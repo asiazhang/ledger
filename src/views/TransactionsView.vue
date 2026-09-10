@@ -428,12 +428,13 @@ const columns = computed<DataTableColumn<Transaction>[]>(() => [
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = computed(() => sumFixedColumnWidths(columns.value))
 
-/** 卡片「⋯」（移动档）：与行右键共用同一 RowContextMenu open 入口（桌面表格
- * 操作列同一入口），菜单选项同一 buildRowMenuOptions ——「⋯」集合与桌面右键一致
- * 由同源保证。 */
-function openCardMenu(event: MouseEvent, row: Transaction): void {
-  rowMenu.open(event, row)
-}
+/** 空态文案（两档同源）：过滤无结果提示 / 默认暂无数据，归一计算属性供
+ * 移动档空态与桌面表格 #empty 槽共用同一字符串口径。 */
+const emptyDescription = computed(() =>
+  filtersActive.value
+    ? t('transactions.list.emptyFiltered')
+    : t('transactions.list.empty'),
+)
 
 /** 整卡点击 = 编辑（移动档卡片）：与行菜单「编辑」同一开放判定（refund 不开放，
  * supportsRowEdit 单源）与同一编辑意图入口。 */
@@ -595,14 +596,14 @@ function activateCard(row: Transaction): void {
         <TransactionCardList
           v-if="data.length > 0"
           :rows="data"
-          :open-row-menu="openCardMenu"
+          :open-row-menu="rowMenu.open"
           :activate-row="activateCard"
         />
         <!-- 空态：与桌面表格空槽同文案同动作（过滤无结果提示 + 清除按钮）；
              加载期间不渲染空态节点（桌面 loading 时空态隐藏同规） -->
         <NEmpty
           v-else-if="!loading"
-          :description="filtersActive ? t('transactions.list.emptyFiltered') : t('transactions.list.empty')"
+          :description="emptyDescription"
           size="small"
         >
           <template v-if="filtersActive" #extra>
@@ -645,7 +646,7 @@ function activateCard(row: Transaction): void {
            无过滤时为默认「暂无数据」文案 -->
       <template #empty>
         <NEmpty
-          :description="filtersActive ? t('transactions.list.emptyFiltered') : t('transactions.list.empty')"
+          :description="emptyDescription"
           size="small"
         >
           <template v-if="filtersActive" #extra>

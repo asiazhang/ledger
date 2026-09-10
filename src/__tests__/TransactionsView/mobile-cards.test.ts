@@ -1,79 +1,42 @@
-import { describe, it, expect, afterEach } from 'vitest'
-import { flushPromises, type VueWrapper } from '@vue/test-utils'
-import { NDataTable, NModal, NSelect, NPagination } from 'naive-ui'
 // 路由替身经 common.ts 的 vi.mock 注册，必须先于任何直连组件导入（导入顺序即 mock 生效面）
 import {
-  mountView, routeMock, makeTxn, setTxnDb,
-  lastListFilter, rowMenu, rowMenuKeys, selectRowMenu,
+  mountView, mountMobile, mountPhone, cards, shownModal, closeShownModal,
+  makeTxn, setTxnDb, rowMenu, rowMenuKeys,
 } from './common'
+import { describe, it, expect, afterEach } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
+import { NDataTable } from 'naive-ui'
 import { setFakeMedia } from '../helpers/media-mock'
-import { clickDialogButton } from '../helpers/dom'
-import { fireProp } from '../helpers/component-vm'
-import { amountPrivacyEnabled, formatAmount } from '@/utils/money'
+import { probeColor } from '../helpers/dom'
+import { formatAmount } from '@/utils/money'
 import { kindSemanticColor } from '@/theme/semantic-colors'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { refCurrencies } from '../helpers/reference-stubs'
 import AccountLink from '@/components/AccountLink.vue'
-import PinyinSelect from '@/components/PinyinSelect.vue'
 import TransactionCardList from '@/components/TransactionCardList.vue'
 
 /**
  * 交易页移动档（issue #846 / ADR-0088 决策 9 断点双渲染）：组件测试主接缝。
- * 换档一律经媒体查询测试接缝（helpers/media-mock）：默认桌面指针态为桌面档基线；
- * `width: 839` 换移动档（输入轴不变——桌面缩窗是移动档的附带能力），
- * `width: 839 + hover: none + pointer: coarse` 为触屏手机形态。断言「看到什么、
- * 交互后发生什么」：两档渲染分支、卡片字段与隐私掩码、卡片「⋯」与整卡编辑、
- * FAB → 类型选择 → 表单五类型意图矩阵、分页/筛选/URL 下钻/页码回退两档一致。
+ * 换档一律经媒体查询测试接缝（helpers/media-mock，目录薄壳 mountMobile/mountPhone
+ * 单点收口）：默认桌面指针态为桌面档基线；`width: 839` 换移动档（输入轴不变——
+ * 桌面缩窗是移动档的附带能力），`width: 839 + hover: none + pointer: coarse`
+ * 为触屏手机形态。断言「看到什么、交互后发生什么」：两档渲染分支、卡片字段与
+ * 隐私掩码、卡片「⋯」与整卡编辑、记一笔悬浮按钮五类型意图矩阵。
+ * 翻页/筛选/URL 下钻/页码回退的两档一致断言在既有 pagination.test.ts /
+ * filtering.test.ts 上扩展（验收 2 的落点），不在本文件重复。
  */
 
 const cny = refCurrencies[0]
 
-/** 移动档挂载（宽度轴换档，输入轴保持指针——桌面缩窗基线）。 */
-function mountMobile() {
-  setFakeMedia({ width: 839 })
-  return mountView()
-}
-
-/** 触屏手机挂载（移动档 + 触控轴）。 */
-function mountPhone() {
-  setFakeMedia({ width: 839, hover: 'none', pointer: 'coarse' })
-  return mountView()
-}
-
-function cards(wrapper: Awaited<ReturnType<typeof mountView>>) {
-  return wrapper.findAll('.transaction-card')
-}
-
-/** 当前展示中的弹窗（视图有四枚 AppModal，意图非空即显示派生 show）。 */
-function shownModal(wrapper: VueWrapper) {
-  return wrapper.findAllComponents(NModal).find((m) => m.props('show') === true)
-}
-
-/** 关闭展示中弹窗（update:show 装配缝；attrs 同名合并可能为数组，逐个调用）。 */
-async function closeShownModal(wrapper: VueWrapper) {
-  const modal = shownModal(wrapper)
-  expect(modal, '期望有展示中的弹窗').toBeTruthy()
-  const handler = modal!.props('onUpdate:show') as unknown as
-    | ((v: boolean) => void)
-    | Array<(v: boolean) => void>
-  for (const fn of Array.isArray(handler) ? handler : [handler]) fn?.(false)
-  await flushPromises()
-}
-
-/** 语义色内联样式断言：期待值经探针元素走同一 jsdom 归一化，逐字可比。 */
-function probeColor(color: string): string {
-  const probe = document.createElement('span')
-  probe.style.color = color
-  return probe.style.color
-}
-
+// 金额隐私模式是模块级单点 ref：开关经 store 真实路径写入，此处置回复默认，
+// 不向同文件后续用例泄漏。
 afterEach(() => {
-  amountPrivacyEnabled.value = false
+  useAppStore().setAmountPrivacyEnabled(false)
 })
 
 describe('TransactionsView 断点双渲染（issue #846）', () => {
-  it('桌面档：表格在、卡片列表与 FAB 不在（回归红线）', async () => {
+  it('桌面档：表格在、卡片列表与记一笔悬浮按钮不在（回归红线）', async () => {
     const wrapper = await mountView()
     expect(wrapper.findComponent(NDataTable).exists()).toBe(true)
     expect(wrapper.findComponent(TransactionCardList).exists()).toBe(false)
@@ -81,15 +44,19 @@ describe('TransactionsView 断点双渲染（issue #846）', () => {
     expect(wrapper.find('.create-fab').exists()).toBe(false)
   })
 
-  it('移动档：卡片列表在、表格与工具栏记一笔按钮不在', async () => {
+  it('移动档：卡片列表在、表格与工具栏记一笔按钮不在；过滤控件与快捷时间选择保留', async () => {
     const wrapper = await mountMobile()
     expect(wrapper.findComponent(NDataTable).exists()).toBe(false)
     expect(wrapper.findComponent(TransactionCardList).exists()).toBe(true)
     expect(cards(wrapper).length).toBe(20)
     // 记一笔入口分档：工具栏分裂按钮（唯一文本「记一笔」）桌面档在、移动档不在；
-    // FAB 只在移动档（触控轴移动档下快捷键不绑，FAB 是唯一记一笔入口）
+    // 悬浮按钮只在移动档（触控轴移动档下快捷键不绑，它是唯一记一笔入口）
     expect(wrapper.text()).not.toContain('记一笔')
     expect(wrapper.find('.create-fab').exists()).toBe(true)
+    // 过滤语义零变化：筛选控件与时间范围快捷选择（五芯片）在移动档照常在
+    for (const chip of ['全部', '当月', '当季', '当年', '去年']) {
+      expect(wrapper.findAll('button').some((b) => b.text() === chip), chip).toBe(true)
+    }
   })
 
   it('跨断点实时换档：839 ↔ 1280 缩放时卡片与表格互斥切换', async () => {
@@ -235,7 +202,7 @@ describe('卡片「⋯」与整卡编辑', () => {
   })
 })
 
-describe('记一笔悬浮按钮（FAB）', () => {
+describe('记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）', () => {
   it('点开五枚大号类型选择（支出/收入/转账/买入/卖出，不含借贷与退款）', async () => {
     const wrapper = await mountPhone()
     await wrapper.find('.create-fab').trigger('click')
@@ -268,69 +235,10 @@ describe('记一笔悬浮按钮（FAB）', () => {
       await closeShownModal(wrapper)
     }
   })
-})
 
-describe('过滤语义两档一致（移动档扩展断言）', () => {
-  it('移动档分页：默认 20/页，翻页与页大小切换与桌面同语义', async () => {
-    const wrapper = await mountMobile()
-    expect(lastListFilter()).toMatchObject({ page: 1, page_size: 20 })
-    const pagination = wrapper.findComponent(NPagination)
-    expect(pagination.exists()).toBe(true)
-    fireProp(pagination, 'onUpdate:page', 2)
-    await flushPromises()
-    expect(lastListFilter()).toMatchObject({ page: 2, page_size: 20 })
-    expect(cards(wrapper).length).toBe(20)
-    // 页大小切换经统一出口：重拉 + 翻回第 1 页
-    fireProp(pagination, 'onUpdate:pageSize', 50)
-    await flushPromises()
-    expect(lastListFilter()).toMatchObject({ page: 1, page_size: 50 })
-    expect(cards(wrapper).length).toBe(45)
-  })
-
-  it('移动档筛选：手动筛选立即生效（翻页归零 + 重拉），与桌面同出口', async () => {
-    const wrapper = await mountMobile()
-    // 账户筛选（PinyinSelect → NSelect 装配缝）→ setFilter 出口：涉及账户语义含转入侧
-    const accountSelect = wrapper.findAllComponents(PinyinSelect)[0].findComponent(NSelect)
-    fireProp(accountSelect, 'onUpdate:value', 'acc-2')
-    await flushPromises()
-    expect(lastListFilter()).toMatchObject({ page: 1, involving_account_id: 'acc-2' })
-    expect(cards(wrapper).length).toBeGreaterThan(0)
-  })
-
-  it('移动档 URL 下钻：?account= 直达过滤（URL 只读入口同一接线）', async () => {
-    routeMock.query = { account: 'acc-2' }
-    await mountMobile()
-    expect(lastListFilter()).toMatchObject({
-      page: 1,
-      page_size: 20,
-      involving_account_id: 'acc-2',
-    })
-  })
-
-  it('移动档空态：过滤无结果提示 + 清除筛选', async () => {
-    setTxnDb([makeTxn(1, 'acc-1', { kind: 'expense' })])
-    routeMock.query = { kinds: 'income' }
-    const wrapper = await mountMobile()
-    expect(cards(wrapper).length).toBe(0)
-    expect(wrapper.text()).toContain('没有符合条件的交易')
-    await wrapper.findAll('button').find((b) => b.text() === '清除筛选')!.trigger('click')
-    await flushPromises()
-    expect(cards(wrapper).length).toBe(1)
-  })
-
-  it('移动档页码回退：删末页最后一条自动回退上一页（ADR-0045 两档一致）', async () => {
-    const wrapper = await mountMobile()
-    fireProp(wrapper.findComponent(NPagination), 'onUpdate:page', 3)
-    await flushPromises()
-    expect(cards(wrapper).length).toBe(5)
-    for (let i = 0; i < 5; i++) {
-      await cards(wrapper)[0].find('.row-actions-btn').trigger('click')
-      await flushPromises()
-      await selectRowMenu(wrapper, 'delete')
-      await clickDialogButton('删除')
-      await flushPromises()
-    }
-    expect(lastListFilter()).toMatchObject({ page: 2, page_size: 20 })
-    expect(cards(wrapper).length).toBe(20)
+  it('桌面档无记一笔悬浮按钮（顶栏分裂按钮是桌面档唯一入口）', async () => {
+    const wrapper = await mountView()
+    expect(wrapper.find('.create-fab').exists()).toBe(false)
+    expect(wrapper.text()).toContain('记一笔')
   })
 })

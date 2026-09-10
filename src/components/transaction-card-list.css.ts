@@ -10,6 +10,9 @@ import { appVars } from '@/theme/app-theme.css.ts'
  * 保留链接语义；中性视觉取值一律经主题合同变量（appVars），亮暗随根主题类换装。
  */
 
+/** 列表容器钩子类。 */
+export const TRANSACTION_CARD_LIST_CLASS = 'transaction-card-list'
+
 /** 卡片根元素钩子类。 */
 export const TRANSACTION_CARD_CLASS = 'transaction-card'
 
@@ -17,7 +20,7 @@ export const TRANSACTION_CARD_CLASS = 'transaction-card'
 export const CARD_MENU_CLASS = 'transaction-card-menu'
 
 /** 列表容器：卡片纵向堆叠。 */
-globalStyle('.transaction-card-list', {
+globalStyle(`.${TRANSACTION_CARD_LIST_CLASS}`, {
   display: 'flex',
   flexDirection: 'column',
   gap: '8px',

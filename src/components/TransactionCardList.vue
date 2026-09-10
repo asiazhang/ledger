@@ -10,7 +10,11 @@ import MerchantLink from '@/components/MerchantLink.vue'
 import SourceLink from '@/components/SourceLink.vue'
 import AmountCell from '@/components/AmountCell.vue'
 import { kindLabel, KIND_TAG_TYPE, renderAccountCell } from '@/components/transaction-columns'
-import { TRANSACTION_CARD_CLASS, CARD_MENU_CLASS } from './transaction-card-list.css.ts'
+import {
+  TRANSACTION_CARD_LIST_CLASS,
+  TRANSACTION_CARD_CLASS,
+  CARD_MENU_CLASS,
+} from './transaction-card-list.css.ts'
 
 /**
  * 移动档交易卡片列表（issue #846 / ADR-0088 决策 9 断点双渲染）：
@@ -74,7 +78,7 @@ function onCardClick(row: Transaction): void {
 </script>
 
 <template>
-  <div class="transaction-card-list">
+  <div :class="TRANSACTION_CARD_LIST_CLASS">
     <div
       v-for="row in rows"
       :key="row.id"
