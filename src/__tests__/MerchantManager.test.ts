@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { setFakeMedia } from './helpers/media-mock'
+import { assertMobileTierScrollX } from './helpers/mobile-scroll-x'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NDataTable, NPopconfirm } from 'naive-ui'
@@ -684,21 +684,6 @@ describe('MerchantManager.vue 前端分页（issue #457）', () => {
 
 describe('MerchantManager 移动档横向滚动下限（issue #849 / ADR-0088 决策 11 票⑨）', () => {
   it('窄屏表格挂 scroll-x = 固定列宽总和（横向滚动吸收窄屏）；桌面档不挂零变化', async () => {
-    setFakeMedia({ width: 400, hover: 'hover', pointer: 'fine' })
-    const mobile = mount(MerchantManager)
-    await flushPromises()
-    const mobileTable = mobile.findComponent(NDataTable)
-    const columns = mobileTable.props('columns') as unknown as Array<{ width?: number }>
-    const fixedSum = columns.reduce(
-      (sum, c) => sum + (typeof c.width === 'number' ? c.width : 0),
-      0,
-    )
-    expect(fixedSum).toBeGreaterThan(0)
-    expect(mobileTable.props('scrollX')).toBe(fixedSum)
-
-    setFakeMedia({ width: 1280, hover: 'hover', pointer: 'fine' })
-    const desktop = mount(MerchantManager)
-    await flushPromises()
-    expect(desktop.findComponent(NDataTable).props('scrollX')).toBeUndefined()
+    await assertMobileTierScrollX(() => mount(MerchantManager))
   })
 })

@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
-import { setFakeMedia } from './helpers/media-mock'
+import { assertMobileTierScrollX } from './helpers/mobile-scroll-x'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { componentVm } from './helpers/component-vm'
 import { findButton } from './helpers/dom'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
-import { NDataTable, NPopconfirm, NSelect, NDatePicker } from 'naive-ui'
+import { NPopconfirm, NSelect, NDatePicker } from 'naive-ui'
 import { nextTick } from 'vue'
 import { applyLocale } from '@/i18n'
 import ItemsView from '@/views/ItemsView.vue'
@@ -729,21 +729,6 @@ describe('ItemsView 来源跳转落点（issue #708）', () => {
 
 describe('ItemsView 移动档横向滚动下限（issue #849 / ADR-0088 决策 11 票⑨）', () => {
   it('窄屏表格挂 scroll-x = 固定列宽总和（横向滚动吸收窄屏）；桌面档不挂零变化', async () => {
-    setFakeMedia({ width: 400, hover: 'hover', pointer: 'fine' })
-    const mobile = mount(ItemsView)
-    await flushPromises()
-    const mobileTable = mobile.findComponent(NDataTable)
-    const columns = mobileTable.props('columns') as unknown as Array<{ width?: number }>
-    const fixedSum = columns.reduce(
-      (sum, c) => sum + (typeof c.width === 'number' ? c.width : 0),
-      0,
-    )
-    expect(fixedSum).toBeGreaterThan(0)
-    expect(mobileTable.props('scrollX')).toBe(fixedSum)
-
-    setFakeMedia({ width: 1280, hover: 'hover', pointer: 'fine' })
-    const desktop = mount(ItemsView)
-    await flushPromises()
-    expect(desktop.findComponent(NDataTable).props('scrollX')).toBeUndefined()
+    await assertMobileTierScrollX(() => mount(ItemsView))
   })
 })

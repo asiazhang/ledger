@@ -117,7 +117,6 @@ describe('CategoryManager.vue', () => {
     setFakeMedia({ width: 1280, hover: 'hover', pointer: 'fine' })
     const desktop = mount(CategoryManager)
     const desktopNodes = desktop.findAll('.n-tree-node')
-    console.log('DEBUG desktop nodes:', desktopNodes.length, desktopNodes.map((n) => n.attributes('draggable')))
     expect(desktopNodes.length).toBeGreaterThan(0)
     desktopNodes.forEach((n) => {
       expect(n.attributes('draggable')).toBe('true')

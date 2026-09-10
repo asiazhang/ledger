@@ -70,8 +70,10 @@ const CONTAINED_VIEWS: Record<ContainableViewName, { component: Component; icon:
 const route = useRoute()
 const router = useRouter()
 
-// 窗口分级（issue #849）：裁剪判定接宽度轴唯一事实源。
+// 窗口分级（issue #849）：裁剪判定接宽度轴唯一事实源，档位派生与其余
+// 轻适配组件同形。
 const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
 
 // 顺序状态消费 sidebar-order store（issue #549）：清单/组内序只读，移回写路径经 store。
 const sidebarOrder = useSidebarOrderStore()
@@ -120,7 +122,7 @@ const backMenuOptions = computed(() => buildTabContextMenuOptions(sidebarOrder.s
  * 口（右键不弹，与导航抽屉「菜单不附右键排序事件」同口径），只读消费收纳结构；
  * 桌面档照常。 */
 function onTabContextmenu(e: MouseEvent, name: ContainableViewName) {
-  if (windowTier.value === 'mobile') return
+  if (isMobileTier.value) return
   backTarget.value = name
   backMenuX.value = e.clientX
   backMenuY.value = e.clientY
