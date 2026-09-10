@@ -22,6 +22,7 @@
 - **AI 导入**：新增商户改名端点 `PUT /api/v1/merchants/{id}`（[#884]）。
 - **AI 导入**：导入知识新增查询与分页纪律——子集检查用服务端过滤参数、分页读回以 `total` 为准核对总条数、buy/sell 标的关联认 `source` 字段（[#928]）。
 - **交易**：交易页筛选与分页会话内保留，切走再回原样恢复（[#893]）。
+- **投资**：买入/卖出交易可选「出资账户」——现金实际流出/流入的账户（如银行卡直扣买基金）纳入余额与资金流归因（[#935]）。
 - **发布**：Android arm64 APK 进入发布矩阵，随 GitHub Release 发布（[#559]）。
 - **发布**：Android APK 发布签名就绪——发布构建以 CI secrets 注入 keystore 签名，tag 构建缺签名 secrets 直接失败；试跑产物经 apksigner 校验可真机直装（[#560]）。
 - **报表**：报表页接入 ESC 复位（[#894]）。
@@ -291,3 +292,4 @@
 [#917]: https://github.com/asiazhang/ledger/issues/917
 [#920]: https://github.com/asiazhang/ledger/issues/920
 [#928]: https://github.com/asiazhang/ledger/issues/928
+[#935]: https://github.com/asiazhang/ledger/issues/935

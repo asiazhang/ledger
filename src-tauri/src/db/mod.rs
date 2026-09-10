@@ -65,6 +65,9 @@ fn migrations() -> &'static Migrations<'static> {
                 "../../migrations/V021__sync_merge_semantics.sql"
             )),
             M::up(include_str!("../../migrations/V022__sync_checkpoint.sql")),
+            M::up(include_str!(
+                "../../migrations/V023__transaction_funding_account.sql"
+            )),
         ])
     })
 }

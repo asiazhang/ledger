@@ -23,6 +23,7 @@ pub(super) fn make_input(
         category_id: None,
         merchant_id: None,
         refund_of_transaction_id: None,
+        funding_account_id: None,
         note: None,
         date: date.into(),
         instrument_id: None,
