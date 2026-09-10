@@ -22,6 +22,9 @@ pub struct Transaction {
     pub amount_native_cents: i64,
     pub account_id: String,
     pub to_account_id: Option<String>,
+    /// 可选出资账户（issue #935 / ADR-0096）：仅 buy/sell 可携带（行为层准入收口
+    /// `funding::validate_funding_account`），结算现金腿的归因端点。
+    pub funding_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     /// 可选保单引用（issue #361 / ADR-0051 决策 3）：仅 expense/income 可挂（行为层准入）。
@@ -141,6 +144,9 @@ pub struct TransactionInput {
     pub currency_code: String,
     pub account_id: String,
     pub to_account_id: Option<String>,
+    /// 可选出资账户（issue #935 / ADR-0096）：仅 buy/sell 可携带，准入收口
+    /// `funding::validate_funding_account`；缺省即「结算账户 = 投资账户」。
+    pub funding_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     /// 商户名字符串（AI 导入契约，issue #194 / ADR-0028）：提交体不带 `merchant_id` 而
@@ -184,6 +190,8 @@ pub struct UpdateTransactionInput {
     pub currency_code: String,
     pub account_id: String,
     pub to_account_id: Option<String>,
+    /// 可选出资账户（与 `TransactionInput.funding_account_id` 同一契约）。
+    pub funding_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     /// 商户名字符串（与 `TransactionInput.merchant_name` 同一契约）：修改路径同样
@@ -216,6 +224,7 @@ impl From<UpdateTransactionInput> for TransactionInput {
             currency_code: u.currency_code,
             account_id: u.account_id,
             to_account_id: u.to_account_id,
+            funding_account_id: u.funding_account_id,
             category_id: u.category_id,
             merchant_id: u.merchant_id,
             merchant_name: u.merchant_name,
@@ -246,6 +255,8 @@ pub struct NormalizedTransaction {
     pub amount_native_cents: i64,
     pub account_id: String,
     pub to_account_id: Option<String>,
+    /// 可选出资账户（issue #935 / ADR-0096）：随归一化行落库与随 op 搬运。
+    pub funding_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     pub policy_id: Option<String>,
@@ -272,6 +283,7 @@ impl TryFrom<&NormalizedTransaction> for writer::NormalizedRow {
             amount_native_cents: norm.amount_native_cents,
             account_id: norm.account_id.clone(),
             to_account_id: norm.to_account_id.clone(),
+            funding_account_id: norm.funding_account_id.clone(),
             category_id: norm.category_id.clone(),
             merchant_id: norm.merchant_id.clone(),
             policy_id: norm.policy_id.clone(),
@@ -294,6 +306,7 @@ impl From<&writer::NormalizedRow> for NormalizedTransaction {
             amount_native_cents: row.amount_native_cents,
             account_id: row.account_id.clone(),
             to_account_id: row.to_account_id.clone(),
+            funding_account_id: row.funding_account_id.clone(),
             category_id: row.category_id.clone(),
             merchant_id: row.merchant_id.clone(),
             policy_id: row.policy_id.clone(),
@@ -447,17 +460,18 @@ impl FromRow for Transaction {
             amount_native_cents: row.get(4)?,
             account_id: row.get(5)?,
             to_account_id: row.get(6)?,
-            category_id: row.get(7)?,
-            refund_of_transaction_id: row.get(8)?,
-            note: row.get(9)?,
-            date: row.get(10)?,
-            created_at: row.get(11)?,
-            updated_at: row.get(12)?,
-            version: row.get(13)?,
-            device_id: row.get(14)?,
-            is_deleted: row.get::<_, i64>(15)? != 0,
-            merchant_id: row.get(16)?,
-            policy_id: row.get(17)?,
+            funding_account_id: row.get(7)?,
+            category_id: row.get(8)?,
+            refund_of_transaction_id: row.get(9)?,
+            note: row.get(10)?,
+            date: row.get(11)?,
+            created_at: row.get(12)?,
+            updated_at: row.get(13)?,
+            version: row.get(14)?,
+            device_id: row.get(15)?,
+            is_deleted: row.get::<_, i64>(16)? != 0,
+            merchant_id: row.get(17)?,
+            policy_id: row.get(18)?,
             // 来源列非库列：FromRow 恒空，由列表/搜索读路径 `attach_sources` 按页填充。
             source: None,
         })

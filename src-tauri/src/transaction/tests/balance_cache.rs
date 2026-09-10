@@ -236,6 +236,7 @@ fn writer_insert_row_direct_seam_refreshes_cache() {
         policy_id: None,
         existing_policy_id: None,
         refund_of_transaction_id: None,
+        funding_account_id: None,
         note: None,
         date: "2026-03-01".into(),
     };

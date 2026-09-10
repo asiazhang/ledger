@@ -87,7 +87,13 @@
     "category-unsupported": "交易类型 {0} 不能携带分类",
     "merchant-id-and-name-conflict": "merchant_id 与 merchant_name 不可同时提供",
     "kind-unsupported": "交易类型 {0} 暂不支持（MVP 未实现）",
-    "policy-unsupported": "交易类型 {0} 不能挂保单"
+    "policy-unsupported": "交易类型 {0} 不能挂保单",
+    "funding-unsupported": "交易类型 {0} 不能携带出资账户"
+  },
+  "funding": {
+    "account-not-found": "出资账户不存在或已删除: {0}",
+    "account-type-unsupported": "出资账户类型不支持: {0}（仅现金类账户可作出资账户）",
+    "currency-mismatch": "出资账户币种（{0}）与交易币种（{1}）不一致"
   },
   "refund": {
     "source-required": "退款必须关联原支出交易",

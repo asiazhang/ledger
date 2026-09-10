@@ -465,21 +465,32 @@ fn advance_rolls_forward_across_backfilled_range() {
 }
 
 /// 引导 schema 偏斜（较旧快照）：重建后对齐快照版本并前向迁移升级到本端
-/// 最新版本（V022 位点表在场、位点写入可用、业务数据完整）。
+/// 最新版本（V022 位点表在场、V023 出资列在场、位点写入可用、业务数据完整）。
 #[test]
 fn bootstrap_migrates_older_schema_snapshot() {
     let conn_a = test_support::open();
     let id = base_ledger(&conn_a);
     let cp22 = create_checkpoint(&conn_a).unwrap();
 
-    // 把快照化成 V021 时代的真实形态：卸下 V022 位点表并回拨 user_version
-    //（user_version 以迁移条目计：V005 移除不回填，V022 = 第 21 条，V021 时代 = 20）。
+    // 把快照化成 V021 时代的真实形态：卸下 V022 位点表与 V023 出资列
+    //（先卸部分索引再卸列，SQLite 限制：索引列不可直接 DROP COLUMN）并回拨
+    // user_version（user_version 以迁移条目计：V005 移除不回填，V022 = 第 21 条，
+    // V021 时代 = 20）。
     let stale_path = std::env::temp_dir().join(format!("ledger-v21-{}.db", crate::db::new_uuid()));
     std::fs::write(&stale_path, &cp22.snapshot).unwrap();
     {
         let stale = crate::db::open_connection(&stale_path).unwrap();
         stale
             .execute("DROP TABLE sync_stream_positions", [])
+            .unwrap();
+        stale
+            .execute("DROP INDEX IF EXISTS idx_transactions_funding", [])
+            .unwrap();
+        stale
+            .execute(
+                "ALTER TABLE transactions DROP COLUMN funding_account_id",
+                [],
+            )
             .unwrap();
         stale.execute("PRAGMA user_version = 20", []).unwrap();
     }

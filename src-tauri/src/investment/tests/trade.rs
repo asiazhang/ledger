@@ -705,6 +705,7 @@ fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
             category_id: None,
             merchant_id: None,
             refund_of_transaction_id: None,
+            funding_account_id: None,
             note: None,
             date: "2026-01-10".into(),
             instrument_id: None,
