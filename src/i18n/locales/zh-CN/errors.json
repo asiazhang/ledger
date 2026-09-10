@@ -87,6 +87,7 @@
     "category-unsupported": "交易类型 {0} 不能携带分类",
     "merchant-id-and-name-conflict": "merchant_id 与 merchant_name 不可同时提供",
     "kind-unsupported": "交易类型 {0} 暂不支持（MVP 未实现）",
+    "replay-unsupported": "交易类型 {0} 的同步重放尚未接入",
     "policy-unsupported": "交易类型 {0} 不能挂保单",
     "funding-unsupported": "交易类型 {0} 不能携带出资账户"
   },
@@ -102,6 +103,10 @@
   },
   "trade": {
     "partially-sold-update": "该买入交易已有部分卖出，无法修改",
+    "consumed-by-convert-update": "该交易的份额已被后续转换消耗，无法修改",
+    "consumed-by-convert-delete": "该交易的份额已被后续转换消耗，无法删除",
+    "convert-update-unsupported": "基金转换的修改尚未接入",
+    "convert-delete-unsupported": "基金转换的删除尚未接入",
     "buy-instrument-required": "买入必须指定标的",
     "buy-instrument-not-found": "买入标的不存在: {0}",
     "sell-instrument-required": "卖出必须指定标的",
@@ -119,6 +124,17 @@
     "sell-price-positive": "卖出单价必须大于 0",
     "buy-account-not-investment": "买入交易必须使用投资账户",
     "sell-account-not-investment": "卖出交易必须使用投资账户",
+    "convert-instrument-required": "转换必须指定转出标的",
+    "convert-to-instrument-required": "转换必须指定转入标的",
+    "convert-instrument-not-found": "转换转出标的不存在: {0}",
+    "convert-to-instrument-not-found": "转换转入标的不存在: {0}",
+    "convert-same-instrument": "转换的转出标的与转入标的不能相同",
+    "convert-quantity-positive": "转换转出份额必须大于 0",
+    "convert-to-quantity-positive": "转换转入份额必须大于 0",
+    "convert-out-amount-positive": "转换转出金额必须大于 0",
+    "convert-in-amount-positive": "转换转入金额必须大于 0",
+    "convert-account-not-investment": "转换交易必须使用投资账户",
+    "convert-to-account-forbidden": "转换不跨账户：转出与转入必须同属一个投资账户，不能携带转入账户",
     "insufficient-holding": "可卖出数量不足，当前持有 {0}，尝试卖出 {1}"
   },
   "fx": {

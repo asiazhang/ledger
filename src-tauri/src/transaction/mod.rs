@@ -30,7 +30,7 @@ pub mod writer;
 mod model;
 
 pub use model::{
-    CreateTransactionResult, NormalizedTransaction, NotePinyinRepairFailure,
+    ConvertFields, CreateTransactionResult, NormalizedTransaction, NotePinyinRepairFailure,
     NotePinyinRepairReport, NotePinyinRepairStage, Transaction, TransactionBatchInput,
     TransactionInput, TransactionListFilter, TransactionListResult, TransactionSearchResult,
     TransactionSource, TransactionSourceKind, TransactionSourceStatus, UpdateTransactionInput,

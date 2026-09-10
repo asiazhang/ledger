@@ -30,6 +30,7 @@ use std::time::Instant;
 use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
+use super::amount::TransactionKind;
 use super::model::{CreateTransactionResult, TransactionInput};
 use crate::error::{AppError, ErrClass, Result};
 use crate::signals::WriteEvidence;
@@ -180,9 +181,13 @@ impl TransactionBatch {
 }
 
 /// 计算导入去重哈希：`sha256("date|kind|amount_cents|currency_code|account_id|to_account_id")`，
-/// 携带出资账户时追加 `|funding_account_id`（issue #939 / ADR-0096 决策 8）。
+/// 携带出资账户时追加 `|funding_account_id`（issue #939 / ADR-0096 决策 8）；
+/// 基金转换（ADR-0099）追加四腿字段（转入标的/转入份额/两侧确认金额）——多腿
+/// 转换单由提交方拆成多条 convert 记录（每腿一条），仅日期/账户/金额占位相同的
+/// 两腿必须判为不同内容，否则第二腿被内容哈希误判重复而静默丢弃。
+///
 /// `to_account_id` 缺省拼空串；刻意排除 note/category（AI 生成文本非确定性，会让哈希漂移）。
-/// 出资账户仅在携带时追加：无出资账户的输入与旧公式逐字节同输入——历史行
+/// 出资账户与转换腿字段仅在携带时追加：其余输入与旧公式逐字节同输入——历史行
 /// `dedup_hash` 列（旧公式产物）对新公式仍命中，重导去重行为不变。
 pub fn compute_dedup_hash(input: &TransactionInput) -> String {
     let to_account_id = input.to_account_id.as_deref().unwrap_or("");
@@ -198,6 +203,16 @@ pub fn compute_dedup_hash(input: &TransactionInput) -> String {
     if let Some(funding) = input.funding_account_id.as_deref() {
         payload.push('|');
         payload.push_str(funding);
+    }
+    if input.kind == TransactionKind::Convert {
+        payload.push('|');
+        payload.push_str(input.to_instrument_id.as_deref().unwrap_or(""));
+        payload.push('|');
+        payload.push_str(&input.to_quantity.unwrap_or(0.0).to_string());
+        payload.push('|');
+        payload.push_str(&input.out_amount_cents.unwrap_or(0).to_string());
+        payload.push('|');
+        payload.push_str(&input.in_amount_cents.unwrap_or(0).to_string());
     }
     let digest = Sha256::digest(payload.as_bytes());
     digest.iter().map(|b| format!("{b:02x}")).collect()

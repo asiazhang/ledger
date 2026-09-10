@@ -253,6 +253,10 @@ pub(crate) fn generate_inputs(
             quantity: None,
             price_cents: None,
             fee_cents: None,
+            to_instrument_id: None,
+            to_quantity: None,
+            out_amount_cents: None,
+            in_amount_cents: None,
             idempotency_key: None,
         })
         .collect()

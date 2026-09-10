@@ -31,10 +31,10 @@ fn insert_txn(
 // TransactionKind 枚举
 // ---------------------------------------------------------------------------
 
-/// 全部 8 种 kind 与字符串互转严格往返。
+/// 全部 9 种 kind 与字符串互转严格往返。
 #[test]
 fn kind_string_roundtrip() {
-    assert_eq!(TransactionKind::ALL.len(), 8);
+    assert_eq!(TransactionKind::ALL.len(), 9);
     for kind in TransactionKind::ALL {
         assert_eq!(TransactionKind::parse(kind.as_str()).unwrap(), kind);
         assert_eq!(kind.to_string(), kind.as_str());
@@ -82,6 +82,7 @@ fn matrix_signed_amount_all_cells() {
         (Sell, AccountFlow(TransferSide::Out), 1),
         (Dividend, AccountFlow(TransferSide::Out), 1),
         (Split, AccountFlow(TransferSide::Out), 0),
+        (Convert, AccountFlow(TransferSide::Out), 0),
         // account_flow（转入账户侧）
         (Income, AccountFlow(TransferSide::In), 1),
         (Expense, AccountFlow(TransferSide::In), -1),
@@ -91,6 +92,7 @@ fn matrix_signed_amount_all_cells() {
         (Sell, AccountFlow(TransferSide::In), 1),
         (Dividend, AccountFlow(TransferSide::In), 1),
         (Split, AccountFlow(TransferSide::In), 0),
+        (Convert, AccountFlow(TransferSide::In), 0),
         // expense_net：毛支出 − 退款；投资类不计入
         (Income, ExpenseNet, 0),
         (Expense, ExpenseNet, 1),
@@ -100,6 +102,7 @@ fn matrix_signed_amount_all_cells() {
         (Sell, ExpenseNet, 0),
         (Dividend, ExpenseNet, 0),
         (Split, ExpenseNet, 0),
+        (Convert, ExpenseNet, 0),
         // income_net：收入 + 分红
         (Income, IncomeNet, 1),
         (Expense, IncomeNet, 0),
@@ -109,6 +112,7 @@ fn matrix_signed_amount_all_cells() {
         (Sell, IncomeNet, 0),
         (Dividend, IncomeNet, 1),
         (Split, IncomeNet, 0),
+        (Convert, IncomeNet, 0),
         // refund_gross：仅退款
         (Income, RefundGross, 0),
         (Expense, RefundGross, 0),
@@ -118,6 +122,7 @@ fn matrix_signed_amount_all_cells() {
         (Sell, RefundGross, 0),
         (Dividend, RefundGross, 0),
         (Split, RefundGross, 0),
+        (Convert, RefundGross, 0),
         // policy_premium：仅挂单保费（expense），无退款冲减（ADR-0051 决策 4）
         (Income, PolicyPremium, 0),
         (Expense, PolicyPremium, 1),
@@ -127,6 +132,7 @@ fn matrix_signed_amount_all_cells() {
         (Sell, PolicyPremium, 0),
         (Dividend, PolicyPremium, 0),
         (Split, PolicyPremium, 0),
+        (Convert, PolicyPremium, 0),
         // policy_inflow：仅挂单现金流入（income）
         (Income, PolicyInflow, 1),
         (Expense, PolicyInflow, 0),
@@ -136,6 +142,7 @@ fn matrix_signed_amount_all_cells() {
         (Sell, PolicyInflow, 0),
         (Dividend, PolicyInflow, 0),
         (Split, PolicyInflow, 0),
+        (Convert, PolicyInflow, 0),
     ];
     for &(kind, measure, expect_sign) in cells {
         assert_eq!(
@@ -282,6 +289,8 @@ fn account_flow_expr_balances_match_rust() {
     insert_txn(&conn, "t3", TransactionKind::Refund, 300, "acc-a", None);
     insert_txn(&conn, "t4", TransactionKind::Buy, 2000, "acc-a", None);
     insert_txn(&conn, "t5", TransactionKind::Split, 9999, "acc-a", None);
+    // 基金转换（ADR-0099）：两腿同记录、无现金腿——金额非 0 也不入任何账户余额。
+    insert_txn(&conn, "t5c", TransactionKind::Convert, 4321, "acc-a", None);
     insert_txn(
         &conn,
         "t6",

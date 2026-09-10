@@ -132,6 +132,17 @@ const KIND_FIELD_MATRIX: Record<TransactionKind, KindMatrixRow> = {
     policy_id: null,
     refund_of_transaction_id: null,
   },
+  // 基金转换（ADR-0099）：一笔两腿、无现金腿，行金额占位 0（服务端按 FIFO 消耗
+  // 算定结转成本后写入锚点）；两腿字段不属本矩阵形态，转换表单随 issue #979 落地。
+  convert: {
+    amount_cents: 0,
+    to_account_id: null,
+    funding_account_id: null,
+    category_id: null,
+    merchant_id: null,
+    policy_id: null,
+    refund_of_transaction_id: null,
+  },
 }
 
 /** fail fast：非法表单状态抛中文错误，不静默兜底 */

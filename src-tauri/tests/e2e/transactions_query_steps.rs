@@ -347,12 +347,12 @@ fn parse_kinds(raw: &str) -> Vec<TransactionKind> {
         .collect()
 }
 
-/// 播种 8 种 kind × 带分类/无分类共 16 行（读侧过滤域级测试）：写入路径按 kind 各有
-/// 专用校验（buy/sell 需要标的、refund 需关联原支出），而本场景只针对读过滤接缝
-/// （kind IN + category_id IS NULL 的 AND 组合），直插 SQL 与同日批量导入步骤同先例。
-/// 库内状态直置（#764 已登记例外）：dividend/split 未实现，公开写入入口显式拒绝，
-/// 全 kind 覆盖无法经行为层构造。
-#[when(expr = "播种 8 类交易各带分类与无分类 日期 {string} 到账户 {string} 分类 {string}")]
+/// 播种 9 种 kind × 带分类/无分类共 18 行（读侧过滤域级测试）：写入路径按 kind 各有
+/// 专用校验（buy/sell 需标的、convert 需两标的与份额、refund 需关联原支出），而本场景
+/// 只针对读过滤接缝（kind IN + category_id IS NULL 的 AND 组合），直插 SQL 与同日批量
+/// 导入步骤同先例。库内状态直置（#764 已登记例外）：dividend/split 未实现、公开写入
+/// 入口显式拒绝，全 kind 覆盖无法经行为层构造。
+#[when(expr = "播种 9 类交易各带分类与无分类 日期 {string} 到账户 {string} 分类 {string}")]
 fn seed_kinds_with_and_without_category(
     world: &mut LedgerWorld,
     date: String,

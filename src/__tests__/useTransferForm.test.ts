@@ -68,6 +68,7 @@ describe('useTransferForm', () => {
       merchant_id: null,
       policy_id: null,
       source: null,
+      convert: null,
       refund_of_transaction_id: null,
       note: '房租',
       date: '2026-03-01',

@@ -112,6 +112,10 @@ pub(super) fn make_buy_input(
         quantity: Some(qty),
         price_cents: Some(price),
         fee_cents: Some(fee),
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
         idempotency_key: None,
     }
 }
@@ -141,6 +145,50 @@ pub(super) fn make_sell_input(
         quantity: Some(qty),
         price_cents: Some(price),
         fee_cents: Some(fee),
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        idempotency_key: None,
+    }
+}
+
+/// 基金转换输入构造器（ADR-0099）：转出腿 = instrument_id / quantity / out_amount，
+/// 转入腿 = to_instrument_id / to_quantity / in_amount；行金额占位 0（服务端按
+/// FIFO 消耗算定结转成本后写入锚点）。
+#[allow(clippy::too_many_arguments)]
+pub(super) fn make_convert_input(
+    account_id: &str,
+    instrument_id: &str,
+    to_instrument_id: &str,
+    quantity: f64,
+    to_quantity: f64,
+    out_amount_cents: i64,
+    in_amount_cents: i64,
+    fee_cents: i64,
+) -> TransactionInput {
+    TransactionInput {
+        merchant_name: None,
+        policy_id: None,
+        kind: TransactionKind::Convert,
+        amount_cents: 0,
+        currency_code: "CNY".into(),
+        account_id: account_id.into(),
+        to_account_id: None,
+        funding_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-02-01".into(),
+        instrument_id: Some(instrument_id.into()),
+        quantity: Some(quantity),
+        price_cents: None,
+        fee_cents: Some(fee_cents),
+        to_instrument_id: Some(to_instrument_id.into()),
+        to_quantity: Some(to_quantity),
+        out_amount_cents: Some(out_amount_cents),
+        in_amount_cents: Some(in_amount_cents),
         idempotency_key: None,
     }
 }
@@ -172,6 +220,10 @@ pub(super) fn make_trade_input(
         quantity: Some(qty),
         price_cents: Some(price),
         fee_cents: Some(0),
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
         idempotency_key: None,
     }
 }

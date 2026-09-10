@@ -51,6 +51,7 @@ const editingTx: Transaction = {
   merchant_id: null,
   policy_id: null,
   source: null,
+  convert: null,
   refund_of_transaction_id: null,
   note: '建仓买入',
   date: '2026-01-10',

@@ -59,6 +59,10 @@ fn txn_base(
         quantity: None,
         price_cents: None,
         fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
         idempotency_key: None,
     }
 }
@@ -219,6 +223,10 @@ pub fn existing_input(existing: &Transaction) -> TransactionInput {
         quantity: None,
         price_cents: None,
         fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
         idempotency_key: None,
     }
 }

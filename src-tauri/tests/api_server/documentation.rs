@@ -211,9 +211,10 @@ async fn test_openapi_transaction_kind_is_lowercase_enum() {
     assert_eq!(
         enum_values,
         vec![
-            "income", "expense", "transfer", "refund", "buy", "sell", "dividend", "split"
+            "income", "expense", "transfer", "refund", "buy", "sell", "dividend", "split",
+            "convert"
         ],
-        "kind 枚举值应为闭集的 8 个小写字符串"
+        "kind 枚举值应为闭集的 9 个小写字符串"
     );
 }
 
