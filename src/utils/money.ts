@@ -82,6 +82,14 @@ export function centsToYuan(cents: number, currency?: Currency): number {
 }
 
 /**
+ * 价格刻度换算因子（ADR-0038，与后端 `investment::prices::PRICE_UNITS_PER_FEN` 同一倍率）：
+ * 金额（分）→ 价格（万分之一元）乘 `PRICE_UNITS_PER_FEN`；价格（万分之一元）→ 元展示值
+ * 除 `PRICE_UNITS_PER_YUAN`。表单反算单价等消费方经本处单一来源取用，不各写 100/10000。
+ */
+export const PRICE_UNITS_PER_FEN = 100
+export const PRICE_UNITS_PER_YUAN = 10000
+
+/**
  * 万分之一元 → 元字符串（价格列展示专用，ADR-0038 价格刻度）：固定 4 位小数后裁剪尾零
  * （1.2345 → 1.2345、15.00 → 15、475.2000 → 475.2，无损去零不涉舍入）；
  * 股票两位价、港股三位价、基金四位净值同一直口。整数部分走界面语言分组；locale 缺省取应用当前语言。

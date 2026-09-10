@@ -706,19 +706,203 @@ fn convert_consuming_buy_lot_guards_buy_edit_and_delete() {
     assert_eq!(conversions, 1);
     assert!(fund_lot(&conn, "inst-in").is_some());
 
-    // 先删转换（回补转出腿、清理转入批次），再删买入放行——
-    // 但转换的删除尚未接入，本版先锁其码化拒绝（生命周期票接入后本行改为放行）。
-    let err = delete_transaction_internal(&conn, &convert_id).unwrap_err();
-    assert!(
-        matches!(&err, AppError::Coded { code, .. } if code == "trade.convert-delete-unsupported"),
-        "转换删除应被码化拒绝，got: {err:?}"
-    );
+    // 先删转换（回补转出腿、清理转入批次）即可解开链条，再删买入放行（#979）。
+    delete_transaction_internal(&conn, &convert_id).unwrap();
+    assert!((fund_lot(&conn, "inst-out").unwrap().1 - 10.0).abs() < 1e-9);
+    assert!(fund_lot(&conn, "inst-in").is_none());
+    delete_transaction_internal(&conn, &buy_id).unwrap();
+    assert!(fund_lot(&conn, "inst-out").is_none());
 }
 
-/// 转换的修改与删除尚未接入（随生命周期票落地）：修改（就地改与 kind 变更）、
-/// 删除均得码化拒绝且不留半套副作用——接入后本测试随实现票翻转。
+/// 删除转换（#979 / ADR-0099 决策 5）：转出腿逐批次精确回补、转入批次与消耗记录
+/// 一并清理、交易明细行消失、余额不变；随后原买入可删（转换链已解开）。
 #[test]
-fn convert_lifecycle_paths_are_refused_until_wired() {
+fn convert_delete_restores_out_lots_and_purges_in_lot() {
+    let conn = open();
+    seed_convert_scene(&conn);
+    let buy_id = create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-cv",
+            "inst-out",
+            10.0,
+            10_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap()
+    .id;
+    let after_buy = balance_snapshot(&conn);
+    let convert_id = create_transaction_internal(
+        &conn,
+        make_convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
+    )
+    .unwrap()
+    .id;
+
+    delete_transaction_internal(&conn, &convert_id).unwrap();
+
+    // 转出腿精确回补：原批次剩余 10 份（不是按批次重放，而是逐条消耗记录加回）。
+    assert!((fund_lot(&conn, "inst-out").unwrap().1 - 10.0).abs() < 1e-9);
+    // 转入批次与两腿扩展行、消耗记录一并清理。
+    assert!(fund_lot(&conn, "inst-in").is_none());
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM security_lot_conversions", [], |r| r
+            .get::<_, i64>(
+            0
+        ))
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM security_transactions WHERE action='convert'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    // 转换零余额扰动：删除后余额回到买入后的快照。
+    assert_eq!(after_buy, balance_snapshot(&conn));
+    crate::test_support::assert_balance_cache_matches_realtime(&conn);
+    // 买入恢复可删（转换链不再占用其批次）。
+    delete_transaction_internal(&conn, &buy_id).unwrap();
+    assert!(fund_lot(&conn, "inst-out").is_none());
+}
+
+/// 删除转换的级联语义（#979 / ADR-0097）：转入批次被在用 sell 消耗时，与 buy 同规
+/// 逐笔级联软删该 sell（持仓扣减回补），再清转换两侧；余额回到转换前快照。
+#[test]
+fn convert_delete_cascades_active_sell_on_in_lot() {
+    let conn = open();
+    seed_convert_scene(&conn);
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-cv",
+            "inst-out",
+            10.0,
+            10_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    let after_buy = balance_snapshot(&conn);
+    let convert_id = create_transaction_internal(
+        &conn,
+        make_convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
+    )
+    .unwrap()
+    .id;
+    let sell_id = create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Sell,
+            "acc-cv",
+            "inst-in",
+            4.0,
+            15_000,
+            "2026-02-10",
+        ),
+    )
+    .unwrap()
+    .id;
+
+    delete_transaction_internal(&conn, &convert_id).unwrap();
+
+    // 在用 sell 被级联软删，卖出匹配清空、转入批次消失。
+    let sell_deleted: i64 = conn
+        .query_row(
+            "SELECT is_deleted FROM transactions WHERE id=?1",
+            rusqlite::params![sell_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(sell_deleted, 1, "在用 sell 随转换删除级联软删");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM security_lot_sales", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert!(fund_lot(&conn, "inst-in").is_none());
+    assert!((fund_lot(&conn, "inst-out").unwrap().1 - 10.0).abs() < 1e-9);
+    // 删除转换连带撤销其级联 sell 的现金影响（转换恒零扰动）：余额回到卖出前。
+    assert_eq!(after_buy, balance_snapshot(&conn));
+    crate::test_support::assert_balance_cache_matches_realtime(&conn);
+}
+
+/// 转换链守卫（ADR-0099 链式结构）：转入批次已被在用后续转换消耗时，前腿的修改与
+/// 删除均被码化拒绝（否则下游转换的转出消耗记录一并消失）；从最后一腿往前删则放行。
+#[test]
+fn convert_chain_guards_update_and_delete_front_leg() {
+    let conn = open();
+    seed_convert_scene(&conn);
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-cv",
+            "inst-out",
+            10.0,
+            10_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    let first = create_transaction_internal(
+        &conn,
+        make_convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
+    )
+    .unwrap()
+    .id;
+    // 第二腿：把上一腿建起的转入批次再换回转出标的（链式转换）。
+    let second = create_transaction_internal(
+        &conn,
+        make_convert_input("acc-cv", "inst-in", "inst-out", 10.0, 10.0, 1_100, 1_100, 0),
+    )
+    .unwrap()
+    .id;
+
+    let err = update_transaction_internal(
+        &conn,
+        &first,
+        make_convert_input("acc-cv", "inst-out", "inst-in", 5.0, 5.0, 550, 550, 0),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&err, AppError::Coded { code, .. } if code == "trade.consumed-by-convert-update"),
+        "被后续转换消耗的前腿不可修改，got: {err:?}"
+    );
+    let err = delete_transaction_internal(&conn, &first).unwrap_err();
+    assert!(
+        matches!(&err, AppError::Coded { code, .. } if code == "trade.consumed-by-convert-delete"),
+        "被后续转换消耗的前腿不可删除，got: {err:?}"
+    );
+    // 被拒后链式结构原样保留。
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM security_lot_conversions", [], |r| r
+            .get::<_, i64>(
+            0
+        ))
+        .unwrap(),
+        2
+    );
+
+    // 从最后一腿往前删：第二腿放行，前腿随之解开。
+    delete_transaction_internal(&conn, &second).unwrap();
+    delete_transaction_internal(&conn, &first).unwrap();
+    assert!((fund_lot(&conn, "inst-out").unwrap().1 - 10.0).abs() < 1e-9);
+    assert!(fund_lot(&conn, "inst-in").is_none());
+}
+
+/// 「部分卖出禁改」在用占用守卫对转换批次同等生效（#979）：转入批次已被后续卖出
+/// 消耗时修改转换被拒绝（修改会重建批次、破坏该卖出的已实现盈亏）；删除仍走级联。
+#[test]
+fn convert_update_guard_when_in_lot_partially_sold() {
     let conn = open();
     seed_convert_scene(&conn);
     create_transaction_internal(
@@ -739,9 +923,19 @@ fn convert_lifecycle_paths_are_refused_until_wired() {
     )
     .unwrap()
     .id;
-    let before = balance_snapshot(&conn);
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Sell,
+            "acc-cv",
+            "inst-in",
+            4.0,
+            15_000,
+            "2026-02-10",
+        ),
+    )
+    .unwrap();
 
-    // 就地修改转换。
     let err = update_transaction_internal(
         &conn,
         &convert_id,
@@ -749,46 +943,177 @@ fn convert_lifecycle_paths_are_refused_until_wired() {
     )
     .unwrap_err();
     assert!(
-        matches!(&err, AppError::Coded { code, .. } if code == "trade.convert-update-unsupported"),
-        "就地修改转换应被码化拒绝，got: {err:?}"
+        matches!(&err, AppError::Coded { code, .. } if code == "trade.convert-partially-sold-update"),
+        "转入批次已被后续卖出的转换不可修改，got: {err:?}"
     );
-    // 经 PUT 把普通交易改为 convert（kind 进/出 convert 一律不给走）。
-    let mut as_expense = make_trade_input(
-        TransactionKind::Expense,
-        "acc-cv",
-        "inst-out",
-        1.0,
-        10_000,
-        "2026-01-20",
+    match &err {
+        AppError::Coded { message, .. } => assert!(
+            message.contains("该转换的转入份额已被后续卖出"),
+            "转换守卫文案主体应为转换而非买入，got: {message}"
+        ),
+        _ => panic!("应为 Coded 错误"),
+    }
+    // 被拒后卖出匹配与转入批次原样保留（未落半套副作用）。
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM security_lot_sales", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        1
     );
-    as_expense.kind = TransactionKind::Convert;
-    as_expense.instrument_id = Some("inst-out".into());
-    as_expense.to_instrument_id = Some("inst-in".into());
-    as_expense.quantity = Some(1.0);
-    as_expense.to_quantity = Some(1.0);
-    as_expense.out_amount_cents = Some(100);
-    as_expense.in_amount_cents = Some(100);
-    let err = update_transaction_internal(&conn, &convert_id, as_expense).unwrap_err();
-    assert!(
-        matches!(&err, AppError::Coded { code, .. } if code == "trade.convert-update-unsupported"),
-        "经修改变更 kind 应被拒绝，got: {err:?}"
-    );
-    // 删除转换。
-    let err = delete_transaction_internal(&conn, &convert_id).unwrap_err();
-    assert!(
-        matches!(&err, AppError::Coded { code, .. } if code == "trade.convert-delete-unsupported"),
-        "删除转换应被码化拒绝，got: {err:?}"
-    );
+    assert!((fund_lot(&conn, "inst-in").unwrap().1 - 6.0).abs() < 1e-9);
+}
 
-    // 三条拒绝路径均不留半套副作用：交易行仍在、两腿与消耗记录原样、余额不变。
-    let alive: i64 = conn
-        .query_row(
-            "SELECT is_deleted FROM transactions WHERE id=?1",
-            rusqlite::params![convert_id],
-            |r| r.get(0),
+/// 就地修改转换：转出腿跨批次回补后按新输入重新 FIFO 消耗与结转（#979 revert 精确性）——
+/// 回补不是「按批次重放」，而是逐条消耗记录加回，多批次消耗也能分毫不差。
+#[test]
+fn convert_update_reverts_across_batches_and_reapplies() {
+    let conn = open();
+    seed_convert_scene(&conn);
+    // 两批买入：3 份 @ 1.2345 元（行金额 370 分）、4 份 @ 0.5000 元（行金额 200 分）。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-cv",
+            "inst-out",
+            3.0,
+            12_345,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-cv",
+            "inst-out",
+            4.0,
+            5_000,
+            "2026-01-11",
+        ),
+    )
+    .unwrap();
+    // 原转换 5 份：耗尽首批（370）+ 次批 2 份（100）= 470。
+    let convert_id = create_transaction_internal(
+        &conn,
+        make_convert_input("acc-cv", "inst-out", "inst-in", 5.0, 5.0, 600, 600, 0),
+    )
+    .unwrap()
+    .id;
+    let before = balance_snapshot(&conn);
+    assert!((fund_lot(&conn, "inst-in").unwrap().0 - 5.0).abs() < 1e-9);
+
+    // 改为只转 2 份：首批回补后重新消耗 2 份（非耗尽 → round(2×12345÷100)=247）。
+    update_transaction_internal(
+        &conn,
+        &convert_id,
+        make_convert_input("acc-cv", "inst-out", "inst-in", 2.0, 2.0, 240, 240, 0),
+    )
+    .unwrap();
+
+    // 旧转入批次已清、新转入批次以新结转成本建立（247×100÷2 = 12350）。
+    let in_lots: Vec<(f64, i64)> = {
+        let mut stmt = conn
+            .prepare("SELECT initial_quantity, cost_per_unit_cents FROM security_lots WHERE instrument_id='inst-in'")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    };
+    assert_eq!(in_lots.len(), 1, "旧转入批次被清理、只留新批次");
+    assert!((in_lots[0].0 - 2.0).abs() < 1e-9);
+    assert_eq!(in_lots[0].1, 12_350);
+    // 转出腿跨批次回补精确：首批剩 1 份、次批仍 4 份；消耗记录只余 1 条。
+    let remaining: Vec<(String, f64)> = {
+        let mut stmt = conn
+            .prepare("SELECT instrument_id, remaining_quantity FROM security_lots WHERE instrument_id='inst-out' AND remaining_quantity > 0 ORDER BY rowid")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    };
+    assert_eq!(remaining.len(), 2, "两批转出标的各有剩余");
+    assert!((remaining[0].1 - 1.0).abs() < 1e-9, "首批剩 1 份");
+    assert!((remaining[1].1 - 4.0).abs() < 1e-9, "次批 4 份未被消耗");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM security_lot_conversions", [], |r| r
+            .get::<_, i64>(
+            0
+        ))
+        .unwrap(),
+        1
+    );
+    assert_eq!(before, balance_snapshot(&conn), "修改前后余额不变");
+}
+
+/// PUT 禁止从/到 convert 的 kind 变更（#979 / ADR-0099 决策 5）：新码化错误，
+/// 纠错只有「删除后重建」一条窄路。
+#[test]
+fn convert_put_kind_change_rejected() {
+    let conn = open();
+    seed_convert_scene(&conn);
+    let buy_id = create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-cv",
+            "inst-out",
+            10.0,
+            10_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap()
+    .id;
+    let convert_id = create_transaction_internal(
+        &conn,
+        make_convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
+    )
+    .unwrap()
+    .id;
+
+    // 普通交易 → convert（kind 进）。
+    let err = update_transaction_internal(
+        &conn,
+        &buy_id,
+        make_convert_input("acc-cv", "inst-out", "inst-in", 1.0, 1.0, 100, 100, 0),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&err, AppError::Coded { code, .. } if code == "trade.convert-kind-change-forbidden"),
+        "改为 convert 应被拒绝，got: {err:?}"
+    );
+    // convert → 普通交易（kind 出）。
+    let err = update_transaction_internal(
+        &conn,
+        &convert_id,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-cv",
+            "inst-out",
+            1.0,
+            10_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&err, AppError::Coded { code, .. } if code == "trade.convert-kind-change-forbidden"),
+        "改出 convert 应被拒绝，got: {err:?}"
+    );
+    // 拒绝不留半套副作用：两行原样、转换两侧在场。
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+            [],
+            |r| r.get::<_, i64>(0)
         )
-        .unwrap();
-    assert_eq!(alive, 0);
+        .unwrap(),
+        2
+    );
     assert_eq!(
         conn.query_row(
             "SELECT COUNT(*) FROM security_transactions WHERE action='convert'",
@@ -798,14 +1123,50 @@ fn convert_lifecycle_paths_are_refused_until_wired() {
         .unwrap(),
         1
     );
-    assert_eq!(
-        conn.query_row("SELECT COUNT(*) FROM security_lot_conversions", [], |r| r
-            .get::<_, i64>(
-            0
-        ))
-        .unwrap(),
-        1
+}
+
+/// 转换读投影（`get_transaction_convert`，#979）：两腿标的/份额/金额/手续费/结转成本
+/// 全量回填信息；非转换交易得码化 NotFound。
+#[test]
+fn get_transaction_convert_returns_two_legs() {
+    let conn = open();
+    seed_convert_scene(&conn);
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-cv",
+            "inst-out",
+            10.0,
+            10_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    let convert_id = create_transaction_internal(
+        &conn,
+        make_convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 900, 5),
+    )
+    .unwrap()
+    .id;
+
+    let detail = trade::get_transaction_convert(&conn, &convert_id).unwrap();
+    assert_eq!(detail.out_instrument_id, "inst-out");
+    assert_eq!(detail.out_symbol, "006793");
+    assert!((detail.out_quantity - 10.0).abs() < 1e-9);
+    assert_eq!(detail.out_amount_cents, 1_100);
+    assert_eq!(detail.in_instrument_id, "inst-in");
+    assert_eq!(detail.in_symbol, "519700");
+    assert!((detail.in_quantity - 10.0).abs() < 1e-9);
+    assert_eq!(detail.in_amount_cents, 900);
+    assert_eq!(detail.fee_cents, 5);
+    assert_eq!(detail.carried_cost_cents, 1_000, "结转成本 = 行金额锚点");
+    assert_eq!(detail.currency_code, "CNY");
+
+    // 非转换交易 / 不存在的 id：码化 NotFound。
+    let err = trade::get_transaction_convert(&conn, "no-such-txn").unwrap_err();
+    assert!(
+        matches!(&err, AppError::Coded { code, .. } if code == "trade.convert-detail-not-found"),
+        "非转换交易应得码化 NotFound，got: {err:?}"
     );
-    assert!((fund_lot(&conn, "inst-in").unwrap().1 - 10.0).abs() < 1e-9);
-    assert_eq!(before, balance_snapshot(&conn), "被拒后余额不变");
 }

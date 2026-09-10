@@ -96,6 +96,7 @@ describe('buildTransactionColumns 金额单元格语义着色', () => {
       amount_native_cents: 359062,
       convert: {
         to_instrument_id: 'inst-in',
+        to_symbol: '519700',
         to_quantity: 10,
         out_amount_cents: 361561,
         in_amount_cents: 361561,

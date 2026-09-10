@@ -1,6 +1,6 @@
 use rusqlite::{Connection, OptionalExtension};
 
-use super::model::TransactionTrade;
+use super::model::{TransactionConvert, TransactionTrade};
 use super::prices::PRICE_UNITS_PER_FEN;
 use crate::accounts::AccountType;
 use crate::db::query::{FromRow, query_all, query_one};
@@ -107,6 +107,36 @@ pub fn get_transaction_trade(conn: &Connection, transaction_id: &str) -> Result<
     })
 }
 
+/// 读取一笔 convert 交易的两腿明细（ADR-0099 / issue #979）：从 `security_transactions`
+/// 的 convert 行取两侧标的/份额/金额/手续费，JOIN `instruments` 两次带出两侧展示字段、
+/// JOIN `transactions` 带出结转成本锚点与币种。供转换表单编辑模式回填「A → B」全量信息；
+/// 无明细（交易不存在/非 convert）返回 `NotFound`。两侧展示单价不随投影携带：前端按
+/// 确认单金额 ÷ 份额与 `prepare_convert` 同一公式反算（余额权威、单价反算）。
+pub fn get_transaction_convert(
+    conn: &Connection,
+    transaction_id: &str,
+) -> Result<TransactionConvert> {
+    query_one::<TransactionConvert, _>(
+        conn,
+        "SELECT st.instrument_id, oi.symbol, oi.name, st.quantity, st.out_amount_cents, \
+         st.to_instrument_id, ii.symbol, ii.name, st.to_quantity, st.in_amount_cents, \
+         st.fee_cents, t.amount_cents, t.currency_code \
+         FROM security_transactions st \
+         JOIN instruments oi ON oi.id = st.instrument_id \
+         JOIN instruments ii ON ii.id = st.to_instrument_id \
+         JOIN transactions t ON t.id = st.transaction_id \
+         WHERE st.transaction_id = ?1 AND st.action='convert'",
+        rusqlite::params![transaction_id],
+    )?
+    .ok_or_else(|| {
+        AppError::codedp_not_found(
+            "trade.convert-detail-not-found",
+            format!("交易不存在或无转换明细: {transaction_id}"),
+            &[transaction_id],
+        )
+    })
+}
+
 /// 按交易 id 批量反查基金转换两腿扩展（一次 IN 查询，调用方按 id 归位到交易行）。
 ///
 /// `security_transactions` 的 convert 行以 `transaction_id` 为主键——一笔转换至多
@@ -121,17 +151,20 @@ pub fn convert_fields_by_transaction_ids(
     }
     let placeholders = vec!["?"; transaction_ids.len()].join(",");
     let mut stmt = conn.prepare(&format!(
-        "SELECT transaction_id,to_instrument_id,to_quantity,out_amount_cents,in_amount_cents \
-         FROM security_transactions WHERE action='convert' AND transaction_id IN ({placeholders})"
+        "SELECT st.transaction_id,st.to_instrument_id,i.symbol,st.to_quantity,st.out_amount_cents,st.in_amount_cents \
+         FROM security_transactions st \
+         JOIN instruments i ON i.id = st.to_instrument_id \
+         WHERE st.action='convert' AND st.transaction_id IN ({placeholders})"
     ))?;
     let rows = stmt.query_map(rusqlite::params_from_iter(transaction_ids.iter()), |r| {
         Ok((
             r.get::<_, String>(0)?,
             ConvertFields {
                 to_instrument_id: r.get(1)?,
-                to_quantity: r.get(2)?,
-                out_amount_cents: r.get(3)?,
-                in_amount_cents: r.get(4)?,
+                to_symbol: r.get(2)?,
+                to_quantity: r.get(3)?,
+                out_amount_cents: r.get(4)?,
+                in_amount_cents: r.get(5)?,
             },
         ))
     })?;
@@ -721,7 +754,7 @@ fn plan_lot_consumption(
 ///
 /// 「在用卖出占用」归因谓词：按 `security_lot_sales` 归因到 sell 交易行、只计未软删
 /// 者——已删 sell 的历史匹配（幽灵占用）不计入，既不触发守卫、也不阻塞级联查询。
-fn active_sell_ids_on_buy_lots(conn: &Connection, buy_id: &str) -> Result<Vec<String>> {
+fn active_sell_ids_on_own_lots(conn: &Connection, anchor_id: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT s.sell_transaction_id FROM security_lot_sales s \
          JOIN transactions t ON t.id = s.sell_transaction_id \
@@ -729,17 +762,17 @@ fn active_sell_ids_on_buy_lots(conn: &Connection, buy_id: &str) -> Result<Vec<St
          (SELECT id FROM security_lots WHERE buy_transaction_id = ?1)",
     )?;
     let ids = stmt
-        .query_map(rusqlite::params![buy_id], |r| r.get::<_, String>(0))?
+        .query_map(rusqlite::params![anchor_id], |r| r.get::<_, String>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(ids)
 }
 
 /// 消费某买入/转换持仓批次的**在用** convert id 列表（转换链守卫的对象）。
 ///
-/// 与 [`active_sell_ids_on_buy_lots`] 同款归因谓词：按 `security_lot_conversions`
+/// 与 [`active_sell_ids_on_own_lots`] 同款归因谓词：按 `security_lot_conversions`
 /// 归因到 convert 交易行、只计未软删者。一条转换单拆多腿时，后腿消耗前腿建起的
 /// 转入批次，链式依赖由此谓词可见。
-fn active_convert_ids_on_buy_lots(conn: &Connection, buy_id: &str) -> Result<Vec<String>> {
+fn active_convert_ids_on_own_lots(conn: &Connection, anchor_id: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT c.transaction_id FROM security_lot_conversions c \
          JOIN transactions t ON t.id = c.transaction_id \
@@ -747,7 +780,7 @@ fn active_convert_ids_on_buy_lots(conn: &Connection, buy_id: &str) -> Result<Vec
          (SELECT id FROM security_lots WHERE buy_transaction_id = ?1)",
     )?;
     let ids = stmt
-        .query_map(rusqlite::params![buy_id], |r| r.get::<_, String>(0))?
+        .query_map(rusqlite::params![anchor_id], |r| r.get::<_, String>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(ids)
 }
@@ -760,7 +793,7 @@ fn active_convert_ids_on_buy_lots(conn: &Connection, buy_id: &str) -> Result<Vec
 ///
 /// 措辞与错误码由调用入口单点定义（ADR-0033 决策 #4），本域不持文案。
 fn guard_no_convert_consumed(conn: &Connection, id: &str, code: &str, msg: &str) -> Result<()> {
-    if !active_convert_ids_on_buy_lots(conn, id)?.is_empty() {
+    if !active_convert_ids_on_own_lots(conn, id)?.is_empty() {
         return Err(AppError::coded(code, msg));
     }
     Ok(())
@@ -768,21 +801,31 @@ fn guard_no_convert_consumed(conn: &Connection, id: &str, code: &str, msg: &str)
 
 /// 持仓副作用守卫的措辞与错误码组（修改入口）：由行为层单点定义后下传
 /// （ADR-0033 决策 #4）——本域只持守卫语义，不持用户可见文案。
+///
+/// sell 占用守卫两对：buy 与 convert 的「在用卖出占用」谓词同一，但用户可见
+/// 主体不同（买入 vs 转换的转入份额），措辞与错误码各自单点（同一入口同一文案）。
 pub struct GuardMessages<'a> {
     /// 买入已有部分卖出（修改入口）。
     pub partially_sold_code: &'a str,
     pub partially_sold_msg: &'a str,
+    /// 转换的转入份额已被后续卖出（修改入口）。
+    pub convert_partially_sold_code: &'a str,
+    pub convert_partially_sold_msg: &'a str,
     /// 持仓份额已被后续转换消耗（修改入口）。
     pub consumed_by_convert_code: &'a str,
     pub consumed_by_convert_msg: &'a str,
 }
 
-/// 整批清理买入的持仓关联：批次、批次的全部卖出匹配与买入明细。
+/// 整批清理一笔买入或转换**转入腿**的持仓关联：批次、批次的全部卖出匹配与自身的
+/// `security_transactions` 明细行（`transaction_id` 为主键，一交易至多一行——buy 行
+/// 或 convert 行之一）。
 ///
 /// 卖出匹配按 `lot_id` 归批清理——指向已软删 sell 的历史匹配行（旧版
 /// 「sell 删除不回补」遗留的幽灵占用，issue #940）随批次一并消失；
 /// 删除路径（级联后）与修改路径重建（在用占用守卫放行后）共用。
-fn purge_buy_lot_artifacts(conn: &Connection, id: &str) -> Result<()> {
+/// 转换行还需先经 [`reverse_convert_out_leg`] 回补转出腿（本函数删目标行会按
+/// `security_lot_conversions.transaction_id` 的外键级联删掉消耗记录）。
+fn purge_lot_artifacts(conn: &Connection, id: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM security_lot_sales WHERE lot_id IN \
          (SELECT id FROM security_lots WHERE buy_transaction_id=?1)",
@@ -793,26 +836,49 @@ fn purge_buy_lot_artifacts(conn: &Connection, id: &str) -> Result<()> {
         rusqlite::params![id],
     )?;
     conn.execute(
-        "DELETE FROM security_transactions WHERE transaction_id=?1 AND action='buy'",
+        "DELETE FROM security_transactions WHERE transaction_id=?1",
         rusqlite::params![id],
     )?;
     Ok(())
 }
 
-/// 修改路径的买入持仓关联守卫 + 清理。
+/// 回补一笔转换的**转出腿**：把逐批次消耗记录的数量加回原批次剩余，再删除本转换的
+/// `security_lot_conversions` 记录。
 ///
-/// 若该买入已有**在用**卖出占用（在用 sell 的匹配消耗本买入批次）则拒绝清理——
-/// 修改会重建批次、破坏在用卖出的已实现盈亏。守卫谓词按在用归因（见
-/// [`active_sell_ids_on_buy_lots`]），不再按批次剩余数量判定：已删 sell 的幽灵
-/// 扣减不再把买入永久锁死（issue #940 修复的死锁根源）。`partially_sold_msg`
-/// 为调用入口单点定义的措辞（见 `transaction::behavior` 的入口文案常量，
-/// ADR-0033 决策 #4）。
-fn cleanup_buy_side_effects(
-    conn: &Connection,
-    id: &str,
-    partially_sold_code: &str,
-    partially_sold_msg: &str,
-) -> Result<()> {
+/// 这是删除/修改精确回补的唯一依据（转出时的 FIFO 状态在后续交易发生后不可重建，
+/// ADR-0099 决策 2）——回补必须发生在清目标行之前：删 `security_transactions` 行会按
+/// 外键级联清掉消耗记录，数量就再也回不去了。
+fn reverse_convert_out_leg(conn: &Connection, id: &str) -> Result<()> {
+    let now = now_iso();
+    let mut stmt = conn
+        .prepare("SELECT lot_id, quantity FROM security_lot_conversions WHERE transaction_id=?1")?;
+    let consumptions: Vec<(String, f64)> = stmt
+        .query_map(rusqlite::params![id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(stmt);
+    for (lot_id, quantity) in consumptions {
+        conn.execute(
+            "UPDATE security_lots SET remaining_quantity=remaining_quantity+?1, \
+             updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
+            rusqlite::params![quantity, now, device_id(conn)?, lot_id],
+        )?;
+    }
+    conn.execute(
+        "DELETE FROM security_lot_conversions WHERE transaction_id=?1",
+        rusqlite::params![id],
+    )?;
+    Ok(())
+}
+
+/// 在用卖出占用守卫：该行（买入或转换转入腿）的持仓批次已被**在用** sell 的匹配
+/// 消耗则拒绝。守卫谓词按在用归因（见 [`active_sell_ids_on_own_lots`]），不再按批次
+/// 剩余数量判定：已删 sell 的幽灵扣减不再把行永久锁死（issue #940 修复的死锁根源）。
+///
+/// `code` / `msg` 为调用入口单点定义的措辞（见 `transaction::behavior` 的入口文案
+/// 常量，ADR-0033 决策 #4）。删除路径不经本守卫：在用 sell 已被级联消化。
+fn guard_no_active_sell(conn: &Connection, id: &str, code: &str, msg: &str) -> Result<()> {
     let partially_sold: i64 = conn.query_row(
         "SELECT COUNT(DISTINCT s.sell_transaction_id) FROM security_lot_sales s \
          JOIN transactions t ON t.id = s.sell_transaction_id \
@@ -822,9 +888,54 @@ fn cleanup_buy_side_effects(
         |r| r.get(0),
     )?;
     if partially_sold > 0 {
-        return Err(AppError::coded(partially_sold_code, partially_sold_msg));
+        return Err(AppError::coded(code, msg));
     }
-    purge_buy_lot_artifacts(conn, id)
+    Ok(())
+}
+
+/// 修改路径的买入持仓关联守卫 + 清理。
+///
+/// 若该买入已有**在用**卖出占用（在用 sell 的匹配消耗本买入批次）则拒绝清理——
+/// 修改会重建批次、破坏在用卖出的已实现盈亏。`partially_sold_msg` 为调用入口单点
+/// 定义的措辞（见 `transaction::behavior` 的入口文案常量，ADR-0033 决策 #4）。
+fn cleanup_buy_side_effects(
+    conn: &Connection,
+    id: &str,
+    partially_sold_code: &str,
+    partially_sold_msg: &str,
+) -> Result<()> {
+    guard_no_active_sell(conn, id, partially_sold_code, partially_sold_msg)?;
+    purge_lot_artifacts(conn, id)
+}
+
+/// 修改路径的转换持仓关联守卫 + 清理（ADR-0099 决策 5：`revert` 复用 buy 清理语义）。
+///
+/// 顺序即语义：
+/// 1. 转换链守卫——本转换建起的**转入批次**若已被在用的后续转换消耗，修改会连带
+///    抹掉下游的转出消耗记录（链式转换须从最后一腿往前处理）；
+/// 2. 在用卖出占用守卫——转入批次若已被后续卖出，修改会重建批次、破坏该卖出的
+///    已实现盈亏（「部分卖出禁改」对转换批次同等生效）；
+/// 3. 回补**转出腿**（逐批次精确回补，必须先于清目标行，见 [`reverse_convert_out_leg`]）；
+/// 4. 整批清理转入批次与转换明细行。
+fn cleanup_convert_side_effects(
+    conn: &Connection,
+    id: &str,
+    guards: &GuardMessages<'_>,
+) -> Result<()> {
+    guard_no_convert_consumed(
+        conn,
+        id,
+        guards.consumed_by_convert_code,
+        guards.consumed_by_convert_msg,
+    )?;
+    guard_no_active_sell(
+        conn,
+        id,
+        guards.convert_partially_sold_code,
+        guards.convert_partially_sold_msg,
+    )?;
+    reverse_convert_out_leg(conn, id)?;
+    purge_lot_artifacts(conn, id)
 }
 
 /// 删除路径的持仓副作用回退（行为层 delete 编排入口专用，issue #940 / ADR-0097）。
@@ -833,13 +944,13 @@ fn cleanup_buy_side_effects(
 /// - buy：**级联**——消费其持仓批次的在用 sell 逐笔回退持仓副作用，再整批清理
 ///   批次与匹配（含指向已软删 sell 的历史匹配行，随批次消失），返回被级联的
 ///   sell id 列表，供行为层软删其交易行并各自产出 delete op 与余额刷新；
-/// - convert：转换的删除（转出腿回补 / 转入批次清理 / 转换链）随生命周期票落地，
-///   本版显式码化拒绝（见下方臂注释）；
+/// - convert：**级联**——转入批次被在用 sell 消费时与 buy 同规逐笔级联；另回补
+///   转出腿（逐批次精确回补）并整批清理转入批次与转换明细行；
 /// - 其余 kind 无持仓副作用，返回空表。
 ///
-/// buy 的级联仅覆盖**在用 sell**；若该买入的批次已被在用的后续转换消耗，先以
-/// [`guard_no_convert_consumed`] 拒绝（否则批次连同下游转换的转出消耗记录一并消失，
-/// 下游失去回退与结转的唯一依据）。删除路径不经 [`revert`] 的 buy 在用
+/// buy / convert 的级联仅覆盖**在用 sell**；若该行的持仓批次已被在用的后续转换
+/// 消耗，先以 [`guard_no_convert_consumed`] 拒绝（否则批次连同下游转换的转出消耗
+/// 记录一并消失，下游失去回退与结转的唯一依据）。删除路径不经 [`revert`] 的在用
 /// 占用守卫：在用 sell 已被级联消化，守卫谓词天然为空。
 pub fn release_for_delete(
     conn: &Connection,
@@ -855,20 +966,26 @@ pub fn release_for_delete(
         }
         TransactionKind::Buy => {
             guard_no_convert_consumed(conn, id, consumed_by_convert_code, consumed_by_convert_msg)?;
-            let cascaded_sell_ids = active_sell_ids_on_buy_lots(conn, id)?;
+            let cascaded_sell_ids = active_sell_ids_on_own_lots(conn, id)?;
             for sell_id in &cascaded_sell_ids {
                 reverse_sell(conn, sell_id)?;
             }
-            purge_buy_lot_artifacts(conn, id)?;
+            purge_lot_artifacts(conn, id)?;
             Ok(cascaded_sell_ids)
         }
-        // 转换的删除（转出腿逐批次回补 / 转入批次清理 / 转换链）随生命周期票落地：
-        // 本版显式码化拒绝——删除会碰转换链（后腿消耗前腿建起的转入批次），
-        // 级联与守卫语义未定案前不动半套副作用。
-        TransactionKind::Convert => Err(AppError::coded(
-            "trade.convert-delete-unsupported",
-            "基金转换的删除尚未接入",
-        )),
+        // 转换的删除（ADR-0099 决策 5）：转出腿逐批次精确回补 + 转入批次级联清理。
+        // 回补先于清目标行（删 `security_transactions` 行会级联掉消耗记录）；
+        // 转入批次被在用后续转换消耗时先拒绝（转换链从最后一腿往前处理）。
+        TransactionKind::Convert => {
+            guard_no_convert_consumed(conn, id, consumed_by_convert_code, consumed_by_convert_msg)?;
+            let cascaded_sell_ids = active_sell_ids_on_own_lots(conn, id)?;
+            for sell_id in &cascaded_sell_ids {
+                reverse_sell(conn, sell_id)?;
+            }
+            reverse_convert_out_leg(conn, id)?;
+            purge_lot_artifacts(conn, id)?;
+            Ok(cascaded_sell_ids)
+        }
         // 行为层仅对 buy/sell/convert 调用本函数；其余 kind 无持仓副作用，no-op
         // （显式枚举保证新增 kind 时此处编译报错，而非落入兜底）。
         TransactionKind::Income
@@ -990,11 +1107,12 @@ pub fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
 /// - buy：转换链守卫（批次已被在用后续转换消耗则拒绝）+ 在用占用守卫
 ///   （在用 sell 的匹配消耗本买入批次则拒绝）+ 清理持仓/买入关联；
 /// - sell：回补持仓扣减并清空卖出关联；
-/// - convert：转换的修改随生命周期票落地，本版显式码化拒绝（不静默落半套副作用）。
+/// - convert：转换链守卫 + 在用卖出占用守卫（转入批次被后续卖出则拒绝）
+///   + 转出腿逐批次精确回补 + 转入批次与转换明细行清理（复用 buy 清理语义）。
 ///
 /// 删除路径不经本函数（其持仓语义由 [`release_for_delete`] 承载：sell 回补 /
-/// buy 级联，issue #940 / ADR-0097）。`guards` 为调用入口单点定义的
-/// 错误码与措辞（ADR-0033 决策 #4）——本函数不自带措辞；
+/// buy 与 convert 级联，issue #940 / ADR-0097 / ADR-0099）。`guards` 为调用入口
+/// 单点定义的错误码与措辞（ADR-0033 决策 #4）——本函数不自带措辞；
 /// 非 buy/sell/convert 的 kind 无持仓副作用，防御性返回成功。
 pub fn revert(
     conn: &Connection,
@@ -1018,13 +1136,10 @@ pub fn revert(
             )
         }
         TransactionKind::Sell => reverse_sell(conn, id),
-        // 转换的修改（含经 PUT 就地改转换）随生命周期票落地：显式码化拒绝。
-        // 行为层在分派前已先拒「从 convert 出 / 改为 convert」的 kind 变更（同码），
-        // 此处兜住就地修改（convert → convert）。
-        TransactionKind::Convert => Err(AppError::coded(
-            "trade.convert-update-unsupported",
-            "基金转换的修改尚未接入",
-        )),
+        // 转换：复用 buy 清理语义（转换链守卫 + 在用卖出占用守卫 + 转出腿精确回补
+        // + 转入批次与明细行清理，ADR-0099 决策 5）。行为层在分派前已先拒
+        // 「从 convert 出 / 改为 convert」的 kind 变更，此处只处理就地修改。
+        TransactionKind::Convert => cleanup_convert_side_effects(conn, id, guards),
         // 行为层仅对 buy/sell/convert 调用本函数；其余 kind 无持仓副作用，no-op
         // （显式枚举保证新增 kind 时此处编译报错，而非落入兜底）。
         TransactionKind::Income

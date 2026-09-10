@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildConvertInput,
   buildExpenseIncomeInput,
   buildRefundInput,
   buildTradeInput,
   buildTransferInput,
 } from '@/domain/transaction-input'
 import type {
+  ConvertFormState,
   ExpenseIncomeFormState,
   RefundFormState,
   TradeFormState,
@@ -330,6 +332,77 @@ describe('buildTradeInput', () => {
 
   it('fail fast：非基金形态缺单价仍抛「单价不能为空」', () => {
     expect(() => buildTradeInput({ ...fundBuyState, amount: null })).toThrow('单价不能为空')
+  })
+})
+
+describe('buildConvertInput（ADR-0099 / issue #979）', () => {
+  const convertState: ConvertFormState = {
+    currencyCode: 'CNY',
+    accountId: 'inv-1',
+    outInstrumentId: 'ins-out',
+    outQuantity: 100.5,
+    outAmount: 120.5,
+    inInstrumentId: 'ins-in',
+    inQuantity: 99.75,
+    inAmount: 120,
+    fee: 1.5,
+    note: '换仓',
+    date: localTs(2024, 6, 15),
+  }
+
+  it('完整 wire 形状：行金额占位 0、两腿份额与两侧确认金额落位、无转入账户/出资账户', () => {
+    expect(buildConvertInput(convertState)).toEqual({
+      kind: 'convert',
+      amount_cents: 0,
+      currency_code: 'CNY',
+      account_id: 'inv-1',
+      to_account_id: null,
+      funding_account_id: null,
+      category_id: null,
+      merchant_id: null,
+      policy_id: null,
+      refund_of_transaction_id: null,
+      note: '换仓',
+      date: '2024-06-15',
+      instrument_id: 'ins-out',
+      quantity: 100.5,
+      to_instrument_id: 'ins-in',
+      to_quantity: 99.75,
+      out_amount_cents: 12050,
+      in_amount_cents: 12000,
+      fee_cents: 150,
+    })
+  })
+
+  it('金额与份额同为权威输入：两侧金额各自元转分，不落单价（后端反算）', () => {
+    const input = buildConvertInput(convertState)
+    expect(input.out_amount_cents).toBe(12050)
+    expect(input.in_amount_cents).toBe(12000)
+    expect(input.quantity).toBe(100.5)
+    expect(input.to_quantity).toBe(99.75)
+    expect(input).not.toHaveProperty('price_cents')
+  })
+
+  it('手续费缺省 → fee_cents null（不静默写 0）', () => {
+    expect(buildConvertInput({ ...convertState, fee: null }).fee_cents).toBeNull()
+  })
+
+  it('fail fast：转出/转入标的、份额、两侧金额缺失或非法各自抛中文错误', () => {
+    expect(() => buildConvertInput({ ...convertState, outInstrumentId: null })).toThrow(
+      '转出标的不能为空',
+    )
+    expect(() => buildConvertInput({ ...convertState, inInstrumentId: null })).toThrow(
+      '转入标的不能为空',
+    )
+    expect(() => buildConvertInput({ ...convertState, outQuantity: null })).toThrow(
+      '数量不能为空',
+    )
+    expect(() => buildConvertInput({ ...convertState, outAmount: null })).toThrow(
+      '转出金额不能为空',
+    )
+    expect(() => buildConvertInput({ ...convertState, inAmount: null })).toThrow(
+      '转入金额不能为空',
+    )
   })
 })
 

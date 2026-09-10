@@ -97,6 +97,7 @@
     "submitIncome": "Record Income",
     "submitBuy": "Record Buy",
     "submitSell": "Record Sell",
+    "submitConvert": "Record Convert",
     "submitTransfer": "Record Transfer",
     "saveChanges": "Save Changes",
     "warnSelectFromAccount": "Please select the source account",

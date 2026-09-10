@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { t } from '@/i18n'
-import { centsToYuan, priceToYuan, yuanToCents } from '@/types'
+import { centsToYuan, priceToYuan, yuanToCents, PRICE_UNITS_PER_FEN, PRICE_UNITS_PER_YUAN } from '@/types'
 import { judgeQuantityText, judgePriceText, fieldErrorKind } from '@/utils/field-error'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { buildTradeInput } from '@/domain/transaction-input'
@@ -12,11 +12,6 @@ import type {
   Transaction,
   TransactionTrade,
 } from '@/types'
-
-/** 价格刻度换算因子（ADR-0038，与后端 investment::prices::PRICE_UNITS_PER_FEN 同一倍率）：
- * 金额（分）→ 价格（万分之一元）乘 100；价格（万分之一元）→ 元展示值除 10000。 */
-const PRICE_UNITS_PER_FEN = 100
-const PRICE_UNITS_PER_YUAN = 10000
 
 export function useInvestmentForm(
   kind: 'buy' | 'sell',

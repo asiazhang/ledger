@@ -124,10 +124,10 @@ describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
     await flushPromises()
   }
 
-  it('下拉菜单为 7 项：5 个 kind 项标注快捷键（支出 a/收入 i/转账 z/买入 b/卖出 s），分隔线后借贷两项（借出/借入），无退款（issue #150/#153/#374）', async () => {
+  it('下拉菜单为 8 项：6 个 kind 项标注快捷键（支出 a/收入 i/转账 z/买入 b/卖出 s/转换 c），分隔线后借贷两项（借出/借入），无退款（issue #150/#153/#374/#979）', async () => {
     const wrapper = await mountView()
     const labels = await openDropdown(wrapper)
-    expect(labels).toEqual(['支出 a', '收入 i', '转账 z', '买入 b', '卖出 s', '借出', '借入'])
+    expect(labels).toEqual(['支出 a', '收入 i', '转账 z', '买入 b', '卖出 s', '转换 c', '借出', '借入'])
     expect(labels).not.toContain('退款')
   })
 
@@ -137,6 +137,7 @@ describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
     ['转账 z', '转账', 'transfer'],
     ['买入 b', '买入', 'buy'],
     ['卖出 s', '卖出', 'sell'],
+    ['转换 c', '转换', 'convert'],
   ] as const)('点菜单项「%s」打开对应类型弹窗（无类型单选组）', async (label, kindLabel, kind) => {
     const wrapper = await mountView()
     await openDropdown(wrapper)

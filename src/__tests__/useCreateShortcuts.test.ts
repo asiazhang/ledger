@@ -27,18 +27,19 @@ function pressOn(target: Element, key = 'a'): KeyboardEvent {
 }
 
 describe('CREATE_KIND_KEYS 键位映射', () => {
-  it('恰好覆盖 5 种可创建类型，refund 不占键位', () => {
+  it('恰好覆盖全部可创建类型，refund 不占键位', () => {
     expect(Object.keys(CREATE_KIND_KEYS).sort()).toEqual([...CREATE_KINDS].sort())
     expect('refund' in CREATE_KIND_KEYS).toBe(false)
   })
 
-  it('键位分配：a=支出 z=转账 i=收入 b=买入 s=卖出', () => {
+  it('键位分配：a=支出 z=转账 i=收入 b=买入 s=卖出 c=转换', () => {
     expect(CREATE_KIND_KEYS).toEqual({
       expense: 'a',
       transfer: 'z',
       income: 'i',
       buy: 'b',
       sell: 's',
+      convert: 'c',
     })
   })
 })

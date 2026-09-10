@@ -219,6 +219,56 @@ pub struct TransactionTrade {
     pub fee_cents: Option<i64>,
 }
 
+/// 基金转换两腿明细（ADR-0099 / issue #979）：一笔 `convert` 交易在
+/// `security_transactions` 扩展表中的投影（两腿同记录），供转换表单编辑模式回填。
+///
+/// `out_*` 为转出腿（转出标的恒为 `instrument_id` / `quantity`）、`in_*` 为转入腿
+/// （`to_instrument_id` / `to_quantity`）；两侧金额是确认单权威（`out_amount_cents` /
+/// `in_amount_cents`），两侧单价由前端按金额 ÷ 份额反算展示（金额权威、单价反算，
+/// 与场外基金 buy/sell 同款，ADR-0038），故不随投影冗余携带。`carried_cost_cents`
+/// 是行金额锚点（服务端按 FIFO 消耗算定的结转成本，非确认单金额）。
+/// `symbol` / `instrument_name` 为 JOIN `instruments` 带出的展示字段，保证回填后
+/// 标的选择框可直接显示标的而非裸 id。
+#[derive(Debug, Serialize, Clone)]
+pub struct TransactionConvert {
+    pub out_instrument_id: String,
+    pub out_symbol: String,
+    pub out_instrument_name: Option<String>,
+    pub out_quantity: f64,
+    pub out_amount_cents: i64,
+    pub in_instrument_id: String,
+    pub in_symbol: String,
+    pub in_instrument_name: Option<String>,
+    pub in_quantity: f64,
+    pub in_amount_cents: i64,
+    /// 手续费（整数分）：如实记录，不进支出口径、不摊入持仓成本。
+    pub fee_cents: i64,
+    /// 结转成本（分）= 行金额锚点（转入批次总成本），审计展示用。
+    pub carried_cost_cents: i64,
+    /// 记账币种（行币种）。
+    pub currency_code: String,
+}
+
+impl FromRow for TransactionConvert {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(TransactionConvert {
+            out_instrument_id: row.get(0)?,
+            out_symbol: row.get(1)?,
+            out_instrument_name: row.get(2)?,
+            out_quantity: row.get(3)?,
+            out_amount_cents: row.get(4)?,
+            in_instrument_id: row.get(5)?,
+            in_symbol: row.get(6)?,
+            in_instrument_name: row.get(7)?,
+            in_quantity: row.get(8)?,
+            in_amount_cents: row.get(9)?,
+            fee_cents: row.get(10)?,
+            carried_cost_cents: row.get(11)?,
+            currency_code: row.get(12)?,
+        })
+    }
+}
+
 impl FromRow for TransactionTrade {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(TransactionTrade {

@@ -4,7 +4,7 @@ import { useModalIntent } from '@/composables/useModalIntent'
 import { api } from '@/api'
 import { errorMessage } from '@/utils/errors'
 import { t } from '@/i18n'
-import type { CreateFormKind, Transaction, TransactionTrade } from '@/types'
+import type { CreateFormKind, Transaction, TransactionConvert, TransactionTrade } from '@/types'
 
 /**
  * TransactionModalState 交易弹窗编排深模块（ADR-0045，词汇表「TransactionModalState（交易弹窗编排）」）：
@@ -16,13 +16,14 @@ import type { CreateFormKind, Transaction, TransactionTrade } from '@/types'
  *
  * 已迁为弹窗意图编排通用工厂 ModalIntent（useModalIntent，ADR-0072）之上的首个适配器：
  * 意图与序号两面由工厂持有（意图落位即递增序号、关闭不重置），本模块只补交易弹窗族
- * 特有的异步时序——「先取买卖明细再开窗、失败不开窗、最后一次开启胜出」守卫留适配器层，
+ * 特有的异步时序——「先取买卖/转换明细再开窗、失败不开窗、最后一次开启胜出」守卫留适配器层，
  * 不上浮通用工厂。适配器代数计数器与工厂序号是两个计数器：代数随每次开启尝试递增
  * （含取数失败），序号只在意图真正落位递增，语义不同、不合并。
  *
  * 依赖 direct-import（api 与 useMessage），不做注入（先例 useScheduledPlanList；
- * getTransactionTrade 只有一个实现，注入是 YAGNI）。只内化「关闭」——列表刷新
- * （翻回第一页或保持当前页）仍归视图，弹窗编排与 TransactionFilter 两个深模块正交。
+ * getTransactionTrade / getTransactionConvert 各只有一个实现，注入是 YAGNI）。只内化
+ * 「关闭」——列表刷新（翻回第一页或保持当前页）仍归视图，弹窗编排与 TransactionFilter
+ * 两个深模块正交。
  */
 
 // ---------------------------------------------------------------------------
@@ -34,13 +35,14 @@ import type { CreateFormKind, Transaction, TransactionTrade } from '@/types'
  * - create：无目标行，携带表单形态子类型（issue #374 起 CreateFormKind：可创建 kind +
  *   借贷两个呈现变体；refund 不在可创建集，入口由交易条目右键承接）；
  * - refund / add-item：携带目标交易行；
- * - edit：另携带买卖明细（非买卖行为 null；buy/sell 的明细由模块先取再开窗，调用方不经手）。
+ * - edit：另携带买卖明细与转换两腿明细（非买卖/转换行为 null；buy/sell 与 convert
+ *   的明细由模块先取再开窗，调用方不经手）。
  * 视图以 `intent?.type` 判别渲染，payload 在各分支内被类型系统收窄。
  */
 export type TransactionModalIntent =
   | { type: 'create'; kind: CreateFormKind }
   | { type: 'refund'; row: Transaction }
-  | { type: 'edit'; row: Transaction; trade: TransactionTrade | null }
+  | { type: 'edit'; row: Transaction; trade: TransactionTrade | null; convert: TransactionConvert | null }
   | { type: 'add-item'; row: Transaction }
 
 /**
@@ -106,15 +108,20 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
       settle(gen, { type: request.type, row: request.row })
       return
     }
-    // edit：先取买卖明细再开窗（时序内化）。非买卖行无明细面，开窗即开。
+    // edit：先取买卖/转换明细再开窗（时序内化）。非买卖/转换行无明细面，开窗即开。
     const { row } = request
-    if (row.kind !== 'buy' && row.kind !== 'sell') {
-      settle(gen, { type: 'edit', row, trade: null })
+    if (row.kind !== 'buy' && row.kind !== 'sell' && row.kind !== 'convert') {
+      settle(gen, { type: 'edit', row, trade: null, convert: null })
       return
     }
     try {
-      const trade = await api.getTransactionTrade(row.id)
-      settle(gen, { type: 'edit', row, trade })
+      if (row.kind === 'convert') {
+        const convert = await api.getTransactionConvert(row.id)
+        settle(gen, { type: 'edit', row, trade: null, convert })
+      } else {
+        const trade = await api.getTransactionTrade(row.id)
+        settle(gen, { type: 'edit', row, trade, convert: null })
+      }
     } catch (e) {
       if (gen !== generation) return // 迟到的失败整体丢弃
       message.error(t('transactions.modal.editFailed', { msg: errorMessage(e) }))

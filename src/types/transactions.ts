@@ -21,6 +21,8 @@ export type TransactionSourceStatus = 'cancelled' | 'disposed' | 'deleted'
 export interface ConvertFields {
   /** 转入标的（转出标的恒为行的 instrument_id） */
   to_instrument_id: string
+  /** 转入标的代码（JOIN instruments 带出的展示字段，移动卡片「A → B」消费） */
+  to_symbol: string
   /** 转入份额 */
   to_quantity: number
   /** 转出金额（分，确认单权威） */
@@ -181,10 +183,9 @@ export interface TransactionSearchFilter {
   dateTo?: string | null
 }
 
-/** 「记一笔」可创建的类型：不含 refund（退款入口由交易条目右键菜单承接）
- * 与 convert（基金转换表单随生命周期票 issue #979 落地）——两者都以独立入口承载，
- * 不上「记一笔」菜单；表单可用后从排除项移除即可。 */
-export type CreateTransactionKind = Exclude<TransactionKind, 'refund' | 'convert'>
+/** 「记一笔」可创建的类型：不含 refund（退款入口由交易条目右键菜单承接）；
+ * 基金转换（convert，issue #979 落地）同样以独立表单入口承载，已纳入菜单。 */
+export type CreateTransactionKind = Exclude<TransactionKind, 'refund'>
 
 /** 前端交易类型闭集（穷尽表驱动）；显示标签在文案资源 transactions.kind.*（i18n，ADR-0049） */
 const TRANSACTION_KIND_PRESENCE = {
@@ -207,6 +208,7 @@ const CREATE_KIND_MAP = {
   transfer: true,
   buy: true,
   sell: true,
+  convert: true,
 } satisfies Record<CreateTransactionKind, true>
 
 /** 「记一笔」入口可选类型（不含 refund：退款已移出表单域，入口由交易条目

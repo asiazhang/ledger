@@ -108,14 +108,22 @@ describe('移动档卡片字段（同一段列表状态）', () => {
     expect(incomeEl.style.color).toBe(probeColor(kindSemanticColor('income', useAppStore().theme)))
   })
 
-  it('基金转换行卡片：类型标签「转换」、金额显示转出金额（ADR-0099）', async () => {
+  it('基金转换行卡片：类型标签「转换」、金额显示转出金额、「A → B」两腿标的（ADR-0099 / #979）', async () => {
     setTxnDb([
       makeTxn(1, 'acc-1', {
         kind: 'convert',
         // 行金额锚点 = 结转成本；展示口径 = 转出金额（确认单）。
         amount_native_cents: 359062,
+        // 转出标的经来源列反查（security_transactions.instrument_id）。
+        source: {
+          kind: 'instrument',
+          entity_id: 'inst-out',
+          display_name: '006793 转出基金',
+          status: null,
+        },
         convert: {
           to_instrument_id: 'inst-in',
+          to_symbol: '519700',
           to_quantity: 10,
           out_amount_cents: 361561,
           in_amount_cents: 361561,
@@ -125,6 +133,10 @@ describe('移动档卡片字段（同一段列表状态）', () => {
     const wrapper = await mountMobile()
     const first = cards(wrapper)[0]
     expect(first.text()).toContain('转换')
+    // 「A → B」两腿标的（转出经来源链接、转入读列表投影 to_symbol）。
+    expect(first.text()).toContain('006793 转出基金')
+    expect(first.text()).toContain('→')
+    expect(first.text()).toContain('519700')
     const amountEl = first.find('.amount-cell').element as HTMLElement
     expect(amountEl.textContent).toBe(formatAmount(361561, cny))
     expect(amountEl.style.color).toBe(probeColor(kindSemanticColor('convert', useAppStore().theme)))
@@ -234,21 +246,22 @@ describe('卡片「⋯」与整卡编辑', () => {
 })
 
 describe('记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）', () => {
-  it('点开五枚大号类型选择（支出/收入/转账/买入/卖出，不含借贷与退款）', async () => {
+  it('点开六枚大号类型选择（支出/收入/转账/买入/卖出/转换，不含借贷与退款）', async () => {
     const wrapper = await mountPhone()
     await wrapper.find('.create-fab').trigger('click')
     await flushPromises()
     const options = [...document.body.querySelectorAll('.create-fab-option')]
-    expect(options.map((o) => o.textContent)).toEqual(['支出', '收入', '转账', '买入', '卖出'])
+    expect(options.map((o) => o.textContent)).toEqual(['支出', '收入', '转账', '买入', '卖出', '转换'])
   })
 
-  it('五类型意图矩阵：类型选择 → 记一笔意图（携带类型）→ 对应表单', async () => {
+  it('六类型意图矩阵：类型选择 → 记一笔意图（携带类型）→ 对应表单', async () => {
     const cases = [
       ['支出', '记一笔 · 支出'],
       ['收入', '记一笔 · 收入'],
       ['转账', '记一笔 · 转账'],
       ['买入', '记一笔 · 买入'],
       ['卖出', '记一笔 · 卖出'],
+      ['转换', '记一笔 · 转换'],
     ] as const
     const wrapper = await mountPhone()
     for (const [optionLabel, expectedTitle] of cases) {
