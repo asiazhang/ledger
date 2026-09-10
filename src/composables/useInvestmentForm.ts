@@ -39,6 +39,8 @@ export function useInvestmentForm(
   const message = useMessage()
 
   const accountId = ref<string | null>(null)
+  /** 可选出资账户（issue #936 / ADR-0096，买入侧先行）：默认空；候选过滤与回填见下 */
+  const fundingAccountId = ref<string | null>(null)
   const instrumentId = ref<string | null>(null)
   /** 确认单金额（元）：基金申赎的权威输入（issue #302 / ADR-0038 金额权威）；
    * 非基金形态恒 null（金额由后端按数量 × 单价重算，表单只展示）。 */
@@ -65,6 +67,15 @@ export function useInvestmentForm(
   // 投资账户谓词单点收口在参考 store（与盈亏页账户下拉同源，词汇表 RealizedPnl 词条）
   const investmentAccountOptions = computed(() =>
     reference.investmentAccounts.map((a) => ({ label: a.name, value: a.id })),
+  )
+
+  // 出资账户候选（issue #936 / ADR-0096）：准入闭集收口参考 store 单一派生，
+  // 币种一致过滤随交易币种在此承担（后端行为层准入是唯一权威）；默认空，
+  // 不选 = 维持余额买卖语义（结算账户 = 投资账户）
+  const fundingAccountOptions = computed(() =>
+    reference.fundingCandidateAccounts
+      .filter((a) => a.currency_code === currencyCode.value)
+      .map((a) => ({ label: a.name, value: a.id })),
   )
 
   const instrumentOptions = computed(() => {
@@ -101,6 +112,10 @@ export function useInvestmentForm(
     accountId.value = editingTx.account_id
     currencyCode.value = editingTx.currency_code
     instrumentId.value = editingTrade.instrument_id
+    // 出资账户回填（issue #936）：历史买入不带出资账户时保持空，不误带；带出后
+    // 随全字段替换原样提交，编辑不改该字段也不被静默丢失（候选同币种过滤由后端
+    // 准入的币种一致保证，回填值必命中候选）
+    fundingAccountId.value = editingTx.funding_account_id ?? null
     // 数量/价格以文本形态回填：存储值在本仓录入路径下必在各自精度口径内（数量
     // 经 precision=4 录入、单价万分之一元刻度 ≤四位小数），合法回填不显红态；
     // 极端历史数据（如导入超粒度数量）如实红显，属字段错误态的诚实反馈
@@ -283,6 +298,7 @@ export function useInvestmentForm(
         quantity,
         price: fund ? null : price,
         fee: fee.value,
+        fundingAccountId: fundingAccountId.value,
         note: note.value,
         date: date.value,
       })
@@ -303,6 +319,7 @@ export function useInvestmentForm(
         priceBlurred.value = false
         saveAttempted.value = false
         fee.value = null
+        fundingAccountId.value = null
         note.value = ''
         options?.onCreated?.()
       }
@@ -325,13 +342,14 @@ export function useInvestmentForm(
     priceBlurred.value = false
     saveAttempted.value = false
     fee.value = null
+    fundingAccountId.value = null
     note.value = ''
     date.value = Date.now()
     currencyCode.value = 'CNY'
   }
 
   return {
-    accountId, instrumentId, amount, quantityText, priceText, fee, note, date, currencyCode,
+    accountId, fundingAccountId, fundingAccountOptions, instrumentId, amount, quantityText, priceText, fee, note, date, currencyCode,
     quantityError, priceError, hasFieldError, markQuantityBlurred, markPriceBlurred,
     isFundInstrument, derivedPrice, investmentAmount,
     investmentAccountOptions, instrumentOptions, currencyOptions,

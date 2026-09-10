@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
 import type { Account, Category, Currency, Insurer, Merchant } from '@/types'
+import { isFundingCandidateAccount } from '@/types/accounts'
 import type { Syncable } from '@/types/common'
 import {
   rootCategories as pureRootCategories,
@@ -147,6 +148,15 @@ export const useReferenceStore = defineStore('reference', () => {
     accounts.value.filter((a) => a.type === 'investment'),
   )
 
+  /**
+   * 出资账户候选单一谓词派生（issue #936 / ADR-0096 决策 4）：在用账户中类型落在
+   * 准入闭集（现金类，见 types/accounts.ts isFundingCandidateAccount）者。币种一致过滤
+   * 随交易币种，由消费表单承担；后端行为层准入是唯一权威，此处仅供表单预过滤。
+   */
+  const fundingCandidateAccounts = computed(() =>
+    accounts.value.filter((a) => isFundingCandidateAccount(a.type)),
+  )
+
   function categoryChildren(parentId: string): Category[] {
     return pureCategoryChildren(categories.value, parentId)
   }
@@ -259,6 +269,7 @@ export const useReferenceStore = defineStore('reference', () => {
     expenseCategories,
     incomeCategories,
     investmentAccounts,
+    fundingCandidateAccounts,
     categoryChildren,
     categoryPath,
     categoryDisplayName,

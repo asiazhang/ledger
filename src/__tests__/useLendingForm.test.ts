@@ -140,6 +140,7 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
           kind: 'transfer',
           account_id: 'acc-cash',
           to_account_id: 'acc-recv-zhang',
+          funding_account_id: null,
         }),
       })
     })
@@ -159,6 +160,7 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
           kind: 'transfer',
           account_id: 'acc-bank',
           to_account_id: 'acc-debt-li',
+          funding_account_id: null,
         }),
       })
     })
@@ -241,6 +243,7 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
       amount_native_cents: 30000,
       account_id: 'acc-cash',
       to_account_id: 'acc-recv-zhang',
+      funding_account_id: null,
       category_id: null,
       merchant_id: null,
       policy_id: null,
@@ -278,6 +281,7 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
           kind: 'transfer',
           account_id: 'acc-cash',
           to_account_id: 'acc-recv-zhang',
+          funding_account_id: null,
         }),
       })
       expect(onUpdated).toHaveBeenCalledTimes(1)

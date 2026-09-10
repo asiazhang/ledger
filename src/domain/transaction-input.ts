@@ -79,6 +79,10 @@ export interface TradeFormState {
   price: number | null
   /** 手续费（元）；null 表示未填 → fee_cents: null（而非 0） */
   fee: number | null
+  /** 可选出资账户（issue #936 / ADR-0096）：结算现金实际流出（buy）/流入（sell）的
+   * 现金类账户；null = 不填（维持余额买卖语义，结算账户 = 投资账户）。候选闭集与
+   * 币种一致过滤在表单层，行为层准入是唯一权威。 */
+  fundingAccountId: string | null
   note: string
   date: number
 }
@@ -91,6 +95,9 @@ interface KindMatrixRow {
   /** buy/sell 金额占位恒 0（成交金额由后端按数量×单价±费用重算）；其余 kind 不设，金额由表单承载 */
   amount_cents?: 0
   to_account_id: null
+  /** 可选出资账户（issue #936 / ADR-0096）：矩阵各行不承载（全 null），仅 buy/sell 由表单入口覆写；
+   * 其余 kind 落 null（后端行为层拒绝携带，与 policy_id 同款收口） */
+  funding_account_id: null
   category_id: null
   merchant_id: null
   /** 可选保单引用（issue #361）：仅 expense/income 由表单承载，其余 kind 不承载（行为层准入拒绝） */
@@ -103,13 +110,14 @@ interface KindMatrixRow {
  * 由各入口在装配结果上覆写。新增表单形态只改此矩阵。
  */
 const KIND_FIELD_MATRIX: Record<TransactionKind, KindMatrixRow> = {
-  income: { to_account_id: null, category_id: null, merchant_id: null, policy_id: null, refund_of_transaction_id: null },
-  expense: { to_account_id: null, category_id: null, merchant_id: null, policy_id: null, refund_of_transaction_id: null },
-  transfer: { to_account_id: null, category_id: null, merchant_id: null, policy_id: null, refund_of_transaction_id: null },
-  refund: { to_account_id: null, category_id: null, merchant_id: null, policy_id: null, refund_of_transaction_id: null },
+  income: { to_account_id: null, funding_account_id: null, category_id: null, merchant_id: null, policy_id: null, refund_of_transaction_id: null },
+  expense: { to_account_id: null, funding_account_id: null, category_id: null, merchant_id: null, policy_id: null, refund_of_transaction_id: null },
+  transfer: { to_account_id: null, funding_account_id: null, category_id: null, merchant_id: null, policy_id: null, refund_of_transaction_id: null },
+  refund: { to_account_id: null, funding_account_id: null, category_id: null, merchant_id: null, policy_id: null, refund_of_transaction_id: null },
   buy: {
     amount_cents: 0,
     to_account_id: null,
+    funding_account_id: null,
     category_id: null,
     merchant_id: null,
     policy_id: null,
@@ -118,6 +126,7 @@ const KIND_FIELD_MATRIX: Record<TransactionKind, KindMatrixRow> = {
   sell: {
     amount_cents: 0,
     to_account_id: null,
+    funding_account_id: null,
     category_id: null,
     merchant_id: null,
     policy_id: null,
@@ -176,6 +185,7 @@ function baseInput(
     // 矩阵先行落位：关联字段占位（含 buy/sell 的 amount_cents: 0），表单承载字段由各入口覆写
     amount_cents: fields.amountCents ?? row.amount_cents ?? fail(`${kind} 缺少金额`),
     to_account_id: row.to_account_id,
+    funding_account_id: row.funding_account_id,
     category_id: row.category_id,
     merchant_id: row.merchant_id,
     policy_id: row.policy_id,
@@ -256,6 +266,9 @@ export function buildTradeInput(state: TradeFormState): TransactionInput {
     }),
     instrument_id: requireNonEmpty(state.instrumentId, t('transactions.field.instrument')),
     quantity: requireQuantity(state.quantity),
+    // 可选出资账户（issue #936 / ADR-0096）：表单状态原样透传（null = 不填），
+    // 编辑路径全字段替换下显式落位、不静默丢字段；矩阵占位在此被表单承载值覆写
+    funding_account_id: state.fundingAccountId,
     // 单价是价格列（万分之一元刻度，ADR-0038），与金额列（分）换算口径不同；
     // 基金形态不落单价（null → 后端按金额 ∓ 费用 ÷ 份额反算）
     price_cents: priceCents,

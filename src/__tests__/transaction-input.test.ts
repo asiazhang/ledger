@@ -52,6 +52,7 @@ describe('buildExpenseIncomeInput', () => {
       currency_code: 'CNY',
       account_id: 'acc-1',
       to_account_id: null,
+      funding_account_id: null,
       category_id: 'cat-1',
       merchant_id: 'm-1',
       policy_id: null,
@@ -80,6 +81,7 @@ describe('buildExpenseIncomeInput', () => {
       currency_code: 'USD',
       account_id: 'acc-2',
       to_account_id: null,
+      funding_account_id: null,
       category_id: null,
       merchant_id: null,
       policy_id: null,
@@ -103,6 +105,7 @@ describe('buildTransferInput', () => {
       currency_code: 'CNY',
       account_id: 'acc-1',
       to_account_id: 'acc-2',
+      funding_account_id: null,
       category_id: null,
       merchant_id: null,
       policy_id: null,
@@ -151,6 +154,7 @@ describe('buildTransferInput', () => {
       currency_code: 'CNY',
       account_id: fromId,
       to_account_id: toId,
+      funding_account_id: null,
       category_id: null,
       merchant_id: null,
       policy_id: null,
@@ -178,6 +182,7 @@ describe('buildRefundInput', () => {
       currency_code: 'CNY',
       account_id: 'acc-1',
       to_account_id: null,
+      funding_account_id: null,
       category_id: null,
       merchant_id: null,
       policy_id: null,
@@ -204,6 +209,7 @@ describe('buildTradeInput', () => {
     quantity: 100,
     price: 12.34,
     fee: 5.5,
+    fundingAccountId: null,
     note: '',
     date: localTs(2024, 6, 15),
   }
@@ -217,6 +223,7 @@ describe('buildTradeInput', () => {
     quantity: 987.6543,
     price: null,
     fee: 1.5,
+    fundingAccountId: null,
     note: '',
     date: localTs(2024, 6, 15),
   }
@@ -228,6 +235,7 @@ describe('buildTradeInput', () => {
       currency_code: 'CNY',
       account_id: 'inv-1',
       to_account_id: null,
+      funding_account_id: null,
       category_id: null,
       merchant_id: null,
       policy_id: null,
@@ -241,6 +249,20 @@ describe('buildTradeInput', () => {
     })
   })
 
+  it('出资账户（issue #936 / ADR-0096）：表单选择落 funding_account_id，缺省 null（编辑全字段替换不丢字段）', () => {
+    const input = buildTradeInput({ ...buyState, fundingAccountId: 'bank-1' })
+    expect(input.funding_account_id).toBe('bank-1')
+    // 不填 = 维持余额买入语义（结算账户 = 投资账户），wire 显式 null 而非缺省缺字段
+    expect(buildTradeInput(buyState).funding_account_id).toBeNull()
+  })
+
+  it('出资账户与基金形态正交（issue #936）：金额置零覆写不受影响——确认单金额仍权威、单价不落 wire', () => {
+    const input = buildTradeInput({ ...fundBuyState, fundingAccountId: 'bank-1' })
+    expect(input.funding_account_id).toBe('bank-1')
+    expect(input.amount_cents).toBe(100000) // 矩阵占位 0 仍被权威金额覆写
+    expect(input.price_cents).toBeNull()
+  })
+
   it('sell 同构：完整 wire 形状（逐形态断言，含占位字段）', () => {
     expect(buildTradeInput({ ...buyState, kind: 'sell', note: '止盈' })).toEqual({
       kind: 'sell',
@@ -248,6 +270,7 @@ describe('buildTradeInput', () => {
       currency_code: 'CNY',
       account_id: 'inv-1',
       to_account_id: null,
+      funding_account_id: null,
       category_id: null,
       merchant_id: null,
       policy_id: null,
@@ -278,6 +301,7 @@ describe('buildTradeInput', () => {
       currency_code: 'CNY',
       account_id: 'inv-1',
       to_account_id: null,
+      funding_account_id: null,
       category_id: null,
       merchant_id: null,
       policy_id: null,

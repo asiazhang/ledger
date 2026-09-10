@@ -35,6 +35,8 @@ export interface Transaction extends Syncable {
   amount_native_cents: number
   account_id: string
   to_account_id: string | null
+  /** 可选出资账户（issue #935 / ADR-0096）：仅 buy/sell 可携带，读投影恒返回（无则 null） */
+  funding_account_id: string | null
   category_id: string | null
   merchant_id: string | null
   /** 可选保单引用（issue #361 / ADR-0051）：仅 expense/income 可挂，后端行为层准入 */
@@ -53,6 +55,9 @@ export interface TransactionInput {
   currency_code: string
   account_id: string
   to_account_id?: string | null
+  /** 可选出资账户（issue #936 / ADR-0096）：仅 buy/sell 可携带（后端行为层准入），
+   * 缺省即「结算账户 = 投资账户」；编辑路径全字段替换须显式携带，避免静默抹字段 */
+  funding_account_id?: string | null
   category_id?: string | null
   /** 商户引用（expense/refund/income 可携带；transfer/buy/sell/dividend/split 后端行为层拒绝） */
   merchant_id?: string | null
