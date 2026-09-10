@@ -179,38 +179,50 @@ export function buildTransactionColumns(
   return columns
 }
 
-/** 转账单元格内账户链接的布局样式：内容宽度 + 允许收缩省略 + 文本左对齐。
+/** 转账/出资账户行单元格内账户链接的布局样式：内容宽度 + 允许收缩省略 + 文本左对齐。
  * 经 attrs 透传到 AccountLink 根按钮，与组件内部强调色样式合并。
  * 用内容宽度（flex-grow:0）而非均分剩余宽度：单账户行「花呗」是内容宽度、自然靠左，
- * 转账行首账户名若也均分半宽会因 <button> 默认 text-align:center 被水平居中、顶不到列左缘
+ * 双账户行首账户名若也均分半宽会因 <button> 默认 text-align:center 被水平居中、顶不到列左缘
  * （与上方单账户行错位）。内容宽度让首名紧贴列左缘、与单账户行对齐；
  * 收缩项仍由 min-width:0 允许收缩（长名省略号兜底、不溢出）。 */
 const ACCOUNT_CELL_LINK_STYLE = 'flex: 0 1 auto; min-width: 0; text-align: left;'
 
-/** 账户单元格渲染（issue #99）：
- * - 转账行显示「转出 → 转入」双向账户名（to_account_id 存在时），两个名字各自可点击、
- *   各自下钻到对应账户的过滤视图；
- * - 其余交易类型仍显示主账户名（可点击下钻，issue #97）。
- *
- * 布局：转账行用 inline-flex 容器，两个链接内容宽度、箭头固定宽度，整组 justify-content:flex-start
+/** 双账户单元格（转账「转出 → 转入」、出资 buy/sell「出资账户 → 投资账户」）公共渲染：
+ * inline-flex 容器，两个链接内容宽度、箭头固定宽度，整组 justify-content:flex-start
  * 靠左；长账户名由链接自身 ellipsis（见 AccountLink）省略号兜底、不溢出（列宽 180 时收缩省略）。
  * 首账户名因此与单账户行（如「花呗」）左侧对齐；不设列级 ellipsis（fixed 布局由备注列的
  * ellipsis 维持），否则 NEllipsis 会把两个按钮包装成整体省略，破坏各自可点击语义。
  * 导出面（issue #846）：移动档卡片列表消费同一渲染，账户呈现两形态单源。 */
+function renderTwoAccountCell(fromAccountId: string, toAccountId: string): VNode {
+  return h(
+    'div',
+    {
+      style:
+        'display: inline-flex; align-items: center; justify-content: flex-start; gap: 4px; width: 100%; max-width: 100%;',
+    },
+    [
+      h(AccountLink, { accountId: fromAccountId, style: ACCOUNT_CELL_LINK_STYLE }),
+      h('span', { style: 'flex: none; opacity: 0.5;' }, '→'),
+      h(AccountLink, { accountId: toAccountId, style: ACCOUNT_CELL_LINK_STYLE }),
+    ],
+  )
+}
+
+/** 账户单元格渲染（issue #99 / #937）：
+ * - 转账行显示「转出 → 转入」双向账户名（to_account_id 存在时），两个名字各自可点击、
+ *   各自下钻到对应账户的过滤视图；
+ * - 带出资账户的 buy/sell 行显示「出资账户 → 投资账户」双向账户名（ADR-0096：钱从哪来、
+ *   份额记到哪一眼可辨），两端各自可点击下钻；
+ * - 其余交易类型（含不带出资账户的 buy/sell）仍显示主账户名（可点击下钻，issue #97）。
+ *
+ * 出资账户为空投资账户照常；出资账户命中时资金实际从出资账户流出/流入，
+ * 出资端在前与转账「资金流出方在前」的阅读顺序一致。 */
 export function renderAccountCell(row: Transaction): VNode {
   if (row.kind === 'transfer' && row.to_account_id) {
-    return h(
-      'div',
-      {
-        style:
-          'display: inline-flex; align-items: center; justify-content: flex-start; gap: 4px; width: 100%; max-width: 100%;',
-      },
-      [
-        h(AccountLink, { accountId: row.account_id, style: ACCOUNT_CELL_LINK_STYLE }),
-        h('span', { style: 'flex: none; opacity: 0.5;' }, '→'),
-        h(AccountLink, { accountId: row.to_account_id, style: ACCOUNT_CELL_LINK_STYLE }),
-      ],
-    )
+    return renderTwoAccountCell(row.account_id, row.to_account_id)
+  }
+  if ((row.kind === 'buy' || row.kind === 'sell') && row.funding_account_id) {
+    return renderTwoAccountCell(row.funding_account_id, row.account_id)
   }
   return h(AccountLink, { accountId: row.account_id })
 }

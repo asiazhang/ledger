@@ -101,7 +101,7 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
     let mut stmt = conn
         .prepare(
             "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
-             to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,\
+             to_account_id,funding_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,\
              version,device_id,is_deleted,merchant_id,policy_id \
              FROM transactions WHERE is_deleted=0 ORDER BY date DESC, created_at DESC, id DESC",
         )
@@ -115,18 +115,18 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
             amount_native_cents: r.get(4)?,
             account_id: r.get(5)?,
             to_account_id: r.get(6)?,
-            category_id: r.get(7)?,
-            refund_of_transaction_id: r.get(8)?,
-            funding_account_id: None,
-            note: r.get(9)?,
-            date: r.get(10)?,
-            created_at: r.get(11)?,
-            updated_at: r.get(12)?,
-            version: r.get(13)?,
-            device_id: r.get(14)?,
-            is_deleted: r.get::<_, i64>(15)? != 0,
-            merchant_id: r.get(16)?,
-            policy_id: r.get(17)?,
+            funding_account_id: r.get(7)?,
+            category_id: r.get(8)?,
+            refund_of_transaction_id: r.get(9)?,
+            note: r.get(10)?,
+            date: r.get(11)?,
+            created_at: r.get(12)?,
+            updated_at: r.get(13)?,
+            version: r.get(14)?,
+            device_id: r.get(15)?,
+            is_deleted: r.get::<_, i64>(16)? != 0,
+            merchant_id: r.get(17)?,
+            policy_id: r.get(18)?,
             // 步骤侧直读快照不做来源反查：来源契约断言一律走列表命令（transactions_source_steps）。
             source: None,
         })

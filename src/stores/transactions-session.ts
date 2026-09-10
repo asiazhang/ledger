@@ -44,7 +44,7 @@ export interface TransactionFilters {
   /** 日期起止过滤（YYYY-MM-DD，与后端 date 字典序一致，含边界） */
   dateFrom: string | null
   dateTo: string | null
-  /** 涉及账户过滤（account_id 或 to_account_id 命中即算，含转入的转账；issue #97/#98） */
+  /** 涉及账户过滤（account_id、to_account_id 或出资账户 funding_account_id 任一命中即算；issue #97/#98、#937） */
   involvingAccountId: string | null
   /** 商户过滤（含软删商户，历史交易口径；issue #191） */
   merchantId: string | null

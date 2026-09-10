@@ -1,7 +1,7 @@
 //! 交易查询：列表排序、过滤（账户 / kind / 日期）、分页与退化输入边界。
 
 use super::super::*;
-use super::common::make_input;
+use super::common::{make_buy_input, make_input};
 use crate::test_support;
 use crate::transaction::{TransactionInput, TransactionListFilter};
 use rusqlite::Connection;
@@ -328,6 +328,97 @@ fn list_transactions_involving_account_filter() {
     assert_eq!(
         legacy.total, 2,
         "account_id 仅按转出账户过滤，语义不变（不命中转入侧）"
+    );
+}
+
+/// 涉及账户过滤命中出资端（issue #937 / ADR-0096）：出资账户是涉及账户的第三端——
+/// 按银行卡过滤交易应命中它出资的买入；旧口径 `account_id` 过滤语义不变（不命中出资端）。
+#[test]
+fn list_transactions_involving_account_filter_includes_funding_end() {
+    let conn = test_support::open();
+    // 投资铺垫：USD 投资账户 + 标的 + 1:1 汇率（buy 写入前提，issue #70 折算不缺汇率）
+    test_support::seed_investment_setup(&conn, "acc-inv-f", "inst-f");
+    // 出资账户：USD 银行卡（准入闭集现金类 + 币种与交易一致）
+    test_support::seed_account(&conn, "acc-fund-usd", "美元卡", "bank", "USD", 0);
+    // 无关账户：不出资、非投资端
+    test_support::seed_account(&conn, "acc-fund-other", "无关账户", "cash", "CNY", 0);
+
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            funding_account_id: Some("acc-fund-usd".into()),
+            ..make_buy_input("acc-inv-f", "inst-f", 10.0, 100000, 0)
+        },
+    )
+    .unwrap();
+    // 卖出同样可携带出资账户（回卡卖出，AC：命中其出资的买入/卖出）；
+    // FIFO 匹配消耗上方买入持仓。
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            funding_account_id: Some("acc-fund-usd".into()),
+            kind: TransactionKind::Sell,
+            ..make_buy_input("acc-inv-f", "inst-f", 4.0, 110000, 0)
+        },
+    )
+    .unwrap();
+
+    // 出资账户端命中：按卡过滤检索到它出资的买入与卖出
+    let by_funding = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            involving_account_id: Some("acc-fund-usd".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        by_funding.total, 2,
+        "按出资账户过滤应命中其出资的买入与卖出"
+    );
+    assert!(
+        by_funding
+            .items
+            .iter()
+            .all(|t| t.funding_account_id.as_deref() == Some("acc-fund-usd")),
+        "命中行的出资端均应为该账户"
+    );
+
+    // 投资账户端照旧命中（三端之一）
+    let by_investment = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            involving_account_id: Some("acc-inv-f".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(by_investment.total, 2, "投资账户端命中不变（买入 + 卖出）");
+
+    // 无关账户不命中
+    let by_other = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            involving_account_id: Some("acc-fund-other".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(by_other.total, 0, "无关账户不应命中");
+
+    // 已发布字段 account_id（仅转出账户）语义不变：出资账户 ≠ account_id，
+    // 该 buy 行 account_id 是投资账户，按出资账户走旧口径过滤不命中。
+    let legacy = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            account_id: Some("acc-fund-usd".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        legacy.total, 0,
+        "account_id 过滤不含出资端，语义不变（只增不改）"
     );
 }
 
