@@ -189,7 +189,11 @@ pub fn list_transactions_internal(
         params.push(account_id.to_string());
     }
     if let Some(account_id) = filter.involving_account_id.as_deref() {
-        where_clause.push_str(" AND (account_id = ? OR to_account_id = ?)");
+        // 涉及账户三端（issue #937 / ADR-0096）：转出 ∪ 转入 ∪ 出资——按出资账户
+        // 过滤命中它出资的 buy/sell；已发布两端语义不变（只增不改）。
+        where_clause
+            .push_str(" AND (account_id = ? OR to_account_id = ? OR funding_account_id = ?)");
+        params.push(account_id.to_string());
         params.push(account_id.to_string());
         params.push(account_id.to_string());
     }

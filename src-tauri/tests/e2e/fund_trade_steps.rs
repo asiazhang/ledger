@@ -31,16 +31,30 @@ fn create_fund_instrument(world: &mut LedgerWorld, symbol: String, name: String)
         .expect("新建基金标的失败");
 }
 
+/// 确认单三联（issue #302 金额权威）：份额、整分金额、手续费——基金申赎步骤的
+/// 热点数值入参打包，避免步骤助手长参数列表。
+struct FundConfirmation {
+    quantity: f64,
+    amount_cents: i64,
+    fee_cents: i64,
+}
+
 /// 按确认单录入基金申赎（金额权威：amount_cents = 确认单整分金额，wire 不带单价）。
+/// `funding_name` 非空时携带出资账户（issue #937 / ADR-0096：直扣买卖的资金流归因），
+/// 经同一行为层公开创建入口写入。
 fn fund_trade(
     world: &mut LedgerWorld,
     kind: TransactionKind,
     symbol: &str,
-    quantity: f64,
-    amount_cents: i64,
-    fee_cents: i64,
+    confirmation: FundConfirmation,
     account_name: &str,
+    funding_name: Option<&str>,
 ) {
+    let FundConfirmation {
+        quantity,
+        amount_cents,
+        fee_cents,
+    } = confirmation;
     // 申购/赎回错开交易日（与持仓批次 FIFO 排序、列表断言的日期序一致）
     let date = match kind {
         TransactionKind::Buy => "2026-01-10",
@@ -67,6 +81,7 @@ fn fund_trade(
         amount_cents,
         currency_code,
         fee_cents: Some(fee_cents),
+        funding_account_id: funding_name.map(|n| world.account_id(n)),
         ..base
     };
     let write = create_transaction_internal(&world_conn!(world), input).expect("基金申赎落库失败");
@@ -87,10 +102,13 @@ fn fund_buy(
         world,
         TransactionKind::Buy,
         &symbol,
-        quantity,
-        amount_cents,
-        fee_cents,
+        FundConfirmation {
+            quantity,
+            amount_cents,
+            fee_cents,
+        },
         &account_name,
+        None,
     );
 }
 
@@ -107,10 +125,41 @@ fn fund_sell(
         world,
         TransactionKind::Sell,
         &symbol,
-        quantity,
-        amount_cents,
-        fee_cents,
+        FundConfirmation {
+            quantity,
+            amount_cents,
+            fee_cents,
+        },
         &account_name,
+        None,
+    );
+}
+
+/// 直扣申购（issue #937 / ADR-0096）：出资账户命中的买入——结算现金从出资账户
+/// 流出、投资账户现金腿为 0。经同一行为层公开创建入口写入（公开写入口，非裸 SQL）。
+#[when(
+    expr = "按确认单出资账户申购基金 {string} 份额 {float} 金额 {int} 手续费 {int} 到投资账户 {string} 出资账户 {string}"
+)]
+fn fund_buy_with_funding(
+    world: &mut LedgerWorld,
+    symbol: String,
+    quantity: f64,
+    amount_cents: i64,
+    fee_cents: i64,
+    account_name: String,
+    funding_name: String,
+) {
+    fund_trade(
+        world,
+        TransactionKind::Buy,
+        &symbol,
+        FundConfirmation {
+            quantity,
+            amount_cents,
+            fee_cents,
+        },
+        &account_name,
+        Some(&funding_name),
     );
 }
 
@@ -201,5 +250,26 @@ fn assert_fund_realized_pnl_total(world: &mut LedgerWorld, symbol: String, expec
     assert_eq!(
         total, expected,
         "已实现盈亏合计不符（闭合不变式：应等于 Σ 卖出金额 − Σ 买入金额）"
+    );
+}
+
+/// 列表两端展示断言（issue #937 / ADR-0096）：出资账户命中的 buy 行读回投影
+/// 同时携带投资账户（account_id）与出资账户（funding_account_id）——列表双链接
+/// 与下钻的行级数据前提；「转出 → 转入」断言（transactions_write_steps）同形。
+#[then(expr = "该买入 account_id 应匹配账户 {string}")]
+fn check_buy_investment_account(world: &mut LedgerWorld, account_name: String) {
+    let txn = world.txn.transactions_list.last().expect("交易列表为空");
+    let expected_id = world.account_id(&account_name);
+    assert_eq!(txn.account_id, expected_id, "买入行的投资账户端不符");
+}
+
+#[then(expr = "该买入 funding_account_id 应匹配账户 {string}")]
+fn check_buy_funding_account(world: &mut LedgerWorld, account_name: String) {
+    let txn = world.txn.transactions_list.last().expect("交易列表为空");
+    let expected_id = world.account_id(&account_name);
+    assert_eq!(
+        txn.funding_account_id.as_deref(),
+        Some(expected_id.as_str()),
+        "买入行的出资账户端不符"
     );
 }
