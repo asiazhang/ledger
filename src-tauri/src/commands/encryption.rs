@@ -20,7 +20,6 @@ use rusqlite::Connection;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime};
 
-use crate::backup;
 use crate::commands::boot::current_boot;
 use crate::commands::data_location::default_data_dir;
 use crate::db::DbState;
@@ -112,7 +111,8 @@ pub async fn get_encryption_status(app: AppHandle) -> Result<EncryptionStatus> {
 
 /// 解锁核心（手输 [`unlock_encryption`] 与凭缓存 [`unlock_with_remembered_passphrase`]
 /// 共用，issue #574）：凭主口令打开密文库并原位换连（HTTP 壳与调度线程已持有的
-/// 连接 Arc 克隆全部可见），翻转锁定门、拉起自动备份调度；启动期等待中的搬迁
+/// 连接 Arc 克隆全部可见），翻转锁定门、经唯一编排点成对拉起后台服务（自动
+/// 备份与同步触发，issue #961）；启动期等待中的搬迁
 /// （源库为密文库）在解锁后以主口令补做，成功即触发重启语义。
 async fn do_unlock(app: &AppHandle, passphrase: &str) -> Result<UnlockOutcome> {
     let db_path = active_db_path(app)?;
@@ -236,8 +236,9 @@ pub async fn unlock_with_remembered_passphrase(app: AppHandle) -> Result<UnlockO
 
 /// 业务可用起点编排（解锁、忘记口令重置与启动失败重置共用，ADR-0075
 /// 决策 5 / issue #601）：新连接原位换入 DbState（Arc 形状不变，业务路径
-/// 下次锁连接即取到真实库）→ 翻转锁定门 → 拉起自动备份调度（轮询同轮
-/// 承载定时追补）。锁定门翻转对未锁定路径（启动失败重置）是无操作。
+/// 下次锁连接即取到真实库）→ 翻转锁定门 → 经
+/// [`crate::start_background_services`] 成对拉起后台服务（自动备份调度 + 同步
+/// 触发，issue #961 唯一编排点）。锁定门翻转对未锁定路径（启动失败重置）是无操作。
 pub(crate) fn resume_business_surface(app: &AppHandle, conn: Connection) -> Result<()> {
     {
         let state = app.state::<DbState>();
@@ -254,11 +255,9 @@ pub(crate) fn resume_business_surface(app: &AppHandle, conn: Connection) -> Resu
         crate::logger::apply_persisted_level(&conn);
     }
     tracing::info!("业务读写恢复（解锁/重置后），自动备份与多端同步调度拉起");
-    backup::start_scheduler(app);
-    // 多端同步触发编排（issue #863）：解锁/恢复后同步触发随之恢复——打开应用
-    // 即同步的兜底路径（密文库会话在解锁前不可达）。分平台分流收在域侧
-    // `start_triggers` 单点（移动端只跑打开即同步，ADR-0098 决策 4）。
-    crate::sync_engine::start_triggers(app);
+    // 后台服务成对拉起收在唯一编排点（issue #961）：解锁/重置后同步触发随之
+    // 恢复——打开即同步的兜底路径（密文库会话在解锁前不可达，ADR-0098 决策 4）。
+    crate::start_background_services(app);
     Ok(())
 }
 
@@ -329,7 +328,7 @@ pub async fn change_encryption_passphrase(
 /// 新库语义见 [`encryption::reset_encrypted_db_file`]）。
 ///
 /// 只在锁定状态可达（解锁屏专用面）；成功后经 [`resume_business_surface`]
-/// 原位换连、翻 unlock、拉起自动备份调度——应用随即回到明文模式的业务
+/// 原位换连、翻 unlock、经唯一编排点成对拉起后台服务——应用随即回到明文模式的业务
 /// 可用状态，无需重启，可在设置页再次走开启加密流程。
 #[tauri::command]
 pub async fn reset_after_forgotten_passphrase(app: AppHandle) -> Result<()> {

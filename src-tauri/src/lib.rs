@@ -132,6 +132,24 @@ fn redact_passphrase_payload(payload: &serde_json::Value) -> serde_json::Value {
     mask(payload)
 }
 
+/// 业务可用起点的**后台服务编排单一入口**（issue #961）：自动备份调度
+/// （[`backup::start_scheduler`]，轮询同轮承载定时计划追补）与多端同步触发
+/// （[`sync_engine::start_triggers`]，分平台门收在域内一处，ADR-0098 决策 4）
+/// 必须在每个业务可用起点成对拉起——两个独立调用无机制保证成对，#863 会话
+/// 已由同一根因造成两次真实缺陷（分平台门漂移、`restart_app` 落 Ready 漏接
+/// 同步触发），且「缺失一个调用」不会让任何断言变红。全部业务可用起点只调
+/// 本函数：
+/// ① `lib.rs` setup 就绪（锁定/失败不拉，守卫在调用方）；
+/// ② `resume_business_surface`（解锁 / 忘记口令重置 / 启动失败重置共用）；
+/// ③ `restart_app` 原位重引导落 `Ready`（不经 setup 也不经解锁路径）。
+/// 成对性由本函数与 `scripts/check-background-services.ts` 文本守门共同保证：
+/// 两个域入口的生产调用只允许出现在本函数体内，其余位置命中即红。
+/// 各调度自持单次拉起守卫，原位重引导重复调用幂等（ADR-0080）。
+pub(crate) fn start_background_services(app: &tauri::AppHandle) {
+    backup::start_scheduler(app);
+    sync_engine::start_triggers(app);
+}
+
 fn try_init_database(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("开始初始化数据库");
     // 启动引导序列与重启命令（原位重引导）同一段（commands::boot::boot_sequence）：
@@ -216,17 +234,13 @@ pub fn run() {
             // 解锁先于一切业务读写，失败期间库不可用；调度分别由解锁命令与
             // 启动失败重置命令在恢复成功后拉起（轮询同轮承载定时追补）。
             if !locked && !boot_failed {
-                backup::start_scheduler(app.handle());
-                // 多端同步触发编排（issue #863 / ADR-0091 决策 9）：打开应用即
-                // 同步 + 桌面运行期低频轮询。与自动备份同款「锁定/失败不启动」
-                // 口径。
-                //
-                // 分平台分流收在域侧单点 `start_triggers`（ADR-0098 决策 4 /
-                // ADR-0074 决策 6 先例）：Android 后台不承诺同步（系统会杀
-                // 后台进程，轮询线程不可靠），移动端只保留「打开即同步」——
-                // 解锁路径（`resume_business_surface`）共用同一入口，分平台门
-                // 只有一处，不会漏。
-                sync_engine::start_triggers(app.handle());
+                // 后台服务成对拉起收在唯一编排点（issue #961）：自动备份 +
+                // 多端同步触发，分平台分流收在域侧 `start_triggers` 一处
+                // （ADR-0098 决策 4 / ADR-0074 决策 6 先例）。锁定/启动失败
+                // 期间不启动（issue #570 / #601 / ADR-0075 决策 5）：解锁先于
+                // 一切业务读写，失败期间库不可用；调度分别由解锁命令与启动
+                // 失败重置命令在恢复成功后经同一编排点拉起。
+                start_background_services(app.handle());
             }
             // 备份产物变更信号（issue #129）：自动备份的深路径执行点
             // （连接层写入口提交点的写时顺带检查）拿不到 AppHandle，启动时注入镜像句柄一次，
