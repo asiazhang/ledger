@@ -23,8 +23,11 @@ import { api } from '@/api'
 import { t } from '@/i18n'
 import { useDashboardOverview } from '@/composables/useDashboardOverview'
 import { useFinancialFreedom } from '@/composables/useFinancialFreedom'
+import { useInputMode } from '@/composables/useInputMode'
 import { useItemDailyTotal } from '@/composables/useItemDailyTotal'
+import { useWindowTier } from '@/composables/useWindowTier'
 import { useReferenceStore } from '@/stores/reference'
+import AppPopover from '@/components/AppPopover.vue'
 import { formatAmount } from '@/types'
 import type { BudgetProgress, MonthlySummary } from '@/types'
 import {
@@ -98,6 +101,23 @@ const freedomCurrency = computed(() =>
   freedom.value ? reference.getCurrency(freedom.value.native_currency) : undefined,
 )
 
+// 移动档适配（issue #847 / ADR-0088 决策 11 票⑦）：概览栅格单列化 + 悬停替代。
+// 断点口径接窗口分级 composable 唯一事实源，不自立断点（响应栅格不用 naive
+// 自带 640/1024 断点）；悬停替代按输入轴判定（平板横屏 = 桌面档 + 触控轴）。
+const windowTier = useWindowTier()
+const inputMode = useInputMode()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
+const isTouch = computed(() => inputMode.value === 'touch')
+
+/** 计算口径四行文案的 i18n key 闭集：tooltip 与触控气泡两轴共用同一数据源，
+ * 文案只在一处声明。 */
+const FREEDOM_INFO_KEYS = [
+  'formula',
+  'numeratorBreakdown',
+  'denominatorBreakdown',
+  'extractionRate',
+] as const
+
 // 阶段标签前端派生（ADR-0048 决策 5：阈值与文案归 UI，不做后端枚举）：
 // <30% 积累期 / 30–100% 接近自由 / ≥100% 财务自由；文案走 i18n（ADR-0049）
 const freedomStage = computed(() => {
@@ -156,9 +176,12 @@ onMounted(async () => {
       </NSpin>
     </NCard>
 
-    <!-- 本月收支卡（issue #144）：紧随净资产之后，先看本月现金流再看投资/预算 -->
+    <!-- 本月收支卡（issue #144）：紧随净资产之后，先看本月现金流再看投资/预算。
+         栅格按窗口分级分档（issue #847）：移动档单列（三格纵排，窄屏不横向挤压），
+         桌面档保持三列；断点口径接窗口分级 composable，naive 自带断点不用
+         （responsive="screen" 在纯数字 cols 下本就惰性，已随本次移除）。 -->
     <NCard :title="t('dashboard.monthly.title')" size="small">
-      <NGrid :cols="3" :x-gap="16" responsive="screen">
+      <NGrid :cols="isMobileTier ? 1 : 3" :x-gap="16">
         <NGridItem>
           <NSpace vertical :size="4">
             <NText depth="3" style="font-size: 12px">{{ t('dashboard.monthly.income') }}</NText>
@@ -182,7 +205,9 @@ onMounted(async () => {
 
     <!-- 投资概览卡（issue #145）：始终展示，无持仓时空态占位 -->
     <NCard :title="t('dashboard.investment.title')" size="small" data-testid="investment-overview-card">
-      <NGrid v-if="holdingRows.length > 0" :x-gap="16" cols="1 s:2">
+      <!-- 投资概览卡栅格按窗口分级分档（issue #847）：移动档单列，桌面档保持既有
+           自响应「1 s:2」（容器 <640 时单列的桌面窄窗行为不变）。 -->
+      <NGrid v-if="holdingRows.length > 0" :x-gap="16" :cols="isMobileTier ? 1 : '1 s:2'">
         <NGi>
           <NStatistic :label="t('dashboard.investment.marketValue')" data-testid="dashboard-total-market-value">
             {{ formatCurrencyGroups(totalMarketValueGroups, reference.currencyMap) }}
@@ -201,10 +226,13 @@ onMounted(async () => {
          先看资产再看「资产够不够躺」，最后才看单品与预算执行 -->
     <NCard :title="t('dashboard.freedom.title')" size="small" data-testid="financial-freedom-card">
       <template #header-extra>
-        <!-- 计算口径悬停提示：3% 乘数使百分比无法从已展示的分子/分母直接推出，
-             不解释会被当成算错（ADR-0048）。悬停即现、移开即关、不拦交互，
-             不在 ADR-0035 弹层注册表枚举内，用裸 NTooltip -->
-        <NTooltip placement="top" :style="{ maxWidth: '320px' }">
+        <!-- 计算口径说明（3% 乘数使百分比无法从已展示的分子/分母直接推出，
+             不解释会被当成算错，ADR-0048）。按输入轴分面（ADR-0088 决策 6 悬停
+             一击可达，issue #847）：指针轴悬停即现、移开即关、不拦交互，不在
+             ADR-0035 弹层注册表枚举内，用裸 NTooltip（行为零变化）；触控轴悬停
+             不可达，改点按气泡（经 AppPopover 入弹层注册表，AmountCell 同款），
+             触发器以全局工具类扩热区至 ≥48px。口径文案两轴同源（同一组行）。 -->
+        <NTooltip v-if="!isTouch" placement="top" :style="{ maxWidth: '320px' }">
           <template #trigger>
             <NButton text :aria-label="t('dashboard.freedom.tooltipAria')" data-testid="financial-freedom-info">
               <NIcon :size="14" color="var(--n-title-text-color, #999)">
@@ -213,12 +241,33 @@ onMounted(async () => {
             </NButton>
           </template>
           <NSpace vertical :size="2">
-            <span>{{ t('dashboard.freedom.formula') }}</span>
-            <span>{{ t('dashboard.freedom.numeratorBreakdown') }}</span>
-            <span>{{ t('dashboard.freedom.denominatorBreakdown') }}</span>
-            <span>{{ t('dashboard.freedom.extractionRate') }}</span>
+            <span v-for="key in FREEDOM_INFO_KEYS" :key="key">{{
+              t(`dashboard.freedom.${key}`)
+            }}</span>
           </NSpace>
         </NTooltip>
+        <AppPopover v-else trigger="click" placement="top" :style="{ maxWidth: '320px' }">
+          <template #trigger>
+            <!-- 热区外扩量覆写：text 中号按钮高 34px，默认 ±6px 垂直仅 46px 不达
+                 48px 基线，按头部无跨行误触场景加大至 ±8px（ReportsView 同型）。 -->
+            <NButton
+              text
+              class="touch-hit-area"
+              :style="{ '--touch-hit-inset': '-8px -14px' }"
+              :aria-label="t('dashboard.freedom.tooltipAria')"
+              data-testid="financial-freedom-info"
+            >
+              <NIcon :size="14" color="var(--n-title-text-color, #999)">
+                <InformationCircleOutline />
+              </NIcon>
+            </NButton>
+          </template>
+          <NSpace vertical :size="2">
+            <span v-for="key in FREEDOM_INFO_KEYS" :key="key">{{
+              t(`dashboard.freedom.${key}`)
+            }}</span>
+          </NSpace>
+        </AppPopover>
       </template>
       <NSpin :show="freedomLoading">
         <!-- 零分母（未设预算）：占位引导跳预算页，口径不回退实际支出；
