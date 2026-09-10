@@ -1,6 +1,8 @@
 {
   "title": "Cannot open the ledger database",
   "hint": "Reading the ledger failed at startup; the file may be corrupted. The app will not modify or delete your data file.",
+  "driftTitle": "Database schema is abnormal",
+  "driftHint": "The ledger database schema does not match what the app expects; the data itself is intact. The app will not modify or delete your data file — restoring from a backup is the recommended first choice.",
   "resetChannelTitle": "Reset to an empty ledger",
   "resetChannelHint": "Reset the unreadable ledger to a brand-new empty one and enter the app right away.",
   "resetButton": "Reset to empty ledger…",
