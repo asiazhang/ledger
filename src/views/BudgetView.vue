@@ -18,9 +18,15 @@ import {
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { useModalIntent } from '@/composables/useModalIntent'
+import { useWindowTier } from '@/composables/useWindowTier'
 import AppModal from '@/components/AppModal.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
+import {
+  MOBILE_CELL_STYLE,
+  MOBILE_SUB_STYLE,
+  MOBILE_TOUCH_TARGET_STYLE,
+} from '@/components/mobile-cells'
 import { useReferenceStore } from '@/stores/reference'
 import { errorMessage } from '@/utils/errors'
 import { yuanToCents } from '@/utils/money'
@@ -32,6 +38,17 @@ const reference = useReferenceStore()
 const message = useMessage()
 const list = ref<BudgetProgress[]>([])
 const loading = ref(false)
+
+// 移动档适配（issue #848 / ADR-0088 决策 11 票⑧）：预算表三分列（周期/状态并入
+// 分类副行、进度含已支/预算文案）+ 新增表单纵排。断点口径接窗口分级 composable
+// 唯一事实源，不自立断点；桌面档列结构与表单布局一字不动（回归红线）。
+// 进度语义（父含子、子只算自身、超支判断）零变化——同一命令输出，仅布局适配。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
+
+// 移动档单元格共用样式（纵排堆叠/弱化副行/触控目标）全仓单点：@/components/mobile-cells；
+// 首行「分类名 + 状态标签同行」为预算列特有布局，留守本地。
+const MOBILE_HEAD_STYLE = 'display: flex; align-items: center; gap: 6px; min-width: 0;'
 
 const categoryId = ref<string | null>(null)
 const amount = ref<number | null>(null)
@@ -159,7 +176,91 @@ async function remove(id: string) {
   }
 }
 
-const columns = computed<DataTableColumns<BudgetProgress>>(() => [
+/** 进度百分比：消耗/上限封顶 100（桌面/移动两分支共用同一口径）。 */
+function progressPercentage(row: BudgetProgress): number {
+  return row.budget.amount_cents > 0
+    ? Math.min(100, Math.round((row.spent_cents / row.budget.amount_cents) * 100))
+    : 0
+}
+
+/** 进度条状态语义色：超支红 / 正常绿（两分支共用）。 */
+function progressStatus(row: BudgetProgress): 'error' | 'success' {
+  return row.over_budget ? 'error' : 'success'
+}
+
+const columns = computed<DataTableColumns<BudgetProgress>>(() => {
+  // 移动档三分列（issue #848）：列数收敛至窄屏无横向滚动，信息并入副行不丢失
+  if (isMobileTier.value) {
+    return [
+      {
+        title: t('budget.list.colCategory'),
+        key: 'category_name',
+        render: (row) =>
+          h('div', { style: MOBILE_CELL_STYLE }, [
+            h('div', { style: MOBILE_HEAD_STYLE }, [
+              h('span', displayCategoryName(row)),
+              row.over_budget
+                ? h(NTag, { type: 'error' }, () => t('budget.status.over'))
+                : h(NTag, { type: 'success' }, () => t('budget.status.normal')),
+            ]),
+            // 周期以本地化标签呈现（桌面列沿用历史原值呈现，移动档不跟随其旧账）
+            h('span', { style: MOBILE_SUB_STYLE }, t(`budget.period.${row.budget.period}`)),
+          ]),
+      },
+      {
+        title: t('budget.list.colProgress'),
+        key: 'progress',
+        render: (row) =>
+          h('div', { style: MOBILE_CELL_STYLE }, [
+            h(NProgress, {
+              type: 'line',
+              percentage: progressPercentage(row),
+              status: progressStatus(row),
+            }),
+            h(
+              'span',
+              { style: MOBILE_SUB_STYLE },
+              t('budget.list.spentOfBudget', {
+                spent: formatAmount(row.spent_cents),
+                total: formatAmount(row.budget.amount_cents),
+              }),
+            ),
+          ]),
+      },
+      {
+        title: t('budget.list.colActions'),
+        key: 'actions',
+        render: (row) =>
+          h(NSpace, { size: 4, wrap: false }, () => [
+            h(
+              NButton,
+              {
+                size: 'tiny',
+                type: 'primary',
+                quaternary: true,
+                style: MOBILE_TOUCH_TARGET_STYLE,
+                onClick: () => openEdit(row),
+              },
+              () => t('budget.actions.edit'),
+            ),
+            h(
+              AppPopconfirm,
+              { onPositiveClick: () => remove(row.budget.id) },
+              {
+                default: () => t('budget.actions.confirmDelete'),
+                trigger: () =>
+                  h(
+                    NButton,
+                    { size: 'tiny', type: 'error', quaternary: true, style: MOBILE_TOUCH_TARGET_STYLE },
+                    () => t('budget.actions.delete'),
+                  ),
+              },
+            ),
+          ]),
+      },
+    ]
+  }
+  return [
   {
     title: t('budget.list.colCategory'),
     key: 'category_name',
@@ -179,16 +280,12 @@ const columns = computed<DataTableColumns<BudgetProgress>>(() => [
   {
     title: t('budget.list.colProgress'),
     key: 'progress',
-    render: (row) => {
-      const pct = row.budget.amount_cents > 0
-        ? Math.min(100, Math.round((row.spent_cents / row.budget.amount_cents) * 100))
-        : 0
-      return h(NProgress, {
+    render: (row) =>
+      h(NProgress, {
         type: 'line',
-        percentage: pct,
-        status: row.over_budget ? 'error' : 'success',
-      })
-    },
+        percentage: progressPercentage(row),
+        status: progressStatus(row),
+      }),
   },
   {
     title: t('budget.list.colStatus'),
@@ -220,7 +317,8 @@ const columns = computed<DataTableColumns<BudgetProgress>>(() => [
         ),
       ]),
   },
-])
+]
+})
 
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
@@ -232,19 +330,42 @@ onMounted(() => {
   <NSpin :show="loading">
     <NSpace vertical :size="16">
       <NCard :title="t('budget.create.title')" size="small">
-        <NForm label-placement="left" :show-feedback="false" inline size="small">
+        <!-- 新增预算表单按窗口分级分档（issue #848）：桌面档行内横排（既有布局一字
+             不动）；移动档纵排堆叠（标签上置 + 控件满宽，行内横排窄屏必溢出），
+             行距取 ADR-0079 决策 4 的 12px 节奏值（同账户新增表单先例）。
+             「添加」主操作热区扩至 ≥48px（视觉不变）。 -->
+        <NForm
+          :inline="!isMobileTier"
+          :label-placement="isMobileTier ? 'top' : 'left'"
+          :show-feedback="false"
+          size="small"
+          :style="
+            isMobileTier
+              ? { display: 'flex', flexDirection: 'column', gap: '12px' }
+              : undefined
+          "
+        >
           <NFormItem :label="t('budget.create.category')">
             <PinyinSelect
               v-model:value="categoryId"
               :options="categoryOptions()"
               :placeholder="t('budget.create.categoryPlaceholder')"
-              style="width: 160px"
+              :style="isMobileTier ? { width: '100%' } : { width: '160px' }"
             />
           </NFormItem>
           <NFormItem :label="t('budget.create.amount')">
-            <NInputNumber v-model:value="amount" :precision="2" style="width: 140px" />
+            <NInputNumber
+              v-model:value="amount"
+              :precision="2"
+              :style="isMobileTier ? { width: '100%' } : { width: '140px' }"
+            />
           </NFormItem>
-          <NButton type="primary" @click="create">{{ t('budget.create.add') }}</NButton>
+          <NButton
+            type="primary"
+            :class="isMobileTier ? 'touch-hit-area' : undefined"
+            :style="isMobileTier ? { '--touch-hit-inset': '-10px -14px' } : undefined"
+            @click="create"
+          >{{ t('budget.create.add') }}</NButton>
         </NForm>
       </NCard>
 
