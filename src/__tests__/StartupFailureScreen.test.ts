@@ -25,6 +25,7 @@ beforeEach(() => {
   const gate = useEncryptionGate()
   gate.locked.value = null
   gate.bootFailed.value = false
+  gate.bootErrorCode.value = null
 })
 
 function findButton(wrapper: ReturnType<typeof mount>, testid: string) {
@@ -181,6 +182,73 @@ describe('StartupFailureScreen.vue（启动失败恢复屏·issue #601）', () =
     await flushPromises()
     expect(gate.bootFailed.value).toBe(false)
     expect(gate.locked.value).toBe(true)
+  })
+})
+
+describe('StartupFailureScreen.vue（schema 漂移按码呈现·issue #994）', () => {
+  /** 通道入口在 DOM 中的位置（漂移场景动作排序断言用）。 */
+  function channelPos(wrapper: ReturnType<typeof mount>, testid: string) {
+    return wrapper.html().indexOf(testid)
+  }
+
+  it('探测返回 failed 携带漂移码：门记录错误码，恢复屏按码取材', async () => {
+    wireInvokeSeam({
+      overrides: {
+        get_boot_status: () =>
+          Promise.resolve({ phase: 'failed', error_code: 'boot.schema-drift' }),
+      },
+    })
+    const gate = useEncryptionGate()
+    await gate.probe()
+    await flushPromises()
+    expect(gate.bootFailed.value).toBe(true)
+    expect(gate.bootErrorCode.value).toBe('boot.schema-drift')
+  })
+
+  it('漂移恢复屏：出「数据库结构异常」文案（不宣称库打不开），从备份恢复首选在前、重置次选在后', async () => {
+    const gate = useEncryptionGate()
+    gate.bootErrorCode.value = 'boot.schema-drift'
+    const { wrapper } = await mountFailedScreen()
+    const html = wrapper.html()
+    expect(html).toContain('数据库结构异常')
+    expect(html).not.toContain('无法打开账本数据库')
+    // 动作排序（issue #994）：漂移库打得开且数据完好，从备份恢复是首选动作
+    const restorePos = channelPos(wrapper, 'failure-restore-open')
+    const resetPos = channelPos(wrapper, 'failure-reset-open')
+    expect(restorePos).toBeGreaterThanOrEqual(0)
+    expect(resetPos).toBeGreaterThan(restorePos)
+    // 首选强调：恢复入口 primary 实心，重置入口降为普通形态（次选）
+    const restoreClasses = findButton(wrapper, 'failure-restore-open')!.classes().join(' ')
+    const resetClasses = findButton(wrapper, 'failure-reset-open')!.classes().join(' ')
+    expect(restoreClasses).toContain('n-button--primary-type')
+    expect(resetClasses).not.toContain('n-button--error-type')
+  })
+
+  it('库不可读恢复屏（默认码）：重置通道在前且 error 实心，恢复通道在后（#601 既有顺序不回退）', async () => {
+    const { wrapper } = await mountFailedScreen()
+    const html = wrapper.html()
+    expect(html).toContain('无法打开账本数据库')
+    expect(html).not.toContain('数据库结构异常')
+    const resetPos = channelPos(wrapper, 'failure-reset-open')
+    const restorePos = channelPos(wrapper, 'failure-restore-open')
+    expect(resetPos).toBeGreaterThanOrEqual(0)
+    expect(restorePos).toBeGreaterThan(resetPos)
+    expect(findButton(wrapper, 'failure-reset-open')!.classes().join(' ')).toContain(
+      'n-button--error-type',
+    )
+  })
+
+  it('漂移场景重置仍为 error 级二次确认（ADR-0078 语义不变）', async () => {
+    const gate = useEncryptionGate()
+    gate.bootErrorCode.value = 'boot.schema-drift'
+    const { wrapper } = await mountFailedScreen({
+      reset_after_startup_failure: () => Promise.resolve(),
+    })
+    await findButton(wrapper, 'failure-reset-open')!.trigger('click')
+    await waitModal()
+    expect(wrapper.html()).toContain('重置为空库？')
+    const alert = wrapper.find('.n-modal .n-alert')
+    expect(alert.exists(), '红色警示块应存在').toBe(true)
   })
 })
 

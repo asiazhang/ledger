@@ -21,7 +21,7 @@
  * 不存在（与解锁屏同理，见 UnlockScreen 注释）。
  */
 import { NAlert, NButton, NCard, NSpace, NText, useMessage } from 'naive-ui'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import AppModal from '@/components/AppModal.vue'
 import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
 import { t } from '@/i18n'
@@ -29,7 +29,7 @@ import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import { useFailureRestore } from '@/composables/useFailureRestore'
 import { errorMessage } from '@/utils/errors'
 
-const { resetFromFailure } = useEncryptionGate()
+const { resetFromFailure, bootErrorCode } = useEncryptionGate()
 const {
   restoreIntent,
   restoreSeq,
@@ -42,6 +42,17 @@ const message = useMessage()
 const confirmVisible = ref(false)
 const submitting = ref(false)
 const errorText = ref('')
+
+/** 漂移失败（issue #994 / ADR-0100）：漂移库打得开且数据完好，与「库不可读」
+ *  的处置顺序有真实差异——标题/说明按码取材（不再宣称「打不开」），「从备份
+ *  恢复」首选在前、「重置为空库」次选在后；error 级二次确认（ADR-0078）两
+ *  场景共用不变。其它失败码回退既有单一呈现（向后兼容未知码）。 */
+const isSchemaDrift = computed(() => bootErrorCode.value === 'boot.schema-drift')
+
+/** 通道排布单一来源（DOM 顺序即呈现顺序）：恢复优先仅漂移场景。 */
+const channels = computed(() =>
+  isSchemaDrift.value ? (['restore', 'reset'] as const) : (['reset', 'restore'] as const),
+)
 
 /** 二次确认：取消或失败都留在失败恢复屏，可再次进入。 */
 function openConfirm() {
@@ -74,26 +85,45 @@ async function confirmReset() {
   <div class="failure-screen">
     <NCard class="failure-card" :bordered="false">
       <NSpace vertical :size="16" align="center" :style="{ width: '100%' }">
-        <NText class="failure-title">{{ t('startupFailure.title') }}</NText>
-        <NText depth="3" class="failure-hint">{{ t('startupFailure.hint') }}</NText>
+        <!-- 标题/说明按失败码取材（issue #994）：漂移出「结构异常」，其余出「打不开」 -->
+        <NText class="failure-title">
+          {{ isSchemaDrift ? t('startupFailure.driftTitle') : t('startupFailure.title') }}
+        </NText>
+        <NText depth="3" class="failure-hint">
+          {{ isSchemaDrift ? t('startupFailure.driftHint') : t('startupFailure.hint') }}
+        </NText>
 
-        <!-- 恢复通道①（issue #601）：重置为空库 -->
-        <NSpace vertical :size="8" class="failure-channel">
-          <NText strong>{{ t('startupFailure.resetChannelTitle') }}</NText>
-          <NText depth="3">{{ t('startupFailure.resetChannelHint') }}</NText>
-          <NButton type="error" block data-testid="failure-reset-open" @click="openConfirm">
-            {{ t('startupFailure.resetButton') }}
-          </NButton>
-        </NSpace>
+        <!-- 恢复通道按失败码排布（issue #994）：库不可读重置优先（重置入口
+             error 实心），漂移从备份恢复优先（恢复入口 primary 实心） -->
+        <template v-for="channel in channels" :key="channel">
+          <!-- 重置为空库（issue #601）：重置是破坏性操作，error 级二次确认不变 -->
+          <NSpace v-if="channel === 'reset'" vertical :size="8" class="failure-channel">
+            <NText strong>{{ t('startupFailure.resetChannelTitle') }}</NText>
+            <NText depth="3">{{ t('startupFailure.resetChannelHint') }}</NText>
+            <NButton
+              :type="isSchemaDrift ? 'default' : 'error'"
+              block
+              data-testid="failure-reset-open"
+              @click="openConfirm"
+            >
+              {{ t('startupFailure.resetButton') }}
+            </NButton>
+          </NSpace>
 
-        <!-- 恢复通道②（issue #602）：从备份文件恢复；确认弹窗复用 #572 语义面 -->
-        <NSpace vertical :size="8" class="failure-channel">
-          <NText strong>{{ t('startupFailure.restoreChannelTitle') }}</NText>
-          <NText depth="3">{{ t('startupFailure.restoreChannelHint') }}</NText>
-          <NButton block data-testid="failure-restore-open" @click="pickRestoreFromFailure">
-            {{ t('startupFailure.restoreButton') }}
-          </NButton>
-        </NSpace>
+          <!-- 从备份文件恢复（issue #602）：确认弹窗复用 #572 语义面 -->
+          <NSpace v-else vertical :size="8" class="failure-channel">
+            <NText strong>{{ t('startupFailure.restoreChannelTitle') }}</NText>
+            <NText depth="3">{{ t('startupFailure.restoreChannelHint') }}</NText>
+            <NButton
+              :type="isSchemaDrift ? 'primary' : 'default'"
+              block
+              data-testid="failure-restore-open"
+              @click="pickRestoreFromFailure"
+            >
+              {{ t('startupFailure.restoreButton') }}
+            </NButton>
+          </NSpace>
+        </template>
 
         <NText v-if="errorText" type="error" class="failure-error">{{ errorText }}</NText>
       </NSpace>

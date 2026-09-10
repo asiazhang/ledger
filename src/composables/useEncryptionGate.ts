@@ -26,6 +26,11 @@ const locked = ref<boolean | null>(null)
 /** 启动失败状态（issue #601）：后端启动失败门的前端镜像，失败恢复屏由它驱动。 */
 const bootFailed = ref(false)
 
+/** 启动失败错误码（issue #994 / ADR-0100）：失败时后端原样上报的稳定码，失败
+ *  恢复屏按码区分「结构异常」（漂移，从备份恢复优先）与「库不可读」（重置优先）
+ *  的文案与动作排序；非 failed 为 null。 */
+const bootErrorCode = ref<string | null>(null)
+
 /**
  * 自动解锁有界等待上限（issue #644）：钥匙串读取/生物认证在受限形态或系统
  * 弹窗滞留时可能长时间不返回，解锁屏对自动解锁的等待必须有边界——到期回退
@@ -58,7 +63,9 @@ export function useEncryptionGate() {
       const status = await api.getBootStatus()
       if (status.phase === 'failed') {
         bootFailed.value = true
+        bootErrorCode.value = status.error_code
       } else {
+        bootErrorCode.value = null
         locked.value = status.phase === 'locked'
       }
     } catch (e) {
@@ -177,12 +184,14 @@ export function useEncryptionGate() {
   async function resetFromFailure(): Promise<void> {
     await api.resetAfterStartupFailure()
     bootFailed.value = false
+    bootErrorCode.value = null
     locked.value = false
   }
 
   return {
     locked,
     bootFailed,
+    bootErrorCode,
     rememberSupport,
     probe,
     unlock,

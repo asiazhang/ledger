@@ -79,7 +79,7 @@ pub(crate) fn setup_locked_app() -> Router {
 /// OpenAPI 契约自举端点外的全部端点返回码化错误（连接仅为形状占位，不应被触达）。
 pub(crate) fn setup_boot_failed_app() -> Router {
     let boot_gate = BootFailureGate::new();
-    boot_gate.set_failed();
+    boot_gate.set_failed(None);
     build_router(ApiState {
         conn: Arc::new(Mutex::new(test_support::open())),
         emitter: None,

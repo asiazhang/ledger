@@ -166,6 +166,38 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
     expect(wrapper.html()).not.toContain('口令错误或文件损坏')
   })
 
+  it('解锁遇 boot.schema-drift：结构异常专属文案按码呈现，不与口令错误/库损坏混用，逃生门可达（issue #994）', async () => {
+    wireInvokeSeam({
+      overrides: {
+        get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
+        unlock_encryption: () =>
+          Promise.reject({
+            kind: 'Invalid',
+            message: '数据库结构异常，可从备份恢复或重置',
+            code: 'boot.schema-drift',
+          }),
+      },
+    })
+    const { probe, locked } = useEncryptionGate()
+    const probePromise = probe()
+    const wrapper = mount(UnlockScreen)
+    await probePromise
+    await flushPromises()
+
+    await wrapper.find('input').setValue('口令')
+    await findButton(wrapper, '解锁')!.trigger('click')
+    await flushPromises()
+    const html = wrapper.html()
+    // 漂移库打得开且数据完好：专属文案，不走口令错误合并口径、不混用损坏文案
+    expect(html).toContain('数据库结构异常，可从备份恢复或重置')
+    expect(html).not.toContain('口令错误或文件损坏')
+    expect(html).not.toContain('数据库文件损坏，无法通过完整性检查')
+    expect(locked.value).toBe(true)
+    // 双逃生门保持可达（忘记口令重置 / 从备份文件恢复）
+    expect(findButton(wrapper, '从备份文件恢复')).toBeTruthy()
+    expect(findButton(wrapper, '忘记口令')).toBeTruthy()
+  })
+
   it('解锁时补做了搬迁：成功提示后触发应用重启（Restore 同型重启语义）', async () => {
     vi.useFakeTimers()
     try {

@@ -79,8 +79,8 @@ fn non_aligned_truncated_encrypted_shape_is_unreadable() {
 fn gate_flips_and_is_idempotent() {
     let gate = BootFailureGate::new();
     assert!(!gate.is_failed());
-    gate.set_failed();
-    gate.set_failed();
+    gate.set_failed(None);
+    gate.set_failed(None);
     assert!(gate.is_failed());
     gate.clear();
     assert!(!gate.is_failed());
@@ -90,8 +90,23 @@ fn gate_flips_and_is_idempotent() {
 fn clone_shares_the_same_flag() {
     let gate = BootFailureGate::new();
     let cloned = gate.clone();
-    cloned.set_failed();
+    cloned.set_failed(None);
     assert!(gate.is_failed());
+}
+
+#[test]
+fn gate_records_failure_code_and_falls_back_when_uncoded() {
+    // 失败门记录引导失败错误的稳定码（issue #994 / ADR-0100）：漂移码原样
+    // 上报，前端失败恢复屏按码区分「结构异常」与「库不可读」的文案与动作排序。
+    let gate = BootFailureGate::new();
+    gate.set_failed(Some(crate::db::schema_guard::BOOT_SCHEMA_DRIFT));
+    assert!(gate.is_failed());
+    assert_eq!(gate.failure_code(), "boot.schema-drift");
+    gate.clear();
+    assert!(!gate.is_failed());
+    // 非码化失败（无码构造/极端时序）：回退既有单一码，#601 wire 行为不回退。
+    gate.set_failed(None);
+    assert_eq!(gate.failure_code(), super::BOOT_DB_UNREADABLE);
 }
 
 #[test]

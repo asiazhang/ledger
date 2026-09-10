@@ -177,7 +177,10 @@ pub(crate) fn boot_sequence(app: &AppHandle) -> Result<BootPhase> {
 /// 失败兑底），重引导路径留痕后保持失败态。
 pub(crate) fn recover_boot_failure(app: &AppHandle, error: &AppError) -> Result<()> {
     tracing::error!(error = %error, "数据库初始化失败，登记启动失败状态，交由前端失败恢复屏接管");
-    app.state::<BootFailureGate>().set_failed();
+    // 失败码随门记录（issue #994 / ADR-0100）：漂移等码化失败原样上报，前端
+    // 失败恢复屏按码区分「结构异常」与「库不可读」的文案与动作排序；非码化
+    // 失败传 None，读取侧回退既有单一码。
+    app.state::<BootFailureGate>().set_failed(error.code());
     placeholder_db(app)
 }
 
@@ -203,7 +206,8 @@ pub struct BootStatus {
     /// 启动相位（闭集）：`ready`（明文库/已解锁，挂主界面）、`locked`
     /// （密文库等待解锁，挂解锁屏）、`failed`（启动失败，挂失败恢复屏）。
     pub phase: &'static str,
-    /// 失败时的稳定错误码（前端按码本地化失败恢复屏文案）；非 failed 为 `None`。
+    /// 失败时的稳定错误码（失败门记录的引导失败错误码原样上报，issue #994；
+    /// 非码化失败回退 `boot.db-unreadable`）；非 failed 为 `None`。
     pub error_code: Option<String>,
 }
 
@@ -213,7 +217,7 @@ pub struct BootStatus {
 /// 每次探测即「WebView 已加载」的日志信号（issue #644）：原位重引导后
 /// 本日志出现 = 前端重载成功；缺失 = WebView 未加载（白屏根因二的可观测面）。
 #[tauri::command]
-pub fn get_boot_status(app: AppHandle) -> Result<BootStatus> {
+pub fn get_boot_status<R: Runtime>(app: AppHandle<R>) -> Result<BootStatus> {
     let failed = app.state::<BootFailureGate>().is_failed();
     let locked = app.state::<EncryptionGate>().is_locked();
     // 相位词表单一来源（审查：与 [`BootPhase::as_str`] 共用闭集，不再平行手拼）。
@@ -226,7 +230,8 @@ pub fn get_boot_status(app: AppHandle) -> Result<BootStatus> {
     };
     let status = BootStatus {
         phase: phase.as_str(),
-        error_code: (phase == BootPhase::Failed).then(|| BOOT_DB_UNREADABLE.to_string()),
+        error_code: (phase == BootPhase::Failed)
+            .then(|| app.state::<BootFailureGate>().failure_code()),
     };
     tracing::info!(phase = status.phase, "前端启动探测完成（WebView 已加载）");
     Ok(status)

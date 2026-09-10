@@ -16,6 +16,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::Result;
@@ -51,6 +52,9 @@ pub fn gate_rejection_error() -> crate::error::AppError {
 #[derive(Clone)]
 pub struct BootFailureGate {
     failed: Arc<AtomicBool>,
+    /// 引导失败错误的稳定错误码（issue #994 / ADR-0100）：失败登记时记录，
+    /// `get_boot_status` 原样上报，前端失败恢复屏按码区分文案与动作排序。
+    code: Arc<RwLock<Option<String>>>,
 }
 
 impl BootFailureGate {
@@ -58,6 +62,7 @@ impl BootFailureGate {
     pub fn new() -> Self {
         Self {
             failed: Arc::new(AtomicBool::new(false)),
+            code: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -66,14 +71,28 @@ impl BootFailureGate {
         self.failed.load(Ordering::SeqCst)
     }
 
-    /// 登记启动失败（启动编排失败路径调用；幂等）。
-    pub fn set_failed(&self) {
+    /// 登记启动失败（启动编排失败路径调用；幂等）。`code` 是失败错误的稳定
+    /// 错误码（码化错误取 `AppError::code`，如漂移的 [`super::schema_guard::BOOT_SCHEMA_DRIFT`]；
+    /// 非码化失败传 `None`，读取侧回退 [`BOOT_DB_UNREADABLE`] 既有单一码）。
+    pub fn set_failed(&self, code: Option<&str>) {
         self.failed.store(true, Ordering::SeqCst);
+        *self.code.write().unwrap_or_else(|e| e.into_inner()) = code.map(str::to_string);
+    }
+
+    /// 失败时的稳定错误码：门内记录的原样返回；未记录（非码化失败/极端时序）
+    /// 回退 [`BOOT_DB_UNREADABLE`]——#601 时代的单一码呈现不回退。
+    pub fn failure_code(&self) -> String {
+        self.code
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .unwrap_or_else(|| BOOT_DB_UNREADABLE.to_string())
     }
 
     /// 清除启动失败（重置成功、业务可用起点已就位时调用）。
     pub fn clear(&self) {
         self.failed.store(false, Ordering::SeqCst);
+        *self.code.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
