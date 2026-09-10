@@ -47,6 +47,19 @@ GitHub 的 issue 和 PR 共享编号空间，单独的 `#42` 可能是任一类�
 - **阻塞关系必须用 GitHub 原生 blocked-by**（不要只写在正文里）：存在先后依赖时，用下文 Wayfinding 操作的「阻塞关系」命令添加原生依赖。原生依赖可被 `/wayfinder` 与查询自动识别（`issue_dependencies_summary.blocked_by`），正文文本 `Blocked by: #<n>` 只在原生依赖功能不可用（API 返回 404/501）时作为回退。
 - **检查既有依赖**：`gh api graphql -f query='query{repository(owner:"<owner>",name:"<repo>"){issue(number:<n>){blockedBy(first:50){nodes{number title}} blocking(first:50){nodes{number title}}}}}' `。
 
+## 接线型 ticket 的验收判据（删除即变红）
+
+**接线型 ticket** 指核心价值是「接线 / 时机 / 入口」的 ticket——某调用必须在某时机出现在某位置（如启动拉起后台服务、写路径挂触发钩子、平台门分流、校验接进启动路径）。这类 ticket 的验收判据**必须**含一条可机械验证的负向条目（照 #959 的写法）：
+
+> 删除 `<接线调用点>` → 至少一条测试变红。
+> 断言对准用户可观察结果（通道上有段 / 时刻落库 / 状态变更），不对准线程或函数调用形状（ADR-0087 断言强度）。
+
+只写正向行为拦不住「接线被删掉」的回归：删掉一个调用，所有正向断言照常通过（#863 会话的两个漏接线缺陷均属此类，现有测试套件零拦截）。
+
+- **何时应用**：拆票写验收判据（如 `/to-tickets` 产出）与 triage 补判据时核对；给既有 ticket 回填同样适用。
+- **只对接线型要求**：领域逻辑型 ticket 的正向断言已足够，不加此条，避免形式主义。
+- **替代形态**：接线在本机 CI 不构建的分支内（如 `#[cfg(mobile)]`）时「删除即变红」不可行，允许以**源码扫描守门**替代（文本级核对，先例：#959 分平台门、#961 成对调用文本守门）。
+
 ## 开发认领（开发中标记）
 
 issue 进入实际开发（`/implement` 开工）时必须先认领，使「open + 有 assignee」成为「开发中」的唯一标记；用户随时可用 `gh issue list --state open --assignee @me` 查看开发中的 issue。
