@@ -423,6 +423,7 @@ fn deliver_unreplayable_op_blocking(base_url: &str) {
                 date: "2026-02-01".into(),
             },
             investment: None,
+            convert: None,
         }),
     };
     let payload = vec![op];

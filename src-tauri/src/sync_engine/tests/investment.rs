@@ -195,6 +195,13 @@ fn buy_delete_replay_cleans_lot() {
     assert_eq!(deleted(&conn_b), 1, "删除重放后同软删");
     assert_eq!(read_lot(&conn_a, &buy_id), None, "买入删除清理持仓批次");
     assert_eq!(read_lot(&conn_b, &buy_id), None, "删除重放同样清理批次");
+    // 删除重放不产出本地 op（ADR-0091：重放不得追加本地 op）：两端 op 日志全等
+    // ——否则重放端会再发布一条 Delete，对端重放命中已删行即挂起（issue #980）。
+    assert_eq!(
+        read_ops(&conn_a).unwrap(),
+        read_ops(&conn_b).unwrap(),
+        "删除重放不产 op，两端日志全等"
+    );
 }
 
 #[test]

@@ -40,7 +40,9 @@
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
-use super::command::{InvestmentCommandFields, TransactionCommand, record_local};
+use super::command::{
+    ConvertCommandFields, InvestmentCommandFields, TransactionCommand, record_local,
+};
 use super::model::{NormalizedTransaction, TransactionInput};
 use crate::accounts::balance::{affected_accounts, refresh_account_balances};
 use crate::db::now_iso;
@@ -82,6 +84,12 @@ const CONSUMED_BY_CONVERT_CANNOT_UPDATE: &str = "该交易的份额已被后续�
 const CONSUMED_BY_CONVERT_CANNOT_UPDATE_CODE: &str = "trade.consumed-by-convert-update";
 const CONSUMED_BY_CONVERT_CANNOT_DELETE: &str = "该交易的份额已被后续转换消耗，无法删除";
 const CONSUMED_BY_CONVERT_CANNOT_DELETE_CODE: &str = "trade.consumed-by-convert-delete";
+
+/// 进/出 convert 的 kind 变更拒绝文案与错误码（issue #979 / ADR-0099 决策 5）：
+/// 本地修改与重放修改共用同源单点（同一入口同一文案，ADR-0033 决策 #4）。
+const CONVERT_KIND_CHANGE_FORBIDDEN_CODE: &str = "trade.convert-kind-change-forbidden";
+const CONVERT_KIND_CHANGE_FORBIDDEN: &str =
+    "不可将交易类型改为或改出「转换」：转换的纠错只有「删除后重建」一条路";
 
 /// 修改入口的持仓副作用守卫文案组（单点定义，修改本体与重放修改共享）。
 const UPDATE_GUARDS: investment::GuardMessages<'static> = investment::GuardMessages {
@@ -235,8 +243,8 @@ fn update_within_transaction(
     // revert/plan 协议（convert → convert 由 [investment::revert] 的转换清理承载）。
     if (old_kind == TransactionKind::Convert) != (input.kind == TransactionKind::Convert) {
         return Err(AppError::coded(
-            "trade.convert-kind-change-forbidden",
-            "不可将交易类型改为或改出「转换」：转换的纠错只有「删除后重建」一条路",
+            CONVERT_KIND_CHANGE_FORBIDDEN_CODE,
+            CONVERT_KIND_CHANGE_FORBIDDEN,
         ));
     }
 
@@ -277,12 +285,26 @@ fn update_within_transaction(
 /// 不存在的 id 返回码化 NotFound（HTTP 侧映射 404）。事务规则见
 /// [`ensure_transaction`]。IPC 与 HTTP 端点共用本函数。
 pub fn delete(conn: &Connection, id: &str) -> Result<()> {
-    ensure_transaction(conn, || delete_within_transaction(conn, id))
+    ensure_transaction(conn, || {
+        delete_within_transaction(conn, id, OpEmission::Local)
+    })
 }
 
-/// 删除协议本体：`release_for_delete（sell 回补 / buy 级联）→ 级联软删在用 sell →
-/// 主行软删`（无事务语义，由 [`ensure_transaction`] 包裹）。
-fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
+/// 删除路径的 op 产出开关（issue #980 修复）：本地删除逐行留痕（主行与级联行
+/// 各一条 delete op，本机流完整）；外来 delete op 重放只落数据、不产 op——
+/// ADR-0091 决策 2「重放不得追加本地 op」，且级联行的 op 由源端产出、随同一流
+/// 以更早时钟先行到达，重放再产一份会让对端收到命中已删行的重复删除而挂起。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpEmission {
+    /// 本机删除：每条被软删行（含级联行）各产一条 delete op。
+    Local,
+    /// 外来 op 重放：只落数据、不产 op。
+    Replay,
+}
+
+/// 删除协议本体：`release_for_delete（sell 回补 / buy 与 convert 级联）→ 级联软删
+/// 在用 sell → 主行软删`（无事务语义，由 [`ensure_transaction`] 包裹）。
+fn delete_within_transaction(conn: &Connection, id: &str, emission: OpEmission) -> Result<()> {
     let (kind,): (TransactionKind,) = conn
         .query_row(
             "SELECT kind FROM transactions WHERE id=?1 AND is_deleted=0",
@@ -313,19 +335,20 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
     // 级联软删：被消化的在用 sell 逐笔软删（各自余额刷新与 delete op），先于主行
     // 落 op——重放端按 op 顺序先删 sell 再删 buy，级联与显式 op 不打架。
     for sell_id in &cascaded_sell_ids {
-        soft_delete_transaction_row(conn, sell_id)?;
+        soft_delete_transaction_row(conn, sell_id, emission)?;
     }
     // 搜索（V018 两段式，issue #492）：候选流带 is_deleted 口径过滤，软删即刻
     // 生效，删除的交易不再可搜（拼音列非本路径维护字段，无需处理）。
-    soft_delete_transaction_row(conn, id)
+    soft_delete_transaction_row(conn, id, emission)
 }
 
 /// 软删单笔交易行 + 余额刷新 + delete op（删除编排的行级步骤，主删与级联删共用）。
 ///
 /// 行读取（`is_deleted=0` 存在性 + 账户引用对）→ 软删 UPDATE → 受影响账户余额重算
-/// （issue #491 / ADR-0067）→ delete op 追加（issue #855 / ADR-0091）。级联删除的
-/// 被级联行亦各自留痕：同步端按同一 delete 协议逐笔收敛，无需感知级联语义。
-fn soft_delete_transaction_row(conn: &Connection, id: &str) -> Result<()> {
+/// （issue #491 / ADR-0067）→ 本地删除时追加 delete op（issue #855 / ADR-0091）。
+/// 级联删除的被级联行在**源端**亦各自留痕：同步端按同一 delete 协议逐笔收敛，
+/// 无需感知级联语义；重放端不产 op（见 [`OpEmission`]）。
+fn soft_delete_transaction_row(conn: &Connection, id: &str, emission: OpEmission) -> Result<()> {
     let (account_id, to_account_id, funding_account_id): (String, Option<String>, Option<String>) = conn
         .query_row(
             "SELECT account_id, to_account_id, funding_account_id FROM transactions WHERE id=?1 AND is_deleted=0",
@@ -352,9 +375,12 @@ fn soft_delete_transaction_row(conn: &Connection, id: &str) -> Result<()> {
         None,
     );
     refresh_account_balances(conn, &affected)?;
-    // op 产出接缝（issue #855 / ADR-0091）：删除成功 → delete op（实体 id）
-    // 追加；随同一事务提交/回滚。
-    record_local(conn, TransactionCommand::Delete { id: id.to_string() })
+    // op 产出接缝（issue #855 / ADR-0091）：**仅本地删除**追加 delete op（实体 id）；
+    // 随同一事务提交/回滚（失败不残留 op）。重放不产 op（ADR-0091 决策 2）。
+    if emission == OpEmission::Local {
+        record_local(conn, TransactionCommand::Delete { id: id.to_string() })?;
+    }
+    Ok(())
 }
 
 /// 校验并归一化一笔交易输入为计划（交易行不落库）。
@@ -543,11 +569,18 @@ fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
 /// 编排计划 → 命令载荷部件（产出侧桥）：归一化行 + 投资 kind 的语义字段与
 /// 派生结果（买入每份成本随行，源端折算，ADR-0091 决策 3）；普通 kind 恒 None。
 ///
-/// 转换的语义字段（ConvertCommandFields）随同步票（issue #980）落地：在此之前
-/// 转换 op 只携归一化行，重放端按 kind 防御臂显式拒绝（挂起，不静默落错账）。
-fn command_parts(plan: &Plan) -> (NormalizedTransaction, Option<InvestmentCommandFields>) {
+/// 转换的语义字段（[`ConvertCommandFields`]）与源端算定的结转成本随同步票
+/// （issue #980 / ADR-0099 决策 6）携带：重放端据以本地重建 FIFO 快照并比对
+/// 结转成本合计，不依赖源端的批次行 id。
+fn command_parts(
+    plan: &Plan,
+) -> (
+    NormalizedTransaction,
+    Option<InvestmentCommandFields>,
+    Option<ConvertCommandFields>,
+) {
     match plan {
-        Plan::Common(r) => (NormalizedTransaction::from(r), None),
+        Plan::Common(r) => (NormalizedTransaction::from(r), None, None),
         Plan::Investment(p) => {
             let fields = match p {
                 investment::Plan::Buy(b) => Some(InvestmentCommandFields {
@@ -564,30 +597,47 @@ fn command_parts(plan: &Plan) -> (NormalizedTransaction, Option<InvestmentComman
                     fee_cents: s.fee_cents,
                     cost_per_unit_cents: None,
                 }),
+                // 转换走独立的可选成员（investment 恒 None）：两腿字段与 buy/sell
+                // 的语义字段不同构，不塞进同一结构。
                 investment::Plan::Convert(_) => None,
             };
-            (p.normalized().clone(), fields)
+            let convert = match p {
+                investment::Plan::Convert(c) => Some(ConvertCommandFields {
+                    instrument_id: c.instrument_id.clone(),
+                    quantity: c.quantity,
+                    to_instrument_id: c.to_instrument_id.clone(),
+                    to_quantity: c.to_quantity,
+                    out_amount_cents: c.out_amount_cents,
+                    in_amount_cents: c.in_amount_cents,
+                    fee_cents: c.fee_cents,
+                    carried_cost_cents: c.carried_cost_cents(),
+                }),
+                investment::Plan::Buy(_) | investment::Plan::Sell(_) => None,
+            };
+            (p.normalized().clone(), fields, convert)
         }
     }
 }
 
 /// 创建命令构造（行为层创建协议专用）。
 fn create_command(id: &str, plan: &Plan) -> TransactionCommand {
-    let (row, investment) = command_parts(plan);
+    let (row, investment, convert) = command_parts(plan);
     TransactionCommand::Create {
         id: id.to_string(),
         row,
         investment,
+        convert,
     }
 }
 
 /// 修改命令构造（行为层修改协议专用）。
 fn update_command(id: &str, plan: &Plan) -> TransactionCommand {
-    let (row, investment) = command_parts(plan);
+    let (row, investment, convert) = command_parts(plan);
     TransactionCommand::Update {
         id: id.to_string(),
         row,
         investment,
+        convert,
     }
 }
 
@@ -606,34 +656,42 @@ fn update_command(id: &str, plan: &Plan) -> TransactionCommand {
 /// 重放形态计划重建（[`investment::replay_plan`]）装配后走同一 `apply`——
 /// 依赖在位校验（标的、投资账户、可卖数量）以与本地写入同码的码化错误上抛，
 /// 由同步引擎挂起进队列（issue #856），依赖方 op 补齐后重投递自然重试；
-/// 买入每份成本随命令携带、不重算。删除重放支持全部 kind（按行现状执行
-/// 与本地删除同一协议，含 sell 回补 / buy 级联与持仓清理，issue #940）。
+/// 买入每份成本随命令携带、不重算。转换（convert）的重放同理（issue #980）：
+/// 逐批次消耗按本地 FIFO 快照重建（[`investment::replay_convert_plan`]），
+/// 源端算定的结转成本作权威比对基准。删除重放支持全部 kind（按行现状执行
+/// 与本地删除同一协议，含 sell 回补 / buy 与 convert 级联与持仓清理，
+/// issue #940 / #979）。
 pub(crate) fn replay_command(conn: &Connection, command: &TransactionCommand) -> Result<()> {
     match command {
         TransactionCommand::Create {
             id,
             row,
             investment,
-        } => replay_create(conn, id, row, investment.as_ref()),
+            convert,
+        } => replay_create(conn, id, row, investment.as_ref(), convert.as_ref()),
         TransactionCommand::Update {
             id,
             row,
             investment,
-        } => replay_update(conn, id, row, investment.as_ref()),
-        TransactionCommand::Delete { id } => delete_within_transaction(conn, id),
+            convert,
+        } => replay_update(conn, id, row, investment.as_ref(), convert.as_ref()),
+        TransactionCommand::Delete { id } => {
+            delete_within_transaction(conn, id, OpEmission::Replay)
+        }
     }
 }
 
-/// 重放创建：普通 kind 原样落库（含余额缓存重算）；投资 kind 经重放形态计划
-/// 重建装配副作用后落库；dividend / split 与本地写入同码拒绝（kind-unsupported
-/// ——本地 plan 从不产出这两种命令，此处是伪造/漂移载荷的防御臂，防绕过
-/// 「暂不支持」守卫直落交易行）。落地前校验账户引用存活（issue #856：
-/// 「往已删账户记账」码化拒绝，引擎挂起待裁决，不自动复活已删账户）。
+/// 重放创建：普通 kind 原样落库（含余额缓存重算）；投资 kind（buy/sell/convert）
+/// 经重放形态计划重建装配副作用后落库；dividend / split 与本地写入同码拒绝
+/// （kind-unsupported——本地 plan 从不产出这两种命令，此处是伪造/漂移载荷的
+/// 防御臂，防绕过「暂不支持」守卫直落交易行）。落地前校验账户引用存活
+/// （issue #856：「往已删账户记账」码化拒绝，引擎挂起待裁决，不自动复活已删账户）。
 fn replay_create(
     conn: &Connection,
     id: &str,
     row: &NormalizedTransaction,
     investment: Option<&InvestmentCommandFields>,
+    convert: Option<&ConvertCommandFields>,
 ) -> Result<()> {
     let norm_row = writer::NormalizedRow::try_from(row)?;
     // 伪造/漂移载荷的防御臂先于依赖校验：dividend / split 与本地写入同码拒绝
@@ -643,11 +701,6 @@ fn replay_create(
         TransactionKind::Dividend | TransactionKind::Split
     ) {
         return Err(kind_unsupported(norm_row.kind));
-    }
-    // 转换重放（ConvertCommandFields 随命令携带）随同步票（issue #980）落地；
-    // 在此之前显式拒绝、不落半套副作用（引擎挂起待升级/补齐）。
-    if norm_row.kind == TransactionKind::Convert {
-        return Err(kind_replay_unsupported(norm_row.kind));
     }
     writer::validate_accounts_alive(
         conn,
@@ -666,20 +719,29 @@ fn replay_create(
             writer::insert_row_with_id(conn, id, &norm_row)?;
             investment::apply(conn, id, &plan)
         }
+        TransactionKind::Convert => {
+            // 旧版本设备产出的转换 op 不携转换字段（issue #980 前）：缺失即显式
+            // 失败挂起（kind 防御臂，与 schema 版本硬检查双保险），不落半套副作用。
+            let fields = convert_fields(convert)?;
+            let plan = investment::replay_convert_plan(conn, row, fields)?;
+            writer::insert_row_with_id(conn, id, &norm_row)?;
+            investment::apply(conn, id, &plan)
+        }
         TransactionKind::Dividend | TransactionKind::Split => Err(kind_unsupported(norm_row.kind)),
-        TransactionKind::Convert => Err(kind_replay_unsupported(norm_row.kind)),
     }
 }
 
 /// 重放修改：存在性守卫与本地修改同款（不存在或已软删返回码化 NotFound）；
 /// 先按旧 kind 回退副作用（含 buy 部分卖出守卫，同码同文案），再按新 kind
 /// 装配落库——与本地修改协议同序（`revert → 校验 → 落库 → apply`）；
-/// dividend / split 目标与本地修改同码拒绝（防御臂同 [`replay_create`]）。
+/// dividend / split 目标与本地修改同码拒绝（防御臂同 [`replay_create`]），
+/// 进/出 convert 的 kind 变更与本地修改同码拒绝（ADR-0099 决策 5）。
 fn replay_update(
     conn: &Connection,
     id: &str,
     row: &NormalizedTransaction,
     investment: Option<&InvestmentCommandFields>,
+    convert: Option<&ConvertCommandFields>,
 ) -> Result<()> {
     let (old_kind,): (TransactionKind,) = conn
         .query_row(
@@ -695,8 +757,13 @@ fn replay_update(
     if matches!(new_kind, TransactionKind::Dividend | TransactionKind::Split) {
         return Err(kind_unsupported(new_kind));
     }
-    if new_kind == TransactionKind::Convert {
-        return Err(kind_replay_unsupported(new_kind));
+    // 进/出 convert 的 kind 变更与本地修改同码拒绝（ADR-0099 决策 5）：转换的
+    // 纠错只有「软删 + 重建」一条窄路，重放端不得由伪造 op 绕过。
+    if (old_kind == TransactionKind::Convert) != (new_kind == TransactionKind::Convert) {
+        return Err(AppError::coded(
+            CONVERT_KIND_CHANGE_FORBIDDEN_CODE,
+            CONVERT_KIND_CHANGE_FORBIDDEN,
+        ));
     }
     // 先按旧 kind 回退持仓/卖出关联副作用（普通 kind 为 no-op），再落新行。
     investment::revert(conn, id, old_kind, &UPDATE_GUARDS)?;
@@ -716,6 +783,12 @@ fn replay_update(
             writer::update_row(conn, id, &norm_row)?;
             investment::apply(conn, id, &plan)
         }
+        TransactionKind::Convert => {
+            let fields = convert_fields(convert)?;
+            let plan = investment::replay_convert_plan(conn, row, fields)?;
+            writer::update_row(conn, id, &norm_row)?;
+            investment::apply(conn, id, &plan)
+        }
         TransactionKind::Income
         | TransactionKind::Expense
         | TransactionKind::Transfer
@@ -723,7 +796,6 @@ fn replay_update(
         // 入口已先行拒绝（dividend / split 同码防御臂）；穷尽分支不引入 panic
         // 构造（ADR-0060），以同码错误表达不可达态。
         TransactionKind::Dividend | TransactionKind::Split => Err(kind_unsupported(new_kind)),
-        TransactionKind::Convert => Err(kind_replay_unsupported(new_kind)),
     }
 }
 
@@ -735,22 +807,18 @@ fn investment_fields(
     investment.ok_or_else(|| AppError::Invalid("投资命令缺少投资字段（程序缺陷）".into()))
 }
 
+/// 转换命令字段解包（防御臂）：convert 命令必携转换字段；缺失属旧版本设备载荷
+/// 或程序缺陷（本地 plan 自本票起恒产出），fail loud 由引擎挂起承接（ADR-0099
+/// 决策 6 的 kind 防御臂——旧端 op 与 schema 版本硬检查双保险）。
+fn convert_fields(convert: Option<&ConvertCommandFields>) -> Result<&ConvertCommandFields> {
+    convert.ok_or_else(|| AppError::Invalid("转换命令缺少转换字段（旧版本载荷或程序缺陷）".into()))
+}
+
 /// dividend / split 未实现（与本地 plan 同码同文案，防御臂单点复用）。
 fn kind_unsupported(kind: TransactionKind) -> AppError {
     AppError::codedp(
         "transaction.kind-unsupported",
         format!("交易类型 {kind} 暂不支持（MVP 未实现）"),
-        &[&kind.to_string()],
-    )
-}
-
-/// 转换的同步重放尚未接入（`ConvertCommandFields` 与重放臂随同步票落地）：
-/// 转出/更新 op 在此显式码化拒绝（不泄露内部票号，前端按码取 i18n 模板），
-/// 由引擎挂起，不静默落半套持仓副作用。
-fn kind_replay_unsupported(kind: TransactionKind) -> AppError {
-    AppError::codedp(
-        "transaction.replay-unsupported",
-        format!("交易类型 {kind} 的同步重放尚未接入"),
         &[&kind.to_string()],
     )
 }

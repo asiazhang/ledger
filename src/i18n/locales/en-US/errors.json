@@ -87,7 +87,6 @@
     "category-unsupported": "transaction type {0} cannot carry a category",
     "merchant-id-and-name-conflict": "merchant_id and merchant_name cannot both be provided",
     "kind-unsupported": "transaction type {0} is not supported yet (not implemented in MVP)",
-    "replay-unsupported": "sync replay for transaction type {0} is not wired yet",
     "policy-unsupported": "Transaction kind {0} cannot carry a policy",
     "funding-unsupported": "transaction type {0} cannot carry a funding account"
   },

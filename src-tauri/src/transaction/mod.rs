@@ -53,7 +53,7 @@ pub use behavior::{
 /// 同步重放与嵌套感知事务原语（crate 内消费：`sync_engine::apply_ops` 经本接缝
 /// 执行外来命令并复用同一事务原语，ADR-0033）。
 pub(crate) use behavior::{ensure_transaction, replay_command};
-pub use command::{InvestmentCommandFields, TransactionCommand};
+pub use command::{ConvertCommandFields, InvestmentCommandFields, TransactionCommand};
 pub use funding::validate_funding_account;
 pub use read::{
     get_transaction, get_transaction_internal, list_transactions, list_transactions_internal,
