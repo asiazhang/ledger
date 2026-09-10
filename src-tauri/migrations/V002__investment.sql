@@ -19,6 +19,16 @@
 -- 创建美股市场标的将被 CHECK 拒绝，不提供自动修复（2026-09-06 裁定：1.0 前
 -- 就地修改历史迁移可接受 BREAKING）——两级 BREAKING 标记之一，另一级见
 -- CHANGELOG「Unreleased」BREAKING 条目。
+--
+-- 【就地修改注记】security_transactions 就地扩集（issue #977 / 父 spec #973 / ADR-0099）：
+-- action 检查约束闭集由 buy/sell/dividend/split 扩至含 'convert'，
+-- 并新增 4 个可空转换列——to_instrument_id（转入标的，命名对齐 transfer 的
+-- to_account_id 惯例）/ to_quantity（转入份额）/ out_amount_cents（转出金额，分）
+-- / in_amount_cents（转入金额，分）；同批新增转出消耗表 security_lot_conversions
+-- （见下文第 5 条）。全新安装生效；**存量库不重跑本迁移**，其上写入
+-- kind='convert' 被 V001 旧闭集拒绝、且缺这 4 列与新表——存量库须重建库
+-- （scripts/db-reset.sh）才能获得完整 convert schema，不提供自动升级
+-- （两级 BREAKING 标记之一，另一级见 CHANGELOG「Unreleased」BREAKING 条目）。
 
 -- 1. instruments（金融工具字典表）
 --    - 统一维护股票、基金、债券、ETF 等金融工具的基础信息。
@@ -45,13 +55,23 @@ CREATE TABLE IF NOT EXISTS instruments (
 --    - 通过 instrument_id 关联 instruments，避免 symbol / instrument_type 重复录入和潜在不一致。
 --    - 现金部分仍由 transactions 表表达，账户余额计算无需额外 JOIN。
 --    - 分红/拆股等无资金变动时，transactions.amount_cents 为 0。
+--    - 基金转换（convert）在同一行同时表达转出腿与转入腿：instrument_id / quantity
+--      为转出标的与转出份额，to_instrument_id / to_quantity 为转入腿，
+--      out_amount_cents / in_amount_cents 为两侧金额（金额权威、price_cents 反算，
+--      与场外基金 buy/sell 同款）；转入批次成本按转出批次原始成本结转（不按转入日
+--      市值重置），逐批次依据落 security_lot_conversions（下文第 5 条）。
+--      4 个新增列不设 kind/action 关联约束：形态准入由行为层收口（同 V013/V023 纪律）。
 CREATE TABLE IF NOT EXISTS security_transactions (
     transaction_id   TEXT PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,  -- 关联交易 ID
-    instrument_id    TEXT NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,  -- 关联金融工具，通过 instruments 取 symbol / type / currency
-    action           TEXT NOT NULL CHECK(action IN ('buy','sell','dividend','split')),  -- 交易动作：买入/卖出/分红/拆股
-    quantity         REAL,                                -- 数量变化（拆股/送股/分红可用 NULL）
-    price_cents      INTEGER,                             -- 成交单价（万分之一元，刻度见文件头就地修改注记），分红/拆股可为 NULL
-    fee_cents        INTEGER NOT NULL DEFAULT 0           -- 手续费/佣金（分，金额列仍是整数分）
+    instrument_id    TEXT NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,  -- 关联金融工具，通过 instruments 取 symbol / type / currency；convert 为转出标的
+    action           TEXT NOT NULL CHECK(action IN ('buy','sell','dividend','split','convert')),  -- 交易动作：买入/卖出/分红/拆股/基金转换
+    quantity         REAL,                                -- 数量变化（convert 为转出份额；拆股/送股/分红可用 NULL）
+    price_cents      INTEGER,                             -- 成交单价（万分之一元，刻度见文件头就地修改注记），分红/拆股可为 NULL；convert 为金额反算的展示单价
+    fee_cents        INTEGER NOT NULL DEFAULT 0,          -- 手续费/佣金（分，金额列仍是整数分）；convert 如实记录，不进支出口径、不摊入持仓成本
+    to_instrument_id TEXT REFERENCES instruments(id) ON DELETE RESTRICT,  -- 转入标的（仅 convert；转出标的恒为 instrument_id），转入标的硬删时拒绝而非静默悬空
+    to_quantity      REAL,                                -- 转入份额（仅 convert）
+    out_amount_cents INTEGER,                             -- 转出金额（仅 convert；分）
+    in_amount_cents  INTEGER                              -- 转入金额（仅 convert；分）
 );
 
 -- 3. security_lots（持仓批次表）
@@ -89,7 +109,25 @@ CREATE TABLE IF NOT EXISTS security_lot_sales (
     created_at          TEXT NOT NULL                      -- 创建时间
 );
 
--- 5. market_prices（市场价格表）
+-- 5. security_lot_conversions（转换消耗表，issue #977 / 父 spec #973）
+--    - 记录一笔 convert 转出腿消耗了哪些 lot、各转出多少份额、按该批次单位成本
+--      结转多少金额；是修改回退与删除精确回补的唯一依据（转出时的 FIFO 状态在
+--      后续交易发生后不可重建），也是分批结转成本的审计载体。
+--    - 不复用 security_lot_sales：转换零盈亏，假匹配会污染已实现盈亏明细。
+--    - 归属父行存续（扩展行语义，同 security_lot_sales）：交易行删除级联消失；
+--      批次硬删（随其买入交易级联删除）时本行级联消失——两条级联都无独立存续意义。
+--    - 币种不冗余落列：结转成本随被消耗批次币种，审计经 lot_id 关联 security_lots 取用。
+CREATE TABLE IF NOT EXISTS security_lot_conversions (
+    id                  TEXT PRIMARY KEY,  -- 消耗记录全局唯一 ID（UUID v7）
+    transaction_id      TEXT NOT NULL REFERENCES security_transactions(transaction_id) ON DELETE CASCADE,  -- 关联 convert 交易
+    lot_id              TEXT NOT NULL REFERENCES security_lots(id) ON DELETE CASCADE,  -- 关联被消耗的转出批次
+    quantity            REAL NOT NULL,                     -- 该批次被消耗的数量（转出份额）
+    cost_per_unit_cents INTEGER NOT NULL,                  -- 消耗时该批次单位成本（万分之一元，刻度见文件头就地修改注记）
+    cost_cents          INTEGER NOT NULL,                  -- 该批次结转成本（分）= 数量 × 单位成本，单批闭合
+    created_at          TEXT NOT NULL                      -- 创建时间
+);
+
+-- 6. market_prices（市场价格表）
 --    - 每个 instrument 仅保留最新价格，用于计算持仓市值和未实现盈亏。
 --    - priced_at 记录该价格对应的行情日期，updated_at 记录写入时间。
 --    - nav_date 记录净值日期：场外基金现价 = 最新公布单位净值时携带（ADR-0038），
@@ -109,7 +147,7 @@ CREATE TABLE IF NOT EXISTS market_prices (
     UNIQUE(instrument_id)
 );
 
--- 6. v_holdings（当前持仓视图）
+-- 7. v_holdings（当前持仓视图）
 --    - 由 security_lots 实时聚合，不作为主数据存储，避免与交易流水不一致。
 --    - 关联最新 market_prices 与 exchange_rates，输出账户本位币市值和未实现盈亏。
 --    - 金额列（成本/市值/盈亏）仍为整数分：数量 × 单价（万分之一元）÷ 100 = 分；
@@ -193,5 +231,9 @@ CREATE INDEX IF NOT EXISTS idx_security_lots_active_covering
 CREATE INDEX IF NOT EXISTS idx_security_lots_buy_transaction ON security_lots(buy_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_security_lots_sync ON security_lots(updated_at, device_id);
 CREATE INDEX IF NOT EXISTS idx_security_lot_sales_lot ON security_lot_sales(lot_id);
+-- 两条索引均服务外键级联：按转换交易读消耗明细（回退 / 删除精确回补、结转成本审计）
+-- 与按批次读消耗（批次在用占用归因、批次级联删除）。SQLite 不为外键自动建索引。
+CREATE INDEX IF NOT EXISTS idx_security_lot_conversions_transaction ON security_lot_conversions(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_security_lot_conversions_lot ON security_lot_conversions(lot_id);
 CREATE INDEX IF NOT EXISTS idx_security_transactions_instrument ON security_transactions(instrument_id);
 CREATE INDEX IF NOT EXISTS idx_market_prices_instrument ON market_prices(instrument_id);

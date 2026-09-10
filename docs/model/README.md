@@ -26,7 +26,7 @@ Ledger 采用 SQLite 作为本地数据库，面向**多设备同步的离线优
 
 > 实体清单、字段与外键的逐列 ON DELETE 语义以 migration 为唯一事实来源（三类动作的分工见上方「外键约定」）；以下三图只呈现领域结构与关系基数。`v_holdings` 为视图（聚合 security_lots 计算市值与未实现盈亏），不作为实体；`app_settings` 为无外键的 KV 表，不进图，经领域命令读写（ADR-0017）；`sync_device` / `sync_ops` / `sync_parked_ops` / `sync_stream_positions` 为多端同步元数据（设备标识、逻辑时钟、操作日志、挂起队列、各来源流已应用位点），不进图（issue #855 / #856 / #857 / ADR-0091）。
 
-**配色图例**：币种（黄）、账户（蓝）、分类（绿）、商户（黄绿）、物品（棕）、交易（红）、预算（青）、汇率（紫）、实物资产与估值历史（赭石）为核心域；投资域用靛蓝（工具）/ 粉（证券扩展）/ 橙（持仓批次）/ 橄榄（卖出匹配）/ 天蓝（现价）/ 深天蓝（价格历史）/ 深紫（汇率历史）；计划域核心与期次为紫色系，三类扩展表为灰色。同一表在不同图中颜色一致。实体文字颜色跟随主题自适应，未手动覆盖。
+**配色图例**：币种（黄）、账户（蓝）、分类（绿）、商户（黄绿）、物品（棕）、交易（红）、预算（青）、汇率（紫）、实物资产与估值历史（赭石）为核心域；投资域用靛蓝（工具）/ 粉（证券扩展）/ 橙（持仓批次）/ 橄榄（卖出匹配）/ 松绿（转换消耗）/ 天蓝（现价）/ 深天蓝（价格历史）/ 深紫（汇率历史）；计划域核心与期次为紫色系，三类扩展表为灰色。同一表在不同图中颜色一致。实体文字颜色跟随主题自适应，未手动覆盖。
 
 ### 核心领域（币种 · 账户 · 分类 · 商户 · 物品 · 交易 · 预算 · 汇率 · 实物资产）
 
@@ -61,7 +61,7 @@ erDiagram
     style exchange_rates fill:#EFEAFB,stroke:#8A6FD8,stroke-width:2px
 ```
 
-### 投资领域（工具 · 证券交易 · 持仓批次 · 卖出匹配 · 行情 · 价格/汇率历史）
+### 投资领域（工具 · 证券交易 · 持仓批次 · 卖出匹配 · 转换消耗 · 行情 · 价格/汇率历史）
 
 ```mermaid
 erDiagram
@@ -81,6 +81,8 @@ erDiagram
     security_transactions ||--o{ security_lots : "buy_transaction_id"
     security_transactions ||--o{ security_lot_sales : "sell_transaction_id"
     security_lots ||--o{ security_lot_sales : "lot_id"
+    security_transactions ||--o{ security_lot_conversions : "transaction_id"
+    security_lots ||--o{ security_lot_conversions : "lot_id"
 
     style currencies fill:#FFF6E0,stroke:#E8A83C,stroke-width:2px
     style accounts fill:#E7F0FF,stroke:#5B8DEF,stroke-width:2px
@@ -89,6 +91,7 @@ erDiagram
     style security_transactions fill:#FBE5F0,stroke:#C85A97,stroke-width:2px
     style security_lots fill:#FFEDDD,stroke:#E08A3C,stroke-width:2px
     style security_lot_sales fill:#F5F3DE,stroke:#A6A03C,stroke-width:2px
+    style security_lot_conversions fill:#EAF4F0,stroke:#4F9E86,stroke-width:2px
     style market_prices fill:#E2F1F9,stroke:#4E9CC0,stroke-width:2px
     style price_history fill:#D8EBF5,stroke:#33809E,stroke-width:2px
     style fx_rate_history fill:#E4DCF5,stroke:#6E55B8,stroke-width:2px
@@ -129,8 +132,8 @@ erDiagram
 
 | 迁移 | 内容 |
 |---|---|
-| `V001__initial.sql` | currencies / accounts / categories / merchants / transactions / budgets / exchange_rates 表结构、索引、CHECK 约束 |
-| `V002__investment.sql` | 投资域五表 + `v_holdings` 视图 |
+| `V001__initial.sql` | currencies / accounts / categories / merchants / transactions / budgets / exchange_rates 表结构、索引、CHECK 约束（含基金转换就地扩集：kind CHECK 含 convert，issue #977） |
+| `V002__investment.sql` | 投资域六表 + `v_holdings` 视图（含基金转换就地扩集：action CHECK 含 convert + 4 个转换列 + 转出消耗表 `security_lot_conversions`，issue #977） |
 | `V003__scheduled_transactions.sql` | 计划交易核心表、期次表与三张扩展表 |
 | `V004__seed_defaults.sql` | 币种与分类种子数据（含黑洞账户） |
 | `V006__transaction_amount_index.sql` | 金额筛选索引 |
