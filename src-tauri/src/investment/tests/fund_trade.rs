@@ -38,6 +38,10 @@ fn make_fund_buy_input(
         quantity: Some(qty),
         price_cents: None,
         fee_cents: Some(fee_cents),
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
         idempotency_key: None,
     }
 }
@@ -68,6 +72,10 @@ fn make_fund_sell_input(
         quantity: Some(qty),
         price_cents: None,
         fee_cents: Some(fee_cents),
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
         idempotency_key: None,
     }
 }

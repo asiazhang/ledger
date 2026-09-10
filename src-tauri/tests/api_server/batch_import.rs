@@ -490,3 +490,144 @@ async fn test_batch_dedup_keeps_dedup_hash_unchanged() {
     };
     assert_eq!(hash, hash_after, "dedup_hash 导入后保持不变");
 }
+
+/// 基金转换（convert）批量导入端到端（ADR-0099 / issue #978）：批量端点解包 4 个
+/// 扩展字段，服务端按 FIFO 消耗算定结转成本写入行金额锚点，落两腿明细与消耗记录；
+/// 列表读投影带出转换扩展（金额列展示转出金额的数据面）。
+#[tokio::test]
+async fn test_batch_create_convert_unpacks_leg_fields_and_lands_carry() {
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        test_support::seed_account(&conn, "acc-cv-api", "基金户", "investment", "CNY", 0);
+        test_support::seed_instrument(&conn, "inst-cv-out", "006793", "转出基金", "CNY", "unknown");
+        test_support::seed_instrument(&conn, "inst-cv-in", "519700", "转入基金", "CNY", "unknown");
+    }
+
+    // 先建仓：买入转出标的 10 份 @ 1.00 元（单价 10000 万分之一元）→ 行金额 1000 分。
+    let buy = r#"{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-api","date":"2026-01-10","instrument_id":"inst-cv-out","quantity":10.0,"price_cents":10000,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[buy], None)).await;
+    assert_eq!(created[0]["success"], true, "{created:?}");
+
+    let convert = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-api","date":"2026-02-01","instrument_id":"inst-cv-out","quantity":10.0,"to_instrument_id":"inst-cv-in","to_quantity":10.0,"out_amount_cents":1100,"in_amount_cents":1100,"fee_cents":0}"#;
+    let results = post_batch(&app, batch_body(&[convert], None)).await;
+    assert_eq!(results[0]["success"], true, "转换应落账: {results:?}");
+    assert_eq!(results[0]["duplicate"], false);
+
+    let convert_id = results[0]["id"].as_str().unwrap().to_string();
+    let (kind, amount_cents): (String, i64) = {
+        let conn = conn.lock().unwrap();
+        conn.query_row(
+            "SELECT kind, amount_cents FROM transactions WHERE id=?1",
+            rusqlite::params![convert_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(kind, "convert");
+    assert_eq!(amount_cents, 1000, "行金额锚点 = FIFO 结转成本");
+
+    let (to_instrument, to_quantity, out_amount, in_amount): (String, f64, i64, i64) = {
+        let conn = conn.lock().unwrap();
+        conn.query_row(
+            "SELECT to_instrument_id, to_quantity, out_amount_cents, in_amount_cents \
+             FROM security_transactions WHERE transaction_id=?1",
+            rusqlite::params![convert_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(to_instrument, "inst-cv-in");
+    assert!((to_quantity - 10.0).abs() < 1e-9);
+    assert_eq!(out_amount, 1100);
+    assert_eq!(in_amount, 1100);
+
+    // 列表读投影带出转换扩展：金额列展示转出金额的数据面。
+    let (_, list) = get_json(&app, "/api/v1/transactions").await;
+    let items = list["items"].as_array().unwrap();
+    let convert_row = items
+        .iter()
+        .find(|row| row["kind"] == "convert")
+        .expect("列表应含转换行");
+    assert_eq!(convert_row["convert"]["out_amount_cents"], 1100);
+    assert_eq!(convert_row["convert"]["to_instrument_id"], "inst-cv-in");
+    // 非转换行不带转换扩展（null）。
+    let buy_row = items
+        .iter()
+        .find(|row| row["kind"] == "buy")
+        .expect("列表应含买入行");
+    assert!(buy_row["convert"].is_null(), "非转换行 convert 应为 null");
+}
+
+/// 转换守卫在批量端点逐行返回码化中文错误（不落库、不影响同批其他行）。
+#[tokio::test]
+async fn test_batch_create_convert_guards_return_coded_errors() {
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        test_support::seed_account(&conn, "acc-cv-guard", "基金户", "investment", "CNY", 0);
+        test_support::seed_instrument(
+            &conn,
+            "inst-cv-g-out",
+            "006793",
+            "转出基金",
+            "CNY",
+            "unknown",
+        );
+        test_support::seed_instrument(
+            &conn,
+            "inst-cv-g-in",
+            "519700",
+            "转入基金",
+            "CNY",
+            "unknown",
+        );
+    }
+
+    let missing_to = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-guard","date":"2026-02-01","instrument_id":"inst-cv-g-out","quantity":1.0,"out_amount_cents":100,"in_amount_cents":100}"#;
+    let same_instrument = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-guard","date":"2026-02-02","instrument_id":"inst-cv-g-out","quantity":1.0,"to_instrument_id":"inst-cv-g-out","to_quantity":1.0,"out_amount_cents":100,"in_amount_cents":100}"#;
+    let oversell = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-guard","date":"2026-02-03","instrument_id":"inst-cv-g-out","quantity":5.0,"to_instrument_id":"inst-cv-g-in","to_quantity":5.0,"out_amount_cents":500,"in_amount_cents":500}"#;
+
+    let results = post_batch(
+        &app,
+        batch_body(&[missing_to, same_instrument, oversell], None),
+    )
+    .await;
+    assert_eq!(results.len(), 3);
+    assert!(
+        results[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("转换必须指定转入标的"),
+        "{:?}",
+        results[0]
+    );
+    assert!(
+        results[1]["error"]
+            .as_str()
+            .unwrap()
+            .contains("转出标的与转入标的不能相同"),
+        "{:?}",
+        results[1]
+    );
+    assert!(
+        results[2]["error"]
+            .as_str()
+            .unwrap()
+            .contains("可卖出数量不足"),
+        "{:?}",
+        results[2]
+    );
+    for r in &results {
+        assert_eq!(r["success"], false);
+    }
+
+    let conn = conn.lock().unwrap();
+    assert_eq!(count_active_transactions(&conn), 0, "被拒的转换不应落库");
+    let conversions: i64 = conn
+        .query_row("SELECT COUNT(*) FROM security_lot_conversions", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(conversions, 0);
+}

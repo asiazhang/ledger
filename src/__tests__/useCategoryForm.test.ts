@@ -45,6 +45,7 @@ const editingTx: Transaction = {
   device_id: 'test',
   is_deleted: false,
   source: null,
+  convert: null,
 }
 
 /** 非参考命令面：保单 store 重拉的两命令（参考五命令由接缝规范夹具兜底）。 */

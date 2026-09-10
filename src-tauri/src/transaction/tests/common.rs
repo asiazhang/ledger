@@ -30,6 +30,10 @@ pub(crate) fn make_input(
         quantity: None,
         price_cents: None,
         fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
         idempotency_key: None,
     }
 }
@@ -60,6 +64,10 @@ pub(crate) fn make_buy_input(
         quantity: Some(qty),
         price_cents: Some(price),
         fee_cents: Some(fee),
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
         idempotency_key: None,
     }
 }

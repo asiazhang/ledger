@@ -106,7 +106,10 @@ pub(crate) use command::{
     replay_exchange_rate_command, replay_instrument_command, replay_price_command,
 };
 pub(crate) use trade::replay_plan;
-pub use trade::{Plan, apply, get_transaction_trade, prepare, release_for_delete, revert};
+pub use trade::{
+    GuardMessages, Plan, apply, convert_fields_by_transaction_ids, get_transaction_trade, prepare,
+    release_for_delete, revert,
+};
 pub use trend::{query_instrument_price_trend, query_portfolio_value_trend};
 
 #[cfg(test)]

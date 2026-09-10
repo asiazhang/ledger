@@ -11,6 +11,8 @@
 //! - [`manual_price`]：手动报价两落点与信号发射判定（issue #291 / ADR-0036）
 //! - [`predicates`]：「持仓标的」判定谓词 ↔ v_holdings 视图一致性绑定
 //! - [`trade`]：buy/sell 写入与买卖明细查询（命名对齐源码 trade 模块）
+//! - [`convert`]：基金转换（convert）写入——转出腿 FIFO 消耗与结转成本、转入批次
+//!   建仓与闭合、零已实现盈亏、余额不变、两腿时点持仓、守卫与回退/删除（ADR-0099）
 //! - [`fund_trade`]：场外基金申赎记账——金额权威、单价反算、成本锚定与盈亏闭合不变式（issue #302 / ADR-0038）
 //! - [`pnl`]：已实现盈亏汇总
 //! - [`trend`]：走势查询（单标的 / 组合）
@@ -20,6 +22,7 @@
 //! - [`stock_add`]：「添加投资标的」股票侧录入——通道解析、查询遍历与识别落库（issue #697）
 
 mod common;
+mod convert;
 mod fund_add;
 mod fund_trade;
 mod holdings_as_of;

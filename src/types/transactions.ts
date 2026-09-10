@@ -1,6 +1,6 @@
 import type { Syncable } from './common'
 
-export type TransactionKind = 'income' | 'expense' | 'transfer' | 'refund' | 'buy' | 'sell'
+export type TransactionKind = 'income' | 'expense' | 'transfer' | 'refund' | 'buy' | 'sell' | 'convert'
 
 /** 交易来源类型闭集（spec #704 / issue #706，词汇表「来源列」）：定时计划三形态 /
  * 保单 / 物品 / 标的；wire 字面与后端枚举（camelCase）同源，与 source-jump.ts
@@ -15,6 +15,19 @@ export type TransactionSourceKind =
 
 /** 来源状态闭集（spec #704，可空字段）：已取消计划 / 已处置物品 / 软删保单。 */
 export type TransactionSourceStatus = 'cancelled' | 'disposed' | 'deleted'
+
+/** 基金转换两腿扩展（ADR-0099）：一笔 convert 两腿的标的、份额与两侧确认金额。
+ * 行金额锚点（`amount_native_cents`）是结转成本而非确认单金额，展示口径读本扩展。 */
+export interface ConvertFields {
+  /** 转入标的（转出标的恒为行的 instrument_id） */
+  to_instrument_id: string
+  /** 转入份额 */
+  to_quantity: number
+  /** 转出金额（分，确认单权威） */
+  out_amount_cents: number
+  /** 转入金额（分，确认单权威） */
+  in_amount_cents: number
+}
 
 /** 交易行来源（读时反查推导，零迁移）：仅列表/搜索命令填充，其余返回点为 null。 */
 export interface TransactionSource {
@@ -43,6 +56,9 @@ export interface Transaction extends Syncable {
   policy_id: string | null
   /** 来源列（spec #704 / issue #706）：仅列表/搜索读路径填充，其余返回点为 null */
   source: TransactionSource | null
+  /** 转换两腿扩展（ADR-0099）：仅 kind = convert 的行由列表/搜索读路径填充（其余 null）；
+   * 行金额锚点是结转成本，列表金额列展示转出金额须读本扩展 */
+  convert: ConvertFields | null
   refund_of_transaction_id: string | null
   note: string | null
   date: string
@@ -59,7 +75,7 @@ export interface TransactionInput {
    * 缺省即「结算账户 = 投资账户」；编辑路径全字段替换须显式携带，避免静默抹字段 */
   funding_account_id?: string | null
   category_id?: string | null
-  /** 商户引用（expense/refund/income 可携带；transfer/buy/sell/dividend/split 后端行为层拒绝） */
+  /** 商户引用（expense/refund/income 可携带；transfer/buy/sell/dividend/split/convert 后端行为层拒绝） */
   merchant_id?: string | null
   /** 商户名字符串（AI 导入契约，issue #194）：后端精确匹配在用商户名，命中复用、未命中即建；
    * 与 merchant_id 互斥，与商户名归一化责任在后端 */
@@ -74,6 +90,14 @@ export interface TransactionInput {
   quantity?: number | null
   price_cents?: number | null
   fee_cents?: number | null
+  /** 转入标的 id（仅 convert 需提供，ADR-0099）：与 instrument_id（转出标的）必须不同 */
+  to_instrument_id?: string | null
+  /** 转入份额（仅 convert 需提供，必须 > 0） */
+  to_quantity?: number | null
+  /** 转出金额（仅 convert 需提供，整数分，必须 > 0）：确认单转出端金额（列表展示口径） */
+  out_amount_cents?: number | null
+  /** 转入金额（仅 convert 需提供，整数分，必须 > 0）：确认单转入端金额 */
+  in_amount_cents?: number | null
   /** 客户端提供的、内容无关的导入幂等键（指向"该交易来自源文件哪一行"） */
   idempotency_key?: string | null
 }
@@ -99,7 +123,7 @@ export interface TransactionListFilter {
   category_id?: string | null
   /** 仅无分类（issue #377）：true 时仅返回无分类交易；与 category_id 同携按 AND 组合 */
   uncategorized_only?: boolean | null
-  /** income / expense / transfer / buy / sell / refund */
+  /** income / expense / transfer / buy / sell / refund / convert（闭集） */
   kind?: TransactionKind | null
   /** 类型集合过滤（issue #581 报表分类下钻载荷）：命中集合内各类型（与其余维度 AND 组合）；
    * 与单值 kind 解耦共存，下钻专用、无手动控件 */
@@ -157,7 +181,10 @@ export interface TransactionSearchFilter {
   dateTo?: string | null
 }
 
-export type CreateTransactionKind = Exclude<TransactionKind, 'refund'>
+/** 「记一笔」可创建的类型：不含 refund（退款入口由交易条目右键菜单承接）
+ * 与 convert（基金转换表单随生命周期票 issue #979 落地）——两者都以独立入口承载，
+ * 不上「记一笔」菜单；表单可用后从排除项移除即可。 */
+export type CreateTransactionKind = Exclude<TransactionKind, 'refund' | 'convert'>
 
 /** 前端交易类型闭集（穷尽表驱动）；显示标签在文案资源 transactions.kind.*（i18n，ADR-0049） */
 const TRANSACTION_KIND_PRESENCE = {
@@ -167,6 +194,7 @@ const TRANSACTION_KIND_PRESENCE = {
   refund: true,
   buy: true,
   sell: true,
+  convert: true,
 } satisfies Record<TransactionKind, boolean>
 
 export const TRANSACTION_KINDS = Object.keys(TRANSACTION_KIND_PRESENCE) as TransactionKind[]

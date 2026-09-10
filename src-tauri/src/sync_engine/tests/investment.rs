@@ -39,6 +39,10 @@ fn buy_input(
         quantity: Some(quantity),
         price_cents: Some(price),
         fee_cents: Some(fee),
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
         idempotency_key: None,
     }
 }

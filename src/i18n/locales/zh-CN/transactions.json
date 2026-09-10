@@ -5,7 +5,8 @@
     "transfer": "转账",
     "refund": "退款",
     "buy": "买入",
-    "sell": "卖出"
+    "sell": "卖出",
+    "convert": "转换"
   },
   "lending": {
     "direction": "方向",
