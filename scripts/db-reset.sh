@@ -8,8 +8,9 @@
 #    - 旧格式指针 {"data_dir": …} → 取 data_dir；
 #    - 新格式注册表 {"version": 1, "books": [{id, name, dir}…], "active": …}
 #      → 取活动账本（active 指向条目）的 dir；
-#    - 文件缺失、无法解析或校验不通过（版本未知、清单/活动指针缺失或悬空、
-#      条目字段缺失、id/目录重复登记）一律视同未配置，仅重置默认目录
+#    - 文件缺失、无法解析或校验不通过（版本未知、清单/活动指针/搬迁意图缺失
+#      或悬空、条目字段缺失、id/目录重复登记、显式 null 字段视同缺席后的
+#      形态判别）一律视同未配置，仅重置默认目录
 #      （与 data_location::boot 的损坏回退原则一致）；
 #    - 解析依赖 jq，未安装时跳过自定义目录并提示。
 # 3. 注册表中非活动的其他账本目录：仅打印路径提示，不自动删除。
@@ -35,31 +36,45 @@ REGISTRY_FILE="$DEFAULT_DIR/data_location.json"
 # 非法 JSON / 字段类型不符等运行期错误由外层兜底为 corrupt。
 # shellcheck disable=SC2016  # jq 过滤器内 $books/$active 是 jq 变量，不参与 shell 展开
 JQ_RESOLVE='
-  if has("version") and (.version != 1) then
-    {"kind":"corrupt"}
-  elif has("books") and has("active") then
-    ([.books[] | {
-        id:   (.id   // "" | gsub("^\\s+|\\s+$"; "")),
-        name: (.name // "" | gsub("^\\s+|\\s+$"; "")),
-        dir:  (.dir  // "" | gsub("^\\s+|\\s+$"; ""))}]) as $books
-    | (.active | gsub("^\\s+|\\s+$"; "")) as $active
-    | if ($books | length) == 0
-         or ($books | any(.id == "" or .name == "" or .dir == ""))
-         or ($books | map(.id) | unique | length) != ($books | length)
-         or ($books | map(.dir) | unique | length) != ($books | length)
-         or ($books | map(select(.id == $active)) | length) != 1
-      then {"kind":"corrupt"}
+  (.version // null) as $version
+  | (.books // null) as $books_raw
+  | (.active // null) as $active_raw
+  | (.relocation // null) as $reloc_raw
+  | if $version != null and $version != 1 then
+      {"kind":"corrupt"}
+    elif $books_raw != null and $active_raw != null then
+      if ($books_raw | type) != "array" then
+        {"kind":"corrupt"}
       else
-        {"kind":"registry",
-         "active_dir": ($books | map(select(.id == $active)) | .[0] | .dir),
-         "other_dirs": ($books | map(select(.id != $active) | .dir))}
+        ([$books_raw[] | {
+            id:   (.id   // "" | gsub("^\\s+|\\s+$"; "")),
+            name: (.name // "" | gsub("^\\s+|\\s+$"; "")),
+            dir:  (.dir  // "" | gsub("^\\s+|\\s+$"; ""))}]) as $books
+        | ($active_raw | gsub("^\\s+|\\s+$"; "")) as $active
+        | ($reloc_raw | if . == null then null else
+            {book_id:  (.book_id // "" | gsub("^\\s+|\\s+$"; "")),
+             from_dir: (.from_dir // "" | gsub("^\\s+|\\s+$"; ""))} end) as $reloc
+        | if ($books | length) == 0
+             or ($books | any(.id == "" or .name == "" or .dir == ""))
+             or ($books | map(.id) | unique | length) != ($books | length)
+             or ($books | map(.dir) | unique | length) != ($books | length)
+             or ($books | map(select(.id == $active)) | length) != 1
+             or ($reloc != null and
+                 ($reloc.book_id == "" or $reloc.from_dir == ""
+                  or ($books | map(select(.id == $reloc.book_id)) | length) != 1))
+          then {"kind":"corrupt"}
+          else
+            {"kind":"registry",
+             "active_dir": ($books | map(select(.id == $active)) | .[0] | .dir),
+             "other_dirs": ($books | map(select(.id != $active) | .dir))}
+          end
       end
-  elif has("books") or has("active") then
-    {"kind":"corrupt"}
-  else
-    (.data_dir // "" | gsub("^\\s+|\\s+$"; "")) as $dir
-    | if $dir == "" then {"kind":"corrupt"} else {"kind":"pointer", "dir": $dir} end
-  end'
+    elif $books_raw != null or $active_raw != null then
+      {"kind":"corrupt"}
+    else
+      (.data_dir // "" | gsub("^\\s+|\\s+$"; "")) as $dir
+      | if $dir == "" then {"kind":"corrupt"} else {"kind":"pointer", "dir": $dir} end
+    end'
 
 remove_db_in_dir() {
   _dir="$1"
