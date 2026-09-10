@@ -375,22 +375,21 @@ pub async fn get_remember_passphrase_support() -> Result<RememberPassphraseSuppo
 /// 把主口令本身缓存进系统钥匙串（issue #574 / ADR-0075 决策 3；macOS 以
 /// Touch ID 生物认证门保护）。只在解锁后可达；「记住」偏好开关由前端
 /// localStorage 轻量设置项持有，本命令只落钥匙串缓存。
+///
+/// **不记会话形态**（issue #863 / ADR-0098 决策 3）：本命令可在这达时库必已
+/// 解锁（`ensure_unlocked`），而解锁路径 [`do_unlock`] 已用**已验证**的口令
+/// 记入了会话；此处传入的口令未经校验（只写钥匙串），再记一次会让错口令
+/// 覆盖掉对的那个——自动轮次随后拿它封包，对端无法开封且段名幂等跳过会令
+/// 重传永不发生（与 `sync_now` 的「先验证后封包」同一理由）。
 #[tauri::command]
 pub async fn set_remember_passphrase(app: AppHandle, passphrase: String) -> Result<()> {
     ensure_unlocked(&app)?;
     // 条目按当前活动账本分域（issue #836）：开启/关闭/清除只影响对应账本。
     let book = active_book_id(&app);
-    let session = passphrase.clone();
     run_db("set_remember_passphrase", move || {
         passphrase_cache::store(&passphrase, book.as_deref())
     })
-    .await?;
-    // 用户在此提供了当前主口令：记入本会话形态（issue #863），同步轮次
-    // 随即可以封包，不必等下一次解锁。
-    crate::sync_engine::SessionEnvelope::remember(crate::sync_engine::SessionEnvelope::Encrypted(
-        session,
-    ));
-    Ok(())
+    .await
 }
 
 /// 清除「本机记住」的主口令缓存（issue #574）：关闭「记住」、关闭加密或忘记口令
