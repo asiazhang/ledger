@@ -46,6 +46,7 @@ const editingTx: Transaction = {
   amount_native_cents: 15500,
   account_id: 'acc-inv',
   to_account_id: null,
+  funding_account_id: null,
   category_id: null,
   merchant_id: null,
   policy_id: null,
@@ -339,5 +340,112 @@ describe('useInvestmentForm', () => {
       expect(form.quantityText.value).toBe('100')
       expect(form.priceText.value).toBe('150')
     })
+  })
+})
+
+describe('useInvestmentForm 出资账户（issue #936 / ADR-0096，买入侧）', () => {
+  /** 准入闭集与币种过滤的候选全集：现金类五型 + 排除型三型 + 异币种 */
+  const fundingAccounts: Account[] = [
+    { id: 'acc-cash', name: '现金钱包', type: 'cash', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    { id: 'acc-bank', name: '招商银行卡', type: 'bank', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    { id: 'acc-credit', name: '信用卡', type: 'credit', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    { id: 'acc-ewallet', name: '零钱通', type: 'ewallet', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    { id: 'acc-other', name: '其他现金', type: 'other', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    { id: 'acc-inv', name: '证券户', type: 'investment', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    { id: 'acc-recv', name: '借出·张三', type: 'receivable', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    { id: 'acc-debt', name: '借入·李四', type: 'debt', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    { id: 'acc-bank-usd', name: '美元卡', type: 'bank', currency_code: 'USD', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+  ]
+
+  async function fundingForm(kind: 'buy' | 'sell' = 'buy') {
+    wireInvokeSeam({ overrides: { list_accounts: fundingAccounts } })
+    const store = useReferenceStore()
+    await store.refresh()
+    return useInvestmentForm(kind)
+  }
+
+  it('候选过滤：只含现金类账户且币种与交易币种一致；默认空', async () => {
+    const form = await fundingForm()
+    expect(form.fundingAccountId.value).toBeNull()
+    expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual([
+      'acc-cash', 'acc-bank', 'acc-credit', 'acc-ewallet', 'acc-other',
+    ])
+  })
+
+  it('交易币种变化重过滤：USD 交易只剩同币种现金类候选', async () => {
+    const form = await fundingForm()
+    form.currencyCode.value = 'USD'
+    expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual(['acc-bank-usd'])
+  })
+
+  it('编辑回填：带出资账户的买入带出当前值，历史买入不带（保持空）', async () => {
+    wireInvokeSeam({ overrides: { list_accounts: fundingAccounts } })
+    const store = useReferenceStore()
+    await store.refresh()
+    const withFunding = useInvestmentForm('buy', {
+      editing: () => ({ ...editingTx, funding_account_id: 'acc-bank' }),
+      trade: () => editingTrade,
+    })
+    expect(withFunding.fundingAccountId.value).toBe('acc-bank')
+    const withoutFunding = useInvestmentForm('buy', {
+      editing: () => editingTx,
+      trade: () => editingTrade,
+    })
+    expect(withoutFunding.fundingAccountId.value).toBeNull()
+  })
+
+  it('submit 创建：出资账户随装配落 funding_account_id；重置表单后回空', async () => {
+    wireInvokeSeam({
+      overrides: { list_accounts: fundingAccounts, create_transaction: Promise.resolve('new-txn') },
+    })
+    const store = useReferenceStore()
+    await store.refresh()
+    const onCreated = vi.fn()
+    const form = useInvestmentForm('buy', { onCreated })
+    form.accountId.value = 'acc-inv'
+    form.instrumentId.value = 'ins-1'
+    form.quantityText.value = '10'
+    form.priceText.value = '15'
+    form.fundingAccountId.value = 'acc-bank'
+    await form.submit()
+    expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
+      input: expect.objectContaining({ kind: 'buy', funding_account_id: 'acc-bank' }),
+    })
+    expect(onCreated).toHaveBeenCalledTimes(1)
+  })
+
+  it('submit 编辑不改出资账户：回填值随全字段替换原样提交（字段不被静默丢失）', async () => {
+    wireInvokeSeam({
+      overrides: { list_accounts: fundingAccounts, update_transaction: Promise.resolve(null) },
+    })
+    const store = useReferenceStore()
+    await store.refresh()
+    const form = useInvestmentForm('buy', {
+      onUpdated: vi.fn(),
+      editing: () => ({ ...editingTx, funding_account_id: 'acc-bank' }),
+      trade: () => editingTrade,
+    })
+    await form.submit()
+    expect(mockInvoke).toHaveBeenCalledWith('update_transaction', {
+      id: 'txn-buy-1',
+      input: expect.objectContaining({ funding_account_id: 'acc-bank' }),
+    })
+  })
+
+  it('submit 编辑清空出资账户：提交显式 null（改/清语义正确，非缺字段）', async () => {
+    wireInvokeSeam({
+      overrides: { list_accounts: fundingAccounts, update_transaction: Promise.resolve(null) },
+    })
+    const store = useReferenceStore()
+    await store.refresh()
+    const form = useInvestmentForm('buy', {
+      onUpdated: vi.fn(),
+      editing: () => ({ ...editingTx, funding_account_id: 'acc-bank' }),
+      trade: () => editingTrade,
+    })
+    form.fundingAccountId.value = null
+    await form.submit()
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'update_transaction')!
+    expect((call[1] as { input: { funding_account_id: string | null } }).input.funding_account_id).toBeNull()
   })
 })

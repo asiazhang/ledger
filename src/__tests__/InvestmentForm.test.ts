@@ -299,6 +299,7 @@ describe('InvestmentForm.vue 字段错误态（ADR-0058 / issue #416）', () => 
       amount_native_cents: 15500,
       account_id: 'acc-1',
       to_account_id: null,
+      funding_account_id: null,
       category_id: null,
       merchant_id: null,
       policy_id: null,
@@ -410,6 +411,7 @@ describe('InvestmentForm.vue 编辑模式（issue #180）', () => {
     amount_native_cents: 15500,
     account_id: 'acc-1',
     to_account_id: null,
+    funding_account_id: null,
     category_id: null,
     merchant_id: null,
     policy_id: null,
@@ -456,5 +458,14 @@ describe('InvestmentForm.vue 编辑模式（issue #180）', () => {
     await flushPromises()
     expect(wrapper.emitted('saved')).toHaveLength(1)
     expect(wrapper.emitted('created')).toBeUndefined()
+  })
+})
+
+describe('出资账户表单行（issue #936 / ADR-0096，买入侧先行）', () => {
+  it('买入渲染出资账户下拉（默认空、可选清空）；卖出不渲染（#938 对称票落地）', () => {
+    const buy = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    expect(buy.text()).toContain('出资账户')
+    const sell = mount(InvestmentForm, { props: { kind: 'sell', submitLabel: '记卖出' } })
+    expect(sell.text()).not.toContain('出资账户')
   })
 })

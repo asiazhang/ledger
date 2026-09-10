@@ -110,6 +110,8 @@
   "form": {
     "amount": "Amount",
     "account": "Investment Account",
+    "fundingAccount": "Funding Account",
+    "fundingAccountPlaceholder": "Select funding account (optional)",
     "instrument": "Instrument",
     "shares": "Shares",
     "quantity": "Quantity",

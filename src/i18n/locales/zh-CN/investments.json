@@ -110,6 +110,8 @@
   "form": {
     "amount": "金额",
     "account": "投资账户",
+    "fundingAccount": "出资账户",
+    "fundingAccountPlaceholder": "选择出资账户（可选）",
     "instrument": "标的",
     "shares": "份额",
     "quantity": "数量",

@@ -63,6 +63,7 @@ describe('useTransferForm', () => {
       amount_native_cents: 50000,
       account_id: 'acc-1',
       to_account_id: 'acc-2',
+      funding_account_id: null,
       category_id: null,
       merchant_id: null,
       policy_id: null,
@@ -107,6 +108,7 @@ describe('useTransferForm', () => {
           kind: 'transfer',
           account_id: 'acc-2',
           to_account_id: 'acc-1',
+          funding_account_id: null,
           note: '房租',
         }),
       })
