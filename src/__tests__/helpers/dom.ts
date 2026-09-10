@@ -179,6 +179,18 @@ export async function pressReleaseOn(selector: string) {
 }
 
 /**
+ * 期待色值归一化（jsdom 内联样式探针）：jsdom 的 CSSStyleDeclaration 会把色值
+ * 归一为 rgb(...) 形态，直接与生产侧 hex 期待值逐字比较会假阴；把期待值先写入
+ * 探针元素样式、取归一化产物后再比对，两侧同一归一化口径（移动档卡片语义色
+ * 内联样式断言先例，issue #846 审查上收）。
+ */
+export function probeColor(color: string): string {
+  const probe = document.createElement('span')
+  probe.style.color = color
+  return probe.style.color
+}
+
+/**
  * 确认框遮罩「按下-抬起」完整事件序列：真实浏览器中按下-抬起在遮罩上合成 click
  * 触发关闭判定，jsdom 不自动合成，手动派发三段事件等价模拟
  * （AppModal 契约测试同款先例）。

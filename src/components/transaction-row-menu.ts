@@ -27,15 +27,20 @@ export { renderRowMenuIcon, errorOptionProps }
  * `errorColor`：当前主题的 error 色（组件经 useThemeVars 取值传入），注入删除项
  * DropdownOption props，图标+文字整体着色——不硬编码色值，暗色模式自动适配。
  */
+/** 「编辑」开放判定（refund 破坏关联语义不开放；其余 kind 经各自表单编辑：
+ * income/expense/transfer 走分类记账/转账表单，buy/sell 走投资表单编辑模式，
+ * issue #180）。单一来源：菜单组装与移动档卡片「整卡点击 = 编辑」共用（issue #846）。 */
+export function supportsRowEdit(row: Pick<Transaction, 'kind'>): boolean {
+  return row.kind !== 'refund'
+}
+
 export function buildRowMenuOptions(
   row: Pick<Transaction, 'kind'>,
   opts: { hasItem?: boolean; errorColor?: string } = {},
 ): DropdownOption[] {
   const options: DropdownOption[] = []
-  // 「编辑」显式白名单（refund 破坏关联语义不开放；其余 kind 经各自表单编辑：
-  // income/expense/transfer 走分类记账/转账表单，buy/sell 走投资表单，issue #180）。
-  if (row.kind === 'income' || row.kind === 'expense' || row.kind === 'transfer'
-    || row.kind === 'buy' || row.kind === 'sell') {
+  // 「编辑」显式白名单（refund 破坏关联语义不开放，开放判定见 supportsRowEdit 单源）：
+  if (supportsRowEdit(row)) {
     options.push({ label: t('transactions.menu.edit'), key: 'edit', icon: renderRowMenuIcon(CreateOutline) })
   }
   if (row.kind === 'expense') {

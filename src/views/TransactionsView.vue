@@ -9,7 +9,9 @@ import {
   NButtonGroup,
   NIcon,
   NEmpty,
+  NPagination,
   NSpace,
+  NSpin,
   useMessage,
   useThemeVars,
   type DataTableColumn,
@@ -20,13 +22,16 @@ import { ChevronDown } from '@vicons/ionicons5'
 import AppModal from '@/components/AppModal.vue'
 import AppDropdown from '@/components/AppDropdown.vue'
 import AppSelect from '@/components/AppSelect.vue'
+import TransactionCardList from '@/components/TransactionCardList.vue'
+import CreateFab from '@/components/CreateFab.vue'
 import { useAppDialog } from '@/composables/useAppDialog'
+import { useWindowTier } from '@/composables/useWindowTier'
 import TransactionForm from '@/components/TransactionForm.vue'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
-import { buildRowMenuOptions } from '@/components/transaction-row-menu'
+import { buildRowMenuOptions, supportsRowEdit } from '@/components/transaction-row-menu'
 import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
 import { useInputMode } from '@/composables/useInputMode'
 import { useRowContextMenu } from '@/composables/useRowContextMenu'
@@ -51,6 +56,11 @@ import {
 } from '@/types'
 
 const reference = useReferenceStore()
+// 窗口分级（ADR-0088 决策 2 / 词汇表「窗口分级」）：断点双渲染判定——同一列表
+// 状态，桌面档表格（一字不动）/移动档卡片列表二选一；记一笔入口分档（FAB 仅
+// 移动档）。换档实时响应（媒体查询 change 驱动）。
+const tier = useWindowTier()
+const isMobile = computed(() => tier.value === 'mobile')
 // 物品 store（issue #119）：仅用于右键菜单「加入物品」的置灰态判断；
 // self-init + ledger:changed 自动重拉，创建成功后菜单下次打开即为置灰态。
 const itemsStore = useItemsStore()
@@ -380,6 +390,19 @@ const rowProps = (row: Transaction) => ({
   onContextmenu: (e: MouseEvent) => rowMenu.open(e, row),
 })
 
+/** 翻页（两档同一出口）：写入页码 + 以当前状态重拉。桌面表格 pagination 与
+ * 移动档 NPagination 共用，语义零分叉。 */
+function onPageChange(p: number): void {
+  page.value = p
+  void load()
+}
+
+/** 页大小切换（两档同一出口）：写入后经统一出口重拉（翻回第 1 页）。 */
+function onPageSizeChange(size: number): void {
+  pageSize.value = size
+  refresh()
+}
+
 const pagination = computed<PaginationProps>(() => ({
   page: page.value,
   pageSize: pageSize.value,
@@ -389,15 +412,8 @@ const pagination = computed<PaginationProps>(() => ({
   pageSizes: PAGE_SIZE_OPTIONS,
   prefix: ({ itemCount }) =>
     h('span', null, () => t('transactions.list.total', { n: itemCount ?? 0 })),
-  onChange: (p: number) => {
-    page.value = p
-    void load()
-  },
-  onUpdatePageSize: (size: number) => {
-    // 页大小归模块分页所有：写入后经统一出口重拉（翻回第 1 页）
-    pageSize.value = size
-    refresh()
-  },
+  onChange: onPageChange,
+  onUpdatePageSize: onPageSizeChange,
 }))
 
 // 列经 computed 构造：列名（t()）随语言切换即时重建（列宽总和随之联动）。
@@ -411,6 +427,20 @@ const columns = computed<DataTableColumn<Transaction>[]>(() => [
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = computed(() => sumFixedColumnWidths(columns.value))
+
+/** 空态文案（两档同源）：过滤无结果提示 / 默认暂无数据，归一计算属性供
+ * 移动档空态与桌面表格 #empty 槽共用同一字符串口径。 */
+const emptyDescription = computed(() =>
+  filtersActive.value
+    ? t('transactions.list.emptyFiltered')
+    : t('transactions.list.empty'),
+)
+
+/** 整卡点击 = 编辑（移动档卡片）：与行菜单「编辑」同一开放判定（refund 不开放，
+ * supportsRowEdit 单源）与同一编辑意图入口。 */
+function activateCard(row: Transaction): void {
+  if (supportsRowEdit(row)) openEditFromRow(row)
+}
 
 </script>
 
@@ -454,8 +484,9 @@ const scrollX = computed(() => sumFixedColumnWidths(columns.value))
       >
         {{ t('transactions.filter.clear') }}
       </NButton>
-      <!-- 分裂按钮：主体直开支出弹窗，箭头展开 5 项类型菜单（issue #150） -->
-      <NButtonGroup>
+      <!-- 分裂按钮（桌面档）：主体直开支出弹窗，箭头展开 5 项类型菜单（issue #150）。
+           移动档不渲染：记一笔入口分档，FAB 是移动档唯一记一笔入口（ADR-0088 决策 5）。 -->
+      <NButtonGroup v-if="!isMobile">
         <NButton type="primary" @click="openCreate('expense')">{{ t('transactions.create.button') }}</NButton>
         <AppDropdown
           trigger="click"
@@ -558,9 +589,49 @@ const scrollX = computed(() => sumFixedColumnWidths(columns.value))
       @select="rowMenu.select"
       @clickoutside="rowMenu.close"
     />
+    <!-- 断点双渲染（ADR-0088 决策 9，issue #846）：同一列表状态，移动档卡片列表
+         （分页语义不变：20/页、页大小选择与桌面同一出口），桌面档表格一字不动 -->
+    <template v-if="isMobile">
+      <NSpin :show="loading">
+        <TransactionCardList
+          v-if="data.length > 0"
+          :rows="data"
+          :open-row-menu="rowMenu.open"
+          :activate-row="activateCard"
+        />
+        <!-- 空态：与桌面表格空槽同文案同动作（过滤无结果提示 + 清除按钮）；
+             加载期间不渲染空态节点（桌面 loading 时空态隐藏同规） -->
+        <NEmpty
+          v-else-if="!loading"
+          :description="emptyDescription"
+          size="small"
+        >
+          <template v-if="filtersActive" #extra>
+            <NButton size="tiny" quaternary type="primary" @click="resetFilters">
+              {{ t('transactions.filter.clear') }}
+            </NButton>
+          </template>
+        </NEmpty>
+      </NSpin>
+      <!-- 移动档分页：与桌面表格 pagination 同一出口（翻页/页大小/共 N 条） -->
+      <NPagination
+        :page="page"
+        :page-size="pageSize"
+        :item-count="total"
+        :page-sizes="PAGE_SIZE_OPTIONS"
+        show-size-picker
+        @update:page="onPageChange"
+        @update:page-size="onPageSizeChange"
+      >
+        <template #prefix>
+          <span>{{ t('transactions.list.total', { n: total }) }}</span>
+        </template>
+      </NPagination>
+    </template>
     <!-- 备注列为弹性列（transaction-columns 中不设 width），表格始终铺满容器；
          窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
     <NDataTable
+      v-else
       :columns="columns"
       :data="data"
       :loading="loading"
@@ -575,7 +646,7 @@ const scrollX = computed(() => sumFixedColumnWidths(columns.value))
            无过滤时为默认「暂无数据」文案 -->
       <template #empty>
         <NEmpty
-          :description="filtersActive ? t('transactions.list.emptyFiltered') : t('transactions.list.empty')"
+          :description="emptyDescription"
           size="small"
         >
           <template v-if="filtersActive" #extra>
@@ -587,4 +658,8 @@ const scrollX = computed(() => sumFixedColumnWidths(columns.value))
       </template>
     </NDataTable>
   </NSpace>
+  <!-- 记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）：点开五枚大号类型选择
+       轻弹层，经弹窗意图编排的记一笔意图（携带类型）进对应表单；零表单内部改造。
+       独立根节点渲染：固定定位不参与 NSpace 布局流 -->
+  <CreateFab v-if="isMobile" @select="openCreate" />
 </template>
