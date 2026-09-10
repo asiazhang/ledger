@@ -17,6 +17,7 @@
 - **多端同步**：定时计划、账户/分类/商户字典、预算、保险、物品与实物资产的变化随同步分发，各端业务数据一致（[#860]）。
 - **移动端**：窗口 <840 切换移动档导航壳（顶栏 + 抽屉），适配刘海与手势条安全区（[#842]）。
 - **移动端**：触屏交互适配——交易行常显「⋯」菜单，悬停信息点按可达（[#843]）。
+- **移动端**：交易页窄窗口/手机切换卡片列表（日期、类型、分类/商户、账户、金额一眼可读，金额隐私模式兼容），右下角新增「记一笔」悬浮按钮，点选类型后进对应表单；搜索结果同构复用卡片列表（[#846]）。
 - **移动端**：Android 系统返回键/手势获得应用内语义——有弹层先关最上层，无弹层路由回退，路由栈底交还系统退出；遮罩点击不关的原则不变，桌面档无此通道（[#845]）。
 - **AI 导入**：新增商户改名端点 `PUT /api/v1/merchants/{id}`（[#884]）。
 - **AI 导入**：导入知识新增查询与分页纪律——子集检查用服务端过滤参数、分页读回以 `total` 为准核对总条数、buy/sell 标的关联认 `source` 字段（[#928]）。
@@ -272,6 +273,7 @@
 [#839]: https://github.com/asiazhang/ledger/issues/839
 [#842]: https://github.com/asiazhang/ledger/issues/842
 [#843]: https://github.com/asiazhang/ledger/issues/843
+[#846]: https://github.com/asiazhang/ledger/issues/846
 [#845]: https://github.com/asiazhang/ledger/issues/845
 [#855]: https://github.com/asiazhang/ledger/issues/855
 [#856]: https://github.com/asiazhang/ledger/issues/856

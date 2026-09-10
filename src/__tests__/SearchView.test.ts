@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { NButton, NDatePicker } from 'naive-ui'
+import { NButton, NDataTable, NDatePicker, NModal } from 'naive-ui'
+import { setFakeMedia } from './helpers/media-mock'
 import { useReferenceStore } from '@/stores/reference'
 import SearchView from '@/views/SearchView.vue'
 import AccountLink from '@/components/AccountLink.vue'
@@ -756,5 +757,51 @@ describe('SearchView 转账行双向账户名（issue #99）', () => {
       name: 'transactions',
       query: { account: 'acc-cash' },
     })
+  })
+})
+
+describe('SearchView 移动档卡片复用（issue #846，第二消费方）', () => {
+  it('移动档结果渲染卡片列表（只读形态）而非表格，分页语义不变', async () => {
+    setFakeMedia({ width: 839 })
+    vi.useFakeTimers()
+    const wrapper = mount(SearchView)
+    await nextTick()
+    await typeAndSearch(wrapper, '午餐')
+    expect(wrapper.text()).toContain('命中 23 条')
+    expect(wrapper.findAll('.transaction-card').length).toBe(20)
+    expect(wrapper.findComponent(NDataTable).exists()).toBe(false)
+    // 只读同构：与桌面搜索结果一致——无「⋯」行菜单、无删除入口；FAB 仅交易页
+    expect(wrapper.findAll('.transaction-card .row-actions-btn').length).toBe(0)
+    expect(wrapper.text()).not.toContain('删除')
+    expect(wrapper.find('.create-fab').exists()).toBe(false)
+    // 分页语义不变：第 2 页携带 page=2 重新搜索
+    const pageTwo = wrapper
+      .findAll('.n-pagination-item')
+      .find((el) => el.text() === '2')
+    expect(pageTwo).toBeTruthy()
+    await pageTwo!.trigger('click')
+    await nextTick()
+    await nextTick()
+    expect(lastSearchArgs()).toMatchObject({ query: '午餐', page: 2, pageSize: 20 })
+  })
+
+  it('移动档整卡点击无动作（搜索结果只读，不打开编辑弹窗）', async () => {
+    setFakeMedia({ width: 839 })
+    vi.useFakeTimers()
+    const wrapper = mount(SearchView)
+    await nextTick()
+    await typeAndSearch(wrapper, '午餐')
+    await wrapper.find('.transaction-card').trigger('click')
+    await nextTick()
+    expect(wrapper.findComponent(NModal).exists()).toBe(false)
+  })
+
+  it('桌面档表格形态不变（卡片仅移动档渲染）', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(SearchView)
+    await nextTick()
+    await typeAndSearch(wrapper, '午餐')
+    expect(wrapper.findComponent(NDataTable).exists()).toBe(true)
+    expect(wrapper.find('.transaction-card').exists()).toBe(false)
   })
 })
