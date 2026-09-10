@@ -349,6 +349,14 @@ async fn parked_ops_are_visible_through_command_surface() {
         parked[0].code
     );
     assert!(!parked[0].message.is_empty(), "原因详情不应为空");
+    // 插值参数随挂起行出 wire（issue #957）：壳层 `ParkedOpState::from` 是手工
+    // 字段搬运，漏字段即前端渲染残缺句；此处钉住 params 与 code 同源到场。
+    assert_eq!(parked[0].code, "account.not-found");
+    assert_eq!(
+        parked[0].params,
+        vec!["no-such-account".to_string()],
+        "params 应随 wire 携带动态值"
+    );
     assert!(!parked[0].parked_at.is_empty(), "挂起时刻应落库");
 
     // 状态回显同源：parked_count 与清单长度一致。
