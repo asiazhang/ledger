@@ -357,11 +357,12 @@ describe('useInvestmentForm 出资账户（issue #936 / ADR-0096，买入侧）'
     { id: 'acc-bank-usd', name: '美元卡', type: 'bank', currency_code: 'USD', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
   ]
 
-  async function fundingForm(kind: 'buy' | 'sell' = 'buy') {
+  /** 出资账户候选场景的表单布线：候选全集上参考 store，编辑回填场景可注入 editing/trade */
+  async function fundingForm(options?: Parameters<typeof useInvestmentForm>[1]) {
     wireInvokeSeam({ overrides: { list_accounts: fundingAccounts } })
     const store = useReferenceStore()
     await store.refresh()
-    return useInvestmentForm(kind)
+    return useInvestmentForm('buy', options)
   }
 
   it('候选过滤：只含现金类账户且币种与交易币种一致；默认空', async () => {
@@ -379,15 +380,12 @@ describe('useInvestmentForm 出资账户（issue #936 / ADR-0096，买入侧）'
   })
 
   it('编辑回填：带出资账户的买入带出当前值，历史买入不带（保持空）', async () => {
-    wireInvokeSeam({ overrides: { list_accounts: fundingAccounts } })
-    const store = useReferenceStore()
-    await store.refresh()
-    const withFunding = useInvestmentForm('buy', {
+    const withFunding = await fundingForm({
       editing: () => ({ ...editingTx, funding_account_id: 'acc-bank' }),
       trade: () => editingTrade,
     })
     expect(withFunding.fundingAccountId.value).toBe('acc-bank')
-    const withoutFunding = useInvestmentForm('buy', {
+    const withoutFunding = await fundingForm({
       editing: () => editingTx,
       trade: () => editingTrade,
     })
@@ -415,15 +413,13 @@ describe('useInvestmentForm 出资账户（issue #936 / ADR-0096，买入侧）'
   })
 
   it('submit 编辑不改出资账户：回填值随全字段替换原样提交（字段不被静默丢失）', async () => {
-    wireInvokeSeam({
-      overrides: { list_accounts: fundingAccounts, update_transaction: Promise.resolve(null) },
-    })
-    const store = useReferenceStore()
-    await store.refresh()
-    const form = useInvestmentForm('buy', {
+    const form = await fundingForm({
       onUpdated: vi.fn(),
       editing: () => ({ ...editingTx, funding_account_id: 'acc-bank' }),
       trade: () => editingTrade,
+    })
+    wireInvokeSeam({
+      overrides: { list_accounts: fundingAccounts, update_transaction: Promise.resolve(null) },
     })
     await form.submit()
     expect(mockInvoke).toHaveBeenCalledWith('update_transaction', {
@@ -433,15 +429,13 @@ describe('useInvestmentForm 出资账户（issue #936 / ADR-0096，买入侧）'
   })
 
   it('submit 编辑清空出资账户：提交显式 null（改/清语义正确，非缺字段）', async () => {
-    wireInvokeSeam({
-      overrides: { list_accounts: fundingAccounts, update_transaction: Promise.resolve(null) },
-    })
-    const store = useReferenceStore()
-    await store.refresh()
-    const form = useInvestmentForm('buy', {
+    const form = await fundingForm({
       onUpdated: vi.fn(),
       editing: () => ({ ...editingTx, funding_account_id: 'acc-bank' }),
       trade: () => editingTrade,
+    })
+    wireInvokeSeam({
+      overrides: { list_accounts: fundingAccounts, update_transaction: Promise.resolve(null) },
     })
     form.fundingAccountId.value = null
     await form.submit()

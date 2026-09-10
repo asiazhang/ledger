@@ -462,10 +462,79 @@ describe('InvestmentForm.vue 编辑模式（issue #180）', () => {
 })
 
 describe('出资账户表单行（issue #936 / ADR-0096，买入侧先行）', () => {
+  /** 候选全集：投资账户 + 现金类银行卡（出资候选）；
+   * 编辑回填用交易与买卖明细复用本文件既有形状（funding_account_id 为差异点） */
+  const accountsWithFunding = [
+    ...mockAccounts,
+    { id: 'acc-bank', name: '招商银行卡', type: 'bank', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+  ]
+  const editingTx = {
+    id: 'txn-buy-1',
+    kind: 'buy' as const,
+    amount_cents: 15500,
+    currency_code: 'CNY',
+    amount_native_cents: 15500,
+    account_id: 'acc-1',
+    to_account_id: null,
+    funding_account_id: 'acc-bank' as string | null,
+    category_id: null,
+    merchant_id: null,
+    policy_id: null,
+    source: null,
+    refund_of_transaction_id: null,
+    note: null,
+    date: '2026-01-10',
+    created_at: '2026-01-10T01:00:00Z',
+    updated_at: '2026-01-10T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+  }
+  const editingTrade = {
+    instrument_id: 'ins-1',
+    symbol: 'NVDA',
+    instrument_name: '英伟达',
+    instrument_type: 'stock' as const,
+    quantity: 100,
+    price_cents: 1500000,
+    fee_cents: 500,
+  }
+
+  /** 出资账户下拉 = 候选中含 acc-bank 的那个 NSelect（非 remote，区别于标的搜索） */
+  function fundingSelect(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAllComponents(NSelect).find((s) =>
+      (s.props('options') as Array<{ value: string }>).some((o) => o.value === 'acc-bank'),
+    )!
+  }
+
+  async function mountWithFundingReference() {
+    wireInvokeSeam({
+      overrides: { list_accounts: accountsWithFunding, list_instruments: { items: [], total: 0 } },
+    })
+    await useReferenceStore().refresh()
+  }
+
   it('买入渲染出资账户下拉（默认空、可选清空）；卖出不渲染（#938 对称票落地）', () => {
     const buy = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
     expect(buy.text()).toContain('出资账户')
     const sell = mount(InvestmentForm, { props: { kind: 'sell', submitLabel: '记卖出' } })
     expect(sell.text()).not.toContain('出资账户')
+  })
+
+  it('编辑回填：带出资账户的买入打开即显示当前值（AC「字段回填显示」）', async () => {
+    await mountWithFundingReference()
+    const wrapper = mount(InvestmentForm, {
+      props: { kind: 'buy', submitLabel: '记买入', editing: editingTx, trade: editingTrade },
+    })
+    expect(fundingSelect(wrapper).props('value')).toBe('acc-bank')
+    const untouched = mount(InvestmentForm, {
+      props: {
+        kind: 'buy',
+        submitLabel: '记买入',
+        editing: { ...editingTx, funding_account_id: null },
+        trade: editingTrade,
+      },
+    })
+    expect(fundingSelect(untouched).props('value')).toBeNull()
   })
 })

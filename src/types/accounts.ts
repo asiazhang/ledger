@@ -67,7 +67,7 @@ const ACCOUNT_TYPE_PRESENCE = {
 
 export const ACCOUNT_TYPES = Object.keys(ACCOUNT_TYPE_PRESENCE) as AccountType[]
 
-/** 出资账户准入闭集（issue #936 / ADR-0096 决策 6）：现金类账户 cash/bank/credit/ewallet/other。
+/** 出资账户准入闭集（issue #936 / ADR-0096 决策 4）：现金类账户 cash/bank/credit/ewallet/other。
  * 排除 investment（跨投资账户走 transfer，保住「子弹」语义单一）与 receivable/debt（借贷
  * 账户不承载投资结算）；与后端 transaction/funding.rs 的 FUNDING_ALLOWED_TYPES 同一闭集，
  * 后端行为层准入是唯一权威，本表驱动谓词仅供表单候选预过滤。币种一致过滤在表单层
