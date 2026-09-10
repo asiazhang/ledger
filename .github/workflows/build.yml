@@ -104,7 +104,7 @@ jobs:
     # CI 提速（仅 CI，本地开发不受影响）：
     # - DEBUG=1：workspace 自身降 debuginfo 到 line-tables-only（依赖已同配置），
     #   纯编译收益，backtrace 行号保留。
-    # - RUSTFLAGS + mold：链接器换 mold（lib + 两个集成测试 crate 各全量链接一次，
+    # - RUSTFLAGS + mold：链接器换 mold（lib 与每个集成测试 crate 各全量链接一次，
     #   链接是 workspace 编译的大头），apt 装 mold 秒级完成。
     # - 刻意不用 OPT_LEVEL=1：实测（run 33975823593）负优化——workspace 大 crate
     #   的优化 pass 使编译 76s→2m43s，执行只省 ~14s，净 +60s，已回退。
@@ -146,12 +146,15 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # 显式列出 target（lib + api_server + e2e）：不编译也不运行 bin 测试——
-      # ledger-perf 的生成器正确性单测属性能工具链（perf-bench.yml 域），随每日常规
-      # 基准一起运行；PR CI 只守护产品代码路径。副作用：显式 target 选择不跑
-      # doc-tests（当前为 0 个，无损失）。
+      # 显式 target 选择：lib + 全部集成 target（tests/ 下每个 *.rs 与 */main.rs 各一个
+      # crate，当前 api_server / e2e / commands / sync_trigger_poll）。`--test` 的名称
+      # 支持 Unix glob（cargo 文档明确要求单引号防 shell 展开），`'*'` 命中全部集成
+      # target 而不含 bin——新增集成 target 自动进 CI，无「手工清单漏项静默漏跑」的
+      # 坑（issue #988）。刻意不用 `--tests`：它会连带 bin 测试，把 ledger-perf 的
+      # 生成器正确性单测（属性能工具链，perf-bench.yml 域，随每日常规基准一起运行）
+      # 拖回 PR CI。副作用：显式 target 选择不跑 doc-tests（当前为 0 个，无损失）。
       - name: Rust 单元测试 + BDD/e2e 测试（cucumber）
-        run: cargo test --lib --test api_server --test e2e
+        run: cargo test --lib --test '*'
 
   backend-lint:
     name: 后端静态检查（fmt + clippy）
