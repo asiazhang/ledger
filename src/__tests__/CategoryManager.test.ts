@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount } from '@vue/test-utils'
+import { setFakeMedia } from './helpers/media-mock'
 import CategoryManager from '@/components/CategoryManager.vue'
 import type { Category } from '@/types'
 
@@ -98,6 +99,27 @@ describe('CategoryManager.vue', () => {
     const nodes = wrapper.findAll('.n-tree-node')
     expect(nodes.length).toBeGreaterThan(0)
     nodes.forEach((n) => {
+      expect(n.attributes('draggable')).toBe('true')
+    })
+  })
+
+  it('移动档拖拽排序入口隐藏（issue #849 / ADR-0088 决策 10 桌面专属管理动作）：树节点不可拖拽；桌面档照常', () => {
+    setFakeMedia({ width: 400, hover: 'hover', pointer: 'fine' })
+    const mobile = mount(CategoryManager)
+    const mobileNodes = mobile.findAll('.n-tree-node')
+    expect(mobileNodes.length).toBeGreaterThan(0)
+    mobileNodes.forEach((n) => {
+      // draggable 为枚举属性：false 以字符串 "false" 渲染（不可拖拽）
+      expect(n.attributes('draggable')).toBe('false')
+    })
+
+    // 桌面档照常（默认宽视口）：拖拽排序入口在位
+    setFakeMedia({ width: 1280, hover: 'hover', pointer: 'fine' })
+    const desktop = mount(CategoryManager)
+    const desktopNodes = desktop.findAll('.n-tree-node')
+    console.log('DEBUG desktop nodes:', desktopNodes.length, desktopNodes.map((n) => n.attributes('draggable')))
+    expect(desktopNodes.length).toBeGreaterThan(0)
+    desktopNodes.forEach((n) => {
       expect(n.attributes('draggable')).toBe('true')
     })
   })

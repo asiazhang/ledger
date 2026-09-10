@@ -3,6 +3,8 @@ import { computed, h } from 'vue'
 import { NCard, NDataTable, NEmpty, NRadioButton, NRadioGroup } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { t } from '@/i18n'
+import { useInputMode } from '@/composables/useInputMode'
+import { useWindowTier } from '@/composables/useWindowTier'
 import { MERCHANT_TOP_N_OPTIONS } from '@/stores/reports-session'
 import { formatAmount } from '@/types'
 import { merchantTableRows } from '@/utils/merchant-chart'
@@ -36,6 +38,16 @@ const emit = defineEmits<{
   (e: 'drilldown', merchantId: string): void
 }>()
 
+// 移动档（issue #849 / ADR-0088 决策 11 票⑨）：商户排行窄屏自裁量**改堆叠**——
+// 排行是逐行对账的阅读面，堆叠两列（商户名＋金额分布条 / 金额＋占比·笔数）让
+// 五列信息一屏并读，不引入横向滚动；下钻入口、testid 与口径两档同源。
+// 桌面档五列一字不动（回归红线）；TopN 控件另按输入轴达标触控目标 ≥48px。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
+const inputMode = useInputMode()
+const isTouch = computed(() => inputMode.value === 'touch')
+const TOUCH_TARGET_STYLE = { minHeight: '48px' }
+
 const tableRows = computed(() =>
   merchantTableRows(props.report.rows, props.report.total_cents),
 )
@@ -46,68 +58,105 @@ function onDrill(merchantId: string) {
   emit('drilldown', merchantId)
 }
 
-const columns = computed<DataTableColumns<MerchantTableRow>>(() => [
-  {
-    title: t('reports.merchant.columns.name'),
-    key: 'name',
-    render: (row) =>
-      h(MerchantLink, {
-        merchantId: row.merchant_id,
-        drillIntent: true,
-        'data-testid': 'merchant-name',
-        onDrill,
-      }),
-  },
-  {
-    title: t('reports.merchant.columns.bar'),
-    key: 'bar',
-    render: (row) =>
-      h('div', { class: 'merchant-bar-track', 'data-testid': 'merchant-bar-track' }, [
-        h('div', {
-          class: 'merchant-bar-fill',
-          'data-testid': 'merchant-bar',
-          style: {
-            width: `${row.barPct}%`,
-            // 名次色「淡入渐变 → 实色」：与柱图 softBarFillPlugin 视觉同源
-            background: `linear-gradient(90deg, ${row.color}66, ${row.color})`,
-          },
-        }),
-      ]),
-  },
-  {
-    title: t('reports.merchant.columns.amount'),
-    key: 'amount',
-    align: 'right',
-    render: (row) =>
-      h(
-        'span',
-        { class: 'merchant-amount', 'data-testid': 'merchant-amount' },
-        formatAmount(row.amount_cents),
-      ),
-  },
-  {
-    title: t('reports.merchant.columns.share'),
-    key: 'share',
-    align: 'right',
-    render: (row) =>
-      h(
-        'span',
-        { 'data-testid': 'merchant-share' },
-        `${row.sharePct}%`,
-      ),
-  },
-  {
-    title: t('reports.merchant.columns.count'),
-    key: 'count',
-    align: 'right',
-    render: (row) =>
-      h(
-        'span',
-        { 'data-testid': 'merchant-count' },
-        String(row.transactionCount),
-      ),
-  },
-])
+// —— 单元格渲染单点：两档列结构复用同一套渲染函数，testid 与口径零漂移 ——
+const renderNameCell = (row: MerchantTableRow) =>
+  h(MerchantLink, {
+    merchantId: row.merchant_id,
+    drillIntent: true,
+    'data-testid': 'merchant-name',
+    onDrill,
+  })
+
+const renderBarCell = (row: MerchantTableRow) =>
+  h('div', { class: 'merchant-bar-track', 'data-testid': 'merchant-bar-track' }, [
+    h('div', {
+      class: 'merchant-bar-fill',
+      'data-testid': 'merchant-bar',
+      style: {
+        width: `${row.barPct}%`,
+        // 名次色「淡入渐变 → 实色」：与柱图 softBarFillPlugin 视觉同源
+        background: `linear-gradient(90deg, ${row.color}66, ${row.color})`,
+      },
+    }),
+  ])
+
+const renderAmountCell = (row: MerchantTableRow) =>
+  h(
+    'span',
+    { class: 'merchant-amount', 'data-testid': 'merchant-amount' },
+    formatAmount(row.amount_cents),
+  )
+
+const renderShareCell = (row: MerchantTableRow) =>
+  h('span', { 'data-testid': 'merchant-share' }, `${row.sharePct}%`)
+
+const renderCountCell = (row: MerchantTableRow) =>
+  h('span', { 'data-testid': 'merchant-count' }, String(row.transactionCount))
+
+/** 移动档堆叠单元格：主行 + 弱化副行纵排（accounts / 预算移动档同款先例）。 */
+const MOBILE_STACK_STYLE = 'display: flex; flex-direction: column; gap: 2px; min-width: 0;'
+const MOBILE_AMOUNT_STACK_STYLE =
+  'display: flex; flex-direction: column; gap: 2px; align-items: flex-end;'
+const MOBILE_SUB_STYLE = 'font-size: 12px; opacity: 0.65;'
+
+const columns = computed<DataTableColumns<MerchantTableRow>>(() => {
+  // 移动档两列：商户名（副行金额分布条）+ 金额（副行占比 · 笔数）——
+  // 五列信息全部保留，副行文案复用桌面列头文案单点。
+  if (isMobileTier.value) {
+    return [
+      {
+        title: t('reports.merchant.columns.name'),
+        key: 'name',
+        render: (row) =>
+          h('div', { style: MOBILE_STACK_STYLE }, [renderNameCell(row), renderBarCell(row)]),
+      },
+      {
+        title: t('reports.merchant.columns.amount'),
+        key: 'amount',
+        align: 'right' as const,
+        render: (row) =>
+          h('div', { style: MOBILE_AMOUNT_STACK_STYLE }, [
+            renderAmountCell(row),
+            h('div', { style: MOBILE_SUB_STYLE }, [
+              renderShareCell(row),
+              ' · ',
+              renderCountCell(row),
+            ]),
+          ]),
+      },
+    ]
+  }
+  return [
+    {
+      title: t('reports.merchant.columns.name'),
+      key: 'name',
+      render: renderNameCell,
+    },
+    {
+      title: t('reports.merchant.columns.bar'),
+      key: 'bar',
+      render: renderBarCell,
+    },
+    {
+      title: t('reports.merchant.columns.amount'),
+      key: 'amount',
+      align: 'right',
+      render: renderAmountCell,
+    },
+    {
+      title: t('reports.merchant.columns.share'),
+      key: 'share',
+      align: 'right',
+      render: renderShareCell,
+    },
+    {
+      title: t('reports.merchant.columns.count'),
+      key: 'count',
+      align: 'right',
+      render: renderCountCell,
+    },
+  ]
+})
 </script>
 
 <template>
@@ -126,6 +175,7 @@ const columns = computed<DataTableColumns<MerchantTableRow>>(() => [
             v-for="n in MERCHANT_TOP_N_OPTIONS"
             :key="n"
             :value="n"
+            :style="isTouch ? TOUCH_TARGET_STYLE : undefined"
             :data-testid="`merchant-topn-${n}`"
           >
             {{ t('reports.merchant.topOption', { n }) }}
@@ -156,10 +206,12 @@ const columns = computed<DataTableColumns<MerchantTableRow>>(() => [
 </template>
 
 <style scoped>
-/* 商户卡头部：标题与 TopN 档位控件同行（分类卡头部面包屑同构） */
+/* 商户卡头部：标题与 TopN 档位控件同行（分类卡头部面包屑同构）；窄屏换行
+   （issue #849），桌面档不溢出永不触发。 */
 .merchant-card-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 

@@ -17,8 +17,10 @@ import PhysicalAssetValuationModal from '@/components/PhysicalAssetValuationModa
 import PhysicalAssetDisposeModal from '@/components/PhysicalAssetDisposeModal.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import { useModalIntent } from '@/composables/useModalIntent'
+import { useWindowTier } from '@/composables/useWindowTier'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
 import { useReferenceStore } from '@/stores/reference'
+import { sumFixedColumnWidths } from '@/utils/table'
 import type { PhysicalAsset } from '@/types'
 
 /**
@@ -33,6 +35,12 @@ import type { PhysicalAsset } from '@/types'
  */
 const physicalAssetsStore = usePhysicalAssetsStore()
 const reference = useReferenceStore()
+
+// 移动档（issue #849 / ADR-0088 决策 11 票⑨，收纳页布局核对级适配）：低频管理表
+// 窄屏不重排列结构，挂 scroll-x = 固定列宽总和由横向滚动吸收（触屏滑动可达全部
+// 列与行内操作）；桌面档不挂（既有压缩行为一字不变）。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
 
 // —— 建档弹窗（新建/编辑双模式，T2）——
 // 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
@@ -239,6 +247,9 @@ const columns: DataTableColumns<PhysicalAsset> = [
   },
 ]
 
+/** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
+const tableScrollX = sumFixedColumnWidths(columns)
+
 const listTitle = computed(() => t('physicalAssets.listTitle'))
 const totalLabel = computed(() => t('physicalAssets.holdingTotal'))
 
@@ -291,6 +302,7 @@ onMounted(() => {
         :data="physicalAssetsStore.assets"
         :bordered="false"
         size="small"
+        :scroll-x="isMobileTier ? tableScrollX : undefined"
       >
         <template #empty>
           <span data-testid="physical-asset-empty-guide">{{ t('physicalAssets.emptyGuide') }}</span>

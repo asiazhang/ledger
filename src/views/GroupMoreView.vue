@@ -30,6 +30,7 @@ import ItemsView from '@/views/ItemsView.vue'
 import ReportsView from '@/views/ReportsView.vue'
 import SearchView from '@/views/SearchView.vue'
 import { useSidebarOrderStore, buildTabContextMenuOptions } from '@/stores/sidebar-order'
+import { useWindowTier } from '@/composables/useWindowTier'
 import type { ContainableViewName, SidebarGroupId } from '@/stores/sidebar-order'
 
 /**
@@ -68,6 +69,9 @@ const CONTAINED_VIEWS: Record<ContainableViewName, { component: Component; icon:
 
 const route = useRoute()
 const router = useRouter()
+
+// 窗口分级（issue #849）：裁剪判定接宽度轴唯一事实源。
+const windowTier = useWindowTier()
 
 // 顺序状态消费 sidebar-order store（issue #549）：清单/组内序只读，移回写路径经 store。
 const sidebarOrder = useSidebarOrderStore()
@@ -111,8 +115,12 @@ const backTarget = ref<ContainableViewName | null>(null)
 /** 菜单选项由本组当前主项序派生（组满置灰判定在纯函数内，响应式随动）。 */
 const backMenuOptions = computed(() => buildTabContextMenuOptions(sidebarOrder.sidebarGroupOrders[props.group]))
 
-/** 右键页签弹出移回菜单：先收起再 nextTick 展开，保证连续弹出时位置刷新（侧栏菜单同款）。 */
+/** 右键页签弹出移回菜单：先收起再 nextTick 展开，保证连续弹出时位置刷新（侧栏菜单同款）。
+ * 组内收纳管理是桌面专属管理动作（ADR-0088 决策 10，issue #849）：移动档不入
+ * 口（右键不弹，与导航抽屉「菜单不附右键排序事件」同口径），只读消费收纳结构；
+ * 桌面档照常。 */
 function onTabContextmenu(e: MouseEvent, name: ContainableViewName) {
+  if (windowTier.value === 'mobile') return
   backTarget.value = name
   backMenuX.value = e.clientX
   backMenuY.value = e.clientY

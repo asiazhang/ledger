@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
-import { NDialogProvider } from 'naive-ui'
+import { NDataTable, NDialogProvider } from 'naive-ui'
+import { setFakeMedia } from './helpers/media-mock'
 import { useReferenceStore } from '@/stores/reference'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
 import {
@@ -332,6 +333,24 @@ describe('InstrumentBrowser 添加投资标的入口（issue #697 / spec #690）
     expect(msg.text()).toContain('已添加投资标的：贵州茅台')
     const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
     expect(after).toBe(before + 1)
+  })
+})
+
+describe('InstrumentBrowser 移动档横向滚动下限（issue #849 / ADR-0088 决策 11 票⑨）', () => {
+  it('窄屏表格挂 scroll-x = 固定列宽总和（横向滚动吸收窄屏，列不压碎）；桌面档不挂零变化', async () => {
+    setFakeMedia({ width: 400, hover: 'hover', pointer: 'fine' })
+    const mobile = mountBrowser()
+    await flushPromises()
+    const mobileTable = mobile.findComponent(NDataTable)
+    const columns = mobileTable.props('columns') as unknown as Array<{ width?: number }>
+    const fixedSum = columns.reduce((sum, c) => sum + (typeof c.width === 'number' ? c.width : 0), 0)
+    expect(fixedSum).toBeGreaterThan(0)
+    expect(mobileTable.props('scrollX')).toBe(fixedSum)
+
+    setFakeMedia({ width: 1280, hover: 'hover', pointer: 'fine' })
+    const desktop = mountBrowser()
+    await flushPromises()
+    expect(desktop.findComponent(NDataTable).props('scrollX')).toBeUndefined()
   })
 })
 

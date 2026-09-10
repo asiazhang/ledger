@@ -20,9 +20,11 @@ import { api } from '@/api'
 import { useRouter } from 'vue-router'
 import { useReferenceStore } from '@/stores/reference'
 import { useModalIntent } from '@/composables/useModalIntent'
+import { useWindowTier } from '@/composables/useWindowTier'
 import { matchLabel } from '@/utils/pinyin-filter'
 import { t } from '@/i18n'
 import { formatQuantity } from '@/utils/money'
+import { sumFixedColumnWidths } from '@/utils/table'
 import type { Merchant, MerchantInput } from '@/types'
 
 // 商户管理（issue #189 / ADR-0028）：字典为扁平表（无层级、无 sort_order，按名称排序），
@@ -55,6 +57,12 @@ interface MerchantRow extends Merchant {
 const reference = useReferenceStore()
 const message = useMessage()
 const router = useRouter()
+
+// 移动档（issue #849 / ADR-0088 决策 11 票⑨，收纳页布局核对级适配）：低频管理表
+// 窄屏不重排列结构，挂 scroll-x = 固定列宽总和由横向滚动吸收；桌面档不挂
+//（既有压缩行为一字不变）。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
 
 /** 条数下钻（issue #446）：按行 id 产生跳转，不对条数/商户状态设门——
  * 条数为 0 点击只见空列表（诚实行为）；软删商户行（#447 引入展示后）同样可下钻。 */
@@ -293,6 +301,9 @@ const columns: DataTableColumn<MerchantRow>[] = [
           ]),
   },
 ]
+
+/** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
+const tableScrollX = sumFixedColumnWidths(columns)
 </script>
 
 <template>
@@ -325,6 +336,7 @@ const columns: DataTableColumn<MerchantRow>[] = [
           :bordered="false"
           size="small"
           :row-key="(m: MerchantRow) => m.id"
+          :scroll-x="isMobileTier ? tableScrollX : undefined"
           :pagination="pagination"
           @update:sorter="resetPageOnSort"
         />

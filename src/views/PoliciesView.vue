@@ -19,6 +19,8 @@ import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { useModalIntent } from '@/composables/useModalIntent'
 import { useFocusParam } from '@/composables/useFocusParam'
+import { useWindowTier } from '@/composables/useWindowTier'
+import { sumFixedColumnWidths } from '@/utils/table'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
 import { t } from '@/i18n'
@@ -27,6 +29,12 @@ const reference = useReferenceStore()
 const policiesStore = usePoliciesStore()
 const message = useMessage()
 const route = useRoute()
+
+// 移动档（issue #849 / ADR-0088 决策 11 票⑨，收纳页布局核对级适配）：低频管理表
+// 窄屏不重排列结构，挂 scroll-x = 固定列宽总和由横向滚动吸收（触屏滑动可达全部
+// 列与行内操作）；桌面档不挂（既有压缩行为一字不变）。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
 
 // —— 新建/编辑弹窗（同一表单组件双模式）——
 // 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
@@ -175,6 +183,9 @@ const columns: DataTableColumns<Policy> = [
   },
 ]
 
+/** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
+const tableScrollX = sumFixedColumnWidths(columns)
+
 // —— 来源跳转落点（spec #704 / issue #706，词汇表「实体定位参数（focus 参数）」）：
 // 挂载消费一次（读一次语义归 useFocusParam 单点）；保单行高亮属「先拿 id 后等
 // 数据」——回调只暂存 id，列表渲染后滚动定位（读取时刻与生效时刻解耦）。
@@ -254,6 +265,7 @@ onMounted(() => {
         :row-props="rowProps"
         :bordered="false"
         size="small"
+        :scroll-x="isMobileTier ? tableScrollX : undefined"
       >
         <template #empty>
           <span data-testid="policy-empty-guide">{{ t('policies.emptyGuide') }}</span>

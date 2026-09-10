@@ -4,6 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import GroupMoreView from '@/views/GroupMoreView.vue'
+import { setFakeMedia } from './helpers/media-mock'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { makePolicy, makePolicyStats } from './factories'
 import { routes, router } from '@/router'
@@ -40,6 +41,13 @@ type GroupMoreId = 'bookkeeping' | 'assets' | 'insights'
 function containerTabs(wrapper: { element: Element }): string[] {
   const nav = wrapper.element.querySelectorAll('.n-tabs-nav')[0]!
   return Array.from(nav.querySelectorAll('.n-tabs-tab')).map((t) => t.textContent!.trim())
+}
+
+/** 页签右键「移回侧栏」菜单选项（AppDropdown teleport 到 body，按文本定位）。 */
+function findBackOption(): Element | undefined {
+  return Array.from(document.body.querySelectorAll('.n-dropdown-option')).find((el) =>
+    el.textContent?.includes('移回侧栏'),
+  )
 }
 
 /** 组内「更多」容器：真实路由表同构 memory router + 按组传 prop。 */
@@ -225,12 +233,6 @@ describe('GroupMoreView 页签右键「移回侧栏」（issue #475 / ADR-0063 �
     resetOverlays()
   })
 
-  function findBackOption(): Element | undefined {
-    return Array.from(document.body.querySelectorAll('.n-dropdown-option')).find((el) =>
-      el.textContent?.includes('移回侧栏'),
-    )
-  }
-
   it('出厂满员（记账组）：右键页签弹「移回侧栏」置灰且提示文案经 i18n 渲染（定时/商户移回置灰的天然验证场景）；菜单经既有弹层封装上报注册表', async () => {
     const { wrapper } = await mountGroupView('bookkeeping')
     await wrapper.findAll('.pane-tab').find((t) => t.text().includes('定时'))!.trigger('contextmenu')
@@ -274,6 +276,32 @@ describe('GroupMoreView 页签右键「移回侧栏」（issue #475 / ADR-0063 �
     expect(store.sidebarContainment.insights).toEqual([])
     const { wrapper } = await mountGroupView('insights')
     expect(wrapper.findAll('.n-tabs-tab').length).toBe(0)
+  })
+})
+
+describe('GroupMoreView 移动档裁剪组内收纳管理入口（issue #849 / ADR-0088 决策 10）', () => {
+  afterEach(() => {
+    useSidebarOrderStore().resetSidebarOrder()
+    resetOverlays()
+  })
+
+  it('窄屏右键页签不弹「移回侧栏」菜单（桌面专属管理动作移动档不可达）；桌面档照常', async () => {
+    setFakeMedia({ width: 400, hover: 'hover', pointer: 'fine' })
+    const mobile = await mountGroupView('bookkeeping')
+    await mobile.wrapper.findAll('.pane-tab').find((t) => t.text().includes('定时'))!.trigger('contextmenu')
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(false)
+    expect(findBackOption()).toBeUndefined()
+    // 移动档只读消费收纳结构：页签清单本身不受影响
+    expect(containerTabs(mobile.wrapper)).toEqual(['定时', '商户'])
+
+    // 桌面档照常：右键菜单可用（同 #475 既有行为）
+    setFakeMedia({ width: 1280, hover: 'hover', pointer: 'fine' })
+    const desktop = await mountGroupView('bookkeeping')
+    await desktop.wrapper.findAll('.pane-tab').find((t) => t.text().includes('定时'))!.trigger('contextmenu')
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(true)
+    expect(findBackOption()).toBeDefined()
   })
 })
 
