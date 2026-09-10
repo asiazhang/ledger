@@ -1,7 +1,8 @@
 #!/bin/sh
-# 文档一致性检查：地图完整性 / 术语唯一 / 导航一致 / ADR 编号唯一 / 代码坐标
+# 文档一致性检查：地图完整性 / 术语唯一 / 导航一致 / ADR 编号唯一 / 代码坐标 /
+# 快照分组组数一致
 #
-# 五项校验：
+# 六项校验：
 #   ① CONTEXT-MAP.md 与 docs/contexts/CONTEXT-*.md 一一对应（地图断链、未挂地图的孤儿文件均报错）
 #   ② 术语全库唯一：分域词汇表条目标题（^## ）按括号前主干归一后比对，重复即报错
 #   ③ 导航一致：AGENTS.md 与 CONTEXT-MAP.md 引用的仓库内文件/目录必须存在（导航指向已删除文件即报错）
@@ -9,6 +10,9 @@
 #   ⑤ 代码坐标：分域词汇表与模型文档不得出现实现坐标（src-tauri/src/、src/ 路径式引用
 #      及 .rs/.ts/.vue 文件名）——「代码可查事实不进文档」三层标尺的守门（标尺见
 #      CONTEXT-MAP「结构约定」；扫描范围不含 ADR / agents / api 文档）
+#   ⑥ 快照分组组数一致：CONTEXT-testing.md 快照分组词条与 ADR-0086 决策 6 记载的
+#      组数，必须与 e2e world 实际快照分组数全等——「新快照必须归入既有分组」
+#      纪律的守门，防止新组绕过规格修订静默入场（issue #955）
 #
 # 任一校验失败即非零退出；错误信息为中文并定位到文件与术语。
 # 已挂入 scripts/check.sh 质量门槛序列，也可独立运行：scripts/check-docs.sh
@@ -121,10 +125,44 @@ for f in $(find "$CTX_DIR" docs/model -type f -name '*.md' 2>/dev/null | sort); 
   done
 done
 
+# ── ⑥ 快照分组组数一致（testing 词条 / ADR-0086 决策 6 / e2e world 实际分组） ─
+world_file=src-tauri/tests/e2e/world.rs
+cn_to_num() {
+  case "$1" in
+    一) echo 1 ;; 二|两) echo 2 ;; 三) echo 3 ;; 四) echo 4 ;; 五) echo 5 ;;
+    六) echo 6 ;; 七) echo 7 ;; 八) echo 8 ;; 九) echo 9 ;; 十) echo 10 ;;
+    *) echo 0 ;;
+  esac
+}
+if [ ! -f "$world_file" ]; then
+  err "快照分组：world 文件不存在：$world_file"
+  world_groups=-1
+else
+  world_groups=$(grep -cE '^    pub [a-z][a-z_]*: [A-Za-z]+Group,' "$world_file" || true)
+fi
+testing_entry=docs/contexts/CONTEXT-testing.md
+testing_num=$(sed -n '/^## 快照分组/,/^## /p' "$testing_entry" | grep -oE '[一二两三四五六七八九十]+组' | head -n 1 | sed 's/组$//')
+if [ -z "$testing_num" ]; then
+  err "快照分组：$testing_entry 快照分组词条未找到「N组」计数"
+else
+  testing_groups=$(cn_to_num "$testing_num")
+  [ "$testing_groups" = "$world_groups" ] || \
+    err "快照分组：$testing_entry 词条记 $testing_num（$testing_groups 组），world 实际 $world_groups 组，不一致"
+fi
+adr_group_file=docs/adr/0086-bdd-step-shared-layer-deepening.md
+adr_num=$(grep -oE '[一二两三四五六七八九十]+分组' "$adr_group_file" | head -n 1 | sed 's/分组$//; s/组$//')
+if [ -z "$adr_num" ]; then
+  err "快照分组：$adr_group_file 未找到「N分组」计数"
+else
+  adr_groups=$(cn_to_num "$adr_num")
+  [ "$adr_groups" = "$world_groups" ] || \
+    err "快照分组：$adr_group_file 决策记 $adr_num（$adr_groups 组），world 实际 $world_groups 组，不一致"
+fi
+
 # ── 结果 ────────────────────────────────────────────────────────────────
 if [ -s "$tmp" ]; then
   cat "$tmp"
   echo "❌ 文档一致性检查失败：$(wc -l <"$tmp" | tr -d ' ') 处问题（见上方 ✗ 列表）"
   exit 1
 fi
-echo "  ✓ 地图完整、术语唯一、导航一致、ADR 编号唯一、词汇表与模型文档坐标清零"
+echo "  ✓ 地图完整、术语唯一、导航一致、ADR 编号唯一、词汇表与模型文档坐标清零、快照分组组数一致"
