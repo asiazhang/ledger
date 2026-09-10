@@ -70,10 +70,11 @@ const ctx = useInvestmentForm(props.kind, {
         />
       </NFormItem>
 
-      <!-- 可选出资账户（issue #936 / ADR-0096，买入侧先行）：候选准入闭集与同币种过滤
-           收口 composable（后端行为层准入是唯一权威）；默认空 = 维持余额买入语义
-           （结算账户 = 投资账户），编辑回填随全字段替换提交不被静默丢失 -->
-      <NFormItem v-if="kind === 'buy'" :label="t('investments.form.fundingAccount')">
+      <!-- 可选出资账户（issue #936 / #938 / ADR-0096，buy/sell 对称）：候选准入闭集与
+           同币种过滤收口 composable（后端行为层准入是唯一权威）；默认空 = 维持余额买卖
+           语义（结算账户 = 投资账户），编辑回填随全字段替换提交不被静默丢失。
+           本组件仅 buy/sell 两形态挂载，出资账户行无条件渲染 -->
+      <NFormItem :label="t('investments.form.fundingAccount')">
         <PinyinSelect
           v-model:value="ctx.fundingAccountId.value"
           :options="ctx.fundingAccountOptions.value"

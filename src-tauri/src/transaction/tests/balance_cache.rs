@@ -194,6 +194,120 @@ fn delete_transfer_restores_both_sides() {
 }
 
 // ---------------------------------------------------------------------------
+// 出资账户归因（ADR-0096 sell 臂，issue #938）：sell 记 + 于出资账户，
+// 投资账户现金不动；修改/删除的三端重算与回补随 sell 路径验证
+// ---------------------------------------------------------------------------
+
+/// sell + 出资账户夹具：余额买入 2 份建仓（$100 × 2 = 20000 分，现金腿落投资
+/// 账户），两张 USD 出资卡（与交易同币种，准入闭集内）随投资账户一并建缓存行。
+fn seed_sell_funding_fixture(conn: &Connection) {
+    test_support::seed_investment_setup(conn, "acc-inv", "inst-sf");
+    test_support::seed_account(conn, "acc-fund-a", "出资卡A", "bank", "USD", 0);
+    test_support::seed_account(conn, "acc-fund-b", "出资卡B", "bank", "USD", 0);
+    for id in ["acc-inv", "acc-fund-a", "acc-fund-b"] {
+        backfill_scaffold_account(conn, id);
+    }
+    create_transaction_internal(conn, make_buy_input("acc-inv", "inst-sf", 2.0, 1000000, 0))
+        .unwrap();
+}
+
+/// 建仓后的卖出输入构造：2 份 × $100 毛得 20000 分（USD→CNY 汇率 1.0）。
+fn make_sell_input(funding_account_id: Option<&str>) -> TransactionInput {
+    let mut sell = make_buy_input("acc-inv", "inst-sf", 2.0, 1000000, 0);
+    sell.kind = TransactionKind::Sell;
+    sell.funding_account_id = funding_account_id.map(str::to_string);
+    sell
+}
+
+/// 带出资账户的 sell：赎回款记 + 于出资账户，投资账户现金不动（钱不经手）。
+#[test]
+fn create_sell_with_funding_credits_funding_not_investment() {
+    let conn = test_support::open();
+    seed_sell_funding_fixture(&conn);
+    let inv_before = compute_balance(&conn, "acc-inv").unwrap();
+
+    create_transaction_internal(&conn, make_sell_input(Some("acc-fund-a"))).unwrap();
+
+    assert_balance_cache_matches_realtime(&conn);
+    assert_eq!(
+        compute_balance(&conn, "acc-fund-a").unwrap(),
+        20000,
+        "回卡卖出：赎回款 + 于出资账户"
+    );
+    assert_eq!(
+        compute_balance(&conn, "acc-inv").unwrap(),
+        inv_before,
+        "投资账户现金不动（出资账户命中时现金腿为 0）"
+    );
+}
+
+/// 不填出资账户的 sell：维持余额卖出语义——现金腿 + 记投资账户自己（钱留券商），
+/// 出资账户不误记账。
+#[test]
+fn create_sell_without_funding_keeps_balance_sell_semantics() {
+    let conn = test_support::open();
+    seed_sell_funding_fixture(&conn);
+
+    create_transaction_internal(&conn, make_sell_input(None)).unwrap();
+
+    assert_balance_cache_matches_realtime(&conn);
+    assert_eq!(
+        compute_balance(&conn, "acc-inv").unwrap(),
+        0,
+        "不填出资账户：买入 − 与卖出 + 同落投资账户（子弹口径回到 0）"
+    );
+    assert_eq!(compute_balance(&conn, "acc-fund-a").unwrap(), 0);
+}
+
+/// 修改换出资账户：旧 ∪ 新三端整体重算——旧出资端恢复、新出资端计入、投资账户不动。
+#[test]
+fn update_sell_funding_swap_recomputes_three_ends() {
+    let conn = test_support::open();
+    seed_sell_funding_fixture(&conn);
+    let inv_before = compute_balance(&conn, "acc-inv").unwrap();
+    let id = create_transaction_internal(&conn, make_sell_input(Some("acc-fund-a")))
+        .unwrap()
+        .id;
+
+    update_transaction_internal(&conn, &id, make_sell_input(Some("acc-fund-b"))).unwrap();
+
+    assert_balance_cache_matches_realtime(&conn);
+    assert_eq!(
+        compute_balance(&conn, "acc-fund-a").unwrap(),
+        0,
+        "旧出资端随重算恢复"
+    );
+    assert_eq!(
+        compute_balance(&conn, "acc-fund-b").unwrap(),
+        20000,
+        "新出资端计入赎回款"
+    );
+    assert_eq!(compute_balance(&conn, "acc-inv").unwrap(), inv_before);
+}
+
+/// 删除带出资账户的 sell：出资账户余额自动回补（软删行三元组整体重算），
+/// 投资账户不动。
+#[test]
+fn delete_sell_with_funding_restores_funding_balance() {
+    let conn = test_support::open();
+    seed_sell_funding_fixture(&conn);
+    let inv_before = compute_balance(&conn, "acc-inv").unwrap();
+    let id = create_transaction_internal(&conn, make_sell_input(Some("acc-fund-a")))
+        .unwrap()
+        .id;
+
+    delete_transaction_internal(&conn, &id).unwrap();
+
+    assert_balance_cache_matches_realtime(&conn);
+    assert_eq!(
+        compute_balance(&conn, "acc-fund-a").unwrap(),
+        0,
+        "删除回补出资账户，不留幽灵入账"
+    );
+    assert_eq!(compute_balance(&conn, "acc-inv").unwrap(), inv_before);
+}
+
+// ---------------------------------------------------------------------------
 // 批量导入与 Writer 直写（定时引擎例外接缝）
 // ---------------------------------------------------------------------------
 
