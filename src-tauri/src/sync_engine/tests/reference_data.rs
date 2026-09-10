@@ -311,18 +311,55 @@ fn category_lifecycle_and_reorder_ops_replay_and_converge() {
 }
 
 /// 命令 LWW 裁决域钉子：各域命令 subject 指向实体 id，防实体判别键漂移。
+/// 派生自然键型命令（货币对、标的 × 周）以派生键为裁决域（issue #861）。
 #[test]
 fn command_subject_is_entity_id_across_domains() {
+    use std::borrow::Cow;
     assert_eq!(
-        Some(("account", "acc-1")),
+        Some(("account", Cow::Borrowed("acc-1"))),
         DomainCommand::Account(AccountCommand::Delete { id: "acc-1".into() }).subject()
     );
     assert_eq!(
-        Some(("category", "cat-1")),
+        Some(("category", Cow::Borrowed("cat-1"))),
         DomainCommand::Category(CategoryCommand::Delete { id: "cat-1".into() }).subject()
     );
     assert_eq!(
-        Some(("merchant", "m-1")),
+        Some(("merchant", Cow::Borrowed("m-1"))),
         DomainCommand::Merchant(MerchantCommand::Delete { id: "m-1".into() }).subject()
+    );
+    assert_eq!(
+        Some(("exchange_rate", Cow::<str>::Owned("EUR->CNY".to_string()))),
+        DomainCommand::ExchangeRate(crate::investment::ExchangeRateCommand::Upsert {
+            id: "er-1".into(),
+            base_code: "EUR".into(),
+            quote_code: "CNY".into(),
+            rate: 8.0,
+            priced_at: "2026-01-10".into(),
+            source: None,
+        })
+        .subject()
+    );
+    assert_eq!(
+        Some((
+            "price_history",
+            Cow::<str>::Owned("inst-1|2026-01-12".to_string())
+        )),
+        DomainCommand::Price(crate::investment::PriceCommand::ManualPrice {
+            instrument_id: "inst-1".into(),
+            date: "2026-01-15".into(),
+            price_cents: 100,
+        })
+        .subject()
+    );
+    assert_eq!(
+        Some(("market_price", Cow::Borrowed("inst-1"))),
+        DomainCommand::Price(crate::investment::PriceCommand::MarketPrice {
+            instrument_id: "inst-1".into(),
+            price_cents: 100,
+            currency_code: "CNY".into(),
+            priced_at: "2026-01-15".into(),
+            source: None,
+        })
+        .subject()
     );
 }

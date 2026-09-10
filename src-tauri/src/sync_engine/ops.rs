@@ -43,6 +43,11 @@ pub(crate) fn insert_row(conn: &Connection, op: &SyncOp) -> Result<()> {
     // 「旧端载荷反序列化失败」的 schema 偏斜场景由挂起队列承接后改道。
     let payload = serde_json::to_string(&op.command)
         .map_err(|e| AppError::Invalid(format!("op 载荷序列化失败: {e}")))?;
+    let entity_id = op
+        .command
+        .subject()
+        .map(|(_, id)| id.into_owned())
+        .unwrap_or_default();
     conn.execute(
         "INSERT INTO sync_ops (op_id, device_id, clock, schema_version, entity, entity_id, payload, recorded_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -52,10 +57,7 @@ pub(crate) fn insert_row(conn: &Connection, op: &SyncOp) -> Result<()> {
             op.clock,
             op.schema_version,
             op.command.entity(),
-            op.command
-                .subject()
-                .map(|(_, id)| id)
-                .unwrap_or_default(),
+            entity_id,
             payload,
             now_iso(),
         ],

@@ -18,6 +18,7 @@
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
+use super::command::{PriceCommand, record_price};
 use super::model::{ManualPriceInput, ManualPriceResult};
 use super::prices::{upsert_market_price, upsert_price_history};
 use crate::error::{AppError, Result};
@@ -26,8 +27,30 @@ use crate::error::{AppError, Result};
 pub(crate) const MANUAL_PRICE_SOURCE: &str = "manual";
 
 /// 手动报价核心接缝：校验 → 价格历史周采样落库 → 按最新点映像规则决定现价
-/// upsert。与 IPC 命令同一实现（先例 `create_instrument_manual`）。
+/// upsert → 产出 op（裁决域 = 标的 × ISO 周采样行，issue #861）。与 IPC 命令
+/// 同一实现（先例 `create_instrument_manual`）；写入协议见 [`write_manual_price`]。
 pub fn record_manual_price(
+    conn: &Connection,
+    input: &ManualPriceInput,
+) -> Result<ManualPriceResult> {
+    let outcome = write_manual_price(conn, input)?;
+    // op 产出接缝（issue #861 / ADR-0091）：本地写成功 → 报价随行追加进本机
+    // OpLog（两落点的落库判定在重放端按同一规则执行）；随同一事务提交/回滚。
+    record_price(
+        conn,
+        PriceCommand::ManualPrice {
+            instrument_id: input.instrument_id.clone(),
+            date: input.date.clone(),
+            price_cents: input.price_cents,
+        },
+    )?;
+    Ok(outcome)
+}
+
+/// 手动报价写入协议（本地报价与重放共用，无 op 产出）：校验 → 周采样落库 →
+/// 最新点映像规则决定现价 upsert。重放端以同一规则执行两落点判定（现价映像
+/// 依赖本地历史状态，同序重放 ⇒ 同一判定，ADR-0091 决策 2）。
+pub(crate) fn write_manual_price(
     conn: &Connection,
     input: &ManualPriceInput,
 ) -> Result<ManualPriceResult> {

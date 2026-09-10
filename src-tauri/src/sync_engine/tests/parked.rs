@@ -161,44 +161,5 @@ fn replay_onto_deleted_account_parks_and_never_resurrects() {
     assert_eq!(count, 1, "仍不落地");
 }
 
-/// 投资命令重放（v1 边界，#861 承接重放执行）：不 fail loud 中断批次，进挂起
-/// 队列并携带既有码化原因。
-#[test]
-fn investment_command_replay_parks_instead_of_failing_batch() {
-    let conn_a = test_support::open();
-    let conn_b = test_support::open();
-    // 两端等量投资夹具（真实世界对应标的/账户已同步，#860）。
-    test_support::seed_investment_setup(&conn_a, "acc-inv", "inst-1");
-    test_support::seed_investment_setup(&conn_b, "acc-inv", "inst-1");
-
-    behavior::create(
-        &conn_a,
-        crate::transaction::TransactionInput {
-            kind: crate::transaction::amount::TransactionKind::Buy,
-            instrument_id: Some("inst-1".into()),
-            quantity: Some(100.0),
-            price_cents: Some(1500),
-            fee_cents: Some(5),
-            amount_cents: 0,
-            currency_code: "USD".into(),
-            account_id: "acc-inv".into(),
-            ..make_expense("acc-inv", 0, "")
-        },
-    )
-    .unwrap();
-
-    let wire = wire_out(&conn_a);
-    let reports = ingest_ops(&conn_b, &wire).unwrap();
-    assert_eq!(reports.len(), 1);
-    assert!(
-        matches!(
-            &reports[0].outcome,
-            OpOutcome::Parked { code, .. } if code == "sync-engine.command-unsupported"
-        ),
-        "投资命令重放挂起并携带既有码"
-    );
-    assert!(read_ops(&conn_b).unwrap().is_empty(), "挂起不落日志");
-    let parked = parked_ops(&conn_b).unwrap();
-    assert_eq!(parked.len(), 1);
-    assert_eq!(parked[0].entity, "transaction");
-}
+// 投资命令重放自 #861 起由同步引擎完整执行（buy/sell 三件套），挂起场景
+// （标的不存在、可卖数量依赖倒挂）收敛在 tests/investment.rs。

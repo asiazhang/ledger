@@ -9,6 +9,8 @@
 //! 迁入）。
 //!
 //! 接缝（域语言短名经本入口再导出，调用面用 `investment::` 前缀）：
+//! - [`command`]：同步命令（op 载荷形态、产出单点与重放分派，issue #861）——
+//!   标的字典 / 汇率 / 用户侧价格写入全域进 OpLog，东财行情外拉数据不进 op；
 //! - [`crud`]：标的字典 / 汇率 / 现价列表与写入、标的搜索（含统一模糊搜索语义）、
 //!   手动创建守卫与自建标的删除守卫；
 //! - [`financial_freedom`]：财务自由度口径——可投资资产 × 3% 安全提取率对
@@ -41,6 +43,7 @@
 //! （ADR-0056 决策 2 允许）。IPC 参数解包、事务边界、命令注册和失效信号发射
 //! 留在投资命令壳层（`commands::investment`）。
 
+pub mod command;
 pub mod crud;
 pub mod financial_freedom;
 pub mod fund;
@@ -73,6 +76,7 @@ pub use model::{
 /// 与 ADR-0056 阶段 1 定格形状一致（先例：`item::domain`、`merchants::crud`）。
 /// 模块级接缝（[`holdings`] / [`prices`] / [`predicates`]）按样板留在模块路径
 /// 消费（先例：`item::guard` / `item::cost` 不再导出到根）。
+pub use command::{ExchangeRateCommand, InstrumentCommand, PriceCommand};
 pub use crud::{
     create_exchange_rate, create_instrument, create_instrument_manual, create_market_price,
     delete_instrument, get_instrument, list_exchange_rates, list_holdings, list_instruments,
@@ -97,6 +101,11 @@ pub use stock::{
 // 回退副作用（revert，修改路径）、删除路径持仓回退（release_for_delete：sell 回补 /
 // buy 级联）各一个入口，不再暴露 create/update/cleanup/reverse 等散落函数；
 // 行写入经交易行为层编排。
+/// 同步重放的计划重建接缝（issue #861）：crate 内供交易行为层重放入口消费。
+pub(crate) use command::{
+    replay_exchange_rate_command, replay_instrument_command, replay_price_command,
+};
+pub(crate) use trade::replay_plan;
 pub use trade::{Plan, apply, get_transaction_trade, prepare, release_for_delete, revert};
 pub use trend::{query_instrument_price_trend, query_portfolio_value_trend};
 

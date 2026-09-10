@@ -228,7 +228,7 @@ fn replay_one(conn: &rusqlite::Connection, op: &SyncOp, local_version: i64) -> R
     // 为输者——落日志可追溯、不执行。LWW 只裁决「op 都活着但打架」；op 本身
     // 永不丢弃。
     if let Some((entity, entity_id)) = op.command.subject()
-        && ops::has_later_subject(conn, entity, entity_id, op.clock, &op.device_id)?
+        && ops::has_later_subject(conn, entity, entity_id.as_ref(), op.clock, &op.device_id)?
     {
         ensure_transaction(conn, || {
             ops::insert_row(conn, op)?;
@@ -300,7 +300,7 @@ fn parked_from_op(op: &SyncOp, code: &str, message: String) -> Result<ParkedOp> 
         entity_id: op
             .command
             .subject()
-            .map(|(_, id)| id.to_string())
+            .map(|(_, id)| id.into_owned())
             .unwrap_or_default(),
         payload: serde_json::to_string(&op.command)
             .map_err(|e| AppError::Invalid(format!("op 载荷序列化失败: {e}")))?,
@@ -390,6 +390,18 @@ fn dispatch(conn: &rusqlite::Connection, command: &DomainCommand) -> Result<Repl
         }
         DomainCommand::PhysicalAsset(cmd) => {
             crate::physical_asset::replay_command(conn, cmd)?;
+            Ok(ReplayEffect::Applied)
+        }
+        DomainCommand::Instrument(cmd) => {
+            crate::investment::replay_instrument_command(conn, cmd)?;
+            Ok(ReplayEffect::Applied)
+        }
+        DomainCommand::ExchangeRate(cmd) => {
+            crate::investment::replay_exchange_rate_command(conn, cmd)?;
+            Ok(ReplayEffect::Applied)
+        }
+        DomainCommand::Price(cmd) => {
+            crate::investment::replay_price_command(conn, cmd)?;
             Ok(ReplayEffect::Applied)
         }
     }
