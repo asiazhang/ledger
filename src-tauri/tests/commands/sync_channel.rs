@@ -1,0 +1,316 @@
+//! 多端同步命令面集成测试（issue #862 / ADR-0091）。
+//!
+//! 直调命令函数（`#[tokio::test]`），覆盖壳行为：参数解包、错误码、双端经
+//! 真实 WebDAV 桩手动同步后数据一致（验收判据「手动触发路径」）。通道布局、
+//! 轮次协议、幂等重放与挂起语义归域单测（`sync_engine::tests`，ADR-0087），
+//! 此处只钉「命令壳 → 通道在位性 → 轮次 → 状态回显」的整链行为。
+//!
+//! 现场隔离：每个「设备」是独立的 mock 应用 + 独立临时目录的文件库 + 引导
+//! 登记态（与 `books.rs` 同型）；进程启动时把 `$HOME` 重定向到本测试目标
+//! 专属临时目录（mock runtime 的 `app_data_dir` 回退解析隔离）。测试间以
+//! 各自独立的 WebDAV 桩（真实 HTTP 服务，MKCOL/GET/PUT）对接，互不共享通道。
+
+// 测试整体豁免（ADR-0060）：集成测试 crate 经 cfg(test) 放行六件套，生产构建零放宽。
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable
+    )
+)]
+
+use std::path::PathBuf;
+use std::sync::Once;
+
+use tauri::Manager;
+use tauri_app_lib::commands::accounts;
+use tauri_app_lib::commands::sync_channel::{
+    SyncChannelConfigInput, get_sync_channel_config, get_sync_status, set_sync_channel_config,
+    sync_now,
+};
+use tauri_app_lib::commands::{boot::BootCell, transactions};
+use tauri_app_lib::db::data_location;
+use tauri_app_lib::db::encryption::{enable_encryption_for_file, probe_file_kind};
+use tauri_app_lib::db::{self, DbState};
+use tauri_app_lib::error::AppError;
+use tauri_app_lib::test_support::{read_scalar_i64, spawn_webdav_stub};
+use tauri_app_lib::transaction::{TransactionInput, TransactionKind};
+
+static ISOLATE: Once = Once::new();
+
+/// HOME 重定向（进程内一次）：mock runtime 回退路径解析与 `$HOME` 派生的默认
+/// 数据目录落在进程专属临时目录。SAFETY：`set_var` 自 Rust 2024 起 unsafe；
+/// 调用点在各测试函数首行，本测试目标无其他代码并发读取 `$HOME`。
+fn isolate_home() {
+    ISOLATE.call_once(|| {
+        let root = std::env::temp_dir().join(format!(
+            "ledger-syncchannel-it-{}",
+            tauri_app_lib::db::new_uuid()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        // SAFETY：见函数文档。
+        unsafe { std::env::set_var("HOME", &root) };
+    });
+}
+
+/// 引导登记态在位的 mock 应用 + 独立临时目录（不含库连接；连接由调用方按
+/// 明文/密文形态自行挂载，tauri manage 同型仅首次生效）。
+fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, PathBuf) {
+    let dir = std::env::temp_dir().join(format!(
+        "ledger-syncchannel-it-{tag}-{}",
+        tauri_app_lib::db::new_uuid()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let app = tauri::test::mock_app();
+    let boot = data_location::boot(&dir);
+    app.manage(BootCell::new(boot));
+    (app, dir)
+}
+
+/// 一台「设备」：mock 应用 + 独立临时目录文件库 + 真实引导登记态（BootCell）。
+fn device_app(tag: &str) -> (tauri::AppHandle<tauri::test::MockRuntime>, PathBuf) {
+    let (app, dir) = fresh_app(tag);
+    app.manage(db::open_db_in(&dir).unwrap());
+    (app.handle().clone(), dir)
+}
+
+/// 断言码化错误命中的稳定码。
+fn assert_code(err: AppError, code: &str) {
+    assert!(err.is_code(code), "期望 {code}，实际 {err:?}");
+}
+
+/// 支出交易输入构造器（行为前置经壳层公开命令，op 产出随之发生）。
+fn expense_input(account_id: &str, amount_cents: i64, note: &str) -> TransactionInput {
+    TransactionInput {
+        merchant_name: None,
+        policy_id: None,
+        kind: TransactionKind::Expense,
+        amount_cents,
+        currency_code: "CNY".into(),
+        account_id: account_id.into(),
+        to_account_id: None,
+        funding_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        refund_of_transaction_id: None,
+        note: Some(note.into()),
+        date: "2026-01-10".into(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    }
+}
+
+const STUB_USER: &str = "alice";
+const STUB_PASS: &str = "app-pass";
+
+/// 两端配置同一 WebDAV 桩与同一同步空间（跨端共识的世界身份）。
+async fn configure_channel(app: &tauri::AppHandle<tauri::test::MockRuntime>, base_url: &str) {
+    let input = SyncChannelConfigInput {
+        base_url: base_url.into(),
+        username: STUB_USER.into(),
+        password: STUB_PASS.into(),
+        space_id: Some("family".into()),
+    };
+    set_sync_channel_config(app.clone(), input)
+        .await
+        .unwrap_or_else(|e| panic!("通道配置应保存成功: {e:?}"));
+}
+
+#[tokio::test]
+async fn sync_status_defaults_and_channel_config_roundtrip() {
+    isolate_home();
+    let (app, _dir) = device_app("status");
+
+    // 未配置现场：状态各字段取默认，设备标识在位（首用生成）。
+    let status = get_sync_status(app.clone()).await.expect("状态应可读");
+    assert!(!status.device_id.is_empty(), "设备标识应非空");
+    assert!(!status.channel_configured, "新端通道未配置");
+    assert_eq!(status.last_sync_at, None, "从未同步");
+    assert_eq!(status.parked_count, 0, "新端无挂起");
+    assert!(!status.library_encrypted, "明文库");
+
+    // 配置往返：保存 → 读回一致 + 状态翻转。
+    configure_channel(&app, "http://127.0.0.1:1/dav/").await;
+    let config = get_sync_channel_config(app.clone())
+        .await
+        .expect("配置应可读");
+    assert!(config.configured);
+    assert_eq!(config.base_url, "http://127.0.0.1:1/dav/");
+    assert_eq!(config.username, STUB_USER);
+    assert_eq!(config.password, STUB_PASS);
+
+    let status = get_sync_status(app.clone()).await.expect("状态应可读");
+    assert!(status.channel_configured, "保存后通道在位");
+
+    // 非法通道（空地址）：码化错误、不落库（读回仍是原值）。
+    let bad = SyncChannelConfigInput {
+        base_url: "   ".into(),
+        username: STUB_USER.into(),
+        password: STUB_PASS.into(),
+        space_id: None,
+    };
+    let err = set_sync_channel_config(app.clone(), bad)
+        .await
+        .expect_err("空地址应被拒");
+    assert_code(err, "sync-channel.base-url-missing");
+    let config = get_sync_channel_config(app.clone())
+        .await
+        .expect("配置应可读");
+    assert_eq!(
+        config.base_url, "http://127.0.0.1:1/dav/",
+        "坏值未覆盖原配置"
+    );
+}
+
+#[tokio::test]
+async fn sync_now_without_channel_is_rejected_with_coded_error() {
+    isolate_home();
+    let (app, _dir) = device_app("unconfigured");
+
+    let err = sync_now(app.clone(), None).await.expect_err("未配置应被拒");
+    assert_code(err, "sync-channel.not-configured");
+}
+
+/// 验收判据（issue #862）：两台桌面设备经真实 WebDAV 桩手动触发同步后数据
+/// 一致。A 记账 → A 同步 → B 同步（收到 A 的账）→ B 记账 → B 同步 → A 同步
+///（收到 B 的账）；业务行（账户 + 两笔交易金额）在两端相等。
+#[tokio::test]
+async fn dual_device_manual_sync_converges_over_real_webdav_stub() {
+    isolate_home();
+    let stub = spawn_webdav_stub(Some((STUB_USER, STUB_PASS)));
+    let (app_a, _dir_a) = device_app("dual-a");
+    let (app_b, _dir_b) = device_app("dual-b");
+    configure_channel(&app_a, &stub.base_url).await;
+    configure_channel(&app_b, &stub.base_url).await;
+
+    // A 端记账（经壳层公开命令：写入接缝 + op 产出随之发生）。
+    let acc_id = accounts::create_account(
+        app_a.state(),
+        app_a.clone(),
+        tauri_app_lib::accounts::AccountInput {
+            name: "现金".into(),
+            kind: tauri_app_lib::accounts::AccountType::Cash,
+            currency_code: "CNY".into(),
+            initial_balance_cents: Some(0),
+        },
+    )
+    .await
+    .expect("A 建户应成功");
+    let a_txn = transactions::create_transaction(
+        app_a.state(),
+        app_a.clone(),
+        expense_input(&acc_id, 10_000, "A 桌面记的账"),
+    )
+    .await
+    .expect("A 记账应成功");
+
+    // A 同步：发布自己流（明文库 → 明文模式随报告标记）。
+    let report_a1 = sync_now(app_a.clone(), None).await.expect("A 首轮应成功");
+    assert!(report_a1.uploaded_ops >= 2, "A 应上传自己的 op");
+    assert!(report_a1.plaintext_mode, "明文库同步应标记明文模式");
+
+    // B 同步：拉取并重放 A 的流。
+    let report_b1 = sync_now(app_b.clone(), None).await.expect("B 首轮应成功");
+    assert!(report_b1.applied >= 2, "B 应应用 A 的 op");
+
+    // B 端可观察结果（接线证明）：A 的账户与交易已落 B 库。
+    let b_accounts = accounts::list_accounts(app_b.clone().state())
+        .await
+        .expect("B 账户清单应可读");
+    assert!(
+        b_accounts.iter().any(|a| a.id == acc_id),
+        "A 的账户应已同步到 B"
+    );
+    let b_conn = app_b.state::<DbState>().conn.clone();
+    let b_amount = read_scalar_i64(
+        &b_conn.lock().unwrap(),
+        "SELECT amount_cents FROM transactions WHERE id = ?1",
+        [a_txn.as_str()],
+    );
+    assert_eq!(b_amount, Some(10_000), "A 的交易金额应在 B 端一致");
+
+    // 反向：B 记账 → B 同步上传 → A 同步收下。
+    let b_txn = transactions::create_transaction(
+        app_b.state(),
+        app_b.clone(),
+        expense_input(&acc_id, 2_500, "B 桌面记的账"),
+    )
+    .await
+    .expect("B 记账应成功");
+    sync_now(app_b.clone(), None).await.expect("B 二轮应成功");
+    sync_now(app_a.clone(), None).await.expect("A 二轮应成功");
+
+    let a_conn = app_a.state::<DbState>().conn.clone();
+    let a_amount = read_scalar_i64(
+        &a_conn.lock().unwrap(),
+        "SELECT amount_cents FROM transactions WHERE id = ?1",
+        [b_txn.as_str()],
+    );
+    assert_eq!(a_amount, Some(2_500), "B 的交易金额应在 A 端一致");
+
+    // 幂等续作：重复轮次零变化（全部已知跳过），数据不重复。
+    let again = sync_now(app_b.clone(), None).await.expect("B 三轮应成功");
+    assert_eq!(again.applied, 0, "重复轮次不应再应用");
+    let count = read_scalar_i64(
+        &b_conn.lock().unwrap(),
+        "SELECT count(*) FROM transactions",
+        [],
+    );
+    assert_eq!(count, Some(2), "两端各一笔，重复同步不产生重复行");
+}
+
+/// 密文库同步的信封接线：状态回显加密形态；缺口令报码化错误；显式口令
+/// （主口令 = 库口令）轮次成功——「加密模式由壳层按本库加密形态决定」。
+#[tokio::test]
+async fn encrypted_library_requires_passphrase_and_seals_with_it() {
+    isolate_home();
+    let stub = spawn_webdav_stub(Some((STUB_USER, STUB_PASS)));
+    // 密文库设备：先建明文库（迁移完成）→ 原位转换 → 以口令重开连接挂载
+    //（连接在转换后一次性挂载，tauri manage 同型仅首次生效）。
+    let (app, dir) = fresh_app("encrypted");
+    db::open_db_in(&dir).unwrap(); // 建明文库（连接随即丢弃，文件已迁移）
+    let db_path = dir.join(data_location::DB_FILE_NAME);
+    enable_encryption_for_file(&db_path, "master-pass").expect("加密转换应成功");
+    assert_eq!(
+        probe_file_kind(&db_path).unwrap(),
+        tauri_app_lib::db::encryption::DbFileKind::Encrypted
+    );
+    let conn = db::open_connection_with_passphrase(&db_path, "master-pass").expect("密文库应可开");
+    app.manage(DbState {
+        conn: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+    });
+    let app = app.handle().clone();
+    configure_channel(&app, &stub.base_url).await;
+
+    // 状态回显加密形态（明文提示与口令引导的依据）。
+    let status = get_sync_status(app.clone()).await.expect("状态应可读");
+    assert!(status.library_encrypted, "密文库应回显加密形态");
+
+    // 缺口令：码化错误（错误模板既有 sync-channel.passphrase-required）。
+    let err = sync_now(app.clone(), None).await.expect_err("缺口令应被拒");
+    assert_code(err, "sync-channel.passphrase-required");
+
+    // 错误口令在封包上传前被拦下（错误口令封出的段对端解不开，段名幂等跳过
+    // 会令重传永不发生）：码化错误与密文备份恢复同款合并口径。
+    let err = sync_now(app.clone(), Some("wrong-pass".into()))
+        .await
+        .expect_err("错误口令应被拦下");
+    assert_code(err, "encryption.passphrase-incorrect");
+
+    // 显式口令：信封以主口令封包，轮次成功（域单测已证密文可解，此处钉壳层模式选择）。
+    let report = sync_now(app.clone(), Some("master-pass".into()))
+        .await
+        .expect("凭口令轮次应成功");
+    assert!(!report.plaintext_mode, "密文库轮次不应标记明文模式");
+
+    // 上次成功同步时刻随成功轮次落库。
+    let status = get_sync_status(app.clone()).await.expect("状态应可读");
+    assert!(status.last_sync_at.is_some(), "成功轮次应更新同步时刻");
+}

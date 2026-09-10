@@ -371,6 +371,13 @@ const IPC_WRITE_ENTRY_EXCEPTIONS: &[(&str, WriteOp, &str)] = &[
          置脏豁免（ADR-0032/0017），刻意零信号（设置不是账本数据，ADR-0006）",
     ),
     (
+        "set_sync_channel_config",
+        WriteOp::SetSyncChannelConfig,
+        "多端同步通道配置（issue #862）：WebDAV 凭据写 app_settings，经 settings.rs 单点收口、\
+         置脏豁免（ADR-0032/0017），刻意零信号——本机设备配置不同步（同步边界 SyncBoundary）；\
+         凭据构库校验（WebDavTransport::new）无 DB 写，不经写入口",
+    ),
+    (
         "audit_balance_cache",
         WriteOp::AuditBalanceCache,
         "余额缓存审计修复：派生缓存行直连锁内维护，不置脏不发信号（ADR-0067；置脏口径为已知开放点，不在本票裁决）",
@@ -471,6 +478,8 @@ fn parse_write_op(ident: &str) -> WriteOp {
         "SubmitDataLocationChange" => WriteOp::SubmitDataLocationChange,
         "RestoreDefaultDataLocation" => WriteOp::RestoreDefaultDataLocation,
         "SetBaseCurrency" => WriteOp::SetBaseCurrency,
+        "SyncRound" => WriteOp::SyncRound,
+        "SetSyncChannelConfig" => WriteOp::SetSyncChannelConfig,
         other => panic!(
             "未知 WriteOp 变体标识符 {other}——enum 新增变体须同步 parse_write_op 与 WriteOp::ALL"
         ),

@@ -23,6 +23,7 @@ export * from './policy'
 export * from './reports'
 export * from './scheduled'
 export * from './sync'
+export * from './sync-channel'
 export * from './transactions'
 export * from './settings'
 

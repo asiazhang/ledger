@@ -65,6 +65,7 @@ pub use engine::{
     ApplyReport, OpOutcome, apply_ops, ingest_ops, ops_after_positions, parked_ops, read_ops,
     stream_positions, total_order,
 };
+pub use envelope::EnvelopeMode;
 pub use model::SyncOp;
 pub use parked::ParkedOp;
 pub use positions::StreamPosition;

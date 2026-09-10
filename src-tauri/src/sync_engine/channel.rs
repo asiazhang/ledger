@@ -282,8 +282,9 @@ impl Default for ChannelOptions {
 /// 一次同步轮次的报告（触发编排与同步状态的消费形态，#862/#863 接线）。
 ///
 /// `plaintext_mode` 为明文模式的显性标记：未开加密模式时界面须显著提示
-/// （ADR-0091 决策 8；提示呈现归壳层）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// （ADR-0091 决策 8；提示呈现归壳层）。Serialize 为 IPC wire 形态（#862
+/// `sync_now` 响应体，前端据此轻量提示轮次结果）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 pub struct SyncRoundReport {
     /// 本轮上传段数。
     pub uploaded_segments: usize,

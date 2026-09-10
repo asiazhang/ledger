@@ -2,7 +2,8 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useMessage } from "naive-ui";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { useAppStore } from "@/stores/app";
+import { useAppStore } from "@/stores/app"
+import { formatIsoMinute } from "@/utils/datetime"
 import { api } from "@/api";
 import type { AutoBackupState, BackupFileInfo, BackupKind } from "@/types";
 import { errorMessage } from "@/utils/errors";
@@ -29,7 +30,8 @@ function formatSize(bytes: number): string {
 }
 
 function formatBackupTime(iso: string): string {
-  return iso.slice(0, 16).replace("T", " ");
+  // 时刻展示格式单一来源 utils/datetime（备份与多端同步共用，issue #862）。
+  return formatIsoMinute(iso);
 }
 
 /** 来源展示文案：自动 / 手动；旧数据缺字段按手动（与后端回落一致）。 */

@@ -19,3 +19,4 @@
 )]
 
 mod books;
+mod sync_channel;
