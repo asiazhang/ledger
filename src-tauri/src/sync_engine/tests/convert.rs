@@ -12,7 +12,7 @@
 use rusqlite::Connection;
 
 use super::super::{OpOutcome, parked_ops, read_ops};
-use super::common::{read_transaction, seed_device, wire_in, wire_out};
+use super::common::{read_lot, read_lot_sale, read_transaction, seed_device, wire_in, wire_out};
 use crate::accounts::balance::cached_balance;
 use crate::db;
 use crate::test_support::{
@@ -116,17 +116,6 @@ fn convert_input(
     }
 }
 
-/// 批次业务快照（自然键 = 锚定交易 id）：(初始数量, 剩余数量, 每份成本, 币种)。
-fn read_lot(conn: &Connection, anchor_tx_id: &str) -> Option<(f64, f64, i64, String)> {
-    conn.query_row(
-        "SELECT initial_quantity, remaining_quantity, cost_per_unit_cents, currency_code \
-         FROM security_lots WHERE buy_transaction_id = ?1",
-        [anchor_tx_id],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-    )
-    .ok()
-}
-
 /// 转换转出消耗快照：按消耗批次锚定交易 id 排序的 (锚定交易, 数量, 每份成本, 结转成本)。
 fn read_conversions(conn: &Connection, convert_id: &str) -> Vec<(String, f64, i64, i64)> {
     let mut stmt = conn
@@ -142,18 +131,6 @@ fn read_conversions(conn: &Connection, convert_id: &str) -> Vec<(String, f64, i6
     .unwrap()
     .collect::<Result<Vec<_>, _>>()
     .unwrap()
-}
-
-/// 卖出匹配快照（自然键 = 卖出交易 × 消耗批次锚定交易）：(数量, 每份成本, 已实现盈亏)。
-fn read_lot_sale(conn: &Connection, sell_id: &str, anchor_tx_id: &str) -> Option<(f64, i64, i64)> {
-    conn.query_row(
-        "SELECT s.quantity, s.cost_per_unit_cents, s.realized_pnl_cents \
-         FROM security_lot_sales s JOIN security_lots l ON l.id = s.lot_id \
-         WHERE s.sell_transaction_id = ?1 AND l.buy_transaction_id = ?2",
-        [sell_id, anchor_tx_id],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-    )
-    .ok()
 }
 
 /// 转换明细行快照：(转出份额, 反算单价, 手续费, 转入标的, 转入份额, 转出金额, 转入金额)。
@@ -567,8 +544,8 @@ fn legacy_convert_op_without_fields_parks_without_booking() {
         .remove("convert");
     let reports = wire_in(&conn_b, &[serde_json::to_string(&legacy).unwrap()]);
     assert!(
-        matches!(&reports[0].outcome, OpOutcome::Parked { code, .. } if code == "sync-engine.replay-failed"),
-        "缺转换字段的转换 op 应挂起，实际: {:?}",
+        matches!(&reports[0].outcome, OpOutcome::Parked { code, .. } if code == "transaction.convert-fields-missing"),
+        "缺转换字段的转换 op 应码化挂起，实际: {:?}",
         reports[0]
     );
     assert!(
@@ -580,5 +557,79 @@ fn legacy_convert_op_without_fields_parks_without_booking() {
         read_conversions(&conn_b, &convert_id).is_empty(),
         "不落转出消耗"
     );
+    assert_eq!(parked_ops(&conn_b).unwrap().len(), 1);
+}
+
+#[test]
+fn convert_op_with_divergent_carried_cost_parks_without_booking() {
+    let (conn_a, conn_b) = seed_both_ends();
+    behavior::create(
+        &conn_a,
+        buy_input("acc-cv", "inst-out", 10.0, 10_000, "2026-01-10"),
+    )
+    .unwrap();
+    let convert_id = behavior::create(
+        &conn_a,
+        convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
+    )
+    .unwrap()
+    .id;
+    let wire = wire_out(&conn_a);
+    wire_in(&conn_b, &[wire[0].clone()]);
+
+    // 源端结转成本与本地 FIFO 重建不一致（载荷被篡改/本地快照发散）：显式失败
+    // 挂起，不静默落出错误成本基础（ADR-0099 决策 6）。
+    let mut tampered: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
+    tampered["command"]["payload"]["convert"]["carried_cost_cents"] = serde_json::json!(999);
+    let reports = wire_in(&conn_b, &[serde_json::to_string(&tampered).unwrap()]);
+    assert!(
+        matches!(&reports[0].outcome, OpOutcome::Parked { code, .. } if code == "transaction.convert-carried-cost-mismatch"),
+        "结转成本发散应码化挂起，实际: {:?}",
+        reports[0]
+    );
+    assert!(
+        read_transaction(&conn_b, &convert_id).is_none(),
+        "不落转换行"
+    );
+    assert_eq!(read_lot(&conn_b, &convert_id), None, "不落转入批次");
+    assert!(
+        read_conversions(&conn_b, &convert_id).is_empty(),
+        "不落转出消耗"
+    );
+    assert_eq!(parked_ops(&conn_b).unwrap().len(), 1);
+}
+
+#[test]
+fn convert_op_with_to_account_parks_without_booking() {
+    let (conn_a, conn_b) = seed_both_ends();
+    behavior::create(
+        &conn_a,
+        buy_input("acc-cv", "inst-out", 10.0, 10_000, "2026-01-10"),
+    )
+    .unwrap();
+    let convert_id = behavior::create(
+        &conn_a,
+        convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
+    )
+    .unwrap()
+    .id;
+    let wire = wire_out(&conn_a);
+    wire_in(&conn_b, &[wire[0].clone()]);
+
+    // 伪造载荷带转入账户（本地录入必被 `trade.convert-to-account-forbidden` 拒绝）：
+    // 重放经同一接缝守卫，不绕开本地不变量。账户存活校验先过（指向存活的投资账户）。
+    let mut tampered: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
+    tampered["command"]["payload"]["row"]["to_account_id"] = serde_json::json!("acc-cv");
+    let reports = wire_in(&conn_b, &[serde_json::to_string(&tampered).unwrap()]);
+    assert!(
+        matches!(&reports[0].outcome, OpOutcome::Parked { code, .. } if code == "trade.convert-to-account-forbidden"),
+        "带转入账户的转换 op 应码化挂起，实际: {:?}",
+        reports[0]
+    );
+    assert!(
+        read_transaction(&conn_b, &convert_id).is_none(),
+        "不落转换行"
+    );
+    assert_eq!(read_lot(&conn_b, &convert_id), None, "不落转入批次");
     assert_eq!(parked_ops(&conn_b).unwrap().len(), 1);
 }

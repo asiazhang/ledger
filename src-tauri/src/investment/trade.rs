@@ -53,6 +53,16 @@ fn fetch_instrument_type(
     })
 }
 
+/// 「可卖出数量不足」码化错误（buy/sell/convert 的 FIFO 守卫共用单点）：本地
+/// prepare 与重放计划重建同一口径（同码同文案同插值参数），两端与两路径不漂移。
+fn insufficient_holding_error(total_available: f64, quantity: f64) -> AppError {
+    AppError::codedp(
+        "trade.insufficient-holding",
+        format!("可卖出数量不足，当前持有 {total_available}，尝试卖出 {quantity}"),
+        &[&total_available.to_string(), &quantity.to_string()],
+    )
+}
+
 /// 投资交易对外出口（issue #72 / spec #69）：`prepare / apply / revert` 三件套 +
 /// 删除路径专用的 [`release_for_delete`]（issue #940 / ADR-0097），承载三类投资 kind：
 /// buy（建仓）/ sell（FIFO 卖出匹配与已实现盈亏）/ convert（基金转换，ADR-0099：
@@ -403,13 +413,7 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
     let lots: Vec<ActiveLot> = fifo_active_lots(conn, &input.account_id, &instrument_id)?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
     if total_available < quantity {
-        let avail = total_available.to_string();
-        let qty = quantity.to_string();
-        return Err(AppError::codedp(
-            "trade.insufficient-holding",
-            format!("可卖出数量不足，当前持有 {total_available}，尝试卖出 {quantity}"),
-            &[&avail, &qty],
-        ));
+        return Err(insufficient_holding_error(total_available, quantity));
     }
 
     Ok(SellPlan {
@@ -558,13 +562,7 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
     let lots = fifo_active_lots(conn, &input.account_id, &instrument_id)?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
     if total_available < quantity {
-        let avail = total_available.to_string();
-        let qty = quantity.to_string();
-        return Err(AppError::codedp(
-            "trade.insufficient-holding",
-            format!("可卖出数量不足，当前持有 {total_available}，尝试卖出 {quantity}"),
-            &[&avail, &qty],
-        ));
+        return Err(insufficient_holding_error(total_available, quantity));
     }
     // 转出腿 FIFO 消耗与逐批次结转成本（含耗尽批次闭合）在 prepare 阶段算定：
     // 它是行金额锚点与转入批次成本的唯一依据，apply 原样落消耗记录与批次。
@@ -1357,16 +1355,7 @@ pub(crate) fn replay_plan(
                 fifo_active_lots(conn, &row.account_id, &fields.instrument_id)?;
             let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
             if total_available < fields.quantity {
-                let avail = total_available.to_string();
-                let qty = fields.quantity.to_string();
-                return Err(AppError::codedp(
-                    "trade.insufficient-holding",
-                    format!(
-                        "可卖出数量不足，当前持有 {total_available}，尝试卖出 {}",
-                        fields.quantity
-                    ),
-                    &[&avail, &qty],
-                ));
+                return Err(insufficient_holding_error(total_available, fields.quantity));
             }
             Ok(Plan::Sell(SellPlan {
                 normalized: row.clone(),
@@ -1461,21 +1450,27 @@ pub(crate) fn replay_convert_plan(
         "trade.convert-account-not-investment",
         "转换交易必须使用投资账户",
     )?;
+    // 不跨账户（与本地录入同码）：两腿是同一投资账户内的两个标的，携带转入账户即
+    // 伪造/漂移载荷，重放不得绕开本地不变量（CONTEXT-sync「经同一接缝执行」）。
+    if row.to_account_id.is_some() {
+        return Err(AppError::coded(
+            "trade.convert-to-account-forbidden",
+            "转换不跨账户：转出与转入必须同属一个投资账户，不能携带转入账户",
+        ));
+    }
+    // 出资账户准入（与本地录入共用同一条接缝）：convert 不在出资闭集内，携带即拒绝。
+    crate::transaction::funding::validate_funding_account(
+        conn,
+        TransactionKind::Convert,
+        row.funding_account_id.as_deref(),
+        &row.currency_code,
+    )?;
     // FIFO 批次快照在本端重建（排序键 rowid 的跨端确定性依据同 [`prepare_sell`]）：
     // 同序重放 ⇒ 与源端同状态 ⇒ 同一逐批次消耗结果。
     let lots = fifo_active_lots(conn, &row.account_id, &fields.instrument_id)?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
     if total_available < fields.quantity {
-        let avail = total_available.to_string();
-        let qty = fields.quantity.to_string();
-        return Err(AppError::codedp(
-            "trade.insufficient-holding",
-            format!(
-                "可卖出数量不足，当前持有 {total_available}，尝试卖出 {}",
-                fields.quantity
-            ),
-            &[&avail, &qty],
-        ));
+        return Err(insufficient_holding_error(total_available, fields.quantity));
     }
     let consumed = plan_lot_consumption(conn, &lots, fields.quantity)?;
     // 源端结转成本与本地重建的逐批次成本合计必须一致（兼行金额锚点校验）：
@@ -1485,10 +1480,18 @@ pub(crate) fn replay_convert_plan(
     if rebuilt_cost_cents != fields.carried_cost_cents
         || row.amount_cents != fields.carried_cost_cents
     {
-        return Err(AppError::Invalid(format!(
-            "转换结转成本与本地重建不一致（源端 {}，本端 {rebuilt_cost_cents}，行锚点 {}）",
-            fields.carried_cost_cents, row.amount_cents
-        )));
+        return Err(AppError::codedp(
+            "transaction.convert-carried-cost-mismatch",
+            format!(
+                "转换结转成本校验不一致（源端 {}，本机重建 {rebuilt_cost_cents}，行金额 {}），已挂起等待处理",
+                fields.carried_cost_cents, row.amount_cents
+            ),
+            &[
+                &fields.carried_cost_cents.to_string(),
+                &rebuilt_cost_cents.to_string(),
+                &row.amount_cents.to_string(),
+            ],
+        ));
     }
     Ok(Plan::Convert(ConvertPlan {
         normalized: row.clone(),

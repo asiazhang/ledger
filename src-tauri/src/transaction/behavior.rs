@@ -292,8 +292,9 @@ pub fn delete(conn: &Connection, id: &str) -> Result<()> {
 
 /// 删除路径的 op 产出开关（issue #980 修复）：本地删除逐行留痕（主行与级联行
 /// 各一条 delete op，本机流完整）；外来 delete op 重放只落数据、不产 op——
-/// ADR-0091 决策 2「重放不得追加本地 op」，且级联行的 op 由源端产出、随同一流
-/// 以更早时钟先行到达，重放再产一份会让对端收到命中已删行的重复删除而挂起。
+/// 重放形态的既有契约即「命令执行不得再追加本地 op」（见 [`replay_command`]；
+/// ADR-0098 触发点决策同旨），且级联行的 op 由源端产出、随同一流以更早时钟
+/// 先行到达，重放再产一份会让对端收到命中已删行的重复删除而挂起。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OpEmission {
     /// 本机删除：每条被软删行（含级联行）各产一条 delete op。
@@ -376,7 +377,7 @@ fn soft_delete_transaction_row(conn: &Connection, id: &str, emission: OpEmission
     );
     refresh_account_balances(conn, &affected)?;
     // op 产出接缝（issue #855 / ADR-0091）：**仅本地删除**追加 delete op（实体 id）；
-    // 随同一事务提交/回滚（失败不残留 op）。重放不产 op（ADR-0091 决策 2）。
+    // 随同一事务提交/回滚（失败不残留 op）。重放不产 op（见 [`OpEmission`]）。
     if emission == OpEmission::Local {
         record_local(conn, TransactionCommand::Delete { id: id.to_string() })?;
     }
@@ -808,10 +809,15 @@ fn investment_fields(
 }
 
 /// 转换命令字段解包（防御臂）：convert 命令必携转换字段；缺失属旧版本设备载荷
-/// 或程序缺陷（本地 plan 自本票起恒产出），fail loud 由引擎挂起承接（ADR-0099
+/// 或程序缺陷（本地 plan 自本票起恒产出），码化失败由引擎挂起承接（ADR-0099
 /// 决策 6 的 kind 防御臂——旧端 op 与 schema 版本硬检查双保险）。
 fn convert_fields(convert: Option<&ConvertCommandFields>) -> Result<&ConvertCommandFields> {
-    convert.ok_or_else(|| AppError::Invalid("转换命令缺少转换字段（旧版本载荷或程序缺陷）".into()))
+    convert.ok_or_else(|| {
+        AppError::coded(
+            "transaction.convert-fields-missing",
+            "该转换操作缺少同步所需的转换字段（产生自较早版本），无法在本机重放；请在来源设备上删除并重新录入该转换后再次同步",
+        )
+    })
 }
 
 /// dividend / split 未实现（与本地 plan 同码同文案，防御臂单点复用）。

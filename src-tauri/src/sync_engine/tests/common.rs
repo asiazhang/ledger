@@ -104,6 +104,38 @@ pub(crate) fn read_transaction(conn: &Connection, id: &str) -> Option<TxnRow> {
 }
 
 // ---------------------------------------------------------------------------
+// 投资类业务快照读取（同步重放收敛的判据）：自然键 = 锚定交易 id（批次/匹配行
+// id 是各端本地事实，不参与状态等值判定；先例：交易行审计列同一取舍）。
+// ---------------------------------------------------------------------------
+
+/// 持仓批次业务快照（自然键 = 锚定交易 id）：(初始数量, 剩余数量, 每份成本, 币种)。
+pub(crate) fn read_lot(conn: &Connection, anchor_tx_id: &str) -> Option<(f64, f64, i64, String)> {
+    conn.query_row(
+        "SELECT initial_quantity, remaining_quantity, cost_per_unit_cents, currency_code \
+         FROM security_lots WHERE buy_transaction_id = ?1",
+        [anchor_tx_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )
+    .ok()
+}
+
+/// 卖出匹配业务快照（自然键 = 卖出交易 × 锚定交易）：(数量, 每份成本, 已实现盈亏)。
+pub(crate) fn read_lot_sale(
+    conn: &Connection,
+    sell_tx_id: &str,
+    anchor_tx_id: &str,
+) -> Option<(f64, i64, i64)> {
+    conn.query_row(
+        "SELECT s.quantity, s.cost_per_unit_cents, s.realized_pnl_cents \
+         FROM security_lot_sales s JOIN security_lots l ON l.id = s.lot_id \
+         WHERE s.sell_transaction_id = ?1 AND l.buy_transaction_id = ?2",
+        [sell_tx_id, anchor_tx_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )
+    .ok()
+}
+
+// ---------------------------------------------------------------------------
 // 定时计划合成夹具（issue #856 防双扣场景）：计划与期次行按同一计划 id 在两端
 // 等量种子（真实世界对应 #860 计划同步后的两端状态）；期次行 id 刻意允许两端
 // 不同——期次身份是 (plan_id, 计划日期)，不是本地行 id。
