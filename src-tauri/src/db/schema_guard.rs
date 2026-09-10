@@ -47,7 +47,10 @@ fn table_columns(conn: &Connection, table: &str) -> rusqlite::Result<BTreeSet<St
 /// 多出 = 容忍（V005 搜索索引残留、`sqlite_sequence` 等合法遗留不误报，
 /// ADR-0027 / ADR-0100 决策 2）。参照库由迁移链自动构建，零手工清单维护。
 pub(crate) fn verify_schema(actual: &Connection) -> Result<()> {
-    let mut reference = Connection::open_in_memory()?;
+    // 参照库建连走 [`super::open_in_memory`]（外键 + perf hook，与生产建连同
+    // 收口）：参照构建的 SQL 受 ADR-0009 100ms 观测线约束（ADR-0100 性能定
+    // 语）；不经 `init_db`，无递归守卫。
+    let mut reference = super::open_in_memory()?;
     super::migrations().to_latest(&mut reference)?;
 
     let reference_objects = schema_objects(&reference)?;
