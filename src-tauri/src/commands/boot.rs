@@ -268,6 +268,11 @@ pub async fn restart_app(app: AppHandle) -> Result<()> {
         // 未就绪（解锁屏/失败恢复屏）不拉：解锁/重置路径的
         // `resume_business_surface` 会在业务可用起点拉起。
         backup::start_scheduler(&app);
+        // 同步触发同源（issue #863 / ADR-0098 决策 4）：这是第四个业务可用起点
+        // （锁定/失败态启动 → 解锁屏恢复明文备份 → 重引导落 Ready）——setup 与
+        // `resume_business_surface` 都不在本路径上，不在此拉起则「打开即同步」
+        // 与写后触发本会话永不生效（分平台分流收在 `start_triggers` 一处）。
+        crate::sync_engine::start_triggers(&app);
     }
     tracing::info!(
         phase = phase.as_str(),
