@@ -47,3 +47,23 @@ export interface SyncRoundReport {
   /// 明文模式标记（界面显著提示依据）
   plaintext_mode: boolean
 }
+
+/// 挂起操作（issue #863 挂起通知数据面）：不可重放 op 的身份与码化原因。
+/// 挂起通知可见是 #863 验收项——数量经 SyncStatus.parked_count 回显，
+/// 明细经 get_parked_ops 按需拉取。
+export interface ParkedOpInfo {
+  /// op 标识（信封不可读时为合成 id）
+  op_id: string
+  /// 来源设备标识（信封不可读时为空串）
+  device_id: string
+  /// 实体判别键（载荷不可解时为空串）
+  entity: string
+  /// 实体 id（不可知时为空串）
+  entity_id: string
+  /// 码化挂起原因（前端按 errors.<code> 模板本地化）
+  code: string
+  /// 挂起原因详情（中文原文，未知码时降级透传）
+  message: string
+  /// 挂起时刻（本机簿记事实）
+  parked_at: string
+}

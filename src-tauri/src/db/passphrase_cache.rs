@@ -45,6 +45,10 @@
 //! 本模块是纯基础设施（无领域语义），只被命令壳层经 `commands/encryption.rs`
 //! 消费。主口令不落盘于应用可控存储（ADR-0075 后果条款）：仅透明经 IPC 参数
 //! 到达（lib.rs `redact_passphrase_payload` 遮蔽），本体存于系统钥匙串。
+//!
+//! 多端同步自动轮次的「本会话密钥形态」记忆**不在此**（归同步域
+//! `sync_engine::SessionEnvelope`）：它是同步触发的工程决策，除同步轮次外无
+//! 消费者，放基础设施会平白造出基础设施→域的依赖。
 
 use crate::error::Result;
 

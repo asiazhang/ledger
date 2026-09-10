@@ -1,8 +1,9 @@
-//! 多端同步命令面集成测试（issue #862 / ADR-0091）。
+//! 多端同步命令面集成测试（issue #862 / #863 / ADR-0091）。
 //!
 //! 直调命令函数（`#[tokio::test]`），覆盖壳行为：参数解包、错误码、双端经
-//! 真实 WebDAV 桩手动同步后数据一致（验收判据「手动触发路径」）。通道布局、
-//! 轮次协议、幂等重放与挂起语义归域单测（`sync_engine::tests`，ADR-0087），
+//! 真实 WebDAV 桩手动同步后数据一致（验收判据「手动触发路径」）、挂起通知
+//! 命令面可见（#863）。通道布局、轮次协议、幂等重放、挂起语义与触发编排归域
+//! 单测（`sync_engine::tests` / `sync_engine::trigger::tests`，ADR-0087），
 //! 此处只钉「命令壳 → 通道在位性 → 轮次 → 状态回显」的整链行为。
 //!
 //! 现场隔离：每个「设备」是独立的 mock 应用 + 独立临时目录的文件库 + 引导
@@ -29,8 +30,8 @@ use std::sync::Once;
 use tauri::Manager;
 use tauri_app_lib::commands::accounts;
 use tauri_app_lib::commands::sync_channel::{
-    SyncChannelConfigInput, get_sync_channel_config, get_sync_status, set_sync_channel_config,
-    sync_now,
+    SyncChannelConfigInput, get_parked_ops, get_sync_channel_config, get_sync_status,
+    set_sync_channel_config, sync_now,
 };
 use tauri_app_lib::commands::{boot::BootCell, transactions};
 use tauri_app_lib::db::data_location;
@@ -313,4 +314,138 @@ async fn encrypted_library_requires_passphrase_and_seals_with_it() {
     // 上次成功同步时刻随成功轮次落库。
     let status = get_sync_status(app.clone()).await.expect("状态应可读");
     assert!(status.last_sync_at.is_some(), "成功轮次应更新同步时刻");
+}
+
+/// 挂起通知命令面（issue #863）：不可重放 op 经手动同步落入挂起队列后，
+/// `get_parked_ops` 返回其身份与码化原因，`get_sync_status` 的 `parked_count`
+/// 同步反映——「挂起通知可见」的壳三件套形态（参数解包、码化错误、接线证明）。
+#[tokio::test]
+async fn parked_ops_are_visible_through_command_surface() {
+    isolate_home();
+    let stub = spawn_webdav_stub(Some((STUB_USER, STUB_PASS)));
+    let (app, _dir) = device_app("parked");
+    configure_channel(&app, &stub.base_url).await;
+
+    // 空队列：命令回空清单（读路径零副作用）。
+    let parked = get_parked_ops(app.clone()).await.expect("挂起清单应可读");
+    assert!(parked.is_empty(), "新端无挂起");
+
+    // 对端投递一条引用不存在账户的 op：写段 + 归并 manifest（真实通道路径）。
+    deliver_unreplayable_op(&stub.base_url);
+
+    let report = sync_now(app.clone(), None).await.expect("同步应成功");
+    assert_eq!(report.parked, 1, "不可重放 op 应挂起");
+
+    // 挂起通知可见（命令面）：身份、码化原因与详情齐备。
+    let parked = get_parked_ops(app.clone()).await.expect("挂起清单应可读");
+    assert_eq!(parked.len(), 1);
+    assert_eq!(parked[0].op_id, "it-parked-op");
+    assert_eq!(parked[0].entity, "transaction");
+    assert_eq!(parked[0].entity_id, "it-parked-txn");
+    assert!(
+        parked[0].code.contains('.'),
+        "原因应是稳定错误码，实际 {:?}",
+        parked[0].code
+    );
+    assert!(!parked[0].message.is_empty(), "原因详情不应为空");
+    assert!(!parked[0].parked_at.is_empty(), "挂起时刻应落库");
+
+    // 状态回显同源：parked_count 与清单长度一致。
+    let status = get_sync_status(app.clone()).await.expect("状态应可读");
+    assert_eq!(status.parked_count, 1, "挂起数量应回显");
+}
+
+/// 对端投递一条引用不存在账户的 op（段 + manifest 两条真实通道写）。
+///
+/// 走独立 OS 线程：reqwest 阻塞客户端在 tokio 运行时内构造/析构会 panic
+///（「Cannot drop a runtime in a context where blocking is not allowed」）——
+/// 与产品侧把阻塞 IO 放进阻塞线程池同一语义（ADR-0069 / 壳层 `sync_now` 形态）。
+fn deliver_unreplayable_op(base_url: &str) {
+    let base_url = base_url.to_string();
+    std::thread::spawn(move || deliver_unreplayable_op_blocking(&base_url))
+        .join()
+        .expect("对端投递线程不应 panic");
+}
+
+fn deliver_unreplayable_op_blocking(base_url: &str) {
+    use tauri_app_lib::sync_engine::{
+        ChannelLayout, ChannelManifest, DomainCommand, SegmentEntry, StreamManifest, SyncOp,
+        Transport, WebDavConfig, WebDavTransport,
+    };
+    use tauri_app_lib::transaction::{NormalizedTransaction, TransactionCommand};
+
+    let transport = WebDavTransport::new(WebDavConfig {
+        base_url: base_url.to_string(),
+        username: STUB_USER.into(),
+        password: STUB_PASS.into(),
+    })
+    .unwrap();
+    let layout = ChannelLayout::new("family").unwrap();
+    let schema_version = test_support_open_schema_version();
+    let op = SyncOp {
+        op_id: "it-parked-op".into(),
+        device_id: "it-peer-device".into(),
+        clock: 1,
+        schema_version,
+        command: DomainCommand::Transaction(TransactionCommand::Create {
+            id: "it-parked-txn".into(),
+            row: NormalizedTransaction {
+                kind: TransactionKind::Expense,
+                amount_cents: 1_000,
+                currency_code: "CNY".into(),
+                amount_native_cents: 1_000,
+                account_id: "no-such-account".into(),
+                to_account_id: None,
+                funding_account_id: None,
+                category_id: None,
+                merchant_id: None,
+                policy_id: None,
+                refund_of_transaction_id: None,
+                note: Some("引用不存在账户".into()),
+                date: "2026-02-01".into(),
+            },
+            investment: None,
+        }),
+    };
+    let payload = serde_json::to_vec(&vec![op]).unwrap();
+    transport
+        .ensure_dir(&layout.stream_dir("it-peer-device"))
+        .unwrap();
+    transport
+        .write_file(&layout.segment_path("it-peer-device", 1, 1), &payload)
+        .unwrap();
+    let manifest = ChannelManifest {
+        version: 1,
+        streams: vec![StreamManifest {
+            device_id: "it-peer-device".into(),
+            segments: vec![SegmentEntry {
+                file: "seg-0000000001-0000000001.enc".into(),
+                first_clock: 1,
+                last_clock: 1,
+                size: payload.len() as u64,
+                sha256: sha256_hex(&payload),
+            }],
+        }],
+        checkpoint: None,
+    };
+    transport
+        .write_file(
+            &layout.manifest_path(),
+            &serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+}
+
+/// 当前 schema 版本（与重放端同版：走重放路径而非 schema 偏斜挂起）。
+fn test_support_open_schema_version() -> i64 {
+    let conn = tauri_app_lib::test_support::open();
+    conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+        .unwrap()
+}
+
+/// SHA-256 hex（段自校验摘要）。
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
 }

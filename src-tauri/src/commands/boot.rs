@@ -256,6 +256,10 @@ pub fn get_boot_status(app: AppHandle) -> Result<BootStatus> {
 pub async fn restart_app(app: AppHandle) -> Result<()> {
     tracing::info!("应用重启开始：原位重引导（进程不退出），完成后由前端重载 WebView");
     let handle = app.clone();
+    // 原位重引导 = 可能换库（切换账本 / 恢复 / 转换后重开）：清空本会话密钥记忆
+    // （issue #863 / ADR-0098）——新库的密钥形态未知，等下一次解锁或手动同步
+    // 重新记入，避免拿旧库口令去封新库的段（密文/明文错配会让对端无法开封）。
+    crate::sync_engine::SessionEnvelope::forget();
     let phase = run_db("restart_app", move || Ok(try_boot_sequence(&handle))).await?;
     if phase == BootPhase::Ready {
         // 重引导落到就绪即拉起调度（幂等，单次拉起守卫）：锁定/失败态启动的
@@ -264,6 +268,11 @@ pub async fn restart_app(app: AppHandle) -> Result<()> {
         // 未就绪（解锁屏/失败恢复屏）不拉：解锁/重置路径的
         // `resume_business_surface` 会在业务可用起点拉起。
         backup::start_scheduler(&app);
+        // 同步触发同源（issue #863 / ADR-0098 决策 4）：这是第四个业务可用起点
+        // （锁定/失败态启动 → 解锁屏恢复明文备份 → 重引导落 Ready）——setup 与
+        // `resume_business_surface` 都不在本路径上，不在此拉起则「打开即同步」
+        // 与写后触发本会话永不生效（分平台分流收在 `start_triggers` 一处）。
+        crate::sync_engine::start_triggers(&app);
     }
     tracing::info!(
         phase = phase.as_str(),

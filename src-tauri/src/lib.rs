@@ -217,6 +217,16 @@ pub fn run() {
             // 启动失败重置命令在恢复成功后拉起（轮询同轮承载定时追补）。
             if !locked && !boot_failed {
                 backup::start_scheduler(app.handle());
+                // 多端同步触发编排（issue #863 / ADR-0091 决策 9）：打开应用即
+                // 同步 + 桌面运行期低频轮询。与自动备份同款「锁定/失败不启动」
+                // 口径。
+                //
+                // 分平台分流收在域侧单点 `start_triggers`（ADR-0098 决策 4 /
+                // ADR-0074 决策 6 先例）：Android 后台不承诺同步（系统会杀
+                // 后台进程，轮询线程不可靠），移动端只保留「打开即同步」——
+                // 解锁路径（`resume_business_surface`）共用同一入口，分平台门
+                // 只有一处，不会漏。
+                sync_engine::start_triggers(app.handle());
             }
             // 备份产物变更信号（issue #129）：自动备份的深路径执行点
             // （连接层写入口提交点的写时顺带检查）拿不到 AppHandle，启动时注入镜像句柄一次，

@@ -13,6 +13,8 @@
 //! - [`channel`]：通道层（issue #859）——哑字节通道上的目录布局与 manifest、
 //!   同步轮次（发布自己流 / 拉取他人流）、SyncEnvelope 封包（[`envelope`]）、
 //!   Checkpoint 通道传递与新端取件。
+//! - [`trigger`]：触发编排（issue #863）——通道配置与构库单点、轮次编排与挂起
+//!   通知数据面、打开应用即同步与运行期低频轮询、会话密钥形态判定的信封模式。
 //! - [`transport`]：Transport 哑字节通道抽象（v1 内置 WebDAV 后端，两端同一
 //!   代码路径）。
 //! - [`positions`]：位点（各来源流已应用水位，`sync_stream_positions` 表的
@@ -47,6 +49,7 @@ pub mod ops;
 pub mod parked;
 pub mod positions;
 pub mod transport;
+pub mod trigger;
 
 /// 域内共享接缝（crate 内消费）：DeviceId 读取与本地 op 产出信封。
 pub(crate) use device::device_id;
@@ -72,6 +75,11 @@ pub use positions::StreamPosition;
 pub use transport::{
     Transport,
     webdav::{WebDavConfig, WebDavTransport},
+};
+pub use trigger::{
+    SessionEnvelope, SyncChannel, SyncChannelConfig, build_channel, configured_channel,
+    run_auto_round, run_round_once, start_sync_scheduler, start_triggers, sync_after_write,
+    sync_on_start,
 };
 
 #[cfg(test)]

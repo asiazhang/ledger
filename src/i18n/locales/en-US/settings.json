@@ -277,7 +277,10 @@
       "saveChannel": "Save settings",
       "saveOk": "Channel settings saved",
       "saveFailed": "Failed to save channel settings: {msg}",
-      "colon": ": "
+      "colon": ": ",
+      "parkedToast": "Sync finished, but {count} operation(s) could not be applied locally and were parked for review.",
+      "parkedListTitle": "Parked operations",
+      "parkedItem": "Parked: {reason}"
     },
     "source": {
       "auto": "Auto",

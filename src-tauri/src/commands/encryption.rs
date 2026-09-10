@@ -121,6 +121,11 @@ async fn do_unlock(app: &AppHandle, passphrase: &str) -> Result<UnlockOutcome> {
         encryption::unlock_db_file(&db_path, &pass)
     })
     .await?;
+    // 本会话密钥记忆（issue #863 / ADR-0098）：解锁成功即记入会话形态，自动
+    // 同步轮次（打开即同步 / 低频轮询）无需再触钥匙串即可封包。
+    crate::sync_engine::SessionEnvelope::remember(crate::sync_engine::SessionEnvelope::Encrypted(
+        passphrase.to_string(),
+    ));
     resume_business_surface(app, conn)?;
 
     // 等待中的搬迁（issue #570）：源库为密文库时启动期无法搬迁，解锁后
@@ -248,8 +253,12 @@ pub(crate) fn resume_business_surface(app: &AppHandle, conn: Connection) -> Resu
         let conn = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
         crate::logger::apply_persisted_level(&conn);
     }
-    tracing::info!("业务读写恢复（解锁/重置后），自动备份调度拉起");
+    tracing::info!("业务读写恢复（解锁/重置后），自动备份与多端同步调度拉起");
     backup::start_scheduler(app);
+    // 多端同步触发编排（issue #863）：解锁/恢复后同步触发随之恢复——打开应用
+    // 即同步的兜底路径（密文库会话在解锁前不可达）。分平台分流收在域侧
+    // `start_triggers` 单点（移动端只跑打开即同步，ADR-0098 决策 4）。
+    crate::sync_engine::start_triggers(app);
     Ok(())
 }
 
@@ -289,6 +298,9 @@ pub async fn disable_encryption(app: AppHandle, passphrase: String) -> Result<()
         passphrase_cache::delete(book.as_deref())
     })
     .await;
+    // 关闭加密后库为明文形态：记入明文形态（issue #863），后续自动轮次按明文
+    // 直通（否则会拿旧口令去封明文段，对端无法开封）。
+    crate::sync_engine::SessionEnvelope::remember(crate::sync_engine::SessionEnvelope::Plaintext);
     tracing::info!("整库转换完成（关闭加密），待重启以明文重新打开");
     Ok(())
 }
@@ -337,6 +349,9 @@ pub async fn reset_after_forgotten_passphrase(app: AppHandle) -> Result<()> {
     // 不残留可自动解锁的旧口令（ADR-0075 决策 5）。只清当前账本的条目
     //（issue #836 按本分域）。
     let book = active_book_id(&app);
+    // 忘记口令重置：旧主口令不再适用，清会话密钥记忆（issue #863）与钥匙串
+    // 缓存（幂等，失败不阻断重置），不残留可自动解锁的旧口令。
+    crate::sync_engine::SessionEnvelope::forget();
     let _ = run_db("clear_remember_after_reset", move || {
         passphrase_cache::delete(book.as_deref())
     })
@@ -360,6 +375,12 @@ pub async fn get_remember_passphrase_support() -> Result<RememberPassphraseSuppo
 /// 把主口令本身缓存进系统钥匙串（issue #574 / ADR-0075 决策 3；macOS 以
 /// Touch ID 生物认证门保护）。只在解锁后可达；「记住」偏好开关由前端
 /// localStorage 轻量设置项持有，本命令只落钥匙串缓存。
+///
+/// **不记会话形态**（issue #863 / ADR-0098 决策 3）：本命令可在这达时库必已
+/// 解锁（`ensure_unlocked`），而解锁路径 [`do_unlock`] 已用**已验证**的口令
+/// 记入了会话；此处传入的口令未经校验（只写钥匙串），再记一次会让错口令
+/// 覆盖掉对的那个——自动轮次随后拿它封包，对端无法开封且段名幂等跳过会令
+/// 重传永不发生（与 `sync_now` 的「先验证后封包」同一理由）。
 #[tauri::command]
 pub async fn set_remember_passphrase(app: AppHandle, passphrase: String) -> Result<()> {
     ensure_unlocked(&app)?;

@@ -25,7 +25,7 @@
 mod budget;
 mod channel;
 mod checkpoint;
-mod common;
+pub(crate) mod common;
 mod device;
 mod engine;
 mod envelope;
