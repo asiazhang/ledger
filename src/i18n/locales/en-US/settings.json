@@ -106,7 +106,8 @@
       "backup": "Backup",
       "location": "Storage Location",
       "encryption": "Encryption",
-      "repair": "Data Repair"
+      "repair": "Data Repair",
+      "sync": "Sync"
     },
     "backup": {
       "dirTitle": "Backup Directory",
@@ -253,6 +254,30 @@
       "rememberDevFallbackHint": "Development build: the local cache has no Touch ID gate — restarts unlock directly from the cache without prompting biometrics. Release builds are unaffected.",
       "rememberEnabled": "Auto unlock enabled",
       "rememberFailed": "Couldn't enable auto unlock; keeping manual entry"
+    },
+    "sync": {
+      "cardTitle": "Multi-Device Sync",
+      "lastSyncAt": "Last sync",
+      "neverSynced": "Never synced",
+      "parkedCount": "Parked ops",
+      "parkedHint": "Some sync ops could not be applied locally and await redelivery; they will retry automatically after upgrading or filling in missing data.",
+      "syncNow": "Sync now",
+      "syncOk": "Sync finished: uploaded {uploaded}, applied {applied}, parked {parked}.",
+      "syncFailed": "Sync failed: {msg}",
+      "loadFailed": "Failed to load sync status: {msg}",
+      "plaintextWarning": "Encryption is off for this book: sync data will be stored on your cloud drive in plaintext. To sync encrypted, enable encryption on the Encryption tab first.",
+      "encryptedHint": "This library is encrypted: sync data will be sealed with your master passphrase before upload.",
+      "passphrasePlaceholder": "Master passphrase (leave empty to use the remembered one)",
+      "channelTitle": "Channel settings",
+      "urlPlaceholder": "WebDAV URL, e.g. https://dav.example.com/dav/ledger/",
+      "usernamePlaceholder": "Cloud account",
+      "passwordPlaceholder": "Password / app password",
+      "spacePlaceholder": "Sync space",
+      "spaceHint": "A sync space is the shared sync world two devices agree on: devices configured with the same space sync the same book data (default: default); use different spaces to isolate different books. Lowercase letters, digits and hyphens only.",
+      "saveChannel": "Save settings",
+      "saveOk": "Channel settings saved",
+      "saveFailed": "Failed to save channel settings: {msg}",
+      "colon": ": "
     },
     "source": {
       "auto": "Auto",

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '../helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import {
+  NDataTable,
   NModal,
   NSelect,
   NPopconfirm,
@@ -10,6 +11,7 @@ import {
 import InstallmentsPane from '@/components/scheduled/InstallmentsPane.vue'
 import { findInputByTestId as findInput } from '../helpers/dom'
 import { mountFlushed } from '../helpers/mount'
+import { setFakeMedia } from '../helpers/media-mock'
 import {
   makeInstallmentPlan,
   makeSubscriptionPlan,
@@ -547,5 +549,94 @@ describe('InstallmentsPane 商户挂靠（issue #206：表单接缝接线冒烟�
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('手机分期')
     expect(wrapper.text()).not.toContain('京东白条')
+  })
+})
+
+describe('InstallmentsPane 移动档（issue #848 / ADR-0088 决策 11 票⑧）', () => {
+  /** 分期夹具：120000 分 12 期，已还 3 期 30000 分。 */
+  function wirePlan() {
+    const inst = makeInstallmentPlan(
+      { id: 'i1', note: '手机分期' },
+      120000,
+      12,
+      'mer-1',
+    )
+    mockPlans = [inst]
+    mockDetails.set('i1', makeDetail(inst, { count: 3, amount: 30000 }))
+    return inst
+  }
+
+  function tableOf(wrapper: Awaited<ReturnType<typeof mountView>>) {
+    return wrapper.findComponent(NDataTable)
+  }
+
+  it('移动档列结构三分（备注/总额/操作），桌面档十列一字不动', async () => {
+    wirePlan()
+    const desktop = await mountView()
+    expect((tableOf(desktop).props('columns') as unknown[]).length).toBe(10)
+    desktop.unmount()
+
+    setFakeMedia({ width: 600 })
+    const mobile = await mountView()
+    const columns = tableOf(mobile).props('columns') as Array<{ key?: string }>
+    expect(columns.map((c) => c.key)).toEqual(['note', 'total', 'actions'])
+  })
+
+  it('移动档信息并入副行不丢失：状态/周期/开始日/商户/分类/账户/总额/进度（锚点同桌面）', async () => {
+    setFakeMedia({ width: 600 })
+    wirePlan()
+    const wrapper = await mountView()
+    const row = wrapper.find('.n-data-table-tbody .n-data-table-tr')
+    const text = row.text()
+    expect(text).toContain('手机分期')
+    expect(text).toContain('进行中')
+    expect(text).toContain('每月')
+    expect(text).toContain('2026-01-01')
+    expect(text).toContain('京东白条')
+    expect(text).toContain('数码分期')
+    expect(text).toContain('招商银行')
+    expect(text).toContain(formatAmount(120000, cny))
+    // 进度锚点与桌面同 testid：进度条 + 已还文案照常
+    const cell = wrapper.find('[data-testid="inst-progress-i1"]')
+    expect(cell.exists()).toBe(true)
+    expect(cell.text()).toContain(formatAmount(30000, cny))
+    expect(cell.text()).toContain('3/12 期')
+    const progress = cell.findComponent(NProgress)
+    expect(progress.exists()).toBe(true)
+    expect(progress.props('percentage')).toBe(25)
+  })
+
+  it('移动档生命周期操作一击可达：暂停/取消为可见按钮且 ≥48px 触控目标，暂停走同一状态命令', async () => {
+    setFakeMedia({ width: 600 })
+    wirePlan()
+    const wrapper = await mountView()
+    for (const key of ['pause', 'cancel']) {
+      const btn = wrapper.find(`[data-testid="op-${key}-i1"]`)
+      expect(btn.exists(), `应存在可见的「${key}」按钮`).toBe(true)
+      const el = btn.element as HTMLElement
+      expect(el.style.minWidth).toBe('48px')
+      expect(el.style.minHeight).toBe('48px')
+    }
+    await wrapper.find('[data-testid="op-pause-i1"]').trigger('click')
+    await flushPromises()
+    expect(
+      mockInvoke.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === 'update_scheduled_transaction_status' &&
+          (args as { input: { new_status: string } }).input.new_status === 'paused',
+      ),
+    ).toBe(true)
+  })
+
+  it('跨断点缩窗实时换列（十列 ⇄ 三列）', async () => {
+    wirePlan()
+    const wrapper = await mountView()
+    expect((tableOf(wrapper).props('columns') as unknown[]).length).toBe(10)
+    setFakeMedia({ width: 600 })
+    await flushPromises()
+    expect((tableOf(wrapper).props('columns') as unknown[]).length).toBe(3)
+    setFakeMedia({ width: 1280 })
+    await flushPromises()
+    expect((tableOf(wrapper).props('columns') as unknown[]).length).toBe(10)
   })
 })

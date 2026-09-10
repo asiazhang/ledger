@@ -24,6 +24,7 @@ import type { ScheduledTransactionOccurrence } from '@/types'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useModalIntent } from '@/composables/useModalIntent'
+import { useWindowTier } from '@/composables/useWindowTier'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import {
   earliestPendingOccurrence,
@@ -38,6 +39,7 @@ import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
+import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from '@/components/mobile-cells'
 import { usePlanFocusLanding } from '@/composables/usePlanFocusLanding'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
@@ -55,6 +57,12 @@ import { scheduledStatusLabel } from '@/utils/scheduled'
 
 const reference = useReferenceStore()
 const message = useMessage()
+
+// 移动档适配（issue #848 / ADR-0088 决策 11 票⑧）：清单列结构三分（备注/金额/
+// 操作），信息并入副行不丢失；生命周期操作经 PlanRowActions 移动档变体一击可达。
+// 断点口径接窗口分级 composable 唯一事实源；桌面档十列一字不动（回归红线）。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
 
 // ---------------------------------------------------------------------------
 // 表单接缝（ADR-0041）：新建与编辑弹窗各持一份草稿实例——公共草稿字段、商户
@@ -262,10 +270,104 @@ function statusLabel(status: string): string {
   return scheduledStatusLabel(status)
 }
 
+/** 商户名单元格解析（桌面/移动两分支共用；改名即时生效，merchantMap 含软删会话缓存）。 */
+function merchantName(row: SubscriptionRow): string {
+  const m = row.plan.merchant_id ? reference.merchantMap.get(row.plan.merchant_id) : undefined
+  return m?.name ?? '—'
+}
+
+/** 扣款账户名解析（两分支共用；未知 id 回退 id，与桌面列同口径）。 */
+function accountName(row: SubscriptionRow): string {
+  return reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id
+}
+
+/** 行操作描述符组装（桌面/移动两分支共用）：模块产出在详情动作后插入自建编辑
+ * 描述符（订阅真差异，ADR-0023 决策三；同形状、无确认文案，spec #520）。 */
+function subscriptionActions(row: SubscriptionRow): ScheduledPlanRowAction[] {
+  const status = row.plan.core.status
+  const actions: ScheduledPlanRowAction[] = []
+  for (const action of list.rowActions(row)) {
+    if (action.key === 'detail') {
+      actions.push(action, {
+        key: 'edit',
+        label: t('scheduled.action.edit'),
+        available: status === 'active' || status === 'paused',
+        confirm: null,
+        run: () => openEdit(row),
+      })
+    } else {
+      actions.push(action)
+    }
+  }
+  return actions
+}
+
+/** 下期扣款单元格（两分支共用）：无 pending 占位「—」，详情失败示「加载失败」
+ * 不混淆；测试锚点两档同 testid。 */
+function nextChargeText(row: SubscriptionRow): string {
+  const currency = reference.getCurrency(row.plan.core.currency_code)
+  if (row.ext.next) {
+    return `${row.ext.next.scheduled_date} · ${formatAmount(row.ext.next.amount_cents, currency)}`
+  }
+  return row.detailFailed ? t('scheduled.list.loadFailed') : '—'
+}
+
 /** 周期下拉选项（computed 现取标签，切语言即时生效） */
 const recurrenceOptions = computed(scheduledRecurrenceOptions)
 
-const columns = computed<DataTableColumns<SubscriptionRow>>(() => [
+const columns = computed<DataTableColumns<SubscriptionRow>>(() => {
+  // 移动档三分列（issue #848）：备注标题行 + 状态/周期/开始日与商户/分类/账户两
+  // 弱化副行 + 金额/下期扣款列；窄屏无横向滚动，信息并入副行不丢失
+  if (isMobileTier.value) {
+    return [
+      {
+        title: t('scheduled.column.note'),
+        key: 'note',
+        render: (row) =>
+          h('div', { style: MOBILE_CELL_STYLE }, [
+            h('span', null, row.plan.core.note ?? '—'),
+            h(
+              'span',
+              { style: MOBILE_SUB_STYLE },
+              mobileSubLine(
+                statusLabel(row.plan.core.status),
+                scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
+                row.plan.core.start_date,
+              ),
+            ),
+            h(
+              'span',
+              { style: MOBILE_SUB_STYLE },
+              mobileSubLine(
+                merchantName(row),
+                reference.categoryPath(row.plan.core.category_id),
+                accountName(row),
+              ),
+            ),
+          ]),
+      },
+      {
+        title: t('scheduled.column.amount'),
+        key: 'amount',
+        render: (row) =>
+          h('div', { style: MOBILE_CELL_STYLE }, [
+            h('span', null, formatAmount(row.plan.core.amount_cents, reference.getCurrency(row.plan.core.currency_code))),
+            h(
+              'span',
+              { style: MOBILE_SUB_STYLE, 'data-testid': `next-charge-${row.plan.core.id}` },
+              nextChargeText(row),
+            ),
+          ]),
+      },
+      {
+        title: t('scheduled.column.actions'),
+        key: 'actions',
+        render: (row) =>
+          h(PlanRowActions, { actions: subscriptionActions(row), rowId: row.plan.core.id, mobile: true }),
+      },
+    ]
+  }
+  return [
   {
     title: t('scheduled.column.note'),
     key: 'note',
@@ -275,10 +377,7 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => [
     title: t('scheduled.column.merchant'),
     key: 'merchant',
     // 改名即时生效（引用指向 id）：merchantMap 含软删商户会话缓存，历史计划照常显示
-    render: (row) => {
-      const m = row.plan.merchant_id ? reference.merchantMap.get(row.plan.merchant_id) : undefined
-      return m?.name ?? '—'
-    },
+    render: (row) => merchantName(row),
   },
   {
     title: t('scheduled.column.category'),
@@ -288,7 +387,7 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => [
   {
     title: t('scheduled.column.account'),
     key: 'account',
-    render: (row) => reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id,
+    render: (row) => accountName(row),
   },
   {
     title: t('scheduled.column.amount'),
@@ -311,11 +410,7 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => [
       h(
         'span',
         { 'data-testid': `next-charge-${row.plan.core.id}` },
-        row.ext.next
-          ? `${row.ext.next.scheduled_date} · ${formatAmount(row.ext.next.amount_cents, reference.getCurrency(row.plan.core.currency_code))}`
-          : row.detailFailed
-            ? t('scheduled.list.loadFailed')
-            : '—',
+        nextChargeText(row),
       ),
   },
   {
@@ -325,26 +420,11 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => [
     // 空占位只此一份，ADR-0041 决策 7 注）：订阅真差异「编辑」（仅非金额字段，
     // ADR-0023 决策三）以同形状描述符紧随详情动作之后——active/paused 可编辑、
     // 已取消不提供、无确认文案；渲染组件不识形态，编辑弹窗开启逻辑留本页签。
-    render: (row) => {
-      const status = row.plan.core.status
-      const actions: ScheduledPlanRowAction[] = []
-      for (const action of list.rowActions(row)) {
-        if (action.key === 'detail') {
-          actions.push(action, {
-            key: 'edit',
-            label: t('scheduled.action.edit'),
-            available: status === 'active' || status === 'paused',
-            confirm: null,
-            run: () => openEdit(row),
-          })
-        } else {
-          actions.push(action)
-        }
-      }
-      return h(PlanRowActions, { actions, rowId: row.plan.core.id })
-    },
+    render: (row) =>
+      h(PlanRowActions, { actions: subscriptionActions(row), rowId: row.plan.core.id }),
   },
-])
+]
+})
 
 /** 来源跳转落点入参（spec #704 / issue #707）：待开的计划 id（视图侧 focus
  * 读一次后的暂存；空则无落点）。 */

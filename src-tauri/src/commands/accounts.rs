@@ -11,7 +11,7 @@
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
 #![allow(clippy::unreachable)]
 
-use tauri::State;
+use tauri::{AppHandle, Runtime, State};
 
 use crate::accounts as account_domain;
 use crate::accounts::{
@@ -35,9 +35,9 @@ pub async fn list_accounts(db: State<'_, DbState>) -> Result<Vec<Account>> {
 }
 
 #[tauri::command]
-pub async fn create_account(
+pub async fn create_account<R: Runtime>(
     db: State<'_, DbState>,
-    app: tauri::AppHandle,
+    app: AppHandle<R>,
     input: AccountInput,
 ) -> Result<String> {
     // 壳层统一写入口（ADR-0073）：置脏、信号内化单点，参考写入成功发参考失效信号。

@@ -250,7 +250,10 @@ fn require_encrypted_file(db_path: &Path) -> Result<()> {
 /// 验证当前主口令确实能读开密文源库（先验证后转换）：类型化读语句先行
 /// 校验（错误形态可精确匹配 not-a-database），口令错误报码化错误，原库
 /// 不动。转换本体在自有裸连接重开源库，验证连接即弃。
-fn verify_source_passphrase(db_path: &Path, passphrase: &str) -> Result<()> {
+/// 多端同步壳层（issue #862）同源消费：手动同步拿到的主口令（显式参数 /
+/// 钥匙串缓存）在封包前先验证——错误口令封出的段对端无法解封，且段名
+/// 幂等跳过会令重传永不发生，必须在上传前拦下。
+pub(crate) fn verify_source_passphrase(db_path: &Path, passphrase: &str) -> Result<()> {
     let conn = super::open_connection_with_passphrase(db_path, passphrase)?;
     match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
         r.get::<_, i64>(0)

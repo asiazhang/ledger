@@ -103,12 +103,13 @@ export function makeTxn(i: number, accountId = 'acc-1', overrides: Partial<Trans
  * 分页返回随 total 变化。偶数序号在 acc-2、奇数序号在 acc-1，供涉及账户过滤断言。 */
 let txnDb: Transaction[] = []
 
-/** 与后端 read.rs 口径一致：涉及账户 / 商户 / 日期起止 / 类型 / 分页 AND 组合过滤。 */
+/** 与后端 read.rs 口径一致：涉及账户（三端：转出 ∪ 转入 ∪ 出资，issue #937）/
+ * 商户 / 日期起止 / 类型 / 分页 AND 组合过滤。 */
 function applyListFilter(filter: Record<string, unknown>) {
   return txnDb.filter((t) => {
     if (filter.involving_account_id) {
       const id = filter.involving_account_id as string
-      if (t.account_id !== id && t.to_account_id !== id) return false
+      if (t.account_id !== id && t.to_account_id !== id && t.funding_account_id !== id) return false
     }
     if (filter.merchant_id && t.merchant_id !== filter.merchant_id) return false
     if (filter.from && t.date < (filter.from as string)) return false

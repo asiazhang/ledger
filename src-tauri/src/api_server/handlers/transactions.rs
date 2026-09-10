@@ -37,7 +37,7 @@ use crate::write_entry::{Outcome, write_entry};
         ("from" = Option<String>, Query, description = "起始日期（含），YYYY-MM-DD"),
         ("to" = Option<String>, Query, description = "结束日期（含），YYYY-MM-DD"),
         ("account_id" = Option<String>, Query, description = "按转出账户过滤"),
-        ("involving_account_id" = Option<String>, Query, description = "涉及账户过滤（account_id 或 to_account_id 命中即算，含转入的转账）"),
+        ("involving_account_id" = Option<String>, Query, description = "涉及账户过滤（account_id、to_account_id 或出资账户 funding_account_id 任一命中即算：含转账两侧与带出资账户买卖的出资端）"),
         ("merchant_id" = Option<String>, Query, description = "按商户过滤（含软删商户的历史交易）"),
         ("category_id" = Option<String>, Query, description = "按分类精确过滤（不含子分类，含软删分类的历史交易）"),
         ("uncategorized_only" = Option<bool>, Query, description = "true 时仅返回无分类交易；与 category_id 同携按 AND 组合"),

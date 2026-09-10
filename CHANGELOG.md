@@ -16,16 +16,19 @@
 - **多端同步**：本位币基准随同步在各设备一致生效；原「默认币种」更名为「展示币种」，仅影响本机展示（[#858]）。
 - **多端同步**：定时计划、账户/分类/商户字典、预算、保险、物品与实物资产的变化随同步分发，各端业务数据一致（[#860]）。
 - **多端同步**：投资买入/卖出（含持仓与已实现盈亏）、标的字典、汇率与手动报价及 AI 导入的数据变化随同步分发，各端业务数据一致（[#861]）。
+- **多端同步**：设置页新增同步卡片——查看上次同步时间与挂起操作数、手动「立即同步」、配置网盘（WebDAV）通道；两台桌面设备配置同一同步空间后，手动同步即可保持一致；密文库同步数据以主口令加密上通道，明文库同步时显著提示（[#862]）。
 - **移动端**：窗口 <840 切换移动档导航壳（顶栏 + 抽屉），适配刘海与手势条安全区（[#842]）。
 - **移动端**：触屏交互适配——交易行常显「⋯」菜单，悬停信息点按可达（[#843]）。
 - **移动端**：交易页窄窗口/手机切换卡片列表（日期、类型、分类/商户、账户、金额一眼可读，金额隐私模式兼容），右下角新增「记一笔」悬浮按钮，点选类型后进对应表单；搜索结果同构复用卡片列表（[#846]）。
 - **移动端**：Android 系统返回键/手势获得应用内语义——有弹层先关最上层，无弹层路由回退，路由栈底交还系统退出；遮罩点击不关的原则不变，桌面档无此通道（[#845]）。
 - **移动端**：概览与账户页移动档适配——概览栅格窄屏单列、账户列表窄屏收为名称/余额/操作三分列（类型与币种并入名称副行）、新增表单纵排，财务自由度口径说明触屏点按可达；金额隐私模式照常生效，桌面档不变（[#847]）。
+- **移动端**：预算与定时计划页移动档适配——预算列表窄屏收为分类/进度/操作三分列（周期与超支状态并入副行）、定时计划三页签窄屏收为备注/金额/操作三分列（状态、周期、商户、账户、下期扣款/转账、分期进度并入副行），暂停/恢复/取消等生命周期操作以 ≥48px 触控按钮一击可达；新增预算表单窄屏纵排，桌面档不变（[#848]）。
 - **移动端**：报表与投资及收纳页/设置移动档适配——商户排行窄屏改两列堆叠（名＋金额分布条 / 金额＋占比·笔数，下钻不变）、时间范围快捷选择触屏按钮达标 48px、标的页表格窄屏横向滚动；分类树拖拽排序与「更多」页签「移回侧栏」桌面专属管理动作在移动档隐藏、桌面照常（[#849]）。
 - **AI 导入**：新增商户改名端点 `PUT /api/v1/merchants/{id}`（[#884]）。
 - **AI 导入**：导入知识新增查询与分页纪律——子集检查用服务端过滤参数、分页读回以 `total` 为准核对总条数、buy/sell 标的关联认 `source` 字段（[#928]）。
 - **交易**：交易页筛选与分页会话内保留，切走再回原样恢复（[#893]）。
 - **投资**：买入/卖出交易可选「出资账户」——现金实际流出/流入的账户（如银行卡直扣买基金）纳入余额与资金流归因（[#935]）。
+- **投资**：交易列表买入/卖出行展示「出资账户 → 投资账户」双链接（两端各自可点击下钻）；按账户筛选交易命中其出资的买入/卖出，一张卡的完整资金历史可检索（[#937]）。
 - **发布**：Android arm64 APK 进入发布矩阵，随 GitHub Release 发布（[#559]）。
 - **发布**：Android APK 发布签名就绪——发布构建以 CI secrets 注入 keystore 签名，tag 构建缺签名 secrets 直接失败；试跑产物经 apksigner 校验可真机直装（[#560]）。
 - **报表**：报表页接入 ESC 复位（[#894]）。
@@ -285,6 +288,7 @@
 [#846]: https://github.com/asiazhang/ledger/issues/846
 [#845]: https://github.com/asiazhang/ledger/issues/845
 [#847]: https://github.com/asiazhang/ledger/issues/847
+[#848]: https://github.com/asiazhang/ledger/issues/848
 [#855]: https://github.com/asiazhang/ledger/issues/855
 [#856]: https://github.com/asiazhang/ledger/issues/856
 [#857]: https://github.com/asiazhang/ledger/issues/857
@@ -292,6 +296,7 @@
 [#858]: https://github.com/asiazhang/ledger/issues/858
 [#860]: https://github.com/asiazhang/ledger/issues/860
 [#861]: https://github.com/asiazhang/ledger/issues/861
+[#862]: https://github.com/asiazhang/ledger/issues/862
 [#834]: https://github.com/asiazhang/ledger/issues/834
 [#836]: https://github.com/asiazhang/ledger/issues/836
 [#831]: https://github.com/asiazhang/ledger/issues/831
@@ -304,4 +309,5 @@
 [#920]: https://github.com/asiazhang/ledger/issues/920
 [#928]: https://github.com/asiazhang/ledger/issues/928
 [#935]: https://github.com/asiazhang/ledger/issues/935
+[#937]: https://github.com/asiazhang/ledger/issues/937
 [#940]: https://github.com/asiazhang/ledger/issues/940

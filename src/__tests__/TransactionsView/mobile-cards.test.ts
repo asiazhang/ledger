@@ -117,6 +117,15 @@ describe('移动档卡片字段（同一段列表状态）', () => {
     expect(first.text()).toContain('→')
   })
 
+  it('带出资账户的买入行账户呈现「出资账户 → 投资账户」双向链接（与表格同构，issue #937）', async () => {
+    setTxnDb([makeTxn(1, 'acc-1', { kind: 'buy', funding_account_id: 'acc-2' })])
+    const wrapper = await mountMobile()
+    const first = cards(wrapper)[0]
+    const links = first.findAllComponents(AccountLink)
+    expect(links.map((l: { text(): string }) => l.text())).toEqual(['银行', '现金'])
+    expect(first.text()).toContain('→')
+  })
+
   it('金额隐私模式：隐藏数字不隐藏形状与方向——掩码恒形、语义色保留', async () => {
     setTxnDb([makeTxn(1, 'acc-1', { kind: 'expense', amount_native_cents: 12345 })])
     const wrapper = await mountMobile()
