@@ -15,6 +15,7 @@
 //! - [`item`]：物品全域 op 产出、源端折算随行（issue #860）
 //! - [`physical_asset`]：实物资产全域 op 产出、并发估值全部存活（issue #860）
 //! - [`scheduled_plan`]：定时计划全域 op 产出与收敛（issue #860）
+//! - [`transaction_funding`]：出资账户的重放收敛与旧格式 op 前向兼容（issue #939）
 //! - [`checkpoint`]：Checkpoint 快照、新端引导、位点与截断机制（issue #857）
 //! - [`wire`]：op 信封序列化往返（wire 形态稳定性）
 //! - [`envelope`]：SyncEnvelope 信封加密往返与码化错误（issue #859）
@@ -38,5 +39,6 @@ mod physical_asset;
 mod reference_data;
 mod scheduled_plan;
 mod total_order;
+mod transaction_funding;
 mod transport;
 mod wire;

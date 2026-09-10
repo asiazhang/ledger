@@ -14,6 +14,7 @@ use crate::transaction::{
 };
 
 use super::batch_common::make_input;
+use super::common::make_buy_input;
 use crate::test_support;
 
 // ---------------------------------------------------------------------------
@@ -125,11 +126,119 @@ fn dedup_hash_matches_known_sha256_vector() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
     let input = make_input("acc-1", TransactionKind::Income, 1000, "2026-07-01");
-    // sha256("2026-07-01|income|1000|CNY|acc-1|")
+    // sha256("2026-07-01|income|1000|CNY|acc-1|")——无出资账户时与旧公式逐字节
+    // 同输入（issue #939）：本向量同时钉住「历史行哈希兼容」，新公式不得漂移。
     assert_eq!(
         compute_dedup_hash(&input),
         "d5a4ee5fa04913672a319a06c454283d74d312f13506a27fc81c72b09602a558"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 出资账户纳入哈希（issue #939 / ADR-0096 决策 8）：仅出资账户不同的两笔不再
+// 互相去重；历史行（无出资账户）哈希不变。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dedup_hash_includes_funding_account_when_present() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-dedup", "现金", "cash", "CNY", 0);
+    let base = make_input("acc-dedup", TransactionKind::Income, 1000, "2026-07-01");
+    let with_funding = TransactionInput {
+        policy_id: None,
+        funding_account_id: Some("acc-fund".into()),
+        ..base.clone()
+    };
+    assert_ne!(
+        compute_dedup_hash(&with_funding),
+        compute_dedup_hash(&base),
+        "仅出资账户不同应得到不同哈希"
+    );
+}
+
+#[test]
+fn dedup_hash_matches_known_vector_with_funding_account() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
+    let mut input = make_input("acc-1", TransactionKind::Income, 1000, "2026-07-01");
+    input.funding_account_id = Some("acc-fund".into());
+    // sha256("2026-07-01|income|1000|CNY|acc-1||acc-fund")
+    assert_eq!(
+        compute_dedup_hash(&input),
+        "fb83dd1889fe6f5f181f9437104f874d4a07ff99d81f73cecfa8bbb91775f9fe"
+    );
+}
+
+#[test]
+fn dedup_identity_distinguishes_funding_only_difference() {
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-inv-f", "inst-f");
+    test_support::seed_account(&conn, "acc-fund-a", "卡A", "bank", "USD", 0);
+    test_support::seed_account(&conn, "acc-fund-b", "卡B", "bank", "USD", 0);
+
+    // 两笔仅出资账户不同的买入（其余内容全同）：先落一笔，另一笔应判为新写。
+    let mut a = make_buy_input("acc-inv-f", "inst-f", 10.0, 10000, 500);
+    a.funding_account_id = Some("acc-fund-a".into());
+    let mut b = make_buy_input("acc-inv-f", "inst-f", 10.0, 10000, 500);
+    b.funding_account_id = Some("acc-fund-b".into());
+    TransactionBatch::run(&conn, vec![a], true).unwrap();
+
+    match dedup_identity(&conn, &b).unwrap() {
+        DedupIdentity::New { dedup_hash } => {
+            assert_eq!(
+                dedup_hash,
+                compute_dedup_hash(&b),
+                "仅出资账户不同应判定为新写，且携带与落库回写一致的内容哈希"
+            );
+        }
+        other => panic!("仅出资账户不同不应互相去重，实际: {other:?}"),
+    }
+
+    // 批次路径：两笔都写入（duplicate=false），各自落行。
+    let mut c = make_buy_input("acc-inv-f", "inst-f", 10.0, 10000, 500);
+    c.funding_account_id = Some("acc-fund-b".into());
+    let r = TransactionBatch::run(&conn, vec![c], true).unwrap().results;
+    assert!(r[0].success && !r[0].duplicate, "仅出资账户不同应写入新行");
+
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 2, "两笔各落一行");
+}
+
+#[test]
+fn historical_row_without_funding_still_dedups_by_content_hash() {
+    // 历史行兼容（issue #939 验收）：旧版本落库的行（dedup_hash 按旧公式写入、
+    // funding 列 NULL）对同内容重导仍应内容哈希命中，去重行为不变。
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-hist", "现金", "cash", "CNY", 0);
+
+    let input = make_input("acc-hist", TransactionKind::Income, 1000, "2026-07-01");
+    let first = TransactionBatch::run(&conn, vec![input.clone()], true)
+        .unwrap()
+        .results;
+    let id = first[0].id.clone().unwrap();
+    // 把该行的 dedup_hash 改写为旧公式产物（模拟旧版本写入的存量行）：
+    // sha256("2026-07-01|income|1000|CNY|acc-hist|")。
+    conn.execute(
+        "UPDATE transactions SET dedup_hash=?2 WHERE id=?1",
+        params![
+            id,
+            "cbe601c2ff074b00086e739a0a85ae761c22aa7078bb2488508ae7472a510b06"
+        ],
+    )
+    .unwrap();
+
+    match dedup_identity(&conn, &input).unwrap() {
+        DedupIdentity::Existing { id } => {
+            assert_eq!(id, None, "内容哈希命中回传 id:None（冻结契约，不回归）");
+        }
+        other => panic!("历史行同内容重导应命中去重，实际: {other:?}"),
+    }
 }
 
 // ---- dedup_identity 判定函数直接覆盖（issue #62）----

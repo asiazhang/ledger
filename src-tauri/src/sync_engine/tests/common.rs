@@ -62,6 +62,7 @@ pub(crate) struct TxnRow {
     pub amount_native_cents: i64,
     pub account_id: String,
     pub to_account_id: Option<String>,
+    pub funding_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
@@ -74,7 +75,7 @@ pub(crate) struct TxnRow {
 pub(crate) fn read_transaction(conn: &Connection, id: &str) -> Option<TxnRow> {
     conn.query_row(
         "SELECT kind, amount_cents, currency_code, amount_native_cents, account_id, \
-         to_account_id, category_id, merchant_id, refund_of_transaction_id, note, date, is_deleted \
+         to_account_id, funding_account_id, category_id, merchant_id, refund_of_transaction_id, note, date, is_deleted \
          FROM transactions WHERE id = ?1",
         [id],
         |r| {
@@ -85,12 +86,13 @@ pub(crate) fn read_transaction(conn: &Connection, id: &str) -> Option<TxnRow> {
                 amount_native_cents: r.get(3)?,
                 account_id: r.get(4)?,
                 to_account_id: r.get(5)?,
-                category_id: r.get(6)?,
-                merchant_id: r.get(7)?,
-                refund_of_transaction_id: r.get(8)?,
-                note: r.get(9)?,
-                date: r.get(10)?,
-                is_deleted: r.get(11)?,
+                funding_account_id: r.get(6)?,
+                category_id: r.get(7)?,
+                merchant_id: r.get(8)?,
+                refund_of_transaction_id: r.get(9)?,
+                note: r.get(10)?,
+                date: r.get(11)?,
+                is_deleted: r.get(12)?,
             })
         },
     )
