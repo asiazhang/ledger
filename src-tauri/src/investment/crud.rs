@@ -5,6 +5,10 @@
 
 use rusqlite::Connection;
 
+use super::command::{
+    ExchangeRateCommand, InstrumentCommand, InstrumentCommandRow, PriceCommand,
+    record_exchange_rate, record_instrument, record_price,
+};
 use super::model::{
     Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
     InstrumentType, MarketPrice, MarketPriceInput,
@@ -41,16 +45,52 @@ pub fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) -> Resu
     if input.rate <= 0.0 {
         return Err(AppError::coded("fx.rate-positive", "汇率必须大于 0"));
     }
-    let id = new_uuid();
+    let id = write_exchange_rate(
+        conn,
+        &new_uuid(),
+        &input.base_code,
+        &input.quote_code,
+        input.rate,
+        &input.priced_at,
+        input.source.as_deref(),
+    )?;
+    // op 产出接缝（issue #861 / ADR-0091）：本地写成功 → 动作随行追加进本机
+    // OpLog；随同一事务提交/回滚，写失败不残留 op。
+    record_exchange_rate(
+        conn,
+        ExchangeRateCommand::Upsert {
+            id: id.clone(),
+            base_code: input.base_code,
+            quote_code: input.quote_code,
+            rate: input.rate,
+            priced_at: input.priced_at,
+            source: input.source,
+        },
+    )?;
+    Ok(id)
+}
+
+/// 汇率写入协议（本地录入与重放共用，无 op 产出）：按货币对 upsert，未命中以
+/// `insert_id` 新建（本地传新生成 id、重放携带源端 id，两端收敛同一行），命中
+/// 复用既有行 id 只更新语义列。返回落库行实际 id。
+pub(crate) fn write_exchange_rate(
+    conn: &Connection,
+    insert_id: &str,
+    base_code: &str,
+    quote_code: &str,
+    rate: f64,
+    priced_at: &str,
+    source: Option<&str>,
+) -> Result<String> {
     let now = now_iso();
     let existing_id: Option<String> = conn
         .query_row(
             "SELECT id FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
-            rusqlite::params![input.base_code, input.quote_code],
+            rusqlite::params![base_code, quote_code],
             |r| r.get(0),
         )
         .ok();
-    let id = existing_id.unwrap_or(id);
+    let id = existing_id.unwrap_or_else(|| insert_id.to_string());
     conn.execute(
         "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) \
@@ -59,11 +99,11 @@ pub fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) -> Resu
          updated_at=excluded.updated_at, version=version+1, device_id=excluded.device_id",
         rusqlite::params![
             id,
-            input.base_code,
-            input.quote_code,
-            input.rate,
-            input.priced_at,
-            input.source,
+            base_code,
+            quote_code,
+            rate,
+            priced_at,
+            source,
             now,
             1,
             device_id(conn)?
@@ -93,8 +133,7 @@ pub fn create_market_price(conn: &Connection, input: MarketPriceInput) -> Result
     // （防基金现价被手动更新后旧净值日期残留错配，与同步通道同规则）。
     // source 透传入参（可空，发布 API 形状不变）；手动报价正经 manual_price 模块
     // （record_manual_price），本命令为已发布的独立写价通道（issue #291 前的半成品）。
-    // 返回落库行实际 id（upsert 单点负责既有行复用/新建）。
-    upsert_market_price(
+    let id = upsert_market_price(
         conn,
         &input.instrument_id,
         input.price_cents,
@@ -102,7 +141,20 @@ pub fn create_market_price(conn: &Connection, input: MarketPriceInput) -> Result
         &input.priced_at,
         None,
         input.source.as_deref(),
-    )
+    )?;
+    // op 产出接缝（issue #861 / ADR-0091）：本地写成功 → 动作随行追加（裁决域
+    // = 标的的现价行）；随同一事务提交/回滚。
+    record_price(
+        conn,
+        PriceCommand::MarketPrice {
+            instrument_id: input.instrument_id,
+            price_cents: input.price_cents,
+            currency_code: input.currency_code,
+            priced_at: input.priced_at,
+            source: input.source,
+        },
+    )?;
+    Ok(id)
 }
 
 /// 标的搜索的匹配目标：「代码 · 名称」label 等价文本（与投资表单标的下拉的
@@ -248,6 +300,22 @@ pub fn get_instrument(conn: &Connection, id: &str) -> Result<Instrument> {
 /// 必有买入明细行，故守卫的流水 COUNT 已覆盖批次（无流水 ⟺ 无批次），
 /// DELETE 不会撞到 RESTRICT 外键错误。
 pub fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
+    write_delete_instrument(conn, id)?;
+    // op 产出接缝（issue #861 / ADR-0091）：删除成功 → delete op（实体 id）
+    // 追加；随同一事务提交/回滚。
+    record_instrument(conn, InstrumentCommand::Delete { id: id.to_string() })
+}
+
+/// 标的删除协议（本地删除与重放共用，无 op 产出）：守卫前置检查——仅来源为
+/// 手动且无任何 buy/sell 流水引用（security_transactions 无行）的自建标的可删；
+/// 有引用拒删（交易行与明细归属用户记账事实，不随字典清理）、同步来源标的拒删
+/// （字典修正由按代码查询/创建带回权威名称承担，ADR-0081）。不引入软删——标的字典查询面不被污染。现价缓存与
+/// 价格历史随外键 CASCADE 一并消失；持仓批次表虽是 RESTRICT，但批次行的
+/// buy_transaction_id 为指向 security_transactions 的 NOT NULL 外键——批次存在
+/// 必有买入明细行，故守卫的流水 COUNT 已覆盖批次（无流水 ⟺ 无批次），
+/// DELETE 不会撞到 RESTRICT 外键错误。重放端守卫原样生效：守卫失败（如另一端
+/// 已有流水）由引擎挂起待裁决，不自动放行。
+pub(crate) fn write_delete_instrument(conn: &Connection, id: &str) -> Result<()> {
     let source: Option<String> = conn
         .query_row(
             "SELECT source FROM instruments WHERE id=?1",
@@ -281,7 +349,10 @@ pub fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
 
 /// 核心创建函数（手动 IPC 命令与 AI HTTP 端点共用，ADR-0037）：新建行来源标
 /// 'manual'（非同步即手动），（代码，类型）命中既有行则复用并只更新名称/市场，
-/// 来源随行终身不变（issue #293 / ADR-0036 决策 2）。
+/// 来源随行终身不变（issue #293 / ADR-0036 决策 2）。写入委托共享协议
+/// [`write_instrument`]，实际变化按形态产出 op（issue #861）——新建 →
+/// Create op；复用改名/改市场 → Update op；无变化复用不产出（op 是本机数据
+/// 变化的记录，零变化零 op）。
 pub fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<String> {
     if input.symbol.trim().is_empty() {
         return Err(AppError::coded(
@@ -289,45 +360,117 @@ pub fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<St
             "标的代码不能为空",
         ));
     }
-    let market = input.market.as_deref().unwrap_or("unknown");
+    let row = InstrumentCommandRow {
+        symbol: input.symbol,
+        kind: input.kind,
+        name: input.name,
+        currency_code: input.currency_code,
+        market: input.market.unwrap_or_else(|| "unknown".to_string()),
+    };
+    let (id, outcome) = write_instrument(conn, &new_uuid(), &row)?;
+    match outcome {
+        InstrumentWrite::Created => record_instrument(
+            conn,
+            InstrumentCommand::Create {
+                id: id.clone(),
+                row: row.clone(),
+            },
+        )?,
+        InstrumentWrite::Renamed => record_instrument(
+            conn,
+            InstrumentCommand::Update {
+                id: id.clone(),
+                symbol: row.symbol.clone(),
+                kind: row.kind,
+                name: row.name.clone(),
+                market: row.market.clone(),
+            },
+        )?,
+        InstrumentWrite::Unchanged => {}
+    }
+    Ok(id)
+}
+
+/// 标的写入形态（op 产出判据）：新建 / 复用有变化 / 复用无变化。
+pub(crate) enum InstrumentWrite {
+    Created,
+    Renamed,
+    Unchanged,
+}
+
+/// 标的写入协议（本地创建与重放共用，无 op 产出）：按自然键（symbol, 类型）
+/// 幂等 upsert——未命中以 `insert_id` 新建（本地传新生成 id、重放携带源端 id，
+/// 两端收敛同一行），命中复用既有行 id 并只更新名称/市场（有变化才写）。
+/// 返回（生效行 id，写入形态）。
+pub(crate) fn write_instrument(
+    conn: &Connection,
+    insert_id: &str,
+    row: &InstrumentCommandRow,
+) -> Result<(String, InstrumentWrite)> {
     let existing_id: Option<(String, Option<String>, String)> = conn
         .query_row(
             "SELECT id, name, market FROM instruments WHERE symbol=?1 AND instrument_type=?2",
-            rusqlite::params![input.symbol, input.kind],
+            rusqlite::params![row.symbol, row.kind],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .ok();
     if let Some((existing_id, existing_name, existing_market)) = existing_id {
-        let name_changed = input.name != existing_name;
-        let market_changed = market != existing_market;
+        let name_changed = row.name != existing_name;
+        let market_changed = row.market != existing_market;
         if name_changed || market_changed {
             let now = now_iso();
             conn.execute(
                 "UPDATE instruments SET name=?1, market=?2, updated_at=?3, version=version+1 WHERE id=?4",
-                rusqlite::params![input.name, market, now, existing_id],
+                rusqlite::params![row.name, row.market, now, existing_id],
             )?;
+            return Ok((existing_id, InstrumentWrite::Renamed));
         }
-        return Ok(existing_id);
+        return Ok((existing_id, InstrumentWrite::Unchanged));
     }
-    let id = new_uuid();
     let now = now_iso();
     conn.execute(
         "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'manual')",
         rusqlite::params![
-            id,
-            input.symbol,
-            input.kind,
-            input.name,
-            input.currency_code,
-            market,
+            insert_id,
+            row.symbol,
+            row.kind,
+            row.name,
+            row.currency_code,
+            row.market,
             now,
             now,
             1,
             device_id(conn)?
         ],
     )?;
-    Ok(id)
+    Ok((insert_id.to_string(), InstrumentWrite::Created))
+}
+
+/// 复用改名协议（重放）：以自然键（symbol, 类型）定位——建档 id 各端独立生成
+/// （并发建档各成一行、业务字段经自然键 upsert 收敛到先到行），自然键是稳定
+/// 身份；行不存在（Update 先于 Create 到达）以码化 NotFound 上抛，由引擎挂起，
+/// Create 补齐后重投递自愈。
+pub(crate) fn write_instrument_update(
+    conn: &Connection,
+    symbol: &str,
+    kind: InstrumentType,
+    name: &Option<String>,
+    market: &str,
+) -> Result<()> {
+    let changed = conn.execute(
+        "UPDATE instruments SET name=?1, market=?2, updated_at=?3, version=version+1 \
+         WHERE symbol=?4 AND instrument_type=?5",
+        rusqlite::params![name, market, now_iso(), symbol, kind],
+    )?;
+    if changed == 0 {
+        return Err(AppError::codedp_not_found(
+            "instrument.not-found",
+            format!("标的 {symbol} 不存在"),
+            &[symbol],
+        ));
+    }
+    Ok(())
 }
 
 /// 同步随行名称刷新接缝（issue #827）：以数据源权威名称覆盖标的行名称——仅当

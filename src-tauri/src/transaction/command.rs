@@ -57,8 +57,11 @@ impl TransactionCommand {
     }
 }
 
-/// 投资 kind（buy/sell）的命令字段：随 op 携带的语义输入，供审计留痕与后续
-/// 投资命令重放（#861）消费；v1 重放对投资命令显式码化拒绝（fail loud）。
+/// 投资 kind（buy/sell）的命令字段：随 op 携带的语义输入与派生结果。
+/// 数量/单价/手续费是 prepare 的算定输入；买入的每份成本是 prepare 单次舍入
+/// 的派生结果（源端折算随行，ADR-0091 决策 3），重放端直接落批次、不重算
+///（重算需读标的类型，属本地状态）；卖出无此概念（批次成本随买方批次在本端
+/// 已就位）。重放执行见 `behavior::replay_command`（#861 起）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InvestmentCommandFields {
     pub instrument_id: String,
@@ -68,6 +71,8 @@ pub struct InvestmentCommandFields {
     pub price_cents: i64,
     /// 手续费（整数分）。
     pub fee_cents: i64,
+    /// 买入每份成本（万分之一元，含费用摊薄单次舍入，ADR-0038）；卖出为 None。
+    pub cost_per_unit_cents: Option<i64>,
 }
 
 /// op 产出接缝（交易域集中单点）：本地交易写成功后追加一条 op 进本机 OpLog。

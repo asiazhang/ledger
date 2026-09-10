@@ -15,6 +15,7 @@
 - **多端同步**：内置 WebDAV 同步通道，同步包可选加密上云，检查点可发布上云（[#859]）。
 - **多端同步**：本位币基准随同步在各设备一致生效；原「默认币种」更名为「展示币种」，仅影响本机展示（[#858]）。
 - **多端同步**：定时计划、账户/分类/商户字典、预算、保险、物品与实物资产的变化随同步分发，各端业务数据一致（[#860]）。
+- **多端同步**：投资买入/卖出（含持仓与已实现盈亏）、标的字典、汇率与手动报价及 AI 导入的数据变化随同步分发，各端业务数据一致（[#861]）。
 - **移动端**：窗口 <840 切换移动档导航壳（顶栏 + 抽屉），适配刘海与手势条安全区（[#842]）。
 - **移动端**：触屏交互适配——交易行常显「⋯」菜单，悬停信息点按可达（[#843]）。
 - **移动端**：Android 系统返回键/手势获得应用内语义——有弹层先关最上层，无弹层路由回退，路由栈底交还系统退出；遮罩点击不关的原则不变，桌面档无此通道（[#845]）。
@@ -279,6 +280,7 @@
 [#859]: https://github.com/asiazhang/ledger/issues/859
 [#858]: https://github.com/asiazhang/ledger/issues/858
 [#860]: https://github.com/asiazhang/ledger/issues/860
+[#861]: https://github.com/asiazhang/ledger/issues/861
 [#834]: https://github.com/asiazhang/ledger/issues/834
 [#836]: https://github.com/asiazhang/ledger/issues/836
 [#831]: https://github.com/asiazhang/ledger/issues/831

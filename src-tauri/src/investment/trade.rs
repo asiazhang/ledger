@@ -9,6 +9,7 @@ use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
 use crate::transaction::amount;
 use crate::transaction::amount::TransactionKind;
+use crate::transaction::command::InvestmentCommandFields;
 use crate::transaction::{NormalizedTransaction, TransactionInput};
 
 /// 查询账户本位币代码（原 `commands::fx::account_currency_code`，随投资域归位
@@ -328,7 +329,7 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         "SELECT id, remaining_quantity, cost_per_unit_cents, currency_code \
          FROM security_lots \
          WHERE account_id=?1 AND instrument_id=?2 AND remaining_quantity > 0 \
-         ORDER BY created_at ASC, id ASC",
+         ORDER BY rowid ASC",
         rusqlite::params![input.account_id, instrument_id],
     )?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
@@ -499,32 +500,21 @@ fn cleanup_buy_side_effects(
     Ok(())
 }
 
-/// 回补一笔卖出交易曾扣减的持仓并清空其卖出关联：把每笔 `security_lot_sales` 的数量
-/// 加回对应 lot，再清空该卖出的 `security_lot_sales` 与 `security_transactions` 记录。
-fn reverse_sell(conn: &Connection, id: &str) -> Result<()> {
+fn create_buy_lot(conn: &Connection, transaction_id: &str, plan: &BuyPlan) -> Result<()> {
+    let lot_id = new_uuid();
     let now = now_iso();
-    let mut stmt = conn
-        .prepare("SELECT lot_id, quantity FROM security_lot_sales WHERE sell_transaction_id=?1")?;
-    let sales: Vec<(String, f64)> = stmt
-        .query_map(rusqlite::params![id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
-        })?
-        .collect::<std::result::Result<_, _>>()?;
-    drop(stmt);
-    for (lot_id, quantity) in sales {
-        conn.execute(
-            "UPDATE security_lots SET remaining_quantity=remaining_quantity+?1, \
-             updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-            rusqlite::params![quantity, now, device_id(conn)?, lot_id],
-        )?;
-    }
+    // 每份成本已在 prepare 按标的类型算定（基金锚定权威金额、其余锚定成交单价 +
+    // 费用摊薄，均单次舍入），此处原样落批次——摊薄算法单一归属 prepare（issue #302）；
+    // 重放路径的成本随命令携带（源端折算），经 replay_plan 装配后同样原样落批次。
     conn.execute(
-        "DELETE FROM security_lot_sales WHERE sell_transaction_id=?1",
-        rusqlite::params![id],
+        "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
+         VALUES (?1,?2,'buy',?3,?4,?5)",
+        rusqlite::params![transaction_id, plan.instrument_id, plan.quantity, plan.price_cents, plan.fee_cents],
     )?;
     conn.execute(
-        "DELETE FROM security_transactions WHERE transaction_id=?1 AND action='sell'",
-        rusqlite::params![id],
+        "INSERT INTO security_lots (id,account_id,instrument_id,buy_transaction_id,initial_quantity,remaining_quantity,cost_per_unit_cents,currency_code,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,?5,?6,?7,?8,?8,?9,?10)",
+        rusqlite::params![lot_id, plan.normalized.account_id, plan.instrument_id, transaction_id, plan.quantity, plan.cost_per_unit_cents, plan.normalized.currency_code, now, 1, device_id(conn)?],
     )?;
     Ok(())
 }
@@ -618,20 +608,182 @@ pub fn revert(
     }
 }
 
-fn create_buy_lot(conn: &Connection, transaction_id: &str, plan: &BuyPlan) -> Result<()> {
-    let lot_id = new_uuid();
+/// 回补一笔卖出交易曾扣减的持仓并清空其卖出关联：把每笔 `security_lot_sales` 的数量
+/// 加回对应 lot，再清空该卖出的 `security_lot_sales` 与 `security_transactions` 记录。
+fn reverse_sell(conn: &Connection, id: &str) -> Result<()> {
     let now = now_iso();
-    // 每份成本已在 prepare 按标的类型算定（基金锚定权威金额、其余锚定成交单价 +
-    // 费用摊薄，均单次舍入），此处原样落批次——摊薄算法单一归属 prepare（issue #302）。
+    let mut stmt = conn
+        .prepare("SELECT lot_id, quantity FROM security_lot_sales WHERE sell_transaction_id=?1")?;
+    let sales: Vec<(String, f64)> = stmt
+        .query_map(rusqlite::params![id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(stmt);
+    for (lot_id, quantity) in sales {
+        conn.execute(
+            "UPDATE security_lots SET remaining_quantity=remaining_quantity+?1, \
+             updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
+            rusqlite::params![quantity, now, device_id(conn)?, lot_id],
+        )?;
+    }
     conn.execute(
-        "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
-         VALUES (?1,?2,'buy',?3,?4,?5)",
-        rusqlite::params![transaction_id, plan.instrument_id, plan.quantity, plan.price_cents, plan.fee_cents],
+        "DELETE FROM security_lot_sales WHERE sell_transaction_id=?1",
+        rusqlite::params![id],
     )?;
     conn.execute(
-        "INSERT INTO security_lots (id,account_id,instrument_id,buy_transaction_id,initial_quantity,remaining_quantity,cost_per_unit_cents,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,?5,?6,?7,?8,?8,?9,?10)",
-        rusqlite::params![lot_id, plan.normalized.account_id, plan.instrument_id, transaction_id, plan.quantity, plan.cost_per_unit_cents, plan.normalized.currency_code, now, 1, device_id(conn)?],
+        "DELETE FROM security_transactions WHERE transaction_id=?1 AND action='sell'",
+        rusqlite::params![id],
     )?;
+    Ok(())
+}
+
+/// 重放形态的计划重建（issue #861 / ADR-0091 决策 2/3）：从命令字段与随行
+/// 归一化行重建 [`apply`] 所需计划，不重折算、不产出 op。
+///
+/// 与本地 [`prepare`] 的分工：归一化行已随命令携带（金额与本位币折算结果为
+/// 落定值，重放不依赖本地汇率表），买入每份成本随命令携带、不重算（重算需
+/// 读标的类型，属本地状态）；本函数只做「apply 依赖在位」校验与副作用计划装配：
+/// - 数量为正（与本地 prepare 同码，防伪造载荷落出零数量副作用）；
+/// - 标的存在（兼类型读取：基金/非基金的权威分流语义一致，与本地同码）；
+/// - 账户在位且为投资账户（与本地同码；账户存活已由行为层重放入口先行校验）；
+/// - 卖出的可卖数量（FIFO 批次快照在本端重建——同序重放 ⇒ 同一匹配结果，
+///   与本地同码）。
+///
+/// 依赖缺失以与本地写入同码的码化错误上抛，由同步引擎挂起进队列（issue #856），
+/// 依赖方 op 补齐后重投递自然重试。
+pub(crate) fn replay_plan(
+    conn: &Connection,
+    kind: TransactionKind,
+    row: &NormalizedTransaction,
+    fields: &InvestmentCommandFields,
+) -> Result<Plan> {
+    match kind {
+        TransactionKind::Buy => {
+            if fields.quantity <= 0.0 {
+                return Err(AppError::coded(
+                    "trade.buy-quantity-positive",
+                    "买入数量必须大于 0",
+                ));
+            }
+            // 标的存在性校验（与本地同码）；类型不参与买入重放装配（每份成本
+            // 随命令携带），仅作依赖在位检查。
+            fetch_instrument_type(
+                conn,
+                &fields.instrument_id,
+                "买入",
+                "trade.buy-instrument-not-found",
+            )?;
+            ensure_investment_account(
+                conn,
+                &row.account_id,
+                "trade.buy-account-not-investment",
+                "买入交易必须使用投资账户",
+            )?;
+            // 每份成本是 prepare 单次舍入的派生结果，随命令携带（源端折算）；
+            // 缺失属载荷伪造或程序缺陷（产出侧永不产 None），fail loud 由引擎
+            // 挂起承接，不以本地重算静默兑底。
+            let cost_per_unit_cents = fields
+                .cost_per_unit_cents
+                .ok_or_else(|| AppError::Invalid("买入命令缺少每份成本字段（程序缺陷）".into()))?;
+            Ok(Plan::Buy(BuyPlan {
+                normalized: row.clone(),
+                instrument_id: fields.instrument_id.clone(),
+                quantity: fields.quantity,
+                price_cents: fields.price_cents,
+                fee_cents: fields.fee_cents,
+                cost_per_unit_cents,
+            }))
+        }
+        TransactionKind::Sell => {
+            if fields.quantity <= 0.0 {
+                return Err(AppError::coded(
+                    "trade.sell-quantity-positive",
+                    "卖出数量必须大于 0",
+                ));
+            }
+            let instrument_type = fetch_instrument_type(
+                conn,
+                &fields.instrument_id,
+                "卖出",
+                "trade.sell-instrument-not-found",
+            )?;
+            ensure_investment_account(
+                conn,
+                &row.account_id,
+                "trade.sell-account-not-investment",
+                "卖出交易必须使用投资账户",
+            )?;
+            // 毛收入重建（与本地 prepare 同式）：基金 = 权威金额 + 手续费
+            // （金额随行携带），其余 = round(数量 × 单价 ÷ 换算因子)。
+            let gross_proceeds_cents = if instrument_type == "fund" {
+                row.amount_cents + fields.fee_cents
+            } else {
+                (fields.quantity * fields.price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64
+            };
+            // FIFO 批次快照在本端重建：同序重放下与源端同状态 ⇒ 同一匹配结果。
+            let lots: Vec<ActiveLot> = query_all(
+                conn,
+                "SELECT id, remaining_quantity, cost_per_unit_cents, currency_code \
+                 FROM security_lots \
+                 WHERE account_id=?1 AND instrument_id=?2 AND remaining_quantity > 0 \
+                 ORDER BY rowid ASC",
+                rusqlite::params![row.account_id, fields.instrument_id],
+            )?;
+            let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
+            if total_available < fields.quantity {
+                let avail = total_available.to_string();
+                let qty = fields.quantity.to_string();
+                return Err(AppError::codedp(
+                    "trade.insufficient-holding",
+                    format!(
+                        "可卖出数量不足，当前持有 {total_available}，尝试卖出 {}",
+                        fields.quantity
+                    ),
+                    &[&avail, &qty],
+                ));
+            }
+            Ok(Plan::Sell(SellPlan {
+                normalized: row.clone(),
+                instrument_id: fields.instrument_id.clone(),
+                quantity: fields.quantity,
+                price_cents: fields.price_cents,
+                fee_cents: fields.fee_cents,
+                lots,
+                gross_proceeds_cents,
+            }))
+        }
+        // 行为层重放入口穷尽分派保证仅转发 buy/sell；其余 kind 属编排错误，
+        // 显式拒绝防误用（不引入 panic 构造，ADR-0060）。
+        TransactionKind::Income
+        | TransactionKind::Expense
+        | TransactionKind::Transfer
+        | TransactionKind::Refund
+        | TransactionKind::Dividend
+        | TransactionKind::Split => Err(AppError::Invalid(format!(
+            "投资层重放仅处理 buy/sell，收到: {kind}"
+        ))),
+    }
+}
+
+/// 账户投资类型校验（重放形态）：行内引用的账户必须存在且为投资类型；
+/// 与本地 prepare 同码同文案，失败由引擎挂起待裁决。账户存活（存在且未软删）
+/// 已由行为层重放入口先行校验，此处只补类型语义。
+fn ensure_investment_account(
+    conn: &Connection,
+    account_id: &str,
+    code: &str,
+    msg: &str,
+) -> Result<()> {
+    let account_type: AccountType = conn
+        .query_row(
+            "SELECT type FROM accounts WHERE id=?1",
+            rusqlite::params![account_id],
+            |r| r.get::<_, String>(0),
+        )?
+        .parse()?;
+    if account_type != AccountType::Investment {
+        return Err(AppError::coded(code, msg));
+    }
     Ok(())
 }

@@ -4,12 +4,15 @@
 //! 不绕过不变量。**只增不改**：新增实体/字段只追加（旧日志可在新 schema 上
 //! 重放），与已发布契约纪律同构；`entity` tag 与 `sync_ops.entity` 列同源。
 
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 
 use crate::accounts::AccountCommand;
 use crate::budget::BudgetCommand;
 use crate::categories::CategoryCommand;
 use crate::currencies::LedgerSettingCommand;
+use crate::investment::{ExchangeRateCommand, InstrumentCommand, PriceCommand};
 use crate::item::ItemCommand;
 use crate::merchants::MerchantCommand;
 use crate::physical_asset::PhysicalAssetCommand;
@@ -43,6 +46,12 @@ pub enum DomainCommand {
     Item(ItemCommand),
     /// 实物资产命令（issue #860）。
     PhysicalAsset(PhysicalAssetCommand),
+    /// 标的字典命令（投资域，issue #861）。
+    Instrument(InstrumentCommand),
+    /// 汇率命令（投资域，issue #861）。
+    ExchangeRate(ExchangeRateCommand),
+    /// 用户侧价格命令（现价录入 / 手动报价，issue #861；东财行情不进 op）。
+    Price(PriceCommand),
 }
 
 impl DomainCommand {
@@ -60,27 +69,45 @@ impl DomainCommand {
             DomainCommand::Insurer(_) => "insurer",
             DomainCommand::Item(_) => "item",
             DomainCommand::PhysicalAsset(_) => "physical_asset",
+            DomainCommand::Instrument(_) => "instrument",
+            DomainCommand::ExchangeRate(_) => "exchange_rate",
+            DomainCommand::Price(_) => "price",
         }
     }
 
     /// 命令指向的实体（实体判别键，实体 id）：LWW 裁决域（同实体并发编辑取
     /// 全序末者，ADR-0091 决策 4）。无实体指向的命令返回 None——其冲突域另行
-    /// 裁定（如期次触发命令的 OccurrenceKey，ADR-0091 决策 5）。
-    pub fn subject(&self) -> Option<(&'static str, &str)> {
+    /// 裁定（如期次触发命令的 OccurrenceKey，ADR-0091 决策 5）。裁决键为
+    /// `Cow`：自然键派生型命令（货币对、标的 × 周）以派生键为域，与落库冲突
+    /// 键同粒度（issue #861）。
+    pub fn subject(&self) -> Option<(&'static str, Cow<'_, str>)> {
         match self {
-            DomainCommand::Transaction(cmd) => Some(("transaction", cmd.subject_id())),
+            DomainCommand::Transaction(cmd) => {
+                Some(("transaction", Cow::Borrowed(cmd.subject_id())))
+            }
             // 定时计划：计划 CRUD 按 plan 实体 LWW；期次触发冲突域在 OccurrenceKey、
             // 期次展开按本端现状重推，均无实体指向（ADR-0091 决策 4/5）。
-            DomainCommand::Scheduled(cmd) => cmd.subject(),
-            DomainCommand::LedgerSetting(cmd) => Some(("ledger_setting", cmd.subject_id())),
-            DomainCommand::Account(cmd) => Some(("account", cmd.subject_id())),
-            DomainCommand::Category(cmd) => cmd.subject(),
-            DomainCommand::Merchant(cmd) => Some(("merchant", cmd.subject_id())),
-            DomainCommand::Budget(cmd) => Some(("budget", cmd.subject_id())),
-            DomainCommand::Policy(cmd) => Some(("policy", cmd.subject_id())),
-            DomainCommand::Insurer(cmd) => Some(("insurer", cmd.subject_id())),
-            DomainCommand::Item(cmd) => Some(("item", cmd.subject_id())),
-            DomainCommand::PhysicalAsset(cmd) => cmd.subject(),
+            DomainCommand::Scheduled(cmd) => cmd
+                .subject()
+                .map(|(entity, id)| (entity, Cow::Borrowed(id))),
+            DomainCommand::LedgerSetting(cmd) => {
+                Some(("ledger_setting", Cow::Borrowed(cmd.subject_id())))
+            }
+            DomainCommand::Account(cmd) => Some(("account", Cow::Borrowed(cmd.subject_id()))),
+            DomainCommand::Category(cmd) => cmd
+                .subject()
+                .map(|(entity, id)| (entity, Cow::Borrowed(id))),
+            DomainCommand::Merchant(cmd) => Some(("merchant", Cow::Borrowed(cmd.subject_id()))),
+            DomainCommand::Budget(cmd) => Some(("budget", Cow::Borrowed(cmd.subject_id()))),
+            DomainCommand::Policy(cmd) => Some(("policy", Cow::Borrowed(cmd.subject_id()))),
+            DomainCommand::Insurer(cmd) => Some(("insurer", Cow::Borrowed(cmd.subject_id()))),
+            DomainCommand::Item(cmd) => Some(("item", Cow::Borrowed(cmd.subject_id()))),
+            DomainCommand::PhysicalAsset(cmd) => cmd
+                .subject()
+                .map(|(entity, id)| (entity, Cow::Borrowed(id))),
+            DomainCommand::Instrument(cmd) => cmd.subject(),
+            DomainCommand::ExchangeRate(cmd) => cmd.subject(),
+            DomainCommand::Price(cmd) => cmd.subject(),
         }
     }
 }
