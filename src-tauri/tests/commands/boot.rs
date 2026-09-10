@@ -27,7 +27,8 @@ use tauri_app_lib::db::boot::BootFailureGate;
 use tauri_app_lib::db::encryption::EncryptionGate;
 use tauri_app_lib::db::schema_guard::BOOT_SCHEMA_DRIFT;
 
-use crate::sync_channel::{fresh_app, isolate_home};
+use crate::isolation::isolate_home;
+use crate::sync_channel::fresh_app;
 
 #[tokio::test]
 async fn boot_status_reports_the_recorded_failure_code() {

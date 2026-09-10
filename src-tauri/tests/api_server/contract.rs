@@ -344,9 +344,11 @@ async fn contract_transaction_schemas_carry_funding_account() {
 /// ASCII ≈ 1 token / 3.6 字符、中文 ≈ 0.95 token / 字符——原型实测 ~17KB
 /// ≈ ~5.1K tokens（契约单次拉取自 ~14.0K tokens 降 63%）。触线 6K tokens
 /// （≈20KB）须人工决策提预算或瘦身，不允许契约膨胀无声挤占 AI 上下文
-/// （延续 #304 / #693 契约膨胀护栏传统）。基金转换（issue #978）的四个可选字段
-/// 与转换读投影加入后仍在预算内（实测 ≈19.7KB，余量 ≈0.35KB）；触线时按先例先
-/// 瘦身再谈提预算，不擅自抬预算。
+/// （延续 #304 / #693 契约膨胀护栏传统）。基金转换（issue #978/#979）加入 `TransactionInput`
+/// / `UpdateTransactionInput` 的两腿可选字段、`ConvertFields.to_symbol` 后已逼近预算
+/// （实测 ≈19.9KB）——注意 `TransactionConvert` / `TransactionTrade` 是 IPC 专用投影，
+/// 不在 `ApiDoc` 组件内，不占方言体积；触线前须先做一轮瘦身（如合并重复字段描述）
+/// 再谈提预算。
 #[tokio::test]
 async fn contract_size_within_budget() {
     let (app, _) = setup_app();

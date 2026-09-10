@@ -29,13 +29,14 @@
 //!   批量取证券交易记录指向的标的展示字段）；
 //! - [`stock`]：股票按（市场，代码）查询的领域规则——代码形态 → 市场单点推断、
 //!   报价币种推导（issue #693 / ADR-0081；东财访问在 `sync::stock`）；
-//! - [`trade`]：buy/sell 协议三件套与买卖明细投影（`TransactionTrade`）；
+//! - [`trade`]：buy/sell/convert 协议三件套与买卖/转换明细投影
+//!   （`TransactionTrade` / `TransactionConvert`）；
 //! - [`trend`]：单标的 / 组合走势查询。
 //!
 //! 协议事务契约（ADR-0033）：prepare 校验归一化（不落库）、apply 应用副作用
-//! （buy 建仓 / sell 卖出匹配）、revert 回退副作用（修改路径：buy 在用占用守卫+清理 /
-//! sell 回补）、release_for_delete 承载删除路径（sell 回补 / buy 级联+清理，issue #940 /
-//! ADR-0097）；交易行写入由核心交易域行为层编排（经 Writer 接缝），本域不再反向
+//! （buy 建仓 / sell 卖出匹配 / convert 两腿结转）、revert 回退副作用（修改路径：
+//! buy 与 convert 转换链+在用占用守卫+清理 / sell 回补）、release_for_delete 承载删除路径
+//! （sell 回补 / buy 与 convert 级联+清理，issue #940 / #979 / ADR-0097 / ADR-0099）；交易行写入由核心交易域行为层编排（经 Writer 接缝），本域不再反向
 //! 依赖核心交易域的行更新（双向依赖已斩断，issue #70）。
 //!
 //! 依赖方向恒为「壳层 → investment → 基础设施」，本模块不反向依赖壳层；
@@ -68,8 +69,8 @@ pub use model::{
     FundNav, Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
     InstrumentPnl, InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, ManualPriceInput,
     ManualPriceResult, MarketPrice, MarketPriceInput, PnlDetail, PnlFilter, PortfolioTrendPoint,
-    PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary, StockQuote, TransactionTrade,
-    TrendRange, YearPnl,
+    PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary, StockQuote, TransactionConvert,
+    TransactionTrade, TrendRange, YearPnl,
 };
 
 /// 域 API 再导出：调用面用域语言短名（`investment::list_instruments` 等），
@@ -107,8 +108,8 @@ pub(crate) use command::{
 };
 pub(crate) use trade::replay_plan;
 pub use trade::{
-    GuardMessages, Plan, apply, convert_fields_by_transaction_ids, get_transaction_trade, prepare,
-    release_for_delete, revert,
+    GuardMessages, Plan, apply, convert_fields_by_transaction_ids, get_transaction_convert,
+    get_transaction_trade, prepare, release_for_delete, revert,
 };
 pub use trend::{query_instrument_price_trend, query_portfolio_value_trend};
 

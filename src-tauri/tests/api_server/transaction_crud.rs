@@ -511,3 +511,216 @@ async fn test_update_sell_investment_funding_returns_coded_400() {
         "params 携带被拒账户类型"
     );
 }
+
+/// 基金转换就地修改（PUT，#979 / ADR-0099）：全字段替换——转出腿精确回补后按新输入
+/// 重新 FIFO 消耗，结转成本（行金额锚点）与转入批次随之重建；读投影带回新两腿。
+#[tokio::test]
+async fn test_update_convert_in_place_rebuilds_carry() {
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        test_support::seed_account(&conn, "acc-cv-put", "基金户", "investment", "CNY", 0);
+        test_support::seed_instrument(
+            &conn,
+            "inst-cv-p-out",
+            "006793",
+            "转出基金",
+            "CNY",
+            "unknown",
+        );
+        test_support::seed_instrument(
+            &conn,
+            "inst-cv-p-in",
+            "519700",
+            "转入基金",
+            "CNY",
+            "unknown",
+        );
+    }
+    let buy = r#"{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-put","date":"2026-01-10","instrument_id":"inst-cv-p-out","quantity":10.0,"price_cents":10000,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[buy], None)).await;
+    assert_eq!(created[0]["success"], true, "{created:?}");
+    let convert = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-put","date":"2026-02-01","instrument_id":"inst-cv-p-out","quantity":10.0,"to_instrument_id":"inst-cv-p-in","to_quantity":10.0,"out_amount_cents":1100,"in_amount_cents":1100,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[convert], None)).await;
+    assert_eq!(created[0]["success"], true, "{created:?}");
+    let id = created[0]["id"].as_str().unwrap();
+
+    // 只转 2 份：结转成本 = round(2 × 10000 ÷ 100) = 200 分。
+    let body = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-put","date":"2026-02-05","instrument_id":"inst-cv-p-out","quantity":2.0,"to_instrument_id":"inst-cv-p-in","to_quantity":2.0,"out_amount_cents":240,"in_amount_cents":240,"fee_cents":0}"#;
+    let (status, bytes) = put_transaction_via_api(&app, id, body).await;
+    assert_eq!(status, StatusCode::OK, "就地修改转换应成功: {bytes:?}");
+    let updated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(updated["kind"], "convert");
+    assert_eq!(updated["date"], "2026-02-05");
+
+    // 接线证明：读回反映新提交的两腿（域结果细节（结转成本、批次回补）归域单测）。
+    let (_, list) = get_json(&app, "/api/v1/transactions").await;
+    let row = items_of(&list)
+        .iter()
+        .find(|t| t["id"].as_str() == Some(id))
+        .expect("修改后的转换应可读回");
+    assert_eq!(row["convert"]["out_amount_cents"], 240);
+    assert_eq!(row["convert"]["to_instrument_id"], "inst-cv-p-in");
+}
+
+/// PUT 禁止从/到 `convert` 的 kind 变更（#979 / ADR-0099 决策 5）：新码化错误，
+/// 顶层 400；两侧均不落半套副作用。
+#[tokio::test]
+async fn test_update_kind_to_or_from_convert_returns_coded_400() {
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        test_support::seed_account(&conn, "acc-cv-kind", "基金户", "investment", "CNY", 0);
+        test_support::seed_instrument(
+            &conn,
+            "inst-cv-k-out",
+            "006793",
+            "转出基金",
+            "CNY",
+            "unknown",
+        );
+        test_support::seed_instrument(
+            &conn,
+            "inst-cv-k-in",
+            "519700",
+            "转入基金",
+            "CNY",
+            "unknown",
+        );
+    }
+    let buy = r#"{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-kind","date":"2026-01-10","instrument_id":"inst-cv-k-out","quantity":10.0,"price_cents":10000,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[buy], None)).await;
+    let buy_id = created[0]["id"].as_str().unwrap().to_string();
+
+    // 普通交易 → convert（kind 进）。
+    let as_convert = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-kind","date":"2026-02-01","instrument_id":"inst-cv-k-out","quantity":1.0,"to_instrument_id":"inst-cv-k-in","to_quantity":1.0,"out_amount_cents":100,"in_amount_cents":100,"fee_cents":0}"#;
+    let (status, bytes) = put_transaction_via_api(&app, &buy_id, as_convert).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "trade.convert-kind-change-forbidden");
+
+    // convert → 普通交易（kind 出）。
+    let convert = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-kind","date":"2026-02-01","instrument_id":"inst-cv-k-out","quantity":10.0,"to_instrument_id":"inst-cv-k-in","to_quantity":10.0,"out_amount_cents":1100,"in_amount_cents":1100,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[convert], None)).await;
+    assert_eq!(created[0]["success"], true, "{created:?}");
+    let convert_id = created[0]["id"].as_str().unwrap().to_string();
+    let as_buy = r#"{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-kind","date":"2026-01-10","instrument_id":"inst-cv-k-out","quantity":1.0,"price_cents":10000,"fee_cents":0}"#;
+    let (status, bytes) = put_transaction_via_api(&app, &convert_id, as_buy).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "trade.convert-kind-change-forbidden");
+
+    // 两条拒绝路径都不留半套副作用：两行原样可读回（域结果细节归域单测）。
+    let (_, list) = get_json(&app, "/api/v1/transactions").await;
+    let ids: Vec<&str> = items_of(&list)
+        .iter()
+        .filter_map(|t| t["id"].as_str())
+        .collect();
+    assert!(ids.contains(&buy_id.as_str()), "被拒的买入仍在");
+    assert!(ids.contains(&convert_id.as_str()), "被拒的转换仍在");
+}
+
+/// 删除转换（#979 / ADR-0099）：转出腿逐批次精确回补、转入批次的在用 sell 与 buy
+/// 同规级联软删，随后原买入可删。
+#[tokio::test]
+async fn test_delete_convert_restores_positions_and_cascades_sell() {
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        test_support::seed_account(&conn, "acc-cv-del", "基金户", "investment", "CNY", 0);
+        test_support::seed_instrument(
+            &conn,
+            "inst-cv-d-out",
+            "006793",
+            "转出基金",
+            "CNY",
+            "unknown",
+        );
+        test_support::seed_instrument(
+            &conn,
+            "inst-cv-d-in",
+            "519700",
+            "转入基金",
+            "CNY",
+            "unknown",
+        );
+    }
+    let buy = r#"{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-del","date":"2026-01-10","instrument_id":"inst-cv-d-out","quantity":10.0,"price_cents":10000,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[buy], None)).await;
+    let buy_id = created[0]["id"].as_str().unwrap().to_string();
+    let convert = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-del","date":"2026-02-01","instrument_id":"inst-cv-d-out","quantity":10.0,"to_instrument_id":"inst-cv-d-in","to_quantity":10.0,"out_amount_cents":1100,"in_amount_cents":1100,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[convert], None)).await;
+    let convert_id = created[0]["id"].as_str().unwrap().to_string();
+    let sell = r#"{"kind":"sell","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-del","date":"2026-02-10","instrument_id":"inst-cv-d-in","quantity":4.0,"price_cents":15000,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[sell], None)).await;
+    let sell_id = created[0]["id"].as_str().unwrap().to_string();
+
+    let (status, bytes) = delete_transaction_via_api(&app, &convert_id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "删除转换应成功: {bytes:?}");
+
+    // 接线证明：转换行与级联软删的 sell 都不再出现在读回结果里
+    // （回补精确值、批次清理明细等域结果细节归域单测）。
+    let (_, list) = get_json(&app, "/api/v1/transactions").await;
+    let ids: Vec<&str> = items_of(&list)
+        .iter()
+        .filter_map(|t| t["id"].as_str())
+        .collect();
+    assert!(!ids.contains(&convert_id.as_str()), "删除的转换不再可读回");
+    assert!(
+        !ids.contains(&sell_id.as_str()),
+        "级联软删的 sell 不再可读回"
+    );
+
+    // 转换链解开后原买入可删。
+    let (status, _) = delete_transaction_via_api(&app, &buy_id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+/// 删除转换的转换链守卫（#979 / ADR-0099）：转入批次已被在用后续转换消耗时，
+/// 顶层码化 400（须从最后一腿往前处理）。
+#[tokio::test]
+async fn test_delete_convert_guarded_by_later_convert_returns_coded_400() {
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        test_support::seed_account(&conn, "acc-cv-chain", "基金户", "investment", "CNY", 0);
+        test_support::seed_instrument(
+            &conn,
+            "inst-cv-c-out",
+            "006793",
+            "转出基金",
+            "CNY",
+            "unknown",
+        );
+        test_support::seed_instrument(
+            &conn,
+            "inst-cv-c-in",
+            "519700",
+            "转入基金",
+            "CNY",
+            "unknown",
+        );
+    }
+    let buy = r#"{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-chain","date":"2026-01-10","instrument_id":"inst-cv-c-out","quantity":10.0,"price_cents":10000,"fee_cents":0}"#;
+    post_batch(&app, batch_body(&[buy], None)).await;
+    let first = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-chain","date":"2026-02-01","instrument_id":"inst-cv-c-out","quantity":10.0,"to_instrument_id":"inst-cv-c-in","to_quantity":10.0,"out_amount_cents":1100,"in_amount_cents":1100,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[first], None)).await;
+    let first_id = created[0]["id"].as_str().unwrap().to_string();
+    let second = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-chain","date":"2026-03-01","instrument_id":"inst-cv-c-in","quantity":10.0,"to_instrument_id":"inst-cv-c-out","to_quantity":10.0,"out_amount_cents":1100,"in_amount_cents":1100,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[second], None)).await;
+    assert_eq!(created[0]["success"], true, "{created:?}");
+    let second_id = created[0]["id"].as_str().unwrap().to_string();
+
+    let (status, bytes) = delete_transaction_via_api(&app, &first_id).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "前腿删除应被拒绝");
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "trade.consumed-by-convert-delete");
+
+    // 从最后一腿往前删则放行。
+    let (status, _) = delete_transaction_via_api(&app, &second_id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = delete_transaction_via_api(&app, &first_id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, list) = get_json(&app, "/api/v1/transactions").await;
+    assert_eq!(items_of(&list).len(), 1, "只剩建仓买入");
+}

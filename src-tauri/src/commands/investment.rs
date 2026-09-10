@@ -26,7 +26,7 @@ use crate::investment::{
     AddFundResult, AddStockInstrumentResult, Holding, Instrument, InstrumentInput,
     InstrumentListFilter, InstrumentListResult, InstrumentPriceTrend, ManualPriceInput,
     ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter, PortfolioValueTrend,
-    RealizedPnlSummary, TransactionTrade, TrendRange,
+    RealizedPnlSummary, TransactionConvert, TransactionTrade, TrendRange,
 };
 use crate::signals::{WriteEvidence, WriteOp};
 use crate::write_entry::{Outcome, write_entry};
@@ -198,6 +198,21 @@ pub async fn get_transaction_trade(db: State<'_, DbState>, id: String) -> Result
     run_db("get_transaction_trade", move || {
         let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
         investment_domain::get_transaction_trade(&conn, &id)
+    })
+    .await
+}
+
+/// IPC 命令：取一笔基金转换的两腿明细（ADR-0099 / issue #979）——转换表单
+/// 编辑模式回填「A → B」全量信息的数据源（扩展表投影，非转换交易 NotFound）。
+#[tauri::command]
+pub async fn get_transaction_convert(
+    db: State<'_, DbState>,
+    id: String,
+) -> Result<TransactionConvert> {
+    let conn = db.conn.clone();
+    run_db("get_transaction_convert", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        investment_domain::get_transaction_convert(&conn, &id)
     })
     .await
 }
