@@ -286,11 +286,11 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
 /// （issue #491 / ADR-0067）→ delete op 追加（issue #855 / ADR-0091）。级联删除的
 /// 被级联行亦各自留痕：同步端按同一 delete 协议逐笔收敛，无需感知级联语义。
 fn soft_delete_transaction_row(conn: &Connection, id: &str) -> Result<()> {
-    let (account_id, to_account_id): (String, Option<String>) = conn
+    let (account_id, to_account_id, funding_account_id): (String, Option<String>, Option<String>) = conn
         .query_row(
-            "SELECT account_id, to_account_id FROM transactions WHERE id=?1 AND is_deleted=0",
+            "SELECT account_id, to_account_id, funding_account_id FROM transactions WHERE id=?1 AND is_deleted=0",
             rusqlite::params![id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?
         .ok_or_else(|| {
@@ -300,9 +300,17 @@ fn soft_delete_transaction_row(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
-    // 余额缓存写路径（issue #491 / ADR-0067）：软删后对原行账户引用对（受影响
-    // 账户推导，消费余额模块唯一定义，issue #534）同事务整体重算。
-    let affected = affected_accounts(Some((account_id.as_str(), to_account_id.as_deref())), None);
+    // 余额缓存写路径（issue #491 / ADR-0067）：软删后对原行账户引用三元组（受影响
+    // 账户推导，消费余额模块唯一定义，issue #534 / #935——删除恢复出资账户的现金腿）
+    // 同事务整体重算。
+    let affected = affected_accounts(
+        Some((
+            account_id.as_str(),
+            to_account_id.as_deref(),
+            funding_account_id.as_deref(),
+        )),
+        None,
+    );
     refresh_account_balances(conn, &affected)?;
     // op 产出接缝（issue #855 / ADR-0091）：删除成功 → delete op（实体 id）
     // 追加；随同一事务提交/回滚。
@@ -442,6 +450,9 @@ fn plan_with_existing_refs(
                     currency_code: input.currency_code.clone(),
                     account_id: input.account_id.clone(),
                     to_account_id: input.to_account_id.clone(),
+                    // 出资账户随输入下传；通用 kind 携带即被 writer::normalize 内的
+                    // 准入校验拒绝（issue #935），此处透传不判定。
+                    funding_account_id: input.funding_account_id.clone(),
                     category_id: input.category_id.clone(),
                     merchant_id,
                     existing_merchant_id: existing_merchant_id.map(str::to_string),
@@ -569,7 +580,12 @@ fn replay_create(conn: &Connection, id: &str, row: &NormalizedTransaction) -> Re
         | TransactionKind::Expense
         | TransactionKind::Transfer
         | TransactionKind::Refund => {
-            writer::validate_accounts_alive(conn, &row.account_id, row.to_account_id.as_deref())?;
+            writer::validate_accounts_alive(
+                conn,
+                &row.account_id,
+                row.to_account_id.as_deref(),
+                row.funding_account_id.as_deref(),
+            )?;
             writer::insert_row_with_id(conn, id, &row)
         }
         TransactionKind::Buy | TransactionKind::Sell => Err(unsupported_replay_kind(row.kind)),
@@ -608,8 +624,13 @@ fn replay_update(conn: &Connection, id: &str, row: &NormalizedTransaction) -> Re
     }
     let row = writer::NormalizedRow::try_from(row)?;
     // 账户引用存活守卫（issue #856，与重放创建同款）：修改不得把交易改挂到
-    // 已删账户上。
-    writer::validate_accounts_alive(conn, &row.account_id, row.to_account_id.as_deref())?;
+    // 已删账户上（含出资端，issue #935）。
+    writer::validate_accounts_alive(
+        conn,
+        &row.account_id,
+        row.to_account_id.as_deref(),
+        row.funding_account_id.as_deref(),
+    )?;
     writer::update_row(conn, id, &row)
 }
 

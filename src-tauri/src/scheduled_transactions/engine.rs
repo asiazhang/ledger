@@ -950,6 +950,8 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             currency_code: st.currency_code.clone(),
             account_id: st.account_id.clone(),
             to_account_id: ext.to_account_id,
+            // 定时计划无出资账户语义（期次只产通用 kind，issue #935）。
+            funding_account_id: None,
             category_id,
             merchant_id: ext.merchant_id.clone(),
             existing_merchant_id: ext.merchant_id,

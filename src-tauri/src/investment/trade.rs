@@ -209,6 +209,14 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         ));
     }
     let account_currency = account_currency_code(conn, &input.account_id)?;
+    // 出资账户准入（issue #935 / ADR-0096）：buy 的结算币种 = 投资账户币种，
+    // 出资账户币种必须与其一致。
+    crate::transaction::funding::validate_funding_account(
+        conn,
+        TransactionKind::Buy,
+        input.funding_account_id.as_deref(),
+        &account_currency,
+    )?;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
     // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
     let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
@@ -221,6 +229,7 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
             amount_native_cents,
             account_id: input.account_id.clone(),
             to_account_id: input.to_account_id.clone(),
+            funding_account_id: input.funding_account_id.clone(),
             category_id: None,
             merchant_id: None,
             // 投资 kind 不涉保单（行为层准入已拒绝携带，issue #361）：恒 None。
@@ -322,6 +331,14 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         ));
     }
     let account_currency = account_currency_code(conn, &input.account_id)?;
+    // 出资账户准入（issue #935 / ADR-0096）：sell 的结算币种 = 投资账户币种，
+    // 出资账户币种必须与其一致。
+    crate::transaction::funding::validate_funding_account(
+        conn,
+        TransactionKind::Sell,
+        input.funding_account_id.as_deref(),
+        &account_currency,
+    )?;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
     // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
     let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
@@ -353,6 +370,7 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
             amount_native_cents,
             account_id: input.account_id.clone(),
             to_account_id: input.to_account_id.clone(),
+            funding_account_id: input.funding_account_id.clone(),
             category_id: None,
             merchant_id: None,
             // 投资 kind 不涉保单（行为层准入已拒绝携带，issue #361）：恒 None。

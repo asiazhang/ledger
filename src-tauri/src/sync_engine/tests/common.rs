@@ -35,6 +35,7 @@ pub(crate) fn make_expense(account_id: &str, amount_cents: i64, note: &str) -> T
         currency_code: "CNY".into(),
         account_id: account_id.into(),
         to_account_id: None,
+        funding_account_id: None,
         category_id: None,
         merchant_id: None,
         refund_of_transaction_id: None,

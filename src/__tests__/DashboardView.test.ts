@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { findButton } from './helpers/dom'
+import { setFakeMedia } from './helpers/media-mock'
 import { nextTick } from 'vue'
 import { applyLocale } from '@/i18n'
 import DashboardView from '@/views/DashboardView.vue'
@@ -9,7 +10,7 @@ import TransactionForm from '@/components/TransactionForm.vue'
 import { amountPrivacyEnabled, formatAmount } from '@/utils/money'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
-import { NProgress } from 'naive-ui'
+import { NGrid, NProgress } from 'naive-ui'
 import {
   makeAccount,
   makeFinancialFreedom,
@@ -492,6 +493,84 @@ describe('DashboardView 物品使用成本卡（issue #122）', () => {
     const card = wrapper.find('[data-testid="item-daily-cost-card"]')
     expect(card.text()).toContain(`${formatAmount(30000, cny)}/天`)
     expect(card.text()).toContain('共 2 件在用物品')
+  })
+})
+
+describe('DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词汇表「窗口分级」）', () => {
+  afterEach(() => {
+    amountPrivacyEnabled.value = false
+  })
+
+  it('移动档栅格单列化：本月收支三格与投资概览两格均单列（断点口径接窗口分级常量，不自立断点）', async () => {
+    setFakeMedia({ width: 600 })
+    const wrapper = await mountView()
+    const grids = wrapper.findAllComponents(NGrid)
+    expect(grids.length).toBe(2)
+    expect(grids[0].props('cols')).toBe(1) // 本月收支
+    expect(grids[1].props('cols')).toBe(1) // 投资概览
+  })
+
+  it('桌面档栅格零变化：本月收支三列、投资概览自响应「1 s:2」', async () => {
+    const wrapper = await mountView()
+    const grids = wrapper.findAllComponents(NGrid)
+    expect(grids.length).toBe(2)
+    expect(grids[0].props('cols')).toBe(3)
+    expect(grids[1].props('cols')).toBe('1 s:2')
+  })
+
+  it('跨断点缩窗实时切列（单列 ⇄ 三列）', async () => {
+    const wrapper = await mountView()
+    expect(wrapper.findAllComponents(NGrid)[0].props('cols')).toBe(3)
+    setFakeMedia({ width: 600 })
+    await flushPromises()
+    expect(wrapper.findAllComponents(NGrid)[0].props('cols')).toBe(1)
+    setFakeMedia({ width: 1280 })
+    await flushPromises()
+    expect(wrapper.findAllComponents(NGrid)[0].props('cols')).toBe(3)
+  })
+
+  it('移动档触控轴：自由度口径说明点按可达（气泡全文）；指针轴点击无气泡（行为不变）', async () => {
+    setFakeMedia({ width: 600, hover: 'none', pointer: 'coarse' })
+    const touch = await mountView()
+    const trigger = touch.find('[data-testid="financial-freedom-info"]')
+    expect(trigger.exists()).toBe(true)
+    // 触控轴热区 ≥48px：text 中号按钮 34px 高，外扩量须经 inset 覆写补足（默认 ±6px 仅 46px）
+    expect((trigger.element as HTMLElement).style.getPropertyValue('--touch-hit-inset')).toBe(
+      '-8px -14px',
+    )
+    expect(document.body.querySelector('.n-popover')).toBeNull()
+    await trigger.trigger('click')
+    await flushPromises()
+    const popover = document.body.querySelector('.n-popover')
+    expect(popover).not.toBeNull()
+    expect(popover!.textContent).toContain('可投资资产 × 3% ÷ 年度预算总额')
+    expect(popover!.textContent).toContain('安全提取率')
+    // 卸载触控挂载，避免其已开启的气泡泄入指针轴断言
+    touch.unmount()
+
+    setFakeMedia({ hover: 'hover', pointer: 'fine' })
+    const pointer = await mountView()
+    await pointer.find('[data-testid="financial-freedom-info"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('.n-popover')).toBeNull()
+  })
+
+  it('移动档：金额隐私模式生效（掩码替换各金额，栅格单列不回归）', async () => {
+    setFakeMedia({ width: 600 })
+    setCurrentMonthSummary({ income_cents: 100000, expense_cents: 80000, refund_cents: 5000 })
+    const wrapper = await mountView()
+    expect(wrapper.findAllComponents(NGrid)[0].props('cols')).toBe(1)
+    const netWorthText = formatAmount(123456, cny)
+    expect(wrapper.text()).toContain(netWorthText)
+    amountPrivacyEnabled.value = true
+    await nextTick()
+    const text = wrapper.text()
+    expect(text).toContain('••••')
+    expect(text).not.toContain(cny.symbol)
+    expect(text).not.toContain(netWorthText)
+    amountPrivacyEnabled.value = false
+    await nextTick()
+    expect(wrapper.text()).toContain(netWorthText)
   })
 })
 

@@ -87,7 +87,13 @@
     "category-unsupported": "transaction type {0} cannot carry a category",
     "merchant-id-and-name-conflict": "merchant_id and merchant_name cannot both be provided",
     "kind-unsupported": "transaction type {0} is not supported yet (not implemented in MVP)",
-    "policy-unsupported": "Transaction kind {0} cannot carry a policy"
+    "policy-unsupported": "Transaction kind {0} cannot carry a policy",
+    "funding-unsupported": "transaction type {0} cannot carry a funding account"
+  },
+  "funding": {
+    "account-not-found": "funding account does not exist or has been deleted: {0}",
+    "account-type-unsupported": "funding account type is not supported: {0} (only cash-like accounts can fund)",
+    "currency-mismatch": "funding account currency ({0}) does not match the transaction currency ({1})"
   },
   "refund": {
     "source-required": "refund must reference the original expense transaction",

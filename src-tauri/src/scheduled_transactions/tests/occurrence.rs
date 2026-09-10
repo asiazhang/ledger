@@ -319,6 +319,7 @@ fn execute_occurrence_with_preexisting_landing_completes_without_second_row() {
             policy_id: None,
             existing_policy_id: None,
             refund_of_transaction_id: None,
+            funding_account_id: None,
             note: None,
             date: date.clone(),
         },

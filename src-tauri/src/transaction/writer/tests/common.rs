@@ -27,6 +27,7 @@ pub(super) fn input(kind: TransactionKind, amount_cents: i64, account_id: &str) 
         currency_code: "CNY".into(),
         account_id: account_id.into(),
         to_account_id: None,
+        funding_account_id: None,
         category_id: None,
         merchant_id: None,
         existing_merchant_id: None,

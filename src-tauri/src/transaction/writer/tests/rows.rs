@@ -48,6 +48,7 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
         policy_id: row.policy_id,
         merchant_id: row.merchant_id,
         refund_of_transaction_id: row.refund_of_transaction_id,
+        funding_account_id: None,
         note: row.note,
         date: row.date,
     }
@@ -160,6 +161,7 @@ fn update_row_overwrites_fields_and_bumps_version() {
         merchant_id: None,
         policy_id: None,
         refund_of_transaction_id: None,
+        funding_account_id: None,
         note: Some("改后".into()),
         date: "2026-02-10".into(),
     };

@@ -48,6 +48,10 @@ pub struct Input {
     pub currency_code: String,
     pub account_id: String,
     pub to_account_id: Option<String>,
+    /// 可选出资账户（issue #935 / ADR-0096）：writer 不判 kind 准入（buy/sell 不经
+    /// 本模块 normalize），通用 kind 携带即经 [`super::funding::validate_funding_account`]
+    /// 拒绝；buy/sell 由投资域 prepare 校验后随 [`NormalizedRow`] 落库。
+    pub funding_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     /// 修改路径该行**当前**的商户 id（创建路径为 None）。提交的 [`merchant_id`] 与其
@@ -78,6 +82,8 @@ pub struct NormalizedRow {
     pub amount_native_cents: i64,
     pub account_id: String,
     pub to_account_id: Option<String>,
+    /// 可选出资账户（issue #935 / ADR-0096）：随行落库的归因端点引用。
+    pub funding_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     /// 可选保单引用（issue #361 / ADR-0051 决策 3），随 [`Input::policy_id`] 归一化。
@@ -205,6 +211,14 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
                 None,
             )
         };
+    // 出资账户准入（issue #935 / ADR-0096）：通用 kind 携带出资账户在此拒绝
+    //（buy/sell 不经本模块 normalize，其出资校验在投资域 prepare，同一收口）。
+    super::funding::validate_funding_account(
+        conn,
+        input.kind,
+        input.funding_account_id.as_deref(),
+        &currency_code,
+    )?;
     let native = amount::convert_to_native(conn, input.amount_cents, &currency_code)?;
     let policy_id = input.policy_id.clone();
     let to_account_id = if input.kind == TransactionKind::Transfer {
@@ -219,6 +233,8 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         amount_native_cents: native,
         account_id,
         to_account_id,
+        // 通用 kind 经准入校验后恒为 None（仅 buy/sell 可携带，见 normalize）。
+        funding_account_id: input.funding_account_id.clone(),
         category_id,
         merchant_id,
         policy_id,
@@ -287,8 +303,9 @@ pub fn validate_accounts_alive(
     conn: &Connection,
     account_id: &str,
     to_account_id: Option<&str>,
+    funding_account_id: Option<&str>,
 ) -> Result<()> {
-    let mut ids = [Some(account_id), to_account_id];
+    let mut ids = [Some(account_id), to_account_id, funding_account_id];
     for id in ids.iter_mut().flatten() {
         let alive: bool = conn
             .query_row(
@@ -328,8 +345,8 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,merchant_id,policy_id,refund_of_transaction_id,note,note_pinyin,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,0)",
+         funding_account_id,category_id,merchant_id,policy_id,refund_of_transaction_id,note,note_pinyin,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,0)",
         params![
             id,
             row.kind.as_str(),
@@ -338,6 +355,7 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
             row.amount_native_cents,
             row.account_id,
             row.to_account_id,
+            row.funding_account_id,
             row.category_id,
             row.merchant_id,
             row.policy_id,
@@ -357,7 +375,11 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
     // 受影响账户推导消费余额模块唯一定义（issue #533）：创建 = 新行账户引用对。
     let affected = affected_accounts(
         None,
-        Some((row.account_id.as_str(), row.to_account_id.as_deref())),
+        Some((
+            row.account_id.as_str(),
+            row.to_account_id.as_deref(),
+            row.funding_account_id.as_deref(),
+        )),
     );
     refresh_account_balances(conn, &affected)?;
     Ok(())
@@ -369,16 +391,20 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
 /// buy/sell 同样经本函数落交易行字段（其持仓/卖出关联副作用由调用方另行处理）。
 pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()> {
     // 旧账户引用先行读取（同事务）：修改可能移动账户，两侧都要整体重算。
-    let (old_account_id, old_to_account_id): (String, Option<String>) = conn.query_row(
-        "SELECT account_id, to_account_id FROM transactions WHERE id=?1",
+    let (old_account_id, old_to_account_id, old_funding_account_id): (
+        String,
+        Option<String>,
+        Option<String>,
+    ) = conn.query_row(
+        "SELECT account_id, to_account_id, funding_account_id FROM transactions WHERE id=?1",
         params![id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
     conn.execute(
         "UPDATE transactions \
          SET kind=?2, amount_cents=?3, currency_code=?4, amount_native_cents=?5, account_id=?6, \
-         to_account_id=?7, category_id=?8, merchant_id=?9, policy_id=?10, refund_of_transaction_id=?11, note=?12, note_pinyin=?13, date=?14, \
-         updated_at=?15, version=version+1, device_id=?16 \
+         to_account_id=?7, funding_account_id=?8, category_id=?9, merchant_id=?10, policy_id=?11, refund_of_transaction_id=?12, note=?13, note_pinyin=?14, date=?15, \
+         updated_at=?16, version=version+1, device_id=?17 \
          WHERE id=?1",
         params![
             id,
@@ -388,6 +414,7 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             row.amount_native_cents,
             row.account_id,
             row.to_account_id,
+            row.funding_account_id,
             row.category_id,
             row.merchant_id,
             row.policy_id,
@@ -399,12 +426,20 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             device_id(conn)?,
         ],
     )?;
-    // 余额缓存写路径：受影响账户 = 旧行 ∪ 新行账户引用对，消费余额模块唯一
-    // 定义（issue #534）；旧账户引用读取时机与刷新事务位置不变，同事务整体
+    // 余额缓存写路径：受影响账户 = 旧行 ∪ 新行账户引用三元组，消费余额模块唯一
+    // 定义（issue #534 / #935）；旧账户引用读取时机与刷新事务位置不变，同事务整体
     // 重算（修改可能移动账户，ADR-0067）。
     let affected = affected_accounts(
-        Some((old_account_id.as_str(), old_to_account_id.as_deref())),
-        Some((row.account_id.as_str(), row.to_account_id.as_deref())),
+        Some((
+            old_account_id.as_str(),
+            old_to_account_id.as_deref(),
+            old_funding_account_id.as_deref(),
+        )),
+        Some((
+            row.account_id.as_str(),
+            row.to_account_id.as_deref(),
+            row.funding_account_id.as_deref(),
+        )),
     );
     refresh_account_balances(conn, &affected)?;
     Ok(())
