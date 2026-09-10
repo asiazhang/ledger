@@ -6,7 +6,9 @@
 //! - `dirty_marker`：连接层统一写入口 `db::write` 置脏语义（ADR-0032）；
 //! - `run_db`：统一 DB 调用 helper `db::run_db`（形状乙，spec #498 / #501）；
 //! - `encryption`：SQLCipher 引擎基座（issue #569 / ADR-0075）——依赖切换
-//!   不变量（未设密钥保持明文）、建连密钥缝、文件头探测三态。
+//!   不变量（未设密钥保持明文）、建连密钥缝、文件头探测三态；
+//! - `schema_guard`：schema 漂移守卫机制（内存参照库方向性 diff，
+//!   issue #992 / ADR-0100）。
 
 mod common;
 mod dirty_marker;
@@ -15,3 +17,4 @@ mod holding;
 mod migrations;
 mod perf;
 mod run_db;
+mod schema_guard;
