@@ -26,6 +26,7 @@ import AppSelect from '@/components/AppSelect.vue'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { useModalIntent } from '@/composables/useModalIntent'
 import { useRowContextMenu } from '@/composables/useRowContextMenu'
+import { useWindowTier } from '@/composables/useWindowTier'
 import AccountLink from '@/components/AccountLink.vue'
 import { buildAccountRowMenuOptions } from '@/components/account-row-menu'
 import { ACCOUNT_TYPES, formatAmount } from '@/types'
@@ -36,6 +37,14 @@ const message = useMessage()
 const dialog = useAppDialog()
 const themeVars = useThemeVars()
 const balances = ref<AccountBalance[]>([])
+
+// 移动档适配（issue #847 / ADR-0088 决策 11 票⑦）：账户列表三分列 + 新增表单
+// 纵向堆叠 + 「⋯」48px 触控目标。断点口径接窗口分级 composable 唯一事实源，
+// 不自立断点；桌面档列结构与表单布局一字不动（回归红线）。
+// composable 在 setup 顶层调用一次（监听注册与 onScopeDispose 注销归其内聚），
+// 档位派生只读返回值。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
 
 const name = ref('')
 const type = ref<AccountType>('cash')
@@ -267,29 +276,28 @@ const rowProps = (row: AccountBalance) => ({
   onContextmenu: (e: MouseEvent) => rowMenu.open(e, row),
 })
 
-const columns = computed<DataTableColumns<AccountBalance>>(() => [
-  {
-    title: t('accounts.list.colName'),
-    key: 'account.name',
-    // 账户名下钻：点击跳转交易页并按涉及账户过滤（issue #97）
-    render: (row) => h(AccountLink, { accountId: row.account.id }),
-  },
-  {
-    title: t('accounts.list.colType'),
-    key: 'account.type',
-    render: (row) => t(`accounts.type.${row.account.type}`),
-  },
-  { title: t('accounts.list.colCurrency'), key: 'account.currency_code' },
-  {
-    title: t('accounts.list.colBalance'),
-    key: 'balance_cents',
-    render: (row) => formatAmount(row.balance_cents, reference.getCurrency(row.account.currency_code)),
-  },
-  {
+/** 余额单元格渲染（移动/桌面两分支共用，格式化接缝 formatAmount 单点含隐私掩码）。 */
+const renderBalanceCell = (row: AccountBalance) =>
+  formatAmount(row.balance_cents, reference.getCurrency(row.account.currency_code))
+
+/** 移动档名称单元格布局：名称与「类型 · 币种」副行纵排；副行弱化小字（内联样式收口
+ * 在列配置单点，同 transaction-columns 渲染函数先例）。 */
+const MOBILE_NAME_CELL_STYLE = 'display: flex; flex-direction: column; gap: 2px; min-width: 0;'
+const MOBILE_NAME_SUB_STYLE = 'font-size: 12px; opacity: 0.65;'
+/** 移动档名称链接：换行不截断（悬停替代原则「空间够则常驻」，触屏无悬停全文）、
+ * 文本左对齐（button 拉满单元格宽后默认居中会与桌面行错位，交易列先例）。 */
+const MOBILE_NAME_LINK_STYLE = 'white-space: normal; text-align: left;'
+/** 移动档「⋯」按钮：显式 48×48 触控目标（ADR-0088 全局验收基线；按钮自身达标，
+ * 不用伪元素外扩——操作列内相邻行的热区互不侵入）。桌面档不挂，尺寸零变化。 */
+const MOBILE_MORE_BUTTON_STYLE = { width: '48px', height: '48px', fontSize: '18px' }
+
+const columns = computed<DataTableColumns<AccountBalance>>(() => {
+  /** 操作列：「⋯」与行右键共用同一工厂 open 入口（以点击坐标弹出）；两轴同一
+   * 列配置（入口全平台常显），仅移动档加大触控目标。 */
+  const actionsColumn: DataTableColumns<AccountBalance>[number] = {
     title: t('accounts.list.colActions'),
     key: 'actions',
     width: 64,
-    // 「⋯」按钮与行右键共用同一工厂 open 入口（以点击坐标弹出）
     render: (row) =>
       h(
         NButton,
@@ -297,12 +305,65 @@ const columns = computed<DataTableColumns<AccountBalance>>(() => [
           size: 'tiny',
           quaternary: true,
           'aria-label': t('accounts.list.moreActions'),
+          style: isMobileTier.value ? MOBILE_MORE_BUTTON_STYLE : undefined,
           onClick: (e: MouseEvent) => rowMenu.open(e, row),
         },
         () => '⋯',
       ),
-  },
-])
+  }
+
+  // 移动档三分列（issue #847）：名称（类型/币种并入副行）、余额、操作——328px
+  // 内容宽内无横向滚动、逐行可读；桌面档五列一字不动（回归红线）。
+  if (isMobileTier.value) {
+    return [
+      {
+        title: t('accounts.list.colName'),
+        key: 'account.name',
+        // 名称下钻：点击跳转交易页并按涉及账户过滤（issue #97）；副行携带类型与币种
+        render: (row) =>
+          h('div', { style: MOBILE_NAME_CELL_STYLE }, [
+            h(AccountLink, {
+              accountId: row.account.id,
+              style: MOBILE_NAME_LINK_STYLE,
+            }),
+            h(
+              'div',
+              { style: MOBILE_NAME_SUB_STYLE },
+              `${t(`accounts.type.${row.account.type}`)} · ${row.account.currency_code}`,
+            ),
+          ]),
+      },
+      {
+        title: t('accounts.list.colBalance'),
+        key: 'balance_cents',
+        width: 110,
+        render: renderBalanceCell,
+      },
+      actionsColumn,
+    ]
+  }
+
+  return [
+    {
+      title: t('accounts.list.colName'),
+      key: 'account.name',
+      // 账户名下钻：点击跳转交易页并按涉及账户过滤（issue #97）
+      render: (row) => h(AccountLink, { accountId: row.account.id }),
+    },
+    {
+      title: t('accounts.list.colType'),
+      key: 'account.type',
+      render: (row) => t(`accounts.type.${row.account.type}`),
+    },
+    { title: t('accounts.list.colCurrency'), key: 'account.currency_code' },
+    {
+      title: t('accounts.list.colBalance'),
+      key: 'balance_cents',
+      render: renderBalanceCell,
+    },
+    actionsColumn,
+  ]
+})
 
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
@@ -312,25 +373,59 @@ onMounted(() => {
 
 <template>
   <NSpace vertical :size="16">
+    <!-- 新增账户表单按窗口分级分档（issue #847）：桌面档行内横排（既有布局一字
+         不动）；移动档纵排堆叠（标签上置 + 控件满宽，内联横排 ≈700px 在 360dp
+         屏必横向溢出），行距取 ADR-0079 决策 4 的 12px 节奏值（show-feedback 关
+         闭后表单项零间距，容器 gap 单点补齐；页面级表单不在弹窗节奏守门范围）。
+         「添加」主操作热区扩至 ≥48px（视觉不变）。 -->
     <NCard :title="t('accounts.create.title')" size="small">
-      <NForm label-placement="left" :show-feedback="false" inline size="small">
+      <NForm
+        :inline="!isMobileTier"
+        :label-placement="isMobileTier ? 'top' : 'left'"
+        :show-feedback="false"
+        size="small"
+        :style="
+          isMobileTier
+            ? { display: 'flex', flexDirection: 'column', gap: '12px' }
+            : undefined
+        "
+      >
         <NFormItem :label="t('accounts.create.name')">
           <NInput
             v-model:value="name"
             :placeholder="t('accounts.create.namePlaceholder')"
-            style="width: 160px"
+            :style="isMobileTier ? { width: '100%' } : { width: '160px' }"
           />
         </NFormItem>
         <NFormItem :label="t('accounts.create.type')">
-          <AppSelect v-model:value="type" :options="typeOptions" style="width: 120px" />
+          <AppSelect
+            v-model:value="type"
+            :options="typeOptions"
+            :style="isMobileTier ? { width: '100%' } : { width: '120px' }"
+          />
         </NFormItem>
         <NFormItem :label="t('accounts.create.currency')">
-          <AppSelect v-model:value="currencyCode" :options="currencyOptions()" style="width: 140px" />
+          <AppSelect
+            v-model:value="currencyCode"
+            :options="currencyOptions()"
+            :style="isMobileTier ? { width: '100%' } : { width: '140px' }"
+          />
         </NFormItem>
         <NFormItem :label="t('accounts.create.initialBalance')">
-          <NInputNumber v-model:value="initial" :precision="2" style="width: 140px" />
+          <NInputNumber
+            v-model:value="initial"
+            :precision="2"
+            :style="isMobileTier ? { width: '100%' } : { width: '140px' }"
+          />
         </NFormItem>
-        <NButton type="primary" @click="create">{{ t('accounts.create.add') }}</NButton>
+        <NButton
+          type="primary"
+          :class="isMobileTier ? 'touch-hit-area' : undefined"
+          :style="isMobileTier ? { '--touch-hit-inset': '-10px -14px' } : undefined"
+          @click="create"
+        >
+          {{ t('accounts.create.add') }}
+        </NButton>
       </NForm>
     </NCard>
 

@@ -18,6 +18,7 @@
 - **移动端**：窗口 <840 切换移动档导航壳（顶栏 + 抽屉），适配刘海与手势条安全区（[#842]）。
 - **移动端**：触屏交互适配——交易行常显「⋯」菜单，悬停信息点按可达（[#843]）。
 - **移动端**：Android 系统返回键/手势获得应用内语义——有弹层先关最上层，无弹层路由回退，路由栈底交还系统退出；遮罩点击不关的原则不变，桌面档无此通道（[#845]）。
+- **移动端**：概览与账户页移动档适配——概览栅格窄屏单列、账户列表窄屏收为名称/余额/操作三分列（类型与币种并入名称副行）、新增表单纵排，财务自由度口径说明触屏点按可达；金额隐私模式照常生效，桌面档不变（[#847]）。
 - **AI 导入**：新增商户改名端点 `PUT /api/v1/merchants/{id}`（[#884]）。
 - **AI 导入**：导入知识新增查询与分页纪律——子集检查用服务端过滤参数、分页读回以 `total` 为准核对总条数、buy/sell 标的关联认 `source` 字段（[#928]）。
 - **交易**：交易页筛选与分页会话内保留，切走再回原样恢复（[#893]）。
@@ -273,6 +274,7 @@
 [#842]: https://github.com/asiazhang/ledger/issues/842
 [#843]: https://github.com/asiazhang/ledger/issues/843
 [#845]: https://github.com/asiazhang/ledger/issues/845
+[#847]: https://github.com/asiazhang/ledger/issues/847
 [#855]: https://github.com/asiazhang/ledger/issues/855
 [#856]: https://github.com/asiazhang/ledger/issues/856
 [#857]: https://github.com/asiazhang/ledger/issues/857
