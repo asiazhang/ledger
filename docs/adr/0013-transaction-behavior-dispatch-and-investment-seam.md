@@ -44,3 +44,5 @@
 - **保留 investment 的 9 个出口、仅收拢调用点**：散落分支虽集中但耦合面不变，验收标准「investment 对外仅暴露 prepare/apply/revert」不满足，放弃。
 
 > 注（ADR-0033，issue #169）：本 ADR 已被**部分修订**——决策 #1 的「对外暴露 plan/apply/revert 三个能力」与决策 #3 的「行为函数不内嵌事务、事务边界由调用方持有」由 ADR-0033（行为层编排协议内化）承接：行为层对外接口收窄为 create / update / delete 三个编排入口，事务所有权转移至行为层（嵌套感知「保证处于事务中」）；其余决策（薄 match、investment 出口三件套、dividend/split 显式拒绝）维持不变。
+>
+> 注（ADR-0097，issue #940）：本 ADR 已被**部分修订**——决策 #1 的「删除路径仅 buy 走 revert（sell 删除不清理持仓关联，既有行为保持不变）」由 ADR-0097（投资交易删除语义修订）承接：sell 删除回补持仓并清空卖出关联，buy 删除级联软删其在用 sell 后整批清理；删除路径的持仓回退改经投资域第四出口 `release_for_delete`。其余决策维持不变。

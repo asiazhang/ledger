@@ -540,7 +540,7 @@ fn backfill_note_pinyin(conn: &Connection) -> NotePinyinRepairReport {
     finish_repair(conn, backfilled, None)
 }
 
-/// 第二段：仅为当前页命中 id 回表取展示列（`Transaction::from_row` 的 18 列，
+/// 第二段：仅为当前页命中 id 回表取展示列（`Transaction::from_row` 的 19 列，
 /// 无 JOIN）。输出保持第一段给定的日期降序（page_ids 顺序），页内缺行（理论上
 /// 不可达：id 来自同一连接刚流式扫过的候选）安静跳过。
 fn fetch_display_rows(conn: &Connection, page_ids: &[String]) -> Result<Vec<Transaction>> {
@@ -555,7 +555,7 @@ fn fetch_display_rows(conn: &Connection, page_ids: &[String]) -> Result<Vec<Tran
         .join(",");
     let sql = format!(
         "SELECT t.id,t.kind,t.amount_cents,t.currency_code,t.amount_native_cents,t.account_id,\
-         t.to_account_id,t.category_id,t.refund_of_transaction_id,t.note,t.date,t.created_at,\
+         t.to_account_id,t.funding_account_id,t.category_id,t.refund_of_transaction_id,t.note,t.date,t.created_at,\
          t.updated_at,t.version,t.device_id,t.is_deleted,t.merchant_id,t.policy_id \
          FROM transactions t WHERE t.id IN ({placeholders})"
     );

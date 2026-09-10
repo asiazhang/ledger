@@ -711,6 +711,7 @@ fn writer_seam_populates_note_pinyin_on_insert_and_update() {
         merchant_id: None,
         policy_id: None,
         refund_of_transaction_id: None,
+        funding_account_id: None,
         note: Some("万科物业".into()),
         date: "2026-02-01".into(),
     };

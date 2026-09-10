@@ -1,25 +1,25 @@
 //! [`affected_accounts`](super::affected_accounts)「受影响账户」并集口径的直测
 //! （issue #533 / spec #519）。纯函数无数据库环境；形态仿 Writer 接缝按主题
-//! 拆分单测先例：单端、双侧、旧新重叠、去重与首见顺序、空引用，
+//! 拆分单测先例：单端、双侧、资金端（funding）、旧新重叠、去重与首见顺序、空引用，
 //! 并按创建 / 修改 / 删除三种写入形态覆盖调用面。
 
 use super::affected_accounts;
 
 // ---------------------------------------------------------------------------
-// 单端：行上只有 account_id 一端（income/expense/refund/buy/sell 等）
+// 单端：行上只有 account_id 一端（income/expense/refund 等）
 // ---------------------------------------------------------------------------
 
 /// 创建形态（旧行 None）：单端行推导只含转出账户一端。
 #[test]
 fn create_single_sided_row_yields_only_account_id() {
-    let affected = affected_accounts(None, Some(("acc-a", None)));
+    let affected = affected_accounts(None, Some(("acc-a", None, None)));
     assert_eq!(affected, vec!["acc-a"]);
 }
 
 /// 删除形态（新行 None）：单端行推导只含原行账户一端。
 #[test]
 fn delete_single_sided_row_yields_only_account_id() {
-    let affected = affected_accounts(Some(("acc-a", None)), None);
+    let affected = affected_accounts(Some(("acc-a", None, None)), None);
     assert_eq!(affected, vec!["acc-a"]);
 }
 
@@ -31,15 +31,44 @@ fn delete_single_sided_row_yields_only_account_id() {
 /// 顺序一致（接线无行为变化）。
 #[test]
 fn create_transfer_row_yields_both_sides_out_first() {
-    let affected = affected_accounts(None, Some(("acc-out", Some("acc-in"))));
+    let affected = affected_accounts(None, Some(("acc-out", Some("acc-in"), None)));
     assert_eq!(affected, vec!["acc-out", "acc-in"]);
 }
 
 /// 删除形态：原行 transfer 双侧都进集合。
 #[test]
 fn delete_transfer_row_yields_both_sides() {
-    let affected = affected_accounts(Some(("acc-out", Some("acc-in"))), None);
+    let affected = affected_accounts(Some(("acc-out", Some("acc-in"), None)), None);
     assert_eq!(affected, vec!["acc-out", "acc-in"]);
+}
+
+// ---------------------------------------------------------------------------
+// 资金端：buy/sell 行 funding_account_id（issue #935 / ADR-0096）
+// ---------------------------------------------------------------------------
+
+/// 创建形态：buy 行单端 account_id + 资金端，推导含两账户——行内先 account
+/// 后 funding（与「先主账户后扩展端」的行内顺序一致）。
+#[test]
+fn create_buy_row_yields_account_and_funding() {
+    let affected = affected_accounts(None, Some(("acc-inv", None, Some("acc-cash"))));
+    assert_eq!(affected, vec!["acc-inv", "acc-cash"]);
+}
+
+/// 删除形态：原行 buy 的资金端也进集合（删除要恢复资金账户余额）。
+#[test]
+fn delete_buy_row_yields_account_and_funding() {
+    let affected = affected_accounts(Some(("acc-inv", None, Some("acc-cash"))), None);
+    assert_eq!(affected, vec!["acc-inv", "acc-cash"]);
+}
+
+/// 修改形态：buy 换资金账户，旧新并集含两代资金端（旧端恢复、新端计入）。
+#[test]
+fn update_buy_row_funding_move_unions_old_and_new_funding() {
+    let affected = affected_accounts(
+        Some(("acc-inv", None, Some("acc-cash-old"))),
+        Some(("acc-inv", None, Some("acc-cash-new"))),
+    );
+    assert_eq!(affected, vec!["acc-inv", "acc-cash-old", "acc-cash-new"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -50,8 +79,8 @@ fn delete_transfer_row_yields_both_sides() {
 #[test]
 fn update_without_move_unions_old_and_new_dedup() {
     let affected = affected_accounts(
-        Some(("acc-a", Some("acc-b"))),
-        Some(("acc-a", Some("acc-b"))),
+        Some(("acc-a", Some("acc-b"), None)),
+        Some(("acc-a", Some("acc-b"), None)),
     );
     assert_eq!(affected, vec!["acc-a", "acc-b"]);
 }
@@ -59,7 +88,7 @@ fn update_without_move_unions_old_and_new_dedup() {
 /// 修改形态：跨账户移动（旧新无重叠）时两侧都进集合。
 #[test]
 fn update_with_account_move_unions_both() {
-    let affected = affected_accounts(Some(("acc-old", None)), Some(("acc-new", None)));
+    let affected = affected_accounts(Some(("acc-old", None, None)), Some(("acc-new", None, None)));
     assert_eq!(affected, vec!["acc-old", "acc-new"]);
 }
 
@@ -71,16 +100,19 @@ fn update_with_account_move_unions_both() {
 #[test]
 fn duplicates_collapse_to_first_occurrence() {
     let affected = affected_accounts(
-        Some(("acc-a", Some("acc-b"))),
-        Some(("acc-b", Some("acc-a"))),
+        Some(("acc-a", Some("acc-b"), None)),
+        Some(("acc-b", Some("acc-a"), None)),
     );
     assert_eq!(affected, vec!["acc-a", "acc-b"]);
 }
 
-/// 首见顺序保持：旧行引用先于新行引用，新行行内先 account 后 to。
+/// 首见顺序保持：旧行引用先于新行引用，新行行内先 account 后 to 后 funding。
 #[test]
 fn first_seen_order_preserved_across_old_and_new() {
-    let affected = affected_accounts(Some(("acc-a", None)), Some(("acc-c", Some("acc-b"))));
+    let affected = affected_accounts(
+        Some(("acc-a", None, None)),
+        Some(("acc-c", Some("acc-b"), None)),
+    );
     assert_eq!(affected, vec!["acc-a", "acc-c", "acc-b"]);
 }
 

@@ -232,7 +232,7 @@ pub fn list_transactions_internal(
     // 不加 id 翻页会漂移（重复/遗漏）。
     let mut sql = format!(
         "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
-         to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted,merchant_id,policy_id \
+         to_account_id,funding_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted,merchant_id,policy_id \
          FROM transactions {where_clause} ORDER BY date DESC, created_at DESC, id DESC"
     );
     // 分页路径优先：传 page_size 时按 offset 页码取当前页（小于 1 按 1 处理，
@@ -260,7 +260,7 @@ pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transacti
     query_one::<Transaction, _>(
         conn,
         "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
-         to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,\
+         to_account_id,funding_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,\
          version,device_id,is_deleted,merchant_id,policy_id FROM transactions WHERE id=?1 AND is_deleted=0",
         rusqlite::params![id],
     )?

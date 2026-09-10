@@ -3,8 +3,8 @@ use axum::http::StatusCode;
 use tauri_app_lib::test_support;
 
 use crate::common::{
-    batch_body, create_account_via_api, delete_transaction_via_api, get_json, items_of, post_batch,
-    put_transaction_via_api, setup_app,
+    batch_body, create_account_via_api, delete_account_via_api, delete_transaction_via_api,
+    get_json, items_of, post_batch, put_transaction_via_api, setup_app,
 };
 
 #[tokio::test]
@@ -222,4 +222,148 @@ async fn test_create_sell_via_batch_succeeds_and_readable() {
         .find(|t| t["id"].as_str() == Some(sell_id))
         .expect("创建的卖出应可读回");
     assert_eq!(row["kind"], "sell");
+}
+
+// ---------------------------------------------------------------------------
+// 出资账户（issue #935 / ADR-0096）：壳层接线证明。参数解包、状态码与错误码
+// 在此锁定；准入闭集与归因语义的域细节归域单测
+//（transaction/funding/tests.rs、transaction/tests/amount.rs）。
+// ---------------------------------------------------------------------------
+
+/// 买入携带出资账户：参数解包 + 读回形状证明。创建成功且读回携带出资账户 id。
+#[tokio::test]
+async fn test_create_buy_with_funding_account_roundtrips_readback() {
+    let (app, conn) = setup_app();
+    test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-fund", "inst-fund");
+    // USD 现金出资账户（与投资账户同币种，现金类准入闭集内）。
+    test_support::seed_account(
+        &conn.lock().unwrap(),
+        "acc-fund-usd",
+        "出资金账户",
+        "cash",
+        "USD",
+        0,
+    );
+
+    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-fund","date":"2026-01-10","instrument_id":"inst-fund","quantity":10.0,"price_cents":1000000,"fee_cents":0,"funding_account_id":"acc-fund-usd"}]}"#;
+    let created = post_batch(&app, buy.to_string()).await;
+    assert_eq!(
+        created[0]["success"], true,
+        "携带出资账户的买入应成功: {:?}",
+        created[0]
+    );
+
+    // 读回携带出资账户（可选字段出现在读模型）。
+    let buy_id = created[0]["id"].as_str().unwrap();
+    let (_, readback) = get_json(&app, "/api/v1/transactions").await;
+    let row = items_of(&readback)
+        .iter()
+        .find(|t| t["id"].as_str() == Some(buy_id))
+        .expect("创建的买入应可读回");
+    assert_eq!(
+        row["funding_account_id"], "acc-fund-usd",
+        "读回应携带出资账户 id: {row}"
+    );
+}
+
+/// 通用 kind 携带出资账户：批量端点行级容错（Invalid 类归行级 success:false）。
+#[tokio::test]
+async fn test_create_expense_with_funding_account_rejected_in_batch() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01","funding_account_id":"{account_id}"}}"#
+    );
+    let results = post_batch(&app, batch_body(&[&tx], None)).await;
+    assert_eq!(results[0]["success"], false, "expense 不得携带出资账户");
+    assert!(
+        results[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("不能携带出资账户"),
+        "行级错误应可读: {results:?}"
+    );
+}
+
+/// 投资账户不可作出资账户（准入闭集排除 investment）：顶层码化 400。
+#[tokio::test]
+async fn test_update_buy_investment_funding_returns_coded_400() {
+    let (app, conn) = setup_app();
+    test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-u", "inst-u");
+    test_support::seed_account(
+        &conn.lock().unwrap(),
+        "acc-inv-other",
+        "美股二号",
+        "investment",
+        "USD",
+        0,
+    );
+
+    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-u","date":"2026-01-10","instrument_id":"inst-u","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
+    let created = post_batch(&app, buy.to_string()).await;
+    let id = created[0]["id"].as_str().unwrap();
+
+    let body = r#"{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-u","date":"2026-01-10","instrument_id":"inst-u","quantity":10.0,"price_cents":1000000,"fee_cents":0,"funding_account_id":"acc-inv-other"}"#;
+    let (status, bytes) = put_transaction_via_api(&app, id, body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "投资账户出资应返回 400");
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "funding.account-type-unsupported");
+    assert_eq!(
+        err["params"],
+        serde_json::json!(["investment"]),
+        "params 携带被拒账户类型"
+    );
+}
+
+/// 出资账户币种与结算币种不一致：顶层码化 400，params 按消息动态值顺序排列。
+#[tokio::test]
+async fn test_update_buy_funding_currency_mismatch_returns_coded_400() {
+    let (app, conn) = setup_app();
+    test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-c", "inst-c");
+    let cny_cash = create_account_via_api(&app, "人民币现金").await;
+
+    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-c","date":"2026-01-10","instrument_id":"inst-c","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
+    let created = post_batch(&app, buy.to_string()).await;
+    let id = created[0]["id"].as_str().unwrap();
+
+    let body = format!(
+        r#"{{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-c","date":"2026-01-10","instrument_id":"inst-c","quantity":10.0,"price_cents":1000000,"fee_cents":0,"funding_account_id":"{cny_cash}"}}"#
+    );
+    let (status, bytes) = put_transaction_via_api(&app, id, &body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "跨币种出资应返回 400");
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "funding.currency-mismatch");
+    assert_eq!(
+        err["params"],
+        serde_json::json!(["CNY", "USD"]),
+        "params 顺序 = 消息动态值顺序（出资币种 → 交易币种）"
+    );
+}
+
+/// 软删出资账户不可被新选择：顶层码化 404（存在且未软删校验，与商户/保单同款）。
+#[tokio::test]
+async fn test_update_buy_deleted_funding_account_returns_coded_404() {
+    let (app, conn) = setup_app();
+    test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-d", "inst-d");
+    test_support::seed_account(
+        &conn.lock().unwrap(),
+        "acc-fund-del",
+        "待删出资金",
+        "cash",
+        "USD",
+        0,
+    );
+    let (status, _) = delete_account_via_api(&app, "acc-fund-del").await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "铺垫账户删除应成功");
+
+    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-d","date":"2026-01-10","instrument_id":"inst-d","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
+    let created = post_batch(&app, buy.to_string()).await;
+    let id = created[0]["id"].as_str().unwrap();
+
+    let body = r#"{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-d","date":"2026-01-10","instrument_id":"inst-d","quantity":10.0,"price_cents":1000000,"fee_cents":0,"funding_account_id":"acc-fund-del"}"#;
+    let (status, bytes) = put_transaction_via_api(&app, id, body).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "软删出资账户应返回 404");
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["kind"], "NotFound");
+    assert_eq!(err["code"], "funding.account-not-found");
 }
