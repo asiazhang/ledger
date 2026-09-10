@@ -13,6 +13,7 @@ pub mod encryption;
 pub mod passphrase_cache;
 pub mod perf_trace;
 pub mod query;
+pub mod schema_guard;
 
 /// 迁移集合。新增 schema 变更或种子数据时，在 `src-tauri/migrations/` 下新建
 /// `V00X__名称.sql`，并在 `migrations()` 的 `vec!` 里追加
@@ -77,6 +78,12 @@ pub fn init_db(conn: &mut Connection) -> Result<()> {
     tracing::info!("开始执行数据库迁移");
     migrations().to_latest(conn)?;
     tracing::info!("数据库迁移完成");
+    // Schema 漂移守卫（issue #971/#992 / ADR-0100）：to_latest 只比 user_version，
+    // 「版本已达最新但 schema 内容漂移」的库在此确定性拦截。守卫接线是尾部
+    // 单点：全部生产建连路径统一收口本函数，一处接线零遗漏。接线负向判据
+    //（#963 惯例 / ADR-0087）：删除本调用，e2e「缺列漂移的明文库启动进入
+    // 失败状态」场景变红。
+    schema_guard::verify_schema(conn)?;
     Ok(())
 }
 

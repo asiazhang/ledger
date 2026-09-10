@@ -242,7 +242,8 @@
   },
   "boot": {
     "db-unreadable": "Startup failed; the database is unavailable. Reset or restore from the recovery screen first.",
-    "not-failed": "The app is not in a startup-failure state; nothing to reset."
+    "not-failed": "The app is not in a startup-failure state; nothing to reset.",
+    "schema-drift": "The database schema is abnormal; restore from a backup or reset."
   },
   "encryption": {
     "locked": "The app is locked. Unlock it to use the API.",

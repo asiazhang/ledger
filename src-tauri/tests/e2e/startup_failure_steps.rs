@@ -77,6 +77,23 @@ fn default_dir_with_encrypted_vault(world: &mut LedgerWorld, passphrase: String,
     world.boot.dl_default_dir = Some(dir);
 }
 
+/// 默认数据目录中的缺列漂移明文库（issue #971/#992 / ADR-0100）：先从零
+/// 迁出健康库，再注入漂移——删列后 user_version 不变，rusqlite_migration
+/// 的迁移裁决（只比 user_version）不再触发，漂移守卫是唯一防线。
+#[given(expr = "默认数据目录中存在一个缺列漂移的明文库")]
+fn default_dir_with_drifted_db(world: &mut LedgerWorld) {
+    let dir = std::env::temp_dir().join(format!("ledger-e2e-sf-drift-{}", new_uuid()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(DB_FILE_NAME);
+    {
+        let mut conn = open_connection(&path).unwrap();
+        init_db(&mut conn).unwrap();
+        conn.execute("ALTER TABLE sync_parked_ops DROP COLUMN park_params", [])
+            .unwrap();
+    }
+    world.boot.dl_default_dir = Some(dir);
+}
+
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
@@ -86,6 +103,9 @@ fn default_dir_with_encrypted_vault(world: &mut LedgerWorld, passphrase: String,
 fn takeover(world: &mut LedgerWorld) {
     let dir = world.boot.dl_default_dir.clone().unwrap();
     let db_path = dir.join(DB_FILE_NAME);
+    // 错误槽随每次接管重置：接管成功不留上次失败的陈旧错误（码断言只认
+    // 最近一次接管的失败现场）。
+    world.last_app_error = None;
     let outcome = match boot::classify_for_boot(&db_path) {
         Ok(boot::BootDisposition::AwaitUnlock) => StartupTakeover::AwaitUnlock,
         Ok(boot::BootDisposition::Unreadable) => StartupTakeover::Failed,
@@ -94,9 +114,16 @@ fn takeover(world: &mut LedgerWorld) {
                 world.boot.dl_conn = Some(state);
                 StartupTakeover::Opened
             }
-            Err(_) => StartupTakeover::Failed,
+            Err(e) => {
+                // 建连/迁移/漂移守卫失败原样登记（码化错误码断言用）。
+                world.last_app_error = Some(e);
+                StartupTakeover::Failed
+            }
         },
-        Err(_) => StartupTakeover::Failed,
+        Err(e) => {
+            world.last_app_error = Some(e);
+            StartupTakeover::Failed
+        }
     };
     world.boot.sf_last_takeover = Some(outcome);
 }
@@ -233,6 +260,18 @@ fn startup_failed(world: &mut LedgerWorld) {
         world.boot.sf_last_takeover,
         Some(StartupTakeover::Failed),
         "启动应进入失败状态（前端失败恢复屏接管）"
+    );
+}
+
+/// 启动失败的错误码断言（issue #992 / ADR-0100）：漂移守卫失败经
+/// open_db_in → init_db 尾部守卫原样上抛，码化错误在接管现场可观察。
+#[then(expr = "启动失败错误码应为 {string}")]
+fn startup_failed_with_code(world: &mut LedgerWorld, code: String) {
+    let error = world.last_app_error.as_ref().expect("预期启动失败错误");
+    assert_eq!(
+        error.code(),
+        Some(code.as_str()),
+        "启动失败错误码不匹配，实际: {error}"
     );
 }
 
