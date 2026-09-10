@@ -18,7 +18,7 @@
 
 use rusqlite::Connection;
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::backup;
 use crate::commands::boot::current_boot;
@@ -61,8 +61,9 @@ pub struct RememberPassphraseSupport {
 
 /// 生效目录中的库文件路径（引导结果登记的单一来源，经 BootCell 只读快照；
 /// 未登记时回退默认数据目录，与 [`crate::commands::data_location::effective_db_dir_of`
-/// 同一兑底语义）。
-fn active_db_path(app: &AppHandle) -> Result<std::path::PathBuf> {
+/// 同一兑底语义）。多端同步壳层（commands/sync_channel.rs，issue #862）同源消费——
+/// 信封模式按本库加密形态判定的探测对象即此路径。
+pub(crate) fn active_db_path<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf> {
     let db_dir = match current_boot(app) {
         Some(boot) => boot.db_dir,
         None => default_data_dir(app)?,
@@ -74,7 +75,9 @@ fn active_db_path(app: &AppHandle) -> Result<std::path::PathBuf> {
 /// 快照的注册表取活动账本 id。注册表不可用（极端时序/损坏回退）时 `None`——
 /// 回退现场运行的是折叠默认账本，钥匙串退回历史无标识条目
 ///（[`crate::db::passphrase_cache::account_for`]），升级用户不丢自动解锁。
-fn active_book_id(app: &AppHandle) -> Option<String> {
+/// 多端同步壳层（issue #862）同源消费；ChannelLayout 需要非空 id，`None` 由
+/// 消费侧报码化错误。
+pub(crate) fn active_book_id<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
     current_boot(app)
         .and_then(|boot| boot.registry)
         .map(|registry| registry.active_id)

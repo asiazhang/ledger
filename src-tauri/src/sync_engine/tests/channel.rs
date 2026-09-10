@@ -12,12 +12,11 @@ use crate::sync_engine::channel::{
     publish_checkpoint_with, run_round, run_round_with,
 };
 use crate::sync_engine::envelope::{EnvelopeMode, EnvelopeParams, is_sealed};
-use crate::sync_engine::tests::common::{
-    MemoryTransport, make_expense, read_transaction, spawn_webdav_stub,
-};
+use crate::sync_engine::tests::common::{MemoryTransport, make_expense, read_transaction};
 use crate::sync_engine::transport::Transport;
 use crate::sync_engine::transport::webdav::{WebDavConfig, WebDavTransport};
 use crate::sync_engine::{OpOutcome, apply_ops, bootstrap_from_checkpoint, read_ops};
+use crate::test_support::spawn_webdav_stub;
 use crate::test_support::{self, seed_account};
 use crate::transaction::behavior;
 

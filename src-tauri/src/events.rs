@@ -85,7 +85,10 @@ pub fn init_event_app(app: &AppHandle) {
 /// 投递失败（应用退出中事件循环已关）与发射本身失败一样静默忽略，不影响写
 /// 事务 / 同步结果（ADR-0044「发射失败静默」语义）。同一线程先后入队的动作
 /// 按入队顺序在主线程依次执行，事件间无乱序。
-pub(crate) fn post_emit_with(app: &AppHandle, action: impl FnOnce() + Send + 'static) {
+pub(crate) fn post_emit_with<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    action: impl FnOnce() + Send + 'static,
+) {
     let _ = app.run_on_main_thread(action);
 }
 
@@ -103,8 +106,9 @@ pub trait SignalEmitter: Send + Sync {
 /// 生产实现（spec #364 / ADR-0054）：主线程非阻塞投递——`post` 构造「emit 指定
 /// 事件」闭包交 [`post_emit_with`] 投递主线程队尾，调用即返回、不等发射完成。
 /// 失效信号的壳层发射入口（`signals::emit_for` / 深路径 `emit_backups_changed`）
-/// 全部汇聚于此。
-impl SignalEmitter for AppHandle {
+/// 全部汇聚于此。泛型于 Runtime（issue #862）：mock runtime 直调命令函数的
+/// 集成测试与生产 Wry 同一实现，行为零差异。
+impl<R: tauri::Runtime> SignalEmitter for AppHandle<R> {
     fn post(&self, event: &'static str) {
         let handle = self.clone();
         post_emit_with(self, move || {

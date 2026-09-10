@@ -27,6 +27,7 @@ pub mod scheduled;
 pub mod search;
 pub mod settings;
 pub mod sync;
+pub mod sync_channel;
 pub mod transactions;
 
 pub use accounts::*;
@@ -53,4 +54,5 @@ pub use scheduled::*;
 pub use search::*;
 pub use settings::*;
 pub use sync::*;
+pub use sync_channel::*;
 pub use transactions::*;

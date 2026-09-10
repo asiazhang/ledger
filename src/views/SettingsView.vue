@@ -12,7 +12,8 @@
  * 混用默认 if 与 show:lazy pane 时 show:lazy pane 会在切换时被卸载重建（缓存失效），
  * 显式 key 让 Vue 按 key 复用实例。
  *
- * 「数据」pane 内部子页签（issue #568）：备份 / 存储位置 / 数据修复——纯信息架构重组，
+ * 「数据」pane 内部子页签（issue #568）：备份 / 存储位置 / 加密 / 同步（issue #862）/
+ * 数据修复——纯信息架构重组，
  * 三个组件原样迁入、功能项一个不少；备份目录随备份走（ADR-0022 既有归属裁决）；
  * 「数据修复」是伞形标签（现仅 SearchDataSettings 搜索派生数据一键修复，issue #513，
  * 后续修复工具归入）。子页签同用 show:lazy + 显式 key：切子页签备份列表不卸载重拉
@@ -36,6 +37,7 @@ import BaseCurrencySettings from '@/components/settings/BaseCurrencySettings.vue
 import BackupSettings from '@/components/settings/BackupSettings.vue'
 import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
 import EncryptionSettings from '@/components/settings/EncryptionSettings.vue'
+import SyncSettings from '@/components/settings/SyncSettings.vue'
 import SearchDataSettings from '@/components/settings/SearchDataSettings.vue'
 import ScheduledSettings from '@/components/settings/ScheduledSettings.vue'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
@@ -73,6 +75,10 @@ import { t } from '@/i18n'
           </NTabPane>
           <NTabPane name="encryption" key="encryption" :tab="t('settings.data.tabs.encryption')" display-directive="show:lazy">
             <EncryptionSettings />
+          </NTabPane>
+          <!-- 多端同步（issue #862）：与备份/加密同属数据安全与多端世界，随加密子页签之后。 -->
+          <NTabPane name="sync" key="sync" :tab="t('settings.data.tabs.sync')" display-directive="show:lazy">
+            <SyncSettings />
           </NTabPane>
           <NTabPane name="repair" key="repair" :tab="t('settings.data.tabs.repair')" display-directive="show:lazy">
             <SearchDataSettings />

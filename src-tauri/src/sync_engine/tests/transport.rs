@@ -2,9 +2,9 @@
 //! WebDAV 桩的读写行为、错误归一（凭据错误/网络失败 → 明确可重试的码化错误）
 //! 与路径守卫。HTTP 语义全部对准本地桩，不依赖真实网络。
 
-use crate::sync_engine::tests::common::spawn_webdav_stub;
 use crate::sync_engine::transport::Transport;
 use crate::sync_engine::transport::webdav::{WebDavConfig, WebDavTransport};
+use crate::test_support::spawn_webdav_stub;
 
 /// 可用的 WebDAV 通道（对桩、无认证）。
 fn transport(base_url: &str) -> WebDavTransport {

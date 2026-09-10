@@ -198,6 +198,14 @@ pub enum WriteOp {
     /// 编辑订阅计划续费字段（IPC `update_scheduled_subscription`）。
     UpdateScheduledSubscription,
 
+    // ── 多端同步域（ADR-0091）：重放是行为编排之外的第 N 写入入口，外来 op
+    //    实际应用即账本数据变化，条件发 `ledger:changed`（证据承载「有无应用」）──
+    /// 多端同步轮次（IPC `sync_now`，issue #862）：发布自己流 + 拉取他人流并经
+    /// 同步引擎幂等重放。证据 [`WriteEvidence::LedgerApplied`]——本轮实际应用
+    /// （applied > 0）才广播参考失效；纯跳过 / 去重 / 压制 / 挂起的轮次零变化
+    /// 不广播（与「零变化不广播」同一品味）。
+    SyncRound,
+
     // ── 设置域：刻意零信号（设备偏好 / 引导配置，无 `ledger:*` 失效语义；
     //    设置页自读回显）──
     /// 自动备份开关（IPC `set_auto_backup_enabled`，写 `app_settings` KV，ADR-0017）。
@@ -222,6 +230,10 @@ pub enum WriteOp {
     /// 设置页自读回显；与 [`WriteOp::SetLogLevel`] 的区别是本写经 `write_entry`
     /// （op 与设置写同事务，非置脏豁免路径——基准是账本数据）。
     SetBaseCurrency,
+    /// 多端同步通道配置（IPC `set_sync_channel_config`，issue #862，写
+    /// `app_settings` 的 `sync.channel.config`，WebDAV 凭据属本机设备配置）：
+    /// 刻意零信号——通道配置不同步、不属任何失效语义；设置页自读回显。
+    SetSyncChannelConfig,
 }
 
 impl WriteOp {
@@ -234,7 +246,7 @@ impl WriteOp {
     /// 清单紧邻 enum，同步义务就地可查（同 `TransactionKind::ALL` 先例）。
     /// 长度标注与初始化个数不符即编译错；但 enum 新增变体而本清单漏登不会报错，
     /// 改 enum 必须同步改这里。
-    pub const ALL: [WriteOp; 59] = [
+    pub const ALL: [WriteOp; 61] = [
         // 参考数据四表
         WriteOp::CreateAccount,
         WriteOp::UpdateAccount,
@@ -305,6 +317,9 @@ impl WriteOp {
         WriteOp::RestoreDefaultDataLocation,
         WriteOp::SetLogLevel,
         WriteOp::SetBaseCurrency,
+        // 多端同步域
+        WriteOp::SyncRound,
+        WriteOp::SetSyncChannelConfig,
     ];
 }
 
@@ -325,6 +340,9 @@ pub enum WriteEvidence {
     /// 交易写「即建商户」（入参带 `merchant_name` 且未命中，写第四张参考表；
     /// 仅命中复用为零信号，ADR-0028）。
     MerchantCreated(bool),
+    /// 多端同步轮次「本轮实际应用外来 op」（applied > 0，issue #862）：零应用轮次
+    /// （全部跳过 / 去重 / 压制 / 挂起）为假，不广播。
+    LedgerApplied(bool),
 }
 
 impl WriteEvidence {
@@ -343,6 +361,12 @@ impl WriteEvidence {
     /// 商户即建证据为真（映射判定与批量聚合共享这一份形状判定）。
     pub(crate) fn merchant_created(&self) -> bool {
         matches!(self, WriteEvidence::MerchantCreated(true))
+    }
+
+    /// 同步轮次「本轮实际应用外来 op」证据为真（applied > 0；映射判定与轮次
+    /// 报告归一化共享这一份形状判定，issue #862）。
+    fn ledger_applied(&self) -> bool {
+        matches!(self, WriteEvidence::LedgerApplied(true))
     }
 }
 
@@ -476,7 +500,11 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         | WriteOp::SubmitDataLocationChange
         | WriteOp::RestoreDefaultDataLocation
         | WriteOp::SetLogLevel
-        | WriteOp::SetBaseCurrency => NO_SIGNALS,
+        | WriteOp::SetBaseCurrency
+        | WriteOp::SetSyncChannelConfig => NO_SIGNALS,
+
+        // ── 多端同步域（ADR-0091）：本轮实际应用外来 op 才广播参考失效 ──
+        WriteOp::SyncRound => when(evidence.ledger_applied(), LEDGER_CHANGED_SET),
     }
 }
 
@@ -993,6 +1021,25 @@ mod tests {
         // 设置域（ADR-0006 / #611）：写 app_settings 的 logging.level，零信号——
         // 设置不是账本数据（ADR-0032 置脏豁免），也不属参考/价格/备份失效语义。
         assert_signals(signals_for(Op::SetLogLevel, E::None), &[]);
+    }
+
+    #[test]
+    fn set_sync_channel_config_is_silent() {
+        // 多端同步通道配置（issue #862）：WebDAV 凭据写 app_settings，属本机
+        // 设备配置（不同步、无失效语义），刻意零信号。
+        assert_signals(signals_for(Op::SetSyncChannelConfig, E::None), &[]);
+    }
+
+    #[test]
+    fn sync_round_emits_ledger_changed_only_when_applied() {
+        // 多端同步轮次（issue #862）：实际应用外来 op（applied > 0）→ 参考失效；
+        // 零应用轮次（全跳过/去重/压制/挂起）→ 零变化不广播。
+        assert_signals(
+            signals_for(Op::SyncRound, E::LedgerApplied(true)),
+            &[Signal::LedgerChanged],
+        );
+        assert_signals(signals_for(Op::SyncRound, E::LedgerApplied(false)), &[]);
+        assert_signals(signals_for(Op::SyncRound, E::None), &[]);
     }
 
     // ── 证据形状 ──

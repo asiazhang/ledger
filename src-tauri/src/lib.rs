@@ -100,25 +100,36 @@ const BOOT_FAILURE_ALLOWED_COMMANDS: &[&str] = &[
 ];
 
 /// IPC 日志脱敏：载荷中含主口令字段时遮蔽其值（ADR-0075 后果条款：审计日志
-/// 与 trace 输出不落主口令）。按字段名匹配，对后续关闭加密/修改主口令等
-/// 命令同样生效。
+/// 与 trace 输出不落主口令）。按字段名递归匹配（对象与数组皆下探，嵌套结构
+/// 体入参不漏），对后续关闭加密/修改主口令、同步通道凭据等命令同样生效。
 fn redact_passphrase_payload(payload: &serde_json::Value) -> serde_json::Value {
-    // 主口令字段永不落日志/trace（ADR-0075）：解锁/开启加密的 `passphrase`
+    // 主口令/凭据字段永不落日志/trace（ADR-0075）：解锁/开启加密的 `passphrase`
     // 与修改主口令的 `new_passphrase` 同等敏感（Tauri v2 参数名按 JS 侧
-    // camelCase 到达，两种拼法都遮蔽）。
-    const SENSITIVE_KEYS: &[&str] = &["passphrase", "new_passphrase", "newPassphrase"];
-    match payload {
-        serde_json::Value::Object(map) => {
-            let mut masked = map.clone();
-            for (key, value) in masked.iter_mut() {
-                if SENSITIVE_KEYS.contains(&key.as_str()) && !value.is_null() {
-                    *value = serde_json::Value::String("••••••".into());
-                }
+    // camelCase 到达，两种拼法都遮蔽）；`password` 覆盖嵌套结构体形态的
+    // 凭据字段（issue #862 同步通道配置，WebDAV 密码与主口令同级处置）。
+    // 递归遍历：入参常为嵌套对象（如 `config.password`），仅看顶层会漏。
+    const SENSITIVE_KEYS: &[&str] = &["passphrase", "new_passphrase", "newPassphrase", "password"];
+    fn mask(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => serde_json::Value::Object(
+                map.iter()
+                    .map(|(key, val)| {
+                        let masked = if SENSITIVE_KEYS.contains(&key.as_str()) && !val.is_null() {
+                            serde_json::Value::String("••••••".into())
+                        } else {
+                            mask(val)
+                        };
+                        (key.clone(), masked)
+                    })
+                    .collect(),
+            ),
+            serde_json::Value::Array(items) => {
+                serde_json::Value::Array(items.iter().map(mask).collect())
             }
-            serde_json::Value::Object(masked)
+            other => other.clone(),
         }
-        other => other.clone(),
     }
+    mask(payload)
 }
 
 fn try_init_database(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -297,4 +308,39 @@ fn extract_resource_id(payload: &serde_json::Value) -> String {
         }
     }
     String::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 敏感键遮蔽（ADR-0075）：顶层与嵌套形态的 passphrase/password 都被遮蔽，
+    /// null 不遮蔽（未提供的可选参数原样保留），非敏感字段原样透传。
+    /// 嵌套下探是 #862 修订：通道配置的 `config.password` 在结构体入参内层，
+    /// 仅看顶层会漏进 trace。
+    #[test]
+    fn sensitive_keys_masked_recursively() {
+        let payload: serde_json::Value = serde_json::json!({
+            "passphrase": "top-secret",
+            "optional": null,
+            "config": {
+                "base_url": "https://dav.example.com/dav/",
+                "username": "alice",
+                "password": "app-pass",
+                "note": null,
+                "deep": [{ "newPassphrase": "inner" }],
+            },
+        });
+        let masked = redact_passphrase_payload(&payload);
+        let obj = masked.as_object().unwrap();
+        assert_eq!(obj["passphrase"], "••••••");
+        assert_eq!(obj["optional"], serde_json::Value::Null, "null 不遮蔽");
+        let config = obj["config"].as_object().unwrap();
+        assert_eq!(config["password"], "••••••");
+        assert_eq!(config["username"], "alice", "非敏感字段原样");
+        assert_eq!(config["note"], serde_json::Value::Null, "null 不遮蔽");
+        assert_eq!(config["deep"][0]["newPassphrase"], "••••••", "数组内也下探");
+        // 原载荷不被改动。
+        assert_eq!(payload["passphrase"], "top-secret");
+    }
 }
