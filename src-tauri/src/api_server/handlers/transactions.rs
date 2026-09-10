@@ -149,15 +149,16 @@ pub async fn update_transaction_handler(
     tag = "transactions",
     summary = "删除交易（软删除）",
     description = "按 `id` 软删除交易（`is_deleted=1`）。buy 交易同步清理关联持仓\
-                  （`security_lots` / `security_transactions`）；若该买入已有部分卖出则返回 400。\
+                  （`security_lots` / `security_transactions`）；部分卖出的买入改为级联删除：\
+                  其持仓批次的在用 sell 一并软删除（持仓扣减回补，issue #940）；\
+                  sell 删除回补持仓扣减并清空卖出匹配。\
                   删除后该交易不再占用去重位，重跑批量导入会重新写入（`duplicate: false`）。\
                   不存在的 id 返回 404。成功返回 204 No Content。",
     params(
         ("id" = String, Path, description = "交易 ID")
     ),
     responses(
-        (status = 204, description = "删除成功（无响应体）"),
-        (status = 400, description = "该买入交易已有部分卖出，无法删除", body = ErrorResponse),
+        (status = 204, description = "删除成功（无响应体；buy 的级联软删不额外返回被删列表）"),
         (status = 404, description = "交易不存在", body = ErrorResponse),
         (status = 500, description = "数据库错误", body = ErrorResponse)
     )

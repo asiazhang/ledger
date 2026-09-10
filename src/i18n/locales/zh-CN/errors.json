@@ -102,7 +102,6 @@
   },
   "trade": {
     "partially-sold-update": "该买入交易已有部分卖出，无法修改",
-    "partially-sold-delete": "该买入交易已有部分卖出，无法删除",
     "buy-instrument-required": "买入必须指定标的",
     "buy-instrument-not-found": "买入标的不存在: {0}",
     "sell-instrument-required": "卖出必须指定标的",

@@ -27,6 +27,10 @@
 - **发布**：Android APK 发布签名就绪——发布构建以 CI secrets 注入 keystore 签名，tag 构建缺签名 secrets 直接失败；试跑产物经 apksigner 校验可真机直装（[#560]）。
 - **报表**：报表页接入 ESC 复位（[#894]）。
 
+### BREAKING
+
+- **投资/交易**：删除语义修订——删除卖出交易会回补持仓扣减并清空卖出匹配；删除买入交易改级联删除（其持仓批次的在用卖出一并软删并回补持仓），「已有部分卖出的买入禁删」守卫与 `trade.partially-sold-delete` 错误码退场（[#940]，ADR-0097）。
+
 ### Changed
 
 - **投资**：持仓与盈亏表格排版调整——数值列右对齐、等宽数字（[#920]）。
@@ -36,6 +40,7 @@
 
 ### Fixed
 
+- **投资**：修复删除卖出后对应买入被幽灵占用永久锁死、无法删除或修改（[#940]）。
 - **发布**：修复 Windows 发布 pnpm install 因补丁文件 CRLF 行尾失败（[#917]）。
 
 ## [0.6.0] - 2026-09-08
@@ -293,3 +298,4 @@
 [#920]: https://github.com/asiazhang/ledger/issues/920
 [#928]: https://github.com/asiazhang/ledger/issues/928
 [#935]: https://github.com/asiazhang/ledger/issues/935
+[#940]: https://github.com/asiazhang/ledger/issues/940
