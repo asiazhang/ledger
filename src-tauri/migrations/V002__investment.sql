@@ -20,7 +20,7 @@
 -- 就地修改历史迁移可接受 BREAKING）——两级 BREAKING 标记之一，另一级见
 -- CHANGELOG「Unreleased」BREAKING 条目。
 --
--- 【就地修改注记】security_transactions 就地扩集（issue #977 / 父 spec #973）：
+-- 【就地修改注记】security_transactions 就地扩集（issue #977 / 父 spec #973 / ADR-0099）：
 -- action 检查约束闭集由 buy/sell/dividend/split 扩至含 'convert'，
 -- 并新增 4 个可空转换列——to_instrument_id（转入标的，命名对齐 transfer 的
 -- to_account_id 惯例）/ to_quantity（转入份额）/ out_amount_cents（转出金额，分）

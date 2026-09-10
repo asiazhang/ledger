@@ -15,7 +15,7 @@
 -- 全新安装；已执行过本迁移的存量库不带该索引（兜底查询维持全表扫描，
 -- 行为零差异、仅性能差异），重建库或手工补建索引后获得导入提速。
 --
--- 【就地修改注记】transactions.kind 检查约束闭集就地扩集（issue #977 / 父 spec #973）：
+-- 【就地修改注记】transactions.kind 检查约束闭集就地扩集（issue #977 / 父 spec #973 / ADR-0099）：
 -- 由 income/expense/transfer/refund/buy/sell/dividend/split 扩至含第 9 种 kind
 -- `convert`（基金转换：同一投资账户内两标的互换、无现金腿，落账前后全部账户
 -- 余额不变）。全新安装生效；**存量库不重跑本迁移、保持旧闭集**，其上写入
