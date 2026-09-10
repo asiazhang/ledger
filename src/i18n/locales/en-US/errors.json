@@ -96,7 +96,6 @@
   },
   "trade": {
     "partially-sold-update": "this buy transaction has been partially sold and cannot be modified",
-    "partially-sold-delete": "this buy transaction has been partially sold and cannot be deleted",
     "buy-instrument-required": "buy requires an instrument",
     "buy-instrument-not-found": "buy instrument does not exist: {0}",
     "sell-instrument-required": "sell requires an instrument",

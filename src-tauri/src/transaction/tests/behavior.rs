@@ -340,30 +340,253 @@ fn delete_transaction_internal_cleans_up_buy_lots() {
     assert_eq!(deleted, 1, "交易应被软删除");
 }
 
+/// 删除 buy 级联（issue #940 / ADR-0097）：部分卖出的买入可删，其在用 sell 随之
+/// 软删（各自 delete op），批次与卖出匹配整批清理——「已有部分卖出的买入禁删」退场。
 #[test]
-fn delete_transaction_internal_rejects_partially_sold_buy() {
+fn delete_transaction_internal_cascades_active_sells_and_purges_buy_lots() {
     let conn = test_support::open();
-    test_support::seed_investment_setup(&conn, "acc-inv2", "inst-msft");
+    test_support::seed_investment_setup(&conn, "acc-casc", "inst-casc");
 
     let buy_id = create_transaction_internal(
         &conn,
-        make_buy_input("acc-inv2", "inst-msft", 10.0, 1000000, 0),
+        make_buy_input("acc-casc", "inst-casc", 10.0, 1000000, 0),
     )
     .unwrap()
     .id;
-
-    let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 1100000, 0);
+    let mut sell = make_buy_input("acc-casc", "inst-casc", 4.0, 1100000, 0);
     sell.kind = TransactionKind::Sell;
     sell.date = "2026-01-20".into();
-    create_transaction_internal(&conn, sell).unwrap();
+    let sell_id = create_transaction_internal(&conn, sell).unwrap().id;
 
-    let err = delete_transaction_internal(&conn, &buy_id).unwrap_err();
-    // 守卫文案按入口内化（ADR-0033 决策 #4）：删除入口固定返回自己的措辞，
-    // 与修改入口对同一守卫各持措辞、互不漂移。
-    match err {
-        AppError::Coded { message, .. } => assert_eq!(message, "该买入交易已有部分卖出，无法删除"),
-        other => panic!("expected Coded, got {other:?}"),
-    }
+    delete_transaction_internal(&conn, &buy_id).unwrap();
+
+    let (buy_deleted, sell_deleted): (i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT is_deleted FROM transactions WHERE id=?1), \
+                    (SELECT is_deleted FROM transactions WHERE id=?2)",
+            params![buy_id, sell_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(buy_deleted, 1, "buy 应被软删除");
+    assert_eq!(sell_deleted, 1, "在用 sell 应被级联软删除");
+
+    let (lots, lot_sales, buy_stx, sell_stx): (i64, i64, i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1), \
+                    (SELECT COUNT(*) FROM security_lot_sales WHERE lot_id IN \
+                       (SELECT id FROM security_lots WHERE buy_transaction_id=?1)), \
+                    (SELECT COUNT(*) FROM security_transactions WHERE transaction_id=?1 AND action='buy'), \
+                    (SELECT COUNT(*) FROM security_transactions WHERE transaction_id=?2 AND action='sell')",
+            params![buy_id, sell_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(lots, 0, "级联后批次应整批清理");
+    assert_eq!(lot_sales, 0, "级联后该批次的卖出匹配应清空");
+    assert_eq!(buy_stx, 0, "buy 明细应清理");
+    assert_eq!(sell_stx, 0, "级联 sell 的明细应随回补清理");
+
+    // 各自留痕：主删与级联删各产出一条 delete op（级联先于主行，重放按序收敛）。
+    let delete_ops: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sync_ops WHERE entity_id IN (?1, ?2) \
+             AND payload LIKE '%\"delete\"%'",
+            params![buy_id, sell_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(delete_ops, 2, "主删与级联删应各产出一条 delete op");
+}
+
+/// 删除 sell 回补（issue #940 / ADR-0097）：删除卖出即撤销其全部持仓影响——
+/// 扣减回补、卖出匹配与卖出明细清空，不再遗留幽灵占用（旧版「sell 删除不回补」
+/// 是把买入永久锁死的根源）。
+#[test]
+fn delete_transaction_internal_sell_restores_holding() {
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-rev", "inst-rev");
+
+    let buy_id = create_transaction_internal(
+        &conn,
+        make_buy_input("acc-rev", "inst-rev", 10.0, 1000000, 0),
+    )
+    .unwrap()
+    .id;
+    let mut sell = make_buy_input("acc-rev", "inst-rev", 4.0, 1100000, 0);
+    sell.kind = TransactionKind::Sell;
+    let sell_id = create_transaction_internal(&conn, sell).unwrap().id;
+
+    delete_transaction_internal(&conn, &sell_id).unwrap();
+
+    let (sell_deleted, remaining): (i64, f64) = conn
+        .query_row(
+            "SELECT (SELECT is_deleted FROM transactions WHERE id=?1), \
+                    (SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?2)",
+            params![sell_id, buy_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(sell_deleted, 1, "sell 应被软删除");
+    assert_eq!(remaining, 10.0, "删除卖出应回补持仓扣减");
+
+    let (lot_sales, sell_stx): (i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM security_lot_sales WHERE sell_transaction_id=?1), \
+                    (SELECT COUNT(*) FROM security_transactions WHERE transaction_id=?1 AND action='sell')",
+            params![sell_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(lot_sales, 0, "删除卖出应清空其卖出匹配");
+    assert_eq!(sell_stx, 0, "删除卖出应清空其卖出明细");
+}
+
+/// 级联的跨批次涟漪（issue #940）：一笔 sell 跨两笔买入批次匹配时，删除其中
+/// 一笔 buy 会级联删掉该 sell，兄弟批次的扣减亦应回补、不留残留匹配。
+#[test]
+fn delete_buy_cascades_sell_spanning_multiple_buys_and_restores_sibling_lot() {
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-ripple", "inst-ripple");
+
+    let buy_a = create_transaction_internal(
+        &conn,
+        make_buy_input("acc-ripple", "inst-ripple", 10.0, 1000000, 0),
+    )
+    .unwrap()
+    .id;
+    let mut buy_b_input = make_buy_input("acc-ripple", "inst-ripple", 10.0, 1050000, 0);
+    buy_b_input.date = "2026-01-12".into();
+    let buy_b = create_transaction_internal(&conn, buy_b_input).unwrap().id;
+    let mut sell = make_buy_input("acc-ripple", "inst-ripple", 12.0, 1100000, 0);
+    sell.kind = TransactionKind::Sell;
+    sell.date = "2026-01-20".into();
+    let sell_id = create_transaction_internal(&conn, sell).unwrap().id;
+
+    // 前置：sell 跨两个批次匹配（FIFO 10 + 2）。
+    let matched_lots: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT lot_id) FROM security_lot_sales WHERE sell_transaction_id=?1",
+            params![sell_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(matched_lots, 2, "卖出应跨两笔买入批次匹配");
+
+    delete_transaction_internal(&conn, &buy_a).unwrap();
+
+    let (buy_a_deleted, buy_b_deleted, sell_deleted): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT is_deleted FROM transactions WHERE id=?1), \
+                    (SELECT is_deleted FROM transactions WHERE id=?2), \
+                    (SELECT is_deleted FROM transactions WHERE id=?3)",
+            params![buy_a, buy_b, sell_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(buy_a_deleted, 1);
+    assert_eq!(sell_deleted, 1, "跨批次 sell 应被级联软删除");
+    assert_eq!(buy_b_deleted, 0, "兄弟买入不应受牵连");
+
+    // 兄弟批次扣减应回补：sell 全量回退后剩余回到初始 10。
+    let remaining_b: f64 = conn
+        .query_row(
+            "SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?1",
+            params![buy_b],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining_b, 10.0, "级联回补应覆盖兄弟批次");
+    let sales_on_b: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM security_lot_sales WHERE lot_id IN \
+             (SELECT id FROM security_lots WHERE buy_transaction_id=?1)",
+            params![buy_b],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(sales_on_b, 0, "兄弟批次上不应残留卖出匹配");
+}
+
+/// 幽灵占用随批次火化（issue #940）：旧版本遗留的「已软删 sell 仍挂着卖出匹配、
+/// 扣减未回补」状态不再锁死买入——删除 buy 直接成功，幽灵匹配随批次一并清理。
+#[test]
+fn delete_buy_purges_ghost_lot_sales_of_deleted_sells() {
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-ghost", "inst-ghost");
+
+    let buy_id = create_transaction_internal(
+        &conn,
+        make_buy_input("acc-ghost", "inst-ghost", 10.0, 1000000, 0),
+    )
+    .unwrap()
+    .id;
+    let mut sell = make_buy_input("acc-ghost", "inst-ghost", 4.0, 1100000, 0);
+    sell.kind = TransactionKind::Sell;
+    let sell_id = create_transaction_internal(&conn, sell).unwrap().id;
+    // 旧版幽灵态：只软删 sell 行，不回补持仓、不清匹配（ADR-0013 旧行为）。
+    conn.execute(
+        "UPDATE transactions SET is_deleted=1 WHERE id=?1",
+        params![sell_id],
+    )
+    .unwrap();
+
+    delete_transaction_internal(&conn, &buy_id).unwrap();
+
+    let (buy_deleted, lots, ghost_lot_sales): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT is_deleted FROM transactions WHERE id=?1), \
+                    (SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1), \
+                    (SELECT COUNT(*) FROM security_lot_sales WHERE sell_transaction_id=?2)",
+            params![buy_id, sell_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(buy_deleted, 1, "幽灵占用不再锁死删除");
+    assert_eq!(lots, 0, "批次应整批清理");
+    assert_eq!(ghost_lot_sales, 0, "幽灵匹配应随批次火化");
+}
+
+/// update 守卫改在用归因（issue #940）：已软删 sell 的幽灵匹配不再计入「在用卖出
+/// 占用」，买入修改不被幽灵误伤（旧版按批次剩余数量判定时被幽灵扣减永久锁死）。
+#[test]
+fn update_buy_ignores_ghost_lot_sales_of_deleted_sells() {
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-ghost-upd", "inst-ghost-upd");
+
+    let buy_id = create_transaction_internal(
+        &conn,
+        make_buy_input("acc-ghost-upd", "inst-ghost-upd", 10.0, 1000000, 0),
+    )
+    .unwrap()
+    .id;
+    let mut sell = make_buy_input("acc-ghost-upd", "inst-ghost-upd", 4.0, 1100000, 0);
+    sell.kind = TransactionKind::Sell;
+    let sell_id = create_transaction_internal(&conn, sell).unwrap().id;
+    conn.execute(
+        "UPDATE transactions SET is_deleted=1 WHERE id=?1",
+        params![sell_id],
+    )
+    .unwrap();
+
+    update_transaction_internal(
+        &conn,
+        &buy_id,
+        make_buy_input("acc-ghost-upd", "inst-ghost-upd", 5.0, 1200000, 0),
+    )
+    .unwrap();
+
+    // 幽灵匹配随重建火化，新批次按新输入重建。
+    let (ghost_lot_sales, remaining): (i64, f64) = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM security_lot_sales WHERE sell_transaction_id=?1), \
+                    (SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?2)",
+            params![sell_id, buy_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(ghost_lot_sales, 0, "幽灵匹配应随批次重建消失");
+    assert_eq!(remaining, 5.0, "批次应按新输入重建");
 }
 
 /// 注入「软删中途失败」：行为层 revert（清理持仓批次）成功后、软删 UPDATE 被

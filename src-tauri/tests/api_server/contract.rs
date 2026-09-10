@@ -109,12 +109,16 @@ async fn contract_request_body_and_responses() {
         "TransactionListResult"
     );
 
-    // 删除：204（无 JSON 体）与 404/400 状态码保留（移植自
-    // test_openapi_doc_covers_delete_transaction_endpoint）。
+    // 删除：204（无 JSON 体）与 404 状态码保留（移植自
+    // test_openapi_doc_covers_delete_transaction_endpoint）；部分卖出的 400
+    // 已随级联删除退役（issue #940 / ADR-0097：删除改级联 + 回补，不再拒绝）。
     let delete = find("DELETE", "/transactions/{id}");
     assert_eq!(delete["res"]["204"], "-", "无响应体以 - 占位");
     assert_eq!(delete["res"]["404"], "ErrorResponse");
-    assert_eq!(delete["res"]["400"], "ErrorResponse");
+    assert!(
+        delete["res"].get("400").is_none(),
+        "删除不再声明部分卖出 400（级联删除退场，issue #940）"
+    );
 
     // 账户编辑：请求体 schema 名在位。
     let put = find("PUT", "/accounts/{id}");

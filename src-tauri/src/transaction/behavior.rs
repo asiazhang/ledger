@@ -14,10 +14,12 @@
 //! 调用方的 `db.write` 闭包返回 Ok 且已提交时单点触发——自持事务与批量嵌套同一形态，
 //! 本模块对备份域零感知。
 //!
-//! **守卫文案按入口内化（ADR-0033 决策 #4）**：buy 已有部分卖出的拒绝文案是各编排
-//! 入口的实现细节（`PARTIAL_SOLD_CANNOT_UPDATE` / `PARTIAL_SOLD_CANNOT_DELETE`），
-//! 单点定义、不随调用方漂移；回退分派直接委托 [`investment::revert`]（其 match 已覆盖
-//! 全部 kind，普通 kind 为 no-op），行为层不再另设 revert 转发层。
+//! **守卫文案按入口内化（ADR-0033 决策 #4）**：buy 已有部分卖出的拒绝文案是修改
+//! 入口的实现细节（`PARTIAL_SOLD_CANNOT_UPDATE`），单点定义、不随调用方漂移；回退
+//! 分派直接委托 [`investment::revert`]（其 match 已覆盖全部 kind，普通 kind 为
+//! no-op），行为层不再另设 revert 转发层。删除入口不设部分卖出守卫（issue #940 /
+//! ADR-0097）：sell 删除回补持仓、buy 删除级联软删其在用 sell——「已有部分卖出的
+//! 买入禁删」随之退场。
 //!
 //! 分派是薄而穷尽的 `match`（不引入 trait 注册表，避免过度设计）：
 //! 普通 kind（income/expense/transfer/refund）经 Writer 接缝归一化；buy/sell 委托投资域
@@ -59,13 +61,11 @@ pub use update as update_transaction_internal;
 
 /// buy 已有部分卖出的守卫文案——修改入口措辞（ADR-0033 决策 #4：按入口内化、
 /// 行为层单点定义，调用方协议面不出现文案，同一入口同一文案不漂移）。
+/// 删除入口曾有的 `PARTIAL_SOLD_CANNOT_DELETE`（`trade.partially-sold-delete`）
+/// 随级联删除退场（issue #940 / ADR-0097）——删除不再拒绝，改为级联。
 const PARTIAL_SOLD_CANNOT_UPDATE: &str = "该买入交易已有部分卖出，无法修改";
 /// 上迹守卫的稳定错误码（issue #342 二期）：与文案同源单点，经 revert 下传。
 const PARTIAL_SOLD_CANNOT_UPDATE_CODE: &str = "trade.partially-sold-update";
-/// buy 已有部分卖出的守卫文案——删除入口措辞（同上）。
-const PARTIAL_SOLD_CANNOT_DELETE: &str = "该买入交易已有部分卖出，无法删除";
-/// 上迹守卫的稳定错误码（同上）。
-const PARTIAL_SOLD_CANNOT_DELETE_CODE: &str = "trade.partially-sold-delete";
 
 /// 计划：归一化后的交易行 + kind 特有副作用数据（不落库）。
 enum Plan {
@@ -231,41 +231,71 @@ fn update_within_transaction(
 /// 删除交易（软删除 `is_deleted=1`；IPC `delete_transaction` / HTTP
 /// `DELETE /api/v1/transactions/{id}`，issue #229 / ADR-0033）。
 ///
-/// 行为层删除编排入口：持仓清理与软删 UPDATE 同处一个事务——revert（buy 清理持仓批次）
-/// 成功后软删 UPDATE 中途失败整体回滚，不再出现「持仓已删而交易仍在」的中间态
-/// （删除路径事务缺口修复，ADR-0033 决策 #3）。buy 守卫（已有部分卖出拒绝）措辞为
-/// 删除入口单点定义的文案。sell 删除不清理持仓关联（既有行为保持不变，ADR-0013 已锁定）。
+/// 行为层删除编排入口：持仓副作用回退与软删 UPDATE 同处一个事务——回退成功后
+/// 软删 UPDATE 中途失败整体回滚，不再出现「持仓已删而交易仍在」的中间态
+/// （删除路径事务缺口修复，ADR-0033 决策 #3）。
+///
+/// 持仓副作用回退按 kind 分派（issue #940 / ADR-0097，部分修订 ADR-0013 删除条）：
+/// - sell：回补其扣减的持仓并清空卖出关联——删除即撤销其全部持仓影响，
+///   不再遗留幽灵占用（旧版「sell 删除不回补」是把买入永久锁死的根源）；
+/// - buy：**级联**——其持仓批次的在用 sell 逐笔回退持仓副作用并随之软删
+///   （各自 delete op 与余额刷新），「已有部分卖出的买入禁删」守卫退场；
+/// - 其余 kind 无持仓副作用，直接软删。
+///
 /// 不存在的 id 返回码化 NotFound（HTTP 侧映射 404）。事务规则见
 /// [`ensure_transaction`]。IPC 与 HTTP 端点共用本函数。
 pub fn delete(conn: &Connection, id: &str) -> Result<()> {
     ensure_transaction(conn, || delete_within_transaction(conn, id))
 }
 
-/// 删除协议本体：`revert（仅 buy）→ 软删 UPDATE`（无事务语义，由 [`ensure_transaction`] 包裹）。
+/// 删除协议本体：`release_for_delete（sell 回补 / buy 级联）→ 级联软删在用 sell →
+/// 主行软删`（无事务语义，由 [`ensure_transaction`] 包裹）。
 fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
-    let (kind, account_id, to_account_id): (TransactionKind, String, Option<String>) = conn
+    let (kind,): (TransactionKind,) = conn
         .query_row(
-            "SELECT kind, account_id, to_account_id FROM transactions WHERE id=?1 AND is_deleted=0",
+            "SELECT kind FROM transactions WHERE id=?1 AND is_deleted=0",
             rusqlite::params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?,)),
         )
         .optional()?
         .ok_or_else(|| {
             AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
 
-    if kind == TransactionKind::Buy {
-        // 守卫（部分卖出拒绝）与持仓关联清理经投资域 revert。
-        // sell 删除不清理持仓关联（既有行为保持不变，本重构不改变）。
-        investment::revert(
-            conn,
-            id,
-            kind,
-            PARTIAL_SOLD_CANNOT_DELETE_CODE,
-            PARTIAL_SOLD_CANNOT_DELETE,
-        )?;
+    // 持仓副作用回退（issue #940 / ADR-0097）：sell 回补持仓扣减；buy 消费其
+    // 持仓批次的在用 sell（逐笔回退）并整批清理批次与匹配，返回级联对象 id 列表。
+    let cascaded_sell_ids = match kind {
+        TransactionKind::Buy | TransactionKind::Sell => {
+            investment::release_for_delete(conn, id, kind)?
+        }
+        _ => Vec::new(),
+    };
+    // 级联软删：被消化的在用 sell 逐笔软删（各自余额刷新与 delete op），先于主行
+    // 落 op——重放端按 op 顺序先删 sell 再删 buy，级联与显式 op 不打架。
+    for sell_id in &cascaded_sell_ids {
+        soft_delete_transaction_row(conn, sell_id)?;
     }
+    // 搜索（V018 两段式，issue #492）：候选流带 is_deleted 口径过滤，软删即刻
+    // 生效，删除的交易不再可搜（拼音列非本路径维护字段，无需处理）。
+    soft_delete_transaction_row(conn, id)
+}
 
+/// 软删单笔交易行 + 余额刷新 + delete op（删除编排的行级步骤，主删与级联删共用）。
+///
+/// 行读取（`is_deleted=0` 存在性 + 账户引用对）→ 软删 UPDATE → 受影响账户余额重算
+/// （issue #491 / ADR-0067）→ delete op 追加（issue #855 / ADR-0091）。级联删除的
+/// 被级联行亦各自留痕：同步端按同一 delete 协议逐笔收敛，无需感知级联语义。
+fn soft_delete_transaction_row(conn: &Connection, id: &str) -> Result<()> {
+    let (account_id, to_account_id): (String, Option<String>) = conn
+        .query_row(
+            "SELECT account_id, to_account_id FROM transactions WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?
+        .ok_or_else(|| {
+            AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
+        })?;
     conn.execute(
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id(conn)?],
@@ -274,12 +304,9 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
     // 账户推导，消费余额模块唯一定义，issue #534）同事务整体重算。
     let affected = affected_accounts(Some((account_id.as_str(), to_account_id.as_deref())), None);
     refresh_account_balances(conn, &affected)?;
-    // 搜索（V018 两段式，issue #492）：候选流带 is_deleted 口径过滤，软删即刻
-    // 生效，删除的交易不再可搜（拼音列非本路径维护字段，无需处理）。
     // op 产出接缝（issue #855 / ADR-0091）：删除成功 → delete op（实体 id）
     // 追加；随同一事务提交/回滚。
-    record_local(conn, TransactionCommand::Delete { id: id.to_string() })?;
-    Ok(())
+    record_local(conn, TransactionCommand::Delete { id: id.to_string() })
 }
 
 /// 校验并归一化一笔交易输入为计划（交易行不落库）。
@@ -521,7 +548,7 @@ fn update_command(id: &str, plan: &Plan) -> TransactionCommand {
 /// 投资命令（buy/sell 的创建/修改）v1 显式码化拒绝：持仓/卖出关联的确定性
 /// 重放依赖跨端标的身份解析，待 #861 补齐；失败由同步引擎挂起进队列（
 /// issue #856，不阻塞其余重放、重投递重试）。删除重放支持全部 kind（按行现状
-/// 执行与本地删除同一协议，含 buy 守卫与持仓清理）。
+/// 执行与本地删除同一协议，含 sell 回补 / buy 级联与持仓清理，issue #940）。
 pub(crate) fn replay_command(conn: &Connection, command: &TransactionCommand) -> Result<()> {
     match command {
         TransactionCommand::Create { id, row, .. } => replay_create(conn, id, row),
