@@ -262,17 +262,17 @@ pub async fn restart_app(app: AppHandle) -> Result<()> {
     crate::sync_engine::SessionEnvelope::forget();
     let phase = run_db("restart_app", move || Ok(try_boot_sequence(&handle))).await?;
     if phase == BootPhase::Ready {
-        // 重引导落到就绪即拉起调度（幂等，单次拉起守卫）：锁定/失败态启动的
-        // 会话里 setup 未拉起调度线程，恢复通道重启不经 setup——此处是该场景
-        // 下调度线程唯一的生产点（ADR-0080 决策 4：解锁/恢复后自动继续）。
+        // 重引导落到就绪即拉起后台服务（issue #961 唯一编排点）：锁定/失败态
+        // 启动的会话里 setup 未拉起调度线程，恢复通道重启不经 setup——此处是
+        // 该场景下调度唯一的生产点（ADR-0080 决策 4：解锁/恢复后自动继续）。
         // 未就绪（解锁屏/失败恢复屏）不拉：解锁/重置路径的
         // `resume_business_surface` 会在业务可用起点拉起。
-        backup::start_scheduler(&app);
+        // 后台服务成对拉起收在唯一编排点（issue #961，幂等，单次拉起守卫）。
         // 同步触发同源（issue #863 / ADR-0098 决策 4）：这是第四个业务可用起点
         // （锁定/失败态启动 → 解锁屏恢复明文备份 → 重引导落 Ready）——setup 与
         // `resume_business_surface` 都不在本路径上，不在此拉起则「打开即同步」
-        // 与写后触发本会话永不生效（分平台分流收在 `start_triggers` 一处）。
-        crate::sync_engine::start_triggers(&app);
+        // 与写后触发本会话永不生效（分平台分流收在域侧 `start_triggers` 一处）。
+        crate::start_background_services(&app);
     }
     tracing::info!(
         phase = phase.as_str(),

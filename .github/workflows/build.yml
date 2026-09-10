@@ -56,6 +56,9 @@ jobs:
       - name: 结构守门检查
         run: bun scripts/check-structure.ts
 
+      - name: 后台服务成对拉起守门
+        run: bun scripts/check-background-services.ts
+
       - name: 文档一致性检查
         run: ./scripts/check-docs.sh
 
