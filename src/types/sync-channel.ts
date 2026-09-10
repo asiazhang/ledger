@@ -62,7 +62,9 @@ export interface ParkedOpInfo {
   entity_id: string
   /// 码化挂起原因（前端按 errors.<code> 模板本地化）
   code: string
-  /// 挂起原因详情（中文原文，未知码时降级透传）
+  /// 码化挂起原因的插值参数（按消息中动态值出现顺序；ADR-0050 / issue #957）
+  params: string[]
+  /// 挂起原因详情（已渲染完整句；码未命中模板或 params 不足时降级透传）
   message: string
   /// 挂起时刻（本机簿记事实）
   parked_at: string

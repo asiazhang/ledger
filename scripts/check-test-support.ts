@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-// Rust 测试守门（issue #752 落地 / #758 收口 / ADR-0084 决策 8），三条规则：
+// Rust 测试守门（issue #752 落地 / #758 收口 / #956 追加规则 4 / ADR-0084 决策 8），
+// 四条规则：
 //
 // 统一测试数据库工厂（src-tauri/src/test_support/，#751 落地）是建库与种子知识的
 // 唯一入口；本守门防回潮——测试代码绕开工厂直连建库、直写种子表、自抄默认时刻，
@@ -41,6 +42,18 @@
 // 文本级无法分辨意图，恰为该值的字面量一律计入（如实际作域时刻用，迁移票缩减
 // 白名单时改写为其他值或引用常量）；tests/e2e 的例外见下方已登记例外表。
 //
+// 规则 4（禁自建通道线格式，issue #956）：测试代码不得手工构造通道段/清单
+//（`SegmentEntry {` / `ChannelManifest {` 字面构造），也不得在**引用了通道面**
+// 的文件里自建摘要实现（`Sha256` / `sha2::`）。通道线格式的成帧单点是
+// `test_support::channel::publish_raw_segment`（内部消费产品侧 `channel::sha256_hex`
+// 唯一实现）——测试侧自建会让段命名规则、清单版本与「尺寸/摘要算在封包后字节
+// 上」的口径各自漂移一份（#956 成因：两处夹具都错把尺寸/摘要算在 payload 上，
+// 明文模式下恰好相等而掩盖）。
+// 「引用了通道面」的判定：同文件出现 `ChannelManifest` / `SegmentEntry` /
+// `EnvelopeMode` / `publish_raw_segment` 任一标识。此作用域限定是为了不误伤
+// 与通道无关的摘要用法（如 `src/bin/ledger-perf/tests.rs` 的生成器确定性 DB
+// 摘要——它自带 sha2 但是另一件事）。
+//
 // tests/e2e 已登记例外（#764 裁决，登记处 = ADR-0086 修订注记）：e2e 侧无法
 // 收敛的存量命中逐条登记（文件 + 规则 + 预期命中数 + 动机一句话），与
 // ADR-0073 例外白名单纪律同构——「例外显式登记在案，防止被无意复制」。
@@ -54,9 +67,10 @@
 //   模块/目录与顶层集成测试，check-structure.ts 同款约定）整文件；
 //   ② 其余产品文件内的 `#[cfg(test)] mod <name> { … }` 内联块（括号配对，词法
 //   跳过字符串与注释）。产品代码本体不扫——产品开库、产品写表、产品默认时刻
-//   均合法，三条规则只辖测试代码。
+//   均合法，四条规则只辖测试代码。
 // - tests/e2e/** 规则 2/3 整目录覆盖（#764 恢复，#758 时暂离）：未登记命中即红；
-//   规则 1 不辖（分层形态，见规则 1 范围边界）。
+//   规则 1 不辖（分层形态，见规则 1 范围边界）。规则 4 对 tests/e2e 照常生效
+//   （e2e 正是本规则要辖的两处消费方之一）。
 // - 字符串字面量不掩码（SQL 就住在字符串里）；注释（行/块，含嵌套块注释）掩码
 //   为等长空白。裸字符串 "…" 处理转义，r"…" / r#"…"# 等原始字符串按 hash 数配对
 //   终止；'…' 仅按合法 char 字面量吞掉，其余（生命周期 'a、标签 'outer:）跳过
@@ -196,19 +210,27 @@ function extractCfgTestRegions(masked: string): Region[] {
   return regions
 }
 
-// ——— 三条规则的命中形态 ———
+// ——— 四条规则的命中形态 ———
 // 规则 1：裸标识符匹配（任意限定路径、裸调用与 use 引入、测试侧平行建库入口
 // 如 DbState::open_in_memory 与方法形态全部命中；\b 边界排除更长标识符的子串）。
 const RULE1_IDENTIFIERS = /\b(open_in_memory|init_db)\b/g
 // 规则 3：FIXED_NOW 现值（字面量形态，含于字符串内）。
 const RULE3_LITERAL = '2026-01-01T00:00:00Z'
+// 规则 4：手工构造通道段/清单（字面构造形态），与自建摘要实现（裸标识符）。
+// 段/清单构造按 `Type {`（结构体字面量）匹配：类型名单独出现（如 `use ...SegmentEntry`）
+// 不命中——仅当文件里真的在拼字面量时才红。
+const RULE4_LITERAL_CONSTRUCTIONS = [/\bSegmentEntry\s*\{/g, /\bChannelManifest\s*\{/g]
+const RULE4_DIGEST_IDENTIFIERS = /\b(Sha256|sha2)\b/g
+// 规则 4 的作用域门：同文件出现下列任一标识才启用摘要禁令（避开与通道无关的
+// 摘要用法，见文件头规则 4 说明）。
+const RULE4_CHANNEL_SURFACE = [/\bChannelManifest\b/, /\bSegmentEntry\b/, /\bEnvelopeMode\b/, /\bpublish_raw_segment\b/]
 
 // tests/e2e 已登记例外（#764 裁决；登记处 = ADR-0086 修订注记，代码处附动机
 // 注释）：文件 + 规则 + 预期命中数 + 动机一句话。规则 1 无 e2e 例外（不辖，
 // 见文件头规则 1 范围边界）。
 interface E2eException {
   file: string
-  rule: 2 | 3
+  rule: Rule
   count: number
   why: string
 }
@@ -233,7 +255,11 @@ const E2E_REGISTERED_EXCEPTIONS: readonly E2eException[] = [
   },
 ]
 
-interface Hit { rule: 1 | 2 | 3; line: number }
+interface Hit { rule: Rule; line: number }
+
+/** 四条规则的编号集（判定循环与计数表的单一来源） */
+const RULES = [1, 2, 3, 4] as const
+type Rule = (typeof RULES)[number]
 
 function findHits(masked: string, lineOf: (offset: number) => number, bannedTables: string[]): Hit[] {
   const hits: Hit[] = []
@@ -249,6 +275,17 @@ function findHits(masked: string, lineOf: (offset: number) => number, bannedTabl
   while (at !== -1) {
     hits.push({ rule: 3, line: lineOf(at) })
     at = masked.indexOf(RULE3_LITERAL, at + RULE3_LITERAL.length)
+  }
+  for (const re of RULE4_LITERAL_CONSTRUCTIONS) {
+    re.lastIndex = 0
+    let m4: RegExpExecArray | null
+    while ((m4 = re.exec(masked))) hits.push({ rule: 4, line: lineOf(m4.index) })
+  }
+  // 摘要禁令仅在文件引用了通道面时启用（作用域限定，见文件头规则 4 说明）。
+  if (RULE4_CHANNEL_SURFACE.some((re) => re.test(masked))) {
+    RULE4_DIGEST_IDENTIFIERS.lastIndex = 0
+    let m5: RegExpExecArray | null
+    while ((m5 = RULE4_DIGEST_IDENTIFIERS.exec(masked))) hits.push({ rule: 4, line: lineOf(m5.index) })
   }
   return hits
 }
@@ -323,8 +360,8 @@ function scanFiles(
   files: string[],
   srcTauri: string,
   bannedTables: string[],
-): { countByFile: Map<string, Map<1 | 2 | 3, number>>; hits: Array<{ rel: string } & Hit> } {
-  const countByFile = new Map<string, Map<1 | 2 | 3, number>>()
+): { countByFile: Map<string, Map<Rule, number>>; hits: Array<{ rel: string } & Hit> } {
+  const countByFile = new Map<string, Map<Rule, number>>()
   const hits: Array<{ rel: string } & Hit> = []
   for (const file of files.sort()) {
     const rel = relative(srcTauri, file).split('\\').join('/')
@@ -352,7 +389,7 @@ function scanFiles(
       const text = masked.slice(region.start, region.end)
       // 行号按原文计算：masked 与原文等长等换行，region 起点即原文偏移
       for (const hit of findHits(text, (o) => lineOf(region.start + o), bannedTables)) {
-        // 规则豁免：test_support 是工厂本体，三条规则全部合法
+        // 规则豁免：test_support 是工厂本体，四条规则全部合法
         if (underTestSupport) continue
         if (inE2e && hit.rule === 1) continue // 规则 1 不辖 e2e（分层形态，文件头范围边界）
         if (hit.rule === 2 && isThinShell(segments)) continue // 薄皮种子合法（准入规则，ADR-0084 决策 1）
@@ -370,17 +407,20 @@ function scanFiles(
  *  命中对照已登记例外表严格相等校验（#764；「已收敛」零命中校验只在被扫文件
  *  实际存在时生效——例外表只辖本仓 e2e 树，不辖测试夹具），返回违规清单。 */
 function violations(
-  countByFile: Map<string, Map<1 | 2 | 3, number>>,
+  countByFile: Map<string, Map<Rule, number>>,
   hits: Array<{ rel: string } & Hit>,
   scanned: Set<string>,
 ): string[] {
   const problems: string[] = []
-  const RULE_NAMES = { 1: '直连建库', 2: '夹具裸SQL', 3: '默认时刻字面量' } as const
+  const RULE_NAMES = { 1: '直连建库', 2: '夹具裸SQL', 3: '默认时刻字面量', 4: '自建通道线格式' } as const
   for (const file of [...countByFile.keys()].sort()) {
-    for (const rule of [1, 2, 3] as const) {
+    for (const rule of RULES) {
       const actual = countByFile.get(file)?.get(rule) ?? 0
       if (actual === 0) continue
-      const lines = hits.filter((h) => h.rel === file && h.rule === rule).map((h) => h.line)
+      const lines = hits
+        .filter((h) => h.rel === file && h.rule === rule)
+        .map((h) => h.line)
+        .sort((a, b) => a - b)
       // tests/e2e：对照已登记例外表严格相等校验（登记处 ADR-0086 修订注记）
       if (file.startsWith('tests/e2e/')) {
         const registered = E2E_REGISTERED_EXCEPTIONS.find((e) => e.file === file && e.rule === rule)

@@ -62,13 +62,13 @@ export const GUARDED_NAMES: readonly GuardedName[] = [
   },
   {
     name: 'start_triggers',
-    wholeFile: ['sync_engine/trigger.rs', 'sync_engine/mod.rs'],
+    wholeFile: ['sync_engine/trigger/scheduler.rs', 'sync_engine/trigger/mod.rs', 'sync_engine/mod.rs'],
     orchestratorBodyAllowed: true,
-    note: '同步触发编排单一入口（分平台门住址，ADR-0098 决策 4）',
+    note: '同步触发编排单一入口（分平台门住址，ADR-0098 决策 4；issue #958 拆目录后定义住 trigger/scheduler.rs）',
   },
   {
     name: 'start_sync_scheduler',
-    wholeFile: ['sync_engine/trigger.rs', 'sync_engine/mod.rs'],
+    wholeFile: ['sync_engine/trigger/scheduler.rs', 'sync_engine/trigger/mod.rs', 'sync_engine/mod.rs'],
     orchestratorBodyAllowed: false,
     note: '桌面轮询线程拉起（仅 start_triggers 域内消费；直接调用即绕过分平台门，#863 缺陷 1 形态）',
   },

@@ -195,24 +195,8 @@ pub struct ReportGroup {
     pub last_date_range: Option<tauri_app_lib::reports::DateRange>,
 }
 
-/// 同步组快照（issue #863）：多端同步单端旅程的场景状态——通道桩、
-/// 自动/手动轮次的产出与错误、会话信封形态。通道桩按场景现起（Drop 清理），
-/// 故与引导组分离：同步场景自带独立通道世界，不与其他场景共享。
-#[derive(Default)]
-pub struct SyncGroup {
-    /// 本场景的 WebDAV 桩（配置通道时起；场景结束随 world 释放）。
-    pub stub: Option<tauri_app_lib::test_support::WebDavStub>,
-    /// 自动轮次结果（`Ok(None)` = 零动作；`Err` = 静默失败路径）。
-    pub last_auto_round: Option<
-        Result<Option<tauri_app_lib::sync_engine::SyncRoundReport>, tauri_app_lib::error::AppError>,
-    >,
-    /// 手动轮次报告（成功路径）。
-    pub last_report: Option<tauri_app_lib::sync_engine::SyncRoundReport>,
-    /// 会话信封形态快照（密文会话场景断言用）。
-    pub session_encrypted: bool,
-}
-
-/// 引导组快照：备份 + 数据位置 + 加密 + 启动失败 + 账本登记的文件级/引导级状态。
+/// 引导组快照：备份 + 数据位置 + 加密 + 启动失败 + 账本登记 + 同步的文件级/
+/// 引导级/进程级状态——同步与备份同为整库级进程能力，归并于此（issue #955）。
 #[derive(Default)]
 pub struct BootGroup {
     /// 最近一次备份文件的路径（备份/恢复场景用）
@@ -263,6 +247,16 @@ pub struct BootGroup {
     pub book_last_disposition: Option<Result<tauri_app_lib::db::boot::BootDisposition, String>>,
     /// 账本场景（issue #835）：最近一次账本清单聚合（列表命令内核同款）
     pub book_last_list: Option<tauri_app_lib::db::book_registry::BookListInfo>,
+    /// 同步场景的 WebDAV 通道桩（配置通道时起；Drop 清理，issue #863）
+    pub sync_stub: Option<tauri_app_lib::test_support::WebDavStub>,
+    /// 同步自动轮次结果（`Ok(None)` = 零动作；`Err` = 静默失败路径，issue #863）
+    pub sync_last_auto_round: Option<
+        Result<Option<tauri_app_lib::sync_engine::SyncRoundReport>, tauri_app_lib::error::AppError>,
+    >,
+    /// 同步手动轮次报告（成功路径，issue #863）
+    pub sync_last_report: Option<tauri_app_lib::sync_engine::SyncRoundReport>,
+    /// 同步会话信封形态快照（密文会话场景断言用，issue #863）
+    pub sync_session_encrypted: bool,
 }
 
 /// Cucumber World：每个 Scenario 独立持有一个 in-memory SQLite 数据库。
@@ -300,10 +294,8 @@ pub struct LedgerWorld {
     pub policy: PolicyGroup,
     /// 报表组快照
     pub report: ReportGroup,
-    /// 引导组快照（备份 + 数据位置 + 加密 + 启动失败 + 账本登记）
+    /// 引导组快照（备份 + 数据位置 + 加密 + 启动失败 + 账本登记 + 同步）
     pub boot: BootGroup,
-    /// 同步组快照（多端同步单端旅程，issue #863）
-    pub sync: SyncGroup,
 }
 
 /// 启动处置接管结果（issue #601，启动失败恢复场景专用）：文件判定 + 建连的
@@ -360,7 +352,6 @@ impl LedgerWorld {
             policy: PolicyGroup::default(),
             report: ReportGroup::default(),
             boot: BootGroup::default(),
-            sync: SyncGroup::default(),
         };
         // 注册种子黑洞账户（V004 预置 无(CNY)/无(HKD)），供迁移场景按名称引用。
         let hidden: Vec<(String, String)> = {

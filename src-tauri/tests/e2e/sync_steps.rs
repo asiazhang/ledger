@@ -8,15 +8,18 @@
 //! 通道用真实 WebDAV 桩（进程内 axum，域单测与命令集成测试同体消费，ADR-0084
 //! 决策 1），故「配置通道 → 触发同步 → 数据落库」是真实 HTTP 语义而非内存替身。
 //!
-//! 桩按场景现起（`world.sync.stub`，Drop 清理）：每个场景一个独立通道世界，
+//! 桩按场景现起（`world.boot.sync_stub`，Drop 清理）：每个场景一个独立通道世界，
 //! 场景之间零串扰（域单测里桩是场景内局部量，同款纪律）。对端投递用「另起一个
-//! 设备库发布」与「直接写一段坏 op 的段文件」两条真实通道路径，不绕过产品代码。
+//! 设备库发布」与「直接写一段坏 op 的段文件」两条通道路径：前者经产品轮次，
+//! 后者（无公开入口能产出「引用不存在账户的 op」）经共享的**通道线格式替身**
+//! （`test_support::channel`，issue #956）按产品消费的字节形态成帧。
 //!
-//! 与测试工厂的分层边界（ADR-0086 决策 9）：本文件只共享 `test_support::webdav`
-//! 的 **WebDAV 协议替身**（真实 HTTP 服务的进程内实现，域单测与命令面集成测试
-//! 同体消费，ADR-0084 准入「跨 ≥2 处同体消费」），**不消费工厂的建库/种子/
-//! 默认值集**——BDD 侧建库走产品开库入口（world 的 `DbState`）、种子走 `crate::common`
-//! 的 e2e 共享助手、输入走 `step_inputs`、写入走 `step_verbs`，两层互不共享默认值。
+//! 与测试工厂的分层边界（ADR-0086 决策 9）：本文件只共享两个**协议/线格式替身**
+//! —— `test_support::webdav` 的 **WebDAV 协议替身**（真实 HTTP 服务的进程内实现）
+//! 与 `test_support::channel` 的**通道线格式替身**（字节级成帧），两者均由
+//! ≥2 层同体消费（ADR-0084 准入）；**不消费工厂的建库/种子/默认值集**——BDD 侧
+//! 建库走产品开库入口（world 的 `DbState`）、种子走 `crate::common` 的 e2e 共享
+//! 助手、输入走 `step_inputs`、写入走 `step_verbs`，两层互不共享默认值。
 
 use cucumber::{given, then, when};
 use rusqlite::Connection;
@@ -26,8 +29,7 @@ use tauri_app_lib::sync_engine::trigger::{
     SessionEnvelope, SyncChannel, build_channel, configured_channel, run_auto_round, run_round_once,
 };
 use tauri_app_lib::sync_engine::{
-    ChannelLayout, ChannelManifest, DomainCommand, EnvelopeMode, SegmentEntry, StreamManifest,
-    SyncChannelConfig, SyncOp, Transport,
+    ChannelLayout, DomainCommand, EnvelopeMode, SyncChannelConfig, SyncOp, Transport,
 };
 use tauri_app_lib::transaction::{
     NormalizedTransaction, TransactionCommand, TransactionInput, TransactionKind,
@@ -38,7 +40,7 @@ use crate::step_inputs::expense_input;
 use crate::step_verbs::create_transaction_verb;
 use crate::world::LedgerWorld;
 use tauri_app_lib::db::DbState;
-use tauri_app_lib::test_support::spawn_webdav_stub;
+use tauri_app_lib::test_support::{publish_raw_segment, spawn_webdav_stub};
 
 /// 把阻塞的通道工作（reqwest 阻塞客户端 + 真 HTTP）移出异步上下文：cucumber
 /// 场景跑在 tokio 运行时内，阻塞客户端在其中构造/析构会 panic（「Cannot drop a
@@ -64,8 +66,8 @@ fn channel_of(world: &LedgerWorld) -> SyncChannel {
 /// 桩的同步根 URL（场景应先配置通道）。
 fn stub_url(world: &LedgerWorld) -> String {
     world
-        .sync
-        .stub
+        .boot
+        .sync_stub
         .as_ref()
         .expect("场景应先起通道桩")
         .base_url
@@ -76,13 +78,6 @@ fn stub_url(world: &LedgerWorld) -> String {
 fn device_id_of(conn: &Connection) -> String {
     conn.query_row("SELECT id FROM sync_device LIMIT 1", [], |r| r.get(0))
         .expect("本机设备标识应已生成")
-}
-
-/// SHA-256 hex（段自校验摘要；步骤侧独立实现，避免依赖域的私有助手）。
-fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -105,8 +100,8 @@ fn configure_channel_impl(world: &mut LedgerWorld, space: String) {
     // 场景前置：清会话密钥记忆（进程级单例跨场景共享，明文库场景不应残留密文形态）。
     SessionEnvelope::forget();
     // 通道桩按场景现起（同场景内重复配置复用同一桩——语义等价于「改配置」）。
-    if world.sync.stub.is_none() {
-        world.sync.stub = Some(spawn_webdav_stub(None));
+    if world.boot.sync_stub.is_none() {
+        world.boot.sync_stub = Some(spawn_webdav_stub(None));
     }
     let config = SyncChannelConfig {
         base_url: stub_url(world),
@@ -164,9 +159,10 @@ fn peer_publishes(world: &mut LedgerWorld) {
     });
 }
 
-/// 对端投递一条引用不存在账户的操作：直接写一个含坏 op 的段文件 + 归并 manifest。
+/// 对端投递一条引用不存在账户的操作：按通道线格式写一个含坏 op 的段 + manifest。
 /// 该 op 外键指向不存在的账户，重放必然被账户存活守卫拒绝——挂起队列因此非空
-///（「挂起通知可见」的被测前提）。写入经通道的段/清单形态（产品代码消费的形状）。
+///（「挂起通知可见」的被测前提）。此形态无公开入口可产出（域写入口有外键守卫），
+/// 故经共享的线格式替身成帧（issue #956），字节形态与产品消费的形状同源。
 #[given(expr = "对端投递一条引用不存在账户的操作")]
 fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
     let layout = ChannelLayout::new("default").expect("布局应可构造");
@@ -208,34 +204,15 @@ fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
             investment: None,
         }),
     };
-    let payload = serde_json::to_vec(&vec![op]).expect("段载荷序列化应成功");
-    let manifest = ChannelManifest {
-        version: 1,
-        streams: vec![StreamManifest {
-            device_id: "e2e-peer-device".into(),
-            segments: vec![SegmentEntry {
-                file: "seg-0000000001-0000000001.enc".into(),
-                first_clock: 1,
-                last_clock: 1,
-                size: payload.len() as u64,
-                sha256: sha256_hex(&payload),
-            }],
-        }],
-        checkpoint: None,
-    };
     blocking(|| {
-        transport
-            .ensure_dir(&layout.stream_dir("e2e-peer-device"))
-            .expect("建流目录应成功");
-        transport
-            .write_file(&layout.segment_path("e2e-peer-device", 1, 1), &payload)
-            .expect("段写入应成功");
-        transport
-            .write_file(
-                &layout.manifest_path(),
-                &serde_json::to_vec_pretty(&manifest).expect("清单序列化应成功"),
-            )
-            .expect("清单写入应成功");
+        publish_raw_segment(
+            transport,
+            &layout,
+            "e2e-peer-device",
+            &EnvelopeMode::Plaintext,
+            &[op],
+        )
+        .expect("段与清单写入应成功");
     });
 }
 
@@ -262,7 +239,7 @@ fn point_to_unreachable_channel(world: &mut LedgerWorld) {
 #[when(expr = "打开应用即同步一轮")]
 fn auto_sync_once(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
-    world.sync.last_auto_round = Some(blocking(|| {
+    world.boot.sync_last_auto_round = Some(blocking(|| {
         run_auto_round(&conn, &SessionEnvelope::Plaintext)
     }));
 }
@@ -273,7 +250,7 @@ fn manual_sync_once(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     match blocking(|| run_round_once(&conn, &channel, &EnvelopeMode::Plaintext)) {
         Ok(report) => {
-            world.sync.last_report = Some(report);
+            world.boot.sync_last_report = Some(report);
             world.last_app_error = None;
         }
         Err(e) => world.last_app_error = Some(e),
@@ -285,9 +262,9 @@ fn auto_sync_encrypted_session(world: &mut LedgerWorld) {
     // 密文库会话形态：记入会话口令（自动轮次据此封包，不读钥匙串）。
     SessionEnvelope::remember(SessionEnvelope::Encrypted("master-pass".into()));
     let session = SessionEnvelope::current();
-    world.sync.session_encrypted = matches!(session, SessionEnvelope::Encrypted(_));
+    world.boot.sync_session_encrypted = matches!(session, SessionEnvelope::Encrypted(_));
     let conn = world_conn!(world);
-    world.sync.last_auto_round = Some(blocking(|| run_auto_round(&conn, &session)));
+    world.boot.sync_last_auto_round = Some(blocking(|| run_auto_round(&conn, &session)));
     SessionEnvelope::forget();
 }
 
@@ -318,8 +295,8 @@ fn channel_has_book_dir(world: &mut LedgerWorld) {
 #[then(expr = "本轮同步应上传 {int} 条操作")]
 fn uploaded_ops_is(world: &mut LedgerWorld, expected: usize) {
     let round = world
-        .sync
-        .last_auto_round
+        .boot
+        .sync_last_auto_round
         .as_ref()
         .expect("应先执行自动轮次")
         .as_ref()
@@ -330,7 +307,11 @@ fn uploaded_ops_is(world: &mut LedgerWorld, expected: usize) {
 
 #[then(expr = "本端应已应用对端操作")]
 fn applied_foreign_ops(world: &mut LedgerWorld) {
-    let report = world.sync.last_report.as_ref().expect("应先执行手动轮次");
+    let report = world
+        .boot
+        .sync_last_report
+        .as_ref()
+        .expect("应先执行手动轮次");
     assert!(
         report.applied >= 1,
         "本端应至少应用一条对端 op，实际报告 {report:?}"
@@ -366,8 +347,8 @@ fn status_has_last_sync_at(world: &mut LedgerWorld) {
 #[then(expr = "同步轮次应零动作")]
 fn auto_sync_was_noop(world: &mut LedgerWorld) {
     let round = world
-        .sync
-        .last_auto_round
+        .boot
+        .sync_last_auto_round
         .as_ref()
         .expect("应先执行同步轮次");
     assert!(
@@ -399,7 +380,7 @@ fn parked_notice_has_code(world: &mut LedgerWorld) {
 #[then(expr = "会话信封形态应为密文")]
 fn session_is_encrypted(world: &mut LedgerWorld) {
     assert!(
-        world.sync.session_encrypted,
+        world.boot.sync_session_encrypted,
         "会话口令在场即密文形态（自动轮次不读钥匙串）"
     );
 }
@@ -407,8 +388,8 @@ fn session_is_encrypted(world: &mut LedgerWorld) {
 #[then(expr = "同步轮次应封包上传")]
 fn auto_round_sealed(world: &mut LedgerWorld) {
     let round = world
-        .sync
-        .last_auto_round
+        .boot
+        .sync_last_auto_round
         .as_ref()
         .expect("应先执行同步轮次")
         .as_ref()

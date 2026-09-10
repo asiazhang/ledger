@@ -38,6 +38,7 @@ use tauri_app_lib::db::data_location;
 use tauri_app_lib::db::encryption::{enable_encryption_for_file, probe_file_kind};
 use tauri_app_lib::db::{self, DbState};
 use tauri_app_lib::error::AppError;
+use tauri_app_lib::sync_engine::EnvelopeMode;
 use tauri_app_lib::test_support::{read_scalar_i64, spawn_webdav_stub};
 use tauri_app_lib::transaction::{TransactionInput, TransactionKind};
 
@@ -348,6 +349,14 @@ async fn parked_ops_are_visible_through_command_surface() {
         parked[0].code
     );
     assert!(!parked[0].message.is_empty(), "原因详情不应为空");
+    // 插值参数随挂起行出 wire（issue #957）：壳层 `ParkedOpState::from` 是手工
+    // 字段搬运，漏字段即前端渲染残缺句；此处钉住 params 与 code 同源到场。
+    assert_eq!(parked[0].code, "account.not-found");
+    assert_eq!(
+        parked[0].params,
+        vec!["no-such-account".to_string()],
+        "params 应随 wire 携带动态值"
+    );
     assert!(!parked[0].parked_at.is_empty(), "挂起时刻应落库");
 
     // 状态回显同源：parked_count 与清单长度一致。
@@ -369,9 +378,9 @@ fn deliver_unreplayable_op(base_url: &str) {
 
 fn deliver_unreplayable_op_blocking(base_url: &str) {
     use tauri_app_lib::sync_engine::{
-        ChannelLayout, ChannelManifest, DomainCommand, SegmentEntry, StreamManifest, SyncOp,
-        Transport, WebDavConfig, WebDavTransport,
+        ChannelLayout, DomainCommand, SyncOp, WebDavConfig, WebDavTransport,
     };
+    use tauri_app_lib::test_support::publish_raw_segment;
     use tauri_app_lib::transaction::{NormalizedTransaction, TransactionCommand};
 
     let transport = WebDavTransport::new(WebDavConfig {
@@ -381,7 +390,9 @@ fn deliver_unreplayable_op_blocking(base_url: &str) {
     })
     .unwrap();
     let layout = ChannelLayout::new("family").unwrap();
-    let schema_version = test_support_open_schema_version();
+    // schema 版本取产品单点（`db::schema_version`），与重放端同版：走重放路径
+    // 而非 schema 偏斜挂起。
+    let schema_version = db::schema_version(&tauri_app_lib::test_support::open()).unwrap();
     let op = SyncOp {
         op_id: "it-parked-op".into(),
         device_id: "it-peer-device".into(),
@@ -407,45 +418,15 @@ fn deliver_unreplayable_op_blocking(base_url: &str) {
             investment: None,
         }),
     };
-    let payload = serde_json::to_vec(&vec![op]).unwrap();
-    transport
-        .ensure_dir(&layout.stream_dir("it-peer-device"))
-        .unwrap();
-    transport
-        .write_file(&layout.segment_path("it-peer-device", 1, 1), &payload)
-        .unwrap();
-    let manifest = ChannelManifest {
-        version: 1,
-        streams: vec![StreamManifest {
-            device_id: "it-peer-device".into(),
-            segments: vec![SegmentEntry {
-                file: "seg-0000000001-0000000001.enc".into(),
-                first_clock: 1,
-                last_clock: 1,
-                size: payload.len() as u64,
-                sha256: sha256_hex(&payload),
-            }],
-        }],
-        checkpoint: None,
-    };
-    transport
-        .write_file(
-            &layout.manifest_path(),
-            &serde_json::to_vec_pretty(&manifest).unwrap(),
-        )
-        .unwrap();
-}
-
-/// 当前 schema 版本（与重放端同版：走重放路径而非 schema 偏斜挂起）。
-fn test_support_open_schema_version() -> i64 {
-    let conn = tauri_app_lib::test_support::open();
-    conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-        .unwrap()
-}
-
-/// SHA-256 hex（段自校验摘要）。
-fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+    let payload = vec![op];
+    // 段 + manifest 两条真实通道写：线格式成帧收归测试支持域（issue #956），
+    // 本处只提供 op 语义与对端身份。
+    publish_raw_segment(
+        &transport,
+        &layout,
+        "it-peer-device",
+        &EnvelopeMode::Plaintext,
+        &payload,
+    )
+    .unwrap();
 }
