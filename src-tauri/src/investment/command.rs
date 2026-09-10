@@ -195,7 +195,7 @@ pub(crate) fn replay_instrument_command(
             name,
             market,
             ..
-        } => super::crud::write_instrument_update(conn, symbol, *kind, name, market),
+        } => super::crud::write_instrument_update(conn, symbol, *kind, name.as_deref(), market),
         InstrumentCommand::Delete { id } => super::crud::write_delete_instrument(conn, id),
     }
 }

@@ -193,19 +193,12 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
             ((quantity * price_cents as f64 + fee_cents as f64 * PRICE_UNITS_PER_FEN) / quantity)
                 .round() as i64;
     }
-    let account_type: AccountType = conn
-        .query_row(
-            "SELECT type FROM accounts WHERE id=?1",
-            rusqlite::params![input.account_id],
-            |r| r.get::<_, String>(0),
-        )?
-        .parse()?;
-    if account_type != AccountType::Investment {
-        return Err(AppError::coded(
-            "trade.buy-account-not-investment",
-            "买入交易必须使用投资账户",
-        ));
-    }
+    ensure_investment_account(
+        conn,
+        &input.account_id,
+        "trade.buy-account-not-investment",
+        "买入交易必须使用投资账户",
+    )?;
     let account_currency = account_currency_code(conn, &input.account_id)?;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
     // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
@@ -306,24 +299,21 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         }
         amount_cents = gross_proceeds - fee_cents;
     }
-    let account_type: AccountType = conn
-        .query_row(
-            "SELECT type FROM accounts WHERE id=?1",
-            rusqlite::params![input.account_id],
-            |r| r.get::<_, String>(0),
-        )?
-        .parse()?;
-    if account_type != AccountType::Investment {
-        return Err(AppError::coded(
-            "trade.sell-account-not-investment",
-            "卖出交易必须使用投资账户",
-        ));
-    }
+    ensure_investment_account(
+        conn,
+        &input.account_id,
+        "trade.sell-account-not-investment",
+        "卖出交易必须使用投资账户",
+    )?;
     let account_currency = account_currency_code(conn, &input.account_id)?;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
     // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
     let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
 
+    // FIFO 排序键 = rowid（本端插入序，先买先卖）：不得用 created_at/id——
+    // now_iso 为秒级精度，同秒建仓时随机 id tiebreak 在重放端会排出与源端
+    // 不同的顺序，卖出匹配发散（确定性重放，ADR-0091 决策 2/3，issue #861）；
+    // 重放端按 op 序插入批次，rowid 相对序与源端恒一致。
     let lots: Vec<ActiveLot> = query_all(
         conn,
         "SELECT id, remaining_quantity, cost_per_unit_cents, currency_code \
@@ -721,7 +711,8 @@ pub(crate) fn replay_plan(
             } else {
                 (fields.quantity * fields.price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64
             };
-            // FIFO 批次快照在本端重建：同序重放下与源端同状态 ⇒ 同一匹配结果。
+            // FIFO 批次快照在本端重建：同序重放下与源端同状态 ⇒ 同一匹配结果
+            //（排序键 rowid 的跨端确定性依据见 prepare_sell 同码查询处注释）。
             let lots: Vec<ActiveLot> = query_all(
                 conn,
                 "SELECT id, remaining_quantity, cost_per_unit_cents, currency_code \

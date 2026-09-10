@@ -299,6 +299,8 @@ pub fn get_instrument(conn: &Connection, id: &str) -> Result<Instrument> {
 /// buy_transaction_id 为指向 security_transactions 的 NOT NULL 外键——批次存在
 /// 必有买入明细行，故守卫的流水 COUNT 已覆盖批次（无流水 ⟺ 无批次），
 /// DELETE 不会撞到 RESTRICT 外键错误。
+/// 自建标的删除（issue #292 / ADR-0036 决策 5）：守卫与删除语义单一归属
+/// [`write_delete_instrument`]，本入口只叠加 op 产出（issue #861）。
 pub fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
     write_delete_instrument(conn, id)?;
     // op 产出接缝（issue #861 / ADR-0091）：删除成功 → delete op（实体 id）
@@ -455,7 +457,7 @@ pub(crate) fn write_instrument_update(
     conn: &Connection,
     symbol: &str,
     kind: InstrumentType,
-    name: &Option<String>,
+    name: Option<&str>,
     market: &str,
 ) -> Result<()> {
     let changed = conn.execute(
