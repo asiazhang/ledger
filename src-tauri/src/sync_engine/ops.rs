@@ -19,6 +19,15 @@ use super::positions;
 ///
 /// 必须在本地写事务内调用（行为编排入口保证）——op 与其对应的数据写同事务
 /// 提交/回滚，写失败不残留 op，时钟不产生空洞。
+///
+/// 本函数是**本地产出 op 的唯一收敛点**（行为编排入口经各域命令模块调用；
+/// 外来 op 重放走 [`insert_row`]、不产出本地 op，天然不误触发）：写后即时上传
+/// 的信号（issue #863 / ADR-0091 决策 9）钩在这里——比壳层 `write_entry` 更准
+/// （后者漏掉定时追补 `scheduled_transactions::run_catch_up` 并在 `sync_now`
+/// 自身空触发），也比连接层 `db::write` 提交点更合分层（基础设施不持业务语义，
+/// ADR-0071 决策 6）。信号在事务内投递：它只是「起来看看」的提示，真正的读在
+/// 调度线程拿到连接锁之后（写路径持锁到提交/回滚，轮次看不到未提交状态）；
+/// 非阻塞，调度未拉起时零动作。
 pub(crate) fn record_local(conn: &Connection, command: DomainCommand) -> Result<SyncOp> {
     let device_id = device::device_id(conn)?;
     let clock = device::next_clock(conn)?;
@@ -34,6 +43,10 @@ pub(crate) fn record_local(conn: &Connection, command: DomainCommand) -> Result<
     // 跟进使位点门能拦住「源端截掉旧 op 后对端全量重投」的本机旧 op（不复活，
     // issue #857）。
     positions::advance(conn, &op.device_id, op.clock)?;
+    // 写后即时入队上传（ADR-0091 决策 9）：本地产出 op 即投递一次「有新 op
+    // 待发布」，调度线程去抖合流后跑一轮。非阻塞（无界通道投递即返回），
+    // 写路径不等网络；同步调度未拉起（未配置通道 / 单测环境）时零动作。
+    super::trigger::sync_after_write();
     Ok(op)
 }
 

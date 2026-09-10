@@ -44,7 +44,9 @@ use crate::sync_engine::trigger::{
     DEFAULT_SPACE_ID, book_unavailable_error, build_channel, configured_channel,
     not_configured_error, run_round_once,
 };
-use crate::sync_engine::{EnvelopeMode, SyncChannelConfig, SyncRoundReport, device_id, parked_ops};
+use crate::sync_engine::{
+    EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport, device_id, parked_ops,
+};
 use crate::write_entry::{Outcome, write_entry};
 
 /// 通道配置回显（设置页通道配置表单，issue #862）：未配置时各字段为空串、
@@ -151,11 +153,13 @@ pub async fn sync_now<R: Runtime>(
                 None => EnvelopeMode::Plaintext,
             };
             let report = run_round_once(conn, &channel, &mode)?;
-            // 成功轮次的口令记入本机会话（打开即同步与低频轮询不再触钥匙串）；
-            // 明文库清空会话记忆——同一单点同时承载两态（issue #863）。
+            // 成功轮次记入本会话形态（打开即同步与低频轮询不再触钥匙串）；
+            // 明文库记「明文形态」——同一单点同时承载两态（issue #863）。
             match &passphrase_holder {
-                Some(passphrase) => passphrase_cache::set_session_passphrase(passphrase),
-                None => passphrase_cache::clear_session_passphrase(),
+                Some(passphrase) => {
+                    SessionEnvelope::remember(SessionEnvelope::Encrypted(passphrase.clone()))
+                }
+                None => SessionEnvelope::remember(SessionEnvelope::Plaintext),
             }
             Ok(Outcome::Evidenced(
                 report,

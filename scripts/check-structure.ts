@@ -125,12 +125,6 @@ const INFRA_DOMAIN_ALLOWED_EDGES: readonly InfraDomainEdge[] = [
     reason: 'ADR-0032 连接层统一写入口置脏单点：after_commit 提交点触发置脏 + 到期检查（#246）',
   },
   {
-    file: 'db/mod.rs',
-    domain: 'sync_engine',
-    reason:
-      'ADR-0098 决策 2 写后即时上传信号点：after_commit 提交点投递一次「有本地 op 待发布」（与 ADR-0032 置脏同一位置，#863）；投递非阻塞、发送端缺席时零动作，业务写路径零接线',
-  },
-  {
     file: 'settings.rs',
     domain: 'test_support',
     reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/取常量（#758 收口），测试专用边、非产品依赖',

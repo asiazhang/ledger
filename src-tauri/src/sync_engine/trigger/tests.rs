@@ -5,7 +5,6 @@
 //! 钉触发侧新增的事实：配置读取/构库单点、未配置即零动作（不触网、不落成功
 //! 时刻）、一轮成功即落成功时刻、会话记忆决定信封形态。
 
-use crate::db::passphrase_cache;
 use crate::settings::{self, SettingKey};
 use crate::sync_engine::EnvelopeMode;
 use crate::sync_engine::SyncChannelConfig;
@@ -70,14 +69,14 @@ fn build_channel_rejects_invalid_space_with_coded_error() {
 /// 「自动轮询不读钥匙串」由本单点保证（读会话记忆，不读钥匙串）。
 #[test]
 fn session_envelope_follows_session_passphrase() {
-    passphrase_cache::clear_session_passphrase();
+    SessionEnvelope::forget();
     assert_eq!(
         SessionEnvelope::current(),
         SessionEnvelope::Plaintext,
-        "无会话口令 = 明文形态（明文库的正常形态）"
+        "无会话记忆 = 明文形态（明文库的正常形态）"
     );
 
-    passphrase_cache::set_session_passphrase("master-pass");
+    SessionEnvelope::remember(SessionEnvelope::Encrypted("master-pass".into()));
     assert_eq!(
         SessionEnvelope::current(),
         SessionEnvelope::Encrypted("master-pass".into())
@@ -86,8 +85,16 @@ fn session_envelope_follows_session_passphrase() {
         SessionEnvelope::current().mode(),
         EnvelopeMode::Encrypted { passphrase } if passphrase == "master-pass"
     ));
-    // 收尾：进程级单例跨测试共享，复位避免污染其他用例。
-    passphrase_cache::clear_session_passphrase();
+
+    // 换库清空（原位重引导 / 忘记口令重置 / 关闭加密）：新库形态未知，回明文
+    // 形态等下一次解锁或手动同步重新记入——避免拿旧库口令去封新库的段。
+    SessionEnvelope::forget();
+    assert_eq!(SessionEnvelope::current(), SessionEnvelope::Plaintext);
+    assert_eq!(
+        SessionEnvelope::Plaintext.mode(),
+        EnvelopeMode::Plaintext,
+        "明文形态对应的信封模式是明文直通"
+    );
 }
 
 /// 自动轮次：通道未配置时零动作（`None`，不触网、不落成功时刻）。
@@ -137,20 +144,32 @@ fn round_once_stamps_last_sync_on_success() {
     );
 }
 
-/// 写后触发的去抖合流（ADR-0091 决策 9「写 op 后即时入队上传」）：连续写入合流
-/// 成一轮，且最后一次写之后仍会跑一轮（不丢最后一批 op）。
+/// 写后触发的去抖合流（ADR-0091 决策 9「写 op 后即时入队上传」）：窗口内的
+/// 连续写信号被一次吸干——连续记账合流成一轮，不是「每写一笔传一次」。
 #[test]
-fn write_after_sync_debounce_keeps_the_last_batch() {
-    // 空窗口（无写信号）：不跑轮次。
-    let empty = crate::sync_engine::trigger::WriteDebounce::default();
-    assert!(!empty.should_run(), "无写信号不该起轮次");
+fn write_after_sync_debounce_drains_a_burst_into_one_round() {
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let window = std::time::Duration::from_millis(80);
 
-    // 连发多次写：同一窗口内合流，收尾判定为「有活干」——恰好跑一轮。
-    let mut burst = crate::sync_engine::trigger::WriteDebounce::default();
-    burst.observe();
-    burst.observe();
-    burst.observe();
-    assert!(burst.should_run(), "窗口内有写：收尾应跑一轮（合流成一轮）");
+    // 连发三次写（模拟批量录入）：一次吸干，返回「窗口内有过写」。
+    tx.send(()).unwrap();
+    tx.send(()).unwrap();
+    tx.send(()).unwrap();
+    assert!(
+        crate::sync_engine::trigger::drain_write_signals(&rx, window),
+        "窗口内有写：应收尾并跑一轮（合流成一轮）"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "三次写应被一次吸干（不残留信号触发第二轮）"
+    );
+
+    // 空窗口（无写信号）：不跑轮次。
+    let (_tx, rx) = std::sync::mpsc::channel::<()>();
+    assert!(
+        !crate::sync_engine::trigger::drain_write_signals(&rx, window),
+        "无写信号不该起轮次"
+    );
 }
 
 /// 写后触发在「调度未拉起」时是零动作（写路径对同步域无感）：投递不 panic、
@@ -158,4 +177,25 @@ fn write_after_sync_debounce_keeps_the_last_batch() {
 #[test]
 fn write_after_sync_without_scheduler_is_a_noop() {
     crate::sync_engine::sync_after_write();
+}
+
+/// 写信号投递侧（与吸干侧对称的参数接缝）：通道在位即投递一次；未装通道
+/// 零动作。两侧共用显式通道参数，不依赖进程级单例、不需测试后门。
+#[test]
+fn write_signal_is_delivered_into_the_channel() {
+    use std::sync::OnceLock;
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let slot: OnceLock<std::sync::mpsc::Sender<()>> = OnceLock::new();
+    assert!(slot.set(tx).is_ok());
+
+    crate::sync_engine::trigger::notify_write_signal(&slot);
+    assert!(
+        rx.try_recv().is_ok(),
+        "通道在位：本地产出 op 应投递一次写信号"
+    );
+    assert!(rx.try_recv().is_err(), "一次产出一次信号（不重复投递）");
+
+    // 未装通道（未拉起调度 / 单测环境）：零动作，不 panic。
+    let empty: OnceLock<std::sync::mpsc::Sender<()>> = OnceLock::new();
+    crate::sync_engine::trigger::notify_write_signal(&empty);
 }

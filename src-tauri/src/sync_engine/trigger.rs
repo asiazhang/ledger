@@ -10,13 +10,15 @@
 //!   的失败静默等下一轮（ADR-0091：「同步失败不阻塞本地记账」）；
 //! - 自动触发（[`run_auto_round`] / [`sync_on_start`] / [`start_sync_scheduler`] /
 //!   [`sync_after_write`]）：打开应用即同步 + 运行期低频轮询 + 写 op 后即时入队
-//!   上传，三者同一段编排，只有触发时机不同。写后触发**去抖合流**：连续记账
+//!   上传，三者同一段编排，只有触发时机不同。写后触发的信号点在**本地 op 产出
+//!   单点** [`super::ops::record_local`]（域内，见该函数文档），去抖合流：连续记账
 //!   只在最后一次写后 [WRITE_DEBOUNCE] 跑一轮，避免每次写入都触网（ADR-0091
 //!   「写 op 后即时入队上传」的取舍留痕见 ADR-0098）；
-//! - 信封模式由**本机会话密钥形态**（[`SessionEnvelope`]）判定：解锁密文库或
-//!   一次成功的手动同步后记入会话口令（见 [`crate::db::passphrase_cache`]），
-//!   有则封包、无则明文直通——自动轮询不读钥匙串（钥匙串读取在发布构建下带
-//!   生物认证门，后台轮询不得弹交互，ADR-0098）。
+//! - 信封模式由**本机会话密钥形态**（[`SessionEnvelope`]，进程级单例）判定：
+//!   解锁密文库或一次成功的手动同步后记入，有则封包、无则明文直通——自动轮询
+//!   不读钥匙串（钥匙串读取在发布构建下带生物认证门，后台轮询不得弹交互，
+//!   ADR-0098）。换库路径（原位重引导、忘记口令重置）清空记忆、关闭加密记入
+//!   明文形态，避免拿旧库口令去封新库的段。
 //!
 //! 触发时机是**可逆工程决策**（ADR-0091「后果」段明言不入 ADR），轮询周期与
 //! 「自动轮询不做新端引导」两条留痕见 ADR-0098。
@@ -31,7 +33,6 @@ use tauri::{AppHandle, Manager};
 
 use crate::db::boot::BootFailureGate;
 use crate::db::encryption::EncryptionGate;
-use crate::db::passphrase_cache;
 use crate::db::{DbState, now_iso};
 use crate::error::{AppError, Result};
 use crate::settings::{self, SettingKey};
@@ -135,8 +136,16 @@ pub fn run_round_once(
     Ok(report)
 }
 
-/// 本机会话的密钥形态（ADR-0098）：解锁密文库或一次成功的手动同步后记入，
-/// 自动同步轮次据此判定信封模式。
+/// 本会话密钥记忆（ADR-0098）：解锁密文库或一次成功的手动同步后记入，
+/// 自动同步轮次据此判定信封模式。进程级单例，与解锁态同生命周期。
+///
+/// 归本域而非基础设施：它是**同步触发**的工程决策（自动轮询不得弹生物认证），
+/// 除同步轮次外无消费者。口令本体的钥匙串缓存仍归备份域基础设施
+/// （`db::passphrase_cache`），本单例只持「本会话已知的形态」。
+static SESSION_ENVELOPE: std::sync::Mutex<Option<SessionEnvelope>> = std::sync::Mutex::new(None);
+
+/// 本机会话的密钥形态：解锁密文库或一次成功的手动同步后记入，自动同步轮次
+/// 据此判定信封模式。
 ///
 /// 自动轮询**不读钥匙串**：钥匙串读取在发布构建下先过 LocalAuthentication 门
 /// （弹 Touch ID，ADR-0075 决策 3 / issue #866），后台轮询不得弹交互；本会话
@@ -151,12 +160,25 @@ pub enum SessionEnvelope {
 }
 
 impl SessionEnvelope {
-    /// 读取当前会话形态（进程级单例，见 [`passphrase_cache::session_passphrase`]）。
+    /// 记入本会话形态（解锁成功 / 一次成功的手动同步 / 用户设置记住口令）。
+    pub fn remember(session: SessionEnvelope) {
+        *SESSION_ENVELOPE.lock().unwrap_or_else(|e| e.into_inner()) = Some(session);
+    }
+
+    /// 清空本会话记忆（引导换库、忘记口令重置、关闭加密等改变库身份的路径）：
+    /// 新库形态未知，等下一次解锁/手动同步重新记入——避免拿旧库口令去封新库的段
+    /// （密文/明文错配会让对端无法开封）。
+    pub fn forget() {
+        *SESSION_ENVELOPE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// 读取当前会话形态（未记入回 [`SessionEnvelope::Plaintext`]：明文库形态）。
     pub fn current() -> Self {
-        match passphrase_cache::session_passphrase() {
-            Some(passphrase) => Self::Encrypted(passphrase),
-            None => Self::Plaintext,
-        }
+        SESSION_ENVELOPE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .unwrap_or(SessionEnvelope::Plaintext)
     }
 
     /// 对应的信封模式（借出形态，轮次消费）。
@@ -201,42 +223,49 @@ pub fn sync_on_start(app: &AppHandle) {
     });
 }
 
-/// 写后即时同步的去抖合流策略（ADR-0091 决策 9「写 op 后即时入队上传」）：
-/// 连续写入合流成一轮，且保证**最后一次**写之后仍会跑一轮（不丢最后一批 op）。
+/// 写后触发去抖合流的**决策本体**（ADR-0091 决策 9「写 op 后即时入队上传」）：
+/// 把去抖窗口内的连续写信号一次吸干，返回「窗口内确实有过写」。
 ///
-/// 纯状态机（不触网、不触库），调度线程只做 `recv_timeout` + 调用本结构——
-/// 「合流」这一决策因此可独立断言，不与线程时序耦合。
-#[derive(Debug, Default)]
-struct WriteDebounce {
-    /// 本窗口内是否已有写（窗口起点判定）。
-    seen: bool,
-}
-
-impl WriteDebounce {
-    /// 收一次写信号。
-    fn observe(&mut self) {
-        self.seen = true;
-    }
-
-    /// 窗口是否已收到过写（收尾时判定：有则本轮确实有活干）。
-    fn should_run(&self) -> bool {
-        self.seen
+/// 与线程时序解耦，便于直接断言「连续记账合流成一轮」；调度线程只做
+/// `recv_timeout` 循环 + 调用本函数（`window` 即静默判定长度）。
+///
+/// 返回值恒为真（调用方在收到首个信号后才进入本函数），保留返回值是为了让
+/// 「吸干后是否该跑一轮」这一判定显式可读、可测。
+fn drain_write_signals(rx: &std::sync::mpsc::Receiver<()>, window: Duration) -> bool {
+    let mut wrote = false;
+    loop {
+        match rx.recv_timeout(window) {
+            Ok(()) => wrote = true,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return wrote,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return wrote,
+        }
     }
 }
 
-/// 写后即时同步的信号通道（进程级单例）：`db::write` 提交点经 [`sync_after_write`]
-/// 投递一次「有本地 op 待发布」，调度线程据此起一轮。发送端未装（调度未拉起 /
-/// 单测环境）时投递是零动作——写路径对同步域完全无感。
+/// 写后即时同步的信号通道（进程级单例）：本地 op 产出单点
+/// [`super::ops::record_local`] 经 [`sync_after_write`] 投递一次「有新 op 待发布」，
+/// 调度线程据此起一轮。发送端未装（调度未拉起 / 单测环境）时投递是零动作——
+/// 写路径对同步域完全无感。
 static WRITE_SIGNAL: std::sync::OnceLock<std::sync::mpsc::Sender<()>> = std::sync::OnceLock::new();
 
-/// 写 op 后即时入队上传的信号侧（ADR-0091 决策 9）：本地写入成功后调用一次。
+/// 写 op 后即时入队上传的信号侧（ADR-0091 决策 9）：本地产出 op 后调用一次。
 ///
-/// 触发点是连接层统一写入口的提交点（`db::write` 的 `after_commit`，与自动备份
-/// 置脏同一位置）：所有业务写入（IPC / HTTP / 批量导入 / 重放）天然覆盖，各写路径
-/// 零接线。**非阻塞**：无界通道投递即返回，写路径不等网络；发送端缺席（未拉起
-/// 调度、单测）静默忽略。去抖合流在调度线程侧完成（连续记账合流成一轮）。
+/// 触发点是**本地 op 产出单点** [`super::ops::record_local`]：本仓全部本地产出
+/// （IPC / HTTP / 批量导入 / 定时追补）都经它收敛，且外来 op 重放走
+/// [`super::ops::insert_row`] 不产出本地 op，天然不误触发。放在壳层
+/// `write_entry` 会漏掉定时追补（直接进行为编排）并在 `sync_now` 自身空触发；
+/// 放在连接层 `db::write` 提交点则既有分层问题又不区分产出。**非阻塞**：无界
+/// 通道投递即返回，写路径不等网络；发送端缺席（未拉起调度、单测）静默忽略。
+/// 去抖合流在调度线程侧完成。
 pub fn sync_after_write() {
-    if let Some(tx) = WRITE_SIGNAL.get() {
+    notify_write_signal(&WRITE_SIGNAL);
+}
+
+/// 写信号投递（信号侧单点）：通道未装时零动作。与 [`drain_write_signals`]
+/// 对称——投递与吸干两侧都以通道为显式参数，可脱离线程时序单独断言
+/// （不依赖进程级单例，无需测试后门）。
+fn notify_write_signal(slot: &std::sync::OnceLock<std::sync::mpsc::Sender<()>>) {
+    if let Some(tx) = slot.get() {
         let _ = tx.send(());
     }
 }
@@ -270,16 +299,8 @@ pub fn start_sync_scheduler(app: &AppHandle) {
                 // 写后触发：去抖合流——窗口内继续有写则顺延，直到静默
                 // [WRITE_DEBOUNCE] 才跑一轮（连续记账合流成一轮，最后一批 op 不丢）。
                 Ok(()) => {
-                    let mut debounce = WriteDebounce::default();
-                    debounce.observe();
-                    loop {
-                        match rx.recv_timeout(WRITE_DEBOUNCE) {
-                            Ok(()) => debounce.observe(),
-                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
-                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
-                        }
-                    }
-                    if !debounce.should_run() {
+                    // 去抖合流：把窗口内的连续写信号一次吸干，只跑一轮。
+                    if !drain_write_signals(&rx, WRITE_DEBOUNCE) {
                         continue;
                     }
                 }

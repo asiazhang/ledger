@@ -121,9 +121,11 @@ async fn do_unlock(app: &AppHandle, passphrase: &str) -> Result<UnlockOutcome> {
         encryption::unlock_db_file(&db_path, &pass)
     })
     .await?;
-    // 本会话密钥记忆（issue #863 / ADR-0098）：解锁成功即记入会话口令，自动
+    // 本会话密钥记忆（issue #863 / ADR-0098）：解锁成功即记入会话形态，自动
     // 同步轮次（打开即同步 / 低频轮询）无需再触钥匙串即可封包。
-    passphrase_cache::set_session_passphrase(passphrase);
+    crate::sync_engine::SessionEnvelope::remember(crate::sync_engine::SessionEnvelope::Encrypted(
+        passphrase.to_string(),
+    ));
     resume_business_surface(app, conn)?;
 
     // 等待中的搬迁（issue #570）：源库为密文库时启动期无法搬迁，解锁后
@@ -296,9 +298,9 @@ pub async fn disable_encryption(app: AppHandle, passphrase: String) -> Result<()
         passphrase_cache::delete(book.as_deref())
     })
     .await;
-    // 关闭加密后库为明文形态：清本会话密钥记忆（issue #863），后续自动轮次
-    // 按明文直通（否则会拿旧口令去封明文段，对端无法开封）。
-    passphrase_cache::clear_session_passphrase();
+    // 关闭加密后库为明文形态：记入明文形态（issue #863），后续自动轮次按明文
+    // 直通（否则会拿旧口令去封明文段，对端无法开封）。
+    crate::sync_engine::SessionEnvelope::remember(crate::sync_engine::SessionEnvelope::Plaintext);
     tracing::info!("整库转换完成（关闭加密），待重启以明文重新打开");
     Ok(())
 }
@@ -349,7 +351,7 @@ pub async fn reset_after_forgotten_passphrase(app: AppHandle) -> Result<()> {
     let book = active_book_id(&app);
     // 忘记口令重置：旧主口令不再适用，清会话密钥记忆（issue #863）与钥匙串
     // 缓存（幂等，失败不阻断重置），不残留可自动解锁的旧口令。
-    passphrase_cache::clear_session_passphrase();
+    crate::sync_engine::SessionEnvelope::forget();
     let _ = run_db("clear_remember_after_reset", move || {
         passphrase_cache::delete(book.as_deref())
     })
@@ -383,9 +385,11 @@ pub async fn set_remember_passphrase(app: AppHandle, passphrase: String) -> Resu
         passphrase_cache::store(&passphrase, book.as_deref())
     })
     .await?;
-    // 用户在此提供了当前主口令：记入本会话密钥记忆（issue #863），自动同步
-    // 轮次随即可以封包，不必等下一次解锁。
-    passphrase_cache::set_session_passphrase(&session);
+    // 用户在此提供了当前主口令：记入本会话形态（issue #863），自动同步轮次
+    // 随即可以封包，不必等下一次解锁。
+    crate::sync_engine::SessionEnvelope::remember(crate::sync_engine::SessionEnvelope::Encrypted(
+        session,
+    ));
     Ok(())
 }
 

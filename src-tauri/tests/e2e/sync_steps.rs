@@ -11,11 +11,16 @@
 //! 桩按场景现起（`world.sync.stub`，Drop 清理）：每个场景一个独立通道世界，
 //! 场景之间零串扰（域单测里桩是场景内局部量，同款纪律）。对端投递用「另起一个
 //! 设备库发布」与「直接写一段坏 op 的段文件」两条真实通道路径，不绕过产品代码。
+//!
+//! 与测试工厂的分层边界（ADR-0086 决策 9）：本文件只共享 `test_support::webdav`
+//! 的 **WebDAV 协议替身**（真实 HTTP 服务的进程内实现，域单测与命令面集成测试
+//! 同体消费，ADR-0084 准入「跨 ≥2 处同体消费」），**不消费工厂的建库/种子/
+//! 默认值集**——BDD 侧建库走产品开库入口（world 的 `DbState`）、种子走 `crate::common`
+//! 的 e2e 共享助手、输入走 `step_inputs`、写入走 `step_verbs`，两层互不共享默认值。
 
 use cucumber::{given, then, when};
 use rusqlite::Connection;
 
-use tauri_app_lib::db::passphrase_cache;
 use tauri_app_lib::settings::{self, SettingKey};
 use tauri_app_lib::sync_engine::trigger::{
     SessionEnvelope, SyncChannel, build_channel, configured_channel, run_auto_round, run_round_once,
@@ -24,13 +29,15 @@ use tauri_app_lib::sync_engine::{
     ChannelLayout, ChannelManifest, DomainCommand, EnvelopeMode, SegmentEntry, StreamManifest,
     SyncChannelConfig, SyncOp, Transport,
 };
-use tauri_app_lib::test_support::{self, spawn_webdav_stub};
 use tauri_app_lib::transaction::{
     NormalizedTransaction, TransactionCommand, TransactionInput, TransactionKind,
 };
 
+use crate::common::seed_account_with_expenses;
 use crate::step_inputs::expense_input;
 use crate::world::LedgerWorld;
+use tauri_app_lib::db::DbState;
+use tauri_app_lib::test_support::spawn_webdav_stub;
 
 /// 把阻塞的通道工作（reqwest 阻塞客户端 + 真 HTTP）移出异步上下文：cucumber
 /// 场景跑在 tokio 运行时内，阻塞客户端在其中构造/析构会 panic（「Cannot drop a
@@ -95,7 +102,7 @@ fn configure_channel_when(world: &mut LedgerWorld, space: String) {
 
 fn configure_channel_impl(world: &mut LedgerWorld, space: String) {
     // 场景前置：清会话密钥记忆（进程级单例跨场景共享，明文库场景不应残留密文形态）。
-    passphrase_cache::clear_session_passphrase();
+    SessionEnvelope::forget();
     // 通道桩按场景现起（同场景内重复配置复用同一桩——语义等价于「改配置」）。
     if world.sync.stub.is_none() {
         world.sync.stub = Some(spawn_webdav_stub(None));
@@ -132,24 +139,15 @@ fn write_expense(
 /// 桩根目录按同步空间共享，故对端的段对本端可见——本端随后拉取即得真实数据。
 #[given(expr = "对端账本已把同一笔数据推上同一通道")]
 fn peer_publishes(world: &mut LedgerWorld) {
-    let peer = test_support::open();
-    // 对端账户经域公开创建入口（产出账户 op 随行）：本端重放时账户先落地，
-    // 交易 op 才有可引用的外键——「对端数据落到本端」的真实形态。
-    let account = tauri_app_lib::accounts::create_account(
-        &peer,
-        tauri_app_lib::accounts::AccountInput {
-            name: "对端现金".into(),
-            kind: tauri_app_lib::accounts::AccountType::Cash,
-            currency_code: "CNY".into(),
-            initial_balance_cents: Some(0),
-        },
-    )
-    .expect("对端建户应成功");
-    let input = TransactionInput {
-        note: Some("对端记的账".into()),
-        ..expense_input(2_500, &account, "2026-02-01")
-    };
-    tauri_app_lib::transaction::create_transaction_internal(&peer, input).expect("对端写入应成功");
+    // 对端库：e2e 共享种子形态（`crate::common`，非测试工厂——ADR-0086 决策 9
+    // 分层互斥）。账户 + 一笔支出都经域公开写入口，产出账户 op 与交易 op 随行：
+    // 本端重放时账户先落地，交易 op 才有可引用的外键——「对端数据落到本端」的
+    // 真实形态（若只发交易 op，本端会因缺账户外键而挂起）。
+    let peer = DbState::open_in_memory().expect("对端库初始化失败");
+    {
+        let conn = peer.conn.lock().expect("对端连接锁应可获取");
+        seed_account_with_expenses(&conn, "对端现金", "对端记的账", 1, 2_500, "2026-02-01");
+    }
     let base_url = stub_url(world);
     blocking(|| {
         let peer_channel = build_channel(&SyncChannelConfig {
@@ -159,7 +157,8 @@ fn peer_publishes(world: &mut LedgerWorld) {
             space_id: "default".into(),
         })
         .expect("对端通道构库应成功");
-        run_round_once(&peer, &peer_channel, &EnvelopeMode::Plaintext).expect("对端发布轮次应成功");
+        let conn = peer.conn.lock().expect("对端连接锁应可获取");
+        run_round_once(&conn, &peer_channel, &EnvelopeMode::Plaintext).expect("对端发布轮次应成功");
     });
 }
 
@@ -182,8 +181,9 @@ fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
         op_id: "e2e-parked-op".into(),
         device_id: "e2e-peer-device".into(),
         clock: 1,
-        // 与当前 schema 同版（走重放路径而非 schema 偏斜挂起）。
-        schema_version: test_support::open()
+        // 与当前 schema 同版（走重放路径而非 schema 偏斜挂起）：取本场景库的
+        // `user_version`（迁移后即当前版本）。
+        schema_version: world_conn!(world)
             .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .expect("读 schema 版本应成功"),
         command: DomainCommand::Transaction(TransactionCommand::Create {
@@ -281,12 +281,12 @@ fn manual_sync_once(world: &mut LedgerWorld) {
 #[when(expr = "以密文库会话形态打开应用即同步一轮")]
 fn auto_sync_encrypted_session(world: &mut LedgerWorld) {
     // 密文库会话形态：记入会话口令（自动轮次据此封包，不读钥匙串）。
-    passphrase_cache::set_session_passphrase("master-pass");
+    SessionEnvelope::remember(SessionEnvelope::Encrypted("master-pass".into()));
     let session = SessionEnvelope::current();
     world.sync.session_encrypted = matches!(session, SessionEnvelope::Encrypted(_));
     let conn = world_conn!(world);
     world.sync.last_auto_round = Some(blocking(|| run_auto_round(&conn, &session)));
-    passphrase_cache::clear_session_passphrase();
+    SessionEnvelope::forget();
 }
 
 // ---------------------------------------------------------------------------
