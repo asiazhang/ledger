@@ -217,6 +217,11 @@ pub fn run() {
             // 启动失败重置命令在恢复成功后拉起（轮询同轮承载定时追补）。
             if !locked && !boot_failed {
                 backup::start_scheduler(app.handle());
+                // 多端同步触发编排（issue #863 / ADR-0091 决策 9）：打开应用即
+                // 同步 + 桌面运行期低频轮询。与自动备份同款「锁定/失败不启动」
+                // 口径，两条调度线程各持单次拉起守卫（原位重引导幂等）。
+                sync_engine::start_sync_scheduler(app.handle());
+                sync_engine::sync_on_start(app.handle());
             }
             // 备份产物变更信号（issue #129）：自动备份的深路径执行点
             // （连接层写入口提交点的写时顺带检查）拿不到 AppHandle，启动时注入镜像句柄一次，

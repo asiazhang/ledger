@@ -5,13 +5,17 @@ import { api } from '@/api'
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
 import { formatIsoMinute } from '@/utils/datetime'
-import type { SyncChannelConfig, SyncStatus } from '@/types'
+import type { ParkedOpInfo, SyncChannelConfig, SyncStatus } from '@/types'
 
-// 多端同步卡片（issue #862 / ADR-0091）：设置页「数据」Tab 的同步可见面——
-// 上次同步时间、挂起数量、「立即同步」动作与通道配置表单（WebDAV 凭据）。
-// 显示值一律来自命令返回（AppSettings 权威），不走 localStorage；通道配置是
-// 本机设备配置（不同步）。明文模式的显著提示是 ADR-0091 决策 8 的界面义务：
-// 未开加密时同步数据明文上通道，警示常驻卡片。
+// 多端同步卡片（issue #862 / #863 / ADR-0091）：设置页「数据」Tab 的同步可见面——
+// 上次同步时间、挂起数量、「立即同步」动作、挂起通知明细与通道配置表单
+//（WebDAV 凭据）。显示值一律来自命令返回（AppSettings 权威），不走 localStorage；
+// 通道配置是本机设备配置（不同步）。明文模式的显著提示是 ADR-0091 决策 8 的界面
+// 义务：未开加密时同步数据明文上通道，警示常驻卡片。
+//
+// 自动触发（打开应用即同步 + 运行期低频轮询）由后端编排，前端零调用面；本卡片
+// 只呈现「同步到什么状态」。挂起通知（issue #863 验收项）：数量 > 0 时展开明细，
+// 逐条按码化原因本地化呈现（`errors.<code>`），供用户知道哪些操作待裁决。
 
 const message = useMessage()
 
@@ -21,6 +25,8 @@ const syncing = ref(false)
 const saving = ref(false)
 // 口令输入：仅密文库需要（留空则后端回退本机已记住口令）；不落任何本地存储。
 const passphrase = ref('')
+// 挂起操作明细（issue #863 挂起通知）：数量 > 0 时按需拉取，展示码化原因。
+const parkedOps = ref<ParkedOpInfo[]>([])
 
 // 通道配置表单：初值来自命令回显（未配置为空表单，空间字段填默认值）。
 const form = ref<SyncChannelConfig>({
@@ -35,10 +41,26 @@ async function refreshStatus() {
   loading.value = true
   try {
     status.value = await api.getSyncStatus()
+    await refreshParkedOps()
   } catch (e: any) {
     message.error(t('settings.data.sync.loadFailed', { msg: errorMessage(e) }))
   } finally {
     loading.value = false
+  }
+}
+
+/** 拉取挂起明细（issue #863）：仅当数量 > 0 时调用，避免无谓 IPC。 */
+async function refreshParkedOps() {
+  if (!status.value || status.value.parked_count === 0) {
+    parkedOps.value = []
+    return
+  }
+  try {
+    parkedOps.value = await api.getParkedOps()
+  } catch (e: any) {
+    // 明细拉取失败不升级为卡片级错误：数量仍由状态回显，重试即下次刷新。
+    console.warn('挂起明细拉取失败', e)
+    parkedOps.value = []
   }
 }
 
@@ -77,11 +99,22 @@ async function syncNow() {
       }),
     )
     await refreshStatus()
+    if (report.parked > 0) {
+      message.warning(
+        t('settings.data.sync.parkedToast', { count: report.parked }),
+      )
+    }
   } catch (e: any) {
     message.error(t('settings.data.sync.syncFailed', { msg: errorMessage(e) }))
   } finally {
     syncing.value = false
   }
+}
+
+/** 挂起原因展示文本：码化原因按当前语言模板本地化，未知码降级透传原文。 */
+function parkedReason(op: ParkedOpInfo): string {
+  const key = `errors.${op.code}`
+  return t(key) !== key ? t(key) : op.message
 }
 
 /** 保存通道配置：WebDAV 凭据与同步空间（跨端共识的世界身份；空值交由后端回默认）。 */
@@ -130,6 +163,25 @@ async function saveChannel() {
           data-testid="sync-parked-hint"
         >
           {{ t('settings.data.sync.parkedHint') }}
+        </NText>
+      </NSpace>
+
+      <!-- 挂起通知明细（issue #863 验收项）：逐条按码化原因本地化呈现。 -->
+      <NSpace
+        v-if="parkedOps.length > 0"
+        vertical
+        :size="4"
+        data-testid="sync-parked-list"
+      >
+        <NText strong>{{ t('settings.data.sync.parkedListTitle') }}</NText>
+        <NText
+          v-for="op in parkedOps"
+          :key="op.op_id"
+          depth="3"
+          style="font-size: 12px"
+          data-testid="sync-parked-item"
+        >
+          {{ t('settings.data.sync.parkedItem', { reason: parkedReason(op) }) }}
         </NText>
       </NSpace>
       <NSpace>

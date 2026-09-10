@@ -121,6 +121,9 @@ async fn do_unlock(app: &AppHandle, passphrase: &str) -> Result<UnlockOutcome> {
         encryption::unlock_db_file(&db_path, &pass)
     })
     .await?;
+    // 本会话密钥记忆（issue #863 / ADR-0098）：解锁成功即记入会话口令，自动
+    // 同步轮次（打开即同步 / 低频轮询）无需再触钥匙串即可封包。
+    passphrase_cache::set_session_passphrase(passphrase);
     resume_business_surface(app, conn)?;
 
     // 等待中的搬迁（issue #570）：源库为密文库时启动期无法搬迁，解锁后
@@ -248,8 +251,12 @@ pub(crate) fn resume_business_surface(app: &AppHandle, conn: Connection) -> Resu
         let conn = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
         crate::logger::apply_persisted_level(&conn);
     }
-    tracing::info!("业务读写恢复（解锁/重置后），自动备份调度拉起");
+    tracing::info!("业务读写恢复（解锁/重置后），自动备份与多端同步调度拉起");
     backup::start_scheduler(app);
+    // 多端同步触发编排（issue #863）：解锁/恢复后自动同步随之恢复——打开应用
+    // 即同步的兜底路径（密文库会话在解锁前不可达），低频轮询线程幂等拉起。
+    crate::sync_engine::start_sync_scheduler(app);
+    crate::sync_engine::sync_on_start(app);
     Ok(())
 }
 
@@ -289,6 +296,9 @@ pub async fn disable_encryption(app: AppHandle, passphrase: String) -> Result<()
         passphrase_cache::delete(book.as_deref())
     })
     .await;
+    // 关闭加密后库为明文形态：清本会话密钥记忆（issue #863），后续自动轮次
+    // 按明文直通（否则会拿旧口令去封明文段，对端无法开封）。
+    passphrase_cache::clear_session_passphrase();
     tracing::info!("整库转换完成（关闭加密），待重启以明文重新打开");
     Ok(())
 }
@@ -337,6 +347,9 @@ pub async fn reset_after_forgotten_passphrase(app: AppHandle) -> Result<()> {
     // 不残留可自动解锁的旧口令（ADR-0075 决策 5）。只清当前账本的条目
     //（issue #836 按本分域）。
     let book = active_book_id(&app);
+    // 忘记口令重置：旧主口令不再适用，清会话密钥记忆（issue #863）与钥匙串
+    // 缓存（幂等，失败不阻断重置），不残留可自动解锁的旧口令。
+    passphrase_cache::clear_session_passphrase();
     let _ = run_db("clear_remember_after_reset", move || {
         passphrase_cache::delete(book.as_deref())
     })
@@ -365,10 +378,15 @@ pub async fn set_remember_passphrase(app: AppHandle, passphrase: String) -> Resu
     ensure_unlocked(&app)?;
     // 条目按当前活动账本分域（issue #836）：开启/关闭/清除只影响对应账本。
     let book = active_book_id(&app);
+    let session = passphrase.clone();
     run_db("set_remember_passphrase", move || {
         passphrase_cache::store(&passphrase, book.as_deref())
     })
-    .await
+    .await?;
+    // 用户在此提供了当前主口令：记入本会话密钥记忆（issue #863），自动同步
+    // 轮次随即可以封包，不必等下一次解锁。
+    passphrase_cache::set_session_passphrase(&session);
+    Ok(())
 }
 
 /// 清除「本机记住」的主口令缓存（issue #574）：关闭「记住」、关闭加密或忘记口令

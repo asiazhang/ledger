@@ -92,6 +92,8 @@ mod startup_failure_steps;
 mod step_inputs;
 #[path = "e2e/step_verbs.rs"]
 mod step_verbs;
+#[path = "e2e/sync_steps.rs"]
+mod sync_steps;
 #[path = "e2e/transactions_edit_steps.rs"]
 mod transactions_edit_steps;
 #[path = "e2e/transactions_policy_steps.rs"]

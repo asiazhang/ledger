@@ -277,7 +277,10 @@
       "saveChannel": "保存配置",
       "saveOk": "通道配置已保存",
       "saveFailed": "通道配置保存失败：{msg}",
-      "colon": "："
+      "colon": "：",
+      "parkedToast": "同步完成，但有 {count} 条操作无法在本机执行，已挂起待处理。",
+      "parkedListTitle": "挂起操作明细",
+      "parkedItem": "挂起：{reason}"
     },
     "source": {
       "auto": "自动",

@@ -3,7 +3,7 @@ import { mockInvoke, wireInvokeSeam, lastInvokeArgs } from './helpers/invoke-moc
 import { messageCalls } from './helpers/message-mock'
 import { findButtonByTestId, findInputByTestId } from './helpers/dom'
 import { mount, flushPromises } from '@vue/test-utils'
-import type { SyncChannelConfig, SyncRoundReport, SyncStatus } from '@/types'
+import type { ParkedOpInfo, SyncChannelConfig, SyncRoundReport, SyncStatus } from '@/types'
 
 import SyncSettings from '@/components/settings/SyncSettings.vue'
 
@@ -25,6 +25,16 @@ const baseConfig: SyncChannelConfig = {
   password: 'app-pass',
   space_id: 'family',
   configured: true,
+}
+
+const parkedOp: ParkedOpInfo = {
+  op_id: 'op-1',
+  device_id: 'device-abcdef',
+  entity: 'transaction',
+  entity_id: 'txn-1',
+  code: 'sync-engine.schema-ahead',
+  message: '该操作来自更新版本的应用，升级本端后将自动重试',
+  parked_at: '2026-01-15T09:00:00Z',
 }
 
 const emptyReport: SyncRoundReport = {
@@ -216,5 +226,73 @@ describe('SyncSettings.vue', () => {
     expect(
       messageCalls().some((m) => m.method === 'success'),
     ).toBe(false)
+  })
+
+  // ---- 挂起通知（issue #863 验收项）----
+
+  it('挂起数量 > 0：拉取明细并按码化原因本地化呈现（非透传原文）', async () => {
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: { ...baseStatus, parked_count: 1 },
+        get_sync_channel_config: baseConfig,
+        get_parked_ops: [{ ...parkedOp, message: 'RAW' }],
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    expect(mockInvoke).toHaveBeenCalledWith('get_parked_ops')
+    const list = wrapper.find('[data-testid="sync-parked-list"]')
+    expect(list.exists()).toBe(true)
+    // 码化原因经 errors.<code> 模板本地化，原文不出现（未知码才降级透传）。
+    expect(list.text()).toContain('该操作来自更新版本的应用')
+    expect(list.text()).not.toContain('RAW')
+  })
+
+  it('无挂起：不拉明细也不渲染挂起清单（零无谓 IPC）', async () => {
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: { ...baseStatus, parked_count: 0 },
+        get_sync_channel_config: baseConfig,
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    expect(mockInvoke).not.toHaveBeenCalledWith('get_parked_ops')
+    expect(wrapper.find('[data-testid="sync-parked-list"]').exists()).toBe(false)
+  })
+
+  it('手动同步后出现挂起：轮次报告驱动挂起提示，并刷新状态与明细', async () => {
+    // 同步前的状态无挂起、同步后回显 1 条挂起（真实后端语义：轮次把 op 挂起，
+    // 随后的状态查询即反映新数量）——刷新明细的触发条件由此成立。
+    let parkedCount = 0
+    wireInvokeSeam({
+      defaults: {
+        get_sync_channel_config: baseConfig,
+        get_parked_ops: [parkedOp],
+        sync_now: { ...emptyReport, parked: 1 },
+      },
+      overrides: {
+        get_sync_status: () =>
+          Promise.resolve({ ...baseStatus, parked_count: parkedCount }),
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+    mockInvoke.mockClear()
+    parkedCount = 1
+
+    await findButtonByTestId(wrapper, 'sync-now').trigger('click')
+    await flushPromises()
+
+    expect(
+      messageCalls().some(
+        (m) => m.method === 'warning' && m.text.includes('1 条操作无法在本机执行'),
+      ),
+    ).toBe(true)
+    // 效果断言：状态与挂起明细均被重新拉取（挂起通知可见通道）。
+    expect(mockInvoke).toHaveBeenCalledWith('get_sync_status')
+    expect(mockInvoke).toHaveBeenCalledWith('get_parked_ops')
   })
 })

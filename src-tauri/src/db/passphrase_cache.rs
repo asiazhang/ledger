@@ -48,6 +48,45 @@
 
 use crate::error::Result;
 
+/// 本会话密钥知识（多端同步自动轮次消费，issue #863 / ADR-0098）：进程级单例，
+/// 只在「应用已经知道库口令」的时点记入——解锁密文库成功、手动同步成功、
+/// 用户设置「本机记住主口令」。自动同步轮次据此判定信封模式：有口令则封包，
+/// 无则按明文形态跑（明文库的正常形态）。
+///
+/// 为什么需要这份会话记忆：钥匙串读取在发布构建下先过 LocalAuthentication
+/// 门（弹 Touch ID，ADR-0075 决策 3 / issue #866），后台低频轮询不能弹交互。
+/// 会话口令活到进程结束或下次引导（切换账本经原位重引导会清空，见
+/// [`clear_session_passphrase`]），与解锁态同生命周期。
+static SESSION_PASSPHRASE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// 记入本会话口令（解锁成功 / 手动同步成功 / 用户设置记住口令时调用）。
+///
+/// `pub` + `#[doc(hidden)]`（本模块同款纪律，先例 `test_support`）：BDD 单端旅程
+///（issue #863）与命令集成测试要直调本接缝摆出「密文库会话形态」，经集成测试
+/// 链接的是非 `#[cfg(test)]` 构建的 lib，`pub(crate)` 不可达。生产路径的调用点
+/// 仍只有壳层解锁/同步/记住口令三处。
+#[doc(hidden)]
+pub fn set_session_passphrase(passphrase: &str) {
+    let mut guard = SESSION_PASSPHRASE.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = Some(passphrase.to_string());
+}
+
+/// 清空本会话口令（引导换库、忘记口令重置、恢复等改变库身份的路径调用）。
+#[doc(hidden)]
+pub fn clear_session_passphrase() {
+    let mut guard = SESSION_PASSPHRASE.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = None;
+}
+
+/// 本会话口令（未记入回 `None`）：调用方自行决定借出形态。
+#[doc(hidden)]
+pub fn session_passphrase() -> Option<String> {
+    SESSION_PASSPHRASE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 /// 非 macOS 不支持桩需要码化错误构造器；macOS 构建下该模块被编译出去，
 /// `AppError` 只在 [`imp`] 与下方桩里使用（分层隔离，避免平台条件导入污染）。
 #[cfg(not(target_os = "macos"))]
