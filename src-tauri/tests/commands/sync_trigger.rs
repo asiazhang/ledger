@@ -35,9 +35,8 @@ use tauri_app_lib::sync_engine::{
 };
 use tauri_app_lib::test_support::spawn_webdav_stub;
 
-use crate::sync_channel::{
-    STUB_PASS, STUB_USER, configure_channel, expense_input, fresh_app, isolate_home,
-};
+use crate::isolation::isolate_home;
+use crate::sync_channel::{STUB_PASS, STUB_USER, configure_channel, expense_input, fresh_app};
 
 /// 调度线程现场（消费两扇门做锁定/失败空转判定）的设备应用：mock 应用 + 独立
 /// 临时目录文件库 + 引导登记态 + 两扇门（生产由 setup 首先登记，此处同型补齐；

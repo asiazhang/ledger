@@ -7,12 +7,11 @@
 //!
 //! 现场隔离：mock runtime 的 `app_data_dir()` 实现为 `dirs::data_dir()` 拼接
 //! 空 identifier（`$HOME/Library/Application Support`），指向真实用户目录。
-//! 进程启动时把 `$HOME` 重定向到本测试目标专属临时目录，默认数据目录随之
-//! 落在隔离区。tokio 测试线程池并行执行会互踩同一现场，故全部场景收进
-//! 一个顺序旅程测试（与 BDD 场景流同型）。
+//! `$HOME` 重定向收在本测试目标唯一的 [`crate::isolation`]（进程内一次），
+//! 默认数据目录随之落在隔离区。tokio 测试线程池并行执行会互踩同一现场，故
+//! 全部场景收进一个顺序旅程测试（与 BDD 场景流同型）。
 
 use std::path::PathBuf;
-use std::sync::Once;
 
 use tauri::Manager;
 use tauri_app_lib::commands::book;
@@ -23,26 +22,7 @@ use tauri_app_lib::db::data_location::DB_FILE_NAME;
 use tauri_app_lib::db::encryption::enable_encryption_for_file;
 use tauri_app_lib::error::AppError;
 
-static ISOLATE: Once = Once::new();
-
-/// HOME 重定向（进程内一次）：mock runtime 经 `dirs::data_dir()` 解析
-/// `app_data_dir`，macOS/Linux 下该值由 `$HOME` 派生。重定向后命令壳解析出
-/// 的默认数据目录落在进程专属临时目录，绝不触真实用户目录。
-///
-/// SAFETY：`set_var` 自 Rust 2024 起 unsafe。调用点在各测试函数首行、断言
-/// 现场文件操作之前；本测试目标内无其他代码并发读取 `$HOME`（无多线程
-/// 现场依赖）， Once 保证只执行一次，之后整个进程的目录解析都落在隔离区。
-fn isolate_home() {
-    ISOLATE.call_once(|| {
-        let root = std::env::temp_dir().join(format!(
-            "ledger-commands-it-{}",
-            tauri_app_lib::db::new_uuid()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        // SAFETY：见函数文档。
-        unsafe { std::env::set_var("HOME", &root) };
-    });
-}
+use crate::isolation::isolate_home;
 
 /// mock 应用 + 真实引导态：引导按生产同型登记（真实
 /// [`data_location::boot`] 解析 → [`BootCell`]）——命令预检与清单聚合
