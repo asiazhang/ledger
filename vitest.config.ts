@@ -17,6 +17,13 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // 每测清理全部 mock 的调用记录（vitest 5 起为默认值，此处显式写死）：
+    // 清记录不碰实现（mockReset 才清 implementation），故 mockResolvedValue
+    // 等静态实现不受影响；执行时机在用户 beforeEach 之前（@vitest/runner 的
+    // onBeforeTryTask → 再跑 beforeEach），不会抹掉用例内刚记下的调用。
+    // 显式化的收益是覆盖 setup.ts 未管的模块级 mock（pushMock / writeText 等），
+    // 且不受 vitest 未来默认值变动影响。
+    clearMocks: true,
     setupFiles: ['./src/__tests__/setup.ts'],
     include: ['src/__tests__/**/*.test.ts'],
   },
