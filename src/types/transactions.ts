@@ -91,7 +91,7 @@ export interface TransactionListFilter {
   to?: string | null
   /** 按转出账户过滤 */
   account_id?: string | null
-  /** 涉及账户过滤（account_id 或 to_account_id 命中即算，含转入的转账） */
+  /** 涉及账户过滤（account_id、to_account_id 或出资账户 funding_account_id 任一命中即算） */
   involving_account_id?: string | null
   /** 按商户过滤（issue #191）：命中该商户全部未删除交易，软删商户同样可过滤 */
   merchant_id?: string | null

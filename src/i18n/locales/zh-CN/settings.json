@@ -106,7 +106,8 @@
       "backup": "备份",
       "location": "存储位置",
       "encryption": "加密",
-      "repair": "数据修复"
+      "repair": "数据修复",
+      "sync": "同步"
     },
     "backup": {
       "dirTitle": "备份目录",
@@ -253,6 +254,30 @@
       "rememberDevFallbackHint": "当前为开发构建：本机缓存不带 Touch ID 门，重启后凭缓存直接解锁、不弹生物认证；发布构建不受影响。",
       "rememberEnabled": "已启用自动解锁",
       "rememberFailed": "未能启用自动解锁，已保持手动输入"
+    },
+    "sync": {
+      "cardTitle": "多端同步",
+      "lastSyncAt": "上次同步",
+      "neverSynced": "从未同步",
+      "parkedCount": "挂起操作",
+      "parkedHint": "存在无法在本机执行、待后续重投递的同步操作；升级或补齐数据后将自动重试。",
+      "syncNow": "立即同步",
+      "syncOk": "同步完成：上传 {uploaded} 条，应用 {applied} 条，挂起 {parked} 条。",
+      "syncFailed": "同步失败：{msg}",
+      "loadFailed": "同步状态读取失败：{msg}",
+      "plaintextWarning": "当前账本未开启加密：同步数据将以明文存放于网盘。如需加密同步，请先在「加密」页开启加密模式。",
+      "encryptedHint": "本账库为密文形态：同步数据将以主口令加密后上通道。",
+      "passphrasePlaceholder": "主口令（留空使用已记住的口令）",
+      "channelTitle": "通道配置",
+      "urlPlaceholder": "网盘地址（WebDAV），如 https://dav.example.com/dav/ledger/",
+      "usernamePlaceholder": "网盘账号",
+      "passwordPlaceholder": "密码 / 应用密码",
+      "spacePlaceholder": "同步空间",
+      "spaceHint": "同步空间是两端约定的同步世界：两台设备填写同一空间即同步同一份账本数据（默认 default）；不同账本用不同空间隔离。仅限小写字母、数字与短横线。",
+      "saveChannel": "保存配置",
+      "saveOk": "通道配置已保存",
+      "saveFailed": "通道配置保存失败：{msg}",
+      "colon": "："
     },
     "source": {
       "auto": "自动",

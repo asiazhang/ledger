@@ -23,6 +23,7 @@ import { yuanToCents } from '@/utils/money'
 import { installmentSchedule } from '@/utils/installment'
 import { useReferenceStore } from '@/stores/reference'
 import { useModalIntent } from '@/composables/useModalIntent'
+import { useWindowTier } from '@/composables/useWindowTier'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import {
   scheduledRecurrenceLabel,
@@ -34,6 +35,7 @@ import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
+import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from '@/components/mobile-cells'
 import { usePlanFocusLanding } from '@/composables/usePlanFocusLanding'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
@@ -51,6 +53,12 @@ import { scheduledStatusLabel } from '@/utils/scheduled'
 
 const reference = useReferenceStore()
 const message = useMessage()
+
+// 移动档适配（issue #848 / ADR-0088 决策 11 票⑧）：清单列结构三分（备注/总额/
+// 操作），进度与关联对象并入副行不丢失；生命周期操作经 PlanRowActions 移动档
+// 变体一击可达。断点口径接窗口分级 composable；桌面档十列一字不动（回归红线）。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
 
 // ---------------------------------------------------------------------------
 // 清单编排（ADR-0041）：全部经 ScheduledPlanList 模块；行操作经共享渲染组件
@@ -206,6 +214,30 @@ function statusLabel(status: string): string {
   return scheduledStatusLabel(status)
 }
 
+/** 商户名解析（桌面/移动两分支共用；merchantMap 含软删商户会话缓存，改名即时生效）。 */
+function merchantName(row: InstallmentRow): string {
+  const m = row.plan.merchant_id ? reference.merchantMap.get(row.plan.merchant_id) : undefined
+  return m?.name ?? '—'
+}
+
+/** 扣款账户名解析（两分支共用；未知 id 回退 id，与桌面列同口径）。 */
+function accountName(row: InstallmentRow): string {
+  return reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id
+}
+
+/** 进度文案（两分支共用）：详情失败示「加载失败」不与无数据混淆，否则已还汇总。 */
+function progressText(row: InstallmentRow): string {
+  const currency = reference.getCurrency(row.plan.core.currency_code)
+  return row.detailFailed
+    ? t('scheduled.list.loadFailed')
+    : t('scheduled.progress.repaid', {
+        paid: formatAmount(row.ext.completedAmountCents, currency),
+        total: formatAmount(row.plan.total_amount_cents ?? 0, currency),
+        count: row.ext.completedCount,
+        occurrences: row.plan.total_occurrences ?? 0,
+      })
+}
+
 /** 进度百分比：期数维度（已完成期数 / 总期数），总额异常时兜底 0。 */
 function progressPercentage(row: InstallmentRow): number {
   const total = row.plan.total_occurrences ?? 0
@@ -213,7 +245,67 @@ function progressPercentage(row: InstallmentRow): number {
   return Math.min(100, (row.ext.completedCount / total) * 100)
 }
 
-const columns = computed<DataTableColumns<InstallmentRow>>(() => [
+const columns = computed<DataTableColumns<InstallmentRow>>(() => {
+  // 移动档三分列（issue #848）：备注标题行 + 状态/周期/开始日与商户/分类/账户两
+  // 弱化副行 + 总额/进度列（进度锚点与桌面同 testid）；窄屏无横向滚动
+  if (isMobileTier.value) {
+    return [
+      {
+        title: t('scheduled.column.note'),
+        key: 'note',
+        render: (row) =>
+          h('div', { style: MOBILE_CELL_STYLE }, [
+            h('span', null, row.plan.core.note ?? '—'),
+            h(
+              'span',
+              { style: MOBILE_SUB_STYLE },
+              mobileSubLine(
+                statusLabel(row.plan.core.status),
+                scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
+                row.plan.core.start_date,
+              ),
+            ),
+            h(
+              'span',
+              { style: MOBILE_SUB_STYLE },
+              mobileSubLine(
+                merchantName(row),
+                reference.categoryPath(row.plan.core.category_id),
+                accountName(row),
+              ),
+            ),
+          ]),
+      },
+      {
+        title: t('scheduled.column.totalAmount'),
+        key: 'total',
+        render: (row) =>
+          h('div', { style: MOBILE_CELL_STYLE }, [
+            h('span', null, formatAmount(row.plan.total_amount_cents ?? 0, reference.getCurrency(row.plan.core.currency_code))),
+            h(
+              'div',
+              { style: MOBILE_SUB_STYLE, 'data-testid': `inst-progress-${row.plan.core.id}` },
+              [
+                row.detailFailed
+                  ? null
+                  : h(NProgress, {
+                      type: 'line',
+                      percentage: progressPercentage(row),
+                      showIndicator: false,
+                    }),
+                h('span', progressText(row)),
+              ],
+            ),
+          ]),
+      },
+      {
+        title: t('scheduled.column.actions'),
+        key: 'actions',
+        render: (row) => h(PlanRowActions, { actions: list.rowActions(row), rowId: row.plan.core.id, mobile: true }),
+      },
+    ]
+  }
+  return [
   {
     title: t('scheduled.column.note'),
     key: 'note',
@@ -223,10 +315,7 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => [
     title: t('scheduled.column.merchant'),
     key: 'merchant',
     // 改名即时生效（引用指向 id）：merchantMap 含软删商户会话缓存，历史计划照常显示
-    render: (row) => {
-      const m = row.plan.merchant_id ? reference.merchantMap.get(row.plan.merchant_id) : undefined
-      return m?.name ?? '—'
-    },
+    render: (row) => merchantName(row),
   },
   {
     title: t('scheduled.column.category'),
@@ -236,7 +325,7 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => [
   {
     title: t('scheduled.column.account'),
     key: 'account',
-    render: (row) => reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id,
+    render: (row) => accountName(row),
   },
   {
     title: t('scheduled.column.totalAmount'),
@@ -247,17 +336,8 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => [
   {
     title: t('scheduled.column.progress'),
     key: 'progress',
-    render: (row) => {
-      const currency = reference.getCurrency(row.plan.core.currency_code)
-      const text = row.detailFailed
-        ? t('scheduled.list.loadFailed')
-        : t('scheduled.progress.repaid', {
-            paid: formatAmount(row.ext.completedAmountCents, currency),
-            total: formatAmount(row.plan.total_amount_cents ?? 0, currency),
-            count: row.ext.completedCount,
-            occurrences: row.plan.total_occurrences ?? 0,
-          })
-      return h('div', { 'data-testid': `inst-progress-${row.plan.core.id}` }, [
+    render: (row) =>
+      h('div', { 'data-testid': `inst-progress-${row.plan.core.id}` }, [
         row.detailFailed
           ? null
           : h(NProgress, {
@@ -266,9 +346,8 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => [
               showIndicator: false,
               style: 'max-width: 160px',
             }),
-        h('span', text),
-      ])
-    },
+        h('span', progressText(row)),
+      ]),
   },
 
   {
@@ -290,7 +369,8 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => [
         rowId: row.plan.core.id,
       }),
   },
-])
+]
+})
 
 /** 来源跳转落点入参（spec #704 / issue #707）：待开的计划 id（视图侧 focus
  * 读一次后的暂存；空则无落点）。 */

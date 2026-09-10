@@ -343,7 +343,7 @@ describe('useInvestmentForm', () => {
   })
 })
 
-describe('useInvestmentForm 出资账户（issue #936 / ADR-0096，买入侧）', () => {
+describe('useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/sell 对称）', () => {
   /** 准入闭集与币种过滤的候选全集：现金类五型 + 排除型三型 + 异币种 */
   const fundingAccounts: Account[] = [
     { id: 'acc-cash', name: '现金钱包', type: 'cash', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
@@ -357,12 +357,16 @@ describe('useInvestmentForm 出资账户（issue #936 / ADR-0096，买入侧）'
     { id: 'acc-bank-usd', name: '美元卡', type: 'bank', currency_code: 'USD', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
   ]
 
-  /** 出资账户候选场景的表单布线：候选全集上参考 store，编辑回填场景可注入 editing/trade */
-  async function fundingForm(options?: Parameters<typeof useInvestmentForm>[1]) {
+  /** 出资账户候选场景的表单布线：候选全集上参考 store，编辑回填场景可注入 editing/trade；
+    * kind 参数供 sell 对称用例复用同套候选与编辑夹具（#938） */
+  async function fundingForm(
+    options?: Parameters<typeof useInvestmentForm>[1],
+    kind: 'buy' | 'sell' = 'buy',
+  ) {
     wireInvokeSeam({ overrides: { list_accounts: fundingAccounts } })
     const store = useReferenceStore()
     await store.refresh()
-    return useInvestmentForm('buy', options)
+    return useInvestmentForm(kind, options)
   }
 
   it('候选过滤：只含现金类账户且币种与交易币种一致；默认空', async () => {
@@ -434,6 +438,72 @@ describe('useInvestmentForm 出资账户（issue #936 / ADR-0096，买入侧）'
       editing: () => ({ ...editingTx, funding_account_id: 'acc-bank' }),
       trade: () => editingTrade,
     })
+    wireInvokeSeam({
+      overrides: { list_accounts: fundingAccounts, update_transaction: Promise.resolve(null) },
+    })
+    form.fundingAccountId.value = null
+    await form.submit()
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'update_transaction')!
+    expect((call[1] as { input: { funding_account_id: string | null } }).input.funding_account_id).toBeNull()
+  })
+
+  // --- sell 对称（issue #938）：卖出表单与编辑回填复用买入同款模式 ---
+
+  it('sell 候选过滤同款：只含同币种现金类账户，默认空', async () => {
+    const form = await fundingForm(undefined, 'sell')
+    expect(form.fundingAccountId.value).toBeNull()
+    expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual([
+      'acc-cash', 'acc-bank', 'acc-credit', 'acc-ewallet', 'acc-other',
+    ])
+    form.currencyCode.value = 'USD'
+    expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual(['acc-bank-usd'])
+  })
+
+  it('sell submit 创建：出资账户随装配落 funding_account_id（kind sell）', async () => {
+    wireInvokeSeam({
+      overrides: { list_accounts: fundingAccounts, create_transaction: Promise.resolve('new-txn') },
+    })
+    const store = useReferenceStore()
+    await store.refresh()
+    const form = useInvestmentForm('sell')
+    form.accountId.value = 'acc-inv'
+    form.instrumentId.value = 'ins-1'
+    form.quantityText.value = '10'
+    form.priceText.value = '15'
+    form.fundingAccountId.value = 'acc-bank'
+    await form.submit()
+    expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
+      input: expect.objectContaining({ kind: 'sell', funding_account_id: 'acc-bank' }),
+    })
+  })
+
+  it('sell 编辑回填同款：带出资账户带出当前值，不带保持空', async () => {
+    const editingSellTx = { ...editingTx, kind: 'sell' as const, id: 'txn-sell-1' }
+    const withFunding = await fundingForm(
+      {
+        editing: () => ({ ...editingSellTx, funding_account_id: 'acc-bank' }),
+        trade: () => editingTrade,
+      },
+      'sell',
+    )
+    expect(withFunding.fundingAccountId.value).toBe('acc-bank')
+    const withoutFunding = await fundingForm(
+      { editing: () => editingSellTx, trade: () => editingTrade },
+      'sell',
+    )
+    expect(withoutFunding.fundingAccountId.value).toBeNull()
+  })
+
+  it('sell submit 编辑清空出资账户：提交显式 null（回卡改余额卖出）', async () => {
+    const editingSellTx = { ...editingTx, kind: 'sell' as const, id: 'txn-sell-1' }
+    const form = await fundingForm(
+      {
+        onUpdated: vi.fn(),
+        editing: () => ({ ...editingSellTx, funding_account_id: 'acc-bank' }),
+        trade: () => editingTrade,
+      },
+      'sell',
+    )
     wireInvokeSeam({
       overrides: { list_accounts: fundingAccounts, update_transaction: Promise.resolve(null) },
     })

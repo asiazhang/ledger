@@ -84,6 +84,10 @@ import type {
   ScheduledTransactionWithExt,
   SubscriptionSpendOverview,
   SyncInstrumentInfoResult,
+  SyncRoundReport,
+  SyncStatus,
+  SyncChannelConfig,
+  SyncChannelConfigInput,
   TrendRange,
   TransactionInput,
   UpdateTransactionInput,
@@ -447,4 +451,13 @@ export const api = {
   // 随多端同步全设备一致（ADR-0091 决策 3）。
   getBaseCurrency: () => invoke<BaseCurrencyState>('get_base_currency'),
   setBaseCurrency: (code: string) => invoke<BaseCurrencyState>('set_base_currency', { code }),
+
+  // 多端同步（issue #862，设置页「数据」Tab 同步卡片）：状态查询、手动同步轮次
+  // 与通道配置（WebDAV 凭据，本机设备配置不同步）。passphrase 为主口令（密文库
+  // 同步封包用，不落日志），留空则后端回退本机已记住口令。
+  getSyncStatus: () => invoke<SyncStatus>('get_sync_status'),
+  syncNow: (passphrase?: string) => invoke<SyncRoundReport>('sync_now', { passphrase: passphrase || null }),
+  getSyncChannelConfig: () => invoke<SyncChannelConfig>('get_sync_channel_config'),
+  setSyncChannelConfig: (config: SyncChannelConfigInput) =>
+    invoke<void>('set_sync_channel_config', { config }),
 }

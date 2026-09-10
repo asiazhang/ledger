@@ -14,7 +14,7 @@
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
 #![allow(clippy::unreachable)]
 
-use tauri::State;
+use tauri::{AppHandle, Runtime, State};
 
 use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
@@ -42,9 +42,9 @@ pub async fn list_transactions(
 
 /// 创建单笔交易（issue #331 起携带「即建商户」证据发射参考失效信号，ADR-0044）。
 #[tauri::command]
-pub async fn create_transaction(
+pub async fn create_transaction<R: Runtime>(
     db: State<'_, DbState>,
-    app: tauri::AppHandle,
+    app: AppHandle<R>,
     input: TransactionInput,
 ) -> Result<String> {
     // 创建编排入口（issue #228 / ADR-0033）：行为层自持事务，中途失败整体回滚。

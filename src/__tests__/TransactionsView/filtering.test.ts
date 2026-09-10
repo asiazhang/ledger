@@ -32,6 +32,18 @@ describe('TransactionsView URL 下钻接线（issue #97/#191，冒烟级）', ()
     expect(wrapper.text()).toContain('共 3 条')
   })
 
+  it('涉及语义含出资账户端（issue #937）：按卡过滤命中它出资的买入', async () => {
+    // acc-2 出资、acc-1 投资的买入：按 acc-2（银行卡）下钻应命中，替身镜像后端三端口径
+    setTxnDb([
+      makeTxn(1, 'acc-1', { kind: 'buy', funding_account_id: 'acc-2', date: '2026-01-05' }),
+      makeTxn(2, 'acc-1', { date: '2026-01-20' }),
+    ])
+    routeMock.query = { account: 'acc-2' }
+    const wrapper = await mountView()
+    expect(lastListFilter()).toMatchObject({ involving_account_id: 'acc-2' })
+    expect(wrapper.text()).toContain('共 1 条')
+  })
+
   it('account 与 merchant 参数可组合直达（同时生效）', async () => {
     routeMock.query = { account: 'acc-1', merchant: 'mch-1' }
     const wrapper = await mountView()

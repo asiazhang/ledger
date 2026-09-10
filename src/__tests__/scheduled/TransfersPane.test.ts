@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '../helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { NModal, NSelect, NPopconfirm } from 'naive-ui'
+import { NDataTable, NModal, NSelect, NPopconfirm } from 'naive-ui'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
 import { findInputByTestId as findInput } from '../helpers/dom'
 import { mountFlushed } from '../helpers/mount'
+import { setFakeMedia } from '../helpers/media-mock'
 import { makeOccurrence, makeTransferPlan } from '../factories'
 import { formatAmount } from '@/utils/money'
 import type {
@@ -399,5 +400,100 @@ describe('TransfersPane 新建定时转账（转账形态真差异，issue #203�
     const wrapper = await mountView()
     await openCreateModal(wrapper)
     expect(wrapper.findComponent('[data-testid="transfer-merchant"]').exists()).toBe(false)
+  })
+})
+
+describe('TransfersPane 移动档（issue #848 / ADR-0088 决策 11 票⑧）', () => {
+  /** 转账夹具：循环转账 招商银行 → 支付宝，每月，下期 2026-03-01。 */
+  function wirePlan() {
+    const plan = makeTransferPlan(
+      { id: 't1', note: '月度储蓄', amount_cents: 50000 },
+      'acc-cny2',
+      null,
+    )
+    mockPlans = [plan]
+    mockDetails.set(
+      't1',
+      makeDetail(plan, [makeOccurrence({ id: 'o1', scheduled_date: '2026-03-01' })]),
+    )
+    return plan
+  }
+
+  function tableOf(wrapper: Awaited<ReturnType<typeof mountView>>) {
+    return wrapper.findComponent(NDataTable)
+  }
+
+  it('移动档列结构三分（备注/金额/操作），桌面档九列一字不动', async () => {
+    wirePlan()
+    const desktop = await mountView()
+    expect((tableOf(desktop).props('columns') as unknown[]).length).toBe(9)
+    desktop.unmount()
+
+    setFakeMedia({ width: 600 })
+    const mobile = await mountView()
+    const columns = tableOf(mobile).props('columns') as Array<{ key?: string }>
+    expect(columns.map((c) => c.key)).toEqual(['note', 'amount', 'actions'])
+  })
+
+  it('移动档信息并入副行不丢失：状态/周期/开始日/双向账户/金额/下期转账', async () => {
+    setFakeMedia({ width: 600 })
+    wirePlan()
+    const wrapper = await mountView()
+    const row = wrapper.find('.n-data-table-tbody .n-data-table-tr')
+    const text = row.text()
+    expect(text).toContain('月度储蓄')
+    expect(text).toContain('进行中')
+    expect(text).toContain('每月')
+    expect(text).toContain('2026-01-01')
+    // 双向账户：转出与转入并存（转账形态真差异）
+    expect(text).toContain('招商银行')
+    expect(text).toContain('支付宝')
+    expect(text).toContain(formatAmount(50000, cny))
+    // 下期转账锚点与桌面同 testid
+    const next = wrapper.find('[data-testid="next-transfer-t1"]')
+    expect(next.exists()).toBe(true)
+    expect(next.text()).toContain('2026-03-01')
+  })
+
+  it('移动档生命周期操作一击可达：暂停/取消为可见按钮且 ≥48px 触控目标，取消经确认弹层', async () => {
+    setFakeMedia({ width: 600 })
+    wirePlan()
+    const wrapper = await mountView()
+    for (const key of ['pause', 'cancel']) {
+      const btn = wrapper.find(`[data-testid="op-${key}-t1"]`)
+      expect(btn.exists(), `应存在可见的「${key}」按钮`).toBe(true)
+      const el = btn.element as HTMLElement
+      expect(el.style.minWidth).toBe('48px')
+      expect(el.style.minHeight).toBe('48px')
+    }
+    // 取消仍需二次确认：确认后走同一状态命令
+    await wrapper.find('[data-testid="op-cancel-t1"]').trigger('click')
+    await flushPromises()
+    expect(
+      mockInvoke.mock.calls.some(([cmd]) => cmd === 'update_scheduled_transaction_status'),
+    ).toBe(false)
+    const positive = document.body.querySelector('.n-popconfirm .n-button--primary-type')
+    expect(positive).not.toBeNull()
+    ;(positive as HTMLButtonElement).click()
+    await flushPromises()
+    expect(
+      mockInvoke.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === 'update_scheduled_transaction_status' &&
+          (args as { input: { new_status: string } }).input.new_status === 'cancelled',
+      ),
+    ).toBe(true)
+  })
+
+  it('跨断点缩窗实时换列（九列 ⇄ 三列）', async () => {
+    wirePlan()
+    const wrapper = await mountView()
+    expect((tableOf(wrapper).props('columns') as unknown[]).length).toBe(9)
+    setFakeMedia({ width: 600 })
+    await flushPromises()
+    expect((tableOf(wrapper).props('columns') as unknown[]).length).toBe(3)
+    setFakeMedia({ width: 1280 })
+    await flushPromises()
+    expect((tableOf(wrapper).props('columns') as unknown[]).length).toBe(9)
   })
 })

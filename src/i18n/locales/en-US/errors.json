@@ -255,7 +255,8 @@
   "sync-channel": {
     "auth-failed": "Sync channel credentials were rejected; check your cloud account and password (or app password) settings.",
     "base-url-missing": "Sync channel address is required.",
-    "book-id-invalid": "Invalid book id; cannot build the sync directory.",
+    "book-id-invalid": "Invalid sync space (only lowercase letters, digits and hyphens); cannot build the sync directory.",
+    "book-unavailable": "Book registry is unavailable; cannot determine the sync scope.",
     "checkpoint-corrupt": "Checkpoint snapshot failed verification (possibly incomplete upload or corrupt); publish a new checkpoint: {0}",
     "checkpoint-missing": "Checkpoint file is missing on the sync channel; publish a new checkpoint: {0}",
     "checkpoint-none": "No checkpoint snapshot exists on the sync channel yet.",
@@ -265,6 +266,7 @@
     "manifest-corrupt": "Sync manifest is corrupt or unreadable: {0}",
     "manifest-version-newer": "Sync manifest is from a newer app version (manifest version {0}); upgrade before syncing.",
     "network-failed": "Sync channel network failure; check your network and retry: {0}",
+    "not-configured": "Sync channel is not configured; set up your cloud drive in Settings first.",
     "passphrase-required": "The sync channel contains encrypted data; the master passphrase is required to read it.",
     "path-invalid": "Invalid sync channel path: {0}",
     "segment-corrupt": "Sync segment failed verification (possibly incomplete upload or corrupt); retry sync: {0}",

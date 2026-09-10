@@ -349,8 +349,9 @@ pub struct TransactionListFilter {
     pub to: Option<String>,
     /// 按转出账户过滤。
     pub account_id: Option<String>,
-    /// 涉及账户过滤（v0.2.0 之后新增扩展字段）：`account_id = X OR to_account_id = X`，
-    /// 命中普通交易与转账的转出/转入两侧（含转入的转账）。
+    /// 涉及账户过滤（v0.2.0 之后新增扩展字段）：转出 ∪ 转入 ∪ 出资三端——
+    /// `account_id = X OR to_account_id = X OR funding_account_id = X`，命中普通交易、
+    /// 转账两侧与带出资账户 buy/sell 的出资端（issue #937 / ADR-0096）。
     /// 已发布字段 `account_id`（仅转出账户）语义保持不变，遵守发布冻结约定。
     pub involving_account_id: Option<String>,
     /// 按商户过滤（issue #191）：命中 `merchant_id = X` 的全部未删除交易

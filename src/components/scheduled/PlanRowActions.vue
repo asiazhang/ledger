@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { NButton, NSpace } from 'naive-ui'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
+import { MOBILE_TOUCH_TARGET_STYLE } from '@/components/mobile-cells'
 import type { ScheduledPlanRowAction } from '@/composables/useScheduledPlanList'
 
 /**
@@ -21,6 +22,10 @@ const props = defineProps<{
   actions: ScheduledPlanRowAction[]
   /** 行主键：测试锚点 `op-${key}-${rowId}` 的来源。 */
   rowId: string
+  /** 移动档变体（issue #848 / ADR-0088 决策 11 票⑧）：动作纵排堆叠 + ≥48px
+   *  触控目标（生命周期操作一击可达）；描述符闭集、确认分支、测试锚点两档
+   *  共用。缺省桌面档渲染一字不动（回归红线）。 */
+  mobile?: boolean
 }>()
 
 /** 仅渲染可用动作；全不可用时空占位「—」。 */
@@ -28,15 +33,16 @@ const visibleActions = computed(() => props.actions.filter((a) => a.available))
 </script>
 
 <template>
-  <NSpace v-if="visibleActions.length" :size="4">
+  <NSpace v-if="visibleActions.length" :size="mobile ? 2 : 4" :vertical="mobile">
     <template v-for="a in visibleActions" :key="a.key">
       <AppPopconfirm v-if="a.confirm" :on-positive-click="a.run">
         <template #default>{{ a.confirm }}</template>
         <template #trigger>
           <NButton
-            size="tiny"
+            :size="mobile ? 'small' : 'tiny'"
             type="error"
             quaternary
+            :style="mobile ? MOBILE_TOUCH_TARGET_STYLE : undefined"
             :data-testid="`op-${a.key}-${rowId}`"
           >
             {{ a.label }}
@@ -45,7 +51,8 @@ const visibleActions = computed(() => props.actions.filter((a) => a.available))
       </AppPopconfirm>
       <NButton
         v-else
-        size="tiny"
+        :size="mobile ? 'small' : 'tiny'"
+        :style="mobile ? MOBILE_TOUCH_TARGET_STYLE : undefined"
         :data-testid="`op-${a.key}-${rowId}`"
         @click="a.run"
       >
