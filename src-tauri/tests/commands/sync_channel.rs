@@ -7,9 +7,10 @@
 //! 此处只钉「命令壳 → 通道在位性 → 轮次 → 状态回显」的整链行为。
 //!
 //! 现场隔离：每个「设备」是独立的 mock 应用 + 独立临时目录的文件库 + 引导
-//! 登记态（与 `books.rs` 同型）；进程启动时把 `$HOME` 重定向到本测试目标
-//! 专属临时目录（mock runtime 的 `app_data_dir` 回退解析隔离）。测试间以
-//! 各自独立的 WebDAV 桩（真实 HTTP 服务，MKCOL/GET/PUT）对接，互不共享通道。
+//! 登记态（与 `books.rs` 同型）；`$HOME` 重定向收在本测试目标唯一的
+//! [`crate::isolation`]（进程内一次，mock runtime 的 `app_data_dir` 回退解析
+//! 隔离）。测试间以各自独立的 WebDAV 桩（真实 HTTP 服务，MKCOL/GET/PUT）对接，
+//! 互不共享通道。
 
 // 测试整体豁免（ADR-0060）：集成测试 crate 经 cfg(test) 放行六件套，生产构建零放宽。
 #![cfg_attr(
@@ -25,7 +26,6 @@
 )]
 
 use std::path::PathBuf;
-use std::sync::Once;
 
 use tauri::Manager;
 use tauri_app_lib::commands::accounts;
@@ -42,22 +42,7 @@ use tauri_app_lib::sync_engine::EnvelopeMode;
 use tauri_app_lib::test_support::{read_scalar_i64, spawn_webdav_stub};
 use tauri_app_lib::transaction::{TransactionInput, TransactionKind};
 
-static ISOLATE: Once = Once::new();
-
-/// HOME 重定向（进程内一次）：mock runtime 回退路径解析与 `$HOME` 派生的默认
-/// 数据目录落在进程专属临时目录。SAFETY：`set_var` 自 Rust 2024 起 unsafe；
-/// 调用点在各测试函数首行，本测试目标无其他代码并发读取 `$HOME`。
-pub(crate) fn isolate_home() {
-    ISOLATE.call_once(|| {
-        let root = std::env::temp_dir().join(format!(
-            "ledger-syncchannel-it-{}",
-            tauri_app_lib::db::new_uuid()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        // SAFETY：见函数文档。
-        unsafe { std::env::set_var("HOME", &root) };
-    });
-}
+use crate::isolation::isolate_home;
 
 /// 引导登记态在位的 mock 应用 + 独立临时目录（不含库连接；连接由调用方按
 /// 明文/密文形态自行挂载，tauri manage 同型仅首次生效）。
