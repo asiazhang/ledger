@@ -179,11 +179,14 @@ impl TransactionBatch {
     }
 }
 
-/// 计算导入去重哈希：`sha256("date|kind|amount_cents|currency_code|account_id|to_account_id")`。
+/// 计算导入去重哈希：`sha256("date|kind|amount_cents|currency_code|account_id|to_account_id")`，
+/// 携带出资账户时追加 `|funding_account_id`（issue #939 / ADR-0096 决策 8）。
 /// `to_account_id` 缺省拼空串；刻意排除 note/category（AI 生成文本非确定性，会让哈希漂移）。
+/// 出资账户仅在携带时追加：无出资账户的输入与旧公式逐字节同输入——历史行
+/// `dedup_hash` 列（旧公式产物）对新公式仍命中，重导去重行为不变。
 pub fn compute_dedup_hash(input: &TransactionInput) -> String {
     let to_account_id = input.to_account_id.as_deref().unwrap_or("");
-    let payload = format!(
+    let mut payload = format!(
         "{}|{}|{}|{}|{}|{}",
         input.date,
         input.kind.as_str(),
@@ -192,6 +195,10 @@ pub fn compute_dedup_hash(input: &TransactionInput) -> String {
         input.account_id,
         to_account_id
     );
+    if let Some(funding) = input.funding_account_id.as_deref() {
+        payload.push('|');
+        payload.push_str(funding);
+    }
     let digest = Sha256::digest(payload.as_bytes());
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }

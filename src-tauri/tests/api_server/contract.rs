@@ -315,6 +315,29 @@ async fn contract_strips_provenance_while_openapi_keeps_it() {
     );
 }
 
+/// 出资账户契约锁（issue #939 / ADR-0096 决策 8）：创建/修改请求体与交易读回
+/// schema 都带出可选出资账户字段——契约自描述端点随类型派生自动带出新字段
+/// 的验收面（字段可选、类型可选字符串、字段描述提及准入语义）。
+#[tokio::test]
+async fn contract_transaction_schemas_carry_funding_account() {
+    let doc = fetch_contract().await;
+    let schemas = doc["schemas"].as_object().unwrap();
+
+    for name in ["TransactionInput", "UpdateTransactionInput", "Transaction"] {
+        let field = &schemas[name]["funding_account_id?"];
+        assert!(!field.is_null(), "{name} 应带出可选出资账户字段");
+        assert_eq!(field[0], "str?", "{name}.funding_account_id 应为可选字符串");
+    }
+
+    let desc = schemas["TransactionInput"]["funding_account_id?"][1]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        desc.contains("buy/sell"),
+        "字段描述应说明仅 buy/sell 可携带，实际: {desc}"
+    );
+}
+
 /// 方言体积预算护栏（issue #839）：产物 ≤20KB。
 ///
 /// token 换算口径（与 issue 原型一致，不引入真实 tokenizer 依赖）：
