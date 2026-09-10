@@ -33,6 +33,7 @@ const parkedOp: ParkedOpInfo = {
   entity: 'transaction',
   entity_id: 'txn-1',
   code: 'sync-engine.schema-ahead',
+  params: [],
   message: '该操作来自更新版本的应用，升级本端后将自动重试',
   parked_at: '2026-01-15T09:00:00Z',
 }
@@ -246,6 +247,35 @@ describe('SyncSettings.vue', () => {
     expect(list.exists()).toBe(true)
     // 码化原因经 errors.<code> 模板本地化，原文不出现（未知码才降级透传）。
     expect(list.text()).toContain('该操作来自更新版本的应用')
+    expect(list.text()).not.toContain('RAW')
+  })
+
+  it('挂起原因带参码：按 errors.<code> 模板插出动态值（issue #957 缺陷回归）', async () => {
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: { ...baseStatus, parked_count: 1 },
+        get_sync_channel_config: baseConfig,
+        // 真实主路径形态：对端 op 引用不存在账户，重放被账户存活守卫拒绝。
+        // message 置为哨兵值：只有「params 插值走通模板」才能得到 acc-1；
+        // 若 params 丢失，守卫会回退透传 message，断言即失败。
+        get_parked_ops: [
+          {
+            ...parkedOp,
+            code: 'account.not-found',
+            params: ['acc-1'],
+            message: 'RAW',
+          },
+        ],
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    const list = wrapper.find('[data-testid="sync-parked-list"]')
+    // 缺陷回归：params 丢失时渲染成「账户不存在: 」（空悬占位符）。
+    // 修复后必须插出动态值——挂起明细是用户唯一的裁决依据。
+    expect(list.text()).toContain('acc-1')
+    expect(list.text()).not.toContain('{0}')
     expect(list.text()).not.toContain('RAW')
   })
 

@@ -15,7 +15,9 @@ import type { ParkedOpInfo, SyncChannelConfig, SyncStatus } from '@/types'
 //
 // 自动触发（打开应用即同步 + 运行期低频轮询）由后端编排，前端零调用面；本卡片
 // 只呈现「同步到什么状态」。挂起通知（issue #863 验收项）：数量 > 0 时展开明细，
-// 逐条按码化原因本地化呈现（`errors.<code>`），供用户知道哪些操作待裁决。
+// 逐条经 `utils/errors.ts` 的 `errorMessage` 按码本地化（含 params 插值；码未命中
+// 或 params 不足则降级透传后端原文），供用户知道哪些操作待裁决——挂起原因
+// 的码→文案实现单点在 errors.ts，此处不自建（issue #957）。
 
 const message = useMessage()
 
@@ -111,12 +113,6 @@ async function syncNow() {
   }
 }
 
-/** 挂起原因展示文本：码化原因按当前语言模板本地化，未知码降级透传原文。 */
-function parkedReason(op: ParkedOpInfo): string {
-  const key = `errors.${op.code}`
-  return t(key) !== key ? t(key) : op.message
-}
-
 /** 保存通道配置：WebDAV 凭据与同步空间（跨端共识的世界身份；空值交由后端回默认）。 */
 async function saveChannel() {
   saving.value = true
@@ -181,7 +177,7 @@ async function saveChannel() {
           style="font-size: 12px"
           data-testid="sync-parked-item"
         >
-          {{ t('settings.data.sync.parkedItem', { reason: parkedReason(op) }) }}
+          {{ t('settings.data.sync.parkedItem', { reason: errorMessage(op) }) }}
         </NText>
       </NSpace>
       <NSpace>

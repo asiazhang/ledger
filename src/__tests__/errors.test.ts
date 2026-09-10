@@ -133,4 +133,45 @@ describe('errorMessage 错误码本地化（issue #342 二期 / ADR-0050）', ()
       }),
     ).toBe('缺少 USD→CNY 汇率，无法折算')
   })
+
+  it('params 不足时回退透传 message，不渲染空悬占位符（issue #957 守卫）', () => {
+    // 模板声明 2 个占位符、只给 1 个：插值会得到「缺少 USD→ 汇率」——
+    // 比后端原文更难读，故回退完整句。
+    expect(
+      errorMessage({
+        kind: 'Invalid',
+        message: '缺少 USD→CNY 汇率，无法折算',
+        code: 'fx.rate-missing',
+        params: ['USD'],
+      }),
+    ).toBe('缺少 USD→CNY 汇率，无法折算')
+    // 完全无 params 同理（后端声明了插值参数却没给）。
+    expect(
+      errorMessage({
+        kind: 'Invalid',
+        message: '缺少 USD→CNY 汇率，无法折算',
+        code: 'fx.rate-missing',
+      }),
+    ).toBe('缺少 USD→CNY 汇率，无法折算')
+    // 空数组与缺席等价。
+    expect(
+      errorMessage({
+        kind: 'Invalid',
+        message: '缺少 USD→CNY 汇率，无法折算',
+        code: 'fx.rate-missing',
+        params: [],
+      }),
+    ).toBe('缺少 USD→CNY 汇率，无法折算')
+  })
+
+  it('无占位符模板不受守卫影响，params 多余也照常渲染模板', () => {
+    expect(
+      errorMessage({
+        kind: 'Invalid',
+        message: 'RAW',
+        code: 'transfer.to-account-required',
+        params: ['多余'],
+      }),
+    ).toBe('转账目标账户不能为空')
+  })
 })

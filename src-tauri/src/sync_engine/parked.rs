@@ -34,7 +34,11 @@ pub struct ParkedOp {
     pub payload: String,
     /// 码化挂起原因（稳定错误码）。
     pub code: String,
-    /// 中文详情（原样保留，与错误消息纪律同款）。
+    /// 码化挂起原因的插值参数（按消息中动态值出现顺序；与 `code` 同源于
+    /// `AppError::Coded`，ADR-0050）。前端按 `errors.<code>` 模板插值用。
+    pub params: Vec<String>,
+    /// 中文详情（**已渲染**的完整句，与错误消息纪律同款）：码命中模板且
+    /// `params` 齐备时前端用模板渲染，否则降级透传本字段（恒可读）。
     pub message: String,
     /// 挂起时刻（本机簿记事实）。
     pub parked_at: String,
@@ -52,10 +56,11 @@ pub(super) const CODE_REPLAY_FAILED: &str = "sync-engine.replay-failed";
 pub(super) fn park(conn: &rusqlite::Connection, op: &ParkedOp) -> Result<()> {
     conn.execute(
         "INSERT INTO sync_parked_ops \
-         (op_id, device_id, clock, schema_version, entity, entity_id, payload, park_code, park_message, parked_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+         (op_id, device_id, clock, schema_version, entity, entity_id, payload, park_code, park_params, park_message, parked_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
          ON CONFLICT(op_id) DO UPDATE SET \
-           park_code = excluded.park_code, park_message = excluded.park_message, parked_at = excluded.parked_at",
+           park_code = excluded.park_code, park_params = excluded.park_params, \
+           park_message = excluded.park_message, parked_at = excluded.parked_at",
         params![
             op.op_id,
             op.device_id,
@@ -65,6 +70,7 @@ pub(super) fn park(conn: &rusqlite::Connection, op: &ParkedOp) -> Result<()> {
             op.entity_id,
             op.payload,
             op.code,
+            encode_params(&op.params),
             op.message,
             now_iso(),
         ],
@@ -91,7 +97,7 @@ pub(super) fn is_empty(conn: &rusqlite::Connection) -> Result<bool> {
 pub(super) fn list(conn: &rusqlite::Connection) -> Result<Vec<ParkedOp>> {
     let mut stmt = conn.prepare(
         "SELECT op_id, device_id, clock, schema_version, entity, entity_id, payload, \
-         park_code, park_message, parked_at \
+         park_code, park_params, park_message, parked_at \
          FROM sync_parked_ops ORDER BY clock ASC, device_id ASC",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -104,8 +110,9 @@ pub(super) fn list(conn: &rusqlite::Connection) -> Result<Vec<ParkedOp>> {
             entity_id: r.get(5)?,
             payload: r.get(6)?,
             code: r.get(7)?,
-            message: r.get(8)?,
-            parked_at: r.get(9)?,
+            params: decode_params(r.get::<_, String>(8)?),
+            message: r.get(9)?,
+            parked_at: r.get(10)?,
         })
     })?;
     let mut ops = Vec::new();
@@ -113,4 +120,16 @@ pub(super) fn list(conn: &rusqlite::Connection) -> Result<Vec<ParkedOp>> {
         ops.push(row?);
     }
     Ok(ops)
+}
+
+/// `params` 落库编码：JSON 字符串数组文本（与同表 `payload` 同款；params 恒整读
+/// 整写、不参与查询，无需子表）。
+fn encode_params(params: &[String]) -> String {
+    serde_json::to_string(params).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// `params` 出库解码：坏值降级空数组（params 缺失只影响插值，不影响挂起行本身
+/// 的可用性——前端会回退到 `message` 透传，不静默丢弃挂起通知）。
+fn decode_params(raw: String) -> Vec<String> {
+    serde_json::from_str(&raw).unwrap_or_default()
 }

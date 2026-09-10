@@ -199,7 +199,10 @@ pub struct ParkedOpState {
     pub entity_id: String,
     /// 码化挂起原因（前端按码本地化）。
     pub code: String,
-    /// 挂起原因详情（中文原文）。
+    /// 码化挂起原因的插值参数（按消息中动态值出现顺序；ADR-0050）：前端按
+    /// `errors.<code>` 模板插值用（issue #957）。
+    pub params: Vec<String>,
+    /// 挂起原因详情（**已渲染**的中文完整句，码未命中模板或 params 不足时降级透传）。
     pub message: String,
     /// 挂起时刻（本机簿记事实）。
     pub parked_at: String,
@@ -213,6 +216,7 @@ impl From<crate::sync_engine::ParkedOp> for ParkedOpState {
             entity: op.entity,
             entity_id: op.entity_id,
             code: op.code,
+            params: op.params,
             message: op.message,
             parked_at: op.parked_at,
         }

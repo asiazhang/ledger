@@ -216,6 +216,7 @@ fn replay_one(conn: &rusqlite::Connection, op: &SyncOp, local_version: i64) -> R
         let parked = parked_from_op(
             op,
             parked::CODE_SCHEMA_AHEAD,
+            Vec::new(),
             "该操作来自更新版本的应用，升级本端后将自动重试".to_string(),
         )?;
         park(conn, &parked)?;
@@ -278,19 +279,33 @@ fn park(conn: &rusqlite::Connection, parked: &ParkedOp) -> Result<()> {
     parked::park(conn, &row)
 }
 
-/// 重放失败的挂起构造：码化错误原样携带其码（前端按码本地化）；其余错误以
-/// 通用挂起码 + 原始详情承载（外键依赖失败经各域守卫以码化错误表达）。
+/// 重放失败的挂起构造：码化错误原样携带其码与插值参数（前端按码本地化）；
+/// 其余错误以通用挂起码 + 原始详情承载（外键依赖失败经各域守卫以码化错误表达）。
 fn park_replay_failure(conn: &rusqlite::Connection, op: &SyncOp, error: &AppError) -> Result<()> {
-    let (code, message) = match error {
-        AppError::Coded { code, message, .. } => (code.clone(), message.clone()),
-        other => (parked::CODE_REPLAY_FAILED.to_string(), other.to_string()),
+    let (code, params, message) = match error {
+        AppError::Coded {
+            code,
+            message,
+            params,
+            ..
+        } => (code.clone(), params.clone(), message.clone()),
+        other => (
+            parked::CODE_REPLAY_FAILED.to_string(),
+            vec![other.to_string()],
+            other.to_string(),
+        ),
     };
-    let parked = parked_from_op(op, &code, message)?;
+    let parked = parked_from_op(op, &code, params, message)?;
     park(conn, &parked)
 }
 
 /// op → 挂起行构造单点（信封字段与载荷序列化同源；簿记戳由 [`park`] 落库时补齐）。
-fn parked_from_op(op: &SyncOp, code: &str, message: String) -> Result<ParkedOp> {
+fn parked_from_op(
+    op: &SyncOp,
+    code: &str,
+    params: Vec<String>,
+    message: String,
+) -> Result<ParkedOp> {
     Ok(ParkedOp {
         op_id: op.op_id.clone(),
         device_id: op.device_id.clone(),
@@ -305,6 +320,7 @@ fn parked_from_op(op: &SyncOp, code: &str, message: String) -> Result<ParkedOp> 
         payload: serde_json::to_string(&op.command)
             .map_err(|e| AppError::Invalid(format!("op 载荷序列化失败: {e}")))?,
         code: code.to_string(),
+        params,
         message,
         parked_at: String::new(),
     })
@@ -343,6 +359,7 @@ fn undecodable_park_draft(raw: &str, detail: &str) -> ParkedOp {
         entity_id: String::new(),
         payload: raw.to_string(),
         code: parked::CODE_UNDECODABLE.to_string(),
+        params: vec![detail.to_string()],
         message: format!("同步命令无法识别（可能产生自更高版本的应用）：{detail}"),
         parked_at: String::new(),
     }
