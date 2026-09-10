@@ -79,6 +79,7 @@ import type {
   ReportPeriodRange,
   RealizedPnlSummary,
   RestoreResult,
+  TransactionConvert,
   TransactionTrade,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
@@ -254,6 +255,10 @@ export const api = {
   // 交易买卖明细（issue #180）：buy/sell 交易编辑回填数据源（扩展表投影，非买卖交易 NotFound）
   getTransactionTrade: (id: string) =>
     invoke<TransactionTrade>('get_transaction_trade', { id }),
+  // 基金转换两腿明细（ADR-0099 / issue #979）：convert 交易编辑回填「A → B」
+  // 全量信息的数据源（扩展表投影，非转换交易 NotFound）
+  getTransactionConvert: (id: string) =>
+    invoke<TransactionConvert>('get_transaction_convert', { id }),
   createInstrument: (input: InstrumentInput) =>
     invoke<string>('create_instrument', { input }),
   // 自建标的删除（issue #292 / ADR-0036）：仅手动来源且无买卖流水引用可删，

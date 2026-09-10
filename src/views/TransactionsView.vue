@@ -573,6 +573,7 @@ function activateCard(row: Transaction): void {
         v-if="intent?.type === 'edit'"
         :editing="intent.row"
         :trade="intent.trade"
+        :convert="intent.convert"
         @saved="onEditSaved"
       />
     </AppModal>

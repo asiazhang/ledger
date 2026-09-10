@@ -2,6 +2,7 @@ import { merchantDb, makeTxn, mountView, listCalls, lastListFilter, tablePaginat
 import { mockInvoke, wireInvokeSeam, type InvokeSeamDispatcher } from '../helpers/invoke-mock'
 import { clickDialogButton, dialogText, pressReleaseOnDialogMask, visibleModalText } from '../helpers/dom'
 import { describe, it, expect, beforeEach } from 'vitest'
+import ConvertForm from '@/components/ConvertForm.vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NDataTable, NPopconfirm, NSelect, NModal, NInput, NInputNumber } from 'naive-ui'
 import CategoryForm from '@/components/CategoryForm.vue'
@@ -377,7 +378,43 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     makeTxn(1, 'acc-inv', { kind: 'buy', amount_cents: 15500, note: '建仓买入', date: '2026-01-10' }),
     makeTxn(2, 'acc-inv', { kind: 'sell', amount_cents: 9500, note: '减仓', date: '2026-01-20' }),
     makeTxn(3, 'acc-1', { kind: 'refund', refund_of_transaction_id: 'txn-000' }),
+    makeTxn(4, 'acc-inv', {
+      kind: 'convert',
+      amount_cents: 100000,
+      note: '换仓',
+      date: '2026-02-01',
+      source: {
+        kind: 'instrument',
+        entity_id: 'ins-1',
+        display_name: '006793 转出基金',
+        status: null,
+      },
+      convert: {
+        to_instrument_id: 'ins-2',
+        to_symbol: '519700',
+        to_quantity: 99.75,
+        out_amount_cents: 110550,
+        in_amount_cents: 109725,
+      },
+    }),
   ]
+
+  /** 转换两腿读投影（`get_transaction_convert`）：编辑回填数据源（ADR-0099 / #979）。 */
+  const convertDetail = {
+    out_instrument_id: 'ins-1',
+    out_symbol: '006793',
+    out_instrument_name: '转出基金',
+    out_quantity: 100.5,
+    out_amount_cents: 110550,
+    in_instrument_id: 'ins-2',
+    in_symbol: '519700',
+    in_instrument_name: '转入基金',
+    in_quantity: 99.75,
+    in_amount_cents: 109725,
+    fee_cents: 150,
+    carried_cost_cents: 100000,
+    currency_code: 'CNY',
+  }
 
   const buyTrade = {
     instrument_id: 'ins-1',
@@ -399,9 +436,13 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
       defaults: SHELL_DEFAULTS,
       overrides: {
         ...SHELL_OVERRIDES,
-        // sell 行返回无手续费明细，buy 行返回完整明细
+        // sell 行返回无手续费明细，buy 行返回完整明细；convert 行返回两腿明细
         get_transaction_trade: (args) =>
           Promise.resolve(args?.id === 'txn-002' ? { ...buyTrade, fee_cents: null } : buyTrade),
+        get_transaction_convert: (args) =>
+          args?.id === 'txn-004'
+            ? Promise.resolve(convertDetail)
+            : Promise.reject(new Error('unexpected invoke: get_transaction_convert')),
       },
     })
   })
@@ -488,6 +529,21 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     expect(form.props('trade')).toMatchObject({ instrument_id: 'ins-1', fee_cents: null })
     const numbers = form.findAllComponents(NInputNumber)
     expect(numbers[1].props('value')).toBeNull()
+  })
+
+  it('convert 行编辑：先取转换两腿明细（get_transaction_convert），转换表单回填「A → B」并显示结转成本', async () => {
+    const wrapper = await mountView()
+    await openEditModal(wrapper, 3)
+    const convertCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'get_transaction_convert')
+    expect(convertCalls).toHaveLength(1)
+    expect(convertCalls[0][1]).toMatchObject({ id: 'txn-004' })
+    const form = wrapper.findComponent(ConvertForm)
+    expect(form.exists()).toBe(true)
+    expect(form.props('editing')).toMatchObject({ id: 'txn-004' })
+    expect(form.props('convert')).toMatchObject({ out_instrument_id: 'ins-1', in_instrument_id: 'ins-2' })
+    // 编辑形态展示结转成本（行金额锚点）
+    expect(form.text()).toContain('结转成本')
+    expect(form.text()).toContain('保存修改')
   })
 
   it('取买卖明细失败：弹窗不打开并提示错误', async () => {

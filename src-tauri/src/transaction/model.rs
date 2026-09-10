@@ -55,6 +55,8 @@ pub struct Transaction {
 pub struct ConvertFields {
     /// 转入标的。
     pub to_instrument_id: String,
+    /// 转入标的代码。
+    pub to_symbol: String,
     /// 转入份额。
     pub to_quantity: f64,
     /// 转出金额（分，确认单权威）。
@@ -210,8 +212,9 @@ pub struct TransactionInput {
 ///
 /// 与 `TransactionInput` 的唯一差异是不含 `idempotency_key`：幂等键不可编辑，只在导入时落定，
 /// 编辑不改变导入身份（修改后重跑同批导入仍按同键去重、不产生重复）。
-/// buy/sell 仍需 `instrument_id`/`quantity`/`price_cents`/`fee_cents`；convert 不在
-/// 本修改契约内（转换的修改尚未接入，走不到这一个输入形状）。
+/// buy/sell 仍需 `instrument_id`/`quantity`/`price_cents`/`fee_cents`；convert 的就地修改
+/// （全字段替换）同样需 `instrument_id`/`quantity`/`to_instrument_id`/`to_quantity`/
+/// `out_amount_cents`/`in_amount_cents`/`fee_cents`（kind 变更仍被拒，见 `behavior::update`）。
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct UpdateTransactionInput {
     pub kind: TransactionKind,
@@ -241,13 +244,21 @@ pub struct UpdateTransactionInput {
     pub price_cents: Option<i64>,
     /// 手续费（整数分，可省，默认 0）：与 `TransactionInput.fee_cents` 同一契约。
     pub fee_cents: Option<i64>,
+    /// 转入标的 id（仅 convert）：不得与转出标的相同。
+    pub to_instrument_id: Option<String>,
+    /// 转入份额。
+    pub to_quantity: Option<f64>,
+    /// 转出金额（分）。
+    pub out_amount_cents: Option<i64>,
+    /// 转入金额（分）。
+    pub in_amount_cents: Option<i64>,
 }
 
 impl From<UpdateTransactionInput> for TransactionInput {
     fn from(u: UpdateTransactionInput) -> Self {
         // 幂等键不作为可编辑字段：修改路径忽略请求中的该字段（保留既有行的幂等键），
-        // 此处统一置 None 表达"不写入新幂等键"。转换四腿字段同样不在修改契约内
-        // （转换的修改尚未接入，kind 变更与就地修改均被拒，见 `behavior::update`）。
+        // 此处统一置 None 表达"不写入新幂等键"。转换两腿字段随就地修改契约携带
+        // （全字段替换），kind 变更由行为层拒绝。
         TransactionInput {
             kind: u.kind,
             amount_cents: u.amount_cents,
@@ -266,11 +277,10 @@ impl From<UpdateTransactionInput> for TransactionInput {
             quantity: u.quantity,
             price_cents: u.price_cents,
             fee_cents: u.fee_cents,
-            // 转换四腿字段不在修改契约内（转换的修改尚未接入）。
-            to_instrument_id: None,
-            to_quantity: None,
-            out_amount_cents: None,
-            in_amount_cents: None,
+            to_instrument_id: u.to_instrument_id,
+            to_quantity: u.to_quantity,
+            out_amount_cents: u.out_amount_cents,
+            in_amount_cents: u.in_amount_cents,
             idempotency_key: None,
         }
     }

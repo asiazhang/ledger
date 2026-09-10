@@ -177,6 +177,27 @@ export interface TransactionTrade {
   fee_cents: number | null
 }
 
+/** 基金转换两腿明细（ADR-0099 / issue #979）：一笔 convert 交易在扩展表中的投影
+ * （两腿同记录），供转换表单编辑模式回填「A → B」全量信息。两侧金额为确认单权威
+ * （`out_amount_cents` / `in_amount_cents`），两侧单价由表单按金额 ÷ 份额反算展示
+ * （万分之一元，ADR-0038），故投影不冗余携带；`carried_cost_cents` 是行金额锚点
+ * （服务端按 FIFO 消耗算定的结转成本，非确认单金额）。 */
+export interface TransactionConvert {
+  out_instrument_id: string
+  out_symbol: string
+  out_instrument_name: string | null
+  out_quantity: number
+  out_amount_cents: number
+  in_instrument_id: string
+  in_symbol: string
+  in_instrument_name: string | null
+  in_quantity: number
+  in_amount_cents: number
+  fee_cents: number
+  carried_cost_cents: number
+  currency_code: string
+}
+
 export interface Holding {
   id: string
   account_id: string

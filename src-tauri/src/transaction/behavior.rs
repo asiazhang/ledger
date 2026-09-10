@@ -67,6 +67,13 @@ const PARTIAL_SOLD_CANNOT_UPDATE: &str = "该买入交易已有部分卖出，�
 /// 上迹守卫的稳定错误码（issue #342 二期）：与文案同源单点，经 revert 下传。
 const PARTIAL_SOLD_CANNOT_UPDATE_CODE: &str = "trade.partially-sold-update";
 
+/// 转换**转入份额**已有部分卖出的守卫文案（issue #979 / ADR-0099）：谓词与买入的
+/// 「在用卖出占用」同一（[`investment::revert`] 的 convert 臂复用 buy 清理语义），
+/// 但用户可见主体是转换的转入份额而非买入交易——用户可见文案各自单点，不复用
+/// 买入的「该买入交易…」措辞（ADR-0049 文案准确性）。
+const CONVERT_PARTIALLY_SOLD_CANNOT_UPDATE: &str = "该转换的转入份额已被后续卖出，无法修改";
+const CONVERT_PARTIALLY_SOLD_CANNOT_UPDATE_CODE: &str = "trade.convert-partially-sold-update";
+
 /// 持仓份额已被**在用的后续转换**消耗的守卫文案（issue #978 / ADR-0099）：修改会
 /// 重建持仓批次、删除会连带清空批次，两者都会抹掉后续转换的转出消耗记录（它精确
 /// 回补与结转成本的唯一依据）——链式转换（一条转换单拆多腿）须从最后一腿往前处理。
@@ -80,6 +87,8 @@ const CONSUMED_BY_CONVERT_CANNOT_DELETE_CODE: &str = "trade.consumed-by-convert-
 const UPDATE_GUARDS: investment::GuardMessages<'static> = investment::GuardMessages {
     partially_sold_code: PARTIAL_SOLD_CANNOT_UPDATE_CODE,
     partially_sold_msg: PARTIAL_SOLD_CANNOT_UPDATE,
+    convert_partially_sold_code: CONVERT_PARTIALLY_SOLD_CANNOT_UPDATE_CODE,
+    convert_partially_sold_msg: CONVERT_PARTIALLY_SOLD_CANNOT_UPDATE,
     consumed_by_convert_code: CONSUMED_BY_CONVERT_CANNOT_UPDATE_CODE,
     consumed_by_convert_msg: CONSUMED_BY_CONVERT_CANNOT_UPDATE,
 };
@@ -88,7 +97,7 @@ const UPDATE_GUARDS: investment::GuardMessages<'static> = investment::GuardMessa
 enum Plan {
     /// 普通 kind（income/expense/transfer/refund）：无副作用。
     Common(writer::NormalizedRow),
-    /// 投资 kind（buy/sell）：归一化行与副作用数据留在投资域计划中。
+    /// 投资 kind（buy/sell/convert）：归一化行与副作用数据留在投资域计划中。
     Investment(investment::Plan),
 }
 
@@ -221,13 +230,13 @@ fn update_within_transaction(
             AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
 
-    // 转换的 kind 变更（从 convert 出、或改为 convert）随生命周期票落地：本版在
-    // 分派前显式拒绝，避免经修改路径造出/抹掉转换行（ADR-0099 决策 5 的 kind 变更
-    // 专属码化错误由该票接管）；就地修改转换由 revert 的同码拒绝兜底。
+    // 转换的 kind 变更（从 convert 出、或改为 convert）为 PUT 专属码化拒绝：转换的
+    // 纠错只有「软删 + 重建」一条窄路（ADR-0099 决策 5）；就地修改转换走下方同一
+    // revert/plan 协议（convert → convert 由 [investment::revert] 的转换清理承载）。
     if (old_kind == TransactionKind::Convert) != (input.kind == TransactionKind::Convert) {
         return Err(AppError::coded(
-            "trade.convert-update-unsupported",
-            "基金转换的修改尚未接入",
+            "trade.convert-kind-change-forbidden",
+            "不可将交易类型改为或改出「转换」：转换的纠错只有「删除后重建」一条路",
         ));
     }
 
@@ -256,12 +265,13 @@ fn update_within_transaction(
 /// 软删 UPDATE 中途失败整体回滚，不再出现「持仓已删而交易仍在」的中间态
 /// （删除路径事务缺口修复，ADR-0033 决策 #3）。
 ///
-/// 持仓副作用回退按 kind 分派（issue #940 / ADR-0097，部分修订 ADR-0013 删除条）：
+/// 持仓副作用回退按 kind 分派（issue #940 / ADR-0097，issue #979 / ADR-0099）：
 /// - sell：回补其扣减的持仓并清空卖出关联——删除即撤销其全部持仓影响，
 ///   不再遗留幽灵占用（旧版「sell 删除不回补」是把买入永久锁死的根源）；
 /// - buy：**级联**——其持仓批次的在用 sell 逐笔回退持仓副作用并随之软删
 ///   （各自 delete op 与余额刷新），「已有部分卖出的买入禁删」守卫退场；
-/// - convert：转换的删除（转出腿回补 / 转换链）随生命周期票落地，本版码化拒绝；
+/// - convert：**级联**——转出腿逐批次精确回补、转入批次的在用 sell 与 buy 同规
+///   级联，再整批清理转入批次与转换明细行（ADR-0099 决策 5）；
 /// - 其余 kind 无持仓副作用，直接软删。
 ///
 /// 不存在的 id 返回码化 NotFound（HTTP 侧映射 404）。事务规则见
@@ -284,10 +294,10 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
             AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
 
-    // 持仓副作用回退（issue #940 / ADR-0097 / ADR-0099）：sell 回补持仓扣减；
-    // buy 消费其持仓批次的在用 sell（逐笔回退）并整批清理批次与匹配；convert 的删除
-    // 尚未接入（release_for_delete 内同码拒绝）。本行批次已被在用后续转换消耗时，
-    // buy 的删除以删除入口守卫拒绝。
+    // 持仓副作用回退（issue #940 / ADR-0097 / issue #979 / ADR-0099）：sell 回补
+    // 持仓扣减；buy / convert 消费其持仓批次的在用 sell（逐笔回退）并整批清理批次
+    // 与匹配（convert 另回补转出腿消耗）；本行批次已被在用后续转换消耗时，以删除
+    // 入口守卫拒绝。
     let cascaded_sell_ids = match kind {
         TransactionKind::Buy | TransactionKind::Sell | TransactionKind::Convert => {
             investment::release_for_delete(
@@ -363,8 +373,8 @@ fn soft_delete_transaction_row(conn: &Connection, id: &str) -> Result<()> {
 /// 走到本函数，同批内首行即建、后续行按名精确匹配复用。
 ///
 /// 单点分派全部 9 种 kind：通用 kind 经 Writer 接缝 [`writer::normalize`]（金额>0、
-/// transfer 目标账户、refund 继承原支出等校验 + 本位币折算）；buy/sell 委托投资域
-/// [`investment::prepare`]（投资账户/数量/单价/可卖数量校验 + 折算）；
+/// transfer 目标账户、refund 继承原支出等校验 + 本位币折算）；buy/sell/convert 委托投资域
+/// [`investment::prepare`]（投资账户/数量/单价/可卖数量、两标的互异与不跨账户校验 + 折算）；
 /// `dividend` / `split` 已声明但未实现，显式「暂不支持」报错——取代此前
 /// [`writer::normalize`] 兜底的「仅处理通用交易类型」文案（唯一对外可观测变化）。
 /// 参考数据携带准入（商户/保单/分类，issue #188/#361/#582）在本函数内按 kind 单点

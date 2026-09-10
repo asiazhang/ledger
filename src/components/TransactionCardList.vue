@@ -114,8 +114,21 @@ function onCardClick(row: Transaction): void {
       <div class="transaction-card-row" @click.stop>
         <AccountCell :row="row" />
       </div>
+      <!-- 两腿标的行（ADR-0099 / issue #979）：转换行显示「A → B」——A（转出标的）
+           经来源列同一 SourceLink 渲染（security_transactions.instrument_id 反查），
+           B 显示转入标的代码；无来源（防御）时退化为转入标的单腿。
+           转换行不重复渲染下方来源行（同一转出标的） -->
+      <div
+        v-if="row.kind === 'convert' && row.convert"
+        class="transaction-card-row"
+        @click.stop
+      >
+        <SourceLink v-if="row.source" :source="row.source" />
+        <span v-if="row.source" class="transaction-card-join">→</span>
+        <span>{{ row.convert.to_symbol }}</span>
+      </div>
       <!-- 来源行：保留链接语义（来源列词条）；无来源不占行 -->
-      <div v-if="row.source" class="transaction-card-row" @click.stop>
+      <div v-else-if="row.source" class="transaction-card-row" @click.stop>
         <SourceLink :source="row.source" />
       </div>
       <!-- 金额行：AmountCell 承载语义色与触控轴全文点按（阻断冒泡） -->

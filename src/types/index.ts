@@ -35,4 +35,6 @@ export {
   priceToYuan,
   yuanToCents,
   yuanToPrice,
+  PRICE_UNITS_PER_FEN,
+  PRICE_UNITS_PER_YUAN,
 } from '@/utils/money'

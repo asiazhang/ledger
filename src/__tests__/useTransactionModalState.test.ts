@@ -4,7 +4,7 @@ import { flushPromises } from '@vue/test-utils'
 import { makeTransaction } from '@/__tests__/factories'
 import { messageCalls } from './helpers/message-mock'
 import { useTransactionModalState } from '@/composables/useTransactionModalState'
-import type { TransactionTrade } from '@/types'
+import type { TransactionConvert, TransactionTrade } from '@/types'
 
 // ---------------------------------------------------------------------------
 // 数据工厂：买卖明细（交易行走共享 makeTransaction，factories.ts）
@@ -84,7 +84,39 @@ describe('useTransactionModalState edit 意图（先取明细再开窗）', () =
     await modals.open({ type: 'edit', row })
     expect(mockInvoke).toHaveBeenCalledTimes(1)
     expect(mockInvoke.mock.calls[0]).toEqual(['get_transaction_trade', { id: 'txn-b1' }])
-    expect(modals.intent.value).toEqual({ type: 'edit', row, trade })
+    expect(modals.intent.value).toEqual({ type: 'edit', row, trade, convert: null })
+    expect(modals.seq.value).toBe(1)
+  })
+
+  it('convert 行：先取转换两腿明细再开窗（get_transaction_convert）', async () => {
+    const modals = useTransactionModalState()
+    const row = makeTransaction({ id: 'txn-cv', kind: 'convert' })
+    const convert: TransactionConvert = {
+      out_instrument_id: 'inst-out',
+      out_symbol: '006793',
+      out_instrument_name: '转出基金',
+      out_quantity: 10,
+      out_amount_cents: 1_100,
+      in_instrument_id: 'inst-in',
+      in_symbol: '519700',
+      in_instrument_name: '转入基金',
+      in_quantity: 10,
+      in_amount_cents: 900,
+      fee_cents: 0,
+      carried_cost_cents: 1_000,
+      currency_code: 'CNY',
+    }
+    wireInvokeSeam({
+      overrides: {
+        get_transaction_convert: (args) =>
+          args?.id === 'txn-cv'
+            ? Promise.resolve(convert)
+            : Promise.reject(new Error('unexpected invoke: get_transaction_convert')),
+      },
+    })
+    await modals.open({ type: 'edit', row })
+    expect(mockInvoke.mock.calls[0]).toEqual(['get_transaction_convert', { id: 'txn-cv' }])
+    expect(modals.intent.value).toEqual({ type: 'edit', row, trade: null, convert })
     expect(modals.seq.value).toBe(1)
   })
 
@@ -93,7 +125,7 @@ describe('useTransactionModalState edit 意图（先取明细再开窗）', () =
     const row = makeTransaction({ id: 'txn-1', kind: 'expense' })
     await modals.open({ type: 'edit', row })
     expect(mockInvoke).not.toHaveBeenCalled()
-    expect(modals.intent.value).toEqual({ type: 'edit', row, trade: null })
+    expect(modals.intent.value).toEqual({ type: 'edit', row, trade: null, convert: null })
     expect(modals.seq.value).toBe(1)
   })
 
@@ -133,13 +165,13 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
 
     const openA = modals.open({ type: 'edit', row: rowA })
     await modals.open({ type: 'edit', row: rowB })
-    expect(modals.intent.value).toEqual({ type: 'edit', row: rowB, trade: tradeB })
+    expect(modals.intent.value).toEqual({ type: 'edit', row: rowB, trade: tradeB, convert: null })
     expect(modals.seq.value).toBe(1)
 
     resolveA(tradeA)
     await openA
     await flushPromises()
-    expect(modals.intent.value).toEqual({ type: 'edit', row: rowB, trade: tradeB })
+    expect(modals.intent.value).toEqual({ type: 'edit', row: rowB, trade: tradeB, convert: null })
     expect(modals.seq.value).toBe(1)
   })
 
@@ -165,7 +197,7 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     await openA
     await flushPromises()
     expect(messageCalls()).toEqual([])
-    expect(modals.intent.value).toEqual({ type: 'edit', row: rowB, trade: tradeB })
+    expect(modals.intent.value).toEqual({ type: 'edit', row: rowB, trade: tradeB, convert: null })
     expect(modals.seq.value).toBe(1)
   })
 
@@ -189,12 +221,12 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     // 编辑意图已在场（trade 仍在途，下一断言补全）；matchObject 兼容意图联合（create 支无 row）
     expect(modals.intent.value).toMatchObject({ type: 'edit', row: { id: 'a1' } })
     const openB = modals.open({ type: 'edit', row: rowB })
-    expect(modals.intent.value).toEqual({ type: 'edit', row: rowA, trade: makeTrade({ symbol: 'AAA' }) })
+    expect(modals.intent.value).toEqual({ type: 'edit', row: rowA, trade: makeTrade({ symbol: 'AAA' }), convert: null })
 
     resolveB(tradeB)
     await openB
     await flushPromises()
-    expect(modals.intent.value).toEqual({ type: 'edit', row: rowB, trade: tradeB })
+    expect(modals.intent.value).toEqual({ type: 'edit', row: rowB, trade: tradeB, convert: null })
     expect(modals.seq.value).toBe(2)
   })
 

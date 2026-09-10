@@ -14,6 +14,7 @@ export const CREATE_KIND_KEYS: Record<CreateTransactionKind, string> = {
   income: 'i',
   buy: 'b',
   sell: 's',
+  convert: 'c',
 }
 
 /**
