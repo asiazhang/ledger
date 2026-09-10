@@ -89,7 +89,8 @@ const pagination = computed(() => ({
 }))
 
 // 横向滚动下限 = 各固定列宽总和（全仓单一收口）：名称列是唯一弹性列（minWidth
-// 不计入），窄窗口由横向滚动吸收（投资视图无窗口分级分支，#898 边界维持）。
+// 不计入），窄窗口由横向滚动吸收（本表不设窗口分级分支，#898 边界维持；
+// 标的页签表格的移动档 scroll-x 分支见 InstrumentBrowser，issue #849）。
 const scrollX = computed(() => sumFixedColumnWidths(overviewColumns.value))
 
 // 列形态遵循词汇表「表格列形态」约定：数值列右对齐 + 等宽数字（className 单点
