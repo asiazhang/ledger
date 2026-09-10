@@ -18,13 +18,20 @@
 - **多端同步**：投资买入/卖出（含持仓与已实现盈亏）、标的字典、汇率与手动报价及 AI 导入的数据变化随同步分发，各端业务数据一致（[#861]）。
 - **移动端**：窗口 <840 切换移动档导航壳（顶栏 + 抽屉），适配刘海与手势条安全区（[#842]）。
 - **移动端**：触屏交互适配——交易行常显「⋯」菜单，悬停信息点按可达（[#843]）。
+- **移动端**：交易页窄窗口/手机切换卡片列表（日期、类型、分类/商户、账户、金额一眼可读，金额隐私模式兼容），右下角新增「记一笔」悬浮按钮，点选类型后进对应表单；搜索结果同构复用卡片列表（[#846]）。
 - **移动端**：Android 系统返回键/手势获得应用内语义——有弹层先关最上层，无弹层路由回退，路由栈底交还系统退出；遮罩点击不关的原则不变，桌面档无此通道（[#845]）。
+- **移动端**：概览与账户页移动档适配——概览栅格窄屏单列、账户列表窄屏收为名称/余额/操作三分列（类型与币种并入名称副行）、新增表单纵排，财务自由度口径说明触屏点按可达；金额隐私模式照常生效，桌面档不变（[#847]）。
 - **AI 导入**：新增商户改名端点 `PUT /api/v1/merchants/{id}`（[#884]）。
 - **AI 导入**：导入知识新增查询与分页纪律——子集检查用服务端过滤参数、分页读回以 `total` 为准核对总条数、buy/sell 标的关联认 `source` 字段（[#928]）。
 - **交易**：交易页筛选与分页会话内保留，切走再回原样恢复（[#893]）。
+- **投资**：买入/卖出交易可选「出资账户」——现金实际流出/流入的账户（如银行卡直扣买基金）纳入余额与资金流归因（[#935]）。
 - **发布**：Android arm64 APK 进入发布矩阵，随 GitHub Release 发布（[#559]）。
 - **发布**：Android APK 发布签名就绪——发布构建以 CI secrets 注入 keystore 签名，tag 构建缺签名 secrets 直接失败；试跑产物经 apksigner 校验可真机直装（[#560]）。
 - **报表**：报表页接入 ESC 复位（[#894]）。
+
+### BREAKING
+
+- **投资/交易**：删除语义修订——删除卖出交易会回补持仓扣减并清空卖出匹配；删除买入交易改级联删除（其持仓批次的在用卖出一并软删并回补持仓），「已有部分卖出的买入禁删」守卫与 `trade.partially-sold-delete` 错误码退场（[#940]，ADR-0097）。
 
 ### Changed
 
@@ -35,6 +42,7 @@
 
 ### Fixed
 
+- **投资**：修复删除卖出后对应买入被幽灵占用永久锁死、无法删除或修改（[#940]）。
 - **发布**：修复 Windows 发布 pnpm install 因补丁文件 CRLF 行尾失败（[#917]）。
 
 ## [0.6.0] - 2026-09-08
@@ -273,7 +281,9 @@
 [#839]: https://github.com/asiazhang/ledger/issues/839
 [#842]: https://github.com/asiazhang/ledger/issues/842
 [#843]: https://github.com/asiazhang/ledger/issues/843
+[#846]: https://github.com/asiazhang/ledger/issues/846
 [#845]: https://github.com/asiazhang/ledger/issues/845
+[#847]: https://github.com/asiazhang/ledger/issues/847
 [#855]: https://github.com/asiazhang/ledger/issues/855
 [#856]: https://github.com/asiazhang/ledger/issues/856
 [#857]: https://github.com/asiazhang/ledger/issues/857
@@ -291,3 +301,5 @@
 [#917]: https://github.com/asiazhang/ledger/issues/917
 [#920]: https://github.com/asiazhang/ledger/issues/920
 [#928]: https://github.com/asiazhang/ledger/issues/928
+[#935]: https://github.com/asiazhang/ledger/issues/935
+[#940]: https://github.com/asiazhang/ledger/issues/940

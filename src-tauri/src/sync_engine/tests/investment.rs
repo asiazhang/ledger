@@ -29,6 +29,7 @@ fn buy_input(
         currency_code: "USD".into(),
         account_id: account_id.into(),
         to_account_id: None,
+        funding_account_id: None,
         category_id: None,
         merchant_id: None,
         refund_of_transaction_id: None,

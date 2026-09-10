@@ -1,7 +1,9 @@
-import { routeMock, makeTxn, setTxnDb, setMerchantDb, mountView, listCalls, lastListFilter, bodyRows } from './common'
+import { routeMock, makeTxn, setTxnDb, setMerchantDb, mountView, mountMobile, cards, listCalls, lastListFilter, bodyRows } from './common'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect, NButton } from 'naive-ui'
+import { fireProp } from '../helpers/component-vm'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
 import type { Merchant, Transaction } from '@/types'
 
@@ -268,5 +270,52 @@ describe('TransactionsView 商户筛选（issue #191，冒烟级）', () => {
     await setMerchant(wrapper, null)
     expect(lastListFilter()).not.toHaveProperty('merchant_id')
     expect(wrapper.text()).toContain('共 4 条')
+  })
+})
+
+/**
+ * 移动档筛选/URL 下钻两档一致（issue #846 验收 2，ADR-0088 决策 9）：同一
+ * TransactionFilter 出口在移动档卡片列表形态下语义不变——手动筛选立即生效
+ * （翻页归零 + 重拉）、URL 只读下钻直达、空态提示与清除回默认；换档经媒体
+ * 查询测试接缝（helpers/media-mock，薄壳 mountMobile 单点）。
+ */
+describe('TransactionsView 移动档筛选（issue #846 两档一致）', () => {
+  beforeEach(() => {
+    setTxnDb([
+      makeTxn(1, 'acc-1', { merchant_id: 'mch-1', date: '2026-01-05' }),
+      makeTxn(2, 'acc-2', { merchant_id: 'mch-1', date: '2026-02-10' }),
+      makeTxn(3, 'acc-1', { date: '2026-01-20' }),
+      makeTxn(4, 'acc-2', { kind: 'transfer', to_account_id: 'acc-1', date: '2026-01-25' }),
+    ])
+  })
+
+  it('移动档手动筛选立即生效（setFilter 出口：涉及账户语义含转入侧）', async () => {
+    const wrapper = await mountMobile()
+    const accountSelect = wrapper.findAllComponents(PinyinSelect)[0].findComponent(NSelect)
+    fireProp(accountSelect, 'onUpdate:value', 'acc-1')
+    await flushPromises()
+    expect(lastListFilter()).toMatchObject({ page: 1, involving_account_id: 'acc-1' })
+    // 涉及 acc-1：txn-1 / txn-3（主账户）+ txn-4（转账转入侧）
+    expect(cards(wrapper).length).toBe(3)
+  })
+
+  it('移动档 URL 下钻：?account= 直达过滤（URL 只读入口同一接线）', async () => {
+    routeMock.query = { account: 'acc-2' }
+    await mountMobile()
+    expect(lastListFilter()).toMatchObject({
+      page: 1,
+      page_size: 20,
+      involving_account_id: 'acc-2',
+    })
+  })
+
+  it('移动档空态：过滤无结果提示 + 清除筛选回默认', async () => {
+    routeMock.query = { kinds: 'income' }
+    const wrapper = await mountMobile()
+    expect(cards(wrapper).length).toBe(0)
+    expect(wrapper.text()).toContain('没有符合条件的交易')
+    await wrapper.findAll('button').find((b) => b.text() === '清除筛选')!.trigger('click')
+    await flushPromises()
+    expect(cards(wrapper).length).toBe(4)
   })
 })

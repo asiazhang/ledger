@@ -53,12 +53,15 @@ fn fetch_instrument_type(
     })
 }
 
-/// 投资交易对外出口（issue #72 / spec #69）：只暴露 `prepare / apply / revert` 三件套。
+/// 投资交易对外出口（issue #72 / spec #69）：`prepare / apply / revert` 三件套 +
+/// 删除路径专用的 [`release_for_delete`]（issue #940 / ADR-0097）。
 ///
 /// - [`prepare`]：校验并归一化一笔 buy/sell 输入（不落库、不产生副作用），产出 [`Plan`]；
 /// - [`apply`]：应用计划的副作用（buy 建仓 / sell 卖出匹配），由编排层在行落库后调用；
-/// - [`revert`]：回退一笔已存在 buy/sell 交易的副作用（buy 守卫+清理 / sell 回补），
-///   供删除/修改前清理。
+/// - [`revert`]：回退一笔已存在 buy/sell 交易的副作用（buy 在用占用守卫+清理 / sell 回补），
+///   供修改前清理；
+/// - [`release_for_delete`]：删除路径的持仓副作用回退（sell 回补 / buy 级联+清理），
+///   供行为层删除编排入口调用。
 ///
 /// 交易行字段的 INSERT/UPDATE 一律经 `transaction::writer` 接缝（issue #70），
 /// 本模块不再反向依赖 transactions 的行更新函数；行写入由编排层（行为层）持有，
@@ -200,6 +203,14 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         "买入交易必须使用投资账户",
     )?;
     let account_currency = account_currency_code(conn, &input.account_id)?;
+    // 出资账户准入（issue #935 / ADR-0096）：buy 的结算币种 = 投资账户币种，
+    // 出资账户币种必须与其一致。
+    crate::transaction::funding::validate_funding_account(
+        conn,
+        TransactionKind::Buy,
+        input.funding_account_id.as_deref(),
+        &account_currency,
+    )?;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
     // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
     let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
@@ -212,6 +223,7 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
             amount_native_cents,
             account_id: input.account_id.clone(),
             to_account_id: input.to_account_id.clone(),
+            funding_account_id: input.funding_account_id.clone(),
             category_id: None,
             merchant_id: None,
             // 投资 kind 不涉保单（行为层准入已拒绝携带，issue #361）：恒 None。
@@ -306,6 +318,14 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         "卖出交易必须使用投资账户",
     )?;
     let account_currency = account_currency_code(conn, &input.account_id)?;
+    // 出资账户准入（issue #935 / ADR-0096）：sell 的结算币种 = 投资账户币种，
+    // 出资账户币种必须与其一致。
+    crate::transaction::funding::validate_funding_account(
+        conn,
+        TransactionKind::Sell,
+        input.funding_account_id.as_deref(),
+        &account_currency,
+    )?;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
     // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
     let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
@@ -341,6 +361,7 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
             amount_native_cents,
             account_id: input.account_id.clone(),
             to_account_id: input.to_account_id.clone(),
+            funding_account_id: input.funding_account_id.clone(),
             category_id: None,
             merchant_id: None,
             // 投资 kind 不涉保单（行为层准入已拒绝携带，issue #361）：恒 None。
@@ -459,26 +480,34 @@ fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Resu
     Ok(())
 }
 
-/// 清理一笔买入交易的持仓关联（行为层删除/修改编排入口共用的守卫 + 清理）。
+/// 消费某买入持仓批次的**在用** sell id 列表（issue #940 级联删除的级联对象）。
 ///
-/// 若该买入已有部分卖出（`remaining_quantity < initial_quantity`）则拒绝清理——避免破坏
-/// 对应卖出的已实现盈亏。`partially_sold_msg` 为调用入口单点定义的措辞
-/// （见 `transaction::behavior` 的入口文案常量，ADR-0033 决策 #4）。
-fn cleanup_buy_side_effects(
-    conn: &Connection,
-    id: &str,
-    partially_sold_code: &str,
-    partially_sold_msg: &str,
-) -> Result<()> {
-    let partially_sold: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM security_lots \
-         WHERE buy_transaction_id=?1 AND remaining_quantity < initial_quantity",
-        rusqlite::params![id],
-        |r| r.get(0),
+/// 「在用卖出占用」归因谓词：按 `security_lot_sales` 归因到 sell 交易行、只计未软删
+/// 者——已删 sell 的历史匹配（幽灵占用）不计入，既不触发守卫、也不阻塞级联查询。
+fn active_sell_ids_on_buy_lots(conn: &Connection, buy_id: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT s.sell_transaction_id FROM security_lot_sales s \
+         JOIN transactions t ON t.id = s.sell_transaction_id \
+         WHERE t.is_deleted = 0 AND s.lot_id IN \
+         (SELECT id FROM security_lots WHERE buy_transaction_id = ?1)",
     )?;
-    if partially_sold > 0 {
-        return Err(AppError::coded(partially_sold_code, partially_sold_msg));
-    }
+    let ids = stmt
+        .query_map(rusqlite::params![buy_id], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(ids)
+}
+
+/// 整批清理买入的持仓关联：批次、批次的全部卖出匹配与买入明细。
+///
+/// 卖出匹配按 `lot_id` 归批清理——指向已软删 sell 的历史匹配行（旧版
+/// 「sell 删除不回补」遗留的幽灵占用，issue #940）随批次一并消失；
+/// 删除路径（级联后）与修改路径重建（在用占用守卫放行后）共用。
+fn purge_buy_lot_artifacts(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM security_lot_sales WHERE lot_id IN \
+         (SELECT id FROM security_lots WHERE buy_transaction_id=?1)",
+        rusqlite::params![id],
+    )?;
     conn.execute(
         "DELETE FROM security_lots WHERE buy_transaction_id=?1",
         rusqlite::params![id],
@@ -488,6 +517,73 @@ fn cleanup_buy_side_effects(
         rusqlite::params![id],
     )?;
     Ok(())
+}
+
+/// 修改路径的买入持仓关联守卫 + 清理。
+///
+/// 若该买入已有**在用**卖出占用（在用 sell 的匹配消耗本买入批次）则拒绝清理——
+/// 修改会重建批次、破坏在用卖出的已实现盈亏。守卫谓词按在用归因（见
+/// [`active_sell_ids_on_buy_lots`]），不再按批次剩余数量判定：已删 sell 的幽灵
+/// 扣减不再把买入永久锁死（issue #940 修复的死锁根源）。`partially_sold_msg`
+/// 为调用入口单点定义的措辞（见 `transaction::behavior` 的入口文案常量，
+/// ADR-0033 决策 #4）。
+fn cleanup_buy_side_effects(
+    conn: &Connection,
+    id: &str,
+    partially_sold_code: &str,
+    partially_sold_msg: &str,
+) -> Result<()> {
+    let partially_sold: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT s.sell_transaction_id) FROM security_lot_sales s \
+         JOIN transactions t ON t.id = s.sell_transaction_id \
+         WHERE t.is_deleted = 0 AND s.lot_id IN \
+         (SELECT id FROM security_lots WHERE buy_transaction_id = ?1)",
+        rusqlite::params![id],
+        |r| r.get(0),
+    )?;
+    if partially_sold > 0 {
+        return Err(AppError::coded(partially_sold_code, partially_sold_msg));
+    }
+    purge_buy_lot_artifacts(conn, id)
+}
+
+/// 删除路径的持仓副作用回退（行为层 delete 编排入口专用，issue #940 / ADR-0097）。
+///
+/// - sell：回补其扣减的持仓并清空卖出关联（与修改路径同一 [`reverse_sell`]）；
+/// - buy：**级联**——消费其持仓批次的在用 sell 逐笔回退持仓副作用，再整批清理
+///   批次与匹配（含指向已软删 sell 的历史匹配行，随批次消失），返回被级联的
+///   sell id 列表，供行为层软删其交易行并各自产出 delete op 与余额刷新；
+/// - 其余 kind 无持仓副作用，返回空表。
+///
+/// 删除路径不经 [`revert`] 的 buy 在用占用守卫：在用 sell 已被级联消化，守卫谓词
+/// 天然为空；删除顺序从此无关，「已有部分卖出的买入禁删」退场（同 issue）。
+pub fn release_for_delete(
+    conn: &Connection,
+    id: &str,
+    kind: TransactionKind,
+) -> Result<Vec<String>> {
+    match kind {
+        TransactionKind::Sell => {
+            reverse_sell(conn, id)?;
+            Ok(Vec::new())
+        }
+        TransactionKind::Buy => {
+            let cascaded_sell_ids = active_sell_ids_on_buy_lots(conn, id)?;
+            for sell_id in &cascaded_sell_ids {
+                reverse_sell(conn, sell_id)?;
+            }
+            purge_buy_lot_artifacts(conn, id)?;
+            Ok(cascaded_sell_ids)
+        }
+        // 行为层仅对 buy/sell 调用本函数；其余 kind 无持仓副作用，no-op
+        // （显式枚举保证新增 kind 时此处编译报错，而非落入兜底）。
+        TransactionKind::Income
+        | TransactionKind::Expense
+        | TransactionKind::Transfer
+        | TransactionKind::Refund
+        | TransactionKind::Dividend
+        | TransactionKind::Split => Ok(Vec::new()),
+    }
 }
 
 fn create_buy_lot(conn: &Connection, transaction_id: &str, plan: &BuyPlan) -> Result<()> {
@@ -567,13 +663,15 @@ pub fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
     }
 }
 
-/// 回退一笔已存在 buy/sell 交易的副作用，供行为层删除/修改编排入口在清理阶段调用。
+/// 回退一笔已存在 buy/sell 交易的副作用，供行为层**修改**编排入口在清理阶段调用。
 ///
-/// - buy：守卫（已有部分卖出则拒绝）+ 清理持仓/买入关联；
+/// - buy：在用占用守卫（在用 sell 的匹配消耗本买入批次则拒绝）+ 清理持仓/买入关联；
 /// - sell：回补持仓扣减并清空卖出关联。
 ///
-/// `partial_sold_code` / `partial_sold_msg` 为 buy 守卫的错误码与措辞，由行为层各编排入口传入其单点定义的
-/// 文案（修改/删除各持自己的措辞，ADR-0033 决策 #4）——本函数不自带措辞；
+/// 删除路径不经本函数（其持仓语义由 [`release_for_delete`] 承载：sell 回补 /
+/// buy 级联，issue #940 / ADR-0097）。`partial_sold_code` / `partial_sold_msg`
+/// 为 buy 守卫的错误码与措辞，由行为层修改编排入口传入其单点定义的文案
+/// （ADR-0033 决策 #4）——本函数不自带措辞；
 /// 非 buy/sell 的 kind 无持仓副作用，防御性返回成功。
 pub fn revert(
     conn: &Connection,

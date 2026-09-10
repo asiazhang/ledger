@@ -3,9 +3,10 @@ import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride, type InvokeSeamSta
 import { fireProp } from '../helpers/component-vm'
 import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { reactive } from 'vue'
-import { NDataTable, NDropdown } from 'naive-ui'
+import { NDataTable, NDropdown, NModal } from 'naive-ui'
 import { mountWithDialog } from '../helpers/mount'
 import { makeTransaction } from '../factories'
+import { setFakeMedia } from '../helpers/media-mock'
 import TransactionsView from '@/views/TransactionsView.vue'
 import type { Account, Merchant, ReportDateRange, Transaction } from '@/types'
 
@@ -191,6 +192,41 @@ export async function mountView() {
 /** 视图顶层调用 useDialog（issue #151 删除二次确认），与 App.vue 同构需 NDialogProvider 包裹。 */
 export function mountViewSync() {
   return mountWithDialog(TransactionsView)
+}
+
+// —— 移动档助手（issue #846）：宽度轴换档唯一入口 + 卡片/弹窗查找 ——
+
+/** 移动档挂载（宽度轴换档，输入轴保持指针——桌面缩窗基线）。 */
+export function mountMobile() {
+  setFakeMedia({ width: 839 })
+  return mountView()
+}
+
+/** 触屏手机挂载（移动档 + 触控轴）。 */
+export function mountPhone() {
+  setFakeMedia({ width: 839, hover: 'none', pointer: 'coarse' })
+  return mountView()
+}
+
+/** 移动档卡片列表（.transaction-card 钩子类，样式与测试同键）。 */
+export function cards(wrapper: VueWrapper) {
+  return wrapper.findAll('.transaction-card')
+}
+
+/** 当前展示中的弹窗（视图有四枚 AppModal，意图非空即显示派生 show）。 */
+export function shownModal(wrapper: VueWrapper) {
+  return wrapper.findAllComponents(NModal).find((m) => m.props('show') === true)
+}
+
+/** 关闭展示中弹窗（update:show 装配缝；attrs 同名合并可能为数组，逐个调用）。 */
+export async function closeShownModal(wrapper: VueWrapper) {
+  const modal = shownModal(wrapper)
+  expect(modal, '期望有展示中的弹窗').toBeTruthy()
+  const handler = modal!.props('onUpdate:show') as unknown as
+    | ((v: boolean) => void)
+    | Array<(v: boolean) => void>
+  for (const fn of Array.isArray(handler) ? handler : [handler]) fn?.(false)
+  await flushPromises()
 }
 
 export function listCalls() {

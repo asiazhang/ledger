@@ -19,7 +19,7 @@ import { lendingLabelKey, resolveLendingDirection } from '@/domain/lending'
 
 export type ReferenceStore = ReturnType<typeof useReferenceStore>
 
-const KIND_TAG_TYPE: Record<TransactionKind, 'success' | 'warning' | 'info' | 'default'> = {
+export const KIND_TAG_TYPE: Record<TransactionKind, 'success' | 'warning' | 'info' | 'default'> = {
   income: 'success',
   expense: 'warning',
   refund: 'info',
@@ -50,8 +50,9 @@ const KIND_TAG_TYPE: Record<TransactionKind, 'success' | 'warning' | 'info' | 'd
  * （receivable/debt）的转账显示借出/收回/借入/还款专属文案，普通转账仍显示「转账」；
  * 非 transfer kind 不参与派生、按自身 kind 标签。历史数据实时派生、无数据迁移。
  * 方向识别收口 domain 层借贷模块（与表单分派/回填共用同一函数），
- * 标签随账户映射响应式更新（同 categoryPath 的响应式纪律）。 */
-function kindLabel(reference: ReferenceStore, row: Transaction): string {
+ * 标签随账户映射响应式更新（同 categoryPath 的响应式纪律）。
+ * 导出面（issue #846）：移动档卡片列表消费同一派生，与表格类型列单源同文案。 */
+export function kindLabel(reference: ReferenceStore, row: Transaction): string {
   if (row.kind !== 'transfer') return t(`transactions.kind.${row.kind}`)
   const direction = resolveLendingDirection(row, (id) => reference.accountMap.get(id)?.type)
   return t(lendingLabelKey(direction ?? 'none'))
@@ -194,8 +195,9 @@ const ACCOUNT_CELL_LINK_STYLE = 'flex: 0 1 auto; min-width: 0; text-align: left;
  * 布局：转账行用 inline-flex 容器，两个链接内容宽度、箭头固定宽度，整组 justify-content:flex-start
  * 靠左；长账户名由链接自身 ellipsis（见 AccountLink）省略号兜底、不溢出（列宽 180 时收缩省略）。
  * 首账户名因此与单账户行（如「花呗」）左侧对齐；不设列级 ellipsis（fixed 布局由备注列的
- * ellipsis 维持），否则 NEllipsis 会把两个按钮包装成整体省略，破坏各自可点击语义。 */
-function renderAccountCell(row: Transaction): VNode {
+ * ellipsis 维持），否则 NEllipsis 会把两个按钮包装成整体省略，破坏各自可点击语义。
+ * 导出面（issue #846）：移动档卡片列表消费同一渲染，账户呈现两形态单源。 */
+export function renderAccountCell(row: Transaction): VNode {
   if (row.kind === 'transfer' && row.to_account_id) {
     return h(
       'div',

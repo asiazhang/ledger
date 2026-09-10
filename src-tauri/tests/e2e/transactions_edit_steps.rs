@@ -81,6 +81,14 @@ fn delete_last_txn(world: &mut LedgerWorld) {
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
+/// 删除买入交易（issue #940 级联场景）：按标的定位 buy 交易 id，经删除动词软删。
+#[when(expr = "删除买入交易 {string}")]
+fn delete_buy_by_symbol(world: &mut LedgerWorld, symbol: String) {
+    let id = trade_txn_id(world, &symbol, "buy");
+    delete_transaction_verb(world, &id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
+}
+
 /// 按标的 + 动作（buy/sell）定位交易 id：场景内同标的多笔买卖并存，
 /// 不能依赖「最近交易」指针（买入后再卖出，最近交易已指向卖出）。
 fn trade_txn_id(world: &LedgerWorld, symbol: &str, action: &str) -> String {
@@ -294,6 +302,20 @@ fn assert_holding_quantity(world: &mut LedgerWorld, symbol: String, expected: i6
         (quantity - expected as f64).abs() < 1e-9,
         "持仓数量不符: 期望 {expected}，实际 {quantity}"
     );
+}
+
+/// 断言标的的持仓批次数（级联删除后批次应整批清理，issue #940）。
+#[then(expr = "标的 {string} 持仓批次应为 {int} 条")]
+fn assert_lot_count(world: &mut LedgerWorld, symbol: String, expected: i64) {
+    let count: i64 = world_conn!(world)
+        .query_row(
+            "SELECT COUNT(*) FROM security_lots \
+             WHERE instrument_id = (SELECT id FROM instruments WHERE symbol=?1)",
+            params![symbol],
+            |r| r.get(0),
+        )
+        .expect("查询持仓批次失败");
+    assert_eq!(count, expected, "持仓批次数不符");
 }
 
 /// 断言买入/卖出明细与预期一致（编辑回填数据源：security_transactions JOIN instruments）。

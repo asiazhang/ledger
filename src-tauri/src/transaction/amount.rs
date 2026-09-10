@@ -162,14 +162,19 @@ impl<'de> Deserialize<'de> for TransactionKind {
 // 具名度量
 // ---------------------------------------------------------------------------
 
-/// 转账中账户的角色：转出侧（`account_id`）或转入侧（`to_account_id`）。
-/// `account_flow` 度量对 transfer 的符号由此决定。
+/// 账户现金流量的归因端点：转出侧（`account_id`）、转入侧（`to_account_id`）
+/// 或出资侧（`funding_account_id`，ADR-0096）。`account_flow` 度量对 transfer 的
+/// 符号由转出/转入侧决定；出资侧只承载 buy/sell 的现金腿。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransferSide {
     /// 转出账户侧：现金流出（−）。
     Out,
     /// 转入账户侧：现金流入（+）。
     In,
+    /// 出资账户侧（ADR-0096）：buy/sell 的结算现金端点——结算账户 =
+    /// 出资账户 ?? 投资账户；buy 记 −、sell 记 +，kind 矩阵符号不变、
+    /// 归因端点可变。非 buy/sell 行不经出资端（准入收口，防御性记 0）。
+    Funding,
 }
 
 /// 具名金额度量。每种度量对每种 kind 的符号见 [`coefficient`] 矩阵。
@@ -200,15 +205,27 @@ pub enum Measure {
 /// 修改任何口径只改这里，两侧行为同步变化。
 fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
     match measure {
+        // 账户现金流动：buy/sell 的符号与端点无关（矩阵符号不变，归因端点可变，
+        // ADR-0096）——转出侧带出资守卫后只对未出资行生效，出资侧只对 buy/sell
+        // 生效（见 [`account_flow_expr`] 的归因规则）。非 buy/sell 行不经出资端
+        // （准入收口在行为层，防御性记 0）。
         Measure::AccountFlow(side) => match kind {
-            TransactionKind::Income
-            | TransactionKind::Refund
-            | TransactionKind::Sell
-            | TransactionKind::Dividend => 1,
-            TransactionKind::Expense | TransactionKind::Buy => -1,
+            TransactionKind::Income | TransactionKind::Refund | TransactionKind::Dividend => {
+                match side {
+                    TransferSide::Funding => 0,
+                    _ => 1,
+                }
+            }
+            TransactionKind::Sell => 1,
+            TransactionKind::Expense => match side {
+                TransferSide::Funding => 0,
+                _ => -1,
+            },
+            TransactionKind::Buy => -1,
             TransactionKind::Transfer => match side {
                 TransferSide::Out => -1,
                 TransferSide::In => 1,
+                TransferSide::Funding => 0,
             },
             TransactionKind::Split => 0,
         },
@@ -321,8 +338,21 @@ fn quote_list(items: &[&str]) -> String {
 
 /// `account_flow` 聚合片段。转账符号按 `side` 取：
 /// 转出侧 join `t.account_id`、转入侧 join `t.to_account_id` 后分别求和相加。
+///
+/// 出资账户归因规则单条在此落库为 SQL（ADR-0096 决策 2，全库唯一直 incarnation）：
+/// 结算账户 = 出资账户 ?? 投资账户（`account_id`）——带出资账户的 buy/sell，其现金
+/// 腿归出资侧（[`TransferSide::Funding`] 端点，join `funding_account_id`），转出侧
+/// （投资账户端）对带出资账户的 buy/sell 记 0（钱不经手）；未填出资账户时矩阵符号
+/// 原样记在投资账户上。转入侧不需要守卫：buy/sell 行恒无 `to_account_id`。
 pub fn account_flow_expr(alias: &str, side: TransferSide) -> String {
-    kind_case_expr(alias, Measure::AccountFlow(side))
+    let matrix = kind_case_expr(alias, Measure::AccountFlow(side));
+    match side {
+        TransferSide::Out => format!(
+            "CASE WHEN {alias}.kind IN ('buy','sell') \
+             AND {alias}.funding_account_id IS NOT NULL THEN 0 ELSE ({matrix}) END"
+        ),
+        TransferSide::In | TransferSide::Funding => matrix,
+    }
 }
 
 /// `expense_net` 聚合片段（毛支出 − 退款）。

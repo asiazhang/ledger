@@ -60,6 +60,7 @@ fn seed_purchase_tx(conn: &Connection, date: &str, cost_cents: i64, currency: &s
             category_id: None,
             merchant_id: None,
             refund_of_transaction_id: None,
+            funding_account_id: None,
             note: None,
             date: date.into(),
             instrument_id: None,

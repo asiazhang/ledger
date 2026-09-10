@@ -18,6 +18,7 @@ pub mod amount;
 pub mod batch;
 pub mod behavior;
 pub mod command;
+pub mod funding;
 pub mod read;
 pub mod search;
 pub mod search_text;
@@ -53,6 +54,7 @@ pub use behavior::{
 /// 执行外来命令并复用同一事务原语，ADR-0033）。
 pub(crate) use behavior::{ensure_transaction, replay_command};
 pub use command::{InvestmentCommandFields, TransactionCommand};
+pub use funding::validate_funding_account;
 pub use read::{
     get_transaction, get_transaction_internal, list_transactions, list_transactions_internal,
 };

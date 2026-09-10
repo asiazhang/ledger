@@ -177,7 +177,13 @@ pub(crate) fn replay_command(
                 return Ok(ReplayEffect::IdempotentHit);
             }
             // 账户存活守卫（issue #856）：往已删账户记账不落地，挂起待裁决。
-            writer::validate_accounts_alive(conn, &row.account_id, row.to_account_id.as_deref())?;
+            // 定时计划不携带资金账户（funding_account_id 恒 None），与 engine 落地路径一致。
+            writer::validate_accounts_alive(
+                conn,
+                &row.account_id,
+                row.to_account_id.as_deref(),
+                None,
+            )?;
             let norm = writer::NormalizedRow::try_from(row)?;
             writer::insert_row_with_id(conn, &landing_id, &norm)?;
             complete_local_occurrence(conn, plan_id, scheduled_date, &landing_id)?;

@@ -32,9 +32,10 @@
 //! - [`trade`]：buy/sell 协议三件套与买卖明细投影（`TransactionTrade`）；
 //! - [`trend`]：单标的 / 组合走势查询。
 //!
-//! 协议事务契约（ADR-0033）与可卖数量守卫零变化：prepare 校验归一化（不落库）、
-//! apply 应用副作用（buy 建仓 / sell 卖出匹配）、revert 回退副作用（buy 守卫+清理 /
-//! sell 回补）；交易行写入由核心交易域行为层编排（经 Writer 接缝），本域不再反向
+//! 协议事务契约（ADR-0033）：prepare 校验归一化（不落库）、apply 应用副作用
+//! （buy 建仓 / sell 卖出匹配）、revert 回退副作用（修改路径：buy 在用占用守卫+清理 /
+//! sell 回补）、release_for_delete 承载删除路径（sell 回补 / buy 级联+清理，issue #940 /
+//! ADR-0097）；交易行写入由核心交易域行为层编排（经 Writer 接缝），本域不再反向
 //! 依赖核心交易域的行更新（双向依赖已斩断，issue #70）。
 //!
 //! 依赖方向恒为「壳层 → investment → 基础设施」，本模块不反向依赖壳层；
@@ -95,15 +96,17 @@ pub use stock::{
     fetch_stock_quote_for_add, is_stock_lookup_miss, persist_stock_quote,
     resolve_add_stock_channel, resolve_stock_quote_candidates, route_stock_creation,
 };
-// 投资交易对外出口收窄为 prepare/apply/revert 三件套（issue #72 / spec #69）：
-// 校验归一化（prepare）、应用副作用（apply）、回退副作用（revert）各一个入口，
-// 不再暴露 create/update/cleanup/reverse 等散落函数；行写入经交易行为层编排。
+// 投资交易对外出口收窄为 prepare/apply/revert 三件套 + 删除路径专用 release_for_delete
+// （issue #72 / spec #69 / #940 / ADR-0097）：校验归一化（prepare）、应用副作用（apply）、
+// 回退副作用（revert，修改路径）、删除路径持仓回退（release_for_delete：sell 回补 /
+// buy 级联）各一个入口，不再暴露 create/update/cleanup/reverse 等散落函数；
+// 行写入经交易行为层编排。
 /// 同步重放的计划重建接缝（issue #861）：crate 内供交易行为层重放入口消费。
 pub(crate) use command::{
     replay_exchange_rate_command, replay_instrument_command, replay_price_command,
 };
 pub(crate) use trade::replay_plan;
-pub use trade::{Plan, apply, get_transaction_trade, prepare, revert};
+pub use trade::{Plan, apply, get_transaction_trade, prepare, release_for_delete, revert};
 pub use trend::{query_instrument_price_trend, query_portfolio_value_trend};
 
 #[cfg(test)]

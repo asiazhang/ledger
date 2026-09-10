@@ -7,12 +7,16 @@ import {
   NDataTable,
   NEmpty,
   NInput,
+  NPagination,
   NSpace,
+  NSpin,
   NText,
   useMessage,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
+import TransactionCardList from '@/components/TransactionCardList.vue'
+import { useWindowTier } from '@/composables/useWindowTier'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
@@ -25,6 +29,10 @@ import { yuanToCents } from '@/utils/money'
 const store = useAppStore()
 const reference = useReferenceStore()
 const message = useMessage()
+// 窗口分级（ADR-0088 决策 9）：搜索结果断点双渲染——移动档同构复用交易卡片列表
+// （第二消费方，只读形态：无「⋯」、无整卡编辑，与桌面搜索结果只读口径一致）
+const tier = useWindowTier()
+const isMobile = computed(() => tier.value === 'mobile')
 
 const keyword = ref('')
 // 金额筛选：用户以「元」输入（支持小数），内部转分后传后端
@@ -182,15 +190,17 @@ const columns = computed<DataTableColumn<Transaction>[]>(() => buildTransactionC
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = computed(() => sumFixedColumnWidths(columns.value))
 
-// 服务端分页：翻页时携带 page 重新搜索
+// 服务端分页：翻页时携带 page 重新搜索（移动档 NPagination 与桌面表格同一回调）
+function onPageChange(p: number): void {
+  page.value = p
+  void runSearch()
+}
+
 const pagination = computed(() => ({
   page: page.value,
   pageSize,
   itemCount: total.value,
-  onChange: (p: number) => {
-    page.value = p
-    runSearch()
-  },
+  onChange: onPageChange,
 }))
 </script>
 
@@ -234,6 +244,19 @@ const pagination = computed(() => ({
     <template v-if="searched">
       <NText depth="3">{{ t('search.hitCount', { n: total }) }}</NText>
       <NEmpty v-if="total === 0" :description="t('search.noResults')" />
+      <!-- 移动档（issue #846）：同构复用交易卡片列表（只读：不传行菜单/整卡回调），
+           分页语义不变（翻页重新搜索） -->
+      <template v-else-if="isMobile">
+        <NSpin :show="loading">
+          <TransactionCardList :rows="results" />
+        </NSpin>
+        <NPagination
+          :page="page"
+          :page-size="pageSize"
+          :item-count="total"
+          @update:page="onPageChange"
+        />
+      </template>
       <!-- 备注列为弹性列，表格铺满容器；窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
       <NDataTable
         v-else
