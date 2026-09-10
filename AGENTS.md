@@ -19,6 +19,7 @@
 - **Issue、PR、triage 或依赖关系**：按需读 `docs/agents/issue-tracker.md` 与 `docs/agents/triage-labels.md`。
 - **依赖版本升级或工具链 bump**：读 `docs/agents/dependency-upgrades.md`（三层口径、跨 major 实测要求、刻意 hold 的注释纪律、验证与打包盲区）。
 - **脚本或质量检查**：先读目标脚本头部注释；脚本当前行为是真源。
+- **选验证档位（改动后跑哪档检查与测试）**：读 `docs/agents/verification.md`（选档判据「什么会红」、多轮修复节奏、交付前全量硬门）。
 
 代码行为与词汇表不一致时，按可验证行为修正词汇表。代码行为与 ADR 冲突时，先显式报告冲突，确认决策后再修改 ADR 或实现。
 
@@ -43,6 +44,7 @@
 
 ## 测试、工作流与发布
 
+- 验证按 `docs/agents/verification.md` 的阶梯选档：中间轮次跑改动类型对应的最小档，建 PR 前分支 tip 全量一轮（`./scripts/check.sh` + Rust 全目标 + vitest），不要每修一处就跑一遍全量。
 - Rust 侧测试三层各有权威：域行为归域单测（写入编排、金额折算、余额规则、删除清理副作用、查询语义）；壳行为归 API 集成测试（参数解包、状态码、错误码、壳层接线），域语义至多以接线证明出现；跨模块用户旅程归 e2e BDD，不为域规则凑数据。前端逻辑补 Vitest；BDD world 只保存跨步骤读写的状态。
 - 调用 `/implement` 实施代码改动时：对应 GitHub issue 先认领（见 `docs/agents/issue-tracker.md` 开发认领），再使用独立 git worktree，并在工作树内完成验证和提交；提交后推送分支并主动在 GitHub 上创建 PR，PR 是交付终点，不自行合并。worktree 缺少前端依赖时先运行 `pnpm install`。
 - 只读审查不修改、不提交；研究任务是否写入文档，以用户要求和对应 skill 为准。
