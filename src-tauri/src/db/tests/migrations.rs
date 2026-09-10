@@ -108,6 +108,7 @@ fn migration_from_zero_reaches_latest_completely() {
         "scheduled_transactions",
         "physical_assets",
         "insurers",
+        "security_lot_conversions",
         "account_balance_cache",
         "net_worth_cache",
         "sync_device",
@@ -138,6 +139,9 @@ fn migration_from_zero_reaches_latest_completely() {
         ("subscription_plans", "policy_id"),
         // V021 就地修改（issue #957）：挂起原因的插值参数列。
         ("sync_parked_ops", "park_params"),
+        // V002 就地修改（issue #977）：基金转换的转入腿列（同批另增 to_quantity /
+        // out_amount_cents / in_amount_cents 与转出消耗表，形状锁见 convert 专测）。
+        ("security_transactions", "to_instrument_id"),
     ] {
         let hit: i64 = conn
             .query_row(
@@ -162,6 +166,98 @@ fn migration_from_zero_reaches_latest_completely() {
     assert!(
         index_sql.contains("merchant_id"),
         "idx_transactions_note_search 定义应引用 merchant_id，实际: {index_sql}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// V001/V002 就地修改：基金转换（convert）schema（issue #977 / 父 spec #973）
+// ---------------------------------------------------------------------------
+
+/// 插入一条最小合法交易行（只带必填列，金额占位 0 与 convert/split 同臂；簿记戳
+/// 引用工厂固定时刻常量，ADR-0084 决策 5）。为写入形态探针，返回 Result 由调用方判。
+fn insert_raw_transaction(
+    conn: &Connection,
+    id: &str,
+    kind: &str,
+    account_id: &str,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO transactions \
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,\
+          created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,0,'CNY',0,?3,'2026-05-11',?4,?4,1,'test',0)",
+        params![id, kind, account_id, FIXED_NOW],
+    )
+}
+
+/// 基金转换 schema 形态（V001/V002 就地修改，issue #977）：全新安装即带第 9 种 kind
+/// ——transactions.kind 与 security_transactions.action 闭集含 'convert'、闭集外取值
+/// 仍被 CHECK 拒绝，转换扩展 4 列可写入，转出消耗表 security_lot_conversions 在场
+/// 且列集与契约一致。**存量库不在兼容范围**：V001/V002 已发布，就地修改只影响全新
+/// 安装，存量库须重建库（scripts/db-reset.sh）——裁定见两个迁移文件头部就地修改
+/// 注记与 CHANGELOG「Unreleased」BREAKING 条目；历史库升级路径不测（见模块注释）。
+#[test]
+fn convert_schema_shape_is_complete_from_zero() {
+    let conn = crate::test_support::open();
+    seed_account(&conn, "acc-convert", "投资账户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-out", "000001.OF", "基金A", "CNY", "unknown");
+    seed_instrument(&conn, "inst-in", "000002.OF", "基金B", "CNY", "unknown");
+
+    // transactions.kind 闭集：'convert' 可落库，闭集外取值仍被拒。
+    insert_raw_transaction(&conn, "tx-convert", "convert", "acc-convert")
+        .unwrap_or_else(|e| panic!("kind='convert' 应可落库: {e}"));
+    let bogus_kind = insert_raw_transaction(&conn, "tx-bogus", "convert_typo", "acc-convert");
+    assert!(bogus_kind.is_err(), "闭集外 kind 应被 CHECK 拒绝");
+
+    // security_transactions：action 含 'convert'，4 个转换列可写入（一行同时表达两腿：
+    // instrument_id/quantity = 转出腿，to_instrument_id/to_quantity = 转入腿）。
+    conn.execute(
+        "INSERT INTO security_transactions \
+         (transaction_id,instrument_id,action,quantity,price_cents,fee_cents,\
+          to_instrument_id,to_quantity,out_amount_cents,in_amount_cents) \
+         VALUES ('tx-convert','inst-out','convert',100.0,10000,0,\
+                 'inst-in',50.0,10000,10000)",
+        [],
+    )
+    .unwrap_or_else(|e| panic!("action='convert' 与转换扩展列应可落库: {e}"));
+
+    // action 闭集外取值仍被拒（第二条交易行避开主键冲突）。
+    insert_raw_transaction(&conn, "tx-convert-bad", "convert", "acc-convert").unwrap();
+    let bogus_action = conn.execute(
+        "INSERT INTO security_transactions \
+         (transaction_id,instrument_id,action,quantity,fee_cents) \
+         VALUES ('tx-convert-bad','inst-out','convert_typo',1.0,0)",
+        [],
+    );
+    assert!(bogus_action.is_err(), "闭集外 action 应被 CHECK 拒绝");
+
+    // 转入标的同款强依赖（RESTRICT）：被转换行引用的标的硬删被拒，不静默悬空。
+    let hard_delete = conn.execute("DELETE FROM instruments WHERE id='inst-in'", []);
+    assert!(
+        hard_delete.is_err(),
+        "被转换行引用的转入标的硬删应被 RESTRICT 拒绝"
+    );
+
+    // 转出消耗表在场且列集与契约一致（承载逐批次消耗与结转成本的审计载体）。
+    let columns: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_table_info('security_lot_conversions') ORDER BY cid")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        columns,
+        vec![
+            "id",
+            "transaction_id",
+            "lot_id",
+            "quantity",
+            "cost_per_unit_cents",
+            "cost_cents",
+            "created_at"
+        ],
+        "security_lot_conversions 列集应与转换消耗表契约一致"
     );
 }
 

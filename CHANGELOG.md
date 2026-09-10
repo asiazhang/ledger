@@ -39,6 +39,7 @@
 ### BREAKING
 
 - **投资/交易**：删除语义修订——删除卖出交易会回补持仓扣减并清空卖出匹配；删除买入交易改级联删除（其持仓批次的在用卖出一并软删并回补持仓），「已有部分卖出的买入禁删」守卫与 `trade.partially-sold-delete` 错误码退场（[#940]，ADR-0097）。
+- **数据库 schema**：基金转换（convert）所需的 kind/action 检查约束扩集、4 个转换列（`to_instrument_id` / `to_quantity` / `out_amount_cents` / `in_amount_cents`）与转出消耗表 `security_lot_conversions` 经**就地修改 V001/V002** 落地。仅全新安装获得新 schema；**存量库不自动升级，需重建库**（[#977]）。
 
 ### Changed
 
@@ -318,3 +319,4 @@
 [#937]: https://github.com/asiazhang/ledger/issues/937
 [#939]: https://github.com/asiazhang/ledger/issues/939
 [#940]: https://github.com/asiazhang/ledger/issues/940
+[#977]: https://github.com/asiazhang/ledger/issues/977

@@ -14,6 +14,15 @@
 -- idx_transactions_dedup_hash（issue #701，#532 归因）。就地修改只影响
 -- 全新安装；已执行过本迁移的存量库不带该索引（兜底查询维持全表扫描，
 -- 行为零差异、仅性能差异），重建库或手工补建索引后获得导入提速。
+--
+-- 【就地修改注记】transactions.kind 检查约束闭集就地扩集（issue #977 / 父 spec #973）：
+-- 由 income/expense/transfer/refund/buy/sell/dividend/split 扩至含第 9 种 kind
+-- `convert`（基金转换：同一投资账户内两标的互换、无现金腿，落账前后全部账户
+-- 余额不变）。全新安装生效；**存量库不重跑本迁移、保持旧闭集**，其上写入
+-- convert 交易将被 CHECK 拒绝——转换所需的 security_transactions 扩展列与转出
+-- 消耗表同样只在全新安装的 V002 里（见 V002 头部就地修改注记），存量库须重建库
+-- （scripts/db-reset.sh）才能获得完整 convert schema，不提供自动升级
+-- （两级 BREAKING 标记之一，另一级见 CHANGELOG「Unreleased」BREAKING 条目）。
 
 CREATE TABLE IF NOT EXISTS currencies (
     code            TEXT PRIMARY KEY,           -- 货币代码（ISO 4217），如 CNY / USD / EUR
@@ -89,7 +98,9 @@ CREATE TABLE IF NOT EXISTS transactions (
     -- sell：    卖出证券/基金，增加账户现金，由 security_transactions 扩展记录持仓变化。
     -- dividend：现金分红，增加账户现金，security_transactions 记录对应标的。
     -- split：   拆股/送股，不改变账户现金，仅通过 security_transactions 调整持仓数量。
-    kind                      TEXT NOT NULL CHECK(kind IN ('income','expense','transfer','refund','buy','sell','dividend','split')),
+    -- convert： 基金转换，同一投资账户内两标的互换、无现金腿，账户余额不变；
+    --            两腿标的/份额/金额与结转成本由 security_transactions 扩展记录（V002）。
+    kind                      TEXT NOT NULL CHECK(kind IN ('income','expense','transfer','refund','buy','sell','dividend','split','convert')),
     amount_cents              INTEGER NOT NULL,                                        -- 原始币种金额，以「分」为单位的整数
     currency_code             TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 原始币种代码，关联 currencies.code
     amount_native_cents       INTEGER NOT NULL,                                        -- 本位币金额（当前 1:1，预留多币种换算），以「分」为单位
