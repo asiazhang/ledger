@@ -255,7 +255,7 @@
   "sync-channel": {
     "auth-failed": "Sync channel credentials were rejected; check your cloud account and password (or app password) settings.",
     "base-url-missing": "Sync channel address is required.",
-    "book-id-invalid": "Invalid book id; cannot build the sync directory.",
+    "book-id-invalid": "Invalid sync space (only lowercase letters, digits and hyphens); cannot build the sync directory.",
     "book-unavailable": "Book registry is unavailable; cannot determine the sync scope.",
     "checkpoint-corrupt": "Checkpoint snapshot failed verification (possibly incomplete upload or corrupt); publish a new checkpoint: {0}",
     "checkpoint-missing": "Checkpoint file is missing on the sync channel; publish a new checkpoint: {0}",

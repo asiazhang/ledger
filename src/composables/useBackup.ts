@@ -2,8 +2,8 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useMessage } from "naive-ui";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { useAppStore } from "@/stores/app"
-import { formatIsoMinute } from "@/utils/datetime"
+import { useAppStore } from "@/stores/app";
+import { formatIsoMinute } from "@/utils/datetime";
 import { api } from "@/api";
 import type { AutoBackupState, BackupFileInfo, BackupKind } from "@/types";
 import { errorMessage } from "@/utils/errors";

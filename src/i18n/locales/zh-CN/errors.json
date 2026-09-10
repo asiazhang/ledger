@@ -255,7 +255,7 @@
   "sync-channel": {
     "auth-failed": "同步通道凭据被拒绝，请检查网盘账号与密码（或应用密码）设置",
     "base-url-missing": "同步通道地址不能为空",
-    "book-id-invalid": "账本标识非法，无法构造同步目录",
+    "book-id-invalid": "同步空间非法（仅限小写字母、数字与短横线），无法构造同步目录",
     "book-unavailable": "账本注册表不可用，无法确定同步范围",
     "checkpoint-corrupt": "检查点快照校验失败（可能未完整上传或已损坏），请重新发布检查点: {0}",
     "checkpoint-missing": "同步通道上的检查点文件缺失，请重新发布检查点: {0}",

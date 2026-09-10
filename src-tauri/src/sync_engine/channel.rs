@@ -68,7 +68,9 @@ pub struct ChannelLayout {
 }
 
 impl ChannelLayout {
-    /// 从账本标识构造布局（UUID 形态原样可用；非法字符清洗，清洗后为空拒绝）。
+    /// 从同步空间标识构造布局（`book-<space>`；空间是跨端共识的世界身份，
+    /// 见多端同步域 Transport 词条——issue #862）：非法字符清洗，清洗后为空
+    /// 拒绝（用户可见错误，文案对齐设置页「同步空间」字段语义）。
     pub fn new(book_id: &str) -> Result<Self> {
         let sanitized: String = book_id
             .to_lowercase()
@@ -78,7 +80,7 @@ impl ChannelLayout {
         if sanitized.is_empty() {
             return Err(AppError::coded(
                 "sync-channel.book-id-invalid",
-                "账本标识非法，无法构造同步目录",
+                "同步空间非法（仅限小写字母、数字与短横线），无法构造同步目录",
             ));
         }
         Ok(Self {

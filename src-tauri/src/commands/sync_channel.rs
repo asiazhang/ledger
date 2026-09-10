@@ -174,12 +174,7 @@ pub async fn sync_now<R: Runtime>(
                     "账本注册表不可用，无法确定同步范围",
                 ));
             }
-            let transport = WebDavTransport::new(WebDavConfig {
-                base_url: config.base_url,
-                username: config.username,
-                password: config.password,
-            })?;
-            let layout = ChannelLayout::new(&config.space_id)?;
+            let (transport, layout) = build_channel(&config)?;
             // 口令持有串活在轮次作用域，信封模式借出形态对齐（无泄漏）。
             let passphrase_holder = resolve_passphrase(&db_path, book.as_deref(), passphrase)?;
             let mode = match passphrase_holder {
@@ -241,24 +236,32 @@ pub async fn set_sync_channel_config<R: Runtime>(
         let space_id = config
             .space_id
             .unwrap_or_else(|| DEFAULT_SPACE_ID.to_string());
-        // 校验单点：构库（连接参数定型，不发网络请求）+ 布局构造（空间字符
-        // 闭集），不通过不落库——错误码为域的 sync-channel.*。
         let config = SyncChannelConfig {
             base_url: config.base_url,
             username: config.username,
             password: config.password,
             space_id,
         };
-        WebDavTransport::new(WebDavConfig {
-            base_url: config.base_url.clone(),
-            username: config.username.clone(),
-            password: config.password.clone(),
-        })?;
-        ChannelLayout::new(&config.space_id)?;
+        // 校验单点（与 `sync_now` 同源）：不通过不落库——错误码为域的
+        // sync-channel.*。
+        build_channel(&config)?;
         let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
         settings::set(&conn, SettingKey::SyncChannelConfig, &config)
     })
     .await
+}
+
+/// 通道构库校验单点（`sync_now` 与 `set_sync_channel_config` 共用）：WebDAV
+/// 凭据构库（连接参数定型，不发网络请求）+ 布局构造（空间字符闭集），
+/// 错误码复用域的 `sync-channel.*`；不通过即早退，不触网、不落库。
+fn build_channel(config: &SyncChannelConfig) -> Result<(WebDavTransport, ChannelLayout)> {
+    let transport = WebDavTransport::new(WebDavConfig {
+        base_url: config.base_url.clone(),
+        username: config.username.clone(),
+        password: config.password.clone(),
+    })?;
+    let layout = ChannelLayout::new(&config.space_id)?;
+    Ok((transport, layout))
 }
 
 /// 口令解析与验证（ADR-0091 决策 8）：密文库回 `Some(主口令)`——显式参数优先
