@@ -248,6 +248,7 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
       merchant_id: null,
       policy_id: null,
       source: null,
+      convert: null,
       refund_of_transaction_id: null,
       note: '借给张三',
       date: '2026-05-01',

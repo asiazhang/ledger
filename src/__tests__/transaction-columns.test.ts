@@ -85,6 +85,28 @@ describe('buildTransactionColumns 金额单元格语义着色', () => {
       formatAmount(123456, reference.getCurrency(row.currency_code)),
     )
   })
+
+  it('转换行金额显示转出金额（确认单口径），不读行金额锚点（结转成本，ADR-0099）', () => {
+    const app = useAppStore()
+    app.setTheme('dark')
+    const row = makeTransaction({
+      id: 'tx-convert',
+      kind: 'convert',
+      // 行金额锚点 = 结转成本（3590.62），展示口径 = 转出金额（3615.61）。
+      amount_native_cents: 359062,
+      convert: {
+        to_instrument_id: 'inst-in',
+        to_quantity: 10,
+        out_amount_cents: 361561,
+        in_amount_cents: 361561,
+      },
+    })
+    const vnode = amountCellOf(row)
+    expect((vnode.props as { text: string }).text).toBe(
+      formatAmount(361561, reference.getCurrency(row.currency_code)),
+    )
+    expect((vnode.props as { color: string }).color).toBe(kindSemanticColor('convert', 'dark'))
+  })
 })
 
 /** 来源列（spec #704 / issue #706）：列序与渲染产物——

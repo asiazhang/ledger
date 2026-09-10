@@ -22,8 +22,8 @@
 //! 买入禁删」随之退场。
 //!
 //! 分派是薄而穷尽的 `match`（不引入 trait 注册表，避免过度设计）：
-//! 普通 kind（income/expense/transfer/refund）经 Writer 接缝归一化；buy/sell 委托投资域
-//! （`investment` 域入口的 prepare/apply/revert，正向分派保留）；`dividend` / `split`
+//! 普通 kind（income/expense/transfer/refund）经 Writer 接缝归一化；buy/sell/convert 委托
+//! 投资域（`investment` 域入口的 prepare/apply/revert，正向分派保留）；`dividend` / `split`
 //! 已声明但未实现，在此显式「暂不支持」拒绝——这是 #72 重构唯一对外的可观测行为变化
 //! （此前经交易接口创建 dividend/split 落入 [`writer::normalize`] 的通用兜底，返回语义不明的
 //! 「仅处理通用交易类型」；现改为明确的「暂不支持」，两者都不落库）。
@@ -66,6 +66,23 @@ pub use update as update_transaction_internal;
 const PARTIAL_SOLD_CANNOT_UPDATE: &str = "该买入交易已有部分卖出，无法修改";
 /// 上迹守卫的稳定错误码（issue #342 二期）：与文案同源单点，经 revert 下传。
 const PARTIAL_SOLD_CANNOT_UPDATE_CODE: &str = "trade.partially-sold-update";
+
+/// 持仓份额已被**在用的后续转换**消耗的守卫文案（issue #978 / ADR-0099）：修改会
+/// 重建持仓批次、删除会连带清空批次，两者都会抹掉后续转换的转出消耗记录（它精确
+/// 回补与结转成本的唯一依据）——链式转换（一条转换单拆多腿）须从最后一腿往前处理。
+/// 修改与删除两个入口措辞各自单点定义（与上方部分卖出守卫同款）。
+const CONSUMED_BY_CONVERT_CANNOT_UPDATE: &str = "该交易的份额已被后续转换消耗，无法修改";
+const CONSUMED_BY_CONVERT_CANNOT_UPDATE_CODE: &str = "trade.consumed-by-convert-update";
+const CONSUMED_BY_CONVERT_CANNOT_DELETE: &str = "该交易的份额已被后续转换消耗，无法删除";
+const CONSUMED_BY_CONVERT_CANNOT_DELETE_CODE: &str = "trade.consumed-by-convert-delete";
+
+/// 修改入口的持仓副作用守卫文案组（单点定义，修改本体与重放修改共享）。
+const UPDATE_GUARDS: investment::GuardMessages<'static> = investment::GuardMessages {
+    partially_sold_code: PARTIAL_SOLD_CANNOT_UPDATE_CODE,
+    partially_sold_msg: PARTIAL_SOLD_CANNOT_UPDATE,
+    consumed_by_convert_code: CONSUMED_BY_CONVERT_CANNOT_UPDATE_CODE,
+    consumed_by_convert_msg: CONSUMED_BY_CONVERT_CANNOT_UPDATE,
+};
 
 /// 计划：归一化后的交易行 + kind 特有副作用数据（不落库）。
 enum Plan {
@@ -204,15 +221,19 @@ fn update_within_transaction(
             AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
 
+    // 转换的 kind 变更（从 convert 出、或改为 convert）随生命周期票落地：本版在
+    // 分派前显式拒绝，避免经修改路径造出/抹掉转换行（ADR-0099 决策 5 的 kind 变更
+    // 专属码化错误由该票接管）；就地修改转换由 revert 的同码拒绝兜底。
+    if (old_kind == TransactionKind::Convert) != (input.kind == TransactionKind::Convert) {
+        return Err(AppError::coded(
+            "trade.convert-update-unsupported",
+            "基金转换的修改尚未接入",
+        ));
+    }
+
     // 先按旧 kind 回退持仓/卖出关联副作用，再按新 kind 校验并应用（跨 kind 修改避免孤儿持仓）；
-    // buy 守卫（已有部分卖出拒绝）措辞与错误码为修改入口单点定义的文案。
-    investment::revert(
-        conn,
-        id,
-        old_kind,
-        PARTIAL_SOLD_CANNOT_UPDATE_CODE,
-        PARTIAL_SOLD_CANNOT_UPDATE,
-    )?;
+    // buy 守卫（已有部分卖出 / 份额已被后续转换消耗）措辞与错误码为修改入口单点定义的文案。
+    investment::revert(conn, id, old_kind, &UPDATE_GUARDS)?;
     let (plan, merchant_created) = plan_with_existing_refs(
         conn,
         input,
@@ -240,6 +261,7 @@ fn update_within_transaction(
 ///   不再遗留幽灵占用（旧版「sell 删除不回补」是把买入永久锁死的根源）；
 /// - buy：**级联**——其持仓批次的在用 sell 逐笔回退持仓副作用并随之软删
 ///   （各自 delete op 与余额刷新），「已有部分卖出的买入禁删」守卫退场；
+/// - convert：转换的删除（转出腿回补 / 转换链）随生命周期票落地，本版码化拒绝；
 /// - 其余 kind 无持仓副作用，直接软删。
 ///
 /// 不存在的 id 返回码化 NotFound（HTTP 侧映射 404）。事务规则见
@@ -262,11 +284,19 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
             AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
 
-    // 持仓副作用回退（issue #940 / ADR-0097）：sell 回补持仓扣减；buy 消费其
-    // 持仓批次的在用 sell（逐笔回退）并整批清理批次与匹配，返回级联对象 id 列表。
+    // 持仓副作用回退（issue #940 / ADR-0097 / ADR-0099）：sell 回补持仓扣减；
+    // buy 消费其持仓批次的在用 sell（逐笔回退）并整批清理批次与匹配；convert 的删除
+    // 尚未接入（release_for_delete 内同码拒绝）。本行批次已被在用后续转换消耗时，
+    // buy 的删除以删除入口守卫拒绝。
     let cascaded_sell_ids = match kind {
-        TransactionKind::Buy | TransactionKind::Sell => {
-            investment::release_for_delete(conn, id, kind)?
+        TransactionKind::Buy | TransactionKind::Sell | TransactionKind::Convert => {
+            investment::release_for_delete(
+                conn,
+                id,
+                kind,
+                CONSUMED_BY_CONVERT_CANNOT_DELETE_CODE,
+                CONSUMED_BY_CONVERT_CANNOT_DELETE,
+            )?
         }
         _ => Vec::new(),
     };
@@ -332,7 +362,7 @@ fn soft_delete_transaction_row(conn: &Connection, id: &str) -> Result<()> {
 /// 自然走到；商户创建与交易落库同处入口持有的事务，中途回滚不残留碎商户。幂等重放不产生碎商户：批量导入命中去重的行不会
 /// 走到本函数，同批内首行即建、后续行按名精确匹配复用。
 ///
-/// 单点分派全部 8 种 kind：通用 kind 经 Writer 接缝 [`writer::normalize`]（金额>0、
+/// 单点分派全部 9 种 kind：通用 kind 经 Writer 接缝 [`writer::normalize`]（金额>0、
 /// transfer 目标账户、refund 继承原支出等校验 + 本位币折算）；buy/sell 委托投资域
 /// [`investment::prepare`]（投资账户/数量/单价/可卖数量校验 + 折算）；
 /// `dividend` / `split` 已声明但未实现，显式「暂不支持」报错——取代此前
@@ -473,7 +503,7 @@ fn plan_with_existing_refs(
             };
             Ok((Plan::Common(norm), merchant_created))
         }
-        TransactionKind::Buy | TransactionKind::Sell => {
+        TransactionKind::Buy | TransactionKind::Sell | TransactionKind::Convert => {
             // 投资 kind 不涉商户（行为层 kind 收口已拒绝携带），证据恒假。
             Ok((
                 Plan::Investment(investment::prepare(conn, kind, input)?),
@@ -502,27 +532,31 @@ fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
 
 /// 编排计划 → 命令载荷部件（产出侧桥）：归一化行 + 投资 kind 的语义字段与
 /// 派生结果（买入每份成本随行，源端折算，ADR-0091 决策 3）；普通 kind 恒 None。
+///
+/// 转换的语义字段（ConvertCommandFields）随同步票（issue #980）落地：在此之前
+/// 转换 op 只携归一化行，重放端按 kind 防御臂显式拒绝（挂起，不静默落错账）。
 fn command_parts(plan: &Plan) -> (NormalizedTransaction, Option<InvestmentCommandFields>) {
     match plan {
         Plan::Common(r) => (NormalizedTransaction::from(r), None),
         Plan::Investment(p) => {
             let fields = match p {
-                investment::Plan::Buy(b) => InvestmentCommandFields {
+                investment::Plan::Buy(b) => Some(InvestmentCommandFields {
                     instrument_id: b.instrument_id.clone(),
                     quantity: b.quantity,
                     price_cents: b.price_cents,
                     fee_cents: b.fee_cents,
                     cost_per_unit_cents: Some(b.cost_per_unit_cents),
-                },
-                investment::Plan::Sell(s) => InvestmentCommandFields {
+                }),
+                investment::Plan::Sell(s) => Some(InvestmentCommandFields {
                     instrument_id: s.instrument_id.clone(),
                     quantity: s.quantity,
                     price_cents: s.price_cents,
                     fee_cents: s.fee_cents,
                     cost_per_unit_cents: None,
-                },
+                }),
+                investment::Plan::Convert(_) => None,
             };
-            (p.normalized().clone(), Some(fields))
+            (p.normalized().clone(), fields)
         }
     }
 }
@@ -600,6 +634,11 @@ fn replay_create(
     ) {
         return Err(kind_unsupported(norm_row.kind));
     }
+    // 转换重放（ConvertCommandFields 随命令携带）随同步票（issue #980）落地；
+    // 在此之前显式拒绝、不落半套副作用（引擎挂起待升级/补齐）。
+    if norm_row.kind == TransactionKind::Convert {
+        return Err(kind_replay_unsupported(norm_row.kind));
+    }
     writer::validate_accounts_alive(
         conn,
         &norm_row.account_id,
@@ -618,6 +657,7 @@ fn replay_create(
             investment::apply(conn, id, &plan)
         }
         TransactionKind::Dividend | TransactionKind::Split => Err(kind_unsupported(norm_row.kind)),
+        TransactionKind::Convert => Err(kind_replay_unsupported(norm_row.kind)),
     }
 }
 
@@ -645,14 +685,11 @@ fn replay_update(
     if matches!(new_kind, TransactionKind::Dividend | TransactionKind::Split) {
         return Err(kind_unsupported(new_kind));
     }
+    if new_kind == TransactionKind::Convert {
+        return Err(kind_replay_unsupported(new_kind));
+    }
     // 先按旧 kind 回退持仓/卖出关联副作用（普通 kind 为 no-op），再落新行。
-    investment::revert(
-        conn,
-        id,
-        old_kind,
-        PARTIAL_SOLD_CANNOT_UPDATE_CODE,
-        PARTIAL_SOLD_CANNOT_UPDATE,
-    )?;
+    investment::revert(conn, id, old_kind, &UPDATE_GUARDS)?;
     let norm_row = writer::NormalizedRow::try_from(row)?;
     // 账户引用存活守卫（issue #856，与重放创建同款）：修改不得把交易改挂到
     // 已删账户上（含出资端，issue #935）。
@@ -676,6 +713,7 @@ fn replay_update(
         // 入口已先行拒绝（dividend / split 同码防御臂）；穷尽分支不引入 panic
         // 构造（ADR-0060），以同码错误表达不可达态。
         TransactionKind::Dividend | TransactionKind::Split => Err(kind_unsupported(new_kind)),
+        TransactionKind::Convert => Err(kind_replay_unsupported(new_kind)),
     }
 }
 
@@ -692,6 +730,17 @@ fn kind_unsupported(kind: TransactionKind) -> AppError {
     AppError::codedp(
         "transaction.kind-unsupported",
         format!("交易类型 {kind} 暂不支持（MVP 未实现）"),
+        &[&kind.to_string()],
+    )
+}
+
+/// 转换的同步重放尚未接入（`ConvertCommandFields` 与重放臂随同步票落地）：
+/// 转出/更新 op 在此显式码化拒绝（不泄露内部票号，前端按码取 i18n 模板），
+/// 由引擎挂起，不静默落半套持仓副作用。
+fn kind_replay_unsupported(kind: TransactionKind) -> AppError {
+    AppError::codedp(
+        "transaction.replay-unsupported",
+        format!("交易类型 {kind} 的同步重放尚未接入"),
         &[&kind.to_string()],
     )
 }

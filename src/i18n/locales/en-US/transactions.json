@@ -5,7 +5,8 @@
     "transfer": "Transfer",
     "refund": "Refund",
     "buy": "Buy",
-    "sell": "Sell"
+    "sell": "Sell",
+    "convert": "Convert"
   },
   "lending": {
     "direction": "Direction",

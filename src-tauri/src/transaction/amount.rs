@@ -1,7 +1,7 @@
 //! Amount 接缝（issue #54 / spec #52）：交易金额口径的单一权威。
 //!
 //! 三块职责：
-//! - [`TransactionKind`] 枚举：8 种交易类型的模块内真源（DB/wire 边界的小写字符串
+//! - [`TransactionKind`] 枚举：9 种交易类型的模块内真源（DB/wire 边界的小写字符串
 //!   映射经 `as_str` / `parse` 收口，serde 以小写字符串序列化，wire 格式不变）。
 //! - kind→度量矩阵：[`signed_amount`]（行级/展示）与四个 SQL 片段 builder
 //!   （服务端聚合）由同一 [`coefficient`] 矩阵驱动，二者口径恒一致。
@@ -38,6 +38,7 @@ use crate::error::{AppError, Result};
 /// | [`TransactionKind::Sell`] | 卖出证券（增加现金） |
 /// | [`TransactionKind::Dividend`] | 现金分红 |
 /// | [`TransactionKind::Split`] | 拆股/送股（现金影响恒为 0） |
+/// | [`TransactionKind::Convert`] | 基金转换（同一投资账户内两标的互换、无现金腿，六度量系数全 0） |
 ///
 /// serde 以**小写字符串**序列化（`"income"` 等，与裸 String 的 wire 格式一致）；
 /// 反序列化复用 [`TransactionKind::parse`]，未知值报错文案与 parse 同源
@@ -52,11 +53,12 @@ pub enum TransactionKind {
     Sell,
     Dividend,
     Split,
+    Convert,
 }
 
 impl TransactionKind {
     /// 全部 kind，矩阵断言与 SQL 片段生成按此遍历。
-    pub const ALL: [TransactionKind; 8] = [
+    pub const ALL: [TransactionKind; 9] = [
         TransactionKind::Income,
         TransactionKind::Expense,
         TransactionKind::Transfer,
@@ -65,6 +67,7 @@ impl TransactionKind {
         TransactionKind::Sell,
         TransactionKind::Dividend,
         TransactionKind::Split,
+        TransactionKind::Convert,
     ];
 
     /// 数据库存储的 kind 字符串（与 serde 序列化同形）。
@@ -78,6 +81,7 @@ impl TransactionKind {
             TransactionKind::Sell => "sell",
             TransactionKind::Dividend => "dividend",
             TransactionKind::Split => "split",
+            TransactionKind::Convert => "convert",
         }
     }
 
@@ -92,9 +96,10 @@ impl TransactionKind {
             "sell" => TransactionKind::Sell,
             "dividend" => TransactionKind::Dividend,
             "split" => TransactionKind::Split,
+            "convert" => TransactionKind::Convert,
             other => {
                 return Err(AppError::Invalid(format!(
-                    "未知交易类型: {other}（合法值: income/expense/transfer/refund/buy/sell/dividend/split）"
+                    "未知交易类型: {other}（合法值: income/expense/transfer/refund/buy/sell/dividend/split/convert）"
                 )));
             }
         };
@@ -227,7 +232,9 @@ fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
                 TransferSide::In => 1,
                 TransferSide::Funding => 0,
             },
-            TransactionKind::Split => 0,
+            // convert 无现金腿（ADR-0099）：两侧标的互换不涉任何账户现金，
+            // 三个侧别恒记 0——落账前后全部账户余额（含黑洞）不变。
+            TransactionKind::Split | TransactionKind::Convert => 0,
         },
         Measure::ExpenseNet => match kind {
             TransactionKind::Expense => 1,
@@ -237,7 +244,8 @@ fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
             | TransactionKind::Buy
             | TransactionKind::Sell
             | TransactionKind::Dividend
-            | TransactionKind::Split => 0,
+            | TransactionKind::Split
+            | TransactionKind::Convert => 0,
         },
         Measure::IncomeNet => match kind {
             TransactionKind::Income | TransactionKind::Dividend => 1,
@@ -246,7 +254,8 @@ fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
             | TransactionKind::Refund
             | TransactionKind::Buy
             | TransactionKind::Sell
-            | TransactionKind::Split => 0,
+            | TransactionKind::Split
+            | TransactionKind::Convert => 0,
         },
         Measure::RefundGross => match kind {
             TransactionKind::Refund => 1,
@@ -256,7 +265,8 @@ fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
             | TransactionKind::Buy
             | TransactionKind::Sell
             | TransactionKind::Dividend
-            | TransactionKind::Split => 0,
+            | TransactionKind::Split
+            | TransactionKind::Convert => 0,
         },
         Measure::PolicyPremium => match kind {
             TransactionKind::Expense => 1,
@@ -266,7 +276,8 @@ fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
             | TransactionKind::Buy
             | TransactionKind::Sell
             | TransactionKind::Dividend
-            | TransactionKind::Split => 0,
+            | TransactionKind::Split
+            | TransactionKind::Convert => 0,
         },
         Measure::PolicyInflow => match kind {
             TransactionKind::Income => 1,
@@ -276,7 +287,8 @@ fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
             | TransactionKind::Buy
             | TransactionKind::Sell
             | TransactionKind::Dividend
-            | TransactionKind::Split => 0,
+            | TransactionKind::Split
+            | TransactionKind::Convert => 0,
         },
     }
 }

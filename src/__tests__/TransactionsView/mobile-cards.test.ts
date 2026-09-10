@@ -108,6 +108,28 @@ describe('移动档卡片字段（同一段列表状态）', () => {
     expect(incomeEl.style.color).toBe(probeColor(kindSemanticColor('income', useAppStore().theme)))
   })
 
+  it('基金转换行卡片：类型标签「转换」、金额显示转出金额（ADR-0099）', async () => {
+    setTxnDb([
+      makeTxn(1, 'acc-1', {
+        kind: 'convert',
+        // 行金额锚点 = 结转成本；展示口径 = 转出金额（确认单）。
+        amount_native_cents: 359062,
+        convert: {
+          to_instrument_id: 'inst-in',
+          to_quantity: 10,
+          out_amount_cents: 361561,
+          in_amount_cents: 361561,
+        },
+      }),
+    ])
+    const wrapper = await mountMobile()
+    const first = cards(wrapper)[0]
+    expect(first.text()).toContain('转换')
+    const amountEl = first.find('.amount-cell').element as HTMLElement
+    expect(amountEl.textContent).toBe(formatAmount(361561, cny))
+    expect(amountEl.style.color).toBe(probeColor(kindSemanticColor('convert', useAppStore().theme)))
+  })
+
   it('转账行账户呈现「转出 → 转入」双向链接（与表格同构）', async () => {
     setTxnDb([makeTxn(1, 'acc-1', { kind: 'transfer', to_account_id: 'acc-2' })])
     const wrapper = await mountMobile()

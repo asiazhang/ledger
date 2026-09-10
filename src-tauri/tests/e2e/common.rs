@@ -129,6 +129,8 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
             policy_id: r.get(18)?,
             // 步骤侧直读快照不做来源反查：来源契约断言一律走列表命令（transactions_source_steps）。
             source: None,
+            // 转换扩展同规：直读快照不反查，展示口径断言走列表命令。
+            convert: None,
         })
     })
     .unwrap()

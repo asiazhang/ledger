@@ -12,7 +12,7 @@ import { DARK_FLOAT_LAYER, NEUTRAL_TOKENS } from './design-tokens'
  *   （`src/__tests__/design-tokens.test.ts`）。
  * - 强调色（品牌色）与语义色（业务色）相互独立，且均不是中性常量：强调色留在
  *   本模块；语义色不在这里，收口于同层单一来源模块 `src/theme/semantic-colors.ts`
- *   （六种交易类型、亮/暗两套色值），交易列表/搜索金额列与报表月度收支图同源
+ *   （七种交易类型、亮/暗两套色值），交易列表/搜索金额列与报表月度收支图同源
  *   消费、随主题切换即时换色（issue #435）。
  * - 亮色主题保持现状等效：仅共享强调色（同色相加深版），其余保持 Naive 出厂
  *   默认，不借机补全（issue #887 边界）。

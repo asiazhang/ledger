@@ -35,6 +35,10 @@ fn buy_input(account_id: &str, instrument_id: &str, funding: Option<&str>) -> Tr
         quantity: Some(10.0),
         price_cents: Some(1500),
         fee_cents: Some(5),
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
         idempotency_key: None,
     }
 }

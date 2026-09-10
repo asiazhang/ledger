@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use rusqlite::Connection;
 
+use super::amount::TransactionKind;
 use super::model::{
-    Transaction, TransactionListFilter, TransactionListResult, TransactionSource,
+    ConvertFields, Transaction, TransactionListFilter, TransactionListResult, TransactionSource,
     TransactionSourceKind, TransactionSourceStatus,
 };
 use crate::db::query::{query_all, query_one};
@@ -169,6 +170,36 @@ pub(super) fn attach_sources(conn: &Connection, items: &mut [Transaction]) -> Re
     Ok(())
 }
 
+/// 按页填充转换两腿扩展（ADR-0099 / 词汇表「基金转换（Conversion）」）：仅
+/// `kind = convert` 的行命中（`security_transactions` 的 convert 行以
+/// `transaction_id` 为主键、一交易至多一行），逐页一次批量查询、不逐行 N+1。
+///
+/// 扩展查询归投资域（`security_transactions` 表的所属域，与来源列标的反查同款
+/// 域访问器，ADR-0056）：行为层不自己读投资扩展表。行金额锚点是结转成本（不是确认单
+/// 金额），列表金额列展示转出金额须读本扩展（`out_amount_cents`）；非转换行与未命中行
+/// 保持 `None`（与来源列同款的读时投影纪律：零库列、写路径不填充）。
+pub(super) fn attach_convert_fields(conn: &Connection, items: &mut [Transaction]) -> Result<()> {
+    let convert_ids: Vec<String> = items
+        .iter()
+        .filter(|t| t.kind == TransactionKind::Convert)
+        .map(|t| t.id.clone())
+        .collect();
+    let rows = investment::convert_fields_by_transaction_ids(conn, &convert_ids)?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let by_txn: HashMap<&str, &ConvertFields> = rows
+        .iter()
+        .map(|(id, fields)| (id.as_str(), fields))
+        .collect();
+    for txn in items.iter_mut() {
+        if let Some(fields) = by_txn.get(txn.id.as_str()) {
+            txn.convert = Some((*fields).clone());
+        }
+    }
+    Ok(())
+}
+
 pub fn list_transactions_internal(
     conn: &Connection,
     filter: &TransactionListFilter,
@@ -256,6 +287,7 @@ pub fn list_transactions_internal(
     }
     let mut items = query_all(conn, &sql, rusqlite::params_from_iter(params))?;
     attach_sources(conn, &mut items)?;
+    attach_convert_fields(conn, &mut items)?;
     Ok(TransactionListResult { items, total })
 }
 

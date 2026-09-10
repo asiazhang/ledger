@@ -733,6 +733,7 @@ pub fn search_transactions_internal(
     // spec #704 / issue #706：搜索页与交易页同一来源口径）。
     let mut items = fetch_display_rows(conn, &page_ids)?;
     super::read::attach_sources(conn, &mut items)?;
+    super::read::attach_convert_fields(conn, &mut items)?;
 
     Ok(TransactionSearchResult { items, total })
 }

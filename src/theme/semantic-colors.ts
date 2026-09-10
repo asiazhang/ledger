@@ -4,7 +4,7 @@ import type { TransactionKind } from '@/types'
 /**
  * 交易类型语义色（issue #435）——金额业务色的**单一来源**。
  *
- * 六种交易类型（支出/收入/转账/退款/买入/卖出）各一个专属色，
+ * 七种交易类型（支出/收入/转账/退款/买入/卖出/转换）各一个专属色，
  * 每色亮/暗两套色值，随外观主题（Appearance）切换。消费方：
  * - 交易列工厂（`src/components/transaction-columns.ts`，交易列表与搜索结果共用）
  *   的金额单元格，运行时响应式读取主题取色；
@@ -14,9 +14,10 @@ import type { TransactionKind } from '@/types'
  * - 表驱动穷尽（`Record<TransactionKind, …>`）：新增交易类型时此处编译报错，
  *   强制补色，不出现无色回退。
  * - 暗色为默认主题，暗色变体取亮色同色相的提亮版，保证近黑底可读。
- * - 与类型标签色（NTag：收入 success、支出 warning、退款 info、其余 default）
+ * - 与类型标签色（NTag：收入 success、支出 warning、退款与转换 info、其余 default）
  *   及品牌琥珀强调色（账户/商户链接）相互独立：借出/借入/收回/还款是 transfer
- *   的派生视角（ADR-0053），金额与普通转账同为紫色，不做派生级区分。
+ *   的派生视角（ADR-0053），金额与普通转账同为紫色，不做派生级区分；基金转换
+ *   （ADR-0099）是独立 kind，取独立色相（琥珀）与两腿买卖腿的买入/卖出色区分。
  * - 图表柱体允许对语义色做**同色相渐变**（沿数值轴向基线淡出，视觉柔化）：
  *   色相与类型绑定不变，渐变是绘制期呈现（`@/theme/chart-style` 的
  *   softBarFillPlugin），不改动本模块色值，列表金额仍为实色。
@@ -35,6 +36,7 @@ export const KIND_SEMANTIC_COLORS: Record<TransactionKind, SemanticColor> = {
   transfer: { light: '#722ed1', dark: '#b37feb' },
   buy: { light: '#eb2f96', dark: '#ff85c0' },
   sell: { light: '#13c2c2', dark: '#5cdbd3' },
+  convert: { light: '#d48806', dark: '#f0c060' },
 }
 
 /** 语义色覆盖的交易类型闭集（与交易类型闭集同源，运行时校验锚点）。 */

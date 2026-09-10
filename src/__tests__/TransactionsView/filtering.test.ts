@@ -144,7 +144,7 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     expect(
       (merchant.props('options') as { value: string }[]).map((o) => o.value),
     ).toEqual(['mch-1'])
-    // 类型下拉：可清除，6 种交易类型（income/expense/transfer/refund/buy/sell）
+    // 类型下拉：可清除，7 种交易类型（income/expense/transfer/refund/buy/sell/convert）
     const kind = kindSelect(wrapper)
     expect(kind.props('clearable')).toBe(true)
     expect((kind.props('options') as { value: string }[]).map((o) => o.value)).toEqual([
@@ -154,6 +154,7 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
       'refund',
       'buy',
       'sell',
+      'convert',
     ])
     // 清除筛选按钮：无过滤时禁用
     expect(clearButton(wrapper).attributes('disabled')).toBeDefined()
