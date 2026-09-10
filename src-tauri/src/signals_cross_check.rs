@@ -40,7 +40,9 @@ include!(concat!(env!("OUT_DIR"), "/commands_manifest.rs"));
 /// 掩码 Rust 源文本中的注释与字符串/char 字面量：内容替换为等长空白（保留换行
 /// 与列位），使令牌扫描只落在真实代码上。与 `check-structure.ts` 的 `maskNonCode`
 /// 同款规则（行注释、可嵌套块注释、字符串、原始字符串、char 字面量）。
-fn mask_non_code(text: &str) -> String {
+/// `pub(crate)`：触发接线守门同用本器具（`sync_engine::trigger::tests`，
+/// issue #959）——扫描器具单一维护点，规则漂移两处同红。
+pub(crate) fn mask_non_code(text: &str) -> String {
     let bytes: Vec<char> = text.chars().collect();
     let n = bytes.len();
     let mut out = bytes.clone();

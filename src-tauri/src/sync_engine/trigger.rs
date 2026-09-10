@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::db::boot::BootFailureGate;
 use crate::db::encryption::EncryptionGate;
@@ -53,6 +53,28 @@ const POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// 写后即时同步的去抖窗口：连续记账（批量录入、导入）只在最后一次写后
 /// [WRITE_DEBOUNCE] 触发一轮，避免「每写一笔就触网一次」（ADR-0098 取舍留痕）。
 const WRITE_DEBOUNCE: Duration = Duration::from_secs(5);
+
+/// 触发时机的显式参数（调度线程的轮询周期与写后去抖窗口）：生产走默认值
+/// （即上两个常量），触发接线测试注入「短去抖 + 超长轮询」——写后触发断言
+/// 只等去抖窗，且接线断掉（写信号删除）时不得被低频轮询救活（issue #959）。
+/// `ChannelOptions` 同款显式参数接缝（KDF 迭代次数与段容量的先例），不是
+/// 测试后门：参数是调度线程的正常输入，任何调用方都可给定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TriggerTimings {
+    /// 低频轮询周期（兜底「对端有新数据」与写后失败重试）。
+    pub poll_interval: Duration,
+    /// 写后去抖窗口（连续记账合流成一轮的静默判定长度）。
+    pub write_debounce: Duration,
+}
+
+impl Default for TriggerTimings {
+    fn default() -> Self {
+        Self {
+            poll_interval: POLL_INTERVAL,
+            write_debounce: WRITE_DEBOUNCE,
+        }
+    }
+}
 
 /// 通道配置持久化形态（`app_settings` 的 `sync.channel.config`，JSON 对象）。
 ///
@@ -212,8 +234,10 @@ pub fn run_auto_round(
 ///
 /// 与 [`start_sync_scheduler`] 同一段编排，只有触发时机不同。
 ///
-/// 本函数**平台无关**（移动端也跑）：打开即同步是 Android 的兜底语义。
-pub fn sync_on_start(app: &AppHandle) {
+/// 本函数**平台无关**（移动端也跑）：打开即同步是 Android 的兜底语义。签名对
+/// 运行时泛型（壳层命令同款）：业务可用起点的现场（真应用 / 测试 mock 应用）
+/// 都能调用（issue #959 接线测试）。
+pub fn sync_on_start<R: Runtime>(app: &AppHandle<R>) {
     let conn = Arc::clone(&app.state::<DbState>().conn);
     let handle = app.clone();
     std::thread::spawn(move || {
@@ -234,7 +258,7 @@ pub fn sync_on_start(app: &AppHandle) {
 ///   在编译期剔除，与 ADR-0074 决策 6 的既有分平台先例同款。
 ///
 /// 两个调度各持单次拉起守卫，原位重引导/重复调用幂等。
-pub fn start_triggers(app: &AppHandle) {
+pub fn start_triggers<R: Runtime>(app: &AppHandle<R>) {
     #[cfg(desktop)]
     start_sync_scheduler(app);
     sync_on_start(app);
@@ -290,6 +314,9 @@ fn notify_write_signal(slot: &std::sync::OnceLock<std::sync::mpsc::Sender<()>>) 
 
 /// 写后触发与低频轮询的统一调度线程（幂等：单次拉起守卫，与自动备份调度同型）。
 ///
+/// 生产入口：时机参数走默认常量（[`TriggerTimings::default`]）；触发接线测试
+/// 注入更短窗口经 [`start_sync_scheduler_with`]（显式参数接缝，issue #959）。
+///
 /// 单一线程承载两条触发路径，避免并发触网：
 /// - **写后即时**（[`sync_after_write`] 的信号）：收到信号后先去抖 [WRITE_DEBOUNCE]
 ///   窗口（窗口内再有写入则继续等待），再跑一轮——连续记账合流成一轮；
@@ -297,7 +324,15 @@ fn notify_write_signal(slot: &std::sync::OnceLock<std::sync::mpsc::Sender<()>>) 
 ///
 /// 每轮门检锁定/启动失败期间空转（占位连接不是业务库）；拿不到连接锁跳过本轮；
 /// 失败静默记录，等下一轮重试。
-pub fn start_sync_scheduler(app: &AppHandle) {
+pub fn start_sync_scheduler<R: Runtime>(app: &AppHandle<R>) {
+    start_sync_scheduler_with(app, TriggerTimings::default());
+}
+
+/// 调度线程拉起（显式时机参数版，[`start_sync_scheduler`] 的接缝本体）：轮询
+/// 周期与写后去抖窗口由调用方给定——生产传 [`TriggerTimings::default`]，触发
+/// 接线测试注入「短去抖 + 超长轮询」（写后触发断言只等去抖窗，不被低频轮询
+/// 救活，issue #959）。其余语义同 [`start_sync_scheduler`]。
+pub fn start_sync_scheduler_with<R: Runtime>(app: &AppHandle<R>, timings: TriggerTimings) {
     static SPAWNED: AtomicBool = AtomicBool::new(false);
     if SPAWNED.swap(true, Ordering::SeqCst) {
         return;
@@ -313,13 +348,13 @@ pub fn start_sync_scheduler(app: &AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || {
         loop {
-            match rx.recv_timeout(POLL_INTERVAL) {
+            match rx.recv_timeout(timings.poll_interval) {
                 // 写后触发：去抖合流——窗口内继续有写则顺延，直到静默
                 // [WRITE_DEBOUNCE] 才跑一轮（连续记账合流成一轮，最后一批 op 不丢）。
                 Ok(()) => {
                     // 去抖合流：本信号已计一次写，把窗口内后续写信号一次吸干
                     // （连续记账合流成一轮），静默 [WRITE_DEBOUNCE] 后跑一轮。
-                    drain_write_signals(&rx, WRITE_DEBOUNCE);
+                    drain_write_signals(&rx, timings.write_debounce);
                 }
                 // 低频轮询到期（或写信号通道断裂后的兜底）。
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -341,7 +376,11 @@ pub fn start_sync_scheduler(app: &AppHandle) {
 /// ——同步轮次落地的数据同样要让各视图重拉，否则「同步了但界面不动」。
 ///
 /// 失败静默（ADR-0091：同步失败不阻塞本地记账），记日志等下一轮。
-fn run_auto_round_with_emit(app: &AppHandle, conn: &Connection, session: &SessionEnvelope) {
+fn run_auto_round_with_emit<R: Runtime>(
+    app: &AppHandle<R>,
+    conn: &Connection,
+    session: &SessionEnvelope,
+) {
     match run_auto_round(conn, session) {
         Ok(Some(report)) => {
             tracing::debug!(
