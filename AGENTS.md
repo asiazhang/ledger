@@ -17,6 +17,7 @@
 - **AI 导入**：读 `docs/contexts/CONTEXT-ai-import.md`、`src-tauri/prompts/ledger-api.md` 和实际 API 契约。
 - **HTTP 端点**：读实际路由、对应 API 契约和 API 集成测试；仅在属于 AI 导入时读取 AI 导入文档。
 - **Issue、PR、triage 或依赖关系**：按需读 `docs/agents/issue-tracker.md` 与 `docs/agents/triage-labels.md`。
+- **依赖版本升级或工具链 bump**：读 `docs/agents/dependency-upgrades.md`（三层口径、跨 major 实测要求、刻意 hold 的注释纪律、验证与打包盲区）。
 - **脚本或质量检查**：先读目标脚本头部注释；脚本当前行为是真源。
 
 代码行为与词汇表不一致时，按可验证行为修正词汇表。代码行为与 ADR 冲突时，先显式报告冲突，确认决策后再修改 ADR 或实现。
