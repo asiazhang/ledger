@@ -10,13 +10,16 @@
 //!
 //! 桩按场景现起（`world.sync.stub`，Drop 清理）：每个场景一个独立通道世界，
 //! 场景之间零串扰（域单测里桩是场景内局部量，同款纪律）。对端投递用「另起一个
-//! 设备库发布」与「直接写一段坏 op 的段文件」两条真实通道路径，不绕过产品代码。
+//! 设备库发布」与「直接写一段坏 op 的段文件」两条通道路径：前者经产品轮次，
+//! 后者（无公开入口能产出「引用不存在账户的 op」）经共享的**通道线格式替身**
+//! （`test_support::channel`，issue #956）按产品消费的字节形态成帧。
 //!
-//! 与测试工厂的分层边界（ADR-0086 决策 9）：本文件只共享 `test_support::webdav`
-//! 的 **WebDAV 协议替身**（真实 HTTP 服务的进程内实现，域单测与命令面集成测试
-//! 同体消费，ADR-0084 准入「跨 ≥2 处同体消费」），**不消费工厂的建库/种子/
-//! 默认值集**——BDD 侧建库走产品开库入口（world 的 `DbState`）、种子走 `crate::common`
-//! 的 e2e 共享助手、输入走 `step_inputs`、写入走 `step_verbs`，两层互不共享默认值。
+//! 与测试工厂的分层边界（ADR-0086 决策 9）：本文件只共享两个**协议/线格式替身**
+//! —— `test_support::webdav` 的 **WebDAV 协议替身**（真实 HTTP 服务的进程内实现）
+//! 与 `test_support::channel` 的**通道线格式替身**（字节级成帧），两者均由
+//! ≥2 层同体消费（ADR-0084 准入）；**不消费工厂的建库/种子/默认值集**——BDD 侧
+//! 建库走产品开库入口（world 的 `DbState`）、种子走 `crate::common` 的 e2e 共享
+//! 助手、输入走 `step_inputs`、写入走 `step_verbs`，两层互不共享默认值。
 
 use cucumber::{given, then, when};
 use rusqlite::Connection;
@@ -26,8 +29,7 @@ use tauri_app_lib::sync_engine::trigger::{
     SessionEnvelope, SyncChannel, build_channel, configured_channel, run_auto_round, run_round_once,
 };
 use tauri_app_lib::sync_engine::{
-    ChannelLayout, ChannelManifest, DomainCommand, EnvelopeMode, SegmentEntry, StreamManifest,
-    SyncChannelConfig, SyncOp, Transport,
+    ChannelLayout, DomainCommand, EnvelopeMode, SyncChannelConfig, SyncOp, Transport,
 };
 use tauri_app_lib::transaction::{
     NormalizedTransaction, TransactionCommand, TransactionInput, TransactionKind,
@@ -38,7 +40,7 @@ use crate::step_inputs::expense_input;
 use crate::step_verbs::create_transaction_verb;
 use crate::world::LedgerWorld;
 use tauri_app_lib::db::DbState;
-use tauri_app_lib::test_support::spawn_webdav_stub;
+use tauri_app_lib::test_support::{publish_raw_segment, spawn_webdav_stub};
 
 /// 把阻塞的通道工作（reqwest 阻塞客户端 + 真 HTTP）移出异步上下文：cucumber
 /// 场景跑在 tokio 运行时内，阻塞客户端在其中构造/析构会 panic（「Cannot drop a
@@ -76,13 +78,6 @@ fn stub_url(world: &LedgerWorld) -> String {
 fn device_id_of(conn: &Connection) -> String {
     conn.query_row("SELECT id FROM sync_device LIMIT 1", [], |r| r.get(0))
         .expect("本机设备标识应已生成")
-}
-
-/// SHA-256 hex（段自校验摘要；步骤侧独立实现，避免依赖域的私有助手）。
-fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -164,9 +159,10 @@ fn peer_publishes(world: &mut LedgerWorld) {
     });
 }
 
-/// 对端投递一条引用不存在账户的操作：直接写一个含坏 op 的段文件 + 归并 manifest。
+/// 对端投递一条引用不存在账户的操作：按通道线格式写一个含坏 op 的段 + manifest。
 /// 该 op 外键指向不存在的账户，重放必然被账户存活守卫拒绝——挂起队列因此非空
-///（「挂起通知可见」的被测前提）。写入经通道的段/清单形态（产品代码消费的形状）。
+///（「挂起通知可见」的被测前提）。此形态无公开入口可产出（域写入口有外键守卫），
+/// 故经共享的线格式替身成帧（issue #956），字节形态与产品消费的形状同源。
 #[given(expr = "对端投递一条引用不存在账户的操作")]
 fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
     let layout = ChannelLayout::new("default").expect("布局应可构造");
@@ -208,34 +204,15 @@ fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
             investment: None,
         }),
     };
-    let payload = serde_json::to_vec(&vec![op]).expect("段载荷序列化应成功");
-    let manifest = ChannelManifest {
-        version: 1,
-        streams: vec![StreamManifest {
-            device_id: "e2e-peer-device".into(),
-            segments: vec![SegmentEntry {
-                file: "seg-0000000001-0000000001.enc".into(),
-                first_clock: 1,
-                last_clock: 1,
-                size: payload.len() as u64,
-                sha256: sha256_hex(&payload),
-            }],
-        }],
-        checkpoint: None,
-    };
     blocking(|| {
-        transport
-            .ensure_dir(&layout.stream_dir("e2e-peer-device"))
-            .expect("建流目录应成功");
-        transport
-            .write_file(&layout.segment_path("e2e-peer-device", 1, 1), &payload)
-            .expect("段写入应成功");
-        transport
-            .write_file(
-                &layout.manifest_path(),
-                &serde_json::to_vec_pretty(&manifest).expect("清单序列化应成功"),
-            )
-            .expect("清单写入应成功");
+        publish_raw_segment(
+            transport,
+            &layout,
+            "e2e-peer-device",
+            &EnvelopeMode::Plaintext,
+            &[op],
+        )
+        .expect("段与清单写入应成功");
     });
 }
 

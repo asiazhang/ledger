@@ -59,7 +59,7 @@ describe('check-test-support（Rust 测试守门，纯禁令）', () => {
     expect(r.output).toContain('禁用种子表 5 张')
   })
 
-  it('三条规则违规样本全部命中：直连建库、夹具裸 SQL、默认时刻字面量', () => {
+  it('四条规则违规样本全部命中：直连建库、夹具裸 SQL、默认时刻字面量、自建通道线格式', () => {
     const dir = makeFixture({
       'src/ledger/tests.rs': [
         'use crate::db::{init_db, open_in_memory};',
@@ -74,6 +74,22 @@ describe('check-test-support（Rust 测试守门，纯禁令）', () => {
       'src/ledger/tests/state.rs': 'fn t() { let s = DbState::open_in_memory().unwrap(); }',
       // 顶屋 tests/ 子目录下的共享层：文件名 common.rs 但父目录非 tests，薄皮豁免不适用
       'tests/api_server/common.rs': 'fn seed() { let _ = "INSERT INTO instruments (id) VALUES (1)"; }',
+      // 规则 4：手工构造通道段/清单 + 引用了通道面后的自建摘要（#956）
+      'tests/commands/channel.rs': [
+        'use crate::sync_engine::{ChannelManifest, SegmentEntry, EnvelopeMode};',
+        'fn t() {',
+        '  let m = ChannelManifest { version: 1, streams: vec![], checkpoint: None };',
+        '  let e = SegmentEntry { file: "x".into(), first_clock: 1, last_clock: 1, size: 1, sha256: "y".into() };',
+        '  use sha2::{Digest, Sha256};',
+        '  let _ = Sha256::digest(b"z");',
+        '  let _ = (m, e);',
+        '}',
+      ].join('\n'),
+      // 规则 4 作用域限定：未引用通道面的摘要用法不误报（ledger-perf 形态）
+      'src/ledger/perf/tests.rs': [
+        'use sha2::Digest;',
+        'fn digest_db() { let mut h = sha2::Sha256::new(); let _ = &mut h; }',
+      ].join('\n'),
     })
     const r = run([dir])
     expect(r.status).toBe(1)
@@ -83,11 +99,15 @@ describe('check-test-support（Rust 测试守门，纯禁令）', () => {
     expect(r.output).toContain('规则 3（默认时刻字面量）命中 1 处')
     expect(r.output).toContain('src/ledger/tests/state.rs')
     expect(r.output).toContain('tests/api_server/common.rs')
+    // 1 处清单字面构造 + 1 处段字面构造 + 3 处摘要标识（use 行 + Sha256::digest + sha2 路径）
+    expect(r.output).toContain('规则 4（自建通道线格式）命中 5 处')
+    expect(r.output).toContain('tests/commands/channel.rs')
+    expect(r.output).not.toContain('src/ledger/perf/tests.rs')
   })
 
   it('合法形态不误报：工厂本体、域薄皮种子 SQL、域时刻字面量、db 产品代码', () => {
     const dir = makeFixture({
-      // 工厂本体：建库 + 种子 SQL + FIXED_NOW 全部合法（三条规则豁免）
+      // 工厂本体：建库 + 种子 SQL + FIXED_NOW 全部合法（四条规则豁免）
       'src/test_support/mod.rs': [
         'pub const FIXED_NOW: &str = "2026-01-01T00:00:00Z";',
         'fn t() { db::open_in_memory(); db::init_db(); }',
