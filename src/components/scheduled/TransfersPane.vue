@@ -21,6 +21,7 @@ import { formatAmount } from '@/types'
 import { yuanToCents } from '@/utils/money'
 import type { ScheduledTransactionOccurrence } from '@/types'
 import { useReferenceStore } from '@/stores/reference'
+import { useWindowTier } from '@/composables/useWindowTier'
 import {
   earliestPendingOccurrence,
   scheduledRecurrenceLabel,
@@ -33,6 +34,11 @@ import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
+import {
+  PLAN_MOBILE_CELL_STYLE,
+  PLAN_MOBILE_SUB_STYLE,
+  planSubLine,
+} from '@/components/scheduled/plan-mobile'
 import { usePlanFocusLanding } from '@/composables/usePlanFocusLanding'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
@@ -46,6 +52,13 @@ import { scheduledStatusLabel } from '@/utils/scheduled'
 
 const reference = useReferenceStore()
 const message = useMessage()
+
+// 移动档适配（issue #848 / ADR-0088 决策 11 票⑧）：清单列结构三分（备注/金额/
+// 操作），双向账户与下期转账并入副行不丢失；生命周期操作经 PlanRowActions
+// 移动档变体一击可达。断点口径接窗口分级 composable；桌面档九列一字不动
+//（回归红线）。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
 
 // ---------------------------------------------------------------------------
 // 清单编排（ADR-0041）：全部经 ScheduledPlanList 模块；确认弹层在本适配器渲染
@@ -182,10 +195,83 @@ function statusLabel(status: string): string {
   return scheduledStatusLabel(status)
 }
 
+/** 转出账户名解析（桌面/移动两分支共用；未知 id 回退 id，与桌面列同口径）。 */
+function fromAccountName(row: TransferRow): string {
+  return reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id
+}
+
+/** 转入账户名解析（两分支共用）。 */
+function toAccountName(row: TransferRow): string {
+  const id = row.plan.to_account_id
+  return id ? (reference.accountMap.get(id)?.name ?? id) : '—'
+}
+
+/** 金额单元格文案（两分支共用）：金额 + 有限期数的「× N期」后缀。 */
+function amountText(row: TransferRow): string {
+  return `${formatAmount(row.plan.core.amount_cents, reference.getCurrency(row.plan.core.currency_code))}${row.plan.total_occurrences != null ? ` ${t('scheduled.column.occurrencesSuffix', { n: row.plan.total_occurrences })}` : ''}`
+}
+
+/** 下期转账单元格文案（两分支共用）：无 pending 占位「—」，详情失败示「加载失败」。
+ * 测试锚点两档同 testid。 */
+function nextTransferText(row: TransferRow): string {
+  const currency = reference.getCurrency(row.plan.core.currency_code)
+  if (row.ext.next) {
+    return `${row.ext.next.scheduled_date} · ${formatAmount(row.ext.next.amount_cents, currency)}`
+  }
+  return row.detailFailed ? t('scheduled.list.loadFailed') : '—'
+}
+
 /** 周期下拉选项（computed 现取标签，切语言即时生效） */
 const recurrenceOptions = computed(scheduledRecurrenceOptions)
 
-const columns = computed<DataTableColumns<TransferRow>>(() => [
+const columns = computed<DataTableColumns<TransferRow>>(() => {
+  // 移动档三分列（issue #848）：备注标题行 + 状态/周期/开始日与「转出 → 转入」
+  // 两弱化副行 + 金额（含期数后缀）/下期转账列；窄屏无横向滚动
+  if (isMobileTier.value) {
+    return [
+      {
+        title: t('scheduled.column.note'),
+        key: 'note',
+        render: (row) =>
+          h('div', { style: PLAN_MOBILE_CELL_STYLE }, [
+            h('span', null, row.plan.core.note ?? '—'),
+            h(
+              'span',
+              { style: PLAN_MOBILE_SUB_STYLE },
+              planSubLine(
+                statusLabel(row.plan.core.status),
+                scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
+                row.plan.core.start_date,
+              ),
+            ),
+            h(
+              'span',
+              { style: PLAN_MOBILE_SUB_STYLE },
+              planSubLine(fromAccountName(row), '→', toAccountName(row)),
+            ),
+          ]),
+      },
+      {
+        title: t('scheduled.column.amount'),
+        key: 'amount',
+        render: (row) =>
+          h('div', { style: PLAN_MOBILE_CELL_STYLE }, [
+            h('span', null, amountText(row)),
+            h(
+              'span',
+              { style: PLAN_MOBILE_SUB_STYLE, 'data-testid': `next-transfer-${row.plan.core.id}` },
+              nextTransferText(row),
+            ),
+          ]),
+      },
+      {
+        title: t('scheduled.column.actions'),
+        key: 'actions',
+        render: (row) => h(PlanRowActions, { actions: list.rowActions(row), rowId: row.plan.core.id, mobile: true }),
+      },
+    ]
+  }
+  return [
   {
     title: t('scheduled.column.note'),
     key: 'note',
@@ -194,22 +280,17 @@ const columns = computed<DataTableColumns<TransferRow>>(() => [
   {
     title: t('scheduled.column.fromAccount'),
     key: 'from',
-    render: (row) =>
-      reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id,
+    render: (row) => fromAccountName(row),
   },
   {
     title: t('scheduled.column.toAccount'),
     key: 'to',
-    render: (row) => {
-      const id = row.plan.to_account_id
-      return id ? (reference.accountMap.get(id)?.name ?? id) : '—'
-    },
+    render: (row) => toAccountName(row),
   },
   {
     title: t('scheduled.column.amount'),
     key: 'amount',
-    render: (row) =>
-      `${formatAmount(row.plan.core.amount_cents, reference.getCurrency(row.plan.core.currency_code))}${row.plan.total_occurrences != null ? ` ${t('scheduled.column.occurrencesSuffix', { n: row.plan.total_occurrences })}` : ''}`,
+    render: (row) => amountText(row),
   },
   {
     title: t('scheduled.column.recurrence'),
@@ -227,11 +308,7 @@ const columns = computed<DataTableColumns<TransferRow>>(() => [
       h(
         'span',
         { 'data-testid': `next-transfer-${row.plan.core.id}` },
-        row.ext.next
-          ? `${row.ext.next.scheduled_date} · ${formatAmount(row.ext.next.amount_cents, reference.getCurrency(row.plan.core.currency_code))}`
-          : row.detailFailed
-            ? t('scheduled.list.loadFailed')
-            : '—',
+        nextTransferText(row),
       ),
   },
   {
@@ -245,7 +322,8 @@ const columns = computed<DataTableColumns<TransferRow>>(() => [
         rowId: row.plan.core.id,
       }),
   },
-])
+]
+})
 
 /** 来源跳转落点入参（spec #704 / issue #707）：待开的计划 id（视图侧 focus
  * 读一次后的暂存；空则无落点）。 */

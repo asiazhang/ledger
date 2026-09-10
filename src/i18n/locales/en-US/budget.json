@@ -14,7 +14,8 @@
     "colSpent": "Spent",
     "colProgress": "Progress",
     "colStatus": "Status",
-    "colActions": "Actions"
+    "colActions": "Actions",
+    "spentOfBudget": "Spent {spent} / {total}"
   },
   "status": {
     "over": "Over Budget",

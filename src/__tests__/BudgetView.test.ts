@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { NSelect, NInputNumber, NDatePicker, NModal } from 'naive-ui'
+import { NDataTable, NForm, NProgress, NSelect, NInputNumber, NDatePicker, NModal } from 'naive-ui'
+import { setFakeMedia } from './helpers/media-mock'
+import { formatAmount } from '@/utils/money'
 import { useReferenceStore } from '@/stores/reference'
 import { todayStr } from '@/utils/date'
 import BudgetView from '@/views/BudgetView.vue'
@@ -331,5 +333,107 @@ describe('BudgetView 编辑预算金额（issue #184）', () => {
     bodyButton('保存', '编辑弹窗').click()
     await flushPromises()
     expect(messageApi.error).toHaveBeenCalledWith('更新失败: 预算不存在: budget-1')
+  })
+})
+
+describe('BudgetView 移动档（issue #848 / ADR-0088 决策 11 票⑧，词汇表「窗口分级」）', () => {
+  /** 带两行进度夹具布线（超支 + 正常），返回进度行集。 */
+  function wireRows() {
+    const over: typeof mockProgress = {
+      ...mockProgress,
+      budget: { ...mockProgress.budget, id: 'budget-over', amount_cents: 10000 },
+      category_name: '餐饮',
+      spent_cents: 12000,
+      over_budget: true,
+    }
+    wireInvokeSeam({
+      defaults: { budget_progress: [over, mockProgress] },
+      overrides: { ...REFERENCE_OVERRIDES },
+    })
+    return [over, mockProgress]
+  }
+
+  function tableOf(wrapper: Awaited<ReturnType<typeof mountView>>) {
+    return wrapper.findComponent(NDataTable)
+  }
+
+  it('桌面档零变化：七列、新增表单行内横排（回归红线）', async () => {
+    wireRows()
+    const wrapper = await mountView()
+    expect((tableOf(wrapper).props('columns') as unknown[]).length).toBe(7)
+    expect(wrapper.findComponent(NForm).props('inline')).toBe(true)
+  })
+
+  it('移动档列结构三分：分类（周期/状态并入副行）、进度（含已支/预算文案）、操作——窄屏无横向滚动前提', async () => {
+    setFakeMedia({ width: 600 })
+    wireRows()
+    const wrapper = await mountView()
+    const columns = tableOf(wrapper).props('columns') as Array<{ key?: string }>
+    expect(columns.map((c) => c.key)).toEqual(['category_name', 'progress', 'actions'])
+    const rows = wrapper.findAll('.n-data-table-tbody .n-data-table-tr')
+    // 分类列副行不丢信息：周期（本地化标签）与状态随副行可读
+    expect(rows[0].text()).toContain('按月')
+    expect(rows[0].text()).toContain('超支')
+    expect(rows[1].text()).toContain('正常')
+    // 进度列文案不丢口径：已支出 / 预算两金额并存（期待值调同一 formatAmount 实现）
+    expect(rows[1].text()).toContain(
+      `已支出 ${formatAmount(20000)} / ${formatAmount(50000)}`,
+    )
+  })
+
+  it('移动档进度语义零变化：超支行进度条 error、正常行 success（同一命令输出，仅布局适配）', async () => {
+    setFakeMedia({ width: 600 })
+    wireRows()
+    const wrapper = await mountView()
+    const bars = wrapper.findAllComponents(NProgress)
+    expect(bars.length).toBe(2)
+    expect(bars[0].props('status')).toBe('error')
+    expect(bars[0].props('percentage')).toBe(100) // 12000/10000 封顶
+    expect(bars[1].props('status')).toBe('success')
+    expect(bars[1].props('percentage')).toBe(40) // 20000/50000
+  })
+
+  it('移动档操作 48px 触控目标（ADR-0088 全局验收基线）；编辑/删除语义不变', async () => {
+    setFakeMedia({ width: 600 })
+    wireRows()
+    const wrapper = await mountView()
+    for (const text of ['编辑', '删除']) {
+      const btn = findButton(wrapper, text, { exact: true })
+      expect(btn, `应存在「${text}」按钮`).toBeDefined()
+      const el = btn!.element as HTMLElement
+      expect(el.style.minWidth).toBe('48px')
+      expect(el.style.minHeight).toBe('48px')
+    }
+    // 编辑：同一弹窗意图入口（移动档经 AppModal 全屏化，票④，不在本票范围）
+    await openEditModal(wrapper)
+    expect(wrapper.findComponent(NModal).exists()).toBe(true)
+    // 删除：同一确认弹层语义（首行 = budget-over）
+    await findButton(wrapper, '删除', { exact: true })!.trigger('click')
+    await flushPromises()
+    const positive = document.body.querySelector('.n-popconfirm .n-button--primary-type')
+    expect(positive).not.toBeNull()
+    ;(positive as HTMLButtonElement).click()
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('delete_budget', { id: 'budget-over' })
+  })
+
+  it('跨断点缩窗实时换列（七列 ⇄ 三列）', async () => {
+    wireRows()
+    const wrapper = await mountView()
+    expect((tableOf(wrapper).props('columns') as unknown[]).length).toBe(7)
+    setFakeMedia({ width: 600 })
+    await flushPromises()
+    expect((tableOf(wrapper).props('columns') as unknown[]).length).toBe(3)
+    setFakeMedia({ width: 1280 })
+    await flushPromises()
+    expect((tableOf(wrapper).props('columns') as unknown[]).length).toBe(7)
+  })
+
+  it('移动档新增预算表单纵排（标签上置 + 控件满宽），桌面横排不变', async () => {
+    setFakeMedia({ width: 600 })
+    const wrapper = await mountView()
+    const form = wrapper.findComponent(NForm)
+    expect(form.props('inline')).toBe(false)
+    expect(form.props('labelPlacement')).toBe('top')
   })
 })
