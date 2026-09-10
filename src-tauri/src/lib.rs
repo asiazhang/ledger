@@ -219,19 +219,14 @@ pub fn run() {
                 backup::start_scheduler(app.handle());
                 // 多端同步触发编排（issue #863 / ADR-0091 决策 9）：打开应用即
                 // 同步 + 桌面运行期低频轮询。与自动备份同款「锁定/失败不启动」
-                // 口径，两条调度线程各持单次拉起守卫（原位重引导幂等）。
+                // 口径。
                 //
-                // 桌面专属（ADR-0098 决策 4 / ADR-0074 决策 6 分平台先例）：
-                // Android 后台不承诺自动同步（系统会杀后台进程，轮询线程不可靠），
-                // 打开即同步才是兜底语义——移动端只保留「打开即同步」，不拉轮询
-                // 线程（工单 10 按同语义接入 `sync_on_start`，零分叉）。
-                #[cfg(desktop)]
-                {
-                    sync_engine::start_sync_scheduler(app.handle());
-                    sync_engine::sync_on_start(app.handle());
-                }
-                #[cfg(mobile)]
-                sync_engine::sync_on_start(app.handle());
+                // 分平台分流收在域侧单点 `start_triggers`（ADR-0098 决策 4 /
+                // ADR-0074 决策 6 先例）：Android 后台不承诺同步（系统会杀
+                // 后台进程，轮询线程不可靠），移动端只保留「打开即同步」——
+                // 解锁路径（`resume_business_surface`）共用同一入口，分平台门
+                // 只有一处，不会漏。
+                sync_engine::start_triggers(app.handle());
             }
             // 备份产物变更信号（issue #129）：自动备份的深路径执行点
             // （连接层写入口提交点的写时顺带检查）拿不到 AppHandle，启动时注入镜像句柄一次，

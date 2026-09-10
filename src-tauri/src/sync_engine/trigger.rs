@@ -45,7 +45,7 @@ use super::transport::webdav::{WebDavConfig, WebDavTransport};
 /// 通道空间默认值（同步世界身份的 v1 共识形态，见 [`SyncChannelConfig::space_id`]）。
 pub(crate) const DEFAULT_SPACE_ID: &str = "default";
 
-/// 桌面运行期自动同步的轮询周期（低频：ADR-0091 决策 9「运行期低频轮询」）。
+/// 桌面运行期低频轮询的周期（低频：ADR-0091 决策 9「运行期低频轮询」）。
 /// 与自动备份同量级（10 分钟，ADR-0016 修订注记），两件事共用同一「低频」品味；
 /// 触发时机是可逆工程决策，取舍留痕见 ADR-0098。
 const POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -137,14 +137,14 @@ pub fn run_round_once(
 }
 
 /// 本会话密钥记忆（ADR-0098）：解锁密文库或一次成功的手动同步后记入，
-/// 自动同步轮次据此判定信封模式。进程级单例，与解锁态同生命周期。
+/// 同步轮次据此判定信封模式。进程级单例，与解锁态同生命周期。
 ///
 /// 归本域而非基础设施：它是**同步触发**的工程决策（自动轮询不得弹生物认证），
 /// 除同步轮次外无消费者。口令本体的钥匙串缓存仍归备份域基础设施
 /// （`db::passphrase_cache`），本单例只持「本会话已知的形态」。
 static SESSION_ENVELOPE: std::sync::Mutex<Option<SessionEnvelope>> = std::sync::Mutex::new(None);
 
-/// 本机会话的密钥形态：解锁密文库或一次成功的手动同步后记入，自动同步轮次
+/// 本机会话的密钥形态：解锁密文库或一次成功的手动同步后记入，同步轮次
 /// 据此判定信封模式。
 ///
 /// 自动轮询**不读钥匙串**：钥匙串读取在发布构建下先过 LocalAuthentication 门
@@ -210,8 +210,9 @@ pub fn run_auto_round(
 /// 打开应用即同步（业务可用起点调用，ADR-0091 决策 9）：一次性后台轮次，
 /// 失败静默记日志——打开应用不该被网络/凭据问题打断。
 ///
-/// 与 [`start_sync_scheduler`] 同一段编排，只有触发时机不同；移动端（#864）同源
-/// 消费本函数实现「打开即同步兜底」。
+/// 与 [`start_sync_scheduler`] 同一段编排，只有触发时机不同。
+///
+/// 本函数**平台无关**（移动端也跑）：打开即同步是 Android 的兜底语义。
 pub fn sync_on_start(app: &AppHandle) {
     let conn = Arc::clone(&app.state::<DbState>().conn);
     let handle = app.clone();
@@ -223,21 +224,38 @@ pub fn sync_on_start(app: &AppHandle) {
     });
 }
 
+/// 业务可用起点的**触发编排单一入口**（启动就绪、解锁成功、启动失败重置三条
+/// 路径共用，ADR-0098 决策 4）：分流「拉不拉低频轮询线程」只在本函数一处。
+///
+/// - **打开即同步**：全平台都跑（Android 后台不承诺同步，打开即同步是兜底
+///   语义，工单 10 零分叉接入）。
+/// - **低频轮询 + 写后触发**：仅桌面。移动端系统会回收后台进程，轮询线程不保证
+///   存活，承诺「后台同步」是空头支票（ADR-0091 决策 9）；用 `#[cfg(desktop)]`
+///   在编译期剔除，与 ADR-0074 决策 6 的既有分平台先例同款。
+///
+/// 两个调度各持单次拉起守卫，原位重引导/重复调用幂等。
+pub fn start_triggers(app: &AppHandle) {
+    #[cfg(desktop)]
+    start_sync_scheduler(app);
+    sync_on_start(app);
+}
+
 /// 写后触发去抖合流的**决策本体**（ADR-0091 决策 9「写 op 后即时入队上传」）：
-/// 把去抖窗口内的连续写信号一次吸干，返回「窗口内确实有过写」。
+/// 把去抖窗口内的连续写信号一次吸干，静默 `window` 后返回。
 ///
 /// 与线程时序解耦，便于直接断言「连续记账合流成一轮」；调度线程只做
 /// `recv_timeout` 循环 + 调用本函数（`window` 即静默判定长度）。
 ///
-/// 返回值恒为真（调用方在收到首个信号后才进入本函数），保留返回值是为了让
-/// 「吸干后是否该跑一轮」这一判定显式可读、可测。
-fn drain_write_signals(rx: &std::sync::mpsc::Receiver<()>, window: Duration) -> bool {
-    let mut wrote = false;
+/// **契约**：调用方已消费掉触发本次收尾的那个写信号（外层 `recv_timeout` 的
+/// `Ok(())` 分支）——单笔记账（窗口内无后续写）也会在 `window` 静默后返回并跑
+/// 一轮，不会漏掉最后一批 op。窗口内继续收到的写信号被吸干、合流进同一轮
+/// （不残留信号触发第二轮）。
+fn drain_write_signals(rx: &std::sync::mpsc::Receiver<()>, window: Duration) {
     loop {
         match rx.recv_timeout(window) {
-            Ok(()) => wrote = true,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return wrote,
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return wrote,
+            Ok(()) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
 }
@@ -299,10 +317,9 @@ pub fn start_sync_scheduler(app: &AppHandle) {
                 // 写后触发：去抖合流——窗口内继续有写则顺延，直到静默
                 // [WRITE_DEBOUNCE] 才跑一轮（连续记账合流成一轮，最后一批 op 不丢）。
                 Ok(()) => {
-                    // 去抖合流：把窗口内的连续写信号一次吸干，只跑一轮。
-                    if !drain_write_signals(&rx, WRITE_DEBOUNCE) {
-                        continue;
-                    }
+                    // 去抖合流：本信号已计一次写，把窗口内后续写信号一次吸干
+                    // （连续记账合流成一轮），静默 [WRITE_DEBOUNCE] 后跑一轮。
+                    drain_write_signals(&rx, WRITE_DEBOUNCE);
                 }
                 // 低频轮询到期（或写信号通道断裂后的兜底）。
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -321,7 +338,7 @@ pub fn start_sync_scheduler(app: &AppHandle) {
 
 /// 自动轮次 + 失效信号：本轮实际应用外来 op（`applied > 0`）即广播参考失效
 /// （与手动同步同一映射身份与证据，见 `signals::signals_for` 的 `SyncRound` 行）
-/// ——自动同步落地的数据同样要让各视图重拉，否则「同步了但界面不动」。
+/// ——同步轮次落地的数据同样要让各视图重拉，否则「同步了但界面不动」。
 ///
 /// 失败静默（ADR-0091：同步失败不阻塞本地记账），记日志等下一轮。
 fn run_auto_round_with_emit(app: &AppHandle, conn: &Connection, session: &SessionEnvelope) {
@@ -330,7 +347,7 @@ fn run_auto_round_with_emit(app: &AppHandle, conn: &Connection, session: &Sessio
             tracing::debug!(
                 applied = report.applied,
                 parked = report.parked,
-                "自动同步轮次完成"
+                "同步轮次完成"
             );
             emit_for(
                 app,
@@ -339,7 +356,7 @@ fn run_auto_round_with_emit(app: &AppHandle, conn: &Connection, session: &Sessio
             );
         }
         Ok(None) => {}
-        Err(e) => tracing::warn!(error = %e, "自动同步轮次失败（静默，等下一轮）"),
+        Err(e) => tracing::warn!(error = %e, "同步轮次失败（静默，等下一轮）"),
     }
 }
 

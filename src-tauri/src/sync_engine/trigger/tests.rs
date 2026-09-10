@@ -144,32 +144,51 @@ fn round_once_stamps_last_sync_on_success() {
     );
 }
 
-/// 写后触发的去抖合流（ADR-0091 决策 9「写 op 后即时入队上传」）：窗口内的
-/// 连续写信号被一次吸干——连续记账合流成一轮，不是「每写一笔传一次」。
+/// 写后触发的去抖合流（ADR-0091 决策 9「写 op 后即时入队上传」）：调用方形态
+/// 是「外层 `recv_timeout` 已消费首个写信号，再进入吸干」——单次写必须跑一轮
+/// （否则记完账永不上传）；窗口中途到达的写被吸干、合流进同一轮（不是每写一笔
+/// 传一次）；通道断裂也不得挂死。
 #[test]
-fn write_after_sync_debounce_drains_a_burst_into_one_round() {
-    let (tx, rx) = std::sync::mpsc::channel::<()>();
+fn write_after_sync_debounce_runs_one_round_per_burst() {
     let window = std::time::Duration::from_millis(80);
 
-    // 连发三次写（模拟批量录入）：一次吸干，返回「窗口内有过写」。
-    tx.send(()).unwrap();
-    tx.send(()).unwrap();
+    // 单次写（最常见的「记一笔账」）：外层消费首个信号 → 吸干 → 本轮确实跑。
+    // 返回值已取消（吸干后必然跑一轮，没有可假的分支），故断言「不挂死且无
+    // 残留」：残留即第二轮空转。
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
     tx.send(()).unwrap();
     assert!(
-        crate::sync_engine::trigger::drain_write_signals(&rx, window),
-        "窗口内有写：应收尾并跑一轮（合流成一轮）"
+        rx.recv_timeout(window).is_ok(),
+        "外层应先消费触发收尾的那个写信号"
     );
+    crate::sync_engine::trigger::drain_write_signals(&rx, window);
     assert!(
         rx.try_recv().is_err(),
-        "三次写应被一次吸干（不残留信号触发第二轮）"
+        "单次写不应残留信号（否则第二轮空转）"
     );
 
-    // 空窗口（无写信号）：不跑轮次。
-    let (_tx, rx) = std::sync::mpsc::channel::<()>();
+    // 窗口中途到达的写：被吸干、合流进同一轮（去抖窗口真实生效），不残留。
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    tx.send(()).unwrap();
+    assert!(rx.recv_timeout(window).is_ok(), "外层先消费首个写信号");
+    let late = tx.clone();
+    let sender = std::thread::spawn(move || {
+        std::thread::sleep(window / 2);
+        late.send(()).expect("中途写应可投递");
+    });
+    crate::sync_engine::trigger::drain_write_signals(&rx, window);
+    sender.join().expect("投递线程应结束");
     assert!(
-        !crate::sync_engine::trigger::drain_write_signals(&rx, window),
-        "无写信号不该起轮次"
+        rx.try_recv().is_err(),
+        "窗口中途的写应被吸干合流（不触发第二轮）"
     );
+
+    // 通道断裂（发送端全部丢弃）：吸干不得挂死、不得 panic，照常返回跑一轮。
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    tx.send(()).unwrap();
+    assert!(rx.recv_timeout(window).is_ok(), "外层先消费首个写信号");
+    drop(tx);
+    crate::sync_engine::trigger::drain_write_signals(&rx, window);
 }
 
 /// 写后触发在「调度未拉起」时是零动作（写路径对同步域无感）：投递不 panic、

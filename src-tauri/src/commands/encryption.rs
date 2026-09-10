@@ -255,10 +255,10 @@ pub(crate) fn resume_business_surface(app: &AppHandle, conn: Connection) -> Resu
     }
     tracing::info!("业务读写恢复（解锁/重置后），自动备份与多端同步调度拉起");
     backup::start_scheduler(app);
-    // 多端同步触发编排（issue #863）：解锁/恢复后自动同步随之恢复——打开应用
-    // 即同步的兜底路径（密文库会话在解锁前不可达），低频轮询线程幂等拉起。
-    crate::sync_engine::start_sync_scheduler(app);
-    crate::sync_engine::sync_on_start(app);
+    // 多端同步触发编排（issue #863）：解锁/恢复后同步触发随之恢复——打开应用
+    // 即同步的兜底路径（密文库会话在解锁前不可达）。分平台分流收在域侧
+    // `start_triggers` 单点（移动端只跑打开即同步，ADR-0098 决策 4）。
+    crate::sync_engine::start_triggers(app);
     Ok(())
 }
 
@@ -385,7 +385,7 @@ pub async fn set_remember_passphrase(app: AppHandle, passphrase: String) -> Resu
         passphrase_cache::store(&passphrase, book.as_deref())
     })
     .await?;
-    // 用户在此提供了当前主口令：记入本会话形态（issue #863），自动同步轮次
+    // 用户在此提供了当前主口令：记入本会话形态（issue #863），同步轮次
     // 随即可以封包，不必等下一次解锁。
     crate::sync_engine::SessionEnvelope::remember(crate::sync_engine::SessionEnvelope::Encrypted(
         session,

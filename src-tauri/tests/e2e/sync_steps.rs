@@ -35,6 +35,7 @@ use tauri_app_lib::transaction::{
 
 use crate::common::seed_account_with_expenses;
 use crate::step_inputs::expense_input;
+use crate::step_verbs::create_transaction_verb;
 use crate::world::LedgerWorld;
 use tauri_app_lib::db::DbState;
 use tauri_app_lib::test_support::spawn_webdav_stub;
@@ -131,8 +132,9 @@ fn write_expense(
         date,
         ..expense_input(amount, &account_id, "2026-02-01")
     };
-    let conn = world_conn!(world);
-    tauri_app_lib::transaction::create_transaction_internal(&conn, input).expect("写入支出应成功");
+    // 步骤动词（ADR-0086 决策 1/3）：写入经共享动词走公开写入口，步骤函数
+    // 只做文本解析 + 动词调用（不直调行为层）。
+    create_transaction_verb(world, input);
 }
 
 /// 对端把同一笔数据推上同一通道：另起一个「对端设备」库（同构种子）跑一轮发布。
@@ -361,16 +363,16 @@ fn status_has_last_sync_at(world: &mut LedgerWorld) {
     assert!(stamp.is_some(), "成功轮次后应有上次同步时刻");
 }
 
-#[then(expr = "自动同步应零动作")]
+#[then(expr = "同步轮次应零动作")]
 fn auto_sync_was_noop(world: &mut LedgerWorld) {
     let round = world
         .sync
         .last_auto_round
         .as_ref()
-        .expect("应先执行自动轮次");
+        .expect("应先执行同步轮次");
     assert!(
         matches!(round, Ok(None)),
-        "自动同步应零动作（未配置通道），实际 {round:?}"
+        "同步轮次应零动作（未配置通道），实际 {round:?}"
     );
 }
 
@@ -402,19 +404,19 @@ fn session_is_encrypted(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "自动同步应封包上传")]
+#[then(expr = "同步轮次应封包上传")]
 fn auto_round_sealed(world: &mut LedgerWorld) {
     let round = world
         .sync
         .last_auto_round
         .as_ref()
-        .expect("应先执行自动轮次")
+        .expect("应先执行同步轮次")
         .as_ref()
-        .expect("自动轮次应成功");
-    let report = round.as_ref().expect("通道已配置：自动轮次应有报告");
+        .expect("同步轮次应成功");
+    let report = round.as_ref().expect("通道已配置：同步轮次应有报告");
     assert!(
         !report.plaintext_mode,
-        "密文会话形态下自动轮次应封包（plaintext_mode 为假），实际 {report:?}"
+        "密文会话形态下同步轮次应封包（plaintext_mode 为假），实际 {report:?}"
     );
     assert!(report.uploaded_ops >= 1, "本轮应上传本机 op");
 }
