@@ -74,11 +74,11 @@ ADR-0091 决策 9 定了触发的**语义**：打开应用即同步、桌面运�
 
 本 ADR 新增一条域间横向边，按 ADR-0071 决策 5「域间横向边显式化、逐条留痕」登记：
 
-- **`sync_engine → backup`**：`trigger.rs` 的自动轮次（`sync_on_start` / 调度线程）经 `crate::backup::lock_conn_with_timeout` 取连接锁。动机：同步轮次需与自动备份调度共用同一「拿不到锁就跳过本轮、不阻塞业务写」口径（`LOCK_TIMEOUT` + poisoned 处理），不另造第二份锁等待实现；该函数本就是连接锁等待单点（现有消费者：备份调度自身、`commands/backup.rs`）。方向与「壳 → 域 → 基础设施」一致（域消费基础设施能力），非回边。
+- **`sync_engine → backup`**：`trigger/scheduler.rs` 的自动轮次（`sync_on_start` / 调度线程）经 `crate::backup::lock_conn_with_timeout` 取连接锁。动机：同步轮次需与自动备份调度共用同一「拿不到锁就跳过本轮、不阻塞业务写」口径（`LOCK_TIMEOUT` + poisoned 处理），不另造第二份锁等待实现；该函数本就是连接锁等待单点（现有消费者：备份调度自身、`commands/backup.rs`）。方向与「壳 → 域 → 基础设施」一致（域消费基础设施能力），非回边。
 
 ## 影响
 
-- `src-tauri/src/sync_engine/trigger.rs` 成为触发编排的单点：通道配置与构库、轮次编排、会话信封形态、触发入口。三处业务可用起点（setup 就绪、`resume_business_surface`、`restart_app` 落 Ready）统一调 `start_triggers`（分平台分流收在这里一处），壳层（`commands/sync_channel.rs`）退化为参数解包 + 一行调用。
+- `src-tauri/src/sync_engine/trigger/` 成为触发编排的单点（issue #958 按变更原因拆为 `channel.rs` / `session.rs` / `scheduler.rs` 三个子模块，对外接缝零变化）：通道配置与构库、轮次编排、会话信封形态、触发入口。三处业务可用起点（setup 就绪、`resume_business_surface`、`restart_app` 落 Ready）统一调 `start_triggers`（分平台分流收在这里一处），壳层（`commands/sync_channel.rs`）退化为参数解包 + 一行调用。
 - 壳层统一写入口 `write_entry`（ADR-0073）**不动**（基础设施零业务语义、零域依赖，ADR-0071 决策 6）；连接层 `db::write` 的 `after_commit` 也不动。写后触发钩在同步域的本地 op 产出单点 `sync_engine::ops::record_local`（域内调用，无新增分层边）：投递非阻塞，未拉起同步调度时零动作，单测环境零影响。
 - 进程级会话记忆（`sync_engine::trigger::SessionEnvelope`，归同步域：它只服务同步触发的信封判定，放基础设施会平白造出基础设施→域依赖）新增 `remember` / `forget` / `current`；调用点：解锁成功、手动同步成功记入（口令均经校验），原位重引导（`restart_app`）与忘记口令重置清空，关闭加密记入明文形态；`set_remember_passphrase` **不记入**（见决策 3）。`db::passphrase_cache` 只保留钥匙串缓存，不再持会话状态。
 - 用户可见行为：打开应用后同步；桌面运行期每 10 分钟一次；记完账约 5 秒后上传；密文库同步不弹 Touch ID；同步失败静默（本地记账不受影响），状态与挂起明细在设置页同步卡片可见。

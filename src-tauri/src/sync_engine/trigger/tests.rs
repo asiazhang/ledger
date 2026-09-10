@@ -375,9 +375,9 @@ fn sync_triggers_start_from_every_business_surface_via_single_entry() {
 #[test]
 fn sync_desktop_gate_is_a_single_point_in_start_triggers_body() {
     let src = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/sync_engine/trigger.rs"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/sync_engine/trigger/scheduler.rs"),
     )
-    .expect("trigger.rs 应可读");
+    .expect("scheduler.rs 应可读");
     let text = production_text(&src);
     assert_eq!(
         text.matches("#[cfg(desktop)]").count(),
