@@ -300,10 +300,15 @@ fn production_text(src: &str) -> String {
     masked
 }
 
-/// 触发编排单一入口被全部业务可用起点调用（ADR-0098 决策 4）：反向核对「域外
-/// 不得直呼两个内部触发入口」（绕开单点即红），正向核对「start_triggers 调用方
-/// 恰为三起点 + 定义点」——删掉任一起点的 start_triggers 调用（#863 第二版曾
-/// 漏 restart_app 落 Ready 这个起点），或新增调用点未登记，在此即红。
+/// 触发编排单一入口被全部业务可用起点调用（ADR-0098 决策 4；#961 成对编排点）：
+/// 反向核对「域外不得直呼两个内部触发入口」（绕开单点即红），正向核对两层接线：
+/// ① `start_triggers(` 的生产调用方恰为壳层唯一编排点 `start_background_services`
+///    （issue #961：后台服务成对拉起收进单点；与 check-background-services.ts
+///    的住址规则互为冗余）；
+/// ② `start_background_services(` 的调用方恰为三业务可用起点——删掉任一起点的
+///    编排点调用（#863 第二版曾漏 restart_app 落 Ready 这个起点），或新增起点
+///    未登记，在此即红。起点覆盖是本守门独有职责：check-background-services
+///    只钉域入口住址与编排点内成对性，不钉起点都调编排点。
 #[test]
 fn sync_triggers_start_from_every_business_surface_via_single_entry() {
     let sources = all_rust_sources();
@@ -317,54 +322,76 @@ fn sync_triggers_start_from_every_business_surface_via_single_entry() {
             assert!(
                 !text.contains(entry),
                 "{path} 直呼触发内部入口 `{entry}`——分平台门与触发时机编排只收在 \
-                 start_triggers 单点（ADR-0098 决策 4），业务可用起点应调 start_triggers"
+                 start_triggers 单点（ADR-0098 决策 4），业务可用起点应经 \
+                 start_background_services 编排点拉起（issue #961）"
             );
         }
-        // 调用点贴身窗口（60 字符）不得出现平台门属性/宏：把 start_triggers
-        // 调用包进 #[cfg(desktop)]（移动端「打开即同步」静默失效，ADR-0098 决策
-        // 4 的「加门」回归形态）是文本可查的。窗口贴身即不含远处合法的 desktop
-        // 门（lib.rs 的 api_server 等）；文本级扫描的其余盲区（间接别名、远距
-        // 包装）按 signals_cross_check 同款纪律靠评审兜底。
-        let mut search_from = 0usize;
-        while let Some(rel) = text[search_from..].find("start_triggers(") {
-            let call_pos = search_from + rel;
-            let window = &text[call_pos.saturating_sub(60)..call_pos];
-            for gate in [
-                "cfg(desktop)",
-                "cfg(mobile)",
-                "cfg!(desktop)",
-                "cfg!(mobile)",
-            ] {
-                assert!(
-                    !window.contains(gate),
-                    "{path} 的 start_triggers 调用贴身出现平台门 `{gate}`——调用点不得 \
-                     分平台包装（门只收在 start_triggers 单点，移动端只保留打开即同步）"
-                );
+        // 调用点贴身窗口（60 字符）不得出现平台门属性/宏：把接线调用包进
+        // #[cfg(desktop)]（移动端「打开即同步」静默失效，ADR-0098 决策 4 的
+        // 「加门」回归形态）是文本可查的。对 start_triggers（编排点体内）与
+        // start_background_services（三起点）两个标识符都查——门搬去哪一层都红。
+        // 窗口贴身即不含远处合法的 desktop 门（lib.rs 的 api_server 等）；文本级
+        // 扫描的其余盲区（间接别名、远距包装）按 signals_cross_check 同款纪律
+        // 靠评审兜底。
+        for entry in ["start_triggers(", "start_background_services("] {
+            let mut search_from = 0usize;
+            while let Some(rel) = text[search_from..].find(entry) {
+                let call_pos = search_from + rel;
+                let window = &text[call_pos.saturating_sub(60)..call_pos];
+                for gate in [
+                    "cfg(desktop)",
+                    "cfg(mobile)",
+                    "cfg!(desktop)",
+                    "cfg!(mobile)",
+                ] {
+                    assert!(
+                        !window.contains(gate),
+                        "{path} 的 {entry} 调用贴身出现平台门 `{gate}`——调用点不得 \
+                         分平台包装（门只收在 start_triggers 单点，移动端只保留打开即同步）"
+                    );
+                }
+                search_from = call_pos + entry.len();
             }
-            search_from = call_pos + "start_triggers(".len();
         }
     }
 
+    // ① 域入口的唯一生产调用方 = 唯一编排点。定义点不在本清单：`start_triggers`
+    //    的定义随泛型化带 `<R: Runtime>` 参数列表，不含裸 `start_triggers(` 子串；
+    //    定义点自身（单点形状）由
+    //    `sync_desktop_gate_is_a_single_point_in_start_triggers_body` 钉住。
     let mut callers: Vec<&str> = sources
         .iter()
         .filter(|(_, src)| production_text(src).contains("start_triggers("))
         .map(|(path, _)| path.as_str())
         .collect();
     callers.sort_unstable();
-    // 定义点不在本清单：`start_triggers` 的定义随泛型化带 `<R: Runtime>` 参数
-    // 列表，不含裸 `start_triggers(` 子串；定义点自身（单点形状）由
-    // `sync_desktop_gate_is_a_single_point_in_start_triggers_body` 钉住。
-    let mut expected = [
+    assert_eq!(
+        callers,
+        ["src/lib.rs"],
+        "start_triggers 调用方漂移——生产调用只能住在壳层唯一编排点 \
+         start_background_services（issue #961：与自动备份成对拉起；TS 侧同规则见 \
+         check-background-services.ts，两侧互为冗余）"
+    );
+
+    // ② 三业务可用起点都调唯一编排点（编排点定义在 lib.rs，故 lib.rs 也在清单：
+    //    定义带裸 `start_background_services(` 子串，随清单一并核销）。
+    let mut orchestrator_callers: Vec<&str> = sources
+        .iter()
+        .filter(|(_, src)| production_text(src).contains("start_background_services("))
+        .map(|(path, _)| path.as_str())
+        .collect();
+    orchestrator_callers.sort_unstable();
+    let orchestrator_expected = [
         "src/commands/boot.rs",
         "src/commands/encryption.rs",
         "src/lib.rs",
     ];
-    expected.sort_unstable();
     assert_eq!(
-        callers, expected,
-        "start_triggers 调用方漂移——三业务可用起点（setup 就绪 / \
+        orchestrator_callers, orchestrator_expected,
+        "start_background_services 调用方漂移——三业务可用起点（setup 就绪 / \
          resume_business_surface / restart_app 落 Ready）缺一不可，新增起点须同步登记本守门\
-         （ADR-0098 决策 4：起点不在本清单即「打开即同步」本会话不生效）"
+         （ADR-0098 决策 4：起点不在本清单即「打开即同步」本会话不生效；#961 后起点 \
+         经唯一编排点接线，成对性由 check-background-services.ts 钉住）"
     );
 }
 
