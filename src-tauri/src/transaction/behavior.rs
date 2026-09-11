@@ -2,7 +2,7 @@
 //!
 //! 对外暴露**三个编排入口** [`create`] / [`update`] / [`delete`]（issue #228 / #229 /
 //! ADR-0033：连接 + 输入进，返回终态或错误）——`revert → plan → 落库 → apply` 的顺序
-//! 契约、事务边界、守卫文案全部内化为实现细节，调用方只传连接与输入、处理报错。
+//! 契约、事务边界与守卫文案全部内化为实现细节，调用方只传连接与输入、处理报错。
 //! 模块内协作件 [`plan`]（校验 + 归一化）与 [`apply`]（应用副作用）为私有实现细节。
 //!
 //! **嵌套感知事务（「保证处于事务中」，ADR-0033 决策 #2）**：每个入口经
@@ -14,12 +14,12 @@
 //! 调用方的 `db.write` 闭包返回 Ok 且已提交时单点触发——自持事务与批量嵌套同一形态，
 //! 本模块对备份域零感知。
 //!
-//! **守卫文案按入口内化（ADR-0033 决策 #4）**：buy 已有部分卖出的拒绝文案是修改
-//! 入口的实现细节（`PARTIAL_SOLD_CANNOT_UPDATE`），单点定义、不随调用方漂移；回退
-//! 分派直接委托 [`investment::revert`]（其 match 已覆盖全部 kind，普通 kind 为
-//! no-op），行为层不再另设 revert 转发层。删除入口不设部分卖出守卫（issue #940 /
-//! ADR-0097）：sell 删除回补持仓、buy 删除级联软删其在用 sell——「已有部分卖出的
-//! 买入禁删」随之退场。
+//! **守卫文案收口投资域（ADR-0033 决策 #4 修订，issue #1020）**：buy 部分卖出 /
+//! 转换链 / 转换转入份额被后续卖出的拒绝文案与错误码随守卫知识归投资域 `unwind`
+//! 模块，按 kind × 修改/删除模式单点选择；行为层不再持守卫文案常量。回退分派直接
+//! 委托 [`investment::revert`]（其 match 已覆盖全部 kind，普通 kind 为 no-op），
+//! 行为层不再另设 revert 转发层。删除入口不设部分卖出守卫（issue #940 / ADR-0097）：
+//! sell 删除回补持仓、buy 删除级联软删其在用 sell——「已有部分卖出的买入禁删」随之退场。
 //!
 //! 分派是薄而穷尽的 `match`（不引入 trait 注册表，避免过度设计）：
 //! 普通 kind（income/expense/transfer/refund）经 Writer 接缝归一化；buy/sell/convert 委托
@@ -62,45 +62,11 @@ pub use delete as delete_transaction_internal;
 pub use update as update_transaction;
 pub use update as update_transaction_internal;
 
-/// buy 已有部分卖出的守卫文案——修改入口措辞（ADR-0033 决策 #4：按入口内化、
-/// 行为层单点定义，调用方协议面不出现文案，同一入口同一文案不漂移）。
-/// 删除入口曾有的 `PARTIAL_SOLD_CANNOT_DELETE`（`trade.partially-sold-delete`）
-/// 随级联删除退场（issue #940 / ADR-0097）——删除不再拒绝，改为级联。
-const PARTIAL_SOLD_CANNOT_UPDATE: &str = "该买入交易已有部分卖出，无法修改";
-/// 上迹守卫的稳定错误码（issue #342 二期）：与文案同源单点，经 revert 下传。
-const PARTIAL_SOLD_CANNOT_UPDATE_CODE: &str = "trade.partially-sold-update";
-
-/// 转换**转入份额**已有部分卖出的守卫文案（issue #979 / ADR-0099）：谓词与买入的
-/// 「在用卖出占用」同一（[`investment::revert`] 的 convert 臂复用 buy 清理语义），
-/// 但用户可见主体是转换的转入份额而非买入交易——用户可见文案各自单点，不复用
-/// 买入的「该买入交易…」措辞（ADR-0049 文案准确性）。
-const CONVERT_PARTIALLY_SOLD_CANNOT_UPDATE: &str = "该转换的转入份额已被后续卖出，无法修改";
-const CONVERT_PARTIALLY_SOLD_CANNOT_UPDATE_CODE: &str = "trade.convert-partially-sold-update";
-
-/// 持仓份额已被**在用的后续转换**消耗的守卫文案（issue #978 / ADR-0099）：修改会
-/// 重建持仓批次、删除会连带清空批次，两者都会抹掉后续转换的转出消耗记录（它精确
-/// 回补与结转成本的唯一依据）——链式转换（一条转换单拆多腿）须从最后一腿往前处理。
-/// 修改与删除两个入口措辞各自单点定义（与上方部分卖出守卫同款）。
-const CONSUMED_BY_CONVERT_CANNOT_UPDATE: &str = "该交易的份额已被后续转换消耗，无法修改";
-const CONSUMED_BY_CONVERT_CANNOT_UPDATE_CODE: &str = "trade.consumed-by-convert-update";
-const CONSUMED_BY_CONVERT_CANNOT_DELETE: &str = "该交易的份额已被后续转换消耗，无法删除";
-const CONSUMED_BY_CONVERT_CANNOT_DELETE_CODE: &str = "trade.consumed-by-convert-delete";
-
 /// 进/出 convert 的 kind 变更拒绝文案与错误码（issue #979 / ADR-0099 决策 5）：
 /// 本地修改与重放修改共用同源单点（同一入口同一文案，ADR-0033 决策 #4）。
 const CONVERT_KIND_CHANGE_FORBIDDEN_CODE: &str = "trade.convert-kind-change-forbidden";
 const CONVERT_KIND_CHANGE_FORBIDDEN: &str =
     "不可将交易类型改为或改出「转换」：转换的纠错只有「删除后重建」一条路";
-
-/// 修改入口的持仓副作用守卫文案组（单点定义，修改本体与重放修改共享）。
-const UPDATE_GUARDS: investment::GuardMessages<'static> = investment::GuardMessages {
-    partially_sold_code: PARTIAL_SOLD_CANNOT_UPDATE_CODE,
-    partially_sold_msg: PARTIAL_SOLD_CANNOT_UPDATE,
-    convert_partially_sold_code: CONVERT_PARTIALLY_SOLD_CANNOT_UPDATE_CODE,
-    convert_partially_sold_msg: CONVERT_PARTIALLY_SOLD_CANNOT_UPDATE,
-    consumed_by_convert_code: CONSUMED_BY_CONVERT_CANNOT_UPDATE_CODE,
-    consumed_by_convert_msg: CONSUMED_BY_CONVERT_CANNOT_UPDATE,
-};
 
 /// 计划：归一化后的交易行 + kind 特有副作用数据（不落库）。
 enum Plan {
@@ -170,8 +136,9 @@ fn create_within_transaction(
 /// 按 `id` 全字段替换一笔交易（IPC `update_transaction` / HTTP
 /// `PUT /api/v1/transactions/{id}`，issue #229 / ADR-0033）。
 ///
-/// 行为层修改编排入口：`revert → plan → update_row → apply` 的顺序契约与守卫文案
-/// （`PARTIAL_SOLD_CANNOT_UPDATE`）在此单点可达，调用方只传连接、id 与输入、处理报错。
+/// 行为层修改编排入口：`revert → plan → update_row → apply` 的顺序契约在此单点可达，
+/// 调用方只传连接、id 与输入、处理报错；持仓守卫语义与文案归投资域 `unwind`
+/// （issue #1020），本入口只承接分派。
 /// 事务规则见 [`ensure_transaction`]；旧 kind/商户的读取在事务内完成（消除读取与
 /// BEGIN 之间的窗口，ADR-0033 决策 #5）。
 ///
@@ -219,8 +186,8 @@ fn update_within_transaction(
     }
 
     // 先按旧 kind 回退持仓/卖出关联副作用，再按新 kind 校验并应用（跨 kind 修改避免孤儿持仓）；
-    // buy 守卫（已有部分卖出 / 份额已被后续转换消耗）措辞与错误码为修改入口单点定义的文案。
-    investment::revert(conn, id, old_kind, &UPDATE_GUARDS)?;
+    // buy/convert 守卫（已有部分卖出 / 份额已被后续转换消耗）语义与措辞归投资域 unwind 模块。
+    investment::revert(conn, id, old_kind)?;
     let (plan, merchant_created) = plan_with_existing_refs(
         conn,
         input,
@@ -293,13 +260,7 @@ fn delete_within_transaction(conn: &Connection, id: &str, emission: OpEmission) 
     // 入口守卫拒绝。
     let cascaded_sell_ids = match kind {
         TransactionKind::Buy | TransactionKind::Sell | TransactionKind::Convert => {
-            investment::release_for_delete(
-                conn,
-                id,
-                kind,
-                CONSUMED_BY_CONVERT_CANNOT_DELETE_CODE,
-                CONSUMED_BY_CONVERT_CANNOT_DELETE,
-            )?
+            investment::release_for_delete(conn, id, kind)?
         }
         _ => Vec::new(),
     };
@@ -614,7 +575,7 @@ fn update_command(id: &str, plan: &Plan) -> TransactionCommand {
 
 /// 同步重放入口：执行外来交易命令（issue #855 / ADR-0091）。
 ///
-/// 与本地写入共用同一编排协议（`revert → 落库 → apply` 与既有守卫文案），但
+/// 与本地写入共用同一编排协议（`revert → 落库 → apply` 与既有守卫），但
 /// 三处刻意差异构成重放形态：
 /// - **折算随命令携带**（源端折算）：行数据原样落库，不查本地汇率表——重放
 ///   不依赖本地汇率表状态与设备配置（ADR-0091 决策 3）；
@@ -703,7 +664,7 @@ fn replay_create(
 }
 
 /// 重放修改：存在性守卫与本地修改同款（不存在或已软删返回码化 NotFound）；
-/// 先按旧 kind 回退副作用（含 buy 部分卖出守卫，同码同文案），再按新 kind
+/// 先按旧 kind 回退副作用（含 buy 部分卖出守卫，同码同文案，归投资域 `unwind`），再按新 kind
 /// 装配落库——与本地修改协议同序（`revert → 校验 → 落库 → apply`）；
 /// dividend / split 目标与本地修改同码拒绝（防御臂同 [`replay_create`]），
 /// 进/出 convert 的 kind 变更与本地修改同码拒绝（ADR-0099 决策 5）。
@@ -737,7 +698,7 @@ fn replay_update(
         ));
     }
     // 先按旧 kind 回退持仓/卖出关联副作用（普通 kind 为 no-op），再落新行。
-    investment::revert(conn, id, old_kind, &UPDATE_GUARDS)?;
+    investment::revert(conn, id, old_kind)?;
     let norm_row = writer::NormalizedRow::try_from(row)?;
     // 账户引用存活守卫（issue #856，与重放创建同款）：修改不得把交易改挂到
     // 已删账户上（含出资端，issue #935）。
