@@ -81,6 +81,7 @@ import type {
   RealizedPnlSummary,
   RestoreResult,
   TransactionConvert,
+  TransactionSplit,
   TransactionTrade,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
@@ -263,6 +264,10 @@ export const api = {
   // 全量信息的数据源（扩展表投影，非转换交易 NotFound）
   getTransactionConvert: (id: string) =>
     invoke<TransactionConvert>('get_transaction_convert', { id }),
+  // 份额调整明细（ADR-0106 / issue #1052）：split 交易「只读详情」呈现标的与带符号
+  // 份额增量 Δ 的数据源（扩展表投影，非 split 交易 NotFound）
+  getTransactionSplit: (id: string) =>
+    invoke<TransactionSplit>('get_transaction_split', { id }),
   createInstrument: (input: InstrumentInput) =>
     invoke<string>('create_instrument', { input }),
   // 自建标的删除（issue #292 / ADR-0036）：仅手动来源且无买卖流水引用可删，

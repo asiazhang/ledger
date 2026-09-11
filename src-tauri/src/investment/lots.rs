@@ -27,12 +27,12 @@ use crate::sync_engine::device_id;
 /// （持仓 ≪ 1e7 份）约 1e-12 ~ 1e-9，而录入粒度合同为至多四位小数（issue #416，
 /// 真实超卖差异 ≥ 1e-4）——1e-6 距两侧各 3~5 个数量级，既吞掉全部位噪声、
 /// 又不会放过任何真实超卖。守卫与批次耗尽判定共用同一常量，不得各写各的。
-const QTY_GUARD_EPSILON: f64 = 1e-6;
+pub(crate) const QTY_GUARD_EPSILON: f64 = 1e-6;
 
 /// 数量展示格式化（错误文案用）：至多 4 位小数、去尾零——与录入粒度合同
 /// （issue #416 四位小数）对齐无损展示，f64 位误差（~1e-12）远在刻度以下
 /// 必然消失（如 8036.109999999999 → "8036.11"）。
-fn format_quantity_for_message(quantity: f64) -> String {
+pub(crate) fn format_quantity_for_message(quantity: f64) -> String {
     format!("{quantity:.4}")
         .trim_end_matches('0')
         .trim_end_matches('.')

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { NButton, NTag } from 'naive-ui'
 import type { Transaction } from '@/types'
-import { formatAmount } from '@/utils/money'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { kindSemanticColor } from '@/theme/semantic-colors'
@@ -9,7 +8,7 @@ import { t } from '@/i18n'
 import MerchantLink from '@/components/MerchantLink.vue'
 import SourceLink from '@/components/SourceLink.vue'
 import AmountCell from '@/components/AmountCell.vue'
-import { kindLabel, KIND_TAG_TYPE, displayAmountCents, renderAccountCell } from '@/components/transaction-columns'
+import { kindLabel, KIND_TAG_TYPE, displayAmountText, renderAccountCell } from '@/components/transaction-columns'
 import {
   TRANSACTION_CARD_LIST_CLASS,
   TRANSACTION_CARD_CLASS,
@@ -65,9 +64,9 @@ function hasMeta(row: Transaction): boolean {
 }
 
 /** 金额文案与语义色（formatAmount / kindSemanticColor 口径不变，归其单点）；
- * 转换行金额读展示口径单点（转出金额，与表格金额列同源）。 */
+ * 金额文案读展示口径单点（转换行转出金额、份额调整行空值 '-'，与表格金额列同源）。 */
 function amountText(row: Transaction): string {
-  return formatAmount(displayAmountCents(row), reference.getCurrency(row.currency_code))
+  return displayAmountText(reference, row)
 }
 function amountColor(row: Transaction): string {
   return kindSemanticColor(row.kind, app.theme)

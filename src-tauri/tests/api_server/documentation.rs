@@ -427,10 +427,23 @@ async fn test_import_knowledge_covers_key_conventions() {
         "扣费后净份额",
         "kind 改成 / 改出",
         "假卖出",
-        // 不受支持文案范围校准（issue #981）：convert 闭集扩容后仍准确——convert
-        // 可用，dividend / split 维持显式拒绝；措辞退回「三类 kind」旧口径时报红。
-        "`convert` 可用",
-        "`dividend` / `split` 仍不受支持",
+        // 份额调整可用性文案（ADR-0106 决策 11 / issue #1054）：split 激活后文案锁
+        // 改绿——convert / split 可用、dividend 维持显式拒绝；措辞退回「split 不受
+        // 支持」旧口径时报红。
+        "`convert` / `split` 可用",
+        "`dividend` 仍不受支持",
+        // 份额调整教学关键词锁（ADR-0106 决策 11 / issue #1054）：字段位置、方向
+        // 符号、无现金腿、守卫、成本与盈亏口径、余额不变而持仓市值随份额变化、
+        // 纠错边界——整节被误删或口径退回买 / 卖借位落账时逐词报红。
+        "份额调整（split",
+        "带符号份额增量",
+        "缩股",
+        "Δ 不能为 0",
+        "严格小于",
+        "有在用持仓",
+        "贡献恒为 0",
+        "随份额变化",
+        "不可改、不可删",
     ];
     for kw in required_keywords {
         assert!(text.contains(kw), "导入知识应包含关键约定关键词 {kw:?}");

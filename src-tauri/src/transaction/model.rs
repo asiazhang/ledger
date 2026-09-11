@@ -185,8 +185,12 @@ pub struct TransactionInput {
     /// （`GET /api/v1/instruments`）把源数据中的标的描述解析为 id，未命中再按创建端点
     /// 幂等新建；引用不存在的标的返回 400（中文错误，可读回自纠）。
     pub instrument_id: Option<String>,
-    /// 成交数量（份，可含小数）：仅 buy/sell/convert/split 需提供，必须 > 0（convert 为转出份额、
-    /// split 为带符号份额增量 Δ）。
+    /// 成交数量（份，可含小数）：仅 buy/sell/convert/split 需提供。buy/sell 为成交份额、
+    /// convert 为转出份额，均必须 > 0；split 为同一账户内单标的的带符号份额增量 Δ
+    /// （`+` 折算/结转/送股；`−` 缩股且 |Δ| 小于当前持仓），必须 ≠ 0。
+    /// split 无现金腿：`amount_cents` 恒填 0、`price_cents` 不提供、`fee_cents` 只能为 0，
+    /// 不携带 `to_instrument_id` / `to_account_id` / `funding_account_id` / 商户 / 分类 / 保单，
+    /// 落账前后全部账户余额不变，仅持仓份额与市值随 Δ 变化（ADR-0106 决策 1/7）。
     pub quantity: Option<f64>,
     /// 成交单价（万分之一元，元 × 10000；价格刻度见 ADR-0038，金额列仍为整数分）：
     /// 非基金标的必填且必须 > 0；场外基金（issue #302 / ADR-0038 金额权威）不提供，
@@ -239,7 +243,7 @@ pub struct UpdateTransactionInput {
     /// 标的 id（仅 buy/sell 需提供）：与 `TransactionInput` 同一契约；
     /// 引用不存在的标的返回 400（中文错误，可读回自纠）。
     pub instrument_id: Option<String>,
-    /// 成交数量（份，可含小数）：与 `TransactionInput.quantity` 同一契约，必须 > 0。
+    /// 成交数量（份，可含小数）：与 `TransactionInput.quantity` 同一契约。
     pub quantity: Option<f64>,
     /// 成交单价（万分之一元）：与 `TransactionInput.price_cents` 同一契约，必须 > 0。
     pub price_cents: Option<i64>,

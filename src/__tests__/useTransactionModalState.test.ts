@@ -4,7 +4,7 @@ import { flushPromises } from '@vue/test-utils'
 import { makeTransaction } from '@/__tests__/factories'
 import { messageCalls } from './helpers/message-mock'
 import { useTransactionModalState } from '@/composables/useTransactionModalState'
-import type { TransactionConvert, TransactionTrade } from '@/types'
+import type { TransactionConvert, TransactionSplit, TransactionTrade } from '@/types'
 
 // ---------------------------------------------------------------------------
 // 数据工厂：买卖明细（交易行走共享 makeTransaction，factories.ts）
@@ -116,7 +116,30 @@ describe('useTransactionModalState edit 意图（先取明细再开窗）', () =
     })
     await modals.open({ type: 'detail', row })
     expect(mockInvoke.mock.calls[0]).toEqual(['get_transaction_convert', { id: 'txn-cv' }])
-    expect(modals.intent.value).toEqual({ type: 'detail', row, convert })
+    expect(modals.intent.value).toEqual({ type: 'detail', row, detail: { kind: 'convert', convert } })
+    expect(modals.seq.value).toBe(1)
+  })
+
+  it('split 行详情：先取份额调整明细再开窗（get_transaction_split），意图为 detail', async () => {
+    const modals = useTransactionModalState()
+    const row = makeTransaction({ id: 'txn-sp', kind: 'split' })
+    const split: TransactionSplit = {
+      instrument_id: 'inst-sp',
+      symbol: '502010',
+      instrument_name: '证券基金',
+      quantity: 339.76,
+    }
+    wireInvokeSeam({
+      overrides: {
+        get_transaction_split: (args) =>
+          args?.id === 'txn-sp'
+            ? Promise.resolve(split)
+            : Promise.reject(new Error('unexpected invoke: get_transaction_split')),
+      },
+    })
+    await modals.open({ type: 'detail', row })
+    expect(mockInvoke.mock.calls[0]).toEqual(['get_transaction_split', { id: 'txn-sp' }])
+    expect(modals.intent.value).toEqual({ type: 'detail', row, detail: { kind: 'split', split } })
     expect(modals.seq.value).toBe(1)
   })
 
@@ -129,7 +152,7 @@ describe('useTransactionModalState edit 意图（先取明细再开窗）', () =
     expect(modals.seq.value).toBe(1)
   })
 
-  it('detail 非 convert 行：无详情面，不落意图（「意图非空即显示」不变式，ADR-0106 决策 10 / #1048）', async () => {
+  it('detail 非 convert / split 行：无详情面，不落意图（「意图非空即显示」不变式）', async () => {
     const modals = useTransactionModalState()
     const row = makeTransaction({ id: 'txn-1', kind: 'expense' })
     await modals.open({ type: 'detail', row })

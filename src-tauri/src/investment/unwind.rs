@@ -16,6 +16,7 @@
 use rusqlite::Connection;
 
 use super::lots;
+use super::split;
 use crate::error::{AppError, Result};
 use crate::transaction::amount::TransactionKind;
 
@@ -63,15 +64,30 @@ const CONSUMED_BY_SPLIT_CANNOT_UPDATE_CODE: &str = "trade.consumed-by-split-upda
 const CONSUMED_BY_SPLIT_CANNOT_DELETE: &str = "该交易的份额已被后续份额调整重述，无法删除";
 const CONSUMED_BY_SPLIT_CANNOT_DELETE_CODE: &str = "trade.consumed-by-split-delete";
 
-/// 撤销一笔 buy / sell / convert 交易对持仓的全部影响（修改路径与删除路径同一动作）。
+/// 份额调整行**自身**的「批次已被下游在用消耗」守卫文案（ADR-0106 决策 5 判据家族 /
+/// issue #1051）：本行重述过的批次若被其**落账序之后、且未软删**的后续交易消耗
+/// （后续 sell / convert）或再次重述（后一次 split），改 / 删即拒绝——精确回补会把
+/// 批次数量与每份成本直接还原到本行重述前的快照，而下游消耗是按重述后的数量与每份
+/// 成本结算的，冲突会篡改下游账面。修改与删除两个入口措辞各自单点定义（与上方
+/// [`CONSUMED_BY_SPLIT_CANNOT_UPDATE`] 同款）。
+const SPLIT_CONSUMED_BY_DOWNSTREAM_CANNOT_UPDATE: &str =
+    "该份额调整的批次已被后续交易消耗，无法修改";
+const SPLIT_CONSUMED_BY_DOWNSTREAM_CANNOT_UPDATE_CODE: &str = "trade.split-consumed-update";
+const SPLIT_CONSUMED_BY_DOWNSTREAM_CANNOT_DELETE: &str =
+    "该份额调整的批次已被后续交易消耗，无法删除";
+const SPLIT_CONSUMED_BY_DOWNSTREAM_CANNOT_DELETE_CODE: &str = "trade.split-consumed-delete";
+
+/// 撤销一笔 buy / sell / convert / split 交易对持仓的全部影响（修改路径与删除路径同一动作）。
 ///
-/// 按 kind 与模式分派（ADR-0097 / ADR-0099）：
+/// 按 kind 与模式分派（ADR-0097 / ADR-0099 / ADR-0106）：
 /// - sell：回补其扣减的持仓并清空卖出关联（两模式同一，无守卫）；
 /// - buy：修改模式先用「在用占用」守卫拒绝（批次已被在用后续转换消耗 / 已被在用
 ///   sell 匹配消耗），再整批清理批次与买入明细；删除模式经转换链守卫后**级联**——
 ///   其持仓批次的在用 sell 逐笔回补（各自软删由行为层编排），再整批清理；
 /// - convert：与 buy 同规，另在清理前回补**转出腿**（逐批次精确回补，必须先于清目标
 ///   行——删目标行会按外键级联删掉消耗记录）；
+/// - split：其重述过的批次被在用下游消耗则拒绝改 / 删，放行后按重述审计逐批次 before
+///   快照精确回补并清空扩展行（无级联语义，ADR-0106 决策 3/5）；
 /// - 其余 kind 无持仓副作用，返回空表。
 ///
 /// 删除模式返回被级联的 sell id 列表（ADR-0097 契约：级联对象由行为层逐笔软删并
@@ -132,14 +148,22 @@ pub fn remove(
                 Ok(cascaded_sell_ids)
             }
         },
-        // 行为层仅对 buy/sell/convert 调用本函数；其余 kind 无持仓副作用，no-op
+        // 份额调整（split）：本行重述过的批次被在用下游消耗则拒绝改 / 删
+        // （ADR-0106 决策 5 / issue #1051），放行后按 `security_lot_adjustments`
+        // 逐批次 before 快照精确回补（[`split::restore_restatement`]）并清空扩展行。
+        // 无「级联软删下游」语义——下游消耗一旦存在即挂守卫拒绝，故恒返回空表。
+        TransactionKind::Split => {
+            guard_no_split_downstream_consumed(conn, id, mode)?;
+            split::restore_restatement(conn, id)?;
+            Ok(Vec::new())
+        }
+        // 行为层仅对 buy/sell/convert/split 调用本函数；其余 kind 无持仓副作用，no-op
         // （显式枚举保证新增 kind 时此处编译报错，而非落入兜底）。
         TransactionKind::Income
         | TransactionKind::Expense
         | TransactionKind::Transfer
         | TransactionKind::Refund
-        | TransactionKind::Dividend
-        | TransactionKind::Split => Ok(Vec::new()),
+        | TransactionKind::Dividend => Ok(Vec::new()),
     }
 }
 
@@ -251,6 +275,58 @@ fn active_split_ids_on_own_lots(conn: &Connection, anchor_id: &str) -> Result<Ve
         .query_map(rusqlite::params![anchor_id], |r| r.get::<_, String>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(ids)
+}
+
+/// 份额调整行自身的「批次已被下游在用消耗」守卫（ADR-0106 决策 5 / issue #1051）。
+///
+/// 归因谓词：本行（split）经 `security_lot_adjustments` 重述过的每个批次，若在
+/// **落账序（`transactions.rowid`，全局 FIFO 序）之后**被未软删的后续交易消耗或
+/// 再次重述，即拒绝本行改 / 删：
+/// - 后续 **sell**（`security_lot_sales` 归因到未软删 sell 行）；
+/// - 后续 **convert**（`security_lot_conversions` 归因到未软删 convert 行）；
+/// - 后续 **split**（`security_lot_adjustments` 归因到未软删 split 行，排除本行自身）。
+///
+/// 落账序严格取「之后」而非「任意」：本行重述前的先序 sell / convert 消耗已计入
+/// 审计行的 `_before` 快照，回补到 `_before` 与它们相容；只有先序关系之外的消耗才
+/// 会与本行的精确回补冲突——这是「下游」二字的可验证判据（判据家族同
+/// [`guard_no_split_restated`]，但那条针对买入 / 转换的批次谓词天然不含先序歧义）。
+fn guard_no_split_downstream_consumed(conn: &Connection, id: &str, mode: Mode) -> Result<()> {
+    let (code, msg) = match mode {
+        Mode::Update => (
+            SPLIT_CONSUMED_BY_DOWNSTREAM_CANNOT_UPDATE_CODE,
+            SPLIT_CONSUMED_BY_DOWNSTREAM_CANNOT_UPDATE,
+        ),
+        Mode::Delete => (
+            SPLIT_CONSUMED_BY_DOWNSTREAM_CANNOT_DELETE_CODE,
+            SPLIT_CONSUMED_BY_DOWNSTREAM_CANNOT_DELETE,
+        ),
+    };
+    let consumed: bool = conn.query_row(
+        "WITH adjusted(lot_id) AS ( \
+           SELECT lot_id FROM security_lot_adjustments WHERE transaction_id=?1 \
+         ), downstream(txn_id) AS ( \
+           SELECT s.sell_transaction_id FROM security_lot_sales s \
+            WHERE s.lot_id IN (SELECT lot_id FROM adjusted) \
+           UNION ALL \
+           SELECT c.transaction_id FROM security_lot_conversions c \
+            WHERE c.lot_id IN (SELECT lot_id FROM adjusted) \
+           UNION ALL \
+           SELECT a.transaction_id FROM security_lot_adjustments a \
+            WHERE a.transaction_id<>?1 AND a.lot_id IN (SELECT lot_id FROM adjusted) \
+         ) \
+         SELECT EXISTS ( \
+           SELECT 1 FROM downstream d \
+           JOIN transactions t ON t.id = d.txn_id \
+           WHERE t.is_deleted = 0 \
+             AND t.rowid > (SELECT rowid FROM transactions WHERE id = ?1) \
+         )",
+        rusqlite::params![id],
+        |r| r.get(0),
+    )?;
+    if consumed {
+        return Err(AppError::coded(code, msg));
+    }
+    Ok(())
 }
 
 /// 整批清理一笔买入或转换**转入腿**的持仓关联：批次、批次的全部卖出匹配与自身的

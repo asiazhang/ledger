@@ -148,6 +148,8 @@
     "convertOutAmount": "转出金额",
     "convertInAmount": "转入金额",
     "convertCarriedCost": "结转成本",
+    "splitShares": "份额变动",
+    "splitDate": "调整日",
     "saveFailed": "保存失败: {message}",
     "recordFailed": "记账失败: {message}"
   },

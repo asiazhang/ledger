@@ -767,16 +767,26 @@ fn advance_date(st: &ScheduledTransaction, from: &str, offset: i64) -> Result<St
             }
             let day = st.recurrence_day.map(|d| d as u32).unwrap_or(date.day());
             let max_day = days_in_month(y, m as u32);
-            chrono::NaiveDate::from_ymd_opt(y as i32, m as u32, day.min(max_day))
-                .ok_or_else(|| AppError::Invalid("无效日期".into()))?
+            chrono::NaiveDate::from_ymd_opt(y as i32, m as u32, day.min(max_day)).ok_or_else(
+                || {
+                    // ADR-0050 码化收口（#1072）：recurrence_day 未在入口校验，
+                    // 0 等非法值在此给出用户可见的码化参数错误，message 逐字保留。
+                    AppError::coded("scheduled-plan.occurrence-date-invalid", "无效日期")
+                },
+            )?
         }
         "yearly" => {
             let y = date.year() + (interval * offset) as i32;
             let day = st.recurrence_day.map(|d| d as u32).unwrap_or(date.day());
             let max_day = days_in_month(y as i64, date.month());
-            chrono::NaiveDate::from_ymd_opt(y, date.month(), day.min(max_day))
-                .ok_or_else(|| AppError::Invalid("无效日期".into()))?
+            chrono::NaiveDate::from_ymd_opt(y, date.month(), day.min(max_day)).ok_or_else(|| {
+                AppError::coded("scheduled-plan.occurrence-date-invalid", "无效日期")
+            })?
         }
+        // 防御臂（ADR-0050 允许的「程序性/内部错误」不转，本票明确保留）：
+        // recurrence_type 列只由 `RecurrenceType` 闭集写入，闭集外的值只可能来自
+        // 外部改库；同一条件的稳定码 `scheduled-plan.recurrence-unknown` 归
+        // `RecurrenceType` 解析边界（models.rs / spend.rs），此处不另立第二码。
         _ => return Err(AppError::Invalid("未知周期类型".into())),
     };
 

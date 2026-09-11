@@ -6,7 +6,7 @@
 
 ### Added
 
-- **投资**：新增份额调整（拆股 / 送股 / 份额折算与结转）记录——AI 导入与迁移可提交「份额变多 / 变少、钱不动」的公司行为，持仓与市值随份额变化，全部账户余额与已实现盈亏保持不变；改 / 删此类记录暂不支持（后续版本放开）（[#1049]）。
+- **投资**：新增份额调整（拆股 / 送股 / 份额折算与结转）记录——AI 导入与迁移可提交「份额变多 / 变少、钱不动」的公司行为，持仓与市值随份额变化，全部账户余额与已实现盈亏保持不变；记录可修改与删除，改 / 删按逐批次重述审计精确回补（含舍入）（[#1049]、[#1051]）。
 - **投资**：「同步标的信息」新增逐标的进度条与计数，完成照常提示结果、失败提示错误（[#897]）。
 - **账本**：新增多账本——可新建、改名、移除与切换，现有数据自动成为「默认账本」（[#831]、[#834]）。
 - **账本**：多账本适配备份与自动解锁缓存；「更改数据位置」改为仅搬移当前账本（[#836]）。
@@ -35,6 +35,7 @@
 - **多端同步**：买入/卖出的出资账户随同步在各端一致重放，余额与本地一致；旧版本设备产出的历史操作照常重放（[#939]）。
 - **AI 导入**：导入知识同步出资账户教学——直扣/直付行携带出资账户、余额核对含结算账户现金流；契约自描述端点带出该字段（[#939]）。
 - **AI 导入**：导入知识新增基金转换教学——快照转出端与 `tradingTarget` 转入端字段位置、单腿一条记录、腿序幂等键、多腿分摊与余额不变对账口径、软删 + 重建纠错；`convert` 可用而 `dividend` / `split` 仍不受支持（[#981]）。
+- **AI 导入**：导入知识新增份额调整教学——字段位置、方向符号（`+` 折算 / 结转 / 送股、`−` 缩股）、无现金腿与「余额不变但持仓市值随份额变化」的对账口径、纠错边界；契约 `quantity` 字段说明带出方向与无现金腿语义，`split` 可用而 `dividend` 仍不受支持（[#1054]）。
 - **发布**：Android arm64 APK 进入发布矩阵，随 GitHub Release 发布（[#559]）。
 - **发布**：Android APK 发布签名就绪——发布构建以 CI secrets 注入 keystore 签名，tag 构建缺签名 secrets 直接失败；试跑产物经 apksigner 校验可真机直装（[#560]）。
 - **报表**：报表页接入 ESC 复位（[#894]）。
@@ -331,6 +332,7 @@
 [#894]: https://github.com/asiazhang/ledger/issues/894
 [#849]: https://github.com/asiazhang/ledger/issues/849
 [#1049]: https://github.com/asiazhang/ledger/issues/1049
+[#1051]: https://github.com/asiazhang/ledger/issues/1051
 [#897]: https://github.com/asiazhang/ledger/issues/897
 [#917]: https://github.com/asiazhang/ledger/issues/917
 [#920]: https://github.com/asiazhang/ledger/issues/920
@@ -346,3 +348,4 @@
 [#1059]: https://github.com/asiazhang/ledger/issues/1059
 [#1060]: https://github.com/asiazhang/ledger/issues/1060
 [#1061]: https://github.com/asiazhang/ledger/issues/1061
+[#1054]: https://github.com/asiazhang/ledger/issues/1054

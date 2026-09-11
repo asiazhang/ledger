@@ -57,6 +57,10 @@ pub async fn create_category_handler(
     State(emitter): State<EmitterSlot>,
     body: String,
 ) -> Result<(StatusCode, Json<String>), AppError> {
+    // 请求体反序列化失败保留裸 Invalid（ADR-0050 决策 2 允许的「程序性/内部
+    // 错误」，#1072 明确不转）：message 是 JSON 解析器的技术错误原文（英文、
+    // 位置相关），没有可逐字保留的中文模板，与同族的 sync_engine 序列化失败
+    // 同待遇；HTTP 400 与 `kind` 形状不变。
     let input: CategoryInput =
         serde_json::from_str(&body).map_err(|e| AppError::Invalid(e.to_string()))?;
     write_entry(

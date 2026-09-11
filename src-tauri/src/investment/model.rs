@@ -265,6 +265,33 @@ impl FromRow for TransactionConvert {
     }
 }
 
+/// 份额调整明细（ADR-0106 决策 1 / issue #1052）：一笔 `split` 交易在
+/// `security_transactions` 扩展表中的投影（`quantity` = 带符号份额增量 Δ、
+/// `price_cents` 留 NULL），供交易列表「只读详情」呈现标的与份额变动。
+/// `symbol` / `instrument_name` 为 JOIN `instruments` 带出的展示字段。
+///
+/// Δ 有符号：`+` = 折算 / 结转 / 送股，`-` = 缩股——界面按符号原样呈现，
+/// 不取绝对值、不重算方向。
+#[derive(Debug, Serialize, Clone)]
+pub struct TransactionSplit {
+    pub instrument_id: String,
+    pub symbol: String,
+    pub instrument_name: Option<String>,
+    /// 带符号份额增量 Δ（`security_transactions.quantity`）。
+    pub quantity: f64,
+}
+
+impl FromRow for TransactionSplit {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(TransactionSplit {
+            instrument_id: row.get(0)?,
+            symbol: row.get(1)?,
+            instrument_name: row.get(2)?,
+            quantity: row.get(3)?,
+        })
+    }
+}
+
 impl FromRow for TransactionTrade {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(TransactionTrade {

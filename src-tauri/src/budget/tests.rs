@@ -17,6 +17,19 @@ fn setup() -> Connection {
     crate::test_support::open()
 }
 
+/// 未知预算周期按 ADR-0050 码化（#1072）：闭集解析边界报稳定码与插值参数，
+/// `message` 逐字保留；码本身经 `FromSql` 扁平化后不达前端（构造点口径，
+/// 与 `account.type-unknown` 同形）。
+#[test]
+fn budget_period_parse_rejects_unknown_with_code() {
+    let err = "quarterly".parse::<BudgetPeriod>().unwrap_err();
+    let wire = serde_json::to_value(&err).unwrap();
+    assert_eq!(wire["kind"], "Invalid");
+    assert_eq!(wire["code"], "budget.period-unknown");
+    assert_eq!(wire["params"], serde_json::json!(["quarterly"]));
+    assert_eq!(err.to_string(), "未知预算周期: quarterly");
+}
+
 fn first_expense_category_id(conn: &Connection) -> String {
     conn.query_row(
         "SELECT id FROM categories WHERE kind='expense' AND parent_id IS NULL ORDER BY created_at LIMIT 1",

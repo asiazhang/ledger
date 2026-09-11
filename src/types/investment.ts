@@ -185,6 +185,17 @@ export interface TransactionConvert {
   currency_code: string
 }
 
+/** 份额调整明细（ADR-0106 / issue #1052）：一笔 split 交易在 `security_transactions`
+ * 扩展表中的投影（`quantity` = **带符号**份额增量 Δ）；供交易列表「只读详情」呈现
+ * 标的与份额变动。`instrument_name` 为 JOIN `instruments` 带出的展示字段（可空）。 */
+export interface TransactionSplit {
+  instrument_id: string
+  symbol: string
+  instrument_name: string | null
+  /** 带符号份额增量 Δ：`+` = 折算 / 结转 / 送股，`-` = 缩股。 */
+  quantity: number
+}
+
 export interface Holding {
   id: string
   account_id: string

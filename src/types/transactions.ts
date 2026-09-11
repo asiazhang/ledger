@@ -208,7 +208,8 @@ export const TRANSACTION_KINDS = Object.keys(TRANSACTION_KIND_PRESENCE) as Trans
  * - `edit`：行激活进可编辑表单（行菜单「编辑」）；
  * - `detail`：只读详情——「无现金腿」kind 无创建 / 编辑 / 软删写入口，只保留只读呈现；
  * - `none`：无行激活（refund 破坏关联语义，仅留行菜单软删）。
- * 新增 kind 而未更新此表时编译报错；split 落地（#1045）按件补行。 */
+ * 新增 kind 而未更新此表时编译报错；两种「无现金腿」kind（convert / split）都进
+ * 只读详情。 */
 export type TransactionKindActivation = 'edit' | 'detail' | 'none'
 
 const TRANSACTION_KIND_ACTIVATION = {
@@ -219,9 +220,9 @@ const TRANSACTION_KIND_ACTIVATION = {
   buy: 'edit',
   sell: 'edit',
   convert: 'detail',
-  // split 落地（ADR-0106 / #1049）临时形态：改 / 删后端显式拒绝、只读详情未接，
-  // 行激活暂为 none（行菜单仅删除项，点击返回码化错误）；#1052 补只读详情后翻转 detail。
-  split: 'none',
+  // 份额调整（ADR-0106 / #1052）：与 convert 同属「无现金腿」kind——无创建 / 编辑 /
+  // 软删写入口，行激活进只读详情（标的 + 带符号份额变动 + 调整日 + 账户）。
+  split: 'detail',
 } satisfies Record<TransactionKind, TransactionKindActivation>
 
 /** 行激活形态查询：行激活与行菜单按 kind 收口的唯一事实源。 */

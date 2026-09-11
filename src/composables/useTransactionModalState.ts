@@ -4,7 +4,13 @@ import { useModalIntent } from '@/composables/useModalIntent'
 import { api } from '@/api'
 import { errorMessage } from '@/utils/errors'
 import { t } from '@/i18n'
-import type { CreateFormKind, Transaction, TransactionConvert, TransactionTrade } from '@/types'
+import type {
+  CreateFormKind,
+  Transaction,
+  TransactionConvert,
+  TransactionSplit,
+  TransactionTrade,
+} from '@/types'
 
 /**
  * TransactionModalState 交易弹窗编排深模块（ADR-0045，词汇表「TransactionModalState（交易弹窗编排）」）：
@@ -31,20 +37,29 @@ import type { CreateFormKind, Transaction, TransactionConvert, TransactionTrade 
 // ---------------------------------------------------------------------------
 
 /**
+ * 只读详情载荷（判别联合）：按目标行 kind 各自携带先取回的扩展明细——
+ * convert 两腿（ADR-0099 / #1048）、split 份额调整（ADR-0106 / #1052）。
+ * 「无现金腿」kind 的只读详情形态共用同一 `detail` 意图，渲染面按 `kind` 收窄。
+ */
+export type TransactionDetailPayload =
+  | { kind: 'convert'; convert: TransactionConvert }
+  | { kind: 'split'; split: TransactionSplit }
+
+/**
  * 意图状态（单一判别联合，弹窗编排的唯一事实源）：
  * - create：无目标行，携带表单形态子类型（issue #374 起 CreateFormKind：可创建 kind +
  *   借贷两个呈现变体；refund 不在可创建集，入口由交易条目右键承接）；
  * - refund / add-item：携带目标交易行；
- * - detail：只读详情（convert 等「无现金腿」kind 无写操作入口，ADR-0106 决策 10 / #1048）；
- *   当前只服务 convert 行，携带被取回的两腿明细（明细由模块先取再开窗，调用方不经手），
- *   非 convert 行无详情面、请求不落意图（「意图非空即显示」不变式）；
+ * - detail：只读详情（convert / split 等「无现金腿」kind 无写操作入口，ADR-0106 决策 10）；
+ *   携带被取回的扩展明细（明细由模块先取再开窗，调用方不经手），无详情面的行请求不落
+ *   意图（「意图非空即显示」不变式）；
  * - edit：另携带买卖明细（非买卖行为 null；buy/sell 的明细由模块先取再开窗）。
  * 视图以 `intent?.type` 判别渲染，payload 在各分支内被类型系统收窄。
  */
 export type TransactionModalIntent =
   | { type: 'create'; kind: CreateFormKind }
   | { type: 'refund'; row: Transaction }
-  | { type: 'detail'; row: Transaction; convert: TransactionConvert }
+  | { type: 'detail'; row: Transaction; detail: TransactionDetailPayload }
   | { type: 'edit'; row: Transaction; trade: TransactionTrade | null }
   | { type: 'add-item'; row: Transaction }
 
@@ -113,13 +128,17 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
       return
     }
     const { row } = request
-    // detail：只读详情——当前只服务 convert（先取转换两腿明细再开窗，时序内化）；
-    // 其余 kind 无详情面，不落意图（「意图非空即显示」，落一个渲染不出的意图会破坏该不变式）。
+    // detail：只读详情——convert / split 两类「无现金腿」kind 各自先取扩展明细再开窗
+    // （时序内化）；其余 kind 无详情面，不落意图（「意图非空即显示」，落一个渲染不出的
+    // 意图会破坏该不变式）。
     if (request.type === 'detail') {
-      if (row.kind !== 'convert') return
+      if (row.kind !== 'convert' && row.kind !== 'split') return
       try {
-        const convert = await api.getTransactionConvert(row.id)
-        settle(gen, { type: 'detail', row, convert })
+        const detail: TransactionDetailPayload =
+          row.kind === 'convert'
+            ? { kind: 'convert', convert: await api.getTransactionConvert(row.id) }
+            : { kind: 'split', split: await api.getTransactionSplit(row.id) }
+        settle(gen, { type: 'detail', row, detail })
       } catch (e) {
         if (gen !== generation) return // 迟到的失败整体丢弃
         message.error(t('transactions.detail.loadFailed', { msg: errorMessage(e) }))
