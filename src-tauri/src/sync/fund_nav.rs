@@ -1,31 +1,36 @@
 //! 东财历史净值通道（issue #303 / ADR-0038 决策 6）：lsjz 历史净值接口访问、
-//! 报文解析、净值同步水位语义与基金分区编排。
+//! 报文解析、净值同步水位语义与基金分区编排；首刷深回填另走单请求全量通道
+//!（基金详情页数据文件，issue #1062）。
 //!
 //! - 报文解析（[`parse_lsjz`]）与水位窗口（[`nav_window`]）为纯函数，fixture
 //!   单测见 `tests/fund_nav.rs`（真实报文形状，不依赖真实网络）；
 //! - 页抓取（[`fetch_nav_page`]）复用行情 HTTP 层的主机池 / 重试 / 限流泛型层；
 //!   lsjz 为单主机接口且必须携带 Referer 头（缺省被以 ErrCode=-999 拦截）；
-//! - 逐只编排 [`sync_one_fund_nav`] 接受注入的页抓取闭包（生产接 HTTP 层，测试
-//!   注入 mock）：首刷判据 = **磁盘上没有任何历史序列**（issue #1059——添加基金 /
-//!   AI 导入已把最新净值落现价缓存、水位有值但 PriceHistory 为空，此时按首刷
-//!   回填近两年）；已有历史序列的基金以现价缓存的净值日期（`market_prices.nav_date`，
-//!   #301 落）为水位，从水位次日起按页增量（常态每只一页，页大小为服务端硬上限
-//!   20）；全部净值点攒齐后一次降采样落周线（跨页同周取最后一个净值日），现价 =
-//!   窗口内最新公布单位净值。基金间的遍历与名称随行刷新、进度推进归增量同步编排
-//!   （`incremental`，issue #897 逐只合并推进）。
+//! - 单请求全量通道（[`fetch_nav_snapshot`]）一次 GET 基金详情页数据文件、解析
+//!   `Data_netWorthTrend` 得整只基金历史单位净值（口径与 lsjz `DWJZ` 逐值一致，
+//!   ADR-0038 修订记录有样本验证），仅首刷深回填用——抓取 / 解析失败或窗口内无点
+//!   fail-closed 回退 lsjz 分页，不静默丢数据；
+//! - 逐只编排 [`sync_one_fund_nav`] 接受注入的页抓取与单请求抓取两条闭包（生产接
+//!   HTTP 层，测试注入 mock）：首刷判据 = **磁盘上没有任何历史序列**（issue #1059
+//!   ——添加基金 / AI 导入已把最新净值落现价缓存、水位有值但 PriceHistory 为空，
+//!   此时按首刷回填近两年）；已有历史序列的基金以现价缓存的净值日期
+//!   （`market_prices.nav_date`，#301 落）为水位，从水位次日起按页增量（常态每只一页，
+//!   页大小为服务端硬上限 20）；全部净值点攒齐后一次降采样落周线（跨页同周取最后
+//!   一个净值日），现价 = 窗口内最新公布单位净值。基金间的遍历与名称随行刷新、进度
+//!   推进归增量同步编排（`incremental`，issue #897 逐只合并推进）。
 
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
 use serde::Deserialize;
 
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
     upsert_price_history,
 };
 
 use super::fund::deserialize_flexible_f64;
-use super::http::{KlineBar, Pacer, RetryConfig, request_json_from_hosts};
+use super::http::{KlineBar, Pacer, RetryConfig, request_json_from_hosts, request_text_from_hosts};
 
 // 历史净值接口：单主机（无公开镜像池），复用行情层的重试与限流泛型层。
 const LSJZ_HOSTS: &[&str] = &["https://api.fund.eastmoney.com"];
@@ -35,6 +40,11 @@ const LSJZ_PAGE_SIZE: u64 = 20;
 /// 单只基金单次同步的页数上限：近两年窗口约 25 页（≈500 个净值日 ÷ 20），
 /// 上限兜底防异常 TotalCount 导致的失控翻页（触顶记警告日志、保留已采净值点）。
 const MAX_NAV_PAGES: u64 = 40;
+
+// 基金详情页数据文件（pingzhongdata）：单主机（无公开镜像池），一次请求返回整只
+// 基金的全部历史净值（issue #1062）。仅服务首刷深回填，增量仍走 lsjz。
+const PINGZHONG_HOSTS: &[&str] = &["https://fund.eastmoney.com"];
+const PINGZHONG_PATH_PREFIX: &str = "/pingzhongdata/";
 
 /// lsjz 整体响应。`TotalCount` 在顶层；`Data` 正常为对象，被拦截形态（缺
 /// Referer / 风控）是空字符串，以无标签枚举宽容为 [`LsjzDataField::Blocked`]；
@@ -85,6 +95,90 @@ pub(super) struct LsjzItem {
 pub(super) struct NavPoint {
     pub(super) date: String,
     pub(super) nav: f64,
+}
+
+/// 基金详情页数据文件（pingzhongdata）里单位净值序列的变量名。同文件另有
+/// `Data_ACWorthTrend`（累计净值，`[时间戳, 值]` 数组）——本通道刻意只取单位
+/// 净值（与历史净值接口 `DWJZ` 同口径，见 [`parse_net_worth_trend`]）。
+const NET_WORTH_TREND_VAR: &str = "Data_netWorthTrend";
+
+/// 单位净值序列的单个元素：`x` = 净值日北京时间午夜的毫秒时间戳；`y` = 单位
+/// 净值（真实价格值，元）；其余字段（equityReturn / unitMoney）不消费。
+#[derive(Debug, Deserialize)]
+struct NetWorthTrendPoint {
+    x: i64,
+    #[serde(default, deserialize_with = "deserialize_flexible_f64")]
+    y: Option<f64>,
+}
+
+/// 解析基金详情页数据文件（`.js`）里的**单位净值序列**（issue #1062）：取出
+/// `Data_netWorthTrend` 数组并投影为 [`NavPoint`]（毫秒时间戳 + 8h 取北京日历日
+/// 即净值日期），无效行（缺净值 / 净值 ≤ 0 / 时间戳越界）静默过滤，与 lsjz 同姿态。
+///
+/// 返回值区分两种语义：`None` = 变量缺省 / 数组截断 / 字段形态不符——数据不可信，
+/// 调用方 fail-closed 回退分页通道；`Some(vec![])` = 结构完好但序列为空（新基金
+/// 未公布净值），是可信空结果。累计净值数组 `Data_ACWorthTrend` 不被消费。
+pub(super) fn parse_net_worth_trend(js: &str) -> Option<Vec<NavPoint>> {
+    let array = extract_declared_json_array(js, NET_WORTH_TREND_VAR)?;
+    let raw: Vec<NetWorthTrendPoint> = serde_json::from_str(array).ok()?;
+    Some(
+        raw.into_iter()
+            .filter_map(|point| {
+                let nav = point.y.filter(|n| *n > 0.0)?;
+                let date = beijing_date_from_epoch_ms(point.x)?;
+                Some(NavPoint { date, nav })
+            })
+            .collect(),
+    )
+}
+
+/// 从 JS 文本里取出 `var <name> = [ ... ];` 的数组字面量：先定位变量名后的 `=`，
+/// 再从 `[` 做括号配对（跳过 JSON 字符串内的括号与转义）。未声明、缺 `=`、缺 `[`
+/// 或括号不闭合均返回 None（上层按不可信数据 fail-closed）。
+fn extract_declared_json_array<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    let after_name = &text[text.find(name)? + name.len()..];
+    let after_eq = &after_name[after_name.find('=')? + 1..];
+    let open = after_eq.find('[')?;
+    let bytes = after_eq.as_bytes();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, &byte) in bytes.iter().enumerate().skip(open) {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&after_eq[open..=index]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// 毫秒时间戳（净值日北京时间午夜，见单位净值序列元素的 `x`）→ ISO 净值日期：
+/// UTC 时刻 + 8h 后取日期部分（与 [`super::incremental::beijing_date`] 同口径）。
+fn beijing_date_from_epoch_ms(ms: i64) -> Option<String> {
+    let utc = chrono::DateTime::from_timestamp_millis(ms)?;
+    Some(
+        (utc + chrono::Duration::hours(8))
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string(),
+    )
 }
 
 /// 一页净值的解析结果：有效净值点 + 窗口内总条数（服务端按起止日期过滤后的
@@ -219,6 +313,44 @@ pub(super) fn fetch_nav_page_from(
     Ok(parse_lsjz(&resp))
 }
 
+/// 单请求全量净值通道（issue #1062）：一次 GET 基金详情页数据文件，解析
+/// `Data_netWorthTrend` 得整只基金的**全部历史单位净值**——口径与 lsjz 的 `DWJZ`
+/// 逐值一致、同落在万分位价格刻度上（spike 四类型样本验证见 ADR-0038 修订记录）。
+/// 仅服务首刷深回填，替代约 25 次分页请求；日常增量仍走 lsjz。
+///
+/// 失败语义是 fail-closed 的前半：网络失败、被拦截（HTML 而非数据文件）或解析不出
+/// 单位净值序列都返回 `Err`，调用方据此回退分页通道，不把不可信结果当「无净值」。
+pub(super) fn fetch_nav_snapshot(
+    client: &reqwest::blocking::Client,
+    pacer: &mut Pacer,
+    code: &str,
+) -> Result<Vec<NavPoint>> {
+    fetch_nav_snapshot_from(client, pacer, code, PINGZHONG_HOSTS)
+}
+
+/// 同 [`fetch_nav_snapshot`]，主机池可注入（本地 HTTP 服务测试请求路径与解析）。
+pub(super) fn fetch_nav_snapshot_from(
+    client: &reqwest::blocking::Client,
+    pacer: &mut Pacer,
+    code: &str,
+    hosts: &[&str],
+) -> Result<Vec<NavPoint>> {
+    tracing::debug!(code, "单请求全量净值查询");
+    let path = format!("{PINGZHONG_PATH_PREFIX}{code}.js");
+    let body = request_text_from_hosts(
+        client,
+        &[],
+        &path,
+        hosts,
+        RetryConfig::production(),
+        pacer,
+        &format!("fetch_nav_snapshot:{code}"),
+        None,
+    )?;
+    parse_net_worth_trend(&body)
+        .ok_or_else(|| AppError::Parse(format!("基金 {code} 详情页数据文件缺少可信的单位净值序列")))
+}
+
 /// 基金分区的同步统计（与 [`super::incremental`] 的股票统计同源汇总）：
 /// `synced` = 处理成功（含「已是最新、无新净值」）；`skipped` = 无法拉取
 /// （首刷查无净值；**空响应/被拦截**——不是「无新净值」，issue #1059；名称充
@@ -231,13 +363,14 @@ pub(super) struct FundSyncStats {
 }
 
 /// 单只 fund 标的的净值增量同步（ADR-0038 决策 6；收集面随 issue #827 放开至
-/// 库内全部 fund 行）：请求 lsjz 回填——**首刷判据 = 磁盘上没有任何历史序列**
-///（issue #1059），首刷回填近两年；已有历史序列的基金以现价缓存的净值日期为
-/// 水位增量（水位当日不重拉、只取水位次日之后）——净值点降采样落 PriceHistory
-///（同周整周覆盖幂等），窗口内最新公布净值落现价缓存（现价 = 单位净值、
-/// priced_at = nav_date = 净值日期，与 #301 添加基金同形）。页抓取闭包由
-/// 调用方注入（生产接 HTTP 层，测试 mock），本函数不触碰网络；单只结果累加
-/// 进调用方的 `stats`（基金间的遍历、名称随行刷新与进度推进归编排层，
+/// 库内全部 fund 行）：**首刷判据 = 磁盘上没有任何历史序列**（issue #1059）。
+/// 首刷回填近两年——优先走单请求全量通道（详情页数据文件，issue #1062），抓取/
+/// 解析失败或窗口内无点则 fail-closed 回退 lsjz 分页通道；已有历史序列的基金走
+/// lsjz 分页，以现价缓存的净值日期为水位增量（水位当日不重拉、只取水位次日之后）。
+/// 净值点降采样落 PriceHistory（同周整周覆盖幂等），窗口内最新公布净值落现价缓存
+/// （现价 = 单位净值、priced_at = nav_date = 净值日期，与 #301 添加基金同形）。
+/// 两条抓取闭包由调用方注入（生产接 HTTP 层，测试 mock），本函数不触碰网络；
+/// 单只结果累加进调用方的 `stats`（基金间的遍历、名称随行刷新与进度推进归编排层，
 /// issue #897）。
 ///
 /// **前置条件**：`fund` 为 6 位真实代码的有通道基金行——名称充代码行（查不到
@@ -245,14 +378,55 @@ pub(super) struct FundSyncStats {
 /// 跳过语义：首刷查无净值与**空响应/被拦截**（issue #1059）计入 `skipped`，
 /// 不报错不中断；单只网络失败与股票通道一致——上抛中断同步（跳过统计只收
 /// 「无法拉取」的行，不含网络失败）。
-pub(super) fn sync_one_fund_nav<N>(
+/// 分页通道取净值点（首刷回退与增量共用）：按服务端总数翻页（页大小为服务端硬
+/// 上限），先攒齐全部净值点再一次性降采样——跨页同周的采样必须取最后一个净值日，
+/// 逐页落库会用后页的更早日期覆盖前页采样。返回净值点与「任意一页空响应」标记。
+fn fetch_nav_pages<N>(
+    fetch_nav: &mut N,
+    code: &str,
+    start: &str,
+    end: &str,
+) -> Result<(Vec<NavPoint>, bool)>
+where
+    N: FnMut(&NavQuery) -> Result<LsjzPage>,
+{
+    let query = |page: u64| NavQuery {
+        code: code.to_string(),
+        start_date: start.to_string(),
+        end_date: end.to_string(),
+        page,
+    };
+    let first = fetch_nav(&query(1))?;
+    let mut blocked = first.blocked;
+    let mut points = first.points;
+    let raw_pages = first
+        .total
+        .max(points.len() as u64)
+        .div_ceil(LSJZ_PAGE_SIZE);
+    let pages = raw_pages.min(MAX_NAV_PAGES);
+    if raw_pages > MAX_NAV_PAGES {
+        tracing::warn!(code = %code, total = %first.total, "历史净值页数触顶，窗口可能未采全");
+    }
+    for page in 2..=pages {
+        let next = fetch_nav(&query(page))?;
+        // 任意一页空响应都让本轮窗口不完整（页 1 空 → 整轮不可信；后续页空 →
+        // 已采净值点照常落库、窗口可能缺尾），统一由调用方按形态分流。
+        blocked |= next.blocked;
+        points.extend(next.points);
+    }
+    Ok((points, blocked))
+}
+
+pub(super) fn sync_one_fund_nav<N, S>(
     conn: &Connection,
     fund: &super::incremental::SyncInstrument,
     fetch_nav: &mut N,
+    fetch_nav_snapshot: &mut S,
     stats: &mut FundSyncStats,
 ) -> Result<()>
 where
     N: FnMut(&NavQuery) -> Result<LsjzPage>,
+    S: FnMut(&str) -> Result<Vec<NavPoint>>,
 {
     let today = super::incremental::beijing_today();
     // 水位 = 现价缓存的净值日期（股票行恒 NULL，基金行由 #301/本通道写入）。
@@ -279,33 +453,47 @@ where
         watermark.as_deref()
     };
     let (start, end) = nav_window(window_watermark, today);
-    let query = |page: u64| NavQuery {
-        code: fund.symbol.clone(),
-        start_date: start.clone(),
-        end_date: end.clone(),
-        page,
+
+    // 首刷优先走单请求全量通道（ADR-0038 决策 6 修订，issue #1062）：一次请求拿
+    // 整只基金的历史单位净值，本地裁剪到与分页通道相同的近两年窗口后再用。抓取
+    // 失败 / 解析不出序列 / 窗口内无点都 fail-closed 回退分页通道，不静默丢数据；
+    // 已有历史序列的增量不触碰本通道（日常增量仍走 lsjz）。
+    let snapshot_points = if first_fill {
+        match fetch_nav_snapshot(&fund.symbol) {
+            Ok(points) => {
+                let clipped: Vec<NavPoint> = points
+                    .into_iter()
+                    .filter(|p| {
+                        p.date.as_str() >= start.as_str() && p.date.as_str() <= end.as_str()
+                    })
+                    .collect();
+                if clipped.is_empty() {
+                    tracing::warn!(
+                        code = %fund.symbol,
+                        "单请求全量净值通道无窗口内净值，回退分页通道"
+                    );
+                    None
+                } else {
+                    Some(clipped)
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    code = %fund.symbol, %error,
+                    "单请求全量净值通道失败，回退分页通道"
+                );
+                None
+            }
+        }
+    } else {
+        None
     };
-    // 按服务端总数翻页（页大小为服务端硬上限）；先攒齐全部净值点再一次性
-    // 降采样——跨页同周的采样必须取最后一个净值日，逐页落库会用后页的
-    // 更早日期覆盖前页采样。
-    let first = fetch_nav(&query(1))?;
-    let mut blocked = first.blocked;
-    let mut points = first.points;
-    let raw_pages = first
-        .total
-        .max(points.len() as u64)
-        .div_ceil(LSJZ_PAGE_SIZE);
-    let pages = raw_pages.min(MAX_NAV_PAGES);
-    if raw_pages > MAX_NAV_PAGES {
-        tracing::warn!(code = %fund.symbol, total = %first.total, "历史净值页数触顶，窗口可能未采全");
-    }
-    for page in 2..=pages {
-        let next = fetch_nav(&query(page))?;
-        // 任意一页空响应都让本轮窗口不完整（页 1 空 → 整轮不可信；后续页空 →
-        // 已采净值点照常落库、窗口可能缺尾），统一在下方按形态分流。
-        blocked |= next.blocked;
-        points.extend(next.points);
-    }
+
+    // 单请求通道命中即免去分页；否则回退既有分页通道（首刷近两年 / 增量水位次日）。
+    let (points, blocked) = match snapshot_points {
+        Some(points) => (points, false),
+        None => fetch_nav_pages(fetch_nav, &fund.symbol, &start, &end)?,
+    };
 
     if points.is_empty() {
         if blocked {

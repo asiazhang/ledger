@@ -6,7 +6,8 @@
 //! ② 每行情分区标的一次日 K 请求回填近两年日线，本地降采样为周线落
 //! `price_history`；③ 非本位币币种对的汇率 K 线同期落 `fx_rate_history`；
 //! ④ 基金走历史净值通道逐只回填（ADR-0038 决策 6，见 `fund_nav`）——无历史
-//! 序列者首刷回填近两年，已有序列者按水位增量（issue #1059）；
+//! 序列者首刷回填近两年（优先单请求全量通道、失败回退分页，issue #1062），
+//! 已有序列者按水位增量（issue #1059）；
 //! ⑤ 有通道的行以数据源权威名称随行刷新标的字典名称（行情通道零额外请求，
 //! 基金通道逐只详情查询；「随用随修 + 同步随行刷新」，ADR-0036/0081 修订）。
 //! 类型分区在 Rust 侧完成，不增删标的、不改市场。
@@ -16,11 +17,12 @@
 //!
 //! 编排与网络解耦：核心流程 [`do_incremental_sync_with`] 接受注入的批量报价 / 日 K /
 //! 汇率 K 三个闭包（同一签名 `&str → Result<Vec<_>>`）、历史净值页闭包
-//!（[`NavQuery`] → [`LsjzPage`]）、基金名称闭包（`&str → Result<String>`）与进度
-//! 回调闭包（`done, total`，issue #897 / ADR-0095），测试以 mock 数据驱动（不依赖
-//! 真实网络）；生产经 [`do_incremental_sync`] 接 HTTP 层（复用主机池/重试/限流
-//! pacer 与价格换算）。进度回调闭包是本函数唯一的对外观察点：编排核心不碰网络、
-//! 不碰事件系统，进度事件发射归壳层接线（见 `commands::sync`）。
+//!（[`NavQuery`] → [`LsjzPage`]）、单请求全量净值闭包（`&str → Result<Vec<NavPoint>>`，
+//! 首刷深回填用，issue #1062）、基金名称闭包（`&str → Result<String>`）与进度回调
+//! 闭包（`done, total`，issue #897 / ADR-0095），测试以 mock 数据驱动（不依赖真实
+//! 网络）；生产经 [`do_incremental_sync`] 接 HTTP 层（复用主机池/重试/限流 pacer
+//! 与价格换算）。进度回调闭包是本函数唯一的对外观察点：编排核心不碰网络、不碰事件
+//! 系统，进度事件发射归壳层接线（见 `commands::sync`）。
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -38,7 +40,7 @@ use crate::investment::prices::{
 use crate::investment::{InstrumentType, PriceChannel, derive_price_channel};
 use crate::transaction::amount::default_currency_code;
 
-use super::fund_nav::{FundSyncStats, LsjzPage, NavQuery, sync_one_fund_nav};
+use super::fund_nav::{FundSyncStats, LsjzPage, NavPoint, NavQuery, sync_one_fund_nav};
 use super::http::{
     KlineBar, Pacer, StockItem, ULIST_BATCH_SIZE, build_client, fetch_fx_kline, fetch_kline,
     fetch_ulist, price_cents_from_raw, secid_prefix,
@@ -101,7 +103,7 @@ fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
 /// #695）构造 secid 批量报价 upsert 现价（换算按随行精度位单点）、名称随行刷新、
 /// 日 K 回填周线；基金侧逐只历史净值按水位增量回填（ADR-0038 决策 6，委托
 /// [`sync_one_fund_nav`]）与逐只名称刷新；汇率 K 线同期落 `fx_rate_history` →
-/// 结果统计。六个回调均由调用方注入（五个抓取 + 一个进度回调，issue #897；生产接
+/// 结果统计。七个回调均由调用方注入（六个抓取 + 一个进度回调，issue #897；生产接
 /// HTTP 层与事件发射，测试注入 mock），本函数不触碰网络、不碰事件系统。
 /// 返回统计：`synced` = 处理成功的标的数（行情分区有效价 + 基金处理成功，含基金
 /// 「已是最新」）；`skipped` = 无通道行（无行情类型/市场未知/名称充代码）、停牌/
@@ -116,12 +118,16 @@ fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
 ///（报价+日 K 合并为行情标的一格，净值+名称合并为基金一格；停牌/查询无果/
 /// 「已是最新」照常推进——有通道标的不以成败计格）。`total` 为 0（全部无通道）
 /// 不发任何进度事件，空转不伪装成推进。
-pub(super) fn do_incremental_sync_with<F, K, X, N, M, P>(
+// 六个抓取闭包 + conn + 进度回调共 8 参：网络接缝逐通道注入使然（与 HTTP 层
+// request_from_hosts 同形），参数表就是「本编排消费哪些外部通道」的清单。
+#[allow(clippy::too_many_arguments)]
+pub(super) fn do_incremental_sync_with<F, K, X, N, S, M, P>(
     conn: &Connection,
     fetch: &mut F,
     fetch_kline: &mut K,
     fetch_fx: &mut X,
     fetch_nav: &mut N,
+    fetch_nav_snapshot: &mut S,
     fetch_fund_name: &mut M,
     progress: &mut P,
 ) -> Result<SyncInstrumentInfoResult>
@@ -130,6 +136,9 @@ where
     K: FnMut(&str) -> Result<Vec<KlineBar>>,
     X: FnMut(&str) -> Result<Vec<KlineBar>>,
     N: FnMut(&NavQuery) -> Result<LsjzPage>,
+    // 单请求全量净值闭包（issue #1062）：6 位基金代码 → 整只基金历史单位净值；
+    // 仅首刷深回填用，失败由 sync_one_fund_nav fail-closed 回退 fetch_nav 分页通道。
+    S: FnMut(&str) -> Result<Vec<NavPoint>>,
     // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
     // （不落库）。生产接基金详情通道，测试注入 mock。
     M: FnMut(&str) -> Result<String>,
@@ -276,7 +285,7 @@ where
         written: 0,
     };
     for fund in &funds {
-        sync_one_fund_nav(conn, fund, fetch_nav, &mut fund_stats)?;
+        sync_one_fund_nav(conn, fund, fetch_nav, fetch_nav_snapshot, &mut fund_stats)?;
         let name = fetch_fund_name(&fund.symbol)?;
         if refresh_instrument_name(conn, &fund.instrument_id, &name)? {
             renamed += 1;
@@ -356,10 +365,10 @@ pub(super) fn week_monday(d: NaiveDate) -> NaiveDate {
     d - chrono::Duration::days(d.weekday().num_days_from_monday() as i64)
 }
 
-/// 生产入口：接 HTTP 层的批量报价 / 日 K / 汇率 K 线 / 历史净值页 / 基金详情查询
-///（复用主机池、重试、限流 pacer 与价格换算）。五个抓取闭包串行使用，pacer 以 RefCell
-/// 共享，保证全部请求之间仍然保持统一的限速间隔。进度回调透传调用方（生产接
-/// 事件发射，issue #897）。
+/// 生产入口：接 HTTP 层的批量报价 / 日 K / 汇率 K 线 / 历史净值页 / 单请求全量净值 /
+/// 基金详情查询（复用主机池、重试、限流 pacer 与价格换算）。六个抓取闭包串行使用，
+/// pacer 以 RefCell 共享，保证全部请求之间仍然保持统一的限速间隔。进度回调透传调用方
+///（生产接事件发射，issue #897）。
 pub fn do_incremental_sync<P>(
     conn: &Connection,
     progress: &mut P,
@@ -375,6 +384,8 @@ where
     let mut fx = |pair: &str| fetch_fx_kline(&client, &mut pacer.borrow_mut(), pair, &beg);
     let mut nav =
         |query: &NavQuery| super::fund_nav::fetch_nav_page(&client, &mut pacer.borrow_mut(), query);
+    let mut nav_snapshot =
+        |code: &str| super::fund_nav::fetch_nav_snapshot(&client, &mut pacer.borrow_mut(), code);
     let mut fund_name =
         |code: &str| super::fetch_fund_quote_production(code).map(|quote| quote.name);
     do_incremental_sync_with(
@@ -383,6 +394,7 @@ where
         &mut kline,
         &mut fx,
         &mut nav,
+        &mut nav_snapshot,
         &mut fund_name,
         progress,
     )
