@@ -151,8 +151,9 @@ pub fn sell_input(
 
 /// 转换输入（issue #982 / ADR-0099）：两腿标的/份额与两侧确认金额为热点；行金额
 /// 占位 0（服务端按 FIFO 结转成本重算，与 buy/sell「金额占位、服务端重算」同款）。
-/// 手续费为冷字段（`fee_cents: Some(..)`），如实记录、不摊入结转成本。
-#[allow(clippy::too_many_arguments)] // 两腿标 share + 两腿份额 + 两侧确认金额 + 日期，热点即此
+/// 手续费为冷字段（`fee_cents: Some(..)` 结构体更新覆盖），如实记录、不摊入结转
+/// 成本，默认与 sell 同形（None，后端缺省即 0）。
+#[allow(clippy::too_many_arguments)] // 两腿标的 + 两腿份额 + 两侧确认金额 + 日期，热点即此
 pub fn convert_input(
     account_id: &str,
     out_instrument_id: &str,
@@ -170,7 +171,6 @@ pub fn convert_input(
         to_quantity: Some(in_quantity),
         out_amount_cents: Some(out_amount_cents),
         in_amount_cents: Some(in_amount_cents),
-        fee_cents: Some(0),
         ..txn_base(TransactionKind::Convert, 0, account_id, date)
     }
 }
