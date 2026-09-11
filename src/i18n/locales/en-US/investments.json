@@ -31,7 +31,8 @@
     "searchPlaceholder": "Search instruments (symbol / name / pinyin)",
     "filterAccount": "All accounts",
     "totalMarketValue": "Total Market Value",
-    "totalUnrealizedPnl": "Total Unrealized P&L",
+    "totalUnrealizedPnl": "Holding P&L",
+    "totalCumulativePnl": "Cumulative P&L",
     "columns": {
       "symbol": "Instrument",
       "name": "Name",
@@ -41,7 +42,7 @@
       "price": "Price",
       "navDate": "NAV Date",
       "marketValue": "Market Value",
-      "unrealizedPnl": "Unrealized P&L"
+      "unrealizedPnl": "Holding P&L"
     }
   },
   "browser": {

@@ -28,6 +28,7 @@ import type {
   CreateScheduledInput,
   CreateTransactionResult,
   Currency,
+  CurrencyCumulativePnl,
   DashboardOverview,
   DataLocationChangeOutcome,
   DataLocationInfo,
@@ -294,6 +295,10 @@ export const api = {
   // 已实现盈亏汇总
   realizedPnlSummary: (filter?: PnlFilter) =>
     invoke<RealizedPnlSummary>('realized_pnl_summary', { filter: filter ?? null }),
+  // 按币种分组的累计收益（issue #1077）：未实现 + 已实现两腿相加，
+  // 持仓页签合计区与首页投资卡共用（不做跨币种折算，缺价行情不计入）
+  cumulativePnlSummary: () =>
+    invoke<CurrencyCumulativePnl[]>('cumulative_pnl_summary'),
 
   // 物品（issue #116）：独立领域（非参考数据），写入后由后端发 ledger:changed
   listItems: () => invoke<ItemWithDailyCost[]>('list_items'),

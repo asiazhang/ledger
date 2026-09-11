@@ -77,7 +77,7 @@ const INVESTED_INSTRUMENT_FETCH_LIMIT = 500
  *
  * loading 置收、错误捕获与文案归一、错误展示（默认 toast + error 双通道）、
  * 竞态裁决全部内化进 Loadable；本薄壳只持任务结果（rows）与首跑时序，
- * Promise.all 双请求与行映射逻辑留在发起闭包内。失败不向上抛（首刷/刷新不再
+ * Promise.all 三请求（持仓 + 持仓标的字典 + 累计收益聚合）与行映射逻辑留在发起闭包内。失败不向上抛（首刷/刷新不再
  * 产生未处理 rejection，spec 治愈清单①）：error 置位 + 默认 toast，rows 保持
  * 原值不清空成空态。
  */
@@ -85,9 +85,13 @@ export function usePortfolioOverview() {
   const reference = useReferenceStore()
 
   const rows = ref<PortfolioRow[]>([])
+  // 累计收益（issue #1077）：后端按币种分组聚合（未实现 + 已实现两腿相加），
+  // 是**全账本**口径、不随持仓页签的搜索/账户过滤收窄——已实现腿来自平仓匹配、
+  // 无法归到某一行可见持仓。持仓页签合计区与首页投资卡共用本结果。
+  const totalCumulativePnlGroups = ref<CurrencyAmountGroup[]>([])
 
   const { loading, error, run } = useLoadable(async () => {
-    const [holdings, invested] = await Promise.all([
+    const [holdings, invested, cumulative] = await Promise.all([
       api.listHoldings(),
       // 「持仓标的」字典：有当前持仓批次（remaining_quantity > 0），与增量同步同口径
       api.listInstruments({
@@ -95,17 +99,27 @@ export function usePortfolioOverview() {
         // 持仓标的一般远少于标的总数；list_instruments 单页上限即此值
         page_size: INVESTED_INSTRUMENT_FETCH_LIMIT,
       }),
+      api.cumulativePnlSummary(),
     ])
     // 行数通常远小于标的数，直接按 id 建 map（O(n+m)）
     const instrumentMap = new Map(invested.items.map((i) => [i.id, i]))
-    return holdings.map((h: Holding) => toRow(h, instrumentMap, reference.accountMap))
+    return {
+      rows: holdings.map((h: Holding) => toRow(h, instrumentMap, reference.accountMap)),
+      cumulativePnlGroups: cumulative.map((g) => ({
+        currencyCode: g.currency_code,
+        cents: g.cumulative_pnl_cents,
+      })),
+    }
   })
 
   async function refresh() {
     const result = await run()
     // 失败回空（error 已置位）：rows 保持原值不清空；迟到前发结果已被 Loadable
     // 竞态裁决作废为空，不会覆写终态
-    if (result !== null) rows.value = result
+    if (result !== null) {
+      rows.value = result.rows
+      totalCumulativePnlGroups.value = result.cumulativePnlGroups
+    }
   }
 
   const totalMarketValueGroups = computed(() =>
@@ -119,7 +133,15 @@ export function usePortfolioOverview() {
     void refresh()
   })
 
-  return { rows, loading, error, totalMarketValueGroups, totalUnrealizedPnlGroups, refresh }
+  return {
+    rows,
+    loading,
+    error,
+    totalMarketValueGroups,
+    totalUnrealizedPnlGroups,
+    totalCumulativePnlGroups,
+    refresh,
+  }
 }
 
 interface InstrumentLike {

@@ -415,6 +415,19 @@ pub struct CurrencyPnl {
     pub realized_pnl_cents: i64,
 }
 
+/// 按币种分组的累计收益小计（issue #1077 / 词汇表「累计收益（CumulativePnl）」）：
+/// 未实现盈亏（Holding）+ 已实现盈亏（RealizedPnl）两腿相加，按账户币种独立成组、
+/// 不做跨币种折算（同 ADR-0107 决策 6 的持仓合计口径）。
+///
+/// **空值语义采 Holding 侧**：缺价 / 缺汇率的持仓其未实现腿为空值，不计入本组、
+/// 不以零计入（与持仓视图合计既有的「跳过空值」语义一致）；已实现腿来自平仓匹配，
+/// 不受当前持仓有无行情影响。某币种两腿皆空时该组不出现（由调用方渲染为空态）。
+#[derive(Debug, Serialize)]
+pub struct CurrencyCumulativePnl {
+    pub currency_code: String,
+    pub cumulative_pnl_cents: i64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct YearPnl {
     pub year: String,
@@ -487,6 +500,15 @@ impl FromRow for CurrencyPnl {
         Ok(CurrencyPnl {
             currency_code: row.get(0)?,
             realized_pnl_cents: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+        })
+    }
+}
+
+impl FromRow for CurrencyCumulativePnl {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(CurrencyCumulativePnl {
+            currency_code: row.get(0)?,
+            cumulative_pnl_cents: row.get(1)?,
         })
     }
 }

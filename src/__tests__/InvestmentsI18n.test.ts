@@ -25,6 +25,7 @@ vi.mock('vue-router', () => ({
 const EMPTY_INVESTMENT_DEFAULTS = {
   list_instruments: { items: [], total: 0 },
   list_holdings: [],
+  cumulative_pnl_summary: [],
   portfolio_value_trend: { currency_code: 'CNY', points: [] },
   realized_pnl_summary: {
     total_realized_pnl_cents: 0,
