@@ -29,6 +29,7 @@ pub mod logger;
 pub mod merchants;
 pub mod physical_asset;
 pub mod policy;
+pub mod read_entry;
 pub mod reports;
 pub mod scheduled_transactions;
 pub mod settings;
