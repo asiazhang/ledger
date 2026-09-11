@@ -89,6 +89,9 @@ import type {
   SyncStatus,
   SyncChannelConfig,
   SyncChannelConfigInput,
+  SyncCheckpointInfo,
+  SyncCheckpointPublished,
+  SyncBootstrapOutcome,
   ParkedOpInfo,
   TrendRange,
   TransactionInput,
@@ -468,4 +471,12 @@ export const api = {
   getSyncChannelConfig: () => invoke<SyncChannelConfig>('get_sync_channel_config'),
   setSyncChannelConfig: (config: SyncChannelConfigInput) =>
     invoke<void>('set_sync_channel_config', { config }),
+  // 检查点发布/预检/引导（issue #864 新端加入向导）：存量数据设备先发布检查
+  // 点；全新设备预检后引导（整库换入快照，成功后由调用方重启）。passphrase
+  // 为主口令（密文快照开封与封包用，不落日志）。
+  getSyncChannelCheckpoint: () => invoke<SyncCheckpointInfo | null>('get_sync_channel_checkpoint'),
+  publishSyncCheckpoint: (passphrase?: string) =>
+    invoke<SyncCheckpointPublished>('publish_sync_checkpoint', { passphrase: passphrase || null }),
+  bootstrapSyncFromChannel: (passphrase?: string) =>
+    invoke<SyncBootstrapOutcome>('bootstrap_sync_from_channel', { passphrase: passphrase || null }),
 }

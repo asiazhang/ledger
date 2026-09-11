@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::settings::{self, SettingKey};
-use crate::sync_engine::channel::{ChannelLayout, ChannelOptions, SyncRoundReport, run_round_with};
+use crate::sync_engine::channel::{
+    ChannelLayout, ChannelOptions, CheckpointPointer, FetchedCheckpoint, SyncRoundReport,
+    fetch_checkpoint, peek_checkpoint_pointer, publish_checkpoint, run_round_with,
+};
 use crate::sync_engine::envelope::EnvelopeMode;
 use crate::sync_engine::transport::webdav::{WebDavConfig, WebDavTransport};
 
@@ -78,6 +81,32 @@ impl SyncChannel {
         options: &ChannelOptions,
     ) -> Result<SyncRoundReport> {
         run_round_with(conn, &self.transport, &self.layout, mode, options)
+    }
+
+    /// 读取通道上的当前检查点指针（不下载快照体；新端引导前的预检接缝，
+    /// 壳层向导据此区分「通道上还没有检查点」与「发现检查点可引导」，#864）。
+    pub fn checkpoint_pointer(&self) -> Result<Option<CheckpointPointer>> {
+        peek_checkpoint_pointer(&self.transport, &self.layout)
+    }
+
+    /// 发布检查点（全量快照 + 位点成对封包上通道，manifest 换指针）：
+    /// 与轮次同款「句柄交出传输与布局」形态，调用方不必解包句柄。
+    ///
+    /// 须在单连接互斥锁内调用（位点与快照同刻成对，
+    /// [`crate::sync_engine::checkpoint::create_checkpoint`] 约束）。
+    pub fn publish_checkpoint(
+        &self,
+        conn: &Connection,
+        mode: &EnvelopeMode<'_>,
+    ) -> Result<CheckpointPointer> {
+        publish_checkpoint(conn, &self.transport, &self.layout, mode)
+    }
+
+    /// 拉取通道上的当前检查点（新端引导取件；解封凭主口令，明文模式免口令）。
+    /// 返回值携带封包形态标记（[`FetchedCheckpoint::sealed`]），引导端据此
+    /// 对齐本库加密形态（#864）。
+    pub fn fetch_checkpoint(&self, passphrase: Option<&str>) -> Result<FetchedCheckpoint> {
+        fetch_checkpoint(&self.transport, &self.layout, passphrase)
     }
 }
 

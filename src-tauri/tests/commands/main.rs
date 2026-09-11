@@ -22,4 +22,5 @@ mod books;
 mod boot;
 mod isolation;
 mod sync_channel;
+mod sync_checkpoint;
 mod sync_trigger;

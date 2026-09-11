@@ -1,5 +1,5 @@
-//! 多端同步命令壳（issue #862 / #863 / ADR-0091）：同步状态查询、手动同步轮次
-//! 与通道配置（WebDAV 凭据）。
+//! 多端同步命令壳（issue #862 / #863 / #864 / ADR-0091）：同步状态查询、手动同步
+//! 轮次、通道配置（WebDAV 凭据）与检查点发布/预检/引导（新端加入向导的命令面）。
 //!
 //! 只做参数解包、凭据/信封模式解析与轮次编排一行调用；通道布局、轮次协议、
 //! 幂等重放、挂起语义与触发编排全在 [`crate::sync_engine`]（域不依赖壳，
@@ -34,7 +34,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::commands::encryption::{active_book_id, active_db_path};
-use crate::db::encryption::{DbFileKind, probe_file_kind, verify_source_passphrase};
+use crate::db::encryption::{
+    DbFileKind, enable_encryption_for_file, probe_file_kind, verify_source_passphrase,
+};
 use crate::db::passphrase_cache::{self, CacheLoad};
 use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
@@ -45,7 +47,8 @@ use crate::sync_engine::trigger::{
     not_configured_error, run_round_once,
 };
 use crate::sync_engine::{
-    EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport, device_id, parked_ops,
+    EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport, bootstrap_from_checkpoint,
+    bootstrap_preflight, device_id, parked_ops,
 };
 use crate::write_entry::{Outcome, write_entry};
 
@@ -308,4 +311,192 @@ fn resolve_passphrase(
     };
     verify_source_passphrase(db_path, &passphrase)?;
     Ok(Some(passphrase))
+}
+
+// ---------------------------------------------------------------------------
+// 检查点发布 / 预检 / 引导（issue #864 新端加入向导的命令面；ADR-0091 决策 9、
+// ADR-0098 决策 5——引导是整库换入的重动作，只经用户显式向导，不挂自动轮次）
+// ---------------------------------------------------------------------------
+
+/// 通道上的检查点指针回显（预检形态；不含快照体）。
+#[derive(Debug, Serialize)]
+pub struct SyncCheckpointInfoState {
+    /// 检查点代数（每次发布单调递增）。
+    pub generation: i64,
+    /// 密文字节数（快照体大小，供向导展示）。
+    pub size: u64,
+    /// 产出时刻（产出端本地事实，供展示）。
+    pub created_at: String,
+}
+
+/// 预检通道上的当前检查点（issue #864 引导向导首步）：只读 manifest 不下载
+/// 快照体，向导据此区分「通道上还没有检查点（先去旧设备发布）」与「发现检查
+/// 点，可引导」。通道未配置报 `sync-channel.not-configured`。
+#[tauri::command]
+pub async fn get_sync_channel_checkpoint<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<Option<SyncCheckpointInfoState>> {
+    let conn = app.state::<DbState>().conn.clone();
+    run_db("get_sync_channel_checkpoint", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let config = configured_channel(&conn)?.ok_or_else(not_configured_error)?;
+        let channel = build_channel(&config)?;
+        Ok(channel
+            .checkpoint_pointer()?
+            .map(|p| SyncCheckpointInfoState {
+                generation: p.generation,
+                size: p.size,
+                created_at: p.created_at,
+            }))
+    })
+    .await
+}
+
+/// 检查点发布结果（向导成功提示的数据面）。
+#[derive(Debug, Serialize)]
+pub struct SyncCheckpointPublished {
+    /// 本次发布的代数。
+    pub generation: i64,
+    /// 密文字节数。
+    pub size: u64,
+    /// 明文模式标记（快照明文上通道，界面显著提示依据，ADR-0091 决策 8）。
+    pub plaintext_mode: bool,
+}
+
+/// 发布检查点到通道（issue #864）：全量快照 + 各流位点成对封包上传，manifest
+/// 换指针——存量数据的旧端把「新端可引导的来源」放上通道的唯一动作。
+///
+/// 本命令是通道操作而非账本写入：本地数据零变化（零信号），且 `VACUUM INTO`
+/// 无法在事务内执行，故不经统一写入口 [`crate::write_entry::write_entry`]、
+/// 直接持主连接锁调用（位点与快照同刻成对约束，`create_checkpoint`）。
+/// 信封模式解析与 `sync_now` 同款（`resolve_passphrase` 单点：密文库凭显式
+/// 口令或钥匙串，先验证后封包）。
+#[tauri::command]
+pub async fn publish_sync_checkpoint<R: Runtime>(
+    app: AppHandle<R>,
+    passphrase: Option<String>,
+) -> Result<SyncCheckpointPublished> {
+    let conn = app.state::<DbState>().conn.clone();
+    let db_path = active_db_path(&app)?;
+    let book = active_book_id(&app);
+    run_db("publish_sync_checkpoint", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let config = configured_channel(&conn)?.ok_or_else(not_configured_error)?;
+        if book.is_none() {
+            return Err(book_unavailable_error());
+        }
+        let channel = build_channel(&config)?;
+        let passphrase_holder = resolve_passphrase(&db_path, book.as_deref(), passphrase)?;
+        let mode = match &passphrase_holder {
+            Some(passphrase) => EnvelopeMode::Encrypted { passphrase },
+            None => EnvelopeMode::Plaintext,
+        };
+        let pointer = channel.publish_checkpoint(&conn, &mode)?;
+        Ok(SyncCheckpointPublished {
+            generation: pointer.generation,
+            size: pointer.size,
+            plaintext_mode: mode.is_plaintext(),
+        })
+    })
+    .await
+}
+
+/// 引导结果（向导收尾提示与重启决策的数据面）。
+#[derive(Debug, Serialize)]
+pub struct SyncBootstrapOutcome {
+    /// 采纳的检查点代数。
+    pub generation: i64,
+    /// 快照密文字节数。
+    pub size: u64,
+    /// 引导后本库已从明文转换为本机密文库（重启后需凭主口令解锁）。
+    pub reencrypted: bool,
+}
+
+/// 新端从通道检查点引导（issue #864）：拉取通道当前检查点并整库换入本机——
+/// 「加入即新库」的显式向导动作，成功后由前端原位重引导（`restart_app`）。
+///
+/// 序列（全部持主连接锁，与轮次同形；快照拉取是整库体量，期间业务写被互斥
+/// 排除是正确性要求而非副作用）：
+/// 1. 前置守卫（fail fast，不浪费拉取；[`crate::sync_engine::
+///    bootstrap_preflight`]，两半同序优先级在域内单点）：通道在位；未参与
+///    同步（`sync-engine.bootstrap-not-fresh`）；无用户业务数据（
+///    `sync-channel.bootstrap-library-not-empty`——快照整库覆盖，带存量数据
+///    被引导等于丢账）。
+/// 2. 拉取检查点：信封自描述，密文快照凭口令开封（缺口令报域的
+///    `sync-engine.checkpoint-passphrase-required` 可重试，错误口令报
+///    `encryption.passphrase-incorrect`）。
+/// 3. 信封形态对齐守卫：同一通道的段必须同形态可开（明文端开不了密文段、
+///    密文端封的段明文对端开不了）——引导端必须对齐快照形态：
+///    - 密文快照 × 密文本机：输入口令必须就是本机主口令（后续轮次以本机口令
+///      封段，两把钥匙会让对端解不开），不一致报
+///      `sync-channel.bootstrap-passphrase-mismatch`；
+///    - 明文快照 × 密文本机：拒绝（`sync-channel.bootstrap-form-mismatch`），
+///      请先关闭加密再引导；
+///    - 密文快照 × 明文本机：引导后整库转换为本机密文库（复用备份域加密
+///      转换，`enable_encryption_for_file` 原子替换 + `.bak` 保留）。
+/// 4. 整库换入（域 [`bootstrap_from_checkpoint`]：SQL 级重建、换入本机设备
+///    身份、位点以快照为准；快照 schema 偏斜双向处置）。
+/// 5. 清「上次成功同步时刻」：本机簿记事实，快照携带的是来源端的值。
+///
+/// 本命令不经统一写入口（整库替换同 Restore 先例，零信号）：引导后前端立即
+/// 原位重引导重载数据，信号无消费窗口。转换失败的可恢复路径：本机已是引导
+/// 后的完整数据，经设置页「开启加密」以同一主口令转换即可重新对齐通道形态。
+#[tauri::command]
+pub async fn bootstrap_sync_from_channel<R: Runtime>(
+    app: AppHandle<R>,
+    passphrase: Option<String>,
+) -> Result<SyncBootstrapOutcome> {
+    let conn = app.state::<DbState>().conn.clone();
+    let db_path = active_db_path(&app)?;
+    run_db("bootstrap_sync_from_channel", move || {
+        let mut conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        // 1. 前置守卫（fail fast）：未参与同步且无用户业务数据（「加入即新库」）。
+        let config = configured_channel(&conn)?.ok_or_else(not_configured_error)?;
+        bootstrap_preflight(&conn)?;
+        let channel = build_channel(&config)?;
+        // 2. 拉取检查点（持锁；快照体整库下载）。
+        let fetched = channel.fetch_checkpoint(passphrase.as_deref())?;
+        // 3. 信封形态对齐守卫（替换本机数据前判定，失败零副作用）。
+        let local_encrypted = probe_file_kind(&db_path)? == DbFileKind::Encrypted;
+        if fetched.sealed && local_encrypted {
+            // fetch 成功 ⇒ 口令已验证可开快照（缺口令/错口令在域内归一报错）。
+            let passphrase = passphrase.as_deref().unwrap_or_default();
+            if verify_source_passphrase(&db_path, passphrase).is_err() {
+                return Err(AppError::coded(
+                    "sync-channel.bootstrap-passphrase-mismatch",
+                    "输入的主口令与本机主口令不一致：密文库引导须以本机主口令进行（通道上的快照以同一主口令封包）",
+                ));
+            }
+        } else if !fetched.sealed && local_encrypted {
+            return Err(AppError::coded(
+                "sync-channel.bootstrap-form-mismatch",
+                "通道上的检查点为明文，本机为密文库：请先在设置中关闭加密，或让来源端开启加密后重新发布检查点",
+            ));
+        }
+        let reencrypted = fetched.sealed && !local_encrypted;
+        // 4. 整库换入（域守卫复验同步三表全空）。
+        bootstrap_from_checkpoint(&mut conn, &fetched.checkpoint, passphrase.as_deref())?;
+        // 5. 本机簿记事实不采纳来源端取值（在文件级转换前执行：转换的原子
+        //   替换会让本连接指向被换下的旧文件，此后一切写路径不得再经它——
+        //   与既有「开启加密后由前端重启」同一纪律）。
+        crate::settings::clear(&conn, crate::settings::SettingKey::SyncLastSyncAt)?;
+        // 密文快照 × 明文本机：引导后整库转换为本机密文库（文件级原子替换，
+        // 复用备份域机制；重启后新连接凭口令打开）。
+        if reencrypted {
+            let passphrase = passphrase.as_deref().unwrap_or_default();
+            enable_encryption_for_file(&db_path, passphrase)?;
+        }
+        tracing::info!(
+            generation = fetched.generation,
+            size = fetched.size,
+            reencrypted,
+            "已从通道检查点完成新端引导"
+        );
+        Ok(SyncBootstrapOutcome {
+            generation: fetched.generation,
+            size: fetched.size,
+            reencrypted,
+        })
+    })
+    .await
 }

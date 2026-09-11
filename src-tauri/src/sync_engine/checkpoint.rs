@@ -89,19 +89,14 @@ pub fn bootstrap_from_checkpoint(
     checkpoint: &Checkpoint,
     passphrase: Option<&str>,
 ) -> Result<()> {
-    // 守卫：目标尚未参与同步（三张同步元数据表全空）。
-    for (table, empty) in [
-        ("sync_ops", ops::is_empty(conn)?),
-        ("sync_stream_positions", positions::is_empty(conn)?),
-        ("sync_parked_ops", super::parked::is_empty(conn)?),
-    ] {
-        if !empty {
-            return Err(AppError::codedp(
-                "sync-engine.bootstrap-not-fresh",
-                format!("本机已参与同步（{table} 非空），拒绝整库引导以免覆盖既有同步状态"),
-                &[table],
-            ));
-        }
+    // 守卫：目标尚未参与同步（三张同步元数据表全空；权威复验，壳层拉取前
+    // 已有同序前置）。
+    if let Some(table) = first_sync_table_not_empty(conn)? {
+        return Err(AppError::codedp(
+            "sync-engine.bootstrap-not-fresh",
+            format!("本机已参与同步（{table} 非空），拒绝整库引导以免覆盖既有同步状态"),
+            &[table],
+        ));
     }
     // 引导前捕获/生成本机设备身份（首用生成单点；重建后换回，快照携带的
     // 来源方身份不残留）。
@@ -410,6 +405,85 @@ pub fn truncate_stream_before(
         );
     }
     Ok(deleted)
+}
+
+/// 同步元数据表非空检查（引导守卫的第一半）：返回命中的表名。
+/// [`bootstrap_from_checkpoint`] 的权威守卫与 [`bootstrap_preflight`] 共享。
+fn first_sync_table_not_empty(conn: &Connection) -> Result<Option<&'static str>> {
+    for (table, empty) in [
+        ("sync_ops", ops::is_empty(conn)?),
+        ("sync_stream_positions", positions::is_empty(conn)?),
+        ("sync_parked_ops", super::parked::is_empty(conn)?),
+    ] {
+        if !empty {
+            return Ok(Some(table));
+        }
+    }
+    Ok(None)
+}
+
+/// 引导前置守卫（fail fast，壳层在拉取快照前调用；[bootstrap_from_checkpoint]
+/// 内部对同步三表的复验仍是权威）：目标必须是「全新空库」——未参与同步且无
+/// 用户业务数据。已参与同步报 `sync-engine.bootstrap-not-fresh`（优先于业务
+/// 数据判定：已加入同步的端重试引导，正确提示是「已参与同步」而非「本机
+/// 有数据」）；残留业务数据报 `sync-channel.bootstrap-library-not-empty`。
+pub fn bootstrap_preflight(conn: &Connection) -> Result<()> {
+    if let Some(table) = first_sync_table_not_empty(conn)? {
+        return Err(AppError::codedp(
+            "sync-engine.bootstrap-not-fresh",
+            format!("本机已参与同步（{table} 非空），拒绝整库引导以免覆盖既有同步状态"),
+            &[table],
+        ));
+    }
+    if library_has_user_data(conn)? {
+        return Err(AppError::coded(
+            "sync-channel.bootstrap-library-not-empty",
+            "本机已有账本数据，不能从通道引导（引导将以快照整库替换本机账本）；请改用备份恢复合并数据，或在本机是全新空账本时重试",
+        ));
+    }
+    Ok(())
+}
+
+/// 本机库是否已有用户业务数据（「加入即新库」守卫的判据，[`bootstrap_preflight`] 消费）。
+///
+/// 引导是整库换入——带存量业务数据的库被引导等于丢账（快照整库覆盖）。
+/// 领域守卫（[`bootstrap_from_checkpoint`]）只挡「已参与同步」；「业务数据
+/// 是否残留」是同步边界的知识（业务域清单与 Backup/Restore 迁移边界对齐），
+/// 归本域单点、壳层引导前置消费（issue #864）。探针为闭集清单：各业务域
+/// 的用户事实行（种子行以 `device_id = 'seed'` 排除；派生数据——余额/净值
+/// 缓存、期次行、持仓批次结转——不属用户事实或被主表探针覆盖，不在清单；
+/// 币种字典无来源设备列且全为种子闭集，自建币种残留属可接受边界）。
+pub fn library_has_user_data(conn: &Connection) -> Result<bool> {
+    const PROBE_TABLES: &[&str] = &[
+        "transactions",
+        "accounts",
+        "categories",
+        "merchants",
+        "insurers",
+        "instruments",
+        "scheduled_transactions",
+        "budgets",
+        "policies",
+        "items",
+        "physical_assets",
+        "exchange_rates",
+        "fx_rate_history",
+        "market_prices",
+        "price_history",
+        "security_lots",
+    ];
+    for table in PROBE_TABLES {
+        // 表名是本模块闭集常量（非用户输入），无注入面。
+        let has_row: bool = conn.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE device_id <> 'seed')"),
+            [],
+            |r| r.get(0),
+        )?;
+        if has_row {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// 快照临时文件路径（系统临时目录 + 唯一名，收尾统一 [`fs_util::cleanup`]）。

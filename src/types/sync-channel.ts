@@ -69,3 +69,33 @@ export interface ParkedOpInfo {
   /// 挂起时刻（本机簿记事实）
   parked_at: string
 }
+
+/// 通道上的检查点指针（预检回显，issue #864；不含快照体）。
+export interface SyncCheckpointInfo {
+  /// 检查点代数（每次发布单调递增）
+  generation: number
+  /// 密文字节数（快照体大小）
+  size: number
+  /// 产出时刻（产出端本地事实，供展示）
+  created_at: string
+}
+
+/// 检查点发布结果（issue #864）。
+export interface SyncCheckpointPublished {
+  /// 本次发布的代数
+  generation: number
+  /// 密文字节数
+  size: number
+  /// 明文模式标记（快照明文上通道，界面显著提示依据）
+  plaintext_mode: boolean
+}
+
+/// 新端从通道检查点引导的结果（issue #864）。
+export interface SyncBootstrapOutcome {
+  /// 采纳的检查点代数
+  generation: number
+  /// 快照密文字节数
+  size: number
+  /// 引导后本库已从明文转换为本机密文库（重启后需凭主口令解锁）
+  reencrypted: boolean
+}
