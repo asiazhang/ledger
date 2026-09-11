@@ -91,7 +91,8 @@ fn delete_buy_by_symbol(world: &mut LedgerWorld, symbol: String) {
 
 /// 按标的 + 动作（buy/sell）定位交易 id：场景内同标的多笔买卖并存，
 /// 不能依赖「最近交易」指针（买入后再卖出，最近交易已指向卖出）。
-fn trade_txn_id(world: &LedgerWorld, symbol: &str, action: &str) -> String {
+/// pub(crate)：转换回归扫尾步骤复用（尝试删除被转换消耗的买入，issue #982）。
+pub(crate) fn trade_txn_id(world: &LedgerWorld, symbol: &str, action: &str) -> String {
     world_conn!(world)
         .query_row(
             "SELECT st.transaction_id FROM security_transactions st \

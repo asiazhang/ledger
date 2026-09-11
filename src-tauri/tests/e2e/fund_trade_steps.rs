@@ -41,7 +41,8 @@ struct FundConfirmation {
 
 /// 按确认单录入基金申赎（金额权威：amount_cents = 确认单整分金额，wire 不带单价）。
 /// `funding_name` 非空时携带出资账户（issue #937 / ADR-0096：直扣买卖的资金流归因），
-/// 经同一行为层公开创建入口写入。
+/// 经同一行为层公开创建入口写入。交易日由调用方显式给出（issue #982）：转换旅程的
+/// 申赎须与转换日构成先后（FIFO 消耗序），既有步骤的固定日期仅是缺省捷径。
 fn fund_trade(
     world: &mut LedgerWorld,
     kind: TransactionKind,
@@ -49,17 +50,13 @@ fn fund_trade(
     confirmation: FundConfirmation,
     account_name: &str,
     funding_name: Option<&str>,
+    date: &str,
 ) {
     let FundConfirmation {
         quantity,
         amount_cents,
         fee_cents,
     } = confirmation;
-    // 申购/赎回错开交易日（与持仓批次 FIFO 排序、列表断言的日期序一致）
-    let date = match kind {
-        TransactionKind::Buy => "2026-01-10",
-        _ => "2026-01-20",
-    };
     let instrument_id = instrument_id_by_symbol(&world_conn!(world), symbol);
     let account_id = world.account_id(account_name);
     let currency_code = world_conn!(world)
@@ -109,6 +106,35 @@ fn fund_buy(
         },
         &account_name,
         None,
+        "2026-01-10",
+    );
+}
+
+/// 带交易日形态（issue #982）：转换旅程的申购日须先于转换日（FIFO 消耗序）。
+#[when(
+    expr = "按确认单于 {string} 申购基金 {string} 份额 {float} 金额 {int} 手续费 {int} 到投资账户 {string}"
+)]
+fn fund_buy_on(
+    world: &mut LedgerWorld,
+    date: String,
+    symbol: String,
+    quantity: f64,
+    amount_cents: i64,
+    fee_cents: i64,
+    account_name: String,
+) {
+    fund_trade(
+        world,
+        TransactionKind::Buy,
+        &symbol,
+        FundConfirmation {
+            quantity,
+            amount_cents,
+            fee_cents,
+        },
+        &account_name,
+        None,
+        &date,
     );
 }
 
@@ -132,6 +158,35 @@ fn fund_sell(
         },
         &account_name,
         None,
+        "2026-01-20",
+    );
+}
+
+/// 带交易日形态（issue #982）：全平仓旅程的赎回日在转换之后。
+#[when(
+    expr = "按确认单于 {string} 赎回基金 {string} 份额 {float} 金额 {int} 手续费 {int} 从投资账户 {string}"
+)]
+fn fund_sell_on(
+    world: &mut LedgerWorld,
+    date: String,
+    symbol: String,
+    quantity: f64,
+    amount_cents: i64,
+    fee_cents: i64,
+    account_name: String,
+) {
+    fund_trade(
+        world,
+        TransactionKind::Sell,
+        &symbol,
+        FundConfirmation {
+            quantity,
+            amount_cents,
+            fee_cents,
+        },
+        &account_name,
+        None,
+        &date,
     );
 }
 
@@ -160,6 +215,7 @@ fn fund_buy_with_funding(
         },
         &account_name,
         Some(&funding_name),
+        "2026-01-10",
     );
 }
 
