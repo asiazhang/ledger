@@ -423,3 +423,55 @@ describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收�
     expect(r.status).toBe(0)
   })
 })
+
+describe('check-structure 原生事务语句禁令（issue #1014 / #1003 定案 7）', () => {
+  it('产品代码手写 BEGIN → 红并定位文件行号', () => {
+    const args = makeFixture({
+      'accounts/core.rs': 'pub fn f(conn: &Connection) {\n    conn.execute("BEGIN", []);\n}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('原生事务语句')
+    expect(r.output).toContain('accounts/core.rs:2')
+    expect(r.output).toContain('db/tx_scope.rs')
+  })
+
+  it('COMMIT / ROLLBACK 手写同样识别 → 红', () => {
+    const args = makeFixture({
+      'transaction/batch.rs': 'pub fn g(conn: &Connection) {\n    conn.execute("COMMIT", []);\n}\n',
+      'scheduled_transactions/engine.rs':
+        'pub fn h(conn: &Connection) {\n    conn.execute("ROLLBACK", []);\n}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('transaction/batch.rs:2')
+    expect(r.output).toContain('scheduled_transactions/engine.rs:2')
+  })
+
+  it('唯一合法住址 db/tx_scope.rs 内的原生事务语句 → 绿', () => {
+    const args = makeFixture({
+      'db/tx_scope.rs': 'pub fn hold(conn: &Connection) {\n    conn.execute("BEGIN", []);\n}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('注释中的 execute("BEGIN") 不误报（只掩码注释、保留字符串）', () => {
+    const args = makeFixture({
+      'accounts/core.rs': [
+        '// 原生事务语句禁令：conn.execute("BEGIN", []) 只许出现在 db/tx_scope.rs',
+        '/// conn.execute("COMMIT", [])',
+        'pub fn f() {}',
+        '',
+      ].join('\n'),
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('真实仓库默认通过：原生事务语句仅 db/tx_scope.rs 一处', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain('原生事务语句全树扫描')
+  })
+})

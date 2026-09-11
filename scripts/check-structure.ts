@@ -36,6 +36,9 @@
 //    域模型文件（model.rs / models.rs）内的 `pub use …::*` 聚合即红，
 //    所有权必须逐类型可见（`pub(crate) use` 受限再导出与私有 `use` glob 引入
 //    不在文本可辨范围，靠评审兜底）。
+// ③ 原生事务语句禁令（issue #1014 / #1003 grilling 定案 7）——产品代码手写
+//    `BEGIN`/`COMMIT`/`ROLLBACK` 即红，唯一合法住址 `db/tx_scope.rs`（事务原语
+//    本体）；靶形态落在字符串里，扫描保留字符串、只掩码注释；外挂测试豁免不变。
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-structure.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-structure.ts [src-dir]
@@ -156,6 +159,15 @@ const MODEL_GLOB_REEXPORT_PATTERN = /\bpub\s+use\s+[\w:]*\bmodels?\b\s*::\s*\*/
 
 /** 规则②形态：任意 glob 再导出（仅用于域模型文件内的聚合扫描） */
 const MODEL_FILE_GLOB_PATTERN = /\bpub\s+use\s+[\w:]*\*/
+
+/** 规则③形态：产品代码原生事务语句（issue #1014 / #1003 grilling 定案 7）——
+ *  事务壳（无条件自持 `hold_transaction` / 嵌套感知 `ensure_transaction`）归
+ *  基础设施 `db::tx_scope`，其余位置手写 `BEGIN` / `COMMIT` / `ROLLBACK` 即红。
+ *  靶形态落在字符串字面量里，扫描须 `keepLiterals=true`（只掩码注释）。 */
+const NATIVE_TX_STMT_PATTERN = /\bexecute\s*\(\s*"(?:BEGIN|COMMIT|ROLLBACK)\b/
+
+/** 原生事务语句唯一合法住址（事务原语本体，issue #1014） */
+const NATIVE_TX_STMT_ALLOWED = 'db/tx_scope.rs'
 
 /** 业务域→同步域引用锚点（crate 根前缀限定；掩码后匹配） */
 const SYNC_ENGINE_REF_PATTERN = /\b(?:crate|tauri_app_lib)\s*::\s*sync_engine\b/
@@ -279,8 +291,10 @@ function isTestFile(relPath: string): boolean {
  * 处理形态：行注释（//、///、//!）、块注释（/* .. *&#47;，可嵌套）、
  * 普通字符串（含转义）、原始字符串 r"…" / r#"…"#（多级 #）、
  * char 字面量（'a'、'\n'、'\u{…}'）；生命周期标注（'a）按非字面量处理。
+ * `keepLiterals=true` 时保留字符串/char 字面量内容、只掩码注释——用于靶形态
+ * 落在字符串里的扫描（原生事务语句 `execute("BEGIN")`，issue #1014）。
  */
-export function maskNonCode(text: string): string {
+export function maskNonCode(text: string, keepLiterals = false): string {
   const out = text.split('')
   const n = text.length
   const blank = (from: number, to: number): void => {
@@ -322,7 +336,7 @@ export function maskNonCode(text: string): string {
           break
         } else j++
       }
-      blank(i, j)
+      if (!keepLiterals) blank(i, j)
       i = j
     } else if (c === 'r' && (text[i + 1] === '"' || (text[i + 1] === '#' && text[i + 2] === '"'))) {
       // 原始字符串 r"…" / r#"…"# / r##"…"##；前一字 符为标识符成分时是普通名字（如 for），不误伤
@@ -340,7 +354,7 @@ export function maskNonCode(text: string): string {
       const close = '"' + '#'.repeat(hashes)
       const end = text.indexOf(close, j + 1)
       const stop = end === -1 ? n : end + close.length
-      blank(i, stop)
+      if (!keepLiterals) blank(i, stop)
       i = stop
     } else if (c === "'") {
       // char 字面量 vs 生命周期：有闭引号为字面量，否则是生命周期标注（'a）
@@ -358,7 +372,7 @@ export function maskNonCode(text: string): string {
       }
       if (text[j] === "'") {
         const stop = j + 1
-        blank(i, stop)
+        if (!keepLiterals) blank(i, stop)
         i = stop
       } else {
         i++
@@ -380,10 +394,16 @@ export interface ScanHit {
 }
 
 /** 扫描单个 Rust 文本（掩码注释与字符串/char 字面量）：返回命中指定形态的
- *  行号（1 起算）与原文；形态缺省为壳层依赖（白名单分层检查的既有行为） */
-export function scanRustSource(text: string, pattern: RegExp = SHELL_DEP_PATTERN): ScanHit[] {
+ *  行号（1 起算）与原文；形态缺省为壳层依赖（白名单分层检查的既有行为）。
+ *  `keepLiterals=true` 保留字符串/char 字面量内容、只掩码注释——靶形态落在
+ *  字符串里的扫描（原生事务语句，issue #1014） */
+export function scanRustSource(
+  text: string,
+  pattern: RegExp = SHELL_DEP_PATTERN,
+  keepLiterals = false,
+): ScanHit[] {
   const hits: ScanHit[] = []
-  const masked = maskNonCode(text)
+  const masked = maskNonCode(text, keepLiterals)
   const maskedLines = masked.split('\n')
   const rawLines = text.split('\n')
   for (let i = 0; i < maskedLines.length; i++) {
@@ -421,8 +441,9 @@ function main(): void {
   let scannedFiles = 0
   const domainCount = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN).length
 
-  // 模型域化禁令（规则①/②）：全树扫描（壳、域、基础设施、顶层文件），
-  // 残留引用可出现在任何层；collectRustFiles 自带测试豁免（ADR-0056 决策 5）。
+  // 模型域化禁令（规则①/②）+ 原生事务语句禁令（规则③）：全树扫描（壳、域、
+  // 基础设施、顶层文件），残留引用可出现在任何层；collectRustFiles 自带测试
+  // 豁免（ADR-0056 决策 5）——外挂测试目录的直置事务边界合法。
   // srcDir 整体不可达时静默交由白名单循环报「路径不存在」，不在此抛栈。
   let allFiles: RustFileRef[] = []
   try {
@@ -458,6 +479,16 @@ function main(): void {
             `（ADR-0059 决策 3/6，#424）`,
         )
       }
+    }
+    for (const hit of scanRustSource(source, NATIVE_TX_STMT_PATTERN, true)) {
+      if (f.rel === NATIVE_TX_STMT_ALLOWED) continue
+      problems.push(
+        `✗ 原生事务语句：${f.rel}:${hit.line}（${hit.match}）\n` +
+          `    ${hit.text}\n` +
+          `    事务壳归基础设施 db::tx_scope（无条件自持 hold_transaction / ` +
+          `嵌套感知 ensure_transaction，ADR-0056 / ADR-0105；#1013/#1014）——` +
+          `产品代码不得手写 BEGIN/COMMIT/ROLLBACK，唯一合法住址 ${NATIVE_TX_STMT_ALLOWED}`,
+      )
     }
   }
 
@@ -545,7 +576,8 @@ function main(): void {
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 业务域→同步域严形态零违规（契约模块 ${SYNC_CONTRACT_MODULE} ∪ 白名单 ${SYNC_ROOT_ALLOWED_SYMBOLS.size} 符号，ADR-0101）` +
-      `· 模型域化禁令全树扫描 ${allFiles.length} 个文件零残留（ADR-0059）`,
+      `· 模型域化禁令全树扫描 ${allFiles.length} 个文件零残留（ADR-0059）` +
+      `· 原生事务语句全树扫描 ${allFiles.length} 个文件仅 ${NATIVE_TX_STMT_ALLOWED} 一处（#1014）`,
   )
 }
 
