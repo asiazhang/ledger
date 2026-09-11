@@ -19,9 +19,8 @@
 //! - **存活校验**：Replay 独有（缘由见 [`WriteForm::Replay`] 与协议注记——刻意
 //!   不对称，ADR-0105 决策 4）。
 //!
-//! kind 守卫（dividend 显式拒绝；split 的创建 / 就地修改 / 删除在 Local 形态放行、
-//! Replay 形态拒绝挂起，与进/出 split 的 kind 变更禁止——ADR-0106；进/出 convert 的
-//! kind 变更禁止，ADR-0099 决策 5）单点进协议本体，两形态同码同文案；穷尽 match
+//! kind 守卫（dividend 显式拒绝；进/出 split 与进/出 convert 的 kind 变更禁止——
+//! ADR-0106 决策 5 / ADR-0099 决策 5）单点进协议本体，两形态同码同文案；穷尽 match
 //! 兜底臂沿 ADR-0060 现行写法（同码错误表达不可达态，不引入 panic 构造）。
 //!
 //! **嵌套感知事务（「保证处于事务中」，ADR-0033 决策 #2）**：create / update 的
@@ -45,9 +44,8 @@
 //! 分派是薄而穷尽的 `match`（不引入 trait 注册表，避免过度设计）：
 //! 普通 kind（income/expense/transfer/refund）经 Writer 接缝归一化；buy/sell/convert/split
 //! 委托投资域（`investment` 域入口的 prepare/apply/revert，正向分派保留；Replay 形态经
-//! `investment` 的 replay_plan / replay_convert_plan 装配）；`dividend` 协议守卫单点
-//! 显式「暂不支持」拒绝（split 已随 ADR-0106 激活，其 Replay 形态暂拒绝挂起、
-//! #1053 收编）。拒绝均不落库。
+//! `investment` 的 replay_plan / replay_convert_plan / replay_split_plan 装配）；
+//! `dividend` 协议守卫单点显式「暂不支持」拒绝。拒绝均不落库。
 //!
 //! **结果证据外传（ADR-0044 决策 4，issue #331）**：计划装配在入参带 `merchant_name`
 //! 且未命中时即建商户（写 `merchants` 表，第四张参考表），「是否即建」作为
@@ -62,7 +60,8 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
 use super::command::{
-    ConvertCommandFields, InvestmentCommandFields, TransactionCommand, record_local,
+    ConvertCommandFields, InvestmentCommandFields, SplitCommandFields, TransactionCommand,
+    record_local,
 };
 use super::model::{NormalizedTransaction, TransactionInput};
 use crate::accounts::balance::{affected_accounts, refresh_account_balances};
@@ -91,9 +90,9 @@ const CONVERT_KIND_CHANGE_FORBIDDEN: &str =
     "不可将交易类型改为或改出「转换」：转换的纠错只有「删除后重建」一条路";
 
 /// 进/出 split 的 kind 变更拒绝文案与错误码（ADR-0106 决策 5，沿用 convert 先例）：
-/// 与 convert 守卫同段单点，Local / Replay 两形态同码同文案。修改/删除 split 行的
-/// 就地修改与删除已收编（#1051：全字段替换 + 逐批次精确回补），仅重放形态仍显式
-/// 拒绝挂起（重放端本地重述重建归 #1053，与创建协议同一口径）。
+/// 与 convert 守卫同段单点，Local / Replay 两形态同码同文案。split 行的创建 / 就地
+/// 修改 / 删除与重放均已收编（#1051 / #1053：全字段替换 + 逐批次精确回补 + 本地
+/// 重述重建比对）。
 const SPLIT_KIND_CHANGE_FORBIDDEN_CODE: &str = "trade.split-kind-change-forbidden";
 const SPLIT_KIND_CHANGE_FORBIDDEN: &str =
     "不可将交易类型改为或改出「份额调整」：换交易类型的纠错只有「删除后重建」一条路";
@@ -137,6 +136,7 @@ enum CreateForm<'a> {
         row: &'a NormalizedTransaction,
         investment: Option<&'a InvestmentCommandFields>,
         convert: Option<&'a ConvertCommandFields>,
+        split: Option<&'a SplitCommandFields>,
     },
 }
 
@@ -159,6 +159,7 @@ enum UpdateForm<'a> {
         row: &'a NormalizedTransaction,
         investment: Option<&'a InvestmentCommandFields>,
         convert: Option<&'a ConvertCommandFields>,
+        split: Option<&'a SplitCommandFields>,
     },
 }
 
@@ -233,8 +234,8 @@ pub fn create(conn: &Connection, input: TransactionInput) -> Result<TransactionW
 ///   kind 守卫（准入拒绝优先于「暂不支持」，拒绝行不产生字典碎片）；Replay 信任
 ///   源端归一化行、不再判定；
 /// - kind 守卫单点——dividend 已声明但未实现（MVP）两形态同码同文案显式拒绝、
-///   不落库；split 的 Local 形态进入投资域装配（ADR-0106），Replay 形态显式拒绝
-///   挂起（#1053 收编）；Replay 的伪造/漂移载荷防御臂先于依赖校验，不误报账户缺失；
+///   不落库；split 的 Local 形态进入投资域装配、Replay 形态经投资域重放装配
+///   （ADR-0106 决策 9）；Replay 的伪造/漂移载荷防御臂先于依赖校验，不误报账户缺失；
 /// - 存活校验——仅 Replay（issue #856）：账户引用必须存活，往已删账户记账码化
 ///   拒绝、引擎挂起待裁决；Local 刻意不补（见 [`WriteForm::Local`]）。
 ///
@@ -249,11 +250,6 @@ fn create_protocol(conn: &Connection, source: CreateForm<'_>) -> Result<Transact
         }
         let kind = source.kind();
         if kind == TransactionKind::Dividend {
-            return Err(kind_unsupported(kind));
-        }
-        // split：本机创建放行（ADR-0106 决策 10，AI / 契约是唯一写入面）；重放形态
-        // 本票暂不支持（重放端本地重述重建归 #1053），显式拒绝由引擎挂起承接。
-        if kind == TransactionKind::Split && matches!(source, CreateForm::Replay { .. }) {
             return Err(kind_unsupported(kind));
         }
         if let CreateForm::Replay { row, .. } = &source {
@@ -271,9 +267,10 @@ fn create_protocol(conn: &Connection, source: CreateForm<'_>) -> Result<Transact
                 row,
                 investment,
                 convert,
+                split,
                 ..
             } => (
-                replay_assembly(conn, row, *investment, *convert)?,
+                replay_assembly(conn, None, row, *investment, *convert, *split)?,
                 // 重放形态不解析商户名、不即建商户，证据恒假。
                 false,
             ),
@@ -334,8 +331,8 @@ pub fn update(conn: &Connection, id: &str, input: TransactionInput) -> Result<Wr
 ///   伪造 op 绕过；就地修改转换走同一协议（convert → convert 由
 ///   [`investment::revert`] 的转换清理承载）。
 /// - 参考数据携带准入——仅 Local，先于 kind 守卫（同创建协议）。
-/// - kind 守卫单点——dividend「暂不支持」拒绝；进/出 split 的 kind 变更拒绝与
-///   split 就地修改的 Replay 形态拒绝挂起（Local 形态全字段替换放行，#1051）。
+/// - kind 守卫单点——dividend「暂不支持」拒绝；进/出 split 的 kind 变更拒绝
+///   （split 就地修改两形态均放行，#1051 / #1053）。
 ///
 /// 新值守卫全部先于回退：对非法新值先行拒绝、不做任何突变（fail fast，与重放
 /// 形态既有顺序一致）。回退按旧 kind 执行（跨 kind 修改避免孤儿持仓）；存活校验
@@ -376,13 +373,6 @@ fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Resul
                 SPLIT_KIND_CHANGE_FORBIDDEN,
             ));
         }
-        // split 行就地修改（全字段替换）：Local 形态经「回退（逐批次精确回补）→
-        // 重装（按新输入重述在用批次）→ 落库 → 重述副作用」实现（ADR-0106 决策 3/5，
-        // #1051）；重放形态本票仍显式拒绝挂起（重放端本地重述重建归 #1053，与创建
-        // 协议同一口径——否则会先回退再在装配兜底臂挂起，回退无谓地发生）。
-        if new_kind == TransactionKind::Split && matches!(&source, UpdateForm::Replay { .. }) {
-            return Err(kind_unsupported(new_kind));
-        }
         if let UpdateForm::Local(input) = &source {
             guard_reference_admission(input)?;
         }
@@ -416,7 +406,12 @@ fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Resul
                 row,
                 investment,
                 convert,
-            } => (replay_assembly(conn, row, *investment, *convert)?, false),
+                split,
+                ..
+            } => (
+                replay_assembly(conn, Some(id), row, *investment, *convert, *split)?,
+                false,
+            ),
         };
         let row = plan.normalized_row()?;
         // ── 落库（目标 id 两形态同构：id 即寻址既有行，无 id 来源分歧）──
@@ -479,17 +474,12 @@ fn delete_within_transaction(conn: &Connection, id: &str, form: WriteForm) -> Re
     // 持仓扣减；buy / convert 消费其持仓批次的在用 sell（逐笔回退）并整批清理批次
     // 与匹配（convert 另回补转出腿消耗）；本行批次已被在用后续转换消耗时，以删除
     // 入口守卫拒绝。split 行按 `security_lot_adjustments` 逐批次精确回补（ADR-0106
-    // 决策 3/5，#1051）；重放形态仍显式拒绝挂起（重放端本地重述重建归 #1053）。
+    // 决策 3/5，#1051）——回补依据是本地重述审计行，两形态同源，重放无需额外载荷。
     let cascaded_sell_ids = match kind {
         TransactionKind::Buy
         | TransactionKind::Sell
         | TransactionKind::Convert
-        | TransactionKind::Split => {
-            if kind == TransactionKind::Split && form == WriteForm::Replay {
-                return Err(kind_unsupported(kind));
-            }
-            investment::release_for_delete(conn, id, kind)?
-        }
+        | TransactionKind::Split => investment::release_for_delete(conn, id, kind)?,
         _ => Vec::new(),
     };
     // 级联软删：被消化的在用 sell 逐笔软删（各自余额刷新与 delete op），先于主行
@@ -752,15 +742,21 @@ fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
 /// 转换的语义字段（[`ConvertCommandFields`]）与源端算定的结转成本随同步票
 /// （issue #980 / ADR-0099 决策 6）携带：重放端据以本地重建 FIFO 快照并比对
 /// 结转成本合计，不依赖源端的批次行 id。
+///
+/// 份额调整的语义字段（[`SplitCommandFields`]）与源端**最终持仓 / 批次总成本**
+/// 两个比对锚点随本票（issue #1053 / ADR-0106 决策 9）携带：重放端本地重建批次
+/// 重述并比对两个总量，不一致显式挂起；**逐批次重述结果不随载荷携带**（重述是
+/// 当前批次快照 + Δ 的纯函数）。
 fn command_parts(
     plan: &Plan,
 ) -> (
     NormalizedTransaction,
     Option<InvestmentCommandFields>,
+    Option<SplitCommandFields>,
     Option<ConvertCommandFields>,
 ) {
     match plan {
-        Plan::Common(r) => (NormalizedTransaction::from(r), None, None),
+        Plan::Common(r) => (NormalizedTransaction::from(r), None, None, None),
         Plan::Investment(p) => {
             let fields = match p {
                 investment::Plan::Buy(b) => Some(InvestmentCommandFields {
@@ -777,19 +773,22 @@ fn command_parts(
                     fee_cents: s.fee_cents,
                     cost_per_unit_cents: None,
                 }),
-                // 份额调整只携带 Δ（复用 quantity，ADR-0106 决策 9）：重述是
-                // (批次快照, Δ) 的纯函数，重放端本地重建，不携带重述结果
-                //（重放重建归 #1053；在其收编前重放端仍显式拒绝挂起）。
-                investment::Plan::Split(s) => Some(InvestmentCommandFields {
+                // 份额调整、转换走各自独立的可选成员（investment 恒 None）：语义
+                // 字段与 buy/sell 不同构，不塞进同一结构（ADR-0106 决策 9 /
+                // ADR-0099 决策 6）。
+                investment::Plan::Split(_) | investment::Plan::Convert(_) => None,
+            };
+            // 份额调整的比对锚点（ADR-0106 决策 9）：Δ + 源端最终持仓 + 批次总成本。
+            let split = match p {
+                investment::Plan::Split(s) => Some(SplitCommandFields {
                     instrument_id: s.instrument_id.clone(),
-                    quantity: s.delta_quantity,
-                    price_cents: 0,
-                    fee_cents: 0,
-                    cost_per_unit_cents: None,
+                    delta_quantity: s.delta_quantity,
+                    final_quantity: s.final_quantity,
+                    total_cost_cents: s.total_cost_cents,
                 }),
-                // 转换走独立的可选成员（investment 恒 None）：两腿字段与 buy/sell
-                // 的语义字段不同构，不塞进同一结构。
-                investment::Plan::Convert(_) => None,
+                investment::Plan::Buy(_)
+                | investment::Plan::Sell(_)
+                | investment::Plan::Convert(_) => None,
             };
             let convert = match p {
                 investment::Plan::Convert(c) => Some(ConvertCommandFields {
@@ -806,29 +805,31 @@ fn command_parts(
                 | investment::Plan::Sell(_)
                 | investment::Plan::Split(_) => None,
             };
-            (p.normalized().clone(), fields, convert)
+            (p.normalized().clone(), fields, split, convert)
         }
     }
 }
 
 /// 创建命令构造（创建协议 op 产出步专用）。
 fn create_command(id: &str, plan: &Plan) -> TransactionCommand {
-    let (row, investment, convert) = command_parts(plan);
+    let (row, investment, split, convert) = command_parts(plan);
     TransactionCommand::Create {
         id: id.to_string(),
         row,
         investment,
+        split,
         convert,
     }
 }
 
 /// 修改命令构造（修改协议 op 产出步专用）。
 fn update_command(id: &str, plan: &Plan) -> TransactionCommand {
-    let (row, investment, convert) = command_parts(plan);
+    let (row, investment, split, convert) = command_parts(plan);
     TransactionCommand::Update {
         id: id.to_string(),
         row,
         investment,
+        split,
         convert,
     }
 }
@@ -848,14 +849,19 @@ fn update_command(id: &str, plan: &Plan) -> TransactionCommand {
 /// 投资 kind（buy/sell）与转换（convert）的重放依赖在位校验（标的、投资账户、
 /// 可卖数量、结转成本比对）以与本地写入同码的码化错误上抛，由同步引擎挂起进
 /// 队列（issue #856），依赖方 op 补齐后重投递自然重试（issue #861 / #980）。
+/// 份额调整（split）同规重放：本地按 Δ 重建批次重述，与源端携带的最终持仓 /
+/// 批次总成本比对，不一致（前序 op 未达、载荷篡改）码化挂起（issue #1053 /
+/// ADR-0106 决策 9）。
 /// 删除重放支持全部 kind（按行现状执行与本地删除同一协议，含 sell 回补 /
-/// buy 与 convert 级联与持仓清理，issue #940 / #979）。
+/// buy 与 convert 级联与持仓清理、split 按重述审计精确回补，issue #940 / #979 /
+/// #1051）。
 pub(crate) fn replay_command(conn: &Connection, command: &TransactionCommand) -> Result<()> {
     match command {
         TransactionCommand::Create {
             id,
             row,
             investment,
+            split,
             convert,
         } => {
             create_protocol(
@@ -865,6 +871,7 @@ pub(crate) fn replay_command(conn: &Connection, command: &TransactionCommand) ->
                     row,
                     investment: investment.as_ref(),
                     convert: convert.as_ref(),
+                    split: split.as_ref(),
                 },
             )?;
             Ok(())
@@ -873,6 +880,7 @@ pub(crate) fn replay_command(conn: &Connection, command: &TransactionCommand) ->
             id,
             row,
             investment,
+            split,
             convert,
         } => {
             update_protocol(
@@ -882,6 +890,7 @@ pub(crate) fn replay_command(conn: &Connection, command: &TransactionCommand) ->
                     row,
                     investment: investment.as_ref(),
                     convert: convert.as_ref(),
+                    split: split.as_ref(),
                 },
             )?;
             Ok(())
@@ -903,13 +912,22 @@ pub(crate) fn replay_command(conn: &Connection, command: &TransactionCommand) ->
 ///   （不一致显式失败挂起，不静默错账，ADR-0099 决策 6）；旧版本设备产出的
 ///   转换 op 不携转换字段，缺失即显式失败挂起（kind 防御臂，与 schema 版本硬
 ///   检查双保险），不落半套副作用；
-/// - dividend / split：协议守卫单点已先行拒绝（split 的 Replay 拒绝见创建协议），
-///   此臂为穷尽兜底，同码错误表达不可达态（不引入 panic 构造，ADR-0060）。
+/// - split：重放形态份额调整计划重建（[`investment::replay_split_plan`]）——
+///   本地快照重建批次重述，源端携带的最终持仓 / 批次总成本作权威比对基准
+///   （快照发散显式失败挂起，不静默错账，ADR-0106 决策 9）；旧版本设备产出的
+///   split op 不携份额调整字段，缺失即显式失败挂起（kind 防御臂），不落半套副作用；
+/// - dividend：协议守卫单点已先行拒绝，此臂为穷尽兜底，同码错误表达不可达态
+///   （不引入 panic 构造，ADR-0060）。
+///
+/// `existing_id`：修改路径传本行 id（split 重述以本行落账序为界，ADR-0106 决策 6；
+/// 其余 kind 忽略），创建路径传 `None`。
 fn replay_assembly(
     conn: &Connection,
+    existing_id: Option<&str>,
     row: &NormalizedTransaction,
     investment: Option<&InvestmentCommandFields>,
     convert: Option<&ConvertCommandFields>,
+    split: Option<&SplitCommandFields>,
 ) -> Result<Plan> {
     let norm_row = writer::NormalizedRow::try_from(row)?;
     match norm_row.kind {
@@ -932,7 +950,16 @@ fn replay_assembly(
                 conn, row, fields,
             )?))
         }
-        TransactionKind::Dividend | TransactionKind::Split => Err(kind_unsupported(norm_row.kind)),
+        TransactionKind::Split => {
+            let fields = split_fields(split)?;
+            Ok(Plan::Investment(investment::replay_split_plan(
+                conn,
+                row,
+                fields,
+                existing_id,
+            )?))
+        }
+        TransactionKind::Dividend => Err(kind_unsupported(norm_row.kind)),
     }
 }
 
@@ -956,8 +983,21 @@ fn convert_fields(convert: Option<&ConvertCommandFields>) -> Result<&ConvertComm
     })
 }
 
-/// dividend 未实现 / split 重放未收编（协议 kind 守卫单点的错误构造器）：创建/修改两协议
-/// 与 Replay 装配兜底臂共用，两形态同码同文案由构造保证。
+/// 份额调整命令字段解包（防御臂）：split 命令必携份额调整字段；缺失属旧版本
+/// 设备载荷或程序缺陷（本地 plan 自 #1053 起恒产出），码化失败由引擎挂起承接
+/// （与 convert 的 kind 防御臂同规——旧端 op 不携比对锚点，重放端无从校验重述，
+/// 宁可挂起也不静默落出未经校验的批次成本）。
+fn split_fields(split: Option<&SplitCommandFields>) -> Result<&SplitCommandFields> {
+    split.ok_or_else(|| {
+        AppError::coded(
+            "transaction.split-fields-missing",
+            "该份额调整操作缺少同步所需的份额调整字段（产生自较早版本），无法在本机重放；请在来源设备上删除并重新录入该份额调整后再次同步",
+        )
+    })
+}
+
+/// dividend 未实现（协议 kind 守卫单点的错误构造器）：创建/修改两协议与 Replay
+/// 装配兜底臂共用，两形态同码同文案由构造保证。
 fn kind_unsupported(kind: TransactionKind) -> AppError {
     AppError::codedp(
         "transaction.kind-unsupported",

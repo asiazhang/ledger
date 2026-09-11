@@ -211,6 +211,7 @@ fn convert_op_carries_convert_fields_and_carried_cost() {
         row,
         investment,
         convert,
+        ..
     }) = &ops[1].command
     else {
         panic!("应为 create 命令，实际: {:?}", ops[1].command);
