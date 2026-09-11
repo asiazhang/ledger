@@ -194,7 +194,7 @@ pub(super) fn make_convert_input(
 }
 
 /// 份额调整输入构造器（ADR-0106 / issue #1049）：无现金腿——金额 0、无单价、
-/// 无手续费；`delta` 为带符号份额增量 Δ（本票正向闭环恒 > 0）。
+/// 无手续费；`delta` 为带符号份额增量 Δ（`+` = 折算/结转/送股、`−` = 缩股）。
 pub(super) fn make_split_input(
     account_id: &str,
     instrument_id: &str,

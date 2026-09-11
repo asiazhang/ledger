@@ -578,8 +578,9 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
 pub struct SplitPlan {
     pub(crate) normalized: NormalizedTransaction,
     pub(crate) instrument_id: String,
-    /// 带符号份额增量 Δ（绝对增量语义，不是换算比例）：本票仅收 +Δ
-    /// （缩股 −Δ 与取严守卫由后续票 #1050 收编）。
+    /// 带符号份额增量 Δ（绝对增量语义，不是换算比例）：`+Δ` = 折算 / 结转 /
+    /// 送股，`−Δ` = 缩股（ADR-0106 决策 1）；缩股幅度取严 `|Δ| < 当前持仓`
+    /// （`trade.split-shrink-not-less-than-holding`）。
     pub(crate) delta_quantity: f64,
     /// 在用批次重述快照（逐批次 before / after，落 `security_lot_adjustments` 审计）。
     pub(crate) restated: Vec<LotRestatement>,
@@ -593,11 +594,11 @@ pub struct SplitPlan {
 /// 六度量系数全 0，落账前后全部账户余额（含黑洞）完全不变；成本口径为按比例
 /// 重述在用批次（[`split::plan_restatement`]），零已实现盈亏。
 ///
-/// 守卫（全部码化中文错误，ADR-0050）：标的存在、账户为投资账户、Δ > 0
-/// （本票正向闭环）、零在用持仓拒绝（价值已含在原批次，零持仓无从重述）、
-/// 不接受手续费（非 0 拒绝）/ 单价 / 非零金额 / 转入标的 / 转入账户；商户 /
-/// 分类 / 保单由行为层参考数据携带准入拒绝（split 不在任何准入集）；出资账户
-/// 由出资准入闭集拒绝（仅 buy/sell 可携带，ADR-0096）。
+/// 守卫（全部码化中文错误，ADR-0050）：标的存在、账户为投资账户、Δ ≠ 0、
+/// `Δ > 0` 须有在用持仓（价值已含在原批次，零持仓无从重述）、`Δ < 0` 缩股幅度
+/// 取严 `|Δ| < 当前持仓`、不接受手续费（非 0 拒绝）/ 单价 / 非零金额 / 转入标的 /
+/// 转入账户；商户 / 分类 / 保单由行为层参考数据携带准入拒绝（split 不在任何准入
+/// 集）；出资账户由出资准入闭集拒绝（仅 buy/sell 可携带，ADR-0096）。
 fn prepare_split(conn: &Connection, input: &TransactionInput) -> Result<SplitPlan> {
     let instrument_id = input
         .instrument_id
@@ -646,12 +647,13 @@ fn prepare_split(conn: &Connection, input: &TransactionInput) -> Result<SplitPla
         ));
     }
     let delta_quantity = input.quantity.unwrap_or(0.0);
-    // 本票仅正向闭环（ADR-0106 决策 1：+ = 折算/结转/送股）；缩股 −Δ 与取严
-    // 不等式由后续票 #1050 收编，此处统一按「必须大于 0」拒绝。
-    if delta_quantity <= 0.0 {
+    // Δ = 0 不改变任何持仓，无意义：显式拒绝。`+` / `−` 两向都合法（ADR-0106
+    // 决策 1：`+` = 折算/结转/送股、`−` = 缩股）；缩股幅度守卫（`|Δ|` 严格小于
+    // 当前持仓）归投资域 [`split::plan_restatement`]，与批次快照同源、不在此另算。
+    if delta_quantity == 0.0 {
         return Err(AppError::coded(
-            "trade.split-quantity-positive",
-            "份额调整数量必须大于 0",
+            "trade.split-quantity-zero",
+            "份额调整数量不能为 0",
         ));
     }
     ensure_investment_account(

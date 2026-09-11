@@ -763,6 +763,99 @@ async fn test_batch_create_split_adjusts_holdings_and_keeps_balances() {
     assert_eq!(items[0]["amount_cents"], 0);
 }
 
+/// −Δ 份额调整（缩股）端到端：批量端点落账 → 持仓减少 |Δ|、v_holdings 成本基础
+/// 不变（单批次尾差闭合）、全部账户余额（含隐藏账户）完全不变、缩股零已实现盈亏。
+#[tokio::test]
+async fn test_batch_create_reverse_split_shrinks_holding_and_keeps_balances() {
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        test_support::seed_account(&conn, "acc-rs-api", "股票户", "investment", "CNY", 0);
+        test_support::seed_instrument(&conn, "inst-rs-api", "502010", "证券基金", "CNY", "unknown");
+    }
+
+    // 建仓：买入 100 份 @ 1.00 元（行金额 10000 分、每份成本 10000 万分之一元）。
+    let buy = r#"{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"acc-rs-api","date":"2026-01-10","instrument_id":"inst-rs-api","quantity":100.0,"price_cents":10000,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[buy], None)).await;
+    assert_eq!(created[0]["success"], true, "{created:?}");
+
+    let (_, balances_before) = get_json(&app, "/api/v1/accounts/balances").await;
+
+    // −Δ 缩股：无金额、无手续费、无出资账户、无转入标的/账户。
+    let split = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-rs-api","date":"2026-02-01","instrument_id":"inst-rs-api","quantity":-40.0}"#;
+    let results = post_batch(&app, batch_body(&[split], None)).await;
+    assert_eq!(results[0]["success"], true, "缩股应落账: {results:?}");
+    let split_id = results[0]["id"].as_str().unwrap().to_string();
+
+    // 交易行：kind=split、金额恒 0（无现金腿）。
+    let amount_cents: i64 = {
+        let conn = conn.lock().unwrap();
+        conn.query_row(
+            "SELECT amount_cents FROM transactions WHERE id=?1",
+            rusqlite::params![split_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(amount_cents, 0, "缩股无现金腿：行金额恒 0");
+
+    // 扩展行：action='split'、quantity=−Δ、price_cents 留 NULL（带符号份额增量）。
+    let (action, quantity): (String, f64) = {
+        let conn = conn.lock().unwrap();
+        conn.query_row(
+            "SELECT action, quantity FROM security_transactions WHERE transaction_id=?1",
+            rusqlite::params![split_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(action, "split");
+    assert!(
+        (quantity + 40.0).abs() < 1e-9,
+        "扩展行保留带符号 Δ，实际 {quantity}"
+    );
+
+    // 持仓减少 |Δ|：v_holdings 数量 100 − 40 = 60；批次总成本展示值不变
+    //（亚分舍入 ±1 分，见域单测 split.rs 的精确口径）。
+    let (holding_qty, cost_basis): (f64, i64) = {
+        let conn = conn.lock().unwrap();
+        conn.query_row(
+            "SELECT quantity, cost_basis_cents FROM v_holdings \
+             WHERE account_id='acc-rs-api' AND instrument_id='inst-rs-api'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    };
+    assert!(
+        (holding_qty - 60.0).abs() < 1e-6,
+        "持仓应为 100 − 40 = 60，实际 {holding_qty}"
+    );
+    assert!(
+        (cost_basis - 10000).abs() <= 1,
+        "批次总成本展示值应与调整前一致（亚分舍入 ±1 分），实际 {cost_basis}"
+    );
+
+    // 全部账户余额（含隐藏账户）落账前后完全不变；缩股零已实现盈亏。
+    let (_, balances_after) = get_json(&app, "/api/v1/accounts/balances").await;
+    assert_eq!(
+        balances_before, balances_after,
+        "缩股落账前后全部账户余额应完全不变"
+    );
+    let realized: i64 = {
+        let conn = conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(SUM(realized_pnl_cents),0) FROM security_lot_sales s \
+             JOIN transactions t ON t.id = s.sell_transaction_id \
+             WHERE t.account_id='acc-rs-api'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(realized, 0, "缩股本身不产生任何已实现盈亏");
+}
+
 /// 份额调整守卫在批量端点逐行返回码化中文错误（不落库、不影响同批其他行）。
 #[tokio::test]
 async fn test_batch_create_split_guards_return_coded_errors() {
@@ -787,9 +880,10 @@ async fn test_batch_create_split_guards_return_coded_errors() {
     assert_eq!(created[0]["success"], true, "{created:?}");
 
     // 零持仓标的（现金账户上根本没有持仓标的行，先撞非投资账户守卫也不行——
-    // 用独立标的触发零持仓）。
+    // 用独立标的触发零持仓）；缩股越界（−150 > 持仓 100，取严拒绝，文案对准
+    // 缩股语义而非卖出 / 超卖）。
     let zero_holding = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-none","quantity":10.0}"#;
-    let negative = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-g","quantity":-5.0}"#;
+    let over_shrink = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-g","quantity":-150.0}"#;
     let with_fee = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-g","quantity":10.0,"fee_cents":100}"#;
     let with_amount = r#"{"kind":"split","amount_cents":500,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-g","quantity":10.0}"#;
     let with_price = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-g","quantity":10.0,"price_cents":10000}"#;
@@ -801,7 +895,7 @@ async fn test_batch_create_split_guards_return_coded_errors() {
         batch_body(
             &[
                 zero_holding,
-                negative,
+                over_shrink,
                 with_fee,
                 with_amount,
                 with_price,
@@ -818,7 +912,7 @@ async fn test_batch_create_split_guards_return_coded_errors() {
         .map(|r| r["error"].as_str().unwrap_or(""))
         .collect();
     assert!(errors[0].contains("有在用持仓"), "{errors:?}");
-    assert!(errors[1].contains("必须大于 0"), "{errors:?}");
+    assert!(errors[1].contains("缩股"), "{errors:?}");
     assert!(errors[2].contains("不接受手续费"), "{errors:?}");
     assert!(errors[3].contains("金额必须为 0"), "{errors:?}");
     assert!(errors[4].contains("不可提供单价"), "{errors:?}");

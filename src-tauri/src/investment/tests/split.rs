@@ -1,9 +1,11 @@
-//! 份额调整（split）正向写入测试（ADR-0106 / spec #1045 / issue #1049）。
+//! 份额调整（split）写入测试（ADR-0106 / spec #1045 / issue #1049 + #1050）。
 //!
 //! 以行为层公开入口断言外部行为（先例：`convert` / `trade` 的测试纪律）：
 //! - 按比例重述在用批次：每份成本同比例稀释、**批次总成本在权威口径（锚点 −
 //!   记录消耗）下精确不变**、舍入尾差归末批次；逐批次 before / after 落
 //!   `security_lot_adjustments` 审计；
+//! - **正负两向共用同一公式**（#1050）：`+Δ` 稀释每份成本、`−Δ` 缩股抬升每份
+//!   成本，两向批次总成本都精确不变；缩股幅度取严 `|Δ| < 当前持仓`；
 //! - **部分卖出按重述后的每份成本结算**（ADR-0106 决策 2 的唯一钉死处：
 //!   买 100 @10 元、送 10、卖 55 → 已实现 50 元——不随 FIFO 插入顺序漂移、
 //!   不出现 0 成本口径的全额假盈亏）；
@@ -407,9 +409,225 @@ fn holdings_as_of_includes_split_leg() {
     assert!((before - 100.0).abs() < 1e-6);
 }
 
-/// 守卫（ADR-0106 决策 7，全部码化中文错误）：零持仓、Δ ≤ 0、非投资账户、
-/// 无现金腿（非零金额 / 单价 / 手续费）、携带转入标的 / 转入账户 / 出资账户 /
-/// 商户 / 分类 / 保单。
+/// 缩股方向（−Δ，ADR-0106 决策 1 / issue #1050）：负增量走**同一重述公式**——
+/// 批次数量按比例缩小、每份成本按比例上升、**批次总成本精确不变**；全部账户余额
+/// （含黑洞）不变、缩股本身零已实现盈亏；时点持仓推算认带符号 Δ、与持仓视图一致。
+#[test]
+fn split_reverse_shrinks_holding_and_keeps_total_cost() {
+    let conn = open();
+    seed_split_scene(&conn);
+    // 买 100 @10 元（锚点 100000 分、每份成本 100000 万分之一元）。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            100_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    let balances_before = balance_snapshot(&conn);
+
+    // −20 份缩股：f = 0.8 → 数量 80、每份成本 = 100000 ÷ 0.8 = 125000（12.5 元）。
+    create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", -20.0)).unwrap();
+
+    let lots = lots_of(&conn, "inst-sp");
+    assert_eq!(lots.len(), 1);
+    assert!((lots[0].0 - 80.0).abs() < 1e-9, "初始数量 × f = 80");
+    assert!((lots[0].1 - 80.0).abs() < 1e-9, "剩余数量 × f = 80");
+    assert_eq!(
+        lots[0].2, 125_000,
+        "每份成本 = 100000 ÷ 0.8，批次总成本精确不变"
+    );
+
+    // 持仓减少 |Δ|；持仓视图（批次驱动）总成本不变：80 × 125000 ÷ 100 = 100000 分。
+    let (qty, cost_basis): (f64, i64) = conn
+        .query_row(
+            "SELECT quantity, cost_basis_cents FROM v_holdings \
+             WHERE account_id='acc-sp' AND instrument_id='inst-sp'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!((qty - 80.0).abs() < 1e-6, "持仓 100 − 20 = 80，实际 {qty}");
+    assert_eq!(cost_basis, 100_000, "批次总成本不变");
+
+    // 全部账户余额（含黑洞）不变（无现金腿）、缩股零已实现盈亏。
+    assert_eq!(
+        balance_snapshot(&conn),
+        balances_before,
+        "缩股无现金腿，余额不变"
+    );
+    assert_eq!(
+        realized_pnl_of(&conn, "inst-sp"),
+        0,
+        "缩股本身不产生已实现盈亏"
+    );
+
+    // 时点持仓推算认带符号 Δ：调整日当天含 −20、调整日前不含。
+    let on = holdings::holdings_as_of(&conn, Some("inst-sp"), "2026-02-01").unwrap();
+    assert!(
+        (on - 80.0).abs() < 1e-6,
+        "as-of 应含缩股腿：100 − 20 = 80，实际 {on}"
+    );
+    let before = holdings::holdings_as_of(&conn, Some("inst-sp"), "2026-01-31").unwrap();
+    assert!(
+        (before - 100.0).abs() < 1e-6,
+        "调整日之前不含 Δ，实际 {before}"
+    );
+}
+
+/// 缩股方向的多批次尾差归末批次（ADR-0106 决策 2 在负方向的独立钉死）：两批次
+/// 缩股时非末批次每份成本独立取整上升，末批次以其为闭合目标吸收全部舍入尾差——
+/// Σ 权威批次剩余成本（锚点 − 记录消耗）精确不变；同一点上时点持仓推算、批次
+/// 剩余合计与持仓视图三口径一致。
+#[test]
+fn split_reverse_tail_difference_lands_on_last_batch() {
+    let conn = open();
+    seed_split_scene(&conn);
+    // 两批次：100 份 @1.00 元（锚点 10000 分）+ 200 份 @2.00 元（锚点 40000 分）。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            10_000,
+            "2026-01-01",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            200.0,
+            20_000,
+            "2026-01-15",
+        ),
+    )
+    .unwrap();
+
+    // 缩股 −30：持仓 300 → 270，f = 0.9。
+    create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", -30.0)).unwrap();
+
+    // 批次 1（非末）：100 → 90，cpu = round(10000 ÷ 0.9) = round(11111.111) = 11111；
+    // 批次 2（末）：200 → 180，cpu 倒推闭合全部尾差。
+    let lots = lots_of(&conn, "inst-sp");
+    assert_eq!(lots.len(), 2);
+    assert!((lots[0].1 - 90.0).abs() < 1e-9, "非末批次剩余 = 100 × 0.9");
+    assert_eq!(lots[0].2, 11_111, "非末批次独立取整上升 round(10000 ÷ f)");
+    assert!((lots[1].1 - 180.0).abs() < 1e-9, "末批次剩余 = 200 × 0.9");
+    assert_eq!(
+        lots[1].2, 22_222,
+        "末批次闭合尾差：round((50000 − 90×11111÷100) × 100 ÷ 180)"
+    );
+
+    // Σ 权威批次剩余成本精确不变：锚点合计 50000 分（重述不改它）。
+    let canonical: i64 = conn
+        .query_row(
+            "SELECT CAST(COALESCE(SUM(t.amount_cents),0) - COALESCE((\
+               SELECT SUM(CAST(ROUND(q * cpu / 100.0) AS INTEGER)) FROM (\
+                 SELECT s.quantity AS q, s.cost_per_unit_cents AS cpu FROM security_lot_sales s \
+                 JOIN security_lots l ON l.id = s.lot_id WHERE l.instrument_id='inst-sp' \
+                 UNION ALL \
+                 SELECT c.quantity, c.cost_per_unit_cents FROM security_lot_conversions c \
+                 JOIN security_lots l ON l.id = c.lot_id WHERE l.instrument_id='inst-sp')),0) AS INTEGER) \
+             FROM security_lots l JOIN transactions t ON t.id = l.buy_transaction_id \
+             WHERE l.instrument_id='inst-sp' AND l.remaining_quantity > 0",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap();
+    assert_eq!(canonical, 50_000, "Σ 权威批次剩余成本精确不变");
+
+    // 三口径一致：as-of 时点持仓推算 = 批次剩余合计 = 持仓视图数量。
+    let lot_sum: f64 = lots.iter().map(|l| l.1).sum();
+    let as_of = holdings::holdings_as_of(&conn, Some("inst-sp"), "2026-02-01").unwrap();
+    let view_qty: f64 = conn
+        .query_row(
+            "SELECT quantity FROM v_holdings WHERE account_id='acc-sp' AND instrument_id='inst-sp'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!((lot_sum - 270.0).abs() < 1e-9);
+    assert!(
+        (as_of - lot_sum).abs() < 1e-6,
+        "as-of {as_of} 应对齐批次合计 {lot_sum}"
+    );
+    assert!(
+        (view_qty - lot_sum).abs() < 1e-6,
+        "持仓视图 {view_qty} 应对齐批次合计 {lot_sum}"
+    );
+
+    // 缩股零已实现盈亏：不写卖出匹配。
+    assert_eq!(realized_pnl_of(&conn, "inst-sp"), 0);
+}
+
+/// 缩股后部分卖出按**重述后**每份成本结算（ADR-0106 决策 2 在负方向的同一钉死）：
+/// 买 100 @10 元、缩股 −20（每份成本升为 12.5 元）、卖 60 @15 元 →
+/// 已实现 = 900 − 750 = 150 元；续卖剩余 20 清仓后 Σ已实现 = Σ卖出 − Σ买入 精确闭合。
+#[test]
+fn split_reverse_partial_sell_settles_at_restated_cost() {
+    let conn = open();
+    seed_split_scene(&conn);
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            100_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", -20.0)).unwrap();
+
+    // 卖 60 @15 元：金额 90000 分，成本 round(60 × 125000 ÷ 100) = 75000 分，
+    // 已实现 15000 分——按重述后每份成本 12.5 元结算的唯一答案。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Sell,
+            "acc-sp",
+            "inst-sp",
+            60.0,
+            150_000,
+            "2026-03-01",
+        ),
+    )
+    .unwrap();
+    assert_eq!(realized_pnl_of(&conn, "inst-sp"), 15_000);
+
+    // 清仓剩余 20 @15 元：耗尽闭合 = 100000 − 75000 = 25000 分，已实现 5000 分；
+    // Σ = 20000 = Σ卖出 120000 − Σ买入 100000（缩股只重摊成本，不引入新项）。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Sell,
+            "acc-sp",
+            "inst-sp",
+            20.0,
+            150_000,
+            "2026-04-01",
+        ),
+    )
+    .unwrap();
+    assert_eq!(realized_pnl_of(&conn, "inst-sp"), 20_000);
+}
+
+/// 守卫（ADR-0106 决策 7，全部码化中文错误）：零持仓、Δ = 0、缩股越界
+/// （`|Δ| ≥ 当前持仓`，取严）、非投资账户、无现金腿（非零金额 / 单价 / 手续费）、
+/// 携带转入标的 / 转入账户 / 出资账户 / 商户 / 分类 / 保单。
 #[test]
 fn split_guards_return_coded_errors() {
     let conn = open();
@@ -426,6 +644,17 @@ fn split_guards_return_coded_errors() {
         make_split_input("acc-sp", "inst-other", 10.0),
     ));
     assert_eq!(e.code().unwrap(), "trade.split-no-holding", "{e:?}");
+    // 零持仓缩股：`|Δ| > 0 ≥ 当前持仓` 被缩股守卫拒绝（对准缩股语义，不借用
+    // 卖出 / 超卖文案），不给「零持仓无从重述」的正向口径。
+    let e = err(create_transaction_internal(
+        &conn,
+        make_split_input("acc-sp", "inst-other", -10.0),
+    ));
+    assert_eq!(
+        e.code().unwrap(),
+        "trade.split-shrink-not-less-than-holding",
+        "{e:?}"
+    );
 
     // 建仓后逐守卫。
     create_transaction_internal(
@@ -445,15 +674,27 @@ fn split_guards_return_coded_errors() {
         &conn,
         make_split_input("acc-sp", "inst-sp", 0.0),
     ));
-    assert_eq!(e.code().unwrap(), "trade.split-quantity-positive");
+    assert_eq!(e.code().unwrap(), "trade.split-quantity-zero");
+    // 缩股取严（ADR-0106 决策 1/7）：等号（Δ = −100 = −持仓）拒绝——f = 0 会让
+    // 成本凭空消失；越界同样拒绝。文案对准缩股语义（非卖出 / 超卖）。
     let e = err(create_transaction_internal(
         &conn,
-        make_split_input("acc-sp", "inst-sp", -5.0),
+        make_split_input("acc-sp", "inst-sp", -100.0),
     ));
     assert_eq!(
         e.code().unwrap(),
-        "trade.split-quantity-positive",
-        "缩股方向本票未放开（#1050）"
+        "trade.split-shrink-not-less-than-holding",
+        "{e:?}"
+    );
+    assert!(e.to_string().contains("缩股"), "文案应针对缩股语义: {e}");
+    let e = err(create_transaction_internal(
+        &conn,
+        make_split_input("acc-sp", "inst-sp", -150.0),
+    ));
+    assert_eq!(
+        e.code().unwrap(),
+        "trade.split-shrink-not-less-than-holding",
+        "{e:?}"
     );
 
     // 非投资账户。
@@ -706,5 +947,35 @@ fn portfolio_trend_includes_split_leg() {
     assert_eq!(
         trend.points[0].market_value_cents, 15_000,
         "周点市值 = (100 + 50) × 1.00 元 = 15000 分"
+    );
+}
+
+/// 组合走势认缩股腿（−Δ，ADR-0106 决策 8 / issue #1050）：缩股落账后的周点市值 =
+/// 缩股后持仓 × 当期周线价格——与 as-of 推算、持仓视图同源，走势查询不感知推算
+/// 内部变化；删去推算 SQL 的 split 腿本测试确定性变红（接线负向判据 ADR-0087）。
+#[test]
+fn portfolio_trend_includes_reverse_split_leg() {
+    let conn = open();
+    seed_split_scene(&conn);
+    crate::test_support::seed_price_history(&conn, "ph-rs", "inst-sp", "2026-02-02", 10_000, "CNY");
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            10_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", -40.0)).unwrap();
+
+    let trend = trend::query_portfolio_value_trend(&conn, &TrendRange::default()).unwrap();
+    assert_eq!(trend.points.len(), 1);
+    assert_eq!(
+        trend.points[0].market_value_cents, 6_000,
+        "周点市值 = (100 − 40) × 1.00 元 = 6000 分"
     );
 }
