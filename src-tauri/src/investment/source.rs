@@ -17,9 +17,9 @@ use crate::db::query::query_all;
 use crate::error::Result;
 
 /// 按生成交易 id 批量反查买卖明细指向的标的（标的 id + 代码 + 名称），调用方
-/// 按 `transaction_id` 把结果归位到交易行。dividend/split 行写入层暂未开放
-/// （行为层显式拒绝），开放后经同一路径自然获得标的来源，本查询不按 action
-/// 过滤——反查语义是「交易发起源档案」，不是买卖动作本身。
+/// 按 `transaction_id` 把结果归位到交易行。dividend 行写入层仍显式拒绝；
+/// split 已随 ADR-0106 / #1049 激活并经同一路径自然获得标的来源；本查询不按
+/// action 过滤——反查语义是「交易发起源档案」，不是买卖动作本身。
 pub fn source_display_by_transaction_ids(
     conn: &Connection,
     transaction_ids: &[String],

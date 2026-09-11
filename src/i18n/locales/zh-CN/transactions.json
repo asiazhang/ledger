@@ -6,7 +6,8 @@
     "refund": "退款",
     "buy": "买入",
     "sell": "卖出",
-    "convert": "转换"
+    "convert": "转换",
+    "split": "份额调整"
   },
   "lending": {
     "direction": "方向",

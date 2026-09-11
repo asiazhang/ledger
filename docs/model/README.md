@@ -152,5 +152,8 @@ erDiagram
 | `V019__insurer_dictionary.sql` | 保司字典（insurers）表 + 30 家常用国内保司种子（保险域自有字典，ADR-0082） |
 | `V020__sync_oplog.sql` | 多端同步元数据：设备标识与端内逻辑时钟（sync_device 单行）与操作日志（sync_ops，只追加；issue #855 / ADR-0091） |
 | `V021__sync_merge_semantics.sql` | 多端同步合并语义：sync_ops 实体指向列（LWW 裁决检索）与挂起队列（sync_parked_ops；issue #856 / ADR-0091） |
+| `V022__sync_checkpoint.sql` | 多端同步各来源流已应用位点表（sync_stream_positions；issue #857 / ADR-0091 决策 9） |
+| `V023__transaction_funding_account.sql` | buy/sell 出资账户列（funding_account_id）与出资端聚合索引（ADR-0096） |
+| `V024__security_lot_adjustments.sql` | 份额调整（split）批次重述审计表：逐批次 before / after 快照（ADR-0106 / issue #1049） |
 
 > 迁移版本由 SQLite `user_version` 自动追踪，新迁移在数据库模块统一注册。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时新建 `V00X__名称.sql` 并在注册处追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。

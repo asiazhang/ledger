@@ -54,6 +54,15 @@ const CONSUMED_BY_CONVERT_CANNOT_UPDATE_CODE: &str = "trade.consumed-by-convert-
 const CONSUMED_BY_CONVERT_CANNOT_DELETE: &str = "该交易的份额已被后续转换消耗，无法删除";
 const CONSUMED_BY_CONVERT_CANNOT_DELETE_CODE: &str = "trade.consumed-by-convert-delete";
 
+/// 持仓批次已被**在用的后续份额调整**重述的守卫文案（ADR-0106 决策 5 判据家族 /
+/// issue #1049）：修改会重建批次、删除会连带清空批次，两者都会把重述审计
+/// （security_lot_adjustments，精确回补与审计的唯一依据）一并抹掉。修改与删除
+/// 两个入口措辞各自单点定义（与上方转换链守卫同款）。
+const CONSUMED_BY_SPLIT_CANNOT_UPDATE: &str = "该交易的份额已被后续份额调整重述，无法修改";
+const CONSUMED_BY_SPLIT_CANNOT_UPDATE_CODE: &str = "trade.consumed-by-split-update";
+const CONSUMED_BY_SPLIT_CANNOT_DELETE: &str = "该交易的份额已被后续份额调整重述，无法删除";
+const CONSUMED_BY_SPLIT_CANNOT_DELETE_CODE: &str = "trade.consumed-by-split-delete";
+
 /// 撤销一笔 buy / sell / convert 交易对持仓的全部影响（修改路径与删除路径同一动作）。
 ///
 /// 按 kind 与模式分派（ADR-0097 / ADR-0099）：
@@ -81,6 +90,7 @@ pub fn remove(
         TransactionKind::Buy => match mode {
             Mode::Update => {
                 guard_no_convert_consumed(conn, id, Mode::Update)?;
+                guard_no_split_restated(conn, id, Mode::Update)?;
                 guard_no_active_sell(
                     conn,
                     id,
@@ -92,6 +102,7 @@ pub fn remove(
             }
             Mode::Delete => {
                 guard_no_convert_consumed(conn, id, Mode::Delete)?;
+                guard_no_split_restated(conn, id, Mode::Delete)?;
                 let cascaded_sell_ids = cascade_active_sells(conn, id)?;
                 purge_lot_artifacts(conn, id)?;
                 Ok(cascaded_sell_ids)
@@ -101,6 +112,7 @@ pub fn remove(
         TransactionKind::Convert => match mode {
             Mode::Update => {
                 guard_no_convert_consumed(conn, id, Mode::Update)?;
+                guard_no_split_restated(conn, id, Mode::Update)?;
                 guard_no_active_sell(
                     conn,
                     id,
@@ -113,6 +125,7 @@ pub fn remove(
             }
             Mode::Delete => {
                 guard_no_convert_consumed(conn, id, Mode::Delete)?;
+                guard_no_split_restated(conn, id, Mode::Delete)?;
                 let cascaded_sell_ids = cascade_active_sells(conn, id)?;
                 lots::restore_convert_out_leg(conn, id)?;
                 purge_lot_artifacts(conn, id)?;
@@ -198,6 +211,46 @@ fn guard_no_convert_consumed(conn: &Connection, id: &str, mode: Mode) -> Result<
         return Err(AppError::coded(code, msg));
     }
     Ok(())
+}
+
+/// 份额调整重述守卫：本行的持仓批次若已被**在用**的后续份额调整（split）重述，
+/// 则拒绝修改/删除（ADR-0106 决策 5 判据家族，先例 [`guard_no_convert_consumed`]）。
+///
+/// 修改会重建批次、删除会连带清空批次，两者都会把重述审计行一并抹掉——那是
+/// split 精确回补与审计的唯一依据。谓词与 kind 无关（buy 与 convert 转入腿同一
+/// 「被在用 split 重述」归因），仅按模式选择用户可见措辞。
+fn guard_no_split_restated(conn: &Connection, id: &str, mode: Mode) -> Result<()> {
+    let (code, msg) = match mode {
+        Mode::Update => (
+            CONSUMED_BY_SPLIT_CANNOT_UPDATE_CODE,
+            CONSUMED_BY_SPLIT_CANNOT_UPDATE,
+        ),
+        Mode::Delete => (
+            CONSUMED_BY_SPLIT_CANNOT_DELETE_CODE,
+            CONSUMED_BY_SPLIT_CANNOT_DELETE,
+        ),
+    };
+    if !active_split_ids_on_own_lots(conn, id)?.is_empty() {
+        return Err(AppError::coded(code, msg));
+    }
+    Ok(())
+}
+
+/// 消费某买入/转换持仓批次的**在用** split id 列表（份额调整重述守卫的对象）。
+///
+/// 与 [`active_sell_ids_on_own_lots`] 同款归因谓词：按 `security_lot_adjustments`
+/// 归因到 split 交易行、只计未软删者。
+fn active_split_ids_on_own_lots(conn: &Connection, anchor_id: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT a.transaction_id FROM security_lot_adjustments a \
+         JOIN transactions t ON t.id = a.transaction_id \
+         WHERE t.is_deleted = 0 AND a.lot_id IN \
+         (SELECT id FROM security_lots WHERE buy_transaction_id = ?1)",
+    )?;
+    let ids = stmt
+        .query_map(rusqlite::params![anchor_id], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(ids)
 }
 
 /// 整批清理一笔买入或转换**转入腿**的持仓关联：批次、批次的全部卖出匹配与自身的

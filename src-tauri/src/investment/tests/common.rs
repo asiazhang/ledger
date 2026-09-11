@@ -193,6 +193,39 @@ pub(super) fn make_convert_input(
     }
 }
 
+/// 份额调整输入构造器（ADR-0106 / issue #1049）：无现金腿——金额 0、无单价、
+/// 无手续费；`delta` 为带符号份额增量 Δ（本票正向闭环恒 > 0）。
+pub(super) fn make_split_input(
+    account_id: &str,
+    instrument_id: &str,
+    delta: f64,
+) -> TransactionInput {
+    TransactionInput {
+        merchant_name: None,
+        policy_id: None,
+        kind: TransactionKind::Split,
+        amount_cents: 0,
+        currency_code: "CNY".into(),
+        account_id: account_id.into(),
+        to_account_id: None,
+        funding_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-02-01".into(),
+        instrument_id: Some(instrument_id.into()),
+        quantity: Some(delta),
+        price_cents: None,
+        fee_cents: Some(0),
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        idempotency_key: None,
+    }
+}
+
 /// 日期可指定的 buy/sell 输入（数量推算测试需要错开周采样日）。
 pub(super) fn make_trade_input(
     kind: TransactionKind,

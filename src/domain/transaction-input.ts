@@ -147,6 +147,17 @@ const KIND_FIELD_MATRIX: Record<TransactionKind, KindMatrixRow> = {
     policy_id: null,
     refund_of_transaction_id: null,
   },
+  // 份额调整（ADR-0106 / #1049）：无现金腿、单标的带符号份额增量，行金额占位 0；
+  // 界面无手工录入入口（决策 10），wire 字段由 AI 导入 / HTTP 契约直接提交。
+  split: {
+    amount_cents: 0,
+    to_account_id: null,
+    funding_account_id: null,
+    category_id: null,
+    merchant_id: null,
+    policy_id: null,
+    refund_of_transaction_id: null,
+  },
 }
 
 /** fail fast：非法表单状态抛中文错误，不静默兜底 */

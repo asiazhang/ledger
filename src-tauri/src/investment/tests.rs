@@ -20,6 +20,9 @@
 //! - [`stock_lookup`]：股票按（市场，代码）查询领域规则（市场推断 / 矛盾 400 / 币种推导，issue #693）
 //! - [`stock_create`]：股票创建增强的东财往返路由与落库接缝（权威名称 + 现价 / 降级市场保留，issue #694）
 //! - [`stock_add`]：「添加投资标的」股票侧录入——通道解析、查询遍历与识别落库（issue #697）
+//! - [`split`]：份额调整（split）正向写入——按比例重述与尾差归末批次、部分卖出按
+//!   重述后每份成本结算（决策 2 唯一钉死处）、无 split 行消耗回算恒等绑定、
+//!   守卫与改删/ kind 变更拒绝（ADR-0106 / issue #1049）
 
 mod common;
 mod convert;
@@ -33,6 +36,7 @@ mod instrument_manual_create;
 mod manual_price;
 mod pnl;
 mod predicates;
+mod split;
 mod stock_add;
 mod stock_create;
 mod stock_lookup;

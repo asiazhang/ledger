@@ -35,9 +35,12 @@
 //! - [`reports`]：已实现盈亏汇总查询；
 //! - [`source`]：交易列表标的来源反查（spec #704 / issue #709，按生成交易 id
 //!   批量取证券交易记录指向的标的展示字段）；
+//! - [`split`]：份额调整（split）批次成本重述单点——按比例重述在用批次
+//!   （尾差归末批次）与 `security_lot_adjustments` 审计落库（ADR-0106 决策 2/3，
+//!   issue #1049）；
 //! - [`stock`]：股票按（市场，代码）查询的领域规则——代码形态 → 市场单点推断、
 //!   报价币种推导（issue #693 / ADR-0081；东财访问在 `sync::stock`）；
-//! - [`trade`]：buy/sell/convert 协议三件套与买卖/转换明细投影
+//! - [`trade`]：buy/sell/convert/split 协议分派与买卖/转换明细投影
 //!   （`TransactionTrade` / `TransactionConvert`）；
 //! - [`trend`]：单标的 / 组合走势查询。
 //! - [`unwind`]：持仓副作用撤销（Unwind）——修改/删除路径的守卫 → 级联/回补 → 清理
@@ -68,6 +71,7 @@ pub mod prices;
 pub mod quote;
 pub mod reports;
 pub mod source;
+pub mod split;
 pub mod stock;
 pub mod trade;
 pub mod trend;

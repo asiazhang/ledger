@@ -3,6 +3,7 @@ use rusqlite::{Connection, OptionalExtension};
 use super::lots::{self, Consumption};
 use super::model::{TransactionConvert, TransactionTrade};
 use super::prices::PRICE_UNITS_PER_FEN;
+use super::split::{self, LotRestatement};
 use super::unwind;
 use crate::accounts::AccountType;
 use crate::db::query::query_one;
@@ -56,9 +57,10 @@ fn fetch_instrument_type(
 }
 
 /// 投资交易对外出口（issue #72 / spec #69）：`prepare / apply / revert` 三件套 +
-/// 删除路径专用的 [`release_for_delete`]（issue #940 / ADR-0097），承载三类投资 kind：
+/// 删除路径专用的 [`release_for_delete`]（issue #940 / ADR-0097），承载投资 kind：
 /// buy（建仓）/ sell（FIFO 卖出匹配与已实现盈亏）/ convert（基金转换，ADR-0099：
-/// 转出腿 FIFO 消耗与结转成本、转入批次以结转成本建仓、零已实现盈亏）。
+/// 转出腿 FIFO 消耗与结转成本、转入批次以结转成本建仓、零已实现盈亏）/
+/// split（份额调整，ADR-0106：按比例重述在用批次成本、零已实现盈亏，#1049）。
 ///
 /// - [`prepare`]：校验并归一化一笔 buy/sell/convert 输入（不落库、不产生副作用），产出 [`Plan`]；
 /// - [`apply`]：应用计划的副作用（buy 建仓 / sell 卖出匹配 / convert 两腿结转），由编排层在行落库后调用；
@@ -207,7 +209,7 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
             ));
         }
         // 金额权威与单价权威互斥：wire 上误传单价显式拒绝（与前端装配器同源），
-        // 不静默吞掉（非法输入 fail fast，与 dividend/split 显式拒绝同一原则）。
+        // 不静默吞掉（非法输入 fail fast，与 split 的单价拒绝同一原则）。
         if input.price_cents.is_some() {
             return Err(AppError::coded(
                 "trade.fund-price-forbidden",
@@ -570,6 +572,139 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
     })
 }
 
+/// 份额调整计划（ADR-0106）：归一化行（无现金腿，金额恒 0）+ 带符号份额增量 Δ
+/// + 在用批次重述快照（prepare 算定、apply 原样落库）。重述不携带批次行 id 之外
+///   的任何落库状态；同步重放只携带 Δ（ADR-0106 决策 9），重放端本地重建重述。
+pub struct SplitPlan {
+    pub(crate) normalized: NormalizedTransaction,
+    pub(crate) instrument_id: String,
+    /// 带符号份额增量 Δ（绝对增量语义，不是换算比例）：本票仅收 +Δ
+    /// （缩股 −Δ 与取严守卫由后续票 #1050 收编）。
+    pub(crate) delta_quantity: f64,
+    /// 在用批次重述快照（逐批次 before / after，落 `security_lot_adjustments` 审计）。
+    pub(crate) restated: Vec<LotRestatement>,
+}
+
+/// 校验并归一化一笔份额调整（不落库）。创建与修改共用；修改路径在本票被
+/// 「暂不支持」显式拒绝（临时形态，#1051 收编），本函数仅为创建路径分派。
+///
+/// 语义（ADR-0106 决策 1/3/7）：同一投资账户内、单标的的非现金份额变动——
+/// 一条记录表达标的、带符号份额增量 Δ 与调整日；**无现金腿**：行金额恒 0、
+/// 六度量系数全 0，落账前后全部账户余额（含黑洞）完全不变；成本口径为按比例
+/// 重述在用批次（[`split::plan_restatement`]），零已实现盈亏。
+///
+/// 守卫（全部码化中文错误，ADR-0050）：标的存在、账户为投资账户、Δ > 0
+/// （本票正向闭环）、零在用持仓拒绝（价值已含在原批次，零持仓无从重述）、
+/// 不接受手续费（非 0 拒绝）/ 单价 / 非零金额 / 转入标的 / 转入账户；商户 /
+/// 分类 / 保单由行为层参考数据携带准入拒绝（split 不在任何准入集）；出资账户
+/// 由出资准入闭集拒绝（仅 buy/sell 可携带，ADR-0096）。
+fn prepare_split(conn: &Connection, input: &TransactionInput) -> Result<SplitPlan> {
+    let instrument_id = input
+        .instrument_id
+        .as_ref()
+        .ok_or_else(|| AppError::coded("trade.split-instrument-required", "份额调整必须指定标的"))?
+        .clone();
+    // 标的存在性（兼类型读取）先于数值校验：身份错了，数值对错无从谈起
+    // （buy/sell/convert 同一顺序）。标的类型不限（基金/股票同构）。
+    fetch_instrument_type(
+        conn,
+        &instrument_id,
+        "份额调整",
+        "trade.split-instrument-not-found",
+    )?;
+    // 单标的、不跨账户、无现金腿（ADR-0106 决策 1）：携带 convert/交易形态的
+    // 专属字段即意图漂移，fail fast 显式拒绝，不静默吞掉。
+    if input.to_instrument_id.is_some() {
+        return Err(AppError::coded(
+            "trade.split-to-instrument-forbidden",
+            "份额调整是单标的份额变动，不能携带转入标的",
+        ));
+    }
+    if input.to_account_id.is_some() {
+        return Err(AppError::coded(
+            "trade.split-to-account-forbidden",
+            "份额调整不跨账户：只能调整同一投资账户内的标的，不能携带转入账户",
+        ));
+    }
+    if input.price_cents.is_some() {
+        return Err(AppError::coded(
+            "trade.split-price-forbidden",
+            "份额调整无现金腿，不可提供单价",
+        ));
+    }
+    let fee_cents = input.fee_cents.unwrap_or(0);
+    if fee_cents != 0 {
+        return Err(AppError::coded(
+            "trade.split-fee-forbidden",
+            "份额调整无现金腿，不接受手续费",
+        ));
+    }
+    if input.amount_cents != 0 {
+        return Err(AppError::coded(
+            "trade.split-amount-forbidden",
+            "份额调整无现金腿，金额必须为 0",
+        ));
+    }
+    let delta_quantity = input.quantity.unwrap_or(0.0);
+    // 本票仅正向闭环（ADR-0106 决策 1：+ = 折算/结转/送股）；缩股 −Δ 与取严
+    // 不等式由后续票 #1050 收编，此处统一按「必须大于 0」拒绝。
+    if delta_quantity <= 0.0 {
+        return Err(AppError::coded(
+            "trade.split-quantity-positive",
+            "份额调整数量必须大于 0",
+        ));
+    }
+    ensure_investment_account(
+        conn,
+        &input.account_id,
+        "trade.split-account-not-investment",
+        "份额调整必须使用投资账户",
+    )?;
+    // 出资账户准入（ADR-0096）：split 不在出资闭集内，携带即被既有
+    // 「不能携带出资账户」拒绝——「无现金腿」由此天然成立，不另设第二份判定。
+    let account_currency = account_currency_code(conn, &input.account_id)?;
+    crate::transaction::funding::validate_funding_account(
+        conn,
+        TransactionKind::Split,
+        input.funding_account_id.as_deref(),
+        &account_currency,
+    )?;
+    // 在用批次重述快照（prepare 算定，apply 原样落盘）：零在用持仓在此拒绝——
+    // 价值已含在原批次中，零持仓无从重述（ADR-0106 决策 7）。
+    let restated =
+        split::plan_restatement(conn, &input.account_id, &instrument_id, delta_quantity)?;
+    if restated.is_empty() {
+        return Err(AppError::coded(
+            "trade.split-no-holding",
+            "份额调整要求该标的有在用持仓（零持仓无从重述批次成本）",
+        ));
+    }
+
+    Ok(SplitPlan {
+        normalized: NormalizedTransaction {
+            kind: TransactionKind::Split,
+            // 无现金腿：行金额恒 0、六度量系数全 0。本位币金额同恒 0——
+            // 0 在任何币种下的本位币折算恒为 0，不经汇率表（无现金腿不依赖汇率）。
+            amount_cents: 0,
+            currency_code: account_currency,
+            amount_native_cents: 0,
+            account_id: input.account_id.clone(),
+            // 单标的、不跨账户：转入账户已拒绝、出资账户已被准入拒绝，恒 None。
+            to_account_id: None,
+            funding_account_id: None,
+            category_id: None,
+            merchant_id: None,
+            policy_id: None,
+            refund_of_transaction_id: None,
+            note: input.note.clone(),
+            date: input.date.clone(),
+        },
+        instrument_id,
+        delta_quantity,
+        restated,
+    })
+}
+
 /// 卖出交易的持仓/卖出关联副作用（创建与修改共用）。
 ///
 /// 只写 `security_transactions` 记录、`security_lot_sales` 匹配与持仓扣减，不写交易行——
@@ -725,6 +860,8 @@ pub enum Plan {
     Buy(BuyPlan),
     Sell(SellPlan),
     Convert(ConvertPlan),
+    /// 份额调整（ADR-0106）：批次重述快照随计划走，apply 原样落库。
+    Split(SplitPlan),
 }
 
 impl Plan {
@@ -734,28 +871,29 @@ impl Plan {
             Plan::Buy(p) => &p.normalized,
             Plan::Sell(p) => &p.normalized,
             Plan::Convert(p) => &p.normalized,
+            Plan::Split(p) => &p.normalized,
         }
     }
 }
 
-/// 校验并归一化一笔 buy/sell/convert 输入为 [`Plan`]（不落库、不产生副作用）。
+/// 校验并归一化一笔 buy/sell/convert/split 输入为 [`Plan`]（不落库、不产生副作用）。
 ///
 /// 由行为层（`transaction`）在创建/修改路径按 kind 分派调用；
-/// `kind` 为已解析的 [`TransactionKind`]，收到非 buy/sell/convert 的 kind 属编排错误，报错防误用。
+/// `kind` 为已解析的 [`TransactionKind`]，收到其余 kind 属编排错误，报错防误用。
 pub fn prepare(conn: &Connection, kind: TransactionKind, input: &TransactionInput) -> Result<Plan> {
     match kind {
         TransactionKind::Buy => Ok(Plan::Buy(prepare_buy(conn, input)?)),
         TransactionKind::Sell => Ok(Plan::Sell(prepare_sell(conn, input)?)),
         TransactionKind::Convert => Ok(Plan::Convert(prepare_convert(conn, input)?)),
-        // 行为层穷尽分派保证仅转发 buy/sell/convert；其余 kind 属编排错误，显式拒绝防误用
+        TransactionKind::Split => Ok(Plan::Split(prepare_split(conn, input)?)),
+        // 行为层穷尽分派保证仅转发 buy/sell/convert/split；其余 kind 属编排错误，显式拒绝防误用
         // （显式枚举保证新增 kind 时此处编译报错，而非落入兜底）。
         TransactionKind::Income
         | TransactionKind::Expense
         | TransactionKind::Transfer
         | TransactionKind::Refund
-        | TransactionKind::Dividend
-        | TransactionKind::Split => Err(AppError::Invalid(format!(
-            "投资层仅处理 buy/sell/convert，收到: {kind}"
+        | TransactionKind::Dividend => Err(AppError::Invalid(format!(
+            "投资层仅处理 buy/sell/convert/split，收到: {kind}"
         ))),
     }
 }
@@ -767,6 +905,13 @@ pub fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
         Plan::Buy(p) => create_buy_lot(conn, id, p),
         Plan::Sell(p) => write_sell_side_effects(conn, id, p),
         Plan::Convert(p) => write_convert_side_effects(conn, id, p),
+        Plan::Split(p) => split::write_split_side_effects(
+            conn,
+            id,
+            &p.instrument_id,
+            p.delta_quantity,
+            &p.restated,
+        ),
     }
 }
 

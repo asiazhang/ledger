@@ -6,7 +6,8 @@
     "refund": "Refund",
     "buy": "Buy",
     "sell": "Sell",
-    "convert": "Convert"
+    "convert": "Convert",
+    "split": "Share Adjustment"
   },
   "lending": {
     "direction": "Direction",

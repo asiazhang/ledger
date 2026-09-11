@@ -29,6 +29,9 @@ export const KIND_TAG_TYPE: Record<TransactionKind, 'success' | 'warning' | 'inf
   // 基金转换（ADR-0099）取 info 蓝色标注：与退款同色型但标签文案不同，
   // 一眼区分于买入/卖出的中性标签（投资类默认色）。
   convert: 'info',
+  // 份额调整（ADR-0106 / #1049）：与转换同为「无现金腿」kind，同取 info 蓝色标注，
+  // 标签文案区分二者。
+  split: 'info',
 }
 
 /**

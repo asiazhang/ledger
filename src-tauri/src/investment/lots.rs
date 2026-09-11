@@ -102,24 +102,29 @@ pub(crate) fn active_lots(
 
 /// 该批次此前已消耗成本合计（分）：卖出匹配与转换转出两条消耗记录同口径求和。
 ///
-/// 逐条按「数量 × 批次每份成本 ÷ 换算因子」单次舍入后求和，与既有卖出匹配的
-/// 重建口径一致；批次被转换后再被卖出/再转换时，已结转走的部分不被重复计入。
-fn prior_consumed_cost_cents(
-    conn: &Connection,
-    lot_id: &str,
-    cost_per_unit_cents: i64,
-) -> Result<i64> {
+/// 逐条按「数量 × **记录时**批次每份成本 ÷ 换算因子」单次舍入后求和，与既有卖出
+/// 匹配的重建口径一致；批次被转换后再被卖出/再转换时，已结转走的部分不被重复计入。
+///
+/// 成本读**记录时**的每份成本（`security_lot_sales` / `security_lot_conversions`
+/// 行内落定的列，ADR-0106 决策 5）：份额调整重述批次后，批次当前每份成本已稀释，
+/// 历史消耗不能再从当前值回算（否则耗尽批次的闭合锚点漂移：100 份 @1.00 卖 40
+/// 后 +100%，清仓闭合会给出 80 而非 60）；无 split 行时记录时值与当前值恒等，
+/// 回算口径与重述引入前完全一致（绑定测试钉住，见 `tests/split.rs`）。
+/// 本函数同时是份额调整末批次闭合的目标依据（`split::plan_restatement`）。
+pub(crate) fn prior_consumed_cost_cents(conn: &Connection, lot_id: &str) -> Result<i64> {
     let mut stmt = conn.prepare(
-        "SELECT quantity FROM security_lot_sales WHERE lot_id=?1 \
+        "SELECT quantity, cost_per_unit_cents FROM security_lot_sales WHERE lot_id=?1 \
          UNION ALL \
-         SELECT quantity FROM security_lot_conversions WHERE lot_id=?1",
+         SELECT quantity, cost_per_unit_cents FROM security_lot_conversions WHERE lot_id=?1",
     )?;
-    let quantities = stmt
-        .query_map(rusqlite::params![lot_id], |r| r.get::<_, f64>(0))?
+    let rows = stmt
+        .query_map(rusqlite::params![lot_id], |r| {
+            Ok((r.get::<_, f64>(0)?, r.get::<_, i64>(1)?))
+        })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(quantities
+    Ok(rows
         .iter()
-        .map(|q| (q * cost_per_unit_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64)
+        .map(|(q, recorded_cpu)| (q * *recorded_cpu as f64 / PRICE_UNITS_PER_FEN).round() as i64)
         .sum())
 }
 
@@ -164,7 +169,7 @@ pub(crate) fn plan(
                 rusqlite::params![lot.id],
                 |r| r.get(0),
             )?;
-            lot_total_cents - prior_consumed_cost_cents(conn, &lot.id, lot.cost_per_unit_cents)?
+            lot_total_cents - prior_consumed_cost_cents(conn, &lot.id)?
         } else {
             (matched * lot.cost_per_unit_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64
         };
