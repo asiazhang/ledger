@@ -599,7 +599,15 @@ pub struct SplitPlan {
 /// 取严 `|Δ| < 当前持仓`、不接受手续费（非 0 拒绝）/ 单价 / 非零金额 / 转入标的 /
 /// 转入账户；商户 / 分类 / 保单由行为层参考数据携带准入拒绝（split 不在任何准入
 /// 集）；出资账户由出资准入闭集拒绝（仅 buy/sell 可携带，ADR-0096）。
-fn prepare_split(conn: &Connection, input: &TransactionInput) -> Result<SplitPlan> {
+///
+/// `existing_id`：修改路径传本行 id，重述目标以本行落账序为界（ADR-0106 决策 6）——
+/// 只重述它落账那一刻在场的批次，其后建立的批次（后续买入）不受历史份额调整影响；
+/// 创建路径传 `None`，取当前全部在用批次。
+fn prepare_split(
+    conn: &Connection,
+    input: &TransactionInput,
+    existing_id: Option<&str>,
+) -> Result<SplitPlan> {
     let instrument_id = input
         .instrument_id
         .as_ref()
@@ -673,8 +681,22 @@ fn prepare_split(conn: &Connection, input: &TransactionInput) -> Result<SplitPla
     )?;
     // 在用批次重述快照（prepare 算定，apply 原样落盘）：零在用持仓在此拒绝——
     // 价值已含在原批次中，零持仓无从重述（ADR-0106 决策 7）。
-    let restated =
-        split::plan_restatement(conn, &input.account_id, &instrument_id, delta_quantity)?;
+    // 修改路径以本行落账序为界（ADR-0106 决策 6）：历史份额调整不回头改后续买入。
+    let before_rowid = match existing_id {
+        Some(id) => Some(conn.query_row(
+            "SELECT rowid FROM transactions WHERE id=?1",
+            rusqlite::params![id],
+            |r| r.get::<_, i64>(0),
+        )?),
+        None => None,
+    };
+    let restated = split::plan_restatement(
+        conn,
+        &input.account_id,
+        &instrument_id,
+        delta_quantity,
+        before_rowid,
+    )?;
     if restated.is_empty() {
         return Err(AppError::coded(
             "trade.split-no-holding",
@@ -882,12 +904,19 @@ impl Plan {
 ///
 /// 由行为层（`transaction`）在创建/修改路径按 kind 分派调用；
 /// `kind` 为已解析的 [`TransactionKind`]，收到其余 kind 属编排错误，报错防误用。
-pub fn prepare(conn: &Connection, kind: TransactionKind, input: &TransactionInput) -> Result<Plan> {
+/// `existing_id`：修改路径的既有交易 id（创建路径 `None`）——仅 split 消费，用于把
+/// 重述目标限定在该行落账那一刻在场的批次（ADR-0106 决策 6）；其余 kind 忽略。
+pub fn prepare(
+    conn: &Connection,
+    kind: TransactionKind,
+    input: &TransactionInput,
+    existing_id: Option<&str>,
+) -> Result<Plan> {
     match kind {
         TransactionKind::Buy => Ok(Plan::Buy(prepare_buy(conn, input)?)),
         TransactionKind::Sell => Ok(Plan::Sell(prepare_sell(conn, input)?)),
         TransactionKind::Convert => Ok(Plan::Convert(prepare_convert(conn, input)?)),
-        TransactionKind::Split => Ok(Plan::Split(prepare_split(conn, input)?)),
+        TransactionKind::Split => Ok(Plan::Split(prepare_split(conn, input, existing_id)?)),
         // 行为层穷尽分派保证仅转发 buy/sell/convert/split；其余 kind 属编排错误，显式拒绝防误用
         // （显式枚举保证新增 kind 时此处编译报错，而非落入兜底）。
         TransactionKind::Income

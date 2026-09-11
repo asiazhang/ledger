@@ -150,8 +150,8 @@
     "split-account-not-investment": "份额调整必须使用投资账户",
     "split-no-holding": "份额调整要求该标的有在用持仓（零持仓无从重述批次成本）",
     "split-kind-change-forbidden": "不可将交易类型改为或改出「份额调整」：份额调整的纠错只有「删除后重建」一条路",
-    "split-update-unsupported": "份额调整记录暂不支持修改",
-    "split-delete-unsupported": "份额调整记录暂不支持删除",
+    "split-consumed-update": "该份额调整的批次已被后续交易消耗，无法修改",
+    "split-consumed-delete": "该份额调整的批次已被后续交易消耗，无法删除",
     "consumed-by-split-update": "该交易的份额已被后续份额调整重述，无法修改",
     "consumed-by-split-delete": "该交易的份额已被后续份额调整重述，无法删除",
     "insufficient-holding": "可卖出数量不足，当前持有 {0}，尝试卖出 {1}"

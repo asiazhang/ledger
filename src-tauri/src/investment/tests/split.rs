@@ -767,10 +767,11 @@ fn split_guards_return_coded_errors() {
     assert!((lots_of(&conn, "inst-sp")[0].1 - 100.0).abs() < 1e-9);
 }
 
-/// 改 / 删 split 行本票显式拒绝（临时形态，#1051 收编）；进/出 split 的 kind
-/// 变更一律拒绝（ADR-0106 决策 5，与 convert 同规，永久守卫）。
+/// 进/出 split 的 kind 变更一律拒绝（ADR-0106 决策 5，与 convert 同规，永久守卫）：
+/// 就地修改与删除已随 #1051 收编，不再是「暂不支持」，但换 kind 仍只有「软删 + 重建」
+/// 一条路。
 #[test]
-fn split_update_delete_and_kind_change_are_rejected() {
+fn split_kind_change_is_rejected() {
     let conn = open();
     seed_split_scene(&conn);
     create_transaction_internal(
@@ -788,19 +789,6 @@ fn split_update_delete_and_kind_change_are_rejected() {
     let split_id = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", 50.0))
         .unwrap()
         .id;
-
-    // 就地修改 split → split。
-    let e = update_transaction_internal(
-        &conn,
-        &split_id,
-        make_split_input("acc-sp", "inst-sp", 60.0),
-    )
-    .expect_err("split 就地修改应被拒绝");
-    assert_eq!(e.code().unwrap(), "trade.split-update-unsupported");
-
-    // 删除 split。
-    let e = delete_transaction_internal(&conn, &split_id).expect_err("split 删除应被拒绝");
-    assert_eq!(e.code().unwrap(), "trade.split-delete-unsupported");
 
     // 改出 split（→ buy）与改入 split（buy → split）都拒绝。
     let e = update_transaction_internal(
@@ -833,6 +821,478 @@ fn split_update_delete_and_kind_change_are_rejected() {
     let e = update_transaction_internal(&conn, &buy_id, make_split_input("acc-sp", "inst-sp", 5.0))
         .expect_err("改入 split 应被拒绝");
     assert_eq!(e.code().unwrap(), "trade.split-kind-change-forbidden");
+}
+
+/// 某 split 的重述审计行（remaining before / after、cpu before / after，按批次
+/// rowid 序）——回补精确性与「审计随新输入重建」的断言依据。
+fn audit_rows(conn: &rusqlite::Connection, split_id: &str) -> Vec<(f64, f64, i64, i64)> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT a.remaining_quantity_before, a.remaining_quantity_after, \
+             a.cost_per_unit_cents_before, a.cost_per_unit_cents_after \
+             FROM security_lot_adjustments a JOIN security_lots l ON l.id = a.lot_id \
+             WHERE a.transaction_id=?1 ORDER BY l.rowid",
+        )
+        .unwrap();
+    stmt.query_map(rusqlite::params![split_id], |r| {
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+    })
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
+/// split 扩展行数量（读回 qty 与行金额，验证「全字段替换」真换）。
+fn split_extension(conn: &rusqlite::Connection, split_id: &str) -> (f64, i64) {
+    conn.query_row(
+        "SELECT st.quantity, t.amount_cents FROM security_transactions st \
+         JOIN transactions t ON t.id = st.transaction_id WHERE st.transaction_id=?1",
+        rusqlite::params![split_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .unwrap()
+}
+
+/// 就地修改一笔份额调整（#1051 / ADR-0106 决策 3/5）：先按 `security_lot_adjustments`
+/// 逐批次 before 快照精确回退（含舍入），再按新输入重述——结果与「直接以新输入落一笔
+/// 调整」逐值一致，审计随新快照重建、旧快照不残留；余额不变、零已实现盈亏。
+#[test]
+fn split_update_reallocates_lots_to_new_input() {
+    let conn = open();
+    seed_split_scene(&conn);
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            100_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    let split_id = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", 50.0))
+        .unwrap()
+        .id;
+    // +50 后：150 份、每份成本 round(100000 ÷ 1.5) = 66667 万分之一元。
+    assert_eq!(lots_of(&conn, "inst-sp"), vec![(150.0, 150.0, 66_667)]);
+
+    let before = balance_snapshot(&conn);
+    update_transaction_internal(
+        &conn,
+        &split_id,
+        make_split_input("acc-sp", "inst-sp", 100.0),
+    )
+    .unwrap();
+
+    // 回退到 100 份 @100000，再按 +100 重述：200 份、每份成本 50000。
+    assert_eq!(lots_of(&conn, "inst-sp"), vec![(200.0, 200.0, 50_000)]);
+    // 审计随新输入重建：仍是 1 行，before 仍为调整前 100、after 为新值 200。
+    assert_eq!(
+        audit_rows(&conn, &split_id),
+        vec![(100.0, 200.0, 100_000, 50_000)]
+    );
+    // 全字段替换：扩展行数量随新 Δ，行金额仍恒 0（无现金腿）。
+    assert_eq!(split_extension(&conn, &split_id), (100.0, 0));
+    assert_eq!(before, balance_snapshot(&conn), "修改前后余额不变");
+    assert_eq!(realized_pnl_of(&conn, "inst-sp"), 0, "split 恒零已实现盈亏");
+}
+
+/// 修改可跨正负两向（#1051）：增长改缩股、缩股改增长都走同一回退 + 重述路径，
+/// 批次数量与每份成本精确落到新输入对应的值。
+#[test]
+fn split_update_crosses_growth_and_shrink_direction() {
+    let conn = open();
+    seed_split_scene(&conn);
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            100_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    let split_id = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", 100.0))
+        .unwrap()
+        .id;
+    assert_eq!(lots_of(&conn, "inst-sp"), vec![(200.0, 200.0, 50_000)]);
+
+    // 增长 → 缩股：回退到 100，再按 −40 重述为 60 份、每份成本 round(100000 ÷ 0.6)。
+    update_transaction_internal(
+        &conn,
+        &split_id,
+        make_split_input("acc-sp", "inst-sp", -40.0),
+    )
+    .unwrap();
+    assert_eq!(lots_of(&conn, "inst-sp"), vec![(60.0, 60.0, 166_667)]);
+
+    // 缩股 → 增长：回退到 100，再按 +300 重述为 400 份、每份成本 25000。
+    update_transaction_internal(
+        &conn,
+        &split_id,
+        make_split_input("acc-sp", "inst-sp", 300.0),
+    )
+    .unwrap();
+    assert_eq!(lots_of(&conn, "inst-sp"), vec![(400.0, 400.0, 25_000)]);
+}
+
+/// 修改不会回头改后续买入的批次（#1051 / ADR-0106 决策 6）：重述目标以本行**落账序**
+/// 为界——其后才建立的批次（后续买入）不受这笔历史份额调整的修改 / 删除影响。
+#[test]
+fn split_update_leaves_later_buys_untouched() {
+    let conn = open();
+    seed_split_scene(&conn);
+    // 批次 A：100 份 @1.00 元（锚点 10000 分）。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            10_000,
+            "2026-01-01",
+        ),
+    )
+    .unwrap();
+    let split_id = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", 50.0))
+        .unwrap()
+        .id;
+    // 批次 B：份额调整**之后**才买入 200 份 @2.00 元（锚点 40000 分）。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            200.0,
+            20_000,
+            "2026-03-01",
+        ),
+    )
+    .unwrap();
+    let later_buy = lots_of(&conn, "inst-sp")[1];
+
+    // 改 split：+50 → +100。A 回退到 100 后按 f=2 重述为 200 份 @5000。
+    update_transaction_internal(
+        &conn,
+        &split_id,
+        make_split_input("acc-sp", "inst-sp", 100.0),
+    )
+    .unwrap();
+    let lots = lots_of(&conn, "inst-sp");
+    assert_eq!(lots[0], (200.0, 200.0, 5_000));
+    assert_eq!(
+        lots[1], later_buy,
+        "后续买入的批次不因历史 split 的修改而重述"
+    );
+    assert_eq!(
+        audit_rows(&conn, &split_id).len(),
+        1,
+        "审计只覆盖在场批次 A"
+    );
+
+    // 删除也只精确还原 A，后建的 B 原样保留。
+    delete_transaction_internal(&conn, &split_id).unwrap();
+    assert_eq!(
+        lots_of(&conn, "inst-sp"),
+        vec![(100.0, 100.0, 10_000), later_buy]
+    );
+}
+
+/// 删除一笔份额调整（#1051 / ADR-0106 决策 3）：按逐批次 before 快照精确还原
+/// 持仓与每份成本（含舍入），审计行与 split 扩展行一并消失；先序卖出的已实现盈亏
+/// 不受影响、全部账户余额不变。
+#[test]
+fn split_delete_restores_lots_exactly_with_rounding() {
+    let conn = open();
+    seed_split_scene(&conn);
+    // 两批次 + 先序部分卖出，制造非末批次独立取整的舍入尾差（同尾差测试场景）。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            10_000,
+            "2026-01-01",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            200.0,
+            20_000,
+            "2026-01-15",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Sell,
+            "acc-sp",
+            "inst-sp",
+            40.0,
+            20_000,
+            "2026-01-20",
+        ),
+    )
+    .unwrap();
+    let lots_before_split = lots_of(&conn, "inst-sp");
+    let pnl_before_split = realized_pnl_of(&conn, "inst-sp");
+    let balances_before_split = balance_snapshot(&conn);
+
+    let split_id = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", 30.0))
+        .unwrap()
+        .id;
+    assert_ne!(
+        lots_of(&conn, "inst-sp"),
+        lots_before_split,
+        "重述应改变批次"
+    );
+    assert_eq!(
+        audit_rows(&conn, &split_id).len(),
+        2,
+        "每个在用批次一行审计"
+    );
+
+    delete_transaction_internal(&conn, &split_id).unwrap();
+
+    assert_eq!(
+        lots_of(&conn, "inst-sp"),
+        lots_before_split,
+        "删除后批次逐值精确还原到调整前（含舍入）"
+    );
+    assert!(audit_rows(&conn, &split_id).is_empty(), "审计随删除消失");
+    let ext: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM security_transactions WHERE transaction_id=?1",
+            rusqlite::params![split_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(ext, 0, "split 扩展行随删除消失");
+    let deleted: i64 = conn
+        .query_row(
+            "SELECT is_deleted FROM transactions WHERE id=?1",
+            rusqlite::params![split_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(deleted, 1, "交易行软删");
+    assert_eq!(
+        realized_pnl_of(&conn, "inst-sp"),
+        pnl_before_split,
+        "先序卖出的已实现盈亏不受删除影响"
+    );
+    assert_eq!(
+        balance_snapshot(&conn),
+        balances_before_split,
+        "删除前后余额不变"
+    );
+}
+
+/// 下游在用消耗守卫（#1051 / ADR-0106 决策 5）：本行重述过的批次被**落账序在后、
+/// 且未软删**的后续 sell 消耗时，改 / 删一律码化拒绝（回补会把批次还原到重述前快照，
+/// 与下游按重述后口径的结算冲突）；下游 sell 被软删消化后守卫解除，删除精确还原。
+#[test]
+fn split_downstream_consumption_guards_update_and_delete() {
+    let conn = open();
+    seed_split_scene(&conn);
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            100_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    let split_id = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", 100.0))
+        .unwrap()
+        .id;
+    // 下游卖出 50 份：消耗本行重述过的批次（200 → 150）。
+    let sell_id = create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Sell,
+            "acc-sp",
+            "inst-sp",
+            50.0,
+            100_000,
+            "2026-03-01",
+        ),
+    )
+    .unwrap()
+    .id;
+    let lots_after_sell = lots_of(&conn, "inst-sp");
+
+    let e = update_transaction_internal(
+        &conn,
+        &split_id,
+        make_split_input("acc-sp", "inst-sp", 60.0),
+    )
+    .expect_err("被下游消耗的份额调整修改应被拒绝");
+    assert_eq!(e.code().unwrap(), "trade.split-consumed-update", "{e:?}");
+    let e = delete_transaction_internal(&conn, &split_id)
+        .expect_err("被下游消耗的份额调整删除应被拒绝");
+    assert_eq!(e.code().unwrap(), "trade.split-consumed-delete", "{e:?}");
+    // 拒绝无副作用：批次、审计与扩展行原样。
+    assert_eq!(lots_of(&conn, "inst-sp"), lots_after_sell);
+    assert_eq!(audit_rows(&conn, &split_id).len(), 1);
+    assert_eq!(split_extension(&conn, &split_id), (100.0, 0));
+
+    // 下游 sell 软删（回补持仓）后守卫解除：删除 split 精确还原到调整前 100 @100000。
+    delete_transaction_internal(&conn, &sell_id).unwrap();
+    assert_eq!(lots_of(&conn, "inst-sp"), vec![(200.0, 200.0, 50_000)]);
+    delete_transaction_internal(&conn, &split_id).unwrap();
+    assert_eq!(lots_of(&conn, "inst-sp"), vec![(100.0, 100.0, 100_000)]);
+}
+
+/// 下游在用 convert 消耗本行重述过的批次同样挂守卫（#1051）——转出腿 FIFO 消耗
+/// 记在 `security_lot_conversions`，谓词与 sell 同族。
+#[test]
+fn split_downstream_convert_guards_delete() {
+    let conn = open();
+    seed_split_scene(&conn);
+    seed_instrument(&conn, "inst-other", "600519", "贵州茅台", "CNY", "sh");
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            100_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    let split_id = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", 100.0))
+        .unwrap()
+        .id;
+    // 下游转换 80 份 inst-sp → inst-other：消耗本行重述过的批次。
+    create_transaction_internal(
+        &conn,
+        make_convert_input("acc-sp", "inst-sp", "inst-other", 80.0, 80.0, 800, 800, 0),
+    )
+    .unwrap();
+
+    let e = delete_transaction_internal(&conn, &split_id)
+        .expect_err("被下游转换消耗的份额调整删除应被拒绝");
+    assert_eq!(e.code().unwrap(), "trade.split-consumed-delete", "{e:?}");
+}
+
+/// 后一次 split 重述了本行重述过的批次同样挂守卫（#1051）：删除前一行会破坏后一行
+/// 的 before 链；后一行无下游可删，删后再删前一行精确链式还原。
+#[test]
+fn split_later_split_guards_earlier_split_delete() {
+    let conn = open();
+    seed_split_scene(&conn);
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            100_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    let first = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", 100.0))
+        .unwrap()
+        .id;
+    let second = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", 100.0))
+        .unwrap()
+        .id;
+    assert_eq!(lots_of(&conn, "inst-sp"), vec![(300.0, 300.0, 33_333)]);
+
+    let e = delete_transaction_internal(&conn, &first).expect_err("前一行被后一行重述应被拒绝");
+    assert_eq!(e.code().unwrap(), "trade.split-consumed-delete", "{e:?}");
+
+    delete_transaction_internal(&conn, &second).unwrap();
+    assert_eq!(
+        lots_of(&conn, "inst-sp"),
+        vec![(200.0, 200.0, 50_000)],
+        "删后一行先还原到它重述前（= 前一行重述后）"
+    );
+    delete_transaction_internal(&conn, &first).unwrap();
+    assert_eq!(
+        lots_of(&conn, "inst-sp"),
+        vec![(100.0, 100.0, 100_000)],
+        "链条自后向前拆除后精确还原到调整前"
+    );
+}
+
+/// 先序消耗不挂守卫（#1051 /「下游」的可验证判据）：落账序在 split **之前**的 sell
+/// 已计入重述前快照，回补到 before 与它相容——删除 split 不应被误拒，先序卖出的
+/// 匹配记录完整保留。
+#[test]
+fn split_upstream_consumption_does_not_block_delete() {
+    let conn = open();
+    seed_split_scene(&conn);
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            100_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    let sell_id = create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Sell,
+            "acc-sp",
+            "inst-sp",
+            40.0,
+            100_000,
+            "2026-01-20",
+        ),
+    )
+    .unwrap()
+    .id;
+    let split_id = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", 60.0))
+        .unwrap()
+        .id;
+    // 先序卖出 40 份后剩 60 @100000；split +60（f = 120/60 = 2）→
+    // 初始数量 100×2 = 200、剩余 120、每份成本 50000。
+    assert_eq!(lots_of(&conn, "inst-sp"), vec![(200.0, 120.0, 50_000)]);
+
+    delete_transaction_internal(&conn, &split_id).unwrap();
+    assert_eq!(
+        lots_of(&conn, "inst-sp"),
+        vec![(100.0, 60.0, 100_000)],
+        "回补到 split 前（先序卖出后的）批次状态"
+    );
+    let sell_matches: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM security_lot_sales WHERE sell_transaction_id=?1",
+            rusqlite::params![sell_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(sell_matches, 1, "先序卖出的匹配记录完整保留");
 }
 
 /// 在用占用守卫（ADR-0106 决策 5 判据家族，先例「被后续转换消耗」）：批次已被
