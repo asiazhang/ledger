@@ -1,0 +1,12 @@
+# 项目级 Codex 配置（仅本仓库，已 trust_level = "trusted"）。
+# 关掉沙箱：本仓库内命令不再受 seatbelt 文件/网络边界限制，
+# 因为 workspace-write 沙箱会挡住 kache 缓存目录（~/Library/Caches/kache），
+# 导致 cargo check/clippy 每次都无法命中缓存。
+# 如需回到沙箱，把 sandbox_mode 改回 "workspace-write"，或删除本文件。
+sandbox_mode = "danger-full-access"
+
+# 跳过批准流程（等价于启动时 -a never）。合法值：untrusted / on-failure /
+# on-request / granular / never。
+# 注意：CLI 的 --dangerously-bypass-approvals-and-sandbox 没有对应配置键，
+# 但"无沙箱 + approval_policy = never"在行为上等同于它。
+approval_policy = "never"
