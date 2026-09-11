@@ -26,11 +26,12 @@ use crate::error::Result;
 /// 失败直接返回错误——回滚归外层持有者（批量导入的批次事务与余额调整的外层事务壳，
 /// issue #310，是嵌套模式的合法使用者）。
 ///
-/// `pub(crate)`（issue #855 / #1013）：`sync_engine::apply_ops` 重放外来 op 时
+/// 跨 crate 消费面（issue #855 / #1013；#1088 随基础设施 crate 归位由
+/// `pub(crate)` 提为 `pub`）：域侧（`accounts` / `policy` / `sync_engine` 等）
 /// 复用同一事务原语（命令执行 + op 落日志同事务原子），不另造第二份嵌套感知实现。
 ///
 /// 自持分支基于 [`hold_transaction`]（issue #1014）：事务壳与失败语义只有一处实现。
-pub(crate) fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
+pub fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
     // is_autocommit()=true ⇔ 连接不在事务中（rusqlite 语义），据此选分支。
     if !conn.is_autocommit() {
         return f();
@@ -52,7 +53,7 @@ pub(crate) fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Resul
 /// （`transaction::batch`）、定时引擎期次执行（`scheduled_transactions::engine`，
 /// ADR-0033 决策 6）、余额调整事务壳（`accounts::core`）。批次层语义（`PRAGMA
 /// optimize` / 汇总日志 / 期次日志 / 状态回填）保留在各自调用点外，不进本原语。
-pub(crate) fn hold_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
+pub fn hold_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
     conn.execute("BEGIN", [])?;
     match f() {
         Ok(v) => match conn.execute("COMMIT", []) {

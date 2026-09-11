@@ -7,8 +7,8 @@ use rusqlite::Connection;
 use tracing::Level;
 
 use crate::db::perf_trace;
-use crate::test_support::{self, seed_account, seed_instrument};
 use crate::test_utils::capture_events;
+use tauri_app_lib::test_support::{self, seed_account, seed_instrument};
 
 /// security_lots 聚合索引：partial covering index 存在并覆盖聚合列，旧冗余索引已删除，
 /// 且 v_holdings 聚合子查询实际命中该覆盖索引（EXPLAIN QUERY PLAN 出现索引名）。

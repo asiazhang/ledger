@@ -11,7 +11,7 @@ use crate::db::schema_guard::{BOOT_SCHEMA_DRIFT, verify_schema};
 /// 健康库零误报：从零迁移（工厂两行序）后的库应通过守卫校验（验收判据 2）。
 #[test]
 fn healthy_db_passes_schema_guard() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     assert!(verify_schema(&conn).is_ok(), "健康库不应报漂移");
 }
 
@@ -20,7 +20,7 @@ fn healthy_db_passes_schema_guard() {
 /// 迁移裁决不再触发，守卫是唯一防线。
 #[test]
 fn missing_column_is_detected_as_drift() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     conn.execute("ALTER TABLE sync_parked_ops DROP COLUMN park_params", [])
         .unwrap();
     let err = verify_schema(&conn).expect_err("缺列库应报漂移");
@@ -35,7 +35,7 @@ fn missing_column_is_detected_as_drift() {
 /// 视图形态；表同走 sqlite_master 清单比对，机制相同）。
 #[test]
 fn missing_objects_are_detected_as_drift() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     conn.execute("DROP INDEX idx_transactions_note_search", [])
         .unwrap();
     conn.execute("DROP VIEW v_holdings", []).unwrap();
@@ -55,7 +55,7 @@ fn missing_objects_are_detected_as_drift() {
 /// （实测形态：missing_objects=["table sqlite_stat4"]）。
 #[test]
 fn missing_internal_stat_tables_are_tolerated() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     conn.execute("DROP TABLE IF EXISTS sqlite_stat4", [])
         .unwrap();
     conn.execute("DROP TABLE IF EXISTS sqlite_stat1", [])
@@ -68,7 +68,7 @@ fn missing_internal_stat_tables_are_tolerated() {
 /// ADR-0100 决策 2），非方向性比对必然误报。
 #[test]
 fn legacy_extra_objects_are_tolerated() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     conn.execute("CREATE TABLE notes_search (id TEXT, note TEXT)", [])
         .unwrap();
     conn.execute(

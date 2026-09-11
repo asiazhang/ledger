@@ -57,9 +57,10 @@ base64 = "0.23"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 pinyin = "0.11"
-# 基础设施 crate（spec #1086 / issue #1087）：workspace 首位成员，承载无域语义、
-# 被所有层消费的能力。本票只落第一个最小模块（IPC 载荷脱敏），其余基础设施
-# 随 #1088「基础设施 crate 全量归位」迁入。
+# 基础设施 crate（spec #1086 / issue #1087–#1088）：workspace 成员，承载无域语义、
+# 被所有层消费的能力。数据库、错误、设置、文件工具、日志、事件、信号、闭集与
+# 壳层统一读写入口已全量归位（#1088）；根包以再导出形态保留 `crate::db` 等原
+# 引用路径，域与壳层调用点零改动。
 ledger-infra = { path = "crates/infra" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。

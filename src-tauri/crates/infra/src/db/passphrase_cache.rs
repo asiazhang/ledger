@@ -84,7 +84,7 @@ pub(crate) fn account_for(book: Option<&str>) -> String {
 }
 
 /// 平台是否支持本机记住主口令（v1 仅 macOS）。
-pub(crate) fn supported() -> bool {
+pub fn supported() -> bool {
     cfg!(target_os = "macos")
 }
 
@@ -129,7 +129,7 @@ impl RememberMode {
 }
 
 /// 当前运行形态（命令壳层经 `RememberPassphraseSupport.mode` 暴露给前端）。
-pub(crate) fn current_mode() -> RememberMode {
+pub fn current_mode() -> RememberMode {
     RememberMode::from_gate(uses_biometry_gate(is_dev_build()))
 }
 
@@ -137,7 +137,7 @@ pub(crate) fn current_mode() -> RememberMode {
 /// `Found`/`Cancelled` 仅 macOS 的 `load` 构造；非 macOS 桩恒返回 `NotFound`，故豁免死代码。
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum CacheLoad {
+pub enum CacheLoad {
     /// 读到缓存的主口令。
     Found(String),
     /// 钥匙串无条目（从未缓存或被清）——回退手输，不弹生物认证。
@@ -333,7 +333,7 @@ mod imp {
 /// 条目（幂等 best-effort，失败不阻断——升级后遗留的旧条目不再被任何路径
 /// 消费，清不掉也无害，仅少一次钥匙串清理）。
 #[cfg(target_os = "macos")]
-pub(crate) fn store(passphrase: &str, book: Option<&str>) -> Result<()> {
+pub fn store(passphrase: &str, book: Option<&str>) -> Result<()> {
     if book.is_some() {
         let _ = imp::delete(None);
     }
@@ -343,13 +343,13 @@ pub(crate) fn store(passphrase: &str, book: Option<&str>) -> Result<()> {
 /// 读取缓存的入口令（生物门形态先过 LocalAuthentication 应用层门再读条目，
 /// 三态见 [`CacheLoad`]；开发态无门直接读出，issue #866）。`book` 见 [`store`]。
 #[cfg(target_os = "macos")]
-pub(crate) fn load(book: Option<&str>) -> Result<CacheLoad> {
+pub fn load(book: Option<&str>) -> Result<CacheLoad> {
     imp::load(book, uses_biometry_gate(is_dev_build()))
 }
 
 /// 删除缓存的入口令（幂等）。`book` 见 [`store`]。
 #[cfg(target_os = "macos")]
-pub(crate) fn delete(book: Option<&str>) -> Result<()> {
+pub fn delete(book: Option<&str>) -> Result<()> {
     imp::delete(book)
 }
 
@@ -359,7 +359,7 @@ pub(crate) fn delete(book: Option<&str>) -> Result<()> {
 
 /// 存储（建/更）缓存的入口令：不支持平台统一报码化错误（前端隐藏选项即不会触达）。
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn store(_passphrase: &str, _book: Option<&str>) -> Result<()> {
+pub fn store(_passphrase: &str, _book: Option<&str>) -> Result<()> {
     Err(AppError::coded(
         "encryption.remember-unsupported",
         "当前平台不支持本机记住主口令",
@@ -368,13 +368,13 @@ pub(crate) fn store(_passphrase: &str, _book: Option<&str>) -> Result<()> {
 
 /// 读取缓存的入口令：不支持平台视为无缓存（回退手输）。
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn load(_book: Option<&str>) -> Result<CacheLoad> {
+pub fn load(_book: Option<&str>) -> Result<CacheLoad> {
     Ok(CacheLoad::NotFound)
 }
 
 /// 删除缓存的入口令：不支持平台幂等成功。
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn delete(_book: Option<&str>) -> Result<()> {
+pub fn delete(_book: Option<&str>) -> Result<()> {
     Ok(())
 }
 

@@ -1,7 +1,7 @@
 //! db 测试目录内共享脚手架：仅限本测试目录各子模块使用（跨测试模块合并不在此列，见 #250）。
 //!
 //! 建库与种子经统一测试工厂（spec #728 / issue #754 / ADR-0084 决策 7）：普通
-//! 内存库用 [`crate::test_support::open`]；instrument/price/fx 种子已上收工厂
+//! 内存库用 [`tauri_app_lib::test_support::open`]；instrument/price/fx 种子已上收工厂
 //! （`seed_instrument` / `seed_price_history` / `seed_fx_rate_history`）。本薄皮
 //! 只留 db 域特有编排：schema 约束探针（准入规则：单域特有留域薄皮，
 //! ADR-0084 决策 1）。
@@ -14,15 +14,20 @@ use crate::db::DbState;
 
 /// 构造带 Arc<Mutex<Connection>> 的 DbState（写入口持锁形态）；建库经统一测试工厂。
 pub(super) fn write_test_state() -> DbState {
+    // 提交点后置动作接线（spec #1086 / issue #1088）：本 crate 的单测经 dev-dependency
+    // 环消费根包，拿到的是另一份 crate 实例（静态身份分离）——经 `test_support::open`
+    // 触发的注册落在那一份的写入口静态上，本份实例仍是未注册态。故这里直接把自己的
+    // 注册点接上备份域实现（幂等；函数指针只经 rusqlite 外部类型，跨实例类型相容）。
+    crate::db::register_after_commit_hook(tauri_app_lib::backup::after_commit_hook);
     DbState {
-        conn: Arc::new(Mutex::new(crate::test_support::open())),
+        conn: Arc::new(Mutex::new(tauri_app_lib::test_support::open())),
     }
 }
 
 /// 读回自动备份调度状态（断言置脏语义用）。
-pub(super) fn dirty_state(state: &DbState) -> crate::backup::AutoBackupState {
+pub(super) fn dirty_state(state: &DbState) -> tauri_app_lib::backup::AutoBackupState {
     let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
-    crate::backup::get_state(&conn).expect("读调度状态")
+    tauri_app_lib::backup::get_state(&conn).expect("读调度状态")
 }
 
 // ---------------------------------------------------------------------------
@@ -42,7 +47,7 @@ pub(super) fn probe_exchange_rate(
     conn.execute(
         "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
          VALUES (?1,?2,?3,?4,'2026-01-01','manual',?5,1,'test')",
-        params![id, base, quote, rate, crate::test_support::FIXED_NOW],
+        params![id, base, quote, rate, tauri_app_lib::test_support::FIXED_NOW],
     )
 }
 

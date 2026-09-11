@@ -50,8 +50,8 @@ where
 mod tests {
     use super::*;
     use crate::error::AppError;
-    use crate::test_support::{open, seed_account};
     use std::sync::Arc;
+    use tauri_app_lib::test_support::{open, seed_account};
 
     /// 内存库夹具（统一测试工厂建库，ADR-0084 决策 3/7）。
     fn fixture() -> Arc<Mutex<Connection>> {

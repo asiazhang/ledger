@@ -303,7 +303,7 @@ mod tests {
 
     fn migrated_conn() -> rusqlite::Connection {
         // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
-        crate::test_support::open()
+        tauri_app_lib::test_support::open()
     }
 
     /// 缺 key / 缺表：`persisted_level` 回默认 info（`settings::get` 兑底）。

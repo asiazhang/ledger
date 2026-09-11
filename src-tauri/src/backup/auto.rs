@@ -159,6 +159,43 @@ pub(crate) fn mark_dirty(conn: &Connection) -> crate::error::Result<()> {
     settings::set(conn, SettingKey::AutoBackupDirty, &true)
 }
 
+/// 连接层提交点后置动作实现（ADR-0032 置脏单点，原 `db::after_commit` 本体）：
+/// 基础设施侧只保留注册点与调用时机（issue #1088 crate 归位后数据库不再知道
+/// 备份域），副作用语义住本域。公开面仅为「接线用」——壳层启动、测试建库单点与
+/// 基础设施 crate 的单测各自把它注册进去（dev-dependency 环下 crate 实例分离，
+/// 见 [`install_after_commit_hook`]），业务代码不直接调用。
+///
+/// - 置脏失败仅记日志不上抛，不影响已成功的业务写；
+/// - 到期检查命中（脏且今天尚未自动备份，本地自然日界门，issue #386）即执行自动
+///   备份；开关关闭/目录未配置等门禁由 [`run_due_backup`] 统一静默处理。
+pub fn after_commit_hook(conn: &Connection) {
+    if let Err(e) = mark_dirty(conn) {
+        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");
+    }
+    let dir = shared_prefs().snapshot_dir();
+    // 备份作用域从偏好镜像快照（引导登记点播种，issue #836）：写路径深处只有
+    // `&Connection`，账本归属经镜像统一承载，与调度线程同一来源。
+    let scope = shared_prefs().snapshot_scope();
+    run_due_backup(
+        conn,
+        dir.as_deref(),
+        env!("CARGO_PKG_VERSION"),
+        Utc::now(),
+        scope.as_ref(),
+    );
+}
+
+/// 把提交点后置动作注册进连接层写入口（幂等，进程级一次）。
+///
+/// 接缝形态（spec #1086 / issue #1088）：下层（基础设施）定义注册点、上层（本域）
+/// 提供实现、壳层启动时接线——`lib.rs::run` 与测试建库单点（`test_support::open`、
+/// BDD world）各调用一次，生产与测试同形。基础设施 crate 的单测经
+/// dev-dependency 环拿到的是**另一份** crate 实例（静态与类型身份分离），故它直接
+/// 以 [`after_commit_hook`] 注册进自己那份写入口静态，不经本函数。
+pub fn install_after_commit_hook() {
+    db::register_after_commit_hook(after_commit_hook);
+}
+
 /// 脏复位并把备份成功时刻记为新的上次备份锚点：
 /// - [`mark_clean`]：自动备份成功后调用；失败时不得调用——保留脏标记即重试机制；
 /// - [`reset`]：恢复成功后调用——不置真、重新计时，避免「恢复后立即备份」的重复，

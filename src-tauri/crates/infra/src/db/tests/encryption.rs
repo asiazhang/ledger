@@ -122,13 +122,14 @@ use crate::db::{check_integrity, open_connection_with_passphrase as reopen_with_
 /// 在库中建一笔账户 + N 条种子交易（与真实写路径一致的 Writer 接缝，
 /// 账户插入含缓存行不变量，ADR-0067）。
 fn seed_transactions(conn: &Connection, count: usize) {
-    use crate::transaction::TransactionInput;
-    use crate::transaction::amount::TransactionKind;
+    use tauri_app_lib::transaction::TransactionInput;
+    use tauri_app_lib::transaction::amount::TransactionKind;
     let account_id = crate::db::new_uuid();
     // 工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）；裸种子绕过 Writer
     // 接缝，按 V017 迁移回填语义补建缓存行（ADR-0067）。
-    crate::test_support::seed_account(conn, &account_id, "现金", "cash", "CNY", 0);
-    crate::accounts::balance::refresh_account_balances(conn, &[account_id.as_str()]).unwrap();
+    tauri_app_lib::test_support::seed_account(conn, &account_id, "现金", "cash", "CNY", 0);
+    tauri_app_lib::accounts::balance::refresh_account_balances(conn, &[account_id.as_str()])
+        .unwrap();
     for i in 0..count {
         let input = TransactionInput {
             merchant_name: None,
@@ -154,7 +155,7 @@ fn seed_transactions(conn: &Connection, count: usize) {
             in_amount_cents: None,
             idempotency_key: None,
         };
-        crate::transaction::create_transaction_internal(conn, input).unwrap();
+        tauri_app_lib::transaction::create_transaction_internal(conn, input).unwrap();
     }
 }
 

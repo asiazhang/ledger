@@ -2,7 +2,7 @@
 //! 闭包内自管事务延迟到提交点，以及目录未配置时不记备份锚点。
 
 use crate::error::AppError;
-use crate::test_support::FIXED_NOW;
+use tauri_app_lib::test_support::FIXED_NOW;
 
 use super::common::{dirty_state, write_test_state};
 

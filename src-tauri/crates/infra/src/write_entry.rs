@@ -103,7 +103,7 @@ mod tests {
     /// 内存库 + 闸门式假发射器的测试夹具。
     fn fixture() -> (Arc<Mutex<Connection>>, GatedEmitter) {
         // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
-        let conn = crate::test_support::open();
+        let conn = tauri_app_lib::test_support::open();
         (Arc::new(Mutex::new(conn)), GatedEmitter::gated())
     }
 
@@ -148,8 +148,8 @@ mod tests {
                         "测试",
                         "expense",
                         // 夹具簿记戳引用工厂固定时刻（ADR-0084 决策 5）。
-                        crate::test_support::FIXED_NOW,
-                        crate::test_support::FIXED_NOW,
+                        tauri_app_lib::test_support::FIXED_NOW,
+                        tauri_app_lib::test_support::FIXED_NOW,
                         1,
                         "device-1"
                     ],

@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 
 /// app_settings 建表语句（与迁移 V008 同源，CREATE TABLE IF NOT EXISTS 幂等），
 /// 供「表缺失自愈」兑底复用。
-const APP_SETTINGS_SQL: &str = include_str!("../migrations/V008__app_settings.sql");
+const APP_SETTINGS_SQL: &str = include_str!("../../../migrations/V008__app_settings.sql");
 
 /// 配置键枚举：唯一合法的 `app_settings.key` 来源，杜绝字符串字面量散落。
 /// 命名规范 `<feature>.<name>`。新增配置项的成本是加一个变体 + 默认值约定。
@@ -34,8 +34,8 @@ pub enum SettingKey {
     /// 见 [`crate::logger::LogLevel`]）：后端消费、随 Backup/Restore 迁移（ADR-0006 / #611）。
     /// 持久化表示取档位指令字符串（同 [`crate::logger::LogLevel::directive`]）。
     LogLevel,
-    /// 本位币基准（币种代码字符串，默认 "CNY"，见
-    /// [`crate::currencies::base_currency`]）：账本级设置（LedgerLevelSetting 首个
+    /// 本位币基准（币种代码字符串，默认 "CNY"，读取口径归币种域
+    /// `base_currency`）：账本级设置（LedgerLevelSetting 首个
     /// 成员，issue #858 / ADR-0091 决策 3）——后端消费（Amount 折算基准）故按
     /// ADR-0017 存库，随多端同步分发、全设备强制一致。
     LedgerBaseCurrency,
@@ -139,13 +139,13 @@ mod tests {
 
     fn conn() -> rusqlite::Connection {
         // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
-        crate::test_support::open()
+        tauri_app_lib::test_support::open()
     }
 
     /// 迁移可重复执行幂等（CREATE TABLE IF NOT EXISTS）。
     #[test]
     fn migration_is_idempotent() {
-        let c = crate::test_support::open();
+        let c = tauri_app_lib::test_support::open();
         c.execute_batch(APP_SETTINGS_SQL)
             .expect("重复执行同一建表语句");
     }
@@ -153,7 +153,7 @@ mod tests {
     /// 工厂库删除 app_settings 模拟旧版本备份恢复后的缺表现场（工厂无
     /// 「未迁移库」形态：建库 = 内存库 + 迁移，ADR-0084 决策 3）。
     fn conn_without_app_settings() -> rusqlite::Connection {
-        let c = crate::test_support::open();
+        let c = tauri_app_lib::test_support::open();
         c.execute("DROP TABLE app_settings", [])
             .expect("删除 app_settings");
         c

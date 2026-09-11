@@ -17,6 +17,10 @@
 //    内同样不放行。
 // ④ 白名单条目（定义与域接缝再导出四个文件）必须存在且各自含其受守标识符
 //    ——清单漂移 fail loud，防白名单烂掉后守门空转。
+// ⑤ 启动接线单点（issue #1088）：连接层提交点后置动作的注册必须出现在壳层
+//    启动接线处（`BOOT_WIRING`）——缺失即生产静默丢置脏/到期检查，而启动路径
+//    不被任何测试直接执行（「缺失一个调用」不会让断言变红），故以源码扫描
+//    守门（先例 #959 / #961 的接线在测试不可达处用扫描守门替代）。
 //
 // 扫描边界：文本级扫描，形态同 check-structure.ts 家族——复用其注释与
 // 字符串/char 字面量掩码（文档注释提到函数名不误报）；外挂测试模块/目录豁免
@@ -71,6 +75,26 @@ export const GUARDED_NAMES: readonly GuardedName[] = [
     wholeFile: ['sync_engine/trigger/scheduler.rs', 'sync_engine/trigger/mod.rs', 'sync_engine/mod.rs'],
     orchestratorBodyAllowed: false,
     note: '桌面轮询线程拉起（仅 start_triggers 域内消费；直接调用即绕过分平台门，#863 缺陷 1 形态）',
+  },
+]
+
+/** 启动接线单点（issue #1088）：标识符 + 唯一合法接线文件（相对 src 根）。 */
+export interface BootWiring {
+  name: string
+  file: string
+  note: string
+}
+
+/**
+ * 壳层启动接线清单（issue #1088 提交点后置动作注册）：每条须在指定文件内出现
+ * 至少一次（掩码后匹配，测试豁免同全树扫描）；缺失即红——生产启动被删无断言
+ * 可捕获，只能靠扫描守门。
+ */
+export const BOOT_WIRING: readonly BootWiring[] = [
+  {
+    name: 'install_after_commit_hook',
+    file: ORCHESTRATOR_FILE,
+    note: '提交点后置动作注册：备份域实现接到基础设施注册点（spec #1086 / issue #1088）',
   },
 ]
 
@@ -194,6 +218,26 @@ function main(): void {
   }
 
   // 全树扫描：命中按名核对合法住址（整文件豁免 / 编排点函数体按名放行），其余一律红
+  // 启动接线自证（issue #1088）：注册必须在壳层启动接线处出现，缺失即红。
+  for (const wiring of BOOT_WIRING) {
+    let source: string
+    try {
+      source = readFileSync(join(srcDir, wiring.file), 'utf8')
+    } catch {
+      problems.push(
+        `✗ 启动接线文件缺失：${wiring.file}（${wiring.note}）——壳层启动文件漂移，fail loud`,
+      )
+      continue
+    }
+    if (!new RegExp(`\\b${wiring.name}\\b`).test(maskNonCode(source))) {
+      problems.push(
+        `✗ 启动接线缺失：${wiring.file} 内未接线 \`${wiring.name}\`（${wiring.note}）\n` +
+          `    启动路径不被测试直接执行，删掉这行不会让任何断言变红——生产将静默丢` +
+          `置脏/到期检查；请在壳层启动接线处恢复调用`,
+      )
+    }
+  }
+
   let files: { abs: string; rel: string }[] = []
   try {
     files = collectRustFiles(srcDir, '')
@@ -238,7 +282,8 @@ function main(): void {
   console.log(
     `✓ 后台服务成对拉起守门：受守入口 ${GUARDED_NAMES.length} 个` +
       `（${GUARDED_NAMES.map((g) => g.name).join(' / ')}）· 白名单路径 ${pathCount} 个（定义与再导出）` +
-      ` · 生产调用收敛于 \`${ORCHESTRATOR_FN}\` 单点 · 全树扫描 ${files.length} 个非测试文件零脱离`,
+      ` · 生产调用收敛于 \`${ORCHESTRATOR_FN}\` 单点 · 启动接线 ${BOOT_WIRING.length} 项已接线（#1088）` +
+      ` · 全树扫描 ${files.length} 个非测试文件零脱离`,
   )
 }
 

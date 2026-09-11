@@ -7,13 +7,13 @@
 
 use rusqlite::params;
 
-use crate::test_support::{seed_account, seed_exchange_rate, seed_instrument};
+use tauri_app_lib::test_support::{seed_account, seed_exchange_rate, seed_instrument};
 
 /// 跨币种持仓：CNY 账户持 USD 标的，市值与成本都应折算到 CNY 后再相减。
 /// 旧实现只折算市值、不折算成本，会把 CNY 市值直接减 USD 成本，结果错误。
 #[test]
 fn cross_currency_holding_pnl() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
 
     let account_id = "acc-test-cny-inv";
     let instrument_id = "inst-test-nvda";
@@ -72,7 +72,7 @@ fn cross_currency_holding_pnl() {
 /// 视图应取倒数折算，市值与盈亏与正向 USD->CNY 等价。
 #[test]
 fn holding_reverse_rate_fallback() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
 
     let account_id = "acc-test-rev";
     let instrument_id = "inst-test-rev";
@@ -134,7 +134,7 @@ fn holding_reverse_rate_fallback() {
 /// id 纳入 currency_code，避免 account_id-instrument_id 重复 key。
 #[test]
 fn holding_id_unique_across_currencies() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
 
     let account_id = "acc-test-id-uniq";
     let instrument_id = "inst-test-multi";
@@ -215,7 +215,7 @@ fn holding_id_unique_across_currencies() {
 /// v_holdings 过滤软删除账户：已删账户的 lot 仍存在于 security_lots，但视图不应返回其持仓行。
 #[test]
 fn holding_excludes_soft_deleted_account() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
 
     let active_acc = "acc-soft-active";
     let deleted_acc = "acc-soft-deleted";
@@ -292,16 +292,18 @@ fn holding_excludes_soft_deleted_account() {
 /// 非本位币交易按日期汇率折算到 amount_native_cents。
 #[test]
 fn transaction_currency_conversion() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
 
     let account_id = "acc-test-cny";
     seed_account(&conn, account_id, "现金", "cash", "CNY", 0);
     seed_exchange_rate(&conn, "USD", "CNY", 7.2);
 
-    let native = crate::transaction::amount::convert_to_native(&conn, 10000, "USD").unwrap();
+    let native =
+        tauri_app_lib::transaction::amount::convert_to_native(&conn, 10000, "USD").unwrap();
     assert_eq!(native, 72000);
 
     // 同币种无需汇率，1:1 返回。
-    let native = crate::transaction::amount::convert_to_native(&conn, 10000, "CNY").unwrap();
+    let native =
+        tauri_app_lib::transaction::amount::convert_to_native(&conn, 10000, "CNY").unwrap();
     assert_eq!(native, 10000);
 }

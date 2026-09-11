@@ -14,7 +14,7 @@ use crate::db::check_integrity;
 fn integrity_failure_reports_coded_error() {
     // 建库两行序经统一测试工厂承载（ADR-0084 决策 7）：本用例只在已迁移的
     // 内存库上加一张自建表造错，不旁路工厂。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     conn.execute_batch(
         "CREATE TABLE t(a, b); \
          CREATE INDEX i ON t(a); \

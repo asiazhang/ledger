@@ -37,6 +37,10 @@
 /// （`<域>.<条件>`），`params` 为 `[未知值, 合法值清单]`——清单经 `{1}` 插值，不在
 /// 前端码表里另抄一份（ADR-0108「消灭手抄清单」跨本地化边界保持）。`err_code` 为
 /// 必填参数：第三枚举接入时漏码化不可表达。
+// 宏体经 `$crate::error` 取基础设施错误类型；`#[macro_export]` 使宏项可经
+// 本模块（`pub use closed_set;`）与根包（`pub use ledger_infra::closed_set;`）
+// 分层再导出，域模块的 `crate::closed_set::closed_set` 引用路径零改动。
+#[macro_export]
 macro_rules! closed_set {
     (
         $(#[$enum_meta:meta])*
@@ -106,4 +110,7 @@ macro_rules! closed_set {
     };
 }
 
-pub(crate) use closed_set;
+// 宏经根包再导出（`pub use ledger_infra::closed_set;`）供域模块以
+// `crate::closed_set::closed_set` 路径消费（issue #1088 基础设施 crate 归位）：
+// 跨 crate 再导出要求宏项本身公开。
+pub use closed_set;

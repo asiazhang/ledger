@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  BOOT_WIRING,
   GUARDED_NAMES,
   ORCHESTRATOR_FILE,
   ORCHESTRATOR_FN,
@@ -40,6 +41,12 @@ const orchestratorPaired = `pub fn ${ORCHESTRATOR_FN}(app: &tauri::AppHandle) {
 }
 `
 
+/** 启动接线夹具：壳层启动处注册提交点后置动作（issue #1088 启动接线单点） */
+const bootWiring = `pub fn run() {
+    backup::install_after_commit_hook();
+}
+`
+
 /**
  * 建临时夹具：按脚本导出的 GUARDED_NAMES 生成全部白名单条目文件（每文件
  * 写入映射到它的全部受守标识符）+ 编排点 `lib.rs`（成对形态），再按 overrides
@@ -60,7 +67,7 @@ function makeFixture(overrides: Record<string, string> = {}): string[] {
     writeFileSync(abs, `pub use crate::x::{${names.join(', ')}}; // 再导出桩\n`)
   }
   const files: Record<string, string> = {
-    [ORCHESTRATOR_FILE]: orchestratorPaired,
+    [ORCHESTRATOR_FILE]: bootWiring + orchestratorPaired,
     ...overrides,
   }
   for (const [relPath, content] of Object.entries(files)) {
@@ -159,5 +166,19 @@ describe('check-background-services（后台服务成对拉起守门，issue #96
     const r = run([src])
     expect(r.status).toBe(1)
     expect(r.output).toContain('白名单条目缺失')
+  })
+
+  it('启动接线明细注入摘要（issue #1088 提交点后置动作注册）', () => {
+    const r = run(makeFixture())
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`启动接线 ${BOOT_WIRING.length} 项已接线`)
+  })
+
+  it('删除启动接线（提交点后置动作注册）→ 报红（删除即变红，#1088）', () => {
+    const args = makeFixture({ [ORCHESTRATOR_FILE]: orchestratorPaired })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('启动接线缺失')
+    expect(r.output).toContain(BOOT_WIRING[0].name)
   })
 })

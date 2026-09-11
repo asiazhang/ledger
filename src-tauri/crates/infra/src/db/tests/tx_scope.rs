@@ -8,7 +8,7 @@
 
 use super::super::tx_scope::{ensure_transaction, hold_transaction};
 use crate::error::AppError;
-use crate::test_support;
+use tauri_app_lib::test_support;
 
 /// 嵌套加入外层（嵌套模式，issue #310 合法使用者语义）：连接已在事务中时，原语
 /// 不再 BEGIN/COMMIT——Ok 与 Err 都原样透传，回滚权归外层持有者。
