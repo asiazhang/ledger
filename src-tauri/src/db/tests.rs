@@ -9,6 +9,7 @@
 //!   不变量（未设密钥保持明文）、建连密钥缝、文件头探测三态；
 //! - `schema_guard`：schema 漂移守卫机制（内存参照库方向性 diff，
 //!   issue #992 / ADR-0100）；
+//! - `integrity`：完整性检查失败的码契约（ADR-0050 收口，#1072）；
 //! - `tx_scope`：事务作用域原语 `db::tx_scope::{ensure_transaction, hold_transaction}`
 //!   （嵌套感知「保证处于事务中」与无条件自持事务壳，ADR-0033 决策 2 /
 //!   issue #1013、#1014）。
@@ -17,6 +18,7 @@ mod common;
 mod dirty_marker;
 mod encryption;
 mod holding;
+mod integrity;
 mod migrations;
 mod perf;
 mod run_db;

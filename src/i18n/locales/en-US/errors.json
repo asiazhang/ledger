@@ -175,7 +175,8 @@
     "as-of-date-invalid": "invalid as-of trading date: {0}",
     "trend-start-date-invalid": "invalid start date: {0}",
     "trend-end-date-invalid": "invalid end date: {0}",
-    "trend-range-invalid": "start date cannot be later than end date"
+    "trend-range-invalid": "start date cannot be later than end date",
+    "query-required": "query must not be empty: instrument search is a search-style endpoint, please provide a keyword (no full listing)"
   },
   "fund": {
     "code-invalid": "fund code must be 6 digits"
@@ -196,10 +197,12 @@
     "category-not-expense": "budgets can only be set on expense categories (this category is {0})",
     "duplicate-monthly": "this category already has a monthly budget, edit that budget's amount instead",
     "duplicate-yearly": "this category already has a yearly budget, edit that budget's amount instead",
-    "not-found": "budget does not exist: {0}"
+    "not-found": "budget does not exist: {0}",
+    "period-unknown": "unknown budget period: {0}"
   },
   "scheduled-plan": {
     "amount-positive": "amount must be greater than 0",
+    "kind-unknown": "unknown scheduled plan kind: {0}",
     "same-account": "the source account cannot be the same as the destination account",
     "from-account-not-found": "source account does not exist",
     "to-account-not-found": "destination account does not exist",
@@ -212,12 +215,15 @@
     "not-found": "scheduled plan does not exist",
     "manual-complete-forbidden": "plans cannot be set to completed manually",
     "status-transition-forbidden": "transition from {0} to {1} is not allowed",
+    "status-unknown": "unknown plan status: {0}",
     "edit-amount-forbidden": "subscription amount cannot be edited: to change the price, cancel the old plan and create a new one (rebuild the plan with the new amount, keeping both real price histories)",
     "edit-subscription-only": "only subscription plans support editing non-amount fields",
+    "recurrence-unknown": "unknown recurrence type: {0}",
     "installment-ext-not-found": "installment extension info does not exist",
     "subscription-ext-not-found": "subscription extension info does not exist",
     "transfer-ext-not-found": "scheduled transfer extension info does not exist",
     "date-invalid": "invalid date {0}: {1}",
+    "occurrence-date-invalid": "invalid date",
     "not-active": "the linked plan is not active",
     "policy-subscription-only": "only subscription agreements can reference a policy",
     "policy-merchant-forbidden": "policy agreements cannot carry a merchant: premiums are attributed via the policy reference",
@@ -225,6 +231,7 @@
   },
   "scheduled-occurrence": {
     "not-found": "occurrence does not exist",
+    "status-unknown": "unknown occurrence status: {0}",
     "not-executable": "occurrence status is {0}, it cannot be executed",
     "plan-not-found": "the linked scheduled plan does not exist",
     "conflict": "the occurrence has already been executed by another device"
@@ -261,6 +268,9 @@
     "date-invalid": "Invalid date format, expected YYYY-MM-DD: {0}",
     "status-invalid": "Unknown physical asset status: {0} (valid values: holding/disposed)",
     "not-found": "Physical asset not found: {0}"
+  },
+  "db": {
+    "integrity-check-failed": "database integrity check failed: {0}"
   },
   "boot": {
     "db-unreadable": "Startup failed; the database is unavailable. Reset or restore from the recovery screen first.",

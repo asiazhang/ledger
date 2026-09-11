@@ -32,9 +32,13 @@ impl std::str::FromStr for ScheduledKind {
             "installment" => Ok(ScheduledKind::Installment),
             "subscription" => Ok(ScheduledKind::Subscription),
             "scheduled_transfer" => Ok(ScheduledKind::ScheduledTransfer),
-            _ => Err(crate::error::AppError::Invalid(format!(
-                "未知定时交易类型: {s}"
-            ))),
+            // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误，
+            // message 逐字保留、未知值进 params。
+            _ => Err(crate::error::AppError::codedp(
+                "scheduled-plan.kind-unknown",
+                format!("未知定时交易类型: {s}"),
+                &[s],
+            )),
         }
     }
 }
@@ -76,9 +80,12 @@ impl std::str::FromStr for ScheduledStatus {
             "paused" => Ok(ScheduledStatus::Paused),
             "cancelled" => Ok(ScheduledStatus::Cancelled),
             "completed" => Ok(ScheduledStatus::Completed),
-            _ => Err(crate::error::AppError::Invalid(format!(
-                "未知计划状态: {s}"
-            ))),
+            // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误。
+            _ => Err(crate::error::AppError::codedp(
+                "scheduled-plan.status-unknown",
+                format!("未知计划状态: {s}"),
+                &[s],
+            )),
         }
     }
 }
@@ -111,9 +118,12 @@ impl std::str::FromStr for RecurrenceType {
             "weekly" => Ok(RecurrenceType::Weekly),
             "monthly" => Ok(RecurrenceType::Monthly),
             "yearly" => Ok(RecurrenceType::Yearly),
-            _ => Err(crate::error::AppError::Invalid(format!(
-                "未知周期类型: {s}"
-            ))),
+            // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误。
+            _ => Err(crate::error::AppError::codedp(
+                "scheduled-plan.recurrence-unknown",
+                format!("未知周期类型: {s}"),
+                &[s],
+            )),
         }
     }
 }
@@ -150,9 +160,12 @@ impl std::str::FromStr for OccurrenceStatus {
             "completed" => Ok(OccurrenceStatus::Completed),
             "failed" => Ok(OccurrenceStatus::Failed),
             "cancelled" => Ok(OccurrenceStatus::Cancelled),
-            _ => Err(crate::error::AppError::Invalid(format!(
-                "未知期次状态: {s}"
-            ))),
+            // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误。
+            _ => Err(crate::error::AppError::codedp(
+                "scheduled-occurrence.status-unknown",
+                format!("未知期次状态: {s}"),
+                &[s],
+            )),
         }
     }
 }

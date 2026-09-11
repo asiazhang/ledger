@@ -65,3 +65,17 @@
 - **合法值清单不落前端码表**：zh/en 模板写 `未知交易类型: {0}（合法值: {1}）` / `unknown transaction kind: {0} (valid values: {1})`，清单仍由宏同一批字面量同源拼接、经 `{1}` 插值——ADR-0108「消灭手抄清单」跨本地化边界保持；`message` 与清单逐字不变（ADR-0050 只增不改）。
 - **包装路径行为语义保持**：serde 反序列化与 `FromSql` 继续骑行 `parse`（未知值即错，不静默映射）；两者经 serde/rusqlite 错误类型扁平化后只承载 `message`，`code`/`params` 不随之外传——与既有的 `account.type-unknown`（同为 serde 包装的闭集码）同一形态，按 ADR-0050 决策 2 的「构造点码化」口径落地。**已知边界**：新增两码在当前 wire/DB 路径不可达前端；若要经边界直达，须改解包形态（如壳层改收原始字符串后域内 `parse`），超出本票「不改解析行为」边界，建议另立票评估。
 - **同族扫描**：`rg "AppError::Invalid\(" src-tauri/src` 剩余存量构造点无既有收口票，清单化立为 #1072（区分用户可见条件候选与 ADR-0050 允许不转的程序性/内部错误）。
+
+### #1072 收口（2026-09-11，同族扫描结清）
+
+- **转码化（8 条件 / 9 构造点，`message` 逐字保留、动态值进 `params`）**：
+  - `budget.period-unknown`（`budget/model.rs`，`BudgetPeriod` 闭集解析）；
+  - `scheduled-plan.kind-unknown` / `scheduled-plan.status-unknown` / `scheduled-plan.recurrence-unknown` / `scheduled-occurrence.status-unknown`（`scheduled_transactions/models.rs` 四处 `FromStr` 闭集解析）；
+  - `scheduled-plan.occurrence-date-invalid`（`scheduled_transactions/engine.rs` 两处期次日期守卫——`recurrence_day` 未在入口校验，0 日等非法值落在 `from_ymd_opt` 的 None 分支，是用户可达条件）；
+  - `instrument.query-required`（`api_server/handlers/instruments.rs` 标的搜索缺 `query`，AI 导入按码自纠的 HTTP 入参条件）；
+  - `db.integrity-check-failed`（`db/mod.rs` `check_integrity`）。**码归 `db.*` 而非票面猜测的 `boot.*`**：构造点在基础设施，启动引导、备份恢复校验、同步 checkpoint 重建三域共用，按启动场景命名会把后两者的同名失败误标为启动条件；启动路径经 `BootFailureGate` 记录该码，失败恢复屏仍按「库不可读」呈现（只有 `boot.schema-drift` 走恢复优先排布）。
+- **票面候选中判定保留裸 `Invalid` 的两点（ADR-0050 决策 2「程序性/内部错误可不转」的逐点裁定，非票面预授权）**：
+  - `scheduled_transactions/engine.rs` 的 `未知周期类型` 防御臂：`recurrence_type` 列只由 `RecurrenceType` 闭集写入，闭集外的值只可能来自外部改库——判「内部不一致」；同一条件的稳定码已归 `RecurrenceType` 解析边界（`scheduled-plan.recurrence-unknown`），此处另立码会让一条条件长出两个码。
+  - `api_server/handlers/categories.rs` 的请求体反序列化失败：`message` 是 JSON 解析器的技术错误原文（英文、位置相关），没有可逐字保留的中文模板——判「程序性输入格式错误」。同族先例：其余 handler 的 `Json<T>` / `Query<T>` extractor 拒绝（如标的搜索非法 `type`）走框架默认 400 体、同样无码不经 `AppError`，本点与之一致；同族的 sync_engine 序列化失败亦在同票排除清单。
+- **测试层归口（对 ADR-0050 决策 6 的显式例外，先例 #1071）**：决策 6 把「错误契约的字段断言」归 `src-tauri/tests/api_server/` 集成测试。本票 8 条码的可达面分三类：`instrument.query-required` 走 HTTP 面——已在 `tests/api_server/instrument_search.rs` 断言码、`message` 与 `params` 缺席（决策 6 正例）；5 条闭集解析（`budget.period-unknown` + `scheduled-plan` 三条 + `scheduled-occurrence.status-unknown`）只经 rusqlite/serde 扁平化，`code`/`params` 不随之外传，HTTP/IPC 面都无从断言（与 `account.type-unknown` 同形的已知边界）；`scheduled-plan.occurrence-date-invalid`（计划建档 IPC）与 `db.integrity-check-failed`（失败恢复 / 备份恢复 IPC）虽经 IPC 上抛，但两者都不经过 HTTP 面，且命令面集成测试现无同类归口。故其余 7 条按 #1071 的构造点口径在域/基础设施单测钉码形态：`scheduled_transactions/tests/parse_codes.rs`、`budget/tests.rs`、`db/tests/integrity.rs`（`PRAGMA writable_schema` 造非 `ok` 结果，断言实际 pragma 输出），zh/en 模板插值归 Vitest `src/__tests__/errors-adr-0050-sweep.test.ts`；两条 IPC 可达码的壳层断言若需要，归后续命令面集成测试票。
+- **`db.*` 命名空间说明**：`db.integrity-check-failed` 与系统通用码 `db.error` 同前缀。CONTEXT-core（错误码词条）只约定 `Db`/`Parse`/`Io` **系统错误**携带通用码、底层驱动消息不入码表，未禁止 db 层条件码；构造点在 `db/mod.rs` 基础设施、启动引导/备份恢复/同步 checkpoint 三域共用，沿用 `db` 前缀而不新造域。

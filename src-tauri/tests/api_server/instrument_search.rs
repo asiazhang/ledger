@@ -240,9 +240,24 @@ async fn test_search_limit_clamped_to_100() {
 
 fn assert_bad_request(status: StatusCode, body: &serde_json::Value, what: &str) {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{what} 应返回 400");
+    // ADR-0050 码化收口（#1072）：入参条件带稳定码与逐字保留的中文原文，
+    // AI 导入按码自纠（HTTP 面是唯一消费方）。
+    assert_eq!(body["kind"], "Invalid", "{what} kind 契约不变");
+    assert_eq!(
+        body["code"], "instrument.query-required",
+        "{what} 应带稳定码"
+    );
     assert!(
         body["message"].as_str().is_some_and(|m| !m.is_empty()),
         "{what} 应返回中文错误信息"
+    );
+    assert_eq!(
+        body["message"], "query 不能为空：标的搜索为搜索式端点，请携带关键词（不做全量列表）",
+        "{what} message 逐字保留"
+    );
+    assert!(
+        body.get("params").is_none(),
+        "{what} 无插值参数时 params 应缺席: {body}"
     );
 }
 

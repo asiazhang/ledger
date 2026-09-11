@@ -175,7 +175,8 @@
     "as-of-date-invalid": "as-of 交易日格式无效: {0}",
     "trend-start-date-invalid": "起始日期格式无效: {0}",
     "trend-end-date-invalid": "截止日期格式无效: {0}",
-    "trend-range-invalid": "起始日期不能晚于截止日期"
+    "trend-range-invalid": "起始日期不能晚于截止日期",
+    "query-required": "query 不能为空：标的搜索为搜索式端点，请携带关键词（不做全量列表）"
   },
   "fund": {
     "code-invalid": "基金代码须为 6 位数字"
@@ -196,10 +197,12 @@
     "category-not-expense": "预算只能设置在支出分类上（该分类为{0}分类）",
     "duplicate-monthly": "该分类已存在按月预算，可编辑该预算的金额",
     "duplicate-yearly": "该分类已存在按年预算，可编辑该预算的金额",
-    "not-found": "预算不存在: {0}"
+    "not-found": "预算不存在: {0}",
+    "period-unknown": "未知预算周期: {0}"
   },
   "scheduled-plan": {
     "amount-positive": "金额必须大于 0",
+    "kind-unknown": "未知定时交易类型: {0}",
     "same-account": "转出账户不能等于转入账户",
     "from-account-not-found": "转出账户不存在",
     "to-account-not-found": "转入账户不存在",
@@ -212,12 +215,15 @@
     "not-found": "定时计划不存在",
     "manual-complete-forbidden": "不能手动将计划设为 completed",
     "status-transition-forbidden": "不允许从 {0} 转换到 {1}",
+    "status-unknown": "未知计划状态: {0}",
     "edit-amount-forbidden": "订阅金额不可编辑：改价 = 取消旧计划 + 新建（按新金额重建计划，保留两段真实价格历史）",
     "edit-subscription-only": "仅订阅计划支持编辑非金额字段",
+    "recurrence-unknown": "未知周期类型: {0}",
     "installment-ext-not-found": "分期扩展信息不存在",
     "subscription-ext-not-found": "订阅扩展信息不存在",
     "transfer-ext-not-found": "定时转账扩展信息不存在",
     "date-invalid": "日期格式错误 {0}: {1}",
+    "occurrence-date-invalid": "无效日期",
     "not-active": "关联计划未处于活跃状态",
     "policy-subscription-only": "只有订阅形态协议可挂保单",
     "policy-merchant-forbidden": "保单缴费协议不挂商户：保费归属走保单引用，付款对象由保司承担",
@@ -225,6 +231,7 @@
   },
   "scheduled-occurrence": {
     "not-found": "期次不存在",
+    "status-unknown": "未知期次状态: {0}",
     "not-executable": "期次状态为 {0}，不能执行",
     "plan-not-found": "关联定时计划不存在",
     "conflict": "期次已被其他设备执行"
@@ -261,6 +268,9 @@
     "date-invalid": "日期格式无效，应为 YYYY-MM-DD: {0}",
     "status-invalid": "未知实物资产状态: {0}（合法值: holding/disposed）",
     "not-found": "实物资产不存在: {0}"
+  },
+  "db": {
+    "integrity-check-failed": "数据库完整性检查失败: {0}"
   },
   "boot": {
     "db-unreadable": "启动失败，数据库不可用，请先在失败恢复屏重置或恢复",

@@ -175,7 +175,14 @@ pub fn check_integrity(conn: &Connection) -> Result<()> {
         .query_row("PRAGMA integrity_check", [], |r| r.get(0))
         .map_err(AppError::from)?;
     if result != "ok" {
-        return Err(AppError::Invalid(format!("数据库完整性检查失败: {result}")));
+        // ADR-0050 码化收口（#1072）：构造点在基础设施（启动/备份恢复/checkpoint
+        // 三域共用），码归 `db.*` 而非 `boot.*`——按启动场景命名会把备份与同步的
+        // 同名失败误标为启动条件；message 逐字保留、检查结果进 params。
+        return Err(AppError::codedp(
+            "db.integrity-check-failed",
+            format!("数据库完整性检查失败: {result}"),
+            &[result.as_str()],
+        ));
     }
     Ok(())
 }
