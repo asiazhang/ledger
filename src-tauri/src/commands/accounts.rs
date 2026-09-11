@@ -18,8 +18,9 @@ use crate::accounts::{
     Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountUpdateInput,
     BalanceCacheAudit,
 };
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
+use crate::read_entry::read_entry;
 use crate::signals::{WriteEvidence, WriteOp};
 use crate::write_entry::{Outcome, write_entry};
 
@@ -27,9 +28,8 @@ use crate::write_entry::{Outcome, write_entry};
 #[tauri::command]
 pub async fn list_accounts(db: State<'_, DbState>) -> Result<Vec<Account>> {
     let conn = db.conn.clone();
-    run_db("list_accounts", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        account_domain::list_accounts(&conn)
+    read_entry("list_accounts", conn, move |conn| {
+        account_domain::list_accounts(conn)
     })
     .await
 }
@@ -119,9 +119,8 @@ pub async fn adjust_account_balance(
 #[tauri::command]
 pub async fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalance>> {
     let conn = db.conn.clone();
-    run_db("list_account_balances", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        account_domain::list_account_balances_with_visibility(&conn, false)
+    read_entry("list_account_balances", conn, move |conn| {
+        account_domain::list_account_balances_with_visibility(conn, false)
     })
     .await
 }
@@ -132,9 +131,10 @@ pub async fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<Account
 #[tauri::command]
 pub async fn audit_balance_cache(db: State<'_, DbState>) -> Result<BalanceCacheAudit> {
     let conn = db.conn.clone();
-    run_db("audit_balance_cache", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        account_domain::audit_balance_cache(&conn)
+    // 写侧白名单身份保留（ADR-0104 决策 5）：仍是不经 write_entry 的声明写命令，
+    // 闭包体与形状 A 同构，锁仪式归统一读入口。
+    read_entry("audit_balance_cache", conn, move |conn| {
+        account_domain::audit_balance_cache(conn)
     })
     .await
 }

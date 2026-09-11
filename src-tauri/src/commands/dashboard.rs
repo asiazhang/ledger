@@ -14,16 +14,16 @@ use tauri::State;
 
 use crate::dashboard as dashboard_domain;
 use crate::dashboard::DashboardOverview;
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
+use crate::read_entry::read_entry;
 
 /// 首页净资产总览：本位币净资产及其三个组成。
 #[tauri::command]
 pub async fn dashboard_overview(db: State<'_, DbState>) -> Result<DashboardOverview> {
     let conn = db.conn.clone();
-    run_db("dashboard_overview", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        dashboard_domain::query_dashboard_overview(&conn)
+    read_entry("dashboard_overview", conn, move |conn| {
+        dashboard_domain::query_dashboard_overview(conn)
     })
     .await
 }

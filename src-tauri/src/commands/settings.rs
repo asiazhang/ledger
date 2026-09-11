@@ -23,6 +23,7 @@ use crate::currencies::current_base_currency;
 use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::logger;
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::write_entry::{Outcome, write_entry};
 
@@ -41,9 +42,8 @@ pub struct LogLevelState {
 #[tauri::command]
 pub async fn get_log_level(app: tauri::AppHandle) -> Result<LogLevelState> {
     let conn = app.state::<DbState>().conn.clone();
-    run_db("get_log_level", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        let level = logger::persisted_level(&conn);
+    read_entry("get_log_level", conn, move |conn| {
+        let level = logger::persisted_level(conn);
         Ok(LogLevelState {
             level: level.directive().to_string(),
         })
@@ -76,10 +76,9 @@ pub struct BaseCurrencyState {
 #[tauri::command]
 pub async fn get_base_currency(app: tauri::AppHandle) -> Result<BaseCurrencyState> {
     let conn = app.state::<DbState>().conn.clone();
-    run_db("get_base_currency", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    read_entry("get_base_currency", conn, move |conn| {
         Ok(BaseCurrencyState {
-            code: current_base_currency(&conn)?,
+            code: current_base_currency(conn)?,
         })
     })
     .await
