@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { reactive, readonly, ref, watch } from 'vue'
+import { reactive, readonly, ref, toRaw, watch } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import { TRANSACTION_KINDS } from '@/types'
 import type { TransactionKind } from '@/types'
@@ -51,13 +51,14 @@ export interface TransactionFilters {
   /** 分类过滤维度（issue #377，三态）：分类 id = 精确过滤（不含子分类，含软删分类）；
    * UNCATEGORIZED_ONLY 哨兵 = 仅无分类；null = 不过滤。URL 下钻只读入口，无手动控件。 */
   categoryId: string | null
-  /** 交易类型过滤（前端 6 种：income/expense/transfer/refund/buy/sell） */
-  kind: TransactionKind | null
-  /** 类型集合维度（issue #581，下钻专用）：URL ?kinds= 携带的交易类型集合（逗号分隔
-   * 闭集字面量解析为字面量数组），与其余维度 AND 组合。类型为闭集字面量、无参考数据
-   * 映射、不涉保留值，挂起补判/让位/复位守卫同规；与单值 kind 手动维度解耦共存。
-   * 消费方是报表分类下钻跳转（载荷显式携带与分类柱一致的收支类型集合）；与「仅无分类」
-   * 解耦：仅无分类命中一切无分类交易、不限定类型，收支限定由本维度承担。 */
+  /** 类型维度（spec #1025 单维化，原 issue #581，手动多选 + 下钻共用）：列表页类型
+   * 下拉的多选集合与 URL ?kinds= 携带的下钻载荷（逗号分隔闭集字面量解析为字面量
+   * 数组）共用本字段。维度内多值取或、与其余维度 AND 组合；类型为闭集字面量、
+   * 无参考数据映射、不涉保留值，挂起补判/让位/复位守卫同规。空集合 ≡ 不过滤 ≡
+   * 默认态（选满全部可选类型不归一：类型是可扩闭集）；载荷在场即覆盖手动多选
+   * （URL 永远赢，ADR-0094）。与「仅无分类」解耦：仅无分类命中一切无分类交易、
+   * 不限定类型，收支限定由本维度承担。原「单值 kind 手动维度 + 下钻专用集合」
+   * 两套表示并存、同携取交集的形态已退役（BREAKING，见 CHANGELOG）。 */
   kinds: readonly TransactionKind[] | null
 }
 
@@ -78,7 +79,6 @@ const DEFAULT_FILTERS: TransactionFilters = {
   involvingAccountId: null,
   merchantId: null,
   categoryId: null,
-  kind: null,
   kinds: null,
 }
 
@@ -180,8 +180,9 @@ const URL_PARAM_TABLE: ReadonlyArray<UrlParamDef> = [
 
 /**
  * 交易页会话状态 store（issue #893）：TransactionFilter 过滤状态与会话内保留语义的
- * 唯一读写方——筛选全维（账户/商户/分类三态/单值类型/类型集合/日期边界）+ 页码 +
- * 页大小提升到会话生命周期（ADR-0094，修订 ADR-0061 决策 2/4 的逐票裁决口径）。
+ * 唯一读写方——筛选全维（账户/商户/分类三态/类型集合/日期边界，spec #1025 起类型
+ * 维度单维化）+ 页码 + 页大小提升到会话生命周期（ADR-0094，修订 ADR-0061 决策 2/4
+ * 的逐票裁决口径）。
  *
  * 「会话内保留」语义（spec #892，先例 reports-session issue #427）：同一应用会话内，
  * 离开交易页再回来（侧栏切换、下钻往返、回退）= 回到离开时的样子，数据按恢复的
@@ -257,6 +258,15 @@ export const useTransactionsSessionStore = defineStore('transactions-session', (
     refreshVersion.value += 1
   }
 
+  /** 同值判定：对象值（类型集合数组）经 toRaw 解引用——reactive 深代理读取嵌套
+   * 对象返回新代理，直接 === 会对同一数组的重复声明误判为变化（重复出口）。 */
+  function isSameValue(a: unknown, b: unknown): boolean {
+    if (a === b) return true
+    return (
+      a !== null && b !== null && typeof a === 'object' && typeof b === 'object' && toRaw(a) === b
+    )
+  }
+
   /**
    * 过滤写入唯一路径：逐键合并补丁，同值守卫（undefined 视为未声明、同值不动作），
    * 实际变化才走统一出口。manual 标记手动意图：触碰 URL 管理维度 → 挂起参数让位
@@ -266,7 +276,7 @@ export const useTransactionsSessionStore = defineStore('transactions-session', (
     let changed = false
     ;(Object.keys(patch) as Array<keyof TransactionFilters>).forEach((key) => {
       const value = patch[key]
-      if (value === undefined || filters[key] === value) return
+      if (value === undefined || isSameValue((filters as Record<keyof TransactionFilters, unknown>)[key], value)) return
       // 逐键写入：值类型已由 TransactionFilterPatch 的键值对应约束，
       // 此处仅为绕开联合键索引的宽化收窄
       ;(filters as Record<keyof TransactionFilters, unknown>)[key] = value
@@ -362,9 +372,9 @@ export const useTransactionsSessionStore = defineStore('transactions-session', (
     if (
       next === null &&
       !otherHasValidParam(entry) &&
-      (filters.dateFrom !== null || filters.dateTo !== null || filters.kind !== null)
+      (filters.dateFrom !== null || filters.dateTo !== null || filters.kinds?.length)
     ) {
-      mutate({ dateFrom: null, dateTo: null, kind: null }, false)
+      mutate({ dateFrom: null, dateTo: null, kinds: null }, false)
     }
     mutate(entry.toPatch(next), false)
   }

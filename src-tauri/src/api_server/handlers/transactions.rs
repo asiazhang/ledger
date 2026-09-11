@@ -29,7 +29,7 @@ use crate::write_entry::{Outcome, write_entry};
     tag = "transactions",
     summary = "列出交易（可按日期/账户/类型过滤 + 服务端分页）",
     description = "读回/列表唯一入口：返回 `{items, total}`，过滤参数（from/to、account_id、\
-                  involving_account_id、merchant_id、category_id、kind/kinds、\
+                  involving_account_id、merchant_id、category_id、kinds、\
                   uncategorized_only、limit、page/page_size）全部可选；默认按日期倒序稳定排序。\
                   读回核对与参数语义见导入知识「对账完成判定」节；行携带 `source` 来源字段（读时反查推导），\
                   无来源交易为`null`。",
@@ -41,8 +41,7 @@ use crate::write_entry::{Outcome, write_entry};
         ("merchant_id" = Option<String>, Query, description = "按商户过滤（含软删商户的历史交易）"),
         ("category_id" = Option<String>, Query, description = "按分类精确过滤（不含子分类，含软删分类的历史交易）"),
         ("uncategorized_only" = Option<bool>, Query, description = "true 时仅返回无分类交易；与 category_id 同携按 AND 组合"),
-        ("kind" = Option<TransactionKind>, Query, description = "交易类型过滤（闭集枚举，非法值 4xx；含 convert 基金转换）"),
-        ("kinds" = Option<Vec<TransactionKind>>, Query, description = "类型集合过滤（issue #581）：逗号分隔单参数如 expense,refund，命中 kind IN (...)；与其余维度 AND 组合，非法值 4xx"),
+        ("kinds" = Option<Vec<TransactionKind>>, Query, description = "交易类型集合过滤（唯一类型维度，手动多选与下钻共用）：逗号分隔单参数如 expense,refund（同时承担单值与多值，取代原单值 kind 参数），命中 kind IN (...)；与其余维度 AND 组合，非法值 4xx"),
         ("limit" = Option<i64>, Query, description = "取前 N 条，缺省返回全部；传 page_size 时分页路径生效"),
         ("page" = Option<usize>, Query, description = "页码，从 1 开始，默认 1"),
         ("page_size" = Option<usize>, Query, description = "每页条数，缺省返回全部（total 恒返回）")

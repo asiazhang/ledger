@@ -206,10 +206,11 @@ fn readback_kind_amount(
     let result = list_transactions_internal(
         &world_conn!(world),
         &TransactionListFilter {
-            kind: Some(
+            // 单值经集合参数（spec #1025：原单值 kind 参数已移除，BREAKING）
+            kinds: Some(vec![
                 TransactionKind::parse(&kind)
                     .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
-            ),
+            ]),
             ..Default::default()
         },
     )

@@ -82,7 +82,7 @@ describe('TransactionsView URL 下钻接线（issue #97/#191，冒烟级）', ()
     })
     // 未分类柱下钻列表只含支出与退款，转账不再出现（与图同口径）
     expect(wrapper.text()).toContain('共 2 条')
-    // 类型集合维度是 URL 下钻专用：过滤行控件数量不变，无新控件
+    // 类型维度单维化（spec #1025）：下钻载荷与手动多选共用类型下拉，无新增控件
     expect(wrapper.findAllComponents(NSelect).length).toBe(selectCount)
     // 导航清除 → 类型集合同步清空回全量
     routeMock.query = {}
@@ -144,9 +144,10 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     expect(
       (merchant.props('options') as { value: string }[]).map((o) => o.value),
     ).toEqual(['mch-1'])
-    // 类型下拉：可清除，7 种交易类型（income/expense/transfer/refund/buy/sell/convert）
+    // 类型下拉：可清除、多选（spec #1025），7 种交易类型按闭集顺序
     const kind = kindSelect(wrapper)
     expect(kind.props('clearable')).toBe(true)
+    expect(kind.props('multiple')).toBe(true)
     expect((kind.props('options') as { value: string }[]).map((o) => o.value)).toEqual([
       'income',
       'expense',
@@ -160,7 +161,7 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     expect(clearButton(wrapper).attributes('disabled')).toBeDefined()
   })
 
-  async function setKind(wrapper: ReturnType<typeof mount>, k: string | null) {
+  async function setKind(wrapper: ReturnType<typeof mount>, k: string[] | null) {
     kindSelect(wrapper).vm.$emit('update:value', k)
     await flushPromises()
   }
@@ -182,7 +183,7 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
   it('清除筛选按钮走 resetFilters：复位全部条件并回到全量列表（第 1 页）', async () => {
     const wrapper = await mountView()
     await setAccount(wrapper, 'acc-1')
-    await setKind(wrapper, 'transfer')
+    await setKind(wrapper, ['transfer'])
     expect(wrapper.text()).toContain('共 1 条')
     await clearButton(wrapper).trigger('click')
     await flushPromises()
@@ -199,7 +200,7 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     routeMock.query = { account: 'acc-1' }
     const wrapper = await mountView()
     await setAccount(wrapper, 'acc-2')
-    await setKind(wrapper, 'income')
+    await setKind(wrapper, ['income'])
     // 商户维度同样不写回（URL 只读是整层契约，非按维度分支）
     await merchantSelect(wrapper).vm.$emit('update:value', 'mch-1')
     await flushPromises()
@@ -208,12 +209,31 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
 
   it('过滤无结果时展示空态提示（与加载态区分），空态可一键清除', async () => {
     const wrapper = await mountView()
-    await setKind(wrapper, 'buy') // richDb 无 buy → 空结果
+    await setKind(wrapper, ['buy']) // richDb 无 buy → 空结果
     expect(wrapper.text()).toContain('没有符合条件的交易')
     expect(bodyRows(wrapper).length).toBe(0)
     // 空态中的「清除筛选」可一键复位到全量
     await clearButton(wrapper).trigger('click')
     await flushPromises()
+    expect(wrapper.text()).toContain('共 5 条')
+  })
+
+  it('类型多选交互路由（spec #1025）：多类型集合生效于请求；选满全部类型不归一（清除按钮仍可用）；清空回全量', async () => {
+    const wrapper = await mountView()
+    // 多选买入 + 卖出：请求携带集合（richDb 无 buy/sell → 空结果）
+    await setKind(wrapper, ['buy', 'sell'])
+    expect(lastListFilter()).toMatchObject({ page: 1, page_size: 20, kinds: ['buy', 'sell'] })
+    expect(wrapper.text()).toContain('没有符合条件的交易')
+    // 标签按闭集顺序渲染（决议 6）：选择序 / URL 载荷序不作展示序
+    await setKind(wrapper, ['sell', 'income'])
+    expect(kindSelect(wrapper).props('value')).toEqual(['income', 'sell'])
+    // 选满全部可选类型：不归一为默认态——请求仍携带全量集合，清除筛选按钮可用
+    await setKind(wrapper, ['income', 'expense', 'transfer', 'refund', 'buy', 'sell', 'convert'])
+    expect(lastListFilter().kinds).toHaveLength(7)
+    expect(clearButton(wrapper).attributes('disabled')).toBeUndefined()
+    // 清空选择：请求不再携带类型参数，回到全量
+    await setKind(wrapper, null)
+    expect(lastListFilter()).not.toHaveProperty('kinds')
     expect(wrapper.text()).toContain('共 5 条')
   })
 })

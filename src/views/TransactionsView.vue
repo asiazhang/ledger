@@ -127,7 +127,7 @@ const merchantOptions = computed(() =>
     .map((m) => ({ label: m.name, value: m.id })),
 )
 
-/** 类型下拉选项：前端 TransactionKind 的 6 种（income/expense/transfer/refund/buy/sell；
+/** 类型下拉选项：前端 TransactionKind 全量闭集（spec #1025 起多选，按闭集顺序渲染；
  * Rust 侧另有 dividend/split 未在前端类型暴露，不进过滤选项）。标签经 t() 随语言切换。 */
 const kindOptions = computed<Array<{ label: string; value: TransactionKind }>>(() =>
   TRANSACTION_KINDS.map((value) => ({
@@ -135,6 +135,15 @@ const kindOptions = computed<Array<{ label: string; value: TransactionKind }>>((
     value,
   })),
 )
+
+/** 类型多选值（spec #1025）：脱只读投影（readonly 数组不直接喚组件）、标签按闭集顺序
+ * 渲染（决议 6——手动选择序与 URL 载荷序都不作为展示序）；空集合归一为 null
+ * （空集合 ≡ 不过滤 ≡ 默认态）。 */
+const kindValue = computed<TransactionKind[] | null>(() => {
+  if (!filters.kinds?.length) return null
+  const rank = new Map(TRANSACTION_KINDS.map((k, i) => [k, i]))
+  return [...filters.kinds].sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0))
+})
 
 /** 列表请求（ADR-0030 决策 6：请求发起、loading、行数据归视图）：以模块当前状态装配
  * 请求参数并发起查询。 */
@@ -152,8 +161,7 @@ async function load() {
     if (filters.merchantId) filter.merchant_id = filters.merchantId
     if (filters.categoryId === UNCATEGORIZED_ONLY) filter.uncategorized_only = true
     else if (filters.categoryId) filter.category_id = filters.categoryId
-    if (filters.kind) filter.kind = filters.kind
-    // 类型集合维度（issue #581，下钻专用，无手动控件）：非空集合 → 后端 kinds 数组（浅拷贝脱只读）
+    // 类型维度（spec #1025，手动多选 + 下钻共用）：非空集合 → 后端 kinds 数组（浅拷贝脱只读）
     if (filters.kinds?.length) filter.kinds = [...filters.kinds]
     const res = await api.listTransactions(filter)
     // 页码钳制（issue #893）：页码超出当前数据有效范围时自愈——空页 + 尚有数据
@@ -261,8 +269,9 @@ function onMerchantFilterChange(id: string | null) {
   setFilter({ merchantId: id })
 }
 
-function onKindFilterChange(value: TransactionKind | null) {
-  setFilter({ kind: value })
+/** 类型多选处理器（spec #1025）：空数组归一为 null（空集合 ≡ 不过滤 ≡ 默认态）。 */
+function onKindFilterChange(values: TransactionKind[] | null) {
+  setFilter({ kinds: values?.length ? values : null })
 }
 
 async function remove(id: string) {
@@ -468,11 +477,13 @@ function activateCard(row: Transaction): void {
         @update:value="onMerchantFilterChange"
       />
       <AppSelect
-        :value="filters.kind"
+        :value="kindValue"
         :options="kindOptions"
         :placeholder="t('transactions.filter.kind')"
+        multiple
         clearable
-        style="width: 120px"
+        :max-tag-count="1"
+        style="width: 160px"
         @update:value="onKindFilterChange"
       />
       <NButton
