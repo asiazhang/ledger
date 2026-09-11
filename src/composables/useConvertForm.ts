@@ -3,7 +3,8 @@ import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { centsToYuan, yuanToCents, PRICE_UNITS_PER_FEN, PRICE_UNITS_PER_YUAN } from '@/types'
-import { judgeQuantityText, fieldErrorKind } from '@/utils/field-error'
+import { judgeQuantityText } from '@/utils/field-error'
+import { useFieldErrors } from '@/composables/useFieldErrors'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { buildConvertInput } from '@/domain/transaction-input'
 import { errorMessage } from '@/utils/errors'
@@ -20,7 +21,7 @@ import type { Instrument, Transaction, TransactionConvert } from '@/types'
  *
  * 复用既有接缝：标的远程搜索（与投资表单同款防抖 remote 搜索）、投资账户选择
  * （参考 store 单一派生）、金额元转分（yuanToCents / centsToYuan 单点）、
- * 数量格式判定（judgeQuantityText / fieldErrorKind，ADR-0058 字段错误态）。
+ * 数量格式判定与错误态装配（judgeQuantityText / useFieldErrors，ADR-0058 字段错误态）。
  *
  * 编辑模式（与 useInvestmentForm 同约定）：待编辑交易的转换读投影
  * （`get_transaction_convert`）回填「A → B」全量信息；仅在 composable 创建时读一次
@@ -53,10 +54,6 @@ export function useConvertForm(options?: {
   const carriedCost = ref<number | null>(null)
   const note = ref('')
   const date = ref(Date.now())
-
-  const outBlurred = ref(false)
-  const inBlurred = ref(false)
-  const saveAttempted = ref(false)
 
   const outInstruments = ref<Instrument[]>([])
   const inInstruments = ref<Instrument[]>([])
@@ -129,39 +126,24 @@ export function useConvertForm(options?: {
   )
   const inInstrumentOptions = computed(() => optionsWithSeed(inInstruments.value, seededInOption))
 
-  const outJudgment = computed(() => judgeQuantityText(outQuantityText.value))
-  const inJudgment = computed(() => judgeQuantityText(inQuantityText.value))
-  const outQuantityError = computed(() =>
-    fieldErrorKind(outJudgment.value, {
-      touched: outBlurred.value,
-      saveAttempted: saveAttempted.value,
-    }),
-  )
-  const inQuantityError = computed(() =>
-    fieldErrorKind(inJudgment.value, {
-      touched: inBlurred.value,
-      saveAttempted: saveAttempted.value,
-    }),
-  )
+  // 两侧份额错误态装配（ADR-0058 / issue #979 → #1007 收口）：判定走纯函数单点
+  // judgeQuantityText、装配走表单级工厂 useFieldErrors——两腿各一行字段声明。
+  const errors = useFieldErrors({
+    out: { text: outQuantityText, judge: judgeQuantityText },
+    in: { text: inQuantityText, judge: judgeQuantityText },
+  })
+  const {
+    error: outQuantityError,
+    value: outQuantityValue,
+    markBlurred: markOutBlurred,
+  } = errors.fields.out
+  const {
+    error: inQuantityError,
+    value: inQuantityValue,
+    markBlurred: markInBlurred,
+  } = errors.fields.in
   /** 任一字段处于错误态，保存按钮随之禁用（红框＋提交禁用两件同发）。 */
-  const hasFieldError = computed(
-    () => outQuantityError.value != null || inQuantityError.value != null,
-  )
-
-  function markOutBlurred() {
-    outBlurred.value = true
-  }
-  function markInBlurred() {
-    inBlurred.value = true
-  }
-
-  /** 判定 ok 时的已解析份额（null = 文本非 ok，供反算与提交消费）。 */
-  const outQuantityValue = computed(() =>
-    outJudgment.value.kind === 'ok' ? outJudgment.value.value : null,
-  )
-  const inQuantityValue = computed(() =>
-    inJudgment.value.kind === 'ok' ? inJudgment.value.value : null,
-  )
+  const hasFieldError = errors.hasError
 
   /** 两侧反算单价（元，只读展示）：与后端 prepare_convert 同一公式——确认单金额 ÷ 份额，
    * 万分之一元单次舍入。输入不完整时为 null（占位显示）。 */
@@ -204,8 +186,8 @@ export function useConvertForm(options?: {
   }
 
   async function submit() {
-    saveAttempted.value = true
-    if (outQuantityError.value != null || inQuantityError.value != null) return
+    errors.markSaveAttempted()
+    if (hasFieldError.value) return
     if (!accountId.value) {
       message.warning(t('investments.form.selectAccount'))
       return
@@ -282,9 +264,7 @@ export function useConvertForm(options?: {
     inInstrumentId.value = null
     outQuantityText.value = ''
     inQuantityText.value = ''
-    outBlurred.value = false
-    inBlurred.value = false
-    saveAttempted.value = false
+    errors.reset()
     outAmount.value = null
     inAmount.value = null
     fee.value = null

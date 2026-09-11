@@ -3,7 +3,8 @@ import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { centsToYuan, priceToYuan, yuanToCents, PRICE_UNITS_PER_FEN, PRICE_UNITS_PER_YUAN } from '@/types'
-import { judgeQuantityText, judgePriceText, fieldErrorKind } from '@/utils/field-error'
+import { judgeQuantityText, judgePriceText } from '@/utils/field-error'
+import { useFieldErrors } from '@/composables/useFieldErrors'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { buildTradeInput } from '@/domain/transaction-input'
 import { errorMessage } from '@/utils/errors'
@@ -47,9 +48,6 @@ export function useInvestmentForm(
   // 错误态装配（输入中即时红 / 空值红在失焦或保存尝试后）由本薄层声明时机。
   const quantityText = ref('')
   const priceText = ref('')
-  const quantityBlurred = ref(false)
-  const priceBlurred = ref(false)
-  const saveAttempted = ref(false)
   const fee = ref<number | null>(null)
   const note = ref('')
   const date = ref(Date.now())
@@ -141,49 +139,26 @@ export function useInvestmentForm(
     return id === seededInstrumentOption?.value && seededInstrumentIsFund
   })
 
-  // 数量/价格错误态装配：判定 + 时机 → 当前错误类别。价格错误态仅在非基金形态
-  // 装配——基金无单价输入面（单价反算只读展示），空文本不构成红态；数量（股数/份额）
-  // 两形态共用同一输入面，同规装配。
-  const quantityJudgment = computed(() => judgeQuantityText(quantityText.value))
-  const priceJudgment = computed(() => judgePriceText(priceText.value))
-  const quantityError = computed(() =>
-    fieldErrorKind(quantityJudgment.value, {
-      touched: quantityBlurred.value,
-      saveAttempted: saveAttempted.value,
-    }),
-  )
-  const priceError = computed(() =>
-    isFundInstrument.value
-      ? null
-      : fieldErrorKind(priceJudgment.value, {
-          touched: priceBlurred.value,
-          saveAttempted: saveAttempted.value,
-        }),
-  )
+  // 数量/价格错误态装配（ADR-0058 / issue #416 → #1007 收口）：判定走纯函数单点
+  // judgeQuantityText / judgePriceText、装配走表单级工厂 useFieldErrors。价格字段
+  // 仅在非基金形态参与——基金无单价输入面（单价反算只读展示），enabled 抑制其错误态
+  // 与聚合；数量（股数/份额）两形态共用同一输入面，同规装配。
+  const errors = useFieldErrors({
+    quantity: { text: quantityText, judge: judgeQuantityText },
+    price: { text: priceText, judge: judgePriceText, enabled: () => !isFundInstrument.value },
+  })
+  const {
+    error: quantityError,
+    value: quantityValue,
+    markBlurred: markQuantityBlurred,
+  } = errors.fields.quantity
+  const {
+    error: priceError,
+    value: priceValue,
+    markBlurred: markPriceBlurred,
+  } = errors.fields.price
   /** 任一字段处于错误态，保存按钮随之禁用（红框＋提交禁用两件同发） */
-  const hasFieldError = computed(
-    () => quantityError.value != null || priceError.value != null,
-  )
-
-  /** 数量失焦：空值红时机输入（touched） */
-  function markQuantityBlurred() {
-    quantityBlurred.value = true
-  }
-
-  /** 单价失焦：空值红时机输入（touched） */
-  function markPriceBlurred() {
-    priceBlurred.value = true
-  }
-
-  /** 判定 ok 时的已解析数量（null = 文本非 ok，供计算/提交消费） */
-  const quantityValue = computed(() =>
-    quantityJudgment.value.kind === 'ok' ? quantityJudgment.value.value : null,
-  )
-
-  /** 判定 ok 时的已解析单价（元；null = 文本非 ok） */
-  const priceValue = computed(() =>
-    priceJudgment.value.kind === 'ok' ? priceJudgment.value.yuan : null,
-  )
+  const hasFieldError = errors.hasError
 
   /** 基金反算单价（元）：与后端 prepare 同一公式——(金额 ∓ 手续费) × 100 ÷ 份额，
    * 万分之一元单次舍入。买入减费（净投入）、卖出加费（费在收入外另收）。
@@ -233,11 +208,11 @@ export function useInvestmentForm(
 
   async function submit() {
     // 保存尝试即触发空值兜底红态（fieldErrorKind 的 saveAttempted 输入）
-    saveAttempted.value = true
+    errors.markSaveAttempted()
     // 格式类错误（解析失败 / 超精度 / 必填为空）由「红框＋提交禁用」取代旧格式
     // toast（ADR-0058 决策 1/3，#416 数量/价格接入）：错误态下静默中止提交（先于
     // 账户/标的 toast：红框已在字段上呈现，账户提示延后到格式修正后的下次尝试）
-    if (quantityError.value != null || priceError.value != null) return
+    if (hasFieldError.value) return
     if (!accountId.value) {
       message.warning(t('investments.form.selectAccount'))
       return
@@ -310,9 +285,7 @@ export function useInvestmentForm(
         quantityText.value = ''
         priceText.value = ''
         // 时机标志同清：弹窗关窗销毁实例前不留潜伏红态（初始为空不红，ADR-0058 决策 2）
-        quantityBlurred.value = false
-        priceBlurred.value = false
-        saveAttempted.value = false
+        errors.reset()
         fee.value = null
         fundingAccountId.value = null
         note.value = ''
@@ -333,9 +306,7 @@ export function useInvestmentForm(
     amount.value = null
     quantityText.value = ''
     priceText.value = ''
-    quantityBlurred.value = false
-    priceBlurred.value = false
-    saveAttempted.value = false
+    errors.reset()
     fee.value = null
     fundingAccountId.value = null
     note.value = ''
