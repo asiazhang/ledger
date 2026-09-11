@@ -17,6 +17,7 @@ import {
 } from 'naive-ui'
 import { api } from '@/api'
 import { t } from '@/i18n'
+import { useLoadable } from '@/composables/useLoadable'
 import { useModalIntent } from '@/composables/useModalIntent'
 import { useWindowTier } from '@/composables/useWindowTier'
 import AppModal from '@/components/AppModal.vue'
@@ -37,7 +38,11 @@ import type { BudgetInput, BudgetProgress } from '@/types'
 const reference = useReferenceStore()
 const message = useMessage()
 const list = ref<BudgetProgress[]>([])
-const loading = ref(false)
+
+// 清单加载收编 Loadable（issue #1008 / ADR-0040）：loading 置收、竞态裁决与错误
+// 提示内化；失败 = error 置位 + 默认裸 toast（治愈原 try/finally 无 catch 的静默
+// 失败与未处理 rejection），旧行保留到下次成功替换。
+const { loading, run: runList } = useLoadable(() => api.budgetProgress())
 
 // 移动档适配（issue #848 / ADR-0088 决策 11 票⑧）：预算表三分列（周期/状态并入
 // 分类副行、进度含已支/预算文案）+ 新增表单纵排。断点口径接窗口分级 composable
@@ -106,12 +111,8 @@ const editingCategoryName = computed(() =>
 )
 
 async function refresh() {
-  loading.value = true
-  try {
-    list.value = await api.budgetProgress()
-  } finally {
-    loading.value = false
-  }
+  const progress = await runList()
+  if (progress !== null) list.value = progress
 }
 
 async function create() {

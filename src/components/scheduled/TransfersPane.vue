@@ -73,7 +73,6 @@ const list = useScheduledPlanList<TransferExt>({
   expandDetail: (_plan, detail) => ({
     next: detail ? earliestPendingOccurrence(detail) : null,
   }),
-  loadErrorText: () => t('scheduled.pane.transferLoadError'),
   cancelConfirmText: () => t('scheduled.pane.transferCancelConfirm'),
   onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),
 })

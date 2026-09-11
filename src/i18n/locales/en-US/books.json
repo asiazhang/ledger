@@ -40,7 +40,6 @@
     "created": "Book “{name}” created; its database is created on first entry",
     "renamed": "Renamed to “{name}”",
     "removed": "Book “{name}” removed; files remain on disk",
-    "switching": "Switching to “{name}”; reloading the app",
-    "loadFailed": "Failed to load books: {msg}"
+    "switching": "Switching to “{name}”; reloading the app"
   }
 }

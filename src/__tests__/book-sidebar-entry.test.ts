@@ -1,11 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
 import BookSidebarEntry from '@/components/BookSidebarEntry.vue'
 import { lastInvokeArgs, mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from './helpers/invoke-mock'
 import { clickDialogButton, dialogText, findBodyButton, visibleModalText } from './helpers/dom'
-import { messageCalls } from './helpers/message-mock'
+import { messageApi, messageCalls } from './helpers/message-mock'
+import { resetToastSink } from './factories'
+import { registerToastSink } from '@/composables/useLoadable'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import type { BookListInfo } from '@/types'
 
@@ -81,6 +83,8 @@ function callsOf(cmd: string): number {
 }
 
 beforeEach(() => {
+  // Loadable 默认错误 toast 经模块级单点 sink；测试把它接到消息替身，供断言读取
+  registerToastSink(messageApi)
   resetOverlays()
   registry = {
     books: [
@@ -92,6 +96,10 @@ beforeEach(() => {
     fallback_reason: null,
   }
   mutableRegistrySeam()
+})
+
+afterEach(() => {
+  resetToastSink()
 })
 
 describe('账本入口（issue #834）：当前账本名与清单弹层', () => {
@@ -141,7 +149,8 @@ describe('账本入口（issue #834）：当前账本名与清单弹层', () => 
     const wrapper = mountEntry()
     await flushPromises()
     expect(wrapper.find('[data-testid="book-entry"]').text()).not.toContain('默认账本')
-    expect(messageCalls().some((m) => m.method === 'error' && m.text.includes('账本清单读取失败'))).toBe(true)
+    // 清单加载失败走 Loadable 默认策略（裸 errorMessage）；动作上下文由弹层错误行承载
+    expect(messageCalls().some((m) => m.method === 'error' && m.text === 'boom')).toBe(true)
 
     await openPanel(wrapper)
     expect(document.body.textContent).toContain('账本清单读取失败')
