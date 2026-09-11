@@ -24,11 +24,23 @@ use crate::error::{AppError, Result};
 /// `src/i18n/locales/{zh-CN,en-US}/errors.json` 的 `boot.schema-drift`。
 pub const BOOT_SCHEMA_DRIFT: &str = "boot.schema-drift";
 
-/// 库对象清单（表/视图/索引，`sqlite_master`）：`(type, name)` 有序集合——
-/// BTreeSet 保证 diff 结果（诊断日志）顺序确定，不随扫描顺序漂移。
+/// 库对象清单（表/视图/索引，`sqlite_master`，`sqlite_%` 内部对象排除）：
+/// `(type, name)` 有序集合——BTreeSet 保证 diff 结果（诊断日志）顺序确定，
+/// 不随扫描顺序漂移。
+///
+/// `sqlite_%` 内部对象（`sqlite_stat1`/`sqlite_stat4` 统计表、
+/// `sqlite_sequence` 计数表、`sqlite_autoindex_*` 隐式索引等）由引擎自主
+/// 创建回收（`ANALYZE`/`PRAGMA optimize`/AUTOINCREMENT），非迁移链声明
+/// 对象；统计表的存在性还随引擎编译选项漂移：bundled 引擎（
+/// SQLITE_ENABLE_STAT4）参照库在 V016 尾 `ANALYZE` 必产 `sqlite_stat4`，
+/// 而经非 STAT4 构建（如 macOS 系统 sqlite3）刷新过统计的实际库只有
+/// `sqlite_stat1`，不排除即把引擎实现细节误判为漂移、启动失败。先例：
+/// 迁移审计外键不变量与 checkpoint 对象清单同用 `name NOT LIKE 'sqlite_%'`。
 fn schema_objects(conn: &Connection) -> rusqlite::Result<BTreeSet<(String, String)>> {
-    let mut stmt = conn
-        .prepare("SELECT type, name FROM sqlite_master WHERE type IN ('table', 'view', 'index')")?;
+    let mut stmt = conn.prepare(
+        "SELECT type, name FROM sqlite_master \
+         WHERE type IN ('table', 'view', 'index') AND name NOT LIKE 'sqlite_%'",
+    )?;
     stmt.query_map([], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?
@@ -44,8 +56,9 @@ fn table_columns(conn: &Connection, table: &str) -> rusqlite::Result<BTreeSet<St
 /// schema 一致性校验（守卫本体，[`super::init_db`] 尾部接线）：从零迁移一个
 /// 内存参照库（直接调迁移链，不经 `init_db`——避免递归守卫），与真实库做
 /// **方向性** diff：参照有而实际缺的对象（表/视图/索引）或列 = 漂移；实际
-/// 多出 = 容忍（V005 搜索索引残留、`sqlite_sequence` 等合法遗留不误报，
-/// ADR-0027 / ADR-0100 决策 2）。参照库由迁移链自动构建，零手工清单维护。
+/// 多出 = 容忍（V005 搜索索引残留等合法遗留不误报，ADR-0027 / ADR-0100 决策 2）。
+/// `sqlite_%` 内部对象双向排除、不参与比对——引擎自主管理，非迁移链声明
+/// （详见 [`schema_objects`]）。参照库由迁移链自动构建，零手工清单维护。
 pub(crate) fn verify_schema(actual: &Connection) -> Result<()> {
     // 参照库建连走 [`super::open_in_memory`]（外键 + perf hook，与生产建连同
     // 收口）：参照构建的 SQL 受 ADR-0009 100ms 观测线约束（ADR-0100 性能定
