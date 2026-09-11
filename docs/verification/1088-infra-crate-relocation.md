@@ -60,6 +60,10 @@
 | `crates/infra/src/db/tests/common.rs::write_test_state` | 基础设施 crate 单测（dev-dependency 环，crate 实例分离） | ✅ 直接向本实例注册点注册备份域实现 |
 | `src/bin/ledger-perf/generate.rs`、`commands/boot`、`sync_engine::checkpoint`、`tests/commands/*` 的建库 | 性能生成器 / 生产引导 / 同步检查点 / 命令集成 | 不消费脏标记断言（`rg 'dirty\|backup' tests/commands tests/api_server` 零命中）；同进程内世界级注册已生效，不另接线 |
 
+生产启动接线的「删除即变红」由源码扫描守门兜底（启动路径不被任何测试直接执行）：
+`scripts/check-background-services.ts::BOOT_WIRING` 要求 `lib.rs` 内存在
+`install_after_commit_hook` 调用，缺失即红；夹具用例「删除启动接线 → 报红」锁死。
+
 ## 负向验收（删除即变红）
 
 1. **根包测试工厂接线删除**：临时移除 `test_support::open` 内的
@@ -87,6 +91,8 @@
 4. **基础设施 crate 内引用壳层**：夹具写入 `db/helper.rs: use crate::commands::…` →
    红（`反向依赖`，定位 `db/helper.rs:1`）——crate 内清单基准随归位改到
    `crates/infra/src`，删除清单条目即报「白名单路径不存在」。
+5. **启动接线删除**：`bun scripts/check-background-services.ts` 夹具删掉 `lib.rs`
+   内的注册调用 → 红（`启动接线缺失`，含「删掉这行不会让任何断言变红」的动机说明）。
 
 ## 归位带来的形态调整（crate 边界强制，均不改变对外行为）
 

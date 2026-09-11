@@ -41,9 +41,11 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-# 测试专用边（ADR-0084 / spec #1086）：迁入本 crate 的域单测用统一测试数据库工厂
-# 与共享器具（test_support / test_utils 仍在根包）。dev-dependency 环由 Cargo
-# 允许——测试目标与生产依赖图分离，不构成生产环。
+# 测试专用边（spec #1086 明文裁决「数据库 ↔ 核心交易域的双向引用是测试专用边，
+# 用 dev-dependency 环解决（Cargo 允许）」）：迁入本 crate 的域单测用根包的统一
+# 测试数据库工厂与共享断言（test_support；测试器具 test_utils 已随类型身份约束
+# 住本 crate，不在此环上）。dev-dependency 环由 Cargo 允许——测试目标与生产依赖
+# 图分离，不构成生产环；结构守门的依赖方向核对只辖生产依赖。
 tauri-app = { path = "../.." }
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：

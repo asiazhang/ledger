@@ -467,7 +467,8 @@ pub fn unlock_db_file(db_path: &Path, passphrase: &str) -> Result<Connection> {
 }
 
 /// 错误形态判别：SQLCipher 对错误口令与损坏文件均报 not-a-database；
-/// 本谓词供备份域等基础设施消费方归一错误形态（pub(crate)：勿在壳层使用）。
+/// 本谓词供备份域等消费方归一错误形态（#1088 归位后为跨 crate `pub`：
+/// 域侧消费，壳层不经它做分支）。
 pub fn is_not_a_database(e: &rusqlite::Error) -> bool {
     matches!(
         e,

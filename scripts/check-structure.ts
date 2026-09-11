@@ -108,7 +108,6 @@ export const WHITELIST: readonly WhitelistEntry[] = [
 export const INFRA_MODULES: readonly WhitelistEntry[] = [
   { path: 'db', layer: '基础设施', note: '数据库连接与 schema 守卫' },
   { path: 'signals.rs', layer: '基础设施', note: '信号映射（ADR-0044）' },
-  { path: 'signals', layer: '基础设施', note: '信号映射的外挂测试目录' },
   { path: 'error.rs', layer: '基础设施', note: '错误' },
   { path: 'settings.rs', layer: '基础设施', note: '设置' },
   { path: 'fs_util.rs', layer: '基础设施', note: '文件级原子操作工具（备份与 DataLocation 搬迁共用，#408 纳入守门）' },
@@ -118,6 +117,7 @@ export const INFRA_MODULES: readonly WhitelistEntry[] = [
   { path: 'write_entry.rs', layer: '基础设施', note: '壳层统一写入口（ADR-0073，spec #523）' },
   { path: 'read_entry.rs', layer: '基础设施', note: '壳层统一读入口（ADR-0104，spec #1009）' },
   { path: 'redact.rs', layer: '基础设施', note: 'IPC 载荷脱敏（issue #1087 首位成员）' },
+  { path: 'test_utils.rs', layer: '基础设施', note: '测试器具（捕获 tracing 事件的 Layer / 闸门式假发射器，#1088 随类型身份约束归位；`#[doc(hidden)]`，生产路径不得消费）' },
 ]
 
 /** 基础设施 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-infra.dir 同源。 */
@@ -564,18 +564,18 @@ function manifestPackageName(manifest: string): string | null {
 }
 
 /**
- * 清单声明的依赖 crate 名（含 dev 依赖与 target 变体；`[dependencies.x]` 子表形态）。
+ * 清单声明的**生产**依赖 crate 名（含 target 变体；`[dependencies.x]` 子表形态）。
  * 只取依赖表本身，段落其余内容不参与——供 crate 依赖方向核对使用。
  *
- * `includeDev=false`（依赖方向核对）刻意排除 `[dev-dependencies]`：测试专用边
- * 允许沿「域/基础设施 → 壳」反向（Cargo 允许 dev-dependency 环，ADR-0084 /
- * spec #1086——各域单测消费根包的测试工厂与器具）；生产依赖方向仍单向核对。
+ * 刻意排除 `[dev-dependencies]`：spec #1086 明文裁决「数据库 ↔ 核心交易域的双向
+ * 引用是测试专用边，用 dev-dependency 环解决（Cargo 允许）」，测试工厂与器具以
+ * dev-dependency 形态供各域/基础设施复用（#1088 实测：环成立，测试目标与生产依赖
+ * 图分离）；生产依赖方向仍按「壳 → 域 → 基础设施」单向核对，`crates/infra` 的
+ * `[dev-dependencies] tauri-app` 是本票测试专用边的落点。
  */
-function declaredDependencyNames(manifest: string, includeDev = true): string[] {
+function declaredProductionDependencyNames(manifest: string): string[] {
   const names = new Set<string>()
-  const tableRe = includeDev
-    ? /^(?:target\..+\.)?(?:dev-)?dependencies(?:\.([A-Za-z0-9_-]+))?$/
-    : /^(?:target\..+\.)?dependencies(?:\.([A-Za-z0-9_-]+))?$/
+  const tableRe = /^(?:target\..+\.)?dependencies(?:\.([A-Za-z0-9_-]+))?$/
   let current = ''
   for (const raw of manifest.split('\n')) {
     const header = raw.trim().match(/^\[([^\]]+)\]$/)
@@ -702,9 +702,9 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
           '    缺失即六件套 deny 门禁静默消失而 clippy 依然全绿——删除继承行即变红（ADR-0060 / spec #1086）',
       )
     }
-    // 依赖方向只看生产依赖：dev-dependency 是测试专用边（ADR-0084 / spec #1086），
-    // 允许域/基础设施 crate 以 dev-dependency 环消费根包的测试工厂与器具。
-    for (const dep of declaredDependencyNames(manifest, false)) {
+    // 依赖方向只看生产依赖（dev-dependency 环是 spec #1086 明文裁决的测试专用边，
+    // 见 declaredProductionDependencyNames 注释）。
+    for (const dep of declaredProductionDependencyNames(manifest)) {
       const target = CRATES.find((c) => c.name === dep)
       if (target && CRATE_LAYER_RANK[target.layer] > CRATE_LAYER_RANK[crate.layer]) {
         problems.push(
