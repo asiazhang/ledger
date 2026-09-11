@@ -196,6 +196,42 @@ fn dedup_hash_includes_convert_leg_fields() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// 分红归属标的纳入哈希（ADR-0109 / issue #1078）：同一天同一账户同额的两笔分红
+// 分属不同标的时必须判为不同内容；非 dividend 输入的哈希与旧公式逐字节同输入
+// （buy/sell 历史行不受影响）。
+// ---------------------------------------------------------------------------
+
+/// 构造一笔 dividend 输入（归属标的由调用方给定），其余字段取中性默认。
+fn dividend_input(instrument_id: &str, amount_cents: i64) -> TransactionInput {
+    TransactionInput {
+        kind: TransactionKind::Dividend,
+        instrument_id: Some(instrument_id.into()),
+        ..make_input(
+            "acc-dv",
+            TransactionKind::Dividend,
+            amount_cents,
+            "2026-07-01",
+        )
+    }
+}
+
+#[test]
+fn dedup_hash_includes_dividend_instrument() {
+    let first = dividend_input("inst-a", 3000);
+    let second = dividend_input("inst-b", 3000);
+    assert_ne!(
+        compute_dedup_hash(&first),
+        compute_dedup_hash(&second),
+        "同日同额、仅归属标的不同的两笔分红不应互相去重"
+    );
+    // 同一笔内容重复提交：哈希稳定（幂等重跑仍命中）。
+    assert_eq!(
+        compute_dedup_hash(&first),
+        compute_dedup_hash(&dividend_input("inst-a", 3000))
+    );
+}
+
 #[test]
 fn dedup_hash_unchanged_for_non_convert_inputs() {
     // 非 convert 输入与旧公式逐字节同输入：既有已知向量（无出资账户）仍成立。

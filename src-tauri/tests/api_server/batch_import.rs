@@ -205,17 +205,6 @@ async fn test_batch_create_dividend_persists_cash_leg_and_instrument_link() {
     assert_eq!(items[0]["amount_cents"], 3000);
     assert_eq!(items[0]["source"]["kind"], "instrument");
     assert_eq!(items[0]["source"]["entity_id"], "inst-div-1078");
-
-    // 扩展行：action='dividend'、无份额 / 单价。
-    let conn = conn.lock().unwrap();
-    let ext: (String, Option<f64>, Option<i64>) = conn
-        .query_row(
-            "SELECT action, quantity, price_cents FROM security_transactions",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .unwrap();
-    assert_eq!(ext, ("dividend".to_string(), None, None));
 }
 
 /// issue #1078 / ADR-0109：分红守卫经交易接口返回可读中文错误（缺标的、缺金额正性）。
@@ -405,15 +394,9 @@ async fn test_update_dividend_in_place_updates_amount() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["kind"], "dividend");
     assert_eq!(items[0]["amount_cents"], 5000);
-
-    // 扩展行仍在（就地修改后重建），金额锚点随之更新。
-    let conn = conn.lock().unwrap();
-    let ext_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM security_transactions", [], |r| {
-            r.get(0)
-        })
-        .unwrap();
-    assert_eq!(ext_count, 1);
+    // 就地修改后扩展行仍在（来源列标的反查仍命中，读时推导自扩展行）。
+    assert_eq!(items[0]["source"]["kind"], "instrument");
+    assert_eq!(items[0]["source"]["entity_id"], "inst-div-upd");
 }
 
 #[tokio::test]

@@ -42,7 +42,7 @@ const amountText = computed(() => displayAmountText(reference, props.transaction
     </NDescriptionsItem>
     <NDescriptionsItem :label="t('transactions.field.amount')">{{ amountText }}</NDescriptionsItem>
     <NDescriptionsItem :label="t('transactions.form.date')">{{ transaction.date }}</NDescriptionsItem>
-    <NDescriptionsItem :label="t('investments.form.account')">{{ accountName }}</NDescriptionsItem>
+    <NDescriptionsItem :label="t('transactions.field.account')">{{ accountName }}</NDescriptionsItem>
     <NDescriptionsItem :label="t('transactions.form.note')">
       {{ transaction.note ?? '—' }}
     </NDescriptionsItem>

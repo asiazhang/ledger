@@ -191,10 +191,16 @@ impl TransactionBatch {
 /// 基金转换（ADR-0099）追加四腿字段（转入标的/转入份额/两侧确认金额）——多腿
 /// 转换单由提交方拆成多条 convert 记录（每腿一条），仅日期/账户/金额占位相同的
 /// 两腿必须判为不同内容，否则第二腿被内容哈希误判重复而静默丢弃。
+/// 现金分红（ADR-0109 / issue #1078）追加归属标的：同一天同一账户同额的两笔分红
+/// 分属不同标的时必须判为不同内容，否则后一笔被误判重复而静默丢弃——AI 导入是
+/// 分红的主写入面，同日多只基金各自分红是常见形态。
 ///
 /// `to_account_id` 缺省拼空串；刻意排除 note/category（AI 生成文本非确定性，会让哈希漂移）。
 /// 出资账户与转换腿字段仅在携带时追加：其余输入与旧公式逐字节同输入——历史行
 /// `dedup_hash` 列（旧公式产物）对新公式仍命中，重导去重行为不变。
+/// **标的仅在 dividend 追加**（同类「仅携带时追加」纪律）：buy/sell 的历史行以旧
+/// 公式落 `dedup_hash`，为其补同一字段会让历史行对新公式失配、重导产生重复，
+/// 属 ADR-0010 冻结契约的破坏，故不做。
 pub fn compute_dedup_hash(input: &TransactionInput) -> String {
     let to_account_id = input.to_account_id.as_deref().unwrap_or("");
     let mut payload = format!(
@@ -219,6 +225,10 @@ pub fn compute_dedup_hash(input: &TransactionInput) -> String {
         payload.push_str(&input.out_amount_cents.unwrap_or(0).to_string());
         payload.push('|');
         payload.push_str(&input.in_amount_cents.unwrap_or(0).to_string());
+    }
+    if input.kind == TransactionKind::Dividend {
+        payload.push('|');
+        payload.push_str(input.instrument_id.as_deref().unwrap_or(""));
     }
     let digest = Sha256::digest(payload.as_bytes());
     digest.iter().map(|b| format!("{b:02x}")).collect()
