@@ -37,6 +37,8 @@ export const KIND_SEMANTIC_COLORS: Record<TransactionKind, SemanticColor> = {
   buy: { light: '#eb2f96', dark: '#ff85c0' },
   sell: { light: '#13c2c2', dark: '#5cdbd3' },
   convert: { light: '#d48806', dark: '#f0c060' },
+  // 份额调整：靛蓝——与转换（琥珀）区分、不与买卖收支色相混淆的非现金资本变动色。
+  split: { light: '#2f54eb', dark: '#85a5ff' },
 }
 
 /** 语义色覆盖的交易类型闭集（与交易类型闭集同源，运行时校验锚点）。 */

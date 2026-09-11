@@ -211,8 +211,9 @@ pub fn parse_kind(kind: &str) -> TransactionKind {
 ///   被测前提（`transfer.to-account-required` / `refund.source-required`），非法性
 ///   由后端背书、测试层不预判（CONTEXT-testing「步骤动词」：写入失败进入错误
 ///   断言路径）；
-/// - dividend/split 未实现：场景断言「暂不支持」显式拒绝，本就无合法形态可设
-///   per-kind 工厂。
+/// - dividend 未实现：场景断言「暂不支持」显式拒绝，本就无合法形态可设
+///   per-kind 工厂（split 已随 ADR-0106 激活：创建守卫场景——如缺标的——
+///   同样经本工厂走通用步骤，断言码化域守卫错误）。
 ///
 /// 与 ADR-0086 否决的「单一 transaction_input(kind) 工厂」不同界：那把 per-kind
 /// 矩阵知识摊到每个调用点；本函数只服务无 per-kind 热点字段的通用步骤短语与

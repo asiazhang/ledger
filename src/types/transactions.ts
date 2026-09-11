@@ -1,6 +1,6 @@
 import type { Syncable } from './common'
 
-export type TransactionKind = 'income' | 'expense' | 'transfer' | 'refund' | 'buy' | 'sell' | 'convert'
+export type TransactionKind = 'income' | 'expense' | 'transfer' | 'refund' | 'buy' | 'sell' | 'convert' | 'split'
 
 /** 交易来源类型闭集（spec #704 / issue #706，词汇表「来源列」）：定时计划三形态 /
  * 保单 / 物品 / 标的；wire 字面与后端枚举（camelCase）同源，与 source-jump.ts
@@ -188,7 +188,7 @@ export interface TransactionSearchFilter {
 /** 「记一笔」可创建的类型：不含 refund（退款入口由交易条目右键菜单承接）；
  * 基金转换（convert）是无现金腿 kind，界面无手工录入入口（ADR-0106 决策 10 / #1048），
  * 写入面由 AI 导入 / HTTP 契约承担——移除后穷尽表仍由类型系统守门。 */
-export type CreateTransactionKind = Exclude<TransactionKind, 'refund' | 'convert'>
+export type CreateTransactionKind = Exclude<TransactionKind, 'refund' | 'convert' | 'split'>
 
 /** 前端交易类型闭集（穷尽表驱动）；显示标签在文案资源 transactions.kind.*（i18n，ADR-0049） */
 const TRANSACTION_KIND_PRESENCE = {
@@ -199,6 +199,7 @@ const TRANSACTION_KIND_PRESENCE = {
   buy: true,
   sell: true,
   convert: true,
+  split: true,
 } satisfies Record<TransactionKind, boolean>
 
 export const TRANSACTION_KINDS = Object.keys(TRANSACTION_KIND_PRESENCE) as TransactionKind[]
@@ -218,6 +219,9 @@ const TRANSACTION_KIND_ACTIVATION = {
   buy: 'edit',
   sell: 'edit',
   convert: 'detail',
+  // split 落地（ADR-0106 / #1049）临时形态：改 / 删后端显式拒绝、只读详情未接，
+  // 行激活暂为 none（行菜单仅删除项，点击返回码化错误）；#1052 补只读详情后翻转 detail。
+  split: 'none',
 } satisfies Record<TransactionKind, TransactionKindActivation>
 
 /** 行激活形态查询：行激活与行菜单按 kind 收口的唯一事实源。 */

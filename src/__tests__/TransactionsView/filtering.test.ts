@@ -144,7 +144,7 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     expect(
       (merchant.props('options') as { value: string }[]).map((o) => o.value),
     ).toEqual(['mch-1'])
-    // 类型下拉：可清除、多选（spec #1025），7 种交易类型按闭集顺序
+    // 类型下拉：可清除、多选（spec #1025），8 种交易类型按闭集顺序
     const kind = kindSelect(wrapper)
     expect(kind.props('clearable')).toBe(true)
     expect(kind.props('multiple')).toBe(true)
@@ -156,6 +156,7 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
       'buy',
       'sell',
       'convert',
+      'split',
     ])
     // 清除筛选按钮：无过滤时禁用
     expect(clearButton(wrapper).attributes('disabled')).toBeDefined()

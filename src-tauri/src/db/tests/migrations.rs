@@ -66,9 +66,9 @@ fn init_db_is_idempotent_and_seeds_defaults() {
     assert_eq!(mismatched, 0);
 }
 
-/// 当前迁移序列长度（V001–V023，V005 移除不回填，共 22 条）；新增迁移时随
+/// 当前迁移序列长度（V001–V024，V005 移除不回填，共 23 条）；新增迁移时随
 /// `migrations()` 同步更新。钉住「从零迁移到最新」的完整性基线。
-const LATEST_SCHEMA_VERSION: usize = 22;
+const LATEST_SCHEMA_VERSION: usize = 23;
 
 /// 从零迁移完整性（内存库从零 → 最新）：user_version 停在最新、全库完整性
 /// 检查通过、每条迁移的签名表/列在场。漏跑或中途失败的迁移批次会停在半途
@@ -109,6 +109,7 @@ fn migration_from_zero_reaches_latest_completely() {
         "physical_assets",
         "insurers",
         "security_lot_conversions",
+        "security_lot_adjustments",
         "account_balance_cache",
         "net_worth_cache",
         "sync_device",
@@ -259,6 +260,86 @@ fn convert_schema_shape_is_complete_from_zero() {
         ],
         "security_lot_conversions 列集应与转换消耗表契约一致"
     );
+}
+
+// ---------------------------------------------------------------------------
+// V024：份额调整（split）批次重述审计表（issue #1049 / 父 spec #1045 / ADR-0106 决策 3）
+// ---------------------------------------------------------------------------
+
+/// 份额调整重述审计表 schema 形态（V024，additive）：列集与契约一致，
+/// 逐列成对的 before / after 快照可落库；transaction_id 级联随 split 扩展行消失、
+/// lot_id 级联随批次硬删消失（扩展行语义，同 security_lot_conversions）。
+#[test]
+fn split_lot_adjustments_schema_shape_is_complete_from_zero() {
+    let conn = crate::test_support::open();
+    seed_account(&conn, "acc-split", "投资账户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-split", "502010", "基金S", "CNY", "unknown");
+
+    insert_raw_transaction(&conn, "tx-split", "split", "acc-split")
+        .unwrap_or_else(|e| panic!("kind='split' 应可落库（闭集早已声明）: {e}"));
+    conn.execute(
+        "INSERT INTO security_transactions \
+         (transaction_id,instrument_id,action,quantity,fee_cents) \
+         VALUES ('tx-split','inst-split','split',339.76,0)",
+        [],
+    )
+    .unwrap_or_else(|e| panic!("action='split' 行应可落库（price_cents 留 NULL）: {e}"));
+    conn.execute(
+        "INSERT INTO security_lots \
+         (id,account_id,instrument_id,buy_transaction_id,initial_quantity,remaining_quantity,cost_per_unit_cents,currency_code,created_at,updated_at,version,device_id) \
+         VALUES ('lot-split','acc-split','inst-split','tx-split',100.0,100.0,10000,'CNY',?1,?1,1,'test')",
+        params![FIXED_NOW],
+    )
+    .unwrap();
+
+    // 列集与契约一致（逐列成对的 before / after 快照）。
+    let columns: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_table_info('security_lot_adjustments') ORDER BY cid")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        columns,
+        vec![
+            "id",
+            "transaction_id",
+            "lot_id",
+            "initial_quantity_before",
+            "initial_quantity_after",
+            "remaining_quantity_before",
+            "remaining_quantity_after",
+            "cost_per_unit_cents_before",
+            "cost_per_unit_cents_after",
+            "created_at"
+        ],
+        "security_lot_adjustments 列集应与重述审计表契约一致"
+    );
+
+    // before / after 快照可落库。
+    conn.execute(
+        "INSERT INTO security_lot_adjustments \
+         (id,transaction_id,lot_id,initial_quantity_before,initial_quantity_after,\
+          remaining_quantity_before,remaining_quantity_after,cost_per_unit_cents_before,\
+          cost_per_unit_cents_after,created_at) \
+         VALUES ('adj-01','tx-split','lot-split',100.0,106.2,100.0,106.2,10000,9416,?1)",
+        params![FIXED_NOW],
+    )
+    .unwrap_or_else(|e| panic!("重述审计行应可落库: {e}"));
+
+    // split 扩展行硬删 → 审计行级联消失（扩展行语义）。
+    conn.execute(
+        "DELETE FROM security_transactions WHERE transaction_id='tx-split'",
+        [],
+    )
+    .unwrap();
+    let left: i64 = conn
+        .query_row("SELECT COUNT(*) FROM security_lot_adjustments", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(left, 0, "split 扩展行删除后重述审计行应级联消失");
 }
 
 // ---------------------------------------------------------------------------

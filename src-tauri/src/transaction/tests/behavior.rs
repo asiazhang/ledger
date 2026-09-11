@@ -175,21 +175,23 @@ fn delete_transaction_internal_returns_not_found_for_already_deleted() {
 /// 此前经交易接口创建 dividend/split 落入 writer::normalize 的通用兜底，返回语义不明的
 /// 「仅处理通用交易类型」；现改为明确的「暂不支持」——两者均不落库（见 spec #69）。
 #[test]
-fn create_transaction_internal_rejects_dividend_and_split_with_not_supported() {
+fn create_transaction_internal_rejects_dividend_with_not_supported() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-unsup", "现金", "cash", "CNY", 0);
 
-    for (kind, amount) in [(TransactionKind::Dividend, 60), (TransactionKind::Split, 0)] {
-        let err =
-            create_transaction_internal(&conn, make_input("acc-unsup", kind, amount, "2026-05-04"))
-                .unwrap_err();
-        match err {
-            AppError::Coded { message, .. } => assert!(
-                message.contains("暂不支持"),
-                "{kind} 应报「暂不支持」，实际: {message}"
-            ),
-            other => panic!("expected Coded, got {other:?}"),
-        }
+    // dividend 维持显式「暂不支持」；split 已激活（ADR-0106 / #1049），其输入守卫
+    // 由投资域 prepare_split 承接（见 investment::tests::split），不再在本层拒绝。
+    let err = create_transaction_internal(
+        &conn,
+        make_input("acc-unsup", TransactionKind::Dividend, 60, "2026-05-04"),
+    )
+    .unwrap_err();
+    match err {
+        AppError::Coded { message, .. } => assert!(
+            message.contains("暂不支持"),
+            "dividend 应报「暂不支持」，实际: {message}"
+        ),
+        other => panic!("expected Coded, got {other:?}"),
     }
 
     let count: i64 = conn
@@ -202,7 +204,8 @@ fn create_transaction_internal_rejects_dividend_and_split_with_not_supported() {
     assert_eq!(count, 0, "拒绝的交易不应落库");
 }
 
-/// 修改为 dividend/split 同样经行为层显式拒绝（单点分派覆盖创建与修改，事务回滚）。
+/// 修改为 dividend 经行为层显式拒绝（单点分派覆盖创建与修改，事务回滚）；
+/// 改挂 split 由 kind 变更守卫拒绝（ADR-0106 决策 5），同样不落库。
 #[test]
 fn update_transaction_rejects_dividend_and_split_with_not_supported() {
     let conn = test_support::open();
@@ -214,17 +217,17 @@ fn update_transaction_rejects_dividend_and_split_with_not_supported() {
     .unwrap()
     .id;
 
-    for (kind, amount) in [(TransactionKind::Dividend, 60), (TransactionKind::Split, 0)] {
+    {
         let err = update_transaction_internal(
             &conn,
             &id,
-            make_input("acc-unsup-upd", kind, amount, "2026-05-04"),
+            make_input("acc-unsup-upd", TransactionKind::Dividend, 60, "2026-05-04"),
         )
         .unwrap_err();
         match err {
             AppError::Coded { message, .. } => assert!(
                 message.contains("暂不支持"),
-                "{kind} 应报「暂不支持」，实际: {message}"
+                "dividend 应报「暂不支持」，实际: {message}"
             ),
             other => panic!("expected Coded, got {other:?}"),
         }
