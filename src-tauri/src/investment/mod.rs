@@ -18,6 +18,9 @@
 //! - [`fund`]：场外基金接入——6 位代码校验、详情落库、AI 降级建行、
 //!   按代码即拉注入接缝（`add_fund_by_code_with`）；
 //! - [`holdings`]：时点持仓（AsOfHolding）推算单点；
+//! - [`lots`]：持仓批次（security_lots）单点——取批次、逐批次 FIFO 分摊与
+//!   耗尽批次成本闭合、结转成本合计、修改/删除路径的两个精确回补原语
+//!   （issue #1018，父 spec #1005 决策 D4）；
 //! - [`manual_price`]：手动报价两落点（价格历史周采样 + 现价缓存映像规则）；
 //! - [`model`]：域集中模型——全量投资类型、基金/股票行情 DTO 与财务自由度总览
 //!   （#422 模型域化随域归位），经本入口逐类型再导出（禁止 glob）；
@@ -49,6 +52,7 @@ pub mod crud;
 pub mod financial_freedom;
 pub mod fund;
 pub mod holdings;
+pub mod lots;
 pub mod manual_price;
 pub mod predicates;
 pub mod prices;
