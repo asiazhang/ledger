@@ -90,11 +90,12 @@ async fn test_get_transactions_filters_by_account_id() {
 }
 
 #[tokio::test]
-async fn test_get_transactions_filters_by_kind() {
+async fn test_get_transactions_filters_by_kinds_single_value() {
     let (app, _) = setup_app();
     seed_readback_transactions(&app).await;
 
-    let (status, body) = get_json(&app, "/api/v1/transactions?kind=expense").await;
+    // 单值亦经集合参数（spec #1025：原单值 kind 参数已移除，BREAKING）
+    let (status, body) = get_json(&app, "/api/v1/transactions?kinds=expense").await;
     assert_eq!(status, StatusCode::OK);
     let txs = items_of(&body);
     assert_eq!(txs.len(), 2);
@@ -154,11 +155,12 @@ async fn test_get_transactions_filters_by_kinds_set() {
     let (_, body) = get_json(&app, "/api/v1/transactions?uncategorized_only=true").await;
     assert_eq!(body["total"], 1, "仅无分类应命中无分类收入: {body:?}");
 
-    // 既有单值 kind 参数行为不变（只增不改）
+    // 单值 kind 参数已移除（BREAKING，spec #1025）：旧调用方传 kind= 不报错，
+    // 被忽略、结果变宽（显式接受的静默失效，见 CHANGELOG BREAKING）
     let (_, body) = get_json(&app, "/api/v1/transactions?kind=expense").await;
-    assert_eq!(body["total"], 1);
+    assert_eq!(body["total"], 3, "kind= 不再生效，应返回全量: {body:?}");
 
-    // 集合外字面量：非法值 4xx（与单值 kind 同规）；Query 反序列化拒绝，响应体非 JSON 契约
+    // 集合外字面量：非法值 4xx；Query 反序列化拒绝，响应体非 JSON 契约
     let status = get_status(&app, "/api/v1/transactions?kinds=expense,bogus").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }

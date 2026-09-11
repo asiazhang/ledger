@@ -540,7 +540,8 @@ async fn test_openapi_doc_covers_list_transactions_params_and_schema() {
         "from",
         "to",
         "account_id",
-        "kind",
+        // 类型维度唯一集合参数（spec #1025：单值 kind 参数已移除，BREAKING）
+        "kinds",
         "limit",
         "page",
         "page_size",

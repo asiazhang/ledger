@@ -784,7 +784,7 @@ fn profile_kind_mix_and_soft_delete() {
         list_transactions(
             &conn,
             &TransactionListFilter {
-                kind: Some(k),
+                kinds: Some(vec![k]),
                 ..Default::default()
             },
         )
@@ -944,7 +944,7 @@ fn refund_chains_reference_earlier_expenses() {
     let refunds = list_transactions(
         &conn,
         &TransactionListFilter {
-            kind: Some(TransactionKind::Refund),
+            kinds: Some(vec![TransactionKind::Refund]),
             ..Default::default()
         },
     )
@@ -982,7 +982,7 @@ fn transfers_have_two_accounts() {
     let transfers = list_transactions(
         &conn,
         &TransactionListFilter {
-            kind: Some(TransactionKind::Transfer),
+            kinds: Some(vec![TransactionKind::Transfer]),
             limit: Some(50),
             ..Default::default()
         },

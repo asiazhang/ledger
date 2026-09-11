@@ -15,8 +15,8 @@ describe('TransactionsView 出资账户行双向账户名（issue #937）', () =
     setTxnDb([])
   })
 
-  /** 类型下拉（过滤行第 3 个 NSelect）直接 emit 变更（与转账行测试同模式）。 */
-  async function filterKind(wrapper: ReturnType<typeof mount>, k: string | null) {
+  /** 类型下拉（过滤行第 3 个 NSelect）直接 emit 变更（spec #1025 起多选数组值）。 */
+  async function filterKind(wrapper: ReturnType<typeof mount>, k: string[] | null) {
     wrapper.findAllComponents(NSelect)[2].vm.$emit('update:value', k)
     await flushPromises()
   }
@@ -30,7 +30,7 @@ describe('TransactionsView 出资账户行双向账户名（issue #937）', () =
   it('买入行（带出资账户）显示「出资账户 → 投资账户」双向账户名，两端各自可点击、各自跳转对应账户', async () => {
     setTxnDb([fundingBuy])
     const wrapper = await mountView()
-    await filterKind(wrapper, 'buy')
+    await filterKind(wrapper, ['buy'])
     // 双向展示：出资账户在前、投资账户在后（转账同款「转出 → 转入」风格）
     const links = wrapper.findAllComponents(AccountLink)
     expect(links.length).toBe(2)
@@ -55,7 +55,7 @@ describe('TransactionsView 出资账户行双向账户名（issue #937）', () =
       makeTxn(1, 'acc-1', { kind: 'sell', funding_account_id: 'acc-2' }),
     ])
     const wrapper = await mountView()
-    await filterKind(wrapper, 'sell')
+    await filterKind(wrapper, ['sell'])
     const links = wrapper.findAllComponents(AccountLink)
     // 资金流出方在前：sell 现金从投资账户流入出资账户（赎回款到账银行卡）
     expect(links.map((l) => l.text())).toEqual(['现金', '银行'])
@@ -76,7 +76,7 @@ describe('TransactionsView 出资账户行双向账户名（issue #937）', () =
   it('不带出资账户的买入行仍显示单个主账户名（余额买入语义展示不变）', async () => {
     setTxnDb([makeTxn(1, 'acc-1', { kind: 'buy' })])
     const wrapper = await mountView()
-    await filterKind(wrapper, 'buy')
+    await filterKind(wrapper, ['buy'])
     const links = wrapper.findAllComponents(AccountLink)
     expect(links.length).toBe(1)
     expect(links[0].text()).toBe('现金')

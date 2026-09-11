@@ -152,6 +152,7 @@ fn check_page_involving_account(
     );
 }
 
+/// 单值类型经集合参数（spec #1025：原单值 kind 参数已移除，BREAKING）。
 #[then(expr = "分页查询 kind {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
 fn check_page_kind(
     world: &mut LedgerWorld,
@@ -164,17 +165,17 @@ fn check_page_kind(
     assert_paged(
         world,
         TransactionListFilter {
-            kind: Some(
+            kinds: Some(vec![
                 TransactionKind::parse(&kind)
                     .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
-            ),
+            ]),
             page: Some(page as usize),
             page_size: Some(page_size as usize),
             ..Default::default()
         },
         expected_count,
         expected_total,
-        &format!("kind 过滤后 page={page}"),
+        &format!("kind（经集合参数）过滤后 page={page}"),
     );
 }
 
@@ -399,6 +400,51 @@ fn check_page_kinds(
         expected_count,
         expected_total,
         &format!("类型集合 '{kinds_raw}' page={page}"),
+    );
+}
+
+/// 下钻载荷组合形态（分类 + 类型集合，报表下钻落点查询）。spec #1025 旅程用。
+#[then(
+    expr = "分页查询 分类 {string} 类型集合 {string} page {int} page_size {int} 应返回 {int} 条 total {int}"
+)]
+fn check_page_category_kinds(
+    world: &mut LedgerWorld,
+    category_name: String,
+    kinds_raw: String,
+    page: i64,
+    page_size: i64,
+    expected_count: i64,
+    expected_total: i64,
+) {
+    let category_id = world.category_id(&category_name);
+    assert_paged(
+        world,
+        TransactionListFilter {
+            category_id: Some(category_id),
+            kinds: Some(parse_kinds(&kinds_raw)),
+            page: Some(page as usize),
+            page_size: Some(page_size as usize),
+            ..Default::default()
+        },
+        expected_count,
+        expected_total,
+        &format!("分类 '{category_name}' + 类型集合 '{kinds_raw}' page={page}"),
+    );
+}
+
+/// 列表快照行同时含两个类型（维度内取或，spec #1025 多选旅程）。
+#[then(expr = "列表行应同时含类型 {string} 与 {string}")]
+fn check_rows_contain_both_kinds(world: &mut LedgerWorld, kind_a: String, kind_b: String) {
+    let parse =
+        |k: &str| TransactionKind::parse(k).unwrap_or_else(|e| panic!("非法 kind: {k}（{e}）"));
+    let (a, b) = (parse(&kind_a), parse(&kind_b));
+    assert!(
+        world.txn.transactions_list.iter().any(|t| t.kind == a),
+        "列表应含 {kind_a} 行"
+    );
+    assert!(
+        world.txn.transactions_list.iter().any(|t| t.kind == b),
+        "列表应含 {kind_b} 行"
     );
 }
 

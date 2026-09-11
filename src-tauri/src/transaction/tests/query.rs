@@ -177,7 +177,7 @@ fn list_transactions_pagination_total_respects_filters() {
     let by_kind = list_transactions_internal(
         &conn,
         &TransactionListFilter {
-            kind: Some(TransactionKind::Income),
+            kinds: Some(vec![TransactionKind::Income]),
             page: Some(1),
             page_size: Some(1),
             ..Default::default()
@@ -276,12 +276,12 @@ fn list_transactions_involving_account_filter() {
     assert_eq!(unrelated.total, 1, "无关账户不应命中其他账户交易");
     assert_eq!(unrelated.items[0].account_id, "acc-inv-3");
 
-    // 与 kind 组合：涉及现金 + 仅 transfer = 2 条（转出 + 转入）
+    // 与类型集合组合（单值经集合参数，spec #1025）：涉及现金 + 仅 transfer = 2 条（转出 + 转入）
     let kind_combo = list_transactions_internal(
         &conn,
         &TransactionListFilter {
             involving_account_id: Some("acc-inv-1".into()),
-            kind: Some(TransactionKind::Transfer),
+            kinds: Some(vec![TransactionKind::Transfer]),
             ..Default::default()
         },
     )
@@ -591,7 +591,7 @@ fn list_transactions_out_of_range_page_and_empty_result() {
     let none = list_transactions_internal(
         &conn,
         &TransactionListFilter {
-            kind: Some(TransactionKind::Income),
+            kinds: Some(vec![TransactionKind::Income]),
             page: Some(1),
             page_size: Some(10),
             ..Default::default()

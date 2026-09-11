@@ -125,10 +125,9 @@ export interface TransactionListFilter {
   category_id?: string | null
   /** 仅无分类（issue #377）：true 时仅返回无分类交易；与 category_id 同携按 AND 组合 */
   uncategorized_only?: boolean | null
-  /** income / expense / transfer / buy / sell / refund / convert（闭集） */
-  kind?: TransactionKind | null
-  /** 类型集合过滤（issue #581 报表分类下钻载荷）：命中集合内各类型（与其余维度 AND 组合）；
-   * 与单值 kind 解耦共存，下钻专用、无手动控件 */
+  /** 类型集合过滤（spec #1025 起为唯一类型维度，手动多选 + 下钻载荷共用）：命中集合内
+   * 各类型（维度内取或，与其余维度 AND 组合）；空集合视为未携带（不过滤）。
+   * 原单值 kind 查询参数已移除（BREAKING），单值亦经本参数传递 */
   kinds?: TransactionKind[] | null
   /** 取前 N 条（仪表盘"最近 N 条"场景），与分页互斥：传 page_size 时分页路径生效 */
   limit?: number | null

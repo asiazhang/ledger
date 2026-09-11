@@ -104,7 +104,7 @@ export function makeTxn(i: number, accountId = 'acc-1', overrides: Partial<Trans
 let txnDb: Transaction[] = []
 
 /** 与后端 read.rs 口径一致：涉及账户（三端：转出 ∪ 转入 ∪ 出资，issue #937）/
- * 商户 / 日期起止 / 类型 / 分页 AND 组合过滤。 */
+ * 商户 / 日期起止 / 分页 AND 组合过滤。 */
 function applyListFilter(filter: Record<string, unknown>) {
   return txnDb.filter((t) => {
     if (filter.involving_account_id) {
@@ -114,8 +114,7 @@ function applyListFilter(filter: Record<string, unknown>) {
     if (filter.merchant_id && t.merchant_id !== filter.merchant_id) return false
     if (filter.from && t.date < (filter.from as string)) return false
     if (filter.to && t.date > (filter.to as string)) return false
-    if (filter.kind && t.kind !== (filter.kind as string)) return false
-    // 镜像后端读接缝（issue #377/#581）：精确分类 / 仅无分类 / 类型集合
+    // 镜像后端读接缝（issue #377/#581，spec #1025 起类型唯一集合参数）：精确分类 / 仅无分类 / 类型集合
     if (filter.category_id && t.category_id !== (filter.category_id as string)) return false
     if (filter.uncategorized_only === true && t.category_id !== null) return false
     if (Array.isArray(filter.kinds) && !filter.kinds.includes(t.kind)) return false

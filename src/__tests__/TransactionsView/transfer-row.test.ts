@@ -17,15 +17,15 @@ describe('TransactionsView 转账行双向账户名（issue #99）', () => {
     setTxnDb([...mixedDb])
   })
 
-  /** 类型下拉（过滤行第 3 个 NSelect，issue #191 后商户下拉插入第 2 位）直接 emit 变更（与 issue #98 测试同模式）。 */
-  async function filterKind(wrapper: ReturnType<typeof mount>, k: string | null) {
+  /** 类型下拉（过滤行第 3 个 NSelect，issue #191 后商户下拉插入第 2 位）直接 emit 变更（spec #1025 起多选数组值）。 */
+  async function filterKind(wrapper: ReturnType<typeof mount>, k: string[] | null) {
     wrapper.findAllComponents(NSelect)[2].vm.$emit('update:value', k)
     await flushPromises()
   }
 
   it('转账行账户列显示「转出 → 转入」双向账户名，两个名字各自可点击、各自跳转对应账户', async () => {
     const wrapper = await mountView()
-    await filterKind(wrapper, 'transfer')
+    await filterKind(wrapper, ['transfer'])
     // 双向展示：两个账户名（转出 acc-2、转入 acc-1）+ 箭头分隔
     const links = wrapper.findAllComponents(AccountLink)
     expect(links.length).toBe(2)
@@ -47,7 +47,7 @@ describe('TransactionsView 转账行双向账户名（issue #99）', () => {
 
   it('非转账行账户列仍显示单个主账户名（可点击，带 title 提示）', async () => {
     const wrapper = await mountView()
-    await filterKind(wrapper, 'income')
+    await filterKind(wrapper, ['income'])
     const links = wrapper.findAllComponents(AccountLink)
     expect(links.length).toBe(1)
     expect(links[0].text()).toBe('现金')

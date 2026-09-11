@@ -113,7 +113,7 @@ Feature: 交易管理
     And 分类列表不应包含 "下钻专线"
     And 分类含软删列表应包含 "下钻专线"
 
-  Scenario: 类型集合过滤（issue #581）：命中集合内各 kind、排除集合外；类型集合 × 仅无分类 AND 组合；既有单值 kind 与仅无分类行为不变
+  Scenario: 类型集合过滤（spec #1025 起为唯一类型维度，手动多选与下钻共用）：命中集合内各 kind、排除集合外；类型集合 × 仅无分类 AND 组合；单值经集合参数与仅无分类行为不变
     Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
     And 存在分类 "餐饮" 类型 "expense"
     When 播种 9 类交易各带分类与无分类 日期 "2026-11-01" 到账户 "现金" 分类 "餐饮"
@@ -123,6 +123,15 @@ Feature: 交易管理
     And 分页查询 类型集合 "dividend" page 1 page_size 10 应返回 2 条 total 2
     And 分页查询 kind "expense" page 1 page_size 10 应返回 2 条 total 2
     And 分页查询 仅无分类 page 1 page_size 10 应返回 9 条 total 9
+
+  Scenario: 类型多选买入+卖出（spec #1025 旅程）：集合查询两类行同现，下钻载荷组合落点正确
+    Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
+    And 存在分类 "餐饮" 类型 "expense"
+    When 播种 9 类交易各带分类与无分类 日期 "2026-12-01" 到账户 "现金" 分类 "餐饮"
+    Then 分页查询 类型集合 "buy,sell" page 1 page_size 10 应返回 4 条 total 4
+    And 列表行应同时含类型 "buy" 与 "sell"
+    And 分页查询 分类 "餐饮" 类型集合 "buy,sell" page 1 page_size 10 应返回 2 条 total 2
+    And 列表行应同时含类型 "buy" 与 "sell"
 
   Scenario: 同日期同时间戳批量导入翻页无重复无遗漏
     Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
