@@ -9,7 +9,7 @@
 //!
 //! 行为单测：`tests/tx_scope.rs` 锁定四个行为——嵌套加入外层 / 自持失败整体回滚 /
 //! COMMIT 失败尽力回滚清理 / ROLLBACK 自身失败不遮蔽原错误（失败注入用纯测试侧
-//! 手段：SQLite 触发器 RAISE(ABORT)、延迟外键、第二连接持锁）。
+//! 手段：SQLite 触发器 RAISE(ABORT) / RAISE(ROLLBACK)、延迟外键）。
 
 use rusqlite::Connection;
 

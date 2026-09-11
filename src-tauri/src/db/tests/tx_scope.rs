@@ -2,7 +2,7 @@
 //! ADR-0033 决策 2）：锁定四个原语行为——嵌套加入外层 / 自持失败整体回滚 /
 //! COMMIT 失败尽力回滚清理 / ROLLBACK 自身失败不遮蔽原错误。断言对准数据终态
 //! 与报错内容，不断言事务写法（ADR-0033 测试定案）；失败注入用纯测试侧手段
-//! （SQLite 触发器 RAISE(ABORT)、延迟外键、第二连接持锁），产品代码零 hook。
+//! （SQLite 触发器 RAISE(ABORT) / RAISE(ROLLBACK)、延迟外键），产品代码零 hook。
 
 use super::super::tx_scope::ensure_transaction;
 use crate::error::AppError;
