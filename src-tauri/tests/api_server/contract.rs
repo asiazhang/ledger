@@ -338,6 +338,33 @@ async fn contract_transaction_schemas_carry_funding_account() {
     );
 }
 
+/// 份额调整（split）字段语义锁（issue #1054 / ADR-0106 决策 11）：AI / 契约是
+/// split 的唯一写入面，`TransactionInput.quantity` 的描述必须自描述方向符号
+/// （`+` 折算/结转/送股、`−` 缩股）、缩股取严只作用于 `−` 向、以及「无现金腿」
+/// 的准入口径（金额恒 0、单价不提供、费用只能为 0）——AI 据此能自行构造出被
+/// 接受的提交；描述退回「数量必须 > 0」旧口径或把守卫泛化到两向时本锁报红。
+#[tokio::test]
+async fn contract_transaction_input_quantity_describes_split_semantics() {
+    let doc = fetch_contract().await;
+    let desc = doc["schemas"]["TransactionInput"]["quantity?"][1]
+        .as_str()
+        .unwrap_or_default();
+
+    for frag in [
+        "带符号份额增量",
+        "折算",
+        "`−` 缩股且 |Δ| 小于当前持仓", // 守卫只作用于 − 向（+Δ 折算/送股无上限）
+        "必须 ≠ 0",
+        "无现金腿",
+        "`price_cents` 不提供、`fee_cents` 只能为 0",
+    ] {
+        assert!(
+            desc.contains(frag),
+            "quantity 字段描述应带出 split 语义 {frag:?}，实际: {desc}"
+        );
+    }
+}
+
 /// 方言体积预算护栏（issue #839）：产物 ≤22KB。
 ///
 /// token 换算口径（与 issue 原型一致，不引入真实 tokenizer 依赖）：
