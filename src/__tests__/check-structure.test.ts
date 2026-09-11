@@ -251,8 +251,8 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
   it('真实仓库默认通过：基础设施→域零未认许引用（认许边留痕于脚本）', () => {
     const r = run([])
     expect(r.status).toBe(0)
-    // db/mod.rs→backup（ADR-0032）+ settings/logger/write_entry→test_support（ADR-0084，#758）
-    expect(r.output).toContain('认许边 4 条')
+    // db/mod.rs→backup（ADR-0032）+ settings/logger/write_entry/read_entry→test_support（ADR-0084，#758）
+    expect(r.output).toContain('认许边 5 条')
   })
 })
 

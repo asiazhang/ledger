@@ -91,6 +91,7 @@ export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'logger.rs', layer: '基础设施', note: '日志初始化与滚动清理（#408 纳入守门）' },
   { path: 'events.rs', layer: '基础设施', note: '事件发射机制（ADR-0054，#408 纳入守门）' },
   { path: 'write_entry.rs', layer: '基础设施', note: '壳层统一写入口（ADR-0073，spec #523）' },
+  { path: 'read_entry.rs', layer: '基础设施', note: '壳层统一读入口（ADR-0104，spec #1009）' },
 ]
 
 /** 壳层依赖形态：模块路径引用（crate::commands::x / commands::x）与别名引入 */
@@ -144,6 +145,11 @@ const INFRA_DOMAIN_ALLOWED_EDGES: readonly InfraDomainEdge[] = [
     file: 'write_entry.rs',
     domain: 'test_support',
     reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/簿记戳引用 FIXED_NOW（#758 收口），测试专用边、非产品依赖',
+  },
+  {
+    file: 'read_entry.rs',
+    domain: 'test_support',
+    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/种子（#758 收口），测试专用边、非产品依赖',
   },
 ]
 
