@@ -66,12 +66,7 @@ impl PartialSchema for InstrumentType {
         RefOr::T(Schema::Object(
             ObjectBuilder::new()
                 .schema_type(Type::String)
-                .enum_values(Some(
-                    InstrumentType::ALL
-                        .iter()
-                        .map(|k| k.as_str().to_string())
-                        .collect::<Vec<_>>(),
-                ))
+                .enum_values(Some(InstrumentType::ALL.map(|k| k.to_string())))
                 .description(Some(
                     "金融工具类型（闭集，小写字符串，与 instruments.instrument_type 一致）",
                 ))

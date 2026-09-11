@@ -35,6 +35,7 @@
 1. 仓库第二个自定义声明宏：宏内文档 rustdoc 不入调用域文档链接（已避免跨展开 intra-doc link）；展开调试依赖 `cargo expand`（清单形态简单）。
 2. `InstrumentType` 未知值报错文案变化（追加合法值后缀）——用户可见，已被 grilling 接受为改进。
 3. e2e 步骤层 4 处 `.parse()` 改调 `InstrumentType::parse`（`FromStr` 退役的随迁成本）。
+4. **与 ADR-0050 的关系（显式记录）**：宏生成的 `parse` 保持既有裸 `AppError::Invalid` 构造（两枚举既状如此，本票不扩大范围）；「Invalid 构造点逐点码化」是 ADR-0050 的存量收口债，宏固化该形状使第三枚举接入时会照抄——已立票单独追踪，不静默延续。
 
 ## 替代方案（防重提）
 
