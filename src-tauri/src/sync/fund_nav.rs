@@ -87,8 +87,9 @@ pub(super) struct NavPoint {
     pub(super) nav: f64,
 }
 
-/// 单页抓取结果：解析后的净值点 + 窗口内总条数（服务端按起止日期过滤后的
-/// 总数，供分页循环定界）+ 报文形态。
+/// 一页净值的解析结果：有效净值点 + 窗口内总条数（服务端按起止日期过滤后的
+/// 总数，供分页循环定界）+ 报文形态（`blocked` = 空响应/被拦截，见
+/// [`parse_lsjz`]）。
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct LsjzPage {
     pub(super) points: Vec<NavPoint>,
@@ -107,25 +108,19 @@ pub(super) struct NavQuery {
     pub(super) page: u64,
 }
 
-/// lsjz 报文解析结果：有效净值点 + 报文形态。`blocked` 标记空响应/被拦截形态
-///（[`LsjzDataField::Blocked`]，含 `Data` 缺省），供调用方把「抓取不可信」与
-/// 「窗口内确实没有新净值」分开处置（issue #1059）。
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct LsjzParse {
-    pub(super) points: Vec<NavPoint>,
-    pub(super) blocked: bool,
-}
-
-/// 从 lsjz 报文挑出有效净值点：日期非空、单位净值 > 0（未公布/异常行静默
-/// 过滤，与日线「无效样本不中断」同一姿态）。被拦截形态（`Data:""`）得空表并
-/// 标记 `blocked`——空表有两种语义，解析层负责把它们区分开（issue #1059）。
-pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzParse {
+/// 解析一页 lsjz 报文：挑出有效净值点（日期非空、单位净值 > 0；未公布/异常行
+/// 静默过滤，与日线「无效样本不中断」同一姿态）+ 顶层总条数 + 报文形态。被拦截
+/// 形态（`Data:""` / [`LsjzDataField::Blocked`]，含 `Data` 缺省）得空表并标记
+/// `blocked`——空表有两种语义（抓取不可信 vs 窗口内确实没有新净值），解析层
+/// 负责把它们区分开（issue #1059）。
+pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzPage {
     let data = match &resp.data {
         Some(LsjzDataField::Data(data)) => data,
         other => {
             tracing::debug!(payload = ?other, "lsjz Data 缺省或为被拦截形态，按空响应处理");
-            return LsjzParse {
+            return LsjzPage {
                 points: Vec::new(),
+                total: resp.total_count,
                 blocked: true,
             };
         }
@@ -144,8 +139,9 @@ pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzParse {
             })
         })
         .collect();
-    LsjzParse {
+    LsjzPage {
         points,
+        total: resp.total_count,
         blocked: false,
     }
 }
@@ -220,12 +216,7 @@ pub(super) fn fetch_nav_page_from(
         &format!("fetch_nav_page:{}", query.code),
         Some(referer.as_str()),
     )?;
-    let parsed = parse_lsjz(&resp);
-    Ok(LsjzPage {
-        total: resp.total_count,
-        points: parsed.points,
-        blocked: parsed.blocked,
-    })
+    Ok(parse_lsjz(&resp))
 }
 
 /// 基金分区的同步统计（与 [`super::incremental`] 的股票统计同源汇总）：
