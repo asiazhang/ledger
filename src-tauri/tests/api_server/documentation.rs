@@ -409,6 +409,28 @@ async fn test_import_knowledge_covers_key_conventions() {
         "直扣/直付",
         "现金腿记出资账户",
         "仅出资账户不同的两笔不互相去重",
+        // 基金转换教学关键词锁（issue #981 / ADR-0099）：快照字段位置（转出端与
+        // tradingTarget 转入端）、单腿一条记录、腿序幂等键、多腿转出份额两写、
+        // 金额占比分摊与尾差末腿、余额不变对账口径、软删 + 重建纠错与 kind 变更
+        // 禁用——整节被误删或口径退回借位落账时逐词报红。
+        "基金转换",
+        "convert",
+        "tradingTarget",
+        "convertAmount",
+        "无现金腿",
+        "单腿一条记录",
+        "逐腿直读",
+        "金额占比拆分",
+        "快照口径假设",
+        "尾差末腿",
+        "结转成本",
+        "扣费后净份额",
+        "kind 改成 / 改出",
+        "假卖出",
+        // 不受支持文案范围校准（issue #981）：convert 闭集扩容后仍准确——convert
+        // 可用，dividend / split 维持显式拒绝；措辞退回「三类 kind」旧口径时报红。
+        "`convert` 可用",
+        "`dividend` / `split` 仍不受支持",
     ];
     for kw in required_keywords {
         assert!(text.contains(kw), "导入知识应包含关键约定关键词 {kw:?}");

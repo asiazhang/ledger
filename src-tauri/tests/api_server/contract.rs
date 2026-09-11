@@ -346,9 +346,13 @@ async fn contract_transaction_schemas_carry_funding_account() {
 /// （≈20KB）须人工决策提预算或瘦身，不允许契约膨胀无声挤占 AI 上下文
 /// （延续 #304 / #693 契约膨胀护栏传统）。基金转换（issue #978/#979）加入 `TransactionInput`
 /// / `UpdateTransactionInput` 的两腿可选字段、`ConvertFields.to_symbol` 后已逼近预算
-/// （实测 ≈19.9KB）——注意 `TransactionConvert` / `TransactionTrade` 是 IPC 专用投影，
-/// 不在 `ApiDoc` 组件内，不占方言体积；触线前须先做一轮瘦身（如合并重复字段描述）
-/// 再谈提预算。
+/// （≈19.9KB）——注意 `TransactionConvert` / `TransactionTrade` 是 IPC 专用投影，
+/// 不在 `ApiDoc` 组件内，不占方言体积。
+///
+/// issue #981 复核：实测 20412 字节，余量仅 68（上限 20480），已逼近上限。已发布
+/// 字段描述受 `AGENTS.md`「已发布 AI API 契约只增不改」约束，本票不动契约；后续
+/// 任何新增字段都会触线，须先人工决策：对**未发布新增**的字段描述做一轮显式瘦身，
+/// 或经维护者同意提高预算——不得默默挤占 AI 上下文（决策建议已在 issue #981 留痕）。
 #[tokio::test]
 async fn contract_size_within_budget() {
     let (app, _) = setup_app();

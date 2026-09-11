@@ -32,6 +32,7 @@
 - **投资**：交易列表买入/卖出行展示「出资账户 → 投资账户」双链接（两端各自可点击下钻）；按账户筛选交易命中其出资的买入/卖出，一张卡的完整资金历史可检索（[#937]）。
 - **多端同步**：买入/卖出的出资账户随同步在各端一致重放，余额与本地一致；旧版本设备产出的历史操作照常重放（[#939]）。
 - **AI 导入**：导入知识同步出资账户教学——直扣/直付行携带出资账户、余额核对含结算账户现金流；契约自描述端点带出该字段（[#939]）。
+- **AI 导入**：导入知识新增基金转换教学——快照转出端与 `tradingTarget` 转入端字段位置、单腿一条记录、腿序幂等键、多腿分摊与余额不变对账口径、软删 + 重建纠错；`convert` 可用而 `dividend` / `split` 仍不受支持（[#981]）。
 - **发布**：Android arm64 APK 进入发布矩阵，随 GitHub Release 发布（[#559]）。
 - **发布**：Android APK 发布签名就绪——发布构建以 CI secrets 注入 keystore 签名，tag 构建缺签名 secrets 直接失败；试跑产物经 apksigner 校验可真机直装（[#560]）。
 - **报表**：报表页接入 ESC 复位（[#894]）。
@@ -320,3 +321,4 @@
 [#939]: https://github.com/asiazhang/ledger/issues/939
 [#940]: https://github.com/asiazhang/ledger/issues/940
 [#977]: https://github.com/asiazhang/ledger/issues/977
+[#981]: https://github.com/asiazhang/ledger/issues/981
