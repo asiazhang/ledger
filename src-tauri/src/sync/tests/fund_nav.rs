@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::NaiveDate;
 
 use crate::sync::fund_nav::{
-    LsjzResponse, NavPoint, NavQuery, fetch_nav_page_from, fetch_nav_snapshot_from, nav_window,
+    LsjzResponse, NavPoint, NavQuery, fetch_nav_full_series_from, fetch_nav_page_from, nav_window,
     parse_lsjz, parse_net_worth_trend,
 };
 use crate::sync::http::{Pacer, request_json_from_hosts};
@@ -307,13 +307,14 @@ fn request_json_from_hosts_accepts_referer_argument() {
 }
 
 #[test]
-fn nav_snapshot_fetch_reads_single_file() {
+fn nav_full_series_fetch_reads_single_file() {
     // 单请求全量净值通道：一次 GET 详情页数据文件即取整只基金的历史净值序列
     // （issue #1062）。本地 HTTP 服务验证请求路径与报文解析，不依赖真实网络。
     let (url, heads) = spawn_header_capture_server(REAL_PINGZHONG_SNIPPET.to_string());
     let client = reqwest::blocking::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let points = fetch_nav_snapshot_from(&client, &mut pacer, "110022", &[url.as_str()]).unwrap();
+    let points =
+        fetch_nav_full_series_from(&client, &mut pacer, "110022", &[url.as_str()]).unwrap();
 
     let head = &heads.lock().unwrap()[0];
     assert!(
@@ -340,11 +341,11 @@ fn nav_snapshot_fetch_reads_single_file() {
 }
 
 #[test]
-fn nav_snapshot_fetch_untrusted_body_errors_for_fallback() {
+fn nav_full_series_fetch_untrusted_body_errors_for_fallback() {
     // 被风控拦截形态（HTML 而非数据文件）：解析不可信 → 返回 Err，上层 fail-closed
     // 回退分页通道，不把空结果当「无净值」静默吞掉。
     let (url, _) = spawn_header_capture_server("<html>blocked by waf</html>".to_string());
     let client = reqwest::blocking::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    assert!(fetch_nav_snapshot_from(&client, &mut pacer, "110022", &[url.as_str()]).is_err());
+    assert!(fetch_nav_full_series_from(&client, &mut pacer, "110022", &[url.as_str()]).is_err());
 }

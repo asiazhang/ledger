@@ -245,7 +245,7 @@ fn incremental_sync_normalizes_symbol_suffix() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -280,7 +280,7 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -302,7 +302,7 @@ fn incremental_sync_empty_library_returns_message() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -345,7 +345,7 @@ fn incremental_sync_updates_holding_prices_only() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -413,7 +413,7 @@ fn incremental_sync_skips_holdings_without_quote_source() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -463,7 +463,7 @@ fn incremental_sync_keeps_old_price_when_suspended() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -494,7 +494,7 @@ fn incremental_sync_counts_missing_response_as_skipped() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -523,7 +523,7 @@ fn incremental_sync_skips_unknown_market() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -547,7 +547,7 @@ fn incremental_sync_is_idempotent() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -561,7 +561,7 @@ fn incremental_sync_is_idempotent() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -592,7 +592,7 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -648,7 +648,7 @@ fn incremental_sync_batches_by_fifty() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -670,7 +670,7 @@ fn incremental_sync_propagates_fetch_error() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -728,7 +728,7 @@ fn no_nav(_: &NavQuery) -> Result<LsjzPage> {
 
 /// 空实现：既有用例不关心单请求全量净值通道时注入。空序列 = 通道不可用，编排
 /// 据此回退分页通道（与真实解析失败同路）——既有首刷用例仍走分页桩。
-fn no_snapshot(_: &str) -> Result<Vec<NavPoint>> {
+fn no_full_nav(_: &str) -> Result<Vec<NavPoint>> {
     Ok(vec![])
 }
 
@@ -825,7 +825,7 @@ fn kline_backfill_downsamples_daily_to_weekly() {
         &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -870,7 +870,7 @@ fn kline_backfill_full_week_overwrite_is_idempotent() {
         &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -885,7 +885,7 @@ fn kline_backfill_full_week_overwrite_is_idempotent() {
         &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -930,7 +930,7 @@ fn kline_backfill_keeps_history_after_position_cleared() {
         &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -954,7 +954,7 @@ fn kline_backfill_keeps_history_after_position_cleared() {
         &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -1003,7 +1003,7 @@ fn kline_backfill_writes_fx_rate_history_alongside() {
         &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -1046,7 +1046,7 @@ fn kline_backfill_empty_history_keeps_quote_only() {
         &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -1075,7 +1075,7 @@ fn kline_backfill_fetch_error_propagates() {
         &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -1210,7 +1210,7 @@ fn mock_nav<'a>(
 }
 
 /// 日序列（日期升序的 (日期, 单位净值)）→ 单请求全量通道的净值点序列。
-fn snapshot_series(series: &[(String, f64)]) -> Vec<NavPoint> {
+fn full_series(series: &[(String, f64)]) -> Vec<NavPoint> {
     series
         .iter()
         .map(|(date, nav)| NavPoint {
@@ -1222,7 +1222,7 @@ fn snapshot_series(series: &[(String, f64)]) -> Vec<NavPoint> {
 
 /// 模拟单请求全量净值通道：按代码返回整只基金的**全部历史**单位净值，并记录请求
 /// 的代码（断言首刷一次请求、增量不触碰本通道）。
-fn mock_snapshot<'a>(
+fn mock_full_nav<'a>(
     series_by_code: &'a [(&'a str, Vec<NavPoint>)],
     requested: &'a RefCell<Vec<String>>,
 ) -> impl FnMut(&str) -> Result<Vec<NavPoint>> + 'a {
@@ -1367,7 +1367,7 @@ fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -1405,7 +1405,7 @@ fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
 }
 
 #[test]
-fn fund_first_sync_prefers_single_request_snapshot() {
+fn fund_first_sync_prefers_single_request_full_series() {
     // issue #1062：首刷一次请求拿整只基金历史净值并裁剪到近两年窗口，替代约 25
     // 次分页请求；窗口外更早的点被裁剪掉（回填深度语义不变）。
     let conn = crate::test_support::open();
@@ -1426,9 +1426,9 @@ fn fund_first_sync_prefers_single_request_snapshot() {
         .checked_sub_months(chrono::Months::new(60))
         .unwrap();
     let series = daily_nav_series(five_years_ago, beijing_today());
-    let snapshot_by_code = [("110022", snapshot_series(&series))];
-    let snapshot_requested = RefCell::new(Vec::new());
-    let mut snapshot = mock_snapshot(&snapshot_by_code, &snapshot_requested);
+    let full_by_code = [("110022", full_series(&series))];
+    let full_requested = RefCell::new(Vec::new());
+    let mut full = mock_full_nav(&full_by_code, &full_requested);
     let page_requested = RefCell::new(Vec::new());
     let mut nav = mock_nav(&[], &page_requested);
 
@@ -1439,7 +1439,7 @@ fn fund_first_sync_prefers_single_request_snapshot() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut snapshot,
+        &mut full,
         &mut no_name,
         &mut no_progress,
     )
@@ -1448,7 +1448,7 @@ fn fund_first_sync_prefers_single_request_snapshot() {
     assert_eq!(result.synced, 1);
     assert_eq!(result.written, 1);
     {
-        let requested = snapshot_requested.borrow();
+        let requested = full_requested.borrow();
         assert_eq!(requested.len(), 1, "首刷每次一条请求");
         assert_eq!(requested[0], "110022", "按基金代码取全量");
     }
@@ -1482,9 +1482,9 @@ fn fund_first_sync_prefers_single_request_snapshot() {
 }
 
 #[test]
-fn fund_first_sync_snapshot_failure_falls_back_to_pages() {
-    // 单请求通道不可信（网络失败 / 被拦截 / 解析失败）：fail-closed 回退既有分页
-    // 通道，分页结果照常落库——不静默丢数据。
+fn fund_first_sync_full_series_failure_falls_back_to_pages() {
+    // 单请求通道不可信（解析失败——生产就是「数据文件缺少可信单位净值序列」这条
+    // 错误）：fail-closed 回退既有分页通道，分页结果照常落库——不静默丢数据。
     let conn = crate::test_support::open();
     insert_holding(
         &conn,
@@ -1496,7 +1496,11 @@ fn fund_first_sync_snapshot_failure_falls_back_to_pages() {
         "unknown",
     );
 
-    let mut snapshot = |_: &str| Err(AppError::Io("模拟单请求失败".into()));
+    let mut full = |_: &str| {
+        Err(AppError::Parse(
+            "基金 110022 详情页数据文件缺少可信的单位净值序列".into(),
+        ))
+    };
     let requested = RefCell::new(Vec::new());
     let pages = [(
         "110022",
@@ -1511,7 +1515,7 @@ fn fund_first_sync_snapshot_failure_falls_back_to_pages() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut snapshot,
+        &mut full,
         &mut no_name,
         &mut no_progress,
     )
@@ -1530,7 +1534,7 @@ fn fund_first_sync_snapshot_failure_falls_back_to_pages() {
 }
 
 #[test]
-fn fund_first_sync_snapshot_empty_falls_back_to_pages() {
+fn fund_first_sync_full_series_empty_falls_back_to_pages() {
     // 单请求通道结构完好但为空（新基金未公布净值 / 裁剪后无窗口内点）：同样回退
     // 分页通道，不让一条不确定的空结果直接决定「无净值」。
     let conn = crate::test_support::open();
@@ -1544,7 +1548,7 @@ fn fund_first_sync_snapshot_empty_falls_back_to_pages() {
         "unknown",
     );
 
-    let mut snapshot = |_: &str| Ok(vec![]);
+    let mut full = |_: &str| Ok(vec![]);
     let requested = RefCell::new(Vec::new());
     let pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.348)])])];
     let mut nav = mock_nav(&pages, &requested);
@@ -1556,7 +1560,7 @@ fn fund_first_sync_snapshot_empty_falls_back_to_pages() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut snapshot,
+        &mut full,
         &mut no_name,
         &mut no_progress,
     )
@@ -1571,7 +1575,7 @@ fn fund_first_sync_snapshot_empty_falls_back_to_pages() {
 }
 
 #[test]
-fn fund_first_sync_snapshot_without_window_points_falls_back_to_pages() {
+fn fund_first_sync_full_series_without_window_points_falls_back_to_pages() {
     // 退市 / 清仓多年的基金：单请求通道返回的点全在近两年窗口外——裁剪为空后
     // 回退分页通道，不在窗口内凭空造点。
     let conn = crate::test_support::open();
@@ -1589,9 +1593,9 @@ fn fund_first_sync_snapshot_without_window_points_falls_back_to_pages() {
         date: "2010-08-20".into(),
         nav: 1.0,
     }];
-    let snapshot_by_code = [("110022", stale)];
-    let snapshot_requested = RefCell::new(Vec::new());
-    let mut snapshot = mock_snapshot(&snapshot_by_code, &snapshot_requested);
+    let full_by_code = [("110022", stale)];
+    let full_requested = RefCell::new(Vec::new());
+    let mut full = mock_full_nav(&full_by_code, &full_requested);
     let requested = RefCell::new(Vec::new());
     let pages = [("110022", vec![nav_page(0, &[])])];
     let mut nav = mock_nav(&pages, &requested);
@@ -1603,20 +1607,20 @@ fn fund_first_sync_snapshot_without_window_points_falls_back_to_pages() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut snapshot,
+        &mut full,
         &mut no_name,
         &mut no_progress,
     )
     .unwrap();
 
     assert_eq!(requested.borrow().len(), 1, "窗口外点回退分页通道");
-    assert_eq!(snapshot_requested.borrow().len(), 1, "首刷先查单请求通道");
+    assert_eq!(full_requested.borrow().len(), 1, "首刷先查单请求通道");
     assert_eq!(price_history_rows(&conn, "inst-fund"), vec![]);
     assert_eq!(result.skipped, 1, "查无窗口内净值计入跳过");
 }
 
 #[test]
-fn fund_incremental_does_not_touch_single_request_snapshot() {
+fn fund_incremental_does_not_touch_single_request_full_series() {
     // 日常增量仍走既有历史净值接口：有历史序列的基金不发起单请求全量查询，
     // 即使单请求通道返回别值也不被消费（水位语义与 #1059 一致）。
     let conn = crate::test_support::open();
@@ -1651,15 +1655,15 @@ fn fund_incremental_does_not_touch_single_request_snapshot() {
     )
     .unwrap();
 
-    let snapshot_by_code = [(
+    let full_by_code = [(
         "110022",
         vec![NavPoint {
             date: "2026-01-30".into(),
             nav: 9.99,
         }],
     )];
-    let snapshot_requested = RefCell::new(Vec::new());
-    let mut snapshot = mock_snapshot(&snapshot_by_code, &snapshot_requested);
+    let full_requested = RefCell::new(Vec::new());
+    let mut full = mock_full_nav(&full_by_code, &full_requested);
     let requested = RefCell::new(Vec::new());
     let pages = [(
         "110022",
@@ -1674,7 +1678,7 @@ fn fund_incremental_does_not_touch_single_request_snapshot() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut snapshot,
+        &mut full,
         &mut no_name,
         &mut no_progress,
     )
@@ -1682,7 +1686,7 @@ fn fund_incremental_does_not_touch_single_request_snapshot() {
 
     assert_eq!(requested.borrow().len(), 1, "增量走分页通道");
     assert!(
-        snapshot_requested.borrow().is_empty(),
+        full_requested.borrow().is_empty(),
         "有历史序列的增量不触碰单请求全量通道"
     );
     assert_eq!(
@@ -1752,7 +1756,7 @@ fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -1830,7 +1834,7 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -1874,7 +1878,7 @@ fn fund_first_sync_without_nav_counts_skipped() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -1943,7 +1947,7 @@ fn fund_with_nav_date_but_no_history_backfills_two_years() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2037,7 +2041,7 @@ fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
         &mut no_kline,
         &mut no_fx,
         &mut blocked_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2090,7 +2094,7 @@ fn fund_rows_without_real_code_skip_without_fetch() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2123,7 +2127,7 @@ fn fund_nav_fetch_error_propagates() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2165,7 +2169,7 @@ fn etf_holding_syncs_quote_and_kline_backfill() {
         &mut kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2210,7 +2214,7 @@ fn etf_holding_unknown_market_counts_skipped_without_requests() {
         &mut kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2297,7 +2301,7 @@ fn three_type_partitions_roll_up_into_one_result() {
         &mut kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2411,7 +2415,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2474,7 +2478,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2517,7 +2521,7 @@ fn us_stock_holdings_route_exact_secids_per_market() {
         &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2569,7 +2573,7 @@ fn incremental_sync_includes_cleared_instrument() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2601,7 +2605,7 @@ fn incremental_sync_includes_never_traded_instrument() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2632,7 +2636,7 @@ fn incremental_sync_refreshes_names_from_quote_batch() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2678,7 +2682,7 @@ fn incremental_sync_skips_name_write_when_unchanged() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
     )
@@ -2728,7 +2732,7 @@ fn fund_name_refresh_via_detail_lookup() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut fund_name,
         &mut no_progress,
     )
@@ -2782,7 +2786,7 @@ fn fund_name_lookup_skips_name_as_code_rows_and_empty_names() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut fund_name,
         &mut no_progress,
     )
@@ -2861,7 +2865,7 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
         &mut kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut progress,
     )
@@ -2931,7 +2935,7 @@ fn progress_denominator_counts_channel_capable_instruments_only() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut fund_name,
         &mut progress,
     )
@@ -2985,7 +2989,7 @@ fn progress_advances_even_when_quote_invalid_or_missing() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut progress,
     )
@@ -3054,7 +3058,7 @@ fn fund_up_to_date_still_advances_progress() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut fund_name,
         &mut progress,
     )
@@ -3102,7 +3106,7 @@ fn fund_progress_advances_after_nav_and_name_complete() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut fund_name,
         &mut progress,
     )
@@ -3133,7 +3137,7 @@ fn progress_not_emitted_for_empty_library() {
         &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut progress,
     )
@@ -3177,7 +3181,7 @@ fn progress_not_emitted_when_no_channel_capable_instrument() {
         &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_snapshot,
+        &mut no_full_nav,
         &mut no_name,
         &mut progress,
     )

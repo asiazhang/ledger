@@ -127,7 +127,7 @@ pub(super) fn do_incremental_sync_with<F, K, X, N, S, M, P>(
     fetch_kline: &mut K,
     fetch_fx: &mut X,
     fetch_nav: &mut N,
-    fetch_nav_snapshot: &mut S,
+    fetch_nav_full: &mut S,
     fetch_fund_name: &mut M,
     progress: &mut P,
 ) -> Result<SyncInstrumentInfoResult>
@@ -285,7 +285,7 @@ where
         written: 0,
     };
     for fund in &funds {
-        sync_one_fund_nav(conn, fund, fetch_nav, fetch_nav_snapshot, &mut fund_stats)?;
+        sync_one_fund_nav(conn, fund, fetch_nav, fetch_nav_full, &mut fund_stats)?;
         let name = fetch_fund_name(&fund.symbol)?;
         if refresh_instrument_name(conn, &fund.instrument_id, &name)? {
             renamed += 1;
@@ -384,8 +384,8 @@ where
     let mut fx = |pair: &str| fetch_fx_kline(&client, &mut pacer.borrow_mut(), pair, &beg);
     let mut nav =
         |query: &NavQuery| super::fund_nav::fetch_nav_page(&client, &mut pacer.borrow_mut(), query);
-    let mut nav_snapshot =
-        |code: &str| super::fund_nav::fetch_nav_snapshot(&client, &mut pacer.borrow_mut(), code);
+    let mut nav_full =
+        |code: &str| super::fund_nav::fetch_nav_full_series(&client, &mut pacer.borrow_mut(), code);
     let mut fund_name =
         |code: &str| super::fetch_fund_quote_production(code).map(|quote| quote.name);
     do_incremental_sync_with(
@@ -394,7 +394,7 @@ where
         &mut kline,
         &mut fx,
         &mut nav,
-        &mut nav_snapshot,
+        &mut nav_full,
         &mut fund_name,
         progress,
     )

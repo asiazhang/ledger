@@ -6,7 +6,7 @@
 //!   单测见 `tests/fund_nav.rs`（真实报文形状，不依赖真实网络）；
 //! - 页抓取（[`fetch_nav_page`]）复用行情 HTTP 层的主机池 / 重试 / 限流泛型层；
 //!   lsjz 为单主机接口且必须携带 Referer 头（缺省被以 ErrCode=-999 拦截）；
-//! - 单请求全量通道（[`fetch_nav_snapshot`]）一次 GET 基金详情页数据文件、解析
+//! - 单请求全量通道（[`fetch_nav_full_series`]）一次 GET 基金详情页数据文件、解析
 //!   `Data_netWorthTrend` 得整只基金历史单位净值（口径与 lsjz `DWJZ` 逐值一致，
 //!   ADR-0038 修订记录有样本验证），仅首刷深回填用——抓取 / 解析失败或窗口内无点
 //!   fail-closed 回退 lsjz 分页，不静默丢数据；
@@ -170,12 +170,12 @@ fn extract_declared_json_array<'a>(text: &'a str, name: &str) -> Option<&'a str>
 }
 
 /// 毫秒时间戳（净值日北京时间午夜，见单位净值序列元素的 `x`）→ ISO 净值日期：
-/// UTC 时刻 + 8h 后取日期部分（与 [`super::incremental::beijing_date`] 同口径）。
+/// 委托北京日历日单点 [`super::incremental::beijing_date`]（UTC + 8h 取日期部分），
+/// 不在此复刻 +8h 口径。
 fn beijing_date_from_epoch_ms(ms: i64) -> Option<String> {
     let utc = chrono::DateTime::from_timestamp_millis(ms)?;
     Some(
-        (utc + chrono::Duration::hours(8))
-            .date_naive()
+        super::incremental::beijing_date(utc)
             .format("%Y-%m-%d")
             .to_string(),
     )
@@ -320,16 +320,16 @@ pub(super) fn fetch_nav_page_from(
 ///
 /// 失败语义是 fail-closed 的前半：网络失败、被拦截（HTML 而非数据文件）或解析不出
 /// 单位净值序列都返回 `Err`，调用方据此回退分页通道，不把不可信结果当「无净值」。
-pub(super) fn fetch_nav_snapshot(
+pub(super) fn fetch_nav_full_series(
     client: &reqwest::blocking::Client,
     pacer: &mut Pacer,
     code: &str,
 ) -> Result<Vec<NavPoint>> {
-    fetch_nav_snapshot_from(client, pacer, code, PINGZHONG_HOSTS)
+    fetch_nav_full_series_from(client, pacer, code, PINGZHONG_HOSTS)
 }
 
-/// 同 [`fetch_nav_snapshot`]，主机池可注入（本地 HTTP 服务测试请求路径与解析）。
-pub(super) fn fetch_nav_snapshot_from(
+/// 同 [`fetch_nav_full_series`]，主机池可注入（本地 HTTP 服务测试请求路径与解析）。
+pub(super) fn fetch_nav_full_series_from(
     client: &reqwest::blocking::Client,
     pacer: &mut Pacer,
     code: &str,
@@ -344,7 +344,7 @@ pub(super) fn fetch_nav_snapshot_from(
         hosts,
         RetryConfig::production(),
         pacer,
-        &format!("fetch_nav_snapshot:{code}"),
+        &format!("fetch_nav_full_series:{code}"),
         None,
     )?;
     parse_net_worth_trend(&body)
@@ -421,7 +421,7 @@ pub(super) fn sync_one_fund_nav<N, S>(
     conn: &Connection,
     fund: &super::incremental::SyncInstrument,
     fetch_nav: &mut N,
-    fetch_nav_snapshot: &mut S,
+    fetch_nav_full_series: &mut S,
     stats: &mut FundSyncStats,
 ) -> Result<()>
 where
@@ -458,8 +458,8 @@ where
     // 整只基金的历史单位净值，本地裁剪到与分页通道相同的近两年窗口后再用。抓取
     // 失败 / 解析不出序列 / 窗口内无点都 fail-closed 回退分页通道，不静默丢数据；
     // 已有历史序列的增量不触碰本通道（日常增量仍走 lsjz）。
-    let snapshot_points = if first_fill {
-        match fetch_nav_snapshot(&fund.symbol) {
+    let full_points = if first_fill {
+        match fetch_nav_full_series(&fund.symbol) {
             Ok(points) => {
                 let clipped: Vec<NavPoint> = points
                     .into_iter()
@@ -490,7 +490,7 @@ where
     };
 
     // 单请求通道命中即免去分页；否则回退既有分页通道（首刷近两年 / 增量水位次日）。
-    let (points, blocked) = match snapshot_points {
+    let (points, blocked) = match full_points {
         Some(points) => (points, false),
         None => fetch_nav_pages(fetch_nav, &fund.symbol, &start, &end)?,
     };
