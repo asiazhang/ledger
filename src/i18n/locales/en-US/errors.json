@@ -269,7 +269,11 @@
     "command-unsupported": "Replaying commands of transaction type {0} is not supported yet (investment command replay comes later).",
     "schema-ahead": "This operation was produced by a newer version of the app; it will retry automatically after you upgrade.",
     "op-undecodable": "Sync command could not be recognized (possibly produced by a newer version): {0}",
-    "replay-failed": "Sync operation failed on this device and is parked for review: {0}"
+    "replay-failed": "Sync operation failed on this device and is parked for review: {0}",
+    "checkpoint-passphrase-required": "The checkpoint snapshot on the channel is encrypted; the master passphrase is required to bootstrap.",
+    "bootstrap-not-fresh": "This device already participates in sync ({0} is not empty); bootstrapping is refused to avoid overwriting existing sync state.",
+    "checkpoint-schema-newer": "The checkpoint snapshot is from a newer app version (snapshot schema v{0} > current v{1}); upgrade the app before bootstrapping.",
+    "checkpoint-fk-violation": "Checkpoint snapshot failed foreign-key verification ({0} violation(s)); the snapshot is unusable."
   },
   "sync-channel": {
     "auth-failed": "Sync channel credentials were rejected; check your cloud account and password (or app password) settings.",
@@ -287,6 +291,9 @@
     "network-failed": "Sync channel network failure; check your network and retry: {0}",
     "not-configured": "Sync channel is not configured; set up your cloud drive in Settings first.",
     "passphrase-required": "The sync channel contains encrypted data; the master passphrase is required to read it.",
+    "bootstrap-library-not-empty": "This device already has book data and cannot bootstrap from the channel (bootstrapping replaces the whole local book with the snapshot); use backup restore to merge data instead, or retry on a brand-new empty book.",
+    "bootstrap-passphrase-mismatch": "The passphrase does not match this device's master passphrase: an encrypted library must bootstrap with its own master passphrase (channel snapshots are sealed with that same passphrase).",
+    "bootstrap-form-mismatch": "The checkpoint on the channel is plaintext while this library is encrypted: turn off encryption in Settings first, or have the source device enable encryption and publish a new checkpoint.",
     "path-invalid": "Invalid sync channel path: {0}",
     "segment-corrupt": "Sync segment failed verification (possibly incomplete upload or corrupt); retry sync: {0}",
     "segment-missing": "Sync segment file is missing on the channel (the cloud may not have finished syncing); retry later: {0}"

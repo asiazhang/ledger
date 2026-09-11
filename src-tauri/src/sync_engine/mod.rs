@@ -56,12 +56,13 @@ pub(crate) use device::device_id;
 pub(crate) use ops::record_local;
 
 pub use channel::{
-    ChannelLayout, ChannelManifest, ChannelOptions, CheckpointPointer, SegmentEntry,
-    StreamManifest, SyncRoundReport, fetch_checkpoint, publish_checkpoint, publish_checkpoint_with,
-    run_round, run_round_with,
+    ChannelLayout, ChannelManifest, ChannelOptions, CheckpointPointer, FetchedCheckpoint,
+    SegmentEntry, StreamManifest, SyncRoundReport, fetch_checkpoint, publish_checkpoint,
+    publish_checkpoint_with, run_round, run_round_with,
 };
 pub use checkpoint::{
-    Checkpoint, bootstrap_from_checkpoint, create_checkpoint, truncate_stream_before,
+    BootstrapOutcome, Checkpoint, bootstrap_from_channel, bootstrap_from_checkpoint,
+    create_checkpoint, truncate_stream_before,
 };
 pub use command::DomainCommand;
 pub use engine::{

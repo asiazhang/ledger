@@ -1,5 +1,5 @@
-//! 多端同步命令壳（issue #862 / #863 / ADR-0091）：同步状态查询、手动同步轮次
-//! 与通道配置（WebDAV 凭据）。
+//! 多端同步命令壳（issue #862 / #863 / #864 / ADR-0091）：同步状态查询、手动同步
+//! 轮次、通道配置（WebDAV 凭据）与检查点发布/预检/引导（新端加入向导的命令面）。
 //!
 //! 只做参数解包、凭据/信封模式解析与轮次编排一行调用；通道布局、轮次协议、
 //! 幂等重放、挂起语义与触发编排全在 [`crate::sync_engine`]（域不依赖壳，
@@ -45,7 +45,8 @@ use crate::sync_engine::trigger::{
     not_configured_error, run_round_once,
 };
 use crate::sync_engine::{
-    EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport, device_id, parked_ops,
+    EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport, bootstrap_from_channel,
+    device_id, parked_ops,
 };
 use crate::write_entry::{Outcome, write_entry};
 
@@ -308,4 +309,136 @@ fn resolve_passphrase(
     };
     verify_source_passphrase(db_path, &passphrase)?;
     Ok(Some(passphrase))
+}
+
+// ---------------------------------------------------------------------------
+// 检查点发布 / 预检 / 引导（issue #864 新端加入向导的命令面；ADR-0091 决策 9、
+// ADR-0098 决策 5——引导是整库换入的重动作，只经用户显式向导，不挂自动轮次）
+// ---------------------------------------------------------------------------
+
+/// 通道上的检查点指针回显（预检形态；不含快照体）。
+#[derive(Debug, Serialize)]
+pub struct SyncCheckpointInfoState {
+    /// 检查点代数（每次发布单调递增）。
+    pub generation: i64,
+    /// 密文字节数（快照体大小，供向导展示）。
+    pub size: u64,
+    /// 产出时刻（产出端本地事实，供展示）。
+    pub created_at: String,
+}
+
+/// 预检通道上的当前检查点（issue #864 引导向导首步）：只读 manifest 不下载
+/// 快照体，向导据此区分「通道上还没有检查点（先去旧设备发布）」与「发现检查
+/// 点，可引导」。通道未配置报 `sync-channel.not-configured`。
+#[tauri::command]
+pub async fn get_sync_channel_checkpoint<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<Option<SyncCheckpointInfoState>> {
+    let conn = app.state::<DbState>().conn.clone();
+    run_db("get_sync_channel_checkpoint", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let config = configured_channel(&conn)?.ok_or_else(not_configured_error)?;
+        let channel = build_channel(&config)?;
+        Ok(channel
+            .checkpoint_pointer()?
+            .map(|p| SyncCheckpointInfoState {
+                generation: p.generation,
+                size: p.size,
+                created_at: p.created_at,
+            }))
+    })
+    .await
+}
+
+/// 检查点发布结果（向导成功提示的数据面）。
+#[derive(Debug, Serialize)]
+pub struct SyncCheckpointPublished {
+    /// 本次发布的代数。
+    pub generation: i64,
+    /// 密文字节数。
+    pub size: u64,
+    /// 明文模式标记（快照明文上通道，界面显著提示依据，ADR-0091 决策 8）。
+    pub plaintext_mode: bool,
+}
+
+/// 发布检查点到通道（issue #864）：全量快照 + 各流位点成对封包上传，manifest
+/// 换指针——存量数据的旧端把「新端可引导的来源」放上通道的唯一动作。
+///
+/// 本命令是通道操作而非账本写入：本地数据零变化（零信号），且 `VACUUM INTO`
+/// 无法在事务内执行，故不经统一写入口 [`crate::write_entry::write_entry`]、
+/// 直接持主连接锁调用（位点与快照同刻成对约束，`create_checkpoint`）。
+/// 信封模式解析与 `sync_now` 同款（`resolve_passphrase` 单点：密文库凭显式
+/// 口令或钥匙串，先验证后封包）。
+#[tauri::command]
+pub async fn publish_sync_checkpoint<R: Runtime>(
+    app: AppHandle<R>,
+    passphrase: Option<String>,
+) -> Result<SyncCheckpointPublished> {
+    let conn = app.state::<DbState>().conn.clone();
+    let db_path = active_db_path(&app)?;
+    let book = active_book_id(&app);
+    run_db("publish_sync_checkpoint", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let config = configured_channel(&conn)?.ok_or_else(not_configured_error)?;
+        if book.is_none() {
+            return Err(book_unavailable_error());
+        }
+        let channel = build_channel(&config)?;
+        let passphrase_holder = resolve_passphrase(&db_path, book.as_deref(), passphrase)?;
+        let mode = match &passphrase_holder {
+            Some(passphrase) => EnvelopeMode::Encrypted { passphrase },
+            None => EnvelopeMode::Plaintext,
+        };
+        let pointer = channel.publish_checkpoint(&conn, &mode)?;
+        Ok(SyncCheckpointPublished {
+            generation: pointer.generation,
+            size: pointer.size,
+            plaintext_mode: mode.is_plaintext(),
+        })
+    })
+    .await
+}
+
+/// 引导结果（域 [`crate::sync_engine::BootstrapOutcome`] 的 wire 投影）。
+#[derive(Debug, Serialize)]
+pub struct SyncBootstrapOutcome {
+    /// 采纳的检查点代数。
+    pub generation: i64,
+    /// 快照密文字节数。
+    pub size: u64,
+    /// 引导后本库已从明文转换为本机密文库（重启后需凭主口令解锁）。
+    pub reencrypted: bool,
+}
+
+/// 新端从通道检查点引导（issue #864）：拉取通道当前检查点并整库换入本机——
+/// 「加入即新库」的显式向导动作（ADR-0098 决策 5：不挂自动轮次），成功后由
+/// 前端原位重引导（`restart_app`）。
+///
+/// 编排全在域单点 [`crate::sync_engine::bootstrap_from_channel`]（前置守卫、
+/// 信封形态对齐、整库换入、簿记清理与转密文决策）；本命令不经统一写入口
+/// （整库替换同 Restore 先例，零信号：引导后前端立即原位重引导，信号无消费
+/// 窗口），持主连接锁调用（快照拉取/换入与轮次同一互斥约束）。
+#[tauri::command]
+pub async fn bootstrap_sync_from_channel<R: Runtime>(
+    app: AppHandle<R>,
+    passphrase: Option<String>,
+) -> Result<SyncBootstrapOutcome> {
+    let conn = app.state::<DbState>().conn.clone();
+    let db_path = active_db_path(&app)?;
+    run_db("bootstrap_sync_from_channel", move || {
+        let mut conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        // 通道在位性前置：未配置即早退，不触网。
+        let config = configured_channel(&conn)?.ok_or_else(not_configured_error)?;
+        let channel = build_channel(&config)?;
+        // 编排归域（`bootstrap_from_channel`，ADR-0056）：前置守卫、拉取、
+        // 信封形态对齐、整库换入、簿记清理与转密文决策全在域内单点，本壳
+        // 只解包口令并把结果投影为 wire 形态。
+        let outcome = bootstrap_from_channel(&mut conn, &db_path, &channel, passphrase.as_deref())?;
+        Ok(SyncBootstrapOutcome {
+            generation: outcome.generation,
+            size: outcome.size,
+            reencrypted: outcome.reencrypted,
+        })
+    })
+    .await
 }

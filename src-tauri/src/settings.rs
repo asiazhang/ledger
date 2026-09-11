@@ -119,6 +119,20 @@ pub fn set<T: Serialize>(
     }
 }
 
+/// 清除配置值（key 不存在为无操作；表缺失同读取口径 tolerated 为无操作）。
+/// 引导端采纳快照后清「上次成功同步时刻」这类本机簿记事实用——快照携带的
+/// 是来源端的值，对本机不成立（issue #864）。
+pub fn clear(conn: &Connection, key: SettingKey) -> crate::error::Result<()> {
+    match conn.execute("DELETE FROM app_settings WHERE key = ?1", [key.as_str()]) {
+        Ok(_) => Ok(()),
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => {
+            tracing::warn!(key = %key.as_str(), "app_settings 表不存在，清除按无操作处理");
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

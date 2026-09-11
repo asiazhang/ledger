@@ -21,8 +21,9 @@
 //!   位点的最小值 + 已并入对端可达 Checkpoint）是通道层（#859/#862）义务。
 //!
 //! 引导守卫：目标必须尚未参与同步（无日志、无位点、无挂起）——引导是整库
-//! 换入，覆盖既有同步状态等于丢账。目标残留未产出 op 的业务数据属壳层加入
-//! 流程（#862）的义务边界：加入即新库。
+//! 换入，覆盖既有同步状态等于丢账；残留用户业务数据的库同样拒绝（加入即
+//! 新库）。两半守卫收在 [`bootstrap_preflight`] / [`bootstrap_from_channel`]
+//! 域内单点（issue #864），壳层退回解包与投影。
 
 use std::path::{Path, PathBuf};
 
@@ -36,6 +37,7 @@ use crate::transaction::ensure_transaction;
 use super::device;
 use super::ops;
 use super::positions::{self, StreamPosition};
+use super::trigger::SyncChannel;
 
 /// 引导期间快照挂载的 ATTACH 别名。
 const SNAP_ALIAS: &str = "sync_snap";
@@ -89,19 +91,14 @@ pub fn bootstrap_from_checkpoint(
     checkpoint: &Checkpoint,
     passphrase: Option<&str>,
 ) -> Result<()> {
-    // 守卫：目标尚未参与同步（三张同步元数据表全空）。
-    for (table, empty) in [
-        ("sync_ops", ops::is_empty(conn)?),
-        ("sync_stream_positions", positions::is_empty(conn)?),
-        ("sync_parked_ops", super::parked::is_empty(conn)?),
-    ] {
-        if !empty {
-            return Err(AppError::codedp(
-                "sync-engine.bootstrap-not-fresh",
-                format!("本机已参与同步（{table} 非空），拒绝整库引导以免覆盖既有同步状态"),
-                &[table],
-            ));
-        }
+    // 守卫：目标尚未参与同步（三张同步元数据表全空；权威复验，壳层拉取前
+    // 已有同序前置）。
+    if let Some(table) = first_sync_table_not_empty(conn)? {
+        return Err(AppError::codedp(
+            "sync-engine.bootstrap-not-fresh",
+            format!("本机已参与同步（{table} 非空），拒绝整库引导以免覆盖既有同步状态"),
+            &[table],
+        ));
     }
     // 引导前捕获/生成本机设备身份（首用生成单点；重建后换回，快照携带的
     // 来源方身份不残留）。
@@ -410,6 +407,176 @@ pub fn truncate_stream_before(
         );
     }
     Ok(deleted)
+}
+
+/// 同步元数据表非空检查（引导守卫的第一半）：返回命中的表名。
+/// [`bootstrap_from_checkpoint`] 的权威守卫与 [`bootstrap_preflight`] 共享。
+fn first_sync_table_not_empty(conn: &Connection) -> Result<Option<&'static str>> {
+    for (table, empty) in [
+        ("sync_ops", ops::is_empty(conn)?),
+        ("sync_stream_positions", positions::is_empty(conn)?),
+        ("sync_parked_ops", super::parked::is_empty(conn)?),
+    ] {
+        if !empty {
+            return Ok(Some(table));
+        }
+    }
+    Ok(None)
+}
+
+/// 引导前置守卫（fail fast，[`bootstrap_from_channel`] 在拉取快照前调用；
+/// [`bootstrap_from_checkpoint`] 内部对同步三表的复验仍是权威）：目标必须是
+/// 「全新空库」——未参与同步且无用户业务数据。已参与同步报
+/// `sync-engine.bootstrap-not-fresh`（优先于业务数据判定：已加入同步的端重试
+/// 引导，正确提示是「已参与同步」而非「本机有数据」）；残留业务数据报
+/// `sync-channel.bootstrap-library-not-empty`。
+pub(crate) fn bootstrap_preflight(conn: &Connection) -> Result<()> {
+    if let Some(table) = first_sync_table_not_empty(conn)? {
+        return Err(AppError::codedp(
+            "sync-engine.bootstrap-not-fresh",
+            format!("本机已参与同步（{table} 非空），拒绝整库引导以免覆盖既有同步状态"),
+            &[table],
+        ));
+    }
+    if library_has_user_data(conn)? {
+        return Err(AppError::coded(
+            "sync-channel.bootstrap-library-not-empty",
+            "本机已有账本数据，不能从通道引导（引导将以快照整库替换本机账本）；请改用备份恢复合并数据，或在本机是全新空账本时重试",
+        ));
+    }
+    Ok(())
+}
+
+/// 探针表闭集（引导前置「加入即新库」判据）：各业务域的用户事实行。
+const PROBE_TABLES: &[&str] = &[
+    "transactions",
+    "accounts",
+    "categories",
+    "merchants",
+    "insurers",
+    "instruments",
+    "scheduled_transactions",
+    "budgets",
+    "policies",
+    "items",
+    "physical_assets",
+    "exchange_rates",
+    "fx_rate_history",
+    "market_prices",
+    "price_history",
+    "security_lots",
+];
+
+/// 种子行的来源设备标识（迁移种子数据的既定约定，V004 起种子行
+/// `device_id = 'seed'`；非此值即用户事实）。
+const SEED_DEVICE_ID: &str = "seed";
+
+/// 本机库是否已有用户业务数据（「加入即新库」守卫的判据，[`bootstrap_preflight`] 消费）。
+///
+/// 引导是整库换入——带存量业务数据的库被引导等于丢账（快照整库覆盖）。
+/// 领域守卫（[`bootstrap_from_checkpoint`]）只挡「已参与同步」；「业务数据
+/// 是否残留」是同步边界的知识（业务域清单与 Backup/Restore 迁移边界对齐），
+/// 归本域单点、[`bootstrap_preflight`] 消费（issue #864）。探针为闭集清单：各业务域
+/// 的用户事实行（种子行以 `device_id = 'seed'` 排除；派生数据——余额/净值
+/// 缓存、期次行、持仓批次结转——不属用户事实或被主表探针覆盖，不在清单；
+/// 币种字典无来源设备列且全为种子闭集，自建币种残留属可接受边界）。
+pub(crate) fn library_has_user_data(conn: &Connection) -> Result<bool> {
+    for table in PROBE_TABLES {
+        // 表名是本模块闭集常量（非用户输入），无注入面。
+        let has_row: bool = conn.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE device_id <> {SEED_DEVICE_ID:?})"),
+            [],
+            |r| r.get(0),
+        )?;
+        if has_row {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// 引导结果（壳层 wire 面由此投影）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapOutcome {
+    /// 采纳的检查点代数。
+    pub generation: i64,
+    /// 快照密文字节数。
+    pub size: u64,
+    /// 引导后本库已从明文转换为本机密文库（重启后需凭主口令解锁）。
+    pub reencrypted: bool,
+}
+
+/// 新端从通道检查点引导的编排单点（壳层「从通道引导本端」向导的领域接缝，
+/// issue #864）：拉取 → 信封形态对齐 → 整库换入 → 簿记清理 → （密文快照 ×
+/// 明文本机时）整库转密文。必须在单连接互斥锁内调用（快照拉取/换入与轮次
+/// 同一互斥约束）。
+///
+/// 序列：
+/// 1. 前置守卫（fail fast，不浪费拉取）：[`bootstrap_preflight`]——未参与
+///    同步且无用户业务数据；
+/// 2. 拉取检查点：信封自描述，密文快照凭口令开封（缺口令报
+///    `sync-engine.checkpoint-passphrase-required` 可重试，错误口令报
+///    `encryption.passphrase-incorrect`）；
+/// 3. 信封形态对齐守卫：同一通道的段必须同形态可开（明文端开不了密文段、
+///    密文端封的段明文对端开不了）——引导端必须对齐快照形态：密文快照 ×
+///    密文本机时输入口令必须就是本机主口令（后续轮次以本机口令封段，两把
+///    钥匙会让对端解不开），不一致报 `sync-channel.bootstrap-passphrase-mismatch`；
+///    明文快照 × 密文本机拒绝（`sync-channel.bootstrap-form-mismatch`）；
+/// 4. 整库换入（[`bootstrap_from_checkpoint`]，同步三表权威复验）；
+/// 5. 清「上次成功同步时刻」（本机簿记事实，快照携带的是来源端取值；在
+///    文件级转换前执行——转换的原子替换会让本连接指向被换下的旧文件，
+///    此后一切写路径不得再经它）；
+/// 6. 密文快照 × 明文本机：复用备份域机制整库转密文（文件级原子替换，
+///    重启后新连接凭口令打开）。转换失败的可恢复路径：本机已是引导后的
+///    完整数据，经既有「开启加密」以同一主口令转换即重新对齐通道形态。
+pub fn bootstrap_from_channel(
+    conn: &mut Connection,
+    db_path: &Path,
+    channel: &SyncChannel,
+    passphrase: Option<&str>,
+) -> Result<BootstrapOutcome> {
+    // 1. 前置守卫（fail fast）。
+    bootstrap_preflight(conn)?;
+    // 2. 拉取检查点（持锁；快照体整库下载）。
+    let fetched = channel.fetch_checkpoint(passphrase)?;
+    // 3. 信封形态对齐守卫（替换本机数据前判定，失败零副作用）。
+    let local_encrypted =
+        db::encryption::probe_file_kind(db_path)? == db::encryption::DbFileKind::Encrypted;
+    if fetched.sealed && local_encrypted {
+        // fetch 成功 ⇒ 口令已验证可开快照（缺口令/错口令在域内归一报错）。
+        let passphrase = passphrase.unwrap_or_default();
+        if db::encryption::verify_source_passphrase(db_path, passphrase).is_err() {
+            return Err(AppError::coded(
+                "sync-channel.bootstrap-passphrase-mismatch",
+                "输入的主口令与本机主口令不一致：密文库引导须以本机主口令进行（通道上的快照以同一主口令封包）",
+            ));
+        }
+    } else if !fetched.sealed && local_encrypted {
+        return Err(AppError::coded(
+            "sync-channel.bootstrap-form-mismatch",
+            "通道上的检查点为明文，本机为密文库：请先在设置中关闭加密，或让来源端开启加密后重新发布检查点",
+        ));
+    }
+    let reencrypted = fetched.sealed && !local_encrypted;
+    // 4. 整库换入（同步三表权威复验）。
+    bootstrap_from_checkpoint(conn, &fetched.checkpoint, passphrase)?;
+    // 5. 本机簿记事实不采纳来源端取值（时序约束见序列说明）。
+    crate::settings::clear(conn, crate::settings::SettingKey::SyncLastSyncAt)?;
+    // 6. 密文快照 × 明文本机：整库转密文（文件级原子替换，复用备份域机制）。
+    if reencrypted {
+        db::encryption::enable_encryption_for_file(db_path, passphrase.unwrap_or_default())?;
+    }
+    tracing::info!(
+        generation = fetched.generation,
+        size = fetched.size,
+        reencrypted,
+        "已从通道检查点完成新端引导"
+    );
+    Ok(BootstrapOutcome {
+        generation: fetched.generation,
+        size: fetched.size,
+        reencrypted,
+    })
 }
 
 /// 快照临时文件路径（系统临时目录 + 唯一名，收尾统一 [`fs_util::cleanup`]）。

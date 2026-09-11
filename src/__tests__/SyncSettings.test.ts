@@ -1,11 +1,20 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mockInvoke, wireInvokeSeam, lastInvokeArgs } from './helpers/invoke-mock'
 import { messageCalls } from './helpers/message-mock'
-import { findButtonByTestId, findInputByTestId } from './helpers/dom'
-import { mount, flushPromises } from '@vue/test-utils'
+import {
+  findButtonByTestId,
+  findInputByTestId,
+  findBodyButtonByTestId,
+} from './helpers/dom'
+import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import type { ParkedOpInfo, SyncChannelConfig, SyncRoundReport, SyncStatus } from '@/types'
 
 import SyncSettings from '@/components/settings/SyncSettings.vue'
+
+// 引导成功后的原位重引导走 utils/restart 单点（Restore 同型）；组件测试只断言
+// 「成功即触发重启编排」，重启内部编排归 restart.test.ts。
+vi.mock('@/utils/restart', () => ({ restartAppShortly: vi.fn() }))
+import { restartAppShortly } from '@/utils/restart'
 
 // 多端同步卡片组件测试（issue #862）：invoke 测试接缝（defaults/overrides 表，
 // ADR-0085）布线命令替身；断言强度对准用户可观察回归（状态回显、明文警示、
@@ -325,4 +334,163 @@ describe('SyncSettings.vue', () => {
     expect(mockInvoke).toHaveBeenCalledWith('get_sync_status')
     expect(mockInvoke).toHaveBeenCalledWith('get_parked_ops')
   })
+})
+
+// ---------------------------------------------------------------------------
+// 检查点发布与新端引导向导（issue #864）
+// ---------------------------------------------------------------------------
+
+const checkpointInfo = {
+  generation: 3,
+  size: 2 * 1024 * 1024,
+  created_at: '2026-01-15T08:00:00Z',
+}
+
+// 发布结果（明文库 → plaintext_mode 真）。
+const publishResult = {
+  generation: 3,
+  size: 2 * 1024 * 1024,
+  plaintext_mode: true,
+}
+
+const bootstrapOutcome = {
+  generation: 3,
+  size: 2 * 1024 * 1024,
+  reencrypted: false,
+}
+
+it('未配置通道：发布与引导入口均禁用（引导依赖通道在位）', async () => {
+  wireInvokeSeam({
+    defaults: {
+      get_sync_status: { ...baseStatus, channel_configured: false },
+      get_sync_channel_config: { ...baseConfig, configured: false },
+    },
+  })
+  const wrapper = mount(SyncSettings)
+  await flushPromises()
+  expect(findButtonByTestId(wrapper, 'sync-publish-checkpoint').attributes('disabled')).toBeDefined()
+  expect(findButtonByTestId(wrapper, 'sync-bootstrap').attributes('disabled')).toBeDefined()
+})
+
+it('发布检查点：携带口令参数调用命令，成功提示代数与体积', async () => {
+  wireInvokeSeam({
+    defaults: {
+      // 密文库：主口令输入框在场（与 sync_now 共用同一输入）。
+      get_sync_status: { ...baseStatus, library_encrypted: true },
+      get_sync_channel_config: baseConfig,
+      publish_sync_checkpoint: publishResult,
+    },
+  })
+  const wrapper = mount(SyncSettings)
+  await flushPromises()
+  mockInvoke.mockClear()
+
+  await findInputByTestId(wrapper, 'sync-passphrase').setValue('master-pass')
+  await findButtonByTestId(wrapper, 'sync-publish-checkpoint').trigger('click')
+  await flushPromises()
+
+  expect(lastInvokeArgs('publish_sync_checkpoint')).toEqual({ passphrase: 'master-pass' })
+  expect(
+    messageCalls().some(
+      (m) => m.method === 'success' && m.text.includes('第 3 代') && m.text.includes('2.0 MB'),
+    ),
+  ).toBe(true)
+  // 明文库发布：明文显著提示（ADR-0091 决策 8）。
+  expect(
+    messageCalls().some(
+      (m) => m.method === 'warning' && m.text.includes('明文存放于网盘'),
+    ),
+  ).toBe(true)
+})
+
+it('引导向导：预检发现检查点后确认，携带口令调用引导并原位重引导', async () => {
+  wireInvokeSeam({
+    defaults: {
+      get_sync_status: baseStatus,
+      get_sync_channel_config: baseConfig,
+      get_sync_channel_checkpoint: checkpointInfo,
+      bootstrap_sync_from_channel: bootstrapOutcome,
+    },
+  })
+  const wrapper = mount(SyncSettings)
+  await flushPromises()
+  mockInvoke.mockClear()
+
+  await findButtonByTestId(wrapper, 'sync-bootstrap').trigger('click')
+  await flushPromises()
+
+  // 预检回显（弹窗内容 teleport 到 body）：代数 + 体积 + 后果警示。
+  expect(mockInvoke).toHaveBeenCalledWith('get_sync_channel_checkpoint')
+  const modalHtml = document.body.querySelector('.n-modal')?.innerHTML ?? ''
+  expect(modalHtml).toContain('第 3 代')
+  expect(modalHtml).toContain('2.0 MB')
+  expect(modalHtml).toContain('整库替换')
+
+  const pass = document.body.querySelector('.n-modal input[type="password"]')!
+  await new DOMWrapper<HTMLInputElement>(pass as HTMLInputElement).setValue('master-pass')
+  await flushPromises()
+  await findBodyButtonByTestId('sync-bootstrap-confirm')!.trigger('click')
+  await flushPromises()
+
+  expect(lastInvokeArgs('bootstrap_sync_from_channel')).toEqual({ passphrase: 'master-pass' })
+  expect(
+    messageCalls().some((m) => m.method === 'success' && m.text.includes('引导完成')),
+  ).toBe(true)
+  // 重启编排（Restore 同型）：引导成功即触发原位重引导。
+  expect(restartAppShortly).toHaveBeenCalled()
+})
+
+it('引导向导：通道上没有检查点时展示指引且确认禁用（不发起引导）', async () => {
+  wireInvokeSeam({
+    defaults: {
+      get_sync_status: baseStatus,
+      get_sync_channel_config: baseConfig,
+      get_sync_channel_checkpoint: null,
+    },
+  })
+  const wrapper = mount(SyncSettings)
+  await flushPromises()
+  mockInvoke.mockClear()
+
+  await findButtonByTestId(wrapper, 'sync-bootstrap').trigger('click')
+  await flushPromises()
+
+  expect(document.body.querySelector('.n-modal')?.innerHTML).toContain('通道上还没有检查点')
+  expect(findBodyButtonByTestId('sync-bootstrap-confirm')!.attributes('disabled')).toBeDefined()
+  expect(mockInvoke).not.toHaveBeenCalledWith('bootstrap_sync_from_channel')
+})
+
+it('引导失败：码化错误本地化呈现且弹窗保持打开（可就地重试）', async () => {
+  wireInvokeSeam({
+    defaults: {
+      get_sync_status: baseStatus,
+      get_sync_channel_config: baseConfig,
+      get_sync_channel_checkpoint: checkpointInfo,
+    },
+    overrides: {
+      bootstrap_sync_from_channel: () =>
+        Promise.reject({
+          kind: 'Invalid',
+          code: 'sync-engine.bootstrap-not-fresh',
+          params: ['sync_ops'],
+          message: 'RAW',
+        }),
+    },
+  })
+  const wrapper = mount(SyncSettings)
+  await flushPromises()
+  mockInvoke.mockClear()
+
+  await findButtonByTestId(wrapper, 'sync-bootstrap').trigger('click')
+  await flushPromises()
+  await findBodyButtonByTestId('sync-bootstrap-confirm')!.trigger('click')
+  await flushPromises()
+
+  expect(
+    messageCalls().some(
+      (m) => m.method === 'error' && m.text.includes('已参与同步'),
+    ),
+  ).toBe(true)
+  expect(messageCalls().some((m) => m.text.includes('RAW'))).toBe(false)
+  expect(restartAppShortly).not.toHaveBeenCalled()
 })
