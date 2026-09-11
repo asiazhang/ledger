@@ -248,4 +248,45 @@ describe('useInstrumentInfoSync 同步进度（issue #897）', () => {
     resolveSync({ synced: 0, skipped: 0, message: '暂无标的可同步' })
     await expect(p).resolves.toBe('success')
   })
+
+  it('基金深回填的页级明细随进度一并产出，标的级推进清除明细（issue #1061）', async () => {
+    // 首刷回填单只基金期间：done/total 停在标的级口径，页明细持续推进；
+    // 基金完成后的标的级推进（无 fund 字段）把页明细清掉。
+    let resolveSync!: (v: unknown) => void
+    mockInvoke.mockImplementation(
+      () => new Promise((res) => { resolveSync = res }),
+    )
+    const { progress, sync } = useInstrumentInfoSync()
+    const p = sync()
+
+    fireProgress({ done: 0, total: 1, fund: { code: '110022', page: 3, pages: 25 } })
+    await flushPromises()
+    expect(progress.value).toEqual({
+      done: 0,
+      total: 1,
+      fund: { code: '110022', page: 3, pages: 25 },
+    })
+
+    fireProgress({ done: 1, total: 1 })
+    await flushPromises()
+    expect(progress.value).toEqual({ done: 1, total: 1 })
+    expect(progress.value?.fund).toBeUndefined()
+
+    resolveSync({ synced: 1, skipped: 0, message: '已同步 1 只，跳过 0 只' })
+    await expect(p).resolves.toBe('success')
+  })
+
+  it('页级明细形状异常时丢弃明细、保留标的级进度（防脏 payload 渲染）', async () => {
+    let resolveSync!: (v: unknown) => void
+    mockInvoke.mockImplementation(
+      () => new Promise((res) => { resolveSync = res }),
+    )
+    const { progress, sync } = useInstrumentInfoSync()
+    const p = sync()
+    fireProgress({ done: 2, total: 3, fund: { code: 42, page: 'x', pages: 0 } })
+    await flushPromises()
+    expect(progress.value).toEqual({ done: 2, total: 3 })
+    resolveSync({ synced: 3, skipped: 0, message: '已同步 3 只，跳过 0 只' })
+    await expect(p).resolves.toBe('success')
+  })
 })

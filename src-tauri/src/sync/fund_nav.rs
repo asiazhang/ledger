@@ -11,8 +11,9 @@
 //!   回填近两年）；已有历史序列的基金以现价缓存的净值日期（`market_prices.nav_date`，
 //!   #301 落）为水位，从水位次日起按页增量（常态每只一页，页大小为服务端硬上限
 //!   20）；全部净值点攒齐后一次降采样落周线（跨页同周取最后一个净值日），现价 =
-//!   窗口内最新公布单位净值。基金间的遍历与名称随行刷新、进度推进归增量同步编排
-//!   （`incremental`，issue #897 逐只合并推进）。
+//!   窗口内最新公布单位净值。基金间的遍历与名称随行刷新、标的级进度推进归增量同步
+//!   编排（`incremental`，issue #897 逐只合并推进）；每页抓取返回后的页级推进经
+//!   注入回调透传（issue #1061）。
 
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
@@ -237,22 +238,28 @@ pub(super) struct FundSyncStats {
 ///（同周整周覆盖幂等），窗口内最新公布净值落现价缓存（现价 = 单位净值、
 /// priced_at = nav_date = 净值日期，与 #301 添加基金同形）。页抓取闭包由
 /// 调用方注入（生产接 HTTP 层，测试 mock），本函数不触碰网络；单只结果累加
-/// 进调用方的 `stats`（基金间的遍历、名称随行刷新与进度推进归编排层，
-/// issue #897）。
+/// 进调用方的 `stats`；页级推进经注入的 `on_page` 回调透传（issue #1061——
+/// 每页抓取返回后报告「已完成页/总页数」，抓取内部的退避/重试等待不产生推进）。
+/// 基金间的遍历、名称随行刷新与标的级进度推进归编排层（issue #897）。
 ///
 /// **前置条件**：`fund` 为 6 位真实代码的有通道基金行——名称充代码行（查不到
 /// 净值）由调用方计入跳过、零请求（issue #897 起跳过判定与分母口径同收编排层）。
 /// 跳过语义：首刷查无净值与**空响应/被拦截**（issue #1059）计入 `skipped`，
 /// 不报错不中断；单只网络失败与股票通道一致——上抛中断同步（跳过统计只收
 /// 「无法拉取」的行，不含网络失败）。
-pub(super) fn sync_one_fund_nav<N>(
+pub(super) fn sync_one_fund_nav<N, P>(
     conn: &Connection,
     fund: &super::incremental::SyncInstrument,
     fetch_nav: &mut N,
     stats: &mut FundSyncStats,
+    on_page: &mut P,
 ) -> Result<()>
 where
     N: FnMut(&NavQuery) -> Result<LsjzPage>,
+    // 页级推进回调（issue #1061）：(已完成页, 总页数)。只在本页抓取返回之后发出
+    //（抓取内部的退避/重试等待不产生推进）；单页（pages ≤ 1）不发——增量常态
+    // 的事件形状与频率不变。
+    P: FnMut(u64, u64),
 {
     let today = super::incremental::beijing_today();
     // 水位 = 现价缓存的净值日期（股票行恒 NULL，基金行由 #301/本通道写入）。
@@ -299,12 +306,25 @@ where
     if raw_pages > MAX_NAV_PAGES {
         tracing::warn!(code = %fund.symbol, total = %first.total, "历史净值页数触顶，窗口可能未采全");
     }
+    // 页级推进只在真正翻页时发出；首页在抓取返回、总页数已知后立即报告。
+    // 位置固定在 fetch_nav 之后——抓取闭包内部的退避/重试等待不产生推进
+    //（issue #1061 的「等待不伪装成推进」由这一先后关系保证）。空响应页
+    //（`blocked`，Data 缺省/非对象：疑似被拦截/异常）不算「已回填的一页」，
+    // 不推进页码——被风控拦截期间同样不得虚假推进（与 #1059 空响应区分同源）。
+    let page_level = pages > 1;
+    if page_level && !blocked {
+        on_page(1, pages);
+    }
     for page in 2..=pages {
         let next = fetch_nav(&query(page))?;
         // 任意一页空响应都让本轮窗口不完整（页 1 空 → 整轮不可信；后续页空 →
         // 已采净值点照常落库、窗口可能缺尾），统一在下方按形态分流。
-        blocked |= next.blocked;
+        let blocked_page = next.blocked;
+        blocked |= blocked_page;
         points.extend(next.points);
+        if page_level && !blocked_page {
+            on_page(page, pages);
+        }
     }
 
     if points.is_empty() {

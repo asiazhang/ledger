@@ -22,9 +22,10 @@ export type InstrumentInfoSyncOutcome = Exclude<InstrumentInfoSyncStatus, 'idle'
  * 订阅重拉自身数据，无需在 sync 返回后手工刷新。
  *
  * 同步全程可见（issue #897 / ADR-0095）：接缝订阅后端确定进度事件
- * [`INSTRUMENT_SYNC_PROGRESS_EVENT`]（payload `{ done, total }`），经
- * `progress` 产出可观察进度；同步全程唯一——任一入口在途时，其余入口的
- * `sync()` 一律短路复用同一承诺、不并发第二次同步。
+ * [`INSTRUMENT_SYNC_PROGRESS_EVENT`]（payload `{ done, total }`，基金深回填
+ * 期间另带页级明细 `fund`，issue #1061），经 `progress` 产出可观察进度；
+ * 同步全程唯一——任一入口在途时，其余入口的 `sync()` 一律短路复用同一承诺、
+ * 不并发第二次同步。
  *
  * **全部接缝状态为模块级共享单例**（唯一读写方是本模块的事件订阅与 sync
  * 生命周期，先例：globalBusy 的聚合计数）：同步只有一场，进行中/进度/结果
@@ -75,7 +76,20 @@ function ensureProgressSubscription(): void {
       typeof payload.done === 'number' && Number.isFinite(payload.done) &&
       typeof payload.total === 'number' && Number.isFinite(payload.total)
     ) {
-      progress.value = { done: payload.done, total: payload.total }
+      // 页级明细（issue #1061）为可选字段：形状不合法即丢弃明细、保留标的级
+      // 进度；缺省即「标的级推进」，不残留上一只基金的页明细。
+      const fund = payload.fund
+      const validFund = (
+        fund &&
+        typeof fund.code === 'string' &&
+        typeof fund.page === 'number' && Number.isFinite(fund.page) &&
+        typeof fund.pages === 'number' && Number.isFinite(fund.pages) && fund.pages > 0
+      )
+        ? { code: fund.code, page: fund.page, pages: fund.pages }
+        : null
+      progress.value = validFund
+        ? { done: payload.done, total: payload.total, fund: validFund }
+        : { done: payload.done, total: payload.total }
     }
   }).catch((e) => {
     console.warn(`订阅 ${INSTRUMENT_SYNC_PROGRESS_EVENT} 失败`, e)

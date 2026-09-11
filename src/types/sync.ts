@@ -11,10 +11,21 @@ export interface SyncInstrumentInfoResult {
   message: string
 }
 
-/// 标的信息同步确定进度载荷（issue #897 / ADR-0095）：后端
-/// `ledger:instrument-sync-progress` 事件的 payload——done = 已完成的有通道
-/// 标的数，total = 有通道标的总数（跳过行不计入分母）。
+/// 场外基金深回填的页级明细（issue #1061）：正在回填的基金代码与
+/// 「已完成页 / 总页数」；只在真正翻页的首刷/深回填期间出现。
+export interface InstrumentSyncFundProgress {
+  code: string
+  page: number
+  pages: number
+}
+
+/// 标的信息同步确定进度载荷（issue #897 / ADR-0095；页级明细 issue #1061）：
+/// 后端 `ledger:instrument-sync-progress` 事件的 payload——done = 已完成的有通道
+/// 标的数，total = 有通道标的总数（跳过行不计入分母）；fund 缺省表示标的级推进
+/// （页级明细不改 done/total 的标的级口径）。
 export interface InstrumentSyncProgress {
   done: number
   total: number
+  /// 基金深回填页级明细（issue #1061）；标的级推进与单页基金缺省。
+  fund?: InstrumentSyncFundProgress | null
 }

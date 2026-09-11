@@ -18,11 +18,12 @@ use crate::signals::{WriteEvidence, WriteOp};
 use crate::sync::{ProgressEmitter, SyncInstrumentInfoResult, SyncProgress, do_incremental_sync};
 use crate::write_entry::{Outcome, write_entry};
 
-/// 生产进度接线（issue #897 / ADR-0095）：把编排的进度回调（`done, total`）接到
-/// 进度事件发射器。独立成函数是壳层接线证明的锚点：测试注入记录型发射器驱动
-/// 编排，钉住「命令壳把编排回调接到事件发射」；命令体一行调用本函数。
-pub(crate) fn progress_to_emitter(emitter: &dyn ProgressEmitter) -> impl FnMut(usize, usize) + '_ {
-    move |done, total| emitter.emit_progress(SyncProgress { done, total })
+/// 生产进度接线（issue #897 / ADR-0095）：把编排的进度回调（标的级 `done`/
+/// `total`，基金深回填时带页级明细，issue #1061）接到进度事件发射器。独立成
+/// 函数是壳层接线证明的锚点：测试注入记录型发射器驱动编排，钉住「命令壳把编排
+/// 回调接到事件发射」；命令体一行调用本函数。
+pub(crate) fn progress_to_emitter(emitter: &dyn ProgressEmitter) -> impl FnMut(SyncProgress) + '_ {
+    move |progress| emitter.emit_progress(progress)
 }
 
 /// IPC 命令：同步标的信息（增量同步，issue #103 / #303；#827 覆盖面放开至
@@ -36,8 +37,9 @@ pub(crate) fn progress_to_emitter(emitter: &dyn ProgressEmitter) -> impl FnMut(u
 ///
 /// 同步全程发确定进度事件（issue #897 / ADR-0095）：编排的进度回调经
 /// [`progress_to_emitter`] 接到 `ledger:instrument-sync-progress` 带 payload 事件
-///（`{ done, total }`，经 [`ProgressEmitter`] 非阻塞投递主线程）；进度事件不是
-/// 失效信号，不影响下方价格失效信号的判定与发射条件。
+///（标的级 `{ done, total }`，基金深回填期间另带页级明细 `fund`，issue #1061；
+/// 经 [`ProgressEmitter`] 非阻塞投递主线程）；进度事件不是失效信号，不影响下方
+/// 价格失效信号的判定与发射条件。
 ///
 /// 「是否发」判定已于 #333 归一化进 signals 映射单点（`signals_for` +
 /// [`WriteEvidence::PriceWritten`]，ADR-0044）：入口只把终态归一化为证据——
@@ -77,6 +79,7 @@ pub async fn sync_instrument_info(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sync::FundNavProgress;
     use std::sync::Mutex;
 
     /// 记录型假发射器：接收到的进度推进按序攒入缓冲（发射器接缝的测试注入
@@ -93,33 +96,66 @@ mod tests {
     /// 壳层接线证明（issue #897 / ADR-0095；先例：信号发射两层测试——映射层
     /// 钉「谁发什么」，本测试钉「命令壳把编排回调接到事件发射」的接线半边，
     /// 编排回调的触发时序归 sync 域进度序列测试）：`progress_to_emitter` 把
-    /// 编排的 (done, total) 回调接到发射器，载荷形状与顺序保持不变。
+    /// 编排的进度回调接到发射器，载荷形状与顺序保持不变（含基金页级明细）。
     #[test]
     fn command_shell_wires_orchestration_progress_to_emitter() {
         let emitter = RecordingEmitter::default();
         let mut progress = progress_to_emitter(&emitter);
 
-        progress(0, 100);
-        progress(37, 100);
-        progress(100, 100);
+        progress(SyncProgress {
+            done: 0,
+            total: 100,
+            fund: None,
+        });
+        progress(SyncProgress {
+            done: 37,
+            total: 100,
+            fund: None,
+        });
+        progress(SyncProgress {
+            done: 37,
+            total: 100,
+            fund: Some(FundNavProgress {
+                code: "110022".into(),
+                page: 3,
+                pages: 25,
+            }),
+        });
+        progress(SyncProgress {
+            done: 100,
+            total: 100,
+            fund: None,
+        });
 
         assert_eq!(
             *emitter.0.lock().unwrap(),
             vec![
                 SyncProgress {
                     done: 0,
-                    total: 100
+                    total: 100,
+                    fund: None,
                 },
                 SyncProgress {
                     done: 37,
-                    total: 100
+                    total: 100,
+                    fund: None,
+                },
+                SyncProgress {
+                    done: 37,
+                    total: 100,
+                    fund: Some(FundNavProgress {
+                        code: "110022".into(),
+                        page: 3,
+                        pages: 25,
+                    }),
                 },
                 SyncProgress {
                     done: 100,
-                    total: 100
+                    total: 100,
+                    fund: None,
                 },
             ],
-            "编排回调逐次直达发射器，载荷即 done/total 两字段"
+            "编排回调逐次直达发射器，载荷形状与顺序保持不变（含基金页级明细）"
         );
     }
 }

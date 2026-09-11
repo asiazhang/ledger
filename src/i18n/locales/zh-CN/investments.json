@@ -153,6 +153,7 @@
   "sync": {
     "failed": "同步失败：{message}",
     "progress": "同步标的信息 {done}/{total}",
+    "progressFundPages": "回填 {code}：第 {page}/{pages} 页",
     "progressAriaLabel": "同步标的信息进度"
   },
   "market": {
