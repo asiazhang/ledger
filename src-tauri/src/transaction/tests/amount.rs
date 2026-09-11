@@ -55,10 +55,25 @@ fn kind_serde_roundtrip() {
     assert!(err.to_string().contains("未知交易类型"), "实际: {err}");
 }
 
-/// 未知 kind 字符串应报错。
+/// 未知 kind 字符串应报错：按 ADR-0050 码化（稳定 `code` + 插值参数），
+/// `message` 逐字不变、合法值清单仍由宏同一批字面量同源生成。
 #[test]
 fn kind_parse_rejects_unknown() {
-    assert!(TransactionKind::parse("bonus").is_err());
+    let err = TransactionKind::parse("bonus").unwrap_err();
+    assert_eq!(err.code(), Some("transaction.kind-unknown"));
+    assert_eq!(
+        err.to_string(),
+        "未知交易类型: bonus（合法值: income/expense/transfer/refund/buy/sell/dividend/split/convert）",
+        "message 逐字不变（ADR-0050 只增不改）"
+    );
+    assert_eq!(
+        serde_json::to_value(&err).unwrap()["params"],
+        serde_json::json!([
+            "bonus",
+            "income/expense/transfer/refund/buy/sell/dividend/split/convert"
+        ]),
+        "params 按动态值出现顺序：未知值 → 同源合法值清单"
+    );
     assert!(TransactionKind::parse("").is_err());
 }
 
