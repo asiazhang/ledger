@@ -34,7 +34,14 @@ impl FromStr for BudgetPeriod {
         match s {
             "monthly" => Ok(BudgetPeriod::Monthly),
             "yearly" => Ok(BudgetPeriod::Yearly),
-            _ => Err(AppError::Invalid(format!("未知预算周期: {s}"))),
+            // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误，
+            // message 逐字保留、未知值进 params（FromSql 路径经 rusqlite 扁平化
+            // 只承载 message，码在构造点稳定存在，与 account.type-unknown 同形）。
+            _ => Err(AppError::codedp(
+                "budget.period-unknown",
+                format!("未知预算周期: {s}"),
+                &[s],
+            )),
         }
     }
 }

@@ -73,8 +73,11 @@ pub async fn search_instruments_handler(
         .map(str::trim)
         .filter(|q| !q.is_empty())
         .ok_or_else(|| {
-            AppError::Invalid(
-                "query 不能为空：标的搜索为搜索式端点，请携带关键词（不做全量列表）".into(),
+            // ADR-0050 码化收口（#1072）：AI 导入按码自纠的入参条件，
+            // message 逐字保留、无插值参数。
+            AppError::coded(
+                "instrument.query-required",
+                "query 不能为空：标的搜索为搜索式端点，请携带关键词（不做全量列表）",
             )
         })?;
     // 封顶返回：缺省 20、上限收敛 100，AI 上下文预算可控。
