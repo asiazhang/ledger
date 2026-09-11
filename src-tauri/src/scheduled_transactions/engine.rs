@@ -5,7 +5,7 @@ use super::command::{
     ScheduledCommand, occurrence_transaction_id, record_local, transaction_landed,
 };
 use crate::db::query::{query_all, query_one};
-use crate::db::tx_scope::ensure_transaction;
+use crate::db::tx_scope::{ensure_transaction, hold_transaction};
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
@@ -967,34 +967,24 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
     )?;
 
     // 事务自持：从 CAS 置 processing 起包到计划完成检查（事务边界见本函数 doc）。
+    // 无条件自持原语归基础设施 `db::tx_scope::hold_transaction`（issue #1014 / #1003
+    // 定案 5）：中途失败整体回滚、期次回原状态可重试；失败语义（尽力回滚不遮蔽、
+    // COMMIT 失败尽力清理）与行为层编排入口统一。ADR-0033 决策 6 的例外本质不变
+    // （不经三入口直调 Writer），变的只是事务壳住址。
     let now = now_iso();
-    conn.execute("BEGIN", [])?;
-    match execute_within_transaction(
-        conn,
-        occurrence_id,
-        &occ.status,
-        &norm,
-        &st.id,
-        &occ.scheduled_date,
-        &now,
-    ) {
-        Ok(txn_id) => match conn.execute("COMMIT", []) {
-            Ok(_) => {
-                tracing::info!(occurrence_id = %occurrence_id, transaction_id = %txn_id, "定时交易期次执行成功");
-                Ok(txn_id)
-            }
-            // COMMIT 失败：尽力回滚清理残留，再上抛提交错误（与行为层编排入口同款）。
-            Err(e) => {
-                let _ = conn.execute("ROLLBACK", []);
-                Err(e.into())
-            }
-        },
-        // 中途失败：整体回滚，期次回原状态可重试；ROLLBACK 自身失败不遮蔽业务错误。
-        Err(e) => {
-            let _ = conn.execute("ROLLBACK", []);
-            Err(e)
-        }
-    }
+    let txn_id = hold_transaction(conn, || {
+        execute_within_transaction(
+            conn,
+            occurrence_id,
+            &occ.status,
+            &norm,
+            &st.id,
+            &occ.scheduled_date,
+            &now,
+        )
+    })?;
+    tracing::info!(occurrence_id = %occurrence_id, transaction_id = %txn_id, "定时交易期次执行成功");
+    Ok(txn_id)
 }
 
 /// 读取订阅计划扩展行（期次执行引用复制用）；缺失即错（核心行存在而扩展行

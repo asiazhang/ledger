@@ -19,6 +19,7 @@ use super::validation::{
     validate_dispose_input, validate_input, validate_update_input, validate_valuation_input,
 };
 use crate::db::query::{query_all, query_one};
+use crate::db::tx_scope::ensure_transaction;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
@@ -41,32 +42,6 @@ const ASSET_WITH_VALUATION_FROM: &str = "\
                    WHERE v2.asset_id = a.id \
                    ORDER BY v2.valuation_date DESC, v2.id DESC LIMIT 1)";
 
-/// 「保证处于事务中」（嵌套感知，ADR-0033 决策 #2）：连接 autocommit 则自持
-/// BEGIN/COMMIT/ROLLBACK，已在事务中则加入外层。建档要原子写资产行 + 首条
-/// 估值行两表，缺失会造成「资产无当前估值」的半行（列表 JOIN 丢行、净资产
-/// 缺腿）。域内私有助手，形状与基础设施 `db::tx_scope::ensure_transaction`
-/// 同款（收敛至该原语由父 spec #1003 下的收敛票处理）。
-fn in_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
-    if !conn.is_autocommit() {
-        return f();
-    }
-    conn.execute("BEGIN", [])?;
-    match f() {
-        Ok(v) => match conn.execute("COMMIT", []) {
-            Ok(_) => Ok(v),
-            // COMMIT 失败：尽力回滚清理残留，再上抛提交错误（同交易域先例）。
-            Err(e) => {
-                let _ = conn.execute("ROLLBACK", []);
-                Err(e.into())
-            }
-        },
-        Err(e) => {
-            let _ = conn.execute("ROLLBACK", []);
-            Err(e)
-        }
-    }
-}
-
 /// 建档：校验 → 落库（资产行 + 首条估值行，同事务）→ 成功后调用 `notify`。
 /// 校验语义见 `validation::validate_input`（缺名称 / 缺估值显式报错、不落库）。
 pub fn create_physical_asset(
@@ -76,7 +51,7 @@ pub fn create_physical_asset(
 ) -> Result<String> {
     let normalized = validate_input(conn, &input)?;
 
-    let id = in_transaction(conn, || {
+    let id = ensure_transaction(conn, || {
         let id = new_uuid();
         let first_valuation = ValuationCommandRow {
             id: new_uuid(),
@@ -302,7 +277,7 @@ pub fn update_physical_asset(
     input: PhysicalAssetUpdateInput,
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
-    in_transaction(conn, || {
+    ensure_transaction(conn, || {
         require_asset_exists(conn, id)?;
         let normalized = validate_update_input(conn, &input)?;
         write_update(
@@ -370,7 +345,7 @@ pub fn update_physical_asset_valuation(
     input: PhysicalAssetValuationInput,
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
-    in_transaction(conn, || {
+    ensure_transaction(conn, || {
         // 前置存在性检查（含软删过滤）：估值历史依附资产存续，不允许孤儿行。
         require_asset_exists(conn, id)?;
         let normalized = validate_valuation_input(conn, &input)?;
@@ -429,7 +404,7 @@ pub fn dispose_physical_asset(
     input: PhysicalAssetDisposeInput,
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
-    in_transaction(conn, || {
+    ensure_transaction(conn, || {
         // 处置日期与购买日期的先后守卫需要既有行的购买日期：单列裸读（与折算
         // 读路径解耦，先例 require_asset_exists 的注释理由）。
         let purchase_date = require_asset_purchase_date(conn, id)?;
@@ -489,7 +464,7 @@ fn write_dispose(
 /// `WHERE is_deleted=0` 自动过滤。不存在（含已删除）→ 码化 NotFound；
 /// 成功后 bump version / updated_at 并调用 `notify`。
 pub fn delete_physical_asset(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> Result<()> {
-    in_transaction(conn, || {
+    ensure_transaction(conn, || {
         require_asset_exists(conn, id)?;
         write_delete(conn, id)?;
         record_local(conn, PhysicalAssetCommand::Delete { id: id.to_string() })
