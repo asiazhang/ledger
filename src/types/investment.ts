@@ -57,7 +57,15 @@ export interface Instrument extends Syncable {
   price_cents: number | null
   /** 是否持有该标的（有当前持仓，派生自 security_lots） */
   invested: boolean
+  /** 价格写入通道（后端派生事实，不落库，issue #1060）：单标的走势放行与
+   * 录价入口的唯一判定来源，前端不再自行按类型与市场推断 */
+  price_channel: InstrumentPriceChannel
 }
+
+/** 价格写入通道（后端派生事实，issue #1060）：quote 行情 / fund_nav 净值 /
+ * manual 手动报价 / none 无来源；判定单点在后端（`derive_price_channel`），
+ * 与标的信息同步的通道分区同源。 */
+export type InstrumentPriceChannel = 'quote' | 'fund_nav' | 'manual' | 'none'
 
 export interface InstrumentInput {
   symbol: string
@@ -88,27 +96,6 @@ export interface InstrumentListResult {
   items: Instrument[]
   /** 满足过滤条件的总条数（用于分页条） */
   total: number
-}
-
-/**
- * 6 位纯数字基金代码判定（后端 `is_six_digit_code` 的前端镜像，跨 IPC 无法字面
- * 同源）：名称充代码的基金行非 6 位，不进净值通道（ADR-0038）。两端任一侧调整
- * 判定口径必须同步另一侧，否则「录价入口」与「净值可拉分区」漂移出第二口径。
- */
-export function isSixDigitInstrumentCode(code: string): boolean {
-  return code.length === 6 && /^\d{6}$/.test(code)
-}
-
-/**
- * 该标的是否开放「录价」入口（手动报价，ADR-0036 决策 1 修订）：只对同步覆盖
- * 不到的标的开放——自建标的（债券/ETF/其他）与名称充代码的基金行；真实代码
- * 基金（净值通道）与股票（行情通道）的现价归同步，开放录价只会被下次同步冲掉。
- * 判定口径与增量同步「净值可拉」分区同源（镜像后端谓词，见上）。
- */
-export function canManualPrice(inst: Pick<Instrument, 'type' | 'symbol'>): boolean {
-  if (inst.type === 'stock') return false
-  if (inst.type === 'fund' && isSixDigitInstrumentCode(inst.symbol)) return false
-  return true
 }
 
 /** 手动报价入参（issue #291 / ADR-0036）：标的 id + 日期（ISO）+ 价格（万分之一元，价格刻度） */

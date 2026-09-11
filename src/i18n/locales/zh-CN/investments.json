@@ -97,10 +97,11 @@
     "rangeAll": "全部",
     "captionPortfolio": "单位：{currency}（本位币）",
     "captionInstrument": "计价币种：{currency}",
-    "noSource": "暂无行情来源",
-    "noSourceExtra": "该标的类型暂不参与行情采集（仅股票 / ETF 支持），不提供走势图。",
+    "noSource": "该标的没有价格来源",
+    "noSourceExtra": "市场未知的股票类标的不参与行情采集，也不开放手动录价，无法绘制走势。",
     "empty": "暂无历史价格数据",
-    "emptyExtra": "点击标的列表的「同步标的信息」回填近两年行情后，即可查看走势。"
+    "emptyExtra": "点击标的列表的「同步标的信息」回填近两年行情后，即可查看走势。",
+    "emptyExtraManual": "点击标的列表的「录价」录入价格后，即可查看走势。"
   },
   "form": {
     "amount": "金额",

@@ -60,6 +60,7 @@ const mockInstruments: Instrument[] = [
     source: 'eastmoney',
     price_cents: null,
     invested: false,
+    price_channel: 'quote',
   },
   {
     id: 'inst-2',
@@ -76,6 +77,7 @@ const mockInstruments: Instrument[] = [
     source: 'eastmoney',
     price_cents: null,
     invested: false,
+    price_channel: 'quote',
   },
   {
     id: 'inst-3',
@@ -92,6 +94,7 @@ const mockInstruments: Instrument[] = [
     source: 'eastmoney',
     price_cents: null,
     invested: false,
+    price_channel: 'quote',
   },
 ]
 

@@ -12,7 +12,6 @@ import { formatAmount, formatPrice } from '@/types'
 import { amountPrivacyEnabled } from '@/utils/money'
 import { t } from '@/i18n'
 import {
-  hasMarketSource,
   TREND_RANGE_PRESETS,
   usePortfolioTrend,
 } from '@/composables/usePortfolioTrend'
@@ -49,9 +48,24 @@ const selectedInstrumentId = computed({
   },
 })
 
-/** 当前标的是否走行情采集通道（非股票/ETF、市场未知 → 边界说明而非空图） */
-const noMarketSource = computed(
-  () => trend.mode.value === 'instrument' && !!trend.instrument.value && !hasMarketSource(trend.instrument.value),
+/** 无价格来源标的（后端判通道 = none，issue #1060）：边界说明而非空图。
+ * 放行判定消费后端派生事实，前端不再按类型与市场自行推断。 */
+const noPriceSource = computed(
+  () =>
+    trend.mode.value === 'instrument' &&
+    trend.instrument.value?.price_channel === 'none',
+)
+
+/** 当前单标的的价格通道（组合模式为 null）；有通道无数据时按通道选引导文案 */
+const priceChannel = computed(() =>
+  trend.mode.value === 'instrument' ? trend.instrument.value?.price_channel ?? null : null,
+)
+
+/** 有通道无数据的引导文案：手动报价通道引导去「录价」，其余通道引导去同步 */
+const emptyExtra = computed(() =>
+  priceChannel.value === 'manual'
+    ? t('investments.trend.emptyExtraManual')
+    : t('investments.trend.emptyExtra'),
 )
 
 const currency = computed(() =>
@@ -167,9 +181,9 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
     </NSpace>
 
     <NSpin :show="trend.loading.value">
-      <!-- 非股票标的：暂无行情来源（PriceHistory 不覆盖，ADR-0019），给说明而非空白报错 -->
+      <!-- 无价格来源标的（通道 = none，issue #1060）：说明「没有价格来源」而非空白报错 -->
       <NEmpty
-        v-if="noMarketSource"
+        v-if="noPriceSource"
         data-testid="trend-no-source"
         :description="t('investments.trend.noSource')"
         size="large"
@@ -181,7 +195,7 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
         </template>
       </NEmpty>
 
-      <!-- 无历史数据：引导去「同步标的信息」回填近两年周线（ADR-0019 单通道） -->
+      <!-- 有通道无历史数据：按通道给可执行引导——净值/行情通道去同步，手动报价通道去录价 -->
       <NEmpty
         v-else-if="trend.isEmpty.value"
         data-testid="trend-empty"
@@ -190,7 +204,7 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
       >
         <template #extra>
           <NText depth="3">
-            {{ t('investments.trend.emptyExtra') }}
+            {{ emptyExtra }}
           </NText>
         </template>
       </NEmpty>

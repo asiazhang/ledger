@@ -31,11 +31,11 @@ use rusqlite::Connection;
 use super::model::SyncInstrumentInfoResult;
 use crate::error::Result;
 use crate::investment::crud::refresh_instrument_name;
-use crate::investment::is_six_digit_code;
 use crate::investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
     upsert_price_history,
 };
+use crate::investment::{InstrumentType, PriceChannel, derive_price_channel};
 use crate::transaction::amount::default_currency_code;
 
 use super::fund_nav::{FundSyncStats, LsjzPage, NavQuery, sync_one_fund_nav};
@@ -57,22 +57,11 @@ pub(super) struct SyncInstrument {
     pub(super) symbol: String,
     pub(super) market: String,
     pub(super) currency: String,
-    pub(super) instrument_type: String,
-}
-
-impl SyncInstrument {
-    /// 是否走行情通道：股票与场内 ETF（stock|etf，issue #695 / spec #690 方案 6）。
-    /// 场内 ETF 与股票共用东财行情报价/日 K 接口族，按市场+代码构造 secid 同路
-    /// 刷价与回填；市场未知仍无法构造 secid，照常计入跳过。
-    fn is_quote_channel(&self) -> bool {
-        matches!(self.instrument_type.as_str(), "stock" | "etf")
-    }
-
-    /// 是否场外基金：走历史净值通道（ADR-0038 决策 6）；名称充代码的基金行
-    ///（非 6 位代码）在净值编排内计入跳过。
-    fn is_fund(&self) -> bool {
-        self.instrument_type == "fund"
-    }
+    /// 价格写入通道（issue #1060）：投资域派生单点 [`derive_price_channel`] 的
+    /// 判定结果——行情（Quote）/ 净值（FundNav）两分区参与同步，手动报价与
+    /// 无来源行计入跳过。分区口径与标的读投影（`Instrument::price_channel`）
+    /// 同源单点，不再各自镜像类型与市场判定。
+    pub(super) channel: PriceChannel,
 }
 
 /// 单次收集库内全部标的（一条 SQL，无持仓前置条件，issue #827）：覆盖面从
@@ -87,13 +76,18 @@ fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
                FROM instruments i \
                ORDER BY i.symbol";
     let mut stmt = conn.prepare(sql)?;
+    // 价格通道收集时单点派生（issue #1060）：分区判定不再留在同步域镜像
+    // （原 is_quote_channel / is_fund + 6 位代码过滤），与标的读投影同源。
     let rows = stmt.query_map([], |r| {
+        let symbol: String = r.get(1)?;
+        let market: String = r.get(2)?;
+        let kind: InstrumentType = r.get(4)?;
         Ok(SyncInstrument {
             instrument_id: r.get(0)?,
-            symbol: r.get(1)?,
-            market: r.get(2)?,
+            channel: derive_price_channel(kind, &market, &symbol),
+            symbol,
+            market,
             currency: r.get(3)?,
-            instrument_type: r.get(4)?,
         })
     })?;
     let mut instruments = Vec::new();
@@ -144,13 +138,19 @@ where
     P: FnMut(usize, usize),
 {
     let held = collect_instruments(conn)?;
-    // 单次收集库内全部标的（一条 SQL，无持仓前置，issue #827），Rust 内按通道能力
-    // 分区：行情分区（stock|etf，issue #695）构造 secid 查报价与日 K；基金侧走历史
-    // 净值通道（ADR-0038 决策 6）；其余（债券/其他、市场未知自建行等无通道）计入
-    // 跳过统计——三类统计天然同源。
-    let quote_channel: Vec<&SyncInstrument> =
-        held.iter().filter(|i| i.is_quote_channel()).collect();
-    let funds: Vec<&SyncInstrument> = held.iter().filter(|i| i.is_fund()).collect();
+    // 单次收集库内全部标的（一条 SQL，无持仓前置，issue #827），按投资域派生的
+    // 价格通道分区（issue #1060，判定单点 `derive_price_channel`）：行情分区
+    // 构造 secid 查报价与日 K；净值分区（fund 且 6 位真实代码，ADR-0038 决策 6）
+    // 走历史净值通道；其余（手动报价通道与无来源行：债券/其他、市场未知自建行、
+    // 名称充代码基金行等）计入跳过统计——三类统计天然同源。
+    let quote_channel: Vec<&SyncInstrument> = held
+        .iter()
+        .filter(|i| i.channel == PriceChannel::Quote)
+        .collect();
+    let funds: Vec<&SyncInstrument> = held
+        .iter()
+        .filter(|i| i.channel == PriceChannel::FundNav)
+        .collect();
     let no_quote_source = held.len() - quote_channel.len() - funds.len();
 
     // 库内无任何标的：明确提示，不报错。
@@ -181,18 +181,10 @@ where
         }
     }
 
-    // 进度分母（issue #897 / ADR-0095）：有通道标的数 = 可构造查询的行情分区
-    // 标的（市场未知无法构造 secid，计入跳过、不进分母）+ 有真实代码（6 位）的
-    // 基金（名称充代码行计入跳过、不进分母）。可拉取基金集合单点派生——分母、
-    // 基金循环与跳过计数共用同一集合，done == total 不变量由结构保证；
-    // 收集与分区完成后立即发 total；total 为 0 不发任何进度事件。
-    let syncable_funds: Vec<&SyncInstrument> = funds
-        .iter()
-        .filter(|f| is_six_digit_code(&f.symbol))
-        .copied()
-        .collect();
-    let skipped_name_as_code = funds.len() - syncable_funds.len();
-    let total = queryable.len() + syncable_funds.len();
+    // 进度分母（issue #897 / ADR-0095）：有通道标的数 = 行情分区标的 + 净值分区
+    // 基金（价格通道派生单点已保证行情分区市场可查、净值分区代码为 6 位真实代码；
+    // 无通道行不进分母）。收集与分区完成后立即发 total；total 为 0 不发任何进度事件。
+    let total = queryable.len() + funds.len();
     if total > 0 {
         progress(0, total);
     }
@@ -277,14 +269,13 @@ where
     // 水位增量，issue #1059）+ 权威名称随行刷新（issue #827，净值报文不携带名称，
     // 逐只经基金详情通道；每只有码基金一请求）合并为该基金的一格——净值与名称都
     // 完成才推进；「已是最新（无新净值）」同样推进。
-    // 名称充代码行（非 6 位）无通道：不进 syncable_funds（不进分母、零请求），
-    // 计数由 len 差值派生（见上方 skipped_name_as_code）。
+    // 名称充代码行无通道：不进净值分区（不进分母、零请求），计入跳过（见上）。
     let mut fund_stats = FundSyncStats {
         synced: 0,
         skipped: 0,
         written: 0,
     };
-    for fund in &syncable_funds {
+    for fund in &funds {
         sync_one_fund_nav(conn, fund, fetch_nav, &mut fund_stats)?;
         let name = fetch_fund_name(&fund.symbol)?;
         if refresh_instrument_name(conn, &fund.instrument_id, &name)? {
@@ -297,8 +288,9 @@ where
     let synced = synced_codes.len() + fund_stats.synced;
     // 已查询但未取到有效价的（停牌/无效价/查询无果）计入跳过。
     let invalid = queryable.len() - synced_codes.len();
-    let skipped =
-        no_quote_source + skipped_unqueryable + invalid + skipped_name_as_code + fund_stats.skipped;
+    // 无通道行（手动报价通道与无来源：债券/其他、市场未知自建行、名称充代码基金行）
+    // 与停牌/查询无果/首刷查无净值等一并计入跳过。
+    let skipped = no_quote_source + skipped_unqueryable + invalid + fund_stats.skipped;
     // 实际写入 = 股票有效价 + 基金实际落库净值（基金「已是最新」不算写入）。
     let written = synced_codes.len() + fund_stats.written;
 

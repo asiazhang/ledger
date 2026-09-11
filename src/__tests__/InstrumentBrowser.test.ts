@@ -53,6 +53,7 @@ const mockInstruments: Instrument[] = [
     source: 'eastmoney',
     price_cents: 1000,
     invested: true,
+    price_channel: 'quote',
   },
   {
     id: 'inst-2',
@@ -69,6 +70,7 @@ const mockInstruments: Instrument[] = [
     source: 'eastmoney',
     price_cents: 1200,
     invested: false,
+    price_channel: 'quote',
   },
 ]
 
@@ -446,19 +448,20 @@ describe('InstrumentBrowser 自建标的删除（issue #292 / ADR-0036）', () =
   })
 })
 
-describe('InstrumentBrowser 行内录价入口（issue #291 / ADR-0036）', () => {
-  /** 五类行覆盖录价分区：股票/真实代码基金无入口；自建标的与名称充代码基金行有入口 */
+describe('InstrumentBrowser 行内录价入口（issue #291 / ADR-0036；通道判定收口 issue #1060）', () => {
+  /** 六类行覆盖价格通道分区：行情 / 净值通道与无来源行无入口；手动报价通道有入口 */
   function rowsForQuoteGating() {
     return [
-      makeInstrument({ id: 'inst-st', symbol: '600000', type: 'stock', source: 'eastmoney' }),
-      makeInstrument({ id: 'inst-fund6', symbol: '000001', type: 'fund', source: 'manual', market: 'unknown' }),
-      makeInstrument({ id: 'inst-other', symbol: '稳稳地幸福', type: 'other', source: 'manual', market: 'unknown' }),
-      makeInstrument({ id: 'inst-bond', symbol: '019547', type: 'bond', source: 'manual', market: 'unknown' }),
-      makeInstrument({ id: 'inst-fund-name', symbol: '稳稳地幸福', type: 'fund', source: 'manual', market: 'unknown' }),
+      makeInstrument({ id: 'inst-st', symbol: '600000', type: 'stock', source: 'eastmoney', price_channel: 'quote' }),
+      makeInstrument({ id: 'inst-fund6', symbol: '000001', type: 'fund', source: 'manual', market: 'unknown', price_channel: 'fund_nav' }),
+      makeInstrument({ id: 'inst-none', symbol: 'ghost1', type: 'stock', source: 'eastmoney', market: 'unknown', price_channel: 'none' }),
+      makeInstrument({ id: 'inst-other', symbol: '稳稳地幸福', type: 'other', source: 'manual', market: 'unknown', price_channel: 'manual' }),
+      makeInstrument({ id: 'inst-bond', symbol: '019547', type: 'bond', source: 'manual', market: 'unknown', price_channel: 'manual' }),
+      makeInstrument({ id: 'inst-fund-name', symbol: '稳稳地幸福2', type: 'fund', source: 'manual', market: 'unknown', price_channel: 'manual' }),
     ]
   }
 
-  it('录价入口只对同步覆盖不到的标的开放：股票与 6 位代码基金无入口，自建标的与名称充代码基金行有入口', async () => {
+  it('录价入口只对手动报价通道开放：行情 / 净值通道与无来源行无入口', async () => {
     const rows = rowsForQuoteGating()
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
@@ -468,15 +471,16 @@ describe('InstrumentBrowser 行内录价入口（issue #291 / ADR-0036）', () =
     const wrapper = mountBrowser()
     await flushPromises()
     const cells = wrapper.findAll('td[data-col-key="quote"]').map((c) => c.text())
-    expect(cells).toEqual(['-', '-', '录价', '录价', '录价'])
+    expect(cells).toEqual(['-', '-', '-', '录价', '录价', '录价'])
     // 入口按钮带标的定位 testid（有入口的三行）
     expect(wrapper.find('[data-testid="quote-600000"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="quote-000001"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="quote-ghost1"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="quote-稳稳地幸福"]').exists()).toBe(true)
   })
 
   it('点击行内「录价」打开报价弹窗，弹窗内展示标的代码', async () => {
-    const rows = [rowsForQuoteGating()[2]]
+    const rows = [rowsForQuoteGating()[3]]
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {

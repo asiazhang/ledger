@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::openapi::{ObjectBuilder, RefOr, Schema, Type};
 use utoipa::{PartialSchema, ToSchema};
 
+use super::channel::PriceChannel;
 use crate::db::query::FromRow;
 use crate::error::AppError;
 
@@ -120,6 +121,10 @@ pub struct Instrument {
     pub price_cents: Option<i64>,
     /// 是否持有该标的（有当前持仓批次 remaining_quantity > 0，派生自 security_lots）。
     pub invested: bool,
+    /// 价格写入通道（派生事实，不落库，issue #1060）：后端按类型 × 市场 × 代码
+    /// 单点派生（见 [`super::channel`]），前端据此放行单标的走势与开放录价入口，
+    /// 不再自行按类型与市场推断。
+    pub price_channel: PriceChannel,
 }
 
 #[derive(Debug, Deserialize)]
@@ -531,13 +536,19 @@ impl FromRow for InstrumentPnl {
 
 impl FromRow for Instrument {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        // 派生事实先行（issue #1060）：价格通道由类型 × 市场 × 代码单点派生，
+        // 不进 SQL 投影——SQL 无法引用 Rust 判定，行映射处消费域单点。
+        let kind: InstrumentType = row.get(2)?;
+        let market: String = row.get(5)?;
+        let symbol: String = row.get(1)?;
+        let price_channel = super::channel::derive_price_channel(kind, &market, &symbol);
         Ok(Instrument {
             id: row.get(0)?,
-            symbol: row.get(1)?,
-            kind: row.get(2)?,
+            symbol,
+            kind,
             name: row.get(3)?,
             currency_code: row.get(4)?,
-            market: row.get(5)?,
+            market,
             created_at: row.get(6)?,
             updated_at: row.get(7)?,
             version: row.get(8)?,
@@ -545,6 +556,7 @@ impl FromRow for Instrument {
             source: row.get(10)?,
             price_cents: row.get(11)?,
             invested: row.get(12)?,
+            price_channel,
         })
     }
 }

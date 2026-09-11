@@ -97,10 +97,11 @@
     "rangeAll": "All",
     "captionPortfolio": "Unit: {currency} (base currency)",
     "captionInstrument": "Quote currency: {currency}",
-    "noSource": "No market data source",
-    "noSourceExtra": "This instrument type is not covered by market data collection (stocks / ETFs only), so no trend chart is available.",
+    "noSource": "No price source for this instrument",
+    "noSourceExtra": "Stock instruments with an unknown market are not covered by market data collection and do not accept manual price entry, so no trend chart is available.",
     "empty": "No historical price data",
-    "emptyExtra": "Click “Sync Instrument Info” in the instrument list to backfill the last two years of quotes, then the trend will appear."
+    "emptyExtra": "Click “Sync Instrument Info” in the instrument list to backfill the last two years of quotes, then the trend will appear.",
+    "emptyExtraManual": "Click “Record Price” in the instrument list to enter a price, then the trend will appear."
   },
   "form": {
     "amount": "Amount",

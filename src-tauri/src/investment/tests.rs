@@ -10,6 +10,7 @@
 //! - [`fund_add`]：按代码即拉添加基金（注入 stub，issue #301 / ADR-0038）
 //! - [`manual_price`]：手动报价两落点与信号发射判定（issue #291 / ADR-0036）
 //! - [`predicates`]：「持仓标的」判定谓词 ↔ v_holdings 视图一致性绑定
+//! - [`price_channel`]：价格通道派生判定与读路径接线（issue #1060）
 //! - [`trade`]：buy/sell 写入与买卖明细查询（命名对齐源码 trade 模块）
 //! - [`convert`]：基金转换（convert）写入——转出腿 FIFO 消耗与结转成本、转入批次
 //!   建仓与闭合、零已实现盈亏、余额不变、两腿时点持仓、守卫与回退/删除（ADR-0099）
@@ -33,6 +34,7 @@ mod instrument_manual_create;
 mod manual_price;
 mod pnl;
 mod predicates;
+mod price_channel;
 mod stock_add;
 mod stock_create;
 mod stock_lookup;
