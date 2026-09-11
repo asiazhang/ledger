@@ -55,6 +55,15 @@ pub(crate) struct LotRestatement {
     pub(crate) cost_per_unit_after: i64,
 }
 
+/// 单批次重述前的快照（回补的唯一依据）：读自 `security_lot_adjustments` 的
+/// `_before` 列，命名列组随结构体带语义，不靠 SELECT 位置约定。
+struct LotBefore {
+    lot_id: String,
+    initial_quantity: f64,
+    remaining_quantity: f64,
+    cost_per_unit_cents: i64,
+}
+
 /// 在用批次重述快照行（含锚点行金额：闭合目标的权威依据）。
 struct LotSnapshot {
     lot_id: String,
@@ -247,25 +256,30 @@ pub(crate) fn write_split_side_effects(
 pub(crate) fn restore_restatement(conn: &Connection, id: &str) -> Result<()> {
     let now = now_iso();
     // 先读全量 before 快照再落盘：读与写不交错，审计行随后的清空不影响回补依据。
-    let prior: Vec<(String, f64, f64, i64)> = {
+    let prior: Vec<LotBefore> = {
         let mut stmt = conn.prepare(
             "SELECT lot_id, initial_quantity_before, remaining_quantity_before, \
              cost_per_unit_cents_before FROM security_lot_adjustments WHERE transaction_id=?1",
         )?;
         stmt.query_map(rusqlite::params![id], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            Ok(LotBefore {
+                lot_id: r.get(0)?,
+                initial_quantity: r.get(1)?,
+                remaining_quantity: r.get(2)?,
+                cost_per_unit_cents: r.get(3)?,
+            })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?
     };
-    for (lot_id, initial_before, remaining_before, cost_per_unit_before) in prior {
+    for lot in prior {
         conn.execute(
             "UPDATE security_lots SET initial_quantity=?2, remaining_quantity=?3, cost_per_unit_cents=?4, \
              updated_at=?5, version=version+1, device_id=?6 WHERE id=?1",
             rusqlite::params![
-                lot_id,
-                initial_before,
-                remaining_before,
-                cost_per_unit_before,
+                lot.lot_id,
+                lot.initial_quantity,
+                lot.remaining_quantity,
+                lot.cost_per_unit_cents,
                 now,
                 device_id(conn)?
             ],

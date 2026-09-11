@@ -77,15 +77,17 @@ const SPLIT_CONSUMED_BY_DOWNSTREAM_CANNOT_DELETE: &str =
     "该份额调整的批次已被后续交易消耗，无法删除";
 const SPLIT_CONSUMED_BY_DOWNSTREAM_CANNOT_DELETE_CODE: &str = "trade.split-consumed-delete";
 
-/// 撤销一笔 buy / sell / convert 交易对持仓的全部影响（修改路径与删除路径同一动作）。
+/// 撤销一笔 buy / sell / convert / split 交易对持仓的全部影响（修改路径与删除路径同一动作）。
 ///
-/// 按 kind 与模式分派（ADR-0097 / ADR-0099）：
+/// 按 kind 与模式分派（ADR-0097 / ADR-0099 / ADR-0106）：
 /// - sell：回补其扣减的持仓并清空卖出关联（两模式同一，无守卫）；
 /// - buy：修改模式先用「在用占用」守卫拒绝（批次已被在用后续转换消耗 / 已被在用
 ///   sell 匹配消耗），再整批清理批次与买入明细；删除模式经转换链守卫后**级联**——
 ///   其持仓批次的在用 sell 逐笔回补（各自软删由行为层编排），再整批清理；
 /// - convert：与 buy 同规，另在清理前回补**转出腿**（逐批次精确回补，必须先于清目标
 ///   行——删目标行会按外键级联删掉消耗记录）；
+/// - split：其重述过的批次被在用下游消耗则拒绝改 / 删，放行后按重述审计逐批次 before
+///   快照精确回补并清空扩展行（无级联语义，ADR-0106 决策 3/5）；
 /// - 其余 kind 无持仓副作用，返回空表。
 ///
 /// 删除模式返回被级联的 sell id 列表（ADR-0097 契约：级联对象由行为层逐笔软删并
@@ -300,18 +302,20 @@ fn guard_no_split_downstream_consumed(conn: &Connection, id: &str, mode: Mode) -
         ),
     };
     let consumed: bool = conn.query_row(
-        "SELECT EXISTS ( \
-           SELECT 1 FROM ( \
-             SELECT s.sell_transaction_id AS txn_id FROM security_lot_sales s \
-              WHERE s.lot_id IN (SELECT lot_id FROM security_lot_adjustments WHERE transaction_id=?1) \
-             UNION ALL \
-             SELECT c.transaction_id AS txn_id FROM security_lot_conversions c \
-              WHERE c.lot_id IN (SELECT lot_id FROM security_lot_adjustments WHERE transaction_id=?1) \
-             UNION ALL \
-             SELECT a.transaction_id AS txn_id FROM security_lot_adjustments a \
-              WHERE a.transaction_id<>?1 \
-                AND a.lot_id IN (SELECT lot_id FROM security_lot_adjustments WHERE transaction_id=?1) \
-           ) d \
+        "WITH adjusted(lot_id) AS ( \
+           SELECT lot_id FROM security_lot_adjustments WHERE transaction_id=?1 \
+         ), downstream(txn_id) AS ( \
+           SELECT s.sell_transaction_id FROM security_lot_sales s \
+            WHERE s.lot_id IN (SELECT lot_id FROM adjusted) \
+           UNION ALL \
+           SELECT c.transaction_id FROM security_lot_conversions c \
+            WHERE c.lot_id IN (SELECT lot_id FROM adjusted) \
+           UNION ALL \
+           SELECT a.transaction_id FROM security_lot_adjustments a \
+            WHERE a.transaction_id<>?1 AND a.lot_id IN (SELECT lot_id FROM adjusted) \
+         ) \
+         SELECT EXISTS ( \
+           SELECT 1 FROM downstream d \
            JOIN transactions t ON t.id = d.txn_id \
            WHERE t.is_deleted = 0 \
              AND t.rowid > (SELECT rowid FROM transactions WHERE id = ?1) \

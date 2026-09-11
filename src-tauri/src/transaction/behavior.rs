@@ -96,7 +96,7 @@ const CONVERT_KIND_CHANGE_FORBIDDEN: &str =
 /// 拒绝挂起（重放端本地重述重建归 #1053，与创建协议同一口径）。
 const SPLIT_KIND_CHANGE_FORBIDDEN_CODE: &str = "trade.split-kind-change-forbidden";
 const SPLIT_KIND_CHANGE_FORBIDDEN: &str =
-    "不可将交易类型改为或改出「份额调整」：份额调整的纠错只有「删除后重建」一条路";
+    "不可将交易类型改为或改出「份额调整」：换交易类型的纠错只有「删除后重建」一条路";
 
 // ---------------------------------------------------------------------------
 // 写入形态闭集（issue #1004 / ADR-0105）

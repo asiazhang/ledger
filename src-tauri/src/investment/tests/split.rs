@@ -1192,6 +1192,13 @@ fn split_downstream_convert_guards_delete() {
     )
     .unwrap();
 
+    let e = update_transaction_internal(
+        &conn,
+        &split_id,
+        make_split_input("acc-sp", "inst-sp", 60.0),
+    )
+    .expect_err("被下游转换消耗的份额调整修改应被拒绝");
+    assert_eq!(e.code().unwrap(), "trade.split-consumed-update", "{e:?}");
     let e = delete_transaction_internal(&conn, &split_id)
         .expect_err("被下游转换消耗的份额调整删除应被拒绝");
     assert_eq!(e.code().unwrap(), "trade.split-consumed-delete", "{e:?}");
@@ -1225,6 +1232,9 @@ fn split_later_split_guards_earlier_split_delete() {
 
     let e = delete_transaction_internal(&conn, &first).expect_err("前一行被后一行重述应被拒绝");
     assert_eq!(e.code().unwrap(), "trade.split-consumed-delete", "{e:?}");
+    let e = update_transaction_internal(&conn, &first, make_split_input("acc-sp", "inst-sp", 50.0))
+        .expect_err("前一行被后一行重述应拒绝修改");
+    assert_eq!(e.code().unwrap(), "trade.split-consumed-update", "{e:?}");
 
     delete_transaction_internal(&conn, &second).unwrap();
     assert_eq!(

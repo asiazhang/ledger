@@ -6,7 +6,7 @@
 
 ### Added
 
-- **投资**：新增份额调整（拆股 / 送股 / 份额折算与结转）记录——AI 导入与迁移可提交「份额变多 / 变少、钱不动」的公司行为，持仓与市值随份额变化，全部账户余额与已实现盈亏保持不变；改 / 删此类记录暂不支持（后续版本放开）（[#1049]）。
+- **投资**：新增份额调整（拆股 / 送股 / 份额折算与结转）记录——AI 导入与迁移可提交「份额变多 / 变少、钱不动」的公司行为，持仓与市值随份额变化，全部账户余额与已实现盈亏保持不变；记录可修改与删除，改 / 删按逐批次重述审计精确回补（含舍入）（[#1049]、[#1051]）。
 - **投资**：「同步标的信息」新增逐标的进度条与计数，完成照常提示结果、失败提示错误（[#897]）。
 - **账本**：新增多账本——可新建、改名、移除与切换，现有数据自动成为「默认账本」（[#831]、[#834]）。
 - **账本**：多账本适配备份与自动解锁缓存；「更改数据位置」改为仅搬移当前账本（[#836]）。
@@ -331,6 +331,7 @@
 [#894]: https://github.com/asiazhang/ledger/issues/894
 [#849]: https://github.com/asiazhang/ledger/issues/849
 [#1049]: https://github.com/asiazhang/ledger/issues/1049
+[#1051]: https://github.com/asiazhang/ledger/issues/1051
 [#897]: https://github.com/asiazhang/ledger/issues/897
 [#917]: https://github.com/asiazhang/ledger/issues/917
 [#920]: https://github.com/asiazhang/ledger/issues/920
