@@ -554,15 +554,42 @@ pub fn publish_checkpoint_with(
     Ok(pointer)
 }
 
+/// 拉取所得的检查点：检查点本体 + 通道快照的封包形态标记。
+///
+/// `sealed` 为真表示通道上的快照是密文信封（源库为加密形态）——引导端据此
+/// 对齐本库加密形态：明文库引导密文快照后若不转换为本机密文库，后续轮次
+/// 便无法开封通道上的密文段（信封形态全通道一致是隐含契约）；对齐动作归
+/// 壳层引导编排（issue #864，复用备份域整库加密转换）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchedCheckpoint {
+    /// 检查点本体（快照 + 位点）。
+    pub checkpoint: Checkpoint,
+    /// 通道快照是否为密文信封。
+    pub sealed: bool,
+    /// 采纳的检查点代数（manifest 指针，向导展示与日志用）。
+    pub generation: i64,
+    /// 快照密文字节数。
+    pub size: u64,
+}
+
+/// 读取通道上的当前检查点指针（不下载快照体；新端引导前的预检接缝，
+/// 壳层向导据此区分「通道上还没有检查点」与「发现检查点可引导」）。
+pub fn peek_checkpoint_pointer(
+    transport: &dyn Transport,
+    layout: &ChannelLayout,
+) -> Result<Option<CheckpointPointer>> {
+    Ok(read_manifest(transport, layout)?.checkpoint)
+}
+
 /// 拉取通道上的当前检查点（新端引导的取件接缝；解封凭主口令，明文模式免口令）。
 ///
-/// 返回的 [`Checkpoint`] 交给 [`checkpoint::bootstrap_from_checkpoint`] 完成
-/// 整库换入（引导流程编排归 #862 壳层加入向导）。
+/// 返回的 [`FetchedCheckpoint`] 交给 [`checkpoint::bootstrap_from_checkpoint`] 完成
+/// 整库换入（引导流程编排归壳层加入向导，issue #864）。
 pub fn fetch_checkpoint(
     transport: &dyn Transport,
     layout: &ChannelLayout,
     passphrase: Option<&str>,
-) -> Result<Checkpoint> {
+) -> Result<FetchedCheckpoint> {
     let manifest = read_manifest(transport, layout)?;
     let pointer = manifest.checkpoint.ok_or_else(|| {
         AppError::coded("sync-channel.checkpoint-none", "同步通道上还没有检查点快照")
@@ -574,8 +601,18 @@ pub fn fetch_checkpoint(
     if bytes.len() as u64 != pointer.size || sha256_hex(&bytes) != pointer.sha256 {
         return Err(checkpoint_corrupt_error(&path));
     }
+    // 封包形态先于开封判定（`is_sealed` 按文件自身魔数，自描述）：引导端
+    // 据此对齐本库加密形态，见 [`FetchedCheckpoint::sealed`]。
+    let sealed = envelope::is_sealed(&bytes);
     let bundle = envelope::open(&bytes, passphrase)?;
-    unframe_checkpoint_bundle(&bundle).map_err(|_| checkpoint_corrupt_error(&path))
+    let checkpoint =
+        unframe_checkpoint_bundle(&bundle).map_err(|_| checkpoint_corrupt_error(&path))?;
+    Ok(FetchedCheckpoint {
+        checkpoint,
+        sealed,
+        generation: pointer.generation,
+        size: pointer.size,
+    })
 }
 
 /// 检查点通道载荷组帧：头（位点 JSON，4 字节 LE 长度前缀）+ 快照字节。

@@ -526,3 +526,49 @@ fn bootstrap_migrates_older_schema_snapshot() {
     );
     assert_balance_cache_matches_realtime(&conn_b);
 }
+
+// ---------------------------------------------------------------------------
+// 「加入即新库」守卫：library_has_user_data 探针（issue #864 壳层引导前置）
+// ---------------------------------------------------------------------------
+
+/// 全新空库（含种子行）无用户业务数据：种子以 device_id='seed' 排除，
+/// 不误报——误报会让全新设备永远无法引导。
+#[test]
+fn fresh_library_has_no_user_data() {
+    let conn = test_support::open();
+    assert!(
+        !crate::sync_engine::checkpoint::library_has_user_data(&conn).unwrap(),
+        "全新库（含种子分类/币种/黑洞账户）不应判为已有业务数据"
+    );
+}
+
+/// 任一业务域的用户事实行都触发探针：交易（主探针）与无交易的纯参考数据
+///（用户建的账户/分类）同样判为已有数据——引导整库换入会覆盖它们。
+#[test]
+fn user_fact_rows_in_any_business_domain_trigger_probe() {
+    // 交易在位（主探针）。
+    let conn = test_support::open();
+    base_ledger(&conn);
+    assert!(
+        crate::sync_engine::checkpoint::library_has_user_data(&conn).unwrap(),
+        "有交易的库应判为已有业务数据"
+    );
+
+    // 纯参考数据：用户建的账户（device_id 非种子）而无任何交易。
+    let conn = test_support::open();
+    seed_account(&conn, "acc-user", "钱包", "cash", "CNY", 0);
+    assert_ne!(
+        conn.query_row(
+            "SELECT device_id FROM accounts WHERE id = 'acc-user'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "seed",
+        "测试前置：种子账户判定应成立"
+    );
+    assert!(
+        crate::sync_engine::checkpoint::library_has_user_data(&conn).unwrap(),
+        "只有用户自建账户（无交易）也应判为已有业务数据"
+    );
+}

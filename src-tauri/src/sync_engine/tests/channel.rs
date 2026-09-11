@@ -373,10 +373,11 @@ fn checkpoint_publish_bootstrap_and_increment_over_channel() {
     // 全新端：拉取 + 引导（目标尚未参与同步）。
     let mut conn_c = test_support::open();
     let fetched = fetch_checkpoint(&mem, &layout, None).unwrap();
+    assert!(!fetched.sealed, "明文模式检查点应回带未封包标记");
     // 检查点两半同刻到达：快照字节 + 各流位点（A 端两笔 op 的流头）。
-    assert!(!fetched.positions.is_empty());
-    assert_eq!(fetched.positions[0].applied_through, 2);
-    bootstrap_from_checkpoint(&mut conn_c, &fetched, None).unwrap();
+    assert!(!fetched.checkpoint.positions.is_empty());
+    assert_eq!(fetched.checkpoint.positions[0].applied_through, 2);
+    bootstrap_from_checkpoint(&mut conn_c, &fetched.checkpoint, None).unwrap();
     assert!(
         read_transaction(&conn_c, &first.id).is_some(),
         "快照业务数据就位"
@@ -442,7 +443,7 @@ fn two_end_file_exchange_over_local_webdav_stub() {
     publish_checkpoint_with(&conn_a, &dav, &layout, &mode, &fast_options()).unwrap();
     let mut conn_c = test_support::open();
     let fetched = fetch_checkpoint(&dav, &layout, None).unwrap();
-    bootstrap_from_checkpoint(&mut conn_c, &fetched, None).unwrap();
+    bootstrap_from_checkpoint(&mut conn_c, &fetched.checkpoint, None).unwrap();
     assert_eq!(
         read_transaction(&conn_c, &a_txn.id),
         read_transaction(&conn_a, &a_txn.id)
@@ -489,6 +490,12 @@ fn encrypted_exchange_over_local_webdav_stub() {
         read_transaction(&conn_b, &created.id),
         read_transaction(&conn_a, &created.id)
     );
+
+    // 密文检查点拉取回带封包标记（引导端对齐本库加密形态的依据，#864）。
+    publish_checkpoint_with(&conn_a, &dav, &layout, &mode, &fast_options()).unwrap();
+    let fetched = fetch_checkpoint(&dav, &layout, Some("两端共知的口令")).unwrap();
+    assert!(fetched.sealed, "密文模式检查点应回带封包标记");
+    assert!(!fetched.checkpoint.snapshot.is_empty());
 }
 
 /// 同步失败不影响本地记账（AC：凭据/网络失败明确可重试，本地旁路不受扰）。
