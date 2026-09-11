@@ -32,6 +32,7 @@ use sha2::{Digest, Sha256};
 
 use super::amount::TransactionKind;
 use super::model::{CreateTransactionResult, TransactionInput};
+use crate::db::tx_scope::hold_transaction;
 use crate::error::{AppError, ErrClass, Result};
 use crate::signals::WriteEvidence;
 use crate::transaction::behavior::create as create_transaction_internal;
@@ -67,99 +68,107 @@ impl TransactionBatch {
     ) -> Result<BatchOutcome> {
         let started = Instant::now();
         let total = inputs.len();
-        conn.execute("BEGIN", [])?;
-        let mut results = Vec::with_capacity(total);
-        // 聚合证据：任一实际落库的行即建商户即为真（ADR-0044 决策 4，issue #331）。
-        let mut any_merchant_created = false;
         // 失败条数：累计到批次汇总日志（成功路径=无效行数；回滚路径含触发回滚的那条）。
         let mut failed = 0usize;
-        for input in inputs {
-            // 客户端幂等键：带键时作为去重身份（内容无关），无键时 None 走内容哈希兜底。
-            let idempotency_key = input.idempotency_key.clone();
-            // 去重身份判定用 T1/issue #62 的 `dedup_identity`：带键按键查（走部分唯一索引）、
-            // 无键回退内容哈希（走部分索引）；ADR-0010 的契约编码在 `DedupIdentity` 类型里，不散在 if 分支。
-            // `New` 携带内容哈希供落库回写 `dedup_hash` 列，避免重复计算。
-            // 单条写入（含 buy/sell 的持仓副作用路径）由行为层创建编排入口
-            // `behavior::create`（issue #228 / ADR-0033）承担：本函数持有外层批次事务，
-            // 入口以嵌套模式加入（失败直接返回错误、回滚归本层），其交易行落库
-            // 已收口到 `transaction::writer` 接缝（issue #60）：列映射与审计字段统一由
-            // writer 生成，此处不重复；去重身份（幂等键/内容哈希）仍在本批次编排层
-            // 判定与回写，不沉入 writer。
-            let dedup_hash = if dedup {
-                match dedup_identity(conn, &input)? {
-                    DedupIdentity::Existing { id } => {
+        // 批次外层事务壳（issue #310 / #1014）：整批原子——单行 Invalid 跳过，
+        // 非 Invalid 失败直接返回错误、由 `hold_transaction` 整体回滚。无条件自持
+        // 原语归基础设施 `db::tx_scope`（#1003 grilling 定案 3/4）；`PRAGMA optimize`
+        // 与汇总日志留批次层、包在本调用点外（#1003 定案 8）。
+        let outcome = hold_transaction(conn, || {
+            let mut results = Vec::with_capacity(total);
+            // 聚合证据：任一实际落库的行即建商户即为真（ADR-0044 决策 4，issue #331）。
+            let mut any_merchant_created = false;
+            for input in inputs {
+                // 客户端幂等键：带键时作为去重身份（内容无关），无键时 None 走内容哈希兜底。
+                let idempotency_key = input.idempotency_key.clone();
+                // 去重身份判定用 T1/issue #62 的 `dedup_identity`：带键按键查（走部分唯一索引）、
+                // 无键回退内容哈希（走部分索引）；ADR-0010 的契约编码在 `DedupIdentity` 类型里，不散在 if 分支。
+                // `New` 携带内容哈希供落库回写 `dedup_hash` 列，避免重复计算。
+                // 单条写入（含 buy/sell 的持仓副作用路径）由行为层创建编排入口
+                // `behavior::create`（issue #228 / ADR-0033）承担：本函数持有外层批次事务，
+                // 入口以嵌套模式加入（失败直接返回错误、回滚归本层），其交易行落库
+                // 已收口到 `transaction::writer` 接缝（issue #60）：列映射与审计字段统一由
+                // writer 生成，此处不重复；去重身份（幂等键/内容哈希）仍在本批次编排层
+                // 判定与回写，不沉入 writer。
+                let dedup_hash = if dedup {
+                    match dedup_identity(conn, &input)? {
+                        DedupIdentity::Existing { id } => {
+                            results.push(CreateTransactionResult {
+                                success: true,
+                                duplicate: true,
+                                // 冻结契约即类型：幂等键命中回传已有 id，内容哈希命中回传 id:None（不回归）。
+                                id,
+                                error: None,
+                            });
+                            continue;
+                        }
+                        DedupIdentity::New { dedup_hash } => dedup_hash,
+                    }
+                } else {
+                    compute_dedup_hash(&input)
+                };
+                match create_transaction_internal(conn, input) {
+                    Ok(write) => {
+                        // 聚合复用证据自身的形状判定（与映射单点同一份，不自写 matches!）。
+                        any_merchant_created |= write.evidence.merchant_created();
+                        if let Err(e) = conn.execute(
+                            "UPDATE transactions SET dedup_hash=?1, idempotency_key=?2 WHERE id=?3",
+                            rusqlite::params![dedup_hash, idempotency_key, write.id],
+                        ) {
+                            failed += 1;
+                            return Err(e.into());
+                        }
                         results.push(CreateTransactionResult {
                             success: true,
-                            duplicate: true,
-                            // 冻结契约即类型：幂等键命中回传已有 id，内容哈希命中回传 id:None（不回归）。
-                            id,
+                            duplicate: false,
+                            id: Some(write.id),
                             error: None,
                         });
-                        continue;
                     }
-                    DedupIdentity::New { dedup_hash } => dedup_hash,
-                }
-            } else {
-                compute_dedup_hash(&input)
-            };
-            match create_transaction_internal(conn, input) {
-                Ok(write) => {
-                    // 聚合复用证据自身的形状判定（与映射单点同一份，不自写 matches!）。
-                    any_merchant_created |= write.evidence.merchant_created();
-                    if let Err(e) = conn.execute(
-                        "UPDATE transactions SET dedup_hash=?1, idempotency_key=?2 WHERE id=?3",
-                        rusqlite::params![dedup_hash, idempotency_key, write.id],
-                    ) {
-                        conn.execute("ROLLBACK", [])?;
+                    Err(AppError::Invalid(msg)) => {
                         failed += 1;
-                        log_batch_summary(started, total, failed, false);
-                        return Err(e.into());
+                        results.push(CreateTransactionResult {
+                            success: false,
+                            duplicate: false,
+                            id: None,
+                            error: Some(msg),
+                        });
                     }
-                    results.push(CreateTransactionResult {
-                        success: true,
-                        duplicate: false,
-                        id: Some(write.id),
-                        error: None,
-                    });
-                }
-                Err(AppError::Invalid(msg)) => {
-                    failed += 1;
-                    results.push(CreateTransactionResult {
-                        success: false,
-                        duplicate: false,
-                        id: None,
-                        error: Some(msg),
-                    });
-                }
-                // 码化 Invalid（issue #342 二期）：行为层校验失败码化后同归「单行失败」，
-                // 不改变「单行校验失败不回滚整批」的编排语义。
-                Err(AppError::Coded {
-                    class: ErrClass::Invalid,
-                    message,
-                    ..
-                }) => {
-                    failed += 1;
-                    results.push(CreateTransactionResult {
-                        success: false,
-                        duplicate: false,
-                        id: None,
-                        error: Some(message),
-                    });
-                }
-                Err(e) => {
-                    conn.execute("ROLLBACK", [])?;
-                    failed += 1;
-                    log_batch_summary(started, total, failed, false);
-                    return Err(e);
+                    // 码化 Invalid（issue #342 二期）：行为层校验失败码化后同归「单行失败」，
+                    // 不改变「单行校验失败不回滚整批」的编排语义。
+                    Err(AppError::Coded {
+                        class: ErrClass::Invalid,
+                        message,
+                        ..
+                    }) => {
+                        failed += 1;
+                        results.push(CreateTransactionResult {
+                            success: false,
+                            duplicate: false,
+                            id: None,
+                            error: Some(message),
+                        });
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        return Err(e);
+                    }
                 }
             }
-        }
-        if let Err(e) = conn.execute("COMMIT", []) {
-            // COMMIT 失败：尝试回滚清理残留（错误路径同样记录批次汇总）。
-            let _ = conn.execute("ROLLBACK", []);
-            log_batch_summary(started, total, failed, false);
-            return Err(e.into());
-        }
+            Ok(BatchOutcome {
+                results,
+                evidence: WriteEvidence::MerchantCreated(any_merchant_created),
+            })
+        });
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            // 中途失败：`hold_transaction` 已尽力整体回滚，批次层记汇总日志后上抛
+            // （回滚路径含触发回滚的那条失败，与提交成功路径的无效行数口径区分）。
+            Err(e) => {
+                log_batch_summary(started, total, failed, false);
+                return Err(e);
+            }
+        };
         // 批量提交后重跑统计（issue #490）：批量写入是唯一的批量落库入口，
         // 每批提交后执行 `PRAGMA optimize`——按表行数变化启发式增量 ANALYZE，
         // 统计无需刷新时零开销、只刷需要的表，批量大小不设门槛；新装库迁移期
@@ -173,10 +182,7 @@ impl TransactionBatch {
         // 数据已提交，批次应有一条可观测的汇总行。置脏已随迁移收口写入口
         // （issue #245）：调用方的 db.write 闭包在此处返回 Ok 后于提交点触发。
         log_batch_summary(started, total, failed, true);
-        Ok(BatchOutcome {
-            results,
-            evidence: WriteEvidence::MerchantCreated(any_merchant_created),
-        })
+        Ok(outcome)
     }
 }
 

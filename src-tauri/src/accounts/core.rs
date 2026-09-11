@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::accounts::balance::refresh_account_balances;
 use crate::db::query::query_all;
-use crate::db::tx_scope::ensure_transaction;
+use crate::db::tx_scope::{ensure_transaction, hold_transaction};
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
@@ -348,8 +348,10 @@ pub fn adjust_account_balance(
             "余额已等于目标值，无需调整",
         ));
     }
-    conn.execute("BEGIN", [])?;
-    let res = (|| -> Result<(String, bool)> {
+    // 余额调整外层事务壳（issue #310）：黑洞账户 ensure 与交易写入必须同事务。
+    // 无条件自持原语归基础设施 `db::tx_scope::hold_transaction`（issue #1014 / #1003
+    // 定案 3/4）：中途失败整体回滚、COMMIT 失败尽力清理，失败语义与行为层编排入口统一。
+    hold_transaction(conn, || {
         let (black_hole_id, created) = ensure_black_hole_account(conn, &account.currency_code)?;
         let (account_id, to_account_id) = if delta > 0 {
             (black_hole_id.clone(), id.to_string())
@@ -390,17 +392,7 @@ pub fn adjust_account_balance(
         )?
         .id;
         Ok((tx_id, created))
-    })();
-    match res {
-        Ok((tx_id, created)) => {
-            conn.execute("COMMIT", [])?;
-            Ok((tx_id, created))
-        }
-        Err(e) => {
-            conn.execute("ROLLBACK", [])?;
-            Err(e)
-        }
-    }
+    })
 }
 
 /// 手动审计命令领域逻辑（issue #491 / ADR-0067）：全账户实时重算 vs 余额缓存，
