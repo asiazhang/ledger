@@ -41,7 +41,7 @@ fn create_instrument_idempotently(
     market: String,
     currency: String,
 ) {
-    let kind: InstrumentType = kind.parse().expect("未知金融工具类型");
+    let kind = InstrumentType::parse(&kind).expect("未知金融工具类型");
     create_instrument(
         &world_conn!(world),
         InstrumentInput {

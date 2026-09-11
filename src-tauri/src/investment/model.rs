@@ -8,73 +8,70 @@
 //! 承载行情 DTO。全部类型经 `investment` 域路径逐类型再导出，消费方经域路径
 //! 显式 import，禁止 glob。
 
-use std::fmt;
-use std::str::FromStr;
-
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
 use utoipa::openapi::{ObjectBuilder, RefOr, Schema, Type};
 use utoipa::{PartialSchema, ToSchema};
 
+use crate::closed_set::closed_set;
 use crate::db::query::FromRow;
-use crate::error::AppError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+closed_set! {
+/// 金融工具类型闭集（与 `instruments.instrument_type` 的 CHECK 约束（V002）
+/// 一一对应）。五份表示（enum / `ALL` / `as_str` / `parse` / `Display`）由
+/// `closed_set!` 宏同体派生（ADR-0108）：字符串字面量每变体只出现一次，
+/// 漏登/漏臂漂移不可表达；随 ADR-0102 既定形态收口，serde 由
+/// `rename_all = "snake_case"` derive（与 `Display`/`FromStr` 平行的第二套
+/// 字符串面、漂移无守门）改为手写 impl 骑行 `as_str`/`parse`（wire 形状
+/// 逐字不变：5 变体全单词，`snake_case` 展开与 `as_str` 同形）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstrumentType {
-    Stock,
-    Fund,
-    Bond,
-    Etf,
-    Other,
+    Stock => "stock",
+    Fund => "fund",
+    Bond => "bond",
+    Etf => "etf",
+    Other => "other",
+}
+err_label = "金融工具类型",
 }
 
-impl InstrumentType {
-    /// 闭集全量清单（OpenAPI 枚举等消费；先例：`TransactionKind::ALL`）。
-    pub const ALL: [InstrumentType; 5] = [
-        InstrumentType::Stock,
-        InstrumentType::Fund,
-        InstrumentType::Bond,
-        InstrumentType::Etf,
-        InstrumentType::Other,
-    ];
-}
-
-impl fmt::Display for InstrumentType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InstrumentType::Stock => write!(f, "stock"),
-            InstrumentType::Fund => write!(f, "fund"),
-            InstrumentType::Bond => write!(f, "bond"),
-            InstrumentType::Etf => write!(f, "etf"),
-            InstrumentType::Other => write!(f, "other"),
-        }
+// serde：以与 `instruments.instrument_type` 同形的小写字符串序列化（wire 格式
+// 与 `rename_all = "snake_case"` 时代的 JSON 形状逐字一致）；反序列化复用
+// [`InstrumentType::parse`]，未知值报错文案与 parse 同源（serde 包装后附位置
+// 信息）。先例：[`crate::transaction::TransactionKind`]。
+impl Serialize for InstrumentType {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
     }
 }
 
-impl FromStr for InstrumentType {
-    type Err = AppError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "stock" => Ok(InstrumentType::Stock),
-            "fund" => Ok(InstrumentType::Fund),
-            "bond" => Ok(InstrumentType::Bond),
-            "etf" => Ok(InstrumentType::Etf),
-            "other" => Ok(InstrumentType::Other),
-            _ => Err(AppError::Invalid(format!("未知金融工具类型: {s}"))),
-        }
+impl<'de> Deserialize<'de> for InstrumentType {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        InstrumentType::parse(&s).map_err(serde::de::Error::custom)
     }
 }
 
 // OpenAPI（utoipa）：闭集枚举以小写字符串枚举值入文档，与 wire 格式一致
 // （先例：`TransactionKind`，内联 schema，消费方字段直接嵌入、无需注册组件；
-// 枚举值由 [`InstrumentType::ALL`] 驱动，变体增减单点同步）。
+// 枚举值由 `closed_set!` 宏生成的 [`InstrumentType::ALL`] 同源驱动）。
 impl PartialSchema for InstrumentType {
     fn schema() -> RefOr<Schema> {
         RefOr::T(Schema::Object(
             ObjectBuilder::new()
                 .schema_type(Type::String)
-                .enum_values(Some(InstrumentType::ALL.map(|k| k.to_string())))
+                .enum_values(Some(
+                    InstrumentType::ALL
+                        .iter()
+                        .map(|k| k.as_str().to_string())
+                        .collect::<Vec<_>>(),
+                ))
                 .description(Some(
                     "金融工具类型（闭集，小写字符串，与 instruments.instrument_type 一致）",
                 ))
@@ -87,16 +84,13 @@ impl ToSchema for InstrumentType {}
 
 impl ToSql for InstrumentType {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        Ok(ToSqlOutput::from(self.to_string()))
+        Ok(ToSqlOutput::from(self.as_str()))
     }
 }
 
 impl FromSql for InstrumentType {
     fn column_result(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
-        value
-            .as_str()?
-            .parse()
-            .map_err(|e: AppError| FromSqlError::Other(Box::new(e)))
+        InstrumentType::parse(value.as_str()?).map_err(|e| FromSqlError::Other(Box::new(e)))
     }
 }
 
