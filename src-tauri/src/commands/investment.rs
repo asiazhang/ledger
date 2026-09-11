@@ -240,9 +240,10 @@ pub async fn add_fund_by_code(
         WriteOp::AddFundByCode,
         move |conn| {
             // 网络拉取在锁外：单请求叠加限流冷却重试最长可达分钟级，不阻塞其它命令。
-            let detail = crate::sync::fetch_fund_detail_production(&code)?;
-            // 编排单点：经接缝以已拉取的详情驱动（注入闭包同值回放）。
-            let mut fetch = |_: &str| Ok(detail.clone());
+            let quote = crate::sync::fetch_fund_quote_production(&code)?;
+            // 编排单点：经接缝以已拉取的报价驱动（注入闭包同值回放；统一注入签名
+            // 为（代码，市场），场外基金无交易所市场，市场位不消费）。
+            let mut fetch = |_: &str, _: &str| Ok(quote.clone());
             investment_domain::add_fund_by_code_with(conn, &code, &mut fetch).map(|result| {
                 let evidence = WriteEvidence::PriceWritten(result.price_written);
                 Outcome::Evidenced(result, evidence)
@@ -272,8 +273,9 @@ pub async fn add_instrument_by_code(
     // 查询阶段在锁外：网络往返不进锁（慢闭包纪律）；生产拉取闭包与同步域同一
     // HTTP 层（主机池/重试/限流），未命中/临时错误以码化错误上抛给对话框分流。
     let quote = tauri::async_runtime::spawn_blocking(move || {
+        // 统一注入签名（ADR-0103）：（代码，市场）——场内市场由候选解析单点产出。
         let mut fetch =
-            |market: &str, code: &str| crate::sync::fetch_stock_quote_production(market, code);
+            |code: &str, market: &str| crate::sync::fetch_stock_quote_production(market, code);
         investment_domain::fetch_stock_quote_for_add(&market, &code, &mut fetch)
     })
     .await

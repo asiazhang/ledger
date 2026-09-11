@@ -283,7 +283,7 @@ fn after_commit(conn: &Connection) {
 /// 连接层统一 DB 调用 helper：把 DB 闭包放到 tauri 全局运行时的阻塞线程池执行
 /// （显式句柄 [`tauri::async_runtime::spawn_blocking`]，从 HTTP 壳自建运行时调用
 /// 亦安全——返回的 JoinHandle 是跨运行时 future，生产先例
-/// `fetch_fund_detail_for_api`），事件循环线程与 tokio worker 不再被 DB 调用占用。
+/// `fetch_fund_quote_for_api`），事件循环线程与 tokio worker 不再被 DB 调用占用。
 ///
 /// - 闭包自带连接获取方式：读路径锁内执行（`conn.lock()`），写路径经连接层
 ///   统一写入口 [`write`]（ADR-0032 置脏语义零改动）；

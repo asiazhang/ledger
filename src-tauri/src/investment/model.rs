@@ -1,11 +1,12 @@
 //! 投资域集中模型（#422 随域归位）：金融工具、持仓、行情价、已实现盈亏、
-//! 标的列表分页、基金/股票行情 DTO 与财务自由度总览。
+//! 标的列表分页与财务自由度总览。
 //!
 //! 自全局模型目录迁入本域（#417 归属原则）；财务自由度并入为既有裁决
-//! （自由度归投资域，ADR-0048）。基金行情 DTO（[`FundDetail`] / [`FundNav`]）
-//! 与股票行情 DTO（[`StockQuote`]，issue #693）虽有录入入口在行情同步壳，
-//! 但被投资域引擎自身消费，域归属投资（#422 Q11 事实修正）。全部类型经
-//! `investment` 域路径逐类型再导出，消费方经域路径显式 import，禁止 glob。
+//! （自由度归投资域，ADR-0048）。基金与股票的行情 DTO（issue #693）随 #422 Q11
+//! 归属修正迁入本域后，又随 ADR-0103 收口为行情接入接缝的**统一报价载荷**
+//! [`super::quote::Quote`]（深层统一：不再有嵌套的通道专属载荷），本文件不再
+//! 承载行情 DTO。全部类型经 `investment` 域路径逐类型再导出，消费方经域路径
+//! 显式 import，禁止 glob。
 
 use std::fmt;
 use std::str::FromStr;
@@ -603,45 +604,6 @@ pub struct PortfolioValueTrend {
     /// 折算基准（本位币）。
     pub currency_code: String,
     pub points: Vec<PortfolioTrendPoint>,
-}
-
-// ---------------------------------------------------------------------------
-// 基金行情 DTO（#422 Q11 归属修正自行情同步域迁入）
-// ---------------------------------------------------------------------------
-
-/// 按代码即拉拉取到的基金详情（issue #301 / ADR-0038 决策 1）：名称与东财分类
-/// 为透传展示信息（不落库），nav 缺省（新发基金尚未公布首期净值等）时仅建
-/// 标的、不落现价（不广播价格失效信号）。
-#[derive(Debug, Clone, PartialEq)]
-pub struct FundDetail {
-    pub code: String,
-    pub name: String,
-    /// 东财基金分类（如「混合型-灵活」），展示与 AI 确认识别用，不落库。
-    pub fund_class: String,
-    pub nav: Option<FundNav>,
-}
-
-/// 基金最新单位净值（真实价格值，元）与其净值日期（ISO 日期）。
-#[derive(Debug, Clone, PartialEq)]
-pub struct FundNav {
-    pub nav: f64,
-    pub nav_date: String,
-}
-
-/// 按（市场，代码）拉取到的股票行情（issue #693 / ADR-0081 决策 1）：与
-/// [`FundDetail`] 同为「按代码实时查询」领域接缝的返回形态——基金走场外净值
-/// 通道、股票走行情通道，两翼同一模式。name 为东财权威名称；最新价已在访问
-/// 层按市场缩放换算为万分之一元刻度（停牌/无有效报价为 None）；price_date 为
-/// 最新价的北京日历日；kind_hint 为东财类型特征字段的类型提示（场内基金类 →
-/// Etf，其余 → Stock，探测单点在行情同步域）。
-#[derive(Debug, Clone, PartialEq)]
-pub struct StockQuote {
-    pub code: String,
-    pub name: String,
-    pub market: String,
-    pub price_cents: Option<i64>,
-    pub price_date: Option<String>,
-    pub kind_hint: InstrumentType,
 }
 
 // ---------------------------------------------------------------------------

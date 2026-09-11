@@ -11,7 +11,7 @@
 //! [`crate::write_entry::write_entry`]（ADR-0073）：事务、置脏、信号内化单点。
 //! 不触 DB 的端点（基金查询实时网络往返、导入知识、OpenAPI
 //! 文档）形态不变：基金详情拉取在连接锁外完成（分钟级阻塞网络往返不进锁，
-//! 慢闭包纪律），先例 `fetch_fund_detail_for_api`。
+//! 慢闭包纪律），先例 `fetch_fund_quote_for_api`。
 
 pub mod accounts;
 pub mod categories;

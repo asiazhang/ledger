@@ -19,7 +19,7 @@ use rusqlite::params;
 
 use tauri_app_lib::api_server::StockQuoteFetcher;
 use tauri_app_lib::error::AppError;
-use tauri_app_lib::investment::{InstrumentType, StockQuote};
+use tauri_app_lib::investment::{InstrumentType, Quote};
 
 use crate::common::{StockStubHit, get_json, post_instrument, setup_app_with_stock_stub};
 
@@ -274,13 +274,15 @@ fn toggle_stub(
             return Err(AppError::Io("东财网络不可达".into()));
         }
         match hits.get(&format!("{market}/{code}")) {
-            Some(hit) => Ok(StockQuote {
+            Some(hit) => Ok(Quote {
                 code: code.to_string(),
                 name: hit.name.to_string(),
-                market: market.to_string(),
                 price_cents: hit.price.map(|(p, _)| p),
                 price_date: hit.price.map(|(_, d)| d.to_string()),
-                kind_hint: hit.kind_hint,
+                market: Some(market.to_string()),
+                kind_hint: Some(hit.kind_hint),
+                fund_class: None,
+                nav_date: None,
             }),
             None => Err(AppError::codedp(
                 "sync.stock-not-found",

@@ -1,36 +1,37 @@
-//! 按代码即拉添加基金（issue #301 / ADR-0038）：编排接缝（注入详情获取 stub）
-//! 的落库行为——标的字典行（类型 fund / 市场 unknown / 来源 manual）、现价缓存
-//! （净值即价格 + 净值日期 + priced_at = 净值日期）、未取到净值不落现价、
-//! 非法代码前置拦截、查无此码不产生标的行、幂等复用。全部离线驱动。
+//! 按代码即拉添加基金（issue #301 / ADR-0038 / ADR-0103）：编排接缝（注入报价
+//! 获取 stub，统一注入签名（代码，市场））的落库行为——标的字典行（类型 fund /
+//! 市场 unknown / 来源 manual）、现价缓存（净值即价格 + 净值日期 + priced_at =
+//! 净值日期）、未取到净值不落现价、非法代码前置拦截、查无此码不产生标的行、
+//! 幂等复用。全部离线驱动。
 
 use rusqlite::Connection;
 
 use crate::error::{AppError, Result};
+use crate::investment::Quote;
 use crate::investment::add_fund_by_code_with;
 use crate::investment::fund::validate_fund_code;
-use crate::investment::{FundDetail, FundNav};
+use crate::investment::prices::price_value_to_cents;
 
 use crate::test_support::open;
 
-/// 构造一份典型基金详情（净值 1.3180 → 13180 万分之一元）。
-fn detail(code: &str, name: &str, fund_class: &str, nav: Option<FundNav>) -> FundDetail {
-    FundDetail {
+/// 构造一份典型基金报价（统一载荷，ADR-0103）：净值 1.3180 → 13180 万分之一元；
+/// 场外通道的价格日期与净值日期同为净值日期，市场与类型提示是场内成员（缺省）。
+fn quote(code: &str, name: &str, fund_class: &str, nav: Option<(f64, &str)>) -> Quote {
+    let nav = nav.map(|(nav, date)| (price_value_to_cents(nav), date.to_string()));
+    Quote {
         code: code.to_string(),
         name: name.to_string(),
-        fund_class: fund_class.to_string(),
-        nav,
+        price_cents: nav.as_ref().map(|(cents, _)| *cents),
+        price_date: nav.as_ref().map(|(_, date)| date.clone()),
+        market: None,
+        kind_hint: None,
+        fund_class: Some(fund_class.to_string()),
+        nav_date: nav.map(|(_, date)| date),
     }
 }
 
-fn nav(nav: f64, date: &str) -> FundNav {
-    FundNav {
-        nav,
-        nav_date: date.to_string(),
-    }
-}
-
-fn stub_fetch_with(detail: FundDetail) -> impl FnMut(&str) -> Result<FundDetail> {
-    move |_code: &str| Ok(detail.clone())
+fn stub_fetch_with(quote: Quote) -> impl FnMut(&str, &str) -> Result<Quote> {
+    move |_code: &str, _market: &str| Ok(quote.clone())
 }
 
 /// 查标的行（symbol + 类型定位）：。
@@ -69,11 +70,11 @@ fn adds_fund_with_nav_and_price_cache() {
     let result = add_fund_by_code_with(
         &conn,
         "000001",
-        &mut stub_fetch_with(detail(
+        &mut stub_fetch_with(quote(
             "000001",
             "华夏成长混合",
             "混合型-灵活",
-            Some(nav(1.318, "2026-08-28")),
+            Some((1.318, "2026-08-28")),
         )),
     )
     .unwrap();
@@ -112,7 +113,7 @@ fn adds_fund_without_nav_only_instrument_row() {
     let result = add_fund_by_code_with(
         &conn,
         "012345",
-        &mut stub_fetch_with(detail("012345", "新发基金", "混合型", None)),
+        &mut stub_fetch_with(quote("012345", "新发基金", "混合型", None)),
     )
     .unwrap();
 
@@ -128,9 +129,9 @@ fn invalid_code_rejected_before_fetch() {
     let conn = open();
     for bad in ["12345", "1234567", "00001a", "000 01", ""] {
         let mut called = 0usize;
-        let mut fetch = |_code: &str| -> Result<FundDetail> {
+        let mut fetch = |_code: &str, _market: &str| -> Result<Quote> {
             called += 1;
-            Ok(detail("000001", "华夏成长混合", "混合型", None))
+            Ok(quote("000001", "华夏成长混合", "混合型", None))
         };
         let err = add_fund_by_code_with(&conn, bad, &mut fetch).unwrap_err();
         assert!(
@@ -170,7 +171,7 @@ fn validate_fund_code_accepts_six_digits_only() {
 fn unknown_code_error_propagates_without_instrument_row() {
     // 查无此码：获取函数返回中文 Invalid 错误，上抛给 UI；不产生标的行。
     let conn = open();
-    let mut fetch = |_code: &str| -> Result<FundDetail> {
+    let mut fetch = |_code: &str, _market: &str| -> Result<Quote> {
         Err(AppError::Invalid(
             "查无基金代码 999999，请核对后重试".into(),
         ))
@@ -191,22 +192,22 @@ fn re_add_reuses_instrument_row_and_overwrites_price() {
     let first = add_fund_by_code_with(
         &conn,
         "000001",
-        &mut stub_fetch_with(detail(
+        &mut stub_fetch_with(quote(
             "000001",
             "旧名称",
             "混合型-灵活",
-            Some(nav(1.0, "2026-08-01")),
+            Some((1.0, "2026-08-01")),
         )),
     )
     .unwrap();
     let second = add_fund_by_code_with(
         &conn,
         "000001",
-        &mut stub_fetch_with(detail(
+        &mut stub_fetch_with(quote(
             "000001",
             "华夏成长混合",
             "混合型-灵活",
-            Some(nav(1.318, "2026-08-28")),
+            Some((1.318, "2026-08-28")),
         )),
     )
     .unwrap();

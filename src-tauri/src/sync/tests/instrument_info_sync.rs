@@ -11,7 +11,7 @@ use rusqlite::{Connection, params};
 
 use crate::error::{AppError, Result};
 use crate::investment::prices::{
-    EASTMONEY_PRICE_SOURCE, upsert_market_price, upsert_price_history,
+    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, upsert_market_price, upsert_price_history,
 };
 use crate::sync::fund_nav::{LsjzPage, NavPoint, NavQuery};
 use crate::sync::http::{
@@ -301,13 +301,15 @@ fn incremental_sync_updates_holding_prices_only() {
     // 预先存在的旧价（应被覆盖更新，不产生新行）
     upsert_market_price(
         &conn,
-        "inst-sh",
-        999,
-        "CNY",
-        // 预置旧价的时间点为夹具簿记，引用工厂固定时刻常量（ADR-0084 决策 5）。
-        crate::test_support::FIXED_NOW,
-        None,
-        Some("eastmoney"),
+        &MarketPriceWrite {
+            instrument_id: "inst-sh",
+            price_cents: 999,
+            currency_code: "CNY",
+            // 预置旧价的时间点为夹具簿记，引用工厂固定时刻常量（ADR-0084 决策 5）。
+            priced_at: crate::test_support::FIXED_NOW,
+            nav_date: None,
+            source: Some("eastmoney"),
+        },
     )
     .unwrap();
 
@@ -418,13 +420,15 @@ fn incremental_sync_keeps_old_price_when_suspended() {
     // 停牌股已有旧价
     upsert_market_price(
         &conn,
-        "inst-sz",
-        888,
-        "CNY",
-        // 预置旧价的时间点为夹具簿记，引用工厂固定时刻常量（ADR-0084 决策 5）。
-        crate::test_support::FIXED_NOW,
-        None,
-        Some("eastmoney"),
+        &MarketPriceWrite {
+            instrument_id: "inst-sz",
+            price_cents: 888,
+            currency_code: "CNY",
+            // 预置旧价的时间点为夹具簿记，引用工厂固定时刻常量（ADR-0084 决策 5）。
+            priced_at: crate::test_support::FIXED_NOW,
+            nav_date: None,
+            source: Some("eastmoney"),
+        },
     )
     .unwrap();
 
@@ -1287,12 +1291,14 @@ fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
     // 水位 = 现价缓存的净值日期 01-28（周三），上一轮已把该周采样写到周三。
     upsert_market_price(
         &conn,
-        "inst-fund",
-        30000,
-        "CNY",
-        "2026-01-28",
-        Some("2026-01-28"),
-        Some(EASTMONEY_PRICE_SOURCE),
+        &MarketPriceWrite {
+            instrument_id: "inst-fund",
+            price_cents: 30000,
+            currency_code: "CNY",
+            priced_at: "2026-01-28",
+            nav_date: Some("2026-01-28"),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
     )
     .unwrap();
     upsert_price_history(
@@ -1377,12 +1383,14 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
         .to_string();
     upsert_market_price(
         &conn,
-        "inst-fund",
-        30000,
-        "CNY",
-        &watermark,
-        Some(&watermark),
-        Some(EASTMONEY_PRICE_SOURCE),
+        &MarketPriceWrite {
+            instrument_id: "inst-fund",
+            price_cents: 30000,
+            currency_code: "CNY",
+            priced_at: &watermark,
+            nav_date: Some(&watermark),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
     )
     .unwrap();
 
@@ -2393,12 +2401,14 @@ fn fund_up_to_date_still_advances_progress() {
         .to_string();
     upsert_market_price(
         &conn,
-        "inst-fund",
-        30000,
-        "CNY",
-        &watermark,
-        Some(&watermark),
-        Some(EASTMONEY_PRICE_SOURCE),
+        &MarketPriceWrite {
+            instrument_id: "inst-fund",
+            price_cents: 30000,
+            currency_code: "CNY",
+            priced_at: &watermark,
+            nav_date: Some(&watermark),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
     )
     .unwrap();
 

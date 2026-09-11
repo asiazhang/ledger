@@ -14,7 +14,7 @@ use axum::Router;
 use axum::http::StatusCode;
 use rusqlite::params;
 
-use tauri_app_lib::api_server::FundDetailFetcher;
+use tauri_app_lib::api_server::FundQuoteFetcher;
 use tauri_app_lib::error::AppError;
 
 use crate::common::{FundStubHit, post_instrument, setup_app_with_fund_stub};
@@ -181,23 +181,25 @@ fn toggle_stub(
     hits: HashMap<String, FundStubHit>,
     down: Arc<AtomicBool>,
     calls: Arc<Mutex<Vec<String>>>,
-) -> FundDetailFetcher {
+) -> FundQuoteFetcher {
     Arc::new(move |code: &str| {
         calls.lock().unwrap().push(code.to_string());
         if down.load(Ordering::SeqCst) {
             return Err(AppError::Io("东财网络不可达".into()));
         }
         match hits.get(code) {
-            Some(hit) => Ok(tauri_app_lib::investment::FundDetail {
+            Some(hit) => Ok(tauri_app_lib::investment::Quote {
                 code: code.to_string(),
                 name: hit.name.to_string(),
-                fund_class: hit.fund_class.to_string(),
-                nav: hit
+                // 场外通道：价格已在访问层换算为万分之一元刻度，价格日期即净值日期。
+                price_cents: hit
                     .nav
-                    .map(|(nav, nav_date)| tauri_app_lib::investment::FundNav {
-                        nav,
-                        nav_date: nav_date.to_string(),
-                    }),
+                    .map(|(nav, _)| tauri_app_lib::investment::prices::price_value_to_cents(nav)),
+                price_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
+                market: None,
+                kind_hint: None,
+                fund_class: Some(hit.fund_class.to_string()),
+                nav_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
             }),
             None => Err(AppError::Invalid(format!(
                 "查无基金代码 {code}，请核对后重试"

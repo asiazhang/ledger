@@ -163,6 +163,9 @@
   "fund": {
     "code-invalid": "fund code must be 6 digits"
   },
+  "quote": {
+    "market-missing": "quote is missing its market (internal inconsistency)"
+  },
   "stock": {
     "bse-unsupported": "stock code {0} belongs to the Beijing Stock Exchange (starts with 4/8), which is not supported yet",
     "channel-unsupported": "instrument entry channel {0} is not supported (currently sh / sz / hk / us)",

@@ -3,7 +3,7 @@
 use cucumber::{given, then, when};
 
 use tauri_app_lib::dashboard::query_dashboard_overview;
-use tauri_app_lib::investment::prices::upsert_market_price;
+use tauri_app_lib::investment::prices::{MarketPriceWrite, upsert_market_price};
 use tauri_app_lib::investment::{InstrumentInput, InstrumentType, create_instrument};
 use tauri_app_lib::transaction::{TransactionKind, create_transaction_internal};
 
@@ -41,12 +41,14 @@ fn set_market_price(world: &mut LedgerWorld, symbol: String, price: i64, currenc
     let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
     upsert_market_price(
         &world_conn!(world),
-        &instrument_id,
-        price,
-        &currency,
-        "2025-06-01",
-        None,
-        None,
+        &MarketPriceWrite {
+            instrument_id: &instrument_id,
+            price_cents: price,
+            currency_code: &currency,
+            priced_at: "2025-06-01",
+            nav_date: None,
+            source: None,
+        },
     )
     .expect("标的现价夹具：写入失败");
 }
