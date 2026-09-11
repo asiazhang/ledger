@@ -46,12 +46,13 @@ pub enum CategoryCommand {
 }
 
 impl CategoryCommand {
-    /// 命令指向的实体 id（LWW 裁决域 = 单个分类）；重排无实体指向。
-    pub(crate) fn subject(&self) -> Option<(&'static str, &str)> {
+    /// 命令指向的实体键（LWW 裁决域 = 单个分类）；重排无实体指向。实体标签不在
+    /// 此返回——由同步域重放注册表单源组装（ADR-0101 勘误 3）。
+    pub(crate) fn subject(&self) -> Option<&str> {
         match self {
             CategoryCommand::Create { id, .. }
             | CategoryCommand::Update { id, .. }
-            | CategoryCommand::Delete { id } => Some(("category", id)),
+            | CategoryCommand::Delete { id } => Some(id),
             CategoryCommand::Reorder { .. } => None,
         }
     }

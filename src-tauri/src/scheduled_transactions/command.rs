@@ -26,8 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::{deterministic_uuid, now_iso};
 use crate::error::Result;
+use crate::sync_engine::command::ReplayEffect;
 use crate::sync_engine::device_id;
-use crate::sync_engine::engine::ReplayEffect;
 use crate::sync_engine::{DomainCommand, record_local as record_op};
 use crate::transaction::NormalizedTransaction;
 use crate::transaction::writer;
@@ -75,16 +75,17 @@ pub enum ScheduledCommand {
 }
 
 impl ScheduledCommand {
-    /// 命令指向的实体（LWW 裁决域 = 单个计划，ADR-0091 决策 4）：计划 CRUD 按
-    /// plan 实体裁决；期次触发冲突域在 OccurrenceKey、期次展开按本端现状重推，
-    /// 均无实体指向、不参与同实体 LWW（ADR-0091 决策 5）。
-    pub fn subject(&self) -> Option<(&'static str, &str)> {
+    /// 命令指向的实体键（LWW 裁决域 = 单个计划，ADR-0091 决策 4）：计划 CRUD
+    /// 携带 plan id；期次触发冲突域在 OccurrenceKey、期次展开按本端现状重推，
+    /// 均无实体指向、不参与同实体 LWW（ADR-0091 决策 5）。实体标签不在此返回
+    /// ——由同步域重放注册表单源组装（ADR-0101 勘误 3）。
+    pub fn subject(&self) -> Option<&str> {
         match self {
             ScheduledCommand::ExecuteOccurrence { .. }
             | ScheduledCommand::ExpandOccurrences { .. } => None,
             ScheduledCommand::CreatePlan { id, .. }
             | ScheduledCommand::UpdatePlanStatus { id, .. }
-            | ScheduledCommand::UpdateSubscription { id, .. } => Some(("scheduled", id)),
+            | ScheduledCommand::UpdateSubscription { id, .. } => Some(id),
         }
     }
 

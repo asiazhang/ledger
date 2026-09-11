@@ -67,7 +67,10 @@ fn physical_asset_lifecycle_ops_replay_and_converge() {
 
     let ops = read_ops(&conn_a).unwrap();
     assert_eq!(ops.len(), 4, "建档/编辑/估值/处置各一条：{ops:?}");
-    assert!(ops.iter().all(|op| op.command.entity() == "physical_asset"));
+    assert!(
+        ops.iter()
+            .all(|op| op.command.subject().0 == "physical_asset")
+    );
 
     wire_in(&conn_b, &wire_out(&conn_a));
 

@@ -10,8 +10,11 @@ use super::common::{
     make_expense, read_occurrence, read_transaction, seed_device, seed_occurrence, seed_plan,
     wire_in, wire_out,
 };
+use crate::investment::{MarketPriceInput, create_market_price};
 use crate::scheduled_transactions::{execute_occurrence, occurrence_transaction_id};
-use crate::test_support::{self, assert_balance_cache_matches_realtime, seed_account};
+use crate::test_support::{
+    self, assert_balance_cache_matches_realtime, seed_account, seed_instrument,
+};
 use crate::transaction::behavior;
 
 /// 并发修改同一笔交易：两端按全序取序末者（LWW），输者的 op 落日志可追溯。
@@ -75,6 +78,65 @@ fn concurrent_same_field_edits_converge_to_order_last() {
     );
     assert_balance_cache_matches_realtime(&conn_a);
     assert_balance_cache_matches_realtime(&conn_b);
+}
+
+/// price 类 op 的 LWW 复活（ADR-0101 勘误 2）：现价录入的裁决域标签归一为
+/// serde tag（`price`），跨轮乱序到达时输者被 `Superseded`、终态 = 全序赢者值。
+///
+/// 归一前 `PriceCommand::subject()` 返回 `market_price`，与 `sync_ops.entity`
+/// 列（`price`）字面不同，LWW 检索永不命中——两端各自执行对方 op、终态漂移。
+#[test]
+fn concurrent_market_price_edits_converge_to_order_last() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    // 固定 DeviceId：dev-a < dev-b，全序确定（B 的写入为序末者）。
+    seed_device(&conn_a, "dev-a");
+    seed_device(&conn_b, "dev-b");
+    seed_instrument(&conn_a, "inst-1", "SYM", "Symbol", "USD", "unknown");
+    seed_instrument(&conn_b, "inst-1", "SYM", "Symbol", "USD", "unknown");
+
+    let write = |conn: &rusqlite::Connection, price_cents: i64| {
+        create_market_price(
+            conn,
+            MarketPriceInput {
+                instrument_id: "inst-1".into(),
+                price_cents,
+                currency_code: "USD".into(),
+                priced_at: "2026-01-10".into(),
+                source: None,
+            },
+        )
+        .unwrap();
+    };
+    // 两端并发写同一标的现价：同钟 tiebreak 落 DeviceId，B 的 op 为全序末者。
+    write(&conn_a, 200);
+    write(&conn_b, 100);
+
+    let reports_b = wire_in(&conn_b, &wire_out(&conn_a));
+    let reports_a = wire_in(&conn_a, &wire_out(&conn_b));
+
+    assert_eq!(
+        outcomes(&reports_b),
+        vec![OpOutcome::Superseded],
+        "B 端：A 的同实体早序 op 被 LWW 压制"
+    );
+    assert_eq!(
+        outcomes(&reports_a),
+        vec![OpOutcome::Skipped, OpOutcome::Applied],
+        "A 端：回传日志含本端已知 op（跳过），B 的序末 op 执行"
+    );
+
+    let current = |conn: &rusqlite::Connection| -> i64 {
+        conn.query_row(
+            "SELECT price_cents FROM market_prices WHERE instrument_id='inst-1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(current(&conn_a), 100, "A 端收敛到全序赢者");
+    assert_eq!(current(&conn_b), 100, "B 端收敛到全序赢者");
+    assert_eq!(read_ops(&conn_a).unwrap(), read_ops(&conn_b).unwrap());
 }
 
 /// 并发「删除 vs 修改」：修改为序末者时，删除端不自动复活（park 承接裁决）。
@@ -259,8 +321,11 @@ fn occurrence_command_has_no_entity_subject() {
     execute_occurrence(&conn, "occ-a").unwrap();
     let ops = read_ops(&conn).unwrap();
     assert_eq!(ops.len(), 1);
-    assert_eq!(ops[0].command.entity(), "scheduled");
-    assert!(ops[0].command.subject().is_none());
+    assert_eq!(ops[0].command.subject().0, "scheduled");
+    assert!(
+        ops[0].command.subject().1.is_none(),
+        "期次触发无实体键（冲突域在 OccurrenceKey）"
+    );
     let DomainCommand::Scheduled(cmd) = &ops[0].command else {
         panic!("应为期次触发命令");
     };

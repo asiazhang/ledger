@@ -85,7 +85,7 @@ fn item_lifecycle_ops_replay_and_converge() {
     let ops = read_ops(&conn_a).unwrap();
     // 交易 op + 物品 create/update/dispose 各一条（软删在后续步骤）。
     assert_eq!(ops.len(), 4, "交易 + create/update/dispose：{ops:?}");
-    assert_eq!(ops[1].command.entity(), "item");
+    assert_eq!(ops[1].command.subject().0, "item");
 
     wire_in(&conn_b, &wire_out(&conn_a));
     let row = |conn: &rusqlite::Connection| -> (String, String, i64, String, Option<i64>) {

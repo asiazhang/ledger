@@ -89,7 +89,7 @@ fn plan_lifecycle_ops_replay_and_converge() {
 
     let ops = read_ops(&conn_a).unwrap();
     assert_eq!(ops.len(), 4, "建档/状态/编辑/展开各一条：{ops:?}");
-    assert!(ops.iter().all(|op| op.command.entity() == "scheduled"));
+    assert!(ops.iter().all(|op| op.command.subject().0 == "scheduled"));
 
     let reports = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(

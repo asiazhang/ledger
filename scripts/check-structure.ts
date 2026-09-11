@@ -22,6 +22,12 @@
 // 事实固化为规格」；清单之外的基础设施→域引用一律红。首条 db/mod.rs→backup
 // 为 ADR-0032 连接层写入口置脏单点（#246）——ADR-0071 §6「落地即全绿」原
 // 前提漏数此边，勘误注记见该 ADR（#538 实施时补录）。
+// 业务域→同步域严形态（ADR-0101 决策 4b / 勘误 4）：业务域引用同步域（sync_engine）
+// 合法面 = 契约模块 `command` ∪ 根再导出白名单 {DomainCommand, record_local,
+// device_id}（各附缘由注释，认许边同款纪律）；内部模块路径（engine::/ops::/model::
+// /channel::…）一律红——「重放不产本地 op」今天靠「域不知道 ops 存在」的结构巧合
+// 成立，扫描把巧合变规格。作用域限业务域目录（test_support/ 测试专用边、sync_engine
+// 自身、壳层 commands/ 与 tests 不在列）；文本级扫描、别名改写不可达，靠评审兜底。
 // 模型域化禁令（ADR-0059 T7 / #424 收口落地，全树扫描、同样掩码与测试豁免）：
 // ① 全局模型模块路径残留禁令——`crate::models` / `tauri_app_lib::models` 即红：
 //    全局模型目录已随域归位消亡，防扁平命名空间复活（crate 根裸路径 `models::x`
@@ -150,6 +156,108 @@ const MODEL_GLOB_REEXPORT_PATTERN = /\bpub\s+use\s+[\w:]*\bmodels?\b\s*::\s*\*/
 
 /** 规则②形态：任意 glob 再导出（仅用于域模型文件内的聚合扫描） */
 const MODEL_FILE_GLOB_PATTERN = /\bpub\s+use\s+[\w:]*\*/
+
+/** 业务域→同步域引用锚点（crate 根前缀限定；掩码后匹配） */
+const SYNC_ENGINE_REF_PATTERN = /\b(?:crate|tauri_app_lib)\s*::\s*sync_engine\b/
+
+/** 同步域契约模块名（业务域唯一可引的内部模块，ADR-0101 决策 4b） */
+const SYNC_CONTRACT_MODULE = 'command'
+
+/**
+ * 同步域根再导出白名单（业务域引用同步域根符号的合法面，ADR-0101 勘误 4）：
+ * 每条附缘由——认许边同款纪律，新增合法符号须在此留痕。
+ */
+const SYNC_ROOT_ALLOWED_SYMBOLS: ReadonlyMap<string, string> = new Map([
+  ['DomainCommand', '同步重放契约：op 载荷信封（域命令类型经此进 op）'],
+  ['record_local', '本机 op 产出单点（行为编排入口随写事务追加 op）'],
+  ['device_id', '本机 DeviceId 读取（域侧簿记戳/版本列共用接缝）'],
+])
+
+/** 花括号列举内不合法的条目头（深度 0 逐条切分后取首个标识符；`self`/契约模块/
+ *  白名单符号合法）。返回违规条目头，供调用方构造命中。 */
+function disallowedBraceEntries(body: string): string[] {
+  const out: string[] = []
+  let depth = 0
+  let current = ''
+  const flush = (): void => {
+    const head = current.trim().split(/[\s:{]/)[0] ?? ''
+    if (
+      head !== '' &&
+      head !== 'self' &&
+      head !== SYNC_CONTRACT_MODULE &&
+      !SYNC_ROOT_ALLOWED_SYMBOLS.has(head)
+    ) {
+      out.push(head)
+    }
+    current = ''
+  }
+  for (const ch of body) {
+    if (ch === '{' || ch === '(' || ch === '[') depth++
+    else if (ch === '}' || ch === ')' || ch === ']') depth--
+    if (ch === ',' && depth === 0) flush()
+    else current += ch
+  }
+  flush()
+  return out
+}
+
+/**
+ * 业务域→同步域严形态扫描（ADR-0101 决策 4b / 勘误 4）：返回引用同步域内部件
+ * （非契约模块、非白名单根符号）的命中。文本级扫描（掩码注释与字面量）。
+ */
+export function scanSyncEngineRefs(text: string): ScanHit[] {
+  const masked = maskNonCode(text)
+  const rawLines = text.split('\n')
+  const hits: ScanHit[] = []
+  const lineOf = (index: number): number => (masked.slice(0, index).match(/\n/g)?.length ?? 0) + 1
+  const push = (index: number, match: string): void => {
+    const line = lineOf(index)
+    hits.push({ line, text: (rawLines[line - 1] ?? '').trim(), match, captured: undefined })
+  }
+  for (const m of masked.matchAll(new RegExp(SYNC_ENGINE_REF_PATTERN, 'g'))) {
+    const start = m.index ?? 0
+    const tail = masked.slice(start + m[0].length)
+    const afterModule = /^\s*::\s*/.exec(tail)
+    if (!afterModule) {
+      // 无 `::` 子路径：根模块自身导入（`use crate::sync_engine;`）合法；
+      // `use crate::sync_engine as se;` 的别名引入一律红——别名改写会让后续
+      // 引用文本不可达（与既有壳层扫描的 `commands as` 同款堵漏）。
+      if (/^\s+as\b/.test(tail)) push(start, `${m[0]} as …`)
+      continue
+    }
+    const cursor = start + m[0].length + afterModule[0].length
+    if (masked[cursor] === '{') {
+      // 根花括号列举：跨行取匹配闭括号后逐条判合法。
+      let depth = 0
+      let close = -1
+      for (let i = cursor; i < masked.length; i++) {
+        if (masked[i] === '{') depth++
+        else if (masked[i] === '}') {
+          depth--
+          if (depth === 0) {
+            close = i
+            break
+          }
+        }
+      }
+      const body = masked.slice(cursor + 1, close === -1 ? masked.length : close)
+      for (const entry of disallowedBraceEntries(body)) {
+        push(start, `sync_engine::{…${entry}…}`)
+      }
+      continue
+    }
+    const segment = /^([A-Za-z_][A-Za-z0-9_]*)/.exec(masked.slice(cursor))
+    if (!segment) {
+      // `sync_engine::*` 等非具名形态：不在合法面（白名单逐符号），一律红。
+      push(start, masked.slice(start, cursor + 1))
+      continue
+    }
+    const name = segment[1]
+    if (name === SYNC_CONTRACT_MODULE || SYNC_ROOT_ALLOWED_SYMBOLS.has(name)) continue
+    push(start, `sync_engine::${name}`)
+  }
+  return hits
+}
 
 /** 域模型文件（ADR-0059 目标形状：每域一个 model.rs；定时计划域为先例名 models.rs） */
 function isModelFile(relPath: string): boolean {
@@ -375,6 +483,10 @@ function main(): void {
     }
     scannedFiles += files.length
     const isInfra = w.layer === LAYER.INFRA
+    // 业务域→同步域严形态作用域：域目录，除同步域自身与测试支持域
+    // （test_support→sync_engine 为测试专用边，登记处 ADR-0084 迁移状态段）。
+    const isBusinessDomain =
+      w.layer === LAYER.DOMAIN && w.path !== 'sync_engine' && w.path !== 'test_support'
     for (const f of files) {
       const source = readFileSync(f.abs, 'utf8')
       for (const hit of scanRustSource(source)) {
@@ -401,6 +513,18 @@ function main(): void {
           )
         }
       }
+      if (isBusinessDomain) {
+        for (const hit of scanSyncEngineRefs(source)) {
+          problems.push(
+            `✗ 业务域引用同步域内部件：${f.rel}:${hit.line}（${hit.match}）\n` +
+              `    ${hit.text}\n` +
+              `    严形态（ADR-0101 决策 4b）：业务域引用同步域合法面 = 契约模块 ` +
+              `command ∪ 根再导出白名单 {DomainCommand, record_local, device_id}；` +
+              `内部模块路径（engine::/ops::/model::…）一律红——` +
+              `「重放不产本地 op」从结构巧合升为规格`,
+          )
+        }
+      }
     }
   }
 
@@ -420,6 +544,7 @@ function main(): void {
     `✓ 结构守门：白名单 ${WHITELIST.length} 项（域目录 ${domainCount} + 基础设施 ${WHITELIST.length - domainCount}）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
+      `· 业务域→同步域严形态零违规（契约模块 ${SYNC_CONTRACT_MODULE} ∪ 白名单 ${SYNC_ROOT_ALLOWED_SYMBOLS.size} 符号，ADR-0101）` +
       `· 模型域化禁令全树扫描 ${allFiles.length} 个文件零残留（ADR-0059）`,
   )
 }

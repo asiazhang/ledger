@@ -55,8 +55,8 @@ fn insurer_and_policy_ops_replay_and_converge() {
         4,
         "保司创建 + 保单 create/update/delete：{ops:?}"
     );
-    assert_eq!(ops[0].command.entity(), "insurer");
-    assert!(ops[1..].iter().all(|op| op.command.entity() == "policy"));
+    assert_eq!(ops[0].command.subject().0, "insurer");
+    assert!(ops[1..].iter().all(|op| op.command.subject().0 == "policy"));
 
     let reports = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(reports.iter().all(|r| r.outcome == OpOutcome::Applied));

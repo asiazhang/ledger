@@ -256,6 +256,91 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
   })
 })
 
+describe('check-structure 业务域→同步域严形态（ADR-0101 决策 4b / 勘误 4）', () => {
+  it('业务域引用同步域内部件（engine::/ops::/model::…）→ 红并定位文件行号', () => {
+    const args = makeFixture({
+      'scheduled_transactions/command.rs': 'use crate::sync_engine::engine::ReplayEffect;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域内部件')
+    expect(r.output).toContain('scheduled_transactions/command.rs:1')
+    expect(r.output).toContain('sync_engine::engine')
+  })
+
+  it('契约模块 command 与根白名单三符号 → 绿', () => {
+    const args = makeFixture({
+      'item/command.rs': [
+        'use crate::sync_engine::command::ReplayEffect;',
+        'use crate::sync_engine::{DomainCommand, record_local as record_op};',
+        'use crate::sync_engine::device_id;',
+        'use crate::sync_engine;',
+        'pub fn x() {}',
+        '',
+      ].join('\n'),
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('根花括号列举夹带内部件 → 红（逐条判定）', () => {
+    const args = makeFixture({
+      'item/command.rs': 'use crate::sync_engine::{DomainCommand, model::SyncOp};\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域内部件')
+    expect(r.output).toContain('model')
+  })
+
+  it('根 glob 引入非白名单面 → 红', () => {
+    const args = makeFixture({ 'item/command.rs': 'use crate::sync_engine::*;\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域内部件')
+  })
+
+  it('根别名引入（use crate::sync_engine as se）→ 红（堵别名盲区）', () => {
+    const args = makeFixture({
+      'item/command.rs': 'use crate::sync_engine as se;\npub fn x() {}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域内部件')
+    expect(r.output).toContain('item/command.rs:1')
+  })
+
+  it('同步域自身与测试支持域不参与（作用域边界）', () => {
+    const args = makeFixture({
+      'sync_engine/engine.rs': 'use crate::sync_engine::ops::insert_row;\n',
+      'test_support/channel.rs': 'use crate::sync_engine::model::SyncOp;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('注释与字符串中的同步域内部路径不误报（掩码边界）', () => {
+    const args = makeFixture({
+      'item/command.rs': [
+        '/// 见 `crate::sync_engine::ops::record_local` 说明（文档注释不算引用）',
+        '// crate::sync_engine::engine::dispatch',
+        'let s = "crate::sync_engine::parked::ParkedOp";',
+        'let re = r#"crate::sync_engine::model::SyncOp"#;',
+        'pub fn f() {}',
+        '',
+      ].join('\n'),
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('真实仓库默认通过：业务域→同步域严形态零违规', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain('业务域→同步域严形态零违规')
+  })
+})
+
 describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收口）', () => {
   it('规则①：crate::models 全局模型路径残留 → 红', () => {
     const args = makeFixture({ 'item/crud.rs': 'use crate::models::Transaction;\npub fn x() {}\n' })

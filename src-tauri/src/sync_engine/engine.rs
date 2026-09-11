@@ -12,8 +12,9 @@
 //! - **Parked**：不可重放（外键依赖失败、schema 版本偏斜、载荷不可解）——进
 //!   挂起队列并报告码化原因，不落日志、不阻塞其余重放、不静默丢弃、不自动
 //!   复活数据；重投递（升级后/依赖方补齐后）自然重试，成功即出队；
-//! - **Applied**：命令经既有写入接缝执行（`transaction::replay_command` 等），
-//!   与 op 落日志同处一个事务（op 为同步原子单位），折算结果随命令携带。
+//! - **Applied**：命令经重放注册表（[`super::registry`]，ADR-0101）转发到域侧
+//!   既有写入接缝，与 op 落日志同处一个事务（op 为同步原子单位），折算结果随
+//!   命令携带。
 //!
 //! 期次触发命令（OccurrenceKey，ADR-0091 决策 5）的幂等由命令自带的确定性
 //! 落地身份承载：同键（plan_id + 期次标识）跨端派生同一落地 id，已落即命中
@@ -25,13 +26,17 @@
 
 use crate::db::tx_scope::ensure_transaction;
 use crate::error::{AppError, Result};
-use crate::transaction::replay_command;
 
-use super::command::DomainCommand;
+use super::command::{DomainCommand, ReplayBinding, ReplayEffect};
 use super::model::SyncOp;
 use super::ops;
 use super::parked::{self, ParkedOp};
 use super::positions;
+use super::registry::{
+    AccountBinding, BudgetBinding, CategoryBinding, ExchangeRateBinding, InstrumentBinding,
+    InsurerBinding, ItemBinding, LedgerSettingBinding, MerchantBinding, PhysicalAssetBinding,
+    PolicyBinding, PriceBinding, ScheduledBinding, TransactionBinding,
+};
 
 /// 单条 op 的重放结果：执行（含 op 落日志）、按幂等跳过、LWW 压制、期次去重
 /// 或挂起。
@@ -229,7 +234,8 @@ fn replay_one(conn: &rusqlite::Connection, op: &SyncOp, local_version: i64) -> R
     // LWW（ADR-0091 决策 4）：同实体存在全序更后的 op ⇒ 序末者已生效，本 op
     // 为输者——落日志可追溯、不执行。LWW 只裁决「op 都活着但打架」；op 本身
     // 永不丢弃。
-    if let Some((entity, entity_id)) = op.command.subject()
+    let (entity, entity_id) = op.command.subject();
+    if let Some(entity_id) = entity_id
         && ops::has_later_subject(conn, entity, entity_id.as_ref(), op.clock, &op.device_id)?
     {
         ensure_transaction(conn, || {
@@ -307,17 +313,14 @@ fn parked_from_op(
     params: Vec<String>,
     message: String,
 ) -> Result<ParkedOp> {
+    let (entity, entity_id) = op.command.subject();
     Ok(ParkedOp {
         op_id: op.op_id.clone(),
         device_id: op.device_id.clone(),
         clock: op.clock,
         schema_version: op.schema_version,
-        entity: op.command.entity().to_string(),
-        entity_id: op
-            .command
-            .subject()
-            .map(|(_, id)| id.into_owned())
-            .unwrap_or_default(),
+        entity: entity.to_string(),
+        entity_id: entity_id.map(|id| id.into_owned()).unwrap_or_default(),
         payload: serde_json::to_string(&op.command)
             .map_err(|e| AppError::Invalid(format!("op 载荷序列化失败: {e}")))?,
         code: code.to_string(),
@@ -366,72 +369,26 @@ fn undecodable_park_draft(raw: &str, detail: &str) -> ParkedOp {
     }
 }
 
-/// 命令分派：按实体转发到各域的重放执行接缝（新实体随 DomainCommand 追加）。
+/// 命令分派：按实体转发到重放注册表绑定（ADR-0101 决策 1）。臂保留（纯 Rust 中
+/// enum 变体到数据只有 match 可路由），降为一行委托；删任一绑定即编译红（门 c，
+/// 穷尽 match 引用全部绑定）。
 fn dispatch(conn: &rusqlite::Connection, command: &DomainCommand) -> Result<ReplayEffect> {
     match command {
-        DomainCommand::Transaction(cmd) => {
-            replay_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
-        DomainCommand::Scheduled(cmd) => crate::scheduled_transactions::replay_command(conn, cmd),
-        DomainCommand::LedgerSetting(cmd) => {
-            crate::currencies::replay_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
-        DomainCommand::Account(cmd) => {
-            crate::accounts::replay_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
-        DomainCommand::Category(cmd) => {
-            crate::categories::replay_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
-        DomainCommand::Merchant(cmd) => {
-            crate::merchants::replay_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
-        DomainCommand::Budget(cmd) => {
-            crate::budget::replay_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
-        DomainCommand::Policy(cmd) => {
-            crate::policy::replay_policy_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
-        DomainCommand::Insurer(cmd) => {
-            crate::policy::replay_insurer_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
-        DomainCommand::Item(cmd) => {
-            crate::item::replay_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
-        DomainCommand::PhysicalAsset(cmd) => {
-            crate::physical_asset::replay_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
-        DomainCommand::Instrument(cmd) => {
-            crate::investment::replay_instrument_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
-        DomainCommand::ExchangeRate(cmd) => {
-            crate::investment::replay_exchange_rate_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
-        DomainCommand::Price(cmd) => {
-            crate::investment::replay_price_command(conn, cmd)?;
-            Ok(ReplayEffect::Applied)
-        }
+        DomainCommand::Transaction(cmd) => TransactionBinding::replay(conn, cmd),
+        DomainCommand::Scheduled(cmd) => ScheduledBinding::replay(conn, cmd),
+        DomainCommand::LedgerSetting(cmd) => LedgerSettingBinding::replay(conn, cmd),
+        DomainCommand::Account(cmd) => AccountBinding::replay(conn, cmd),
+        DomainCommand::Category(cmd) => CategoryBinding::replay(conn, cmd),
+        DomainCommand::Merchant(cmd) => MerchantBinding::replay(conn, cmd),
+        DomainCommand::Budget(cmd) => BudgetBinding::replay(conn, cmd),
+        DomainCommand::Policy(cmd) => PolicyBinding::replay(conn, cmd),
+        DomainCommand::Insurer(cmd) => InsurerBinding::replay(conn, cmd),
+        DomainCommand::Item(cmd) => ItemBinding::replay(conn, cmd),
+        DomainCommand::PhysicalAsset(cmd) => PhysicalAssetBinding::replay(conn, cmd),
+        DomainCommand::Instrument(cmd) => InstrumentBinding::replay(conn, cmd),
+        DomainCommand::ExchangeRate(cmd) => ExchangeRateBinding::replay(conn, cmd),
+        DomainCommand::Price(cmd) => PriceBinding::replay(conn, cmd),
     }
-}
-
-/// 命令执行效果：落地新效果，或幂等命中（该效果已在本端存在）。
-///
-/// 期次触发命令（OccurrenceKey）经确定性落地身份去重时返回 `IdempotentHit`；
-/// 其余命令恒为 `Applied`。
-pub(crate) enum ReplayEffect {
-    Applied,
-    IdempotentHit,
 }
 
 /// 读取本机全部 op（本地产出 + 已重放的外来 op），按全序返回。
