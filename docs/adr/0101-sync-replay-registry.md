@@ -1,6 +1,6 @@
 # ADR-0101: 同步重放注册表——ReplayBinding 单点承载可重放契约，裁决域派生归域，三道门守契约
 
-- 状态：已接受（grilling 定稿，2026-09-11）
+- 状态：已接受（grilling 定稿，2026-09-11；同日实施前核查二轮勘误，见文末勘误注记）
 - 日期：2026-09-11
 - 作者：Ledger 项目
 - 关联：#1006（spec 与实施票，架构走查 2026-09-11 候选 4）；ADR-0091（哑通道 + 语义命令重放——本决策是其接口化补充，不改变其语义）；ADR-0047（命令注册注解驱动——被否决的 build.rs 扫描路线的先例与对照）；ADR-0087（断言强度——门的验收判据）；ADR-0056（后端分层，域不依赖壳）；#860/#861（DomainCommand 14 实体的既有落点）
@@ -48,3 +48,17 @@ enum、serde 输出、`sync_ops.entity` 列取值、挂起行字段全部不动�
 4. 域侧 subject 派生的签名形状不强制统一（Option 包装与否由域自定），由适配层归一——域保留自然形状。
 5. 「新增一个可重放域」仍非字面加一行：加 enum 变体 + 两处一行臂 + 一个绑定 + 域侧 subject 派生与重放入口 + 样本——每步都被门拦住漏项，但步数是诚实的。
 6. 词汇表收「重放注册表」词条（接缝名与契约承载关系）；机制细节以本 ADR 为唯一解释处（与 ADR-0047 决策 6 同一取舍，但本机制属 sync 分域自有接缝，故词条落 CONTEXT-sync）。
+
+## 勘误注记（2026-09-11 实施前核查 · 二轮 grilling · 维护者裁决）
+
+实施前代码核查推翻两处基线事实并校准一处接缝口径，均不改动本文决策骨架；证据坐标见 #1006 二轮记录。
+
+> **勘误 1（背景事实：price 标签双源，LWW 对 price 从未生效）**：`PriceCommand::subject()` 今日返回 `("market_price", 标的)` / `("price_history", 标的×周)`，而 serde tag、`entity()` 与 `sync_ops.entity` 列均为 `"price"`；LWW 检索以 subject 标签查 entity 列，字面不同即永不命中——price 类 op 的 LWW 压制从未生效，跨轮乱序到达（先 clock 大后 clock 小）时输者执行并覆盖赢者，终态可能为全序输者的值。测试面仅 `reference_data.rs` 钉住现标签，无 price LWW 用例。决策 2「标签恒有（entity 列取值）」与决策 5「列取值不动」在此事实下相撞，二轮裁决如下。
+
+> **勘误 2（决策 2/5 落实口径：列读 subject 标签，price 归一并复活 LWW）**：op 落库与挂起行的 entity 列改读 `subject().0`（「标签恒有」动机成立，`entity()` 真删除、无替代路由臂）；price 裁决域标签归一——`"market_price"`/`"price_history"` 字面量删除（全库仅定义处与测试钉值两处，其余命中为 `price_history`/`market_prices` 表名，无外溢）。LWW 对 price 复活，为本次**唯一行为变化**，以引擎测试钉住跨轮乱序（输者 `Superseded`、终态 = 全序赢者）。决策 5 完整成立：归一后列值仍为 `"price"`，零列值变化、零新旧行混窗。键碰撞面已排除：`instrument_id` 一律 `new_uuid()`（不含 `|`），裸 uuid 键与 `uuid|ISO 周` 键结构不相交，键格式不变、不加判别前缀。
+
+> **勘误 3（决策 2 字面修订：标签单源化，impl 块移驻注册表）**：`subject()` 签名不变，impl 块自 command.rs 移驻 `registry.rs` 与绑定同居（同 crate 跨模块 inherent impl；依赖保持 registry→command 单向），臂一行委托绑定，标签一律取 `ENTITY`（含键为空的臂）——标签宇宙 = {serde derive, `ENTITY`} 各 14 处，门 (a) 维持原文二源断言，`subject().0 ≡ ENTITY` 由构造成立。「14 个语义命令类型统一自带 subject 派生」修订为「**键派生归命令类型，标签归注册表单源组装**」：8 个内联域零改动（既有 `subject_id()` 即键派生，绑定组装标签），6 个已有 pair 派生的域（scheduled / category / physical_asset / instrument / exchange_rate / price）剥标签收敛为键派生——决策 2「8 个域各补数行方法」作废（#1006 清单笔误：categories 本有 pair 派生，系误列）。代价与边界 4「域保留自然形状」由此完整成立；`DomainCommand` 存在第二个 impl 块系本勘误刻意安排，非散落。
+
+> **勘误 4（门 (b) 基线勘误扩充：根共享接缝白名单）**：基线红点远不止 scheduled 一处——`record_local`（ops.rs，经根 re-export 被 9 个业务域 command.rs 引用）与 `device_id`（约 20 处业务域引用）均为业务域既有合法依赖（mod.rs 既有注释「域内共享接缝」）。严形态合法面据此定为：`command` 模块路径 ∪ 根 re-export 白名单 `{DomainCommand, record_local, device_id}`（三条各附缘由注释，认许边同款纪律）；内部模块路径（`engine::`/`ops::`/`model::`/…）一律红；门作用域限业务域目录（`commands/`、`test_support/`、tests 不在列）。scheduled 的 `engine::ReplayEffect` 在 ReplayEffect 挪入契约模块后自动转绿，无须白名单。
+
+> **勘误 5（落地细节）**：门 (a) 样本轮询测试落点 `sync_engine/tests/wire.rs`（契约 serde 一致性既有落点）；单 PR 交付（门 (b) 绿点依赖 ReplayEffect 挪位、门 (a) 依赖绑定与键派生就位，拆批产生基线红中间态）；LWW 复活用例落点 `sync_engine/tests/merge.rs`。
