@@ -1,8 +1,8 @@
 #!/bin/sh
-# 文档一致性检查：地图完整性 / 术语唯一 / 导航一致 / ADR 编号唯一 / 代码坐标 /
-# 快照分组组数一致
+# 文档一致性检查：地图完整性 / 术语唯一 / 导航一致 / ADR 编号唯一 / ADR 索引完整 /
+# 代码坐标 / 快照分组组数一致
 #
-# 六项校验：
+# 七项校验：
 #   ① CONTEXT-MAP.md 与 docs/contexts/CONTEXT-*.md 一一对应（地图断链、未挂地图的孤儿文件均报错）
 #   ② 术语全库唯一：分域词汇表条目标题（^## ）按括号前主干归一后比对，重复即报错
 #   ③ 导航一致：AGENTS.md 与 CONTEXT-MAP.md 引用的仓库内文件/目录必须存在（导航指向已删除文件即报错）
@@ -13,6 +13,9 @@
 #   ⑥ 快照分组组数一致：CONTEXT-testing.md 快照分组词条与 ADR-0086 决策 6 记载的
 #      组数，必须与 e2e world 实际快照分组数全等——「新快照必须归入既有分组」
 #      纪律的守门，防止新组绕过规格修订静默入场（issue #955）
+#   ⑦ ADR 索引完整：docs/adr/ 下每个现行 ADR 文件编号都必须在 docs/adr/README.md
+#      有一条索引条目行——「新 ADR 落盘须同步入索引」纪律的守门，补④只查重复
+#      不查遗漏的方向；判据取条目行而非「编号出现」，他行交叉引用不算（issue #1027）
 #
 # 任一校验失败即非零退出；错误信息为中文并定位到文件与术语。
 # 已挂入 scripts/check.sh 质量门槛序列，也可独立运行：scripts/check-docs.sh
@@ -159,10 +162,27 @@ else
     err "快照分组：$adr_group_file 决策记 $adr_num（$adr_groups 组），world 实际 $world_groups 组，不一致"
 fi
 
+# ── ⑦ ADR 索引完整（docs/adr/ 下每个现行 ADR 文件须有 README 索引条目行） ──────
+# 与④编号唯一对偶的遗漏方向：新 ADR 落盘却忘记入 docs/adr/README.md 时，读者与 AI
+# 从索引找决策会漏读。判据取「README 有以 `- <编号> ` 开头的条目行」——他行的正文
+# 交叉引用不算入索引（0013/0059 正因被他行旁引而骗过「编号出现即通过」的弱判据，
+# issue #1027 实测）。已删除 ADR 无文件，不在扫描范围。
+adr_readme=docs/adr/README.md
+if [ ! -f "$adr_readme" ]; then
+  err "ADR 索引：$adr_readme 不存在"
+else
+  for f in docs/adr/[0-9][0-9][0-9][0-9]-*.md; do
+    [ -e "$f" ] || continue
+    adr_file_num=$(basename "$f" | cut -c1-4)
+    grep -qE "^- $adr_file_num " "$adr_readme" || \
+      err "ADR 未入索引：$f 的编号 $adr_file_num 在 $adr_readme 无索引条目行（遗漏方向，与④编号唯一对偶）"
+  done
+fi
+
 # ── 结果 ────────────────────────────────────────────────────────────────
 if [ -s "$tmp" ]; then
   cat "$tmp"
   echo "❌ 文档一致性检查失败：$(wc -l <"$tmp" | tr -d ' ') 处问题（见上方 ✗ 列表）"
   exit 1
 fi
-echo "  ✓ 地图完整、术语唯一、导航一致、ADR 编号唯一、词汇表与模型文档坐标清零、快照分组组数一致"
+echo "  ✓ 地图完整、术语唯一、导航一致、ADR 编号唯一、词汇表与模型文档坐标清零、快照分组组数一致、ADR 索引完整"
