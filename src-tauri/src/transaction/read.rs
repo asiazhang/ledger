@@ -241,6 +241,17 @@ pub fn list_transactions_internal(
     if filter.uncategorized_only == Some(true) {
         where_clause.push_str(" AND category_id IS NULL");
     }
+    // 标的过滤（ADR-0107）：核心交易行不持标的信息，经投资域扩展表子查询命中——
+    // 任一腿命中（instrument_id = 转出腿，to_instrument_id = convert 转入腿），
+    // 与其它维度 AND 组合；total 与 items 共用同一 WHERE 子句，口径自动一致。
+    if let Some(instrument_id) = filter.instrument_id.as_deref() {
+        where_clause.push_str(
+            " AND id IN (SELECT transaction_id FROM security_transactions \
+             WHERE instrument_id = ? OR to_instrument_id = ?)",
+        );
+        params.push(instrument_id.to_string());
+        params.push(instrument_id.to_string());
+    }
     // 类型集合过滤（spec #1025 起为唯一类型维度，手动多选与下钻载荷共用）：kind IN (...)，
     // 维度内取或、与其余维度 AND 组合；单值亦经本参数（原单值 kind = ? 子句已随
     // 参数移除，BREAKING，见 CHANGELOG）。空集合视为未携带（不过滤），先例同

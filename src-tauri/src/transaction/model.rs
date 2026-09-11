@@ -411,6 +411,11 @@ pub struct TransactionListFilter {
     /// （两条件矛盾，恒为空集）；前端分类维度为单选三态（不过滤/精确/仅无分类），
     /// 不会同时携带两者。
     pub uncategorized_only: Option<bool>,
+    /// 按标的过滤（ADR-0107）：命中投资域扩展表 `security_transactions` 中该标的的行——
+    /// buy/sell/dividend/split 由 `instrument_id`（转出腿）命中，convert **任一腿命中即算**
+    /// （转入腿 `to_instrument_id`；与时点持仓推算认 convert 两腿的既有口径对齐）。
+    /// 经子查询实现（核心交易行不持标的信息），与其余维度 AND 组合。
+    pub instrument_id: Option<String>,
     /// 交易类型集合过滤（spec #1025 起为唯一类型维度，手动多选与下钻载荷共用）：
     /// 命中 `kind IN (...)` 的未删除交易，维度内取或、与其余维度 AND 组合。
     /// 单值亦经本参数传递——原单值 `kind` 查询参数已移除（BREAKING，未发布窗口内

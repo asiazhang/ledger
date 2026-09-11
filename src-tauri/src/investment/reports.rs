@@ -1,6 +1,8 @@
 use rusqlite::Connection;
 
-use super::model::{AccountPnl, InstrumentPnl, PnlDetail, PnlFilter, RealizedPnlSummary, YearPnl};
+use super::model::{
+    AccountPnl, CurrencyPnl, InstrumentPnl, PnlFilter, RealizedPnlSummary, YearPnl,
+};
 use crate::db::query::query_all;
 use crate::error::Result;
 
@@ -35,52 +37,38 @@ pub fn query_realized_pnl_summary(
         format!(" WHERE {}", conditions.join(" AND "))
     };
 
+    // 汇总按匹配行币种分组（ADR-0107 决策 6）：不做跨币种折算，各币种小计独立成立——
+    // 原「各币种裸数字直接 SUM」的混算口径废止（多币种账户下合计是错的）。
+    // 逐匹配「卖出明细」查询已随明细卡退役（决策 1），本函数只产出三张汇总视图 + 分组总数。
     let total_sql = format!(
-        "SELECT COALESCE(SUM(sls.realized_pnl_cents), 0) {}{}",
-        base_from, where_clause
+        "SELECT sls.currency_code, COALESCE(SUM(sls.realized_pnl_cents), 0) \
+         {base_from}{where_clause} GROUP BY sls.currency_code ORDER BY sls.currency_code"
     );
     let year_sql = format!(
-        "SELECT substr(t.date, 1, 4) AS year, SUM(sls.realized_pnl_cents) \
-         {}{} GROUP BY year ORDER BY year",
-        base_from, where_clause
+        "SELECT substr(t.date, 1, 4) AS year, sls.currency_code, SUM(sls.realized_pnl_cents) \
+         {base_from}{where_clause} GROUP BY year, sls.currency_code ORDER BY year, sls.currency_code"
     );
     let account_sql = format!(
-        "SELECT a.id, a.name, COALESCE(SUM(sls.realized_pnl_cents), 0) \
-         {}{} GROUP BY a.id ORDER BY a.name",
-        base_from, where_clause
+        "SELECT a.id, a.name, sls.currency_code, COALESCE(SUM(sls.realized_pnl_cents), 0) \
+         {base_from}{where_clause} GROUP BY a.id, sls.currency_code ORDER BY a.name, sls.currency_code"
     );
     let instrument_sql = format!(
-        "SELECT i.id, i.symbol, i.name, COALESCE(SUM(sls.realized_pnl_cents), 0) \
-         {}{} GROUP BY i.id ORDER BY i.symbol",
-        base_from, where_clause
-    );
-    let detail_sql = format!(
-        "SELECT sls.id, t.date, t.account_id, a.name, i.id, i.symbol, i.name, \
-         sls.quantity, sls.cost_per_unit_cents, sls.realized_pnl_cents, sls.currency_code \
-         {}{} ORDER BY t.date DESC, sls.created_at DESC",
-        base_from, where_clause
+        "SELECT i.id, i.symbol, i.name, sls.currency_code, COALESCE(SUM(sls.realized_pnl_cents), 0) \
+         {base_from}{where_clause} GROUP BY i.id, sls.currency_code ORDER BY i.symbol, sls.currency_code"
     );
 
     let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
 
-    let total_realized_pnl_cents: i64 = conn
-        .query_row(&total_sql, params_ref.as_slice(), |r| {
-            r.get::<_, Option<i64>>(0)
-        })
-        .unwrap_or(None)
-        .unwrap_or(0);
-
+    let total: Vec<CurrencyPnl> = query_all(conn, &total_sql, params_ref.as_slice())?;
     let by_year: Vec<YearPnl> = query_all(conn, &year_sql, params_ref.as_slice())?;
     let by_account: Vec<AccountPnl> = query_all(conn, &account_sql, params_ref.as_slice())?;
     let by_instrument: Vec<InstrumentPnl> =
         query_all(conn, &instrument_sql, params_ref.as_slice())?;
-    let details: Vec<PnlDetail> = query_all(conn, &detail_sql, params_ref.as_slice())?;
 
     Ok(RealizedPnlSummary {
-        total_realized_pnl_cents,
+        total,
         by_year,
         by_account,
         by_instrument,
-        details,
     })
 }

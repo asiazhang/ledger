@@ -80,10 +80,10 @@ pub mod unwind;
 mod model;
 
 pub use model::{
-    AccountPnl, AddFundResult, AddStockInstrumentResult, FinancialFreedomOverview, Holding,
-    Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPnl,
-    InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, ManualPriceInput,
-    ManualPriceResult, MarketPrice, MarketPriceInput, PnlDetail, PnlFilter, PortfolioTrendPoint,
+    AccountPnl, AddFundResult, AddStockInstrumentResult, CurrencyPnl, FinancialFreedomOverview,
+    Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
+    InstrumentPnl, InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, ManualPriceInput,
+    ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter, PortfolioTrendPoint,
     PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary, TransactionConvert, TransactionTrade,
     TrendRange, YearPnl,
 };

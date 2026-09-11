@@ -400,18 +400,30 @@ impl ManualPriceResult {
     }
 }
 
+/// 已实现盈亏汇总（ADR-0107）：盈亏页三视图（按年/按账户/按标的）+ 按币种分组总数。
+/// 逐匹配「卖出明细」已退役（决策 1），明细数据本体（security_lot_sales 逐匹配行）
+/// 不再随本投影返回。
 #[derive(Debug, Serialize)]
 pub struct RealizedPnlSummary {
-    pub total_realized_pnl_cents: i64,
+    /// 按币种分组的已实现盈亏总数（决策 6：不做跨币种折算）。
+    pub total: Vec<CurrencyPnl>,
     pub by_year: Vec<YearPnl>,
     pub by_account: Vec<AccountPnl>,
     pub by_instrument: Vec<InstrumentPnl>,
-    pub details: Vec<PnlDetail>,
+}
+
+/// 按币种分组的已实现盈亏小计（ADR-0107 决策 6）：匹配行（security_lot_sales）币种口径，
+/// 不做跨币种折算——原「各币种裸数字直接 SUM」的混算口径废止（多币种账户下合计是错的）。
+#[derive(Debug, Serialize)]
+pub struct CurrencyPnl {
+    pub currency_code: String,
+    pub realized_pnl_cents: i64,
 }
 
 #[derive(Debug, Serialize)]
 pub struct YearPnl {
     pub year: String,
+    pub currency_code: String,
     pub realized_pnl_cents: i64,
 }
 
@@ -419,6 +431,7 @@ pub struct YearPnl {
 pub struct AccountPnl {
     pub account_id: String,
     pub account_name: String,
+    pub currency_code: String,
     pub realized_pnl_cents: i64,
 }
 
@@ -427,22 +440,8 @@ pub struct InstrumentPnl {
     pub instrument_id: String,
     pub symbol: String,
     pub name: Option<String>,
-    pub realized_pnl_cents: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PnlDetail {
-    pub id: String,
-    pub sell_date: String,
-    pub account_id: String,
-    pub account_name: String,
-    pub instrument_id: String,
-    pub instrument_symbol: String,
-    pub instrument_name: Option<String>,
-    pub quantity: f64,
-    pub cost_per_unit_cents: i64,
-    pub realized_pnl_cents: i64,
     pub currency_code: String,
+    pub realized_pnl_cents: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -488,11 +487,21 @@ impl FromRow for MarketPrice {
     }
 }
 
+impl FromRow for CurrencyPnl {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(CurrencyPnl {
+            currency_code: row.get(0)?,
+            realized_pnl_cents: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+        })
+    }
+}
+
 impl FromRow for YearPnl {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(YearPnl {
             year: row.get(0)?,
-            realized_pnl_cents: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            currency_code: row.get(1)?,
+            realized_pnl_cents: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
         })
     }
 }
@@ -502,7 +511,8 @@ impl FromRow for AccountPnl {
         Ok(AccountPnl {
             account_id: row.get(0)?,
             account_name: row.get(1)?,
-            realized_pnl_cents: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            currency_code: row.get(2)?,
+            realized_pnl_cents: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
         })
     }
 }
@@ -513,7 +523,8 @@ impl FromRow for InstrumentPnl {
             instrument_id: row.get(0)?,
             symbol: row.get(1)?,
             name: row.get(2)?,
-            realized_pnl_cents: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+            currency_code: row.get(3)?,
+            realized_pnl_cents: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
         })
     }
 }
@@ -534,24 +545,6 @@ impl FromRow for Instrument {
             source: row.get(10)?,
             price_cents: row.get(11)?,
             invested: row.get(12)?,
-        })
-    }
-}
-
-impl FromRow for PnlDetail {
-    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
-        Ok(PnlDetail {
-            id: row.get(0)?,
-            sell_date: row.get(1)?,
-            account_id: row.get(2)?,
-            account_name: row.get(3)?,
-            instrument_id: row.get(4)?,
-            instrument_symbol: row.get(5)?,
-            instrument_name: row.get(6)?,
-            quantity: row.get(7)?,
-            cost_per_unit_cents: row.get(8)?,
-            realized_pnl_cents: row.get(9)?,
-            currency_code: row.get(10)?,
         })
     }
 }
