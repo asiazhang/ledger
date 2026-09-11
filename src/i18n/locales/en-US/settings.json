@@ -285,6 +285,7 @@
       "checkpointHint": "On the device that already has book data, publish a checkpoint to upload a full snapshot to the channel; on a brand-new empty device (e.g. your phone), use \"Bootstrap from channel\" to join sync.",
       "publishCheckpoint": "Publish checkpoint to channel",
       "publishOk": "Checkpoint published: generation {generation}, {size}",
+      "publishPlaintextToast": "This checkpoint was published unencrypted: the snapshot is stored on your cloud drive in plaintext.",
       "publishFailed": "Failed to publish checkpoint: {msg}",
       "bootstrapTitle": "Bootstrap from channel…",
       "bootstrapModalTitle": "Bootstrap from channel",

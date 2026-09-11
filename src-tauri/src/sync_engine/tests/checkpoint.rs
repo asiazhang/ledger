@@ -537,7 +537,7 @@ fn bootstrap_migrates_older_schema_snapshot() {
 fn fresh_library_has_no_user_data() {
     let conn = test_support::open();
     assert!(
-        !super::super::library_has_user_data(&conn).unwrap(),
+        !crate::sync_engine::checkpoint::library_has_user_data(&conn).unwrap(),
         "全新库（含种子分类/币种/黑洞账户）不应判为已有业务数据"
     );
 }
@@ -550,7 +550,7 @@ fn user_fact_rows_in_any_business_domain_trigger_probe() {
     let conn = test_support::open();
     base_ledger(&conn);
     assert!(
-        super::super::library_has_user_data(&conn).unwrap(),
+        crate::sync_engine::checkpoint::library_has_user_data(&conn).unwrap(),
         "有交易的库应判为已有业务数据"
     );
 
@@ -568,7 +568,7 @@ fn user_fact_rows_in_any_business_domain_trigger_probe() {
         "测试前置：种子账户判定应成立"
     );
     assert!(
-        super::super::library_has_user_data(&conn).unwrap(),
+        crate::sync_engine::checkpoint::library_has_user_data(&conn).unwrap(),
         "只有用户自建账户（无交易）也应判为已有业务数据"
     );
 }

@@ -165,7 +165,8 @@ async fn dual_device_checkpoint_bootstrap_converges_both_ways() {
     );
     assert_eq!(b_amount, Some(10_000), "A 的交易应随快照就位");
 
-    // B 是自己的设备身份；位点以快照为准（A 流已应用到发布时刻）。
+    // B 是自己的设备身份；位点表随快照就位（对 A 流有已应用水位，增量轮次
+    // 因此只拉位点之后的段；精确水位值归域单测，此处只钉接线）。
     let device_a = get_sync_status(app_a.clone())
         .await
         .expect("A 状态应可读")
@@ -175,16 +176,12 @@ async fn dual_device_checkpoint_bootstrap_converges_both_ways() {
         .expect("B 状态应可读")
         .device_id;
     assert_ne!(device_a, device_b, "引导端保留自己的设备身份");
-    let applied_through = read_scalar_i64(
+    let position_rows = read_scalar_i64(
         &b_conn.lock().unwrap(),
-        "SELECT applied_through FROM sync_stream_positions WHERE device_id = ?1",
+        "SELECT count(*) FROM sync_stream_positions WHERE device_id = ?1",
         [device_a.as_str()],
     );
-    assert_eq!(
-        applied_through,
-        Some(2),
-        "A 流位点应随快照就位（建户+记账）"
-    );
+    assert_eq!(position_rows, Some(1), "A 流位点应随快照就位");
 
     // 引导是本机簿记事实重置点：快照携带的来源端「上次同步时刻」不采纳。
     let b_status = get_sync_status(app_b.clone()).await.expect("B 状态应可读");

@@ -170,6 +170,10 @@ async function publishCheckpoint() {
         size: formatSizeMb(result.size),
       }),
     )
+    if (result.plaintext_mode) {
+      // 明文显著提示（ADR-0091 决策 8）：快照整库明文上通道，与常驻卡片警示同义。
+      message.warning(t('settings.data.sync.publishPlaintextToast'))
+    }
   } catch (e: any) {
     message.error(t('settings.data.sync.publishFailed', { msg: errorMessage(e) }))
   } finally {

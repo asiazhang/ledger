@@ -346,6 +346,13 @@ const checkpointInfo = {
   created_at: '2026-01-15T08:00:00Z',
 }
 
+// 发布结果（明文库 → plaintext_mode 真）。
+const publishResult = {
+  generation: 3,
+  size: 2 * 1024 * 1024,
+  plaintext_mode: true,
+}
+
 const bootstrapOutcome = {
   generation: 3,
   size: 2 * 1024 * 1024,
@@ -371,7 +378,7 @@ it('发布检查点：携带口令参数调用命令，成功提示代数与体�
       // 密文库：主口令输入框在场（与 sync_now 共用同一输入）。
       get_sync_status: { ...baseStatus, library_encrypted: true },
       get_sync_channel_config: baseConfig,
-      publish_sync_checkpoint: checkpointInfo,
+      publish_sync_checkpoint: publishResult,
     },
   })
   const wrapper = mount(SyncSettings)
@@ -386,6 +393,12 @@ it('发布检查点：携带口令参数调用命令，成功提示代数与体�
   expect(
     messageCalls().some(
       (m) => m.method === 'success' && m.text.includes('第 3 代') && m.text.includes('2.0 MB'),
+    ),
+  ).toBe(true)
+  // 明文库发布：明文显著提示（ADR-0091 决策 8）。
+  expect(
+    messageCalls().some(
+      (m) => m.method === 'warning' && m.text.includes('明文存放于网盘'),
     ),
   ).toBe(true)
 })
