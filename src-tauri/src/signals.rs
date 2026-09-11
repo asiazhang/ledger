@@ -34,6 +34,61 @@
 
 use crate::events;
 
+/// 写操作闭集单一来源宏（ADR-0102）：清单即 enum 本体，同体从同一 token 流展开
+/// [`WriteOp`] enum、[`WriteOp::ALL`]（切片）与 [`WriteOp::from_ident`]——「enum 新增
+/// 变体漏登 `ALL` / 漏 parse」的漂移**不可表达**（构造性保证，非「可检测」）。
+///
+/// 变体 `///` 文档经 `$meta` 原位透传（rustdoc 不变）；域分组注释保留在调用内作
+/// 纯注释。宏定义与调用就地本模块（局部性即卖点，ADR-0102 决策 1 / 决策 3）。
+macro_rules! write_op_set {
+    (
+        $(#[$enum_meta:meta])*
+        $vis:vis enum $name:ident {
+            $(
+                $(#[$variant_meta:meta])*
+                $variant:ident
+            ),* $(,)?
+        }
+    ) => {
+        $(#[$enum_meta])*
+        $vis enum $name {
+            $(
+                $(#[$variant_meta])*
+                $variant,
+            )*
+        }
+
+        impl $name {
+            /// 全部写操作身份（闭集清单）：信号守门测试（`signals_cross_check`，
+            /// ADR-0044 决策 3 / ADR-0073 决策 5）按此遍历做「映射未声明」反向核对——
+            /// 除特例条目 [`WriteOp::AutoBackupDeepPath`]（登记生产者清单、刻意不做
+            /// 命令键）外，每个身份须被至少一壳声明（`write_entry` 调用点或例外白名单），
+            /// 否则测试期即红。
+            ///
+            /// 本清单由 [`write_op_set!`] 从宏调用清单同体展开（ADR-0102 决策 1）：
+            /// 与 enum 本体共享同一 token 流，不存在第二份事实，漏登失败类不可表达。
+            pub const ALL: &[$name] = &[
+                $($name::$variant,)*
+            ];
+
+            /// 变体标识符 → 身份（ADR-0102 决策 2）：供 `signals_cross_check` 把源码
+            /// 扫描提取的 `WriteOp::<Variant>` 文本映射回变体，取代手写
+            /// `parse_write_op` 穷尽臂。臂集与本清单同源展开，完备性由构造保证；
+            /// 非变体文本返回 [`None`]，由调用方以断言失败报「扫描提取漂移」。
+            /// 消费方仅 `#[cfg(test)]` 的守门测试（ADR-0073 决策 5），非测试构建
+            /// 不生成本函数，避免 `-D warnings` 下的 dead_code 告警。
+            #[cfg(test)]
+            pub(crate) fn from_ident(ident: &str) -> Option<$name> {
+                match ident {
+                    $(stringify!($variant) => Some($name::$variant),)*
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+write_op_set! {
 /// 写操作身份（ADR-0044 决策 2）：跨 IPC 壳与 HTTP 壳共享的强类型键，闭集。
 ///
 /// 变体按域分组；每个变体注释标明对应的 IPC 命令与/或 HTTP 端点，以及
@@ -235,92 +290,6 @@ pub enum WriteOp {
     /// 刻意零信号——通道配置不同步、不属任何失效语义；设置页自读回显。
     SetSyncChannelConfig,
 }
-
-impl WriteOp {
-    /// 全部写操作身份（闭集清单）：信号守门测试（`signals_cross_check`，ADR-0044
-    /// 决策 3 / ADR-0073 决策 5）按此遍历做「映射未声明」反向核对——除特例条目
-    /// [`WriteOp::AutoBackupDeepPath`]（登记生产者清单、刻意不做命令键）外，每个身份
-    /// 须被至少一壳声明（`write_entry` 调用点或例外白名单），否则测试期即红。
-    ///
-    /// **与 enum 本体同步维护**：新增变体漏登本清单时，反向核对对该变体失明——
-    /// 清单紧邻 enum，同步义务就地可查（同 `TransactionKind::ALL` 先例）。
-    /// 长度标注与初始化个数不符即编译错；但 enum 新增变体而本清单漏登不会报错，
-    /// 改 enum 必须同步改这里。
-    pub const ALL: [WriteOp; 61] = [
-        // 参考数据四表
-        WriteOp::CreateAccount,
-        WriteOp::UpdateAccount,
-        WriteOp::DeleteAccount,
-        WriteOp::CreateCategory,
-        WriteOp::UpdateCategory,
-        WriteOp::ReorderCategories,
-        WriteOp::DeleteCategory,
-        WriteOp::CreateMerchant,
-        WriteOp::UpdateMerchant,
-        WriteOp::DeleteMerchant,
-        WriteOp::CreateInsurer,
-        WriteOp::UpdateInsurer,
-        WriteOp::DeleteInsurer,
-        // 物品域
-        WriteOp::CreateItem,
-        WriteOp::UpdateItem,
-        WriteOp::DisposeItem,
-        WriteOp::DeleteItem,
-        // 保单域
-        WriteOp::CreatePolicy,
-        WriteOp::UpdatePolicy,
-        WriteOp::DeletePolicy,
-        // 实物资产域
-        WriteOp::CreatePhysicalAsset,
-        WriteOp::UpdatePhysicalAsset,
-        WriteOp::UpdatePhysicalAssetValuation,
-        WriteOp::DisposePhysicalAsset,
-        WriteOp::DeletePhysicalAsset,
-        // 账户域
-        WriteOp::AdjustAccountBalance,
-        WriteOp::AuditBalanceCache,
-        // 价格域
-        WriteOp::SyncInstrumentInfo,
-        WriteOp::AddFundByCode,
-        WriteOp::AddInstrumentByCode,
-        WriteOp::RecordManualPrice,
-        WriteOp::CreateInstrument,
-        WriteOp::DeleteInstrument,
-        WriteOp::CreateMarketPrice,
-        WriteOp::CreateExchangeRate,
-        // 备份域
-        WriteOp::CreateBackup,
-        WriteOp::PruneBackups,
-        WriteOp::RestoreBackup,
-        WriteOp::AutoBackupDeepPath,
-        // 交易域（含搜索派生数据维护）
-        WriteOp::CreateTransaction,
-        WriteOp::RepairNotePinyin,
-        WriteOp::BatchCreateTransactions,
-        WriteOp::UpdateTransaction,
-        WriteOp::DeleteTransaction,
-        WriteOp::ExecuteScheduledOccurrence,
-        WriteOp::ExpandScheduledOccurrences,
-        // 预算域
-        WriteOp::CreateBudget,
-        WriteOp::UpdateBudget,
-        WriteOp::DeleteBudget,
-        // 定时计划域
-        WriteOp::CreateScheduledTransaction,
-        WriteOp::UpdateScheduledTransactionStatus,
-        WriteOp::UpdateScheduledSubscription,
-        // 设置域
-        WriteOp::SetAutoBackupEnabled,
-        WriteOp::SetAutoBackupDir,
-        WriteOp::SetAutoExecutionEnabled,
-        WriteOp::SubmitDataLocationChange,
-        WriteOp::RestoreDefaultDataLocation,
-        WriteOp::SetLogLevel,
-        WriteOp::SetBaseCurrency,
-        // 多端同步域
-        WriteOp::SyncRound,
-        WriteOp::SetSyncChannelConfig,
-    ];
 }
 
 /// 结果证据（ADR-0044 决策 1 / 决策 4）：写操作本次执行的**自然返回值**归一化，

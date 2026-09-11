@@ -413,79 +413,23 @@ fn ipc_derived_declarations() -> Vec<(String, WriteOp)> {
             chunk.name
         );
         let ident = identities.into_iter().next().expect("长度已断言为 1");
-        let op = parse_write_op(&ident);
+        let op = resolve_write_op(&ident);
         declared.push((chunk.name.clone(), op));
     }
     declared
 }
 
-/// 身份标识符 → WriteOp（穷尽清单，漏登变体在孤儿核对处即红）。
-fn parse_write_op(ident: &str) -> WriteOp {
-    match ident {
-        "CreateAccount" => WriteOp::CreateAccount,
-        "UpdateAccount" => WriteOp::UpdateAccount,
-        "DeleteAccount" => WriteOp::DeleteAccount,
-        "CreateCategory" => WriteOp::CreateCategory,
-        "UpdateCategory" => WriteOp::UpdateCategory,
-        "ReorderCategories" => WriteOp::ReorderCategories,
-        "DeleteCategory" => WriteOp::DeleteCategory,
-        "CreateMerchant" => WriteOp::CreateMerchant,
-        "UpdateMerchant" => WriteOp::UpdateMerchant,
-        "DeleteMerchant" => WriteOp::DeleteMerchant,
-        "CreateInsurer" => WriteOp::CreateInsurer,
-        "UpdateInsurer" => WriteOp::UpdateInsurer,
-        "DeleteInsurer" => WriteOp::DeleteInsurer,
-        "CreateItem" => WriteOp::CreateItem,
-        "UpdateItem" => WriteOp::UpdateItem,
-        "DisposeItem" => WriteOp::DisposeItem,
-        "DeleteItem" => WriteOp::DeleteItem,
-        "CreatePolicy" => WriteOp::CreatePolicy,
-        "UpdatePolicy" => WriteOp::UpdatePolicy,
-        "DeletePolicy" => WriteOp::DeletePolicy,
-        "CreatePhysicalAsset" => WriteOp::CreatePhysicalAsset,
-        "UpdatePhysicalAsset" => WriteOp::UpdatePhysicalAsset,
-        "UpdatePhysicalAssetValuation" => WriteOp::UpdatePhysicalAssetValuation,
-        "DisposePhysicalAsset" => WriteOp::DisposePhysicalAsset,
-        "DeletePhysicalAsset" => WriteOp::DeletePhysicalAsset,
-        "AdjustAccountBalance" => WriteOp::AdjustAccountBalance,
-        "AuditBalanceCache" => WriteOp::AuditBalanceCache,
-        "RepairNotePinyin" => WriteOp::RepairNotePinyin,
-        "SyncInstrumentInfo" => WriteOp::SyncInstrumentInfo,
-        "AddFundByCode" => WriteOp::AddFundByCode,
-        "AddInstrumentByCode" => WriteOp::AddInstrumentByCode,
-        "RecordManualPrice" => WriteOp::RecordManualPrice,
-        "CreateInstrument" => WriteOp::CreateInstrument,
-        "DeleteInstrument" => WriteOp::DeleteInstrument,
-        "CreateMarketPrice" => WriteOp::CreateMarketPrice,
-        "CreateExchangeRate" => WriteOp::CreateExchangeRate,
-        "CreateBackup" => WriteOp::CreateBackup,
-        "PruneBackups" => WriteOp::PruneBackups,
-        "RestoreBackup" => WriteOp::RestoreBackup,
-        "AutoBackupDeepPath" => WriteOp::AutoBackupDeepPath,
-        "CreateTransaction" => WriteOp::CreateTransaction,
-        "BatchCreateTransactions" => WriteOp::BatchCreateTransactions,
-        "UpdateTransaction" => WriteOp::UpdateTransaction,
-        "DeleteTransaction" => WriteOp::DeleteTransaction,
-        "ExecuteScheduledOccurrence" => WriteOp::ExecuteScheduledOccurrence,
-        "ExpandScheduledOccurrences" => WriteOp::ExpandScheduledOccurrences,
-        "CreateBudget" => WriteOp::CreateBudget,
-        "UpdateBudget" => WriteOp::UpdateBudget,
-        "DeleteBudget" => WriteOp::DeleteBudget,
-        "CreateScheduledTransaction" => WriteOp::CreateScheduledTransaction,
-        "UpdateScheduledTransactionStatus" => WriteOp::UpdateScheduledTransactionStatus,
-        "UpdateScheduledSubscription" => WriteOp::UpdateScheduledSubscription,
-        "SetAutoBackupEnabled" => WriteOp::SetAutoBackupEnabled,
-        "SetAutoBackupDir" => WriteOp::SetAutoBackupDir,
-        "SetAutoExecutionEnabled" => WriteOp::SetAutoExecutionEnabled,
-        "SubmitDataLocationChange" => WriteOp::SubmitDataLocationChange,
-        "RestoreDefaultDataLocation" => WriteOp::RestoreDefaultDataLocation,
-        "SetBaseCurrency" => WriteOp::SetBaseCurrency,
-        "SyncRound" => WriteOp::SyncRound,
-        "SetSyncChannelConfig" => WriteOp::SetSyncChannelConfig,
-        other => panic!(
-            "未知 WriteOp 变体标识符 {other}——enum 新增变体须同步 parse_write_op 与 WriteOp::ALL"
-        ),
-    }
+/// 扫描提取的身份标识符 → `WriteOp`（ADR-0102 决策 2）：改经宏同体派生的
+/// [`WriteOp::from_ident`] 映射，手写 `parse_write_op` 穷尽臂已消亡。映射臂集由
+/// 宏清单构造性保证完备；提取到非变体文本（扫描器具自身漂移）以断言失败报
+/// 「扫描提取漂移」。
+fn resolve_write_op(ident: &str) -> WriteOp {
+    WriteOp::from_ident(ident).unwrap_or_else(|| {
+        panic!(
+            "扫描提取漂移：{ident} 不是 WriteOp 变体标识符——\
+             信号守门扫描器具与 enum 本体不一致"
+        )
+    })
 }
 
 /// HTTP 壳的 `#[utoipa::path(...)]` handler 函数体块（全 handler 文件）。
@@ -522,7 +466,7 @@ fn http_derived_declarations() -> Vec<(String, WriteOp)> {
         let endpoint_key = handler_endpoint_key(&chunk.raw)
             .unwrap_or_else(|| panic!("HTTP handler {} 缺 #[utoipa::path] 端点注解", chunk.name));
         let ident = identities.into_iter().next().expect("长度已断言为 1");
-        declared.push((endpoint_key, parse_write_op(&ident)));
+        declared.push((endpoint_key, resolve_write_op(&ident)));
     }
     declared
 }
@@ -569,14 +513,14 @@ fn declared_ops() -> HashSet<WriteOp> {
 #[test]
 fn every_mapped_write_op_is_declared_by_some_shell() {
     let declared = declared_ops();
-    for op in WriteOp::ALL {
+    for &op in WriteOp::ALL {
         if matches!(op, WriteOp::AutoBackupDeepPath) {
             continue;
         }
         assert!(
             declared.contains(&op),
             "写操作身份 {op:?} 已在 signals_for 映射，却未被任何壳声明——\
-             新写命令忘了经 write_entry 接线（或在例外白名单登记）或漏登 WriteOp::ALL"
+             新写命令忘了经 write_entry 接线（或在例外白名单登记）"
         );
     }
 }
@@ -724,6 +668,21 @@ fn ipc_derived_declarations_are_registered_commands() {
         assert!(
             registry.contains(name.as_str()),
             "IPC 派生声明 {name} 不在命令注册清单上——扫描提取漂移或注册缺失"
+        );
+    }
+}
+
+/// 例外白名单名字必须都在命令注册清单上（build.rs 生成的 ADR-0047 真源，
+/// ADR-0102 决策 5 顺带核对，`startup_gate_allowlists_only_contain_registered_commands`
+/// 同款器具）：白名单身份是类型化变体（非漂移面），但命令名字此前无「仍真实存在」
+/// 守门——命令改名 / 删除后旧条目静默残留为死条目，在此即红。
+#[test]
+fn ipc_write_entry_exceptions_only_contain_registered_commands() {
+    let registry: HashSet<&str> = IPC_COMMAND_MANIFEST.iter().copied().collect();
+    for (name, _, _) in IPC_WRITE_ENTRY_EXCEPTIONS {
+        assert!(
+            registry.contains(name),
+            "例外白名单命令 {name} 不在命令注册清单上——死条目（命令已改名或删除）"
         );
     }
 }
