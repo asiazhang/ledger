@@ -57,6 +57,7 @@
 - **依赖**：内部依赖维护——前端 vitest 4→5 与 oxlint 升补丁版、Rust 传递依赖刷新至最新 patch，均为开发工具与传递依赖，无使用者可见变化（[#953]）。
 - **交易**：交易页类型筛选改为多选——可同时查看多个类型（如买入 + 卖出），空选即全部类型、选满全部类型不归一为「全部」；原单选形态退役（[#1025]）。
 - **投资**：盈亏页收敛——移除「卖出明细」卡（逐匹配明细退役，逐笔粒度由三张汇总视图兜底），总盈亏卡单统计布局同步收敛（ADR-0107）。
+- **投资**：标的类型无效的报错补充合法值清单（stock/fund/bond/etf/other）；闭集表示内部收敛，API 契约与数据形状不变（[#1022]）。
 
 ### Removed
 
@@ -339,4 +340,5 @@
 [#977]: https://github.com/asiazhang/ledger/issues/977
 [#981]: https://github.com/asiazhang/ledger/issues/981
 [#1025]: https://github.com/asiazhang/ledger/issues/1025
+[#1022]: https://github.com/asiazhang/ledger/issues/1022
 [#1059]: https://github.com/asiazhang/ledger/issues/1059

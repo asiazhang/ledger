@@ -82,6 +82,7 @@
 - 0100 — 启动期 schema 漂移守卫：init_db 尾部内存参照库方向性 diff，漂移报 `boot.schema-drift`（#971 实证，未发布迁移就地修改的防护）
 - 0101 — 同步重放注册表：ReplayBinding 单点承载可重放契约、裁决域派生归域、三道门守契约（#1006）
 - 0102 — WriteOp 闭集单一化：`write_op_set!` 声明宏同体派生 enum 本体 / `ALL` / `from_ident`，三份表示收敛为一份（#1011）
+- 0108 — TransactionKind / InstrumentType 闭集单一化：共享 `closed_set!` 宏同体派生（enum / `ALL` / `as_str` / `parse` / `Display`），InstrumentType 双字符串面收口，DB CHECK 字面量测试期互核兑底（#1022）
 - 0104 — 壳层读路径仪式收敛：统一读入口 `read_entry`——run_db 之上的锁仪式单点 + 源扫描守门（翻案 0073 决策 6 读侧搁置；spec #1009，grilling 定稿）
 - 0105 — 交易写入协议：create/update 单正文 + Local / Replay 形态闭集（OpEmission 推广合一、delete 现状保持），守卫单点、事务自持进协议、存活校验刻意不对称（细化 0013/0033 承载；#1003/#1005 先行；spec #1004，grilling 定稿）
 - 0069 — 后端 DB 调用 async 化：单连接互斥锁保留 + 统一阻塞线程池 helper（形状乙；tokio-rusqlite 与自建专用线程两否决在案，spec #498）
