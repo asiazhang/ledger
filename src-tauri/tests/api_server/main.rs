@@ -32,6 +32,7 @@ mod instrument_create_fund;
 mod instrument_create_stock;
 mod instrument_search;
 mod investment_migration;
+mod investment_split_acceptance;
 mod merchant_import;
 mod reference_data;
 mod signal_delivery;
