@@ -115,6 +115,7 @@
     "sell-instrument-not-found": "sell instrument does not exist: {0}",
     "detail-not-found": "transaction not found or has no buy/sell detail: {0}",
     "convert-detail-not-found": "transaction not found or has no conversion detail: {0}",
+    "split-detail-not-found": "transaction not found or has no share adjustment detail: {0}",
     "buy-quantity-positive": "buy quantity must be greater than 0",
     "sell-quantity-positive": "sell quantity must be greater than 0",
     "buy-amount-positive": "buy amount must be greater than 0 (fund subscription uses the confirmation amount as the source of truth)",

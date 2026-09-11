@@ -229,13 +229,33 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     await setKind(wrapper, ['sell', 'income'])
     expect(kindSelect(wrapper).props('value')).toEqual(['income', 'sell'])
     // 选满全部可选类型：不归一为默认态——请求仍携带全量集合，清除筛选按钮可用
-    await setKind(wrapper, ['income', 'expense', 'transfer', 'refund', 'buy', 'sell', 'convert'])
-    expect(lastListFilter().kinds).toHaveLength(7)
+    await setKind(wrapper, [
+      'income', 'expense', 'transfer', 'refund', 'buy', 'sell', 'convert', 'split',
+    ])
+    expect(lastListFilter().kinds).toHaveLength(8)
     expect(clearButton(wrapper).attributes('disabled')).toBeUndefined()
     // 清空选择：请求不再携带类型参数，回到全量
     await setKind(wrapper, null)
     expect(lastListFilter()).not.toHaveProperty('kinds')
     expect(wrapper.text()).toContain('共 5 条')
+  })
+
+  it('类型筛选含「份额调整」：选中 split 只留 split 行，结果正确（ADR-0106 / #1052）', async () => {
+    setTxnDb([
+      makeTxn(1, 'acc-1', { kind: 'expense', date: '2026-01-05' }),
+      makeTxn(2, 'acc-1', {
+        kind: 'split',
+        amount_cents: 0,
+        amount_native_cents: 0,
+        date: '2026-02-01',
+      }),
+      makeTxn(3, 'acc-1', { kind: 'buy', date: '2026-03-01' }),
+    ])
+    const wrapper = await mountView()
+    await setKind(wrapper, ['split'])
+    expect(lastListFilter()).toMatchObject({ kinds: ['split'] })
+    expect(bodyRows(wrapper).length).toBe(1)
+    expect(bodyRows(wrapper)[0].text()).toContain('份额调整')
   })
 })
 
