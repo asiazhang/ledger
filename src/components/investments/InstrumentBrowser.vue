@@ -25,7 +25,6 @@ import {
   INSTRUMENT_TYPES,
   MARKET_FILTER_TYPES,
   MARKET_TYPES,
-  canManualPrice,
 } from '@/types'
 import { sumFixedColumnWidths } from '@/utils/table'
 import AppSelect from '@/components/AppSelect.vue'
@@ -170,9 +169,9 @@ function confirmDeleteInstrument(row: Instrument) {
 }
 
 // ---------------------------------------------------------------------------
-// 手动报价（issue #291 / ADR-0036）：行内「录价」动作只对同步覆盖不到的标的
-// 开放（自建标的与名称充代码的基金行，判定 canManualPrice 与「净值可拉」分区
-// 同源）；报价弹窗提交后后端广播价格失效信号，现价列刷新由本组件既有的
+// 手动报价（issue #291 / ADR-0036）：行内「录价」动作只对手动报价通道的标的
+// 开放（后端派生价格通道判定，issue #1060 收口——自建标的与名称充代码基金行）；
+// 报价弹窗提交后后端广播价格失效信号，现价列刷新由本组件既有的
 // usePricesChanged 订阅完成，此处零手动重拉。
 // ---------------------------------------------------------------------------
 const quoteTarget = ref<Instrument | null>(null)
@@ -264,13 +263,13 @@ const instrumentBrowseColumns = computed<DataTableColumn<Instrument>[]>(() => [
     },
   },
   {
-    // 录价（issue #291 / ADR-0036）：只对同步覆盖不到的标的开放（自建标的与
-    // 名称充代码的基金行）；真实代码基金与股票的现价归同步，无录价入口。
+    // 录价（issue #291 / ADR-0036）：只对手动报价通道的标的开放（后端派生价格
+    // 通道判定，issue #1060）；行情 / 净值通道的现价归同步，无来源行无入口。
     title: t('investments.browser.columns.quote'),
     key: 'quote',
     width: 70,
     render(row) {
-      if (!canManualPrice(row)) return '-'
+      if (row.price_channel !== 'manual') return '-'
       return h(
         NButton,
         {

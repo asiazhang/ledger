@@ -38,6 +38,7 @@ const stockInstrument = makeInstrument({
   name: '浦发银行',
   type: 'stock',
   market: 'sh',
+  price_channel: 'quote',
 })
 
 const fundInstrument = makeInstrument({
@@ -46,6 +47,27 @@ const fundInstrument = makeInstrument({
   name: '天弘余额宝',
   type: 'fund',
   market: 'unknown',
+  price_channel: 'fund_nav',
+})
+
+/** 录过价的自建标的（且慢组合形态）：手动报价通道（issue #291） */
+const manualInstrument = makeInstrument({
+  id: 'inst-manual',
+  symbol: '稳稳地幸福',
+  name: '且慢组合',
+  type: 'other',
+  market: 'unknown',
+  price_channel: 'manual',
+})
+
+/** 市场未知的股票类：无任何价格来源（issue #1060） */
+const noSourceInstrument = makeInstrument({
+  id: 'inst-none',
+  symbol: 'ghost1',
+  name: '幽灵股票',
+  type: 'stock',
+  market: 'unknown',
+  price_channel: 'none',
 })
 
 /** 面板挂载即拉的领域命令契约快照：持仓空集 + 两标的字典。 */
@@ -143,14 +165,105 @@ describe('PortfolioTrendPanel 走势面板', () => {
     expect(wrapper.get('[data-testid="trend-currency"]').text()).toContain('CNY')
   })
 
-  it('非股票标的 → 「暂无行情来源」边界说明，不发起走势查询', async () => {
+  it('无价格来源标的（通道 = none）→ 「没有价格来源」边界说明，不发起走势查询、不出图', async () => {
+    const wrapper = mount(PortfolioTrendPanel, {
+      props: { entryInstrument: noSourceInstrument },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="trend-no-source"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('没有价格来源')
+    // 边界说明不再误述「仅股票 / ETF 支持」：说明的是没有价格来源
+    expect(wrapper.text()).not.toContain('仅股票 / ETF 支持')
+    expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'instrument_price_trend')).toBe(false)
+  })
+
+  it('选中场外基金（净值通道）→ 净值曲线出图（#303 验收在界面上成立）', async () => {
+    wireInvokeSeam({
+      defaults: PANEL_DEFAULTS,
+      overrides: {
+        portfolio_value_trend: portfolioTrendResponse,
+        instrument_price_trend: {
+          instrument_id: 'inst-fund',
+          points: [
+            { date: '2026-06-05', price_cents: 12850, currency_code: 'CNY' },
+            { date: '2026-06-12', price_cents: 12960, currency_code: 'CNY' },
+          ],
+        },
+      },
+    })
     const wrapper = mount(PortfolioTrendPanel, {
       props: { entryInstrument: fundInstrument },
     })
     await flushPromises()
-    expect(wrapper.text()).toContain('暂无行情来源')
+    // 发起净值走势查询并出图（此前被前端场内白名单拦截）
+    const call = mockInvoke.mock.calls.filter(([c]) => c === 'instrument_price_trend').at(-1)!
+    expect((call[1] as { instrumentId: string }).instrumentId).toBe('inst-fund')
+    const payload = chartPayload(wrapper)
+    expect(payload.datasets[0].data).toEqual([12850, 12960])
+    expect(wrapper.find('[data-testid="trend-no-source"]').exists()).toBe(false)
+  })
+
+  it('选中录过价的自建标的（手动报价通道）→ 价格曲线出图（#291 验收在界面上成立）', async () => {
+    wireInvokeSeam({
+      defaults: PANEL_DEFAULTS,
+      overrides: {
+        portfolio_value_trend: portfolioTrendResponse,
+        instrument_price_trend: {
+          instrument_id: 'inst-manual',
+          points: [
+            { date: '2026-06-05', price_cents: 13180, currency_code: 'CNY' },
+            { date: '2026-06-12', price_cents: 13200, currency_code: 'CNY' },
+          ],
+        },
+      },
+    })
+    const wrapper = mount(PortfolioTrendPanel, {
+      props: { entryInstrument: manualInstrument },
+    })
+    await flushPromises()
+    const call = mockInvoke.mock.calls.filter(([c]) => c === 'instrument_price_trend').at(-1)!
+    expect((call[1] as { instrumentId: string }).instrumentId).toBe('inst-manual')
+    const payload = chartPayload(wrapper)
+    expect(payload.datasets[0].data).toEqual([13180, 13200])
+    expect(wrapper.find('[data-testid="trend-no-source"]').exists()).toBe(false)
+  })
+
+  it('有通道无数据：行情 / 净值通道引导去「同步标的信息」，不出图', async () => {
+    wireInvokeSeam({
+      defaults: PANEL_DEFAULTS,
+      overrides: {
+        portfolio_value_trend: portfolioTrendResponse,
+        instrument_price_trend: { instrument_id: 'inst-fund', points: [] },
+      },
+    })
+    const wrapper = mount(PortfolioTrendPanel, {
+      props: { entryInstrument: fundInstrument },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="trend-empty"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('暂无历史价格数据')
+    expect(wrapper.text()).toContain('同步标的信息')
     expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
-    expect(mockInvoke.mock.calls.some(([c]) => c === 'instrument_price_trend')).toBe(false)
+  })
+
+  it('有通道无数据：手动报价通道引导去「录价」，与同步引导是两种不同文案', async () => {
+    wireInvokeSeam({
+      defaults: PANEL_DEFAULTS,
+      overrides: {
+        portfolio_value_trend: portfolioTrendResponse,
+        instrument_price_trend: { instrument_id: 'inst-manual', points: [] },
+      },
+    })
+    const wrapper = mount(PortfolioTrendPanel, {
+      props: { entryInstrument: manualInstrument },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="trend-empty"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('暂无历史价格数据')
+    expect(wrapper.text()).toContain('录价')
+    expect(wrapper.text()).not.toContain('同步标的信息')
+    expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
   })
 
   it('价格失效信号触发后重拉走势：键（模式+区间）未变也强制重取（issue #238）', async () => {

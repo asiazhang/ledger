@@ -25,7 +25,7 @@ const mockInstruments: Instrument[] = [
     id: 'ins-1', symbol: 'NVDA', name: '英伟达', type: 'stock', currency_code: 'CNY',
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false, market: 'unknown', invested: false,
-    source: 'eastmoney', price_cents: null,
+    source: 'eastmoney', price_cents: null, price_channel: 'none',
   },
 ]
 
@@ -34,7 +34,7 @@ const mockFundInstruments: Instrument[] = [
     id: 'ins-fund', symbol: '000123', name: '某混合基金', type: 'fund', currency_code: 'CNY',
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false, market: 'unknown', invested: false,
-    source: 'eastmoney', price_cents: null,
+    source: 'eastmoney', price_cents: null, price_channel: 'fund_nav',
   },
 ]
 
