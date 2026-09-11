@@ -40,12 +40,16 @@
 //! - [`trade`]：buy/sell/convert 协议三件套与买卖/转换明细投影
 //!   （`TransactionTrade` / `TransactionConvert`）；
 //! - [`trend`]：单标的 / 组合走势查询。
+//! - [`unwind`]：持仓副作用撤销（Unwind）——修改/删除路径的守卫 → 级联/回补 → 清理
+//!   模板单点 `remove(conn, id, kind, mode)`，`trade.*` 守卫码与文案随迁（issue #1020，
+//!   父 spec #1005 决策 D2/D3）；
 //!
 //! 协议事务契约（ADR-0033）：prepare 校验归一化（不落库）、apply 应用副作用
 //! （buy 建仓 / sell 卖出匹配 / convert 两腿结转）、revert 回退副作用（修改路径：
 //! buy 与 convert 转换链+在用占用守卫+清理 / sell 回补）、release_for_delete 承载删除路径
-//! （sell 回补 / buy 与 convert 级联+清理，issue #940 / #979 / ADR-0097 / ADR-0099）；交易行写入由核心交易域行为层编排（经 Writer 接缝），本域不再反向
-//! 依赖核心交易域的行更新（双向依赖已斩断，issue #70）。
+//! （sell 回补 / buy 与 convert 级联+清理，issue #940 / #979 / ADR-0097 / ADR-0099）——
+//! 两者均为薄委托，守卫与清理模板归 [`unwind`]；交易行写入由核心交易域行为层编排
+//! （经 Writer 接缝），本域不再反向依赖核心交易域的行更新（双向依赖已斩断，issue #70）。
 //!
 //! 依赖方向恒为「壳层 → investment → 基础设施」，本模块不反向依赖壳层；
 //! 对 `transaction::amount` / `transaction::search_text` 的消费属域间横向依赖
@@ -67,6 +71,7 @@ pub mod source;
 pub mod stock;
 pub mod trade;
 pub mod trend;
+pub mod unwind;
 
 /// 域集中模型（#422 模型域化随域归位，样板先例：`reports::model`）：全量投资
 /// 类型与财务自由度类型（自由度归投资域，ADR-0048 既有裁决）集中本文件，经
@@ -111,15 +116,15 @@ pub use stock::{
 // 投资交易对外出口收窄为 prepare/apply/revert 三件套 + 删除路径专用 release_for_delete
 // （issue #72 / spec #69 / #940 / ADR-0097）：校验归一化（prepare）、应用副作用（apply）、
 // 回退副作用（revert，修改路径）、删除路径持仓回退（release_for_delete：sell 回补 /
-// buy 级联）各一个入口，不再暴露 create/update/cleanup/reverse 等散落函数；
-// 行写入经交易行为层编排。
+// buy 级联）各一个入口（两者为 [`unwind`] 的薄委托，issue #1020），不再暴露
+// create/update/cleanup/reverse 等散落函数；行写入经交易行为层编排。
 /// 同步重放的计划重建接缝（issue #861）：crate 内供交易行为层重放入口消费。
 pub(crate) use command::{
     replay_exchange_rate_command, replay_instrument_command, replay_price_command,
 };
 pub use trade::{
-    GuardMessages, Plan, apply, convert_fields_by_transaction_ids, get_transaction_convert,
-    get_transaction_trade, prepare, release_for_delete, revert,
+    Plan, apply, convert_fields_by_transaction_ids, get_transaction_convert, get_transaction_trade,
+    prepare, release_for_delete, revert,
 };
 pub(crate) use trade::{replay_convert_plan, replay_plan};
 pub use trend::{query_instrument_price_trend, query_portfolio_value_trend};
