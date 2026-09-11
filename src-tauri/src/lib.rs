@@ -17,6 +17,7 @@ pub mod api_server;
 pub mod backup;
 pub mod budget;
 pub mod categories;
+pub mod closed_set;
 pub mod commands;
 pub mod currencies;
 pub mod dashboard;

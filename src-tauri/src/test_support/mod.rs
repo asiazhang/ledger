@@ -67,7 +67,9 @@ mod seed;
 mod tests;
 pub mod webdav;
 
-pub use assert::{assert_balance_cache_matches_realtime, read_scalar_i64};
+pub use assert::{
+    assert_balance_cache_matches_realtime, extract_check_in_literals, read_scalar_i64,
+};
 pub use channel::publish_raw_segment;
 pub use seed::{
     seed_account, seed_exchange_rate, seed_fx_rate_history, seed_instrument, seed_investment_setup,

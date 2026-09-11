@@ -10,6 +10,23 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::accounts::balance::{compute_balance, list_accounts_with_visibility};
 
+/// 从 `CREATE TABLE` DDL 中提取 `CHECK(<col> IN ('a','b',…))` 的字面量清单
+/// （保序）。供闭集枚举 ↔ DB CHECK 冻结副本的测试期互核消费（ADR-0108）：
+/// 断言本体在各域测试内，本函数只共享提取体。DDL 内同列名的 CHECK 至多
+/// 一个（表级 `sqlite_master.sql` 无歧义），字面量为简单小写词、不含括号。
+pub fn extract_check_in_literals(ddl: &str, col: &str) -> Option<Vec<String>> {
+    let needle = format!("CHECK({col} IN (");
+    let start = ddl.find(&needle)? + needle.len();
+    let rest = &ddl[start..];
+    let end = rest.find("))")?;
+    Some(
+        rest[..end]
+            .split(',')
+            .map(|s| s.trim().trim_matches('\'').to_string())
+            .collect(),
+    )
+}
+
 /// 通用白盒行读取器：执行只读 SQL 取单个整数列，行缺失返回 `None`（既有白盒读
 /// 约定是有意为之的旁路，本读取器只共享读取体、不推翻约定，ADR-0084 决策 6）。
 /// SQL 由调用方书写（显式、可 grep），`query_row` + `optional` 的样板在此归一。
