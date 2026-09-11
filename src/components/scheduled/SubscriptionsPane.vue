@@ -104,7 +104,6 @@ const list = useScheduledPlanList<SubscriptionExt>({
   expandDetail: (_plan, detail) => ({
     next: detail ? earliestPendingOccurrence(detail) : null,
   }),
-  loadErrorText: () => t('scheduled.pane.subscriptionLoadError'),
   cancelConfirmText: () => t('scheduled.pane.subscriptionCancelConfirm'),
   onStatusChanged: refreshSpend,
   onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),

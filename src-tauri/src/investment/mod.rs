@@ -15,15 +15,23 @@
 //!   手动创建守卫与自建标的删除守卫；
 //! - [`financial_freedom`]：财务自由度口径——可投资资产 × 3% 安全提取率对
 //!   年度预算总额的覆盖比例（只读，ADR-0048）；
-//! - [`fund`]：场外基金接入——6 位代码校验、详情落库、AI 降级建行、
-//!   按代码即拉注入接缝（`add_fund_by_code_with`）；
+//! - [`fund`]：场外基金接入——6 位代码校验、行情接入落库半边（`adopt_fund_quote`）、
+//!   AI 降级建行、按代码即拉注入接缝（`add_fund_by_code_with`）；
 //! - [`holdings`]：时点持仓（AsOfHolding）推算单点；
+//! - [`lots`]：持仓批次（security_lots）单点——取批次、逐批次 FIFO 分摊与
+//!   耗尽批次成本闭合、结转成本合计、修改/删除路径的两个精确回补原语
+//!   （issue #1018，父 spec #1005 决策 D4）；
 //! - [`manual_price`]：手动报价两落点（价格历史周采样 + 现价缓存映像规则）；
-//! - [`model`]：域集中模型——全量投资类型、基金/股票行情 DTO 与财务自由度总览
-//!   （#422 模型域化随域归位），经本入口逐类型再导出（禁止 glob）；
+//! - [`model`]：域集中模型——全量投资类型与财务自由度总览（#422 模型域化随域
+//!   归位），经本入口逐类型再导出（禁止 glob）；行情 DTO 已随 ADR-0103 收口为
+//!   [`quote`] 模块的统一载荷；
 //! - [`predicates`]：「持仓标的」判定谓词单点（`INVESTED_EXISTS`）；
 //! - [`prices`]：价格写入单点——现价缓存 upsert、价格历史周采样 upsert、
 //!   价格刻度换算（`PRICE_UNITS_PER_FEN` / `price_value_to_cents`）、东财来源标记；
+//! - [`quote`]：行情接入接缝（QuoteAdoption，ADR-0103）——统一报价载荷
+//!   `Quote` 与落库半边 `adopt_quote`（建档 + 落现价一体）；查询半边实现在
+//!   行情同步域网络层（`sync::fetch_fund_quote_production` /
+//!   `sync::fetch_stock_quote_production`），统一注入签名 `(代码, 市场)`；
 //! - [`reports`]：已实现盈亏汇总查询；
 //! - [`source`]：交易列表标的来源反查（spec #704 / issue #709，按生成交易 id
 //!   批量取证券交易记录指向的标的展示字段）；
@@ -49,9 +57,11 @@ pub mod crud;
 pub mod financial_freedom;
 pub mod fund;
 pub mod holdings;
+pub mod lots;
 pub mod manual_price;
 pub mod predicates;
 pub mod prices;
+pub mod quote;
 pub mod reports;
 pub mod source;
 pub mod stock;
@@ -59,18 +69,18 @@ pub mod trade;
 pub mod trend;
 
 /// 域集中模型（#422 模型域化随域归位，样板先例：`reports::model`）：全量投资
-/// 类型、基金行情 DTO（#422 Q11 归属修正自行情同步域迁入）与财务自由度类型
-/// （自由度归投资域，ADR-0048 既有裁决）集中本文件，经域路径逐类型再导出
-/// （禁止 glob），消费方经域路径显式 import。
+/// 类型与财务自由度类型（自由度归投资域，ADR-0048 既有裁决）集中本文件，经
+/// 域路径逐类型再导出（禁止 glob），消费方经域路径显式 import。行情 DTO 已随
+/// ADR-0103 收口为 [`quote`] 模块的统一载荷。
 mod model;
 
 pub use model::{
-    AccountPnl, AddFundResult, AddStockInstrumentResult, FinancialFreedomOverview, FundDetail,
-    FundNav, Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
-    InstrumentPnl, InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, ManualPriceInput,
+    AccountPnl, AddFundResult, AddStockInstrumentResult, FinancialFreedomOverview, Holding,
+    Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPnl,
+    InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, ManualPriceInput,
     ManualPriceResult, MarketPrice, MarketPriceInput, PnlDetail, PnlFilter, PortfolioTrendPoint,
-    PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary, StockQuote, TransactionConvert,
-    TransactionTrade, TrendRange, YearPnl,
+    PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary, TransactionConvert, TransactionTrade,
+    TrendRange, YearPnl,
 };
 
 /// 域 API 再导出：调用面用域语言短名（`investment::list_instruments` 等），
@@ -85,16 +95,17 @@ pub use crud::{
 };
 pub use financial_freedom::query_financial_freedom;
 pub use fund::{
-    FundCreateOutcome, add_fund_by_code_with, create_fund_degraded, is_six_digit_code,
-    persist_fund_detail, validate_fund_code,
+    FundCreateOutcome, add_fund_by_code_with, adopt_fund_quote, create_fund_degraded,
+    is_six_digit_code, validate_fund_code,
 };
 pub use manual_price::record_manual_price;
+pub use quote::{Quote, QuoteAdoptionInput, QuoteAdoptionOutcome};
 pub use reports::query_realized_pnl_summary;
 pub use source::source_display_by_transaction_ids;
 pub use stock::{
     ResolvedStockCode, StockCreateOutcome, StockCreateRoute, StockEnhancePlan,
-    add_stock_instrument_with_quote, create_stock_degraded, derive_quote_currency,
-    fetch_stock_quote_for_add, is_stock_lookup_miss, persist_stock_quote,
+    add_stock_instrument_with_quote, adopt_stock_quote, create_stock_degraded,
+    derive_quote_currency, fetch_stock_quote_for_add, is_stock_lookup_miss,
     resolve_add_stock_channel, resolve_stock_quote_candidates, route_stock_creation,
 };
 // 投资交易对外出口收窄为 prepare/apply/revert 三件套 + 删除路径专用 release_for_delete

@@ -12,6 +12,10 @@ import { errorMessage } from '@/utils/errors'
  * - 发起永不 reject：成功回结果、失败回空且 error 置位（error 是唯一成败判据）；
  * - 不持任务结果：数据存取归调用方（成功结果从 run 返回值取）；
  * - 无生命周期钩子、无 immediate：首跑时序归调用方。
+ * - 每实例静默 opt-out：`{ silent: true }` 时 error 照常置位、默认 toast 不弹
+ *   （背景型优雅降级请求，ADR-0040 决策 3 修订注）；
+ * - 作废在途出口 `invalidate()`：序号推进且 loading 收尾、error 不动、不发起新任务
+ *   （清空/重置时不许在途结果落位，ADR-0040 决策 5 修订注）。
  */
 
 /** toast sink 最小结构面：模块默认策略只用 error 一路；
@@ -34,7 +38,14 @@ function showErrorToast(message: string): void {
   toastSink.error(message)
 }
 
-export function useLoadable<T>(task: () => Promise<T>) {
+/** 实例级配置：`silent` 为每实例静默 opt-out（默认策略仍全局单点，不是策略注入）。 */
+export interface UseLoadableOptions {
+  /** 静默实例：error 照常置位、toast 不弹——失败走优雅降级而非弹窗打扰。 */
+  silent?: boolean
+}
+
+export function useLoadable<T>(task: () => Promise<T>, options: UseLoadableOptions = {}) {
+  const silent = options.silent ?? false
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -54,12 +65,19 @@ export function useLoadable<T>(task: () => Promise<T>) {
     } catch (e) {
       if (mySeq !== seq) return null
       error.value = errorMessage(e)
-      showErrorToast(error.value)
+      if (!silent) showErrorToast(error.value)
       return null
     } finally {
       if (mySeq === seq) loading.value = false
     }
   }
 
-  return { loading, error, run }
+  /** 作废在途：序号推进 + loading 收尾置 false（error 不动），不发起新任务；
+   * 此后迟到的在途结果按既有竞态语义作废（不落位、不收 loading、不弹 toast）。 */
+  function invalidate(): void {
+    seq += 1
+    loading.value = false
+  }
+
+  return { loading, error, run, invalidate }
 }

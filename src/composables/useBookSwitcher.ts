@@ -3,6 +3,7 @@ import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
+import { useLoadable } from '@/composables/useLoadable'
 import { restartAppShortly } from '@/utils/restart'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { useModalIntent } from '@/composables/useModalIntent'
@@ -43,30 +44,26 @@ export function useBookSwitcher() {
   const activeId = ref<string | null>(null)
   const mutable = ref(true)
   const fallbackReason = ref<string | null>(null)
-  const loading = ref(false)
-  const loadFailed = ref(false)
   /** 切换在途（写指针→重载窗口）：期间拒绝再次发起切换。 */
   const switching = ref(false)
+
+  // 清单加载收编 Loadable（issue #1008 / ADR-0040）：loading 置收、竞态裁决与错误
+  // toast（默认策略 = 裸 errorMessage）内化；loadFailed 由 error 状态派生——弹层
+  // 错误行 + 重试承载动作上下文，清单半边不再手搓 loading/失败位。
+  const { loading, error, run: runList } = useLoadable(() => api.listBooks())
+  const loadFailed = computed(() => error.value !== null)
 
   /** 当前活动账本（入口按钮展示名；清单未就绪或损坏时为 null）。 */
   const activeBook = computed(() => books.value.find((b) => b.id === activeId.value) ?? null)
 
   /** 刷新清单（挂载首刷 + 每次登记变更成功后重拉，弹层列表即时更新）。 */
   async function refresh(): Promise<void> {
-    loading.value = true
-    try {
-      const info = await api.listBooks()
-      books.value = info.books
-      activeId.value = info.active_id
-      mutable.value = info.mutable
-      fallbackReason.value = info.fallback_reason
-      loadFailed.value = false
-    } catch (e) {
-      loadFailed.value = true
-      message.error(t('books.toasts.loadFailed', { msg: errorMessage(e) }))
-    } finally {
-      loading.value = false
-    }
+    const info = await runList()
+    if (info === null) return
+    books.value = info.books
+    activeId.value = info.active_id
+    mutable.value = info.mutable
+    fallbackReason.value = info.fallback_reason
   }
 
   onMounted(() => {

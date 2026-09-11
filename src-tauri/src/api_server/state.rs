@@ -6,24 +6,27 @@ use crate::db::boot::BootFailureGate;
 use crate::db::encryption::EncryptionGate;
 use crate::error::AppError;
 use crate::events::SignalEmitter;
-use crate::investment::{FundDetail, StockQuote};
+use crate::investment::Quote;
 use axum::extract::FromRef;
 use rusqlite::Connection;
 
-/// 东财基金详情获取函数接缝（issue #304 / ADR-0039）：`基金代码 → Result<FundDetail>`，
+/// 东财基金报价获取函数接缝（issue #304 / ADR-0039）：`基金代码 → Result<Quote>`，
 /// 查无此码以 `AppError::Invalid`（中文错误）上抛——与 IPC/BDD 的
-/// `add_fund_by_code_with` 注入接缝同一形状约定。生产路径为东财 FundSearchAPI
-/// （`fetch_fund_detail_production`）；HTTP 集成测试以注入桩离线驱动
-/// （`setup_app_with_fund_fetch`），全部基金端点集成测试不触真实网络。
-pub type FundDetailFetcher = Arc<dyn Fn(&str) -> Result<FundDetail, AppError> + Send + Sync>;
+/// `add_fund_by_code_with` 注入接缝同一载荷（行情接入统一报价，ADR-0103）；本接缝
+/// 是查询端点的场外通道注入（按代码一参），与接缝的统一注入签名（代码，市场）
+/// 同源不同面。生产路径为东财 FundSearchAPI（`fetch_fund_quote_production`）；
+/// HTTP 集成测试以注入桩离线驱动（`setup_app_with_fund_fetch`），全部基金端点
+/// 集成测试不触真实网络。
+pub type FundQuoteFetcher = Arc<dyn Fn(&str) -> Result<Quote, AppError> + Send + Sync>;
 
-/// 东财股票行情获取函数接缝（issue #693 / ADR-0081）：`(市场, 代码) → Result<StockQuote>`，
-/// 查无此码以码化中文错误上抛——注入桩形态与 [`FundDetailFetcher`] 同构。市场/代码
+/// 东财股票行情获取函数接缝（issue #693 / ADR-0081）：`(市场, 代码) → Result<Quote>`，
+/// 查无此码以码化中文错误上抛——注入桩形态与 [`FundQuoteFetcher`] 同构（统一报价
+/// 载荷，ADR-0103）。市场/代码
 /// 形态解析在投资域单点完成（`resolve_stock_quote_candidates`），本接缝只接归一化后的查询；
 /// 美股 ticker 的候选遍历由壳层共享助手 `fetch_stock_quote_first_hit_for_api` 执行（issue #696）。
 /// 生产路径为东财单点行情（`fetch_stock_quote_production`）；HTTP 集成测试以注入桩
 /// 离线驱动，全部股票端点集成测试不触真实网络。
-pub type StockQuoteFetcher = Arc<dyn Fn(&str, &str) -> Result<StockQuote, AppError> + Send + Sync>;
+pub type StockQuoteFetcher = Arc<dyn Fn(&str, &str) -> Result<Quote, AppError> + Send + Sync>;
 
 /// 失效信号发射槽（壳层 handler 的提取形状，ADR-0054 #367 修订）：写事务提交
 /// 成功后经信号映射单点发射失效信号的机制槽位，收口于发射器接缝
@@ -56,7 +59,7 @@ pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 pub struct ApiState {
     pub conn: Arc<Mutex<Connection>>,
     pub emitter: EmitterSlot,
-    pub fund_fetch: Option<FundDetailFetcher>,
+    pub fund_fetch: Option<FundQuoteFetcher>,
     pub stock_fetch: Option<StockQuoteFetcher>,
     pub lock_gate: EncryptionGate,
     pub boot_gate: BootFailureGate,

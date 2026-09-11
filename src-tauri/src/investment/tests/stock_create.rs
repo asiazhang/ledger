@@ -1,24 +1,26 @@
-//! 股票创建增强的领域落库接缝（issue #694 / ADR-0081 决策 2）：东财往返路由
-//! 判定（真实代码触网 / 北交所与矛盾 market 拒绝 / 非代码形态走通用路径）、
-//! 命中落库（权威名称 + 解析市场 + 现价）、降级落库（市场保留、既有行不覆盖）。
-//! 全部离线驱动，先例：[`super::fund_add`]。
+//! 股票创建增强的领域落库接缝（issue #694 / ADR-0081 决策 2 / ADR-0103）：东财
+//! 往返路由判定（真实代码触网 / 北交所与矛盾 market 拒绝 / 非代码形态走通用路径）、
+//! 命中落库（权威名称 + 解析市场 + 现价，经行情接入落库半边）、降级落库（市场保留、
+//! 既有行不覆盖）。全部离线驱动，先例：[`super::fund_add`]。
 
 use crate::investment::{
-    InstrumentType, StockCreateRoute, StockQuote, create_stock_degraded, persist_stock_quote,
+    InstrumentType, Quote, StockCreateRoute, adopt_stock_quote, create_stock_degraded,
     route_stock_creation,
 };
 
 use crate::test_support::open;
 
-/// 构造一份典型股票行情（价格万分之一元刻度）。
-fn quote(code: &str, name: &str, market: &str, price: Option<i64>) -> StockQuote {
-    StockQuote {
+/// 构造一份典型股票行情（统一报价载荷，ADR-0103；价格万分之一元刻度）。
+fn quote(code: &str, name: &str, market: &str, price: Option<i64>) -> Quote {
+    Quote {
         code: code.to_string(),
         name: name.to_string(),
-        market: market.to_string(),
         price_cents: price,
         price_date: price.map(|_| "2026-09-04".to_string()),
-        kind_hint: InstrumentType::Stock,
+        market: Some(market.to_string()),
+        kind_hint: Some(InstrumentType::Stock),
+        fund_class: None,
+        nav_date: None,
     }
 }
 
@@ -173,7 +175,7 @@ fn routes_non_code_shapes_to_generic_path() {
 #[test]
 fn persists_quote_as_stock_row_with_market_and_price() {
     let conn = open();
-    let outcome = persist_stock_quote(
+    let outcome = adopt_stock_quote(
         &conn,
         InstrumentType::Stock,
         &quote("600519", "贵州茅台", "sh", Some(150000)),
@@ -199,7 +201,7 @@ fn persists_quote_as_stock_row_with_market_and_price() {
 #[test]
 fn persists_quote_without_price_skips_price_row() {
     let conn = open();
-    let outcome = persist_stock_quote(
+    let outcome = adopt_stock_quote(
         &conn,
         InstrumentType::Stock,
         &quote("000001", "平安银行", "sz", None),
@@ -219,7 +221,7 @@ fn persists_quote_without_price_skips_price_row() {
 #[test]
 fn hong_kong_quote_derives_hkd_currency() {
     let conn = open();
-    let outcome = persist_stock_quote(
+    let outcome = adopt_stock_quote(
         &conn,
         InstrumentType::Stock,
         &quote("00700", "腾讯控股", "hk", Some(360500)),
@@ -285,7 +287,7 @@ fn degraded_creation_without_ai_name_creates_nameless_row() {
 fn degraded_replay_reuses_row_without_overwriting_authoritative_name() {
     let conn = open();
     // 第一笔：东财可达 → 权威名称回填 + 落价。
-    let first = persist_stock_quote(
+    let first = adopt_stock_quote(
         &conn,
         InstrumentType::Stock,
         &quote("600519", "贵州茅台", "sh", Some(150000)),
@@ -322,7 +324,7 @@ fn persists_quote_with_submitted_etf_kind_preserves_type() {
     let conn = open();
     // 场内基金段代码 + 调用方按类型提示提交 etf：增强照常生效，类型以提交为准
     //（东财类型提示只在查询端点投影，不在此改写）。
-    let outcome = persist_stock_quote(
+    let outcome = adopt_stock_quote(
         &conn,
         InstrumentType::Etf,
         &quote("510300", "沪深300ETF", "sh", Some(398500)),

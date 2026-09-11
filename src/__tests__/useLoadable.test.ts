@@ -165,3 +165,88 @@ describe('useLoadable 异步任务模块（ADR-0040 / issue #320）', () => {
     expect(error.value).toBeNull()
   })
 })
+
+describe('useLoadable 静默实例与作废在途（issue #1008）', () => {
+  it('silent 实例失败：error 照常置位、默认 toast 不弹（双通道只关 toast 一路）', async () => {
+    const sink = makeFakeSink()
+    registerToastSink(sink)
+    const { error, run } = useLoadable(async () => Promise.reject(new Error('后台失败')), {
+      silent: true,
+    })
+
+    await expect(run()).resolves.toBeNull()
+    expect(error.value).toBe('后台失败')
+    expect(sink.error).not.toHaveBeenCalled()
+  })
+
+  it('silent 实例成功路径与默认实例无异：回结果、error 清零、不弹 toast', async () => {
+    const sink = makeFakeSink()
+    registerToastSink(sink)
+    const { loading, error, run } = useLoadable(async () => '结果', { silent: true })
+
+    await expect(run()).resolves.toBe('结果')
+    expect(loading.value).toBe(false)
+    expect(error.value).toBeNull()
+    expect(sink.error).not.toHaveBeenCalled()
+  })
+
+  it('invalidate 作废在途：loading 收尾、不发起新任务，迟到结果不落位', async () => {
+    const gate = deferred<string>()
+    const task = vi.fn(() => gate.promise)
+    const { loading, error, run, invalidate } = useLoadable(task)
+
+    const pending = run()
+    expect(loading.value).toBe(true)
+
+    invalidate()
+    expect(loading.value).toBe(false)
+    expect(error.value).toBeNull()
+    expect(task).toHaveBeenCalledTimes(1) // 作废不发起新任务
+
+    gate.resolve('迟到的结果')
+    await expect(pending).resolves.toBeNull()
+    expect(loading.value).toBe(false)
+    expect(error.value).toBeNull()
+  })
+
+  it('invalidate 后迟到失败：error 不置位、默认 toast 不弹', async () => {
+    const sink = makeFakeSink()
+    registerToastSink(sink)
+    const gate = deferred<string>()
+    const { error, run, invalidate } = useLoadable(() => gate.promise)
+
+    const pending = run()
+    invalidate()
+    gate.reject(new Error('迟到的失败'))
+    await expect(pending).resolves.toBeNull()
+    expect(error.value).toBeNull()
+    expect(sink.error).not.toHaveBeenCalled()
+  })
+
+  it('invalidate 只收 loading，不动已有 error', async () => {
+    const { error, run, invalidate } = useLoadable(async () => {
+      throw new Error('先前失败')
+    })
+
+    await run()
+    expect(error.value).toBe('先前失败')
+    invalidate()
+    expect(error.value).toBe('先前失败')
+  })
+
+  it('invalidate 后再发起：新任务正常落位，被作废的旧任务仍不落位', async () => {
+    const gates = [deferred<string>(), deferred<string>()]
+    let n = 0
+    const { loading, run, invalidate } = useLoadable(() => gates[n++].promise)
+
+    const stale = run() // gates[0]
+    invalidate()
+    const fresh = run() // gates[1]
+    gates[1].resolve('新结果')
+    await expect(fresh).resolves.toBe('新结果')
+    expect(loading.value).toBe(false)
+
+    gates[0].resolve('旧结果')
+    await expect(stale).resolves.toBeNull()
+  })
+})

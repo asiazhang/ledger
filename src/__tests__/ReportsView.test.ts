@@ -11,7 +11,8 @@ import { useWindowGuard } from '@/composables/useWindowGuard'
 import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
 import { fireViewReset, clearViewResets } from '@/composables/viewResetRegistry'
 import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
-import { makeCategory } from './factories'
+import { makeCategory, makeFakeSink, resetToastSink } from './factories'
+import { registerToastSink } from '@/composables/useLoadable'
 import { formatAmount } from '@/utils/money'
 import type { NullableDateRange } from '@/utils/time-period'
 import type { ReportDateRange } from '@/types'
@@ -67,6 +68,7 @@ const BASE_DEFAULTS = {
 }
 
 beforeEach(() => {
+  resetToastSink()
   wireInvokeSeam({ defaults: BASE_DEFAULTS })
   pushMock.mockReset()
   vi.useFakeTimers()
@@ -75,6 +77,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  resetToastSink()
 })
 
 async function mountReports() {
@@ -747,6 +750,19 @@ describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重�
 })
 
 
+describe('ReportsView 加载失败治愈（issue #1008）', () => {
+  it('整页主实例失败：默认策略弹裸 errorMessage（治愈原 try/finally 无 catch 的静默失败）', async () => {
+    const sink = makeFakeSink()
+    registerToastSink(sink)
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { monthly_summary: () => Promise.reject(new Error('数据库不可用')) },
+    })
+    await mountReports()
+    expect(sink.error).toHaveBeenCalledWith('数据库不可用')
+  })
+})
+
 describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', () => {
   const mockMerchants = [
     { merchant_id: 'm-1', merchant_name: '超市', amount_cents: 5000, transaction_count: 3 },
@@ -872,7 +888,7 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
     expect(Object.keys(localStorage)).toEqual(keysBefore)
   })
 
-  it('TopN 快速连点竞态：最后一次发起胜出，迟到的前发响应丢弃（ADR-0040 同语义）', async () => {
+  it('TopN 快速连点竞态：最后一次发起胜出，迟到的前发响应丢弃（merchant Loadable 实例）', async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { merchant_shares: merchantPayload() },

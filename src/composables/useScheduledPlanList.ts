@@ -2,6 +2,7 @@ import { computed, readonly, ref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
+import { useLoadable } from '@/composables/useLoadable'
 import { errorMessage } from '@/utils/errors'
 import { t } from '@/i18n'
 import { scheduledStatusLabel } from '@/utils/scheduled'
@@ -151,8 +152,6 @@ export interface UseScheduledPlanListOptions<E> {
     plan: ScheduledTransactionWithExt,
     detail: ScheduledTransactionDetail | null,
   ): E
-  /** 清单加载失败的提示文案 getter（形态命名，如「加载定时转账失败」；getter 保证切语言即时生效）。 */
-  loadErrorText(): string
   /** 取消确认文案 getter（三形态措辞各异，注入而非写死；确认弹层由适配器渲染）。 */
   cancelConfirmText(): string
   /** 生命周期变更（暂停/恢复/取消）成功并重拉后的回调（订阅注入花费面板刷新）。 */
@@ -166,15 +165,15 @@ export interface UseScheduledPlanListReturn<E> {
   readonly rows: Readonly<Ref<readonly ScheduledPlanRow<E>[]>>
   /** 清单加载中（只读）：归 NDataTable loading 消费。 */
   readonly loading: Readonly<Ref<boolean>>
+  /** 清单加载失败归一文案（只读）：error 是唯一成败判据，toast 之外的观察面。 */
+  readonly error: Readonly<Ref<string | null>>
   /** 清单状态过滤值（只读），默认「进行中」；改动经 setStatusFilter。 */
   readonly statusFilter: Readonly<Ref<ScheduledStatus>>
-  /** 重拉版本号：bump 即「清单数据完成一次重拉」，是唯一的重拉观察信号。 */
-  readonly refreshVersion: Readonly<Ref<number>>
   /** 状态过滤后的行（纯前端过滤，不产生请求）。 */
   readonly filteredRows: ComputedRef<ScheduledPlanRow<E>[]>
   /** 按形态的状态过滤选项集（computed：标签随界面语言即时切换）。 */
   readonly statusFilterOptions: ComputedRef<ReadonlyArray<ScheduledPlanStatusOption>>
-  /** 清单加载/刷新：按形态拉取计划 + 逐行详情扩展；成功完成 bump refreshVersion。 */
+  /** 清单加载/刷新：按形态拉取计划 + 逐行详情扩展；失败留旧行、error 置位。 */
   load(): Promise<void>
   /** 状态过滤意图入口。 */
   setStatusFilter(status: ScheduledStatus): void
@@ -185,21 +184,18 @@ export interface UseScheduledPlanListReturn<E> {
 }
 
 /**
- * 计划清单工厂：每次调用返回独立实例（各页签独立状态与版本号，避免串扰）。
- * 必须在组件 setup 内调用（成功/失败提示经 useMessage，与仓库既有 composable 形态一致；
- * ADR-0040 的 Loadable 落地后可整体顺带迁移，见其决策 6 预留）。
+ * 计划清单工厂：每次调用返回独立实例（各页签独立状态，避免串扰）。
+ * 必须在组件 setup 内调用：清单加载的生命周期经 Loadable 内化（ADR-0040），
+ * Plan Lifecycle 变更的成功/失败提示仍经 useMessage（与仓库既有 composable 形态一致）。
  */
 export function useScheduledPlanList<E>(
   options: UseScheduledPlanListOptions<E>,
 ): UseScheduledPlanListReturn<E> {
-  const { kind, expandDetail, loadErrorText, cancelConfirmText, onStatusChanged, onOpenDetail } =
-    options
+  const { kind, expandDetail, cancelConfirmText, onStatusChanged, onOpenDetail } = options
   const message = useMessage()
 
   const rows = ref([]) as Ref<ScheduledPlanRow<E>[]>
-  const loading = ref(false)
   const statusFilter = ref<ScheduledStatus>('active')
-  const refreshVersion = ref(0)
 
   const filteredRows = computed(() =>
     rows.value.filter((r) => r.plan.core.status === statusFilter.value),
@@ -208,31 +204,28 @@ export function useScheduledPlanList<E>(
   const statusFilterOptions = computed(() => buildStatusFilterOptions(kind))
 
   /**
-   * 清单加载（唯一写 rows 的路径）：列表命令按形态过滤后，逐行取详情扩展；
-   * 单行详情失败标记 detailFailed 不拖垮整单；列表命令失败提示形态文案、行保持旧值。
-   * 时序彻底内化：loading 置收、错误提示、版本号 bump 均在此，调用方只管发起。
+   * 清单加载收编 Loadable（issue #1008 / ADR-0040）：loading 置收、竞态裁决与
+   * 错误 toast（默认策略 = 裸 errorMessage）内化；任务只产结果不写 rows，成功才由
+   * load 落位——列表命令失败时行保持旧值。「等待重拉完成」由 await load() 天然承担。
+   * 单行详情失败标记 detailFailed 不拖垮整单。
    */
+  const { loading, error, run } = useLoadable(async (): Promise<ScheduledPlanRow<E>[]> => {
+    const plans = (await api.listScheduledTransactions()).filter((p) => p.core.kind === kind)
+    return Promise.all(
+      plans.map(async (p): Promise<ScheduledPlanRow<E>> => {
+        try {
+          const detail = await api.getScheduledTransactionDetail(p.core.id)
+          return { plan: p, detailFailed: false, ext: expandDetail(p, detail) }
+        } catch {
+          return { plan: p, detailFailed: true, ext: expandDetail(p, null) }
+        }
+      }),
+    )
+  })
+
   async function load() {
-    loading.value = true
-    try {
-      const plans = (await api.listScheduledTransactions()).filter((p) => p.core.kind === kind)
-      const details = await Promise.all(
-        plans.map(async (p): Promise<ScheduledPlanRow<E>> => {
-          try {
-            const detail = await api.getScheduledTransactionDetail(p.core.id)
-            return { plan: p, detailFailed: false, ext: expandDetail(p, detail) }
-          } catch {
-            return { plan: p, detailFailed: true, ext: expandDetail(p, null) }
-          }
-        }),
-      )
-      rows.value = details
-      refreshVersion.value += 1
-    } catch (e) {
-      message.error(`${loadErrorText()}: ${errorMessage(e)}`)
-    } finally {
-      loading.value = false
-    }
+    const loaded = await run()
+    if (loaded !== null) rows.value = loaded
   }
 
   function setStatusFilter(status: ScheduledStatus) {
@@ -300,8 +293,8 @@ export function useScheduledPlanList<E>(
   return {
     rows: readonly(rows) as Readonly<Ref<readonly ScheduledPlanRow<E>[]>>,
     loading: readonly(loading) as Readonly<Ref<boolean>>,
+    error: readonly(error) as Readonly<Ref<string | null>>,
     statusFilter: readonly(statusFilter) as Readonly<Ref<ScheduledStatus>>,
-    refreshVersion: readonly(refreshVersion) as Readonly<Ref<number>>,
     filteredRows,
     statusFilterOptions,
     load,

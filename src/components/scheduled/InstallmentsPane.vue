@@ -81,7 +81,6 @@ const list = useScheduledPlanList<InstallmentExt>({
     completedCount: detail?.completed_occurrences ?? 0,
     completedAmountCents: detail?.completed_amount_cents ?? 0,
   }),
-  loadErrorText: () => t('scheduled.pane.installmentLoadError'),
   cancelConfirmText: () => t('scheduled.pane.installmentCancelConfirm'),
   onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),
 })

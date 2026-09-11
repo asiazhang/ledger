@@ -1,19 +1,22 @@
-//! 场外基金的东财详情落库接缝：按代码即拉添加（issue #301 / ADR-0038 决策 1）
-//! 与 AI 创建端点 fund 增强（issue #304 / ADR-0039 决策 3）共用同一套字典形态——
-//! 手动输入 / AI 提交 6 位基金代码 → 东财详情拉取（名称 / 分类 / 最新单位净值 +
-//! 净值日期）→ 落标的字典（类型 fund、市场恒 unknown、来源 manual）与现价缓存
-//! （净值即价格、币种人民币、带净值日期）。查无此码返回中文错误，不产生标的行。
+//! 场外基金的行情接入通道（ADR-0103）：按代码即拉添加（issue #301 / ADR-0038
+//! 决策 1）与 AI 创建端点 fund 增强（issue #304 / ADR-0039 决策 3）共用同一套
+//! 字典形态——手动输入 / AI 提交 6 位基金代码 → 查询半边取东财报价（名称 /
+//! 分类 / 最新单位净值 + 净值日期，`sync::fetch_fund_quote_production`）→
+//! 落库半边（[`adopt_fund_quote`]）落标的字典（类型 fund、市场恒 unknown、
+//! 来源 manual）与现价缓存（净值即价格、币种人民币、带净值日期）。查无此码
+//! 返回中文错误，不产生标的行。
 //!
-//! 编排与网络解耦：核心接缝 [`add_fund_by_code_with`] 接受注入的详情获取函数
-//! （`&str → Result<FundDetail>`），测试与 BDD 以 stub 离线驱动（不依赖真实
-//! 网络）；生产命令在锁外完成网络拉取后调 [`persist_fund_detail`] 落库
-//! （见 `commands::investment` 壳的 `add_fund_by_code` 命令）。
+//! 编排与网络解耦：核心接缝 [`add_fund_by_code_with`] 接受统一注入的报价获取
+//! 函数（行情接入查询半边签名 `(代码, 市场) → Result<Quote>`，ADR-0103 决策 2），
+//! 测试与 BDD 以 stub 离线驱动（不依赖真实网络）；生产命令在锁外完成网络拉取后
+//! 调 [`adopt_fund_quote`] 落库（见 `commands::investment` 壳的 `add_fund_by_code`
+//! 命令）。
 
 use rusqlite::Connection;
 
 use super::crud;
-use super::model::{AddFundResult, FundDetail, InstrumentInput, InstrumentType};
-use super::prices::{EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price};
+use super::model::{AddFundResult, InstrumentInput, InstrumentType};
+use super::quote::{Quote, QuoteAdoptionInput, adopt_quote};
 use crate::error::{AppError, Result};
 
 /// 场外基金标的的固定字典形态（ADR-0038 决策 1）：类型 fund、市场恒 unknown
@@ -87,64 +90,52 @@ pub fn create_fund_degraded(
     })
 }
 
-/// 拉取到的基金详情落库：建标的行（复用核心创建函数的（代码，类型）幂等
-/// upsert，来源 manual，ADR-0036）+ 有净值时落现价缓存（净值即价格、
-/// priced_at = 净值日期）。返回结果含 `price_written`（价格失效信号判定依据）。
-pub fn persist_fund_detail(
-    conn: &Connection,
-    code: &str,
-    detail: &FundDetail,
-) -> Result<AddFundResult> {
-    let instrument_id = crud::create_instrument(
+/// 行情接入落库半边的场外通道（ADR-0103 决策 3）：字典形态与现价时点在本通道
+/// 判定——类型恒 fund、市场恒 unknown（场外无交易所市场，纯字典键）、币种恒
+/// 人民币（含 QDII 人民币份额）；有净值时 priced_at 与 nav_date 同为净值日期
+///（现价的行情日期就是净值本身对应的日期）。覆盖不比较新旧净值日期：水位比较
+/// 归净值同步通道（#303 以 nav_date 为增量水位），本通道语义 = 东财当前最新值
+/// 整体回放。建档 + 落现价交 [`adopt_quote`] 一体执行，此处只构造回显投影
+/// [`AddFundResult`]（含 `price_written`，价格失效信号判定依据）。
+pub fn adopt_fund_quote(conn: &Connection, quote: &Quote) -> Result<AddFundResult> {
+    let nav_date = quote.nav_date.as_deref();
+    let outcome = adopt_quote(
         conn,
-        InstrumentInput {
-            symbol: code.to_string(),
+        &QuoteAdoptionInput {
             kind: InstrumentType::Fund,
-            name: Some(detail.name.clone()),
-            currency_code: FUND_CURRENCY.to_string(),
-            market: Some(FUND_MARKET.to_string()),
+            market: FUND_MARKET,
+            currency_code: FUND_CURRENCY,
+            // 基金现价时点 = 净值日期；无净值时不落现价，该值不被消费。
+            priced_at: nav_date.unwrap_or_default(),
+            nav_date,
         },
+        quote,
     )?;
-    let nav = detail.nav.as_ref();
-    if let Some(nav) = nav {
-        // 现价 = 最新公布单位净值（万分之一元，ADR-0038 决策 3）；priced_at 与
-        // nav_date 同为净值日期——现价的行情日期就是净值本身对应的日期。覆盖
-        // 不比较新旧净值日期：水位比较归净值同步通道（#303 以 nav_date 为增量
-        // 水位），本通道语义 = 东财当前最新值整体回放。
-        upsert_market_price(
-            conn,
-            &instrument_id,
-            price_value_to_cents(nav.nav),
-            FUND_CURRENCY,
-            &nav.nav_date,
-            Some(nav.nav_date.as_str()),
-            Some(EASTMONEY_PRICE_SOURCE),
-        )?;
-    }
     Ok(AddFundResult {
-        instrument_id,
-        symbol: code.to_string(),
-        name: detail.name.clone(),
-        fund_class: detail.fund_class.clone(),
-        nav_cents: nav.map(|n| price_value_to_cents(n.nav)),
-        nav_date: nav.map(|n| n.nav_date.clone()),
-        price_written: nav.is_some(),
+        instrument_id: outcome.instrument_id,
+        symbol: quote.code.clone(),
+        name: quote.name.clone(),
+        fund_class: quote.fund_class.clone().unwrap_or_default(),
+        nav_cents: quote.price_cents,
+        nav_date: quote.nav_date.clone(),
+        price_written: outcome.price_written,
     })
 }
 
-/// 按代码即拉核心接缝：校验代码 → 注入的获取函数拉详情 → 落库。
-/// 获取函数按请求代码返回 [`FundDetail`]，查无此码以 `AppError::Invalid`
-/// （中文错误）上抛；本函数不触碰网络，测试以 stub 驱动（先例：
-/// `incremental::do_incremental_sync_with`）。
+/// 按代码即拉核心接缝：校验代码 → 注入的获取函数取报价 → 落库。
+/// 获取函数按（请求代码，通道字典市场）返回 [`Quote`]（统一注入签名，ADR-0103
+/// 决策 2；场外基金无交易所市场，市场位恒 `unknown`），查无此码以
+/// `AppError::Invalid`（中文错误）上抛；本函数不触碰网络，测试以 stub 驱动
+///（先例：`incremental::do_incremental_sync_with`）。
 pub fn add_fund_by_code_with<F>(
     conn: &Connection,
     code: &str,
     fetch: &mut F,
 ) -> Result<AddFundResult>
 where
-    F: FnMut(&str) -> Result<FundDetail>,
+    F: FnMut(&str, &str) -> Result<Quote>,
 {
     validate_fund_code(code)?;
-    let detail = fetch(code)?;
-    persist_fund_detail(conn, code, &detail)
+    let quote = fetch(code, FUND_MARKET)?;
+    adopt_fund_quote(conn, &quote)
 }

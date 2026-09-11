@@ -356,16 +356,19 @@ fn fund_add_by_code_syncs_dictionary_not_quote() {
 
     // 按代码即拉（注入桩离线驱动）：标的字典随 op 同步；东财现价是行情外拉
     // 数据，不进 op——重放端字典有行、现价无行（各端自行拉行情）。
-    let detail = crate::investment::FundDetail {
+    // 统一报价载荷（行情接入，ADR-0103）：净值 1.2345 元 → 12345 万分之一元，
+    // 价格日期与净值日期同为净值日期。
+    let quote = crate::investment::Quote {
         code: "000001".into(),
         name: "华夏成长混合".into(),
-        fund_class: "混合型-灵活".into(),
-        nav: Some(crate::investment::FundNav {
-            nav: 1.2345,
-            nav_date: "2026-01-09".into(),
-        }),
+        price_cents: Some(12_345),
+        price_date: Some("2026-01-09".into()),
+        market: None,
+        kind_hint: None,
+        fund_class: Some("混合型-灵活".into()),
+        nav_date: Some("2026-01-09".into()),
     };
-    let mut fetch = |_: &str| Ok(detail.clone());
+    let mut fetch = |_: &str, _: &str| Ok(quote.clone());
     let result = add_fund_by_code_with(&conn_a, "000001", &mut fetch).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
 

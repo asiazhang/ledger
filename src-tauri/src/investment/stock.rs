@@ -1,10 +1,10 @@
 //! 股票按（市场，代码）查询与创建增强的领域规则收口（issue #693/#694/#696 /
 //! ADR-0081 决策 1/2）：代码形态 → 查询候选单点解析（显式 market 校验共用同一份
 //! 形态规则）、报价币种推导与创建增强的东财往返路由判定。东财网络访问在行情
-//! 同步域（`sync::stock`，注入桩形态与基金详情获取接缝同构）；落库接缝
-//! （[`persist_stock_quote`] / [`create_stock_degraded`]）镜像场外基金的
-//! `fund.rs` 同名接缝，供 stocks 查询端点、标的创建壳与后续添加投资标的壳
-//! 共用（spec #690 测试决策：唯一新增接缝，三个壳共用）。
+//! 同步域（`sync::stock`，统一注入签名的场内实例，ADR-0103 决策 2）；行情接入
+//! 落库半边的场内通道（[`adopt_stock_quote`] / [`create_stock_degraded`]）镜像
+//! 场外基金的 `fund.rs` 同族接缝，供 stocks 查询端点、标的创建壳与后续添加投资
+//! 标的壳共用（spec #690 测试决策：唯一新增接缝，三个壳共用）。
 //!
 //! 推断规则：6 位数字 6/5 开头→沪（5 开头为场内基金段，ETF/LOF 是类型提示的
 //! 探测对象）、0/3/1 开头→深（1 开头为场内基金段）、5 位及以下数字→港股
@@ -15,8 +15,8 @@
 use rusqlite::params;
 
 use super::crud;
-use super::model::{AddStockInstrumentResult, InstrumentInput, InstrumentType, StockQuote};
-use super::prices::{EASTMONEY_PRICE_SOURCE, upsert_market_price};
+use super::model::{AddStockInstrumentResult, InstrumentInput, InstrumentType};
+use super::quote::{Quote, QuoteAdoptionInput, adopt_quote};
 use crate::db::now_iso;
 use crate::error::{AppError, Result};
 
@@ -214,20 +214,21 @@ pub fn resolve_add_stock_channel(channel: &str) -> Result<Option<&'static str>> 
 }
 
 /// 「添加投资标的」查询阶段（issue #697，spec #690 唯一接缝的 IPC 侧编排，注入
-/// 形态与基金详情获取接缝同构）：通道解析 → 候选解析（全部拒绝路径在发起网络
-/// 前，先例：基金代码格式校验）→ 按候选序遍历（未命中继续、临时错误立即上抛，
-/// 「哪些错误算未命中」谓词 [`is_stock_lookup_miss`]）。本函数不触数据库：生产壳
-/// 在连接锁外以生产拉取闭包驱动（慢闭包纪律，先例：`fetch_fund_detail_production`），
-/// 测试与 BDD 以注入桩离线驱动。
-pub fn fetch_stock_quote_for_add<F>(channel: &str, code: &str, fetch: &mut F) -> Result<StockQuote>
+/// 形态与基金按代码即拉接缝同构——行情接入查询半边的统一签名
+/// `(代码, 市场) → Result<Quote>`，ADR-0103 决策 2）：通道解析 → 候选解析
+///（全部拒绝路径在发起网络前，先例：基金代码格式校验）→ 按候选序遍历（未命中
+/// 继续、临时错误立即上抛，「哪些错误算未命中」谓词 [`is_stock_lookup_miss`]）。
+/// 本函数不触数据库：生产壳在连接锁外以生产拉取闭包驱动（慢闭包纪律，先例：
+/// `fetch_fund_quote_production`），测试与 BDD 以注入桩离线驱动。
+pub fn fetch_stock_quote_for_add<F>(channel: &str, code: &str, fetch: &mut F) -> Result<Quote>
 where
-    F: FnMut(&str, &str) -> Result<StockQuote>,
+    F: FnMut(&str, &str) -> Result<Quote>,
 {
     let market = resolve_add_stock_channel(channel)?;
     let candidates = resolve_stock_quote_candidates(market, code)?;
     let mut last_miss: Option<AppError> = None;
     for candidate in &candidates {
-        match fetch(candidate.market, &candidate.code) {
+        match fetch(&candidate.code, candidate.market) {
             Ok(quote) => return Ok(quote),
             Err(e) if is_stock_lookup_miss(&e) => last_miss = Some(e),
             Err(e) => return Err(e),
@@ -249,22 +250,24 @@ where
 /// 添加投资标的·识别落库阶段（issue #697）：类型自动识别（行情命中 → stock、
 /// 东财类型特征 → etf，提示随行情在访问层投影为 `kind_hint`，探测单点
 /// `sync::stock::detect_kind_hint`）后经创建增强同一落库接缝
-///（[`persist_stock_quote`]：权威名称回填 + 精确市场落库 + 最新价落现价，来源
+///（[`adopt_stock_quote`]：权威名称回填 + 精确市场落库 + 最新价落现价，来源
 /// manual、币种按市场推导）。与 AI 创建端点的差异只在类型来源：对话框无类型
 /// 入参，类型即识别结果（spec #690 用户故事 12）；误判代价仅类型标签，已接受
 ///（ADR-0081）。返回投影供壳层回显（识别回显）。
 pub fn add_stock_instrument_with_quote(
     conn: &rusqlite::Connection,
-    quote: &StockQuote,
+    quote: &Quote,
 ) -> Result<AddStockInstrumentResult> {
-    let outcome = persist_stock_quote(conn, quote.kind_hint, quote)?;
+    let kind = quote.stock_kind_hint();
+    let market = quote.stock_market()?;
+    let outcome = adopt_stock_quote(conn, kind, quote)?;
     Ok(AddStockInstrumentResult {
         instrument_id: outcome.instrument_id,
         symbol: quote.code.clone(),
         name: quote.name.clone(),
-        kind: quote.kind_hint,
-        market: quote.market.clone(),
-        currency_code: derive_quote_currency(&quote.market).to_string(),
+        kind,
+        market: market.to_string(),
+        currency_code: derive_quote_currency(market).to_string(),
         price_cents: quote.price_cents,
         price_date: quote.price_date.clone(),
         price_written: outcome.price_written,
@@ -351,51 +354,41 @@ pub fn route_stock_creation(market: Option<&str>, symbol: &str) -> StockCreateRo
     }
 }
 
-/// AI 创建端点 stock 增强的东财命中落库（镜像 [`super::fund::persist_fund_detail`]，
-/// issue #694 / ADR-0081 决策 2）：以归一化真实代码 + 东财权威名称 + 解析市场建/复用
-/// 标的行（来源 manual、币种按市场推导），有最新价时落现价缓存。`kind` 为调用方
-/// 提交类型（stock/etf，两者同属场内行情通道；导入知识按类型提示填）——东财类型
-/// 提示只在查询端点投影，不在此改写类型（自然键（代码，类型）不因探测漂移而漂移）。
-/// 现价 `priced_at` = 写入时刻、`nav_date` 恒 None——与全量/增量同步的股票现价
-/// 写入口径一致（净值日期是场外基金语义）；覆盖不比较新旧：本通道语义 = 东财当前
-/// 最新值整体回放。
-pub fn persist_stock_quote(
+/// 行情接入落库半边的场内通道（镜像 [`super::fund::adopt_fund_quote`]，issue #694 /
+/// ADR-0081 决策 2 / ADR-0103 决策 3）：精确市场与币种在本通道判定（市场取行情
+/// 回显 = 候选解析单点产物，币种按市场推导），建档 + 落现价交 [`adopt_quote`] 一体
+/// 执行。`kind` 为调用方提交类型（stock/etf，两者同属场内行情通道；导入知识按类型
+/// 提示填）——东财类型提示只在查询端点投影，不在此改写类型（自然键（代码，类型）
+/// 不因探测漂移而漂移）。现价 `priced_at` = 写入时刻、`nav_date` 恒 None——与全量/
+/// 增量同步的股票现价写入口径一致（净值日期是场外基金语义）；覆盖不比较新旧：
+/// 本通道语义 = 东财当前最新值整体回放。
+pub fn adopt_stock_quote(
     conn: &rusqlite::Connection,
     kind: InstrumentType,
-    quote: &StockQuote,
+    quote: &Quote,
 ) -> Result<StockCreateOutcome> {
-    let currency = derive_quote_currency(&quote.market);
-    let instrument_id = crud::create_instrument(
+    let market = quote.stock_market()?;
+    let outcome = adopt_quote(
         conn,
-        InstrumentInput {
-            symbol: quote.code.clone(),
+        &QuoteAdoptionInput {
             kind,
-            name: Some(quote.name.clone()),
-            currency_code: currency.to_string(),
-            market: Some(quote.market.clone()),
+            market,
+            currency_code: derive_quote_currency(market),
+            // 场内现价时点 = 写入时刻（无净值日期语义）。
+            priced_at: &now_iso(),
+            nav_date: None,
         },
+        quote,
     )?;
-    let price_written = quote.price_cents.is_some();
-    if let Some(price_cents) = quote.price_cents {
-        upsert_market_price(
-            conn,
-            &instrument_id,
-            price_cents,
-            currency,
-            &now_iso(),
-            None,
-            Some(EASTMONEY_PRICE_SOURCE),
-        )?;
-    }
     Ok(StockCreateOutcome {
-        instrument_id,
-        price_written,
+        instrument_id: outcome.instrument_id,
+        price_written: outcome.price_written,
     })
 }
 
 /// AI 创建端点 stock 增强的降级落库（镜像 [`super::fund::create_fund_degraded`]，
 /// 关键差异：**保留解析市场**）——东财临时不可达等临时故障时，以 AI 提交名称 +
-/// 真实代码 + 解析市场建行（不阻塞导入）。`kind` 语义同 [`persist_stock_quote`]。
+/// 真实代码 + 解析市场建行（不阻塞导入）。`kind` 语义同 [`adopt_stock_quote`]。
 /// 与基金恒 unknown 不同：股票行情通道只依赖（市场，代码），降级行在行情恢复后
 /// 仍可达（查询与价格同步照常服务）。既有行直接复用、名称与市场不动——降级重放
 /// 不得用 AI 名称覆盖已回填的东财权威名称。

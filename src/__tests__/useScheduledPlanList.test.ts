@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from './helpers/invoke-mock'
 import { messageCalls } from './helpers/message-mock'
+import { makeFakeSink, resetToastSink } from './factories'
 import {
   makeInstallmentPlan,
   makeOccurrence,
   makeSubscriptionPlan,
   makeTransferPlan,
 } from './factories'
-import { defineComponent, watch, type PropType } from 'vue'
+import { registerToastSink } from '@/composables/useLoadable'
+import { defineComponent, type PropType } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import {
   earliestPendingOccurrence,
@@ -70,20 +72,19 @@ const PLAN_INVOKE: Record<string, InvokeSeamOverride> = {
 }
 
 // ---------------------------------------------------------------------------
-// 消费契约镜像（ADR-0030 先例）：最小挂载壳直打工厂实例；模块内化请求发起，
-// 镜像 = 监听 refreshVersion，每次重拉完成时记录行快照（断言「动作 → 重拉次数
-// 与行终态」），同步批次内多次 bump 由 watcher 天然逐次记录。
+// 消费契约镜像（ADR-0030 先例）：最小挂载壳直打工厂实例；模块内化请求发起与
+// 错误提示。重拉观察面 = list_scheduled_transactions 调用次数——零消费的
+// refreshVersion 已随 issue #1008 删除，「等待重拉完成」由 await load() 承担；
+// 加载失败的 toast 走 Loadable sink，用例经假 sink 断言。
 // ---------------------------------------------------------------------------
 
 /** 转账行扩展：下期 = 最早 pending 期次（详情失败时为 null）。 */
 interface TransferExt {
   next: ScheduledTransactionOccurrence | null
 }
-type TransferRow = ScheduledPlanRow<TransferExt>
 
 let harness: {
   list: UseScheduledPlanListReturn<TransferExt>
-  pulls: TransferRow[][]
   detailOpened: string[]
   counters: { statusChanged: number }
 } | null = null
@@ -100,7 +101,6 @@ const Harness = defineComponent({
       expandDetail: (_plan, detail) => ({
         next: detail ? earliestPendingOccurrence(detail) : null,
       }),
-      loadErrorText: () => '加载定时转账失败',
       cancelConfirmText: () => '取消后不再自动转账，已生成的交易与历史期次保留。确认取消？',
       onStatusChanged: () => {
         counters.statusChanged += 1
@@ -109,11 +109,7 @@ const Harness = defineComponent({
         detailOpened.push(row.plan.core.id)
       },
     })
-    const pulls: TransferRow[][] = []
-    watch(list.refreshVersion, () => {
-      pulls.push(JSON.parse(JSON.stringify(list.rows.value)) as TransferRow[])
-    })
-    harness = { list, pulls, detailOpened, counters }
+    harness = { list, detailOpened, counters }
     return () => null
   },
 })
@@ -129,20 +125,26 @@ function lastMessage(method: string): string {
   return found!.text
 }
 
+/** 清单命令调用次数（重拉观察面，替代已删的 refreshVersion）。 */
+function listCalls(): number {
+  return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_scheduled_transactions').length
+}
+
 beforeEach(() => {
   mockPlans = []
   mockDetails.clear()
   failList = false
+  resetToastSink()
   wireInvokeSeam({ overrides: PLAN_INVOKE })
 })
 
 describe('useScheduledPlanList 初始状态', () => {
-  it('空行、不在加载、默认过滤「进行中」、版本号 0', () => {
+  it('空行、不在加载、默认过滤「进行中」、error 为空', () => {
     const { list } = mountHarness()
     expect(list.rows.value).toEqual([])
     expect(list.loading.value).toBe(false)
+    expect(list.error.value).toBeNull()
     expect(list.statusFilter.value).toBe('active')
-    expect(list.refreshVersion.value).toBe(0)
     expect(list.filteredRows.value).toEqual([])
   })
 
@@ -188,7 +190,8 @@ describe('useScheduledPlanList 清单加载', () => {
     await list.load()
     await flushPromises()
     expect(list.rows.value.map((r) => r.plan.core.id)).toEqual(['t1'])
-    expect(list.refreshVersion.value).toBe(1)
+    expect(list.error.value).toBeNull()
+    expect(listCalls()).toBe(1)
   })
 
   it('详情扩展：下期取最早 pending 期次（乱序输入取日期最早，不现场推算）；无 pending 为 null', async () => {
@@ -225,14 +228,16 @@ describe('useScheduledPlanList 清单加载', () => {
     expect(list.rows.value.find((r) => r.plan.core.id === 'bad1')!.detailFailed).toBe(true)
     expect(list.rows.value.find((r) => r.plan.core.id === 'bad1')!.ext.next).toBeNull()
     expect(list.rows.value.find((r) => r.plan.core.id === 'ok1')!.detailFailed).toBe(false)
-    // 详情失败不拖垮整单加载：版本号照常 bump
-    expect(list.refreshVersion.value).toBe(1)
+    // 详情失败不拖垮整单加载：行照常落位
+    expect(list.rows.value).toHaveLength(2)
   })
 
-  it('清单命令失败：错误提示（形态文案归一）、loading 收尾、版本号不 bump、行保持旧值', async () => {
+  it('清单命令失败：error 置位 + 裸 toast、loading 收尾、行保持旧值、不重拉', async () => {
     const plan = makeTransferPlan({ id: 't1' }, null)
     mockPlans = [plan]
     mockDetails.set('t1', makeDetail(plan, []))
+    const sink = makeFakeSink()
+    registerToastSink(sink)
     const { list } = mountHarness()
     await list.load()
     await flushPromises()
@@ -240,9 +245,11 @@ describe('useScheduledPlanList 清单加载', () => {
     failList = true
     await list.load()
     await flushPromises()
-    expect(lastMessage('error')).toBe('加载定时转账失败: 数据库不可用')
+    // 默认策略 = 裸 errorMessage（ADR-0040 决策 2）：动作上下文由视图 warning 位承载
+    expect(sink.error).toHaveBeenCalledWith('数据库不可用')
+    expect(list.error.value).toBe('数据库不可用')
     expect(list.loading.value).toBe(false)
-    expect(list.refreshVersion.value).toBe(1)
+    expect(listCalls()).toBe(2)
     expect(list.rows.value).toHaveLength(1)
   })
 })
@@ -263,7 +270,7 @@ describe('useScheduledPlanList 状态过滤', () => {
     expect(list.statusFilter.value).toBe('completed')
     expect(list.filteredRows.value.map((r) => r.plan.core.id)).toEqual(['d1'])
     // 状态过滤是纯前端过滤：不产生重拉
-    expect(list.refreshVersion.value).toBe(1)
+    expect(listCalls()).toBe(1)
   })
 
   it('已暂停与已取消行经对应过滤可见（迁自原组件测试，承接覆盖）', async () => {
@@ -289,7 +296,7 @@ describe('useScheduledPlanList Plan Lifecycle 操作', () => {
     const plan = makeTransferPlan({ id: 'a1' }, null)
     mockPlans = [plan]
     mockDetails.set('a1', makeDetail(plan, []))
-    const { list, counters, pulls } = mountHarness()
+    const { list, counters } = mountHarness()
     await list.load()
     await flushPromises()
     await list.changeStatus('a1', 'paused')
@@ -303,8 +310,7 @@ describe('useScheduledPlanList Plan Lifecycle 操作', () => {
       ),
     ).toBe(true)
     expect(lastMessage('success')).toBe('已暂停')
-    expect(list.refreshVersion.value).toBe(2)
-    expect(pulls).toHaveLength(2)
+    expect(listCalls()).toBe(2)
     expect(list.rows.value[0]!.plan.core.status).toBe('paused')
     expect(counters.statusChanged).toBe(1)
   })
@@ -339,7 +345,7 @@ describe('useScheduledPlanList Plan Lifecycle 操作', () => {
     const plan = makeTransferPlan({ id: 'a1' }, null)
     mockPlans = [plan]
     mockDetails.set('a1', makeDetail(plan, []))
-    const { list, pulls } = mountHarness()
+    const { list } = mountHarness()
     await list.load()
     await flushPromises()
     wireInvokeSeam({
@@ -352,8 +358,7 @@ describe('useScheduledPlanList Plan Lifecycle 操作', () => {
     await list.changeStatus('a1', 'paused')
     await flushPromises()
     expect(lastMessage('error')).toBe('操作失败: 状态不允许变更')
-    expect(list.refreshVersion.value).toBe(1)
-    expect(pulls).toHaveLength(1)
+    expect(listCalls()).toBe(1)
   })
 })
 
@@ -415,13 +420,14 @@ describe('useScheduledPlanList 行操作描述符', () => {
 })
 
 describe('useScheduledPlanList 工厂形态', () => {
-  it('每次调用返回独立实例：状态与版本号互不串扰', async () => {
+  it('每次调用返回独立实例：状态互不串扰', async () => {
+    mockPlans = [makeTransferPlan({ id: 't1' }, null)]
+    mockDetails.set('t1', makeDetail(mockPlans[0], []))
     const first = mountHarness()
     await first.list.load()
     await flushPromises()
     const second = mountHarness()
-    expect(first.list.refreshVersion.value).toBe(1)
-    expect(second.list.refreshVersion.value).toBe(0)
+    expect(first.list.rows.value.map((r) => r.plan.core.id)).toEqual(['t1'])
     expect(second.list.rows.value).toEqual([])
     second.list.setStatusFilter('paused')
     await flushPromises()

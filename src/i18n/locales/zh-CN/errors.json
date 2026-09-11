@@ -163,6 +163,9 @@
   "fund": {
     "code-invalid": "基金代码须为 6 位数字"
   },
+  "quote": {
+    "market-missing": "行情缺少市场（内部不一致）"
+  },
   "stock": {
     "bse-unsupported": "股票代码 {0} 为北交所代码（4/8 开头），暂不支持",
     "channel-unsupported": "暂不支持的投资标的录入通道 {0}（当前支持沪 sh/深 sz/港 hk/美股 us）",

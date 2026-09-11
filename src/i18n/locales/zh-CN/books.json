@@ -40,7 +40,6 @@
     "created": "已创建账本「{name}」，进入即自动建库",
     "renamed": "已重命名为「{name}」",
     "removed": "已移除账本「{name}」，文件仍保留在磁盘",
-    "switching": "正在切换到「{name}」，应用即将重载",
-    "loadFailed": "账本清单读取失败：{msg}"
+    "switching": "正在切换到「{name}」，应用即将重载"
   }
 }

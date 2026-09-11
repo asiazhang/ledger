@@ -56,21 +56,38 @@ pub fn upsert_price_history(
     Ok(())
 }
 
-/// 按 instrument_id 插入或更新一条行情价格。`priced_at` 为该价格对应的行情/净值日期；
-/// `nav_date` 仅场外基金现价携带（单位净值日期，兼任净值同步水位，ADR-0038），
-/// 股票与手动报价传 None（手动落价无净值日期语义，覆盖为 NULL）。
-/// `source` 为价格数据来源（与字典侧 source 同词表）：同步 'eastmoney'、手动报价 'manual'
-/// （ADR-0036）——现价缓存写入的单点（投资域旧半成品 `crud::create_market_price` 已
-/// 委托至此，issue #291 收口），不另写第二份 upsert SQL。
-pub fn upsert_market_price(
-    conn: &Connection,
-    instrument_id: &str,
-    price_cents: i64,
-    currency: &str,
-    priced_at: &str,
-    nav_date: Option<&str>,
-    source: Option<&str>,
-) -> Result<String> {
+/// 现价缓存写入输入（ADR-0103 决策 4）：conn + 6 个业务位置参数收敛为单一输入
+/// 结构，不搞 builder。通道语义（股票 `priced_at` = 写入时刻、基金 = 净值日期、
+/// 净值水位比较、最新点映像）留在各自通道，不收进本结构。
+#[derive(Debug, Clone, Copy)]
+pub struct MarketPriceWrite<'a> {
+    /// 标的 id（现价行按 instrument_id 唯一，未命中即新建）。
+    pub instrument_id: &'a str,
+    /// 价格（万分之一元，ADR-0038 价格刻度）。
+    pub price_cents: i64,
+    /// 报价币种（随标的字典）。
+    pub currency_code: &'a str,
+    /// 该价格对应的行情 / 净值日期（由调用通道判定）。
+    pub priced_at: &'a str,
+    /// 单位净值日期（兼任净值同步水位，ADR-0038）：仅场外基金现价携带；
+    /// 股票与手动报价传 None（无净值日期语义，覆盖为 NULL）。
+    pub nav_date: Option<&'a str>,
+    /// 价格数据来源（与字典侧 source 同词表）：同步 'eastmoney'、手动报价 'manual'
+    ///（ADR-0036）；可空透传是已发布行为（重放与 `create_market_price` 透传）。
+    pub source: Option<&'a str>,
+}
+
+/// 按 instrument_id 插入或更新一条行情价格——现价缓存写入的单点（投资域旧半成品
+/// `crud::create_market_price` 已委托至此，issue #291 收口），不另写第二份 upsert SQL。
+pub fn upsert_market_price(conn: &Connection, input: &MarketPriceWrite<'_>) -> Result<String> {
+    let MarketPriceWrite {
+        instrument_id,
+        price_cents,
+        currency_code,
+        priced_at,
+        nav_date,
+        source,
+    } = *input;
     let existing_id: Option<String> = conn
         .query_row(
             "SELECT id FROM market_prices WHERE instrument_id=?1",
@@ -91,7 +108,7 @@ pub fn upsert_market_price(
             id,
             instrument_id,
             price_cents,
-            currency,
+            currency_code,
             priced_at,
             nav_date,
             source,

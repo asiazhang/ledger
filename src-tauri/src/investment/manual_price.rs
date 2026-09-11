@@ -20,7 +20,7 @@ use rusqlite::Connection;
 
 use super::command::{PriceCommand, record_price};
 use super::model::{ManualPriceInput, ManualPriceResult};
-use super::prices::{upsert_market_price, upsert_price_history};
+use super::prices::{MarketPriceWrite, upsert_market_price, upsert_price_history};
 use crate::error::{AppError, Result};
 
 /// 手动报价来源标记：价格数据来源「手动」（与字典侧 source 同词表，ADR-0036）。
@@ -102,12 +102,14 @@ pub(crate) fn write_manual_price(
         // 手动落价无净值日期语义，nav_date 覆盖为 None（与同步落库单点同规则）。
         upsert_market_price(
             conn,
-            &instrument_id,
-            input.price_cents,
-            &currency,
-            &trade_date,
-            None,
-            Some(MANUAL_PRICE_SOURCE),
+            &MarketPriceWrite {
+                instrument_id: &instrument_id,
+                price_cents: input.price_cents,
+                currency_code: &currency,
+                priced_at: &trade_date,
+                nav_date: None,
+                source: Some(MANUAL_PRICE_SOURCE),
+            },
         )?;
     }
 

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { NButton, NCard, NSpace, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import { useInputMode } from '@/composables/useInputMode'
+import { useLoadable } from '@/composables/useLoadable'
 import { Bar } from 'vue-chartjs'
 import type { ActiveElement, ChartOptions, TooltipItem } from 'chart.js'
 // Chart.js 统一注册模块（issue #926）：柱状图所需 controller/element/scale 一处
@@ -83,42 +84,37 @@ const monthly = ref<MonthlySummary[]>([])
 const shares = ref<CategoryShare[]>([])
 // 商户排行载荷（issue #588）：rows + 全量合计（占比分母），截断收口后端
 const merchantReport = ref<MerchantSharesReport>({ rows: [], total_cents: 0 })
-const loading = ref(false)
 
-/** 商户排行取数（issue #588）：期间 + 当前 TopN 档位进载荷，排序与截断后端收口。
- *  发起序号守卫（ADR-0040 竞态语义同款轻量内联）：终态 = 最后一次发起的结果，
- *  迟到的前发响应一律丢弃——TopN 快速连点或与期间切换 refresh 并发时，
- *  旧档位/旧期间的响应不得覆盖新结果。 */
-let merchantFetchSeq = 0
-async function fetchMerchantReport() {
-  const seq = ++merchantFetchSeq
-  const report = await api.merchantShares(
-    { from: session.period.from, to: session.period.to },
-    session.merchantTopN,
-  )
-  if (seq === merchantFetchSeq) merchantReport.value = report
-}
+/** 整页数据（月度 + 构成）收编 Loadable 主实例（issue #1008 / ADR-0040）：loading
+ *  承整页 NSpin 的既有 UI 契约，竞态后发覆盖先发与错误 toast（默认策略 = 裸
+ *  errorMessage）内化；任务只产结果，成功才写两张卡（失败留旧载荷，由空态兜底）。 */
+const { loading, run: runMainRefresh } = useLoadable(async () => {
+  const [monthlySummary, categoryShares] = await Promise.all([
+    // 三张卡随所选期间重算（issue #411）：期间口径一致，聚合在后端收口；
+    // 期间读自会话状态 store（issue #427），恢复/改选同规。
+    api.monthlySummary({ from: session.period.from, to: session.period.to }),
+    api.categoryShares('expense', { from: session.period.from, to: session.period.to }),
+  ])
+  return { monthlySummary, categoryShares }
+})
 
 async function refresh() {
-  loading.value = true
-  try {
-    await Promise.all([
-      // 三张卡随所选期间重算（issue #411）：期间口径一致，聚合在后端收口；
-      // 期间读自会话状态 store（issue #427），恢复/改选同规；
-      // 商户卡自持落位（fetchMerchantReport 内含发起序守卫，issue #588）
-      api.monthlySummary({ from: session.period.from, to: session.period.to }).then((m) => {
-        monthly.value = m
-      }),
-      api
-        .categoryShares('expense', { from: session.period.from, to: session.period.to })
-        .then((s) => {
-          shares.value = s
-        }),
-      fetchMerchantReport(),
-    ])
-  } finally {
-    loading.value = false
-  }
+  const result = await runMainRefresh()
+  if (result === null) return
+  monthly.value = result.monthlySummary
+  shares.value = result.categoryShares
+}
+
+/** 商户排行取数（issue #588）：期间 + 当前 TopN 档位进载荷，排序与截断后端收口。
+ *  独立 Loadable 实例（issue #1008 / ADR-0040）——竞态后发覆盖先发内化：TopN
+ *  快速连点或与期间切换并发时，旧档位/旧期间的迟到响应一律不落位。 */
+const { run: runMerchantRefresh } = useLoadable(() =>
+  api.merchantShares({ from: session.period.from, to: session.period.to }, session.merchantTopN),
+)
+
+async function fetchMerchantReport() {
+  const report = await runMerchantRefresh()
+  if (report !== null) merchantReport.value = report
 }
 
 // TopN 档位切换（issue #588）：仅商户卡以新 top_n 重拉，其余两卡不受牵连
@@ -137,7 +133,8 @@ watch(
   () => {
     // 期间切换复位下钻已内化在 store.setPeriod（issue #427）；视图只负责
     // 照常重拉：三卡按当前期间重算，离开期间新记的账进入即反映
-    refresh()
+    void refresh()
+    void fetchMerchantReport()
   },
 )
 
@@ -402,6 +399,7 @@ onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll；
   // 数据期间边界由 QuickTimeRange 组件内化（issue #410），视图不再自拉
   void refresh()
+  void fetchMerchantReport()
 })
 </script>
 

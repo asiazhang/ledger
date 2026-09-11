@@ -32,7 +32,8 @@ use crate::error::Result;
 use crate::investment::crud::refresh_instrument_name;
 use crate::investment::is_six_digit_code;
 use crate::investment::prices::{
-    EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price, upsert_price_history,
+    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
+    upsert_price_history,
 };
 use crate::transaction::amount::default_currency_code;
 
@@ -216,12 +217,15 @@ where
                     let price = price_cents_from_raw(raw, item.precision, &inst.market);
                     upsert_market_price(
                         conn,
-                        &inst.instrument_id,
-                        price,
-                        &inst.currency,
-                        &crate::db::now_iso(),
-                        None,
-                        Some(EASTMONEY_PRICE_SOURCE),
+                        &MarketPriceWrite {
+                            instrument_id: &inst.instrument_id,
+                            price_cents: price,
+                            currency_code: &inst.currency,
+                            // 场内现价时点 = 写入时刻、无净值日期语义（ADR-0036）。
+                            priced_at: &crate::db::now_iso(),
+                            nav_date: None,
+                            source: Some(EASTMONEY_PRICE_SOURCE),
+                        },
                     )?;
                     synced_codes.insert(item.code.clone());
                 }
@@ -377,7 +381,7 @@ where
     let mut nav =
         |query: &NavQuery| super::fund_nav::fetch_nav_page(&client, &mut pacer.borrow_mut(), query);
     let mut fund_name =
-        |code: &str| super::fetch_fund_detail_production(code).map(|detail| detail.name);
+        |code: &str| super::fetch_fund_quote_production(code).map(|quote| quote.name);
     do_incremental_sync_with(
         conn,
         &mut fetch,

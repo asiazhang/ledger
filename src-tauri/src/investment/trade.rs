@@ -1,9 +1,10 @@
 use rusqlite::{Connection, OptionalExtension};
 
+use super::lots::{self, ActiveLot, Consumption};
 use super::model::{TransactionConvert, TransactionTrade};
 use super::prices::PRICE_UNITS_PER_FEN;
 use crate::accounts::AccountType;
-use crate::db::query::{FromRow, query_all, query_one};
+use crate::db::query::query_one;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
@@ -53,46 +54,6 @@ fn fetch_instrument_type(
     })
 }
 
-/// 份额守卫容差（issue #1033）：f64 逐次 FIFO 扣减的累积位误差在账本量级
-/// （持仓 ≪ 1e7 份）约 1e-12 ~ 1e-9，而录入粒度合同为至多四位小数（issue #416，
-/// 真实超卖差异 ≥ 1e-4）——1e-6 距两侧各 3~5 个数量级，既吞掉全部位噪声、
-/// 又不会放过任何真实超卖。守卫与批次耗尽判定共用同一常量，不得各写各的。
-const QTY_GUARD_EPSILON: f64 = 1e-6;
-
-/// 数量展示格式化（错误文案用）：至多 4 位小数、去尾零——与录入粒度合同
-/// （issue #416 四位小数）对齐无损展示，f64 位误差（~1e-12）远在刻度以下
-/// 必然消失（如 8036.109999999999 → "8036.11"）。
-fn format_quantity_for_message(quantity: f64) -> String {
-    format!("{quantity:.4}")
-        .trim_end_matches('0')
-        .trim_end_matches('.')
-        .to_string()
-}
-
-/// 「可卖出数量不足」码化错误（buy/sell/convert 的 FIFO 守卫共用单点）：本地
-/// prepare 与重放计划重建同一口径（同码同文案同插值参数），两端与两路径不漂移。
-/// 数字按录入粒度合同展示，不把位噪声原文抛给用户。
-fn insufficient_holding_error(total_available: f64, quantity: f64) -> AppError {
-    let available_display = format_quantity_for_message(total_available);
-    let quantity_display = format_quantity_for_message(quantity);
-    AppError::codedp(
-        "trade.insufficient-holding",
-        format!("可卖出数量不足，当前持有 {available_display}，尝试卖出 {quantity_display}"),
-        &[&available_display, &quantity_display],
-    )
-}
-
-/// 可卖数量守卫单点（issue #1033）：裸比较 `<` 会让 f64 FIFO 扣减的累积位误差
-/// 误拒真实全清仓（如持有 8036.109999999999、卖出 8036.11）。带容差判定与
-/// 码化错误在此收口：本地 prepare 与重放计划重建的四处守卫共用，同码同文案，
-/// 两端与两路径不漂移。
-fn ensure_available_holding(total_available: f64, quantity: f64) -> Result<()> {
-    if total_available + QTY_GUARD_EPSILON < quantity {
-        return Err(insufficient_holding_error(total_available, quantity));
-    }
-    Ok(())
-}
-
 /// 投资交易对外出口（issue #72 / spec #69）：`prepare / apply / revert` 三件套 +
 /// 删除路径专用的 [`release_for_delete`]（issue #940 / ADR-0097），承载三类投资 kind：
 /// buy（建仓）/ sell（FIFO 卖出匹配与已实现盈亏）/ convert（基金转换，ADR-0099：
@@ -107,25 +68,7 @@ fn ensure_available_holding(total_available: f64, quantity: f64) -> Result<()> {
 ///
 /// 交易行字段的 INSERT/UPDATE 一律经 `transaction::writer` 接缝（issue #70），
 /// 本模块不再反向依赖 transactions 的行更新函数；行写入由编排层（行为层）持有，
-/// 与 lot/匹配副作用同处一个事务。
-pub(crate) struct ActiveLot {
-    pub(crate) id: String,
-    pub(crate) remaining_quantity: f64,
-    pub(crate) cost_per_unit_cents: i64,
-    pub(crate) currency_code: String,
-}
-
-impl FromRow for ActiveLot {
-    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
-        Ok(ActiveLot {
-            id: row.get(0)?,
-            remaining_quantity: row.get(1)?,
-            cost_per_unit_cents: row.get(2)?,
-            currency_code: row.get(3)?,
-        })
-    }
-}
-
+/// 与 lot/匹配副作用同处一个事务。FIFO 取批次/分摊/回补知识归 [`lots`]（#1018）。
 /// 读取一笔 buy/sell 交易的买卖明细（issue #180）：从 `security_transactions`
 /// 扩展表按交易 id 取标的/数量/价格/费用，JOIN `instruments` 带出展示字段。
 /// 供投资表单编辑模式回填；无明细（交易不存在/非 buy/sell）返回 `NotFound`。
@@ -440,9 +383,9 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
     // now_iso 为秒级精度，同秒建仓时随机 id tiebreak 在重放端会排出与源端
     // 不同的顺序，卖出匹配发散（确定性重放，ADR-0091 决策 2/3，issue #861）；
     // 重放端按 op 序插入批次，rowid 相对序与源端恒一致。
-    let lots: Vec<ActiveLot> = fifo_active_lots(conn, &input.account_id, &instrument_id)?;
+    let lots: Vec<ActiveLot> = lots::active_lots(conn, &input.account_id, &instrument_id)?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
-    ensure_available_holding(total_available, quantity)?;
+    lots::ensure_available_holding(total_available, quantity)?;
 
     Ok(SellPlan {
         normalized: NormalizedTransaction {
@@ -587,13 +530,13 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
         input.funding_account_id.as_deref(),
         &account_currency,
     )?;
-    let lots = fifo_active_lots(conn, &input.account_id, &instrument_id)?;
+    let lots = lots::active_lots(conn, &input.account_id, &instrument_id)?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
-    ensure_available_holding(total_available, quantity)?;
+    lots::ensure_available_holding(total_available, quantity)?;
     // 转出腿 FIFO 消耗与逐批次结转成本（含耗尽批次闭合）在 prepare 阶段算定：
     // 它是行金额锚点与转入批次成本的唯一依据，apply 原样落消耗记录与批次。
-    let consumed = plan_lot_consumption(conn, &lots, quantity)?;
-    let carried_cost_cents = total_consumed_cost(&consumed);
+    let consumed = lots::plan(conn, &lots, quantity)?;
+    let carried_cost_cents = lots::total_cost(&consumed);
     let amount_native_cents =
         amount::convert_to_native(conn, carried_cost_cents, &account_currency)?;
 
@@ -641,7 +584,7 @@ fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Resu
     )?;
 
     // 匹配记录与逐批次成本（含耗尽批次闭合）由消耗规划单点算定，与转换转出同源。
-    let consumptions = plan_lot_consumption(conn, &plan.lots, plan.quantity)?;
+    let consumptions = lots::plan(conn, &plan.lots, plan.quantity)?;
 
     // 分摊双闭合（issue #302）：①收入按匹配末位吸收余数，Σ 匹配收入 = 毛收入
     // （基金 = 权威金额 + 手续费）精确到分；②耗尽批次的匹配把批次总成本闭合到
@@ -686,113 +629,6 @@ fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Resu
     }
 
     Ok(())
-}
-
-/// 单批次消耗的分摊结果（卖出匹配与转换转出共用，ADR-0038 / ADR-0099）。
-pub(crate) struct Consumption {
-    /// 被消耗的批次；`remaining_quantity` 为**本次消耗数量**（非批次剩余）。
-    pub(crate) lot: ActiveLot,
-    /// 本次消耗成本（分）——卖出为匹配成本、转换为结转成本。
-    pub(crate) cost_cents: i64,
-}
-
-/// 逐批次消耗成本合计（分）：即转换的**结转成本**——行金额锚点与转入批次成本
-/// 来源（ADR-0099 决策 3）。录入、产出与重放共用本单点，不得各算各的。
-fn total_consumed_cost(consumed: &[Consumption]) -> i64 {
-    consumed.iter().map(|c| c.cost_cents).sum()
-}
-
-/// 该批次此前已消耗成本合计（分）：卖出匹配与转换转出两条消耗记录同口径求和。
-///
-/// 逐条按「数量 × 批次每份成本 ÷ 换算因子」单次舍入后求和，与既有卖出匹配的
-/// 重建口径一致；批次被转换后再被卖出/再转换时，已结转走的部分不被重复计入。
-fn prior_consumed_cost_cents(
-    conn: &Connection,
-    lot_id: &str,
-    cost_per_unit_cents: i64,
-) -> Result<i64> {
-    let mut stmt = conn.prepare(
-        "SELECT quantity FROM security_lot_sales WHERE lot_id=?1 \
-         UNION ALL \
-         SELECT quantity FROM security_lot_conversions WHERE lot_id=?1",
-    )?;
-    let quantities = stmt
-        .query_map(rusqlite::params![lot_id], |r| r.get::<_, f64>(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(quantities
-        .iter()
-        .map(|q| (q * cost_per_unit_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64)
-        .sum())
-}
-
-/// FIFO 排序键 = rowid（本端插入序，先买先消耗）：不得用 created_at/id——
-/// now_iso 为秒级精度，同秒建仓时随机 id tiebreak 在重放端会排出与源端
-/// 不同的顺序，消耗匹配发散（确定性重放，ADR-0091 决策 2/3，issue #861）；
-/// 重放端按 op 序插入批次，rowid 相对序与源端恒一致。
-///
-/// 卖出匹配与转换转出共用同一取数口径（同一批次的消耗次序在两种路径下必须一致）。
-fn fifo_active_lots(
-    conn: &Connection,
-    account_id: &str,
-    instrument_id: &str,
-) -> Result<Vec<ActiveLot>> {
-    query_all(
-        conn,
-        "SELECT id, remaining_quantity, cost_per_unit_cents, currency_code \
-         FROM security_lots \
-         WHERE account_id=?1 AND instrument_id=?2 AND remaining_quantity > 0 \
-         ORDER BY rowid ASC",
-        rusqlite::params![account_id, instrument_id],
-    )
-}
-
-/// 按 FIFO 顺序把 `quantity` 分摊到 `lots` 上，并逐批次算定成本（分）。
-///
-/// 成本口径（卖出匹配与转换转出共用，ADR-0038 / ADR-0099）：
-/// - 耗尽批次 → 买入锚点行权威金额 − 该批次此前已消耗成本之和（闭合，精确到分）；
-/// - 非耗尽批次 → round(消耗数量 × 批次每份成本 ÷ 换算因子)。
-fn plan_lot_consumption(
-    conn: &Connection,
-    lots: &[ActiveLot],
-    quantity: f64,
-) -> Result<Vec<Consumption>> {
-    let mut remaining = quantity;
-    let mut out: Vec<Consumption> = Vec::new();
-    for lot in lots {
-        if remaining <= 0.0 {
-            break;
-        }
-        // 耗尽判定与守卫同一容差（issue #1033）：批次剩余噪声偏高（≤ 待消耗 + 容差）
-        // 时视为耗尽、整批取走——全清仓精确归零，不留尘埃批次残差（残差会让
-        // remaining_quantity > 0 永远认其为持仓）；噪声偏低方向由守卫容差放行。
-        let exhausts_lot = remaining + QTY_GUARD_EPSILON >= lot.remaining_quantity;
-        let matched = if exhausts_lot {
-            lot.remaining_quantity
-        } else {
-            remaining
-        };
-        let cost_cents = if exhausts_lot {
-            let lot_total_cents: i64 = conn.query_row(
-                "SELECT t.amount_cents FROM security_lots l \n                 JOIN transactions t ON t.id = l.buy_transaction_id WHERE l.id=?1",
-                rusqlite::params![lot.id],
-                |r| r.get(0),
-            )?;
-            lot_total_cents - prior_consumed_cost_cents(conn, &lot.id, lot.cost_per_unit_cents)?
-        } else {
-            (matched * lot.cost_per_unit_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64
-        };
-        out.push(Consumption {
-            lot: ActiveLot {
-                id: lot.id.clone(),
-                remaining_quantity: matched,
-                cost_per_unit_cents: lot.cost_per_unit_cents,
-                currency_code: lot.currency_code.clone(),
-            },
-            cost_cents,
-        });
-        remaining -= matched;
-    }
-    Ok(out)
 }
 
 /// 消费某买入/转换持仓批次的**在用** sell id 列表（issue #940 级联删除的级联对象）。
@@ -868,7 +704,7 @@ pub struct GuardMessages<'a> {
 /// 卖出匹配按 `lot_id` 归批清理——指向已软删 sell 的历史匹配行（旧版
 /// 「sell 删除不回补」遗留的幽灵占用，issue #940）随批次一并消失；
 /// 删除路径（级联后）与修改路径重建（在用占用守卫放行后）共用。
-/// 转换行还需先经 [`reverse_convert_out_leg`] 回补转出腿（本函数删目标行会按
+/// 转换行还需先经 [`lots::restore_convert_out_leg`] 回补转出腿（本函数删目标行会按
 /// `security_lot_conversions.transaction_id` 的外键级联删掉消耗记录）。
 fn purge_lot_artifacts(conn: &Connection, id: &str) -> Result<()> {
     conn.execute(
@@ -882,36 +718,6 @@ fn purge_lot_artifacts(conn: &Connection, id: &str) -> Result<()> {
     )?;
     conn.execute(
         "DELETE FROM security_transactions WHERE transaction_id=?1",
-        rusqlite::params![id],
-    )?;
-    Ok(())
-}
-
-/// 回补一笔转换的**转出腿**：把逐批次消耗记录的数量加回原批次剩余，再删除本转换的
-/// `security_lot_conversions` 记录。
-///
-/// 这是删除/修改精确回补的唯一依据（转出时的 FIFO 状态在后续交易发生后不可重建，
-/// ADR-0099 决策 2）——回补必须发生在清目标行之前：删 `security_transactions` 行会按
-/// 外键级联清掉消耗记录，数量就再也回不去了。
-fn reverse_convert_out_leg(conn: &Connection, id: &str) -> Result<()> {
-    let now = now_iso();
-    let mut stmt = conn
-        .prepare("SELECT lot_id, quantity FROM security_lot_conversions WHERE transaction_id=?1")?;
-    let consumptions: Vec<(String, f64)> = stmt
-        .query_map(rusqlite::params![id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    drop(stmt);
-    for (lot_id, quantity) in consumptions {
-        conn.execute(
-            "UPDATE security_lots SET remaining_quantity=remaining_quantity+?1, \
-             updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-            rusqlite::params![quantity, now, device_id(conn)?, lot_id],
-        )?;
-    }
-    conn.execute(
-        "DELETE FROM security_lot_conversions WHERE transaction_id=?1",
         rusqlite::params![id],
     )?;
     Ok(())
@@ -960,7 +766,7 @@ fn cleanup_buy_side_effects(
 ///    抹掉下游的转出消耗记录（链式转换须从最后一腿往前处理）；
 /// 2. 在用卖出占用守卫——转入批次若已被后续卖出，修改会重建批次、破坏该卖出的
 ///    已实现盈亏（「部分卖出禁改」对转换批次同等生效）；
-/// 3. 回补**转出腿**（逐批次精确回补，必须先于清目标行，见 [`reverse_convert_out_leg`]）；
+/// 3. 回补**转出腿**（逐批次精确回补，必须先于清目标行，见 [`lots::restore_convert_out_leg`]）；
 /// 4. 整批清理转入批次与转换明细行。
 fn cleanup_convert_side_effects(
     conn: &Connection,
@@ -979,13 +785,13 @@ fn cleanup_convert_side_effects(
         guards.convert_partially_sold_code,
         guards.convert_partially_sold_msg,
     )?;
-    reverse_convert_out_leg(conn, id)?;
+    lots::restore_convert_out_leg(conn, id)?;
     purge_lot_artifacts(conn, id)
 }
 
 /// 删除路径的持仓副作用回退（行为层 delete 编排入口专用，issue #940 / ADR-0097）。
 ///
-/// - sell：回补其扣减的持仓并清空卖出关联（与修改路径同一 [`reverse_sell`]）；
+/// - sell：回补其扣减的持仓并清空卖出关联（与修改路径同一 [`lots::restore_sell`]）；
 /// - buy：**级联**——消费其持仓批次的在用 sell 逐笔回退持仓副作用，再整批清理
 ///   批次与匹配（含指向已软删 sell 的历史匹配行，随批次消失），返回被级联的
 ///   sell id 列表，供行为层软删其交易行并各自产出 delete op 与余额刷新；
@@ -1006,14 +812,14 @@ pub fn release_for_delete(
 ) -> Result<Vec<String>> {
     match kind {
         TransactionKind::Sell => {
-            reverse_sell(conn, id)?;
+            lots::restore_sell(conn, id)?;
             Ok(Vec::new())
         }
         TransactionKind::Buy => {
             guard_no_convert_consumed(conn, id, consumed_by_convert_code, consumed_by_convert_msg)?;
             let cascaded_sell_ids = active_sell_ids_on_own_lots(conn, id)?;
             for sell_id in &cascaded_sell_ids {
-                reverse_sell(conn, sell_id)?;
+                lots::restore_sell(conn, sell_id)?;
             }
             purge_lot_artifacts(conn, id)?;
             Ok(cascaded_sell_ids)
@@ -1025,9 +831,9 @@ pub fn release_for_delete(
             guard_no_convert_consumed(conn, id, consumed_by_convert_code, consumed_by_convert_msg)?;
             let cascaded_sell_ids = active_sell_ids_on_own_lots(conn, id)?;
             for sell_id in &cascaded_sell_ids {
-                reverse_sell(conn, sell_id)?;
+                lots::restore_sell(conn, sell_id)?;
             }
-            reverse_convert_out_leg(conn, id)?;
+            lots::restore_convert_out_leg(conn, id)?;
             purge_lot_artifacts(conn, id)?;
             Ok(cascaded_sell_ids)
         }
@@ -1098,10 +904,10 @@ pub struct ConvertPlan {
 }
 
 impl ConvertPlan {
-    /// 结转成本合计（分）：见 [`total_consumed_cost`]。产出侧与重放侧均经本
+    /// 结转成本合计（分）：见 [`lots::total_cost`]。产出侧与重放侧均经本
     /// 访问器取值（单一来源）。
     pub(crate) fn carried_cost_cents(&self) -> i64 {
-        total_consumed_cost(&self.consumed)
+        lots::total_cost(&self.consumed)
     }
 }
 
@@ -1188,7 +994,7 @@ pub fn revert(
                 guards.partially_sold_msg,
             )
         }
-        TransactionKind::Sell => reverse_sell(conn, id),
+        TransactionKind::Sell => lots::restore_sell(conn, id),
         // 转换：复用 buy 清理语义（转换链守卫 + 在用卖出占用守卫 + 转出腿精确回补
         // + 转入批次与明细行清理，ADR-0099 决策 5）。行为层在分派前已先拒
         // 「从 convert 出 / 改为 convert」的 kind 变更，此处只处理就地修改。
@@ -1265,36 +1071,6 @@ fn write_convert_side_effects(conn: &Connection, id: &str, plan: &ConvertPlan) -
             1,
             device_id(conn)?
         ],
-    )?;
-    Ok(())
-}
-
-/// 回补一笔卖出交易曾扣减的持仓并清空其卖出关联：把每笔 `security_lot_sales` 的数量
-/// 加回对应 lot，再清空该卖出的 `security_lot_sales` 与 `security_transactions` 记录。
-fn reverse_sell(conn: &Connection, id: &str) -> Result<()> {
-    let now = now_iso();
-    let mut stmt = conn
-        .prepare("SELECT lot_id, quantity FROM security_lot_sales WHERE sell_transaction_id=?1")?;
-    let sales: Vec<(String, f64)> = stmt
-        .query_map(rusqlite::params![id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    drop(stmt);
-    for (lot_id, quantity) in sales {
-        conn.execute(
-            "UPDATE security_lots SET remaining_quantity=remaining_quantity+?1, \
-             updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-            rusqlite::params![quantity, now, device_id(conn)?, lot_id],
-        )?;
-    }
-    conn.execute(
-        "DELETE FROM security_lot_sales WHERE sell_transaction_id=?1",
-        rusqlite::params![id],
-    )?;
-    conn.execute(
-        "DELETE FROM security_transactions WHERE transaction_id=?1 AND action='sell'",
-        rusqlite::params![id],
     )?;
     Ok(())
 }
@@ -1385,9 +1161,9 @@ pub(crate) fn replay_plan(
             // FIFO 批次快照在本端重建：同序重放下与源端同状态 ⇒ 同一匹配结果
             //（排序键 rowid 的跨端确定性依据见 prepare_sell 同码查询处注释）。
             let lots: Vec<ActiveLot> =
-                fifo_active_lots(conn, &row.account_id, &fields.instrument_id)?;
+                lots::active_lots(conn, &row.account_id, &fields.instrument_id)?;
             let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
-            ensure_available_holding(total_available, fields.quantity)?;
+            lots::ensure_available_holding(total_available, fields.quantity)?;
             Ok(Plan::Sell(SellPlan {
                 normalized: row.clone(),
                 instrument_id: fields.instrument_id.clone(),
@@ -1498,14 +1274,14 @@ pub(crate) fn replay_convert_plan(
     )?;
     // FIFO 批次快照在本端重建（排序键 rowid 的跨端确定性依据同 [`prepare_sell`]）：
     // 同序重放 ⇒ 与源端同状态 ⇒ 同一逐批次消耗结果。
-    let lots = fifo_active_lots(conn, &row.account_id, &fields.instrument_id)?;
+    let lots = lots::active_lots(conn, &row.account_id, &fields.instrument_id)?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
-    ensure_available_holding(total_available, fields.quantity)?;
-    let consumed = plan_lot_consumption(conn, &lots, fields.quantity)?;
+    lots::ensure_available_holding(total_available, fields.quantity)?;
+    let consumed = lots::plan(conn, &lots, fields.quantity)?;
     // 源端结转成本与本地重建的逐批次成本合计必须一致（兼行金额锚点校验）：
     // 不一致即本地 FIFO 快照发散（前序 op 缺失或非确定），挂起待裁决，
     // 不静默落出错误成本基础（ADR-0099 决策 6「不静默错账」）。
-    let rebuilt_cost_cents = total_consumed_cost(&consumed);
+    let rebuilt_cost_cents = lots::total_cost(&consumed);
     if rebuilt_cost_cents != fields.carried_cost_cents
         || row.amount_cents != fields.carried_cost_cents
     {

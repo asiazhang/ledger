@@ -1,6 +1,6 @@
 //! 标的字典步骤（issue #199）：搜索语义的 BDD 接缝。实现为
 //! `investment::list_instruments`（与 IPC 命令同一实现，#401 域目录化后直调域入口）。
-//! 另载按代码即拉添加基金的编排接缝（issue #301）：东财详情以注入桩离线驱动，
+//! 另载按代码即拉添加基金的编排接缝（issue #301 / ADR-0103）：东财报价以注入桩离线驱动，
 //! 实现为 `investment::add_fund_by_code_with`（与 IPC 命令同一套
 //! 校验/拉取编排/落库实现，网络层经注入替换）。
 
@@ -10,7 +10,7 @@ use rusqlite::params;
 use tauri_app_lib::db::{new_uuid, now_iso};
 use tauri_app_lib::error::Result;
 use tauri_app_lib::investment::{
-    FundDetail, FundNav, InstrumentInput, InstrumentListFilter, StockQuote, add_fund_by_code_with,
+    InstrumentInput, InstrumentListFilter, Quote, add_fund_by_code_with,
     add_stock_instrument_with_quote, create_instrument_manual,
     delete_instrument as delete_instrument_domain, fetch_stock_quote_for_add, get_instrument,
     list_instruments, prices::price_value_to_cents,
@@ -348,7 +348,7 @@ fn assert_get_instrument_error(world: &mut LedgerWorld, fragment: String) {
 /// 获取函数收到请求代码时须全等（桩只对目标代码返回详情）。
 fn run_add_fund<F>(world: &mut LedgerWorld, code: String, fetch: F)
 where
-    F: FnMut(&str) -> Result<FundDetail>,
+    F: FnMut(&str, &str) -> Result<Quote>,
 {
     let mut fetch = fetch;
     let outcome = add_fund_by_code_with(&world_conn!(world), &code, &mut fetch);
@@ -369,15 +369,20 @@ fn add_fund_with_stub_detail(
     nav: f64,
     nav_date: String,
 ) {
-    let detail = FundDetail {
+    // 统一报价载荷（行情接入，ADR-0103）：价格日期与净值日期同为净值日期。
+    let quote = Quote {
         code: code.clone(),
         name,
-        fund_class,
-        nav: Some(FundNav { nav, nav_date }),
+        price_cents: Some(price_value_to_cents(nav)),
+        price_date: Some(nav_date.clone()),
+        market: None,
+        kind_hint: None,
+        fund_class: Some(fund_class),
+        nav_date: Some(nav_date),
     };
-    run_add_fund(world, code, move |requested: &str| {
-        assert_eq!(requested, detail.code, "获取函数应收到请求代码");
-        Ok(detail.clone())
+    run_add_fund(world, code, move |requested: &str, _market: &str| {
+        assert_eq!(requested, quote.code, "获取函数应收到请求代码");
+        Ok(quote.clone())
     });
 }
 
@@ -388,21 +393,25 @@ fn add_fund_with_stub_no_nav(
     name: String,
     fund_class: String,
 ) {
-    let detail = FundDetail {
+    let quote = Quote {
         code: code.clone(),
         name,
-        fund_class,
-        nav: None,
+        price_cents: None,
+        price_date: None,
+        market: None,
+        kind_hint: None,
+        fund_class: Some(fund_class),
+        nav_date: None,
     };
-    run_add_fund(world, code, move |requested: &str| {
-        assert_eq!(requested, detail.code, "获取函数应收到请求代码");
-        Ok(detail.clone())
+    run_add_fund(world, code, move |requested: &str, _market: &str| {
+        assert_eq!(requested, quote.code, "获取函数应收到请求代码");
+        Ok(quote.clone())
     });
 }
 
 #[when(expr = "按代码添加基金 {string} 东财查无此码")]
 fn add_fund_with_stub_not_found(world: &mut LedgerWorld, code: String) {
-    let mut fetch = |requested: &str| -> Result<FundDetail> {
+    let mut fetch = |requested: &str, _market: &str| -> Result<Quote> {
         Err(tauri_app_lib::error::AppError::Invalid(format!(
             "查无基金代码 {requested}，请核对后重试",
         )))
@@ -427,7 +436,7 @@ fn add_fund_with_stub_not_found(world: &mut LedgerWorld, code: String) {
 /// 时桩恒未命中（查无此码），`Err(Io)` 形态以 `temporary_failure` 开关表达。
 fn run_add_instrument<F>(world: &mut LedgerWorld, channel: String, code: String, fetch: &mut F)
 where
-    F: FnMut(&str, &str) -> Result<StockQuote>,
+    F: FnMut(&str, &str) -> Result<Quote>,
 {
     // 查询阶段（生产在连接锁外）：通道解析 → 候选遍历。
     let quote = match fetch_stock_quote_for_add(&channel, &code, fetch) {
@@ -458,16 +467,18 @@ fn add_instrument_with_stub_quote(
 ) {
     let kind: tauri_app_lib::investment::InstrumentType =
         kind_hint.parse().expect("未知类型提示（stock/etf）");
-    let mut fetch = move |market: &str, code: &str| -> Result<StockQuote> {
+    let mut fetch = move |code: &str, market: &str| -> Result<Quote> {
         if market == quote_market {
-            Ok(StockQuote {
+            Ok(Quote {
                 // 代码回显请求归一化形态（与访问层回显同构：命中判定 = 回显全等）。
                 code: code.to_string(),
                 name: name.clone(),
-                market: market.to_string(),
                 price_cents: Some(price_value_to_cents(price)),
                 price_date: Some("2026-09-04".to_string()),
-                kind_hint: kind,
+                market: Some(market.to_string()),
+                kind_hint: Some(kind),
+                fund_class: None,
+                nav_date: None,
             })
         } else {
             Err(tauri_app_lib::error::AppError::codedp(
@@ -482,7 +493,7 @@ fn add_instrument_with_stub_quote(
 
 #[when(expr = "按代码添加投资标的 市场 {string} 代码 {string} 行情查无此码")]
 fn add_instrument_with_stub_all_miss(world: &mut LedgerWorld, channel: String, code: String) {
-    let mut fetch = |market: &str, code: &str| -> Result<StockQuote> {
+    let mut fetch = |code: &str, market: &str| -> Result<Quote> {
         let _ = market;
         Err(tauri_app_lib::error::AppError::codedp(
             "sync.stock-not-found",
@@ -499,7 +510,7 @@ fn add_instrument_with_stub_temporary_failure(
     channel: String,
     code: String,
 ) {
-    let mut fetch = |_market: &str, _code: &str| -> Result<StockQuote> {
+    let mut fetch = |_code: &str, _market: &str| -> Result<Quote> {
         Err(tauri_app_lib::error::AppError::Io("东财临时不可达".into()))
     };
     run_add_instrument(world, channel, code, &mut fetch);

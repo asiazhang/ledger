@@ -8,7 +8,6 @@
   "hitCount": "{n} results",
   "noResults": "No matching results",
   "emptyPlaceholder": "Enter a keyword or set filters to start searching",
-  "searchFailed": "Search failed: {msg}",
   "filter": {
     "amountRange": "Amount {min} ~ {max}",
     "amountMin": "Min {amount}",

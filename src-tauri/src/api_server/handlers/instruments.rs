@@ -9,16 +9,15 @@ use rusqlite::Connection;
 use serde::Deserialize;
 
 use crate::api_server::error::ErrorResponse;
-use crate::api_server::handlers::funds::fetch_fund_detail_for_api;
+use crate::api_server::handlers::funds::fetch_fund_quote_for_api;
 use crate::api_server::handlers::stocks::fetch_stock_quote_first_hit_for_api;
 use crate::api_server::state::ApiState;
 use crate::db::run_db;
 use crate::error::AppError;
 use crate::investment::{
-    FundDetail, InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentType,
-    StockCreateRoute, StockQuote, create_fund_degraded, create_stock_degraded,
-    derive_quote_currency, is_six_digit_code, persist_fund_detail, persist_stock_quote,
-    route_stock_creation,
+    InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentType, Quote,
+    StockCreateRoute, adopt_fund_quote, adopt_stock_quote, create_fund_degraded,
+    create_stock_degraded, derive_quote_currency, is_six_digit_code, route_stock_creation,
 };
 use crate::signals::{WriteEvidence, WriteOp};
 use crate::write_entry::{Outcome, write_entry};
@@ -149,11 +148,11 @@ pub async fn create_instrument_handler(
     // 不发起网络请求。stock 的路由判定收口在投资域单点（route_stock_creation）：
     // 北交所与真实代码形态的 market 矛盾在发起网络前显式 400；非代码形态走通用创建路径。
     enum Enrichment {
-        FundAuthoritative(FundDetail),
+        FundAuthoritative(Quote),
         FundDegrade,
         StockAuthoritative {
             kind: InstrumentType,
-            quote: StockQuote,
+            quote: Quote,
         },
         StockDegrade {
             kind: InstrumentType,
@@ -164,9 +163,9 @@ pub async fn create_instrument_handler(
     let enrichment: Option<Enrichment> = match input.kind {
         InstrumentType::Fund if is_six_digit_code(&input.symbol) => {
             Some(
-                match fetch_fund_detail_for_api(&state, &input.symbol).await {
+                match fetch_fund_quote_for_api(&state, &input.symbol).await {
                     // 东财命中：权威名称回填 + 净值落现价。
-                    Ok(detail) => Enrichment::FundAuthoritative(detail),
+                    Ok(quote) => Enrichment::FundAuthoritative(quote),
                     // 查无此码（接缝约定以 Invalid 上抛）：显式拒绝创建，AI 可提示用户或跳过该行。
                     Err(e @ AppError::Invalid(_)) => return Err(e),
                     // 网络不可达等临时故障：降级为 AI 提供名称 + 真实代码建行，不阻塞导入。
@@ -224,9 +223,9 @@ pub async fn create_instrument_handler(
         WriteOp::CreateInstrument,
         move |conn| {
             let (instrument_id, price_written) = match &enrichment {
-                Some(Enrichment::FundAuthoritative(detail)) => {
+                Some(Enrichment::FundAuthoritative(quote)) => {
                     // 东财命中：与按代码即拉同一落库接缝（权威名称回填 + 净值落现价）。
-                    let r = persist_fund_detail(conn, &input.symbol, detail)?;
+                    let r = adopt_fund_quote(conn, quote)?;
                     (r.instrument_id, r.price_written)
                 }
                 Some(Enrichment::FundDegrade) => {
@@ -235,7 +234,7 @@ pub async fn create_instrument_handler(
                 }
                 Some(Enrichment::StockAuthoritative { kind, quote }) => {
                     // 东财命中：与查询端点同一行情投影落库（权威名称回填 + 最新价落现价）。
-                    let r = persist_stock_quote(conn, *kind, quote)?;
+                    let r = adopt_stock_quote(conn, *kind, quote)?;
                     (r.instrument_id, r.price_written)
                 }
                 Some(Enrichment::StockDegrade { kind, market, code }) => {

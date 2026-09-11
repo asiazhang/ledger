@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { afterEach, describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NDataTable, NForm, NProgress, NSelect, NInputNumber, NDatePicker, NModal } from 'naive-ui'
@@ -8,6 +8,8 @@ import { useReferenceStore } from '@/stores/reference'
 import { todayStr } from '@/utils/date'
 import BudgetView from '@/views/BudgetView.vue'
 import { messageApi } from './helpers/message-mock'
+import { makeFakeSink, resetToastSink } from './factories'
+import { registerToastSink } from '@/composables/useLoadable'
 import { findButton, findBodyButton } from './helpers/dom'
 import type { BudgetProgress, Category } from '@/types'
 
@@ -142,12 +144,33 @@ function bodyButton(text: string, label: string) {
 }
 
 beforeEach(async () => {
+  resetToastSink()
   wireInvokeSeam({
     defaults: { budget_progress: [] },
     overrides: { ...REFERENCE_OVERRIDES },
   })
   const store = useReferenceStore()
   await store.refresh()
+})
+
+afterEach(() => {
+  resetToastSink()
+})
+
+describe('BudgetView 加载失败治愈（issue #1008）', () => {
+  it('清单加载失败：默认策略弹裸 errorMessage（治愈原 try/finally 无 catch 的静默失败）', async () => {
+    const sink = makeFakeSink()
+    registerToastSink(sink)
+    wireInvokeSeam({
+      defaults: { budget_progress: [] },
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        budget_progress: () => Promise.reject(new Error('数据库不可用')),
+      },
+    })
+    await mountView()
+    expect(sink.error).toHaveBeenCalledWith('数据库不可用')
+  })
 })
 
 describe('BudgetView 预算表单（issue #183）', () => {

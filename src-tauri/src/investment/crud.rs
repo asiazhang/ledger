@@ -14,7 +14,7 @@ use super::model::{
     InstrumentType, MarketPrice, MarketPriceInput,
 };
 use super::predicates::INVESTED_EXISTS;
-use super::prices::upsert_market_price;
+use super::prices::{MarketPriceWrite, upsert_market_price};
 use crate::currencies::{ExchangeRate, ExchangeRateInput};
 use crate::db::query::{query_all, query_one};
 use crate::db::{new_uuid, now_iso};
@@ -135,12 +135,14 @@ pub fn create_market_price(conn: &Connection, input: MarketPriceInput) -> Result
     // （record_manual_price），本命令为已发布的独立写价通道（issue #291 前的半成品）。
     let id = upsert_market_price(
         conn,
-        &input.instrument_id,
-        input.price_cents,
-        &input.currency_code,
-        &input.priced_at,
-        None,
-        input.source.as_deref(),
+        &MarketPriceWrite {
+            instrument_id: &input.instrument_id,
+            price_cents: input.price_cents,
+            currency_code: &input.currency_code,
+            priced_at: &input.priced_at,
+            nav_date: None,
+            source: input.source.as_deref(),
+        },
     )?;
     // op 产出接缝（issue #861 / ADR-0091）：本地写成功 → 动作随行追加（裁决域
     // = 标的的现价行）；随同一事务提交/回滚。

@@ -5,6 +5,8 @@ import { setFakeMedia } from './helpers/media-mock'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { NButton, NDatePicker } from 'naive-ui'
 import { resetOverlays, hasOpenOverlay, openOverlayNames } from '@/composables/overlayRegistry'
+import { registerToastSink } from '@/composables/useLoadable'
+import { makeFakeSink, resetToastSink } from './factories'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import { DATED_TIME_PERIOD_PRESETS, type NullableDateRange } from '@/utils/time-period'
@@ -34,6 +36,7 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 0, 15, 12, 0, 0))
+    resetToastSink()
     resetOverlays()
     wireInvokeSeam({
       overrides: {
@@ -45,6 +48,7 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    resetToastSink()
     resetOverlays()
   })
 
@@ -168,7 +172,9 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     expect(lastEmitted(wrapper)).toEqual({ from: '2025-07-01', to: '2025-07-31' })
   })
 
-  it('退化：边界拉取失败时不钳制（> 可步进），不阻塞快捷选择', async () => {
+  it('退化：边界拉取失败时不钳制（> 可步进）、不阻塞快捷选择、静默不 toast（silent 实例）', async () => {
+    const sink = makeFakeSink()
+    registerToastSink(sink)
     const failing: Promise<{ min_date: string | null; max_date: string | null }> =
       Promise.reject(new Error('boom'))
     failing.catch(() => {}) // 防 unhandled rejection 噪音
@@ -181,6 +187,8 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     const wrapper = mountRange({ from: '2026-01-01', to: '2026-01-31' })
     await flushPromises()
     expect(stepButton(wrapper, 'next').props('disabled')).toBe(false)
+    // 静默语义锚定：失败走优雅降级，不弹错误 toast
+    expect(sink.error).not.toHaveBeenCalled()
   })
 
   it('面板：type 随当前游标单位切换（月/季/年），边界外月份置灰', async () => {

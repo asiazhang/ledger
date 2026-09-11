@@ -61,18 +61,15 @@
     "createSubscription": "New Subscription",
     "createSubscriptionSubmit": "Create Subscription",
     "editSubscription": "Edit Subscription",
-    "subscriptionLoadError": "Failed to load subscriptions",
     "subscriptionCancelConfirm": "No more charges after cancelling. Generated transactions and past occurrences are kept. Confirm cancel?",
     "installmentList": "Installment List",
     "createInstallment": "New Installment",
     "createInstallmentSubmit": "Create Installment",
-    "installmentLoadError": "Failed to load installments",
     "installmentCancelConfirm": "No more automatic charges after cancelling. Generated transactions and past occurrences are kept. Confirm cancel?",
     "transferList": "Scheduled Transfer List",
     "createTransfer": "New Transfer",
     "createTransferModal": "New Scheduled Transfer",
     "createTransferSubmit": "Create Transfer",
-    "transferLoadError": "Failed to load scheduled transfers",
     "transferCancelConfirm": "No more automatic transfers after cancelling. Generated transactions and past occurrences are kept. Confirm cancel?"
   },
   "form": {
