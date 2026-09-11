@@ -12,7 +12,9 @@ use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
 use crate::transaction::amount;
 use crate::transaction::amount::TransactionKind;
-use crate::transaction::command::{ConvertCommandFields, InvestmentCommandFields};
+use crate::transaction::command::{
+    ConvertCommandFields, InvestmentCommandFields, SplitCommandFields,
+};
 use crate::transaction::{ConvertFields, NormalizedTransaction, TransactionInput};
 
 /// 查询账户本位币代码（原 `commands::fx::account_currency_code`，随投资域归位
@@ -594,9 +596,10 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
     })
 }
 
-/// 份额调整计划（ADR-0106）：归一化行（无现金腿，金额恒 0）+ 带符号份额增量 Δ
-/// + 在用批次重述快照（prepare 算定、apply 原样落库）。重述不携带批次行 id 之外
-///   的任何落库状态；同步重放只携带 Δ（ADR-0106 决策 9），重放端本地重建重述。
+/// 份额调整计划（ADR-0106）：归一化行（无现金腿，金额恒 0）、带符号份额增量 Δ、
+/// 在用批次重述快照（prepare 算定、apply 原样落库），以及最终持仓与批次总成本
+/// 两个跨端重放比对锚点（ADR-0106 决策 9：载荷不携逐批次重述结果、只携 Δ 与这
+/// 两个总量，重放端本地重建重述后比对，不一致显式挂起）。
 pub struct SplitPlan {
     pub(crate) normalized: NormalizedTransaction,
     pub(crate) instrument_id: String,
@@ -606,10 +609,15 @@ pub struct SplitPlan {
     pub(crate) delta_quantity: f64,
     /// 在用批次重述快照（逐批次 before / after，落 `security_lot_adjustments` 审计）。
     pub(crate) restated: Vec<LotRestatement>,
+    /// 重述后总持仓（Σ remaining_after）：同步命令携带的比对锚点之一。
+    pub(crate) final_quantity: f64,
+    /// 批次总成本（分，重述精确不变）：同步命令携带的比对锚点之二。
+    pub(crate) total_cost_cents: i64,
 }
 
-/// 校验并归一化一笔份额调整（不落库）。创建与修改共用；修改路径在本票被
-/// 「暂不支持」显式拒绝（临时形态，#1051 收编），本函数仅为创建路径分派。
+/// 校验并归一化一笔份额调整（不落库）。本地创建与本地修改共用（修改路径以
+/// `existing_id` 限定重述范围，ADR-0106 决策 6）；重放形态走
+/// [`replay_split_plan`]（同一守卫集、从命令携带字段装配）。
 ///
 /// 语义（ADR-0106 决策 1/3/7）：同一投资账户内、单标的的非现金份额变动——
 /// 一条记录表达标的、带符号份额增量 Δ 与调整日；**无现金腿**：行金额恒 0、
@@ -712,14 +720,14 @@ fn prepare_split(
         )?),
         None => None,
     };
-    let restated = split::plan_restatement(
+    let restatement = split::plan_restatement(
         conn,
         &input.account_id,
         &instrument_id,
         delta_quantity,
         before_rowid,
     )?;
-    if restated.is_empty() {
+    if restatement.lots.is_empty() {
         return Err(AppError::coded(
             "trade.split-no-holding",
             "份额调整要求该标的有在用持仓（零持仓无从重述批次成本）",
@@ -747,7 +755,9 @@ fn prepare_split(
         },
         instrument_id,
         delta_quantity,
-        restated,
+        restated: restatement.lots,
+        final_quantity: restatement.final_quantity,
+        total_cost_cents: restatement.total_cost_cents,
     })
 }
 
@@ -1281,6 +1291,119 @@ pub(crate) fn replay_convert_plan(
         out_amount_cents: fields.out_amount_cents,
         in_amount_cents: fields.in_amount_cents,
         consumed,
+    }))
+}
+
+/// 份额调整（split）重放形态的计划重建（issue #1053 / ADR-0106 决策 9）：从随命令
+/// 携带的份额调整字段与归一化行重建 [`apply`] 所需计划。
+///
+/// 与本地 [`prepare_split`] 的分工：归一化行（无现金腿，金额恒 0）与 Δ 随命令携带；
+/// **逐批次重述结果不随载荷携带**（重述是「当前批次快照 + Δ」的纯函数，重放端按 op
+/// 序重建的批次快照与源端一致），本端以本地快照独立重建。比对锚点 = 源端携带的
+/// **最终持仓与批次总成本**——本地重建的两个总量与其不一致（前序 op 未达、载荷被
+/// 篡改）即本地快照发散，码化挂起待裁决，不静默落出错误持仓与成本基础（同 convert
+/// 的结转成本比对，ADR-0099 决策 6）。
+///
+/// `existing_id`：修改路径传本行 id（重述目标以本行落账序为界，ADR-0106 决策 6，
+/// 与本地修改同口径），创建路径传 `None` 取当前全部在用批次。
+///
+/// 依赖缺失（标的不存在、账户非投资、零在用持仓、缩股越界）以与本地写入同码的
+/// 码化错误上抛，由同步引擎挂起进队列（issue #856），依赖方 op 补齐后重投递自然重试。
+pub(crate) fn replay_split_plan(
+    conn: &Connection,
+    row: &NormalizedTransaction,
+    fields: &SplitCommandFields,
+    existing_id: Option<&str>,
+) -> Result<Plan> {
+    // 与本地 prepare 同序的守卫：身份（标的存在）→ 数值 → 账户 → 持仓。
+    fetch_instrument_type(
+        conn,
+        &fields.instrument_id,
+        "份额调整",
+        "trade.split-instrument-not-found",
+    )?;
+    if fields.delta_quantity == 0.0 {
+        return Err(AppError::coded(
+            "trade.split-quantity-zero",
+            "份额调整数量不能为 0",
+        ));
+    }
+    // 无现金腿（ADR-0106 决策 1）：行金额恒 0，携带非零金额即伪造/漂移载荷，
+    // 重放不得绕开本地不变量（CONTEXT-sync「经同一接缝执行」）。
+    if row.amount_cents != 0 || row.amount_native_cents != 0 {
+        return Err(AppError::coded(
+            "trade.split-amount-forbidden",
+            "份额调整无现金腿，金额必须为 0",
+        ));
+    }
+    ensure_investment_account(
+        conn,
+        &row.account_id,
+        "trade.split-account-not-investment",
+        "份额调整必须使用投资账户",
+    )?;
+    // 不跨账户（与本地录入同码）：单标的份额变动携带转入账户即伪造载荷。
+    if row.to_account_id.is_some() {
+        return Err(AppError::coded(
+            "trade.split-to-account-forbidden",
+            "份额调整不跨账户：只能调整同一投资账户内的标的，不能携带转入账户",
+        ));
+    }
+    // 出资账户准入（与本地录入共用同一条接缝）：split 不在出资闭集内，携带即拒绝。
+    crate::transaction::funding::validate_funding_account(
+        conn,
+        TransactionKind::Split,
+        row.funding_account_id.as_deref(),
+        &row.currency_code,
+    )?;
+    // 修改路径以本行落账序为界（ADR-0106 决策 6）：取本端该交易行的 rowid，
+    // 只重述它落账那一刻在场的批次。
+    let before_rowid = match existing_id {
+        Some(id) => Some(conn.query_row(
+            "SELECT rowid FROM transactions WHERE id=?1",
+            rusqlite::params![id],
+            |r| r.get::<_, i64>(0),
+        )?),
+        None => None,
+    };
+    let restatement = split::plan_restatement(
+        conn,
+        &row.account_id,
+        &fields.instrument_id,
+        fields.delta_quantity,
+        before_rowid,
+    )?;
+    // 零在用持仓（前序买入 op 未达）在此码化拒绝，与本地创建同码（ADR-0106 决策 7）。
+    if restatement.lots.is_empty() {
+        return Err(AppError::coded(
+            "trade.split-no-holding",
+            "份额调整要求该标的有在用持仓（零持仓无从重述批次成本）",
+        ));
+    }
+    // 源端锚点比对（ADR-0106 决策 9）：本地重建的最终持仓与批次总成本必须与源端
+    // 携带值一致；不一致即本地快照发散（前序 op 未达 / 载荷被篡改），挂起待裁决。
+    let quantity_diverges =
+        (restatement.final_quantity - fields.final_quantity).abs() > lots::QTY_GUARD_EPSILON;
+    if quantity_diverges || restatement.total_cost_cents != fields.total_cost_cents {
+        let source_quantity = lots::format_quantity_for_message(fields.final_quantity);
+        let local_quantity = lots::format_quantity_for_message(restatement.final_quantity);
+        let source_cost = fields.total_cost_cents.to_string();
+        let local_cost = restatement.total_cost_cents.to_string();
+        return Err(AppError::codedp(
+            "transaction.split-restatement-mismatch",
+            format!(
+                "份额调整重放校验不一致（源端 最终持仓 {source_quantity}、总成本 {source_cost}；本机重建 {local_quantity}、{local_cost}），已挂起等待处理"
+            ),
+            &[&source_quantity, &source_cost, &local_quantity, &local_cost],
+        ));
+    }
+    Ok(Plan::Split(SplitPlan {
+        normalized: row.clone(),
+        instrument_id: fields.instrument_id.clone(),
+        delta_quantity: fields.delta_quantity,
+        restated: restatement.lots,
+        final_quantity: restatement.final_quantity,
+        total_cost_cents: restatement.total_cost_cents,
     }))
 }
 

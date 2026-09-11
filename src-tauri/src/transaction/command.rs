@@ -9,6 +9,9 @@
 //!   投资 kind 的语义字段随 [`InvestmentCommandFields`] 携带（buy/sell 重放执行
 //!   见 `behavior::replay_command`）；转换 kind 的语义字段与源端结转成本随
 //!   [`ConvertCommandFields`] 携带（issue #980，重放端本地重建 FIFO 快照）。
+//!   份额调整 kind 的语义字段与源端**最终持仓 / 批次总成本**两个比对锚点随
+//!   [`SplitCommandFields`] 携带（issue #1053，重放端本地重建批次重述并比对，
+//!   不一致显式挂起；逐批次重述结果不随载荷携带，ADR-0106 决策 9）。
 //!   **只增不改**：字段演进只追加可选成员，旧日志可在新 schema 重放。
 //! - **产出单点**（[`record_local`]）：行为编排三入口（create / update /
 //!   delete）成功后各自调用一次，op 产出不散落各写路径——IPC/HTTP/批量导入/
@@ -39,6 +42,10 @@ pub enum TransactionCommand {
         /// 旧版本设备产出的载荷（该成员缺省）为 None（ADR-0099 决策 6）。
         #[serde(default)]
         convert: Option<ConvertCommandFields>,
+        /// 份额调整 kind（split）的语义字段与源端比对锚点；其余 kind 与旧版本
+        /// 设备产出的载荷（该成员缺省）为 None（ADR-0106 决策 9 / issue #1053）。
+        #[serde(default)]
+        split: Option<SplitCommandFields>,
     },
     /// 全字段替换修改（与本地修改同语义）：实体 id 与归一化后的新行随命令携带。
     Update {
@@ -50,6 +57,10 @@ pub enum TransactionCommand {
         /// 旧版本设备产出的载荷（该成员缺省）为 None（ADR-0099 决策 6）。
         #[serde(default)]
         convert: Option<ConvertCommandFields>,
+        /// 份额调整 kind（split）的语义字段与源端比对锚点；其余 kind 与旧版本
+        /// 设备产出的载荷（该成员缺省）为 None（ADR-0106 决策 9 / issue #1053）。
+        #[serde(default)]
+        split: Option<SplitCommandFields>,
     },
     /// 删除交易（软删除）：实体 id 足够——重放端读行现状（kind 守卫、账户引用）
     /// 执行与本地删除同一协议。
@@ -95,6 +106,29 @@ pub struct ConvertCommandFields {
     pub fee_cents: i64,
     /// 结转成本（源端算定，整数分）：行金额锚点与转入批次成本来源。
     pub carried_cost_cents: i64,
+}
+
+/// 份额调整 kind（split）的命令字段（ADR-0106 决策 9 / issue #1053）：随 op 携带的
+/// 语义输入与源端算定的**总量比对锚点**。
+///
+/// 与 convert 的差别（ADR-0106 决策 9）：重述是「当前批次快照 + Δ」的纯函数，
+/// 重放端按 op 序重建的批次快照与源端一致，故**不携带逐批次重述结果**——只携带 Δ
+/// 与两个总量（最终持仓、批次总成本）。重放端以本地快照独立重建重述，两个总量与其
+/// 不一致即本地快照发散（前序 op 未达、载荷被篡改），显式失败挂起，不静默错账。
+///
+/// 旧版本设备产出的 split op 缺本成员（`#[serde(default)]` 缺省即 None）：重放端
+/// 无比对锚点可用，按既有挂起机制码化挂起（`transaction.split-fields-missing`），
+/// 不静默落出未经校验的重述（同 convert 的旧载荷处置，ADR-0099 决策 6）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SplitCommandFields {
+    /// 调整标的（`security_transactions.instrument_id`）。
+    pub instrument_id: String,
+    /// 带符号份额增量 Δ（绝对增量语义，`+` = 折算/结转/送股、`−` = 缩股）。
+    pub delta_quantity: f64,
+    /// 源端重述后总持仓（Σ remaining_after）：重放端本地重建值须与之一致。
+    pub final_quantity: f64,
+    /// 源端批次总成本（分，重述精确不变）：重放端本地重建值须与之一致。
+    pub total_cost_cents: i64,
 }
 
 /// 投资 kind（buy/sell）的命令字段：随 op 携带的语义输入与派生结果。
