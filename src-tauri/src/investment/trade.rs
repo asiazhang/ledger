@@ -53,14 +53,44 @@ fn fetch_instrument_type(
     })
 }
 
+/// 份额守卫容差（issue #1033）：f64 逐次 FIFO 扣减的累积位误差在账本量级
+/// （持仓 ≪ 1e7 份）约 1e-12 ~ 1e-9，而录入粒度合同为至多四位小数（issue #416，
+/// 真实超卖差异 ≥ 1e-4）——1e-6 距两侧各 3~5 个数量级，既吞掉全部位噪声、
+/// 又不会放过任何真实超卖。守卫与批次耗尽判定共用同一常量，不得各写各的。
+const QTY_GUARD_EPSILON: f64 = 1e-6;
+
+/// 数量展示格式化（错误文案用）：至多 4 位小数、去尾零——与录入粒度合同
+/// （issue #416 四位小数）对齐无损展示，f64 位误差（~1e-12）远在刻度以下
+/// 必然消失（如 8036.109999999999 → "8036.11"）。
+fn format_quantity_for_message(quantity: f64) -> String {
+    format!("{quantity:.4}")
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
+}
+
 /// 「可卖出数量不足」码化错误（buy/sell/convert 的 FIFO 守卫共用单点）：本地
 /// prepare 与重放计划重建同一口径（同码同文案同插值参数），两端与两路径不漂移。
+/// 数字按录入粒度合同展示，不把位噪声原文抛给用户。
 fn insufficient_holding_error(total_available: f64, quantity: f64) -> AppError {
+    let available_display = format_quantity_for_message(total_available);
+    let quantity_display = format_quantity_for_message(quantity);
     AppError::codedp(
         "trade.insufficient-holding",
-        format!("可卖出数量不足，当前持有 {total_available}，尝试卖出 {quantity}"),
-        &[&total_available.to_string(), &quantity.to_string()],
+        format!("可卖出数量不足，当前持有 {available_display}，尝试卖出 {quantity_display}"),
+        &[&available_display, &quantity_display],
     )
+}
+
+/// 可卖数量守卫单点（issue #1033）：裸比较 `<` 会让 f64 FIFO 扣减的累积位误差
+/// 误拒真实全清仓（如持有 8036.109999999999、卖出 8036.11）。带容差判定与
+/// 码化错误在此收口：本地 prepare 与重放计划重建的四处守卫共用，同码同文案，
+/// 两端与两路径不漂移。
+fn ensure_available_holding(total_available: f64, quantity: f64) -> Result<()> {
+    if total_available + QTY_GUARD_EPSILON < quantity {
+        return Err(insufficient_holding_error(total_available, quantity));
+    }
+    Ok(())
 }
 
 /// 投资交易对外出口（issue #72 / spec #69）：`prepare / apply / revert` 三件套 +
@@ -412,9 +442,7 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
     // 重放端按 op 序插入批次，rowid 相对序与源端恒一致。
     let lots: Vec<ActiveLot> = fifo_active_lots(conn, &input.account_id, &instrument_id)?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
-    if total_available < quantity {
-        return Err(insufficient_holding_error(total_available, quantity));
-    }
+    ensure_available_holding(total_available, quantity)?;
 
     Ok(SellPlan {
         normalized: NormalizedTransaction {
@@ -561,9 +589,7 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
     )?;
     let lots = fifo_active_lots(conn, &input.account_id, &instrument_id)?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
-    if total_available < quantity {
-        return Err(insufficient_holding_error(total_available, quantity));
-    }
+    ensure_available_holding(total_available, quantity)?;
     // 转出腿 FIFO 消耗与逐批次结转成本（含耗尽批次闭合）在 prepare 阶段算定：
     // 它是行金额锚点与转入批次成本的唯一依据，apply 原样落消耗记录与批次。
     let consumed = plan_lot_consumption(conn, &lots, quantity)?;
@@ -736,8 +762,15 @@ fn plan_lot_consumption(
         if remaining <= 0.0 {
             break;
         }
-        let matched = lot.remaining_quantity.min(remaining);
-        let exhausts_lot = remaining >= lot.remaining_quantity;
+        // 耗尽判定与守卫同一容差（issue #1033）：批次剩余噪声偏高（≤ 待消耗 + 容差）
+        // 时视为耗尽、整批取走——全清仓精确归零，不留尘埃批次残差（残差会让
+        // remaining_quantity > 0 永远认其为持仓）；噪声偏低方向由守卫容差放行。
+        let exhausts_lot = remaining + QTY_GUARD_EPSILON >= lot.remaining_quantity;
+        let matched = if exhausts_lot {
+            lot.remaining_quantity
+        } else {
+            remaining
+        };
         let cost_cents = if exhausts_lot {
             let lot_total_cents: i64 = conn.query_row(
                 "SELECT t.amount_cents FROM security_lots l \n                 JOIN transactions t ON t.id = l.buy_transaction_id WHERE l.id=?1",
@@ -1354,9 +1387,7 @@ pub(crate) fn replay_plan(
             let lots: Vec<ActiveLot> =
                 fifo_active_lots(conn, &row.account_id, &fields.instrument_id)?;
             let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
-            if total_available < fields.quantity {
-                return Err(insufficient_holding_error(total_available, fields.quantity));
-            }
+            ensure_available_holding(total_available, fields.quantity)?;
             Ok(Plan::Sell(SellPlan {
                 normalized: row.clone(),
                 instrument_id: fields.instrument_id.clone(),
@@ -1469,9 +1500,7 @@ pub(crate) fn replay_convert_plan(
     // 同序重放 ⇒ 与源端同状态 ⇒ 同一逐批次消耗结果。
     let lots = fifo_active_lots(conn, &row.account_id, &fields.instrument_id)?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
-    if total_available < fields.quantity {
-        return Err(insufficient_holding_error(total_available, fields.quantity));
-    }
+    ensure_available_holding(total_available, fields.quantity)?;
     let consumed = plan_lot_consumption(conn, &lots, fields.quantity)?;
     // 源端结转成本与本地重建的逐批次成本合计必须一致（兼行金额锚点校验）：
     // 不一致即本地 FIFO 快照发散（前序 op 缺失或非确定），挂起待裁决，

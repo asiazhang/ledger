@@ -727,3 +727,210 @@ fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
     let err = trade::get_transaction_trade(&conn, "no-such-txn").unwrap_err();
     assert!(err.to_string().contains("无买卖明细"), "实际: {err}");
 }
+
+/// 可卖数量守卫容差（issue #1033）：f64 FIFO 扣减的累积位噪声不得误拒真实全清仓。
+/// 复刻真实账本位模式：buy 11511.99 → convert 转出两腿 684.76、2791.12 → 批次剩余
+/// 低于 8036.11 的位模式（issue 附 DB printf('%.17g') 证据：8036.109999999999）→
+/// sell 8036.11 必须放行，且批次精确归零。
+#[test]
+fn sell_full_clearance_with_fifo_noise_is_allowed() {
+    let conn = open();
+    seed_account(&conn, "acc-noise", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(
+        &conn,
+        "inst-noise-src",
+        "006793",
+        "源标的",
+        "USD",
+        "unknown",
+    );
+    seed_instrument(
+        &conn,
+        "inst-noise-dst",
+        "519700",
+        "目标标的",
+        "USD",
+        "unknown",
+    );
+
+    let buy_id = create_transaction_internal(
+        &conn,
+        make_buy_input("acc-noise", "inst-noise-src", 11511.99, 10_000, 0),
+    )
+    .unwrap()
+    .id;
+    // 多腿转换单按提交方拆成多条 convert 记录。腿序决定噪声方向（IEEE 双精度
+    // 逐次扣减不结合）：11511.99 − 2791.12 − 684.76 = 8036.109999999999（issue
+    // 位模式），反序则恰好干净——守卫必须对两种序同等容忍。
+    create_transaction_internal(
+        &conn,
+        make_convert_input(
+            "acc-noise",
+            "inst-noise-src",
+            "inst-noise-dst",
+            2791.12,
+            2791.12,
+            279_112,
+            279_112,
+            0,
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_convert_input(
+            "acc-noise",
+            "inst-noise-src",
+            "inst-noise-dst",
+            684.76,
+            684.76,
+            68_476,
+            68_476,
+            0,
+        ),
+    )
+    .unwrap();
+
+    let remaining: f64 = conn
+        .query_row(
+            "SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?1",
+            params![buy_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        remaining < 8036.11,
+        "复刻位模式：FIFO 扣减后剩余应低于 8036.11（真实账本 8036.109999999999），got {remaining}"
+    );
+
+    // 此前被裸比较误拒的全清仓卖出：容差内放行。
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-noise", "inst-noise-src", 8036.11, 10_000, 0),
+    )
+    .unwrap();
+
+    let remaining_after: f64 = conn
+        .query_row(
+            "SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?1",
+            params![buy_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining_after, 0.0, "全清仓后批次精确归零");
+}
+
+/// 容差边界钉住 1e-6：真实超卖（差额超容差）仍以同码拒绝；容差内的位噪声差异放行。
+#[test]
+fn sell_guard_rejects_oversell_beyond_tolerance() {
+    let conn = open();
+    seed_account(&conn, "acc-eps", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-eps", "AAPL", "Apple", "USD", "unknown");
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-eps", "inst-eps", 100.0, 10_000, 0),
+    )
+    .unwrap();
+
+    // 差额 2e-6 > 容差 1e-6：真实超卖，拒绝且同码。
+    let err = create_transaction_internal(
+        &conn,
+        make_sell_input("acc-eps", "inst-eps", 100.000002, 10_000, 0),
+    )
+    .unwrap_err();
+    assert!(
+        err.is_code("trade.insufficient-holding"),
+        "超容差超卖应保持原码拒绝，got: {err:?}"
+    );
+
+    // 差额 5e-7 < 容差 1e-6：位噪声量级，放行。
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-eps", "inst-eps", 100.0000005, 10_000, 0),
+    )
+    .unwrap();
+}
+
+/// 尘埃批次（issue #1033 同根因的另一面）：批次剩余噪声偏高时，全清仓不得留下
+/// 1e-12 量级的残余批次（否则 v_holdings/InvestedInstrument 永远认其为持仓）。
+/// 噪声偏高位模式无公开写入口可确定性产生，按 ADR-0086 以裸 SQL 直置（模拟历史
+/// f64 扣减残差），显式登记于此。
+#[test]
+fn sell_full_clearance_consumes_noise_over_lot_exactly() {
+    let conn = open();
+    seed_account(&conn, "acc-dust", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-dust", "MSFT", "Microsoft", "USD", "unknown");
+    let buy_id = create_transaction_internal(
+        &conn,
+        make_buy_input("acc-dust", "inst-dust", 100.0, 10_000, 0),
+    )
+    .unwrap()
+    .id;
+    conn.execute(
+        "UPDATE security_lots SET remaining_quantity=100.000000000001 WHERE buy_transaction_id=?1",
+        params![buy_id],
+    )
+    .unwrap();
+
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-dust", "inst-dust", 100.0, 10_000, 0),
+    )
+    .unwrap();
+
+    let remaining_after: f64 = conn
+        .query_row(
+            "SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?1",
+            params![buy_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining_after, 0.0, "清仓后批次精确归零，不留尘埃残差");
+    let active_lots: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM security_lots WHERE instrument_id='inst-dust' AND remaining_quantity > 0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(active_lots, 0, "无残余活跃批次");
+}
+
+/// 「可卖出数量不足」文案不带位噪声（issue #1033 报障文案）：数字按录入粒度合同
+/// （issue #416，至多四位小数）去尾零展示，8036.109999999999 → 8036.11。
+#[test]
+fn insufficient_holding_error_message_hides_float_noise() {
+    let conn = open();
+    seed_account(&conn, "acc-msg", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-msg", "TSLA", "Tesla", "USD", "unknown");
+    let buy_id = create_transaction_internal(
+        &conn,
+        make_buy_input("acc-msg", "inst-msg", 100.0, 10_000, 0),
+    )
+    .unwrap()
+    .id;
+    conn.execute(
+        "UPDATE security_lots SET remaining_quantity=99.99999999999999 WHERE buy_transaction_id=?1",
+        params![buy_id],
+    )
+    .unwrap();
+
+    let err = create_transaction_internal(
+        &conn,
+        make_sell_input("acc-msg", "inst-msg", 200.0, 10_000, 0),
+    )
+    .unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("当前持有 100，尝试卖出 200"),
+        "文案应按四位小数去尾零展示，got: {message}"
+    );
+    assert!(
+        !message.contains("99.9"),
+        "文案不应出现位噪声原样数字，got: {message}"
+    );
+}
