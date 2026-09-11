@@ -44,8 +44,8 @@ const ASSET_WITH_VALUATION_FROM: &str = "\
 /// 「保证处于事务中」（嵌套感知，ADR-0033 决策 #2）：连接 autocommit 则自持
 /// BEGIN/COMMIT/ROLLBACK，已在事务中则加入外层。建档要原子写资产行 + 首条
 /// 估值行两表，缺失会造成「资产无当前估值」的半行（列表 JOIN 丢行、净资产
-/// 缺腿）。域内私有助手，形状与交易域 `transaction::behavior::ensure_transaction`
-/// 同款（该函数为交易域私有，不跨域复用实现）。
+/// 缺腿）。域内私有助手，形状与基础设施 `db::tx_scope::ensure_transaction`
+/// 同款（收敛至该原语由收敛票处理，见 issue #1013）。
 fn in_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
     if !conn.is_autocommit() {
         return f();

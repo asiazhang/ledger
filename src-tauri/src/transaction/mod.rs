@@ -45,14 +45,14 @@ pub use amount::{
 pub use batch::{
     BatchOutcome, DedupIdentity, TransactionBatch, compute_dedup_hash, dedup_identity,
 };
+/// 同步重放（crate 内消费：`sync_engine::apply_ops` 经本接缝执行外来命令，
+/// ADR-0033）。嵌套感知事务原语已归位基础设施 `db::tx_scope`（issue #1013）。
+pub(crate) use behavior::replay_command;
 pub use behavior::{
     TransactionWrite, create, create_transaction, create_transaction_internal, delete,
     delete_transaction, delete_transaction_internal, update, update_transaction,
     update_transaction_internal,
 };
-/// 同步重放与嵌套感知事务原语（crate 内消费：`sync_engine::apply_ops` 经本接缝
-/// 执行外来命令并复用同一事务原语，ADR-0033）。
-pub(crate) use behavior::{ensure_transaction, replay_command};
 pub use command::{ConvertCommandFields, InvestmentCommandFields, TransactionCommand};
 pub use funding::validate_funding_account;
 pub use read::{

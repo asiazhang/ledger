@@ -29,10 +29,10 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
+use crate::db::tx_scope::ensure_transaction;
 use crate::db::{self, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::fs_util;
-use crate::transaction::ensure_transaction;
 
 use super::device;
 use super::ops;

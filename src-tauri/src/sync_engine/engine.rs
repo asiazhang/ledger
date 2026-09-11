@@ -23,8 +23,9 @@
 //! 收 wire 形态（JSON 字符串，通道上的搬运形态）——解析失败即 schema 偏斜，
 //! 按信封可读性挂起，#859 Transport 直接消费。
 
+use crate::db::tx_scope::ensure_transaction;
 use crate::error::{AppError, Result};
-use crate::transaction::{ensure_transaction, replay_command};
+use crate::transaction::replay_command;
 
 use super::command::DomainCommand;
 use super::model::SyncOp;

@@ -8,7 +8,9 @@
 //! - `encryption`：SQLCipher 引擎基座（issue #569 / ADR-0075）——依赖切换
 //!   不变量（未设密钥保持明文）、建连密钥缝、文件头探测三态；
 //! - `schema_guard`：schema 漂移守卫机制（内存参照库方向性 diff，
-//!   issue #992 / ADR-0100）。
+//!   issue #992 / ADR-0100）；
+//! - `tx_scope`：事务作用域原语 `db::tx_scope::ensure_transaction`（嵌套感知
+//!   「保证处于事务中」，ADR-0033 决策 2 / issue #1013）。
 
 mod common;
 mod dirty_marker;
@@ -18,3 +20,4 @@ mod migrations;
 mod perf;
 mod run_db;
 mod schema_guard;
+mod tx_scope;

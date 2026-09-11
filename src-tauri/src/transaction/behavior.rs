@@ -46,6 +46,7 @@ use super::command::{
 use super::model::{NormalizedTransaction, TransactionInput};
 use crate::accounts::balance::{affected_accounts, refresh_account_balances};
 use crate::db::now_iso;
+use crate::db::tx_scope::ensure_transaction;
 use crate::error::{AppError, Result};
 use crate::investment;
 use crate::signals::WriteEvidence;
@@ -115,37 +116,6 @@ impl Plan {
         match self {
             Plan::Common(row) => Ok(row.clone()),
             Plan::Investment(p) => Ok(writer::NormalizedRow::try_from(p.normalized())?),
-        }
-    }
-}
-
-/// 「保证处于事务中」（嵌套感知，ADR-0033 决策 #2）：连接 autocommit 则自持
-/// BEGIN/COMMIT/ROLLBACK（`f` 中途失败整体回滚）；已在事务中则加入外层、失败直接
-/// 返回错误——回滚归外层持有者（批量导入的批次事务与余额调整的外层事务壳，
-/// issue #310，是嵌套模式的合法使用者）。
-///
-/// `pub(crate)`（issue #855）：`sync_engine::apply_ops` 重放外来 op 时复用同一
-/// 事务原语（命令执行 + op 落日志同事务原子），不另造第二份嵌套感知实现。
-pub(crate) fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
-    // is_autocommit()=true ⇔ 连接不在事务中（rusqlite 语义），据此选分支。
-    if !conn.is_autocommit() {
-        return f();
-    }
-    conn.execute("BEGIN", [])?;
-    match f() {
-        Ok(v) => match conn.execute("COMMIT", []) {
-            Ok(_) => Ok(v),
-            // COMMIT 失败：尽力回滚清理残留（与批量编排同款），再上抛提交错误。
-            Err(e) => {
-                let _ = conn.execute("ROLLBACK", []);
-                Err(e.into())
-            }
-        },
-        // 自持事务中途失败：整体回滚，不留已落库交易行与半套副作用；
-        // ROLLBACK 自身失败不遮蔽业务错误（与 COMMIT 失败分支同款，尽力回滚后上抛原错误）。
-        Err(e) => {
-            let _ = conn.execute("ROLLBACK", []);
-            Err(e)
         }
     }
 }
