@@ -70,6 +70,10 @@
   "edit": {
     "title": "Edit Transaction"
   },
+  "detail": {
+    "title": "Transaction Details",
+    "loadFailed": "Cannot load details: {msg}"
+  },
   "deleteDialog": {
     "title": "Delete Transaction",
     "content": "Delete this transaction? This action cannot be undone.",
@@ -78,6 +82,7 @@
   },
   "menu": {
     "edit": "Edit",
+    "detail": "Details",
     "refund": "Refund",
     "addItem": "Add Item",
     "delete": "Delete",
@@ -97,7 +102,6 @@
     "submitIncome": "Record Income",
     "submitBuy": "Record Buy",
     "submitSell": "Record Sell",
-    "submitConvert": "Record Convert",
     "submitTransfer": "Record Transfer",
     "saveChanges": "Save Changes",
     "warnSelectFromAccount": "Please select the source account",

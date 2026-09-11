@@ -8,11 +8,11 @@ import type { CreateFormKind, Transaction, TransactionConvert, TransactionTrade 
 
 /**
  * TransactionModalState 交易弹窗编排深模块（ADR-0045，词汇表「TransactionModalState（交易弹窗编排）」）：
- * 交易列表四个弹窗（记一笔 / 退款 / 编辑 / 加入物品）共享的「开启 / 目标 / 关闭」编排——
- * 意图闭集四的单一判别联合是唯一事实源，显示开关由「意图非空」派生（无独立 show 布尔，
- * 不存在「目标非空但已关闭」的中间态）；回调序号随 open 递增内化（作表单 key 强制重建）；
- * 编辑 buy/sell 的「先取买卖明细再开窗、失败不开窗」异步时序与慢取竞态守卫（last-open-wins）
- * 内化其中，慢取/失败行为一处定义。
+ * 交易列表五个弹窗（记一笔 / 退款 / 只读详情 / 编辑 / 加入物品）共享的「开启 / 目标 / 关闭」
+ * 编排——意图闭集五的单一判别联合是唯一事实源，显示开关由「意图非空」派生（无独立 show
+ * 布尔，不存在「目标非空但已关闭」的中间态）；回调序号随 open 递增内化（作表单 key 强制
+ * 重建）；详情/编辑的「先取扩展明细再开窗、失败不开窗」异步时序与慢取竞态守卫
+ * （last-open-wins）内化其中，慢取/失败行为一处定义。
  *
  * 已迁为弹窗意图编排通用工厂 ModalIntent（useModalIntent，ADR-0072）之上的首个适配器：
  * 意图与序号两面由工厂持有（意图落位即递增序号、关闭不重置），本模块只补交易弹窗族
@@ -27,7 +27,7 @@ import type { CreateFormKind, Transaction, TransactionConvert, TransactionTrade 
  */
 
 // ---------------------------------------------------------------------------
-// 意图模型（闭集四：单一判别联合）
+// 意图模型（闭集五：单一判别联合）
 // ---------------------------------------------------------------------------
 
 /**
@@ -35,23 +35,27 @@ import type { CreateFormKind, Transaction, TransactionConvert, TransactionTrade 
  * - create：无目标行，携带表单形态子类型（issue #374 起 CreateFormKind：可创建 kind +
  *   借贷两个呈现变体；refund 不在可创建集，入口由交易条目右键承接）；
  * - refund / add-item：携带目标交易行；
- * - edit：另携带买卖明细与转换两腿明细（非买卖/转换行为 null；buy/sell 与 convert
- *   的明细由模块先取再开窗，调用方不经手）。
+ * - detail：只读详情（convert 等「无现金腿」kind 无写操作入口，ADR-0106 决策 10 / #1048）；
+ *   当前只服务 convert 行，携带被取回的两腿明细（明细由模块先取再开窗，调用方不经手），
+ *   非 convert 行无详情面、请求不落意图（「意图非空即显示」不变式）；
+ * - edit：另携带买卖明细（非买卖行为 null；buy/sell 的明细由模块先取再开窗）。
  * 视图以 `intent?.type` 判别渲染，payload 在各分支内被类型系统收窄。
  */
 export type TransactionModalIntent =
   | { type: 'create'; kind: CreateFormKind }
   | { type: 'refund'; row: Transaction }
-  | { type: 'edit'; row: Transaction; trade: TransactionTrade | null; convert: TransactionConvert | null }
+  | { type: 'detail'; row: Transaction; convert: TransactionConvert }
+  | { type: 'edit'; row: Transaction; trade: TransactionTrade | null }
   | { type: 'add-item'; row: Transaction }
 
 /**
- * open 入参（开启请求）：与意图状态同构，唯 edit 只携目标行——明细由模块内化取数，
- * 不出现在调用方面上。
+ * open 入参（开启请求）：与意图状态同构，唯 detail / edit 只携目标行——明细由模块内化取数，
+ * 不出现在调用方面上。convert 走 detail（只读），edit 不再承接 convert。
  */
 export type TransactionModalOpenRequest =
   | { type: 'create'; kind: CreateFormKind }
   | { type: 'refund'; row: Transaction }
+  | { type: 'detail'; row: Transaction }
   | { type: 'edit'; row: Transaction }
   | { type: 'add-item'; row: Transaction }
 
@@ -108,20 +112,28 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
       settle(gen, { type: request.type, row: request.row })
       return
     }
-    // edit：先取买卖/转换明细再开窗（时序内化）。非买卖/转换行无明细面，开窗即开。
     const { row } = request
-    if (row.kind !== 'buy' && row.kind !== 'sell' && row.kind !== 'convert') {
-      settle(gen, { type: 'edit', row, trade: null, convert: null })
+    // detail：只读详情——当前只服务 convert（先取转换两腿明细再开窗，时序内化）；
+    // 其余 kind 无详情面，不落意图（「意图非空即显示」，落一个渲染不出的意图会破坏该不变式）。
+    if (request.type === 'detail') {
+      if (row.kind !== 'convert') return
+      try {
+        const convert = await api.getTransactionConvert(row.id)
+        settle(gen, { type: 'detail', row, convert })
+      } catch (e) {
+        if (gen !== generation) return // 迟到的失败整体丢弃
+        message.error(t('transactions.detail.loadFailed', { msg: errorMessage(e) }))
+      }
+      return
+    }
+    // edit：先取买卖明细再开窗（时序内化）。非买卖行无明细面，开窗即开。
+    if (row.kind !== 'buy' && row.kind !== 'sell') {
+      settle(gen, { type: 'edit', row, trade: null })
       return
     }
     try {
-      if (row.kind === 'convert') {
-        const convert = await api.getTransactionConvert(row.id)
-        settle(gen, { type: 'edit', row, trade: null, convert })
-      } else {
-        const trade = await api.getTransactionTrade(row.id)
-        settle(gen, { type: 'edit', row, trade, convert: null })
-      }
+      const trade = await api.getTransactionTrade(row.id)
+      settle(gen, { type: 'edit', row, trade })
     } catch (e) {
       if (gen !== generation) return // 迟到的失败整体丢弃
       message.error(t('transactions.modal.editFailed', { msg: errorMessage(e) }))

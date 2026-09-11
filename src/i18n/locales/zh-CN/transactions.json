@@ -70,6 +70,10 @@
   "edit": {
     "title": "编辑交易"
   },
+  "detail": {
+    "title": "交易详情",
+    "loadFailed": "无法查看详情: {msg}"
+  },
   "deleteDialog": {
     "title": "删除交易",
     "content": "确认删除该条交易？删除后不可恢复。",
@@ -78,6 +82,7 @@
   },
   "menu": {
     "edit": "编辑",
+    "detail": "详情",
     "refund": "退款",
     "addItem": "加入物品",
     "delete": "删除",
@@ -97,7 +102,6 @@
     "submitIncome": "记收入",
     "submitBuy": "记买入",
     "submitSell": "记卖出",
-    "submitConvert": "记转换",
     "submitTransfer": "记转账",
     "saveChanges": "保存修改",
     "warnSelectFromAccount": "请选择转出账户",
