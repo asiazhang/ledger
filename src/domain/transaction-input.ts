@@ -19,9 +19,12 @@ import { t } from '@/i18n'
  * - 商户解析（resolveMerchantId 五分支）与语义校验（金额 > 0、转出≠转入等）留表单层；
  * - 非法输入 fail fast：throw 中文错误，不静默兜底。
  *
- * 五个表单 composable（useCategoryForm / useTransferForm / useRefundForm /
- * useInvestmentForm / useConvertForm）已接入本接缝（issue #216 / #979）：表单只做语义校验与提交路由，
+ * 四个表单 composable（useCategoryForm / useTransferForm / useRefundForm /
+ * useInvestmentForm）已接入本接缝（issue #216）：表单只做语义校验与提交路由，
  * wire 字段拼装不再散落调用方。
+ *
+ * convert 无前端写入口（无现金腿 kind 界面只读，ADR-0106 决策 10 / #1048）——
+ * 本装配器不再承接转换表单状态，wire 字段由 AI 导入 / HTTP 契约直接提交。
  */
 
 /** 支出/收入表单形态（useCategoryForm 表单状态原样；merchantId 为已解析的商户 id） */
@@ -87,29 +90,6 @@ export interface TradeFormState {
   date: number
 }
 
-/** 基金转换表单形态（useConvertForm 表单状态原样，ADR-0099）。一笔转换 = 两腿同一记录：
- * 转出腿（out*）与转入腿（in*）的份额与确认单金额均为权威输入，两腿单价由后端
- * 金额 ÷ 份额反算（金额权威、单价反算，与场外基金 buy/sell 同款，ADR-0038）。
- * 不做基金/非基金形态分流——转换天然只有确认单一种录入形态。 */
-export interface ConvertFormState {
-  currencyCode: string
-  accountId: string | null
-  outInstrumentId: string | null
-  /** 转出份额（确认单权威） */
-  outQuantity: number | null
-  /** 转出金额（元，确认单权威） */
-  outAmount: number | null
-  inInstrumentId: string | null
-  /** 转入份额（确认单权威） */
-  inQuantity: number | null
-  /** 转入金额（元，确认单权威） */
-  inAmount: number | null
-  /** 手续费（元）；null 表示未填 → fee_cents: null */
-  fee: number | null
-  note: string
-  date: number
-}
-
 /**
  * 矩阵行形状：每个 kind 一行，完整列出全部关联字段的处置（null = 不由表单承载）。
  * 行内必须穷尽四个关联字段（新增 kind 时逐字段显式决策，不允许缺省）。
@@ -156,8 +136,8 @@ const KIND_FIELD_MATRIX: Record<TransactionKind, KindMatrixRow> = {
     refund_of_transaction_id: null,
   },
   // 基金转换（ADR-0099）：一笔两腿、无现金腿，行金额占位 0（服务端按 FIFO 消耗
-  // 算定结转成本后写入锚点）；两腿字段不属本矩阵形态，由转换表单入口覆写
-  // （issue #979）。
+  // 算定结转成本后写入锚点）；两腿字段不属本矩阵形态，界面无手工录入入口
+  // （ADR-0106 决策 10 / #1048），wire 字段由 AI 导入 / HTTP 契约直接提交。
   convert: {
     amount_cents: 0,
     to_account_id: null,
@@ -307,36 +287,6 @@ export function buildTradeInput(state: TradeFormState): TransactionInput {
     // 单价是价格列（万分之一元刻度，ADR-0038），与金额列（分）换算口径不同；
     // 基金形态不落单价（null → 后端按金额 ∓ 费用 ÷ 份额反算）
     price_cents: priceCents,
-    fee_cents: state.fee == null ? null : requireAmountCents(state.fee, t('transactions.field.fee')),
-  }
-}
-
-/** 基金转换表单状态 → TransactionInput（ADR-0099）：两腿份额与两侧确认单金额为
- * 权威输入，行金额占位 0（服务端按 FIFO 消耗算定结转成本后写入锚点）；
- * 转出腿单价不落 wire（后端按转出金额 ÷ 转出份额反算）。 */
-export function buildConvertInput(state: ConvertFormState): TransactionInput {
-  return {
-    ...baseInput('convert', {
-      currencyCode: requireNonEmpty(state.currencyCode, t('transactions.field.currency')),
-      accountId: requireNonEmpty(state.accountId, t('transactions.field.investmentAccount')),
-      note: state.note,
-      date: requireDateISO(state.date),
-    }),
-    instrument_id: requireNonEmpty(
-      state.outInstrumentId,
-      t('investments.form.convertOutInstrument'),
-    ),
-    quantity: requireQuantity(state.outQuantity),
-    to_instrument_id: requireNonEmpty(
-      state.inInstrumentId,
-      t('investments.form.convertInInstrument'),
-    ),
-    to_quantity: requireQuantity(state.inQuantity),
-    out_amount_cents: requireAmountCents(
-      state.outAmount,
-      t('investments.form.convertOutAmount'),
-    ),
-    in_amount_cents: requireAmountCents(state.inAmount, t('investments.form.convertInAmount')),
     fee_cents: state.fee == null ? null : requireAmountCents(state.fee, t('transactions.field.fee')),
   }
 }

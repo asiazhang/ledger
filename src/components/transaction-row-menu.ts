@@ -1,8 +1,8 @@
 import type { DropdownOption } from 'naive-ui'
-import { AddCircleOutline, CashOutline, CreateOutline, TrashOutline } from '@vicons/ionicons5'
+import { AddCircleOutline, CashOutline, CreateOutline, EyeOutline, TrashOutline } from '@vicons/ionicons5'
 import { errorOptionProps, renderRowMenuIcon } from './row-menu-common'
 import { t } from '@/i18n'
-import type { Transaction } from '@/types'
+import { transactionKindActivation, type Transaction } from '@/types'
 
 // 公共件（row-menu-common）原生于本模块：renderRowMenuIcon / errorOptionProps
 // 的完整注释见该文件，此处重导出保持既有 import 路径不变。
@@ -20,6 +20,8 @@ export { renderRowMenuIcon, errorOptionProps }
  *   「编辑」对除 refund 外的 kind 呈现（refund 破坏关联语义；buy/sell 经投资表单
  *   编辑模式回填标的/数量/价格/费用，issue #180）；
  *   「加入物品」仅对 expense 行呈现（溯源必为支出购买，ADR-0025）。
+ * - `convert` 行：仅只读详情（EyeOutline）——「无现金腿」kind 在 UI 上不体现任何写操作
+ *   （无编辑、无软删，ADR-0106 决策 10 / #1048），写入与纠错走 HTTP 契约。
  *
  * `hasItem`：该交易已创建过物品（items store 按溯源指针比对得出，不新增查询）
  * → 「加入物品」置灰禁用（溯源唯一的界面呈现）。
@@ -27,17 +29,31 @@ export { renderRowMenuIcon, errorOptionProps }
  * `errorColor`：当前主题的 error 色（组件经 useThemeVars 取值传入），注入删除项
  * DropdownOption props，图标+文字整体着色——不硬编码色值，暗色模式自动适配。
  */
-/** 「编辑」开放判定（refund 破坏关联语义不开放；其余 kind 经各自表单编辑：
- * income/expense/transfer 走分类记账/转账表单，buy/sell 走投资表单编辑模式，
- * issue #180）。单一来源：菜单组装与移动档卡片「整卡点击 = 编辑」共用（issue #846）。 */
+/** 「编辑」开放判定（income/expense/transfer 走分类记账/转账表单，buy/sell 走投资表单
+ * 编辑模式，issue #180；refund 破坏关联语义、convert 为无现金腿只读 kind 均不开放，
+ * ADR-0106 决策 10 / #1048）。单一来源：交易类型行激活闭集（transactionKindActivation），
+ * 菜单组装与移动档卡片行激活共用（issue #846 / #1048）。 */
 export function supportsRowEdit(row: Pick<Transaction, 'kind'>): boolean {
-  return row.kind !== 'refund'
+  return transactionKindActivation(row.kind) === 'edit'
+}
+
+/** 「只读详情」开放判定：「无现金腿」kind（convert；split 随 #1045 接入）在界面不体现
+ * 写操作入口，只保留列表 / 筛选 / 只读详情（ADR-0106 决策 10 / #1048）。
+ * 单一来源同上（交易类型行激活闭集），菜单组装与移动档卡片「整卡点击 = 详情」共用。 */
+export function supportsRowDetail(row: Pick<Transaction, 'kind'>): boolean {
+  return transactionKindActivation(row.kind) === 'detail'
 }
 
 export function buildRowMenuOptions(
   row: Pick<Transaction, 'kind'>,
   opts: { hasItem?: boolean; errorColor?: string } = {},
 ): DropdownOption[] {
+  // 无现金腿 kind：界面只读——仅只读「详情」，无编辑/软删入口（ADR-0106 决策 10 / #1048）。
+  if (supportsRowDetail(row)) {
+    return [
+      { label: t('transactions.menu.detail'), key: 'detail', icon: renderRowMenuIcon(EyeOutline) },
+    ]
+  }
   const options: DropdownOption[] = []
   // 「编辑」显式白名单（refund 破坏关联语义不开放，开放判定见 supportsRowEdit 单源）：
   if (supportsRowEdit(row)) {

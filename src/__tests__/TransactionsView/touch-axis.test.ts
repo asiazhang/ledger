@@ -56,13 +56,13 @@ describe('TransactionsView 触控交互轴（issue #843 两轴对比）', () => 
     setFakeMedia({ hover: 'none', pointer: 'coarse' })
     const touch = await mountView()
     expect(createKindLabels(touch)).toEqual([
-      '支出', '收入', '转账', '买入', '卖出', '转换', '借出', '借入',
+      '支出', '收入', '转账', '买入', '卖出', '借出', '借入',
     ])
 
     setFakeMedia({ hover: 'hover', pointer: 'fine' })
     const pointer = await mountView()
     expect(createKindLabels(pointer)).toEqual([
-      '支出 a', '收入 i', '转账 z', '买入 b', '卖出 s', '转换 c', '借出', '借入',
+      '支出 a', '收入 i', '转账 z', '买入 b', '卖出 s', '借出', '借入',
     ])
   })
 

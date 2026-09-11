@@ -1,11 +1,12 @@
 // 路由替身经 common.ts 的 vi.mock 注册，必须先于任何直连组件导入（导入顺序即 mock 生效面）
 import {
   mountView, mountMobile, mountPhone, cards, shownModal, closeShownModal,
-  makeTxn, setTxnDb, rowMenu, rowMenuKeys,
+  makeTxn, setTxnDb, rowMenu, rowMenuKeys, SHELL_DEFAULTS, SHELL_OVERRIDES,
 } from './common'
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { NDataTable } from 'naive-ui'
+import { NButton, NDataTable, NInput } from 'naive-ui'
+import { wireInvokeSeam } from '../helpers/invoke-mock'
 import { setFakeMedia } from '../helpers/media-mock'
 import { probeColor } from '../helpers/dom'
 import { formatAmount } from '@/utils/money'
@@ -14,6 +15,7 @@ import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { refCurrencies } from '../helpers/reference-stubs'
 import AccountLink from '@/components/AccountLink.vue'
+import ConvertDetail from '@/components/ConvertDetail.vue'
 import TransactionCardList from '@/components/TransactionCardList.vue'
 
 /**
@@ -255,22 +257,21 @@ describe('卡片「⋯」与整卡编辑', () => {
 })
 
 describe('记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）', () => {
-  it('点开六枚大号类型选择（支出/收入/转账/买入/卖出/转换，不含借贷与退款）', async () => {
+  it('点开五枚大号类型选择（支出/收入/转账/买入/卖出，不含借贷、退款与转换）', async () => {
     const wrapper = await mountPhone()
     await wrapper.find('.create-fab').trigger('click')
     await flushPromises()
     const options = [...document.body.querySelectorAll('.create-fab-option')]
-    expect(options.map((o) => o.textContent)).toEqual(['支出', '收入', '转账', '买入', '卖出', '转换'])
+    expect(options.map((o) => o.textContent)).toEqual(['支出', '收入', '转账', '买入', '卖出'])
   })
 
-  it('六类型意图矩阵：类型选择 → 记一笔意图（携带类型）→ 对应表单', async () => {
+  it('五类型意图矩阵：类型选择 → 记一笔意图（携带类型）→ 对应表单（convert 无手工录入入口）', async () => {
     const cases = [
       ['支出', '记一笔 · 支出'],
       ['收入', '记一笔 · 收入'],
       ['转账', '记一笔 · 转账'],
       ['买入', '记一笔 · 买入'],
       ['卖出', '记一笔 · 卖出'],
-      ['转换', '记一笔 · 转换'],
     ] as const
     const wrapper = await mountPhone()
     for (const [optionLabel, expectedTitle] of cases) {
@@ -293,5 +294,84 @@ describe('记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5�
     const wrapper = await mountView()
     expect(wrapper.find('.create-fab').exists()).toBe(false)
     expect(wrapper.text()).toContain('记一笔')
+  })
+})
+
+describe('基金转换只读详情（ADR-0106 决策 10 / #1048）', () => {
+  /** 转换两腿读投影（`get_transaction_convert`）：只读详情的数据源。 */
+  const convertDetail = {
+    out_instrument_id: 'inst-out',
+    out_symbol: '006793',
+    out_instrument_name: '转出基金',
+    out_quantity: 100.5,
+    out_amount_cents: 110550,
+    in_instrument_id: 'inst-in',
+    in_symbol: '519700',
+    in_instrument_name: '转入基金',
+    in_quantity: 99.75,
+    in_amount_cents: 109725,
+    fee_cents: 150,
+    carried_cost_cents: 100000,
+    currency_code: 'CNY',
+  }
+
+  /** 转换行：列表投影供卡片呈现「A → B」。 */
+  function convertRow() {
+    return makeTxn(1, 'acc-1', {
+      kind: 'convert',
+      // 行金额锚点 = 结转成本；展示口径 = 转出金额（确认单）
+      amount_native_cents: 100000,
+      source: {
+        kind: 'instrument',
+        entity_id: 'inst-out',
+        display_name: '006793 转出基金',
+        status: null,
+      },
+      convert: {
+        to_instrument_id: 'inst-in',
+        to_symbol: '519700',
+        to_quantity: 99.75,
+        out_amount_cents: 110550,
+        in_amount_cents: 109725,
+      },
+    })
+  }
+
+  beforeEach(() => {
+    setTxnDb([makeTxn(1, 'acc-1', { kind: 'expense' }), convertRow()])
+    // 薄壳表展开合并本组特有覆写，重走唯一接缝（守门规则 3；issue #750）
+    wireInvokeSeam({
+      defaults: SHELL_DEFAULTS,
+      overrides: { ...SHELL_OVERRIDES, get_transaction_convert: () => convertDetail },
+    })
+  })
+
+  it('转换行「⋯」菜单仅只读「详情」——无编辑、无软删入口', async () => {
+    const wrapper = await mountMobile()
+    await cards(wrapper)[1].find('.row-actions-btn').trigger('click')
+    await flushPromises()
+    expect(rowMenuKeys(wrapper)).toEqual(['detail'])
+    expect(shownModal(wrapper)).toBeUndefined()
+  })
+
+  it('转换整卡点击 → 只读详情（无可编辑/可提交面，不再进可编辑表单）', async () => {
+    const wrapper = await mountMobile()
+    await cards(wrapper)[1].trigger('click')
+    await flushPromises()
+    const modal = shownModal(wrapper)
+    expect(modal?.props('title')).toBe('交易详情')
+    const detail = wrapper.findComponent(ConvertDetail)
+    expect(detail.exists()).toBe(true)
+    // A → B 两腿标的与两侧金额、手续费、结转成本
+    expect(detail.text()).toContain('006793')
+    expect(detail.text()).toContain('519700')
+    expect(detail.text()).toContain(formatAmount(110550, cny))
+    expect(detail.text()).toContain(formatAmount(109725, cny))
+    expect(detail.text()).toContain(formatAmount(150, cny))
+    expect(detail.text()).toContain(formatAmount(100000, cny))
+    // 负向收口：无输入面、无提交/保存按钮
+    expect(detail.findAllComponents(NInput)).toHaveLength(0)
+    expect(detail.findAllComponents(NButton)).toHaveLength(0)
+    expect(detail.text()).not.toContain('保存修改')
   })
 })
