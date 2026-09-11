@@ -7,13 +7,14 @@ use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 use tauri_app_lib::api_server::{
-    ApiState, EmitterSlot, FundDetailFetcher, StockQuoteFetcher, build_router,
+    ApiState, EmitterSlot, FundQuoteFetcher, StockQuoteFetcher, build_router,
 };
 use tauri_app_lib::db::boot::BootFailureGate;
 use tauri_app_lib::db::encryption::EncryptionGate;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::events::SignalEmitter;
-use tauri_app_lib::investment::{FundDetail, FundNav, InstrumentType, StockQuote};
+use tauri_app_lib::investment::prices::price_value_to_cents;
+use tauri_app_lib::investment::{InstrumentType, Quote};
 use tauri_app_lib::test_support;
 
 pub(crate) async fn body_to_bytes(body: Body) -> Vec<u8> {
@@ -29,7 +30,7 @@ pub(crate) fn setup_app() -> (Router, Arc<Mutex<rusqlite::Connection>>) {
 /// 建库两行序经统一测试工厂 `test_support::open()` 承载（spec #728 / issue #753 /
 /// ADR-0084 决策 7）：`ApiState` 注入形状不变，外部调用点零改动。
 fn build_test_app(
-    fund_fetch: Option<FundDetailFetcher>,
+    fund_fetch: Option<FundQuoteFetcher>,
     stock_fetch: Option<StockQuoteFetcher>,
     emitter: EmitterSlot,
 ) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
@@ -48,7 +49,7 @@ fn build_test_app(
 /// 装配带东财基金详情注入桩的应用（issue #304）：全部基金端点集成测试以桩
 /// 离线驱动，不触真实网络；`None` 即生产路径（真实东财，测试不用）。
 pub(crate) fn setup_app_with_fund_fetch(
-    fund_fetch: Option<FundDetailFetcher>,
+    fund_fetch: Option<FundQuoteFetcher>,
 ) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
     // 集成测试不经真实 Tauri 运行时，发射槽传 None（发射分支跳过，见 ApiState 注释）
     build_test_app(fund_fetch, None, None)
@@ -107,25 +108,27 @@ pub(crate) struct FundStubHit {
 }
 
 /// 构造可注入的东财基金详情桩：命中表驱动（`hits` 内的代码按表返回；表外代码
-/// 返回「查无此码」中文 `Invalid`——与生产 `fetch_fund_detail` 未命中同形状），
+/// 返回「查无此码」中文 `Invalid`——与生产 `fetch_fund_quote` 未命中同形状），
 /// 并按调用顺序记录请求代码（`calls`，供测试断言「未发起网络请求」「请求了哪些
 /// 代码」）。网络不可达等特殊形态由测试自建闭包或状态开关表达（先例
 /// instrument_create_fund.rs 的命中/不可达切换桩）。
 pub(crate) fn fund_fetch_stub(
     hits: std::collections::HashMap<String, FundStubHit>,
     calls: Arc<Mutex<Vec<String>>>,
-) -> FundDetailFetcher {
+) -> FundQuoteFetcher {
     Arc::new(move |code: &str| {
         calls.lock().unwrap().push(code.to_string());
         match hits.get(code) {
-            Some(hit) => Ok(FundDetail {
+            Some(hit) => Ok(Quote {
                 code: code.to_string(),
                 name: hit.name.to_string(),
-                fund_class: hit.fund_class.to_string(),
-                nav: hit.nav.map(|(nav, nav_date)| FundNav {
-                    nav,
-                    nav_date: nav_date.to_string(),
-                }),
+                price_cents: hit.nav.map(|(nav, _)| price_value_to_cents(nav)),
+                // 场外通道：价格日期即净值日期（现价的行情日期就是净值本身对应的日期）。
+                price_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
+                market: None,
+                kind_hint: None,
+                fund_class: Some(hit.fund_class.to_string()),
+                nav_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
             }),
             None => Err(AppError::Invalid(format!(
                 "查无基金代码 {code}，请核对后重试"
@@ -174,13 +177,15 @@ pub(crate) fn stock_fetch_stub(
             .unwrap()
             .push((market.to_string(), code.to_string()));
         match hits.get(&format!("{market}/{code}")) {
-            Some(hit) => Ok(StockQuote {
+            Some(hit) => Ok(Quote {
                 code: code.to_string(),
                 name: hit.name.to_string(),
-                market: market.to_string(),
                 price_cents: hit.price.map(|(p, _)| p),
                 price_date: hit.price.map(|(_, d)| d.to_string()),
-                kind_hint: hit.kind_hint,
+                market: Some(market.to_string()),
+                kind_hint: Some(hit.kind_hint),
+                fund_class: None,
+                nav_date: None,
             }),
             None => Err(AppError::codedp(
                 "sync.stock-not-found",

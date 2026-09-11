@@ -18,7 +18,8 @@ use serde::Deserialize;
 
 use crate::error::Result;
 use crate::investment::prices::{
-    EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price, upsert_price_history,
+    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
+    upsert_price_history,
 };
 
 use super::fund::deserialize_flexible_f64;
@@ -306,12 +307,16 @@ where
     };
     upsert_market_price(
         conn,
-        &fund.instrument_id,
-        price_value_to_cents(latest.nav),
-        &fund.currency,
-        &latest.date,
-        Some(&latest.date),
-        Some(EASTMONEY_PRICE_SOURCE),
+        &MarketPriceWrite {
+            instrument_id: &fund.instrument_id,
+            price_cents: price_value_to_cents(latest.nav),
+            currency_code: &fund.currency,
+            // 基金现价时点 = 净值日期（现价的行情日期就是净值本身对应的日期）；
+            // nav_date 兼任下次同步的水位。
+            priced_at: &latest.date,
+            nav_date: Some(&latest.date),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
     )?;
     stats.synced += 1;
     stats.written += 1;

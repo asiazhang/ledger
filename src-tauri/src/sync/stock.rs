@@ -1,6 +1,7 @@
 //! 东财股票行情访问层（issue #693 / ADR-0081 决策 1）：按（市场，代码）实时查询
-//! 东财个股行情（权威名称 / 最新价 / 价格日期 / 类型提示），供 stocks 查询端点
-//! 与后续创建增强、添加投资标的壳共用（注入桩形态与基金详情获取接缝同构）。
+//! 东财个股行情（权威名称 / 最新价 / 价格日期 / 类型提示），投影为行情接入接缝的
+//! 统一载荷 [`Quote`]（ADR-0103 决策 2），供 stocks 查询端点与创建增强、添加投资
+//! 标的壳共用（即接缝的**查询半边**场内通道，注入签名与基金报价获取接缝同形）。
 //! 报文解析、类型探测、价格换算与命中挑选为纯函数（fixture 单测钉沪深
 //! ETF/LOF/股票已知样本，不依赖真实网络）；网络复用行情 HTTP 层的主机池 /
 //! 重试 / 限流。
@@ -25,7 +26,7 @@ use super::http::{
 };
 use super::incremental::beijing_date;
 use crate::error::{AppError, Result};
-use crate::investment::{InstrumentType, StockQuote};
+use crate::investment::{InstrumentType, Quote};
 
 /// 单点行情查询字段：最新价 / 代码 / 名称 / 精度位 / 类型特征 / 更新时间戳。
 const STOCK_QUOTE_FIELDS: &str = "f43,f57,f58,f59,f62,f86";
@@ -95,29 +96,33 @@ pub(crate) fn price_date_from_timestamp(ts: Option<i64>) -> Option<String> {
         .map(|utc| beijing_date(utc).format("%Y-%m-%d").to_string())
 }
 
-/// 从单点行情响应投影领域 DTO：命中判定 = f57 与请求归一化代码全等且名称非空
+/// 从单点行情响应投影统一报价：命中判定 = f57 与请求归一化代码全等且名称非空
 /// （stock/get 按 secid 精确查询，但错前缀 secid 也会返回其他标的——如
 /// 0.501018 返回深市权证「奇消23B」——回显全等是防错配的关键）；未命中返回
 /// None（上层转「查无此码」码化错误）。无有效报价（停牌）时价格为 None，
-/// 投影为 null（与基金未公布净值投影 null 同构）。
+/// 投影为 null（与基金未公布净值投影 null 同构）。公共成员（代码 / 名称 / 价格 /
+/// 价格日期）+ 场内通道成员（精确市场 / 类型提示）；基金分类与净值日期是场外
+/// 通道成员，场内恒缺省（`None`）。
 pub(crate) fn pick_stock_quote(
     resp: StockQuoteResponse,
     market: &str,
     code: &str,
-) -> Option<StockQuote> {
+) -> Option<Quote> {
     let data = resp.data?;
     if data.code != code || data.name.trim().is_empty() {
         return None;
     }
-    Some(StockQuote {
+    Some(Quote {
         code: code.to_string(),
         name: data.name.trim().to_string(),
-        market: market.to_string(),
         price_cents: data
             .price_raw
             .map(|raw| price_cents_from_raw(raw, data.precision, market)),
         price_date: price_date_from_timestamp(data.updated_at),
-        kind_hint: detect_kind_hint(data.kind_feature),
+        market: Some(market.to_string()),
+        kind_hint: Some(detect_kind_hint(data.kind_feature)),
+        fund_class: None,
+        nav_date: None,
     })
 }
 
@@ -129,7 +134,7 @@ pub(super) fn fetch_stock_quote(
     pacer: &mut Pacer,
     market: &str,
     code: &str,
-) -> Result<StockQuote> {
+) -> Result<Quote> {
     let secid = format!(
         "{}.{}",
         // resolve 已限定沪深港闭集，三市场在 secid_prefix 均有映射；两者闭集
@@ -164,9 +169,9 @@ pub(super) fn fetch_stock_quote(
 }
 
 /// 生产拉取入口：构建客户端与限流器后执行单次行情查询（不经数据库连接，
-/// 供 HTTP 壳在连接锁外完成网络往返，先例：`fetch_fund_detail_production`，
+/// 供 HTTP 壳在连接锁外完成网络往返，先例：`fetch_fund_quote_production`，
 /// 单请求叠加限流冷却重试最长可达分钟级）。
-pub fn fetch_stock_quote_production(market: &str, code: &str) -> Result<StockQuote> {
+pub fn fetch_stock_quote_production(market: &str, code: &str) -> Result<Quote> {
     let client = build_client()?;
     let mut pacer = Pacer::default();
     fetch_stock_quote(&client, &mut pacer, market, code)

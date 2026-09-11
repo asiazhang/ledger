@@ -1,4 +1,4 @@
-//! 场外基金端点：按 6 位代码查询（东财实时）与两端点共用的东财详情获取接缝。
+//! 场外基金端点：按 6 位代码查询（东财实时）与两端点共用的东财报价获取接缝。
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -7,24 +7,20 @@ use utoipa::ToSchema;
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::ApiState;
 use crate::error::AppError;
-use crate::investment::FundDetail;
-use crate::investment::prices::price_value_to_cents;
+use crate::investment::Quote;
 use crate::investment::validate_fund_code;
 
-/// 东财基金详情获取（查询与创建两端点共用，issue #304）：测试注入桩直接同步
+/// 东财基金报价获取（查询与创建两端点共用，issue #304）：测试注入桩直接同步
 /// 调用（离线驱动）；生产路径经 `spawn_blocking` 在连接锁外完成阻塞网络往返
 /// （单请求叠加限流冷却重试最长可达分钟级，先例：`add_fund_by_code` 命令的
 /// 网络拉取在锁外完成，不阻塞其它命令）。
-pub async fn fetch_fund_detail_for_api(
-    state: &ApiState,
-    code: &str,
-) -> Result<FundDetail, AppError> {
+pub async fn fetch_fund_quote_for_api(state: &ApiState, code: &str) -> Result<Quote, AppError> {
     match &state.fund_fetch {
         Some(fetch) => fetch(code),
         None => {
             let code = code.to_string();
             tauri::async_runtime::spawn_blocking(move || {
-                crate::sync::fetch_fund_detail_production(&code)
+                crate::sync::fetch_fund_quote_production(&code)
             })
             .await
             .map_err(|e| AppError::Io(format!("基金详情查询任务执行失败: {e}")))?
@@ -33,8 +29,8 @@ pub async fn fetch_fund_detail_for_api(
 }
 
 /// 基金查询响应（`GET /api/v1/funds/{code}`，issue #304 / ADR-0039 决策 2）：
-/// 东财详情投影为 API 价格刻度（净值 万分之一元），AI 供校验「代码 → 名称」
-/// 映射与查最新净值。
+/// 统一报价（行情接入载荷，ADR-0103）的场外通道投影——净值已是万分之一元价格
+/// 刻度（换算在访问层，ADR-0038），AI 供校验「代码 → 名称」映射与查最新净值。
 #[derive(Debug, serde::Serialize, ToSchema)]
 pub struct FundLookup {
     /// 基金代码（6 位数字）
@@ -49,15 +45,16 @@ pub struct FundLookup {
     nav_date: Option<String>,
 }
 
-impl From<FundDetail> for FundLookup {
-    fn from(d: FundDetail) -> Self {
-        // 净值对（值 + 日期）在东财访问层已保证成对出现（任一缺省即 nav = None）。
+impl From<Quote> for FundLookup {
+    fn from(q: Quote) -> Self {
+        // 净值对（值 + 日期）在东财访问层已保证成对出现（任一缺省即价格 = None）。
         Self {
-            code: d.code,
-            name: d.name,
-            fund_class: d.fund_class,
-            nav_cents: d.nav.as_ref().map(|n| price_value_to_cents(n.nav)),
-            nav_date: d.nav.map(|n| n.nav_date),
+            code: q.code,
+            name: q.name,
+            // 场外通道成员：基金分类缺省为空串（源数据分类缺省时同为空白，行为不变）。
+            fund_class: q.fund_class.unwrap_or_default(),
+            nav_cents: q.price_cents,
+            nav_date: q.nav_date,
         }
     }
 }
@@ -88,6 +85,6 @@ pub async fn lookup_fund_handler(
 ) -> Result<Json<FundLookup>, AppError> {
     // 格式非法即刻拒绝，不发起网络请求（与按代码即拉同一校验、同一中文错误）。
     validate_fund_code(&code)?;
-    let detail = fetch_fund_detail_for_api(&state, &code).await?;
-    Ok(Json(FundLookup::from(detail)))
+    let quote = fetch_fund_quote_for_api(&state, &code).await?;
+    Ok(Json(FundLookup::from(quote)))
 }

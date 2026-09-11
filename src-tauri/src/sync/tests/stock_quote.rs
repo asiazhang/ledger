@@ -1,4 +1,5 @@
-//! 东财股票单点行情报文解析、类型特征探测、价格换算与命中挑选（issue #693）：
+//! 东财股票单点行情报文解析、类型特征探测、价格换算与命中挑选（issue #693 /
+//! ADR-0103 统一载荷）：
 //! fixture 驱动，不依赖真实网络。夹具字段值取自 stock/get 真实响应（2026-09
 //! 实测截取，字段拼读保持不变）：f62 类型特征钉住沪深 ETF/LOF/股票已知样本
 //!（场内基金类恒为 0），f59 精度位钉住 2 位/3 位两类缩放。
@@ -13,7 +14,7 @@ fn parse(raw: &str) -> StockQuoteResponse {
     serde_json::from_str(raw).expect("fixture 应为合法 JSON")
 }
 
-fn pick(raw: &str, market: &str, code: &str) -> Option<crate::investment::StockQuote> {
+fn pick(raw: &str, market: &str, code: &str) -> Option<crate::investment::Quote> {
     pick_stock_quote(parse(raw), market, code)
 }
 
@@ -57,7 +58,7 @@ fn picks_sh_stock_with_scaled_price_and_date() {
     let q = pick(SH_STOCK, "sh", "600519").expect("应命中");
     assert_eq!(q.code, "600519");
     assert_eq!(q.name, "贵州茅台", "应返回东财权威名称");
-    assert_eq!(q.market, "sh");
+    assert_eq!(q.market.as_deref(), Some("sh"));
     assert_eq!(
         q.price_cents,
         Some(13_300_000),
@@ -68,7 +69,11 @@ fn picks_sh_stock_with_scaled_price_and_date() {
         Some("2026-09-04".to_string()),
         "f86 unix 秒应投影为北京日历日"
     );
-    assert_eq!(q.kind_hint, InstrumentType::Stock, "f62 非零应为股票");
+    assert_eq!(
+        q.stock_kind_hint(),
+        InstrumentType::Stock,
+        "f62 非零应为股票"
+    );
 }
 
 #[test]
@@ -83,13 +88,13 @@ fn exchange_traded_fund_samples_pin_zero_feature_and_3_digit_scale() {
     ] {
         let q = pick(raw, market, code).unwrap_or_else(|| panic!("{code} 应命中"));
         assert_eq!(
-            q.kind_hint,
+            q.stock_kind_hint(),
             InstrumentType::Etf,
             "{code} f62=0 应探测为 etf"
         );
         assert_eq!(q.name, name);
         assert_eq!(q.price_cents, Some(cents), "{code} 应按精度 3 位换算");
-        assert_eq!(q.market, market);
+        assert_eq!(q.market.as_deref(), Some(market));
     }
 }
 
@@ -98,13 +103,17 @@ fn picks_hk_stock_with_5_digit_echo_and_scale() {
     let q = pick(HK_STOCK, "hk", "00700").expect("应命中");
     assert_eq!(q.code, "00700");
     assert_eq!(q.name, "腾讯控股");
-    assert_eq!(q.market, "hk");
+    assert_eq!(q.market.as_deref(), Some("hk"));
     assert_eq!(
         q.price_cents,
         Some(4_428_000),
         "f43=442800 精度 3 位 → 442.800 港元 → 万分之一元 4428000"
     );
-    assert_eq!(q.kind_hint, InstrumentType::Stock, "港股股票 f62 非零");
+    assert_eq!(
+        q.stock_kind_hint(),
+        InstrumentType::Stock,
+        "港股股票 f62 非零"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +149,7 @@ fn suspended_quote_yields_null_price_and_missing_timestamp_yields_null_date() {
     let q = pick(suspended, "sh", "600519").expect("停牌仍是命中行");
     assert_eq!(q.price_cents, None, "无有效报价应投影 null 价格");
     assert_eq!(q.price_date, None, "无时间戳应投影 null 日期");
-    assert_eq!(q.kind_hint, InstrumentType::Stock);
+    assert_eq!(q.stock_kind_hint(), InstrumentType::Stock);
 }
 
 // ---------------------------------------------------------------------------

@@ -114,7 +114,7 @@ fn command_span_rebuilt_when_caller_has_none() {
 }
 
 /// 闭包 panic → JoinError 归一化为 [`AppError::Io`]（helper 的错误归一化路径，
-/// 与 `spawn_blocking` 先例 `fetch_fund_detail_for_api` 同形）。
+/// 与 `spawn_blocking` 先例 `fetch_fund_quote_for_api` 同形）。
 #[test]
 fn closure_panic_maps_to_io_error() {
     let err = tauri::async_runtime::block_on(super::super::run_db::<(), _>(

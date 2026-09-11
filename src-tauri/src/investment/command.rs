@@ -241,12 +241,14 @@ pub(crate) fn replay_price_command(conn: &Connection, command: &PriceCommand) ->
         } => {
             super::prices::upsert_market_price(
                 conn,
-                instrument_id,
-                *price_cents,
-                currency_code,
-                priced_at,
-                None,
-                source.as_deref(),
+                &super::prices::MarketPriceWrite {
+                    instrument_id,
+                    price_cents: *price_cents,
+                    currency_code,
+                    priced_at,
+                    nav_date: None,
+                    source: source.as_deref(),
+                },
             )?;
             Ok(())
         }

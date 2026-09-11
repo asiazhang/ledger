@@ -11,19 +11,19 @@ use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::ApiState;
 use crate::error::AppError;
 use crate::investment::{
-    InstrumentType, ResolvedStockCode, StockQuote, derive_quote_currency, is_stock_lookup_miss,
+    InstrumentType, Quote, ResolvedStockCode, derive_quote_currency, is_stock_lookup_miss,
     resolve_stock_quote_candidates,
 };
 
 /// 东财股票行情获取（查询端点与创建增强、添加投资标的壳共用，issue #693）：
 /// 测试注入桩直接同步调用（离线驱动）；生产路径经 `spawn_blocking` 在连接锁外
 /// 完成阻塞网络往返（单请求叠加限流冷却重试最长可达分钟级，先例：
-/// `fetch_fund_detail_for_api`，网络往返不进连接锁）。
+/// `fetch_fund_quote_for_api`，网络往返不进连接锁）。
 pub async fn fetch_stock_quote_for_api(
     state: &ApiState,
     market: &str,
     code: &str,
-) -> Result<StockQuote, AppError> {
+) -> Result<Quote, AppError> {
     match &state.stock_fetch {
         Some(fetch) => fetch(market, code),
         None => {
@@ -46,7 +46,7 @@ pub async fn fetch_stock_quote_for_api(
 pub async fn fetch_stock_quote_first_hit_for_api(
     state: &ApiState,
     candidates: &[ResolvedStockCode],
-) -> Result<StockQuote, AppError> {
+) -> Result<Quote, AppError> {
     let mut last_miss: Option<AppError> = None;
     for candidate in candidates {
         match fetch_stock_quote_for_api(state, candidate.market, &candidate.code).await {
@@ -96,17 +96,23 @@ pub struct StockLookup {
     kind_hint: InstrumentType,
 }
 
-impl From<StockQuote> for StockLookup {
-    fn from(q: StockQuote) -> Self {
-        Self {
-            currency_code: derive_quote_currency(&q.market).to_string(),
+impl TryFrom<Quote> for StockLookup {
+    type Error = AppError;
+
+    fn try_from(q: Quote) -> Result<Self, AppError> {
+        // 场内通道强约束在投资域单点判定（缺市场即内部不一致的码化拒绝，
+        // ADR-0103 决策 2：通道差异从类型形状退到通道内判定）。
+        let market = q.stock_market()?.to_string();
+        let kind_hint = q.stock_kind_hint();
+        Ok(Self {
+            currency_code: derive_quote_currency(&market).to_string(),
             code: q.code,
             name: q.name,
-            market: q.market,
+            market,
             price_cents: q.price_cents,
             price_date: q.price_date,
-            kind_hint: q.kind_hint,
-        }
+            kind_hint,
+        })
     }
 }
 
@@ -143,5 +149,5 @@ pub async fn lookup_stock_handler(
     // 形态解析（推断 / 遍历候选 / 矛盾 / 不支持 / 北交所）在发起网络前完成：非法参数即刻 400。
     let candidates = resolve_stock_quote_candidates(query.market.as_deref(), &code)?;
     let quote = fetch_stock_quote_first_hit_for_api(&state, &candidates).await?;
-    Ok(Json(StockLookup::from(quote)))
+    Ok(Json(StockLookup::try_from(quote)?))
 }

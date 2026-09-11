@@ -9,20 +9,22 @@ use std::rc::Rc;
 
 use crate::error::AppError;
 use crate::investment::{
-    InstrumentType, StockQuote, add_stock_instrument_with_quote, fetch_stock_quote_for_add,
+    InstrumentType, Quote, add_stock_instrument_with_quote, fetch_stock_quote_for_add,
     resolve_add_stock_channel,
 };
 use crate::test_support::open;
 
-/// 构造行情桩的命中回报：行情对象自带（市场，代码，价格，类型提示）。
-fn hit_quote(market: &str, code: &str, kind: InstrumentType) -> StockQuote {
-    StockQuote {
+/// 构造行情桩的命中回报：统一报价载荷（ADR-0103）自带（市场，代码，价格，类型提示）。
+fn hit_quote(market: &str, code: &str, kind: InstrumentType) -> Quote {
+    Quote {
         code: code.to_string(),
         name: format!("权威名称·{code}"),
-        market: market.to_string(),
         price_cents: Some(2325000),
         price_date: Some("2026-09-06".to_string()),
-        kind_hint: kind,
+        market: Some(market.to_string()),
+        kind_hint: Some(kind),
+        fund_class: None,
+        nav_date: None,
     }
 }
 
@@ -42,15 +44,15 @@ type RequestTrack = Rc<RefCell<Vec<(String, String)>>>;
 /// 候选一律未命中——单候选通道首请求即命中；美股通道命中前的候选按未命中继续
 /// （遍历语义随之被驱动）。请求轨迹经共享句柄带出供断言。
 fn tracking_fetch(
-    hit: Option<(&'static str, StockQuote)>,
+    hit: Option<(&'static str, Quote)>,
 ) -> (
-    impl FnMut(&str, &str) -> crate::error::Result<StockQuote>,
+    impl FnMut(&str, &str) -> crate::error::Result<Quote>,
     RequestTrack,
 ) {
     let requests: RequestTrack = Rc::new(RefCell::new(Vec::new()));
     let track = Rc::clone(&requests);
     (
-        move |market: &str, code: &str| {
+        move |code: &str, market: &str| {
             track
                 .borrow_mut()
                 .push((market.to_string(), code.to_string()));
@@ -107,7 +109,7 @@ fn sh_channel_hits_first_candidate_with_normalized_code() {
         hit_quote("sh", "600519", InstrumentType::Stock),
     )));
     let quote = fetch_stock_quote_for_add("sh", "600519", &mut fetch).unwrap();
-    assert_eq!(quote.market, "sh");
+    assert_eq!(quote.stock_market().unwrap(), "sh");
     assert_eq!(quote.code, "600519");
     assert_eq!(
         *requests.borrow(),
@@ -134,7 +136,11 @@ fn us_channel_traverses_candidates_until_first_hit() {
         hit_quote("amex", "AAPL", InstrumentType::Stock),
     )));
     let quote = fetch_stock_quote_for_add("us", "aapl", &mut fetch).unwrap();
-    assert_eq!(quote.market, "amex", "落库市场取东财回显的精确交易所");
+    assert_eq!(
+        quote.stock_market().unwrap(),
+        "amex",
+        "落库市场取东财回显的精确交易所"
+    );
     assert_eq!(quote.code, "AAPL", "ticker 大写归一");
     assert_eq!(
         *requests.borrow(),
@@ -184,7 +190,7 @@ fn beijing_exchange_code_rejects_before_any_fetch() {
 fn temporary_error_stops_traversal_immediately() {
     let requests = Rc::new(RefCell::new(Vec::new()));
     let track = Rc::clone(&requests);
-    let mut fetch = move |market: &str, code: &str| -> crate::error::Result<StockQuote> {
+    let mut fetch = move |code: &str, market: &str| -> crate::error::Result<Quote> {
         track
             .borrow_mut()
             .push((market.to_string(), code.to_string()));

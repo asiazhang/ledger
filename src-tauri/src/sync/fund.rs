@@ -1,8 +1,9 @@
-//! 东财基金访问层（issue #301 / ADR-0038 决策 1）：按 6 位基金代码拉取基金详情
-//! （名称 / 东财分类 / 最新单位净值 + 净值日期），供「按代码即拉」添加基金与
-//! AI 查询/创建端点（#304 / ADR-0039）复用。报文解析与命中挑选为纯函数
-//! （fixture 单测，见 `tests/fund_search.rs`），网络请求复用行情 HTTP 层的
-//! 主机池 / 重试 / 限流。
+//! 东财基金访问层（issue #301 / ADR-0038 决策 1）：按 6 位基金代码取报价
+//! （名称 / 东财分类 / 最新单位净值 + 净值日期），投影为行情接入接缝的统一
+//! 载荷 [`Quote`]（ADR-0103 决策 2）；供「按代码即拉」添加基金与 AI 查询/创建
+//! 端点（#304 / ADR-0039）复用，即接缝的**查询半边**（按代码取行情，纯取数不落库）。
+//! 报文解析与命中挑选为纯函数（fixture 单测，见 `tests/fund_search.rs`），
+//! 网络请求复用行情 HTTP 层的主机池 / 重试 / 限流。
 //!
 //! 接口：基金搜索建议 `FundSearchAPI.ashx`——搜索关键词命中多条（基金 / 股票 /
 //! 指数等类别混排），基金条目带 `FundBaseInfo`（含 FCODE / SHORTNAME / FTYPE /
@@ -13,7 +14,8 @@ use serde::Deserialize;
 
 use super::http::{Pacer, RetryConfig, build_client, request_json_from_hosts};
 use crate::error::{AppError, Result};
-use crate::investment::{FundDetail, FundNav};
+use crate::investment::Quote;
+use crate::investment::prices::price_value_to_cents;
 
 // 基金搜索建议接口：单主机（无公开镜像池），复用行情层的重试与限流泛型层。
 const FUND_SEARCH_HOSTS: &[&str] = &["https://fundsuggest.eastmoney.com"];
@@ -72,10 +74,13 @@ where
     })
 }
 
-/// 从搜索建议响应中挑选与请求代码全等的基金条目：`FundBaseInfo` 存在且
-/// FCODE == code（同码股票 / 指数条目无 FundBaseInfo，天然排除；名称凑巧
-/// 含代码的其他基金被 FCODE 全等判定排除）。无命中返回 None（查无此码）。
-pub(crate) fn pick_fund_detail(resp: &FundSearchResponse, code: &str) -> Option<FundDetail> {
+/// 从搜索建议响应中挑选与请求代码全等的基金条目并投影为统一报价：[`Quote`]
+/// 的公共成员（代码 / 名称 / 价格 / 价格日期）+ 场外通道成员（基金分类 /
+/// 净值日期）；市场与类型提示是场内通道成员，基金侧恒缺省（`None`）。
+/// `FundBaseInfo` 存在且 FCODE == code 即命中（同码股票 / 指数条目无
+/// FundBaseInfo，天然排除；名称凑巧含代码的其他基金被 FCODE 全等判定排除）。
+/// 无命中返回 None（查无此码）。
+pub(crate) fn pick_fund_quote(resp: &FundSearchResponse, code: &str) -> Option<Quote> {
     let item = resp.datas.as_ref()?.iter().find(|item| {
         item.fund_base_info
             .as_ref()
@@ -88,29 +93,34 @@ pub(crate) fn pick_fund_detail(resp: &FundSearchResponse, code: &str) -> Option<
         .filter(|n| !n.trim().is_empty())
         .or_else(|| item.name.clone())?;
     // 净值对（值 + 日期）齐备才有效：任一缺省按「未取到净值」处理（不落现价）。
-    let nav = match (base.dwjz, base.fsrq.as_deref()) {
-        (Some(nav), Some(date)) if nav > 0.0 && !date.trim().is_empty() => Some(FundNav {
-            nav,
-            nav_date: date.trim().to_string(),
-        }),
+    // 价格在此换算为万分之一元刻度（ADR-0038），与场内通道同载荷同刻度。
+    let nav_date = match (base.dwjz, base.fsrq.as_deref()) {
+        (Some(nav), Some(date)) if nav > 0.0 && !date.trim().is_empty() => {
+            Some((price_value_to_cents(nav), date.trim().to_string()))
+        }
         _ => None,
     };
-    Some(FundDetail {
+    Some(Quote {
         code: base.fcode.clone(),
         name: name.trim().to_string(),
-        fund_class: base.ftype.trim().to_string(),
-        nav,
+        price_cents: nav_date.as_ref().map(|(cents, _)| *cents),
+        // 场外基金的价格日期即净值日期（现价的行情日期就是净值本身对应的日期）。
+        price_date: nav_date.as_ref().map(|(_, date)| date.clone()),
+        market: None,
+        kind_hint: None,
+        fund_class: Some(base.ftype.trim().to_string()),
+        nav_date: nav_date.map(|(_, date)| date),
     })
 }
 
-/// 按 6 位代码拉取基金详情（名称 / 分类 / 最新净值 + 净值日期）。
+/// 按 6 位代码拉取基金报价（名称 / 分类 / 最新净值 + 净值日期）。
 /// 查无此码返回中文错误（Invalid），网络失败 / 风控拦截由 HTTP 层重试后上抛。
-pub(super) fn fetch_fund_detail(
+pub(super) fn fetch_fund_quote(
     client: &reqwest::blocking::Client,
     pacer: &mut Pacer,
     code: &str,
-) -> Result<FundDetail> {
-    tracing::debug!(code, "基金详情查询");
+) -> Result<Quote> {
+    tracing::debug!(code, "基金行情查询");
     let params = [("m", "1"), ("key", code)];
     let resp: FundSearchResponse = request_json_from_hosts(
         client,
@@ -119,10 +129,10 @@ pub(super) fn fetch_fund_detail(
         FUND_SEARCH_HOSTS,
         RetryConfig::production(),
         pacer,
-        &format!("fetch_fund_detail:{code}"),
+        &format!("fetch_fund_quote:{code}"),
         None,
     )?;
-    pick_fund_detail(&resp, code).ok_or_else(|| {
+    pick_fund_quote(&resp, code).ok_or_else(|| {
         AppError::codedp(
             "sync.fund-not-found",
             format!("查无基金代码 {code}，请核对后重试"),
@@ -133,8 +143,8 @@ pub(super) fn fetch_fund_detail(
 
 /// 生产拉取入口：构建客户端与限流器后执行单次详情查询（不经数据库连接，
 /// 供 IPC 命令在获取连接锁之前完成网络往返，避免长限流重试阻塞其它命令）。
-pub fn fetch_fund_detail_production(code: &str) -> Result<FundDetail> {
+pub fn fetch_fund_quote_production(code: &str) -> Result<Quote> {
     let client = build_client()?;
     let mut pacer = Pacer::default();
-    fetch_fund_detail(&client, &mut pacer, code)
+    fetch_fund_quote(&client, &mut pacer, code)
 }
