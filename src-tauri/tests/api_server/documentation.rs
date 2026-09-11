@@ -443,6 +443,8 @@ async fn test_import_knowledge_covers_key_conventions() {
         "有在用持仓",
         "贡献恒为 0",
         "随份额变化",
+        "可就地修改",
+        "或软删",
         "不可改、不可删",
     ];
     for kw in required_keywords {
