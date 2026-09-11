@@ -48,7 +48,7 @@
 `scripts/check.sh` **不跑测试**，只跑类型检查、lint、fmt 与各守门脚本。依赖升级必须额外跑：
 
 - `pnpm test`（前端全量）
-- `cargo test --lib --test '*'`（Rust 三层：域单测 + API 集成测试 + e2e BDD；glob 全量命中集成 target，与 build.yml 的 backend job 同一形态）
+- `cargo test --workspace --lib --test '*'`（Rust 三层：域单测 + API 集成测试 + e2e BDD；glob 全量命中集成 target，与 build.yml 的 backend job 同一形态；`--workspace` 覆盖全部成员 crate）
 
 并把结果与**升级前基线**对比（改动前先跑一遍基线，别拿升级后的数字自证）。
 

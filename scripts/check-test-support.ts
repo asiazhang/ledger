@@ -88,6 +88,8 @@
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-test-support.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-test-support.ts [src-tauri-dir]
+// workspace 成员（crates/*/src 与 crates/*/tests）同在该扫描范围内（spec #1086 /
+// issue #1087）——拆 crate 后测试守门不得因目录随迁而静默漏扫。
 // 挂载于 scripts/check.sh 质量门槛序列；包装测试 src/__tests__/check-test-support.test.ts。
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
@@ -301,6 +303,27 @@ function walkRustFiles(dir: string): string[] {
   return out
 }
 
+/**
+ * workspace 成员 crate 的 Rust 根（crates/<crate>/src 与 crates/<crate>/tests）：
+ * 拆 crate 后测试守门须覆盖全 workspace（spec #1086 / issue #1087），不因目录
+ * 随迁而把成员 crate 的测试代码留在扫描范围之外。
+ */
+function memberCrateRustRoots(srcTauri: string): string[] {
+  const cratesDir = join(srcTauri, 'crates')
+  if (!existsSync(cratesDir)) return []
+  const roots: string[] = []
+  for (const entry of readdirSync(cratesDir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    if (!entry.isDirectory()) continue
+    for (const sub of ['src', 'tests']) {
+      const dir = join(cratesDir, entry.name, sub)
+      if (existsSync(dir)) roots.push(dir)
+    }
+  }
+  return roots
+}
+
 /** 路径含 tests 目录段，或文件名为 tests.rs（外挂测试模块/目录约定，check-structure.ts 同款） */
 function isTestPath(relSegments: string[]): boolean {
   return relSegments.slice(0, -1).includes('tests') || relSegments[relSegments.length - 1] === 'tests.rs'
@@ -334,7 +357,11 @@ function main(): void {
 
   const bannedTables = extractSeedTables(join(srcDir, 'test_support', 'seed.rs'))
 
-  const files = [...walkRustFiles(srcDir), ...(existsSync(testsDir) ? walkRustFiles(testsDir) : [])]
+  const files = [
+    ...walkRustFiles(srcDir),
+    ...(existsSync(testsDir) ? walkRustFiles(testsDir) : []),
+    ...memberCrateRustRoots(srcTauri).flatMap((dir) => walkRustFiles(dir)),
+  ]
   const { countByFile, hits } = scanFiles(files, srcTauri, bannedTables)
   const scanned = new Set(files.map((f) => relative(srcTauri, f).split('\\').join('/')))
   const problems = violations(countByFile, hits, scanned)
