@@ -7,11 +7,13 @@
 
 use std::cell::RefCell;
 
+use chrono::{Datelike, NaiveDate};
 use rusqlite::{Connection, params};
 
 use crate::error::{AppError, Result};
 use crate::investment::prices::{
-    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, upsert_market_price, upsert_price_history,
+    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
+    upsert_price_history,
 };
 use crate::sync::fund_nav::{LsjzPage, NavPoint, NavQuery};
 use crate::sync::http::{
@@ -692,6 +694,7 @@ fn no_nav(_: &NavQuery) -> Result<LsjzPage> {
     Ok(LsjzPage {
         points: vec![],
         total: 0,
+        blocked: false,
     })
 }
 
@@ -1132,6 +1135,7 @@ fn week_key_matches_sqlite_week_start_column() {
 fn nav_page(total: u64, points: &[(&str, f64)]) -> LsjzPage {
     LsjzPage {
         total,
+        blocked: false,
         points: points
             .iter()
             .map(|(d, n)| NavPoint {
@@ -1158,7 +1162,61 @@ fn mock_nav<'a>(
             .unwrap_or(LsjzPage {
                 points: vec![],
                 total: 0,
+                blocked: false,
             }))
+    }
+}
+
+/// 逐交易日净值序列（周一至周五各一条、日期升序、单位净值温和上抬）：真实净值
+/// 按日公布，周线回填的覆盖深度由降采样后每周一点体现。
+fn daily_nav_series(start: NaiveDate, end: NaiveDate) -> Vec<(String, f64)> {
+    let mut series = Vec::new();
+    let mut nav = 1.0_f64;
+    let mut day = start;
+    while day <= end {
+        if day.weekday().num_days_from_monday() < 5 {
+            nav += 0.001;
+            series.push((day.format("%Y-%m-%d").to_string(), nav));
+        }
+        day = day.succ_opt().unwrap();
+    }
+    series
+}
+
+/// 窗口敏感的历史净值页 mock（页大小 = 服务端硬上限 20，返回前按日期降序）：
+/// 按 `[start_date, end_date]` 闭区间从固定序列里过滤，`total` = 窗口内条数。
+/// 窗口起点错（如把「添加时写入的净值日期」当增量水位）会直接少采或不采净值点，
+/// 于是「首刷回填补齐两年」的断言对准同步后可查询到的周点覆盖深度，而不是函数
+/// 或调用形状（issue #1059 负向条目）。
+fn mock_nav_series<'a>(
+    series: &'a [(String, f64)],
+    requested: &'a RefCell<Vec<NavQuery>>,
+) -> impl FnMut(&NavQuery) -> Result<LsjzPage> + 'a {
+    move |query: &NavQuery| {
+        requested.borrow_mut().push(query.clone());
+        let mut in_window: Vec<&(String, f64)> = series
+            .iter()
+            .filter(|(date, _)| {
+                date.as_str() >= query.start_date.as_str()
+                    && date.as_str() <= query.end_date.as_str()
+            })
+            .collect();
+        in_window.sort_by(|a, b| b.0.cmp(&a.0));
+        let total = in_window.len() as u64;
+        let points = in_window
+            .into_iter()
+            .skip(((query.page - 1) * 20) as usize)
+            .take(20)
+            .map(|(date, nav)| NavPoint {
+                date: date.clone(),
+                nav: *nav,
+            })
+            .collect();
+        Ok(LsjzPage {
+            points,
+            total,
+            blocked: false,
+        })
     }
 }
 
@@ -1393,6 +1451,16 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
         },
     )
     .unwrap();
+    // 已有历史序列：水位只在「已回填过」的基金上作增量起点（issue #1059）。
+    upsert_price_history(
+        &conn,
+        "inst-fund",
+        &watermark,
+        30000,
+        "CNY",
+        EASTMONEY_PRICE_SOURCE,
+    )
+    .unwrap();
 
     let requested = RefCell::new(Vec::new());
     let mut fetch = mock_fetch(&[]);
@@ -1418,7 +1486,11 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
         Some((30000, Some(watermark))),
         "无新净值不动现价"
     );
-    assert_eq!(price_history_rows(&conn, "inst-fund"), vec![]);
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund").len(),
+        1,
+        "无新净值零落库：既有历史点原样保留（水位增量语义，issue #1059）"
+    );
 }
 
 #[test]
@@ -1453,6 +1525,174 @@ fn fund_first_sync_without_nav_counts_skipped() {
     assert_eq!(result.written, 0);
     assert_eq!(fund_price_of(&conn, "inst-fund"), None);
     assert_eq!(result.message, "已同步 0 只，跳过 1 只");
+}
+
+#[test]
+fn fund_with_nav_date_but_no_history_backfills_two_years() {
+    // issue #1059：添加基金 / AI 导入在「按代码即拉」时已把最新净值日期写进
+    // 现价缓存（水位有值），但这只基金没有任何历史序列——首刷判据必须是
+    // 「磁盘上有无历史序列」，不是「水位是否存在」。#303 的首刷回填验收在真实
+    // 账本上未成立，根因即在此。
+    let conn = crate::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    // 添加基金路径的产物：现价缓存有净值日期（水位），PriceHistory 为空。
+    let watermark = beijing_today()
+        .checked_sub_days(chrono::Days::new(1))
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string();
+    upsert_market_price(
+        &conn,
+        &MarketPriceWrite {
+            instrument_id: "inst-fund",
+            price_cents: 35000,
+            currency_code: "CNY",
+            priced_at: &watermark,
+            nav_date: Some(&watermark),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![],
+        "前置：无任何历史序列（水位冒充已回填的现场）"
+    );
+
+    // 近两年逐交易日净值序列 + 窗口敏感 mock：起点若按水位增量取，窗口会被压成
+    // 一天、几乎采不到净值点（现价也就不再更新）。
+    let start = beijing_today()
+        .checked_sub_months(chrono::Months::new(24))
+        .unwrap();
+    let series = daily_nav_series(start, beijing_today());
+    let requested = RefCell::new(Vec::new());
+    let mut nav = mock_nav_series(&series, &requested);
+    let mut fetch = mock_fetch(&[]);
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_name,
+        &mut no_progress,
+    )
+    .unwrap();
+
+    assert_eq!(result.synced, 1);
+    assert_eq!(result.skipped, 0);
+    assert_eq!(result.written, 1);
+
+    // 同步后可查询到的净值周点覆盖深度 = 近两年（约 104 周），而不是「水位之后
+    // 的那几天」——断言对准周点覆盖深度，不对准函数或调用形状。
+    let rows = price_history_rows(&conn, "inst-fund");
+    assert!(
+        rows.len() >= 100,
+        "首刷应回填近两年周线，实际只有 {} 个周点",
+        rows.len()
+    );
+    let earliest = rows.first().unwrap().0.as_str();
+    let window_start = expected_first_sync_start();
+    let first_week_end = (start + chrono::Days::new(6))
+        .format("%Y-%m-%d")
+        .to_string();
+    assert!(
+        earliest >= window_start.as_str() && earliest <= first_week_end.as_str(),
+        "最早周点应落在两年窗口的首周内：{earliest} ∉ [{window_start}, {first_week_end}]"
+    );
+
+    // 现价 = 窗口内最新公布净值（序列末点），与 #301 添加基金同形。
+    let latest = series.last().unwrap();
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((price_value_to_cents(latest.1), Some(latest.0.clone()))),
+    );
+}
+
+#[test]
+fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
+    // issue #1059：有水位、有历史序列，但历史净值接口返回空响应（Data 缺省 /
+    // 非对象，如缺 Referer 被拦截 / 风控）——不得按「已是最新」静默计成功。
+    // 与 fund_incremental_up_to_date_counts_synced_without_write（同样是空窗口，
+    // 但报文形态正常、空表可信）在同步统计上区分开。
+    let conn = crate::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    let watermark = beijing_today()
+        .checked_sub_days(chrono::Days::new(7))
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string();
+    upsert_market_price(
+        &conn,
+        &MarketPriceWrite {
+            instrument_id: "inst-fund",
+            price_cents: 30000,
+            currency_code: "CNY",
+            priced_at: &watermark,
+            nav_date: Some(&watermark),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
+    )
+    .unwrap();
+    // 已有历史序列：增量语义生效（水位次日起）。
+    upsert_price_history(
+        &conn,
+        "inst-fund",
+        &watermark,
+        30000,
+        "CNY",
+        EASTMONEY_PRICE_SOURCE,
+    )
+    .unwrap();
+
+    let mut fetch = mock_fetch(&[]);
+    let mut blocked_nav = |_: &NavQuery| {
+        Ok(LsjzPage {
+            points: vec![],
+            total: 0,
+            blocked: true,
+        })
+    };
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut blocked_nav,
+        &mut no_name,
+        &mut no_progress,
+    )
+    .unwrap();
+
+    assert_eq!(result.synced, 0, "空响应不得计成功");
+    assert_eq!(result.skipped, 1, "空响应计入跳过（不是「已是最新」）");
+    assert_eq!(result.written, 0);
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((30000, Some(watermark.clone()))),
+        "空响应不动现价、水位不前进"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund").len(),
+        1,
+        "空响应零落库（原有历史点原样保留）"
+    );
 }
 
 #[test]
@@ -2409,6 +2649,17 @@ fn fund_up_to_date_still_advances_progress() {
             nav_date: Some(&watermark),
             source: Some(EASTMONEY_PRICE_SOURCE),
         },
+    )
+    .unwrap();
+
+    // 已有历史序列：水位只在「已回填过」的基金上作增量起点（issue #1059）。
+    upsert_price_history(
+        &conn,
+        "inst-fund",
+        &watermark,
+        30000,
+        "CNY",
+        EASTMONEY_PRICE_SOURCE,
     )
     .unwrap();
 

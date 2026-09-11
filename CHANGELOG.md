@@ -57,6 +57,7 @@
 ### Fixed
 
 - **投资**：修复删除卖出后对应买入被幽灵占用永久锁死、无法删除或修改（[#940]）。
+- **投资**：修复添加/导入的场外基金「同步标的信息」不回填历史净值——首刷判据改看有无历史序列，添加时写入的最新净值日期不再冒充已回填，首次同步即补齐近两年周线；历史净值接口返回空响应也不再按「已是最新」静默计成功（[#1059]）。
 - **发布**：修复 Windows 发布 pnpm install 因补丁文件 CRLF 行尾失败（[#917]）。
 
 ## [0.6.0] - 2026-09-08
@@ -327,3 +328,4 @@
 [#977]: https://github.com/asiazhang/ledger/issues/977
 [#981]: https://github.com/asiazhang/ledger/issues/981
 [#1025]: https://github.com/asiazhang/ledger/issues/1025
+[#1059]: https://github.com/asiazhang/ledger/issues/1059

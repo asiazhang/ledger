@@ -22,28 +22,44 @@ fn date(s: &str) -> NaiveDate {
 fn lsjz_response_deserializes_real_payload() {
     let resp: LsjzResponse = serde_json::from_str(REAL_PAYLOAD).unwrap();
     assert_eq!(resp.total_count, 506);
-    let points = parse_lsjz(&resp);
-    assert_eq!(points.len(), 2);
-    assert_eq!(points[0].date, "2026-01-30");
-    assert_eq!(points[0].nav, 3.3480);
-    assert_eq!(points[1].date, "2026-01-29");
-    assert_eq!(points[1].nav, 3.42);
+    let parsed = parse_lsjz(&resp);
+    assert!(!parsed.blocked, "正常对象报文不是空响应");
+    assert_eq!(parsed.points.len(), 2);
+    assert_eq!(parsed.points[0].date, "2026-01-30");
+    assert_eq!(parsed.points[0].nav, 3.3480);
+    assert_eq!(parsed.points[1].date, "2026-01-29");
+    assert_eq!(parsed.points[1].nav, 3.42);
 }
 
 #[test]
 fn lsjz_blocked_payload_parses_to_empty() {
-    // 缺 Referer / 风控拦截形态：Data 是空字符串（非对象），宽容解析为空而非报错。
+    // 缺 Referer / 风控拦截形态：Data 是空字符串（非对象），宽容解析为空而非报错，
+    // 但形态标记为 blocked——空表不可信（issue #1059，与「窗口内无新净值」区分）。
     let json = r#"{"Data":"","ErrCode":-999,"ErrMsg":"","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}"#;
     let resp: LsjzResponse = serde_json::from_str(json).unwrap();
-    assert!(parse_lsjz(&resp).is_empty());
+    let parsed = parse_lsjz(&resp);
+    assert!(parsed.points.is_empty());
+    assert!(parsed.blocked, "空响应形态必须标记，不得与正常空窗混同");
 }
 
 #[test]
 fn lsjz_no_data_yet_shape_parses_to_empty() {
-    // 查无此码 / 新基金未公布：ErrCode=0 但 LSJZList 为空。
+    // 查无此码 / 新基金未公布 / 增量窗口内无新净值：ErrCode=0、Data 是对象但
+    // LSJZList 为空——空表可信（窗口内确实没有净值），不是被拦截形态。
     let json = r#"{"Data":{"LSJZList":[],"FundType":"","SYType":null,"isNewType":false,"Feature":null},"ErrCode":0,"ErrMsg":null,"TotalCount":0,"Expansion":null,"PageSize":20,"PageIndex":1}"#;
     let resp: LsjzResponse = serde_json::from_str(json).unwrap();
-    assert!(parse_lsjz(&resp).is_empty());
+    let parsed = parse_lsjz(&resp);
+    assert!(parsed.points.is_empty());
+    assert!(!parsed.blocked, "正常空表不是空响应");
+}
+
+#[test]
+fn lsjz_missing_data_field_is_blocked() {
+    // Data 字段整体缺省（另一种空响应形态）：同样标记 blocked。
+    let resp: LsjzResponse = serde_json::from_str(r#"{"ErrCode":-999,"TotalCount":0}"#).unwrap();
+    let parsed = parse_lsjz(&resp);
+    assert!(parsed.points.is_empty());
+    assert!(parsed.blocked);
 }
 
 #[test]
@@ -60,7 +76,7 @@ fn lsjz_invalid_nav_rows_are_filtered() {
     let resp: LsjzResponse = serde_json::from_str(json).unwrap();
     let points = parse_lsjz(&resp);
     assert_eq!(
-        points,
+        points.points,
         vec![
             crate::sync::fund_nav::NavPoint {
                 date: "2026-01-30".into(),
@@ -72,6 +88,7 @@ fn lsjz_invalid_nav_rows_are_filtered() {
             },
         ]
     );
+    assert!(!points.blocked);
 }
 
 #[test]
