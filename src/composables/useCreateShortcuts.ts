@@ -6,7 +6,8 @@ import type { CreateTransactionKind } from '@/types'
 /**
  * 「记一笔」裸键快捷键（issue #153）：交易页按 a/z/i/b/s 直达对应类型的记一笔弹窗。
  * 键位映射是单一来源：keydown 匹配与下拉菜单项标注共用，保证提示与行为一致。
- * refund 不占键位（退款入口由交易条目右键菜单承接）。
+ * refund 不占键位（退款入口由交易条目右键菜单承接）；convert 无手工录入入口
+ * （无现金腿 kind 界面只读，ADR-0106 决策 10 / #1048），同样不占键位。
  */
 export const CREATE_KIND_KEYS: Record<CreateTransactionKind, string> = {
   expense: 'a',
@@ -14,7 +15,6 @@ export const CREATE_KIND_KEYS: Record<CreateTransactionKind, string> = {
   income: 'i',
   buy: 'b',
   sell: 's',
-  convert: 'c',
 }
 
 /**

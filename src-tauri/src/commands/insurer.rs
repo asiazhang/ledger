@@ -12,10 +12,11 @@
 
 use tauri::State;
 
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
 use crate::policy as policy_domain;
 use crate::policy::{Insurer, InsurerInput, InsurerUpdateInput};
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::write_entry::{Outcome, write_entry};
 
@@ -27,9 +28,8 @@ pub async fn list_insurers(
     include_deleted: Option<bool>,
 ) -> Result<Vec<Insurer>> {
     let conn = db.conn.clone();
-    run_db("list_insurers", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        policy_domain::list_insurers(&conn, include_deleted.unwrap_or(false))
+    read_entry("list_insurers", conn, move |conn| {
+        policy_domain::list_insurers(conn, include_deleted.unwrap_or(false))
     })
     .await
 }

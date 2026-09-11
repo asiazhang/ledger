@@ -15,8 +15,9 @@ use tauri::State;
 
 use crate::categories as category_domain;
 use crate::categories::{Category, CategoryInput, CategoryUpdateInput, ReorderItem};
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::write_entry::{Outcome, write_entry};
 
@@ -27,9 +28,8 @@ pub async fn list_categories(
     include_deleted: Option<bool>,
 ) -> Result<Vec<Category>> {
     let conn = db.conn.clone();
-    run_db("list_categories", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        category_domain::list_categories(&conn, include_deleted.unwrap_or(false))
+    read_entry("list_categories", conn, move |conn| {
+        category_domain::list_categories(conn, include_deleted.unwrap_or(false))
     })
     .await
 }

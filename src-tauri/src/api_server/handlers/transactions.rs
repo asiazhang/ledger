@@ -13,8 +13,8 @@ use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::EmitterSlot;
-use crate::db::run_db;
 use crate::error::AppError;
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::{
@@ -55,9 +55,8 @@ pub async fn list_transactions_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
     Query(query): Query<TransactionListFilter>,
 ) -> Result<Json<TransactionListResult>, AppError> {
-    run_db("GET /api/v1/transactions", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        let result = crate::transaction::list_transactions_internal(&conn, &query)?;
+    read_entry("GET /api/v1/transactions", conn, move |conn| {
+        let result = crate::transaction::list_transactions_internal(conn, &query)?;
         Ok(Json(result))
     })
     .await

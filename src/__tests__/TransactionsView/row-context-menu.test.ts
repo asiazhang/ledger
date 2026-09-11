@@ -2,9 +2,9 @@ import { merchantDb, makeTxn, mountView, listCalls, lastListFilter, tablePaginat
 import { mockInvoke, wireInvokeSeam, type InvokeSeamDispatcher } from '../helpers/invoke-mock'
 import { clickDialogButton, dialogText, pressReleaseOnDialogMask, visibleModalText } from '../helpers/dom'
 import { describe, it, expect, beforeEach } from 'vitest'
-import ConvertForm from '@/components/ConvertForm.vue'
+import ConvertDetail from '@/components/ConvertDetail.vue'
 import { mount, flushPromises } from '@vue/test-utils'
-import { NDataTable, NPopconfirm, NSelect, NModal, NInput, NInputNumber } from 'naive-ui'
+import { NButton, NDataTable, NPopconfirm, NSelect, NModal, NInput, NInputNumber } from 'naive-ui'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransferForm from '@/components/TransferForm.vue'
 import InvestmentForm from '@/components/InvestmentForm.vue'
@@ -12,7 +12,7 @@ import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount } from '@/utils/money'
+import { formatAmount, formatQuantity } from '@/utils/money'
 import { refCurrencies } from '../helpers/reference-stubs'
 import type { Transaction } from '@/types'
 
@@ -460,7 +460,7 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     await selectRowMenu(wrapper, 'edit')
   }
 
-  it('buy/sell 行右键菜单含「编辑」，refund 行仍仅「删除」', async () => {
+  it('buy/sell 行右键菜单含「编辑」，refund 行仍仅「删除」，convert 行仅只读「详情」', async () => {
     const wrapper = await mountView()
     await openMenuOnRow(wrapper, 0)
     expect(rowMenuKeys(wrapper)).toEqual(['edit', 'menu-divider', 'delete'])
@@ -468,6 +468,9 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     expect(rowMenuKeys(wrapper)).toEqual(['edit', 'menu-divider', 'delete'])
     await openMenuOnRow(wrapper, 2)
     expect(rowMenuKeys(wrapper)).toEqual(['delete'])
+    // convert：无现金腿 kind 在 UI 无编辑/软删入口，只保留只读详情（ADR-0106 决策 10 / #1048）
+    await openMenuOnRow(wrapper, 3)
+    expect(rowMenuKeys(wrapper)).toEqual(['detail'])
   })
 
   it('buy 行编辑：先取买卖明细（get_transaction_trade），投资表单回填标的/数量/价格/费用，按钮「保存修改」', async () => {
@@ -531,19 +534,42 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     expect(numbers[1].props('value')).toBeNull()
   })
 
-  it('convert 行编辑：先取转换两腿明细（get_transaction_convert），转换表单回填「A → B」并显示结转成本', async () => {
+  it('convert 行「详情」：先取转换两腿明细（get_transaction_convert），只读弹窗呈现 A → B、两侧份额与金额、手续费与结转成本，无可编辑/提交面', async () => {
     const wrapper = await mountView()
-    await openEditModal(wrapper, 3)
+    await openMenuOnRow(wrapper, 3)
+    expect(rowMenuKeys(wrapper)).toEqual(['detail'])
+    await selectRowMenu(wrapper, 'detail')
     const convertCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'get_transaction_convert')
     expect(convertCalls).toHaveLength(1)
     expect(convertCalls[0][1]).toMatchObject({ id: 'txn-004' })
-    const form = wrapper.findComponent(ConvertForm)
-    expect(form.exists()).toBe(true)
-    expect(form.props('editing')).toMatchObject({ id: 'txn-004' })
-    expect(form.props('convert')).toMatchObject({ out_instrument_id: 'ins-1', in_instrument_id: 'ins-2' })
-    // 编辑形态展示结转成本（行金额锚点）
-    expect(form.text()).toContain('结转成本')
-    expect(form.text()).toContain('保存修改')
+    const modal = wrapper.findAllComponents(NModal).find((m) => m.props('title') === '交易详情')!
+    expect(modal.props('show')).toBe(true)
+    const detail = wrapper.findComponent(ConvertDetail)
+    expect(detail.exists()).toBe(true)
+    expect(detail.props('transaction')).toMatchObject({ id: 'txn-004' })
+    expect(detail.props('convert')).toMatchObject({
+      out_instrument_id: 'ins-1',
+      in_instrument_id: 'ins-2',
+    })
+    // 两腿标的（A → B）
+    expect(detail.text()).toContain('006793')
+    expect(detail.text()).toContain('转出基金')
+    expect(detail.text()).toContain('519700')
+    expect(detail.text()).toContain('转入基金')
+    // 两侧份额与金额
+    expect(detail.text()).toContain(formatQuantity(100.5))
+    expect(detail.text()).toContain(formatQuantity(99.75))
+    expect(detail.text()).toContain(formatAmount(110550, cny))
+    expect(detail.text()).toContain(formatAmount(109725, cny))
+    // 手续费与结转成本（行金额锚点）
+    expect(detail.text()).toContain(formatAmount(150, cny))
+    expect(detail.text()).toContain(formatAmount(100000, cny))
+    expect(detail.text()).toContain('结转成本')
+    // 只读形态：无可编辑输入面、无提交/保存按钮（ADR-0106 决策 10 / #1048）
+    expect(detail.findAllComponents(NInput)).toHaveLength(0)
+    expect(detail.findAllComponents(NInputNumber)).toHaveLength(0)
+    expect(detail.findAllComponents(NButton)).toHaveLength(0)
+    expect(detail.text()).not.toContain('保存修改')
   })
 
   it('取买卖明细失败：弹窗不打开并提示错误', async () => {
@@ -681,4 +707,3 @@ describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
     expect(addItemModal(wrapper).props('show')).toBe(true)
   })
 })
-

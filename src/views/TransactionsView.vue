@@ -31,7 +31,8 @@ import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
-import { buildRowMenuOptions, supportsRowEdit } from '@/components/transaction-row-menu'
+import ConvertDetail from '@/components/ConvertDetail.vue'
+import { buildRowMenuOptions, supportsRowDetail, supportsRowEdit } from '@/components/transaction-row-menu'
 import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
 import { useInputMode } from '@/composables/useInputMode'
 import { useRowContextMenu } from '@/composables/useRowContextMenu'
@@ -212,7 +213,8 @@ function createKindLabel(kind: CreateFormKind): string {
 }
 
 /** 下拉选项：5 种可创建类型（refund 不在入口：退款已移出表单域，入口由交易条目
- * 右键菜单承接，独立 ticket 落地前处于过渡态）+ 借贷变体「借出」「借入」两项
+ * 右键菜单承接，独立 ticket 落地前处于过渡态；convert 不在入口：无现金腿 kind 界面
+ * 只读、无手工录入，ADR-0106 决策 10 / #1048）+ 借贷变体「借出」「借入」两项
  * （issue #374，分隔线分组；不占快捷键键位）。kind 项标签后附裸键快捷键提示（issue #153），
  * 键位来自 CREATE_KIND_KEYS 单一来源，与 keydown 匹配共用。
  * 触控轴下裸键监听不绑定（ADR-0088 决策 6 / issue #843），键位标注同步退役
@@ -320,9 +322,17 @@ function onRefundCreated() {
  * 开启/关闭编排经 TransactionModalState（ADR-0045，#340）：目标行由意图携带
  * （fixed-target），序号作表单 key 强制重建实例（回填/提交均指向本次右键所在行）；
  * buy/sell 的「先取买卖明细再开窗、失败不开窗」时序与慢取竞态守卫内化在模块，
- * 取数不经视图。提交失败弹窗不关、已填内容不丢（错误提示与不重置均在表单 composable 内）。 */
+ * 取数不经视图。提交失败弹窗不关、已填内容不丢（错误提示与不重置均在表单 composable 内）。
+ * convert 不进本入口（无现金腿 kind 界面只读，见 openDetailFromRow）。 */
 function openEditFromRow(row: Transaction) {
   void openModal({ type: 'edit', row })
+}
+
+/** 只读详情弹窗（ADR-0106 决策 10 / #1048）：无现金腿 kind（convert）界面不体现写操作
+ * 入口，行激活与菜单「详情」都进本入口；转换两腿明细的「先取数再开窗、失败不开窗」时序
+ * 与慢取竞态守卫内化在 TransactionModalState，取数不经视图。 */
+function openDetailFromRow(row: Transaction) {
+  void openModal({ type: 'detail', row })
 }
 
 /** 编辑成功：关窗（编排内化关闭意图）并以当前页码重拉列表（保持当前页与筛选，
@@ -358,7 +368,8 @@ function onModalShowUpdate(show: boolean) {
  * 菜单项图标与删除项 error 色也由该函数统一注入；业务动作分派留视图
  * （工厂入参回调，选中即收起并交付收起瞬间的目标行）。 */
 const rowMenu = useRowContextMenu<Transaction>((key, row) => {
-  if (key === 'edit') openEditFromRow(row)
+  if (key === 'detail') openDetailFromRow(row)
+  else if (key === 'edit') openEditFromRow(row)
   else if (key === 'refund') openRefundFromRow(row)
   else if (key === 'add-item') openAddItemFromRow(row)
   else if (key === 'delete') confirmDelete(row)
@@ -445,10 +456,11 @@ const emptyDescription = computed(() =>
     : t('transactions.list.empty'),
 )
 
-/** 整卡点击 = 编辑（移动档卡片）：与行菜单「编辑」同一开放判定（refund 不开放，
- * supportsRowEdit 单源）与同一编辑意图入口。 */
+/** 整卡点击 = 行激活（移动档卡片）：无现金腿 kind 进只读详情（supportsRowDetail 单源），
+ * 其余可编辑行进编辑表单（supportsRowEdit 单源）——refund 两类都不开放，点击无动作。 */
 function activateCard(row: Transaction): void {
-  if (supportsRowEdit(row)) openEditFromRow(row)
+  if (supportsRowDetail(row)) openDetailFromRow(row)
+  else if (supportsRowEdit(row)) openEditFromRow(row)
 }
 
 </script>
@@ -584,11 +596,29 @@ function activateCard(row: Transaction): void {
         v-if="intent?.type === 'edit'"
         :editing="intent.row"
         :trade="intent.trade"
-        :convert="intent.convert"
         @saved="onEditSaved"
       />
     </AppModal>
-    <!-- 行右键菜单（issue #151 / #119 / #550）：expense 行「退款」「加入物品」+ 所有行「删除」，
+    <!-- 转换只读详情弹窗（ADR-0106 决策 10 / #1048）：无现金腿 kind 界面不体现任何写操作
+         （无创建/编辑/软删），只读呈现「A → B」两侧标的、份额、金额、手续费与结转成本；
+         行激活与菜单「详情」进本入口，转换两腿明细的取数时序内化在编排模块 -->
+    <AppModal
+      :show="intent?.type === 'detail'"
+      :title="t('transactions.detail.title')"
+      preset="card"
+      display-directive="if"
+      card-size="md"
+      @update:show="onModalShowUpdate"
+    >
+      <ConvertDetail
+        :key="seq"
+        v-if="intent?.type === 'detail'"
+        :transaction="intent.row"
+        :convert="intent.convert"
+      />
+    </AppModal>
+    <!-- 行右键菜单（issue #151 / #119 / #550）：expense 行「退款」「加入物品」+ 可编辑行「编辑」
+         + convert 行「详情」（无现金腿 kind 只读，ADR-0106 决策 10 / #1048）+ 其余行「删除」，
          手动定位弹出；开合上报经薄封装 attrs watch 自动生效（`:show` 绑定照旧） -->
     <AppDropdown
       trigger="manual"

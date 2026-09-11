@@ -269,9 +269,11 @@ export async function openMenuOnRow(wrapper: VueWrapper, index = 0) {
 
 export function rowMenu(wrapper: VueWrapper) {
   // 视图上有多个 NDropdown（#150 记一笔分裂按钮 + #151 行右键菜单），
-  // 按菜单项含 delete key 识别行右键菜单
+  // 按行菜单专属项（delete / 只读 kind 的 detail）识别行右键菜单
   return wrapper.findAllComponents(NDropdown).find((d) =>
-    (d.props('options') as Array<{ key?: string }>).some((o) => o.key === 'delete'),
+    (d.props('options') as Array<{ key?: string }>).some(
+      (o) => o.key === 'delete' || o.key === 'detail',
+    ),
   )!
 }
 

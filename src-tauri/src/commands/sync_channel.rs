@@ -38,6 +38,7 @@ use crate::db::encryption::{DbFileKind, probe_file_kind, verify_source_passphras
 use crate::db::passphrase_cache::{self, CacheLoad};
 use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
+use crate::read_entry::read_entry;
 use crate::settings::{self, SettingKey};
 use crate::signals::{WriteEvidence, WriteOp};
 use crate::sync_engine::trigger::{
@@ -177,9 +178,8 @@ pub async fn sync_now<R: Runtime>(
 #[tauri::command]
 pub async fn get_parked_ops<R: Runtime>(app: AppHandle<R>) -> Result<Vec<ParkedOpState>> {
     let conn = app.state::<DbState>().conn.clone();
-    run_db("get_parked_ops", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        Ok(parked_ops(&conn)?
+    read_entry("get_parked_ops", conn, move |conn| {
+        Ok(parked_ops(conn)?
             .into_iter()
             .map(ParkedOpState::from)
             .collect())
@@ -230,9 +230,8 @@ pub async fn get_sync_channel_config<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<SyncChannelConfigState> {
     let conn = app.state::<DbState>().conn.clone();
-    run_db("get_sync_channel_config", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        Ok(match configured_channel(&conn)? {
+    read_entry("get_sync_channel_config", conn, move |conn| {
+        Ok(match configured_channel(conn)? {
             Some(config) => SyncChannelConfigState {
                 base_url: config.base_url,
                 username: config.username,
