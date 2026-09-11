@@ -7,7 +7,10 @@ use std::time::Duration;
 
 use chrono::NaiveDate;
 
-use crate::sync::fund_nav::{LsjzResponse, NavQuery, fetch_nav_page_from, nav_window, parse_lsjz};
+use crate::sync::fund_nav::{
+    LsjzResponse, NavPoint, NavQuery, fetch_nav_full_series_from, fetch_nav_page_from, nav_window,
+    parse_lsjz, parse_net_worth_trend,
+};
 use crate::sync::http::{Pacer, request_json_from_hosts};
 
 /// 真实 lsjz 响应形状（fundCode=110022，实测 2026-08）：Data.LSJZList 按净值
@@ -89,6 +92,91 @@ fn lsjz_invalid_nav_rows_are_filtered() {
         ]
     );
     assert!(!points.blocked);
+}
+
+// ---------------------------------------------------------------------------
+// 单请求全量净值通道（基金详情页数据文件，issue #1062）
+// ---------------------------------------------------------------------------
+
+/// 真实 pingzhongdata 数据文件片段（fundCode=110022，实测 2026-09-11）：单位净值
+/// 序列变量 `Data_netWorthTrend` 为 `{x: 毫秒时间戳, y: 单位净值, ...}` 升序数组；
+/// `Data_ACWorthTrend` 是并存的累计净值数组（本通道刻意不取）。片段同时带
+/// 前缀声明与尾随声明，钉住「取变量、不误取另一数组」。
+const REAL_PINGZHONG_SNIPPET: &str = r#"/*基金或股票信息*/var fS_name = "易方达消费行业股票";var fS_code = "110022";
+var Data_ACWorthTrend = [[1282233600000,1.0],[1282838400000,1.001]];
+var Data_netWorthTrend = [{"x":1282233600000,"y":1.0,"equityReturn":0,"unitMoney":""},{"x":1282838400000,"y":1.001,"equityReturn":0.1,"unitMoney":""},{"x":1283443200000,"y":1.006,"equityReturn":0.4995,"unitMoney":""}];
+var Data_currentFundManager = [{"id":"1"}];
+"#;
+
+#[test]
+fn parse_net_worth_trend_reads_real_fixture() {
+    // x 为北京时间午夜的毫秒时间戳（UTC 前一日 16:00）：+8h 后取日期即净值日期。
+    let points = parse_net_worth_trend(REAL_PINGZHONG_SNIPPET).unwrap();
+    assert_eq!(
+        points,
+        vec![
+            NavPoint {
+                date: "2010-08-20".into(),
+                nav: 1.0
+            },
+            NavPoint {
+                date: "2010-08-27".into(),
+                nav: 1.001
+            },
+            NavPoint {
+                date: "2010-09-03".into(),
+                nav: 1.006
+            },
+        ]
+    );
+}
+
+#[test]
+fn parse_net_worth_trend_skills_accumulated_array() {
+    // 只有累计净值数组、没有单位净值数组：不得误取 Data_ACWorthTrend——返回 None
+    // 让上层 fail-closed 回退分页通道（口径不一致比慢更糟）。
+    let js = r#"var Data_ACWorthTrend = [[1282233600000,9.9],[1282838400000,9.8]];"#;
+    assert_eq!(parse_net_worth_trend(js), None);
+}
+
+#[test]
+fn parse_net_worth_trend_missing_or_malformed_is_none() {
+    // 缺变量、整体不是数组、数组被截断：都无法作为可信数据源，返回 None。
+    assert_eq!(parse_net_worth_trend("var fS_name = \"x\";"), None);
+    assert_eq!(parse_net_worth_trend("var Data_netWorthTrend = 5;"), None);
+    assert_eq!(
+        parse_net_worth_trend(r#"var Data_netWorthTrend = [{"x":1282233600000,"y":1.0}"#),
+        None
+    );
+}
+
+#[test]
+fn parse_net_worth_trend_well_formed_empty_is_some_empty() {
+    // 结构完好但为空（新基金未公布净值）：是可信空结果，与「解析失败」区分开。
+    assert_eq!(
+        parse_net_worth_trend("var Data_netWorthTrend = [];"),
+        Some(vec![])
+    );
+}
+
+#[test]
+fn parse_net_worth_trend_filters_invalid_rows() {
+    // 单位净值 null / ≤0 的行静默过滤（与 lsjz 无效行同姿态），其余照常解析。
+    let js = r#"var Data_netWorthTrend = [{"x":1282233600000,"y":1.0},{"x":1282838400000,"y":null},{"x":1283443200000,"y":0},{"x":1284048000000,"y":"1.5"}];"#;
+    let points = parse_net_worth_trend(js).unwrap();
+    assert_eq!(
+        points,
+        vec![
+            NavPoint {
+                date: "2010-08-20".into(),
+                nav: 1.0
+            },
+            NavPoint {
+                date: "2010-09-10".into(),
+                nav: 1.5
+            },
+        ]
+    );
 }
 
 #[test]
@@ -216,4 +304,48 @@ fn request_json_from_hosts_accepts_referer_argument() {
         head.to_lowercase().contains("referer: http://ref.example/"),
         "{head}"
     );
+}
+
+#[test]
+fn nav_full_series_fetch_reads_single_file() {
+    // 单请求全量净值通道：一次 GET 详情页数据文件即取整只基金的历史净值序列
+    // （issue #1062）。本地 HTTP 服务验证请求路径与报文解析，不依赖真实网络。
+    let (url, heads) = spawn_header_capture_server(REAL_PINGZHONG_SNIPPET.to_string());
+    let client = reqwest::blocking::Client::new();
+    let mut pacer = Pacer::new(Duration::ZERO);
+    let points =
+        fetch_nav_full_series_from(&client, &mut pacer, "110022", &[url.as_str()]).unwrap();
+
+    let head = &heads.lock().unwrap()[0];
+    assert!(
+        head.contains("GET /pingzhongdata/110022.js"),
+        "请求路径应为基金详情页数据文件: {head}"
+    );
+    assert_eq!(
+        points,
+        vec![
+            NavPoint {
+                date: "2010-08-20".into(),
+                nav: 1.0
+            },
+            NavPoint {
+                date: "2010-08-27".into(),
+                nav: 1.001
+            },
+            NavPoint {
+                date: "2010-09-03".into(),
+                nav: 1.006
+            },
+        ]
+    );
+}
+
+#[test]
+fn nav_full_series_fetch_untrusted_body_errors_for_fallback() {
+    // 被风控拦截形态（HTML 而非数据文件）：解析不可信 → 返回 Err，上层 fail-closed
+    // 回退分页通道，不把空结果当「无净值」静默吞掉。
+    let (url, _) = spawn_header_capture_server("<html>blocked by waf</html>".to_string());
+    let client = reqwest::blocking::Client::new();
+    let mut pacer = Pacer::new(Duration::ZERO);
+    assert!(fetch_nav_full_series_from(&client, &mut pacer, "110022", &[url.as_str()]).is_err());
 }

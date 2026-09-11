@@ -239,10 +239,40 @@ pub(super) fn request_json_from_hosts<T>(
 where
     T: serde::de::DeserializeOwned,
 {
+    request_from_hosts(path, hosts, |url| {
+        request_json_with_retry::<T>(client, url, params, pacer, ctx, cfg, referer)
+    })
+}
+
+/// 同 [`request_json_from_hosts`] 的多主机切换，但返回**原始文本**（非 JSON 的
+/// 数据文件通道用，如基金详情页 `.js`；issue #1062）。解析与可信度判定留给调用方
+/// （文本层无法区分正常数据文件与被拦截 HTML 页，那是解析层的判据）。
+#[allow(clippy::too_many_arguments)]
+pub(super) fn request_text_from_hosts(
+    client: &reqwest::blocking::Client,
+    params: &[(&str, &str)],
+    path: &str,
+    hosts: &[&str],
+    cfg: RetryConfig,
+    pacer: &mut Pacer,
+    ctx: &str,
+    referer: Option<&str>,
+) -> Result<String> {
+    request_from_hosts(path, hosts, |url| {
+        request_text_with_retry(client, url, params, pacer, ctx, cfg, referer)
+    })
+}
+
+/// 多主机请求核心：按序尝试多个主机、首个成功即返回，全失败时把各主机错误汇聚成
+/// 一条错误（便于定位是哪个镜像挂了）。单主机重试与解析由 `attempt` 承载。
+fn request_from_hosts<T, A>(path: &str, hosts: &[&str], mut attempt: A) -> Result<T>
+where
+    A: FnMut(&str) -> Result<T>,
+{
     let mut failures: Vec<String> = Vec::new();
     for host in hosts {
         let url = format!("{host}{path}");
-        match request_json_with_retry(client, &url, params, pacer, ctx, cfg, referer) {
+        match attempt(&url) {
             Ok(resp) => return Ok(resp),
             Err(e) => failures.push(format!("{host}: {e}")),
         }
@@ -264,6 +294,44 @@ pub(super) fn request_json_with_retry<T>(
 ) -> Result<T>
 where
     T: serde::de::DeserializeOwned,
+{
+    request_with_retry(client, url, params, pacer, ctx, cfg, referer, &|bytes| {
+        serde_json::from_slice::<T>(bytes).map_err(|e| format!("JSON 解析失败: {e}"))
+    })
+}
+
+/// 单主机请求重试 + 原样文本返回（非 JSON 数据文件通道，issue #1062）。
+#[allow(clippy::too_many_arguments)]
+pub(super) fn request_text_with_retry(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    params: &[(&str, &str)],
+    pacer: &mut Pacer,
+    ctx: &str,
+    cfg: RetryConfig,
+    referer: Option<&str>,
+) -> Result<String> {
+    request_with_retry(client, url, params, pacer, ctx, cfg, referer, &|bytes| {
+        String::from_utf8(bytes.to_vec()).map_err(|e| format!("响应解码失败: {e}"))
+    })
+}
+
+/// 单主机请求重试核心（多主机版本 [`request_from_hosts`] 的底座）：串行限速 →
+/// 发送 → 传输错误短退避 / 429 长冷却 / 响应字节解析；解析失败按「疑似被风控拦截」
+/// 长冷却重试，与既有 JSON 行为一致。纯文本通道的解析恒成功，据此复用同一套重试。
+#[allow(clippy::too_many_arguments)]
+fn request_with_retry<T, P>(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    params: &[(&str, &str)],
+    pacer: &mut Pacer,
+    ctx: &str,
+    cfg: RetryConfig,
+    referer: Option<&str>,
+    parse: &P,
+) -> Result<T>
+where
+    P: Fn(&[u8]) -> std::result::Result<T, String>,
 {
     let mut transport_attempts = 0u32;
     let mut throttle_attempts = 0u32;
@@ -318,8 +386,8 @@ where
                 continue;
             }
         };
-        match serde_json::from_slice::<T>(&bytes) {
-            Ok(json) => return Ok(json),
+        match parse(&bytes) {
+            Ok(parsed) => return Ok(parsed),
             Err(e) => {
                 let head = String::from_utf8_lossy(&bytes[..bytes.len().min(120)]);
                 throttle_attempts += 1;
@@ -338,7 +406,7 @@ where
                     content_encoding = %content_encoding, body_head = %head, error = %e,
                     "响应解析失败"
                 );
-                return Err(AppError::Parse(format!("JSON 解析失败: {e}")));
+                return Err(AppError::Parse(e));
             }
         }
     }
