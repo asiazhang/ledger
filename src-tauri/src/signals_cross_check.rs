@@ -199,11 +199,21 @@ fn split_chunks(source: &str, anchor: &str) -> Vec<Chunk> {
 
     let mut chunks = Vec::new();
     for (idx, &start) in starts.iter().enumerate() {
-        let end = starts
+        let next = starts
             .get(idx + 1)
             .copied()
             .or_else(|| ends.iter().copied().find(|&e| e > start))
             .unwrap_or(masked_chars.len());
+        // 块边界截断到首个函数体的花括号配对结束（掩码文本上配对可靠）：
+        // 命令 / handler 块不再吞并锚点之间的非命令 helper（如 encryption.rs
+        // `resume_business_surface` 的手写锁行不应算进相邻命令的函数体，
+        // ADR-0104 读侧守门暴露后修正；对写侧声明提取 / 归因串核对无变化，
+        // 对反向守门是收紧——不再把后续函数的 bypass 形态算进命令体）。找不到
+        // 函数体（器具漂移）时回退旧边界，由下游断言兜底。
+        // fn_body_end 返回切片内相对偏移，加 start 绝对化；找不到函数体时回退旧边界。
+        let end = fn_body_end(&masked_chars[start..next].iter().collect::<String>())
+            .map(|rel| start + rel)
+            .unwrap_or(next);
         let raw: String = source_chars[start..end].iter().collect();
         let masked_text: String = masked_chars[start..end].iter().collect();
         if let Some(name) = fn_name(&masked_text) {
@@ -217,9 +227,41 @@ fn split_chunks(source: &str, anchor: &str) -> Vec<Chunk> {
     chunks
 }
 
+/// 掩码文本切片内首个 `pub [async] fn` 函数体的花括号配对结束位置（切片末尾
+/// 相对偏移）：从函数名后首个 `{` 起计数，`{` + 1 / `}` - 1，归零即函数体结束。
+/// 注释与字符串已在掩码中空白化，花括号只来自真实代码，配对可靠。
+/// 块内首个 `pub [async] fn` 的标记对（[`fn_name`] 命名提取与
+/// [`fn_body_end`] 函数体定位共用，防两处漂移）。
+const FN_MARKERS: [&str; 2] = ["pub async fn ", "pub fn "];
+
+/// 掩码文本切片内首个 `pub [async] fn` 函数体的花括号配对结束位置（切片末尾
+/// 相对偏移）：从函数名后首个 `{` 起计数，`{` + 1 / `}` - 1，归零即函数体结束。
+/// 注释与字符串已在掩码中空白化，花括号只来自真实代码，配对可靠。
+fn fn_body_end(masked: &str) -> Option<usize> {
+    let fn_pos = FN_MARKERS
+        .iter()
+        .filter_map(|marker| masked.find(marker))
+        .min()?;
+    let open = masked[fn_pos..].find('{')? + fn_pos;
+    let mut depth = 0usize;
+    for (i, c) in masked[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + i + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// 块内首个 `pub [async] fn` 的标识符（命令 / handler 函数体的命名约定）。
 fn fn_name(masked: &str) -> Option<String> {
-    for marker in ["pub async fn ", "pub fn "] {
+    for marker in FN_MARKERS {
         if let Some(pos) = masked.find(marker) {
             let rest = &masked[pos + marker.len()..];
             let ident: String = rest
@@ -744,6 +786,122 @@ fn http_derived_endpoint_keys_are_in_openapi_contract() {
         assert!(
             endpoints.contains(&key),
             "HTTP 派生端点键 {key} 不在 OpenAPI 契约端点集上——扫描提取漂移或契约漏记"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 守门六：读侧锁仪式反向守门（ADR-0104 决策 6，ADR-0073 决策 5 同形）
+// ---------------------------------------------------------------------------
+
+/// 壳层标准锁行模式（ADR-0104）：锁获取 + 锁失败映射的手抄仪式——全仓复制量
+/// 最大的一行。统一读入口 [`crate::read_entry::read_entry`] 体内单点之后，
+/// 壳层命令 / handler 函数体不应再手抄本行（确属不经读入口的命令进下方豁免
+/// 清单）。文本级扫描（掩码后匹配），换行拆写或别名改写不可达，靠评审兜底
+/// （与写侧扫描同款边界）。
+const STANDARD_LOCK_LINE: &str = ".lock().map_err(|e| AppError::Db(e.to_string()))";
+
+/// 读侧锁仪式豁免清单（ADR-0104 决策 6）：不经统一读/写入口、函数体保留手写
+/// 标准锁行的命令，逐个附动机。与写侧 [`IPC_WRITE_ENTRY_EXCEPTIONS`] **分立**——
+/// 两者核对的知识不同（写身份 vs 锁仪式），合并会混淆（ADR-0104 代价 2）。
+/// 全部 9 条来自 ADR-0104 决策 5 的 B/C 组结构性理由（写侧白名单写命令、锁内
+/// 文件/网络、分支锁、mut 守卫）；迁移后壳层手写标准锁行恰为本表 9 条，
+/// 以 `rg` 实测为准。HTTP 壳无例外（7 个读端点全部迁入读入口，ADR-0104 决策 7）。
+const IPC_READ_ENTRY_EXCEPTIONS: &[(&str, &str)] = &[
+    (
+        "create_backup",
+        "文件级备份产物（库快照 → zip）：写侧白名单命令（ADR-0073），快照须在连接锁内取一致视图，非读闭包语义",
+    ),
+    (
+        "restore_backup",
+        "整库恢复：分支锁——主连接可选（issue #601 启动失败接管现场无连接不持锁），锁形态超出 read_entry 单锁形状",
+    ),
+    (
+        "set_auto_backup_enabled",
+        "设置 KV 写入经 settings 单点收口（写侧白名单，ADR-0032/0017）：写命令非读闭包",
+    ),
+    (
+        "set_log_level",
+        "设置 KV 写入经 settings 单点收口（写侧白名单，ADR-0032/0017）：写命令非读闭包",
+    ),
+    (
+        "set_sync_channel_config",
+        "通道配置写 app_settings（写侧白名单）：锁前凭据构库校验、锁后 settings::set，非读闭包形状",
+    ),
+    (
+        "get_sync_status",
+        "锁内文件探测（probe_file_kind 判库加密形态）：持锁窗口刻意含文件 IO，直连保持显式（ADR-0104 形状 C）",
+    ),
+    (
+        "get_sync_channel_checkpoint",
+        "锁内网络（checkpoint_pointer 拉 manifest 预检）：持锁触网刻意直连（ADR-0104 形状 C）",
+    ),
+    (
+        "publish_sync_checkpoint",
+        "锁内网络（VACUUM INTO 快照与位点同刻成对上传）：持锁触网刻意直连（ADR-0104 形状 C）",
+    ),
+    (
+        "bootstrap_sync_from_channel",
+        "mut 守卫（整库换入需 &mut Connection）：非读闭包形状（ADR-0104 形状 C）",
+    ),
+];
+
+/// 块内是否出现手写标准锁行（掩码文本上匹配，注释/字符串不误伤）。
+fn has_handwritten_lock(masked: &str) -> bool {
+    count_token(masked, STANDARD_LOCK_LINE) > 0
+}
+
+/// IPC 反向守门（读侧，ADR-0104 决策 6）：命令体内出现标准锁行而同函数体无
+/// `read_entry` / `write_entry` 即红——「手抄锁仪式回潮」在测试期拦住（写入口
+/// 体内单点持锁同样满足；本票要消灭的失败类恰是评审最守不住的手抄回潮）。
+/// 确属不经读入口的命令必须在 [`IPC_READ_ENTRY_EXCEPTIONS`] 登记并附动机。
+#[test]
+fn ipc_lock_ritual_must_go_through_read_entry() {
+    let exceptions: HashSet<&str> = IPC_READ_ENTRY_EXCEPTIONS.iter().map(|(n, _)| *n).collect();
+    for chunk in ipc_command_chunks() {
+        let through_entry = count_token(&chunk.masked, "read_entry(") > 0
+            || count_token(&chunk.masked, "write_entry(") > 0;
+        if through_entry || !has_handwritten_lock(&chunk.masked) {
+            continue;
+        }
+        assert!(
+            exceptions.contains(chunk.name.as_str()),
+            "IPC 命令 {} 的函数体出现手写标准锁行却未走 read_entry——\
+             锁仪式回潮（ADR-0104 决策 6）；如确属不经读入口的命令，\
+             在 IPC_READ_ENTRY_EXCEPTIONS 豁免清单登记并附动机",
+            chunk.name
+        );
+    }
+}
+
+/// HTTP 反向守门（读侧，ADR-0104 决策 6）：handler 函数体内出现标准锁行而同
+/// 函数体无 `read_entry` / `write_entry` 即红。HTTP 壳无豁免清单——7 个读端点
+/// 全部迁入读入口（ADR-0104 决策 7），出现手写锁行即回归。
+#[test]
+fn http_lock_ritual_must_go_through_read_entry() {
+    for chunk in http_handler_chunks() {
+        let through_entry = count_token(&chunk.masked, "read_entry(") > 0
+            || count_token(&chunk.masked, "write_entry(") > 0;
+        if through_entry || !has_handwritten_lock(&chunk.masked) {
+            continue;
+        }
+        panic!(
+            "HTTP handler {} 的函数体出现手写标准锁行却未走 read_entry——\
+             锁仪式回潮（ADR-0104 决策 6）",
+            chunk.name
+        );
+    }
+}
+
+/// 读侧豁免清单名字必须都在命令注册清单上（build.rs 生成的 ADR-0047 真源，
+/// 写侧同款死条目守卫）：命令改名 / 删除后旧条目静默残留为死条目，在此即红。
+#[test]
+fn ipc_read_entry_exceptions_only_contain_registered_commands() {
+    let registry: HashSet<&str> = IPC_COMMAND_MANIFEST.iter().copied().collect();
+    for (name, _) in IPC_READ_ENTRY_EXCEPTIONS {
+        assert!(
+            registry.contains(name),
+            "读侧豁免清单命令 {name} 不在命令注册清单上——死条目（命令已改名或删除）"
         );
     }
 }

@@ -12,8 +12,9 @@
 
 use tauri::State;
 
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
+use crate::read_entry::read_entry;
 use crate::transaction as transaction_domain;
 use crate::transaction::{NotePinyinRepairReport, TransactionSearchResult};
 
@@ -34,10 +35,9 @@ pub async fn search_transactions(
     date_to: Option<String>,
 ) -> Result<TransactionSearchResult> {
     let conn = db.conn.clone();
-    run_db("search_transactions", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    read_entry("search_transactions", conn, move |conn| {
         transaction_domain::search_transactions_internal(
-            &conn,
+            conn,
             &query,
             page.unwrap_or(1),
             page_size.unwrap_or(20),
@@ -56,9 +56,10 @@ pub async fn search_transactions(
 #[tauri::command]
 pub async fn repair_note_pinyin(db: State<'_, DbState>) -> Result<NotePinyinRepairReport> {
     let conn = db.conn.clone();
-    run_db("repair_note_pinyin", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        Ok(transaction_domain::repair_note_pinyin(&conn))
+    // 写侧白名单身份保留（ADR-0104 决策 5）：仍是不经 write_entry 的声明写命令，
+    // 闭包体与形状 A 同构，锁仪式归统一读入口。
+    read_entry("repair_note_pinyin", conn, move |conn| {
+        Ok(transaction_domain::repair_note_pinyin(conn))
     })
     .await
 }

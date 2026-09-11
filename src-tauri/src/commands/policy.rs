@@ -17,18 +17,18 @@
 
 use tauri::State;
 
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
 use crate::policy::{self as policy_domain, Policy, PolicyInput, PolicyStats};
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_policies(db: State<'_, DbState>) -> Result<Vec<Policy>> {
     let conn = db.conn.clone();
-    run_db("list_policies", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        policy_domain::list_policies(&conn)
+    read_entry("list_policies", conn, move |conn| {
+        policy_domain::list_policies(conn)
     })
     .await
 }
@@ -38,9 +38,8 @@ pub async fn list_policies(db: State<'_, DbState>) -> Result<Vec<Policy>> {
 #[tauri::command]
 pub async fn list_policy_stats(db: State<'_, DbState>) -> Result<Vec<PolicyStats>> {
     let conn = db.conn.clone();
-    run_db("list_policy_stats", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        policy_domain::policy_stats(&conn, chrono::Local::now().date_naive())
+    read_entry("list_policy_stats", conn, move |conn| {
+        policy_domain::policy_stats(conn, chrono::Local::now().date_naive())
     })
     .await
 }

@@ -15,18 +15,18 @@
 
 use tauri::State;
 
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
 use crate::investment as investment_domain;
 use crate::investment::FinancialFreedomOverview;
+use crate::read_entry::read_entry;
 
 /// 财务自由度总览：可投资资产 × 3% 安全提取率对年度预算总额的覆盖比例（只读）。
 #[tauri::command]
 pub async fn financial_freedom(db: State<'_, DbState>) -> Result<FinancialFreedomOverview> {
     let conn = db.conn.clone();
-    run_db("financial_freedom", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        investment_domain::query_financial_freedom(&conn)
+    read_entry("financial_freedom", conn, move |conn| {
+        investment_domain::query_financial_freedom(conn)
     })
     .await
 }

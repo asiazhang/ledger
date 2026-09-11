@@ -13,8 +13,8 @@ use rusqlite::Connection;
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::EmitterSlot;
 use crate::categories::{Category, CategoryInput};
-use crate::db::run_db;
 use crate::error::AppError;
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::write_entry::{Outcome, write_entry};
 
@@ -32,9 +32,8 @@ use crate::write_entry::{Outcome, write_entry};
 pub async fn list_categories_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<crate::categories::Category>>, AppError> {
-    run_db("GET /api/v1/categories", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        Ok(Json(crate::categories::list_categories(&conn, false)?))
+    read_entry("GET /api/v1/categories", conn, move |conn| {
+        Ok(Json(crate::categories::list_categories(conn, false)?))
     })
     .await
 }

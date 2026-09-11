@@ -12,9 +12,9 @@ use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::EmitterSlot;
-use crate::db::run_db;
 use crate::error::AppError;
 use crate::merchants::{Merchant, MerchantUpdateInput};
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::write_entry::{Outcome, write_entry};
 
@@ -39,9 +39,8 @@ use crate::write_entry::{Outcome, write_entry};
 pub async fn list_merchants_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<Merchant>>, AppError> {
-    run_db("GET /api/v1/merchants", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        Ok(Json(crate::merchants::list_merchants(&conn, false)?))
+    read_entry("GET /api/v1/merchants", conn, move |conn| {
+        Ok(Json(crate::merchants::list_merchants(conn, false)?))
     })
     .await
 }

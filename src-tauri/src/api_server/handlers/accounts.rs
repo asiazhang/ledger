@@ -13,8 +13,8 @@ use rusqlite::Connection;
 use crate::accounts::{Account, AccountBalance, AccountInput, AccountUpdateInput};
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::EmitterSlot;
-use crate::db::run_db;
 use crate::error::AppError;
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::write_entry::{Outcome, write_entry};
 
@@ -33,9 +33,8 @@ use crate::write_entry::{Outcome, write_entry};
 pub async fn list_accounts_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<Account>>, AppError> {
-    run_db("GET /api/v1/accounts", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        let accounts = crate::accounts::list_accounts_for_api(&conn)?;
+    read_entry("GET /api/v1/accounts", conn, move |conn| {
+        let accounts = crate::accounts::list_accounts_for_api(conn)?;
         Ok(Json(accounts))
     })
     .await
@@ -164,9 +163,8 @@ pub async fn delete_account_handler(
 pub async fn list_account_balances_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<AccountBalance>>, AppError> {
-    run_db("GET /api/v1/accounts/balances", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        let balances = crate::accounts::list_account_balances_for_api(&conn)?;
+    read_entry("GET /api/v1/accounts/balances", conn, move |conn| {
+        let balances = crate::accounts::list_account_balances_for_api(conn)?;
         Ok(Json(balances))
     })
     .await

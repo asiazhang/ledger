@@ -30,7 +30,8 @@ import {
  * 触控语义：
  * - 卡片「⋯」与桌面右键共用同一 RowContextMenu open 入口（openRowMenu 可选——
  *   传入才渲染，搜索结果只读不传，与桌面表格操作列同构）；
- * - 整卡点击 = 编辑（activateRow 可选，refund 行不开放编辑的判定归调用方）；
+ * - 整卡点击 = 行激活（activateRow 可选，交易页 = 编辑或只读详情；refund 两类都不开放
+ *   的判定归调用方，ADR-0106 决策 10 / #1048）；
  *   卡内链接、「⋯」与金额触发器阻断冒泡，不连带整卡激活；
  * - 金额全文点按查看归 AmountCell（触控轴气泡，悬停一击可达同规）。
  *
@@ -42,7 +43,7 @@ const props = defineProps<{
   rows: Transaction[]
   /** 卡片「⋯」打开回调（与行右键同一 RowContextMenu open 入口）；缺省不渲染「⋯」（搜索结果只读） */
   openRowMenu?: (event: MouseEvent, row: Transaction) => void
-  /** 整卡点击回调（交易页 = 编辑）；缺省整卡点击无动作 */
+  /** 整卡点击回调（交易页 = 编辑或只读详情，判定归调用方）；缺省整卡点击无动作 */
   activateRow?: (row: Transaction) => void
 }>()
 
@@ -72,7 +73,7 @@ function amountColor(row: Transaction): string {
   return kindSemanticColor(row.kind, app.theme)
 }
 
-/** 整卡点击 = 编辑：交互元素（链接/按钮/金额触发器）冒泡已在各行阻断，这里只收空地点击。 */
+/** 整卡点击 = 行激活：交互元素（链接/按钮/金额触发器）冒泡已在各行阻断，这里只收空地点击。 */
 function onCardClick(row: Transaction): void {
   props.activateRow?.(row)
 }
