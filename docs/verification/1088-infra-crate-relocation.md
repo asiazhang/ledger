@@ -119,9 +119,23 @@
 
 - **本票前**（#1087 基线，commit `de097771` / run `34618048780`）：依赖缓存恢复
   `~2009 MB`，编译阶段 `Finished test profile in 1m 23s`（83s，编 `tauri-app` +
-  `ledger-infra` 两个 crate）。
-- **本票后**：见 PR run（待 CI 完成后回填：缓存体积、`Finished` 阶段耗时、job wall
-  clock）。
+ `ledger-infra` 两个 crate）。
+- **本票后**（commit `df82bfc9`，run `34623003769`，后端测试 job
+  `103341360384`，Linux x64 runner）：
+  - **依赖缓存**：恢复 `Cache Size: ~2009 MB (2107028882 B)`（restore-key 命中），
+    保存 `2107056400 B`——相对 #1087 基线的 2107047336 B 增量 ≈ +9 KB，在 rust-cache
+    清理噪声内（可视作零增量）；apt 缓存 `~59 MB` 命中。
+  - **编译阶段**：`Finished \`test\` profile [unoptimized + debuginfo] target(s) in
+    1m 29s`（89s），本仓仍只编 `tauri-app` + `ledger-infra` 两个 crate。
+  - **后端测试 job wall clock**：5m0s（300s；16:37:12 → 16:42:12），#1087 记录对照
+    ≈362s。
+  - **测试执行**：`ledger-infra` lib 234 用例 5.13s / 根包 lib 948 用例 40.38s /
+    API 集成 225 用例 10.21s / 命令集成 15 用例 11.51s / e2e 453 场景 ≈54s /
+    同步轮询 1 用例 0.29s。
+
+缓存体积与 job wall clock 前后基本持平（编译阶段 ±6s 属单次运行波动，本票不主张
+因果）；按 spec #1086 的口径，拆 crate 的价值不以编译收益为条件，CI 侧调优与基线
+刷新归 #1110。
 
 ### 本机（控制变量：touch 源文件后重编，依赖全热，kache 命中）
 
