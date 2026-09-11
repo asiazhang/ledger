@@ -14,6 +14,7 @@ pub mod passphrase_cache;
 pub mod perf_trace;
 pub mod query;
 pub mod schema_guard;
+pub mod tx_scope;
 
 /// 迁移集合。新增 schema 变更或种子数据时，在 `src-tauri/migrations/` 下新建
 /// `V00X__名称.sql`，并在 `migrations()` 的 `vec!` 里追加

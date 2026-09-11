@@ -5,10 +5,10 @@ use rusqlite::{Connection, OptionalExtension};
 use super::command::{PolicyCommand, PolicyCommandRow, record_policy_local};
 use super::model::{Policy, PolicyInput, PolicySourceDisplay};
 use crate::db::query::{query_all, query_one};
+use crate::db::tx_scope::ensure_transaction;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
-use crate::transaction::ensure_transaction;
 
 use super::validation::validate_input;
 

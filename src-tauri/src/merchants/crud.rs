@@ -10,10 +10,10 @@
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::db::query::query_all;
+use crate::db::tx_scope::ensure_transaction;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
-use crate::transaction::ensure_transaction;
 
 use super::command::{MerchantCommand, record_local};
 use super::model::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};

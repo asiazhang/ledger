@@ -31,11 +31,11 @@ use super::model::{
     ItemStatus, ItemWithDailyCost,
 };
 use crate::db::query::{query_all, query_one};
+use crate::db::tx_scope::ensure_transaction;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
 use crate::transaction::amount;
-use crate::transaction::ensure_transaction;
 
 /// 按 `id` 读未删除物品（多命令共用的前检）：不存在（或已软删除）返回 `None`。
 fn get_item_by_id(conn: &Connection, id: &str) -> Result<Option<Item>> {
