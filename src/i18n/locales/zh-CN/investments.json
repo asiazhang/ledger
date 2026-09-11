@@ -15,14 +15,9 @@
     "byYear": "按年度汇总",
     "byAccount": "按账户汇总",
     "byInstrument": "按标的汇总",
-    "details": "卖出明细",
     "columns": {
-      "date": "日期",
       "account": "账户",
-      "instrument": "标的",
       "name": "名称",
-      "quantity": "数量",
-      "costPrice": "成本单价",
       "realizedPnl": "已实现盈亏",
       "year": "年度",
       "symbol": "代码"

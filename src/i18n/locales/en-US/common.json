@@ -46,7 +46,8 @@
   },
   "link": {
     "viewMerchant": "View transactions with this merchant",
-    "viewAccount": "View transactions with this account"
+    "viewAccount": "View transactions with this account",
+    "viewInstrument": "View transactions with this instrument"
   },
   "app": {
     "name": "OpenLedger"

@@ -1,6 +1,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { api } from '@/api'
 import { useLoadable } from '@/composables/useLoadable'
+import type { CurrencyAmountGroup } from '@/composables/usePortfolioOverview'
 import { useReferenceStore } from '@/stores/reference'
 import type { RealizedPnlSummary } from '@/types'
 
@@ -86,7 +87,14 @@ export function useRealizedPnl() {
     void refresh()
   }
 
-  const totalPnl = computed(() => summary.value?.total_realized_pnl_cents ?? 0)
+  // 总盈亏按币种分组（ADR-0107 决策 6）：后端按匹配行币种分组返回，不做跨币种折算，
+  // 展示层经 formatCurrencyGroups 逐组格式化（与持仓页签合计同款）。
+  const totalGroups = computed<CurrencyAmountGroup[]>(() =>
+    (summary.value?.total ?? []).map((g) => ({
+      currencyCode: g.currency_code,
+      cents: g.realized_pnl_cents,
+    })),
+  )
 
   onMounted(() => {
     // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
@@ -102,7 +110,7 @@ export function useRealizedPnl() {
     accountOptions,
     pnlInstrumentOptions,
     searchingInstruments,
-    totalPnl,
+    totalGroups,
     refresh,
     searchInstruments,
     onSelectInstrument,

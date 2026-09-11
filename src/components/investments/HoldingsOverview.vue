@@ -22,6 +22,7 @@ import { useInstrumentInfoSync } from '@/composables/useInstrumentInfoSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import { pnlSemanticColor } from '@/theme/semantic-colors'
 import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
+import InstrumentLink from '@/components/InstrumentLink.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import {
   formatCurrencyGroups,
@@ -96,7 +97,14 @@ const scrollX = computed(() => sumFixedColumnWidths(overviewColumns.value))
 // 列形态遵循词汇表「表格列形态」约定：数值列右对齐 + 等宽数字（className 单点
 // 挂全局工具类），长名称列弹性 + 单行 ellipsis 悬停全名，短内容列按内容定宽。
 const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
-  { title: t('investments.holdings.columns.symbol'), key: 'symbol', width: 100, render: (r) => r.symbol ?? '-' },
+  {
+    title: t('investments.holdings.columns.symbol'),
+    key: 'symbol',
+    width: 100,
+    // 标的代码列下钻（ADR-0107 决策 4）：跳交易页 ?account=&instrument=（不带 kinds，
+    // 「该标的的交易历史」语义完整，sell 筛选交易页一键可得）；无代码渲染纯文本「-」。
+    render: (r) => h(InstrumentLink, { instrumentId: r.instrumentId, accountId: r.accountId, label: r.symbol ?? null }),
+  },
   {
     title: t('investments.holdings.columns.name'),
     key: 'instrumentName',

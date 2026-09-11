@@ -657,3 +657,215 @@ fn list_transactions_degenerate_inputs_do_not_panic() {
     assert_eq!(huge_page.items.len(), 0, "极端页码应返回空");
     assert_eq!(huge_page.total, 5);
 }
+
+// 标的过滤（ADR-0107）：核心交易行不持标的信息，经 security_transactions 扩展表
+// 子查询命中——buy/sell 由 instrument_id（转出腿）命中，convert 任一腿命中
+// （转入腿 to_instrument_id 同算，与时点持仓推算认 convert 两腿的既有口径对齐）。
+
+/// 卖出输入构造器（本文件局部：标的过滤用例需要）。
+fn make_sell_input(
+    account_id: &str,
+    instrument_id: &str,
+    qty: f64,
+    price: i64,
+) -> TransactionInput {
+    TransactionInput {
+        merchant_name: None,
+        policy_id: None,
+        kind: TransactionKind::Sell,
+        amount_cents: 0,
+        currency_code: "USD".into(),
+        account_id: account_id.into(),
+        to_account_id: None,
+        funding_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-01-20".into(),
+        instrument_id: Some(instrument_id.into()),
+        quantity: Some(qty),
+        price_cents: Some(price),
+        fee_cents: Some(0),
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        idempotency_key: None,
+    }
+}
+
+/// 基金转换输入构造器（本文件局部：标的过滤「任一腿命中」用例需要）；行金额
+/// 占位 0（服务端按 FIFO 消耗算定结转成本后重写）。
+fn make_convert_input(
+    account_id: &str,
+    instrument_id: &str,
+    to_instrument_id: &str,
+) -> TransactionInput {
+    TransactionInput {
+        merchant_name: None,
+        policy_id: None,
+        kind: TransactionKind::Convert,
+        amount_cents: 0,
+        currency_code: "USD".into(),
+        account_id: account_id.into(),
+        to_account_id: None,
+        funding_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-02-01".into(),
+        instrument_id: Some(instrument_id.into()),
+        quantity: Some(10.0),
+        price_cents: None,
+        fee_cents: Some(0),
+        to_instrument_id: Some(to_instrument_id.into()),
+        to_quantity: Some(10.0),
+        out_amount_cents: Some(100_000),
+        in_amount_cents: Some(100_000),
+        idempotency_key: None,
+    }
+}
+
+#[test]
+fn list_transactions_filter_by_instrument_hits_buy_and_sell() {
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-inst", "inst-hit");
+    test_support::seed_instrument(&conn, "inst-other", "OTHER", "Other", "USD", "unknown");
+
+    // 无关交易（不持标的信息）+ 命中标的的买卖 + 无关标的的买入
+    create_transaction_internal(
+        &conn,
+        make_input("acc-inst", TransactionKind::Expense, 500, "2026-01-05"),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-inst", "inst-hit", 10.0, 100_000, 0),
+    )
+    .unwrap();
+    let sell_id =
+        create_transaction_internal(&conn, make_sell_input("acc-inst", "inst-hit", 4.0, 150_000))
+            .unwrap()
+            .id;
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-inst", "inst-other", 10.0, 100_000, 0),
+    )
+    .unwrap();
+
+    let result = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            instrument_id: Some("inst-hit".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(result.total, 2, "命中标的的 buy 与 sell 各一条");
+    assert!(result.items.iter().any(|t| t.kind == TransactionKind::Buy));
+    assert!(
+        result
+            .items
+            .iter()
+            .any(|t| t.kind == TransactionKind::Sell && t.id == sell_id)
+    );
+    // 无关标的与无标的行不命中
+    assert!(
+        !result
+            .items
+            .iter()
+            .any(|t| t.kind == TransactionKind::Expense)
+    );
+}
+
+#[test]
+fn list_transactions_filter_by_instrument_matches_convert_either_leg() {
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-conv", "inst-out");
+    test_support::seed_instrument(&conn, "inst-in", "TOIN", "To In", "USD", "unknown");
+
+    // 先买入建立转出腿持仓，再转换 A → B（同一交易行携带两腿）
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-conv", "inst-out", 10.0, 100_000, 0),
+    )
+    .unwrap();
+    let convert_id =
+        create_transaction_internal(&conn, make_convert_input("acc-conv", "inst-out", "inst-in"))
+            .unwrap()
+            .id;
+
+    // 转出腿命中（instrument_id）
+    let out = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            instrument_id: Some("inst-out".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(out.total, 2, "买入 + 转换行（转出腿）命中");
+    assert!(out.items.iter().any(|t| t.id == convert_id));
+
+    // 转入腿同算（to_instrument_id，任一腿命中即算）
+    let inp = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            instrument_id: Some("inst-in".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(inp.total, 1, "convert 转入腿命中即算");
+    assert_eq!(inp.items[0].id, convert_id);
+}
+
+#[test]
+fn list_transactions_filter_by_instrument_combines_with_account() {
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-i1", "inst-x");
+    test_support::seed_account(&conn, "acc-i2", "另一投资户", "investment", "USD", 0);
+
+    // 两个账户都买同一标的：标的维度单独命中 2 行，与账户 AND 组合后只剩 1 行
+    create_transaction_internal(&conn, make_buy_input("acc-i1", "inst-x", 10.0, 100_000, 0))
+        .unwrap();
+    create_transaction_internal(&conn, make_buy_input("acc-i2", "inst-x", 10.0, 100_000, 0))
+        .unwrap();
+
+    let combined = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            account_id: Some("acc-i2".into()),
+            instrument_id: Some("inst-x".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(combined.total, 1, "标的与账户维度 AND 组合");
+    assert!(combined.items.iter().all(|t| t.account_id == "acc-i2"));
+}
+
+#[test]
+fn list_transactions_filter_by_unknown_instrument_returns_empty() {
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-inst", "inst-hit");
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-inst", "inst-hit", 10.0, 100_000, 0),
+    )
+    .unwrap();
+
+    // 未知标的 id：子查询不命中，返回空集与 total 0（不报错，与其它维度同规）
+    let result = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            instrument_id: Some("inst-none".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(result.total, 0);
+    assert!(result.items.is_empty());
+}

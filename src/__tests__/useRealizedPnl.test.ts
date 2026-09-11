@@ -44,13 +44,13 @@ beforeEach(async () => {
 })
 
 describe('useRealizedPnl 已实现盈亏数据层', () => {
-  it('加载已实现盈亏汇总并派生 totalPnl', async () => {
-    const { summary, loading, totalPnl, refresh } = withSetup(() => useRealizedPnl())
-    expect(totalPnl.value).toBe(0) // 未加载前空态
+  it('加载已实现盈亏汇总并派生按币种分组的 totalGroups（ADR-0107 决策 6）', async () => {
+    const { summary, loading, totalGroups, refresh } = withSetup(() => useRealizedPnl())
+    expect(totalGroups.value).toEqual([]) // 未加载前空态
     await refresh()
     expect(loading.value).toBe(false)
     expect(summary.value).toEqual(mockSummary)
-    expect(totalPnl.value).toBe(30000)
+    expect(totalGroups.value).toEqual([{ currencyCode: 'CNY', cents: 30000 }])
   })
 
   it('无筛选时不带 filter 参数（后端全表口径）', async () => {
@@ -75,7 +75,9 @@ describe('useRealizedPnl 已实现盈亏数据层', () => {
               releaseFirst = resolve
             })
           }
-          return Promise.resolve(makePnlSummary({ total_realized_pnl_cents: 777 }))
+          return Promise.resolve(
+            makePnlSummary({ total: [{ currency_code: 'CNY', realized_pnl_cents: 777 }] }),
+          )
         },
       },
     })
@@ -83,12 +85,12 @@ describe('useRealizedPnl 已实现盈亏数据层', () => {
     const first = refresh()
     const second = refresh()
     await second
-    expect(summary.value!.total_realized_pnl_cents).toBe(777)
+    expect(summary.value!.total[0].realized_pnl_cents).toBe(777)
 
     // 迟到的先发结果：已被 Loadable 竞态裁决作废为空，不覆写终态、不置 error
     releaseFirst(mockSummary)
     await first
-    expect(summary.value!.total_realized_pnl_cents).toBe(777)
+    expect(summary.value!.total[0].realized_pnl_cents).toBe(777)
     expect(error.value).toBeNull()
   })
 

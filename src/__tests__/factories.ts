@@ -348,16 +348,17 @@ export function makeFinancialFreedom(
   }
 }
 
-/** realized_pnl_summary 返回值工厂（issue #325）：默认全表汇总 300 元 */
+/** realized_pnl_summary 返回值工厂（issue #325；ADR-0107 起按币种分组、无明细）：默认全表汇总 300 元（CNY） */
 export function makePnlSummary(partial: Partial<RealizedPnlSummary> = {}): RealizedPnlSummary {
   return {
-    total_realized_pnl_cents: 30000,
-    by_year: [{ year: '2026', realized_pnl_cents: 30000 }],
-    by_account: [{ account_id: 'acc-1', account_name: '证券账户A', realized_pnl_cents: 30000 }],
-    by_instrument: [
-      { instrument_id: 'inst-1', symbol: '600000', name: '浦发银行', realized_pnl_cents: 30000 },
+    total: [{ currency_code: 'CNY', realized_pnl_cents: 30000 }],
+    by_year: [{ year: '2026', currency_code: 'CNY', realized_pnl_cents: 30000 }],
+    by_account: [
+      { account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', realized_pnl_cents: 30000 },
     ],
-    details: [],
+    by_instrument: [
+      { instrument_id: 'inst-1', symbol: '600000', name: '浦发银行', currency_code: 'CNY', realized_pnl_cents: 30000 },
+    ],
     ...partial,
   }
 }
