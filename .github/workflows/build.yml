@@ -149,6 +149,9 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # 范围显式 `--workspace`（spec #1086 / issue #1087）：非虚拟 workspace 下 cargo
+      # 默认只作用于根包，缺范围参数会静默漏跑成员 crate；cargo 对没有对应 target
+      # 的成员自动跳过，故 `--lib --test '*'` 的组合对成员 crate 安全。
       # 显式 target 选择：lib + 全部集成 target（tests/ 下每个 *.rs 与 */main.rs 各一个
       # crate，当前 api_server / e2e / commands / sync_trigger_poll）。`--test` 的名称
       # 支持 Unix glob（cargo 文档明确要求单引号防 shell 展开），`'*'` 命中全部集成
@@ -157,7 +160,7 @@ jobs:
       # 生成器正确性单测（属性能工具链，perf-bench.yml 域，随每日常规基准一起运行）
       # 拖回 PR CI。副作用：显式 target 选择不跑 doc-tests（当前为 0 个，无损失）。
       - name: Rust 单元测试 + BDD/e2e 测试（cucumber）
-        run: cargo test --lib --test '*'
+        run: cargo test --workspace --lib --test '*'
 
   backend-lint:
     name: 后端静态检查（fmt + clippy）
@@ -197,10 +200,10 @@ jobs:
           workspaces: src-tauri
 
       - name: 格式检查
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Clippy 检查
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   # 发布构建：桌面三平台 + Android 四行矩阵并行（ADR-0066 / ADR-0074），产物
   # upload-artifact 交给 publish 汇总，单一 GitHub Release 拓扑不变。

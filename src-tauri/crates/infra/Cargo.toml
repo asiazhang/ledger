@@ -1,0 +1,15 @@
+[package]
+name = "ledger-infra"
+version = "0.6.0"
+description = "Ledger 后端基础设施 crate：无域语义、被所有层消费"
+edition = "2024"
+publish = false
+
+[dependencies]
+# IPC 载荷脱敏（issue #1087）：纯 serde_json::Value 遍历，无域语义、无本仓依赖。
+serde_json = "1"
+
+# 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+[lints]
+workspace = true

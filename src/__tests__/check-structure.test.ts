@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { WHITELIST, LAYER } from '../../scripts/check-structure.ts'
+import { CRATES, WHITELIST, LAYER } from '../../scripts/check-structure.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-structure.ts（结构守门，ADR-0056）。
 // 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。
@@ -32,12 +32,10 @@ afterAll(() => {
 const STUB = '// 结构守门夹具桩\npub fn stub() {}\n'
 
 /**
- * 建临时夹具：按脚本导出的 WHITELIST 生成全部条目（目录 → mod.rs，文件 → 同名文件），
- * 再按 overrides 追加/覆盖文件。返回脚本参数（夹具 src 目录）。
+ * 按脚本导出的 WHITELIST 生成全部条目（目录 → mod.rs，文件 → 同名文件），
+ * 再按 overrides 追加/覆盖文件——单层夹具与 workspace 夹具共用的填充步骤。
  */
-function makeFixture(overrides: Record<string, string> = {}): string[] {
-  const src = mkdtempSync(join(tmpdir(), 'check-structure-'))
-  tempDirs.push(src)
+function populateWhitelistEntries(src: string, overrides: Record<string, string> = {}): void {
   for (const { path } of WHITELIST) {
     const abs = join(src, path)
     if (path.endsWith('.rs')) {
@@ -53,6 +51,16 @@ function makeFixture(overrides: Record<string, string> = {}): string[] {
     mkdirSync(join(file, '..'), { recursive: true })
     writeFileSync(file, content)
   }
+}
+
+/**
+ * 建临时夹具：按脚本导出的 WHITELIST 生成全部条目，
+ * 再按 overrides 追加/覆盖文件。返回脚本参数（夹具 src 目录）。
+ */
+function makeFixture(overrides: Record<string, string> = {}): string[] {
+  const src = mkdtempSync(join(tmpdir(), 'check-structure-'))
+  tempDirs.push(src)
+  populateWhitelistEntries(src, overrides)
   return [src]
 }
 
@@ -473,5 +481,242 @@ describe('check-structure 原生事务语句禁令（issue #1014 / #1003 定案 
     const r = run([])
     expect(r.status).toBe(0)
     expect(r.output).toContain('原生事务语句全树扫描')
+  })
+})
+
+/** workspace 骨架夹具的可覆盖面（缺省为一份全绿的骨架）。 */
+interface CrateFixtureOverrides {
+  rootManifest?: string
+  memberManifest?: string
+  checkSh?: string
+  testSh?: string
+  lintFixSh?: string
+  workflow?: string
+  /** 追加一个未登记的成员目录（crates/<name>）——新 crate 漏登记的负向夹具 */
+  orphanCrate?: string
+}
+
+/** 六件套 deny 声明（workspace 级唯一声明处，ADR-0060） */
+const LINT_DENIES = [
+  'unwrap_used = "deny"',
+  'expect_used = "deny"',
+  'panic = "deny"',
+  'todo = "deny"',
+  'unimplemented = "deny"',
+  'unreachable = "deny"',
+].join('\n')
+
+/**
+ * 建 workspace 骨架夹具：`<root>/src-tauri/{Cargo.toml,src,crates/infra}` +
+ * 仓库根的门槛宿主（scripts/check.sh、scripts/test.sh、.github/workflows/build.yml）。
+ * 返回脚本参数 `[src-dir, src-tauri-dir]`——src-tauri-dir 指向夹具使 crate 边界
+ * 核对落在夹具上（缺省时核对真实仓库，见既有用例）。
+ */
+function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
+  const root = mkdtempSync(join(tmpdir(), 'check-structure-crate-'))
+  tempDirs.push(root)
+  const srcTauri = join(root, 'src-tauri')
+  populateWhitelistEntries(join(srcTauri, 'src'))
+
+  const rootManifest =
+    overrides.rootManifest ??
+    [
+      '[package]',
+      'name = "tauri-app"',
+      'version = "0.6.0"',
+      'edition = "2024"',
+      '',
+      '[workspace]',
+      'members = ["crates/*"]',
+      'resolver = "3"',
+      '',
+      '[workspace.lints.clippy]',
+      LINT_DENIES,
+      '',
+      '[lints]',
+      'workspace = true',
+      '',
+    ].join('\n')
+  writeFileSync(join(srcTauri, 'Cargo.toml'), rootManifest)
+
+  const memberManifest =
+    overrides.memberManifest ??
+    [
+      '[package]',
+      'name = "ledger-infra"',
+      'version = "0.6.0"',
+      'edition = "2024"',
+      '',
+      '[lints]',
+      'workspace = true',
+      '',
+    ].join('\n')
+  mkdirSync(join(srcTauri, 'crates', 'infra', 'src'), { recursive: true })
+  writeFileSync(join(srcTauri, 'crates', 'infra', 'Cargo.toml'), memberManifest)
+  writeFileSync(join(srcTauri, 'crates', 'infra', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
+  if (overrides.orphanCrate) {
+    mkdirSync(join(srcTauri, 'crates', overrides.orphanCrate, 'src'), { recursive: true })
+    writeFileSync(
+      join(srcTauri, 'crates', overrides.orphanCrate, 'Cargo.toml'),
+      '[package]\nname = "orphan"\nversion = "0.1.0"\nedition = "2024"\n',
+    )
+    writeFileSync(
+      join(srcTauri, 'crates', overrides.orphanCrate, 'src', 'lib.rs'),
+      'pub fn stub() {}\n',
+    )
+  }
+
+  mkdirSync(join(root, 'scripts'), { recursive: true })
+  mkdirSync(join(root, '.github', 'workflows'), { recursive: true })
+  writeFileSync(
+    join(root, 'scripts', 'check.sh'),
+    overrides.checkSh ??
+      '( cd src-tauri && cargo clippy --workspace --all-targets --all-features -- -D warnings )\n' +
+        '( cd src-tauri && cargo fmt --all -- --check )\n',
+  )
+  writeFileSync(
+    join(root, 'scripts', 'test.sh'),
+    overrides.testSh ?? '( cd src-tauri && cargo test --workspace )\n',
+  )
+  writeFileSync(
+    join(root, 'scripts', 'lint-fix.sh'),
+    overrides.lintFixSh ??
+      '( cd src-tauri && cargo fmt --all && cargo clippy --fix --workspace --all-targets --all-features --allow-dirty --allow-staged )\n',
+  )
+  writeFileSync(
+    join(root, '.github', 'workflows', 'build.yml'),
+    overrides.workflow ??
+      [
+        'jobs:',
+        '  b:',
+        '    steps:',
+        '      - run: cargo test --workspace --lib --test "*"',
+        '      - run: cargo fmt --all --check',
+        '      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings',
+        '',
+      ].join('\n'),
+  )
+
+  return [join(srcTauri, 'src'), srcTauri]
+}
+
+describe('check-structure crate 边界核对（spec #1086 / issue #1087 门禁前置）', () => {
+  it('workspace 骨架夹具：成员登记 + 门禁继承 + 命令覆盖齐全 → 通过', () => {
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`crate 边界 ${CRATES.length} 个`)
+  })
+
+  it('真实仓库默认通过：crate 边界核对入摘要', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`crate 边界 ${CRATES.length} 个`)
+  })
+
+  it('成员 crate 删掉 [lints] workspace = true → 红（门禁继承删除即变红）', () => {
+    const args = makeCrateFixture({
+      memberManifest: '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('门禁继承')
+    expect(r.output).toContain('ledger-infra')
+  })
+
+  it('根包删掉 [lints] workspace = true → 红', () => {
+    const args = makeCrateFixture({
+      rootManifest: [
+        '[package]',
+        'name = "tauri-app"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[workspace]',
+        'members = ["crates/*"]',
+        'resolver = "3"',
+        '',
+        '[workspace.lints.clippy]',
+        LINT_DENIES,
+        '',
+      ].join('\n'),
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('根包缺 [lints] workspace = true')
+  })
+
+  it('新增成员目录未登记 CRATES → 红（成员登记删除即变红）', () => {
+    const args = makeCrateFixture({ orphanCrate: 'newdomain' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('未登记 CRATES')
+    expect(r.output).toContain('crates/newdomain')
+  })
+
+  it('workspace members 未用 crates/* glob → 红', () => {
+    const args = makeCrateFixture({
+      rootManifest: [
+        '[package]',
+        'name = "tauri-app"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[workspace]',
+        'members = ["crates/infra"]',
+        'resolver = "3"',
+        '',
+        '[workspace.lints.clippy]',
+        LINT_DENIES,
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crates/*')
+  })
+
+  it('静态检查/测试命令缺 --workspace → 红（命令覆盖全成员删除即变红）', () => {
+    const args = makeCrateFixture({ testSh: '( cd src-tauri && cargo test )\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('缺 --workspace')
+    expect(r.output).toContain('test.sh')
+  })
+
+  it('`--all-targets` 等 `--all*` 旗标不算 workspace 范围 → 红（防假绿回归）', () => {
+    // 改版前的 build.yml clippy 形态：只有 --all-targets / --all-features，没有
+    // --workspace。用 \b 匹配 --all 会误判为已覆盖，本用例锁死该假绿。
+    const args = makeCrateFixture({
+      lintFixSh:
+        '( cd src-tauri && cargo clippy --fix --all-targets --all-features --allow-dirty --allow-staged )\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('缺 --workspace')
+    expect(r.output).toContain('lint-fix.sh')
+  })
+
+  it('cargo fmt 缺 --all → 红（fmt 的 workspace 别名是 --all）', () => {
+    const args = makeCrateFixture({ checkSh: '( cd src-tauri && cargo fmt -- --check )\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('缺 --workspace')
+    expect(r.output).toContain('check.sh')
+  })
+
+  it('基础设施 crate 反向依赖壳层 crate → 红（依赖方向核对）', () => {
+    const args = makeCrateFixture({
+      memberManifest:
+        '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 依赖方向')
+    expect(r.output).toContain('ledger-infra')
   })
 })

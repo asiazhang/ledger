@@ -57,6 +57,10 @@ base64 = "0.23"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 pinyin = "0.11"
+# 基础设施 crate（spec #1086 / issue #1087）：workspace 首位成员，承载无域语义、
+# 被所有层消费的能力。本票只落第一个最小模块（IPC 载荷脱敏），其余基础设施
+# 随 #1088「基础设施 crate 全量归位」迁入。
+ledger-infra = { path = "crates/infra" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]
@@ -107,10 +111,22 @@ harness = false
 [profile.dev.package."*"]
 debug = "line-tables-only"
 
-[lints.clippy]
+# workspace 骨架（spec #1086 / issue #1087）：Rust 根升级为 workspace 根，根包仍是
+# tauri 应用包（构建与桌面/Android 打包命令零变化）；成员 crate 集中在 `crates/` 下，
+# 用 glob 纳入——新增成员目录自动成为 workspace 成员，不依赖手工清单。
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
 # 易 panic 构造六件套 deny 门禁（issue #432 / ADR-0060）：门禁约束生产路径；
 # 测试目标经 crate 根与集成/BDD 测试 crate 头部 cfg_attr(test, allow) 整体豁免，
 # 存量生产 panic 点按 B/C/A 三类逐点豁免安置（清单与纪律见 ADR-0060）。
+#
+# 门禁的**唯一声明处**在 workspace 级 `[workspace.lints.clippy]`：lint 表不跨
+# package 自动继承，成员必须显式写 `[lints] workspace = true`——漏写会让门禁
+# 静默消失而 clippy 依然全绿。`scripts/check-structure.ts` 的 crate 边界核对
+# 对「成员漏继承」与「新成员未登记」做删除即变红的负向守门（ADR-0056 门禁前置）。
+[workspace.lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
@@ -118,3 +134,6 @@ todo = "deny"
 unimplemented = "deny"
 unreachable = "deny"
 
+# 根包同为 workspace 成员，六件套门禁经 workspace 继承（本表即继承接线）。
+[lints]
+workspace = true

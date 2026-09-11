@@ -39,14 +39,23 @@
 // ③ 原生事务语句禁令（issue #1014 / #1003 grilling 定案 7）——产品代码手写
 //    `BEGIN`/`COMMIT`/`ROLLBACK` 即红，唯一合法住址 `db/tx_scope.rs`（事务原语
 //    本体）；靶形态落在字符串里，扫描保留字符串、只掩码注释；外挂测试豁免不变。
+// crate 边界核对（spec #1086 / issue #1087 门禁前置）：模块路径白名单之上再加
+// crate 级核对——CRATES 是 workspace 成员、分层与允许依赖方向的唯一事实源；
+// 成员目录（crates/*）与 CRATES 双向全等（新 crate 未登记即红）；每个成员须写
+// `[lints] workspace = true` 继承六件套门禁（漏写即红——clippy 本身不会报）；
+// 依赖方向按 壳 → 域 → 基础设施 单向核对；scripts/check.sh、scripts/test.sh 与
+// scripts/lint-fix.sh、CI workflow 的 cargo clippy/test/fmt 命令须显式 `--workspace`
+// 或词尾 `--all`（非虚拟 workspace 下默认只作用于根包，缺范围参数会静默漏检成员；
+// `--all-targets` 等 `--all*` 旗标不算范围——\b 匹配会在这里假绿，故按词尾判定）。
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-structure.ts`。
-// 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-structure.ts [src-dir]
+// 默认校验本仓库；测试可传位置参数指向夹具：
+// bun scripts/check-structure.ts [src-dir] [src-tauri-dir]
 // 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job），
 // 与命令注册一致性检查并列。
 
-import { readdirSync, readFileSync, statSync, type Stats } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readdirSync, readFileSync, statSync, type Stats } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
 /** 白名单条目（ADR-0056 决策 4） */
@@ -97,6 +106,79 @@ export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'write_entry.rs', layer: '基础设施', note: '壳层统一写入口（ADR-0073，spec #523）' },
   { path: 'read_entry.rs', layer: '基础设施', note: '壳层统一读入口（ADR-0104，spec #1009）' },
 ]
+
+/**
+ * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
+ * 与上面的 `LAYER`（单 crate 内的**模块路径**分层：域目录 / 基础设施）刻意分开——
+ * 两者是不同粒度的事实源，同名值不合并（合并只会让任一侧语义被动漂移）。
+ */
+export const CRATE_LAYER = {
+  SHELL: '壳',
+  DOMAIN: '域',
+  INFRA: '基础设施',
+} as const
+
+export type CrateLayer = (typeof CRATE_LAYER)[keyof typeof CRATE_LAYER]
+
+/** crate 依赖方向优先级（数值大者可依赖数值小者）：壳 → 域 → 基础设施。 */
+const CRATE_LAYER_RANK: Record<CrateLayer, number> = {
+  [CRATE_LAYER.SHELL]: 2,
+  [CRATE_LAYER.DOMAIN]: 1,
+  [CRATE_LAYER.INFRA]: 0,
+}
+
+/** crate 边界条目（单一事实源，spec #1086 / issue #1087）：dir 相对 src-tauri。 */
+export interface CrateEntry {
+  name: string
+  dir: string
+  layer: CrateLayer
+  note: string
+}
+
+/**
+ * crate 边界清单：workspace 成员、分层与允许的依赖方向（壳 → 域 → 基础设施）
+ * 的唯一事实源——结构守门据此核对成员登记、门禁继承与依赖方向；每拆一个域
+ * crate 在此追加一行（与 WHITELIST 同为「已验证事实固化为规格」）。
+ */
+export const CRATES: readonly CrateEntry[] = [
+  {
+    name: 'tauri-app',
+    dir: '.',
+    layer: CRATE_LAYER.SHELL,
+    note: 'tauri 应用包：命令注册扫描、IPC/HTTP 壳与集成测试入口；过渡期仍承载尚未迁出的域，随 P1–P5 逐域迁出',
+  },
+  {
+    name: 'ledger-infra',
+    dir: 'crates/infra',
+    layer: CRATE_LAYER.INFRA,
+    note: '基础设施 crate（#1087 首位成员：IPC 载荷脱敏；#1088 起承载数据库/错误/设置/日志/事件/信号/闭集/壳层统一读写入口）',
+  },
+]
+
+/** 成员目录约定（workspace glob）：新增 crate 只需落在此目录下即自动入 workspace。 */
+const MEMBER_DIR_GLOB = 'crates/*'
+
+/** 易 panic 构造六件套（ADR-0060）：workspace 级声明的键集（单一来源）。 */
+const PANIC_LINT_KEYS = [
+  'unwrap_used',
+  'expect_used',
+  'panic',
+  'todo',
+  'unimplemented',
+  'unreachable',
+] as const
+
+/** 显式声明 workspace 范围的 cargo 命令宿主（静态检查与测试命令覆盖全成员）。 */
+const WORKSPACE_COMMAND_FILES = [
+  'scripts/check.sh',
+  'scripts/test.sh',
+  'scripts/lint-fix.sh',
+  '.github/workflows/build.yml',
+] as const
+
+/** workspace 范围参数：`--workspace` 或 `--all`（后者仅在词尾，防止 `--all-targets` 假绿）。 */
+const WORKSPACE_SCOPE_PATTERN = /(?:^|\s)--workspace(?:\s|$)/
+const ALL_SCOPE_PATTERN = /(?:^|\s)--all(?:\s|$)/
 
 /** 壳层依赖形态：模块路径引用（crate::commands::x / commands::x）与别名引入 */
 const SHELL_DEP_PATTERN = /\bcommands\s*::|\bcommands\s+as\b/
@@ -441,9 +523,210 @@ function collectRustFiles(dir: string, relBase: string): RustFileRef[] {
   return out
 }
 
+/** 取 TOML 段内容（段头到下一个段头之间，不含段头行）；段不存在返回 null。 */
+function manifestSection(text: string, section: string): string | null {
+  const lines = text.split('\n')
+  const header = `[${section}]`
+  let start = -1
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim()
+    if (start === -1) {
+      if (trimmed === header) start = i + 1
+    } else if (trimmed.startsWith('[')) {
+      return lines.slice(start, i).join('\n')
+    }
+  }
+  return start === -1 ? null : lines.slice(start).join('\n')
+}
+
+/** 清单 [package] name（缺失返回 null）。 */
+function manifestPackageName(manifest: string): string | null {
+  const section = manifestSection(manifest, 'package')
+  const m = section?.match(/(?:^|\n)\s*name\s*=\s*"([^"]+)"/)
+  return m ? m[1] : null
+}
+
+/**
+ * 清单声明的依赖 crate 名（含 dev 依赖与 target 变体；`[dependencies.x]` 子表形态）。
+ * 只取依赖表本身，段落其余内容不参与——供 crate 依赖方向核对使用。
+ */
+function declaredDependencyNames(manifest: string): string[] {
+  const names = new Set<string>()
+  const tableRe = /^(?:target\..+\.)?(?:dev-)?dependencies(?:\.([A-Za-z0-9_-]+))?$/
+  let current = ''
+  for (const raw of manifest.split('\n')) {
+    const header = raw.trim().match(/^\[([^\]]+)\]$/)
+    if (header) {
+      current = header[1]
+      const sub = tableRe.exec(current)
+      if (sub?.[1]) names.add(sub[1])
+      continue
+    }
+    const sub = tableRe.exec(current)
+    if (!sub || sub[1]) continue
+    const key = raw.trim().match(/^([A-Za-z0-9_-]+)\s*=/)
+    if (key) names.add(key[1])
+  }
+  return [...names]
+}
+
+/** [lints] 段声明 workspace 继承（`workspace = true`）——六件套门禁的继承接线。 */
+function inheritsWorkspaceLints(manifest: string): boolean {
+  const section = manifestSection(manifest, 'lints')
+  return section !== null && /(?:^|\n)\s*workspace\s*=\s*true\b/.test(section)
+}
+
+/** `crates/` 下含 Cargo.toml 的成员 crate 目录（相对 src-tauri，排序保证输出确定）。 */
+function memberCrateDirs(srcTauriDir: string): string[] {
+  const cratesDir = join(srcTauriDir, 'crates')
+  if (!existsSync(cratesDir)) return []
+  return readdirSync(cratesDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && existsSync(join(cratesDir, e.name, 'Cargo.toml')))
+    .map((e) => `crates/${e.name}`)
+    .sort()
+}
+
+/**
+ * crate 边界核对（spec #1086 / issue #1087 门禁前置）：workspace 成员登记、
+ * 六件套 deny 门禁继承、依赖方向（壳 → 域 → 基础设施）与静态检查/测试命令
+ * 的 workspace 覆盖，全部 fail loud、删除即变红：
+ * - 成员漏写 `[lints] workspace = true` → 门禁静默消失，clippy 仍绿，本核对红；
+ * - `crates/` 下新增 crate 未登记 CRATES → 边界知识分裂，本核对红；
+ * - cargo 命令缺 `--workspace` → 默认只作用于根包，本核对红。
+ */
+function checkCrateBoundaries(srcTauriDir: string): string[] {
+  const problems: string[] = []
+  const repoRoot = dirname(srcTauriDir)
+  const rootManifestPath = join(srcTauriDir, 'Cargo.toml')
+  if (!existsSync(rootManifestPath)) {
+    problems.push(`✗ crate 边界：workspace 根清单不存在：${rootManifestPath}`)
+    return problems
+  }
+  const rootManifest = readFileSync(rootManifestPath, 'utf8')
+
+  // ① workspace 骨架 + 成员目录 glob（新增 crate 自动成为 workspace 成员）
+  const workspaceSection = manifestSection(rootManifest, 'workspace')
+  if (workspaceSection === null) {
+    problems.push(
+      '✗ crate 边界：src-tauri/Cargo.toml 缺 [workspace] 段——Rust 根须为 workspace 根（spec #1086）',
+    )
+  } else if (!workspaceSection.includes(`"${MEMBER_DIR_GLOB}"`)) {
+    problems.push(
+      `✗ crate 边界：[workspace] members 未包含 "${MEMBER_DIR_GLOB}"——成员目录须用 glob 纳入，` +
+        '新增 crate 自动入 workspace，漏项即静默漏检',
+    )
+  }
+
+  // ② 六件套门禁的唯一声明处（workspace 级）
+  const clippyLints = manifestSection(rootManifest, 'workspace.lints.clippy')
+  if (clippyLints === null) {
+    problems.push(
+      '✗ 门禁继承：[workspace.lints.clippy] 缺失——六件套 deny 门禁的唯一声明处（ADR-0060 / spec #1086）',
+    )
+  } else {
+    for (const key of PANIC_LINT_KEYS) {
+      if (!new RegExp(`(?:^|\\n)\\s*${key}\\s*=\\s*"deny"`).test(clippyLints)) {
+        problems.push(`✗ 门禁继承：[workspace.lints.clippy] 缺 ${key} = "deny"（ADR-0060 六件套）`)
+      }
+    }
+  }
+
+  // ③ 根包同为 workspace 成员，须继承门禁
+  if (!inheritsWorkspaceLints(rootManifest)) {
+    problems.push(
+      '✗ 门禁继承：workspace 根包缺 [lints] workspace = true——根包同受六件套约束（ADR-0060）',
+    )
+  }
+
+  // ④ 成员登记：磁盘成员目录 ↔ CRATES 双向核对（新 crate 未登记即红）
+  const onDisk = memberCrateDirs(srcTauriDir)
+  const registeredMemberDirs = CRATES.filter((c) => c.dir.startsWith('crates/'))
+    .map((c) => c.dir)
+    .sort()
+  for (const dir of onDisk) {
+    if (!CRATES.some((c) => c.dir === dir)) {
+      problems.push(
+        `✗ crate 边界：成员 crate 未登记 CRATES：${dir}\n` +
+          '    新增 crate 后须在 scripts/check-structure.ts 的 CRATES 追加一行（分层 + 注释），' +
+          '否则边界知识分裂成两份、依赖方向失守',
+      )
+    }
+  }
+  for (const dir of registeredMemberDirs) {
+    if (!onDisk.includes(dir)) {
+      problems.push(`✗ crate 边界：CRATES 登记的成员目录不存在：${dir}（清单漂移 fail loud）`)
+    }
+  }
+
+  // ⑤ 每个 crate：清单存在、包名一致、门禁继承、依赖方向单向
+  for (const crate of CRATES) {
+    const isRoot = crate.dir === '.'
+    const manifestPath = isRoot ? rootManifestPath : join(srcTauriDir, crate.dir, 'Cargo.toml')
+    if (!existsSync(manifestPath)) {
+      problems.push(`✗ crate 边界：crate 清单不存在：${crate.name}（${crate.dir}）`)
+      continue
+    }
+    const manifest = isRoot ? rootManifest : readFileSync(manifestPath, 'utf8')
+    const name = manifestPackageName(manifest)
+    if (name !== crate.name) {
+      problems.push(
+        `✗ crate 边界：CRATES 登记名 ${crate.name} 与清单包名 ${name ?? '（缺 name）'} 不一致（${crate.dir}）`,
+      )
+    }
+    if (!isRoot && !inheritsWorkspaceLints(manifest)) {
+      problems.push(
+        `✗ 门禁继承：成员 crate ${crate.name} 缺 [lints] workspace = true（${crate.dir}/Cargo.toml）\n` +
+          '    缺失即六件套 deny 门禁静默消失而 clippy 依然全绿——删除继承行即变红（ADR-0060 / spec #1086）',
+      )
+    }
+    for (const dep of declaredDependencyNames(manifest)) {
+      const target = CRATES.find((c) => c.name === dep)
+      if (target && CRATE_LAYER_RANK[target.layer] > CRATE_LAYER_RANK[crate.layer]) {
+        problems.push(
+          `✗ crate 依赖方向：${crate.name}（${crate.layer}）依赖 ${target.name}（${target.layer}）\n` +
+            '    分层规则：壳 → 域 → 基础设施单向；被依赖逻辑应下沉到更低层（spec #1086）',
+        )
+      }
+    }
+  }
+
+  // ⑥ 静态检查与测试命令覆盖全成员（缺 --workspace 即静默漏检成员）
+  for (const rel of WORKSPACE_COMMAND_FILES) {
+    const abs = join(repoRoot, rel)
+    if (!existsSync(abs)) {
+      problems.push(`✗ workspace 命令覆盖：宿主文件不存在：${rel}`)
+      continue
+    }
+    const lines = readFileSync(abs, 'utf8').split('\n')
+    lines.forEach((line, i) => {
+      if (line.trim().startsWith('#')) return // 注释行（含 workflow 说明）不算命令
+      // 逐条命令核对（一行可有 `cargo fmt … && cargo clippy …` 多条：只看首个
+      // 匹配会把未覆盖的 clippy 放过去）；命令段截到下一个 shell 控制符为止。
+      const re = /\bcargo\s+(clippy|test|fmt)\b/g
+      let m: RegExpExecArray | null
+      while ((m = re.exec(line))) {
+        const rest = line.slice(m.index)
+        const end = rest.search(/&&|;|\|/)
+        const segment = end === -1 ? rest : rest.slice(0, end)
+        // `--all` 仅在词尾才算 workspace 别名：`--all-targets` / `--all-features`
+        // 的 `\b` 落在 `-` 前，用 \b 会假绿（本核对要拦的正是这一形态）。
+        if (WORKSPACE_SCOPE_PATTERN.test(segment) || ALL_SCOPE_PATTERN.test(segment)) continue
+        problems.push(
+          `✗ workspace 命令覆盖：${rel}:${i + 1} cargo ${m[1]} 缺 --workspace` +
+            '（非虚拟 workspace 下默认只作用于根包，会静默漏检成员 crate）\n' +
+            `    ${line.trim()}`,
+        )
+      }
+    })
+  }
+
+  return problems
+}
+
 function main(): void {
   const repoRoot = fileURLToPath(new URL('..', import.meta.url))
   const srcDir = process.argv[2] ?? join(repoRoot, 'src-tauri', 'src')
+  const srcTauriDir = process.argv[3] ?? join(repoRoot, 'src-tauri')
   const problems: string[] = []
   let scannedFiles = 0
   const domainCount = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN).length
@@ -570,6 +853,10 @@ function main(): void {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
   }
 
+  // crate 边界核对（spec #1086 / issue #1087）：成员登记、门禁继承、依赖方向、
+  // 静态检查/测试命令的 workspace 覆盖——与模块路径白名单并列，同为删除即变红。
+  problems.push(...checkCrateBoundaries(srcTauriDir))
+
   if (problems.length > 0) {
     for (const p of problems) console.error(p)
     console.error(
@@ -584,7 +871,8 @@ function main(): void {
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 业务域→同步域严形态零违规（契约模块 ${SYNC_CONTRACT_MODULE} ∪ 白名单 ${SYNC_ROOT_ALLOWED_SYMBOLS.size} 符号，ADR-0101）` +
       `· 模型域化禁令全树扫描 ${allFiles.length} 个文件零残留（ADR-0059）` +
-      `· 原生事务语句全树扫描 ${allFiles.length} 个文件仅 ${NATIVE_TX_STMT_ALLOWED} 一处（#1014）`,
+      `· 原生事务语句全树扫描 ${allFiles.length} 个文件仅 ${NATIVE_TX_STMT_ALLOWED} 一处（#1014）` +
+      `· crate 边界 ${CRATES.length} 个（成员登记 / 门禁继承 / 依赖方向 / workspace 命令覆盖，#1087）`,
   )
 }
 
