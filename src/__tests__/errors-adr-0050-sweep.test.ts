@@ -62,9 +62,11 @@ const cases: Case[] = [
   },
   {
     code: 'db.integrity-check-failed',
-    message: '数据库完整性检查失败: row 2 missing from index i',
-    params: ['row 2 missing from index i'],
-    en: 'database integrity check failed: row 2 missing from index i',
+    // 检查结果只是插值参数原样透传：用合成细节串，不耦合 SQLite 版本的输出文本
+    // （真实结果形态由 Rust 侧 db/tests/integrity.rs 用实际 pragma 输出断言）。
+    message: '数据库完整性检查失败: integrity detail',
+    params: ['integrity detail'],
+    en: 'database integrity check failed: integrity detail',
   },
 ]
 
