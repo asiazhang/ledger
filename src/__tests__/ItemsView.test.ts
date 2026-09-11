@@ -86,7 +86,7 @@ let itemList: ItemWithDailyCost[]
 /** 自选参考日重算的 mock 返回（null = 模拟重算失败，issue #121）。 */
 let calcResponse: ItemDailyCost | null = null
 
-/** 可供关联的支出交易（后端 list_transactions kind=expense 过滤）。 */
+/** 可供关联的支出交易（后端 list_transactions kinds=['expense'] 集合过滤，spec #1025）。 */
 const mockExpenseTxs: Transaction[] = [
   {
     id: 'tx-1',
@@ -142,11 +142,13 @@ function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
       // list_currencies 参考命令本场景需 USD 行（$ 金额格式化断言，overrides 优先于参考兑底）
       list_currencies: mockCurrencies,
       list_transactions: (args?: Record<string, unknown>) => {
-        const filter = (args as { filter?: { kind?: string } | null } | undefined)?.filter
-        // 物品视图只拉支出交易（关联购买交易候选）；其他 kind 返回空
+        const filter = (args as { filter?: { kinds?: string[] | null } | null } | undefined)?.filter
+        // 物品视图只拉支出交易（关联购买交易候选，kinds 集合参数 spec #1025）；其他类型返回空
+        const expenseOnly =
+          Array.isArray(filter?.kinds) && filter.kinds.length === 1 && filter.kinds[0] === 'expense'
         return Promise.resolve({
-          items: filter?.kind === 'expense' ? expenseTxs : [],
-          total: filter?.kind === 'expense' ? expenseTxs.length : 0,
+          items: expenseOnly ? expenseTxs : [],
+          total: expenseOnly ? expenseTxs.length : 0,
         })
       },
       list_items: () => Promise.resolve(itemList),

@@ -364,7 +364,7 @@ onMounted(() => {
   // 关联购买交易候选：支出交易，倒序取最近 100 笔（MVP 取舍：更早的交易不在
   // 候选内；加载失败不阻塞编辑弹窗换关）
   api
-    .listTransactions({ kind: 'expense', limit: 100 })
+    .listTransactions({ kinds: ['expense'], limit: 100 })
     .then((r) => (expenseTxs.value = r.items))
     .catch(() => {
       /* 候选为空，创建退化为手填 */

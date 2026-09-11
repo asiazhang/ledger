@@ -122,7 +122,8 @@ async fn test_batch_create_transactions_invalid_json_returns_400() {
 /// 非法 kind 在 API 边界即被拒绝（issue #74：kind 为闭集枚举，反序列化阶段校验）：
 /// - batch 请求体任一条 kind 非法 → 整批 4xx（请求体格式错误，axum Json rejection 为 422），
 ///   不是逐条 success:false；
-/// - list 查询参数 kind 非法 → 4xx（400）。
+/// - list 查询参数 kinds 非法 → 4xx（400）（spec #1025：非法断言挂集合参数，
+///   单值 kind 参数已移除）。
 /// 合法 kind 的成功路径不变（由其余测试覆盖）；断言只要求 4xx（用户传递参数错误），
 /// 不绑定具体状态码。
 #[tokio::test]
@@ -151,12 +152,12 @@ async fn test_kind_enum_rejects_unknown_at_api_boundary() {
         response.status()
     );
 
-    // list：非法 kind 查询参数 → 4xx（Query rejection 响应体为纯文本，不走 get_json）
+    // list：非法 kinds 查询参数 → 4xx（Query rejection 响应体为纯文本，不走 get_json）
     let response = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/v1/transactions?kind=bonus")
+                .uri("/api/v1/transactions?kinds=bonus")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -164,7 +165,7 @@ async fn test_kind_enum_rejects_unknown_at_api_boundary() {
         .unwrap();
     assert!(
         response.status().is_client_error(),
-        "非法 kind 过滤参数应 4xx，实际: {}",
+        "非法 kinds 过滤参数应 4xx，实际: {}",
         response.status()
     );
 }

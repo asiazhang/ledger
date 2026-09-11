@@ -411,16 +411,15 @@ pub struct TransactionListFilter {
     /// （两条件矛盾，恒为空集）；前端分类维度为单选三态（不过滤/精确/仅无分类），
     /// 不会同时携带两者。
     pub uncategorized_only: Option<bool>,
-    /// 交易类型过滤（income / expense / transfer / buy / sell / refund / dividend / split / convert，闭集枚举）。
-    /// 枚举反序列化对未知值报参数错误（400），不再静默传字符串给 SQL。
-    pub kind: Option<TransactionKind>,
-    /// 交易类型集合过滤（issue #581 报表分类下钻载荷）：命中 `kind IN (...)` 的未删除交易，
-    /// 与其余维度 AND 组合；与单值 `kind` 同携时也按 AND 组合。已发布单值参数语义冻结
-    /// （只增不改）：不携带本字段时行为与已发布契约一致。两形态反序列化
-    /// （[`deserialize_kind_set`]）：IPC JSON 为字符串数组；HTTP 查询串为逗号分隔单参数
-    /// （`kinds=expense,refund`，与前端下钻 URL 同一编码），逐元素闭集枚举、未知值
-    /// 报参数错误（400）。空数组视为未携带（不过滤，先例同 `uncategorized_only=false`）；
-    /// HTTP 空串（`kinds=`）不是合法字面量串，照报 400（先例同 `uncategorized_only=`）。
+    /// 交易类型集合过滤（spec #1025 起为唯一类型维度，手动多选与下钻载荷共用）：
+    /// 命中 `kind IN (...)` 的未删除交易，维度内取或、与其余维度 AND 组合。
+    /// 单值亦经本参数传递——原单值 `kind` 查询参数已移除（BREAKING，未发布窗口内
+    /// 就地变更，见 CHANGELOG）：旧调用方传 `kind=` 不报错、被忽略、结果变宽。
+    /// 两形态反序列化（[`deserialize_kind_set`]）：IPC JSON 为字符串数组；HTTP 查询串
+    /// 为逗号分隔单参数（`kinds=expense,refund`，与前端下钻 URL 同一编码），逐元素
+    /// 闭集枚举、未知值报参数错误（400）。空数组视为未携带（不过滤，先例同
+    /// `uncategorized_only=false`）；HTTP 空串（`kinds=`）不是合法字面量串，照报 400
+    /// （先例同 `uncategorized_only=`）。
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -436,9 +435,9 @@ pub struct TransactionListFilter {
     pub page_size: Option<usize>,
 }
 
-/// `kinds` 字段双形态反序列化（issue #581）：字符串数组（IPC JSON）或逗号分隔单参数
-/// （HTTP 查询串，与前端下钻 URL 同一编码）。逐元素经 [`TransactionKind`] 闭集枚举
-/// 反序列化，未知值报参数错误（单值 `kind` 同规）。
+/// `kinds` 字段双形态反序列化（issue #581，spec #1025 起兼任单值载体）：字符串数组
+/// （IPC JSON）或逗号分隔单参数（HTTP 查询串，与前端下钻 URL 同一编码）。逐元素经
+/// [`TransactionKind`] 闭集枚举反序列化，未知值报参数错误（400）。
 fn deserialize_kind_set<'de, D>(
     deserializer: D,
 ) -> std::result::Result<Option<Vec<TransactionKind>>, D::Error>
