@@ -1,6 +1,6 @@
 use rusqlite::{Connection, OptionalExtension};
 
-use super::lots::{self, ActiveLot, Consumption};
+use super::lots::{self, Consumption};
 use super::model::{TransactionConvert, TransactionTrade};
 use super::prices::PRICE_UNITS_PER_FEN;
 use crate::accounts::AccountType;
@@ -290,7 +290,8 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
 }
 
 /// 校验并归一化一笔卖出交易（不落库）。创建与修改共用；
-/// 卖出匹配持仓等副作用由 [`apply`] 在落库时按其身份执行。
+/// FIFO 消耗（含「可卖出数量不足」守卫）在本阶段算定，卖出匹配等副作用由
+/// [`apply`] 按该消耗快照落盘、不再复算（与 convert 同一形态，issue #1019）。
 fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan> {
     let instrument_id = input
         .instrument_id
@@ -379,13 +380,9 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
     // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
     let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
 
-    // FIFO 排序键 = rowid（本端插入序，先买先卖）：不得用 created_at/id——
-    // now_iso 为秒级精度，同秒建仓时随机 id tiebreak 在重放端会排出与源端
-    // 不同的顺序，卖出匹配发散（确定性重放，ADR-0091 决策 2/3，issue #861）；
-    // 重放端按 op 序插入批次，rowid 相对序与源端恒一致。
-    let lots: Vec<ActiveLot> = lots::active_lots(conn, &input.account_id, &instrument_id)?;
-    let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
-    lots::ensure_available_holding(total_available, quantity)?;
+    // 取批次 → 分摊（含「可卖出数量不足」守卫）两步单点算定消耗规划：apply 只落盘。
+    let active_lots = lots::active_lots(conn, &input.account_id, &instrument_id)?;
+    let consumed = lots::plan(conn, &active_lots, quantity)?;
 
     Ok(SellPlan {
         normalized: NormalizedTransaction {
@@ -408,7 +405,7 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         quantity,
         price_cents,
         fee_cents,
-        lots,
+        consumed,
         gross_proceeds_cents: gross_proceeds,
     })
 }
@@ -530,12 +527,11 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
         input.funding_account_id.as_deref(),
         &account_currency,
     )?;
-    let lots = lots::active_lots(conn, &input.account_id, &instrument_id)?;
-    let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
-    lots::ensure_available_holding(total_available, quantity)?;
     // 转出腿 FIFO 消耗与逐批次结转成本（含耗尽批次闭合）在 prepare 阶段算定：
-    // 它是行金额锚点与转入批次成本的唯一依据，apply 原样落消耗记录与批次。
-    let consumed = lots::plan(conn, &lots, quantity)?;
+    // 它是行金额锚点与转入批次成本的唯一依据，apply 原样落消耗记录与批次
+    // （取批次 → 分摊两步，含「可卖出数量不足」守卫，issue #1019）。
+    let active_lots = lots::active_lots(conn, &input.account_id, &instrument_id)?;
+    let consumed = lots::plan(conn, &active_lots, quantity)?;
     let carried_cost_cents = lots::total_cost(&consumed);
     let amount_native_cents =
         amount::convert_to_native(conn, carried_cost_cents, &account_currency)?;
@@ -583,8 +579,9 @@ fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Resu
         rusqlite::params![id, plan.instrument_id, plan.quantity, plan.price_cents, plan.fee_cents],
     )?;
 
-    // 匹配记录与逐批次成本（含耗尽批次闭合）由消耗规划单点算定，与转换转出同源。
-    let consumptions = lots::plan(conn, &plan.lots, plan.quantity)?;
+    // 匹配记录与逐批次成本（含耗尽批次闭合）由 prepare 的消耗快照单点算定，
+    // 此处原样落盘、不复算（与转换转出同源，issue #1019）。
+    let consumptions = &plan.consumed;
 
     // 分摊双闭合（issue #302）：①收入按匹配末位吸收余数，Σ 匹配收入 = 毛收入
     // （基金 = 权威金额 + 手续费）精确到分；②耗尽批次的匹配把批次总成本闭合到
@@ -873,7 +870,9 @@ pub struct SellPlan {
     pub(crate) quantity: f64,
     pub(crate) price_cents: i64,
     pub(crate) fee_cents: i64,
-    pub(crate) lots: Vec<ActiveLot>,
+    /// 卖出匹配的逐批次消耗规划（prepare 算定、apply 原样落库）：含各匹配成本
+    /// 与耗尽批次闭合，apply 不再复算（与 `ConvertPlan.consumed` 同一形态）。
+    pub(crate) consumed: Vec<Consumption>,
     /// 毛收入（分，费前）：基金 = 权威金额 + 手续费，其余 = round(数量 × 单价 ÷ 换算因子)。
     /// 卖出副作用的收入分摊以其为闭合基准（末匹配吸收余数，Σ 匹配收入 = 毛收入精确到分）。
     pub(crate) gross_proceeds_cents: i64,
@@ -1158,19 +1157,18 @@ pub(crate) fn replay_plan(
             } else {
                 (fields.quantity * fields.price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64
             };
-            // FIFO 批次快照在本端重建：同序重放下与源端同状态 ⇒ 同一匹配结果
-            //（排序键 rowid 的跨端确定性依据见 prepare_sell 同码查询处注释）。
-            let lots: Vec<ActiveLot> =
-                lots::active_lots(conn, &row.account_id, &fields.instrument_id)?;
-            let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
-            lots::ensure_available_holding(total_available, fields.quantity)?;
+            // FIFO 批次快照在本端重建（同序重放 ⇒ 与源端同状态 ⇒ 同一匹配结果；
+            // 排序键 rowid 的跨端确定性依据见 `lots::active_lots`），消耗规划
+            //（含「可卖出数量不足」守卫）由 `lots::plan` 单点算定。
+            let active_lots = lots::active_lots(conn, &row.account_id, &fields.instrument_id)?;
+            let consumed = lots::plan(conn, &active_lots, fields.quantity)?;
             Ok(Plan::Sell(SellPlan {
                 normalized: row.clone(),
                 instrument_id: fields.instrument_id.clone(),
                 quantity: fields.quantity,
                 price_cents: fields.price_cents,
                 fee_cents: fields.fee_cents,
-                lots,
+                consumed,
                 gross_proceeds_cents,
             }))
         }
@@ -1273,11 +1271,10 @@ pub(crate) fn replay_convert_plan(
         &row.currency_code,
     )?;
     // FIFO 批次快照在本端重建（排序键 rowid 的跨端确定性依据同 [`prepare_sell`]）：
-    // 同序重放 ⇒ 与源端同状态 ⇒ 同一逐批次消耗结果。
-    let lots = lots::active_lots(conn, &row.account_id, &fields.instrument_id)?;
-    let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
-    lots::ensure_available_holding(total_available, fields.quantity)?;
-    let consumed = lots::plan(conn, &lots, fields.quantity)?;
+    // 同序重放 ⇒ 与源端同状态 ⇒ 同一逐批次消耗结果；消耗规划（含「可卖出数量不足」
+    // 守卫）由 `lots::plan` 单点算定。
+    let active_lots = lots::active_lots(conn, &row.account_id, &fields.instrument_id)?;
+    let consumed = lots::plan(conn, &active_lots, fields.quantity)?;
     // 源端结转成本与本地重建的逐批次成本合计必须一致（兼行金额锚点校验）：
     // 不一致即本地 FIFO 快照发散（前序 op 缺失或非确定），挂起待裁决，
     // 不静默落出错误成本基础（ADR-0099 决策 6「不静默错账」）。

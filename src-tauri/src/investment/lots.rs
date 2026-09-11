@@ -7,11 +7,10 @@
 //! 基金转换转出腿与两端重放共用同一消耗口径，不得各算各的（ADR-0038 / ADR-0099
 //! / 确定性重放 ADR-0091 决策 2/3）。
 //!
-//! 守卫归属：本票「可卖出数量不足」守卫仍由调用点在取批次后调用
-//! [`ensure_available_holding`]（未内化进 [`plan`]），错误构造助手
-//! [`insufficient_holding_error`] 与份额容差 [`QTY_GUARD_EPSILON`] 收归本模块私有；
-//! 本地 prepare 与重放计划重建的四处共用同码同文案，两端与两路径不漂移
-//! （issue #1033；守卫内化进 [`plan`] 由后续票承担）。
+//! 守卫归属：「可卖出数量不足」守卫内化进 [`plan`]——取批次后先求和守卫、再逐批次
+//! 分摊（issue #1019）。本地 sell/convert prepare 与重放 sell/convert 计划重建四个
+//! 调用点共用本单点，同码同文案，两端与两路径不漂移（issue #1033）；守卫失败恒在
+//! prepare 阶段、先于任何写入（词汇表 prepare 校验语义不变）。
 //!
 //! 不属本模块：级联/清理模板（`purge_lot_artifacts` 等）归投资域 unwind（后续票）。
 
@@ -50,17 +49,6 @@ fn insufficient_holding_error(total_available: f64, quantity: f64) -> AppError {
         format!("可卖出数量不足，当前持有 {available_display}，尝试卖出 {quantity_display}"),
         &[&available_display, &quantity_display],
     )
-}
-
-/// 可卖数量守卫单点（issue #1033）：裸比较 `<` 会让 f64 FIFO 扣减的累积位误差
-/// 误拒真实全清仓（如持有 8036.109999999999、卖出 8036.11）。带容差判定与
-/// 码化错误在此收口：本地 prepare 与重放计划重建的四处守卫共用，同码同文案，
-/// 两端与两路径不漂移。本票守卫仍在调用点调用本函数（未内化进 [`plan`]）。
-pub(crate) fn ensure_available_holding(total_available: f64, quantity: f64) -> Result<()> {
-    if total_available + QTY_GUARD_EPSILON < quantity {
-        return Err(insufficient_holding_error(total_available, quantity));
-    }
-    Ok(())
 }
 
 /// 某账户某标的的在用持仓批次快照（FIFO 排序键 = rowid）。
@@ -136,6 +124,12 @@ fn prior_consumed_cost_cents(
 
 /// 按 FIFO 顺序把 `quantity` 分摊到 `lots` 上，并逐批次算定成本（分）。
 ///
+/// 「可卖出数量不足」守卫内化于此（issue #1019）：先按 `QTY_GUARD_EPSILON` 容差
+/// 求和守卫（裸比较 `<` 会让 f64 FIFO 扣减的累积位误差误拒真实全清仓，如持有
+/// 8036.109999999999、卖出 8036.11），不足即码化拒绝、先于任何写入；通过后再
+/// 逐批次分摊。本地 prepare 与重放计划重建的四处共用本单点，同码同文案不漂移
+/// （issue #1033）。守卫只构造一次，见 [`insufficient_holding_error`]。
+///
 /// 成本口径（卖出匹配与转换转出共用，ADR-0038 / ADR-0099）：
 /// - 耗尽批次 → 买入锚点行权威金额 − 该批次此前已消耗成本之和（闭合，精确到分）；
 /// - 非耗尽批次 → round(消耗数量 × 批次每份成本 ÷ 换算因子)。
@@ -144,6 +138,10 @@ pub(crate) fn plan(
     lots: &[ActiveLot],
     quantity: f64,
 ) -> Result<Vec<Consumption>> {
+    let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
+    if total_available + QTY_GUARD_EPSILON < quantity {
+        return Err(insufficient_holding_error(total_available, quantity));
+    }
     let mut remaining = quantity;
     let mut out: Vec<Consumption> = Vec::new();
     for lot in lots {
