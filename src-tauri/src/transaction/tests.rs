@@ -8,6 +8,8 @@
 //! - [`common`]：交易行为/查询脚手架
 //! - [`merchant`]：商户携带收口与即建商户证据
 //! - [`oplog`]：op 产出——写成功追加含源端折算的 op、失败不残留（issue #855）
+//! - [`protocol`]：写入协议的协议级对称断言——Local / Replay 两形态同码同文案、
+//!   op 发射开关与 id 来源（issue #1004 / ADR-0105）
 //! - [`query`]：交易查询、排序与分页
 //! - [`search`]：统一模糊搜索语义与搜索行为
 //! - [`search_repair`]：拼音辅助数据一键修复（积压回填、幂等、收敛）
@@ -26,6 +28,7 @@ mod category;
 mod common;
 mod merchant;
 mod oplog;
+mod protocol;
 mod query;
 mod search;
 mod search_repair;

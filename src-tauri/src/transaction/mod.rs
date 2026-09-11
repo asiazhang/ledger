@@ -3,7 +3,9 @@
 //! 接缝：
 //! - [`amount`]（口径权威）：kind 枚举真源 + kind→度量矩阵 + 本位币折算。
 //! - [`batch`]（批量编排权威）：批量事务、幂等键/内容哈希去重判定与批次汇总日志（`TransactionBatch::run`）。
-//! - [`behavior`]（行为层编排权威）：create / update / delete 三编排入口、嵌套事务感知、plan/apply 副作用分派与即建商户证据；以及同步重放的命令执行形态（`replay_command`，与本地写入共用协议）。
+//! - [`behavior`]（行为层编排权威）：create / update / delete 三编排入口；创建与
+//!   修改的写入协议单正文（Local / Replay 两形态，ADR-0105）承载顺序契约、
+//!   守卫单点、事务自持与即建商户证据；同步重放经 `replay_command` 进同一协议。
 //! - [`command`]（同步命令，issue #855）：交易同步命令载荷形态与 op 产出单点（`record_local`，行为编排入口专用）。
 //! - [`read`]（读取权威）：交易列表（过滤/排序/分页）与单笔读取。
 //! - [`search`]（搜索权威）：SQL 候选流式扫描 + 统一模糊搜索契约过滤与分页。

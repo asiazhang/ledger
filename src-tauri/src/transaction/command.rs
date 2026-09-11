@@ -14,8 +14,8 @@
 //!   delete）成功后各自调用一次，op 产出不散落各写路径——IPC/HTTP/批量导入/
 //!   余额调整等写路径全部经行为编排入口收敛，op 随入口事务提交/回滚。
 //!
-//! 重放执行（`replay_command`）与本地写入共用同一编排协议，见
-//! [`super::behavior`] 的重放形态函数。
+//! 重放执行（`replay_command`）与本地写入共用同一编排协议（写入协议，Local /
+//! Replay 两形态，ADR-0105），见 [`super::behavior`]。
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
