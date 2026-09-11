@@ -3,7 +3,6 @@ import { api } from '@/api'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import type {
   Instrument,
-  InstrumentType,
   InstrumentPriceTrend,
   PortfolioValueTrend,
   TrendRange,
@@ -21,14 +20,6 @@ export const TREND_RANGE_PRESETS: { value: TrendRangePreset; labelKey: string }[
 
 /** 走势视图模式：组合市值曲线 ↔ 单标的曲线同视图切换 */
 export type TrendMode = 'portfolio' | 'instrument'
-
-/** 有行情来源的标的类型（东财日 K 数据源覆盖范围，与 PriceHistory 口径一致） */
-const MARKET_SOURCE_TYPES: readonly InstrumentType[] = ['stock', 'etf']
-
-/** 某标的是否走行情采集通道：股票 / ETF 且市场已知（未知市场无法构造 secid） */
-export function hasMarketSource(inst: Pick<Instrument, 'type' | 'market'>): boolean {
-  return MARKET_SOURCE_TYPES.includes(inst.type) && inst.market !== 'unknown'
-}
 
 /** 某月天数（month 1-12） */
 function daysInMonth(year: number, month: number): number {
@@ -128,8 +119,10 @@ export function usePortfolioTrend() {
 
   async function fetchTrend() {
     if (mode.value === 'instrument') {
-      // 未选标的，或非股票/ETF 等无行情来源标的（ADR-0019）：不发起查询，由面板给边界说明
-      if (!instrument.value || !hasMarketSource(instrument.value)) return
+      // 未选标的，或后端判「无价格来源」的标的（price_channel=none，issue #1060）：
+      // 不发起查询，由面板给边界说明。放行判定消费后端派生事实，前端不再按
+      // 类型与市场自行推断（原场内行情白名单已随场外基金定案漂移成第二口径）。
+      if (!instrument.value || instrument.value.price_channel === 'none') return
     }
     const key =
       mode.value === 'portfolio'

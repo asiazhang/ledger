@@ -11,10 +11,9 @@ import {
   toTrendRange,
   toTrendChartSeries,
   isTrendEmpty,
-  hasMarketSource,
   usePortfolioTrend,
 } from '@/composables/usePortfolioTrend'
-import type { PortfolioValueTrend } from '@/types'
+import type { InstrumentPriceChannel, PortfolioValueTrend } from '@/types'
 import { makeInstrument } from './factories'
 
 
@@ -124,21 +123,43 @@ describe('isTrendEmpty 空态判定（纯函数）', () => {
   })
 })
 
-describe('hasMarketSource 行情来源判定（纯函数）', () => {
-  it('股票 / ETF（市场已知）有行情来源', () => {
-    expect(hasMarketSource({ type: 'stock', market: 'sh' })).toBe(true)
-    expect(hasMarketSource({ type: 'etf', market: 'sz' })).toBe(true)
-    expect(hasMarketSource({ type: 'stock', market: 'hk' })).toBe(true)
+describe('单标的走势放行（按后端价格通道判定，issue #1060）', () => {
+  const instrumentWithChannel = (id: string, price_channel: InstrumentPriceChannel) =>
+    makeInstrument({ id, symbol: 'X1', type: 'other', market: 'unknown', price_channel })
+
+  function wireInstrumentTrend() {
+    wireInvokeSeam({
+      overrides: {
+        ...BASE_OVERRIDES,
+        instrument_price_trend: {
+          instrument_id: 'inst-x',
+          points: [{ date: '2026-06-05', price_cents: 1500, currency_code: 'CNY' }],
+        },
+      },
+    })
+  }
+
+  it('无价格来源（price_channel=none）不发起走势查询，由面板给边界说明', async () => {
+    wireInstrumentTrend()
+    const { refresh, showInstrument } = withSetup(() => usePortfolioTrend())
+    await refresh()
+    showInstrument(instrumentWithChannel('inst-x', 'none'))
+    await refresh()
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'instrument_price_trend')).toBe(false)
   })
 
-  it('基金 / 债券 / 其他无行情来源', () => {
-    expect(hasMarketSource({ type: 'fund', market: 'unknown' })).toBe(false)
-    expect(hasMarketSource({ type: 'bond', market: 'unknown' })).toBe(false)
-    expect(hasMarketSource({ type: 'other', market: 'unknown' })).toBe(false)
-  })
-
-  it('市场未知（无法构造 secid）视为无行情来源', () => {
-    expect(hasMarketSource({ type: 'stock', market: 'unknown' })).toBe(false)
+  it('行情 / 净值 / 手动报价通道照常发起走势查询并出图', async () => {
+    for (const channel of ['quote', 'fund_nav', 'manual'] as const) {
+      wireInstrumentTrend()
+      mockInvoke.mockClear()
+      const { refresh, showInstrument, chartSeries } = withSetup(() => usePortfolioTrend())
+      await refresh()
+      showInstrument(instrumentWithChannel('inst-x', channel))
+      await refresh()
+      expect(mockInvoke.mock.calls.some(([c]) => c === 'instrument_price_trend')).toBe(true)
+      // 效果断言：放行后曲线拿到采样点（不只断命令调用事实）
+      expect(chartSeries.value.values).toEqual([1500])
+    }
   })
 })
 

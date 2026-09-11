@@ -79,6 +79,7 @@ export function makeInstrument(partial: Partial<Instrument> & { id: string }): I
     source: 'eastmoney',
     price_cents: null,
     invested: true,
+    price_channel: 'quote',
     ...partial,
   }
 }

@@ -45,6 +45,7 @@ const mockInstruments: Instrument[] = [
     source: 'eastmoney',
     price_cents: null,
     invested: false,
+    price_channel: 'none',
   },
 ]
 

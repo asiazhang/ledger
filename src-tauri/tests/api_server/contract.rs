@@ -338,21 +338,25 @@ async fn contract_transaction_schemas_carry_funding_account() {
     );
 }
 
-/// 方言体积预算护栏（issue #839）：产物 ≤20KB。
+/// 方言体积预算护栏（issue #839）：产物 ≤22KB。
 ///
 /// token 换算口径（与 issue 原型一致，不引入真实 tokenizer 依赖）：
 /// ASCII ≈ 1 token / 3.6 字符、中文 ≈ 0.95 token / 字符——原型实测 ~17KB
-/// ≈ ~5.1K tokens（契约单次拉取自 ~14.0K tokens 降 63%）。触线 6K tokens
-/// （≈20KB）须人工决策提预算或瘦身，不允许契约膨胀无声挤占 AI 上下文
-/// （延续 #304 / #693 契约膨胀护栏传统）。基金转换（issue #978/#979）加入 `TransactionInput`
-/// / `UpdateTransactionInput` 的两腿可选字段、`ConvertFields.to_symbol` 后已逼近预算
-/// （≈19.9KB）——注意 `TransactionConvert` / `TransactionTrade` 是 IPC 专用投影，
-/// 不在 `ApiDoc` 组件内，不占方言体积。
+/// ≈ ~5.1K tokens（契约单次拉取自 ~14.0K tokens 降 63%）。触线须人工决策提预算
+/// 或瘦身，不允许契约膨胀无声挤占 AI 上下文（延续 #304 / #693 契约膨胀护栏传统）。
+/// 基金转换（issue #978/#979）加入 `TransactionInput` / `UpdateTransactionInput`
+/// 的两腿可选字段、`ConvertFields.to_symbol` 后已逼近预算（≈19.9KB）——注意
+/// `TransactionConvert` / `TransactionTrade` 是 IPC 专用投影，不在 `ApiDoc` 组件内，
+/// 不占方言体积。
 ///
 /// issue #981 复核：实测 20412 字节，余量仅 68（上限 20480），已逼近上限。已发布
 /// 字段描述受 `AGENTS.md`「已发布 AI API 契约只增不改」约束，本票不动契约；后续
 /// 任何新增字段都会触线，须先人工决策：对**未发布新增**的字段描述做一轮显式瘦身，
 /// 或经维护者同意提高预算——不得默默挤占 AI 上下文（决策建议已在 issue #981 留痕）。
+///
+/// issue #1069 触线：`Instrument.price_channel` 派生字段与 `PriceChannel` 组件带入
+/// 后实测 20732 字节越过原 20480，经维护者决策提至 22KB（≈6.3K tokens）——新字段
+/// 描述承载价格通道语义、无冗余可削，留痕见 ADR-0090 决策 6。
 #[tokio::test]
 async fn contract_size_within_budget() {
     let (app, _) = setup_app();
@@ -368,8 +372,8 @@ async fn contract_size_within_budget() {
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = body_to_bytes(response.into_body()).await;
     assert!(
-        bytes.len() <= 20 * 1024,
-        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 20KB）",
+        bytes.len() <= 22 * 1024,
+        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 22KB）",
         bytes.len()
     );
 }

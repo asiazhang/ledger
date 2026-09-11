@@ -7,7 +7,7 @@
 //! OpenAPI 结构样板与出处引用（`issue #N` / `ADR-N`，出处保留在源注解里），
 //! 端点路径省略 `/api/v1` 前缀（base 单列），字段级语义描述原文保留。
 //!
-//! 产物体积有字节预算护栏（≤20KB，测试 `contract_size_within_budget`），
+//! 产物体积有字节预算护栏（≤22KB，测试 `contract_size_within_budget`），
 //! 契约膨胀不允许无声挤占 AI 上下文。
 
 use std::sync::{LazyLock, OnceLock};
