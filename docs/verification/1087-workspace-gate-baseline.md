@@ -46,8 +46,25 @@
 
 ## 编译耗时 / 体积基线
 
-测量机为本仓库开发机（macOS / arm64，kache rustc-wrapper 命中，`CARGO_PROFILE_DEV_DEBUG=1`）。
-「前后」两次都以「touch 源文件后重编，其余依赖全热」控制变量：
+### CI（本票分支的 Build run，后端测试 job）
+
+commit `de097771` 触发的 `Build` workflow（run `34618048780`，后端测试 job
+`103324784451`，Linux x64 runner）：
+
+- **依赖缓存体积**：恢复 `Cache Size: ~2009 MB (2107050681 B)`（restore-key 命中
+  主干缓存），保存 `2107047336 B`——首位成员带来的缓存体积增量 ≈ −3.4 KB，在
+  rust-cache 清理噪声内，可视作零增量。
+- **编译阶段**：`Finished \`test\` profile [unoptimized + debuginfo] target(s) in
+  1m 23s`（83s），本仓只编 `tauri-app` + `ledger-infra` 两个 crate。
+- **后端测试 job** wall clock ≈ 362s（含缓存解包 ~62s、apt ~5s、测试执行）。
+
+对照基线：父 spec #1086 记录的「本票前」单 crate 编译为 113s（run 34599136819）、
+依赖缓存 2009 MB。缓存体积前后一致；编译耗时低于旧基线（单次运行的波动，本票
+不主张因果）。CI 阶段实测随 #1110「编译与缓存调优 + 基线刷新」继续跟踪。
+
+### 本机（控制变量：touch 源文件后重编，依赖全热）
+
+测量机为本仓库开发机（macOS / arm64，kache rustc-wrapper 命中，`CARGO_PROFILE_DEV_DEBUG=1`）：
 
 | 项 | 本票前（main，无 workspace） | 本票后（workspace + 首位成员） |
 | --- | --- | --- |
@@ -57,10 +74,6 @@
 
 结论：首位成员在依赖全热时**不增加可测得的编译耗时**（差值在噪声内）；其增量
 产物约 1.1 MB，相对既有 CI 依赖缓存 2009 MB 约 0.05%。
-
-**CI 阶段数值（编译 113s、缓存 2009 MB、apt 20–98s、缓存解包 41–60s、测试执行
-≈150s）来自父 spec #1086 的实测基线；本机无法产出 CI runner 的阶段耗时与缓存
-体积，CI 侧实测随 #1110「编译与缓存调优 + 基线刷新」一并回填。**
 
 ## 未验证项
 

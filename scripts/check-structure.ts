@@ -107,7 +107,11 @@ export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'read_entry.rs', layer: '基础设施', note: '壳层统一读入口（ADR-0104，spec #1009）' },
 ]
 
-/** crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。 */
+/**
+ * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
+ * 与上面的 `LAYER`（单 crate 内的**模块路径**分层：域目录 / 基础设施）刻意分开——
+ * 两者是不同粒度的事实源，同名值不合并（合并只会让任一侧语义被动漂移）。
+ */
 export const CRATE_LAYER = {
   SHELL: '壳',
   DOMAIN: '域',
