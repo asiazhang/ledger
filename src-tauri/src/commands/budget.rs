@@ -16,17 +16,17 @@ use tauri::State;
 
 use crate::budget as budget_domain;
 use crate::budget::{Budget, BudgetInput, BudgetProgress, BudgetUpdateInput};
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_budgets(db: State<'_, DbState>) -> Result<Vec<Budget>> {
     let conn = db.conn.clone();
-    run_db("list_budgets", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        budget_domain::list_budgets(&conn)
+    read_entry("list_budgets", conn, move |conn| {
+        budget_domain::list_budgets(conn)
     })
     .await
 }
@@ -88,9 +88,8 @@ pub async fn delete_budget(
 #[tauri::command]
 pub async fn budget_progress(db: State<'_, DbState>) -> Result<Vec<BudgetProgress>> {
     let conn = db.conn.clone();
-    run_db("budget_progress", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        budget_domain::budget_progress_rows(&conn, Local::now().date_naive())
+    read_entry("budget_progress", conn, move |conn| {
+        budget_domain::budget_progress_rows(conn, Local::now().date_naive())
     })
     .await
 }

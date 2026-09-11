@@ -33,6 +33,7 @@ use crate::commands::data_location::effective_db_dir_of;
 use crate::db::data_location::DB_FILE_NAME;
 use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
+use crate::read_entry::read_entry;
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
 /// 当前活动账本的备份作用域（列表/清理命令共用，issue #836）：从引导快照的
@@ -204,9 +205,8 @@ pub struct AutoBackupSettingsState {
 #[tauri::command]
 pub async fn get_auto_backup_state(app: AppHandle) -> Result<AutoBackupSettingsState> {
     let conn = app.state::<DbState>().conn.clone();
-    run_db("get_auto_backup_state", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        let s = backup::get_state(&conn)?;
+    read_entry("get_auto_backup_state", conn, move |conn| {
+        let s = backup::get_state(conn)?;
         Ok(AutoBackupSettingsState {
             enabled: s.enabled,
             last_backup_at: s.last_backup_at,

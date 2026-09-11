@@ -19,12 +19,13 @@
 
 use tauri::State;
 
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
 use crate::physical_asset::{
     self as physical_asset_domain, PhysicalAsset, PhysicalAssetDisposeInput, PhysicalAssetInput,
     PhysicalAssetList, PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
 };
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::write_entry::{Outcome, write_entry};
 
@@ -34,9 +35,8 @@ pub async fn list_physical_assets(
     status: Option<String>,
 ) -> Result<PhysicalAssetList> {
     let conn = db.conn.clone();
-    run_db("list_physical_assets", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        physical_asset_domain::list_physical_assets(&conn, status.as_deref())
+    read_entry("list_physical_assets", conn, move |conn| {
+        physical_asset_domain::list_physical_assets(conn, status.as_deref())
     })
     .await
 }
@@ -44,9 +44,8 @@ pub async fn list_physical_assets(
 #[tauri::command]
 pub async fn get_physical_asset(db: State<'_, DbState>, id: String) -> Result<PhysicalAsset> {
     let conn = db.conn.clone();
-    run_db("get_physical_asset", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        physical_asset_domain::get_physical_asset(&conn, &id)
+    read_entry("get_physical_asset", conn, move |conn| {
+        physical_asset_domain::get_physical_asset(conn, &id)
     })
     .await
 }

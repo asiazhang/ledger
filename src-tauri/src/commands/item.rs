@@ -19,21 +19,18 @@
 
 use tauri::State;
 
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
 use crate::item::domain;
 use crate::item::{ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemWithDailyCost};
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemWithDailyCost>> {
     let conn = db.conn.clone();
-    run_db("list_items", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        domain::list_items(&conn)
-    })
-    .await
+    read_entry("list_items", conn, domain::list_items).await
 }
 
 /// 计算单件物品的每天使用成本（issue #121，只读命令不发失效信号）：
@@ -45,9 +42,8 @@ pub async fn calculate_item_cost(
     reference_date: Option<String>,
 ) -> Result<ItemDailyCost> {
     let conn = db.conn.clone();
-    run_db("calculate_item_cost", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        domain::calculate_item_cost(&conn, &id, reference_date.as_deref())
+    read_entry("calculate_item_cost", conn, move |conn| {
+        domain::calculate_item_cost(conn, &id, reference_date.as_deref())
     })
     .await
 }
@@ -57,9 +53,8 @@ pub async fn calculate_item_cost(
 #[tauri::command]
 pub async fn item_daily_total(db: State<'_, DbState>) -> Result<ItemDailyTotal> {
     let conn = db.conn.clone();
-    run_db("item_daily_total", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        domain::item_daily_total(&conn)
+    read_entry("item_daily_total", conn, move |conn| {
+        domain::item_daily_total(conn)
     })
     .await
 }

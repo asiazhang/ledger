@@ -16,8 +16,9 @@
 
 use tauri::State;
 
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
+use crate::read_entry::read_entry;
 use crate::reports as reports_domain;
 use crate::reports::{CategoryShare, DateRange, MerchantSharesReport, MonthlySummary};
 
@@ -29,9 +30,8 @@ pub async fn monthly_summary(
     to: Option<String>,
 ) -> Result<Vec<MonthlySummary>> {
     let conn = db.conn.clone();
-    run_db("monthly_summary", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        reports_domain::monthly_summary_rows(&conn, year, from.as_deref(), to.as_deref())
+    read_entry("monthly_summary", conn, move |conn| {
+        reports_domain::monthly_summary_rows(conn, year, from.as_deref(), to.as_deref())
     })
     .await
 }
@@ -47,9 +47,8 @@ pub async fn merchant_shares(
     top_n: Option<i64>,
 ) -> Result<MerchantSharesReport> {
     let conn = db.conn.clone();
-    run_db("merchant_shares", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        reports_domain::merchant_shares_report(&conn, year, from.as_deref(), to.as_deref(), top_n)
+    read_entry("merchant_shares", conn, move |conn| {
+        reports_domain::merchant_shares_report(conn, year, from.as_deref(), to.as_deref(), top_n)
     })
     .await
 }
@@ -58,9 +57,8 @@ pub async fn merchant_shares(
 #[tauri::command]
 pub async fn report_date_range(db: State<'_, DbState>) -> Result<DateRange> {
     let conn = db.conn.clone();
-    run_db("report_date_range", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        reports_domain::query_report_date_range(&conn)
+    read_entry("report_date_range", conn, move |conn| {
+        reports_domain::query_report_date_range(conn)
     })
     .await
 }
@@ -77,10 +75,9 @@ pub async fn category_shares(
     to: Option<String>,
 ) -> Result<Vec<CategoryShare>> {
     let conn = db.conn.clone();
-    run_db("category_shares", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    read_entry("category_shares", conn, move |conn| {
         reports_domain::category_shares_rows(
-            &conn,
+            conn,
             &kind,
             month.as_deref(),
             year,

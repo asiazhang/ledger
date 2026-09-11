@@ -14,16 +14,16 @@ use tauri::State;
 
 use crate::currencies as currency_domain;
 use crate::currencies::Currency;
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
+use crate::read_entry::read_entry;
 
 /// 币种清单：全部种子币种按 `code` 排序。
 #[tauri::command]
 pub async fn list_currencies(db: State<'_, DbState>) -> Result<Vec<Currency>> {
     let conn = db.conn.clone();
-    run_db("list_currencies", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        currency_domain::list_currencies(&conn)
+    read_entry("list_currencies", conn, move |conn| {
+        currency_domain::list_currencies(conn)
     })
     .await
 }

@@ -13,10 +13,11 @@
 
 use tauri::State;
 
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
 use crate::merchants as merchant_domain;
 use crate::merchants::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::write_entry::{Outcome, write_entry};
 
@@ -27,9 +28,8 @@ pub async fn list_merchants(
     include_deleted: Option<bool>,
 ) -> Result<Vec<Merchant>> {
     let conn = db.conn.clone();
-    run_db("list_merchants", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        merchant_domain::list_merchants(&conn, include_deleted.unwrap_or(false))
+    read_entry("list_merchants", conn, move |conn| {
+        merchant_domain::list_merchants(conn, include_deleted.unwrap_or(false))
     })
     .await
 }
@@ -41,9 +41,8 @@ pub async fn list_merchant_transaction_counts(
     db: State<'_, DbState>,
 ) -> Result<Vec<MerchantTransactionCount>> {
     let conn = db.conn.clone();
-    run_db("list_merchant_transaction_counts", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        merchant_domain::transaction_counts(&conn)
+    read_entry("list_merchant_transaction_counts", conn, move |conn| {
+        merchant_domain::transaction_counts(conn)
     })
     .await
 }

@@ -19,7 +19,7 @@
 use tauri::State;
 
 use crate::currencies::{ExchangeRate, ExchangeRateInput};
-use crate::db::{DbState, run_db};
+use crate::db::DbState;
 use crate::error::{AppError, Result};
 use crate::investment as investment_domain;
 use crate::investment::{
@@ -28,15 +28,15 @@ use crate::investment::{
     ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter, PortfolioValueTrend,
     RealizedPnlSummary, TransactionConvert, TransactionTrade, TrendRange,
 };
+use crate::read_entry::read_entry;
 use crate::signals::{WriteEvidence, WriteOp};
 use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_holdings(db: State<'_, DbState>) -> Result<Vec<Holding>> {
     let conn = db.conn.clone();
-    run_db("list_holdings", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        investment_domain::list_holdings(&conn)
+    read_entry("list_holdings", conn, move |conn| {
+        investment_domain::list_holdings(conn)
     })
     .await
 }
@@ -49,10 +49,9 @@ pub async fn instrument_price_trend(
 ) -> Result<InstrumentPriceTrend> {
     let conn = db.conn.clone();
     // 域入口单点（#401 域目录化）：BDD 步骤直调同一域函数，与 IPC 命令同一实现。
-    run_db("instrument_price_trend", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    read_entry("instrument_price_trend", conn, move |conn| {
         investment_domain::query_instrument_price_trend(
-            &conn,
+            conn,
             &instrument_id,
             &filter.unwrap_or_default(),
         )
@@ -67,9 +66,8 @@ pub async fn portfolio_value_trend(
 ) -> Result<PortfolioValueTrend> {
     let conn = db.conn.clone();
     // 域入口单点（#401 域目录化）：BDD 步骤直调同一域函数，与 IPC 命令同一实现。
-    run_db("portfolio_value_trend", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        investment_domain::query_portfolio_value_trend(&conn, &filter.unwrap_or_default())
+    read_entry("portfolio_value_trend", conn, move |conn| {
+        investment_domain::query_portfolio_value_trend(conn, &filter.unwrap_or_default())
     })
     .await
 }
@@ -80,13 +78,12 @@ pub async fn realized_pnl_summary(
     filter: Option<PnlFilter>,
 ) -> Result<RealizedPnlSummary> {
     let conn = db.conn.clone();
-    run_db("realized_pnl_summary", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    read_entry("realized_pnl_summary", conn, move |conn| {
         let filter = filter.unwrap_or(PnlFilter {
             account_id: None,
             instrument_id: None,
         });
-        investment_domain::query_realized_pnl_summary(&conn, &filter)
+        investment_domain::query_realized_pnl_summary(conn, &filter)
     })
     .await
 }
@@ -94,9 +91,8 @@ pub async fn realized_pnl_summary(
 #[tauri::command]
 pub async fn list_exchange_rates(db: State<'_, DbState>) -> Result<Vec<ExchangeRate>> {
     let conn = db.conn.clone();
-    run_db("list_exchange_rates", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        investment_domain::list_exchange_rates(&conn)
+    read_entry("list_exchange_rates", conn, move |conn| {
+        investment_domain::list_exchange_rates(conn)
     })
     .await
 }
@@ -121,9 +117,8 @@ pub async fn create_exchange_rate(
 #[tauri::command]
 pub async fn list_market_prices(db: State<'_, DbState>) -> Result<Vec<MarketPrice>> {
     let conn = db.conn.clone();
-    run_db("list_market_prices", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        investment_domain::list_market_prices(&conn)
+    read_entry("list_market_prices", conn, move |conn| {
+        investment_domain::list_market_prices(conn)
     })
     .await
 }
@@ -151,10 +146,9 @@ pub async fn list_instruments(
     filter: Option<InstrumentListFilter>,
 ) -> Result<InstrumentListResult> {
     let conn = db.conn.clone();
-    run_db("list_instruments", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    read_entry("list_instruments", conn, move |conn| {
         let filter = filter.unwrap_or_default();
-        investment_domain::list_instruments(&conn, &filter)
+        investment_domain::list_instruments(conn, &filter)
     })
     .await
 }
@@ -165,9 +159,8 @@ pub async fn list_instruments(
 #[tauri::command]
 pub async fn get_instrument(db: State<'_, DbState>, id: String) -> Result<Instrument> {
     let conn = db.conn.clone();
-    run_db("get_instrument", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        investment_domain::get_instrument(&conn, &id)
+    read_entry("get_instrument", conn, move |conn| {
+        investment_domain::get_instrument(conn, &id)
     })
     .await
 }
@@ -195,9 +188,8 @@ pub async fn delete_instrument(
 #[tauri::command]
 pub async fn get_transaction_trade(db: State<'_, DbState>, id: String) -> Result<TransactionTrade> {
     let conn = db.conn.clone();
-    run_db("get_transaction_trade", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        investment_domain::get_transaction_trade(&conn, &id)
+    read_entry("get_transaction_trade", conn, move |conn| {
+        investment_domain::get_transaction_trade(conn, &id)
     })
     .await
 }
@@ -210,9 +202,8 @@ pub async fn get_transaction_convert(
     id: String,
 ) -> Result<TransactionConvert> {
     let conn = db.conn.clone();
-    run_db("get_transaction_convert", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        investment_domain::get_transaction_convert(&conn, &id)
+    read_entry("get_transaction_convert", conn, move |conn| {
+        investment_domain::get_transaction_convert(conn, &id)
     })
     .await
 }

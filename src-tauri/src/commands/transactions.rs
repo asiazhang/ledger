@@ -16,8 +16,9 @@
 
 use tauri::{AppHandle, Runtime, State};
 
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
+use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
 use crate::transaction as transaction_domain;
 use crate::transaction::{
@@ -32,10 +33,9 @@ pub async fn list_transactions(
     filter: Option<TransactionListFilter>,
 ) -> Result<TransactionListResult> {
     let conn = db.conn.clone();
-    run_db("list_transactions", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    read_entry("list_transactions", conn, move |conn| {
         let filter = filter.unwrap_or_default();
-        transaction_domain::list_transactions_internal(&conn, &filter)
+        transaction_domain::list_transactions_internal(conn, &filter)
     })
     .await
 }

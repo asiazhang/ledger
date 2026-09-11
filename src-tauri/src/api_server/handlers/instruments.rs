@@ -12,13 +12,13 @@ use crate::api_server::error::ErrorResponse;
 use crate::api_server::handlers::funds::fetch_fund_quote_for_api;
 use crate::api_server::handlers::stocks::fetch_stock_quote_first_hit_for_api;
 use crate::api_server::state::ApiState;
-use crate::db::run_db;
 use crate::error::AppError;
 use crate::investment::{
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentType, Quote,
     StockCreateRoute, adopt_fund_quote, adopt_stock_quote, create_fund_degraded,
     create_stock_degraded, derive_quote_currency, is_six_digit_code, route_stock_creation,
 };
+use crate::read_entry::read_entry;
 use crate::signals::{WriteEvidence, WriteOp};
 use crate::write_entry::{Outcome, write_entry};
 
@@ -87,9 +87,8 @@ pub async fn search_instruments_handler(
         page: Some(1),
         page_size: Some(limit as usize),
     };
-    run_db("GET /api/v1/instruments", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        Ok(Json(crate::investment::list_instruments(&conn, &filter)?))
+    read_entry("GET /api/v1/instruments", conn, move |conn| {
+        Ok(Json(crate::investment::list_instruments(conn, &filter)?))
     })
     .await
 }

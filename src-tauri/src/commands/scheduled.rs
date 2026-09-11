@@ -13,8 +13,9 @@
 
 use tauri::State;
 
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
+use crate::db::DbState;
+use crate::error::Result;
+use crate::read_entry::read_entry;
 use crate::scheduled_transactions as scheduled_domain;
 use crate::scheduled_transactions::{
     CreateScheduledInput, ExecuteOccurrenceInput, ScheduledTransactionDetail,
@@ -47,9 +48,8 @@ pub async fn list_scheduled_transactions(
     db: State<'_, DbState>,
 ) -> Result<Vec<ScheduledTransactionWithExt>> {
     let conn = db.conn.clone();
-    run_db("list_scheduled_transactions", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        scheduled_domain::list_plans(&conn)
+    read_entry("list_scheduled_transactions", conn, move |conn| {
+        scheduled_domain::list_plans(conn)
     })
     .await
 }
@@ -60,9 +60,8 @@ pub async fn get_scheduled_transaction_detail(
     id: String,
 ) -> Result<ScheduledTransactionDetail> {
     let conn = db.conn.clone();
-    run_db("get_scheduled_transaction_detail", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        scheduled_domain::get_plan_detail(&conn, &id)
+    read_entry("get_scheduled_transaction_detail", conn, move |conn| {
+        scheduled_domain::get_plan_detail(conn, &id)
     })
     .await
 }
@@ -153,9 +152,8 @@ pub async fn subscription_spend_overview(
     db: State<'_, DbState>,
 ) -> Result<SubscriptionSpendOverview> {
     let conn = db.conn.clone();
-    run_db("subscription_spend_overview", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        scheduled_domain::query_subscription_spend(&conn, chrono::Local::now().date_naive())
+    read_entry("subscription_spend_overview", conn, move |conn| {
+        scheduled_domain::query_subscription_spend(conn, chrono::Local::now().date_naive())
     })
     .await
 }
