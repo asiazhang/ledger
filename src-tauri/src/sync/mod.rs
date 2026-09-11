@@ -50,5 +50,5 @@ mod tests;
 pub use fund::fetch_fund_quote_production;
 pub use incremental::do_incremental_sync;
 pub use model::SyncInstrumentInfoResult;
-pub use progress::{INSTRUMENT_SYNC_PROGRESS, ProgressEmitter, SyncProgress};
+pub use progress::{FundNavProgress, INSTRUMENT_SYNC_PROGRESS, ProgressEmitter, SyncProgress};
 pub use stock::fetch_stock_quote_production;

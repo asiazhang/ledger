@@ -44,4 +44,25 @@ describe('SyncProgressBar 同步进度条（issue #897）', () => {
     expect(wrapper.text()).toContain('同步标的信息 0/100')
     expect(wrapper.find('[data-testid="instrument-sync-progress-bar"]').attributes('style')).toContain('width: 0%')
   })
+
+  it('基金深回填期间另起一行渲染页级明细，不改标的级进度宽度（issue #1061）', () => {
+    // 单只基金首刷要翻约 25 页、按全局限速接近一分钟——页级明细让这一段
+    // 「看起来卡死」的时间可见；进度条宽度仍按标的级 done/total，页推进不虚报。
+    const wrapper = mountBar({
+      done: 5,
+      total: 100,
+      fund: { code: '110022', page: 3, pages: 25 },
+    })
+    const bar = wrapper.find('[data-testid="instrument-sync-progress"]')
+    expect(bar.text()).toContain('同步标的信息 5/100')
+    expect(wrapper.find('[data-testid="instrument-sync-progress-fund"]').text()).toBe(
+      '回填 110022：第 3/25 页',
+    )
+    expect(wrapper.find('[data-testid="instrument-sync-progress-bar"]').attributes('style')).toContain('width: 5%')
+  })
+
+  it('标的级推进（无页级明细）不渲染明细行', () => {
+    const wrapper = mountBar({ done: 5, total: 100 })
+    expect(wrapper.find('[data-testid="instrument-sync-progress-fund"]').exists()).toBe(false)
+  })
 })
