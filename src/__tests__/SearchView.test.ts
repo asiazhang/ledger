@@ -338,6 +338,33 @@ describe('SearchView.vue', () => {
     expect(lastSearchArgs().query).toBe('午餐')
   })
 
+  it('清空在途搜索：作废在途请求，迟到结果不落位、回占位态（issue #1008 invalidate 接线）', async () => {
+    vi.useFakeTimers()
+    let release!: (value: unknown) => void
+    const pending = new Promise((resolve) => {
+      release = resolve
+    })
+    wireInvokeSeam({ overrides: { search_transactions: () => pending } })
+    const wrapper = mount(SearchView)
+    await nextTick()
+    // 防抖到点发起搜索，保持在途
+    await typeAndSearch(wrapper, '午餐')
+    expect(searchCalls().length).toBe(1)
+    // 清空关键字 → resetResults 作废在途请求（无新查询、回占位态）
+    await wrapper.find('input').setValue('')
+    await nextTick()
+    expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
+    expect(wrapper.findComponent(NDataTable).exists()).toBe(false)
+    // 迟到的在途结果到达：不得落位（删掉 resetResults 里的 invalidate() 本用例变红）
+    release({ items: [makeTransaction({ id: 'late', note: '午餐' })], total: 1 })
+    await vi.advanceTimersByTimeAsync(0)
+    await nextTick()
+    await nextTick()
+    expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
+    expect(wrapper.text()).not.toContain('命中 1 条')
+    expect(searchCalls().length).toBe(1)
+  })
+
   it('搜索结果渲染表格并显示「命中 N 条」', async () => {
     vi.useFakeTimers()
     const wrapper = mount(SearchView)

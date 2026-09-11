@@ -61,18 +61,15 @@
     "createSubscription": "新建订阅",
     "createSubscriptionSubmit": "创建订阅",
     "editSubscription": "编辑订阅",
-    "subscriptionLoadError": "加载订阅失败",
     "subscriptionCancelConfirm": "取消后不再扣款，已生成的交易与历史期次保留。确认取消？",
     "installmentList": "分期清单",
     "createInstallment": "新建分期",
     "createInstallmentSubmit": "创建分期",
-    "installmentLoadError": "加载分期失败",
     "installmentCancelConfirm": "取消后不再自动扣款，已生成的交易与历史期次保留。确认取消？",
     "transferList": "定时转账清单",
     "createTransfer": "新建转账",
     "createTransferModal": "新建定时转账",
     "createTransferSubmit": "创建转账",
-    "transferLoadError": "加载定时转账失败",
     "transferCancelConfirm": "取消后不再自动转账，已生成的交易与历史期次保留。确认取消？"
   },
   "form": {

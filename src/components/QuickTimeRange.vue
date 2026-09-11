@@ -5,6 +5,7 @@ import { NButton, NButtonGroup, NIcon, NSpace } from 'naive-ui'
 import { ChevronBack, ChevronDown, ChevronForward } from '@vicons/ionicons5'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import { useInputMode } from '@/composables/useInputMode'
+import { useLoadable } from '@/composables/useLoadable'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import type { ReportDateRange } from '@/types'
@@ -85,22 +86,22 @@ const currentPeriod = computed(() => rangeToPeriod(props.modelValue.from, props.
 //（AI 导入外扩历史、删除收窄边界即时跟随）。null = 在途或失败 → 钳制退化为
 // 不钳制（不阻塞步进）；空库（双 null 日期对，非 null 对象）由派生单点回退为
 // 单当前期间。重拉在途时沿用旧值到成功替换（stale-while-revalidate，与参考
-// store 同形，不闪烁）；仅在失败时置空退化，静默不 toast（辅助钳制状态）。
-// 不走 useLoadable（ADR-0040）：需持值 stale-while-revalidate + 刻意静默退化，
-// 均在其形态之外，序号守卫为该形态最小实现。
+// store 同形，不闪烁）；仅在失败时置空退化。
+// 收编 Loadable（issue #1008 / ADR-0040）：silent 实例关掉 toast 一路（辅助钳制
+// 状态失败不打扰用户），竞态后发覆盖先发内化；任务只产结果——成功替换、失败
+// （error 置位）置空退化、被作废的迟到结果不落位。
 const dateRange = ref<ReportDateRange | null>(null)
-let dateRangeSeq = 0
 let unlistenLedgerChanged: UnlistenFn | null = null
 let ledgerListenerDisposed = false
 
+const { error: dateRangeError, run: runLoadDateRange } = useLoadable(() => api.reportDateRange(), {
+  silent: true,
+})
+
 async function loadDateRange() {
-  const seq = ++dateRangeSeq
-  try {
-    const range = await api.reportDateRange()
-    if (seq === dateRangeSeq) dateRange.value = range
-  } catch {
-    if (seq === dateRangeSeq) dateRange.value = null
-  }
+  const range = await runLoadDateRange()
+  if (range !== null) dateRange.value = range
+  else if (dateRangeError.value !== null) dateRange.value = null
 }
 
 /** 当前游标单位下的数据期间边界；「全部」无游标或边界未知（在途/失败）时为 null。 */

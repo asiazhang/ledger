@@ -8,7 +8,6 @@
   "hitCount": "命中 {n} 条",
   "noResults": "无匹配结果",
   "emptyPlaceholder": "输入关键字或设置筛选开始搜索",
-  "searchFailed": "搜索失败: {msg}",
   "filter": {
     "amountRange": "金额 {min} ~ {max}",
     "amountMin": "最低 {amount}",

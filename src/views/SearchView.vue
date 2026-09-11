@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { t } from '@/i18n'
-import { errorMessage } from '@/utils/errors'
 import { computed, ref, watch } from 'vue'
 import {
   NButton,
@@ -11,12 +10,12 @@ import {
   NSpace,
   NSpin,
   NText,
-  useMessage,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import TransactionCardList from '@/components/TransactionCardList.vue'
 import { useWindowTier } from '@/composables/useWindowTier'
+import { useLoadable } from '@/composables/useLoadable'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
@@ -28,7 +27,6 @@ import { yuanToCents } from '@/utils/money'
 
 const store = useAppStore()
 const reference = useReferenceStore()
-const message = useMessage()
 // 窗口分级（ADR-0088 决策 9）：搜索结果断点双渲染——移动档同构复用交易卡片列表
 // （第二消费方，只读形态：无「⋯」、无整卡编辑，与桌面搜索结果只读口径一致）
 const tier = useWindowTier()
@@ -46,13 +44,16 @@ const results = ref<Transaction[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
-const loading = ref(false)
 // 是否已完成至少一次搜索（区分「占位提示」与「空结果」两种空态）
 const searched = ref(false)
 
 let debounceTimer: ReturnType<typeof setTimeout> | undefined
-// 请求序号：丢弃过期响应，防快速输入/清空下的竞态
-let searchSeq = 0
+
+// 搜索加载收编 Loadable（issue #1008 / ADR-0040）：loading 置收、竞态后发覆盖先发
+// 与错误 toast（默认策略 = 裸 errorMessage）内化；任务只产结果不写状态。
+const { loading, run: runSearchTask, invalidate } = useLoadable(() =>
+  api.searchTransactions(keyword.value.trim(), page.value, pageSize, buildFilter()),
+)
 
 const amountMinCents = computed(() => yuanToCents(amountMinYuan.value))
 const amountMaxCents = computed(() => yuanToCents(amountMaxYuan.value))
@@ -120,25 +121,11 @@ function buildFilter(): TransactionSearchFilter {
 }
 
 async function runSearch() {
-  const seq = ++searchSeq
-  loading.value = true
-  try {
-    const res = await api.searchTransactions(
-      keyword.value.trim(),
-      page.value,
-      pageSize,
-      buildFilter(),
-    )
-    if (seq !== searchSeq) return
-    results.value = res.items
-    total.value = res.total
-    searched.value = true
-  } catch (e) {
-    if (seq !== searchSeq) return
-    message.error(t('search.searchFailed', { msg: errorMessage(e) }))
-  } finally {
-    if (seq === searchSeq) loading.value = false
-  }
+  const res = await runSearchTask()
+  if (res === null) return
+  results.value = res.items
+  total.value = res.total
+  searched.value = true
 }
 
 function scheduleSearch() {
@@ -151,12 +138,11 @@ function scheduleSearch() {
 
 function resetResults() {
   clearTimeout(debounceTimer)
-  searchSeq++ // 使在途请求过期
+  invalidate() // 作废在途请求：迟到结果不落位、loading 收尾
   results.value = []
   total.value = 0
   page.value = 1
   searched.value = false
-  loading.value = false
 }
 
 // 关键字或筛选任一变化：空查询（无关键字且无筛选）→ 占位；否则防抖查询
