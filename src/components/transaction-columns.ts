@@ -225,21 +225,25 @@ function renderTwoAccountCell(fromAccountId: string, toAccountId: string): VNode
   )
 }
 
-/** 账户单元格渲染（issue #99 / #937）：
+/** 账户单元格渲染（issue #99 / #937，方向修正 issue #1030）：
  * - 转账行显示「转出 → 转入」双向账户名（to_account_id 存在时），两个名字各自可点击、
  *   各自下钻到对应账户的过滤视图；
- * - 带出资账户的 buy/sell 行显示「出资账户 → 投资账户」双向账户名（ADR-0096：钱从哪来、
- *   份额记到哪一眼可辨），两端各自可点击下钻；
+ * - 带出资账户的 buy/sell 行按「资金流出方在前」显示双向账户名（ADR-0096 决策 6：
+ *   buy「出资账户 → 投资账户」、sell「投资账户 → 出资账户」，与出资账户的流入/流出
+ *   契约语义及转账行阅读顺序一致），两端各自可点击下钻；
  * - 其余交易类型（含不带出资账户的 buy/sell）仍显示主账户名（可点击下钻，issue #97）。
  *
- * 出资账户为空投资账户照常；出资账户命中时资金实际从出资账户流出/流入，
- * 出资端在前与转账「资金流出方在前」的阅读顺序一致。 */
+ * 出资账户为空投资账户照常；出资账户命中时资金实际流出方在前（buy：出资账户，
+ * sell：投资账户），与转账「资金流出方在前」的阅读顺序一致（issue #1030）。 */
 export function renderAccountCell(row: Transaction): VNode {
   if (row.kind === 'transfer' && row.to_account_id) {
     return renderTwoAccountCell(row.account_id, row.to_account_id)
   }
-  if ((row.kind === 'buy' || row.kind === 'sell') && row.funding_account_id) {
+  if (row.kind === 'buy' && row.funding_account_id) {
     return renderTwoAccountCell(row.funding_account_id, row.account_id)
+  }
+  if (row.kind === 'sell' && row.funding_account_id) {
+    return renderTwoAccountCell(row.account_id, row.funding_account_id)
   }
   return h(AccountLink, { accountId: row.account_id })
 }

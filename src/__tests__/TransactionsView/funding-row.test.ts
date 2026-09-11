@@ -5,8 +5,10 @@ import { NSelect } from 'naive-ui'
 import AccountLink from '@/components/AccountLink.vue'
 import type { Transaction } from '@/types'
 
-/** 买入/卖出行出资账户双链接（issue #937 / ADR-0096）：出资账户命中的 buy/sell
- * 行账户列按转账同款「出资账户 → 投资账户」双向账户名展示，两端各自可点击下钻；
+/** 买入/卖出行出资账户双链接（issue #937 / ADR-0096，方向修正 issue #1030）：
+ * 出资账户命中的 buy/sell 行账户列按「资金流出方在前」双向账户名展示——
+ * buy「出资账户 → 投资账户」、sell「投资账户 → 出资账户」（与契约
+ * TransactionInput.funding_account_id 的流入/流出语义一致），两端各自可点击下钻；
  * 不带出资账户的 buy/sell 与其余 kind 展示不变（单主账户名）。 */
 describe('TransactionsView 出资账户行双向账户名（issue #937）', () => {
   beforeEach(() => {
@@ -48,15 +50,27 @@ describe('TransactionsView 出资账户行双向账户名（issue #937）', () =
     })
   })
 
-  it('卖出行（带出资账户）同样双向展示（buy/sell 同口径）', async () => {
+  it('卖出行（带出资账户）显示「投资账户 → 出资账户」（资金流出方在前，issue #1030）', async () => {
     setTxnDb([
       makeTxn(1, 'acc-1', { kind: 'sell', funding_account_id: 'acc-2' }),
     ])
     const wrapper = await mountView()
     await filterKind(wrapper, 'sell')
     const links = wrapper.findAllComponents(AccountLink)
-    expect(links.map((l) => l.text())).toEqual(['银行', '现金'])
+    // 资金流出方在前：sell 现金从投资账户流入出资账户（赎回款到账银行卡）
+    expect(links.map((l) => l.text())).toEqual(['现金', '银行'])
     expect(wrapper.text()).toContain('→')
+    // 两端各自可点击下钻：投资账户在前、出资账户在后
+    await links[0].find('button').trigger('click')
+    expect(pushMock).toHaveBeenLastCalledWith({
+      name: 'transactions',
+      query: { account: 'acc-1' },
+    })
+    await links[1].find('button').trigger('click')
+    expect(pushMock).toHaveBeenLastCalledWith({
+      name: 'transactions',
+      query: { account: 'acc-2' },
+    })
   })
 
   it('不带出资账户的买入行仍显示单个主账户名（余额买入语义展示不变）', async () => {
