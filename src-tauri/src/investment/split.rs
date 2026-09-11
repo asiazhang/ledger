@@ -1,4 +1,4 @@
-//! 份额调整（split）批次成本重述单点（ADR-0106 决策 2/3 / issue #1049）。
+//! 份额调整（split）批次成本重述单点（ADR-0106 决策 2/3 / issue #1049 + #1050）。
 //!
 //! split = 同一投资账户内、单标的的非现金份额变动：一笔落账把该标的**在用批次**
 //! 按比例 f = (当前持仓 + Δ) / 当前持仓 重述——逐批 `remaining_quantity × f`、
@@ -6,22 +6,43 @@
 //! （锚点行金额 − 既往记录消耗，见 [`lots`] 的闭合机制）下精确不变；每份成本
 //! 取整产生的舍入尾差归**末批次**闭合（沿用 convert 的「尾差末腿」纪律）。
 //!
+//! 正负两向共用同一公式：#1049 落 `+Δ`（份额折算 / 结转 / 送股，数量增加、每份
+//! 成本稀释）；#1050 落 `−Δ`（缩股，数量减少、每份成本上升），缩股幅度取严
+//! `|Δ| < 当前持仓`（[`shrink_not_less_than_holding_error`]）。
+//!
 //! 重述不可逆（含舍入），逐批次 before / after 快照落 `security_lot_adjustments`
 //! （角色对齐 `security_lot_conversions`）——它是后续修改/删除精确回补与审计的
 //! 唯一依据（本票只落审计；回补由后续票 #1051 收编）。重述本身零已实现盈亏、
 //! 不写卖出匹配、不动任何账户余额（六度量系数全 0，ADR-0011 矩阵既有行）。
 //!
-//! 不属本模块：split 输入守卫与计划装配归 [`super::trade`]（`prepare_split`，
-//! 与 buy/sell/convert 同排）；「批次被在用 split 重述后其买入/转换不可改删」的
-//! 在用占用守卫归 [`super::unwind`]。
+//! 守卫归属：字段级输入守卫（标的 / 账户类型 / 手续费 / 金额 / 转入腿 / `Δ = 0`）
+//! 与「`Δ > 0` 须有在用持仓」的错误映射归 [`super::trade`] 的 `prepare_split`；
+//! **缩股不等式取严内化进 [`plan_restatement`]**——它需要与本函数同一份在用批次
+//! 快照，且是准备路径与后续重放路径共用的「必须带门」单点（同 [`lots::plan`] 把
+//! 可卖出数量守卫内化进批次分摊的先例，ADR-0106 决策 5/7、ADR-0091 重放确定性）。
+//! 「批次被在用 split 重述后其买入/转换不可改删」的在用占用守卫归 [`super::unwind`]。
 
 use rusqlite::Connection;
 
-use super::lots;
+use super::lots::{self, QTY_GUARD_EPSILON, format_quantity_for_message};
 use super::prices::PRICE_UNITS_PER_FEN;
 use crate::db::{new_uuid, now_iso};
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
+
+/// 「缩股幅度不得达到当前持仓」码化错误（ADR-0106 决策 1/7）：取严 `<`——等号
+/// 让 f = 0、批次清零，成本凭空消失，与「份额调整恒不产生已实现盈亏」冲突。
+/// 文案对准缩股语义（不借用卖出 / 超卖口径），数字按录入粒度合同展示（同
+/// [`lots`] 的不足守卫），两端与两路径不漂移。
+fn shrink_not_less_than_holding_error(total_holding: f64, shrink_quantity: f64) -> AppError {
+    let holding_display = format_quantity_for_message(total_holding);
+    let shrink_display = format_quantity_for_message(shrink_quantity);
+    AppError::codedp(
+        "trade.split-shrink-not-less-than-holding",
+        format!("缩股幅度必须小于当前持仓，当前持有 {holding_display}，尝试缩股 {shrink_display}"),
+        &[&holding_display, &shrink_display],
+    )
+}
 
 /// 单批次重述快照（before / after 逐列成对，落 `security_lot_adjustments` 一行）。
 pub(crate) struct LotRestatement {
@@ -77,11 +98,14 @@ fn snapshot_active_lots(
 /// （与 sell/convert 的「prepare 算定消耗、apply 落盘」同一形态，issue #1019）。
 ///
 /// - `f = (S + Δ) / S`，S 为在用批次剩余数量合计（快照内求和）；
+/// - 缩股 `Δ < 0` 取严 `|Δ| < S`：越界（含等号，容差同 FIFO 守卫）在此码化拒绝，
+///   不让 `f ≤ 0` 进入分摊（[`shrink_not_less_than_holding_error`]）；
 /// - 非末批次每份成本 = round(cpu ÷ f)（同比例稀释的独立取整）；
 /// - 末批次每份成本闭合全部尾差：以「Σ 权威批次剩余成本」（锚点 − 既往记录
 ///   消耗，整数分、重述不动它）为目标，倒推末批次每份成本——批次总成本在权威
 ///   口径下精确不变，末批次吸收全部舍入尾差；
-/// - 快照为空（零在用持仓）返回空表，由调用方映射为码化守卫错误。
+/// - 快照为空（零在用持仓）且非缩股时返回空表，由调用方映射为码化守卫错误；
+///   零持仓缩股在缩股守卫处即被拒绝，不返回空表。
 pub(crate) fn plan_restatement(
     conn: &Connection,
     account_id: &str,
@@ -89,10 +113,16 @@ pub(crate) fn plan_restatement(
     delta: f64,
 ) -> Result<Vec<LotRestatement>> {
     let lots = snapshot_active_lots(conn, account_id, instrument_id)?;
+    let total_holding: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
+    // 缩股取严（ADR-0106 决策 1/7）：|Δ| 必须严格小于当前持仓——等号让 f = 0、
+    // 批次成本凭空消失。零持仓缩股同被此守卫拒绝（|Δ| > 0 恒 ≥ 0）。容差与 FIFO
+    // 守卫同源：f64 逐次扣减的位噪声不误拒真实合法缩股。
+    if delta < 0.0 && total_holding + delta <= QTY_GUARD_EPSILON {
+        return Err(shrink_not_less_than_holding_error(total_holding, -delta));
+    }
     if lots.is_empty() {
         return Ok(Vec::new());
     }
-    let total_holding: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
     let factor = (total_holding + delta) / total_holding;
 
     // 权威总成本（分）：Σ（锚点 − 既往记录消耗）——整数分，重述不改它，
