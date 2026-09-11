@@ -21,6 +21,7 @@ use crate::sync::http::{
     fx_secid_candidates, parse_klines, price_cents_from_raw, secid_prefix,
 };
 use crate::sync::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
+use crate::sync::{FundNavProgress, SyncProgress};
 
 use crate::test_support::{seed_account, seed_instrument};
 
@@ -738,12 +739,18 @@ fn no_name(_: &str) -> Result<String> {
 }
 
 /// 空实现：既有用例不关心进度序列时注入（进度回调最小桩，issue #897）。
-fn no_progress(_done: usize, _total: usize) {}
+fn no_progress(_progress: SyncProgress) {}
 
-/// 进度记录闭包：把 (done, total) 推进序列攒进测试侧共享缓冲（与 [`mock_fx`]
-/// 的请求记录同纪律：缓冲由测试持有，断言时 borrow）。
-fn progress_recorder<'a>(log: &'a RefCell<Vec<(usize, usize)>>) -> impl FnMut(usize, usize) + 'a {
-    move |done, total| log.borrow_mut().push((done, total))
+/// 进度记录闭包：把**标的级一格的** (done, total) 推进序列攒进测试侧共享缓冲
+///（与 [`mock_fx`] 的请求记录同纪律：缓冲由测试持有，断言时 borrow）。基金
+/// 页级明细（issue #1061）由 `fund.is_some()` 的专用记录覆盖，本闭包只收标的级
+/// 推进——既有断言对准的正是那一层序列。
+fn progress_recorder<'a>(log: &'a RefCell<Vec<(usize, usize)>>) -> impl FnMut(SyncProgress) + 'a {
+    move |progress| {
+        if progress.fund.is_none() {
+            log.borrow_mut().push((progress.done, progress.total));
+        }
+    }
 }
 
 /// 模拟汇率 K 线抓取：按 base+quote 直连串（如 "HKDCNY"）返回汇率日线样本，
@@ -2856,8 +2863,10 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
         events.borrow_mut().push(format!("kline:{secid}"));
         Ok(vec![])
     };
-    let mut progress = |done: usize, total: usize| {
-        events.borrow_mut().push(format!("progress:{done}/{total}"));
+    let mut progress = |progress: SyncProgress| {
+        events
+            .borrow_mut()
+            .push(format!("progress:{}/{}", progress.done, progress.total));
     };
     do_incremental_sync_with(
         &conn,
@@ -3097,8 +3106,10 @@ fn fund_progress_advances_after_nav_and_name_complete() {
         events.borrow_mut().push(format!("name:{code}"));
         Ok(format!("权威-{code}"))
     };
-    let mut progress = |done: usize, total: usize| {
-        events.borrow_mut().push(format!("progress:{done}/{total}"));
+    let mut progress = |progress: SyncProgress| {
+        events
+            .borrow_mut()
+            .push(format!("progress:{}/{}", progress.done, progress.total));
     };
     do_incremental_sync_with(
         &conn,
@@ -3122,6 +3133,259 @@ fn fund_progress_advances_after_nav_and_name_complete() {
         ],
         "先发 total；净值与名称都完成后才推进该基金的一格"
     );
+}
+
+#[test]
+fn fund_first_sync_emits_page_level_progress_within_one_instrument() {
+    // issue #1061：首刷一只基金要翻 3 页（total=45 → 3 页），页级明细让单只基金
+    // 回填期间进度持续推进；done/total 的标的级口径不变——页推进不改 done、
+    // 分母恒为有通道标的数（ADR-0095 决策 2 的不变量）。
+    let conn = crate::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    let pages = [(
+        "110022",
+        vec![
+            nav_page(45, &[("2026-01-30", 3.348)]),
+            nav_page(45, &[("2025-12-31", 3.1)]),
+            nav_page(45, &[("2025-12-30", 3.0)]),
+        ],
+    )];
+    let requested = RefCell::new(Vec::new());
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = mock_nav(&pages, &requested);
+    let log = RefCell::new(Vec::new());
+    let mut progress = |progress: SyncProgress| log.borrow_mut().push(progress);
+    do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut progress,
+    )
+    .unwrap();
+
+    let fund_page = |page: u64| SyncProgress {
+        done: 0,
+        total: 1,
+        fund: Some(FundNavProgress {
+            code: "110022".into(),
+            page,
+            pages: 3,
+        }),
+    };
+    assert_eq!(
+        *log.borrow(),
+        vec![
+            SyncProgress {
+                done: 0,
+                total: 1,
+                fund: None,
+            },
+            fund_page(1),
+            fund_page(2),
+            fund_page(3),
+            SyncProgress {
+                done: 1,
+                total: 1,
+                fund: None,
+            },
+        ],
+        "单只基金回填期间逐页推进；页级明细不改 done/total 的标的级口径"
+    );
+}
+
+#[test]
+fn fund_page_progress_emitted_only_after_page_fetch_returns() {
+    // issue #1061 负向条目：页级推进只在本页抓取返回之后发出——抓取闭包内部的
+    // 退避/重试等待（生产在 HTTP 层内完成，注入层不可见）期间不得产生虚假推进。
+    // 篡改成「翻页前先报页码」会让事件顺序翻转为 progress-fund 先于 fetch-exit，
+    // 本断言即变红。
+    let conn = crate::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    let events = RefCell::new(Vec::new());
+    let mut fetch = mock_fetch(&[]);
+    // 注入闭包在抓取内部先记 enter、模拟（内部已完成）退避等待、再记 exit 并返回
+    // 本页——编排看到的只有一次闭合调用。
+    let mut nav = |query: &NavQuery| {
+        events
+            .borrow_mut()
+            .push(format!("fetch-enter:{}", query.page));
+        events
+            .borrow_mut()
+            .push(format!("retry-wait:{}", query.page));
+        // 就地断言：本页抓取尚未返回时（含内部退避/重试等待），不得已经出现本页
+        // 的页级推进——「等待不伪装成推进」在抓取进行中即成立，而非只靠事后的
+        // 事件顺序对齐。
+        assert!(
+            !events
+                .borrow()
+                .iter()
+                .any(|e| e == &format!("progress-fund:{}", query.page)),
+            "页级推进在本页抓取返回之前就出现了（等待被伪装成推进）"
+        );
+        events
+            .borrow_mut()
+            .push(format!("fetch-exit:{}", query.page));
+        Ok(nav_page(40, &[]))
+    };
+    let mut progress = |progress: SyncProgress| {
+        events.borrow_mut().push(match progress.fund {
+            Some(fund) => format!("progress-fund:{}", fund.page),
+            None => format!("progress:{}/{}", progress.done, progress.total),
+        });
+    };
+    do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut progress,
+    )
+    .unwrap();
+
+    assert_eq!(
+        *events.borrow(),
+        vec![
+            "progress:0/1".to_string(),
+            "fetch-enter:1".to_string(),
+            "retry-wait:1".to_string(),
+            "fetch-exit:1".to_string(),
+            "progress-fund:1".to_string(),
+            "fetch-enter:2".to_string(),
+            "retry-wait:2".to_string(),
+            "fetch-exit:2".to_string(),
+            "progress-fund:2".to_string(),
+            "progress:1/1".to_string(),
+        ],
+        "页级推进严格晚于本页抓取返回；抓取内部的退避等待不产生推进"
+    );
+}
+
+#[test]
+fn page_level_detail_only_for_multi_page_fund_sync() {
+    // 单页基金（增量常态）与行情标的不产生页级明细——只有真正翻页的首刷/深回填
+    // 才有页级推进，增量常态事件形状保持既有 { done, total } 两字段。
+    let conn = crate::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-stock", "600001", "stock", "CNY", "sh");
+    insert_holding(
+        &conn,
+        "acc-2",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    let pages = [("110022", vec![nav_page(2, &[("2026-01-30", 3.3)])])];
+    let requested = RefCell::new(Vec::new());
+    let mut fetch = mock_fetch(&[("600001", Some(1000.0))]);
+    let mut nav = mock_nav(&pages, &requested);
+    let log = RefCell::new(Vec::new());
+    let mut progress = |progress: SyncProgress| log.borrow_mut().push(progress);
+    do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut progress,
+    )
+    .unwrap();
+
+    let events = log.borrow();
+    assert!(
+        events.iter().all(|e| e.fund.is_none()),
+        "单页基金与行情标的不产生页级明细：{events:?}"
+    );
+    assert_eq!(
+        events.iter().map(|e| (e.done, e.total)).collect::<Vec<_>>(),
+        vec![(0, 2), (1, 2), (2, 2)],
+        "标的级推进序列不受页级明细影响"
+    );
+}
+
+#[test]
+fn blocked_fund_pages_do_not_advance_page_progress() {
+    // issue #1061 负向条目：风控拦截形态（`Data` 缺省/非对象，`blocked`）即使带着
+    // 非零 `TotalCount`、翻满整个窗口，也不算「已回填的一页」——被拦截期间不得让
+    // 页码虚假推进（与 #1059「空响应不是成功」同源）。该基金最终计入跳过，
+    // 标的级序列照常推进一格。
+    let conn = crate::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    // total=45 → 3 页，每页都是被拦截空响应。
+    let blocked_page = || LsjzPage {
+        points: vec![],
+        total: 45,
+        blocked: true,
+    };
+    let pages = [(
+        "110022",
+        vec![blocked_page(), blocked_page(), blocked_page()],
+    )];
+    let requested = RefCell::new(Vec::new());
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = mock_nav(&pages, &requested);
+    let log = RefCell::new(Vec::new());
+    let mut progress = |progress: SyncProgress| log.borrow_mut().push(progress);
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut progress,
+    )
+    .unwrap();
+
+    let events = log.borrow();
+    assert!(
+        events.iter().all(|e| e.fund.is_none()),
+        "被拦截页不产生页级推进：{events:?}"
+    );
+    assert_eq!(
+        events.iter().map(|e| (e.done, e.total)).collect::<Vec<_>>(),
+        vec![(0, 1), (1, 1)],
+        "标的级序列照常推进一格；被拦截不虚报页级进度"
+    );
+    assert_eq!(result.skipped, 1);
 }
 
 #[test]

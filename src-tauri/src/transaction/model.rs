@@ -181,11 +181,12 @@ pub struct TransactionInput {
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
-    /// 标的 id（仅 buy/sell/convert 需提供）：先用标的搜索端点
+    /// 标的 id（仅 buy/sell/convert/split 需提供）：先用标的搜索端点
     /// （`GET /api/v1/instruments`）把源数据中的标的描述解析为 id，未命中再按创建端点
     /// 幂等新建；引用不存在的标的返回 400（中文错误，可读回自纠）。
     pub instrument_id: Option<String>,
-    /// 成交数量（份，可含小数）：仅 buy/sell/convert 需提供，必须 > 0（convert 为转出份额）。
+    /// 成交数量（份，可含小数）：仅 buy/sell/convert/split 需提供，必须 > 0（convert 为转出份额、
+    /// split 为带符号份额增量 Δ）。
     pub quantity: Option<f64>,
     /// 成交单价（万分之一元，元 × 10000；价格刻度见 ADR-0038，金额列仍为整数分）：
     /// 非基金标的必填且必须 > 0；场外基金（issue #302 / ADR-0038 金额权威）不提供，

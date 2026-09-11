@@ -35,7 +35,7 @@
 1. 仓库第二个自定义声明宏：宏内文档 rustdoc 不入调用域文档链接（已避免跨展开 intra-doc link）；展开调试依赖 `cargo expand`（清单形态简单）。
 2. `InstrumentType` 未知值报错文案变化（追加合法值后缀）——用户可见，已被 grilling 接受为改进。
 3. e2e 步骤层 4 处 `.parse()` 改调 `InstrumentType::parse`（`FromStr` 退役的随迁成本）。
-4. **与 ADR-0050 的关系（显式记录）**：宏生成的 `parse` 保持既有裸 `AppError::Invalid` 构造（两枚举既状如此，本票不扩大范围）；「Invalid 构造点逐点码化」是 ADR-0050 的存量收口债，宏固化该形状使第三枚举接入时会照抄——已立票单独追踪，不静默延续。
+4. **与 ADR-0050 的关系（显式记录）**：宏生成的 `parse` 保持既有裸 `AppError::Invalid` 构造（两枚举既状如此，本票不扩大范围）；「Invalid 构造点逐点码化」是 ADR-0050 的存量收口债，宏固化该形状使第三枚举接入时会照抄——已立票单独追踪，不静默延续。**（本句所述裸 `Invalid` 形状已被 #1071 取代**：宏增必填 `err_code` 参数、`parse` 改报码化错误；见文末「实施 recorded · #1071 收口」。）
 
 ## 替代方案（防重提）
 
@@ -58,3 +58,10 @@
 - **scratch 变体走查**：宏调用清单暂加 `InstrumentType::Walkthrough => "walkthrough"`——`ALL`/`as_str`/`parse` 由宏同源展开自动带入（无第二处可漏登），`create_instrument_manual` 的穷尽 match 即 `E0004 non-exhaustive patterns`（编译红，证明「新增类型必须过手动创建守卫决策行」的强制面不因宏而弱化）；补臂后 V002 CHECK 互核测试红（CHECK 5 字面量 vs `ALL` 6 项），证明互核对 enum/schema 漂移有牙、非恒绿装饰；删 scratch 回绿。
 - **删除即变红（宏接线）**：宏产物被域接缝直接消费——`FromSql`/serde 反序列化消费 `parse`、`ToSql`/`Display`/OpenAPI `enum_values` 消费 `as_str`/`ALL`，删除任一产物即消费点 `E0599` 编译红；「接线即宏本身」，红在编译期。
 - 等价性：`cargo test` 全量 1369 项零改全绿（含 API 契约测试对两闭集的逐字符断言），仅 e2e 步骤层 4 处 parse 调用形态随迁；`./scripts/check.sh` 全绿。
+
+### #1071 收口（2026-09-11，代价 4 的存量债结清）
+
+- **宏增必填 `err_code` 参数**（`err_label` 保留）：`parse` 未知值由裸 `AppError::Invalid` 改为 `AppError::codedp`——稳定码 `transaction.kind-unknown` / `instrument.type-unknown`，`params` = `[未知值, 合法值清单]`。必填而非可选，是让「第三枚举接入时照抄裸 Invalid」不可表达（漏参数即编译红）。
+- **合法值清单不落前端码表**：zh/en 模板写 `未知交易类型: {0}（合法值: {1}）` / `unknown transaction kind: {0} (valid values: {1})`，清单仍由宏同一批字面量同源拼接、经 `{1}` 插值——ADR-0108「消灭手抄清单」跨本地化边界保持；`message` 与清单逐字不变（ADR-0050 只增不改）。
+- **包装路径行为语义保持**：serde 反序列化与 `FromSql` 继续骑行 `parse`（未知值即错，不静默映射）；两者经 serde/rusqlite 错误类型扁平化后只承载 `message`，`code`/`params` 不随之外传——与既有的 `account.type-unknown`（同为 serde 包装的闭集码）同一形态，按 ADR-0050 决策 2 的「构造点码化」口径落地。**已知边界**：新增两码在当前 wire/DB 路径不可达前端；若要经边界直达，须改解包形态（如壳层改收原始字符串后域内 `parse`），超出本票「不改解析行为」边界，建议另立票评估。
+- **同族扫描**：`rg "AppError::Invalid\(" src-tauri/src` 剩余存量构造点无既有收口票，清单化立为 #1072（区分用户可见条件候选与 ADR-0050 允许不转的程序性/内部错误）。

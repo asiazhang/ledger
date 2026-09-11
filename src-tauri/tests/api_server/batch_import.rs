@@ -5,7 +5,8 @@ use tower::ServiceExt;
 
 use crate::common::{
     batch_body, body_to_bytes, count_active_transactions, create_account_via_api,
-    get_first_category_id, get_json, post_batch, setup_app,
+    delete_transaction_via_api, get_first_category_id, get_json, post_batch,
+    put_transaction_via_api, setup_app,
 };
 
 #[tokio::test]
@@ -173,23 +174,22 @@ async fn test_kind_enum_rejects_unknown_at_api_boundary() {
 /// issue #72：dividend/split 已声明但未实现，经交易接口（批量创建）显式「暂不支持」拒绝，
 /// 且不落库——取代此前 writer::normalize 兜底的「仅处理通用交易类型」文案（唯一对外可观测变化）。
 #[tokio::test]
-async fn test_batch_create_dividend_and_split_rejected_with_not_supported() {
+async fn test_batch_create_dividend_rejected_with_not_supported() {
     let (app, conn) = setup_app();
     let account_id = create_account_via_api(&app, "证券账户").await;
 
     let body = format!(
         r#"{{
             "transactions": [
-                {{"kind":"dividend","amount_cents":60,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-04"}},
-                {{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-05"}}
+                {{"kind":"dividend","amount_cents":60,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-04"}}
             ]
         }}"#
     );
 
     let results = post_batch(&app, body).await;
-    assert_eq!(results.len(), 2);
+    assert_eq!(results.len(), 1);
     for r in &results {
-        assert_eq!(r["success"], false, "dividend/split 应拒绝: {r}");
+        assert_eq!(r["success"], false, "dividend 应拒绝: {r}");
         assert_eq!(r["duplicate"], false);
         assert!(
             r["error"].as_str().unwrap().contains("暂不支持"),
@@ -201,7 +201,7 @@ async fn test_batch_create_dividend_and_split_rejected_with_not_supported() {
     assert_eq!(
         count_active_transactions(&count),
         0,
-        "被拒绝的 dividend/split 不应落库"
+        "被拒绝的 dividend 不应落库"
     );
 }
 
@@ -631,4 +631,269 @@ async fn test_batch_create_convert_guards_return_coded_errors() {
         })
         .unwrap();
     assert_eq!(conversions, 0);
+}
+
+// ---------------------------------------------------------------------------
+// 份额调整（split）正向写入闭环（ADR-0106 / issue #1049）：AI / 批量导入提交
+// 一条 +Δ 份额调整（无金额、无手续费、无出资账户）后，持仓 +Δ、全部账户余额
+// 不变、批次总成本不变、读回与落库一致。
+// ---------------------------------------------------------------------------
+
+/// +Δ 份额调整端到端：批量端点落账 → 持仓 +Δ、v_holdings 成本基础不变（单批次
+/// 尾差闭合）、全部账户余额（含隐藏账户）完全不变、交易读回 kind=split。
+#[tokio::test]
+async fn test_batch_create_split_adjusts_holdings_and_keeps_balances() {
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        test_support::seed_account(&conn, "acc-split-api", "股票户", "investment", "CNY", 0);
+        test_support::seed_instrument(
+            &conn,
+            "inst-split-api",
+            "502010",
+            "证券基金",
+            "CNY",
+            "unknown",
+        );
+    }
+
+    // 建仓：买入 100 份 @ 1.00 元（行金额 10000 分、每份成本 10000 万分之一元）。
+    let buy = r#"{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"acc-split-api","date":"2026-01-10","instrument_id":"inst-split-api","quantity":100.0,"price_cents":10000,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[buy], None)).await;
+    assert_eq!(created[0]["success"], true, "{created:?}");
+
+    // 落账前余额快照（含隐藏账户的完整清单）。
+    let (_, balances_before) = get_json(&app, "/api/v1/accounts/balances").await;
+
+    // +Δ 份额调整：无金额、无手续费、无出资账户、无转入标的/账户。
+    let split = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-split-api","date":"2026-02-01","instrument_id":"inst-split-api","quantity":50.0}"#;
+    let results = post_batch(&app, batch_body(&[split], None)).await;
+    assert_eq!(results[0]["success"], true, "份额调整应落账: {results:?}");
+    assert_eq!(results[0]["duplicate"], false);
+    let split_id = results[0]["id"].as_str().unwrap().to_string();
+
+    // 交易行：kind=split、金额恒 0（无现金腿）。
+    let (kind, amount_cents, amount_native_cents): (String, i64, i64) = {
+        let conn = conn.lock().unwrap();
+        conn.query_row(
+            "SELECT kind, amount_cents, amount_native_cents FROM transactions WHERE id=?1",
+            rusqlite::params![split_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(kind, "split");
+    assert_eq!(amount_cents, 0, "split 无现金腿：行金额恒 0");
+    assert_eq!(amount_native_cents, 0);
+
+    // 扩展行：action='split'、quantity=Δ、price_cents 留 NULL（ADR-0106 决策 3）。
+    let (action, quantity, price_cents): (String, f64, Option<i64>) = {
+        let conn = conn.lock().unwrap();
+        conn.query_row(
+            "SELECT action, quantity, price_cents FROM security_transactions WHERE transaction_id=?1",
+            rusqlite::params![split_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(action, "split");
+    assert!((quantity - 50.0).abs() < 1e-9);
+    assert_eq!(price_cents, None, "split 行 price_cents 留 NULL");
+
+    // 持仓 +Δ：v_holdings 数量 100 + 50 = 150。批次总成本在权威口径（锚点 −
+    // 记录消耗，闭合机制消费的整数分层）下精确不变；v_holdings 的 cost_basis
+    // 是对存储乘积（数量 × 每份成本）的 ROUND 展示——每份成本整数化的亚分残差
+    // 至多 ±1 分（150 份 × 半个万分位 = 0.75 分，见域单测 split.rs 的精确口径）。
+    let (holding_qty, cost_basis): (f64, i64) = {
+        let conn = conn.lock().unwrap();
+        conn.query_row(
+            "SELECT quantity, cost_basis_cents FROM v_holdings \
+             WHERE account_id='acc-split-api' AND instrument_id='inst-split-api'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    };
+    assert!(
+        (holding_qty - 150.0).abs() < 1e-6,
+        "持仓应为 100 + 50 = 150，实际 {holding_qty}"
+    );
+    assert!(
+        (cost_basis - 10000).abs() <= 1,
+        "批次总成本展示值应与调整前一致（亚分舍入 ±1 分），实际 {cost_basis}"
+    );
+
+    // 全部账户余额（含隐藏账户）落账前后完全不变。
+    let (_, balances_after) = get_json(&app, "/api/v1/accounts/balances").await;
+    assert_eq!(
+        balances_before, balances_after,
+        "split 落账前后全部账户余额应完全不变"
+    );
+
+    // 权威口径的精确性由用户可观察结果钉住：全额清仓后 Σ已实现 = Σ卖出 − Σ买入
+    // 精确到分（split 只重摊成本，不产生也不吞掉盈亏）。
+    let sell = r#"{"kind":"sell","amount_cents":0,"currency_code":"CNY","account_id":"acc-split-api","date":"2026-03-01","instrument_id":"inst-split-api","quantity":150.0,"price_cents":10000,"fee_cents":0}"#;
+    let sold = post_batch(&app, batch_body(&[sell], None)).await;
+    assert_eq!(
+        sold[0]["success"], true,
+        "重述后的批次应可全额清仓: {sold:?}"
+    );
+    let realized: i64 = {
+        let conn = conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(SUM(realized_pnl_cents),0) FROM security_lot_sales s \
+             JOIN transactions t ON t.id = s.sell_transaction_id \
+             WHERE t.account_id='acc-split-api' AND s.lot_id IN \
+             (SELECT id FROM security_lots WHERE instrument_id='inst-split-api')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        realized, 5000,
+        "Σ已实现应为 15000 − 10000 = 5000 分（成本总量不因 split 漂移）"
+    );
+
+    // 读回：GET /api/v1/transactions 可见 split 行（筛选闭集本就含 split）。
+    let (_, list) = get_json(&app, "/api/v1/transactions?kinds=split").await;
+    let items = list["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "按 kinds=split 读回应命中落账行");
+    assert_eq!(items[0]["kind"], "split");
+    assert_eq!(items[0]["amount_cents"], 0);
+}
+
+/// 份额调整守卫在批量端点逐行返回码化中文错误（不落库、不影响同批其他行）。
+#[tokio::test]
+async fn test_batch_create_split_guards_return_coded_errors() {
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        test_support::seed_account(&conn, "acc-sp-guard", "股票户", "investment", "CNY", 0);
+        test_support::seed_account(&conn, "acc-sp-cash", "现金户", "cash", "CNY", 0);
+        test_support::seed_instrument(&conn, "inst-sp-g", "502010", "证券基金", "CNY", "unknown");
+        test_support::seed_instrument(
+            &conn,
+            "inst-sp-none",
+            "161725",
+            "无持仓基金",
+            "CNY",
+            "unknown",
+        );
+    }
+    // 建仓 100 份 @1.00 元。
+    let buy = r#"{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-01-10","instrument_id":"inst-sp-g","quantity":100.0,"price_cents":10000,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[buy], None)).await;
+    assert_eq!(created[0]["success"], true, "{created:?}");
+
+    // 零持仓标的（现金账户上根本没有持仓标的行，先撞非投资账户守卫也不行——
+    // 用独立标的触发零持仓）。
+    let zero_holding = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-none","quantity":10.0}"#;
+    let negative = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-g","quantity":-5.0}"#;
+    let with_fee = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-g","quantity":10.0,"fee_cents":100}"#;
+    let with_amount = r#"{"kind":"split","amount_cents":500,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-g","quantity":10.0}"#;
+    let with_price = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-g","quantity":10.0,"price_cents":10000}"#;
+    let with_funding = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-g","quantity":10.0,"funding_account_id":"acc-sp-cash"}"#;
+    let with_merchant = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-guard","date":"2026-02-01","instrument_id":"inst-sp-g","quantity":10.0,"merchant_name":"京东"}"#;
+
+    let results = post_batch(
+        &app,
+        batch_body(
+            &[
+                zero_holding,
+                negative,
+                with_fee,
+                with_amount,
+                with_price,
+                with_funding,
+                with_merchant,
+            ],
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(results.len(), 7);
+    let errors: Vec<&str> = results
+        .iter()
+        .map(|r| r["error"].as_str().unwrap_or(""))
+        .collect();
+    assert!(errors[0].contains("有在用持仓"), "{errors:?}");
+    assert!(errors[1].contains("必须大于 0"), "{errors:?}");
+    assert!(errors[2].contains("不接受手续费"), "{errors:?}");
+    assert!(errors[3].contains("金额必须为 0"), "{errors:?}");
+    assert!(errors[4].contains("不可提供单价"), "{errors:?}");
+    assert!(errors[5].contains("不能携带出资账户"), "{errors:?}");
+    assert!(errors[6].contains("不能携带商户"), "{errors:?}");
+    for r in &results {
+        assert_eq!(r["success"], false);
+    }
+
+    let conn = conn.lock().unwrap();
+    let splits: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM security_transactions WHERE action='split'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(splits, 0, "被拒的份额调整不应落库");
+}
+
+/// PUT / DELETE 对 split 行的临时拒绝与进/出 split 的 kind 变更守卫
+///（#1049 临时形态，#1051 收编改删与回退）。
+#[tokio::test]
+async fn test_split_update_delete_and_kind_change_return_coded_400() {
+    let (app, _conn) = setup_app();
+    {
+        let conn = _conn.lock().unwrap();
+        test_support::seed_account(&conn, "acc-sp-put", "股票户", "investment", "CNY", 0);
+        test_support::seed_instrument(&conn, "inst-sp-p", "502010", "证券基金", "CNY", "unknown");
+    }
+    let buy = r#"{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-put","date":"2026-01-10","instrument_id":"inst-sp-p","quantity":100.0,"price_cents":10000,"fee_cents":0}"#;
+    let created = post_batch(&app, batch_body(&[buy], None)).await;
+    assert_eq!(created[0]["success"], true);
+    let buy_id = created[0]["id"].as_str().unwrap().to_string();
+
+    let split = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-put","date":"2026-02-01","instrument_id":"inst-sp-p","quantity":50.0}"#;
+    let results = post_batch(&app, batch_body(&[split], None)).await;
+    assert_eq!(results[0]["success"], true, "{results:?}");
+    let split_id = results[0]["id"].as_str().unwrap().to_string();
+
+    // 就地修改 split → split：临时「暂不支持」。
+    let as_split_more = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-put","date":"2026-02-05","instrument_id":"inst-sp-p","quantity":60.0}"#;
+    let (status, bytes) = put_transaction_via_api(&app, &split_id, as_split_more).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "trade.split-update-unsupported");
+
+    // 删除 split：临时「暂不支持」。
+    let (status, bytes) = delete_transaction_via_api(&app, &split_id).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "trade.split-delete-unsupported");
+
+    // 改出 split（→ buy）与改入 split（buy → split）都拒绝（永久守卫）。
+    let as_buy = r#"{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-put","date":"2026-01-10","instrument_id":"inst-sp-p","quantity":10.0,"price_cents":10000,"fee_cents":0}"#;
+    let (status, bytes) = put_transaction_via_api(&app, &split_id, as_buy).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "trade.split-kind-change-forbidden");
+
+    let as_split = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-put","date":"2026-02-01","instrument_id":"inst-sp-p","quantity":5.0}"#;
+    let (status, bytes) = put_transaction_via_api(&app, &buy_id, as_split).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "trade.split-kind-change-forbidden");
+
+    // 拒绝路径不留半套副作用：持仓仍为 150。
+    let qty: f64 = {
+        let conn = _conn.lock().unwrap();
+        conn.query_row(
+            "SELECT remaining_quantity FROM security_lots WHERE instrument_id='inst-sp-p'",
+            [],
+            |r| r.get::<_, f64>(0),
+        )
+        .unwrap()
+    };
+    assert!((qty - 150.0).abs() < 1e-6);
 }

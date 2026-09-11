@@ -46,6 +46,7 @@ use super::http::{
     fetch_ulist, price_cents_from_raw, secid_prefix,
 };
 use super::persist::upsert_fx_rate_history;
+use super::progress::{FundNavProgress, SyncProgress};
 
 /// 持仓股票的报价代码：东财 secid 与响应 f12 均为裸代码（如 600519 / 00700）。
 /// 字典 symbol 可能带市场后缀（schema 注释示例格式如 "600519.SH"），取点号前段归一化。
@@ -112,12 +113,13 @@ fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
 /// `renamed` = 名称被刷新的标的数（两者共同决定价格失效信号：零变化不广播，
 /// 基金无新净值不算价格写入，issue #827）。
 ///
-/// 进度回调（issue #897 / ADR-0095）：`progress(done, total)`——分母 `total` 为
-/// **有通道标的数**（可构造查询的行情标的 + 有真实代码的基金；无通道行不计），
-/// 收集与分区完成后立即发 `(0, total)`；此后每完成一个有通道标的推进一格
-///（报价+日 K 合并为行情标的一格，净值+名称合并为基金一格；停牌/查询无果/
-/// 「已是最新」照常推进——有通道标的不以成败计格）。`total` 为 0（全部无通道）
-/// 不发任何进度事件，空转不伪装成推进。
+/// 进度回调（issue #897 / ADR-0095；页级明细 issue #1061）：载荷 `done`/`total`
+/// 的分母 `total` 为**有通道标的数**（可构造查询的行情标的 + 有真实代码的基金；
+/// 无通道行不计），收集与分区完成后立即发 `{ done: 0, total }`；此后每完成一个
+/// 有通道标的推进一格（报价+日 K 合并为行情标的一格，净值+名称合并为基金一格；
+/// 停牌/查询无果/「已是最新」照常推进——有通道标的不以成败计格）。`total` 为 0
+///（全部无通道）不发任何进度事件，空转不伪装成推进。首刷/深回填的基金在页抓取
+/// 返回后额外带出 `fund` 页级明细（不改 `done`/`total`；单页不发）。
 // 六个抓取闭包 + conn + 进度回调共 8 参：网络接缝逐通道注入使然（与 HTTP 层
 // request_from_hosts 同形），参数表就是「本编排消费哪些外部通道」的清单。
 #[allow(clippy::too_many_arguments)]
@@ -142,9 +144,10 @@ where
     // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
     // （不落库）。生产接基金详情通道，测试注入 mock。
     M: FnMut(&str) -> Result<String>,
-    // 进度回调闭包（issue #897 / ADR-0095）：(done, total)，逐有通道标的推进；
-    // 生产接事件发射（壳层接线），测试注入记录闭包。
-    P: FnMut(usize, usize),
+    // 进度回调闭包（issue #897 / ADR-0095；页级明细 issue #1061）：三字段载荷，
+    // 逐有通道标的推进、基金深回填带页级明细；生产接事件发射（壳层接线），
+    // 测试注入记录闭包。
+    P: FnMut(SyncProgress),
 {
     let held = collect_instruments(conn)?;
     // 单次收集库内全部标的（一条 SQL，无持仓前置，issue #827），按投资域派生的
@@ -195,7 +198,7 @@ where
     // 无通道行不进分母）。收集与分区完成后立即发 total；total 为 0 不发任何进度事件。
     let total = queryable.len() + funds.len();
     if total > 0 {
-        progress(0, total);
+        progress(SyncProgress::instrument(0, total));
     }
     let mut done = 0usize;
 
@@ -251,7 +254,7 @@ where
                 )?;
             }
             done += 1;
-            progress(done, total);
+            progress(SyncProgress::instrument(done, total));
         }
     }
 
@@ -285,13 +288,36 @@ where
         written: 0,
     };
     for fund in &funds {
-        sync_one_fund_nav(conn, fund, fetch_nav, fetch_nav_full, &mut fund_stats)?;
+        // 页级推进（issue #1061）：`done`/`total` 仍是标的级口径，页抓取返回后
+        // 才带出本基金的页明细——抓取内部的退避/重试等待不产生推进。
+        let code = fund.symbol.clone();
+        {
+            let mut on_page = |page: u64, pages: u64| {
+                progress(SyncProgress {
+                    done,
+                    total,
+                    fund: Some(FundNavProgress {
+                        code: code.clone(),
+                        page,
+                        pages,
+                    }),
+                });
+            };
+            sync_one_fund_nav(
+                conn,
+                fund,
+                fetch_nav,
+                fetch_nav_full,
+                &mut fund_stats,
+                &mut on_page,
+            )?;
+        }
         let name = fetch_fund_name(&fund.symbol)?;
         if refresh_instrument_name(conn, &fund.instrument_id, &name)? {
             renamed += 1;
         }
         done += 1;
-        progress(done, total);
+        progress(SyncProgress::instrument(done, total));
     }
 
     let synced = synced_codes.len() + fund_stats.synced;
@@ -374,7 +400,7 @@ pub fn do_incremental_sync<P>(
     progress: &mut P,
 ) -> Result<SyncInstrumentInfoResult>
 where
-    P: FnMut(usize, usize),
+    P: FnMut(SyncProgress),
 {
     let client = build_client()?;
     let pacer = RefCell::new(Pacer::default());

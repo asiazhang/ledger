@@ -34,6 +34,7 @@ pub enum InstrumentType {
     Other => "other",
 }
 err_label = "金融工具类型",
+err_code = "instrument.type-unknown",
 }
 
 // serde：以与 `instruments.instrument_type` 同形的小写字符串序列化（wire 格式

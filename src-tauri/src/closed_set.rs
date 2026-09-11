@@ -3,7 +3,8 @@
 //!
 //! 清单即 enum 本体：同一 `(变体 => 字面量)` token 流同体展开五产物——
 //! enum 本体、`ALL`（定长数组）、`as_str`（DB 存储/wire 序列化形状）、
-//! `parse`（反序列化与 DB 读边界的严格映射）、`Display`（骑行 `as_str`）。
+//! `parse`（反序列化与 DB 读边界的严格映射，未知值报 ADR-0050 码化错误）、
+//! `Display`（骑行 `as_str`）。
 //! 「enum 新增变体漏登 `ALL` / 漏写 `as_str` / `parse` 臂」的漂移**不可表达**
 //! （构造性保证，非「可检测」）；字符串字面量每变体只出现一次。
 //!
@@ -27,11 +28,15 @@
 ///         Income => "income",
 ///     }
 ///     err_label = "交易类型",
+///     err_code = "transaction.kind-unknown",
 /// }
 /// ```
 ///
-/// `err_label` 用于 `parse` 未知值报错文案：`未知{label}: {s}（合法值: …）`，
-/// 合法值清单由同一批字面量拼接生成（与 enum 顺序一致）。
+/// `parse` 未知值报 ADR-0050 码化错误：文案 `未知{err_label}: {s}（合法值: …）`，
+/// 合法值清单由同一批字面量拼接生成（与 enum 顺序一致）；`err_code` 是稳定错误码
+/// （`<域>.<条件>`），`params` 为 `[未知值, 合法值清单]`——清单经 `{1}` 插值，不在
+/// 前端码表里另抄一份（ADR-0108「消灭手抄清单」跨本地化边界保持）。`err_code` 为
+/// 必填参数：第三枚举接入时漏码化不可表达。
 macro_rules! closed_set {
     (
         $(#[$enum_meta:meta])*
@@ -41,7 +46,8 @@ macro_rules! closed_set {
                 $variant:ident => $str:literal
             ),* $(,)?
         }
-        err_label = $err_label:literal $(,)?
+        err_label = $err_label:literal,
+        err_code = $err_code:literal $(,)?
     ) => {
         $(#[$enum_meta])*
         $vis enum $name {
@@ -68,18 +74,24 @@ macro_rules! closed_set {
                 }
             }
 
-            /// 从闭集字符串严格解析；未知值报参数错误，文案附同源生成的
+            /// 从闭集字符串严格解析；未知值报 ADR-0050 码化参数错误（稳定
+            /// `code`，`params` = `[未知值, 合法值清单]`），文案附同源生成的
             /// 合法值清单。serde 反序列化与 DB 读边界（`FromSql`）复用本
             /// 函数（wire/DB 未知值即错，不静默映射）。
             pub fn parse(s: &str) -> $crate::error::Result<$name> {
                 let value = match s {
                     $($str => $name::$variant,)*
                     other => {
-                        return Err($crate::error::AppError::Invalid(format!(
-                            concat!("未知", $err_label, ": {}（合法值: {}）"),
-                            other,
-                            [$($str),*].join("/")
-                        )));
+                        let legal = [$($str),*].join("/");
+                        return Err($crate::error::AppError::codedp(
+                            $err_code,
+                            format!(
+                                concat!("未知", $err_label, ": {}（合法值: {}）"),
+                                other,
+                                legal
+                            ),
+                            &[other, legal.as_str()],
+                        ));
                     }
                 };
                 Ok(value)

@@ -16,8 +16,9 @@
 //!   此时按首刷回填近两年）；已有历史序列的基金以现价缓存的净值日期
 //!   （`market_prices.nav_date`，#301 落）为水位，从水位次日起按页增量（常态每只一页，
 //!   页大小为服务端硬上限 20）；全部净值点攒齐后一次降采样落周线（跨页同周取最后
-//!   一个净值日），现价 = 窗口内最新公布单位净值。基金间的遍历与名称随行刷新、进度
-//!   推进归增量同步编排（`incremental`，issue #897 逐只合并推进）。
+//!   一个净值日），现价 = 窗口内最新公布单位净值。基金间的遍历与名称随行刷新、标的级
+//!   进度推进归增量同步编排（`incremental`，issue #897 逐只合并推进）；每页抓取返回
+//!   后的页级推进经注入回调透传（issue #1061）。
 
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
@@ -370,8 +371,10 @@ pub(super) struct FundSyncStats {
 /// 净值点降采样落 PriceHistory（同周整周覆盖幂等），窗口内最新公布净值落现价缓存
 /// （现价 = 单位净值、priced_at = nav_date = 净值日期，与 #301 添加基金同形）。
 /// 两条抓取闭包由调用方注入（生产接 HTTP 层，测试 mock），本函数不触碰网络；
-/// 单只结果累加进调用方的 `stats`（基金间的遍历、名称随行刷新与进度推进归编排层，
-/// issue #897）。
+/// 单只结果累加进调用方的 `stats`；页级推进经注入的 `on_page` 回调透传
+///（issue #1061——每页抓取返回后报告「已完成页/总页数」，抓取内部的退避/重试
+/// 等待不产生推进）。基金间的遍历、名称随行刷新与标的级进度推进归编排层
+///（issue #897）。
 ///
 /// **前置条件**：`fund` 为 6 位真实代码的有通道基金行——名称充代码行（查不到
 /// 净值）由调用方计入跳过、零请求（issue #897 起跳过判定与分母口径同收编排层）。
@@ -380,15 +383,19 @@ pub(super) struct FundSyncStats {
 /// 「无法拉取」的行，不含网络失败）。
 /// 分页通道取净值点（首刷回退与增量共用）：按服务端总数翻页（页大小为服务端硬
 /// 上限），先攒齐全部净值点再一次性降采样——跨页同周的采样必须取最后一个净值日，
-/// 逐页落库会用后页的更早日期覆盖前页采样。返回净值点与「任意一页空响应」标记。
-fn fetch_nav_pages<N>(
+/// 逐页落库会用后页的更早日期覆盖前页采样。返回净值点与「任意一页空响应」标记；
+/// 页级推进经 `on_page` 透传（issue #1061）：只在本页抓取返回之后发出（抓取内部
+/// 的退避/重试等待不产生推进），单页（pages ≤ 1）不发。
+fn fetch_nav_pages<N, P>(
     fetch_nav: &mut N,
     code: &str,
     start: &str,
     end: &str,
+    on_page: &mut P,
 ) -> Result<(Vec<NavPoint>, bool)>
 where
     N: FnMut(&NavQuery) -> Result<LsjzPage>,
+    P: FnMut(u64, u64),
 {
     let query = |page: u64| NavQuery {
         code: code.to_string(),
@@ -407,26 +414,44 @@ where
     if raw_pages > MAX_NAV_PAGES {
         tracing::warn!(code = %code, total = %first.total, "历史净值页数触顶，窗口可能未采全");
     }
+    // 页级推进只在真正翻页时发出；首页在抓取返回、总页数已知后立即报告。
+    // 位置固定在 fetch_nav 之后——抓取闭包内部的退避/重试等待不产生推进
+    //（issue #1061 的「等待不伪装成推进」由这一先后关系保证）。空响应页
+    //（`blocked`，Data 缺省/非对象：疑似被拦截/异常）不算「已回填的一页」，
+    // 不推进页码——被风控拦截期间同样不得虚假推进（与 #1059 空响应区分同源）。
+    let page_level = pages > 1;
+    if page_level && !blocked {
+        on_page(1, pages);
+    }
     for page in 2..=pages {
         let next = fetch_nav(&query(page))?;
         // 任意一页空响应都让本轮窗口不完整（页 1 空 → 整轮不可信；后续页空 →
         // 已采净值点照常落库、窗口可能缺尾），统一由调用方按形态分流。
-        blocked |= next.blocked;
+        let blocked_page = next.blocked;
+        blocked |= blocked_page;
         points.extend(next.points);
+        if page_level && !blocked_page {
+            on_page(page, pages);
+        }
     }
     Ok((points, blocked))
 }
 
-pub(super) fn sync_one_fund_nav<N, S>(
+pub(super) fn sync_one_fund_nav<N, S, P>(
     conn: &Connection,
     fund: &super::incremental::SyncInstrument,
     fetch_nav: &mut N,
     fetch_nav_full_series: &mut S,
     stats: &mut FundSyncStats,
+    on_page: &mut P,
 ) -> Result<()>
 where
     N: FnMut(&NavQuery) -> Result<LsjzPage>,
     S: FnMut(&str) -> Result<Vec<NavPoint>>,
+    // 页级推进回调（issue #1061）：(已完成页, 总页数)。只在本页抓取返回之后发出
+    //（抓取内部的退避/重试等待不产生推进）；单页（pages ≤ 1）不发——增量常态
+    // 的事件形状与频率不变。
+    P: FnMut(u64, u64),
 {
     let today = super::incremental::beijing_today();
     // 水位 = 现价缓存的净值日期（股票行恒 NULL，基金行由 #301/本通道写入）。
@@ -492,7 +517,7 @@ where
     // 单请求通道命中即免去分页；否则回退既有分页通道（首刷近两年 / 增量水位次日）。
     let (points, blocked) = match full_points {
         Some(points) => (points, false),
-        None => fetch_nav_pages(fetch_nav, &fund.symbol, &start, &end)?,
+        None => fetch_nav_pages(fetch_nav, &fund.symbol, &start, &end, on_page)?,
     };
 
     if points.is_empty() {

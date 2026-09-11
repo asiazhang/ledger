@@ -24,14 +24,14 @@ describe('KIND_SEMANTIC_COLORS（交易类型语义色表）', () => {
     }
   })
 
-  it('亮色七色两两不同', () => {
+  it('亮色八色两两不同', () => {
     const lights = TRANSACTION_KINDS.map((k) => KIND_SEMANTIC_COLORS[k].light)
-    expect(new Set(lights).size).toBe(7)
+    expect(new Set(lights).size).toBe(8)
   })
 
-  it('暗色七色两两不同', () => {
+  it('暗色八色两两不同', () => {
     const darks = TRANSACTION_KINDS.map((k) => KIND_SEMANTIC_COLORS[k].dark)
-    expect(new Set(darks).size).toBe(7)
+    expect(new Set(darks).size).toBe(8)
   })
 
   it('亮暗两套彼此不同（同类型暗色变体确实是变体）', () => {

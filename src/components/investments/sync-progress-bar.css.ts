@@ -49,3 +49,21 @@ export const text = style({
   opacity: 0.75,
   whiteSpace: 'nowrap',
 })
+
+/**
+ * 计数文案与基金页级明细（issue #1061）的纵向栈：进度条右侧两行——主行是
+ * 标的级计数，次行（仅深回填期间出现）是当前基金的页号。右对齐堆叠，窄卡片
+ * 下不把两段文案挤成一行溢出。display/对齐族走 Sprinkles 原子（ADR-0093
+ * 布尔轴约定，与 `root` 同形），gap/minWidth 留本文件字面量。
+ */
+export const textStack = style([
+  sprinkles({
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+  }),
+  {
+    gap: '2px',
+    minWidth: 0,
+  },
+])

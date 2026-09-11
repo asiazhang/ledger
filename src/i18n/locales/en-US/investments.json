@@ -153,6 +153,7 @@
   "sync": {
     "failed": "Sync failed: {message}",
     "progress": "Syncing instruments {done}/{total}",
+    "progressFundPages": "Backfilling {code}: page {page}/{pages}",
     "progressAriaLabel": "Instrument info sync progress"
   },
   "market": {
