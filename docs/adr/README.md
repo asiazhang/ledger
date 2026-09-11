@@ -43,7 +43,7 @@
 - 0095 — 标的信息同步确定进度：事件驱动、有通道分母、不做取消（在 0081 决策 3 退役旧进度事件之上重建）
 - 0103 — 行情接入接缝 QuoteAdoption：统一行情查询与建档落价（两成员、无 trait 承载），手动报价与标的信息同步留接缝外，价格写入单点改命名参数入口（spec #1010，grilling 定稿）
 - 0107 — 盈亏页退役逐匹配卖出明细：汇总三视图兜底、按币种分组展示，交易页新增标的下钻维度（convert 任一腿命中）与持仓下钻跳转——清仓标的卖出流水的唯一入口（grilling 定稿）
-- 0090 — AI 契约双投影：标准 OpenAPI 与紧凑方言（`GET /api/v1/contract`）同一 ApiDoc 同源分流，端点级教学迁入导入知识，体积护栏 ≤20KB（spec #839）
+- 0090 — AI 契约双投影：标准 OpenAPI 与紧凑方言（`GET /api/v1/contract`）同一 ApiDoc 同源分流，端点级教学迁入导入知识，体积护栏 ≤22KB（spec #839）
 - 0042 — 定时计划自动执行（到期追补）与设备级开关
 - 0051 — 保单（保险域）MVP 决策：建档 / 缴费复用订阅 / 流水直挂
 - 0082 — 保司独立字典：保险公司与商户分家、保费流水不挂商户（推翻 0051 决策 7，breaking）
@@ -82,6 +82,7 @@
 - 0100 — 启动期 schema 漂移守卫：init_db 尾部内存参照库方向性 diff，漂移报 `boot.schema-drift`（#971 实证，未发布迁移就地修改的防护）
 - 0101 — 同步重放注册表：ReplayBinding 单点承载可重放契约、裁决域派生归域、三道门守契约（#1006）
 - 0102 — WriteOp 闭集单一化：`write_op_set!` 声明宏同体派生 enum 本体 / `ALL` / `from_ident`，三份表示收敛为一份（#1011）
+- 0108 — TransactionKind / InstrumentType 闭集单一化：共享 `closed_set!` 宏同体派生（enum / `ALL` / `as_str` / `parse` / `Display`），InstrumentType 双字符串面收口，DB CHECK 字面量测试期互核兜底（#1022）
 - 0104 — 壳层读路径仪式收敛：统一读入口 `read_entry`——run_db 之上的锁仪式单点 + 源扫描守门（翻案 0073 决策 6 读侧搁置；spec #1009，grilling 定稿）
 - 0105 — 交易写入协议：create/update 单正文 + Local / Replay 形态闭集（OpEmission 推广合一、delete 现状保持），守卫单点、事务自持进协议、存活校验刻意不对称（细化 0013/0033 承载；#1003/#1005 先行；spec #1004，grilling 定稿）
 - 0069 — 后端 DB 调用 async 化：单连接互斥锁保留 + 统一阻塞线程池 helper（形状乙；tokio-rusqlite 与自建专用线程两否决在案，spec #498）

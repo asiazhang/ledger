@@ -10,6 +10,7 @@
 //! - [`fund_add`]：按代码即拉添加基金（注入 stub，issue #301 / ADR-0038）
 //! - [`manual_price`]：手动报价两落点与信号发射判定（issue #291 / ADR-0036）
 //! - [`predicates`]：「持仓标的」判定谓词 ↔ v_holdings 视图一致性绑定
+//! - [`price_channel`]：价格通道派生判定与读路径接线（issue #1060）
 //! - [`trade`]：buy/sell 写入与买卖明细查询（命名对齐源码 trade 模块）
 //! - [`convert`]：基金转换（convert）写入——转出腿 FIFO 消耗与结转成本、转入批次
 //!   建仓与闭合、零已实现盈亏、余额不变、两腿时点持仓、守卫与回退/删除（ADR-0099）
@@ -17,6 +18,8 @@
 //! - [`pnl`]：已实现盈亏汇总
 //! - [`trend`]：走势查询（单标的 / 组合）
 //! - [`holdings_as_of`]：时点持仓推算
+//! - [`instrument_type_string`]：`InstrumentType` 字符串面（宏同体派生，ADR-0108）
+//! - [`instrument_type_check`]：`instrument_type` CHECK 字面量 ↔ `ALL` 互核（ADR-0108）
 //! - [`stock_lookup`]：股票按（市场，代码）查询领域规则（市场推断 / 矛盾 400 / 币种推导，issue #693）
 //! - [`stock_create`]：股票创建增强的东财往返路由与落库接缝（权威名称 + 现价 / 降级市场保留，issue #694）
 //! - [`stock_add`]：「添加投资标的」股票侧录入——通道解析、查询遍历与识别落库（issue #697）
@@ -33,9 +36,12 @@ mod instrument_create;
 mod instrument_delete;
 mod instrument_list;
 mod instrument_manual_create;
+mod instrument_type_check;
+mod instrument_type_string;
 mod manual_price;
 mod pnl;
 mod predicates;
+mod price_channel;
 mod split;
 mod stock_add;
 mod stock_create;

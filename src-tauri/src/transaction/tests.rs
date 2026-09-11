@@ -13,6 +13,7 @@
 //! - [`query`]：交易查询、排序与分页
 //! - [`search`]：统一模糊搜索语义与搜索行为
 //! - [`search_repair`]：拼音辅助数据一键修复（积压回填、幂等、收敛）
+//! - [`schema_cross_check`]：`transactions.kind` CHECK 字面量 ↔ `ALL` 互核（ADR-0108）
 //! - [`batch_common`]：批量写入共享脚手架
 //! - [`batch_create`]：批量写入、幂等键语义与批次汇总日志
 //! - [`batch_dedup`]：内容哈希与去重身份判定
@@ -30,5 +31,6 @@ mod merchant;
 mod oplog;
 mod protocol;
 mod query;
+mod schema_cross_check;
 mod search;
 mod search_repair;

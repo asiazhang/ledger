@@ -141,6 +141,21 @@ fn secid_prefix_maps_known_markets() {
 }
 
 #[test]
+fn quote_channel_derivation_matches_secid_construction() {
+    // 价格通道收口（issue #1060）：行情通道派生（投资域单点 `derive_price_channel`）
+    // 与 secid 构造能力（同步域 `secid_prefix`）恒等——判「可行情」的市场必须恰是
+    // 可构造 secid 的市场，否则 Quote 行进不了查询（静默跳过）或无通道行混进行情分区。
+    use crate::investment::{InstrumentType, PriceChannel, derive_price_channel};
+    for market in ["sh", "sz", "hk", "nasdaq", "nyse", "amex", "unknown"] {
+        assert_eq!(
+            derive_price_channel(InstrumentType::Stock, market, "600000") == PriceChannel::Quote,
+            secid_prefix(market).is_some(),
+            "行情通道判定与 secid 构造能力漂移：{market}"
+        );
+    }
+}
+
+#[test]
 fn ulist_response_deserializes_cross_market_codes() {
     // 真实 ulist.np/get 响应样本（一次携带跨市场：沪 1.600519 / 深 0.000001 / 港 116.00700）
     let json = r#"{"rc":0,"rt":11,"svr":177542529,"lt":1,"full":1,"dlmkts":"8,10,128","dsc":"0","data":{"total":3,"diff":[{"f2":130280,"f12":"600519","f14":"贵州茅台"},{"f2":1173,"f12":"000001","f14":"平安银行"},{"f2":445400,"f12":"00700","f14":"腾讯控股"}]}}"#;

@@ -10,7 +10,7 @@ use rusqlite::params;
 use tauri_app_lib::db::{new_uuid, now_iso};
 use tauri_app_lib::error::Result;
 use tauri_app_lib::investment::{
-    InstrumentInput, InstrumentListFilter, Quote, add_fund_by_code_with,
+    InstrumentInput, InstrumentListFilter, InstrumentType, Quote, add_fund_by_code_with,
     add_stock_instrument_with_quote, create_instrument_manual,
     delete_instrument as delete_instrument_domain, fetch_stock_quote_for_add, get_instrument,
     list_instruments, prices::price_value_to_cents,
@@ -103,7 +103,7 @@ fn manual_create_instrument(
 ) {
     let input = InstrumentInput {
         symbol,
-        kind: kind.parse().expect("未知金融工具类型"),
+        kind: InstrumentType::parse(&kind).expect("未知金融工具类型"),
         name: Some(name),
         currency_code: currency,
         market: None,
@@ -157,7 +157,7 @@ fn search_instruments(world: &mut LedgerWorld, query: String) {
 fn search_instruments_of_kind(world: &mut LedgerWorld, kind: String, query: String) {
     let filter = InstrumentListFilter {
         search: Some(query),
-        kind: Some(kind.parse().expect("未知金融工具类型")),
+        kind: Some(InstrumentType::parse(&kind).expect("未知金融工具类型")),
         ..Default::default()
     };
     world.asset.last_instrument_search =
@@ -465,8 +465,8 @@ fn add_instrument_with_stub_quote(
     price: f64,
     kind_hint: String,
 ) {
-    let kind: tauri_app_lib::investment::InstrumentType =
-        kind_hint.parse().expect("未知类型提示（stock/etf）");
+    let kind = tauri_app_lib::investment::InstrumentType::parse(&kind_hint)
+        .expect("未知类型提示（stock/etf）");
     let mut fetch = move |code: &str, market: &str| -> Result<Quote> {
         if market == quote_market {
             Ok(Quote {
