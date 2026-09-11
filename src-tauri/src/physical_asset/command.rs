@@ -65,14 +65,15 @@ pub enum PhysicalAssetCommand {
 }
 
 impl PhysicalAssetCommand {
-    /// 命令指向的实体（LWW 裁决域 = 单件资产）；估值追加为只追加历史行，无实体
-    /// 指向（并发估值全部存活，不参与同实体 LWW）。
-    pub(crate) fn subject(&self) -> Option<(&'static str, &str)> {
+    /// 命令指向的实体键（LWW 裁决域 = 单件资产）；估值追加为只追加历史行，无实体
+    /// 指向（并发估值全部存活，不参与同实体 LWW）。实体标签不在此返回——由同步域
+    /// 重放注册表单源组装（ADR-0101 勘误 3）。
+    pub(crate) fn subject(&self) -> Option<&str> {
         match self {
             PhysicalAssetCommand::Create { id, .. }
             | PhysicalAssetCommand::Update { id, .. }
             | PhysicalAssetCommand::Dispose { id, .. }
-            | PhysicalAssetCommand::Delete { id } => Some(("physical_asset", id)),
+            | PhysicalAssetCommand::Delete { id } => Some(id),
             PhysicalAssetCommand::UpdateValuation { .. } => None,
         }
     }

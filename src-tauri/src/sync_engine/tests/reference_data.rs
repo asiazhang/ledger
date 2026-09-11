@@ -61,7 +61,7 @@ fn account_create_update_delete_ops_replay_and_converge() {
     // A 端三入口各产出一条 op（create / update / delete）。
     let ops = read_ops(&conn_a).unwrap();
     assert_eq!(ops.len(), 3, "三个写入口各产出一条 op：{ops:?}");
-    assert!(ops.iter().all(|op| op.command.entity() == "account"));
+    assert!(ops.iter().all(|op| op.command.subject().0 == "account"));
 
     let reports = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(reports.iter().all(|r| r.outcome == OpOutcome::Applied));
@@ -312,23 +312,27 @@ fn category_lifecycle_and_reorder_ops_replay_and_converge() {
 
 /// 命令 LWW 裁决域钉子：各域命令 subject 指向实体 id，防实体判别键漂移。
 /// 派生自然键型命令（货币对、标的 × 周）以派生键为裁决域（issue #861）。
+/// 实体标签一律取注册表 `ENTITY`（ADR-0101 勘误 3），故此处只钉键不受标签影响。
 #[test]
 fn command_subject_is_entity_id_across_domains() {
     use std::borrow::Cow;
     assert_eq!(
-        Some(("account", Cow::Borrowed("acc-1"))),
+        ("account", Some(Cow::Borrowed("acc-1"))),
         DomainCommand::Account(AccountCommand::Delete { id: "acc-1".into() }).subject()
     );
     assert_eq!(
-        Some(("category", Cow::Borrowed("cat-1"))),
+        ("category", Some(Cow::Borrowed("cat-1"))),
         DomainCommand::Category(CategoryCommand::Delete { id: "cat-1".into() }).subject()
     );
     assert_eq!(
-        Some(("merchant", Cow::Borrowed("m-1"))),
+        ("merchant", Some(Cow::Borrowed("m-1"))),
         DomainCommand::Merchant(MerchantCommand::Delete { id: "m-1".into() }).subject()
     );
     assert_eq!(
-        Some(("exchange_rate", Cow::<str>::Owned("EUR->CNY".to_string()))),
+        (
+            "exchange_rate",
+            Some(Cow::<str>::Owned("EUR->CNY".to_string()))
+        ),
         DomainCommand::ExchangeRate(crate::investment::ExchangeRateCommand::Upsert {
             id: "er-1".into(),
             base_code: "EUR".into(),
@@ -340,10 +344,10 @@ fn command_subject_is_entity_id_across_domains() {
         .subject()
     );
     assert_eq!(
-        Some((
-            "price_history",
-            Cow::<str>::Owned("inst-1|2026-01-12".to_string())
-        )),
+        (
+            "price",
+            Some(Cow::<str>::Owned("inst-1|2026-01-12".to_string()))
+        ),
         DomainCommand::Price(crate::investment::PriceCommand::ManualPrice {
             instrument_id: "inst-1".into(),
             date: "2026-01-15".into(),
@@ -352,7 +356,7 @@ fn command_subject_is_entity_id_across_domains() {
         .subject()
     );
     assert_eq!(
-        Some(("market_price", Cow::Borrowed("inst-1"))),
+        ("price", Some(Cow::Borrowed("inst-1"))),
         DomainCommand::Price(crate::investment::PriceCommand::MarketPrice {
             instrument_id: "inst-1".into(),
             price_cents: 100,

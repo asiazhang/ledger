@@ -61,12 +61,13 @@ pub enum InstrumentCommand {
 }
 
 impl InstrumentCommand {
-    /// 命令指向的实体 id（LWW 裁决域 = 单个标的行身份）。
-    pub(crate) fn subject(&self) -> Option<(&'static str, Cow<'_, str>)> {
+    /// 命令指向的实体键（LWW 裁决域 = 单个标的行身份）。实体标签不在此返回——
+    /// 由同步域重放注册表单源组装（ADR-0101 勘误 3）。
+    pub(crate) fn subject(&self) -> Option<Cow<'_, str>> {
         match self {
             InstrumentCommand::Create { id, .. }
             | InstrumentCommand::Update { id, .. }
-            | InstrumentCommand::Delete { id } => Some(("instrument", Cow::Borrowed(id.as_str()))),
+            | InstrumentCommand::Delete { id } => Some(Cow::Borrowed(id.as_str())),
         }
     }
 }
@@ -86,19 +87,17 @@ pub enum ExchangeRateCommand {
 }
 
 impl ExchangeRateCommand {
-    /// 命令指向的实体（LWW 裁决域 = 货币对自然键；行 id 各端可异，不作裁决域）。
+    /// 命令指向的实体键（LWW 裁决域 = 货币对自然键；行 id 各端可异，不作裁决域）。
     /// 键由命令字段确定性派生（`sync_ops.entity_id` 列同源；随行的建档 id 与
-    /// 裁决无关——同货币对并发录入取序末者）。
-    pub(crate) fn subject(&self) -> Option<(&'static str, Cow<'_, str>)> {
+    /// 裁决无关——同货币对并发录入取序末者）。实体标签不在此返回——由同步域
+    /// 重放注册表单源组装（ADR-0101 勘误 3）。
+    pub(crate) fn subject(&self) -> Option<Cow<'_, str>> {
         match self {
             ExchangeRateCommand::Upsert {
                 base_code,
                 quote_code,
                 ..
-            } => Some((
-                "exchange_rate",
-                Cow::Owned(format!("{base_code}->{quote_code}")),
-            )),
+            } => Some(Cow::Owned(format!("{base_code}->{quote_code}"))),
         }
     }
 }
@@ -125,21 +124,23 @@ pub enum PriceCommand {
 }
 
 impl PriceCommand {
-    /// 命令指向的实体（LWW 裁决域与落库冲突键同粒度：现价行按标的、周采样行
-    /// 按标的 × ISO 周——跨周报价不互压，同周报价取序末者）。
-    pub(crate) fn subject(&self) -> Option<(&'static str, Cow<'_, str>)> {
+    /// 命令指向的实体键（LWW 裁决域与落库冲突键同粒度：现价行按标的、周采样行
+    /// 按标的 × ISO 周——跨周报价不互压，同周报价取序末者）。实体标签不在此
+    /// 返回——由同步域重放注册表单源组装的 `price`（与 serde tag 同源，ADR-0101
+    /// 勘误 2 归一，复活 price 类 op 的 LWW）。
+    pub(crate) fn subject(&self) -> Option<Cow<'_, str>> {
         match self {
             PriceCommand::MarketPrice { instrument_id, .. } => {
-                Some(("market_price", Cow::Borrowed(instrument_id.as_str())))
+                Some(Cow::Borrowed(instrument_id.as_str()))
             }
             PriceCommand::ManualPrice {
                 instrument_id,
                 date,
                 ..
-            } => Some((
-                "price_history",
-                Cow::Owned(format!("{instrument_id}|{}", week_start_of(date))),
-            )),
+            } => Some(Cow::Owned(format!(
+                "{instrument_id}|{}",
+                week_start_of(date)
+            ))),
         }
     }
 }

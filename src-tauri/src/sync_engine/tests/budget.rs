@@ -47,7 +47,7 @@ fn budget_create_update_delete_ops_replay_and_converge() {
     let budget_ops: Vec<_> = read_ops(&conn_a)
         .unwrap()
         .into_iter()
-        .filter(|op| op.command.entity() == "budget")
+        .filter(|op| op.command.subject().0 == "budget")
         .collect();
     assert_eq!(budget_ops.len(), 3, "三个写入口各产出一条 op");
 
@@ -93,10 +93,10 @@ fn budget_create_period_defaults_to_monthly_in_payload() {
     let budget_ops: Vec<_> = read_ops(&conn_a)
         .unwrap()
         .into_iter()
-        .filter(|op| op.command.entity() == "budget")
+        .filter(|op| op.command.subject().0 == "budget")
         .collect();
     assert_eq!(budget_ops.len(), 1);
-    assert_eq!(budget_ops[0].command.entity(), "budget");
+    assert_eq!(budget_ops[0].command.subject().0, "budget");
 }
 
 #[test]

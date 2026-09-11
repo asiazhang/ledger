@@ -372,7 +372,7 @@ fn encrypted_checkpoint_roundtrip_and_passphrase_guards() {
     let id = read_ops(&conn_a)
         .unwrap()
         .iter()
-        .find_map(|op| op.command.subject().map(|(_, eid)| eid.to_string()))
+        .find_map(|op| op.command.subject().1.map(|eid| eid.into_owned()))
         .expect("种子交易 op 在场");
 
     let cp = create_checkpoint(&conn_a).unwrap();

@@ -1,17 +1,26 @@
-//! 跨端语义命令信封（DomainCommand，ADR-0091 决策 2）：op 的载荷形态。
+//! 跨端语义命令信封与重放契约（DomainCommand，ADR-0091 决策 2 / ADR-0101）：
+//! op 的载荷形态、重放效果与重放绑定契约。
 //!
 //! 与既有写入接缝同语义的域级命令，按实体分派；重放端经同一编排协议执行，
 //! 不绕过不变量。**只增不改**：新增实体/字段只追加（旧日志可在新 schema 上
 //! 重放），与已发布契约纪律同构；`entity` tag 与 `sync_ops.entity` 列同源。
+//!
+//! 本模块是同步域对业务域暴露的**契约面**（ADR-0101 决策 1/4b）：信封
+//! [`DomainCommand`]、重放效果 [`ReplayEffect`] 与重放绑定契约 [`ReplayBinding`]
+//! 集中住此——业务域只许经本模块路径与根再导出白名单引用同步域（门 b，
+//! `check-structure.ts`）。14 个适配绑定与 `DomainCommand::subject` 的组装臂
+//! 住 [`super::registry`]（契约读一处即知，绑定与组装同居一处）。
 
 use std::borrow::Cow;
 
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::accounts::AccountCommand;
 use crate::budget::BudgetCommand;
 use crate::categories::CategoryCommand;
 use crate::currencies::LedgerSettingCommand;
+use crate::error::Result;
 use crate::investment::{ExchangeRateCommand, InstrumentCommand, PriceCommand};
 use crate::item::ItemCommand;
 use crate::merchants::MerchantCommand;
@@ -54,60 +63,37 @@ pub enum DomainCommand {
     Price(PriceCommand),
 }
 
-impl DomainCommand {
-    /// 实体判别键（`sync_ops.entity` 列取值；与 serde tag 同源，防双源漂移）。
-    pub fn entity(&self) -> &'static str {
-        match self {
-            DomainCommand::Transaction(_) => "transaction",
-            DomainCommand::Scheduled(_) => "scheduled",
-            DomainCommand::LedgerSetting(_) => "ledger_setting",
-            DomainCommand::Account(_) => "account",
-            DomainCommand::Category(_) => "category",
-            DomainCommand::Merchant(_) => "merchant",
-            DomainCommand::Budget(_) => "budget",
-            DomainCommand::Policy(_) => "policy",
-            DomainCommand::Insurer(_) => "insurer",
-            DomainCommand::Item(_) => "item",
-            DomainCommand::PhysicalAsset(_) => "physical_asset",
-            DomainCommand::Instrument(_) => "instrument",
-            DomainCommand::ExchangeRate(_) => "exchange_rate",
-            DomainCommand::Price(_) => "price",
-        }
-    }
+/// 单条命令的重放执行效果（ADR-0101 决策 3）。
+///
+/// 13 个域侧重放入口返回 `Result<()>`，由适配绑定映射为 [`ReplayEffect::Applied`]；
+/// 期次触发（OccurrenceKey 独有语义，见 CONTEXT-sync 期次词条）由域侧原样透传
+/// [`ReplayEffect::IdempotentHit`]——逼其余 13 个无此概念的域返回它只会让类型说谎，
+/// 差异留在适配层比假统一诚实。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReplayEffect {
+    /// 落地新效果。
+    Applied,
+    /// 幂等命中：该效果已在本端存在。
+    IdempotentHit,
+}
 
-    /// 命令指向的实体（实体判别键，实体 id）：LWW 裁决域（同实体并发编辑取
-    /// 全序末者，ADR-0091 决策 4）。无实体指向的命令返回 None——其冲突域另行
-    /// 裁定（如期次触发命令的 OccurrenceKey，ADR-0091 决策 5）。裁决键为
-    /// `Cow`：自然键派生型命令（货币对、标的 × 周）以派生键为域，与落库冲突
-    /// 键同粒度（issue #861）。
-    pub fn subject(&self) -> Option<(&'static str, Cow<'_, str>)> {
-        match self {
-            DomainCommand::Transaction(cmd) => {
-                Some(("transaction", Cow::Borrowed(cmd.subject_id())))
-            }
-            // 定时计划：计划 CRUD 按 plan 实体 LWW；期次触发冲突域在 OccurrenceKey、
-            // 期次展开按本端现状重推，均无实体指向（ADR-0091 决策 4/5）。
-            DomainCommand::Scheduled(cmd) => cmd
-                .subject()
-                .map(|(entity, id)| (entity, Cow::Borrowed(id))),
-            DomainCommand::LedgerSetting(cmd) => {
-                Some(("ledger_setting", Cow::Borrowed(cmd.subject_id())))
-            }
-            DomainCommand::Account(cmd) => Some(("account", Cow::Borrowed(cmd.subject_id()))),
-            DomainCommand::Category(cmd) => cmd
-                .subject()
-                .map(|(entity, id)| (entity, Cow::Borrowed(id))),
-            DomainCommand::Merchant(cmd) => Some(("merchant", Cow::Borrowed(cmd.subject_id()))),
-            DomainCommand::Budget(cmd) => Some(("budget", Cow::Borrowed(cmd.subject_id()))),
-            DomainCommand::Policy(cmd) => Some(("policy", Cow::Borrowed(cmd.subject_id()))),
-            DomainCommand::Insurer(cmd) => Some(("insurer", Cow::Borrowed(cmd.subject_id()))),
-            DomainCommand::Item(cmd) => Some(("item", Cow::Borrowed(cmd.subject_id()))),
-            DomainCommand::PhysicalAsset(cmd) => cmd
-                .subject()
-                .map(|(entity, id)| (entity, Cow::Borrowed(id))),
-            DomainCommand::Instrument(cmd) => cmd.subject(),
-            DomainCommand::ExchangeRate(cmd) => cmd.subject(),
-            DomainCommand::Price(cmd) => cmd.subject(),
-        }
-    }
+/// 语义命令重放绑定契约（ADR-0101 决策 1）：一个语义命令类型一条绑定，单点承载
+/// 「实体标签 + 裁决域派生 + 重放入口」；域侧接缝的 6 个函数名与 2 种返回形状由
+/// 绑定吸收，域侧除裁决键派生外零改动。
+///
+/// 可重放契约五条（ADR-0091）：① 载荷可 serde 且只增不改、⑤ 确定性——由
+/// [`DomainCommand`] 信封与域侧命令类型承载；② 裁决域派生——[`Self::subject`]；
+/// ③ 域暴露重放入口——[`Self::replay`]；④ 重放不产本地 op——域侧不认识同步域
+/// 内部件，由结构守门钉死（门 b，`check-structure.ts`）。
+pub(crate) trait ReplayBinding {
+    /// 实体标签（serde tag 与 `sync_ops.entity` 列同源；门 a 样本轮询断言之锚）。
+    const ENTITY: &'static str;
+    /// 本绑定承载的语义命令类型。
+    type Command;
+    /// 命令指向的实体键。`None` = 无实体指向（冲突域在 OccurrenceKey，不参与
+    /// 同实体 LWW，ADR-0091 决策 5）。标签不在此返回——由注册表单源组装
+    /// （标签一律取 [`Self::ENTITY`]，ADR-0101 勘误 3）。
+    fn subject(command: &Self::Command) -> Option<Cow<'_, str>>;
+    /// 重放入口：转发域侧既有写入接缝（守卫原样生效，不产出本地 op）。
+    fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect>;
 }

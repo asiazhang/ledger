@@ -22,7 +22,10 @@
 //! - [`device`]：DeviceId 读取（首用生成并持久化）与端内单调逻辑时钟分配。
 //! - [`ops`]：op 行落库与读取（`sync_ops` 表的唯一 SQL 收口）。
 //! - [`parked`]：挂起队列（`sync_parked_ops` 表的唯一 SQL 收口）。
-//! - [`command`]：跨端语义命令信封（DomainCommand，只增不改）。
+//! - [`command`]：跨端语义命令信封与重放契约（DomainCommand / ReplayEffect /
+//!   ReplayBinding，只增不改）——同步域对业务域暴露的契约面（ADR-0101 决策 4b）。
+//! - [`registry`]：重放注册表（ADR-0101）——14 个语义命令类型的适配绑定与
+//!   `DomainCommand::subject` 组装臂，与 ops/parked/positions 平级。
 //! - [`model`]：op 信封 wire 模型（[`model::SyncOp`]）。
 //!
 //! 复制模型（ADR-0091 决策 2/3）：op 载荷是语义级域命令，重放经既有写入接缝
@@ -48,6 +51,7 @@ pub mod model;
 pub mod ops;
 pub mod parked;
 pub mod positions;
+pub mod registry;
 pub mod transport;
 pub mod trigger;
 
