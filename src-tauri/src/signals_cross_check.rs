@@ -230,8 +230,15 @@ fn split_chunks(source: &str, anchor: &str) -> Vec<Chunk> {
 /// 掩码文本切片内首个 `pub [async] fn` 函数体的花括号配对结束位置（切片末尾
 /// 相对偏移）：从函数名后首个 `{` 起计数，`{` + 1 / `}` - 1，归零即函数体结束。
 /// 注释与字符串已在掩码中空白化，花括号只来自真实代码，配对可靠。
+/// 块内首个 `pub [async] fn` 的标记对（[`fn_name`] 命名提取与
+/// [`fn_body_end`] 函数体定位共用，防两处漂移）。
+const FN_MARKERS: [&str; 2] = ["pub async fn ", "pub fn "];
+
+/// 掩码文本切片内首个 `pub [async] fn` 函数体的花括号配对结束位置（切片末尾
+/// 相对偏移）：从函数名后首个 `{` 起计数，`{` + 1 / `}` - 1，归零即函数体结束。
+/// 注释与字符串已在掩码中空白化，花括号只来自真实代码，配对可靠。
 fn fn_body_end(masked: &str) -> Option<usize> {
-    let fn_pos = ["pub async fn ", "pub fn "]
+    let fn_pos = FN_MARKERS
         .iter()
         .filter_map(|marker| masked.find(marker))
         .min()?;
@@ -254,7 +261,7 @@ fn fn_body_end(masked: &str) -> Option<usize> {
 
 /// 块内首个 `pub [async] fn` 的标识符（命令 / handler 函数体的命名约定）。
 fn fn_name(masked: &str) -> Option<String> {
-    for marker in ["pub async fn ", "pub fn "] {
+    for marker in FN_MARKERS {
         if let Some(pos) = masked.find(marker) {
             let rest = &masked[pos + marker.len()..];
             let ident: String = rest
