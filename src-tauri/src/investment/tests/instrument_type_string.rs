@@ -21,7 +21,8 @@ fn instrument_type_serde_roundtrip() {
     assert!(err.to_string().contains("未知金融工具类型"), "实际: {err}");
 }
 
-/// `Display` / `parse` 严格往返；未知值报参数错误并附合法值清单。
+/// `Display` / `parse` 严格往返；未知值报参数错误并附合法值清单（ADR-0050 码化：
+/// 稳定 `code` + 插值参数，`message` 逐字不变、清单仍由宏同源生成）。
 #[test]
 fn instrument_type_parse_roundtrip() {
     for kind in InstrumentType::ALL {
@@ -29,9 +30,15 @@ fn instrument_type_parse_roundtrip() {
         assert_eq!(kind.to_string(), kind.as_str());
     }
     let err = InstrumentType::parse("etfs").unwrap_err();
+    assert_eq!(err.code(), Some("instrument.type-unknown"));
     assert!(err.to_string().contains("未知金融工具类型"), "实际: {err}");
     assert!(
         err.to_string().contains("stock/fund/bond/etf/other"),
         "实际: {err}"
+    );
+    assert_eq!(
+        serde_json::to_value(&err).unwrap()["params"],
+        serde_json::json!(["etfs", "stock/fund/bond/etf/other"]),
+        "params 按动态值出现顺序：未知值 → 同源合法值清单"
     );
 }

@@ -57,6 +57,7 @@ pub enum TransactionKind {
     Convert => "convert",
 }
 err_label = "交易类型",
+err_code = "transaction.kind-unknown",
 }
 
 // rusqlite：从 `transactions.kind` 列直接读为枚举（DB 边界：TEXT 列经 [`TransactionKind::parse`]
