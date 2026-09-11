@@ -14,7 +14,7 @@
 use rusqlite::{Connection, params};
 
 use crate::db::migrations;
-use crate::test_support::{
+use tauri_app_lib::test_support::{
     FIXED_NOW, seed_account, seed_exchange_rate, seed_fx_rate_history, seed_instrument,
     seed_price_history,
 };
@@ -30,7 +30,7 @@ use super::common::{
 /// 迁移缝 `to_latest`（init_db 的迁移核心），spec #728 / issue #754 / ADR-0084 决策 7。
 #[test]
 fn init_db_is_idempotent_and_seeds_defaults() {
-    let mut conn = crate::test_support::open();
+    let mut conn = tauri_app_lib::test_support::open();
     migrations().to_latest(&mut conn).unwrap();
     migrations().to_latest(&mut conn).unwrap();
 
@@ -75,7 +75,7 @@ const LATEST_SCHEMA_VERSION: usize = 23;
 /// （迁移批次单事务回滚），本测试确定性失败。
 #[test]
 fn migration_from_zero_reaches_latest_completely() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
 
     // 完整性：user_version 到达最新（迁移批次单事务，缺迁移即版本落后）。
     let user_version: i64 = conn
@@ -199,7 +199,7 @@ fn insert_raw_transaction(
 /// 注记与 CHANGELOG「Unreleased」BREAKING 条目；历史库升级路径不测（见模块注释）。
 #[test]
 fn convert_schema_shape_is_complete_from_zero() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     seed_account(&conn, "acc-convert", "投资账户", "investment", "CNY", 0);
     seed_instrument(&conn, "inst-out", "000001.OF", "基金A", "CNY", "unknown");
     seed_instrument(&conn, "inst-in", "000002.OF", "基金B", "CNY", "unknown");
@@ -271,7 +271,7 @@ fn convert_schema_shape_is_complete_from_zero() {
 /// lot_id 级联随批次硬删消失（扩展行语义，同 security_lot_conversions）。
 #[test]
 fn split_lot_adjustments_schema_shape_is_complete_from_zero() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     seed_account(&conn, "acc-split", "投资账户", "investment", "CNY", 0);
     seed_instrument(&conn, "inst-split", "502010", "基金S", "CNY", "unknown");
 
@@ -353,7 +353,7 @@ fn split_lot_adjustments_schema_shape_is_complete_from_zero() {
 /// 库层只验存在性）。
 #[test]
 fn policies_table_references_insurers() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
 
     // 新形状：insurer_id 在场、merchant_id 不在场（就地修改替换，非并存）。
     let has_insurer_id: bool = conn
@@ -413,7 +413,7 @@ fn policies_table_references_insurers() {
 /// 同名不重复建（按名 INSERT OR IGNORE），行数与身份（确定性 UUID）稳定。
 #[test]
 fn insurer_seed_is_present_and_idempotent() {
-    let mut conn = crate::test_support::open();
+    let mut conn = tauri_app_lib::test_support::open();
 
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM insurers", [], |r| r.get(0))
@@ -467,11 +467,11 @@ fn insurer_seed_is_present_and_idempotent() {
     // 重放 SQL 本体才能真验种子语句集的幂等性：IF NOT EXISTS + OR IGNORE）。
     migrations().to_latest(&mut conn).unwrap();
     conn.execute_batch(include_str!(
-        "../../../migrations/V019__insurer_dictionary.sql"
+        "../../../../../migrations/V019__insurer_dictionary.sql"
     ))
     .unwrap();
     conn.execute_batch(include_str!(
-        "../../../migrations/V019__insurer_dictionary.sql"
+        "../../../../../migrations/V019__insurer_dictionary.sql"
     ))
     .unwrap();
     let count_after: i64 = conn
@@ -502,7 +502,7 @@ fn insurer_seed_is_present_and_idempotent() {
 /// 见 transaction/tests.rs），此处不再重复。
 #[test]
 fn exchange_rate_single_row_per_pair() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
 
     // 当前行：工厂汇率种子（行 id 由货币对派生，spec #728 / ADR-0084 决策 4）。
     seed_exchange_rate(&conn, "USD", "CNY", 7.2);
@@ -521,7 +521,7 @@ fn exchange_rate_single_row_per_pair() {
 /// + 标的级联删除跟随。
 #[test]
 fn price_history_weekly_unique_and_cascade() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     seed_instrument(&conn, "inst-01", "600519.SH", "贵州茅台", "CNY", "sh");
 
     seed_price_history(&conn, "ph-01", "inst-01", "2026-05-27", 170000, "CNY");
@@ -562,7 +562,7 @@ fn price_history_weekly_unique_and_cascade() {
 /// （与价格侧 source 列同款）。历史库的升级回填语义不再单独测（见模块注释）。
 #[test]
 fn instruments_source_defaults_eastmoney_and_rejects_null() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
 
     // 省略 source 列的插入落列默认值（market 探针不带 source 列，顺带覆盖 name 可空）。
     probe_instrument_market(&conn, "inst-d", "600000", "sh")
@@ -587,7 +587,7 @@ fn instruments_source_defaults_eastmoney_and_rejects_null() {
 /// 修改注记与 CHANGELOG「Unreleased」BREAKING 条目两级标记）。
 #[test]
 fn instruments_market_check_accepts_us_markets() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
 
     for (i, market) in ["sh", "sz", "hk", "nasdaq", "nyse", "amex", "unknown"]
         .into_iter()
@@ -605,7 +605,7 @@ fn instruments_market_check_accepts_us_markets() {
 /// fx_rate_history：币种对 × 周唯一（与 PriceHistory 同规则）。
 #[test]
 fn fx_rate_history_weekly_unique_per_pair() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
 
     seed_fx_rate_history(&conn, "fx-01", "HKD", "CNY", "2026-05-27", 0.92);
     // 同币种对同采样日第二行应被周唯一约束拒绝（探针直写，自定义 id）。
@@ -654,7 +654,7 @@ fn insert_occurrence(conn: &Connection, id: &str, plan_id: &str) {
 
 /// 准备行为抽查的世界：迁移后的内存库 + 一个现金账户；返回连接。
 fn world_with_account() -> Connection {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     seed_account(&conn, "acc-01", "现金", "cash", "CNY", 0);
     conn
 }
@@ -700,7 +700,7 @@ fn count(conn: &Connection, table: &str) -> i64 {
 /// 经 `PRAGMA foreign_key_list` 反射观察 schema，不测实现细节。
 #[test]
 fn migration_audit_every_foreign_key_has_explicit_on_delete() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
 
     let tables: Vec<String> = conn
         .prepare(

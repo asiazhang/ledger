@@ -3,7 +3,13 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CRATES, WHITELIST, LAYER } from '../../scripts/check-structure.ts'
+import {
+  CRATES,
+  INFRA_MODULES,
+  INFRA_SRC_REL,
+  WHITELIST,
+  LAYER,
+} from '../../scripts/check-structure.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-structure.ts（结构守门，ADR-0056）。
 // 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。
@@ -32,12 +38,13 @@ afterAll(() => {
 const STUB = '// 结构守门夹具桩\npub fn stub() {}\n'
 
 /**
- * 按脚本导出的 WHITELIST 生成全部条目（目录 → mod.rs，文件 → 同名文件），
- * 再按 overrides 追加/覆盖文件——单层夹具与 workspace 夹具共用的填充步骤。
+ * 按脚本导出的清单写桩（目录 → mod.rs，文件 → 同名文件）：域目录条目落
+ * `<srcTauri>/src`，基础设施模块条目落 `<srcTauri>/crates/infra/src`（#1088 起
+ * 基础设施整体住 crate）。
  */
-function populateWhitelistEntries(src: string, overrides: Record<string, string> = {}): void {
-  for (const { path } of WHITELIST) {
-    const abs = join(src, path)
+function writeModuleStubs(baseDir: string, entries: readonly { path: string }[]): void {
+  for (const { path } of entries) {
+    const abs = join(baseDir, path)
     if (path.endsWith('.rs')) {
       mkdirSync(join(abs, '..'), { recursive: true })
       writeFileSync(abs, STUB)
@@ -46,11 +53,30 @@ function populateWhitelistEntries(src: string, overrides: Record<string, string>
       writeFileSync(join(abs, 'mod.rs'), STUB)
     }
   }
-  for (const [relPath, content] of Object.entries(overrides)) {
-    const file = join(src, relPath)
-    mkdirSync(join(file, '..'), { recursive: true })
-    writeFileSync(file, content)
-  }
+}
+
+function populateWhitelistEntries(srcTauri: string): void {
+  writeModuleStubs(join(srcTauri, 'src'), WHITELIST)
+  writeModuleStubs(join(srcTauri, INFRA_SRC_REL), INFRA_MODULES)
+}
+
+/** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
+const INFRA_ENTRY_PATHS = new Set(INFRA_MODULES.map((m) => m.path))
+
+function isInfraModulePath(rel: string): boolean {
+  const head = rel.split('/')[0]
+  return INFRA_ENTRY_PATHS.has(head) || INFRA_ENTRY_PATHS.has(rel)
+}
+
+/**
+ * 写覆盖文件：按路径首段归位——基础设施模块（`db/…` / `error.rs` / …）落
+ * `<srcTauri>/crates/infra/src`，其余（域目录、壳层 `commands/` 等）落 `<srcTauri>/src`。
+ */
+function placeOverride(srcTauri: string, relPath: string, content: string): void {
+  const base = isInfraModulePath(relPath) ? join(srcTauri, INFRA_SRC_REL) : join(srcTauri, 'src')
+  const file = join(base, relPath)
+  mkdirSync(join(file, '..'), { recursive: true })
+  writeFileSync(file, content)
 }
 
 /**
@@ -58,10 +84,11 @@ function populateWhitelistEntries(src: string, overrides: Record<string, string>
  * 再按 overrides 追加/覆盖文件。返回脚本参数（夹具 src 目录）。
  */
 function makeFixture(overrides: Record<string, string> = {}): string[] {
-  const src = mkdtempSync(join(tmpdir(), 'check-structure-'))
-  tempDirs.push(src)
-  populateWhitelistEntries(src, overrides)
-  return [src]
+  const args = makeCrateFixture()
+  for (const [relPath, content] of Object.entries(overrides)) {
+    placeOverride(args[1], relPath, content)
+  }
+  return args
 }
 
 // 夹具用现存的壳层引用形态（商户壳层命令）：参考数据三域 #404 归位后账户壳层已无
@@ -91,6 +118,14 @@ describe('check-structure（结构守门）', () => {
     expect(r.status).toBe(1)
     expect(r.output).toContain('反向依赖')
     expect(r.output).toContain('item/crud.rs:1')
+  })
+
+  it('基础设施 crate 内代码引用壳层 → 失败并定位文件行号（#1088 归位后清单基准在 crate）', () => {
+    const args = makeFixture({ 'db/helper.rs': shellUse })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('反向依赖')
+    expect(r.output).toContain('db/helper.rs:1')
   })
 
   it('注释与字符串中的 commands:: 不误报（掩码边界）', () => {
@@ -127,7 +162,16 @@ describe('check-structure（结构守门）', () => {
 
   it('白名单路径缺失（清单漂移）→ fail loud', () => {
     const args = makeFixture()
-    rmSync(join(args[0], 'db'), { recursive: true, force: true })
+    rmSync(join(args[0], 'item'), { recursive: true, force: true })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('白名单路径不存在')
+    expect(r.output).toContain('item')
+  })
+
+  it('基础设施模块清单路径缺失（crate 内清单漂移）→ fail loud', () => {
+    const args = makeFixture()
+    rmSync(join(args[1], INFRA_SRC_REL, 'db'), { recursive: true, force: true })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('白名单路径不存在')
@@ -145,7 +189,11 @@ describe('check-structure（结构守门）', () => {
 })
 
 describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）', () => {
-  /** 与真实树 db/mod.rs after_commit 同形的夹具文本（ADR-0032 置脏单点，认许边原型） */
+  /**
+   * 迁移前 db/mod.rs after_commit 的形态（ADR-0032 置脏单点）：#1088 起该生产边
+   * 已由注册点反转消除（基础设施只留调用时机、备份域提供实现），故本形态现为
+   * **未认许**的产出式反向引用——夹具用它钉死「生产挂载点不得复活」。
+   */
   const afterCommitShape = [
     'pub fn write<T>(f: impl FnOnce() -> T) -> T { f() }',
     'fn after_commit(conn: &Connection) {',
@@ -237,12 +285,23 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
     expect(r.status).toBe(0)
   })
 
-  it('认许边精确匹配：db/mod.rs→backup 绿；同文件他域或他文件同域仍红', () => {
-    const green = makeFixture({ 'db/mod.rs': afterCommitShape })
+  it('生产挂载点已反转：db/mod.rs 直调备份域 → 红（认许边不再含该条）', () => {
+    const args = makeFixture({ 'db/mod.rs': afterCommitShape })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('引用域目录 backup')
+    expect(r.output).toContain('db/mod.rs:3')
+  })
+
+  it('认许边精确匹配：settings.rs→test_support 绿；同文件他域或他文件同域仍红', () => {
+    const green = makeFixture({
+      'settings.rs': 'use tauri_app_lib::test_support::open;\npub fn x() {}\n',
+    })
     expect(run(green).status).toBe(0)
 
     const otherDomain = makeFixture({
-      'db/mod.rs': afterCommitShape + 'use crate::accounts::Account;\n',
+      'settings.rs':
+        'use tauri_app_lib::test_support::open;\nuse crate::accounts::Account;\npub fn x() {}\n',
     })
     const r1 = run(otherDomain)
     expect(r1.status).toBe(1)
@@ -259,8 +318,8 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
   it('真实仓库默认通过：基础设施→域零未认许引用（认许边留痕于脚本）', () => {
     const r = run([])
     expect(r.status).toBe(0)
-    // db/mod.rs→backup（ADR-0032）+ settings/logger/write_entry/read_entry→test_support（ADR-0084，#758）
-    expect(r.output).toContain('认许边 5 条')
+    // 生产挂载点 0（#1088 注册点反转消除 db/mod.rs→backup）+ settings/logger/write_entry/read_entry→test_support（ADR-0084，#758）
+    expect(r.output).toContain('认许边 4 条')
   })
 })
 
@@ -516,7 +575,7 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   const root = mkdtempSync(join(tmpdir(), 'check-structure-crate-'))
   tempDirs.push(root)
   const srcTauri = join(root, 'src-tauri')
-  populateWhitelistEntries(join(srcTauri, 'src'))
+  populateWhitelistEntries(srcTauri)
 
   const rootManifest =
     overrides.rootManifest ??
@@ -718,5 +777,15 @@ describe('check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
     expect(r.status).toBe(1)
     expect(r.output).toContain('crate 依赖方向')
     expect(r.output).toContain('ledger-infra')
+  })
+
+  it('基础设施 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
+    const args = makeCrateFixture({
+      memberManifest:
+        '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
   })
 })

@@ -1,28 +1,10 @@
-//! 统一错误响应：`AppError` → HTTP 状态码 + `{kind, message[, code, params]}` JSON。
+//! 统一错误响应格式：`{kind, message[, code, params]}` JSON。
+//!
+//! `AppError` → HTTP 状态码的投影实现随错误类型住基础设施 crate（issue #1088：
+//! 孤儿规则要求 trait 实现与类型同 crate，`ledger_infra::error` 提供
+//! `impl IntoResponse for AppError`）；本模块只保留响应 DTO 的形状声明。
 
-use crate::error::{AppError, ErrClass};
-use axum::Json;
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
 use utoipa::ToSchema;
-
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        let status = match &self {
-            AppError::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::NotFound(_) => StatusCode::NOT_FOUND,
-            AppError::Invalid(_) => StatusCode::BAD_REQUEST,
-            AppError::Parse(_) => StatusCode::BAD_REQUEST,
-            AppError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            // 码化错误按归类取状态（ADR-0050）：Invalid→400、NotFound→404
-            AppError::Coded { class, .. } => match class {
-                ErrClass::Invalid => StatusCode::BAD_REQUEST,
-                ErrClass::NotFound => StatusCode::NOT_FOUND,
-            },
-        };
-        (status, Json(self)).into_response()
-    }
-}
 
 /// 统一错误响应格式：`{ "kind": "<ErrorKind>", "message": "<中文描述>" }`；
 /// 码化错误额外携带稳定 `code` 与可选 `params`（issue #342 二期 / ADR-0050，只增不改）。

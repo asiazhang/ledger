@@ -75,10 +75,11 @@ macro_rules! write_op_set {
             /// 扫描提取的 `WriteOp::<Variant>` 文本映射回变体，取代手写
             /// `parse_write_op` 穷尽臂。臂集与本清单同源展开，完备性由构造保证；
             /// 非变体文本返回 [`None`]，由调用方以断言失败报「扫描提取漂移」。
-            /// 消费方仅 `#[cfg(test)]` 的守门测试（ADR-0073 决策 5），非测试构建
-            /// 不生成本函数，避免 `-D warnings` 下的 dead_code 告警。
-            #[cfg(test)]
-            pub(crate) fn from_ident(ident: &str) -> Option<$name> {
+            /// 消费方仅守门测试（ADR-0073 决策 5）；`signals_cross_check` 属根包的
+            /// `#[cfg(test)]` 模块，跨 crate 消费时不随本 crate 的 cfg(test) 编译
+            /// （issue #1088 归位后实测），故本函数恒生成、以 `#[doc(hidden)]` 退场。
+            #[doc(hidden)]
+            pub fn from_ident(ident: &str) -> Option<$name> {
                 match ident {
                     $(stringify!($variant) => Some($name::$variant),)*
                     _ => None,
@@ -328,7 +329,7 @@ impl WriteEvidence {
     }
 
     /// 商户即建证据为真（映射判定与批量聚合共享这一份形状判定）。
-    pub(crate) fn merchant_created(&self) -> bool {
+    pub fn merchant_created(&self) -> bool {
         matches!(self, WriteEvidence::MerchantCreated(true))
     }
 

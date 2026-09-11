@@ -2582,7 +2582,27 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 name = "ledger-infra"
 version = "0.6.0"
 dependencies = [
+ "axum",
+ "block2",
+ "chrono",
+ "objc2",
+ "objc2-foundation",
+ "objc2-local-authentication",
+ "rusqlite",
+ "rusqlite_migration",
+ "security-framework",
+ "security-framework-sys",
+ "serde",
  "serde_json",
+ "sha2 0.11.0",
+ "tauri",
+ "tauri-app",
+ "thiserror 2.0.20",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
+ "zip",
 ]
 
 [[package]]

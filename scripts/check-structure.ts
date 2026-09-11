@@ -11,7 +11,8 @@
 // 扫描边界：文本级扫描，注释与字符串/char 字面量掩码后匹配 `commands::`
 // 路径引用与 `commands as` 别名引入；经别名改名的间接引用文本不可达，
 // 靠评审兜底。
-// 基础设施→域扫描（ADR-0071 决策 6 / #538）：白名单基础设施条目内的反向依赖
+// 基础设施→域扫描（ADR-0071 决策 6 / #538）：基础设施模块（#1088 起住
+// `crates/infra/src`，清单见 INFRA_MODULES）内的反向依赖
 // 文本级扫描，与壳层扫描同款形态（掩码后匹配、fail loud、外挂测试豁免不变）。
 // 匹配限定 crate 根前缀的域模块路径（`crate::`/`tauri_app_lib::` + 域目录名，
 // 再随 `::`/` as `/`;`）——不裸匹配域名单词：`sync` 等域名与 std::sync /
@@ -75,7 +76,8 @@ export type Layer = (typeof LAYER)[keyof typeof LAYER]
 
 /**
  * 守门白名单（ADR-0056 决策 4）：路径相对 src-tauri/src。
- * 首批 = 已归位域目录 + 全部基础设施；每迁一域在此追加一行。
+ * 首批 = 已归位域目录；每迁一域在此追加一行。基础设施自 #1088 起整体住
+ * `crates/infra/src`（不再有根 src 路径），改由下面的 INFRA_MODULES 清单核对。
  */
 export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'transaction', layer: '域目录', note: '核心交易域' },
@@ -88,7 +90,6 @@ export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'investment', layer: '域目录', note: '投资域（#401 阶段 5 归位，主体自 commands/investment 随迁；价格写入单点自 sync/persist 迁入）' },
   { path: 'accounts', layer: '域目录', note: '账户域（#404 参考数据域归位，主体自 commands/accounts 随迁）' },
   { path: 'categories', layer: '域目录', note: '分类域（#404 参考数据域归位，主体自 commands/categories 随迁）' },
-  { path: 'closed_set.rs', layer: '基础设施', note: '闭集字符串枚举宏（ADR-0108；模式先例 signals.rs write_op_set!，ADR-0102）' },
   { path: 'currencies', layer: '域目录', note: '币种域（#404 参考数据域归位，清单查询自 commands/currencies 迁入）' },
   { path: 'reports', layer: '域目录', note: '报表域（#405 归位，月度汇总/分类/商户/日期极值聚合读模型，消费 transaction::amount 矩阵）' },
   { path: 'dashboard', layer: '域目录', note: '仪表盘域（#405 归位，全仓净资产跨币种折算聚合）' },
@@ -96,16 +97,31 @@ export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'sync', layer: '域目录', note: '行情同步域（#407 归位，HTTP 爬取/东财基金净值/同步编排自 commands/sync 随迁；全量修字典翼已退役，issue #698）' },
   { path: 'sync_engine', layer: '域目录', note: '多端同步域（issue #855 新建即归位，ADR-0091 OpLog 基座；与行情同步域 sync 相邻不同域）' },
   { path: 'test_support', layer: '域目录', note: '测试支持域（统一测试数据库工厂与共享断言库，ADR-0084 / #751；依赖域与基础设施合法，对壳层零依赖）' },
-  { path: 'db', layer: '基础设施', note: '数据库连接' },
+]
+
+/**
+ * 基础设施 crate 的模块清单（spec #1086 / issue #1088）：路径相对
+ * `src-tauri/crates/infra/src`。数据库、错误、设置、文件工具、日志、事件、
+ * 信号、闭集与壳层统一读写入口全量归位于此——它们对根包只以再导出面存在，
+ * 故模块级守门（对壳层零依赖、基础设施→域认许边）随之落到 crate 根下扫描。
+ */
+export const INFRA_MODULES: readonly WhitelistEntry[] = [
+  { path: 'db', layer: '基础设施', note: '数据库连接与 schema 守卫' },
   { path: 'signals.rs', layer: '基础设施', note: '信号映射（ADR-0044）' },
+  { path: 'signals', layer: '基础设施', note: '信号映射的外挂测试目录' },
   { path: 'error.rs', layer: '基础设施', note: '错误' },
   { path: 'settings.rs', layer: '基础设施', note: '设置' },
   { path: 'fs_util.rs', layer: '基础设施', note: '文件级原子操作工具（备份与 DataLocation 搬迁共用，#408 纳入守门）' },
   { path: 'logger.rs', layer: '基础设施', note: '日志初始化与滚动清理（#408 纳入守门）' },
   { path: 'events.rs', layer: '基础设施', note: '事件发射机制（ADR-0054，#408 纳入守门）' },
+  { path: 'closed_set.rs', layer: '基础设施', note: '闭集字符串枚举宏（ADR-0108；模式先例 signals.rs write_op_set!，ADR-0102）' },
   { path: 'write_entry.rs', layer: '基础设施', note: '壳层统一写入口（ADR-0073，spec #523）' },
   { path: 'read_entry.rs', layer: '基础设施', note: '壳层统一读入口（ADR-0104，spec #1009）' },
+  { path: 'redact.rs', layer: '基础设施', note: 'IPC 载荷脱敏（issue #1087 首位成员）' },
 ]
+
+/** 基础设施 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-infra.dir 同源。 */
+export const INFRA_SRC_REL = 'crates/infra/src'
 
 /**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
@@ -151,7 +167,7 @@ export const CRATES: readonly CrateEntry[] = [
     name: 'ledger-infra',
     dir: 'crates/infra',
     layer: CRATE_LAYER.INFRA,
-    note: '基础设施 crate（#1087 首位成员：IPC 载荷脱敏；#1088 起承载数据库/错误/设置/日志/事件/信号/闭集/壳层统一读写入口）',
+    note: '基础设施 crate（#1088 全量归位：数据库/错误/设置/文件工具/日志/事件/信号/闭集/壳层统一读写入口 + 载荷脱敏；对根包只以再导出面存在，基础设施→域生产边为 0——提交点后置动作经注册点反转，接线在壳层启动）',
   },
 ]
 
@@ -208,15 +224,16 @@ interface InfraDomainEdge {
 /**
  * 认许边（ADR-0071 决策 6 + §6 勘误注记 / #538）：基础设施→域的既有设计
  * 意图边，与白名单同属「已验证事实固化为规格」——逐条精确到白名单条目内
- * 文件相对路径 + 目标域目录名，新增条目须附 ADR 指针与成因；清单之外的
- * 基础设施→域引用一律红。
+ * 文件相对路径（相对 `crates/infra/src`，自 #1088 归位起） + 目标域目录名，
+ * 新增条目须附 ADR 指针与成因；清单之外的引用一律红。
+ *
+ * #1088 挂载点清点（「数量有记录、不新增」）：原首条 `db/mod.rs→backup`
+ * （ADR-0032 连接层提交点置脏单点，#246）在生产代码里被注册点反转消除——
+ * 基础设施只留调用时机、备份域提供实现、壳层启动接线，crate 依赖图不再有
+ * 基础设施→业务域边；清单因此由 5 条降为 4 条，且余下 4 条全是内联 cfg(test)
+ * 经测试工厂建库的测试专用边（生产挂载点 0 条）。
  */
 const INFRA_DOMAIN_ALLOWED_EDGES: readonly InfraDomainEdge[] = [
-  {
-    file: 'db/mod.rs',
-    domain: 'backup',
-    reason: 'ADR-0032 连接层统一写入口置脏单点：after_commit 提交点触发置脏 + 到期检查（#246）',
-  },
   {
     file: 'settings.rs',
     domain: 'test_support',
@@ -255,8 +272,8 @@ const MODEL_FILE_GLOB_PATTERN = /\bpub\s+use\s+[\w:]*\*/
  *  靶形态落在字符串字面量里，扫描须 `keepLiterals=true`（只掩码注释）。 */
 const NATIVE_TX_STMT_PATTERN = /\bexecute\s*\(\s*"(?:BEGIN|COMMIT|ROLLBACK)\b/
 
-/** 原生事务语句唯一合法住址（事务原语本体，issue #1014） */
-const NATIVE_TX_STMT_ALLOWED = 'db/tx_scope.rs'
+/** 原生事务语句唯一合法住址（事务原语本体，issue #1014；#1088 起住基础设施 crate） */
+const NATIVE_TX_STMT_ALLOWED = `${INFRA_SRC_REL}/db/tx_scope.rs`
 
 /** 业务域→同步域引用锚点（crate 根前缀限定；掩码后匹配） */
 const SYNC_ENGINE_REF_PATTERN = /\b(?:crate|tauri_app_lib)\s*::\s*sync_engine\b/
@@ -549,10 +566,16 @@ function manifestPackageName(manifest: string): string | null {
 /**
  * 清单声明的依赖 crate 名（含 dev 依赖与 target 变体；`[dependencies.x]` 子表形态）。
  * 只取依赖表本身，段落其余内容不参与——供 crate 依赖方向核对使用。
+ *
+ * `includeDev=false`（依赖方向核对）刻意排除 `[dev-dependencies]`：测试专用边
+ * 允许沿「域/基础设施 → 壳」反向（Cargo 允许 dev-dependency 环，ADR-0084 /
+ * spec #1086——各域单测消费根包的测试工厂与器具）；生产依赖方向仍单向核对。
  */
-function declaredDependencyNames(manifest: string): string[] {
+function declaredDependencyNames(manifest: string, includeDev = true): string[] {
   const names = new Set<string>()
-  const tableRe = /^(?:target\..+\.)?(?:dev-)?dependencies(?:\.([A-Za-z0-9_-]+))?$/
+  const tableRe = includeDev
+    ? /^(?:target\..+\.)?(?:dev-)?dependencies(?:\.([A-Za-z0-9_-]+))?$/
+    : /^(?:target\..+\.)?dependencies(?:\.([A-Za-z0-9_-]+))?$/
   let current = ''
   for (const raw of manifest.split('\n')) {
     const header = raw.trim().match(/^\[([^\]]+)\]$/)
@@ -679,7 +702,9 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
           '    缺失即六件套 deny 门禁静默消失而 clippy 依然全绿——删除继承行即变红（ADR-0060 / spec #1086）',
       )
     }
-    for (const dep of declaredDependencyNames(manifest)) {
+    // 依赖方向只看生产依赖：dev-dependency 是测试专用边（ADR-0084 / spec #1086），
+    // 允许域/基础设施 crate 以 dev-dependency 环消费根包的测试工厂与器具。
+    for (const dep of declaredDependencyNames(manifest, false)) {
       const target = CRATES.find((c) => c.name === dep)
       if (target && CRATE_LAYER_RANK[target.layer] > CRATE_LAYER_RANK[crate.layer]) {
         problems.push(
@@ -723,67 +748,22 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
   return problems
 }
 
-function main(): void {
-  const repoRoot = fileURLToPath(new URL('..', import.meta.url))
-  const srcDir = process.argv[2] ?? join(repoRoot, 'src-tauri', 'src')
-  const srcTauriDir = process.argv[3] ?? join(repoRoot, 'src-tauri')
-  const problems: string[] = []
-  let scannedFiles = 0
-  const domainCount = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN).length
-
-  // 模型域化禁令（规则①/②）+ 原生事务语句禁令（规则③）：全树扫描（壳、域、
-  // 基础设施、顶层文件），残留引用可出现在任何层；collectRustFiles 自带测试
-  // 豁免（ADR-0056 决策 5）——外挂测试目录的直置事务边界合法。
-  // srcDir 整体不可达时静默交由白名单循环报「路径不存在」，不在此抛栈。
-  let allFiles: RustFileRef[] = []
-  try {
-    allFiles = collectRustFiles(srcDir, '')
-  } catch {
-    // 目录缺失：白名单循环会逐条报错并 fail loud
-  }
-  for (const f of allFiles) {
-    const source = readFileSync(f.abs, 'utf8')
-    for (const hit of scanRustSource(source, GLOBAL_MODEL_PATH_PATTERN)) {
-      problems.push(
-        `✗ 全局模型路径残留：${f.rel}:${hit.line}（${hit.match}）\n` +
-          `    ${hit.text}\n` +
-          `    全局模型目录已随 ADR-0059 模型域化消亡（T7 / #424），` +
-          `模型类型一律走域路径显式 import（如 crate::transaction::model::Transaction）` +
-          `——防扁平命名空间复活`,
-      )
-    }
-    for (const hit of scanRustSource(source, MODEL_GLOB_REEXPORT_PATTERN)) {
-      problems.push(
-        `✗ 域模型 glob 再导出：${f.rel}:${hit.line}（${hit.match}）\n` +
-          `    ${hit.text}\n` +
-          `    域 model 只许逐类型再导出，所有权必须逐类型可见 ` +
-          `（ADR-0059 决策 3/6，#424）：改为 pub use model::{TypeA, TypeB} 形态`,
-      )
-    }
-    if (isModelFile(f.rel)) {
-      for (const hit of scanRustSource(source, MODEL_FILE_GLOB_PATTERN)) {
-        problems.push(
-          `✗ 域模型文件内 glob 聚合：${f.rel}:${hit.line}（${hit.match}）\n` +
-            `    ${hit.text}\n` +
-            `    域模型文件只承载本域类型定义与逐类型再导出，禁止 glob 聚合 ` +
-            `（ADR-0059 决策 3/6，#424）`,
-        )
-      }
-    }
-    for (const hit of scanRustSource(source, NATIVE_TX_STMT_PATTERN, true)) {
-      if (f.rel === NATIVE_TX_STMT_ALLOWED) continue
-      problems.push(
-        `✗ 原生事务语句：${f.rel}:${hit.line}（${hit.match}）\n` +
-          `    ${hit.text}\n` +
-          `    事务壳归基础设施 db::tx_scope（无条件自持 hold_transaction / ` +
-          `嵌套感知 ensure_transaction，ADR-0056 / ADR-0105；#1013/#1014）——` +
-          `产品代码不得手写 BEGIN/COMMIT/ROLLBACK，唯一合法住址 ${NATIVE_TX_STMT_ALLOWED}`,
-      )
-    }
-  }
-
-  for (const w of WHITELIST) {
-    const abs = join(srcDir, w.path)
+/**
+ * 模块清单核对（ADR-0056 决策 4）：清单条目必须存在且扫得到非测试 Rust 文件
+ * （清单漂移 fail loud），条目内对壳层零依赖；基础设施条目另核
+ * 基础设施→域认许边（ADR-0071 决策 6 / #538），业务域条目另核业务域→同步域
+ * 严形态（ADR-0101 决策 4b）。返回扫到的非测试文件数；返回 0 由调用方统一拒绝
+ * （拒绝以空集假绿通过）。清单与路径基准分离，使域目录（根 src）与基础设施
+ * crate（`crates/infra/src`）共用同一份核对逻辑与同一份认许边清单。
+ */
+function scanModuleEntries(
+  entries: readonly WhitelistEntry[],
+  baseDir: string,
+  problems: string[],
+): number {
+  let scanned = 0
+  for (const w of entries) {
+    const abs = join(baseDir, w.path)
     let stat: Stats | undefined
     try {
       stat = statSync(abs)
@@ -794,7 +774,9 @@ function main(): void {
       problems.push(`✗ 白名单路径不存在：${w.path}（${w.layer}：${w.note}）——目录改名/迁移后未同步守门清单`)
       continue
     }
-    const files: RustFileRef[] = stat.isDirectory() ? collectRustFiles(abs, w.path) : [{ abs, rel: w.path }]
+    const files: RustFileRef[] = stat.isDirectory()
+      ? collectRustFiles(abs, w.path)
+      : [{ abs, rel: w.path }]
     if (files.length === 0) {
       problems.push(
         `✗ 白名单条目扫不到非测试 Rust 文件：${w.path}（${w.layer}：${w.note}）——` +
@@ -802,7 +784,7 @@ function main(): void {
       )
       continue
     }
-    scannedFiles += files.length
+    scanned += files.length
     const isInfra = w.layer === LAYER.INFRA
     // 业务域→同步域严形态作用域：域目录，除同步域自身与测试支持域
     // （test_support→sync_engine 为测试专用边，登记处 ADR-0084 迁移状态段）。
@@ -848,6 +830,77 @@ function main(): void {
       }
     }
   }
+  return scanned
+}
+
+function main(): void {
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url))
+  const srcDir = process.argv[2] ?? join(repoRoot, 'src-tauri', 'src')
+  const srcTauriDir = process.argv[3] ?? join(repoRoot, 'src-tauri')
+  const problems: string[] = []
+  let scannedFiles = 0
+  const domainCount = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN).length
+
+  // 模型域化禁令（规则①/②）+ 原生事务语句禁令（规则③）：全树扫描（壳、域、
+  // 基础设施、顶层文件），残留引用可出现在任何层；collectRustFiles 自带测试
+  // 豁免（ADR-0056 决策 5）——外挂测试目录的直置事务边界合法。
+  // srcDir 整体不可达时静默交由白名单循环报「路径不存在」，不在此抛栈。
+  let allFiles: RustFileRef[] = []
+  try {
+    allFiles = [
+      ...collectRustFiles(srcDir, ''),
+      ...collectRustFiles(join(srcTauriDir, INFRA_SRC_REL), INFRA_SRC_REL),
+    ]
+  } catch {
+    // 目录缺失：白名单循环会逐条报错并 fail loud
+  }
+  for (const f of allFiles) {
+    const source = readFileSync(f.abs, 'utf8')
+    for (const hit of scanRustSource(source, GLOBAL_MODEL_PATH_PATTERN)) {
+      problems.push(
+        `✗ 全局模型路径残留：${f.rel}:${hit.line}（${hit.match}）\n` +
+          `    ${hit.text}\n` +
+          `    全局模型目录已随 ADR-0059 模型域化消亡（T7 / #424），` +
+          `模型类型一律走域路径显式 import（如 crate::transaction::model::Transaction）` +
+          `——防扁平命名空间复活`,
+      )
+    }
+    for (const hit of scanRustSource(source, MODEL_GLOB_REEXPORT_PATTERN)) {
+      problems.push(
+        `✗ 域模型 glob 再导出：${f.rel}:${hit.line}（${hit.match}）\n` +
+          `    ${hit.text}\n` +
+          `    域 model 只许逐类型再导出，所有权必须逐类型可见 ` +
+          `（ADR-0059 决策 3/6，#424）：改为 pub use model::{TypeA, TypeB} 形态`,
+      )
+    }
+    if (isModelFile(f.rel)) {
+      for (const hit of scanRustSource(source, MODEL_FILE_GLOB_PATTERN)) {
+        problems.push(
+          `✗ 域模型文件内 glob 聚合：${f.rel}:${hit.line}（${hit.match}）\n` +
+            `    ${hit.text}\n` +
+            `    域模型文件只承载本域类型定义与逐类型再导出，禁止 glob 聚合 ` +
+            `（ADR-0059 决策 3/6，#424）`,
+        )
+      }
+    }
+    for (const hit of scanRustSource(source, NATIVE_TX_STMT_PATTERN, true)) {
+      if (f.rel === NATIVE_TX_STMT_ALLOWED) continue
+      problems.push(
+        `✗ 原生事务语句：${f.rel}:${hit.line}（${hit.match}）\n` +
+          `    ${hit.text}\n` +
+          `    事务壳归基础设施 db::tx_scope（无条件自持 hold_transaction / ` +
+          `嵌套感知 ensure_transaction，ADR-0056 / ADR-0105；#1013/#1014）——` +
+          `产品代码不得手写 BEGIN/COMMIT/ROLLBACK，唯一合法住址 ${NATIVE_TX_STMT_ALLOWED}`,
+      )
+    }
+  }
+
+  // 模块清单核对：域目录相对根 src 扫描（壳层反向依赖 + 业务域→同步域严形态），
+  // 基础设施模块相对 `crates/infra/src` 扫描（壳层反向依赖 + 基础设施→域认许边）——
+  // 自 #1088 全量归位起基础设施不再住根 src，路径基准随归位改一次、事实源仍只有
+  // 本脚本一份（ADR-0056「白名单即规格」不变）。
+  scannedFiles += scanModuleEntries(WHITELIST, srcDir, problems)
+  scannedFiles += scanModuleEntries(INFRA_MODULES, join(srcTauriDir, INFRA_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -866,7 +919,8 @@ function main(): void {
     process.exit(1)
   }
   console.log(
-    `✓ 结构守门：白名单 ${WHITELIST.length} 项（域目录 ${domainCount} + 基础设施 ${WHITELIST.length - domainCount}）` +
+    `✓ 结构守门：白名单 ${WHITELIST.length} 项（域目录 ${domainCount}）` +
+      `+ 基础设施模块 ${INFRA_MODULES.length} 项（crate ${INFRA_SRC_REL}）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 业务域→同步域严形态零违规（契约模块 ${SYNC_CONTRACT_MODULE} ∪ 白名单 ${SYNC_ROOT_ALLOWED_SYMBOLS.size} 符号，ADR-0101）` +

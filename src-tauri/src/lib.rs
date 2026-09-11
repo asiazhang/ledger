@@ -17,24 +17,16 @@ pub mod api_server;
 pub mod backup;
 pub mod budget;
 pub mod categories;
-pub mod closed_set;
 pub mod commands;
 pub mod currencies;
 pub mod dashboard;
-pub mod db;
-pub mod error;
-pub mod events;
 pub mod investment;
 pub mod item;
-pub mod logger;
 pub mod merchants;
 pub mod physical_asset;
 pub mod policy;
-pub mod read_entry;
 pub mod reports;
 pub mod scheduled_transactions;
-pub mod settings;
-pub mod signals;
 pub mod sync;
 pub mod sync_engine;
 // 信号守门测试（signals_cross_check，ADR-0044 决策 3 修订 / ADR-0073 决策 5）：
@@ -46,15 +38,22 @@ mod signals_cross_check;
 //（C 类豁免声明，ADR-0060）。
 #[doc(hidden)]
 pub mod test_support;
-#[doc(hidden)]
-pub mod test_utils;
 pub mod transaction;
-pub mod write_entry;
 
 use tauri::Manager;
 use tauri::ipc::Invoke;
-// 基础设施 crate 首位成员（spec #1086 / issue #1087）：IPC 载荷脱敏自本文件迁出，
-// 无域语义、壳层消费；调用面保持原函数名。
+// 基础设施全量归位（spec #1086 / issue #1088）：数据库、错误、设置、文件工具、
+// 日志、事件、信号、闭集与壳层统一读写入口迁入 `ledger-infra`，根包以再导出
+// 形态保留原引用路径——域与壳层的 `crate::db::…` / `crate::error::…` 等调用点
+// 零改动即可编译（expand 形态）。
+pub use ledger_infra::{
+    closed_set, db, error, events, fs_util, logger, read_entry, settings, signals, write_entry,
+};
+// 测试支持器具随基础设施归位（issue #1088）：类型身份要求与 `events::SignalEmitter`
+// 同 crate，根包原路径 `crate::test_utils` / `tauri_app_lib::test_utils` 经再导出保持。
+#[doc(hidden)]
+pub use ledger_infra::test_utils;
+// IPC 载荷脱敏（issue #1087 首位成员）：调用面保持原函数名。
 use ledger_infra::redact::redact_passphrase_payload;
 // 对话框兜底仅桌面参与（issue #558 / ADR-0074 决策 6）：移动端启动期 DB 初始化
 // 二次失败改走记日志后带错误退出，不引入主线程阻塞对话框（见 run() 的二次失败兜底）。
@@ -64,8 +63,6 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use crate::commands::boot::{boot_sequence, recover_boot_failure};
 use crate::db::boot::BootFailureGate;
 use crate::db::encryption::EncryptionGate;
-
-pub mod fs_util;
 
 // 命令注册单一来源（ADR-0047）：由 build.rs 扫描 #[tauri::command] 注解生成、
 // include! 进本 crate；命令注册零手工清单，新增/删除命令只改命令域文件本身。
@@ -165,6 +162,10 @@ pub fn run() {
     builder
         .setup(move |app| {
             logger::init(app.handle());
+            // 写路径副作用接缝接线（spec #1086 / issue #1088）：连接层写入口提交点的
+            // 后置动作（置脏 + 写时顺带到期检查，ADR-0032）由备份域提供实现、壳层
+            // 启动时注册——基础设施 crate 不再反向依赖业务域；注册先于任何建库/写库。
+            backup::install_after_commit_hook();
             // 两扇进程级门先登记（boot_sequence 与 IPC/HTTP 门禁共同消费；实例
             // 由 run() 创建，同一份供 invoke wrapper 共享）：加密锁定门 + 启动
             // 失败门（issue #601）。

@@ -185,6 +185,37 @@ impl From<serde_json::Error> for AppError {
 
 pub type Result<T> = std::result::Result<T, AppError>;
 
+// ---------------------------------------------------------------------------
+// HTTP 错误响应投影（壳层 `api_server` 与 HTTP-only handler 消费）
+// ---------------------------------------------------------------------------
+
+/// `AppError` → HTTP 状态码 + JSON 的统一投影。
+///
+/// 原住 `api_server::error`，随错误类型迁入基础设施 crate（issue #1088）：
+/// 孤儿规则（E0117）要求 trait 实现与类型同 crate——`IntoResponse` 属 axum、
+/// `AppError` 属本 crate，故实现只能住这里；壳层保留响应 DTO（`ErrorResponse`）
+/// 与路由接线，调用面零改动。
+impl axum::response::IntoResponse for AppError {
+    fn into_response(self) -> axum::response::Response {
+        use axum::Json;
+        use axum::http::StatusCode;
+
+        let status = match &self {
+            AppError::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::NotFound(_) => StatusCode::NOT_FOUND,
+            AppError::Invalid(_) => StatusCode::BAD_REQUEST,
+            AppError::Parse(_) => StatusCode::BAD_REQUEST,
+            AppError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            // 码化错误按归类取状态（ADR-0050）：Invalid→400、NotFound→404
+            AppError::Coded { class, .. } => match class {
+                ErrClass::Invalid => StatusCode::BAD_REQUEST,
+                ErrClass::NotFound => StatusCode::NOT_FOUND,
+            },
+        };
+        (status, Json(self)).into_response()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

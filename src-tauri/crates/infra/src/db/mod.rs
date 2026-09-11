@@ -18,60 +18,70 @@ pub mod tx_scope;
 
 /// 迁移集合。新增 schema 变更或种子数据时，在 `src-tauri/migrations/` 下新建
 /// `V00X__名称.sql`，并在 `migrations()` 的 `vec!` 里追加
-/// `M::up(include_str!("../migrations/V00X__名称.sql"))`。
+/// `M::up(include_str!("../../../../migrations/V00X__名称.sql"))`。
 /// 版本由 SQLite 的 `user_version` 字段自动追踪，无需手动维护版本表。
 fn migrations() -> &'static Migrations<'static> {
     static MIGRATIONS: OnceLock<Migrations<'static>> = OnceLock::new();
     MIGRATIONS.get_or_init(|| {
         Migrations::new(vec![
-            M::up(include_str!("../../migrations/V001__initial.sql")),
-            M::up(include_str!("../../migrations/V002__investment.sql")),
+            M::up(include_str!("../../../../migrations/V001__initial.sql")),
+            M::up(include_str!("../../../../migrations/V002__investment.sql")),
             M::up(include_str!(
-                "../../migrations/V003__scheduled_transactions.sql"
+                "../../../../migrations/V003__scheduled_transactions.sql"
             )),
-            M::up(include_str!("../../migrations/V004__seed_defaults.sql")),
+            M::up(include_str!(
+                "../../../../migrations/V004__seed_defaults.sql"
+            )),
             // 注：原 V005__search_index.sql（搜索索引）已从序列整体移除（见 ADR-0027），
             // 序列号不回填，后续迁移文件名保持不变；新库不再产生搜索索引对象。
             M::up(include_str!(
-                "../../migrations/V006__transaction_amount_index.sql"
+                "../../../../migrations/V006__transaction_amount_index.sql"
             )),
             M::up(include_str!(
-                "../../migrations/V007__transaction_idempotency_key.sql"
-            )),
-            M::up(include_str!("../../migrations/V008__app_settings.sql")),
-            M::up(include_str!("../../migrations/V009__items.sql")),
-            M::up(include_str!("../../migrations/V010__price_history.sql")),
-            M::up(include_str!(
-                "../../migrations/V011__instruments_source.sql"
-            )),
-            M::up(include_str!("../../migrations/V012__policies.sql")),
-            M::up(include_str!(
-                "../../migrations/V013__transaction_policy_id.sql"
+                "../../../../migrations/V007__transaction_idempotency_key.sql"
             )),
             M::up(include_str!(
-                "../../migrations/V014__subscription_plan_policy_id.sql"
+                "../../../../migrations/V008__app_settings.sql"
             )),
-            M::up(include_str!("../../migrations/V015__physical_assets.sql")),
+            M::up(include_str!("../../../../migrations/V009__items.sql")),
             M::up(include_str!(
-                "../../migrations/V016__transaction_structural_indexes.sql"
-            )),
-            M::up(include_str!(
-                "../../migrations/V017__balance_net_worth_cache.sql"
-            )),
-            M::up(include_str!("../../migrations/V018__note_pinyin.sql")),
-            M::up(include_str!(
-                "../../migrations/V019__insurer_dictionary.sql"
-            )),
-            M::up(include_str!("../../migrations/V020__sync_oplog.sql")),
-            M::up(include_str!(
-                "../../migrations/V021__sync_merge_semantics.sql"
-            )),
-            M::up(include_str!("../../migrations/V022__sync_checkpoint.sql")),
-            M::up(include_str!(
-                "../../migrations/V023__transaction_funding_account.sql"
+                "../../../../migrations/V010__price_history.sql"
             )),
             M::up(include_str!(
-                "../../migrations/V024__security_lot_adjustments.sql"
+                "../../../../migrations/V011__instruments_source.sql"
+            )),
+            M::up(include_str!("../../../../migrations/V012__policies.sql")),
+            M::up(include_str!(
+                "../../../../migrations/V013__transaction_policy_id.sql"
+            )),
+            M::up(include_str!(
+                "../../../../migrations/V014__subscription_plan_policy_id.sql"
+            )),
+            M::up(include_str!(
+                "../../../../migrations/V015__physical_assets.sql"
+            )),
+            M::up(include_str!(
+                "../../../../migrations/V016__transaction_structural_indexes.sql"
+            )),
+            M::up(include_str!(
+                "../../../../migrations/V017__balance_net_worth_cache.sql"
+            )),
+            M::up(include_str!("../../../../migrations/V018__note_pinyin.sql")),
+            M::up(include_str!(
+                "../../../../migrations/V019__insurer_dictionary.sql"
+            )),
+            M::up(include_str!("../../../../migrations/V020__sync_oplog.sql")),
+            M::up(include_str!(
+                "../../../../migrations/V021__sync_merge_semantics.sql"
+            )),
+            M::up(include_str!(
+                "../../../../migrations/V022__sync_checkpoint.sql"
+            )),
+            M::up(include_str!(
+                "../../../../migrations/V023__transaction_funding_account.sql"
+            )),
+            M::up(include_str!(
+                "../../../../migrations/V024__security_lot_adjustments.sql"
             )),
         ])
     })
@@ -248,7 +258,7 @@ pub fn open_in_memory() -> Result<Connection> {
 /// 豁免清单集中在「不经过本入口的写方」：设置与调度状态写入（`app_settings`
 /// 全表，经 [`crate::settings`] 单点收口）与恢复（Restore）路径。
 ///
-/// 薄 wrapper 边界：只做「锁 + 写后置脏/检查」，不接管事务管理——闭包内保留
+/// 薄 wrapper 边界：只做「锁 + 写后置动作/检查」，不接管事务管理——闭包内保留
 /// 裸 `BEGIN`/`COMMIT`/`ROLLBACK` 写法。耗时日志等其它连接级横切机制收口时
 /// 并入本入口（单独开票）。
 pub fn write<T>(conn: &Mutex<Connection>, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
@@ -260,30 +270,39 @@ pub fn write<T>(conn: &Mutex<Connection>, f: impl FnOnce(&Connection) -> Result<
     result
 }
 
-/// 提交点单点后置动作：置脏 + 写时顺带到期检查（连接层内部实现细节，ADR-0032）。
+/// 提交点后置动作注册点（spec #1086 / issue #1088 基础设施 crate 归位）。
 ///
-/// 仅由 [`write`] 在「闭包成功且 `is_autocommit()`」时调用；业务代码不可见也不可调用——
-/// 置脏触发不再是备份模块的公开 API（#246），而是本写入口的结构性副作用：
-/// - 置脏失败仅记日志不上抛，不影响已成功的业务写；
-/// - 到期检查命中（脏且今天尚未自动备份，本地自然日界门，issue #386）即执行自动备份；开关关闭/目录未配置等
-///   门禁由 [`crate::backup::run_due_backup`] 统一静默处理；
-/// - 闭包 Err（回滚）或未提交就返回（显式事务仍打开）不会到达本函数——
-///   「事务内推迟、提交后补上」由 [`write`] 的 `is_autocommit()` 复核结构保证。
+/// 连接层写入口在「闭包成功且已提交」时触碰的副作用按「下层定义注册点、上层
+/// 注册实现、壳层启动时接线」形态挂在基础设施侧：本 crate 只承诺调用时机，
+/// 不知道副作用语义——数据库与备份域之间不再有 crate 依赖边（备份域是业务域，
+/// 基础设施不得反向引用）。实现由备份域提供、壳层在启动时注册；其余两类写路径
+/// 挂载点（受影响账户余额重算、计划来源解析）由 #1090「写路径副作用接缝反转」
+/// 收口为同一形态。
+pub type AfterCommitHook = fn(&Connection);
+
+static AFTER_COMMIT_HOOK: OnceLock<AfterCommitHook> = OnceLock::new();
+
+/// 注册提交点后置动作实现（幂等：进程级一次，重复注册保留首次实现）。
+///
+/// 调用点在壳层启动接线与测试建库单点（`test_support::open`、BDD world），
+/// 与生产同形；未注册时写入口报错误日志（`after_commit` 内），不静默。
+pub fn register_after_commit_hook(hook: AfterCommitHook) {
+    let _ = AFTER_COMMIT_HOOK.set(hook);
+}
+
+/// 提交点单点后置动作：委派给注册的实现（连接层内部实现细节，ADR-0032）。
+///
+/// 仅由 [`write`] 在「闭包成功且 `is_autocommit()`」时调用；闭包 Err（回滚）或
+/// 未提交就返回（显式事务仍打开）不会到达本函数——「事务内推迟、提交后补上」
+/// 由 [`write`] 的 `is_autocommit()` 复核结构保证。实现缺失即接线缺失，记错误
+/// 日志使失败可见（不静默丢副作用）。
 fn after_commit(conn: &Connection) {
-    if let Err(e) = crate::backup::mark_dirty(conn) {
-        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");
+    match AFTER_COMMIT_HOOK.get() {
+        Some(hook) => hook(conn),
+        None => tracing::error!(
+            "db 提交点后置动作未注册：写已提交但置脏/到期检查被跳过（壳层启动接线缺失）"
+        ),
     }
-    let dir = crate::backup::shared_prefs().snapshot_dir();
-    // 备份作用域从偏好镜像快照（引导登记点播种，issue #836）：写路径深处只有
-    // `&Connection`，账本归属经镜像统一承载，与调度线程同一来源。
-    let scope = crate::backup::shared_prefs().snapshot_scope();
-    crate::backup::run_due_backup(
-        conn,
-        dir.as_deref(),
-        env!("CARGO_PKG_VERSION"),
-        chrono::Utc::now(),
-        scope.as_ref(),
-    );
 }
 
 // ---------------------------------------------------------------------------

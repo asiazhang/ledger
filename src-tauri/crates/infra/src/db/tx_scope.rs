@@ -30,7 +30,7 @@ use crate::error::Result;
 /// 复用同一事务原语（命令执行 + op 落日志同事务原子），不另造第二份嵌套感知实现。
 ///
 /// 自持分支基于 [`hold_transaction`]（issue #1014）：事务壳与失败语义只有一处实现。
-pub(crate) fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
+pub fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
     // is_autocommit()=true ⇔ 连接不在事务中（rusqlite 语义），据此选分支。
     if !conn.is_autocommit() {
         return f();
@@ -52,7 +52,7 @@ pub(crate) fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Resul
 /// （`transaction::batch`）、定时引擎期次执行（`scheduled_transactions::engine`，
 /// ADR-0033 决策 6）、余额调整事务壳（`accounts::core`）。批次层语义（`PRAGMA
 /// optimize` / 汇总日志 / 期次日志 / 状态回填）保留在各自调用点外，不进本原语。
-pub(crate) fn hold_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
+pub fn hold_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
     conn.execute("BEGIN", [])?;
     match f() {
         Ok(v) => match conn.execute("COMMIT", []) {

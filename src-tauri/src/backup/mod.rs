@@ -18,8 +18,9 @@ mod engine;
 
 pub use auto::{
     AUTO_BACKUP_PREFIX, AttemptOutcome, AutoBackupState, BackupDecision, PrefsState, SkipReason,
-    auto_backup_file_name, due_decision, exit_fallback, get_state, reset, run_due_backup,
-    run_exit_backup, run_first_backup, seed_book_scope, set_state, shared_prefs, start_scheduler,
+    after_commit_hook, auto_backup_file_name, due_decision, exit_fallback, get_state,
+    install_after_commit_hook, reset, run_due_backup, run_exit_backup, run_first_backup,
+    seed_book_scope, set_state, shared_prefs, start_scheduler,
 };
 pub use engine::{
     BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, BackupScope, PruneResult,

@@ -85,7 +85,7 @@ pub fn init_event_app(app: &AppHandle) {
 /// 投递失败（应用退出中事件循环已关）与发射本身失败一样静默忽略，不影响写
 /// 事务 / 同步结果（ADR-0044「发射失败静默」语义）。同一线程先后入队的动作
 /// 按入队顺序在主线程依次执行，事件间无乱序。
-pub(crate) fn post_emit_with<R: tauri::Runtime>(
+pub fn post_emit_with<R: tauri::Runtime>(
     app: &AppHandle<R>,
     action: impl FnOnce() + Send + 'static,
 ) {

@@ -6,8 +6,45 @@ edition = "2024"
 publish = false
 
 [dependencies]
-# IPC 载荷脱敏（issue #1087）：纯 serde_json::Value 遍历，无域语义、无本仓依赖。
+# 基础设施全量归位（spec #1086 / issue #1088）：依赖面与迁移前的根包同名依赖一致
+# ——本 crate 承接数据库、错误、设置、文件工具、日志、事件、信号、闭集与壳层
+# 统一读写入口，是全部业务域的共同底座；对外只经根包再导出面消费。
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+rusqlite_migration = "2.6"
+chrono = { version = "0.4.45", features = ["serde"] }
+uuid = { version = "1.23", features = ["v7", "v5", "serde"] }
+thiserror = "2.0.18"
+tauri = { version = "2", features = ["tracing"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# HTTP 错误响应投影（`impl IntoResponse for AppError`，issue #1088）：孤儿规则要求
+# 实现与错误类型同 crate，故壳层 axum 的响应投影随错误归位；非域语义的传输映射。
+axum = "0.8"
+sha2 = "0.11"
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# 主口令本机缓存（issue #574 / ADR-0075 决策 3）：随 `db/passphrase_cache.rs`
+# 迁入本 crate，target 门禁与依赖声明同迁移前根包（macOS 专用）。
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"
+security-framework-sys = "2.17"
+objc2-local-authentication = "0.3"
+block2 = { version = "0.6", default-features = false, features = ["alloc"] }
+objc2 = { version = "0.6", default-features = false, features = ["std"] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "alloc",
+  "NSString",
+  "NSError",
+] }
+
+[dev-dependencies]
+# 测试专用边（ADR-0084 / spec #1086）：迁入本 crate 的域单测用统一测试数据库工厂
+# 与共享器具（test_support / test_utils 仍在根包）。dev-dependency 环由 Cargo
+# 允许——测试目标与生产依赖图分离，不构成生产环。
+tauri-app = { path = "../.." }
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。

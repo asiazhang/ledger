@@ -253,7 +253,7 @@ fn require_encrypted_file(db_path: &Path) -> Result<()> {
 /// 多端同步壳层（issue #862）同源消费：手动同步拿到的主口令（显式参数 /
 /// 钥匙串缓存）在封包前先验证——错误口令封出的段对端无法解封，且段名
 /// 幂等跳过会令重传永不发生，必须在上传前拦下。
-pub(crate) fn verify_source_passphrase(db_path: &Path, passphrase: &str) -> Result<()> {
+pub fn verify_source_passphrase(db_path: &Path, passphrase: &str) -> Result<()> {
     let conn = super::open_connection_with_passphrase(db_path, passphrase)?;
     match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
         r.get::<_, i64>(0)
@@ -408,7 +408,7 @@ fn sql_string_literal(value: &str) -> String {
 /// （ADR-0075 决策 5 修订 / issue #603）：统一以「口令错误或文件损坏」
 /// 合并口径的码化错误上报——不误报损坏、可无限重试。单一构造点避免
 /// 口径文案多出漂移（zh 模板与之逐字一致，ADR-0050）。
-pub(crate) fn passphrase_incorrect_error() -> AppError {
+pub fn passphrase_incorrect_error() -> AppError {
     AppError::coded(
         "encryption.passphrase-incorrect",
         "口令错误或文件损坏，请重试",
@@ -468,7 +468,7 @@ pub fn unlock_db_file(db_path: &Path, passphrase: &str) -> Result<Connection> {
 
 /// 错误形态判别：SQLCipher 对错误口令与损坏文件均报 not-a-database；
 /// 本谓词供备份域等基础设施消费方归一错误形态（pub(crate)：勿在壳层使用）。
-pub(crate) fn is_not_a_database(e: &rusqlite::Error) -> bool {
+pub fn is_not_a_database(e: &rusqlite::Error) -> bool {
     matches!(
         e,
         rusqlite::Error::SqliteFailure(err, _) if err.code == rusqlite::ffi::ErrorCode::NotADatabase
