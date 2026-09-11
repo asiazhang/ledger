@@ -46,7 +46,8 @@
   },
   "link": {
     "viewMerchant": "查看该商户的交易",
-    "viewAccount": "查看该账户的交易"
+    "viewAccount": "查看该账户的交易",
+    "viewInstrument": "查看该标的的交易"
   },
   "app": {
     "name": "开源记账"

@@ -15,14 +15,9 @@
     "byYear": "By Year",
     "byAccount": "By Account",
     "byInstrument": "By Instrument",
-    "details": "Sell Details",
     "columns": {
-      "date": "Date",
       "account": "Account",
-      "instrument": "Instrument",
       "name": "Name",
-      "quantity": "Qty",
-      "costPrice": "Cost Price",
       "realizedPnl": "Realized P&L",
       "year": "Year",
       "symbol": "Symbol"

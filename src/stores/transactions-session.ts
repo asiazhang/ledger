@@ -33,6 +33,10 @@ export const MERCHANT_DRILLDOWN_KINDS = MERCHANT_DRILLDOWN_KIND_TOKENS.join(',')
  * 恒为合法自然年边界，该形态仅手工构造 URL 可达。 */
 const DATE_PARAM_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
 
+/** URL 标的参数格式（ADR-0107）：标的 id 为 UUID（v7）。标的不在参考数据字典
+ * （无 instrumentMap 可查），按 id 形状校验；非法视为参数不在场（回退不过滤）。 */
+const UUID_PARAM_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /** 页大小默认档：会话内保留、冷启动回此默认（issue #893）。 */
 export const TRANSACTION_PAGE_SIZE_DEFAULT = 20
 
@@ -60,6 +64,10 @@ export interface TransactionFilters {
    * 不限定类型，收支限定由本维度承担。原「单值 kind 手动维度 + 下钻专用集合」
    * 两套表示并存、同携取交集的形态已退役（BREAKING，见 CHANGELOG）。 */
   kinds: readonly TransactionKind[] | null
+  /** 标的下钻维度（ADR-0107，URL-only 无手动控件，与分类维度同规）：持仓页签行与
+   * 盈亏页按标的汇总行的跳转载荷。标的不在参考数据字典，URL 参数按 id 形状校验
+   * （UUID 形状，非法视为不在场）；与其余维度 AND 组合，挂起补判/让位/复位守卫同规。 */
+  instrumentId: string | null
 }
 
 /** 部分过滤意图：只声明要改的维度，未提及维度保持不变。 */
@@ -80,6 +88,7 @@ const DEFAULT_FILTERS: TransactionFilters = {
   merchantId: null,
   categoryId: null,
   kinds: null,
+  instrumentId: null,
 }
 
 /**
@@ -113,8 +122,15 @@ type UrlParamCheck =
  */
 interface UrlParamDef {
   /** URL query 键（?account= / ?merchant= / ?category= / ?kinds=（issue #581） /
-   * ?dateFrom= / ?dateTo=，issue #380） */
-  readonly queryKey: 'account' | 'merchant' | 'category' | 'kinds' | 'dateFrom' | 'dateTo'
+   * ?dateFrom= / ?dateTo=（issue #380） / ?instrument=（ADR-0107）） */
+  readonly queryKey:
+    | 'account'
+    | 'merchant'
+    | 'category'
+    | 'kinds'
+    | 'dateFrom'
+    | 'dateTo'
+    | 'instrument'
   /** 接管的过滤维度字段 */
   readonly field: keyof TransactionFilters
   /** 校验规则（映射查 id 或格式校验，判别联合） */
@@ -152,6 +168,15 @@ const URL_PARAM_TABLE: ReadonlyArray<UrlParamDef> = [
     field: 'categoryId',
     check: { mapKey: 'categoryMap', reservedValues: [UNCATEGORIZED_ONLY] },
     toPatch: (value) => ({ categoryId: value }),
+  },
+  {
+    // 标的下钻维度（ADR-0107）：持仓页签行与盈亏页按标的汇总行的跳转载荷。
+    // 标的不在参考数据字典，按 id 形状校验（UUID 形状）；URL-only、无手动控件，
+    // 与分类维度同规（挂起补判/让位/复位守卫对每条同规则处理）。
+    queryKey: 'instrument',
+    field: 'instrumentId',
+    check: { pattern: UUID_PARAM_PATTERN },
+    toPatch: (value) => ({ instrumentId: value }),
   },
   {
     // 类型集合维度（issue #581）：报表分类下钻跳转载荷「分类 + 期间 + 收支类型集合」
@@ -372,9 +397,12 @@ export const useTransactionsSessionStore = defineStore('transactions-session', (
     if (
       next === null &&
       !otherHasValidParam(entry) &&
-      (filters.dateFrom !== null || filters.dateTo !== null || filters.kinds?.length)
+      (filters.dateFrom !== null ||
+        filters.dateTo !== null ||
+        filters.kinds?.length ||
+        filters.instrumentId !== null)
     ) {
-      mutate({ dateFrom: null, dateTo: null, kinds: null }, false)
+      mutate({ dateFrom: null, dateTo: null, kinds: null, instrumentId: null }, false)
     }
     mutate(entry.toPatch(next), false)
   }

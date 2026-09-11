@@ -125,6 +125,9 @@ export interface TransactionListFilter {
   category_id?: string | null
   /** 仅无分类（issue #377）：true 时仅返回无分类交易；与 category_id 同携按 AND 组合 */
   uncategorized_only?: boolean | null
+  /** 按标的过滤（ADR-0107）：命中证券交易扩展表中该标的的 buy/sell 行，
+   * convert 任一腿命中即算（转入腿同算）；与其余维度 AND 组合 */
+  instrument_id?: string | null
   /** 类型集合过滤（spec #1025 起为唯一类型维度，手动多选 + 下钻载荷共用）：命中集合内
    * 各类型（维度内取或，与其余维度 AND 组合）；空集合视为未携带（不过滤）。
    * 原单值 kind 查询参数已移除（BREAKING），单值亦经本参数传递 */

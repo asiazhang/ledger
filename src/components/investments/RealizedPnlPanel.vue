@@ -6,21 +6,18 @@ import {
   NEmpty,
   NGi,
   NGrid,
-  NNumberAnimation,
   NSpace,
   NSpin,
   NStatistic,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import PinyinSelect from '@/components/PinyinSelect.vue'
+import InstrumentLink from '@/components/InstrumentLink.vue'
 import { t } from '@/i18n'
-import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount, formatPrice, formatQuantity } from '@/types'
-import { pnlSemanticColor } from '@/theme/semantic-colors'
-import type { PnlDetail } from '@/types'
+import { formatAmount } from '@/types'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
-import { sumFixedColumnWidths } from '@/utils/table'
+import { formatCurrencyGroups } from '@/composables/usePortfolioOverview'
 
 const reference = useReferenceStore()
 const {
@@ -31,70 +28,15 @@ const {
   accountOptions,
   pnlInstrumentOptions,
   searchingInstruments,
-  totalPnl,
+  totalGroups,
   refresh,
   searchInstruments,
   onSelectInstrument,
 } = useRealizedPnl()
 
-// 卖出明细表列形态同持仓表（词汇表「表格列形态」约定）：名称列唯一弹性、
-// 数值列右对齐 + 等宽数字，短内容列按内容定宽。
-const detailColumns: DataTableColumn<PnlDetail>[] = [
-  { title: t('investments.pnl.columns.date'), key: 'sell_date', width: 100, align: 'right', className: 'tabular-nums' },
-  { title: t('investments.pnl.columns.account'), key: 'account_name', width: 110 },
-  { title: t('investments.pnl.columns.instrument'), key: 'instrument_symbol', width: 100 },
-  {
-    // 唯一弹性列：不设固定宽，独吃窗口剩余宽度；minWidth 保窄窗口下限
-    title: t('investments.pnl.columns.name'),
-    key: 'instrument_name',
-    minWidth: 140,
-    ellipsis: { tooltip: true },
-  },
-  {
-    title: t('investments.pnl.columns.quantity'),
-    key: 'quantity',
-    width: 110,
-    align: 'right',
-    className: 'tabular-nums',
-    render: (row) => formatQuantity(row.quantity),
-  },
-  {
-    title: t('investments.pnl.columns.costPrice'),
-    key: 'cost_per_unit_cents',
-    width: 110,
-    align: 'right',
-    className: 'tabular-nums',
-    // 成本单价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示
-    render(row) {
-      const ccy = reference.currencyMap.get(row.currency_code)
-      return formatPrice(row.cost_per_unit_cents, ccy)
-    },
-  },
-  {
-    title: t('investments.pnl.columns.realizedPnl'),
-    key: 'realized_pnl_cents',
-    width: 130,
-    align: 'right',
-    className: 'tabular-nums',
-    render(row) {
-      const ccy = reference.currencyMap.get(row.currency_code)
-      const text = formatAmount(row.realized_pnl_cents, ccy)
-      // 红涨绿跌（A股/基金语境，词汇表「盈亏涨跌色」）；列配置为模块级常量，
-      // 主题在渲染期经 store 响应式取值（transaction-columns 同款先例）
-      return h(
-        'span',
-        { style: { color: pnlSemanticColor(row.realized_pnl_cents, useAppStore().theme) } },
-        text,
-      )
-    },
-  },
-]
-
-// 横向滚动下限 = 固定列宽总和（名称列 minWidth 不计入，与持仓表同规则）
-const detailScrollX = sumFixedColumnWidths(detailColumns)
-
-// 汇总表通用「已实现盈亏」列：金额按币种格式化展示；数值列右对齐 + 等宽数字
-// （词汇表「表格列形态」约定，三张汇总表同一单点收口）。
+// 汇总表通用「已实现盈亏」列：金额按行币种格式化展示（ADR-0107 决策 6：汇总行随
+// 匹配行币种，与持仓页签行同款口径）；数值列右对齐 + 等宽数字（词汇表「表格列形态」
+// 约定，三张汇总表同一单点收口）。
 function realizedPnlColumn(title: string): DataTableColumn {
   return {
     title,
@@ -102,7 +44,7 @@ function realizedPnlColumn(title: string): DataTableColumn {
     align: 'right',
     className: 'tabular-nums',
     render(row: any) {
-      return formatAmount(row.realized_pnl_cents)
+      return formatAmount(row.realized_pnl_cents, reference.currencyMap.get(row.currency_code))
     },
   }
 }
@@ -118,7 +60,15 @@ const accountCols: DataTableColumn[] = [
 ]
 
 const instPnlColumns: DataTableColumn[] = [
-  { title: t('investments.pnl.columns.symbol'), key: 'symbol' },
+  {
+    // 代码列下钻（ADR-0107 决策 5）：跳交易页 ?instrument=（不带账户）——本表含已
+    // 清仓标的，是清仓标的卖出流水的唯一入口；标的字典无软删，跳转恒可达。
+    title: t('investments.pnl.columns.symbol'),
+    key: 'symbol',
+    render(row: any) {
+      return h(InstrumentLink, { instrumentId: row.instrument_id, label: row.symbol })
+    },
+  },
   { title: t('investments.pnl.columns.name'), key: 'name' },
   realizedPnlColumn(t('investments.pnl.columns.realizedPnl')),
 ]
@@ -154,13 +104,12 @@ const instPnlColumns: DataTableColumn[] = [
 
       <NCard :title="t('investments.pnl.title')" size="small">
         <NEmpty v-if="!summary" :description="t('investments.pnl.empty')" />
-        <NGrid v-else :x-gap="16" :y-gap="16" cols="1 s:2 m:4">
-          <NGi>
-            <NStatistic :label="t('investments.pnl.totalPnl')">
-              <NNumberAnimation :from="0" :to="totalPnl" :duration="600" />
-            </NStatistic>
-          </NGi>
-        </NGrid>
+        <!-- 总盈亏按币种分组展示（ADR-0107 决策 6/7）：逐组格式化「 / 」连接，不做跨币种
+             折算；原单数字动画（NNumberAnimation）跨币种不适用，随混算口径一并退役，
+             冗余的单统计网格（cols="1 s:2 m:4"）同步收敛为直接统计 -->
+        <NStatistic v-else :label="t('investments.pnl.totalPnl')">
+          {{ formatCurrencyGroups(totalGroups, reference.currencyMap) }}
+        </NStatistic>
       </NCard>
 
       <template v-if="summary">
@@ -199,19 +148,6 @@ const instPnlColumns: DataTableColumn[] = [
             :data="summary.by_instrument"
             :bordered="false"
             size="small"
-          />
-        </NCard>
-
-        <NCard :title="t('investments.pnl.details')" size="small">
-          <NEmpty v-if="summary.details.length === 0" :description="t('investments.pnl.emptyTable')" />
-          <NDataTable
-            v-else
-            :columns="detailColumns"
-            :data="summary.details"
-            :bordered="true"
-            size="small"
-            :scroll-x="detailScrollX"
-            :pagination="{ pageSize: 20 }"
           />
         </NCard>
       </template>

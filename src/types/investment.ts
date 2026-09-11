@@ -237,12 +237,14 @@ export interface MarketPriceInput {
 
 export interface YearPnl {
   year: string
+  currency_code: string
   realized_pnl_cents: number
 }
 
 export interface AccountPnl {
   account_id: string
   account_name: string
+  currency_code: string
   realized_pnl_cents: number
 }
 
@@ -250,21 +252,8 @@ export interface InstrumentPnl {
   instrument_id: string
   symbol: string
   name: string | null
-  realized_pnl_cents: number
-}
-
-export interface PnlDetail {
-  id: string
-  sell_date: string
-  account_id: string
-  account_name: string
-  instrument_id: string
-  instrument_symbol: string
-  instrument_name: string | null
-  quantity: number
-  cost_per_unit_cents: number
-  realized_pnl_cents: number
   currency_code: string
+  realized_pnl_cents: number
 }
 
 export interface PnlFilter {
@@ -272,12 +261,19 @@ export interface PnlFilter {
   instrument_id?: string | null
 }
 
+/** 按币种分组的已实现盈亏小计（ADR-0107 决策 6）：匹配行币种口径，不做跨币种折算 */
+export interface CurrencyPnl {
+  currency_code: string
+  realized_pnl_cents: number
+}
+
+/** 已实现盈亏汇总（ADR-0107）：盈亏页三视图（按年/按账户/按标的）+ 按币种分组总数；
+ * 逐匹配「卖出明细」已退役（决策 1），明细数据不再随本投影返回 */
 export interface RealizedPnlSummary {
-  total_realized_pnl_cents: number
+  total: CurrencyPnl[]
   by_year: YearPnl[]
   by_account: AccountPnl[]
   by_instrument: InstrumentPnl[]
-  details: PnlDetail[]
 }
 
 /** 走势查询区间：可选起止 ISO 日期，缺省表示该侧不设界（"全部"区间） */
