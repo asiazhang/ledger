@@ -12,7 +12,6 @@
 //! 经 `convert_to_native` 折算本位币，服务端聚合经 SQL 片段 builder，余额/报表/预算
 //! 消费矩阵口径），语义由测试锁定。
 
-use std::fmt;
 use std::fmt::Write as _;
 
 use rusqlite::Connection;
@@ -20,12 +19,14 @@ use serde::{Deserialize, Serialize};
 use utoipa::openapi::{ObjectBuilder, RefOr, Schema, Type};
 use utoipa::{PartialSchema, ToSchema};
 
+use crate::closed_set::closed_set;
 use crate::error::{AppError, Result};
 
 // ---------------------------------------------------------------------------
 // TransactionKind 枚举
 // ---------------------------------------------------------------------------
 
+closed_set! {
 /// 交易类型真源（issue #73）。与 `transactions.kind` 的 CHECK 约束（V001）一一对应：
 ///
 /// | kind | 含义 |
@@ -40,77 +41,22 @@ use crate::error::{AppError, Result};
 /// | [`TransactionKind::Split`] | 拆股/送股（现金影响恒为 0） |
 /// | [`TransactionKind::Convert`] | 基金转换（同一投资账户内两标的互换、无现金腿，六度量系数全 0） |
 ///
-/// serde 以**小写字符串**序列化（`"income"` 等，与裸 String 的 wire 格式一致）；
-/// 反序列化复用 [`TransactionKind::parse`]，未知值报错文案与 parse 同源
-/// （serde 包装后附加位置信息）。
+/// 五份表示（enum / `ALL` / `as_str` / `parse` / `Display`）由 `closed_set!`
+/// 宏同体派生（ADR-0108）：字符串字面量每变体只出现一次，漏登/漏臂漂移
+/// 不可表达。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransactionKind {
-    Income,
-    Expense,
-    Transfer,
-    Refund,
-    Buy,
-    Sell,
-    Dividend,
-    Split,
-    Convert,
+    Income => "income",
+    Expense => "expense",
+    Transfer => "transfer",
+    Refund => "refund",
+    Buy => "buy",
+    Sell => "sell",
+    Dividend => "dividend",
+    Split => "split",
+    Convert => "convert",
 }
-
-impl TransactionKind {
-    /// 全部 kind，矩阵断言与 SQL 片段生成按此遍历。
-    pub const ALL: [TransactionKind; 9] = [
-        TransactionKind::Income,
-        TransactionKind::Expense,
-        TransactionKind::Transfer,
-        TransactionKind::Refund,
-        TransactionKind::Buy,
-        TransactionKind::Sell,
-        TransactionKind::Dividend,
-        TransactionKind::Split,
-        TransactionKind::Convert,
-    ];
-
-    /// 数据库存储的 kind 字符串（与 serde 序列化同形）。
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            TransactionKind::Income => "income",
-            TransactionKind::Expense => "expense",
-            TransactionKind::Transfer => "transfer",
-            TransactionKind::Refund => "refund",
-            TransactionKind::Buy => "buy",
-            TransactionKind::Sell => "sell",
-            TransactionKind::Dividend => "dividend",
-            TransactionKind::Split => "split",
-            TransactionKind::Convert => "convert",
-        }
-    }
-
-    /// 从 kind 字符串解析；未知值报参数错误。
-    pub fn parse(s: &str) -> Result<TransactionKind> {
-        let kind = match s {
-            "income" => TransactionKind::Income,
-            "expense" => TransactionKind::Expense,
-            "transfer" => TransactionKind::Transfer,
-            "refund" => TransactionKind::Refund,
-            "buy" => TransactionKind::Buy,
-            "sell" => TransactionKind::Sell,
-            "dividend" => TransactionKind::Dividend,
-            "split" => TransactionKind::Split,
-            "convert" => TransactionKind::Convert,
-            other => {
-                return Err(AppError::Invalid(format!(
-                    "未知交易类型: {other}（合法值: income/expense/transfer/refund/buy/sell/dividend/split/convert）"
-                )));
-            }
-        };
-        Ok(kind)
-    }
-}
-
-impl fmt::Display for TransactionKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
+err_label = "交易类型",
 }
 
 // rusqlite：从 `transactions.kind` 列直接读为枚举（DB 边界：TEXT 列经 [`TransactionKind::parse`]
