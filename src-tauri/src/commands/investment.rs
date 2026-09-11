@@ -26,7 +26,7 @@ use crate::investment::{
     AddFundResult, AddStockInstrumentResult, Holding, Instrument, InstrumentInput,
     InstrumentListFilter, InstrumentListResult, InstrumentPriceTrend, ManualPriceInput,
     ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter, PortfolioValueTrend,
-    RealizedPnlSummary, TransactionConvert, TransactionTrade, TrendRange,
+    RealizedPnlSummary, TransactionConvert, TransactionSplit, TransactionTrade, TrendRange,
 };
 use crate::read_entry::read_entry;
 use crate::signals::{WriteEvidence, WriteOp};
@@ -204,6 +204,18 @@ pub async fn get_transaction_convert(
     let conn = db.conn.clone();
     read_entry("get_transaction_convert", conn, move |conn| {
         investment_domain::get_transaction_convert(conn, &id)
+    })
+    .await
+}
+
+/// IPC 命令：取一笔份额调整的明细（ADR-0106 / issue #1052）——交易列表
+/// 「只读详情」呈现标的与**带符号**份额增量 Δ 的数据源（扩展表投影，
+/// 非 split 交易 NotFound）。
+#[tauri::command]
+pub async fn get_transaction_split(db: State<'_, DbState>, id: String) -> Result<TransactionSplit> {
+    let conn = db.conn.clone();
+    read_entry("get_transaction_split", conn, move |conn| {
+        investment_domain::get_transaction_split(conn, &id)
     })
     .await
 }

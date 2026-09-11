@@ -144,6 +144,29 @@ describe('移动档卡片字段（同一段列表状态）', () => {
     expect(amountEl.style.color).toBe(probeColor(kindSemanticColor('convert', useAppStore().theme)))
   })
 
+  it('份额调整行卡片：类型标签「份额调整」、无现金腿金额按空值口径呈现「-」（ADR-0106 / #1052）', async () => {
+    setTxnDb([
+      makeTxn(1, 'acc-1', {
+        kind: 'split',
+        // 无现金腿：行金额恒 0，界面不以 0 伪装「已知为零」
+        amount_native_cents: 0,
+        source: {
+          kind: 'instrument',
+          entity_id: 'inst-sp',
+          display_name: '502010 证券基金',
+          status: null,
+        },
+      }),
+    ])
+    const wrapper = await mountMobile()
+    const first = cards(wrapper)[0]
+    expect(first.text()).toContain('份额调整')
+    expect(first.text()).not.toContain('买入')
+    expect(first.text()).not.toContain('卖出')
+    const amountEl = first.find('.amount-cell').element as HTMLElement
+    expect(amountEl.textContent).toBe('-')
+  })
+
   it('转账行账户呈现「转出 → 转入」双向链接（与表格同构）', async () => {
     setTxnDb([makeTxn(1, 'acc-1', { kind: 'transfer', to_account_id: 'acc-2' })])
     const wrapper = await mountMobile()

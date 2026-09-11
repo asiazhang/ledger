@@ -91,8 +91,8 @@ pub use model::{
     Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
     InstrumentPnl, InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, ManualPriceInput,
     ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter, PortfolioTrendPoint,
-    PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary, TransactionConvert, TransactionTrade,
-    TrendRange, YearPnl,
+    PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary, TransactionConvert, TransactionSplit,
+    TransactionTrade, TrendRange, YearPnl,
 };
 
 /// 域 API 再导出：调用面用域语言短名（`investment::list_instruments` 等），
@@ -131,8 +131,8 @@ pub(crate) use command::{
     replay_exchange_rate_command, replay_instrument_command, replay_price_command,
 };
 pub use trade::{
-    Plan, apply, convert_fields_by_transaction_ids, get_transaction_convert, get_transaction_trade,
-    prepare, release_for_delete, revert,
+    Plan, apply, convert_fields_by_transaction_ids, get_transaction_convert, get_transaction_split,
+    get_transaction_trade, prepare, release_for_delete, revert,
 };
 pub(crate) use trade::{replay_convert_plan, replay_plan};
 pub use trend::{query_instrument_price_trend, query_portfolio_value_trend};

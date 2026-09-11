@@ -36,16 +36,26 @@ export const KIND_TAG_TYPE: Record<TransactionKind, 'success' | 'warning' | 'inf
 
 /**
  * 列表/卡片金额展示口径单点：基金转换行展示**转出金额**（确认单权威，ADR-0099），
+ * 份额调整行无现金腿、无金额（ADR-0106）返回 `null`（空值口径，渲染 '-'），
  * 其余行展示行金额锚点（本位币口径）。
  *
  * 转换行的行金额锚点是服务端按 FIFO 消耗算出的**结转成本**（不是用户看到的转出金额），
  * 故展示必须走扩展字段；扩展缺失（旧数据/直读快照）时回退行金额，不抛错、不显空。
- * 表格金额列与移动卡片共用本函数，两处各自分支即口径漂移。
+ * 表格金额列与移动卡片共用 `displayAmountText`，两处各自分支即口径漂移。
  */
-export function displayAmountCents(row: Transaction): number {
-  return row.kind === 'convert' && row.convert
-    ? row.convert.out_amount_cents
-    : row.amount_native_cents
+export function displayAmountCents(row: Transaction): number | null {
+  if (row.kind === 'convert' && row.convert) return row.convert.out_amount_cents
+  // 份额调整（ADR-0106 决策 1）：无现金腿、无金额——按空值语义返回 null，
+  // 不以 0 伪装「已知为零」（同持仓缺价行的 '-' 口径）。
+  if (row.kind === 'split') return null
+  return row.amount_native_cents
+}
+
+/** 金额展示文案单点（表格金额列与移动卡片共用）：空值口径（无现金腿的 split 无金额）
+ * 渲染 '-'，其余经 `formatAmount`（含金额隐私模式与数字分组）。 */
+export function displayAmountText(reference: ReferenceStore, row: Transaction): string {
+  const cents = displayAmountCents(row)
+  return cents === null ? '-' : formatAmount(cents, reference.getCurrency(row.currency_code))
 }
 
 /** 交易基础列：日期/类型/分类/账户/备注/金额（搜索结果与交易列表共用，只读）。
@@ -169,7 +179,7 @@ export function buildTransactionColumns(
       // 点按弹出全文（悬停一击可达；文案与色在此单点计算后传入）。
       render: (row) =>
         h(AmountCell, {
-          text: formatAmount(displayAmountCents(row), reference.getCurrency(row.currency_code)),
+          text: displayAmountText(reference, row),
           color: kindSemanticColor(row.kind, useAppStore().theme),
         }),
     },

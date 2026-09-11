@@ -979,3 +979,48 @@ fn portfolio_trend_includes_reverse_split_leg() {
         "周点市值 = (100 − 40) × 1.00 元 = 6000 分"
     );
 }
+
+/// 份额调整读投影（`get_transaction_split`，ADR-0106 / issue #1052）：带符号 Δ 原样回填
+/// （`+` 送股 / `−` 缩股，符号不丢），标的展示字段经 JOIN `instruments` 带出；
+/// 非 split 行 / 不存在的 id 得码化 NotFound（供前端只读详情的数据源）。
+#[test]
+fn get_transaction_split_returns_signed_delta() {
+    let conn = open();
+    seed_split_scene(&conn);
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            100_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+
+    // 正向 Δ（折算 / 结转 / 送股）：+10 份原样回填。
+    let plus_id = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", 10.0))
+        .unwrap()
+        .id;
+    let plus = trade::get_transaction_split(&conn, &plus_id).unwrap();
+    assert_eq!(plus.instrument_id, "inst-sp");
+    assert_eq!(plus.symbol, "502010");
+    assert_eq!(plus.instrument_name.as_deref(), Some("证券基金"));
+    assert!((plus.quantity - 10.0).abs() < 1e-9, "正向 Δ 原样回填");
+
+    // 负向 Δ（缩股，ADR-0106 决策 1 / #1050）：符号不丢。
+    let minus_id = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", -20.0))
+        .unwrap()
+        .id;
+    let minus = trade::get_transaction_split(&conn, &minus_id).unwrap();
+    assert!((minus.quantity + 20.0).abs() < 1e-9, "负向 Δ 保持符号");
+
+    // 非 split / 不存在 id：码化 NotFound。
+    let err = trade::get_transaction_split(&conn, "no-such-txn").unwrap_err();
+    assert!(
+        matches!(&err, AppError::Coded { code, .. } if code == "trade.split-detail-not-found"),
+        "非 split 交易应得码化 NotFound，got: {err:?}"
+    );
+}

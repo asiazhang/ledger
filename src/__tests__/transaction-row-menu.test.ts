@@ -90,6 +90,12 @@ describe('buildRowMenuOptions（行右键菜单选项）', () => {
     expect(options[0]).toMatchObject({ label: '详情', key: 'detail' })
   })
 
+  it('split 行：仅只读「详情」（无现金腿 kind 无编辑/软删入口，ADR-0106 决策 10 / #1052）', () => {
+    const options = buildRowMenuOptions({ kind: 'split' })
+    expect(options.map((o) => 'key' in o && o.key)).toEqual(['detail'])
+    expect(options[0]).toMatchObject({ label: '详情', key: 'detail' })
+  })
+
   it('expense 行挂图标：编辑 CreateOutline、退款 CashOutline、加入物品 AddCircleOutline、删除 TrashOutline', () => {
     const options = buildRowMenuOptions({ kind: 'expense' })
     const byKey = (key: string) => options.find((o) => 'key' in o && o.key === key)!
@@ -133,7 +139,7 @@ describe('buildRowMenuOptions（行右键菜单选项）', () => {
 })
 
 describe('行激活开放闭集（ADR-0106 决策 10 / #1048）', () => {
-  it('可编辑 = 除 refund（破坏关联语义）与 convert（无现金腿只读）外的全部 kind', () => {
+  it('可编辑 = 除 refund（破坏关联语义）与 convert / split（无现金腿只读）外的全部 kind', () => {
     expect(TRANSACTION_KINDS.filter((kind) => supportsRowEdit({ kind }))).toEqual([
       'income',
       'expense',
@@ -143,7 +149,10 @@ describe('行激活开放闭集（ADR-0106 决策 10 / #1048）', () => {
     ])
   })
 
-  it('只读详情 = 仅 convert（split 随 #1045 接入）', () => {
-    expect(TRANSACTION_KINDS.filter((kind) => supportsRowDetail({ kind }))).toEqual(['convert'])
+  it('只读详情 = convert / split 两种无现金腿 kind（ADR-0106 决策 10）', () => {
+    expect(TRANSACTION_KINDS.filter((kind) => supportsRowDetail({ kind }))).toEqual([
+      'convert',
+      'split',
+    ])
   })
 })

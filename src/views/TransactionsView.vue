@@ -32,6 +32,7 @@ import PinyinSelect from '@/components/PinyinSelect.vue'
 import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import ConvertDetail from '@/components/ConvertDetail.vue'
+import SplitDetail from '@/components/SplitDetail.vue'
 import { buildRowMenuOptions, supportsRowDetail, supportsRowEdit } from '@/components/transaction-row-menu'
 import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
 import { useInputMode } from '@/composables/useInputMode'
@@ -104,6 +105,9 @@ const { intent, seq, open: openModal, close: closeModal } = useTransactionModalS
 /** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
 const filtersActive = computed(() => Object.values(filters).some((v) => v !== null))
 
+/** 只读详情意图（窄化）：非 detail 意图为 null；模板按 detail.kind 分派只读组件。 */
+const detailIntent = computed(() => (intent.value?.type === 'detail' ? intent.value : null))
+
 // 时间维度行（issue #381/#382/#383，#410 起由共享受控组件承载）：预设芯片
 // 「全部 | 当月 | 当季 | 当年 | 去年」＋期间步进器＋期间直达面板整行由
 // QuickTimeRange 承载。快照区间 v-model 进出——组件不持状态源，唯一事实源
@@ -129,7 +133,7 @@ const merchantOptions = computed(() =>
 )
 
 /** 类型下拉选项：前端 TransactionKind 全量闭集（spec #1025 起多选，按闭集顺序渲染；
- * Rust 侧另有 dividend/split 未在前端类型暴露，不进过滤选项）。标签经 t() 随语言切换。 */
+ * Rust 侧另有 dividend 未在前端类型暴露，不进过滤选项）。标签经 t() 随语言切换。 */
 const kindOptions = computed<Array<{ label: string; value: TransactionKind }>>(() =>
   TRANSACTION_KINDS.map((value) => ({
     label: t(`transactions.kind.${value}`),
@@ -331,9 +335,9 @@ function openEditFromRow(row: Transaction) {
   void openModal({ type: 'edit', row })
 }
 
-/** 只读详情弹窗（ADR-0106 决策 10 / #1048）：无现金腿 kind（convert）界面不体现写操作
- * 入口，行激活与菜单「详情」都进本入口；转换两腿明细的「先取数再开窗、失败不开窗」时序
- * 与慢取竞态守卫内化在 TransactionModalState，取数不经视图。 */
+/** 只读详情弹窗（ADR-0106 决策 10 / #1048、#1052）：无现金腿 kind（convert / split）
+ * 界面不体现写操作入口，行激活与菜单「详情」都进本入口；扩展明细的「先取数再开窗、
+ * 失败不开窗」时序与慢取竞态守卫内化在 TransactionModalState，取数不经视图。 */
 function openDetailFromRow(row: Transaction) {
   void openModal({ type: 'detail', row })
 }
@@ -602,9 +606,10 @@ function activateCard(row: Transaction): void {
         @saved="onEditSaved"
       />
     </AppModal>
-    <!-- 转换只读详情弹窗（ADR-0106 决策 10 / #1048）：无现金腿 kind 界面不体现任何写操作
-         （无创建/编辑/软删），只读呈现「A → B」两侧标的、份额、金额、手续费与结转成本；
-         行激活与菜单「详情」进本入口，转换两腿明细的取数时序内化在编排模块 -->
+    <!-- 只读详情弹窗（ADR-0106 决策 10 / #1048、#1052）：无现金腿 kind（convert / split）
+         界面不体现任何写操作（无创建/编辑/软删）——convert 只读呈现「A → B」两侧标的、
+         份额、金额、手续费与结转成本，split 只读呈现标的、带符号份额变动、调整日与账户；
+         行激活与菜单「详情」进本入口，扩展明细的取数时序内化在编排模块 -->
     <AppModal
       :show="intent?.type === 'detail'"
       :title="t('transactions.detail.title')"
@@ -615,9 +620,15 @@ function activateCard(row: Transaction): void {
     >
       <ConvertDetail
         :key="seq"
-        v-if="intent?.type === 'detail'"
-        :transaction="intent.row"
-        :convert="intent.convert"
+        v-if="detailIntent?.detail.kind === 'convert'"
+        :transaction="detailIntent.row"
+        :convert="detailIntent.detail.convert"
+      />
+      <SplitDetail
+        :key="seq"
+        v-else-if="detailIntent?.detail.kind === 'split'"
+        :transaction="detailIntent.row"
+        :split="detailIntent.detail.split"
       />
     </AppModal>
     <!-- 行右键菜单（issue #151 / #119 / #550）：expense 行「退款」「加入物品」+ 可编辑行「编辑」

@@ -1,7 +1,7 @@
 use rusqlite::{Connection, OptionalExtension};
 
 use super::lots::{self, Consumption};
-use super::model::{TransactionConvert, TransactionTrade};
+use super::model::{TransactionConvert, TransactionSplit, TransactionTrade};
 use super::prices::PRICE_UNITS_PER_FEN;
 use super::split::{self, LotRestatement};
 use super::unwind;
@@ -120,6 +120,28 @@ pub fn get_transaction_convert(
         AppError::codedp_not_found(
             "trade.convert-detail-not-found",
             format!("交易不存在或无转换明细: {transaction_id}"),
+            &[transaction_id],
+        )
+    })
+}
+
+/// 读取一笔 split 交易的份额调整明细（ADR-0106 / issue #1052）：从
+/// `security_transactions` 的 split 行取**带符号**份额增量 Δ（`quantity`，
+/// `price_cents` 留 NULL），JOIN `instruments` 带出标的展示字段。供交易列表
+/// 「只读详情」呈现标的与份额变动；无明细（交易不存在 / 非 split）返回 `NotFound`。
+pub fn get_transaction_split(conn: &Connection, transaction_id: &str) -> Result<TransactionSplit> {
+    query_one::<TransactionSplit, _>(
+        conn,
+        "SELECT st.instrument_id, i.symbol, i.name, st.quantity \
+         FROM security_transactions st \
+         JOIN instruments i ON i.id = st.instrument_id \
+         WHERE st.transaction_id = ?1 AND st.action='split'",
+        rusqlite::params![transaction_id],
+    )?
+    .ok_or_else(|| {
+        AppError::codedp_not_found(
+            "trade.split-detail-not-found",
+            format!("交易不存在或无份额调整明细: {transaction_id}"),
             &[transaction_id],
         )
     })

@@ -3,6 +3,7 @@ import { mockInvoke, wireInvokeSeam, type InvokeSeamDispatcher } from '../helper
 import { clickDialogButton, dialogText, pressReleaseOnDialogMask, visibleModalText } from '../helpers/dom'
 import { describe, it, expect, beforeEach } from 'vitest'
 import ConvertDetail from '@/components/ConvertDetail.vue'
+import SplitDetail from '@/components/SplitDetail.vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NButton, NDataTable, NPopconfirm, NSelect, NModal, NInput, NInputNumber } from 'naive-ui'
 import CategoryForm from '@/components/CategoryForm.vue'
@@ -397,6 +398,20 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
         in_amount_cents: 109725,
       },
     }),
+    makeTxn(5, 'acc-1', {
+      kind: 'split',
+      // 无现金腿：行金额恒 0（ADR-0106 决策 1），列表金额列按空值口径呈现
+      amount_cents: 0,
+      amount_native_cents: 0,
+      note: '年度结转',
+      date: '2026-03-01',
+      source: {
+        kind: 'instrument',
+        entity_id: 'ins-1',
+        display_name: '502010 证券基金',
+        status: null,
+      },
+    }),
   ]
 
   /** 转换两腿读投影（`get_transaction_convert`）：编辑回填数据源（ADR-0099 / #979）。 */
@@ -426,6 +441,14 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     fee_cents: 500,
   }
 
+  /** 份额调整读投影（`get_transaction_split`，ADR-0106 / issue #1052）：只读详情数据源。 */
+  const splitDetail = {
+    instrument_id: 'ins-1',
+    symbol: '502010',
+    instrument_name: '证券基金',
+    quantity: 339.76,
+  }
+
   /** 接缝分发器：薄壳表展开合并本组特有覆写，重走唯一接缝
    * （持久叠加桩已禁，守门规则 3；issue #750）。 */
   let base: InvokeSeamDispatcher
@@ -443,6 +466,10 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
           args?.id === 'txn-004'
             ? Promise.resolve(convertDetail)
             : Promise.reject(new Error('unexpected invoke: get_transaction_convert')),
+        get_transaction_split: (args) =>
+          args?.id === 'txn-005'
+            ? Promise.resolve(splitDetail)
+            : Promise.reject(new Error('unexpected invoke: get_transaction_split')),
       },
     })
   })
@@ -470,6 +497,9 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     expect(rowMenuKeys(wrapper)).toEqual(['delete'])
     // convert：无现金腿 kind 在 UI 无编辑/软删入口，只保留只读详情（ADR-0106 决策 10 / #1048）
     await openMenuOnRow(wrapper, 3)
+    expect(rowMenuKeys(wrapper)).toEqual(['detail'])
+    // split：同属无现金腿 kind，同规只读详情（ADR-0106 决策 10 / #1052）
+    await openMenuOnRow(wrapper, 4)
     expect(rowMenuKeys(wrapper)).toEqual(['detail'])
   })
 
@@ -570,6 +600,44 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     expect(detail.findAllComponents(NInputNumber)).toHaveLength(0)
     expect(detail.findAllComponents(NButton)).toHaveLength(0)
     expect(detail.text()).not.toContain('保存修改')
+  })
+
+  it('split 行桌面档：类型标签「份额调整」、无现金腿金额列按空值口径呈现「-」（ADR-0106 / #1052）', async () => {
+    const wrapper = await mountView()
+    const row = bodyRows(wrapper)[4]
+    expect(row.text()).toContain('份额调整')
+    expect(row.text()).not.toContain('买入')
+    expect(row.text()).not.toContain('卖出')
+    const amountEl = row.find('.amount-cell').element as HTMLElement
+    expect(amountEl.textContent).toBe('-')
+  })
+
+  it('split 行「详情」：先取份额调整明细（get_transaction_split），只读弹窗呈现标的、带符号份额变动、调整日与账户，无可编辑/删除面', async () => {
+    const wrapper = await mountView()
+    await openMenuOnRow(wrapper, 4)
+    expect(rowMenuKeys(wrapper)).toEqual(['detail'])
+    await selectRowMenu(wrapper, 'detail')
+    const splitCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'get_transaction_split')
+    expect(splitCalls).toHaveLength(1)
+    expect(splitCalls[0][1]).toMatchObject({ id: 'txn-005' })
+    const modal = wrapper.findAllComponents(NModal).find((m) => m.props('title') === '交易详情')!
+    expect(modal.props('show')).toBe(true)
+    const detail = wrapper.findComponent(SplitDetail)
+    expect(detail.exists()).toBe(true)
+    expect(detail.props('transaction')).toMatchObject({ id: 'txn-005' })
+    expect(detail.props('split')).toMatchObject({ instrument_id: 'ins-1', quantity: 339.76 })
+    // 标的、带符号份额变动（显式 +）、调整日、账户
+    expect(detail.text()).toContain('502010')
+    expect(detail.text()).toContain('证券基金')
+    expect(detail.text()).toContain(`+${formatQuantity(339.76)}`)
+    expect(detail.text()).toContain('2026-03-01')
+    expect(detail.text()).toContain('现金')
+    // 只读形态：无可编辑输入面、无提交/保存按钮、无删除入口（ADR-0106 决策 10 / #1052）
+    expect(detail.findAllComponents(NInput)).toHaveLength(0)
+    expect(detail.findAllComponents(NInputNumber)).toHaveLength(0)
+    expect(detail.findAllComponents(NButton)).toHaveLength(0)
+    expect(modal.text()).not.toContain('删除')
+    expect(modal.text()).not.toContain('保存修改')
   })
 
   it('取买卖明细失败：弹窗不打开并提示错误', async () => {
