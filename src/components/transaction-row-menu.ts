@@ -20,9 +20,9 @@ export { renderRowMenuIcon, errorOptionProps }
  *   「编辑」对除 refund 外的 kind 呈现（refund 破坏关联语义；buy/sell 经投资表单
  *   编辑模式回填标的/数量/价格/费用，issue #180）；
  *   「加入物品」仅对 expense 行呈现（溯源必为支出购买，ADR-0025）。
- * - `convert` / `split` 行：仅只读详情（EyeOutline）——两种「无现金腿」kind 在 UI 上
- *   不体现任何写操作（无编辑、无软删，ADR-0106 决策 10 / #1048、#1052），写入与纠错
- *   走 HTTP 契约。
+ * - `convert` / `split` / `dividend` 行：仅只读详情（EyeOutline）——界面只读 kind
+ *   在 UI 上不体现任何写操作（无编辑、无软删，ADR-0106 决策 10 / #1048、#1052；
+ *   ADR-0109 / #1078），写入与纠错走 HTTP 契约。
  *
  * `hasItem`：该交易已创建过物品（items store 按溯源指针比对得出，不新增查询）
  * → 「加入物品」置灰禁用（溯源唯一的界面呈现）。
@@ -31,15 +31,16 @@ export { renderRowMenuIcon, errorOptionProps }
  * DropdownOption props，图标+文字整体着色——不硬编码色值，暗色模式自动适配。
  */
 /** 「编辑」开放判定（income/expense/transfer 走分类记账/转账表单，buy/sell 走投资表单
- * 编辑模式，issue #180；refund 破坏关联语义、convert / split 为无现金腿只读 kind 均不
- * 开放，ADR-0106 决策 10）。单一来源：交易类型行激活闭集（transactionKindActivation），
+ * 编辑模式，issue #180；refund 破坏关联语义、convert / split / dividend 为界面只读
+ * kind 均不开放，ADR-0106 决策 10 / ADR-0109）。单一来源：交易类型行激活闭集
+ * （transactionKindActivation），
  * 菜单组装与移动档卡片行激活共用（issue #846 / #1048）。 */
 export function supportsRowEdit(row: Pick<Transaction, 'kind'>): boolean {
   return transactionKindActivation(row.kind) === 'edit'
 }
 
-/** 「只读详情」开放判定：「无现金腿」kind（convert / split，ADR-0106 决策 10）在界面
- * 不体现写操作入口，只保留列表 / 筛选 / 只读详情。
+/** 「只读详情」开放判定：界面只读 kind（convert / split 无现金腿；dividend 现金分红，
+ * ADR-0106 决策 10 / ADR-0109）不体现写操作入口，只保留列表 / 筛选 / 只读详情。
  * 单一来源同上（交易类型行激活闭集），菜单组装与移动档卡片「整卡点击 = 详情」共用。 */
 export function supportsRowDetail(row: Pick<Transaction, 'kind'>): boolean {
   return transactionKindActivation(row.kind) === 'detail'

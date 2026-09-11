@@ -36,7 +36,7 @@ pub enum TransactionCommand {
     Create {
         id: String,
         row: NormalizedTransaction,
-        /// 投资 kind（buy/sell）的语义字段；其余 kind（含 convert）为 None。
+        /// 投资 kind（buy/sell/dividend）的语义字段；其余 kind 为 None。
         investment: Option<InvestmentCommandFields>,
         /// 转换 kind（convert）的语义字段与源端算定的结转成本；其余 kind 与
         /// 旧版本设备产出的载荷（该成员缺省）为 None（ADR-0099 决策 6）。
@@ -51,7 +51,7 @@ pub enum TransactionCommand {
     Update {
         id: String,
         row: NormalizedTransaction,
-        /// 投资 kind（buy/sell）的语义字段；其余 kind（含 convert）为 None。
+        /// 投资 kind（buy/sell/dividend）的语义字段；其余 kind 为 None。
         investment: Option<InvestmentCommandFields>,
         /// 转换 kind（convert）的语义字段与源端算定的结转成本；其余 kind 与
         /// 旧版本设备产出的载荷（该成员缺省）为 None（ADR-0099 决策 6）。
@@ -131,11 +131,13 @@ pub struct SplitCommandFields {
     pub total_cost_cents: i64,
 }
 
-/// 投资 kind（buy/sell）的命令字段：随 op 携带的语义输入与派生结果。
+/// 投资 kind（buy/sell/dividend）的命令字段：随 op 携带的语义输入与派生结果。
 /// 数量/单价/手续费是 prepare 的算定输入；买入的每份成本是 prepare 单次舍入
 /// 的派生结果（源端折算随行，ADR-0091 决策 3），重放端直接落批次、不重算
 ///（重算需读标的类型，属本地状态）；卖出无此概念（批次成本随买方批次在本端
-/// 已就位）。重放执行见 `behavior::replay_command`（#861 起）。
+/// 已就位）。**现金分红（ADR-0109）只消费 `instrument_id`**——分红无份额 / 单价 /
+/// 手续费，其余成员是占位零值、重放端不读；现金腿随归一化行携带。重放执行见
+/// `behavior::replay_command`（#861 起）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InvestmentCommandFields {
     pub instrument_id: String,

@@ -158,6 +158,16 @@ const KIND_FIELD_MATRIX: Record<TransactionKind, KindMatrixRow> = {
     policy_id: null,
     refund_of_transaction_id: null,
   },
+  // 现金分红（ADR-0109 / #1078）：有现金腿（金额由契约承载），归属标的与到账账户
+  // 亦由契约直接提交；界面无手工录入入口（只读呈现），本矩阵行仅为穷尽表补位。
+  dividend: {
+    to_account_id: null,
+    funding_account_id: null,
+    category_id: null,
+    merchant_id: null,
+    policy_id: null,
+    refund_of_transaction_id: null,
+  },
 }
 
 /** fail fast：非法表单状态抛中文错误，不静默兜底 */

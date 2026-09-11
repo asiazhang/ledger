@@ -39,6 +39,8 @@ export const KIND_SEMANTIC_COLORS: Record<TransactionKind, SemanticColor> = {
   convert: { light: '#d48806', dark: '#f0c060' },
   // 份额调整：靛蓝——与转换（琥珀）区分、不与买卖收支色相混淆的非现金资本变动色。
   split: { light: '#2f54eb', dark: '#85a5ff' },
+  // 现金分红：青绿——投资现金流入口径（income 语义），与 buy/sell 资本变动色区分。
+  dividend: { light: '#0d9488', dark: '#5eead4' },
 }
 
 /** 语义色覆盖的交易类型闭集（与交易类型闭集同源，运行时校验锚点）。 */

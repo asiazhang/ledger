@@ -201,10 +201,9 @@ fn create_refund_ignores_caller_category_and_inherits_original() {
     );
 }
 
-/// dividend 维持「暂不支持」；携带分类时分类拒绝优先于「暂不支持」（比照商户
-/// 收口先例，拒绝且不落库）。split 已激活（ADR-0106 / #1049）：携带分类仍被
-/// 参考数据携带准入拒绝（split 不在分类准入集），不携带分类则进投资域守卫
-/// （本场景缺标的 → trade.split-instrument-required）。
+/// dividend（ADR-0109）与 split（ADR-0106）均已激活：携带分类时被参考数据携带
+/// 准入拒绝（两者都不在分类准入集，比照商户收口先例，拒绝且不落库），拒绝先于
+/// 投资域装配；不携带分类则进各自投资域守卫（本场景缺标的）。
 #[test]
 fn create_dividend_split_with_category_reports_category_rejection_first() {
     let conn = test_support::open();
@@ -212,7 +211,7 @@ fn create_dividend_split_with_category_reports_category_rejection_first() {
     insert_category(&conn, "cat-food", "餐饮", "expense");
 
     for kind in [TransactionKind::Dividend, TransactionKind::Split] {
-        // 携带分类：报分类拒绝（先于 kind 守卫）。
+        // 携带分类：报分类拒绝（先于投资域装配）。
         let err = create_transaction_internal(
             &conn,
             TransactionInput {
@@ -229,7 +228,7 @@ fn create_dividend_split_with_category_reports_category_rejection_first() {
             "{kind} 携带分类应报「不能携带分类」，实际: {err}"
         );
 
-        // 不携带分类：dividend 维持「暂不支持」；split 进投资域守卫（缺标的）。
+        // 不携带分类：进各自投资域守卫（发行缺标的拒绝）。
         let err = create_transaction_internal(
             &conn,
             TransactionInput {
@@ -242,8 +241,8 @@ fn create_dividend_split_with_category_reports_category_rejection_first() {
         .unwrap_err();
         if kind == TransactionKind::Dividend {
             assert!(
-                err.to_string().contains("暂不支持"),
-                "dividend 不携带分类应维持「暂不支持」，实际: {err}"
+                err.is_code("trade.dividend-instrument-required"),
+                "dividend 不携带分类应进投资域守卫（缺标的），实际: {err}"
             );
         } else {
             assert!(

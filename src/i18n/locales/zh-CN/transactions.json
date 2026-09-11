@@ -7,7 +7,8 @@
     "buy": "买入",
     "sell": "卖出",
     "convert": "转换",
-    "split": "份额调整"
+    "split": "份额调整",
+    "dividend": "分红"
   },
   "lending": {
     "direction": "方向",

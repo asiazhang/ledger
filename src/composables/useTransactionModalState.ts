@@ -38,19 +38,22 @@ import type {
 
 /**
  * 只读详情载荷（判别联合）：按目标行 kind 各自携带先取回的扩展明细——
- * convert 两腿（ADR-0099 / #1048）、split 份额调整（ADR-0106 / #1052）。
- * 「无现金腿」kind 的只读详情形态共用同一 `detail` 意图，渲染面按 `kind` 收窄。
+ * convert 两腿（ADR-0099 / #1048）、split 份额调整（ADR-0106 / #1052）、
+ * dividend 现金分红（ADR-0109 / #1078，无扩展读取，仅作渲染面判别）。
+ * 界面只读 kind 的只读详情形态共用同一 `detail` 意图，渲染面按 `kind` 收窄。
  */
 export type TransactionDetailPayload =
   | { kind: 'convert'; convert: TransactionConvert }
   | { kind: 'split'; split: TransactionSplit }
+  | { kind: 'dividend' }
 
 /**
  * 意图状态（单一判别联合，弹窗编排的唯一事实源）：
  * - create：无目标行，携带表单形态子类型（issue #374 起 CreateFormKind：可创建 kind +
  *   借贷两个呈现变体；refund 不在可创建集，入口由交易条目右键承接）；
  * - refund / add-item：携带目标交易行；
- * - detail：只读详情（convert / split 等「无现金腿」kind 无写操作入口，ADR-0106 决策 10）；
+ * - detail：只读详情（convert / split / dividend 等界面只读 kind 无写操作入口，
+ *   ADR-0106 决策 10 / ADR-0109）；
  *   携带被取回的扩展明细（明细由模块先取再开窗，调用方不经手），无详情面的行请求不落
  *   意图（「意图非空即显示」不变式）；
  * - edit：另携带买卖明细（非买卖行为 null；buy/sell 的明细由模块先取再开窗）。
@@ -129,9 +132,13 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
     }
     const { row } = request
     // detail：只读详情——convert / split 两类「无现金腿」kind 各自先取扩展明细再开窗
-    // （时序内化）；其余 kind 无详情面，不落意图（「意图非空即显示」，落一个渲染不出的
-    // 意图会破坏该不变式）。
+    // （时序内化）、dividend（ADR-0109）无扩展读取同步开窗；其余 kind 无详情面，
+    // 不落意图（「意图非空即显示」，落一个渲染不出的意图会破坏该不变式）。
     if (request.type === 'detail') {
+      if (row.kind === 'dividend') {
+        settle(gen, { type: 'detail', row, detail: { kind: 'dividend' } })
+        return
+      }
       if (row.kind !== 'convert' && row.kind !== 'split') return
       try {
         const detail: TransactionDetailPayload =

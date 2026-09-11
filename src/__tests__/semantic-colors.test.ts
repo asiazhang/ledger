@@ -8,8 +8,8 @@ import {
 } from '@/theme/semantic-colors'
 import { TRANSACTION_KINDS } from '@/types'
 
-/** 语义色单一来源（issue #435）：七种交易类型 × 亮/暗两套色值。
- * 只测外部行为：类型穷尽、色值齐全、七色两两不同（防撞色回归）。 */
+/** 语义色单一来源（issue #435）：九种交易类型 × 亮/暗两套色值。
+ * 只测外部行为：类型穷尽、色值齐全、九色两两不同（防撞色回归）。 */
 
 describe('KIND_SEMANTIC_COLORS（交易类型语义色表）', () => {
   it('类型穷尽：与交易类型闭集一一对应，不多不少', () => {
@@ -24,14 +24,14 @@ describe('KIND_SEMANTIC_COLORS（交易类型语义色表）', () => {
     }
   })
 
-  it('亮色八色两两不同', () => {
+  it('亮色九色两两不同', () => {
     const lights = TRANSACTION_KINDS.map((k) => KIND_SEMANTIC_COLORS[k].light)
-    expect(new Set(lights).size).toBe(8)
+    expect(new Set(lights).size).toBe(9)
   })
 
-  it('暗色八色两两不同', () => {
+  it('暗色九色两两不同', () => {
     const darks = TRANSACTION_KINDS.map((k) => KIND_SEMANTIC_COLORS[k].dark)
-    expect(new Set(darks).size).toBe(8)
+    expect(new Set(darks).size).toBe(9)
   })
 
   it('亮暗两套彼此不同（同类型暗色变体确实是变体）', () => {
@@ -48,6 +48,7 @@ describe('KIND_SEMANTIC_COLORS（交易类型语义色表）', () => {
     expect(KIND_SEMANTIC_COLORS.buy).toEqual({ light: '#eb2f96', dark: '#ff85c0' })
     expect(KIND_SEMANTIC_COLORS.sell).toEqual({ light: '#13c2c2', dark: '#5cdbd3' })
     expect(KIND_SEMANTIC_COLORS.convert).toEqual({ light: '#d48806', dark: '#f0c060' })
+    expect(KIND_SEMANTIC_COLORS.dividend).toEqual({ light: '#0d9488', dark: '#5eead4' })
   })
 })
 

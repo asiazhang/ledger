@@ -7,7 +7,8 @@
     "buy": "Buy",
     "sell": "Sell",
     "convert": "Convert",
-    "split": "Share Adjustment"
+    "split": "Share Adjustment",
+    "dividend": "Dividend"
   },
   "lending": {
     "direction": "Direction",
