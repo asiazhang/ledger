@@ -1,18 +1,20 @@
 //! 写入协议的协议级对称断言（issue #1004 / ADR-0105）：Local / Replay 两形态
-//! 跑同一断言集——kind 守卫（dividend 暂不支持）与 convert / split kind 变更
-//! 禁止同码同文案、op 发射开关（重放不产本地 op）、id 来源（重放随命令携带）。
+//! 跑同一断言集——dividend / split / convert 的进 / 出 kind 变更禁止同码同文案、
+//! dividend 创建两形态同终态、op 发射开关（重放不产本地 op）、id 来源（重放随
+//! 命令携带）。
 //! 本地形态经行为层既有编排入口驱动；重放形态经同步引擎 dispatch 的既有消费面
 //! （`replay_command`）驱动。
 //!
 //! 断言强度（ADR-0087）：只断言外部可观察行为——错误码与文案、落库终态、
 //! OpLog 行内容；形态对称性本身由编译期单正文构造保证，不靠测试兜底。
 //!
-//! 删除即变红：删除协议本体的 kind 守卫单点（`kind_unsupported` 构造或其在
-//! 协议守卫段的调用）、convert 变更守卫，或任一形态的装配 / 落库 / op 分支，
+//! 删除即变红：删除协议本体的 kind 变更守卫（dividend / split / convert 任一），
+//! 或任一形态的装配 / 落库 / op 分支，
 //! 下列断言至少一条变红——
-//! - 删 kind 守卫单点：Replay 伪造 dividend 载荷将落库或改报他码，
-//!   `*_same_code_both_forms` 红；
+//! - 删 dividend / split kind 变更守卫：`update_*_same_code_both_forms` 红；
 //! - 删 convert 变更守卫：`update_convert_kind_change_same_code_both_forms` 红；
+//! - 删 dividend 的 Replay 装配 / 落库 / 副作用任一步：
+//!   `create_dividend_same_terminal_state_both_forms` 红；
 //! - 删 Replay 落库分支（insert_row_with_id）：
 //!   `replay_create_uses_carried_id_and_emits_no_local_op` 红；
 //! - 删 Replay 的 op 发射开关（误产 op）：同上测试的零 op 断言红。
@@ -95,63 +97,87 @@ fn seed_buy_and_convert(conn: &Connection) -> (String, String) {
     (buy_id, convert_id)
 }
 
-/// kind 守卫（dividend 暂不支持）在创建协议按形态裁决，且均不落库（拒绝先于
-/// 任何写入）。
+/// 创建协议两形态对 dividend 同终态（ADR-0109）：Local 经行为层编排入口、Replay
+/// 经同步引擎既有消费面携投资字段（标的 id）重放，两侧落出同一交易行与同一
+/// `security_transactions` 扩展行；重放不产本地 op。
+///
+/// 删除即变红：删 dividend 的 Replay 装配（replay_plan 的 Dividend 臂）/ 落库 /
+/// 副作用（apply 的 Dividend 臂）任一步，Replay 侧终态断言即红。
 #[test]
-fn create_rejects_dividend_same_code_both_forms() {
-    for kind in [TransactionKind::Dividend] {
-        // Local：行为层创建编排入口。
-        let conn_local = test_support::open();
-        seed_account(&conn_local, "acc-g", "现金", "cash", "CNY", 0);
-        let err_local =
-            create_transaction_internal(&conn_local, make_input("acc-g", kind, 500, "2026-05-04"))
-                .unwrap_err();
+fn create_dividend_same_terminal_state_both_forms() {
+    let seed = |conn: &Connection| {
+        seed_account(conn, "acc-div", "股票户", "investment", "CNY", 0);
+        seed_instrument(conn, "inst-div", "502010", "证券基金", "CNY", "unknown");
+    };
 
-        // Replay：同步引擎 dispatch 的既有消费面（伪造 dividend 载荷——
-        // 本地 plan 从不产出该命令）。
-        let conn_replay = test_support::open();
-        seed_account(&conn_replay, "acc-g", "现金", "cash", "CNY", 0);
-        let err_replay = replay_command(
-            &conn_replay,
-            &TransactionCommand::Create {
-                id: "sync-div-1".into(),
-                row: carried_row(kind, "acc-g", 500),
-                investment: None,
-                split: None,
-                convert: None,
-            },
-        )
-        .unwrap_err();
+    // Local：行为层创建编排入口（标的 + 现金腿）。
+    let conn_local = test_support::open();
+    seed(&conn_local);
+    let local_id = create_transaction_internal(
+        &conn_local,
+        crate::transaction::TransactionInput {
+            instrument_id: Some("inst-div".into()),
+            ..make_input("acc-div", TransactionKind::Dividend, 3000, "2026-05-04")
+        },
+    )
+    .unwrap()
+    .id;
 
-        // 同码同文案：两端对同一违规操作返回同一裁决提示（spec 用户故事 2）。
-        let (code_local, msg_local) = coded_of(err_local);
-        let (code_replay, msg_replay) = coded_of(err_replay);
-        assert_eq!(code_local, "transaction.kind-unsupported");
-        assert_eq!(code_local, code_replay, "{kind} 两形态应同码");
-        assert_eq!(msg_local, msg_replay, "{kind} 两形态应同文案");
+    // Replay：同步引擎 dispatch 的既有消费面（命令携归一化行 + 投资字段）。
+    let conn_replay = test_support::open();
+    seed(&conn_replay);
+    replay_command(
+        &conn_replay,
+        &TransactionCommand::Create {
+            id: "sync-div-1".into(),
+            row: carried_row(TransactionKind::Dividend, "acc-div", 3000),
+            investment: Some(crate::transaction::InvestmentCommandFields {
+                instrument_id: "inst-div".into(),
+                quantity: 0.0,
+                price_cents: 0,
+                fee_cents: 0,
+                cost_per_unit_cents: None,
+            }),
+            split: None,
+            convert: None,
+        },
+    )
+    .unwrap();
 
-        // 两端均不落库。
-        for conn in [&conn_local, &conn_replay] {
-            let count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(count, 0, "{kind} 拒绝后不应落库");
-        }
+    // 两形态同终态：交易行（kind / 金额 / 币种）+ 扩展行（标的 / 动作 / 无份额单价）。
+    for (conn, id) in [
+        (&conn_local, local_id.as_str()),
+        (&conn_replay, "sync-div-1"),
+    ] {
+        let t = get_transaction_internal(conn, id).unwrap();
+        assert_eq!(t.kind, TransactionKind::Dividend);
+        assert_eq!(t.amount_cents, 3000);
+        assert_eq!(t.currency_code, "CNY");
+        let ext: (String, String, Option<f64>, Option<i64>) = conn
+            .query_row(
+                "SELECT instrument_id, action, quantity, price_cents FROM security_transactions \
+                 WHERE transaction_id=?1",
+                rusqlite::params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            ext,
+            ("inst-div".to_string(), "dividend".to_string(), None, None)
+        );
     }
+    // 重放不产本地 op（ADR-0091 契约）。
+    assert!(read_ops(&conn_replay).unwrap().is_empty());
 }
 
-/// kind 守卫在修改协议两形态同码同文案：改挂 dividend 显式拒绝（暂不支持）、
-/// 改挂 split 由 kind 变更守卫拒绝（ADR-0106 决策 5），两形态同码同文案、
-/// 原行保持不变。
+/// kind 变更守卫在修改协议两形态同码同文案：改出 / 改入 dividend（ADR-0109）与
+/// split（ADR-0106 决策 5）一律拒绝，两形态同码同文案、原行保持不变。
 #[test]
 fn update_rejects_dividend_split_same_code_both_forms() {
     let expected_code = |kind: TransactionKind| match kind {
         TransactionKind::Split => "trade.split-kind-change-forbidden",
-        _ => "transaction.kind-unsupported",
+        TransactionKind::Dividend => "trade.dividend-kind-change-forbidden",
+        _ => unreachable!("本测试只覆盖 dividend / split"),
     };
     for kind in [TransactionKind::Dividend, TransactionKind::Split] {
         // Local：既有 expense 行，修改为 dividend/split。

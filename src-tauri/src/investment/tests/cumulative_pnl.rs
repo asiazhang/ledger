@@ -7,7 +7,9 @@
 //! 不计入且不以零计入（某币种两腿皆空则该组不出现）。
 
 use crate::transaction::amount::TransactionKind;
-use crate::transaction::create_transaction_internal;
+use crate::transaction::{
+    create_transaction_internal, delete_transaction_internal, update_transaction_internal,
+};
 
 use super::super::*;
 use super::common::*;
@@ -289,4 +291,197 @@ fn cumulative_pnl_identity_holds_after_split() {
     let groups = query_cumulative_pnl_summary(&conn).unwrap();
     assert_eq!(cumulative_for(&groups, "CNY"), unrealized + realized);
     assert_eq!(cumulative_for(&groups, "CNY"), 14000);
+}
+
+#[test]
+fn cumulative_pnl_includes_dividend_as_third_leg() {
+    // 分红计入累计收益的第三腿（issue #1078 / ADR-0109）：累计收益 = 未实现盈亏 +
+    // 已实现盈亏 + 累计分红；分红不摊薄成本——未实现 / 已实现两腿逐位不变。
+    let conn = open();
+    seed_account(&conn, "acc-dv", "美股账户", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-dv", "AAPL", "Apple", "USD", "unknown");
+
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-dv", "inst-dv", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-dv", "inst-dv", 5.0, 1_200_000, 200),
+    )
+    .unwrap();
+    seed_market_price(&conn, "inst-dv", 1_100_000, "USD");
+
+    let (unrealized, realized) = legs_of(&conn);
+    assert_eq!(unrealized, 5000);
+    assert_eq!(realized, 9800);
+    assert_eq!(
+        cumulative_for(&query_cumulative_pnl_summary(&conn).unwrap(), "USD"),
+        unrealized + realized
+    );
+
+    // 三笔分红共 30 元（3000 分）。
+    for _ in 0..3 {
+        create_transaction_internal(&conn, make_dividend_input("acc-dv", "inst-dv", 1000, "USD"))
+            .unwrap();
+    }
+
+    // 两腿口径不变（分红不摊薄 FIFO 批次成本、不进已实现盈亏），第三腿 3000 分入累计。
+    let (unrealized_after, realized_after) = legs_of(&conn);
+    assert_eq!((unrealized_after, realized_after), (unrealized, realized));
+    let groups = query_cumulative_pnl_summary(&conn).unwrap();
+    assert_eq!(cumulative_for(&groups, "USD"), unrealized + realized + 3000);
+    assert_eq!(cumulative_for(&groups, "USD"), 17800);
+}
+
+#[test]
+fn cumulative_pnl_dividend_leg_survives_missing_price() {
+    // 分红腿不受当前有无行情影响（空值语义只作用于未实现腿）：缺价持仓两腿为空，
+    // 分红腿独立让该币种分组出现，且金额精确。
+    let conn = open();
+    seed_account(&conn, "acc-dvp", "美股账户", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-dvp", "AAPL", "Apple", "USD", "unknown");
+
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-dvp", "inst-dvp", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_dividend_input("acc-dvp", "inst-dvp", 2500, "USD"),
+    )
+    .unwrap();
+
+    // 无现价 → 未实现腿为空（不以零计入）；分组仍因分红腿出现。
+    let groups = query_cumulative_pnl_summary(&conn).unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(cumulative_for(&groups, "USD"), 2500);
+}
+
+#[test]
+fn cumulative_pnl_dividend_without_holding_is_allowed() {
+    // 分红不要求当前有持仓（除息 / 到账错位合法）：清仓后收到分红照常入第三腿。
+    let conn = open();
+    seed_account(&conn, "acc-dvc", "股票户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-dvc", "502010", "证券基金", "CNY", "unknown");
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-dvc",
+            "inst-dvc",
+            100.0,
+            10_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Sell,
+            "acc-dvc",
+            "inst-dvc",
+            100.0,
+            12_000,
+            "2026-01-20",
+        ),
+    )
+    .unwrap();
+    assert!(list_holdings(&conn).unwrap().is_empty());
+
+    create_transaction_internal(
+        &conn,
+        make_dividend_input("acc-dvc", "inst-dvc", 4000, "CNY"),
+    )
+    .unwrap();
+
+    // 全清仓后的累计收益 = 已实现 2000（100 份 × (1.20 − 1.00) 元）+ 分红 4000
+    //（无未实现腿）。
+    let groups = query_cumulative_pnl_summary(&conn).unwrap();
+    assert_eq!(cumulative_for(&groups, "CNY"), 6000);
+}
+
+#[test]
+fn cumulative_pnl_dividend_update_and_delete_roll_back_precisely() {
+    // 分红流水被修改 / 删除后，累计收益精确回退（实时重聚，无物化状态）。
+    let conn = open();
+    seed_account(&conn, "acc-dvr", "股票户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-dvr", "502010", "证券基金", "CNY", "unknown");
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-dvr",
+            "inst-dvr",
+            100.0,
+            10_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    seed_market_price(&conn, "inst-dvr", 10_000, "CNY");
+
+    let dividend_id = create_transaction_internal(
+        &conn,
+        make_dividend_input("acc-dvr", "inst-dvr", 3000, "CNY"),
+    )
+    .unwrap()
+    .id;
+    assert_eq!(
+        cumulative_for(&query_cumulative_pnl_summary(&conn).unwrap(), "CNY"),
+        3000
+    );
+
+    // 全字段替换：金额 3000 → 5000，第三腿随之替换而非叠加。
+    update_transaction_internal(
+        &conn,
+        &dividend_id,
+        make_dividend_input("acc-dvr", "inst-dvr", 5000, "CNY"),
+    )
+    .unwrap();
+    assert_eq!(
+        cumulative_for(&query_cumulative_pnl_summary(&conn).unwrap(), "CNY"),
+        5000
+    );
+
+    // 删除：分红腿精确移除，只剩现价与成本相等的 0 未实现腿。
+    delete_transaction_internal(&conn, &dividend_id).unwrap();
+    assert_eq!(
+        cumulative_for(&query_cumulative_pnl_summary(&conn).unwrap(), "CNY"),
+        0
+    );
+}
+
+#[test]
+fn cumulative_pnl_dividend_groups_by_currency_without_mixing() {
+    // 分红腿与既有两腿同款多币种口径：按交易行币种分组，不跨币种裸数字相加。
+    let conn = open();
+    seed_account(&conn, "acc-dv-usd", "美股账户", "investment", "USD", 0);
+    seed_account(&conn, "acc-dv-cny", "A 股账户", "investment", "CNY", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-dv-usd", "USDX", "USDX Corp", "USD", "unknown");
+    seed_instrument(&conn, "inst-dv-cny", "CNYX", "CNYX Corp", "CNY", "unknown");
+
+    create_transaction_internal(
+        &conn,
+        make_dividend_input("acc-dv-usd", "inst-dv-usd", 1000, "USD"),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_dividend_input("acc-dv-cny", "inst-dv-cny", 2000, "CNY"),
+    )
+    .unwrap();
+
+    let groups = query_cumulative_pnl_summary(&conn).unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(cumulative_for(&groups, "USD"), 1000);
+    assert_eq!(cumulative_for(&groups, "CNY"), 2000);
+    // 混算会得到 3000（把两币种裸数字相加），断言它不出现在任何分组。
+    assert!(groups.iter().all(|g| g.cumulative_pnl_cents != 3000));
 }

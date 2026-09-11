@@ -16,6 +16,8 @@
 //!   结转成本随命令携带与本地 FIFO 重建、schema 超前挂起与旧载荷兼容（issue #980）
 //! - [`split`]：份额调整的语义命令重放——create/update/delete 三 op 收敛、批次
 //!   重述本地重建与最终持仓 / 批次总成本比对、依赖倒挂与旧载荷挂起（issue #1053）
+//! - [`dividend`]：现金分红的语义命令重放——create/update/delete 三 op 收敛、
+//!   扩展行自包含（无 FIFO 重建）、标的依赖倒挂挂起自愈、币种分叉码化挂起（issue #1078）
 //! - [`item`]：物品全域 op 产出、源端折算随行（issue #860）
 //! - [`physical_asset`]：实物资产全域 op 产出、并发估值全部存活（issue #860）
 //! - [`scheduled_plan`]：定时计划全域 op 产出与收敛（issue #860）
@@ -32,6 +34,7 @@ mod checkpoint;
 pub(crate) mod common;
 mod convert;
 mod device;
+mod dividend;
 mod engine;
 mod envelope;
 mod insurance;

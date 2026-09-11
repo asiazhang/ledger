@@ -7,21 +7,28 @@ use super::model::{
 use crate::db::query::query_all;
 use crate::error::Result;
 
-/// 按币种分组的累计收益（issue #1077 / 词汇表「累计收益（CumulativePnl）」）：
+/// 按币种分组的累计收益（issue #1077 / #1078 / 词汇表「累计收益（CumulativePnl）」）：
 /// 未实现盈亏（Holding 侧，`v_holdings`）+ 已实现盈亏（RealizedPnl 侧，
-/// `security_lot_sales`）两腿相加，按币种独立成组、不做跨币种折算。
+/// `security_lot_sales`）+ 累计分红（`security_transactions` 的 dividend 行）
+/// 三腿相加，按币种独立成组、不做跨币种折算。
 ///
-/// **复用两条既有读口径、不改其定义**：未实现腿直接取 `v_holdings` 的账户本位币
+/// **复用既有读口径、不改其定义**：未实现腿直接取 `v_holdings` 的账户本位币
 /// `unrealized_pnl_cents`（账户币种经 `accounts` 取出，与视图折算口径同源）；已实现腿
 /// 与 [`query_realized_pnl_summary`] 同一过滤——软删账户（`a.is_deleted=0`）与软删交易
-/// （`t.is_deleted=0`）排除，隐藏账户照常计入。
+/// （`t.is_deleted=0`）排除，隐藏账户照常计入；分红腿同一过滤（软删账户与软删分红
+/// 流水排除、隐藏账户照常计入），币种取交易行币种（写路径守卫保证 = 到账账户币种）。
 ///
 /// **空值语义采 Holding 侧**：缺价 / 缺汇率持仓的未实现腿为 NULL，在 `SUM` 中跳过、
 /// 不以零计入（与持仓视图合计的既有空值语义一致）；已实现腿为平仓匹配、无此空值。
-/// 某币种两腿皆空时不出现该分组。
+/// 某币种三腿皆空时不出现该分组。
+///
+/// **分红是第三腿、不摊薄成本**（issue #1078 / ADR-0109）：分红不触碰 FIFO 批次
+/// （未实现盈亏与已实现盈亏的既有口径逐位不变），只按其自身现金流量入累计收益——
+/// 与「当前市值 + 累计卖出净收入 − 累计买入总支出 + 累计分红」的现金流口径一致。
 pub fn query_cumulative_pnl_summary(conn: &Connection) -> Result<Vec<CurrencyCumulativePnl>> {
-    // 两腿 `UNION ALL` 后按币种分组求和：未实现腿按账户币种、已实现腿按匹配行币种，
-    // 两条口径的币种在单账户内同源（buy/sell 记录币种恒为账户币），故同组可直接相加。
+    // 三腿 `UNION ALL` 后按币种分组求和：未实现腿按账户币种、已实现腿按匹配行币种、
+    // 分红腿按交易行币种，三条口径的币种在单账户内同源（buy/sell 与 dividend 记录
+    // 币种恒为账户币），故同组可直接相加。
     let sql = "SELECT currency_code, SUM(amount_cents) FROM (\
                    SELECT a.currency_code AS currency_code, v.unrealized_pnl_cents AS amount_cents \
                    FROM v_holdings v \
@@ -33,6 +40,12 @@ pub fn query_cumulative_pnl_summary(conn: &Connection) -> Result<Vec<CurrencyCum
                    JOIN transactions t ON t.id = sls.sell_transaction_id \
                    JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0 \
                    WHERE t.is_deleted = 0 \
+                   UNION ALL \
+                   SELECT t.currency_code AS currency_code, t.amount_cents AS amount_cents \
+                   FROM transactions t \
+                   JOIN security_transactions st ON st.transaction_id = t.id AND st.action='dividend' \
+                   JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0 \
+                   WHERE t.is_deleted = 0 AND t.kind='dividend' \
                ) GROUP BY currency_code ORDER BY currency_code";
     query_all(conn, sql, [])
 }

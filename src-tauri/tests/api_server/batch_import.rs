@@ -171,35 +171,81 @@ async fn test_kind_enum_rejects_unknown_at_api_boundary() {
     );
 }
 
-/// issue #72：dividend/split 已声明但未实现，经交易接口（批量创建）显式「暂不支持」拒绝，
-/// 且不落库——取代此前 writer::normalize 兜底的「仅处理通用交易类型」文案（唯一对外可观测变化）。
+/// issue #1078 / ADR-0109：dividend 已激活——批量创建落现金腿 + 标的扩展行，
+/// 到账账户为任意在用账户（不要求投资账户 / 持仓），读回带标的来源。
 #[tokio::test]
-async fn test_batch_create_dividend_rejected_with_not_supported() {
+async fn test_batch_create_dividend_persists_cash_leg_and_instrument_link() {
     let (app, conn) = setup_app();
-    let account_id = create_account_via_api(&app, "证券账户").await;
-
-    let body = format!(
-        r#"{{
-            "transactions": [
-                {{"kind":"dividend","amount_cents":60,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-04"}}
-            ]
-        }}"#
+    let account_id = create_account_via_api(&app, "银行卡").await;
+    test_support::seed_instrument(
+        &conn.lock().unwrap(),
+        "inst-div-1078",
+        "502010",
+        "证券基金",
+        "CNY",
+        "unknown",
     );
 
+    let body = batch_body(
+        &[&format!(
+            r#"{{"kind":"dividend","amount_cents":3000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-04","instrument_id":"inst-div-1078"}}"#
+        )],
+        None,
+    );
     let results = post_batch(&app, body).await;
     assert_eq!(results.len(), 1);
-    for r in &results {
-        assert_eq!(r["success"], false, "dividend 应拒绝: {r}");
-        assert_eq!(r["duplicate"], false);
-        assert!(
-            r["error"].as_str().unwrap().contains("暂不支持"),
-            "应返回明确的「暂不支持」错误，实际: {r}"
-        );
-    }
+    assert_eq!(results[0]["success"], true, "dividend 应落库: {results:?}");
+    assert_eq!(results[0]["duplicate"], false);
 
-    let count = conn.lock().unwrap();
+    // 读回：kind / 金额 / 来源列标的。
+    let list = get_json(&app, "/api/v1/transactions").await;
+    let items = list.1["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["kind"], "dividend");
+    assert_eq!(items[0]["amount_cents"], 3000);
+    assert_eq!(items[0]["source"]["kind"], "instrument");
+    assert_eq!(items[0]["source"]["entity_id"], "inst-div-1078");
+}
+
+/// issue #1078 / ADR-0109：分红守卫经交易接口返回可读中文错误（缺标的、缺金额正性）。
+#[tokio::test]
+async fn test_batch_create_dividend_guards_return_readable_errors() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "银行卡").await;
+
+    let results = post_batch(
+        &app,
+        batch_body(
+            &[&format!(
+                r#"{{"kind":"dividend","amount_cents":3000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-04"}}"#
+            )],
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(results[0]["success"], false);
+    assert!(
+        results[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("分红必须指定标的"),
+        "缺标的应返回可读中文错误，实际: {results:?}"
+    );
+
+    let results = post_batch(
+        &app,
+        batch_body(
+            &[&format!(
+                r#"{{"kind":"dividend","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-04","instrument_id":"inst-x"}}"#
+            )],
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(results[0]["success"], false);
+
     assert_eq!(
-        count_active_transactions(&count),
+        count_active_transactions(&conn.lock().unwrap()),
         0,
         "被拒绝的 dividend 不应落库"
     );
@@ -250,10 +296,10 @@ async fn test_batch_buy_sell_with_missing_instrument_rejected_with_readable_erro
     );
 }
 
-/// issue #72：把一笔已有普通交易修改为 dividend/split 同样显式拒绝（行为层单点分派覆盖修改路径），
-/// 原交易保持不变。
+/// issue #1078 / ADR-0109：把一笔已有普通交易改为 dividend 由 kind 变更守卫拒绝
+/// （纠错只有「删除后重建」一条路），原交易保持不变。
 #[tokio::test]
-async fn test_update_transaction_to_dividend_rejected_with_not_supported() {
+async fn test_update_transaction_to_dividend_rejected_by_kind_change_guard() {
     let (app, _) = setup_app();
     let account_id = create_account_via_api(&app, "现金账户").await;
 
@@ -288,9 +334,10 @@ async fn test_update_transaction_to_dividend_rejected_with_not_supported() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let bytes = body_to_bytes(response.into_body()).await;
     let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "trade.dividend-kind-change-forbidden", "{err}");
     assert!(
-        err["message"].as_str().unwrap().contains("暂不支持"),
-        "修改为 dividend 应报「暂不支持」，实际: {err}"
+        err["message"].as_str().unwrap().contains("分红"),
+        "拒绝文案应对准分红，实际: {err}"
     );
 
     // 原交易保持不变（仍是 expense）。
@@ -298,6 +345,58 @@ async fn test_update_transaction_to_dividend_rejected_with_not_supported() {
     let items = list.1["items"].as_array().unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["kind"], "expense");
+}
+
+/// issue #1078 / ADR-0109：分红行可就地修改（全字段替换，扩展行摘除后重建），
+/// 读回金额随之更新（累计收益实时重聚，无物化状态）。
+#[tokio::test]
+async fn test_update_dividend_in_place_updates_amount() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "银行卡").await;
+    test_support::seed_instrument(
+        &conn.lock().unwrap(),
+        "inst-div-upd",
+        "502010",
+        "证券基金",
+        "CNY",
+        "unknown",
+    );
+    let created = post_batch(
+        &app,
+        batch_body(
+            &[&format!(
+                r#"{{"kind":"dividend","amount_cents":3000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-04","instrument_id":"inst-div-upd"}}"#
+            )],
+            None,
+        ),
+    )
+    .await;
+    let txn_id = created[0]["id"].as_str().unwrap().to_string();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/transactions/{txn_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"kind":"dividend","amount_cents":5000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-04","instrument_id":"inst-div-upd"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let list = get_json(&app, "/api/v1/transactions").await;
+    let items = list.1["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["kind"], "dividend");
+    assert_eq!(items[0]["amount_cents"], 5000);
+    // 就地修改后扩展行仍在（来源列标的反查仍命中，读时推导自扩展行）。
+    assert_eq!(items[0]["source"]["kind"], "instrument");
+    assert_eq!(items[0]["source"]["entity_id"], "inst-div-upd");
 }
 
 #[tokio::test]

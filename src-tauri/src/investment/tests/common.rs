@@ -226,6 +226,41 @@ pub(super) fn make_split_input(
     }
 }
 
+/// 现金分红输入构造器（issue #1078 / ADR-0109）：现金腿 = `amount_cents`，
+/// 标的必填；无份额 / 单价 / 手续费。`currency` 须与到账账户币种一致（写路径守卫），
+/// 到账账户可为任意在用账户（本构造器默认投资账户）。
+pub(super) fn make_dividend_input(
+    account_id: &str,
+    instrument_id: &str,
+    amount_cents: i64,
+    currency: &str,
+) -> TransactionInput {
+    TransactionInput {
+        merchant_name: None,
+        policy_id: None,
+        kind: TransactionKind::Dividend,
+        amount_cents,
+        currency_code: currency.into(),
+        account_id: account_id.into(),
+        to_account_id: None,
+        funding_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-02-10".into(),
+        instrument_id: Some(instrument_id.into()),
+        quantity: None,
+        price_cents: None,
+        fee_cents: Some(0),
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        idempotency_key: None,
+    }
+}
+
 /// 日期可指定的 buy/sell 输入（数量推算测试需要错开周采样日）。
 pub(super) fn make_trade_input(
     kind: TransactionKind,

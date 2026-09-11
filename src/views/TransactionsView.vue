@@ -33,6 +33,7 @@ import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import ConvertDetail from '@/components/ConvertDetail.vue'
 import SplitDetail from '@/components/SplitDetail.vue'
+import DividendDetail from '@/components/DividendDetail.vue'
 import { buildRowMenuOptions, supportsRowDetail, supportsRowEdit } from '@/components/transaction-row-menu'
 import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
 import { useInputMode } from '@/composables/useInputMode'
@@ -132,8 +133,8 @@ const merchantOptions = computed(() =>
     .map((m) => ({ label: m.name, value: m.id })),
 )
 
-/** 类型下拉选项：前端 TransactionKind 全量闭集（spec #1025 起多选，按闭集顺序渲染；
- * Rust 侧另有 dividend 未在前端类型暴露，不进过滤选项）。标签经 t() 随语言切换。 */
+/** 类型下拉选项：前端 TransactionKind 全量闭集（spec #1025 起多选，按闭集顺序渲染，
+ * 含只读 kind convert / split / dividend）。标签经 t() 随语言切换。 */
 const kindOptions = computed<Array<{ label: string; value: TransactionKind }>>(() =>
   TRANSACTION_KINDS.map((value) => ({
     label: t(`transactions.kind.${value}`),
@@ -330,14 +331,15 @@ function onRefundCreated() {
  * （fixed-target），序号作表单 key 强制重建实例（回填/提交均指向本次右键所在行）；
  * buy/sell 的「先取买卖明细再开窗、失败不开窗」时序与慢取竞态守卫内化在模块，
  * 取数不经视图。提交失败弹窗不关、已填内容不丢（错误提示与不重置均在表单 composable 内）。
- * convert 不进本入口（无现金腿 kind 界面只读，见 openDetailFromRow）。 */
+ * convert / split / dividend 不进本入口（界面只读 kind，见 openDetailFromRow）。 */
 function openEditFromRow(row: Transaction) {
   void openModal({ type: 'edit', row })
 }
 
-/** 只读详情弹窗（ADR-0106 决策 10 / #1048、#1052）：无现金腿 kind（convert / split）
- * 界面不体现写操作入口，行激活与菜单「详情」都进本入口；扩展明细的「先取数再开窗、
- * 失败不开窗」时序与慢取竞态守卫内化在 TransactionModalState，取数不经视图。 */
+/** 只读详情弹窗（ADR-0106 决策 10 / #1048、#1052；ADR-0109 / #1078）：界面只读
+ * kind（convert / split / dividend）不体现写操作入口，行激活与菜单「详情」都进本
+ * 入口；扩展明细的「先取数再开窗、失败不开窗」时序与慢取竞态守卫内化在
+ * TransactionModalState，取数不经视图。 */
 function openDetailFromRow(row: Transaction) {
   void openModal({ type: 'detail', row })
 }
@@ -606,9 +608,10 @@ function activateCard(row: Transaction): void {
         @saved="onEditSaved"
       />
     </AppModal>
-    <!-- 只读详情弹窗（ADR-0106 决策 10 / #1048、#1052）：无现金腿 kind（convert / split）
-         界面不体现任何写操作（无创建/编辑/软删）——convert 只读呈现「A → B」两侧标的、
-         份额、金额、手续费与结转成本，split 只读呈现标的、带符号份额变动、调整日与账户；
+    <!-- 只读详情弹窗（ADR-0106 决策 10 / #1048、#1052；ADR-0109 / #1078）：界面只读
+         kind（convert / split / dividend）不体现任何写操作（无创建/编辑/软删）——convert
+         只读呈现「A → B」两侧标的、份额、金额、手续费与结转成本，split 只读呈现标的、
+         带符号份额变动、调整日与账户，dividend 只读呈现归属标的、金额、到账账户与日期；
          行激活与菜单「详情」进本入口，扩展明细的取数时序内化在编排模块 -->
     <AppModal
       :show="intent?.type === 'detail'"
@@ -629,6 +632,11 @@ function activateCard(row: Transaction): void {
         v-else-if="detailIntent?.detail.kind === 'split'"
         :transaction="detailIntent.row"
         :split="detailIntent.detail.split"
+      />
+      <DividendDetail
+        :key="seq"
+        v-else-if="detailIntent?.detail.kind === 'dividend'"
+        :transaction="detailIntent.row"
       />
     </AppModal>
     <!-- 行右键菜单（issue #151 / #119 / #550）：expense 行「退款」「加入物品」+ 可编辑行「编辑」

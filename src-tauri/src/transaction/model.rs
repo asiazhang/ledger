@@ -181,9 +181,10 @@ pub struct TransactionInput {
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
-    /// 标的 id（仅 buy/sell/convert/split 需提供）：先用标的搜索端点
+    /// 标的 id（仅 buy/sell/convert/split/dividend 需提供）：先用标的搜索端点
     /// （`GET /api/v1/instruments`）把源数据中的标的描述解析为 id，未命中再按创建端点
-    /// 幂等新建；引用不存在的标的返回 400（中文错误，可读回自纠）。
+    /// 幂等新建；引用不存在的标的返回 400（中文错误，可读回自纠）。dividend 不要求
+    /// 当前有持仓，到账账户为任意在用账户（ADR-0109）。
     pub instrument_id: Option<String>,
     /// 成交数量（份，可含小数）：仅 buy/sell/convert/split 需提供。buy/sell 为成交份额、
     /// convert 为转出份额，均必须 > 0；split 为同一账户内单标的的带符号份额增量 Δ
@@ -191,14 +192,17 @@ pub struct TransactionInput {
     /// split 无现金腿：`amount_cents` 恒填 0、`price_cents` 不提供、`fee_cents` 只能为 0，
     /// 不携带 `to_instrument_id` / `to_account_id` / `funding_account_id` / 商户 / 分类 / 保单，
     /// 落账前后全部账户余额不变，仅持仓份额与市值随 Δ 变化（ADR-0106 决策 1/7）。
+    /// dividend 不提供数量（无份额变动）。
     pub quantity: Option<f64>,
     /// 成交单价（万分之一元，元 × 10000；价格刻度见 ADR-0038，金额列仍为整数分）：
     /// 非基金标的必填且必须 > 0；场外基金（issue #302 / ADR-0038 金额权威）不提供，
     /// 由后端按（行金额 ∓ 手续费）÷ 数量反算到万分之一元；convert 不提供（由转出金额 ÷ 转出份额反算）。
+    /// dividend 不提供（无成交单价）。
     pub price_cents: Option<i64>,
     /// 手续费（整数分，可省，默认 0）：sell 不得超过卖出收入（数量 × 单价，非基金）；
     /// 服务端行金额：非基金按 buy = 数量 × 单价 + 费用、sell = 数量 × 单价 − 费用重算；
     /// 场外基金以 `amount_cents`（确认单整分金额）为权威，行金额原样采用；convert 如实记录、不进支出报表。
+    /// dividend 不接受手续费（只能省或填 0）。
     pub fee_cents: Option<i64>,
     /// 转入标的 id（仅 convert）：与 `instrument_id`（转出标的）必须不同。
     pub to_instrument_id: Option<String>,
@@ -240,7 +244,7 @@ pub struct UpdateTransactionInput {
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
-    /// 标的 id（仅 buy/sell 需提供）：与 `TransactionInput` 同一契约；
+    /// 标的 id（仅 buy/sell/convert/split/dividend 需提供）：与 `TransactionInput` 同一契约；
     /// 引用不存在的标的返回 400（中文错误，可读回自纠）。
     pub instrument_id: Option<String>,
     /// 成交数量（份，可含小数）：与 `TransactionInput.quantity` 同一契约。

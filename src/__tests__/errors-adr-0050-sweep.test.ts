@@ -83,6 +83,65 @@ const cases: Case[] = [
     params: ['999', '1', '290', '46000'],
     en: 'share-adjustment replay check mismatch (source final holding 999, total cost 1; local rebuild 290, 46000); parked for review',
   },
+  // #1078 现金分红：kind 变更守卫与形态守卫（ADR-0109）。
+  {
+    code: 'trade.dividend-kind-change-forbidden',
+    message: '不可将交易类型改为或改出「分红」：换交易类型的纠错只有「删除后重建」一条路',
+    en: 'transaction type cannot be changed to or from "dividend": changing the type is only correctable by deleting and re-creating',
+  },
+  {
+    code: 'trade.dividend-instrument-required',
+    message: '分红必须指定标的',
+    en: 'a dividend must reference an instrument',
+  },
+  {
+    code: 'trade.dividend-instrument-not-found',
+    message: '分红标的不存在: inst-x',
+    params: ['inst-x'],
+    en: 'dividend instrument does not exist: inst-x',
+  },
+  {
+    code: 'trade.dividend-to-instrument-forbidden',
+    message: '分红是单标的现金收入，不能携带转入标的',
+    en: 'a dividend is a single-instrument cash inflow and cannot carry a target instrument',
+  },
+  {
+    code: 'trade.dividend-to-account-forbidden',
+    message: '分红不跨账户，不能携带转入账户',
+    en: 'a dividend does not move between accounts and cannot carry a target account',
+  },
+  {
+    code: 'trade.dividend-quantity-forbidden',
+    message: '分红无份额变动，不可提供数量',
+    en: 'a dividend has no share change; quantity is not accepted',
+  },
+  {
+    code: 'trade.dividend-price-forbidden',
+    message: '分红无成交单价，不可提供单价',
+    en: 'a dividend has no unit price; price_cents is not accepted',
+  },
+  {
+    code: 'trade.dividend-fee-forbidden',
+    message: '分红不接受手续费',
+    en: 'a dividend does not accept a fee',
+  },
+  {
+    code: 'trade.dividend-amount-positive',
+    message: '分红金额必须大于 0',
+    en: 'the dividend amount must be greater than 0',
+  },
+  {
+    code: 'trade.dividend-currency-mismatch',
+    message: '分红币种（CNY）必须与到账账户币种（USD）一致',
+    params: ['CNY', 'USD'],
+    en: 'the dividend currency (CNY) must match the destination account currency (USD)',
+  },
+  {
+    code: 'trade.dividend-account-not-found',
+    message: '分红到账账户不存在或已删除: acc-x',
+    params: ['acc-x'],
+    en: 'the dividend destination account does not exist or was deleted: acc-x',
+  },
 ]
 
 describe('errors.json 新增码表（ADR-0050 收口）', () => {

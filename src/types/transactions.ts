@@ -1,6 +1,15 @@
 import type { Syncable } from './common'
 
-export type TransactionKind = 'income' | 'expense' | 'transfer' | 'refund' | 'buy' | 'sell' | 'convert' | 'split'
+export type TransactionKind =
+  | 'income'
+  | 'expense'
+  | 'transfer'
+  | 'refund'
+  | 'buy'
+  | 'sell'
+  | 'convert'
+  | 'split'
+  | 'dividend'
 
 /** 交易来源类型闭集（spec #704 / issue #706，词汇表「来源列」）：定时计划三形态 /
  * 保单 / 物品 / 标的；wire 字面与后端枚举（camelCase）同源，与 source-jump.ts
@@ -186,9 +195,10 @@ export interface TransactionSearchFilter {
 }
 
 /** 「记一笔」可创建的类型：不含 refund（退款入口由交易条目右键菜单承接）；
- * 基金转换（convert）是无现金腿 kind，界面无手工录入入口（ADR-0106 决策 10 / #1048），
- * 写入面由 AI 导入 / HTTP 契约承担——移除后穷尽表仍由类型系统守门。 */
-export type CreateTransactionKind = Exclude<TransactionKind, 'refund' | 'convert' | 'split'>
+ * 无手工录入入口的 kind——convert / split 无现金腿（ADR-0106 决策 10 / #1048）与
+ * dividend 现金分红（ADR-0109 / #1078，界面只读呈现）——写入面由 AI 导入 /
+ * HTTP 契约承担；移除后穷尽表仍由类型系统守门。 */
+export type CreateTransactionKind = Exclude<TransactionKind, 'refund' | 'convert' | 'split' | 'dividend'>
 
 /** 前端交易类型闭集（穷尽表驱动）；显示标签在文案资源 transactions.kind.*（i18n，ADR-0049） */
 const TRANSACTION_KIND_PRESENCE = {
@@ -200,6 +210,7 @@ const TRANSACTION_KIND_PRESENCE = {
   sell: true,
   convert: true,
   split: true,
+  dividend: true,
 } satisfies Record<TransactionKind, boolean>
 
 export const TRANSACTION_KINDS = Object.keys(TRANSACTION_KIND_PRESENCE) as TransactionKind[]
@@ -223,6 +234,10 @@ const TRANSACTION_KIND_ACTIVATION = {
   // 份额调整（ADR-0106 / #1052）：与 convert 同属「无现金腿」kind——无创建 / 编辑 /
   // 软删写入口，行激活进只读详情（标的 + 带符号份额变动 + 调整日 + 账户）。
   split: 'detail',
+  // 现金分红（ADR-0109 / #1078）：界面只读呈现（比照 convert / split）——无创建 /
+  // 编辑 / 软删入口，行激活进只读详情（归属标的 + 金额 + 到账账户 + 日期）；
+  // 写入与纠错走 HTTP 契约（AI 导入 / 迁移侧）。
+  dividend: 'detail',
 } satisfies Record<TransactionKind, TransactionKindActivation>
 
 /** 行激活形态查询：行激活与行菜单按 kind 收口的唯一事实源。 */

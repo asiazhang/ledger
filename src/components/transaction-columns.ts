@@ -32,6 +32,9 @@ export const KIND_TAG_TYPE: Record<TransactionKind, 'success' | 'warning' | 'inf
   // 份额调整（ADR-0106 / #1049）：与转换同为「无现金腿」kind，同取 info 蓝色标注，
   // 标签文案区分二者。
   split: 'info',
+  // 现金分红（ADR-0109 / #1078）：投资现金流入（income 语义），取 success 绿色标注，
+  // 与买入/卖出的中性标签区分。
+  dividend: 'success',
 }
 
 /**

@@ -88,6 +88,8 @@ const SPLIT_CONSUMED_BY_DOWNSTREAM_CANNOT_DELETE_CODE: &str = "trade.split-consu
 ///   行——删目标行会按外键级联删掉消耗记录）；
 /// - split：其重述过的批次被在用下游消耗则拒绝改 / 删，放行后按重述审计逐批次 before
 ///   快照精确回补并清空扩展行（无级联语义，ADR-0106 决策 3/5）；
+/// - dividend：无持仓副作用（不改数量、不写匹配），摘除其 `security_transactions`
+///   扩展行即可（改 / 删两模式同一动作，issue #1078）；
 /// - 其余 kind 无持仓副作用，返回空表。
 ///
 /// 删除模式返回被级联的 sell id 列表（ADR-0097 契约：级联对象由行为层逐笔软删并
@@ -157,13 +159,22 @@ pub fn remove(
             split::restore_restatement(conn, id)?;
             Ok(Vec::new())
         }
-        // 行为层仅对 buy/sell/convert/split 调用本函数；其余 kind 无持仓副作用，no-op
+        // 现金分红（dividend，issue #1078）：无持仓副作用（不改数量、不写匹配），
+        // 唯一痕迹是 `security_transactions` 扩展行——改 / 删都只需摘除它，供
+        // 修改路径重建或删除路径留空；两模式同一动作，无守卫、无级联。
+        TransactionKind::Dividend => {
+            conn.execute(
+                "DELETE FROM security_transactions WHERE transaction_id=?1 AND action='dividend'",
+                rusqlite::params![id],
+            )?;
+            Ok(Vec::new())
+        }
+        // 行为层仅对 buy/sell/convert/split/dividend 调用本函数；其余 kind 无持仓副作用，no-op
         // （显式枚举保证新增 kind 时此处编译报错，而非落入兜底）。
         TransactionKind::Income
         | TransactionKind::Expense
         | TransactionKind::Transfer
-        | TransactionKind::Refund
-        | TransactionKind::Dividend => Ok(Vec::new()),
+        | TransactionKind::Refund => Ok(Vec::new()),
     }
 }
 

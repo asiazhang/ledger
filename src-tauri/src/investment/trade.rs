@@ -615,6 +615,17 @@ pub struct SplitPlan {
     pub(crate) total_cost_cents: i64,
 }
 
+/// 现金分红计划（issue #1078）：归一化行（现金腿记 `amount_cents`，kind→度量
+/// 矩阵既有行 account_flow + / income_net +）+ 归属标的。
+///
+/// 分红不触碰 FIFO 批次、不写卖出匹配、不改变任何持仓数量——apply 的唯一副作用
+/// 是落 `security_transactions` 的 dividend 扩展行（`quantity` / `price_cents`
+/// 恒 NULL），它同时是来源列标的反查与累计收益第三腿的数据源。
+pub struct DividendPlan {
+    pub(crate) normalized: NormalizedTransaction,
+    pub(crate) instrument_id: String,
+}
+
 /// 校验并归一化一笔份额调整（不落库）。本地创建与本地修改共用（修改路径以
 /// `existing_id` 限定重述范围，ADR-0106 决策 6）；重放形态走
 /// [`replay_split_plan`]（同一守卫集、从命令携带字段装配）。
@@ -759,6 +770,147 @@ fn prepare_split(
         final_quantity: restatement.final_quantity,
         total_cost_cents: restatement.total_cost_cents,
     })
+}
+
+/// 校验并归一化一笔现金分红（dividend）输入（不落库）。本地创建与本地修改共用；
+/// 重放形态走 [`replay_plan`] 的 Dividend 臂（同一守卫集、从命令携带字段装配）。
+///
+/// 语义（issue #1078 / ADR-0109）：分红是**归属于某标的**的现金收入——现金腿记
+/// `amount_cents`（kind→度量矩阵既有行：account_flow +、income_net +），标的信息
+/// 落 `security_transactions` 扩展行（action='dividend'，quantity / price 恒 NULL）。
+/// 分红**不摊薄持仓成本**：不触碰 FIFO 批次、不写卖出匹配、不改变任何持仓数量；
+/// 与已实现盈亏的关系是「累计收益的第三腿」（见投资域 `reports`）。
+///
+/// 守卫（grilling 定案，全部码化中文错误，ADR-0050）：
+/// - 标的必填且存在；**不要求当前有持仓**（除息 / 到账错位合法）；
+/// - 金额 > 0；
+/// - 到账账户必须是**在用账户**（任意类型——分红可直达银行卡 / 现金 / 投资账户，
+///   不限于投资账户），币种须与账户币种一致（现金腿不折算跨币种）；
+/// - 不接受份额 / 成交单价 / 手续费 / 转入标的 / 转入账户（意图漂移 fail fast）；
+/// - 商户 / 分类 / 保单由行为层参考数据携带准入拒绝（dividend 不在任何准入集）；
+///   出资账户由出资准入闭集拒绝（仅 buy/sell 可携带，ADR-0096）。
+fn prepare_dividend(conn: &Connection, input: &TransactionInput) -> Result<DividendPlan> {
+    let instrument_id = input
+        .instrument_id
+        .as_ref()
+        .ok_or_else(|| AppError::coded("trade.dividend-instrument-required", "分红必须指定标的"))?
+        .clone();
+    // 标的存在性先于数值校验：身份错了，数值对错无从谈起（buy/sell/convert/split
+    // 同一顺序）。标的类型不限（股票 / 基金 / 自建组合同构）。
+    fetch_instrument_type(
+        conn,
+        &instrument_id,
+        "分红",
+        "trade.dividend-instrument-not-found",
+    )?;
+    if input.to_instrument_id.is_some() {
+        return Err(AppError::coded(
+            "trade.dividend-to-instrument-forbidden",
+            "分红是单标的现金收入，不能携带转入标的",
+        ));
+    }
+    if input.to_account_id.is_some() {
+        return Err(AppError::coded(
+            "trade.dividend-to-account-forbidden",
+            "分红不跨账户，不能携带转入账户",
+        ));
+    }
+    if input.quantity.is_some() {
+        return Err(AppError::coded(
+            "trade.dividend-quantity-forbidden",
+            "分红无份额变动，不可提供数量",
+        ));
+    }
+    if input.price_cents.is_some() {
+        return Err(AppError::coded(
+            "trade.dividend-price-forbidden",
+            "分红无成交单价，不可提供单价",
+        ));
+    }
+    if input.fee_cents.unwrap_or(0) != 0 {
+        return Err(AppError::coded(
+            "trade.dividend-fee-forbidden",
+            "分红不接受手续费",
+        ));
+    }
+    if input.amount_cents <= 0 {
+        return Err(AppError::coded(
+            "trade.dividend-amount-positive",
+            "分红金额必须大于 0",
+        ));
+    }
+    // 到账账户：任意在用账户（非投资账户亦合法），币种须与账户币种一致。
+    let account_currency = active_account_currency(conn, &input.account_id)?;
+    if input.currency_code != account_currency {
+        return Err(AppError::codedp(
+            "trade.dividend-currency-mismatch",
+            format!(
+                "分红币种（{}）必须与到账账户币种（{account_currency}）一致",
+                input.currency_code
+            ),
+            &[&input.currency_code, &account_currency],
+        ));
+    }
+    // 出资账户准入（ADR-0096）：dividend 不在出资闭集内，携带即被既有「不能携带
+    // 出资账户」拒绝——到账账户就是现金腿端点，不另设第二份判定。
+    crate::transaction::funding::validate_funding_account(
+        conn,
+        TransactionKind::Dividend,
+        input.funding_account_id.as_deref(),
+        &account_currency,
+    )?;
+    let amount_native_cents =
+        amount::convert_to_native(conn, input.amount_cents, &account_currency)?;
+    Ok(DividendPlan {
+        normalized: NormalizedTransaction {
+            kind: TransactionKind::Dividend,
+            amount_cents: input.amount_cents,
+            currency_code: account_currency,
+            amount_native_cents,
+            account_id: input.account_id.clone(),
+            // 单标的、不跨账户：转入标的 / 转入账户已拒绝，出资账户已被准入拒绝。
+            to_account_id: None,
+            funding_account_id: None,
+            category_id: None,
+            merchant_id: None,
+            policy_id: None,
+            refund_of_transaction_id: None,
+            note: input.note.clone(),
+            date: input.date.clone(),
+        },
+        instrument_id,
+    })
+}
+
+/// 分红到账账户校验（issue #1078）：账户必须存在且未软删除（任意类型），返回
+/// 账户币种供币种一致性守卫。软删账户不可被**新选择**，历史引用照常保留——
+/// 与商户 / 保单 / 出资账户同款语义。
+fn active_account_currency(conn: &Connection, account_id: &str) -> Result<String> {
+    conn.query_row(
+        "SELECT currency_code FROM accounts WHERE id=?1 AND is_deleted=0",
+        rusqlite::params![account_id],
+        |r| r.get(0),
+    )
+    .optional()?
+    .ok_or_else(|| {
+        AppError::codedp_not_found(
+            "trade.dividend-account-not-found",
+            format!("分红到账账户不存在或已删除: {account_id}"),
+            &[account_id],
+        )
+    })
+}
+
+/// 分红副作用落库：`security_transactions` 扩展行（action='dividend'，
+/// `quantity` / `price_cents` 恒 NULL）——来源列标的反查与累计收益第三腿的数据源。
+/// 不触碰批次与卖出匹配：分红不改变持仓数量、不产生已实现盈亏。
+fn write_dividend_side_effects(conn: &Connection, id: &str, instrument_id: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
+         VALUES (?1,?2,'dividend',NULL,NULL,0)",
+        rusqlite::params![id, instrument_id],
+    )?;
+    Ok(())
 }
 
 /// 卖出交易的持仓/卖出关联副作用（创建与修改共用）。
@@ -918,6 +1070,8 @@ pub enum Plan {
     Convert(ConvertPlan),
     /// 份额调整（ADR-0106）：批次重述快照随计划走，apply 原样落库。
     Split(SplitPlan),
+    /// 现金分红（issue #1078）：现金腿 + 标的扩展行，不触碰 FIFO 批次。
+    Dividend(DividendPlan),
 }
 
 impl Plan {
@@ -928,6 +1082,7 @@ impl Plan {
             Plan::Sell(p) => &p.normalized,
             Plan::Convert(p) => &p.normalized,
             Plan::Split(p) => &p.normalized,
+            Plan::Dividend(p) => &p.normalized,
         }
     }
 }
@@ -949,14 +1104,14 @@ pub fn prepare(
         TransactionKind::Sell => Ok(Plan::Sell(prepare_sell(conn, input)?)),
         TransactionKind::Convert => Ok(Plan::Convert(prepare_convert(conn, input)?)),
         TransactionKind::Split => Ok(Plan::Split(prepare_split(conn, input, existing_id)?)),
-        // 行为层穷尽分派保证仅转发 buy/sell/convert/split；其余 kind 属编排错误，显式拒绝防误用
+        TransactionKind::Dividend => Ok(Plan::Dividend(prepare_dividend(conn, input)?)),
+        // 行为层穷尽分派保证仅转发投资 kind；其余 kind 属编排错误，显式拒绝防误用
         // （显式枚举保证新增 kind 时此处编译报错，而非落入兜底）。
         TransactionKind::Income
         | TransactionKind::Expense
         | TransactionKind::Transfer
-        | TransactionKind::Refund
-        | TransactionKind::Dividend => Err(AppError::Invalid(format!(
-            "投资层仅处理 buy/sell/convert/split，收到: {kind}"
+        | TransactionKind::Refund => Err(AppError::Invalid(format!(
+            "投资层仅处理 buy/sell/convert/split/dividend，收到: {kind}"
         ))),
     }
 }
@@ -975,6 +1130,7 @@ pub fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
             p.delta_quantity,
             &p.restated,
         ),
+        Plan::Dividend(p) => write_dividend_side_effects(conn, id, &p.instrument_id),
     }
 }
 
@@ -1157,17 +1313,61 @@ pub(crate) fn replay_plan(
                 gross_proceeds_cents,
             }))
         }
+        TransactionKind::Dividend => {
+            // 与本地 prepare 同序的守卫：身份（标的存在）→ 数值 → 到账账户。
+            // 金额是本位币折算结果的原始腿，随归一化行携带（源端折算，ADR-0091
+            // 决策 3），重放端校验其正性；形态漂移（携带转入账户 / 出资账户 /
+            // 币种与账户不符）与本地同码拒绝——伪造载荷不得绕开本地不变量。
+            fetch_instrument_type(
+                conn,
+                &fields.instrument_id,
+                "分红",
+                "trade.dividend-instrument-not-found",
+            )?;
+            if row.amount_cents <= 0 {
+                return Err(AppError::coded(
+                    "trade.dividend-amount-positive",
+                    "分红金额必须大于 0",
+                ));
+            }
+            if row.to_account_id.is_some() {
+                return Err(AppError::coded(
+                    "trade.dividend-to-account-forbidden",
+                    "分红不跨账户，不能携带转入账户",
+                ));
+            }
+            crate::transaction::funding::validate_funding_account(
+                conn,
+                TransactionKind::Dividend,
+                row.funding_account_id.as_deref(),
+                &row.currency_code,
+            )?;
+            let account_currency = active_account_currency(conn, &row.account_id)?;
+            if row.currency_code != account_currency {
+                return Err(AppError::codedp(
+                    "trade.dividend-currency-mismatch",
+                    format!(
+                        "分红币种（{}）必须与到账账户币种（{account_currency}）一致",
+                        row.currency_code
+                    ),
+                    &[&row.currency_code, &account_currency],
+                ));
+            }
+            Ok(Plan::Dividend(DividendPlan {
+                normalized: row.clone(),
+                instrument_id: fields.instrument_id.clone(),
+            }))
+        }
         // 行为层重放入口穷尽分派保证仅转发 buy/sell 至本函数（转换走
-        // [`replay_convert_plan`]）；其余 kind 属编排错误，显式拒绝防误用
-        //（不引入 panic 构造，ADR-0060）。
+        // [`replay_convert_plan`]，份额调整走 [`replay_split_plan`]）；其余 kind
+        // 属编排错误，显式拒绝防误用（不引入 panic 构造，ADR-0060）。
         TransactionKind::Income
         | TransactionKind::Expense
         | TransactionKind::Transfer
         | TransactionKind::Refund
-        | TransactionKind::Dividend
         | TransactionKind::Split
         | TransactionKind::Convert => Err(AppError::Invalid(format!(
-            "投资层重放仅处理 buy/sell，收到: {kind}"
+            "投资层重放仅处理 buy/sell/dividend（convert/split 走各自入口），收到: {kind}"
         ))),
     }
 }
