@@ -3,7 +3,13 @@ import { NIcon } from 'naive-ui'
 import type { DropdownOption } from 'naive-ui'
 import type { VNode } from 'vue'
 import { AddCircleOutline, CashOutline, CreateOutline, TrashOutline } from '@vicons/ionicons5'
-import { buildRowMenuOptions, renderRowMenuIcon } from '@/components/transaction-row-menu'
+import {
+  buildRowMenuOptions,
+  renderRowMenuIcon,
+  supportsRowDetail,
+  supportsRowEdit,
+} from '@/components/transaction-row-menu'
+import { TRANSACTION_KINDS } from '@/types'
 
 /** 渲染 DropdownOption.icon 工厂，取出其中的图标组件（用于断言挂了哪个图标）。 */
 function iconComponentOf(option: DropdownOption): unknown {
@@ -78,6 +84,12 @@ describe('buildRowMenuOptions（行右键菜单选项）', () => {
     expect(options.map((o) => 'key' in o && o.key)).toEqual(['delete'])
   })
 
+  it('convert 行：仅只读「详情」（无现金腿 kind 无编辑/软删入口，ADR-0106 决策 10 / #1048）', () => {
+    const options = buildRowMenuOptions({ kind: 'convert' })
+    expect(options.map((o) => 'key' in o && o.key)).toEqual(['detail'])
+    expect(options[0]).toMatchObject({ label: '详情', key: 'detail' })
+  })
+
   it('expense 行挂图标：编辑 CreateOutline、退款 CashOutline、加入物品 AddCircleOutline、删除 TrashOutline', () => {
     const options = buildRowMenuOptions({ kind: 'expense' })
     const byKey = (key: string) => options.find((o) => 'key' in o && o.key === key)!
@@ -117,5 +129,21 @@ describe('buildRowMenuOptions（行右键菜单选项）', () => {
     const options = buildRowMenuOptions({ kind: 'expense' })
     const del = options.find((o) => 'key' in o && o.key === 'delete')!
     expect(del.props).toBeUndefined()
+  })
+})
+
+describe('行激活开放闭集（ADR-0106 决策 10 / #1048）', () => {
+  it('可编辑 = 除 refund（破坏关联语义）与 convert（无现金腿只读）外的全部 kind', () => {
+    expect(TRANSACTION_KINDS.filter((kind) => supportsRowEdit({ kind }))).toEqual([
+      'income',
+      'expense',
+      'transfer',
+      'buy',
+      'sell',
+    ])
+  })
+
+  it('只读详情 = 仅 convert（split 随 #1045 接入）', () => {
+    expect(TRANSACTION_KINDS.filter((kind) => supportsRowDetail({ kind }))).toEqual(['convert'])
   })
 })

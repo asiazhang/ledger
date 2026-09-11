@@ -32,14 +32,13 @@ describe('CREATE_KIND_KEYS 键位映射', () => {
     expect('refund' in CREATE_KIND_KEYS).toBe(false)
   })
 
-  it('键位分配：a=支出 z=转账 i=收入 b=买入 s=卖出 c=转换', () => {
+  it('键位分配：a=支出 z=转账 i=收入 b=买入 s=卖出（convert 无手工录入入口，不占键位）', () => {
     expect(CREATE_KIND_KEYS).toEqual({
       expense: 'a',
       transfer: 'z',
       income: 'i',
       buy: 'b',
       sell: 's',
-      convert: 'c',
     })
   })
 })
@@ -62,9 +61,10 @@ describe('matchCreateShortcut 真值表', () => {
     },
   )
 
-  it.each(['A', 'r', 'x', '1', 'Escape', 'Enter', ' '])('非映射裸键 %s 不命中', (key) => {
+  it.each(['A', 'r', 'x', 'c', '1', 'Escape', 'Enter', ' '])('非映射裸键 %s 不命中', (key) => {
     // 大写 A（如 CapsLock）不命中：精确匹配小写键位
     // r 无键位：退款不占键位
+    // c 无键位：convert 无手工录入入口（ADR-0106 决策 10 / #1048）
     expect(matchCreateShortcut(press(key))).toBeNull()
   })
 })

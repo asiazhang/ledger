@@ -183,8 +183,9 @@ export interface TransactionSearchFilter {
 }
 
 /** 「记一笔」可创建的类型：不含 refund（退款入口由交易条目右键菜单承接）；
- * 基金转换（convert，issue #979 落地）同样以独立表单入口承载，已纳入菜单。 */
-export type CreateTransactionKind = Exclude<TransactionKind, 'refund'>
+ * 基金转换（convert）是无现金腿 kind，界面无手工录入入口（ADR-0106 决策 10 / #1048），
+ * 写入面由 AI 导入 / HTTP 契约承担——移除后穷尽表仍由类型系统守门。 */
+export type CreateTransactionKind = Exclude<TransactionKind, 'refund' | 'convert'>
 
 /** 前端交易类型闭集（穷尽表驱动）；显示标签在文案资源 transactions.kind.*（i18n，ADR-0049） */
 const TRANSACTION_KIND_PRESENCE = {
@@ -199,6 +200,28 @@ const TRANSACTION_KIND_PRESENCE = {
 
 export const TRANSACTION_KINDS = Object.keys(TRANSACTION_KIND_PRESENCE) as TransactionKind[]
 
+/** 交易 kind 的行激活形态闭集（穷尽表驱动，ADR-0106 决策 10 / #1048）：
+ * - `edit`：行激活进可编辑表单（行菜单「编辑」）；
+ * - `detail`：只读详情——「无现金腿」kind 无创建 / 编辑 / 软删写入口，只保留只读呈现；
+ * - `none`：无行激活（refund 破坏关联语义，仅留行菜单软删）。
+ * 新增 kind 而未更新此表时编译报错；split 落地（#1045）按件补行。 */
+export type TransactionKindActivation = 'edit' | 'detail' | 'none'
+
+const TRANSACTION_KIND_ACTIVATION = {
+  income: 'edit',
+  expense: 'edit',
+  transfer: 'edit',
+  refund: 'none',
+  buy: 'edit',
+  sell: 'edit',
+  convert: 'detail',
+} satisfies Record<TransactionKind, TransactionKindActivation>
+
+/** 行激活形态查询：行激活与行菜单按 kind 收口的唯一事实源。 */
+export function transactionKindActivation(kind: TransactionKind): TransactionKindActivation {
+  return TRANSACTION_KIND_ACTIVATION[kind]
+}
+
 /** 「记一笔」分裂按钮可创建的类型：枚举对象以 Record<CreateTransactionKind, true> 表达，
  * 新增 kind 而未更新此表时编译报错（穷尽性由类型系统保证，下拉不会静默漏项）。 */
 const CREATE_KIND_MAP = {
@@ -207,11 +230,11 @@ const CREATE_KIND_MAP = {
   transfer: true,
   buy: true,
   sell: true,
-  convert: true,
 } satisfies Record<CreateTransactionKind, true>
 
 /** 「记一笔」入口可选类型（不含 refund：退款已移出表单域，入口由交易条目
- * 右键菜单承接，独立 ticket 落地前处于过渡态）。 */
+ * 右键菜单承接，独立 ticket 落地前处于过渡态；不含 convert：无现金腿 kind
+ * 界面只读、无手工录入，ADR-0106 决策 10 / #1048）。 */
 export const CREATE_KINDS = Object.keys(CREATE_KIND_MAP) as CreateTransactionKind[]
 
 /** 「记一笔」表单形态闭集：可创建 kind + 借贷两个呈现变体（issue #374 / ADR-0053：
