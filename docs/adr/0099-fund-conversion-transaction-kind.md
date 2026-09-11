@@ -26,6 +26,8 @@ wire 值 / DB CHECK / 同步载荷 / i18n key 统一 `convert`。一笔转换 = 
 
 守卫（与既有 kind 同款收口在行为层，不设库层 kind↔列矩阵约束）：两标的必须不同、同属一个投资账户、转出份额不得超当前持仓（同 sell）；convert 不在出资账户准入闭集内（ADR-0096 既有「不能携带出资账户」错误天然拒绝）。`dividend` / `split` 维持显式「暂不支持」拒绝，闭集扩容不改变其状态。
 
+> **修订（ADR-0106）**：`split` 已激活为**份额调整**（单标的、非现金、带符号份额变动），本节「维持显式拒绝」自 ADR-0106 起只对 `dividend` 成立；`convert` 与 `split` 同为「无现金腿」家族，成本重述与回退依据见 ADR-0106。
+
 ### 2. 存储形态：`security_transactions` 扩 4 个可空列 + 转出消耗表
 
 `security_transactions` 扩 `to_instrument_id`（命名对齐 transfer 的 `to_account_id` 惯例）/ `to_quantity` / `out_amount_cents` / `in_amount_cents`，`action` CHECK 纳入 `'convert'`。convert 行：`instrument_id` = 转出标的、`quantity` = 转出份额、`price_cents` = 反算的展示单价（金额权威、单价反算，与场外基金 buy/sell 同款）、`fee_cents` = 手续费。
@@ -58,9 +60,13 @@ convert 行金额占位 0 提交，服务端按 FIFO 消耗算出结转成本后
 
 提交走既有批量导入端点，`TransactionInput` 只增 `to_instrument_id` / `to_quantity` / `out_amount_cents` / `in_amount_cents` 四个可选字段；契约经运行时自描述自动带出。kind 闭集精确断言锁与 20KB 体积预算锁（ADR-0090）随 `convert` 同步更新；导入知识新增「基金转换」教学节（快照字段位置、单腿一条记录、腿序幂等键、金额占比分摊、余额不变对账口径、纠错步骤；多腿转出份额「逐腿直读 / 金额占比拆分」两写）。「dividend/split 不受支持」文案保留。
 
+> **修订（ADR-0106）**：`split`（份额调整）获得同等待遇——导入知识新增份额调整教学节，能力文案改为「`split` 可用 / `dividend` 仍拒绝」。本节对 `dividend` 保留的部分不变。
+
 ### 8. 前端形态
 
 类型标签 i18n「转换 / Convert」；PC 列表与移动卡片金额列显示转出金额；筛选闭集自动纳入；详情/编辑弹窗显示「A → B」两侧标的、份额、金额、手续费与结转成本；新增转换表单组件与 composable（复用标的远程搜索、账户选择、金额元转分接缝）。**不做基金/非基金形态分流**——转换天然只有确认单一种录入形态，份额 + 金额恒为权威输入。前端按 kind 穷尽的记录类型（字段矩阵、语义色、标签色、存在性穷尽表等）编译强制点逐点补齐。
+
+> **修订（ADR-0106 / #1048）**：产品定位以 AI 记账为主，「无现金腿」kind 在 UI 上不再体现操作按钮——convert 的创建入口、编辑与软删入口撤下，只保留列表 / 筛选 / 只读详情；本节交付的可编辑表单形态由 #1048 反转，筛选闭集保留不变（否则 AI 落库的记录不可见、不可筛）。裁决记录见 ADR-0106 决策 10。
 
 ### 9. schema 发布边界：**就地修改 V001/V002** + 两级 BREAKING 标记，存量库不自动升级
 
