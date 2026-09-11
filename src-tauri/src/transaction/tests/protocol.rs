@@ -1,5 +1,5 @@
 //! 写入协议的协议级对称断言（issue #1004 / ADR-0105）：Local / Replay 两形态
-//! 跑同一断言集——kind 守卫（dividend / split 暂不支持）与 convert kind 变更
+//! 跑同一断言集——kind 守卫（dividend 暂不支持）与 convert / split kind 变更
 //! 禁止同码同文案、op 发射开关（重放不产本地 op）、id 来源（重放随命令携带）。
 //! 本地形态经行为层既有编排入口驱动；重放形态经同步引擎 dispatch 的既有消费面
 //! （`replay_command`）驱动。
@@ -95,10 +95,10 @@ fn seed_buy_and_convert(conn: &Connection) -> (String, String) {
     (buy_id, convert_id)
 }
 
-/// kind 守卫（dividend 暂不支持；split 的 Replay 形态拒绝挂起——重放重建归
-/// #1053）在创建协议按形态裁决，且均不落库（拒绝先于任何写入）。
+/// kind 守卫（dividend 暂不支持）在创建协议按形态裁决，且均不落库（拒绝先于
+/// 任何写入）。
 #[test]
-fn create_rejects_dividend_split_same_code_both_forms() {
+fn create_rejects_dividend_same_code_both_forms() {
     for kind in [TransactionKind::Dividend] {
         // Local：行为层创建编排入口。
         let conn_local = test_support::open();
@@ -107,8 +107,8 @@ fn create_rejects_dividend_split_same_code_both_forms() {
             create_transaction_internal(&conn_local, make_input("acc-g", kind, 500, "2026-05-04"))
                 .unwrap_err();
 
-        // Replay：同步引擎 dispatch 的既有消费面（伪造 dividend/split 载荷——
-        // 本地 plan 从不产出这两种命令）。
+        // Replay：同步引擎 dispatch 的既有消费面（伪造 dividend 载荷——
+        // 本地 plan 从不产出该命令）。
         let conn_replay = test_support::open();
         seed_account(&conn_replay, "acc-g", "现金", "cash", "CNY", 0);
         let err_replay = replay_command(
@@ -117,6 +117,7 @@ fn create_rejects_dividend_split_same_code_both_forms() {
                 id: "sync-div-1".into(),
                 row: carried_row(kind, "acc-g", 500),
                 investment: None,
+                split: None,
                 convert: None,
             },
         )
@@ -184,6 +185,7 @@ fn update_rejects_dividend_split_same_code_both_forms() {
                 id: id_replay.clone(),
                 row: carried_row(kind, "acc-g", 500),
                 investment: None,
+                split: None,
                 convert: None,
             },
         )
@@ -234,6 +236,7 @@ fn update_convert_kind_change_same_code_both_forms() {
             id: buy_id_r,
             row: carried_row(TransactionKind::Convert, "acc-cv", 1_000),
             investment: None,
+            split: None,
             convert: None,
         },
     )
@@ -244,6 +247,7 @@ fn update_convert_kind_change_same_code_both_forms() {
             id: convert_id_r,
             row: carried_row(TransactionKind::Buy, "acc-cv", 0),
             investment: None,
+            split: None,
             convert: None,
         },
     )
@@ -289,6 +293,7 @@ fn replay_create_uses_carried_id_and_emits_no_local_op() {
             id: "sync-tx-1".into(),
             row: carried_row(TransactionKind::Expense, "acc-r", 6_400),
             investment: None,
+            split: None,
             convert: None,
         },
     )
@@ -305,12 +310,13 @@ fn replay_create_uses_carried_id_and_emits_no_local_op() {
     );
 }
 
-/// split 的创建协议两形态差异（ADR-0106 / #1049 临时形态）：Local 经投资域
+/// split 的创建协议两形态（ADR-0106 / #1049 / #1053）：Local 经投资域
 /// prepare_split 守卫（本场景缺标的 → trade.split-instrument-required，非 kind
-/// 拒绝）；Replay 显式拒绝挂起（重放端本地重述重建归 #1053，此前由引擎 ParkedOp
-/// 承接，不静默落半套副作用）。
+/// 拒绝）；Replay 经投资域重放装配——旧载荷缺份额调整字段由 kind 防御臂码化
+/// 拒绝（引擎 ParkedOp 承接），有字段但零在用持仓由本地同码守卫拒绝，均不落
+/// 半套副作用。
 #[test]
-fn create_split_local_enters_domain_guard_but_replay_rejected() {
+fn create_split_local_and_replay_enter_domain_guards() {
     // Local：split 进入投资域守卫（缺标的 → trade.split-instrument-required）。
     let conn_local = test_support::open();
     seed_account(&conn_local, "acc-split", "现金", "cash", "CNY", 0);
@@ -325,7 +331,7 @@ fn create_split_local_enters_domain_guard_but_replay_rejected() {
         "Local 的 split 应进投资域守卫而非 kind 拒绝"
     );
 
-    // Replay：伪造 split 创建命令 → 显式拒绝（kind-unsupported，引擎挂起承接）。
+    // Replay（旧载荷，缺份额调整字段）：kind 防御臂码化拒绝，引擎挂起承接。
     let conn_replay = test_support::open();
     seed_account(&conn_replay, "acc-split", "现金", "cash", "CNY", 0);
     let err_replay = replay_command(
@@ -334,13 +340,37 @@ fn create_split_local_enters_domain_guard_but_replay_rejected() {
             id: "sync-split-1".into(),
             row: carried_row(TransactionKind::Split, "acc-split", 0),
             investment: None,
+            split: None,
             convert: None,
         },
     )
     .unwrap_err();
     assert_eq!(
         coded_of(err_replay).0,
-        "transaction.kind-unsupported",
-        "Replay 的 split 应显式拒绝由引擎挂起（#1053 收编前）"
+        "transaction.split-fields-missing",
+        "缺份额调整字段的旧 split 载荷应码化挂起（不静默落半套副作用）"
+    );
+
+    // Replay（有字段但非投资账户）：本地同码守卫拒绝，重放不得绕开不变量。
+    let err_replay = replay_command(
+        &conn_replay,
+        &TransactionCommand::Create {
+            id: "sync-split-2".into(),
+            row: carried_row(TransactionKind::Split, "acc-split", 0),
+            investment: None,
+            split: Some(crate::transaction::command::SplitCommandFields {
+                instrument_id: "inst-missing".into(),
+                delta_quantity: 5.0,
+                final_quantity: 5.0,
+                total_cost_cents: 0,
+            }),
+            convert: None,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        coded_of(err_replay).0,
+        "trade.split-instrument-not-found",
+        "Replay 的 split 应进投资域重放守卫而非 kind 拒绝"
     );
 }

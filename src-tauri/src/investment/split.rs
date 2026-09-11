@@ -55,6 +55,21 @@ pub(crate) struct LotRestatement {
     pub(crate) cost_per_unit_after: i64,
 }
 
+/// 一次份额调整重述的完整结果：逐批次快照 + 两个**总量锚点**。
+///
+/// 总量锚点是跨端重放确定性的比对基准（ADR-0106 决策 9：重放端本地重建重述并
+/// 比对最终持仓与总成本，不一致显式挂起）：源端随命令携带，重放端以本地快照
+/// 独立重建后逐项比对——本地快照与源端发散（前序 op 未达、载荷被篡改）即命中
+/// 码化挂起，不静默落出错误持仓与成本基础。
+pub(crate) struct Restatement {
+    pub(crate) lots: Vec<LotRestatement>,
+    /// 重述后总持仓（Σ remaining_after）。
+    pub(crate) final_quantity: f64,
+    /// 批次总成本（分）：权威闭合目标 Σ（锚点 − 既往记录消耗），重述精确不变
+    /// （ADR-0106 决策 4 的「批次总成本精确不变」）。
+    pub(crate) total_cost_cents: i64,
+}
+
 /// 单批次重述前的快照（回补的唯一依据）：读自 `security_lot_adjustments` 的
 /// `_before` 列，命名列组随结构体带语义，不靠 SELECT 位置约定。
 struct LotBefore {
@@ -134,7 +149,7 @@ pub(crate) fn plan_restatement(
     instrument_id: &str,
     delta: f64,
     before_transaction_rowid: Option<i64>,
-) -> Result<Vec<LotRestatement>> {
+) -> Result<Restatement> {
     let lots = snapshot_active_lots(conn, account_id, instrument_id, before_transaction_rowid)?;
     let total_holding: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
     // 缩股取严（ADR-0106 决策 1/7）：|Δ| 必须严格小于当前持仓——等号让 f = 0、
@@ -144,7 +159,11 @@ pub(crate) fn plan_restatement(
         return Err(shrink_not_less_than_holding_error(total_holding, -delta));
     }
     if lots.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Restatement {
+            lots: Vec::new(),
+            final_quantity: 0.0,
+            total_cost_cents: 0,
+        });
     }
     let factor = (total_holding + delta) / total_holding;
 
@@ -184,7 +203,12 @@ pub(crate) fn plan_restatement(
             cost_per_unit_after,
         });
     }
-    Ok(out)
+    let final_quantity: f64 = out.iter().map(|r| r.remaining_after).sum();
+    Ok(Restatement {
+        lots: out,
+        final_quantity,
+        total_cost_cents: target_total_cents,
+    })
 }
 
 /// 应用份额调整副作用（创建路径在交易行落库后调用，与行写入同事务）：

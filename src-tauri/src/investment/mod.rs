@@ -134,7 +134,7 @@ pub use trade::{
     Plan, apply, convert_fields_by_transaction_ids, get_transaction_convert, get_transaction_split,
     get_transaction_trade, prepare, release_for_delete, revert,
 };
-pub(crate) use trade::{replay_convert_plan, replay_plan};
+pub(crate) use trade::{replay_convert_plan, replay_plan, replay_split_plan};
 pub use trend::{query_instrument_price_trend, query_portfolio_value_trend};
 
 #[cfg(test)]

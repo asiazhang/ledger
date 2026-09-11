@@ -91,7 +91,9 @@
     "policy-unsupported": "Transaction kind {0} cannot carry a policy",
     "funding-unsupported": "transaction type {0} cannot carry a funding account",
     "convert-fields-missing": "this conversion operation lacks the fields required for sync replay (produced by an earlier version) and cannot be replayed here; delete and re-enter the conversion on the source device, then sync again",
-    "convert-carried-cost-mismatch": "conversion carried-cost check mismatch (source {0}, local rebuild {1}, row amount {2}); parked for review"
+    "convert-carried-cost-mismatch": "conversion carried-cost check mismatch (source {0}, local rebuild {1}, row amount {2}); parked for review",
+    "split-fields-missing": "this share adjustment lacks the fields required for sync replay (produced by an earlier version) and cannot be replayed here; delete and re-enter the share adjustment on the source device, then sync again",
+    "split-restatement-mismatch": "share-adjustment replay check mismatch (source final holding {0}, total cost {1}; local rebuild {2}, {3}); parked for review"
   },
   "funding": {
     "account-not-found": "funding account does not exist or has been deleted: {0}",

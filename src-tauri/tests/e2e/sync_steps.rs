@@ -202,6 +202,7 @@ fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
                 date: "2026-02-01".into(),
             },
             investment: None,
+            split: None,
             convert: None,
         }),
     };
