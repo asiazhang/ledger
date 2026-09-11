@@ -30,6 +30,11 @@ const usd: Currency = { code: 'USD', name: '美元', symbol: '$', decimal_places
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
+  // 累计收益（issue #1077）：后端按币种分组聚合（未实现 + 已实现两腿相加）
+  cumulative_pnl_summary: [
+    { currency_code: 'CNY', cumulative_pnl_cents: 30000 },
+    { currency_code: 'USD', cumulative_pnl_cents: -500 },
+  ],
 }
 
 /** 参考命令本场景需自定义值（overrides 优先于参考兑底）：行装配断言消费账户名「证券账户A」 */
@@ -134,6 +139,17 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
     expect(totalUnrealizedPnlGroups.value).toEqual([{ currencyCode: 'CNY', cents: 30000 }])
   })
 
+  it('累计收益按币种分组透传（issue #1077）：后端两腿相加结果直接成组，不从持仓行派生', async () => {
+    const { totalCumulativePnlGroups, refresh } = withSetup(() => usePortfolioOverview())
+    await refresh()
+    expect(totalCumulativePnlGroups.value).toEqual([
+      { currencyCode: 'CNY', cents: 30000 },
+      { currencyCode: 'USD', cents: -500 },
+    ])
+    // USD 组只可能来自后端聚合（持仓行全为 CNY），排除前端从持仓行二次求和
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'cumulative_pnl_summary')).toBe(true)
+  })
+
   it('无持仓时行为明确：rows 为空、汇总为空数组，不报错', async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
@@ -141,14 +157,22 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
         ...REFERENCE_OVERRIDES,
         list_holdings: [],
         list_instruments: { items: [], total: 0 },
+        cumulative_pnl_summary: [],
       },
     })
-    const { rows, loading, totalMarketValueGroups, totalUnrealizedPnlGroups, refresh } =
-      withSetup(() => usePortfolioOverview())
+    const {
+      rows,
+      loading,
+      totalMarketValueGroups,
+      totalUnrealizedPnlGroups,
+      totalCumulativePnlGroups,
+      refresh,
+    } = withSetup(() => usePortfolioOverview())
     await refresh()
     expect(rows.value).toEqual([])
     expect(totalMarketValueGroups.value).toEqual([])
     expect(totalUnrealizedPnlGroups.value).toEqual([])
+    expect(totalCumulativePnlGroups.value).toEqual([])
     expect(loading.value).toBe(false)
   })
 })

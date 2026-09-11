@@ -41,10 +41,13 @@ vi.mock('@/composables/usePricesChanged', async () => {
   }
 })
 
-/** 默认布线 defaults 表：持仓 + 持仓标的字典 + 标的信息同步（参考五命令走接缝规范兜底） */
+/** 默认布线 defaults 表：持仓 + 持仓标的字典 + 累计收益聚合 + 标的信息同步
+ *（参考五命令走接缝规范兜底） */
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
+  // 累计收益（issue #1077）：全账本按币种聚合，独立于持仓行（后端两腿相加）
+  cumulative_pnl_summary: [{ currency_code: 'CNY', cumulative_pnl_cents: 48000 }],
   sync_instrument_info: { synced: 2, skipped: 0, message: '已同步 2 只，跳过 0 只' },
 }
 
@@ -63,21 +66,25 @@ async function cellText(colKey: string): Promise<string[]> {
 }
 
 describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
-  it('渲染总市值与未实现盈亏合计（排除无行情行）', async () => {
+  it('渲染总市值、持仓收益合计与累计收益（排除无行情行）', async () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
     expect(wrapper.text()).toContain('当前持仓')
     expect(wrapper.text()).toContain('总市值')
     expect(wrapper.text()).toContain(formatAmount(150000, cny))
-    expect(wrapper.text()).toContain('未实现盈亏合计')
-    expect(wrapper.text()).toContain(formatAmount(30000, cny))
+    // 展示词逐字归一（issue #1077）：合计卡标签即「持仓收益」（账务口径仍为未实现盈亏）
+    expect(wrapper.find('[data-testid="total-unrealized-pnl"]').text()).toBe(
+      `持仓收益${formatAmount(30000, cny)}`,
+    )
+    // 展示词归一（issue #1077）：持仓页签不再残留「未实现盈亏」文案
+    expect(wrapper.text()).not.toContain('未实现盈亏')
   })
 
-  it('渲染持仓明细表列：标的/数量/成本/现价/市值/未实现盈亏', async () => {
+  it('渲染持仓明细表列：标的/数量/成本/现价/市值/持仓收益', async () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
     const headers = wrapper.findAll('th').map((th) => th.text())
-    for (const h of ['标的', '名称', '账户', '数量', '成本', '现价', '净值日期', '市值', '未实现盈亏']) {
+    for (const h of ['标的', '名称', '账户', '数量', '成本', '现价', '净值日期', '市值', '持仓收益']) {
       expect(headers).toContain(h)
     }
     // 行数据来自 mock（默认标的代码字母序，issue #902：000001 < 600000）
@@ -88,6 +95,15 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     expect(await cellText('latest_price')).toEqual(['-', formatPrice(150000, cny)])
     expect(await cellText('market_value')).toEqual(['-', formatAmount(150000, cny)])
     expect(await cellText('unrealized_pnl')).toEqual(['-', formatAmount(30000, cny)])
+  })
+
+  it('合计区新增「累计收益」卡并按币种分组展示（issue #1077 接线负向条目，ADR-0087）', async () => {
+    // 断言对准用户可观察结果：删除该卡的接线调用（NStatistic / testid）即找不到卡片、本用例变红。
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    const card = wrapper.find('[data-testid="total-cumulative-pnl"]')
+    expect(card.exists()).toBe(true)
+    expect(card.text()).toBe(`累计收益${formatAmount(48000, cny)}`)
   })
 
   it('无持仓时显示空态', async () => {
@@ -334,6 +350,8 @@ const FILTER_HOLDINGS: Holding[] = [
 const FILTER_DEFAULTS = {
   list_holdings: FILTER_HOLDINGS,
   list_instruments: { items: FILTER_INSTRUMENTS, total: FILTER_INSTRUMENTS.length },
+  // 累计收益（issue #1077）：全账本口径，不随三维过滤收窄
+  cumulative_pnl_summary: [{ currency_code: 'CNY', cumulative_pnl_cents: 26000 }],
   sync_instrument_info: { synced: 4, skipped: 0, message: '已同步 4 只，跳过 0 只' },
 }
 
@@ -431,16 +449,16 @@ describe('HoldingsOverview 三维过滤排序（issue #902）', () => {
     expect(await cellText('symbol')).toEqual(['000001', '00700', '600000', 'AAPL'])
   })
 
-  it('未实现盈亏列头排序：盈利在前亏损在后，缺价行恒排末尾', async () => {
+  it('持仓收益列头排序：盈利在前亏损在后，缺价行恒排末尾', async () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
-    const pnlTh = wrapper.findAll('th').find((th) => th.text() === '未实现盈亏')!
+    const pnlTh = wrapper.findAll('th').find((th) => th.text() === '持仓收益')!
     await pnlTh.trigger('click')
     await nextTick()
     // 降序：30000 → 10000 → -500000，缺价行末尾
     expect(await cellText('symbol')).toEqual(['600000', 'AAPL', '00700', '000001'])
     // 升序：盈利在后，缺价行仍末尾（表头重建后重新查找）
-    await wrapper.findAll('th').find((th) => th.text() === '未实现盈亏')!.trigger('click')
+    await wrapper.findAll('th').find((th) => th.text() === '持仓收益')!.trigger('click')
     await nextTick()
     expect(await cellText('symbol')).toEqual(['00700', 'AAPL', '600000', '000001'])
   })
@@ -533,6 +551,7 @@ const PAGE_INSTRUMENTS: Instrument[] = PAGE_HOLDINGS.map((h, i) =>
 const PAGE_DEFAULTS = {
   list_holdings: PAGE_HOLDINGS,
   list_instruments: { items: PAGE_INSTRUMENTS, total: PAGE_INSTRUMENTS.length },
+  cumulative_pnl_summary: [],
   sync_instrument_info: { synced: 25, skipped: 0, message: '已同步 25 只，跳过 0 只' },
 }
 

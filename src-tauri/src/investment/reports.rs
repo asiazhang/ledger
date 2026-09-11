@@ -1,10 +1,41 @@
 use rusqlite::Connection;
 
 use super::model::{
-    AccountPnl, CurrencyPnl, InstrumentPnl, PnlFilter, RealizedPnlSummary, YearPnl,
+    AccountPnl, CurrencyCumulativePnl, CurrencyPnl, InstrumentPnl, PnlFilter, RealizedPnlSummary,
+    YearPnl,
 };
 use crate::db::query::query_all;
 use crate::error::Result;
+
+/// 按币种分组的累计收益（issue #1077 / 词汇表「累计收益（CumulativePnl）」）：
+/// 未实现盈亏（Holding 侧，`v_holdings`）+ 已实现盈亏（RealizedPnl 侧，
+/// `security_lot_sales`）两腿相加，按币种独立成组、不做跨币种折算。
+///
+/// **复用两条既有读口径、不改其定义**：未实现腿直接取 `v_holdings` 的账户本位币
+/// `unrealized_pnl_cents`（账户币种经 `accounts` 取出，与视图折算口径同源）；已实现腿
+/// 与 [`query_realized_pnl_summary`] 同一过滤——软删账户（`a.is_deleted=0`）与软删交易
+/// （`t.is_deleted=0`）排除，隐藏账户照常计入。
+///
+/// **空值语义采 Holding 侧**：缺价 / 缺汇率持仓的未实现腿为 NULL，在 `SUM` 中跳过、
+/// 不以零计入（与持仓视图合计的既有空值语义一致）；已实现腿为平仓匹配、无此空值。
+/// 某币种两腿皆空时不出现该分组。
+pub fn query_cumulative_pnl_summary(conn: &Connection) -> Result<Vec<CurrencyCumulativePnl>> {
+    // 两腿 `UNION ALL` 后按币种分组求和：未实现腿按账户币种、已实现腿按匹配行币种，
+    // 两条口径的币种在单账户内同源（buy/sell 记录币种恒为账户币），故同组可直接相加。
+    let sql = "SELECT currency_code, SUM(amount_cents) FROM (\
+                   SELECT a.currency_code AS currency_code, v.unrealized_pnl_cents AS amount_cents \
+                   FROM v_holdings v \
+                   JOIN accounts a ON a.id = v.account_id \
+                   WHERE v.unrealized_pnl_cents IS NOT NULL \
+                   UNION ALL \
+                   SELECT sls.currency_code AS currency_code, sls.realized_pnl_cents AS amount_cents \
+                   FROM security_lot_sales sls \
+                   JOIN transactions t ON t.id = sls.sell_transaction_id \
+                   JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0 \
+                   WHERE t.is_deleted = 0 \
+               ) GROUP BY currency_code ORDER BY currency_code";
+    query_all(conn, sql, [])
+}
 
 pub fn query_realized_pnl_summary(
     conn: &Connection,

@@ -16,6 +16,7 @@
 //!   建仓与闭合、零已实现盈亏、余额不变、两腿时点持仓、守卫与回退/删除（ADR-0099）
 //! - [`fund_trade`]：场外基金申赎记账——金额权威、单价反算、成本锚定与盈亏闭合不变式（issue #302 / ADR-0038）
 //! - [`pnl`]：已实现盈亏汇总
+//! - [`cumulative_pnl`]：累计收益按币种聚合（未实现 + 已实现两腿相加，issue #1077）
 //! - [`trend`]：走势查询（单标的 / 组合）
 //! - [`holdings_as_of`]：时点持仓推算
 //! - [`instrument_type_string`]：`InstrumentType` 字符串面（宏同体派生，ADR-0108）
@@ -30,6 +31,7 @@
 
 mod common;
 mod convert;
+mod cumulative_pnl;
 mod fund_add;
 mod fund_trade;
 mod holdings_as_of;

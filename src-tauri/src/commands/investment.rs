@@ -23,10 +23,11 @@ use crate::db::DbState;
 use crate::error::{AppError, Result};
 use crate::investment as investment_domain;
 use crate::investment::{
-    AddFundResult, AddStockInstrumentResult, Holding, Instrument, InstrumentInput,
-    InstrumentListFilter, InstrumentListResult, InstrumentPriceTrend, ManualPriceInput,
-    ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter, PortfolioValueTrend,
-    RealizedPnlSummary, TransactionConvert, TransactionSplit, TransactionTrade, TrendRange,
+    AddFundResult, AddStockInstrumentResult, CurrencyCumulativePnl, Holding, Instrument,
+    InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPriceTrend,
+    ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter,
+    PortfolioValueTrend, RealizedPnlSummary, TransactionConvert, TransactionSplit,
+    TransactionTrade, TrendRange,
 };
 use crate::read_entry::read_entry;
 use crate::signals::{WriteEvidence, WriteOp};
@@ -84,6 +85,17 @@ pub async fn realized_pnl_summary(
             instrument_id: None,
         });
         investment_domain::query_realized_pnl_summary(conn, &filter)
+    })
+    .await
+}
+
+/// IPC 命令：按币种分组的累计收益（issue #1077）——未实现盈亏 + 已实现盈亏两腿
+/// 相加，覆盖持仓页签合计区与首页投资卡；只读聚合，无写入路径。
+#[tauri::command]
+pub async fn cumulative_pnl_summary(db: State<'_, DbState>) -> Result<Vec<CurrencyCumulativePnl>> {
+    let conn = db.conn.clone();
+    read_entry("cumulative_pnl_summary", conn, move |conn| {
+        investment_domain::query_cumulative_pnl_summary(conn)
     })
     .await
 }

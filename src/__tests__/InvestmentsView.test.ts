@@ -103,6 +103,8 @@ const INVESTMENT_DEFAULTS = {
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
   // 持仓概览（issue #110）：盈亏 tab 顶部会拉取当前持仓
   list_holdings: [],
+  // 累计收益聚合（issue #1077）：持仓概览同批拉取（全账本按币种分组）
+  cumulative_pnl_summary: [{ currency_code: 'CNY', cumulative_pnl_cents: 45000 }],
   // 走势（issue #139）：标的列表「走势」入口切入走势 tab 时由面板拉取
   portfolio_value_trend: { currency_code: 'CNY', points: [] },
   instrument_price_trend: {
@@ -205,7 +207,7 @@ describe('InvestmentsView 持仓页签（issue #901）', () => {
     expect(wrapper.findAll('.n-tabs-tab--active').map((el) => el.text())).toEqual(['盈亏'])
   })
 
-  it('持仓页签完整呈现：按币种合计统计 + 持仓明细表 + 同步按钮在位', async () => {
+  it('持仓页签完整呈现：按币种合计统计（含累计收益）+ 持仓明细表 + 同步按钮在位', async () => {
     wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: mockHoldings } })
     const wrapper = mountView()
     await flushPromises()
@@ -213,7 +215,14 @@ describe('InvestmentsView 持仓页签（issue #901）', () => {
     expect(wrapper.text()).toContain('当前持仓')
     expect(wrapper.text()).toContain('总市值')
     expect(wrapper.text()).toContain(formatAmount(150000, cny))
-    expect(wrapper.text()).toContain('未实现盈亏合计')
+    expect(wrapper.find('[data-testid="total-unrealized-pnl"]').text()).toBe(
+      `持仓收益${formatAmount(30000, cny)}`,
+    )
+    // 累计收益卡（issue #1077）：持仓页签合计区新增、按币种分组展示
+    expect(wrapper.find('[data-testid="total-cumulative-pnl"]').text()).toBe(
+      `累计收益${formatAmount(45000, cny)}`,
+    )
+    expect(wrapper.text()).not.toContain('未实现盈亏')
     // 持仓明细行上屏（600000 浦发银行）
     expect(wrapper.text()).toContain('600000')
     expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(true)

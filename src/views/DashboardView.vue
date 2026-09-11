@@ -76,6 +76,7 @@ const {
   rows: holdingRows,
   totalMarketValueGroups,
   totalUnrealizedPnlGroups,
+  totalCumulativePnlGroups,
 } = usePortfolioOverview()
 
 // 物品使用成本卡（issue #122）：全部在用物品每天成本合计，后端 `item_daily_total`
@@ -206,8 +207,8 @@ onMounted(async () => {
     <!-- 投资概览卡（issue #145）：始终展示，无持仓时空态占位 -->
     <NCard :title="t('dashboard.investment.title')" size="small" data-testid="investment-overview-card">
       <!-- 投资概览卡栅格按窗口分级分档（issue #847）：移动档单列，桌面档保持既有
-           自响应「1 s:2」（容器 <640 时单列的桌面窄窗行为不变）。 -->
-      <NGrid v-if="holdingRows.length > 0" :x-gap="16" :cols="isMobileTier ? 1 : '1 s:2'">
+           自响应；累计收益卡（issue #1077）与前两格同排，桌面档三列。 -->
+      <NGrid v-if="holdingRows.length > 0" :x-gap="16" :cols="isMobileTier ? 1 : '1 s:3'">
         <NGi>
           <NStatistic :label="t('dashboard.investment.marketValue')" data-testid="dashboard-total-market-value">
             {{ formatCurrencyGroups(totalMarketValueGroups, reference.currencyMap) }}
@@ -216,6 +217,11 @@ onMounted(async () => {
         <NGi>
           <NStatistic :label="t('dashboard.investment.unrealizedPnl')" data-testid="dashboard-total-unrealized-pnl">
             {{ formatCurrencyGroups(totalUnrealizedPnlGroups, reference.currencyMap) }}
+          </NStatistic>
+        </NGi>
+        <NGi>
+          <NStatistic :label="t('dashboard.investment.cumulativePnl')" data-testid="dashboard-total-cumulative-pnl">
+            {{ formatCurrencyGroups(totalCumulativePnlGroups, reference.currencyMap) }}
           </NStatistic>
         </NGi>
       </NGrid>

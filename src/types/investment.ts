@@ -265,6 +265,17 @@ export interface CurrencyPnl {
   realized_pnl_cents: number
 }
 
+/**
+ * 按币种分组的累计收益小计（issue #1077 / 词汇表「累计收益（CumulativePnl）」）：
+ * 未实现盈亏（Holding）+ 已实现盈亏（RealizedPnl）两腿相加，按账户币种独立成组、
+ * 不做跨币种折算（同 ADR-0107 决策 6 的持仓合计口径）。缺价 / 缺汇率持仓的未实现腿
+ * 为空值 → 不计入且不以零计入（Holding 侧语义）；两腿皆空的币种不出现该组。
+ */
+export interface CurrencyCumulativePnl {
+  currency_code: string
+  cumulative_pnl_cents: number
+}
+
 /** 已实现盈亏汇总（ADR-0107）：盈亏页三视图（按年/按账户/按标的）+ 按币种分组总数；
  * 逐匹配「卖出明细」已退役（决策 1），明细数据不再随本投影返回 */
 export interface RealizedPnlSummary {

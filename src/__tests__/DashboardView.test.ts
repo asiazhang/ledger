@@ -72,6 +72,8 @@ const mockItemDailyTotal = { native_currency: 'CNY', per_day_cents: 12345, item_
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
+  // 累计收益（issue #1077）：全账本按币种聚合（未实现 + 已实现两腿相加）
+  cumulative_pnl_summary: [{ currency_code: 'CNY', cumulative_pnl_cents: 48000 }],
   dashboard_overview: mockOverview,
   // 物品使用成本卡（issue #122）挂载时会创建物品 store（self-init 拉列表）
   list_items: [],
@@ -120,6 +122,13 @@ describe('DashboardView 界面语言切换（issue #342 / #351）', () => {
       expect(
         wrapper.find('[data-testid="investment-overview-card"]').text(),
       ).toContain('Total Market Value')
+      // 展示词归一 + 累计收益卡的英文文案（issue #1077）
+      expect(
+        wrapper.find('[data-testid="investment-overview-card"]').text(),
+      ).toContain('Holding P&L')
+      expect(
+        wrapper.find('[data-testid="dashboard-total-cumulative-pnl"]').text(),
+      ).toContain('Cumulative P&L')
       // 财务自由度卡（issue #344）同样双语：标题与阶段标签随语言切换
       expect(
         wrapper.find('[data-testid="financial-freedom-card"]').text(),
@@ -166,7 +175,7 @@ describe('DashboardView 净资产总览卡（issue #143）', () => {
 })
 
 describe('DashboardView 投资概览卡（issue #145）', () => {
-  it('有持仓时展示按币种分组的总市值与未实现盈亏合计，无行情行不以零计入', async () => {
+  it('有持仓时展示总市值、持仓收益与累计收益，无行情行不以零计入', async () => {
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="investment-overview-card"]')
     expect(card.exists()).toBe(true)
@@ -174,9 +183,17 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
     // h-2 无行情（NULL）不计入：合计中不出现零金额
     expect(card.text()).toContain('总市值')
     expect(card.text()).toContain(formatAmount(150000, cny))
-    expect(card.text()).toContain('未实现盈亏合计')
-    expect(card.text()).toContain(formatAmount(30000, cny))
+    // 展示词逐字归一（issue #1077）：标签即「持仓收益」
+    expect(card.find('[data-testid="dashboard-total-unrealized-pnl"]').text()).toBe(
+      `持仓收益${formatAmount(30000, cny)}`,
+    )
+    // 累计收益卡（issue #1077）：后端按币种聚合（未实现 + 已实现两腿相加）
+    expect(card.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toBe(
+      `累计收益${formatAmount(48000, cny)}`,
+    )
     expect(card.text()).not.toContain(formatAmount(0, cny))
+    // 展示词归一（issue #1077）：首页投资卡不再残留「未实现盈亏」文案
+    expect(card.text()).not.toContain('未实现盈亏')
   })
 
   it('多币种持仓按币种分组展示，组间以「 / 」连接', async () => {
@@ -195,6 +212,10 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
         ...BASE_OVERRIDES,
         list_holdings: [mockHoldings[0], usdHolding],
         list_accounts: [mockAccounts[0], usdAccount],
+        cumulative_pnl_summary: [
+          { currency_code: 'CNY', cumulative_pnl_cents: 48000 },
+          { currency_code: 'USD', cumulative_pnl_cents: -900 },
+        ],
       },
     })
     const wrapper = await mountView()
@@ -202,6 +223,10 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
     // 币种代码排序：CNY 在前、USD 在后
     expect(card.text()).toContain(`${formatAmount(150000, cny)} / ${formatAmount(3000, usd)}`)
     expect(card.text()).toContain(`${formatAmount(30000, cny)} / ${formatAmount(-500, usd)}`)
+    // 累计收益同按币种独立成组（后端聚合），不跨币种求和
+    expect(card.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toBe(
+      `累计收益${formatAmount(48000, cny)} / ${formatAmount(-900, usd)}`,
+    )
   })
 
   it('无任何持仓时卡片保留，空态占位而非统计数字', async () => {
@@ -224,6 +249,7 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
         ...BASE_OVERRIDES,
         list_holdings: [mockHoldings[1]],
         list_instruments: { items: [mockInstruments[1]], total: 1 },
+        cumulative_pnl_summary: [],
       },
     })
     const wrapper = await mountView()
@@ -233,8 +259,9 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
     // 精确锁定降级文本：NStatistic 渲染 label + value 连排
     expect(card.find('[data-testid="dashboard-total-market-value"]').text()).toBe('总市值-')
     expect(card.find('[data-testid="dashboard-total-unrealized-pnl"]').text()).toBe(
-      '未实现盈亏合计-',
+      '持仓收益-',
     )
+    expect(card.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toBe('累计收益-')
   })
 })
 
@@ -501,7 +528,7 @@ describe('DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词
     amountPrivacyEnabled.value = false
   })
 
-  it('移动档栅格单列化：本月收支三格与投资概览两格均单列（断点口径接窗口分级常量，不自立断点）', async () => {
+  it('移动档栅格单列化：本月收支三格与投资概览三格均单列（断点口径接窗口分级常量，不自立断点）', async () => {
     setFakeMedia({ width: 600 })
     const wrapper = await mountView()
     const grids = wrapper.findAllComponents(NGrid)
@@ -510,12 +537,12 @@ describe('DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词
     expect(grids[1].props('cols')).toBe(1) // 投资概览
   })
 
-  it('桌面档栅格零变化：本月收支三列、投资概览自响应「1 s:2」', async () => {
+  it('桌面档栅格零变化：本月收支三列、投资概览自响应三列「1 s:3」', async () => {
     const wrapper = await mountView()
     const grids = wrapper.findAllComponents(NGrid)
     expect(grids.length).toBe(2)
     expect(grids[0].props('cols')).toBe(3)
-    expect(grids[1].props('cols')).toBe('1 s:2')
+    expect(grids[1].props('cols')).toBe('1 s:3')
   })
 
   it('跨断点缩窗实时切列（单列 ⇄ 三列）', async () => {

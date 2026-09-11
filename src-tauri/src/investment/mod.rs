@@ -34,7 +34,7 @@
 //!   `Quote` 与落库半边 `adopt_quote`（建档 + 落现价一体）；查询半边实现在
 //!   行情同步域网络层（`sync::fetch_fund_quote_production` /
 //!   `sync::fetch_stock_quote_production`），统一注入签名 `(代码, 市场)`；
-//! - [`reports`]：已实现盈亏汇总查询；
+//! - [`reports`]：已实现盈亏汇总与按币种累计收益查询（issue #1077）；
 //! - [`source`]：交易列表标的来源反查（spec #704 / issue #709，按生成交易 id
 //!   批量取证券交易记录指向的标的展示字段）；
 //! - [`split`]：份额调整（split）批次成本重述单点——按比例重述在用批次
@@ -87,12 +87,12 @@ pub mod unwind;
 mod model;
 
 pub use model::{
-    AccountPnl, AddFundResult, AddStockInstrumentResult, CurrencyPnl, FinancialFreedomOverview,
-    Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
-    InstrumentPnl, InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, ManualPriceInput,
-    ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter, PortfolioTrendPoint,
-    PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary, TransactionConvert, TransactionSplit,
-    TransactionTrade, TrendRange, YearPnl,
+    AccountPnl, AddFundResult, AddStockInstrumentResult, CurrencyCumulativePnl, CurrencyPnl,
+    FinancialFreedomOverview, Holding, Instrument, InstrumentInput, InstrumentListFilter,
+    InstrumentListResult, InstrumentPnl, InstrumentPriceTrend, InstrumentSourceDisplay,
+    InstrumentType, ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter,
+    PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary,
+    TransactionConvert, TransactionSplit, TransactionTrade, TrendRange, YearPnl,
 };
 
 /// 域 API 再导出：调用面用域语言短名（`investment::list_instruments` 等），
@@ -113,7 +113,7 @@ pub use fund::{
 };
 pub use manual_price::record_manual_price;
 pub use quote::{Quote, QuoteAdoptionInput, QuoteAdoptionOutcome};
-pub use reports::query_realized_pnl_summary;
+pub use reports::{query_cumulative_pnl_summary, query_realized_pnl_summary};
 pub use source::source_display_by_transaction_ids;
 pub use stock::{
     ResolvedStockCode, StockCreateOutcome, StockCreateRoute, StockEnhancePlan,

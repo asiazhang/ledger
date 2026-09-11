@@ -43,7 +43,9 @@ const appStore = useAppStore()
 // 投资概览卡共享同一拼装接缝（issue #901/#902 契约不动）；过滤/排序/合计派生
 // 与页码归 useHoldingsFilter，全在前端内存完成，实例随页签挂载而生、
 // 卸载而灭（页签与筛选/排序/页码状态全瞬态，进入投资视图一律回默认）。
-const { rows, loading, refresh } = usePortfolioOverview()
+// 累计收益是全账本口径、不随三维过滤收窄（已实现腿无法归到某行可见持仓），
+// 故直接来自 usePortfolioOverview 而非 useHoldingsFilter。
+const { rows, loading, refresh, totalCumulativePnlGroups } = usePortfolioOverview()
 const {
   searchInput,
   setSearch,
@@ -240,8 +242,9 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
             />
           </NSpace>
 
-          <!-- 合计随过滤子集更新（排序不影响）；排序只是重排行，不换口径 -->
-          <NGrid :x-gap="16" cols="1 s:2">
+          <!-- 合计随过滤子集更新（排序不影响）；排序只是重排行，不换口径。
+               累计收益为全账本口径（不受搜索/账户过滤收窄），见 usePortfolioOverview 注记。 -->
+          <NGrid :x-gap="16" cols="1 s:3">
             <NGi>
               <NStatistic :label="t('investments.holdings.totalMarketValue')" data-testid="total-market-value">
                 {{ formatCurrencyGroups(totalMarketValueGroups, reference.currencyMap) }}
@@ -250,6 +253,13 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
             <NGi>
               <NStatistic :label="t('investments.holdings.totalUnrealizedPnl')" data-testid="total-unrealized-pnl">
                 {{ formatCurrencyGroups(totalUnrealizedPnlGroups, reference.currencyMap) }}
+              </NStatistic>
+            </NGi>
+            <!-- 累计收益卡（issue #1077）：未实现 + 已实现两腿相加、按币种分组，
+                 复用 formatCurrencyGroups 展示形态（与持仓收益合计同款）。 -->
+            <NGi>
+              <NStatistic :label="t('investments.holdings.totalCumulativePnl')" data-testid="total-cumulative-pnl">
+                {{ formatCurrencyGroups(totalCumulativePnlGroups, reference.currencyMap) }}
               </NStatistic>
             </NGi>
           </NGrid>
