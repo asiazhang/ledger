@@ -47,6 +47,22 @@ fn missing_objects_are_detected_as_drift() {
     );
 }
 
+/// 内部统计表缺失不算漂移（回归）：`sqlite_stat1`/`sqlite_stat4` 由引擎经
+/// `ANALYZE`/`PRAGMA optimize` 自主创建回收，非迁移链声明对象；其存在性还随
+/// 引擎编译选项漂移——bundled 引擎（SQLITE_ENABLE_STAT4）的参照库 V016 尾
+/// `ANALYZE` 必产 `sqlite_stat4`，而经非 STAT4 构建（如 macOS 系统 sqlite3）
+/// 刷新过统计的实际库只有 `sqlite_stat1`，照清单比对即误报漂移、启动失败
+/// （实测形态：missing_objects=["table sqlite_stat4"]）。
+#[test]
+fn missing_internal_stat_tables_are_tolerated() {
+    let conn = crate::test_support::open();
+    conn.execute("DROP TABLE IF EXISTS sqlite_stat4", [])
+        .unwrap();
+    conn.execute("DROP TABLE IF EXISTS sqlite_stat1", [])
+        .unwrap();
+    assert!(verify_schema(&conn).is_ok(), "缺内部统计表不应误报漂移");
+}
+
 /// 方向性容忍（验收判据 3）：实际多出的遗留对象与列不算漂移——跑过 V005 的
 /// 老库合法残留搜索索引对象、`sqlite_sequence` 等内部对象（ADR-0027 语义 /
 /// ADR-0100 决策 2），非方向性比对必然误报。
