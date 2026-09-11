@@ -150,9 +150,9 @@
     "split-shrink-not-less-than-holding": "reverse-split quantity must be less than the current holding: currently holding {0}, trying to shrink {1}",
     "split-account-not-investment": "share adjustments must use an investment account",
     "split-no-holding": "share adjustment requires an existing holding of the instrument (no cost basis to restate when holding nothing)",
-    "split-kind-change-forbidden": "transaction type cannot be changed to or from \"share adjustment\": the only correction is to delete and re-create it",
-    "split-update-unsupported": "share adjustment records cannot be modified yet",
-    "split-delete-unsupported": "share adjustment records cannot be deleted yet",
+    "split-kind-change-forbidden": "transaction type cannot be changed to or from \"share adjustment\": changing the type is only correctable by deleting and re-creating",
+    "split-consumed-update": "this share adjustment's lots were used by a later transaction and cannot be modified",
+    "split-consumed-delete": "this share adjustment's lots were used by a later transaction and cannot be deleted",
     "consumed-by-split-update": "this transaction's shares were restated by a later share adjustment and cannot be modified",
     "consumed-by-split-delete": "this transaction's shares were restated by a later share adjustment and cannot be deleted",
     "insufficient-holding": "insufficient holding to sell: currently holding {0}, trying to sell {1}"

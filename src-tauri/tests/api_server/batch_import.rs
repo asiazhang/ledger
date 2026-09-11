@@ -933,10 +933,12 @@ async fn test_batch_create_split_guards_return_coded_errors() {
     assert_eq!(splits, 0, "被拒的份额调整不应落库");
 }
 
-/// PUT / DELETE 对 split 行的临时拒绝与进/出 split 的 kind 变更守卫
-///（#1049 临时形态，#1051 收编改删与回退）。
+/// PUT / DELETE 对 split 行的收编（#1051 / ADR-0106 决策 3/5 / ADR-0087 决策 2）：
+/// 壳三件套 + 一步接线证明——就地修改 200 且同 id 可读回、删除 204 且再读不存在；
+/// 进/出 split 的 kind 变更与下游在用消耗时的改 / 删返回码化 400。批次数值与重述
+/// 细节的权威在投资域单测（`investment::tests::split`），本测试不展开。
 #[tokio::test]
-async fn test_split_update_delete_and_kind_change_return_coded_400() {
+async fn test_split_update_delete_via_api() {
     let (app, _conn) = setup_app();
     {
         let conn = _conn.lock().unwrap();
@@ -953,18 +955,18 @@ async fn test_split_update_delete_and_kind_change_return_coded_400() {
     assert_eq!(results[0]["success"], true, "{results:?}");
     let split_id = results[0]["id"].as_str().unwrap().to_string();
 
-    // 就地修改 split → split：临时「暂不支持」。
-    let as_split_more = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-put","date":"2026-02-05","instrument_id":"inst-sp-p","quantity":60.0}"#;
+    // 就地修改（全字段替换）：+50 → +100。
+    let as_split_more = r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-put","date":"2026-02-05","instrument_id":"inst-sp-p","quantity":100.0}"#;
     let (status, bytes) = put_transaction_via_api(&app, &split_id, as_split_more).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(err["code"], "trade.split-update-unsupported");
-
-    // 删除 split：临时「暂不支持」。
-    let (status, bytes) = delete_transaction_via_api(&app, &split_id).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(err["code"], "trade.split-delete-unsupported");
+    assert_eq!(status, StatusCode::OK, "就地修改应放行: {bytes:?}");
+    let updated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(updated["kind"], "split");
+    assert_eq!(updated["id"], split_id);
+    // 读回仍是同一 id（全字段替换不换行）。
+    let (_, list) = get_json(&app, "/api/v1/transactions?kinds=split").await;
+    let items = list["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], split_id);
 
     // 改出 split（→ buy）与改入 split（buy → split）都拒绝（永久守卫）。
     let as_buy = r#"{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-put","date":"2026-01-10","instrument_id":"inst-sp-p","quantity":10.0,"price_cents":10000,"fee_cents":0}"#;
@@ -979,15 +981,36 @@ async fn test_split_update_delete_and_kind_change_return_coded_400() {
     let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(err["code"], "trade.split-kind-change-forbidden");
 
-    // 拒绝路径不留半套副作用：持仓仍为 150。
-    let qty: f64 = {
-        let conn = _conn.lock().unwrap();
-        conn.query_row(
-            "SELECT remaining_quantity FROM security_lots WHERE instrument_id='inst-sp-p'",
-            [],
-            |r| r.get::<_, f64>(0),
-        )
-        .unwrap()
-    };
-    assert!((qty - 150.0).abs() < 1e-6);
+    // 删除 split：204，再读该 kind 不再命中（存在性消失即接线证明）。
+    let (status, _) = delete_transaction_via_api(&app, &split_id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, list) = get_json(&app, "/api/v1/transactions?kinds=split").await;
+    assert!(
+        list["items"].as_array().unwrap().is_empty(),
+        "删除后按 kinds=split 不再命中"
+    );
+
+    // 下游在用消耗守卫（#1051）：新一笔 split 后落一笔下游卖出，改 / 删被码化 400 拒绝。
+    let results = post_batch(
+        &app,
+        batch_body(
+            &[
+                r#"{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-put","date":"2026-03-01","instrument_id":"inst-sp-p","quantity":100.0}"#,
+                r#"{"kind":"sell","amount_cents":0,"currency_code":"CNY","account_id":"acc-sp-put","date":"2026-03-02","instrument_id":"inst-sp-p","quantity":50.0,"price_cents":10000,"fee_cents":0}"#,
+            ],
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(results[0]["success"], true, "{results:?}");
+    assert_eq!(results[1]["success"], true, "{results:?}");
+    let guarded_split_id = results[0]["id"].as_str().unwrap().to_string();
+    let (status, bytes) = put_transaction_via_api(&app, &guarded_split_id, as_split_more).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "trade.split-consumed-update");
+    let (status, bytes) = delete_transaction_via_api(&app, &guarded_split_id).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "trade.split-consumed-delete");
 }

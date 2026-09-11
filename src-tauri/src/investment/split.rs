@@ -55,6 +55,15 @@ pub(crate) struct LotRestatement {
     pub(crate) cost_per_unit_after: i64,
 }
 
+/// 单批次重述前的快照（回补的唯一依据）：读自 `security_lot_adjustments` 的
+/// `_before` 列，命名列组随结构体带语义，不靠 SELECT 位置约定。
+struct LotBefore {
+    lot_id: String,
+    initial_quantity: f64,
+    remaining_quantity: f64,
+    cost_per_unit_cents: i64,
+}
+
 /// 在用批次重述快照行（含锚点行金额：闭合目标的权威依据）。
 struct LotSnapshot {
     lot_id: String,
@@ -68,28 +77,38 @@ struct LotSnapshot {
 
 /// 取某账户某标的的在用批次快照（FIFO 排序键 = rowid，确定性依据同
 /// `lots::active_lots`——末批次的归位随排序键确定，重放端同序可得同一尾差）。
+///
+/// `before_transaction_rowid`：非 `None` 时只取**买入落账序早于该行**的批次——
+/// 修改一笔份额调整时重述目标仍是它**落账那一刻在场**的批次（ADR-0106 决策 6：
+/// FIFO 状态在后续交易发生后不可重建，插入序是唯一可用的界），其后才建立的批次
+/// （后续买入）不受这笔历史份额调整影响。`None`（创建路径）取当前全部在用批次。
 fn snapshot_active_lots(
     conn: &Connection,
     account_id: &str,
     instrument_id: &str,
+    before_transaction_rowid: Option<i64>,
 ) -> Result<Vec<LotSnapshot>> {
     let mut stmt = conn.prepare(
         "SELECT l.id, l.initial_quantity, l.remaining_quantity, l.cost_per_unit_cents, t.amount_cents \
          FROM security_lots l \
          JOIN transactions t ON t.id = l.buy_transaction_id \
          WHERE l.account_id=?1 AND l.instrument_id=?2 AND l.remaining_quantity > 0 \
+           AND (?3 IS NULL OR t.rowid < ?3) \
          ORDER BY l.rowid ASC",
     )?;
     let rows = stmt
-        .query_map(rusqlite::params![account_id, instrument_id], |r| {
-            Ok(LotSnapshot {
-                lot_id: r.get(0)?,
-                initial_quantity: r.get(1)?,
-                remaining_quantity: r.get(2)?,
-                cost_per_unit_cents: r.get(3)?,
-                anchor_cents: r.get(4)?,
-            })
-        })?
+        .query_map(
+            rusqlite::params![account_id, instrument_id, before_transaction_rowid],
+            |r| {
+                Ok(LotSnapshot {
+                    lot_id: r.get(0)?,
+                    initial_quantity: r.get(1)?,
+                    remaining_quantity: r.get(2)?,
+                    cost_per_unit_cents: r.get(3)?,
+                    anchor_cents: r.get(4)?,
+                })
+            },
+        )?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -106,13 +125,17 @@ fn snapshot_active_lots(
 ///   口径下精确不变，末批次吸收全部舍入尾差；
 /// - 快照为空（零在用持仓）且非缩股时返回空表，由调用方映射为码化守卫错误；
 ///   零持仓缩股在缩股守卫处即被拒绝，不返回空表。
+///
+/// `before_transaction_rowid` 同 [`snapshot_active_lots`]：修改路径以本行落账序为
+/// 界（ADR-0106 决策 6），创建路径为 `None`。
 pub(crate) fn plan_restatement(
     conn: &Connection,
     account_id: &str,
     instrument_id: &str,
     delta: f64,
+    before_transaction_rowid: Option<i64>,
 ) -> Result<Vec<LotRestatement>> {
-    let lots = snapshot_active_lots(conn, account_id, instrument_id)?;
+    let lots = snapshot_active_lots(conn, account_id, instrument_id, before_transaction_rowid)?;
     let total_holding: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
     // 缩股取严（ADR-0106 决策 1/7）：|Δ| 必须严格小于当前持仓——等号让 f = 0、
     // 批次成本凭空消失。零持仓缩股同被此守卫拒绝（|Δ| > 0 恒 ≥ 0）。容差与 FIFO
@@ -216,5 +239,59 @@ pub(crate) fn write_split_side_effects(
             ],
         )?;
     }
+    Ok(())
+}
+
+/// 精确回补一笔份额调整对在用批次的重述（修改与删除路径回退的唯一依据，
+/// ADR-0106 决策 3/5 / issue #1051）：按 `security_lot_adjustments` 的逐批次
+/// `_before` 快照把批次写回重述前状态——数量与每份成本**含舍入一并还原**，
+/// 不做近似反算（重述不可逆，审计行是唯一依据）。
+///
+/// 随后清空本行的重述审计（修改路径由 apply 按新输入重建、删除路径不再存续）与
+/// `security_transactions` 的 split 扩展行：修改路径的 apply 会重插该扩展行，
+/// 删除路径连同软删交易行一并退场；显式删审计而不只依赖扩展行的外键级联，
+/// 让「先读快照、再重建」的顺序自明，不依赖 `PRAGMA foreign_keys` 状态。
+///
+/// 守卫（批次已被在用下游消耗则拒绝改/删）归 [`super::unwind`]，本函数假定已放行。
+pub(crate) fn restore_restatement(conn: &Connection, id: &str) -> Result<()> {
+    let now = now_iso();
+    // 先读全量 before 快照再落盘：读与写不交错，审计行随后的清空不影响回补依据。
+    let prior: Vec<LotBefore> = {
+        let mut stmt = conn.prepare(
+            "SELECT lot_id, initial_quantity_before, remaining_quantity_before, \
+             cost_per_unit_cents_before FROM security_lot_adjustments WHERE transaction_id=?1",
+        )?;
+        stmt.query_map(rusqlite::params![id], |r| {
+            Ok(LotBefore {
+                lot_id: r.get(0)?,
+                initial_quantity: r.get(1)?,
+                remaining_quantity: r.get(2)?,
+                cost_per_unit_cents: r.get(3)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    for lot in prior {
+        conn.execute(
+            "UPDATE security_lots SET initial_quantity=?2, remaining_quantity=?3, cost_per_unit_cents=?4, \
+             updated_at=?5, version=version+1, device_id=?6 WHERE id=?1",
+            rusqlite::params![
+                lot.lot_id,
+                lot.initial_quantity,
+                lot.remaining_quantity,
+                lot.cost_per_unit_cents,
+                now,
+                device_id(conn)?
+            ],
+        )?;
+    }
+    conn.execute(
+        "DELETE FROM security_lot_adjustments WHERE transaction_id=?1",
+        rusqlite::params![id],
+    )?;
+    conn.execute(
+        "DELETE FROM security_transactions WHERE transaction_id=?1",
+        rusqlite::params![id],
+    )?;
     Ok(())
 }
