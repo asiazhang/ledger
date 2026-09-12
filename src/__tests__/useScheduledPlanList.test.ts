@@ -24,7 +24,7 @@ import type {
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
-} from '@/types'
+} from '@ledger/types'
 
 // ---------------------------------------------------------------------------
 // 数据工厂：计划/期次消费共享层出口（factories，#822 收敛）；详情组装留守本地

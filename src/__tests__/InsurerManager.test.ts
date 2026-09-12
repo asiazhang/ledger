@@ -7,7 +7,7 @@ import { messageApi } from './helpers/message-mock'
 import { findBodyButton, findButton } from './helpers/dom'
 import InsurerManager from '@/components/InsurerManager.vue'
 import InsurerEditModal from '@/components/insurers/InsurerEditModal.vue'
-import type { Insurer } from '@/types'
+import type { Insurer } from '@ledger/types'
 
 
 const mockInsurers: Insurer[] = [

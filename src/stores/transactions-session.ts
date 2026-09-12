@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import { reactive, readonly, ref, toRaw, watch } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
-import { TRANSACTION_KINDS } from '@/types'
-import type { TransactionKind } from '@/types'
+import { TRANSACTION_KINDS } from '@ledger/types'
+import type { TransactionKind } from '@ledger/types'
 
 /** 「仅无分类」哨兵值（issue #377）：分类过滤维度三态之一（不过滤 null / 精确 id / 哨兵）。
  * 同时是 URL ?category= 的保留参数值；分类 id 为 UUID，与哨兵串不可能撞值。

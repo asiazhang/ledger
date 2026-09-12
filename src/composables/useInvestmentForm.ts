@@ -2,17 +2,19 @@ import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { t } from '@/i18n'
-import { centsToYuan, priceToYuan, yuanToCents, PRICE_UNITS_PER_FEN, PRICE_UNITS_PER_YUAN } from '@/types'
+import {
+  centsToYuan,
+  priceToYuan,
+  yuanToCents,
+  PRICE_UNITS_PER_FEN,
+  PRICE_UNITS_PER_YUAN,
+} from '@/utils/money'
 import { judgeQuantityText, judgePriceText } from '@/utils/field-error'
 import { useFieldErrors } from '@/composables/useFieldErrors'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { buildTradeInput } from '@/domain/transaction-input'
 import { errorMessage } from '@/utils/errors'
-import type {
-  Instrument,
-  Transaction,
-  TransactionTrade,
-} from '@/types'
+import type { Instrument, Transaction, TransactionTrade } from '@ledger/types'
 
 export function useInvestmentForm(
   kind: 'buy' | 'sell',

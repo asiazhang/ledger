@@ -8,7 +8,7 @@ import { routes } from '@/router'
 import { applyLocale } from '@/i18n'
 import { occurrenceStatusLabel, scheduledStatusLabel } from '@/utils/scheduled'
 import { scheduledRecurrenceLabel, scheduledRecurrenceOptions } from '@/composables/useScheduledPlanList'
-import type { SubscriptionSpendOverview } from '@/types'
+import type { SubscriptionSpendOverview } from '@ledger/types'
 
 /**
  * 定时计划域 i18n 行为测试（issue #349 / ADR-0049）：

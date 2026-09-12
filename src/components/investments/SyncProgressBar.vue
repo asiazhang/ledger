@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { t } from '@/i18n'
-import type { InstrumentSyncProgress } from '@/types'
+import type { InstrumentSyncProgress } from '@ledger/types'
 import { bar, root, text, textStack, track } from './sync-progress-bar.css.ts'
 
 // 同步进度条展示组件（issue #897 / ADR-0095）：标的信息同步的确定进度——

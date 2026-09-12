@@ -3,7 +3,7 @@ import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { messageApi } from './helpers/message-mock'
 import { findButton } from './helpers/dom'
 import { mount, flushPromises } from '@vue/test-utils'
-import type { NotePinyinRepairReport } from '@/types'
+import type { NotePinyinRepairReport } from '@ledger/types'
 
 import SearchDataSettings from '@/components/settings/SearchDataSettings.vue'
 

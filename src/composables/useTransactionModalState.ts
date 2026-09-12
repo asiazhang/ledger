@@ -10,7 +10,7 @@ import type {
   TransactionConvert,
   TransactionSplit,
   TransactionTrade,
-} from '@/types'
+} from '@ledger/types'
 
 /**
  * TransactionModalState 交易弹窗编排深模块（ADR-0045，词汇表「TransactionModalState（交易弹窗编排）」）：

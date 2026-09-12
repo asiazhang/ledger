@@ -4,7 +4,7 @@ import { NAlert, NButton, NCard, NSpace, NText, useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
-import type { NotePinyinRepairReport } from '@/types'
+import type { NotePinyinRepairReport } from '@ledger/types'
 
 // 拼音搜索数据卡片（issue #513）：交易搜索的拼音辅助数据（备注拼音冗余列）
 // 一键修复入口。修复语义全部在命令层（幂等回填全部积压、返回报告），本组件

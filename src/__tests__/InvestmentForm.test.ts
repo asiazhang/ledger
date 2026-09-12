@@ -5,7 +5,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import InvestmentForm from '@/components/InvestmentForm.vue'
-import type { Account, Instrument } from '@/types'
+import type { Account, Instrument } from '@ledger/types'
 
 
 // jsdom 不实现 scrollTo：naive-ui 打开虚拟滚动下拉时会调用，提前 polyfill 避免 unhandled rejection

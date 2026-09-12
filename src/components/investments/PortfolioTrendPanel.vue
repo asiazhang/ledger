@@ -8,14 +8,14 @@ import type { ChartOptions, TooltipItem } from 'chart.js'
 // 注册，不再组件自持子集（缺项曾致渲染错误循环冻结界面）；导入即完成注册。
 import '@/utils/chart-registration'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount, formatPrice } from '@/types'
+import { formatAmount, formatPrice } from '@/utils/money'
 import { amountPrivacyEnabled } from '@/utils/money'
 import { t } from '@/i18n'
 import {
   TREND_RANGE_PRESETS,
   usePortfolioTrend,
 } from '@/composables/usePortfolioTrend'
-import type { Instrument } from '@/types'
+import type { Instrument } from '@ledger/types'
 
 // 标的列表「走势」入口带入的标的（单标的模式起点）；面板内也可经下拉切换
 const props = defineProps<{

@@ -2,11 +2,11 @@
 import { errorMessage } from '@/utils/errors'
 import { computed, ref } from 'vue'
 import { NButton, NFormItem, NInput, NForm, NSpace, NText, useMessage } from 'naive-ui'
-import { formatAmount } from '@/types'
+import { formatAmount } from '@/utils/money'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
 import { t } from '@/i18n'
-import type { Transaction } from '@/types'
+import type { Transaction } from '@ledger/types'
 
 /**
  * 「加入物品」确认弹窗（issue #119 / ADR-0025 创建唯一入口）：

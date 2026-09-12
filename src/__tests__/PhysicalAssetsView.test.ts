@@ -6,7 +6,7 @@ import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import PhysicalAssetsView from '@/views/PhysicalAssetsView.vue'
 import PhysicalAssetFormModal from '@/components/PhysicalAssetFormModal.vue'
 import { makePhysicalAsset, makePhysicalAssetList } from './factories'
-import type { Currency, PhysicalAsset, PhysicalAssetList } from '@/types'
+import type { Currency, PhysicalAsset, PhysicalAssetList } from '@ledger/types'
 
 
 function bodyQuery(selector: string): HTMLElement | null {

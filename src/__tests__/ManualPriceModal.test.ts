@@ -7,7 +7,7 @@ import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import { makeInstrument } from './factories'
 import { todayStr } from '@/utils/date'
-import type { Instrument } from '@/types'
+import type { Instrument } from '@ledger/types'
 
 
 const instrument: Instrument = makeInstrument({

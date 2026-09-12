@@ -85,14 +85,16 @@ function writePackageManifest(root: string, dir: string, pkg: Record<string, unk
 }
 
 describe('check-frontend-structure（前端 workspace 结构守门）', () => {
-  it('真实仓库默认通过：成员为空的骨架绿（#1149 验收：成员为空时通过）', () => {
+  it('真实仓库默认通过：登记成员与磁盘全等的骨架绿（#1149 验收；#1150 起有首个成员）', () => {
     const r = run([])
     expect(r.status).toBe(0)
     expect(r.output).toContain('前端结构守门')
   })
 
   it('夹具最小绿：glob 声明 + 空成员 + 接线齐全', () => {
-    const r = run(fixtureRepo({}))
+    // #1150 起 PACKAGES 非空：无 manifest 的夹具运行会拿生产登记表对夹具根校验、
+    // 触发「清单漂移」假红，故最小绿夹具显式注入空登记表（注入即完全替代）。
+    const r = run(fixtureRepo({ manifest: [] }))
     expect(r.status).toBe(0)
     expect(r.output).toContain('成员登记 0 个')
   })
@@ -341,8 +343,15 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
       expect(r.output).toContain('须为 JSON 数组')
     })
 
-    it('PACKAGES 生产登记表保持为空（#1149 只落骨架，不移动业务代码）', () => {
-      expect(PACKAGES).toEqual([])
+    it('PACKAGES 生产登记表已登记首个成员 @ledger/types（#1150 抽包落位）', () => {
+      expect(PACKAGES).toEqual([
+        {
+          name: '@ledger/types',
+          dir: 'packages/types',
+          deps: [],
+          note: expect.any(String),
+        },
+      ])
     })
   })
 })

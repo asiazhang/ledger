@@ -1,6 +1,6 @@
-import { formatAmount } from '@/types'
+import { formatAmount } from '@/utils/money'
 import { useReferenceStore } from '@/stores/reference'
-import type { PolicyStats } from '@/types'
+import type { PolicyStats } from '@ledger/types'
 
 /**
  * 保单视角统计的展示取值辅助（issue #363 / ADR-0051 决策 6）：

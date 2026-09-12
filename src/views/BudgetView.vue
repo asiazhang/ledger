@@ -32,8 +32,8 @@ import { useReferenceStore } from '@/stores/reference'
 import { errorMessage } from '@/utils/errors'
 import { yuanToCents } from '@/utils/money'
 import { todayStr } from '@/utils/date'
-import { formatAmount, centsToYuan } from '@/types'
-import type { BudgetInput, BudgetProgress } from '@/types'
+import { formatAmount, centsToYuan } from '@/utils/money'
+import type { BudgetInput, BudgetProgress } from '@ledger/types'
 
 const reference = useReferenceStore()
 const message = useMessage()

@@ -7,8 +7,14 @@ import { createTestingPinia } from '@pinia/testing'
 import { useTransactionFilter, UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import type { UseTransactionFilterReturn } from '@/composables/useTransactionFilter'
 import { useReferenceStore } from '@/stores/reference'
-import type { Account, Category, Merchant, TransactionKind, TransactionListFilter } from '@/types'
-import { TRANSACTION_KINDS } from '@/types'
+import type {
+  Account,
+  Category,
+  Merchant,
+  TransactionKind,
+  TransactionListFilter,
+} from '@ledger/types'
+import { TRANSACTION_KINDS } from '@ledger/types'
 
 
 /** URL 下钻用参考数据：两账户；商户含一软删、分类含一软删（历史交易口径，issue #191/#377 校验含软删）。 */

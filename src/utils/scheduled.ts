@@ -1,5 +1,5 @@
 import { t } from '@/i18n'
-import type { ScheduledStatus, ScheduledTransactionOccurrence } from '@/types'
+import type { ScheduledStatus, ScheduledTransactionOccurrence } from '@ledger/types'
 
 /** 计划状态 → 状态标签（订阅清单与花费分析面板共用，避免映射漂移；渲染时经 t() 翻译，随界面语言即时切换） */
 export function scheduledStatusLabel(status: string): string {

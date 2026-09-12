@@ -4,7 +4,7 @@ import { NButton, NForm, NFormItem, NInput, NSpace, useMessage } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
 import { api } from '@/api'
 import { t } from '@/i18n'
-import type { Merchant, MerchantUpdateInput } from '@/types'
+import type { Merchant, MerchantUpdateInput } from '@ledger/types'
 
 const props = defineProps<{
   show: boolean

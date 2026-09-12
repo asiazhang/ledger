@@ -1,0 +1,10 @@
+{
+  "name": "@ledger/types",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "纯类型包（issue #1150 / spec #1148）：零依赖叶子——不依赖任何包（含 @ledger/* 与外部包），类型层是依赖图的根。源码直出，exports 指向 src/index.ts，不建构建链；跨包只能整引包名（深导入由 check-frontend-structure.ts 守门）。",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

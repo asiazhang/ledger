@@ -15,7 +15,7 @@ import {
   useHoldingsFilter,
 } from '@/composables/useHoldingsFilter'
 import type { PortfolioRow } from '@/composables/usePortfolioOverview'
-import type { Account } from '@/types'
+import type { Account } from '@ledger/types'
 
 // ---------------------------------------------------------------------------
 // 夹具：四行持仓，覆盖两账户 / 三币种 / 缺价行 / 中英文名称

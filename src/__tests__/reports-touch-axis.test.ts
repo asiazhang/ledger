@@ -4,7 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { setFakeMedia } from './helpers/media-mock'
 import ReportsView from '@/views/ReportsView.vue'
 import { formatAmount } from '@/utils/money'
-import type { ReportDateRange } from '@/types'
+import type { ReportDateRange } from '@ledger/types'
 
 /**
  * 报表页触控交互轴（issue #843 / ADR-0088 决策 6，词汇表「输入轴」「分类下钻」）：

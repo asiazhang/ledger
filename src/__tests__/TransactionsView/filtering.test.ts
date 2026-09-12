@@ -5,7 +5,7 @@ import { NSelect, NButton } from 'naive-ui'
 import { fireProp } from '../helpers/component-vm'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
-import type { Merchant, Transaction } from '@/types'
+import type { Merchant, Transaction } from '@ledger/types'
 
 describe('TransactionsView URL 下钻接线（issue #97/#191，冒烟级）', () => {
   // account/merchant 参数的解析、校验、复位规则、就绪补判与字段级让位已内化在

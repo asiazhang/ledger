@@ -4,7 +4,7 @@ import { messageApi } from './helpers/message-mock'
 import { findBodyButton } from './helpers/dom'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
-import type { Merchant } from '@/types'
+import type { Merchant } from '@ledger/types'
 
 const mockMerchant: Merchant = {
   id: 'mch-1', name: '京东',

@@ -11,7 +11,7 @@ import type {
   PhysicalAssetList,
   PhysicalAssetUpdateInput,
   PhysicalAssetValuationInput,
-} from '@/types'
+} from '@ledger/types'
 
 function baseAsset(over: Partial<PhysicalAsset> = {}): PhysicalAsset {
   return makePhysicalAsset({ id: 'asset-1', ...over })

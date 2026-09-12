@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
-import type { RememberPassphraseSupport } from '@/types'
+import type { RememberPassphraseSupport } from '@ledger/types'
 
 /**
  * 启动门（issue #570 / #601 / ADR-0075 决策 5 修订）：前端启动首屏的状态接缝。

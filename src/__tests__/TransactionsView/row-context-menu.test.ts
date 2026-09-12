@@ -16,7 +16,7 @@ import MerchantLink from '@/components/MerchantLink.vue'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, formatQuantity } from '@/utils/money'
 import { refCurrencies } from '../helpers/reference-stubs'
-import type { Transaction } from '@/types'
+import type { Transaction } from '@ledger/types'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0]

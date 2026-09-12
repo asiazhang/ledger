@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { Currency } from '@/types/currencies'
+import type { Currency } from '@ledger/types'
 import { currentLocale, type Locale } from '@/i18n'
 
 /** 金额隐私模式的 localStorage key（轻量设置项，水合与持久化收口在应用设置 store） */

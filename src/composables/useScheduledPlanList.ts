@@ -13,7 +13,7 @@ import type {
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
-} from '@/types'
+} from '@ledger/types'
 
 /**
  * ScheduledPlanList 计划清单深模块（ADR-0041，词汇表「ScheduledPlanList（计划清单）」）：

@@ -28,8 +28,8 @@ import { useItemDailyTotal } from '@/composables/useItemDailyTotal'
 import { useWindowTier } from '@/composables/useWindowTier'
 import { useReferenceStore } from '@/stores/reference'
 import AppPopover from '@/components/AppPopover.vue'
-import { formatAmount } from '@/types'
-import type { BudgetProgress, MonthlySummary } from '@/types'
+import { formatAmount } from '@/utils/money'
+import type { BudgetProgress, MonthlySummary } from '@ledger/types'
 import {
   formatCurrencyGroups,
   usePortfolioOverview,

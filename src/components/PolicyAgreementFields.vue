@@ -10,7 +10,7 @@ import { yuanToCents } from '@/utils/money'
 import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
 import { scheduledRecurrenceOptions } from '@/composables/useScheduledPlanList'
-import type { CreateScheduledInput, RecurrenceType } from '@/types'
+import type { CreateScheduledInput, RecurrenceType } from '@ledger/types'
 
 /**
  * 保单缴费协议字段组（issue #362 / ADR-0051 决策 2）：频率/每期金额（+币种）/

@@ -6,7 +6,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 
 import BackupSettings from '@/components/settings/BackupSettings.vue'
 import { useAppStore } from '@/stores/app'
-import type { BackupFileInfo } from '@/types'
+import type { BackupFileInfo } from '@ledger/types'
 
 /** 按出现顺序取全部卡片标题（卡片顺序即页签内信息架构）。 */
 function cardTitles(wrapper: ReturnType<typeof mount>) {

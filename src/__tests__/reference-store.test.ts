@@ -7,7 +7,7 @@ import {
 } from './helpers/listen-mock'
 import { flushPromises } from '@vue/test-utils'
 import { useReferenceStore } from '@/stores/reference'
-import type { Account, Category, Currency, Insurer, Merchant } from '@/types'
+import type { Account, Category, Currency, Insurer, Merchant } from '@ledger/types'
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },

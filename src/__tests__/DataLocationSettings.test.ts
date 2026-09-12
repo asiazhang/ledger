@@ -3,7 +3,7 @@ import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { messageApi } from './helpers/message-mock'
 import { findButton, findButtonByTestId, findBodyButtonByTestId } from './helpers/dom'
 import { mount, flushPromises } from '@vue/test-utils'
-import type { DataLocationChangeOutcome, DataLocationInfo } from '@/types'
+import type { DataLocationChangeOutcome, DataLocationInfo } from '@ledger/types'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),

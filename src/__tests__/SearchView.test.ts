@@ -13,7 +13,7 @@ import { findButton } from './helpers/dom'
 import { makeTransaction } from './factories'
 import { refCurrencies } from './helpers/reference-stubs'
 import { formatAmount } from '@/utils/money'
-import type { Account, Category, Merchant, Transaction } from '@/types'
+import type { Account, Category, Merchant, Transaction } from '@ledger/types'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0]

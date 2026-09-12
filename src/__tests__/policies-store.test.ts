@@ -4,7 +4,7 @@ import { captureListenHandlers, type CapturedListener } from './helpers/listen-m
 import { flushPromises } from '@vue/test-utils'
 import { usePoliciesStore } from '@/stores/policies'
 import { makePolicy, makePolicyStats } from './factories'
-import type { Policy, PolicyInput, PolicyStats } from '@/types'
+import type { Policy, PolicyInput, PolicyStats } from '@ledger/types'
 
 function basePolicy(over: Partial<Policy> = {}): Policy {
   return makePolicy({ id: 'policy-1', ...over })

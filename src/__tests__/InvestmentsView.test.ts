@@ -13,7 +13,7 @@ import {
   firePricesChanged,
   resetPricesChangedHandler,
 } from './prices-changed-mock'
-import type { Instrument } from '@/types'
+import type { Instrument } from '@ledger/types'
 
 // 走势图用共享桩组件替代：组件层测试只验证数据联动与文案渲染，不验证 canvas 绘制
 vi.mock('vue-chartjs', async () => {

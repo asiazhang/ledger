@@ -10,7 +10,7 @@ import { yuanToCents } from '@/utils/money'
 import { useFormShared } from '@/composables/useFormShared'
 import { useAppStore } from '@/stores/app'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
-import type { PhysicalAsset, PhysicalAssetDisposeInput } from '@/types'
+import type { PhysicalAsset, PhysicalAssetDisposeInput } from '@ledger/types'
 
 /**
  * 处置弹窗（issue #468 T3 / ADR-0064）：处置 = 状态标记的唯一入口——

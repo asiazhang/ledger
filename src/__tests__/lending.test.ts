@@ -8,7 +8,7 @@ import {
   lendingLabelKey,
   type LendingDirection,
 } from '@/domain/lending'
-import { ACCOUNT_TYPES, TRANSACTION_KINDS, type AccountType } from '@/types'
+import { ACCOUNT_TYPES, TRANSACTION_KINDS, type AccountType } from '@ledger/types'
 
 /** 测试真值表（与实现独立）：账户类型的借贷侧别归类 */
 function sideOf(type: AccountType): 'fund' | 'receivable' | 'debt' {

@@ -16,10 +16,16 @@ import {
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import { formatAmount } from '@/types'
+import { formatAmount } from '@/utils/money'
 import { yuanToCents, centsToYuan } from '@/utils/money'
 import { todayStr } from '@/utils/date'
-import type { ItemDailyCost, ItemDisposeInput, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
+import type {
+  ItemDailyCost,
+  ItemDisposeInput,
+  ItemInput,
+  ItemWithDailyCost,
+  Transaction,
+} from '@ledger/types'
 import { api } from '@/api'
 import AppModal from '@/components/AppModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'

@@ -9,7 +9,7 @@ import { messageApi, messageCalls } from './helpers/message-mock'
 import { resetToastSink } from './factories'
 import { registerToastSink } from '@/composables/useLoadable'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
-import type { BookListInfo } from '@/types'
+import type { BookListInfo } from '@ledger/types'
 
 // 侧栏左下角账本入口与弹层（issue #834 / ADR-0089）：弹层逻辑（清单渲染、切换
 // 意图、新建/改名/移除交互、折叠态浮标、注册表损坏警示）的组件级行为测试。

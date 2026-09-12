@@ -9,7 +9,7 @@ import { api } from '@/api'
 import { errorMessage } from '@/utils/errors'
 import { t } from '@/i18n'
 import { todayStr } from '@/utils/date'
-import type { CreateScheduledInput, RecurrenceType, ScheduledKind } from '@/types'
+import type { CreateScheduledInput, RecurrenceType, ScheduledKind } from '@ledger/types'
 
 /** 形态特化字段（ADR-0041：分期总额/期数、转账转入账户与总期数留页签）：
  * 仅携带该形态真实发送的键——组装结果键集与既有三表单逐字一致，不补空键。 */

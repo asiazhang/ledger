@@ -1,4 +1,4 @@
-import type { Category, CategoryKind } from '@/types'
+import type { Category, CategoryKind } from '@ledger/types'
 
 export interface CategoryTreeNode {
   key: string

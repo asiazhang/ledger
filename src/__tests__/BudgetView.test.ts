@@ -11,7 +11,7 @@ import { messageApi } from './helpers/message-mock'
 import { makeFakeSink, resetToastSink } from './factories'
 import { registerToastSink } from '@/composables/useLoadable'
 import { findButton, findBodyButton } from './helpers/dom'
-import type { BudgetProgress, Category } from '@/types'
+import type { BudgetProgress, Category } from '@ledger/types'
 
 
 const mockCategories: Category[] = [

@@ -10,7 +10,7 @@ import { makePolicy, makePolicyStats } from './factories'
 import { routes, router } from '@/router'
 import { formatAmount } from '@/utils/money'
 import { refCurrencies } from './helpers/reference-stubs'
-import type { SubscriptionSpendOverview } from '@/types'
+import type { SubscriptionSpendOverview } from '@ledger/types'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0]

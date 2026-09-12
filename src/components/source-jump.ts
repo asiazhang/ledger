@@ -1,5 +1,5 @@
 import { groupOfView, type SidebarGroupId } from '@/stores/sidebar-order'
-import type { TransactionSourceKind } from '@/types'
+import type { TransactionSourceKind } from '@ledger/types'
 
 /**
  * 来源跳转目标计算（spec #704 / issue #705，词汇表「来源列」「实体定位参数
@@ -28,9 +28,9 @@ import type { TransactionSourceKind } from '@/types'
  * 既有命名）；测试以普通函数直打（先例：行菜单编排、弹窗意图编排工厂测试形态）。
  */
 
-/** 来源类型闭集（wire 契约单一定义点在 `@/types` 交易行来源，issue #706 定型；
+/** 来源类型闭集（wire 契约单一定义点在 `@ledger/types` 交易行来源，issue #706 定型；
  *  此处再导出供既有消费面兼容——本模块是消费方，不另持一份词表）。 */
-export type { TransactionSourceKind } from '@/types'
+export type { TransactionSourceKind } from '@ledger/types'
 
 /** 定时视图形态页签词表（ScheduledView TABS 同源；#707 接线时视图侧改引此处收口）。 */
 export type ScheduledFormTab = 'subscriptions' | 'installments' | 'transfers'

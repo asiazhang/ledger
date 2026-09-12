@@ -2,13 +2,13 @@
 import { computed, h, ref } from 'vue'
 import { NButton, NDataTable, NEmpty, NSpace, NSpin, useMessage, type DataTableColumns } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
-import { formatAmount } from '@/types'
+import { formatAmount } from '@/utils/money'
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
 import { occurrenceStatusLabel } from '@/utils/scheduled'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
-import type { ScheduledTransactionDetail, ScheduledTransactionOccurrence } from '@/types'
+import type { ScheduledTransactionDetail, ScheduledTransactionOccurrence } from '@ledger/types'
 
 // ---------------------------------------------------------------------------
 // 期次详情弹窗（issue #205）：订阅 / 分期 / 定时转账三页签通用。

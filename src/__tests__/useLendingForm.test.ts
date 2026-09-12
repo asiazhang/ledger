@@ -3,7 +3,7 @@ import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { useReferenceStore } from '@/stores/reference'
 import { resolveLendingDirection } from '@/domain/lending'
 import { useLendingForm } from '@/composables/useLendingForm'
-import type { Account, Transaction } from '@/types'
+import type { Account, Transaction } from '@ledger/types'
 
 
 /** 覆盖资金侧（cash/bank）、借出侧（receivable）、负债侧（debt）的账户集 */

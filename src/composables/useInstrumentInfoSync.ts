@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
 import { t } from '@/i18n'
-import type { InstrumentSyncProgress, SyncInstrumentInfoResult } from '@/types'
+import type { InstrumentSyncProgress, SyncInstrumentInfoResult } from '@ledger/types'
 
 export type InstrumentInfoSyncStatus = 'idle' | 'success' | 'error'
 /** sync() 返回的终态：InstrumentInfoSyncStatus 去掉 idle，与 status ref 同形。 */

@@ -5,7 +5,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppStore } from "@/stores/app";
 import { formatIsoMinute } from "@/utils/datetime";
 import { api } from "@/api";
-import type { AutoBackupState, BackupFileInfo, BackupKind } from "@/types";
+import type { AutoBackupState, BackupFileInfo, BackupKind } from "@ledger/types";
 import { errorMessage } from "@/utils/errors";
 import { t } from "@/i18n";
 import { useRestoreFromFile } from "@/composables/useRestoreFromFile";

@@ -1,7 +1,7 @@
 import { onMounted, ref } from 'vue'
 import { api } from '@/api'
 import { useLoadable } from '@/composables/useLoadable'
-import type { FinancialFreedomOverview } from '@/types'
+import type { FinancialFreedomOverview } from '@ledger/types'
 
 /**
  * dashboard「财务自由度」卡数据层（issue #344；口径见 ADR-0048）：消费后端

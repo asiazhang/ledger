@@ -1,5 +1,5 @@
 import type { Theme } from '@/stores/app'
-import type { TransactionKind } from '@/types'
+import type { TransactionKind } from '@ledger/types'
 
 /**
  * 交易类型语义色（issue #435）——金额业务色的**单一来源**。

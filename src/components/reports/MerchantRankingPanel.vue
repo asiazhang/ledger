@@ -6,11 +6,11 @@ import { t } from '@/i18n'
 import { useInputMode } from '@/composables/useInputMode'
 import { useWindowTier } from '@/composables/useWindowTier'
 import { MERCHANT_TOP_N_OPTIONS } from '@/stores/reports-session'
-import { formatAmount } from '@/types'
+import { formatAmount } from '@/utils/money'
 import { merchantTableRows } from '@/utils/merchant-chart'
 import type { MerchantTableRow } from '@/utils/merchant-chart'
 import MerchantLink from '@/components/MerchantLink.vue'
-import type { MerchantSharesReport } from '@/types'
+import type { MerchantSharesReport } from '@ledger/types'
 
 // 商户消费排行面板（issue #192 → #588 柱图化 → #618 表格化）：支出与商户的
 // 「列表化度量」以表格呈现——列为 商户名 | 金额分布（内嵌降序条）| 金额数字 |

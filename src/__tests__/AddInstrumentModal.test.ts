@@ -5,7 +5,7 @@ import { nextTick } from 'vue'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import AddInstrumentModal from '@/components/investments/AddInstrumentModal.vue'
-import type { Currency } from '@/types'
+import type { Currency } from '@ledger/types'
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },

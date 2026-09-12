@@ -1,13 +1,13 @@
 import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
-import { centsToYuan, formatAmount } from '@/types'
+import { centsToYuan, formatAmount } from '@/utils/money'
 import { buildRefundInput } from '@/domain/transaction-input'
 import { judgeAmountText } from '@/utils/field-error'
 import { useFieldErrors } from '@/composables/useFieldErrors'
 import { useFormShared } from '@/composables/useFormShared'
 import { t } from '@/i18n'
-import type { Transaction } from '@/types'
+import type { Transaction } from '@ledger/types'
 import { errorMessage } from "@/utils/errors";
 
 export function useRefundForm(options?: {

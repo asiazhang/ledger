@@ -4,7 +4,7 @@ import { NDescriptions, NDescriptionsItem } from 'naive-ui'
 import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { displayAmountText } from '@/components/transaction-columns'
-import type { Transaction } from '@/types'
+import type { Transaction } from '@ledger/types'
 
 /**
  * 现金分红只读详情（ADR-0109 / issue #1078）：dividend 是界面只读 kind（比照

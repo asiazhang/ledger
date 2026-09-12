@@ -25,7 +25,7 @@ const pushMock = vi.fn()
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock }),
 }))
-import type { Account, BudgetProgress, Category, Currency, MonthlySummary } from '@/types'
+import type { Account, BudgetProgress, Category, Currency, MonthlySummary } from '@ledger/types'
 
 
 const mockCurrencies: Currency[] = [

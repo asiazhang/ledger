@@ -20,7 +20,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useModalIntent } from '@/composables/useModalIntent'
 import { matchLabel } from '@/utils/pinyin-filter'
 import { t } from '@/i18n'
-import type { Insurer, InsurerInput } from '@/types'
+import type { Insurer, InsurerInput } from '@ledger/types'
 
 // 保司管理（issue #714 / ADR-0082 决策 3）：保险域自有字典的管理视图，进侧栏
 // 资产组「更多」（组内收纳出厂成员，ADR-0063）。交互照商户管理页形态

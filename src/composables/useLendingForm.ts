@@ -8,7 +8,7 @@ import {
   resolveLendingDirection,
   type LendingFormDirection,
 } from '@/domain/lending'
-import type { AccountType, Transaction } from '@/types'
+import type { AccountType, Transaction } from '@ledger/types'
 
 /**
  * 借贷录入 = 转账表单的借贷变体（issue #374 / ADR-0053）：金额/币种/日期/备注、
