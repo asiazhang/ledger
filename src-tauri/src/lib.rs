@@ -47,6 +47,10 @@ pub mod test_support;
 // `crate::transaction::…` / `tauri_app_lib::transaction::…` 调用点零改动
 //（expand 形态，ledger-backup 同款）。
 pub use ledger_transaction as transaction;
+// 交易域接缝的组合安装入口（issue #1180）：核心交易域六向挂载点的 provider 级
+// `install_*` 在七个建库/启动入口逐字重复，收敛为本模块一处——聚合的只是壳层接线
+// 动作，注册点契约与实现住址不变。
+pub mod transaction_wiring;
 
 use tauri::Manager;
 use tauri::ipc::Invoke;
@@ -193,16 +197,10 @@ pub fn run() {
             scheduled_transactions::auto_run::register_after_occurrence_hook(
                 backup::occurrence_dirty_hook,
             );
-            // 交易域接缝接线（issue #1092）：核心交易域对投资/商户/币种/物品/保单/
-            // 账户六向的残留边（计划装配/即建商户/本位币/来源列反查/转换两腿/
-            // 出资账户视图）按同一形态反转——实现由各提供域装入、壳层启动时接线
-            //（幂等）。注册先于任何建库/写库。
-            investment::install_transaction_hooks();
-            merchants::install_merchant_hooks();
-            currencies::install_base_currency_hook();
-            item::install_source_hook();
-            policy::install_source_hook();
-            accounts::install_funding_account_hook();
+            // 交易域接缝接线（issue #1092 / #1180）：核心交易域对投资/商户/币种/
+            // 物品/保单/账户六向的残留边经组合入口一次装入（幂等）。注册先于任何
+            // 建库/写库。
+            transaction_wiring::install_all();
             // 追补触发接线（issue #1091 / 挂载点④，ADR-0112 决策 5）：自动备份调度
             // 线程的追补判定实现由定时计划域提供（开关镜像 + 本地今天在实现内注入）、
             // 壳层启动时注册进备份域的注册点（幂等）——备份域对定时计划域零依赖。

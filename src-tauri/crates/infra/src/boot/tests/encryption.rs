@@ -129,15 +129,10 @@ fn seed_transactions(conn: &Connection, count: usize) {
     // 下 tauri_app_lib 是另一份实例（静态与类型身份分离），落库前显式注册余额
     // 刷新实现（幂等，与 BDD world 同款纪律）。
     tauri_app_lib::accounts::balance::install_balance_refresh_hook();
-    // 交易域接缝接线（issue #1092）：与测试工厂同形——本处经 Writer/行为层写入，
-    // 六向实现（计划装配/商户/本位币/来源列反查/转换两腿/出资账户视图）显式注册
-    //（幂等，进程级）。
-    tauri_app_lib::investment::install_transaction_hooks();
-    tauri_app_lib::merchants::install_merchant_hooks();
-    tauri_app_lib::currencies::install_base_currency_hook();
-    tauri_app_lib::item::install_source_hook();
-    tauri_app_lib::policy::install_source_hook();
-    tauri_app_lib::accounts::install_funding_account_hook();
+    // 交易域接缝接线（issue #1092 / #1180）：与测试工厂同形——本处经 Writer/行为层
+    // 写入，六向实现（计划装配/商户/本位币/来源列反查/转换两腿/出资账户视图）经
+    // 组合入口一次装入（幂等，进程级）。
+    tauri_app_lib::transaction_wiring::install_all();
     let account_id = crate::db::new_uuid();
     // 工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）；裸种子绕过 Writer
     // 接缝，按 V017 迁移回填语义补建缓存行（ADR-0067）。

@@ -106,14 +106,9 @@ pub fn open() -> Connection {
         crate::backup::occurrence_dirty_hook,
     );
     crate::backup::register_catch_up_hook(crate::scheduled_transactions::auto_run::catch_up_hook);
-    // 交易域接缝接线（issue #1092）：测试库与生产同形——计划装配/即建商户/本位币/
-    // 来源列反查/转换两腿/出资账户视图六向实现由各提供域装入（幂等，先装者优先）。
-    crate::investment::install_transaction_hooks();
-    crate::merchants::install_merchant_hooks();
-    crate::currencies::install_base_currency_hook();
-    crate::item::install_source_hook();
-    crate::policy::install_source_hook();
-    crate::accounts::install_funding_account_hook();
+    // 交易域接缝接线（issue #1092 / #1180）：测试库与生产同形——六向实现经组合
+    // 入口一次装入（幂等，先装者优先）。
+    crate::transaction_wiring::install_all();
     let mut conn = crate::db::open_in_memory().expect("打开内存测试库");
     crate::db::init_db(&mut conn).expect("初始化内存测试库");
     conn

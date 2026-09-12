@@ -51,14 +51,9 @@ pub(crate) fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, Pat
     // 测试工厂，ADR-0084 决策 3），建库单点的注册不覆盖本处——落库前显式注册
     // 余额刷新实现（幂等，进程级，与 BDD world 同款纪律）。
     tauri_app_lib::accounts::balance::install_balance_refresh_hook();
-    // 交易域接缝接线（issue #1092）：与测试工厂同形——六向实现显式注册（幂等，
-    // 进程级）。
-    tauri_app_lib::investment::install_transaction_hooks();
-    tauri_app_lib::merchants::install_merchant_hooks();
-    tauri_app_lib::currencies::install_base_currency_hook();
-    tauri_app_lib::item::install_source_hook();
-    tauri_app_lib::policy::install_source_hook();
-    tauri_app_lib::accounts::install_funding_account_hook();
+    // 交易域接缝接线（issue #1092 / #1180）：与测试工厂同形——六向实现经组合入口
+    // 一次装入（幂等，进程级）。
+    tauri_app_lib::transaction_wiring::install_all();
     let dir = std::env::temp_dir().join(format!(
         "ledger-syncchannel-it-{tag}-{}",
         tauri_app_lib::db::new_uuid()
