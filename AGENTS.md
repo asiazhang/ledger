@@ -24,11 +24,15 @@
 
 ## 后端分层
 
-目标依赖方向是 **壳 → 域 → 基础设施**，域不依赖壳。IPC 壳（`src-tauri/src/commands/`）与 HTTP 壳（`src-tauri/src/api_server/`）负责参数解包、事务边界和信号发射，不含业务语义；业务语义进入以域命名的顶层域目录；模型随域归位（ADR-0059）。新代码不得扩大壳层业务语义。
+Rust 根（`src-tauri/`）是 workspace：根包仍是 tauri 应用包（壳层、命令注册扫描与集成测试入口），成员 crate 集中在 `src-tauri/crates/`（glob 纳入，新 crate 落入即自动成为成员）。目标依赖方向是 **壳 → 域 → 基础设施 → 协议**，域不依赖壳；拆分轴、正交判据（无环且方向单一）、破环方式与门禁保底见 ADR-0112。业务域按 spec #1086 逐域拆出 crate；拆出前业务语义进入根包内以域命名的顶层域目录，模型随域归位（ADR-0059）；新代码不得扩大壳层业务语义。
 
-基础设施（`src-tauri/crates/infra/`）只承诺两条：不依赖任何域 crate、不定义账本数据的口径与规则（账本数据的语义与算术一律归域，基础设施不得对账本数据表执行 DML）；跨层共享机制、引导层不变量、单点收口用的闭集与键名表在此合法（ADR-0111）。crate 内分四区：原语（顶层单文件）、db（库与连接机制）、boot（引导层）、shell_support（只被壳层消费的机制，暂住，随壳层收敛迁出）；events、signals、settings 为共享接缝。内部依赖方向：原语 ← db ← boot ← shell_support。
+下层不直调上层的路径内副作用：写路径副作用挂载点（置脏触发、余额重算、计划来源解析）按「下层定义注册点、上层注册实现、壳层启动时接线」反转，不为消除合法依赖引入端口/事件反转（ADR-0112 决策 5）；合法依赖（上层依赖下层）直呼。
 
-结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）；白名单和归位状态以脚本及 ADR-0056、ADR-0111 为准。
+基础设施（`ledger-infra`，`src-tauri/crates/infra/`）只承诺两条：不依赖任何域 crate、不定义账本数据的口径与规则（账本数据的语义与算术一律归域，基础设施不得对账本数据表执行 DML）；跨层共享机制、引导层不变量、单点收口用的闭集与键名表在此合法（ADR-0111）。crate 内分四区：原语（顶层单文件）、db（库与连接机制）、boot（引导层）、shell_support（只被壳层消费的机制，暂住，随壳层收敛迁出）；events、signals、settings 为共享接缝。内部依赖方向：原语 ← db ← boot ← shell_support。
+
+协议（`ledger-sync-protocol`，`src-tauri/crates/sync-protocol/`）：多端同步的最底层共享协议（设备标识、领域命令契约、op 本地记录与读取、位点）；业务域只依赖协议 crate，不依赖多端同步域。
+
+门禁保底：clippy 六件套唯一声明处在 workspace 级 `[workspace.lints.clippy]`，成员必须显式 `[lints] workspace = true` 继承；静态检查与测试命令显式 `--workspace` 覆盖全部成员。结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）：crate 边界唯一事实源是脚本内 `CRATES` 清单（成员登记、分层、允许依赖方向），模块级白名单与认许边继续辖编译器看不见的规则；白名单和归位状态以脚本及 ADR-0056、ADR-0111、ADR-0112 为准。
 
 ## 数据与交易
 
