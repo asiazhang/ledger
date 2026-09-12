@@ -1,12 +1,12 @@
 {
   /* 前端工程共享 compilerOptions（issue #1149 / spec #1148）：根 tsconfig.json 与
      tsconfig.scripts.json 原各自逐字重复的公共项收敛于此，两工程经 extends 继承，
-     行为逐字不变（继承值与各自原声明全等）。取两工程原声明的交集——
-     useDefineForClassFields 仅根工程声明、types 仅 scripts 工程声明，各自留在本地，
-     不上升为共享项。paths 相对声明它的基文件解析：本文件与两工程同在仓库根，
-     "./src/*" 指向与拆分前一致。 */
+     行为逐字不变（继承值与各自原声明全等）。取两工程原声明的交集；types 仅
+     scripts 工程声明，留在该工程本地不上升。paths 相对声明它的基文件解析：
+     本文件与两工程同在仓库根，"./src/*" 指向与拆分前一致。 */
   "compilerOptions": {
     "target": "ES2020",
+    "useDefineForClassFields": true,
     "module": "ESNext",
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
