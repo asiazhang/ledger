@@ -45,7 +45,9 @@ use tauri::ipc::Invoke;
 // 基础设施全量归位（spec #1086 / issue #1088）：数据库、错误、设置、文件工具、
 // 日志、事件、信号、闭集与壳层统一读写入口迁入 `ledger-infra`，根包以再导出
 // 形态保留原引用路径——域与壳层的 `crate::db::…` / `crate::error::…` 等调用点
-// 零改动即可编译（expand 形态）。
+// 零改动即可编译（expand 形态）。#1130 起日志、读写入口与载荷脱敏在 crate 内
+// 收进 `shell_support` 暂住分组（ADR-0111 决策 2：正住址是壳层，#1086 P5 迁出），
+// 再导出面不变。
 pub use ledger_infra::{
     closed_set, db, error, events, fs_util, logger, read_entry, settings, signals, write_entry,
 };
