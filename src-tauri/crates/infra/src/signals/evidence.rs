@@ -4,7 +4,7 @@
 /// 承载条件信号的「条件」一半。默认 [`WriteEvidence::None`]（无证据，静态行决定信号）；
 /// 三类条件信号各占一个布尔变体，「真 / 假」由调用方按域内口径归一化（如
 /// sync `written > 0`、基金增强 `price_written`、行为层「即建商户」），
-/// 映射表内只保留一份「实际写入」判定（[`WriteEvidence::price_written`]）。
+/// 映射表内只保留一份「实际写入」判定（`WriteEvidence::price_written`，crate 内私有）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteEvidence {
     /// 无证据（默认）：信号完全由写操作身份的静态映射行决定。

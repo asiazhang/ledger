@@ -26,9 +26,9 @@ pub enum SettingKey {
     AutoBackupEnabled,
     /// 备份脏标记：数据变动后置 true，备份完成后复位（bool，默认 false）。
     AutoBackupDirty,
-    /// 上次成功备份时间（Option<String>，UTC ISO）。
+    /// 上次成功备份时间（`Option<String>`，UTC ISO）。
     AutoBackupLastBackupAt,
-    /// 下次备份到期时间（Option<String>，UTC ISO）。
+    /// 下次备份到期时间（`Option<String>`，UTC ISO）。
     AutoBackupNextDueAt,
     /// 后端日志等级（闭集五档 error/warn/info/debug/trace 的档位字符串，默认 info，
     /// 见 [`crate::logger::LogLevel`]）：后端消费、随 Backup/Restore 迁移（ADR-0006 / #611）。

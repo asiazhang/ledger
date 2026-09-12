@@ -83,7 +83,7 @@ fn after_commit(conn: &Connection) {
 /// `fetch_fund_quote_for_api`），事件循环线程与 tokio worker 不再被 DB 调用占用。
 ///
 /// - 闭包自带连接获取方式：读路径锁内执行（`conn.lock()`），写路径经连接层
-///   统一写入口 [`write`]（ADR-0032 置脏语义零改动）；
+///   统一写入口 [`write()`]（ADR-0032 置脏语义零改动）；
 /// - `command` 用于在闭包内重建命令 span：异步命令与 wrapper 不同线程，SQL 耗时
 ///   归因靠这里兜底（lib.rs 异步命令归因约定，先例 `sync_instrument_info`）；
 ///   调用点已有活动 span 时（HTTP handlers 在 tower_http 请求 span 内运行）改为
@@ -134,7 +134,7 @@ impl DbState {
         })
     }
 
-    /// 写入口的命令层便捷形态（语义见 [`write`]）：`state.write(|conn| ...)`。
+    /// 写入口的命令层便捷形态（语义见 [`write()`]）：`state.write(|conn| ...)`。
     pub fn write<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         write(&self.conn, f)
     }
