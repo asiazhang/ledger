@@ -3,7 +3,7 @@ import { errorMessage } from '@/utils/errors'
 import { onMounted, ref } from 'vue'
 import { NCard, NButton, NSpace, NText, useMessage } from 'naive-ui'
 import { api } from '@/api'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 // 样式方案试点（issue #888 / ADR-0093）：样式住旁路样式文件，随根元素主题类亮暗换装
 import { promptBody } from './AiPromptView.css.ts'
 

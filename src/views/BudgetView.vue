@@ -16,7 +16,7 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import { api } from '@/api'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { useLoadable } from '@/composables/useLoadable'
 import { useModalIntent } from '@/composables/useModalIntent'
 import { useWindowTier } from '@/composables/useWindowTier'

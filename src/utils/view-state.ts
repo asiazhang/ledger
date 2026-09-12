@@ -3,7 +3,7 @@
 // 约定：key 统一加 'view_state:' 前缀，与偏好（'appearance' 等）及业务数据（SQLite）分域。
 // 边界：不做"过度记忆"（筛选、滚动位置、列宽等一律不持久化）。
 
-import { loadLocal, saveLocal, removeLocal } from '@/utils/storage'
+import { loadLocal, saveLocal, removeLocal } from '@ledger/storage'
 
 export const VIEW_STATE_KEYS = {
   route: 'view_state:route',

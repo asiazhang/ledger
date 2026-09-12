@@ -9,7 +9,7 @@ import PolicyAgreementFields from '@/components/PolicyAgreementFields.vue'
 // 编辑模式的协议历史区（v-if=editing）：模板曾未 import、渲染为未知元素，
 // 编辑弹窗协议历史实际不显示——本票顺手修复（issue #713 改动本文件时发现）。
 import PolicyAgreementSection from '@/components/PolicyAgreementSection.vue'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'
 import { todayStr } from '@/utils/date'
 import { policyStatAmountText } from '@/utils/policy-stats'

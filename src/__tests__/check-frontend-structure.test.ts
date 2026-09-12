@@ -343,14 +343,11 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
       expect(r.output).toContain('须为 JSON 数组')
     })
 
-    it('PACKAGES 生产登记表已登记首个成员 @ledger/types（#1150 抽包落位）', () => {
-      expect(PACKAGES).toEqual([
-        {
-          name: '@ledger/types',
-          dir: 'packages/types',
-          deps: [],
-          note: expect.any(String),
-        },
+    it('PACKAGES 生产登记表与已落位包全等（#1150/#1151 抽包落位）', () => {
+      expect(PACKAGES.map((p) => ({ name: p.name, dir: p.dir, deps: [...p.deps] }))).toEqual([
+        { name: '@ledger/types', dir: 'packages/types', deps: [] },
+        { name: '@ledger/storage', dir: 'packages/storage', deps: [] },
+        { name: '@ledger/i18n', dir: 'packages/i18n', deps: ['@ledger/storage'] },
       ])
     })
   })

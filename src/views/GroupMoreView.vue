@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, nextTick, ref, type Component, type VNode } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { NTabs, NTabPane, NIcon } from 'naive-ui'
 import AppDropdown from '@/components/AppDropdown.vue'
 import {

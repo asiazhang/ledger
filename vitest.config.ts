@@ -35,6 +35,12 @@ export default defineConfig({
     setupFiles: ['./src/__tests__/setup.ts'],
     // 守门脚本包装测试与所测脚本同目录住 scripts/（issue #1158），前端测试住
     // src/__tests__：两处都纳入。setupFiles 仍指 src/__tests__，对两个目录统一生效。
-    include: ['src/__tests__/**/*.test.ts', 'scripts/**/*.test.ts'],
+    // 另纳入包内测试（spec #1148 用户故事 10：测试跟随被测包，issue #1151 起
+    // @ledger/storage / @ledger/i18n 自带包内测试）；setupFiles 对三处统一生效。
+    include: [
+      'src/__tests__/**/*.test.ts',
+      'scripts/**/*.test.ts',
+      'packages/**/__tests__/**/*.test.ts',
+    ],
   },
 })

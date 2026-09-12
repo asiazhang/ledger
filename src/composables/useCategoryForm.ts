@@ -10,7 +10,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { useMerchantField } from '@/composables/useMerchantField'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { Transaction } from '@ledger/types'
 import { errorMessage } from "@/utils/errors";
 

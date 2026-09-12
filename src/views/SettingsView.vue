@@ -41,7 +41,7 @@ import SyncSettings from '@/components/settings/SyncSettings.vue'
 import SearchDataSettings from '@/components/settings/SearchDataSettings.vue'
 import ScheduledSettings from '@/components/settings/ScheduledSettings.vue'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 </script>
 
 <template>

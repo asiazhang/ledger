@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import {
   INSTRUMENT_LINK_CLASS,
   INSTRUMENT_PLACEHOLDER_CLASS,

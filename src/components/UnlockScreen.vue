@@ -42,7 +42,7 @@
 import { NButton, NCard, NCheckbox, NInput, NSpace, NSpin, NText, useMessage, useThemeVars } from 'naive-ui'
 import { onMounted, ref } from 'vue'
 import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import { useRestoreFromFile } from '@/composables/useRestoreFromFile'
 import { useAppStore } from '@/stores/app'

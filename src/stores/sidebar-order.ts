@@ -2,7 +2,7 @@ import { computed, h, ref } from 'vue'
 import type { DropdownOption } from 'naive-ui'
 import { defineStore } from 'pinia'
 import { getSavedSidebarOrder, saveSidebarOrders, clearSidebarOrder, getSavedContainment, saveContainmentLists, clearContainment } from '@/utils/view-state'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 
 /**
  * 顺序源模块（issue #524 / #549：持久界面状态单一归宿）：侧边栏视图顺序唯一来源

@@ -17,7 +17,7 @@
  * 模式，响应式上下文中调用随语言切换即时重渲染），非入参可注入。
  */
 import { formatLocalDateISO } from '@/utils/date'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 
 /** 带日期区间的预设闭集（「全部」无区间，单独作默认态哨兵）。 */
 export type DatedTimePeriodPreset = 'month' | 'quarter' | 'year' | 'lastYear'

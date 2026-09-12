@@ -6,7 +6,7 @@ import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 
 import { useAppStore } from '@/stores/app'
-import { applyLocale } from '@/i18n'
+import { applyLocale } from '@ledger/i18n'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
 import { captureLastListener, mockListen } from './helpers/listen-mock'

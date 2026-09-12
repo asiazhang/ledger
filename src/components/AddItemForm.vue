@@ -5,7 +5,7 @@ import { NButton, NFormItem, NInput, NForm, NSpace, NText, useMessage } from 'na
 import { formatAmount } from '@/utils/money'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { Transaction } from '@ledger/types'
 
 /**

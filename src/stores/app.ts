@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { loadLocal, saveLocal } from '@/utils/storage'
-import { getLocaleSetting, setLocaleSetting, type LocaleSetting } from '@/i18n'
+import { loadLocal, saveLocal } from '@ledger/storage'
+import { getLocaleSetting, setLocaleSetting, type LocaleSetting } from '@ledger/i18n'
 import { amountPrivacyEnabled, AMOUNT_PRIVACY_STORAGE_KEY } from '@/utils/money'
 
 export type Theme = 'dark' | 'light'
@@ -24,7 +24,7 @@ export const useAppStore = defineStore('app', () => {
   // 后端只持运行时镜像，由 useDevicePreferenceSync 启动/变更时推送。
   const autoExecutionEnabled = ref<boolean>(loadLocal<boolean>('auto_execution_enabled', false))
   // 界面语言偏好（issue #342 / ADR-0049）：轻量设置项，'system' = 跟随系统；
-  // 存储与生效逻辑收口在 @/i18n，此处只持状态供设置页读写。
+  // 存储与生效逻辑收口在 @ledger/i18n，此处只持状态供设置页读写。
   const localeSetting = ref<LocaleSetting>(getLocaleSetting())
 
   // 「本机记住主口令」（issue #574 / ADR-0075 决策 3）：轻量设置项，真源在本机

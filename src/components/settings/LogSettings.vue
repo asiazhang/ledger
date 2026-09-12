@@ -4,7 +4,7 @@ import { api } from '@/api'
 import { errorMessage } from '@/utils/errors'
 import { NButton, NCard, NSpace, NText, useMessage } from 'naive-ui'
 import AppSelect from '@/components/AppSelect.vue'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 
 const message = useMessage()
 

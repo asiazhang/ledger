@@ -3,7 +3,7 @@ import { errorMessage } from '@/utils/errors'
 import { NCard, NSpace, NText, useMessage } from 'naive-ui'
 import pkg from '@/../package.json'
 import { gitShaFull, gitVersionLabel } from '@/utils/git-info'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 
 const message = useMessage()
 const gitVersion = gitVersionLabel()

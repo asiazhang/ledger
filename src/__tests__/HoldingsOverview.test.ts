@@ -4,7 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { NDataTable } from 'naive-ui'
 import { nextTick } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
-import { applyLocale } from '@/i18n'
+import { applyLocale } from '@ledger/i18n'
 import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
 import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,

@@ -37,7 +37,7 @@ import { sumFixedColumnWidths } from '@/utils/table'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useItemsStore } from '@/stores/items'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 
 const reference = useReferenceStore()
 

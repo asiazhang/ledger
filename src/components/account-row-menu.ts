@@ -1,6 +1,6 @@
 import { CreateOutline, SwapHorizontalOutline, TrashOutline } from '@vicons/ionicons5'
 import type { DropdownOption } from 'naive-ui'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { errorOptionProps, renderRowMenuIcon } from './row-menu-common'
 
 /**

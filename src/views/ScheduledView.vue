@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { NTabs, NTabPane, NIcon } from 'naive-ui'
 import {
   CalendarOutline,

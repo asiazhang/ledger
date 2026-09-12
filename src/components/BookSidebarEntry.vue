@@ -16,7 +16,7 @@ import AppModal from '@/components/AppModal.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import AppPopover from '@/components/AppPopover.vue'
 import { useBookSwitcher } from '@/composables/useBookSwitcher'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 
 // 侧栏左下角账本入口与弹层（issue #834 / ADR-0089）：入口（当前账本名按钮 +
 // 折叠态浮标）是 useBookSwitcher 深模块的薄适配器——清单渲染、切换确认、

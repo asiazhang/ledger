@@ -13,7 +13,7 @@ import {
 import type { DataTableColumn } from 'naive-ui'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import InstrumentLink from '@/components/InstrumentLink.vue'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/utils/money'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'

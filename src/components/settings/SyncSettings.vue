@@ -2,7 +2,7 @@
 import { NAlert, NButton, NCard, NInput, NSpace, NSpin, NText, useMessage } from 'naive-ui'
 import { computed, onMounted, ref } from 'vue'
 import { api } from '@/api'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'
 import { formatIsoMinute } from '@/utils/datetime'
 import { restartAppShortly } from '@/utils/restart'

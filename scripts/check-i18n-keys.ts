@@ -5,7 +5,8 @@
 // 纯函数导出供单测（scripts/check-i18n-keys.test.ts），CLI 入口可独立运行。
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-i18n-keys.ts`。
-// 默认校验本仓库；测试可传位置参数指向夹具目录：bun scripts/check-i18n-keys.ts [locales-dir]
+// 默认校验本仓库（locales 文案资源随 @ledger/i18n 包走，issue #1151）；测试可传位置
+// 参数指向夹具目录：bun scripts/check-i18n-keys.ts [locales-dir]
 // 挂载于 scripts/check.sh 质量门槛序列与 CI。
 
 import { readdirSync, readFileSync } from 'node:fs'
@@ -91,7 +92,7 @@ export function compareLocalesDir(localesDir: string): CompareResult {
 }
 
 function main(): void {
-  const localesDir = process.argv[2] ?? fileURLToPath(new URL('../src/i18n/locales', import.meta.url))
+  const localesDir = process.argv[2] ?? fileURLToPath(new URL('../packages/i18n/src/locales', import.meta.url))
   const { sourceLocale, locales, failures } = compareLocalesDir(localesDir)
   if (failures.length === 0) {
     console.log(`✅ i18n key 全等：${locales.join(' / ')} 各语言 key 集合与源语言 ${sourceLocale} 全等`)

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { InstrumentSyncProgress } from '@ledger/types'
 import { bar, root, text, textStack, track } from './sync-progress-bar.css.ts'
 

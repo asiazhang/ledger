@@ -4,7 +4,7 @@ import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { useLoadable } from '@/composables/useLoadable'
 import { errorMessage } from '@/utils/errors'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 import type {
   RecurrenceType,

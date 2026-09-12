@@ -6,8 +6,8 @@
 import { describe, expect, it } from 'vitest'
 import { deriveViewShortcuts } from '@/composables/useViewShortcuts'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
-import { viewLabel } from '@/i18n/view-label'
-import zhCN from '@/i18n/locales/zh-CN'
+import { viewLabel } from '@ledger/i18n/view-label'
+import zhCN from '@ledger/i18n/locales/zh-CN'
 
 // 键位表经 sidebar-order store 装配（issue #549）：派生入参 = store 组内序。
 
