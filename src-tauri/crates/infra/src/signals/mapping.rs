@@ -36,8 +36,9 @@ fn when(cond: bool, signals: &'static [Signal]) -> &'static [Signal] {
 /// 证据，返回本次写成功后应发射的信号集。纯函数——无副作用、不依赖 `AppHandle`、
 /// 不触库，可直接断言；穷尽 `match` 使「enum 新增变体漏改映射」在编译期即红。
 ///
-/// 调用方约定：写事务**提交成功后**调用（信号是写后通知），并经 [`emit_for`] /
-/// [`emit_all`] 发射；发射失败静默忽略，不影响写结果。零信号操作的调用点写
+/// 调用方约定：写事务**提交成功后**调用（信号是写后通知），并经
+/// [`crate::signals::emit_for`] / [`crate::signals::emit_all`] 发射；发射失败静默忽略，
+/// 不影响写结果。零信号操作的调用点写
 /// [`WriteEvidence::None`]，「不发」由此在映射行显式可查。
 pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
     match op {

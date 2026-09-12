@@ -127,7 +127,7 @@ pub enum WriteOp {
 
     // ── 账户域 ──
     /// 余额调整（IPC `adjust_account_balance`，ADR-0026）：预期证据
-    /// [`WriteEvidence::BlackHoleCreated`]——仅按需新建黑洞账户时参考表变更。
+    /// [`crate::signals::WriteEvidence::BlackHoleCreated`]——仅按需新建黑洞账户时参考表变更。
     AdjustAccountBalance,
 
     // ── 价格域：条件信号 `ledger:prices-changed`（ADR-0031），证据
@@ -144,7 +144,7 @@ pub enum WriteOp {
     RecordManualPrice,
     /// 标的创建 / 幂等复用（IPC `create_instrument` 手动创建；HTTP
     /// `POST /api/v1/instruments` 含基金增强分支，ADR-0037/0039）：标的字典写入本身
-    /// 不发参考信号；仅基金增强分支落现价时携 [`WriteEvidence::PriceWritten`] 发价格信号。
+    /// 不发参考信号；仅基金增强分支落现价时携 [`crate::signals::WriteEvidence::PriceWritten`] 发价格信号。
     CreateInstrument,
     /// 删除标的（IPC `delete_instrument`）：刻意零信号——无流水引用的标的无
     /// 持仓 / 走势消费方，前端标的列表本地重拉（issue #292 验收项）。
@@ -182,13 +182,13 @@ pub enum WriteOp {
     /// （连接层写入口提交点的写时顺带检查等，无命令身份）拿不到 `AppHandle`，
     /// 经 `events::EVENT_APP` 镜像句柄发射（`events::emit_backups_changed_current`）。
     /// 登记于此只为「备份信号生产者清单单点可查」，壳层不得以本变体调用
-    /// [`signals_for`] 发射。
+    /// [`crate::signals::signals_for`] 发射。
     AutoBackupDeepPath,
 
     // ── 交易域：基线零信号；唯一例外是「即建商户」证据（ADR-0028 / ADR-0044 决策 4，
     //    修复 HTTP 导入即建商户后的参考数据陈旧漏发，#331 接线）──
     /// 创建单笔交易（IPC `create_transaction`）：预期证据
-    /// [`WriteEvidence::MerchantCreated`]（入参带 `merchant_name` 且未命中即建）。
+    /// [`crate::signals::WriteEvidence::MerchantCreated`]（入参带 `merchant_name` 且未命中即建）。
     CreateTransaction,
     /// 批量创建交易（IPC `create_transactions`；HTTP `POST /api/v1/transactions/batch`）：
     /// 证据 = 批内聚合「任一行即建商户」。
@@ -224,7 +224,7 @@ pub enum WriteOp {
     // ── 多端同步域（ADR-0091）：重放是行为编排之外的第 N 写入入口，外来 op
     //    实际应用即账本数据变化，条件发 `ledger:changed`（证据承载「有无应用」）──
     /// 多端同步轮次（IPC `sync_now`，issue #862）：发布自己流 + 拉取他人流并经
-    /// 同步引擎幂等重放。证据 [`WriteEvidence::LedgerApplied`]——本轮实际应用
+    /// 同步引擎幂等重放。证据 [`crate::signals::WriteEvidence::LedgerApplied`]——本轮实际应用
     /// （applied > 0）才广播参考失效；纯跳过 / 去重 / 压制 / 挂起的轮次零变化
     /// 不广播（与「零变化不广播」同一品味）。
     SyncRound,
