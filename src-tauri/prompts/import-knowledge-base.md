@@ -5,6 +5,13 @@
 - 中文币种名 → `currency_code`：人民币 → CNY、港币 → HKD；完整清单 `GET /api/v1/currencies`。
 - 日期严格 `YYYY-MM-DD`。
 
+## 知识索引（分域知识节按需获取）
+
+导入知识按域分节：本页是基础知识（记账主路径一次拉取即覆盖），分域知识节按会话内容按需获取。
+
+- **投资节**：投资交易（buy / sell）、基金申赎、基金转换、份额调整、现金分红五节——标的解析与投资落账，及投资的对账与纠错口径，全文 `GET /api/v1/import/knowledge/investment`（`text/plain`）。
+- **何时需要读**：会话中出现投资类流水（`buy` / `sell` / `convert` / `split` / `dividend`，即下方「迁移拆行」所指）或投资标的，即须先拉取投资节再落账，且整场会话黏住——对账与纠错口径一并补读；投资类记录不得套用普通收支写法。
+
 ## 每行拆解（确定性，勿漂移）
 
 - 流入金额 > 0 → `income`，金额取流入；流出金额 > 0 → `expense`，金额取流出。
@@ -18,8 +25,6 @@
 
 - 交易可带 `merchant_name`（与 `merchant_id` 互斥）：**同一商户始终用同一名字**，想复用已有名先 `GET /api/v1/merchants` 拉在用列表按名提交——归一化责任在后端（命中复用、未命中即建）。
 - 仅 `income` / `expense` / `transfer` 可携带商户；`buy` / `sell` / `convert` / `split` / `dividend` 不能带（提交会被拒绝）；退款（refund）自动继承原支出商户，携带的商户会被忽略。
-
-{{IMPORT_KNOWLEDGE_INVESTMENT_SECTIONS}}
 
 ## 个人间借贷（借出 / 借入 / 还款）
 

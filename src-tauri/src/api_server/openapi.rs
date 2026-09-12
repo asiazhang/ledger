@@ -66,7 +66,8 @@ use super::handlers::stocks::StockLookup;
         handlers::transactions::batch_create_transactions_handler,
         handlers::transactions::update_transaction_handler,
         handlers::transactions::delete_transaction_handler,
-        handlers::import::import_knowledge_handler
+        handlers::import::import_knowledge_handler,
+        handlers::import::import_investment_knowledge_handler
     ),
     components(schemas(
         Account,
