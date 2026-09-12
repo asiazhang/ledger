@@ -1,5 +1,5 @@
 //! 建连 / 重置 / 完整性检查 / 内存库（自 `db/mod.rs` 按职责拆出，issue #1127，
-//! 纯移动）。建连收尾单点 [`finish_open`]：密钥注入 → 外键 → 耗时 hook；
+//! 纯移动）。建连收尾单点 `finish_open`（本模块私有）：密钥注入 → 外键 → 耗时 hook；
 //! 全部生产建连路径统一收口 [`init_db`]（schema 守卫尾部接线，ADR-0100）。
 
 use std::path::Path;
