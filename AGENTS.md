@@ -8,6 +8,7 @@
 
 - **业务规则、领域术语或跨域改动**：先读 `CONTEXT-MAP.md`，再读所有受影响域的 `docs/contexts/CONTEXT-*.md` 与相关 ADR。
 - **后端壳、域、基础设施或目录归位（含 triage 判定）**：读 `docs/adr/0056-backend-domain-directory-layering.md`。
+- **业务域 crate 内部组织（分区、命名、层序、守门）**：读 `docs/adr/0113-business-domain-crate-internal-organization.md`。
 - **后端易 panic 构造（unwrap/expect/panic!/todo!/unimplemented!/unreachable!）或其豁免**：读 `docs/adr/0060-backend-panic-construction-gate.md`。
 - **金额或交易写入改动**：先读 `docs/contexts/CONTEXT-core.md` 和相关 ADR，再以当前金额与写入接缝为唯一实现依据。
 - **前端状态、界面交互或弹层**：读 `docs/contexts/CONTEXT-reference-settings.md`、`docs/contexts/CONTEXT-ui-interaction.md` 及相关 ADR。
@@ -25,6 +26,8 @@
 ## 后端分层
 
 Rust 根（`src-tauri/`）是 workspace：根包仍是 tauri 应用包（壳层、命令注册扫描与集成测试入口），成员 crate 集中在 `src-tauri/crates/`（glob 纳入，新 crate 落入即自动成为成员）。目标依赖方向是 **壳 → 域 → 基础设施 → 协议**，域不依赖壳；拆分轴、正交判据（无环且方向单一）、破环方式与门禁保底见 ADR-0112。业务域按 spec #1086 逐域拆出 crate；拆出前业务语义进入根包内以域命名的顶层域目录，模型随域归位（ADR-0059）；新代码不得扩大壳层业务语义。
+
+业务域 crate 内部按消费面分四区（共享语义 / 跨域接缝 / 写路径 / 读路径），依赖方向单向（写读 → 接缝 → 共享语义），模块清单双向全等与区级反向依赖由结构守门断言，见 ADR-0113；拆出后的域内重排受该 ADR 管辖，不属拆 crate 迁移纪律（ADR-0112 决策 1 的限缩见其修订注记）。
 
 下层不直调上层的路径内副作用：写路径副作用挂载点（置脏触发、余额重算、计划来源解析）按「下层定义注册点、上层注册实现、壳层启动时接线」反转，不为消除合法依赖引入端口/事件反转（ADR-0112 决策 5）；合法依赖（上层依赖下层）直呼。
 
