@@ -54,9 +54,11 @@
 //!   父 spec #1005 决策 D2/D3）；
 //!
 //! 协议事务契约（ADR-0033）：prepare 校验归一化（不落库）、apply 应用副作用
-//! （buy 建仓 / sell 卖出匹配 / convert 两腿结转）、revert 回退副作用（修改路径：
-//! buy 与 convert 转换链+在用占用守卫+清理 / sell 回补）、release_for_delete 承载删除路径
-//! （sell 回补 / buy 与 convert 级联+清理，issue #940 / #979 / ADR-0097 / ADR-0099）——
+//! （buy 建仓 / sell 卖出匹配 / convert 两腿结转 / split 批次重述 / dividend 扩展行）、
+//! revert 回退副作用（修改路径：buy 与 convert 转换链+在用占用守卫+清理 / sell 回补 /
+//! split 按重述审计精确回补 / dividend 摘除扩展行）、release_for_delete 承载删除路径
+//! （sell 回补 / buy 与 convert 级联+清理 / split 精确回补 / dividend 摘除扩展行，
+//! issue #940 / #979 / ADR-0097 / ADR-0099 / ADR-0106 / ADR-0109）——
 //! 两者均为薄委托，守卫与清理模板归 [`unwind`]；交易行写入由核心交易域行为层编排
 //! （经 Writer 接缝），本域不再反向依赖核心交易域的行更新（双向依赖已斩断，issue #70）。
 //!
