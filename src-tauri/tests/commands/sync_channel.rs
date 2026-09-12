@@ -47,6 +47,10 @@ use crate::isolation::isolate_home;
 /// 引导登记态在位的 mock 应用 + 独立临时目录（不含库连接；连接由调用方按
 /// 明文/密文形态自行挂载，tauri manage 同型仅首次生效）。
 pub(crate) fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, PathBuf) {
+    // 写路径副作用接缝接线（issue #1090）：本套件经产品建缝拿文件库连接（不入
+    // 测试工厂，ADR-0084 决策 3），建库单点的注册不覆盖本处——落库前显式注册
+    // 余额刷新实现（幂等，进程级，与 BDD world 同款纪律）。
+    tauri_app_lib::accounts::balance::install_balance_refresh_hook();
     let dir = std::env::temp_dir().join(format!(
         "ledger-syncchannel-it-{tag}-{}",
         tauri_app_lib::db::new_uuid()

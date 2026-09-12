@@ -3,8 +3,17 @@
 //! 账户余额清单读取一个模块命中。对外函数签名与 IPC/HTTP/信号契约零变化；
 //! ADR-0067 两契约原样保留——写路径同事务整体重算（禁止增量加减）、
 //! 缓存缺失报码化错误不静默回退。口径表达式消费核心交易域
-//! [`crate::transaction::amount::account_flow_expr`] 单一真源（transaction ⇄
-//! accounts 显式横向边，ADR-0071 决策 5：核心交易仅在写路径为账户域维护余额缓存）。
+//! [`crate::transaction::amount::account_flow_expr`] 单一真源（accounts →
+//! transaction 单向；写路径余额刷新自 #1090 起经接缝反转——本模块把实现
+//! 注册进核心交易域的注册点，`transaction → accounts` 直接引用禁令化，
+//! ADR-0071 决策 5 修订注记）。
+//!
+//! 「受影响账户」推导为本模块私有（推导唯一性 issue #533 不变），私有性由
+//! compile_fail 负向用例钉死（再公开即红）：
+//!
+//! ```compile_fail
+//! use tauri_app_lib::accounts::balance::affected_accounts;
+//! ```
 
 use std::collections::HashMap;
 
@@ -190,17 +199,19 @@ pub fn list_account_balances_with_visibility(
 /// 退款继承与投资归一的账户语义已被写入前的归一步骤前置消化，
 /// 推导只看行上三个账户引用列。
 ///
-/// 接线状态：三条写入路径全部消费本函数——创建（Writer 接缝
-/// `transaction::writer::insert_row`，issue #533）、修改（`writer::update_row`，
-/// 旧 ∪ 新并集）与删除（行为层编排 `transaction::behavior::delete_within_transaction`，
-/// 原行三端）自 issue #534 起接线，三份手写推导已消亡；
-/// 任何新写入口不得另造第四份推导，直接消费本函数。
+/// 接线状态（issue #1090 接缝反转后）：三条写入路径经核心交易域的注册点
+/// `transaction::write_effects::refresh_affected_balances` 到达本函数——创建
+/// （Writer 接缝 `transaction::writer::insert_row`，issue #533）、修改
+/// （`writer::update_row`，旧 ∪ 新并集）与删除（行为层编排
+/// `transaction::behavior::soft_delete_transaction_row`，原行三端）。三条路径
+/// 都只交出行上账户引用三元组，推导仍在本函数单点；任何新写入口不得另造
+/// 第四份推导，也不得绕开接缝直接引用本模块。
 ///
 /// 与余额口径 SQL 构造（[`account_flow_subquery`] / [`join_column`]）同模块
 /// 互指、必须共变：本函数决定刷新「算哪些」（账户引用端的收集），
 /// SQL 构造决定账户余额「怎么算」（对同一组账户引用列聚合 `account_flow`）——
 /// 新增账户引用列时两处同改。
-pub fn affected_accounts<'a>(
+fn affected_accounts<'a>(
     old: Option<(&'a str, Option<&'a str>, Option<&'a str>)>,
     new: Option<(&'a str, Option<&'a str>, Option<&'a str>)>,
 ) -> Vec<&'a str> {
@@ -227,6 +238,35 @@ fn now_iso_millis() -> String {
     chrono::Utc::now()
         .format("%Y-%m-%dT%H:%M:%S%.3fZ")
         .to_string()
+}
+
+// ---------------------------------------------------------------------------
+// 写路径副作用接缝实现（issue #1090 / spec #1086 形态推广）：
+// 下层（核心交易域）定义注册点、上层（本域）提供实现、壳层启动时接线
+// ---------------------------------------------------------------------------
+
+/// 写路径余额刷新接缝的实现（[`install_balance_refresh_hook`] 的注册体）：
+/// 受影响账户推导（唯一定义点，[`affected_accounts`]）+ 同事务整体重算
+/// （[`refresh_account_balances`]），供核心交易域注册点
+/// `transaction::write_effects::refresh_affected_balances` 在创建/修改/软删落库后
+/// 同一写事务内调用（ADR-0067 语义零变化）。
+fn balance_refresh_hook(
+    conn: &Connection,
+    old: Option<(&str, Option<&str>, Option<&str>)>,
+    new: Option<(&str, Option<&str>, Option<&str>)>,
+) -> crate::error::Result<()> {
+    let affected = affected_accounts(old, new);
+    refresh_account_balances(conn, &affected)
+}
+
+/// 把写路径余额刷新实现注册进核心交易域的注册点（幂等，进程级一次）。
+///
+/// 接缝形态（issue #1090 / spec #1086）：调用点在壳层启动接线与测试建库单点
+/// （`test_support::open`、BDD world），与生产同形；接线后核心交易域对账户域零
+/// 直接依赖（ADR-0071 决策 5 修订：transaction ⇄ accounts 双向横向边收敛为
+/// accounts → transaction 单向）。
+pub fn install_balance_refresh_hook() {
+    crate::transaction::write_effects::register_balance_refresh_hook(balance_refresh_hook);
 }
 
 /// 对给定账户按唯一口径表达式整体重算余额并写入缓存（禁止增量加减）。

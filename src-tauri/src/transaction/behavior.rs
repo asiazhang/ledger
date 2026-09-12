@@ -63,7 +63,6 @@ use super::command::{
     record_local,
 };
 use super::model::{NormalizedTransaction, TransactionInput};
-use crate::accounts::balance::{affected_accounts, refresh_account_balances};
 use crate::db::now_iso;
 use crate::db::tx_scope::ensure_transaction;
 use crate::error::{AppError, Result};
@@ -516,16 +515,17 @@ fn soft_delete_transaction_row(conn: &Connection, id: &str, form: WriteForm) -> 
     )?;
     // 余额缓存写路径（issue #491 / ADR-0067）：软删后对原行账户引用三元组（受影响
     // 账户推导，消费余额模块唯一定义，issue #534 / #935——删除恢复出资账户的现金腿）
-    // 同事务整体重算。
-    let affected = affected_accounts(
+    // 同事务整体重算。经写路径副作用接缝传入原行三元组（#1090 接缝反转），
+    // 推导与重算都在账户域实现侧，本模块对账户域零感知。
+    super::write_effects::refresh_affected_balances(
+        conn,
         Some((
             account_id.as_str(),
             to_account_id.as_deref(),
             funding_account_id.as_deref(),
         )),
         None,
-    );
-    refresh_account_balances(conn, &affected)?;
+    )?;
     // op 产出接缝（issue #855 / ADR-0091）：**仅本地删除**追加 delete op（实体 id）；
     // 随同一事务提交/回滚（失败不残留 op）。重放不产 op（见 [`WriteForm`]）。
     if form == WriteForm::Local {

@@ -35,6 +35,11 @@
 // 共同底座，仅基础设施在其下）对壳层与全部域目录零依赖——依赖面只有基础设施
 // 与数据面惯用库（清单见 PROTOCOL_MODULES），反向引用由 cargo 依赖图拒绝
 //（协议 crate 根文档负向用例），本扫描再固化为规格。
+// 域间禁边（issue #1090 / spec #1086 形态推广）：三类写路径副作用（余额重算 /
+// 计划来源反查 / 期次落账置脏）的域间直接依赖随接缝反转消亡——
+// transaction→accounts、transaction→scheduled_transactions、
+// scheduled_transactions→backup 残留引用即红（认许边逐条留痕于
+// DOMAIN_PAIR_ALLOWED_EDGES，掩码后匹配，外挂测试豁免不变）。
 // 模型域化禁令（ADR-0059 T7 / #424 收口落地，全树扫描、同样掩码与测试豁免）：
 // ① 全局模型模块路径残留禁令——`crate::models` / `tauri_app_lib::models` 即红：
 //    全局模型目录已随域归位消亡，防扁平命名空间复活（crate 根裸路径 `models::x`
@@ -355,6 +360,79 @@ const NATIVE_TX_STMT_ALLOWED = `${INFRA_SRC_REL}/db/tx_scope.rs`
 
 /** 业务域→同步域引用锚点（crate 根前缀限定；掩码后匹配）——#1089 起零容忍，任何命中即红 */
 const SYNC_ENGINE_REF_PATTERN = /\b(?:crate|tauri_app_lib)\s*::\s*sync_engine\b/
+
+/** 域间禁边规则条目：from 域目录内文件引用 to 域目录即红（认许边除外） */
+interface DomainPairRule {
+  from: string
+  to: string
+  reason: string
+}
+
+/**
+ * 域间禁边（issue #1090 / spec #1086 形态推广）：三类写路径副作用（受影响账户
+ * 余额重算 / 来源列计划反查 / 期次落账置脏）已收口为「下层定义注册点、上层注册
+ * 实现、壳层启动时接线」的接缝反转形态（与 #1088 基础设施提交点后置动作同构），
+ * 域间横向直接依赖随接缝消亡——残留引用（import、全限定调用、花括号列举首段）
+ * 即红。作用域限业务域目录（认许边逐条留痕于 DOMAIN_PAIR_ALLOWED_EDGES），
+ * 文本级扫描、掩码注释与字面量后匹配，别名改写不可达靠评审兑底。
+ */
+const DOMAIN_PAIR_FORBIDDEN: readonly DomainPairRule[] = [
+  {
+    from: 'transaction',
+    to: 'accounts',
+    reason:
+      'issue #1090 / ADR-0071 决策 5 修订：写路径余额重算经注册点反转'
+      + '（transaction::write_effects 注册点 + accounts::balance::install_balance_refresh_hook 实现注册），'
+      + 'transaction → accounts 直接引用禁令；双向横向边收敛为 accounts → transaction 单向',
+  },
+  {
+    from: 'transaction',
+    to: 'scheduled_transactions',
+    reason:
+      'issue #1090 / spec #704 修订：来源列计划反查经注册点反转'
+      + '（transaction::read 注册点 + scheduled_transactions::source::install_plan_source_hook 实现注册），'
+      + 'transaction → scheduled_transactions 直接引用禁令',
+  },
+  {
+    from: 'scheduled_transactions',
+    to: 'backup',
+    reason:
+      'issue #1090 / spec #1086 形态推广：期次落账置脏经注册点反转'
+      + '（auto_run 注册点 + backup::install_occurrence_dirty_hook 实现注册），'
+      + 'scheduled_transactions → backup 直接引用禁令',
+  },
+]
+
+/** 域间禁边认许边条目：文件相对路径（相对根 src）+ from/to + 成因留痕 */
+interface DomainPairAllowedEdge {
+  file: string
+  from: string
+  to: string
+  reason: string
+}
+
+/**
+ * 域间禁边认许边（issue #1090）：既有设计意图边逐条留痕于本脚本，与
+ * INFRA_DOMAIN_ALLOWED_EDGES 同款留痕纪律——精确到文件相对路径，附成因；
+ * 清单之外的域间禁边引用一律红。
+ */
+const DOMAIN_PAIR_ALLOWED_EDGES: readonly DomainPairAllowedEdge[] = [
+  {
+    file: 'transaction/funding.rs',
+    from: 'transaction',
+    to: 'accounts',
+    reason:
+      'AccountType 参考数据类型消费（#935 出资账户准入的枚举判读，#1092 处置）——'
+      + '类型只读边，非写路径副作用',
+  },
+]
+
+/** 域间禁边依赖形态：与 INFRA_DOMAIN_DEP_PATTERN 同款——crate 根前缀 + 目标域名。 */
+function domainPairDepPattern(to: string): RegExp {
+  return new RegExp(
+    `\\b(?:crate|tauri_app_lib)\\s*::\\s*\\{?\\s*(${to})\\b(?:\\s*::|\\s+as\\b|\\s*;)`,
+  )
+}
 
 /** 花括号列举内的违规条目头（深度 0 逐条切分后取首个标识符；#1089 零容忍，
  *  全部条目违规）。返回违规条目头，供调用方构造命中。 */
@@ -1106,6 +1184,23 @@ function scanModuleEntries(
               `ledger_sync_protocol；「重放不产本地 op」从结构巧合升为规格`,
           )
         }
+        // 域间禁边（issue #1090）：残留的域间直接引用即红（认许边逐条留痕）。
+        for (const rule of DOMAIN_PAIR_FORBIDDEN.filter((r) => r.from === w.path)) {
+          for (const hit of scanRustSource(source, domainPairDepPattern(rule.to))) {
+            const allowed = DOMAIN_PAIR_ALLOWED_EDGES.some(
+              (e) => e.file === f.rel && e.from === rule.from && e.to === rule.to,
+            )
+            if (allowed) continue
+            problems.push(
+              `✗ 域间禁边：${f.rel} 引用 ${rule.to} → ${f.rel}:${hit.line}（${hit.match}）\n` +
+                `    ${hit.text}\n` +
+                `    ${rule.reason}\n` +
+                `    写路径副作用一律经注册点反转形态（下层定义注册点、上层注册实现、` +
+                `壳层启动接线，spec #1086 / #1090）；设计意图边须逐条留痕于本脚本 ` +
+                `DOMAIN_PAIR_ALLOWED_EDGES（附成因）`,
+            )
+          }
+        }
       }
     }
   }
@@ -1211,6 +1306,7 @@ function main(): void {
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +
       `· 业务域→同步域零容忍零违规（ADR-0101 / #1089 收紧）` +
+      `· 域间禁边 ${DOMAIN_PAIR_FORBIDDEN.length} 对零未认许引用（认许边 ${DOMAIN_PAIR_ALLOWED_EDGES.length} 条，#1090 接缝反转）` +
       `· 模型域化禁令全树扫描 ${allFiles.length} 个文件零残留（ADR-0059）` +
       `· 原生事务语句全树扫描 ${allFiles.length} 个文件仅 ${NATIVE_TX_STMT_ALLOWED} 一处（#1014）` +
       `· crate 边界 ${CRATES.length} 个（成员登记 / 门禁继承 / 依赖方向 / workspace 命令覆盖，#1087）` +

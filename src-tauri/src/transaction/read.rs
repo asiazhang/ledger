@@ -1,4 +1,17 @@
+//! 交易读取权威（列表过滤/排序/分页与单笔读取）。
+//!
+//! 来源列的计划反查段（②）自 #1090 起经接缝反转：本模块只定义注册点
+//! （[`register_plan_source_resolver`]）与消费单点（[`resolve_plan_sources`]），
+//! 实现由定时计划域提供（`scheduled_transactions::source::install_plan_source_hook`）、
+//! 壳层启动时接线——本域对定时计划域零直接依赖（域间禁边，`scripts/check-structure.ts`）。
+//! 计划反查行的公开再导出随之消亡，私有性由 compile_fail 负向用例钉死：
+//!
+//! ```compile_fail
+//! use tauri_app_lib::scheduled_transactions::source_display_by_transaction_ids;
+//! ```
+
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use rusqlite::Connection;
 
@@ -12,7 +25,49 @@ use crate::error::{AppError, Result};
 use crate::investment;
 use crate::item;
 use crate::policy;
-use crate::scheduled_transactions::{self, ScheduledKind};
+
+// ---------------------------------------------------------------------------
+// 计划来源解析接缝（issue #1090 / spec #1086 形态推广）
+// ---------------------------------------------------------------------------
+
+/// 计划来源解析钩子签名：按页收集的生成交易 id → 交易 id 到来源展示
+/// （[`TransactionSource`]，本域自有模型）的映射。实现侧（定时计划域）负责把
+/// `PlanSourceDisplay` 映射为本域来源模型（kind 三枚举 → 来源类型三枚举、
+/// `cancelled` 状态 → Cancelled 标注，spec #704 口径零变化）。
+type PlanSourceResolver = fn(&Connection, &[String]) -> Result<HashMap<String, TransactionSource>>;
+
+/// 计划来源解析器的进程级单例（登记点反转的承接面）：先装者优先、重复注册零动作。
+static PLAN_SOURCE_RESOLVER: OnceLock<PlanSourceResolver> = OnceLock::new();
+
+/// 注册计划来源解析实现（幂等：进程级一次，重复注册保留首次实现）。
+///
+/// 调用点在壳层启动接线与测试建库单点（`test_support::open`、BDD world），
+/// 与生产同形；实现由定时计划域提供
+/// （`scheduled_transactions::source::install_plan_source_hook`），业务代码不直接调用。
+pub(crate) fn register_plan_source_resolver(resolver: PlanSourceResolver) {
+    let _ = PLAN_SOURCE_RESOLVER.set(resolver);
+}
+
+/// 未注册错误的单一构造（纯函数，可测）：码化 Invalid——接线缺失是程序缺陷，
+/// 不该被读路径静默吞掉。
+fn plan_source_resolver_missing_error() -> AppError {
+    AppError::coded(
+        "transaction.plan-source-resolver-unregistered",
+        "计划来源解析器未注册：来源列的计划反查段被跳过（壳层启动接线缺失）",
+    )
+}
+
+/// 计划反查段的接缝消费点（私有）：委派给注册的实现。未注册即接线缺失，
+/// 码化错误上抛（列表读取显式失败，不静默丢来源列）。
+fn resolve_plan_sources(
+    conn: &Connection,
+    transaction_ids: &[String],
+) -> Result<HashMap<String, TransactionSource>> {
+    let resolver = PLAN_SOURCE_RESOLVER
+        .get()
+        .ok_or_else(plan_source_resolver_missing_error)?;
+    resolver(conn, transaction_ids)
+}
 
 pub use get_transaction_internal as get_transaction;
 pub use list_transactions_internal as list_transactions;
@@ -23,9 +78,9 @@ pub use list_transactions_internal as list_transactions;
 ///    批量反查（`policy::source_display_by_ids`）。双挂场景在此天然优先——
 ///    订阅期次执行时把协议上的保单引用复制进流水，自动保费流水同时有
 ///    「订阅协议 + 保单」两条线索，来源列显示保单（更具体的档案）。
-/// ② 计划反查（issue #707）：按生成交易 id 批量反查期次 → 计划
-///    （`scheduled_transactions::source_display_by_transaction_ids`），展示名 =
-///    计划名（备注，可空由前端按类型名兜底），已取消计划携带状态标注。
+/// ② 计划反查（issue #707）：按生成交易 id 批量反查期次 → 计划——经计划来源
+///    解析接缝（#1090，实现由定时计划域启动时装入），展示名 =
+///    计划名（备注，可空由前端按类型名兑底），已取消计划携带状态标注。
 /// ③ 物品反查（issue #708）：按溯源指针批量反查物品表
 ///    （`item::source_display_by_transaction_ids`），展示名 = 物品名，已处置
 ///    物品携带状态标注（物品列表仍在册、跳转不落空）。期次交易被建物品时
@@ -71,36 +126,23 @@ pub(super) fn attach_sources(conn: &Connection, items: &mut [Transaction]) -> Re
         }
     }
 
-    // ② 计划反查（仅对保单未命中的行；期次唯一索引保证一交易至多一行）
+    // ② 计划反查（仅对保单未命中的行；期次唯一索引保证一交易至多一行）——
+    // 经计划来源解析接缝（#1090）：注册点在本域，实现由定时计划域启动时装入，
+    // kind/状态/展示名映射口径零变化（spec #704）。
     let plan_txn_ids: Vec<String> = items
         .iter()
         .filter(|t| t.source.is_none())
         .map(|t| t.id.clone())
         .collect();
     if !plan_txn_ids.is_empty() {
-        let rows = scheduled_transactions::source_display_by_transaction_ids(conn, &plan_txn_ids)?;
-        let by_txn: HashMap<&str, &scheduled_transactions::PlanSourceDisplay> = rows
-            .iter()
-            .map(|r| (r.transaction_id.as_str(), r))
-            .collect();
+        let by_txn = resolve_plan_sources(conn, &plan_txn_ids)?;
         for txn in items.iter_mut() {
             if txn.source.is_some() {
                 continue;
             }
-            let Some(row) = by_txn.get(txn.id.as_str()) else {
-                continue;
-            };
-            txn.source = Some(TransactionSource {
-                kind: match row.kind {
-                    ScheduledKind::Installment => TransactionSourceKind::InstallmentPlan,
-                    ScheduledKind::Subscription => TransactionSourceKind::Subscription,
-                    ScheduledKind::ScheduledTransfer => TransactionSourceKind::ScheduledTransfer,
-                },
-                entity_id: row.plan_id.clone(),
-                // 展示名 = 计划名（备注）；无备注回空串，前端按类型名兜底展示。
-                display_name: row.note.clone().unwrap_or_default(),
-                status: (row.status == "cancelled").then_some(TransactionSourceStatus::Cancelled),
-            });
+            if let Some(source) = by_txn.get(txn.id.as_str()) {
+                txn.source = Some(source.clone());
+            }
         }
     }
 
@@ -311,4 +353,18 @@ pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transacti
     .ok_or_else(|| {
         AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
     })
+}
+
+#[cfg(test)]
+mod resolver_tests {
+    use super::*;
+
+    #[test]
+    fn 未注册错误_错误码可判读() {
+        let err = plan_source_resolver_missing_error();
+        assert_eq!(
+            err.code(),
+            Some("transaction.plan-source-resolver-unregistered")
+        );
+    }
 }

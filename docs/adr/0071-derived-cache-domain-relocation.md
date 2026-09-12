@@ -37,6 +37,19 @@
 
 迁移后 `transaction::writer/behavior` 调 `accounts::balance` 刷新（新边），`accounts::balance` 反向消费 `transaction::amount` 表达式真源——账户域与核心交易域成横向互依。这是设计意图而非副作用：ADR-0067 同事务约束排除信号/异步替代；「受影响账户集合收口」本就计划把推导落进余额模块。记录为「**核心交易仅在写路径为账户域维护余额缓存**」。依赖方向目标据此从「严格单向」修正为：infra→域业务边归零且可机械守门；域间横向边显式化、逐条留痕。
 
+> **修订（issue #1090，写路径副作用接缝反转）**：上述 `transaction → accounts` 写路径
+> 刷新边已按 #1088 奠定的「下层定义注册点、上层注册实现、壳层启动时接线」形态反转——
+> 核心交易域 `transaction::write_effects` 只定义余额刷新注册点（创建/修改/软删落库后
+> 的同事务刷新时机），实现（受影响账户推导 + 整体重算）由账户域
+> `accounts::balance::install_balance_refresh_hook` 提供、壳层启动时接线（`lib.rs` /
+> `test_support::open` / BDD world）。`transaction → accounts` 直接引用禁令化
+> （`scripts/check-structure.ts` 域间禁边），transaction ⇄ accounts 双向横向边收敛为
+> `accounts → transaction` 单向（口径表达式真源 `transaction::amount` + 注册点调用）；
+> `transaction/funding.rs → accounts` 的 AccountType 类型只读边保留为认许边（#1092
+> 处置）。ADR-0067 语义零变化：写路径仍同事务整体重算，未注册即码化错误回滚。
+> 同票反转的还有 `transaction → scheduled_transactions`（来源列计划反查）与
+> `scheduled_transactions → backup`（期次落账置脏）两条写/读路径副作用边。
+
 ### 6. 结构守门扩展：infra→域扫描
 
 `scripts/check-structure.ts` 新增白名单基础设施条目内的「infra→域」文本级扫描，形态与现有 `commands::` 扫描同款（掩码注释与字符串后匹配域模块路径，fail loud）。迁移落地当天天然全绿——迁移前全基础设施仅 `db/balance.rs` 两行域 import。外挂测试继续豁免（ADR-0056 决策 5）。
