@@ -2,19 +2,16 @@
 # backend-ci.Dockerfile 到 GHCR，供 build.yml 的 backend / backend-lint job
 # 以 container: 挂载，消除每个 job 的 apt 系统依赖安装固定开销。
 #
-# 重建路径（「依赖变更后能重建并生效」的验收路径，三入口）：
-# 1. Dockerfile 变更：merge 进 main 后本 workflow 的 paths 过滤自动触发重建，
-#    下一个 PR 起生效（PR 内的变更在本 PR CI 用旧镜像跑——系统依赖未变则等价，
-#    变了则 merge 后重建生效；需要立即验证新依赖时从 PR 分支手动 dispatch）；
-# 2. 每周一 cron：跟随 Rust stable 安全更新与基础镜像补丁自动重建；
-# 3. 手动 dispatch：Actions → CI Image → Run workflow，可指定任意 ref
-#    （PR 分支上改了 Dockerfile 可先 dispatch 发布验证，再 merge）。
+# 重建路径（三入口）与依赖清单纪律的单一事实源在 Dockerfile 头注，此处只列
+# 触发器：① paths 过滤（Dockerfile/本文件变更 merge 后自动重建）；② 每周一
+# cron 跟随 Rust stable 更新；③ 手动 dispatch（可指定任意 ref，PR 分支可先
+# 发布验证新依赖再 merge）。PR 内的变更在本 PR CI 用旧镜像跑——系统依赖未变
+# 则等价，变了则 merge 后重建生效。
 #
 # 镜像 tag 策略：`:latest`（build.yml 引用的滚动 tag）+ `:sha-<full-sha>`
-# （不可变追溯 tag，回滚与 diff 用）。发布后 package 需为 public（首次发布在
-# GitHub → Packages 手动切 public，一次性）：public 镜像匿名拉取，fork PR 与
-# 无凭据场景零配置；设 private 则所有 PR CI 拉取都要接凭据，得不偿失。
-# 层缓存走 type=gha：apt 清单与 rustup 版本不变时重建走缓存层，秒级完成。
+# （不可变追溯 tag，回滚与 diff 用）。package 必须保持 public（匿名拉取，
+# fork PR 与无凭据场景零配置），下方有匿名拉取守门步骤。层缓存走 type=gha：
+# apt 清单与 rustup 版本不变时重建走缓存层，秒级完成。
 
 name: CI Image
 
@@ -49,28 +46,33 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # buildx 容器驱动：type=gha 层缓存导出与 load: 回载所需（默认 docker
+      # 驱动不支持 cache-to gha）。
+      - uses: docker/setup-buildx-action@v3
+
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 先构建不发布（load 进本地 docker），冒烟通过后才 push——发布以冒烟为
+      # 前置门，坏镜像阻断在 push 之前，不上 :latest（#1109 评审修正）。
       - uses: docker/build-push-action@v6
         with:
           context: .github/docker
           file: .github/docker/backend-ci.Dockerfile
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:sha-${{ github.sha }}
+          push: false
+          load: true
+          tags: ${{ env.IMAGE }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       # 冒烟校验（镜像重建路径可用性的门）：工具链四件套 + 关键系统库
-      # pkg-config 发现均可用才算发布成功，坏镜像不进 :latest 的消费方。
+      # pkg-config 发现均可用，下方发布步骤才执行。
       - name: 镜像冒烟校验
         run: |
-          docker run --rm "$IMAGE" bash -c '
+          docker run --rm "$IMAGE":latest bash -c '
             set -euo pipefail
             rustc --version
             cargo --version
@@ -80,3 +82,27 @@ jobs:
             pkg-config --modversion webkit2gtk-4.1 gtk+-3.0 ayatana-appindicator3-0.1 librsvg-2.0
             git --version
           '
+
+      # 发布：latest 滚动 tag（build.yml 引用）+ sha 不可变追溯 tag（回滚/diff）。
+      # 登录已在 docker/login-action 完成，直接推。
+      - name: 发布镜像
+        run: |
+          docker tag "$IMAGE":latest "$IMAGE":sha-"$GITHUB_SHA"
+          docker push "$IMAGE":latest
+          docker push "$IMAGE":sha-"$GITHUB_SHA"
+
+      # package public 化守门（首次发布后的一次性手动步骤，评审发现无守门）：
+      # GHCR 新 package 默认 private，而 CI 消费方匿名拉取，private 即全红。
+      # 这里用匿名 token 拉清单——public 过，private 红（含修正指引），把
+      # 「忘了切 public」从消费方首跑失败提前到发布当场暴露。
+      - name: 匿名拉取守门（package 须 public）
+        run: |
+          REPO_PATH="${IMAGE#ghcr.io/}"
+          TOKEN=$(curl -sf "https://ghcr.io/token?scope=repository:$REPO_PATH:pull" | jq -r .token)
+          if curl -sf -H "Authorization: Bearer $TOKEN" \
+              "https://ghcr.io/v2/$REPO_PATH/manifests/latest" >/dev/null; then
+            echo "✓ package 可匿名拉取（public），CI 消费方就绪"
+          else
+            echo "::error::package 仍为 private，CI 消费方匿名拉取会失败：GitHub → Packages → ledger-ci-backend 切 public 后重跑本步骤"
+            exit 1
+          fi
