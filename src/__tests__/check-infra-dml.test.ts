@@ -56,7 +56,7 @@ const WRITE_ENTRY_VIOLATION = [
 const DEFAULT_INFRA_FILES: Record<string, string> = {
   'crates/infra/src/db/migrate.rs': 'pub fn migrate() {}',
   'crates/infra/src/db/schema_guard.rs': 'pub fn guard() {}',
-  'crates/infra/src/write_entry.rs': WRITE_ENTRY_VIOLATION,
+  'crates/infra/src/shell_support/write_entry.rs': WRITE_ENTRY_VIOLATION,
 }
 
 /** 建夹具目录（形状同构 src-tauri：migrations/ 与免扫文件必在；值为 null 表示
@@ -197,37 +197,29 @@ describe('check-infra-dml（基础设施账本数据表 DML 禁令，issue #1135
     expect(r.output).toContain('INSERT INTO categories')
   })
 
-  it('已登记例外（write_entry.rs 内联测试夹具）严格相等校验：命中数漂移即红、命中清零即红', () => {
-    const violation = [
-      '#[cfg(test)]',
-      'mod tests {',
-      '  #[test]',
-      '  fn t() {',
-      '    let _ = "INSERT INTO categories (id) VALUES (1)";',
-      '  }',
-      '}',
-    ].join('\n')
+  it('已登记例外（shell_support/write_entry.rs 内联测试夹具）严格相等校验：命中数漂移即红、命中清零即红', () => {
+    const violation = WRITE_ENTRY_VIOLATION
     // 恰好 1 处命中 = 登记数：放行
-    const exact = makeFixture({ 'crates/infra/src/write_entry.rs': violation })
+    const exact = makeFixture({})
     expect(run([exact]).status).toBe(0)
     expect(run([exact]).output).toContain('已登记例外 1 条')
 
     // 登记文件消失（改名/搬迁）：清单漂移 fail loud（与 EXEMPT_FILES 同纪律）
-    const renamed = makeFixture({ 'crates/infra/src/write_entry.rs': null })
+    const renamed = makeFixture({ 'crates/infra/src/shell_support/write_entry.rs': null })
     const missing = run([renamed])
     expect(missing.status).toBe(1)
     expect(missing.output).toContain('例外清单漂移')
 
     // 2 处命中 ≠ 登记的 1 处：红
     const drifted = makeFixture({
-      'crates/infra/src/write_entry.rs': violation + '\n' + violation,
+      'crates/infra/src/shell_support/write_entry.rs': violation + '\n' + violation,
     })
     const more = run([drifted])
     expect(more.status).toBe(1)
     expect(more.output).toContain('实际命中 2 处 ≠ 登记的 1 处')
 
     // 命中清零：例外已收敛，登记条目应删除，红
-    const converged = makeFixture({ 'crates/infra/src/write_entry.rs': 'pub fn x() {}' })
+    const converged = makeFixture({ 'crates/infra/src/shell_support/write_entry.rs': 'pub fn x() {}' })
     const gone = run([converged])
     expect(gone.status).toBe(1)
     expect(gone.output).toContain('例外已收敛')
