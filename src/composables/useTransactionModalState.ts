@@ -3,7 +3,7 @@ import type { Ref } from 'vue'
 import { useModalIntent } from '@/composables/useModalIntent'
 import { api } from '@/api'
 import { errorMessage } from '@/utils/errors'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type {
   CreateFormKind,
   Transaction,

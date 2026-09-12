@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { NButton, NIcon, useMessage } from 'naive-ui'
 import { CopyOutline } from '@vicons/ionicons5'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'
 
 /**

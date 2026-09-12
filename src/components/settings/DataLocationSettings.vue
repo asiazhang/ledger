@@ -4,7 +4,7 @@ import { NAlert, NButton, NCard, NSpace, NSpin, NText, useMessage } from 'naive-
 import { onMounted, ref } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { api } from '@/api'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 import type { DataLocationChangeOutcome, DataLocationInfo } from '@ledger/types'
 

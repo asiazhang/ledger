@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import { resolveMerchantRef } from '@/composables/resolve-merchant'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 
 /**
  * 商户输入字段（issue #189 原生于 useCategoryForm，issue #875 / ADR-0092 提取为共享接缝）：

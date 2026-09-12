@@ -11,7 +11,7 @@ import type { ActiveElement, ChartOptions, TooltipItem } from 'chart.js'
 // 注册，不再组件自持子集；导入即完成注册。
 import '@/utils/chart-registration'
 import { api } from '@/api'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useReportsSessionStore } from '@/stores/reports-session'

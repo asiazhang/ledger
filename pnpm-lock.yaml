@@ -112,6 +112,12 @@ importers:
 
   .:
     dependencies:
+      '@ledger/i18n':
+        specifier: workspace:*
+        version: link:packages/i18n
+      '@ledger/storage':
+        specifier: workspace:*
+        version: link:packages/storage
       '@ledger/types':
         specifier: workspace:*
         version: link:packages/types
@@ -203,6 +209,31 @@ importers:
       vue-tsc:
         specifier: ^3.3.11
         version: 3.3.11(typescript@6.0.3)
+
+  packages/i18n:
+    dependencies:
+      '@ledger/storage':
+        specifier: workspace:*
+        version: link:../storage
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+      vue-i18n:
+        specifier: ^11.4.10
+        version: 11.4.10(vue@3.5.42(typescript@6.0.3))
+    devDependencies:
+      '@vue/test-utils':
+        specifier: ^2.5.0
+        version: 2.5.0(@vue/compiler-dom@3.5.42)(@vue/server-renderer@3.5.42)(vue@3.5.42(typescript@6.0.3))
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
+
+  packages/storage:
+    devDependencies:
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
 
   packages/types: {}
 

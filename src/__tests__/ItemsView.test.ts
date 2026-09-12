@@ -6,7 +6,7 @@ import { findButton } from './helpers/dom'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { NPopconfirm, NSelect, NDatePicker } from 'naive-ui'
 import { nextTick } from 'vue'
-import { applyLocale } from '@/i18n'
+import { applyLocale } from '@ledger/i18n'
 import ItemsView from '@/views/ItemsView.vue'
 import { formatAmount } from '@/utils/money'
 import type {

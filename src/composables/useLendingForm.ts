@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { useTransferForm } from '@/composables/useTransferForm'
 import { useFormShared } from '@/composables/useFormShared'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import {
   LENDING_DIRECTION_SIDES,
   accountMatchesSide,

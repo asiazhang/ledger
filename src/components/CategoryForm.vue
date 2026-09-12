@@ -11,7 +11,7 @@ import AppSelect from '@/components/AppSelect.vue'
 import AppTreeSelect from '@/components/AppTreeSelect.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import { useCategoryForm } from '@/composables/useCategoryForm'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { Transaction } from '@ledger/types'
 
 // 编辑模式（issue #178）：传入 editing 时回填既有交易并走更新命令，

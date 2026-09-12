@@ -6,7 +6,7 @@ import { buildRefundInput } from '@/domain/transaction-input'
 import { judgeAmountText } from '@/utils/field-error'
 import { useFieldErrors } from '@/composables/useFieldErrors'
 import { useFormShared } from '@/composables/useFormShared'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { Transaction } from '@ledger/types'
 import { errorMessage } from "@/utils/errors";
 

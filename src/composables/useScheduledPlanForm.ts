@@ -7,7 +7,7 @@ import { useFormShared } from '@/composables/useFormShared'
 import { resolveMerchantRef } from '@/composables/resolve-merchant'
 import { api } from '@/api'
 import { errorMessage } from '@/utils/errors'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { todayStr } from '@/utils/date'
 import type { CreateScheduledInput, RecurrenceType, ScheduledKind } from '@ledger/types'
 

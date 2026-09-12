@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { NProgress, NText } from 'naive-ui'
 import { computed } from 'vue'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { PassphraseStrengthAssessment, PassphraseStrengthTier } from '@/utils/passphrase-strength'
 
 // 口令强度条（issue #685，词汇表「口令强度」）：纯展示组件——色条＋四档文字，

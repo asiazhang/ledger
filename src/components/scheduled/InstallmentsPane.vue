@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import {
   NCard,
   NButton,

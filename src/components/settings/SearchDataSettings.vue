@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { NAlert, NButton, NCard, NSpace, NText, useMessage } from 'naive-ui'
 import { api } from '@/api'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'
 import type { NotePinyinRepairReport } from '@ledger/types'
 

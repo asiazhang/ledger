@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { computed, ref, watch } from 'vue'
 import {
   NButton,

@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { NTabs, NTabPane } from 'naive-ui'
 import CategoryKindPanel from '@/components/categories/CategoryKindPanel.vue'
 import CategoryEditModal from '@/components/categories/CategoryEditModal.vue'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { Category, CategoryKind } from '@ledger/types'
 
 const activeKind = ref<CategoryKind>('expense')

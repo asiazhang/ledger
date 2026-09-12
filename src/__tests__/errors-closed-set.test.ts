@@ -9,7 +9,7 @@
 // 合法值清单经 `{1}` 插值——不在码表另抄一份（ADR-0108）。
 import { afterEach, describe, expect, it } from 'vitest'
 import { errorMessage } from '@/utils/errors'
-import { applyLocale } from '@/i18n'
+import { applyLocale } from '@ledger/i18n'
 
 describe('errors.json 闭集未知值码表（#1071）', () => {
   afterEach(async () => {

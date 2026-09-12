@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { NIcon, NMenu, useThemeVars } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
 import { MenuOutline } from '@vicons/ionicons5'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import AppDrawer from '@/components/AppDrawer.vue'
 
 /**

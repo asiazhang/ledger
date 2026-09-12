@@ -8,7 +8,7 @@
 // 夹具会让 applyLocale 短路、跳过真实 locale bundle；本文件不注夹具。
 import { afterEach, describe, expect, it } from 'vitest'
 import { errorMessage } from '@/utils/errors'
-import { applyLocale } from '@/i18n'
+import { applyLocale } from '@ledger/i18n'
 
 interface Case {
   code: string

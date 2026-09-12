@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
-import { applyLocale } from '@/i18n'
+import { applyLocale } from '@ledger/i18n'
 import { mountView, openMenuOnRow, rowMenu } from './common'
 
 // 交易域文案 i18n（issue #348）：默认语言恒为 zh-CN（测试环境不初始化），

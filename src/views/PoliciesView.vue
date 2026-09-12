@@ -23,7 +23,7 @@ import { useWindowTier } from '@/composables/useWindowTier'
 import { sumFixedColumnWidths } from '@/utils/table'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 
 const reference = useReferenceStore()
 const policiesStore = usePoliciesStore()

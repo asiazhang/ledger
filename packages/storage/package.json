@@ -1,0 +1,13 @@
+{
+  "name": "@ledger/storage",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "存储接缝包（issue #1151 / spec #1148）：localStorage 读写的 JSON 序列化 + 静默容错——依赖图唯一真叶子（零 import），UI 状态（偏好、视图状态、语言偏好）持久化的单一收口；与业务数据（SQLite）分域的边界由调用方持有。源码直出，exports 指向 src/index.ts，不建构建链；跨包只能整引包名（深导入由 check-frontend-structure.ts 守门）。",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.0"
+  }
+}

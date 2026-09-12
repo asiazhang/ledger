@@ -5,7 +5,7 @@ import AppSelect from '@/components/AppSelect.vue'
 import LogSettings from '@/components/settings/LogSettings.vue'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
-import { t, type LocaleSetting } from '@/i18n'
+import { t, type LocaleSetting } from '@ledger/i18n'
 
 const store = useAppStore()
 const reference = useReferenceStore()

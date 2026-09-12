@@ -11,7 +11,7 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import { formatAmount } from '@/utils/money'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import PhysicalAssetFormModal from '@/components/PhysicalAssetFormModal.vue'
 import PhysicalAssetValuationModal from '@/components/PhysicalAssetValuationModal.vue'
 import PhysicalAssetDisposeModal from '@/components/PhysicalAssetDisposeModal.vue'

@@ -7,7 +7,7 @@ import { formatIsoMinute } from "@/utils/datetime";
 import { api } from "@/api";
 import type { AutoBackupState, BackupFileInfo, BackupKind } from "@ledger/types";
 import { errorMessage } from "@/utils/errors";
-import { t } from "@/i18n";
+import { t } from "@ledger/i18n";
 import { useRestoreFromFile } from "@/composables/useRestoreFromFile";
 import {
   defaultBackupFileName,

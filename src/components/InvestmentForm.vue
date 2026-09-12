@@ -10,7 +10,7 @@ import {
 import AppSelect from '@/components/AppSelect.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { useInvestmentForm } from '@/composables/useInvestmentForm'
 import type { Transaction, TransactionTrade } from '@ledger/types'
 

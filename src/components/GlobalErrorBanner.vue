@@ -7,7 +7,7 @@
 import { NButton } from 'naive-ui'
 import { useThemeVars } from 'naive-ui'
 import { useRenderErrorsStore } from '@/stores/render-errors'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { banner, text, closeButton } from './global-error-banner.css.ts'
 
 const store = useRenderErrorsStore()

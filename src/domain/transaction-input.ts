@@ -1,7 +1,7 @@
 import type { TransactionInput, TransactionKind } from '@ledger/types'
 import { toLocalDateISO } from '@/utils/date'
 import { yuanToCents, yuanToPrice } from '@/utils/money'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 
 /**
  * TransactionInput 装配器（issue #215）：「记一笔」表单状态 → 完整 TransactionInput

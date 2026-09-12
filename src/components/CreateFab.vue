@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { NButton, NIcon } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import { CREATE_KINDS, type CreateTransactionKind } from '@ledger/types'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import AppPopover from '@/components/AppPopover.vue'
 import {
   CREATE_FAB_CLASS,

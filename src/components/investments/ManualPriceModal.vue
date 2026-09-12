@@ -4,7 +4,7 @@ import { NButton, NForm, NFormItem, NInputNumber, NSpace, NText } from 'naive-ui
 import AppModal from '@/components/AppModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import { api } from '@/api'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
 import { formatPrice, yuanToPrice } from '@/utils/money'
 import { todayStr } from '@/utils/date'

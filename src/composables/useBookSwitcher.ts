@@ -1,7 +1,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'
 import { useLoadable } from '@/composables/useLoadable'
 import { restartAppShortly } from '@/utils/restart'

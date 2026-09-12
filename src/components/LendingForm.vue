@@ -7,7 +7,7 @@ import {
   NButtonGroup,
   NSpace,
 } from 'naive-ui'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import AppSelect from '@/components/AppSelect.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
