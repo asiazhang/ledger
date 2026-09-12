@@ -552,6 +552,14 @@ describe('check-structure 原生事务语句禁令（issue #1014 / #1003 定案 
 interface CrateFixtureOverrides {
   rootManifest?: string
   memberManifest?: string
+  /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
+  infraLibRs?: string
+  /** 覆盖根包 `src/lib.rs` 内容（test_utils 再导出 cfg 门负向夹具） */
+  rootLibRs?: string
+  /** 覆盖根包 `[dependencies]` 的 ledger-infra 行（生产依赖接线负向夹具） */
+  rootInfraProdDep?: string
+  /** 追加到根包 `[features]` 段的原文行（default feature 负向夹具） */
+  rootFeaturesExtra?: string
   checkSh?: string
   testSh?: string
   lintFixSh?: string
@@ -590,12 +598,22 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
       'version = "0.6.0"',
       'edition = "2024"',
       '',
+      '[features]',
+      'test-utils = ["ledger-infra/test-utils"]',
+      overrides.rootFeaturesExtra ?? '',
+      '',
+      '[dependencies]',
+      overrides.rootInfraProdDep ?? 'ledger-infra = { path = "crates/infra" }',
+      '',
       '[workspace]',
       'members = ["crates/*"]',
       'resolver = "3"',
       '',
       '[workspace.lints.clippy]',
       LINT_DENIES,
+      '',
+      '[dev-dependencies]',
+      'tauri-app = { path = ".", features = ["test-utils"] }',
       '',
       '[lints]',
       'workspace = true',
@@ -611,13 +629,31 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
       'version = "0.6.0"',
       'edition = "2024"',
       '',
+      '[features]',
+      'test-utils = []',
+      '',
       '[lints]',
       'workspace = true',
       '',
     ].join('\n')
   mkdirSync(join(srcTauri, 'crates', 'infra', 'src'), { recursive: true })
   writeFileSync(join(srcTauri, 'crates', 'infra', 'Cargo.toml'), memberManifest)
-  writeFileSync(join(srcTauri, 'crates', 'infra', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+  writeFileSync(
+    join(srcTauri, 'crates', 'infra', 'src', 'lib.rs'),
+    overrides.infraLibRs ??
+      'pub fn stub() {}\n' +
+        '#[cfg(any(test, feature = "test-utils"))]\n' +
+        '#[doc(hidden)]\n' +
+        'pub mod test_utils;\n',
+  )
+  mkdirSync(join(srcTauri, 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'src', 'lib.rs'),
+    overrides.rootLibRs ??
+      '#[cfg(any(test, feature = "test-utils"))]\n' +
+        '#[doc(hidden)]\n' +
+        'pub use ledger_infra::test_utils;\n',
+  )
 
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
@@ -809,5 +845,112 @@ describe('check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
     })
     const r = run(args)
     expect(r.status).toBe(0)
+  })
+})
+
+describe('check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue #1132）', () => {
+  it('真实仓库默认通过：cfg 门 + 生产依赖不启用 test-utils', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain('test_utils 生产编译门')
+  })
+
+  it('workspace 骨架夹具默认通过', () => {
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
+  })
+
+  it('infra lib.rs 摘掉 test_utils cfg 门 → 红（删除 cfg 门即变红）', () => {
+    const args = makeCrateFixture({
+      infraLibRs: 'pub fn stub() {}\n#[doc(hidden)]\npub mod test_utils;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('test_utils 生产编译门')
+    expect(r.output).toContain('cfg 门')
+  })
+
+  it('模块声明前只有普通注释 → 仍红（注释不构成门）', () => {
+    const args = makeCrateFixture({
+      infraLibRs: 'pub fn stub() {}\n// 仅注释说明，不构成门\npub mod test_utils;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('test_utils 生产编译门')
+  })
+
+  it('cfg 门写在 doc(hidden) 之前 → 绿（属性顺序不敏感）', () => {
+    const args = makeCrateFixture({
+      infraLibRs:
+        'pub fn stub() {}\n#[doc(hidden)]\n#[cfg(any(test, feature = "test-utils"))]\npub mod test_utils;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('根包生产依赖 ledger-infra 启用 test-utils → 红（生产会编入测试器具）', () => {
+    const args = makeCrateFixture({
+      rootInfraProdDep: 'ledger-infra = { path = "crates/infra", features = ["test-utils"] }',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('test_utils 生产编译门')
+    expect(r.output).toContain('生产依赖')
+  })
+
+  it('反向门 #[cfg(not(test))] → 红（模块只留给生产）', () => {
+    const args = makeCrateFixture({
+      infraLibRs: 'pub fn stub() {}\n#[cfg(not(test))]\npub mod test_utils;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('test_utils 生产编译门')
+    expect(r.output).toContain('放行测试')
+  })
+
+  it('与测试无关的 cfg 门 → 红（等价于无门）', () => {
+    const args = makeCrateFixture({
+      infraLibRs: 'pub fn stub() {}\n#[cfg(debug_assertions)]\npub mod test_utils;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('test_utils 生产编译门')
+  })
+
+  it('根包再导出摘掉 cfg 门 → 红（生产构建会解析失败即变红）', () => {
+    const args = makeCrateFixture({
+      rootLibRs: '#[doc(hidden)]\npub use ledger_infra::test_utils;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('test_utils 生产编译门')
+    expect(r.output).toContain('lib.rs')
+  })
+
+  it('infra [features] default 含 test-utils → 红（默认 feature 即生产编入）', () => {
+    const args = makeCrateFixture({
+      memberManifest:
+        '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[features]\ntest-utils = []\ndefault = ["test-utils"]\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('default 包含 test-utils')
+  })
+
+  it('根包 [features] default 含 test-utils → 红', () => {
+    const args = makeCrateFixture({ rootFeaturesExtra: 'default = ["test-utils"]' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('default 包含 test-utils')
+  })
+
+  it('default 经中间 feature 转发到 test-utils → 红（转发链同样生产启用）', () => {
+    const args = makeCrateFixture({
+      rootFeaturesExtra: 'default = ["devkit"]\ndevkit = ["ledger-infra/test-utils"]',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('default 包含 test-utils')
   })
 })

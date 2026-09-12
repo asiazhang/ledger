@@ -39,6 +39,10 @@ pub mod signals;
 // 本模块与基础设施类型（`events::SignalEmitter`）同 crate 是硬约束——经 dev-dependency
 // 环消费会让消费方拿到第二份 infra 类型实例（类型身份不相容，issue #1088 实测），
 // 故随基础设施归位；根包再导出为 `crate::test_utils` 供集成测试消费。
+// 默认不进生产编译（ADR-0111 决策 5 / issue #1132）：仅 `cfg(test)` 与显式启用
+// `test-utils` feature 的测试构建可见，生产构建不编译测试器具；根包测试目标经
+// dev-dependency 启用 feature（同一编译单元，类型身份不变）。
+#[cfg(any(test, feature = "test-utils"))]
 #[doc(hidden)]
 pub mod test_utils;
 pub mod write_entry;
