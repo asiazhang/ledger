@@ -107,7 +107,7 @@ fn normalize_valuation_date(raw: Option<&String>) -> Result<String> {
     let date = match raw {
         Some(raw) => {
             let date = parse_date(raw)?;
-            reject_future_date(date, raw, "估值")?;
+            reject_future_date(date, raw, "valuation", "估值")?;
             date
         }
         None => chrono::Local::now().date_naive(),
@@ -117,14 +117,17 @@ fn normalize_valuation_date(raw: Option<&String>) -> Result<String> {
 
 /// 未来日期守卫（估值日期 / 处置日期共用单点）：日期晚于今天即拒绝——
 /// 估值与处置都是已发生的判断（先例物品域 disposal-in-future）。错误码
-/// `physical-asset.<field>-date-future`，文案 `{field}日期 {raw} 不能是未来`；
-/// field 传域语言中文短名（估值 / 处置）。
-fn reject_future_date(date: chrono::NaiveDate, raw: &str, field: &str) -> Result<()> {
+/// `physical-asset.<slug>-date-future`，文案 `{label}日期 {raw} 不能是未来`；
+/// slug 传稳定 kebab-case（valuation / disposal，与 zh/en errors.json 模板键
+/// 对齐，ADR-0050），label 传域语言中文短名（估值 / 处置）——码与文案必须
+/// 分离传参：动态拼接码静态守门枚举不到，中文拼码会使运行时码永不匹配
+/// 模板键（#1188 检视修正）。
+fn reject_future_date(date: chrono::NaiveDate, raw: &str, slug: &str, label: &str) -> Result<()> {
     let today = chrono::Local::now().date_naive();
     if date > today {
         return Err(AppError::codedp(
-            &format!("physical-asset.{field}-date-future"),
-            format!("{field}日期 {raw} 不能是未来"),
+            &format!("physical-asset.{slug}-date-future"),
+            format!("{label}日期 {raw} 不能是未来"),
             &[raw],
         ));
     }
@@ -252,7 +255,7 @@ pub(super) fn validate_dispose_input(
         AppError::coded("physical-asset.disposal-date-required", "处置日期不能为空")
     })?;
     let disposal_date = parse_date(raw_date)?;
-    reject_future_date(disposal_date, raw_date, "处置")?;
+    reject_future_date(disposal_date, raw_date, "disposal", "处置")?;
     if let Some(purchase) = purchase_date {
         let purchase_date = parse_date(purchase)?;
         if disposal_date < purchase_date {
@@ -307,4 +310,32 @@ pub(super) fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
             &[s],
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 未来日期错误码 slug 与模板键对齐钉子（#1188 检视修正）：码必须用稳定
+    /// kebab-case slug（valuation / disposal），与 zh/en errors.json 的
+    /// `physical-asset.<slug>-date-future` 模板键一致；中文短名只进文案不进码。
+    /// 动态拼接码静态守门枚举不到，此单测即该码的模板对齐契约——把 slug 改回
+    /// 中文短名（或与模板键不一致的任何值）本测试即红。
+    #[test]
+    fn future_date_reject_code_uses_stable_slug_aligned_with_templates() {
+        let tomorrow = chrono::Local::now().date_naive() + chrono::Duration::days(1);
+        let raw = tomorrow.format("%Y-%m-%d").to_string();
+
+        let err = reject_future_date(tomorrow, &raw, "valuation", "估值").unwrap_err();
+        assert!(err.is_code("physical-asset.valuation-date-future"));
+
+        let err = reject_future_date(tomorrow, &raw, "disposal", "处置").unwrap_err();
+        assert!(err.is_code("physical-asset.disposal-date-future"));
+
+        // 过去日期放行（估值 / 处置都是已发生的判断，可事后整理）。
+        let yesterday = chrono::Local::now().date_naive() - chrono::Duration::days(1);
+        let past = yesterday.format("%Y-%m-%d").to_string();
+        assert!(reject_future_date(yesterday, &past, "valuation", "估值").is_ok());
+        assert!(reject_future_date(yesterday, &past, "disposal", "处置").is_ok());
+    }
 }
