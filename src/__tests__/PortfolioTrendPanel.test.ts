@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { useReferenceStore } from '@/stores/reference'
 import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'

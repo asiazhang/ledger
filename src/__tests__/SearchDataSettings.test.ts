@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
-import { messageApi } from './helpers/message-mock'
-import { findButton } from './helpers/dom'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { messageApi } from '@ledger/test-support/message-mock'
+import { findButton } from '@ledger/test-support/dom'
 import { mount, flushPromises } from '@vue/test-utils'
 import type { NotePinyinRepairReport } from '@ledger/types'
 

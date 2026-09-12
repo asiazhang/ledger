@@ -1,15 +1,15 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
-import { assertMobileTierScrollX } from './helpers/mobile-scroll-x'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { assertMobileTierScrollX } from '@ledger/test-support/mobile-scroll-x'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { NPopconfirm } from 'naive-ui'
 import PoliciesView from '@/views/PoliciesView.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { makePolicy, makePolicyStats } from './factories'
 import { formatAmount } from '@/utils/money'
-import { refCurrencies } from './helpers/reference-stubs'
+import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import type { Insurer, Policy, PolicyStats } from '@ledger/types'
-import { componentVm } from './helpers/component-vm'
+import { componentVm } from '@ledger/test-support/component-vm'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0]

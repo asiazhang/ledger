@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { wireInvokeSeam } from './helpers/invoke-mock'
+import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NButton, NInput, NInputNumber } from 'naive-ui'
 import SplitDetail from '@/components/SplitDetail.vue'

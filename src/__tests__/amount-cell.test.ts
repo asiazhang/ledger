@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AmountCell from '@/components/AmountCell.vue'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
-import { setFakeMedia } from './helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 
 /**
  * 金额单元格（issue #843 / ADR-0088 决策 6 悬停一击可达 · 交易表金额全文）：

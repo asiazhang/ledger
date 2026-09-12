@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from './helpers/invoke-mock'
-import { messageCalls } from './helpers/message-mock'
+import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from '@ledger/test-support/invoke-mock'
+import { messageCalls } from '@ledger/test-support/message-mock'
 import { makeFakeSink, resetToastSink } from './factories'
 import {
   makeInstallmentPlan,

@@ -3,13 +3,13 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { NDialogProvider } from 'naive-ui'
-import { setFakeMedia } from './helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import {
   captureBackHandler,
   captureBackRegistration,
   mockOnBackButtonPress,
   mockWindowDestroy,
-} from './helpers/back-mock'
+} from '@ledger/test-support/back-mock'
 import { useSystemBack } from '@/composables/useSystemBack'
 import { createOverlayToken, hasOpenOverlay, openOverlayNames, resetOverlays } from '@/composables/overlayRegistry'
 import { useAppDialog } from '@/composables/useAppDialog'

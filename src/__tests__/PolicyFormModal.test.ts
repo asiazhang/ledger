@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import type { Policy } from '@ledger/types'
-import { componentVm } from './helpers/component-vm'
+import { componentVm } from '@ledger/test-support/component-vm'
 
 // AppModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 PoliciesView 先例）。
 

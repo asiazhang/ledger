@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // 前端 workspace 结构守门（issue #1149 / spec #1148）：pnpm 子包骨架的边界门禁，
 // 为每一次包抽取提供可证伪的边界基线。本脚本不移动业务代码，只核结构。
-// 规则四类：
+// 规则五类：
 // ① 成员登记：packages/* 下的成员目录必须登记于本脚本 PACKAGES（磁盘 ↔ 清单双向
 //    全等，清单漂移 fail loud）——pnpm-workspace.yaml 的 glob 自动纳管目录，能「漏
 //    登记」的只有方向表登记册；新建成员目录不登记即红（删除即变红②）。
@@ -14,6 +14,10 @@
 //    src，从包内使用必然穿越包边界）与相对路径穿越包边界（解析后落点在包目录外）。
 // ④ 深导入禁令：`@ledger/x/sub` 形态必须命中目标包 package.json `exports` 的对应
 //    入口（精确键 `./sub` 或 `./*` 通配；exports 为字符串视作仅暴露 `.`）。
+// ⑤ 测试支持纯净性（issue #1152）：登记于 TEST_SUPPORT_PACKAGES 的包只许经
+//    devDependencies 被消费（根包与成员包一并核对，dependencies/optionalDependencies/
+//    peerDependencies 任一出现即红）；且测试支持包自身 dependencies 必须为空
+//    （替身与接缝所需运行面全部走 devDependencies）——生产依赖图零测试支持内容。
 // 删除即变红①：本脚本核对自身接线——scripts/check.sh 与 CI frontend job
 //（.github/workflows/build.yml）中必须存在实际调用行（非注释、非 echo 展示行），
 // 删除接线行即红（ADR-0087 断言强度：接线型守门的负向条目）。
@@ -41,6 +45,9 @@ export interface PackageEntry {
   dir: string
   /** 允许依赖的 @ledger 包名（方向表，随包抽取逐票补充） */
   deps: readonly string[]
+  /** 测试支持包（issue #1152 规则⑤）：只许被 devDependencies 消费，且自身
+   *  dependencies 必须为空——生产依赖图零测试支持内容；未标记者不受此约束 */
+  testSupport?: boolean
   note: string
 }
 
@@ -54,6 +61,13 @@ export const PACKAGES: readonly PackageEntry[] = [
     dir: 'packages/types',
     deps: [],
     note: '纯类型包（issue #1150）：零依赖叶子，方向表恒空——类型层不依赖任何包；金额展示接缝归 @ledger/money（#1153）',
+  },
+  {
+    name: '@ledger/test-support',
+    dir: 'packages/test-support',
+    deps: ['@ledger/types'],
+    testSupport: true,
+    note: '共享测试支持包（issue #1152）：全局测试接缝（invoke/message/matchMedia/listen/返回桥替身 + 每测清理）唯一宿主，消费只经 devDependency（testSupport 标志 → 规则⑤）；参考数据夹具类型边 @ledger/types 显式放行',
   },
 ]
 
@@ -367,6 +381,64 @@ function checkImportShapes(
   }
 }
 
+/** 规则⑤：testSupport 包只许经 devDependencies 被消费，且自身 dependencies 为空。
+ *  登记面 = PACKAGES 内 testSupport: true 的条目（单一事实源，夹具登记表同形）；
+ *  核对面 = 根包 + 全部成员包的清单（生产依赖图 = 各包 dependencies 侧的并集）。
+ *  对 optionalDependencies/peerDependencies 同样拦截——optional 与 peer 都会把包
+ *  带进消费方的安装/解析面，dev 是唯一合法通道。 */
+function checkTestSupportPurity(
+  repoRoot: string,
+  registry: readonly PackageEntry[],
+  problems: string[],
+): void {
+  const testSupportNames = registry.filter((p) => p.testSupport).map((p) => p.name)
+  if (testSupportNames.length === 0) return
+  const forbiddenKinds = ['dependencies', 'optionalDependencies', 'peerDependencies'] as const
+  const manifests: readonly { label: string; path: string }[] = [
+    { label: '根包（应用壳）', path: join(repoRoot, 'package.json') },
+    ...registry.map((p) => ({ label: p.name, path: join(repoRoot, p.dir, 'package.json') })),
+  ]
+  for (const manifest of manifests) {
+    if (!existsSync(manifest.path)) continue // 清单缺失由规则②报，不重复
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(readFileSync(manifest.path, 'utf8'))
+    } catch {
+      continue // 清单不可解析由规则②报，不重复
+    }
+    for (const kind of forbiddenKinds) {
+      const deps = parsed[kind]
+      if (deps === null || typeof deps !== 'object') continue
+      for (const testSupport of testSupportNames) {
+        if (!(testSupport in (deps as Record<string, unknown>))) continue
+        problems.push(
+          `✗ 测试支持纯净性：${manifest.label} 的 ${kind} 出现 ${testSupport}\n` +
+            `    测试支持只许经 devDependencies 消费（issue #1152 规则⑤）：生产依赖图零测试支持内容；` +
+            `把该依赖移入 devDependencies（消费方为测试代码，不影响产物构建）`,
+        )
+      }
+    }
+  }
+  for (const pkg of registry) {
+    if (!pkg.testSupport) continue
+    const manifestPath = join(repoRoot, pkg.dir, 'package.json')
+    if (!existsSync(manifestPath)) continue // 清单缺失由规则②报，不重复
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    } catch {
+      continue // 清单不可解析由规则②报，不重复
+    }
+    const prodDeps = parsed.dependencies
+    if (prodDeps !== null && typeof prodDeps === 'object' && Object.keys(prodDeps).length > 0) {
+      problems.push(
+        `✗ 测试支持纯净性：${pkg.name} 自身 dependencies 非空（${Object.keys(prodDeps as Record<string, unknown>).join(' ')}）\n` +
+          `    测试支持包零生产依赖（issue #1152 规则⑤）：替身与接缝所需运行面全部走 devDependencies`,
+      )
+    }
+  }
+}
+
 /** 接线核对（删除即变红①）：两个宿主文件须有非注释的实际调用行 */
 function checkWiring(repoRoot: string, problems: string[]): void {
   for (const host of WIRING_HOSTS) {
@@ -417,6 +489,7 @@ function main(): void {
   checkMemberRegistration(repoRoot, registry, problems)
   checkDependencyDirection(repoRoot, registry, problems)
   checkImportShapes(repoRoot, registry, problems)
+  checkTestSupportPurity(repoRoot, registry, problems)
   checkWiring(repoRoot, problems)
 
   if (problems.length > 0) {
@@ -429,6 +502,7 @@ function main(): void {
       `· 成员登记 ${registry.length} 个（磁盘 ↔ PACKAGES 双向全等）` +
       `· 包依赖方向 ${registry.length} 包（方向表逐票补充）` +
       `· 跨包引用形态与深导入禁令扫描 ${collectSourceFiles(join(repoRoot, 'packages'), 'packages').length} 个文件` +
+      `· 测试支持纯净性（${registry.filter((p) => p.testSupport).map((p) => p.name).join(' ') || '无'} 仅 devDependency 消费）` +
       `· 接线核对（scripts/check.sh + CI frontend job）`,
   )
 }

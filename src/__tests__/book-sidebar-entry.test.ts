@@ -3,9 +3,9 @@ import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
 import BookSidebarEntry from '@/components/BookSidebarEntry.vue'
-import { lastInvokeArgs, mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from './helpers/invoke-mock'
-import { clickDialogButton, dialogText, findBodyButton, visibleModalText } from './helpers/dom'
-import { messageApi, messageCalls } from './helpers/message-mock'
+import { lastInvokeArgs, mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from '@ledger/test-support/invoke-mock'
+import { clickDialogButton, dialogText, findBodyButton, visibleModalText } from '@ledger/test-support/dom'
+import { messageApi, messageCalls } from '@ledger/test-support/message-mock'
 import { resetToastSink } from './factories'
 import { registerToastSink } from '@/composables/useLoadable'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
@@ -14,7 +14,7 @@ import type { BookListInfo } from '@ledger/types'
 // 侧栏左下角账本入口与弹层（issue #834 / ADR-0089）：弹层逻辑（清单渲染、切换
 // 意图、新建/改名/移除交互、折叠态浮标、注册表损坏警示）的组件级行为测试。
 // 命令应答一律走 invoke 测试接缝（ADR-0085）；useAppDialog 确认框与 AppModal
-// 卡片 teleport 到 body，经 helpers/dom 的 body 查找家族断言。
+// 卡片 teleport 到 body，经 @ledger/test-support/dom 的 body 查找家族断言。
 
 /** 登记表初始现场：两本账，默认账本活动。 */
 let registry: BookListInfo = {

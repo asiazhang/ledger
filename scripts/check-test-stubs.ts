@@ -7,19 +7,24 @@
 // list_insurers）曾散落全仓 ~57 个测试文件，两分支并行各插一行后合并出同回调
 // 重复桩——if 链先命中短路，后一条永远不生效，带数据桩被兜底空桩静默短路，
 // 测试以「数据缺失」的间接方式失败，排查成本高。
-// 治理：参考命令接线收敛到唯一接缝 wireInvokeSeam（helpers/invoke-mock.ts，
-// 登记处在 helpers/reference-stubs.ts）；本脚本防回归。
+// 治理：参考命令接线收敛到唯一接缝 wireInvokeSeam（@ledger/test-support/invoke-mock.ts，
+// 登记处在 @ledger/test-support/reference-stubs.ts）；本脚本防回归。issue #1152 起
+// 接缝宿主下沉为共享测试支持包，包内测试（packages/**/src/*.test.ts）与包外测试
+// 同规纳管——测试跟随被测包，守门跟随测试。
 //
 // 命令清单单一来源：从助手的 `REFERENCE_DEFAULTS` 登记处文本提取命令名——
 // 新增参考表只改助手，守门清单自动跟随，无双源漂移。登记处提不出任何命令
 // 即红（清单漂移 fail loud）。
 //
-// 扫描边界：文本级扫描 `<testsDir>/**`（默认 src/__tests__）下全部 .ts 文件
-// （含 .test.ts、helpers/ 测试助手与共享桩模块）。规则 1 与规则 3 豁免 helpers/（任意深度的同名
-// 目录）——登记处即桩来源，接线合法；规则 2 不豁免 helpers/（#726 明确要求扫描测试
-// helper，且 helper 内重复桩危害面更大）。接缝自测 invoke-seam.test.ts 文件级豁免
-// （夹具文本合法包含违规形态；接缝自测是接缝自身的符合性测试）。本守门自身的包装
-// 测试已随测试归位迁到 scripts/（issue #1158），在扫描边界之外，原豁免已随迁移删除。
+// 扫描边界：文本级扫描三个互斥区间——① `<testsDir>/**`（默认 src/__tests__）全部
+// .ts（含 .test.ts 与目录级共享模块）；② seam 宿主目录（默认
+// packages/test-support/src，arg2 可指夹具）全部 .ts——接缝本体与登记处住址，
+// 规则 1/3 豁免（登记处即桩来源，接缝出口合法布线），规则 2/4 不豁免（#726：
+// helper 内重复桩危害面更大）；③ 包内测试 `packages/**` 下的 *.test.ts（不含
+// seam 宿主子树，归②）——规则 1/2/3/4 全量纳管；包内非测试源码不扫（产品代码
+// 无 vitest mock 面）。接缝自测 invoke-seam.test.ts 文件级豁免沿用（夹具文本
+// 合法包含违规形态）。本守门自身的包装测试已随测试归位迁到 scripts/
+// （issue #1158），在扫描边界之外。
 // 命中形态限桩接线：`if (cmd === '<命令>')`（if 链）、`cmd === '<命令>' ?`（三元）、
 // `case '<命令>':`（switch）；断言里的命令等值比较（如 mock.calls.filter 箭头函数体）
 // 非接线，不误报。已知文本不可达处（靠评审兜底）：桩实现形参改名（如 cmd → c）
@@ -63,25 +68,33 @@
 //   makeTransferPlan / makeOccurrence。交易侧 makeTxn / makeTransaction 待 #821
 //   收敛落地后补入名单——本票与 #821 文件面不相交、互不阻塞，名单先行会让其
 //   未收敛副本在守门直接变红。
-//   白名单（相对 testsDir 路径）：factories.ts（唯一定义点）与
+//   白名单（相对各扫描区间的 posix 路径）：factories.ts（唯一定义点）与
 //   TransactionsView/common.ts（#821 交易薄壳一行包装，交易名补入名单时生效）。
 //   双源代价（登记处）：名单与共享工厂层出口须人工同步——新增共享工厂必须同步
 //   本名单，否则该厂的新副本不被拦截。
 //   文本盲区（靠评审兜底）：改名逃逸（工厂改名或换名定义即逃逸名单）；仅识别
 //   function/const/let/var 声明形，注释行整行跳过、字符串内无声明前缀不匹配，
-//   与规则 3b 同款行首判定。规则 4 不豁免 helpers/——唯一定义点不在 helpers，
-//   测试 helper 内本地定义名单工厂同样是回潮（豁免分工与规则 1/3 不同是有意为之）。
+//   与规则 3b 同款行首判定。规则 4 在 seam 宿主与包内测试同样不豁免——
+//   唯一定义点不在 seam 宿主，测试 helper 内本地定义名单工厂同样是回潮
+//   （豁免分工与规则 1/3 不同是有意为之）。
 //
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-test-stubs.ts`。
-// 用法：bun scripts/check-test-stubs.ts [testsDir]
+// 用法：bun scripts/check-test-stubs.ts [testsDir] [seamHomeDir]
+//   seamHomeDir 默认 packages/test-support/src；packages 根由其上溯两级派生。
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const testsDir = resolve(process.argv[2] ?? join('src', '__tests__'))
-const helperPath = join(testsDir, 'helpers', 'reference-stubs.ts')
+// seam 宿主目录（issue #1152）：共享测试支持包源码住址，登记处（reference-stubs.ts）
+// 与接缝出口（invoke-mock.ts）的唯一宿主；arg2 可指夹具路径。
+const seamHomeDir = resolve(process.argv[3] ?? join('packages', 'test-support', 'src'))
+const helperPath = join(seamHomeDir, 'reference-stubs.ts')
+// packages 根由 seam 宿主上溯两级派生（生产形态 packages/test-support/src →
+// packages），供包内测试扫描；夹具同构（<tmp>/packages/test-support/src）。
+const packagesDir = resolve(seamHomeDir, '..', '..')
 
 function fail(message: string): never {
   console.error(`✗ 测试桩守门：${message}`)
@@ -101,16 +114,47 @@ function extractCommands(): string[] {
   return [...registryMatch[1].matchAll(/^\s*(list_[a-z_]+):/gm)].map((m) => m[1])
 }
 
-// —— 递归收集 .ts 文件（helpers/ 纳入扫描；接缝自测豁免） ——
-function walk(dir: string): string[] {
+// —— 递归收集 .ts 文件（目录缺失返回空：夹具可无 packages 子树；接缝自测豁免） ——
+function walk(dir: string, keepName: (name: string) => boolean): string[] {
   const out: string[] = []
+  if (!existsSync(dir)) return out
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name)
     if (entry.isDirectory()) {
-      out.push(...walk(p))
-    } else if (entry.name.endsWith('.ts') && entry.name !== 'invoke-seam.test.ts') {
+      out.push(...walk(p, keepName))
+    } else if (
+      entry.name.endsWith('.ts') &&
+      entry.name !== 'invoke-seam.test.ts' &&
+      keepName(entry.name)
+    ) {
       out.push(p)
     }
+  }
+  return out
+}
+
+// 扫描目标三区间（互斥；rel 基准各归其主，白名单按 posix 相对路径比对）：
+// app = 包外测试（testsDir 全量 .ts）；seam-home = 接缝宿主全量 .ts（规则 1/3 豁免）；
+// pkg-tests = 包内 *.test.ts（排除 seam 宿主子树，规则全量）。
+interface ScanTarget {
+  abs: string
+  rel: string
+  zone: 'app' | 'pkg-tests' | 'seam-home'
+}
+
+function collectScanTargets(): ScanTarget[] {
+  const out: ScanTarget[] = []
+  for (const abs of walk(testsDir, () => true)) {
+    out.push({ abs, rel: relative(testsDir, abs), zone: 'app' })
+  }
+  if (seamHomeDir !== testsDir) {
+    for (const abs of walk(seamHomeDir, () => true)) {
+      out.push({ abs, rel: relative(seamHomeDir, abs), zone: 'seam-home' })
+    }
+  }
+  for (const abs of walk(packagesDir, (name) => name.endsWith('.test.ts'))) {
+    if (resolve(abs).startsWith(seamHomeDir + sep)) continue
+    out.push({ abs, rel: relative(packagesDir, abs), zone: 'pkg-tests' })
   }
   return out
 }
@@ -132,7 +176,7 @@ function findHandWiredReferenceStubs(rel: string, source: string, commands: stri
   source.split('\n').forEach((line, i) => {
     for (const { cmd, re } of wirings) {
       if (re.test(line)) {
-        hits.push(`  ${rel}:${i + 1}  手搓参考数据桩（${cmd}）——改走唯一接缝 wireInvokeSeam（helpers/invoke-mock.ts）`)
+        hits.push(`  ${rel}:${i + 1}  手搓参考数据桩（${cmd}）——改走唯一接缝 wireInvokeSeam（@ledger/test-support/invoke-mock.ts）`)
       }
     }
   })
@@ -352,18 +396,17 @@ function main(): void {
   let wiringWrappers = 0
   let factoryDefs = 0
   const violations: string[] = []
-  for (const file of walk(testsDir)) {
-    const rel = relative(testsDir, file)
-    const source = readFileSync(file, 'utf8')
-    const inHelpers = rel.split(sep).includes('helpers')
+  for (const target of collectScanTargets()) {
+    const source = readFileSync(target.abs, 'utf8')
+    const inSeamHome = target.zone === 'seam-home'
     const units = extractCallbackUnits(source)
-    const rule1 = inHelpers ? [] : findHandWiredReferenceStubs(rel, source, commands)
-    const rule2 = findDuplicateWiring(rel, source, units)
-    const rule3a = inHelpers ? [] : findHandWrittenDispatchStub(rel, source, units)
-    const rule3b = inHelpers ? [] : findLocalWiringWrapper(rel, source)
-    const rule4 = FACTORY_WHITELIST.has(rel.split(sep).join('/'))
+    const rule1 = inSeamHome ? [] : findHandWiredReferenceStubs(target.rel, source, commands)
+    const rule2 = findDuplicateWiring(target.rel, source, units)
+    const rule3a = inSeamHome ? [] : findHandWrittenDispatchStub(target.rel, source, units)
+    const rule3b = inSeamHome ? [] : findLocalWiringWrapper(target.rel, source)
+    const rule4 = FACTORY_WHITELIST.has(target.rel.split(sep).join('/'))
       ? []
-      : findFactoryDefinition(rel, source)
+      : findFactoryDefinition(target.rel, source)
     handWired += rule1.length
     duplicated += rule2.length
     dispatchStubs += rule3a.length
@@ -376,12 +419,12 @@ function main(): void {
     console.error(
       `✗ 测试桩守门：发现 ${handWired} 处手搓参考数据桩、${duplicated} 处同回调重复桩、${dispatchStubs} 处手写 invoke 分发桩、${wiringWrappers} 处本地布线包装、${factoryDefs} 处领域数据工厂本地定义（登记处命令：${commands.join(' ')}）\n` +
         violations.join('\n') +
-        `\ninvoke 布线唯一接缝：wireInvokeSeam（${relative(process.cwd(), join(testsDir, 'helpers', 'invoke-mock.ts'))}，issue #746/#750，ADR-0085）`,
+        `\ninvoke 布线唯一接缝：wireInvokeSeam（${relative(process.cwd(), join(seamHomeDir, 'invoke-mock.ts'))}，issue #746/#750/#1152，ADR-0085）`,
     )
     process.exit(1)
   }
 
-  console.log(`✅ 测试桩守门通过（登记处 ${commands.length} 条命令；同回调重复 0、手写分发桩 0、本地布线包装 0、领域数据工厂本地定义 0，testsDir=${relative(process.cwd(), testsDir) || '.'}）`)
+  console.log(`✅ 测试桩守门通过（登记处 ${commands.length} 条命令；同回调重复 0、手写分发桩 0、本地布线包装 0、领域数据工厂本地定义 0；testsDir=${relative(process.cwd(), testsDir)}、seamHome=${relative(process.cwd(), seamHomeDir)}、包内测试纳管）`)
 }
 
 // 仅直接运行时执行 main；被测试/其他工具 import 时只取导出的扫描函数。

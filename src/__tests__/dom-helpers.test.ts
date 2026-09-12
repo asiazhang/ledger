@@ -13,7 +13,7 @@ import {
   dialogText,
   pressReleaseOnDialogMask,
   visibleModalText,
-} from './helpers/dom'
+} from '@ledger/test-support/dom'
 
 // enableAutoUnmount 幂等：setup 层已全局注册，文件级重复注册降级为 no-op（不抛错）
 enableAutoUnmount(afterEach)

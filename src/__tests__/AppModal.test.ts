@@ -4,7 +4,7 @@ import { defineComponent, nextTick, ref } from 'vue'
 import AppModal from '@/components/AppModal.vue'
 import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 import { MOBILE_CARD_CLASS } from '@/components/app-modal.css.ts'
-import { setFakeMedia } from './helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { hasOpenOverlay, openOverlayNames, resetOverlays } from '@/composables/overlayRegistry'
 
 /** 在 body 上查找遮罩元素（弹层抑制同款信号，见 useViewShortcuts）。 */

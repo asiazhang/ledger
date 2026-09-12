@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { defineComponent } from "vue";
-import { captureLastListener, mockListen } from "./helpers/listen-mock";
+import { captureLastListener, mockListen } from "@ledger/test-support/listen-mock";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import {

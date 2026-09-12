@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
-import { findButton } from './helpers/dom'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { findButton } from '@ledger/test-support/dom'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'

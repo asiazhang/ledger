@@ -1,6 +1,6 @@
 import { merchantDb, makeTxn, mountView, listCalls, lastListFilter, tablePagination, bodyRows, deleteCalls, createCalls, openMenuOnRow, rowMenu, rowMenuKeys, selectRowMenu, setTxnDb, setMerchantDb, pushMock, SHELL_DEFAULTS, SHELL_OVERRIDES } from './common'
-import { mockInvoke, wireInvokeSeam, type InvokeSeamDispatcher } from '../helpers/invoke-mock'
-import { clickDialogButton, dialogText, pressReleaseOnDialogMask, visibleModalText } from '../helpers/dom'
+import { mockInvoke, wireInvokeSeam, type InvokeSeamDispatcher } from '@ledger/test-support/invoke-mock'
+import { clickDialogButton, dialogText, pressReleaseOnDialogMask, visibleModalText } from '@ledger/test-support/dom'
 import { describe, it, expect, beforeEach } from 'vitest'
 import ConvertDetail from '@/components/ConvertDetail.vue'
 import SplitDetail from '@/components/SplitDetail.vue'
@@ -15,7 +15,7 @@ import AddItemForm from '@/components/AddItemForm.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, formatQuantity } from '@/utils/money'
-import { refCurrencies } from '../helpers/reference-stubs'
+import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import type { Transaction } from '@ledger/types'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测

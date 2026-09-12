@@ -2,7 +2,7 @@ import { routeMock, makeTxn, setTxnDb, setMerchantDb, mountView, mountMobile, ca
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect, NButton } from 'naive-ui'
-import { fireProp } from '../helpers/component-vm'
+import { fireProp } from '@ledger/test-support/component-vm'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
 import type { Merchant, Transaction } from '@ledger/types'
@@ -332,7 +332,7 @@ describe('TransactionsView 商户筛选（issue #191，冒烟级）', () => {
  * 移动档筛选/URL 下钻两档一致（issue #846 验收 2，ADR-0088 决策 9）：同一
  * TransactionFilter 出口在移动档卡片列表形态下语义不变——手动筛选立即生效
  * （翻页归零 + 重拉）、URL 只读下钻直达、空态提示与清除回默认；换档经媒体
- * 查询测试接缝（helpers/media-mock，薄壳 mountMobile 单点）。
+ * 查询测试接缝（@ledger/test-support/media-mock，薄壳 mountMobile 单点）。
  */
 describe('TransactionsView 移动档筛选（issue #846 两档一致）', () => {
   beforeEach(() => {

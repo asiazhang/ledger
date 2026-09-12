@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
-import { findButton, findBodyButtonByTestId } from './helpers/dom'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { findButton, findBodyButtonByTestId } from '@ledger/test-support/dom'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
@@ -9,7 +9,7 @@ import { useAppStore } from '@/stores/app'
 import { applyLocale } from '@/i18n'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
-import { captureLastListener, mockListen } from './helpers/listen-mock'
+import { captureLastListener, mockListen } from '@ledger/test-support/listen-mock'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),

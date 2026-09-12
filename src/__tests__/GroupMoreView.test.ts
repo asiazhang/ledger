@@ -1,15 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { wireInvokeSeam } from './helpers/invoke-mock'
+import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import GroupMoreView from '@/views/GroupMoreView.vue'
-import { setFakeMedia } from './helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { makePolicy, makePolicyStats } from './factories'
 import { routes, router } from '@/router'
 import { formatAmount } from '@/utils/money'
-import { refCurrencies } from './helpers/reference-stubs'
+import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import type { SubscriptionSpendOverview } from '@ledger/types'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { findButton, findButtonByTestId, findBodyButtonByTestId } from './helpers/dom'
+import { findButton, findButtonByTestId, findBodyButtonByTestId } from '@ledger/test-support/dom'
 
 // 文件选择与重启单点 mock（先例 StartupFailureScreen.test.ts；restartAppShortly
 // 内含延时，测试断言调用而非计时）。恢复流只需 open；confirm 已随 issue #652

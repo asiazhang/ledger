@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { defineComponent } from 'vue'
@@ -8,7 +8,7 @@ import { useReferenceStore } from '@/stores/reference'
 import CategoryForm from '@/components/CategoryForm.vue'
 import AppModal from '@/components/AppModal.vue'
 import { MOBILE_CARD_CLASS } from '@/components/app-modal.css.ts'
-import { setFakeMedia } from './helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import type { Account, Category, Transaction } from '@ledger/types'
 
 

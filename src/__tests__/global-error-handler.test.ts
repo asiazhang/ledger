@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { installGlobalErrorHandler } from '@/utils/global-error-handler'
 import { useRenderErrorsStore } from '@/stores/render-errors'
 

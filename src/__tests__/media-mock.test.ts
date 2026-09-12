@@ -4,10 +4,10 @@ import {
   DEFAULT_MEDIA_STATE,
   resetFakeMedia,
   setFakeMedia,
-} from './helpers/media-mock'
+} from '@ledger/test-support/media-mock'
 import { useInputMode } from '@/composables/useInputMode'
 import { useWindowTier } from '@/composables/useWindowTier'
-import { mountFlushed } from './helpers/mount'
+import { mountFlushed } from '@ledger/test-support/mount'
 
 /**
  * 媒体查询测试接缝测试（issue #841，ADR-0088 决策 11 票①）：

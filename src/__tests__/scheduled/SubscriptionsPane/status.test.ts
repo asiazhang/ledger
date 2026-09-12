@@ -3,7 +3,7 @@ import { flushPromises } from '@vue/test-utils'
 import { NPopconfirm } from 'naive-ui'
 import { makeSubscriptionPlan } from '../../factories'
 import { mockDetails, makeDetail, mountView, setMockPlans, setup } from './common'
-import { mockInvoke } from '../../helpers/invoke-mock'
+import { mockInvoke } from '@ledger/test-support/invoke-mock'
 
 beforeEach(setup)
 

@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
-import { wireInvokeSeam } from '../../helpers/invoke-mock'
-import { mountFlushed } from '../../helpers/mount'
+import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { mountFlushed } from '@ledger/test-support/mount'
 import { makeSubscriptionPlan } from '../../factories'
 import SubscriptionsPane from '@/components/scheduled/SubscriptionsPane.vue'
 
@@ -25,12 +25,12 @@ import type {
  * SubscriptionsPane 测试目录薄壳（issue #748，ADR-0085 决策 7）：只承载本目录
  * 特有夹具与编排组合——计划三件套夹具族、可变数据源（重载读最新值）、面板挂载
  * 编排。通用布线（wireInvokeSeam）、清理四件套（全局壳层每测自动执行）、挂载与
- * DOM 查找（helpers/mount、helpers/dom）一律上收测试辅助层，禁止薄壳再生长
+ * DOM 查找（@ledger/test-support/mount、@ledger/test-support/dom）一律上收测试辅助层，禁止薄壳再生长
  * 通用能力。
  */
 
 // 查找助手直用测试辅助层出口（本目录惯用名 findInput 保持主题文件导入不变）。
-export { findInputByTestId as findInput } from '../../helpers/dom'
+export { findInputByTestId as findInput } from '@ledger/test-support/dom'
 
 export const mockAccounts: Account[] = [
   {

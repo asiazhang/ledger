@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { effectScope } from 'vue'
-import { setFakeMedia } from './helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import {
   substituteWindowTierBreakpoint,
   WINDOW_TIER_BREAKPOINT_PX as BUILD_WINDOW_TIER_BREAKPOINT_PX,
@@ -16,7 +16,7 @@ import {
  * 窗口分级（Window Tier）模块测试（issue #841，ADR-0088 决策 2 / 词汇表「窗口分级」）：
  * composable 只锁「宽度信号 → 档位」纯映射——断点两侧边界与实时换档；
  * 形态断言（按档位渲染什么）不上浮到本层。换档一律经媒体查询测试接缝
- * （helpers/media-mock），宽度不散落魔法数字——断言值由唯一断点常量派生。
+ * （@ledger/test-support/media-mock），宽度不散落魔法数字——断言值由唯一断点常量派生。
  */
 
 /** 在指定视口宽下取档位（effectScope 内实例化，避免无作用域告警）。 */

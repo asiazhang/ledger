@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NModal, NInputNumber, NDatePicker, NSelect, NTreeSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
-import { mockInvoke } from '../../helpers/invoke-mock'
+import { mockInvoke } from '@ledger/test-support/invoke-mock'
 import { formatAmount } from '@/utils/money'
-import { refCurrencies } from '../../helpers/reference-stubs'
+import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import { makeSubscriptionPlan } from '../../factories'
 import {
   mockDetails,

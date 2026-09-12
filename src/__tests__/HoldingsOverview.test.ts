@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NDataTable } from 'naive-ui'
 import { nextTick } from 'vue'
@@ -10,8 +10,8 @@ import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
   resetInstrumentInfoSyncForTest,
 } from '@/composables/useInstrumentInfoSync'
-import { captureListenHandlers } from './helpers/listen-mock'
-import { componentVm } from './helpers/component-vm'
+import { captureListenHandlers } from '@ledger/test-support/listen-mock'
+import { componentVm } from '@ledger/test-support/component-vm'
 import { formatAmount, formatPrice } from '@/utils/money'
 import {
   makeAccount,
@@ -20,7 +20,7 @@ import {
   mockHoldings,
   mockInstruments,
 } from './factories'
-import { refCurrencies } from './helpers/reference-stubs'
+import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import type { Account, Holding, Instrument } from '@ledger/types'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount/formatPrice 实现，

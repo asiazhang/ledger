@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from '../helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NDataTable, NModal, NSelect, NPopconfirm } from 'naive-ui'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
-import { findInputByTestId as findInput } from '../helpers/dom'
-import { mountFlushed } from '../helpers/mount'
-import { setFakeMedia } from '../helpers/media-mock'
+import { findInputByTestId as findInput } from '@ledger/test-support/dom'
+import { mountFlushed } from '@ledger/test-support/mount'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { makeOccurrence, makeTransferPlan } from '../factories'
 import { formatAmount } from '@/utils/money'
 import type {
@@ -16,7 +16,7 @@ import type {
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
 } from '@ledger/types'
-import { componentVm } from '../helpers/component-vm'
+import { componentVm } from '@ledger/test-support/component-vm'
 
 /**
  * 定时转账页签组件测试（ADR-0041 决策 10）：清单加载/状态过滤/生命周期状态机等

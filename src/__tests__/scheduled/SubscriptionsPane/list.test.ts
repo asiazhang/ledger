@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { formatAmount } from '@/utils/money'
-import { refCurrencies } from '../../helpers/reference-stubs'
+import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import {
   makeInstallmentPlan,
   makeOccurrence,

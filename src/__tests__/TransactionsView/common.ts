@@ -1,12 +1,12 @@
 import { vi, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride, type InvokeSeamStaticValue } from '../helpers/invoke-mock'
-import { fireProp } from '../helpers/component-vm'
+import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride, type InvokeSeamStaticValue } from '@ledger/test-support/invoke-mock'
+import { fireProp } from '@ledger/test-support/component-vm'
 import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { reactive } from 'vue'
 import { NDataTable, NDropdown, NModal } from 'naive-ui'
-import { mountWithDialog } from '../helpers/mount'
+import { mountWithDialog } from '@ledger/test-support/mount'
 import { makeTransaction } from '../factories'
-import { setFakeMedia } from '../helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import TransactionsView from '@/views/TransactionsView.vue'
 import type { Account, Merchant, ReportDateRange, Transaction } from '@ledger/types'
 
@@ -14,7 +14,7 @@ import type { Account, Merchant, ReportDateRange, Transaction } from '@ledger/ty
  * TransactionsView 测试目录薄壳（issue #748，ADR-0085 决策 7）：只承载本目录
  * 特有夹具与编排组合——可变 db、路由替身、后端读取口径镜像、表格/行菜单编排。
  * 通用布线（invoke 接缝 wireInvokeSeam）、清理四件套（全局壳层每测自动执行）、
- * 挂载与 DOM 查找（helpers/mount、helpers/dom）一律上收测试辅助层，禁止薄壳
+ * 挂载与 DOM 查找（@ledger/test-support/mount、@ledger/test-support/dom）一律上收测试辅助层，禁止薄壳
  * 再生长通用能力。
  */
 

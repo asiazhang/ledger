@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { wireInvokeSeam } from './helpers/invoke-mock'
+import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { applyLocale } from '@/i18n'
-import { clickTab } from './helpers/dom'
-import { mountWithDialog } from './helpers/mount'
+import { clickTab } from '@ledger/test-support/dom'
+import { mountWithDialog } from '@ledger/test-support/mount'
 import InvestmentsView from '@/views/InvestmentsView.vue'
 import InvestmentForm from '@/components/InvestmentForm.vue'
 
@@ -47,7 +47,7 @@ afterEach(async () => {
   await applyLocale('zh-CN')
 })
 
-/** 视图挂载走共享基座（helpers/mount.ts 单点收口，NDialogProvider 包裹）。 */
+/** 视图挂载走共享基座（@ledger/test-support/mount.ts 单点收口，NDialogProvider 包裹）。 */
 const mountView = () => mountWithDialog(InvestmentsView)
 
 describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {

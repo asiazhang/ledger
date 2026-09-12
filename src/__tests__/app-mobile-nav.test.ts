@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { wireInvokeSeam } from './helpers/invoke-mock'
+import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { setFakeMedia } from './helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import App from '@/App.vue'
 import { routes } from '@/router'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
@@ -13,7 +13,7 @@ import {
   drawerMoreLinkTexts,
   drawerGroupTitles,
   findDrawerItem,
-} from './helpers/mobile-nav'
+} from '@ledger/test-support/mobile-nav'
 
 /**
  * App 壳按窗口分级分支（issue #842 / ADR-0088 决策 2/4）：经假 matchMedia 换档

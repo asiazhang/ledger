@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
-import { findButton, findButtonByTestId } from './helpers/dom'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { findButton, findButtonByTestId } from '@ledger/test-support/dom'
 import { makeTransaction } from './factories'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NMessageProvider } from 'naive-ui'
 import { h } from 'vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import { formatAmount } from '@/utils/money'
-import { refCurrencies } from './helpers/reference-stubs'
+import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import type { Transaction } from '@ledger/types'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测

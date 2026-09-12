@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { effectScope } from 'vue'
-import { setFakeMedia } from './helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { useInputMode, type InputMode } from '@/composables/useInputMode'
 
 /**
  * 输入轴（Input Mode）模块测试（issue #841，ADR-0088 决策 6 / 词汇表「输入轴」）：
  * composable 只锁「hover / pointer 信号 → 触控轴 / 指针轴」纯映射——hover 与
  * pointer 的组合矩阵与实时换档；交互形态断言（快捷键退役渲染等）不上浮到本层。
- * 换档一律经媒体查询测试接缝（helpers/media-mock）。
+ * 换档一律经媒体查询测试接缝（@ledger/test-support/media-mock）。
  */
 
 /** 在指定 hover / pointer 信号下取输入轴（effectScope 内实例化）。 */

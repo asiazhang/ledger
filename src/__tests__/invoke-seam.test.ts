@@ -4,9 +4,9 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, onUnmounted } from 'vue'
 import { getActivePinia } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
-import { refCurrencies } from './helpers/reference-stubs'
-import { messageApi } from './helpers/message-mock'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { refCurrencies } from '@ledger/test-support/reference-stubs'
+import { messageApi } from '@ledger/test-support/message-mock'
 import { useMessage } from 'naive-ui'
 
 // —— 跨测状态捕获（清理四件套的跨测断言用） ——

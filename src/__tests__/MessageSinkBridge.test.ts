@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { messageApi } from './helpers/message-mock'
+import { messageApi } from '@ledger/test-support/message-mock'
 import { useLoadable, registerToastSink } from '@/composables/useLoadable'
 import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
 
