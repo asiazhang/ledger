@@ -17,9 +17,9 @@
 // 扫描边界：文本级扫描 `<testsDir>/**`（默认 src/__tests__）下全部 .ts 文件
 // （含 .test.ts、helpers/ 测试助手与共享桩模块）。规则 1 与规则 3 豁免 helpers/（任意深度的同名
 // 目录）——登记处即桩来源，接线合法；规则 2 不豁免 helpers/（#726 明确要求扫描测试
-// helper，且 helper 内重复桩危害面更大）。本守门自身的包装测试
-// check-test-stubs.test.ts 与接缝自测 invoke-seam.test.ts 文件级豁免（夹具文本合法
-// 包含违规形态；接缝自测是接缝自身的符合性测试）。
+// helper，且 helper 内重复桩危害面更大）。接缝自测 invoke-seam.test.ts 文件级豁免
+// （夹具文本合法包含违规形态；接缝自测是接缝自身的符合性测试）。本守门自身的包装
+// 测试已随测试归位迁到 scripts/（issue #1158），在扫描边界之外，原豁免已随迁移删除。
 // 命中形态限桩接线：`if (cmd === '<命令>')`（if 链）、`cmd === '<命令>' ?`（三元）、
 // `case '<命令>':`（switch）；断言里的命令等值比较（如 mock.calls.filter 箭头函数体）
 // 非接线，不误报。已知文本不可达处（靠评审兜底）：桩实现形参改名（如 cmd → c）
@@ -101,18 +101,14 @@ function extractCommands(): string[] {
   return [...registryMatch[1].matchAll(/^\s*(list_[a-z_]+):/gm)].map((m) => m[1])
 }
 
-// —— 递归收集 .ts 文件（helpers/ 纳入扫描；守门自身包装测试与接缝自测豁免） ——
+// —— 递归收集 .ts 文件（helpers/ 纳入扫描；接缝自测豁免） ——
 function walk(dir: string): string[] {
   const out: string[] = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name)
     if (entry.isDirectory()) {
       out.push(...walk(p))
-    } else if (
-      entry.name.endsWith('.ts') &&
-      entry.name !== 'check-test-stubs.test.ts' &&
-      entry.name !== 'invoke-seam.test.ts'
-    ) {
+    } else if (entry.name.endsWith('.ts') && entry.name !== 'invoke-seam.test.ts') {
       out.push(p)
     }
   }

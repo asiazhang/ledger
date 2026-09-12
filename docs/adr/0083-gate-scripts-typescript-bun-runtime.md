@@ -37,7 +37,9 @@ TS 语法子集受限且版本门槛高；② tsx devDep——给「零 npm 依�
    > ADR-0047 的坐标已同步指向此处。
 
 3. **类型检查入质量门槛（`tsconfig.scripts.json`）**：独立 TS 工程，compilerOptions 与
-   根 tsconfig 同构（strict 套件 / bundler 解析 / DOM lib），差异两处——`types` 限定
+   根 tsconfig 同构（strict 套件 / bundler 解析 / DOM lib；#1149 起公共 compilerOptions
+   收敛至根 `tsconfig.base.json`，根工程与本工程改 `extends` 继承——本「同构」表述
+   同步修订为「两工程共用同一份 extends 源，行为逐字不变」），差异两处——`types` 限定
    `node` + `vitest/globals`（测试全局经 globals:true 使用，类型声明须显式引入）；
    include 收窄为「脚本目录 + 测试助手 + 守门相关测试 + src 全局 `.d.ts`」。执行器用
    vue-tsc（与前端类型检查同一执行器，为后续扩量保持命令面不变）；挂入 `check.sh`

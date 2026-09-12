@@ -25,6 +25,8 @@ export default defineConfig({
     // 且不受 vitest 未来默认值变动影响。
     clearMocks: true,
     setupFiles: ['./src/__tests__/setup.ts'],
-    include: ['src/__tests__/**/*.test.ts'],
+    // 守门脚本包装测试与所测脚本同目录住 scripts/（issue #1158），前端测试住
+    // src/__tests__：两处都纳入。setupFiles 仍指 src/__tests__，对两个目录统一生效。
+    include: ['src/__tests__/**/*.test.ts', 'scripts/**/*.test.ts'],
   },
 })
