@@ -9,13 +9,13 @@ use crate::accounts::AccountType;
 use crate::db::query::query_one;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::sync_engine::device_id;
 use crate::transaction::amount;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::command::{
     ConvertCommandFields, InvestmentCommandFields, SplitCommandFields,
 };
 use crate::transaction::{ConvertFields, NormalizedTransaction, TransactionInput};
+use ledger_sync_protocol::device::device_id;
 
 /// 查询账户本位币代码（原 `commands::fx::account_currency_code`，随投资域归位
 /// 迁入唯一消费方；交易行折算语义归核心交易域 `transaction::amount` 接缝）。

@@ -1,5 +1,6 @@
 //! 位点（StreamPosition，issue #857 / ADR-0091 决策 9）：本机对各来源设备 op 流
-//! 的「已应用位点」——`sync_stream_positions` 表的唯一 SQL 收口。
+//! 的「已应用位点」——`sync_stream_positions` 表的唯一 SQL 收口（自
+//! sync_engine/positions.rs 下放，issue #1089）。
 //!
 //! 位点语义：`applied_through` 是该流上已裁决 op 的**连续前缀水位**——位点之前
 //! 的 op 已全部并入本端状态（应用/去重/按位点门跳过）或作为 LWW 输者落日志可
@@ -19,8 +20,10 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::db::now_iso;
-use crate::error::Result;
+use ledger_infra::db::now_iso;
+use ledger_infra::error::Result;
+
+use super::op;
 
 /// 单个来源设备 op 流的已应用位点。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +35,7 @@ pub struct StreamPosition {
 }
 
 /// 位点表是否为空（引导守卫用：目标已有位点即已参与同步）。
-pub(super) fn is_empty(conn: &Connection) -> Result<bool> {
+pub fn is_empty(conn: &Connection) -> Result<bool> {
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM sync_stream_positions", [], |r| {
         r.get(0)
     })?;
@@ -41,7 +44,7 @@ pub(super) fn is_empty(conn: &Connection) -> Result<bool> {
 
 /// 位点清单（按 DeviceId 序稳定返回）：Checkpoint 位点组件与通道 manifest 上报
 /// 位点的数据面。
-pub(super) fn list(conn: &Connection) -> Result<Vec<StreamPosition>> {
+pub fn list(conn: &Connection) -> Result<Vec<StreamPosition>> {
     let mut stmt = conn.prepare(
         "SELECT device_id, applied_through FROM sync_stream_positions ORDER BY device_id ASC",
     )?;
@@ -59,7 +62,7 @@ pub(super) fn list(conn: &Connection) -> Result<Vec<StreamPosition>> {
 }
 
 /// 单流位点（无行返回 None——该流尚未跟踪，位点门不生效）。
-pub(super) fn position_of(conn: &Connection, device_id: &str) -> Result<Option<i64>> {
+pub fn position_of(conn: &Connection, device_id: &str) -> Result<Option<i64>> {
     Ok(conn
         .query_row(
             "SELECT applied_through FROM sync_stream_positions WHERE device_id = ?1",
@@ -74,7 +77,7 @@ pub(super) fn position_of(conn: &Connection, device_id: &str) -> Result<Option<i
 /// 首见建行从 0 起：若同流先于首见裁决存在挂起 op（不落日志、不触发推进），
 /// 直接以裁决时钟建行会越过它——从 0 起统一走连续前滚，水位被缺口挡在挂起
 /// op 之前（安全钉住）；补齐后后续推进自然前滚。
-pub(super) fn advance(conn: &Connection, device_id: &str, decided_clock: i64) -> Result<()> {
+pub fn advance(conn: &Connection, device_id: &str, decided_clock: i64) -> Result<()> {
     let position = match position_of(conn, device_id)? {
         None => {
             conn.execute(
@@ -90,7 +93,7 @@ pub(super) fn advance(conn: &Connection, device_id: &str, decided_clock: i64) ->
     // 连续前滚：水位 +1 已在日志则前移，吸收挂起补齐后的区段；遇缺口即停
     //（缺口 op 未应用，水位不越过——安全钉住）。
     let mut through = position;
-    while super::ops::is_known_at(conn, device_id, through + 1)? {
+    while op::is_known_at(conn, device_id, through + 1)? {
         through += 1;
     }
     if through > position {
@@ -105,7 +108,7 @@ pub(super) fn advance(conn: &Connection, device_id: &str, decided_clock: i64) ->
 
 /// 位点整体覆写（Checkpoint 引导专用）：以 Checkpoint 携带的位点为准重建位点表
 /// （快照时刻各流头）。引导目标为空库时等价于初建。
-pub(super) fn replace_all(conn: &Connection, positions: &[StreamPosition]) -> Result<()> {
+pub fn replace_all(conn: &Connection, positions: &[StreamPosition]) -> Result<()> {
     conn.execute("DELETE FROM sync_stream_positions", [])?;
     for position in positions {
         conn.execute(

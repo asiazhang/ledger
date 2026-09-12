@@ -2,7 +2,8 @@
 //!
 //! - [`common`]：域薄皮（双端建库、交易语义输入构造器、业务字段行读取、内存假 Transport、
 //!   本地 WebDAV 桩）
-//! - [`device`]：DeviceId 首用生成与持久化、换库新标识
+//! - [`device`]：DeviceId 首用生成与持久化、换库新标识（被测对象自 #1089 起
+//!   住协议 crate `ledger-sync-protocol::device`）
 //! - [`total_order`]：跨端全序 (clock, device_id) 确定性
 //! - [`engine`]：幂等重放与「A 端写 → B 端重放后账本状态一致」闭环
 //! - [`merge`]：双端合并语义——LWW、OccurrenceKey 防双扣、ParkedOp 挂起（issue #856）

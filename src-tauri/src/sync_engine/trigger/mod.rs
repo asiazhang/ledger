@@ -25,9 +25,9 @@ mod session;
 pub(crate) use channel::DEFAULT_SPACE_ID;
 pub use channel::{SyncChannel, SyncChannelConfig, build_channel, configured_channel};
 pub use scheduler::{
-    TriggerTimings, book_unavailable_error, not_configured_error, run_auto_round, run_round_once,
-    start_sync_scheduler, start_sync_scheduler_with, start_triggers, sync_after_write,
-    sync_on_start,
+    TriggerTimings, book_unavailable_error, install_after_write_hook, not_configured_error,
+    run_auto_round, run_round_once, start_sync_scheduler, start_sync_scheduler_with,
+    start_triggers, sync_after_write, sync_on_start,
 };
 // 测试接缝：信号侧两个 helper 只被 `trigger/tests.rs` 经 `trigger::` 路径消费，
 // 故再导出仅测试构建存在（生产构建不引即触发 unused-imports）；可见性取

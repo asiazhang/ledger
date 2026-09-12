@@ -11,7 +11,7 @@ use rusqlite::{Connection, params};
 
 use crate::db::{new_uuid, now_iso};
 use crate::error::Result;
-use crate::sync_engine::device_id;
+use ledger_sync_protocol::device::device_id;
 
 /// 价格刻度换算因子（ADR-0038）：1 分 = 100 万分之一元——
 /// 金额（分）= 数量 × 单价（万分之一元）÷ 本因子；手续费分摊薄入每份成本时

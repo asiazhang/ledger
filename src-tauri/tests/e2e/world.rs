@@ -343,6 +343,9 @@ impl LedgerWorld {
         // 提交点后置动作接线（spec #1086 / issue #1088）：BDD world 自建库，与
         // 生产启动/测试工厂同形先注册备份域的提交点实现，置脏语义才成立（幂等）。
         tauri_app_lib::backup::install_after_commit_hook();
+        // 写后即时同步接线（#1089）：与生产启动/测试工厂同形——op 产出单点在
+        // 协议 crate，响应闭包由同步域提供，此处登记（幂等）。
+        tauri_app_lib::sync_engine::trigger::install_after_write_hook();
         let mut world = Self {
             db: DbState::open_in_memory().expect("数据库初始化失败"),
             account_name_to_id: HashMap::new(),

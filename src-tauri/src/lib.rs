@@ -166,6 +166,10 @@ pub fn run() {
             // 后置动作（置脏 + 写时顺带到期检查，ADR-0032）由备份域提供实现、壳层
             // 启动时注册——基础设施 crate 不再反向依赖业务域；注册先于任何建库/写库。
             backup::install_after_commit_hook();
+            // 写后即时同步接线（#1089 / ADR-0091 决策 9）：本地 op 产出单点在协议
+            // crate（共享底座，不认识调度），响应闭包（去抖合流跑一轮）由本域提供、
+            // 壳层启动时装入（幂等，先装者优先）。注册先于任何建库/写库。
+            sync_engine::trigger::install_after_write_hook();
             // 两扇进程级门先登记（boot_sequence 与 IPC/HTTP 门禁共同消费；实例
             // 由 run() 创建，同一份供 invoke wrapper 共享）：加密锁定门 + 启动
             // 失败门（issue #601）。

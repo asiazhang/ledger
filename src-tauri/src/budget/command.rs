@@ -9,12 +9,15 @@
 //!   「分类 + 周期」唯一校验原样生效，双端离线各建同分类同周期预算后到者在重放
 //!   端挂起待裁决），不产出 op。
 
+use std::borrow::Cow;
+
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::budget::BudgetPeriod;
 use crate::error::Result;
-use crate::sync_engine::{DomainCommand, record_local as record_op};
+use ledger_sync_protocol::command::SyncCommand;
+use ledger_sync_protocol::op::record_local as record_op;
 
 /// 预算同步命令（serde：`action` 判别；作为 DomainCommand 信封的 payload 内嵌）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -46,12 +49,22 @@ impl BudgetCommand {
     }
 }
 
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识；op 产出直呼协议面（环依赖由 crate 依赖图断开）。
+impl SyncCommand for BudgetCommand {
+    const ENTITY: &'static str = "budget";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        Some(Cow::Borrowed(self.subject_id()))
+    }
+}
+
 /// op 产出接缝（预算域集中单点）：本地预算写成功后追加一条 op 进本机 OpLog。
 ///
 /// 仅预算写编排入口（`budget::crud` 的创建 / 编辑 / 删除协议）调用；随编排事务
 /// 提交/回滚，写失败不残留 op。
 pub(crate) fn record_local(conn: &Connection, command: BudgetCommand) -> Result<()> {
-    record_op(conn, DomainCommand::Budget(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }
 

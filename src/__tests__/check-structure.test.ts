@@ -7,6 +7,8 @@ import {
   CRATES,
   INFRA_MODULES,
   INFRA_SRC_REL,
+  PROTOCOL_MODULES,
+  PROTOCOL_SRC_REL,
   WHITELIST,
   LAYER,
 } from '../../scripts/check-structure.ts'
@@ -58,6 +60,7 @@ function writeModuleStubs(baseDir: string, entries: readonly { path: string }[])
 function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, 'src'), WHITELIST)
   writeModuleStubs(join(srcTauri, INFRA_SRC_REL), INFRA_MODULES)
+  writeModuleStubs(join(srcTauri, PROTOCOL_SRC_REL), PROTOCOL_MODULES)
 }
 
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
@@ -323,19 +326,19 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
   })
 })
 
-describe('check-structure 业务域→同步域严形态（ADR-0101 决策 4b / 勘误 4）', () => {
+describe('check-structure 业务域→同步域零容忍（ADR-0101 决策 4b / #1089 收紧）', () => {
   it('业务域引用同步域内部件（engine::/ops::/model::…）→ 红并定位文件行号', () => {
     const args = makeFixture({
       'scheduled_transactions/command.rs': 'use crate::sync_engine::engine::ReplayEffect;\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('业务域引用同步域内部件')
+    expect(r.output).toContain('业务域引用同步域')
     expect(r.output).toContain('scheduled_transactions/command.rs:1')
     expect(r.output).toContain('sync_engine::engine')
   })
 
-  it('契约模块 command 与根白名单三符号 → 绿', () => {
+  it('契约模块与原白名单根符号亦红（#1089 零容忍：协议面下放协议 crate）', () => {
     const args = makeFixture({
       'item/command.rs': [
         'use crate::sync_engine::command::ReplayEffect;',
@@ -347,24 +350,26 @@ describe('check-structure 业务域→同步域严形态（ADR-0101 决策 4b / 
       ].join('\n'),
     })
     const r = run(args)
-    expect(r.status).toBe(0)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域')
+    expect(r.output).toContain('item/command.rs:1')
   })
 
-  it('根花括号列举夹带内部件 → 红（逐条判定）', () => {
+  it('根花括号列举夹带任一符号 → 红（零容忍逐条判定）', () => {
     const args = makeFixture({
       'item/command.rs': 'use crate::sync_engine::{DomainCommand, model::SyncOp};\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('业务域引用同步域内部件')
+    expect(r.output).toContain('业务域引用同步域')
     expect(r.output).toContain('model')
   })
 
-  it('根 glob 引入非白名单面 → 红', () => {
+  it('根 glob 引入 → 红（零容忍）', () => {
     const args = makeFixture({ 'item/command.rs': 'use crate::sync_engine::*;\n' })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('业务域引用同步域内部件')
+    expect(r.output).toContain('业务域引用同步域')
   })
 
   it('根别名引入（use crate::sync_engine as se）→ 红（堵别名盲区）', () => {
@@ -373,7 +378,7 @@ describe('check-structure 业务域→同步域严形态（ADR-0101 决策 4b / 
     })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('业务域引用同步域内部件')
+    expect(r.output).toContain('业务域引用同步域')
     expect(r.output).toContain('item/command.rs:1')
   })
 
@@ -401,10 +406,10 @@ describe('check-structure 业务域→同步域严形态（ADR-0101 决策 4b / 
     expect(r.status).toBe(0)
   })
 
-  it('真实仓库默认通过：业务域→同步域严形态零违规', () => {
+  it('真实仓库默认通过：业务域→同步域零容忍零违规', () => {
     const r = run([])
     expect(r.status).toBe(0)
-    expect(r.output).toContain('业务域→同步域严形态零违规')
+    expect(r.output).toContain('业务域→同步域零容忍零违规')
   })
 })
 
@@ -613,6 +618,23 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   mkdirSync(join(srcTauri, 'crates', 'infra', 'src'), { recursive: true })
   writeFileSync(join(srcTauri, 'crates', 'infra', 'Cargo.toml'), memberManifest)
   writeFileSync(join(srcTauri, 'crates', 'infra', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
+  // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
+  mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'crates', 'sync-protocol', 'Cargo.toml'),
+    [
+      '[package]',
+      'name = "ledger-sync-protocol"',
+      'version = "0.6.0"',
+      'edition = "2024"',
+      '',
+      '[lints]',
+      'workspace = true',
+      '',
+    ].join('\n'),
+  )
+  writeFileSync(join(srcTauri, 'crates', 'sync-protocol', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
   if (overrides.orphanCrate) {
     mkdirSync(join(srcTauri, 'crates', overrides.orphanCrate, 'src'), { recursive: true })

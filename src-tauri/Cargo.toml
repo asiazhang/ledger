@@ -62,6 +62,10 @@ pinyin = "0.11"
 # 壳层统一读写入口已全量归位（#1088）；根包以再导出形态保留 `crate::db` 等原
 # 引用路径，域与壳层调用点零改动。
 ledger-infra = { path = "crates/infra" }
+# 同步协议 crate（spec #1086 / issue #1089）：多端同步的最底层共享协议（设备
+# 标识、领域命令契约、op 本地记录与读取、位点）——业务域与 sync_engine 共同
+# 底座，依赖方向由 cargo 依赖图强制，sync_engine ↔ 业务域环依赖就此断开。
+ledger-sync-protocol = { path = "crates/sync-protocol" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]

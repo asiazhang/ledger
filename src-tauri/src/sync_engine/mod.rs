@@ -17,15 +17,16 @@
 //!   通知数据面、打开应用即同步与运行期低频轮询、会话密钥形态判定的信封模式。
 //! - [`transport`]：Transport 哑字节通道抽象（v1 内置 WebDAV 后端，两端同一
 //!   代码路径）。
-//! - [`positions`]：位点（各来源流已应用水位，`sync_stream_positions` 表的
-//!   唯一 SQL 收口）。
-//! - [`device`]：DeviceId 读取（首用生成并持久化）与端内单调逻辑时钟分配。
-//! - [`ops`]：op 行落库与读取（`sync_ops` 表的唯一 SQL 收口）。
-//! - [`parked`]：挂起队列（`sync_parked_ops` 表的唯一 SQL 收口）。
-//! - [`command`]：跨端语义命令信封与重放契约（DomainCommand / ReplayEffect /
-//!   ReplayBinding，只增不改）——同步域对业务域暴露的契约面（ADR-0101 决策 4b）。
+//! - 位点与设备标识、op 行落库/读取（`sync_stream_positions` / `sync_device` /
+//!   `sync_ops` 表的唯一 SQL 收口）自 #1089 起下放协议 crate
+//!   `ledger-sync-protocol`（rank 0，业务域与 sync_engine 共同底座）；本域经
+//!   适配层（[`ops`]）承载域信封的载荷知识（serde 往返）。
+//! - [`ops`]：op 行落库与读取的适配层（域信封 ↔ JSON；SQL 收口在协议 crate）。
+//! - [`command`]：跨端语义命令信封与重放契约（DomainCommand / ReplayBinding，
+//!   只增不改）——同步域对业务域暴露的契约面（ADR-0101 决策 4b）；重放效果
+//!   ReplayEffect 与命令契约 SyncCommand 已下放协议 crate（#1089）。
 //! - [`registry`]：重放注册表（ADR-0101）——14 个语义命令类型的适配绑定与
-//!   `DomainCommand::subject` 组装臂，与 ops/parked/positions 平级。
+//!   `DomainCommand::subject` 组装臂，与 ops/parked 平级。
 //! - [`model`]：op 信封 wire 模型（[`model::SyncOp`]）。
 //!
 //! 复制模型（ADR-0091 决策 2/3）：op 载荷是语义级域命令，重放经既有写入接缝
@@ -44,20 +45,14 @@
 pub mod channel;
 pub mod checkpoint;
 pub mod command;
-pub mod device;
 pub mod engine;
 pub mod envelope;
 pub mod model;
 pub mod ops;
 pub mod parked;
-pub mod positions;
 pub mod registry;
 pub mod transport;
 pub mod trigger;
-
-/// 域内共享接缝（crate 内消费）：DeviceId 读取与本地 op 产出信封。
-pub(crate) use device::device_id;
-pub(crate) use ops::record_local;
 
 pub use channel::{
     ChannelLayout, ChannelManifest, ChannelOptions, CheckpointPointer, FetchedCheckpoint,
@@ -74,9 +69,9 @@ pub use engine::{
     stream_positions, total_order,
 };
 pub use envelope::EnvelopeMode;
+pub use ledger_sync_protocol::position::StreamPosition;
 pub use model::SyncOp;
 pub use parked::ParkedOp;
-pub use positions::StreamPosition;
 pub use transport::{
     Transport,
     webdav::{WebDavConfig, WebDavTransport},

@@ -23,12 +23,18 @@
 // 事实固化为规格」；清单之外的基础设施→域引用一律红。首条 db/mod.rs→backup
 // 为 ADR-0032 连接层写入口置脏单点（#246）——ADR-0071 §6「落地即全绿」原
 // 前提漏数此边，勘误注记见该 ADR（#538 实施时补录）。
-// 业务域→同步域严形态（ADR-0101 决策 4b / 勘误 4）：业务域引用同步域（sync_engine）
-// 合法面 = 契约模块 `command` ∪ 根再导出白名单 {DomainCommand, record_local,
-// device_id}（各附缘由注释，认许边同款纪律）；内部模块路径（engine::/ops::/model::
-// /channel::…）一律红——「重放不产本地 op」今天靠「域不知道 ops 存在」的结构巧合
-// 成立，扫描把巧合变规格。作用域限业务域目录（test_support/ 测试专用边、sync_engine
-// 自身、壳层 commands/ 与 tests 不在列）；文本级扫描、别名改写不可达，靠评审兜底。
+// 业务域→同步域零容忍（ADR-0101 决策 4b / #1089 收紧）：同步协议面（命令契约 /
+// op 产出 / 设备标识）自 #1089 下放协议 crate（ledger-sync-protocol），业务域对
+// 同步域（sync_engine）的引用归零——任何 `crate::sync_engine` /
+// `tauri_app_lib::sync_engine` 引用（含根模块引入与别名改写）即红。「重放不产
+// 本地 op」从结构巧合升为规格：业务域只依赖协议 crate，重放分派单向住在
+// sync_engine。作用域限业务域目录（test_support/ 测试专用边、sync_engine
+// 自身、壳层 commands/ 与 tests 不在列）；文本级扫描、注释掩码后匹配，
+// 别名改写不可达靠评审兜底。
+// 同步协议 crate 模块扫描（spec #1086 / #1089）：协议 crate（业务域与同步域
+// 共同底座，仅基础设施在其下）对壳层与全部域目录零依赖——依赖面只有基础设施
+// 与数据面惯用库（清单见 PROTOCOL_MODULES），反向引用由 cargo 依赖图拒绝
+//（协议 crate 根文档负向用例），本扫描再固化为规格。
 // 模型域化禁令（ADR-0059 T7 / #424 收口落地，全树扫描、同样掩码与测试豁免）：
 // ① 全局模型模块路径残留禁令——`crate::models` / `tauri_app_lib::models` 即红：
 //    全局模型目录已随域归位消亡，防扁平命名空间复活（crate 根裸路径 `models::x`
@@ -70,6 +76,7 @@ export interface WhitelistEntry {
 export const LAYER = {
   DOMAIN: '域目录',
   INFRA: '基础设施',
+  PROTOCOL: '协议',
 } as const
 
 export type Layer = (typeof LAYER)[keyof typeof LAYER]
@@ -124,6 +131,22 @@ export const INFRA_MODULES: readonly WhitelistEntry[] = [
 export const INFRA_SRC_REL = 'crates/infra/src'
 
 /**
+ * 同步协议 crate 的模块清单（spec #1086 / issue #1089）：路径相对
+ * `src-tauri/crates/sync-protocol/src`。多端同步的最底层共享协议——设备标识、
+ * 领域命令契约、op 本地记录与读取、流位点；业务域与 sync_engine 的共同底座，
+ * 对壳层与全部域目录零依赖（反向引用由 cargo 依赖图拒绝 + 本扫描固化）。
+ */
+export const PROTOCOL_MODULES: readonly WhitelistEntry[] = [
+  { path: 'command.rs', layer: '协议', note: '同步命令契约（SyncCommand 实体标签/实体键）与重放效果（ReplayEffect，ADR-0101）' },
+  { path: 'device.rs', layer: '协议', note: '设备标识与逻辑时钟（`sync_device` 单行唯一 SQL 收口，ADR-0091）' },
+  { path: 'op.rs', layer: '协议', note: 'op 行落库与读取（`sync_ops` 唯一 SQL 收口）+ 写后钩子登记点（ADR-0091 决策 9）' },
+  { path: 'position.rs', layer: '协议', note: '流位点（`sync_stream_positions` 唯一 SQL 收口，issue #857）' },
+]
+
+/** 同步协议 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-sync-protocol.dir 同源。 */
+export const PROTOCOL_SRC_REL = 'crates/sync-protocol/src'
+
+/**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
  * 与上面的 `LAYER`（单 crate 内的**模块路径**分层：域目录 / 基础设施）刻意分开——
  * 两者是不同粒度的事实源，同名值不合并（合并只会让任一侧语义被动漂移）。
@@ -132,14 +155,20 @@ export const CRATE_LAYER = {
   SHELL: '壳',
   DOMAIN: '域',
   INFRA: '基础设施',
+  PROTOCOL: '协议',
 } as const
 
 export type CrateLayer = (typeof CRATE_LAYER)[keyof typeof CRATE_LAYER]
 
-/** crate 依赖方向优先级（数值大者可依赖数值小者）：壳 → 域 → 基础设施。 */
+/**
+ * crate 依赖方向优先级（数值大者可依赖数值小者）：壳 → 域 → 基础设施 → 协议
+ *（#1089：协议 crate 是全部业务域与同步域的共享底座，自身仍消费基础设施——
+ * 基础设施之下再无更底层）。
+ */
 const CRATE_LAYER_RANK: Record<CrateLayer, number> = {
-  [CRATE_LAYER.SHELL]: 2,
-  [CRATE_LAYER.DOMAIN]: 1,
+  [CRATE_LAYER.SHELL]: 3,
+  [CRATE_LAYER.DOMAIN]: 2,
+  [CRATE_LAYER.PROTOCOL]: 1,
   [CRATE_LAYER.INFRA]: 0,
 }
 
@@ -168,6 +197,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/infra',
     layer: CRATE_LAYER.INFRA,
     note: '基础设施 crate（#1088 全量归位：数据库/错误/设置/文件工具/日志/事件/信号/闭集/壳层统一读写入口 + 载荷脱敏；对根包只以再导出面存在，基础设施→域生产边为 0——提交点后置动作经注册点反转，接线在壳层启动）',
+  },
+  {
+    name: 'ledger-sync-protocol',
+    dir: 'crates/sync-protocol',
+    layer: CRATE_LAYER.PROTOCOL,
+    note: '同步协议 crate（#1089 下放：设备标识、领域命令契约 SyncCommand/ReplayEffect、op 本地记录与读取、流位点——业务域与 sync_engine 共同底座；对壳层与域目录零依赖，反向引用由 cargo 依赖图拒绝）',
   },
 ]
 
@@ -275,36 +310,18 @@ const NATIVE_TX_STMT_PATTERN = /\bexecute\s*\(\s*"(?:BEGIN|COMMIT|ROLLBACK)\b/
 /** 原生事务语句唯一合法住址（事务原语本体，issue #1014；#1088 起住基础设施 crate） */
 const NATIVE_TX_STMT_ALLOWED = `${INFRA_SRC_REL}/db/tx_scope.rs`
 
-/** 业务域→同步域引用锚点（crate 根前缀限定；掩码后匹配） */
+/** 业务域→同步域引用锚点（crate 根前缀限定；掩码后匹配）——#1089 起零容忍，任何命中即红 */
 const SYNC_ENGINE_REF_PATTERN = /\b(?:crate|tauri_app_lib)\s*::\s*sync_engine\b/
 
-/** 同步域契约模块名（业务域唯一可引的内部模块，ADR-0101 决策 4b） */
-const SYNC_CONTRACT_MODULE = 'command'
-
-/**
- * 同步域根再导出白名单（业务域引用同步域根符号的合法面，ADR-0101 勘误 4）：
- * 每条附缘由——认许边同款纪律，新增合法符号须在此留痕。
- */
-const SYNC_ROOT_ALLOWED_SYMBOLS: ReadonlyMap<string, string> = new Map([
-  ['DomainCommand', '同步重放契约：op 载荷信封（域命令类型经此进 op）'],
-  ['record_local', '本机 op 产出单点（行为编排入口随写事务追加 op）'],
-  ['device_id', '本机 DeviceId 读取（域侧簿记戳/版本列共用接缝）'],
-])
-
-/** 花括号列举内不合法的条目头（深度 0 逐条切分后取首个标识符；`self`/契约模块/
- *  白名单符号合法）。返回违规条目头，供调用方构造命中。 */
+/** 花括号列举内的违规条目头（深度 0 逐条切分后取首个标识符；#1089 零容忍，
+ *  全部条目违规）。返回违规条目头，供调用方构造命中。 */
 function disallowedBraceEntries(body: string): string[] {
   const out: string[] = []
   let depth = 0
   let current = ''
   const flush = (): void => {
     const head = current.trim().split(/[\s:{]/)[0] ?? ''
-    if (
-      head !== '' &&
-      head !== 'self' &&
-      head !== SYNC_CONTRACT_MODULE &&
-      !SYNC_ROOT_ALLOWED_SYMBOLS.has(head)
-    ) {
+    if (head !== '') {
       out.push(head)
     }
     current = ''
@@ -320,8 +337,10 @@ function disallowedBraceEntries(body: string): string[] {
 }
 
 /**
- * 业务域→同步域严形态扫描（ADR-0101 决策 4b / 勘误 4）：返回引用同步域内部件
- * （非契约模块、非白名单根符号）的命中。文本级扫描（掩码注释与字面量）。
+ * 业务域→同步域零容忍扫描（ADR-0101 决策 4b / #1089 收紧）：业务域对同步域的
+ * 任何代码引用（根引入、别名引入、`::` 子路径、花括号列举）一律命中——同步
+ * 协议面已下放协议 crate，业务域只依赖 `ledger_sync_protocol`。文本级扫描
+ *（掩码注释与字面量）。
  */
 export function scanSyncEngineRefs(text: string): ScanHit[] {
   const masked = maskNonCode(text)
@@ -337,15 +356,15 @@ export function scanSyncEngineRefs(text: string): ScanHit[] {
     const tail = masked.slice(start + m[0].length)
     const afterModule = /^\s*::\s*/.exec(tail)
     if (!afterModule) {
-      // 无 `::` 子路径：根模块自身导入（`use crate::sync_engine;`）合法；
-      // `use crate::sync_engine as se;` 的别名引入一律红——别名改写会让后续
-      // 引用文本不可达（与既有壳层扫描的 `commands as` 同款堵漏）。
-      if (/^\s+as\b/.test(tail)) push(start, `${m[0]} as …`)
+      // 无 `::` 子路径：根模块引入（`use crate::sync_engine;` / `as se;`）——
+      // 零容忍下同样红（别名改写会让后续引用文本不可达，与既有壳层扫描的
+      // `commands as` 同款堵漏）。
+      push(start, /^\s+as\b/.test(tail) ? `${m[0]} as …` : m[0])
       continue
     }
     const cursor = start + m[0].length + afterModule[0].length
     if (masked[cursor] === '{') {
-      // 根花括号列举：跨行取匹配闭括号后逐条判合法。
+      // 根花括号列举：跨行取匹配闭括号后逐条报违规（零容忍，全条目违规）。
       let depth = 0
       let close = -1
       for (let i = cursor; i < masked.length; i++) {
@@ -366,13 +385,11 @@ export function scanSyncEngineRefs(text: string): ScanHit[] {
     }
     const segment = /^([A-Za-z_][A-Za-z0-9_]*)/.exec(masked.slice(cursor))
     if (!segment) {
-      // `sync_engine::*` 等非具名形态：不在合法面（白名单逐符号），一律红。
+      // `sync_engine::*` 等非具名形态：一律红。
       push(start, masked.slice(start, cursor + 1))
       continue
     }
-    const name = segment[1]
-    if (name === SYNC_CONTRACT_MODULE || SYNC_ROOT_ALLOWED_SYMBOLS.has(name)) continue
-    push(start, `sync_engine::${name}`)
+    push(start, `sync_engine::${segment[1]}`)
   }
   return hits
 }
@@ -786,8 +803,9 @@ function scanModuleEntries(
     }
     scanned += files.length
     const isInfra = w.layer === LAYER.INFRA
-    // 业务域→同步域严形态作用域：域目录，除同步域自身与测试支持域
-    // （test_support→sync_engine 为测试专用边，登记处 ADR-0084 迁移状态段）。
+    const isProtocol = w.layer === LAYER.PROTOCOL
+    // 业务域→同步域零容忍作用域：域目录，除同步域自身与测试支持域
+    //（test_support→sync_engine 为测试专用边，登记处 ADR-0084 迁移状态段）。
     const isBusinessDomain =
       w.layer === LAYER.DOMAIN && w.path !== 'sync_engine' && w.path !== 'test_support'
     for (const f of files) {
@@ -816,15 +834,27 @@ function scanModuleEntries(
           )
         }
       }
+      if (isProtocol) {
+        // 协议 crate（共享底座）对壳层与域目录零依赖（#1089）：无认许边——反向
+        // 引用即环，与 cargo 依赖图（协议 crate 根文档负向用例）双保险。
+        for (const hit of scanRustSource(source, INFRA_DOMAIN_DEP_PATTERN)) {
+          problems.push(
+            `✗ 反向依赖：协议 crate（${w.note}）引用域目录 ${hit.captured} → ` +
+              `${f.rel}:${hit.line}（${hit.match}）\n` +
+              `    ${hit.text}\n` +
+              `    分层规则：壳 → 域 → 基础设施 → 协议（#1089 共享底座）；协议 crate ` +
+              `对壳层与域目录零依赖，反向引用即环——依赖面只有基础设施与数据面惯用库`,
+          )
+        }
+      }
       if (isBusinessDomain) {
         for (const hit of scanSyncEngineRefs(source)) {
           problems.push(
-            `✗ 业务域引用同步域内部件：${f.rel}:${hit.line}（${hit.match}）\n` +
+            `✗ 业务域引用同步域：${f.rel}:${hit.line}（${hit.match}）\n` +
               `    ${hit.text}\n` +
-              `    严形态（ADR-0101 决策 4b）：业务域引用同步域合法面 = 契约模块 ` +
-              `command ∪ 根再导出白名单 {DomainCommand, record_local, device_id}；` +
-              `内部模块路径（engine::/ops::/model::…）一律红——` +
-              `「重放不产本地 op」从结构巧合升为规格`,
+              `    零容忍（ADR-0101 决策 4b / #1089 收紧）：同步协议面（命令契约 / ` +
+              `op 产出 / 设备标识）已下放协议 crate，业务域只依赖 ` +
+              `ledger_sync_protocol；「重放不产本地 op」从结构巧合升为规格`,
           )
         }
       }
@@ -850,6 +880,7 @@ function main(): void {
     allFiles = [
       ...collectRustFiles(srcDir, ''),
       ...collectRustFiles(join(srcTauriDir, INFRA_SRC_REL), INFRA_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, PROTOCOL_SRC_REL), PROTOCOL_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -901,6 +932,7 @@ function main(): void {
   // 本脚本一份（ADR-0056「白名单即规格」不变）。
   scannedFiles += scanModuleEntries(WHITELIST, srcDir, problems)
   scannedFiles += scanModuleEntries(INFRA_MODULES, join(srcTauriDir, INFRA_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(PROTOCOL_MODULES, join(srcTauriDir, PROTOCOL_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -921,9 +953,11 @@ function main(): void {
   console.log(
     `✓ 结构守门：白名单 ${WHITELIST.length} 项（域目录 ${domainCount}）` +
       `+ 基础设施模块 ${INFRA_MODULES.length} 项（crate ${INFRA_SRC_REL}）` +
+      `+ 协议模块 ${PROTOCOL_MODULES.length} 项（crate ${PROTOCOL_SRC_REL}）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
-      `· 业务域→同步域严形态零违规（契约模块 ${SYNC_CONTRACT_MODULE} ∪ 白名单 ${SYNC_ROOT_ALLOWED_SYMBOLS.size} 符号，ADR-0101）` +
+      `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +
+      `· 业务域→同步域零容忍零违规（ADR-0101 / #1089 收紧）` +
       `· 模型域化禁令全树扫描 ${allFiles.length} 个文件零残留（ADR-0059）` +
       `· 原生事务语句全树扫描 ${allFiles.length} 个文件仅 ${NATIVE_TX_STMT_ALLOWED} 一处（#1014）` +
       `· crate 边界 ${CRATES.length} 个（成员登记 / 门禁继承 / 依赖方向 / workspace 命令覆盖，#1087）`,

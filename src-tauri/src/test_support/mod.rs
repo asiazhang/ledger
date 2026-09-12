@@ -91,6 +91,10 @@ pub fn open() -> Connection {
     // 提交点后置动作接线（spec #1086 / issue #1088）：测试库与生产同形——连接层
     // 写入口的副作用实现由域侧提供，建库单点负责注册（幂等）。
     crate::backup::install_after_commit_hook();
+    // 写后即时同步接线（#1089）：测试库与生产同形——op 产出单点在协议 crate，
+    // 响应闭包（去抖合流）由同步域提供，此处登记（幂等，先装者优先）；调度未
+    // 拉起时信号投递仍是零动作。
+    crate::sync_engine::trigger::install_after_write_hook();
     let mut conn = crate::db::open_in_memory().expect("打开内存测试库");
     crate::db::init_db(&mut conn).expect("初始化内存测试库");
     conn

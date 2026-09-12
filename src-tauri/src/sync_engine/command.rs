@@ -6,10 +6,15 @@
 //! 重放），与已发布契约纪律同构；`entity` tag 与 `sync_ops.entity` 列同源。
 //!
 //! 本模块是同步域对业务域暴露的**契约面**（ADR-0101 决策 1/4b）：信封
-//! [`DomainCommand`]、重放效果 [`ReplayEffect`] 与重放绑定契约 [`ReplayBinding`]
-//! 集中住此——业务域只许经本模块路径与根再导出白名单引用同步域（门 b，
-//! `check-structure.ts`）。14 个适配绑定与 `DomainCommand::subject` 的组装臂
-//! 住 [`super::registry`]（契约读一处即知，绑定与组装同居一处）。
+//! [`DomainCommand`] 与重放绑定契约 [`ReplayBinding`] 集中住此——业务域只许经
+//! 本模块路径与根再导出白名单引用同步域（门 b，`check-structure.ts`）。14 个
+//! 适配绑定与 `DomainCommand::subject` 的组装臂住 [`super::registry`]（契约读
+//! 一处即知，绑定与组装同居一处）。
+//!
+//! 自 #1089 起，重放效果 `ReplayEffect` 与命令契约 `SyncCommand`（实体标签
+//! 与可空实体键，域命令类型对协议面的自述）下放协议 crate
+//! `ledger-sync-protocol`——业务域直接实现协议面契约，sync_engine 与业务域的
+//! 环依赖由 crate 依赖图断开。
 
 use std::borrow::Cow;
 
@@ -63,23 +68,12 @@ pub enum DomainCommand {
     Price(PriceCommand),
 }
 
-/// 单条命令的重放执行效果（ADR-0101 决策 3）。
-///
-/// 13 个域侧重放入口返回 `Result<()>`，由适配绑定映射为 [`ReplayEffect::Applied`]；
-/// 期次触发（OccurrenceKey 独有语义，见 CONTEXT-sync 期次词条）由域侧原样透传
-/// [`ReplayEffect::IdempotentHit`]——逼其余 13 个无此概念的域返回它只会让类型说谎，
-/// 差异留在适配层比假统一诚实。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReplayEffect {
-    /// 落地新效果。
-    Applied,
-    /// 幂等命中：该效果已在本端存在。
-    IdempotentHit,
-}
+pub(crate) use ledger_sync_protocol::command::ReplayEffect;
 
 /// 语义命令重放绑定契约（ADR-0101 决策 1）：一个语义命令类型一条绑定，单点承载
 /// 「实体标签 + 裁决域派生 + 重放入口」；域侧接缝的 6 个函数名与 2 种返回形状由
-/// 绑定吸收，域侧除裁决键派生外零改动。
+/// 绑定吸收，域侧除裁决键派生外零改动。实体标签自 #1089 起单源取域命令类型的
+/// [`SyncCommand::ENTITY`]（注册表绑定派生，不再另立字面量）。
 ///
 /// 可重放契约五条（ADR-0091）：① 载荷可 serde 且只增不改、⑤ 确定性——由
 /// [`DomainCommand`] 信封与域侧命令类型承载；② 裁决域派生——[`Self::subject`]；

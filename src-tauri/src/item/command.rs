@@ -9,11 +9,14 @@
 //! - **重放执行**（[`replay_command`]）：与本地写同一执行协议（溯源守卫、处置
 //!   日期守卫原样生效，关联交易缺失或溯源坑位被占即挂起待裁决），不产出 op。
 
+use std::borrow::Cow;
+
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::sync_engine::{DomainCommand, record_local as record_op};
+use ledger_sync_protocol::command::SyncCommand;
+use ledger_sync_protocol::op::record_local as record_op;
 
 /// 物品命令行载荷（语义字段；簿记戳不随行携带）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -59,12 +62,22 @@ impl ItemCommand {
     }
 }
 
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识；op 产出直呼协议面（环依赖由 crate 依赖图断开）。
+impl SyncCommand for ItemCommand {
+    const ENTITY: &'static str = "item";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        Some(Cow::Borrowed(self.subject_id()))
+    }
+}
+
 /// op 产出接缝（物品域集中单点）：本地物品写成功后追加一条 op 进本机 OpLog。
 ///
 /// 仅物品写编排入口（`item::domain` 的创建 / 修改 / 处置 / 删除协议）调用；随
 /// 编排事务提交/回滚，写失败不残留 op。
 pub(crate) fn record_local(conn: &Connection, command: ItemCommand) -> Result<()> {
-    record_op(conn, DomainCommand::Item(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }
 

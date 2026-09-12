@@ -19,8 +19,8 @@ use crate::currencies::{ExchangeRate, ExchangeRateInput};
 use crate::db::query::{query_all, query_one};
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::sync_engine::device_id;
 use crate::transaction::search_text::{split_terms, term_matches_text};
+use ledger_sync_protocol::device::device_id;
 
 pub fn list_holdings(conn: &Connection) -> Result<Vec<Holding>> {
     query_all(

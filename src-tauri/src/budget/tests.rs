@@ -9,8 +9,8 @@ use super::model::{BudgetInput, BudgetPeriod};
 use crate::budget::{budget_progress_rows, create_budget, list_budgets, update_budget};
 use crate::db::now_iso;
 use crate::error::{AppError, ErrClass};
-use crate::sync_engine::device_id;
 use crate::transaction::amount::{Measure, TransactionKind, signed_amount};
+use ledger_sync_protocol::device::device_id;
 
 fn setup() -> Connection {
     // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
