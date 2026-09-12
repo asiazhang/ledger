@@ -113,7 +113,8 @@ export const WHITELIST: readonly WhitelistEntry[] = [
  * 故模块级守门（对壳层零依赖、基础设施→域认许边）随之落到 crate 根下扫描。
  */
 export const INFRA_MODULES: readonly WhitelistEntry[] = [
-  { path: 'boot', layer: '基础设施', note: '引导层（#1131 自 db 升顶层目录：disposition 启动处置判定与失败门 / data_location 引导 / book_registry 账本注册表 / encryption 加密基座 / passphrase_cache 口令缓存；依赖方向 boot → db 单向，原 db 路径经再导出保持）' },
+  { path: 'lib.rs', layer: '基础设施', note: 'crate 根声明文件（#1134 双向全等起入清单）：pub mod 声明与再导出面（含 test_utils cfg 门，ADR-0111 决策 5 / #1132）——模块清单与 crate 实形的双向全等含根声明文件'},
+  { path: 'boot', layer: '基础设施', note: '引导层（#1131 自 db 升顶层目录：disposition 启动处置判定与失败门 / data_location 引导 / book_registry 账本注册表 / encryption 加密基座 / passphrase_cache 口令缓存；依赖方向 boot → db 单向，原 db 路径经再导出保持）'},
   { path: 'db', layer: '基础设施', note: '数据库连接与 schema 守卫（#1127 起 mod.rs 只留声明与再导出，按职责分 migrate / connection / runtime 三文件；时间与身份工厂自 #1128 升顶层 ids、引导层五模块自 #1131 升顶层 boot，原 db 路径经再导出保持）' },
   { path: 'ids.rs', layer: '基础设施', note: '时间与身份工厂（当前时刻 / ISO 格式 / UUID v7 与 v5 确定性派生，#1128 自 db 升入——非数据库关切，文件工具等原语引用不穿透 db）' },
   { path: 'signals', layer: '基础设施', note: '信号映射（ADR-0044；#1129 起为目录模块，mod.rs 只做声明与再导出，测试外挂 tests/ 与 db/ 同形）' },
@@ -287,6 +288,49 @@ const INFRA_DOMAIN_ALLOWED_EDGES: readonly InfraDomainEdge[] = [
     file: 'shell_support/read_entry.rs',
     domain: 'test_support',
     reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/种子（#758 收口），测试专用边、非产品依赖（#1130 起住 shell_support/）',
+  },
+]
+
+/**
+ * crate 内块间禁边（ADR-0111 决策 4 / #1134）：子目录级反向依赖断言——
+ * 原语 ← db/ ← boot/ ← shell_support/ 单向，events / signals / settings 是被
+ * 各层引用的共享接缝；db 不得引用 boot / shell_support / signals，boot 不得
+ * 引用 shell_support。键 = 拥有该文件的块（路径首段），值 = 禁止引用的目标块；
+ * 顶层单文件（ids / error / fs_util 等原语与共享接缝）不受块间禁边约束。
+ */
+const INFRA_BLOCK_FORBIDDEN: Record<string, readonly string[]> = {
+  db: ['boot', 'shell_support', 'signals'],
+  boot: ['shell_support'],
+}
+
+/** 块间依赖形态：与 INFRA_DOMAIN_DEP_PATTERN 同款形态——crate 根前缀 + 目标块名，
+ *  再随 `::`（路径引用）、` as `（别名引入）或 `;`（模块自身导入）；\b 防前缀吞
+ *  匹配，`\{?\s*` 容纳花括号列举首段（use crate::{boot::x, …}）；花括号列举
+ *  非首段与 super:: 改写文本不可达，靠评审兜底。 */
+function infraBlockDepPattern(targets: readonly string[]): RegExp {
+  return new RegExp(
+    `\\bcrate\\s*::\\s*\\{?\\s*(${targets.join('|')})\\b(?:\\s*::|\\s+as\\b|\\s*;)`,
+  )
+}
+
+/** crate 内块间认许边条目：基础设施文件相对路径 + 目标块名 + 成因留痕 */
+interface InfraBlockEdge {
+  file: string
+  target: string
+  reason: string
+}
+
+/**
+ * crate 内块间认许边（ADR-0111 决策 4 / #1134）：块间反向依赖的既有设计意图
+ * 边逐条留痕于本脚本，与 INFRA_DOMAIN_ALLOWED_EDGES 同款留痕纪律——精确到
+ * 文件相对路径（相对 `crates/infra/src`）+ 目标块名，附 ADR 指针；清单之外的
+ * 块间反向引用一律红。
+ */
+const INFRA_BLOCK_ALLOWED_EDGES: readonly InfraBlockEdge[] = [
+  {
+    file: 'db/mod.rs',
+    target: 'boot',
+    reason: 'ADR-0111 决策 2 / #1131：引导层五模块升顶层 boot 后，既有 `crate::db::{boot,…}` 调用点与协议 crate 的 `ledger_infra::db::…` 路径经本再导出保持零改动——路径兼容面，非机制依赖（#1128 ids 同款口径）',
   },
 ]
 
@@ -914,9 +958,45 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
 }
 
 /**
+ * INFRA_MODULES 与实际模块双向全等（ADR-0111 决策 5 / #1134）：磁盘侧枚举
+ * `crates/infra/src` 顶层的实际模块——非测试豁免形态的 .rs 文件，与扫得到
+ * 非测试 .rs 文件的目录（目录型条目覆盖其全部子目录，子文件不再逐行登记）——
+ * 磁盘上存在而清单未登记即红（清单漂移不再只单向 fail loud）。
+ * 反方向（登记路径消失 / 条目扫不到非测试文件）由 scanModuleEntries 的
+ * 既有路径存在性与非测试文件数核对承担，本核对不重复报文。
+ */
+function checkInfraModuleEquality(srcTauriDir: string): string[] {
+  const problems: string[] = []
+  const srcDir = join(srcTauriDir, INFRA_SRC_REL)
+  if (!existsSync(srcDir)) return problems // 清单循环逐条报「路径不存在」
+  const onDisk: string[] = []
+  for (const entry of readdirSync(srcDir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    if (entry.isFile() && entry.name.endsWith('.rs') && !isTestFile(entry.name)) {
+      onDisk.push(entry.name)
+    } else if (entry.isDirectory() && collectRustFiles(join(srcDir, entry.name), entry.name).length > 0) {
+      onDisk.push(entry.name)
+    }
+  }
+  for (const mod of onDisk) {
+    if (!INFRA_MODULES.some((m) => m.path === mod)) {
+      problems.push(
+        `✗ INFRA_MODULES 未登记模块：${mod}（${INFRA_SRC_REL}）\n` +
+          '    清单与实际模块双向全等（ADR-0111 决策 5 / #1134）：新增模块后须在 ' +
+          'scripts/check-structure.ts 的 INFRA_MODULES 追加一行（附注释），' +
+          '否则清单漏登记、块间分层与认许边核对静默漏检',
+      )
+    }
+  }
+  return problems
+}
+
+/**
  * 模块清单核对（ADR-0056 决策 4）：清单条目必须存在且扫得到非测试 Rust 文件
  * （清单漂移 fail loud），条目内对壳层零依赖；基础设施条目另核
- * 基础设施→域认许边（ADR-0071 决策 6 / #538），业务域条目另核业务域→同步域
+ * 基础设施→域认许边（ADR-0071 决策 6 / #538）与 crate 内块间反向依赖
+ * （ADR-0111 决策 4 / #1134），业务域条目另核业务域→同步域
  * 严形态（ADR-0101 决策 4b）。返回扫到的非测试文件数；返回 0 由调用方统一拒绝
  * （拒绝以空集假绿通过）。清单与路径基准分离，使域目录（根 src）与基础设施
  * crate（`crates/infra/src`）共用同一份核对逻辑与同一份认许边清单。
@@ -967,6 +1047,27 @@ function scanModuleEntries(
         )
       }
       if (isInfra) {
+        // crate 内块间反向依赖（ADR-0111 决策 4 / #1134）：db 不得引用
+        // boot / shell_support / signals；boot 不得引用 shell_support；
+        // 认许边逐条留痕（INFRA_BLOCK_ALLOWED_EDGES），清单之外即红。
+        const block = f.rel.split('/')[0]
+        const forbiddenTargets = INFRA_BLOCK_FORBIDDEN[block]
+        if (forbiddenTargets) {
+          for (const hit of scanRustSource(source, infraBlockDepPattern(forbiddenTargets))) {
+            const allowed = INFRA_BLOCK_ALLOWED_EDGES.some(
+              (e) => e.file === f.rel && e.target === hit.captured,
+            )
+            if (allowed) continue
+            problems.push(
+              `✗ crate 内反向依赖：${block} 引用 ${hit.captured} → ${f.rel}:${hit.line}（${hit.match}）\n` +
+                `    ${hit.text}\n` +
+                `    crate 内分层（ADR-0111 决策 4）：原语 ← db ← boot ← shell_support 单向，` +
+                `db 不得引用 boot/shell_support/signals，boot 不得引用 shell_support；` +
+                `设计意图边须逐条留痕于本脚本 INFRA_BLOCK_ALLOWED_EDGES（附 ADR 指针），` +
+                `或把逻辑下沉到更低的块`,
+            )
+          }
+        }
         for (const hit of scanRustSource(source, INFRA_DOMAIN_DEP_PATTERN)) {
           const allowed = INFRA_DOMAIN_ALLOWED_EDGES.some(
             (e) => e.file === f.rel && e.domain === hit.captured,
@@ -1090,6 +1191,10 @@ function main(): void {
   // 静态检查/测试命令的 workspace 覆盖——与模块路径白名单并列，同为删除即变红。
   problems.push(...checkCrateBoundaries(srcTauriDir))
 
+  // INFRA_MODULES 与实际模块双向全等（ADR-0111 决策 5 / #1134）：磁盘侧反向
+  // 核对（磁盘模块未登记即红）；登记路径消失 / 扫不到非测试文件已由清单循环红。
+  problems.push(...checkInfraModuleEquality(srcTauriDir))
+
   if (problems.length > 0) {
     for (const p of problems) console.error(p)
     console.error(
@@ -1109,6 +1214,8 @@ function main(): void {
       `· 模型域化禁令全树扫描 ${allFiles.length} 个文件零残留（ADR-0059）` +
       `· 原生事务语句全树扫描 ${allFiles.length} 个文件仅 ${NATIVE_TX_STMT_ALLOWED} 一处（#1014）` +
       `· crate 边界 ${CRATES.length} 个（成员登记 / 门禁继承 / 依赖方向 / workspace 命令覆盖，#1087）` +
+      `· INFRA_MODULES 双向全等（磁盘模块全部登记，ADR-0111 决策 5 / #1134）` +
+      `· crate 内块间反向依赖零未认许引用（认许边 ${INFRA_BLOCK_ALLOWED_EDGES.length} 条，ADR-0111 决策 4 / #1134）` +
       `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）`,
   )
 }
