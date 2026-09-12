@@ -2,6 +2,7 @@
 //!
 //! 接缝：
 //! - [`amount`]（口径权威）：kind 枚举真源 + kind→度量矩阵 + 本位币折算。
+//! - [`base_currency_seam`]（交易×币种接缝，issue #1092）：本位币基准读取注册点。
 //! - [`batch`]（批量编排权威）：批量事务、幂等键/内容哈希去重判定与批次汇总日志（`TransactionBatch::run`）。
 //! - [`behavior`]（行为层编排权威）：create / update / delete 三编排入口；创建与
 //!   修改的写入协议单正文（Local / Replay 两形态，ADR-0105）承载顺序契约、
@@ -13,19 +14,27 @@
 //! - [`model`]：域集中模型——交易全量类型（#423 模型域化随域归位），经本入口
 //!   逐类型再导出（禁止 glob）；
 //! - [`writer`]（写入权威）：归一化 + 全列映射 + 审计字段生成（issue #55 落地）。
+//! - [`investment_seam`]（交易×投资接缝，issue #1092）：投资 kind 写路径计划装配/
+//!   副作用与读路径投影（标的反查、转换两腿）的注册点与计划契约——投资语义
+//!   全部归投资域实现侧，壳层启动接线。
+//! - [`merchant_seam`]（交易×商户接缝，issue #1092）：商户名归一化（先查/后建）
+//!   钩子组注册点。
 //! - [`write_effects`]（写路径副作用接缝，issue #1090 / spec #1086 形态推广）：
 //!   受影响账户余额重算的注册点与委派单点——本域只承诺调用时机，实现由账户域
 //!   提供、壳层启动时接线（下层定义注册点、上层注册实现）。
 //!
-//! 依赖方向恒为「壳层 → transaction → 基础设施」，本模块不反向依赖壳层；对账户域
-//! 与定时计划域的直接引用已随写路径副作用接缝反转消亡（#1090，域间禁边见
-//! `scripts/check-structure.ts`）。
+//! 依赖方向恒为「壳层 → transaction → 基础设施」，本模块不反向依赖壳层；对业务
+//! 域（账户/定时计划/投资/商户/币种/物品/保单）的直接引用已随写路径副作用接缝
+//! 反转消亡（#1090 与 #1092，域间禁边见 `scripts/check-structure.ts`）。
 
 pub mod amount;
+pub mod base_currency_seam;
 pub mod batch;
 pub mod behavior;
 pub mod command;
 pub mod funding;
+pub mod investment_seam;
+pub mod merchant_seam;
 pub mod read;
 pub mod search;
 pub mod search_text;

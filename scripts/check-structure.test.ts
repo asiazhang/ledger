@@ -7,6 +7,8 @@ import {
   BACKUP_MODULES,
   BACKUP_SRC_REL,
   CRATES,
+  DOMAIN_PAIR_ALLOWED_EDGES,
+  DOMAIN_PAIR_FORBIDDEN,
   INFRA_MODULES,
   INFRA_SRC_REL,
   PROTOCOL_MODULES,
@@ -488,19 +490,26 @@ describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反
     expect(r.output).toContain('域间禁边')
   })
 
-  it('认许边精确匹配：transaction/funding.rs 的 AccountType 消费绿；同引用挪到他文件仍红', () => {
-    const green = makeFixture({
+  it('认许边退休：transaction → accounts 的 AccountType 类型消费同样红（#1092 接缝反转后无认许边）', () => {
+    // 原「类型只读边」认许边已随出资账户视图接缝反转消亡（#1092）：类型词汇映射
+    // 迁账户域实现侧，任何 transaction → accounts 残留引用一律红。
+    const args = makeFixture({
       'transaction/funding.rs': 'use crate::accounts::AccountType;\npub fn x() {}\n',
     })
-    expect(run(green).status).toBe(0)
-
-    const moved = makeFixture({
-      'transaction/writer.rs': 'use crate::accounts::AccountType;\npub fn x() {}\n',
-    })
-    const r = run(moved)
+    const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('域间禁边')
-    expect(r.output).toContain('transaction/writer.rs:1')
+    expect(r.output).toContain('transaction/funding.rs:1')
+  })
+
+  it('#1092 新增禁边生效：transaction → investment 残留引用红', () => {
+    const args = makeFixture({
+      'transaction/behavior.rs': 'use crate::investment;\npub fn x() {}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('域间禁边')
+    expect(r.output).toContain('transaction/behavior.rs:1')
   })
 
   it('方向性：禁边反向（accounts → transaction）不红——口径真源单向边合法', () => {
@@ -536,7 +545,11 @@ describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反
   it('真实仓库默认通过：域间禁边零未认许引用（认许边留痕于脚本）', () => {
     const r = run([])
     expect(r.status).toBe(0)
-    expect(r.output).toContain('域间禁边 3 对零未认许引用（认许边 1 条，#1090 接缝反转）')
+    // 汇总字符串自脚本导出清单派生（单一事实源，无双源漂移）。
+    expect(r.output).toContain(
+      `域间禁边 ${DOMAIN_PAIR_FORBIDDEN.length} 对零未认许引用`
+        + `（认许边 ${DOMAIN_PAIR_ALLOWED_EDGES.length} 条，#1090 接缝反转）`,
+    )
   })
 
   it('删除即变红：禁边规则逐对生效，删对后同夹具转绿（对保护不假绿）', () => {

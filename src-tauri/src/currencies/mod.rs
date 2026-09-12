@@ -14,7 +14,9 @@ mod command;
 mod list;
 mod model;
 
-pub use base_currency::{DEFAULT_BASE_CURRENCY, current_base_currency, set_base_currency};
+pub use base_currency::{
+    DEFAULT_BASE_CURRENCY, current_base_currency, install_base_currency_hook, set_base_currency,
+};
 pub use command::LedgerSettingCommand;
 pub use list::list_currencies;
 pub use model::{Currency, ExchangeRate, ExchangeRateInput};

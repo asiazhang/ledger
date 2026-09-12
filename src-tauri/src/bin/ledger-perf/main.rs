@@ -274,6 +274,14 @@ fn main() -> ExitCode {
     tauri_app_lib::backup::register_catch_up_hook(
         tauri_app_lib::scheduled_transactions::auto_run::catch_up_hook,
     );
+    // 交易域接缝接线（issue #1092）：与壳层启动/测试工厂同形——六向实现注册
+    //（幂等，进程级一次）。
+    tauri_app_lib::investment::install_transaction_hooks();
+    tauri_app_lib::merchants::install_merchant_hooks();
+    tauri_app_lib::currencies::install_base_currency_hook();
+    tauri_app_lib::item::install_source_hook();
+    tauri_app_lib::policy::install_source_hook();
+    tauri_app_lib::accounts::install_funding_account_hook();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(sub) = args.first() else {
         print_usage();

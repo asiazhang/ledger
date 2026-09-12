@@ -357,6 +357,14 @@ impl LedgerWorld {
         tauri_app_lib::backup::register_catch_up_hook(
             tauri_app_lib::scheduled_transactions::auto_run::catch_up_hook,
         );
+        // 交易域接缝接线（issue #1092）：与生产启动/测试工厂同形——六向实现注册
+        //（幂等，先装者优先）。
+        tauri_app_lib::investment::install_transaction_hooks();
+        tauri_app_lib::merchants::install_merchant_hooks();
+        tauri_app_lib::currencies::install_base_currency_hook();
+        tauri_app_lib::item::install_source_hook();
+        tauri_app_lib::policy::install_source_hook();
+        tauri_app_lib::accounts::install_funding_account_hook();
         let mut world = Self {
             db: DbState::open_in_memory().expect("数据库初始化失败"),
             account_name_to_id: HashMap::new(),

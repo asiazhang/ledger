@@ -407,7 +407,7 @@ interface DomainPairRule {
  * 即红。作用域限业务域目录（认许边逐条留痕于 DOMAIN_PAIR_ALLOWED_EDGES），
  * 文本级扫描、掩码注释与字面量后匹配，别名改写不可达靠评审兑底。
  */
-const DOMAIN_PAIR_FORBIDDEN: readonly DomainPairRule[] = [
+export const DOMAIN_PAIR_FORBIDDEN: readonly DomainPairRule[] = [
   {
     from: 'transaction',
     to: 'accounts',
@@ -434,6 +434,47 @@ const DOMAIN_PAIR_FORBIDDEN: readonly DomainPairRule[] = [
       + 'scheduled_transactions → backup 直接引用禁令——再导出面（crate::backup / '
       + 'tauri_app_lib::backup）与 crate 名直引（ledger_backup::）两形都红',
   },
+  {
+    from: 'transaction',
+    to: 'investment',
+    reason:
+      'issue #1092：投资 kind 写路径装配/副作用（prepare/replay/revert/release）与读路径投影'
+      + '（来源列④标的反查、转换两腿）经交易×投资接缝反转'
+      + '（transaction::investment_seam 注册点 + investment::transaction_seam::install_transaction_hooks '
+      + '实现注册），transaction → investment 直接引用禁令',
+  },
+  {
+    from: 'transaction',
+    to: 'merchants',
+    reason:
+      'issue #1092：商户名归一化（先查/即建）经交易×商户接缝反转'
+      + '（transaction::merchant_seam 注册点 + merchants::install_merchant_hooks 实现注册），'
+      + 'transaction → merchants 直接引用禁令',
+  },
+  {
+    from: 'transaction',
+    to: 'currencies',
+    reason:
+      'issue #1092：本位币基准读取经交易×币种接缝反转'
+      + '（transaction::base_currency_seam 注册点 + currencies::install_base_currency_hook 实现注册），'
+      + 'transaction → currencies 直接引用禁令',
+  },
+  {
+    from: 'transaction',
+    to: 'item',
+    reason:
+      'issue #1092：来源列③物品反查经接缝反转'
+      + '（transaction::read 注册点 + item::install_source_hook 实现注册），'
+      + 'transaction → item 直接引用禁令',
+  },
+  {
+    from: 'transaction',
+    to: 'policy',
+    reason:
+      'issue #1092：来源列①保单直挂反查经接缝反转'
+      + '（transaction::read 注册点 + policy::install_source_hook 实现注册），'
+      + 'transaction → policy 直接引用禁令',
+  },
 ]
 
 /** 域间禁边认许边条目：文件相对路径（相对根 src）+ from/to + 成因留痕 */
@@ -449,15 +490,9 @@ interface DomainPairAllowedEdge {
  * INFRA_DOMAIN_ALLOWED_EDGES 同款留痕纪律——精确到文件相对路径，附成因；
  * 清单之外的域间禁边引用一律红。
  */
-const DOMAIN_PAIR_ALLOWED_EDGES: readonly DomainPairAllowedEdge[] = [
-  {
-    file: 'transaction/funding.rs',
-    from: 'transaction',
-    to: 'accounts',
-    reason:
-      'AccountType 参考数据类型消费（#935 出资账户准入的枚举判读，#1092 处置）——'
-      + '类型只读边，非写路径副作用',
-  },
+export const DOMAIN_PAIR_ALLOWED_EDGES: readonly DomainPairAllowedEdge[] = [
+  // #1092 后为空：唯一一条（transaction/funding.rs → accounts 的 AccountType
+  // 类型只读边）已随出资账户视图接缝反转消亡，清单保留为空集留痕。
 ]
 
 /** 域间禁边依赖形态：与 INFRA_DOMAIN_DEP_PATTERN 同款——crate 根前缀 + 目标域名。 */

@@ -45,6 +45,10 @@
 //! - [`trade`]：buy/sell/convert/split/dividend 协议分派与买卖/转换/份额调整明细投影
 //!   （`TransactionTrade` / `TransactionConvert`）；
 //! - [`trend`]：单标的 / 组合走势查询。
+//! - [`transaction_seam`]：交易域接缝实现（spec #1086 / issue #1092）——投资 kind
+//!   写路径装配/副作用与读路径投影的实现注册面（注册点住核心交易域
+//!   `transaction::investment_seam`，本域经 `install_transaction_hooks` 一次性装入，
+//!   壳层启动接线）；`transaction → investment` 直接依赖边随接缝反转消亡。
 //! - [`unwind`]：持仓副作用撤销（Unwind）——修改/删除路径的守卫 → 级联/回补 → 清理
 //!   模板单点 `remove(conn, id, kind, mode)`，`trade.*` 守卫码与文案随迁（issue #1020，
 //!   父 spec #1005 决策 D2/D3）；
@@ -77,6 +81,7 @@ pub mod source;
 pub mod split;
 pub mod stock;
 pub mod trade;
+pub mod transaction_seam;
 pub mod trend;
 pub mod unwind;
 
@@ -134,7 +139,9 @@ pub use trade::{
     Plan, apply, convert_fields_by_transaction_ids, get_transaction_convert, get_transaction_split,
     get_transaction_trade, prepare, release_for_delete, revert,
 };
-pub(crate) use trade::{replay_convert_plan, replay_plan, replay_split_plan};
+/// 交易域接缝接线入口（spec #1086 / issue #1092）：六个挂载点实现一次性装入，
+/// 壳层启动接线（`transaction::investment_seam` 注册点）。
+pub use transaction_seam::install_transaction_hooks;
 pub use trend::{query_instrument_price_trend, query_portfolio_value_trend};
 
 #[cfg(test)]

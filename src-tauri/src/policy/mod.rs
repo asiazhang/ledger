@@ -27,7 +27,10 @@ pub(crate) use command::{replay_insurer_command, replay_policy_command};
 
 /// 域 API 再导出：调用面用域语言短名（`policy::list_policies` 等），
 /// 与 ADR-0056 定格形状一致（先例：`item` / `scheduled_transactions` 入口再导出）。
-pub use crud::{create_policy, delete_policy, list_policies, source_display_by_ids, update_policy};
+pub use crud::{
+    create_policy, delete_policy, install_source_hook, list_policies, source_display_by_ids,
+    update_policy,
+};
 pub use insurer::{
     Insurer, InsurerInput, InsurerUpdateInput, create_insurer, create_insurer_by_name,
     delete_insurer, find_insurer_by_name, list_insurers, update_insurer,

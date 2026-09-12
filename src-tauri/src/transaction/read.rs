@@ -16,15 +16,12 @@ use std::sync::OnceLock;
 use rusqlite::Connection;
 
 use super::amount::TransactionKind;
+use super::investment_seam::{resolve_convert_fields, resolve_instrument_sources};
 use super::model::{
     ConvertFields, Transaction, TransactionListFilter, TransactionListResult, TransactionSource,
-    TransactionSourceKind, TransactionSourceStatus,
 };
 use crate::db::query::{query_all, query_one};
 use crate::error::{AppError, Result};
-use crate::investment;
-use crate::item;
-use crate::policy;
 
 // ---------------------------------------------------------------------------
 // 计划来源解析接缝（issue #1090 / spec #1086 形态推广）
@@ -44,7 +41,7 @@ static PLAN_SOURCE_RESOLVER: OnceLock<PlanSourceResolver> = OnceLock::new();
 /// 调用点在壳层启动接线与测试建库单点（`test_support::open`、BDD world），
 /// 与生产同形；实现由定时计划域提供
 /// （`scheduled_transactions::source::install_plan_source_hook`），业务代码不直接调用。
-pub(crate) fn register_plan_source_resolver(resolver: PlanSourceResolver) {
+pub fn register_plan_source_resolver(resolver: PlanSourceResolver) {
     let _ = PLAN_SOURCE_RESOLVER.set(resolver);
 }
 
@@ -69,24 +66,81 @@ fn resolve_plan_sources(
     resolver(conn, transaction_ids)
 }
 
+// ---------------------------------------------------------------------------
+// 来源列①保单 / ③物品反查接缝（issue #1092，与计划反查同族同形）
+// ---------------------------------------------------------------------------
+
+/// 保单直挂反查钩子：按行内保单 id 批量反查保单档案，实现侧（保单域）把自有
+/// 展示字段映射为本域来源模型（kind = Policy、展示名 = 产品名、软删 → Deleted
+/// 标注，spec #704 口径零变化）。
+pub type PolicySourceResolver =
+    fn(&Connection, &[String]) -> Result<HashMap<String, TransactionSource>>;
+
+/// 物品反查钩子：按溯源指针（生成交易 id）批量反查在用物品，实现侧（物品域）
+/// 映射为来源模型（kind = Item、展示名 = 物品名、已处置 → Disposed 标注）。
+pub type ItemSourceResolver =
+    fn(&Connection, &[String]) -> Result<HashMap<String, TransactionSource>>;
+
+static POLICY_SOURCE_RESOLVER: OnceLock<PolicySourceResolver> = OnceLock::new();
+static ITEM_SOURCE_RESOLVER: OnceLock<ItemSourceResolver> = OnceLock::new();
+
+/// 注册保单直挂反查实现（幂等：进程级一次，重复注册保留首次实现）。调用点在
+/// 保单域 `install_source_hook`，壳层启动接线，业务代码不直接调用。
+pub fn register_policy_source_resolver(resolver: PolicySourceResolver) {
+    let _ = POLICY_SOURCE_RESOLVER.set(resolver);
+}
+
+/// 注册物品反查实现（幂等同上）。调用点在物品域 `install_source_hook`。
+pub fn register_item_source_resolver(resolver: ItemSourceResolver) {
+    let _ = ITEM_SOURCE_RESOLVER.set(resolver);
+}
+
+/// 保单反查委派：未注册即接线缺失，码化错误上抛（列表读取显式失败）。
+fn resolve_policy_sources(
+    conn: &Connection,
+    policy_ids: &[String],
+) -> Result<HashMap<String, TransactionSource>> {
+    let resolver = POLICY_SOURCE_RESOLVER.get().ok_or_else(|| {
+        AppError::coded(
+            "transaction.policy-source-resolver-unregistered",
+            "保单来源反查器未注册：来源列的保单直挂段被跳过（壳层启动接线缺失）",
+        )
+    })?;
+    resolver(conn, policy_ids)
+}
+
+/// 物品反查委派：未注册即接线缺失，码化错误上抛（列表读取显式失败）。
+fn resolve_item_sources(
+    conn: &Connection,
+    transaction_ids: &[String],
+) -> Result<HashMap<String, TransactionSource>> {
+    let resolver = ITEM_SOURCE_RESOLVER.get().ok_or_else(|| {
+        AppError::coded(
+            "transaction.item-source-resolver-unregistered",
+            "物品来源反查器未注册：来源列的物品反查段被跳过（壳层启动接线缺失）",
+        )
+    })?;
+    resolver(conn, transaction_ids)
+}
+
 pub use get_transaction_internal as get_transaction;
 pub use list_transactions_internal as list_transactions;
 
 /// 按页填充来源列（spec #704，词汇表「来源列」来源判定优先级：保单直挂 >
 /// 计划反查 > 物品反查 > 标的反查），逐级只对尚无来源的行填充，不做逐行 N+1：
 /// ① 保单直挂（issue #706）：保单 id 已在行内（PolicyReference），去重后一次
-///    批量反查（`policy::source_display_by_ids`）。双挂场景在此天然优先——
+///    批量反查——经保单直挂反查接缝（#1092，实现由保单域装入）。双挂场景在此天然优先——
 ///    订阅期次执行时把协议上的保单引用复制进流水，自动保费流水同时有
 ///    「订阅协议 + 保单」两条线索，来源列显示保单（更具体的档案）。
 /// ② 计划反查（issue #707）：按生成交易 id 批量反查期次 → 计划——经计划来源
 ///    解析接缝（#1090，实现由定时计划域启动时装入），展示名 =
 ///    计划名（备注，可空由前端按类型名兑底），已取消计划携带状态标注。
-/// ③ 物品反查（issue #708）：按溯源指针批量反查物品表
-///    （`item::source_display_by_transaction_ids`），展示名 = 物品名，已处置
+/// ③ 物品反查（issue #708）：按溯源指针批量反查物品表——经物品反查接缝
+///    （#1092，实现由物品域装入），展示名 = 物品名，已处置
 ///    物品携带状态标注（物品列表仍在册、跳转不落空）。期次交易被建物品时
 ///    计划优先（计划是流水发起方，物品是购买档案）。
-/// ④ 标的反查（issue #709）：按生成交易 id 批量反查证券交易记录 → 标的
-///    （`investment::source_display_by_transaction_ids`；transaction_id 为主键，
+/// ④ 标的反查（issue #709）：按生成交易 id 批量反查证券交易记录 → 标的——经
+///    交易×投资接缝（#1092，实现由投资域装入；transaction_id 为主键，
 ///    一交易至多一行），展示名 = 代码 + 名称空格连接（随走势页签标签惯例，
 ///    无名称退化为裸代码）。标的字典无软删（被流水引用的标的不可删），来源
 ///    恒命中、无状态标注——清仓标的同样可达（走势不依赖持仓）。
@@ -103,26 +157,18 @@ pub(super) fn attach_sources(conn: &Connection, items: &mut [Transaction]) -> Re
         }
     }
     if !policy_ids.is_empty() {
-        let refs = policy::source_display_by_ids(conn, &policy_ids)?;
-        let by_id: HashMap<&str, &policy::PolicySourceDisplay> =
-            refs.iter().map(|r| (r.id.as_str(), r)).collect();
+        // 经保单直挂反查接缝（#1092）：注册点在本域，实现由保单域启动时装入。
+        let by_id = resolve_policy_sources(conn, &policy_ids)?;
         for txn in items.iter_mut() {
             let Some(pid) = txn.policy_id.as_deref() else {
                 continue;
             };
-            let Some(reference) = by_id.get(pid) else {
+            let Some(source) = by_id.get(pid) else {
                 // 引用完整性由外键（ON DELETE RESTRICT）保证；缺行属防御性跳过，
                 // 不虚构展示名也不中断整页读取。
                 continue;
             };
-            txn.source = Some(TransactionSource {
-                kind: TransactionSourceKind::Policy,
-                entity_id: pid.to_string(),
-                display_name: reference.product_name.clone(),
-                status: reference
-                    .is_deleted
-                    .then_some(TransactionSourceStatus::Deleted),
-            });
+            txn.source = Some(source.clone());
         }
     }
 
@@ -146,67 +192,42 @@ pub(super) fn attach_sources(conn: &Connection, items: &mut [Transaction]) -> Re
         }
     }
 
-    // ③ 物品反查（仅对保单/计划均未命中的行；溯源唯一保证一交易至多一行）
+    // ③ 物品反查（仅对保单/计划均未命中的行；溯源唯一保证一交易至多一行）——
+    // 经物品反查接缝（#1092）：注册点在本域，实现由物品域启动时装入。
     let item_txn_ids: Vec<String> = items
         .iter()
         .filter(|t| t.source.is_none())
         .map(|t| t.id.clone())
         .collect();
     if !item_txn_ids.is_empty() {
-        let rows = item::source_display_by_transaction_ids(conn, &item_txn_ids)?;
-        let by_txn: HashMap<&str, &item::ItemSourceDisplay> = rows
-            .iter()
-            .filter_map(|r| {
-                r.purchase_transaction_id
-                    .as_deref()
-                    .map(|txn_id| (txn_id, r))
-            })
-            .collect();
+        let by_txn = resolve_item_sources(conn, &item_txn_ids)?;
         for txn in items.iter_mut() {
             if txn.source.is_some() {
                 continue;
             }
-            let Some(row) = by_txn.get(txn.id.as_str()) else {
-                continue;
-            };
-            txn.source = Some(TransactionSource {
-                kind: TransactionSourceKind::Item,
-                entity_id: row.id.clone(),
-                // 展示名 = 物品名；已处置物品携带状态标注（列表仍在册，可点击由前端裁决）。
-                display_name: row.name.clone(),
-                status: row.is_disposed.then_some(TransactionSourceStatus::Disposed),
-            });
+            if let Some(source) = by_txn.get(txn.id.as_str()) {
+                txn.source = Some(source.clone());
+            }
         }
     }
 
     // ④ 标的反查（仅对保单/计划/物品均未命中的行；证券交易记录 transaction_id
-    //    为主键，一交易至多一行）
+    //    为主键，一交易至多一行）——经交易×投资接缝（#1092，[`super::investment_seam`]）：
+    //    注册点在本域，实现由投资域启动时装入。
     let instrument_txn_ids: Vec<String> = items
         .iter()
         .filter(|t| t.source.is_none())
         .map(|t| t.id.clone())
         .collect();
     if !instrument_txn_ids.is_empty() {
-        let rows = investment::source_display_by_transaction_ids(conn, &instrument_txn_ids)?;
-        let by_txn: HashMap<&str, &investment::InstrumentSourceDisplay> = rows
-            .iter()
-            .map(|r| (r.transaction_id.as_str(), r))
-            .collect();
+        let by_txn = resolve_instrument_sources(conn, &instrument_txn_ids)?;
         for txn in items.iter_mut() {
             if txn.source.is_some() {
                 continue;
             }
-            let Some(row) = by_txn.get(txn.id.as_str()) else {
-                continue;
-            };
-            txn.source = Some(TransactionSource {
-                kind: TransactionSourceKind::Instrument,
-                entity_id: row.instrument_id.clone(),
-                // 展示名 = 代码 + 名称空格连接（随走势页签标签惯例），无名称退化为
-                // 裸代码；标的字典无软删，恒无状态标注（清仓标的同样可达）。
-                display_name: row.display_label(),
-                status: None,
-            });
+            if let Some(source) = by_txn.get(txn.id.as_str()) {
+                txn.source = Some(source.clone());
+            }
         }
     }
     Ok(())
@@ -226,17 +247,10 @@ pub(super) fn attach_convert_fields(conn: &Connection, items: &mut [Transaction]
         .filter(|t| t.kind == TransactionKind::Convert)
         .map(|t| t.id.clone())
         .collect();
-    let rows = investment::convert_fields_by_transaction_ids(conn, &convert_ids)?;
-    if rows.is_empty() {
-        return Ok(());
-    }
-    let by_txn: HashMap<&str, &ConvertFields> = rows
-        .iter()
-        .map(|(id, fields)| (id.as_str(), fields))
-        .collect();
+    let by_txn: HashMap<String, ConvertFields> = resolve_convert_fields(conn, &convert_ids)?;
     for txn in items.iter_mut() {
         if let Some(fields) = by_txn.get(txn.id.as_str()) {
-            txn.convert = Some((*fields).clone());
+            txn.convert = Some(fields.clone());
         }
     }
     Ok(())

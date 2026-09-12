@@ -258,3 +258,18 @@ pub(crate) fn replay_update(conn: &Connection, id: &str, name: &str) -> Result<(
 pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
     write_delete(conn, id)
 }
+
+// ---------------------------------------------------------------------------
+// 交易×商户接缝实现（spec #1086 / issue #1092）
+// ---------------------------------------------------------------------------
+
+/// 注册商户名归一化实现（核心交易域 `transaction::merchant_seam` 注册点，#1092）：
+/// 把按名查找与按名即建两支实现原子装入，壳层启动接线，业务代码不直接调用。
+pub fn install_merchant_hooks() {
+    crate::transaction::merchant_seam::register_merchant_hooks(
+        crate::transaction::merchant_seam::MerchantNameHooks {
+            find_by_name: find_merchant_by_name,
+            create_by_name: create_merchant_by_name,
+        },
+    );
+}

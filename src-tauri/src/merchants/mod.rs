@@ -13,7 +13,7 @@ pub use command::MerchantCommand;
 pub(crate) use command::replay_command;
 pub use crud::{
     create_merchant, create_merchant_by_name, delete_merchant, find_merchant_by_name, get_merchant,
-    list_merchants, transaction_counts, update_merchant,
+    install_merchant_hooks, list_merchants, transaction_counts, update_merchant,
 };
 pub use model::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};
 

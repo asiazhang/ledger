@@ -376,11 +376,12 @@ pub fn contributing_kinds_sql(measure: Measure) -> String {
 
 /// 全局默认（本位）币种基准：`amount_native_cents` 的折算基准，读账本级设置
 /// （LedgerLevelSetting 首个成员，issue #858 / ADR-0091 决策 3）：存储落
-/// `app_settings`（ADR-0017，读写协议归币种域 [`crate::currencies`]），缺 key /
-/// 缺表回默认 [`crate::currencies::DEFAULT_BASE_CURRENCY`]（行为免费正确），
-/// 随多端同步分发、全设备强制一致。模块内其余口径不变。
+/// `app_settings`（ADR-0017，读写协议归币种域），缺 key / 缺表回默认 CNY（行为
+/// 免费正确），随多端同步分发、全设备强制一致。读取自 #1092 起经交易×币种接缝
+/// （[`super::base_currency_seam`]）：注册点在本域，实现由币种域启动时装入，
+/// 本域对币种域零直接依赖。模块内其余口径不变。
 pub fn default_currency_code(conn: &Connection) -> Result<String> {
-    crate::currencies::current_base_currency(conn)
+    super::base_currency_seam::current_base_currency(conn)
 }
 
 /// 查询货币对当前汇率（正查失败则反查取倒数）。

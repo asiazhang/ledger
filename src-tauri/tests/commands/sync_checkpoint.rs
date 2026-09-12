@@ -41,6 +41,14 @@ fn reattach_app(
     // 写路径副作用接缝接线（issue #1090）：本helper不经 fresh_app，落库前显式
     // 注册余额刷新实现（幂等，进程级）。
     tauri_app_lib::accounts::balance::install_balance_refresh_hook();
+    // 交易域接缝接线（issue #1092）：与测试工厂同形——六向实现显式注册（幂等，
+    // 进程级）。
+    tauri_app_lib::investment::install_transaction_hooks();
+    tauri_app_lib::merchants::install_merchant_hooks();
+    tauri_app_lib::currencies::install_base_currency_hook();
+    tauri_app_lib::item::install_source_hook();
+    tauri_app_lib::policy::install_source_hook();
+    tauri_app_lib::accounts::install_funding_account_hook();
     let app = tauri::test::mock_app();
     app.manage(BootCell::new(data_location::boot(dir)));
     let conn = match passphrase {
