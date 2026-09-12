@@ -1,28 +1,11 @@
 {
+  /* 共享 compilerOptions 收敛至 tsconfig.base.json（issue #1149），本工程经 extends
+     继承——行为逐字不变（继承值与本工程原声明全等）。仅保留根工程特有项与工程
+     边界：useDefineForClassFields 是根工程独有声明（scripts 工程未写，不上升）；
+     include/exclude/references 不随 extends 继承语义变化，逐字保留。 */
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2020",
-    "useDefineForClassFields": true,
-    "module": "ESNext",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "skipLibCheck": true,
-
-    "paths": {
-      "@/*": ["./src/*"]
-    },
-
-    /* Bundler mode */
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "preserve",
-
-    /* Linting */
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "useDefineForClassFields": true
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"],
   "exclude": ["src/__tests__/**"],
