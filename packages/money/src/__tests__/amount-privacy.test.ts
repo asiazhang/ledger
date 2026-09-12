@@ -8,7 +8,7 @@ import {
   yuanToCents,
   yuanToPrice,
   amountPrivacyEnabled,
-} from '@ledger/money'
+} from '../index'
 import type { Currency } from '@ledger/types'
 
 const cny: Currency = { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }

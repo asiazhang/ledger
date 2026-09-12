@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "//": "金额展示接缝包（issue #1153 / spec #1148）：金额、价格、数量的格式化与元/分换算的单一出口，也持有金额隐私模式响应式开关；依赖方向仅 @ledger/money → @ledger/types（Currency）与 @ledger/i18n（Locale/currentLocale），vue 仅提供 ref 原语，不反向依赖 stores（隐私开关的启动水合与持久化仍归应用设置 store）。源码直出，exports 指向 src/index.ts，不建构建链；跨包只能整引包名（深导入由 check-frontend-structure.ts 守门）。",
+  "//": "金额展示接缝包（issue #1153 / spec #1148）：金额、价格、数量的格式化与元/分换算的单一出口，也持有金额隐私模式响应式开关；依赖方向：@ledger 范围内仅 → @ledger/types（Currency）与 @ledger/i18n（Locale/currentLocale），外部依赖仅 vue（提供 ref 原语）；不反向依赖 stores（隐私开关的启动水合与持久化仍归应用设置 store）。源码直出，exports 指向 src/index.ts，不建构建链；跨包只能整引包名（深导入由 check-frontend-structure.ts 守门）。",
   "exports": {
     ".": "./src/index.ts"
   },

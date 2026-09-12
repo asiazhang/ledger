@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Currency } from '@ledger/types'
-import { yuanToCents, centsToYuan, formatQuantity, formatPrice, yuanToPrice, priceToYuan } from '@ledger/money'
+import { yuanToCents, centsToYuan, formatQuantity, formatPrice, yuanToPrice, priceToYuan } from '../index'
 
 describe('yuanToCents（元 → 分）', () => {
   it('整数元', () => {

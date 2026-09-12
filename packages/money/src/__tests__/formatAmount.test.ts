@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatAmount } from '@ledger/money'
+import { formatAmount } from '../index'
 import type { Currency } from '@ledger/types'
 
 const cny: Currency = { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }
