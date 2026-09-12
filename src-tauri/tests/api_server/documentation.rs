@@ -3,16 +3,10 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
 use crate::common::{body_to_bytes, get_json, setup_app};
-
-/// 投资五节标题（与 handler 常量结构锁同源）：基础知识端点响应的排他断言、
-/// 投资端点响应的存在断言，都以节标题为锚（issue #1123 分级自足）。
-const INVESTMENT_SECTION_HEADERS: [&str; 5] = [
-    "## 投资交易（buy / sell）",
-    "## 基金申赎（buy / sell，场外基金）",
-    "## 基金转换（convert，场外基金）",
-    "## 份额调整（split，场外基金与股票同构）",
-    "## 现金分红（dividend，股息 / 基金分红 / 投顾组合分红同构）",
-];
+// 投资五节标题锚点（issue #1185）：与 handler 常量结构锁同源——唯一住处在
+// lib 侧 `handlers::import`，经 `test-utils` feature 门控再导出；基础知识端点
+// 响应的排他断言、投资端点响应的存在断言，都以节标题为锚（issue #1123 分级自足）。
+use tauri_app_lib::api_server::INVESTMENT_SECTION_HEADERS;
 
 #[tokio::test]
 async fn test_openapi_doc_covers_delete_transaction_endpoint() {

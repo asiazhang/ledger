@@ -20,6 +20,23 @@ const BASE_KNOWLEDGE: &str = include_str!("../../../prompts/import-knowledge-bas
 const INVESTMENT_KNOWLEDGE_SECTIONS: &str =
     include_str!("../../../prompts/import-knowledge-investment.md");
 
+/// 投资五节标题锚点（issue #1185 收敛为单一住处）：#1121 切分边界锚点、
+/// 「投资节正文只存在一处」的判定依据，也是 #1123 HTTP 集成锁（基础知识
+/// 排他断言 / 投资端点存在断言）的共享锚——两层锁同源，节标题改名只改这里，
+/// 漂移在两层断言同步暴露。
+/// 生产构建不编译（ADR-0111 决策 5 / #1132 先例）：仅 `cfg(test)`（本模块
+/// 单测）与显式启用 `test-utils` feature 的测试构建（集成测试经根包自身
+/// dev-dependency 启用）可见，`#[doc(hidden)]` 不进文档。
+#[cfg(any(test, feature = "test-utils"))]
+#[doc(hidden)]
+pub const INVESTMENT_SECTION_HEADERS: [&str; 5] = [
+    "## 投资交易（buy / sell）",
+    "## 基金申赎（buy / sell，场外基金）",
+    "## 基金转换（convert，场外基金）",
+    "## 份额调整（split，场外基金与股票同构）",
+    "## 现金分红（dividend，股息 / 基金分红 / 投顾组合分红同构）",
+];
+
 #[utoipa::path(
     get,
     path = "/api/v1/import/knowledge",
@@ -64,15 +81,6 @@ pub async fn import_investment_knowledge_handler() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 投资五节标题：#1121 切分边界锚点，也是「投资节正文只存在一处」的判定依据。
-    const INVESTMENT_SECTION_HEADERS: [&str; 5] = [
-        "## 投资交易（buy / sell）",
-        "## 基金申赎（buy / sell，场外基金）",
-        "## 基金转换（convert，场外基金）",
-        "## 份额调整（split，场外基金与股票同构）",
-        "## 现金分红（dividend，股息 / 基金分红 / 投顾组合分红同构）",
-    ];
 
     /// 投资节独有措辞抽查（多腿转换、份额调整、分红三节的确定性表述）：
     /// 整节或其中口径被误搬回基础常量时逐词报红——与端点关键词锁（HTTP 响应层）

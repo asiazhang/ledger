@@ -29,6 +29,12 @@ mod state;
 // 壳层引用面单点：`crate::api_server::` 对外路径零变化（issue #429）。
 pub use router::{build_router, start_http_server};
 pub use state::{ApiState, EmitterSlot, FundQuoteFetcher, StockQuoteFetcher};
+// 投资五节标题锚点（issue #1185）：唯一物理住处在 `handlers::import`，经此再导出
+// 供 HTTP 集成锁（tests/api_server/documentation.rs）与本模块单测同源消费；
+// 生产构建不编译（ADR-0111 决策 5 / #1132 先例），门由 check-structure 守门核对。
+#[cfg(any(test, feature = "test-utils"))]
+#[doc(hidden)]
+pub use handlers::import::INVESTMENT_SECTION_HEADERS;
 // 信号守门测试（signals_cross_check，#[cfg(test)]）在 crate 内消费契约装配本体；
 // 非测试构建本再导出无消费方，allow 压制单边 unused 告警（引用面保持 issue #429 原状）。
 #[allow(unused_imports)]
