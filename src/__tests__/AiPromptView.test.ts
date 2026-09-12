@@ -7,10 +7,10 @@ const writeText = vi.fn().mockResolvedValue(undefined)
 
 const SAMPLE_PROMPT = `# Ledger API 入口提示词
 
-开源记账在本地 http://127.0.0.1:9527 提供 HTTP API。
+开源记账在本地 http://127.0.0.1:9527 提供 HTTP API，支持两种并列的会话形态：**AI 记账**与**数据迁移**。
 
-- 先 GET /api/v1/openapi.json 发现全部端点。
-- 批量写交易/导入前，先 GET /api/v1/import/knowledge 获取拆行约定。`
+1. 先 GET /api/v1/contract 发现全部端点。
+2. 写交易前，先 GET /api/v1/import/knowledge 获取导入全流程约定。`
 
 beforeEach(() => {
   wireInvokeSeam({ overrides: { get_ai_prompt: SAMPLE_PROMPT } })
