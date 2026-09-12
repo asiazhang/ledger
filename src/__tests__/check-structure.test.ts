@@ -954,3 +954,111 @@ describe('check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
     expect(r.output).toContain('default 包含 test-utils')
   })
 })
+
+describe('check-structure INFRA_MODULES 双向全等 + crate 内分层断言（ADR-0111 决策 4 / #1134）', () => {
+  it('真实仓库默认通过：INFRA_MODULES 与磁盘模块双向全等 + crate 内块间零未认许引用', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain('双向全等')
+    expect(r.output).toContain('块间反向依赖零未认许引用')
+  })
+
+  it('新增未登记模块（顶层 .rs 文件）→ 红（清单漂移 fail loud）', () => {
+    const args = makeCrateFixture()
+    writeFileSync(join(args[1], INFRA_SRC_REL, 'orphan.rs'), STUB)
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('未登记')
+    expect(r.output).toContain('orphan.rs')
+  })
+
+  it('新增未登记模块（目录型）→ 红（目录型条目覆盖其全部子目录）', () => {
+    const args = makeCrateFixture()
+    mkdirSync(join(args[1], INFRA_SRC_REL, 'orphan_dir'), { recursive: true })
+    writeFileSync(join(args[1], INFRA_SRC_REL, 'orphan_dir', 'mod.rs'), STUB)
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('未登记')
+    expect(r.output).toContain('orphan_dir')
+  })
+
+  it('crate 根声明文件 lib.rs 登记后缺失 → 红', () => {
+    const args = makeCrateFixture()
+    rmSync(join(args[1], INFRA_SRC_REL, 'lib.rs'))
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('白名单路径不存在')
+    expect(r.output).toContain('lib.rs')
+  })
+
+  it('db 引用 boot（非认许边文件）→ 红并定位文件行号', () => {
+    const args = makeFixture({
+      'db/helper.rs': 'use crate::boot::encryption::probe_file_kind;\npub fn x() {}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 内反向依赖')
+    expect(r.output).toContain('db/helper.rs:1')
+  })
+
+  it('db 引用 shell_support / signals → 红', () => {
+    const args = makeFixture({
+      'db/runtime.rs': 'use crate::shell_support::write_entry;\nuse crate::signals::WriteOp;\npub fn x() {}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('shell_support')
+    expect(r.output).toContain('signals')
+  })
+
+  it('boot 引用 shell_support → 红并定位文件行号', () => {
+    const args = makeFixture({
+      'boot/helper.rs': 'use crate::shell_support::logger;\npub fn x() {}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 内反向依赖')
+    expect(r.output).toContain('boot/helper.rs:1')
+  })
+
+  it('db/mod.rs 再导出 shim 合规绿；他文件同引用红', () => {
+    const shim = 'pub use crate::boot::{encryption, data_location};\npub fn x() {}\n'
+    const green = makeFixture({ 'db/mod.rs': shim })
+    expect(run(green).status).toBe(0)
+
+    const bad = makeFixture({ 'db/helper.rs': shim })
+    const r = run(bad)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('db/helper.rs:1')
+  })
+
+  it('boot → db 合法单向 → 绿', () => {
+    const args = makeFixture({
+      'boot/helper.rs': 'use crate::db::open_connection;\npub fn x() {}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('注释与字符串中的块路径不误报', () => {
+    const args = makeFixture({
+      'db/helper.rs': [
+        '/// [`crate::boot`] 升顶层（文档注释不算）',
+        '// crate::shell_support::write_entry',
+        'let s = "crate::signals::WriteOp";',
+        'pub fn f() {}',
+        '',
+      ].join('\n'),
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('外挂测试豁免：db/tests/ 引用 boot 不红', () => {
+    const args = makeFixture({
+      'db/tests/common.rs': 'pub fn s() { crate::boot::encryption::probe_file_kind(); }\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+})
