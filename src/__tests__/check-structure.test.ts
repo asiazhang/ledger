@@ -256,9 +256,11 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
     expect(r.status).toBe(0)
   })
 
-  it('域目录条目内的域间横向引用不红（扫描范围仅基础设施条目，ADR-0071 决策 5）', () => {
+  it('非禁边对的域间横向引用不红（扫描范围仅基础设施条目，ADR-0071 决策 5）', () => {
+    // transaction→accounts 自 #1090 起属域间禁边（另见域间禁边 describe）；
+    // 本用例改用非禁边对（item→backup）钉住「域间横向引用本身不在 infra 扫描范围」。
     const args = makeFixture({
-      'transaction/writer.rs': 'use crate::accounts::Account;\npub fn x() {}\n',
+      'item/crud.rs': 'use crate::backup::AutoBackupState;\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(0)
@@ -410,6 +412,109 @@ describe('check-structure 业务域→同步域零容忍（ADR-0101 决策 4b / 
     const r = run([])
     expect(r.status).toBe(0)
     expect(r.output).toContain('业务域→同步域零容忍零违规')
+  })
+})
+
+describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反转）', () => {
+  it('transaction 引用 accounts（余额重算旧形态）→ 红并定位文件行号', () => {
+    const args = makeFixture({
+      'transaction/writer.rs':
+        'use crate::accounts::balance::{affected_accounts, refresh_account_balances};\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('域间禁边')
+    expect(r.output).toContain('transaction/writer.rs:1')
+    expect(r.output).toContain('accounts')
+  })
+
+  it('transaction 引用 scheduled_transactions（计划反查旧形态）→ 红', () => {
+    const args = makeFixture({
+      'transaction/read.rs':
+        'let rows = crate::scheduled_transactions::source_display_by_transaction_ids(conn, &ids)?;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('域间禁边')
+    expect(r.output).toContain('transaction/read.rs:1')
+  })
+
+  it('scheduled_transactions 引用 backup（置脏旧形态）→ 红', () => {
+    const args = makeFixture({
+      'scheduled_transactions/auto_run.rs': 'crate::backup::mark_dirty(conn);\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('域间禁边')
+    expect(r.output).toContain('scheduled_transactions/auto_run.rs:1')
+  })
+
+  it('根花括号列举首段同样识别 → 红（与 infra→域扫描同款形态）', () => {
+    const args = makeFixture({
+      'transaction/read.rs': 'use crate::{accounts::balance::compute_balance, db::query::query_all};\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('域间禁边')
+  })
+
+  it('认许边精确匹配：transaction/funding.rs 的 AccountType 消费绿；同引用挪到他文件仍红', () => {
+    const green = makeFixture({
+      'transaction/funding.rs': 'use crate::accounts::AccountType;\npub fn x() {}\n',
+    })
+    expect(run(green).status).toBe(0)
+
+    const moved = makeFixture({
+      'transaction/writer.rs': 'use crate::accounts::AccountType;\npub fn x() {}\n',
+    })
+    const r = run(moved)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('域间禁边')
+    expect(r.output).toContain('transaction/writer.rs:1')
+  })
+
+  it('方向性：禁边反向（accounts → transaction）不红——口径真源单向边合法', () => {
+    const args = makeFixture({
+      'accounts/core.rs': 'use crate::transaction::amount::account_flow_expr;\npub fn x() {}\n',
+    })
+    expect(run(args).status).toBe(0)
+  })
+
+  it('注释与字符串中的禁边路径不误报（掩码边界）', () => {
+    const args = makeFixture({
+      'transaction/writer.rs': [
+        '/// 经接缝（#1090）替代旧 `crate::accounts::balance` 直引（文档注释不算依赖）',
+        '// 见 crate::scheduled_transactions::source 说明',
+        'let s = "crate::backup::mark_dirty";',
+        'pub fn f() {}',
+        '',
+      ].join('\n'),
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('外挂测试豁免不变：tests/ 目录引用禁边对不红（ADR-0056 决策 5）', () => {
+    const args = makeFixture({
+      'transaction/tests/balance_cache.rs': 'use crate::accounts::balance::compute_balance;\n',
+      'scheduled_transactions/tests/auto_run.rs': 'crate::backup::get_state(&conn);\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('真实仓库默认通过：域间禁边零未认许引用（认许边留痕于脚本）', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain('域间禁边 3 对零未认许引用（认许边 1 条，#1090 接缝反转）')
+  })
+
+  it('删除即变红：禁边规则逐对生效，删对后同夹具转绿（对保护不假绿）', () => {
+    // 同一夹具在禁边在位时红；规则对逐条生效，删除规则须动脚本（清单外无豁免面）。
+    const fixture = {
+      'scheduled_transactions/auto_run.rs': 'crate::backup::mark_dirty(conn);\n',
+    }
+    expect(run(makeFixture(fixture)).status).toBe(1)
   })
 })
 

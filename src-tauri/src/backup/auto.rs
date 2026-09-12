@@ -153,10 +153,19 @@ pub fn set_state(conn: &Connection, state: &AutoBackupState) -> crate::error::Re
 }
 
 /// 置脏：业务写库成功后由连接层统一写入口在提交点调用（ADR-0032）。
-/// `pub(crate)` 表示它不是业务代码的调用点——业务写经 [`crate::db::write`]，
-/// 置脏是其结构性副作用，业务路径无法也无需直接置脏。
-pub(crate) fn mark_dirty(conn: &Connection) -> crate::error::Result<()> {
+/// 私有表示它不是业务代码的调用点——业务写经 [`crate::db::write`]，置脏是其
+/// 结构性副作用；暴露面只有接线用钩子（[`after_commit_hook`] /
+/// [`occurrence_dirty_hook`]）。
+fn mark_dirty(conn: &Connection) -> crate::error::Result<()> {
     settings::set(conn, SettingKey::AutoBackupDirty, &true)
+}
+
+/// 置脏并忽略失败（提交点钩子与期次落账钩子的共享落点）：置脏失败仅记日志
+/// 不上抛——引发置脏的写/落账已成功，不因置脏失败回滚或报错。
+fn mark_dirty_ignoring_failure(conn: &Connection) {
+    if let Err(e) = mark_dirty(conn) {
+        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");
+    }
 }
 
 /// 连接层提交点后置动作实现（ADR-0032 置脏单点，原 `db::after_commit` 本体）：
@@ -169,9 +178,7 @@ pub(crate) fn mark_dirty(conn: &Connection) -> crate::error::Result<()> {
 /// - 到期检查命中（脏且今天尚未自动备份，本地自然日界门，issue #386）即执行自动
 ///   备份；开关关闭/目录未配置等门禁由 [`run_due_backup`] 统一静默处理。
 pub fn after_commit_hook(conn: &Connection) {
-    if let Err(e) = mark_dirty(conn) {
-        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");
-    }
+    mark_dirty_ignoring_failure(conn);
     let dir = shared_prefs().snapshot_dir();
     // 备份作用域从偏好镜像快照（引导登记点播种，issue #836）：写路径深处只有
     // `&Connection`，账本归属经镜像统一承载，与调度线程同一来源。
@@ -194,6 +201,23 @@ pub fn after_commit_hook(conn: &Connection) {
 /// 以 [`after_commit_hook`] 注册进自己那份写入口静态，不经本函数。
 pub fn install_after_commit_hook() {
     db::register_after_commit_hook(after_commit_hook);
+}
+
+/// 定时追补落账的置脏钩子实现（issue #1090 / spec #1086 形态推广）：备份域提供
+/// 实现、壳层启动时注册进定时计划域的注册点
+/// （`scheduled_transactions::auto_run::register_after_occurrence_hook`）——定时
+/// 计划域对备份域零直接依赖。置脏失败仅记日志不上抛（与提交点钩子同款：落账
+/// 已成功，不因置脏失败报错）。
+pub fn occurrence_dirty_hook(conn: &Connection) {
+    mark_dirty_ignoring_failure(conn);
+}
+
+/// 把期次落账置脏实现注册进定时计划域的注册点（幂等，进程级一次）。
+///
+/// 接缝形态（issue #1090 / spec #1086）：调用点在壳层启动接线与测试建库单点
+/// （`test_support::open`、BDD world），与生产同形。
+pub fn install_occurrence_dirty_hook() {
+    crate::scheduled_transactions::auto_run::register_after_occurrence_hook(occurrence_dirty_hook);
 }
 
 /// 脏复位并把备份成功时刻记为新的上次备份锚点：

@@ -12,6 +12,11 @@
 //! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域零感知，
 //! 落库后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
 //!
+//! 受影响账户余额重算自 #1090 起走写路径副作用接缝（[`super::write_effects`]）：
+//! 本模块只交出行的账户引用三元组，推导与重算都在账户域实现侧（注册点在
+//! [`super::write_effects`]，实现经 `accounts::balance::install_balance_refresh_hook`
+//! 由壳层启动时装入）——本模块对账户域零感知（ADR-0067 语义零变化）。
+//!
 //! **边界**：kind 分派（buy/sell 持仓副作用）、幂等/去重留在命令层，事务边界自
 //! issue #228 起归行为层创建编排入口（嵌套感知，ADR-0033）；
 //! buy/sell 经其投资层产出归一化行后调用 [`insert_row`]/[`update_row`] 落交易行字段。
@@ -22,13 +27,13 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use rusqlite::params;
 
-use crate::accounts::balance::{affected_accounts, refresh_account_balances};
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use ledger_sync_protocol::device::device_id;
 
 use super::amount::{self, TransactionKind};
 use super::search_text::pinyin_initials;
+use super::write_effects;
 
 /// 备注拼音首字母冗余列的取值（issue #492 / ADR-0027 修订）：与 note 同写同换，
 /// 供搜索流式匹配免逐行重算拼音。NULL note → NULL（派生列恒随 note）。
@@ -373,16 +378,18 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
     // 余额缓存写路径（issue #491 / ADR-0067）：新行落库后在同一事务内对受影响
     // 账户按口径表达式整体重算。本接缝是全部交易创建（手动/批量导入/余额调整/
     // buy/sell/定时引擎例外/同步重放）的单一收口，挂此处即覆盖全部创建入口。
-    // 受影响账户推导消费余额模块唯一定义（issue #533）：创建 = 新行账户引用对。
-    let affected = affected_accounts(
+    // 受影响账户推导消费余额模块唯一定义（issue #533）：创建 = 新行账户引用对
+    //——经写路径副作用接缝传入本域自有账户引用三元组，推导与重算都在账户域
+    // 实现侧（#1090 接缝反转，本模块对账户域零感知）。
+    write_effects::refresh_affected_balances(
+        conn,
         None,
         Some((
             row.account_id.as_str(),
             row.to_account_id.as_deref(),
             row.funding_account_id.as_deref(),
         )),
-    );
-    refresh_account_balances(conn, &affected)?;
+    )?;
     Ok(())
 }
 
@@ -429,8 +436,10 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
     )?;
     // 余额缓存写路径：受影响账户 = 旧行 ∪ 新行账户引用三元组，消费余额模块唯一
     // 定义（issue #534 / #935）；旧账户引用读取时机与刷新事务位置不变，同事务整体
-    // 重算（修改可能移动账户，ADR-0067）。
-    let affected = affected_accounts(
+    // 重算（修改可能移动账户，ADR-0067）。经写路径副作用接缝传入两行三元组
+    //（#1090 接缝反转），推导与重算都在账户域实现侧。
+    write_effects::refresh_affected_balances(
+        conn,
         Some((
             old_account_id.as_str(),
             old_to_account_id.as_deref(),
@@ -441,8 +450,7 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             row.to_account_id.as_deref(),
             row.funding_account_id.as_deref(),
         )),
-    );
-    refresh_account_balances(conn, &affected)?;
+    )?;
     Ok(())
 }
 

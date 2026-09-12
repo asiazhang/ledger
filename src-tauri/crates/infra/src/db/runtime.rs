@@ -44,8 +44,10 @@ pub fn write<T>(conn: &Mutex<Connection>, f: impl FnOnce(&Connection) -> Result<
 /// 注册实现、壳层启动时接线」形态挂在基础设施侧：本 crate 只承诺调用时机，
 /// 不知道副作用语义——数据库与备份域之间不再有 crate 依赖边（备份域是业务域，
 /// 基础设施不得反向引用）。实现由备份域提供、壳层在启动时注册；其余两类写路径
-/// 挂载点（受影响账户余额重算、计划来源解析）由 #1090「写路径副作用接缝反转」
-/// 收口为同一形态。
+/// 挂载点（受影响账户余额重算、计划来源解析）已由 #1090「写路径副作用接缝反转」
+/// 收口为同一形态（核心交易域 `transaction::write_effects` / `transaction::read`
+/// 注册点，账户域 / 定时计划域实现），期次落账置脏同票收口（定时计划域
+/// `auto_run` 注册点、备份域实现）。
 pub type AfterCommitHook = fn(&Connection);
 
 static AFTER_COMMIT_HOOK: OnceLock<AfterCommitHook> = OnceLock::new();

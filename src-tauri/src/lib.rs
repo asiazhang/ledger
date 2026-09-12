@@ -175,6 +175,13 @@ pub fn run() {
             // crate（共享底座，不认识调度），响应闭包（去抖合流跑一轮）由本域提供、
             // 壳层启动时装入（幂等，先装者优先）。注册先于任何建库/写库。
             sync_engine::trigger::install_after_write_hook();
+            // 写路径副作用接缝接线（issue #1090 / spec #1086 形态推广）：核心交易域的
+            // 余额刷新注册点、计划来源解析注册点与定时计划域的期次落账置脏注册点，
+            // 实现分别由账户域、定时计划域与备份域提供、壳层启动时接线（幂等）。
+            // 注册先于任何建库/写库。
+            accounts::balance::install_balance_refresh_hook();
+            scheduled_transactions::install_plan_source_hook();
+            backup::install_occurrence_dirty_hook();
             // 两扇进程级门先登记（boot_sequence 与 IPC/HTTP 门禁共同消费；实例
             // 由 run() 创建，同一份供 invoke wrapper 共享）：加密锁定门 + 启动
             // 失败门（issue #601）。

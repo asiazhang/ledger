@@ -124,6 +124,11 @@ use crate::db::{check_integrity, open_connection_with_passphrase as reopen_with_
 fn seed_transactions(conn: &Connection, count: usize) {
     use tauri_app_lib::transaction::TransactionInput;
     use tauri_app_lib::transaction::amount::TransactionKind;
+    // 写路径副作用接缝接线（issue #1090）：本测试经产品建缝拿文件库连接（不入
+    // 测试工厂，ADR-0084 决策 3），建库单点的注册不覆盖本处——dev-dependency 环
+    // 下 tauri_app_lib 是另一份实例（静态与类型身份分离），落库前显式注册余额
+    // 刷新实现（幂等，与 BDD world 同款纪律）。
+    tauri_app_lib::accounts::balance::install_balance_refresh_hook();
     let account_id = crate::db::new_uuid();
     // 工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）；裸种子绕过 Writer
     // 接缝，按 V017 迁移回填语义补建缓存行（ADR-0067）。

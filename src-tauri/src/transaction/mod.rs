@@ -13,8 +13,13 @@
 //! - [`model`]：域集中模型——交易全量类型（#423 模型域化随域归位），经本入口
 //!   逐类型再导出（禁止 glob）；
 //! - [`writer`]（写入权威）：归一化 + 全列映射 + 审计字段生成（issue #55 落地）。
+//! - [`write_effects`]（写路径副作用接缝，issue #1090 / spec #1086 形态推广）：
+//!   受影响账户余额重算的注册点与委派单点——本域只承诺调用时机，实现由账户域
+//!   提供、壳层启动时接线（下层定义注册点、上层注册实现）。
 //!
-//! 依赖方向恒为「壳层 → transaction → 基础设施」，本模块不反向依赖壳层。
+//! 依赖方向恒为「壳层 → transaction → 基础设施」，本模块不反向依赖壳层；对账户域
+//! 与定时计划域的直接引用已随写路径副作用接缝反转消亡（#1090，域间禁边见
+//! `scripts/check-structure.ts`）。
 
 pub mod amount;
 pub mod batch;
@@ -24,6 +29,7 @@ pub mod funding;
 pub mod read;
 pub mod search;
 pub mod search_text;
+pub mod write_effects;
 pub mod writer;
 
 /// 域集中模型（#423 模型域化随域归位，样板先例：`investment::model`）：交易

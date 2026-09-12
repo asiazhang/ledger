@@ -262,6 +262,12 @@ fn print_usage() {
 }
 
 fn main() -> ExitCode {
+    // 写路径副作用接缝接线（issue #1090）：bench-import 的批量导入走核心交易域
+    // 写入协议，余额刷新实现须先注册（幂等，进程级一次；与壳层启动/测试工厂同形）
+    //——注册点在下层（核心交易域/定时计划域），实现由账户域/备份域提供。
+    tauri_app_lib::accounts::balance::install_balance_refresh_hook();
+    tauri_app_lib::scheduled_transactions::install_plan_source_hook();
+    tauri_app_lib::backup::install_occurrence_dirty_hook();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(sub) = args.first() else {
         print_usage();
