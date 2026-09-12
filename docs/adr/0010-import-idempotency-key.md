@@ -45,7 +45,7 @@
 - `src/models.rs`：`TransactionInput` 加可选 `idempotency_key`；`CreateTransactionResult` 在 duplicate 分支返回已有 `id`（更丰富，不破坏现有调用）。
 - `src/commands/transactions.rs`：去重逻辑分支——有键按键查、无键走 `compute_dedup_hash`；新增 `update_transaction_internal`。
 - `src/api_server.rs`：新增 `PUT /api/v1/transactions/{id}` 端点；更新 openapi 描述。
-- `src-tauri/prompts/ledger-api.md`、`import-knowledge.md`：批量导入一律带 `idempotency_key`；纠错用修改 API 而非"删后重导"。
+- `src-tauri/prompts/ledger-api.md`、`import-knowledge-base.md` / `import-knowledge-investment.md`（原 `import-knowledge.md`，#1121 拆分）：批量导入一律带 `idempotency_key`；纠错用修改 API 而非"删后重导"。
 - `CONTEXT.md`：新增 `IdempotencyKey`、`AICleanupModify`，修订 `ImportDedup`，同步 `AI API`。
 - 前端 `src/types/index.ts`：加 `idempotency_key`；IPC `create_transactions` 仍为 `dedup=false` 不变。
 - 测试：BDD 补"同键重跑跳过""同键不同内容仍跳过（内容无关）""不同键雷同内容都保留""按 id 修改后重跑不重复"等场景。
