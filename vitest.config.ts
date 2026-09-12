@@ -24,6 +24,14 @@ export default defineConfig({
     // 显式化的收益是覆盖 setup.ts 未管的模块级 mock（pushMock / writeText 等），
     // 且不受 vitest 未来默认值变动影响。
     clearMocks: true,
+    // 单测墙钟预算（issue #1162）：用例内的 flushPromises（真实 setTimeout）与
+    // naive-ui 过渡收尾（jsdom rAF ≈ 16.7ms tick）串行消耗真实墙钟，机器高负载时
+    // 随负载线性拉长。默认 5000ms 下最慢一批用例（基线 ~0.7s：「删除当前页最后一条
+    // 回退」「URL 下钻往返」等）在 ~7.5x 负载即越过预算偶发红——超时后用例仍会跑完，
+    // 报告里的长耗时（当时 21s/29s/46s）即真实完成时长。30s ≈ 44x 基线余量，覆盖已
+    // 观测的失效样本（21s/29s = 30x/42x）；46s 尾样本为残余风险，再抬预算只会延迟
+    // 真挂死用例的报告（retry 会掩盖真实间歇性信号，不采用）。不改变任何断言语义。
+    testTimeout: 30_000,
     setupFiles: ['./src/__tests__/setup.ts'],
     // 守门脚本包装测试与所测脚本同目录住 scripts/（issue #1158），前端测试住
     // src/__tests__：两处都纳入。setupFiles 仍指 src/__tests__，对两个目录统一生效。
