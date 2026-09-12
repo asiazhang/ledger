@@ -365,6 +365,12 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
           note: expect.any(String),
         },
         {
+          name: '@ledger/money',
+          dir: 'packages/money',
+          deps: ['@ledger/types', '@ledger/i18n'],
+          note: expect.any(String),
+        },
+        {
           name: '@ledger/test-support',
           dir: 'packages/test-support',
           deps: ['@ledger/types'],

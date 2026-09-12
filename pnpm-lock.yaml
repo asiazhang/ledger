@@ -115,6 +115,9 @@ importers:
       '@ledger/i18n':
         specifier: workspace:*
         version: link:packages/i18n
+      '@ledger/money':
+        specifier: workspace:*
+        version: link:packages/money
       '@ledger/storage':
         specifier: workspace:*
         version: link:packages/storage
@@ -228,6 +231,18 @@ importers:
       vitest:
         specifier: ^5.0.0
         version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
+
+  packages/money:
+    dependencies:
+      '@ledger/i18n':
+        specifier: workspace:*
+        version: link:../i18n
+      '@ledger/types':
+        specifier: workspace:*
+        version: link:../types
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
 
   packages/storage:
     devDependencies:

@@ -1,4 +1,4 @@
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { useReferenceStore } from '@/stores/reference'
 import type { PolicyStats } from '@ledger/types'
 

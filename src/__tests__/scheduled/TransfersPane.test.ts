@@ -7,7 +7,7 @@ import { findInputByTestId as findInput } from '@ledger/test-support/dom'
 import { mountFlushed } from '@ledger/test-support/mount'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { makeOccurrence, makeTransferPlan } from '../factories'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import type {
   Account,
   Currency,

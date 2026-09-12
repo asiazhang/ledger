@@ -7,7 +7,7 @@ import type { Chart, ChartOptions, TooltipItem } from 'chart.js'
 import ReportsView from '@/views/ReportsView.vue'
 import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
-import { amountPrivacyEnabled } from '@/utils/money'
+import { amountPrivacyEnabled } from '@ledger/money'
 import { useReferenceStore } from '@/stores/reference'
 import { makeInstrument } from './factories'
 import type {

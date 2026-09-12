@@ -9,7 +9,7 @@ import {
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { errorMessage } from '@/utils/errors'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 import { scheduledRecurrenceLabel } from '@/composables/useScheduledPlanList'

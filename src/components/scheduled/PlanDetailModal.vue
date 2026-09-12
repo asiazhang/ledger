@@ -2,7 +2,7 @@
 import { computed, h, ref } from 'vue'
 import { NButton, NDataTable, NEmpty, NSpace, NSpin, useMessage, type DataTableColumns } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'
 import { occurrenceStatusLabel } from '@/utils/scheduled'

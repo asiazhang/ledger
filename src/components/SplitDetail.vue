@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { NDescriptions, NDescriptionsItem } from 'naive-ui'
 import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'
-import { formatQuantity } from '@/utils/money'
+import { formatQuantity } from '@ledger/money'
 import type { Transaction, TransactionSplit } from '@ledger/types'
 
 /**

@@ -3,7 +3,7 @@ import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import ReportsView from '@/views/ReportsView.vue'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import type { ReportDateRange } from '@ledger/types'
 
 /**

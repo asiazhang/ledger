@@ -14,7 +14,7 @@ import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount, formatQuantity } from '@/utils/money'
+import { formatAmount, formatQuantity } from '@ledger/money'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import type { Transaction } from '@ledger/types'
 

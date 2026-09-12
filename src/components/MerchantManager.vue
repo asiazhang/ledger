@@ -23,7 +23,7 @@ import { useModalIntent } from '@/composables/useModalIntent'
 import { useWindowTier } from '@/composables/useWindowTier'
 import { matchLabel } from '@/utils/pinyin-filter'
 import { t } from '@ledger/i18n'
-import { formatQuantity } from '@/utils/money'
+import { formatQuantity } from '@ledger/money'
 import { sumFixedColumnWidths } from '@/utils/table'
 import type { Merchant, MerchantInput } from '@ledger/types'
 

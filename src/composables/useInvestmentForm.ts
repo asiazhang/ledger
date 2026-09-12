@@ -8,7 +8,7 @@ import {
   yuanToCents,
   PRICE_UNITS_PER_FEN,
   PRICE_UNITS_PER_YUAN,
-} from '@/utils/money'
+} from '@ledger/money'
 import { judgeQuantityText, judgePriceText } from '@/utils/field-error'
 import { useFieldErrors } from '@/composables/useFieldErrors'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'

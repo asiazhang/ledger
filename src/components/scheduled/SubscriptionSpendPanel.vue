@@ -8,7 +8,7 @@ import type { ChartOptions, TooltipItem } from 'chart.js'
 // 注册，不再组件自持子集；导入即完成注册。
 import '@/utils/chart-registration'
 import { api } from '@/api'
-import { formatAmount, amountPrivacyEnabled } from '@/utils/money'
+import { formatAmount, amountPrivacyEnabled } from '@ledger/money'
 import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { scheduledStatusLabel } from '@/utils/scheduled'

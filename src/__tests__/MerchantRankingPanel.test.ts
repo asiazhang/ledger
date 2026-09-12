@@ -12,7 +12,7 @@ vi.mock('vue-router', () => ({
 }))
 import { useReferenceStore } from '@/stores/reference'
 import { paletteColor } from '@/utils/category-chart'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import type { Merchant } from '@ledger/types'
 import type { MerchantSharesReport } from '@ledger/types'
 

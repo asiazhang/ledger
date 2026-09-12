@@ -30,7 +30,7 @@ import {
 } from '@/components/mobile-cells'
 import { useReferenceStore } from '@/stores/reference'
 import { errorMessage } from '@/utils/errors'
-import { yuanToCents, formatAmount, centsToYuan } from '@/utils/money'
+import { yuanToCents, formatAmount, centsToYuan } from '@ledger/money'
 import { todayStr } from '@/utils/date'
 import type { BudgetInput, BudgetProgress } from '@ledger/types'
 

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@ledger/i18n": "workspace:*",
+    "@ledger/money": "workspace:*",
     "@ledger/storage": "workspace:*",
     "@ledger/types": "workspace:*",
     "@tauri-apps/api": "^2.11.1",

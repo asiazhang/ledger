@@ -11,7 +11,7 @@ import AmountCell from '@/components/AmountCell.vue'
 import { useAppStore } from '@/stores/app'
 import { kindSemanticColor } from '@/theme/semantic-colors'
 import { TRANSACTION_KINDS, type Transaction, type TransactionSource } from '@ledger/types'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { makeTransaction } from './factories'
 
 /** 金额列按交易类型语义着色（issue #435）：只测外部行为——

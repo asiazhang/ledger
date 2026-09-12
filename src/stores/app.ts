@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { loadLocal, saveLocal } from '@ledger/storage'
 import { getLocaleSetting, setLocaleSetting, type LocaleSetting } from '@ledger/i18n'
-import { amountPrivacyEnabled, AMOUNT_PRIVACY_STORAGE_KEY } from '@/utils/money'
+import { amountPrivacyEnabled, AMOUNT_PRIVACY_STORAGE_KEY } from '@ledger/money'
 
 export type Theme = 'dark' | 'light'
 
@@ -33,7 +33,7 @@ export const useAppStore = defineStore('app', () => {
   // 钥匙串；钥匙串的读写由后端 `passphrase_cache` 承担。
   const rememberPassphrase = ref<boolean>(loadLocal<boolean>('remember_passphrase', false))
 
-  // 金额隐私模式（issue #566）：轻量设置项，真源 ref 在展示格式化层（@/utils/money，
+  // 金额隐私模式（issue #566）：轻量设置项，真源 ref 在展示格式化层（@ledger/money，
   // 三个格式化函数消费，同界面语言 currentLocale 注入先例）；本 store 负责启动水合
   // 与变更持久化，不随 Backup/Restore 迁移。
   amountPrivacyEnabled.value = loadLocal<boolean>(AMOUNT_PRIVACY_STORAGE_KEY, false)

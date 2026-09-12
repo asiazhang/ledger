@@ -3,7 +3,7 @@ import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from '@ledger/test-support
 import { flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import InvestmentsView from '@/views/InvestmentsView.vue'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { clickTab, findTab } from '@ledger/test-support/dom'
 import { componentVm } from '@ledger/test-support/component-vm'
 import { mountWithDialog } from '@ledger/test-support/mount'

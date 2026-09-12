@@ -319,7 +319,7 @@ function handleSelect(key: string) {
 // 重渲染）；眼睛按钮入口唯一（spec #564：不进设置页、无快捷键、无第二渲染点），
 // 消费应用设置 store 同一状态；睁/闭两态图标与
 // tooltip、aria-label 反映当前状态（文案经 i18n 双语，aria-pressed 携带开关态），
-// 点击即切换并持久化；格式化层（@/utils/money）消费同一 ref，全应用金额即时掩码/恢复。
+// 点击即切换并持久化；格式化层（@ledger/money）消费同一 ref，全应用金额即时掩码/恢复。
 // 渲染函数读取响应式状态，语言/开关变化时随重新渲染；侧栏折叠（宽度归零）时按钮
 // 不可见，展开即可切换（接受取舍，不设第二渲染点）。
 // 命名：brandRow（品牌行）——同文件另有顶栏视图名 title prop（MobileNavShell），

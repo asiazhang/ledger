@@ -23,7 +23,7 @@ import { buildTransactionColumns } from '@/components/transaction-columns'
 import { sumFixedColumnWidths } from '@/utils/table'
 import { type Transaction, type TransactionSearchFilter } from '@ledger/types'
 import type { NullableDateRange } from '@/utils/time-period'
-import { yuanToCents, formatAmount } from '@/utils/money'
+import { yuanToCents, formatAmount } from '@ledger/money'
 
 const store = useAppStore()
 const reference = useReferenceStore()

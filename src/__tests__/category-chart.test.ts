@@ -9,7 +9,7 @@ import {
 } from '@/utils/category-chart'
 import type { Category, CategoryShare } from '@ledger/types'
 import { makeCategory } from './factories'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 
 const categories: Category[] = [
   makeCategory({ id: 'food', name: '餐饮' }),

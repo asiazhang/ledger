@@ -15,7 +15,7 @@ import PinyinSelect from '@/components/PinyinSelect.vue'
 import InstrumentLink from '@/components/InstrumentLink.vue'
 import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
 import { formatCurrencyGroups } from '@/composables/usePortfolioOverview'
 

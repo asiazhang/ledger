@@ -7,7 +7,7 @@ import { api } from '@/api'
 import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { errorCodeOf, errorMessage as extractErrorMessage } from '@/utils/errors'
-import { formatPrice } from '@/utils/money'
+import { formatPrice } from '@ledger/money'
 import type {
   AddInstrumentChannel,
   AddStockInstrumentResult,
