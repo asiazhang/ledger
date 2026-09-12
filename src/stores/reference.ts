@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import {
   isFundingCandidateAccount,
   type Account,

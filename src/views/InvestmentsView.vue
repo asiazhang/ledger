@@ -8,7 +8,7 @@ import {
   PieChartOutline,
   TrendingUpOutline,
 } from '@vicons/ionicons5'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { useFocusParam } from '@/composables/useFocusParam'
 import RealizedPnlPanel from '@/components/investments/RealizedPnlPanel.vue'

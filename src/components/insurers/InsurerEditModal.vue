@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { NButton, NForm, NFormItem, NInput, NSpace, useMessage } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import type { Insurer, InsurerUpdateInput } from '@ledger/types'
 

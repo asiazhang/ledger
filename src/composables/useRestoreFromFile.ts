@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useMessage } from 'naive-ui'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import type { BackupMetaSummary } from '@ledger/types'
 import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'

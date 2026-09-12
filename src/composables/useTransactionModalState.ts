@@ -1,7 +1,7 @@
 import { useMessage } from 'naive-ui'
 import type { Ref } from 'vue'
 import { useModalIntent } from '@/composables/useModalIntent'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { errorMessage } from '@/utils/errors'
 import { t } from '@ledger/i18n'
 import type {

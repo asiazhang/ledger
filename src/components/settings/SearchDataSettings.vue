@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { NAlert, NButton, NCard, NSpace, NText, useMessage } from 'naive-ui'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'
 import type { NotePinyinRepairReport } from '@ledger/types'

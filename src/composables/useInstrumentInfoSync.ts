@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import type { InstrumentSyncProgress, SyncInstrumentInfoResult } from '@ledger/types'
 

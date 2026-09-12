@@ -1,4 +1,4 @@
-import { api } from '@/api'
+import { api } from '@ledger/api'
 
 /**
  * 成功提示后延迟重启（Restore 同型语义，先例 useBackup.pickRestore）：

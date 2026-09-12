@@ -25,7 +25,7 @@ import type {
   ItemWithDailyCost,
   Transaction,
 } from '@ledger/types'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import AppModal from '@/components/AppModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'

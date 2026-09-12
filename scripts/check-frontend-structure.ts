@@ -63,6 +63,12 @@ export const PACKAGES: readonly PackageEntry[] = [
     note: '纯类型包（issue #1150）：零依赖叶子，方向表恒空——类型层不依赖任何包；金额展示接缝归 @ledger/money（#1153）',
   },
   {
+    name: '@ledger/api',
+    dir: 'packages/api',
+    deps: ['@ledger/types'],
+    note: 'IPC 传输层包（issue #1155）：统一 invoke 封装与 globalBusy 唯一生产消费方归位同包，@ledger 范围内只依赖 @ledger/types；不依赖 composables / stores / components / views',
+  },
+  {
     name: '@ledger/storage',
     dir: 'packages/storage',
     deps: [],

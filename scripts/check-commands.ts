@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // 命令注册一致性校验（issue #315 / ADR-0047）：命令单一来源 = `#[tauri::command]` 注解本身。
-// 左集 = Rust 注解命令名（与 src-tauri/build.rs 扫描器同源同界）；右集 = src/api/index.ts
+// 左集 = Rust 注解命令名（与 src-tauri/build.rs 扫描器同源同界）；右集 = packages/api/src/index.ts
 // 的 invoke('命令名') 字符串。双向全等，任一方向孤儿即非零退出并列出差异。
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-commands.ts`。
@@ -56,7 +56,7 @@ export function scanRustSource(text: string): ScanResult {
 
 /**
  * 扫描 TS 调用面文本中的 invoke('命令名')（含 invoke<T>('命令名') 泛型形态）。
- * 只认单引号字符串字面量（api/index.ts 统一风格）。
+ * 只认单引号字符串字面量（packages/api/src/index.ts 统一风格）。
  */
 export function scanTsSource(text: string): string[] {
   return [...text.matchAll(/\binvoke(?:<[^>]*>)?\(\s*'([^']+)'/g)].map((m) => m[1])
@@ -78,7 +78,7 @@ function collectRustFiles(dir: string): string[] {
 function main(): void {
   const repoRoot = fileURLToPath(new URL('..', import.meta.url))
   const commandsDir = process.argv[2] ?? join(repoRoot, 'src-tauri', 'src', 'commands')
-  const apiFile = process.argv[3] ?? join(repoRoot, 'src', 'api', 'index.ts')
+  const apiFile = process.argv[3] ?? join(repoRoot, 'packages', 'api', 'src', 'index.ts')
 
   const problems: string[] = []
   const rustByName = new Map<string, string>() // 命令名 → 定义文件（重复定义保留首个并报错）
@@ -115,7 +115,7 @@ function main(): void {
   const missingInRust = [...tsSet].filter((n) => !rustByName.has(n)).sort()
   if (missingInTs.length > 0) {
     problems.push(
-      `✗ 仅在 Rust 注解侧（TS 调用面缺方法，src/api/index.ts 补 invoke 方法）：\n` +
+      `✗ 仅在 Rust 注解侧（TS 调用面缺方法，packages/api/src/index.ts 补 invoke 方法）：\n` +
         missingInTs.map((n) => `  - ${n}`).join('\n'),
     )
   }

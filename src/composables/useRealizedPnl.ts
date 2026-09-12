@@ -1,5 +1,5 @@
 import { computed, onMounted, ref } from 'vue'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { useLoadable } from '@/composables/useLoadable'
 import type { CurrencyAmountGroup } from '@/composables/usePortfolioOverview'
 import { useReferenceStore } from '@/stores/reference'

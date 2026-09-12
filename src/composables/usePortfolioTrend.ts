@@ -1,5 +1,5 @@
 import { computed, onMounted, ref, watch } from 'vue'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import type {
   Instrument,

@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { NCard, NSpace, NText, useMessage } from 'naive-ui'
 import AppSelect from '@/components/AppSelect.vue'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { errorMessage } from '@/utils/errors'
 import { useReferenceStore } from '@/stores/reference'
 import { t } from '@ledger/i18n'

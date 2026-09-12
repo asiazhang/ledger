@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { centsToYuan, formatAmount } from '@ledger/money'
 import { buildRefundInput } from '@/domain/transaction-input'
 import { judgeAmountText } from '@/utils/field-error'
