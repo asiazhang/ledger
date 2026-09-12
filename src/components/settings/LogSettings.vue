@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { errorMessage } from '@/utils/errors'
 import { NButton, NCard, NSpace, NText, useMessage } from 'naive-ui'
 import AppSelect from '@/components/AppSelect.vue'

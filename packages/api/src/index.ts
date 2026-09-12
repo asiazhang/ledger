@@ -1,5 +1,5 @@
 import { invoke as tauriInvoke, type InvokeArgs } from '@tauri-apps/api/core'
-import { trackBusy } from '@/composables/globalBusy'
+import { trackBusy } from './globalBusy'
 import type {
   Account,
   AccountBalance,
@@ -108,6 +108,8 @@ import type {
   LogLevelState,
   BaseCurrencyState,
 } from '@ledger/types'
+
+export { busyVisible } from './globalBusy'
 
 /** 统一 invoke 封装（全局忙碌条收口点，issue #500）：所有 IPC IO 的生命周期自动
  *  纳入忙碌聚合计数——300ms 阈值内的快操作从不点亮，慢 IO 聚合为一条忙碌条；

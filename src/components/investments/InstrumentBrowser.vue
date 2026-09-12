@@ -10,7 +10,7 @@ import {
   NText,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { useReferenceStore } from '@/stores/reference'
 import { t } from '@ledger/i18n'
 import { useInstrumentInfoSync } from '@/composables/useInstrumentInfoSync'

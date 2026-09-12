@@ -10,7 +10,7 @@ import type { ActiveElement, ChartOptions, TooltipItem } from 'chart.js'
 // Chart.js 统一注册模块（issue #926）：柱状图所需 controller/element/scale 一处
 // 注册，不再组件自持子集；导入即完成注册。
 import '@/utils/chart-registration'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'

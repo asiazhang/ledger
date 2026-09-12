@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import {
   centsToYuan,

@@ -6,7 +6,7 @@ import { ChevronBack, ChevronDown, ChevronForward } from '@vicons/ionicons5'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import { useInputMode } from '@/composables/useInputMode'
 import { useLoadable } from '@/composables/useLoadable'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import type { ReportDateRange } from '@ledger/types'
 import {

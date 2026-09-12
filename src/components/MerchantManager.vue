@@ -16,7 +16,7 @@ import {
 } from 'naive-ui'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { useRouter } from 'vue-router'
 import { useReferenceStore } from '@/stores/reference'
 import { useModalIntent } from '@/composables/useModalIntent'

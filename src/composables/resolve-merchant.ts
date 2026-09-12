@@ -1,4 +1,4 @@
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { useReferenceStore } from '@/stores/reference'
 
 /**

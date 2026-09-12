@@ -7,7 +7,7 @@
 // 随之下移到安全区下沿（与顶栏顶缘重合），避免落在刘海/状态栏下不可见；桌面档
 // env 恒 0，位置不变（≥840 零变化）。
 import { useThemeVars } from 'naive-ui'
-import { busyVisible } from '@/composables/globalBusy'
+import { busyVisible } from '@ledger/api'
 import { useWindowTier } from '@/composables/useWindowTier'
 import { t } from '@ledger/i18n'
 

@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { useAppStore } from '@/stores/app'
 import type { RememberPassphraseSupport } from '@ledger/types'
 

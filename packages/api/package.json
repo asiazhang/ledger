@@ -1,0 +1,16 @@
+{
+  "name": "@ledger/api",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "IPC 传输层包（issue #1155 / spec #1148）：统一 invoke 封装与 globalBusy 在途 IO 聚合计数唯一生产消费方归位同包。@ledger 范围内只依赖 @ledger/types；不依赖 composables / stores / components / views。源码直出，exports 同时暴露根入口与 global-busy 测试接缝，不建构建链；跨包引用必须命中 exports（由 check-frontend-structure.ts 守门）。",
+  "exports": {
+    ".": "./src/index.ts",
+    "./global-busy": "./src/globalBusy.ts"
+  },
+  "dependencies": {
+    "@ledger/types": "workspace:*",
+    "@tauri-apps/api": "^2.11.1",
+    "vue": "^3.5.42"
+  }
+}

@@ -1,6 +1,6 @@
 import { watch } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 
 /**
  * 设备偏好镜像推送：前端 localStorage 设备偏好（应用设置 store）的唯一推送出口，

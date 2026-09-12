@@ -1,7 +1,7 @@
 import type { App } from 'vue'
 import type { Pinia } from 'pinia'
 import { useRenderErrorsStore } from '@/stores/render-errors'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 
 /**
  * 全局渲染错误兜底（issue #926）：`app.config.errorHandler` 单点安装。

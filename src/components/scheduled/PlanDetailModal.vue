@@ -6,7 +6,7 @@ import { formatAmount } from '@ledger/money'
 import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'
 import { occurrenceStatusLabel } from '@/utils/scheduled'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { useReferenceStore } from '@/stores/reference'
 import type { ScheduledTransactionDetail, ScheduledTransactionOccurrence } from '@ledger/types'
 

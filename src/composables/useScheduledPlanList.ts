@@ -1,7 +1,7 @@
 import { computed, readonly, ref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { useLoadable } from '@/composables/useLoadable'
 import { errorMessage } from '@/utils/errors'
 import { t } from '@ledger/i18n'

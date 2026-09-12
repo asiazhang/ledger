@@ -15,7 +15,7 @@ import {
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { useLoadable } from '@/composables/useLoadable'
 import { useModalIntent } from '@/composables/useModalIntent'

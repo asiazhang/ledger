@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam, type AppInvokeHandler } from '@ledger/test-support/invoke-mock'
-import { api } from '@/api'
-import { busyVisible, resetGlobalBusy } from '@/composables/globalBusy'
+import { api } from '@ledger/api'
+import { busyVisible, resetGlobalBusy } from '@ledger/api/global-busy'
 
 
 /** 手动完结的延迟 Promise：控制 invoke 完结时机以构造阈值与并发竞态 */

@@ -19,7 +19,7 @@ import { resolveInsurerRef } from '@/composables/resolve-insurer'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import type { Policy, PolicyInput } from '@ledger/types'
 
 /**

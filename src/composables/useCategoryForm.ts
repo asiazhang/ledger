@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import type { TreeSelectOption } from 'naive-ui'
-import { api } from '@/api'
+import { api } from '@ledger/api'
 import { centsToYuan } from '@ledger/money'
 import { buildExpenseIncomeInput } from '@/domain/transaction-input'
 import { judgeAmountText } from '@/utils/field-error'

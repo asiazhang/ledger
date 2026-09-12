@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // restart_app 命令单点 mock：断言调用与后续重载编排，不触真实后端。
 const restartApp = vi.fn()
-vi.mock('@/api', () => ({
+vi.mock('@ledger/api', () => ({
   api: {
     restartApp: (...args: unknown[]) => restartApp(...args),
   },

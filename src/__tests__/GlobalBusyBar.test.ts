@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import GlobalBusyBar from '@/components/GlobalBusyBar.vue'
-import { trackBusy, resetGlobalBusy } from '@/composables/globalBusy'
+import { trackBusy, resetGlobalBusy } from '@ledger/api/global-busy'
 
 /**
  * 全局忙碌条移动档位置适配（issue #842）：分支断言只落在档位类名上
