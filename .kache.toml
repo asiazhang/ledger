@@ -1,0 +1,9 @@
+# 仓库级 kache 配置（kache 从工作目录向上查找最近的 .kache.toml）。
+# 热回路（编辑后重跑 cargo test / scripts/test.sh）必须保住 rustc 增量编译：kache
+# 默认在缓存路径上剥掉 `-C incremental` 并删除 Cargo 的 incremental 目录
+# （clean_incremental 默认 true），同一处一行改动实测从 ~3s 退化到 ~18s。
+# preserve_incremental 让带 `-C incremental` 的本地 crate 走增量旁路（增量目录隔离到
+# target/debug/incremental.kache-preserved），registry 依赖仍走 kache 缓存，
+# 新 worktree 首次构建的共享 store 收益照旧。
+[cache]
+preserve_incremental = true
