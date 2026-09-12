@@ -133,7 +133,7 @@ fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
         );
     }
 
-    // dividend / split：携带商户时商户拒绝优先于「暂不支持」（两者均拒绝且不落库）。
+    // dividend / split：携带商户时本拒绝先于投资域装配（两者均拒绝且不落库）。
     for kind in [TransactionKind::Dividend, TransactionKind::Split] {
         let err = create_transaction_internal(
             &conn,

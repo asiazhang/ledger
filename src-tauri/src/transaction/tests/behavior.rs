@@ -1,4 +1,4 @@
-//! 写删行为：创建 / 软删 / 修改、refund 链、dividend / split「暂不支持」拒绝、
+//! 写删行为：创建 / 软删 / 修改、refund 链、dividend 分派进投资域与进 / 出 kind 变更拒绝、
 //! 买入卖出副作用清理，以及行为层编排入口（嵌套感知事务，issue #228 / #229 / ADR-0033）。
 
 use super::super::*;
