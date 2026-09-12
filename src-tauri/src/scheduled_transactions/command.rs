@@ -24,13 +24,15 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use std::borrow::Cow;
+
 use crate::db::{deterministic_uuid, now_iso};
 use crate::error::Result;
-use crate::sync_engine::command::ReplayEffect;
-use crate::sync_engine::device_id;
-use crate::sync_engine::{DomainCommand, record_local as record_op};
 use crate::transaction::NormalizedTransaction;
 use crate::transaction::writer;
+use ledger_sync_protocol::command::{ReplayEffect, SyncCommand};
+use ledger_sync_protocol::device::device_id;
+use ledger_sync_protocol::op::record_local as record_op;
 
 use super::models::{CreateScheduledInput, ScheduledStatus, UpdateSubscriptionInput};
 
@@ -104,6 +106,18 @@ impl ScheduledCommand {
     }
 }
 
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识（期次触发 / 展开无实体指向，冲突域在 OccurrenceKey）；
+/// op 产出直呼协议面（环依赖由 crate 依赖图断开）。
+impl SyncCommand for ScheduledCommand {
+    const ENTITY: &'static str = "scheduled";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        // 同名转发：方法解析固有优先，落在上方域自身实现（非本 trait 方法）。
+        ScheduledCommand::subject(self).map(Cow::Borrowed)
+    }
+}
+
 /// OccurrenceKey → 确定性落地身份：同键跨端恒同值（防双扣的结构承载）。
 pub fn occurrence_transaction_id(plan_id: &str, scheduled_date: &str) -> String {
     deterministic_uuid(&format!("scheduled-occurrence|{plan_id}|{scheduled_date}"))
@@ -114,7 +128,7 @@ pub fn occurrence_transaction_id(plan_id: &str, scheduled_date: &str) -> String 
 ///
 /// 仅期次执行入口与计划写编排入口调用；随执行事务提交/回滚，写失败不残留 op。
 pub(crate) fn record_local(conn: &Connection, command: ScheduledCommand) -> Result<()> {
-    record_op(conn, DomainCommand::Scheduled(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }
 

@@ -9,10 +9,11 @@ use rusqlite::Connection;
 use super::super::*;
 use super::common::{make_buy_input, make_input};
 use crate::db;
-use crate::sync_engine::{DomainCommand, SyncOp, device_id, read_ops};
+use crate::sync_engine::{DomainCommand, SyncOp, read_ops};
 use crate::test_support;
 use crate::transaction::TransactionCommand;
 use crate::transaction::amount::TransactionKind;
+use ledger_sync_protocol::device::device_id;
 
 /// 读全部 op 的便捷形态（断言权威：同步引擎公开接口）。
 fn ops(conn: &Connection) -> Vec<SyncOp> {

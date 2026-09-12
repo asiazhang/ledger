@@ -47,9 +47,10 @@ use crate::sync_engine::trigger::{
 };
 use crate::sync_engine::{
     EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport, bootstrap_from_channel,
-    device_id, parked_ops,
+    parked_ops,
 };
 use crate::write_entry::{Outcome, write_entry};
+use ledger_sync_protocol::device::device_id;
 
 /// 通道配置回显（设置页通道配置表单，issue #862）：未配置时各字段为空串、
 /// `configured = false`，表单按空表单起填（空间字段由前端填默认值提示）。

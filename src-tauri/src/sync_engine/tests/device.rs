@@ -1,8 +1,11 @@
 //! DeviceId（设备标识）：首用生成并持久化；换库（重装/换机）生成新标识是
-//! 合法路径（ADR-0091）。
+//! 合法路径（ADR-0091）。被测对象自 #1089 起住协议 crate
+//!（`ledger_sync_protocol::device`）；测试不随迁的原因见协议 crate Cargo.toml
+//! 注释——compile_fail 负向用例优先于 dev-dependency 环（建库两行序只能经根包
+//! test_support 工厂，ADR-0084 规则 1，工厂不住协议 crate 可达位置）。
 
-use super::super::device_id;
 use crate::test_support;
+use ledger_sync_protocol::device::device_id;
 
 #[test]
 fn device_id_is_generated_once_and_persisted() {

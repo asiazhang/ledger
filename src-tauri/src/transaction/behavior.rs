@@ -69,7 +69,7 @@ use crate::db::tx_scope::ensure_transaction;
 use crate::error::{AppError, Result};
 use crate::investment;
 use crate::signals::WriteEvidence;
-use crate::sync_engine::device_id;
+use ledger_sync_protocol::device::device_id;
 
 use super::amount::TransactionKind;
 use super::writer;

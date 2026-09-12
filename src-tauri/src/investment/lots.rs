@@ -21,7 +21,7 @@ use super::prices::PRICE_UNITS_PER_FEN;
 use crate::db::now_iso;
 use crate::db::query::{FromRow, query_all};
 use crate::error::{AppError, Result};
-use crate::sync_engine::device_id;
+use ledger_sync_protocol::device::device_id;
 
 /// 份额守卫容差（issue #1033）：f64 逐次 FIFO 扣减的累积位误差在账本量级
 /// （持仓 ≪ 1e7 份）约 1e-12 ~ 1e-9，而录入粒度合同为至多四位小数（issue #416，

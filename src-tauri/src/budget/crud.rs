@@ -12,7 +12,7 @@ use crate::db::query::query_all;
 use crate::db::tx_scope::ensure_transaction;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::sync_engine::device_id;
+use ledger_sync_protocol::device::device_id;
 
 /// 列出全部未删除预算，排序按创建先后。
 pub fn list_budgets(conn: &Connection) -> Result<Vec<Budget>> {

@@ -5,13 +5,13 @@
 use rusqlite::params;
 
 use crate::db::now_iso;
-use crate::sync_engine::device_id;
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::{
     DedupIdentity, TransactionBatch, compute_dedup_hash, dedup_identity,
     delete_transaction_internal, update_transaction_internal,
 };
+use ledger_sync_protocol::device::device_id;
 
 use super::batch_common::make_input;
 use super::common::make_buy_input;

@@ -25,7 +25,7 @@ use rusqlite::params;
 use crate::accounts::balance::{affected_accounts, refresh_account_balances};
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::sync_engine::device_id;
+use ledger_sync_protocol::device::device_id;
 
 use super::amount::{self, TransactionKind};
 use super::search_text::pinyin_initials;

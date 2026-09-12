@@ -27,11 +27,13 @@
 use crate::db::tx_scope::ensure_transaction;
 use crate::error::{AppError, Result};
 
-use super::command::{DomainCommand, ReplayBinding, ReplayEffect};
+use ledger_sync_protocol::command::ReplayEffect;
+use ledger_sync_protocol::position as positions;
+
+use super::command::{DomainCommand, ReplayBinding};
 use super::model::SyncOp;
 use super::ops;
 use super::parked::{self, ParkedOp};
-use super::positions;
 use super::registry::{
     AccountBinding, BudgetBinding, CategoryBinding, ExchangeRateBinding, InstrumentBinding,
     InsurerBinding, ItemBinding, LedgerSettingBinding, MerchantBinding, PhysicalAssetBinding,

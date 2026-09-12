@@ -20,11 +20,14 @@
 //! 重放执行（`replay_command`）与本地写入共用同一编排协议（写入协议，Local /
 //! Replay 两形态，ADR-0105），见 [`super::behavior`]。
 
+use std::borrow::Cow;
+
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::sync_engine::{DomainCommand, record_local as record_op};
+use ledger_sync_protocol::command::SyncCommand;
+use ledger_sync_protocol::op::record_local as record_op;
 
 use super::model::NormalizedTransaction;
 
@@ -74,6 +77,16 @@ impl TransactionCommand {
             TransactionCommand::Create { id, .. } | TransactionCommand::Update { id, .. } => id,
             TransactionCommand::Delete { id } => id,
         }
+    }
+}
+
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识；op 产出直呼协议面（环依赖由 crate 依赖图断开）。
+impl SyncCommand for TransactionCommand {
+    const ENTITY: &'static str = "transaction";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        Some(Cow::Borrowed(self.subject_id()))
     }
 }
 
@@ -156,6 +169,6 @@ pub struct InvestmentCommandFields {
 /// 仅行为编排入口（`transaction::behavior` 的 create / update / delete 协议）
 /// 调用；随编排事务提交/回滚，写失败不残留 op。
 pub(crate) fn record_local(conn: &Connection, command: TransactionCommand) -> Result<()> {
-    record_op(conn, DomainCommand::Transaction(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }

@@ -11,9 +11,10 @@ use super::super::{
     parked_ops, read_ops, stream_positions, truncate_stream_before,
 };
 use super::common::{make_expense, read_transaction, wire_in, wire_out};
-use crate::sync_engine::{ops, positions};
+use crate::sync_engine::ops;
 use crate::test_support::{self, assert_balance_cache_matches_realtime, seed_account};
 use crate::transaction::behavior;
+use ledger_sync_protocol::position as positions;
 
 /// 读本机设备标识（测试判据用）。
 fn device_of(conn: &rusqlite::Connection) -> String {

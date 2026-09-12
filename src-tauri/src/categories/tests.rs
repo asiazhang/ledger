@@ -1,6 +1,6 @@
 use crate::db::query::query_all;
 use crate::db::{new_uuid, now_iso};
-use crate::sync_engine::device_id;
+use ledger_sync_protocol::device::device_id;
 
 use super::model::Category;
 

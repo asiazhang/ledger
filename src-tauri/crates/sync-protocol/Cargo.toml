@@ -1,0 +1,27 @@
+[package]
+name = "ledger-sync-protocol"
+version = "0.6.0"
+description = "Ledger 同步协议 crate：设备标识、领域命令契约、op 本地记录与读取、位点"
+edition = "2024"
+publish = false
+
+[dependencies]
+# 同步协议 crate（spec #1086 / issue #1089）：多端同步的最底层共享协议，依赖面
+# 只有基础设施与数据面惯用库——不依赖任何业务域，反向引用由 cargo 依赖图在
+# 编译期拒绝（负向用例见 crate 根文档）。设备标识与 op 行落库的簿记事实
+# （UUID / 时刻 / schema 版本）经基础设施单点取用，不另立第二份。
+ledger-infra = { path = "../infra" }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+
+# 设备标识单测（建库两行序经根包 test_support 工厂，ADR-0084 规则 1）住根包
+# sync_engine/tests/device.rs——若以 dev-dependency 环（先例 infra）引入根包，
+# crate 根文档的 compile_fail 负向用例会被环击穿（tauri_app_lib 变为可见），
+# 故测试不随迁、负向用例优先。
+
+# 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+[lints]
+workspace = true

@@ -9,11 +9,14 @@
 //! - **重放执行**：与本地写同一执行协议（保司在用校验、保额成对、名字唯一等
 //!   原样生效，依赖缺失或唯一冲突挂起待裁决），不产出 op。
 
+use std::borrow::Cow;
+
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::sync_engine::{DomainCommand, record_local as record_op};
+use ledger_sync_protocol::command::SyncCommand;
+use ledger_sync_protocol::op::record_local as record_op;
 
 use super::model::PolicyInput;
 use super::validation::NormalizedInput;
@@ -58,6 +61,16 @@ impl PolicyCommand {
     }
 }
 
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识；op 产出直呼协议面（环依赖由 crate 依赖图断开）。
+impl SyncCommand for PolicyCommand {
+    const ENTITY: &'static str = "policy";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        Some(Cow::Borrowed(self.subject_id()))
+    }
+}
+
 impl From<&NormalizedInput> for PolicyCommandRow {
     fn from(n: &NormalizedInput) -> Self {
         Self {
@@ -90,7 +103,7 @@ impl From<&PolicyCommandRow> for PolicyInput {
 
 /// op 产出接缝（保单集中单点）：本地保单写成功后追加一条 op 进本机 OpLog。
 pub(crate) fn record_policy_local(conn: &Connection, command: PolicyCommand) -> Result<()> {
-    record_op(conn, DomainCommand::Policy(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }
 
@@ -130,9 +143,19 @@ impl InsurerCommand {
     }
 }
 
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识；op 产出直呼协议面（环依赖由 crate 依赖图断开）。
+impl SyncCommand for InsurerCommand {
+    const ENTITY: &'static str = "insurer";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        Some(Cow::Borrowed(self.subject_id()))
+    }
+}
+
 /// op 产出接缝（保司集中单点）：本地保司写成功后追加一条 op 进本机 OpLog。
 pub(crate) fn record_insurer_local(conn: &Connection, command: InsurerCommand) -> Result<()> {
-    record_op(conn, DomainCommand::Insurer(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }
 

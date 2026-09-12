@@ -9,8 +9,8 @@ use crate::transaction::TransactionInput;
 use rusqlite::Connection;
 
 use crate::db::now_iso;
-use crate::sync_engine::device_id;
 use crate::transaction::amount::TransactionKind;
+use ledger_sync_protocol::device::device_id;
 use rusqlite::params;
 
 #[test]

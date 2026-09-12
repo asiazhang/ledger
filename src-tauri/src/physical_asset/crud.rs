@@ -22,8 +22,8 @@ use crate::db::query::{query_all, query_one};
 use crate::db::tx_scope::ensure_transaction;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::sync_engine::device_id;
 use crate::transaction::amount::{convert_to_native, default_currency_code};
+use ledger_sync_protocol::device::device_id;
 
 /// 资产全列 + 当前估值三件套（JOIN 每资产最新一条估值历史行）。
 /// 「最新」= 估值日期最新，同日按插入序（UUID v7 主键时间有序，降序首条）。

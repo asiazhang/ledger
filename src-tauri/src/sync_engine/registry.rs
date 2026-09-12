@@ -1,13 +1,15 @@
 //! 重放注册表（ADR-0101）：14 个语义命令类型的适配绑定 + `DomainCommand::subject`
-//! 的组装臂。与 [`super::ops`] / [`super::parked`] / [`super::positions`] 平级；
-//! 依赖方向保持 registry → command 单向（绑定 wrap 域侧既有接缝，域侧不认识本文件）。
+//! 的组装臂。与 [`super::ops`] / [`super::parked`] 平级；依赖方向保持
+//! registry → command 单向（绑定 wrap 域侧既有接缝，域侧不认识本文件）。
 //!
 //! - **适配绑定**（[`ReplayBinding`]）：每个语义命令类型一个零尺寸绑定，`ENTITY` +
 //!   `subject()` + `replay()` 单点承载可重放契约；域侧 6 个函数名与 2 种返回形状
 //!   （`Result<()>` × 13、`Result<ReplayEffect>` × 1）由绑定吸收，域侧除裁决键派生
 //!   外零改动（ADR-0101 决策 1/3）。
-//! - **subject 组装**：实体标签一律取绑定 `ENTITY`（标签宇宙 = {serde derive,
-//!   `ENTITY`} 各 14 处——门 a 维持二源断言），实体键由命令类型派生（域自身知识）；
+//! - **subject 组装**：实体标签自 #1089 起单源取域命令类型的
+//!   `SyncCommand::ENTITY`（协议 crate 契约；绑定常量派生，不再另立字面量——
+//!   标签宇宙 = {serde derive, `SyncCommand::ENTITY`} 各 14 处，门 a 维持二源
+//!   断言），实体键由命令类型派生（域自身知识，`SyncCommand::subject`）；
 //!   `impl DomainCommand` 的第二个 impl 块系刻意安排（标签单源化，ADR-0101 勘误 3），
 //!   非散落。
 //! - **注册完备（门 c）**：`engine::dispatch` 与本文件的 `DomainCommand::subject`
@@ -19,9 +21,11 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
+use ledger_sync_protocol::command::SyncCommand;
+
 use super::command::{DomainCommand, ReplayBinding, ReplayEffect};
 
-/// 标签组装单点：绑定 `ENTITY` + 命令类型派生键。
+/// 标签组装单点：绑定 `ENTITY`（派生自域命令类型契约）+ 命令类型派生键。
 fn labeled<B: ReplayBinding>(command: &B::Command) -> (&'static str, Option<Cow<'_, str>>) {
     (B::ENTITY, B::subject(command))
 }
@@ -55,11 +59,11 @@ impl DomainCommand {
 pub(crate) struct TransactionBinding;
 
 impl ReplayBinding for TransactionBinding {
-    const ENTITY: &'static str = "transaction";
+    const ENTITY: &'static str = <crate::transaction::TransactionCommand as SyncCommand>::ENTITY;
     type Command = crate::transaction::TransactionCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        Some(Cow::Borrowed(command.subject_id()))
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -72,11 +76,12 @@ impl ReplayBinding for TransactionBinding {
 pub(crate) struct ScheduledBinding;
 
 impl ReplayBinding for ScheduledBinding {
-    const ENTITY: &'static str = "scheduled";
+    const ENTITY: &'static str =
+        <crate::scheduled_transactions::ScheduledCommand as SyncCommand>::ENTITY;
     type Command = crate::scheduled_transactions::ScheduledCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        command.subject().map(Cow::Borrowed)
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -90,11 +95,11 @@ impl ReplayBinding for ScheduledBinding {
 pub(crate) struct LedgerSettingBinding;
 
 impl ReplayBinding for LedgerSettingBinding {
-    const ENTITY: &'static str = "ledger_setting";
+    const ENTITY: &'static str = <crate::currencies::LedgerSettingCommand as SyncCommand>::ENTITY;
     type Command = crate::currencies::LedgerSettingCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        Some(Cow::Borrowed(command.subject_id()))
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -107,11 +112,11 @@ impl ReplayBinding for LedgerSettingBinding {
 pub(crate) struct AccountBinding;
 
 impl ReplayBinding for AccountBinding {
-    const ENTITY: &'static str = "account";
+    const ENTITY: &'static str = <crate::accounts::AccountCommand as SyncCommand>::ENTITY;
     type Command = crate::accounts::AccountCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        Some(Cow::Borrowed(command.subject_id()))
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -124,11 +129,11 @@ impl ReplayBinding for AccountBinding {
 pub(crate) struct CategoryBinding;
 
 impl ReplayBinding for CategoryBinding {
-    const ENTITY: &'static str = "category";
+    const ENTITY: &'static str = <crate::categories::CategoryCommand as SyncCommand>::ENTITY;
     type Command = crate::categories::CategoryCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        command.subject().map(Cow::Borrowed)
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -141,11 +146,11 @@ impl ReplayBinding for CategoryBinding {
 pub(crate) struct MerchantBinding;
 
 impl ReplayBinding for MerchantBinding {
-    const ENTITY: &'static str = "merchant";
+    const ENTITY: &'static str = <crate::merchants::MerchantCommand as SyncCommand>::ENTITY;
     type Command = crate::merchants::MerchantCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        Some(Cow::Borrowed(command.subject_id()))
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -158,11 +163,11 @@ impl ReplayBinding for MerchantBinding {
 pub(crate) struct BudgetBinding;
 
 impl ReplayBinding for BudgetBinding {
-    const ENTITY: &'static str = "budget";
+    const ENTITY: &'static str = <crate::budget::BudgetCommand as SyncCommand>::ENTITY;
     type Command = crate::budget::BudgetCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        Some(Cow::Borrowed(command.subject_id()))
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -175,11 +180,11 @@ impl ReplayBinding for BudgetBinding {
 pub(crate) struct PolicyBinding;
 
 impl ReplayBinding for PolicyBinding {
-    const ENTITY: &'static str = "policy";
+    const ENTITY: &'static str = <crate::policy::PolicyCommand as SyncCommand>::ENTITY;
     type Command = crate::policy::PolicyCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        Some(Cow::Borrowed(command.subject_id()))
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -192,11 +197,11 @@ impl ReplayBinding for PolicyBinding {
 pub(crate) struct InsurerBinding;
 
 impl ReplayBinding for InsurerBinding {
-    const ENTITY: &'static str = "insurer";
+    const ENTITY: &'static str = <crate::policy::InsurerCommand as SyncCommand>::ENTITY;
     type Command = crate::policy::InsurerCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        Some(Cow::Borrowed(command.subject_id()))
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -209,11 +214,11 @@ impl ReplayBinding for InsurerBinding {
 pub(crate) struct ItemBinding;
 
 impl ReplayBinding for ItemBinding {
-    const ENTITY: &'static str = "item";
+    const ENTITY: &'static str = <crate::item::ItemCommand as SyncCommand>::ENTITY;
     type Command = crate::item::ItemCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        Some(Cow::Borrowed(command.subject_id()))
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -226,11 +231,12 @@ impl ReplayBinding for ItemBinding {
 pub(crate) struct PhysicalAssetBinding;
 
 impl ReplayBinding for PhysicalAssetBinding {
-    const ENTITY: &'static str = "physical_asset";
+    const ENTITY: &'static str =
+        <crate::physical_asset::PhysicalAssetCommand as SyncCommand>::ENTITY;
     type Command = crate::physical_asset::PhysicalAssetCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        command.subject().map(Cow::Borrowed)
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -243,11 +249,11 @@ impl ReplayBinding for PhysicalAssetBinding {
 pub(crate) struct InstrumentBinding;
 
 impl ReplayBinding for InstrumentBinding {
-    const ENTITY: &'static str = "instrument";
+    const ENTITY: &'static str = <crate::investment::InstrumentCommand as SyncCommand>::ENTITY;
     type Command = crate::investment::InstrumentCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        command.subject()
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -260,11 +266,11 @@ impl ReplayBinding for InstrumentBinding {
 pub(crate) struct ExchangeRateBinding;
 
 impl ReplayBinding for ExchangeRateBinding {
-    const ENTITY: &'static str = "exchange_rate";
+    const ENTITY: &'static str = <crate::investment::ExchangeRateCommand as SyncCommand>::ENTITY;
     type Command = crate::investment::ExchangeRateCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        command.subject()
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
@@ -277,11 +283,11 @@ impl ReplayBinding for ExchangeRateBinding {
 pub(crate) struct PriceBinding;
 
 impl ReplayBinding for PriceBinding {
-    const ENTITY: &'static str = "price";
+    const ENTITY: &'static str = <crate::investment::PriceCommand as SyncCommand>::ENTITY;
     type Command = crate::investment::PriceCommand;
 
     fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
-        command.subject()
+        SyncCommand::subject(command)
     }
 
     fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
