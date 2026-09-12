@@ -8,7 +8,7 @@
 //! （[`SQLITE_HEADER_MAGIC`]），SQLCipher 密文库头部为随机盐——读前
 //! 16 字节即可可靠判定；空文件（不存在或不足 16 字节）按明文新装对待。
 //!
-//! 建连密钥缝在 [`super::open_connection_with_passphrase`]（与明文路径
+//! 建连密钥缝在 [`crate::db::open_connection_with_passphrase`]（与明文路径
 //! 同点的单一注入处）；转换与解锁是文件级操作，行为语义见各函数文档。
 //! IPC 壳（`commands/encryption.rs`）只做参数解包与状态编排。
 
@@ -254,7 +254,7 @@ fn require_encrypted_file(db_path: &Path) -> Result<()> {
 /// 钥匙串缓存）在封包前先验证——错误口令封出的段对端无法解封，且段名
 /// 幂等跳过会令重传永不发生，必须在上传前拦下。
 pub fn verify_source_passphrase(db_path: &Path, passphrase: &str) -> Result<()> {
-    let conn = super::open_connection_with_passphrase(db_path, passphrase)?;
+    let conn = crate::db::open_connection_with_passphrase(db_path, passphrase)?;
     match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
         r.get::<_, i64>(0)
     }) {
@@ -320,10 +320,10 @@ fn export_converted_copy(
 /// `user_version` 一致。验证通过即证明「新库可凭目标形态在重启后重新打开」。
 fn verify_converted_copy(target: &Path, passphrase: Option<&str>, user_version: i64) -> Result<()> {
     let conn = match passphrase {
-        Some(pass) => super::open_connection_with_passphrase(target, pass)?,
-        None => super::open_connection(target)?,
+        Some(pass) => crate::db::open_connection_with_passphrase(target, pass)?,
+        None => crate::db::open_connection(target)?,
     };
-    super::check_integrity(&conn)
+    crate::db::check_integrity(&conn)
         .map_err(|e| AppError::Io(format!("转换副本完整性检查失败: {e}")))?;
     let copied: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if copied != user_version {
@@ -392,9 +392,9 @@ pub fn reset_encrypted_db_file(db_path: &Path) -> Result<Connection> {
 
 /// 新建明文空库：明文路径建连 + 迁移 + 完整性检查（重置产物验收基准）。
 fn open_new_plaintext_db(db_path: &Path) -> Result<Connection> {
-    let mut conn = super::open_connection(db_path)?;
-    super::init_db(&mut conn)?;
-    super::check_integrity(&conn)?;
+    let mut conn = crate::db::open_connection(db_path)?;
+    crate::db::init_db(&mut conn)?;
+    crate::db::check_integrity(&conn)?;
     Ok(conn)
 }
 
@@ -445,7 +445,7 @@ pub fn unlock_db_file(db_path: &Path, passphrase: &str) -> Result<Connection> {
     }
     // `PRAGMA key` 本身不校验口令；校验发生在首条读语句。用类型化读语句
     // 先行校验（错误形态可精确匹配 not-a-database），再执行迁移。
-    let conn = super::open_connection_with_passphrase(db_path, passphrase)?;
+    let conn = crate::db::open_connection_with_passphrase(db_path, passphrase)?;
     if let Err(e) = conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
         r.get::<_, i64>(0)
     }) {
@@ -455,8 +455,8 @@ pub fn unlock_db_file(db_path: &Path, passphrase: &str) -> Result<Connection> {
         return Err(e.into());
     }
     let mut conn = conn;
-    super::init_db(&mut conn)?;
-    if let Err(e) = super::check_integrity(&conn) {
+    crate::db::init_db(&mut conn)?;
+    if let Err(e) = crate::db::check_integrity(&conn) {
         tracing::error!(error = %e, "密文库完整性检查未通过");
         return Err(AppError::coded(
             "encryption.db-corrupt",

@@ -8,16 +8,21 @@ use std::sync::{Arc, Mutex};
 use rusqlite::Connection;
 
 use super::migrate::init_db;
+use super::perf_trace;
 use super::runtime::DbState;
-use super::{data_location, perf_trace};
 use crate::error::{AppError, Result};
+
+/// 库文件名（固定，不可配置；spec：只选目录、文件名由应用固定）。库文件
+/// 机制归 db（ADR-0111 决策 4：db 不引用引导层），引导层经
+/// [`crate::boot::data_location`] 再导出消费，外部原路径零改动。
+pub const DB_FILE_NAME: &str = "ledger.db";
 
 /// 在指定目录打开库并完成 schema 迁移，返回裸连接（原位重引导的连接换入用：
 /// 换入目标是既有 [`DbState`] 的互斥体内槽，需要裸 `Connection` 才能移入，
-/// issue #644 / ADR-0080）。启动期唯一入口：先经 [`super::data_location::boot`] 解析
+/// issue #644 / ADR-0080）。启动期唯一入口：先经 [`crate::boot::data_location::boot`] 解析
 /// 库所在目录，再调本函数建连；不要自行拼接库路径。
 pub fn open_connection_in(db_dir: &Path) -> Result<Connection> {
-    let db_path = db_dir.join(data_location::DB_FILE_NAME);
+    let db_path = db_dir.join(DB_FILE_NAME);
     tracing::info!(db_path = %db_path.display(), "打开数据库");
     let mut conn = open_connection(db_path)?;
     init_db(&mut conn)?;
@@ -42,11 +47,11 @@ pub fn reset_db_in(db_dir: &Path) -> Result<DbState> {
 }
 
 /// 重置核心（连接形态，issue #601）：把当前库改名 `.bak` 保留后原位新建
-/// 明文空库（建连 + 迁移 + 完整性检查，重置产物验收基准与
-/// [`super::encryption::open_new_plaintext_db`] 同口径）。返回连接供启动失败
+/// 明文空库（建连 + 迁移 + 完整性检查，重置产物验收基准与引导层
+/// `boot::encryption` 的 `open_new_plaintext_db` 同口径）。返回连接供启动失败
 /// 恢复通道原位换入存活 [`DbState`]（占位连接 → 真实新库，无需重启）。
 pub fn reset_db_file(db_dir: &Path) -> Result<Connection> {
-    let db_path = db_dir.join(data_location::DB_FILE_NAME);
+    let db_path = db_dir.join(DB_FILE_NAME);
     let bak_path = db_path.with_extension("db.bak");
     std::fs::rename(&db_path, &bak_path).ok();
     tracing::info!(bak = %bak_path.display(), "已备份原数据库并重置");
@@ -88,8 +93,8 @@ pub fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection> {
 /// 建连接缝单点的密钥侧：密钥注入集中在本函数内部一处，业务路径
 /// 不散布密钥知识。参数是**主口令**（passphrase，SQLCipher 按默认
 /// KDF 参数派生密钥，ADR-0075 决策 3），不是派生密钥本体，也不是
-/// raw key 字符串。调用方必须先经 [`super::encryption::probe_file_kind`]
-/// 确认文件确为密文库（[`super::encryption::DbFileKind::Encrypted`]）——对
+/// raw key 字符串。调用方必须先经 [`crate::boot::encryption::probe_file_kind`]
+/// 确认文件确为密文库（[`crate::boot::encryption::DbFileKind::Encrypted`]）——对
 /// 明文库设密钥后首条读语句会报「file is not a database」。口令错误的
 /// 失败同样发生在首条读语句（口令错误 ≠ 库损坏，由探测区分）。
 pub fn open_connection_with_passphrase<P: AsRef<Path>>(

@@ -498,7 +498,7 @@ pub(crate) fn settle_pending_relocation(registry: &mut BookRegistry) -> Result<(
 pub fn create_book_entry(default_dir: &Path, name: &str) -> Result<Book> {
     let name = required_name(name)?;
     let mut registry = read_for_mutation(default_dir)?;
-    let id = super::new_uuid();
+    let id = crate::ids::new_uuid();
     let dir = default_dir.join(BOOKS_DIR_NAME).join(&id);
     ensure_dir_available(&dir)?;
     if let Err(e) = ensure_dir_not_registered(&registry, &dir) {
