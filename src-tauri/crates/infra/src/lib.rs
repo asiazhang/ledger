@@ -29,6 +29,7 @@ pub mod db;
 pub mod error;
 pub mod events;
 pub mod fs_util;
+pub mod ids;
 pub mod logger;
 pub mod read_entry;
 pub mod redact;
