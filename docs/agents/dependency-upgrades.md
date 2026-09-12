@@ -19,7 +19,7 @@
 升 major 前必须**实测**，不接受「应该兼容」：
 
 - 读上游官方迁移/破坏性变更清单，逐条对照本仓**实际用法**（配置文件、测试文件、导入面），标注「适用 / 不适用」并留证据。
-- 适用项若导致存量代码变红，**修复单独一个提交**，与「依赖升级」本身分开——保持 PR 可二分。
+- 适用项若导致存量代码变红，**修复单独一个提交**，与「依赖升级」本身分开——保持提交可二分。
 - 有真实可跑的探针就实跑，别只做静态分析。「静态分析看着等效」不是证据。
 
 ## 刻意 hold 的写法
@@ -52,7 +52,7 @@
 
 并把结果与**升级前基线**对比（改动前先跑一遍基线，别拿升级后的数字自证）。
 
-**打包盲区**：发布构建 workflow 仅 tag 或手动 dispatch 触发，PR 上不打包——DMG / APK 在 PR 阶段结构上无法验证。本机能出的产物尽力跑一次（`pnpm run tauri build`），其余在 PR 正文**显式声明未验证**，不得沉默略过。
+**打包盲区**：发布构建 workflow 仅 tag 或手动 dispatch 触发，合入 `main` 前不打包——DMG / APK 在交付阶段结构上无法验证。本机能出的产物尽力跑一次（`pnpm run tauri build`），其余在交付报告与 issue 评论**显式声明未验证**，不得沉默略过。
 
 ## CHANGELOG
 
@@ -61,5 +61,5 @@
 ## 提交与交付
 
 - 先例：`#495`，单 PR + 分层 commit（前端小版本 / 前端大版本 / 后端 crate）+ 验证证据 + 可二分定位。
-- 走标准链路：issue 认领 → 独立 worktree → 提交 → PR（`Closes #N`）→ 不自行合并。
-- 不引入 Dependabot / Renovate：本仓 PR 须走 issue 认领 + worktree + 三层测试，机器人会持续产出不合流程的 PR。节奏靠人工——定期 `pnpm outdated` + `cargo update --dry-run` 并开 issue。
+- 走标准链路：issue 认领 → 独立 worktree → 提交（`Closes #N`）→ `/finish-worktree` 直合；依赖升级触及不可逆面，收尾报告须单独列出，打包盲区声明落在交付报告与 issue 评论。
+- 不引入 Dependabot / Renovate：本仓改动须走 issue 认领 + worktree + 三层测试，机器人会持续产出不合流程的 PR。节奏靠人工——定期 `pnpm outdated` + `cargo update --dry-run` 并开 issue。
