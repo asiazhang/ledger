@@ -55,8 +55,9 @@ crate 拆分的边界约束若只靠自觉，会以「静默漏检」方式失�
   | ① | 连接层提交点的置脏触发 | `db::after_commit` → `backup::{mark_dirty, …}`（ADR-0032 置脏单点） | 基础设施只留 `db::AfterCommitHook` 注册点与调用时机，备份域 `install_after_commit_hook` 提供实现；壳层启动、测试工厂、BDD world、基础设施单测四类入口各自接线一次，「删除启动接线即红」由源码扫描守门兜底（`check-background-services.ts::BOOT_WIRING`） | 已落地（#1088） |
   | ② | 交易写入的受影响账户余额重算 | transaction writer/behavior → `accounts::balance`（ADR-0071 决策 5 回边，ADR-0067 同事务整体重算约束不变） | 交易域定义注册点，账户域注册实现，壳层启动接线 | #1090 |
   | ③ | 交易读取的计划来源解析 | transaction read → `scheduled_transactions`（来源列「计划反查」批量填充） | 同上 | #1090 |
+  | ④ | 备份调度线程的追补触发 | `backup::auto` 调度线程单一 tick → `scheduled_transactions::run_catch_up`（ADR-0042，#1091 起调度宿住 ledger-backup crate） | 备份域只留 `register_catch_up_hook` 注册点，定时计划域 `auto_run::catch_up_hook` 提供实现（开关镜像与本地「今天」在实现内注入），壳层启动接线；「删除启动接线即红」由源码扫描守门兜底（`check-background-services.ts::BOOT_WIRING`） | 已落地（#1091） |
 
-  同类先例：协议 crate 的同步写后触发（ADR-0091 决策 9 的信号点随迁协议 crate 成钩子槽，同步调度 `install_after_write_hook()` 在壳层/测试工厂/BDD world 启动时装入响应闭包，#1089）——与挂载点①同构，证明该形态在协议抽离过程中同样适用。#1090 交付后数据库↔备份域、核心交易域↔账户域、核心交易域↔定时计划域、备份域↔定时计划域四对互引消除，域间依赖成为无环单向图。
+  同类先例：协议 crate 的同步写后触发（ADR-0091 决策 9 的信号点随迁协议 crate 成钩子槽，同步调度 `install_after_write_hook()` 在壳层/测试工厂/BDD world 启动时装入响应闭包，#1089）——与挂载点①同构，证明该形态在协议抽离过程中同样适用。#1091 交付后（①②③ #1090、④ #1091）数据库↔备份域、核心交易域↔账户域、核心交易域↔定时计划域、备份域↔定时计划域四对互引全部消除，域间依赖成为无环单向图。
 
 - **测试专用边（dev-dependency 环）**：数据库 ↔ 核心交易域的双向引用只存在于测试侧（基础设施 crate 单测经根包测试工厂建库），用 dev-dependency 环解决——Cargo 允许，测试目标与生产依赖图分离，不构成生产环；结构守门的依赖方向核对只辖生产依赖。
 

@@ -66,6 +66,12 @@ ledger-infra = { path = "crates/infra" }
 # 标识、领域命令契约、op 本地记录与读取、位点）——业务域与 sync_engine 共同
 # 底座，依赖方向由 cargo 依赖图强制，sync_engine ↔ 业务域环依赖就此断开。
 ledger-sync-protocol = { path = "crates/sync-protocol" }
+# 备份域 crate（spec #1086 / issue #1091，首个业务域 crate 自根包域目录拆出）：
+# 备份/恢复引擎与自动备份调度归位；对根包与任何业务域零依赖——迁移前的两条
+# 接缝（追补触发直调、期次落账置脏实现）按注册点反转收敛（挂载点①/④，
+# ADR-0112 决策 5），壳层启动时对装。根包 `pub use ledger_backup as backup`
+# 再导出保持原调用点路径。
+ledger-backup = { path = "crates/backup" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]

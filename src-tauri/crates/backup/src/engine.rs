@@ -6,10 +6,10 @@ use chrono::NaiveDateTime;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::db;
-use crate::db::encryption::DbFileKind;
-use crate::error::{AppError, Result};
-use crate::fs_util::{cleanup, replace_file, temp_sibling};
+use ledger_infra::db;
+use ledger_infra::db::encryption::DbFileKind;
+use ledger_infra::error::{AppError, Result};
+use ledger_infra::fs_util::{cleanup, replace_file, temp_sibling};
 
 /// 备份作用域（issue #836 / ADR-0089 决策 5：备份按账本分域）：受管备份的
 /// 列表、滚动清理与首次兜底判定都按当前活动账本过滤；`None` 为引擎级兼容
@@ -34,7 +34,7 @@ impl BackupScope {
     /// 由注册表构造当前活动账本的作用域：活动账本即登记序首本时一并归属
     /// 无标识历史产物（include_legacy）。注册表不可用的降级（无作用域口径）
     /// 由调用方的 `Option<registry>` 层承担，本函数恒可构造。
-    pub fn of_registry(registry: &crate::db::book_registry::BookRegistry) -> Self {
+    pub fn of_registry(registry: &ledger_infra::db::book_registry::BookRegistry) -> Self {
         let include_legacy =
             registry.books.first().map(|b| b.id.as_str()) == Some(registry.active_id.as_str());
         Self {

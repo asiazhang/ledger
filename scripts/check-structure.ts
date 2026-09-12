@@ -90,6 +90,8 @@ export type Layer = (typeof LAYER)[keyof typeof LAYER]
  * 守门白名单（ADR-0056 决策 4）：路径相对 src-tauri/src。
  * 首批 = 已归位域目录；每迁一域在此追加一行。基础设施自 #1088 起整体住
  * `crates/infra/src`（不再有根 src 路径），改由下面的 INFRA_MODULES 清单核对。
+ * #1091 起域目录开始拆独立 crate（backup 首个），拆出即从本清单移除、改登记
+ * CRATES（BACKUP_MODULES 承接模块级扫描）。
  */
 export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'transaction', layer: '域目录', note: '核心交易域' },
@@ -105,7 +107,6 @@ export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'currencies', layer: '域目录', note: '币种域（#404 参考数据域归位，清单查询自 commands/currencies 迁入）' },
   { path: 'reports', layer: '域目录', note: '报表域（#405 归位，月度汇总/分类/商户/日期极值聚合读模型，消费 transaction::amount 矩阵）' },
   { path: 'dashboard', layer: '域目录', note: '仪表盘域（#405 归位，全仓净资产跨币种折算聚合）' },
-  { path: 'backup', layer: '域目录', note: '备份域（#406 归位，备份引擎自 commands/backup/core、自动备份调度自顶层 auto_backup.rs 整合随迁）' },
   { path: 'sync', layer: '域目录', note: '行情同步域（#407 归位，HTTP 爬取/东财基金净值/同步编排自 commands/sync 随迁；全量修字典翼已退役，issue #698）' },
   { path: 'sync_engine', layer: '域目录', note: '多端同步域（issue #855 新建即归位，ADR-0091 OpLog 基座；与行情同步域 sync 相邻不同域）' },
   { path: 'test_support', layer: '域目录', note: '测试支持域（统一测试数据库工厂与共享断言库，ADR-0084 / #751；依赖域与基础设施合法，对壳层零依赖）' },
@@ -150,6 +151,23 @@ export const PROTOCOL_MODULES: readonly WhitelistEntry[] = [
 
 /** 同步协议 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-sync-protocol.dir 同源。 */
 export const PROTOCOL_SRC_REL = 'crates/sync-protocol/src'
+
+/**
+ * 备份域 crate 的模块清单（spec #1086 / issue #1091）：路径相对
+ * `src-tauri/crates/backup/src`。首个自根包域目录拆出的业务域 crate（#1091）——
+ * 备份/恢复引擎与自动备份调度。对壳层与全部域目录零依赖：对定时计划域的两条
+ * 引用（期次落账置脏的实现接线、追补触发）经注册点反转收敛（挂载点①/④，
+ * ADR-0112 决策 5），反向引用由 cargo 依赖图拒绝（生产依赖面无根包，
+ * dev-dependency 环只覆盖测试目标）。crate 根 lib.rs 是声明与再导出面
+ * （无守门靶向代码），与协议 crate 同款不入清单。
+ */
+export const BACKUP_MODULES: readonly WhitelistEntry[] = [
+  { path: 'auto.rs', layer: '域目录', note: '自动备份调度（状态 / 到期判定纯函数 / 三触发入口 / 轮询线程 / 追补触发注册点，挂载点④，issue #1091）' },
+  { path: 'engine.rs', layer: '域目录', note: '备份引擎（zip 打包 / 恢复 / 受管列表与滚动清理，ADR-0007 / ADR-0016）' },
+]
+
+/** 备份域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-backup.dir 同源。 */
+export const BACKUP_SRC_REL = 'crates/backup/src'
 
 /**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
@@ -208,6 +226,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/sync-protocol',
     layer: CRATE_LAYER.PROTOCOL,
     note: '同步协议 crate（#1089 下放：设备标识、领域命令契约 SyncCommand/ReplayEffect、op 本地记录与读取、流位点——业务域与 sync_engine 共同底座；对壳层与域目录零依赖，反向引用由 cargo 依赖图拒绝）',
+  },
+  {
+    name: 'ledger-backup',
+    dir: 'crates/backup',
+    layer: CRATE_LAYER.DOMAIN,
+    note: '备份域 crate（#1091 首个自根包域目录拆出的业务域 crate：备份/恢复引擎与自动备份调度，spec #1086）；依赖面只有基础设施——对定时计划域的置脏实现与追补触发两条引用经注册点反转（挂载点①/④，ADR-0112 决策 5），对壳层/域目录零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
   },
 ]
 
@@ -365,6 +389,13 @@ const SYNC_ENGINE_REF_PATTERN = /\b(?:crate|tauri_app_lib)\s*::\s*sync_engine\b/
 interface DomainPairRule {
   from: string
   to: string
+  /**
+   * 附加文本形态（#1091 crate 拆分）：目标域拆为独立 crate 后的 crate 名直引
+   * 前缀（`ledger_backup::`），与 domainPairDepPattern(to) 的 crate 根前缀形态
+   * （`crate::backup` / `tauri_app_lib::backup` 再导出面）并扫——两形都红。
+   * 经别名改名的间接引用文本不可达，靠评审兜底。
+   */
+  extraPattern?: RegExp
   reason: string
 }
 
@@ -396,10 +427,12 @@ const DOMAIN_PAIR_FORBIDDEN: readonly DomainPairRule[] = [
   {
     from: 'scheduled_transactions',
     to: 'backup',
+    extraPattern: /\bledger_backup\s*::/,
     reason:
       'issue #1090 / spec #1086 形态推广：期次落账置脏经注册点反转'
-      + '（auto_run 注册点 + backup::install_occurrence_dirty_hook 实现注册），'
-      + 'scheduled_transactions → backup 直接引用禁令',
+      + '（auto_run 注册点 + backup::occurrence_dirty_hook 实现注册，#1091 起实现住 ledger-backup crate），'
+      + 'scheduled_transactions → backup 直接引用禁令——再导出面（crate::backup / '
+      + 'tauri_app_lib::backup）与 crate 名直引（ledger_backup::）两形都红',
   },
 ]
 
@@ -1185,20 +1218,26 @@ function scanModuleEntries(
           )
         }
         // 域间禁边（issue #1090）：残留的域间直接引用即红（认许边逐条留痕）。
+        // 目标域拆为独立 crate 后（#1091）追加 crate 名直引前缀并扫（extraPattern）。
         for (const rule of DOMAIN_PAIR_FORBIDDEN.filter((r) => r.from === w.path)) {
-          for (const hit of scanRustSource(source, domainPairDepPattern(rule.to))) {
-            const allowed = DOMAIN_PAIR_ALLOWED_EDGES.some(
-              (e) => e.file === f.rel && e.from === rule.from && e.to === rule.to,
-            )
-            if (allowed) continue
-            problems.push(
-              `✗ 域间禁边：${f.rel} 引用 ${rule.to} → ${f.rel}:${hit.line}（${hit.match}）\n` +
-                `    ${hit.text}\n` +
-                `    ${rule.reason}\n` +
-                `    写路径副作用一律经注册点反转形态（下层定义注册点、上层注册实现、` +
-                `壳层启动接线，spec #1086 / #1090）；设计意图边须逐条留痕于本脚本 ` +
-                `DOMAIN_PAIR_ALLOWED_EDGES（附成因）`,
-            )
+          const patterns = rule.extraPattern
+            ? [domainPairDepPattern(rule.to), rule.extraPattern]
+            : [domainPairDepPattern(rule.to)]
+          for (const pattern of patterns) {
+            for (const hit of scanRustSource(source, pattern)) {
+              const allowed = DOMAIN_PAIR_ALLOWED_EDGES.some(
+                (e) => e.file === f.rel && e.from === rule.from && e.to === rule.to,
+              )
+              if (allowed) continue
+              problems.push(
+                `✗ 域间禁边：${f.rel} 引用 ${rule.to} → ${f.rel}:${hit.line}（${hit.match}）\n` +
+                  `    ${hit.text}\n` +
+                  `    ${rule.reason}\n` +
+                  `    写路径副作用一律经注册点反转形态（下层定义注册点、上层注册实现、` +
+                  `壳层启动接线，spec #1086 / #1090）；设计意图边须逐条留痕于本脚本 ` +
+                  `DOMAIN_PAIR_ALLOWED_EDGES（附成因）`,
+              )
+            }
           }
         }
       }
@@ -1225,6 +1264,7 @@ function main(): void {
       ...collectRustFiles(srcDir, ''),
       ...collectRustFiles(join(srcTauriDir, INFRA_SRC_REL), INFRA_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, PROTOCOL_SRC_REL), PROTOCOL_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, BACKUP_SRC_REL), BACKUP_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -1277,6 +1317,7 @@ function main(): void {
   scannedFiles += scanModuleEntries(WHITELIST, srcDir, problems)
   scannedFiles += scanModuleEntries(INFRA_MODULES, join(srcTauriDir, INFRA_SRC_REL), problems)
   scannedFiles += scanModuleEntries(PROTOCOL_MODULES, join(srcTauriDir, PROTOCOL_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(BACKUP_MODULES, join(srcTauriDir, BACKUP_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -1302,6 +1343,7 @@ function main(): void {
     `✓ 结构守门：白名单 ${WHITELIST.length} 项（域目录 ${domainCount}）` +
       `+ 基础设施模块 ${INFRA_MODULES.length} 项（crate ${INFRA_SRC_REL}）` +
       `+ 协议模块 ${PROTOCOL_MODULES.length} 项（crate ${PROTOCOL_SRC_REL}）` +
+      `+ 备份域模块 ${BACKUP_MODULES.length} 项（crate ${BACKUP_SRC_REL}，#1091）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +

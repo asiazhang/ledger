@@ -41,9 +41,12 @@ const orchestratorPaired = `pub fn ${ORCHESTRATOR_FN}(app: &tauri::AppHandle) {
 }
 `
 
-/** 启动接线夹具：壳层启动处注册提交点后置动作（issue #1088 启动接线单点） */
+/** 启动接线夹具：壳层启动处注册写路径副作用接缝（issue #1088 / #1090 / #1091
+ *  启动接线单点：提交点后置动作 + 期次落账置脏对装 + 追补触发对装） */
 const bootWiring = `pub fn run() {
     backup::install_after_commit_hook();
+    scheduled_transactions::auto_run::register_after_occurrence_hook(backup::occurrence_dirty_hook);
+    backup::register_catch_up_hook(scheduled_transactions::auto_run::catch_up_hook);
 }
 `
 
@@ -51,10 +54,15 @@ const bootWiring = `pub fn run() {
  * 建临时夹具：按脚本导出的 GUARDED_NAMES 生成全部白名单条目文件（每文件
  * 写入映射到它的全部受守标识符）+ 编排点 `lib.rs`（成对形态），再按 overrides
  * 追加/覆盖文件。返回脚本参数（夹具 src 目录）。
+ * #1091 起白名单条目含 crate 路径（`crates/` 前缀相对 src-tauri 根，即夹具
+ * src 的父目录）——夹具根上移一层使 crate 文件与编排点同属一棵可清理树。
  */
 function makeFixture(overrides: Record<string, string> = {}): string[] {
-  const src = mkdtempSync(join(tmpdir(), 'check-background-services-'))
-  tempDirs.push(src)
+  const parent = mkdtempSync(join(tmpdir(), 'check-background-services-'))
+  tempDirs.push(parent)
+  const src = join(parent, 'src')
+  const resolve = (relPath: string): string =>
+    relPath.startsWith('crates/') ? join(parent, relPath) : join(src, relPath)
   const namesByPath = new Map<string, string[]>()
   for (const guarded of GUARDED_NAMES) {
     for (const path of guarded.wholeFile) {
@@ -62,7 +70,7 @@ function makeFixture(overrides: Record<string, string> = {}): string[] {
     }
   }
   for (const [relPath, names] of namesByPath) {
-    const abs = join(src, relPath)
+    const abs = resolve(relPath)
     mkdirSync(join(abs, '..'), { recursive: true })
     writeFileSync(abs, `pub use crate::x::{${names.join(', ')}}; // 再导出桩\n`)
   }
@@ -174,11 +182,13 @@ describe('check-background-services（后台服务成对拉起守门，issue #96
     expect(r.output).toContain(`启动接线 ${BOOT_WIRING.length} 项已接线`)
   })
 
-  it('删除启动接线（提交点后置动作注册）→ 报红（删除即变红，#1088）', () => {
+  it('删除启动接线（写路径副作用接缝注册）→ 报红（删除即变红，#1088 / #1090 / #1091）', () => {
     const args = makeFixture({ [ORCHESTRATOR_FILE]: orchestratorPaired })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('启动接线缺失')
-    expect(r.output).toContain(BOOT_WIRING[0].name)
+    for (const wiring of BOOT_WIRING) {
+      expect(r.output).toContain(wiring.name)
+    }
   })
 })

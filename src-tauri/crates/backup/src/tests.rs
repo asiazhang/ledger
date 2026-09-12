@@ -7,8 +7,8 @@ use rusqlite::Connection;
 use rusqlite::params;
 
 use super::*;
-use crate::db;
-use crate::db::open_connection;
+use ledger_infra::db;
+use ledger_infra::db::open_connection;
 
 fn temp_file(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
@@ -20,7 +20,7 @@ fn temp_file(tag: &str) -> PathBuf {
 
 /// 建内存库并写入一条账户 + 一条交易（账户经工厂种子，spec #728 / ADR-0084 决策 4）。
 fn seed(conn: &Connection) {
-    crate::test_support::seed_account(conn, "acc-1", "现金", "cash", "CNY", 0);
+    tauri_app_lib::test_support::seed_account(conn, "acc-1", "现金", "cash", "CNY", 0);
     conn.execute(
         "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES ('txn-1','expense',1500,'CNY',1500,'acc-1','2026-02-01','2026-02-01T00:00:00Z','2026-02-01T00:00:00Z',1,'test',0)",
@@ -47,7 +47,7 @@ fn temp_safety_dir() -> PathBuf {
 
 #[test]
 fn backup_creates_zip_with_db_and_meta() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     seed(&conn);
 
     let target = temp_file("zip");
@@ -75,16 +75,16 @@ fn backup_creates_zip_with_db_and_meta() {
     drop(out);
     let db_conn = open_connection(&extracted).unwrap();
     assert_eq!(count_transactions(&db_conn), 1);
-    crate::fs_util::cleanup(&target);
-    crate::fs_util::cleanup(&extracted);
+    ledger_infra::fs_util::cleanup(&target);
+    ledger_infra::fs_util::cleanup(&extracted);
 }
 
 #[test]
 fn restore_roundtrip_preserves_data() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     seed(&conn);
     // seed 裸 SQL 绕过写接缝，按生产不变量（备份时缓存与实时一致）补齐缓存行。
-    crate::accounts::balance::refresh_all_account_balances(&conn).unwrap();
+    tauri_app_lib::accounts::balance::refresh_all_account_balances(&conn).unwrap();
 
     let backup = temp_file("rt-backup");
     backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();
@@ -92,7 +92,7 @@ fn restore_roundtrip_preserves_data() {
     // 目标库先建好，含一条多余交易；恢复后应只剩备份里的数据。
     let db_path = temp_file("rt-db");
     {
-        let c = crate::test_support::open();
+        let c = tauri_app_lib::test_support::open();
         seed(&c);
         c.execute(
             "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
@@ -125,7 +125,7 @@ fn restore_roundtrip_preserves_data() {
         .unwrap();
     assert_eq!(
         cached,
-        crate::accounts::balance::compute_balance(&c, "acc-1").unwrap(),
+        tauri_app_lib::accounts::balance::compute_balance(&c, "acc-1").unwrap(),
         "恢复后缓存行应与实时计算一致"
     );
     // 恢复前的库被安全备份。
@@ -140,8 +140,8 @@ fn restore_roundtrip_preserves_data() {
         .collect();
     assert_eq!(safeties.len(), 1);
 
-    crate::fs_util::cleanup(&backup);
-    crate::fs_util::cleanup(&db_path);
+    ledger_infra::fs_util::cleanup(&backup);
+    ledger_infra::fs_util::cleanup(&db_path);
     std::fs::remove_dir_all(&safety_dir).ok();
 }
 
@@ -161,13 +161,13 @@ fn restore_rejects_newer_schema() {
         .to_string();
     assert!(err.contains("更高版本"), "错误信息: {err}");
     assert!(!db_path.exists(), "恢复应被拒绝，不产生目标库");
-    crate::fs_util::cleanup(&newer);
-    crate::fs_util::cleanup(&db_path);
+    ledger_infra::fs_util::cleanup(&newer);
+    ledger_infra::fs_util::cleanup(&db_path);
 }
 
 #[test]
 fn restore_supports_bare_db() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     seed(&conn);
 
     // 直接 VACUUM INTO 生成裸 db 文件作为"备份"。
@@ -181,26 +181,26 @@ fn restore_supports_bare_db() {
     restore_db_from(&bare, &db_path, &safety_dir, expected, None).unwrap();
     let c = open_connection(&db_path).unwrap();
     assert_eq!(count_transactions(&c), 1);
-    crate::fs_util::cleanup(&bare);
-    crate::fs_util::cleanup(&db_path);
+    ledger_infra::fs_util::cleanup(&bare);
+    ledger_infra::fs_util::cleanup(&db_path);
     std::fs::remove_dir_all(&safety_dir).ok();
 }
 
 #[test]
 fn backup_meta_records_kind_for_auto_and_manual() {
     // 仅验产物元数据，无需表结构：工厂全量建库无碍（spec #728 / ADR-0084）。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // 手动产物：kind 落盘为 manual。
     let manual = temp_file("meta-manual");
     backup_db_to(&conn, &manual, "0.2.0", BackupKind::Manual).unwrap();
     assert_eq!(read_backup_kind(&manual).unwrap(), BackupKind::Manual);
-    crate::fs_util::cleanup(&manual);
+    ledger_infra::fs_util::cleanup(&manual);
 
     // 自动产物：kind 落盘为 auto。
     let auto = temp_file("meta-auto");
     backup_db_to(&conn, &auto, "0.2.0", BackupKind::Auto).unwrap();
     assert_eq!(read_backup_kind(&auto).unwrap(), BackupKind::Auto);
-    crate::fs_util::cleanup(&auto);
+    ledger_infra::fs_util::cleanup(&auto);
 }
 
 /// 旧版本备份的 backup.json 缺 kind 字段：读取不报错且视为 manual。
@@ -222,7 +222,7 @@ fn legacy_meta_without_kind_reads_as_manual() {
         zip.finish().unwrap();
     }
     assert_eq!(read_backup_kind(&path).unwrap(), BackupKind::Manual);
-    crate::fs_util::cleanup(&path);
+    ledger_infra::fs_util::cleanup(&path);
 }
 
 /// 元数据里出现未知/非法的 kind 值：宽容回落 manual 而非解析失败（兼容优先）。
@@ -244,13 +244,13 @@ fn meta_with_unknown_kind_reads_as_manual() {
         zip.finish().unwrap();
     }
     assert_eq!(read_backup_kind(&path).unwrap(), BackupKind::Manual);
-    crate::fs_util::cleanup(&path);
+    ledger_infra::fs_util::cleanup(&path);
 }
 
 /// 旧版本备份（元数据无 kind 字段）：恢复不报错、列表正常出现，视为 manual。
 #[test]
 fn legacy_backup_restores_and_lists_without_error() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     seed(&conn);
 
     // 用 VACUUM INTO 造一份裸库，再打包成元数据缺 kind 的旧格式 zip。
@@ -278,7 +278,7 @@ fn legacy_backup_restores_and_lists_without_error() {
         .unwrap();
         zip.finish().unwrap();
     }
-    crate::fs_util::cleanup(&raw);
+    ledger_infra::fs_util::cleanup(&raw);
 
     // 列表：旧格式文件按命名规则正常被识别，来源按 manual 处理。
     let list = list_managed_backups(&dir, None).unwrap();
@@ -304,8 +304,8 @@ fn legacy_backup_restores_and_lists_without_error() {
     let c = open_connection(&db_path).unwrap();
     assert_eq!(count_transactions(&c), 1);
 
-    crate::fs_util::cleanup(&legacy);
-    crate::fs_util::cleanup(&db_path);
+    ledger_infra::fs_util::cleanup(&legacy);
+    ledger_infra::fs_util::cleanup(&db_path);
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&safety_dir);
 }
@@ -392,7 +392,7 @@ fn prune_keeps_all_when_within_limit_and_missing_dir() {
 
 #[test]
 fn backup_fails_when_target_dir_missing() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     let missing = std::env::temp_dir().join(format!(
         "no-such-dir-{}-{}",
         std::process::id(),

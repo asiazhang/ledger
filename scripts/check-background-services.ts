@@ -15,12 +15,14 @@
 //    它是分平台门的域内实现细节（仅 `start_triggers` 消费），直接调用即绕过
 //    分平台门——#863 缺陷 1（解锁路径无门拉轮询线程）的形态，编排点函数体
 //    内同样不放行。
-// ④ 白名单条目（定义与域接缝再导出四个文件）必须存在且各自含其受守标识符
+// ④ 白名单条目（定义与域接缝再导出文件；#1091 起备份域定义住 ledger-backup
+//    crate，路径带 `crates/` 前缀相对 src-tauri 根）必须存在且各自含其受守标识符
 //    ——清单漂移 fail loud，防白名单烂掉后守门空转。
-// ⑤ 启动接线单点（issue #1088）：连接层提交点后置动作的注册必须出现在壳层
-//    启动接线处（`BOOT_WIRING`）——缺失即生产静默丢置脏/到期检查，而启动路径
-//    不被任何测试直接执行（「缺失一个调用」不会让断言变红），故以源码扫描
-//    守门（先例 #959 / #961 的接线在测试不可达处用扫描守门替代）。
+// ⑤ 启动接线单点（issue #1088 / #1090 / #1091）：写路径副作用的注册必须出现在壳层
+//    启动接线处（`BOOT_WIRING`：提交点后置动作①、期次落账置脏对装 #1090、
+//    追补触发对装④，ADR-0112 决策 5）——缺失即生产静默丢置脏/到期检查/追补，
+//    而启动路径不被任何测试直接执行（「缺失一个调用」不会让断言变红），故以源码
+//    扫描守门（先例 #959 / #961 的接线在测试不可达处用扫描守门替代）。
 //
 // 扫描边界：文本级扫描，形态同 check-structure.ts 家族——复用其注释与
 // 字符串/char 字面量掩码（文档注释提到函数名不误报）；外挂测试模块/目录豁免
@@ -60,9 +62,11 @@ export interface GuardedName {
 export const GUARDED_NAMES: readonly GuardedName[] = [
   {
     name: 'start_scheduler',
-    wholeFile: ['backup/auto.rs', 'backup/mod.rs'],
+    // #1091 起备份域拆独立 crate：定义住 crate 的 auto.rs、接缝再导出住 crate 根
+    // lib.rs（根包 `pub use ledger_backup as backup;` 不含标识符原文，不入列）。
+    wholeFile: ['crates/backup/src/auto.rs', 'crates/backup/src/lib.rs'],
     orchestratorBodyAllowed: true,
-    note: '自动备份调度入口（域定义 + 接缝再导出）',
+    note: '自动备份调度入口（ledger-backup crate 定义 + crate 根再导出，#1091）',
   },
   {
     name: 'start_triggers',
@@ -85,6 +89,11 @@ export interface BootWiring {
   note: string
 }
 
+/** 整文件豁免路径解析：`crates/` 前缀相对 src-tauri 根（域 crate，#1091），其余相对根 src。 */
+function wholeFilePath(srcDir: string, relPath: string): string {
+  return relPath.startsWith('crates/') ? join(srcDir, '..', relPath) : join(srcDir, relPath)
+}
+
 /**
  * 壳层启动接线清单（issue #1088 提交点后置动作注册）：每条须在指定文件内出现
  * 至少一次（掩码后匹配，测试豁免同全树扫描）；缺失即红——生产启动被删无断言
@@ -94,7 +103,17 @@ export const BOOT_WIRING: readonly BootWiring[] = [
   {
     name: 'install_after_commit_hook',
     file: ORCHESTRATOR_FILE,
-    note: '提交点后置动作注册：备份域实现接到基础设施注册点（spec #1086 / issue #1088）',
+    note: '提交点后置动作注册：备份域实现接到基础设施注册点（spec #1086 / issue #1088，挂载点①）',
+  },
+  {
+    name: 'register_after_occurrence_hook',
+    file: ORCHESTRATOR_FILE,
+    note: '期次落账置脏注册：备份域实现（#1091 起 ledger-backup crate 的 occurrence_dirty_hook）接到定时计划域注册点（issue #1090；#1091 起实现住 crate）',
+  },
+  {
+    name: 'register_catch_up_hook',
+    file: ORCHESTRATOR_FILE,
+    note: '追补触发注册：定时计划域实现（auto_run::catch_up_hook）接到备份域注册点（issue #1091 挂载点④，ADR-0112 决策 5）',
   },
 ]
 
@@ -172,7 +191,7 @@ function main(): void {
     for (const relPath of guarded.wholeFile) {
       let source: string
       try {
-        source = readFileSync(join(srcDir, relPath), 'utf8')
+        source = readFileSync(wholeFilePath(srcDir, relPath), 'utf8')
       } catch {
         problems.push(
           `✗ 白名单条目缺失：${relPath}（${guarded.name} 的 ${guarded.note}）——文件不存在，清单漂移 fail loud`,
