@@ -27,7 +27,7 @@ import {
   softBarFillPlugin,
   softChartColors,
 } from '@/theme/chart-style'
-import { formatAmount, amountPrivacyEnabled } from '@/utils/money'
+import { formatAmount, amountPrivacyEnabled } from '@ledger/money'
 import type { CategoryShare, MerchantSharesReport, MonthlySummary } from '@ledger/types'
 import {
   barTooltipLabel,

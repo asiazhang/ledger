@@ -13,7 +13,7 @@ import { fireViewReset, clearViewResets } from '@/composables/viewResetRegistry'
 import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import { makeCategory, makeFakeSink, resetToastSink } from './factories'
 import { registerToastSink } from '@/composables/useLoadable'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import type { NullableDateRange } from '@/utils/time-period'
 import type { ReportDateRange } from '@ledger/types'
 

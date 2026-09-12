@@ -12,7 +12,7 @@ import AppSelect from '@/components/AppSelect.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import { useRefundForm } from '@/composables/useRefundForm'
 import PinyinSelect from '@/components/PinyinSelect.vue'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { useReferenceStore } from '@/stores/reference'
 import type { Transaction } from '@ledger/types'
 

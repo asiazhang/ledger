@@ -25,7 +25,7 @@ import {
   MARKET_FILTER_TYPES,
   MARKET_TYPES,
 } from '@ledger/types'
-import { formatPrice } from '@/utils/money'
+import { formatPrice } from '@ledger/money'
 import { sumFixedColumnWidths } from '@/utils/table'
 import AppSelect from '@/components/AppSelect.vue'
 import AddInstrumentModal from '@/components/investments/AddInstrumentModal.vue'

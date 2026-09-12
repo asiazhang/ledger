@@ -19,7 +19,7 @@ import {
 } from '../factories'
 import { componentVm } from '@ledger/test-support/component-vm'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import type {
   Account,
   Category,

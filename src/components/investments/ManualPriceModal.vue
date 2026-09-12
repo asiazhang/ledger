@@ -6,7 +6,7 @@ import AppDatePicker from '@/components/AppDatePicker.vue'
 import { api } from '@/api'
 import { t } from '@ledger/i18n'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
-import { formatPrice, yuanToPrice } from '@/utils/money'
+import { formatPrice, yuanToPrice } from '@ledger/money'
 import { todayStr } from '@/utils/date'
 import type { Instrument } from '@ledger/types'
 

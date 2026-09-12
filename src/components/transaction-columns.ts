@@ -4,7 +4,7 @@
 
 import { h, type VNode } from 'vue'
 import { NEllipsis, NButton, NTag, type DataTableColumn } from 'naive-ui'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import type { Transaction, TransactionKind } from '@ledger/types'
 import type { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'

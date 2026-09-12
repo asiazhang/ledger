@@ -8,7 +8,7 @@ import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { makePolicy, makePolicyStats } from './factories'
 import { routes, router } from '@/router'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import type { SubscriptionSpendOverview } from '@ledger/types'
 

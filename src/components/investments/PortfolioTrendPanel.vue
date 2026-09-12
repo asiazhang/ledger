@@ -8,7 +8,7 @@ import type { ChartOptions, TooltipItem } from 'chart.js'
 // 注册，不再组件自持子集（缺项曾致渲染错误循环冻结界面）；导入即完成注册。
 import '@/utils/chart-registration'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount, formatPrice, amountPrivacyEnabled } from '@/utils/money'
+import { formatAmount, formatPrice, amountPrivacyEnabled } from '@ledger/money'
 import { t } from '@ledger/i18n'
 import {
   TREND_RANGE_PRESETS,

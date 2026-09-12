@@ -10,7 +10,7 @@ import {
   NTag,
   type DataTableColumns,
 } from 'naive-ui'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { t } from '@ledger/i18n'
 import PhysicalAssetFormModal from '@/components/PhysicalAssetFormModal.vue'
 import PhysicalAssetValuationModal from '@/components/PhysicalAssetValuationModal.vue'

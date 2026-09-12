@@ -6,7 +6,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { NMessageProvider } from 'naive-ui'
 import { h } from 'vue'
 import AddItemForm from '@/components/AddItemForm.vue'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import type { Transaction } from '@ledger/types'
 

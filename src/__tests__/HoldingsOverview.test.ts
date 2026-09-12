@@ -12,7 +12,7 @@ import {
 } from '@/composables/useInstrumentInfoSync'
 import { captureListenHandlers } from '@ledger/test-support/listen-mock'
 import { componentVm } from '@ledger/test-support/component-vm'
-import { formatAmount, formatPrice } from '@/utils/money'
+import { formatAmount, formatPrice } from '@ledger/money'
 import {
   makeAccount,
   makeHolding,

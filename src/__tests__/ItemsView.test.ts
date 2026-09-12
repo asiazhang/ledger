@@ -8,7 +8,7 @@ import { NPopconfirm, NSelect, NDatePicker } from 'naive-ui'
 import { nextTick } from 'vue'
 import { applyLocale } from '@ledger/i18n'
 import ItemsView from '@/views/ItemsView.vue'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import type {
   Currency,
   ItemDailyCost,

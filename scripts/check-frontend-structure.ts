@@ -75,6 +75,12 @@ export const PACKAGES: readonly PackageEntry[] = [
     note: '界面语言包（issue #1151 / ADR-0049）：依赖存储底座 @ledger/storage 单向成边，locales 文案资源随包走；money / errors 等上层消费方依赖本包，utils ↔ i18n 双向环消失',
   },
   {
+    name: '@ledger/money',
+    dir: 'packages/money',
+    deps: ['@ledger/types', '@ledger/i18n'],
+    note: '金额展示与换算包（issue #1153 / spec #1148）：金额/价格/数量格式化与元/分换算的单一出口，依赖 @ledger/types 与 @ledger/i18n；金额隐私开关的水合与持久化仍归应用设置 store',
+  },
+  {
     name: '@ledger/test-support',
     dir: 'packages/test-support',
     deps: ['@ledger/types'],

@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
-import { centsToYuan } from '@/utils/money'
+import { centsToYuan } from '@ledger/money'
 import { buildTransferInput } from '@/domain/transaction-input'
 import { judgeAmountText } from '@/utils/field-error'
 import { useFieldErrors } from '@/composables/useFieldErrors'

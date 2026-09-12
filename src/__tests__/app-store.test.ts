@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { useAppStore } from '@/stores/app'
-import { formatAmount, amountPrivacyEnabled } from '@/utils/money'
+import { formatAmount, amountPrivacyEnabled } from '@ledger/money'
 
 
 beforeEach(() => {

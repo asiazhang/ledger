@@ -3,7 +3,7 @@ import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { useReferenceStore } from '@/stores/reference'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import type { SubscriptionSpendOverview, SubscriptionSpendRow } from '@ledger/types'
 

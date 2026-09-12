@@ -2,7 +2,7 @@
 import { errorMessage } from '@/utils/errors'
 import { computed, ref } from 'vue'
 import { NButton, NFormItem, NInput, NForm, NSpace, NText, useMessage } from 'naive-ui'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
 import { t } from '@ledger/i18n'

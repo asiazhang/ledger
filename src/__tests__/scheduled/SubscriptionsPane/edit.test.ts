@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { NModal, NInputNumber, NDatePicker, NSelect, NTreeSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import { mockInvoke } from '@ledger/test-support/invoke-mock'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import { makeSubscriptionPlan } from '../../factories'
 import {

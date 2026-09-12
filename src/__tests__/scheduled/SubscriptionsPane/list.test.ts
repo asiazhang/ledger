@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { formatAmount } from '@/utils/money'
+import { formatAmount } from '@ledger/money'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import {
   makeInstallmentPlan,

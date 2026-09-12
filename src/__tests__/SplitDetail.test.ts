@@ -4,7 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { NButton, NInput, NInputNumber } from 'naive-ui'
 import SplitDetail from '@/components/SplitDetail.vue'
 import { makeTransaction } from './factories'
-import { formatQuantity } from '@/utils/money'
+import { formatQuantity } from '@ledger/money'
 
 /**
  * 份额调整只读详情组件测试（ADR-0106 决策 10 / issue #1052）：
