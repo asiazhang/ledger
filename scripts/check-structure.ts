@@ -120,12 +120,9 @@ export const INFRA_MODULES: readonly WhitelistEntry[] = [
   { path: 'error.rs', layer: '基础设施', note: '错误' },
   { path: 'settings.rs', layer: '基础设施', note: '设置' },
   { path: 'fs_util.rs', layer: '基础设施', note: '文件级原子操作工具（备份与 DataLocation 搬迁共用，#408 纳入守门）' },
-  { path: 'logger.rs', layer: '基础设施', note: '日志初始化与滚动清理（#408 纳入守门）' },
-  { path: 'events.rs', layer: '基础设施', note: '事件发射机制（ADR-0054，#408 纳入守门）' },
+  { path: 'events.rs', layer: '基础设施', note: '事件发射机制（ADR-0054，#408 纳入守门；消费方跨出壳层——备份域、同步域，不随壳机制分组，ADR-0111 决策 2）' },
   { path: 'closed_set.rs', layer: '基础设施', note: '闭集字符串枚举宏（ADR-0108；模式先例 signals/write_op.rs write_op_set!，ADR-0102）' },
-  { path: 'write_entry.rs', layer: '基础设施', note: '壳层统一写入口（ADR-0073，spec #523）' },
-  { path: 'read_entry.rs', layer: '基础设施', note: '壳层统一读入口（ADR-0104，spec #1009）' },
-  { path: 'redact.rs', layer: '基础设施', note: 'IPC 载荷脱敏（issue #1087 首位成员）' },
+  { path: 'shell_support', layer: '基础设施', note: '壳机制暂住分组（ADR-0111 决策 2 / #1130）：壳层统一写入口 write_entry（ADR-0073）、读入口 read_entry（ADR-0104）、IPC 载荷脱敏 redact、日志初始化 logger——只被壳层消费，正住址是壳层（#1086 P5 迁出）；crate 根再导出保持原调用点路径' },
   { path: 'test_utils.rs', layer: '基础设施', note: '测试器具（捕获 tracing 事件的 Layer / 闸门式假发射器，#1088 随类型身份约束归位；`#[cfg(any(test, feature = "test-utils"))]` + `#[doc(hidden)]`，默认不进生产编译，#1132）' },
 ]
 
@@ -277,19 +274,19 @@ const INFRA_DOMAIN_ALLOWED_EDGES: readonly InfraDomainEdge[] = [
     reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/取常量（#758 收口），测试专用边、非产品依赖',
   },
   {
-    file: 'logger.rs',
+    file: 'shell_support/logger.rs',
     domain: 'test_support',
-    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库（#758 收口），测试专用边、非产品依赖',
+    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库（#758 收口），测试专用边、非产品依赖（#1130 起住 shell_support/）',
   },
   {
-    file: 'write_entry.rs',
+    file: 'shell_support/write_entry.rs',
     domain: 'test_support',
-    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/簿记戳引用 FIXED_NOW（#758 收口），测试专用边、非产品依赖',
+    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/簿记戳引用 FIXED_NOW（#758 收口），测试专用边、非产品依赖（#1130 起住 shell_support/）',
   },
   {
-    file: 'read_entry.rs',
+    file: 'shell_support/read_entry.rs',
     domain: 'test_support',
-    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/种子（#758 收口），测试专用边、非产品依赖',
+    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/种子（#758 收口），测试专用边、非产品依赖（#1130 起住 shell_support/）',
   },
 ]
 
