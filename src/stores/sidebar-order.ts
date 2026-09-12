@@ -142,7 +142,7 @@ export function parseGroupOrders(
 /**
  * 每组收纳清单出厂种子（开发者清单，ADR-0063 决策 3）：
  * 记账 = [定时, 商户]（页签序 = 清单序，#473）；
- * 资产 = [保单, 实物资产, 保司]（#472/#466/#714，追加在后，ADR-0055 决策 2 追加先例）；洞察 = 空。
+ * 资产 = [保单, 实物资产, 保司]（#472/#466/#714，追加在后，出厂清单见 ADR-0063 决策 3）；洞察 = 空。
  */
 export const GROUP_CONTAINMENT_SEEDS = {
   bookkeeping: ['scheduled', 'merchants'],

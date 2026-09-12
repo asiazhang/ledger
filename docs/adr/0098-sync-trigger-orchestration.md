@@ -78,13 +78,10 @@ ADR-0091 决策 9 定了触发的**语义**：打开应用即同步、桌面运�
 
 ## 影响
 
-- `src-tauri/src/sync_engine/trigger/` 成为触发编排的单点（issue #958 按变更原因拆为 `channel.rs` / `session.rs` / `scheduler.rs` 三个子模块，对外接缝零变化）：通道配置与构库、轮次编排、会话信封形态、触发入口。三处业务可用起点（setup 就绪、`resume_business_surface`、`restart_app` 落 Ready）经壳层后台服务编排单点成对拉起（2026-09-11 修订：统一调 `lib.rs` 的 `start_background_services`，issue #961，其内部调 `start_triggers`，分平台分流仍收在域内这一处），壳层（`commands/sync_channel.rs`）退化为参数解包 + 一行调用。
-- 壳层统一写入口 `write_entry`（ADR-0073）**不动**（基础设施零业务语义、零域依赖，ADR-0071 决策 6）；连接层 `db::write` 的 `after_commit` 也不动。写后触发钩在同步域的本地 op 产出单点 `sync_engine::ops::record_local`（域内调用，无新增分层边）：投递非阻塞，未拉起同步调度时零动作，单测环境零影响。
-- 进程级会话记忆（`sync_engine::trigger::SessionEnvelope`，归同步域：它只服务同步触发的信封判定，放基础设施会平白造出基础设施→域依赖）新增 `remember` / `forget` / `current`；调用点：解锁成功、手动同步成功记入（口令均经校验），原位重引导（`restart_app`）与忘记口令重置清空，关闭加密记入明文形态；`set_remember_passphrase` **不记入**（见决策 3）。`db::passphrase_cache` 只保留钥匙串缓存，不再持会话状态。
-- 用户可见行为：打开应用后同步；桌面运行期每 10 分钟一次；记完账约 5 秒后上传；密文库同步不弹 Touch ID；同步失败静默（本地记账不受影响），状态与挂起明细在设置页同步卡片可见。
-- 分平台门（决策 4）：业务可用起点统一调 `start_triggers`，`#[cfg(desktop)]` 只在该域函数一处分流——首版把门写在两个调用点，解锁路径那处漏门（Android 解锁密文库后仍拉轮询线程）；第二版收成单点后又漏了 `restart_app` 落 Ready 这个起点（解锁屏恢复明文备份后同步触发本会话不生效）。现三处调用点全数接入，并进一步收进 `start_background_services` 单点、由文本守门保证成对（2026-09-11 修订，issue #961）。
-- 写后触发去抖契约（决策 2）：`drain_write_signals` 的调用方已消费触发收尾的那个信号，单笔记账（窗口内无后续写）同样跑一轮——首版把函数入口当「无写」，单次写返回假、一轮不跑（记完账永不上传），测试已按调用方真实形态（先 `recv` 再吸干）钉住。
-- 参数调整（周期、去抖窗口）只改本模块常量，无 schema / 契约影响。
+- 触发编排收在 `sync_engine::trigger/` 单点，壳层退化为参数解包；三处业务可用起点（setup 就绪、`resume_business_surface`、`restart_app` 落 Ready）统一经 `start_background_services` 成对拉起，分平台门只在域内 `start_triggers` 一处（#961）。
+- 用户可见行为：打开即同步；桌面每 10 分钟一次；记完账约 5 秒后上传；密文库同步不弹 Touch ID；失败静默，状态与挂起明细在同步卡片可见。参数调整只改常量，无 schema / 契约影响。
+- **两次漏接线事故（决策 4 的动机证据）**：首版门写在两个调用点，解锁路径漏门（Android 解锁密文库后仍拉轮询线程）；收成单点后又漏 `restart_app` 落 Ready（解锁屏恢复备份后本会话同步不生效）。现由成对拉起守门兜底。
+- **去抖契约事故（决策 2 的动机证据）**：首版把 `drain_write_signals` 入口当「无写」，单笔记账返回假、一轮不跑（记完账永不上传）；测试已按调用方真实形态（先 `recv` 再吸干）钉住。
 
 ## 修订记录
 

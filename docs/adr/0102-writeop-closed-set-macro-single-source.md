@@ -45,35 +45,10 @@
 - 邻里弱点确认存在、本决策不触及：`TransactionKind::ALL`（9 变体）与 `InstrumentType::ALL`（5 变体）同为「enum + 手抄 ALL」双份表示（无字符串第三份，痛面较窄），立 #1022 候选票待 grilling、原生 blocked-by 本票（宏模式先例在前，方案才有依据）。
 - 机制术语（`write_op_set!` / `from_ident` / 构造性保证）以本 ADR 为唯一解释处，不进 `docs/contexts/`（ADR-0047 决策 6 先例）。
 
-## 实施 recorded
+## 实施证据（#1023）
 
-（#1023 落地，2026-09-11；ADR-0047 先例：scratch 变体三步走、删除即变红演示、
-`SetLogLevel` 漂移处置记录。）
-
-- **scratch 变体三步走通**：宏清单暂加 `ScratchWalkthroughOp`（`WriteOp::ALL` 由宏
-  同源展开、自动带入，无第二处可漏登）——不加 `signals_for` 臂即 `E0004
-  non-exhaustive patterns: signals::WriteOp::ScratchWalkthroughOp not covered`
-  （编译红）；补臂后孤儿核对 `every_mapped_write_op_is_declared_by_some_shell` 报
-  「写操作身份 ScratchWalkthroughOp 已在 signals_for 映射，却未被任何壳声明」
-  （测试红，证明守门种子完备、无失明区）；暂入例外白名单接线后
-  `signals_cross_check` 11 道守门全绿；删 scratch，回绿。
-- **删除即变红**：删宏生成的 `from_ident` → `WriteOp::from_ident` 解析失败 `E0599`
-  （`signals_cross_check` 编译红）；删宏生成的 `ALL` → 孤儿核对
-  `for &op in WriteOp::ALL` 解析失败 `E0599`（编译红）。构造性保证下「接线即宏
-  本身」，红在编译期而非测试期。
-- **`SetLogLevel` 活体漂移处置**：核实原手写 `parse_write_op` 实为 60 臂、缺
-  `SetLogLevel`（该身份走例外白名单类型化路径、从不流经字符串 parse）。构造性消灭：
-  `from_ident` 与 enum 同源展开，臂集必然完备，「缺失臂」失败类不复存在，无需单独
-  修复。
-- **白名单死条目核对上线**：新增
-  `ipc_write_entry_exceptions_only_contain_registered_commands`（白名单名字 ⊆
-  `IPC_COMMAND_MANIFEST`）；scratch 死条目 `walkthrough_nonexistent_command`
-  演示变红（「例外白名单命令 walkthrough_nonexistent_command 不在命令注册清单上
-  ——死条目」）。
-- `parse_write_op` 消亡：扫描提取 ident 改经 `resolve_write_op` →
-  `WriteOp::from_ident`，提取到非变体文本报「扫描提取漂移」；孤儿核对 panic 话术
-  去掉已消亡的「漏登 `WriteOp::ALL`」同步义务。生成的 `from_ident` 标 `#[cfg(test)]`
-  （消费方仅测试侧，ADR-0073 决策 5），非测试构建不生成，避免 `-D warnings` 下
-  dead_code 告警。
-- 等价性：既有 `signals` 61 条映射直测与 `signals_cross_check` 五道守门断言零改，
-  仅 parse 消费点切换；`cargo test --lib` 1071 项全绿，`./scripts/check.sh` 全绿。
+- **scratch 变体走查**：宏清单加走查变体即自动带入 `ALL`；不加 `signals_for` 臂编译红（`E0004`），补臂后孤儿核对测试红（证明守门种子完备、无失明区），删 scratch 回绿。
+- **删除即变红**：删宏生成的 `from_ident` / `ALL` → 消费点 `E0599` 编译红。构造性保证下「接线即宏本身」，红在编译期而非测试期。
+- **`SetLogLevel` 活体漂移**：核实原手写 `parse_write_op` 实为 60 臂、缺 `SetLogLevel`（该身份走例外白名单类型化路径、从不流经字符串 parse）；宏同源展开后「缺失臂」失败类不复存在。
+- **白名单死条目核对**：新增白名单名字 ⊆ `IPC_COMMAND_MANIFEST` 核对，死条目演示变红。
+- **等价性**：既有 `signals` 61 条映射直测与 `signals_cross_check` 五道守门断言零改，仅 parse 消费点切换；`cargo test --lib` 1071 项全绿。

@@ -1,6 +1,6 @@
 # ADR-0076: 应用更名「开源记账 / OpenLedger」——显示名与发布契约解耦，identifier 冻结
 
-- 状态：已接受（实施待启动，grilling 定稿）
+- 状态：已接受（已落地，随 0.6.0 发布；grilling 定稿）
 - 日期：2026-09-05
 - 作者：Ledger 项目
 - 关联：ADR-0049（i18n——双名按界面语言取用）；ADR-0066（跨平台发布——productName 即产物名与 Release 资产名）；ADR-0074（Android 发布——工程未生成，applicationId 届时从冻结 identifier 派生）；ADR-0018（主库文件名固定 `ledger.db`）；ADR-0007 / 0016（备份产物——受管备份前缀为识别依据）；AI 导入域 AIPrompt（「Ledger API」协议称谓）
