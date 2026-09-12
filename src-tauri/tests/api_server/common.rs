@@ -108,7 +108,8 @@ pub(crate) struct FundStubHit {
 }
 
 /// 构造可注入的东财基金详情桩：命中表驱动（`hits` 内的代码按表返回；表外代码
-/// 返回「查无此码」中文 `Invalid`——与生产 `fetch_fund_quote` 未命中同形状），
+/// 返回「查无此码」码化错误 `sync.fund-not-found`——与生产 `fetch_fund_quote`
+/// 未命中同形状，#1186：裸 `Invalid` 掩盖了生产差异，测试绿、线上错），
 /// 并按调用顺序记录请求代码（`calls`，供测试断言「未发起网络请求」「请求了哪些
 /// 代码」）。网络不可达等特殊形态由测试自建闭包或状态开关表达（先例
 /// instrument_create_fund.rs 的命中/不可达切换桩）。
@@ -130,15 +131,17 @@ pub(crate) fn fund_fetch_stub(
                 fund_class: Some(hit.fund_class.to_string()),
                 nav_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
             }),
-            None => Err(AppError::Invalid(format!(
-                "查无基金代码 {code}，请核对后重试"
-            ))),
+            None => Err(AppError::codedp(
+                "sync.fund-not-found",
+                format!("查无基金代码 {code}，请核对后重试"),
+                &[code],
+            )),
         }
     })
 }
 
 /// 带命中表桩的一步装配（issue #304 测试便利）：返回 (router, 连接, 调用记录)，
-/// 各测试按需绑定；命中表外代码由桩返回「查无此码」中文 Invalid。
+/// 各测试按需绑定；命中表外代码由桩返回「查无此码」码化中文 Invalid。
 pub(crate) type FundStubApp = (
     Router,
     Arc<Mutex<rusqlite::Connection>>,
