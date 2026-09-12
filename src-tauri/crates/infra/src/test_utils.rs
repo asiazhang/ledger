@@ -1,6 +1,6 @@
 //! 测试支持：捕获 tracing 事件的 Layer、全局最大级别稳定器与闸门式假发射器。
 //!
-//! 供本 crate 的单元测试（`db/tests.rs`、`signals/emit_blocking_tests.rs`）与
+//! 供本 crate 的单元测试（`db/tests.rs`、`signals/tests/emit_blocking.rs`）与
 //! 集成测试（`tests/api_server/`）共用，避免两处重复实现采集器具
 //!（issue #44 code review：Duplicated Code）与假发射器（spec #367 code review：
 //! 同一坏味道在测试桩上重演）。
@@ -153,7 +153,7 @@ struct GatedShared {
 /// 单次放行）。可克隆，写线程与测试各持一份。
 ///
 /// 两个验证靶共用本桩（spec #366 / #367）：机制接缝层
-///（`signals::emit_blocking_tests`，断言发射器阻塞期间写路径仍及时返回）
+///（`signals::tests::emit_blocking`，断言发射器阻塞期间写路径仍及时返回）
 /// 与 HTTP 壳整链（`tests/api_server/signal_delivery.rs`，断言写请求返回后
 /// 信号最终到达）。所有等待都带超时上界——回归发生时测试超时失败，而非
 /// 永久挂起；刻意不复现真实死锁时序（跨线程时序问题易 flaky）。
