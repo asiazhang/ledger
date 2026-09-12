@@ -87,11 +87,12 @@ function isBackupModulePath(rel: string): boolean {
   return BACKUP_ENTRY_PATHS.has(rel)
 }
 
-/** 核心交易域 crate 模块路径判定（精确文件名，#1092；与基础设施清单无交集）。 */
+/** 核心交易域 crate 模块路径判定（清单条目或其子路径，#1092/#1182 四区目录化）。 */
 const TRANSACTION_ENTRY_PATHS = new Set(TRANSACTION_MODULES.map((m) => m.path))
 
 function isTransactionModulePath(rel: string): boolean {
-  return TRANSACTION_ENTRY_PATHS.has(rel)
+  const head = rel.split('/')[0]
+  return TRANSACTION_ENTRY_PATHS.has(head) || TRANSACTION_ENTRY_PATHS.has(rel)
 }
 
 /**
@@ -490,22 +491,22 @@ describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反
   })
 
   it('核心交易域 crate 模块引用壳层 → 红并定位文件行号（#1092 crate 化后守门基准随迁）', () => {
-    // 'writer.rs' 经 placeOverride 落核心交易域 crate（TRANSACTION_MODULES 派生路由）。
-    const args = makeFixture({ 'writer.rs': shellUse })
+    // 'write/writer.rs' 经 placeOverride 落核心交易域 crate（TRANSACTION_MODULES 派生路由）。
+    const args = makeFixture({ 'write/writer.rs': shellUse })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('反向依赖')
-    expect(r.output).toContain('writer.rs:1')
+    expect(r.output).toContain('write/writer.rs:1')
   })
 
   it('核心交易域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate，#1092）', () => {
     const args = makeFixture({
-      'behavior.rs': 'use tauri_app_lib::sync_engine::registry::dispatch;\n',
+      'write/protocol.rs': 'use tauri_app_lib::sync_engine::registry::dispatch;\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('业务域引用同步域')
-    expect(r.output).toContain('behavior.rs:1')
+    expect(r.output).toContain('write/protocol.rs:1')
   })
 
   it('方向性：禁边反向（accounts → transaction）不红——口径真源单向边合法', () => {
@@ -1524,7 +1525,7 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
   // 四条新断言各由负向夹具锚定（ADR-0087 断言强度，断言对准退出码与输出）：
   // ① 双向全等、② 区级层序、③ 模型目录判据各有一枚夹具；删任一条断言须动
   // 脚本（清单外无豁免面），对应夹具转绿 → 该夹具测试失败（CI 红）。
-  it('真实仓库默认通过：磁盘模块全部登记 + 区级层序零未认许反向引用（认许边 = ADR-0113 决策 3 原形状反边）', () => {
+  it('真实仓库默认通过：磁盘模块全部登记 + 区级层序零未认许反向引用（#1182 消除三处反边后认许边归空）', () => {
     const r = run([])
     expect(r.status).toBe(0)
     expect(r.output).toContain('TRANSACTION_MODULES 双向全等')
@@ -1564,14 +1565,16 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
     const args = makeCrateFixture()
     writeFileSync(
       join(args[1], TRANSACTION_SRC_REL, 'lib.rs'),
-      'pub use crate::writer::NormalizedRow;\npub use crate::read::TransactionView;\npub fn stub() {}\n',
+      'pub use crate::write::writer::NormalizedRow;\npub use crate::read::TransactionView;\npub fn stub() {}\n',
     )
     const r = run(args)
     expect(r.status).toBe(0)
   })
 
   it('② 共享语义引用写路径（认许边之外）→ 红并定位文件行号', () => {
-    const args = makeFixture({ 'command.rs': 'use super::writer::NormalizedRow;\npub fn x() {}\n' })
+    const args = makeFixture({
+      'command.rs': 'use crate::write::writer::NormalizedRow;\npub fn x() {}\n',
+    })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('区级反向依赖')
@@ -1580,7 +1583,7 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
 
   it('② 共享语义引用接缝（认许边之外）→ 红', () => {
     const args = makeFixture({
-      'search_text.rs': 'use super::merchant_seam::ensure_merchant;\npub fn x() {}\n',
+      'search_text.rs': 'use crate::seams::merchant::ensure_merchant;\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
@@ -1589,44 +1592,35 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
 
   it('② 接缝引用路径区（写 / 读）→ 红', () => {
     const seamToWrite = makeFixture({
-      'merchant_seam.rs': 'use super::behavior::create;\npub fn x() {}\n',
+      'seams/merchant.rs': 'use crate::write::protocol::create;\npub fn x() {}\n',
     })
     expect(run(seamToWrite).status).toBe(1)
     const seamToRead = makeFixture({
-      'base_currency_seam.rs': 'use super::read::list_transactions;\npub fn x() {}\n',
+      'seams/investment.rs': 'use crate::read::list_transactions;\npub fn x() {}\n',
     })
     expect(run(seamToRead).status).toBe(1)
   })
 
   it('② 写读两径互不依赖（双向）→ 红', () => {
     const writeToRead = makeFixture({
-      'batch.rs': 'use super::search::search_transactions;\npub fn x() {}\n',
+      'write/batch.rs': 'use crate::read::search::search_transactions;\npub fn x() {}\n',
     })
     const r = run(writeToRead)
     expect(r.status).toBe(1)
     expect(r.output).toContain('区级反向依赖')
     const readToWrite = makeFixture({
-      'read.rs': 'use super::batch::TransactionBatch;\npub fn x() {}\n',
+      'read/mod.rs': 'use crate::write::batch::TransactionBatch;\npub fn x() {}\n',
     })
     expect(run(readToWrite).status).toBe(1)
   })
 
   it('合法层序链：写→接缝→共享语义、读→同区、同区互依 → 绿', () => {
     const args = makeFixture({
-      'batch.rs':
-        'use super::write_effects::recalculate;\nuse super::amount::TransactionKind;\npub fn x() {}\n',
-      'search.rs': 'use super::read::list_view;\nuse super::model::Transaction;\npub fn y() {}\n',
-      'behavior.rs': 'use super::writer::insert_row;\npub fn z() {}\n',
-    })
-    const r = run(args)
-    expect(r.status).toBe(0)
-  })
-
-  it('认许边在位绿：共享语义→接缝 / 共享语义→写路径 仅限 ADR-0113 决策 3 登记两条（真实仓库即此形状）', () => {
-    const args = makeFixture({
-      'amount.rs':
-        'pub fn f(conn: &Connection) -> Currency { super::base_currency_seam::current_base_currency(conn) }\n',
-      'model.rs': 'use super::writer;\npub fn g() -> writer::NormalizedRow { writer::NormalizedRow::default() }\n',
+      'write/batch.rs':
+        'use crate::seams::balance::recalculate;\nuse crate::amount::TransactionKind;\npub fn x() {}\n',
+      'read/search.rs':
+        'use crate::read::source::list_view;\nuse crate::model::Transaction;\npub fn y() {}\n',
+      'write/protocol.rs': 'use crate::write::writer::insert_row;\npub fn z() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(0)
@@ -1635,9 +1629,9 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
   it('注释与字符串中的跨区路径不误报（掩码边界）', () => {
     const args = makeFixture({
       'search_text.rs': [
-        '/// 消费方见 `super::writer` 与 `super::read`（文档注释不算依赖）',
-        '// super::behavior::create',
-        'let s = "crate::batch::run";',
+        '/// 消费方见 `crate::write::writer` 与 `crate::read`（文档注释不算依赖）',
+        '// crate::write::protocol::create',
+        'let s = "crate::write::batch::run";',
         'pub fn f() {}',
         '',
       ].join('\n'),
@@ -1648,7 +1642,7 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
 
   it('花括号列举逐条展开：非首段跨区条目同样命中', () => {
     const args = makeFixture({
-      'search_text.rs': 'use super::{model::Transaction, read::list_view};\npub fn x() {}\n',
+      'search_text.rs': 'use crate::{model::Transaction, read::list_view};\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
@@ -1659,18 +1653,18 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
   it('花括号列举闭括号后文本不吞入：后续枚举变体同名不误报（off-by-one 回归锚，缺它则闭括号扫描失效假绿）', () => {
     const args = makeFixture({
       'search_text.rs':
-        'use super::{model::Transaction};\npub enum E { A, writer }\npub fn x() {}\n',
+        'use crate::{model::Transaction};\npub enum E { A, write }\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(0)
   })
 
-  it('外挂测试豁免：writer/tests/ 引用读路径不红（ADR-0056 决策 5）', () => {
+  it('外挂测试豁免：write/writer/tests/ 引用读路径不红（ADR-0056 决策 5）', () => {
     const args = makeCrateFixture()
-    mkdirSync(join(args[1], TRANSACTION_SRC_REL, 'writer', 'tests'), { recursive: true })
+    mkdirSync(join(args[1], TRANSACTION_SRC_REL, 'write', 'writer', 'tests'), { recursive: true })
     writeFileSync(
-      join(args[1], TRANSACTION_SRC_REL, 'writer', 'tests', 'fixture.rs'),
-      'use super::read::list_view;\npub fn s() {}\n',
+      join(args[1], TRANSACTION_SRC_REL, 'write', 'writer', 'tests', 'fixture.rs'),
+      'use crate::read::list_view;\npub fn s() {}\n',
     )
     const r = run(args)
     expect(r.status).toBe(0)

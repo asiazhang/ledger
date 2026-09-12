@@ -2,7 +2,7 @@
 //!
 //! 列表 / 创建 / 更新（改名）/ 软删除；`name` 在用行全库唯一——重名创建与改名
 //! 撞名都返回明确错误（`AppError::Invalid`）。软删商户不再出现在列表（不可再被
-//! 新交易选择），历史交易引用照常保留（交易侧校验见 `transaction::writer::normalize`）。
+//! 新交易选择），历史交易引用照常保留（交易侧校验见 `transaction::write::writer::normalize`）。
 //!
 //! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域零感知，
 //! 写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
@@ -263,11 +263,11 @@ pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
 // 交易×商户接缝实现（spec #1086 / issue #1092）
 // ---------------------------------------------------------------------------
 
-/// 注册商户名归一化实现（核心交易域 `transaction::merchant_seam` 注册点，#1092）：
+/// 注册商户名归一化实现（核心交易域 `transaction::seams::merchant` 注册点，#1092）：
 /// 把按名查找与按名即建两支实现原子装入，壳层启动接线，业务代码不直接调用。
 pub fn install_merchant_hooks() {
-    crate::transaction::merchant_seam::register_merchant_hooks(
-        crate::transaction::merchant_seam::MerchantNameHooks {
+    crate::transaction::seams::merchant::register_merchant_hooks(
+        crate::transaction::seams::merchant::MerchantNameHooks {
             find_by_name: find_merchant_by_name,
             create_by_name: create_merchant_by_name,
         },

@@ -71,7 +71,7 @@ fn fetch_instrument_type(
 /// - [`release_for_delete`]：删除路径的持仓副作用回退（sell 回补 / buy 与 convert 级联+清理），
 ///   供行为层删除编排入口调用。
 ///
-/// 交易行字段的 INSERT/UPDATE 一律经 `transaction::writer` 接缝（issue #70），
+/// 交易行字段的 INSERT/UPDATE 一律经 `transaction::write::writer` 接缝（issue #70），
 /// 本模块不再反向依赖 transactions 的行更新函数；行写入由编排层（行为层）持有，
 /// 与 lot/匹配副作用同处一个事务。FIFO 取批次/分摊/回补知识归 [`lots`]（#1018），
 /// 修改/删除路径的守卫与清理模板归 [`unwind`]（#1020）——本模块的 [`revert`] /
@@ -283,7 +283,7 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
     let account_currency = account_currency_code(conn, &input.account_id)?;
     // 出资账户准入（issue #935 / ADR-0096）：buy 的结算币种 = 投资账户币种，
     // 出资账户币种必须与其一致。
-    crate::transaction::funding::validate_funding_account(
+    crate::transaction::write::funding::validate_funding_account(
         conn,
         TransactionKind::Buy,
         input.funding_account_id.as_deref(),
@@ -399,7 +399,7 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
     let account_currency = account_currency_code(conn, &input.account_id)?;
     // 出资账户准入（issue #935 / ADR-0096）：sell 的结算币种 = 投资账户币种，
     // 出资账户币种必须与其一致。
-    crate::transaction::funding::validate_funding_account(
+    crate::transaction::write::funding::validate_funding_account(
         conn,
         TransactionKind::Sell,
         input.funding_account_id.as_deref(),
@@ -550,7 +550,7 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
     let account_currency = account_currency_code(conn, &input.account_id)?;
     // 出资账户准入（ADR-0096）：convert 不在出资闭集内，携带即被既有「不能携带
     // 出资账户」拒绝——「无现金保障」由此天然成立，不另设第二份判定。
-    crate::transaction::funding::validate_funding_account(
+    crate::transaction::write::funding::validate_funding_account(
         conn,
         TransactionKind::Convert,
         input.funding_account_id.as_deref(),
@@ -714,7 +714,7 @@ fn prepare_split(
     // 出资账户准入（ADR-0096）：split 不在出资闭集内，携带即被既有
     // 「不能携带出资账户」拒绝——「无现金腿」由此天然成立，不另设第二份判定。
     let account_currency = account_currency_code(conn, &input.account_id)?;
-    crate::transaction::funding::validate_funding_account(
+    crate::transaction::write::funding::validate_funding_account(
         conn,
         TransactionKind::Split,
         input.funding_account_id.as_deref(),
@@ -853,7 +853,7 @@ fn prepare_dividend(conn: &Connection, input: &TransactionInput) -> Result<Divid
     }
     // 出资账户准入（ADR-0096）：dividend 不在出资闭集内，携带即被既有「不能携带
     // 出资账户」拒绝——到账账户就是现金腿端点，不另设第二份判定。
-    crate::transaction::funding::validate_funding_account(
+    crate::transaction::write::funding::validate_funding_account(
         conn,
         TransactionKind::Dividend,
         input.funding_account_id.as_deref(),
@@ -1337,7 +1337,7 @@ pub(crate) fn replay_plan(
                     "分红不跨账户，不能携带转入账户",
                 ));
             }
-            crate::transaction::funding::validate_funding_account(
+            crate::transaction::write::funding::validate_funding_account(
                 conn,
                 TransactionKind::Dividend,
                 row.funding_account_id.as_deref(),
@@ -1450,7 +1450,7 @@ pub(crate) fn replay_convert_plan(
         ));
     }
     // 出资账户准入（与本地录入共用同一条接缝）：convert 不在出资闭集内，携带即拒绝。
-    crate::transaction::funding::validate_funding_account(
+    crate::transaction::write::funding::validate_funding_account(
         conn,
         TransactionKind::Convert,
         row.funding_account_id.as_deref(),
@@ -1551,7 +1551,7 @@ pub(crate) fn replay_split_plan(
         ));
     }
     // 出资账户准入（与本地录入共用同一条接缝）：split 不在出资闭集内，携带即拒绝。
-    crate::transaction::funding::validate_funding_account(
+    crate::transaction::write::funding::validate_funding_account(
         conn,
         TransactionKind::Split,
         row.funding_account_id.as_deref(),

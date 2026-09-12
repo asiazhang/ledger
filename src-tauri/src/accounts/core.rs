@@ -36,8 +36,8 @@ pub fn list_accounts(conn: &Connection) -> Result<Vec<Account>> {
 /// 出资准入的现金类账户类型闭集（ADR-0096 决策 6）：cash / bank / credit /
 /// ewallet / other。投资账户与 receivable / debt 排除——非自有现金与再挂一层
 /// 的出资无记账语义。类型词汇的单一来源是本域 [`AccountType`]，闭集映射随
-/// #1092 接缝反转住本域实现侧（原 `transaction::funding` 的 FUNDING_ALLOWED_TYPES
-/// 迁入，准入判定本身仍归核心交易域）。
+/// #1092 接缝反转住本域实现侧（原交易域 funding 模块的视图映射迁入，准入判定
+/// 本身仍归核心交易域）。
 const FUNDING_CASH_LIKE_TYPES: [AccountType; 5] = [
     AccountType::Cash,
     AccountType::Bank,
@@ -46,13 +46,13 @@ const FUNDING_CASH_LIKE_TYPES: [AccountType; 5] = [
     AccountType::Other,
 ];
 
-/// 出资账户视图实现（核心交易域 `transaction::funding` 注册点，issue #1092）：
+/// 出资账户视图实现（核心交易域 `transaction::seams::funding` 注册点，issue #1092）：
 /// 读在用账户的类型/币种并投影为准入判读所需的最小视图；不存在或已软删除返回
 /// `None`（缺行的码化 NotFound 归交易域准入语义，与商户/保单同款）。
 fn funding_account_view(
     conn: &Connection,
     id: &str,
-) -> Result<Option<crate::transaction::funding::FundingAccountView>> {
+) -> Result<Option<crate::transaction::seams::funding::FundingAccountView>> {
     let (account_type, currency_code): (AccountType, String) = match conn.query_row(
         "SELECT type, currency_code FROM accounts WHERE id=?1 AND is_deleted=0",
         rusqlite::params![id],
@@ -62,21 +62,23 @@ fn funding_account_view(
         Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
         Err(e) => return Err(e.into()),
     };
-    Ok(Some(crate::transaction::funding::FundingAccountView {
-        class: if FUNDING_CASH_LIKE_TYPES.contains(&account_type) {
-            crate::transaction::funding::FundingAccountClass::CashLike
-        } else {
-            crate::transaction::funding::FundingAccountClass::Ineligible
+    Ok(Some(
+        crate::transaction::seams::funding::FundingAccountView {
+            class: if FUNDING_CASH_LIKE_TYPES.contains(&account_type) {
+                crate::transaction::seams::funding::FundingAccountClass::CashLike
+            } else {
+                crate::transaction::seams::funding::FundingAccountClass::Ineligible
+            },
+            type_display: account_type.to_string(),
+            currency_code,
         },
-        type_display: account_type.to_string(),
-        currency_code,
-    }))
+    ))
 }
 
 /// 注册出资账户视图实现（幂等：进程级一次，重复注册保留首次）。调用点在壳层
 /// 启动接线与测试建库单点，与生产同形；业务代码不直接调用。
 pub fn install_funding_account_hook() {
-    crate::transaction::funding::register_funding_account_lookup_hook(funding_account_view);
+    crate::transaction::seams::funding::register_funding_account_lookup_hook(funding_account_view);
 }
 
 /// AI 侧完整账户列表：不过滤 `is_hidden`，返回含 `is_hidden` 字段的完整列表。

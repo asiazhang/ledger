@@ -8,7 +8,7 @@ use super::super::{OpOutcome, ingest_ops, parked_ops, read_ops};
 use super::common::{make_expense, read_transaction, wire_in, wire_out};
 use crate::accounts::delete_account;
 use crate::test_support::{self, seed_account};
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 
 /// 旧端收到新命令（op 产生时 schema 版本超前本端）：挂起并提示升级，不静默
 /// 丢弃，批内其余 op 不受阻。
@@ -19,7 +19,7 @@ fn schema_ahead_op_parks_with_upgrade_hint() {
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
-    let created = behavior::create(&conn_a, make_expense("acc-1", 10000, "午饭"))
+    let created = protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭"))
         .unwrap()
         .id;
     let mut op = read_ops(&conn_a).unwrap().remove(0);
@@ -27,7 +27,7 @@ fn schema_ahead_op_parks_with_upgrade_hint() {
     let ahead = serde_json::to_string(&op).unwrap();
 
     // 偏斜 op 与正常 op 同批：偏斜者挂起，正常者照常落地。
-    behavior::create(&conn_a, make_expense("acc-1", 500, "咖啡")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 500, "咖啡")).unwrap();
     let good_op = wire_out(&conn_a)[1].clone();
     let reports = ingest_ops(&conn_b, &[good_op, ahead]).unwrap();
     assert_eq!(reports.len(), 2);
@@ -123,7 +123,7 @@ fn replay_onto_deleted_account_parks_and_never_resurrects() {
     seed_account(&conn_b, "acc-x", "将删账户", "cash", "CNY", 0);
 
     // A 先在 acc-x 上记一笔并同步（两端一致、账户存活）。
-    let id = behavior::create(&conn_a, make_expense("acc-x", 10000, "午饭"))
+    let id = protocol::create(&conn_a, make_expense("acc-x", 10000, "午饭"))
         .unwrap()
         .id;
     wire_in(&conn_b, &wire_out(&conn_a));
@@ -132,8 +132,8 @@ fn replay_onto_deleted_account_parks_and_never_resurrects() {
     delete_account(&conn_b, "acc-x").unwrap();
 
     // A 继续在 acc-x 上改、记：重放到 B 全部命中账户存活守卫。
-    behavior::update(&conn_a, &id, make_expense("acc-x", 10000, "午饭（改）")).unwrap();
-    behavior::create(&conn_a, make_expense("acc-x", 500, "咖啡")).unwrap();
+    protocol::update(&conn_a, &id, make_expense("acc-x", 10000, "午饭（改）")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-x", 500, "咖啡")).unwrap();
     let reports = wire_in(&conn_b, &wire_out(&conn_a));
     assert_eq!(reports[0].outcome, OpOutcome::Skipped, "已应用 op 幂等跳过");
     for report in &reports[1..] {

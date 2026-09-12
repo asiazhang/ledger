@@ -14,7 +14,7 @@ use crate::test_support::{
 };
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 
 fn buy_input(account_id: &str, instrument_id: &str, funding: Option<&str>) -> TransactionInput {
     TransactionInput {
@@ -87,7 +87,7 @@ fn funding_buy_sell_create_replay_converges_balances() {
     let (conn_a, conn_b) = setup_both_ends();
 
     // A 端：出资买入（buy 155 分记出资账户）→ 同步 → 卖出（sell 60 分记出资账户）→ 同步。
-    let buy_id = behavior::create(&conn_a, buy_input("acc-inv", "inst-1", Some("acc-fund-a")))
+    let buy_id = protocol::create(&conn_a, buy_input("acc-inv", "inst-1", Some("acc-fund-a")))
         .unwrap()
         .id;
     apply_ops(&conn_b, &read_ops(&conn_a).unwrap()).unwrap();
@@ -100,7 +100,7 @@ fn funding_buy_sell_create_replay_converges_balances() {
     assert_eq!(cached_balance(&conn_b, "acc-fund-a").unwrap(), -155);
     assert_eq!(cached_balance(&conn_b, "acc-inv").unwrap(), 0);
 
-    let sell_id = behavior::create(&conn_a, sell_input("acc-inv", "inst-1", Some("acc-fund-a")))
+    let sell_id = protocol::create(&conn_a, sell_input("acc-inv", "inst-1", Some("acc-fund-a")))
         .unwrap()
         .id;
     apply_ops(&conn_b, &read_ops(&conn_a).unwrap()).unwrap();
@@ -123,13 +123,13 @@ fn funding_buy_sell_create_replay_converges_balances() {
 #[test]
 fn funding_update_replay_recalc_three_ends() {
     let (conn_a, conn_b) = setup_both_ends();
-    let id = behavior::create(&conn_a, buy_input("acc-inv", "inst-1", Some("acc-fund-a")))
+    let id = protocol::create(&conn_a, buy_input("acc-inv", "inst-1", Some("acc-fund-a")))
         .unwrap()
         .id;
     apply_ops(&conn_b, &read_ops(&conn_a).unwrap()).unwrap();
 
     // 修改：出资账户 a → b（三端受影响账户重算：a 回补、b 扣减、投资账户不动）。
-    behavior::update(
+    protocol::update(
         &conn_a,
         &id,
         buy_input("acc-inv", "inst-1", Some("acc-fund-b")),
@@ -145,7 +145,7 @@ fn funding_update_replay_recalc_three_ends() {
     assert_eq!(cached_balance(&conn_b, "acc-inv").unwrap(), 0);
 
     // 再修改：去掉出资账户（回到「现金腿记投资账户」的既有语义）。
-    behavior::update(&conn_a, &id, buy_input("acc-inv", "inst-1", None)).unwrap();
+    protocol::update(&conn_a, &id, buy_input("acc-inv", "inst-1", None)).unwrap();
     apply_ops(&conn_b, &read_ops(&conn_a).unwrap()).unwrap();
 
     let expected = read_transaction(&conn_a, &id).unwrap();
@@ -163,14 +163,14 @@ fn funding_update_replay_recalc_three_ends() {
 #[test]
 fn funding_delete_replay_restores_funding_balance() {
     let (conn_a, conn_b) = setup_both_ends();
-    let id = behavior::create(&conn_a, buy_input("acc-inv", "inst-1", Some("acc-fund-a")))
+    let id = protocol::create(&conn_a, buy_input("acc-inv", "inst-1", Some("acc-fund-a")))
         .unwrap()
         .id;
     apply_ops(&conn_b, &read_ops(&conn_a).unwrap()).unwrap();
     assert_eq!(cached_balance(&conn_b, "acc-fund-a").unwrap(), -155);
 
     // 删除重放：出资账户余额回补，两端一致（与本地删除同一协议）。
-    behavior::delete(&conn_a, &id).unwrap();
+    protocol::delete(&conn_a, &id).unwrap();
     apply_ops(&conn_b, &read_ops(&conn_a).unwrap()).unwrap();
 
     let expected = read_transaction(&conn_a, &id).unwrap();
@@ -183,7 +183,7 @@ fn funding_delete_replay_restores_funding_balance() {
 #[test]
 fn legacy_op_without_funding_field_replays_with_old_semantics() {
     let (conn_a, conn_b) = setup_both_ends();
-    let id = behavior::create(&conn_a, buy_input("acc-inv", "inst-1", Some("acc-fund-a")))
+    let id = protocol::create(&conn_a, buy_input("acc-inv", "inst-1", Some("acc-fund-a")))
         .unwrap()
         .id;
 

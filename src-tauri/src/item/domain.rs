@@ -575,7 +575,7 @@ pub fn item_daily_total(conn: &Connection) -> Result<ItemDailyTotal> {
 // 交易×物品接缝实现（spec #1086 / issue #1092）：来源列③物品反查
 // ---------------------------------------------------------------------------
 
-/// 来源列③物品反查实现（核心交易域 `transaction::read` 注册点，#1092）：委托
+/// 来源列③物品反查实现（核心交易域 `transaction::seams::source` 注册点，#1092）：委托
 /// [`source_display_by_transaction_ids`] 并映射为核心交易域来源模型（kind = Item、
 /// entity = 物品 id、展示名 = 物品名、已处置 → Disposed 标注——口径零变化，
 /// spec #704）；溯源指针为空的行跳过（与迁移前调用方 filter_map 同口径）。
@@ -605,5 +605,5 @@ fn item_source_resolver(
 /// 注册物品反查实现（幂等：进程级一次，重复注册保留首次）。调用点在壳层启动
 /// 接线与测试建库单点，与生产同形；业务代码不直接调用。
 pub fn install_source_hook() {
-    crate::transaction::read::register_item_source_resolver(item_source_resolver);
+    crate::transaction::seams::source::register_item_source_resolver(item_source_resolver);
 }

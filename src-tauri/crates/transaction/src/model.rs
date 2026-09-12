@@ -1,16 +1,16 @@
-//! 核心交易域集中模型（#423 随域归位）：交易实体、入参、归一化结果、批量导入、
-//! 列表/搜索分页。
+//! 域集中模型（共享语义区，issue #423 随域归位）：交易实体、入参、归一化结果、
+//! 列表/搜索分页类型。
 //!
-//! 自全局模型目录迁入本域（#417 归属原则：交易类型归核心交易域）；全部类型经
-//! `transaction` 域路径逐类型再导出，消费方经域路径显式 import，禁止 glob。
+//! 职责：域全量类型的单一定义点。不变量：全部类型经域路径逐类型再导出（禁止 glob，
+//! ADR-0059 决策 6），消费方显式 import。ADR 指针：ADR-0059 / ADR-0113 决策 3.2
+//! （到 `write::writer::NormalizedRow` 的转换 impl 归写路径，不在本文件）。陷阱：
+//! `Transaction.source` / `Transaction.convert` 非库列，由读路径 `attach_*` 填充。
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::amount::TransactionKind;
-use super::writer;
+use crate::amount::TransactionKind;
 use ledger_infra::db::query::FromRow;
-use ledger_infra::error::{AppError, Result};
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Transaction {
@@ -317,58 +317,6 @@ pub struct NormalizedTransaction {
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
-}
-
-/// `NormalizedTransaction` → `writer::NormalizedRow`（交易行写入唯一权威，issue #70）。
-///
-/// 转换随模型定义，消费方（通用 kind 归一化后的行、buy/sell 投资层的归一化行）
-/// 直接产出 [`writer::NormalizedRow`] 交给 [`writer::insert_row`]/[`writer::update_row`] 落库；
-/// investment 不再反向 import transactions 模块的行更新函数（双向依赖斩断）。
-/// kind 已为 [`TransactionKind`] 枚举直赋（issue #74），转换不可失败；保留 `Result` 签名
-/// 以维持消费方 `?` 传播的既有形状（无多余分支）。
-impl TryFrom<&NormalizedTransaction> for writer::NormalizedRow {
-    type Error = AppError;
-
-    fn try_from(norm: &NormalizedTransaction) -> Result<Self> {
-        Ok(writer::NormalizedRow {
-            kind: norm.kind,
-            amount_cents: norm.amount_cents,
-            currency_code: norm.currency_code.clone(),
-            amount_native_cents: norm.amount_native_cents,
-            account_id: norm.account_id.clone(),
-            to_account_id: norm.to_account_id.clone(),
-            funding_account_id: norm.funding_account_id.clone(),
-            category_id: norm.category_id.clone(),
-            merchant_id: norm.merchant_id.clone(),
-            policy_id: norm.policy_id.clone(),
-            refund_of_transaction_id: norm.refund_of_transaction_id.clone(),
-            note: norm.note.clone(),
-            date: norm.date.clone(),
-        })
-    }
-}
-
-/// `writer::NormalizedRow` → `NormalizedTransaction`（issue #855）：同步命令
-/// 载荷构造的反向桥——本地编排计划（行为层 `Plan` 的归一化行，通用 kind）
-/// 组装 op 载荷时使用；纯字段拷贝，与正向 [`TryFrom`] 同源互逆。
-impl From<&writer::NormalizedRow> for NormalizedTransaction {
-    fn from(row: &writer::NormalizedRow) -> Self {
-        NormalizedTransaction {
-            kind: row.kind,
-            amount_cents: row.amount_cents,
-            currency_code: row.currency_code.clone(),
-            amount_native_cents: row.amount_native_cents,
-            account_id: row.account_id.clone(),
-            to_account_id: row.to_account_id.clone(),
-            funding_account_id: row.funding_account_id.clone(),
-            category_id: row.category_id.clone(),
-            merchant_id: row.merchant_id.clone(),
-            policy_id: row.policy_id.clone(),
-            refund_of_transaction_id: row.refund_of_transaction_id.clone(),
-            note: row.note.clone(),
-            date: row.date.clone(),
-        }
-    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]

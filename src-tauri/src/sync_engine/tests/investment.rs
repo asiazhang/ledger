@@ -12,7 +12,7 @@ use crate::investment::{
 use crate::test_support::{self, seed_investment_setup};
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 
 fn buy_input(
     account_id: &str,
@@ -70,7 +70,7 @@ fn buy_sell_replay_converge_holdings_and_pnl() {
     seed_investment_setup(&conn_b, "acc-inv", "inst-1");
 
     // A 端：买入 100 份 @15.00（fee 5 分）→ 卖出 40 份；每步 wire 到 B 端。
-    let buy_id = behavior::create(&conn_a, buy_input("acc-inv", "inst-1", 100.0, 1500, 5))
+    let buy_id = protocol::create(&conn_a, buy_input("acc-inv", "inst-1", 100.0, 1500, 5))
         .unwrap()
         .id;
     wire_in(&conn_b, &wire_out(&conn_a));
@@ -82,7 +82,7 @@ fn buy_sell_replay_converge_holdings_and_pnl() {
     );
     assert_eq!(lot_a, lot_b, "买入重放后批次一致");
 
-    let sell_id = behavior::create(&conn_a, sell_input("acc-inv", "inst-1", 40.0, 1500, 5))
+    let sell_id = protocol::create(&conn_a, sell_input("acc-inv", "inst-1", 40.0, 1500, 5))
         .unwrap()
         .id;
     wire_in(&conn_b, &wire_out(&conn_a));
@@ -126,7 +126,7 @@ fn fund_buy_replay_keeps_amount_authority() {
     let mut input = buy_input("acc-inv", "fund-1", 9500.0, 0, 0);
     input.amount_cents = 100_000;
     input.price_cents = None;
-    let buy_id = behavior::create(&conn_a, input).unwrap().id;
+    let buy_id = protocol::create(&conn_a, input).unwrap().id;
     wire_in(&conn_b, &wire_out(&conn_a));
 
     let (lot_a, lot_b) = (read_lot(&conn_a, &buy_id), read_lot(&conn_b, &buy_id));
@@ -147,11 +147,11 @@ fn buy_delete_replay_cleans_lot() {
     seed_investment_setup(&conn_a, "acc-inv", "inst-1");
     seed_investment_setup(&conn_b, "acc-inv", "inst-1");
 
-    let buy_id = behavior::create(&conn_a, buy_input("acc-inv", "inst-1", 100.0, 1500, 5))
+    let buy_id = protocol::create(&conn_a, buy_input("acc-inv", "inst-1", 100.0, 1500, 5))
         .unwrap()
         .id;
     wire_in(&conn_b, &wire_out(&conn_a));
-    behavior::delete(&conn_a, &buy_id).unwrap();
+    protocol::delete(&conn_a, &buy_id).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
 
     let deleted = |conn: &rusqlite::Connection| {
@@ -184,10 +184,10 @@ fn sell_before_buy_parks_then_redelivery_self_heals() {
     seed_investment_setup(&conn_a, "acc-inv", "inst-1");
     seed_investment_setup(&conn_b, "acc-inv", "inst-1");
 
-    let buy_id = behavior::create(&conn_a, buy_input("acc-inv", "inst-1", 100.0, 1500, 5))
+    let buy_id = protocol::create(&conn_a, buy_input("acc-inv", "inst-1", 100.0, 1500, 5))
         .unwrap()
         .id;
-    let sell_id = behavior::create(&conn_a, sell_input("acc-inv", "inst-1", 40.0, 1500, 5))
+    let sell_id = protocol::create(&conn_a, sell_input("acc-inv", "inst-1", 40.0, 1500, 5))
         .unwrap()
         .id;
 
@@ -243,7 +243,7 @@ fn buy_replay_with_missing_instrument_parks() {
     // B 端只有账户，标的字典尚未同步（外键依赖缺失场景）。
     test_support::seed_account(&conn_b, "acc-inv", "美股", "investment", "USD", 0);
 
-    behavior::create(&conn_a, buy_input("acc-inv", "inst-1", 100.0, 1500, 5)).unwrap();
+    protocol::create(&conn_a, buy_input("acc-inv", "inst-1", 100.0, 1500, 5)).unwrap();
     let reports = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(
         matches!(&reports[0].outcome, OpOutcome::Parked { code, .. } if code == "trade.buy-instrument-not-found"),

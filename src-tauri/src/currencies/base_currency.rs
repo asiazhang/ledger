@@ -76,9 +76,9 @@ pub(crate) fn replay_set_base_currency(conn: &Connection, code: &str) -> Result<
 // 交易×币种接缝实现（spec #1086 / issue #1092）
 // ---------------------------------------------------------------------------
 
-/// 注册本位币基准读取实现（核心交易域 `transaction::base_currency_seam` 注册点，
+/// 注册本位币基准读取实现（核心交易域 `transaction::amount::base_currency` 注册点，
 /// #1092）：把本域权威读单点 [`current_base_currency`] 装入，壳层启动接线，
 /// 业务代码不直接调用。
 pub fn install_base_currency_hook() {
-    crate::transaction::base_currency_seam::register_base_currency_reader(current_base_currency);
+    crate::transaction::amount::base_currency::register_base_currency_reader(current_base_currency);
 }

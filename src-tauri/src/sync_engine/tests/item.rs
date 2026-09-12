@@ -10,7 +10,7 @@ use crate::test_support;
 use crate::test_support::seed_account;
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 
 fn expense_input(account_id: &str) -> TransactionInput {
     TransactionInput {
@@ -60,7 +60,7 @@ fn item_lifecycle_ops_replay_and_converge() {
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
     // 购买交易（A 端经行为层创建，产交易 op）→ 溯源创建 → 修改 → 处置 → 软删。
-    let tx_id = behavior::create(&conn_a, expense_input("acc-1"))
+    let tx_id = protocol::create(&conn_a, expense_input("acc-1"))
         .unwrap()
         .id;
     let item_id = create_item(&conn_a, item_input(&tx_id, "主力机"), &mut || {}).unwrap();
@@ -140,7 +140,7 @@ fn item_create_replay_does_not_reconvert() {
     test_support::seed_exchange_rate(&conn_a, "EUR", "CNY", 8.0);
     let mut input = expense_input("acc-1");
     input.currency_code = "EUR".into();
-    let tx_id = behavior::create(&conn_a, input).unwrap().id;
+    let tx_id = protocol::create(&conn_a, input).unwrap().id;
     let item_id = create_item(
         &conn_a,
         ItemInput {

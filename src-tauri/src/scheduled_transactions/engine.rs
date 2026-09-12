@@ -10,7 +10,7 @@ use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::transaction::NormalizedTransaction;
 use crate::transaction::amount::TransactionKind;
-use crate::transaction::writer;
+use crate::transaction::write::writer;
 use ledger_sync_protocol::device::device_id;
 
 use super::models::*;

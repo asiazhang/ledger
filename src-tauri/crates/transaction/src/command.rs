@@ -1,35 +1,19 @@
-//! 交易同步命令（issue #855 / ADR-0091）：op 载荷的交易域形态与产出单点。
+//! 交易同步命令（共享语义区，issue #855 / ADR-0091）：op 载荷的交易域形态契约。
 //!
-//! - **载荷形态**（[`TransactionCommand`]）：创建/修改携带实体 id + 归一化行
-//!   （`NormalizedTransaction`，含源端折算结果 `amount_native_cents`——折算在
-//!   记账端一次性完成并随 op 携带，重放不依赖本地汇率表，ADR-0091 决策 3）；
-//!   删除只需实体 id（重放端按行现状执行同一编排协议）。折算的语义输入
-//!   （raw 金额、币种）即行内字段随 op 在场，汇率输入不显式携带——确定性由
-//!   结果携带保证；若后续审计需要精确汇率，追加可选字段即可（只增不改）。
-//!   投资 kind 的语义字段随 [`InvestmentCommandFields`] 携带（buy/sell 重放执行
-//!   见 `behavior::replay_command`）；转换 kind 的语义字段与源端结转成本随
-//!   [`ConvertCommandFields`] 携带（issue #980，重放端本地重建 FIFO 快照）。
-//!   份额调整 kind 的语义字段与源端**最终持仓 / 批次总成本**两个比对锚点随
-//!   [`SplitCommandFields`] 携带（issue #1053，重放端本地重建批次重述并比对，
-//!   不一致显式挂起；逐批次重述结果不随载荷携带，ADR-0106 决策 9）。
-//!   **只增不改**：字段演进只追加可选成员，旧日志可在新 schema 重放。
-//! - **产出单点**（[`record_local`]）：行为编排三入口（create / update /
-//!   delete）成功后各自调用一次，op 产出不散落各写路径——IPC/HTTP/批量导入/
-//!   余额调整等写路径全部经行为编排入口收敛，op 随入口事务提交/回滚。
-//!
-//! 重放执行（`replay_command`）与本地写入共用同一编排协议（写入协议，Local /
-//! Replay 两形态，ADR-0105），见 [`super::behavior`]。
+//! 职责：定义同步命令信封载荷（[`TransactionCommand`] 及 [`InvestmentCommandFields`] /
+//! [`ConvertCommandFields`] / [`SplitCommandFields`]）——创建/修改携带实体 id + 归一化
+//! 行，删除只需 id。不变量：**只增不改**，字段演进只追加可选成员，旧日志可在新 schema
+//! 重放（ADR-0091 决策 3）。ADR 指针：ADR-0091 / ADR-0099 决策 6 / ADR-0106 决策 9。
+//! 陷阱：op 产出单点在写路径 `crate::write::op`，载荷契约不落库；重放执行见
+//! `crate::write::protocol`（Local / Replay 同协议，ADR-0105）。
 
 use std::borrow::Cow;
 
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use ledger_infra::error::Result;
 use ledger_sync_protocol::command::SyncCommand;
-use ledger_sync_protocol::op::record_local as record_op;
 
-use super::model::NormalizedTransaction;
+use crate::model::NormalizedTransaction;
 
 /// 交易同步命令（serde：`action` 判别；作为 DomainCommand 信封的 payload 内嵌）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -162,13 +146,4 @@ pub struct InvestmentCommandFields {
     pub fee_cents: i64,
     /// 买入每份成本（万分之一元，含费用摊薄单次舍入，ADR-0038）；卖出为 None。
     pub cost_per_unit_cents: Option<i64>,
-}
-
-/// op 产出接缝（交易域集中单点）：本地交易写成功后追加一条 op 进本机 OpLog。
-///
-/// 仅行为编排入口（`transaction::behavior` 的 create / update / delete 协议）
-/// 调用；随编排事务提交/回滚，写失败不残留 op。
-pub(crate) fn record_local(conn: &Connection, command: TransactionCommand) -> Result<()> {
-    record_op(conn, &command)?;
-    Ok(())
 }

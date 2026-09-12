@@ -1,8 +1,8 @@
 //! 交易域接缝实现（spec #1086 / issue #1092）：投资 kind 写路径装配/副作用与读
 //! 路径投影的实现注册面。
 //!
-//! 注册点住核心交易域（`transaction::investment_seam`，计划契约
-//! [`InvestmentPlan`](crate::transaction::investment_seam::InvestmentPlan) 与命令
+//! 注册点住核心交易域（`transaction::seams::investment`，计划契约
+//! [`InvestmentPlan`](crate::transaction::seams::investment::InvestmentPlan) 与命令
 //! 字段类型均为其自有）；本模块把投资域自有计划（[`Plan`]）适配进契约、把四个
 //! 写路径挂载点（Local 装配 / Replay 装配 / 修改回退 / 删除释放）与两个读路径
 //! 投影（来源列④标的反查、转换两腿扩展）经 `install_transaction_hooks` 一次性
@@ -25,11 +25,11 @@ use crate::transaction::amount::TransactionKind;
 use crate::transaction::command::{
     ConvertCommandFields, InvestmentCommandFields, SplitCommandFields,
 };
-use crate::transaction::investment_seam::{
+use crate::transaction::seams::investment::{
     ConvertFieldsResolver, InstrumentSourceResolver, PlanCommandParts, PrepareHook,
     ReleaseForDeleteHook, ReplayAssemblyHook, RevertHook,
 };
-use crate::transaction::investment_seam::{
+use crate::transaction::seams::investment::{
     register_convert_fields_resolver, register_instrument_source_resolver, register_prepare_hook,
     register_release_for_delete_hook, register_replay_hook, register_revert_hook,
 };
@@ -42,7 +42,7 @@ use crate::transaction::{
 // 计划契约适配（InvestmentPlan for Plan）
 // ---------------------------------------------------------------------------
 
-impl crate::transaction::investment_seam::InvestmentPlan for Plan {
+impl crate::transaction::seams::investment::InvestmentPlan for Plan {
     fn normalized(&self) -> &NormalizedTransaction {
         Plan::normalized(self)
     }
@@ -126,7 +126,7 @@ fn prepare_hook(
     kind: TransactionKind,
     input: &TransactionInput,
     existing_id: Option<&str>,
-) -> Result<Box<dyn crate::transaction::investment_seam::InvestmentPlan>> {
+) -> Result<Box<dyn crate::transaction::seams::investment::InvestmentPlan>> {
     Ok(Box::new(trade::prepare(conn, kind, input, existing_id)?))
 }
 
@@ -175,7 +175,7 @@ fn replay_hook(
     investment: Option<&InvestmentCommandFields>,
     convert: Option<&ConvertCommandFields>,
     split: Option<&SplitCommandFields>,
-) -> Result<Box<dyn crate::transaction::investment_seam::InvestmentPlan>> {
+) -> Result<Box<dyn crate::transaction::seams::investment::InvestmentPlan>> {
     match row.kind {
         TransactionKind::Buy | TransactionKind::Sell | TransactionKind::Dividend => {
             let fields = investment_fields(investment)?;

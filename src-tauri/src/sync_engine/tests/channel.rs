@@ -18,7 +18,7 @@ use crate::sync_engine::transport::webdav::{WebDavConfig, WebDavTransport};
 use crate::sync_engine::{OpOutcome, apply_ops, bootstrap_from_checkpoint, read_ops};
 use crate::test_support::spawn_webdav_stub;
 use crate::test_support::{self, seed_account};
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 
 /// 测试用低 KDF 迭代选项（信封格式语义与派生成本无关；生产默认值已在
 /// envelope 套件钉住）。
@@ -47,8 +47,8 @@ fn device_id_of(conn: &Connection) -> String {
 fn round_publishes_own_ops_and_manifest_records_segments() {
     let conn = test_support::open();
     seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
-    behavior::create(&conn, make_expense("acc-1", 10000, "午饭")).unwrap();
-    behavior::create(&conn, make_expense("acc-1", 500, "咖啡")).unwrap();
+    protocol::create(&conn, make_expense("acc-1", 10000, "午饭")).unwrap();
+    protocol::create(&conn, make_expense("acc-1", 500, "咖啡")).unwrap();
 
     let mem = MemoryTransport::new();
     let layout = layout();
@@ -88,8 +88,8 @@ fn round_pull_applies_foreign_ops_and_is_incremental() {
     let conn_b = test_support::open();
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
-    let created = behavior::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
-    behavior::create(&conn_a, make_expense("acc-1", 500, "咖啡")).unwrap();
+    let created = protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 500, "咖啡")).unwrap();
 
     let mem = MemoryTransport::new();
     let layout = layout();
@@ -110,7 +110,7 @@ fn round_pull_applies_foreign_ops_and_is_incremental() {
     assert_eq!(report.applied, 0);
 
     // 增量：A 新增一笔 → 新段；B 只拉新段。
-    behavior::create(&conn_a, make_expense("acc-1", 700, "打车")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 700, "打车")).unwrap();
     run_round(&conn_a, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
     let report = run_round(&conn_b, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
     assert_eq!(report.downloaded_segments, 1);
@@ -128,8 +128,8 @@ fn two_way_exchange_converges_over_channel() {
     let conn_b = test_support::open();
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
-    let a_txn = behavior::create(&conn_a, make_expense("acc-1", 10000, "A 记的账")).unwrap();
-    let b_txn = behavior::create(&conn_b, make_expense("acc-1", 2000, "B 记的账")).unwrap();
+    let a_txn = protocol::create(&conn_a, make_expense("acc-1", 10000, "A 记的账")).unwrap();
+    let b_txn = protocol::create(&conn_b, make_expense("acc-1", 2000, "B 记的账")).unwrap();
 
     let mem = MemoryTransport::new();
     let mode = EnvelopeMode::Plaintext;
@@ -168,10 +168,10 @@ fn concurrent_offline_writes_all_survive_exchange() {
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
     // 离线：两端各写两笔（互相不可见）。
-    behavior::create(&conn_a, make_expense("acc-1", 100, "A1")).unwrap();
-    behavior::create(&conn_a, make_expense("acc-1", 200, "A2")).unwrap();
-    behavior::create(&conn_b, make_expense("acc-1", 300, "B1")).unwrap();
-    behavior::create(&conn_b, make_expense("acc-1", 400, "B2")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 100, "A1")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 200, "A2")).unwrap();
+    protocol::create(&conn_b, make_expense("acc-1", 300, "B1")).unwrap();
+    protocol::create(&conn_b, make_expense("acc-1", 400, "B2")).unwrap();
 
     let mem = MemoryTransport::new();
     let mode = EnvelopeMode::Plaintext;
@@ -196,7 +196,7 @@ fn segments_split_by_capacity_and_all_apply() {
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
     for (cents, note) in [(100, "一"), (200, "二"), (300, "三")] {
-        behavior::create(&conn_a, make_expense("acc-1", cents, note)).unwrap();
+        protocol::create(&conn_a, make_expense("acc-1", cents, note)).unwrap();
     }
 
     let mem = MemoryTransport::new();
@@ -233,7 +233,7 @@ fn tampered_segment_is_detected_by_manifest_hash() {
     let conn_b = test_support::open();
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
-    behavior::create(&conn_a, make_expense("acc-1", 100, "一")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 100, "一")).unwrap();
 
     let mem = MemoryTransport::new();
     let layout = layout();
@@ -256,7 +256,7 @@ fn missing_segment_file_fails_loud() {
     let conn_b = test_support::open();
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
-    behavior::create(&conn_a, make_expense("acc-1", 100, "一")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 100, "一")).unwrap();
 
     let mem = MemoryTransport::new();
     let layout = layout();
@@ -277,7 +277,7 @@ fn corrupt_manifest_fails_loud() {
     let conn_b = test_support::open();
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
-    behavior::create(&conn_a, make_expense("acc-1", 100, "一")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 100, "一")).unwrap();
 
     let mem = MemoryTransport::new();
     let layout = layout();
@@ -300,7 +300,7 @@ fn encrypted_channel_exchanges_only_ciphertext() {
     let conn_b = test_support::open();
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
-    let created = behavior::create(&conn_a, make_expense("acc-1", 10000, "加密世界的账")).unwrap();
+    let created = protocol::create(&conn_a, make_expense("acc-1", 10000, "加密世界的账")).unwrap();
 
     let mem = MemoryTransport::new();
     let layout = layout();
@@ -354,8 +354,8 @@ fn encrypted_channel_exchanges_only_ciphertext() {
 fn checkpoint_publish_bootstrap_and_increment_over_channel() {
     let conn_a = test_support::open();
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
-    let first = behavior::create(&conn_a, make_expense("acc-1", 10000, "快照前的账")).unwrap();
-    behavior::create(&conn_a, make_expense("acc-1", 500, "快照前的第二笔")).unwrap();
+    let first = protocol::create(&conn_a, make_expense("acc-1", 10000, "快照前的账")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 500, "快照前的第二笔")).unwrap();
 
     let mem = MemoryTransport::new();
     let layout = layout();
@@ -384,7 +384,7 @@ fn checkpoint_publish_bootstrap_and_increment_over_channel() {
     );
 
     // A 增量一笔 → C 只重放检查点之后的 op。
-    let late = behavior::create(&conn_a, make_expense("acc-1", 700, "快照后的账")).unwrap();
+    let late = protocol::create(&conn_a, make_expense("acc-1", 700, "快照后的账")).unwrap();
     run_round(&conn_a, &mem, &layout, &mode).unwrap();
     let report = run_round(&conn_c, &mem, &layout, &mode).unwrap();
     assert_eq!(report.applied, 1, "只重放位点之后的增量");
@@ -418,8 +418,8 @@ fn two_end_file_exchange_over_local_webdav_stub() {
     let conn_b = test_support::open();
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
-    let a_txn = behavior::create(&conn_a, make_expense("acc-1", 10000, "A 桌面记的账")).unwrap();
-    let b_txn = behavior::create(&conn_b, make_expense("acc-1", 2500, "B 手机记的账")).unwrap();
+    let a_txn = protocol::create(&conn_a, make_expense("acc-1", 10000, "A 桌面记的账")).unwrap();
+    let b_txn = protocol::create(&conn_b, make_expense("acc-1", 2500, "B 手机记的账")).unwrap();
 
     let layout = layout();
     let mode = EnvelopeMode::Plaintext;
@@ -467,7 +467,7 @@ fn encrypted_exchange_over_local_webdav_stub() {
     let conn_b = test_support::open();
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
-    let created = behavior::create(&conn_a, make_expense("acc-1", 9900, "密文上云")).unwrap();
+    let created = protocol::create(&conn_a, make_expense("acc-1", 9900, "密文上云")).unwrap();
 
     let layout = layout();
     let mode = EnvelopeMode::Encrypted {
@@ -511,13 +511,13 @@ fn failed_round_leaves_local_ledger_untouched() {
 
     let conn = test_support::open();
     seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
-    let before = behavior::create(&conn, make_expense("acc-1", 100, "失败前")).unwrap();
+    let before = protocol::create(&conn, make_expense("acc-1", 100, "失败前")).unwrap();
 
     let err = run_round(&conn, &dav, &layout(), &EnvelopeMode::Plaintext).unwrap_err();
     assert!(err.is_code("sync-channel.auth-failed"));
 
     // 本地记账照常：同步失败后写入成功、既有数据原样。
-    let after = behavior::create(&conn, make_expense("acc-1", 200, "失败后")).unwrap();
+    let after = protocol::create(&conn, make_expense("acc-1", 200, "失败后")).unwrap();
     assert_eq!(
         read_transaction(&conn, &before.id).unwrap().amount_cents,
         100

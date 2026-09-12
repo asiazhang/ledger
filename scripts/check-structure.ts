@@ -201,29 +201,24 @@ export interface TransactionModuleEntry extends WhitelistEntry {
  * 商户/币种/物品/保单/账户六向的残留边已按挂载点反转收敛（#1092 前置提交），
  * 反向引用由 cargo 依赖图拒绝（生产依赖面无根包，dev-dependency 环只覆盖测试
  * 目标）。crate 根 lib.rs 是声明与再导出面（无守门靶向代码），与协议/备份 crate
- * 同款不入清单，也不参与双向全等的磁盘枚举；tests.rs / tests/ / funding/tests.rs
- * / writer/tests/ 均为测试豁免形态不入清单。
+ * 同款不入清单，也不参与双向全等的磁盘枚举；`<模块>/tests.rs` 与 `<模块>/tests/`
+ * 均为测试豁免形态不入清单。
  *
- * zone 字段按 ADR-0113 决策 2 的消费面判据登记（决策 8 目标形状的现行投影）：
+ * zone 字段按 ADR-0113 决策 2 的消费面判据登记（#1182 重排后的目标形状）：
  * 写读两径可依赖接缝与共享语义，接缝只可依赖共享语义，共享语义是底，写读两径
- * 互不依赖。funding.rs 现行同文件承载出资准入（写路径）与出资账户视图接缝，按
- * 主体登记写路径区，重排（#1182）分家后各自归位。
+ * 互不依赖。重排（#1182）已消除三处反边，故 `TRANSACTION_ZONE_ALLOWED_EDGES`
+ * 归空：本位币接缝契约随消费概念归共享语义区（`amount/base_currency`）、
+ * `model → writer` 转换 impl 搬进写路径、同步命令载荷归共享语义区（op 产出点
+ * 留写路径 `write/op.rs`）。
  */
 export const TRANSACTION_MODULES: readonly TransactionModuleEntry[] = [
-  { path: 'amount.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '金额口径权威（kind 枚举真源 + kind→度量矩阵 + 本位币折算）' },
-  { path: 'base_currency_seam.rs', zone: TRANSACTION_ZONE.SEAM, layer: '域目录', note: '交易×币种接缝：本位币基准读取注册点（issue #1092）' },
-  { path: 'batch.rs', zone: TRANSACTION_ZONE.WRITE, layer: '域目录', note: '批量编排权威（批量事务、幂等键/内容哈希去重与批次汇总日志）' },
-  { path: 'behavior.rs', zone: TRANSACTION_ZONE.WRITE, layer: '域目录', note: '行为层编排权威（create/update/delete 三入口 + 写入协议单正文 Local/Replay 两形态，ADR-0105）' },
-  { path: 'command.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '同步命令（op 载荷形态与产出单点，issue #855）；载荷契约被接缝与写路径共同消费，归共享语义，op 产出点随重排（#1182）落写路径区（ADR-0113 决策 3.3）' },
-  { path: 'funding.rs', zone: TRANSACTION_ZONE.WRITE, layer: '域目录', note: '出资账户准入（issue #935 / ADR-0096）+ 出资账户视图接缝注册点（issue #1092）；重排分家：准入留写路径、视图接缝归接缝区（ADR-0113 决策 8）' },
-  { path: 'investment_seam.rs', zone: TRANSACTION_ZONE.SEAM, layer: '域目录', note: '交易×投资接缝：投资 kind 计划契约与装配/副作用/投影注册点（issue #1092）' },
-  { path: 'merchant_seam.rs', zone: TRANSACTION_ZONE.SEAM, layer: '域目录', note: '交易×商户接缝：商户名先查/后建钩子组注册点（issue #1092）' },
-  { path: 'model.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '域集中模型（交易全量类型，#423 随域归位）' },
-  { path: 'read.rs', zone: TRANSACTION_ZONE.READ, layer: '域目录', note: '读取权威（列表过滤/排序/分页与单笔读取 + 来源列反查注册点，#1090/#1092）' },
-  { path: 'search.rs', zone: TRANSACTION_ZONE.READ, layer: '域目录', note: '搜索权威（SQL 下推 + 统一模糊搜索，ADR-0027）' },
-  { path: 'search_text.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '统一模糊搜索语义纯函数（拼音首字母/子序列/词条匹配，ADR-0027）；被投资域下拉共同消费，归共享语义（ADR-0113 决策 2 先例）' },
-  { path: 'write_effects.rs', zone: TRANSACTION_ZONE.SEAM, layer: '域目录', note: '写路径副作用接缝：余额重算注册点（issue #1090）——接缝归接缝区，重排随决策 8 迁 seams/' },
-  { path: 'writer.rs', zone: TRANSACTION_ZONE.WRITE, layer: '域目录', note: '写入权威（归一化 + 全列映射 + 审计字段，issue #55）' },
+  { path: 'amount', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '共享语义：金额口径权威（kind 枚举真源 + kind→度量矩阵 + 本位币折算）；子模块 base_currency 承载本位币基准读取接缝契约（ADR-0113 决策 3.1）' },
+  { path: 'command.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '共享语义：同步命令载荷契约（issue #855）；被接缝与写路径共同消费，op 产出点归写路径 write/op.rs（ADR-0113 决策 3.3）' },
+  { path: 'model.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '共享语义：域集中模型（交易全量类型，#423 随域归位）；到 writer::NormalizedRow 的转换 impl 归写路径（ADR-0113 决策 3.2）' },
+  { path: 'seams', zone: TRANSACTION_ZONE.SEAM, layer: '域目录', note: '跨域接缝：商户 / 投资 / 余额刷新 / 出资账户视图 / 来源列反查（计划/保单/物品）；只持契约与注册点' },
+  { path: 'search_text.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '共享语义：统一模糊搜索语义纯函数（拼音首字母/子序列/词条匹配，ADR-0027）；被投资域下拉共同消费（ADR-0113 决策 2 先例）' },
+  { path: 'write', zone: TRANSACTION_ZONE.WRITE, layer: '域目录', note: '写路径：写入协议（protocol，Local/Replay 同址 ADR-0105）/ 行写入（writer）/ 批量（batch）/ 出资准入（funding）/ op 产出（op）' },
+  { path: 'read', zone: TRANSACTION_ZONE.READ, layer: '域目录', note: '读路径：列表与单笔（mod.rs）/ 来源列与转换投影（source.rs）/ 搜索与拼音修复（search.rs）' },
 ]
 
 /** 核心交易域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-transaction.dir 同源。 */
@@ -251,24 +246,11 @@ interface TransactionZoneEdge {
 /**
  * 交易域区级认许边（ADR-0113 决策 3 / #1181）：原形状上与区级层序冲突的既有
  * 设计意图边逐条留痕于本脚本（与 INFRA_DOMAIN_ALLOWED_EDGES 同款纪律），精确到
- * 清单条目路径 + 目标模块键，附 ADR 指针；清单之外的区级反向引用一律红。两条均
- * 为 ADR-0113 决策 3 登记「重排时同步消除」的反边：重排票（#1182）消除边后须
- * 同步删除对应认许边条目（删边不删认许即假绿面）。
+ * 清单条目路径 + 目标模块键，附 ADR 指针；清单之外的区级反向引用一律红。两条
+ * 原反边已由重排票（#1182）消除（本位币接缝归共享语义区、model→writer 转换归
+ * 写路径），故本清单归空——再出现区级反向引用即红，不设认许。
  */
-export const TRANSACTION_ZONE_ALLOWED_EDGES: readonly TransactionZoneEdge[] = [
-  {
-    file: 'amount.rs',
-    target: 'base_currency_seam',
-    reason:
-      'ADR-0113 决策 3.1：本位币基准读取接缝当前被金额口径（共享语义）依赖——接缝契约随其消费概念归共享语义区，重排票（#1182）消除后删除本条',
-  },
-  {
-    file: 'model.rs',
-    target: 'writer',
-    reason:
-      'ADR-0113 决策 3.2：域模型当前持有到行写入类型的转换实现（共享语义依赖写路径）——转换实现搬进写路径，重排票（#1182）消除后删除本条',
-  },
-]
+export const TRANSACTION_ZONE_ALLOWED_EDGES: readonly TransactionZoneEdge[] = []
 
 /**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
