@@ -4,12 +4,9 @@ import {
   NCard,
   NDataTable,
   NEmpty,
-  NGi,
-  NGrid,
   NInput,
   NSpace,
   NSpin,
-  NStatistic,
   NText,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
@@ -24,11 +21,8 @@ import { pnlSemanticColor } from '@/theme/semantic-colors'
 import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
 import InstrumentLink from '@/components/InstrumentLink.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
-import {
-  formatCurrencyGroups,
-  usePortfolioOverview,
-  type PortfolioRow,
-} from '@/composables/usePortfolioOverview'
+import PortfolioStatsCards from '@/components/investments/PortfolioStatsCards.vue'
+import { usePortfolioOverview, type PortfolioRow } from '@/composables/usePortfolioOverview'
 import {
   useHoldingsFilter,
   HOLDINGS_PAGE_SIZE,
@@ -242,27 +236,15 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
             />
           </NSpace>
 
-          <!-- 合计随过滤子集更新（排序不影响）；排序只是重排行，不换口径。
-               累计收益为全账本口径（不受搜索/账户过滤收窄），见 usePortfolioOverview 注记。 -->
-          <NGrid :x-gap="16" cols="1 s:3">
-            <NGi>
-              <NStatistic :label="t('investments.holdings.totalMarketValue')" data-testid="total-market-value">
-                {{ formatCurrencyGroups(totalMarketValueGroups, reference.currencyMap) }}
-              </NStatistic>
-            </NGi>
-            <NGi>
-              <NStatistic :label="t('investments.holdings.totalUnrealizedPnl')" data-testid="total-unrealized-pnl">
-                {{ formatCurrencyGroups(totalUnrealizedPnlGroups, reference.currencyMap) }}
-              </NStatistic>
-            </NGi>
-            <!-- 累计收益卡（issue #1077）：未实现 + 已实现两腿相加、按币种分组，
-                 复用 formatCurrencyGroups 展示形态（与持仓收益合计同款）。 -->
-            <NGi>
-              <NStatistic :label="t('investments.holdings.totalCumulativePnl')" data-testid="total-cumulative-pnl">
-                {{ formatCurrencyGroups(totalCumulativePnlGroups, reference.currencyMap) }}
-              </NStatistic>
-            </NGi>
-          </NGrid>
+          <!-- 合计三卡（issue #902 / #1077）：形态与口径归 PortfolioStatsCards（首页
+               投资概览卡同一组件），合计随过滤子集更新（排序不影响）、累计收益为全账本
+               口径（不受搜索/账户过滤收窄），见 usePortfolioOverview 注记。 -->
+          <PortfolioStatsCards
+            test-id-prefix="total-"
+            :market-value-groups="totalMarketValueGroups"
+            :unrealized-pnl-groups="totalUnrealizedPnlGroups"
+            :cumulative-pnl-groups="totalCumulativePnlGroups"
+          />
 
           <!-- 「没有持仓」（上方）与「筛选条件下无匹配」（此处）两种空态可区分 -->
           <NEmpty

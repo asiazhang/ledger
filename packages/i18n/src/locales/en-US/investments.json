@@ -6,21 +6,16 @@
     "trend": "Trend"
   },
   "pnl": {
-    "title": "Realized P&L Overview",
-    "totalPnl": "Total Realized P&L",
     "empty": "No realized P&L data yet",
     "emptyTable": "No data",
     "filterAccount": "All accounts",
     "filterInstrument": "Search instruments (symbol / name / pinyin)",
     "byYear": "By Year",
     "byAccount": "By Account",
-    "byInstrument": "By Instrument",
     "columns": {
       "account": "Account",
-      "name": "Name",
       "realizedPnl": "Realized P&L",
-      "year": "Year",
-      "symbol": "Symbol"
+      "year": "Year"
     }
   },
   "holdings": {
@@ -30,9 +25,6 @@
     "filterNoMatch": "No holdings match the current filters",
     "searchPlaceholder": "Search instruments (symbol / name / pinyin)",
     "filterAccount": "All accounts",
-    "totalMarketValue": "Total Market Value",
-    "totalUnrealizedPnl": "Holding P&L",
-    "totalCumulativePnl": "Cumulative P&L",
     "columns": {
       "symbol": "Instrument",
       "name": "Name",
@@ -44,6 +36,15 @@
       "marketValue": "Market Value",
       "unrealizedPnl": "Holding P&L"
     }
+  },
+  "concepts": {
+    "marketValue": "Total Market Value",
+    "unrealizedPnl": "Holding P&L",
+    "cumulativePnl": "Cumulative P&L",
+    "tipAria": "About {concept}",
+    "marketValueTip": "Quantity × latest price for each holding, converted to its account currency. Holdings without a price are excluded; currencies are listed separately.",
+    "unrealizedPnlTip": "Market value minus cost basis (FIFO lots, including buy fees) — unrealized P&L that moves with prices and turns into realized P&L only after you sell.",
+    "cumulativePnlTip": "Holding P&L (unrealized) + realized P&L + dividends across the whole ledger. It does not narrow with the search/account filters; currencies are kept separate."
   },
   "browser": {
     "searchPlaceholder": "Search symbol or name...",

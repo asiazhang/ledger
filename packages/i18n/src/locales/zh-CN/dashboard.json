@@ -10,9 +10,6 @@
   },
   "investment": {
     "title": "投资概览",
-    "marketValue": "总市值",
-    "unrealizedPnl": "持仓收益",
-    "cumulativePnl": "累计收益",
     "empty": "暂无持仓"
   },
   "freedom": {

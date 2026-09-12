@@ -1,25 +1,20 @@
 <script setup lang="ts">
-import { h } from 'vue'
-import {
-  NCard,
-  NDataTable,
-  NEmpty,
-  NGi,
-  NGrid,
-  NSpace,
-  NSpin,
-  NStatistic,
-} from 'naive-ui'
+import { computed, h } from 'vue'
+import { NCard, NDataTable, NEmpty, NGi, NGrid, NSpace, NSpin } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import PinyinSelect from '@/components/PinyinSelect.vue'
-import InstrumentLink from '@/components/InstrumentLink.vue'
 import { t } from '@ledger/i18n'
+import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
+import { useWindowTier } from '@/composables/useWindowTier'
+import { pnlSemanticColor } from '@/theme/semantic-colors'
 import { formatAmount } from '@ledger/money'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
-import { formatCurrencyGroups } from '@/composables/usePortfolioOverview'
 
 const reference = useReferenceStore()
+const appStore = useAppStore()
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
 const {
   loading,
   summary,
@@ -28,7 +23,6 @@ const {
   accountOptions,
   pnlInstrumentOptions,
   searchingInstruments,
-  totalGroups,
   refresh,
   searchInstruments,
   onSelectInstrument,
@@ -36,7 +30,8 @@ const {
 
 // 汇总表通用「已实现盈亏」列：金额按行币种格式化展示（ADR-0107 决策 6：汇总行随
 // 匹配行币种，与持仓页签行同款口径）；数值列右对齐 + 等宽数字（词汇表「表格列形态」
-// 约定，三张汇总表同一单点收口）。
+// 约定，两张汇总表同一单点收口）；数字着盈亏涨跌色（红涨绿跌，与持仓页签
+// 「持仓收益」列、合计三卡同一 semantic-colors 接缝），随主题取亮/暗变体。
 function realizedPnlColumn(title: string): DataTableColumn {
   return {
     title,
@@ -44,7 +39,11 @@ function realizedPnlColumn(title: string): DataTableColumn {
     align: 'right',
     className: 'tabular-nums',
     render(row: any) {
-      return formatAmount(row.realized_pnl_cents, reference.currencyMap.get(row.currency_code))
+      return h(
+        'span',
+        { style: { color: pnlSemanticColor(row.realized_pnl_cents, appStore.theme) } },
+        formatAmount(row.realized_pnl_cents, reference.currencyMap.get(row.currency_code)),
+      )
     },
   }
 }
@@ -59,19 +58,6 @@ const accountCols: DataTableColumn[] = [
   realizedPnlColumn(t('investments.pnl.columns.realizedPnl')),
 ]
 
-const instPnlColumns: DataTableColumn[] = [
-  {
-    // 代码列下钻（ADR-0107 决策 5）：跳交易页 ?instrument=（不带账户）——本表含已
-    // 清仓标的，是清仓标的卖出流水的唯一入口；标的字典无软删，跳转恒可达。
-    title: t('investments.pnl.columns.symbol'),
-    key: 'symbol',
-    render(row: any) {
-      return h(InstrumentLink, { instrumentId: row.instrument_id, label: row.symbol })
-    },
-  },
-  { title: t('investments.pnl.columns.name'), key: 'name' },
-  realizedPnlColumn(t('investments.pnl.columns.realizedPnl')),
-]
 </script>
 
 <template>
@@ -102,18 +88,15 @@ const instPnlColumns: DataTableColumn[] = [
         />
       </NSpace>
 
-      <NCard :title="t('investments.pnl.title')" size="small">
-        <NEmpty v-if="!summary" :description="t('investments.pnl.empty')" />
-        <!-- 总盈亏按币种分组展示（ADR-0107 决策 6/7）：逐组格式化「 / 」连接，不做跨币种
-             折算；原单数字动画（NNumberAnimation）跨币种不适用，随混算口径一并退役，
-             冗余的单统计网格（cols="1 s:2 m:4"）同步收敛为直接统计 -->
-        <NStatistic v-else :label="t('investments.pnl.totalPnl')">
-          {{ formatCurrencyGroups(totalGroups, reference.currencyMap) }}
-        </NStatistic>
-      </NCard>
-
+      <!-- 页面收敛为 筛选 + 按年/按账户 两张汇总表（ADR-0107 修订注记，2026-09-13）：
+           「已实现盈亏概览」卡与「按标的汇总」表退役——总口径在持仓页签合计（累计收益
+           含已实现腿）可得，按标的信息在交易页标的筛选下钻可得。后端 realized_pnl_summary
+           的 total / by_instrument 读取保留（只减 UI 面，不动 IPC 形状）。 -->
+      <NEmpty v-if="!summary" :description="t('investments.pnl.empty')" />
       <template v-if="summary">
-        <NGrid :x-gap="16" :y-gap="16" cols="1 s:2">
+        <!-- 列数用纯数字 + 窗口分级：NGrid 默认 responsive="self" 只认数字前缀，
+             具名断点（s:）永不命中会静默退成 1 列（两表竖排）。 -->
+        <NGrid :x-gap="16" :y-gap="16" :cols="isMobileTier ? 1 : 2">
           <NGi>
             <NCard :title="t('investments.pnl.byYear')" size="small">
               <NEmpty v-if="summary.by_year.length === 0" :description="t('investments.pnl.emptyTable')" />
@@ -139,17 +122,6 @@ const instPnlColumns: DataTableColumn[] = [
             </NCard>
           </NGi>
         </NGrid>
-
-        <NCard :title="t('investments.pnl.byInstrument')" size="small">
-          <NEmpty v-if="summary.by_instrument.length === 0" :description="t('investments.pnl.emptyTable')" />
-          <NDataTable
-            v-else
-            :columns="instPnlColumns"
-            :data="summary.by_instrument"
-            :bordered="false"
-            size="small"
-          />
-        </NCard>
       </template>
     </NSpace>
   </NSpin>

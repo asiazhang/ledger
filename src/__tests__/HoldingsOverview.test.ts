@@ -13,6 +13,10 @@ import {
 import { captureListenHandlers } from '@ledger/test-support/listen-mock'
 import { componentVm } from '@ledger/test-support/component-vm'
 import { formatAmount, formatPrice } from '@ledger/money'
+import { probeColor } from '@ledger/test-support/dom'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
+import { pnlSemanticColor } from '@/theme/semantic-colors'
+import { useAppStore } from '@/stores/app'
 import {
   makeAccount,
   makeHolding,
@@ -46,7 +50,7 @@ vi.mock('@/composables/usePricesChanged', async () => {
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
-  // 累计收益（issue #1077）：全账本按币种聚合，独立于持仓行（后端两腿相加）
+  // 累计收益（issue #1077 / #1078）：全账本按币种聚合，独立于持仓行（后端三腿相加）
   cumulative_pnl_summary: [{ currency_code: 'CNY', cumulative_pnl_cents: 48000 }],
   sync_instrument_info: { synced: 2, skipped: 0, message: '已同步 2 只，跳过 0 只' },
 }
@@ -106,6 +110,127 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     expect(card.text()).toBe(`累计收益${formatAmount(48000, cny)}`)
   })
 
+  it('合计三卡：盈亏两卡按符号着盈亏涨跌色、市值卡不着色，三卡数值等宽数字', async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      // 累计收益转亏，锁住「绿跌」向；持仓收益保持默认 +30000 的「红涨」向
+      overrides: { cumulative_pnl_summary: [{ currency_code: 'CNY', cumulative_pnl_cents: -900 }] },
+    })
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    const theme = useAppStore().theme
+    const inlineColors = (testId: string) =>
+      wrapper!
+        .findAll(`[data-testid="${testId}-value"] span[style]`)
+        .map((s) => (s.element as HTMLElement).style.color)
+    // 市值格保持中性：无内联语义色（色由读数条样式给主文本色）
+    expect(inlineColors('total-market-value')).toEqual([])
+    // 盈亏两格与持仓明细列同一语义色接缝：盈利红涨、亏损绿跌，随主题取变体
+    expect(inlineColors('total-unrealized-pnl')).toEqual([probeColor(pnlSemanticColor(30000, theme))])
+    expect(inlineColors('total-cumulative-pnl')).toEqual([probeColor(pnlSemanticColor(-900, theme))])
+    // 三卡同排等宽：合计区只有这三张卡（页面其余统计不用 NStatistic）
+    expect(wrapper.findAll('.n-statistic-value')).toHaveLength(3)
+    for (const id of ['total-market-value', 'total-unrealized-pnl', 'total-cumulative-pnl']) {
+      const valueBox = wrapper.find(`[data-testid="${id}"] .n-statistic-value`).element as HTMLElement
+      expect(valueBox.style.fontVariantNumeric, id).toBe('tabular-nums')
+    }
+  })
+
+  it('多币种盈亏逐组独立着色：各组按自身符号取涨跌色，组间仍以「 / 」连接', async () => {
+    const usd = { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 }
+    const usdAccount = makeAccount({ id: 'acc-usd', name: '美股账户', currency_code: 'USD' })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_currencies: [cny, usd],
+        list_accounts: [makeAccount({ id: 'acc-a', name: '证券A' }), usdAccount],
+        list_holdings: [
+          mockHoldings[0]!,
+          makeHolding({
+            id: 'h-usd',
+            account_id: 'acc-usd',
+            instrument_id: 'inst-2',
+            cost_basis_cents: 4000,
+            cost_currency_code: 'USD',
+            latest_price_cents: 3500,
+            latest_price_currency_code: 'USD',
+            market_value_cents: 3500,
+            unrealized_pnl_cents: -500,
+          }),
+        ],
+      },
+    })
+    // 参考数据在 beforeEach 已按默认币种表水合；本场景自定义 CNY+USD 后需重刷，
+    // 否则 USD 组取不到符号（展示成裸数字）
+    await useReferenceStore().refresh()
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    const theme = useAppStore().theme
+    const pnl = wrapper.find('[data-testid="total-unrealized-pnl-value"]')
+    // 文本口径不变：币种代码序（CNY 前、USD 后）+「 / 」连接
+    expect(pnl.text()).toBe(`${formatAmount(30000, cny)} / ${formatAmount(-500, usd)}`)
+    // 逐组着色：CNY 组红涨、USD 组绿跌，不按合并符号一刀切
+    expect(pnl.findAll('span[style]').map((s) => (s.element as HTMLElement).style.color)).toEqual([
+      probeColor(pnlSemanticColor(30000, theme)),
+      probeColor(pnlSemanticColor(-500, theme)),
+    ])
+  })
+
+  it('合计三卡同排：桌面档栅格三列、移动档单列（接窗口分级断点，不自立断点）', async () => {
+    setFakeMedia({ width: 1200 })
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    const gridStyle = () =>
+      (wrapper!.find('.n-grid').element as HTMLElement).style.gridTemplateColumns
+    // 具名断点写法（cols="1 s:3"）在 NGrid 默认 responsive="self" 下永不命中、静默
+    // 退成 1 列（三卡竖排）——断言落在真实渲染的栅格列数上，删掉窗口分级切档即变红
+    expect(gridStyle()).toBe('repeat(3, minmax(0, 1fr))')
+    setFakeMedia({ width: 600 })
+    await flushPromises()
+    expect(gridStyle()).toBe('repeat(1, minmax(0, 1fr))')
+  })
+
+  it('三个概念各有口径说明触发器：指针轴悬停出 tooltip，文案与概念对应', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    for (const id of ['total-market-value-info', 'total-unrealized-pnl-info', 'total-cumulative-pnl-info']) {
+      expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true)
+    }
+    expect(document.body.textContent).not.toContain('累计分红')
+    await wrapper.find('[data-testid="total-cumulative-pnl-info"]').trigger('mouseenter')
+    // NTooltip delay 默认 100ms（防误触），jsdom 等真实时钟而非 flushPromises
+    await new Promise((r) => setTimeout(r, 200))
+    await flushPromises()
+    const tip = document.body.querySelector('.n-popover')
+    expect(tip).not.toBeNull()
+    // 累计收益口径：三腿相加（未实现 + 已实现 + 分红）且全账本、不跨币种
+    expect(tip!.textContent).toContain('已实现盈亏')
+    expect(tip!.textContent).toContain('累计分红')
+    expect(tip!.textContent).toContain('全账本')
+  })
+
+  it('触控轴：口径说明点按可达（入弹层注册表的气泡），热区外扩到 ≥48px', async () => {
+    setFakeMedia({ width: 600, hover: 'none', pointer: 'coarse' })
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    const trigger = wrapper.find('[data-testid="total-market-value-info"]')
+    expect(trigger.exists()).toBe(true)
+    // text 中号按钮 34px 高：外扩量须经 inset 覆写补足 48px 触控基线
+    expect((trigger.element as HTMLElement).style.getPropertyValue('--touch-hit-inset')).toBe(
+      '-10px -10px',
+    )
+    expect(document.body.querySelector('.n-popover')).toBeNull()
+    await trigger.trigger('click')
+    await flushPromises()
+    const popover = document.body.querySelector('.n-popover')
+    expect(popover).not.toBeNull()
+    expect(popover!.textContent).toContain('数量 × 最新价格')
+    expect(popover!.textContent).toContain('无行情的持仓不计入')
+    // 卸载触控挂载，避免已开启的气泡泄入后续指针轴断言
+    wrapper!.unmount()
+    wrapper = undefined
+  })
+
   it('无持仓时显示空态', async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
@@ -148,6 +273,23 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     expect(await cellText('latest_price')).toEqual([formatPrice(12345, cny)])
     expect(await cellText('market_value')).toEqual([formatAmount(123450, cny)])
     expect(await cellText('unrealized_pnl')).toEqual([formatAmount(50, cny)])
+  })
+
+  it('数量列按录入粒度（至多 4 位小数）抹平 f64 位噪声，不把长小数抛给用户', async () => {
+    // 位噪声来自后端逐批 FIFO 扣减/份额重述的 f64 累积（如截图 2094.5699999999965）
+    const noisyHolding = makeHolding({
+      id: 'h-noisy',
+      instrument_id: 'inst-1',
+      quantity: 2094.5699999999965,
+      cost_basis_cents: 120000,
+    })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_holdings: [noisyHolding] },
+    })
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    expect(await cellText('quantity')).toEqual(['2094.57'])
   })
 
   it('净值日期独立成列：基金行有值、股票行显示 -；现价列恢复单行（#303 形态修订，issue #912）', async () => {

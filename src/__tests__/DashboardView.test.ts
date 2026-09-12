@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { findButton } from '@ledger/test-support/dom'
+import { findButton, probeColor } from '@ledger/test-support/dom'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { nextTick } from 'vue'
 import { applyLocale } from '@ledger/i18n'
@@ -10,6 +10,8 @@ import TransactionForm from '@/components/TransactionForm.vue'
 import { amountPrivacyEnabled, formatAmount } from '@ledger/money'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
+import { useAppStore } from '@/stores/app'
+import { pnlSemanticColor } from '@/theme/semantic-colors'
 import { NGrid, NProgress } from 'naive-ui'
 import {
   makeAccount,
@@ -72,7 +74,7 @@ const mockItemDailyTotal = { native_currency: 'CNY', per_day_cents: 12345, item_
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
-  // 累计收益（issue #1077）：全账本按币种聚合（未实现 + 已实现两腿相加）
+  // 累计收益（issue #1077 / #1078）：全账本按币种聚合（未实现 + 已实现 + 累计分红 三腿相加）
   cumulative_pnl_summary: [{ currency_code: 'CNY', cumulative_pnl_cents: 48000 }],
   dashboard_overview: mockOverview,
   // 物品使用成本卡（issue #122）挂载时会创建物品 store（self-init 拉列表）
@@ -187,13 +189,45 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
     expect(card.find('[data-testid="dashboard-total-unrealized-pnl"]').text()).toBe(
       `持仓收益${formatAmount(30000, cny)}`,
     )
-    // 累计收益卡（issue #1077）：后端按币种聚合（未实现 + 已实现两腿相加）
+    // 累计收益卡（issue #1077 / #1078）：后端按币种聚合（三腿相加）
     expect(card.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toBe(
       `累计收益${formatAmount(48000, cny)}`,
     )
     expect(card.text()).not.toContain(formatAmount(0, cny))
     // 展示词归一（issue #1077）：首页投资卡不再残留「未实现盈亏」文案
     expect(card.text()).not.toContain('未实现盈亏')
+  })
+
+  it('投资概览三卡：盈亏两卡按符号着盈亏涨跌色、市值卡不着色，三卡各带口径说明', async () => {
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="investment-overview-card"]')
+    const theme = useAppStore().theme
+    const inlineColors = (testId: string) =>
+      card
+        .findAll(`[data-testid="${testId}-value"] span[style]`)
+        .map((s) => (s.element as HTMLElement).style.color)
+    // 市值卡中性（涨跌色不外溢到市值）；盈亏两卡走同一盈亏涨跌色接缝
+    expect(inlineColors('dashboard-total-market-value')).toEqual([])
+    expect(inlineColors('dashboard-total-unrealized-pnl')).toEqual([
+      probeColor(pnlSemanticColor(30000, theme)),
+    ])
+    expect(inlineColors('dashboard-total-cumulative-pnl')).toEqual([
+      probeColor(pnlSemanticColor(48000, theme)),
+    ])
+    // 与持仓页签同一组件：三卡同排（桌面档三列）+ 三个概念说明触发器
+    expect(card.findAll('.n-statistic-value')).toHaveLength(3)
+    for (const id of [
+      'dashboard-total-market-value',
+      'dashboard-total-unrealized-pnl',
+      'dashboard-total-cumulative-pnl',
+    ]) {
+      expect(card.find(`[data-testid="${id}-info"]`).exists(), id).toBe(true)
+    }
+    // 说明文案与持仓页同一份（investments.concepts），不复制第二份措辞
+    await card.find('[data-testid="dashboard-total-cumulative-pnl-info"]').trigger('mouseenter')
+    await new Promise((r) => setTimeout(r, 200))
+    await flushPromises()
+    expect(document.body.querySelector('.n-popover')?.textContent).toContain('累计分红')
   })
 
   it('多币种持仓按币种分组展示，组间以「 / 」连接', async () => {
@@ -537,12 +571,12 @@ describe('DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词
     expect(grids[1].props('cols')).toBe(1) // 投资概览
   })
 
-  it('桌面档栅格零变化：本月收支三列、投资概览自响应三列「1 s:3」', async () => {
+  it('桌面档栅格：本月收支三列、投资概览三列（列数纯数字——具名断点写法在 responsive="self" 下会静默退成 1 列）', async () => {
     const wrapper = await mountView()
     const grids = wrapper.findAllComponents(NGrid)
     expect(grids.length).toBe(2)
     expect(grids[0].props('cols')).toBe(3)
-    expect(grids[1].props('cols')).toBe('1 s:3')
+    expect(grids[1].props('cols')).toBe(3)
   })
 
   it('跨断点缩窗实时切列（单列 ⇄ 三列）', async () => {

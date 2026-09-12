@@ -1037,7 +1037,8 @@ describe('useTransactionFilter URL 参数表·类型维度（手动多选 + 下�
 
 // —— 标的维度（ADR-0107）：URL ?instrument= 下钻，UUID 形状校验、非法回退不过滤；
 // 标的不在参考数据字典（无 instrumentMap），校验仅形状。挂起补判/让位/复位守卫与
-// 既有维度同规；持仓页签行与盈亏页按标的汇总行是仅有的两个跳转入口。
+// 既有维度同规；持仓页签行是现仅有的跳转入口（盈亏页按标的汇总行已退役，
+// ADR-0107 修订注记 2026-09-13）。
 
 describe('useTransactionFilter URL 参数表·标的维度（ADR-0107）', () => {
   const INSTRUMENT_ID = '0197e2c5-9c1e-7def-8a2b-3c4d5e6f7a8b'

@@ -12,8 +12,8 @@ import {
 /**
  * 可点击标的代码（标的前提下钻，ADR-0107 决策 4/5）：点击跳转交易页按标的过滤——
  * 持仓页签行携带 accountId（`/transactions?account=&instrument=`，该账户该标的的
- * 交易历史），盈亏页按标的汇总行不携带（`/transactions?instrument=`，含已清仓标的，
- * 是清仓标的卖出流水的唯一入口）。
+ * 交易历史）。盈亏页「按标的汇总」行退役后（ADR-0107 修订注记，2026-09-13），
+ * 不携带 accountId 的用法暂无调用方；`?instrument=` 维度本身保留（URL 可直达）。
  *
  * 视觉与交互同 AccountLink / MerchantLink 先例：主题强调色文字、hover 提亮 +
  * 下划线 + 微亮背景；用真实 <button> 保证键盘可达（Tab 聚焦 + Enter 触发）。
@@ -26,7 +26,7 @@ const props = defineProps<{
   instrumentId: string
   /** 展示文本（标的代码）；空值渲染纯文本「-」，不可点击 */
   label: string | null
-  /** 可选同游账户 id：在场时跳转载荷带 ?account=（持仓页签行场景） */
+  /** 可选同游账户 id：在场时跳转载荷带 ?account=（现仅持仓页签行场景） */
   accountId?: string | null
 }>()
 
