@@ -13,7 +13,7 @@ import AppDatePicker from '@/components/AppDatePicker.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useLendingForm } from '@/composables/useLendingForm'
 import { LENDING_FORM_DIRECTIONS, type LendingFormDirection } from '@/domain/lending'
-import type { Transaction } from '@/types'
+import type { Transaction } from '@ledger/types'
 
 // 借贷录入 = 转账表单的借贷变体（issue #374 / ADR-0053）：不新增交易 kind，提交产物与
 // 转账同构（useLendingForm 复用 useTransferForm 的装配与提交路由）。创建模式由入口预置

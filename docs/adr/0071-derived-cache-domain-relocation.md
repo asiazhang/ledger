@@ -1,6 +1,6 @@
 # ADR 0071: 派生缓存归域——余额与净资产口径迁出基础设施（修订 ADR-0059 §5）
 
-- 状态：已接受（修订：「无域语义」判据被 ADR-0111 细化为「不依赖域 crate + 不定义账本数据口径」，并叠加基础设施 crate 内子目录分层断言；本文的 infra→域业务边归零判定不变）
+- 状态：已接受（修订：「无域语义」判据被 ADR-0111 细化为「不依赖域 crate + 不定义账本数据口径」，并叠加基础设施 crate 内子目录分层断言；本文的 infra→域业务边归零判定不变；认许边在 crate 边界下的新形态（生产边改注册点反转、清单辖测试专用边）见 ADR-0112 与文末修订注记）
 - 日期：2026-09-04
 - 作者：Ledger 项目
 - 关联：spec #518（architecture review 2026-09-04 七项候选之首）；修订对象 ADR-0059 §5；前置 ADR-0056（三层定义与守门）、ADR-0059（模型域化与允许边）、ADR-0067（派生缓存语义）、ADR-0020（净资产口径）、#404（账户域归位，欠账注释出处）；#538（守门扩展实施票，含 §6 勘误注记）；后续「受影响账户集合收口」spec 的纯函数落点
@@ -37,6 +37,19 @@
 
 迁移后 `transaction::writer/behavior` 调 `accounts::balance` 刷新（新边），`accounts::balance` 反向消费 `transaction::amount` 表达式真源——账户域与核心交易域成横向互依。这是设计意图而非副作用：ADR-0067 同事务约束排除信号/异步替代；「受影响账户集合收口」本就计划把推导落进余额模块。记录为「**核心交易仅在写路径为账户域维护余额缓存**」。依赖方向目标据此从「严格单向」修正为：infra→域业务边归零且可机械守门；域间横向边显式化、逐条留痕。
 
+> **修订（issue #1090，写路径副作用接缝反转）**：上述 `transaction → accounts` 写路径
+> 刷新边已按 #1088 奠定的「下层定义注册点、上层注册实现、壳层启动时接线」形态反转——
+> 核心交易域 `transaction::write_effects` 只定义余额刷新注册点（创建/修改/软删落库后
+> 的同事务刷新时机），实现（受影响账户推导 + 整体重算）由账户域
+> `accounts::balance::install_balance_refresh_hook` 提供、壳层启动时接线（`lib.rs` /
+> `test_support::open` / BDD world）。`transaction → accounts` 直接引用禁令化
+> （`scripts/check-structure.ts` 域间禁边），transaction ⇄ accounts 双向横向边收敛为
+> `accounts → transaction` 单向（口径表达式真源 `transaction::amount` + 注册点调用）；
+> `transaction/funding.rs → accounts` 的 AccountType 类型只读边保留为认许边（#1092
+> 处置）。ADR-0067 语义零变化：写路径仍同事务整体重算，未注册即码化错误回滚。
+> 同票反转的还有 `transaction → scheduled_transactions`（来源列计划反查）与
+> `scheduled_transactions → backup`（期次落账置脏）两条写/读路径副作用边。
+
 ### 6. 结构守门扩展：infra→域扫描
 
 `scripts/check-structure.ts` 新增白名单基础设施条目内的「infra→域」文本级扫描，形态与现有 `commands::` 扫描同款（掩码注释与字符串后匹配域模块路径，fail loud）。迁移落地当天天然全绿——迁移前全基础设施仅 `db/balance.rs` 两行域 import。外挂测试继续豁免（ADR-0056 决策 5）。
@@ -69,3 +82,12 @@ NetWorth 口径词条留投资域词汇表——排除投资账户余额防重�
 - 基础设施业务语义归零且入守门；新增一条显式认许的 transaction→accounts 写路径边。
 - 「受影响账户集合收口」spec 的纯函数落点就绪。
 - 零影响面：schema、迁移、IPC/HTTP 契约、命令注册清单、前端类型全部不变。
+
+## 修订注记（#1111 / ADR-0112，2026-09-13）：认许边在 crate 边界下的新形态——生产边改注册点，清单辖测试专用边
+
+workspace 拆分后（ADR-0112），基础设施→域的生产性引用在 crate 边界被 cargo 依赖图直接禁止——「认许后放行」对生产边不再有可用的机械形态，决策 6 的清单机制随之改辖两类对象：
+
+- **生产侧设计意图边改走注册点反转**：下层定义注册点、上层注册实现、壳层启动接线（ADR-0112 决策 5）。首例正是决策 6 勘误留痕的那条边——`after_commit → backup` 置脏触发已随基础设施 crate 归位（#1088）反转为 `db::AfterCommitHook` 注册点，ADR-0032 置脏单点契约不变，`INFRA_DOMAIN_ALLOWED_EDGES` 的生产挂载点因此归零（#1088 挂载点清点：5 条降 4 条，减去的正是这条）。决策 5 显式认许的 transaction→accounts 写路径回边同属此类，同判由 #1090 按同型反转（实施状态见该票，落地前决策 5 的横向互依仍为现状）：反转落地后仅存 accounts→transaction 的上层→下层单向边，决策 5 记录的横向互依随之收口，届时在本注记补记落地状态。
+- **清单续辖测试专用边**：余下 4 条全部是基础设施 crate 内联 cfg(test) 经测试工厂建库的引用（dev-dependency 环，非生产依赖图，ADR-0084 修订注记同源）；新增生产性 infra→域引用，未声明依赖即编译失败、声明了依赖即被结构守门 CRATES 依赖方向核对拦住，均无需清单裁决。
+
+决策 6 的扫描机制（文本级、掩码注释与字符串、fail loud、逐条精确到文件 + 目标域 + 成因）不变，扫描基准自 #1088 起改为 `crates/infra/src`。

@@ -41,7 +41,8 @@
    匹配 `--all` 会在这里假绿，已用夹具用例锁死）。
 4. **依赖方向**：基础设施 crate 反向依赖壳层 crate → 红（`crate 依赖方向`）。
 
-以上 1–4 均有 `src/__tests__/check-structure.test.ts` 的夹具用例覆盖，断言对准
+以上 1–4 均有 `scripts/check-structure.test.ts` 的夹具用例覆盖（#1158 归位前住
+`src/__tests__/`），断言对准
 检查失败这一可观察结果（退出码与输出），不对准实现形状。
 
 ## 编译耗时 / 体积基线

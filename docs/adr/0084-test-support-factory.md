@@ -1,6 +1,6 @@
 # ADR 0084: 统一测试数据库工厂与共享断言库——深模块收敛、白名单守门、固定时刻显式化
 
-- 状态：已接受（grilling 定稿，2026-09-07 两轮；迁移收官见文末「迁移状态」段）
+- 状态：已接受（grilling 定稿，2026-09-07 两轮；迁移收官见文末「迁移状态」段；修订：「独立测试 crate」否决前提被 ADR-0112 修订——workspace 下 dev-dependency 环可解，决策 2 其余判定与工厂接口形态不变，见文末第二个修订注记）
 - 日期：2026-09-07
 - 作者：Ledger 项目
 - 关联：spec #728（本文档票）；前身 #250（合并共识在案，本决策为其落地）；前端同构先例 #725/#726（参考数据桩深模块收敛 + `check-test-stubs.ts` 守门）；ADR-0056（白名单守门哲学、测试豁免约定、结构守门）；ADR-0067（余额缓存——共享对拍断言是其测试保障面）；ADR-0083（守门脚本 Bun 运行时）
@@ -81,3 +81,11 @@ grilling（2026-09-07，两轮）逐项复核评审数字与当前工作树一�
 - **已知边界（本票不扩守门面）**：`scripts/check-structure.ts` 的 `INFRA_DOMAIN_ALLOWED_EDGES` 只对基础设施层生效，域→域边机器不可达——域间边（含测试专用边）靠评审与 ADR 登记兜底，不是守门覆盖面的缺口误判。
 - **守门新增规则 4**（`scripts/check-test-support.ts`）：测试代码禁手工构造通道段/清单（`SegmentEntry {` / `ChannelManifest {`），禁在引用了通道面的文件里自建摘要（`Sha256` / `sha2::`）；`test_support` 本体豁免。作用域限定（同文件出现 `ChannelManifest` / `SegmentEntry` / `EnvelopeMode` / `publish_raw_segment`）是为了不误伤与通道无关的摘要用法（`src/bin/ledger-perf/tests.rs` 的生成器确定性 DB 摘要，先例见本 ADR 迁移状态段的 #776 裁决）。
 - **成因留痕**：两份夹具都把 `size`/`sha256` 算在 **payload** 上，产品算在 `envelope::seal` 的**输出**上；明文模式下二者恰好相等而长期掩盖。原票「摘要口径漂移致测试静默变绿」的风险陈述不成立（产品在拉取侧校验下载字节的尺寸与摘要，换算法会直接打红），真实风险是同一隐式假设被写了两遍。
+
+## 修订注记（#1111 / ADR-0112，2026-09-13）：「独立测试 crate」否决前提已变——workspace 下 dev-dependency 环可解
+
+决策 2 否决独立测试 crate 的理由是「单 crate 无 workspace，工厂需调用 `init_db` 等主 crate 接口，自依赖循环不可解」。该前提随 workspace 落地（#1087）失效：dev-dependency 环是 Cargo 允许的测试专用边——测试目标与生产依赖图分离，不构成生产环（ADR-0112 决策 5 测试专用边类）。先例已实证：基础设施 crate 的域单测经 `[dev-dependencies] tauri-app` 消费根包的测试工厂与共享断言（#1088），结构守门的依赖方向核对只辖生产依赖。
+
+落点判定不变的部分：工厂仍是跨域深模块（决策 1 准入规则）、接口仍是 `&Connection` 自由函数集（决策 3）。落点判定随结构演进的部分：当前工厂仍住根包 `test_support/`（域目录尚在根包，环无必要）；业务域逐域拆出后按 spec #1086 以**独立测试支持 crate** 供各域 dev-dependency 引用——届时本决策 2 的「独立测试 crate」从否决项变为目标形态，`#[doc(hidden)]` 可见性机制随之迁入该 crate（生产 lib 导出面同步瘦身）。
+
+环非默认必选：负向用例可能被环击穿时以「测试不随迁」替代——协议 crate 先例：其根文档 compile_fail 负向用例要求 `tauri_app_lib` 不可见，取环会击穿之，DeviceId 单测因此留根包 `sync_engine/tests/`（理由留痕于该 crate Cargo.toml）。

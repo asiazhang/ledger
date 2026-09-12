@@ -3,7 +3,7 @@ import { NCard, NSpace } from 'naive-ui'
 import CategoryAddForm from './CategoryAddForm.vue'
 import CategoryTree from './CategoryTree.vue'
 import { t } from '@/i18n'
-import type { Category, CategoryKind } from '@/types'
+import type { Category, CategoryKind } from '@ledger/types'
 
 defineProps<{ kind: CategoryKind }>()
 const emit = defineEmits<{ edit: [cat: Category] }>()

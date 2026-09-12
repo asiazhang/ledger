@@ -7,7 +7,7 @@ import PinyinSelect from '@/components/PinyinSelect.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { t } from '@/i18n'
-import type { Category, CategoryUpdateInput } from '@/types'
+import type { Category, CategoryUpdateInput } from '@ledger/types'
 
 const props = defineProps<{
   show: boolean

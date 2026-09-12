@@ -1,14 +1,14 @@
 import { ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
-import { centsToYuan } from '@/types'
+import { centsToYuan } from '@/utils/money'
 import { buildTransferInput } from '@/domain/transaction-input'
 import { judgeAmountText } from '@/utils/field-error'
 import { useFieldErrors } from '@/composables/useFieldErrors'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { useMerchantField } from '@/composables/useMerchantField'
 import { t } from '@/i18n'
-import type { Transaction } from '@/types'
+import type { Transaction } from '@ledger/types'
 import { errorMessage } from "@/utils/errors";
 
 export function useTransferForm(options?: {

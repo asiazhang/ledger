@@ -10,7 +10,7 @@ import NoteCopyButton from '@/components/NoteCopyButton.vue'
 import AmountCell from '@/components/AmountCell.vue'
 import { useAppStore } from '@/stores/app'
 import { kindSemanticColor } from '@/theme/semantic-colors'
-import { TRANSACTION_KINDS, type Transaction, type TransactionSource } from '@/types'
+import { TRANSACTION_KINDS, type Transaction, type TransactionSource } from '@ledger/types'
 import { formatAmount } from '@/utils/money'
 import { makeTransaction } from './factories'
 

@@ -2,9 +2,15 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
-import type { Account, Category, Currency, Insurer, Merchant } from '@/types'
-import { isFundingCandidateAccount } from '@/types/accounts'
-import type { Syncable } from '@/types/common'
+import {
+  isFundingCandidateAccount,
+  type Account,
+  type Category,
+  type Currency,
+  type Insurer,
+  type Merchant,
+  type Syncable,
+} from '@ledger/types'
 import {
   rootCategories as pureRootCategories,
   categoryChildren as pureCategoryChildren,

@@ -4,7 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import ScheduledView from '@/views/ScheduledView.vue'
 import { routes, router } from '@/router'
-import type { SubscriptionSpendOverview } from '@/types'
+import type { SubscriptionSpendOverview } from '@ledger/types'
 
 /** 订阅花费总览空数据（子页签挂载即拉取）。 */
 const emptySpendOverview: SubscriptionSpendOverview = {
@@ -136,7 +136,7 @@ describe('内嵌态（issue #473：组内「更多」容器装载，页签退内
 // 独立取数，不受清单状态过滤影响——已取消计划照常可开）。
 // ---------------------------------------------------------------------------
 
-import type { ScheduledTransactionDetail } from '@/types'
+import type { ScheduledTransactionDetail } from '@ledger/types'
 
 /** 已取消订阅计划详情（弹窗取数桩；展示名 = 计划名 = 备注）。 */
 function planDetailOf(id: string, overrides: Partial<ScheduledTransactionDetail['core']> = {}): ScheduledTransactionDetail {

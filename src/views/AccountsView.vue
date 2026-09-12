@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { yuanToCents } from '@/utils/money'
+import { yuanToCents, formatAmount } from '@/utils/money'
 import { computed, h, onMounted, ref } from 'vue'
 import {
   NCard,
@@ -29,8 +29,8 @@ import { useRowContextMenu } from '@/composables/useRowContextMenu'
 import { useWindowTier } from '@/composables/useWindowTier'
 import AccountLink from '@/components/AccountLink.vue'
 import { buildAccountRowMenuOptions } from '@/components/account-row-menu'
-import { ACCOUNT_TYPES, formatAmount } from '@/types'
-import type { AccountBalance, AccountInput, AccountType } from '@/types'
+import { ACCOUNT_TYPES } from '@ledger/types'
+import type { AccountBalance, AccountInput, AccountType } from '@ledger/types'
 
 const reference = useReferenceStore()
 const message = useMessage()

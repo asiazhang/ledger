@@ -9,7 +9,7 @@ import CategoryForm from '@/components/CategoryForm.vue'
 import AppModal from '@/components/AppModal.vue'
 import { MOBILE_CARD_CLASS } from '@/components/app-modal.css.ts'
 import { setFakeMedia } from './helpers/media-mock'
-import type { Account, Category, Transaction } from '@/types'
+import type { Account, Category, Transaction } from '@ledger/types'
 
 
 const mockAccounts: Account[] = [

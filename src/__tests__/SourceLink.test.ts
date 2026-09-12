@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import SourceLink from '@/components/SourceLink.vue'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { setFakeMedia } from './helpers/media-mock'
-import type { TransactionSource } from '@/types'
+import type { TransactionSource } from '@ledger/types'
 
 // 点击跳转经 useRouter（MerchantLink/AccountLink 同款 pushMock 断言先例）
 const pushMock = vi.fn()

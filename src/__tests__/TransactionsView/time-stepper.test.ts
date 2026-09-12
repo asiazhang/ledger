@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NButton } from 'naive-ui'
 import { captureListenHandlers, type CapturedListener } from '../helpers/listen-mock'
-import type { Transaction } from '@/types'
+import type { Transaction } from '@ledger/types'
 
 /**
  * 交易页期间步进器与期间标签行为测试（issue #383 / #391）。

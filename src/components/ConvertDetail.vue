@@ -4,7 +4,7 @@ import { NDescriptions, NDescriptionsItem } from 'naive-ui'
 import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, formatQuantity } from '@/utils/money'
-import type { Transaction, TransactionConvert } from '@/types'
+import type { Transaction, TransactionConvert } from '@ledger/types'
 
 /**
  * 基金转换只读详情（ADR-0106 决策 10 / #1048）：convert 是「无现金腿」kind，界面不体现

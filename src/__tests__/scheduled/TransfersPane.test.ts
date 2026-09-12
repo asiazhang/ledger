@@ -15,7 +15,7 @@ import type {
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
-} from '@/types'
+} from '@ledger/types'
 import { componentVm } from '../helpers/component-vm'
 
 /**

@@ -15,7 +15,7 @@ import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 import AppModal from '@/components/AppModal.vue'
 import PassphraseStrengthMeter from '@/components/settings/PassphraseStrengthMeter.vue'
-import type { EncryptionStatus } from '@/types'
+import type { EncryptionStatus } from '@ledger/types'
 
 // 加密卡片（issue #570/#571 / #574 / ADR-0075；#654 重排）：数据文件管理域的加密模式开关。
 // 形态对标 DataLocationSettings——命令往返、组件内状态。转换由后端完成

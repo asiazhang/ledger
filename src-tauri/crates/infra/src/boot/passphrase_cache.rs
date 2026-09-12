@@ -19,8 +19,8 @@
 //! 相对 ACL 门的已知行为差异：生物特征重录**不再使缓存失效**（门在读取时
 //! 评估当前生物特征，不与条目绑定）。
 //!
-//! 运行形态分叉（issue #662「开发态回退」）：形态判别收口 [`uses_biometry_gate`]
-//! 纯函数（输入构建 profile）：**发布构建读取前过 LA 门**；开发/未签名构建
+//! 运行形态分叉（issue #662「开发态回退」）：形态判别收口 `uses_biometry_gate`（本模块
+//! 私有纯函数，输入构建 profile）：**发布构建读取前过 LA 门**；开发/未签名构建
 //! （`tauri dev` / debug）降级为无门形态——写入与发布形态完全相同（普通条目），
 //! 读取不弹生物认证直接读出，本地 dev 的「自动解锁」不依赖签名基建进度立即
 //! 可用。两形态共用同一 service/account 的传统 file-based 钥匙串，`store`
@@ -98,7 +98,9 @@ pub(crate) fn is_dev_build() -> bool {
 /// 开发态布尔（构建 profile，见 [`is_dev_build`]），输出读取是否先过生物认证
 /// 门（issue #866 起为 LocalAuthentication 应用层门，不再写条目 ACL）。
 /// 发布构建恒带门（生物认证语义不变）；开发/未签名构建恒无门（开发态回退）。
-fn uses_biometry_gate(is_dev_build: bool) -> bool {
+/// `pub(super)`：外挂单测 `boot/tests/passphrase_cache.rs` 直测本接缝——私有项
+/// 仅定义模块及其后代可见，测试平移到兄弟目录后需放宽到 boot 子树。
+pub(super) fn uses_biometry_gate(is_dev_build: bool) -> bool {
     !is_dev_build
 }
 
@@ -118,8 +120,9 @@ pub enum RememberMode {
 
 impl RememberMode {
     /// 由「读取是否过门」判定得出形态（与 [`uses_biometry_gate`] 配对成对
-    /// 分支，两侧改动必须同步）。
-    fn from_gate(gated: bool) -> Self {
+    /// 分支，两侧改动必须同步）。`pub(super)` 同 [`uses_biometry_gate`]：
+    /// 外挂单测直测形态判定接缝。
+    pub(super) fn from_gate(gated: bool) -> Self {
         if gated {
             RememberMode::Biometry
         } else {
@@ -376,65 +379,4 @@ pub fn load(_book: Option<&str>) -> Result<CacheLoad> {
 #[cfg(not(target_os = "macos"))]
 pub fn delete(_book: Option<&str>) -> Result<()> {
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 形态判别纯函数（issue #662）：发布构建（非开发态）恒过生物认证门——
-    /// 发布形态行为零变化（#866 起门为读取前 LocalAuthentication 应用层门）。
-    #[test]
-    fn release_build_keeps_biometry_gate() {
-        assert!(uses_biometry_gate(false));
-    }
-
-    /// 开发/未签名构建降级为无门形态（本地 dev 免 Touch ID 自动解锁立即可用）。
-    #[test]
-    fn dev_build_drops_biometry_gate() {
-        assert!(!uses_biometry_gate(true));
-    }
-
-    /// 形态枚举与门判定配对：过门 ↔ biometry，无门 ↔ dev-fallback（spec
-    /// Testing Decisions「后端分支配对」——两侧分支由同一纯函数钉住）。
-    #[test]
-    fn mode_follows_gate_decision() {
-        assert_eq!(
-            RememberMode::from_gate(uses_biometry_gate(false)),
-            RememberMode::Biometry
-        );
-        assert_eq!(
-            RememberMode::from_gate(uses_biometry_gate(true)),
-            RememberMode::DevFallback
-        );
-    }
-
-    /// wire 形态钉死（kebab-case）：码即对外契约，序列化值改名等于破坏前端。
-    #[test]
-    fn mode_serializes_to_kebab_case() {
-        assert_eq!(
-            serde_json::to_value(RememberMode::Biometry).unwrap(),
-            "biometry"
-        );
-        assert_eq!(
-            serde_json::to_value(RememberMode::DevFallback).unwrap(),
-            "dev-fallback"
-        );
-    }
-
-    /// 缓存条目 account 按账本标识分域（issue #836）：携带标识 → 按本分域；
-    /// 无标识（注册表不可用的回退现场，运行的是折叠默认账本）→ 历史无标识
-    /// account——升级用户在回退现场不丢自动解锁。
-    #[test]
-    fn account_scopes_by_book_id() {
-        assert_eq!(account_for(None), "master-passphrase");
-        assert_eq!(
-            account_for(Some("3f2a9c4e-8b1d-4c2a-9f3e-5a7b8c9d0e1f")),
-            "master-passphrase-3f2a9c4e-8b1d-4c2a-9f3e-5a7b8c9d0e1f"
-        );
-        assert_eq!(
-            account_for(Some("ab12cd34ef56ab12")),
-            "master-passphrase-ab12cd34ef56ab12"
-        );
-    }
 }

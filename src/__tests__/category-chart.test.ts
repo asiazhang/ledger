@@ -7,7 +7,7 @@ import {
   categoryDrilldownBars,
   barTooltipLabel,
 } from '@/utils/category-chart'
-import type { Category, CategoryShare } from '@/types'
+import type { Category, CategoryShare } from '@ledger/types'
 import { makeCategory } from './factories'
 import { formatAmount } from '@/utils/money'
 

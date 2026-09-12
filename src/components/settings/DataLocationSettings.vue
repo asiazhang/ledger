@@ -6,7 +6,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
-import type { DataLocationChangeOutcome, DataLocationInfo } from '@/types'
+import type { DataLocationChangeOutcome, DataLocationInfo } from '@ledger/types'
 
 // 数据存储位置卡片（issue #134 / ADR-0018）：消费 #133 命令层契约。
 // 显示值一律来自命令返回（设备本地偏好，前端不做持久化、不走 localStorage）；

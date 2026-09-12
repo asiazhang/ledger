@@ -16,7 +16,7 @@ import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { useInputMode } from '@/composables/useInputMode'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { t } from '@/i18n'
-import type { TransactionSource } from '@/types'
+import type { TransactionSource } from '@ledger/types'
 
 /**
  * 来源列单元格（spec #704 / issue #706，词汇表「来源列」「实体定位参数（focus 参数）」）：

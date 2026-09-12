@@ -4,7 +4,7 @@ import { NButton, NForm, NFormItem, NInput, NSpace, useMessage } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
 import { api } from '@/api'
 import { t } from '@/i18n'
-import type { Insurer, InsurerUpdateInput } from '@/types'
+import type { Insurer, InsurerUpdateInput } from '@ledger/types'
 
 // 保司编辑弹窗（issue #714 / ADR-0082 决策 3）：交互照商户编辑弹窗先例
 // （issue #189）——轻量单字段编辑，改名即时生效（引用指向 id，不回刷），

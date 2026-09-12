@@ -17,9 +17,8 @@ import {
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
-import { formatAmount } from '@/types'
-import { yuanToCents } from '@/utils/money'
-import type { ScheduledTransactionOccurrence } from '@/types'
+import { formatAmount, yuanToCents } from '@/utils/money'
+import type { ScheduledTransactionOccurrence } from '@ledger/types'
 import { useReferenceStore } from '@/stores/reference'
 import { useWindowTier } from '@/composables/useWindowTier'
 import {

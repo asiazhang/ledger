@@ -8,7 +8,7 @@ import { mountWithDialog } from '../helpers/mount'
 import { makeTransaction } from '../factories'
 import { setFakeMedia } from '../helpers/media-mock'
 import TransactionsView from '@/views/TransactionsView.vue'
-import type { Account, Merchant, ReportDateRange, Transaction } from '@/types'
+import type { Account, Merchant, ReportDateRange, Transaction } from '@ledger/types'
 
 /**
  * TransactionsView 测试目录薄壳（issue #748，ADR-0085 决策 7）：只承载本目录

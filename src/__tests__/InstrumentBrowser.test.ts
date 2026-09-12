@@ -16,7 +16,7 @@ import {
   firePricesChanged,
   resetPricesChangedHandler,
 } from './prices-changed-mock'
-import type { Instrument } from '@/types'
+import type { Instrument } from '@ledger/types'
 
 // 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
 // 测试中手动触发模拟后端 emit；捕获/触发辅助收在 prices-changed-mock 共享。

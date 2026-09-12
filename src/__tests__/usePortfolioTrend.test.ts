@@ -13,7 +13,7 @@ import {
   isTrendEmpty,
   usePortfolioTrend,
 } from '@/composables/usePortfolioTrend'
-import type { InstrumentPriceChannel, PortfolioValueTrend } from '@/types'
+import type { InstrumentPriceChannel, PortfolioValueTrend } from '@ledger/types'
 import { makeInstrument } from './factories'
 
 

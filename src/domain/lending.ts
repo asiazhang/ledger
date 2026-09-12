@@ -1,4 +1,4 @@
-import type { AccountType, CreateFormKind, Transaction, TransactionKind } from '@/types'
+import type { AccountType, CreateFormKind, Transaction, TransactionKind } from '@ledger/types'
 
 /**
  * 借贷方向派生（issue #374 / ADR-0053）：借贷是 transfer + receivable/debt 账户的

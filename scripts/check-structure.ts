@@ -35,6 +35,11 @@
 // 共同底座，仅基础设施在其下）对壳层与全部域目录零依赖——依赖面只有基础设施
 // 与数据面惯用库（清单见 PROTOCOL_MODULES），反向引用由 cargo 依赖图拒绝
 //（协议 crate 根文档负向用例），本扫描再固化为规格。
+// 域间禁边（issue #1090 / spec #1086 形态推广）：三类写路径副作用（余额重算 /
+// 计划来源反查 / 期次落账置脏）的域间直接依赖随接缝反转消亡——
+// transaction→accounts、transaction→scheduled_transactions、
+// scheduled_transactions→backup 残留引用即红（认许边逐条留痕于
+// DOMAIN_PAIR_ALLOWED_EDGES，掩码后匹配，外挂测试豁免不变）。
 // 模型域化禁令（ADR-0059 T7 / #424 收口落地，全树扫描、同样掩码与测试豁免）：
 // ① 全局模型模块路径残留禁令——`crate::models` / `tauri_app_lib::models` 即红：
 //    全局模型目录已随域归位消亡，防扁平命名空间复活（crate 根裸路径 `models::x`
@@ -85,6 +90,8 @@ export type Layer = (typeof LAYER)[keyof typeof LAYER]
  * 守门白名单（ADR-0056 决策 4）：路径相对 src-tauri/src。
  * 首批 = 已归位域目录；每迁一域在此追加一行。基础设施自 #1088 起整体住
  * `crates/infra/src`（不再有根 src 路径），改由下面的 INFRA_MODULES 清单核对。
+ * #1091 起域目录开始拆独立 crate（backup 首个），拆出即从本清单移除、改登记
+ * CRATES（BACKUP_MODULES 承接模块级扫描）。
  */
 export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'transaction', layer: '域目录', note: '核心交易域' },
@@ -100,7 +107,6 @@ export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'currencies', layer: '域目录', note: '币种域（#404 参考数据域归位，清单查询自 commands/currencies 迁入）' },
   { path: 'reports', layer: '域目录', note: '报表域（#405 归位，月度汇总/分类/商户/日期极值聚合读模型，消费 transaction::amount 矩阵）' },
   { path: 'dashboard', layer: '域目录', note: '仪表盘域（#405 归位，全仓净资产跨币种折算聚合）' },
-  { path: 'backup', layer: '域目录', note: '备份域（#406 归位，备份引擎自 commands/backup/core、自动备份调度自顶层 auto_backup.rs 整合随迁）' },
   { path: 'sync', layer: '域目录', note: '行情同步域（#407 归位，HTTP 爬取/东财基金净值/同步编排自 commands/sync 随迁；全量修字典翼已退役，issue #698）' },
   { path: 'sync_engine', layer: '域目录', note: '多端同步域（issue #855 新建即归位，ADR-0091 OpLog 基座；与行情同步域 sync 相邻不同域）' },
   { path: 'test_support', layer: '域目录', note: '测试支持域（统一测试数据库工厂与共享断言库，ADR-0084 / #751；依赖域与基础设施合法，对壳层零依赖）' },
@@ -113,19 +119,17 @@ export const WHITELIST: readonly WhitelistEntry[] = [
  * 故模块级守门（对壳层零依赖、基础设施→域认许边）随之落到 crate 根下扫描。
  */
 export const INFRA_MODULES: readonly WhitelistEntry[] = [
-  { path: 'boot', layer: '基础设施', note: '引导层（#1131 自 db 升顶层目录：disposition 启动处置判定与失败门 / data_location 引导 / book_registry 账本注册表 / encryption 加密基座 / passphrase_cache 口令缓存；依赖方向 boot → db 单向，原 db 路径经再导出保持）' },
+  { path: 'lib.rs', layer: '基础设施', note: 'crate 根声明文件（#1134 双向全等起入清单）：pub mod 声明与再导出面（含 test_utils cfg 门，ADR-0111 决策 5 / #1132）——模块清单与 crate 实形的双向全等含根声明文件'},
+  { path: 'boot', layer: '基础设施', note: '引导层（#1131 自 db 升顶层目录：disposition 启动处置判定与失败门 / data_location 引导 / book_registry 账本注册表 / encryption 加密基座 / passphrase_cache 口令缓存；依赖方向 boot → db 单向，原 db 路径经再导出保持）'},
   { path: 'db', layer: '基础设施', note: '数据库连接与 schema 守卫（#1127 起 mod.rs 只留声明与再导出，按职责分 migrate / connection / runtime 三文件；时间与身份工厂自 #1128 升顶层 ids、引导层五模块自 #1131 升顶层 boot，原 db 路径经再导出保持）' },
   { path: 'ids.rs', layer: '基础设施', note: '时间与身份工厂（当前时刻 / ISO 格式 / UUID v7 与 v5 确定性派生，#1128 自 db 升入——非数据库关切，文件工具等原语引用不穿透 db）' },
   { path: 'signals', layer: '基础设施', note: '信号映射（ADR-0044；#1129 起为目录模块，mod.rs 只做声明与再导出，测试外挂 tests/ 与 db/ 同形）' },
   { path: 'error.rs', layer: '基础设施', note: '错误' },
   { path: 'settings.rs', layer: '基础设施', note: '设置' },
   { path: 'fs_util.rs', layer: '基础设施', note: '文件级原子操作工具（备份与 DataLocation 搬迁共用，#408 纳入守门）' },
-  { path: 'logger.rs', layer: '基础设施', note: '日志初始化与滚动清理（#408 纳入守门）' },
-  { path: 'events.rs', layer: '基础设施', note: '事件发射机制（ADR-0054，#408 纳入守门）' },
+  { path: 'events.rs', layer: '基础设施', note: '事件发射机制（ADR-0054，#408 纳入守门；消费方跨出壳层——备份域、同步域，不随壳机制分组，ADR-0111 决策 2）' },
   { path: 'closed_set.rs', layer: '基础设施', note: '闭集字符串枚举宏（ADR-0108；模式先例 signals/write_op.rs write_op_set!，ADR-0102）' },
-  { path: 'write_entry.rs', layer: '基础设施', note: '壳层统一写入口（ADR-0073，spec #523）' },
-  { path: 'read_entry.rs', layer: '基础设施', note: '壳层统一读入口（ADR-0104，spec #1009）' },
-  { path: 'redact.rs', layer: '基础设施', note: 'IPC 载荷脱敏（issue #1087 首位成员）' },
+  { path: 'shell_support', layer: '基础设施', note: '壳机制暂住分组（ADR-0111 决策 2 / #1130）：壳层统一写入口 write_entry（ADR-0073）、读入口 read_entry（ADR-0104）、IPC 载荷脱敏 redact、日志初始化 logger——只被壳层消费，正住址是壳层（#1086 P5 迁出）；crate 根再导出保持原调用点路径' },
   { path: 'test_utils.rs', layer: '基础设施', note: '测试器具（捕获 tracing 事件的 Layer / 闸门式假发射器，#1088 随类型身份约束归位；`#[cfg(any(test, feature = "test-utils"))]` + `#[doc(hidden)]`，默认不进生产编译，#1132）' },
 ]
 
@@ -147,6 +151,23 @@ export const PROTOCOL_MODULES: readonly WhitelistEntry[] = [
 
 /** 同步协议 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-sync-protocol.dir 同源。 */
 export const PROTOCOL_SRC_REL = 'crates/sync-protocol/src'
+
+/**
+ * 备份域 crate 的模块清单（spec #1086 / issue #1091）：路径相对
+ * `src-tauri/crates/backup/src`。首个自根包域目录拆出的业务域 crate（#1091）——
+ * 备份/恢复引擎与自动备份调度。对壳层与全部域目录零依赖：对定时计划域的两条
+ * 引用（期次落账置脏的实现接线、追补触发）经注册点反转收敛（挂载点①/④，
+ * ADR-0112 决策 5），反向引用由 cargo 依赖图拒绝（生产依赖面无根包，
+ * dev-dependency 环只覆盖测试目标）。crate 根 lib.rs 是声明与再导出面
+ * （无守门靶向代码），与协议 crate 同款不入清单。
+ */
+export const BACKUP_MODULES: readonly WhitelistEntry[] = [
+  { path: 'auto.rs', layer: '域目录', note: '自动备份调度（状态 / 到期判定纯函数 / 三触发入口 / 轮询线程 / 追补触发注册点，挂载点④，issue #1091）' },
+  { path: 'engine.rs', layer: '域目录', note: '备份引擎（zip 打包 / 恢复 / 受管列表与滚动清理，ADR-0007 / ADR-0016）' },
+]
+
+/** 备份域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-backup.dir 同源。 */
+export const BACKUP_SRC_REL = 'crates/backup/src'
 
 /**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
@@ -205,6 +226,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/sync-protocol',
     layer: CRATE_LAYER.PROTOCOL,
     note: '同步协议 crate（#1089 下放：设备标识、领域命令契约 SyncCommand/ReplayEffect、op 本地记录与读取、流位点——业务域与 sync_engine 共同底座；对壳层与域目录零依赖，反向引用由 cargo 依赖图拒绝）',
+  },
+  {
+    name: 'ledger-backup',
+    dir: 'crates/backup',
+    layer: CRATE_LAYER.DOMAIN,
+    note: '备份域 crate（#1091 首个自根包域目录拆出的业务域 crate：备份/恢复引擎与自动备份调度，spec #1086）；依赖面只有基础设施——对定时计划域的置脏实现与追补触发两条引用经注册点反转（挂载点①/④，ADR-0112 决策 5），对壳层/域目录零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
   },
 ]
 
@@ -277,19 +304,62 @@ const INFRA_DOMAIN_ALLOWED_EDGES: readonly InfraDomainEdge[] = [
     reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/取常量（#758 收口），测试专用边、非产品依赖',
   },
   {
-    file: 'logger.rs',
+    file: 'shell_support/logger.rs',
     domain: 'test_support',
-    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库（#758 收口），测试专用边、非产品依赖',
+    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库（#758 收口），测试专用边、非产品依赖（#1130 起住 shell_support/）',
   },
   {
-    file: 'write_entry.rs',
+    file: 'shell_support/write_entry.rs',
     domain: 'test_support',
-    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/簿记戳引用 FIXED_NOW（#758 收口），测试专用边、非产品依赖',
+    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/簿记戳引用 FIXED_NOW（#758 收口），测试专用边、非产品依赖（#1130 起住 shell_support/）',
   },
   {
-    file: 'read_entry.rs',
+    file: 'shell_support/read_entry.rs',
     domain: 'test_support',
-    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/种子（#758 收口），测试专用边、非产品依赖',
+    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/种子（#758 收口），测试专用边、非产品依赖（#1130 起住 shell_support/）',
+  },
+]
+
+/**
+ * crate 内块间禁边（ADR-0111 决策 4 / #1134）：子目录级反向依赖断言——
+ * 原语 ← db/ ← boot/ ← shell_support/ 单向，events / signals / settings 是被
+ * 各层引用的共享接缝；db 不得引用 boot / shell_support / signals，boot 不得
+ * 引用 shell_support。键 = 拥有该文件的块（路径首段），值 = 禁止引用的目标块；
+ * 顶层单文件（ids / error / fs_util 等原语与共享接缝）不受块间禁边约束。
+ */
+const INFRA_BLOCK_FORBIDDEN: Record<string, readonly string[]> = {
+  db: ['boot', 'shell_support', 'signals'],
+  boot: ['shell_support'],
+}
+
+/** 块间依赖形态：与 INFRA_DOMAIN_DEP_PATTERN 同款形态——crate 根前缀 + 目标块名，
+ *  再随 `::`（路径引用）、` as `（别名引入）或 `;`（模块自身导入）；\b 防前缀吞
+ *  匹配，`\{?\s*` 容纳花括号列举首段（use crate::{boot::x, …}）；花括号列举
+ *  非首段与 super:: 改写文本不可达，靠评审兜底。 */
+function infraBlockDepPattern(targets: readonly string[]): RegExp {
+  return new RegExp(
+    `\\bcrate\\s*::\\s*\\{?\\s*(${targets.join('|')})\\b(?:\\s*::|\\s+as\\b|\\s*;)`,
+  )
+}
+
+/** crate 内块间认许边条目：基础设施文件相对路径 + 目标块名 + 成因留痕 */
+interface InfraBlockEdge {
+  file: string
+  target: string
+  reason: string
+}
+
+/**
+ * crate 内块间认许边（ADR-0111 决策 4 / #1134）：块间反向依赖的既有设计意图
+ * 边逐条留痕于本脚本，与 INFRA_DOMAIN_ALLOWED_EDGES 同款留痕纪律——精确到
+ * 文件相对路径（相对 `crates/infra/src`）+ 目标块名，附 ADR 指针；清单之外的
+ * 块间反向引用一律红。
+ */
+const INFRA_BLOCK_ALLOWED_EDGES: readonly InfraBlockEdge[] = [
+  {
+    file: 'db/mod.rs',
+    target: 'boot',
+    reason: 'ADR-0111 决策 2 / #1131：引导层五模块升顶层 boot 后，既有 `crate::db::{boot,…}` 调用点与协议 crate 的 `ledger_infra::db::…` 路径经本再导出保持零改动——路径兼容面，非机制依赖（#1128 ids 同款口径）',
   },
 ]
 
@@ -314,6 +384,88 @@ const NATIVE_TX_STMT_ALLOWED = `${INFRA_SRC_REL}/db/tx_scope.rs`
 
 /** 业务域→同步域引用锚点（crate 根前缀限定；掩码后匹配）——#1089 起零容忍，任何命中即红 */
 const SYNC_ENGINE_REF_PATTERN = /\b(?:crate|tauri_app_lib)\s*::\s*sync_engine\b/
+
+/** 域间禁边规则条目：from 域目录内文件引用 to 域目录即红（认许边除外） */
+interface DomainPairRule {
+  from: string
+  to: string
+  /**
+   * 附加文本形态（#1091 crate 拆分）：目标域拆为独立 crate 后的 crate 名直引
+   * 前缀（`ledger_backup::`），与 domainPairDepPattern(to) 的 crate 根前缀形态
+   * （`crate::backup` / `tauri_app_lib::backup` 再导出面）并扫——两形都红。
+   * 经别名改名的间接引用文本不可达，靠评审兜底。
+   */
+  extraPattern?: RegExp
+  reason: string
+}
+
+/**
+ * 域间禁边（issue #1090 / spec #1086 形态推广）：三类写路径副作用（受影响账户
+ * 余额重算 / 来源列计划反查 / 期次落账置脏）已收口为「下层定义注册点、上层注册
+ * 实现、壳层启动时接线」的接缝反转形态（与 #1088 基础设施提交点后置动作同构），
+ * 域间横向直接依赖随接缝消亡——残留引用（import、全限定调用、花括号列举首段）
+ * 即红。作用域限业务域目录（认许边逐条留痕于 DOMAIN_PAIR_ALLOWED_EDGES），
+ * 文本级扫描、掩码注释与字面量后匹配，别名改写不可达靠评审兑底。
+ */
+const DOMAIN_PAIR_FORBIDDEN: readonly DomainPairRule[] = [
+  {
+    from: 'transaction',
+    to: 'accounts',
+    reason:
+      'issue #1090 / ADR-0071 决策 5 修订：写路径余额重算经注册点反转'
+      + '（transaction::write_effects 注册点 + accounts::balance::install_balance_refresh_hook 实现注册），'
+      + 'transaction → accounts 直接引用禁令；双向横向边收敛为 accounts → transaction 单向',
+  },
+  {
+    from: 'transaction',
+    to: 'scheduled_transactions',
+    reason:
+      'issue #1090 / spec #704 修订：来源列计划反查经注册点反转'
+      + '（transaction::read 注册点 + scheduled_transactions::source::install_plan_source_hook 实现注册），'
+      + 'transaction → scheduled_transactions 直接引用禁令',
+  },
+  {
+    from: 'scheduled_transactions',
+    to: 'backup',
+    extraPattern: /\bledger_backup\s*::/,
+    reason:
+      'issue #1090 / spec #1086 形态推广：期次落账置脏经注册点反转'
+      + '（auto_run 注册点 + backup::occurrence_dirty_hook 实现注册，#1091 起实现住 ledger-backup crate），'
+      + 'scheduled_transactions → backup 直接引用禁令——再导出面（crate::backup / '
+      + 'tauri_app_lib::backup）与 crate 名直引（ledger_backup::）两形都红',
+  },
+]
+
+/** 域间禁边认许边条目：文件相对路径（相对根 src）+ from/to + 成因留痕 */
+interface DomainPairAllowedEdge {
+  file: string
+  from: string
+  to: string
+  reason: string
+}
+
+/**
+ * 域间禁边认许边（issue #1090）：既有设计意图边逐条留痕于本脚本，与
+ * INFRA_DOMAIN_ALLOWED_EDGES 同款留痕纪律——精确到文件相对路径，附成因；
+ * 清单之外的域间禁边引用一律红。
+ */
+const DOMAIN_PAIR_ALLOWED_EDGES: readonly DomainPairAllowedEdge[] = [
+  {
+    file: 'transaction/funding.rs',
+    from: 'transaction',
+    to: 'accounts',
+    reason:
+      'AccountType 参考数据类型消费（#935 出资账户准入的枚举判读，#1092 处置）——'
+      + '类型只读边，非写路径副作用',
+  },
+]
+
+/** 域间禁边依赖形态：与 INFRA_DOMAIN_DEP_PATTERN 同款——crate 根前缀 + 目标域名。 */
+function domainPairDepPattern(to: string): RegExp {
+  return new RegExp(
+    `\\b(?:crate|tauri_app_lib)\\s*::\\s*\\{?\\s*(${to})\\b(?:\\s*::|\\s+as\\b|\\s*;)`,
+  )
+}
 
 /** 花括号列举内的违规条目头（深度 0 逐条切分后取首个标识符；#1089 零容忍，
  *  全部条目违规）。返回违规条目头，供调用方构造命中。 */
@@ -1042,9 +1194,45 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
 }
 
 /**
+ * INFRA_MODULES 与实际模块双向全等（ADR-0111 决策 5 / #1134）：磁盘侧枚举
+ * `crates/infra/src` 顶层的实际模块——非测试豁免形态的 .rs 文件，与扫得到
+ * 非测试 .rs 文件的目录（目录型条目覆盖其全部子目录，子文件不再逐行登记）——
+ * 磁盘上存在而清单未登记即红（清单漂移不再只单向 fail loud）。
+ * 反方向（登记路径消失 / 条目扫不到非测试文件）由 scanModuleEntries 的
+ * 既有路径存在性与非测试文件数核对承担，本核对不重复报文。
+ */
+function checkInfraModuleEquality(srcTauriDir: string): string[] {
+  const problems: string[] = []
+  const srcDir = join(srcTauriDir, INFRA_SRC_REL)
+  if (!existsSync(srcDir)) return problems // 清单循环逐条报「路径不存在」
+  const onDisk: string[] = []
+  for (const entry of readdirSync(srcDir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    if (entry.isFile() && entry.name.endsWith('.rs') && !isTestFile(entry.name)) {
+      onDisk.push(entry.name)
+    } else if (entry.isDirectory() && collectRustFiles(join(srcDir, entry.name), entry.name).length > 0) {
+      onDisk.push(entry.name)
+    }
+  }
+  for (const mod of onDisk) {
+    if (!INFRA_MODULES.some((m) => m.path === mod)) {
+      problems.push(
+        `✗ INFRA_MODULES 未登记模块：${mod}（${INFRA_SRC_REL}）\n` +
+          '    清单与实际模块双向全等（ADR-0111 决策 5 / #1134）：新增模块后须在 ' +
+          'scripts/check-structure.ts 的 INFRA_MODULES 追加一行（附注释），' +
+          '否则清单漏登记、块间分层与认许边核对静默漏检',
+      )
+    }
+  }
+  return problems
+}
+
+/**
  * 模块清单核对（ADR-0056 决策 4）：清单条目必须存在且扫得到非测试 Rust 文件
  * （清单漂移 fail loud），条目内对壳层零依赖；基础设施条目另核
- * 基础设施→域认许边（ADR-0071 决策 6 / #538），业务域条目另核业务域→同步域
+ * 基础设施→域认许边（ADR-0071 决策 6 / #538）与 crate 内块间反向依赖
+ * （ADR-0111 决策 4 / #1134），业务域条目另核业务域→同步域
  * 严形态（ADR-0101 决策 4b）。返回扫到的非测试文件数；返回 0 由调用方统一拒绝
  * （拒绝以空集假绿通过）。清单与路径基准分离，使域目录（根 src）与基础设施
  * crate（`crates/infra/src`）共用同一份核对逻辑与同一份认许边清单。
@@ -1095,6 +1283,27 @@ function scanModuleEntries(
         )
       }
       if (isInfra) {
+        // crate 内块间反向依赖（ADR-0111 决策 4 / #1134）：db 不得引用
+        // boot / shell_support / signals；boot 不得引用 shell_support；
+        // 认许边逐条留痕（INFRA_BLOCK_ALLOWED_EDGES），清单之外即红。
+        const block = f.rel.split('/')[0]
+        const forbiddenTargets = INFRA_BLOCK_FORBIDDEN[block]
+        if (forbiddenTargets) {
+          for (const hit of scanRustSource(source, infraBlockDepPattern(forbiddenTargets))) {
+            const allowed = INFRA_BLOCK_ALLOWED_EDGES.some(
+              (e) => e.file === f.rel && e.target === hit.captured,
+            )
+            if (allowed) continue
+            problems.push(
+              `✗ crate 内反向依赖：${block} 引用 ${hit.captured} → ${f.rel}:${hit.line}（${hit.match}）\n` +
+                `    ${hit.text}\n` +
+                `    crate 内分层（ADR-0111 决策 4）：原语 ← db ← boot ← shell_support 单向，` +
+                `db 不得引用 boot/shell_support/signals，boot 不得引用 shell_support；` +
+                `设计意图边须逐条留痕于本脚本 INFRA_BLOCK_ALLOWED_EDGES（附 ADR 指针），` +
+                `或把逻辑下沉到更低的块`,
+            )
+          }
+        }
         for (const hit of scanRustSource(source, INFRA_DOMAIN_DEP_PATTERN)) {
           const allowed = INFRA_DOMAIN_ALLOWED_EDGES.some(
             (e) => e.file === f.rel && e.domain === hit.captured,
@@ -1133,6 +1342,29 @@ function scanModuleEntries(
               `ledger_sync_protocol；「重放不产本地 op」从结构巧合升为规格`,
           )
         }
+        // 域间禁边（issue #1090）：残留的域间直接引用即红（认许边逐条留痕）。
+        // 目标域拆为独立 crate 后（#1091）追加 crate 名直引前缀并扫（extraPattern）。
+        for (const rule of DOMAIN_PAIR_FORBIDDEN.filter((r) => r.from === w.path)) {
+          const patterns = rule.extraPattern
+            ? [domainPairDepPattern(rule.to), rule.extraPattern]
+            : [domainPairDepPattern(rule.to)]
+          for (const pattern of patterns) {
+            for (const hit of scanRustSource(source, pattern)) {
+              const allowed = DOMAIN_PAIR_ALLOWED_EDGES.some(
+                (e) => e.file === f.rel && e.from === rule.from && e.to === rule.to,
+              )
+              if (allowed) continue
+              problems.push(
+                `✗ 域间禁边：${f.rel} 引用 ${rule.to} → ${f.rel}:${hit.line}（${hit.match}）\n` +
+                  `    ${hit.text}\n` +
+                  `    ${rule.reason}\n` +
+                  `    写路径副作用一律经注册点反转形态（下层定义注册点、上层注册实现、` +
+                  `壳层启动接线，spec #1086 / #1090）；设计意图边须逐条留痕于本脚本 ` +
+                  `DOMAIN_PAIR_ALLOWED_EDGES（附成因）`,
+              )
+            }
+          }
+        }
       }
     }
   }
@@ -1157,6 +1389,7 @@ function main(): void {
       ...collectRustFiles(srcDir, ''),
       ...collectRustFiles(join(srcTauriDir, INFRA_SRC_REL), INFRA_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, PROTOCOL_SRC_REL), PROTOCOL_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, BACKUP_SRC_REL), BACKUP_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -1209,6 +1442,7 @@ function main(): void {
   scannedFiles += scanModuleEntries(WHITELIST, srcDir, problems)
   scannedFiles += scanModuleEntries(INFRA_MODULES, join(srcTauriDir, INFRA_SRC_REL), problems)
   scannedFiles += scanModuleEntries(PROTOCOL_MODULES, join(srcTauriDir, PROTOCOL_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(BACKUP_MODULES, join(srcTauriDir, BACKUP_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -1217,6 +1451,10 @@ function main(): void {
   // crate 边界核对（spec #1086 / issue #1087）：成员登记、门禁继承、依赖方向、
   // 静态检查/测试命令的 workspace 覆盖——与模块路径白名单并列，同为删除即变红。
   problems.push(...checkCrateBoundaries(srcTauriDir))
+
+  // INFRA_MODULES 与实际模块双向全等（ADR-0111 决策 5 / #1134）：磁盘侧反向
+  // 核对（磁盘模块未登记即红）；登记路径消失 / 扫不到非测试文件已由清单循环红。
+  problems.push(...checkInfraModuleEquality(srcTauriDir))
 
   if (problems.length > 0) {
     for (const p of problems) console.error(p)
@@ -1230,13 +1468,17 @@ function main(): void {
     `✓ 结构守门：白名单 ${WHITELIST.length} 项（域目录 ${domainCount}）` +
       `+ 基础设施模块 ${INFRA_MODULES.length} 项（crate ${INFRA_SRC_REL}）` +
       `+ 协议模块 ${PROTOCOL_MODULES.length} 项（crate ${PROTOCOL_SRC_REL}）` +
+      `+ 备份域模块 ${BACKUP_MODULES.length} 项（crate ${BACKUP_SRC_REL}，#1091）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +
       `· 业务域→同步域零容忍零违规（ADR-0101 / #1089 收紧）` +
+      `· 域间禁边 ${DOMAIN_PAIR_FORBIDDEN.length} 对零未认许引用（认许边 ${DOMAIN_PAIR_ALLOWED_EDGES.length} 条，#1090 接缝反转）` +
       `· 模型域化禁令全树扫描 ${allFiles.length} 个文件零残留（ADR-0059）` +
       `· 原生事务语句全树扫描 ${allFiles.length} 个文件仅 ${NATIVE_TX_STMT_ALLOWED} 一处（#1014）` +
       `· crate 边界 ${CRATES.length} 个（成员登记 / 门禁继承 / 依赖方向 / workspace 命令覆盖，#1087）` +
+      `· INFRA_MODULES 双向全等（磁盘模块全部登记，ADR-0111 决策 5 / #1134）` +
+      `· crate 内块间反向依赖零未认许引用（认许边 ${INFRA_BLOCK_ALLOWED_EDGES.length} 条，ADR-0111 决策 4 / #1134）` +
       `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）` +
       `· http 投影 feature 门（axum optional + impl cfg 门 + default 不含 http + 域侧不启用，#1133）`,
   )

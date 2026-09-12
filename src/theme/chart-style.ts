@@ -1,6 +1,6 @@
 import { Chart as ChartJS, type Chart } from 'chart.js'
 import type { Theme } from '@/stores/app'
-import { formatAmount } from '@/types'
+import { formatAmount } from '@/utils/money'
 
 /**
  * 柔和柱状图统一样式（报表页两张图共用，2026-09 视觉柔化；投资趋势图未来可复用）：

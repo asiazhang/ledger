@@ -6,9 +6,9 @@ import AppDatePicker from '@/components/AppDatePicker.vue'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
-import { formatPrice, yuanToPrice } from '@/types'
+import { formatPrice, yuanToPrice } from '@/utils/money'
 import { todayStr } from '@/utils/date'
-import type { Instrument } from '@/types'
+import type { Instrument } from '@ledger/types'
 
 // 手动报价弹窗（issue #291 / ADR-0036）：无行情数据源标的的「日期 + 价格」
 // 单点录入。提交后一条通道两个落点（现价缓存 upsert + 价格历史周采样幂等覆盖，

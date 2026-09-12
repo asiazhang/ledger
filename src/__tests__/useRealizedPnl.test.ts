@@ -6,7 +6,7 @@ import { defineComponent } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
 import { registerToastSink } from '@/composables/useLoadable'
-import type { RealizedPnlSummary } from '@/types'
+import type { RealizedPnlSummary } from '@ledger/types'
 import {
   makeAccount,
   makeFakeSink,

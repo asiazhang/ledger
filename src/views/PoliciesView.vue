@@ -11,10 +11,10 @@ import {
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import { formatAmount } from '@/types'
+import { formatAmount } from '@/utils/money'
 import { todayStr } from '@/utils/date'
 import { policyStatAmountText } from '@/utils/policy-stats'
-import type { Policy, PolicyStats } from '@/types'
+import type { Policy, PolicyStats } from '@ledger/types'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { useModalIntent } from '@/composables/useModalIntent'

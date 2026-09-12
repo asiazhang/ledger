@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { Category } from '@/types'
+import type { Category } from '@ledger/types'
 import {
   rootCategories,
   categoryChildren,

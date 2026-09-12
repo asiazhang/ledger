@@ -16,18 +16,54 @@
 //! 计划 `active`；生成交易日期忠实回填期次计划日期。`failed` / `processing` /
 //! `cancelled` 期次与 `paused` / `cancelled` 计划一律不碰；单期尝试失败置为
 //! `failed` 保持手动重试（ADR-0024 失败策略维持），不自动反复重试；单期失败不
-//! 中断同批后续；每笔成功经统一写入口语义置脏（[`crate::backup::mark_dirty`]）
-//! 联动自动备份到期判定。
+//! 中断同批后续；每笔成功联动自动备份到期判定——置脏自 #1090 起经接缝反转：
+//! 本模块只定义期次落账后置钩子的注册点（[`register_after_occurrence_hook`]），
+//! 实现由备份域提供（#1091 起为 `ledger-backup` crate，`backup::occurrence_dirty_hook`）、
+//! 壳层启动时接线——定时计划域对备份域零直接依赖（域间禁边，
+//! `scripts/check-structure.ts`）。反向的同族接缝（issue #1091 / 挂载点④）：
+//! 调度线程的追补触发由备份域定义注册点（`register_catch_up_hook`）、本模块
+//! 提供 [`catch_up_hook`] 实现、壳层启动时对装——备份域对定时计划域亦零依赖。
 
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use chrono::NaiveDate;
+use chrono::{Local, NaiveDate};
 use rusqlite::{Connection, params};
 
 use super::engine::execute_occurrence;
 use crate::db::now_iso;
 use crate::error::Result;
 use ledger_sync_protocol::device::device_id;
+
+// ---------------------------------------------------------------------------
+// 期次落账后置钩子（issue #1090 / spec #1086 形态推广）
+// ---------------------------------------------------------------------------
+
+/// 期次落账后置钩子签名（连接层提交点后置动作 `AfterCommitHook` 的同族形态）：
+/// 深度模块只持有 `&Connection`。
+type AfterOccurrenceHook = fn(&Connection);
+
+/// 期次落账后置钩子的进程级单例（登记点反转的承接面）：先装者优先、重复注册零动作。
+static AFTER_OCCURRENCE_HOOK: OnceLock<AfterOccurrenceHook> = OnceLock::new();
+
+/// 注册期次落账后置钩子实现（幂等：进程级一次，重复注册保留首次实现）。
+///
+/// 调用点在壳层启动接线与测试建库单点（`test_support::open`、BDD world），
+/// 与生产同形；实现由备份域提供（#1091 起为 `ledger-backup` crate，壳层直接
+/// 把 `backup::occurrence_dirty_hook` 对装进本注册点），业务代码不直接调用本函数。
+pub fn register_after_occurrence_hook(hook: AfterOccurrenceHook) {
+    let _ = AFTER_OCCURRENCE_HOOK.set(hook);
+}
+
+/// 追补触发钩子实现（issue #1091 / spec #1086 形态推广，挂载点④）：自动备份
+/// 调度线程的单一 tick 每轮在备份到期判定后调用——调度宿主（备份域，#1091 起
+/// `ledger-backup` crate）只定义注册点（`ledger_backup::register_catch_up_hook`），
+/// 本函数由壳层启动接线注册。开关从运行时镜像读出、「今天」取本地时区日期后
+/// 注入追补入口 [`run_catch_up`]（与迁移前调度线程内联形态同口径：镜像默认关，
+/// 未推送即空转）。
+pub fn catch_up_hook(conn: &Connection) {
+    run_catch_up(conn, is_enabled(), Local::now().date_naive());
+}
 
 /// 后端运行时镜像（进程级）：设备级开关默认关，前端启动/变更时经 IPC 推送更新。
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -79,13 +115,15 @@ pub fn run_catch_up(conn: &Connection, enabled: bool, today: NaiveDate) -> Catch
             Ok(_) => {
                 summary.executed += 1;
                 // 与连接层统一写入口提交点同款：成功落账即置脏（联动自动备份判定）。
-                // 置脏失败仅记日志不上抛，不影响已成功的落账。
-                if let Err(e) = crate::backup::mark_dirty(conn) {
-                    tracing::warn!(
+                // 置脏实现由备份域经钩子注册（#1090 接缝反转）：失败仅记日志不上抛，
+                // 不影响已成功的落账；钩子未注册（接线缺失）同样仅记 error 日志——
+                // 落账事务已提交无法回滚，失败必须可见、不静默丢置脏。
+                match AFTER_OCCURRENCE_HOOK.get() {
+                    Some(hook) => hook(conn),
+                    None => tracing::error!(
                         occurrence_id = %occurrence_id,
-                        error = %e,
-                        "追补落账成功但置脏失败（忽略）"
-                    );
+                        "期次落账后置钩子未注册：置脏被跳过（壳层启动接线缺失）"
+                    ),
                 }
             }
             Err(e) => {

@@ -1,7 +1,7 @@
 //! 自动备份（AutoBackup）状态、到期判定与调度（issue #124 / #125）。
 //!
 //! 职责边界：
-//! - 状态经 [`crate::settings`] 收口持久化到 `app_settings` KV 表（`auto_backup.*` key），
+//! - 状态经 [`ledger_infra::settings`] 收口持久化到 `app_settings` KV 表（`auto_backup.*` key），
 //!   不建专表；IPC 由 `commands::backup` 的领域命令形状暴露（issue #128 接前端）；
 //! - 到期判定为纯函数 [`due_decision`]，当前时间由调用方注入，不依赖全局时钟——
 //!   **线程只做周期调用，是否备份的决策全在纯函数**（可测边界）；「今天」由注入
@@ -13,8 +13,8 @@
 //!   一份运行时镜像 [`PrefsState`]（启动时经 IPC `set_auto_backup_dir` 推送），
 //!   目录未配置时一律静默跳过；
 //! - 置脏触发（issue #126 的「写时顺带检查」）已整体迁入连接层统一写入口
-//!   [`crate::db::write`]（ADR-0032，#246 收口）：本模块不再暴露写路径挂钩，
-//!   只保留域原语 [`mark_dirty`]（`pub(crate)`）与触发入口 [`run_due_backup`]
+//!   [`db::write`]（ADR-0032，#246 收口）：本模块不再暴露写路径挂钩，
+//!   只保留域原语 [`mark_dirty`]（私有）与触发入口 [`run_due_backup`]
 //!   （BackupTrigger 接口面，运行时仅调度线程与连接层提交点调用）供连接层
 //!   提交点组合；深度模块只持有 `&Connection`，不经 AppHandle 取偏好——
 //!   目录镜像经进程级单例 [`shared_prefs`] 读取，应用版本用编译期常量。
@@ -31,8 +31,9 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Local, Offset, TimeZone, Utc};
 use rusqlite::Connection;
 
-use crate::db::{self, DbState};
-use crate::settings::{self, SettingKey};
+use ledger_infra::db::{self, DbState};
+use ledger_infra::error::{self, AppError};
+use ledger_infra::settings::{self, SettingKey};
 
 /// 到期判定结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,7 +128,7 @@ fn to_local(now: DateTime<Utc>) -> DateTime<Local> {
 
 /// 读取自动备份调度状态。key 缺失、甚至 `app_settings` 表缺失
 /// （恢复了旧版本备份）时返回约定默认值，行为免费正确。
-pub fn get_state(conn: &Connection) -> crate::error::Result<AutoBackupState> {
+pub fn get_state(conn: &Connection) -> error::Result<AutoBackupState> {
     let def = AutoBackupState::default();
     Ok(AutoBackupState {
         enabled: settings::get(conn, SettingKey::AutoBackupEnabled, def.enabled)?,
@@ -141,7 +142,7 @@ pub fn get_state(conn: &Connection) -> crate::error::Result<AutoBackupState> {
 }
 
 /// 整体写入调度状态（三个 key 原子性无要求，逐个 upsert 即可）。
-pub fn set_state(conn: &Connection, state: &AutoBackupState) -> crate::error::Result<()> {
+pub fn set_state(conn: &Connection, state: &AutoBackupState) -> error::Result<()> {
     settings::set(conn, SettingKey::AutoBackupEnabled, &state.enabled)?;
     settings::set(conn, SettingKey::AutoBackupDirty, &state.dirty)?;
     settings::set(
@@ -153,10 +154,19 @@ pub fn set_state(conn: &Connection, state: &AutoBackupState) -> crate::error::Re
 }
 
 /// 置脏：业务写库成功后由连接层统一写入口在提交点调用（ADR-0032）。
-/// `pub(crate)` 表示它不是业务代码的调用点——业务写经 [`crate::db::write`]，
-/// 置脏是其结构性副作用，业务路径无法也无需直接置脏。
-pub(crate) fn mark_dirty(conn: &Connection) -> crate::error::Result<()> {
+/// 私有表示它不是业务代码的调用点——业务写经 [`ledger_infra::db::write`]，置脏是其
+/// 结构性副作用；暴露面只有接线用钩子（[`after_commit_hook`] /
+/// [`occurrence_dirty_hook`]）。
+fn mark_dirty(conn: &Connection) -> error::Result<()> {
     settings::set(conn, SettingKey::AutoBackupDirty, &true)
+}
+
+/// 置脏并忽略失败（提交点钩子与期次落账钩子的共享落点）：置脏失败仅记日志
+/// 不上抛——引发置脏的写/落账已成功，不因置脏失败回滚或报错。
+fn mark_dirty_ignoring_failure(conn: &Connection) {
+    if let Err(e) = mark_dirty(conn) {
+        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");
+    }
 }
 
 /// 连接层提交点后置动作实现（ADR-0032 置脏单点，原 `db::after_commit` 本体）：
@@ -169,9 +179,7 @@ pub(crate) fn mark_dirty(conn: &Connection) -> crate::error::Result<()> {
 /// - 到期检查命中（脏且今天尚未自动备份，本地自然日界门，issue #386）即执行自动
 ///   备份；开关关闭/目录未配置等门禁由 [`run_due_backup`] 统一静默处理。
 pub fn after_commit_hook(conn: &Connection) {
-    if let Err(e) = mark_dirty(conn) {
-        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");
-    }
+    mark_dirty_ignoring_failure(conn);
     let dir = shared_prefs().snapshot_dir();
     // 备份作用域从偏好镜像快照（引导登记点播种，issue #836）：写路径深处只有
     // `&Connection`，账本归属经镜像统一承载，与调度线程同一来源。
@@ -196,13 +204,63 @@ pub fn install_after_commit_hook() {
     db::register_after_commit_hook(after_commit_hook);
 }
 
+/// 定时追补落账的置脏钩子实现（issue #1090 / spec #1086 形态推广）：备份域提供
+/// 实现、壳层启动时注册进定时计划域的注册点
+/// （`scheduled_transactions::auto_run::register_after_occurrence_hook`）——定时
+/// 计划域对备份域零直接依赖。置脏失败仅记日志不上抛（与提交点钩子同款：落账
+/// 已成功，不因置脏失败报错）。
+///
+/// #1091 起本域拆为独立 crate，接线函数不再住本域（域对域不能跨 crate 引用，
+/// 见 [`register_catch_up_hook`]）：壳层启动接线（lib.rs、测试建库单点、
+/// BDD world、ledger-perf）直接把本函数注册进定时计划域的注册点。
+pub fn occurrence_dirty_hook(conn: &Connection) {
+    mark_dirty_ignoring_failure(conn);
+}
+
+// ---------------------------------------------------------------------------
+// 追补触发接缝（issue #1091 / spec #1086 形态推广，挂载点④）：调度线程的单一
+// tick 每轮在备份到期判定后做追补判定（ADR-0042），判定本体是定时计划域的
+// 副作用——下层（本域，轮询宿主）定义注册点、上层（定时计划域）注册实现、
+// 壳层启动时接线。
+// ---------------------------------------------------------------------------
+
+/// 追补触发钩子签名（期次落账后置钩子 `AfterOccurrenceHook` 的同族形态）：
+/// 深度模块只持有 `&Connection`。
+type CatchUpHook = fn(&Connection);
+
+/// 追补触发钩子的进程级单例（登记点反转的承接面）：先装者优先、重复注册零动作。
+static CATCH_UP_HOOK: OnceLock<CatchUpHook> = OnceLock::new();
+
+/// 注册追补触发钩子实现（幂等：进程级一次，重复注册保留首次实现）。
+///
+/// 接缝形态（issue #1091 / spec #1086）：下层（本域）只定义注册点，实现由定时
+/// 计划域提供（`scheduled_transactions::auto_run::catch_up_hook`——开关从其
+/// 运行时镜像读出、今天取本地日期后注入追补入口 `run_catch_up`），
+/// 调用点在壳层启动接线与测试建库单点（`test_support::open`、BDD world、
+/// ledger-perf），与生产同形。本 crate 对定时计划域零依赖——反向引用
+/// （引用根包/定时计划域）由生产依赖面编译期拒绝（crate 根文档负向说明）。
+pub fn register_catch_up_hook(hook: CatchUpHook) {
+    let _ = CATCH_UP_HOOK.set(hook);
+}
+
+/// 调用追补触发钩子（调度线程每轮消费）：钩子未注册（壳层启动接线缺失）时
+/// 仅记 error 日志——本轮追补被跳过必须可见，不静默丢副作用（接缝形态：
+/// 未注册时行为显式）；接线由 `check-background-services.ts::BOOT_WIRING`
+/// 源码扫描守门兜底（「删除启动接线即红」，挂载点①同款）。
+fn run_catch_up_hook(conn: &Connection) {
+    match CATCH_UP_HOOK.get() {
+        Some(hook) => hook(conn),
+        None => tracing::error!("追补触发钩子未注册：定时计划追补本轮被跳过（壳层启动接线缺失）"),
+    }
+}
+
 /// 脏复位并把备份成功时刻记为新的上次备份锚点：
 /// - [`mark_clean`]：自动备份成功后调用；失败时不得调用——保留脏标记即重试机制；
 /// - [`reset`]：恢复成功后调用——不置真、重新计时，避免「恢复后立即备份」的重复，
 ///   开关保持恢复库中带来的值不动。
 ///
 /// 两者行为一致（同一语义动作的两个领域别名），`now` 为 UTC ISO 字符串。
-pub fn mark_clean(conn: &Connection, now: &str) -> crate::error::Result<()> {
+pub fn mark_clean(conn: &Connection, now: &str) -> error::Result<()> {
     settings::set(conn, SettingKey::AutoBackupDirty, &false)?;
     settings::set(
         conn,
@@ -212,7 +270,7 @@ pub fn mark_clean(conn: &Connection, now: &str) -> crate::error::Result<()> {
 }
 
 /// 见 [`mark_clean`]：恢复成功后重置调度状态。
-pub fn reset(conn: &Connection, now: &str) -> crate::error::Result<()> {
+pub fn reset(conn: &Connection, now: &str) -> error::Result<()> {
     mark_clean(conn, now)
 }
 
@@ -293,7 +351,7 @@ fn perform_backup(
     app_version: &str,
     now: DateTime<Utc>,
     scope: Option<&super::engine::BackupScope>,
-) -> crate::error::Result<String> {
+) -> error::Result<String> {
     // 产物命名取注入时刻的本地时间（ADR-0016 修订：原 UTC，与手动备份拉齐）；
     // 锚点仍记 UTC 时刻（[`db::iso_at`]），值格式不变。
     let target = Path::new(dir).join(auto_backup_file_name(
@@ -312,7 +370,7 @@ fn effective_dir(dir: Option<&str>) -> Option<&str> {
     dir.map(str::trim).filter(|d| !d.is_empty())
 }
 
-fn failed(reason: crate::error::AppError) -> AttemptOutcome {
+fn failed(reason: AppError) -> AttemptOutcome {
     AttemptOutcome::Failed {
         reason: reason.to_string(),
     }
@@ -334,11 +392,11 @@ fn gate(conn: &Connection, dir: Option<&str>) -> Result<(AutoBackupState, String
 /// 把执行结果归一化为 [`AttemptOutcome`] 并打日志（失败 warn，成功 info）。成功
 /// 产物改变备份列表，一并发出 `ledger:backups-changed` 信号（issue #129），
 /// 前端设置页据此自动刷新列表；发射失败静默忽略。
-fn classify_result(trigger: &str, performed: crate::error::Result<String>) -> AttemptOutcome {
+fn classify_result(trigger: &str, performed: error::Result<String>) -> AttemptOutcome {
     match performed {
         Ok(path) => {
             tracing::info!(trigger, path = %path, "自动备份完成");
-            crate::events::emit_backups_changed_current();
+            ledger_infra::events::emit_backups_changed_current();
             AttemptOutcome::Performed { path }
         }
         Err(e) => {
@@ -505,7 +563,7 @@ impl PrefsState {
 /// 当前活动账本的作用域；注册表损坏（`None`）时清空镜像——回退默认目录建连
 /// 的现场无从归属账本，自动备份退化为旧命名兼容口径（产物仍可靠，仅命名
 /// 不携带账本标识，待注册表修复后自然恢复分域）。
-pub fn seed_book_scope(registry: Option<&crate::db::book_registry::BookRegistry>) {
+pub fn seed_book_scope(registry: Option<&ledger_infra::db::book_registry::BookRegistry>) {
     let scope = registry.map(super::engine::BackupScope::of_registry);
     *shared_prefs().lock_scope() = scope;
     tracing::debug!(
@@ -516,9 +574,11 @@ pub fn seed_book_scope(registry: Option<&crate::db::book_registry::BookRegistry>
 
 /// 等待连接锁至超时。锁被占用超过 [`LOCK_TIMEOUT`] 或已损坏（poisoned）返回 None，
 /// 由调用方跳过本轮并保留脏标记（下个周期重试即重试机制）。
-pub(crate) fn lock_conn_with_timeout(
-    conn: &Arc<Mutex<Connection>>,
-) -> Option<MutexGuard<'_, Connection>> {
+///
+/// 消费面（原 mod.rs `pub(crate) use` 形态随 crate 拆分升 `pub`，issue #1091）：
+/// 壳层 `commands::backup::set_auto_backup_dir`（首次兜底）与同步触发调度线程
+/// （`sync_engine::trigger::scheduler`）共享同一超时语义。
+pub fn lock_conn_with_timeout(conn: &Arc<Mutex<Connection>>) -> Option<MutexGuard<'_, Connection>> {
     let deadline = Instant::now() + LOCK_TIMEOUT;
     loop {
         match conn.try_lock() {
@@ -549,8 +609,8 @@ static SCHEDULER_SPAWNED: AtomicBool = AtomicBool::new(false);
 /// 启动调度轮询线程（标准轮询线程模式：spawn + sleep）。
 ///
 /// 单一 tick 双判定（issue #307 / ADR-0042）：每轮先做自动备份到期判定，再做
-/// 定时计划追补判定；线程只做周期调用——备份决策全在纯函数到期判定，追补决策
-/// 全在参数注入（连接、开关状态、今天日期）的追补入口（开关从运行时镜像读出）。
+/// 定时计划追补判定（[`run_catch_up_hook`]，实现由定时计划域提供、壳层接线）；
+/// 线程只做周期调用——备份决策全在纯函数到期判定，追补决策全在钩子实现。
 ///
 /// 幂等（issue #644 / ADR-0080）：已在跑时本调用退化为无操作；每轮门检在
 /// 锁定/启动失败期间跳过备份与追补（占位连接不是业务库）——原位重引导把
@@ -561,11 +621,12 @@ pub fn start_scheduler(app: &tauri::AppHandle) {
         return;
     }
     let conn = Arc::clone(&app.state::<DbState>().conn);
-    let gate = crate::db::encryption::EncryptionGate::clone(
-        &app.state::<crate::db::encryption::EncryptionGate>(),
+    let gate = ledger_infra::db::encryption::EncryptionGate::clone(
+        &app.state::<ledger_infra::db::encryption::EncryptionGate>(),
     );
-    let boot_gate =
-        crate::db::boot::BootFailureGate::clone(&app.state::<crate::db::boot::BootFailureGate>());
+    let boot_gate = ledger_infra::db::boot::BootFailureGate::clone(
+        &app.state::<ledger_infra::db::boot::BootFailureGate>(),
+    );
     let dir_mirror = Arc::clone(&shared_prefs().dir);
     let handle = app.clone();
     std::thread::spawn(move || {
@@ -592,13 +653,11 @@ pub fn start_scheduler(app: &tauri::AppHandle) {
                 Utc::now(),
                 scope.as_ref(),
             );
-            // 追补判定（issue #307 / ADR-0042）：开关从镜像读出后注入追补入口，
-            // 今天取本地时区日期（与订阅花费总览同款口径）；镜像默认关，未推送即空转。
-            crate::scheduled_transactions::run_catch_up(
-                &guard,
-                crate::scheduled_transactions::auto_run::is_enabled(),
-                chrono::Local::now().date_naive(),
-            );
+            // 追补判定（issue #307 / ADR-0042）：实现由定时计划域经追补触发钩子
+            // 提供（[`register_catch_up_hook`] 接线，挂载点④），本域对定时计划域
+            // 零依赖——开关与「今天」的取数都在钩子实现内注入（与迁移前线程内联
+            // 形态同口径：镜像默认关，未推送即空转）。
+            run_catch_up_hook(&guard);
         }
     });
 }
@@ -624,7 +683,7 @@ mod tests {
 
     fn conn() -> rusqlite::Connection {
         // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
-        crate::test_support::open()
+        tauri_app_lib::test_support::open()
     }
 
     fn ts(s: &str) -> chrono::DateTime<chrono::Utc> {
@@ -718,7 +777,7 @@ mod tests {
     fn get_state_defaults_when_table_missing() {
         // 工厂库删除 app_settings 模拟旧版本备份恢复后的缺表现场（工厂无
         // 「未迁移库」形态：建库 = 内存库 + 迁移，ADR-0084 决策 3）。
-        let c = crate::test_support::open();
+        let c = tauri_app_lib::test_support::open();
         c.execute("DROP TABLE app_settings", [])
             .expect("删除 app_settings");
         let state = get_state(&c).expect("缺表取默认状态");
@@ -792,13 +851,12 @@ mod tests {
 #[cfg(test)]
 mod scheduler_tests {
     use super::*;
-    use crate::db;
     use std::fs;
     use std::path::PathBuf;
 
     fn conn() -> rusqlite::Connection {
         // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
-        crate::test_support::open()
+        tauri_app_lib::test_support::open()
     }
 
     /// 与 backup 模块测试同款：临时目录唯一命名，避免并行测试互踩。
@@ -895,8 +953,8 @@ mod scheduler_tests {
                 );
                 // 产物元数据带 auto 来源标记（issue #127）。
                 assert_eq!(
-                    crate::backup::read_backup_kind(Path::new(path)).unwrap(),
-                    crate::backup::BackupKind::Auto
+                    crate::read_backup_kind(Path::new(path)).unwrap(),
+                    crate::BackupKind::Auto
                 );
             }
             other => panic!("应执行备份，实际 {other:?}"),
@@ -1238,12 +1296,12 @@ mod scheduler_tests {
 #[cfg(test)]
 mod book_scope_tests {
     use super::*;
-    use crate::backup::BackupScope;
+    use crate::BackupScope;
     use std::fs;
     use std::path::PathBuf;
 
     fn conn() -> rusqlite::Connection {
-        crate::test_support::open()
+        tauri_app_lib::test_support::open()
     }
 
     fn now_at(s: &str) -> DateTime<Utc> {

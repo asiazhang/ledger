@@ -8,7 +8,7 @@ import { h, nextTick } from 'vue'
 import AccountsView from '@/views/AccountsView.vue'
 import AccountLink from '@/components/AccountLink.vue'
 import { amountPrivacyEnabled, formatAmount } from '@/utils/money'
-import type { Account, AccountBalance } from '@/types'
+import type { Account, AccountBalance } from '@ledger/types'
 
 
 const pushMock = vi.fn()

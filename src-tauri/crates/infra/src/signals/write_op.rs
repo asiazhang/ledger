@@ -32,7 +32,7 @@ macro_rules! write_op_set {
             /// 命令键）外，每个身份须被至少一壳声明（`write_entry` 调用点或例外白名单），
             /// 否则测试期即红。
             ///
-            /// 本清单由 [`write_op_set!`] 从宏调用清单同体展开（ADR-0102 决策 1）：
+            /// 本清单由 `write_op_set!` 宏（本文件私有，ADR-0102 决策 1）从宏调用清单同体展开：
             /// 与 enum 本体共享同一 token 流，不存在第二份事实，漏登失败类不可表达。
             pub const ALL: &[$name] = &[
                 $($name::$variant,)*

@@ -15,7 +15,7 @@ import { makeCategory, makeFakeSink, resetToastSink } from './factories'
 import { registerToastSink } from '@/composables/useLoadable'
 import { formatAmount } from '@/utils/money'
 import type { NullableDateRange } from '@/utils/time-period'
-import type { ReportDateRange } from '@/types'
+import type { ReportDateRange } from '@ledger/types'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现（无币种形态），
 // 格式规则唯一归属其专测

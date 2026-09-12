@@ -1,8 +1,10 @@
-//! [`crate::db::book_registry`] 单元测试：注册表解析（双格式）、损坏判定与
+//! [`crate::boot::book_registry`] 单元测试：注册表解析（双格式）、损坏判定与
 //! 升级写入（issue #832）。引导回退与文件保全的引导级组合行为由
 //! `data_location` 测试与 BDD e2e 覆盖，此处钉内核纯函数语义。
 
-use super::*;
+use std::path::{Path, PathBuf};
+
+use crate::boot::book_registry::*;
 use crate::db::new_uuid;
 
 fn temp_dir(tag: &str) -> PathBuf {
@@ -640,19 +642,19 @@ fn settle_pending_relocation_matrix() {
         book_id: registry.active_id.clone(),
         from_dir: from.clone(),
     });
-    std::fs::write(from.join(super::super::data_location::DB_FILE_NAME), b"db").unwrap();
+    std::fs::write(from.join(crate::boot::data_location::DB_FILE_NAME), b"db").unwrap();
     let err = settle_pending_relocation(&mut registry).unwrap_err();
     assert!(err.is_code("book.registry-busy"), "实际 {err:?}");
     assert!(registry.pending_relocation.is_some(), "拒绝不消费意图");
 
     // 完成：目标已有库。
-    std::fs::write(to.join(super::super::data_location::DB_FILE_NAME), b"db").unwrap();
+    std::fs::write(to.join(crate::boot::data_location::DB_FILE_NAME), b"db").unwrap();
     settle_pending_relocation(&mut registry).unwrap();
     assert_eq!(registry.pending_relocation, None, "完成即消费");
 
     // 完成（皆无库）：无库可搬，消费放行。
-    std::fs::remove_file(to.join(super::super::data_location::DB_FILE_NAME)).unwrap();
-    std::fs::remove_file(from.join(super::super::data_location::DB_FILE_NAME)).unwrap();
+    std::fs::remove_file(to.join(crate::boot::data_location::DB_FILE_NAME)).unwrap();
+    std::fs::remove_file(from.join(crate::boot::data_location::DB_FILE_NAME)).unwrap();
     registry.pending_relocation = Some(PendingRelocation {
         book_id: registry.active_id.clone(),
         from_dir: from,
@@ -680,7 +682,7 @@ fn mutation_kernels_guard_pending_relocation() {
     let to = dir.join(BOOKS_DIR_NAME).join("moved");
     std::fs::create_dir_all(&from).unwrap();
     std::fs::create_dir_all(&to).unwrap();
-    std::fs::write(from.join(super::super::data_location::DB_FILE_NAME), b"db").unwrap();
+    std::fs::write(from.join(crate::boot::data_location::DB_FILE_NAME), b"db").unwrap();
     let mut registry = read_registry_resolved(&dir);
     registry.books[0].dir = to.clone();
     registry.pending_relocation = Some(PendingRelocation {
@@ -703,7 +705,7 @@ fn mutation_kernels_guard_pending_relocation() {
     );
 
     // 完成后（目标已有库）：内核放行，且写回的文件不再携带意图（自愈）。
-    std::fs::write(to.join(super::super::data_location::DB_FILE_NAME), b"db").unwrap();
+    std::fs::write(to.join(crate::boot::data_location::DB_FILE_NAME), b"db").unwrap();
     rename_book_entry(&dir, &second, "新名").unwrap();
     let healed = read_registry_resolved(&dir);
     assert_eq!(healed.pending_relocation, None, "登记写入自愈清除意图");

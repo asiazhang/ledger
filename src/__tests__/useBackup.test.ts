@@ -3,7 +3,7 @@ import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { type UnlistenFn } from "@tauri-apps/api/event";
-import type { AutoBackupState } from "@/types";
+import type { AutoBackupState } from "@ledger/types";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
@@ -20,7 +20,7 @@ import {
 } from "@/composables/useBackup";
 import { restartAppShortly } from "@/utils/restart";
 import { captureLastListener, mockListen } from "./helpers/listen-mock";
-import type { BackupFileInfo } from "@/types";
+import type { BackupFileInfo } from "@ledger/types";
 
 const autoBackupFile: BackupFileInfo = {
   file_name: "ledger-auto-20260217-093000.db.zip",

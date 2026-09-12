@@ -4,7 +4,7 @@ import { flushPromises } from '@vue/test-utils'
 import { makeTransaction } from '@/__tests__/factories'
 import { messageCalls } from './helpers/message-mock'
 import { useTransactionModalState } from '@/composables/useTransactionModalState'
-import type { TransactionConvert, TransactionSplit, TransactionTrade } from '@/types'
+import type { TransactionConvert, TransactionSplit, TransactionTrade } from '@ledger/types'
 
 // ---------------------------------------------------------------------------
 // 数据工厂：买卖明细（交易行走共享 makeTransaction，factories.ts）

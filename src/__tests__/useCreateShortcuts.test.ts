@@ -9,8 +9,8 @@ import {
 } from '@/composables/useCreateShortcuts'
 import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
 import { setFakeMedia } from './helpers/media-mock'
-import { CREATE_KINDS } from '@/types'
-import type { CreateTransactionKind } from '@/types'
+import { CREATE_KINDS } from '@ledger/types'
+import type { CreateTransactionKind } from '@ledger/types'
 
 function press(
   key: string,

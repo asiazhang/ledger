@@ -10,7 +10,7 @@ import {
   NTag,
   type DataTableColumns,
 } from 'naive-ui'
-import { formatAmount } from '@/types'
+import { formatAmount } from '@/utils/money'
 import { t } from '@/i18n'
 import PhysicalAssetFormModal from '@/components/PhysicalAssetFormModal.vue'
 import PhysicalAssetValuationModal from '@/components/PhysicalAssetValuationModal.vue'
@@ -21,7 +21,7 @@ import { useWindowTier } from '@/composables/useWindowTier'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
 import { useReferenceStore } from '@/stores/reference'
 import { sumFixedColumnWidths } from '@/utils/table'
-import type { PhysicalAsset } from '@/types'
+import type { PhysicalAsset } from '@ledger/types'
 
 /**
  * 实物资产视图（issue #466 建档列表 / issue #467 T2 更新估值与编辑 / spec #465 /

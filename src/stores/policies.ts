@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
-import type { Policy, PolicyInput, PolicyStats } from '@/types'
+import type { Policy, PolicyInput, PolicyStats } from '@ledger/types'
 
 /** 保单加载状态：`idle` 为初始瞬态（self-init 同步置为 `loading`，外部基本观察不到）。 */
 export type PoliciesStatus = 'idle' | 'loading' | 'ready' | 'error'

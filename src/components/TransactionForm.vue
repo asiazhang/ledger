@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
-import type { CreateFormKind, Transaction, TransactionTrade } from '@/types'
+import type { CreateFormKind, Transaction, TransactionTrade } from '@ledger/types'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransferForm from '@/components/TransferForm.vue'
 import LendingForm from '@/components/LendingForm.vue'

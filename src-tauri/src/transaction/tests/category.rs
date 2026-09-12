@@ -1,6 +1,6 @@
 //! 分类携带收口（issue #582）：行为层按 kind 拒绝/放行——expense / income 携带，
 //! refund 忽略调用方填值、继承原支出分类（与账户/币种/商户同款继承语义），
-//! transfer / buy / sell 携带拒绝；dividend / split 与「暂不支持」并存的拒绝优先级；
+//! transfer / buy / sell 携带拒绝；dividend / split 携带亦拒绝且先于投资域装配；
 //! 修改路径与批量导入路径同款收口（先例：[`super::merchant`] 商户携带收口）。
 
 use super::super::*;

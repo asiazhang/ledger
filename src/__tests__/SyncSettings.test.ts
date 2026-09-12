@@ -7,7 +7,7 @@ import {
   findBodyButtonByTestId,
 } from './helpers/dom'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
-import type { ParkedOpInfo, SyncChannelConfig, SyncRoundReport, SyncStatus } from '@/types'
+import type { ParkedOpInfo, SyncChannelConfig, SyncRoundReport, SyncStatus } from '@ledger/types'
 
 import SyncSettings from '@/components/settings/SyncSettings.vue'
 

@@ -38,6 +38,9 @@ fn reattach_app(
     dir: &std::path::Path,
     passphrase: Option<&str>,
 ) -> tauri::AppHandle<tauri::test::MockRuntime> {
+    // 写路径副作用接缝接线（issue #1090）：本helper不经 fresh_app，落库前显式
+    // 注册余额刷新实现（幂等，进程级）。
+    tauri_app_lib::accounts::balance::install_balance_refresh_hook();
     let app = tauri::test::mock_app();
     app.manage(BootCell::new(data_location::boot(dir)));
     let conn = match passphrase {

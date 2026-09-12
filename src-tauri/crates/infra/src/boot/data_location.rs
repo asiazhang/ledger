@@ -640,6 +640,3 @@ pub fn gather_book_list(default_dir: &Path, boot: Option<&Boot>) -> book_registr
         fallback_reason,
     }
 }
-
-#[cfg(test)]
-mod tests;

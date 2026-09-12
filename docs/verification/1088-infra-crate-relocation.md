@@ -87,7 +87,8 @@
 
 3. **生产挂载点复活**：夹具把迁移前的 `db/mod.rs` 直调备份域形态写回基础设施
    crate → `bun scripts/check-structure.ts` 红（`引用域目录 backup`，认许边不再含
-   该条）——`src/__tests__/check-structure.test.ts` 用例「生产挂载点已反转」钉死。
+   该条）——`scripts/check-structure.test.ts`（#1158 归位前住 `src/__tests__/`）
+   用例「生产挂载点已反转」钉死。
 4. **基础设施 crate 内引用壳层**：夹具写入 `db/helper.rs: use crate::commands::…` →
    红（`反向依赖`，定位 `db/helper.rs:1`）——crate 内清单基准随归位改到
    `crates/infra/src`，删除清单条目即报「白名单路径不存在」。

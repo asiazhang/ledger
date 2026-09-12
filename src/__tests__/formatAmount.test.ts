@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { formatAmount } from '@/types'
-import type { Currency } from '@/types'
+import { formatAmount } from '@/utils/money'
+import type { Currency } from '@ledger/types'
 
 const cny: Currency = { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }
 const jpy: Currency = { code: 'JPY', name: '日元', symbol: '¥', decimal_places: 0 }

@@ -20,17 +20,17 @@ import { useWindowTier } from '@/composables/useWindowTier'
 import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
 import {
-  formatPrice,
   INSTRUMENT_SOURCES,
   INSTRUMENT_TYPES,
   MARKET_FILTER_TYPES,
   MARKET_TYPES,
-} from '@/types'
+} from '@ledger/types'
+import { formatPrice } from '@/utils/money'
 import { sumFixedColumnWidths } from '@/utils/table'
 import AppSelect from '@/components/AppSelect.vue'
 import AddInstrumentModal from '@/components/investments/AddInstrumentModal.vue'
 import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
-import type { Instrument, MarketType } from '@/types'
+import type { Instrument, MarketType } from '@ledger/types'
 
 const reference = useReferenceStore()
 

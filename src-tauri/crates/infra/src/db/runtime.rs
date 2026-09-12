@@ -44,8 +44,10 @@ pub fn write<T>(conn: &Mutex<Connection>, f: impl FnOnce(&Connection) -> Result<
 /// 注册实现、壳层启动时接线」形态挂在基础设施侧：本 crate 只承诺调用时机，
 /// 不知道副作用语义——数据库与备份域之间不再有 crate 依赖边（备份域是业务域，
 /// 基础设施不得反向引用）。实现由备份域提供、壳层在启动时注册；其余两类写路径
-/// 挂载点（受影响账户余额重算、计划来源解析）由 #1090「写路径副作用接缝反转」
-/// 收口为同一形态。
+/// 挂载点（受影响账户余额重算、计划来源解析）已由 #1090「写路径副作用接缝反转」
+/// 收口为同一形态（核心交易域 `transaction::write_effects` / `transaction::read`
+/// 注册点，账户域 / 定时计划域实现），期次落账置脏同票收口（定时计划域
+/// `auto_run` 注册点、备份域实现）。
 pub type AfterCommitHook = fn(&Connection);
 
 static AFTER_COMMIT_HOOK: OnceLock<AfterCommitHook> = OnceLock::new();
@@ -83,7 +85,7 @@ fn after_commit(conn: &Connection) {
 /// `fetch_fund_quote_for_api`），事件循环线程与 tokio worker 不再被 DB 调用占用。
 ///
 /// - 闭包自带连接获取方式：读路径锁内执行（`conn.lock()`），写路径经连接层
-///   统一写入口 [`write`]（ADR-0032 置脏语义零改动）；
+///   统一写入口 [`write()`]（ADR-0032 置脏语义零改动）；
 /// - `command` 用于在闭包内重建命令 span：异步命令与 wrapper 不同线程，SQL 耗时
 ///   归因靠这里兜底（lib.rs 异步命令归因约定，先例 `sync_instrument_info`）；
 ///   调用点已有活动 span 时（HTTP handlers 在 tower_http 请求 span 内运行）改为
@@ -134,7 +136,7 @@ impl DbState {
         })
     }
 
-    /// 写入口的命令层便捷形态（语义见 [`write`]）：`state.write(|conn| ...)`。
+    /// 写入口的命令层便捷形态（语义见 [`write()`]）：`state.write(|conn| ...)`。
     pub fn write<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         write(&self.conn, f)
     }

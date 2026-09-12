@@ -95,6 +95,17 @@ pub fn open() -> Connection {
     // 响应闭包（去抖合流）由同步域提供，此处登记（幂等，先装者优先）；调度未
     // 拉起时信号投递仍是零动作。
     crate::sync_engine::trigger::install_after_write_hook();
+    // 写路径副作用接缝接线（issue #1090 / #1091）：测试库与生产同形——余额刷新
+    // 实现由账户域、计划来源解析实现由定时计划域提供，建库单点负责注册（幂等，
+    // 先装者优先）；期次落账置脏（#1090）实现由备份域（#1091 起为 `ledger-backup`
+    // crate）提供、定时计划域注册点对装，追补触发（#1091 挂载点④）实现由定时
+    // 计划域提供、备份域注册点对装——两个域互相零直接依赖，接线都在本单点。
+    crate::accounts::balance::install_balance_refresh_hook();
+    crate::scheduled_transactions::install_plan_source_hook();
+    crate::scheduled_transactions::auto_run::register_after_occurrence_hook(
+        crate::backup::occurrence_dirty_hook,
+    );
+    crate::backup::register_catch_up_hook(crate::scheduled_transactions::auto_run::catch_up_hook);
     let mut conn = crate::db::open_in_memory().expect("打开内存测试库");
     crate::db::init_db(&mut conn).expect("初始化内存测试库");
     conn

@@ -156,6 +156,3 @@ pub fn plan_boot(default_dir: &Path) -> BootPlan {
     let disposition = classify_for_boot(&boot.db_dir.join(super::data_location::DB_FILE_NAME));
     BootPlan { boot, disposition }
 }
-
-#[cfg(test)]
-mod tests;

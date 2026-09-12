@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
-import type { InstrumentSyncProgress } from '@/types'
+import type { InstrumentSyncProgress } from '@ledger/types'
 
 /**
  * 同步进度条展示组件（issue #897 / ADR-0095）：只测外部行为——形态为

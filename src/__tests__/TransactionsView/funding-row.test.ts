@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
 import AccountLink from '@/components/AccountLink.vue'
-import type { Transaction } from '@/types'
+import type { Transaction } from '@ledger/types'
 
 /** 买入/卖出行出资账户双链接（issue #937 / ADR-0096，方向修正 issue #1030）：
  * 出资账户命中的 buy/sell 行账户列按「资金流出方在前」双向账户名展示——

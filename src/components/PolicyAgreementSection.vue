@@ -9,13 +9,13 @@ import {
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import { formatAmount } from '@/types'
+import { formatAmount } from '@/utils/money'
 import { errorMessage } from '@/utils/errors'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 import { scheduledRecurrenceLabel } from '@/composables/useScheduledPlanList'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
-import type { Policy, ScheduledTransactionWithExt } from '@/types'
+import type { Policy, ScheduledTransactionWithExt } from '@ledger/types'
 import PolicyAgreementFields from '@/components/PolicyAgreementFields.vue'
 
 /**

@@ -8,7 +8,7 @@ import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { makePolicy, makePolicyStats } from './factories'
 import { formatAmount } from '@/utils/money'
 import { refCurrencies } from './helpers/reference-stubs'
-import type { Insurer, Policy, PolicyStats } from '@/types'
+import type { Insurer, Policy, PolicyStats } from '@ledger/types'
 import { componentVm } from './helpers/component-vm'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测

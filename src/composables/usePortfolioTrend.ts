@@ -6,7 +6,7 @@ import type {
   InstrumentPriceTrend,
   PortfolioValueTrend,
   TrendRange,
-} from '@/types'
+} from '@ledger/types'
 
 /** 走势预设区间：1 月 / 3 月 / 1 年 / 全部（ADR-0019） */
 export type TrendRangePreset = '1m' | '3m' | '1y' | 'all'

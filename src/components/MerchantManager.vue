@@ -25,7 +25,7 @@ import { matchLabel } from '@/utils/pinyin-filter'
 import { t } from '@/i18n'
 import { formatQuantity } from '@/utils/money'
 import { sumFixedColumnWidths } from '@/utils/table'
-import type { Merchant, MerchantInput } from '@/types'
+import type { Merchant, MerchantInput } from '@ledger/types'
 
 // 商户管理（issue #189 / ADR-0028）：字典为扁平表（无层级、无 sort_order，按名称排序），
 // 交互沿用分类管理先例——新增表单卡片 + 列表卡片 + 编辑弹窗；写入成功后参考数据

@@ -8,7 +8,7 @@ import {
   firePricesChanged,
   resetPricesChangedHandler,
 } from './prices-changed-mock'
-import type { PortfolioValueTrend } from '@/types'
+import type { PortfolioValueTrend } from '@ledger/types'
 
 vi.mock('vue-chartjs', async () => {
   const { LineChartStub } = await import('./line-chart-stub')

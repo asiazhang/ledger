@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { wireInvokeSeam } from '../helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import ItemsView from '@/views/ItemsView.vue'
-import type { ItemWithDailyCost } from '@/types'
+import type { ItemWithDailyCost } from '@ledger/types'
 
 // 物品弹窗族排版统一（issue #634，spec #630）：三个弹窗的卡片外观收敛为
 // AppModal cardSize 单一声明——编辑/处置归 sm（420）、详情归 md（480）；

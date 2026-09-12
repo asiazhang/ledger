@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
 import AccountLink from '@/components/AccountLink.vue'
-import type { Transaction } from '@/types'
+import type { Transaction } from '@ledger/types'
 
 describe('TransactionsView 转账行双向账户名（issue #99）', () => {
   // 混合数据集：转账行（txn-2: acc-2 → acc-1）与普通行并存，供双向展示 / 单账户名断言

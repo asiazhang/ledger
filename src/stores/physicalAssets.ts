@@ -9,7 +9,7 @@ import type {
   PhysicalAssetList,
   PhysicalAssetUpdateInput,
   PhysicalAssetValuationInput,
-} from '@/types'
+} from '@ledger/types'
 
 /** 实物资产加载状态：`idle` 为初始瞬态（self-init 同步置为 `loading`，外部基本观察不到）。 */
 export type PhysicalAssetsStatus = 'idle' | 'loading' | 'ready' | 'error'

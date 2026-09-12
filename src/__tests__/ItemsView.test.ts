@@ -9,7 +9,13 @@ import { nextTick } from 'vue'
 import { applyLocale } from '@/i18n'
 import ItemsView from '@/views/ItemsView.vue'
 import { formatAmount } from '@/utils/money'
-import type { Currency, ItemDailyCost, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
+import type {
+  Currency,
+  ItemDailyCost,
+  ItemInput,
+  ItemWithDailyCost,
+  Transaction,
+} from '@ledger/types'
 
 
 const pushMock = vi.fn()

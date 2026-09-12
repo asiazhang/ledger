@@ -1,5 +1,8 @@
 // 类型统一入口（barrel）：按领域拆分为多个文件，此处集中转出口。
-// 现有 `@/types` 引用零改动；formatAmount / formatPrice / formatQuantity 定义在 `@/utils/money`，此处一并转出。
+// 纯类型包 @ledger/types（issue #1150 / spec #1148）：零依赖叶子，运行时值只收
+// 本包内定义的闭集常量与守卫函数；formatAmount / formatPrice / formatQuantity
+// 等金额展示接缝定义在根包 @/utils/money，归 @ledger/money 票（#1153）落位，
+// 不从本包转出。
 
 export * from './accounts'
 export * from './backup'
@@ -26,15 +29,3 @@ export * from './sync'
 export * from './sync-channel'
 export * from './transactions'
 export * from './settings'
-
-export {
-  formatAmount,
-  formatPrice,
-  formatQuantity,
-  centsToYuan,
-  priceToYuan,
-  yuanToCents,
-  yuanToPrice,
-  PRICE_UNITS_PER_FEN,
-  PRICE_UNITS_PER_YUAN,
-} from '@/utils/money'
