@@ -19,7 +19,7 @@ import {
   resetToastSink,
 } from './factories'
 import { formatAmount } from '@/utils/money'
-import type { Currency } from '@/types'
+import type { Currency } from '@ledger/types'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测；
 // formatCurrencyGroups 自身规则只剩「 / 」连接符，仍以字面量锁定

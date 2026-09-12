@@ -3,7 +3,7 @@ import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount } from '@vue/test-utils'
 import { setFakeMedia } from './helpers/media-mock'
 import CategoryManager from '@/components/CategoryManager.vue'
-import type { Category } from '@/types'
+import type { Category } from '@ledger/types'
 
 
 const mockCategories: Category[] = [

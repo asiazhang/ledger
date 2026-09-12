@@ -10,7 +10,7 @@ import { yuanToCents } from '@/utils/money'
 import { useFormShared } from '@/composables/useFormShared'
 import { useAppStore } from '@/stores/app'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
-import type { PhysicalAsset, PhysicalAssetValuationInput } from '@/types'
+import type { PhysicalAsset, PhysicalAssetValuationInput } from '@ledger/types'
 
 /**
  * 更新估值弹窗（issue #467 T2 / ADR-0064）：「更新估值」的唯一入口——

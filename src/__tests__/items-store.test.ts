@@ -3,7 +3,7 @@ import { wireInvokeSeam } from './helpers/invoke-mock'
 import { captureListenHandlers, type CapturedListener } from './helpers/listen-mock'
 import { flushPromises } from '@vue/test-utils'
 import { useItemsStore } from '@/stores/items'
-import type { ItemInput, ItemWithDailyCost } from '@/types'
+import type { ItemInput, ItemWithDailyCost } from '@ledger/types'
 
 function baseItem(over: Partial<ItemWithDailyCost> = {}): ItemWithDailyCost {
   return {

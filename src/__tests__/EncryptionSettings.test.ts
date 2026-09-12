@@ -3,7 +3,7 @@ import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { messageApi } from './helpers/message-mock'
 import { findButton, findBodyButton, findBodyButtonByTestId } from './helpers/dom'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
-import type { EncryptionStatus } from '@/types'
+import type { EncryptionStatus } from '@ledger/types'
 import zhAll from '@/i18n/locales/zh-CN'
 import enAll from '@/i18n/locales/en-US'
 

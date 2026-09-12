@@ -7,13 +7,13 @@ import { api } from '@/api'
 import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { errorCodeOf, errorMessage as extractErrorMessage } from '@/utils/errors'
-import { formatPrice } from '@/types'
+import { formatPrice } from '@/utils/money'
 import type {
   AddInstrumentChannel,
   AddStockInstrumentResult,
   AddFundResult,
   InstrumentType,
-} from '@/types'
+} from '@ledger/types'
 
 // 「添加投资标的」对话框（issue #697 / spec #690；六通道修订 issue #826）：标的
 // 创建的唯一入口——市场必选录入通道（沪/深/港/美股/场外基金/自定义标的）。

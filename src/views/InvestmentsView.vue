@@ -15,7 +15,7 @@ import RealizedPnlPanel from '@/components/investments/RealizedPnlPanel.vue'
 import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
 import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
-import type { Instrument } from '@/types'
+import type { Instrument } from '@ledger/types'
 
 const route = useRoute()
 

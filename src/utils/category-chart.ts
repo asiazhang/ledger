@@ -1,7 +1,7 @@
 // 支出分类构成横向柱状图的数据形态（issue #378）：一级分类归并 + 未分类柱、
 // 净额降序（负值柱如实沉底）、分类按 id 稳定配色（跨年份/跨数据顺序恒定）、
 // 未分类固定灰。柱尾只标金额；占比收进 tooltip，「金额 · 占比%」标签在此收口为纯函数。
-import type { Category, CategoryShare } from '@/types'
+import type { Category, CategoryShare } from '@ledger/types'
 import { categoryRoot } from '@/utils/category-tree'
 import { formatAmount } from '@/utils/money'
 

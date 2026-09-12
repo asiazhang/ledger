@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { useTransferForm } from '@/composables/useTransferForm'
-import type { Account, Transaction } from '@/types'
+import type { Account, Transaction } from '@ledger/types'
 
 
 const mockAccounts: Account[] = [

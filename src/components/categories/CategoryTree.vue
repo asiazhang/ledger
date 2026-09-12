@@ -7,10 +7,10 @@ import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useWindowTier } from '@/composables/useWindowTier'
-import { getIconComponent } from '@/types/icon'
+import { getIconComponent } from '@/utils/icon'
 import { buildCategoryTree } from '@/utils/category-tree'
 import { t } from '@/i18n'
-import type { Category, CategoryKind } from '@/types'
+import type { Category, CategoryKind } from '@ledger/types'
 
 const props = defineProps<{ kind: CategoryKind }>()
 const emit = defineEmits<{ edit: [cat: Category] }>()

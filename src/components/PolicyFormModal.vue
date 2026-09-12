@@ -20,7 +20,7 @@ import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
 import { api } from '@/api'
-import type { Policy, PolicyInput } from '@/types'
+import type { Policy, PolicyInput } from '@ledger/types'
 
 /**
  * 保单新建/编辑弹窗（issue #360 / ADR-0051）：静态合同要素录入。

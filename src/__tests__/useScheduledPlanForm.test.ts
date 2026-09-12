@@ -5,7 +5,7 @@ import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { todayStr } from '@/utils/date'
-import type { Account, Category, Currency, Merchant } from '@/types'
+import type { Account, Category, Currency, Merchant } from '@ledger/types'
 
 
 const mockCurrencies: Currency[] = [

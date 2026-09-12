@@ -19,7 +19,7 @@ import type {
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
   SubscriptionSpendOverview,
-} from '@/types'
+} from '@ledger/types'
 
 /**
  * SubscriptionsPane 测试目录薄壳（issue #748，ADR-0085 决策 7）：只承载本目录

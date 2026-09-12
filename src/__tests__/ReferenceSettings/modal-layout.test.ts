@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
 import CategoryEditModal from '@/components/categories/CategoryEditModal.vue'
-import type { Merchant, Category } from '@/types'
+import type { Merchant, Category } from '@ledger/types'
 
 // 参考数据管理弹窗排版统一（issue #637，spec #630）：商户编辑与分类编辑
 // 两弹窗卡片外观收敛为 AppModal cardSize 单一声明——均归 sm（420），

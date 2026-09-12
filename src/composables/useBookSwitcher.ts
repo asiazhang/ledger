@@ -7,7 +7,7 @@ import { useLoadable } from '@/composables/useLoadable'
 import { restartAppShortly } from '@/utils/restart'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { useModalIntent } from '@/composables/useModalIntent'
-import type { Book } from '@/types'
+import type { Book } from '@ledger/types'
 
 /**
  * useBookSwitcher——侧栏账本入口的弹层逻辑深模块（issue #834 / ADR-0089）：

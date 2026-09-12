@@ -1,7 +1,7 @@
 import { onUnmounted, watch } from 'vue'
 import { hasOpenOverlay } from '@/composables/overlayRegistry'
 import { useInputMode } from '@/composables/useInputMode'
-import type { CreateTransactionKind } from '@/types'
+import type { CreateTransactionKind } from '@ledger/types'
 
 /**
  * 「记一笔」裸键快捷键（issue #153）：交易页按 a/z/i/b/s 直达对应类型的记一笔弹窗。

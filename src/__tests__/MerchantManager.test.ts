@@ -7,7 +7,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { messageApi } from './helpers/message-mock'
 import { findButton } from './helpers/dom'
 import MerchantManager from '@/components/MerchantManager.vue'
-import type { Merchant } from '@/types'
+import type { Merchant } from '@ledger/types'
 
 const { pushMock } = vi.hoisted(() => ({
   pushMock: vi.fn(),

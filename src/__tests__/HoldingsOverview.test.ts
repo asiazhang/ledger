@@ -21,7 +21,7 @@ import {
   mockInstruments,
 } from './factories'
 import { refCurrencies } from './helpers/reference-stubs'
-import type { Account, Holding, Instrument } from '@/types'
+import type { Account, Holding, Instrument } from '@ledger/types'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount/formatPrice 实现，
 // 格式规则唯一归属其专测；现价列为价格刻度（ADR-0038）走 formatPrice

@@ -3,7 +3,7 @@ import { api } from '@/api'
 import { useLoadable } from '@/composables/useLoadable'
 import type { CurrencyAmountGroup } from '@/composables/usePortfolioOverview'
 import { useReferenceStore } from '@/stores/reference'
-import type { RealizedPnlSummary } from '@/types'
+import type { RealizedPnlSummary } from '@ledger/types'
 
 /**
  * 已实现盈亏概览：账户/标的筛选 + 汇总数据加载（盈亏 tab 的数据层）。

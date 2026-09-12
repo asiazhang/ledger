@@ -13,8 +13,8 @@ vi.mock('vue-router', () => ({
 import { useReferenceStore } from '@/stores/reference'
 import { paletteColor } from '@/utils/category-chart'
 import { formatAmount } from '@/utils/money'
-import type { Merchant } from '@/types'
-import type { MerchantSharesReport } from '@/types'
+import type { Merchant } from '@ledger/types'
+import type { MerchantSharesReport } from '@ledger/types'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现（无币种形态），
 // 格式规则唯一归属其专测

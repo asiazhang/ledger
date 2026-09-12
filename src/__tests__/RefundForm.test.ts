@@ -3,7 +3,7 @@ import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { useReferenceStore } from '@/stores/reference'
 import RefundForm from '@/components/RefundForm.vue'
-import type { Transaction } from '@/types'
+import type { Transaction } from '@ledger/types'
 
 
 /** 行内退款模式的固定原交易（¥30 支出） */

@@ -1,7 +1,7 @@
 import { onMounted, ref } from 'vue'
 import { api } from '@/api'
 import { useLoadable } from '@/composables/useLoadable'
-import type { DashboardOverview } from '@/types'
+import type { DashboardOverview } from '@ledger/types'
 
 /**
  * 首页净资产总览数据层（issue #143；issue #323 起为 Loadable 之上的薄壳，ADR-0040）：

@@ -10,7 +10,7 @@ import { yuanToCents, centsToYuan } from '@/utils/money'
 import { useFormShared } from '@/composables/useFormShared'
 import { useAppStore } from '@/stores/app'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
-import type { PhysicalAsset, PhysicalAssetInput, PhysicalAssetUpdateInput } from '@/types'
+import type { PhysicalAsset, PhysicalAssetInput, PhysicalAssetUpdateInput } from '@ledger/types'
 
 /**
  * 实物资产新建/编辑弹窗（issue #466 建档 / issue #467 T2 编辑 / ADR-0064）：

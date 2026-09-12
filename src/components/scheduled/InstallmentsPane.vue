@@ -18,7 +18,7 @@ import {
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import AppTreeSelect from '@/components/AppTreeSelect.vue'
-import { formatAmount } from '@/types'
+import { formatAmount } from '@/utils/money'
 import { yuanToCents } from '@/utils/money'
 import { installmentSchedule } from '@/utils/installment'
 import { useReferenceStore } from '@/stores/reference'

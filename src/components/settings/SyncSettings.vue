@@ -7,12 +7,7 @@ import { errorMessage } from '@/utils/errors'
 import { formatIsoMinute } from '@/utils/datetime'
 import { restartAppShortly } from '@/utils/restart'
 import AppModal from '@/components/AppModal.vue'
-import type {
-  ParkedOpInfo,
-  SyncChannelConfig,
-  SyncCheckpointInfo,
-  SyncStatus,
-} from '@/types'
+import type { ParkedOpInfo, SyncChannelConfig, SyncCheckpointInfo, SyncStatus } from '@ledger/types'
 
 // 多端同步卡片（issue #862 / #863 / #864 / ADR-0091）：设置页「数据」Tab 的同步可见面——
 // 上次同步时间、挂起数量、「立即同步」动作、挂起通知明细、通道配置表单

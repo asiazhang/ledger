@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { merchantTableRows } from '@/utils/merchant-chart'
 import { paletteColor } from '@/utils/category-chart'
-import type { MerchantShare } from '@/types'
+import type { MerchantShare } from '@ledger/types'
 
 // 商户消费排行表格行构建纯函数（issue #618 表格化）：排序与 topN 截断已收口后端
 // `merchant_shares`，前端按返回序渲染、零口径逻辑。行色与支出分类构成同源——

@@ -9,7 +9,7 @@ import {
   supportsRowDetail,
   supportsRowEdit,
 } from '@/components/transaction-row-menu'
-import { TRANSACTION_KINDS } from '@/types'
+import { TRANSACTION_KINDS } from '@ledger/types'
 
 /** 渲染 DropdownOption.icon 工厂，取出其中的图标组件（用于断言挂了哪个图标）。 */
 function iconComponentOf(option: DropdownOption): unknown {

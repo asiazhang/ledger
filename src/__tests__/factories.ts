@@ -18,7 +18,7 @@ import type {
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
   Transaction,
-} from '@/types'
+} from '@ledger/types'
 
 /**
  * 组件/composable 测试的共享数据工厂（issue #110 审查：消除测试文件间重复）。

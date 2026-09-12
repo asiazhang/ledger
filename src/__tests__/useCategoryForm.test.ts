@@ -3,7 +3,7 @@ import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { useCategoryForm } from '@/composables/useCategoryForm'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
-import type { Merchant, Policy, Transaction } from '@/types'
+import type { Merchant, Policy, Transaction } from '@ledger/types'
 
 
 const mockMerchants: Merchant[] = [

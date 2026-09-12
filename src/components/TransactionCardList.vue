@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NButton, NTag } from 'naive-ui'
-import type { Transaction } from '@/types'
+import type { Transaction } from '@ledger/types'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { kindSemanticColor } from '@/theme/semantic-colors'

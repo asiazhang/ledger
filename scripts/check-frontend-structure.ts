@@ -23,8 +23,9 @@
 // 假阳性不可达，靠评审兜底。仅扫描 .ts / .tsx / .vue 源文件。
 // 默认校验本仓库；测试传位置参数指向夹具：
 // bun scripts/check-frontend-structure.ts [repo-root] [packages-manifest.json]
-// arg2 = 夹具包登记表（JSON 数组，与 PACKAGES 同形）——仅供测试夹具注入，生产
-// 路径不传，登记表唯一事实源仍是本脚本 PACKAGES。
+// arg2 = 夹具包登记表（JSON 数组，与 PACKAGES 同形）——仅供测试夹具注入，注入时
+// 完全替代生产登记表（#1150 起 PACKAGES 非空，拼接会让生产条目泄漏进夹具）；
+// 生产路径不传，登记表唯一事实源仍是本脚本 PACKAGES。
 // 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job），
 // 与结构守门检查并列。
 
@@ -46,9 +47,15 @@ export interface PackageEntry {
 /**
  * 成员包登记册（issue #1149）：与 check-structure.ts 的 CRATES 同为「已验证事实
  * 固化为规格」——packages/* 下的每个成员目录在此恰有一行；每拆一个前端包追加。
- * 本票（#1149）只落骨架，成员为空；空登记 + 空目录 = 双向全等的平凡绿。
  */
-export const PACKAGES: readonly PackageEntry[] = []
+export const PACKAGES: readonly PackageEntry[] = [
+  {
+    name: '@ledger/types',
+    dir: 'packages/types',
+    deps: [],
+    note: '纯类型包（issue #1150）：零依赖叶子，方向表恒空——类型层不依赖任何包；金额展示接缝归 @ledger/money（#1153）',
+  },
+]
 
 /** workspace 成员 glob（pnpm-workspace.yaml 侧声明与本脚本核对同源）。 */
 const MEMBER_DIR_GLOB = 'packages/*'
@@ -388,8 +395,10 @@ function main(): void {
   const scriptDir = dirname(fileURLToPath(import.meta.url))
   const repoRoot = process.argv[2] ?? join(scriptDir, '..')
   const fixtureManifestPath = process.argv[3]
+  // 夹具注入完全替代生产登记表（issue #1150 起 PACKAGES 非空）：concat 会让生产
+  // 条目泄漏进夹具仓库根、触发「清单漂移」假红；夹具自足才可隔离校验。
   const registry: readonly PackageEntry[] = fixtureManifestPath
-    ? [...PACKAGES, ...loadFixtureManifest(fixtureManifestPath)]
+    ? loadFixtureManifest(fixtureManifestPath)
     : PACKAGES
 
   const problems: string[] = []

@@ -18,7 +18,7 @@ import type {
   PortfolioValueTrend,
   ReportDateRange,
   SubscriptionSpendOverview,
-} from '@/types'
+} from '@ledger/types'
 
 // 图表数字同源掩码核查（issue #567，spec #564 user story 4）：逐面断言
 // 「轴刻度 / 图内标注 / tooltip」三类渲染点与列表数字同一掩码口径——

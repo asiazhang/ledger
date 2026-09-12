@@ -2,8 +2,8 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from '@/api'
 import { useLoadable } from '@/composables/useLoadable'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount } from '@/types'
-import type { Currency, Holding } from '@/types'
+import { formatAmount } from '@/utils/money'
+import type { Currency, Holding } from '@ledger/types'
 
 /** 当前持仓概览的一行：Holding 行叠加标的字典与账户的展示信息。 */
 export interface PortfolioRow {

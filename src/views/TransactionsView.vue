@@ -56,7 +56,7 @@ import {
   type Transaction,
   type TransactionKind,
   type TransactionListFilter,
-} from '@/types'
+} from '@ledger/types'
 
 const reference = useReferenceStore()
 // 窗口分级（ADR-0088 决策 2 / 词汇表「窗口分级」）：断点双渲染判定——同一列表

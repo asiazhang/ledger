@@ -9,7 +9,7 @@ import { makeTransaction } from './factories'
 import CategoryManager from '@/components/CategoryManager.vue'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransactionsView from '@/views/TransactionsView.vue'
-import type { Account, Category, Transaction } from '@/types'
+import type { Account, Category, Transaction } from '@ledger/types'
 
 // TransactionsView 经 useRoute 读取 URL query（?account=<id> 只读入口，issue #97）；
 // 本文件挂载该视图但无路由上下文，mock 为空 query（无账户过滤，不影响既有断言）。

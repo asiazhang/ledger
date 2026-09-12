@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NButton, NDatePicker } from 'naive-ui'
 import AppDatePicker from '@/components/AppDatePicker.vue'
-import type { Transaction } from '@/types'
+import type { Transaction } from '@ledger/types'
 
 /**
  * 交易页时间维度行行为测试（issue #382）。

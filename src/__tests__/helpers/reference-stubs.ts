@@ -1,4 +1,4 @@
-import type { Account, Category, Currency, Insurer, Merchant } from '@/types'
+import type { Account, Category, Currency, Insurer, Merchant } from '@ledger/types'
 
 /**
  * 参考数据测试桩的单一来源（issue #725；收尾票 #750 起本文件只承载夹具与登记处）。
