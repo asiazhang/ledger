@@ -2,14 +2,20 @@
 
 > 分域知识节，经 `GET /api/v1/import/knowledge/investment` 按需获取；基础约定（每行拆解、商户、幂等去重、对账与纠错）见 `GET /api/v1/import/knowledge`。
 
+## kind 清单与通用规则
+
+- 投资流水走四类专属 kind，不落普通收支三类（`income` / `expense` / `transfer`）：`buy` / `sell`（见「投资交易」「基金申赎」）、`convert`（见「基金转换」）、`split`（见「份额调整」）与 `dividend`（见「现金分红」）。四者均可用。
+- 投资 kind 一律不带商户：携带 `merchant_name` / `merchant_id` 提交会被拒绝。
+
 ## 投资交易（buy / sell）
 
 - 标的解析三步法（带代码标的的权威路径，与「基金申赎」节对称，不依赖本地标的字典）：① **先按代码查询** `GET /api/v1/stocks/{code}` 确认识别（`market` 可省）；② **再以真实代码创建** `POST /api/v1/instruments`（`symbol`/`type`/`market` 按查询结果填）；③ 用返回的标的 `id` 填 `instrument_id` 写 buy/sell。查无此码（400 中文报错）请核对代码或跳过该行；东财临时不可达时创建仍成功（降级建行、市场保留），无需重试、不阻塞导入。同码异类型（如基金 000001 与股票 000001）经查询端点天然分流。
 - 源数据确无代码时才以名称充代码兜底建行（`symbol` = 名称，该行不触发东财校验、不进行情通道）；`GET /api/v1/instruments` 搜索仅作名称消歧的辅助（参数语义见契约；命中语义为契约缺口缓存：`query` 按空白切词、词条间 AND，对「代码 · 名称」判定原文连续子串或拼音首字母串，如 `gzmt` 命中 600519 贵州茅台），带代码行的解析走三步法。
-- `account_id` 必须是投资账户（`GET /api/v1/accounts` 的 `type` 可辨）；`quantity` / `price_cents` / `fee_cents` 的单位与约束见契约字段说明。`buy` / `sell` 不带商户。
+- `account_id` 必须是投资账户（`GET /api/v1/accounts` 的 `type` 可辨）；`quantity` / `price_cents` / `fee_cents` 的单位与约束见契约字段说明。
 - 直扣/直付场景可带可选 `funding_account_id`（出资账户）：结算现金实际流出（买入）/流入（卖出）的账户，如银行卡直扣买基金——现金类账户（cash/bank/credit/ewallet/other）、币种与交易一致、不得是投资账户；缺省即投资账户自身结算。确认单直接从银行卡扣款/到账时携带，场内余额买卖不携带。
 - 行金额照契约 `fee_cents` 字段说明的重算公式预填即可（服务端按固定公式重算覆盖）；场外基金例外见「基金申赎」节。
 - 纠错：错误行按 400 中文报错自纠——`instrument_id` 不存在时重走三步法拿正确 id 再提交；`sell` 数量不得超过当前持仓；已有部分卖出的买入禁改（改持仓历史会破坏已实现盈亏）但**可删**：删除买入会级联软删其在用卖出并回补持仓（卖出随买入一并消失，204 无被删列表）；删除卖出则回补其持仓扣减并清空卖出匹配。
+- 读回来源口径：核对标的关联认行上 `source` 字段（`kind: "instrument"`，`entity_id` 为标的 id、`display_name` 为「代码 名称」；convert 行是转出标的）；交易行上没有 `instrument_id` / `quantity` 字段——二者只出现在写入入参，不经交易读回返回；convert 两腿读回投影见契约。子集核对直接用服务端过滤（如 `kinds=buy,sell`），返回行即全部待核对对象。
 - 对账：读回行金额按契约公式核对；余额核对含结算账户现金流——`buy` 减现金、`sell` 增现金，带 `funding_account_id` 时现金腿记出资账户、投资账户现金腿为 0（`GET /api/v1/accounts/balances`）；创建标的回填的权威名称可与账单名称不同，以读回的标的名称为准。
 
 ## 基金申赎（buy / sell，场外基金）

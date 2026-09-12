@@ -82,10 +82,11 @@ pub async fn import_investment_knowledge_handler() -> impl IntoResponse {
 mod tests {
     use super::*;
 
-    /// 投资节独有措辞抽查（多腿转换、份额调整、分红三节的确定性表述）：
+    /// 投资节独有措辞抽查（多腿转换、份额调整、分红三节的确定性表述，及
+    /// issue #1124 自基础侧迁入的 kind 清单、商户排除与读回来源口径措辞）：
     /// 整节或其中口径被误搬回基础常量时逐词报红——与端点关键词锁（HTTP 响应层）
     /// 互补，本组断言对准常量结构，守住「同一节正文只存在一处」。
-    const INVESTMENT_ONLY_WORDING: [&str; 7] = [
+    const INVESTMENT_ONLY_WORDING: [&str; 11] = [
         "tradingTarget",
         "convertAmount",
         "逐腿直读",
@@ -93,6 +94,10 @@ mod tests {
         "带符号份额增量",
         "红利再投",
         "到账账户",
+        "四者均可用",
+        "一律不带商户",
+        "entity_id",
+        "display_name",
     ];
 
     #[test]
