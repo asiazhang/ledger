@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { InstrumentSyncProgress, SyncInstrumentInfoResult } from '@ledger/types'
 
 export type InstrumentInfoSyncStatus = 'idle' | 'success' | 'error'

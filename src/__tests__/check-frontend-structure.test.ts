@@ -344,12 +344,24 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
       expect(r.output).toContain('须为 JSON 数组')
     })
 
-    it('PACKAGES 生产登记表已登记 @ledger/types（#1150）与 @ledger/test-support（#1152）', () => {
+    it('PACKAGES 生产登记表与已落位包全等（#1150/#1151/#1152 抽包落位）', () => {
       expect(PACKAGES).toEqual([
         {
           name: '@ledger/types',
           dir: 'packages/types',
           deps: [],
+          note: expect.any(String),
+        },
+        {
+          name: '@ledger/storage',
+          dir: 'packages/storage',
+          deps: [],
+          note: expect.any(String),
+        },
+        {
+          name: '@ledger/i18n',
+          dir: 'packages/i18n',
+          deps: ['@ledger/storage'],
           note: expect.any(String),
         },
         {

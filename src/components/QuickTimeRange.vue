@@ -7,7 +7,7 @@ import AppDatePicker from '@/components/AppDatePicker.vue'
 import { useInputMode } from '@/composables/useInputMode'
 import { useLoadable } from '@/composables/useLoadable'
 import { api } from '@/api'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { ReportDateRange } from '@ledger/types'
 import {
   TIME_PERIOD_PRESETS,

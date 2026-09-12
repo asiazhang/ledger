@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, ref, nextTick, watch } from 'vue'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import {
   NButton,
   NDataTable,

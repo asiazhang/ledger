@@ -63,6 +63,18 @@ export const PACKAGES: readonly PackageEntry[] = [
     note: '纯类型包（issue #1150）：零依赖叶子，方向表恒空——类型层不依赖任何包；金额展示接缝归 @ledger/money（#1153）',
   },
   {
+    name: '@ledger/storage',
+    dir: 'packages/storage',
+    deps: [],
+    note: '存储接缝包（issue #1151）：依赖图唯一真叶子，方向表恒空——localStorage 读写的单一收口，不依赖任何包',
+  },
+  {
+    name: '@ledger/i18n',
+    dir: 'packages/i18n',
+    deps: ['@ledger/storage'],
+    note: '界面语言包（issue #1151 / ADR-0049）：依赖存储底座 @ledger/storage 单向成边，locales 文案资源随包走；money / errors 等上层消费方依赖本包，utils ↔ i18n 双向环消失',
+  },
+  {
     name: '@ledger/test-support',
     dir: 'packages/test-support',
     deps: ['@ledger/types'],

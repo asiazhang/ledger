@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import type { Currency } from '@ledger/types'
-import { currentLocale, type Locale } from '@/i18n'
+import { currentLocale, type Locale } from '@ledger/i18n'
 
 /** 金额隐私模式的 localStorage key（轻量设置项，水合与持久化收口在应用设置 store） */
 export const AMOUNT_PRIVACY_STORAGE_KEY = 'amount_privacy_enabled'

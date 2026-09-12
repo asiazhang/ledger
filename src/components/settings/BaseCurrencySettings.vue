@@ -5,7 +5,7 @@ import AppSelect from '@/components/AppSelect.vue'
 import { api } from '@/api'
 import { errorMessage } from '@/utils/errors'
 import { useReferenceStore } from '@/stores/reference'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 
 // 本位币基准卡片（issue #858，LedgerLevelSetting 首个成员）：账本级设置，
 // 随多端同步在所有设备一致生效；按 ADR-0022「归属领域决定合到哪」，币种域

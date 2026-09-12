@@ -1,5 +1,7 @@
 // localStorage 读写辅助：JSON 序列化 + 静默容错。
 // 项目约定：UI 状态（偏好、视图状态）存 localStorage，与业务数据（SQLite）分域。
+// 存储接缝独立成包（issue #1151 / spec #1148）：依赖图唯一真叶子（零 import），
+// i18n / 偏好 store / 视图状态等上层一律经包名 @ledger/storage 消费。
 
 export function loadLocal<T>(key: string, fallback: T): T {
   try {

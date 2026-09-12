@@ -15,7 +15,7 @@ function stubNavigatorLanguage(lang: string) {
 
 async function freshI18n() {
   vi.resetModules()
-  return await import('@/i18n')
+  return await import('../index')
 }
 
 beforeEach(() => {

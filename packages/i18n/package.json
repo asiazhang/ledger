@@ -1,0 +1,22 @@
+{
+  "name": "@ledger/i18n",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "界面语言包（issue #1151 / ADR-0049）：i18n 单例（createI18n + 全局 Composer t()）、语言判定链与文案资源（locales/ 随包走，非源语言动态 import 懒加载语义不变）。依赖方向单向化：i18n → @ledger/storage（存储底座），money / errors 等上层消费方依赖本包，utils ↔ i18n 双向环消失（方向表由 check-frontend-structure.ts 守门）。exports 另暴露 ./view-label（视图标题文案）与两个 locale 文案树入口（测试侧静态读取文案树用，生产运行时只经 . 与包内懒加载）。源码直出，不建构建链。",
+  "exports": {
+    ".": "./src/index.ts",
+    "./view-label": "./src/view-label.ts",
+    "./locales/zh-CN": "./src/locales/zh-CN/index.ts",
+    "./locales/en-US": "./src/locales/en-US/index.ts"
+  },
+  "dependencies": {
+    "@ledger/storage": "workspace:*",
+    "vue": "^3.5.42",
+    "vue-i18n": "^11.4.10"
+  },
+  "devDependencies": {
+    "@vue/test-utils": "^2.5.0",
+    "vitest": "^5.0.0"
+  }
+}

@@ -9,7 +9,7 @@ import type { ChartOptions, TooltipItem } from 'chart.js'
 import '@/utils/chart-registration'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, formatPrice, amountPrivacyEnabled } from '@/utils/money'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import {
   TREND_RANGE_PRESETS,
   usePortfolioTrend,

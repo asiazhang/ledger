@@ -4,8 +4,8 @@ import { messageApi } from '@ledger/test-support/message-mock'
 import { findButton, findBodyButton, findBodyButtonByTestId } from '@ledger/test-support/dom'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import type { EncryptionStatus } from '@ledger/types'
-import zhAll from '@/i18n/locales/zh-CN'
-import enAll from '@/i18n/locales/en-US'
+import zhAll from '@ledger/i18n/locales/zh-CN'
+import enAll from '@ledger/i18n/locales/en-US'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),

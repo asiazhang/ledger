@@ -5,7 +5,7 @@ import { NButton, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { CategoryInput, CategoryKind } from '@ledger/types'
 
 const props = defineProps<{ kind: CategoryKind }>()

@@ -1,7 +1,7 @@
 import type { DropdownOption } from 'naive-ui'
 import { AddCircleOutline, CashOutline, CreateOutline, EyeOutline, TrashOutline } from '@vicons/ionicons5'
 import { errorOptionProps, renderRowMenuIcon } from './row-menu-common'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { transactionKindActivation, type Transaction } from '@ledger/types'
 
 // 公共件（row-menu-common）原生于本模块：renderRowMenuIcon / errorOptionProps

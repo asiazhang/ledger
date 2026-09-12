@@ -1,6 +1,13 @@
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
+
+// DOM 依存包内测试的登记处（packages-dom project 消费，node project 排除同源）：
+// 逐包登记避免双跑（node include 全量 + exclude 同表）与静默漏跑（新包默认 node）。
+const DOM_PACKAGE_TEST_GLOBS = [
+  'packages/i18n/**/*.test.ts',
+  'packages/storage/**/*.test.ts',
+]
 
 export default defineConfig({
   // 测试不挂 vanilla-extract 插件（issue #888）：*.css.ts 在 vitest 下走纯运行时
@@ -32,14 +39,20 @@ export default defineConfig({
     // 真挂死用例的报告（retry 会掩盖真实间歇性信号，不采用）。不改变任何断言语义。
     testTimeout: 30_000,
     // 多 project 裁定（issue #1152 / spec #1148）：单根配置内 projects 分域，
-    // pnpm test 与 CI --shard=N/2 语义不变（分片在两个 project 的文件并集上均分）。
+    // pnpm test 与 CI --shard=N/2 语义不变（分片在各 project 文件并集上均分）。
     // - app（jsdom）：应用壳测试（src/__tests__，issue #1158）+ 守门脚本包装测试
     //   （scripts/，与所测脚本同目录住）。全局测试接缝 setupFiles 指向共享测试
-    //   支持包 @ledger/test-support（包内 setup 消费），再叠应用壳装配薄壳
-    //   app-setup.ts（参考 store 刷新器注册——接缝包不反向依赖应用壳的包化反转）。
-    // - packages（node）：包内测试（packages/**/*.test.ts，测试跟随被测包）。
-    //   纯类型/纯逻辑包不付 jsdom 每文件创建成本；同一 setup 经环境守卫自适应，
-    //   接缝定义不随环境分裂。组件型包测试（#1157 ui-kit）落位时再扩 jsdom project。
+    //   支持包 @ledger/test-support（包内 setup 消费，src/__tests__/setup.ts 已
+    //   下沉迁入），再叠应用壳装配薄壳 app-setup.ts（参考 store 刷新器注册——
+    //   接缝包不反向依赖应用壳的包化反转）。
+    // - packages（node）：纯类型/纯逻辑包内测试的默认落点（测试跟随被测包，
+    //   spec #1148 用户故事 10），不付 jsdom 每文件创建成本；同一 setup 经
+    //   环境守卫自适应，接缝定义不随环境分裂。DOM 依存的包内测试移出本 project
+    //   （并入 packages-dom），新落位的纯逻辑包自动进 node，无需登记。
+    // - packages-dom（jsdom）：DOM 依存包内测试的显式登记处（组件挂载或
+    //   Storage.prototype 平台语义需 jsdom；原「组件型包测试落位时再扩 jsdom
+    //   project」的预定扩位，issue #1151 起 @ledger/i18n / @ledger/storage
+    //   先行落入）。#1157 ui-kit 落位时并入本 project。
     projects: [
       {
         test: {
@@ -55,6 +68,15 @@ export default defineConfig({
           environment: 'node',
           setupFiles: ['./packages/test-support/src/setup.ts'],
           include: ['packages/**/*.test.ts'],
+          exclude: [...configDefaults.exclude, ...DOM_PACKAGE_TEST_GLOBS],
+        },
+      },
+      {
+        test: {
+          name: 'packages-dom',
+          environment: 'jsdom',
+          setupFiles: ['./packages/test-support/src/setup.ts'],
+          include: [...DOM_PACKAGE_TEST_GLOBS],
         },
       },
     ],

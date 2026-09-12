@@ -15,7 +15,7 @@ import { useAppStore } from '@/stores/app'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { useInputMode } from '@/composables/useInputMode'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { TransactionSource } from '@ledger/types'
 
 /**

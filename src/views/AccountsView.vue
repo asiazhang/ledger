@@ -17,7 +17,7 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import { api } from '@/api'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import AppModal from '@/components/AppModal.vue'
 import AppDropdown from '@/components/AppDropdown.vue'

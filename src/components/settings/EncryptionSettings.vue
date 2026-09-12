@@ -8,7 +8,7 @@ import {
 import { NAlert, NButton, NCard, NCheckbox, NCollapse, NCollapseItem, NForm, NFormItem, NInput, NSpace, NSpin, NText, NTooltip, useMessage } from 'naive-ui'
 import { computed, onMounted, ref, watch, type Ref } from 'vue'
 import { api } from '@/api'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { restartAppShortly } from '@/utils/restart'
 import { useAppStore } from '@/stores/app'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'

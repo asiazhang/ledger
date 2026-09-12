@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { errorMessage } from '@/utils/errors'
-import { applyLocale, i18n } from '@/i18n'
+import { applyLocale, i18n } from '@ledger/i18n'
 
 describe('errorMessage', () => {
   it('从 Tauri 后端 AppError 序列化形态中提取 message', () => {

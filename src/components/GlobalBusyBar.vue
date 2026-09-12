@@ -9,7 +9,7 @@
 import { useThemeVars } from 'naive-ui'
 import { busyVisible } from '@/composables/globalBusy'
 import { useWindowTier } from '@/composables/useWindowTier'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 
 // 强调色取自应用主题（useThemeVars 需在 NConfigProvider 子树内），亮暗主题即时换色
 const themeVars = useThemeVars()

@@ -2,7 +2,7 @@
 import { computed, h } from 'vue'
 import { NCard, NDataTable, NEmpty, NRadioButton, NRadioGroup } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import { useInputMode } from '@/composables/useInputMode'
 import { useWindowTier } from '@/composables/useWindowTier'
 import { MERCHANT_TOP_N_OPTIONS } from '@/stores/reports-session'

@@ -12,7 +12,7 @@
 // 无编译期约束。模板声明的占位符数（`{0}`..`{n}`）多于 `params` 长度时，插值会
 // 渲染出空悬占位符（如「账户不存在: 」），比透传原文更难读——此时回退透传
 // `message`（后端保证为已渲染完整句，ADR-0050 决策 4）。
-import { currentLocale, i18n } from '@/i18n'
+import { currentLocale, i18n } from '@ledger/i18n'
 
 /** 从错误对象中提取码化字段（code 必须为非空字符串；params 过滤保留字符串项） */
 function extractCode(e: unknown): { code: string; params: string[] } | null {

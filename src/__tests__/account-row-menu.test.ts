@@ -3,7 +3,7 @@ import { NIcon } from 'naive-ui'
 import type { DropdownOption } from 'naive-ui'
 import type { VNode } from 'vue'
 import { CreateOutline, SwapHorizontalOutline, TrashOutline } from '@vicons/ionicons5'
-import { applyLocale } from '@/i18n'
+import { applyLocale } from '@ledger/i18n'
 import { buildAccountRowMenuOptions } from '@/components/account-row-menu'
 import { renderRowMenuIcon } from '@/components/transaction-row-menu'
 

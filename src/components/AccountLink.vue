@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 
 /**
  * 可点击账户名（账户名下钻，issue #96/#97）。

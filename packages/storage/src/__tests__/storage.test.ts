@@ -1,6 +1,7 @@
 // storage 工具测试：JSON 序列化 + 静默容错（loadLocal / saveLocal / removeLocal）。
+// 测试跟随被测包（spec #1148 用户故事 10）：住 @ledger/storage 包内，包内引用走相对路径。
 import { describe, it, expect, vi } from 'vitest'
-import { loadLocal, saveLocal, removeLocal } from '@/utils/storage'
+import { loadLocal, saveLocal, removeLocal } from '../index'
 
 describe('loadLocal / saveLocal', () => {
   it('saveLocal JSON 序列化写入，loadLocal 读回', () => {

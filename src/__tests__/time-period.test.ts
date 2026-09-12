@@ -261,7 +261,7 @@ describe('formatPeriodLabel：期间标签本地化格式化（issue #383）', (
     vi.resetModules()
     Object.defineProperty(window.navigator, 'language', { value: 'en-US', configurable: true })
     try {
-      const { initAppLocale } = await import('@/i18n')
+      const { initAppLocale } = await import('@ledger/i18n')
       await initAppLocale()
       const { formatPeriodLabel: fmt } = await import('@/utils/time-period')
       expect(fmt({ unit: 'month', year: 2026, index: 1 })).toBe('Feb 2026')

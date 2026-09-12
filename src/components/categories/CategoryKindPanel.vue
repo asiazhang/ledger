@@ -2,7 +2,7 @@
 import { NCard, NSpace } from 'naive-ui'
 import CategoryAddForm from './CategoryAddForm.vue'
 import CategoryTree from './CategoryTree.vue'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { Category, CategoryKind } from '@ledger/types'
 
 defineProps<{ kind: CategoryKind }>()

@@ -9,7 +9,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useWindowTier } from '@/composables/useWindowTier'
 import { getIconComponent } from '@/utils/icon'
 import { buildCategoryTree } from '@/utils/category-tree'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { Category, CategoryKind } from '@ledger/types'
 
 const props = defineProps<{ kind: CategoryKind }>()

@@ -6,7 +6,7 @@ import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
-import { t } from '@/i18n'
+import { t } from '@ledger/i18n'
 import type { Category, CategoryUpdateInput } from '@ledger/types'
 
 const props = defineProps<{

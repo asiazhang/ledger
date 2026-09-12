@@ -7,9 +7,11 @@
 // - 组件统一经本模块导出的 t() 消费翻译（直接绑定全局 Composer，天然响应 locale
 //   变化），不另建组件级 scope；模块/普通函数（列定义、菜单构造器）同样可用。
 // - 测试环境不调用 initAppLocale()，语言恒为 zh-CN——既有中文断言测试零改动。
+// - 包落位（issue #1151 / spec #1148）：i18n 与 locales 文案资源随包走，存储底座
+//   依赖 @ledger/storage——utils ↔ i18n 双向环消失（money / errors 在上层依赖本包）。
 import { ref } from 'vue'
 import { createI18n } from 'vue-i18n'
-import { loadLocal, saveLocal } from '@/utils/storage'
+import { loadLocal, saveLocal } from '@ledger/storage'
 import zhCN from './locales/zh-CN'
 
 /** 生效界面语言（已解析；'system' 不是生效语言，只是偏好层取值） */

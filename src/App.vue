@@ -43,8 +43,8 @@ import {
   EyeOffOutline,
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
-import { currentLocale, t } from '@/i18n'
-import { viewLabel } from '@/i18n/view-label'
+import { currentLocale, t } from '@ledger/i18n'
+import { viewLabel } from '@ledger/i18n/view-label'
 import { bindRootThemeClass, resolveAppTheme } from '@/theme/theme-contract'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import UnlockScreen from '@/components/UnlockScreen.vue'
