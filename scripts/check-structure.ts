@@ -113,7 +113,8 @@ export const WHITELIST: readonly WhitelistEntry[] = [
  * 故模块级守门（对壳层零依赖、基础设施→域认许边）随之落到 crate 根下扫描。
  */
 export const INFRA_MODULES: readonly WhitelistEntry[] = [
-  { path: 'db', layer: '基础设施', note: '数据库连接与 schema 守卫（#1127 起 mod.rs 只留声明与再导出，按职责分 migrate / connection / runtime 三文件；时间与身份工厂自 #1128 升顶层 ids，原 db 路径经再导出保持）' },
+  { path: 'boot', layer: '基础设施', note: '引导层（#1131 自 db 升顶层目录：disposition 启动处置判定与失败门 / data_location 引导 / book_registry 账本注册表 / encryption 加密基座 / passphrase_cache 口令缓存；依赖方向 boot → db 单向，原 db 路径经再导出保持）' },
+  { path: 'db', layer: '基础设施', note: '数据库连接与 schema 守卫（#1127 起 mod.rs 只留声明与再导出，按职责分 migrate / connection / runtime 三文件；时间与身份工厂自 #1128 升顶层 ids、引导层五模块自 #1131 升顶层 boot，原 db 路径经再导出保持）' },
   { path: 'ids.rs', layer: '基础设施', note: '时间与身份工厂（当前时刻 / ISO 格式 / UUID v7 与 v5 确定性派生，#1128 自 db 升入——非数据库关切，文件工具等原语引用不穿透 db）' },
   { path: 'signals', layer: '基础设施', note: '信号映射（ADR-0044；#1129 起为目录模块，mod.rs 只做声明与再导出，测试外挂 tests/ 与 db/ 同形）' },
   { path: 'error.rs', layer: '基础设施', note: '错误' },

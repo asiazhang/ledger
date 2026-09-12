@@ -5,8 +5,7 @@
 use super::*;
 
 fn temp_dir(tag: &str) -> PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("ledger-dl-unit-{tag}-{}", super::super::new_uuid()));
+    let dir = std::env::temp_dir().join(format!("ledger-dl-unit-{tag}-{}", crate::ids::new_uuid()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -497,7 +496,7 @@ fn boot_pending_relocation_moves_db_via_vacuum() {
     std::fs::create_dir_all(&other).unwrap();
     // 来源库：经产品建连迁移入口造真实库文件（建连迁移本就是引导的既有步骤），
     // 保证 VACUUM INTO 产物可校验。
-    drop(super::super::open_db_in(&source).unwrap());
+    drop(crate::db::open_db_in(&source).unwrap());
     write_registry_with_books(
         &dir,
         &[("a", "默认账本", &target), ("b", "副业", &other)],
@@ -542,8 +541,8 @@ fn boot_pending_relocation_encrypted_source_defers() {
     let target = dir.join("target");
     std::fs::create_dir_all(&source).unwrap();
     {
-        drop(super::super::open_db_in(&source).unwrap());
-        crate::db::encryption::enable_encryption_for_file(&source.join(DB_FILE_NAME), "pw")
+        drop(crate::db::open_db_in(&source).unwrap());
+        crate::boot::encryption::enable_encryption_for_file(&source.join(DB_FILE_NAME), "pw")
             .unwrap();
     }
     write_registry_with_books(&dir, &[("a", "默认账本", &target)], "a");
@@ -664,7 +663,7 @@ fn validate_and_commit_writes_pending_intent_for_active_book() {
     std::fs::create_dir_all(&legacy_dir).unwrap();
     std::fs::create_dir_all(&other).unwrap();
     // 活动账本的库（真实库文件）在旧位置；其他账本的库用占位字节。
-    drop(super::super::open_db_in(&legacy_dir).unwrap());
+    drop(crate::db::open_db_in(&legacy_dir).unwrap());
     std::fs::write(other.join("ledger.db"), b"other").unwrap();
     // 旧格式指针（存量安装形态）。
     std::fs::write(

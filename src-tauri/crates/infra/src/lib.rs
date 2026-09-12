@@ -21,9 +21,11 @@
 //!
 //! 可见性口径（归位的直接后果）：迁移前以 `pub(crate)` 表达「非公开面」的项，
 //! 若消费方在根包（域 / 壳层 / 壳层守门测试），跨 crate 后必须提为 `pub`——
-//! 全部在 `db::{tx_scope, encryption, passphrase_cache}`、`events`、`signals`
-//! 少数接缝上，签名与语义不变，`grep '^pub(crate)'` 检出的余项仍是本 crate 内部面。
+//! #1131 起该口径覆盖面为 `db::tx_scope` 与 `boot::{encryption,
+//! passphrase_cache}`（经 db 再导出保持原路径）、`events`、`signals`
+//! 少数接缝，签名与语义不变，`grep '^pub(crate)'` 检出的余项仍是本 crate 内部面。
 
+pub mod boot;
 pub mod closed_set;
 pub mod db;
 pub mod error;

@@ -72,7 +72,7 @@ impl BootFailureGate {
     }
 
     /// 登记启动失败（启动编排失败路径调用；幂等）。`code` 是失败错误的稳定
-    /// 错误码（码化错误取 `AppError::code`，如漂移的 [`super::schema_guard::BOOT_SCHEMA_DRIFT`]；
+    /// 错误码（码化错误取 `AppError::code`，如漂移的 [`crate::db::schema_guard::BOOT_SCHEMA_DRIFT`]；
     /// 非码化失败传 `None`，读取侧回退 [`BOOT_DB_UNREADABLE`] 既有单一码）。
     pub fn set_failed(&self, code: Option<&str>) {
         self.failed.store(true, Ordering::SeqCst);
