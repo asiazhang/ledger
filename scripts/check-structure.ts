@@ -106,7 +106,7 @@ export const WHITELIST: readonly WhitelistEntry[] = [
  * 故模块级守门（对壳层零依赖、基础设施→域认许边）随之落到 crate 根下扫描。
  */
 export const INFRA_MODULES: readonly WhitelistEntry[] = [
-  { path: 'db', layer: '基础设施', note: '数据库连接与 schema 守卫' },
+  { path: 'db', layer: '基础设施', note: '数据库连接与 schema 守卫（#1127 起 mod.rs 只留声明与再导出，按职责分 migrate / connection / runtime 三文件；时间与身份工厂暂住 mod.rs，#1128 升顶层 ids）' },
   { path: 'signals.rs', layer: '基础设施', note: '信号映射（ADR-0044）' },
   { path: 'error.rs', layer: '基础设施', note: '错误' },
   { path: 'settings.rs', layer: '基础设施', note: '设置' },
