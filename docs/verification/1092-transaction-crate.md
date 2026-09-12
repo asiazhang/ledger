@@ -13,7 +13,7 @@
   历史可跟随）；`ledger-infra` + `ledger-sync-protocol` + rusqlite/serde/sha2/
   tracing/utoipa/pinyin；`[dev-dependencies]` 经 dev-dependency 环引根包
   （tauri-app）与 test-utils 器具；`[lints] workspace = true` 继承六件套。
-- 前置提交（41dcd5f5，接缝反转，行为零变化）：
+- 前置提交（ed9e8619，接缝反转，行为零变化；rebase 前 41dcd5f5）：
   - `transaction::investment_seam`：投资 kind 计划契约（`InvestmentPlan`，本域
     自有类型）与四写路径挂载点（Local/Replay 装配、修改回退、删除释放）+ 两读
     投影（来源列④标的反查、转换两腿）注册点；实现面 `investment::transaction_seam`
@@ -101,21 +101,24 @@ tree 单包、编译期两份）。接缝注册静态由测试工厂接在根包
   - 测试执行：ledger-backup 40 用例 1.51s / ledger-infra 237 用例 4.78s /
     根包 lib 911 用例 38.22s / API 集成 225 用例 9.97s / 命令集成 15 用例
     9.82s / e2e 453 场景 ≈ 52s / 同步轮询 0.28s。
-- **本票后**（本分支 PR #1177，commit `e911d036`，run `34691718877`，后端测试 job
-  `103548024716`，Linux x64 runner）：
-  - 依赖缓存恢复 `Cache Size: ~2009 MB (2107019962 B)`——相对本票前
-    2107043937 B 基本持平（rust-cache 清理噪声内）；
-  - 编译阶段 `Finished \`test\` profile [unoptimized + debuginfo] target(s) in
-    1m 20s`（80s；本仓现编 tauri-app + ledger-transaction + ledger-backup +
-    ledger-infra + ledger-sync-protocol 五个 crate）——相对本票前 82s 持平
-    （单次运行波动内，本票不主张因果；按 spec #1086 口径拆 crate 的价值不以
-    编译收益为条件）；
-  - 后端测试 job wall clock ≈ 297s（11:41:51 → 11:46:48），与本票前 ≈295s 持平；
-  - 测试执行：ledger-backup 40 用例 1.29s / ledger-infra 237 用例 3.78s /
-    ledger-transaction 234 用例 7.62s / 根包 lib 681 用例 23.62s / API 集成 225
-    用例 7.75s / 命令集成 15 用例 9.12s / e2e 453 场景 ≈ 53s / 同步轮询 0.27s
-    ——全部经由与迁移前同一断言集（域侧用例总数 915 = 迁移前 911 + 前置提交
-    新增的 4 个接缝单测，迁移本身零断言改动）。
+- **本票后**（本分支 PR #1177）两个时点：
+  - **首次构建**（交易 crate 产物首次入缓存，rebase 前内容同现 `ba929a97`，commit
+    `a4fc9c91`，run `34691718877`，后端测试 job `103548024716`，Linux x64 runner）：
+    - 依赖缓存恢复 `Cache Size: ~2009 MB (2107019962 B)`——相对本票前
+      2107043937 B 基本持平（rust-cache 清理噪声内）；
+    - 编译阶段 `Finished \`test\` profile [unoptimized + debuginfo] target(s) in
+      1m 20s`（80s；与本票前 82s 持平——同口径：既有 crate 缓存命中、交易 crate
+      首编；单次运行波动内，本票不主张因果；按 spec #1086 口径拆 crate 的价值
+      不以编译收益为条件）；
+    - 后端测试 job wall clock ≈ 297s（11:41:51 → 11:46:48），与本票前 ≈295s 持平；
+    - 测试执行：ledger-backup 40 用例 1.29s / ledger-infra 237 用例 3.78s /
+      ledger-transaction 234 用例 7.62s / 根包 lib 681 用例 23.62s / API 集成 225
+      用例 7.75s / 命令集成 15 用例 9.12s / e2e 453 场景 ≈ 53s / 同步轮询 0.27s
+      ——全部经由与迁移前同一断言集（域侧用例总数 915 = 迁移前 911 + 前置提交
+      新增的 4 个接缝单测，迁移本身零断言改动）。
+  - **rebase 后稳态**（commit `547151b7`，run `34692277304`）：编译阶段 53.22s、
+    后端测试 job ≈ 210s（11:55:07 → 11:58:37）——分支缓存已含交易 crate 产物
+    后的稳态形态，供后续票对照（缓存热度不同，不与本票前直比）。
 
 ### 本机（控制变量：touch 源文件后重编，依赖全热，kache 命中；macOS / arm64）
 
