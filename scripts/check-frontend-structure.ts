@@ -14,7 +14,7 @@
 //    src，从包内使用必然穿越包边界）与相对路径穿越包边界（解析后落点在包目录外）。
 // ④ 深导入禁令：`@ledger/x/sub` 形态必须命中目标包 package.json `exports` 的对应
 //    入口（精确键 `./sub` 或 `./*` 通配；exports 为字符串视作仅暴露 `.`）。
-// ⑤ 测试支持纯净性（issue #1152）：登记于 TEST_SUPPORT_PACKAGES 的包只许经
+// ⑤ 测试支持纯净性（issue #1152）：PACKAGES 内 testSupport: true 的包只许经
 //    devDependencies 被消费（根包与成员包一并核对，dependencies/optionalDependencies/
 //    peerDependencies 任一出现即红）；且测试支持包自身 dependencies 必须为空
 //    （替身与接缝所需运行面全部走 devDependencies）——生产依赖图零测试支持内容。
@@ -381,6 +381,16 @@ function checkImportShapes(
   }
 }
 
+/** 读清单为 JSON 对象；缺失或不可解析返回 null——对应缺口由规则②报，不在此重复 */
+function tryReadManifest(path: string): Record<string, unknown> | null {
+  if (!existsSync(path)) return null
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
 /** 规则⑤：testSupport 包只许经 devDependencies 被消费，且自身 dependencies 为空。
  *  登记面 = PACKAGES 内 testSupport: true 的条目（单一事实源，夹具登记表同形）；
  *  核对面 = 根包 + 全部成员包的清单（生产依赖图 = 各包 dependencies 侧的并集）。
@@ -399,13 +409,8 @@ function checkTestSupportPurity(
     ...registry.map((p) => ({ label: p.name, path: join(repoRoot, p.dir, 'package.json') })),
   ]
   for (const manifest of manifests) {
-    if (!existsSync(manifest.path)) continue // 清单缺失由规则②报，不重复
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(readFileSync(manifest.path, 'utf8'))
-    } catch {
-      continue // 清单不可解析由规则②报，不重复
-    }
+    const parsed = tryReadManifest(manifest.path)
+    if (!parsed) continue
     for (const kind of forbiddenKinds) {
       const deps = parsed[kind]
       if (deps === null || typeof deps !== 'object') continue
@@ -421,14 +426,8 @@ function checkTestSupportPurity(
   }
   for (const pkg of registry) {
     if (!pkg.testSupport) continue
-    const manifestPath = join(repoRoot, pkg.dir, 'package.json')
-    if (!existsSync(manifestPath)) continue // 清单缺失由规则②报，不重复
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    } catch {
-      continue // 清单不可解析由规则②报，不重复
-    }
+    const parsed = tryReadManifest(join(repoRoot, pkg.dir, 'package.json'))
+    if (!parsed) continue
     const prodDeps = parsed.dependencies
     if (prodDeps !== null && typeof prodDeps === 'object' && Object.keys(prodDeps).length > 0) {
       problems.push(

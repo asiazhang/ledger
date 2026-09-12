@@ -49,7 +49,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 // Mock Tauri app/window 模块（issue #845 系统返回桥接）：注册/撤销与窗口销毁
-// 经 helpers/back-mock 助手装配；默认实现为「注册即成功、销毁为 no-op」。App.vue
+// 经同目录 back-mock 助手装配；默认实现为「注册即成功、销毁为 no-op」。App.vue
 // 的 setTitle 动态导入在 mock 下拿到裸 vi.fn()，返回 undefined 由其 try/catch 吸收。
 vi.mock('@tauri-apps/api/app', () => ({
   onBackButtonPress: vi.fn(),
@@ -59,7 +59,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 }))
 
 // jsdom 缺少 matchMedia：挂媒体查询测试接缝（issue #841）——可编程假 matchMedia
-// 取代早期「一律 false」静态桩，测试经 helpers/media-mock 的 setFakeMedia 设定
+// 取代早期「一律 false」静态桩，测试经同目录 media-mock 的 setFakeMedia 设定
 // hover / pointer / 宽度应答换档；默认桌面指针状态使既有测试语义零迁移。
 if (typeof window !== 'undefined' && !window.matchMedia) {
   Object.defineProperty(window, 'matchMedia', {
@@ -88,7 +88,7 @@ vi.mock('@vue/test-utils', async (importOriginal) => {
 
 // Mock Naive UI useMessage（Composable 中使用它显示通知）——
 // 每测发放同一稳定实例 + 全局每测自动清零（ADR-0085 决策 4），实例经
-// helpers/message-mock.ts 出口获取，供需要断言消息的测试读取。
+// 同目录 message-mock.ts 出口获取，供需要断言消息的测试读取。
 vi.mock('naive-ui', async (importOriginal) => {
   const actual = await importOriginal<typeof import('naive-ui')>()
   return {

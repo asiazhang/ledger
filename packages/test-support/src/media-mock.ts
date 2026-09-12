@@ -2,7 +2,7 @@
  * 媒体查询测试接缝：可编程假 matchMedia（issue #841，ADR-0088 决策 11 票①）。
  *
  * jsdom 无 matchMedia，既有全局桩对所有查询一律应答 false（静态）；本接缝在
- * 既有测试支持工厂体系（helpers/*-mock.ts + setup.ts 全局壳层）下提供**可编程**
+ * 既有测试支持工厂体系（同目录 *-mock.ts + setup.ts 全局壳层）下提供**可编程**
  * 假 matchMedia：测试以 setFakeMedia 设定 hover / pointer / 视口宽度应答从而
  * 换档，重编程时按 MediaQueryList 语义向 matches 翻转的查询派发 change 事件。
  * 全部组件 / composable 测试经它换档，不允许第二套换档机制。

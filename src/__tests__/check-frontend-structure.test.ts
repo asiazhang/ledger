@@ -365,8 +365,12 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
 
   describe('规则⑤：测试支持纯净性（testSupport 包仅 devDependency 消费，#1152）', () => {
     /** 建含测试支持包的夹具：登记表注入（testSupport 标志），成员与根包清单自足。
-     *  返回完整 args（含 manifest 路径），根路径需取 args[0]。 */
-    function testSupportArgs(consumerManifest: Record<string, unknown>): string[] {
+     *  返回完整 args（含 manifest 路径）；memberManifest 覆写成员清单（规则⑤自身
+     *  dependencies 用例）。 */
+    function testSupportArgs(
+      consumerManifest: Record<string, unknown>,
+      memberManifest: Record<string, unknown> = { name: '@ledger/ts', devDependencies: {} },
+    ): string[] {
       const args = fixtureRepo({
         manifest: [
           { name: '@ledger/ts', dir: 'packages/ts', deps: [], testSupport: true, note: '夹具' },
@@ -374,7 +378,7 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
         memberDirs: ['ts'],
       })
       const root = args[0] as string
-      writePackageManifest(root, 'packages/ts', { name: '@ledger/ts', devDependencies: {} })
+      writePackageManifest(root, 'packages/ts', memberManifest)
       writePackageManifest(root, '.', consumerManifest)
       return args
     }
@@ -394,20 +398,16 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
     })
 
     it('测试支持包自身 dependencies 非空即红（零生产依赖）', () => {
-      const args = fixtureRepo({
-        manifest: [
-          { name: '@ledger/ts', dir: 'packages/ts', deps: [], testSupport: true, note: '夹具' },
-        ],
-        memberDirs: ['ts'],
-      })
-      const root = args[0] as string
-      writePackageManifest(root, 'packages/ts', {
-        name: '@ledger/ts',
-        dependencies: { 'some-runtime': '^1.0.0' },
-        devDependencies: {},
-      })
-      writePackageManifest(root, '.', {})
-      const r = run(args)
+      const r = run(
+        testSupportArgs(
+          {},
+          {
+            name: '@ledger/ts',
+            dependencies: { 'some-runtime': '^1.0.0' },
+            devDependencies: {},
+          },
+        ),
+      )
       expect(r.status).toBe(1)
       expect(r.output).toContain('自身 dependencies 非空')
     })
