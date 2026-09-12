@@ -71,3 +71,4 @@
 ## 修订记录
 
 - 2026-09-12 grilling 复核（模型审查）：决策 5 的「码表覆盖全部用户可见错误条件」存在实现缺口——至少十个已 `coded` 的错误码在 zh/en 模板中缺失（含投资域写入接缝码与出资账户接缝码），用户会看到未翻译的码。已立 issue #1188，逐码按「补模板，或判定为程序缺陷降级为裸内部错误」收口；本契约本身不变。
+- 2026-09-12 收口（issue #1188）：全量差集枚举生产代码全部码化构造点（`coded` / `codedp` / `coded_not_found` / `codedp_not_found` 字面量、`const NAME: &str` 一级引用，及闭包/宏参数/format! 拼接等动态形态逐点人工核查）共 258 码，与 zh/en 模板差集 12 条全部补齐模板、零豁免降级——其中 `balance.cache-row-missing` 是 ADR-0067 有意的码化设计（缓存行缺失报码化错误引导审计修复），其余 11 条为接缝/守卫码（`transaction.*-unregistered`、`sync-engine.truncate-not-owner`）：虽语义上是接线缺失类程序缺陷，但触发时前端确实展示 message 且码值已被单测钉死为对外契约，按「补模板」主路径收口（`transaction.investment-hook-unregistered` 的消息含内部槽名动态段且无 params，模板取无槽名主干，属唯一非逐字同形项）。守门机器化：`scripts/check-i18n-keys.ts` 在双语 key 全等之外增查「每个静态可枚举的码化构造码必须在 zh/en errors.json 均有模板」（动态构造点无法静态解析，计入 unresolved 供人审，漏报方向安全；`db.error` / `parse.error` / `io.error` 系统通用码无构造点、按决策 2 不进码表，无需白名单），挂入 check.sh。
