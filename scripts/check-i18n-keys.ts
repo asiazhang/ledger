@@ -2,7 +2,7 @@
 // i18n 文案 key 全等校验（issue #342 / ADR-0049）：源语言 zh-CN 与其余各 locale
 // 的 key 集合双向全等——任一方向孤儿（源语言独有 / 其他 locale 独有）即非零退出，
 // 漏翻在合入前被拦截。仿命令集双向全等校验先例（scripts/check-commands.ts）：
-// 纯函数导出供单测（src/__tests__/check-i18n-keys.test.ts），CLI 入口可独立运行。
+// 纯函数导出供单测（scripts/check-i18n-keys.test.ts），CLI 入口可独立运行。
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-i18n-keys.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具目录：bun scripts/check-i18n-keys.ts [locales-dir]
