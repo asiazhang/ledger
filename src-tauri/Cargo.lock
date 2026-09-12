@@ -2632,6 +2632,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ledger-transaction"
+version = "0.6.0"
+dependencies = [
+ "ledger-infra",
+ "ledger-sync-protocol",
+ "pinyin",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tauri-app",
+ "tracing",
+ "utoipa",
+]
+
+[[package]]
 name = "libappindicator"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4761,6 +4777,7 @@ dependencies = [
  "ledger-backup",
  "ledger-infra",
  "ledger-sync-protocol",
+ "ledger-transaction",
  "objc2",
  "objc2-foundation",
  "objc2-local-authentication",

@@ -42,7 +42,11 @@ mod signals_cross_check;
 //（C 类豁免声明，ADR-0060）。
 #[doc(hidden)]
 pub mod test_support;
-pub mod transaction;
+// 核心交易域 crate（spec #1086 / issue #1092，P2 首个底层业务域 crate）：自根包
+// 域目录拆出，根包以再导出形态保留原引用路径——壳层与其余域的
+// `crate::transaction::…` / `tauri_app_lib::transaction::…` 调用点零改动
+//（expand 形态，ledger-backup 同款）。
+pub use ledger_transaction as transaction;
 
 use tauri::Manager;
 use tauri::ipc::Invoke;

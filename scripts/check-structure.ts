@@ -94,7 +94,6 @@ export type Layer = (typeof LAYER)[keyof typeof LAYER]
  * CRATES（BACKUP_MODULES 承接模块级扫描）。
  */
 export const WHITELIST: readonly WhitelistEntry[] = [
-  { path: 'transaction', layer: '域目录', note: '核心交易域' },
   { path: 'scheduled_transactions', layer: '域目录', note: '定时计划域' },
   { path: 'item', layer: '域目录', note: '物品域（#397 阶段 1 归位，主体自 commands/item 随迁）' },
   { path: 'policy', layer: '域目录', note: '保单域（#398 阶段 2 归位）' },
@@ -170,6 +169,35 @@ export const BACKUP_MODULES: readonly WhitelistEntry[] = [
 export const BACKUP_SRC_REL = 'crates/backup/src'
 
 /**
+ * 核心交易域 crate 的模块清单（spec #1086 / issue #1092）：路径相对
+ * `src-tauri/crates/transaction/src`。P2 首个拆出的底层业务域 crate——全部业务
+ * 域可依赖的最底层域。对根包与任何业务域零依赖：对投资/商户/币种/物品/保单/
+ * 账户六向的残留边已按挂载点反转收敛（#1092 前置提交），反向引用由 cargo 依赖
+ * 图拒绝（生产依赖面无根包，dev-dependency 环只覆盖测试目标）。crate 根 lib.rs
+ * 是声明与再导出面（无守门靶向代码），与协议/备份 crate 同款不入清单；
+ * tests.rs / tests/ / funding/tests.rs / writer/tests/ 均为测试豁免形态不入清单。
+ */
+export const TRANSACTION_MODULES: readonly WhitelistEntry[] = [
+  { path: 'amount.rs', layer: '域目录', note: '金额口径权威（kind 枚举真源 + kind→度量矩阵 + 本位币折算）' },
+  { path: 'base_currency_seam.rs', layer: '域目录', note: '交易×币种接缝：本位币基准读取注册点（issue #1092）' },
+  { path: 'batch.rs', layer: '域目录', note: '批量编排权威（批量事务、幂等键/内容哈希去重与批次汇总日志）' },
+  { path: 'behavior.rs', layer: '域目录', note: '行为层编排权威（create/update/delete 三入口 + 写入协议单正文 Local/Replay 两形态，ADR-0105）' },
+  { path: 'command.rs', layer: '域目录', note: '同步命令（op 载荷形态与产出单点，issue #855）' },
+  { path: 'funding.rs', layer: '域目录', note: '出资账户准入（issue #935 / ADR-0096）+ 出资账户视图接缝注册点（issue #1092）' },
+  { path: 'investment_seam.rs', layer: '域目录', note: '交易×投资接缝：投资 kind 计划契约与装配/副作用/投影注册点（issue #1092）' },
+  { path: 'merchant_seam.rs', layer: '域目录', note: '交易×商户接缝：商户名先查/后建钩子组注册点（issue #1092）' },
+  { path: 'model.rs', layer: '域目录', note: '域集中模型（交易全量类型，#423 随域归位）' },
+  { path: 'read.rs', layer: '域目录', note: '读取权威（列表过滤/排序/分页与单笔读取 + 来源列反查注册点，#1090/#1092）' },
+  { path: 'search.rs', layer: '域目录', note: '搜索权威（SQL 下推 + 统一模糊搜索，ADR-0027）' },
+  { path: 'search_text.rs', layer: '域目录', note: '统一模糊搜索语义纯函数（拼音首字母/子序列/词条匹配，ADR-0027）' },
+  { path: 'write_effects.rs', layer: '域目录', note: '写路径副作用接缝：余额重算注册点（issue #1090）' },
+  { path: 'writer.rs', layer: '域目录', note: '写入权威（归一化 + 全列映射 + 审计字段，issue #55）' },
+]
+
+/** 核心交易域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-transaction.dir 同源。 */
+export const TRANSACTION_SRC_REL = 'crates/transaction/src'
+
+/**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
  * 与上面的 `LAYER`（单 crate 内的**模块路径**分层：域目录 / 基础设施）刻意分开——
  * 两者是不同粒度的事实源，同名值不合并（合并只会让任一侧语义被动漂移）。
@@ -232,6 +260,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/backup',
     layer: CRATE_LAYER.DOMAIN,
     note: '备份域 crate（#1091 首个自根包域目录拆出的业务域 crate：备份/恢复引擎与自动备份调度，spec #1086）；依赖面只有基础设施——对定时计划域的置脏实现与追补触发两条引用经注册点反转（挂载点①/④，ADR-0112 决策 5），对壳层/域目录零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
+  },
+  {
+    name: 'ledger-transaction',
+    dir: 'crates/transaction',
+    layer: CRATE_LAYER.DOMAIN,
+    note: '核心交易域 crate（#1092，P2 首个底层业务域 crate：交易写入协议/金额口径/读取与搜索，全部业务域可依赖的最底层域）；依赖面只有基础设施与同步协议——对投资/商户/币种/物品/保单/账户六向的残留边经挂载点反转收敛（#1092 前置提交，ADR-0112 决策 5），反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
   },
 ]
 
@@ -407,23 +441,20 @@ interface DomainPairRule {
  * 即红。作用域限业务域目录（认许边逐条留痕于 DOMAIN_PAIR_ALLOWED_EDGES），
  * 文本级扫描、掩码注释与字面量后匹配，别名改写不可达靠评审兑底。
  */
+/**
+ * 域间禁边（issue #1090 / spec #1086 形态推广）：写路径/读路径副作用已收口为
+ * 「下层定义注册点、上层注册实现、壳层启动时接线」的接缝反转形态（与 #1088
+ * 基础设施提交点后置动作同构），域间横向直接依赖随接缝消亡——残留引用（import、
+ * 全限定调用、花括号列举首段）即红。作用域限业务域目录（认许边逐条留痕于
+ * DOMAIN_PAIR_ALLOWED_EDGES），文本级扫描、掩码注释与字面量后匹配，别名改写
+ * 不可达靠评审兑底。
+ *
+ * 以 transaction 为起点的禁边已随 #1092 crate 化退役：核心交易域拆为
+ * ledger-transaction crate 后，对任何业务域/壳层的引用由 cargo 依赖图编译期
+ * 拒绝（生产依赖面无根包），文本扫描不再可及（crate 名直引形态亦不存在——
+ * 域层对下层 crate 的合法引用走 ledger_transaction::，方向合法不属禁边）。
+ */
 export const DOMAIN_PAIR_FORBIDDEN: readonly DomainPairRule[] = [
-  {
-    from: 'transaction',
-    to: 'accounts',
-    reason:
-      'issue #1090 / ADR-0071 决策 5 修订：写路径余额重算经注册点反转'
-      + '（transaction::write_effects 注册点 + accounts::balance::install_balance_refresh_hook 实现注册），'
-      + 'transaction → accounts 直接引用禁令；双向横向边收敛为 accounts → transaction 单向',
-  },
-  {
-    from: 'transaction',
-    to: 'scheduled_transactions',
-    reason:
-      'issue #1090 / spec #704 修订：来源列计划反查经注册点反转'
-      + '（transaction::read 注册点 + scheduled_transactions::source::install_plan_source_hook 实现注册），'
-      + 'transaction → scheduled_transactions 直接引用禁令',
-  },
   {
     from: 'scheduled_transactions',
     to: 'backup',
@@ -433,47 +464,6 @@ export const DOMAIN_PAIR_FORBIDDEN: readonly DomainPairRule[] = [
       + '（auto_run 注册点 + backup::occurrence_dirty_hook 实现注册，#1091 起实现住 ledger-backup crate），'
       + 'scheduled_transactions → backup 直接引用禁令——再导出面（crate::backup / '
       + 'tauri_app_lib::backup）与 crate 名直引（ledger_backup::）两形都红',
-  },
-  {
-    from: 'transaction',
-    to: 'investment',
-    reason:
-      'issue #1092：投资 kind 写路径装配/副作用（prepare/replay/revert/release）与读路径投影'
-      + '（来源列④标的反查、转换两腿）经交易×投资接缝反转'
-      + '（transaction::investment_seam 注册点 + investment::transaction_seam::install_transaction_hooks '
-      + '实现注册），transaction → investment 直接引用禁令',
-  },
-  {
-    from: 'transaction',
-    to: 'merchants',
-    reason:
-      'issue #1092：商户名归一化（先查/即建）经交易×商户接缝反转'
-      + '（transaction::merchant_seam 注册点 + merchants::install_merchant_hooks 实现注册），'
-      + 'transaction → merchants 直接引用禁令',
-  },
-  {
-    from: 'transaction',
-    to: 'currencies',
-    reason:
-      'issue #1092：本位币基准读取经交易×币种接缝反转'
-      + '（transaction::base_currency_seam 注册点 + currencies::install_base_currency_hook 实现注册），'
-      + 'transaction → currencies 直接引用禁令',
-  },
-  {
-    from: 'transaction',
-    to: 'item',
-    reason:
-      'issue #1092：来源列③物品反查经接缝反转'
-      + '（transaction::read 注册点 + item::install_source_hook 实现注册），'
-      + 'transaction → item 直接引用禁令',
-  },
-  {
-    from: 'transaction',
-    to: 'policy',
-    reason:
-      'issue #1092：来源列①保单直挂反查经接缝反转'
-      + '（transaction::read 注册点 + policy::install_source_hook 实现注册），'
-      + 'transaction → policy 直接引用禁令',
   },
 ]
 
@@ -1425,6 +1415,7 @@ function main(): void {
       ...collectRustFiles(join(srcTauriDir, INFRA_SRC_REL), INFRA_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, PROTOCOL_SRC_REL), PROTOCOL_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, BACKUP_SRC_REL), BACKUP_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, TRANSACTION_SRC_REL), TRANSACTION_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -1478,6 +1469,7 @@ function main(): void {
   scannedFiles += scanModuleEntries(INFRA_MODULES, join(srcTauriDir, INFRA_SRC_REL), problems)
   scannedFiles += scanModuleEntries(PROTOCOL_MODULES, join(srcTauriDir, PROTOCOL_SRC_REL), problems)
   scannedFiles += scanModuleEntries(BACKUP_MODULES, join(srcTauriDir, BACKUP_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(TRANSACTION_MODULES, join(srcTauriDir, TRANSACTION_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -1504,6 +1496,7 @@ function main(): void {
       `+ 基础设施模块 ${INFRA_MODULES.length} 项（crate ${INFRA_SRC_REL}）` +
       `+ 协议模块 ${PROTOCOL_MODULES.length} 项（crate ${PROTOCOL_SRC_REL}）` +
       `+ 备份域模块 ${BACKUP_MODULES.length} 项（crate ${BACKUP_SRC_REL}，#1091）` +
+      `+ 核心交易域模块 ${TRANSACTION_MODULES.length} 项（crate ${TRANSACTION_SRC_REL}，#1092）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +

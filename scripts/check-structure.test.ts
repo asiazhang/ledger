@@ -13,6 +13,8 @@ import {
   INFRA_SRC_REL,
   PROTOCOL_MODULES,
   PROTOCOL_SRC_REL,
+  TRANSACTION_MODULES,
+  TRANSACTION_SRC_REL,
   WHITELIST,
   LAYER,
 } from '../scripts/check-structure.ts'
@@ -66,6 +68,7 @@ function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, INFRA_SRC_REL), INFRA_MODULES)
   writeModuleStubs(join(srcTauri, PROTOCOL_SRC_REL), PROTOCOL_MODULES)
   writeModuleStubs(join(srcTauri, BACKUP_SRC_REL), BACKUP_MODULES)
+  writeModuleStubs(join(srcTauri, TRANSACTION_SRC_REL), TRANSACTION_MODULES)
 }
 
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
@@ -83,6 +86,13 @@ function isBackupModulePath(rel: string): boolean {
   return BACKUP_ENTRY_PATHS.has(rel)
 }
 
+/** 核心交易域 crate 模块路径判定（精确文件名，#1092；与基础设施清单无交集）。 */
+const TRANSACTION_ENTRY_PATHS = new Set(TRANSACTION_MODULES.map((m) => m.path))
+
+function isTransactionModulePath(rel: string): boolean {
+  return TRANSACTION_ENTRY_PATHS.has(rel)
+}
+
 /**
  * 写覆盖文件：按路径首段归位——基础设施模块（`db/…` / `error.rs` / …）落
  * `<srcTauri>/crates/infra/src`，备份域 crate 模块（`auto.rs` / `engine.rs`，#1091）
@@ -93,7 +103,9 @@ function placeOverride(srcTauri: string, relPath: string, content: string): void
     ? join(srcTauri, INFRA_SRC_REL)
     : isBackupModulePath(relPath)
       ? join(srcTauri, BACKUP_SRC_REL)
-      : join(srcTauri, 'src')
+      : isTransactionModulePath(relPath)
+        ? join(srcTauri, TRANSACTION_SRC_REL)
+        : join(srcTauri, 'src')
   const file = join(base, relPath)
   mkdirSync(join(file, '..'), { recursive: true })
   writeFileSync(file, content)
@@ -436,27 +448,12 @@ describe('check-structure 业务域→同步域零容忍（ADR-0101 决策 4b / 
 })
 
 describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反转）', () => {
-  it('transaction 引用 accounts（余额重算旧形态）→ 红并定位文件行号', () => {
-    const args = makeFixture({
-      'transaction/writer.rs':
-        'use crate::accounts::balance::{affected_accounts, refresh_account_balances};\n',
-    })
-    const r = run(args)
-    expect(r.status).toBe(1)
-    expect(r.output).toContain('域间禁边')
-    expect(r.output).toContain('transaction/writer.rs:1')
-    expect(r.output).toContain('accounts')
-  })
-
-  it('transaction 引用 scheduled_transactions（计划反查旧形态）→ 红', () => {
-    const args = makeFixture({
-      'transaction/read.rs':
-        'let rows = crate::scheduled_transactions::source_display_by_transaction_ids(conn, &ids)?;\n',
-    })
-    const r = run(args)
-    expect(r.status).toBe(1)
-    expect(r.output).toContain('域间禁边')
-    expect(r.output).toContain('transaction/read.rs:1')
+  it('transaction 起点禁边已随 crate 化退役（#1092）：文本清单不再辖，依赖方向归 cargo 依赖图', () => {
+    // 核心交易域拆为 ledger-transaction crate 后，对业务域/壳层的引用由生产依赖面
+    // 编译期拒绝；带类型签名的钩子无法跨实例（名义类型不等价），文本扫描对 crate
+    // 内代码不再可及，故 from='transaction' 规则全部退役（守门基准随迁
+    // TRANSACTION_MODULES：对壳层/同步域零容忍照扫）。
+    expect(DOMAIN_PAIR_FORBIDDEN.some((r) => r.from === 'transaction')).toBe(false)
   })
 
   it('scheduled_transactions 引用 backup（置脏旧形态）→ 红', () => {
@@ -483,33 +480,31 @@ describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反
 
   it('根花括号列举首段同样识别 → 红（与 infra→域扫描同款形态）', () => {
     const args = makeFixture({
-      'transaction/read.rs': 'use crate::{accounts::balance::compute_balance, db::query::query_all};\n',
+      'scheduled_transactions/source.rs':
+        'use crate::{backup::mark_dirty, db::query::query_all};\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('域间禁边')
   })
 
-  it('认许边退休：transaction → accounts 的 AccountType 类型消费同样红（#1092 接缝反转后无认许边）', () => {
-    // 原「类型只读边」认许边已随出资账户视图接缝反转消亡（#1092）：类型词汇映射
-    // 迁账户域实现侧，任何 transaction → accounts 残留引用一律红。
-    const args = makeFixture({
-      'transaction/funding.rs': 'use crate::accounts::AccountType;\npub fn x() {}\n',
-    })
+  it('核心交易域 crate 模块引用壳层 → 红并定位文件行号（#1092 crate 化后守门基准随迁）', () => {
+    // 'writer.rs' 经 placeOverride 落核心交易域 crate（TRANSACTION_MODULES 派生路由）。
+    const args = makeFixture({ 'writer.rs': shellUse })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('域间禁边')
-    expect(r.output).toContain('transaction/funding.rs:1')
+    expect(r.output).toContain('反向依赖')
+    expect(r.output).toContain('writer.rs:1')
   })
 
-  it('#1092 新增禁边生效：transaction → investment 残留引用红', () => {
+  it('核心交易域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate，#1092）', () => {
     const args = makeFixture({
-      'transaction/behavior.rs': 'use crate::investment;\npub fn x() {}\n',
+      'behavior.rs': 'use tauri_app_lib::sync_engine::registry::dispatch;\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('域间禁边')
-    expect(r.output).toContain('transaction/behavior.rs:1')
+    expect(r.output).toContain('业务域引用同步域')
+    expect(r.output).toContain('behavior.rs:1')
   })
 
   it('方向性：禁边反向（accounts → transaction）不红——口径真源单向边合法', () => {
@@ -702,6 +697,8 @@ interface CrateFixtureOverrides {
   memberManifest?: string
   /** 覆盖备份域 crate 的 `crates/backup/Cargo.toml`（依赖方向负向夹具，#1091） */
   backupManifest?: string
+  /** 覆盖核心交易域 crate 的 `crates/transaction/Cargo.toml`（依赖方向负向夹具，#1092） */
+  transactionManifest?: string
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string
   /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
@@ -845,6 +842,28 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
       ].join('\n'),
   )
   writeFileSync(join(srcTauri, 'crates', 'backup', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
+  // 核心交易域 crate（#1092，P2 首个底层业务域 crate）：夹具与真实仓库同形——
+  // 成员目录 + 门禁继承 + dev-dependency 测试环。
+  mkdirSync(join(srcTauri, 'crates', 'transaction', 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'crates', 'transaction', 'Cargo.toml'),
+    overrides.transactionManifest ??
+      [
+        '[package]',
+        'name = "ledger-transaction"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[dev-dependencies]',
+        'tauri-app = { path = "../.." }',
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
+  )
+  writeFileSync(join(srcTauri, 'crates', 'transaction', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
@@ -1084,6 +1103,18 @@ describe('check-structure 备份域 crate（#1091 首个业务域 crate 自根�
     // 缺省 backupManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
     const r = run(makeCrateFixture())
     expect(r.status).toBe(0)
+  })
+
+  it('核心交易域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1092）', () => {
+    const args = makeCrateFixture({
+      transactionManifest:
+        '[package]\nname = "ledger-transaction"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 依赖方向')
+    expect(r.output).toContain('ledger-transaction')
   })
 })
 
