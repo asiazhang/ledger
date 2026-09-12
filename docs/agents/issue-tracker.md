@@ -52,9 +52,8 @@ GitHub 的 issue 和 PR 共享编号空间，单独的 `#42` 可能是任一类�
 issue 进入实际开发（`/implement` 开工）时必须先认领，使「open + 有 assignee」成为「开发中」的唯一标记；用户随时可用 `gh issue list --state open --assignee @me` 查看开发中的 issue。
 
 - **认领**: `gh issue edit <n> --add-assignee @me`，在开始编码前完成（与会话中的其他写操作相比应尽量靠前）。
-- **交付默认直合**：提交正文写 `Closes #<n>`，作为 `/finish-worktree` 识别并关闭 issue 的依据；推送 `main` 时 GitHub 也按该关键词自动关闭，收尾流程再在 issue 上评论合并提交。
-- **开 PR 时**（用户主动要求或改动需要讨论）：在 issue 上评论 PR 链接，把「开发中」与「已交付待合并」区分开；PR 正文写 `Closes #<n>`，人工合并后自动关闭。
-- agent 不自行合并、不自行关闭；用户显式调用 `/finish-worktree` 的收尾流程是唯一例外。认领不做移除。
+- **PR 创建后在 issue 上评论 PR 链接**，把「开发中」与「已交付待合并」区分开；PR 正文写 `Closes #<n>`，人工合并后 issue 自动关闭。
+- agent 不自行合并、不自行关闭；认领不做移除。
 
 ## 当 skill 说“获取相关 ticket”
 

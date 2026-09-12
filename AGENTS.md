@@ -55,7 +55,7 @@ Rust 根（`src-tauri/`）是 workspace：根包仍是 tauri 应用包（壳层�
 - 改动引入「所有入口都必须遵循」的约束（成对调用、必须接线、必须带门、必须清理）时，用 `rg` 枚举全部调用点并逐一核对，交付报告附核对清单；修复缺陷后，用 `rg` 检索同一根因的其他实例并核对每处命中。
 - 拆票或补验收判据时，接线 / 时机 / 入口型 ticket（核心价值是某调用必须在某时机出现在某位置）的验收判据必须含「删除即变红」负向条目：删除 `<接线调用点>` → 至少一条测试变红，断言对准用户可观察结果，不对准线程或函数调用形状（ADR-0087 断言强度）；领域逻辑型不加，避免形式主义；接线在本机 CI 不构建的分支内时以源码扫描守门替代（先例 #959、#961）。
 - 编译加速归口 kache：热回路（编辑后重跑 `cargo test`）由仓库根 `.kache.toml` 的 `preserve_incremental` 保住 rustc 增量，冷构建（新 worktree 首次构建）由 kache 共享 store 承担；需要提速构建时直接依赖这套设置，不要另行配置 `RUSTC_WRAPPER`、`KACHE_DISABLED` 等环境变量方案。
-- 调用 `/implement` 实施代码改动时：对应 GitHub issue 先认领（见 `docs/agents/issue-tracker.md` 开发认领），再使用独立 git worktree，并在工作树内完成验证和提交；worktree 缺少前端依赖时先运行 `pnpm install`。交付终点默认直合：提交正文写 `Closes #<n>`，`./scripts/check.sh` 全绿后停下并在报告里点明改动是否触及不可逆面（migration、已发布 API 与 AI 契约、同步协议、依赖版本、发布元数据），等用户显式调用 `/finish-worktree` 直合并推送 `main`、关闭 issue、清理 worktree 与分支；agent 不自行调用该 skill。PR 只在用户主动要求或改动需要讨论时开。
+- 调用 `/implement` 实施代码改动时：对应 GitHub issue 先认领（见 `docs/agents/issue-tracker.md` 开发认领），再使用独立 git worktree，并在工作树内完成验证和提交；提交后推送分支并主动在 GitHub 上创建 PR，PR 是交付终点，不自行合并。worktree 缺少前端依赖时先运行 `pnpm install`。
 - 只读审查不修改、不提交；研究任务是否写入文档，以用户要求和对应 skill 为准。
 - 修改迁移、AI API 契约、数据模型或准备发布时，先判断当前提交相对最新 tag 的发布边界。无可用 tag 时，先报告无法判断发布边界，不擅自把 schema/AI API 契约当作已发布或未发布。已发布 AI API 契约和数据模型只增不改；已发布迁移的就地修改须在 migration 文件头部注明对应 CHANGELOG 条目，并在 `CHANGELOG.md` 的对应版本或 `Unreleased` 下增加 BREAKING 条目。
 
