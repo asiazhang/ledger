@@ -155,6 +155,9 @@ async fn test_create_fund_with_unknown_code_rejects_without_row() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(err["kind"], "Invalid");
+    // 码化契约（ADR-0050）：查无此码以 sync.fund-not-found 上抛，创建端点按码
+    // 判定拒绝而非降级建行（#1186）——删掉按码判定本测试即红（降级返 201）。
+    assert_eq!(err["code"], "sync.fund-not-found");
     assert!(
         err["message"]
             .as_str()
@@ -201,9 +204,12 @@ fn toggle_stub(
                 fund_class: Some(hit.fund_class.to_string()),
                 nav_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
             }),
-            None => Err(AppError::Invalid(format!(
-                "查无基金代码 {code}，请核对后重试"
-            ))),
+            // 未命中形状与生产同源（码化 sync.fund-not-found，#1186），不回退裸 Invalid。
+            None => Err(AppError::codedp(
+                "sync.fund-not-found",
+                format!("查无基金代码 {code}，请核对后重试"),
+                &[code],
+            )),
         }
     })
 }
