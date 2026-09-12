@@ -18,13 +18,16 @@
 //! `failed` 保持手动重试（ADR-0024 失败策略维持），不自动反复重试；单期失败不
 //! 中断同批后续；每笔成功联动自动备份到期判定——置脏自 #1090 起经接缝反转：
 //! 本模块只定义期次落账后置钩子的注册点（[`register_after_occurrence_hook`]），
-//! 实现由备份域提供（`backup::occurrence_dirty_hook`）、壳层启动时接线——
-//! 定时计划域对备份域零直接依赖（域间禁边，`scripts/check-structure.ts`）。
+//! 实现由备份域提供（#1091 起为 `ledger-backup` crate，`backup::occurrence_dirty_hook`）、
+//! 壳层启动时接线——定时计划域对备份域零直接依赖（域间禁边，
+//! `scripts/check-structure.ts`）。反向的同族接缝（issue #1091 / 挂载点④）：
+//! 调度线程的追补触发由备份域定义注册点（`register_catch_up_hook`）、本模块
+//! 提供 [`catch_up_hook`] 实现、壳层启动时对装——备份域对定时计划域亦零依赖。
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use chrono::NaiveDate;
+use chrono::{Local, NaiveDate};
 use rusqlite::{Connection, params};
 
 use super::engine::execute_occurrence;
@@ -46,10 +49,20 @@ static AFTER_OCCURRENCE_HOOK: OnceLock<AfterOccurrenceHook> = OnceLock::new();
 /// 注册期次落账后置钩子实现（幂等：进程级一次，重复注册保留首次实现）。
 ///
 /// 调用点在壳层启动接线与测试建库单点（`test_support::open`、BDD world），
-/// 与生产同形；实现由备份域提供（`backup::install_occurrence_dirty_hook`），
-/// 业务代码不直接调用本函数。
+/// 与生产同形；实现由备份域提供（#1091 起为 `ledger-backup` crate，壳层直接
+/// 把 `backup::occurrence_dirty_hook` 对装进本注册点），业务代码不直接调用本函数。
 pub fn register_after_occurrence_hook(hook: AfterOccurrenceHook) {
     let _ = AFTER_OCCURRENCE_HOOK.set(hook);
+}
+
+/// 追补触发钩子实现（issue #1091 / spec #1086 形态推广，挂载点④）：自动备份
+/// 调度线程的单一 tick 每轮在备份到期判定后调用——调度宿主（备份域，#1091 起
+/// `ledger-backup` crate）只定义注册点（`ledger_backup::register_catch_up_hook`），
+/// 本函数由壳层启动接线注册。开关从运行时镜像读出、「今天」取本地时区日期后
+/// 注入追补入口 [`run_catch_up`]（与迁移前调度线程内联形态同口径：镜像默认关，
+/// 未推送即空转）。
+pub fn catch_up_hook(conn: &Connection) {
+    run_catch_up(conn, is_enabled(), Local::now().date_naive());
 }
 
 /// 后端运行时镜像（进程级）：设备级开关默认关，前端启动/变更时经 IPC 推送更新。

@@ -14,7 +14,11 @@
 
 pub mod accounts;
 pub mod api_server;
-pub mod backup;
+// 备份域 crate（spec #1086 / issue #1091，首个业务域 crate 自根包域目录拆出）：
+// 域目录 `src/backup` 整体迁入 `crates/backup`，根包以别名再导出保留原引用路径
+// ——`crate::backup::…` / `tauri_app_lib::backup::…` 调用点零改动（expand 形态，
+// #1088 基础设施再导出同款）。域内引擎与调度本体见 `ledger-backup` crate。
+pub use ledger_backup as backup;
 pub mod budget;
 pub mod categories;
 pub mod commands;
@@ -176,12 +180,19 @@ pub fn run() {
             // 壳层启动时装入（幂等，先装者优先）。注册先于任何建库/写库。
             sync_engine::trigger::install_after_write_hook();
             // 写路径副作用接缝接线（issue #1090 / spec #1086 形态推广）：核心交易域的
-            // 余额刷新注册点、计划来源解析注册点与定时计划域的期次落账置脏注册点，
-            // 实现分别由账户域、定时计划域与备份域提供、壳层启动时接线（幂等）。
-            // 注册先于任何建库/写库。
+            // 余额刷新注册点与计划来源解析注册点，实现分别由账户域与定时计划域
+            // 提供、壳层启动时接线（幂等）；期次落账置脏（#1090）实现由备份域
+            // （crate，#1091 起 `ledger-backup`）提供、壳层对装——定时计划域对
+            // 备份域零直接依赖。注册先于任何建库/写库。
             accounts::balance::install_balance_refresh_hook();
             scheduled_transactions::install_plan_source_hook();
-            backup::install_occurrence_dirty_hook();
+            scheduled_transactions::auto_run::register_after_occurrence_hook(
+                backup::occurrence_dirty_hook,
+            );
+            // 追补触发接线（issue #1091 / 挂载点④，ADR-0112 决策 5）：自动备份调度
+            // 线程的追补判定实现由定时计划域提供（开关镜像 + 本地今天在实现内注入）、
+            // 壳层启动时注册进备份域的注册点（幂等）——备份域对定时计划域零依赖。
+            backup::register_catch_up_hook(scheduled_transactions::auto_run::catch_up_hook);
             // 两扇进程级门先登记（boot_sequence 与 IPC/HTTP 门禁共同消费；实例
             // 由 run() 创建，同一份供 invoke wrapper 共享）：加密锁定门 + 启动
             // 失败门（issue #601）。
