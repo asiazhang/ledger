@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { TOAST_BASELINE } from '../../scripts/check-async-guards.ts'
+import { TOAST_BASELINE } from '../scripts/check-async-guards.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-async-guards.ts（前端异步守门，issue #1039）。
 // 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。

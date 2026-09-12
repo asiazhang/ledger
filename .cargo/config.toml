@@ -1,0 +1,14 @@
+# 仓库级 Cargo 配置：把构建产物路径交给 kache 归一化，不改 Cargo 本身的行为。
+#
+# 每个 git worktree 有独立 target；openssl-src 的 vendored 构建会把
+# -DOPENSSLDIR/-DENGINESDIR/-DMODULESDIR=<target>/.../out/openssl-build/install
+# 这类绝对路径带进每个 .c 的编译命令，kache 的 cc cache key 会把这些值算进去，
+# 于是每个 worktree 冷构建都 miss 后重编，产物内容却相同（built + deduped）。
+# 把 target 声明为 kache base dir 后，这些前缀映射到固定 sentinel，key 跨
+# worktree/机器收敛。`relative = true` 让 Cargo 按当前 checkout 解析绝对路径
+# （相对本文件所在目录），因此不必把机器路径写进仓库。
+#
+# 注意：自行覆盖 CARGO_TARGET_DIR 时需相应设置 KACHE_BASE_DIR（外部环境变量
+# 优先于本配置，默认不会被覆盖）。
+[env]
+KACHE_BASE_DIR = { value = "src-tauri/target", relative = true }
