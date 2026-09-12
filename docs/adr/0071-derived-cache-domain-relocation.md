@@ -45,10 +45,14 @@
 > `test_support::open` / BDD world）。`transaction → accounts` 直接引用禁令化
 > （`scripts/check-structure.ts` 域间禁边），transaction ⇄ accounts 双向横向边收敛为
 > `accounts → transaction` 单向（口径表达式真源 `transaction::amount` + 注册点调用）；
-> `transaction/funding.rs → accounts` 的 AccountType 类型只读边保留为认许边（#1092
-> 处置）。ADR-0067 语义零变化：写路径仍同事务整体重算，未注册即码化错误回滚。
+> `transaction/funding.rs → accounts` 的 AccountType 类型只读边已随 #1092 出资账户
+> 视图接缝反转消亡（类型闭集映射迁账户域实现侧，认许边清单清零），核心交易域
+> 拆为 ledger-transaction crate 后对账户域零依赖（cargo 依赖图编译期强制）。
+> ADR-0067 语义零变化：写路径仍同事务整体重算，未注册即码化错误回滚。
 > 同票反转的还有 `transaction → scheduled_transactions`（来源列计划反查）与
-> `scheduled_transactions → backup`（期次落账置脏）两条写/读路径副作用边。
+> `scheduled_transactions → backup`（期次落账置脏）两条写/读路径副作用边；
+> #1092 又以同一形态反转了核心交易域对投资/商户/币种/物品/保单/账户的六向
+> 残留边（ADR-0112 决策 5 挂载点⑤），核心交易域拆为独立 crate。
 
 ### 6. 结构守门扩展：infra→域扫描
 
