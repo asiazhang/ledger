@@ -1054,21 +1054,14 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
   //   ④ 根包与 infra 的 `[features] default` 不得包含 test-utils（默认 feature 即生产）；
   //   ⑤ 投资五节标题锚点常量（issue #1185，住 `handlers/import.rs`）须带同一形态的门；
   //   ⑥ 锚点再导出（`api_server/mod.rs`）须带同一形态的门。
-  const gatedDecls: ReadonlyArray<{
-    file: string
-    re: RegExp
-    label: string
-    gate: string
-    src: string
-    victim: string
-  }> = [
+  const gatedDecls = [
     {
       file: join(srcTauriDir, INFRA_SRC_REL, 'lib.rs'),
       re: /^\s*pub\s+mod\s+test_utils\s*;/,
       label: 'pub mod test_utils;',
       gate: 'test_utils 生产编译门',
       src: 'ADR-0111 决策 5 / issue #1132',
-      victim: '测试器具',
+      productionArtifact: '测试器具',
     },
     {
       file: join(srcTauriDir, 'src', 'lib.rs'),
@@ -1076,9 +1069,9 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
       label: 'pub use ledger_infra::test_utils;',
       gate: 'test_utils 生产编译门',
       src: 'ADR-0111 决策 5 / issue #1132',
-      victim: '测试器具',
+      productionArtifact: '测试器具',
     },
-    // 投资五节标题锚点（issue #1185）：#1121 常量结构锁与 #1123 HTTP 集成锁的
+    // 投资五节标题锚点（issue #1185）：#1121 常量结构锁与 #1123 API 集成锁的
     // 共享单一住处，仅测试构建编译——门摘掉即测试锚点静默进生产二进制。
     {
       file: join(srcTauriDir, 'src', 'api_server', 'handlers', 'import.rs'),
@@ -1086,7 +1079,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
       label: 'pub const INVESTMENT_SECTION_HEADERS',
       gate: '投资五节锚点生产编译门',
       src: 'issue #1185',
-      victim: '测试锚点',
+      productionArtifact: '测试锚点',
     },
     {
       file: join(srcTauriDir, 'src', 'api_server', 'mod.rs'),
@@ -1094,10 +1087,10 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
       label: 'pub use handlers::import::INVESTMENT_SECTION_HEADERS;',
       gate: '投资五节锚点生产编译门',
       src: 'issue #1185',
-      victim: '测试锚点',
+      productionArtifact: '测试锚点',
     },
   ]
-  for (const { file, re, label, gate, src, victim } of gatedDecls) {
+  for (const { file, re, label, gate, src, productionArtifact } of gatedDecls) {
     const rel = file.slice(srcTauriDir.length + 1)
     if (!existsSync(file)) {
       problems.push(`✗ ${gate}：${rel} 不存在，无法核对 cfg 门（${src}）`)
@@ -1112,7 +1105,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
         `✗ ${gate}：${rel} \`${label}\` 未加「放行测试」cfg 门\n` +
           `    ${lines[declIndex].trim()}\n` +
           '    门须为 `#[cfg(any(test, feature = "test-utils"))]`（或等价单行 cfg）；' +
-          `无门 / \`#[cfg(not(test))]\` / 与测试无关的 cfg 都会让生产编译${victim}` +
+          `无门 / \`#[cfg(not(test))]\` / 与测试无关的 cfg 都会让生产编译${productionArtifact}` +
           `（${src}），删除或写反 cfg 门即变红`,
       )
     }

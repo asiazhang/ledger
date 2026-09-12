@@ -30,8 +30,9 @@ mod state;
 pub use router::{build_router, start_http_server};
 pub use state::{ApiState, EmitterSlot, FundQuoteFetcher, StockQuoteFetcher};
 // 投资五节标题锚点（issue #1185）：唯一物理住处在 `handlers::import`，经此再导出
-// 供 HTTP 集成锁（tests/api_server/documentation.rs）与本模块单测同源消费；
-// 生产构建不编译（ADR-0111 决策 5 / #1132 先例），门由 check-structure 守门核对。
+// 供 API 集成锁（tests/api_server/documentation.rs）同源消费；本模块单测经
+// `use super::*` 直读模块内原定义，不经此路径。生产构建不编译（ADR-0111 决策 5
+// / #1132 先例），门由 check-structure 守门核对。
 #[cfg(any(test, feature = "test-utils"))]
 #[doc(hidden)]
 pub use handlers::import::INVESTMENT_SECTION_HEADERS;
