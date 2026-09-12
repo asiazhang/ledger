@@ -114,7 +114,7 @@ function findLastIndex(arr: AstNode[], pred: (x: AstNode) => boolean): number {
  * 检查单个模板 AST：每个 NFormItem 必须被节奏容器（NSpace vertical size 12）覆盖——
  * 有同文件 NForm 祖先时须夹在表单项与所属 NForm 之间；无同文件 NForm（父级装配或
  * 独立作行）时须在本文件祖先链上兜底。ancestors 为根到当前节点父级的链。
- * 纯函数导出供单测（src/__tests__/check-dialog-forms.test.ts）。
+ * 纯函数导出供单测（scripts/check-dialog-forms.test.ts）。
  */
 export function checkTemplateAst(ast: unknown, file: string, out: Violation[]): void {
   const walk = (raw: unknown, ancestors: AstNode[]): void => {

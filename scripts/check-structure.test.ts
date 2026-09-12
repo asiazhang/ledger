@@ -11,7 +11,7 @@ import {
   PROTOCOL_SRC_REL,
   WHITELIST,
   LAYER,
-} from '../../scripts/check-structure.ts'
+} from '../scripts/check-structure.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-structure.ts（结构守门，ADR-0056）。
 // 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。

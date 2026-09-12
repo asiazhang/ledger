@@ -3,7 +3,9 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { REFERENCE_DEFAULTS } from './helpers/reference-stubs'
+// 登记处本体仍在 src/__tests__/helpers（前端测试与守门清单的共同单一来源），
+// 本文件归位后跨目录指向它（#1158）。
+import { REFERENCE_DEFAULTS } from '../src/__tests__/helpers/reference-stubs'
 
 // 被测对象是仓库工具脚本 scripts/check-test-stubs.ts（前端测试桩守门，issue #725/#726/#822）。
 // 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。

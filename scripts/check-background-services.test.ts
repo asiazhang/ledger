@@ -8,7 +8,7 @@ import {
   GUARDED_NAMES,
   ORCHESTRATOR_FILE,
   ORCHESTRATOR_FN,
-} from '../../scripts/check-background-services.ts'
+} from '../scripts/check-background-services.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-background-services.ts（后台服务成对
 // 拉起守门，issue #961）。脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun')
