@@ -8,7 +8,7 @@ import type { Account, Category, Currency, Insurer, Merchant } from '@ledger/typ
  * 短路，后一条永远不生效），带数据桩被兜底空桩短路、数据静默变空。
  *
  * 深模块收口：本文件集中持有规范参考数据夹具与命令登记处；接线能力在唯一接缝
- * `wireInvokeSeam`（helpers/invoke-mock.ts）——参考字典五命令由接缝经
+ * `wireInvokeSeam`（同目录 invoke-mock.ts）——参考字典五命令由接缝经
  * `REFERENCE_DEFAULTS` 内建兜底应答，测试只覆写自己实际行使的命令；未覆写的
  * 非参考命令保持
  * `unexpected invoke` 拒绝（既有严格性是有价值的，予以保留）。

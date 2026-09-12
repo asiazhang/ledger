@@ -4,11 +4,15 @@ import { enableAutoUnmount } from '@vue/test-utils'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { setFileScope } from '@vanilla-extract/css/fileScope'
-import { mockInvoke, unexpectedInvoke } from './helpers/invoke-mock'
-import { mockListen } from './helpers/listen-mock'
-import { mockOnBackButtonPress } from './helpers/back-mock'
-import { fakeMatchMedia, resetFakeMedia } from './helpers/media-mock'
-import { messageApi, resetMessageApi } from './helpers/message-mock'
+// 共享测试支持包的 setup 入口（issue #1152）：全局测试接缝自 src/__tests__/setup.ts
+// 下沉至此，供 app（jsdom）与 packages（node）两个 vitest project 共用——DOM 依存
+// 段经环境守卫自适应，接缝定义不随环境分裂（node 下 matchMedia/document 段自然
+// 不生效，invoke/message/listen/返回桥/Pinia 清理照常装配）。
+import { mockInvoke, unexpectedInvoke } from './invoke-mock'
+import { mockListen } from './listen-mock'
+import { mockOnBackButtonPress } from './back-mock'
+import { fakeMatchMedia, resetFakeMedia } from './media-mock'
+import { messageApi, resetMessageApi } from './message-mock'
 
 // vanilla-extract 无 bundler 运行时的默认 file scope（issue #888）：vitest 不挂 ve
 // 插件（见 vitest.config.ts），*.css.ts 走纯运行时求值，而 style()/createTheme 在
@@ -18,7 +22,7 @@ import { messageApi, resetMessageApi } from './helpers/message-mock'
 // 求值执行，此处装配的作用域即全测试面的兜底默认。主题合同测试（
 // theme-contract.test.ts）要捕获 CSS 产出物，会在自己的 beforeAll 另设专属 scope
 // ——后设者居栈顶优先生效、endFileScope 弹回本兜底，互不干扰。
-setFileScope('src/__tests__/setup.ts')
+setFileScope('@ledger/test-support/setup.ts')
 
 // jsdom 环境下 localStorage 不可用，使用 polyfill
 if (typeof localStorage === 'undefined' || localStorage === null) {
@@ -45,7 +49,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 // Mock Tauri app/window 模块（issue #845 系统返回桥接）：注册/撤销与窗口销毁
-// 经 helpers/back-mock 助手装配；默认实现为「注册即成功、销毁为 no-op」。App.vue
+// 经同目录 back-mock 助手装配；默认实现为「注册即成功、销毁为 no-op」。App.vue
 // 的 setTitle 动态导入在 mock 下拿到裸 vi.fn()，返回 undefined 由其 try/catch 吸收。
 vi.mock('@tauri-apps/api/app', () => ({
   onBackButtonPress: vi.fn(),
@@ -55,7 +59,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 }))
 
 // jsdom 缺少 matchMedia：挂媒体查询测试接缝（issue #841）——可编程假 matchMedia
-// 取代早期「一律 false」静态桩，测试经 helpers/media-mock 的 setFakeMedia 设定
+// 取代早期「一律 false」静态桩，测试经同目录 media-mock 的 setFakeMedia 设定
 // hover / pointer / 宽度应答换档；默认桌面指针状态使既有测试语义零迁移。
 if (typeof window !== 'undefined' && !window.matchMedia) {
   Object.defineProperty(window, 'matchMedia', {
@@ -84,7 +88,7 @@ vi.mock('@vue/test-utils', async (importOriginal) => {
 
 // Mock Naive UI useMessage（Composable 中使用它显示通知）——
 // 每测发放同一稳定实例 + 全局每测自动清零（ADR-0085 决策 4），实例经
-// helpers/message-mock.ts 出口获取，供需要断言消息的测试读取。
+// 同目录 message-mock.ts 出口获取，供需要断言消息的测试读取。
 vi.mock('naive-ui', async (importOriginal) => {
   const actual = await importOriginal<typeof import('naive-ui')>()
   return {
@@ -114,5 +118,6 @@ beforeEach(() => {
 enableAutoUnmount(afterEach)
 
 afterEach(() => {
-  document.body.innerHTML = ''
+  // 文档体清空是 DOM 依存段：node 环境（纯逻辑包测试 project）无 document，守卫跳过。
+  if (typeof document !== 'undefined') document.body.innerHTML = ''
 })

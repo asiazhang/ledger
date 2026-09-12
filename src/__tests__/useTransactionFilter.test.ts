@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { wireInvokeSeam } from './helpers/invoke-mock'
+import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { defineComponent, watch } from 'vue'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'

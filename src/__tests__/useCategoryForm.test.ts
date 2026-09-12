@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { useCategoryForm } from '@/composables/useCategoryForm'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'

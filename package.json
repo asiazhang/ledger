@@ -36,6 +36,7 @@
     "vue-router": "^5.3.1"
   },
   "devDependencies": {
+    "@ledger/test-support": "workspace:*",
     "@pinia/testing": "^2.0.1",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^22.20.1",

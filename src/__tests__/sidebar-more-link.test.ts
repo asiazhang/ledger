@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { wireInvokeSeam } from './helpers/invoke-mock'
+import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import App from '@/App.vue'

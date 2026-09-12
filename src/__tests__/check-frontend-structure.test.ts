@@ -33,6 +33,7 @@ interface FixtureEntry {
   name: string
   dir: string
   deps: string[]
+  testSupport?: boolean
   note: string
 }
 
@@ -343,12 +344,89 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
       expect(r.output).toContain('须为 JSON 数组')
     })
 
-    it('PACKAGES 生产登记表与已落位包全等（#1150/#1151 抽包落位）', () => {
-      expect(PACKAGES.map((p) => ({ name: p.name, dir: p.dir, deps: [...p.deps] }))).toEqual([
-        { name: '@ledger/types', dir: 'packages/types', deps: [] },
-        { name: '@ledger/storage', dir: 'packages/storage', deps: [] },
-        { name: '@ledger/i18n', dir: 'packages/i18n', deps: ['@ledger/storage'] },
+    it('PACKAGES 生产登记表与已落位包全等（#1150/#1151/#1152 抽包落位）', () => {
+      expect(PACKAGES).toEqual([
+        {
+          name: '@ledger/types',
+          dir: 'packages/types',
+          deps: [],
+          note: expect.any(String),
+        },
+        {
+          name: '@ledger/storage',
+          dir: 'packages/storage',
+          deps: [],
+          note: expect.any(String),
+        },
+        {
+          name: '@ledger/i18n',
+          dir: 'packages/i18n',
+          deps: ['@ledger/storage'],
+          note: expect.any(String),
+        },
+        {
+          name: '@ledger/test-support',
+          dir: 'packages/test-support',
+          deps: ['@ledger/types'],
+          testSupport: true,
+          note: expect.any(String),
+        },
       ])
+    })
+  })
+
+  describe('规则⑤：测试支持纯净性（testSupport 包仅 devDependency 消费，#1152）', () => {
+    /** 建含测试支持包的夹具：登记表注入（testSupport 标志），成员与根包清单自足。
+     *  返回完整 args（含 manifest 路径）；memberManifest 覆写成员清单（规则⑤自身
+     *  dependencies 用例）。 */
+    function testSupportArgs(
+      consumerManifest: Record<string, unknown>,
+      memberManifest: Record<string, unknown> = { name: '@ledger/ts', devDependencies: {} },
+    ): string[] {
+      const args = fixtureRepo({
+        manifest: [
+          { name: '@ledger/ts', dir: 'packages/ts', deps: [], testSupport: true, note: '夹具' },
+        ],
+        memberDirs: ['ts'],
+      })
+      const root = args[0] as string
+      writePackageManifest(root, 'packages/ts', memberManifest)
+      writePackageManifest(root, '.', consumerManifest)
+      return args
+    }
+
+    it('删除即变红：根包 dependencies 出现测试支持包即红（生产依赖图零测试支持）', () => {
+      const r = run(testSupportArgs({ dependencies: { '@ledger/ts': 'workspace:*' } }))
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('测试支持纯净性')
+      expect(r.output).toContain('根包（应用壳）')
+      expect(r.output).toContain('devDependencies')
+    })
+
+    it('peerDependencies 出现测试支持包同样红（dev 是唯一合法通道）', () => {
+      const r = run(testSupportArgs({ peerDependencies: { '@ledger/ts': 'workspace:*' } }))
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('测试支持纯净性')
+    })
+
+    it('测试支持包自身 dependencies 非空即红（零生产依赖）', () => {
+      const r = run(
+        testSupportArgs(
+          {},
+          {
+            name: '@ledger/ts',
+            dependencies: { 'some-runtime': '^1.0.0' },
+            devDependencies: {},
+          },
+        ),
+      )
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('自身 dependencies 非空')
+    })
+
+    it('经 devDependencies 消费且自身零生产依赖即绿', () => {
+      const r = run(testSupportArgs({ devDependencies: { '@ledger/ts': 'workspace:*' } }))
+      expect(r.status).toBe(0)
     })
   })
 })

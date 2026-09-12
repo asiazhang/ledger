@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount } from '@vue/test-utils'
-import { setFakeMedia } from './helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import CategoryManager from '@/components/CategoryManager.vue'
 import type { Category } from '@ledger/types'
 

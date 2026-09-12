@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
-import { assertMobileTierScrollX } from './helpers/mobile-scroll-x'
+import { assertMobileTierScrollX } from '@ledger/test-support/mobile-scroll-x'
 import { useReferenceStore } from '@/stores/reference'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
 import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
   resetInstrumentInfoSyncForTest,
 } from '@/composables/useInstrumentInfoSync'
-import { captureListenHandlers } from './helpers/listen-mock'
+import { captureListenHandlers } from '@ledger/test-support/listen-mock'
 import { makeInstrument } from './factories'
 import {
   firePricesChanged,

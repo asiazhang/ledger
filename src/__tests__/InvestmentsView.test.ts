@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import InvestmentsView from '@/views/InvestmentsView.vue'
 import { formatAmount } from '@/utils/money'
-import { clickTab, findTab } from './helpers/dom'
-import { componentVm } from './helpers/component-vm'
-import { mountWithDialog } from './helpers/mount'
-import { refCurrencies } from './helpers/reference-stubs'
+import { clickTab, findTab } from '@ledger/test-support/dom'
+import { componentVm } from '@ledger/test-support/component-vm'
+import { mountWithDialog } from '@ledger/test-support/mount'
+import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import { mockHoldings } from './factories'
 import {
   firePricesChanged,
@@ -40,7 +40,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock }),
 }))
 
-/** 视图挂载走共享基座（helpers/mount.ts 单点收口）：顶层 InstrumentBrowser 调
+/** 视图挂载走共享基座（@ledger/test-support/mount.ts 单点收口）：顶层 InstrumentBrowser 调
  * useAppDialog（删除二次确认，issue #292），与 App.vue 同构需 NDialogProvider 包裹。 */
 const mountView = () => mountWithDialog(InvestmentsView)
 

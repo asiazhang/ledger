@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam, type AppInvokeHandler } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam, type AppInvokeHandler } from '@ledger/test-support/invoke-mock'
 import { api } from '@/api'
 import { busyVisible, resetGlobalBusy } from '@/composables/globalBusy'
 

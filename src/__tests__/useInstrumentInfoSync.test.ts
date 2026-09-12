@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke } from '@ledger/test-support/invoke-mock'
 import {
   captureListenHandlers,
   mockListen,
   type CapturedListener,
-} from './helpers/listen-mock'
+} from '@ledger/test-support/listen-mock'
 import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
   resetInstrumentInfoSyncForTest,

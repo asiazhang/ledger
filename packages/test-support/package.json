@@ -1,0 +1,20 @@
+{
+  "name": "@ledger/test-support",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "共享测试支持包（issue #1152 / spec #1148）：全局测试接缝的唯一宿主——invoke/message/matchMedia/listen/返回桥替身与每测清理壳层（setup.ts）+ 测试辅助层出口，对齐 #1086「测试支持 crate + dev-dependency」。消费只经 devDependency（check-frontend-structure.ts 规则⑤守门：生产依赖图零测试支持），自身零生产依赖。源码直出，exports 走 ./* 通配按文件整引——不开 barrel：把 jsdom 向组件库的重模块面经单一入口扩散给全部消费文件。两项裁定：① 住 packages/<name> 而非根测试目录相对引用——包边界规则③禁相对路径穿越，包名导入是唯一合规消费形态；② vitest 覆盖走根 vitest.config.ts 多 project（app=jsdom / packages=node），pnpm test 与 --shard 语义不变。invoke 接缝的 store 层参考预热（refreshReferenceStores）依赖根包参考 store，经 registerReferenceRefresher 注册注入（app-setup.ts 装配），接缝本体不反向依赖应用壳。",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "devDependencies": {
+    "@ledger/types": "workspace:*",
+    "@tauri-apps/api": "^2.11.1",
+    "@vanilla-extract/css": "^1.21.2",
+    "@vue/test-utils": "^2.5.0",
+    "naive-ui": "^2.45.3",
+    "pinia": "^4.0.3",
+    "vitest": "^5.0.0",
+    "vue": "^3.5.42"
+  }
+}

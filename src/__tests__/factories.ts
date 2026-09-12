@@ -22,7 +22,7 @@ import type {
 
 /**
  * 组件/composable 测试的共享数据工厂（issue #110 审查：消除测试文件间重复）。
- * invoke 布线一律走唯一接缝 wireInvokeSeam（helpers/invoke-mock.ts，ADR-0085），
+ * invoke 布线一律走唯一接缝 wireInvokeSeam（@ledger/test-support/invoke-mock.ts，ADR-0085），
  * 本文件只承载数据夹具与 toast sink 假件，不含任何布线能力。
  */
 

@@ -8,7 +8,9 @@
         describe/it/afterEach 经 globals:true 使用，类型声明须显式引入）；
      ② include = 脚本 + 全量测试目录（#737 收窄入门，#738/#739 分批清债，#740 收口
         翻转——「测试文件零类型检查」缺口正式关死）。另收入 src 下全局 .d.ts
-        （vite-env.d.ts 等全局声明，脚本与测试导入图引用）。
+        （vite-env.d.ts 等全局声明，脚本与测试导入图引用）+ 共享测试支持包源码
+        （issue #1152：测试侧 .ts 的类型面，包内测试随同一工程检查；@ledger/types
+        包源码不入本工程——生产类型层由消费方程序随引随查）。
      scripts 由 Bun 运行时执行（ADR-0083），类型检查仍按 TS 语义进行。 */
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -17,6 +19,7 @@
   "include": [
     "scripts/**/*.ts",
     "src/__tests__/**/*.ts",
-    "src/**/*.d.ts"
+    "src/**/*.d.ts",
+    "packages/test-support/src/**/*.ts"
   ]
 }

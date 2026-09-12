@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { type UnlistenFn } from "@tauri-apps/api/event";
@@ -19,7 +19,7 @@ import {
   useBackup,
 } from "@/composables/useBackup";
 import { restartAppShortly } from "@/utils/restart";
-import { captureLastListener, mockListen } from "./helpers/listen-mock";
+import { captureLastListener, mockListen } from "@ledger/test-support/listen-mock";
 import type { BackupFileInfo } from "@ledger/types";
 
 const autoBackupFile: BackupFileInfo = {

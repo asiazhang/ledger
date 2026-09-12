@@ -8,7 +8,7 @@ import {
   useCreateShortcuts,
 } from '@/composables/useCreateShortcuts'
 import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
-import { setFakeMedia } from './helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { CREATE_KINDS } from '@ledger/types'
 import type { CreateTransactionKind } from '@ledger/types'
 

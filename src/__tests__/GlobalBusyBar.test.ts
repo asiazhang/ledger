@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { setFakeMedia } from './helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import GlobalBusyBar from '@/components/GlobalBusyBar.vue'
 import { trackBusy, resetGlobalBusy } from '@/composables/globalBusy'
 

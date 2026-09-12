@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
 import { expect, vi, type Mock } from 'vitest'
-import { useReferenceStore } from '@/stores/reference'
 import { REFERENCE_DEFAULTS } from './reference-stubs'
 
 /**
@@ -29,6 +28,18 @@ export function lastInvokeArgs(cmd: string): Record<string, unknown> {
 }
 
 // —— invoke 测试接缝（issue #746，ADR-0085 决策 1；术语见测试基础设施域词汇表） ——
+
+// —— 参考 store 刷新器注册（issue #1152 包化反转） ——
+// seam 本体住共享测试支持包，不得反向依赖应用壳（参考 store 住根包 src/stores）；
+// refreshReferenceStores 的 store 层预热改为注册注入：应用壳测试工程由
+// src/__tests__/app-setup.ts 每测试文件装配（setupFiles 先于用例求值），包内
+// node 测试未注册而误用该 opt-in 时显式报错，不静默跳过。
+let referenceRefresher: (() => Promise<unknown>) | null = null
+
+/** 注册参考 store 预载刷新器（应用壳测试工程专属装配点；包测试工程不注册）。 */
+export function registerReferenceRefresher(refresh: () => Promise<unknown>): void {
+  referenceRefresher = refresh
+}
 
 /**
  * 未命中报错基座：按命令名拒绝。全局壳层在每测桩复位后重挂本实现，
@@ -137,7 +148,12 @@ export function wireInvokeSeam(options: InvokeSeamOptions = {}): InvokeSeamDispa
   }) as InvokeSeamDispatcher
   mockInvoke.mockImplementation(dispatch as typeof invoke)
   if (options.refreshReferenceStores) {
-    dispatch.ready = useReferenceStore().refresh().then(() => undefined)
+    if (!referenceRefresher) {
+      throw new Error(
+        'refreshReferenceStores 需要参考 store 刷新器：应用壳测试工程由 app-setup 注册（registerReferenceRefresher）',
+      )
+    }
+    dispatch.ready = referenceRefresher().then(() => undefined)
   }
   return dispatch
 }

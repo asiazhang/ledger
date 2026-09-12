@@ -3,8 +3,8 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import MobileNavShell from '@/components/MobileNavShell.vue'
 import { hasOpenOverlay } from '@/composables/overlayRegistry'
-import { pressReleaseOn } from './helpers/dom'
-import { openMobileDrawer, drawerMenuItemTexts, findDrawerItem } from './helpers/mobile-nav'
+import { pressReleaseOn } from '@ledger/test-support/dom'
+import { openMobileDrawer, drawerMenuItemTexts, findDrawerItem } from '@ledger/test-support/mobile-nav'
 
 /**
  * 移动档导航壳组件测试（issue #842）：只断言「看到什么、交互后发生什么」——

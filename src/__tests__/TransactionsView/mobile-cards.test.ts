@@ -6,21 +6,21 @@ import {
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { NButton, NDataTable, NInput } from 'naive-ui'
-import { wireInvokeSeam } from '../helpers/invoke-mock'
-import { setFakeMedia } from '../helpers/media-mock'
-import { probeColor } from '../helpers/dom'
+import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
+import { probeColor } from '@ledger/test-support/dom'
 import { formatAmount } from '@/utils/money'
 import { kindSemanticColor } from '@/theme/semantic-colors'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
-import { refCurrencies } from '../helpers/reference-stubs'
+import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import AccountLink from '@/components/AccountLink.vue'
 import ConvertDetail from '@/components/ConvertDetail.vue'
 import TransactionCardList from '@/components/TransactionCardList.vue'
 
 /**
  * 交易页移动档（issue #846 / ADR-0088 决策 9 断点双渲染）：组件测试主接缝。
- * 换档一律经媒体查询测试接缝（helpers/media-mock，目录薄壳 mountMobile/mountPhone
+ * 换档一律经媒体查询测试接缝（@ledger/test-support/media-mock，目录薄壳 mountMobile/mountPhone
  * 单点收口）：默认桌面指针态为桌面档基线；`width: 839` 换移动档（输入轴不变——
  * 桌面缩窗是移动档的附带能力），`width: 839 + hover: none + pointer: coarse`
  * 为触屏手机形态。断言「看到什么、交互后发生什么」：两档渲染分支、卡片字段与

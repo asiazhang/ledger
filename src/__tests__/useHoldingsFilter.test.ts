@@ -3,8 +3,8 @@ import { ref, effectScope } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { makeAccount } from './factories'
-import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
-import { REFERENCE_DEFAULTS } from './helpers/reference-stubs'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { REFERENCE_DEFAULTS } from '@ledger/test-support/reference-stubs'
 import { useReferenceStore } from '@/stores/reference'
 import {
   HOLDINGS_SEARCH_DEBOUNCE_MS,

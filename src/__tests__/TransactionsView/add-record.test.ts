@@ -1,5 +1,5 @@
 import { mountView, listCalls, lastListFilter, tablePagination } from './common'
-import { mockInvoke } from '../helpers/invoke-mock'
+import { mockInvoke } from '@ledger/test-support/invoke-mock'
 import { describe, it, expect } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect, NButton, NModal, NInput, NRadioGroup } from 'naive-ui'

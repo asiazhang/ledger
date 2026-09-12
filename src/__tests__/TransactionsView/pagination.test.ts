@@ -1,10 +1,10 @@
 import { mountView, mountViewSync, mountMobile, cards, listCalls, lastListFilter, tablePagination, bodyRows, openMenuOnRow, selectRowMenu } from './common'
-import { wireInvokeSeam } from '../helpers/invoke-mock'
-import { clickDialogButton } from '../helpers/dom'
+import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { clickDialogButton } from '@ledger/test-support/dom'
 import { describe, it, expect } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { NDataTable, NPagination } from 'naive-ui'
-import { fireProp } from '../helpers/component-vm'
+import { fireProp } from '@ledger/test-support/component-vm'
 
 describe('TransactionsView 服务端分页', () => {
   it('默认以 page=1 page_size=20 查询并渲染「共 N 条」总数', async () => {
@@ -97,7 +97,7 @@ describe('TransactionsView 服务端分页', () => {
 /**
  * 移动档分页两档一致（issue #846 验收 2，ADR-0088 决策 9）：同一过滤模块出口
  * （翻页/页大小切换/页码回退）在移动档卡片列表形态下语义不变；换档经媒体查询
- * 测试接缝（helpers/media-mock，薄壳 mountMobile 单点）。
+ * 测试接缝（@ledger/test-support/media-mock，薄壳 mountMobile 单点）。
  */
 describe('TransactionsView 移动档分页（issue #846 两档一致）', () => {
   it('移动档默认 20/页，翻页与页大小切换与桌面同语义（同一出口）', async () => {

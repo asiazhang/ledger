@@ -170,6 +170,9 @@ importers:
         specifier: ^5.3.1
         version: 5.3.1(@vue/compiler-sfc@3.5.42)(esbuild@0.28.2)(pinia@4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.42(typescript@6.0.3)))(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))(vue@3.5.42(typescript@6.0.3))
     devDependencies:
+      '@ledger/test-support':
+        specifier: workspace:*
+        version: link:packages/test-support
       '@pinia/testing':
         specifier: ^2.0.1
         version: 2.0.1(pinia@4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.42(typescript@6.0.3)))
@@ -231,6 +234,33 @@ importers:
       vitest:
         specifier: ^5.0.0
         version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
+
+  packages/test-support:
+    devDependencies:
+      '@ledger/types':
+        specifier: workspace:*
+        version: link:../types
+      '@tauri-apps/api':
+        specifier: ^2.11.1
+        version: 2.11.1
+      '@vanilla-extract/css':
+        specifier: ^1.21.2
+        version: 1.21.2
+      '@vue/test-utils':
+        specifier: ^2.5.0
+        version: 2.5.0(@vue/compiler-dom@3.5.42)(@vue/server-renderer@3.5.42)(vue@3.5.42(typescript@6.0.3))
+      naive-ui:
+        specifier: ^2.45.3
+        version: 2.45.3(patch_hash=1d273c9e8f7755836be7d55daae02418e67717cd9ee9f835fe703fbaae0ef403)(vue@3.5.42(typescript@6.0.3))
+      pinia:
+        specifier: ^4.0.3
+        version: 4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.42(typescript@6.0.3))
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
 
   packages/types: {}
 

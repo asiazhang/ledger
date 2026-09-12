@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mockInvoke, wireInvokeSeam, lastInvokeArgs } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam, lastInvokeArgs } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
 import BaseCurrencySettings from '@/components/settings/BaseCurrencySettings.vue'

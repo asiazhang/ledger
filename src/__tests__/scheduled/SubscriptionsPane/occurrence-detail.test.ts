@@ -8,7 +8,7 @@ import {
   setMockPlans,
   setup,
 } from './common'
-import { mockInvoke } from '../../helpers/invoke-mock'
+import { mockInvoke } from '@ledger/test-support/invoke-mock'
 
 beforeEach(setup)
 

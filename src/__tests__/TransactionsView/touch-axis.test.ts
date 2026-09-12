@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { NDropdown, NModal } from 'naive-ui'
-import { setFakeMedia } from '../helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { mountView, rowMenu, rowMenuKeys } from './common'
 
 /**
  * 触控交互轴（issue #843 / ADR-0088 决策 6，词汇表「输入轴」）：两轴对比组件测试。
- * 换档一律经媒体查询测试接缝（helpers/media-mock）：默认桌面指针态（hover +
+ * 换档一律经媒体查询测试接缝（@ledger/test-support/media-mock）：默认桌面指针态（hover +
  * fine）为指针轴基线；`hover: none + pointer: coarse` 为触控轴（Android 手机 /
  * 平板）。断言「看到什么、交互后发生什么」：
  * - 裸键监听：触控轴不注册（按键无弹窗）；指针轴行为不变；

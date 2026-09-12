@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { wireInvokeSeam } from './helpers/invoke-mock'
+import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { setFakeMedia } from './helpers/media-mock'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import App from '@/App.vue'
 import { routes } from '@/router'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
@@ -11,7 +11,7 @@ import { useSidebarOrderStore } from '@/stores/sidebar-order'
  * App 壳触控交互轴（issue #843 / ADR-0088 决策 6，词汇表「输入轴」）：
  * 平板横屏 = 桌面档布局 + 触控轴——宽度轴落桌面档（侧栏在、移动壳不在）时，
  * 输入轴触控下侧栏菜单退役键位提示（⌘/⌃），指针轴行为不变；两轴对比组件测试，
- * 换档一律经媒体查询测试接缝（helpers/media-mock）。
+ * 换档一律经媒体查询测试接缝（@ledger/test-support/media-mock）。
  */
 
 async function mountApp() {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from '../helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import {
   NDataTable,
@@ -9,16 +9,16 @@ import {
   NProgress,
 } from 'naive-ui'
 import InstallmentsPane from '@/components/scheduled/InstallmentsPane.vue'
-import { findInputByTestId as findInput } from '../helpers/dom'
-import { mountFlushed } from '../helpers/mount'
-import { setFakeMedia } from '../helpers/media-mock'
+import { findInputByTestId as findInput } from '@ledger/test-support/dom'
+import { mountFlushed } from '@ledger/test-support/mount'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import {
   makeInstallmentPlan,
   makeSubscriptionPlan,
   makeTransferPlan,
 } from '../factories'
-import { componentVm } from '../helpers/component-vm'
-import { refCurrencies } from '../helpers/reference-stubs'
+import { componentVm } from '@ledger/test-support/component-vm'
+import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import { formatAmount } from '@/utils/money'
 import type {
   Account,

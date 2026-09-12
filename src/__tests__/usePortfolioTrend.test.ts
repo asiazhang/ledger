@@ -4,8 +4,8 @@ import {
   mockInvoke,
   wireInvokeSeam,
   type InvokeSeamOverride,
-} from './helpers/invoke-mock'
-import { withSetup } from './helpers/mount'
+} from '@ledger/test-support/invoke-mock'
+import { withSetup } from '@ledger/test-support/mount'
 import { useReferenceStore } from '@/stores/reference'
 import {
   toTrendRange,

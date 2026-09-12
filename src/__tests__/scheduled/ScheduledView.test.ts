@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from '../helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import ScheduledView from '@/views/ScheduledView.vue'

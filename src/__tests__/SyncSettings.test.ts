@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mockInvoke, wireInvokeSeam, lastInvokeArgs } from './helpers/invoke-mock'
-import { messageCalls } from './helpers/message-mock'
+import { mockInvoke, wireInvokeSeam, lastInvokeArgs } from '@ledger/test-support/invoke-mock'
+import { messageCalls } from '@ledger/test-support/message-mock'
 import {
   findButtonByTestId,
   findInputByTestId,
   findBodyButtonByTestId,
-} from './helpers/dom'
+} from '@ledger/test-support/dom'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import type { ParkedOpInfo, SyncChannelConfig, SyncRoundReport, SyncStatus } from '@ledger/types'
 
