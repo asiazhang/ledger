@@ -96,7 +96,7 @@ pub fn post_emit_with<R: tauri::Runtime>(
 /// 唯一实现约定：**非阻塞**——`post` 只把发射动作交出去（投递 / 入队）即返回，
 /// 绝不等事件真正送达；投递或发射失败静默忽略，不影响写事务结果（ADR-0044
 /// 「发射失败静默」语义）。写路径「不被发射阻塞」的外部保证建立在本约定上：
-/// 回归测试（`signals::emit_blocking_tests`，spec #366）注入可阻塞假发射器
+/// 回归测试（`signals::tests::emit_blocking`，spec #366）注入可阻塞假发射器
 /// 钉死之——发射器阻塞期间写路径仍及时返回，放行后信号最终到达、不丢失。
 pub trait SignalEmitter: Send + Sync {
     /// 投递一个事件。实现必须非阻塞：交接即返回，不等发射完成。
