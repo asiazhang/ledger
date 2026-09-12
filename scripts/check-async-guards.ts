@@ -21,9 +21,9 @@
 //
 // 扫描边界：src 下 .ts/.vue 文本级行扫描（含 __tests__，当前零命中；src 现无其他
 // 源码扩展名，新增须同步扫描面）；行首注释行（// /* * <!--）跳过——注释提及靶形态
-// 不误报；多行块注释内部行与跨行调用形态不可达，靠评审兜底。守门自身包装测试
-// （src/__tests__/check-async-guards.test.ts）文件级豁免（夹具文本合法包含违规形态，
-// check-test-stubs 先例）。不设注释豁免通道：逃逸 = 显式回 issue/ADR 讨论后改脚本
+// 不误报；多行块注释内部行与跨行调用形态不可达，靠评审兜底。守门自身包装测试已随
+// 测试归位迁到 scripts/（issue #1158），在扫描根之外，无需文件级豁免（原豁免已随
+// 迁移删除）。不设注释豁免通道：逃逸 = 显式回 issue/ADR 讨论后改脚本
 // （check-style-blocks 同一纪律）。
 //
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
@@ -85,10 +85,6 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   'views/TransactionsView.vue': 2,
 }
 
-/** 守门自身包装测试豁免（相对扫描根路径；夹具文本合法包含违规形态，
- *  check-test-stubs 先例——限 __tests__/ 前缀，同名文件在他处不免检） */
-const GATE_TEST_REL = '__tests__/check-async-guards.test.ts'
-
 /** 行首注释形态：整行跳过（行内尾注与多行块注释内部行不可达，靠评审兜底） */
 function isCommentLine(trimmed: string): boolean {
   return (
@@ -104,7 +100,7 @@ interface SourceFileRef {
   rel: string
 }
 
-/** 递归收集扫描根下全部 .ts/.vue 文件（守门自测文件豁免；按相对路径排序保证输出确定） */
+/** 递归收集扫描根下全部 .ts/.vue 文件（按相对路径排序保证输出确定） */
 function collectSourceFiles(root: string): SourceFileRef[] {
   const out: SourceFileRef[] = []
   const visit = (dir: string): void => {
@@ -115,7 +111,7 @@ function collectSourceFiles(root: string): SourceFileRef[] {
       if (entry.isDirectory()) visit(abs)
       else if (entry.name.endsWith('.ts') || entry.name.endsWith('.vue')) {
         const rel = relative(root, abs).split('\\').join('/')
-        if (rel !== GATE_TEST_REL) out.push({ abs, rel })
+        out.push({ abs, rel })
       }
     }
   }

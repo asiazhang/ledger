@@ -90,7 +90,7 @@
 // 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-test-support.ts [src-tauri-dir]
 // workspace 成员（crates/*/src 与 crates/*/tests）同在该扫描范围内（spec #1086 /
 // issue #1087）——拆 crate 后测试守门不得因目录随迁而静默漏扫。
-// 挂载于 scripts/check.sh 质量门槛序列；包装测试 src/__tests__/check-test-support.test.ts。
+// 挂载于 scripts/check.sh 质量门槛序列；包装测试 scripts/check-test-support.test.ts（#1158 归位）。
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
