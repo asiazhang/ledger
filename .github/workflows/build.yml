@@ -20,6 +20,8 @@ jobs:
   # vitest import+jsdom 环境创建是每文件固定成本，并行度仅 ~1.4 核），backend ≈222s
   # （编译 76s + 固定 69s + clippy 19s + 测试执行 48s）。据此拆分为四个并行 job：
   # 关键路径 = max(后端测试 ~180s, 前端测试分片 ~116s)，目标总时长 ~3 分钟。
+  # issue #1109 起，backend/backend-lint 挂预构建 CI 镜像（ci-image.yml 发布到
+  # GHCR），job 内零 apt 安装；镜像内容与重建路径见 .github/docker/backend-ci.Dockerfile 头注。
 
   # 前端构建与一致性检查：vue-tsc 类型检查（前端 + 守门脚本与测试两个工程）+ oxlint lint
   # （--deny-warnings，与本地 check.sh 同门槛）+ vite build + 守门脚本（Bun 运行时，ADR-0083），~25s。
@@ -97,13 +99,19 @@ jobs:
         run: pnpm exec vitest run --shard=${{ matrix.shard }}/2
 
   # 后端测试：fmt/clippy 拆至 backend-lint 并行（clippy 仅 ~19s，不值得占关键路径）。
-  # cargo test 本体 ~125s（编译 76s + cucumber e2e 388 场景 29s 等），固定开销靠
-  # apt 下载缓存压缩（27s → ~10s）；rust-cache 默认按 job 隔离缓存，两个 job 各自
-  # 维护 check-profile / test-profile 产物，冷启动各编一次，热启动行为与拆分前一致。
+  # cargo test 本体 ~125s（编译 76s + cucumber e2e 388 场景 29s 等）。
+  # issue #1109：系统依赖（tauri 库 + mold + Rust stable 工具链）改由预构建镜像
+  # 承载（ci-image.yml 发布，Dockerfile 见 .github/docker/backend-ci.Dockerfile），
+  # job 内零安装步骤——改前 apt 阶段 20–98s 波动（缓存命中也有 22–28s），改后 0s。
   backend:
     name: 后端测试（Rust 单测 + BDD/e2e）
     if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
+    # 镜像 tag 刻意写死 upstream 路径：fork PR 匿名拉上游公开镜像即可，无需
+    # fork 自建 package（repository 表达式在 fork PR 会指向 fork，镜像不存在）。
+    # 镜像 public 化（匿名拉取）是 ci-image.yml 首次发布后的一次性手动步骤。
+    container:
+      image: ghcr.io/asiazhang/ledger-ci-backend:latest
     defaults:
       run:
         working-directory: src-tauri
@@ -111,7 +119,7 @@ jobs:
     # - DEBUG=1：workspace 自身降 debuginfo 到 line-tables-only（依赖已同配置），
     #   纯编译收益，backtrace 行号保留。
     # - RUSTFLAGS + mold：链接器换 mold（lib 与每个集成测试 crate 各全量链接一次，
-    #   链接是 workspace 编译的大头），apt 装 mold 秒级完成。
+    #   链接是 workspace 编译的大头），mold 已烘进镜像。
     # - 刻意不用 OPT_LEVEL=1：实测（run 33975823593）负优化——workspace 大 crate
     #   的优化 pass 使编译 76s→2m43s，执行只省 ~14s，净 +60s，已回退。
     # 注意：RUSTFLAGS/debug 变更会使 cargo fingerprint 失效，变更后首跑全量冷编译
@@ -122,35 +130,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # 目录属 root，不 chown 的话 actions/cache 恢复解包全部 Permission denied
-      # （实测 run 33973388654），缓存命中也等于没恢复。
-      - name: 预备 apt 缓存目录属主
-        run: sudo chown -R "$(id -un):$(id -gn)" /var/cache/apt/archives
-
-      - name: 恢复 apt 下载缓存
-        uses: actions/cache@v6
-        with:
-          path: /var/cache/apt/archives
-          key: apt-tauri-deps-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
-
-      # partial/ 目录属 root 权限 700，不清掉会导致 post 保存缓存时 tar 打包失败
-      # （实测 run 33972603641 报 "tar failed with exit code 2"，缓存从未存上）。
-      - name: 安装 Linux 系统依赖（tauri 编译所需 + mold 链接器）
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            mold
-          sudo rm -rf /var/cache/apt/archives/partial /var/cache/apt/archives/lock
-
-      - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # 换镜像起前缀隔离（issue #1109）：旧缓存是在宿主 runner 上编译的，与
+          # 镜像内工具链/链接器产物彻底分层，避免宿主产物混进容器执行；切换后
+          # 首跑一次冷编译（一次性成本）。
+          prefix-key: ci-image
 
       # 范围显式 `--workspace`（spec #1086 / issue #1087）：非虚拟 workspace 下 cargo
       # 默认只作用于根包，缺范围参数会静默漏跑成员 crate；cargo 对没有对应 target
@@ -165,42 +151,26 @@ jobs:
       - name: Rust 单元测试 + BDD/e2e 测试（cucumber）
         run: cargo test --workspace --lib --test '*'
 
+  # 后端静态检查：与 backend job 同挂预构建镜像（issue #1109），fmt/clippy 组件
+  # 已烘进镜像，job 内零安装步骤（改前 apt 阶段缓存命中也有 22s）。
   backend-lint:
     name: 后端静态检查（fmt + clippy）
     if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
+    # 镜像 tag 刻意写死 upstream 路径，理由同 backend job。
+    container:
+      image: ghcr.io/asiazhang/ledger-ci-backend:latest
     defaults:
       run:
         working-directory: src-tauri
     steps:
       - uses: actions/checkout@v7
 
-      - name: 预备 apt 缓存目录属主
-        run: sudo chown -R "$(id -un):$(id -gn)" /var/cache/apt/archives
-
-      - name: 恢复 apt 下载缓存
-        uses: actions/cache@v6
-        with:
-          path: /var/cache/apt/archives
-          key: apt-tauri-deps-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
-
-      - name: 安装 Linux 系统依赖（tauri 编译所需）
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
-          sudo rm -rf /var/cache/apt/archives/partial /var/cache/apt/archives/lock
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # 前缀隔离理由同 backend job（issue #1109）。
+          prefix-key: ci-image
 
       - name: 格式检查
         run: cargo fmt --all --check
@@ -289,6 +259,9 @@ jobs:
           workspaces: src-tauri
 
       # Android 行同为 Linux runner，但不编译桌面目标，跳过 webkit/gtk 系统依赖。
+      # 此清单与 .github/docker/backend-ci.Dockerfile 的 apt 清单同源语义（#1109）：
+      # release job 是三平台原生构建，无法挂 Linux 容器镜像，保留独立安装；
+      # 改 tauri 系统依赖时两处同步，不要只改一处。
       - name: 安装 Linux 系统依赖（tauri 编译与 AppImage 打包所需）
         if: runner.os == 'Linux' && matrix.platform != 'android'
         run: |
