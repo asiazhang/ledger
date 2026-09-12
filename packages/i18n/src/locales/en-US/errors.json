@@ -9,6 +9,9 @@
     "balance-no-change": "balance already equals target, no adjustment needed",
     "type-unknown": "unknown account type: {0}"
   },
+  "balance": {
+    "cache-row-missing": "Account {0} is missing its balance cache row; run the balance cache audit to repair it"
+  },
   "category": {
     "not-found": "category does not exist: {0}",
     "self-parent": "a category cannot be its own parent",
@@ -93,7 +96,17 @@
     "convert-fields-missing": "this conversion operation lacks the fields required for sync replay (produced by an earlier version) and cannot be replayed here; delete and re-enter the conversion on the source device, then sync again",
     "convert-carried-cost-mismatch": "conversion carried-cost check mismatch (source {0}, local rebuild {1}, row amount {2}); parked for review",
     "split-fields-missing": "this share adjustment lacks the fields required for sync replay (produced by an earlier version) and cannot be replayed here; delete and re-enter the share adjustment on the source device, then sync again",
-    "split-restatement-mismatch": "share-adjustment replay check mismatch (source final holding {0}, total cost {1}; local rebuild {2}, {3}); parked for review"
+    "split-restatement-mismatch": "share-adjustment replay check mismatch (source final holding {0}, total cost {1}; local rebuild {2}, {3}); parked for review",
+    "balance-refresh-hook-unregistered": "balance refresh hook not registered: balance cache recomputation on transaction write would be skipped, causing cache drift (shell startup wiring missing)",
+    "base-currency-reader-unregistered": "base-currency reader hook not registered: base-currency conversion is rejected (shell startup wiring missing)",
+    "convert-fields-resolver-unregistered": "convert-fields resolver not registered: the convert two-leg extensions would be skipped (shell startup wiring missing)",
+    "funding-account-lookup-unregistered": "funding-account view hook not registered: funding eligibility check is rejected (shell startup wiring missing)",
+    "instrument-source-resolver-unregistered": "instrument source resolver not registered: the instrument lookup segment of the source column would be skipped (shell startup wiring missing)",
+    "investment-hook-unregistered": "investment seam hook not registered: writes of investment-kind transactions are rejected (shell startup wiring missing)",
+    "item-source-resolver-unregistered": "item source resolver not registered: the item lookup segment of the source column would be skipped (shell startup wiring missing)",
+    "merchant-hooks-unregistered": "merchant-name hooks not registered: merchant name resolution and on-demand creation would be skipped (shell startup wiring missing)",
+    "plan-source-resolver-unregistered": "plan source resolver not registered: the plan lookup segment of the source column would be skipped (shell startup wiring missing)",
+    "policy-source-resolver-unregistered": "policy source resolver not registered: the policy lookup segment of the source column would be skipped (shell startup wiring missing)"
   },
   "funding": {
     "account-not-found": "funding account does not exist or has been deleted: {0}",
@@ -318,7 +331,8 @@
     "checkpoint-passphrase-required": "The checkpoint snapshot on the channel is encrypted; the master passphrase is required to bootstrap.",
     "bootstrap-not-fresh": "This device already participates in sync ({0} is not empty); bootstrapping is refused to avoid overwriting existing sync state.",
     "checkpoint-schema-newer": "The checkpoint snapshot is from a newer app version (snapshot schema v{0} > current v{1}); upgrade the app before bootstrapping.",
-    "checkpoint-fk-violation": "Checkpoint snapshot failed foreign-key verification ({0} violation(s)); the snapshot is unusable."
+    "checkpoint-fk-violation": "Checkpoint snapshot failed foreign-key verification ({0} violation(s)); the snapshot is unusable.",
+    "truncate-not-owner": "Only the originating device may truncate its own operation log stream"
   },
   "sync-channel": {
     "auth-failed": "Sync channel credentials were rejected; check your cloud account and password (or app password) settings.",
