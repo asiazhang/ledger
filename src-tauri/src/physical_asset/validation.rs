@@ -107,7 +107,7 @@ fn normalize_valuation_date(raw: Option<&String>) -> Result<String> {
     let date = match raw {
         Some(raw) => {
             let date = parse_date(raw)?;
-            reject_future_date(date, raw, "估值")?;
+            reject_future_date(date, raw, &FutureDateKind::Valuation)?;
             date
         }
         None => chrono::Local::now().date_naive(),
@@ -115,16 +115,43 @@ fn normalize_valuation_date(raw: Option<&String>) -> Result<String> {
     Ok(date.format("%Y-%m-%d").to_string())
 }
 
+/// 未来日期守卫的码 slug 闭集（#1188 检视修正）：码
+/// `physical-asset.<slug>-date-future` 的 slug 与用户文案中文短名在此单点绑定，
+/// 调用点只能传枚举成员——任意字符串（含中文短名）拼码在编译期不可表示，
+/// slug 与模板键（zh/en errors.json `valuation-/disposal-date-future`，
+/// ADR-0050）的对齐只剩 `slug()` 一个断言点（域单测钉住）。
+enum FutureDateKind {
+    /// 估值日期（建档首条估值 / 更新估值）
+    Valuation,
+    /// 处置日期（处置录入）
+    Disposal,
+}
+
+impl FutureDateKind {
+    fn slug(&self) -> &'static str {
+        match self {
+            FutureDateKind::Valuation => "valuation",
+            FutureDateKind::Disposal => "disposal",
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            FutureDateKind::Valuation => "估值",
+            FutureDateKind::Disposal => "处置",
+        }
+    }
+}
+
 /// 未来日期守卫（估值日期 / 处置日期共用单点）：日期晚于今天即拒绝——
-/// 估值与处置都是已发生的判断（先例物品域 disposal-in-future）。错误码
-/// `physical-asset.<field>-date-future`，文案 `{field}日期 {raw} 不能是未来`；
-/// field 传域语言中文短名（估值 / 处置）。
-fn reject_future_date(date: chrono::NaiveDate, raw: &str, field: &str) -> Result<()> {
+/// 估值与处置都是已发生的判断（先例物品域 disposal-in-future）。码 slug
+/// 与文案由 [`FutureDateKind`] 闭集绑定，调用点无法传错（#1188）。
+fn reject_future_date(date: chrono::NaiveDate, raw: &str, kind: &FutureDateKind) -> Result<()> {
     let today = chrono::Local::now().date_naive();
     if date > today {
         return Err(AppError::codedp(
-            &format!("physical-asset.{field}-date-future"),
-            format!("{field}日期 {raw} 不能是未来"),
+            &format!("physical-asset.{}-date-future", kind.slug()),
+            format!("{}日期 {raw} 不能是未来", kind.label()),
             &[raw],
         ));
     }
@@ -252,7 +279,7 @@ pub(super) fn validate_dispose_input(
         AppError::coded("physical-asset.disposal-date-required", "处置日期不能为空")
     })?;
     let disposal_date = parse_date(raw_date)?;
-    reject_future_date(disposal_date, raw_date, "处置")?;
+    reject_future_date(disposal_date, raw_date, &FutureDateKind::Disposal)?;
     if let Some(purchase) = purchase_date {
         let purchase_date = parse_date(purchase)?;
         if disposal_date < purchase_date {
@@ -307,4 +334,37 @@ pub(super) fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
             &[s],
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 未来日期错误码与模板键对齐钉子（#1188 检视修正）：码 slug 闭集
+    /// [`FutureDateKind`] 使调用点传错在编译期不可表示，本测试在**生产路径**
+    /// （`normalize_valuation_date` → `reject_future_date`）断言码值，并单点
+    /// 钉住 `slug()` 映射——把映射改成中文短名或与 zh/en errors.json 模板键
+    /// （`valuation-/disposal-date-future`）不一致的任何值，本测试即红。
+    #[test]
+    fn future_date_reject_code_uses_stable_slug_aligned_with_templates() {
+        let tomorrow = chrono::Local::now().date_naive() + chrono::Duration::days(1);
+        let raw = tomorrow.format("%Y-%m-%d").to_string();
+
+        // 估值走生产入口（建档 / 更新估值共用的 normalize_valuation_date）。
+        let err = normalize_valuation_date(Some(&raw)).unwrap_err();
+        assert!(err.is_code("physical-asset.valuation-date-future"));
+        // 文案逐字钉住（zh 模板「估值日期 {0} 不能是未来」同源，ADR-0050）——
+        // slug/label 任何一个映射错位本行即红（#1188 检视 round 3）。
+        assert_eq!(err.to_string(), format!("估值日期 {raw} 不能是未来"));
+
+        // 处置与估值共用同一 reject_future_date 单点 + slug() 单点映射。
+        let err = reject_future_date(tomorrow, &raw, &FutureDateKind::Disposal).unwrap_err();
+        assert!(err.is_code("physical-asset.disposal-date-future"));
+        assert_eq!(err.to_string(), format!("处置日期 {raw} 不能是未来"));
+
+        // 过去日期放行（估值 / 处置都是已发生的判断，可事后整理）。
+        let yesterday = chrono::Local::now().date_naive() - chrono::Duration::days(1);
+        let past = yesterday.format("%Y-%m-%d").to_string();
+        assert!(normalize_valuation_date(Some(&past)).is_ok());
+    }
 }
