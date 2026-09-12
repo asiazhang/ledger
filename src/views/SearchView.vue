@@ -22,9 +22,8 @@ import { useReferenceStore } from '@/stores/reference'
 import { buildTransactionColumns } from '@/components/transaction-columns'
 import { sumFixedColumnWidths } from '@/utils/table'
 import { type Transaction, type TransactionSearchFilter } from '@ledger/types'
-  import { formatAmount } from '@/utils/money'
 import type { NullableDateRange } from '@/utils/time-period'
-import { yuanToCents } from '@/utils/money'
+import { yuanToCents, formatAmount } from '@/utils/money'
 
 const store = useAppStore()
 const reference = useReferenceStore()

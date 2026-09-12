@@ -16,8 +16,7 @@ import {
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import { formatAmount } from '@/utils/money'
-import { yuanToCents, centsToYuan } from '@/utils/money'
+import { formatAmount, yuanToCents, centsToYuan } from '@/utils/money'
 import { todayStr } from '@/utils/date'
 import type {
   ItemDailyCost,
