@@ -187,6 +187,11 @@ pub type Result<T> = std::result::Result<T, AppError>;
 
 // ---------------------------------------------------------------------------
 // HTTP 错误响应投影（壳层 `api_server` 与 HTTP-only handler 消费）
+//
+// feature 门（ADR-0111 决策 5 / issue #1133）：孤儿规则要求实现与错误类型同
+// crate，但 axum 只有壳层需要——不设门则每出现一个域 crate 依赖本 crate 就
+// 无条件编入 axum 及其传递依赖。门为 `http` feature（依赖面 `dep:axum`），
+// 仅壳侧根包启用；域侧依赖默认零 axum，响应形状与状态码不受门影响。
 // ---------------------------------------------------------------------------
 
 /// `AppError` → HTTP 状态码 + JSON 的统一投影。
@@ -195,6 +200,7 @@ pub type Result<T> = std::result::Result<T, AppError>;
 /// 孤儿规则（E0117）要求 trait 实现与类型同 crate——`IntoResponse` 属 axum、
 /// `AppError` 属本 crate，故实现只能住这里；壳层保留响应 DTO（`ErrorResponse`）
 /// 与路由接线，调用面零改动。
+#[cfg(feature = "http")]
 impl axum::response::IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         use axum::Json;
@@ -305,5 +311,43 @@ mod tests {
         assert!(!err.is_code("encryption.remember-no-cache"));
         // 非码化错误恒不匹配任何码（编排层按码分流不误判）。
         assert!(!AppError::Io("disk gone".into()).is_code("encryption.passphrase-incorrect"));
+    }
+}
+
+// HTTP 投影契约测试（feature 门内，与实现同开同关，issue #1133）：逐变体锁定
+// 状态码投影——加门后壳侧启用 `http` 的响应状态码必须逐条不变；JSON 体形状
+// （kind/message/code/params）由上面的序列化测试与 `tests/api_server/error_codes.rs`
+// 集成契约测试覆盖（投影体即 `Json(self)`，同一序列化 impl）。
+#[cfg(all(test, feature = "http"))]
+mod http_projection_tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse as _;
+
+    #[test]
+    fn 状态码投影_逐变体不变() {
+        let cases: [(AppError, StatusCode); 8] = [
+            (AppError::Db("db".into()), StatusCode::INTERNAL_SERVER_ERROR),
+            (AppError::NotFound("nf".into()), StatusCode::NOT_FOUND),
+            (AppError::Invalid("inv".into()), StatusCode::BAD_REQUEST),
+            (AppError::Parse("parse".into()), StatusCode::BAD_REQUEST),
+            (AppError::Io("io".into()), StatusCode::INTERNAL_SERVER_ERROR),
+            (AppError::coded("a.b", "消息"), StatusCode::BAD_REQUEST),
+            (
+                AppError::codedp("a.b", "消息", &["p"]),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                AppError::coded_not_found("a.b", "消息"),
+                StatusCode::NOT_FOUND,
+            ),
+        ];
+        for (err, expected) in cases {
+            let response = err.into_response();
+            assert_eq!(response.status(), expected);
+        }
+        // codedp_not_found 与 coded_not_found 同态（404）。
+        let response = AppError::codedp_not_found("a.b", "消息", &["p"]).into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

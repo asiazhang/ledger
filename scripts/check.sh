@@ -24,6 +24,12 @@ pnpm exec oxlint --deny-warnings
 echo "▶ Rust clippy (--workspace --all-targets --all-features, -D warnings)"
 ( cd src-tauri && cargo clippy --workspace --all-targets --all-features -- -D warnings )
 
+# infra 默认 feature 编译门（issue #1133）：clippy 走 --all-features（http 门恒开、
+# axum 恒在），门内 cfg 恒被编译——gate-off 形态（默认 feature 不含 axum）只有这
+# 里核到：error.rs 在无 axum 依赖图下必须独立成立，误在门外引用 axum 即红。
+echo "▶ Rust gate-off 编译检查 (cargo check -p ledger-infra，默认 feature 不含 axum)"
+( cd src-tauri && cargo check -p ledger-infra )
+
 echo "▶ Rust 格式检查 (cargo fmt --all --check)"
 ( cd src-tauri && cargo fmt --all -- --check )
 

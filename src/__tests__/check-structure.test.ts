@@ -554,6 +554,10 @@ interface CrateFixtureOverrides {
   memberManifest?: string
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string
+  /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
+  infraErrorRs?: string
+  /** 覆盖 `crates/sync-protocol/Cargo.toml` 内容（域侧 http 启用负向夹具） */
+  protocolManifest?: string
   /** 覆盖根包 `src/lib.rs` 内容（test_utils 再导出 cfg 门负向夹具） */
   rootLibRs?: string
   /** 覆盖根包 `[dependencies]` 的 ledger-infra 行（生产依赖接线负向夹具） */
@@ -621,6 +625,8 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
     ].join('\n')
   writeFileSync(join(srcTauri, 'Cargo.toml'), rootManifest)
 
+  // 成员清单默认与真实仓库同形：http 投影门（#1133）——axum optional +
+  // `http = ["dep:axum"]`，default 不含 http。
   const memberManifest =
     overrides.memberManifest ??
     [
@@ -631,6 +637,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
       '',
       '[features]',
       'test-utils = []',
+      'http = ["dep:axum"]',
+      '',
+      '[dependencies]',
+      'axum = { version = "0.8", optional = true }',
       '',
       '[lints]',
       'workspace = true',
@@ -646,6 +656,15 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         '#[doc(hidden)]\n' +
         'pub mod test_utils;\n',
   )
+  writeFileSync(
+    join(srcTauri, 'crates', 'infra', 'src', 'error.rs'),
+    overrides.infraErrorRs ??
+      'pub struct AppError;\n' +
+        '#[cfg(feature = "http")]\n' +
+        'impl axum::response::IntoResponse for AppError {\n' +
+        '    fn into_response(self) -> axum::response::Response {}\n' +
+        '}\n',
+  )
   mkdirSync(join(srcTauri, 'src'), { recursive: true })
   writeFileSync(
     join(srcTauri, 'src', 'lib.rs'),
@@ -659,16 +678,17 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
   writeFileSync(
     join(srcTauri, 'crates', 'sync-protocol', 'Cargo.toml'),
-    [
-      '[package]',
-      'name = "ledger-sync-protocol"',
-      'version = "0.6.0"',
-      'edition = "2024"',
-      '',
-      '[lints]',
-      'workspace = true',
-      '',
-    ].join('\n'),
+    overrides.protocolManifest ??
+      [
+        '[package]',
+        'name = "ledger-sync-protocol"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
   )
   writeFileSync(join(srcTauri, 'crates', 'sync-protocol', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
@@ -841,6 +861,8 @@ describe('check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
     const args = makeCrateFixture({
       memberManifest:
         '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[features]\nhttp = ["dep:axum"]\n\n' +
+        '[dependencies]\naxum = { version = "0.8", optional = true }\n\n' +
         '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
     })
     const r = run(args)
@@ -952,5 +974,127 @@ describe('check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('default 包含 test-utils')
+  })
+})
+
+describe('check-structure http 投影 feature 门（ADR-0111 决策 5 / issue #1133）', () => {
+  it('真实仓库默认通过：axum optional + http 门 + default 不含 http + 域侧不启用', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain('http 投影 feature 门')
+  })
+
+  it('workspace 骨架夹具默认通过', () => {
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
+  })
+
+  it('infra axum 依赖摘掉 optional → 红（裸依赖即无条件编入 axum）', () => {
+    const args = makeCrateFixture({
+      memberManifest:
+        '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[features]\nhttp = ["dep:axum"]\n\n' +
+        '[dependencies]\naxum = "0.8"\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('http 投影 feature 门')
+    expect(r.output).toContain('optional')
+  })
+
+  it('http feature 未转发 dep:axum → 红（门与依赖面脱钩，门形同虚设）', () => {
+    const args = makeCrateFixture({
+      memberManifest:
+        '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[features]\nhttp = []\n\n' +
+        '[dependencies]\naxum = { version = "0.8", optional = true }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('dep:axum')
+  })
+
+  it('error.rs impl 摘掉 cfg 门 → 红（删除 cfg 门即变红）', () => {
+    const args = makeCrateFixture({
+      infraErrorRs:
+        'pub struct AppError;\nimpl axum::response::IntoResponse for AppError {\n    fn into_response(self) -> axum::response::Response {}\n}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('http 投影 feature 门')
+    expect(r.output).toContain('cfg 门')
+  })
+
+  it('impl 前只有普通注释 → 仍红（注释不构成门）', () => {
+    const args = makeCrateFixture({
+      infraErrorRs:
+        'pub struct AppError;\n// 仅注释说明，不构成门\nimpl axum::response::IntoResponse for AppError {\n    fn into_response(self) -> axum::response::Response {}\n}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('http 投影 feature 门')
+  })
+
+  it('反向门 #[cfg(not(feature = "http"))] → 红（feature 开启反而消失）', () => {
+    const args = makeCrateFixture({
+      infraErrorRs:
+        'pub struct AppError;\n#[cfg(not(feature = "http"))]\nimpl axum::response::IntoResponse for AppError {\n    fn into_response(self) -> axum::response::Response {}\n}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('http 投影 feature 门')
+  })
+
+  it('infra [features] default 含 http → 红（默认 feature 即生产编入）', () => {
+    const args = makeCrateFixture({
+      memberManifest:
+        '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[features]\nhttp = ["dep:axum"]\ndefault = ["http"]\n\n' +
+        '[dependencies]\naxum = { version = "0.8", optional = true }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('default 包含 http')
+  })
+
+  it('根包 [features] default 含 http → 红', () => {
+    const args = makeCrateFixture({ rootFeaturesExtra: 'default = ["http"]' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('default 包含 http')
+  })
+
+  it('域侧成员生产依赖对 ledger-infra 启用 http → 红（域侧引入 axum）', () => {
+    const args = makeCrateFixture({
+      protocolManifest:
+        '[package]\nname = "ledger-sync-protocol"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\nledger-infra = { path = "../infra", features = ["http"] }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('http 投影 feature 门')
+    expect(r.output).toContain('域侧')
+  })
+
+  it('域侧成员直接声明 axum 生产依赖 → 红（不只经 ledger-infra/http 一条路）', () => {
+    const args = makeCrateFixture({
+      protocolManifest:
+        '[package]\nname = "ledger-sync-protocol"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\nledger-infra = { path = "../infra" }\naxum = "0.8"\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('直接声明 axum')
+  })
+
+  it('域侧成员仅 dev-dependencies 声明 axum → 绿（测试专用边不在此限）', () => {
+    const args = makeCrateFixture({
+      protocolManifest:
+        '[package]\nname = "ledger-sync-protocol"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\nledger-infra = { path = "../infra" }\n\n' +
+        '[dev-dependencies]\naxum = "0.8"\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
   })
 })
