@@ -567,7 +567,10 @@ pub fn remove_book_entry(default_dir: &Path, id: &str) -> Result<()> {
 /// 路径身份按物理位置折叠：既有条目 best-effort canonicalize（目录可能已
 /// 不存在，失败用原样），待登记目录必须已存在（create 刚创建）。create 的
 /// 目录名是现铸 uuid、天然全新，此查重是登记接缝的纵深防御。
-fn ensure_dir_not_registered(registry: &BookRegistry, dir: &Path) -> Result<()> {
+/// `pub(super)`：外挂单测 `boot/tests/book_registry.rs` 直测本查重接缝
+/// （符号链接别名折叠无法经行为级自然触达）——私有项仅定义模块及其后代可见，
+/// 测试平移到兄弟目录后需放宽到 boot 子树。
+pub(super) fn ensure_dir_not_registered(registry: &BookRegistry, dir: &Path) -> Result<()> {
     let canonical = dir.canonicalize()?;
     for book in &registry.books {
         let existing = book.dir.canonicalize().unwrap_or_else(|_| book.dir.clone());
@@ -648,6 +651,3 @@ fn registered_book_mut<'a>(registry: &'a mut BookRegistry, id: &str) -> Result<&
 fn unregistered_book_error(id: &str) -> crate::error::AppError {
     crate::error::AppError::codedp_not_found("book.not-found", format!("账本不存在: {id}"), &[id])
 }
-
-#[cfg(test)]
-mod tests;

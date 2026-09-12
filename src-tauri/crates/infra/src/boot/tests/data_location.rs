@@ -1,8 +1,14 @@
-//! data_location 单元测试：引导解析（注册表双格式兼容、损坏回退、文件保全）
-//! 与更改意图读写。搬迁三分支的跨文件组合行为由 BDD e2e 覆盖；注册表格式
-//! 判定矩阵归 `book_registry` 内核单测（issue #832），此处钉引导语义。
+//! [`crate::boot::data_location`] 单元测试：引导解析（注册表双格式兼容、
+//! 损坏回退、文件保全）与更改意图读写。搬迁三分支的跨文件组合行为由 BDD
+//! e2e 覆盖；注册表格式判定矩阵归 `book_registry` 内核单测（issue #832），
+//! 此处钉引导语义。
 
-use super::*;
+use std::path::{Path, PathBuf};
+
+use crate::boot::book_registry;
+use crate::boot::book_registry::{BookRegistry, RegistryOrigin, RegistryRead, read_registry};
+use crate::boot::data_location::*;
+use crate::db::{check_integrity, open_connection};
 
 fn temp_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ledger-dl-unit-{tag}-{}", crate::ids::new_uuid()));
@@ -354,7 +360,7 @@ fn gather_book_list_follows_boot_states() {
         },
     )
     .unwrap();
-    let boot = super::boot(&dir);
+    let boot = crate::boot::data_location::boot(&dir);
     let info = gather_book_list(&dir, Some(&boot));
     assert_eq!(info.books.len(), 1);
     assert_eq!(info.active_id.as_deref(), Some("m"));
@@ -381,7 +387,7 @@ fn gather_book_list_follows_boot_states() {
     // 损坏注册表：清单不可信（空 + 不可变），回退原因随行。
     let broken = temp_dir("list-broken");
     std::fs::write(broken.join(POINTER_FILE_NAME), "{broken").unwrap();
-    let boot = super::boot(&broken);
+    let boot = crate::boot::data_location::boot(&broken);
     let info = gather_book_list(&broken, Some(&boot));
     assert!(info.books.is_empty());
     assert_eq!(info.active_id, None);

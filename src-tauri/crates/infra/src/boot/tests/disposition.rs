@@ -1,10 +1,13 @@
-//! [`crate::db::boot`] 单元测试：库文件启动处置判定与启动失败门（issue #601）。
+//! [`crate::boot::disposition`] 单元测试：库文件启动处置判定与启动失败门
+//! （issue #601）。
 //!
 //! 判定语义的跨域组合行为（损坏 → 失败 → 重置闭环）由 BDD
 //! `features/startup_failure.feature` 以真临时目录文件库钉住；此处只钉
 //! 纯函数级别的三态分派与门状态翻转。
 
-use super::{BootDisposition, BootFailureGate, classify_for_boot};
+use crate::boot::disposition::{
+    BOOT_DB_UNREADABLE, BootDisposition, BootFailureGate, classify_for_boot,
+};
 
 fn temp_file(name: &str, bytes: &[u8]) -> std::path::PathBuf {
     let dir =
@@ -106,7 +109,7 @@ fn gate_records_failure_code_and_falls_back_when_uncoded() {
     assert!(!gate.is_failed());
     // 非码化失败（无码构造/极端时序）：回退既有单一码，#601 wire 行为不回退。
     gate.set_failed(None);
-    assert_eq!(gate.failure_code(), super::BOOT_DB_UNREADABLE);
+    assert_eq!(gate.failure_code(), BOOT_DB_UNREADABLE);
 }
 
 #[test]
@@ -131,9 +134,6 @@ fn plan_boot_classifies_the_resolved_dir_not_the_default_dir() {
 
     let plan = plan_boot(&default_dir);
     assert_eq!(plan.boot.db_dir, target);
-    assert_eq!(
-        plan.disposition.unwrap(),
-        super::BootDisposition::AwaitUnlock
-    );
+    assert_eq!(plan.disposition.unwrap(), BootDisposition::AwaitUnlock);
     std::fs::remove_dir_all(base).ok();
 }
