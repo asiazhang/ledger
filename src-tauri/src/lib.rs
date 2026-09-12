@@ -42,7 +42,11 @@ mod signals_cross_check;
 //（C 类豁免声明，ADR-0060）。
 #[doc(hidden)]
 pub mod test_support;
-pub mod transaction;
+// 核心交易域 crate（spec #1086 / issue #1092，P2 首个底层业务域 crate）：自根包
+// 域目录拆出，根包以再导出形态保留原引用路径——壳层与其余域的
+// `crate::transaction::…` / `tauri_app_lib::transaction::…` 调用点零改动
+//（expand 形态，ledger-backup 同款）。
+pub use ledger_transaction as transaction;
 
 use tauri::Manager;
 use tauri::ipc::Invoke;
@@ -189,6 +193,16 @@ pub fn run() {
             scheduled_transactions::auto_run::register_after_occurrence_hook(
                 backup::occurrence_dirty_hook,
             );
+            // 交易域接缝接线（issue #1092）：核心交易域对投资/商户/币种/物品/保单/
+            // 账户六向的残留边（计划装配/即建商户/本位币/来源列反查/转换两腿/
+            // 出资账户视图）按同一形态反转——实现由各提供域装入、壳层启动时接线
+            //（幂等）。注册先于任何建库/写库。
+            investment::install_transaction_hooks();
+            merchants::install_merchant_hooks();
+            currencies::install_base_currency_hook();
+            item::install_source_hook();
+            policy::install_source_hook();
+            accounts::install_funding_account_hook();
             // 追补触发接线（issue #1091 / 挂载点④，ADR-0112 决策 5）：自动备份调度
             // 线程的追补判定实现由定时计划域提供（开关镜像 + 本地今天在实现内注入）、
             // 壳层启动时注册进备份域的注册点（幂等）——备份域对定时计划域零依赖。

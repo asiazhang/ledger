@@ -1,5 +1,7 @@
 //! 保单档案 CRUD 域行为：列表、创建、编辑与软删除。
 
+use std::collections::HashMap;
+
 use rusqlite::{Connection, OptionalExtension};
 
 use super::command::{PolicyCommand, PolicyCommandRow, record_policy_local};
@@ -227,4 +229,40 @@ pub(crate) fn replay_update(conn: &Connection, id: &str, row: &PolicyCommandRow)
 /// 重放执行：软删除（同一协议含存在性检查）。
 pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
     write_delete(conn, id)
+}
+
+// ---------------------------------------------------------------------------
+// 交易×保单接缝实现（spec #1086 / issue #1092）：来源列①保单直挂反查
+// ---------------------------------------------------------------------------
+
+/// 来源列①保单直挂反查实现（核心交易域 `transaction::read` 注册点，#1092）：
+/// 委托 [`source_display_by_ids`] 并映射为核心交易域来源模型（kind = Policy、
+/// entity = 保单 id、展示名 = 险种名、软删 → Deleted 标注——口径零变化，
+/// spec #704；软删保单照常返回，历史引用可达）。
+fn policy_source_resolver(
+    conn: &Connection,
+    policy_ids: &[String],
+) -> Result<HashMap<String, crate::transaction::TransactionSource>> {
+    Ok(source_display_by_ids(conn, policy_ids)?
+        .into_iter()
+        .map(|row| {
+            (
+                row.id.clone(),
+                crate::transaction::TransactionSource {
+                    kind: crate::transaction::TransactionSourceKind::Policy,
+                    entity_id: row.id.clone(),
+                    display_name: row.product_name.clone(),
+                    status: row
+                        .is_deleted
+                        .then_some(crate::transaction::TransactionSourceStatus::Deleted),
+                },
+            )
+        })
+        .collect())
+}
+
+/// 注册保单直挂反查实现（幂等：进程级一次，重复注册保留首次）。调用点在壳层
+/// 启动接线与测试建库单点，与生产同形；业务代码不直接调用。
+pub fn install_source_hook() {
+    crate::transaction::read::register_policy_source_resolver(policy_source_resolver);
 }
