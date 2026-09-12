@@ -1,4 +1,9 @@
 # 仓库根即 workspace root。
+packages:
+  # 前端子包成员目录（issue #1149 / spec #1148）：成员可为空，包抽取逐票落位；
+  # 仓库仍只有根目录一份 pnpm 锁文件，根包仍是 Tauri 应用包。成员目录边界由
+  # bun scripts/check-frontend-structure.ts 守门（登记 / 依赖方向 / 引用形态 / 深导入）。
+  - packages/*
 # allowBuilds：显式放行带安装脚本的依赖——fsevents（macOS 可选依赖，Vite 文件监听所需）
 # 与 esbuild（vanilla-extract 依赖链引入，issue #888；postinstall 仅做二进制校验回退）。
 # pnpm 默认拒绝执行未放行的依赖构建脚本（strictDepBuilds，未放行时 ERR_PNPM_IGNORED_BUILDS）。
