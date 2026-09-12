@@ -24,9 +24,11 @@
 
 ## 后端分层
 
-目标依赖方向是 **壳 → 域 → 基础设施**，域不依赖壳。IPC 壳（`src-tauri/src/commands/`）与 HTTP 壳（`src-tauri/src/api_server/`）负责参数解包、事务边界和信号发射，不含业务语义；业务语义进入以域命名的顶层域目录；无域语义的数据库、信号、错误和设置能力进入基础设施（模型已随域归位，ADR-0059）。新代码不得扩大壳层业务语义。
+目标依赖方向是 **壳 → 域 → 基础设施**，域不依赖壳。IPC 壳（`src-tauri/src/commands/`）与 HTTP 壳（`src-tauri/src/api_server/`）负责参数解包、事务边界和信号发射，不含业务语义；业务语义进入以域命名的顶层域目录；模型随域归位（ADR-0059）。新代码不得扩大壳层业务语义。
 
-结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）；白名单和归位状态以脚本及 ADR-0056 为准。
+基础设施（`src-tauri/crates/infra/`）只承诺两条：不依赖任何域 crate、不定义账本数据的口径与规则（账本数据的语义与算术一律归域，基础设施不得对账本数据表执行 DML）；跨层共享机制、引导层不变量、单点收口用的闭集与键名表在此合法（ADR-0111）。crate 内分四区：原语（顶层单文件）、db（库与连接机制）、boot（引导层）、shell_support（只被壳层消费的机制，暂住，随壳层收敛迁出）；events、signals、settings 为共享接缝。内部依赖方向：原语 ← db ← boot ← shell_support。
+
+结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）；白名单和归位状态以脚本及 ADR-0056、ADR-0111 为准。
 
 ## 数据与交易
 

@@ -319,7 +319,7 @@
 
 ## 价格失效信号（PriceChangeSignal）
 
-- **定义**：价格数据（MarketPrice / PriceHistory / FxRateHistory）发生写入后，后端发出的无 payload、粗粒度的 `ledger:prices-changed` 事件信号（ADR-0031）；前端价格消费方各自订阅并重拉自身数据，替代「同步后记得手动刷新」的调用方自觉。
+- **定义**：价格数据（MarketPrice / PriceHistory / FxRateHistory）发生写入后，后端发出的无 payload、粗粒度的 `ledger:prices-changed` 信号（ADR-0031；失效信号家族的成员，家族定义见核心交易域失效信号）；前端价格消费方各自订阅并重拉自身数据，替代「同步后记得手动刷新」的调用方自觉。
 - **边界**：
   - **生产者三处**：InstrumentInfoSync 成功且实际写入价格或名称时（issue #827 起名称刷新同路计入）；手动报价实际写入（任一落点）时（ADR-0036）；场外基金标的按代码即拉详情落现价缓存时（ADR-0038）。零变化（空库、全部跳过、添加基金未取到净值）不广播——失效信号的本义是「数据变了」。原第四生产者（全量同步结束有落库，含用户中断）随全量同步退役删除（issue #698）。
   - **与平行信号的关系**：与参考失效信号 `ledger:changed`（见参考数据与设置域 Reference Data）、备份信号 `ledger:backups-changed`（见备份与数据文件域 Backup）同一 `ledger:*` 命名空间、同一形状（无 payload、粗粒度），各域语义各自锚定；不复用 `ledger:changed`——其语义锚定参考写入（ADR-0012），价格同步误发会触发参考表无谓重拉而价格消费方无人响应。
