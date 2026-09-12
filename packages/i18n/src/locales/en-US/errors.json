@@ -128,6 +128,8 @@
     "derived-price-positive": "derived unit price must be greater than 0 (confirmation amount too small or shares too large)",
     "buy-price-positive": "buy unit price must be greater than 0",
     "sell-price-positive": "sell unit price must be greater than 0",
+    "buy-to-account-forbidden": "a buy cannot carry a destination account: the cash outflow is attributed to the settlement account (funding or investment account); use a transfer to move money between accounts",
+    "sell-to-account-forbidden": "a sell cannot carry a destination account: the cash inflow is attributed to the settlement account (funding or investment account); use a transfer to move money between accounts",
     "buy-account-not-investment": "buy transactions must use an investment account",
     "sell-account-not-investment": "sell transactions must use an investment account",
     "convert-instrument-required": "conversion requires an out instrument",

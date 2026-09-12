@@ -494,6 +494,55 @@ fn missing_instrument_rejection_reason_table() {
     }
 }
 
+/// buy/sell 携带转入账户即拒绝（issue #1187）：现金腿归结算账户（出资账户 ??
+/// 投资账户，ADR-0096），不存在转入侧——携带 `to_account_id` 会被余额写路径
+/// 误用于覆盖转入侧余额（凭空污染第三个账户）。创建/修改两路径同一 prepare
+/// 守卫拦截（与 convert/split/dividend 的 forbidden 守卫同款纪律），拒绝后
+/// 原行与批次保持原样（fail fast，整体回滚）。
+#[test]
+fn buy_sell_to_account_carry_rejected_with_coded_error() {
+    let conn = open();
+    seed_account(&conn, "acc-ta", "美股", "investment", "USD", 0);
+    seed_instrument(&conn, "inst-ta", "NVDA", "NVIDIA", "USD", "unknown");
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+
+    // buy 创建携带转入账户。
+    let mut input = make_buy_input("acc-ta", "inst-ta", 10.0, 1_000_000, 0);
+    input.to_account_id = Some("acc-ta".into());
+    let err = create_transaction_internal(&conn, input).expect_err("携带转入账户的买入应被拒绝");
+    assert_eq!(err.code().unwrap(), "trade.buy-to-account-forbidden");
+
+    // sell 创建携带转入账户（守卫先于可卖数量校验，无需建仓）。
+    let mut input = make_sell_input("acc-ta", "inst-ta", 5.0, 1_200_000, 0);
+    input.to_account_id = Some("acc-ta".into());
+    let err = create_transaction_internal(&conn, input).expect_err("携带转入账户的卖出应被拒绝");
+    assert_eq!(err.code().unwrap(), "trade.sell-to-account-forbidden");
+
+    // buy 修改携带转入账户：同一守卫拦截，原行与批次保持原样。
+    use crate::transaction::update_transaction_internal;
+    let txn_id = create_transaction_internal(
+        &conn,
+        make_buy_input("acc-ta", "inst-ta", 10.0, 1_000_000, 0),
+    )
+    .unwrap()
+    .id;
+    let mut edited = make_buy_input("acc-ta", "inst-ta", 5.0, 1_200_000, 0);
+    edited.to_account_id = Some("acc-ta".into());
+    let err = update_transaction_internal(&conn, &txn_id, edited)
+        .expect_err("修改携带转入账户的买入应被拒绝");
+    assert_eq!(err.code().unwrap(), "trade.buy-to-account-forbidden");
+    let (amount, remaining): (i64, f64) = conn
+        .query_row(
+            "SELECT t.amount_cents, l.remaining_quantity FROM transactions t \
+             JOIN security_lots l ON l.buy_transaction_id = t.id WHERE t.id=?1",
+            params![txn_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(amount, 100_000, "原交易金额不应被修改");
+    assert!((remaining - 10.0).abs() < 1e-9, "原持仓批次不应被清理");
+}
+
 #[test]
 fn sell_transaction_matches_multiple_lots_fifo() {
     let conn = open();

@@ -302,7 +302,10 @@ fn quote_list(items: &[&str]) -> String {
 /// 结算账户 = 出资账户 ?? 投资账户（`account_id`）——带出资账户的 buy/sell，其现金
 /// 腿归出资侧（[`TransferSide::Funding`] 端点，join `funding_account_id`），转出侧
 /// （投资账户端）对带出资账户的 buy/sell 记 0（钱不经手）；未填出资账户时矩阵符号
-/// 原样记在投资账户上。转入侧不需要守卫：buy/sell 行恒无 `to_account_id`。
+/// 原样记在投资账户上。转入侧不需要守卫：buy/sell 行恒无 `to_account_id`——
+/// 该不变量由投资域 prepare / 重放装配的 forbidden 守卫拒绝携带保证
+/// （`trade.buy-to-account-forbidden` / `trade.sell-to-account-forbidden`，
+/// issue #1187），本表达式不另设第二份判定。
 pub fn account_flow_expr(alias: &str, side: TransferSide) -> String {
     let matrix = kind_case_expr(alias, Measure::AccountFlow(side));
     match side {

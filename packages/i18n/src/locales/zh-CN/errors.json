@@ -128,6 +128,8 @@
     "derived-price-positive": "反算单价必须大于 0（确认金额过小或份额过大）",
     "buy-price-positive": "买入单价必须大于 0",
     "sell-price-positive": "卖出单价必须大于 0",
+    "buy-to-account-forbidden": "买入不能携带转入账户：资金流出归结算账户（出资账户或投资账户），账户间划转请使用转账",
+    "sell-to-account-forbidden": "卖出不能携带转入账户：资金流入归结算账户（出资账户或投资账户），账户间划转请使用转账",
     "buy-account-not-investment": "买入交易必须使用投资账户",
     "sell-account-not-investment": "卖出交易必须使用投资账户",
     "convert-instrument-required": "转换必须指定转出标的",

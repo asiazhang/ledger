@@ -4,7 +4,7 @@
 //! 的 op 产出与 IdempotencyKey 去重独立性。
 
 use super::super::{OpOutcome, parked_ops, read_ops};
-use super::common::{read_lot, read_lot_sale, seed_device, wire_in, wire_out};
+use super::common::{read_lot, read_lot_sale, read_transaction, seed_device, wire_in, wire_out};
 use crate::investment::{
     InstrumentInput, InstrumentType, add_fund_by_code_with, create_exchange_rate,
     create_instrument, create_market_price, delete_instrument, record_manual_price,
@@ -102,6 +102,56 @@ fn buy_sell_replay_converge_holdings_and_pnl() {
     assert!(again.iter().all(|r| r.outcome == OpOutcome::Skipped));
     assert_eq!(read_lot(&conn_b, &buy_id), lot_a);
     assert_eq!(read_ops(&conn_a).unwrap(), read_ops(&conn_b).unwrap());
+}
+
+/// 伪造载荷带转入账户的 buy/sell op 应码化挂起、不落行（issue #1187）：本地
+/// 录入必被 `trade.buy-to-account-forbidden` / `trade.sell-to-account-forbidden`
+/// 拒绝，重放经同一接缝守卫，不绕开本地不变量（对照 convert 同款先例）；
+/// 指向存活的投资账户，先过行为层存活校验、再入投资域重放装配。
+#[test]
+fn buy_sell_op_with_to_account_parks_without_booking() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_device(&conn_a, "dev-a");
+    seed_device(&conn_b, "dev-b");
+    seed_investment_setup(&conn_a, "acc-inv", "inst-1");
+    seed_investment_setup(&conn_b, "acc-inv", "inst-1");
+
+    // A 端：合法买入建仓 → 卖出，两 op 的 wire 分别篡改后投递 B 端。
+    let buy_id = behavior::create(&conn_a, buy_input("acc-inv", "inst-1", 100.0, 1500, 5))
+        .unwrap()
+        .id;
+    let sell_id = behavior::create(&conn_a, sell_input("acc-inv", "inst-1", 40.0, 1500, 5))
+        .unwrap()
+        .id;
+    let wire = wire_out(&conn_a);
+    assert_eq!(wire.len(), 2, "应有 buy 与 sell 两个 op");
+
+    // 伪造 buy op：row.to_account_id 指向存活投资账户。
+    let mut tampered_buy: serde_json::Value = serde_json::from_str(&wire[0]).unwrap();
+    tampered_buy["command"]["payload"]["row"]["to_account_id"] = serde_json::json!("acc-inv");
+    let reports = wire_in(&conn_b, &[serde_json::to_string(&tampered_buy).unwrap()]);
+    assert!(
+        matches!(&reports[0].outcome, OpOutcome::Parked { code, .. } if code == "trade.buy-to-account-forbidden"),
+        "带转入账户的买入 op 应码化挂起，实际: {:?}",
+        reports[0]
+    );
+
+    // 伪造 sell op：同款（重放臂守卫先于可卖数量校验，不依赖 buy op 已达）。
+    let mut tampered_sell: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
+    tampered_sell["command"]["payload"]["row"]["to_account_id"] = serde_json::json!("acc-inv");
+    let reports = wire_in(&conn_b, &[serde_json::to_string(&tampered_sell).unwrap()]);
+    assert!(
+        matches!(&reports[0].outcome, OpOutcome::Parked { code, .. } if code == "trade.sell-to-account-forbidden"),
+        "带转入账户的卖出 op 应码化挂起，实际: {:?}",
+        reports[0]
+    );
+
+    // 两 op 均不落交易行（守卫在装配最前，失败即挂起、不产生中间态）。
+    assert!(read_transaction(&conn_b, &buy_id).is_none(), "不落买入行");
+    assert!(read_transaction(&conn_b, &sell_id).is_none(), "不落卖出行");
+    assert_eq!(read_lot(&conn_b, &buy_id), None, "不落买入批次");
+    assert_eq!(parked_ops(&conn_b).unwrap().len(), 2, "两 op 各挂起一条");
 }
 
 #[test]

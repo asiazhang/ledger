@@ -3,8 +3,8 @@ use axum::http::StatusCode;
 use tauri_app_lib::test_support;
 
 use crate::common::{
-    batch_body, create_account_via_api, delete_account_via_api, delete_transaction_via_api,
-    get_json, items_of, post_batch, put_transaction_via_api, setup_app,
+    batch_body, count_active_transactions, create_account_via_api, delete_account_via_api,
+    delete_transaction_via_api, get_json, items_of, post_batch, put_transaction_via_api, setup_app,
 };
 
 #[tokio::test]
@@ -366,6 +366,102 @@ async fn test_update_buy_deleted_funding_account_returns_coded_404() {
     let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(err["kind"], "NotFound");
     assert_eq!(err["code"], "funding.account-not-found");
+}
+
+/// buy 携带转入账户即拒绝（issue #1187）：现金腿归结算账户（出资账户或投资账户），
+/// 不存在转入侧——携带会被余额写路径误用于覆盖转入侧余额。批量端点行级拒绝
+/// （单行失败不回滚整批），拒绝不落任何行。
+#[tokio::test]
+async fn test_create_buy_with_to_account_rejected_with_readable_error() {
+    let (app, conn) = setup_app();
+    test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-ta", "inst-ta");
+
+    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-ta","date":"2026-01-10","instrument_id":"inst-ta","quantity":10.0,"price_cents":1000000,"fee_cents":0,"to_account_id":"acc-inv-ta"}]}"#;
+    let results = post_batch(&app, buy.to_string()).await;
+    assert_eq!(results[0]["success"], false, "携带转入账户的买入应被拒绝");
+    let error = results[0]["error"].as_str().unwrap();
+    assert!(
+        error.contains("买入不能携带转入账户"),
+        "行级错误应对准守卫文案: {error}"
+    );
+    assert_eq!(
+        count_active_transactions(&conn.lock().unwrap()),
+        0,
+        "被拒的买入不应落交易行"
+    );
+}
+
+/// sell 携带转入账户即拒绝（issue #1187，与 buy 同款守卫）：守卫先于可卖数量
+/// 校验，无需建仓即可触发。
+#[tokio::test]
+async fn test_create_sell_with_to_account_rejected_with_readable_error() {
+    let (app, conn) = setup_app();
+    test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-ta-s", "inst-ta-s");
+
+    let sell = r#"{"transactions":[{"kind":"sell","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-ta-s","date":"2026-01-10","instrument_id":"inst-ta-s","quantity":5.0,"price_cents":1000000,"fee_cents":0,"to_account_id":"acc-inv-ta-s"}]}"#;
+    let results = post_batch(&app, sell.to_string()).await;
+    assert_eq!(results[0]["success"], false, "携带转入账户的卖出应被拒绝");
+    let error = results[0]["error"].as_str().unwrap();
+    assert!(
+        error.contains("卖出不能携带转入账户"),
+        "行级错误应对准守卫文案: {error}"
+    );
+    assert_eq!(
+        count_active_transactions(&conn.lock().unwrap()),
+        0,
+        "被拒的卖出不应落交易行"
+    );
+}
+
+/// buy 修改携带转入账户：顶层码化 400（issue #1187）。
+#[tokio::test]
+async fn test_update_buy_with_to_account_returns_coded_400() {
+    let (app, conn) = setup_app();
+    test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-ta-u", "inst-ta-u");
+
+    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-ta-u","date":"2026-01-10","instrument_id":"inst-ta-u","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
+    let created = post_batch(&app, buy.to_string()).await;
+    let id = created[0]["id"].as_str().unwrap();
+
+    let body = r#"{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-ta-u","date":"2026-01-10","instrument_id":"inst-ta-u","quantity":10.0,"price_cents":1000000,"fee_cents":0,"to_account_id":"acc-inv-ta-u"}"#;
+    let (status, bytes) = put_transaction_via_api(&app, id, body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "携带转入账户应返回 400");
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "trade.buy-to-account-forbidden");
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("买入不能携带转入账户"),
+        "拒绝文案应对准买入，实际: {err}"
+    );
+}
+
+/// sell 修改携带转入账户：顶层码化 400（issue #1187），原交易保持不变。
+#[tokio::test]
+async fn test_update_sell_with_to_account_returns_coded_400() {
+    let (app, conn) = setup_app();
+    test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-ta-us", "inst-ta-us");
+
+    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-ta-us","date":"2026-01-10","instrument_id":"inst-ta-us","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
+    let created = post_batch(&app, buy.to_string()).await;
+    assert_eq!(created[0]["success"], true, "建仓买入应成功");
+    let sell = r#"{"transactions":[{"kind":"sell","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-ta-us","date":"2026-01-20","instrument_id":"inst-ta-us","quantity":4.0,"price_cents":1100000,"fee_cents":0}]}"#;
+    let created = post_batch(&app, sell.to_string()).await;
+    let id = created[0]["id"].as_str().unwrap();
+
+    let body = r#"{"kind":"sell","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-ta-us","date":"2026-01-20","instrument_id":"inst-ta-us","quantity":4.0,"price_cents":1100000,"fee_cents":0,"to_account_id":"acc-inv-ta-us"}"#;
+    let (status, bytes) = put_transaction_via_api(&app, id, body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "携带转入账户应返回 400");
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "trade.sell-to-account-forbidden");
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("卖出不能携带转入账户"),
+        "拒绝文案应对准卖出，实际: {err}"
+    );
 }
 
 /// 卖出携带出资账户：参数解包 + 读回形状证明（sell 臂，issue #938）。
