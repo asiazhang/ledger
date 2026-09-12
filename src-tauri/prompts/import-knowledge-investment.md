@@ -1,3 +1,7 @@
+# Ledger 导入知识——投资节（投资交易 / 基金申赎 / 基金转换 / 份额调整 / 现金分红）
+
+> 分域知识节，经 `GET /api/v1/import/knowledge/investment` 按需获取；基础约定（每行拆解、商户、幂等去重、对账与纠错）见 `GET /api/v1/import/knowledge`。
+
 ## 投资交易（buy / sell）
 
 - 标的解析三步法（带代码标的的权威路径，与「基金申赎」节对称，不依赖本地标的字典）：① **先按代码查询** `GET /api/v1/stocks/{code}` 确认识别（`market` 可省）；② **再以真实代码创建** `POST /api/v1/instruments`（`symbol`/`type`/`market` 按查询结果填）；③ 用返回的标的 `id` 填 `instrument_id` 写 buy/sell。查无此码（400 中文报错）请核对代码或跳过该行；东财临时不可达时创建仍成功（降级建行、市场保留），无需重试、不阻塞导入。同码异类型（如基金 000001 与股票 000001）经查询端点天然分流。

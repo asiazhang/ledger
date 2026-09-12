@@ -18,7 +18,7 @@ use super::handlers::categories::{
 };
 use super::handlers::currencies::list_currencies_handler;
 use super::handlers::funds::lookup_fund_handler;
-use super::handlers::import::import_knowledge_handler;
+use super::handlers::import::{import_investment_knowledge_handler, import_knowledge_handler};
 use super::handlers::instruments::{create_instrument_handler, search_instruments_handler};
 use super::handlers::merchants::{list_merchants_handler, update_merchant_handler};
 use super::handlers::stocks::lookup_stock_handler;
@@ -75,6 +75,10 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/v1/merchants", get(list_merchants_handler))
         .route("/api/v1/merchants/{id}", put(update_merchant_handler))
         .route("/api/v1/import/knowledge", get(import_knowledge_handler))
+        .route(
+            "/api/v1/import/knowledge/investment",
+            get(import_investment_knowledge_handler),
+        )
         // 注意：axum 的 `Router::layer` 只包裹“当前已有的” route——若在声明任何 route
         // 之前调用，会对空路由集合空操作（`route_layer` 则会在无 route 时 panic，强制先
         // 声明 route 再加层）。所以 `TraceLayer` 必须放在所有 route 声明之后，否则其请求

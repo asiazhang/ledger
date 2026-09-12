@@ -1,15 +1,14 @@
-//! LLM 导入知识端点：导入全流程约定文本（text/plain）单一权威。
-
-use std::sync::LazyLock;
+//! LLM 导入知识端点：导入全流程约定的单一权威**集合**——知识索引 + 分域知识节
+//! （#1123 分级自足上线，ADR-0110）。基础知识与投资节各由一个端点承载，
+//! 不保留全文副本（#286 红线：同一节正文只存在一处）。
 
 use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::IntoResponse;
 
-/// 基础导入知识（标题 + 非投资节）：金额与日期口径、每行拆解、商户约定、个人间借贷、
-/// 幂等与去重、对账完成判定、对账纠错。投资五节的拼接位置以 [`INVESTMENT_SECTIONS_SLOT`]
-/// 占位标记指示，完整知识由基础 + 投资节拼回（见 [`FULL_IMPORT_KNOWLEDGE`]；
-/// #1121 前置搬家，ADR-0110）。
+/// 基础导入知识（标题 + 知识索引 + 非投资节）：金额与日期口径、每行拆解、商户约定、
+/// 个人间借贷、幂等与去重、对账完成判定、对账纠错；知识索引逐节给出分域知识节的
+/// 名称、一句话语义与「何时需要读」的触发，是按需取节的唯一陈述点（ADR-0110）。
 ///
 /// 内容维护在 `src-tauri/prompts/import-knowledge-base.md`，编译期嵌入（`include_str!`）。
 const BASE_KNOWLEDGE: &str = include_str!("../../../prompts/import-knowledge-base.md");
@@ -21,35 +20,44 @@ const BASE_KNOWLEDGE: &str = include_str!("../../../prompts/import-knowledge-bas
 const INVESTMENT_KNOWLEDGE_SECTIONS: &str =
     include_str!("../../../prompts/import-knowledge-investment.md");
 
-/// 基础知识中投资五节的占位标记行（标记 + 换行）：
-/// [`FULL_IMPORT_KNOWLEDGE`] 在此精确一次替换为 [`INVESTMENT_KNOWLEDGE_SECTIONS`]。
-const INVESTMENT_SECTIONS_SLOT: &str = "{{IMPORT_KNOWLEDGE_INVESTMENT_SECTIONS}}\n";
-
-/// 完整导入知识 = 基础知识 + 投资节（占位处拼回），首次访问时组合一次。
-///
-/// 行为不变阶段（#1121）：原知识端点仍返回完整知识；分级自足上线（#1123）后
-/// 两个知识端点分别返回 [`BASE_KNOWLEDGE`] 与 [`INVESTMENT_KNOWLEDGE_SECTIONS`]，
-/// 届时删除本组合、不留全文副本。
-static FULL_IMPORT_KNOWLEDGE: LazyLock<String> = LazyLock::new(|| {
-    BASE_KNOWLEDGE.replacen(INVESTMENT_SECTIONS_SLOT, INVESTMENT_KNOWLEDGE_SECTIONS, 1)
-});
-
 #[utoipa::path(
     get,
     path = "/api/v1/import/knowledge",
     tag = "import",
-    summary = "获取 LLM 导入知识",
-    description = "返回导入全流程约定文本（text/plain），单一权威：每行拆解、商户约定、幂等与去重、\
-                  对账完成判定、对账纠错。AI 按入口提示词指引自行获取；文本内嵌 `/api/v1/contract`（紧凑契约方言）地址。",
+    summary = "获取 LLM 导入基础知识",
+    description = "返回导入基础知识（text/plain）：知识索引 + 非投资节——每行拆解、商户约定、个人间借贷、\
+                  幂等与去重、对账完成判定、对账纠错；分域知识节按知识索引指引按需获取（投资五节见 \
+                  GET /api/v1/import/knowledge/investment）。AI 按入口提示词指引自行获取；\
+                  文本内嵌 `/api/v1/contract`（紧凑契约方言）地址。",
     responses(
-        (status = 200, description = "text/plain 格式的导入知识", content_type = "text/plain", body = String)
+        (status = 200, description = "text/plain 格式的导入基础知识", content_type = "text/plain", body = String)
     )
 )]
 pub async fn import_knowledge_handler() -> impl IntoResponse {
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-        FULL_IMPORT_KNOWLEDGE.as_str(),
+        BASE_KNOWLEDGE,
+    )
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/import/knowledge/investment",
+    tag = "import",
+    summary = "获取 LLM 导入投资知识",
+    description = "返回导入知识的投资节全文（text/plain）：投资交易（buy/sell）、基金申赎、基金转换、\
+                  份额调整、现金分红——标的解析、投资落账与投资的对账、纠错口径。按基础知识的知识索引\
+                  指引按需获取：AI 记账会话多数行与投资无关，出现投资类流水或标的时才读本端点。",
+    responses(
+        (status = 200, description = "text/plain 格式的投资节知识", content_type = "text/plain", body = String)
+    )
+)]
+pub async fn import_investment_knowledge_handler() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        INVESTMENT_KNOWLEDGE_SECTIONS,
     )
 }
 
@@ -99,29 +107,22 @@ mod tests {
         }
     }
 
+    /// 分级自足上线（#1123 / ADR-0110）：#1121 的占位拼接退役，两常量即两端点
+    /// 响应——任何占位标记不得残留；知识索引段与投资端点指针必须在基础侧在位。
     #[test]
-    fn base_knowledge_carries_exactly_one_slot_line() {
-        assert_eq!(
-            BASE_KNOWLEDGE.matches(INVESTMENT_SECTIONS_SLOT).count(),
-            1,
-            "基础常量应恰好含一个投资节占位标记行"
-        );
+    fn base_knowledge_carries_index_and_constants_carry_no_placeholder() {
+        assert!(!BASE_KNOWLEDGE.contains("{{"), "基础常量不得含占位标记");
         assert!(
             !INVESTMENT_KNOWLEDGE_SECTIONS.contains("{{"),
             "投资节常量不得含占位标记"
         );
-    }
-
-    #[test]
-    fn full_knowledge_splices_investment_sections_without_marker_leftover() {
-        let full = &*FULL_IMPORT_KNOWLEDGE;
-        assert!(!full.contains("{{"), "拼接后的完整知识不得残留占位标记");
-        for header in INVESTMENT_SECTION_HEADERS {
-            assert_eq!(
-                full.matches(header).count(),
-                1,
-                "完整知识应恰好含一次 {header}"
-            );
-        }
+        assert!(
+            BASE_KNOWLEDGE.contains("## 知识索引"),
+            "基础常量应含知识索引段（分域知识节的目录与触发单点）"
+        );
+        assert!(
+            BASE_KNOWLEDGE.contains("GET /api/v1/import/knowledge/investment"),
+            "知识索引应带投资节端点指针"
+        );
     }
 }

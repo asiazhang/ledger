@@ -72,6 +72,7 @@ async fn contract_covers_all_endpoints() {
         ("DELETE", "/transactions/{id}"),
         ("PUT", "/transactions/{id}"),
         ("GET", "/import/knowledge"),
+        ("GET", "/import/knowledge/investment"),
     ];
     for (method, path) in expected {
         let hit = endpoints.iter().any(|e| {
@@ -125,8 +126,13 @@ async fn contract_request_body_and_responses() {
     assert_eq!(put["body"], "AccountUpdateInput");
     assert_eq!(put["res"]["200"], "Account");
 
-    // 导入知识：text/plain 端点无 JSON 响应 schema。
+    // 导入知识：text/plain 端点无 JSON 响应 schema（分级自足后两个知识端点，
+    // issue #1123）。
     assert_eq!(find("GET", "/import/knowledge")["res"]["200"], "-");
+    assert_eq!(
+        find("GET", "/import/knowledge/investment")["res"]["200"],
+        "-"
+    );
 }
 
 /// kind 闭集枚举移植到方言形状（移植自
@@ -384,6 +390,10 @@ async fn contract_transaction_input_quantity_describes_split_semantics() {
 /// issue #1069 触线：`Instrument.price_channel` 派生字段与 `PriceChannel` 组件带入
 /// 后实测 20732 字节越过原 20480，经维护者决策提至 22KB（≈6.3K tokens）——新字段
 /// 描述承载价格通道语义、无冗余可削，留痕见 ADR-0090 决策 6。
+///
+/// issue #1123 复核：投资知识端点进入契约发现面（20 端点）后实测 22057 字节，
+/// 仍在 22KB 预算内（余量约 471B）——下一个新增端点/字段大概率触线，届时须人工
+/// 决策提预算或瘦身，延续本护栏的留痕传统。
 #[tokio::test]
 async fn contract_size_within_budget() {
     let (app, _) = setup_app();
