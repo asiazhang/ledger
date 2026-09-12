@@ -12,9 +12,10 @@
 //! - 自动触发（[`run_auto_round`] / [`sync_on_start`] / [`start_sync_scheduler`] /
 //!   [`sync_after_write`]）：打开应用即同步 + 运行期低频轮询 + 写 op 后即时入队
 //!   上传，三者同一段编排，只有触发时机不同。写后触发的信号点在**本地 op 产出
-//!   单点** [`crate::sync_engine::ops::record_local`]（域内，见该函数文档），去抖
-//!   合流：连续记账只在最后一次写后 [WRITE_DEBOUNCE] 跑一轮，避免每次写入都触网
-//!   （ADR-0091「写 op 后即时入队上传」的取舍留痕见 ADR-0098）。
+//!   单点**（协议 crate `ledger_sync_protocol::op::record_local`，经
+//!   [`install_after_write_hook`] 装入响应闭包），去抖合流：连续记账只在最后一次
+//!   写后 [WRITE_DEBOUNCE] 跑一轮，避免每次写入都触网（ADR-0091「写 op 后即时
+//!   入队上传」的取舍留痕见 ADR-0098）。
 //! - 信封模式由**本机会话密钥形态**（[`super::session::SessionEnvelope`]，进程级
 //!   单例）判定；换库路径（原位重引导、忘记口令重置）清空记忆、关闭加密记入
 //!   明文形态，避免拿旧库口令去封新库的段。
@@ -157,21 +158,33 @@ pub(in crate::sync_engine) fn drain_write_signals(
     }
 }
 
-/// 写后即时同步的信号通道（进程级单例）：本地 op 产出单点
-/// [`crate::sync_engine::ops::record_local`] 经 [`sync_after_write`] 投递一次
-/// 「有新 op 待发布」，调度线程据此起一轮。发送端未装（调度未拉起 / 单测环境）时
-/// 投递是零动作——写路径对同步域完全无感。
+/// 写后即时同步的信号通道（进程级单例）：本地 op 产出单点（协议 crate
+/// `record_local`，经 [`install_after_write_hook`] 装入的钩子）触发
+/// [`sync_after_write`] 投递一次「有新 op 待发布」，调度线程据此起一轮。发送端
+/// 未装（调度未拉起 / 单测环境）时投递是零动作——写路径对同步域完全无感。
 static WRITE_SIGNAL: std::sync::OnceLock<std::sync::mpsc::Sender<()>> = std::sync::OnceLock::new();
+
+/// 写后触发的**登记点反转**（#1089）：本地 op 产出单点在协议 crate（共享底座，
+/// 不认识同步调度），本域在启动时把「去抖合流跑一轮」的响应闭包装进协议面的
+/// 钩子槽（`ledger_sync_protocol::op::install_after_write_hook`）。幂等：重复
+/// 安装零动作（先装者优先）；生产启动（壳层 `setup`）、测试建库工厂与 BDD
+/// world 各装一次，闭包同体。
+pub fn install_after_write_hook() {
+    let installed = ledger_sync_protocol::op::install_after_write_hook(sync_after_write);
+    if !installed {
+        tracing::debug!("写后钩子已安装，忽略重复登记（先装者优先）");
+    }
+}
 
 /// 写 op 后即时入队上传的信号侧（ADR-0091 决策 9）：本地产出 op 后调用一次。
 ///
-/// 触发点是**本地 op 产出单点** [`crate::sync_engine::ops::record_local`]：本仓全部
-/// 本地产出（IPC / HTTP / 批量导入 / 定时追补）都经它收敛，且外来 op 重放走
-/// [`crate::sync_engine::ops::insert_row`] 不产出本地 op，天然不误触发。放在壳层
-/// `write_entry` 会漏掉定时追补（直接进行为编排）并在 `sync_now` 自身空触发；
-/// 放在连接层 `db::write` 提交点则既有分层问题又不区分产出。**非阻塞**：无界
-/// 通道投递即返回，写路径不等网络；发送端缺席（未拉起调度、单测）静默忽略。
-/// 去抖合流在调度线程侧完成。
+/// 触发点是**本地 op 产出单点**（协议 crate [`ledger_sync_protocol::op::record_local`]，
+/// 经 [`install_after_write_hook`] 装入本函数为响应）：本仓全部本地产出（IPC /
+/// HTTP / 批量导入 / 定时追补）都经它收敛，且外来 op 重放走协议面 `insert_row`
+/// 不产出本地 op、天然不误触发。放在壳层 `write_entry` 会漏掉定时追补（直接
+/// 进行为编排）并在 `sync_now` 自身空触发；放在连接层 `db::write` 提交点则既有
+/// 分层问题又不区分产出。**非阻塞**：无界通道投递即返回，写路径不等网络；
+/// 发送端缺席（未拉起调度、单测）静默忽略。去抖合流在调度线程侧完成。
 pub fn sync_after_write() {
     notify_write_signal(&WRITE_SIGNAL);
 }

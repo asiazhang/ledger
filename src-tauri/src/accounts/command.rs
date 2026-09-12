@@ -10,11 +10,14 @@
 //! - **重放执行**（[`replay_command`]）：与本地写同一执行协议（依赖校验 + 落库），
 //!   不产出 op——外来 op 由同步引擎落日志。
 
+use std::borrow::Cow;
+
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::sync_engine::{DomainCommand, record_local as record_op};
+use ledger_sync_protocol::command::SyncCommand;
+use ledger_sync_protocol::op::record_local as record_op;
 
 use super::model::AccountType;
 
@@ -58,12 +61,22 @@ impl AccountCommand {
     }
 }
 
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识；op 产出直呼协议面（环依赖由 crate 依赖图断开）。
+impl SyncCommand for AccountCommand {
+    const ENTITY: &'static str = "account";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        Some(Cow::Borrowed(self.subject_id()))
+    }
+}
+
 /// op 产出接缝（账户域集中单点）：本地账户写成功后追加一条 op 进本机 OpLog。
 ///
 /// 仅账户写编排入口（`accounts::core` 的创建 / 修改 / 删除协议与黑洞即建）调用；
 /// 随编排事务提交/回滚，写失败不残留 op。
 pub(crate) fn record_local(conn: &Connection, command: AccountCommand) -> Result<()> {
-    record_op(conn, DomainCommand::Account(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }
 

@@ -8,11 +8,14 @@
 //! - **重放执行**（[`replay_command`]）：与本地写同一执行协议（两级分类校验、
 //!   预算删除守卫等依赖检查原样生效，依赖缺失即挂起），不产出 op。
 
+use std::borrow::Cow;
+
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::sync_engine::{DomainCommand, record_local as record_op};
+use ledger_sync_protocol::command::SyncCommand;
+use ledger_sync_protocol::op::record_local as record_op;
 
 use super::model::ReorderItem;
 
@@ -58,12 +61,23 @@ impl CategoryCommand {
     }
 }
 
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识（重排无实体指向，不参与同实体 LWW）；op 产出直呼
+/// 协议面（环依赖由 crate 依赖图断开）。
+impl SyncCommand for CategoryCommand {
+    const ENTITY: &'static str = "category";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        self.subject().map(Cow::Borrowed)
+    }
+}
+
 /// op 产出接缝（分类域集中单点）：本地分类写成功后追加一条 op 进本机 OpLog。
 ///
 /// 仅分类写编排入口（`categories::core` 的创建 / 修改 / 删除 / 重排协议）调用；
 /// 随编排事务提交/回滚，写失败不残留 op。
 pub(crate) fn record_local(conn: &Connection, command: CategoryCommand) -> Result<()> {
-    record_op(conn, DomainCommand::Category(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }
 

@@ -26,7 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::investment::InstrumentType;
-use crate::sync_engine::{DomainCommand, record_local as record_op};
+use ledger_sync_protocol::command::SyncCommand;
+use ledger_sync_protocol::op::record_local as record_op;
 
 /// 标的命令行载荷（语义字段；簿记戳不随行携带，市场为解析后的落定值）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -72,6 +73,17 @@ impl InstrumentCommand {
     }
 }
 
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识；op 产出直呼协议面（环依赖由 crate 依赖图断开）。
+impl SyncCommand for InstrumentCommand {
+    const ENTITY: &'static str = "instrument";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        // 同名转发：方法解析固有优先，落在上方域自身实现（非本 trait 方法）。
+        InstrumentCommand::subject(self)
+    }
+}
+
 /// 汇率同步命令（货币对为行身份：`exchange_rates` 每对一行、upsert 语义）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -99,6 +111,18 @@ impl ExchangeRateCommand {
                 ..
             } => Some(Cow::Owned(format!("{base_code}->{quote_code}"))),
         }
+    }
+}
+
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识（货币对自然键）；op 产出直呼协议面（环依赖由
+/// crate 依赖图断开）。
+impl SyncCommand for ExchangeRateCommand {
+    const ENTITY: &'static str = "exchange_rate";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        // 同名转发：方法解析固有优先，落在上方域自身实现（非本 trait 方法）。
+        ExchangeRateCommand::subject(self)
     }
 }
 
@@ -145,6 +169,18 @@ impl PriceCommand {
     }
 }
 
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识（现价行按标的、周采样行按标的 × ISO 周，与落库
+/// 冲突键同粒度）；op 产出直呼协议面（环依赖由 crate 依赖图断开）。
+impl SyncCommand for PriceCommand {
+    const ENTITY: &'static str = "price";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        // 同名转发：方法解析固有优先，落在上方域自身实现（非本 trait 方法）。
+        PriceCommand::subject(self)
+    }
+}
+
 /// ISO 周周一派生（与 `price_history.week_start` 生成列
 /// `date(trade_date,'-6 days','weekday 1')` 同式的 Rust 形态）：裁决键必须与
 /// 周采样落库冲突键同粒度，两端对同一报价才收敛到同一裁决域。解析失败回退
@@ -164,19 +200,19 @@ fn week_start_of(date: &str) -> String {
 ///
 /// 仅投资域写编排入口（`investment::crud`）调用；随编排事务提交/回滚。
 pub(crate) fn record_instrument(conn: &Connection, command: InstrumentCommand) -> Result<()> {
-    record_op(conn, DomainCommand::Instrument(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }
 
 /// op 产出接缝：汇率录入成功后追加。
 pub(crate) fn record_exchange_rate(conn: &Connection, command: ExchangeRateCommand) -> Result<()> {
-    record_op(conn, DomainCommand::ExchangeRate(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }
 
 /// op 产出接缝：用户侧价格写入（现价录入 / 手动报价）成功后追加。
 pub(crate) fn record_price(conn: &Connection, command: PriceCommand) -> Result<()> {
-    record_op(conn, DomainCommand::Price(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }
 

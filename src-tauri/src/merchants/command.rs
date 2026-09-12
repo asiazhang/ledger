@@ -9,11 +9,14 @@
 //! - **重放执行**（[`replay_command`]）：与本地写同一执行协议（名字唯一校验原样
 //!   生效，双端离线各建同名商户后到者在重放端挂起待裁决），不产出 op。
 
+use std::borrow::Cow;
+
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::sync_engine::{DomainCommand, record_local as record_op};
+use ledger_sync_protocol::command::SyncCommand;
+use ledger_sync_protocol::op::record_local as record_op;
 
 /// 商户同步命令（serde：`action` 判别；作为 DomainCommand 信封的 payload 内嵌）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -38,12 +41,22 @@ impl MerchantCommand {
     }
 }
 
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识；op 产出直呼协议面（环依赖由 crate 依赖图断开）。
+impl SyncCommand for MerchantCommand {
+    const ENTITY: &'static str = "merchant";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        Some(Cow::Borrowed(self.subject_id()))
+    }
+}
+
 /// op 产出接缝（商户域集中单点）：本地商户写成功后追加一条 op 进本机 OpLog。
 ///
 /// 仅商户写编排入口（`merchants::crud` 的创建 / 修改 / 删除协议）调用；随编排
 /// 事务提交/回滚，写失败不残留 op。
 pub(crate) fn record_local(conn: &Connection, command: MerchantCommand) -> Result<()> {
-    record_op(conn, DomainCommand::Merchant(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }
 

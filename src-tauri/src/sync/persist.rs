@@ -8,7 +8,7 @@ use rusqlite::params;
 
 use crate::db::{new_uuid, now_iso};
 use crate::error::Result;
-use crate::sync_engine::device_id;
+use ledger_sync_protocol::device::device_id;
 
 /// 按 (币种对, ISO 周) 插入或覆盖一条周采样汇率历史，规则与投资域价格历史
 /// 周采样 upsert（[`crate::investment::prices::upsert_price_history`]）对齐

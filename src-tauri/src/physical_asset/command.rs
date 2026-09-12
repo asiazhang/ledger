@@ -12,11 +12,14 @@
 //! - **重放执行**（[`replay_command`]）：与本地写同一执行协议（名称、成对、
 //!   金额、币种、日期守卫原样生效，币种缺失即挂起），不产出 op。
 
+use std::borrow::Cow;
+
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::sync_engine::{DomainCommand, record_local as record_op};
+use ledger_sync_protocol::command::SyncCommand;
+use ledger_sync_protocol::op::record_local as record_op;
 
 /// 估值行载荷（只追加历史行；id 随行保序）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -79,12 +82,23 @@ impl PhysicalAssetCommand {
     }
 }
 
+/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
+/// 实体键派生是域自身知识（估值追加无实体指向，不参与同实体 LWW）；op 产出
+/// 直呼协议面（环依赖由 crate 依赖图断开）。
+impl SyncCommand for PhysicalAssetCommand {
+    const ENTITY: &'static str = "physical_asset";
+
+    fn subject(&self) -> Option<Cow<'_, str>> {
+        self.subject().map(Cow::Borrowed)
+    }
+}
+
 /// op 产出接缝（实物资产域集中单点）：本地写成功后追加一条 op 进本机 OpLog。
 ///
 /// 仅实物资产写编排入口（`physical_asset::crud` 的五个写协议）调用；随编排事务
 /// 提交/回滚，写失败不残留 op。
 pub(crate) fn record_local(conn: &Connection, command: PhysicalAssetCommand) -> Result<()> {
-    record_op(conn, DomainCommand::PhysicalAsset(command))?;
+    record_op(conn, &command)?;
     Ok(())
 }
 

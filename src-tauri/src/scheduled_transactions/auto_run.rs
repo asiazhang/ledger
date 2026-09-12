@@ -27,7 +27,7 @@ use rusqlite::{Connection, params};
 use super::engine::execute_occurrence;
 use crate::db::now_iso;
 use crate::error::Result;
-use crate::sync_engine::device_id;
+use ledger_sync_protocol::device::device_id;
 
 /// 后端运行时镜像（进程级）：设备级开关默认关，前端启动/变更时经 IPC 推送更新。
 static ENABLED: AtomicBool = AtomicBool::new(false);

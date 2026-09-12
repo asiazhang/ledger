@@ -48,13 +48,14 @@ use sha2::{Digest, Sha256};
 use crate::db::now_iso;
 use crate::error::{AppError, Result};
 
+use ledger_sync_protocol::device;
+use ledger_sync_protocol::position as positions;
+
 use super::checkpoint::{self, Checkpoint};
-use super::device;
 use super::engine;
 use super::envelope::{self, EnvelopeMode, EnvelopeParams};
 use super::model::SyncOp;
 use super::ops;
-use super::positions;
 use super::transport::Transport;
 
 /// manifest 当前版本（未知更高版本拒绝解析：旧端收到新形态清单，提示升级）。

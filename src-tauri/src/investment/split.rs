@@ -28,7 +28,7 @@ use super::lots::{self, QTY_GUARD_EPSILON, format_quantity_for_message};
 use super::prices::PRICE_UNITS_PER_FEN;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::sync_engine::device_id;
+use ledger_sync_protocol::device::device_id;
 
 /// 「缩股幅度不得达到当前持仓」码化错误（ADR-0106 决策 1/7）：取严 `<`——等号
 /// 让 f = 0、批次清零，成本凭空消失，与「份额调整恒不产生已实现盈亏」冲突。

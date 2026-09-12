@@ -34,9 +34,10 @@ use crate::db::{self, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::fs_util;
 
-use super::device;
+use ledger_sync_protocol::device;
+use ledger_sync_protocol::position::{self as positions, StreamPosition};
+
 use super::ops;
-use super::positions::{self, StreamPosition};
 use super::trigger::SyncChannel;
 
 /// 引导期间快照挂载的 ATTACH 别名。

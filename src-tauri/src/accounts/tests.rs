@@ -2,8 +2,8 @@ use super::model::Account;
 use crate::db::query::query_all;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, ErrClass};
-use crate::sync_engine::device_id;
 use crate::transaction::amount::{Measure, TransactionKind, TransferSide, signed_amount};
+use ledger_sync_protocol::device::device_id;
 
 fn setup() -> rusqlite::Connection {
     // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
