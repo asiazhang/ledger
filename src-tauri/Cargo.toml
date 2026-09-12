@@ -61,7 +61,9 @@ pinyin = "0.11"
 # 被所有层消费的能力。数据库、错误、设置、文件工具、日志、事件、信号、闭集与
 # 壳层统一读写入口已全量归位（#1088）；根包以再导出形态保留 `crate::db` 等原
 # 引用路径，域与壳层调用点零改动。
-ledger-infra = { path = "crates/infra" }
+# HTTP 错误响应投影门（issue #1133）：`impl IntoResponse for AppError` 随错误类型
+# 住 infra（孤儿规则），axum 依赖经其 `http` feature 门控——仅壳侧（本包）启用。
+ledger-infra = { path = "crates/infra", features = ["http"] }
 # 同步协议 crate（spec #1086 / issue #1089）：多端同步的最底层共享协议（设备
 # 标识、领域命令契约、op 本地记录与读取、位点）——业务域与 sync_engine 共同
 # 底座，依赖方向由 cargo 依赖图强制，sync_engine ↔ 业务域环依赖就此断开。

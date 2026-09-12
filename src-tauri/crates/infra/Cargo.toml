@@ -10,6 +10,11 @@ publish = false
 # 生产编译，仅 `cfg(test)` 与显式启用本 feature 的测试构建可见（根包测试目标经
 # dev-dependency 启用）。类型身份约束不变——模块始终住本 crate，不另立 crate。
 test-utils = []
+# HTTP 错误响应投影门（ADR-0111 决策 5 / issue #1133）：`impl IntoResponse for
+# AppError` 因孤儿规则必须住本 crate，但 axum 只有壳层需要——axum 声明为
+# optional、仅经本 feature 编入，且 default 不含本 feature（守门见
+# scripts/check-structure.ts，域侧依赖不启用即不引 axum）。
+http = ["dep:axum"]
 
 [dependencies]
 # 基础设施全量归位（spec #1086 / issue #1088）：依赖面与迁移前的根包同名依赖一致
@@ -25,7 +30,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # HTTP 错误响应投影（`impl IntoResponse for AppError`，issue #1088）：孤儿规则要求
 # 实现与错误类型同 crate，故壳层 axum 的响应投影随错误归位；非域语义的传输映射。
-axum = "0.8"
+# optional + `http` feature 门（issue #1133）：仅壳侧根包启用，域侧依赖不编入 axum。
+axum = { version = "0.8", optional = true }
 sha2 = "0.11"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 tracing = "0.1"

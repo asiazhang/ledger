@@ -771,6 +771,24 @@ function inheritsWorkspaceLints(manifest: string): boolean {
 }
 
 /**
+ * 声明（declIndex）前属性链中的首条单行 `#[cfg(...)]` 原文行：跳过空行与注释、
+ * 透明放行其它属性（如 `#[doc(hidden)]`），停在首个非属性行——无 cfg 即 null。
+ * 供生产编译 feature 门的各判定共用（test_utils / http 投影，ADR-0111 决策 5）。
+ */
+function firstCfgLineBefore(lines: readonly string[], declIndex: number): string | null {
+  for (let i = declIndex - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (line === '' || line.startsWith('//')) continue
+    if (line.startsWith('#[')) {
+      if (line.startsWith('#[cfg(')) return line
+      continue
+    }
+    return null
+  }
+  return null
+}
+
+/**
  * 测试器具生产编译门的「放行测试」判定（ADR-0111 决策 5 / issue #1132）：声明
  * （`pub mod test_utils;` / `pub use ledger_infra::test_utils;`）前的属性链中须有
  * 一条单行 `#[cfg(...)]`，且该 cfg 在 `test` 或 `test-utils` feature 下放行——无门、
@@ -778,26 +796,31 @@ function inheritsWorkspaceLints(manifest: string): boolean {
  * 声明前允许注释与其它属性（如 `#[doc(hidden)]`），属性顺序不敏感。
  */
 function hasTestAllowingCfgGate(lines: readonly string[], declIndex: number): boolean {
-  for (let i = declIndex - 1; i >= 0; i--) {
-    const line = lines[i].trim()
-    if (line === '' || line.startsWith('//')) continue
-    if (line.startsWith('#[')) {
-      if (line.startsWith('#[cfg(')) {
-        return /\btest\b/.test(line) && !line.includes('not(')
-      }
-      continue
-    }
-    return false
-  }
-  return false
+  const cfg = firstCfgLineBefore(lines, declIndex)
+  return cfg !== null && /\btest\b/.test(cfg) && !cfg.includes('not(')
+}
+
+/**
+ * HTTP 投影 impl 的 feature cfg 门判定（ADR-0111 决策 5 / issue #1133）：声明
+ * （`impl axum::response::IntoResponse for AppError`）前的属性链中须有一条单行
+ * `#[cfg(...)]` 含 `feature = "http"`；无门、`#[cfg(not(feature = "http"))]` 等
+ * 反向门一律不合格（feature 开启实现反而消失，等价于无门）。同 hasTestAllowingCfgGate，
+ * 声明前允许注释与其它属性，属性顺序不敏感。
+ */
+function hasHttpFeatureCfgGate(lines: readonly string[], declIndex: number): boolean {
+  const cfg = firstCfgLineBefore(lines, declIndex)
+  return cfg !== null && /feature\s*=\s*"http"/.test(cfg) && !cfg.includes('not(')
 }
 
 /**
  * 生产依赖表（`[dependencies]` 与 `target.*.dependencies`，inline 或子表形态，
- * 刻意排除 `[dev-dependencies]`）中对 `ledger-infra` 启用 `test-utils` 的原文行；
- * 命中的行即「生产构建会把测试器具编入」的证据（ADR-0111 决策 5 / #1132）。
+ * 刻意排除 `[dev-dependencies]`）中对 `ledger-infra` 启用指定 feature 的原文行；
+ * 命中的行即「生产构建会把该 feature 编入」的证据（ADR-0111 决策 5：#1132 用
+ * 于 test-utils、#1133 用于 http）。
  */
-function productionTestUtilsEnablement(manifest: string): string | null {
+function productionLedgerInfraEnablement(manifest: string, feature: string): string | null {
+  // 词边界匹配：'http' 不得误命中 https:// 等 URL 里的裸 'http' 子串。
+  const featureRe = new RegExp(`\\b${feature}\\b`)
   let section = ''
   for (const raw of manifest.split('\n')) {
     const header = raw.trim().match(/^\[([^\]]+)\]$/)
@@ -806,22 +829,22 @@ function productionTestUtilsEnablement(manifest: string): string | null {
       continue
     }
     if (/^(?:target\..+\.)?dependencies$/.test(section)) {
-      if (/^\s*ledger-infra\s*=/.test(raw) && raw.includes('test-utils')) return raw.trim()
+      if (/^\s*ledger-infra\s*=/.test(raw) && featureRe.test(raw)) return raw.trim()
     } else if (/^(?:target\..+\.)?dependencies\.ledger-infra$/.test(section)) {
-      if (/^\s*features\s*=/.test(raw) && raw.includes('test-utils')) return raw.trim()
+      if (/^\s*features\s*=/.test(raw) && featureRe.test(raw)) return raw.trim()
     }
   }
   return null
 }
 
 /**
- * `[features] default` 是否（直接或经本清单内 feature 转发）触达 `test-utils`——
- * 默认 feature 在生产构建启用，等价于把测试器具编入生产构建。转发链上的边按
- * `includes('test-utils')` 判定，因而也覆盖 `ledger-infra/test-utils` 这类
- * 跨 crate 引用形态（ADR-0111 决策 5 / #1132）。跨清单的依赖 feature 图不在
- * 文本可辨范围，靠评审兜底。
+ * `[features] default` 是否（直接或经本清单内 feature 转发）触达指定 feature——
+ * 默认 feature 在生产构建启用，等价于无条件编入该 feature 的内容。转发链上的
+ * 边按 `includes(feature)` 判定，因而也覆盖 `ledger-infra/test-utils` 这类
+ * 跨 crate 引用形态（ADR-0111 决策 5：#1132 用于 test-utils、#1133 用于 http）。
+ * 跨清单的依赖 feature 图不在文本可辨范围，靠评审兜底。
  */
-function defaultFeaturesIncludeTestUtils(manifest: string): boolean {
+function defaultFeaturesInclude(manifest: string, feature: string): boolean {
   const section = manifestSection(manifest, 'features')
   if (section === null) return false
   const featureEdges = new Map<string, string[]>()
@@ -836,11 +859,11 @@ function defaultFeaturesIncludeTestUtils(manifest: string): boolean {
   const seen = new Set<string>()
   const pending = [...(featureEdges.get('default') ?? [])]
   while (pending.length > 0) {
-    const feature = pending.pop() as string
-    if (feature.includes('test-utils')) return true
-    if (seen.has(feature)) continue
-    seen.add(feature)
-    pending.push(...(featureEdges.get(feature) ?? []))
+    const current = pending.pop() as string
+    if (current.includes(feature)) return true
+    if (seen.has(current)) continue
+    seen.add(current)
+    pending.push(...(featureEdges.get(current) ?? []))
   }
   return false
 }
@@ -858,13 +881,16 @@ function memberCrateDirs(srcTauriDir: string): string[] {
 /**
  * crate 边界核对（spec #1086 / issue #1087 门禁前置）：workspace 成员登记、
  * 六件套 deny 门禁继承、依赖方向（壳 → 域 → 基础设施）与静态检查/测试命令
- * 的 workspace 覆盖，外加 test_utils 生产编译门（ADR-0111 决策 5 / #1132），
+ * 的 workspace 覆盖，外加 test_utils 生产编译门（ADR-0111 决策 5 / #1132）与
+ * HTTP 错误响应投影 feature 门（ADR-0111 决策 5 / #1133），
  * 全部 fail loud、删除即变红：
  * - 成员漏写 `[lints] workspace = true` → 门禁静默消失，clippy 仍绿，本核对红；
  * - `crates/` 下新增 crate 未登记 CRATES → 边界知识分裂，本核对红；
  * - cargo 命令缺 `--workspace` → 默认只作用于根包，本核对红；
  * - infra `test_utils` 模块摘掉 cfg 门、或根包生产依赖启用 `test-utils` → 测试
- *   器具被编入生产构建，本核对红。
+ *   器具被编入生产构建，本核对红；
+ * - infra `http` 投影门被摘（axum 裸依赖 / impl 无 cfg / default 含 http / 域侧
+ *   成员启用 http）→ axum 无条件编入或域侧引入，本核对红。
  */
 function checkCrateBoundaries(srcTauriDir: string): string[] {
   const problems: string[] = []
@@ -1036,7 +1062,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     }
   }
 
-  const prodEnableLine = productionTestUtilsEnablement(rootManifest)
+  const prodEnableLine = productionLedgerInfraEnablement(rootManifest, 'test-utils')
   if (prodEnableLine !== null) {
     problems.push(
       '✗ test_utils 生产编译门：根包生产依赖 ledger-infra 启用了 test-utils\n' +
@@ -1046,22 +1072,121 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     )
   }
 
+  // infra 清单读一次：test-utils（⑦）与 http（⑧）两道 default 门共用同一份
+  // [清单, 出处] 对与同一套核对（defaultFeaturesInclude）。
   const infraManifestPath = join(srcTauriDir, dirname(INFRA_SRC_REL), 'Cargo.toml')
-  if (!existsSync(infraManifestPath)) {
-    problems.push(`✗ test_utils 生产编译门：${dirname(INFRA_SRC_REL)}/Cargo.toml 不存在`)
+  const infraManifest = existsSync(infraManifestPath)
+    ? readFileSync(infraManifestPath, 'utf8')
+    : null
+  if (infraManifest === null) {
+    problems.push(`✗ 生产编译 feature 门：${dirname(INFRA_SRC_REL)}/Cargo.toml 不存在`)
+  }
+  const defaultFeatureManifests: ReadonlyArray<readonly [string, string]> = [
+    [rootManifest, 'src-tauri/Cargo.toml'],
+    ...(infraManifest !== null
+      ? [[infraManifest, `${dirname(INFRA_SRC_REL)}/Cargo.toml`] as const]
+      : []),
+  ]
+  for (const [manifest, where] of defaultFeatureManifests) {
+    if (defaultFeaturesInclude(manifest, 'test-utils')) {
+      problems.push(
+        `✗ test_utils 生产编译门：${where} [features] default 包含 test-utils\n` +
+          '    默认 feature 在生产构建启用，等价于把测试器具编入生产构建' +
+          '（ADR-0111 决策 5 / issue #1132），从 default 移除 test-utils 即变红',
+      )
+    }
+  }
+
+  // ⑧ HTTP 错误响应投影 feature 门（ADR-0111 决策 5 / issue #1133）：`impl
+  // IntoResponse for AppError` 因孤儿规则必须住 infra，axum 改 optional、经
+  // `http` feature 门控，仅壳侧根包启用——避免每出现一个域 crate 就无条件编入
+  // axum 及其传递依赖。五处删除即变红——clippy 走 --all-features、壳侧生产依赖
+  // 恒启用 http，都发现不了门被摘掉：
+  //   ① infra 的 axum 依赖须声明 optional（裸依赖即门形同虚设）；
+  //   ② infra [features] 须有 http 转发 dep:axum（门与依赖面绑死）；
+  //   ③ error.rs 的 IntoResponse impl 须带 feature = "http" 的 cfg 门；
+  //   ④ 根包与 infra 的 [features] default 不得包含 http（默认 feature 即生产）；
+  //   ⑤ 域侧成员 crate 生产依赖不得对 ledger-infra 启用 http（域侧不引 axum）。
+  const httpGateLabel = 'http 投影 feature 门'
+  if (infraManifest !== null) {
+    const axumLine = infraManifest.split('\n').find((l) => /^\s*axum\s*=/.test(l))
+    if (axumLine === undefined) {
+      problems.push(`✗ ${httpGateLabel}：infra Cargo.toml 找不到 axum 依赖声明`)
+    } else if (!axumLine.includes('optional = true')) {
+      problems.push(
+        `✗ ${httpGateLabel}：infra Cargo.toml 的 axum 依赖未声明 optional\n` +
+          `    ${axumLine.trim()}\n` +
+          '    非 optional 即无条件编入 axum 及其传递依赖（ADR-0111 决策 5 / issue #1133），加回 optional 即变绿',
+      )
+    }
+    const httpFeatureLine = manifestSection(infraManifest, 'features')
+      ?.split('\n')
+      .find((l) => /^\s*http\s*=/.test(l))
+    if (httpFeatureLine === undefined || !httpFeatureLine.includes('dep:axum')) {
+      problems.push(
+        `✗ ${httpGateLabel}：infra Cargo.toml [features] 缺 \`http = ["dep:axum"]\`\n` +
+          '    门与依赖面绑死——feature 不转发 dep:axum 即门形同虚设' +
+          '（ADR-0111 决策 5 / issue #1133）',
+      )
+    }
+  }
+  for (const [manifest, where] of defaultFeatureManifests) {
+    if (defaultFeaturesInclude(manifest, 'http')) {
+      problems.push(
+        `✗ ${httpGateLabel}：${where} [features] default 包含 http\n` +
+          '    默认 feature 在生产构建启用，等价于无条件编入 axum' +
+          '（ADR-0111 决策 5 / issue #1133），从 default 移除 http 即变红',
+      )
+    }
+  }
+
+  // ③' impl cfg 门：error.rs 的 IntoResponse impl 必须带 feature = "http" 的门。
+  const errorRsPath = join(srcTauriDir, INFRA_SRC_REL, 'error.rs')
+  if (!existsSync(errorRsPath)) {
+    problems.push(
+      `✗ ${httpGateLabel}：${INFRA_SRC_REL}/error.rs 不存在，无法核对 impl cfg 门（issue #1133）`,
+    )
   } else {
-    const defaultFeatureManifests: ReadonlyArray<readonly [string, string]> = [
-      [rootManifest, 'src-tauri/Cargo.toml'],
-      [readFileSync(infraManifestPath, 'utf8'), `${dirname(INFRA_SRC_REL)}/Cargo.toml`],
-    ]
-    for (const [manifest, where] of defaultFeatureManifests) {
-      if (defaultFeaturesIncludeTestUtils(manifest)) {
-        problems.push(
-          `✗ test_utils 生产编译门：${where} [features] default 包含 test-utils\n` +
-            '    默认 feature 在生产构建启用，等价于把测试器具编入生产构建' +
-            '（ADR-0111 决策 5 / issue #1132），从 default 移除 test-utils 即变红',
-        )
-      }
+    const lines = readFileSync(errorRsPath, 'utf8').split('\n')
+    const declIndex = lines.findIndex((l) =>
+      /^\s*impl\s+axum::response::IntoResponse\s+for\s+AppError\b/.test(l),
+    )
+    if (declIndex === -1) {
+      problems.push(
+        `✗ ${httpGateLabel}：error.rs 找不到 \`impl axum::response::IntoResponse for AppError\``,
+      )
+    } else if (!hasHttpFeatureCfgGate(lines, declIndex)) {
+      problems.push(
+        `✗ ${httpGateLabel}：error.rs IntoResponse impl 未加 feature cfg 门\n` +
+          `    ${lines[declIndex].trim()}\n` +
+          '    门须为 `#[cfg(feature = "http")]`（紧贴 impl 的属性链）；无门即无条件编译 axum 投影' +
+          '（ADR-0111 决策 5 / issue #1133），补回 cfg 门即变绿',
+      )
+    }
+  }
+
+  // ⑤' 域侧成员启用 http → 红：http 只许壳侧（根包 tauri-app）启用，域侧启用
+  // 即把 axum 编入域依赖图，违背「域侧依赖不引入 axum」口径（issue #1133）。
+  for (const crateDir of memberCrateDirs(srcTauriDir)) {
+    if (crateDir === dirname(INFRA_SRC_REL)) continue // infra 自身是门宿主，非消费方
+    const memberManifest = readFileSync(join(srcTauriDir, crateDir, 'Cargo.toml'), 'utf8')
+    const enableLine = productionLedgerInfraEnablement(memberManifest, 'http')
+    if (enableLine !== null) {
+      problems.push(
+        `✗ ${httpGateLabel}：域侧成员 ${crateDir} 生产依赖 ledger-infra 启用了 http\n` +
+          `    ${enableLine}\n` +
+          '    http 只许壳侧启用；域侧启用即把 axum 编入域依赖图' +
+          '（ADR-0111 决策 5 / issue #1133），移除该 feature 即变红',
+      )
+    }
+    // 域侧直接声明 axum 同样越界（域侧依赖不引入 axum，issue #1133）——不只拦
+    // ledger-infra/http 转发一条路；[dev-dependencies] 不在核对范围（测试专用边）。
+    if (declaredProductionDependencyNames(memberManifest).includes('axum')) {
+      problems.push(
+        `✗ ${httpGateLabel}：域侧成员 ${crateDir} 生产依赖直接声明 axum\n` +
+          '    域侧依赖不引入 axum——axum 只有壳层需要（ADR-0111 决策 5 / issue #1133），' +
+          '移除该依赖即变红',
+      )
     }
   }
 
@@ -1354,7 +1479,8 @@ function main(): void {
       `· crate 边界 ${CRATES.length} 个（成员登记 / 门禁继承 / 依赖方向 / workspace 命令覆盖，#1087）` +
       `· INFRA_MODULES 双向全等（磁盘模块全部登记，ADR-0111 决策 5 / #1134）` +
       `· crate 内块间反向依赖零未认许引用（认许边 ${INFRA_BLOCK_ALLOWED_EDGES.length} 条，ADR-0111 决策 4 / #1134）` +
-      `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）`,
+      `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）` +
+      `· http 投影 feature 门（axum optional + impl cfg 门 + default 不含 http + 域侧不启用，#1133）`,
   )
 }
 

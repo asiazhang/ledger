@@ -187,6 +187,11 @@ pub type Result<T> = std::result::Result<T, AppError>;
 
 // ---------------------------------------------------------------------------
 // HTTP 错误响应投影（壳层 `api_server` 与 HTTP-only handler 消费）
+//
+// feature 门（ADR-0111 决策 5 / issue #1133）：孤儿规则要求实现与错误类型同
+// crate，但 axum 只有壳层需要——不设门则每出现一个域 crate 依赖本 crate 就
+// 无条件编入 axum 及其传递依赖。门为 `http` feature（依赖面 `dep:axum`），
+// 仅壳侧根包启用；域侧依赖默认零 axum，响应形状与状态码不受门影响。
 // ---------------------------------------------------------------------------
 
 /// `AppError` → HTTP 状态码 + JSON 的统一投影。
@@ -195,6 +200,7 @@ pub type Result<T> = std::result::Result<T, AppError>;
 /// 孤儿规则（E0117）要求 trait 实现与类型同 crate——`IntoResponse` 属 axum、
 /// `AppError` 属本 crate，故实现只能住这里；壳层保留响应 DTO（`ErrorResponse`）
 /// 与路由接线，调用面零改动。
+#[cfg(feature = "http")]
 impl axum::response::IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         use axum::Json;
