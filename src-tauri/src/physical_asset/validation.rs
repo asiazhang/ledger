@@ -137,7 +137,7 @@ impl FutureDateKind {
 
     fn label(&self) -> &'static str {
         match self {
-            FutureDateKind::Valuation => "valuation",
+            FutureDateKind::Valuation => "估值",
             FutureDateKind::Disposal => "处置",
         }
     }
@@ -353,10 +353,14 @@ mod tests {
         // 估值走生产入口（建档 / 更新估值共用的 normalize_valuation_date）。
         let err = normalize_valuation_date(Some(&raw)).unwrap_err();
         assert!(err.is_code("physical-asset.valuation-date-future"));
+        // 文案逐字钉住（zh 模板「估值日期 {0} 不能是未来」同源，ADR-0050）——
+        // slug/label 任何一个映射错位本行即红（#1188 检视 round 3）。
+        assert_eq!(err.to_string(), format!("估值日期 {raw} 不能是未来"));
 
         // 处置与估值共用同一 reject_future_date 单点 + slug() 单点映射。
         let err = reject_future_date(tomorrow, &raw, &FutureDateKind::Disposal).unwrap_err();
         assert!(err.is_code("physical-asset.disposal-date-future"));
+        assert_eq!(err.to_string(), format!("处置日期 {raw} 不能是未来"));
 
         // 过去日期放行（估值 / 处置都是已发生的判断，可事后整理）。
         let yesterday = chrono::Local::now().date_naive() - chrono::Duration::days(1);
