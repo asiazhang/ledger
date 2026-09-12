@@ -1,4 +1,5 @@
-//! 数据库基础设施模块（issue #1127 按职责拆分后，本文件只做声明与再导出）：
+//! 数据库基础设施模块（issue #1127 按职责拆分后，本文件只做声明与再导出；
+//! 时间与身份工厂已自 #1128 升顶层 [`crate::ids`]，原路径经再导出保持）：
 //! - [`migrate`]：迁移链与 `init_db`（schema 守卫尾部接线，ADR-0100）；
 //! - [`connection`]：建连 / 重置 / 完整性检查 / 内存库；
 //! - [`runtime`]：连接层统一写入口与提交点后置钩子（ADR-0032）、阻塞线程池
@@ -31,34 +32,10 @@ pub use runtime::{AfterCommitHook, DbState, register_after_commit_hook, run_db, 
 // 迁移集合保持 crate 内可见面（tests 与 schema_guard 经此消费，非公开 API）。
 pub(crate) use migrate::migrations;
 
-// ---------------------------------------------------------------------------
-// 时间与身份工厂（暂住：issue #1128 将升顶层 ids 模块——非数据库关切）
-// ---------------------------------------------------------------------------
-
-/// 当前 UTC 时间 ISO 字符串。
-pub fn now_iso() -> String {
-    iso_at(chrono::Utc::now())
-}
-
-/// 把注入的时刻格式化为与 [`now_iso`] 同格式的 UTC ISO 字符串。
-/// 供需注入时钟的调用方（如自动备份锚点）使用，保证全仓唯一格式定义。
-pub fn iso_at(now: chrono::DateTime<chrono::Utc>) -> String {
-    now.format("%Y-%m-%dT%H:%M:%SZ").to_string()
-}
-
-/// 生成新的 UUID v7（时间有序，适合主键与同步）。
-pub fn new_uuid() -> String {
-    uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string()
-}
-
-/// 确定性 UUID v5 的本仓命名空间（跨端一致派生 id 的派生根；先例：V004 默认
-/// 种子的确定性 UUID v5——同名恒同值，保证各端独立派生不产生重复行）。
-pub const DETERMINISTIC_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes(*b"ledger_sync_v5_1");
-
-/// 确定性 UUID v5：同名同空间跨端恒同值（同步场景的确定性落地身份）。
-pub fn deterministic_uuid(name: &str) -> String {
-    uuid::Uuid::new_v5(&DETERMINISTIC_NAMESPACE, name.as_bytes()).to_string()
-}
+// 时间与身份工厂现住顶层 [`crate::ids`]（issue #1128 / ADR-0111 决策 2：
+// 非数据库关切，文件工具等原语引用不穿透 db）；既有 `crate::db::…` 调用点
+// 与协议 crate 的 `ledger_infra::db::…` 路径经本再导出保持零改动。
+pub use crate::ids::{DETERMINISTIC_NAMESPACE, deterministic_uuid, iso_at, new_uuid, now_iso};
 
 #[cfg(test)]
 mod tests;

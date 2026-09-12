@@ -18,7 +18,7 @@ pub fn temp_sibling(path: &Path, tag: &str) -> PathBuf {
     parent.join(format!(
         ".{file_name}.{tag}-{}-{}",
         std::process::id(),
-        crate::db::new_uuid()
+        crate::ids::new_uuid()
     ))
 }
 
