@@ -708,6 +708,10 @@ interface CrateFixtureOverrides {
   protocolManifest?: string
   /** 覆盖根包 `src/lib.rs` 内容（test_utils 再导出 cfg 门负向夹具） */
   rootLibRs?: string
+  /** 覆盖 `src/api_server/handlers/import.rs` 内容（投资五节锚点 cfg 门负向夹具，#1185） */
+  apiServerImportRs?: string
+  /** 覆盖 `src/api_server/mod.rs` 内容（投资五节锚点再导出 cfg 门负向夹具，#1185） */
+  apiServerModRs?: string
   /** 覆盖根包 `[dependencies]` 的 ledger-infra 行（生产依赖接线负向夹具） */
   rootInfraProdDep?: string
   /** 追加到根包 `[features]` 段的原文行（default feature 负向夹具） */
@@ -820,6 +824,24 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
       '#[cfg(any(test, feature = "test-utils"))]\n' +
         '#[doc(hidden)]\n' +
         'pub use ledger_infra::test_utils;\n',
+  )
+
+  // 投资五节标题锚点（#1185）：夹具与真实仓库同形——常量住 handlers/import.rs、
+  // 经 api_server/mod.rs 再导出，均带「放行测试」cfg 门（生产编译门默认绿）。
+  mkdirSync(join(srcTauri, 'src', 'api_server', 'handlers'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'src', 'api_server', 'handlers', 'import.rs'),
+    overrides.apiServerImportRs ??
+      '#[cfg(any(test, feature = "test-utils"))]\n' +
+        '#[doc(hidden)]\n' +
+        'pub const INVESTMENT_SECTION_HEADERS: [&str; 5] = ["## 节"];\n',
+  )
+  writeFileSync(
+    join(srcTauri, 'src', 'api_server', 'mod.rs'),
+    overrides.apiServerModRs ??
+      '#[cfg(any(test, feature = "test-utils"))]\n' +
+        '#[doc(hidden)]\n' +
+        'pub use handlers::import::INVESTMENT_SECTION_HEADERS;\n',
   )
 
   // 备份域 crate（#1091，首个业务域 crate）：夹具与真实仓库同形——成员目录 +
@@ -1223,6 +1245,48 @@ describe('check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('default 包含 test-utils')
+  })
+})
+
+describe('check-structure 投资五节锚点生产编译门（issue #1185）', () => {
+  it('真实仓库默认通过：常量与再导出均带「放行测试」cfg 门', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain('投资五节锚点生产编译门')
+  })
+
+  it('workspace 骨架夹具默认通过', () => {
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
+  })
+
+  it('锚点常量摘掉 cfg 门 → 红（删除 cfg 门即变红）', () => {
+    const args = makeCrateFixture({
+      apiServerImportRs:
+        '#[doc(hidden)]\npub const INVESTMENT_SECTION_HEADERS: [&str; 5] = ["## 节"];\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('投资五节锚点生产编译门')
+    expect(r.output).toContain('cfg 门')
+  })
+
+  it('api_server 再导出摘掉 cfg 门 → 红（测试锚点会静默进生产二进制）', () => {
+    const args = makeCrateFixture({
+      apiServerModRs: 'pub use handlers::import::INVESTMENT_SECTION_HEADERS;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('投资五节锚点生产编译门')
+    expect(r.output).toContain('放行测试')
+  })
+
+  it('锚点声明被删除 → 红（两层锁共享面不可无声明消失）', () => {
+    const args = makeCrateFixture({ apiServerImportRs: 'pub fn stub() {}\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('投资五节锚点生产编译门')
+    expect(r.output).toContain('找不到')
   })
 })
 

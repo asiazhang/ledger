@@ -1087,7 +1087,7 @@ impl Plan {
     }
 }
 
-/// 校验并归一化一笔 buy/sell/convert/split 输入为 [`Plan`]（不落库、不产生副作用）。
+/// 校验并归一化一笔 buy/sell/convert/split/dividend 输入为 [`Plan`]（不落库、不产生副作用）。
 ///
 /// 由行为层（`transaction`）在创建/修改路径按 kind 分派调用；
 /// `kind` 为已解析的 [`TransactionKind`]，收到其余 kind 属编排错误，报错防误用。
@@ -1116,8 +1116,9 @@ pub fn prepare(
     }
 }
 
-/// 应用计划的副作用（buy 建仓 / sell 卖出匹配 / convert 结转）。由编排层在交易行落库后调用，
-/// 与行写入同处一个事务；`id` 为已落库的交易行 id。
+/// 应用计划的副作用（buy 建仓 / sell 卖出匹配 / convert 结转 / split 批次重述 /
+/// dividend 扩展行）。由编排层在交易行落库后调用，与行写入同处一个事务；
+/// `id` 为已落库的交易行 id。
 pub fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
     match plan {
         Plan::Buy(p) => create_buy_lot(conn, id, p),
@@ -1134,7 +1135,7 @@ pub fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
     }
 }
 
-/// 回退一笔已存在 buy/sell/convert 的副作用，供行为层**修改**编排入口在清理阶段调用。
+/// 回退一笔已存在 buy/sell/convert/split/dividend 的副作用，供行为层**修改**编排入口在清理阶段调用。
 ///
 /// - buy：转换链守卫（批次已被在用后续转换消耗则拒绝）+ 在用占用守卫
 ///   （在用 sell 的匹配消耗本买入批次则拒绝）+ 清理持仓/买入关联；

@@ -55,8 +55,9 @@ pub fn query_realized_pnl_summary(
     filter: &PnlFilter,
 ) -> Result<RealizedPnlSummary> {
     // 账户软删在 JOIN 条件排除（issue #217 定案「删除账户 = 从全部投资视角消失」，
-    // 与 v_holdings / 时点持仓读口径对齐）；交易行软删（t.is_deleted，含 sell 删除
-    // 不清理匹配行的既有行为，ADR-0013）同样排除——隐藏账户不是软删除，照常计入。
+    // 与 v_holdings / 时点持仓读口径对齐）；交易行软删（t.is_deleted）同样排除——
+    // sell 删除自 ADR-0097 起回补持仓并清空其匹配行，此处的读口径排除保留以覆盖
+    // 旧版本遗留的幽灵匹配（issue #940）；隐藏账户不是软删除，照常计入。
     let base_from = "FROM security_lot_sales sls \
                      JOIN transactions t ON t.id = sls.sell_transaction_id \
                      JOIN security_transactions st ON st.transaction_id = sls.sell_transaction_id \

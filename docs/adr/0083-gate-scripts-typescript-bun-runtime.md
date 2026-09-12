@@ -20,11 +20,7 @@ TS 语法子集受限且版本门槛高；② tsx devDep——给「零 npm 依�
 
 ## 决策
 
-1. **四脚本全量迁 `.ts`，行为零变化**：校验规则、白名单、扫描边界、输出文案逐字保留；
-   实跑核对四个脚本 node+`.js`（迁移前）与 bun+`.ts`（迁移后）stdout/stderr/退出码逐字
-   一致。零 npm 依赖性质保留：脚本 import 仅 `node:` 内置模块（bun 内建兼容层实现），
-   不新增任何运行时依赖。`@types/node` 是 devDependency，只服务类型检查（门槛期依赖），
-   非运行时依赖。shebang 同步为 `#!/usr/bin/env bun`。
+1. **四脚本全量迁 `.ts`，行为零变化**：校验规则、白名单、扫描边界、输出文案逐字保留；零 npm 依赖性质保留——脚本 import 仅 `node:` 内置模块（bun 内建兼容层实现），`@types/node` 是 devDependency、只服务类型检查。
 
 2. **守门脚本运行时 = Bun（CI 固定 1.4.0）**：调用方式 `bun scripts/check-*.ts`。四个
    守门测试（check-*.test.ts）以 `spawnSync('bun', …)` 同运行时调用——测的就是门槛路径；
@@ -45,23 +41,14 @@ TS 语法子集受限且版本门槛高；② tsx devDep——给「零 npm 依�
    vue-tsc（与前端类型检查同一执行器，为后续扩量保持命令面不变）；挂入 `check.sh`
    （紧跟前端类型检查之后）与 CI frontend job 各一步。
 
-4. **门槛范围收窄（#737 定稿，先绿后扩）**：存量测试文件存在大量类型错（`.vue` 导入的
-   组件类型、手搓 invoke mock 的参数窄化），一次性纳入不可行。本票范围 = `scripts/**` +
-   `src/__tests__/helpers/**` + 四个 check-*.test.ts + 全局 `.d.ts`，门槛先绿；扩到
-   全量测试目录由 #738–#740 分批承接。为此新增两个测试助手收口 mock 边界：
-   `helpers/invoke-mock.ts`（tauri invoke mock 单一入口，单点把 `InvokeArgs` 联合收窄为
-   对象形态，替代全仓测试散布的 `vi.mocked(invoke)` + as 断言）与
-   `helpers/component-vm.ts`（`findComponent` 字符串选择器实例窄化单点）。
+4. **门槛范围收窄（#737 定稿，先绿后扩）**：存量测试文件类型错多（`.vue` 导入、手搓 invoke mock 参数窄化），一次性纳入不可行。门槛范围 = `scripts/**` + `src/__tests__/helpers/**` + 四个 check-*.test.ts + 全局 `.d.ts`；扩到全量测试目录由 #738–#740 分批承接。mock 边界收口为两个测试助手：`helpers/invoke-mock.ts`（invoke mock 单一入口）与 `helpers/component-vm.ts`（组件实例窄化单点）。
 
 5. **双运行时事实固化**：**门槛脚本 = Bun；前端构建/测试（vite / vitest / vue-tsc /
    build.rs 之外的 node 工具）= node@22**。两套运行时各管一段，不存在「哪边都能跑」的
    灰色地带；CI frontend job 与 frontend-test 分片 job 均经 `oven-sh/setup-bun@v2`
    安装固定 1.4.0（与本地门槛同一固定值，升级走显式 bump），其余步骤不变。
 
-6. **脚本坐标全量同步**：AGENTS.md、ADR-0047/0049/0056/0071、`src-tauri/build.rs`、
-   `src-tauri/src/signals_cross_check.rs`、i18n 模块注释、测试头注释中的
-   `check-*.js` 坐标全部改指 `.ts`；全仓 `rg` 零 `.js` 旧坐标残留（守门脚本相关）。
-   机制术语「守门脚本 / 门槛脚本」沿用各 ADR 既有定义，不进词汇表。
+6. **术语**：「守门脚本 / 门槛脚本」沿用各 ADR 既有定义，不进词汇表。
 
 ## 理由
 

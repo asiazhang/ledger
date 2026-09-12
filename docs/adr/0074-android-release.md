@@ -1,6 +1,6 @@
 # ADR-0074: Android 发布——GitHub Release 直装 APK、并入现有发布矩阵、iOS 暂缓
 
-- 状态：已接受（实施待启动，grilling 定稿）
+- 状态：已接受（已落地；Android 随移动端在 Unreleased 交付，grilling 定稿）
 - 日期：2026-09-05
 - 作者：Ledger 项目
 - 关联：ADR-0066（发布矩阵与单一 Release 拓扑沿用；其「全平台暂不签名」在 Android 侧由本 ADR 决策 3 取代，「移动端不在桌面发布范围」仍为真）；ADR-0047（命令注册扫描面不变，决策 6）；CI 基线 `.github/workflows/build.yml`；根 README「安装」节（随实施同步）

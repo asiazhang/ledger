@@ -1123,44 +1123,68 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     })
   }
 
-  // ⑦ test_utils 生产编译门（ADR-0111 决策 5 / issue #1132）：测试器具默认不进
-  // 生产编译，由构建形态保证，而非注释约定。四处删除即变红——clippy 走
+  // ⑦ 测试导出生产编译门（ADR-0111 决策 5）：测试目标专用导出默认不进生产
+  // 编译，由构建形态保证，而非注释约定。删除即变红——clippy 走
   // `--all-features`、测试走 dev-dependency，都发现不了门被摘掉：
   //   ① infra `test_utils` 模块声明须带「放行测试」的 cfg 门（无门/反向门即生产编译）；
   //   ② 根包 `test_utils` 再导出须带同一形态的门（无门即生产构建解析失败）；
   //   ③ 生产依赖（`[dependencies]` 与 target 变体）不得对 ledger-infra 启用 test-utils；
-  //   ④ 根包与 infra 的 `[features] default` 不得包含 test-utils（默认 feature 即生产）。
+  //   ④ 根包与 infra 的 `[features] default` 不得包含 test-utils（默认 feature 即生产）；
+  //   ⑤ 投资五节标题锚点常量（issue #1185，住 `handlers/import.rs`）须带同一形态的门；
+  //   ⑥ 锚点再导出（`api_server/mod.rs`）须带同一形态的门。
   const gatedDecls = [
     {
       file: join(srcTauriDir, INFRA_SRC_REL, 'lib.rs'),
       re: /^\s*pub\s+mod\s+test_utils\s*;/,
       label: 'pub mod test_utils;',
+      gate: 'test_utils 生产编译门',
+      src: 'ADR-0111 决策 5 / issue #1132',
+      productionArtifact: '测试器具',
     },
     {
       file: join(srcTauriDir, 'src', 'lib.rs'),
       re: /^\s*pub\s+use\s+ledger_infra::test_utils\s*;/,
       label: 'pub use ledger_infra::test_utils;',
+      gate: 'test_utils 生产编译门',
+      src: 'ADR-0111 决策 5 / issue #1132',
+      productionArtifact: '测试器具',
+    },
+    // 投资五节标题锚点（issue #1185）：#1121 常量结构锁与 #1123 API 集成锁的
+    // 共享单一住处，仅测试构建编译——门摘掉即测试锚点静默进生产二进制。
+    {
+      file: join(srcTauriDir, 'src', 'api_server', 'handlers', 'import.rs'),
+      re: /^\s*pub\s+const\s+INVESTMENT_SECTION_HEADERS\b/,
+      label: 'pub const INVESTMENT_SECTION_HEADERS',
+      gate: '投资五节锚点生产编译门',
+      src: 'issue #1185',
+      productionArtifact: '测试锚点',
+    },
+    {
+      file: join(srcTauriDir, 'src', 'api_server', 'mod.rs'),
+      re: /^\s*pub\s+use\s+handlers::import::INVESTMENT_SECTION_HEADERS\s*;/,
+      label: 'pub use handlers::import::INVESTMENT_SECTION_HEADERS;',
+      gate: '投资五节锚点生产编译门',
+      src: 'issue #1185',
+      productionArtifact: '测试锚点',
     },
   ]
-  for (const { file, re, label } of gatedDecls) {
+  for (const { file, re, label, gate, src, productionArtifact } of gatedDecls) {
     const rel = file.slice(srcTauriDir.length + 1)
     if (!existsSync(file)) {
-      problems.push(
-        `✗ test_utils 生产编译门：${rel} 不存在，无法核对 cfg 门（ADR-0111 决策 5 / issue #1132）`,
-      )
+      problems.push(`✗ ${gate}：${rel} 不存在，无法核对 cfg 门（${src}）`)
       continue
     }
     const lines = readFileSync(file, 'utf8').split('\n')
     const declIndex = lines.findIndex((l) => re.test(l))
     if (declIndex === -1) {
-      problems.push(`✗ test_utils 生产编译门：${rel} 找不到 \`${label}\` 声明`)
+      problems.push(`✗ ${gate}：${rel} 找不到 \`${label}\` 声明`)
     } else if (!hasTestAllowingCfgGate(lines, declIndex)) {
       problems.push(
-        `✗ test_utils 生产编译门：${rel} \`${label}\` 未加「放行测试」cfg 门\n` +
+        `✗ ${gate}：${rel} \`${label}\` 未加「放行测试」cfg 门\n` +
           `    ${lines[declIndex].trim()}\n` +
           '    门须为 `#[cfg(any(test, feature = "test-utils"))]`（或等价单行 cfg）；' +
-          '无门 / `#[cfg(not(test))]` / 与测试无关的 cfg 都会让生产编译测试器具' +
-          '（ADR-0111 决策 5 / issue #1132），删除或写反 cfg 门即变红',
+          `无门 / \`#[cfg(not(test))]\` / 与测试无关的 cfg 都会让生产编译${productionArtifact}` +
+          `（${src}），删除或写反 cfg 门即变红`,
       )
     }
   }
@@ -1739,6 +1763,7 @@ function main(): void {
       `· TRANSACTION_MODULES 双向全等（磁盘模块全部登记，ADR-0113 决策 7 / #1181）` +
       `· 交易域区级层序零未认许反向引用（写读 → 接缝 → 共享语义，认许边 ${TRANSACTION_ZONE_ALLOWED_EDGES.length} 条，ADR-0113 决策 3 / #1181）` +
       `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）` +
+      `· 投资五节锚点生产编译门（cfg 门，#1185）` +
       `· http 投影 feature 门（axum optional + impl cfg 门 + default 不含 http + 域侧不启用，#1133）`,
   )
 }

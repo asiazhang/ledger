@@ -51,13 +51,11 @@
 - 代码侧闭集字符串面全部同源；DB CHECK 剩余的冻结字面量有测试互核兜底，漂移必红。
 - 落地：#1022（本票单票承载两 enum + 共享宏 + 互核，grilling 定谳不拆分）。
 
-## 实施 recorded
+## 实施证据（#1022）
 
-（#1022 落地，2026-09-11；ADR-0102 先例：scratch 变体走查、删除即变红记录。）
-
-- **scratch 变体走查**：宏调用清单暂加 `InstrumentType::Walkthrough => "walkthrough"`——`ALL`/`as_str`/`parse` 由宏同源展开自动带入（无第二处可漏登），`create_instrument_manual` 的穷尽 match 即 `E0004 non-exhaustive patterns`（编译红，证明「新增类型必须过手动创建守卫决策行」的强制面不因宏而弱化）；补臂后 V002 CHECK 互核测试红（CHECK 5 字面量 vs `ALL` 6 项），证明互核对 enum/schema 漂移有牙、非恒绿装饰；删 scratch 回绿。
-- **删除即变红（宏接线）**：宏产物被域接缝直接消费——`FromSql`/serde 反序列化消费 `parse`、`ToSql`/`Display`/OpenAPI `enum_values` 消费 `as_str`/`ALL`，删除任一产物即消费点 `E0599` 编译红；「接线即宏本身」，红在编译期。
-- 等价性：`cargo test` 全量 1369 项零改全绿（含 API 契约测试对两闭集的逐字符断言），仅 e2e 步骤层 4 处 parse 调用形态随迁；`./scripts/check.sh` 全绿。
+- **scratch 变体走查**：宏清单加走查变体即带入 `ALL`/`as_str`/`parse`；`create_instrument_manual` 穷尽 match 编译红（强制面不因宏弱化），补臂后 V002 CHECK 互核测试红（5 字面量 vs `ALL` 6 项，证明互核有牙），删 scratch 回绿。
+- **删除即变红**：`FromSql`/serde/`ToSql`/`Display`/OpenAPI 消费宏产物，删任一产物即 `E0599` 编译红。
+- **等价性**：`cargo test` 1369 项零改全绿（含契约逐字符断言），仅 e2e 4 处 parse 调用形态随迁。
 
 ### #1071 收口（2026-09-11，代价 4 的存量债结清）
 
@@ -77,5 +75,5 @@
 - **票面候选中判定保留裸 `Invalid` 的两点（ADR-0050 决策 2「程序性/内部错误可不转」的逐点裁定，非票面预授权）**：
   - `scheduled_transactions/engine.rs` 的 `未知周期类型` 防御臂：`recurrence_type` 列只由 `RecurrenceType` 闭集写入，闭集外的值只可能来自外部改库——判「内部不一致」；同一条件的稳定码已归 `RecurrenceType` 解析边界（`scheduled-plan.recurrence-unknown`），此处另立码会让一条条件长出两个码。
   - `api_server/handlers/categories.rs` 的请求体反序列化失败：`message` 是 JSON 解析器的技术错误原文（英文、位置相关），没有可逐字保留的中文模板——判「程序性输入格式错误」。同族先例：其余 handler 的 `Json<T>` / `Query<T>` extractor 拒绝（如标的搜索非法 `type`）走框架默认 400 体、同样无码不经 `AppError`，本点与之一致；同族的 sync_engine 序列化失败亦在同票排除清单。
-- **测试层归口（对 ADR-0050 决策 6 的显式例外，先例 #1071）**：决策 6 把「错误契约的字段断言」归 `src-tauri/tests/api_server/` 集成测试。本票 8 条码的可达面分三类：`instrument.query-required` 走 HTTP 面——已在 `tests/api_server/instrument_search.rs` 断言码、`message` 与 `params` 缺席（决策 6 正例）；5 条闭集解析（`budget.period-unknown` + `scheduled-plan` 三条 + `scheduled-occurrence.status-unknown`）只经 rusqlite/serde 扁平化，`code`/`params` 不随之外传，HTTP/IPC 面都无从断言（与 `account.type-unknown` 同形的已知边界）；`scheduled-plan.occurrence-date-invalid`（计划建档 IPC）与 `db.integrity-check-failed`（失败恢复 / 备份恢复 IPC）虽经 IPC 上抛，但两者都不经过 HTTP 面，且命令面集成测试现无同类归口。故其余 7 条按 #1071 的构造点口径在域/基础设施单测钉码形态：`scheduled_transactions/tests/parse_codes.rs`、`budget/tests.rs`、`db/tests/integrity.rs`（`PRAGMA writable_schema` 造非 `ok` 结果，断言实际 pragma 输出），zh/en 模板插值归 Vitest `src/__tests__/errors-adr-0050-sweep.test.ts`；两条 IPC 可达码的壳层断言若需要，归后续命令面集成测试票。
-- **`db.*` 命名空间说明**：`db.integrity-check-failed` 与系统通用码 `db.error` 同前缀。CONTEXT-core（错误码词条）只约定 `Db`/`Parse`/`Io` **系统错误**携带通用码、底层驱动消息不入码表，未禁止 db 层条件码；构造点在 `db/mod.rs` 基础设施、启动引导/备份恢复/同步 checkpoint 三域共用，沿用 `db` 前缀而不新造域。
+- **测试层归口（对 ADR-0050 决策 6 的显式例外，先例 #1071）**：`instrument.query-required` 走 HTTP 面，在 API 集成测试断言码与 `params` 缺席；5 条闭集解析码经 serde/rusqlite 扁平化不上抛，按 #1071 构造点口径归域/基础设施单测钉码；两条 IPC 可达码的壳层断言归后续命令面集成测试票。
+- **`db.*` 命名空间**：`db.integrity-check-failed` 构造点在基础设施、启动引导/备份恢复/同步 checkpoint 三域共用，沿用 `db` 前缀而不新造域。
