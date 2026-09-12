@@ -19,8 +19,8 @@ mod tests {
     use super::AI_PROMPT;
 
     /// 入口提示词骨架契约锁（issue #286，骨架定义见 AI_PROMPT 常量注释；
-    /// issue #839 契约发现路径换轨紧凑方言端点）：三步与纪律在位、约定细节
-    /// 零复述——防细节回流造成两处口径分叉。
+    /// issue #839 契约发现路径换轨紧凑方言端点；issue #1122 双形态措辞）：
+    /// 双形态在位、三步与纪律在位、约定细节零复述——防细节回流造成两处口径分叉。
     #[test]
     fn prompt_is_entry_skeleton_without_convention_details() {
         // 三步入口与唯一纪律在位（第一步指向紧凑契约方言，旧 OpenAPI 地址退役）
@@ -35,6 +35,18 @@ mod tests {
         assert!(
             AI_PROMPT.contains("GET /api/v1/import/knowledge"),
             "应指引发现阶段：获取导入知识"
+        );
+        // 双形态并列在位（issue #1122 / ADR-0110 决策 6）：AI 记账与数据迁移
+        assert!(AI_PROMPT.contains("AI 记账"), "应承认会话形态：AI 记账");
+        assert!(AI_PROMPT.contains("数据迁移"), "应承认会话形态：数据迁移");
+        // 「迁移为主直录为辅」的说法退役（ADR-0110 决策 6）
+        assert!(
+            !AI_PROMPT.contains("主要场景"),
+            "迁移为主的措辞应退役（issue #1122）"
+        );
+        assert!(
+            !AI_PROMPT.contains("也可直接录入记账"),
+            "直录为辅的措辞应退役（issue #1122）"
         );
         assert!(AI_PROMPT.contains("不删后重导"), "应保留唯一入口级纪律");
         // 服务常驻排查提示在位（连接失败 → 请用户启动开源记账后重试；标题
