@@ -15,6 +15,7 @@ import {
   PROTOCOL_SRC_REL,
   TRANSACTION_MODULES,
   TRANSACTION_SRC_REL,
+  TRANSACTION_ZONE_ALLOWED_EDGES,
   WHITELIST,
   LAYER,
 } from '../scripts/check-structure.ts'
@@ -1449,6 +1450,187 @@ describe('check-structure INFRA_MODULES 双向全等 + crate 内分层断言（A
   it('外挂测试豁免：db/tests/ 引用 boot 不红', () => {
     const args = makeFixture({
       'db/tests/common.rs': 'pub fn s() { crate::boot::encryption::probe_file_kind(); }\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+})
+
+describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-0113 决策 7 / #1181）', () => {
+  // 四条新断言各由负向夹具锚定（ADR-0087 断言强度，断言对准退出码与输出）：
+  // ① 双向全等、② 区级层序、③ 模型目录判据各有一枚夹具；删任一条断言须动
+  // 脚本（清单外无豁免面），对应夹具转绿 → 该夹具测试失败（CI 红）。
+  it('真实仓库默认通过：磁盘模块全部登记 + 区级层序零未认许反向引用（认许边 = ADR-0113 决策 3 原形状反边）', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain('TRANSACTION_MODULES 双向全等')
+    expect(r.output).toContain('区级层序零未认许反向引用')
+    // 认许边条数自脚本导出清单派生（单一事实源，无双源漂移）
+    expect(r.output).toContain(`认许边 ${TRANSACTION_ZONE_ALLOWED_EDGES.length} 条`)
+  })
+
+  it('① 磁盘新增未登记模块（顶层 .rs）→ 红（清单漂移 fail loud）', () => {
+    const args = makeCrateFixture()
+    writeFileSync(join(args[1], TRANSACTION_SRC_REL, 'orphan.rs'), STUB)
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('TRANSACTION_MODULES 未登记')
+    expect(r.output).toContain('orphan.rs')
+  })
+
+  it('① 磁盘新增未登记模块（目录型）→ 红', () => {
+    const args = makeCrateFixture()
+    mkdirSync(join(args[1], TRANSACTION_SRC_REL, 'orphan_dir'), { recursive: true })
+    writeFileSync(join(args[1], TRANSACTION_SRC_REL, 'orphan_dir', 'helper.rs'), STUB)
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('TRANSACTION_MODULES 未登记')
+    expect(r.output).toContain('orphan_dir')
+  })
+
+  it('① 仅含测试豁免形态的目录不视为磁盘模块（funding/ / writer/ / tests/ 现行形状绿）', () => {
+    const args = makeCrateFixture()
+    mkdirSync(join(args[1], TRANSACTION_SRC_REL, 'extra'), { recursive: true })
+    writeFileSync(join(args[1], TRANSACTION_SRC_REL, 'extra', 'tests.rs'), STUB)
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('crate 根 lib.rs 是声明与再导出面：跨区再导出不参与区级判向（免登不误报）', () => {
+    const args = makeCrateFixture()
+    writeFileSync(
+      join(args[1], TRANSACTION_SRC_REL, 'lib.rs'),
+      'pub use crate::writer::NormalizedRow;\npub use crate::read::TransactionView;\npub fn stub() {}\n',
+    )
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('② 共享语义引用写路径（认许边之外）→ 红并定位文件行号', () => {
+    const args = makeFixture({ 'command.rs': 'use super::writer::NormalizedRow;\npub fn x() {}\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('区级反向依赖')
+    expect(r.output).toContain('command.rs:1')
+  })
+
+  it('② 共享语义引用接缝（认许边之外）→ 红', () => {
+    const args = makeFixture({
+      'search_text.rs': 'use super::merchant_seam::ensure_merchant;\npub fn x() {}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('区级反向依赖')
+  })
+
+  it('② 接缝引用路径区（写 / 读）→ 红', () => {
+    const seamToWrite = makeFixture({
+      'merchant_seam.rs': 'use super::behavior::create;\npub fn x() {}\n',
+    })
+    expect(run(seamToWrite).status).toBe(1)
+    const seamToRead = makeFixture({
+      'base_currency_seam.rs': 'use super::read::list_transactions;\npub fn x() {}\n',
+    })
+    expect(run(seamToRead).status).toBe(1)
+  })
+
+  it('② 写读两径互不依赖（双向）→ 红', () => {
+    const writeToRead = makeFixture({
+      'batch.rs': 'use super::search::search_transactions;\npub fn x() {}\n',
+    })
+    const r = run(writeToRead)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('区级反向依赖')
+    const readToWrite = makeFixture({
+      'read.rs': 'use super::batch::TransactionBatch;\npub fn x() {}\n',
+    })
+    expect(run(readToWrite).status).toBe(1)
+  })
+
+  it('合法层序链：写→接缝→共享语义、读→同区、同区互依 → 绿', () => {
+    const args = makeFixture({
+      'batch.rs':
+        'use super::write_effects::recalculate;\nuse super::amount::TransactionKind;\npub fn x() {}\n',
+      'search.rs': 'use super::read::list_view;\nuse super::model::Transaction;\npub fn y() {}\n',
+      'behavior.rs': 'use super::writer::insert_row;\npub fn z() {}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('认许边在位绿：共享语义→接缝 / 共享语义→写路径 仅限 ADR-0113 决策 3 登记两条（真实仓库即此形状）', () => {
+    const args = makeFixture({
+      'amount.rs':
+        'pub fn f(conn: &Connection) -> Currency { super::base_currency_seam::current_base_currency(conn) }\n',
+      'model.rs': 'use super::writer;\npub fn g() -> writer::NormalizedRow { writer::NormalizedRow::default() }\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('注释与字符串中的跨区路径不误报（掩码边界）', () => {
+    const args = makeFixture({
+      'search_text.rs': [
+        '/// 消费方见 `super::writer` 与 `super::read`（文档注释不算依赖）',
+        '// super::behavior::create',
+        'let s = "crate::batch::run";',
+        'pub fn f() {}',
+        '',
+      ].join('\n'),
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('花括号列举逐条展开：非首段跨区条目同样命中', () => {
+    const args = makeFixture({
+      'search_text.rs': 'use super::{model::Transaction, read::list_view};\npub fn x() {}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('区级反向依赖')
+    expect(r.output).toContain('read')
+  })
+
+  it('花括号列举闭括号后文本不吞入：后续枚举变体同名不误报（off-by-one 回归锚，缺它则闭括号扫描失效假绿）', () => {
+    const args = makeFixture({
+      'search_text.rs':
+        'use super::{model::Transaction};\npub enum E { A, writer }\npub fn x() {}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('外挂测试豁免：writer/tests/ 引用读路径不红（ADR-0056 决策 5）', () => {
+    const args = makeCrateFixture()
+    mkdirSync(join(args[1], TRANSACTION_SRC_REL, 'writer', 'tests'), { recursive: true })
+    writeFileSync(
+      join(args[1], TRANSACTION_SRC_REL, 'writer', 'tests', 'fixture.rs'),
+      'use super::read::list_view;\npub fn s() {}\n',
+    )
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('③ 模型目录成员的 glob 聚合 → 红（判据扩到目录形态，模型目录化不静默失靶）', () => {
+    const args = makeFixture({ 'item/model/price.rs': 'pub use crate::item::types::*;\npub fn x() {}\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('域模型文件内 glob 聚合')
+    expect(r.output).toContain('item/model/price.rs')
+  })
+
+  it('③ 模型文件名判据不回退：model.rs 内 glob 仍红（文件形态先行例）', () => {
+    const args = makeFixture({ 'investment/model.rs': 'pub use crate::investment::types::*;\npub fn x() {}\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('域模型文件内 glob 聚合')
+  })
+
+  it('③ 模型目录成员不含 glob → 绿（判据只拦聚合，不拦逐类型再导出与类型定义）', () => {
+    const args = makeFixture({
+      'item/model/price.rs':
+        'pub struct Price;\npub use crate::item::types::{Price as ItemPrice};\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(0)

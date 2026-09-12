@@ -45,12 +45,23 @@
 //    全局模型目录已随域归位消亡，防扁平命名空间复活（crate 根裸路径 `models::x`
 //    与别名改写文本不可达，靠评审兜底）；
 // ② 域模型 glob 再导出禁令——`pub use …model(s)::*`（域接缝或跨域拍平）与
-//    域模型文件（model.rs / models.rs）内的 `pub use …::*` 聚合即红，
+//    域模型文件（model.rs / models.rs）及模型目录（model/ / models/，#1181
+//    起判据扩到目录形态，模型目录化不静默失靶）内的 `pub use …::*` 聚合即红，
 //    所有权必须逐类型可见（`pub(crate) use` 受限再导出与私有 `use` glob 引入
 //    不在文本可辨范围，靠评审兜底）。
 // ③ 原生事务语句禁令（issue #1014 / #1003 grilling 定案 7）——产品代码手写
 //    `BEGIN`/`COMMIT`/`ROLLBACK` 即红，唯一合法住址 `db/tx_scope.rs`（事务原语
 //    本体）；靶形态落在字符串里，扫描保留字符串、只掩码注释；外挂测试豁免不变。
+// 交易域模块清单与区级层序（ADR-0113 决策 7 / #1181）：TRANSACTION_MODULES 与
+// `crates/transaction/src` 磁盘模块双向全等（新增未登记非测试模块即红；crate
+// 根 lib.rs 是声明与再导出面，不入清单也不参与磁盘枚举）；区归属（共享语义 /
+// 跨域接缝 / 写路径 / 读路径）在清单条目 zone 字段同址单点声明，据此核对区级
+// 层序唯一——写路径/读路径 → 跨域接缝 → 共享语义，共享语义不得依赖接缝与路
+// 径区，接缝不得依赖路径区，写读两径互不依赖；同区互依合法。设计意图边
+// （ADR-0113 决策 3 登记的原形状反边）逐条留痕 TRANSACTION_ZONE_ALLOWED_EDGES，
+// 重排（#1182）消除后同步删除。引用形态：掩码后匹配 `super::`/`crate::` 前缀
+// + 目标模块名（含花括号列举逐条展开），flat 布局与重排后区目录两种形状同扫
+// 判向不变；表达式位裸路径与别名改写文本不可达，靠评审兜底。
 // crate 边界核对（spec #1086 / issue #1087 门禁前置）：模块路径白名单之上再加
 // crate 级核对——CRATES 是 workspace 成员、分层与允许依赖方向的唯一事实源；
 // 成员目录（crates/*）与 CRATES 双向全等（新 crate 未登记即红）；每个成员须写
@@ -168,34 +179,96 @@ export const BACKUP_MODULES: readonly WhitelistEntry[] = [
 /** 备份域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-backup.dir 同源。 */
 export const BACKUP_SRC_REL = 'crates/backup/src'
 
+/** 交易域 crate 四区词汇（ADR-0113 决策 2）：区归属登记与层序判向共用，字面量单一来源。 */
+export const TRANSACTION_ZONE = {
+  SHARED: '共享语义',
+  SEAM: '跨域接缝',
+  WRITE: '写路径',
+  READ: '读路径',
+} as const
+
+export type TransactionZone = (typeof TRANSACTION_ZONE)[keyof typeof TRANSACTION_ZONE]
+
+/** 交易域模块清单条目：白名单条目 + 区归属（ADR-0113 决策 2——区归属与清单同址单点声明，据此判向）。 */
+export interface TransactionModuleEntry extends WhitelistEntry {
+  zone: TransactionZone
+}
+
 /**
- * 核心交易域 crate 的模块清单（spec #1086 / issue #1092）：路径相对
- * `src-tauri/crates/transaction/src`。P2 首个拆出的底层业务域 crate——全部业务
- * 域可依赖的最底层域。对根包与任何业务域零依赖：对投资/商户/币种/物品/保单/
- * 账户六向的残留边已按挂载点反转收敛（#1092 前置提交），反向引用由 cargo 依赖
- * 图拒绝（生产依赖面无根包，dev-dependency 环只覆盖测试目标）。crate 根 lib.rs
- * 是声明与再导出面（无守门靶向代码），与协议/备份 crate 同款不入清单；
- * tests.rs / tests/ / funding/tests.rs / writer/tests/ 均为测试豁免形态不入清单。
+ * 核心交易域 crate 的模块清单（spec #1086 / issue #1092；区归属 ADR-0113 决策
+ * 2/7 / #1181）：路径相对 `src-tauri/crates/transaction/src`。P2 首个拆出的底层
+ * 业务域 crate——全部业务域可依赖的最底层域。对根包与任何业务域零依赖：对投资/
+ * 商户/币种/物品/保单/账户六向的残留边已按挂载点反转收敛（#1092 前置提交），
+ * 反向引用由 cargo 依赖图拒绝（生产依赖面无根包，dev-dependency 环只覆盖测试
+ * 目标）。crate 根 lib.rs 是声明与再导出面（无守门靶向代码），与协议/备份 crate
+ * 同款不入清单，也不参与双向全等的磁盘枚举；tests.rs / tests/ / funding/tests.rs
+ * / writer/tests/ 均为测试豁免形态不入清单。
+ *
+ * zone 字段按 ADR-0113 决策 2 的消费面判据登记（决策 8 目标形状的现行投影）：
+ * 写读两径可依赖接缝与共享语义，接缝只可依赖共享语义，共享语义是底，写读两径
+ * 互不依赖。funding.rs 现行同文件承载出资准入（写路径）与出资账户视图接缝，按
+ * 主体登记写路径区，重排（#1182）分家后各自归位。
  */
-export const TRANSACTION_MODULES: readonly WhitelistEntry[] = [
-  { path: 'amount.rs', layer: '域目录', note: '金额口径权威（kind 枚举真源 + kind→度量矩阵 + 本位币折算）' },
-  { path: 'base_currency_seam.rs', layer: '域目录', note: '交易×币种接缝：本位币基准读取注册点（issue #1092）' },
-  { path: 'batch.rs', layer: '域目录', note: '批量编排权威（批量事务、幂等键/内容哈希去重与批次汇总日志）' },
-  { path: 'behavior.rs', layer: '域目录', note: '行为层编排权威（create/update/delete 三入口 + 写入协议单正文 Local/Replay 两形态，ADR-0105）' },
-  { path: 'command.rs', layer: '域目录', note: '同步命令（op 载荷形态与产出单点，issue #855）' },
-  { path: 'funding.rs', layer: '域目录', note: '出资账户准入（issue #935 / ADR-0096）+ 出资账户视图接缝注册点（issue #1092）' },
-  { path: 'investment_seam.rs', layer: '域目录', note: '交易×投资接缝：投资 kind 计划契约与装配/副作用/投影注册点（issue #1092）' },
-  { path: 'merchant_seam.rs', layer: '域目录', note: '交易×商户接缝：商户名先查/后建钩子组注册点（issue #1092）' },
-  { path: 'model.rs', layer: '域目录', note: '域集中模型（交易全量类型，#423 随域归位）' },
-  { path: 'read.rs', layer: '域目录', note: '读取权威（列表过滤/排序/分页与单笔读取 + 来源列反查注册点，#1090/#1092）' },
-  { path: 'search.rs', layer: '域目录', note: '搜索权威（SQL 下推 + 统一模糊搜索，ADR-0027）' },
-  { path: 'search_text.rs', layer: '域目录', note: '统一模糊搜索语义纯函数（拼音首字母/子序列/词条匹配，ADR-0027）' },
-  { path: 'write_effects.rs', layer: '域目录', note: '写路径副作用接缝：余额重算注册点（issue #1090）' },
-  { path: 'writer.rs', layer: '域目录', note: '写入权威（归一化 + 全列映射 + 审计字段，issue #55）' },
+export const TRANSACTION_MODULES: readonly TransactionModuleEntry[] = [
+  { path: 'amount.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '金额口径权威（kind 枚举真源 + kind→度量矩阵 + 本位币折算）' },
+  { path: 'base_currency_seam.rs', zone: TRANSACTION_ZONE.SEAM, layer: '域目录', note: '交易×币种接缝：本位币基准读取注册点（issue #1092）' },
+  { path: 'batch.rs', zone: TRANSACTION_ZONE.WRITE, layer: '域目录', note: '批量编排权威（批量事务、幂等键/内容哈希去重与批次汇总日志）' },
+  { path: 'behavior.rs', zone: TRANSACTION_ZONE.WRITE, layer: '域目录', note: '行为层编排权威（create/update/delete 三入口 + 写入协议单正文 Local/Replay 两形态，ADR-0105）' },
+  { path: 'command.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '同步命令（op 载荷形态与产出单点，issue #855）；载荷契约被接缝与写路径共同消费，归共享语义，op 产出点随重排（#1182）落写路径区（ADR-0113 决策 3.3）' },
+  { path: 'funding.rs', zone: TRANSACTION_ZONE.WRITE, layer: '域目录', note: '出资账户准入（issue #935 / ADR-0096）+ 出资账户视图接缝注册点（issue #1092）；重排分家：准入留写路径、视图接缝归接缝区（ADR-0113 决策 8）' },
+  { path: 'investment_seam.rs', zone: TRANSACTION_ZONE.SEAM, layer: '域目录', note: '交易×投资接缝：投资 kind 计划契约与装配/副作用/投影注册点（issue #1092）' },
+  { path: 'merchant_seam.rs', zone: TRANSACTION_ZONE.SEAM, layer: '域目录', note: '交易×商户接缝：商户名先查/后建钩子组注册点（issue #1092）' },
+  { path: 'model.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '域集中模型（交易全量类型，#423 随域归位）' },
+  { path: 'read.rs', zone: TRANSACTION_ZONE.READ, layer: '域目录', note: '读取权威（列表过滤/排序/分页与单笔读取 + 来源列反查注册点，#1090/#1092）' },
+  { path: 'search.rs', zone: TRANSACTION_ZONE.READ, layer: '域目录', note: '搜索权威（SQL 下推 + 统一模糊搜索，ADR-0027）' },
+  { path: 'search_text.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '统一模糊搜索语义纯函数（拼音首字母/子序列/词条匹配，ADR-0027）；被投资域下拉共同消费，归共享语义（ADR-0113 决策 2 先例）' },
+  { path: 'write_effects.rs', zone: TRANSACTION_ZONE.SEAM, layer: '域目录', note: '写路径副作用接缝：余额重算注册点（issue #1090）——接缝归接缝区，重排随决策 8 迁 seams/' },
+  { path: 'writer.rs', zone: TRANSACTION_ZONE.WRITE, layer: '域目录', note: '写入权威（归一化 + 全列映射 + 审计字段，issue #55）' },
 ]
 
 /** 核心交易域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-transaction.dir 同源。 */
 export const TRANSACTION_SRC_REL = 'crates/transaction/src'
+
+/**
+ * 交易域区级层序（ADR-0113 决策 3）：允许依赖方向唯一——写路径/读路径 → 跨域
+ * 接缝 → 共享语义。同区互依合法；跨区时秩大者方可依赖秩小者；写路径与读路径
+ * 同秩，互不依赖由「跨区且秩不大即红」承担。
+ */
+const TRANSACTION_ZONE_RANK: Record<TransactionZone, number> = {
+  [TRANSACTION_ZONE.SHARED]: 0,
+  [TRANSACTION_ZONE.SEAM]: 1,
+  [TRANSACTION_ZONE.WRITE]: 2,
+  [TRANSACTION_ZONE.READ]: 2,
+}
+
+/** 交易域区级认许边条目：拥有模块的清单条目路径 + 目标模块键 + 成因留痕 */
+interface TransactionZoneEdge {
+  file: string
+  target: string
+  reason: string
+}
+
+/**
+ * 交易域区级认许边（ADR-0113 决策 3 / #1181）：原形状上与区级层序冲突的既有
+ * 设计意图边逐条留痕于本脚本（与 INFRA_DOMAIN_ALLOWED_EDGES 同款纪律），精确到
+ * 清单条目路径 + 目标模块键，附 ADR 指针；清单之外的区级反向引用一律红。两条均
+ * 为 ADR-0113 决策 3 登记「重排时同步消除」的反边：重排票（#1182）消除边后须
+ * 同步删除对应认许边条目（删边不删认许即假绿面）。
+ */
+export const TRANSACTION_ZONE_ALLOWED_EDGES: readonly TransactionZoneEdge[] = [
+  {
+    file: 'amount.rs',
+    target: 'base_currency_seam',
+    reason:
+      'ADR-0113 决策 3.1：本位币基准读取接缝当前被金额口径（共享语义）依赖——接缝契约随其消费概念归共享语义区，重排票（#1182）消除后删除本条',
+  },
+  {
+    file: 'model.rs',
+    target: 'writer',
+    reason:
+      'ADR-0113 决策 3.2：域模型当前持有到行写入类型的转换实现（共享语义依赖写路径）——转换实现搬进写路径，重排票（#1182）消除后删除本条',
+  },
+]
 
 /**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
@@ -573,11 +646,16 @@ export function scanSyncEngineRefs(text: string): ScanHit[] {
   return hits
 }
 
-/** 域模型文件（ADR-0059 目标形状：每域一个 model.rs；定时计划域为先例名 models.rs） */
+/**
+ * 域模型文件或模型目录成员（ADR-0059 目标形状：每域一个 model.rs，先例名
+ * models.rs；#1181 起判据扩到目录形态——模型目录 model/ / models/ 下的成员
+ * 文件同守「域模型禁止 glob 聚合」，模型目录化不再静默失靶）
+ */
 function isModelFile(relPath: string): boolean {
   const segments = relPath.split('/')
   const file = segments[segments.length - 1]
-  return file === 'model.rs' || file === 'models.rs'
+  if (file === 'model.rs' || file === 'models.rs') return true
+  return segments.slice(0, -1).some((s) => s === 'model' || s === 'models')
 }
 
 /** 测试豁免形态（ADR-0056 决策 5）：tests.rs 文件与 tests/ 目录 */
@@ -1254,6 +1332,151 @@ function checkInfraModuleEquality(srcTauriDir: string): string[] {
 }
 
 /**
+ * TRANSACTION_MODULES 与实际模块双向全等（ADR-0113 决策 7 / #1181，沿用 infra
+ * 侧 #1134 形态）：磁盘侧枚举 `crates/transaction/src` 顶层的实际模块——非测试
+ * 豁免形态的 .rs 文件，与扫得到非测试 .rs 文件的目录（目录型条目覆盖其全部子
+ * 目录，子文件不再逐行登记）——磁盘上存在而清单未登记即红（清单漂移不再只单
+ * 向 fail loud）。crate 根 lib.rs 是声明与再导出面（#1092 同款不入清单），磁盘
+ * 枚举同步排除：crate 根文件名恒定，新增模块经 lib.rs 声明后落磁盘即被本核对
+ * 捕获，不因 lib.rs 免登产生漏检。反方向（登记路径消失 / 条目扫不到非测试文
+ * 件）由 scanModuleEntries 的既有核对承担，本核对不重复报文。
+ */
+function checkTransactionModuleEquality(srcTauriDir: string): string[] {
+  const problems: string[] = []
+  const srcDir = join(srcTauriDir, TRANSACTION_SRC_REL)
+  if (!existsSync(srcDir)) return problems // 清单循环逐条报「路径不存在」
+  const onDisk: string[] = []
+  for (const entry of readdirSync(srcDir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    if (
+      entry.isFile() &&
+      entry.name.endsWith('.rs') &&
+      entry.name !== 'lib.rs' &&
+      !isTestFile(entry.name)
+    ) {
+      onDisk.push(entry.name)
+    } else if (
+      entry.isDirectory() &&
+      collectRustFiles(join(srcDir, entry.name), entry.name).length > 0
+    ) {
+      onDisk.push(entry.name)
+    }
+  }
+  for (const mod of onDisk) {
+    if (!TRANSACTION_MODULES.some((m) => m.path === mod)) {
+      problems.push(
+        `✗ TRANSACTION_MODULES 未登记模块：${mod}（${TRANSACTION_SRC_REL}）\n` +
+          '    清单与实际模块双向全等（ADR-0113 决策 7 / #1181）：新增模块后须在 ' +
+          'scripts/check-structure.ts 的 TRANSACTION_MODULES 追加一行（区归属 + 注释），' +
+          '否则清单漏登记、区级层序与认许边核对静默漏检',
+      )
+    }
+  }
+  return problems
+}
+
+/** 清单条目路径 → 模块键（去 .rs 后缀：flat 文件条目 amount.rs 与目录条目 amount 同键）。 */
+function transactionModuleKey(path: string): string {
+  return path.replace(/\.rs$/, '')
+}
+
+/** 文件所属模块条目：精确匹配优先，其次目录前缀（目录型条目覆盖其全部子目录）。 */
+function transactionOwningEntry(rel: string): TransactionModuleEntry | undefined {
+  return [...TRANSACTION_MODULES]
+    .sort((a, b) => b.path.length - a.path.length)
+    .find((e) => rel === e.path || rel.startsWith(`${e.path}/`))
+}
+
+/**
+ * 交易域 crate 内区级依赖引用扫描（ADR-0113 决策 7 / #1181）：掩码注释与字面量
+ * 后匹配 `super::` / `crate::` 前缀 + 目标模块名（flat 布局的模块名与重排后的
+ * 区目录名同形，两种形状同扫，判向不变）；`::{…}` 花括号列举跨行取匹配闭括号
+ * 后逐条目切分取首段标识符。捕获 = 目标模块名（区归属查表用）。表达式位裸路径
+ * （`writer::x` 无前缀形态，依赖边已由 use 语句承载）与别名改写文本不可达，
+ * 靠评审兜底（与壳层/基础设施扫描同款边界）。
+ */
+function scanTransactionZoneRefs(text: string): ScanHit[] {
+  const masked = maskNonCode(text)
+  const rawLines = text.split('\n')
+  const hits: ScanHit[] = []
+  const lineOf = (index: number): number => (masked.slice(0, index).match(/\n/g)?.length ?? 0) + 1
+  const push = (index: number, match: string, captured: string): void => {
+    const line = lineOf(index)
+    hits.push({ line, text: (rawLines[line - 1] ?? '').trim(), match, captured })
+  }
+  const re = /\b(?:super|crate)\s*::\s*(\{)?/g
+  for (const m of masked.matchAll(re)) {
+    const start = m.index ?? 0
+    const after = start + m[0].length
+    if (m[1] === undefined) {
+      const segment = /^([A-Za-z_][A-Za-z0-9_]*)/.exec(masked.slice(after))
+      if (segment) push(start, m[0] + segment[1], segment[1])
+      continue
+    }
+    // 花括号列举：跨行取匹配闭括号，深度 0 逐条切分后取各条目首段标识符。
+    // `{` 已被正则消费进 m[0]（after 在其后），深度从 1 起数——从 0 起数会使
+    // 闭括号落到 -1、close 恒为 -1，body 吞到文件尾、后续枚举变体等被误报。
+    let depth = 1
+    let close = -1
+    for (let i = after; i < masked.length; i++) {
+      if (masked[i] === '{') depth++
+      else if (masked[i] === '}') {
+        depth--
+        if (depth === 0) {
+          close = i
+          break
+        }
+      }
+    }
+    const body = masked.slice(after, close === -1 ? masked.length : close)
+    for (const entry of disallowedBraceEntries(body)) {
+      push(start, `{…${entry}…}`, entry)
+    }
+  }
+  return hits
+}
+
+/**
+ * 交易域 crate 内区级层序核对（ADR-0113 决策 3/7 / #1181）：对 crate 内全部非
+ * 测试 Rust 文件，按其所属模块条目的 zone 判向——同区互依合法；跨区时秩大者
+ * 方可依赖秩小者（写读 → 接缝 → 共享语义，写读两径互不依赖）；认许边之外即红。
+ * crate 根 lib.rs（声明与再导出面，无所属条目）与未登记孤儿文件（双向全等已
+ * 红）不参与判向。测试豁免形态由 collectRustFiles 过滤（ADR-0056 决策 5）。
+ */
+function checkTransactionZoneDirection(srcTauriDir: string): string[] {
+  const problems: string[] = []
+  const srcDir = join(srcTauriDir, TRANSACTION_SRC_REL)
+  if (!existsSync(srcDir)) return problems // 清单循环逐条报「路径不存在」
+  for (const f of collectRustFiles(srcDir, TRANSACTION_SRC_REL)) {
+    const rel = f.rel.slice(TRANSACTION_SRC_REL.length + 1)
+    const owner = transactionOwningEntry(rel)
+    if (!owner) continue
+    const source = readFileSync(f.abs, 'utf8')
+    for (const hit of scanTransactionZoneRefs(source)) {
+      const target = TRANSACTION_MODULES.find((m) => transactionModuleKey(m.path) === hit.captured)
+      if (!target || target.zone === owner.zone) continue
+      if (TRANSACTION_ZONE_RANK[owner.zone] > TRANSACTION_ZONE_RANK[target.zone]) continue
+      const allowed = TRANSACTION_ZONE_ALLOWED_EDGES.some(
+        (e) => e.file === owner.path && e.target === transactionModuleKey(target.path),
+      )
+      if (allowed) continue
+      problems.push(
+        `✗ 区级反向依赖：${owner.zone}「${owner.path}」引用 ${target.zone}「${target.path}」 → ` +
+          `${f.rel}:${hit.line}（${hit.match}）\n` +
+          `    ${hit.text}\n` +
+          `    区级层序唯一：写路径/读路径 → 跨域接缝 → 共享语义（ADR-0113 决策 3）——` +
+          `共享语义不得依赖接缝与路径区，接缝不得依赖路径区，写读两径互不依赖；` +
+          `区归属与清单同址单点声明（TRANSACTION_MODULES 条目的 zone 字段）；` +
+          `设计意图边须逐条留痕于本脚本 TRANSACTION_ZONE_ALLOWED_EDGES（附 ADR 指针），` +
+          `或把依赖下沉到层序更低的区`,
+      )
+    }
+  }
+  return problems
+}
+
+/**
  * 模块清单核对（ADR-0056 决策 4）：清单条目必须存在且扫得到非测试 Rust 文件
  * （清单漂移 fail loud），条目内对壳层零依赖；基础设施条目另核
  * 基础设施→域认许边（ADR-0071 决策 6 / #538）与 crate 内块间反向依赖
@@ -1483,6 +1706,12 @@ function main(): void {
   // 核对（磁盘模块未登记即红）；登记路径消失 / 扫不到非测试文件已由清单循环红。
   problems.push(...checkInfraModuleEquality(srcTauriDir))
 
+  // TRANSACTION_MODULES 与实际模块双向全等 + 区级层序（ADR-0113 决策 7 / #1181）：
+  // 磁盘侧反向核对（磁盘模块未登记即红）；区归属据清单条目 zone 字段判向，
+  // 认许边（ADR-0113 决策 3 原形状反边）之外即红。
+  problems.push(...checkTransactionModuleEquality(srcTauriDir))
+  problems.push(...checkTransactionZoneDirection(srcTauriDir))
+
   if (problems.length > 0) {
     for (const p of problems) console.error(p)
     console.error(
@@ -1507,6 +1736,8 @@ function main(): void {
       `· crate 边界 ${CRATES.length} 个（成员登记 / 门禁继承 / 依赖方向 / workspace 命令覆盖，#1087）` +
       `· INFRA_MODULES 双向全等（磁盘模块全部登记，ADR-0111 决策 5 / #1134）` +
       `· crate 内块间反向依赖零未认许引用（认许边 ${INFRA_BLOCK_ALLOWED_EDGES.length} 条，ADR-0111 决策 4 / #1134）` +
+      `· TRANSACTION_MODULES 双向全等（磁盘模块全部登记，ADR-0113 决策 7 / #1181）` +
+      `· 交易域区级层序零未认许反向引用（写读 → 接缝 → 共享语义，认许边 ${TRANSACTION_ZONE_ALLOWED_EDGES.length} 条，ADR-0113 决策 3 / #1181）` +
       `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）` +
       `· http 投影 feature 门（axum optional + impl cfg 门 + default 不含 http + 域侧不启用，#1133）`,
   )
