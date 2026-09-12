@@ -99,7 +99,17 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-window-state = "2"
 
+[features]
+# 测试器具可见性（ADR-0111 决策 5 / issue #1132）：`test_utils` 生产不编译，
+# 测试目标（单元测试 + 集成测试）经下面的自身 dev-dependency 启用本 feature 与
+# `ledger-infra/test-utils`；集成测试消费路径 `tauri_app_lib::test_utils` 不变。
+test-utils = ["ledger-infra/test-utils"]
+
 [dev-dependencies]
+# 测试器具（ADR-0111 决策 5 / issue #1132）：自身 dev-dependency 仅对测试目标
+# 启用 `test-utils`，使 `tauri_app_lib::test_utils` 再导出在测试构建中存在；
+# `cargo build` 生产构建不激活 dev-dependency，故不编译测试器具（resolver 3）。
+tauri-app = { path = ".", features = ["test-utils"] }
 cucumber = "0.23"
 futures = "0.3"
 tower = { version = "0.5", features = ["util"] }

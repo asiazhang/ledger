@@ -6,8 +6,9 @@
 //! 同一坏味道在测试桩上重演）。
 //!
 //! 说明：集成测试 `tests/api_server/` 链接的是非 `#[cfg(test)]` 构建的 lib，
-//! 因此本模块不能仅以 `#[cfg(test)]` 编译；`#[doc(hidden)]` 使其不进入文档，
-//! 对生产二进制的影响只是一些未使用的测试辅助类型（可被编译器消除）。
+//! 因此本模块不能仅以 `#[cfg(test)]` 编译；crate 根以
+//! `#[cfg(any(test, feature = "test-utils"))]` 门控（ADR-0111 决策 5 / #1132），
+//! 默认不进生产编译，`#[doc(hidden)]` 另使其不进入文档。
 //
 // C 类豁免（ADR-0060）：仅测试用——本模块被集成测试以非 cfg(test) 构建链接，
 // 无法经 crate 根 cfg(test) 豁免覆盖，故文件级放行六件套；生产路径不得消费本模块。
@@ -19,6 +20,14 @@
     clippy::unimplemented,
     clippy::unreachable
 )]
+// 生产编译门自证（ADR-0111 决策 5 / issue #1132）：crate 根的 cfg 门保证本模块
+// 不进生产构建；若该门被摘掉或写反，本断言在默认 feature 的生产构建（非
+// `cfg(test)`、未启用 `test-utils`）成立并编译失败——「生产构建不编译测试器具」
+// 由此成为编译器可观察结果，而非仅结构守门的文本约定。
+#[cfg(not(any(test, feature = "test-utils")))]
+compile_error!(
+    "test_utils 被编入生产构建：crate 根 cfg 门缺失或失效（ADR-0111 决策 5 / issue #1132）"
+);
 
 use std::sync::{Arc, Condvar, Mutex, Once};
 use std::thread;

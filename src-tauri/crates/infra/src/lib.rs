@@ -30,9 +30,11 @@
 //!
 //! 可见性口径（归位的直接后果）：迁移前以 `pub(crate)` 表达「非公开面」的项，
 //! 若消费方在根包（域 / 壳层 / 壳层守门测试），跨 crate 后必须提为 `pub`——
-//! 全部在 `db::{tx_scope, encryption, passphrase_cache}`、`events`、`signals`
-//! 少数接缝上，签名与语义不变，`grep '^pub(crate)'` 检出的余项仍是本 crate 内部面。
+//! #1131 起该口径覆盖面为 `db::tx_scope` 与 `boot::{encryption,
+//! passphrase_cache}`（经 db 再导出保持原路径）、`events`、`signals`
+//! 少数接缝，签名与语义不变，`grep '^pub(crate)'` 检出的余项仍是本 crate 内部面。
 
+pub mod boot;
 pub mod closed_set;
 pub mod db;
 pub mod error;
@@ -50,5 +52,9 @@ pub use shell_support::{logger, read_entry, redact, write_entry};
 // 本模块与基础设施类型（`events::SignalEmitter`）同 crate 是硬约束——经 dev-dependency
 // 环消费会让消费方拿到第二份 infra 类型实例（类型身份不相容，issue #1088 实测），
 // 故随基础设施归位；根包再导出为 `crate::test_utils` 供集成测试消费。
+// 默认不进生产编译（ADR-0111 决策 5 / issue #1132）：仅 `cfg(test)` 与显式启用
+// `test-utils` feature 的测试构建可见，生产构建不编译测试器具；根包测试目标经
+// dev-dependency 启用 feature（同一编译单元，类型身份不变）。
+#[cfg(any(test, feature = "test-utils"))]
 #[doc(hidden)]
 pub mod test_utils;

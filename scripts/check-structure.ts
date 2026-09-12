@@ -113,7 +113,8 @@ export const WHITELIST: readonly WhitelistEntry[] = [
  * 故模块级守门（对壳层零依赖、基础设施→域认许边）随之落到 crate 根下扫描。
  */
 export const INFRA_MODULES: readonly WhitelistEntry[] = [
-  { path: 'db', layer: '基础设施', note: '数据库连接与 schema 守卫（#1127 起 mod.rs 只留声明与再导出，按职责分 migrate / connection / runtime 三文件；时间与身份工厂自 #1128 升顶层 ids，原 db 路径经再导出保持）' },
+  { path: 'boot', layer: '基础设施', note: '引导层（#1131 自 db 升顶层目录：disposition 启动处置判定与失败门 / data_location 引导 / book_registry 账本注册表 / encryption 加密基座 / passphrase_cache 口令缓存；依赖方向 boot → db 单向，原 db 路径经再导出保持）' },
+  { path: 'db', layer: '基础设施', note: '数据库连接与 schema 守卫（#1127 起 mod.rs 只留声明与再导出，按职责分 migrate / connection / runtime 三文件；时间与身份工厂自 #1128 升顶层 ids、引导层五模块自 #1131 升顶层 boot，原 db 路径经再导出保持）' },
   { path: 'ids.rs', layer: '基础设施', note: '时间与身份工厂（当前时刻 / ISO 格式 / UUID v7 与 v5 确定性派生，#1128 自 db 升入——非数据库关切，文件工具等原语引用不穿透 db）' },
   { path: 'signals', layer: '基础设施', note: '信号映射（ADR-0044；#1129 起为目录模块，mod.rs 只做声明与再导出，测试外挂 tests/ 与 db/ 同形）' },
   { path: 'error.rs', layer: '基础设施', note: '错误' },
@@ -122,7 +123,7 @@ export const INFRA_MODULES: readonly WhitelistEntry[] = [
   { path: 'events.rs', layer: '基础设施', note: '事件发射机制（ADR-0054，#408 纳入守门；消费方跨出壳层——备份域、同步域，不随壳机制分组，ADR-0111 决策 2）' },
   { path: 'closed_set.rs', layer: '基础设施', note: '闭集字符串枚举宏（ADR-0108；模式先例 signals/write_op.rs write_op_set!，ADR-0102）' },
   { path: 'shell_support', layer: '基础设施', note: '壳机制暂住分组（ADR-0111 决策 2 / #1130）：壳层统一写入口 write_entry（ADR-0073）、读入口 read_entry（ADR-0104）、IPC 载荷脱敏 redact、日志初始化 logger——只被壳层消费，正住址是壳层（#1086 P5 迁出）；crate 根再导出保持原调用点路径' },
-  { path: 'test_utils.rs', layer: '基础设施', note: '测试器具（捕获 tracing 事件的 Layer / 闸门式假发射器，#1088 随类型身份约束归位；`#[doc(hidden)]`，生产路径不得消费）' },
+  { path: 'test_utils.rs', layer: '基础设施', note: '测试器具（捕获 tracing 事件的 Layer / 闸门式假发射器，#1088 随类型身份约束归位；`#[cfg(any(test, feature = "test-utils"))]` + `#[doc(hidden)]`，默认不进生产编译，#1132）' },
 ]
 
 /** 基础设施 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-infra.dir 同源。 */
@@ -614,6 +615,81 @@ function inheritsWorkspaceLints(manifest: string): boolean {
   return section !== null && /(?:^|\n)\s*workspace\s*=\s*true\b/.test(section)
 }
 
+/**
+ * 测试器具生产编译门的「放行测试」判定（ADR-0111 决策 5 / issue #1132）：声明
+ * （`pub mod test_utils;` / `pub use ledger_infra::test_utils;`）前的属性链中须有
+ * 一条单行 `#[cfg(...)]`，且该 cfg 在 `test` 或 `test-utils` feature 下放行——无门、
+ * `#[cfg(not(test))]` 等反向门、与测试无关的 cfg 一律不合格（判为生产会编译）。
+ * 声明前允许注释与其它属性（如 `#[doc(hidden)]`），属性顺序不敏感。
+ */
+function hasTestAllowingCfgGate(lines: readonly string[], declIndex: number): boolean {
+  for (let i = declIndex - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (line === '' || line.startsWith('//')) continue
+    if (line.startsWith('#[')) {
+      if (line.startsWith('#[cfg(')) {
+        return /\btest\b/.test(line) && !line.includes('not(')
+      }
+      continue
+    }
+    return false
+  }
+  return false
+}
+
+/**
+ * 生产依赖表（`[dependencies]` 与 `target.*.dependencies`，inline 或子表形态，
+ * 刻意排除 `[dev-dependencies]`）中对 `ledger-infra` 启用 `test-utils` 的原文行；
+ * 命中的行即「生产构建会把测试器具编入」的证据（ADR-0111 决策 5 / #1132）。
+ */
+function productionTestUtilsEnablement(manifest: string): string | null {
+  let section = ''
+  for (const raw of manifest.split('\n')) {
+    const header = raw.trim().match(/^\[([^\]]+)\]$/)
+    if (header) {
+      section = header[1]
+      continue
+    }
+    if (/^(?:target\..+\.)?dependencies$/.test(section)) {
+      if (/^\s*ledger-infra\s*=/.test(raw) && raw.includes('test-utils')) return raw.trim()
+    } else if (/^(?:target\..+\.)?dependencies\.ledger-infra$/.test(section)) {
+      if (/^\s*features\s*=/.test(raw) && raw.includes('test-utils')) return raw.trim()
+    }
+  }
+  return null
+}
+
+/**
+ * `[features] default` 是否（直接或经本清单内 feature 转发）触达 `test-utils`——
+ * 默认 feature 在生产构建启用，等价于把测试器具编入生产构建。转发链上的边按
+ * `includes('test-utils')` 判定，因而也覆盖 `ledger-infra/test-utils` 这类
+ * 跨 crate 引用形态（ADR-0111 决策 5 / #1132）。跨清单的依赖 feature 图不在
+ * 文本可辨范围，靠评审兜底。
+ */
+function defaultFeaturesIncludeTestUtils(manifest: string): boolean {
+  const section = manifestSection(manifest, 'features')
+  if (section === null) return false
+  const featureEdges = new Map<string, string[]>()
+  for (const line of section.split('\n')) {
+    const m = line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*\[([^\]]*)\]/)
+    if (m === null) continue
+    featureEdges.set(
+      m[1],
+      [...m[2].matchAll(/"([^"]+)"/g)].map((x) => x[1]),
+    )
+  }
+  const seen = new Set<string>()
+  const pending = [...(featureEdges.get('default') ?? [])]
+  while (pending.length > 0) {
+    const feature = pending.pop() as string
+    if (feature.includes('test-utils')) return true
+    if (seen.has(feature)) continue
+    seen.add(feature)
+    pending.push(...(featureEdges.get(feature) ?? []))
+  }
+  return false
+}
+
 /** `crates/` 下含 Cargo.toml 的成员 crate 目录（相对 src-tauri，排序保证输出确定）。 */
 function memberCrateDirs(srcTauriDir: string): string[] {
   const cratesDir = join(srcTauriDir, 'crates')
@@ -627,10 +703,13 @@ function memberCrateDirs(srcTauriDir: string): string[] {
 /**
  * crate 边界核对（spec #1086 / issue #1087 门禁前置）：workspace 成员登记、
  * 六件套 deny 门禁继承、依赖方向（壳 → 域 → 基础设施）与静态检查/测试命令
- * 的 workspace 覆盖，全部 fail loud、删除即变红：
+ * 的 workspace 覆盖，外加 test_utils 生产编译门（ADR-0111 决策 5 / #1132），
+ * 全部 fail loud、删除即变红：
  * - 成员漏写 `[lints] workspace = true` → 门禁静默消失，clippy 仍绿，本核对红；
  * - `crates/` 下新增 crate 未登记 CRATES → 边界知识分裂，本核对红；
- * - cargo 命令缺 `--workspace` → 默认只作用于根包，本核对红。
+ * - cargo 命令缺 `--workspace` → 默认只作用于根包，本核对红；
+ * - infra `test_utils` 模块摘掉 cfg 门、或根包生产依赖启用 `test-utils` → 测试
+ *   器具被编入生产构建，本核对红。
  */
 function checkCrateBoundaries(srcTauriDir: string): string[] {
   const problems: string[] = []
@@ -758,6 +837,77 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
         )
       }
     })
+  }
+
+  // ⑦ test_utils 生产编译门（ADR-0111 决策 5 / issue #1132）：测试器具默认不进
+  // 生产编译，由构建形态保证，而非注释约定。四处删除即变红——clippy 走
+  // `--all-features`、测试走 dev-dependency，都发现不了门被摘掉：
+  //   ① infra `test_utils` 模块声明须带「放行测试」的 cfg 门（无门/反向门即生产编译）；
+  //   ② 根包 `test_utils` 再导出须带同一形态的门（无门即生产构建解析失败）；
+  //   ③ 生产依赖（`[dependencies]` 与 target 变体）不得对 ledger-infra 启用 test-utils；
+  //   ④ 根包与 infra 的 `[features] default` 不得包含 test-utils（默认 feature 即生产）。
+  const gatedDecls = [
+    {
+      file: join(srcTauriDir, INFRA_SRC_REL, 'lib.rs'),
+      re: /^\s*pub\s+mod\s+test_utils\s*;/,
+      label: 'pub mod test_utils;',
+    },
+    {
+      file: join(srcTauriDir, 'src', 'lib.rs'),
+      re: /^\s*pub\s+use\s+ledger_infra::test_utils\s*;/,
+      label: 'pub use ledger_infra::test_utils;',
+    },
+  ]
+  for (const { file, re, label } of gatedDecls) {
+    const rel = file.slice(srcTauriDir.length + 1)
+    if (!existsSync(file)) {
+      problems.push(
+        `✗ test_utils 生产编译门：${rel} 不存在，无法核对 cfg 门（ADR-0111 决策 5 / issue #1132）`,
+      )
+      continue
+    }
+    const lines = readFileSync(file, 'utf8').split('\n')
+    const declIndex = lines.findIndex((l) => re.test(l))
+    if (declIndex === -1) {
+      problems.push(`✗ test_utils 生产编译门：${rel} 找不到 \`${label}\` 声明`)
+    } else if (!hasTestAllowingCfgGate(lines, declIndex)) {
+      problems.push(
+        `✗ test_utils 生产编译门：${rel} \`${label}\` 未加「放行测试」cfg 门\n` +
+          `    ${lines[declIndex].trim()}\n` +
+          '    门须为 `#[cfg(any(test, feature = "test-utils"))]`（或等价单行 cfg）；' +
+          '无门 / `#[cfg(not(test))]` / 与测试无关的 cfg 都会让生产编译测试器具' +
+          '（ADR-0111 决策 5 / issue #1132），删除或写反 cfg 门即变红',
+      )
+    }
+  }
+
+  const prodEnableLine = productionTestUtilsEnablement(rootManifest)
+  if (prodEnableLine !== null) {
+    problems.push(
+      '✗ test_utils 生产编译门：根包生产依赖 ledger-infra 启用了 test-utils\n' +
+        `    ${prodEnableLine}\n` +
+        '    test-utils 只许经测试目标（dev-dependency / cfg(test)）启用；' +
+        '生产依赖启用即把测试器具编入生产构建（ADR-0111 决策 5 / issue #1132），删除该 feature 即变红',
+    )
+  }
+
+  const infraManifestPath = join(srcTauriDir, dirname(INFRA_SRC_REL), 'Cargo.toml')
+  if (!existsSync(infraManifestPath)) {
+    problems.push(`✗ test_utils 生产编译门：${dirname(INFRA_SRC_REL)}/Cargo.toml 不存在`)
+  } else {
+    const defaultFeatureManifests: ReadonlyArray<readonly [string, string]> = [
+      [rootManifest, 'src-tauri/Cargo.toml'],
+      [readFileSync(infraManifestPath, 'utf8'), `${dirname(INFRA_SRC_REL)}/Cargo.toml`],
+    ]
+    for (const [manifest, where] of defaultFeatureManifests) {
+      if (defaultFeaturesIncludeTestUtils(manifest)) {
+        problems.push(
+          `✗ test_utils 生产编译门：${where} [features] default 包含 test-utils\n` +
+            '    默认 feature 在生产构建启用，等价于把测试器具编入生产构建' +
+            '（ADR-0111 决策 5 / issue #1132），从 default 移除 test-utils 即变红',
+        )
+      }
+    }
   }
 
   return problems
@@ -958,7 +1108,8 @@ function main(): void {
       `· 业务域→同步域零容忍零违规（ADR-0101 / #1089 收紧）` +
       `· 模型域化禁令全树扫描 ${allFiles.length} 个文件零残留（ADR-0059）` +
       `· 原生事务语句全树扫描 ${allFiles.length} 个文件仅 ${NATIVE_TX_STMT_ALLOWED} 一处（#1014）` +
-      `· crate 边界 ${CRATES.length} 个（成员登记 / 门禁继承 / 依赖方向 / workspace 命令覆盖，#1087）`,
+      `· crate 边界 ${CRATES.length} 个（成员登记 / 门禁继承 / 依赖方向 / workspace 命令覆盖，#1087）` +
+      `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）`,
   )
 }
 

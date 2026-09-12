@@ -21,12 +21,15 @@ use super::book_registry::{
     self, BookRegistry, PendingRelocation, RegistryOrigin, RegistryRead, read_registry,
 };
 use super::encryption::{DbFileKind, probe_file_kind};
-use super::{check_integrity, open_connection, open_connection_with_passphrase};
+use crate::db::{check_integrity, open_connection, open_connection_with_passphrase};
 use crate::error::{AppError, Result};
 use crate::fs_util::{atomic_write, cleanup, replace_file, temp_sibling};
 
-/// 库文件名（固定，不可配置；spec：只选目录、文件名由应用固定）。
-pub const DB_FILE_NAME: &str = "ledger.db";
+// 库文件名现住 [`crate::db::connection::DB_FILE_NAME`]（库文件机制归 db，
+// ADR-0111 决策 4：db 不引用引导层）；本模块经再导出保持既有
+// `crate::db::data_location::DB_FILE_NAME` 与 `crate::boot::data_location::DB_FILE_NAME`
+// 两条路径零改动。
+pub use crate::db::connection::DB_FILE_NAME;
 
 /// 引导文件名：位于默认应用数据目录下，是 DataLocation 与账本注册表的唯一权威
 /// 记录（issue #832 起由单字段指针泛化为账本注册表，文件名沿用不改）；删除该

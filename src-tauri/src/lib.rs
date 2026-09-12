@@ -53,6 +53,9 @@ pub use ledger_infra::{
 };
 // 测试支持器具随基础设施归位（issue #1088）：类型身份要求与 `events::SignalEmitter`
 // 同 crate，根包原路径 `crate::test_utils` / `tauri_app_lib::test_utils` 经再导出保持。
+// 生产构建不编译（ADR-0111 决策 5 / issue #1132）：仅 `cfg(test)` 与显式启用
+// `test-utils` feature 的测试构建含此再导出，feature 由根包自身 dev-dependency 启用。
+#[cfg(any(test, feature = "test-utils"))]
 #[doc(hidden)]
 pub use ledger_infra::test_utils;
 // IPC 载荷脱敏（issue #1087 首位成员）：调用面保持原函数名。

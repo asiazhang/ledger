@@ -5,6 +5,12 @@ description = "Ledger 后端基础设施 crate：无域语义、被所有层消�
 edition = "2024"
 publish = false
 
+[features]
+# 测试器具可见性门（ADR-0111 决策 5 / issue #1132）：`test_utils` 模块默认不参与
+# 生产编译，仅 `cfg(test)` 与显式启用本 feature 的测试构建可见（根包测试目标经
+# dev-dependency 启用）。类型身份约束不变——模块始终住本 crate，不另立 crate。
+test-utils = []
+
 [dependencies]
 # 基础设施全量归位（spec #1086 / issue #1088）：依赖面与迁移前的根包同名依赖一致
 # ——本 crate 承接数据库、错误、设置、文件工具、日志、事件、信号、闭集与壳层
