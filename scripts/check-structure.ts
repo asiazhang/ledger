@@ -213,12 +213,12 @@ export interface TransactionModuleEntry extends WhitelistEntry {
  */
 export const TRANSACTION_MODULES: readonly TransactionModuleEntry[] = [
   { path: 'amount', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '共享语义：金额口径权威（kind 枚举真源 + kind→度量矩阵 + 本位币折算）；子模块 base_currency 承载本位币基准读取接缝契约（ADR-0113 决策 3.1）' },
-  { path: 'command.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '共享语义：同步命令载荷契约（issue #855）；被接缝与写路径共同消费，op 产出点归写路径 write/op.rs（ADR-0113 决策 3.3）' },
-  { path: 'model.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '共享语义：域集中模型（交易全量类型，#423 随域归位）；到 writer::NormalizedRow 的转换 impl 归写路径（ADR-0113 决策 3.2）' },
+  { path: 'command', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '共享语义：同步命令载荷契约（payload 载荷 + fields 语义字段，issue #855）；被接缝与写路径共同消费，op 产出点归写路径 write/op.rs（ADR-0113 决策 3.3）' },
+  { path: 'model', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '共享语义：域集中模型（transaction / input / normalized / filter / repair，#423 随域归位）；到 writer::NormalizedRow 的转换 impl 归写路径（ADR-0113 决策 3.2）' },
   { path: 'seams', zone: TRANSACTION_ZONE.SEAM, layer: '域目录', note: '跨域接缝：商户 / 投资 / 余额刷新 / 出资账户视图 / 来源列反查（计划/保单/物品）；只持契约与注册点' },
   { path: 'search_text.rs', zone: TRANSACTION_ZONE.SHARED, layer: '域目录', note: '共享语义：统一模糊搜索语义纯函数（拼音首字母/子序列/词条匹配，ADR-0027）；被投资域下拉共同消费（ADR-0113 决策 2 先例）' },
   { path: 'write', zone: TRANSACTION_ZONE.WRITE, layer: '域目录', note: '写路径：写入协议（protocol，Local/Replay 同址 ADR-0105）/ 行写入（writer）/ 批量（batch）/ 出资准入（funding）/ op 产出（op）' },
-  { path: 'read', zone: TRANSACTION_ZONE.READ, layer: '域目录', note: '读路径：列表与单笔（mod.rs）/ 来源列与转换投影（source.rs）/ 搜索与拼音修复（search.rs）' },
+  { path: 'read', zone: TRANSACTION_ZONE.READ, layer: '域目录', note: '读路径：列表与单笔（list.rs）/ 来源列与转换投影（source.rs）/ 搜索与拼音修复（search.rs）' },
 ]
 
 /** 核心交易域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-transaction.dir 同源。 */

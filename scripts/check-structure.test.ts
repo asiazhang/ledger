@@ -1573,12 +1573,12 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
 
   it('② 共享语义引用写路径（认许边之外）→ 红并定位文件行号', () => {
     const args = makeFixture({
-      'command.rs': 'use crate::write::writer::NormalizedRow;\npub fn x() {}\n',
+      'command/payload.rs': 'use crate::write::writer::NormalizedRow;\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('区级反向依赖')
-    expect(r.output).toContain('command.rs:1')
+    expect(r.output).toContain('command/payload.rs:1')
   })
 
   it('② 共享语义引用接缝（认许边之外）→ 红', () => {

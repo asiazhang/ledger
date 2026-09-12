@@ -1,78 +1,10 @@
-//! 交易同步命令（共享语义区，issue #855 / ADR-0091）：op 载荷的交易域形态契约。
+//! 同步命令语义字段契约（共享语义区，issue #855 / ADR-0099 决策 6 / ADR-0106 决策 9）。
 //!
-//! 职责：定义同步命令信封载荷（[`TransactionCommand`] 及 [`InvestmentCommandFields`] /
-//! [`ConvertCommandFields`] / [`SplitCommandFields`]）——创建/修改携带实体 id + 归一化
-//! 行，删除只需 id。不变量：**只增不改**，字段演进只追加可选成员，旧日志可在新 schema
-//! 重放（ADR-0091 决策 3）。ADR 指针：ADR-0091 / ADR-0099 决策 6 / ADR-0106 决策 9。
-//! 陷阱：op 产出单点在写路径 `crate::write::op`，载荷契约不落库；重放执行见
-//! `crate::write::protocol`（Local / Replay 同协议，ADR-0105）。
-
-use std::borrow::Cow;
+//! 职责：转换 / 份额调整 / 投资 kind 随 op 携带的语义输入与源端比对锚点。不变量：
+//! **只增不改**——字段演进只追加可选成员，旧日志可在新 schema 重放。ADR 指针：
+//! ADR-0099 决策 6 / ADR-0106 决策 9。陷阱：旧载荷缺省成员由重放端显式挂起，不静默错账。
 
 use serde::{Deserialize, Serialize};
-
-use ledger_sync_protocol::command::SyncCommand;
-
-use crate::model::NormalizedTransaction;
-
-/// 交易同步命令（serde：`action` 判别；作为 DomainCommand 信封的 payload 内嵌）。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "action", rename_all = "snake_case")]
-pub enum TransactionCommand {
-    /// 创建交易：实体 id 与归一化行随命令携带（重放端不得重新生成 id 或折算）。
-    Create {
-        id: String,
-        row: NormalizedTransaction,
-        /// 投资 kind（buy/sell/dividend）的语义字段；其余 kind 为 None。
-        investment: Option<InvestmentCommandFields>,
-        /// 转换 kind（convert）的语义字段与源端算定的结转成本；其余 kind 与
-        /// 旧版本设备产出的载荷（该成员缺省）为 None（ADR-0099 决策 6）。
-        #[serde(default)]
-        convert: Option<ConvertCommandFields>,
-        /// 份额调整 kind（split）的语义字段与源端比对锚点；其余 kind 与旧版本
-        /// 设备产出的载荷（该成员缺省）为 None（ADR-0106 决策 9 / issue #1053）。
-        #[serde(default)]
-        split: Option<SplitCommandFields>,
-    },
-    /// 全字段替换修改（与本地修改同语义）：实体 id 与归一化后的新行随命令携带。
-    Update {
-        id: String,
-        row: NormalizedTransaction,
-        /// 投资 kind（buy/sell/dividend）的语义字段；其余 kind 为 None。
-        investment: Option<InvestmentCommandFields>,
-        /// 转换 kind（convert）的语义字段与源端算定的结转成本；其余 kind 与
-        /// 旧版本设备产出的载荷（该成员缺省）为 None（ADR-0099 决策 6）。
-        #[serde(default)]
-        convert: Option<ConvertCommandFields>,
-        /// 份额调整 kind（split）的语义字段与源端比对锚点；其余 kind 与旧版本
-        /// 设备产出的载荷（该成员缺省）为 None（ADR-0106 决策 9 / issue #1053）。
-        #[serde(default)]
-        split: Option<SplitCommandFields>,
-    },
-    /// 删除交易（软删除）：实体 id 足够——重放端读行现状（kind 守卫、账户引用）
-    /// 执行与本地删除同一协议。
-    Delete { id: String },
-}
-
-impl TransactionCommand {
-    /// 命令指向的实体 id（创建/修改随行携带，删除即目标 id）。
-    pub(crate) fn subject_id(&self) -> &str {
-        match self {
-            TransactionCommand::Create { id, .. } | TransactionCommand::Update { id, .. } => id,
-            TransactionCommand::Delete { id } => id,
-        }
-    }
-}
-
-/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
-/// 实体键派生是域自身知识；op 产出直呼协议面（环依赖由 crate 依赖图断开）。
-impl SyncCommand for TransactionCommand {
-    const ENTITY: &'static str = "transaction";
-
-    fn subject(&self) -> Option<Cow<'_, str>> {
-        Some(Cow::Borrowed(self.subject_id()))
-    }
-}
 
 /// 转换 kind（convert）的命令字段（ADR-0099 决策 6 / issue #980）：随 op 携带的
 /// 语义输入与源端算定的结转成本。
