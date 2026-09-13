@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::query::FromRow;
+use ledger_infra::db::query::FromRow;
 
 /// 实物资产生命周期状态：`holding`（在持，估值进在持合计）/ `disposed`
 /// （已处置，退出默认列表与合计，档案保留可回看）。

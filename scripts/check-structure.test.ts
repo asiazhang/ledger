@@ -23,6 +23,8 @@ import {
   MERCHANTS_SRC_REL,
   POLICY_MODULES,
   POLICY_SRC_REL,
+  PHYSICAL_ASSET_MODULES,
+  PHYSICAL_ASSET_SRC_REL,
   PROTOCOL_MODULES,
   PROTOCOL_SRC_REL,
   SCHEDULED_MODULES,
@@ -91,6 +93,7 @@ function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, POLICY_SRC_REL), POLICY_MODULES)
   writeModuleStubs(join(srcTauri, SCHEDULED_SRC_REL), SCHEDULED_MODULES)
   writeModuleStubs(join(srcTauri, BUDGET_SRC_REL), BUDGET_MODULES)
+  writeModuleStubs(join(srcTauri, PHYSICAL_ASSET_SRC_REL), PHYSICAL_ASSET_MODULES)
 }
 
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
@@ -793,6 +796,8 @@ interface CrateFixtureOverrides {
   scheduledManifest?: string
   /** 覆盖预算域 crate 的 `crates/budget/Cargo.toml`（依赖方向负向夹具，#1101） */
   budgetManifest?: string
+  /** 覆盖实物资产域 crate 的 `crates/physical-asset/Cargo.toml`（依赖方向负向夹具，#1102） */
+  physicalAssetManifest?: string
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string
   /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
@@ -1136,6 +1141,28 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   )
   writeFileSync(join(srcTauri, 'crates', 'budget', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
+  // 实物资产域 crate（#1102，P3 叶子业务域 crate）：夹具与真实仓库同形——成员目录 +
+  // 门禁继承 + dev-dependency 测试环。
+  mkdirSync(join(srcTauri, 'crates', 'physical-asset', 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'crates', 'physical-asset', 'Cargo.toml'),
+    overrides.physicalAssetManifest ??
+      [
+        '[package]',
+        'name = "ledger-physical-asset"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[dev-dependencies]',
+        'tauri-app = { path = "../.." }',
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
+  )
+  writeFileSync(join(srcTauri, 'crates', 'physical-asset', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
   writeFileSync(
@@ -1459,6 +1486,72 @@ describe('check-structure 预算域 crate（#1101 P3 叶子业务域 crate 自�
 
   it('预算域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
     // 缺省 budgetManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
+  })
+})
+
+describe('check-structure 实物资产域 crate（#1102 P3 叶子业务域 crate 自根包拆出）', () => {
+  it('真实仓库默认通过：实物资产域 crate 模块级扫描入摘要', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`实物资产域模块 ${PHYSICAL_ASSET_MODULES.length} 项`)
+  })
+
+  it('实物资产域 crate 模块引用壳层 → 红并定位文件行号', () => {
+    // 本域模块文件名与先登记 crate 全部撞名（command.rs / model.rs → 交易域、
+    // crud.rs → 商户域、validation.rs → 保单域，placeOverride 路由优先级归先
+    // 登记 crate），经 makeFixture 后直写 crate 路径覆盖桩（writeModuleStubs
+    // 已按 PHYSICAL_ASSET_MODULES 落位）。
+    const args = makeFixture()
+    writeFileSync(join(args[1], PHYSICAL_ASSET_SRC_REL, 'validation.rs'), shellUse)
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('反向依赖')
+    expect(r.output).toContain('validation.rs:1')
+  })
+
+  it('实物资产域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）', () => {
+    // 撞名同上：直写 crate 路径覆盖桩。
+    const args = makeFixture()
+    writeFileSync(
+      join(args[1], PHYSICAL_ASSET_SRC_REL, 'validation.rs'),
+      'use tauri_app_lib::sync_engine::engine::ReplayEffect;\n',
+    )
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域')
+    expect(r.output).toContain('validation.rs:1')
+  })
+
+  it('实物资产域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1102）', () => {
+    const args = makeCrateFixture({
+      physicalAssetManifest:
+        '[package]\nname = "ledger-physical-asset"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 依赖方向')
+    expect(r.output).toContain('ledger-physical-asset')
+  })
+
+  it('实物资产域 crate 生产依赖核心交易域 crate → 绿（域→域合法上层依赖，Amount 口径消费，#1092）', () => {
+    // 当前估值折本位币消费交易域 Amount 口径是实物资产 → 核心交易的单向依赖
+    //（域间横向依赖，ADR-0056 决策 2 允许），依赖面受 AC 约束（基础设施/协议/
+    // 核心交易域），不属禁边。
+    const args = makeCrateFixture({
+      physicalAssetManifest:
+        '[package]\nname = "ledger-physical-asset"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\nledger-transaction = { path = "../transaction" }\n\n' +
+        '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('实物资产域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
+    // 缺省 physicalAssetManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
     const r = run(makeCrateFixture())
     expect(r.status).toBe(0)
   })

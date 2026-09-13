@@ -13,7 +13,7 @@ use super::model::{
     PhysicalAssetDisposeInput, PhysicalAssetInput, PhysicalAssetUpdateInput,
     PhysicalAssetValuationInput,
 };
-use crate::error::{AppError, Result};
+use ledger_infra::error::{AppError, Result};
 
 // ---------------------------------------------------------------------------
 // 校验与归一化（建档 / 编辑 / 更新估值共守卫，issue #467 T2 拆出共享助手）
