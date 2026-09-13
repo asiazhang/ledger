@@ -5432,6 +5432,7 @@ dependencies = [
 name = "tauri-app"
 version = "0.6.0"
 dependencies = [
+ "aws-lc-rs",
  "aws-sdk-s3",
  "axum",
  "base64 0.23.1",
@@ -5454,7 +5455,6 @@ dependencies = [
  "pinyin",
  "regex",
  "reqwest",
- "ring",
  "rusqlite",
  "rusqlite_migration",
  "security-framework",
