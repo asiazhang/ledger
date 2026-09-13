@@ -87,6 +87,12 @@ ledger-transaction = { path = "crates/transaction" }
 # 账户视图（挂载点⑤，#1092）两处接缝的实现住本域、壳层启动时对装。根包
 # `pub use ledger_accounts as accounts` 再导出保持原调用点路径。
 ledger-accounts = { path = "crates/accounts" }
+# 分类域 crate（spec #1086 / issue #1094，P3 叶子域，参考数据三域各自独立
+# crate 不合并）：分类 CRUD / 自然键幂等创建 / 预算删除守卫 / 排序重排归位；
+# 依赖面只有基础设施与同步协议（对交易域亦零依赖），无接缝无注册点、壳层
+# 启动零接线。根包 `pub use ledger_categories as categories` 再导出保持原
+# 调用点路径。
+ledger-categories = { path = "crates/categories" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]

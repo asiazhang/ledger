@@ -24,7 +24,11 @@ pub mod api_server;
 // #1088 基础设施再导出同款）。域内引擎与调度本体见 `ledger-backup` crate。
 pub use ledger_backup as backup;
 pub mod budget;
-pub mod categories;
+// 分类域 crate（spec #1086 / issue #1094，P3 叶子域）：自根包域目录拆出，根包
+// 以再导出形态保留原引用路径——壳层（commands / api_server）、同步域与其余域
+// 的 `crate::categories::…` / `tauri_app_lib::categories::…` 调用点零改动
+//（expand 形态，ledger-transaction 同款）。域内本体见 `ledger-categories` crate。
+pub use ledger_categories as categories;
 pub mod commands;
 pub mod currencies;
 pub mod dashboard;

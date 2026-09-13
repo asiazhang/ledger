@@ -112,7 +112,6 @@ export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'merchants', layer: '域目录', note: '商户域（#400 阶段 4 归位）' },
   { path: 'physical_asset', layer: '域目录', note: '实物资产域（issue #466 新建即归位，ADR-0064）' },
   { path: 'investment', layer: '域目录', note: '投资域（#401 阶段 5 归位，主体自 commands/investment 随迁；价格写入单点自 sync/persist 迁入）' },
-  { path: 'categories', layer: '域目录', note: '分类域（#404 参考数据域归位，主体自 commands/categories 随迁）' },
   { path: 'currencies', layer: '域目录', note: '币种域（#404 参考数据域归位，清单查询自 commands/currencies 迁入）' },
   { path: 'reports', layer: '域目录', note: '报表域（#405 归位，月度汇总/分类/商户/日期极值聚合读模型，消费 transaction::amount 矩阵）' },
   { path: 'dashboard', layer: '域目录', note: '仪表盘域（#405 归位，全仓净资产跨币种折算聚合）' },
@@ -244,6 +243,24 @@ export const ACCOUNTS_MODULES: readonly WhitelistEntry[] = [
 /** 账户域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-accounts.dir 同源。 */
 export const ACCOUNTS_SRC_REL = 'crates/accounts/src'
 
+/** 分类域 crate 的模块清单（spec #1086 / issue #1094，P3 叶子域；#1092 的
+ * TRANSACTION_MODULES 同形态）：路径相对 `src-tauri/crates/categories/src`。
+ * 参考数据三域各自独立 crate 不合并（spec 裁决）；本域无接缝无注册点（op 产出
+ * 直呼协议面），依赖面只有基础设施与同步协议。对壳层与全部域目录零依赖：
+ * crate 内模块引用壳层/同步域即红（照 TRANSACTION_MODULES 零容忍形态），反向
+ * 引用另由 cargo 依赖图拒绝（生产依赖面无根包，dev-dependency 环只覆盖测试
+ * 目标）。crate 根 lib.rs 是声明与再导出面（无守门靶向代码），与协议/备份/
+ * 交易 crate 同款不入清单；tests.rs 为测试豁免形态不入清单。
+ */
+export const CATEGORIES_MODULES: readonly WhitelistEntry[] = [
+  { path: 'command.rs', layer: '域目录', note: '同步命令（issue #860 / ADR-0091）：op 载荷的分类域形态、产出单点与重放执行' },
+  { path: 'core.rs', layer: '域目录', note: 'CRUD / 幂等创建 / 软删除 / 两级分类校验 / 预算删除守卫 / 排序重排（issue #91 域内收口）' },
+  { path: 'model.rs', layer: '域目录', note: '分类实体与入参、排序项（#419 随域归位）' },
+]
+
+/** 分类域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-categories.dir 同源。 */
+export const CATEGORIES_SRC_REL = 'crates/categories/src'
+
 /**
  * 交易域区级层序（ADR-0113 决策 3）：允许依赖方向唯一——写路径/读路径 → 跨域
  * 接缝 → 共享语义。同区互依合法；跨区时秩大者方可依赖秩小者；写路径与读路径
@@ -347,6 +364,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/accounts',
     layer: CRATE_LAYER.DOMAIN,
     note: '账户域 crate（#1093，P3 叶子业务域 crate：账户 CRUD/余额口径与余额缓存/同步命令，可被投资域与多端同步域依赖）；依赖面只有基础设施、同步协议与核心交易域（accounts → transaction 单向，ADR-0071 决策 5 修订后方向）——核心交易域写路径的余额刷新与出资账户视图两处接缝实现住本域、壳层启动接线，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
+  },
+  {
+    name: 'ledger-categories',
+    dir: 'crates/categories',
+    layer: CRATE_LAYER.DOMAIN,
+    note: '分类域 crate（#1094，P3 叶子域，参考数据三域各自独立 crate 不合并：分类 CRUD/幂等创建/预算删除守卫/排序重排）；依赖面只有基础设施与同步协议（允许集「基础设施、协议、核心交易域」的子集，对交易域亦零依赖），无接缝无注册点、壳层启动零接线，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
   },
 ]
 
@@ -1672,6 +1695,7 @@ function main(): void {
       ...collectRustFiles(join(srcTauriDir, BACKUP_SRC_REL), BACKUP_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, TRANSACTION_SRC_REL), TRANSACTION_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, ACCOUNTS_SRC_REL), ACCOUNTS_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, CATEGORIES_SRC_REL), CATEGORIES_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -1727,6 +1751,7 @@ function main(): void {
   scannedFiles += scanModuleEntries(BACKUP_MODULES, join(srcTauriDir, BACKUP_SRC_REL), problems)
   scannedFiles += scanModuleEntries(TRANSACTION_MODULES, join(srcTauriDir, TRANSACTION_SRC_REL), problems)
   scannedFiles += scanModuleEntries(ACCOUNTS_MODULES, join(srcTauriDir, ACCOUNTS_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(CATEGORIES_MODULES, join(srcTauriDir, CATEGORIES_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -1761,6 +1786,7 @@ function main(): void {
       `+ 备份域模块 ${BACKUP_MODULES.length} 项（crate ${BACKUP_SRC_REL}，#1091）` +
       `+ 核心交易域模块 ${TRANSACTION_MODULES.length} 项（crate ${TRANSACTION_SRC_REL}，#1092）` +
       `+ 账户域模块 ${ACCOUNTS_MODULES.length} 项（crate ${ACCOUNTS_SRC_REL}，#1093）` +
+      `+ 分类域模块 ${CATEGORIES_MODULES.length} 项（crate ${CATEGORIES_SRC_REL}，#1094）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +
