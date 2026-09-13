@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed } from 'vue'
 import { NEmpty, NRadio, NRadioGroup, NSpace, NSpin, NText } from 'naive-ui'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { Line } from 'vue-chartjs'
@@ -14,23 +14,12 @@ import {
   TREND_RANGE_PRESETS,
   usePortfolioTrend,
 } from '@/composables/usePortfolioTrend'
-import type { Instrument } from '@ledger/types'
-
-// 标的列表「走势」入口带入的标的（单标的模式起点）；面板内也可经下拉切换
-const props = defineProps<{
-  entryInstrument?: Instrument | null
-}>()
 
 const reference = useReferenceStore()
+// 走势的选择（模式 / 选中标的 / 预设区间）住投资页会话状态 store（issue #1192，
+// ADR-0094 会话内保留）：标的列表「走势」入口与 focus 落点写 store，面板读同一
+// 事实源——页签重挂后仍是离开时的那个标的，组件不再持入口 props。
 const trend = usePortfolioTrend()
-
-watch(
-  () => props.entryInstrument,
-  (inst) => {
-    if (inst) trend.showInstrument(inst)
-  },
-  { immediate: true },
-)
 
 const instrumentOptions = computed(() =>
   trend.instruments.value.map((i) => ({
@@ -39,13 +28,9 @@ const instrumentOptions = computed(() =>
   })),
 )
 
-const selectedInstrumentId = computed({
-  get: () => trend.instrument.value?.id ?? null,
-  set: (id: string | null) => {
-    const inst = trend.instruments.value.find((i) => i.id === id)
-    if (inst) trend.showInstrument(inst)
-  },
-})
+// 受控下拉：选中 id 只读投影自会话 store，写回经 selectInstrument 单一入口
+// （未在标的字典分页内的 id 不在选项面，写入天然不发生）。
+const selectedInstrumentId = computed(() => trend.instrument.value?.id ?? null)
 
 /** 无价格来源标的（后端判通道 = none，issue #1060）：边界说明而非空图。
  * 放行判定消费后端派生事实，前端不再按类型与市场自行推断。 */
@@ -149,26 +134,29 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
   <NSpace vertical :size="12">
     <NSpace align="center" :size="16">
       <NRadioGroup
-        v-model:value="trend.mode.value"
+        :value="trend.mode.value"
         size="small"
         data-testid="trend-mode"
+        @update:value="trend.setMode"
       >
         <NRadio value="portfolio">{{ t('investments.trend.modePortfolio') }}</NRadio>
         <NRadio value="instrument">{{ t('investments.trend.modeInstrument') }}</NRadio>
       </NRadioGroup>
       <PinyinSelect
         v-if="trend.mode.value === 'instrument'"
-        v-model:value="selectedInstrumentId"
+        :value="selectedInstrumentId"
         :options="instrumentOptions"
         :placeholder="t('investments.trend.instrumentPlaceholder')"
         clearable
         style="width: 260px"
         data-testid="trend-instrument-select"
+        @update:value="trend.selectInstrument"
       />
       <NRadioGroup
-        v-model:value="trend.preset.value"
+        :value="trend.preset.value"
         size="small"
         data-testid="trend-range"
+        @update:value="trend.setPreset"
       >
         <NRadio v-for="p in TREND_RANGE_PRESETS" :key="p.value" :value="p.value">
           {{ t(p.labelKey) }}

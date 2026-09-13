@@ -35,8 +35,9 @@ const appStore = useAppStore()
 
 // 数据拉取（list_holdings + 持仓标的字典拼装）归 usePortfolioOverview——与首页
 // 投资概览卡共享同一拼装接缝（issue #901/#902 契约不动）；过滤/排序/合计派生
-// 与页码归 useHoldingsFilter，全在前端内存完成，实例随页签挂载而生、
-// 卸载而灭（页签与筛选/排序/页码状态全瞬态，进入投资视图一律回默认）。
+// 与页码归 useHoldingsFilter，全在前端内存完成；状态住投资页会话 store
+// （issue #1192，ADR-0094 会话内保留）：页签重挂恢复离开时的筛选/排序/页码，
+// 冷启动回默认，零写盘。
 // 累计收益是全账本口径、不随三维过滤收窄（已实现腿无法归到某行可见持仓），
 // 故直接来自 usePortfolioOverview 而非 useHoldingsFilter。
 const { rows, loading, refresh, totalCumulativePnlGroups } = usePortfolioOverview()
@@ -49,7 +50,6 @@ const {
   setSorter,
   filteredRows,
   page,
-  setPage,
   totalMarketValueGroups,
   totalUnrealizedPnlGroups,
   accountOptions,
@@ -74,15 +74,19 @@ function columnSortOrder(key: HoldingsSortColumn) {
   return sorter.value?.columnKey === key ? sorter.value.order : false
 }
 
-// 分页（issue #912）：页码状态归 useHoldingsFilter（三维任一变化即翻页归零，
-// 卸载重挂回默认），切片由表格内置分页完成（客户端模式按页码内存切片，
-// itemCount 缺省取行集长度）；页大小固定 20 不设选择器；单页时收起分页条
-// （paginate-single-page=false，≤20 行全量直显不出翻页噪声）。合计/空态在
-// 切片前判定（派生自 filteredRows），与可见页无关。
+// 分页（issue #912；页码随会话保留见 issue #1192）：页码状态归 useHoldingsFilter
+// （三维任一变化即翻页归零，会话内保留、冷启动回默认），切片由表格内置分页完成
+// （客户端模式按页码内存切片，itemCount 缺省取行集长度）；页大小固定 20 不设
+// 选择器；单页时收起分页条（paginate-single-page=false，≤20 行全量直显不出
+// 翻页噪声）。合计/空态在切片前判定（派生自 filteredRows），与可见页无关。
+// 恢复页码越界时由 useHoldingsFilter 钳制到有效范围并回写保留态（见该模块），
+// 视图只读消费——此处不再二次钳制。
 const pagination = computed(() => ({
   page: page.value,
   pageSize: HOLDINGS_PAGE_SIZE,
-  onChange: setPage,
+  onChange: (next: number) => {
+    page.value = next
+  },
 }))
 
 // 横向滚动下限 = 各固定列宽总和（全仓单一收口）：名称列是唯一弹性列（minWidth

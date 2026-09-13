@@ -1,18 +1,30 @@
-import { computed, onScopeDispose, ref, watch, readonly, type Ref } from 'vue'
+import { computed, onScopeDispose, readonly, type Ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
 import { matchLabel } from '@/utils/pinyin-filter'
 import { sumByCurrency, type CurrencyAmountGroup, type PortfolioRow } from '@/composables/usePortfolioOverview'
+import {
+  HOLDINGS_PAGE_SIZE,
+  useInvestmentsSessionStore,
+  type HoldingsSorter,
+  type NaiveUiSorterState,
+} from '@/stores/investments-session'
 
 /**
- * 持仓页签三维过滤排序深模块（issue #902，工厂形态 composable）：
+ * 持仓页签三维过滤排序深模块（issue #902，工厂形态 composable；状态归宿见下）：
  * 「过滤意图进、可观察状态与派生集合出」——输入持仓行集合（数据拉取归
  * usePortfolioOverview，与首页投资概览卡共享同一拼装接缝），内化搜索匹配、
  * 账户过滤、列头排序三维闭集与过滤 × 合计派生，全部在前端内存完成
  * （`list_holdings` 契约不动）。
  *
  * 与交易过滤（useTransactionFilter）形态学同源但独立实现：数据域不同、
- * 无 URL 下钻无会话保留——三维状态与页码全瞬态，实例随页签挂载而生、
- * 卸载而灭，进入投资视图一律回默认。
+ * 无 URL 下钻。**issue #1192 起三维状态与页码住投资页会话状态 store**
+ * （ADR-0094 会话内保留，spec #898/#902 的瞬态豁免随本票落地）：本工厂退为
+ * 薄适配——状态投影与意图入口原样转交会话 store，派生链仍在调用方实例内，
+ * 切片仍由表格组件内置分页完成。卸载重挂恢复离开时的选择、冷启动回默认、
+ * 全程零写盘；ESC 复位由投资视图向复位回调注册表声明（见 store resetToDefault）。
+ * 作用域销毁即撤销在途搜索防抖（Spec 轴 finding）：已输入未应用的值不落地，
+ * 回显回到最后应用值——与原实例级实现的 onScopeDispose 行为等价。
  *
  * 维度闭集三：
  * - **搜索**：判定目标为「代码 · 名称」等价文本（与标的搜索同规格，无名称
@@ -37,27 +49,18 @@ import { sumByCurrency, type CurrencyAmountGroup, type PortfolioRow } from '@/co
  * 空态在切片前判定，与可见页无关。
  */
 
-/** 排序维度闭集：市值 / 未实现盈亏两列（与持仓明细表列 key 一致） */
-export type HoldingsSortColumn = 'market_value' | 'unrealized_pnl'
-export type HoldingsSortOrder = 'ascend' | 'descend'
-
-/** 排序状态：null = 默认标的代码字母序 */
-export interface HoldingsSorter {
-  columnKey: HoldingsSortColumn
-  order: HoldingsSortOrder
-}
-
-/** naive-ui `update:sorter` 的单列 sorter 形态（受控排序回传） */
-export interface NaiveUiSorterState {
-  columnKey: string | number
-  order: 'ascend' | 'descend' | false
-}
-
-/** 搜索输入防抖时长（标的浏览器 300ms 先例） */
-export const HOLDINGS_SEARCH_DEBOUNCE_MS = 300
-
-/** 分页页大小：固定值不设选择器（全仓先例：交易页与搜索页同为 20，issue #912） */
-export const HOLDINGS_PAGE_SIZE = 20
+/** 排序维度闭集与常量随状态迁入投资页会话 store（issue #1192）；此处再导出维持
+ * 既有导入路径（消费方经本模块取用），不制造第二口径。 */
+export {
+  HOLDINGS_SEARCH_DEBOUNCE_MS,
+  HOLDINGS_PAGE_SIZE,
+} from '@/stores/investments-session'
+export type {
+  HoldingsSortColumn,
+  HoldingsSortOrder,
+  HoldingsSorter,
+  NaiveUiSorterState,
+} from '@/stores/investments-session'
 
 // ---------------------------------------------------------------------------
 // 纯函数：排序（null 恒排末尾、多币种数值直比、默认代码字母序）
@@ -152,8 +155,6 @@ export interface UseHoldingsFilterReturn {
   readonly filteredRows: Ref<PortfolioRow[]>
   /** 页码（1 起）：过滤排序之后派生行集的展示切片，不是第四个过滤维度 */
   readonly page: Ref<number>
-  /** 翻页意图：表格分页条 onChange 回传入口（切片本身由表格内置分页完成） */
-  setPage(next: number): void
   /** 派生合计（按币种分组）：随过滤子集更新，排序不影响，缺价行不计入 */
   readonly totalMarketValueGroups: Ref<CurrencyAmountGroup[]>
   readonly totalUnrealizedPnlGroups: Ref<CurrencyAmountGroup[]>
@@ -163,70 +164,21 @@ export interface UseHoldingsFilterReturn {
 
 export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterReturn {
   const reference = useReferenceStore()
-
-  const searchInput = ref('')
-  const search = ref('')
-  const accountId = ref<string | null>(null)
-  const sorter = ref<HoldingsSorter | null>(null)
-  const page = ref(1)
-
-  let debounceTimer: ReturnType<typeof setTimeout> | undefined
-
-  function setSearch(input: string) {
-    searchInput.value = input
-    clearTimeout(debounceTimer)
-    debounceTimer = setTimeout(() => {
-      search.value = input.trim()
-    }, HOLDINGS_SEARCH_DEBOUNCE_MS)
-  }
-
-  function setAccount(id: string | null) {
-    accountId.value = id
-  }
-
-  function setSorter(next: NaiveUiSorterState | NaiveUiSorterState[]) {
-    // naive-ui 单列排序闭集：数组形态（多列回传）不属本模块维度，视作清除
-    const single = Array.isArray(next) ? next[0] : next
-    let resolved: HoldingsSorter | null = null
-    if (
-      single &&
-      single.order !== false &&
-      (single.columnKey === 'market_value' || single.columnKey === 'unrealized_pnl')
-    ) {
-      resolved = { columnKey: single.columnKey, order: single.order }
-    }
-    // 同值重设不产生新状态（翻页归零只对实际变化响应）：引用相等使
-    // sync watch 中的 Object.is 比较短路
-    if (
-      sorter.value?.columnKey === resolved?.columnKey &&
-      sorter.value?.order === resolved?.order
-    ) {
-      return
-    }
-    sorter.value = resolved
-  }
+  const session = useInvestmentsSessionStore()
+  // 会话级 store 是三维状态与页码的唯一读写方（ADR-0094）；本工厂只做投影，
+  // 投影一律只读（原实现的 readonly(...) 保证不因状态迁入 store 而消失）。
+  const { holdingsSearchInput, holdingsAccountId: accountId, holdingsSorter: sorter, holdingsPage: storedPage } =
+    storeToRefs(session)
+  const searchInput = readonly(holdingsSearchInput)
 
   // 派生链：过滤（搜索 × 账户）→ 排序 → 合计。合计只依赖过滤子集，
   // 排序变化不触碰合计（排序不影响合计由派生结构保证，非调用方自觉）。
   const filteredRows = computed(() =>
     sortHoldings(
-      filterHoldings(rows.value, { search: search.value, accountId: accountId.value }),
+      filterHoldings(rows.value, { search: session.holdingsSearch, accountId: accountId.value }),
       sorter.value,
     ),
   )
-
-  // 翻页归零（issue #912）：三维任一「应用值」实际变化即回第一页，与行集收窄
-  // 同步（搜索以 300ms 防抖后的应用时点为准，回显不翻页）；同步 flush 使归零
-  // 与意图应用原子生效，不留「维度已变、页码未归」的中间态；离开页签实例消亡，
-  // 页码随三维状态同瞬态回默认。页码超出行集范围时由表格内置钳制兜底
-  // （行集无意图收窄的场景，如重拉后持仓减少）。
-  watch([search, accountId, sorter], () => {
-    page.value = 1
-  }, { flush: 'sync' })
-
-  function setPage(next: number) {
-    page.value = next
-  }
   const totalMarketValueGroups = computed(() =>
     sumByCurrency(
       filteredRows.value.map((r) => ({ currencyCode: r.valueCurrencyCode, cents: r.marketValueCents })),
@@ -245,23 +197,58 @@ export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterR
     reference.investmentAccounts.map((a) => ({ label: a.name, value: a.id })),
   )
 
-  // 页签卸载即实例消亡：防抖定时器随作用域清理，不向卸载后的行集合写回
+  // 页码恢复钳制（ADR-0094 决策 3 / ADR-0045「回退不归零」既有出口的等价形态）：
+  // 恢复/回访时行集可能少于离开时的页码（离开期间清仓或过滤收窄）——落到有效
+  // 范围并写回 store，使保留态与展示一致；只钳展示会让陈旧页码在行集回增后
+  // 重新生效、凭空跳页。持仓是内存切片（无超页请求、无服务端空页信号），故
+  // 钳制点在派生行集而非请求响应，语义仍是「回退到有效范围、不新增第二出口」。
+  // 读出口即对账（不另挂 watcher/effect）：任一消费方读到越界页码时回写一次，
+  // 使内存保留态与展示同源；翻页意图与视图 onChange 直接写本 ref。
+  let lastReconciled: { stored: number; valid: number } | null = null
+  const page = computed<number>({
+    get: () => {
+      const valid = pageCount(filteredRows.value)
+      const stored = storedPage.value
+      const clamped = Math.min(stored, valid)
+      if (
+        clamped !== stored &&
+        (lastReconciled === null ||
+          lastReconciled.stored !== stored ||
+          lastReconciled.valid !== valid)
+      ) {
+        lastReconciled = { stored, valid }
+        // 回写把保留态收进有效范围（只会往小走），翻页归零 watch 不受影响
+        session.setPage(clamped)
+      }
+      return clamped
+    },
+    set: (next) => {
+      lastReconciled = null
+      session.setPage(next)
+    },
+  })
+
+  // 页签卸载（含导航离开投资视图）即撤销在途搜索防抖：已输入未应用的值不落地
   onScopeDispose(() => {
-    clearTimeout(debounceTimer)
+    session.cancelPendingSearch()
   })
 
   return {
-    searchInput: readonly(searchInput),
-    setSearch,
-    accountId: readonly(accountId),
-    setAccount,
-    sorter: readonly(sorter),
-    setSorter,
+    searchInput,
+    setSearch: session.setSearch,
+    accountId,
+    setAccount: session.setAccount,
+    sorter,
+    setSorter: session.setSorter,
     filteredRows,
-    page: readonly(page),
-    setPage,
+    page,
     totalMarketValueGroups,
     totalUnrealizedPnlGroups,
     accountOptions,
   }
+}
+
+/** 派生行集的有效页数（至少 1 页：空集与单页同归第 1 页）。 */
+function pageCount(rows: PortfolioRow[]): number {
+  return Math.max(1, Math.ceil(rows.length / HOLDINGS_PAGE_SIZE))
 }
