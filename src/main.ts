@@ -2,8 +2,7 @@ import "./assets/global.css";
 import { createApp } from "vue";
 import { createPinia } from "pinia";
 import App from "./App.vue";
-import { router } from "./router";
-import { getSavedRouteName } from "@/utils/view-state";
+import { restoreLastView, router } from "./router";
 import { initAppLocale } from "@ledger/i18n";
 import { installGlobalErrorHandler } from "@/utils/global-error-handler";
 
@@ -20,11 +19,8 @@ async function bootstrap() {
   // 英文系统用户不闪中文；详见 @ledger/i18n（ADR-0049）。
   await initAppLocale();
 
-  // ViewState：启动时恢复到上次所在视图；非法/缺失回退默认路由（dashboard）。
-  const saved = getSavedRouteName();
-  if (saved && router.hasRoute(saved)) {
-    await router.replace({ name: saved });
-  }
+  // ViewState：启动时恢复到上次所在视图；非法 / 缺失 / 已关闭功能回退默认路由（dashboard）。
+  await restoreLastView(router);
 
   app.mount("#app");
 }

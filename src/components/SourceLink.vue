@@ -13,6 +13,7 @@ import {
 import { resolveSourceJumpTarget, type TransactionSourceKind } from '@/components/source-jump'
 import { useAppStore } from '@/stores/app'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
+import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import { useInputMode } from '@/composables/useInputMode'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { t } from '@ledger/i18n'
@@ -22,7 +23,8 @@ import type { TransactionSource } from '@ledger/types'
  * 来源列单元格（spec #704 / issue #706，词汇表「来源列」「实体定位参数（focus 参数）」）：
  * 来源类型图标 + 实体名 + 可空状态标注。点击经来源跳转深模块计算路由目标
  * （`resolveSourceJumpTarget`：落点分流、计划页签叠加、focus 统一装配收口单点），
- * 组件只注入收纳谓词（sidebar-order store 的 `isViewContained`）——路由细节不在此处。
+ * 组件只注入收纳与关闭两轴谓词（sidebar-order store 的 `isViewContained`、
+ * feature-toggles store 的 `isFeatureClosed`）——路由细节不在此处。
  *
  * 可点击裁决（词汇表「不可点击范围仅软删保单」）：`status = deleted` 的软删保单
  * 不在列表、无详情面——名称 +「已删除」标注、不可点击（不提供落空的跳转）；
@@ -52,6 +54,7 @@ const props = defineProps<{
 const router = useRouter()
 const app = useAppStore()
 const sidebarOrder = useSidebarOrderStore()
+const featureToggles = useFeatureToggleStore()
 
 // 输入轴（ADR-0088 决策 6 / issue #843）：来源类型全称悬停收进 title tooltip；
 // 触控轴下 title 不可达，改常驻小字展示（悬停一击可达原则「空间够则常驻」——
@@ -84,10 +87,14 @@ const accent = computed(() => {
 
 function go() {
   if (!clickable.value) return
-  // 收纳谓词注入（深模块约定）：只问本次跳转的目标视图
+  // 收纳与关闭两轴谓词注入（深模块约定）：只问本次跳转的目标视图；关闭态跳过
+  // 收纳分流（ADR-0116 决策 4：关闭的功能不进组「更多」页签，改落自有路由）。
   router.push(
-    resolveSourceJumpTarget(props.source.kind, props.source.entity_id, (v) =>
-      sidebarOrder.isViewContained(v),
+    resolveSourceJumpTarget(
+      props.source.kind,
+      props.source.entity_id,
+      (v) => sidebarOrder.isViewContained(v),
+      (v) => featureToggles.isFeatureClosed(v),
     ),
   )
 }

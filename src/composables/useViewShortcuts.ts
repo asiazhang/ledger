@@ -1,6 +1,7 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import type { Router } from 'vue-router'
 import { hasOpenOverlay } from '@/composables/overlayRegistry'
+import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import { useSidebarOrderStore, FIRST_VIEW, PENULTIMATE_VIEW, LAST_VIEW, SIDEBAR_GROUPS } from '@/stores/sidebar-order'
 import type { SidebarGroupId, SidebarGroupOrders } from '@/stores/sidebar-order'
 
@@ -39,13 +40,19 @@ const LAST_KEY = ','
 
 /**
  * 键位推导纯函数：由组内序按固定组带派生全部视图快捷键（组内序定带内位置，重排即带内重排键位）。
- * 只扫主项：组主项不足 3 时带尾空键保留（不产记录）；超位（理论上限内不发生）得 null。
+ * 只扫主项：已关闭功能退出键位表（无提示、不可触发），但保留其原带内下标——
+ * 带内空键待命，不跨组压缩（issue #1242 / ADR-0116）；超位（理论上限内不发生）得 null。
  */
-export function deriveViewShortcuts(orders: SidebarGroupOrders): ViewShortcut[] {
+export function deriveViewShortcuts(
+  orders: SidebarGroupOrders,
+  closedFeatures: readonly string[] = [],
+): ViewShortcut[] {
+  const closed = new Set(closedFeatures)
   const shortcuts: ViewShortcut[] = [{ name: FIRST_VIEW, key: LEAD_KEY }]
   for (const g of SIDEBAR_GROUPS) {
     const band = GROUP_KEY_BANDS[g.id]
     orders[g.id].forEach((name, i) => {
+      if (closed.has(name)) return
       shortcuts.push({ name, key: band[i] ?? null })
     })
   }
@@ -76,7 +83,10 @@ function isPrimaryModifier(e: KeyboardEvent): boolean {
 export function matchViewShortcut(e: KeyboardEvent): string | null {
   if (e.altKey || e.shiftKey) return null
   if (!isPrimaryModifier(e)) return null
-  const shortcuts = deriveViewShortcuts(useSidebarOrderStore().sidebarGroupOrders)
+  const shortcuts = deriveViewShortcuts(
+    useSidebarOrderStore().sidebarGroupOrders,
+    useFeatureToggleStore().closedFeatures,
+  )
   return shortcuts.find((s) => s.key !== null && e.key === s.key)?.name ?? null
 }
 
@@ -86,7 +96,10 @@ export function matchViewShortcut(e: KeyboardEvent): string | null {
  *  setActivePinia 换实例装配）。 */
 export function useViewShortcuts(router: Router) {
   const store = useSidebarOrderStore()
-  const viewShortcuts = computed<ViewShortcut[]>(() => deriveViewShortcuts(store.sidebarGroupOrders))
+  const featureToggles = useFeatureToggleStore()
+  const viewShortcuts = computed<ViewShortcut[]>(() =>
+    deriveViewShortcuts(store.sidebarGroupOrders, featureToggles.closedFeatures),
+  )
 
   const onKeydown = (e: KeyboardEvent) => {
     const name = matchViewShortcut(e)
