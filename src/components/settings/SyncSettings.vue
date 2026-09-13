@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NAlert, NButton, NCard, NInput, NSpace, NSpin, NText, useMessage } from 'naive-ui'
+import { NAlert, NButton, NCard, NInput, NSpace, NSpin, NSwitch, NText, useMessage } from 'naive-ui'
 import { computed, onMounted, ref } from 'vue'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
@@ -9,12 +9,18 @@ import { restartAppShortly } from '@/utils/restart'
 import AppModal from '@/components/AppModal.vue'
 import type { ParkedOpInfo, SyncChannelConfig, SyncCheckpointInfo, SyncStatus } from '@ledger/types'
 
-// 多端同步卡片（issue #862 / #863 / #864 / ADR-0091）：设置页「数据」Tab 的同步可见面——
-// 上次同步时间、挂起数量、「立即同步」动作、挂起通知明细、通道配置表单
-//（WebDAV 凭据）与检查点发布/引导（新端加入向导）。显示值一律来自命令返回
-//（AppSettings 权威），不走 localStorage；通道配置是本机设备配置（不同步）。
+// 多端同步卡片（issue #862 / #863 / #864 / #1218 / ADR-0091）：设置页「数据」
+// Tab 的同步可见面——上次同步时间、挂起数量、「立即同步」动作、挂起通知明细、
+// 通道配置表单（S3 凭据，issue #1218）与检查点发布/引导（新端加入向导）。
+// 显示值一律来自命令返回（AppSettings 权威），不走 localStorage；通道配置是
+// 本机设备配置（不同步）。
 // 明文模式的显著提示是 ADR-0091 决策 8 的界面义务：未开加密时同步数据明文上
 // 通道，警示常驻卡片。
+//
+// 密钥回显口径（#1218 验收「加载时不回显完整密钥」）：命令面照旧回显
+// `secret_key`（「不改密钥直接保存」需要它），界面层不把该值渲染进输入框——
+// 密钥输入框恒以空串起填，已保存值只留在内存表单里；用户未改动即沿用旧值、
+// 改动即提交新值。这样既不看走漏密钥，也不逼迫每次保存重输密钥。
 //
 // 自动触发（打开应用即同步 + 运行期低频轮询）由后端编排，前端零调用面；本卡片
 // 只呈现「同步到什么状态」。挂起通知（issue #863 验收项）：数量 > 0 时展开明细，
@@ -39,14 +45,26 @@ const passphrase = ref('')
 // 挂起操作明细（issue #863 挂起通知）：数量 > 0 时按需拉取，展示码化原因。
 const parkedOps = ref<ParkedOpInfo[]>([])
 
-// 通道配置表单：初值来自命令回显（未配置为空表单，空间字段填默认值）。
-// 两组地址字段并存（WebDAV 组 / S3 组，按 backend 判别消费）：本票只做类型与
-// 保存载荷接线，S3 字段的输入控件、厂商预设与「测试连接」按钮归 #1218/#1219。
-const form = ref<SyncChannelConfig>({
-  backend: 'webdav',
-  base_url: '',
-  username: '',
-  password: '',
+// 通道配置表单（S3 七字段 + 同步空间，issue #1218）：初值来自命令回显（未配置
+// 为空表单，空间字段填默认值），保存固定发 `backend: 's3'`——WebDAV 字段已从
+// 界面移除（后端字段与后端本体随 #1221 收口）。厂商预设下拉与「测试连接」按钮
+// 归 #1220 / #1219。
+//
+// 表单只装本界面拥有的字段：命令回显形态 `SyncChannelConfig` 里被判别的 WebDAV
+// 三字段没有输入面，却会随对象存进表单成为无人读的死状态，故回显时投影一次。
+type ChannelForm = Pick<
+  SyncChannelConfig,
+  | 'space_id'
+  | 'endpoint'
+  | 'region'
+  | 'bucket'
+  | 'prefix'
+  | 'access_key'
+  | 'secret_key'
+  | 'path_style'
+>
+
+const form = ref<ChannelForm>({
   space_id: 'default',
   endpoint: '',
   region: '',
@@ -55,8 +73,18 @@ const form = ref<SyncChannelConfig>({
   access_key: '',
   secret_key: '',
   path_style: false,
-  configured: false,
 })
+
+// 密钥输入缓冲（#1218 验收「加载时不回显完整密钥」）：输入框只绑本 ref，加载与
+// 保存成功后一律清回空串——已保存密钥只活在 form.secret_key（内存），不上屏。
+const secretKeyInput = ref('')
+
+/** 密钥输入框占位：已保存过密钥时提示「留空则保持不变」，否则是普通字段名。 */
+const secretKeyPlaceholder = computed(() =>
+  form.value.secret_key
+    ? t('settings.data.sync.secretKeySavedPlaceholder')
+    : t('settings.data.sync.secretKeyPlaceholder'),
+)
 
 async function refreshStatus() {
   loading.value = true
@@ -88,9 +116,20 @@ async function refreshParkedOps() {
 async function refreshChannelConfig() {
   try {
     const config = await api.getSyncChannelConfig()
-    form.value = config.configured
-      ? config
-      : { ...config, space_id: 'default' }
+    // 投影进表单（不持有回显对象本体）：表单的 v-model 会就地改写所绑对象，
+    // 直接拿 IPC 契约快照当草稿纸用，等于把响应体当可变状态。
+    form.value = {
+      space_id: config.configured ? config.space_id : 'default',
+      endpoint: config.endpoint,
+      region: config.region,
+      bucket: config.bucket,
+      prefix: config.prefix,
+      access_key: config.access_key,
+      secret_key: config.secret_key,
+      path_style: config.path_style,
+    }
+    // 密钥输入恒从空白起（不回显完整密钥）；已保存值留在 form 内供「留空沿用」。
+    secretKeyInput.value = ''
   } catch (e: any) {
     message.error(t('settings.data.sync.loadFailed', { msg: errorMessage(e) }))
   }
@@ -132,26 +171,30 @@ async function syncNow() {
   }
 }
 
-/** 保存通道配置：凭据（按后端判别）与同步空间（跨端共识的世界身份；空值交由后端回默认）。 */
+/**
+ * 保存通道配置（issue #1218）：S3 七字段与同步空间（跨端共识的世界身份；空值
+ * 交由后端回默认），固定发 `backend: 's3'`。
+ *
+ * 密钥取值：输入框有内容（用户改过）用新值，为空则沿用内存里的已保存值——这是
+ * 「加载时不回显完整密钥」前提下仍能「不改密钥直接保存」的机制。保存成功后重新
+ * 回显，把落库结果（含后端归一化后的字段）呈现在表单上。
+ */
 async function saveChannel() {
   saving.value = true
   try {
     await api.setSyncChannelConfig({
-      backend: form.value.backend,
-      base_url: form.value.base_url,
-      username: form.value.username,
-      password: form.value.password,
+      backend: 's3',
       space_id: form.value.space_id.trim() || undefined,
       endpoint: form.value.endpoint,
       region: form.value.region,
       bucket: form.value.bucket,
       prefix: form.value.prefix,
       access_key: form.value.access_key,
-      secret_key: form.value.secret_key,
+      secret_key: secretKeyInput.value !== '' ? secretKeyInput.value : form.value.secret_key,
       path_style: form.value.path_style,
     })
     message.success(t('settings.data.sync.saveOk'))
-    await refreshStatus()
+    await Promise.all([refreshStatus(), refreshChannelConfig()])
   } catch (e: any) {
     message.error(t('settings.data.sync.saveFailed', { msg: errorMessage(e) }))
   } finally {
@@ -310,26 +353,47 @@ async function confirmBootstrap() {
         style="max-width: 320px"
       />
 
-      <!-- 通道配置表单：WebDAV 凭据 + 同步空间。 -->
+      <!-- 通道配置表单（S3 七字段 + 同步空间，issue #1218）：WebDAV 字段已从界面
+           移除（后端字段与后端本体随 #1221 收口）；厂商预设下拉与「测试连接」
+           按钮归 #1220 / #1219。 -->
       <NText strong>{{ t('settings.data.sync.channelTitle') }}</NText>
       <NSpace vertical :size="8">
         <NInput
-          v-model:value="form.base_url"
-          :placeholder="t('settings.data.sync.urlPlaceholder')"
-          data-testid="sync-url"
+          v-model:value="form.endpoint"
+          :placeholder="t('settings.data.sync.endpointPlaceholder')"
+          data-testid="sync-endpoint"
         />
         <NInput
-          v-model:value="form.username"
-          :placeholder="t('settings.data.sync.usernamePlaceholder')"
-          data-testid="sync-username"
+          v-model:value="form.region"
+          :placeholder="t('settings.data.sync.regionPlaceholder')"
+          data-testid="sync-region"
         />
         <NInput
-          v-model:value="form.password"
+          v-model:value="form.bucket"
+          :placeholder="t('settings.data.sync.bucketPlaceholder')"
+          data-testid="sync-bucket"
+        />
+        <NInput
+          v-model:value="form.prefix"
+          :placeholder="t('settings.data.sync.prefixPlaceholder')"
+          data-testid="sync-prefix"
+        />
+        <NInput
+          v-model:value="form.access_key"
+          :placeholder="t('settings.data.sync.accessKeyPlaceholder')"
+          data-testid="sync-access-key"
+        />
+        <NInput
+          v-model:value="secretKeyInput"
           type="password"
           show-password-on="click"
-          :placeholder="t('settings.data.sync.passwordPlaceholder')"
-          data-testid="sync-password"
+          :placeholder="secretKeyPlaceholder"
+          data-testid="sync-secret-key"
         />
+        <NSpace align="center" :size="8">
+          <NSwitch v-model:value="form.path_style" data-testid="sync-path-style" />
+          <NText depth="3" style="font-size: 12px">{{ t('settings.data.sync.pathStyleLabel') }}</NText>
+        </NSpace>
         <NInput
           v-model:value="form.space_id"
           :placeholder="t('settings.data.sync.spacePlaceholder')"
