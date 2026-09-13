@@ -42,12 +42,16 @@ reqwest = { version = "0.13", default-features = false, features = ["blocking", 
 # SigV4 签名、自定义端点与 path-style 寻址；显式凭据 + 自定义端点即可，
 # 不引入 aws-config 的环境配置链。校验和策略在 client 构建处显式配置为
 # WhenRequired（兼容优先，见 transport/s3.rs），不依赖环境变量。
+# 刻意不开 `rustls` feature：它接的是 aws-smithy-runtime 的**旧**连接器
+# （tls-rustls → hyper 0.14 → legacy-rustls-ring → rustls 0.21 + ring），会把
+# #1215 刚换掉的 ring 重新拉进激活依赖图；HTTPS 由 `default-https-client`
+# 提供（aws-smithy-http-client 的 hyper 1.x 客户端 + rustls/aws-lc-rs），
+# 与 #1215 的密码学基座一致。
 aws-sdk-s3 = { version = "1.146", default-features = false, features = [
   "behavior-version-latest",
   "default-https-client",
   "http-1x",
   "rt-tokio",
-  "rustls",
 ] }
 tracing = "0.1"
 # 日志等级运行期 reload（spec #608）：`tracing-subscriber` 的 `reload` 模块在
