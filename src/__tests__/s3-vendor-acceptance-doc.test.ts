@@ -121,10 +121,9 @@ describe('真桶验收清单与预设档位一致', () => {
   })
 
   it('清单结论只取「已实测 / 未实测」闭集', () => {
-    const tiers = [...table.rows].map(([id, row]) => `${id}: ${row.conclusion}`)
-    expect(tiers.every((entry) => entry.endsWith(` ${TIER_VERIFIED}`) || entry.endsWith(` ${TIER_UNVERIFIED}`))).toBe(
-      true,
-    )
+    for (const [id, row] of table.rows) {
+      expect([TIER_VERIFIED, TIER_UNVERIFIED], `${id} 的结论不在闭集内`).toContain(row.conclusion)
+    }
   })
 
   it('逐家结论与预设 verified 档位一致（翻了档位必须改清单）', () => {
