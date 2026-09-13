@@ -1,13 +1,13 @@
 use super::model::Account;
-use crate::db::query::query_all;
-use crate::db::{new_uuid, now_iso};
-use crate::error::{AppError, ErrClass};
-use crate::transaction::amount::{Measure, TransactionKind, TransferSide, signed_amount};
+use ledger_infra::db::query::query_all;
+use ledger_infra::db::{new_uuid, now_iso};
+use ledger_infra::error::{AppError, ErrClass};
 use ledger_sync_protocol::device::device_id;
+use ledger_transaction::amount::{Measure, TransactionKind, TransferSide, signed_amount};
 
 fn setup() -> rusqlite::Connection {
     // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
-    crate::test_support::open()
+    tauri_app_lib::test_support::open()
 }
 
 fn list_accounts(conn: &rusqlite::Connection) -> Vec<Account> {
@@ -30,20 +30,20 @@ fn insert_account(
 ) {
     // 工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）；裸种子绕过
     // create_account 域钩子，按 V017 迁移回填语义补建缓存行（ADR-0067）。
-    crate::test_support::seed_account(conn, id, name, kind, currency, initial);
-    crate::accounts::balance::refresh_account_balances(conn, &[id]).unwrap();
+    tauri_app_lib::test_support::seed_account(conn, id, name, kind, currency, initial);
+    crate::balance::refresh_account_balances(conn, &[id]).unwrap();
 }
 
 fn insert_hidden_account(conn: &rusqlite::Connection, id: &str, name: &str, currency: &str) {
     // 黑洞账户 = 工厂账户种子 + is_hidden 修正（隐藏语义为本域场景输入，
     // 不入工厂种子）；缓存行补建同 insert_account（ADR-0067）。
-    crate::test_support::seed_account(conn, id, name, "other", currency, 0);
+    tauri_app_lib::test_support::seed_account(conn, id, name, "other", currency, 0);
     conn.execute(
         "UPDATE accounts SET is_hidden=1 WHERE id=?1",
         rusqlite::params![id],
     )
     .unwrap();
-    crate::accounts::balance::refresh_account_balances(conn, &[id]).unwrap();
+    crate::balance::refresh_account_balances(conn, &[id]).unwrap();
 }
 
 fn insert_tx(
@@ -68,11 +68,11 @@ fn insert_tx(
     if let Some(to) = to_account_id {
         affected.push(to);
     }
-    crate::accounts::balance::refresh_account_balances(conn, &affected).unwrap();
+    crate::balance::refresh_account_balances(conn, &affected).unwrap();
 }
 
 fn balance(conn: &rusqlite::Connection, account_id: &str) -> i64 {
-    crate::accounts::balance::compute_balance(conn, account_id).unwrap()
+    crate::balance::compute_balance(conn, account_id).unwrap()
 }
 
 #[test]
@@ -406,7 +406,7 @@ fn balance_computed_via_account_flow_measure() {
     // acc-flow-n = +800 −2000 +1500 +60 +0 = 360
     assert_eq!(balance(&conn, "acc-flow-n"), 360);
 
-    let all = crate::accounts::balance::compute_all_balances(&conn).unwrap();
+    let all = crate::balance::compute_all_balances(&conn).unwrap();
     for id in ["acc-flow-m", "acc-flow-n"] {
         assert_eq!(
             *all.get(id).unwrap_or(&0),
@@ -441,7 +441,7 @@ fn compute_all_balances_matches_per_account() {
     insert_tx(&conn, "tx-b5", "refund", 500, "acc-bulk-1", None);
     insert_tx(&conn, "tx-b6", "dividend", 60, "acc-bulk-3", None);
 
-    let all = crate::accounts::balance::compute_all_balances(&conn).unwrap();
+    let all = crate::balance::compute_all_balances(&conn).unwrap();
 
     for id in ["acc-bulk-1", "acc-bulk-2", "acc-bulk-3"] {
         let expected = balance(&conn, id);
@@ -463,7 +463,7 @@ fn compute_all_balances_excludes_soft_deleted_accounts() {
         rusqlite::params!["acc-deleted", now_iso(), device_id(&conn).unwrap()],
     ).unwrap();
 
-    let all = crate::accounts::balance::compute_all_balances(&conn).unwrap();
+    let all = crate::balance::compute_all_balances(&conn).unwrap();
     assert!(all.contains_key("acc-active"), "应包含活动账户");
     assert!(!all.contains_key("acc-deleted"), "不应包含已删除账户");
 }
@@ -504,9 +504,9 @@ fn hidden_account_transaction_visible_in_transaction_list() {
     insert_hidden_account(&conn, "acc-hidden", "无(CNY)", "CNY");
     insert_tx(&conn, "tx-hidden", "expense", 3000, "acc-hidden", None);
 
-    let rows = crate::transaction::list_transactions_internal(
+    let rows = ledger_transaction::list_transactions_internal(
         &conn,
-        &crate::transaction::TransactionListFilter::default(),
+        &ledger_transaction::TransactionListFilter::default(),
     )
     .unwrap();
     assert!(
@@ -523,7 +523,7 @@ fn hidden_account_balance_excluded_from_all_balances() {
     insert_hidden_account(&conn, "acc-hidden", "无(CNY)", "CNY");
     insert_tx(&conn, "tx-h", "income", 5000, "acc-hidden", None);
 
-    let all = crate::accounts::balance::compute_all_balances(&conn).unwrap();
+    let all = crate::balance::compute_all_balances(&conn).unwrap();
     assert!(
         !all.contains_key("acc-hidden"),
         "compute_all_balances 不应包含黑洞账户"
@@ -538,7 +538,7 @@ fn hidden_account_transactions_included_in_reports() {
     insert_tx(&conn, "tx-normal", "income", 1000, "acc-normal", None);
     insert_tx(&conn, "tx-hidden", "expense", 2000, "acc-hidden", None);
 
-    let summary = crate::reports::monthly_summary_rows(&conn, 2026, None, None)
+    let summary = tauri_app_lib::reports::monthly_summary_rows(&conn, 2026, None, None)
         .unwrap()
         .remove(0);
     assert_eq!(summary.income_cents, 1000);
@@ -724,7 +724,7 @@ fn ensure_rate(conn: &rusqlite::Connection, code: &str, rate: f64) {
     .unwrap();
     // 汇率行：工厂汇率种子（簿记戳内部发放，spec #728 / ADR-0084 决策 5；
     // 来源列落表默认，被测调整路径只读汇率值）。
-    crate::test_support::seed_exchange_rate(conn, code, "CNY", rate);
+    tauri_app_lib::test_support::seed_exchange_rate(conn, code, "CNY", rate);
 }
 
 #[test]

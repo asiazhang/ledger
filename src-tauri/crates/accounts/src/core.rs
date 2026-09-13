@@ -7,26 +7,25 @@
 //! 余额调整的交易写入经行为层创建编排入口（issue #310，ADR-0033）：本模块只
 //! 持有外层事务壳与领域组装（方向/差额/缺省备注），不直调 Writer 接缝。
 
-use rusqlite::{Connection, OptionalExtension};
-
-use crate::accounts::balance::refresh_account_balances;
-use crate::db::query::query_all;
-use crate::db::tx_scope::{ensure_transaction, hold_transaction};
-use crate::db::{new_uuid, now_iso};
-use crate::error::{AppError, Result};
-use crate::transaction::TransactionInput;
-use crate::transaction::amount::TransactionKind;
-use crate::transaction::create_transaction_internal;
+use ledger_infra::db::query::query_all;
+use ledger_infra::db::tx_scope::{ensure_transaction, hold_transaction};
+use ledger_infra::db::{new_uuid, now_iso};
+use ledger_infra::error::{AppError, Result};
 use ledger_sync_protocol::device::device_id;
+use ledger_transaction::TransactionInput;
+use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::create_transaction_internal;
+use rusqlite::{Connection, OptionalExtension};
 
 use super::command::{AccountCommand, AccountCommandRow, record_local};
 use super::model::{
     Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountType,
     AccountUpdateInput, BalanceCacheAudit, BalanceCacheDrift,
 };
+use crate::balance::refresh_account_balances;
 
 pub fn list_accounts(conn: &Connection) -> Result<Vec<Account>> {
-    crate::accounts::balance::list_accounts_with_visibility(conn, false)
+    crate::balance::list_accounts_with_visibility(conn, false)
 }
 
 // ---------------------------------------------------------------------------
@@ -52,7 +51,7 @@ const FUNDING_CASH_LIKE_TYPES: [AccountType; 5] = [
 fn funding_account_view(
     conn: &Connection,
     id: &str,
-) -> Result<Option<crate::transaction::funding::FundingAccountView>> {
+) -> Result<Option<ledger_transaction::funding::FundingAccountView>> {
     let (account_type, currency_code): (AccountType, String) = match conn.query_row(
         "SELECT type, currency_code FROM accounts WHERE id=?1 AND is_deleted=0",
         rusqlite::params![id],
@@ -62,11 +61,11 @@ fn funding_account_view(
         Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
         Err(e) => return Err(e.into()),
     };
-    Ok(Some(crate::transaction::funding::FundingAccountView {
+    Ok(Some(ledger_transaction::funding::FundingAccountView {
         class: if FUNDING_CASH_LIKE_TYPES.contains(&account_type) {
-            crate::transaction::funding::FundingAccountClass::CashLike
+            ledger_transaction::funding::FundingAccountClass::CashLike
         } else {
-            crate::transaction::funding::FundingAccountClass::Ineligible
+            ledger_transaction::funding::FundingAccountClass::Ineligible
         },
         type_display: account_type.to_string(),
         currency_code,
@@ -76,12 +75,12 @@ fn funding_account_view(
 /// 注册出资账户视图实现（幂等：进程级一次，重复注册保留首次）。调用点在壳层
 /// 启动接线与测试建库单点，与生产同形；业务代码不直接调用。
 pub fn install_funding_account_hook() {
-    crate::transaction::funding::register_funding_account_lookup_hook(funding_account_view);
+    ledger_transaction::funding::register_funding_account_lookup_hook(funding_account_view);
 }
 
 /// AI 侧完整账户列表：不过滤 `is_hidden`，返回含 `is_hidden` 字段的完整列表。
 pub fn list_accounts_for_api(conn: &Connection) -> Result<Vec<Account>> {
-    crate::accounts::balance::list_accounts_with_visibility(conn, true)
+    crate::balance::list_accounts_with_visibility(conn, true)
 }
 
 pub fn create_account(conn: &Connection, input: AccountInput) -> Result<String> {
@@ -387,7 +386,7 @@ pub fn adjust_account_balance(
         ));
     }
     // 余额调整取数（五出口之一，issue #491）：读缓存而非实时聚合。
-    let current = crate::accounts::balance::cached_balance(conn, id)?;
+    let current = crate::balance::cached_balance(conn, id)?;
     let delta = input
         .target_balance_cents
         .checked_sub(current)
@@ -449,11 +448,11 @@ pub fn adjust_account_balance(
 /// 逐账户比对→修复（整体重算回写）→差异报告。唯一允许绕过 db::write 的缓存修复
 /// 写入（与设置/恢复同列豁免形态）：缓存为派生数据，修复不置脏、不发信号。
 pub fn audit_balance_cache(conn: &Connection) -> Result<BalanceCacheAudit> {
-    let accounts = crate::accounts::balance::list_accounts_with_visibility(conn, true)?;
+    let accounts = crate::balance::list_accounts_with_visibility(conn, true)?;
     let mut drifts = Vec::new();
     for account in &accounts {
-        let actual = crate::accounts::balance::compute_balance(conn, &account.id)?;
-        let cached = crate::accounts::balance::cached_balance_optional(conn, &account.id)?;
+        let actual = crate::balance::compute_balance(conn, &account.id)?;
+        let cached = crate::balance::cached_balance_optional(conn, &account.id)?;
         if cached != Some(actual) {
             drifts.push(BalanceCacheDrift {
                 account_id: account.id.clone(),
@@ -465,7 +464,7 @@ pub fn audit_balance_cache(conn: &Connection) -> Result<BalanceCacheAudit> {
     }
     let repaired = !drifts.is_empty();
     if repaired {
-        crate::accounts::balance::refresh_all_account_balances(conn)?;
+        crate::balance::refresh_all_account_balances(conn)?;
     }
     Ok(BalanceCacheAudit {
         accounts_checked: accounts.len(),
@@ -475,16 +474,16 @@ pub fn audit_balance_cache(conn: &Connection) -> Result<BalanceCacheAudit> {
 }
 
 /// 账户余额清单（conn 级）：`include_hidden` 为 true 时含黑洞账户。
-/// 余额读模型 SQL 收口在 [`crate::accounts::balance`]（ADR-0071）。
+/// 余额读模型 SQL 收口在 [`crate::balance`]（ADR-0071）。
 /// 域内薄委托：对外扁平签名（mod.rs 再导出）保持不变，清单口径单一来源在余额模块。
 pub fn list_account_balances_with_visibility(
     conn: &Connection,
     include_hidden: bool,
 ) -> Result<Vec<AccountBalance>> {
-    crate::accounts::balance::list_account_balances_with_visibility(conn, include_hidden)
+    crate::balance::list_account_balances_with_visibility(conn, include_hidden)
 }
 
 /// AI 侧余额清单：含黑洞账户。
 pub fn list_account_balances_for_api(conn: &Connection) -> Result<Vec<AccountBalance>> {
-    crate::accounts::balance::list_account_balances_with_visibility(conn, true)
+    crate::balance::list_account_balances_with_visibility(conn, true)
 }

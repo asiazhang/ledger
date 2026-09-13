@@ -80,6 +80,13 @@ ledger-backup = { path = "crates/backup" }
 # 反转收敛（#1092 前置提交），壳层启动时对装。根包
 # `pub use ledger_transaction as transaction` 再导出保持原调用点路径。
 ledger-transaction = { path = "crates/transaction" }
+# 账户域 crate（spec #1086 / issue #1093，P3 叶子业务域 crate）：账户 CRUD、余额
+# 口径与余额缓存（V017 / ADR-0067）、同步命令归位；依赖面只有基础设施、同步协议
+# 与核心交易域（余额口径消费 kind→度量矩阵，accounts → transaction 单向），对
+# 壳层与同级业务域零依赖——核心交易域写路径的余额刷新（挂载点②，#1090）与出资
+# 账户视图（挂载点⑤，#1092）两处接缝的实现住本域、壳层启动时对装。根包
+# `pub use ledger_accounts as accounts` 再导出保持原调用点路径。
+ledger-accounts = { path = "crates/accounts" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]
