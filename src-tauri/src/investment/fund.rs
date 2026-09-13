@@ -21,8 +21,37 @@ use crate::error::{AppError, Result};
 
 /// 场外基金标的的固定字典形态（ADR-0038 决策 1）：类型 fund、市场恒 unknown
 /// （场外基金无交易所市场概念，纯字典键）、币种人民币（含 QDII 人民币份额）。
-const FUND_MARKET: &str = "unknown";
+/// 本常量是「fund 市场恒 unknown」的**唯一出处**：本通道落库与标的写入协议
+/// 守卫（[`super::crud`]）共用，避免同一口径出现第二份常量。
+pub(crate) const FUND_MARKET: &str = "unknown";
 const FUND_CURRENCY: &str = "CNY";
+
+/// fund 市场恒 unknown 单点判据（ADR-0038 决策 1 修订 / issue #1194）：场外基金
+/// 没有交易所市场概念，市场位只接受 unknown——非 unknown 一律以
+/// `instrument.fund-market-forbidden` 码化拒绝（规则与文案单点，供调用方市场
+/// 守卫与标的写入协议守卫共用）。
+pub(crate) fn reject_non_unknown_fund_market(market: &str) -> Result<()> {
+    if market == FUND_MARKET {
+        return Ok(());
+    }
+    Err(AppError::codedp(
+        "instrument.fund-market-forbidden",
+        format!("基金标的市场恒为未知：不能携带市场 {market}（场外基金无交易所市场概念）"),
+        &[market],
+    ))
+}
+
+/// 调用方携带市场守卫（ADR-0038 决策 1 修订 / issue #1194）：fund 创建不接受
+/// 调用方携带的非 unknown 市场。6 位按代码增强/降级分支的市场由通道字典形态
+/// 自造（[`FUND_MARKET`]），不读调用方输入——正因如此，这类通道必须在落到写入
+/// 协议**之前**先经本守卫拒绝携带者，否则「不变量对全部创建通道成立」在增强
+/// 通道上不成立。缺省（None）即未携带，放行。
+pub fn reject_carried_fund_market(market: Option<&str>) -> Result<()> {
+    match market {
+        Some(market) => reject_non_unknown_fund_market(market),
+        None => Ok(()),
+    }
+}
 
 /// 6 位纯数字判定（入口收口的安全前提，ADR-0038 决策 6 / ADR-0039 决策 3）：
 /// 消费三方——按代码即拉的入口校验（[`validate_fund_code`]）、AI 端点 fund

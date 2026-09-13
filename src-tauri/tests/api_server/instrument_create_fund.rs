@@ -416,6 +416,102 @@ async fn test_create_fund_replay_returns_same_id_without_price_fragments() {
 // 契约锁：fund 增强语义写入端点自述
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// fund 市场恒 unknown：通用创建通道携带 market 显式拒绝（issue #1194 / ADR-0038）
+// ---------------------------------------------------------------------------
+
+/// fund 类型标的市场恒 unknown 对全部创建通道成立（ADR-0038 决策 1 修订，
+/// issue #1194）：名称充代码（非 6 位）不经按代码增强、走通用创建通道，携带
+/// 非 unknown 市场即显式 400 拒绝且不产生标的行。删掉后端守卫本测试即红
+///（通用通道会 201 建出 market=sh 的基金行）。
+#[tokio::test]
+async fn test_create_fund_with_market_rejects_without_row() {
+    let (app, conn, calls) = setup_app_with_fund_stub(stub_hit());
+
+    let (status, bytes) = post_instrument(
+        &app,
+        r#"{"symbol":"某基金组合","type":"fund","name":"某基金组合","market":"sh"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["kind"], "Invalid");
+    assert_eq!(
+        err["code"], "instrument.fund-market-forbidden",
+        "fund 行携带市场应以稳定错误码拒绝（ADR-0050）"
+    );
+
+    let count: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM instruments WHERE symbol='某基金组合'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0, "被拒的 fund 创建不应产生标的行");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "非 6 位 symbol 不应发起东财请求"
+    );
+}
+
+/// 不携带市场（或显式 unknown）照常建行，市场落 unknown——守卫只拒绝真实市场
+/// 值，不误伤合法通道。
+#[tokio::test]
+async fn test_create_fund_without_market_creates_unknown_row() {
+    let (app, conn, _calls) = setup_app_with_fund_stub(stub_hit());
+
+    let (status, bytes) = post_instrument(
+        &app,
+        r#"{"symbol":"某基金组合A","type":"fund","name":"某基金组合A"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let _: String = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(fund_row(&conn, "某基金组合A").market, "unknown");
+
+    let (status, bytes) = post_instrument(
+        &app,
+        r#"{"symbol":"某基金组合B","type":"fund","name":"某基金组合B","market":"unknown"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let _: String = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(fund_row(&conn, "某基金组合B").market, "unknown");
+}
+
+/// 6 位基金经按代码增强通道时，调用方携带的非 unknown 市场同样被拒——不变量
+/// 「对全部创建通道成立」，不因 6 位增强自造字典市场而例外（issue #1194 /
+/// ADR-0038）。入口守卫先于东财往返：拒绝即不发起网络请求、不落行。删掉入口
+/// 守卫接线本测试即红（增强分支会 201 建出 market=unknown 的基金行）。
+#[tokio::test]
+async fn test_create_six_digit_fund_with_market_rejects_without_lookup_or_row() {
+    let (app, conn, calls) = setup_app_with_fund_stub(stub_hit());
+
+    let (status, bytes) = post_instrument(
+        &app,
+        r#"{"symbol":"000001","type":"fund","name":"华夏成长混合","market":"sh"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["kind"], "Invalid");
+    assert_eq!(err["code"], "instrument.fund-market-forbidden");
+
+    let count: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM instruments", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0, "被拒的 6 位 fund 创建不应产生标的行");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "入口守卫应先于东财往返拒绝，不发起网络请求"
+    );
+}
+
 #[tokio::test]
 async fn test_openapi_create_endpoint_documents_fund_enhancement() {
     let (app, _conn, _calls) = setup_app_with_fund_stub(stub_hit());

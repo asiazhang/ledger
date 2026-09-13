@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use crate::error::{AppError, Result};
 use crate::investment::Quote;
 use crate::investment::add_fund_by_code_with;
-use crate::investment::fund::validate_fund_code;
+use crate::investment::fund::{FUND_MARKET, reject_carried_fund_market, validate_fund_code};
 use crate::investment::prices::price_value_to_cents;
 
 use crate::test_support::open;
@@ -32,6 +32,17 @@ fn quote(code: &str, name: &str, fund_class: &str, nav: Option<(f64, &str)>) -> 
 
 fn stub_fetch_with(quote: Quote) -> impl FnMut(&str, &str) -> Result<Quote> {
     move |_code: &str, _market: &str| Ok(quote.clone())
+}
+
+/// 调用方携带市场守卫（ADR-0038 决策 1 修订 / issue #1194）：fund 创建只接受
+/// 未携带市场或显式通道字典市场 unknown——非 unknown 一律码化拒绝，这是 6 位
+/// 增强/降级通道「不因自造字典市场而形同归一」的域侧判据。
+#[test]
+fn reject_carried_fund_market_accepts_absent_and_unknown_only() {
+    reject_carried_fund_market(None).unwrap();
+    reject_carried_fund_market(Some(FUND_MARKET)).unwrap();
+    let err = reject_carried_fund_market(Some("sh")).unwrap_err();
+    assert_eq!(err.code(), Some("instrument.fund-market-forbidden"));
 }
 
 /// 查标的行（symbol + 类型定位）：。

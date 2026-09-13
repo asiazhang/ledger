@@ -16,7 +16,8 @@ use crate::error::AppError;
 use crate::investment::{
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentType, Quote,
     StockCreateRoute, adopt_fund_quote, adopt_stock_quote, create_fund_degraded,
-    create_stock_degraded, derive_quote_currency, is_six_digit_code, route_stock_creation,
+    create_stock_degraded, derive_quote_currency, is_six_digit_code, reject_carried_fund_market,
+    route_stock_creation,
 };
 use crate::read_entry::read_entry;
 use crate::signals::{WriteEvidence, WriteOp};
@@ -109,7 +110,9 @@ pub struct InstrumentCreateInput {
     kind: InstrumentType,
     /// 标的名称（可选）
     name: Option<String>,
-    /// 交易市场（可选，缺省 unknown；sh / sz / hk / nasdaq / nyse / amex）
+    /// 交易市场（可选，缺省 unknown；sh / sz / hk / nasdaq / nyse / amex）。
+    /// fund 类型市场恒 unknown（场外基金无交易所市场概念，ADR-0038）：携带非
+    /// unknown 市场即 400（`instrument.fund-market-forbidden`）。
     market: Option<String>,
     /// 报价币种（可选；缺省按市场推导：沪深→CNY、港→HKD、美股三市场→USD、未知→CNY）
     currency_code: Option<String>,
@@ -161,6 +164,13 @@ pub async fn create_instrument_handler(
             market: String,
             code: String,
         },
+    }
+    // fund 市场恒 unknown 入口守卫（ADR-0038 决策 1 修订 / issue #1194）：6 位
+    // 增强/降级分支的市场由通道字典形态自造、不读调用方输入，故必须在落到写入
+    // 协议前先拒绝调用方携带的非 unknown 市场——不变量对全部创建通道成立，不因
+    // 6 位增强而例外（非 6 位通用通道另由标的写入协议守卫兜底，判据与文案同源）。
+    if input.kind == InstrumentType::Fund {
+        reject_carried_fund_market(input.market.as_deref())?;
     }
     let enrichment: Option<Enrichment> = match input.kind {
         InstrumentType::Fund if is_six_digit_code(&input.symbol) => {
