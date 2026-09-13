@@ -402,9 +402,11 @@ const browseScrollX = computed(() => sumFixedColumnWidths(instrumentBrowseColumn
       :pagination="pagination"
     >
       <!-- 空态两态区分（issue #1193）：全部标的不在场 vs 筛选未命中；
-           testid 随态切换，测试按用户可观察文案断言 -->
+           testid 随态切换，测试按用户可观察文案断言。加载门与持仓页同款：
+           首载/筛选重拉在途不渲染空态，否则空库会先闪现「暂无标的」再出列表 -->
       <template #empty>
         <NEmpty
+          v-if="!loading"
           :description="emptyDescription"
           :data-testid="hasActiveFilter ? 'instruments-no-match' : 'instruments-empty'"
         />

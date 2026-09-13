@@ -910,7 +910,7 @@ describe('HoldingsOverview 缺价行可执行引导（issue #1193）', () => {
   it('行情通道缺价行：引导是既有「同步标的信息」入口，点击即发起同步并出结果回执', async () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
-    const btn = wrapper.find('[data-testid="missing-price-sync-c1"]')
+    const btn = wrapper.find('[data-testid="missing-price-sync-acc-1-g-inst-quote"]')
     expect(btn.exists()).toBe(true)
     expect(btn.text()).toBe('同步')
     await btn.trigger('click')
@@ -923,7 +923,7 @@ describe('HoldingsOverview 缺价行可执行引导（issue #1193）', () => {
   it('净值通道缺价行：引导同样落既有「同步标的信息」入口', async () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
-    const btn = wrapper.find('[data-testid="missing-price-sync-b1"]')
+    const btn = wrapper.find('[data-testid="missing-price-sync-acc-1-g-inst-nav"]')
     expect(btn.exists()).toBe(true)
     await btn.trigger('click')
     await flushPromises()
@@ -934,7 +934,7 @@ describe('HoldingsOverview 缺价行可执行引导（issue #1193）', () => {
   it('手动报价通道缺价行：引导打开既有录价弹窗（不新增第二套入口）', async () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
-    const btn = wrapper.find('[data-testid="missing-price-quote-a1"]')
+    const btn = wrapper.find('[data-testid="missing-price-quote-acc-1-g-inst-manual"]')
     expect(btn.exists()).toBe(true)
     expect(btn.text()).toBe('录价')
     await btn.trigger('click')
@@ -948,8 +948,28 @@ describe('HoldingsOverview 缺价行可执行引导（issue #1193）', () => {
     await flushPromises()
     // 空值语义「-」保留，引导紧随其后；无来源行只有「-」
     expect(await cellText('latest_price')).toEqual(['-录价', '-同步', '-同步', '-'])
-    expect(wrapper.find('[data-testid="missing-price-sync-d1"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="missing-price-quote-d1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="missing-price-sync-acc-1-g-inst-none"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="missing-price-quote-acc-1-g-inst-none"]').exists()).toBe(false)
+  })
+
+  it('同一标的跨账户持仓：引导 testid 按账户 + 标的派生，多行互不撞车', async () => {
+    // 两行同标的（同 symbol）不同账户——按 symbol 派生会让两行共用同一 testid
+    wireInvokeSeam({
+      defaults: GUIDE_DEFAULTS,
+      overrides: {
+        list_holdings: [
+          makeHolding({ id: 'gh-a', account_id: 'acc-1', instrument_id: 'g-inst-quote' }),
+          makeHolding({ id: 'gh-b', account_id: 'acc-2', instrument_id: 'g-inst-quote' }),
+        ],
+      },
+    })
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="missing-price-sync-acc-1-g-inst-quote"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="missing-price-sync-acc-2-g-inst-quote"]').exists()).toBe(true)
+    // 行身份不再回落到 symbol：同标的两行不得共用 `…-c1` 形态的 testid
+    expect(wrapper.find('[data-testid="missing-price-sync-c1"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-testid^="missing-price-sync-"]')).toHaveLength(2)
   })
 })
 

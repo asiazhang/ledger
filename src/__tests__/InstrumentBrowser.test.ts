@@ -604,4 +604,27 @@ describe('InstrumentBrowser 空态（issue #1193）', () => {
     expect(noMatch.text()).toBe('筛选条件下无匹配标的')
     expect(wrapper.find('[data-testid="instruments-empty"]').exists()).toBe(false)
   })
+
+  it('加载门：首载在途不渲染空态，加载完成后空态才出现（空库不闪现「暂无标的」）', async () => {
+    let resolveList!: (v: unknown) => void
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_instruments: () =>
+          new Promise((res) => {
+            resolveList = res
+          }),
+      },
+    })
+    const wrapper = mountBrowser()
+    await nextTick()
+    // 首载在途：空态不渲染（否则空库会先闪「暂无标的」再出列表）
+    expect(wrapper.find('[data-testid="instruments-empty"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('暂无标的')
+    resolveList({ items: [], total: 0 })
+    await flushPromises()
+    const empty = wrapper.find('[data-testid="instruments-empty"]')
+    expect(empty.exists()).toBe(true)
+    expect(empty.text()).toBe('暂无标的')
+  })
 })

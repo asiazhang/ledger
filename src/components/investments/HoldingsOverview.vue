@@ -91,9 +91,15 @@ function onQuoted(message: string) {
   quoteMessage.value = message
 }
 
+/** 缺价行引导 testid 的行身份键：账户 + 标的（v_holdings 一行 = 一个账户一只标的），
+ * 同一标的跨账户持仓时各行互不撞车（symbol 会重复，不能作行身份）。 */
+function priceGuideRowKey(row: PortfolioRow) {
+  return `${row.accountId}-${row.instrumentId}`
+}
+
 /** 缺价行的引导动作（无引导时返回 null）：判定单点是 row.priceChannel（后端派生事实） */
 function missingPriceAction(row: PortfolioRow) {
-  const testidBase = row.symbol ?? row.holdingId
+  const testidBase = priceGuideRowKey(row)
   if (row.priceChannel === 'manual') {
     return h(
       NButton,
