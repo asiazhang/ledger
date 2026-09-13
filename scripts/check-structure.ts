@@ -532,7 +532,7 @@ export const CRATES: readonly CrateEntry[] = [
     name: 'ledger-backup',
     dir: 'crates/backup',
     layer: CRATE_LAYER.DOMAIN,
-    note: '备份域 crate（#1091 首个自根包域目录拆出的业务域 crate：备份/恢复引擎与自动备份调度，spec #1086）；依赖面只有基础设施——对定时计划域的置脏实现与追补触发两条引用经注册点反转（挂载点①/④，ADR-0112 决策 5），对壳层/域目录零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
+    note: '备份域 crate（#1091 首个自根包域目录拆出的业务域 crate：备份/恢复引擎与自动备份调度，spec #1086；#1105 复核归位完整性——域逻辑已全量在 crate，根包仅余壳层命令与启动对装）；依赖面只有基础设施——对定时计划域的置脏实现与追补触发两条引用经注册点反转（挂载点①/④，ADR-0112 决策 5），对壳层/域目录零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）；可被多端同步域依赖的独立编译单元',
   },
   {
     name: 'ledger-transaction',
