@@ -87,6 +87,12 @@ export const PACKAGES: readonly PackageEntry[] = [
     note: '金额展示与换算包（issue #1153 / spec #1148）：金额/价格/数量格式化与元/分换算的单一出口，依赖 @ledger/types 与 @ledger/i18n；金额隐私开关的水合与持久化仍归应用设置 store',
   },
   {
+    name: '@ledger/theme',
+    dir: 'packages/theme',
+    deps: ['@ledger/types', '@ledger/money'],
+    note: '主题包（issue #1154 / ADR-0093）：语义色、Design Tokens、图表样式、主题合同与 vanilla-extract 主题的单一来源，Theme（Appearance 模式）类型下移包内定义——不依赖 stores / components / views / composables；图表柱尾金额标注消费 @ledger/money 展示接缝',
+  },
+  {
     name: '@ledger/test-support',
     dir: 'packages/test-support',
     deps: ['@ledger/types'],

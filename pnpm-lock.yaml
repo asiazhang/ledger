@@ -292,6 +292,27 @@ importers:
         specifier: ^3.5.42
         version: 3.5.42(typescript@6.0.3)
 
+  packages/theme:
+    dependencies:
+      '@ledger/money':
+        specifier: workspace:*
+        version: link:../money
+      '@ledger/types':
+        specifier: workspace:*
+        version: link:../types
+      '@vanilla-extract/css':
+        specifier: ^1.21.2
+        version: 1.21.2
+      '@vanilla-extract/sprinkles':
+        specifier: ^1.7.1
+        version: 1.7.1(@vanilla-extract/css@1.21.2)
+      chart.js:
+        specifier: ^4.5.1
+        version: 4.5.1
+      naive-ui:
+        specifier: ^2.45.3
+        version: 2.45.3(patch_hash=1d273c9e8f7755836be7d55daae02418e67717cd9ee9f835fe703fbaae0ef403)(vue@3.5.42(typescript@6.0.3))
+
   packages/types: {}
 
 packages:

@@ -1,0 +1,18 @@
+{
+  "name": "@ledger/theme",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "主题包（issue #1154 / spec #1148 / ADR-0093）：语义色（交易类型 + 盈亏涨跌，issue #435）、中性 Design Tokens、柔和图表样式、主题合同与 vanilla-extract 主题（sprinkles 原子层、app-theme 合同变量、组件库覆盖）的单一来源；Theme（Appearance 模式）类型下移包内定义，包对 stores / components / views / composables 零依赖（Appearance 状态仍归应用设置 store，包只消费模式值）。依赖方向：@ledger 范围内 → @ledger/types（TransactionKind 闭集）与 @ledger/money（图表柱尾金额标注）；外部依赖 chart.js / naive-ui / @vanilla-extract/*（vanilla-extract 插件仍由根 Vite 配置全局加载，ADR-0093 既定性状不变）。源码直出，exports 指向 src/index.ts，不建构建链；跨包只能整引包名（深导入由 check-frontend-structure.ts 守门）。",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ledger/money": "workspace:*",
+    "@ledger/types": "workspace:*",
+    "@vanilla-extract/css": "^1.21.2",
+    "@vanilla-extract/sprinkles": "^1.7.1",
+    "chart.js": "^4.5.1",
+    "naive-ui": "^2.45.3"
+  }
+}
