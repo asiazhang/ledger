@@ -4,6 +4,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  ACCOUNTS_MODULES,
+  ACCOUNTS_SRC_REL,
   BACKUP_MODULES,
   BACKUP_SRC_REL,
   CRATES,
@@ -70,6 +72,7 @@ function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, PROTOCOL_SRC_REL), PROTOCOL_MODULES)
   writeModuleStubs(join(srcTauri, BACKUP_SRC_REL), BACKUP_MODULES)
   writeModuleStubs(join(srcTauri, TRANSACTION_SRC_REL), TRANSACTION_MODULES)
+  writeModuleStubs(join(srcTauri, ACCOUNTS_SRC_REL), ACCOUNTS_MODULES)
 }
 
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
@@ -94,10 +97,20 @@ function isTransactionModulePath(rel: string): boolean {
   return TRANSACTION_ENTRY_PATHS.has(rel)
 }
 
+/** 账户域 crate 模块路径判定（精确文件名，#1093；与基础设施清单无交集）。 */
+const ACCOUNTS_ENTRY_PATHS = new Set(ACCOUNTS_MODULES.map((m) => m.path))
+
+function isAccountsModulePath(rel: string): boolean {
+  return ACCOUNTS_ENTRY_PATHS.has(rel)
+}
+
 /**
  * 写覆盖文件：按路径首段归位——基础设施模块（`db/…` / `error.rs` / …）落
  * `<srcTauri>/crates/infra/src`，备份域 crate 模块（`auto.rs` / `engine.rs`，#1091）
- * 落 `<srcTauri>/crates/backup/src`，其余（域目录、壳层 `commands/` 等）落 `<srcTauri>/src`。
+ * 落 `<srcTauri>/crates/backup/src`，核心交易域 crate 模块（#1092）与账户域 crate
+ * 模块（#1093）各自落同名 crate，其余（域目录、壳层 `commands/` 等）落
+ * `<srcTauri>/src`。账户域在交易域之后判定：`model.rs` / `command.rs` 两名
+ * 为交易域清单先行占有（与 placeOverride 的先后链一致）。
  */
 function placeOverride(srcTauri: string, relPath: string, content: string): void {
   const base = isInfraModulePath(relPath)
@@ -106,7 +119,9 @@ function placeOverride(srcTauri: string, relPath: string, content: string): void
       ? join(srcTauri, BACKUP_SRC_REL)
       : isTransactionModulePath(relPath)
         ? join(srcTauri, TRANSACTION_SRC_REL)
-        : join(srcTauri, 'src')
+        : isAccountsModulePath(relPath)
+          ? join(srcTauri, ACCOUNTS_SRC_REL)
+          : join(srcTauri, 'src')
   const file = join(base, relPath)
   mkdirSync(join(file, '..'), { recursive: true })
   writeFileSync(file, content)
@@ -228,16 +243,17 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
    * **未认许**的产出式反向引用——夹具用它钉死「生产挂载点不得复活」。
    */
   // #1091 起备份域拆独立 crate（crate 名直引 `ledger_backup::` 不再经域目录路径
-  // 扫描，反向引用由 cargo 依赖图拒绝），负向夹具改以 accounts 为靶域保留同形
-  // ——「基础设施→域生产挂载点不得复活」的钉子不变。
+  // 扫描，反向引用由 cargo 依赖图拒绝），负向夹具改以 accounts 为靶域保留同形；
+  // #1093 起账户域亦拆独立 crate，靶域改以 investment（不在本波拆分批次内的
+  // 稳定域目录）——「基础设施→域生产挂载点不得复活」的钉子不变。
   const afterCommitShape = [
     'pub fn write<T>(f: impl FnOnce() -> T) -> T { f() }',
     'fn after_commit(conn: &Connection) {',
-    '    if let Err(e) = crate::accounts::mark_dirty(conn) {',
+    '    if let Err(e) = crate::investment::mark_dirty(conn) {',
     '        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");',
     '    }',
-    '    let dir = crate::accounts::shared_prefs().snapshot_dir();',
-    '    crate::accounts::run_due_backup(',
+    '    let dir = crate::investment::shared_prefs().snapshot_dir();',
+    '    crate::investment::run_due_backup(',
     '        conn,',
     '        dir.as_deref(),',
     '    );',
@@ -246,39 +262,39 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
   ].join('\n')
 
   it('基础设施文件 use 域模块 → 红', () => {
-    const args = makeFixture({ 'db/helper.rs': 'use crate::accounts::Account;\npub fn x() {}\n' })
+    const args = makeFixture({ 'db/helper.rs': 'use crate::investment::Account;\npub fn x() {}\n' })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('引用域目录')
     expect(r.output).toContain('db/helper.rs:1')
   })
 
-  it('内联全限定路径（crate::accounts::x() 形态）同样识别 → 红', () => {
+  it('内联全限定路径（crate::域::x() 形态）同样识别 → 红', () => {
     const args = makeFixture({
-      'db/helper.rs': 'pub fn y() { crate::accounts::mark_dirty(); }\n',
+      'db/helper.rs': 'pub fn y() { crate::investment::mark_dirty(); }\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('引用域目录 accounts')
+    expect(r.output).toContain('引用域目录 investment')
     expect(r.output).toContain('db/helper.rs:1')
   })
 
   it('tauri_app_lib:: 前缀与 use as 别名引入同样识别 → 红', () => {
     const args = makeFixture({
       'events.rs': 'use tauri_app_lib::dashboard::DashboardOverview;\npub fn x() {}\n',
-      'settings.rs': 'use crate::accounts as acct;\npub fn y() {}\n',
+      'settings.rs': 'use crate::investment as acct;\npub fn y() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('引用域目录 dashboard')
-    expect(r.output).toContain('引用域目录 accounts')
+    expect(r.output).toContain('引用域目录 investment')
   })
 
   it('模块自身导入（use crate::<域>;）同样识别 → 红', () => {
-    const args = makeFixture({ 'db/helper.rs': 'use crate::accounts;\npub fn z() {}\n' })
+    const args = makeFixture({ 'db/helper.rs': 'use crate::investment;\npub fn z() {}\n' })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('引用域目录 accounts')
+    expect(r.output).toContain('引用域目录 investment')
   })
 
   it('std::sync 等同名路径不误报（crate 根前缀限定边界）', () => {
@@ -303,7 +319,7 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
     const args = makeFixture({
       'db/helper.rs': [
         '/// 提交点由 [`crate::backup::run_due_backup`] 统一门禁（文档注释不算引用）',
-        '// 见 crate::accounts::Account 说明',
+        '// 见 crate::investment::Account 说明',
         'let s = "crate::backup::mark_dirty";',
         'let re = r#"crate::sync::fetch"#;',
         'pub fn f() {}',
@@ -316,7 +332,7 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
 
   it('外挂测试豁免不变：tests.rs 与 tests/ 目录引用域不红（ADR-0056 决策 5）', () => {
     const args = makeFixture({
-      'db/tests.rs': 'use crate::accounts::Account;\n',
+      'db/tests.rs': 'use crate::investment::Account;\n',
       'db/tests/common.rs': 'pub fn s() -> crate::backup::AutoBackupState { todo!() }\n',
     })
     const r = run(args)
@@ -327,7 +343,7 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
     const args = makeFixture({ 'db/mod.rs': afterCommitShape })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('引用域目录 accounts')
+    expect(r.output).toContain('引用域目录 investment')
     expect(r.output).toContain('db/mod.rs:3')
   })
 
@@ -339,14 +355,14 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
 
     const otherDomain = makeFixture({
       'settings.rs':
-        'use tauri_app_lib::test_support::open;\nuse crate::accounts::Account;\npub fn x() {}\n',
+        'use tauri_app_lib::test_support::open;\nuse crate::investment::Account;\npub fn x() {}\n',
     })
     const r1 = run(otherDomain)
     expect(r1.status).toBe(1)
-    expect(r1.output).toContain('引用域目录 accounts')
+    expect(r1.output).toContain('引用域目录 investment')
 
     const otherFile = makeFixture({
-      'db/helper.rs': 'use crate::accounts::Account;\n',
+      'db/helper.rs': 'use crate::investment::Account;\n',
     })
     const r2 = run(otherFile)
     expect(r2.status).toBe(1)
@@ -508,9 +524,12 @@ describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反
     expect(r.output).toContain('behavior.rs:1')
   })
 
-  it('方向性：禁边反向（accounts → transaction）不红——口径真源单向边合法', () => {
+  it('方向性：账户域 crate 引用核心交易域 crate（生产依赖方向合法）不红', () => {
+    // #1093 起账户域为独立 crate：accounts → transaction 是 Cargo.toml 声明的合法
+    // 生产依赖（余额口径消费 kind→度量矩阵，ADR-0071 决策 5 修订后方向）。
+    // 'core.rs' 经 placeOverride 落账户域 crate（ACCOUNTS_MODULES 派生路由）。
     const args = makeFixture({
-      'accounts/core.rs': 'use crate::transaction::amount::account_flow_expr;\npub fn x() {}\n',
+      'core.rs': 'use ledger_transaction::amount::account_flow_expr;\npub fn x() {}\n',
     })
     expect(run(args).status).toBe(0)
   })
@@ -531,7 +550,7 @@ describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反
 
   it('外挂测试豁免不变：tests/ 目录引用禁边对不红（ADR-0056 决策 5）', () => {
     const args = makeFixture({
-      'transaction/tests/balance_cache.rs': 'use crate::accounts::balance::compute_balance;\n',
+      'transaction/tests/balance_cache.rs': 'use ledger_transaction::read::list_transactions;\n',
       'scheduled_transactions/tests/auto_run.rs': 'crate::backup::get_state(&conn);\n',
     })
     const r = run(args)
@@ -642,13 +661,15 @@ describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收�
 
 describe('check-structure 原生事务语句禁令（issue #1014 / #1003 定案 7）', () => {
   it('产品代码手写 BEGIN → 红并定位文件行号', () => {
+    // 'core.rs' 经 placeOverride 落账户域 crate（ACCOUNTS_MODULES 派生路由，#1093），
+    // 全树扫描覆盖 crate 内文件。
     const args = makeFixture({
-      'accounts/core.rs': 'pub fn f(conn: &Connection) {\n    conn.execute("BEGIN", []);\n}\n',
+      'core.rs': 'pub fn f(conn: &Connection) {\n    conn.execute("BEGIN", []);\n}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('原生事务语句')
-    expect(r.output).toContain('accounts/core.rs:2')
+    expect(r.output).toContain('core.rs:2')
     expect(r.output).toContain('db/tx_scope.rs')
   })
 
@@ -674,7 +695,7 @@ describe('check-structure 原生事务语句禁令（issue #1014 / #1003 定案 
 
   it('注释中的 execute("BEGIN") 不误报（只掩码注释、保留字符串）', () => {
     const args = makeFixture({
-      'accounts/core.rs': [
+      'core.rs': [
         '// 原生事务语句禁令：conn.execute("BEGIN", []) 只许出现在 db/tx_scope.rs',
         '/// conn.execute("COMMIT", [])',
         'pub fn f() {}',
@@ -700,6 +721,8 @@ interface CrateFixtureOverrides {
   backupManifest?: string
   /** 覆盖核心交易域 crate 的 `crates/transaction/Cargo.toml`（依赖方向负向夹具，#1092） */
   transactionManifest?: string
+  /** 覆盖账户域 crate 的 `crates/accounts/Cargo.toml`（依赖方向负向夹具，#1093） */
+  accountsManifest?: string
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string
   /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
@@ -887,6 +910,28 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
       ].join('\n'),
   )
   writeFileSync(join(srcTauri, 'crates', 'transaction', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
+  // 账户域 crate（#1093，P3 叶子业务域 crate）：夹具与真实仓库同形——成员目录 +
+  // 门禁继承 + dev-dependency 测试环。
+  mkdirSync(join(srcTauri, 'crates', 'accounts', 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'crates', 'accounts', 'Cargo.toml'),
+    overrides.accountsManifest ??
+      [
+        '[package]',
+        'name = "ledger-accounts"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[dev-dependencies]',
+        'tauri-app = { path = "../.." }',
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
+  )
+  writeFileSync(join(srcTauri, 'crates', 'accounts', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
@@ -1138,6 +1183,56 @@ describe('check-structure 备份域 crate（#1091 首个业务域 crate 自根�
     expect(r.status).toBe(1)
     expect(r.output).toContain('crate 依赖方向')
     expect(r.output).toContain('ledger-transaction')
+  })
+})
+
+describe('check-structure 账户域 crate（#1093 叶子业务域 crate 自根包拆出）', () => {
+  it('真实仓库默认通过：账户域 crate 模块级扫描入摘要', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`账户域模块 ${ACCOUNTS_MODULES.length} 项`)
+  })
+
+  it('夹具与真实仓库同形：账户域 crate 默认通过', () => {
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
+  })
+
+  it('账户域 crate 模块引用壳层 → 红并定位文件行号', () => {
+    // 'core.rs' 经 placeOverride 落账户域 crate（ACCOUNTS_MODULES 派生路由，#1093）。
+    const args = makeFixture({ 'core.rs': shellUse })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('反向依赖')
+    expect(r.output).toContain('core.rs:1')
+  })
+
+  it('账户域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）', () => {
+    const args = makeFixture({
+      'balance.rs': 'use tauri_app_lib::sync_engine::registry::dispatch;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域')
+    expect(r.output).toContain('balance.rs:1')
+  })
+
+  it('账户域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1093）', () => {
+    const args = makeCrateFixture({
+      accountsManifest:
+        '[package]\nname = "ledger-accounts"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 依赖方向')
+    expect(r.output).toContain('ledger-accounts')
+  })
+
+  it('账户域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
+    // 缺省 accountsManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
   })
 })
 

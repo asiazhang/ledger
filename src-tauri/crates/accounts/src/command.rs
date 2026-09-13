@@ -15,7 +15,7 @@ use std::borrow::Cow;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use ledger_infra::error::Result;
 use ledger_sync_protocol::command::SyncCommand;
 use ledger_sync_protocol::op::record_local as record_op;
 
@@ -81,7 +81,9 @@ pub(crate) fn record_local(conn: &Connection, command: AccountCommand) -> Result
 }
 
 /// 重放执行（同步引擎分派接缝）：按动作转发到与本地写同一执行协议。
-pub(crate) fn replay_command(conn: &Connection, command: &AccountCommand) -> Result<()> {
+/// 跨 crate 消费（sync_engine::registry 经根包再导出面调用，#1093 crate 化
+/// 时 pub(crate)→pub，签名与语义不变）。
+pub fn replay_command(conn: &Connection, command: &AccountCommand) -> Result<()> {
     match command {
         AccountCommand::Create { id, row } => super::core::replay_create(conn, id, row),
         AccountCommand::Update {

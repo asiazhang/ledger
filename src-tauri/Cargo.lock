@@ -2579,6 +2579,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
+name = "ledger-accounts"
+version = "0.6.0"
+dependencies = [
+ "chrono",
+ "ledger-infra",
+ "ledger-sync-protocol",
+ "ledger-transaction",
+ "rusqlite",
+ "serde",
+ "tauri-app",
+ "utoipa",
+]
+
+[[package]]
 name = "ledger-backup"
 version = "0.6.0"
 dependencies = [
@@ -4774,6 +4788,7 @@ dependencies = [
  "cucumber",
  "futures",
  "http-body-util",
+ "ledger-accounts",
  "ledger-backup",
  "ledger-infra",
  "ledger-sync-protocol",
