@@ -3,15 +3,17 @@
 
 use rusqlite::Connection;
 
-use crate::item::domain::{create_item, delete_item, dispose_item, list_items, update_item};
-use crate::item::model::{ItemDisposeInput, ItemInput, ItemStatus};
-use crate::transaction::TransactionInput;
-use crate::transaction::amount::TransactionKind;
-use crate::transaction::create_transaction_internal;
+use crate::domain::{create_item, delete_item, dispose_item, list_items, update_item};
+use crate::model::{ItemDisposeInput, ItemInput, ItemStatus};
+use ledger_transaction::TransactionInput;
+use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::create_transaction_internal;
 
 fn conn() -> Connection {
     // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
-    crate::test_support::open()
+    // 工厂住根包（test_support，ADR-0084），经 dev-dependency 环消费（#1099 拆
+    // crate 起；spec #1086 明文裁决的测试专用边，ledger-transaction 同款）。
+    tauri_app_lib::test_support::open()
 }
 
 fn input(name: &str, date: &str, cost_cents: i64) -> ItemInput {
@@ -38,7 +40,7 @@ fn seed_purchase_tx(conn: &Connection, date: &str, cost_cents: i64, currency: &s
         )
         .unwrap();
     if scaffold_exists == 0 {
-        crate::test_support::seed_account(
+        tauri_app_lib::test_support::seed_account(
             conn,
             "acc-item-scaffold",
             "物品脚手架",
@@ -144,7 +146,7 @@ fn update_item_replaces_note_whole_field() {
 #[test]
 fn update_item_recalculates_daily_cost() {
     let conn = conn();
-    let today = crate::item::cost::today();
+    let today = crate::cost::today();
     let purchase = (today - chrono::Duration::days(9))
         .format("%Y-%m-%d")
         .to_string();
@@ -271,7 +273,7 @@ fn create_item_persists_and_returns_id() {
 fn create_item_daily_cost_uses_cost_seam() {
     let conn = conn();
     // 相对今天构造购买日期，断言含起止两端的日历天数（10 天前购买 → 10 天）。
-    let today = crate::item::cost::today();
+    let today = crate::cost::today();
     let purchase = today - chrono::Duration::days(9);
     let date = purchase.format("%Y-%m-%d").to_string();
     let tx = seed_purchase_tx(&conn, &date, 100_000, "CNY");

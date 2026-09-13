@@ -15,7 +15,7 @@
 
 use chrono::NaiveDate;
 
-use crate::error::{AppError, Result};
+use ledger_infra::error::{AppError, Result};
 
 /// 每天使用成本的计算结果：天数、分子与每天成本一并返回，
 /// 供物品列表（需展示「已用天数」）与 dashboard 聚合共用，避免调用方重算天数。
