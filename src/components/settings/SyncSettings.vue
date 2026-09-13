@@ -1,12 +1,34 @@
 <script setup lang="ts">
-import { NAlert, NButton, NCard, NInput, NSpace, NSpin, NSwitch, NText, useMessage } from 'naive-ui'
+import {
+  NAlert,
+  NButton,
+  NCard,
+  NInput,
+  NSpace,
+  NSpin,
+  NSwitch,
+  NTag,
+  NText,
+  useMessage,
+} from 'naive-ui'
 import { computed, onMounted, ref } from 'vue'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'
 import { formatIsoMinute } from '@/utils/datetime'
 import { restartAppShortly } from '@/utils/restart'
+import {
+  CUSTOM_VENDOR_ID,
+  findVendorPreset,
+  matchVendorByEndpoint,
+  vendorOptions,
+  vendorPrefill,
+  vendorTierKey,
+  type S3VendorPrefill,
+} from '@/utils/s3-vendors'
 import AppModal from '@/components/AppModal.vue'
+import AppSelect from '@/components/AppSelect.vue'
+import { SYNC_HINT_CLASS } from '@/components/settings/sync-settings.css'
 import type { ParkedOpInfo, SyncChannelConfig, SyncCheckpointInfo, SyncStatus } from '@ledger/types'
 
 // 多端同步卡片（issue #862 / #863 / #864 / #1218 / ADR-0091）：设置页「数据」
@@ -45,10 +67,11 @@ const passphrase = ref('')
 // 挂起操作明细（issue #863 挂起通知）：数量 > 0 时按需拉取，展示码化原因。
 const parkedOps = ref<ParkedOpInfo[]>([])
 
-// 通道配置表单（S3 七字段 + 同步空间，issue #1218）：初值来自命令回显（未配置
-// 为空表单，空间字段填默认值），保存固定发 `backend: 's3'`——WebDAV 字段已从
-// 界面移除（后端字段与后端本体随 #1221 收口）。厂商预设下拉与「测试连接」按钮
-// 归 #1220 / #1219。
+// 通道配置表单（S3 七字段 + 同步空间，issue #1218 / #1220）：初值来自命令回显
+//（未配置为空表单，空间字段填默认值），保存固定发 `backend: 's3'`——WebDAV
+// 字段已从界面移除（后端字段与后端本体随 #1221 收口）。厂商预设下拉（issue
+// #1220）只做界面预填与端点反查回显，不落库、不进后端契约；「测试连接」按钮
+// 归 #1219。
 //
 // 表单只装本界面拥有的字段：命令回显形态 `SyncChannelConfig` 里被判别的 WebDAV
 // 三字段没有输入面，却会随对象存进表单成为无人读的死状态，故回显时投影一次。
@@ -85,6 +108,53 @@ const secretKeyPlaceholder = computed(() =>
     ? t('settings.data.sync.secretKeySavedPlaceholder')
     : t('settings.data.sync.secretKeyPlaceholder'),
 )
+
+// 厂商预设（issue #1220）：用户选中的厂商判别键。它只是界面态——不随表单保存，
+// 命令面 `SyncChannelConfig` 也没有厂商字段；「是谁」由端点反查决定（再次打开
+// 或保存回显时按端点重算），所以这条状态不可能是落库数据的第二事实源。
+const selectedVendor = ref<string>(CUSTOM_VENDOR_ID)
+
+/** 当前选中厂商的预设（「其他（自定义）」或未知 id 为 null）。 */
+const selectedVendorPreset = computed(() => findVendorPreset(selectedVendor.value))
+
+/**
+ * 下拉项：预设按声明序 + 末尾固定「其他（自定义）」（issue #1220 验收判据）。
+ * 选项标签 = 厂商专名 + 档位标注（options 里的 name 不进翻译，档位文案经 i18n）。
+ */
+const vendorSelectOptions = computed(() =>
+  vendorOptions().map((option) => ({
+    value: option.id,
+    label: option.custom
+      ? t('settings.data.sync.vendorCustom')
+      : t('settings.data.sync.vendorOption', {
+          name: option.name,
+          tier: t(vendorTierKey(option.verified)),
+        }),
+  })),
+)
+
+/**
+ * 选中厂商：预填端点模板、默认地域与寻址方式（纯函数产出的值，本处只落表单）。
+ * 「其他（自定义）」不预填——字段保持用户已填内容，等待用户自己写端点。
+ */
+function onVendorChange(vendorId: string) {
+  selectedVendor.value = vendorId
+  const prefill = vendorPrefill(vendorId)
+  if (prefill) applyPrefill(prefill)
+}
+
+/** 常用地域快捷项：换地域即按当前厂商模板重写端点（字段随后仍可手改）。 */
+function applyVendorRegion(region: string) {
+  const prefill = vendorPrefill(selectedVendor.value, region)
+  if (prefill) applyPrefill(prefill)
+}
+
+/** 预填值落进表单的单一落点（选中预填与地域快捷项共用，避免两处各写一遍字段）。 */
+function applyPrefill(prefill: S3VendorPrefill) {
+  form.value.endpoint = prefill.endpoint
+  form.value.region = prefill.region
+  form.value.path_style = prefill.pathStyle
+}
 
 async function refreshStatus() {
   loading.value = true
@@ -130,6 +200,9 @@ async function refreshChannelConfig() {
     }
     // 密钥输入恒从空白起（不回显完整密钥）；已保存值留在 form 内供「留空沿用」。
     secretKeyInput.value = ''
+    // 厂商回显按端点反查（issue #1220 验收判据）：命中厂商即回显该厂商，未命中
+    //（自建服务、空表单、改过的端点）回「其他（自定义）」——不额外落库厂商字段。
+    selectedVendor.value = matchVendorByEndpoint(form.value.endpoint)
   } catch (e: any) {
     message.error(t('settings.data.sync.loadFailed', { msg: errorMessage(e) }))
   }
@@ -353,11 +426,55 @@ async function confirmBootstrap() {
         style="max-width: 320px"
       />
 
-      <!-- 通道配置表单（S3 七字段 + 同步空间，issue #1218）：WebDAV 字段已从界面
-           移除（后端字段与后端本体随 #1221 收口）；厂商预设下拉与「测试连接」
-           按钮归 #1220 / #1219。 -->
+      <!-- 通道配置表单（S3 七字段 + 同步空间，issue #1218 / #1220）：WebDAV 字段
+           已从界面移除（后端字段与后端本体随 #1221 收口）；厂商预设下拉只预填、
+           不落库（issue #1220），「测试连接」按钮归 #1219。 -->
       <NText strong>{{ t('settings.data.sync.channelTitle') }}</NText>
       <NSpace vertical :size="8">
+        <!-- 厂商预设（issue #1220）：末尾固定「其他（自定义）」；选中只预填，字段
+             全部保持可编辑；档位标注与官方文档外链随所选厂商展示。选项是 6 项静态
+             闭集，虚拟滚动无收益（关掉后选项全量进 DOM，利于无障碍与查找）。 -->
+        <AppSelect
+          :value="selectedVendor"
+          :options="vendorSelectOptions"
+          :virtual-scroll="false"
+          data-testid="sync-vendor"
+          @update:value="onVendorChange"
+        />
+        <NText depth="3" :class="SYNC_HINT_CLASS" data-testid="sync-vendor-hint">
+          {{ t('settings.data.sync.vendorHint') }}
+        </NText>
+        <template v-if="selectedVendorPreset">
+          <NSpace align="center" :size="8" data-testid="sync-vendor-meta">
+            <NTag size="small" :bordered="false" data-testid="sync-vendor-tier">
+              {{ t(vendorTierKey(selectedVendorPreset.verified)) }}
+            </NTag>
+            <NButton
+              text
+              tag="a"
+              :href="selectedVendorPreset.docsUrl"
+              target="_blank"
+              rel="noreferrer"
+              data-testid="sync-vendor-docs"
+            >
+              {{ t('settings.data.sync.vendorDocs') }}
+            </NButton>
+          </NSpace>
+          <NSpace align="center" :size="8" data-testid="sync-vendor-regions">
+            <NText depth="3" :class="SYNC_HINT_CLASS">
+              {{ t('settings.data.sync.vendorRegionLabel') }}
+            </NText>
+            <NButton
+              v-for="region in selectedVendorPreset.regions"
+              :key="region"
+              size="tiny"
+              data-testid="sync-vendor-region"
+              @click="applyVendorRegion(region)"
+            >
+              {{ region }}
+            </NButton>
+          </NSpace>
+        </template>
         <NInput
           v-model:value="form.endpoint"
           :placeholder="t('settings.data.sync.endpointPlaceholder')"
