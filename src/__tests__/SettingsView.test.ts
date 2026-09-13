@@ -267,14 +267,16 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(html).not.toContain('数据存储位置')
   })
 
-  it('设置页内容列限宽约 720px、左对齐不居中（issue #651）', () => {
+  it('设置页内容列单列动态宽度：卡片随窗口铺满内容区，不再固定 720px（issue #651 修订）', () => {
     const wrapper = mount(SettingsView)
     const column = wrapper.find('[data-testid="settings-column"]')
     expect(column.exists()).toBe(true)
-    const style = column.attributes('style') ?? ''
-    expect(style).toContain('max-width: 720px')
-    // 左对齐：无居中 margin（margin auto 居中与否在此由 margin 属性是否出现表达）。
-    expect(style).not.toContain('margin')
+    expect(column.classes()).toContain('settings-column')
+    // 默认「通用」页签的卡片容器挂单列堆叠钩子。实际宽度规则见
+    // settings-layout-css.test.ts（jsdom 不消费样式表，组件测试只断言 DOM 钩子）。
+    expect(wrapper.find('.settings-card-stack').exists()).toBe(true)
+    // 宽度口径收口在 settings-layout.css.ts，不再有固定 720px 的内联样式。
+    expect(column.attributes('style') ?? '').not.toContain('max-width')
   })
 
   it('备份列表在 Tab 切换间保留缓存，不随切换重拉', async () => {

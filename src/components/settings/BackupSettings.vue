@@ -17,6 +17,7 @@ import { useBackup } from '@/composables/useBackup'
 import { t } from '@ledger/i18n'
 import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
+import { SETTINGS_CARD_STACK_CLASS } from '@/components/settings/settings-layout.css.ts'
 
 const store = useAppStore()
 
@@ -93,125 +94,128 @@ const backupColumns = [
 
 <template>
   <!-- 卡片顺序（issue #651）：备份（动作）→ 备份目录 → 自动备份 → 备份文件列表 → 恢复，
-       最常用的一键备份免滚动直达。 -->
-  <NSpace vertical :size="16">
-    <NCard :title="t('settings.data.backup.backupTitle')" size="small">
-      <NSpace vertical :size="12">
-        <NText depth="3">
-          {{ t('settings.data.backup.backupHint') }}
-        </NText>
-        <NSpace align="center" :size="12">
-          <NButton type="primary" :loading="backingUp" @click="backupOnce">{{ t('settings.data.backup.backupOnce') }}</NButton>
-          <NButton :loading="backingUp" @click="backupAs">{{ t('settings.data.backup.backupAs') }}</NButton>
-        </NSpace>
-        <NSpace v-if="lastBackup" align="center" :size="8">
-          <NText type="success" style="word-break: break-all">
-            {{ t('settings.data.backup.lastBackup') }}{{ lastBackup }}
+       最常用的一键备份免滚动直达。单列，卡片随窗口宽度铺满内容区（issue #651 修订）。 -->
+  <div>
+    <div :class="SETTINGS_CARD_STACK_CLASS">
+      <NCard :title="t('settings.data.backup.backupTitle')" size="small">
+        <NSpace vertical :size="12">
+          <NText depth="3">
+            {{ t('settings.data.backup.backupHint') }}
           </NText>
-          <!-- 复制完整路径（issue #653）：展示文案含大小括注，复制的是原始完整路径 -->
-          <NButton size="small" data-testid="copy-last-backup-path" @click="copyLastBackupPath">
-            {{ t('settings.data.backup.copyPath') }}
-          </NButton>
+          <NSpace align="center" :size="12">
+            <NButton type="primary" :loading="backingUp" @click="backupOnce">{{ t('settings.data.backup.backupOnce') }}</NButton>
+            <NButton :loading="backingUp" @click="backupAs">{{ t('settings.data.backup.backupAs') }}</NButton>
+          </NSpace>
+          <NSpace v-if="lastBackup" align="center" :size="8">
+            <NText type="success" style="word-break: break-all">
+              {{ t('settings.data.backup.lastBackup') }}{{ lastBackup }}
+            </NText>
+            <!-- 复制完整路径（issue #653）：展示文案含大小括注，复制的是原始完整路径 -->
+            <NButton size="small" data-testid="copy-last-backup-path" @click="copyLastBackupPath">
+              {{ t('settings.data.backup.copyPath') }}
+            </NButton>
+          </NSpace>
         </NSpace>
-      </NSpace>
-    </NCard>
+      </NCard>
 
-    <NCard :title="t('settings.data.backup.dirTitle')" size="small">
-      <NSpace vertical :size="12">
-        <NText depth="3">
-          {{ t('settings.data.backup.dirHint') }}
-        </NText>
-        <NSpace align="center" :size="12">
-          <NText style="word-break: break-all">
-            {{ store.backupDir || t('settings.data.backup.dirUnset') }}
+      <NCard :title="t('settings.data.backup.dirTitle')" size="small">
+        <NSpace vertical :size="12">
+          <NText depth="3">
+            {{ t('settings.data.backup.dirHint') }}
           </NText>
-          <NButton size="small" @click="pickBackupDir">
-            {{ store.backupDir ? t('settings.data.backup.changeDir') : t('settings.data.backup.chooseDir') }}
-          </NButton>
-          <NButton v-if="store.backupDir" size="small" quaternary type="error" @click="clearBackupDir">
-            {{ t('settings.data.backup.clear') }}
-          </NButton>
+          <NSpace align="center" :size="12">
+            <NText style="word-break: break-all">
+              {{ store.backupDir || t('settings.data.backup.dirUnset') }}
+            </NText>
+            <NButton size="small" @click="pickBackupDir">
+              {{ store.backupDir ? t('settings.data.backup.changeDir') : t('settings.data.backup.chooseDir') }}
+            </NButton>
+            <NButton v-if="store.backupDir" size="small" quaternary type="error" @click="clearBackupDir">
+              {{ t('settings.data.backup.clear') }}
+            </NButton>
+          </NSpace>
+          <NSpace align="center" :size="12">
+            <NText>{{ t('settings.data.backup.keepLimitLabel') }}</NText>
+            <NInputNumber
+              :value="store.backupMaxCount"
+              :min="1"
+              :max="100"
+              :update-value-on-input="false"
+              style="max-width: 120px"
+              @update:value="onBackupMaxCountChange"
+            />
+            <NText depth="3">{{ t('settings.data.backup.keepLimitSuffix') }}</NText>
+          </NSpace>
         </NSpace>
-        <NSpace align="center" :size="12">
-          <NText>{{ t('settings.data.backup.keepLimitLabel') }}</NText>
-          <NInputNumber
-            :value="store.backupMaxCount"
-            :min="1"
-            :max="100"
-            :update-value-on-input="false"
-            style="max-width: 120px"
-            @update:value="onBackupMaxCountChange"
-          />
-          <NText depth="3">{{ t('settings.data.backup.keepLimitSuffix') }}</NText>
-        </NSpace>
-      </NSpace>
-    </NCard>
+      </NCard>
 
-    <NCard :title="t('settings.data.backup.autoTitle')" size="small">
-      <NSpace vertical :size="12">
-        <NSpace align="center" :size="12">
-          <NSwitch
-            :value="autoBackupEnabled"
-            @update:value="toggleAutoBackup"
-          />
-          <NText>{{ t('settings.data.backup.autoSwitchLabel') }}</NText>
+      <NCard :title="t('settings.data.backup.autoTitle')" size="small">
+        <NSpace vertical :size="12">
+          <NSpace align="center" :size="12">
+            <NSwitch
+              :value="autoBackupEnabled"
+              @update:value="toggleAutoBackup"
+            />
+            <NText>{{ t('settings.data.backup.autoSwitchLabel') }}</NText>
+          </NSpace>
+          <NText depth="3">{{ t('settings.data.backup.autoLast') }}{{ autoBackupLastText }}</NText>
+          <NText v-if="!store.backupDir" type="warning">
+            {{ t('settings.data.backup.autoNeedDir') }}
+          </NText>
         </NSpace>
-        <NText depth="3">{{ t('settings.data.backup.autoLast') }}{{ autoBackupLastText }}</NText>
-        <NText v-if="!store.backupDir" type="warning">
-          {{ t('settings.data.backup.autoNeedDir') }}
-        </NText>
-      </NSpace>
-    </NCard>
+      </NCard>
 
-    <NCard :title="t('settings.data.backup.listTitle')" size="small">
-      <!-- 手动刷新（issue #651）：文件管理器手动增删文件后使列表与磁盘一致。 -->
-      <template #header-extra>
-        <NButton
-          size="small"
-          :loading="refreshing"
-          data-testid="backup-list-refresh"
-          @click="refreshList"
-        >
-          {{ t('settings.data.backup.refresh') }}
-        </NButton>
-      </template>
-      <NSpace vertical :size="12">
-        <!-- 备份按账本分域（issue #836）：列表只呈现当前账本的产物。 -->
-        <NText depth="3">{{ t("settings.data.backup.listHint") }}</NText>
-        <NSpace align="center" justify="space-between" style="width: 100%">
-          <NText depth="3">{{ t('settings.data.backup.count', { n: backups.length, max: store.backupMaxCount }) }}</NText>
+      <NCard :title="t('settings.data.backup.listTitle')" size="small">
+        <!-- 手动刷新（issue #651）：文件管理器手动增删文件后使列表与磁盘一致。 -->
+        <template #header-extra>
           <NButton
             size="small"
-            type="warning"
-            secondary
-            :disabled="backups.length === 0 || pruning"
-            :loading="pruning"
-            @click="manualPrune"
+            :loading="refreshing"
+            data-testid="backup-list-refresh"
+            @click="refreshList"
           >
-            {{ t('settings.data.backup.pruneNow') }}
+            {{ t('settings.data.backup.refresh') }}
           </NButton>
+        </template>
+        <NSpace vertical :size="12">
+          <!-- 备份按账本分域（issue #836）：列表只呈现当前账本的产物。 -->
+          <NText depth="3">{{ t("settings.data.backup.listHint") }}</NText>
+          <NSpace align="center" justify="space-between" style="width: 100%">
+            <NText depth="3">{{ t('settings.data.backup.count', { n: backups.length, max: store.backupMaxCount }) }}</NText>
+            <NButton
+              size="small"
+              type="warning"
+              secondary
+              :disabled="backups.length === 0 || pruning"
+              :loading="pruning"
+              @click="manualPrune"
+            >
+              {{ t('settings.data.backup.pruneNow') }}
+            </NButton>
+          </NSpace>
+          <NDataTable
+            :columns="backupColumns"
+            :data="backupRows"
+            :bordered="false"
+            size="small"
+            :empty="store.backupDir ? t('settings.data.backup.emptyWithDir') : t('settings.data.backup.emptyNoDir')"
+          />
         </NSpace>
-        <NDataTable
-          :columns="backupColumns"
-          :data="backupRows"
-          :bordered="false"
-          size="small"
-          :empty="store.backupDir ? t('settings.data.backup.emptyWithDir') : t('settings.data.backup.emptyNoDir')"
-        />
-      </NSpace>
-    </NCard>
+      </NCard>
 
-    <NCard :title="t('settings.data.backup.restoreTitle')" size="small">
-      <!-- 破坏性警示升为显著警示块（issue #651 / ADR-0078 决策 4）：入口按钮降为
-           default 形态，红色语义由警示块与恢复确认弹窗承载；恢复前安全备份＋
-           确认弹窗双闸不变。 -->
-      <NSpace vertical :size="12">
-        <NAlert type="error" :show-icon="true">
-          {{ t('settings.data.backup.restoreHintBefore') }}<strong>{{ t('settings.data.backup.restoreHintStrong') }}</strong>{{ t('settings.data.backup.restoreHintAfter') }}
-        </NAlert>
-        <NButton :loading="restoring" @click="pickRestore">{{ t('settings.data.backup.restoreButton') }}</NButton>
-      </NSpace>
-    </NCard>
+      <NCard :title="t('settings.data.backup.restoreTitle')" size="small">
+        <!-- 破坏性警示升为显著警示块（issue #651 / ADR-0078 决策 4）：入口按钮降为
+             default 形态，红色语义由警示块与恢复确认弹窗承载；恢复前安全备份＋
+             确认弹窗双闸不变。 -->
+        <NSpace vertical :size="12">
+          <NAlert type="error" :show-icon="true">
+            {{ t('settings.data.backup.restoreHintBefore') }}<strong>{{ t('settings.data.backup.restoreHintStrong') }}</strong>{{ t('settings.data.backup.restoreHintAfter') }}
+          </NAlert>
+          <NButton :loading="restoring" @click="pickRestore">{{ t('settings.data.backup.restoreButton') }}</NButton>
+        </NSpace>
+      </NCard>
+
+    </div>
 
     <!-- 恢复确认弹窗（issue #572）：跨模式警告 + 密文备份主口令，失败可就地重试 -->
     <RestoreConfirmModal
@@ -235,5 +239,5 @@ const backupColumns = [
       :on-confirm="confirmPrune"
       :on-cancel="cancelPrune"
     />
-  </NSpace>
+  </div>
 </template>

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { NCard, NSpace, NSwitch, NText } from 'naive-ui'
 import AppSelect from '@/components/AppSelect.vue'
 import LogSettings from '@/components/settings/LogSettings.vue'
+import { SETTINGS_CARD_STACK_CLASS } from '@/components/settings/settings-layout.css.ts'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { t, type LocaleSetting } from '@ledger/i18n'
@@ -29,7 +30,7 @@ const languageOptions = computed<{ label: string; value: LocaleSetting }[]>(() =
 </script>
 
 <template>
-  <NSpace vertical :size="16">
+  <div :class="SETTINGS_CARD_STACK_CLASS">
     <NCard :title="t('settings.appearance.card')" size="small">
       <NSpace align="center" :size="12">
         <NText>{{ t('settings.appearance.darkMode') }}</NText>
@@ -64,5 +65,5 @@ const languageOptions = computed<{ label: string; value: LocaleSetting }[]>(() =
     </NCard>
 
     <LogSettings />
-  </NSpace>
+  </div>
 </template>

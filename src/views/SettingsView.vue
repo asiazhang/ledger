@@ -28,7 +28,7 @@
  * （搜索修复卡片标题以「拼音搜索数据」开头，若需在模板内注释，避免使用组件会渲染的
  * 文案字样——dev 编译保留模板注释，会被测试的 html 断言读到。）
  */
-import { NTabs, NTabPane, NIcon, NSpace } from 'naive-ui'
+import { NTabs, NTabPane, NIcon } from 'naive-ui'
 import {
   OptionsOutline,
   GridOutline,
@@ -49,6 +49,7 @@ import ScheduledSettings from '@/components/settings/ScheduledSettings.vue'
 import FeatureToggleSettings from '@/components/settings/FeatureToggleSettings.vue'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
 import { useFeatureToggleStore } from '@/stores/feature-toggles'
+import { SETTINGS_CARD_STACK_CLASS, SETTINGS_COLUMN_CLASS } from '@/components/settings/settings-layout.css.ts'
 import { t } from '@ledger/i18n'
 
 // 「功能」Tab 的关闭集合读路径：设置面联动（「定时」Tab 隐藏）由本页消费。
@@ -56,9 +57,9 @@ const featureToggles = useFeatureToggleStore()
 </script>
 
 <template>
-  <!-- 设置页内容列限宽约 720px、左对齐不居中（issue #651）：宽窗口下说明文字
-       保持舒适行宽、表单控件不被拉满；无 margin auto，列停靠左侧。 -->
-  <div data-testid="settings-column" style="max-width: 720px">
+  <!-- 设置页内容列动态宽度（issue #651 修订）：单列，但卡片与宽表随窗口宽度
+       铺满内容区（settings-layout.css.ts 承载 100% 宽度口径），不再固定 720px。 -->
+  <div data-testid="settings-column" :class="SETTINGS_COLUMN_CLASS">
     <NTabs type="line">
       <NTabPane name="general" key="general">
         <template #tab><span class="pane-tab"><NIcon :component="OptionsOutline" />{{ t('settings.tabs.general') }}</span></template>
@@ -69,10 +70,10 @@ const featureToggles = useFeatureToggleStore()
         <template #tab><span class="pane-tab"><NIcon :component="GridOutline" />{{ t('settings.tabs.categories') }}</span></template>
         <!-- 本位币基准（issue #858，账本级设置）随币种域落本页签（ADR-0022
              归属领域定 Tab；与分类管理器同属参考数据域维护面）。 -->
-        <NSpace vertical :size="16">
+        <div :class="SETTINGS_CARD_STACK_CLASS">
           <BaseCurrencySettings />
           <CategoryManager />
-        </NSpace>
+        </div>
       </NTabPane>
 
       <NTabPane name="data" key="data" display-directive="show:lazy">
