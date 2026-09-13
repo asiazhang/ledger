@@ -212,12 +212,18 @@ export const useInvestmentsSessionStore = defineStore('investments-session', () 
   /**
    * ESC 复位出口（ADR-0094 决策 4）：页签回默认「盈亏」、持仓筛选三维清零、
    * 翻页归零、走势回默认组合曲线（选中标的与单标的模式一并清除）——复位即清除
-   * 保留态本身（复位后离开再回来 = 默认）。走各维既有写入出口，同值幂等无操作；
-   * 在途搜索防抖先撤销，复位后不会有意外的旧输入落地。
+   * 保留态本身（复位后离开再回来 = 默认）。走各维既有写入出口，同值幂等无操作。
+   *
+   * 搜索维度按**复位语义优先**处理：撤销在途防抖定时器后直接把「应用值 + 回显」
+   * 一并清空——不能复用 cancelPendingSearch 再清应用值（那会把回显先恢复成旧应用值、
+   * 再清应用值，留下「回显有旧文本、应用值为空」的不一致态，与「ESC 是取消、回到
+   * 默认」直接冲突）。定时器撤销保证复位后不会有意外的旧输入落地。
    */
   function resetToDefault() {
-    cancelPendingSearch()
+    clearTimeout(searchTimer)
+    searchTimer = undefined
     activeTab.value = INVESTMENTS_DEFAULT_TAB
+    holdingsSearchInput.value = ''
     holdingsSearch.value = ''
     holdingsAccountId.value = null
     holdingsSorter.value = null

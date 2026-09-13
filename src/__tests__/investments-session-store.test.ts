@@ -130,6 +130,26 @@ describe('resetToDefault（issue #1192 ESC 复位出口）', () => {
     expect(store.holdingsSearchInput).toBe('')
   })
 
+  it('复位语义优先：已应用搜索时 ESC 复位后回显与应用值同为默认空、定时器已撤销', () => {
+    vi.useFakeTimers()
+    const store = useInvestmentsSessionStore()
+    // 先应用一个搜索（回显 = 应用值 = '600'）
+    store.setSearch('600')
+    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS)
+    expect(store.holdingsSearch).toBe('600')
+    expect(store.holdingsSearchInput).toBe('600')
+    store.resetToDefault()
+    // 复位即回默认：回显不得残留旧应用值
+    expect(store.holdingsSearch).toBe('')
+    expect(store.holdingsSearchInput).toBe('')
+    // 复位后再输入一个值但未到防抖窗口，再复位：旧输入不落地
+    store.setSearch('000001')
+    store.resetToDefault()
+    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS * 2)
+    expect(store.holdingsSearch).toBe('')
+    expect(store.holdingsSearchInput).toBe('')
+  })
+
   it('cancelPendingSearch 撤销在途防抖：应用值不动、回显回到应用值（离开视图语义）', () => {
     vi.useFakeTimers()
     const store = useInvestmentsSessionStore()

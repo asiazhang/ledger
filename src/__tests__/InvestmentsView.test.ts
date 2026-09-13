@@ -646,12 +646,26 @@ describe('InvestmentsView ESC 复位（issue #1192）', () => {
       // 「回到默认全量列表」不成立、排序残留会让默认代码序不成立
       expect(useInvestmentsSessionStore().holdingsSorter).toBeNull()
       expect(useInvestmentsSessionStore().holdingsSearch).toBe('')
+      // 复位语义优先：搜索回显不得残留旧应用值（回归对账点；其余状态同规）
+      expect(useInvestmentsSessionStore().holdingsSearchInput).toBe('')
       expect(useInvestmentsSessionStore().holdingsPage).toBe(1)
       expect(wrapper.findAll('.n-tabs-tab--active').map((el) => el.text())).toEqual(['盈亏'])
       await clickTab(wrapper, '持仓')
       await flushPromises()
       expect(symbols(wrapper)).toEqual(['000001', '600000'])
+      // 用户可见路径：复位后离开投资视图再进来，搜索框渲染文本为空（不是旧应用值）。
+      // 说明：页签卸载的 onScopeDispose（撤销在途防抖）会掩盖复位路径的残留，
+      // 故「复位语义优先」的精确判据落在 store 层回显断言上，此处钉住端到端呈现。
       wrapper.unmount()
+      const reentered = mountView()
+      await flushPromises()
+      await clickTab(reentered, '持仓')
+      await flushPromises()
+      expect(
+        (reentered.find('[data-testid="holdings-search"] input').element as HTMLInputElement).value,
+      ).toBe('')
+      expect(symbols(reentered)).toEqual(['000001', '600000'])
+      reentered.unmount()
       guard.unmount()
     } finally {
       vi.useRealTimers()
