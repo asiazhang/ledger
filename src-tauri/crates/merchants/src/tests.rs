@@ -1,7 +1,9 @@
 //! 商户字典域测试（issue #188 / ADR-0028）。
 
-use crate::error::{AppError, ErrClass};
-use crate::merchants::{
+use ledger_infra::error::{AppError, ErrClass};
+// 测试实例纪律（#1092 同款）：本域行为路径不读交易域接缝注册静态，域单测直接
+// 驱动本 crate 实例（crate 根再导出面路径与拆出前域根路径同形）。
+use crate::{
     create_merchant, create_merchant_by_name, delete_merchant, find_merchant_by_name,
     list_merchants as list_merchants_domain, update_merchant,
 };
@@ -9,8 +11,9 @@ use crate::merchants::{
 use super::model::{Merchant, MerchantInput, MerchantUpdateInput};
 
 fn setup() -> rusqlite::Connection {
-    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
-    crate::test_support::open()
+    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）：
+    // 工厂住根包，dev-dependency 环引用（ledger-transaction/#1092 先例同款）。
+    tauri_app_lib::test_support::open()
 }
 
 fn list_merchants(conn: &rusqlite::Connection) -> Vec<Merchant> {

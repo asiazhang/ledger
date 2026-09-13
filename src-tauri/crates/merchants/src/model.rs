@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::query::FromRow;
+use ledger_infra::db::query::FromRow;
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Merchant {

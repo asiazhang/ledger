@@ -93,6 +93,11 @@ ledger-accounts = { path = "crates/accounts" }
 # 启动零接线。根包 `pub use ledger_categories as categories` 再导出保持原
 # 调用点路径。
 ledger-categories = { path = "crates/categories" }
+# 商户域 crate（spec #1086 / issue #1096，参考数据三域各自独立 crate、不合并）：
+# 商户字典 CRUD 与按名查找/即建归位；依赖面只有基础设施、同步协议与核心交易域
+# ——交易×商户接缝（#1092）的实现注册侧，壳层启动时对装。根包
+# `pub use ledger_merchants as merchants` 再导出保持原调用点路径。
+ledger-merchants = { path = "crates/merchants" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]
