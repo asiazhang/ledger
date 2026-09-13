@@ -36,7 +36,11 @@ pub mod commands;
 //（expand 形态，ledger-transaction 同款）。域内引擎见 `ledger-currencies` crate。
 pub use ledger_currencies as currencies;
 pub mod dashboard;
-pub mod investment;
+// 投资域 crate（spec #1086 / issue #1097，P3 业务域 crate）：自根包域目录拆出，
+// 根包以再导出形态保留原引用路径——壳层（IPC/HTTP 命令）、transaction_wiring 接线、
+// 行情同步域、sync_engine 重放分派、ledger-perf 与 e2e 的 `crate::investment::…` /
+// `tauri_app_lib::investment::…` 调用点零改动（expand 形态，ledger-merchants 同款）。
+pub use ledger_investment as investment;
 pub mod item;
 // 商户域 crate（spec #1086 / issue #1096，参考数据三域各自独立 crate）：自根包
 // 域目录拆出，根包以再导出形态保留原引用路径——壳层（IPC/HTTP 命令）、
