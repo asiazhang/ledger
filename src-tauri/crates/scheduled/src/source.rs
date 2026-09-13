@@ -3,7 +3,7 @@
 //! 只读展示反查，不新增数据级反向引用（期次表 `transaction_id` 既有指针即为通道）。
 //!
 //! 自 #1090 起本模块私有化并承担接缝反转的实现侧：核心交易域只定义注册点
-//! （`transaction::seams::source::register_plan_source_resolver`），本模块提供实现并经
+//!（`ledger_transaction::seams::source::register_plan_source_resolver`），本模块提供实现并经
 //! [`install_plan_source_hook`] 在壳层启动时装入——核心交易域对定时计划域零直接
 //! 依赖（域间禁边，`scripts/check-structure.ts`）。反查行不再公开再导出。
 
@@ -12,9 +12,9 @@ use std::collections::HashMap;
 use rusqlite::Connection;
 
 use super::models::ScheduledKind;
-use crate::db::query::{FromRow, query_all};
-use crate::error::Result;
-use crate::transaction::{TransactionSource, TransactionSourceKind, TransactionSourceStatus};
+use ledger_infra::db::query::{FromRow, query_all};
+use ledger_infra::error::Result;
+use ledger_transaction::{TransactionSource, TransactionSourceKind, TransactionSourceStatus};
 
 /// 计划来源展示行（以生成交易 id 为键）：计划 id + 形态 + 状态 + 备注。
 /// `status`/`note` 沿用域核心模型的 String/Option 形态（wire 与裸列一致）。
@@ -76,7 +76,7 @@ pub fn source_display_by_transaction_ids(
 /// 提供实现、壳层启动时接线——`lib.rs::run` 与测试建库单点（`test_support::open`、
 /// BDD world）各调用一次，生产与测试同形。
 pub fn install_plan_source_hook() {
-    crate::transaction::seams::source::register_plan_source_resolver(plan_source_hook);
+    ledger_transaction::seams::source::register_plan_source_resolver(plan_source_hook);
 }
 
 /// 计划来源解析接缝的实现（[`install_plan_source_hook`] 的注册体）：反查行

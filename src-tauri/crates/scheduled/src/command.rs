@@ -26,13 +26,13 @@ use serde::{Deserialize, Serialize};
 
 use std::borrow::Cow;
 
-use crate::db::{deterministic_uuid, now_iso};
-use crate::error::Result;
-use crate::transaction::NormalizedTransaction;
-use crate::transaction::write::writer;
+use ledger_infra::db::{deterministic_uuid, now_iso};
+use ledger_infra::error::Result;
 use ledger_sync_protocol::command::{ReplayEffect, SyncCommand};
 use ledger_sync_protocol::device::device_id;
 use ledger_sync_protocol::op::record_local as record_op;
+use ledger_transaction::NormalizedTransaction;
+use ledger_transaction::write::writer;
 
 use super::models::{CreateScheduledInput, ScheduledStatus, UpdateSubscriptionInput};
 
@@ -177,10 +177,7 @@ fn complete_local_occurrence(
 /// Writer 接缝内）并完成本地期次，返回 `Applied`。计划 CRUD：与本地写同一执行
 /// 协议（校验 + 落库），恒 `Applied`。**不产出 op**：外来 op 由同步引擎在重放
 /// 事务内落日志。
-pub(crate) fn replay_command(
-    conn: &Connection,
-    command: &ScheduledCommand,
-) -> Result<ReplayEffect> {
+pub fn replay_command(conn: &Connection, command: &ScheduledCommand) -> Result<ReplayEffect> {
     match command {
         ScheduledCommand::ExecuteOccurrence {
             plan_id,

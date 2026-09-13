@@ -1,20 +1,20 @@
 //! 订阅花费双口径（ADR-0023，issue #160 / #161）：实际花费按期次流水逐月忠实统计
 //! （决策二），推算成本按周期系数折算（issue #161），两口径并行互不影响。
 
-use super::super::*;
 use super::common::{
     create_installment, create_subscription, create_subscription_cycle, create_transfer_plan,
     read_txn,
 };
-use crate::test_support;
 use rusqlite::Connection;
 use rusqlite::params;
+use tauri_app_lib::scheduled_transactions::*;
+use tauri_app_lib::test_support;
 
 // ---------------------------------------------------------------------------
 // 订阅花费——实际花费口径（issue #160，ADR-0023 决策二）
 // ---------------------------------------------------------------------------
 
-use crate::scheduled_transactions::query_subscription_spend;
+use tauri_app_lib::scheduled_transactions::query_subscription_spend;
 
 /// 执行计划前 N 条 pending 期次（scheduled_date 升序），返回生成的交易日期。
 fn execute_first_n_occurrences(conn: &Connection, plan_id: &str, n: usize) -> Vec<String> {

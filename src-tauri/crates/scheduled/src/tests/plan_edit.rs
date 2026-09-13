@@ -3,8 +3,8 @@
 
 use super::super::*;
 use super::common::create_subscription;
-use crate::test_support;
 use rusqlite::params;
+use tauri_app_lib::test_support;
 
 // ---------------------------------------------------------------------------
 // 订阅编辑——仅非金额字段（issue #162，ADR-0023 决策三）

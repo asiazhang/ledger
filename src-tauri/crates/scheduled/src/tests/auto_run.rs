@@ -3,12 +3,16 @@
 //! 全部测试打同一个追补入口——内存库 + 注入开关状态与今天日期，只断言外部可观察
 //! 行为：执行汇总与数据库终态（期次状态、交易行、脏标记）。不测线程/sleep/锁
 //! （周期调用结构由调度线程「只做周期调用」保证，与自动备份同款纪律）。
+//!
+//! 测试实例纪律（#1098 拆 crate 起）：置脏钩子是本 crate 自有注册静态，由测试
+//! 工厂接在根包图实例上，故本文件经 `tauri_app_lib::scheduled_transactions::…`
+//! 驱动根包图实例（脏标记联动断言可见）；建库同经根包测试工厂。
 
-use super::super::*;
 use super::common::{create_subscription, occurrence_status};
-use crate::test_support;
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
+use tauri_app_lib::scheduled_transactions::*;
+use tauri_app_lib::test_support;
 
 /// 解析注入的「今天」。
 fn day(s: &str) -> NaiveDate {
@@ -316,19 +320,19 @@ fn success_marks_dirty_for_backup_linkage() {
 
     catch_up(&conn, false, "2026-02-20");
     assert!(
-        !crate::backup::get_state(&conn).unwrap().dirty,
+        !tauri_app_lib::backup::get_state(&conn).unwrap().dirty,
         "空转不置脏"
     );
 
     catch_up(&conn, true, "2026-01-14");
     assert!(
-        !crate::backup::get_state(&conn).unwrap().dirty,
+        !tauri_app_lib::backup::get_state(&conn).unwrap().dirty,
         "未到期不落账不置脏"
     );
 
     catch_up(&conn, true, "2026-02-20");
     assert!(
-        crate::backup::get_state(&conn).unwrap().dirty,
+        tauri_app_lib::backup::get_state(&conn).unwrap().dirty,
         "成功落账应置脏联动自动备份判定"
     );
     let (status, tx) = occurrence_status(&conn, &occurrence_id_at(&conn, &plan_id, 0));

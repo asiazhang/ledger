@@ -52,7 +52,13 @@ pub mod physical_asset;
 //（expand 形态，ledger-transaction 同款）。域内本体见 `ledger-policy` crate。
 pub use ledger_policy as policy;
 pub mod reports;
-pub mod scheduled_transactions;
+// 定时计划域 crate（spec #1086 / issue #1098，P3 业务域）：自根包域目录拆出，
+// 根包以再导出形态保留原引用路径——壳层（IPC/HTTP 命令）、双向接缝接线
+//（计划来源反查实现、期次落账置脏注册点、追补触发实现）、sync_engine 重放分派、
+// ledger-perf 与 e2e 的 `crate::scheduled_transactions::…` /
+// `tauri_app_lib::scheduled_transactions::…` 调用点零改动（expand 形态，
+// ledger-backup/ledger-transaction 同款）。
+pub use ledger_scheduled as scheduled_transactions;
 pub mod sync;
 pub mod sync_engine;
 // 信号守门测试（signals_cross_check，ADR-0044 决策 3 修订 / ADR-0073 决策 5）：

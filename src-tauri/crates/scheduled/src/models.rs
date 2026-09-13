@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::db::query::FromRow;
+use ledger_infra::db::query::FromRow;
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -26,7 +26,7 @@ impl std::fmt::Display for ScheduledKind {
 }
 
 impl std::str::FromStr for ScheduledKind {
-    type Err = crate::error::AppError;
+    type Err = ledger_infra::error::AppError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "installment" => Ok(ScheduledKind::Installment),
@@ -34,7 +34,7 @@ impl std::str::FromStr for ScheduledKind {
             "scheduled_transfer" => Ok(ScheduledKind::ScheduledTransfer),
             // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误，
             // message 逐字保留、未知值进 params。
-            _ => Err(crate::error::AppError::codedp(
+            _ => Err(ledger_infra::error::AppError::codedp(
                 "scheduled-plan.kind-unknown",
                 format!("未知定时交易类型: {s}"),
                 &[s],
@@ -47,8 +47,9 @@ impl std::str::FromStr for ScheduledKind {
 impl rusqlite::types::FromSql for ScheduledKind {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
         let s = value.as_str()?;
-        s.parse()
-            .map_err(|e: crate::error::AppError| rusqlite::types::FromSqlError::Other(Box::new(e)))
+        s.parse().map_err(|e: ledger_infra::error::AppError| {
+            rusqlite::types::FromSqlError::Other(Box::new(e))
+        })
     }
 }
 
@@ -73,7 +74,7 @@ impl std::fmt::Display for ScheduledStatus {
 }
 
 impl std::str::FromStr for ScheduledStatus {
-    type Err = crate::error::AppError;
+    type Err = ledger_infra::error::AppError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "active" => Ok(ScheduledStatus::Active),
@@ -81,7 +82,7 @@ impl std::str::FromStr for ScheduledStatus {
             "cancelled" => Ok(ScheduledStatus::Cancelled),
             "completed" => Ok(ScheduledStatus::Completed),
             // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误。
-            _ => Err(crate::error::AppError::codedp(
+            _ => Err(ledger_infra::error::AppError::codedp(
                 "scheduled-plan.status-unknown",
                 format!("未知计划状态: {s}"),
                 &[s],
@@ -111,7 +112,7 @@ impl std::fmt::Display for RecurrenceType {
 }
 
 impl std::str::FromStr for RecurrenceType {
-    type Err = crate::error::AppError;
+    type Err = ledger_infra::error::AppError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "daily" => Ok(RecurrenceType::Daily),
@@ -119,7 +120,7 @@ impl std::str::FromStr for RecurrenceType {
             "monthly" => Ok(RecurrenceType::Monthly),
             "yearly" => Ok(RecurrenceType::Yearly),
             // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误。
-            _ => Err(crate::error::AppError::codedp(
+            _ => Err(ledger_infra::error::AppError::codedp(
                 "scheduled-plan.recurrence-unknown",
                 format!("未知周期类型: {s}"),
                 &[s],
@@ -152,7 +153,7 @@ impl std::fmt::Display for OccurrenceStatus {
 }
 
 impl std::str::FromStr for OccurrenceStatus {
-    type Err = crate::error::AppError;
+    type Err = ledger_infra::error::AppError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "pending" => Ok(OccurrenceStatus::Pending),
@@ -161,7 +162,7 @@ impl std::str::FromStr for OccurrenceStatus {
             "failed" => Ok(OccurrenceStatus::Failed),
             "cancelled" => Ok(OccurrenceStatus::Cancelled),
             // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误。
-            _ => Err(crate::error::AppError::codedp(
+            _ => Err(ledger_infra::error::AppError::codedp(
                 "scheduled-occurrence.status-unknown",
                 format!("未知期次状态: {s}"),
                 &[s],

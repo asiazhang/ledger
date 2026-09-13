@@ -11,7 +11,7 @@
 use std::str::FromStr;
 
 use super::super::*;
-use crate::error::AppError;
+use ledger_infra::error::AppError;
 
 /// 断言错误同时满足：稳定码、`kind` 归类、message 逐字、插值参数顺序。
 fn assert_coded(err: &AppError, code: &str, message: &str, params: &[&str]) {
@@ -77,8 +77,8 @@ fn occurrence_status_parse_rejects_unknown_with_code() {
 /// （0 日），建档展开期次时报码化「无效日期」——用户可见条件不留裸 `Invalid`。
 #[test]
 fn occurrence_date_guard_reports_coded_invalid_date() {
-    let conn = crate::test_support::open();
-    crate::test_support::seed_account(&conn, "acc", "现金", "cash", "CNY", 0);
+    let conn = tauri_app_lib::test_support::open();
+    tauri_app_lib::test_support::seed_account(&conn, "acc", "现金", "cash", "CNY", 0);
     let err = create_plan(
         &conn,
         CreateScheduledInput {
