@@ -113,7 +113,7 @@ function mountHost() {
   const open = vi.fn<(k: CreateTransactionKind) => void>()
   const Host = defineComponent({
     setup() {
-      useCreateShortcuts(open)
+      useCreateShortcuts(open, () => true)
       return () => h('div')
     },
   })

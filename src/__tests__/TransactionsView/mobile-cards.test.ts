@@ -1,7 +1,7 @@
 // 路由替身经 common.ts 的 vi.mock 注册，必须先于任何直连组件导入（导入顺序即 mock 生效面）
 import {
   mountView, mountMobile, mountPhone, cards, shownModal, closeShownModal,
-  makeTxn, setTxnDb, rowMenu, rowMenuKeys, SHELL_DEFAULTS, SHELL_OVERRIDES,
+  makeTxn, setTxnDb, rowMenu, rowMenuKeys, openCreateFab, SHELL_DEFAULTS, SHELL_OVERRIDES,
 } from './common'
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
@@ -280,12 +280,9 @@ describe('卡片「⋯」与整卡编辑', () => {
 })
 
 describe('记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）', () => {
-  it('点开五枚大号类型选择（支出/收入/转账/买入/卖出，不含借贷、退款与转换）', async () => {
+  it('点开大号类型选择（默认全开 = 支出/收入/转账/买入/卖出，不含借贷、退款与转换）', async () => {
     const wrapper = await mountPhone()
-    await wrapper.find('.create-fab').trigger('click')
-    await flushPromises()
-    const options = [...document.body.querySelectorAll('.create-fab-option')]
-    expect(options.map((o) => o.textContent)).toEqual(['支出', '收入', '转账', '买入', '卖出'])
+    expect(await openCreateFab(wrapper)).toEqual(['支出', '收入', '转账', '买入', '卖出'])
   })
 
   it('五类型意图矩阵：类型选择 → 记一笔意图（携带类型）→ 对应表单（convert 无手工录入入口）', async () => {

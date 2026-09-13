@@ -1,4 +1,4 @@
-import { vi, beforeEach } from 'vitest'
+import { vi, beforeEach, expect } from 'vitest'
 import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride, type InvokeSeamStaticValue } from '@ledger/test-support/invoke-mock'
 import { fireProp } from '@ledger/test-support/component-vm'
 import { flushPromises, type VueWrapper } from '@vue/test-utils'
@@ -206,6 +206,26 @@ export function mountMobile() {
 export function mountPhone() {
   setFakeMedia({ width: 839, hover: 'none', pointer: 'coarse' })
   return mountView()
+}
+
+/** 展开桌面记一笔分裂按钮下拉，返回菜单项文案列表（document.body 中的浮层）。 */
+export async function openCreateDropdown(wrapper: VueWrapper): Promise<string[]> {
+  const arrow = wrapper.find('button[aria-label="更多记账类型"]')
+  expect(arrow.exists()).toBe(true)
+  await arrow.trigger('click')
+  await flushPromises()
+  return [...document.body.querySelectorAll('.n-dropdown-option-body__label')].map(
+    (el) => el.textContent ?? '',
+  )
+}
+
+/** 展开移动记一笔悬浮按钮，返回类型选项文案列表（document.body 中的浮层）。 */
+export async function openCreateFab(wrapper: VueWrapper): Promise<string[]> {
+  await wrapper.find('.create-fab').trigger('click')
+  await flushPromises()
+  return [...document.body.querySelectorAll('.create-fab-option')].map((el) =>
+    (el.textContent ?? '').trim(),
+  )
 }
 
 /** 移动档卡片列表（.transaction-card 钩子类，样式与测试同键）。 */

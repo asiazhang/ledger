@@ -44,12 +44,13 @@ import { useTransactionModalState } from '@/composables/useTransactionModalState
 import { api } from '@ledger/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
+import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import { buildTransactionColumns } from '@/components/transaction-columns'
 import { sumFixedColumnWidths } from '@/utils/table'
+import { availableCreateKinds, isCreateKindAvailable } from '@/utils/create-entry-kinds'
 import { isLendingEntryKind } from '@/domain/lending'
 import { type NullableDateRange } from '@/utils/time-period'
 import {
-  CREATE_KINDS,
   LENDING_CREATE_DIRECTIONS,
   TRANSACTION_KINDS,
   type CreateFormKind,
@@ -228,8 +229,16 @@ function createKindLabel(kind: CreateFormKind): string {
  * 触控轴下裸键监听不绑定（ADR-0088 决策 6 / issue #843），键位标注同步退役
  * （提示不存在的键位是误导）；指针轴行为不变。 */
 const inputMode = useInputMode()
+
+// 投资功能开关（issue #1245 / ADR-0116 决策 4「入口侧」）：关闭投资后买入/卖出
+// 从全部新建入口消失（桌面下拉与移动悬浮按钮共用 createKinds 一份清单）；既有
+// buy/sell 交易与引用侧（列表、来源列、按 kind 筛选）不受影响。
+const featureToggles = useFeatureToggleStore()
+const investmentsClosed = computed(() => featureToggles.isFeatureClosed('investments'))
+const createKinds = computed(() => availableCreateKinds(investmentsClosed.value))
+
 const createKindOptions = computed<DropdownOption[]>(() => [
-  ...CREATE_KINDS.map((k) => ({
+  ...createKinds.value.map((k) => ({
     label:
       inputMode.value === 'pointer'
         ? t('transactions.create.kindWithKey', {
@@ -259,8 +268,12 @@ function openCreate(k: CreateFormKind) {
 }
 
 // 裸键快捷键（issue #153）：a/z/i/b/s 直达对应类型弹窗，与点下拉对应项同一入口；
-// 焦点在可编辑元素或弹层打开时抑制；随视图装卸，仅交易页生效
-useCreateShortcuts(openCreate)
+// 焦点在可编辑元素或弹层打开时抑制；随视图装卸，仅交易页生效。
+// 可用性闸门（issue #1245）：关闭投资后 b/s 属入口侧、不触发（与列表过滤同一判定）。
+useCreateShortcuts(
+  openCreate,
+  (kind) => isCreateKindAvailable(kind, investmentsClosed.value),
+)
 
 /** 提交成功：关窗（模块意图清回终态），回填意图 refresh（重拉 + 翻回第 1 页，
  * 新记录按日期/时间排序最可能落在第 1 页），保留筛选条件（与手动过滤同等语义，不重置）。 */
@@ -722,8 +735,9 @@ function activateCard(row: Transaction): void {
       </template>
     </NDataTable>
   </NSpace>
-  <!-- 记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）：点开五枚大号类型选择
-       轻弹层，经弹窗意图编排的记一笔意图（携带类型）进对应表单；零表单内部改造。
+  <!-- 记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）：点开大号类型选择
+       轻弹层（可用类型随功能开关，默认全开五类型），经弹窗意图编排的记一笔意图
+       （携带类型）进对应表单；零表单内部改造。
        独立根节点渲染：固定定位不参与 NSpace 布局流 -->
-  <CreateFab v-if="isMobile" @select="openCreate" />
+  <CreateFab v-if="isMobile" :kinds="createKinds" @select="openCreate" />
 </template>

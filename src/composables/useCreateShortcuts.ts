@@ -50,14 +50,22 @@ export function isEditableTarget(e: Event): boolean {
  * 交易页「记一笔」快捷键：裸键 a/z/i/b/s 打开对应类型弹窗（复用 #150 的弹窗入口）。
  * 仅在交易页挂载（随视图装卸），抑制条件：焦点在可编辑元素或任一弹层打开。
  *
+ * 可用性闸门（issue #1245 / ADR-0116 决策 4）：调用方以 isKindAvailable 收窄可触发
+ * 类型——关闭投资后 b/s 属入口侧、不得触发（也不占键位：命中但不可用时直接放行，
+ * 不 preventDefault）。判定与下拉/FAB 列表过滤同源（见 utils/create-entry-kinds）。
+ *
  * 触控轴退役（ADR-0088 决策 6 / issue #843）：指针轴注册裸键监听；触控轴不绑定
  * （含运行中换轴实时拆装——输入轴信号变化即重接线）；卸载时清理。监听面由输入轴
  * composable 唯一事实源驱动，纯函数 matchCreateShortcut 与轴无关（可独立测试）。
  */
-export function useCreateShortcuts(open: (kind: CreateTransactionKind) => void) {
+export function useCreateShortcuts(
+  open: (kind: CreateTransactionKind) => void,
+  isKindAvailable: (kind: CreateTransactionKind) => boolean,
+) {
   const onKeydown = (e: KeyboardEvent) => {
     const kind = matchCreateShortcut(e)
     if (!kind) return
+    if (!isKindAvailable(kind)) return
     if (isEditableTarget(e) || hasOpenOverlay()) return
     e.preventDefault()
     open(kind)
