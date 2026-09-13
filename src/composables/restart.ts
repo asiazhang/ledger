@@ -5,6 +5,10 @@ import { api } from '@ledger/api'
  * 转换/搬迁等文件级操作落盘后，让 success toast 先落地再重启。
  * 800ms 与既有恢复流程一致。
  *
+ * 归位注记（issue #1156）：原住 src/utils，因引用 @ledger/api 违反 utils
+ * 叶子方向约束，迁入 composables（壳层行为编排，与 resolve-merchant 等引用
+ * store + api 的辅助同住处）；时序与重启语义零变化。
+ *
  * 重启语义（issue #644 / ADR-0080）：`restart_app` 在后端完成**原位重引导**
  * （重跑启动引导序列：DataLocation 解析 → 库文件判定 → 连接换入 → 两扇门
  * 翻转），返回后前端重载 WebView——重新探测启动相位，落到解锁屏/失败恢复

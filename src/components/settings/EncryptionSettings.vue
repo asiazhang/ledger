@@ -9,7 +9,7 @@ import { NAlert, NButton, NCard, NCheckbox, NCollapse, NCollapseItem, NForm, NFo
 import { computed, onMounted, ref, watch, type Ref } from 'vue'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
-import { restartAppShortly } from '@/utils/restart'
+import { restartAppShortly } from '@/composables/restart'
 import { useAppStore } from '@/stores/app'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'

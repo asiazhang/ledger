@@ -47,7 +47,7 @@ import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import { useRestoreFromFile } from '@/composables/useRestoreFromFile'
 import { useAppStore } from '@/stores/app'
 import { errorMessage } from '@/utils/errors'
-import { restartAppShortly } from '@/utils/restart'
+import { restartAppShortly } from '@/composables/restart'
 import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 
 const {
