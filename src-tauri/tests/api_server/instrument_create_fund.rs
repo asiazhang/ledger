@@ -482,6 +482,36 @@ async fn test_create_fund_without_market_creates_unknown_row() {
     assert_eq!(fund_row(&conn, "某基金组合B").market, "unknown");
 }
 
+/// 6 位基金经按代码增强通道时，调用方携带的非 unknown 市场同样被拒——不变量
+/// 「对全部创建通道成立」，不因 6 位增强自造字典市场而例外（issue #1194 /
+/// ADR-0038）。入口守卫先于东财往返：拒绝即不发起网络请求、不落行。删掉入口
+/// 守卫接线本测试即红（增强分支会 201 建出 market=unknown 的基金行）。
+#[tokio::test]
+async fn test_create_six_digit_fund_with_market_rejects_without_lookup_or_row() {
+    let (app, conn, calls) = setup_app_with_fund_stub(stub_hit());
+
+    let (status, bytes) = post_instrument(
+        &app,
+        r#"{"symbol":"000001","type":"fund","name":"华夏成长混合","market":"sh"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["kind"], "Invalid");
+    assert_eq!(err["code"], "instrument.fund-market-forbidden");
+
+    let count: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM instruments", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0, "被拒的 6 位 fund 创建不应产生标的行");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "入口守卫应先于东财往返拒绝，不发起网络请求"
+    );
+}
+
 #[tokio::test]
 async fn test_openapi_create_endpoint_documents_fund_enhancement() {
     let (app, _conn, _calls) = setup_app_with_fund_stub(stub_hit());

@@ -9,6 +9,7 @@ use super::command::{
     ExchangeRateCommand, InstrumentCommand, InstrumentCommandRow, PriceCommand,
     record_exchange_rate, record_instrument, record_price,
 };
+use super::fund::{FUND_MARKET, reject_non_unknown_fund_market};
 use super::model::{
     Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
     InstrumentType, MarketPrice, MarketPriceInput,
@@ -369,7 +370,7 @@ pub fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<St
         kind: input.kind,
         name: input.name,
         currency_code: input.currency_code,
-        market: input.market.unwrap_or_else(|| UNKNOWN_MARKET.to_string()),
+        market: input.market.unwrap_or_else(|| FUND_MARKET.to_string()),
     };
     let (id, outcome) = write_instrument(conn, &new_uuid(), &row)?;
     match outcome {
@@ -402,23 +403,18 @@ pub(crate) enum InstrumentWrite {
     Unchanged,
 }
 
-/// 场外基金的市场位占位值（ADR-0038 决策 1）：场外基金没有交易所市场概念，
-/// 市场恒 unknown——创建缺省与守卫共用本值，避免字面量漂移。
-const UNKNOWN_MARKET: &str = "unknown";
-
 /// fund 类型标的市场恒 unknown 守卫（ADR-0038 决策 1 修订 / issue #1194）：
 /// 场外基金的市场位只是纯字典占位，不是交易所市场；fund 行携带任何非 unknown
-/// 市场一律码化拒绝（400）。守卫落在标的写入协议（本域写路径单点）而非逐个
-/// 调用入口，使不变量对全部创建通道成立——IPC 手动创建、AI/HTTP 通用创建、
-/// 东财增强与降级建行、同步命令重放；缺省（None）在 [`create_instrument`]
+/// 市场一律码化拒绝（400），判据与文案单点见
+/// [`super::fund::reject_non_unknown_fund_market`]。守卫落在标的写入协议（本域
+/// 写路径单点）——非 HTTP 创建（IPC 核心创建 / 同步命令重放）在此兜底；HTTP
+/// 6 位增强与降级通道自造字典市场、不读调用方输入，其「调用方市场拒绝」由
+/// [`super::fund::reject_carried_fund_market`] 在入口先行拒绝（见
+/// `api_server::handlers::instruments`）。缺省（None）在 [`create_instrument`]
 /// 归一为 unknown，不触发本守卫。
 fn ensure_fund_market_unknown(kind: InstrumentType, market: &str) -> Result<()> {
-    if kind == InstrumentType::Fund && market != UNKNOWN_MARKET {
-        return Err(AppError::codedp(
-            "instrument.fund-market-forbidden",
-            format!("基金标的市场恒为未知：不能携带市场 {market}（场外基金无交易所市场概念）"),
-            &[market],
-        ));
+    if kind == InstrumentType::Fund {
+        reject_non_unknown_fund_market(market)?;
     }
     Ok(())
 }

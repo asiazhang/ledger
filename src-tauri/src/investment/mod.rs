@@ -116,7 +116,7 @@ pub use crud::{
 pub use financial_freedom::query_financial_freedom;
 pub use fund::{
     FundCreateOutcome, add_fund_by_code_with, adopt_fund_quote, create_fund_degraded,
-    is_six_digit_code, validate_fund_code,
+    is_six_digit_code, reject_carried_fund_market, validate_fund_code,
 };
 pub use manual_price::record_manual_price;
 pub use quote::{Quote, QuoteAdoptionInput, QuoteAdoptionOutcome};
