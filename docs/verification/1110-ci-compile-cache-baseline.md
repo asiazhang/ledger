@@ -175,8 +175,8 @@ GitHub 托管）+ job 级预构建容器镜像 `ghcr.io/asiazhang/ledger-ci-back
 - **缓存恢复** = `Run Swatinem/rust-cache@v2` 步骤时长（Actions API，秒）。
 - **编译** = cargo 步骤起点（日志 `##[group]Run cargo test --workspace --lib --test '*'`）
   → 日志里 cargo 的 `Finished … in` 汇总行，四舍五入到秒。该口径**含步骤启动开销**，
-  故比 cargo 自报的 `in` 值大 0–1s；cargo 自报值为 1m21s / 1m30s / 1m32s / 1m33s /
-  1m37s / 1m40s / 1m56s（对应下表自上而下的 run 顺序）。两者不可混称。
+  故比 cargo 自报的 `in` 值大 0–1s；cargo 自报值为 1m30s / 1m40s / 1m32s / 1m37s /
+  1m56s / 1m21s / 1m33s（对应下表自上而下的 run 顺序）。两者不可混称。
 - **测试执行** = `Rust 单元测试 + BDD/e2e 测试（cucumber）` 步骤时长（Actions API，
   秒）− 编译段。于是「编译 + 执行」恒等于该步骤时长，不引入额外取整口径。
 
