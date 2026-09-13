@@ -54,9 +54,10 @@ const ctx = useInvestmentForm(props.kind, {
           style="width: 160px"
         />
         <AppSelect
-          v-model:value="ctx.currencyCode.value"
+          :value="ctx.currencyCode.value"
           :options="ctx.currencyOptions.value"
           :disabled="true"
+          data-testid="investment-currency"
           style="width: 130px; margin-left: 8px"
         />
       </NFormItem>
@@ -66,6 +67,7 @@ const ctx = useInvestmentForm(props.kind, {
           v-model:value="ctx.accountId.value"
           :options="ctx.investmentAccountOptions.value"
           :placeholder="t('investments.form.accountPlaceholder')"
+          data-testid="investment-account"
           style="width: 200px"
         />
       </NFormItem>
@@ -79,6 +81,7 @@ const ctx = useInvestmentForm(props.kind, {
           v-model:value="ctx.fundingAccountId.value"
           :options="ctx.fundingAccountOptions.value"
           :placeholder="t('investments.form.fundingAccountPlaceholder')"
+          data-testid="investment-funding-account"
           clearable
           style="width: 200px"
         />
