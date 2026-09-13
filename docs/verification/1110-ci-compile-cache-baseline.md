@@ -78,11 +78,26 @@ spec #1086 预计「缓存体积 2 GB → 约 1 GB、解包时间砍半」。核
 （本票基线），恢复段（下载+解压）30–42s，这部分收益**已由 db611ca7 取得**，不是
 本票新增。
 
-代价（有意接受）：CI 失败时 backtrace 只有符号名、没有行号（断言位置仍由测试输出
-给出）；`CARGO_`/`RUST_`/`CC` 前缀环境变量参与 rust-cache 的 key hash
-（`src/config.ts` 的 `envPrefixes`，CI 日志的 "Environment considered" 段可见
-`CARGO_PROFILE_DEV_DEBUG`），故本变量改动会让该 job 的 key 变化：下一次运行冷编译并
-重存一份缓存（一次性成本），旧缓存待 10 GB 配额驱逐。
+代价一（有意接受）：CI 失败时 backtrace 只有符号名、没有行号（断言位置仍由测试输出
+给出）。
+
+代价二（一次性，实测）：`CARGO_`/`RUST_`/`CC` 前缀环境变量进入 rust-cache 的
+**restore key** 的 env hash（`src/config.ts` 的 `envPrefixes`；CI 日志的
+"Environment considered" 段可见 `CARGO_PROFILE_DEV_DEBUG`），本变量改动使该 job 的
+env hash 从 `259c68f2`（debug=1）变为 `7392abf3`（debug=0）——restore key 前缀随之
+变化，GitHub 的前缀回退匹配不上旧缓存，于是带本改动的分支下一次运行是**全量冷编**
+（依赖也重编），而不是「只重编成员」：
+
+| run | 缓存恢复 | 编译 | job 端到端 | 结论 |
+| --- | --- | --- | --- | --- |
+| 34751213388（本 PR，过渡态） | 1s（miss） | 5m36s | 8m11s | 一次性代价 |
+| 基线均值（同 job，第三节） | 30–42s | 82–116s | 258–306s | 稳态 |
+
+影响面仅限带本改动的分支与 merge 后首个 main 运行（其余分支/PR 的 env hash 不变，
+backend-lint 未设本变量），之后新 key 缓存固化即回到稳态。备选处置（本票未采用、
+留给维护者取舍）：把本变量降为 cargo 步骤级 `env`，env hash 保持 `259c68f2`，缓存
+内容不受影响（依赖产物与本变量无关，见本节 2），代价是该变量不再出现在 rust-cache
+的「Environment considered」清单里。
 
 ## 二、增量编译：实测后**否决**（不采纳 `CARGO_INCREMENTAL`）
 
@@ -169,11 +184,12 @@ GitHub 托管）+ job 级预构建容器镜像 `ghcr.io/asiazhang/ledger-ci-back
 
 ## 五、未验证项与局限
 
-- **本票自身的 CI 收益未在本票 CI 运行中验证**：PR 运行恢复的是旧 key 的依赖缓存
-  （依赖 debuginfo 与本变量无关，故不受影响），且 PR 不保存缓存（`save-if: main`）；
-  merge 后首次 main 运行才会以新 key 冷编成员并保存新缓存。回填方式：读该 main run
-  的编译段耗时与 Post 缓存大小，与本文件第三节基线对比。预期：编译段小幅下降，缓存
-  体积不变。
+- **本票的稳态收益仍未在本票 CI 运行中验证**：本 PR 的运行（run `34751213388`）因
+  env hash 变化走了全量冷编（见第一节「代价二」），其余四个 job 全绿、后端测试 job
+  通过（三层测试与静态检查结果不变，AC5 的运行证据）。稳态（debug=0 下缓存恢复命中、
+  成员重编）要等 merge 后首个 main 运行以新 key 保存缓存。回填方式：读该 main run 与
+  其后任一次 PR 运行的编译段耗时、Post 缓存大小，与本文件第三节基线对比。预期：
+  编译段小幅下降，缓存体积不变。
 - **本机测量 ≠ CI 条件**：macOS arm64 + kache（CI 为 Linux x64 + rust-cache + mold），
   并发负载 load ≈ 20/12 核使 wall 不可比；只把 CPU 时间与体积对照当证据，未外推秒数。
 - 镜像体积与容器初始化时间（19–31s）未优化：其归属是 #1109 的镜像构建议题，不在本票

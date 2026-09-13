@@ -164,8 +164,16 @@ jobs:
     #   Post 保存 1236735941 B 与恢复的 1236768034 B 基本等大（成员 debuginfo 从未
     #   进过缓存）。spec #1086 里「缓存 2 GB → 约 1 GB、解包砍半」的预期不成立，
     #   那 2.0 GB 是依赖侧 line-tables-only（db611ca7，2026-09-06）之前的历史值。
-    #   一次性代价：CARGO_ 前缀环境变量参与 rust-cache 的 key hash，本变量改动
-    #   ⇒ 该 job 的 key 变化 ⇒ 下一次运行冷编译并重存一份缓存，旧缓存待过期驱逐。
+    #   一次性代价（实测，别按「只省 10–20s」估）：CARGO_ 前缀环境变量进入
+    #   rust-cache 的 **restore key** hash，本变量改动使 env hash 259c68f2 →
+    #   7392abf3（run 34751213388 的 Cache Configuration），与旧缓存前缀不匹配 ⇒
+    #   带本改动的分支下一次运行是**全量冷编**（依赖也重编）：实测该 run 缓存恢复
+    #   1s（miss）、编译 5m36s、job 8m11s；merge 后首个 main 运行同价，之后新 key
+    #   缓存固化、恢复稳态。影响面仅限带本改动的分支与 merge 后首个 main 运行——
+    #   其它 PR 的 env hash 不变（其余 job 亦然，backend-lint 未设本变量）。
+    #   备选（可省掉这次冷编，留给维护者取舍）：把本变量降为 cargo 步骤级 env，
+    #   env hash 保持 259c68f2；依赖产物与本变量无关（见上），缓存内容不受影响，
+    #   代价是该变量不再出现在 rust-cache 的「Environment considered」里。
     # - RUSTFLAGS + mold：链接器换 mold（lib 与每个集成测试 crate 各全量链接一次，
     #   链接是 workspace 编译的大头），mold 已烘进镜像。
     # - 增量编译（issue #1110 实测否决，刻意不设 CARGO_INCREMENTAL）：rust-cache
