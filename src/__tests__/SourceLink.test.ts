@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SourceLink from '@/components/SourceLink.vue'
+import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import type { TransactionSource } from '@ledger/types'
@@ -52,6 +53,16 @@ describe('SourceLink 来源列单元格（spec #704 / issue #706）', () => {
     expect(pushMock).toHaveBeenCalledWith({
       name: 'policies',
       query: { focus: 'pol-1' },
+    })
+  })
+
+  it('保单已关闭（收纳态）：引用照常放行，落保单独立路由 + focus（issue #1244）', async () => {
+    useFeatureToggleStore().setFeatureClosed('policies', true)
+    const wrapper = mount(SourceLink, { props: { source: makeSource({ entity_id: 'pol-9' }) } })
+    await wrapper.find('button.source-link').trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'policies',
+      query: { focus: 'pol-9' },
     })
   })
 
