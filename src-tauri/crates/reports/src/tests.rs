@@ -3,19 +3,22 @@
 
 use rusqlite::Connection;
 
-use crate::db::now_iso;
-use crate::reports::{category_shares_rows, merchant_shares_report, monthly_summary_rows};
-use crate::transaction::amount::{Measure, TransactionKind, contributing_kinds, signed_amount};
+use ledger_infra::db::now_iso;
+// 测试实例纪律（#1092 同款）：本域是纯读路径、不读任何接缝注册静态，域单测直接
+// 驱动本 crate 实例（crate 根再导出面路径与拆出前域根路径同形）。
+use crate::{category_shares_rows, merchant_shares_report, monthly_summary_rows};
 use ledger_sync_protocol::device::device_id;
+use ledger_transaction::amount::{Measure, TransactionKind, contributing_kinds, signed_amount};
 
 fn setup() -> Connection {
-    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
-    crate::test_support::open()
+    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）：
+    // 工厂住根包，dev-dependency 环引用（ledger-transaction/#1092 先例同款）。
+    tauri_app_lib::test_support::open()
 }
 
 fn insert_account(conn: &Connection, id: &str) {
     // 报表世界脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）。
-    crate::test_support::seed_account(conn, id, "测试账户", "cash", "CNY", 0);
+    tauri_app_lib::test_support::seed_account(conn, id, "测试账户", "cash", "CNY", 0);
 }
 
 /// 夹具一行 = 一笔交易（kind 用 Amount 接缝的 TransactionKind 枚举表述）。
@@ -1393,7 +1396,7 @@ fn merchant_shares_top_n_keeps_name_tiebreak_at_boundary() {
 
 // ---- query_report_date_range：日期极值范围（issue #266 / #389）----
 
-use crate::reports::query_report_date_range;
+use crate::query_report_date_range;
 
 #[test]
 fn date_range_spans_earliest_to_latest_date() {

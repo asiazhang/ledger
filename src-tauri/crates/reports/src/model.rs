@@ -5,7 +5,7 @@
 
 use serde::Serialize;
 
-use crate::db::query::FromRow;
+use ledger_infra::db::query::FromRow;
 
 #[derive(Debug, Serialize)]
 pub struct MonthlySummary {

@@ -27,6 +27,8 @@ import {
   PHYSICAL_ASSET_SRC_REL,
   PROTOCOL_MODULES,
   PROTOCOL_SRC_REL,
+  REPORTS_MODULES,
+  REPORTS_SRC_REL,
   SCHEDULED_MODULES,
   SCHEDULED_SRC_REL,
   TRANSACTION_MODULES,
@@ -94,6 +96,7 @@ function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, SCHEDULED_SRC_REL), SCHEDULED_MODULES)
   writeModuleStubs(join(srcTauri, BUDGET_SRC_REL), BUDGET_MODULES)
   writeModuleStubs(join(srcTauri, PHYSICAL_ASSET_SRC_REL), PHYSICAL_ASSET_MODULES)
+  writeModuleStubs(join(srcTauri, REPORTS_SRC_REL), REPORTS_MODULES)
 }
 
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
@@ -798,6 +801,8 @@ interface CrateFixtureOverrides {
   budgetManifest?: string
   /** 覆盖实物资产域 crate 的 `crates/physical-asset/Cargo.toml`（依赖方向负向夹具，#1102） */
   physicalAssetManifest?: string
+  /** 覆盖报表域 crate 的 `crates/reports/Cargo.toml`（依赖方向负向夹具，#1103） */
+  reportsManifest?: string
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string
   /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
@@ -1163,6 +1168,28 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   )
   writeFileSync(join(srcTauri, 'crates', 'physical-asset', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
+  // 报表域 crate（#1103，P3 叶子业务域 crate）：夹具与真实仓库同形——成员目录 +
+  // 门禁继承 + dev-dependency 测试环。
+  mkdirSync(join(srcTauri, 'crates', 'reports', 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'crates', 'reports', 'Cargo.toml'),
+    overrides.reportsManifest ??
+      [
+        '[package]',
+        'name = "ledger-reports"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[dev-dependencies]',
+        'tauri-app = { path = "../.." }',
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
+  )
+  writeFileSync(join(srcTauri, 'crates', 'reports', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
   writeFileSync(
@@ -1368,6 +1395,68 @@ describe('check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
     expect(r.status).toBe(1)
     expect(r.output).toContain('crate 依赖方向')
     expect(r.output).toContain('ledger-currencies')
+  })
+})
+
+describe('check-structure 报表域 crate（#1103 P3 叶子业务域 crate 自根包拆出）', () => {
+  it('真实仓库默认通过：报表域 crate 模块级扫描入摘要', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`报表域模块 ${REPORTS_MODULES.length} 项`)
+  })
+
+  it('报表域 crate 模块引用壳层 → 红并定位文件行号', () => {
+    // 报表域唯一模块 model.rs 与交易域清单撞名（路由优先级归交易 crate，与
+    // placeOverride 先后链一致），夹具直接写入报表域 crate 的模块路径。
+    const args = makeFixture()
+    writeFileSync(join(args[1], REPORTS_SRC_REL, 'model.rs'), shellUse)
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('反向依赖')
+    expect(r.output).toContain('model.rs:1')
+  })
+
+  it('报表域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）', () => {
+    const args = makeFixture()
+    writeFileSync(
+      join(args[1], REPORTS_SRC_REL, 'model.rs'),
+      'use tauri_app_lib::sync_engine::engine::ReplayEffect;\n',
+    )
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域')
+    expect(r.output).toContain('model.rs:1')
+  })
+
+  it('报表域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1103）', () => {
+    const args = makeCrateFixture({
+      reportsManifest:
+        '[package]\nname = "ledger-reports"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 依赖方向')
+    expect(r.output).toContain('ledger-reports')
+  })
+
+  it('报表域 crate 生产依赖核心交易域 crate → 绿（域→域合法上层依赖，汇总口径消费度量矩阵，#1092）', () => {
+    // 汇总口径由核心交易域 kind→度量矩阵单一真源驱动（reports → transaction
+    // 单向），依赖面受 AC 约束（基础设施/协议/核心交易域），不属禁边。
+    const args = makeCrateFixture({
+      reportsManifest:
+        '[package]\nname = "ledger-reports"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\nledger-transaction = { path = "../transaction" }\n\n' +
+        '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('报表域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
+    // 缺省 reportsManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
   })
 })
 
