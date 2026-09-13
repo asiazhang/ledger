@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll } from 'vitest'
 import { mockInvoke, wireInvokeSeam, lastInvokeArgs } from '@ledger/test-support/invoke-mock'
 import { messageCalls } from '@ledger/test-support/message-mock'
 import {
@@ -15,6 +15,12 @@ import SyncSettings from '@/components/settings/SyncSettings.vue'
 // 「成功即触发重启编排」，重启内部编排归 restart.test.ts。
 vi.mock('@/utils/restart', () => ({ restartAppShortly: vi.fn() }))
 import { restartAppShortly } from '@/utils/restart'
+
+// jsdom 未实现元素滚动（naive-ui 下拉菜单打开时会 scrollTo），补空实现避免打断
+// Vue 调度队列（仅影响本文件的厂商下拉交互用例，QuickTimeRange.test.ts 先例）。
+beforeAll(() => {
+  Element.prototype.scrollTo = () => {}
+})
 
 // 多端同步卡片组件测试（issue #862）：invoke 测试接缝（defaults/overrides 表，
 // ADR-0085）布线命令替身；断言强度对准用户可观察回归（状态回显、明文警示、
@@ -635,4 +641,187 @@ it('引导失败：码化错误本地化呈现且弹窗保持打开（可就地�
   ).toBe(true)
   expect(messageCalls().some((m) => m.text.includes('RAW'))).toBe(false)
   expect(restartAppShortly).not.toHaveBeenCalled()
+})
+
+// ---- 厂商预设下拉与端点反查（issue #1220 验收项）----
+//
+// 本票把「预填与反查」的命中/未命中覆盖明确归到纯函数单测（见 s3-vendors.test.ts）；
+// 这里只验证组件侧的用户可观察行为：下拉项构成（末尾固定自定义）、选中即预填且字段
+// 仍可编辑、档位标注与官方文档外链、再次打开按端点反查回显、预设不落库。
+
+describe('SyncSettings.vue 厂商预设（issue #1220）', () => {
+  /** 下拉里当前渲染出的选项文本（真实交互：点开选择框，菜单 teleport 到 body）。 */
+  async function openVendorMenu(wrapper: ReturnType<typeof mount>): Promise<string[]> {
+    await wrapper.find('[data-testid="sync-vendor"] .n-base-selection').trigger('click')
+    await flushPromises()
+    return Array.from(document.body.querySelectorAll('.n-base-select-option')).map(
+      (el) => el.textContent?.trim() ?? '',
+    )
+  }
+
+  /** 模拟用户从下拉里点选一项（按可见选项文本匹配），点完菜单关闭。 */
+  async function pickVendor(wrapper: ReturnType<typeof mount>, labelPart: string) {
+    const option = (await openVendorMenu(wrapper)).findIndex((text) => text.includes(labelPart))
+    expect(option, `下拉里应能看到「${labelPart}」选项`).toBeGreaterThanOrEqual(0)
+    const optionEl = document.body.querySelectorAll('.n-base-select-option')[option]
+    await new DOMWrapper(optionEl).trigger('click')
+    await flushPromises()
+  }
+
+  /** 下拉上显示出的当前选中文本（用户可观察的回显面）。 */
+  function selectedVendorText(wrapper: ReturnType<typeof mount>): string {
+    return wrapper.find('[data-testid="sync-vendor"]').text()
+  }
+
+  it('下拉包含国内主流厂商预设，末尾固定「其他（自定义）」', async () => {
+    wireInvokeSeam({
+      defaults: { get_sync_status: baseStatus, get_sync_channel_config: baseConfig },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    // 入口在位（用户可观察）：通道配置表单里能看到厂商下拉。
+    expect(wrapper.find('[data-testid="sync-vendor"]').exists()).toBe(true)
+
+    const options = await openVendorMenu(wrapper)
+    expect(options.length).toBeGreaterThan(1)
+    // 末尾固定自定义项（验收判据），且它只能出现一次。
+    expect(options.at(-1)).toBe('其他（自定义）')
+    expect(options.filter((o) => o === '其他（自定义）')).toHaveLength(1)
+    // 国内主流厂商在列，选项文本用厂商专名原文 + 档位标注。
+    for (const name of ['阿里云 OSS', '腾讯云 COS', '华为云 OBS', '火山引擎 TOS', '七牛云 Kodo']) {
+      expect(options.some((o) => o.includes(name) && o.includes('未实测')), name).toBe(true)
+    }
+  })
+
+  it('选中厂商：预填端点模板、默认地域与寻址方式，字段全部保持可编辑', async () => {
+    wireInvokeSeam({
+      defaults: { get_sync_status: baseStatus, get_sync_channel_config: baseConfig },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    await pickVendor(wrapper, '阿里云 OSS')
+
+    const endpoint = findInputByTestId(wrapper, 'sync-endpoint')
+    expect((endpoint.element as HTMLInputElement).value).toBe(
+      'https://s3.oss-cn-hangzhou.aliyuncs.com',
+    )
+    expect((findInputByTestId(wrapper, 'sync-region').element as HTMLInputElement).value).toBe(
+      'cn-hangzhou',
+    )
+    // 预填只写默认值：字段没有被锁死，用户可改成自建或其他兼容服务。
+    expect((endpoint.element as HTMLInputElement).disabled).toBe(false)
+    expect((findInputByTestId(wrapper, 'sync-region').element as HTMLInputElement).disabled).toBe(
+      false,
+    )
+
+    // 常用地域快捷项：点一下即换端点与地域（随后仍可手改）。
+    const beijing = wrapper
+      .findAll('[data-testid="sync-vendor-region"]')
+      .find((b) => b.text() === 'cn-beijing')
+    expect(beijing).toBeTruthy()
+    await beijing?.trigger('click')
+    await flushPromises()
+    expect((findInputByTestId(wrapper, 'sync-endpoint').element as HTMLInputElement).value).toBe(
+      'https://s3.oss-cn-beijing.aliyuncs.com',
+    )
+    expect((findInputByTestId(wrapper, 'sync-region').element as HTMLInputElement).value).toBe(
+      'cn-beijing',
+    )
+  })
+
+  it('选中厂商：预填寻址方式（七牛 Kodo 为 path-style）', async () => {
+    wireInvokeSeam({
+      defaults: { get_sync_status: baseStatus, get_sync_channel_config: baseConfig },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    // baseConfig.path_style = true，选一家虚拟托管厂商后应被预填覆盖为 false。
+    await pickVendor(wrapper, '华为云 OBS')
+    expect(wrapper.find('[data-testid="sync-path-style"]').attributes('aria-checked')).toBe('false')
+
+    await pickVendor(wrapper, '七牛云 Kodo')
+    expect(wrapper.find('[data-testid="sync-path-style"]').attributes('aria-checked')).toBe('true')
+  })
+
+  it('预设在界面上区分「已实测 / 未实测」并给出官方文档外链', async () => {
+    wireInvokeSeam({
+      defaults: { get_sync_status: baseStatus, get_sync_channel_config: baseConfig },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    await pickVendor(wrapper, '阿里云 OSS')
+
+    // 档位标注：目前无任何厂商跑过真实桶，界面如实标「未实测」。
+    expect(wrapper.find('[data-testid="sync-vendor-tier"]').text()).toBe('未实测')
+    // 官方文档外链：_blank 才能被系统浏览器打开（桌面壳 opener 的既有约定）。
+    const docs = wrapper.find('[data-testid="sync-vendor-docs"]')
+    expect(docs.attributes('href')).toBe(
+      'https://help.aliyun.com/zh/oss/developer-reference/use-amazon-s3-sdks-to-access-oss',
+    )
+    expect(docs.attributes('target')).toBe('_blank')
+  })
+
+  it('再次打开按端点反查回显厂商；未命中显示「其他（自定义）」', async () => {
+    // 命中：端点属于腾讯云 COS（虚拟托管形态也命中）。
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: baseStatus,
+        get_sync_channel_config: {
+          ...baseConfig,
+          endpoint: 'https://bucket-1250000000.cos.ap-guangzhou.myqcloud.com',
+        },
+      },
+    })
+    const hit = mount(SyncSettings)
+    await flushPromises()
+    expect(selectedVendorText(hit)).toContain('腾讯云 COS')
+    expect(hit.find('[data-testid="sync-vendor-tier"]').text()).toBe('未实测')
+
+    // 未命中：自建服务回「其他（自定义）」，档位与外链区不渲染（无厂商可展示）。
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: baseStatus,
+        get_sync_channel_config: { ...baseConfig, endpoint: 'https://minio.internal:9000' },
+      },
+    })
+    const miss = mount(SyncSettings)
+    await flushPromises()
+    expect(selectedVendorText(miss)).toContain('其他（自定义）')
+    expect(miss.find('[data-testid="sync-vendor-meta"]').exists()).toBe(false)
+  })
+
+  it('预设不落库：选中厂商只改表单，提交载荷不含任何厂商字段', async () => {
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: baseStatus,
+        get_sync_channel_config: baseConfig,
+        set_sync_channel_config: null,
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    await pickVendor(wrapper, '阿里云 OSS')
+    await findButtonByTestId(wrapper, 'sync-save-channel').trigger('click')
+    await flushPromises()
+
+    // toEqual 是整体形状断言：多出 vendor / preset 一类字段即变红。
+    expect(lastInvokeArgs('set_sync_channel_config')).toEqual({
+      config: {
+        backend: 's3',
+        space_id: 'family',
+        endpoint: 'https://s3.oss-cn-hangzhou.aliyuncs.com',
+        region: 'cn-hangzhou',
+        bucket: 'ledger-bucket',
+        prefix: 'sync',
+        access_key: 'AKIAEXAMPLE',
+        secret_key: 'secret-value',
+        path_style: false,
+      },
+    })
+  })
 })
