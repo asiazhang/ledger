@@ -10,7 +10,8 @@
 //! 成帧），不是工厂的建库/种子/默认值集（ADR-0086 决策 9 不破）。
 //!
 //! **摘要口径单一实现**：本模块不另造摘要函数，直接消费产品侧
-//! [`crate::sync_engine::channel::sha256_hex`]（`pub(crate)`，见该函数注释）
+//! [`crate::sync_engine::channel::sha256_hex`]（`#[doc(hidden)] pub`，见该函数注释；
+//! #1107 同步域 crate 化后跨 crate 消费）
 //! ——测试侧从此不可能自建第二份口径。
 //!
 //! **可见性**：`pub` + `#[doc(hidden)]`（本模块同款纪律）——集成测试链接非

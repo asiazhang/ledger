@@ -84,3 +84,9 @@ grilling（2026-09-07，两轮）逐项复核评审数字与当前工作树一�
 落点判定不变的部分：工厂仍是跨域深模块（决策 1 准入规则）、接口仍是 `&Connection` 自由函数集（决策 3）。落点判定随结构演进的部分：当前工厂仍住根包 `test_support/`（域目录尚在根包，环无必要）；业务域逐域拆出后按 spec #1086 以**独立测试支持 crate** 供各域 dev-dependency 引用——届时本决策 2 的「独立测试 crate」从否决项变为目标形态，`#[doc(hidden)]` 可见性机制随之迁入该 crate（生产 lib 导出面同步瘦身）。
 
 环非默认必选：负向用例可能被环击穿时以「测试不随迁」替代——协议 crate 先例：其根文档 compile_fail 负向用例要求 `tauri_app_lib` 不可见，取环会击穿之，DeviceId 单测因此留根包 `sync_engine/tests/`（理由留痕于该 crate Cargo.toml）。
+
+## 修订注记（#1107，2026-09-13）：DeviceId 单测随多端同步域迁入 `ledger-sync-engine`
+
+上条「DeviceId 单测留根包 `sync_engine/tests/`」的落点随 #1107 变更：多端同步域自根包拆为 `ledger-sync-engine`，其 `[dev-dependencies] tauri-app` 测试环只进入该域 crate 的测试目标，协议 crate（`ledger-sync-protocol`）自身仍无环，根文档 `compile_fail` 负向用例继续由 `cargo test --workspace --doc` 守卫。DeviceId 单测随域迁入 `crates/sync-engine/src/tests/device.rs`，断言与场景文本不变。
+
+同票的跨 crate 可见性变更：`channel::sha256_hex` 随测试支持域跨 crate 消费由 `pub(crate)` 再放宽为 `#[doc(hidden)] pub`（#956 注记的第二次放宽），产品消费者仍只有通道模块；用途与单一维护点不变。

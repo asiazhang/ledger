@@ -94,11 +94,20 @@ pub use ledger_scheduled as scheduled_transactions;
 // `crate::sync::…` / `tauri_app_lib::sync::…` 调用点零改动（expand 形态，
 // ledger-transaction 同款）。域内本体见 `ledger-market-sync` crate。
 pub use ledger_market_sync as sync;
-pub mod sync_engine;
+// 多端同步域 crate（spec #1086 / issue #1107，P4 业务域 crate）：OpLog 基座、
+// 双端合并、Checkpoint 与同步触发编排自根包域目录拆出，根包以再导出形态保留
+// 原引用路径——壳层（IPC/HTTP 命令）、启动接线、测试工厂、命令集成与 e2e 的
+// `crate::sync_engine::…` / `tauri_app_lib::sync_engine::…` 调用点零改动
+//（expand 形态，ledger-market-sync 同款）。域内本体见 `ledger-sync-engine` crate。
+pub use ledger_sync_engine as sync_engine;
 // 信号守门测试（signals_cross_check，ADR-0044 决策 3 修订 / ADR-0073 决策 5）：
 // 写路径接线源码扫描核对，仅测试可见。
 #[cfg(test)]
 mod signals_cross_check;
+// 同步触发接线的源码扫描守门（issue #959 / #1107）：核对根包启动接线形状与
+// 同步域内分平台门位置，仅测试可见。
+#[cfg(test)]
+mod sync_trigger_guard;
 // 统一测试数据库工厂与共享断言库（ADR-0084，issue #751）：建库/种子/对拍断言
 // 单一入口，域测试与外部集成测试共用；仅测试消费，生产路径不得消费
 //（C 类豁免声明，ADR-0060）。

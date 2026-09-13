@@ -290,14 +290,14 @@ doc-test 4 passed / 1 ignored —— 与「既有三层测试结果不变」一�
 并发执行（每个二进制 `RUST_TEST_THREADS=1`）把两个**既有**时序脆弱用例从偶发
 变成约 15–25% 必现，证据与根因如下（修复前后均为独立实测）：
 
-1. `src-tauri/src/sync_engine/tests/checkpoint.rs::positions_pinned_below_parked_op`
+1. `src-tauri/crates/sync-engine/src/tests/checkpoint.rs::positions_pinned_below_parked_op`
    以 `stream_positions(&conn_b)[0]` 取「A 流位点」。B 端本机 op 也会推进自己流
    的位点（`crates/sync-protocol/src/position.rs` 模块文档），故位点清单是**两行**
    多流集合，且按 `ORDER BY device_id ASC` 排序；两个 UUIDv7 同一毫秒生成时顺序
    由随机位决定 → 断言随机红。实测（修复前，单测循环）**22/150 失败**；按
    device_id 定位后 **0/300 失败**（同组 4 个用例合并计数）。
 
-2. `src-tauri/src/sync_engine/tests/convert.rs::convert_create_replay_converges_lots_carried_cost_and_pnl`
+2. `src-tauri/crates/sync-engine/src/tests/convert.rs::convert_create_replay_converges_lots_carried_cost_and_pnl`
    以创建顺序构造 `expected_conversions`，而读侧 `ORDER BY l.buy_transaction_id`
    ——同样是「UUIDv7 同毫秒不定序」的假设。实测修复前 **25/100 失败**，两侧按
    同一键归一后 **0/100**（断言仍比较每批的份额与结转成本，换批次序会改数值，

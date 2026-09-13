@@ -108,7 +108,6 @@ export type Layer = (typeof LAYER)[keyof typeof LAYER]
  * CRATES（BACKUP_MODULES 承接模块级扫描）。
  */
 export const WHITELIST: readonly WhitelistEntry[] = [
-  { path: 'sync_engine', layer: '域目录', note: '多端同步域（issue #855 新建即归位，ADR-0091 OpLog 基座；与行情同步域 ledger-market-sync 相邻不同域，行情域已随 #1106 拆出、本域待 #1107 拆出）' },
   { path: 'test_support', layer: '域目录', note: '测试支持域（统一测试数据库工厂与共享断言库，ADR-0084 / #751；依赖域与基础设施合法，对壳层零依赖）' },
 ]
 
@@ -535,6 +534,36 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
 export const MARKET_SYNC_SRC_REL = 'crates/market-sync/src'
 
 /**
+ * 多端同步域 crate 的模块清单（spec #1086 / issue #1107）：路径相对
+ * `src-tauri/crates/sync-engine/src`。P4 业务域 crate——OpLog 基座、双端合并
+ * 语义、Checkpoint 与新端引导、通道/信封与同步触发编排，成为在协议 crate 之上、
+ * 依赖各业务域的独立编译单元。依赖面只有基础设施、同步协议、核心交易域与各
+ * 业务域（重放分派经各域公开接缝消费）；对壳层零依赖，反向引用由 cargo 依赖图
+ * 与结构守门共同拒绝（CRATES 依赖方向核对 + 模块级对壳层扫描）。同步域自身是
+ * 业务域→同步域零容忍规则的边界（协议面下放 #1089；本 crate 不再被业务域依赖），
+ * 故本清单不参与 `isBusinessDomain` 扫描。crate 根 lib.rs 是声明与再导出面
+ * （无守门靶向代码），与协议/备份/交易 crate 同款不入清单；tests.rs 与 tests/
+ * 均为测试豁免形态不入清单。
+ */
+export const SYNC_ENGINE_MODULES: readonly WhitelistEntry[] = [
+  { path: 'channel.rs', layer: '域目录', note: '通道层（ADR-0091 决策 1/8/9）：目录布局与 manifest、发布/拉取同步轮次、Checkpoint 通道传递、通道条目摘要与损坏码化错误单点' },
+  { path: 'checkpoint.rs', layer: '域目录', note: 'Checkpoint 产出（全量快照 + 位点）、新端引导与截断机制（issue #857，v1 永不截断、机制默认不启用）' },
+  { path: 'command.rs', layer: '域目录', note: '跨端语义命令信封与重放契约（DomainCommand / ReplayBinding，只增不改）——同步域对业务域暴露的契约面（ADR-0101 决策 4b）；ReplayEffect/SyncCommand 已下放协议 crate' },
+  { path: 'engine.rs', layer: '域目录', note: '同步引擎公开接口：幂等重放 / wire 接入 / 日志读取全序 / 位点后增量 / 挂起队列清单——本域行为唯一断言权威层' },
+  { path: 'envelope.rs', layer: '域目录', note: 'SyncEnvelope 信封加密（ADR-0091 决策 8）：AES-256-GCM 与 PBKDF2-HMAC-SHA512，明文直通/密文自描述双形态' },
+  { path: 'model.rs', layer: '域目录', note: 'op 信封 wire 模型（SyncOp）：全序字段 + 载荷 JSON' },
+  { path: 'ops.rs', layer: '域目录', note: 'op 行落库与读取的适配层（域信封 ↔ JSON；SQL 收口在协议 crate，ADR-0091/#1089）' },
+  { path: 'parked.rs', layer: '域目录', note: 'ParkedOp 挂起队列（不可重放 op 的统一归宿与码化错误，ADR-0091）' },
+  { path: 'registry.rs', layer: '域目录', note: '重放注册表（ADR-0101）：14 个语义命令类型的适配绑定与 DomainCommand::subject 组装臂' },
+  { path: 'transport.rs', layer: '域目录', note: 'Transport 哑字节通道抽象（v1 唯一后端是 S3 兼容对象存储；WebDAV 已随 #1221 退役）与错误归类单点' },
+  { path: 'transport', layer: '域目录', note: 'S3 兼容对象存储通道后端（s3.rs：SigV4 客户端、path-style/virtual-host 寻址、同步桥接线程）' },
+  { path: 'trigger', layer: '域目录', note: '同步触发编排（ADR-0098）：通道配置与构库单点、轮次编排、打开即同步与桌面低频轮询、写后去抖合流、会话密钥形态判定的信封模式' },
+]
+
+/** 多端同步域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-sync-engine.dir 同源。 */
+export const SYNC_ENGINE_SRC_REL = 'crates/sync-engine/src'
+
+/**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
  * 与上面的 `LAYER`（单 crate 内的**模块路径**分层：域目录 / 基础设施）刻意分开——
  * 两者是不同粒度的事实源，同名值不合并（合并只会让任一侧语义被动漂移）。
@@ -681,6 +710,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/market-sync',
     layer: CRATE_LAYER.DOMAIN,
     note: '行情同步域 crate（#1106，P4 首个业务域 crate：东财行情抓取——批量报价/单点行情/日 K/历史净值——与增量同步编排，成为可被多端同步域依赖的独立编译单元）；依赖面为票面 AC 允许集全量：基础设施（db/error/events）、同步协议（op 落库行 device_id）、核心交易域（币种缺省推导 amount::default_currency_code）、投资域（价格写入单点 prices/名称随行刷新 crud/通道派生 channel/统一报价载荷 Quote，ADR-0103）——四条域→域均为上层域消费下层域的合法直呼（ADR-0112 决策 2），对壳层与多端同步域零直接依赖（壳层同步命令经根包再导出面消费），反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
+  },
+  {
+    name: 'ledger-sync-engine',
+    dir: 'crates/sync-engine',
+    layer: CRATE_LAYER.DOMAIN,
+    note: '多端同步域 crate（#1107，P4 业务域 crate：OpLog 基座、双端合并语义、Checkpoint 与新端引导、通道/信封与同步触发编排）；依赖面只有基础设施、同步协议、核心交易域与各业务域（重放注册表消费 14 个语义命令类型与各域公开重放入口，ADR-0101；对 ledger-backup 的调度锁复用为域→域合法上层依赖），对壳层零直接依赖，反向引用由 cargo 依赖图编译期拒绝（生产依赖面无根包，dev-dependency 环只覆盖测试目标）——全部域 crate 构成无环单向图，结构守门与 cargo 依赖图双证',
   },
 ]
 
@@ -958,8 +993,12 @@ const NATIVE_TX_STMT_PATTERN = /\bexecute\s*\(\s*"(?:BEGIN|COMMIT|ROLLBACK)\b/
 /** 原生事务语句唯一合法住址（事务原语本体，issue #1014；#1088 起住基础设施 crate） */
 const NATIVE_TX_STMT_ALLOWED = `${INFRA_SRC_REL}/db/tx_scope.rs`
 
-/** 业务域→同步域引用锚点（crate 根前缀限定；掩码后匹配）——#1089 起零容忍，任何命中即红 */
-const SYNC_ENGINE_REF_PATTERN = /\b(?:crate|tauri_app_lib)\s*::\s*sync_engine\b/
+/** 业务域→同步域引用锚点（掩码后匹配）——#1089 起零容忍：
+ *  ①同步协议面下放前经根包再导出面的 `crate::sync_engine` / `tauri_app_lib::sync_engine`；
+ *  ②#1107 同步域 crate 化后的 crate 名直引 `ledger_sync_engine::`。
+ *  任何命中即红；Cargo.toml 生产依赖声明另由 crate 边界禁边核对拦下。 */
+const SYNC_ENGINE_REF_PATTERN =
+  /\b(?:crate|tauri_app_lib)\s*::\s*sync_engine\b|\bledger_sync_engine\b/
 
 /** 域间禁边规则条目：from 域目录内文件引用 to 域目录即红（认许边除外） */
 interface DomainPairRule {
@@ -1062,6 +1101,7 @@ export function scanSyncEngineRefs(text: string): ScanHit[] {
   }
   for (const m of masked.matchAll(new RegExp(SYNC_ENGINE_REF_PATTERN, 'g'))) {
     const start = m.index ?? 0
+    const moduleName = m[0].startsWith('ledger_sync_engine') ? 'ledger_sync_engine' : 'sync_engine'
     const tail = masked.slice(start + m[0].length)
     const afterModule = /^\s*::\s*/.exec(tail)
     if (!afterModule) {
@@ -1088,7 +1128,7 @@ export function scanSyncEngineRefs(text: string): ScanHit[] {
       }
       const body = masked.slice(cursor + 1, close === -1 ? masked.length : close)
       for (const entry of disallowedBraceEntries(body)) {
-        push(start, `sync_engine::{…${entry}…}`)
+        push(start, `${moduleName}::{…${entry}…}`)
       }
       continue
     }
@@ -1098,7 +1138,7 @@ export function scanSyncEngineRefs(text: string): ScanHit[] {
       push(start, masked.slice(start, cursor + 1))
       continue
     }
-    push(start, `sync_engine::${segment[1]}`)
+    push(start, `${moduleName}::${segment[1]}`)
   }
   return hits
 }
@@ -1548,6 +1588,21 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
         )
       }
     }
+    // 同级域 crate 的同步禁边（ADR-0101 决策 4b / #1107）：多端同步域是全部业务域
+    // 的消费方，业务域只可依赖同步协议 crate；业务域声明 `ledger-sync-engine`
+    // 生产依赖即形成「业务域 ↔ 同步域」环，与分层秩无关，故在 crate 边界单点
+    // 显式拒绝（文本扫描另对源码引用同向零容忍）。
+    if (
+      crate.layer === CRATE_LAYER.DOMAIN &&
+      crate.name !== 'ledger-sync-engine' &&
+      declaredProductionDependencyNames(manifest).includes('ledger-sync-engine')
+    ) {
+      problems.push(
+        `✗ crate 依赖方向：业务域 crate ${crate.name} 生产依赖多端同步域 ledger-sync-engine\n` +
+          '    业务域只依赖同步协议 crate `ledger-sync-protocol`，不依赖多端同步域（ADR-0101 决策 4b / #1107）；' +
+          '重放分派住同步域单向消费各业务域，反边即环',
+      )
+    }
   }
 
   // ⑥ 静态检查与测试命令覆盖全成员（缺 --workspace 即静默漏检成员）
@@ -1876,6 +1931,49 @@ function checkTransactionModuleEquality(srcTauriDir: string): string[] {
   return problems
 }
 
+/**
+ * SYNC_ENGINE_MODULES 与实际模块双向全等（#1107，沿用 infra/transaction 形态）：
+ * 磁盘侧枚举 `crates/sync-engine/src` 顶层的实际模块——非测试豁免形态的 .rs
+ * 文件（crate 根 lib.rs 是声明与再导出面，恒排除），与扫得到非测试 .rs 文件的
+ * 目录（目录型条目覆盖其全部子目录）。磁盘上存在而清单未登记即红；登记路径
+ * 消失 / 扫不到非测试文件由 scanModuleEntries 的既有核对承担。双向全等保证
+ * 新增模块不会绕过「域 crate 对壳层零依赖」模块级扫描（#1107 检视补强）。
+ */
+function checkSyncEngineModuleEquality(srcTauriDir: string): string[] {
+  const problems: string[] = []
+  const srcDir = join(srcTauriDir, SYNC_ENGINE_SRC_REL)
+  if (!existsSync(srcDir)) return problems // 清单循环逐条报「路径不存在」
+  const onDisk: string[] = []
+  for (const entry of readdirSync(srcDir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    if (
+      entry.isFile() &&
+      entry.name.endsWith('.rs') &&
+      entry.name !== 'lib.rs' &&
+      !isTestFile(entry.name)
+    ) {
+      onDisk.push(entry.name)
+    } else if (
+      entry.isDirectory() &&
+      collectRustFiles(join(srcDir, entry.name), entry.name).length > 0
+    ) {
+      onDisk.push(entry.name)
+    }
+  }
+  for (const mod of onDisk) {
+    if (!SYNC_ENGINE_MODULES.some((m) => m.path === mod)) {
+      problems.push(
+        `✗ SYNC_ENGINE_MODULES 未登记模块：${mod}（${SYNC_ENGINE_SRC_REL}）\n` +
+          '    清单与实际模块双向全等（#1107）：新增模块后须在 ' +
+          'scripts/check-structure.ts 的 SYNC_ENGINE_MODULES 追加一行（附注释），' +
+          '否则清单漏登记、域 crate 对壳层零依赖扫描静默漏检',
+      )
+    }
+  }
+  return problems
+}
+
 /** 清单条目路径 → 模块键（去 .rs 后缀：flat 文件条目 amount.rs 与目录条目 amount 同键）。 */
 function transactionModuleKey(path: string): string {
   return path.replace(/\.rs$/, '')
@@ -1989,6 +2087,7 @@ function scanModuleEntries(
   entries: readonly WhitelistEntry[],
   baseDir: string,
   problems: string[],
+  options: { scanBusinessSyncRefs?: boolean } = {},
 ): number {
   let scanned = 0
   for (const w of entries) {
@@ -2016,10 +2115,13 @@ function scanModuleEntries(
     scanned += files.length
     const isInfra = w.layer === LAYER.INFRA
     const isProtocol = w.layer === LAYER.PROTOCOL
-    // 业务域→同步域零容忍作用域：域目录，除同步域自身与测试支持域
+    // 业务域→同步域零容忍作用域：域目录，除同步域自身（SYNC_ENGINE_MODULES
+    // 显式关扫，#1107 crate 化后其源码住 workspace 成员）与测试支持域
     //（test_support→sync_engine 为测试专用边，登记处 ADR-0084 迁移状态段）。
     const isBusinessDomain =
-      w.layer === LAYER.DOMAIN && w.path !== 'sync_engine' && w.path !== 'test_support'
+      (options.scanBusinessSyncRefs ?? true) &&
+      w.layer === LAYER.DOMAIN &&
+      w.path !== 'test_support'
     for (const f of files) {
       const source = readFileSync(f.abs, 'utf8')
       for (const hit of scanRustSource(source)) {
@@ -2152,6 +2254,7 @@ function main(): void {
       ...collectRustFiles(join(srcTauriDir, DASHBOARD_SRC_REL), DASHBOARD_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, INVESTMENT_SRC_REL), INVESTMENT_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, MARKET_SYNC_SRC_REL), MARKET_SYNC_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, SYNC_ENGINE_SRC_REL), SYNC_ENGINE_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -2219,6 +2322,12 @@ function main(): void {
   scannedFiles += scanModuleEntries(DASHBOARD_MODULES, join(srcTauriDir, DASHBOARD_SRC_REL), problems)
   scannedFiles += scanModuleEntries(INVESTMENT_MODULES, join(srcTauriDir, INVESTMENT_SRC_REL), problems)
   scannedFiles += scanModuleEntries(MARKET_SYNC_MODULES, join(srcTauriDir, MARKET_SYNC_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(
+    SYNC_ENGINE_MODULES,
+    join(srcTauriDir, SYNC_ENGINE_SRC_REL),
+    problems,
+    { scanBusinessSyncRefs: false },
+  )
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -2237,6 +2346,7 @@ function main(): void {
   // 认许边（ADR-0113 决策 3 原形状反边）之外即红。
   problems.push(...checkTransactionModuleEquality(srcTauriDir))
   problems.push(...checkTransactionZoneDirection(srcTauriDir))
+  problems.push(...checkSyncEngineModuleEquality(srcTauriDir))
 
   if (problems.length > 0) {
     for (const p of problems) console.error(p)
@@ -2265,6 +2375,7 @@ function main(): void {
       `+ 仪表盘域模块 ${DASHBOARD_MODULES.length} 项（crate ${DASHBOARD_SRC_REL}，#1104）` +
       `+ 投资域模块 ${INVESTMENT_MODULES.length} 项（crate ${INVESTMENT_SRC_REL}，#1097）` +
       `+ 行情同步域模块 ${MARKET_SYNC_MODULES.length} 项（crate ${MARKET_SYNC_SRC_REL}，#1106）` +
+      `+ 多端同步域模块 ${SYNC_ENGINE_MODULES.length} 项（crate ${SYNC_ENGINE_SRC_REL}，#1107）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +
@@ -2276,6 +2387,7 @@ function main(): void {
       `· INFRA_MODULES 双向全等（磁盘模块全部登记，ADR-0111 决策 5 / #1134）` +
       `· crate 内块间反向依赖零未认许引用（认许边 ${INFRA_BLOCK_ALLOWED_EDGES.length} 条，ADR-0111 决策 4 / #1134）` +
       `· TRANSACTION_MODULES 双向全等（磁盘模块全部登记，ADR-0113 决策 7 / #1181）` +
+      `· SYNC_ENGINE_MODULES 双向全等（磁盘模块全部登记，#1107）` +
       `· 交易域区级层序零未认许反向引用（写读 → 接缝 → 共享语义，认许边 ${TRANSACTION_ZONE_ALLOWED_EDGES.length} 条，ADR-0113 决策 3 / #1181）` +
       `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）` +
       `· 投资五节锚点生产编译门（cfg 门，#1185）` +
