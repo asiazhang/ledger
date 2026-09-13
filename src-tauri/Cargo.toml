@@ -38,21 +38,6 @@ tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 axum = "0.8"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
-# S3 兼容对象存储通道后端（issue #1216 / ADR-0091 决策 1）：官方 SDK 提供
-# SigV4 签名、自定义端点与 path-style 寻址；显式凭据 + 自定义端点即可，
-# 不引入 aws-config 的环境配置链。校验和策略在 client 构建处显式配置为
-# WhenRequired（兼容优先，见 transport/s3.rs），不依赖环境变量。
-# 刻意不开 `rustls` feature：它接的是 aws-smithy-runtime 的**旧**连接器
-# （tls-rustls → hyper 0.14 → legacy-rustls-ring → rustls 0.21 + ring），会把
-# #1215 刚换掉的 ring 重新拉进激活依赖图；HTTPS 由 `default-https-client`
-# 提供（aws-smithy-http-client 的 hyper 1.x 客户端 + rustls/aws-lc-rs），
-# 与 #1215 的密码学基座一致。
-aws-sdk-s3 = { version = "1.146", default-features = false, features = [
-  "behavior-version-latest",
-  "default-https-client",
-  "http-1x",
-  "rt-tokio",
-] }
 tracing = "0.1"
 # 日志等级运行期 reload（spec #608）：`tracing-subscriber` 的 `reload` 模块在
 # std 下无条件可用；本版本（0.3.23）无独立 `reload` feature（可用 features 见解析）。
@@ -61,14 +46,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 tower-http = { version = "0.7", features = ["trace"] }
 sha2 = "0.11"
-# SyncEnvelope 信封加密基座（issue #859 / ADR-0091 决策 8）：AES-256-GCM AEAD 与
-# PBKDF2-HMAC-SHA512 密钥派生。aws-lc-rs 已随 rustls 进依赖图（同版本 1.18），作为
-# 直接依赖零新增传递依赖、零额外构建产物。关默认 feature 只取非 FIPS 后端
-# （aws-lc-sys）——本包一项都不用默认面（ring-io / ring-sig-verify 会额外拖入
-# untrusted 0.7 与 io/签名校验代码），收窄后 aws-lc-rs 最终启用的 feature 面与
-# 迁移前经 rustls 启用的完全相同。密钥派生参数与 SQLCipher 默认 KDF 同量级
-# （PBKDF2 256k 迭代），复用「主口令派生密钥」的既有安全量级。
-aws-lc-rs = { version = "1.18", default-features = false, features = ["aws-lc-sys"] }
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 pinyin = "0.11"
@@ -173,6 +150,12 @@ ledger-investment = { path = "crates/investment" }
 # 与多端同步域零生产依赖。根包 `pub use ledger_market_sync as sync` 再导出保持
 # 原调用点路径（壳层同步命令、行情查询注入点）。
 ledger-market-sync = { path = "crates/market-sync" }
+# 多端同步域 crate（spec #1086 / issue #1107，P4 业务域 crate）：OpLog 基座、
+# 双端合并语义、Checkpoint 与新端引导、通道/信封与同步触发编排归位；依赖面
+# 只有基础设施、同步协议、核心交易域与各业务域——对壳层零生产依赖，反向引用
+# 由 cargo 依赖图编译期拒绝（dev-dependency 环只覆盖测试目标）。根包
+# `pub use ledger_sync_engine as sync_engine` 再导出保持原调用点路径。
+ledger-sync-engine = { path = "crates/sync-engine" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]

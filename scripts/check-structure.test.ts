@@ -39,6 +39,8 @@ import {
   REPORTS_SRC_REL,
   SCHEDULED_MODULES,
   SCHEDULED_SRC_REL,
+  SYNC_ENGINE_MODULES,
+  SYNC_ENGINE_SRC_REL,
   TRANSACTION_MODULES,
   TRANSACTION_SRC_REL,
   TRANSACTION_ZONE_ALLOWED_EDGES,
@@ -109,6 +111,7 @@ function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, INVESTMENT_SRC_REL), INVESTMENT_MODULES)
   writeModuleStubs(join(srcTauri, DASHBOARD_SRC_REL), DASHBOARD_MODULES)
   writeModuleStubs(join(srcTauri, MARKET_SYNC_SRC_REL), MARKET_SYNC_MODULES)
+  writeModuleStubs(join(srcTauri, SYNC_ENGINE_SRC_REL), SYNC_ENGINE_MODULES)
 }
 
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
@@ -218,6 +221,15 @@ function isMarketSyncModulePath(rel: string): boolean {
   return MARKET_SYNC_ENTRY_PATHS.has(rel)
 }
 
+/** 多端同步域 crate 模块路径判定（精确文件名/目录，#1107；撞名条目优先落先登记
+ *  crate，夹具对同步域只用无撞名条目 `checkpoint.rs` / `envelope.rs`） */
+const SYNC_ENGINE_ENTRY_PATHS = new Set(SYNC_ENGINE_MODULES.map((m) => m.path))
+
+function isSyncEngineModulePath(rel: string): boolean {
+  const head = rel.split('/')[0]
+  return SYNC_ENGINE_ENTRY_PATHS.has(head) || SYNC_ENGINE_ENTRY_PATHS.has(rel)
+}
+
 /**
  * 写覆盖文件：按路径首段归位——基础设施模块（`db/…` / `error.rs` / …）落
  * `<srcTauri>/crates/infra/src`，备份域 crate 模块（`auto.rs` / `engine.rs`，#1091）
@@ -259,6 +271,8 @@ function placeOverride(srcTauri: string, relPath: string, content: string): void
           ? join(srcTauri, INVESTMENT_SRC_REL)
         : isMarketSyncModulePath(relPath)
           ? join(srcTauri, MARKET_SYNC_SRC_REL)
+        : isSyncEngineModulePath(relPath)
+          ? join(srcTauri, SYNC_ENGINE_SRC_REL)
           : join(srcTauri, 'src')
   const file = join(base, relPath)
   mkdirSync(join(file, '..'), { recursive: true })
@@ -299,12 +313,13 @@ describe('check-structure（结构守门）', () => {
   })
 
   it('域目录代码引用壳层 → 失败并定位文件行号', () => {
-    // 靶域用仍在根包的 sync_engine（行情同步域随 #1106 拆出，域目录靶随之更替）。
-    const args = makeFixture({ 'sync_engine/crud.rs': shellUse })
+    // 全部业务域 crate 化后，根包仅余测试支持域（test_support），域目录壳层
+    // 反向依赖靶随之更替；业务域 crate 的反向依赖由各自模块清单用例覆盖。
+    const args = makeFixture({ 'test_support/crud.rs': shellUse })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('反向依赖')
-    expect(r.output).toContain('sync_engine/crud.rs:1')
+    expect(r.output).toContain('test_support/crud.rs:1')
   })
 
   it('基础设施 crate 内代码引用壳层 → 失败并定位文件行号（#1088 归位后清单基准在 crate）', () => {
@@ -317,7 +332,7 @@ describe('check-structure（结构守门）', () => {
 
   it('注释与字符串中的 commands:: 不误报（掩码边界）', () => {
     const args = makeFixture({
-      'sync_engine/cost.rs': [
+      'test_support/cost.rs': [
         '/// 消费 `commands::item` 接缝（文档注释不算依赖）',
         '// 见 commands::foo 说明',
         'let url = "http://127.0.0.1:9527/commands::x";',
@@ -332,9 +347,9 @@ describe('check-structure（结构守门）', () => {
 
   it('外挂测试模块/目录豁免：tests.rs 与 tests/ 引用壳层不红（ADR-0056 决策 5）', () => {
     const args = makeFixture({
-      'sync_engine/tests.rs': shellUse,
-      'sync_engine/tests/scaffold.rs': shellUse,
-      'transaction/writer/tests/fixture.rs': shellUse,
+      'test_support/tests.rs': shellUse,
+      'test_support/tests/scaffold.rs': shellUse,
+      'test_support/helper/tests/fixture.rs': shellUse,
     })
     const r = run(args)
     expect(r.status).toBe(0)
@@ -349,11 +364,11 @@ describe('check-structure（结构守门）', () => {
 
   it('白名单路径缺失（清单漂移）→ fail loud', () => {
     const args = makeFixture()
-    rmSync(join(args[0], 'sync_engine'), { recursive: true, force: true })
+    rmSync(join(args[0], 'test_support'), { recursive: true, force: true })
     const r = run(args)
     expect(r.status).toBe(1)
-    // 断言对准缺失条目的路径字段（留痕 note 里也含 sync_engine，裸域名断言偏弱）。
-    expect(r.output).toContain('白名单路径不存在：sync_engine')
+    // 断言对准缺失条目的路径字段（留痕 note 里也含 test_support，裸域名断言偏弱）。
+    expect(r.output).toContain('白名单路径不存在：test_support')
   })
 
   it('基础设施模块清单路径缺失（crate 内清单漂移）→ fail loud', () => {
@@ -367,8 +382,8 @@ describe('check-structure（结构守门）', () => {
 
   it('白名单条目只剩测试豁免文件（扫不到非测试文件）→ fail loud，拒绝假绿', () => {
     const args = makeFixture()
-    rmSync(join(args[0], 'sync_engine', 'mod.rs'))
-    writeFileSync(join(args[0], 'sync_engine', 'tests.rs'), shellUse) // 只剩豁免形态
+    rmSync(join(args[0], 'test_support', 'mod.rs'))
+    writeFileSync(join(args[0], 'test_support', 'tests.rs'), shellUse) // 只剩豁免形态
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('扫不到非测试')
@@ -381,20 +396,18 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
    * 已由注册点反转消除（基础设施只留调用时机、备份域提供实现），故本形态现为
    * **未认许**的产出式反向引用——夹具用它钉死「生产挂载点不得复活」。
    */
-  // #1091 起备份域拆独立 crate（crate 名直引 `ledger_backup::` 不再经域目录路径
-  // 扫描，反向引用由 cargo 依赖图拒绝），负向夹具改以 accounts 为靶域保留同形；
-  // #1093 起账户域亦拆独立 crate，靶域改以 investment（不在本波拆分批次内的
-  // 稳定域目录）；#1097 起投资域亦拆独立 crate，靶域改以 sync；#1106 起行情同步域
-  // 亦拆独立 crate，靶域改以 sync_engine（仍住根包的最后一个业务域目录，
-  // #1107 拆出后随票更替）——「基础设施→域生产挂载点不得复活」的钉子不变。
+  // 全部业务域 crate 化后，根包仅余测试支持域（test_support）；基础设施对该域
+  // 的 4 条认许边全是测试专用边（ADR-0084），其余文件/目标仍红——「基础设施
+  // 生产路径直调域副作用不得复活」的钉子不变；对业务域 crate 的依赖由 cargo
+  // 依赖图（infra Cargo.toml 无域依赖）编译期拒绝。
   const afterCommitShape = [
     'pub fn write<T>(f: impl FnOnce() -> T) -> T { f() }',
     'fn after_commit(conn: &Connection) {',
-    '    if let Err(e) = crate::sync_engine::mark_dirty(conn) {',
+    '    if let Err(e) = crate::test_support::mark_dirty(conn) {',
     '        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");',
     '    }',
-    '    let dir = crate::sync_engine::shared_prefs().snapshot_dir();',
-    '    crate::sync_engine::run_due_backup(',
+    '    let dir = crate::test_support::shared_prefs().snapshot_dir();',
+    '    crate::test_support::run_due_backup(',
     '        conn,',
     '        dir.as_deref(),',
     '    );',
@@ -403,7 +416,7 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
   ].join('\n')
 
   it('基础设施文件 use 域模块 → 红', () => {
-    const args = makeFixture({ 'db/helper.rs': 'use crate::sync_engine::Account;\npub fn x() {}\n' })
+    const args = makeFixture({ 'db/helper.rs': 'use crate::test_support::open;\npub fn x() {}\n' })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('引用域目录')
@@ -412,32 +425,31 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
 
   it('内联全限定路径（crate::域::x() 形态）同样识别 → 红', () => {
     const args = makeFixture({
-      'db/helper.rs': 'pub fn y() { crate::sync_engine::mark_dirty(); }\n',
+      'db/helper.rs': 'pub fn y() { crate::test_support::open(); }\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('引用域目录 sync_engine')
+    expect(r.output).toContain('引用域目录 test_support')
     expect(r.output).toContain('db/helper.rs:1')
   })
 
   it('tauri_app_lib:: 前缀与 use as 别名引入同样识别 → 红', () => {
-    // dashboard 随 #1104、item 随 #1226 crate 化相继退役（tauri_app_lib:: 前缀经
-    // 根包再导出对基础设施合法，文本禁令不再辖），前缀形态改用仍在根包的 sync_engine。
+    // 全部业务域 crate 化后，根包仅余测试支持域；前缀与别名形态以非认许文件钉住。
     const args = makeFixture({
-      'events.rs': 'use tauri_app_lib::sync_engine::InstrumentDailyBar;\npub fn x() {}\n',
-      'settings.rs': 'use crate::sync_engine as acct;\npub fn y() {}\n',
+      'events.rs': 'use tauri_app_lib::test_support::open;\npub fn x() {}\n',
+      'db/helper.rs': 'use crate::test_support as support;\npub fn y() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('引用域目录 sync_engine')
-    expect(r.output).toContain('引用域目录 sync_engine')
+    expect(r.output).toContain('引用域目录 test_support')
+    expect(r.output).toContain('引用域目录 test_support')
   })
 
   it('模块自身导入（use crate::<域>;）同样识别 → 红', () => {
-    const args = makeFixture({ 'db/helper.rs': 'use crate::sync_engine;\npub fn z() {}\n' })
+    const args = makeFixture({ 'db/helper.rs': 'use crate::test_support;\npub fn z() {}\n' })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('引用域目录 sync_engine')
+    expect(r.output).toContain('引用域目录 test_support')
   })
 
   it('std::sync 等同名路径不误报（crate 根前缀限定边界）', () => {
@@ -465,9 +477,9 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
     const args = makeFixture({
       'db/helper.rs': [
         '/// 提交点由 [`crate::backup::run_due_backup`] 统一门禁（文档注释不算引用）',
-        '// 见 crate::sync_engine::Account 说明',
+        '// 见 crate::test_support::open 说明',
         'let s = "crate::backup::mark_dirty";',
-        'let re = r#"crate::sync_engine::fetch"#;',
+        'let re = r#"crate::test_support::open"#;',
         'pub fn f() {}',
         '',
       ].join('\n'),
@@ -478,7 +490,7 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
 
   it('外挂测试豁免不变：tests.rs 与 tests/ 目录引用域不红（ADR-0056 决策 5）', () => {
     const args = makeFixture({
-      'db/tests.rs': 'use crate::sync_engine::Account;\n',
+      'db/tests.rs': 'use crate::test_support::open;\n',
       'db/tests/common.rs': 'pub fn s() -> crate::backup::AutoBackupState { todo!() }\n',
     })
     const r = run(args)
@@ -489,26 +501,18 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
     const args = makeFixture({ 'db/mod.rs': afterCommitShape })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('引用域目录 sync_engine')
+    expect(r.output).toContain('引用域目录 test_support')
     expect(r.output).toContain('db/mod.rs:3')
   })
 
-  it('认许边精确匹配：settings.rs→test_support 绿；同文件他域或他文件同域仍红', () => {
+  it('认许边精确匹配：settings.rs→test_support 绿；他文件同域仍红', () => {
     const green = makeFixture({
       'settings.rs': 'use tauri_app_lib::test_support::open;\npub fn x() {}\n',
     })
     expect(run(green).status).toBe(0)
 
-    const otherDomain = makeFixture({
-      'settings.rs':
-        'use tauri_app_lib::test_support::open;\nuse crate::sync_engine::Account;\npub fn x() {}\n',
-    })
-    const r1 = run(otherDomain)
-    expect(r1.status).toBe(1)
-    expect(r1.output).toContain('引用域目录 sync_engine')
-
     const otherFile = makeFixture({
-      'db/helper.rs': 'use crate::sync_engine::Account;\n',
+      'db/helper.rs': 'use crate::test_support::open;\n',
     })
     const r2 = run(otherFile)
     expect(r2.status).toBe(1)
@@ -585,9 +589,21 @@ describe('check-structure 业务域→同步域零容忍（ADR-0101 决策 4b / 
     expect(r.output).toContain('insurer.rs:1')
   })
 
+  it('业务域直接引用同步域 crate 名（ledger_sync_engine::）→ 红（#1107 crate 化后堵漏）', () => {
+    const args = makeFixture({
+      'insurer.rs': 'use ledger_sync_engine::engine::ReplayEffect;\npub fn x() {}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域')
+    expect(r.output).toContain('ledger_sync_engine::engine')
+  })
+
   it('同步域自身与测试支持域不参与（作用域边界）', () => {
     const args = makeFixture({
-      'sync_engine/engine.rs': 'use crate::sync_engine::ops::insert_row;\n',
+      // checkpoint.rs 经 placeOverride 落多端同步域 crate（SYNC_ENGINE_MODULES
+      // 派生路由，#1107）；同步域自身不参与业务域→同步域零容忍扫描。
+      'checkpoint.rs': 'use crate::sync_engine::ops::insert_row;\n',
       'test_support/channel.rs': 'use crate::sync_engine::model::SyncOp;\n',
     })
     const r = run(args)
@@ -701,12 +717,12 @@ describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反
 describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收口）', () => {
   it('规则①：crate::models 全局模型路径残留 → 红', () => {
     const args = makeFixture({
-      'sync_engine/crud.rs': 'use crate::models::Transaction;\npub fn x() {}\n',
+      'test_support/crud.rs': 'use crate::models::Transaction;\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('全局模型路径残留')
-    expect(r.output).toContain('sync_engine/crud.rs:1')
+    expect(r.output).toContain('test_support/crud.rs:1')
   })
 
   it('规则①：tauri_app_lib::models 形态同样识别 → 红', () => {
@@ -720,7 +736,7 @@ describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收�
 
   it('规则①：注释与字符串中的 models 路径不误报（掩码边界）', () => {
     const args = makeFixture({
-      'sync_engine/cost.rs': [
+      'test_support/cost.rs': [
         '/// 全局模型目录已消亡，crate::models 是历史形态（文档注释不算引用）',
         '// 见 crate::models::Transaction 说明',
         'let s = "crate::models::Transaction";',
@@ -733,24 +749,24 @@ describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收�
 
   it('规则①：外挂测试豁免（tests.rs / tests/ 目录不参与扫描）', () => {
     const args = makeFixture({
-      'sync_engine/tests.rs': 'use crate::models::Transaction;\n',
-      'sync_engine/tests/scaffold.rs': 'use tauri_app_lib::models::Transaction;\n',
+      'test_support/tests.rs': 'use crate::models::Transaction;\n',
+      'test_support/tests/scaffold.rs': 'use tauri_app_lib::models::Transaction;\n',
     })
     const r = run(args)
     expect(r.status).toBe(0)
   })
 
   it('规则②：域接缝 glob 再导出 pub use model::* → 红', () => {
-    const args = makeFixture({ 'sync_engine/mod.rs': 'mod model;\npub use model::*;\n' })
+    const args = makeFixture({ 'test_support/mod.rs': 'mod model;\npub use model::*;\n' })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('glob 再导出')
-    expect(r.output).toContain('sync_engine/mod.rs:2')
+    expect(r.output).toContain('test_support/mod.rs:2')
   })
 
   it('规则②：跨域拍平形态 pub use crate::x::model::* → 红', () => {
     const args = makeFixture({
-      'sync_engine/mod.rs': 'pub use crate::transaction::model::*;\n',
+      'test_support/mod.rs': 'pub use crate::transaction::model::*;\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
@@ -758,25 +774,25 @@ describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收�
   })
 
   it('规则②：旧全局目录同名形态 pub use models::* → 红', () => {
-    const args = makeFixture({ 'sync_engine/mod.rs': 'pub use models::*;\n' })
+    const args = makeFixture({ 'test_support/mod.rs': 'pub use models::*;\n' })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('glob 再导出')
   })
 
   it('规则②：域模型文件内 glob 聚合 pub use xxx::* → 红', () => {
-    const args = makeFixture({ 'sync_engine/model.rs': 'pub use super::crud::*;\n' })
+    const args = makeFixture({ 'test_support/model.rs': 'pub use super::crud::*;\n' })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('glob 聚合')
-    expect(r.output).toContain('sync_engine/model.rs:1')
+    expect(r.output).toContain('test_support/model.rs:1')
   })
 
   it('规则②：逐类型再导出与域内私有 glob 引用合规 → 绿', () => {
     const args = makeFixture({
-      'sync_engine/mod.rs': 'mod model;\npub use model::{Item, ItemInput};\n',
-      'sync_engine/behavior.rs': 'use super::model::*;\npub fn x() {}\n',
-      'sync_engine/model.rs': 'pub struct Item;\n',
+      'test_support/mod.rs': 'mod model;\npub use model::{Item, ItemInput};\n',
+      'test_support/behavior.rs': 'use super::model::*;\npub fn x() {}\n',
+      'test_support/model.rs': 'pub struct Item;\n',
     })
     const r = run(args)
     expect(r.status).toBe(0)
@@ -873,6 +889,8 @@ interface CrateFixtureOverrides {
   dashboardManifest?: string
   /** 覆盖行情同步域 crate 的 `crates/market-sync/Cargo.toml`（依赖方向负向夹具，#1106） */
   marketSyncManifest?: string
+  /** 覆盖多端同步域 crate 的 `crates/sync-engine/Cargo.toml`（依赖方向负向夹具，#1107） */
+  syncEngineManifest?: string
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string
   /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
@@ -1349,6 +1367,29 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
       ].join('\n'),
   )
   writeFileSync(join(srcTauri, 'crates', 'market-sync', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
+  // 多端同步域 crate（#1107，P4 业务域 crate）：夹具与真实仓库同形——成员目录 +
+  // 门禁继承 + dev-dependency 测试环（生产依赖面另有一组基础设施/协议/域依赖，
+  // 与依赖方向核对无关，夹具从简同其他域成员）。
+  mkdirSync(join(srcTauri, 'crates', 'sync-engine', 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'crates', 'sync-engine', 'Cargo.toml'),
+    overrides.syncEngineManifest ??
+      [
+        '[package]',
+        'name = "ledger-sync-engine"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[dev-dependencies]',
+        'tauri-app = { path = "../.." }',
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
+  )
+  writeFileSync(join(srcTauri, 'crates', 'sync-engine', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
@@ -2399,6 +2440,80 @@ describe('check-structure 行情同步域 crate（#1106 P4 业务域 crate 自�
   })
 })
 
+describe('check-structure 多端同步域 crate（#1107 P4 业务域 crate 自根包拆出）', () => {
+  it('真实仓库默认通过：多端同步域 crate 模块级扫描入摘要', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`多端同步域模块 ${SYNC_ENGINE_MODULES.length} 项`)
+  })
+
+  it('多端同步域 crate 模块引用壳层 → 红并定位文件行号', () => {
+    // checkpoint.rs 经 placeOverride 落多端同步域 crate（SYNC_ENGINE_MODULES
+    // 派生路由，#1107；engine.rs / command.rs / model.rs / channel.rs 与先登记
+    // crate 清单同名，夹具只用无撞名条目）。
+    const args = makeFixture({ 'checkpoint.rs': shellUse })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('反向依赖')
+    expect(r.output).toContain('checkpoint.rs:1')
+  })
+
+  it('多端同步域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面）', () => {
+    const args = makeCrateFixture({
+      syncEngineManifest:
+        '[package]\nname = "ledger-sync-engine"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 依赖方向')
+    expect(r.output).toContain('ledger-sync-engine')
+  })
+
+  it('多端同步域 crate 生产依赖基础设施/协议/核心交易与各业务域 → 绿（AC 允许集内合法单向依赖）', () => {
+    const args = makeCrateFixture({
+      syncEngineManifest:
+        '[package]\nname = "ledger-sync-engine"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\n' +
+        'ledger-infra = { path = "../infra" }\n' +
+        'ledger-sync-protocol = { path = "../sync-protocol" }\n' +
+        'ledger-transaction = { path = "../transaction" }\n' +
+        'ledger-accounts = { path = "../accounts" }\n' +
+        'ledger-scheduled = { path = "../scheduled" }\n' +
+        'ledger-backup = { path = "../backup" }\n\n' +
+        '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('业务域 crate 生产依赖多端同步域 crate → 红（同层禁边，ADR-0101 决策 4b / #1107）', () => {
+    const args = makeCrateFixture({
+      accountsManifest:
+        '[package]\nname = "ledger-accounts"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\nledger-sync-engine = { path = "../sync-engine" }\n\n' +
+        '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域 crate ledger-accounts 生产依赖多端同步域 ledger-sync-engine')
+  })
+
+  it('多端同步域 crate 新增未登记模块 → 红（模块清单双向全等，#1107）', () => {
+    const args = makeFixture()
+    writeFileSync(join(args[1], SYNC_ENGINE_SRC_REL, 'new_module.rs'), STUB)
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('SYNC_ENGINE_MODULES 未登记模块')
+  })
+
+  it('多端同步域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
+    // 缺省 syncEngineManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
+  })
+})
+
 describe('check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue #1132）', () => {
   it('真实仓库默认通过：cfg 门 + 生产依赖不启用 test-utils', () => {
     const r = run([])
@@ -2929,17 +3044,17 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
 
   it('③ 模型目录成员的 glob 聚合 → 红（判据扩到目录形态，模型目录化不静默失靶）', () => {
     const args = makeFixture({
-      'sync_engine/model/price.rs': 'pub use crate::sync_engine::types::*;\npub fn x() {}\n',
+      'test_support/model/price.rs': 'pub use crate::test_support::types::*;\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('域模型文件内 glob 聚合')
-    expect(r.output).toContain('sync_engine/model/price.rs')
+    expect(r.output).toContain('test_support/model/price.rs')
   })
 
   it('③ 模型文件名判据不回退：model.rs 内 glob 仍红（文件形态先行例）', () => {
     const args = makeFixture({
-      'sync_engine/model.rs': 'pub use crate::sync_engine::types::*;\npub fn x() {}\n',
+      'test_support/model.rs': 'pub use crate::test_support::types::*;\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
@@ -2948,8 +3063,8 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
 
   it('③ 模型目录成员不含 glob → 绿（判据只拦聚合，不拦逐类型再导出与类型定义）', () => {
     const args = makeFixture({
-      'sync_engine/model/price.rs':
-        'pub struct Price;\npub use crate::sync_engine::types::{Price as ItemPrice};\npub fn x() {}\n',
+      'test_support/model/price.rs':
+        'pub struct Price;\npub use crate::test_support::types::{Price as ItemPrice};\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(0)

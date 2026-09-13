@@ -1,0 +1,66 @@
+[package]
+name = "ledger-sync-engine"
+version = "0.6.0"
+description = "Ledger 多端同步域 crate：OpLog 基座、双端合并、Checkpoint 与同步触发编排"
+edition = "2024"
+publish = false
+# 版本与根包锁步（仓库约定：workspace 各成员同为 0.6.0）。
+
+[dependencies]
+# 多端同步域 crate（spec #1086 / issue #1107，P4 业务域 crate）：依赖面仅限
+# 基础设施、同步协议、核心交易域与各业务域——同步协议是全部业务域与同步域
+# 的共享底座（#1089），重放分派经各域公开接缝消费域能力（ADR-0101），对壳层
+# 零生产依赖、对任何业务域零反向依赖。域→域方向均为上层消费下层的合法直呼
+# （ADR-0112 决策 2）；对根包（壳层）的反向引用由 cargo 依赖图编译期拒绝
+# （生产依赖面无根包，dev-dependency 环只覆盖测试目标）。
+ledger-infra = { path = "../infra" }
+ledger-sync-protocol = { path = "../sync-protocol" }
+ledger-transaction = { path = "../transaction" }
+ledger-accounts = { path = "../accounts" }
+ledger-categories = { path = "../categories" }
+ledger-currencies = { path = "../currencies" }
+ledger-merchants = { path = "../merchants" }
+ledger-investment = { path = "../investment" }
+ledger-scheduled = { path = "../scheduled" }
+ledger-item = { path = "../item" }
+ledger-policy = { path = "../policy" }
+ledger-budget = { path = "../budget" }
+ledger-physical-asset = { path = "../physical-asset" }
+ledger-backup = { path = "../backup" }
+# 数据面惯用库：S3 兼容对象存储通道、信封加密、摘要、Checkpoint 快照与
+# 桌面 AppHandle 触发接线。tauri 只提供 AppHandle/Runtime/Manager（壳层
+# 句柄接缝），本 crate 不消费壳层 commands 面。
+aws-sdk-s3 = { version = "1.146", default-features = false, features = [
+  "behavior-version-latest",
+  "default-https-client",
+  "http-1x",
+  "rt-tokio",
+] }
+aws-lc-rs = { version = "1.18", default-features = false, features = ["aws-lc-sys"] }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+tracing = "0.1"
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+tauri = { version = "2", features = ["tracing"] }
+
+[dev-dependencies]
+# 测试专用边（spec #1086 明文裁决「测试工厂与器具以 dev-dependency 环供各域
+# 复用，Cargo 允许」）：域单测经根包统一测试数据库工厂与共享断言
+# （test_support，ADR-0084）建库、种子与 S3 桩；dev-dependency 环由 Cargo
+# 允许——测试目标与生产依赖图分离，不构成生产环；结构守门的依赖方向核对只
+# 辖生产依赖（本 crate 声明 tauri-app 为生产依赖即红）。由于该环，本 crate
+# 不能像协议 crate 那样以 `use tauri_app_lib::…` compile_fail 文档用例承载
+# 反向引用负向例（dev-dependency 对 doctest 可见，会击穿该形态）——反向
+# 引用的编译期拒绝由生产依赖面承担（lib 目标解析不到 dev-dependency），
+# 机器面负向核对住结构守门的 crate 依赖方向。
+tauri-app = { path = "../.." }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
+uuid = { version = "1.23", features = ["v7", "v5", "serde"] }
+
+# 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+[lints]
+workspace = true

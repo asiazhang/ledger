@@ -14,7 +14,7 @@
 //! 远水救不了近火，测试必须红。
 //!
 //! 分平台门（`#[cfg(desktop)]` 收在 `start_triggers` 单点、三业务可用起点统一
-//! 调用）是源码形状事实，由域内源码扫描守门钉住（`sync_engine::trigger::tests`，
+//! 调用）是源码形状事实，由根包源码扫描守门钉住（`sync_trigger_guard`，
 //! `signals_cross_check` 先例），不在本文件。
 
 use std::path::PathBuf;
@@ -159,7 +159,7 @@ async fn write_entry_enqueues_upload_via_scheduler() {
 
 /// 打开即同步接线（issue #863 验收「打开应用即自动同步」）：业务可用起点调
 /// `sync_on_start` 后，一次性后台轮次把既有本机 op 发布上通道。lib.rs 等起点
-/// 的调用点存在性由域内源码扫描守门钉住（trigger::tests）。
+/// 的调用点存在性由根包源码扫描守门钉住（`sync_trigger_guard`）。
 #[tokio::test]
 async fn sync_on_start_publishes_local_ops_to_channel() {
     isolate_home();
