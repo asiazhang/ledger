@@ -194,7 +194,8 @@ fn assert_instrument_first_symbol(world: &mut LedgerWorld, symbol: String) {
 }
 
 /// 标的列表返回体带来源字段（issue #290）：存量同步行回填 'eastmoney'、
-/// 手动新建行标 'manual'，列表 UI 的「来源」列由此直出。
+/// 手动新建行标 'manual'。该字段是删除准入的字典来源判定依据，不经标的列表
+/// 的「价格来源」列展示（列表列展示的是价格通道派生事实，issue #1189）。
 #[then(expr = "标的列表代码 {string} 来源应为 {string}")]
 fn assert_instrument_list_source(world: &mut LedgerWorld, symbol: String, source: String) {
     let result = world
