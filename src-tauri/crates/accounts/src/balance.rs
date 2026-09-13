@@ -3,7 +3,7 @@
 //! 账户余额清单读取一个模块命中。对外函数签名与 IPC/HTTP/信号契约零变化；
 //! ADR-0067 两契约原样保留——写路径同事务整体重算（禁止增量加减）、
 //! 缓存缺失报码化错误不静默回退。口径表达式消费核心交易域
-//! [`crate::transaction::amount::account_flow_expr`] 单一真源（accounts →
+//! [`ledger_transaction::amount::account_flow_expr`] 单一真源（accounts →
 //! transaction 单向；写路径余额刷新自 #1090 起经接缝反转——本模块把实现
 //! 注册进核心交易域的注册点，`transaction → accounts` 直接引用禁令化，
 //! ADR-0071 决策 5 修订注记）。
@@ -14,15 +14,20 @@
 //! ```compile_fail
 //! use tauri_app_lib::accounts::balance::affected_accounts;
 //! ```
+//!
+//! 该负向例在 crate 化后语义不变：`tauri_app_lib::accounts` 是根包对
+//! `ledger_accounts` 的再导出面（dev-dependency 对 doctest 可见），而
+//! `affected_accounts` 私有性在两份实例中同源——路径解析不到私有项即编译
+//! 失败，compile_fail 成立；再公开即编译通过、本用例红。
 
 use std::collections::HashMap;
 
+use ledger_infra::db::query::{FromRow, query_all};
+use ledger_infra::error::{AppError, Result};
+use ledger_transaction::amount::{TransferSide, account_flow_expr};
 use rusqlite::{Connection, OptionalExtension};
 
 use super::model::{Account, AccountBalance};
-use crate::db::query::{FromRow, query_all};
-use crate::error::{AppError, Result};
-use crate::transaction::amount::{TransferSide, account_flow_expr};
 
 struct AccountBalanceEntry {
     id: String,
@@ -254,7 +259,7 @@ fn balance_refresh_hook(
     conn: &Connection,
     old: Option<(&str, Option<&str>, Option<&str>)>,
     new: Option<(&str, Option<&str>, Option<&str>)>,
-) -> crate::error::Result<()> {
+) -> ledger_infra::error::Result<()> {
     let affected = affected_accounts(old, new);
     refresh_account_balances(conn, &affected)
 }
@@ -266,7 +271,7 @@ fn balance_refresh_hook(
 /// 直接依赖（ADR-0071 决策 5 修订：transaction ⇄ accounts 双向横向边收敛为
 /// accounts → transaction 单向）。
 pub fn install_balance_refresh_hook() {
-    crate::transaction::seams::balance::register_balance_refresh_hook(balance_refresh_hook);
+    ledger_transaction::seams::balance::register_balance_refresh_hook(balance_refresh_hook);
 }
 
 /// 对给定账户按唯一口径表达式整体重算余额并写入缓存（禁止增量加减）。

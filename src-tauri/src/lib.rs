@@ -12,7 +12,11 @@
     )
 )]
 
-pub mod accounts;
+// 账户域 crate（spec #1086 / issue #1093，P3 叶子业务域 crate）：自根包域目录
+// 拆出，根包以再导出形态保留原引用路径——壳层与其余域的 `crate::accounts::…`
+// / `tauri_app_lib::accounts::…` 调用点零改动（expand 形态，ledger-backup/
+// ledger-transaction 同款）。域内行为见 `ledger-accounts` crate。
+pub use ledger_accounts as accounts;
 pub mod api_server;
 // 备份域 crate（spec #1086 / issue #1091，首个业务域 crate 自根包域目录拆出）：
 // 域目录 `src/backup` 整体迁入 `crates/backup`，根包以别名再导出保留原引用路径
