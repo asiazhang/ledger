@@ -3,7 +3,7 @@ import { api } from '@ledger/api'
 import { useLoadable } from '@/composables/useLoadable'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@ledger/money'
-import type { Currency, Holding } from '@ledger/types'
+import type { Currency, Holding, InstrumentPriceChannel } from '@ledger/types'
 
 /** 当前持仓概览的一行：Holding 行叠加标的字典与账户的展示信息。 */
 export interface PortfolioRow {
@@ -27,6 +27,10 @@ export interface PortfolioRow {
   unrealizedPnlCents: number | null
   /** 市值/未实现盈亏的折算币种 = 账户币（账户缺失时回退成本币种） */
   valueCurrencyCode: string
+  /** 价格写入通道（标的字典透传的后端派生事实，issue #1060）：缺价行引导
+   * （issue #1193）只读本事实，前端不再按类型与市场自行推断；标的字典缺行时
+   * 为 null（无可读通道，不给引导） */
+  priceChannel: InstrumentPriceChannel | null
 }
 
 /** 按币种分组的金额小计 */
@@ -166,6 +170,7 @@ export function usePortfolioOverview() {
 interface InstrumentLike {
   symbol: string
   name: string | null
+  price_channel: InstrumentPriceChannel
 }
 
 interface AccountLike {
@@ -198,5 +203,7 @@ function toRow(
     unrealizedPnlCents: h.unrealized_pnl_cents,
     // 市值/未实现盈亏由 v_holdings 折算到账户本位币；账户缺失时回退成本币种保证可展示
     valueCurrencyCode: acct?.currency_code ?? h.cost_currency_code,
+    // 价格通道随标的行透传（后端派生单点），缺价行引导据此分流
+    priceChannel: inst?.price_channel ?? null,
   }
 }

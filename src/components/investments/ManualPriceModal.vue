@@ -8,14 +8,15 @@ import { t } from '@ledger/i18n'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
 import { formatPrice, yuanToPrice } from '@ledger/money'
 import { todayStr } from '@/utils/date'
-import type { Instrument } from '@ledger/types'
 
 // 手动报价弹窗（issue #291 / ADR-0036）：无行情数据源标的的「日期 + 价格」
 // 单点录入。提交后一条通道两个落点（现价缓存 upsert + 价格历史周采样幂等覆盖，
 // 后端同一命令完成）；回填早于最新价格点的旧价只沉淀历史、不动现价（由后端
 // 最新点映像规则判定，回执按结果区分）。列表/持仓/走势刷新由后端广播的价格
 // 失效信号驱动既有消费方完成，本组件与调用方零手动重拉。
-const props = defineProps<{ show: boolean; instrument: Instrument | null }>()
+// 消费面只有 id 与 symbol（弹窗标题与回执文案）：入参按真实消费面收窄，
+// 使标的页（Instrument 行）与持仓页（缺价行引导，issue #1193）共用同一入口。
+const props = defineProps<{ show: boolean; instrument: { id: string; symbol: string } | null }>()
 const emit = defineEmits<{
   'update:show': [value: boolean]
   /** 录价成功回执文案（页面级展示）；列表刷新经价格失效信号，不由调用方重拉 */

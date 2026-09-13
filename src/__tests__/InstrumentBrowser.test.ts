@@ -569,3 +569,62 @@ describe('InstrumentBrowser 行内录价入口（issue #291 / ADR-0036；通道�
     expect(refreshed).toBe(before + 1)
   })
 })
+
+describe('InstrumentBrowser 空态（issue #1193）', () => {
+  function listEmpty() {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_instruments: () => Promise.resolve({ items: [], total: 0 }),
+      },
+    })
+  }
+
+  it('库内无标的且无筛选：空态为「暂无标的」', async () => {
+    listEmpty()
+    const wrapper = mountBrowser()
+    await flushPromises()
+    const empty = wrapper.find('[data-testid="instruments-empty"]')
+    expect(empty.exists()).toBe(true)
+    expect(empty.text()).toBe('暂无标的')
+    // 两态互斥：无筛选时不得显示「筛选无匹配」
+    expect(wrapper.find('[data-testid="instruments-no-match"]').exists()).toBe(false)
+  })
+
+  it('筛选未命中：空态为「筛选条件下无匹配标的」，与「暂无标的」可区分', async () => {
+    listEmpty()
+    const wrapper = mountBrowser()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="instruments-empty"]').exists()).toBe(true)
+    // 「只看持仓」是生效中的筛选（无防抖，切换即重拉）
+    await wrapper.find('[data-testid="only-invested-switch"]').trigger('click')
+    await flushPromises()
+    const noMatch = wrapper.find('[data-testid="instruments-no-match"]')
+    expect(noMatch.exists()).toBe(true)
+    expect(noMatch.text()).toBe('筛选条件下无匹配标的')
+    expect(wrapper.find('[data-testid="instruments-empty"]').exists()).toBe(false)
+  })
+
+  it('加载门：首载在途不渲染空态，加载完成后空态才出现（空库不闪现「暂无标的」）', async () => {
+    let resolveList!: (v: unknown) => void
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_instruments: () =>
+          new Promise((res) => {
+            resolveList = res
+          }),
+      },
+    })
+    const wrapper = mountBrowser()
+    await nextTick()
+    // 首载在途：空态不渲染（否则空库会先闪「暂无标的」再出列表）
+    expect(wrapper.find('[data-testid="instruments-empty"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('暂无标的')
+    resolveList({ items: [], total: 0 })
+    await flushPromises()
+    const empty = wrapper.find('[data-testid="instruments-empty"]')
+    expect(empty.exists()).toBe(true)
+    expect(empty.text()).toBe('暂无标的')
+  })
+})
