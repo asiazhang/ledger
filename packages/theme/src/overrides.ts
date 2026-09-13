@@ -1,4 +1,5 @@
 import type { GlobalThemeOverrides } from 'naive-ui'
+import type { Theme } from './theme'
 import { DARK_FLOAT_LAYER, NEUTRAL_TOKENS } from './design-tokens'
 
 /**
@@ -14,6 +15,9 @@ import { DARK_FLOAT_LAYER, NEUTRAL_TOKENS } from './design-tokens'
  *   本模块；语义色不在这里，收口于同包单一来源模块 `semantic-colors.ts`
  *   （七种交易类型、亮/暗两套色值），交易列表/搜索金额列与报表月度收支图同源
  *   消费、随主题切换即时换色（issue #435）。
+ * - 组件层不直接读两份 overrides 取强调色：`accentColor` 选择器（issue #1268）
+ *   是强调色的唯一解析出口，账户/商户/标的/来源四个链接组件统一经它按主题
+ *   取 `{ base, hover }`（与 `semantic-colors` 先例同形：值与选择器同模块）。
  * - 亮色主题保持现状等效：仅共享强调色（同色相加深版），其余保持 Naive 出厂
  *   默认，不借机补全（issue #887 边界）。
  * - 暗色主题的按钮文字色由 Naive 自动取深色（baseColor=#000），亮琥珀直接可用；
@@ -22,11 +26,13 @@ import { DARK_FLOAT_LAYER, NEUTRAL_TOKENS } from './design-tokens'
  * - 改动后跑 `pnpm exec vue-tsc --noEmit`，`GlobalThemeOverrides` 会校验变量名。
  */
 
-// 暗色（默认主题，主战场）——中性常量取自 token
+// 暗色（默认主题，主战场）——中性常量取自 token。声明用 satisfies 而非类型
+// 注解：保住 common 字面量对象的完整推断（键恒在场、值为字面量类型），
+// accentColor 选择器据此无兜底取色（issue #1268）。
 const token = NEUTRAL_TOKENS.dark
 const floatLayer = DARK_FLOAT_LAYER
 
-export const darkOverrides: GlobalThemeOverrides = {
+export const darkOverrides = {
   common: {
     // 强调色：琥珀暖橙
     primaryColor: '#F59E0B',
@@ -80,14 +86,34 @@ export const darkOverrides: GlobalThemeOverrides = {
     itemIconColorActive: '#F59E0B',
     itemIconColorActiveHover: '#F59E0B',
   },
-}
+} satisfies GlobalThemeOverrides
 
 // 亮色（次要主题）：仅共享强调色（同色相加深版），其余保持 Naive 出厂默认（能用即可）
-export const lightOverrides: GlobalThemeOverrides = {
+export const lightOverrides = {
   common: {
     primaryColor: '#B45309',
     primaryColorHover: '#92400E',
     primaryColorPressed: '#78350F',
     primaryColorSuppl: '#B45309',
   },
+} satisfies GlobalThemeOverrides
+
+/** 强调色解析产物：默认态与悬停态两个色值。 */
+export interface AccentColor {
+  /** 默认态强调色（链接文字色） */
+  base: string
+  /** 悬停/焦点态强调色（hover 文字色与焦点环） */
+  hover: string
+}
+
+/**
+ * 按主题取强调色（纯选择器，随主题响应式消费，issue #1268）——组件层强调色的
+ * 单一解析出口：值直接读本模块两份 overrides 的 common（primaryColor /
+ * primaryColorHover），不持第二份色值副本；common 在两份 overrides 均为完整
+ * 字面量对象（恒有值），无兜底分支。账户/商户/标的/来源四个链接组件统一经
+ * 此取色（原 AccountLink 先例的四处内联解析收编于此）。
+ */
+export function accentColor(theme: Theme): AccentColor {
+  const common = theme === 'dark' ? darkOverrides.common : lightOverrides.common
+  return { base: common.primaryColor, hover: common.primaryColorHover }
 }

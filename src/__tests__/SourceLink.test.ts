@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SourceLink from '@/components/SourceLink.vue'
+import { useAppStore } from '@/stores/app'
 import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
@@ -185,6 +186,24 @@ describe('标的来源渲染（spec #704 / issue #709）：走势图标 + 代码
       name: 'assets-more',
       query: { tab: 'investments', focus: 'inst-2' },
     })
+  })
+})
+
+describe('SourceLink 强调色（issue #1268：与 AccountLink 同源、随主题切换）', () => {
+  it('暗色主题（默认）：主题强调色琥珀 + hover 变量亮琥珀', () => {
+    useAppStore().setTheme('dark')
+    const wrapper = mount(SourceLink, { props: { source: makeSource() } })
+    const style = wrapper.find('button.source-link').attributes('style')
+    expect(style).toContain('rgb(245, 158, 11)')
+    expect(style).toContain('--accent-hover: #FBBF24')
+  })
+
+  it('亮色主题：强调色切同色相加深版（#B45309 / hover #92400E）', () => {
+    useAppStore().setTheme('light')
+    const wrapper = mount(SourceLink, { props: { source: makeSource() } })
+    const style = wrapper.find('button.source-link').attributes('style')
+    expect(style).toContain('rgb(180, 83, 9)')
+    expect(style).toContain('--accent-hover: #92400E')
   })
 })
 

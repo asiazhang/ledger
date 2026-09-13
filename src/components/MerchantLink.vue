@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
-import { darkOverrides, lightOverrides } from '@ledger/theme/overrides'
+import { accentColor } from '@ledger/theme/overrides'
 import { t } from '@ledger/i18n'
 
 /**
@@ -35,15 +35,9 @@ const name = computed(() => merchant.value?.name ?? '-')
 // 仅参考数据可解析的商户可点击下钻；未知 id 渲染为纯文本「-」。
 const isLink = computed(() => !!merchant.value)
 
-// 强调色与 AccountLink 同源：@ledger/theme/overrides 单一来源，按当前主题取值。
-const accent = computed(() => {
-  const common =
-    app.theme === 'dark' ? darkOverrides.common : lightOverrides.common
-  return {
-    base: common?.primaryColor ?? '#F59E0B',
-    hover: common?.primaryColorHover ?? '#FBBF24',
-  }
-})
+// 强调色与 AccountLink 同源：@ledger/theme accentColor 选择器按主题解析
+// （值源：overrides common 单一来源）。
+const accent = computed(() => accentColor(app.theme))
 
 function go() {
   if (props.drillIntent) {

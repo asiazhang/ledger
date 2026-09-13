@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import AccountLink from '@/components/AccountLink.vue'
+import { useAppStore } from '@/stores/app'
 
 
 // AccountLink 经 useRouter 跳转（pushMock 断言导航目标，issue #97/#99）
@@ -35,6 +36,22 @@ describe('AccountLink 账户名下钻（issue #97/#99）', () => {
     // hover 亮琥珀 + 下划线 + 背景微亮、focus-visible 焦点环为组件静态 CSS
     // （jsdom 不注入 scoped 样式，无法在此断言；见 AccountLink.vue 样式块）。
     expect(btn.attributes('style')).toContain('rgb(245, 158, 11)')
+  })
+
+  it('暗色 hover 变量注入亮琥珀（#FBBF24；自定义属性不经 jsdom 颜色归一化）', async () => {
+    useAppStore().setTheme('dark')
+    const wrapper = mount(AccountLink, { props: { accountId: 'acc-1' } })
+    await flushPromises()
+    expect(wrapper.find('button').attributes('style')).toContain('--accent-hover: #FBBF24')
+  })
+
+  it('亮色主题：强调色切同色相加深版（#B45309 / hover #92400E）', async () => {
+    useAppStore().setTheme('light')
+    const wrapper = mount(AccountLink, { props: { accountId: 'acc-1' } })
+    await flushPromises()
+    const style = wrapper.find('button').attributes('style')
+    expect(style).toContain('rgb(180, 83, 9)')
+    expect(style).toContain('--accent-hover: #92400E')
   })
 
   it('点击跳转 /transactions?account=<id>', async () => {

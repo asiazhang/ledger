@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
-import { darkOverrides, lightOverrides } from '@ledger/theme/overrides'
+import { accentColor } from '@ledger/theme/overrides'
 import { t } from '@ledger/i18n'
 
 /**
@@ -34,16 +34,10 @@ const name = computed(() => account.value?.name ?? '-')
 // 仅真实可见账户可点击下钻；黑洞/隐藏账户渲染为纯文本「-」。
 const isLink = computed(() => !!account.value)
 
-// 强调色取自 @ledger/theme/overrides 单一来源（Naive 不暴露全局 --primary-color CSS 变量，
-// 组件内颜色显式按主题取值：暗色琥珀 / 亮色同色相加深版，与 overrides 一致）。
-const accent = computed(() => {
-  const common =
-    app.theme === 'dark' ? darkOverrides.common : lightOverrides.common
-  return {
-    base: common?.primaryColor ?? '#F59E0B',
-    hover: common?.primaryColorHover ?? '#FBBF24',
-  }
-})
+// 强调色经 @ledger/theme accentColor 选择器按主题解析（值源：overrides common
+// 单一来源；Naive 不暴露全局 --primary-color CSS 变量，组件内显式取值注入：
+// 暗色琥珀 / 亮色同色相加深版）。
+const accent = computed(() => accentColor(app.theme))
 
 function go() {
   router.push({ name: 'transactions', query: { account: props.accountId } })
