@@ -470,6 +470,8 @@ describe('出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
   const accountsWithFunding = [
     ...mockAccounts,
     { id: 'acc-bank', name: '招商银行卡', type: 'bank', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    { id: 'acc-inv-usd', name: '美股证券户', type: 'investment', currency_code: 'USD', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    { id: 'acc-bank-usd', name: '美元卡', type: 'bank', currency_code: 'USD', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
   ]
   const editingTx = {
     id: 'txn-buy-1',
@@ -511,6 +513,11 @@ describe('出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
     )!
   }
 
+  /** 按渲染序取 NSelect（0=币种，1=投资账户，2=出资账户，3=标的搜索） */
+  function selectAt(wrapper: ReturnType<typeof mount>, index: number) {
+    return wrapper.findAllComponents(NSelect)[index]
+  }
+
   async function mountWithFundingReference() {
     wireInvokeSeam({
       overrides: { list_accounts: accountsWithFunding, list_instruments: { items: [], total: 0 } },
@@ -540,6 +547,22 @@ describe('出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
       },
     })
     expect(fundingSelect(untouched).props('value')).toBeNull()
+  })
+
+  it('外币投资账户：币种展示随账户联动、出资候选按账户币种过滤（issue #1191）', async () => {
+    await mountWithFundingReference()
+    const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    // 未选账户：币种字段退默认展示币种，出资候选按该币种过滤
+    expect(selectAt(wrapper, 0).props('value')).toBe('CNY')
+    expect(fundingSelect(wrapper).props('options')).toEqual([{ label: '招商银行卡', value: 'acc-bank' }])
+    // 选中美元投资账户：币种字段展示该账户币种（不再恒 CNY），出资候选只剩同币种现金账户
+    selectAt(wrapper, 1).vm.$emit('update:value', 'acc-inv-usd')
+    await flushPromises()
+    expect(selectAt(wrapper, 0).props('value')).toBe('USD')
+    const usdFunding = wrapper.findAllComponents(NSelect).find((s) =>
+      (s.props('options') as Array<{ value: string }>).some((o) => o.value === 'acc-bank-usd'),
+    )!
+    expect(usdFunding.props('options')).toEqual([{ label: '美元卡', value: 'acc-bank-usd' }])
   })
 
   it('卖出编辑回填与买入同款：带出资账户打开即显示当前值（#938 对称）', async () => {

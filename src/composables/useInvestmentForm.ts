@@ -14,6 +14,7 @@ import { useFieldErrors } from '@/composables/useFieldErrors'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { buildTradeInput } from '@/domain/transaction-input'
 import { errorMessage } from '@/utils/errors'
+import { useAppStore } from '@/stores/app'
 import type { Instrument, Transaction, TransactionTrade } from '@ledger/types'
 
 export function useInvestmentForm(
@@ -34,6 +35,7 @@ export function useInvestmentForm(
   },
 ) {
   const { reference, currencyOptions } = useFormShared()
+  const app = useAppStore()
   const message = useMessage()
 
   const accountId = ref<string | null>(null)
@@ -53,7 +55,17 @@ export function useInvestmentForm(
   const fee = ref<number | null>(null)
   const note = ref('')
   const date = ref(Date.now())
-  const currencyCode = ref('CNY')
+  /**
+   * 交易币种（issue #1191）：buy/sell 的记账币种由投资账户决定——后端 prepare 以
+   * 账户币种落 `currency_code`（见 CONTEXT-investment 累计收益「buy/sell 的记录币种
+   * 恒为账户币」），出资账户准入亦按该币种校验。前端不另存一份可能漂移的币种状态，
+   * 展示值与出资候选过滤同源读账户；未选账户前退「新表单预选币种」（展示币种偏好，
+   * 见核心交易域 DefaultCurrency）。
+   */
+  const currencyCode = computed(() => {
+    const account = accountId.value == null ? undefined : reference.accountMap.get(accountId.value)
+    return account?.currency_code ?? app.defaultCurrency
+  })
 
   const instruments = ref<Instrument[]>([])
   const searchingInstruments = ref(false)
@@ -65,8 +77,8 @@ export function useInvestmentForm(
   )
 
   // 出资账户候选（issue #936 / #938 / ADR-0096）：准入闭集收口参考 store 单一派生，
-  // 币种一致过滤随交易币种在此承担（后端行为层准入是唯一权威）；默认空，
-  // 不选 = 维持余额买卖语义（结算账户 = 投资账户）
+  // 币种一致过滤随交易币种（= 所选投资账户币种，issue #1191）在此承担（后端行为层
+  // 准入是唯一权威）；默认空，不选 = 维持余额买卖语义（结算账户 = 投资账户）
   const fundingAccountOptions = computed(() =>
     reference.fundingCandidateAccounts
       .filter((a) => a.currency_code === currencyCode.value)
@@ -105,7 +117,6 @@ export function useInvestmentForm(
     : null
   if (editingTx && editingTrade) {
     accountId.value = editingTx.account_id
-    currencyCode.value = editingTx.currency_code
     instrumentId.value = editingTrade.instrument_id
     // 出资账户回填（issue #936 / #938）：历史买卖不带出资账户时保持空，不误带；
     // 带出后随全字段替换原样提交，编辑不改该字段也不被静默丢失（候选同币种过滤由
@@ -313,7 +324,6 @@ export function useInvestmentForm(
     fundingAccountId.value = null
     note.value = ''
     date.value = Date.now()
-    currencyCode.value = 'CNY'
   }
 
   return {

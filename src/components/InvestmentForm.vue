@@ -54,7 +54,7 @@ const ctx = useInvestmentForm(props.kind, {
           style="width: 160px"
         />
         <AppSelect
-          v-model:value="ctx.currencyCode.value"
+          :value="ctx.currencyCode.value"
           :options="ctx.currencyOptions.value"
           :disabled="true"
           style="width: 130px; margin-left: 8px"

@@ -353,6 +353,7 @@ describe('useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
     { id: 'acc-ewallet', name: '零钱通', type: 'ewallet', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
     { id: 'acc-other', name: '其他现金', type: 'other', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
     { id: 'acc-inv', name: '证券户', type: 'investment', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    { id: 'acc-inv-usd', name: '美股证券户', type: 'investment', currency_code: 'USD', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
     { id: 'acc-recv', name: '借出·张三', type: 'receivable', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
     { id: 'acc-debt', name: '借入·李四', type: 'debt', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
     { id: 'acc-bank-usd', name: '美元卡', type: 'bank', currency_code: 'USD', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
@@ -378,9 +379,12 @@ describe('useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
     ])
   })
 
-  it('交易币种变化重过滤：USD 交易只剩同币种现金类候选', async () => {
+  it('币种随投资账户联动：选美元投资账户后交易币种为 USD，候选只剩同币种现金类（issue #1191）', async () => {
     const form = await fundingForm()
-    form.currencyCode.value = 'USD'
+    // 未选账户：退「新表单预选币种」（展示币种偏好）
+    expect(form.currencyCode.value).toBe('CNY')
+    form.accountId.value = 'acc-inv-usd'
+    expect(form.currencyCode.value).toBe('USD')
     expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual(['acc-bank-usd'])
   })
 
@@ -456,7 +460,8 @@ describe('useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
     expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual([
       'acc-cash', 'acc-bank', 'acc-credit', 'acc-ewallet', 'acc-other',
     ])
-    form.currencyCode.value = 'USD'
+    form.accountId.value = 'acc-inv-usd'
+    expect(form.currencyCode.value).toBe('USD')
     expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual(['acc-bank-usd'])
   })
 
