@@ -6,21 +6,16 @@
     "trend": "走势"
   },
   "pnl": {
-    "title": "已实现盈亏概览",
-    "totalPnl": "总已实现盈亏",
     "empty": "暂无已实现盈亏数据",
     "emptyTable": "暂无数据",
     "filterAccount": "全部账户",
     "filterInstrument": "搜索标的（代码/名称/拼音）",
     "byYear": "按年度汇总",
     "byAccount": "按账户汇总",
-    "byInstrument": "按标的汇总",
     "columns": {
       "account": "账户",
-      "name": "名称",
       "realizedPnl": "已实现盈亏",
-      "year": "年度",
-      "symbol": "代码"
+      "year": "年度"
     }
   },
   "holdings": {
@@ -30,9 +25,6 @@
     "filterNoMatch": "筛选条件下无匹配持仓",
     "searchPlaceholder": "搜索标的（代码/名称/拼音）",
     "filterAccount": "全部账户",
-    "totalMarketValue": "总市值",
-    "totalUnrealizedPnl": "持仓收益",
-    "totalCumulativePnl": "累计收益",
     "columns": {
       "symbol": "标的",
       "name": "名称",
@@ -44,6 +36,15 @@
       "marketValue": "市值",
       "unrealizedPnl": "持仓收益"
     }
+  },
+  "concepts": {
+    "marketValue": "总市值",
+    "unrealizedPnl": "持仓收益",
+    "cumulativePnl": "累计收益",
+    "tipAria": "{concept}口径说明",
+    "marketValueTip": "各持仓按「数量 × 最新价格」折算到账户币种后的合计；无行情的持仓不计入，多币种分组展示、不跨币种合并。",
+    "unrealizedPnlTip": "当前市值减去持仓成本（FIFO 批次成本，含买入手续费）的未实现盈亏，随行情变动；卖出后才转为已实现盈亏。",
+    "cumulativePnlTip": "持仓收益（未实现）＋已实现盈亏＋累计分红，覆盖全账本，不随搜索/账户过滤收窄；多币种各自成组、不跨币种折算。"
   },
   "browser": {
     "searchPlaceholder": "搜索代码或名称...",

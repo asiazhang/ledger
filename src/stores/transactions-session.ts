@@ -64,9 +64,10 @@ export interface TransactionFilters {
    * 不限定类型，收支限定由本维度承担。原「单值 kind 手动维度 + 下钻专用集合」
    * 两套表示并存、同携取交集的形态已退役（BREAKING，见 CHANGELOG）。 */
   kinds: readonly TransactionKind[] | null
-  /** 标的下钻维度（ADR-0107，URL-only 无手动控件，与分类维度同规）：持仓页签行与
-   * 盈亏页按标的汇总行的跳转载荷。标的不在参考数据字典，URL 参数按 id 形状校验
-   * （UUID 形状，非法视为不在场）；与其余维度 AND 组合，挂起补判/让位/复位守卫同规。 */
+  /** 标的下钻维度（ADR-0107，URL-only 无手动控件，与分类维度同规）：持仓页签行的
+   * 跳转载荷（盈亏页按标的汇总行已退役，ADR-0107 修订注记 2026-09-13）。标的
+   * 不在参考数据字典，URL 参数按 id 形状校验（UUID 形状，非法视为不在场）；
+   * 与其余维度 AND 组合，挂起补判/让位/复位守卫同规。 */
   instrumentId: string | null
 }
 
@@ -170,7 +171,7 @@ const URL_PARAM_TABLE: ReadonlyArray<UrlParamDef> = [
     toPatch: (value) => ({ categoryId: value }),
   },
   {
-    // 标的下钻维度（ADR-0107）：持仓页签行与盈亏页按标的汇总行的跳转载荷。
+    // 标的下钻维度（ADR-0107）：持仓页签行的跳转载荷（盈亏页入口已退役）。
     // 标的不在参考数据字典，按 id 形状校验（UUID 形状）；URL-only、无手动控件，
     // 与分类维度同规（挂起补判/让位/复位守卫对每条同规则处理）。
     queryKey: 'instrument',

@@ -47,14 +47,27 @@ function groupNumberString(numStr: string, size: number): string {
 }
 
 /**
- * 数量格式化（股数/份额列）：整数部分按界面语言分组，小数部分原样保留
- * （份额为 f64，可能带小数）。与 formatAmount 共享同一分组口径。
+ * 数量小数位上限 = 数量录入粒度合同（issue #416，至多四位小数）：展示先定标到该
+ * 刻度再裁尾零，f64 位误差（账本量级约 1e-12，如 2094.5699999999965）远在刻度以下
+ * 必然抹平，不把位噪声原文抛给用户。与后端 `investment::lots::format_quantity_for_message`
+ * 同一展示合同。
+ */
+const QUANTITY_DECIMALS = 4
+
+/**
+ * 数量格式化（股数/份额列）：至多 4 位小数、去尾零（份额为 f64，可能带小数），
+ * 整数部分按界面语言分组。与 formatAmount / formatPrice 共享同一分组口径。
  * locale 缺省取应用当前语言（响应式：渲染中调用随语言切换重渲染），
  * 测试可显式传入以回归两种语言口径。
  */
 export function formatQuantity(quantity: number, locale: Locale = currentLocale.value): string {
   if (amountPrivacyEnabled.value) return AMOUNT_PRIVACY_MASK
-  return groupNumberString(String(quantity), groupSizeFor(locale))
+  const fixed = quantity.toFixed(QUANTITY_DECIMALS)
+  // 只去零、不再舍入（刻度已定标）；小数位全空时连小数点一起去掉
+  const trimmed = fixed.replace(/0+$/, '').replace(/\.$/, '')
+  // 舍入到刻度后归零的微小负值（如 -1e-13 的位噪声）不显示成 -0
+  const normalized = trimmed === '-0' ? '0' : trimmed
+  return groupNumberString(normalized, groupSizeFor(locale))
 }
 
 /** 分 -> 元字符串，按币种小数位换算后裁剪小数尾零（98.00→98、98.50→98.5，无损去零不涉舍入）；

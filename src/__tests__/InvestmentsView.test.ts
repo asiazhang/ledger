@@ -4,11 +4,13 @@ import { flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import InvestmentsView from '@/views/InvestmentsView.vue'
 import { formatAmount } from '@ledger/money'
-import { clickTab, findTab } from '@ledger/test-support/dom'
+import { clickTab, findTab, probeColor } from '@ledger/test-support/dom'
 import { componentVm } from '@ledger/test-support/component-vm'
 import { mountWithDialog } from '@ledger/test-support/mount'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
-import { mockHoldings } from './factories'
+import { useAppStore } from '@/stores/app'
+import { pnlSemanticColor } from '@/theme/semantic-colors'
+import { makePnlSummary, mockHoldings } from './factories'
 import {
   firePricesChanged,
   resetPricesChangedHandler,
@@ -234,12 +236,55 @@ describe('InvestmentsView 持仓页签（issue #901）', () => {
     await flushPromises()
     expect(wrapper.text()).not.toContain('当前持仓')
     expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(false)
-    // 盈亏页自有过滤与汇总视图原样保留
-    expect(wrapper.text()).toContain('已实现盈亏概览')
+    // 盈亏页收敛后只剩筛选 + 按年/按账户两表（ADR-0107 修订注记，2026-09-13）
+    expect(wrapper.text()).toContain('按年度汇总')
+    expect(wrapper.text()).toContain('按账户汇总')
+    expect(wrapper.text()).not.toContain('已实现盈亏概览')
+    expect(wrapper.text()).not.toContain('按标的汇总')
     await clickTab(wrapper, '持仓')
     await clickTab(wrapper, '盈亏')
     expect(wrapper.text()).not.toContain('当前持仓')
     expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(false)
+  })
+
+  it('盈亏页两表的已实现盈亏数字着盈亏涨跌色（红涨绿跌，随主题取变体）', async () => {
+    wireInvokeSeam({
+      defaults: INVESTMENT_DEFAULTS,
+      overrides: {
+        realized_pnl_summary: makePnlSummary({
+          by_year: [
+            { year: '2026', currency_code: 'CNY', realized_pnl_cents: 30000 },
+            { year: '2025', currency_code: 'CNY', realized_pnl_cents: -12345 },
+          ],
+          by_account: [
+            {
+              account_id: 'acc-1',
+              account_name: '证券账户A',
+              currency_code: 'CNY',
+              realized_pnl_cents: -12345,
+            },
+          ],
+        }),
+      },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    const theme = useAppStore().theme
+    // 两表同一列口径：盈亏数字逐行按自身符号取色（与持仓页「持仓收益」列、合计三卡同源）
+    const colors = wrapper
+      .findAll('td[data-col-key="realized_pnl_cents"] span')
+      .map((s) => (s.element as HTMLElement).style.color)
+    expect(colors).toEqual([
+      probeColor(pnlSemanticColor(30000, theme)),
+      probeColor(pnlSemanticColor(-12345, theme)),
+      probeColor(pnlSemanticColor(-12345, theme)),
+    ])
+    // 文本口径不变：仍按行币种走 formatAmount
+    expect(wrapper.findAll('td[data-col-key="realized_pnl_cents"]').map((c) => c.text())).toEqual([
+      formatAmount(30000, cny),
+      formatAmount(-12345, cny),
+      formatAmount(-12345, cny),
+    ])
   })
 
   it('价格失效信号触发持仓重查：翻新后的市值合计上屏（自动刷新贯通取数与渲染）', async () => {

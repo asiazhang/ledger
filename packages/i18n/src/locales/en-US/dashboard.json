@@ -10,9 +10,6 @@
   },
   "investment": {
     "title": "Investment Overview",
-    "marketValue": "Total Market Value",
-    "unrealizedPnl": "Holding P&L",
-    "cumulativePnl": "Cumulative P&L",
     "empty": "No holdings"
   },
   "freedom": {

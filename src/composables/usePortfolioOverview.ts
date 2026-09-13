@@ -53,18 +53,37 @@ export function sumByCurrency(
     .sort((a, b) => a.currencyCode.localeCompare(b.currencyCode))
 }
 
+/** 分组合计中的一组展示段 = 分组本体（币种、分）叠加格式化文本 */
+export interface CurrencyAmountSegment extends CurrencyAmountGroup {
+  text: string
+}
+
 /**
- * 按币种分组的合计 → 展示文本：逐组格式化后以「 / 」连接；空分组（全部无行情）降级为「-」。
- * 首页投资概览卡与盈亏页持仓概览共用此实现，避免第二份分组展示逻辑。
+ * 按币种分组的合计 → 逐组展示段（分组展示的单点）：逐组经 formatAmount 格式化，
+ * 需要**逐组着色**的消费方（持仓页读数条的盈亏两格）取此形态；组间连接符与
+ * 空分组降级属于纯文本形态，归 formatCurrencyGroups。
+ */
+export function currencyAmountSegments(
+  groups: CurrencyAmountGroup[],
+  currencyMap: Map<string, Currency>,
+): CurrencyAmountSegment[] {
+  return groups.map((g) => ({
+    ...g,
+    text: formatAmount(g.cents, currencyMap.get(g.currencyCode)),
+  }))
+}
+
+/**
+ * 按币种分组的合计 → 展示文本：逐组格式化后以「 / 」连接；空分组（全部无行情）
+ * 降级为「-」。首页投资概览卡与盈亏页已实现盈亏共用此实现，避免第二份分组展示逻辑。
  */
 export function formatCurrencyGroups(
   groups: CurrencyAmountGroup[],
   currencyMap: Map<string, Currency>,
 ): string {
-  if (groups.length === 0) return '-'
-  return groups
-    .map((g) => formatAmount(g.cents, currencyMap.get(g.currencyCode)))
-    .join(' / ')
+  const segments = currencyAmountSegments(groups, currencyMap)
+  if (segments.length === 0) return '-'
+  return segments.map((s) => s.text).join(' / ')
 }
 
 /** 一次拉全「持仓标的」字典的每页条数上限（list_instruments 单页上限） */
@@ -85,7 +104,7 @@ export function usePortfolioOverview() {
   const reference = useReferenceStore()
 
   const rows = ref<PortfolioRow[]>([])
-  // 累计收益（issue #1077）：后端按币种分组聚合（未实现 + 已实现两腿相加），
+  // 累计收益（issue #1077 / #1078）：后端按币种分组聚合（未实现 + 已实现 + 累计分红 三腿相加），
   // 是**全账本**口径、不随持仓页签的搜索/账户过滤收窄——已实现腿来自平仓匹配、
   // 无法归到某一行可见持仓。持仓页签合计区与首页投资卡共用本结果。
   const totalCumulativePnlGroups = ref<CurrencyAmountGroup[]>([])

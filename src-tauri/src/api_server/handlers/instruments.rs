@@ -168,8 +168,11 @@ pub async fn create_instrument_handler(
                 match fetch_fund_quote_for_api(&state, &input.symbol).await {
                     // 东财命中：权威名称回填 + 净值落现价。
                     Ok(quote) => Enrichment::FundAuthoritative(quote),
-                    // 查无此码（接缝约定以 Invalid 上抛）：显式拒绝创建，AI 可提示用户或跳过该行。
-                    Err(e @ AppError::Invalid(_)) => return Err(e),
+                    // 查无此码（接缝约定以 sync.fund-not-found 码化 400 上抛）：显式拒绝
+                    // 创建，AI 可提示用户或跳过该行。按稳定错误码判定（与下方股票分支同款
+                    // is_code 形态，#1186），不靠错误变体形状——生产路径返回码化错误，
+                    // 按变体匹配会把查无此码误降级为建行。
+                    Err(e) if e.is_code("sync.fund-not-found") => return Err(e),
                     // 网络不可达等临时故障：降级为 AI 提供名称 + 真实代码建行，不阻塞导入。
                     Err(_) => Enrichment::FundDegrade,
                 },

@@ -209,6 +209,16 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         "买入",
         "trade.buy-instrument-not-found",
     )?;
+    // 转入账户拒绝（issue #1187）：buy 的现金腿归结算账户（出资账户 ?? 投资账户，
+    // ADR-0096），不存在转入侧——携带 `to_account_id` 会被余额写路径误用于覆盖
+    // 转入侧余额（凭空污染第三个账户）。与 convert / split / dividend 的同款
+    // forbidden 守卫同一纪律：不接受的字段一律拒绝，不静默吞掉。
+    if input.to_account_id.is_some() {
+        return Err(AppError::coded(
+            "trade.buy-to-account-forbidden",
+            "买入不能携带转入账户：资金流出归结算账户（出资账户或投资账户），账户间划转请使用转账",
+        ));
+    }
     let quantity = input.quantity.unwrap_or(0.0);
     let fee_cents = input.fee_cents.unwrap_or(0);
     if quantity <= 0.0 {
@@ -300,7 +310,8 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
             currency_code: account_currency,
             amount_native_cents,
             account_id: input.account_id.clone(),
-            to_account_id: input.to_account_id.clone(),
+            // 现金腿归结算账户，不存在转入侧：携带已在守卫段拒绝，恒 None（issue #1187）。
+            to_account_id: None,
             funding_account_id: input.funding_account_id.clone(),
             category_id: None,
             merchant_id: None,
@@ -335,6 +346,14 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         "卖出",
         "trade.sell-instrument-not-found",
     )?;
+    // 转入账户拒绝（issue #1187）：与 prepare_buy 同款守卫——sell 的现金腿归
+    // 结算账户（出资账户 ?? 投资账户，ADR-0096），不存在转入侧，携带即拒绝。
+    if input.to_account_id.is_some() {
+        return Err(AppError::coded(
+            "trade.sell-to-account-forbidden",
+            "卖出不能携带转入账户：资金流入归结算账户（出资账户或投资账户），账户间划转请使用转账",
+        ));
+    }
     let quantity = input.quantity.unwrap_or(0.0);
     let fee_cents = input.fee_cents.unwrap_or(0);
     if quantity <= 0.0 {
@@ -420,7 +439,8 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
             currency_code: account_currency,
             amount_native_cents,
             account_id: input.account_id.clone(),
-            to_account_id: input.to_account_id.clone(),
+            // 现金腿归结算账户，不存在转入侧：携带已在守卫段拒绝，恒 None（issue #1187）。
+            to_account_id: None,
             funding_account_id: input.funding_account_id.clone(),
             category_id: None,
             merchant_id: None,
@@ -1222,6 +1242,8 @@ fn write_convert_side_effects(conn: &Connection, id: &str, plan: &ConvertPlan) -
 /// 与本地 [`prepare`] 的分工：归一化行已随命令携带（金额与本位币折算结果为
 /// 落定值，重放不依赖本地汇率表），买入每份成本随命令携带、不重算（重算需
 /// 读标的类型，属本地状态）；本函数只做「apply 依赖在位」校验与副作用计划装配：
+/// - buy/sell 恒无转入账户（形态漂移与本地同码拒绝，伪造载荷不得绕开本地
+///   不变量，issue #1187）；
 /// - 数量为正（与本地 prepare 同码，防伪造载荷落出零数量副作用）；
 /// - 标的存在（兼类型读取：基金/非基金的权威分流语义一致，与本地同码）；
 /// - 账户在位且为投资账户（与本地同码；账户存活已由行为层重放入口先行校验）；
@@ -1238,6 +1260,14 @@ pub(crate) fn replay_plan(
 ) -> Result<Plan> {
     match kind {
         TransactionKind::Buy => {
+            // 形态漂移守卫（与本地 prepare 同码，issue #1187）：buy 行恒无
+            // to_account_id，携带即伪造/漂移载荷，重放不得绕开本地不变量。
+            if row.to_account_id.is_some() {
+                return Err(AppError::coded(
+                    "trade.buy-to-account-forbidden",
+                    "买入不能携带转入账户：资金流出归结算账户（出资账户或投资账户），账户间划转请使用转账",
+                ));
+            }
             if fields.quantity <= 0.0 {
                 return Err(AppError::coded(
                     "trade.buy-quantity-positive",
@@ -1274,6 +1304,14 @@ pub(crate) fn replay_plan(
             }))
         }
         TransactionKind::Sell => {
+            // 形态漂移守卫（与本地 prepare 同码，issue #1187）：sell 行恒无
+            // to_account_id，携带即伪造/漂移载荷，重放不得绕开本地不变量。
+            if row.to_account_id.is_some() {
+                return Err(AppError::coded(
+                    "trade.sell-to-account-forbidden",
+                    "卖出不能携带转入账户：资金流入归结算账户（出资账户或投资账户），账户间划转请使用转账",
+                ));
+            }
             if fields.quantity <= 0.0 {
                 return Err(AppError::coded(
                     "trade.sell-quantity-positive",

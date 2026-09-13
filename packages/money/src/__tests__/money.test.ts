@@ -90,6 +90,20 @@ describe('formatQuantity（数量列万分位分组）', () => {
     expect(formatQuantity(12345.67)).toBe('1,2345.67')
     expect(formatQuantity(123.4507)).toBe('123.4507')
   })
+
+  it('f64 位噪声按录入粒度（至多 4 位小数）抹平，不把位噪声原文抛给用户', () => {
+    expect(formatQuantity(2094.5699999999965)).toBe('2094.57')
+    expect(formatQuantity(8036.109999999999)).toBe('8036.11')
+    expect(formatQuantity(12345.670000000002)).toBe('1,2345.67')
+  })
+
+  it('超出 4 位小数的值按 4 位舍入后裁尾零', () => {
+    expect(formatQuantity(1.23456789)).toBe('1.2346')
+  })
+
+  it('舍入到刻度后归零的微小负值不显示成 -0', () => {
+    expect(formatQuantity(-1e-13)).toBe('0')
+  })
 })
 
 describe('centsToYuan（分 → 元，表单初值用数值口径）', () => {

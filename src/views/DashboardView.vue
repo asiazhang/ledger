@@ -5,12 +5,10 @@ import {
   NButton,
   NCard,
   NEmpty,
-  NGi,
   NGrid,
   NGridItem,
   NProgress,
   NSpace,
-  NStatistic,
   NSpin,
   NTag,
   NText,
@@ -30,10 +28,8 @@ import { useReferenceStore } from '@/stores/reference'
 import AppPopover from '@/components/AppPopover.vue'
 import { formatAmount } from '@ledger/money'
 import type { BudgetProgress, MonthlySummary } from '@ledger/types'
-import {
-  formatCurrencyGroups,
-  usePortfolioOverview,
-} from '@/composables/usePortfolioOverview'
+import { usePortfolioOverview } from '@/composables/usePortfolioOverview'
+import PortfolioStatsCards from '@/components/investments/PortfolioStatsCards.vue'
 
 // 首页财务全貌仪表盘（issue #140）：净资产总览卡（issue #143）+ 投资概览卡（issue #145）
 // + 本月收支与预算进度（issue #144）。
@@ -207,24 +203,17 @@ onMounted(async () => {
     <!-- 投资概览卡（issue #145）：始终展示，无持仓时空态占位 -->
     <NCard :title="t('dashboard.investment.title')" size="small" data-testid="investment-overview-card">
       <!-- 投资概览卡栅格按窗口分级分档（issue #847）：移动档单列，桌面档保持既有
-           自响应；累计收益卡（issue #1077）与前两格同排，桌面档三列。 -->
-      <NGrid v-if="holdingRows.length > 0" :x-gap="16" :cols="isMobileTier ? 1 : '1 s:3'">
-        <NGi>
-          <NStatistic :label="t('dashboard.investment.marketValue')" data-testid="dashboard-total-market-value">
-            {{ formatCurrencyGroups(totalMarketValueGroups, reference.currencyMap) }}
-          </NStatistic>
-        </NGi>
-        <NGi>
-          <NStatistic :label="t('dashboard.investment.unrealizedPnl')" data-testid="dashboard-total-unrealized-pnl">
-            {{ formatCurrencyGroups(totalUnrealizedPnlGroups, reference.currencyMap) }}
-          </NStatistic>
-        </NGi>
-        <NGi>
-          <NStatistic :label="t('dashboard.investment.cumulativePnl')" data-testid="dashboard-total-cumulative-pnl">
-            {{ formatCurrencyGroups(totalCumulativePnlGroups, reference.currencyMap) }}
-          </NStatistic>
-        </NGi>
-      </NGrid>
+           三列；累计收益卡（issue #1077）与前两格同排。列数用纯数字——NGrid 默认
+           responsive="self" 只认数字前缀，具名断点（s:）永不命中会静默退成 1 列
+           （三格竖排），断点口径统一接窗口分级常量、不自立断点。 -->
+      <!-- 三卡形态与口径归 PortfolioStatsCards（与持仓页签合计区同一组件，issue #902/#1077） -->
+      <PortfolioStatsCards
+        v-if="holdingRows.length > 0"
+        test-id-prefix="dashboard-total-"
+        :market-value-groups="totalMarketValueGroups"
+        :unrealized-pnl-groups="totalUnrealizedPnlGroups"
+        :cumulative-pnl-groups="totalCumulativePnlGroups"
+      />
       <NEmpty v-else :description="t('dashboard.investment.empty')" />
     </NCard>
 

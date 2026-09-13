@@ -9,6 +9,9 @@
     "balance-no-change": "余额已等于目标值，无需调整",
     "type-unknown": "未知账户类型: {0}"
   },
+  "balance": {
+    "cache-row-missing": "账户 {0} 缺少余额缓存行，请执行余额缓存审计修复"
+  },
   "category": {
     "not-found": "分类不存在: {0}",
     "self-parent": "自身不能作为父分类",
@@ -93,7 +96,17 @@
     "convert-fields-missing": "该转换操作缺少同步所需的转换字段（产生自较早版本），无法在本机重放；请在来源设备上删除并重新录入该转换后再次同步",
     "convert-carried-cost-mismatch": "转换结转成本校验不一致（源端 {0}，本机重建 {1}，行金额 {2}），已挂起等待处理",
     "split-fields-missing": "该份额调整操作缺少同步所需的份额调整字段（产生自较早版本），无法在本机重放；请在来源设备上删除并重新录入该份额调整后再次同步",
-    "split-restatement-mismatch": "份额调整重放校验不一致（源端 最终持仓 {0}、总成本 {1}；本机重建 {2}、{3}），已挂起等待处理"
+    "split-restatement-mismatch": "份额调整重放校验不一致（源端 最终持仓 {0}、总成本 {1}；本机重建 {2}、{3}），已挂起等待处理",
+    "balance-refresh-hook-unregistered": "余额刷新钩子未注册：交易写入的余额缓存重算被跳过将产生缓存漂移（壳层启动接线缺失）",
+    "base-currency-reader-unregistered": "本位币读取钩子未注册：本位币折算被拒绝（壳层启动接线缺失）",
+    "convert-fields-resolver-unregistered": "转换字段反查器未注册：转换两腿扩展被跳过（壳层启动接线缺失）",
+    "funding-account-lookup-unregistered": "出资账户视图钩子未注册：出资准入校验被拒绝（壳层启动接线缺失）",
+    "instrument-source-resolver-unregistered": "标的来源反查器未注册：来源列的标的反查段被跳过（壳层启动接线缺失）",
+    "investment-hook-unregistered": "投资接缝钩子未注册：投资 kind 的交易写入被拒绝（壳层启动接线缺失）",
+    "item-source-resolver-unregistered": "物品来源反查器未注册：来源列的物品反查段被跳过（壳层启动接线缺失）",
+    "merchant-hooks-unregistered": "商户名钩子未注册：商户名解析与即建被跳过（壳层启动接线缺失）",
+    "plan-source-resolver-unregistered": "计划来源解析器未注册：来源列的计划反查段被跳过（壳层启动接线缺失）",
+    "policy-source-resolver-unregistered": "保单来源反查器未注册：来源列的保单直挂段被跳过（壳层启动接线缺失）"
   },
   "funding": {
     "account-not-found": "出资账户不存在或已删除: {0}",
@@ -128,6 +141,8 @@
     "derived-price-positive": "反算单价必须大于 0（确认金额过小或份额过大）",
     "buy-price-positive": "买入单价必须大于 0",
     "sell-price-positive": "卖出单价必须大于 0",
+    "buy-to-account-forbidden": "买入不能携带转入账户：资金流出归结算账户（出资账户或投资账户），账户间划转请使用转账",
+    "sell-to-account-forbidden": "卖出不能携带转入账户：资金流入归结算账户（出资账户或投资账户），账户间划转请使用转账",
     "buy-account-not-investment": "买入交易必须使用投资账户",
     "sell-account-not-investment": "卖出交易必须使用投资账户",
     "convert-instrument-required": "转换必须指定转出标的",
@@ -318,7 +333,8 @@
     "checkpoint-passphrase-required": "通道上的检查点快照为密文，需要主口令才能引导",
     "bootstrap-not-fresh": "本机已参与同步（{0} 非空），拒绝整库引导以免覆盖既有同步状态",
     "checkpoint-schema-newer": "检查点快照来自更高版本的应用（快照 schema v{0} > 当前 v{1}），请升级应用后再引导",
-    "checkpoint-fk-violation": "检查点快照外键校验失败（{0} 处），快照不可用"
+    "checkpoint-fk-violation": "检查点快照外键校验失败（{0} 处），快照不可用",
+    "truncate-not-owner": "只有来源设备有权截断自己的操作日志流"
   },
   "sync-channel": {
     "auth-failed": "同步通道凭据被拒绝，请检查网盘账号与密码（或应用密码）设置",

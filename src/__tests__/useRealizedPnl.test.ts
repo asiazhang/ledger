@@ -44,13 +44,12 @@ beforeEach(async () => {
 })
 
 describe('useRealizedPnl 已实现盈亏数据层', () => {
-  it('加载已实现盈亏汇总并派生按币种分组的 totalGroups（ADR-0107 决策 6）', async () => {
-    const { summary, loading, totalGroups, refresh } = withSetup(() => useRealizedPnl())
-    expect(totalGroups.value).toEqual([]) // 未加载前空态
+  it('加载已实现盈亏汇总（盈亏页两表的同一数据源）', async () => {
+    const { summary, loading, refresh } = withSetup(() => useRealizedPnl())
+    expect(summary.value).toBeNull() // 未加载前空态
     await refresh()
     expect(loading.value).toBe(false)
     expect(summary.value).toEqual(mockSummary)
-    expect(totalGroups.value).toEqual([{ currencyCode: 'CNY', cents: 30000 }])
   })
 
   it('无筛选时不带 filter 参数（后端全表口径）', async () => {
