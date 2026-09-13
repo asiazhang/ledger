@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::query::FromRow;
+use ledger_infra::db::query::FromRow;
 
 /// 物品生命周期状态：`in_use`（在用，摊到今天）/ `disposed`（已处置，摊到处置日）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
