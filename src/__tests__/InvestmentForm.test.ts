@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from '@ledger/test-support/invoke-mock'
 import { findButton } from '@ledger/test-support/dom'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import InvestmentForm from '@/components/InvestmentForm.vue'
+import { makeAccount } from './factories'
 import type { Account, Instrument } from '@ledger/types'
 
 
@@ -470,8 +471,8 @@ describe('出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
   const accountsWithFunding = [
     ...mockAccounts,
     { id: 'acc-bank', name: '招商银行卡', type: 'bank', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
-    { id: 'acc-inv-usd', name: '美股证券户', type: 'investment', currency_code: 'USD', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
-    { id: 'acc-bank-usd', name: '美元卡', type: 'bank', currency_code: 'USD', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    makeAccount({ id: 'acc-inv-usd', name: '美股证券户', currency_code: 'USD' }),
+    makeAccount({ id: 'acc-bank-usd', name: '美元卡', type: 'bank', currency_code: 'USD' }),
   ]
   const editingTx = {
     id: 'txn-buy-1',
@@ -513,14 +514,32 @@ describe('出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
     )!
   }
 
-  /** 按渲染序取 NSelect（0=币种，1=投资账户，2=出资账户，3=标的搜索） */
-  function selectAt(wrapper: ReturnType<typeof mount>, index: number) {
-    return wrapper.findAllComponents(NSelect)[index]
+  /** 币种字典（含美元）：参考兜底桩只有 CNY，币种框显示文案断言需自备字典 */
+  const currencyDict = [
+    { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
+    { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
+  ]
+
+  /** 控件按 data-testid 语义定位——不按渲染序索引（字段增删/重排不牵连断言） */
+  function selectByTestId(wrapper: ReturnType<typeof mount>, testid: string) {
+    return wrapper.findAllComponents(NSelect).find((s) => s.attributes('data-testid') === testid)!
   }
 
-  async function mountWithFundingReference() {
+  /** 出资账户下拉当前候选集合（用户可见选项：label|value） */
+  function fundingCandidates(wrapper: ReturnType<typeof mount>) {
+    return (selectByTestId(wrapper, 'investment-funding-account').props('options') as Array<{
+      label: string
+      value: string
+    }>).map((o) => `${o.label}|${o.value}`)
+  }
+
+  async function mountWithFundingReference(overrides: Record<string, InvokeSeamOverride> = {}) {
     wireInvokeSeam({
-      overrides: { list_accounts: accountsWithFunding, list_instruments: { items: [], total: 0 } },
+      overrides: {
+        list_accounts: accountsWithFunding,
+        list_instruments: { items: [], total: 0 },
+        ...overrides,
+      },
     })
     await useReferenceStore().refresh()
   }
@@ -549,20 +568,39 @@ describe('出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
     expect(fundingSelect(untouched).props('value')).toBeNull()
   })
 
-  it('外币投资账户：币种展示随账户联动、出资候选按账户币种过滤（issue #1191）', async () => {
-    await mountWithFundingReference()
+  it('外币投资账户（新建）：币种框显示账户币种、出资候选含同币种现金账户（issue #1191）', async () => {
+    await mountWithFundingReference({ list_currencies: currencyDict })
     const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
-    // 未选账户：币种字段退默认展示币种，出资候选按该币种过滤
-    expect(selectAt(wrapper, 0).props('value')).toBe('CNY')
-    expect(fundingSelect(wrapper).props('options')).toEqual([{ label: '招商银行卡', value: 'acc-bank' }])
-    // 选中美元投资账户：币种字段展示该账户币种（不再恒 CNY），出资候选只剩同币种现金账户
-    selectAt(wrapper, 1).vm.$emit('update:value', 'acc-inv-usd')
+    // 未选账户：币种框退默认展示币种，出资候选按该币种过滤
+    expect(selectByTestId(wrapper, 'investment-currency').text()).toContain('人民币 (CNY)')
+    expect(fundingCandidates(wrapper)).toEqual(['招商银行卡|acc-bank'])
+    // 选中美元投资账户：币种框随账户显示美元（不再恒 CNY），出资候选只剩同币种现金账户
+    selectByTestId(wrapper, 'investment-account').vm.$emit('update:value', 'acc-inv-usd')
     await flushPromises()
-    expect(selectAt(wrapper, 0).props('value')).toBe('USD')
-    const usdFunding = wrapper.findAllComponents(NSelect).find((s) =>
-      (s.props('options') as Array<{ value: string }>).some((o) => o.value === 'acc-bank-usd'),
-    )!
-    expect(usdFunding.props('options')).toEqual([{ label: '美元卡', value: 'acc-bank-usd' }])
+    expect(selectByTestId(wrapper, 'investment-currency').text()).toContain('美元 (USD)')
+    expect(fundingCandidates(wrapper)).toEqual(['美元卡|acc-bank-usd'])
+  })
+
+  it('外币投资账户（编辑回填）：币种框显示账户币种、出资候选含同币种现金账户（issue #1191）', async () => {
+    await mountWithFundingReference({ list_currencies: currencyDict })
+    const wrapper = mount(InvestmentForm, {
+      props: {
+        kind: 'buy',
+        submitLabel: '记买入',
+        // 既有外币交易：账户币种 USD、出资账户为美元现金账户（编辑全字段替换的回填形态）
+        editing: {
+          ...editingTx,
+          id: 'txn-buy-usd',
+          account_id: 'acc-inv-usd',
+          currency_code: 'USD',
+          funding_account_id: 'acc-bank-usd',
+        },
+        trade: editingTrade,
+      },
+    })
+    expect(selectByTestId(wrapper, 'investment-currency').text()).toContain('美元 (USD)')
+    expect(selectByTestId(wrapper, 'investment-funding-account').props('value')).toBe('acc-bank-usd')
+    expect(fundingCandidates(wrapper)).toEqual(['美元卡|acc-bank-usd'])
   })
 
   it('卖出编辑回填与买入同款：带出资账户打开即显示当前值（#938 对称）', async () => {

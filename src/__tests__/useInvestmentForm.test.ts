@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { useReferenceStore } from '@/stores/reference'
 import { useInvestmentForm } from '@/composables/useInvestmentForm'
+import { makeAccount } from './factories'
 import type { Account, Instrument, Transaction, TransactionTrade } from '@ledger/types'
 
 
@@ -353,7 +354,7 @@ describe('useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
     { id: 'acc-ewallet', name: '零钱通', type: 'ewallet', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
     { id: 'acc-other', name: '其他现金', type: 'other', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
     { id: 'acc-inv', name: '证券户', type: 'investment', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
-    { id: 'acc-inv-usd', name: '美股证券户', type: 'investment', currency_code: 'USD', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
+    makeAccount({ id: 'acc-inv-usd', name: '美股证券户', currency_code: 'USD' }),
     { id: 'acc-recv', name: '借出·张三', type: 'receivable', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
     { id: 'acc-debt', name: '借入·李四', type: 'debt', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
     { id: 'acc-bank-usd', name: '美元卡', type: 'bank', currency_code: 'USD', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
