@@ -30,6 +30,7 @@ import ItemsView from '@/views/ItemsView.vue'
 import ReportsView from '@/views/ReportsView.vue'
 import SearchView from '@/views/SearchView.vue'
 import { useSidebarOrderStore, buildTabContextMenuOptions } from '@/stores/sidebar-order'
+import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import { useWindowTier } from '@/composables/useWindowTier'
 import type { ContainableViewName, SidebarGroupId } from '@/stores/sidebar-order'
 
@@ -78,9 +79,13 @@ const isMobileTier = computed(() => windowTier.value === 'mobile')
 // 顺序状态消费 sidebar-order store（issue #549）：清单/组内序只读，移回写路径经 store。
 const sidebarOrder = useSidebarOrderStore()
 const { applyMoveBackToSidebar } = sidebarOrder
+// 关闭只筛页签入口，不改写收纳清单（issue #1242 / ADR-0116 决策 3）。
+const featureToggles = useFeatureToggleStore()
 
-/** 该组收纳清单（响应式）：空清单 = 无页签（出厂无成员的预建组）。 */
-const tabs = computed(() => sidebarOrder.sidebarContainment[props.group])
+/** 该组可见收纳成员（响应式）：空清单 = 无页签（含出厂无成员与成员全关闭两种态）。 */
+const tabs = computed(() =>
+  sidebarOrder.sidebarContainment[props.group].filter((name) => !featureToggles.isFeatureClosed(name)),
+)
 
 /** 页签合法性收窄：query.tab 必须是当前清单成员。 */
 function isLegalTab(v: unknown): v is string {
