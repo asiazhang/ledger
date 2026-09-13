@@ -130,6 +130,22 @@ describe('resetToDefault（issue #1192 ESC 复位出口）', () => {
     expect(store.holdingsSearchInput).toBe('')
   })
 
+  it('cancelPendingSearch 撤销在途防抖：应用值不动、回显回到应用值（离开视图语义）', () => {
+    vi.useFakeTimers()
+    const store = useInvestmentsSessionStore()
+    store.setSearch('600')
+    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS)
+    expect(store.holdingsSearch).toBe('600')
+    // 已应用后再输入但未到防抖窗口：离开视图
+    store.setSearch('600000')
+    expect(store.holdingsSearchInput).toBe('600000')
+    store.cancelPendingSearch()
+    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS * 2)
+    // 未应用的新输入被撤销，应用值与回显一致地停在最后应用值
+    expect(store.holdingsSearch).toBe('600')
+    expect(store.holdingsSearchInput).toBe('600')
+  })
+
   it('默认态复位幂等：全默认时复位无副作用', () => {
     const store = useInvestmentsSessionStore()
     store.resetToDefault()
@@ -137,5 +153,36 @@ describe('resetToDefault（issue #1192 ESC 复位出口）', () => {
     expect(store.holdingsPage).toBe(1)
     expect(store.trendMode).toBe(TREND_MODE_DEFAULT)
     expect(store.trendInstrument).toBeNull()
+  })
+})
+
+describe('store 写路径唯一（issue #1192 Standards 轴 finding）', () => {
+  it('全部状态变化都经意图入口（只读投影 + 入口动作是唯一写路）', () => {
+    const store = useInvestmentsSessionStore()
+    expect(store.activeTab).toBe('pnl')
+    store.setActiveTab('holdings')
+    expect(store.activeTab).toBe('holdings')
+    expect(store.trendPreset).toBe(TREND_PRESET_DEFAULT)
+    store.setTrendPreset('1m')
+    expect(store.trendPreset).toBe('1m')
+  })
+
+  it('单标的模式守卫：无选中标的时 setTrendMode("instrument") 无操作', () => {
+    const store = useInvestmentsSessionStore()
+    store.setTrendMode('instrument')
+    expect(store.trendMode).toBe(TREND_MODE_DEFAULT)
+    store.showTrendInstrument(makeInstrument({ id: 'inst-1' }))
+    store.setTrendMode('portfolio')
+    store.setTrendMode('instrument')
+    expect(store.trendMode).toBe('instrument')
+  })
+
+  it('selectTrendInstrument 只接受已声明的标的 id（未知 id 无操作）', () => {
+    const store = useInvestmentsSessionStore()
+    store.selectTrendInstrument('inst-unknown')
+    expect(store.trendInstrumentId).toBeNull()
+    store.showTrendInstrument(makeInstrument({ id: 'inst-1' }))
+    store.selectTrendInstrument('inst-1')
+    expect(store.trendInstrumentId).toBe('inst-1')
   })
 })

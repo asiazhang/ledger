@@ -206,6 +206,15 @@ describe('InvestmentsView 标的 tab', () => {
 describe('InvestmentsView 持仓页签（issue #901）', () => {
   const cny = refCurrencies[0]
 
+  it('页签点击经 store 意图入口落位（NTabs 受控回传，单一路径）', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    expect(useInvestmentsSessionStore().activeTab).toBe('pnl')
+    await clickTab(wrapper, '持仓')
+    expect(useInvestmentsSessionStore().activeTab).toBe('holdings')
+    expect(wrapper.findAll('.n-tabs-tab--active').map((el) => el.text())).toEqual(['持仓'])
+  })
+
   it('页签顺序为盈亏/持仓/标的/走势，默认选中盈亏', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -527,6 +536,64 @@ describe('InvestmentsView 持仓页签会话内保留（issue #1192）', () => {
     expect(symbols(second)).toEqual(['000001', '600000'])
     // 会话内保留零持久化：全程 localStorage 零写入
     expect(Object.keys(localStorage)).toEqual(keysBefore)
+  })
+
+  it('越界页码回落到有效范围并写回保留态：行集回增多页也不凭空跳页（ADR-0094 决策 3）', async () => {
+    wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: manyHoldings } })
+    const wrapper = mountView()
+    await flushPromises()
+    await clickTab(wrapper, '持仓')
+    await flushPromises()
+    await wrapper
+      .findAll('.n-pagination-item')
+      .find((el) => el.text() === '2')!
+      .trigger('click')
+    await flushPromises()
+    expect(useInvestmentsSessionStore().holdingsPage).toBe(2)
+    await clickTab(wrapper, '标的')
+    await clickTab(wrapper, '持仓')
+    await flushPromises()
+    // 离开期间持仓缩到 1 页（回访读页码即回落）
+    wireInvokeSeam({
+      defaults: INVESTMENT_DEFAULTS,
+      overrides: { list_holdings: manyHoldings.slice(0, 5) },
+    })
+    await clickTab(wrapper, '标的')
+    await clickTab(wrapper, '持仓')
+    await flushPromises()
+    expect(wrapper.findAll('td[data-col-key="symbol"]')).toHaveLength(5)
+    // 保留态一并回落（非只钳展示）：否则行集回增后旧页码重新生效
+    expect(useInvestmentsSessionStore().holdingsPage).toBe(1)
+    // 行集回增到多页：仍是第 1 页，不跳回离开时的第 2 页
+    wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: manyHoldings } })
+    await clickTab(wrapper, '标的')
+    await clickTab(wrapper, '持仓')
+    await flushPromises()
+    expect(useInvestmentsSessionStore().holdingsPage).toBe(1)
+    expect(wrapper.findAll('.n-pagination-item--active').map((el) => el.text())).toEqual(['1'])
+  })
+
+  it('防抖窗口内离开页签：在途输入不落地（撤销定时器），回显回到已应用值', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await clickTab(wrapper, '持仓')
+    await flushPromises()
+    // 先应用一个搜索（保留态基线）
+    await typeSearch(wrapper, '600')
+    expect(symbols(wrapper)).toEqual(['600000'])
+    // 输入新值但不等防抖窗口，立刻切走页签（页签重挂 = 作用域销毁）
+    await wrapper.find('[data-testid="holdings-search"] input').setValue('000001')
+    await clickTab(wrapper, '标的')
+    // 防抖窗口推进：未应用的输入不得落地
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+    const store = useInvestmentsSessionStore()
+    expect(store.holdingsSearch).toBe('600')
+    expect(store.holdingsSearchInput).toBe('600')
+    // 回持仓页签：仍是已应用的搜索与命中行（不是未落地的输入）
+    await clickTab(wrapper, '持仓')
+    await flushPromises()
+    expect(symbols(wrapper)).toEqual(['600000'])
   })
 })
 

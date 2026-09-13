@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { ref, effectScope } from 'vue'
+import { ref, effectScope, type Ref } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { makeAccount } from './factories'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { REFERENCE_DEFAULTS } from '@ledger/test-support/reference-stubs'
 import { useReferenceStore } from '@/stores/reference'
+import { useInvestmentsSessionStore } from '@/stores/investments-session'
 import {
   HOLDINGS_SEARCH_DEBOUNCE_MS,
   filterHoldings,
@@ -317,6 +318,17 @@ describe('useHoldingsFilter 工厂', () => {
 describe('useHoldingsFilter 页码生命周期（issue #912）', () => {
   let scope: ReturnType<typeof effectScope> | undefined
 
+  /** 多页夹具（45 行：acc-inv-1 30 行 / acc-inv-2 15 行，均超一页）——页码
+   * 「在范围内」才有意义（issue #1192 起模块对越界页码钳制到有效范围）。 */
+  const MULTI_PAGE_ROWS: PortfolioRow[] = Array.from({ length: 45 }, (_, i) =>
+    makeRow({
+      holdingId: `mp-${i}`,
+      accountId: i < 30 ? 'acc-inv-1' : 'acc-inv-2',
+      symbol: String(i + 1).padStart(3, '0'),
+      marketValueCents: 1000 + i,
+    }),
+  )
+
   function setup(rows: PortfolioRow[]) {
     const rowsRef = ref(rows)
     let instance: ReturnType<typeof useHoldingsFilter> | undefined
@@ -340,24 +352,24 @@ describe('useHoldingsFilter 页码生命周期（issue #912）', () => {
   })
 
   it('默认第一页；翻页意图更新页码', () => {
-    const hf = setup(FIXTURE_ROWS)
+    const hf = setup(MULTI_PAGE_ROWS)
     expect(hf.page.value).toBe(1)
-    hf.setPage(3)
+    hf.page.value = 3
     expect(hf.page.value).toBe(3)
   })
 
   it('账户过滤实际变化即翻页归零', () => {
-    const hf = setup(FIXTURE_ROWS)
-    hf.setPage(2)
+    const hf = setup(MULTI_PAGE_ROWS)
+    hf.page.value = 2
     hf.setAccount('acc-inv-2')
     expect(hf.page.value).toBe(1)
   })
 
   it('搜索以防抖后应用时点归零：回显不归零，应用收窄行集才归零', async () => {
-    const hf = setup(FIXTURE_ROWS)
-    hf.setPage(2)
+    const hf = setup(MULTI_PAGE_ROWS)
+    hf.page.value = 2
     // 输入回显阶段应用值未变、行集未动，不翻页
-    hf.setSearch('txkg')
+    hf.setSearch('01')
     expect(hf.page.value).toBe(2)
     vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS)
     await flushPromises()
@@ -366,23 +378,89 @@ describe('useHoldingsFilter 页码生命周期（issue #912）', () => {
   })
 
   it('排序变化（含第三态清除）即翻页归零', () => {
-    const hf = setup(FIXTURE_ROWS)
-    hf.setPage(2)
+    const hf = setup(MULTI_PAGE_ROWS)
+    hf.page.value = 2
     hf.setSorter({ columnKey: 'market_value', order: 'descend' })
     expect(hf.page.value).toBe(1)
-    hf.setPage(2)
+    hf.page.value = 2
     hf.setSorter({ columnKey: 'market_value', order: false })
     expect(hf.page.value).toBe(1)
   })
 
   it('同值重设不归零（watch 只对实际变化响应）：账户与排序同规', () => {
-    const hf = setup(FIXTURE_ROWS)
+    const hf = setup(MULTI_PAGE_ROWS)
     hf.setAccount('acc-inv-1')
     hf.setSorter({ columnKey: 'market_value', order: 'descend' })
-    hf.setPage(2)
+    hf.page.value = 2
     // 与当前值相同的账户/排序重设：行集未变，页码保持
     hf.setAccount('acc-inv-1')
     hf.setSorter({ columnKey: 'market_value', order: 'descend' })
     expect(hf.page.value).toBe(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 会话内保留的两条附加语义（issue #1192 Standards/Spec 轴 finding）：
+// 页码越界钳制写回保留态（ADR-0094 决策 3）、作用域销毁撤销在途搜索防抖。
+// ---------------------------------------------------------------------------
+
+describe('useHoldingsFilter 页码钳制与搜索防抖撤销（issue #1192）', () => {
+  let scope: ReturnType<typeof effectScope> | undefined
+
+  function setup(rows: Ref<PortfolioRow[]>) {
+    let instance: ReturnType<typeof useHoldingsFilter> | undefined
+    scope = effectScope()
+    scope.run(() => {
+      instance = useHoldingsFilter(rows)
+    })
+    return instance!
+  }
+
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    setActivePinia(createPinia())
+    wireInvokeSeam({ overrides: { list_accounts: FILTER_ACCOUNTS } })
+    await useReferenceStore().refresh()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    scope?.stop()
+    scope = undefined
+  })
+
+  it('越界页码钳制到有效范围并写回保留态：行集回增也不凭空跳页（ADR-0094 决策 3）', () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      makeRow({ holdingId: `m${i}`, symbol: String(i + 1).padStart(3, '0') }),
+    )
+    const rows = ref(many)
+    const hf = setup(rows)
+    hf.page.value = 2
+    expect(hf.page.value).toBe(2)
+
+    // 行集缩到 1 页：钳制到第 1 页，并把保留态一并写回（不只钳展示）
+    rows.value = many.slice(0, 5)
+    expect(hf.page.value).toBe(1)
+    expect(useInvestmentsSessionStore().holdingsPage).toBe(1)
+
+    // 行集回增到多页：保留态已是第 1 页 → 不跳回离开时的旧页码
+    rows.value = many
+    expect(hf.page.value).toBe(1)
+  })
+
+  it('作用域销毁（离开视图）撤销在途搜索防抖：未应用的输入不落地、回显回到应用值', () => {
+    const rows = ref(FIXTURE_ROWS)
+    const hf = setup(rows)
+    hf.setSearch('txkg')
+    expect(hf.searchInput.value).toBe('txkg')
+    // 卸载（页签切走）：撤销在途定时器
+    scope!.stop()
+    scope = undefined
+    // 防抖窗口推进后应用值仍为空、回显回到应用值——输入未落地
+    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS * 2)
+    const store = useInvestmentsSessionStore()
+    expect(store.holdingsSearch).toBe('')
+    expect(store.holdingsSearchInput).toBe('')
+    expect(ids(hf.filteredRows.value)).toHaveLength(4)
   })
 })

@@ -57,14 +57,19 @@ export const TREND_MODE_DEFAULT: TrendViewMode = 'portfolio'
  *   不会有意外的旧输入落地；
  * - 翻页归零：筛选三维任一「应用值」实际变化即回第一页（watch 只对实际变化
  *   响应，同值重设不归零）；页码是展示切片不是第四维；
+ * - 搜索防抖的在途撤销：视图作用域销毁时撤销未应用的输入（useHoldingsFilter
+ *   的 onScopeDispose 调 cancelPendingSearch），「已输入未应用」不算保留态；
  * - ESC 复位出口（ADR-0094）：resetToDefault 全维回默认，视图经复位回调注册表
  *   （viewResetRegistry）向窗口行为守卫声明本出口。
+ *
+ * 对外投影一律只读、写路径只有意图入口一条（ADR-0094「store 是唯一读写方」）：
+ * 视图/面板不持可写 ref，受控组件回传经 `:value` + `@update:value` 调用入口动作。
  */
 export const useInvestmentsSessionStore = defineStore('investments-session', () => {
   /** 当前页签（会话内保留、冷启动回默认「盈亏」；原为视图内实例级瞬态）。 */
   const activeTab = ref<string>(INVESTMENTS_DEFAULT_TAB)
 
-  /** 持仓搜索输入回显值（即时，未经防抖） */
+  /** 持仓搜索输入回显值（即时，未经防抖；写路径唯一为 setSearch） */
   const holdingsSearchInput = ref('')
   /** 持仓搜索应用值（防抖后参与过滤） */
   const holdingsSearch = ref('')
@@ -85,8 +90,7 @@ export const useInvestmentsSessionStore = defineStore('investments-session', () 
    * 走势面板取数出图，与入口形态一致）。 */
   const trendInstrumentCache = new Map<string, Instrument>()
 
-  /** 搜索防抖定时器：闭包内单个，store 实例唯一（视图卸载不撤销定时器——
-   * 落地与卸载解耦，防抖语义随会话状态常驻）。 */
+  /** 搜索防抖定时器：闭包内单个，store 实例唯一。 */
   let searchTimer: ReturnType<typeof setTimeout> | undefined
 
   function setSearch(input: string) {
@@ -94,10 +98,27 @@ export const useInvestmentsSessionStore = defineStore('investments-session', () 
     clearTimeout(searchTimer)
     const next = input.trim()
     // 同值不重排定时器：重复输入同一有效值时应用值本就不变
-    if (next === holdingsSearch.value) return
+    if (next === holdingsSearch.value) {
+      searchTimer = undefined
+      return
+    }
     searchTimer = setTimeout(() => {
+      searchTimer = undefined
       holdingsSearch.value = next
     }, HOLDINGS_SEARCH_DEBOUNCE_MS)
+  }
+
+  /**
+   * 撤销在途搜索防抖（issue #1192，Spec 轴 finding）：视图卸载即放弃「已输入
+   * 未应用」的取值，回显一并回到最后应用值——与 useHoldingsFilter 原实例级实现
+   * 的 onScopeDispose 行为等价（issue #902 语义）。否则输入后 300ms 内离开视图，
+   * 迟到的应用值仍会落地并触发翻页归零，既不属「回到离开时的样子」（那个值从未
+   * 生效）也不属「冷启动回默认」任一保留态。已应用值不在此撤销范围内。
+   */
+  function cancelPendingSearch() {
+    clearTimeout(searchTimer)
+    searchTimer = undefined
+    holdingsSearchInput.value = holdingsSearch.value
   }
 
   function setAccount(id: string | null) {
@@ -137,16 +158,22 @@ export const useInvestmentsSessionStore = defineStore('investments-session', () 
     holdingsPage.value = 1
   }, { flush: 'sync' })
 
-  /** 页签写入意图入口（NTabs v-model 经视图桥接；测试经本入口换档） */
+  /** 页签写入意图入口（NTabs 受控回传与 focus 落点共用；测试经本入口换档） */
   function setActiveTab(tab: string) {
     activeTab.value = tab
   }
 
   /** 走势入口（标的列表「走势」按钮与 focus 落点共用）：带入标的并切到走势页签 */
   function showTrendInstrument(instrument: Instrument) {
-    trendInstrumentCache.set(instrument.id, instrument)
+    registerTrendInstrument(instrument)
     trendInstrumentId.value = instrument.id
     trendMode.value = 'instrument'
+  }
+
+  /** 声明会话内已知标的（走势面板标的字典投影）：只登记不选中——面板下拉改选
+   * 仅给 id，经 selectTrendInstrument 时须能解析回标的本体。 */
+  function registerTrendInstrument(instrument: Instrument) {
+    trendInstrumentCache.set(instrument.id, instrument)
   }
 
   /** 走势面板标的选中意图（id 进；null = 清除选中回组合模式） */
@@ -161,12 +188,16 @@ export const useInvestmentsSessionStore = defineStore('investments-session', () 
     trendMode.value = 'instrument'
   }
 
-  /** 走势模式写入意图（面板 NRadioGroup v-model 回传） */
+  /** 走势模式写入意图（面板 NRadioGroup 回传）：进入单标的模式要求已有选中
+   * 标的（与 selectTrendInstrument 同一不变量，无标的的单标的模式是空态）；
+   * 回组合模式不动选中标的（再切回单标的仍见上次那只）。 */
   function setTrendMode(mode: TrendViewMode) {
+    if (mode === 'instrument' && trendInstrumentId.value === null) return
     trendMode.value = mode
   }
 
-  /** 走势预设区间写入意图（面板 NRadioGroup v-model 回传） */
+  /** 走势预设区间写入意图（面板 NRadioGroup 回传）；区间是闭集字面量，
+   * 无守卫语义（任意档位均可直接生效）。 */
   function setTrendPreset(preset: TrendRangePreset) {
     trendPreset.value = preset
   }
@@ -185,9 +216,8 @@ export const useInvestmentsSessionStore = defineStore('investments-session', () 
    * 在途搜索防抖先撤销，复位后不会有意外的旧输入落地。
    */
   function resetToDefault() {
-    clearTimeout(searchTimer)
+    cancelPendingSearch()
     activeTab.value = INVESTMENTS_DEFAULT_TAB
-    holdingsSearchInput.value = ''
     holdingsSearch.value = ''
     holdingsAccountId.value = null
     holdingsSorter.value = null
@@ -199,13 +229,9 @@ export const useInvestmentsSessionStore = defineStore('investments-session', () 
   }
 
   return {
-    // 可写状态仅限受控组件直写语义：页签（NTabs v-model 桥接）、搜索输入回显
-    // （NInput v-model 语义）。两者都是「意图即值」的受控回传，无中间规则；
-    // 其余维度只读、改动只经意图入口（含走势模式与预设区间——面板经组合式函数
-    // 的写入口转交，语义在 store 内单点）。
-    activeTab,
-    holdingsSearchInput,
-    // 只读投影（改动只经意图入口）
+    // 全部状态只读投影：改动只经下方意图入口（ADR-0094「store 是唯一读写方」）
+    activeTab: readonly(activeTab),
+    holdingsSearchInput: readonly(holdingsSearchInput),
     holdingsSearch: readonly(holdingsSearch),
     holdingsAccountId: readonly(holdingsAccountId),
     holdingsSorter: readonly(holdingsSorter),
@@ -217,10 +243,12 @@ export const useInvestmentsSessionStore = defineStore('investments-session', () 
     // 意图入口
     setActiveTab,
     setSearch,
+    cancelPendingSearch,
     setAccount,
     setSorter,
     setPage,
     showTrendInstrument,
+    registerTrendInstrument,
     selectTrendInstrument,
     setTrendMode,
     setTrendPreset,

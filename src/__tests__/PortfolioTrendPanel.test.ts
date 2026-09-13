@@ -4,6 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { useReferenceStore } from '@/stores/reference'
 import { useInvestmentsSessionStore } from '@/stores/investments-session'
 import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
+import { componentVm } from '@ledger/test-support/component-vm'
 import { makeInstrument } from './factories'
 import {
   firePricesChanged,
@@ -260,6 +261,33 @@ describe('PortfolioTrendPanel 走势面板', () => {
     expect(wrapper.text()).toContain('录价')
     expect(wrapper.text()).not.toContain('同步标的信息')
     expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
+  })
+
+  it('面板内下拉切换标的经 selectInstrument 入口生效（与入口带入同一选中事实源）', async () => {
+    wireInvokeSeam({
+      defaults: PANEL_DEFAULTS,
+      overrides: {
+        portfolio_value_trend: portfolioTrendResponse,
+        instrument_price_trend: {
+          instrument_id: 'inst-fund',
+          points: [{ date: '2026-06-05', price_cents: 12850, currency_code: 'CNY' }],
+        },
+      },
+    })
+    // 入口带入 600000，再经面板下拉改选 000198
+    const wrapper = mountWithEntry(stockInstrument)
+    await flushPromises()
+    expect(useInvestmentsSessionStore().trendInstrumentId).toBe('inst-1')
+    componentVm(wrapper.findComponent('[data-testid="trend-instrument-select"]')).$emit(
+      'update:value',
+      'inst-fund',
+    )
+    await flushPromises()
+    // 选中事实源与出图同步切到新标的
+    expect(useInvestmentsSessionStore().trendInstrumentId).toBe('inst-fund')
+    const call = mockInvoke.mock.calls.filter(([c]) => c === 'instrument_price_trend').at(-1)!
+    expect((call[1] as { instrumentId: string }).instrumentId).toBe('inst-fund')
+    expect(chartPayload(wrapper).datasets[0].data).toEqual([12850])
   })
 
   it('价格失效信号触发后重拉走势：键（模式+区间）未变也强制重取（issue #238）', async () => {

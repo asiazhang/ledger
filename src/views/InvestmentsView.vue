@@ -28,12 +28,12 @@ const route = useRoute()
 // 组件仍按 display-directive 'if' 重新挂载（ADR-0094 明确否决 KeepAlive），
 // 保留由状态提升承担。
 const session = useInvestmentsSessionStore()
-const activeTab = computed({
-  get: () => session.activeTab,
-  set: (tab: string) => {
-    session.setActiveTab(tab)
-  },
-})
+// 页签受控桥接：`:value` 只读投影 + `@update:value` 直调意图入口（单一写路；
+// 不把 store 状态暴露成组件可直写的 ref，ADR-0094「store 是唯一读写方」）。
+const activeTab = computed(() => session.activeTab)
+function onActiveTabChange(tab: string) {
+  session.setActiveTab(tab)
+}
 
 // ESC 复位接线（ADR-0094 决策 4）：本视图持有保留态，setup 期向复位回调注册表
 // 声明复位回调、作用域销毁时自动撤销（导航离开/跨断点换档卸载均不滞留）；
@@ -72,7 +72,7 @@ onMounted(() => focusParam.consume())
 </script>
 
 <template>
-  <NTabs v-model:value="activeTab" type="line">
+  <NTabs :value="activeTab" type="line" @update:value="onActiveTabChange">
     <!-- pnl pane 用 display-directive='show'：内容保持挂载（v-show 隐藏），
          筛选/汇总状态在 tab 切换间保留，与原视图顶层 ref 行为一致。
          持仓/标的/走势 tab 保持默认 'if'，切回时重新挂载加载（ADR-0094 否决

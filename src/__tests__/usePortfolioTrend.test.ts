@@ -7,13 +7,14 @@ import {
 } from '@ledger/test-support/invoke-mock'
 import { withSetup } from '@ledger/test-support/mount'
 import { useReferenceStore } from '@/stores/reference'
+import { useInvestmentsSessionStore } from '@/stores/investments-session'
 import {
   toTrendRange,
   toTrendChartSeries,
   isTrendEmpty,
   usePortfolioTrend,
 } from '@/composables/usePortfolioTrend'
-import type { InstrumentPriceChannel, PortfolioValueTrend } from '@ledger/types'
+import type { Instrument, InstrumentPriceChannel, PortfolioValueTrend } from '@ledger/types'
 import { makeInstrument } from './factories'
 
 
@@ -33,6 +34,12 @@ const portfolioTrend: PortfolioValueTrend = {
 const BASE_OVERRIDES: Record<string, InvokeSeamOverride> = {
   portfolio_value_trend: () => Promise.resolve(portfolioTrend),
   list_instruments: { items: [], total: 0 },
+}
+
+/** 走势入口（标的列表「走势」按钮 / focus 落点同款）：标的先经会话 store 声明，
+ * 再经选中入口生效——面板下拉与入口共用同一事实源（issue #1192）。 */
+function enterInstrument(inst: Instrument) {
+  useInvestmentsSessionStore().showTrendInstrument(inst)
 }
 
 beforeEach(async () => {
@@ -141,9 +148,9 @@ describe('单标的走势放行（按后端价格通道判定，issue #1060）',
 
   it('无价格来源（price_channel=none）不发起走势查询，由面板给边界说明', async () => {
     wireInstrumentTrend()
-    const { refresh, showInstrument } = withSetup(() => usePortfolioTrend())
+    const { refresh } = withSetup(() => usePortfolioTrend())
     await refresh()
-    showInstrument(instrumentWithChannel('inst-x', 'none'))
+    enterInstrument(instrumentWithChannel('inst-x', 'none'))
     await refresh()
     expect(mockInvoke.mock.calls.some(([c]) => c === 'instrument_price_trend')).toBe(false)
   })
@@ -152,9 +159,9 @@ describe('单标的走势放行（按后端价格通道判定，issue #1060）',
     for (const channel of ['quote', 'fund_nav', 'manual'] as const) {
       wireInstrumentTrend()
       mockInvoke.mockClear()
-      const { refresh, showInstrument, chartSeries } = withSetup(() => usePortfolioTrend())
+      const { refresh, chartSeries } = withSetup(() => usePortfolioTrend())
       await refresh()
-      showInstrument(instrumentWithChannel('inst-x', channel))
+      enterInstrument(instrumentWithChannel('inst-x', channel))
       await refresh()
       expect(mockInvoke.mock.calls.some(([c]) => c === 'instrument_price_trend')).toBe(true)
       // 效果断言：放行后曲线拿到采样点（不只断命令调用事实）
@@ -177,9 +184,9 @@ describe('usePortfolioTrend 走势数据层', () => {
   })
 
   it('区间切换重新拉取：预设起止日期进入查询参数', async () => {
-    const { preset, refresh } = withSetup(() => usePortfolioTrend())
+    const { refresh, setPreset } = withSetup(() => usePortfolioTrend())
     await refresh()
-    preset.value = '3m'
+    setPreset('3m')
     await refresh()
     const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'portfolio_value_trend')
     // 初始 refresh + preset 变化触发 watch + 显式 refresh
@@ -202,9 +209,9 @@ describe('usePortfolioTrend 走势数据层', () => {
         },
       },
     })
-    const { refresh, mode, showInstrument, chartSeries, currencyCode } = withSetup(() => usePortfolioTrend())
+    const { refresh, mode, chartSeries, currencyCode } = withSetup(() => usePortfolioTrend())
     await refresh()
-    showInstrument(
+    enterInstrument(
       makeInstrument({ id: 'inst-1', symbol: '600000', name: '浦发银行', type: 'stock', market: 'sh' }),
     )
     await refresh()
@@ -227,12 +234,26 @@ describe('usePortfolioTrend 走势数据层', () => {
     expect(isEmpty.value).toBe(true)
   })
 
-  it('showPortfolio 切回组合模式', async () => {
-    const { mode, showInstrument, showPortfolio } = withSetup(() => usePortfolioTrend())
-    showInstrument(makeInstrument({ id: 'inst-1', type: 'stock', market: 'sh' }))
+  it('setMode 切回组合模式后保留选中标的（再切回单标的仍见上次那只）', async () => {
+    const { mode, setMode } = withSetup(() => usePortfolioTrend())
+    enterInstrument(makeInstrument({ id: 'inst-1', type: 'stock', market: 'sh' }))
     expect(mode.value).toBe('instrument')
-    showPortfolio()
+    setMode('portfolio')
     expect(mode.value).toBe('portfolio')
+    expect(useInvestmentsSessionStore().trendInstrumentId).toBe('inst-1')
+  })
+
+  it('单标的模式守卫：无选中标的时切「单标的」无操作（不进入空态单标的模式）', () => {
+    const { mode, setMode } = withSetup(() => usePortfolioTrend())
+    expect(mode.value).toBe('portfolio')
+    // 无选中标的：模式切换被守卫拦下（不进入「单标的但无标的」空态）
+    setMode('instrument')
+    expect(mode.value).toBe('portfolio')
+    // 有选中标的后可进入单标的模式
+    enterInstrument(makeInstrument({ id: 'inst-1', type: 'stock', market: 'sh' }))
+    setMode('portfolio')
+    setMode('instrument')
+    expect(mode.value).toBe('instrument')
   })
 
   it('加载完成后 loading 复位；命令异常时 loading 同样复位', async () => {

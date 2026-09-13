@@ -28,15 +28,9 @@ const instrumentOptions = computed(() =>
   })),
 )
 
-// 受控下拉桥接：读会话 store 的选中标的 id，写回经 store 的选中意图入口
+// 受控下拉：选中 id 只读投影自会话 store，写回经 selectInstrument 单一入口
 // （未在标的字典分页内的 id 不在选项面，写入天然不发生）。
-const selectedInstrumentId = computed({
-  get: () => trend.instrument.value?.id ?? null,
-  set: (id: string | null) => {
-    const inst = trend.instruments.value.find((i) => i.id === id)
-    if (inst) trend.showInstrument(inst)
-  },
-})
+const selectedInstrumentId = computed(() => trend.instrument.value?.id ?? null)
 
 /** 无价格来源标的（后端判通道 = none，issue #1060）：边界说明而非空图。
  * 放行判定消费后端派生事实，前端不再按类型与市场自行推断。 */
@@ -140,26 +134,29 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
   <NSpace vertical :size="12">
     <NSpace align="center" :size="16">
       <NRadioGroup
-        v-model:value="trend.mode.value"
+        :value="trend.mode.value"
         size="small"
         data-testid="trend-mode"
+        @update:value="trend.setMode"
       >
         <NRadio value="portfolio">{{ t('investments.trend.modePortfolio') }}</NRadio>
         <NRadio value="instrument">{{ t('investments.trend.modeInstrument') }}</NRadio>
       </NRadioGroup>
       <PinyinSelect
         v-if="trend.mode.value === 'instrument'"
-        v-model:value="selectedInstrumentId"
+        :value="selectedInstrumentId"
         :options="instrumentOptions"
         :placeholder="t('investments.trend.instrumentPlaceholder')"
         clearable
         style="width: 260px"
         data-testid="trend-instrument-select"
+        @update:value="trend.selectInstrument"
       />
       <NRadioGroup
-        v-model:value="trend.preset.value"
+        :value="trend.preset.value"
         size="small"
         data-testid="trend-range"
+        @update:value="trend.setPreset"
       >
         <NRadio v-for="p in TREND_RANGE_PRESETS" :key="p.value" :value="p.value">
           {{ t(p.labelKey) }}

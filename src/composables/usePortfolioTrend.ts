@@ -2,7 +2,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '@ledger/api'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import {
-  TREND_MODE_DEFAULT,
   useInvestmentsSessionStore,
   type TrendRangePreset,
   type TrendViewMode,
@@ -109,16 +108,13 @@ const INSTRUMENT_FETCH_LIMIT = 500
  */
 export function usePortfolioTrend() {
   const session = useInvestmentsSessionStore()
-  // 状态投影是 store 的只读 ref：对外保留「可写 ref」形态（既有消费方与测试
-  // 零迁移），写回经 store 的意图入口转交，规则仍单点在 store 内。
-  const preset = computed<TrendRangePreset>({
-    get: () => session.trendPreset,
-    set: (value) => session.setTrendPreset(value),
-  })
-  const mode = computed<TrendViewMode>({
-    get: () => session.trendMode,
-    set: (value) => session.setTrendMode(value),
-  })
+  // 状态投影只读、写回只经意图入口（ADR-0094「store 是唯一读写方」）：
+  // 面板用 :value + @update:value，不再持可写 ref；模式切换与标的选中各走
+  // store 内带守卫的入口（单标的模式必须有选中标的），不新开旁路。
+  /** 当前预设区间（只读投影；写入经 setPreset） */
+  const preset = computed<TrendRangePreset>(() => session.trendPreset)
+  /** 当前视图模式（只读投影；写入经 setMode） */
+  const mode = computed<TrendViewMode>(() => session.trendMode)
   /** 当前选中标的（会话 store 是唯一事实源；null = 尚未选择） */
   const instrument = computed<Instrument | null>(() => session.trendInstrument)
 
@@ -168,6 +164,9 @@ export function usePortfolioTrend() {
   async function fetchInstruments() {
     const res = await api.listInstruments({ page_size: INSTRUMENT_FETCH_LIMIT })
     instruments.value = res.items
+    // 标的字典即「会话内已知标的」：登记进会话 store，使面板下拉改选（仅给 id）
+    // 能经 selectTrendInstrument 的守卫生效（id 必须在已知集合内）。
+    res.items.forEach((inst) => session.registerTrendInstrument(inst))
   }
 
   /** 刷新走势数据（预设区间 / 模式 / 标的变化后由 watch 自动触发） */
@@ -181,14 +180,21 @@ export function usePortfolioTrend() {
     await refresh()
   }
 
-  /** 切到单标的曲线（标的列表「走势」入口与面板下拉共用） */
-  function showInstrument(inst: Instrument) {
-    session.showTrendInstrument(inst)
+  /** 视图模式切换意图（面板 NRadioGroup 回传）：单标的模式由 store 守卫
+   * （无选中标的即无操作），回组合模式保留选中标的。 */
+  function setMode(next: TrendViewMode) {
+    session.setTrendMode(next)
   }
 
-  /** 切回组合市值曲线 */
-  function showPortfolio() {
-    mode.value = TREND_MODE_DEFAULT
+  /** 预设区间切换意图（面板 NRadioGroup 回传）；区间是闭集字面量，无守卫语义。 */
+  function setPreset(next: TrendRangePreset) {
+    session.setTrendPreset(next)
+  }
+
+  /** 面板标的选中意图（id 进；null = 清除选中回组合模式）；守卫在 store 内
+   * （仅接受已在会话中标明的标的 id）——面板下拉与入口带入共用同一选中事实源。 */
+  function selectInstrument(id: string | null) {
+    session.selectTrendInstrument(id)
   }
 
   // 内部自动刷新（watch / 挂载首刷 / 价格失效信号）治愈失败：不再产生未处理
@@ -243,7 +249,8 @@ export function usePortfolioTrend() {
     isEmpty,
     currencyCode,
     refresh,
-    showInstrument,
-    showPortfolio,
+    setMode,
+    setPreset,
+    selectInstrument,
   }
 }

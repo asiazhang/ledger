@@ -50,7 +50,6 @@ const {
   setSorter,
   filteredRows,
   page,
-  setPage,
   totalMarketValueGroups,
   totalUnrealizedPnlGroups,
   accountOptions,
@@ -80,12 +79,14 @@ function columnSortOrder(key: HoldingsSortColumn) {
 // （客户端模式按页码内存切片，itemCount 缺省取行集长度）；页大小固定 20 不设
 // 选择器；单页时收起分页条（paginate-single-page=false，≤20 行全量直显不出
 // 翻页噪声）。合计/空态在切片前判定（派生自 filteredRows），与可见页无关。
-// 恢复/回访时行集可能少于离开时的页码（如离开期间清仓）——钳制到有效范围，
-// 不落空页（表格内置钳制只管展示，此处让页码回写保持与展示一致）。
+// 恢复页码越界时由 useHoldingsFilter 钳制到有效范围并回写保留态（见该模块），
+// 视图只读消费——此处不再二次钳制。
 const pagination = computed(() => ({
-  page: Math.min(page.value, Math.max(1, Math.ceil(filteredRows.value.length / HOLDINGS_PAGE_SIZE))),
+  page: page.value,
   pageSize: HOLDINGS_PAGE_SIZE,
-  onChange: setPage,
+  onChange: (next: number) => {
+    page.value = next
+  },
 }))
 
 // 横向滚动下限 = 各固定列宽总和（全仓单一收口）：名称列是唯一弹性列（minWidth

@@ -1,9 +1,10 @@
-import { computed, type Ref } from 'vue'
+import { computed, onScopeDispose, readonly, type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
 import { matchLabel } from '@/utils/pinyin-filter'
 import { sumByCurrency, type CurrencyAmountGroup, type PortfolioRow } from '@/composables/usePortfolioOverview'
 import {
+  HOLDINGS_PAGE_SIZE,
   useInvestmentsSessionStore,
   type HoldingsSorter,
   type NaiveUiSorterState,
@@ -22,6 +23,8 @@ import {
  * 薄适配——状态投影与意图入口原样转交会话 store，派生链仍在调用方实例内，
  * 切片仍由表格组件内置分页完成。卸载重挂恢复离开时的选择、冷启动回默认、
  * 全程零写盘；ESC 复位由投资视图向复位回调注册表声明（见 store resetToDefault）。
+ * 作用域销毁即撤销在途搜索防抖（Spec 轴 finding）：已输入未应用的值不落地，
+ * 回显回到最后应用值——与原实例级实现的 onScopeDispose 行为等价。
  *
  * 维度闭集三：
  * - **搜索**：判定目标为「代码 · 名称」等价文本（与标的搜索同规格，无名称
@@ -152,8 +155,6 @@ export interface UseHoldingsFilterReturn {
   readonly filteredRows: Ref<PortfolioRow[]>
   /** 页码（1 起）：过滤排序之后派生行集的展示切片，不是第四个过滤维度 */
   readonly page: Ref<number>
-  /** 翻页意图：表格分页条 onChange 回传入口（切片本身由表格内置分页完成） */
-  setPage(next: number): void
   /** 派生合计（按币种分组）：随过滤子集更新，排序不影响，缺价行不计入 */
   readonly totalMarketValueGroups: Ref<CurrencyAmountGroup[]>
   readonly totalUnrealizedPnlGroups: Ref<CurrencyAmountGroup[]>
@@ -164,9 +165,11 @@ export interface UseHoldingsFilterReturn {
 export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterReturn {
   const reference = useReferenceStore()
   const session = useInvestmentsSessionStore()
-  // 会话级 store 是三维状态与页码的唯一读写方（ADR-0094）；本工厂只做投影
-  const { holdingsSearchInput: searchInput, holdingsAccountId: accountId, holdingsSorter: sorter, holdingsPage: page } =
+  // 会话级 store 是三维状态与页码的唯一读写方（ADR-0094）；本工厂只做投影，
+  // 投影一律只读（原实现的 readonly(...) 保证不因状态迁入 store 而消失）。
+  const { holdingsSearchInput, holdingsAccountId: accountId, holdingsSorter: sorter, holdingsPage: storedPage } =
     storeToRefs(session)
+  const searchInput = readonly(holdingsSearchInput)
 
   // 派生链：过滤（搜索 × 账户）→ 排序 → 合计。合计只依赖过滤子集，
   // 排序变化不触碰合计（排序不影响合计由派生结构保证，非调用方自觉）。
@@ -194,6 +197,42 @@ export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterR
     reference.investmentAccounts.map((a) => ({ label: a.name, value: a.id })),
   )
 
+  // 页码恢复钳制（ADR-0094 决策 3 / ADR-0045「回退不归零」既有出口的等价形态）：
+  // 恢复/回访时行集可能少于离开时的页码（离开期间清仓或过滤收窄）——落到有效
+  // 范围并写回 store，使保留态与展示一致；只钳展示会让陈旧页码在行集回增后
+  // 重新生效、凭空跳页。持仓是内存切片（无超页请求、无服务端空页信号），故
+  // 钳制点在派生行集而非请求响应，语义仍是「回退到有效范围、不新增第二出口」。
+  // 读出口即对账（不另挂 watcher/effect）：任一消费方读到越界页码时回写一次，
+  // 使内存保留态与展示同源；翻页意图与视图 onChange 直接写本 ref。
+  let lastReconciled: { stored: number; valid: number } | null = null
+  const page = computed<number>({
+    get: () => {
+      const valid = pageCount(filteredRows.value)
+      const stored = storedPage.value
+      const clamped = Math.min(stored, valid)
+      if (
+        clamped !== stored &&
+        (lastReconciled === null ||
+          lastReconciled.stored !== stored ||
+          lastReconciled.valid !== valid)
+      ) {
+        lastReconciled = { stored, valid }
+        // 回写把保留态收进有效范围（只会往小走），翻页归零 watch 不受影响
+        session.setPage(clamped)
+      }
+      return clamped
+    },
+    set: (next) => {
+      lastReconciled = null
+      session.setPage(next)
+    },
+  })
+
+  // 页签卸载（含导航离开投资视图）即撤销在途搜索防抖：已输入未应用的值不落地
+  onScopeDispose(() => {
+    session.cancelPendingSearch()
+  })
+
   return {
     searchInput,
     setSearch: session.setSearch,
@@ -203,9 +242,13 @@ export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterR
     setSorter: session.setSorter,
     filteredRows,
     page,
-    setPage: session.setPage,
     totalMarketValueGroups,
     totalUnrealizedPnlGroups,
     accountOptions,
   }
+}
+
+/** 派生行集的有效页数（至少 1 页：空集与单页同归第 1 页）。 */
+function pageCount(rows: PortfolioRow[]): number {
+  return Math.max(1, Math.ceil(rows.length / HOLDINGS_PAGE_SIZE))
 }
