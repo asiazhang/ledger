@@ -5,7 +5,7 @@ import {
   PNL_COLORS,
   pnlSemanticColor,
   SEMANTIC_COLOR_KINDS,
-} from '@/theme/semantic-colors'
+} from '../semantic-colors'
 import { TRANSACTION_KINDS } from '@ledger/types'
 
 /** 语义色单一来源（issue #435）：九种交易类型 × 亮/暗两套色值。

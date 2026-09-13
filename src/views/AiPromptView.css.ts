@@ -1,6 +1,6 @@
 import { style } from '@vanilla-extract/css'
-import { sprinkles } from '@/theme/sprinkles.css.ts'
-import { appVars } from '@/theme/app-theme.css.ts'
+import { sprinkles } from '@ledger/theme/sprinkles.css.ts'
+import { appVars } from '@ledger/theme/app-theme.css.ts'
 
 /**
  * AI 提示词页旁路样式（issue #888 样式方案试点 / ADR-0093）：原 scoped 样式块

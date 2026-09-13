@@ -1,5 +1,5 @@
 import { style } from '@vanilla-extract/css'
-import { sprinkles } from '@/theme/sprinkles.css.ts'
+import { sprinkles } from '@ledger/theme/sprinkles.css.ts'
 
 /**
  * 同步进度条旁路样式（issue #897 / ADR-0095，ADR-0093 样式方案）：scoped 样式

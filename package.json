@@ -19,6 +19,7 @@
     "@ledger/i18n": "workspace:*",
     "@ledger/money": "workspace:*",
     "@ledger/storage": "workspace:*",
+    "@ledger/theme": "workspace:*",
     "@ledger/types": "workspace:*",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.3",

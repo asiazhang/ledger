@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { DARK_FLOAT_LAYER, NEUTRAL_TOKENS } from '@/theme/design-tokens'
-import { darkOverrides, lightOverrides } from '@/theme/overrides'
+import { DARK_FLOAT_LAYER, NEUTRAL_TOKENS } from '../design-tokens'
+import { darkOverrides, lightOverrides } from '../overrides'
 
 /** 中性 Design Tokens 单一来源与派生一致性（issue #887 / ADR-0093）。
  * 行为保持重构：亮暗视觉口径零变化；派生一致性断言防覆盖回退为手工副本。 */

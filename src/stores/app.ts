@@ -3,11 +3,14 @@ import { ref } from 'vue'
 import { loadLocal, saveLocal } from '@ledger/storage'
 import { getLocaleSetting, setLocaleSetting, type LocaleSetting } from '@ledger/i18n'
 import { amountPrivacyEnabled, AMOUNT_PRIVACY_STORAGE_KEY } from '@ledger/money'
-
-export type Theme = 'dark' | 'light'
+import type { Theme } from '@ledger/theme'
 
 /**
  * UI 设置（UI Settings）store：主题 / 默认币种 / 备份设置 / 设备级「自动执行」开关，本地持久化。
+ *
+ * 外观模式（Theme）的状态源仍是本 store（`theme` ref 的读写与持久化），类型定义
+ * 随主题包下移（issue #1154）——theme 包不再反向依赖应用壳，本 store 从包的类型
+ * 入口导入，全仓无第二处定义。
  *
  * 参考数据（currencies/accounts/categories）及全部派生映射、分类树逻辑、
  * 加载函数已迁至 `useReferenceStore`（单一来源，见 #78–#85），本 store 不再

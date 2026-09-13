@@ -93,6 +93,12 @@ export const PACKAGES: readonly PackageEntry[] = [
     testSupport: true,
     note: '共享测试支持包（issue #1152）：全局测试接缝（invoke/message/matchMedia/listen/返回桥替身 + 每测清理）唯一宿主，消费只经 devDependency（testSupport 标志 → 规则⑤）；参考数据夹具类型边 @ledger/types 显式放行',
   },
+  {
+    name: '@ledger/theme',
+    dir: 'packages/theme',
+    deps: ['@ledger/types', '@ledger/money'],
+    note: '主题包（issue #1154 / ADR-0093 / issue #888）：语义色、中性设计令牌、组件库主题覆盖、vanilla-extract 主题合同与图表统一样式的单一来源，Theme 类型随包下移；@ledger 范围内只依赖 @ledger/types 与 @ledger/money，不依赖 stores / components / views / composables',
+  },
 ]
 
 /** workspace 成员 glob（pnpm-workspace.yaml 侧声明与本脚本核对同源）。 */

@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
-import { darkOverrides, lightOverrides } from '@/theme/overrides'
+import { darkOverrides, lightOverrides } from '@ledger/theme/overrides'
 import { t } from '@ledger/i18n'
 
 /**
@@ -34,7 +34,7 @@ const name = computed(() => account.value?.name ?? '-')
 // 仅真实可见账户可点击下钻；黑洞/隐藏账户渲染为纯文本「-」。
 const isLink = computed(() => !!account.value)
 
-// 强调色取自 theme/overrides.ts 单一来源（Naive 不暴露全局 --primary-color CSS 变量，
+// 强调色取自 @ledger/theme/overrides 单一来源（Naive 不暴露全局 --primary-color CSS 变量，
 // 组件内颜色显式按主题取值：暗色琥珀 / 亮色同色相加深版，与 overrides 一致）。
 const accent = computed(() => {
   const common =

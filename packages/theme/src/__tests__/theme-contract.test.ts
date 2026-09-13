@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { setAdapter, removeAdapter } from '@vanilla-extract/css/adapter'
 import { setFileScope, endFileScope } from '@vanilla-extract/css/fileScope'
-import { NEUTRAL_TOKENS, type NeutralTokens } from '@/theme/design-tokens'
-import { darkOverrides, lightOverrides } from '@/theme/overrides'
-import type * as AppTheme from '@/theme/app-theme.css.ts'
-import type * as ThemeContract from '@/theme/theme-contract'
+import { NEUTRAL_TOKENS, type NeutralTokens } from '../design-tokens'
+import { darkOverrides, lightOverrides } from '../overrides'
+import type * as AppTheme from '../app-theme.css.ts'
+import type * as ThemeContract from '../theme-contract'
 
 /**
  * 新方案主题合同（issue #888 / ADR-0093）：给定亮/暗模式，产出正确的根主题类
@@ -43,10 +43,10 @@ beforeAll(async () => {
   setAdapter(adapter)
   // vitest 不挂 ve 插件（见 vitest.config.ts）：运行时求值需显式提供 file scope
   // （无 bundler 运行时的受支持用法），指向真实模块路径使标识符与构建同构。
-  setFileScope('src/theme/app-theme.css.ts')
+  setFileScope('packages/theme/src/app-theme.css.ts')
   try {
-    appTheme = await import('@/theme/app-theme.css.ts')
-    contract = await import('@/theme/theme-contract')
+    appTheme = await import('../app-theme.css.ts')
+    contract = await import('../theme-contract')
   } finally {
     endFileScope()
     removeAdapter()
