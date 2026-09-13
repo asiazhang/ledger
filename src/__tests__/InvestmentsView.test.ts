@@ -383,6 +383,9 @@ describe('InvestmentsView 价格过期提示（issue #1190）', () => {
     expect(alert.text()).toContain('3')
     expect(alert.text()).toContain('过期')
     expect(alert.text()).toContain('超过 3 天')
+    // 措辞只陈述标的自身：计数含已清仓标的，故不得宣称「报表会按陈旧价格计算」
+    // （报表只吃持仓，对已清仓标的不成立；口径见词汇表「价格过期提示」）
+    expect(alert.text()).not.toContain('报表')
     // 入口默认不在场（标的页签懒挂载），点击后直达既有「同步标的信息」按钮
     expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(false)
     await wrapper.find('[data-testid="price-staleness-go-sync"]').trigger('click')
