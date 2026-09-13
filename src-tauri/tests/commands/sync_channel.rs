@@ -41,7 +41,7 @@ use tauri_app_lib::db::encryption::{enable_encryption_for_file, probe_file_kind}
 use tauri_app_lib::db::{self, DbState};
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::settings::{self, SettingKey};
-use tauri_app_lib::sync_engine::{ChannelBackend, EnvelopeMode, SyncChannelConfig};
+use tauri_app_lib::sync_engine::{EnvelopeMode, SyncChannelConfig};
 use tauri_app_lib::test_support::{
     S3Addressing, S3Stub, S3StubConfig, read_scalar_i64, spawn_s3_stub,
 };
@@ -142,17 +142,15 @@ async fn sync_status_defaults_and_s3_channel_config_roundtrip() {
     assert_eq!(status.parked_count, 0, "新端无挂起");
     assert!(!status.library_encrypted, "明文库");
 
-    // 未配置回显：空表单形态，后端判别取缺省（WebDAV）。
+    // 未配置回显：空表单形态（各字段空串 / 假值）。
     let empty = get_sync_channel_config(app.clone())
         .await
         .expect("未配置回显应可读");
     assert!(!empty.configured);
-    assert_eq!(empty.backend, ChannelBackend::WebDav);
-    assert_eq!(empty.endpoint, "", "S3 字段回空表单");
+    assert_eq!(empty.endpoint, "", "未配置回空表单");
 
-    // 配置往返（命令面保存 → 读回一致 + 状态翻转）：后端判别与 S3 字段整体落库。
+    // 配置往返（命令面保存 → 读回一致 + 状态翻转）：S3 字段整体落库。
     let input = SyncChannelConfigInput {
-        backend: ChannelBackend::S3,
         endpoint: "https://s3.example.com".into(),
         region: "cn-hangzhou".into(),
         bucket: "ledger".into(),
@@ -161,7 +159,6 @@ async fn sync_status_defaults_and_s3_channel_config_roundtrip() {
         secret_key: "test-secret-key".into(),
         path_style: true,
         space_id: Some("family".into()),
-        ..Default::default()
     };
     set_sync_channel_config(app.clone(), input)
         .await
@@ -170,7 +167,6 @@ async fn sync_status_defaults_and_s3_channel_config_roundtrip() {
         .await
         .expect("配置应可读");
     assert!(config.configured);
-    assert_eq!(config.backend, ChannelBackend::S3, "后端判别应回显");
     assert_eq!(config.endpoint, "https://s3.example.com");
     assert_eq!(config.region, "cn-hangzhou");
     assert_eq!(config.bucket, "ledger");
@@ -185,7 +181,6 @@ async fn sync_status_defaults_and_s3_channel_config_roundtrip() {
 
     // 非法通道（空端点）：码化错误、不落库（读回仍是原值）。
     let bad = SyncChannelConfigInput {
-        backend: ChannelBackend::S3,
         endpoint: "   ".into(),
         ..Default::default()
     };
@@ -203,10 +198,12 @@ async fn sync_status_defaults_and_s3_channel_config_roundtrip() {
     assert_eq!(config.bucket, "ledger", "坏值未覆盖原配置");
 }
 
-/// 缺后端判别字段的老配置仍可解析并回显（#1217 兼容验收的命令面形态）：直落
-/// 一份没有 `backend` 与 S3 字段键的既有 JSON，回显取缺省 WebDAV、S3 组为空。
+/// 退役后端留下的旧配置仍可读（#1221 升级路径的命令面形态）：直落一份只带旧键
+/// （`backend` 与地址 / 凭据）的 JSON，回显照常读出——未知键被忽略，未识别字段
+/// 回空串 / 假值。同步从未随任何版本发布（ADR-0091 决策 1 修订），这里只钉
+/// 「解析性不回归」，不承诺旧配置可用。
 #[tokio::test]
-async fn legacy_webdav_config_without_backend_is_readable() {
+async fn legacy_config_with_retired_backend_keys_is_readable() {
     isolate_home();
     let (app, _dir) = device_app("legacy");
     let conn = app.state::<DbState>().conn.clone();
@@ -216,6 +213,7 @@ async fn legacy_webdav_config_without_backend_is_readable() {
             &guard,
             SettingKey::SyncChannelConfig,
             &serde_json::json!({
+                "backend": "webdav",
                 "base_url": "https://dav.example.com/dav/",
                 "username": "alice",
                 "password": "app-pass",
@@ -228,15 +226,14 @@ async fn legacy_webdav_config_without_backend_is_readable() {
     let config = get_sync_channel_config(app.clone())
         .await
         .expect("老配置应可回显");
-    assert!(config.configured, "老配置应视为已配置");
-    assert_eq!(config.backend, ChannelBackend::WebDav, "缺判别回默认后端");
-    assert_eq!(config.base_url, "https://dav.example.com/dav/");
-    assert_eq!(config.endpoint, "", "缺 S3 字段回空串");
+    assert!(config.configured, "键在位即视为已配置");
+    assert_eq!(config.space_id, "family", "已识别字段照常回显");
+    assert_eq!(config.endpoint, "", "退役后端字段不映射到任何在册字段");
     assert!(!config.path_style);
 }
 
-/// 非 https 端点保存被拒（#1217 验收）：S3 组与 WebDAV 组两条地址形态都报同一
-/// 配置类码化错误；失败路径零写入，读回仍是先前的 https 配置（无半配置状态）。
+/// 非 https 端点保存被拒（#1217 验收）：报配置类码化错误；失败路径零写入，
+/// 读回仍是先前的 https 配置（无半配置状态）。
 #[tokio::test]
 async fn non_https_endpoint_save_is_rejected_and_leaves_config_untouched() {
     isolate_home();
@@ -246,7 +243,6 @@ async fn non_https_endpoint_save_is_rejected_and_leaves_config_untouched() {
     set_sync_channel_config(
         app.clone(),
         SyncChannelConfigInput {
-            backend: ChannelBackend::S3,
             endpoint: "https://s3.example.com".into(),
             region: "cn-hangzhou".into(),
             bucket: "ledger".into(),
@@ -260,9 +256,8 @@ async fn non_https_endpoint_save_is_rejected_and_leaves_config_untouched() {
     .await
     .expect("https 配置应保存成功");
 
-    // 明文 http：S3 端点与 WebDAV 地址都被同一保存门拒绝。
+    // 明文 http：保存门拒绝。
     let insecure_s3 = SyncChannelConfigInput {
-        backend: ChannelBackend::S3,
         endpoint: "http://127.0.0.1:9000".into(),
         region: "us-east-1".into(),
         bucket: "ledger".into(),
@@ -276,55 +271,12 @@ async fn non_https_endpoint_save_is_rejected_and_leaves_config_untouched() {
         .expect_err("http 端点应被拒");
     assert_code(err, "sync-channel.endpoint-insecure");
 
-    let insecure_webdav = SyncChannelConfigInput {
-        backend: ChannelBackend::WebDav,
-        base_url: "http://127.0.0.1:8080/dav/".into(),
-        username: "alice".into(),
-        password: "app-pass".into(),
-        ..Default::default()
-    };
-    let err = set_sync_channel_config(app.clone(), insecure_webdav)
-        .await
-        .expect_err("http WebDAV 地址应被拒");
-    assert_code(err, "sync-channel.endpoint-insecure");
-
     // 失败零写入：读回仍是先前合法配置。
     let config = get_sync_channel_config(app.clone())
         .await
         .expect("配置应可读");
-    assert_eq!(config.backend, ChannelBackend::S3);
     assert_eq!(config.endpoint, "https://s3.example.com");
     assert_eq!(config.bucket, "ledger");
-}
-
-/// WebDAV 后端在 #1221 收口前仍是生产路径（「WebDAV 不删除」）：命令面保存与
-/// 回显照常走 WebDAV 组字段，判别回 `webdav`——本轮测试迁移只把轮次现场换成
-/// S3 桩，没有把 WebDAV 的保存面一起收走。
-#[tokio::test]
-async fn webdav_backend_config_still_saves_and_echoes() {
-    isolate_home();
-    let (app, _dir) = device_app("webdav-save");
-    set_sync_channel_config(
-        app.clone(),
-        SyncChannelConfigInput {
-            backend: ChannelBackend::WebDav,
-            base_url: "https://dav.example.com/dav/".into(),
-            username: "alice".into(),
-            password: "app-pass".into(),
-            space_id: Some("family".into()),
-            ..Default::default()
-        },
-    )
-    .await
-    .expect("https WebDAV 配置应保存成功");
-
-    let config = get_sync_channel_config(app.clone())
-        .await
-        .expect("配置应可读");
-    assert_eq!(config.backend, ChannelBackend::WebDav);
-    assert_eq!(config.base_url, "https://dav.example.com/dav/");
-    assert_eq!(config.username, "alice");
-    assert_eq!(config.space_id, "family");
 }
 
 #[tokio::test]
@@ -588,7 +540,6 @@ fn deliver_unreplayable_op_blocking(config: &SyncChannelConfig) {
 /// 探测用表单入参（S3 组字段齐备；同步空间与寻址取缺省形态）。
 fn probe_input(endpoint: &str, bucket: &str) -> SyncChannelConfigInput {
     SyncChannelConfigInput {
-        backend: ChannelBackend::S3,
         endpoint: endpoint.into(),
         region: "us-east-1".into(),
         bucket: bucket.into(),

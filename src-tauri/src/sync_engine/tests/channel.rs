@@ -1,9 +1,9 @@
 //! 通道层（issue #859 / ADR-0091 决策 1/8）：通道目录布局与 manifest、同步
 //! 轮次（发布自己流 + 拉取他人流）、SyncEnvelope 加密形态、Checkpoint 通道
-//! 传递与新端引导，以及本地 WebDAV 桩上的两端文件交换集成。
+//! 传递与新端引导，以及本地 S3 桩上的两端文件交换集成。
 //!
 //! 快速场景走内存假通道；HTTP 语义（建目录、凭据、两端真实文件交换）走
-//! WebDAV 桩（AC：本地 WebDAV 桩上的两端文件交换集成测试）。
+//! S3 桩（AC：本地通道桩上的两端文件交换集成测试）。
 
 use rusqlite::Connection;
 
@@ -15,10 +15,9 @@ use crate::sync_engine::envelope::{EnvelopeMode, EnvelopeParams, is_sealed};
 use crate::sync_engine::tests::common::{MemoryTransport, make_expense, read_transaction};
 use crate::sync_engine::transport::Transport;
 use crate::sync_engine::transport::s3::{S3Config, S3Transport};
-use crate::sync_engine::transport::webdav::{WebDavConfig, WebDavTransport};
 use crate::sync_engine::{OpOutcome, apply_ops, bootstrap_from_checkpoint, read_ops};
 use crate::test_support::{self, seed_account};
-use crate::test_support::{S3Addressing, S3Stub, S3StubConfig, spawn_s3_stub, spawn_webdav_stub};
+use crate::test_support::{S3Addressing, S3Deny, S3Stub, S3StubConfig, spawn_s3_stub};
 use crate::transaction::write::protocol;
 
 /// 测试用低 KDF 迭代选项（信封格式语义与派生成本无关；生产默认值已在
@@ -241,7 +240,7 @@ fn segments_split_by_capacity_and_all_apply() {
 }
 
 /// 段文件被篡改：hash/尺寸自校验拦截，报可重试的码化错误（内容自校验兜底
-/// WebDAV 弱原子性），不静默应用损坏内容。
+/// 通道弱原子性），不静默应用损坏内容。
 #[test]
 fn tampered_segment_is_detected_by_manifest_hash() {
     let conn_a = test_support::open();
@@ -263,7 +262,7 @@ fn tampered_segment_is_detected_by_manifest_hash() {
     assert!(read_transaction(&conn_b, "none").is_none());
 }
 
-/// manifest 记录的段在通道上缺失（网盘清单先行/文件未到齐）：报明确错误，
+/// manifest 记录的段在通道上缺失（清单先行/文件未到齐）：报明确错误，
 /// 不静默跳过造成日志缺口（零丢失：缺口必须显性失败等待重试）。
 #[test]
 fn missing_segment_file_fails_loud() {
@@ -417,55 +416,6 @@ fn checkpoint_publish_bootstrap_and_increment_over_channel() {
     assert_eq!(manifest.checkpoint.unwrap().file, pointer2.file);
 }
 
-/// AC 集成：本地 WebDAV 桩上的两端文件交换——真实 HTTP 语义（逐级建目录、
-/// PUT/GET）+ 双向交换收敛 + 检查点发布与第三端引导。
-#[test]
-fn two_end_file_exchange_over_local_webdav_stub() {
-    let stub = spawn_webdav_stub(Some(("alice", "app-pass")));
-    let dav = WebDavTransport::new(WebDavConfig {
-        base_url: stub.base_url.clone(),
-        username: "alice".into(),
-        password: "app-pass".into(),
-    })
-    .unwrap();
-
-    let conn_a = test_support::open();
-    let conn_b = test_support::open();
-    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
-    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
-    let a_txn = protocol::create(&conn_a, make_expense("acc-1", 10000, "A 桌面记的账")).unwrap();
-    let b_txn = protocol::create(&conn_b, make_expense("acc-1", 2500, "B 手机记的账")).unwrap();
-
-    let layout = layout();
-    let mode = EnvelopeMode::Plaintext;
-    run_round(&conn_a, &dav, &layout, &mode).unwrap();
-    run_round(&conn_b, &dav, &layout, &mode).unwrap();
-    run_round(&conn_a, &dav, &layout, &mode).unwrap();
-
-    for conn in [&conn_a, &conn_b] {
-        assert_eq!(
-            read_transaction(conn, &a_txn.id),
-            read_transaction(&conn_a, &a_txn.id)
-        );
-        assert_eq!(
-            read_transaction(conn, &b_txn.id),
-            read_transaction(&conn_b, &b_txn.id)
-        );
-        assert_eq!(read_ops(conn).unwrap().len(), 2);
-    }
-
-    // 检查点经 WebDAV 传递：第三端引导后与 A 一致。
-    publish_checkpoint_with(&conn_a, &dav, &layout, &mode, &fast_options()).unwrap();
-    let mut conn_c = test_support::open();
-    let fetched = fetch_checkpoint(&dav, &layout, None).unwrap();
-    bootstrap_from_checkpoint(&mut conn_c, &fetched.checkpoint, None).unwrap();
-    assert_eq!(
-        read_transaction(&conn_c, &a_txn.id),
-        read_transaction(&conn_a, &a_txn.id)
-    );
-    assert_eq!(read_ops(&conn_c).unwrap().len(), 2, "引导端含快照携带日志");
-}
-
 /// AC 集成：本地 S3 桩上的同步轮次——段发布、manifest 归并、增量拉取与
 /// 检查点发布/第三端引导都跑在真实 HTTP 对象存储语义上。
 #[test]
@@ -560,17 +510,12 @@ fn two_end_file_exchange_over_local_s3_stub() {
     );
 }
 
-/// 加密模式的 WebDAV 端到端：通道上只有密文，对端凭口令解开（AC：同步包以
+/// 加密模式的 S3 端到端：通道上只有密文，对端凭口令解开（AC：同步包以
 /// 加密信封整体上云、凭主口令在另一端解开）。
 #[test]
-fn encrypted_exchange_over_local_webdav_stub() {
-    let stub = spawn_webdav_stub(None);
-    let dav = WebDavTransport::new(WebDavConfig {
-        base_url: stub.base_url.clone(),
-        username: "u".into(),
-        password: "p".into(),
-    })
-    .unwrap();
+fn encrypted_exchange_over_local_s3_stub() {
+    let stub = spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle));
+    let s3 = s3_transport(&stub, "");
 
     let conn_a = test_support::open();
     let conn_b = test_support::open();
@@ -582,18 +527,18 @@ fn encrypted_exchange_over_local_webdav_stub() {
     let mode = EnvelopeMode::Encrypted {
         passphrase: "两端共知的口令",
     };
-    run_round_with(&conn_a, &dav, &layout, &mode, &fast_options()).unwrap();
+    run_round_with(&conn_a, &s3, &layout, &mode, &fast_options()).unwrap();
 
     let manifest: ChannelManifest =
-        serde_json::from_slice(&dav.read_file(&layout.manifest_path()).unwrap().unwrap()).unwrap();
+        serde_json::from_slice(&s3.read_file(&layout.manifest_path()).unwrap().unwrap()).unwrap();
     let segment = &manifest.streams[0].segments[0];
-    let raw = dav
+    let raw = s3
         .read_file(&layout.stream_file_path(&manifest.streams[0].device_id, &segment.file))
         .unwrap()
         .unwrap();
-    assert!(is_sealed(&raw), "WebDAV 上必须是密文信封");
+    assert!(is_sealed(&raw), "对象存储上必须是密文信封");
 
-    let report = run_round_with(&conn_b, &dav, &layout, &mode, &fast_options()).unwrap();
+    let report = run_round_with(&conn_b, &s3, &layout, &mode, &fast_options()).unwrap();
     assert_eq!(report.applied, 1);
     assert_eq!(
         read_transaction(&conn_b, &created.id),
@@ -601,8 +546,8 @@ fn encrypted_exchange_over_local_webdav_stub() {
     );
 
     // 密文检查点拉取回带封包标记（引导端对齐本库加密形态的依据，#864）。
-    publish_checkpoint_with(&conn_a, &dav, &layout, &mode, &fast_options()).unwrap();
-    let fetched = fetch_checkpoint(&dav, &layout, Some("两端共知的口令")).unwrap();
+    publish_checkpoint_with(&conn_a, &s3, &layout, &mode, &fast_options()).unwrap();
+    let fetched = fetch_checkpoint(&s3, &layout, Some("两端共知的口令")).unwrap();
     assert!(fetched.sealed, "密文模式检查点应回带封包标记");
     assert!(!fetched.checkpoint.snapshot.is_empty());
 }
@@ -610,19 +555,15 @@ fn encrypted_exchange_over_local_webdav_stub() {
 /// 同步失败不影响本地记账（AC：凭据/网络失败明确可重试，本地旁路不受扰）。
 #[test]
 fn failed_round_leaves_local_ledger_untouched() {
-    let stub = spawn_webdav_stub(Some(("alice", "right-pass")));
-    let dav = WebDavTransport::new(WebDavConfig {
-        base_url: stub.base_url.clone(),
-        username: "alice".into(),
-        password: "wrong-pass".into(),
-    })
-    .unwrap();
+    let stub =
+        spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle).deny(S3Deny::InvalidAccessKeyId));
+    let s3 = s3_transport(&stub, "");
 
     let conn = test_support::open();
     seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
     let before = protocol::create(&conn, make_expense("acc-1", 100, "失败前")).unwrap();
 
-    let err = run_round(&conn, &dav, &layout(), &EnvelopeMode::Plaintext).unwrap_err();
+    let err = run_round(&conn, &s3, &layout(), &EnvelopeMode::Plaintext).unwrap_err();
     assert!(err.is_code("sync-channel.auth-failed"));
 
     // 本地记账照常：同步失败后写入成功、既有数据原样。

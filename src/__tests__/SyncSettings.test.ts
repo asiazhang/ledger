@@ -41,10 +41,6 @@ const baseStatus: SyncStatus = {
 }
 
 const baseConfig: SyncChannelConfig = {
-  backend: 's3',
-  base_url: '',
-  username: '',
-  password: '',
   space_id: 'family',
   endpoint: 'https://s3.example.com',
   region: 'us-east-1',
@@ -123,7 +119,7 @@ describe('SyncSettings.vue', () => {
     expect(html).toContain('2026-01-15 08:30')
     expect(html).not.toContain('从未同步')
     // 明文库：明文警示在场（ADR-0091 决策 8 界面义务），密文提示不在场。
-    expect(html).toContain('明文存放于网盘')
+    expect(html).toContain('明文存放于对象存储')
     expect(html).not.toContain('密文形态')
   })
 
@@ -138,7 +134,7 @@ describe('SyncSettings.vue', () => {
     await flushPromises()
     const html = wrapper.html()
     expect(html).toContain('密文形态')
-    expect(html).not.toContain('明文存放于网盘')
+    expect(html).not.toContain('明文存放于对象存储')
     expect(findInputByTestId(wrapper, 'sync-passphrase').exists()).toBe(true)
   })
 
@@ -262,7 +258,6 @@ describe('SyncSettings.vue', () => {
 
     expect(lastInvokeArgs('set_sync_channel_config')).toEqual({
       config: {
-        backend: 's3',
         space_id: 'family',
         endpoint: 'https://s3.example.org/',
         region: 'us-east-1',
@@ -442,7 +437,6 @@ describe('SyncSettings.vue', () => {
 
     expect(lastInvokeArgs('test_sync_channel_connection')).toEqual({
       config: {
-        backend: 's3',
         space_id: 'family',
         endpoint: 'https://s3.example.com',
         region: 'us-east-1',
@@ -677,7 +671,7 @@ it('发布检查点：携带口令参数调用命令，成功提示代数与体�
   // 明文库发布：明文显著提示（ADR-0091 决策 8）。
   expect(
     messageCalls().some(
-      (m) => m.method === 'warning' && m.text.includes('明文存放于网盘'),
+      (m) => m.method === 'warning' && m.text.includes('明文存放于对象存储'),
     ),
   ).toBe(true)
 })
@@ -920,7 +914,6 @@ describe('SyncSettings.vue 厂商预设（issue #1220）', () => {
     // toEqual 是整体形状断言：多出 vendor / preset 一类字段即变红。
     expect(lastInvokeArgs('set_sync_channel_config')).toEqual({
       config: {
-        backend: 's3',
         space_id: 'family',
         endpoint: 'https://s3.oss-cn-hangzhou.aliyuncs.com',
         region: 'cn-hangzhou',

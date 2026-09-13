@@ -198,8 +198,8 @@ pub(crate) fn read_occurrence(conn: &Connection, occ_id: &str) -> Option<(String
 }
 
 // ---------------------------------------------------------------------------
-// #859 通道测试替身：内存假 Transport（本地 WebDAV 桩已上收统一测试工厂
-// crate::test_support::webdav，issue #862，域单测与集成测试同体消费）
+// #859 通道测试替身：内存假 Transport（本地通道桩已上收统一测试工厂
+// crate::test_support::s3，issue #862 / #1221，域单测与集成测试同体消费）
 // ---------------------------------------------------------------------------
 
 use std::collections::BTreeMap;
@@ -208,7 +208,7 @@ use std::sync::Mutex;
 use crate::sync_engine::transport::Transport;
 
 /// 内存假 Transport：进程内 `BTreeMap` 字节通道（通道布局/manifest/轮次逻辑
-/// 的快速测试替身；HTTP 语义归 WebDAV 桩用例）。
+/// 的快速测试替身；HTTP 语义归 S3 桩用例）。
 #[derive(Default)]
 pub(crate) struct MemoryTransport {
     files: Mutex<BTreeMap<String, Vec<u8>>>,

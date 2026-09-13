@@ -7,11 +7,11 @@
 
 use crate::settings::{self, SettingKey};
 use crate::sync_engine::EnvelopeMode;
+use crate::sync_engine::SyncChannelConfig;
 use crate::sync_engine::tests::common::make_expense;
 use crate::sync_engine::trigger::{
     SessionEnvelope, build_channel, configured_channel, run_auto_round, run_round_once,
 };
-use crate::sync_engine::{ChannelBackend, SyncChannelConfig};
 use crate::test_support::{self, seed_account};
 use crate::transaction::write::protocol;
 
@@ -25,11 +25,14 @@ fn channel_config_roundtrip_through_settings_single_point() {
     );
 
     let config = SyncChannelConfig {
-        base_url: "http://127.0.0.1:9/dav/".into(),
-        username: "alice".into(),
-        password: "app-pass".into(),
+        endpoint: "https://s3.example.com".into(),
+        region: "cn-hangzhou".into(),
+        bucket: "ledger".into(),
+        prefix: "sync/family".into(),
+        access_key: "ak".into(),
+        secret_key: "sk".into(),
+        path_style: true,
         space_id: "family".into(),
-        ..Default::default()
     };
     settings::set(&conn, SettingKey::SyncChannelConfig, &config).unwrap();
     assert_eq!(
@@ -43,20 +46,24 @@ fn channel_config_roundtrip_through_settings_single_point() {
 #[test]
 fn missing_space_id_deserializes_to_default() {
     let config: SyncChannelConfig =
-        serde_json::from_str(r#"{"base_url":"u","username":"n","password":"p"}"#).unwrap();
+        serde_json::from_str(r#"{"endpoint":"https://s3.example.com"}"#).unwrap();
     assert_eq!(config.space_id, "default");
+    assert_eq!(config.endpoint, "https://s3.example.com");
 }
 
-/// 后端判别缺省回 WebDAV（#1217 兼容验收）：既有配置 JSON 没有 `backend` 键、
-/// 也没有任何 S3 字段键，反序列化照常——判别回 [`ChannelBackend::WebDav`]、
-/// S3 组字段取空串/假值。这是 #1221 删除 WebDAV 前老配置升级路径的根据。
+/// 退役后端留下的旧配置仍可解析（#1221 升级路径）：老 JSON 里的 `backend` 与
+/// 地址 / 凭据键都已不是本形态的字段，serde 默认忽略未知键——配置照常反序列化，
+/// 未识别的字段取空串 / 假值，已识别的空间字段照常取值。同步从未随任何版本
+/// 发布（ADR-0091 决策 1 修订），本测试只保证「解析性不回归」，不承诺旧配置
+/// 仍可用（旧配置缺 S3 字段，构库会报 `sync-channel.base-url-missing`）。
 #[test]
-fn missing_backend_deserializes_to_webdav_with_empty_s3_fields() {
+fn legacy_config_with_retired_backend_keys_still_deserializes() {
     let config: SyncChannelConfig = serde_json::from_str(
-        r#"{"base_url":"https://dav.example.com/dav/","username":"n","password":"p"}"#,
+        r#"{"backend":"webdav","base_url":"https://dav.example.com/dav/",
+            "username":"n","password":"p","space_id":"family"}"#,
     )
     .unwrap();
-    assert_eq!(config.backend, ChannelBackend::WebDav);
+    assert_eq!(config.space_id, "family", "已识别字段照常取值");
     assert_eq!(config.endpoint, "");
     assert_eq!(config.region, "");
     assert_eq!(config.bucket, "");
@@ -66,72 +73,27 @@ fn missing_backend_deserializes_to_webdav_with_empty_s3_fields() {
     assert!(!config.path_style);
 }
 
-/// 后端判别 wire 形态（#1217）：serde 变体名恰为 `webdav` / `s3`，与前端
-/// `ChannelBackend` 联合类型逐字一致——`snake_case` 会把 `WebDav` 写成
-/// `web_dav`，前端发 `webdav` 时保存即反序列化失败（契约级回归，直接钉字符串）。
+/// 未知键一律忽略：退役键与未来键都不该让解析变红（与上一条同源机制，这条钉
+/// 「忽略」的普遍性，不依赖任何具体键名）。
 #[test]
-fn backend_wire_values_match_frontend_union() {
-    assert_eq!(
-        serde_json::to_string(&ChannelBackend::WebDav).unwrap(),
-        "\"webdav\""
-    );
-    assert_eq!(
-        serde_json::to_string(&ChannelBackend::S3).unwrap(),
-        "\"s3\""
-    );
-
-    // WebDAV 组字段是既有必填形态（老配置一直带它们），此处按应用实际落库形状给全；
-    // 只让 S3 组字段走 serde 缺省。
-    let s3: SyncChannelConfig = serde_json::from_str(
-        r#"{"backend":"s3","base_url":"","username":"","password":"",
-            "endpoint":"https://s3.example.com","space_id":"default"}"#,
+fn unknown_config_keys_are_ignored() {
+    let config: SyncChannelConfig = serde_json::from_str(
+        r#"{"endpoint":"https://s3.example.com","bucket":"ledger","future_option":true}"#,
     )
     .unwrap();
-    assert_eq!(s3.backend, ChannelBackend::S3, "前端发 s3 应可解析");
-    let webdav: SyncChannelConfig = serde_json::from_str(
-        r#"{"backend":"webdav","base_url":"https://dav.example.com",
-            "username":"alice","password":"app-pass"}"#,
-    )
-    .unwrap();
-    assert_eq!(
-        webdav.backend,
-        ChannelBackend::WebDav,
-        "前端发 webdav 应可解析"
-    );
-}
-
-/// 后端判别显式落库与读回（#1217 验收「配置保存与回显包含后端判别与 S3 字段」
-/// 的域侧半边）：S3 组字段随配置整体往返，不丢也不串到 WebDAV 组。
-#[test]
-fn s3_backend_config_roundtrips_through_settings_single_point() {
-    let conn = test_support::open();
-    let config = SyncChannelConfig {
-        backend: ChannelBackend::S3,
-        endpoint: "https://s3.example.com".into(),
-        region: "cn-hangzhou".into(),
-        bucket: "ledger".into(),
-        prefix: "sync/family".into(),
-        access_key: "ak".into(),
-        secret_key: "sk".into(),
-        path_style: true,
-        space_id: "family".into(),
-        ..Default::default()
-    };
-    settings::set(&conn, SettingKey::SyncChannelConfig, &config).unwrap();
-    assert_eq!(
-        configured_channel(&conn).unwrap().as_ref(),
-        Some(&config),
-        "S3 配置经同一单点读回，值与写入一致"
-    );
+    assert_eq!(config.endpoint, "https://s3.example.com");
+    assert_eq!(config.bucket, "ledger");
 }
 
 /// 构库单点：非法空间（清洗后为空）报码化错误；保存路径与本单点同源。
 #[test]
 fn build_channel_rejects_invalid_space_with_coded_error() {
     let config = SyncChannelConfig {
-        base_url: "http://127.0.0.1:9/dav/".into(),
-        username: "u".into(),
-        password: "p".into(),
+        endpoint: "https://s3.example.com".into(),
+        region: "cn-hangzhou".into(),
+        bucket: "ledger".into(),
+        access_key: "ak".into(),
+        secret_key: "sk".into(),
         space_id: "///".into(),
         ..Default::default()
     };
@@ -192,17 +154,13 @@ fn auto_round_without_channel_is_a_noop() {
 /// 轮次编排单点：一轮成功即更新「上次成功同步时刻」（手动与自动入口共用）。
 #[test]
 fn round_once_stamps_last_sync_on_success() {
-    let stub = test_support::spawn_webdav_stub(Some(("alice", "app-pass")));
+    let stub = test_support::spawn_s3_stub(test_support::S3StubConfig::new(
+        test_support::S3Addressing::PathStyle,
+    ));
     let conn = test_support::open();
     seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
     protocol::create(&conn, make_expense("acc-1", 10000, "午饭")).unwrap();
-    let config = SyncChannelConfig {
-        base_url: stub.base_url.clone(),
-        username: "alice".into(),
-        password: "app-pass".into(),
-        space_id: "default".into(),
-        ..Default::default()
-    };
+    let config = stub.channel_config("default");
     settings::set(&conn, SettingKey::SyncChannelConfig, &config).unwrap();
 
     let channel = build_channel(&config).unwrap();

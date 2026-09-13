@@ -74,15 +74,15 @@ const passphrase = ref('')
 // 挂起操作明细（issue #863 挂起通知）：数量 > 0 时按需拉取，展示码化原因。
 const parkedOps = ref<ParkedOpInfo[]>([])
 
-// 通道配置表单（S3 七字段 + 同步空间，issue #1218 / #1219 / #1220）：初值来自
-// 命令回显（未配置为空表单，空间字段填默认值），保存固定发 `backend: 's3'`——
-// WebDAV 字段已从界面移除（后端字段与后端本体随 #1221 收口）。厂商预设下拉
+// 通道配置表单（S3 七字段 + 同步空间，issue #1218 / #1219 / #1220 / #1221）：
+// 初值来自命令回显（未配置为空表单，空间字段填默认值）；v1 唯一后端是 S3 兼容
+// 对象存储，配置面没有后端判别字段（WebDAV 已随 #1221 整体退役）。厂商预设下拉
 //（issue #1220）只做界面预填与端点反查回显，不落库、不进后端契约；保存前
 //「测试连接」（issue #1219）读的正是同一份表单当前值——预填与手改都算数，
 // 因为探测在点击那一刻取表单快照，二者没有共享的写入状态可冲突。
 //
-// 表单只装本界面拥有的字段：命令回显形态 `SyncChannelConfig` 里被判别的 WebDAV
-// 三字段没有输入面，却会随对象存进表单成为无人读的死状态，故回显时投影一次。
+// 表单只装本界面拥有的字段：命令回显形态 `SyncChannelConfig` 的字段与输入面
+// 一一对应，回显时投影一次以隔开「契约对象」与「草稿对象」两类状态。
 type ChannelForm = Pick<
   SyncChannelConfig,
   | 'space_id'
@@ -254,8 +254,7 @@ async function syncNow() {
 
 /**
  * 表单 → 命令入参的单一转换点（保存与「测试连接」共用，issue #1218 / #1219）：
- * S3 七字段与同步空间（跨端共识的世界身份；空值交由后端回默认），固定发
- * `backend: 's3'`。
+ * S3 七字段与同步空间（跨端共识的世界身份；空值交由后端回默认）。
  *
  * 密钥取值：输入框有内容（用户改过）用新值，为空则沿用内存里的已保存值——这是
  * 「加载时不回显完整密钥」前提下仍能「不改密钥直接保存」的机制。两个动作共用本
@@ -263,7 +262,6 @@ async function syncNow() {
  */
 function channelPayload(): SyncChannelConfigInput {
   return {
-    backend: 's3',
     space_id: form.value.space_id.trim() || undefined,
     endpoint: form.value.endpoint,
     region: form.value.region,
@@ -471,8 +469,8 @@ async function confirmBootstrap() {
       />
 
       <!-- 通道配置表单（S3 七字段 + 同步空间，issue #1218 / #1219 / #1220）：
-           WebDAV 字段已从界面移除（后端字段与后端本体随 #1221 收口）；厂商预设
-           下拉只预填、不落库（issue #1220），「测试连接」按钮在此（issue #1219）。 -->
+           配置面没有后端判别字段（WebDAV 已随 #1221 退役）；厂商预设下拉只预填、
+           不落库（issue #1220），「测试连接」按钮在此（issue #1219）。 -->
       <NText strong>{{ t('settings.data.sync.channelTitle') }}</NText>
       <NSpace vertical :size="8">
         <!-- 厂商预设（issue #1220）：末尾固定「其他（自定义）」；选中只预填，字段

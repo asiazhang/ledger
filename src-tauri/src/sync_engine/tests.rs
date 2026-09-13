@@ -1,7 +1,7 @@
 //! 多端同步域测试索引（issue #855 / #856 / #857 / #858 / #859 / #860）。
 //!
 //! - [`common`]：域薄皮（双端建库、交易语义输入构造器、业务字段行读取、内存假 Transport、
-//!   本地 WebDAV 桩）
+//!   本地 S3 桩经统一测试工厂消费）
 //! - [`device`]：DeviceId 首用生成与持久化、换库新标识（被测对象自 #1089 起
 //!   住协议 crate `ledger-sync-protocol::device`）
 //! - [`total_order`]：跨端全序 (clock, device_id) 确定性
@@ -26,7 +26,6 @@
 //! - [`checkpoint`]：Checkpoint 快照、新端引导、位点与截断机制（issue #857）
 //! - [`wire`]：op 信封序列化往返（wire 形态稳定性）
 //! - [`envelope`]：SyncEnvelope 信封加密往返与码化错误（issue #859）
-//! - [`transport`]：WebDAV 哑字节通道后端对本地桩的行为与错误归一（issue #859）
 //! - [`transport_s3`]：S3 兼容对象存储后端对本地桩的行为、寻址、分片与错误归一（issue #1216）
 //! - [`probe`]：保存前「测试连接」的读取探针——缺对象=连通、权限/目标/网络分层（issue #1219）
 //! - [`channel`]：通道目录布局/manifest/同步轮次与两端文件交换集成（issue #859）
@@ -53,6 +52,5 @@ mod scheduled_plan;
 mod split;
 mod total_order;
 mod transaction_funding;
-mod transport;
 mod transport_s3;
 mod wire;

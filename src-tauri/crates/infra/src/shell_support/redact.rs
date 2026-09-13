@@ -10,11 +10,10 @@
 ///
 /// 主口令/凭据字段永不落日志/trace（ADR-0075）：解锁/开启加密的 `passphrase`
 /// 与修改主口令的 `new_passphrase` 同等敏感（Tauri v2 参数名按 JS 侧
-/// camelCase 到达，两种拼法都遮蔽）；`password` 覆盖嵌套结构体形态的凭据字段
-/// （issue #862 同步通道配置，WebDAV 密码与主口令同级处置）；`secret_key` 是
-/// S3 兼容对象存储的 Secret Access Key（issue #1217，与主口令同级处置）——
-/// `access_key` 是公开标识（等同账号名），不遮蔽，遮蔽它会牺牲可观测性而不
-/// 增加安全性。
+/// camelCase 到达，两种拼法都遮蔽）；`password` 是通用凭据键名（覆盖任何形态的
+/// 嵌套结构体入参）；`secret_key` / `secretKey` 是 S3 兼容对象存储通道配置的
+/// Secret Access Key（issue #1217 / #1221，与主口令同级处置）——`access_key` 是
+/// 公开标识（等同账号名），不遮蔽，遮蔽它会牺牲可观测性而不增加安全性。
 pub fn redact_passphrase_payload(payload: &serde_json::Value) -> serde_json::Value {
     const SENSITIVE_KEYS: &[&str] = &[
         "passphrase",
@@ -53,17 +52,15 @@ mod tests {
 
     /// 敏感键遮蔽（ADR-0075）：顶层与嵌套形态的 passphrase/password/secret_key
     /// 都被遮蔽，null 不遮蔽（未提供的可选参数原样保留），非敏感字段原样透传。
-    /// 嵌套下探是 #862 修订：通道配置的 `config.password` 在结构体入参内层，
-    /// 仅看顶层会漏进 trace；#1217 起 `config.secret_key`（S3 密钥）同款下探，
-    /// access_key 是标识不遮蔽。
+    /// 嵌套下探是 #862 修订：结构体入参内层的凭据字段仅看顶层会漏进 trace；
+    /// #1217 起 `config.secret_key`（S3 密钥）同款下探，access_key 是标识不遮蔽。
     #[test]
     fn sensitive_keys_masked_recursively() {
         let payload: serde_json::Value = serde_json::json!({
             "passphrase": "top-secret",
             "optional": null,
             "config": {
-                "base_url": "https://dav.example.com/dav/",
-                "username": "alice",
+                "endpoint": "https://s3.example.com",
                 "password": "app-pass",
                 "access_key": "AKIAEXAMPLE",
                 "secret_key": "s3-secret",
@@ -77,7 +74,10 @@ mod tests {
         assert_eq!(obj["optional"], serde_json::Value::Null, "null 不遮蔽");
         let config = obj["config"].as_object().unwrap();
         assert_eq!(config["password"], "••••••");
-        assert_eq!(config["username"], "alice", "非敏感字段原样");
+        assert_eq!(
+            config["endpoint"], "https://s3.example.com",
+            "非敏感字段原样"
+        );
         assert_eq!(config["secret_key"], "••••••", "S3 密钥遮蔽");
         assert_eq!(
             config["access_key"], "AKIAEXAMPLE",

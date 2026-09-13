@@ -32,9 +32,7 @@ use tauri_app_lib::db::data_location;
 use tauri_app_lib::db::encryption::EncryptionGate;
 use tauri_app_lib::db::{self, DbState};
 use tauri_app_lib::settings::{self, SettingKey};
-use tauri_app_lib::sync_engine::{
-    ChannelBackend, SyncChannelConfig, TriggerTimings, start_sync_scheduler_with,
-};
+use tauri_app_lib::sync_engine::{SyncChannelConfig, TriggerTimings, start_sync_scheduler_with};
 use tauri_app_lib::test_support::{S3Addressing, S3StubConfig, spawn_s3_stub};
 
 /// 低频轮询到期自跑轮次：无任何本地写入（无写信号），`recv_timeout` 超时分支
@@ -67,7 +65,6 @@ async fn poll_interval_elapses_into_a_round() {
             &guard,
             SettingKey::SyncChannelConfig,
             &SyncChannelConfig {
-                backend: ChannelBackend::S3,
                 endpoint: stub.endpoint.clone(),
                 region: stub.region.clone(),
                 bucket: stub.bucket.clone(),
@@ -76,7 +73,6 @@ async fn poll_interval_elapses_into_a_round() {
                 prefix: String::new(),
                 path_style: true,
                 space_id: "family".into(),
-                ..Default::default()
             },
         )
         .unwrap();

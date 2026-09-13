@@ -66,7 +66,6 @@ pub mod s3;
 mod seed;
 #[cfg(test)]
 mod tests;
-pub mod webdav;
 
 pub use assert::{
     assert_balance_cache_matches_realtime, extract_check_in_literals, read_scalar_i64,
@@ -77,7 +76,6 @@ pub use seed::{
     seed_account, seed_exchange_rate, seed_fx_rate_history, seed_instrument, seed_investment_setup,
     seed_price_history,
 };
-pub use webdav::{WebDavStub, spawn_webdav_stub};
 
 use rusqlite::Connection;
 

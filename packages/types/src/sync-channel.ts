@@ -1,6 +1,7 @@
-// 多端同步命令面类型（issue #862 / ADR-0091）：同步状态、通道配置与同步轮次
-// 报告。字段命名与 Rust 侧 serde 默认（snake_case）保持一致。
-// 通道配置是本机设备配置（不同步，同步边界见多端同步域 SyncBoundary）。
+// 多端同步命令面类型（issue #862 / #1221 / ADR-0091）：同步状态、通道配置与同步
+// 轮次报告。字段命名与 Rust 侧 serde 默认（snake_case）保持一致。
+// 通道配置是本机设备配置（不同步，同步边界见多端同步域 SyncBoundary）；v1 唯一
+// 后端是 S3 兼容对象存储（WebDAV 已随 #1221 退役），配置面无后端判别字段。
 
 /// 同步状态（设置页同步卡片回显）。
 export interface SyncStatus {
@@ -16,17 +17,8 @@ export interface SyncStatus {
   library_encrypted: boolean
 }
 
-/// 同步通道后端判别（缺省 `webdav`：判别字段落地晚于既有配置，#1217 兼容验收）。
-export type ChannelBackend = 'webdav' | 's3'
-
 /// 通道配置回显（未配置时各字段为空串/假值、configured 为 false）。
-/// 两组地址字段并存：`base_url`/`username`/`password` 归 WebDAV（随 #1221 退役），
-/// `endpoint` 起归 S3；消费哪组由 `backend` 判别。
 export interface SyncChannelConfig {
-  backend: ChannelBackend
-  base_url: string
-  username: string
-  password: string
   /// 同步空间（跨端共识的世界身份，`book-<space>` 目录）
   space_id: string
   /// S3 兼容端点（MVP 只接受 https）
@@ -47,13 +39,9 @@ export interface SyncChannelConfig {
 }
 
 /// 通道配置写入参数（表单提交形态）。
-/// 新字段在 Rust 侧带 serde 缺省：只发 WebDAV 组字段的旧调用方照常被接受
-/// （缺 backend 回 webdav）；`space_id` 缺省回 default。
+/// 各字段在 Rust 侧带 serde 缺省（`space_id` 缺省回 default）；退役后端留下的
+/// 多余键由 serde 默认忽略，不影响解析。
 export interface SyncChannelConfigInput {
-  backend?: ChannelBackend
-  base_url?: string
-  username?: string
-  password?: string
   space_id?: string
   endpoint?: string
   region?: string

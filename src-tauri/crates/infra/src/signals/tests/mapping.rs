@@ -494,7 +494,7 @@ fn set_log_level_is_silent() {
 
 #[test]
 fn set_sync_channel_config_is_silent() {
-    // 多端同步通道配置（issue #862）：WebDAV 凭据写 app_settings，属本机
+    // 多端同步通道配置（issue #862 / #1221）：通道凭据写 app_settings，属本机
     // 设备配置（不同步、无失效语义），刻意零信号。
     assert_signals(signals_for(Op::SetSyncChannelConfig, E::None), &[]);
 }

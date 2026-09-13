@@ -254,7 +254,7 @@ pub enum WriteOp {
     /// （op 与设置写同事务，非置脏豁免路径——基准是账本数据）。
     SetBaseCurrency,
     /// 多端同步通道配置（IPC `set_sync_channel_config`，issue #862，写
-    /// `app_settings` 的 `sync.channel.config`，WebDAV 凭据属本机设备配置）：
+    /// `app_settings` 的 `sync.channel.config`，通道凭据属本机设备配置）：
     /// 刻意零信号——通道配置不同步、不属任何失效语义；设置页自读回显。
     SetSyncChannelConfig,
 }
