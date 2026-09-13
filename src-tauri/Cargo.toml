@@ -124,6 +124,12 @@ ledger-currencies = { path = "crates/currencies" }
 # 册侧住本域，壳层启动时对装。根包 `pub use ledger_policy as policy` 再导出保
 # 持原调用点路径。
 ledger-policy = { path = "crates/policy" }
+# 定时计划域 crate（spec #1086 / issue #1098，P3 业务域）：定时交易计划/期次引擎/
+# 自动执行追补/订阅花费与同步命令归位；依赖面只有基础设施、同步协议与核心交易域
+#（票面允许集内的备份域不声明：置脏与追补两条边已按注册点反转收敛，挂载点③/④），
+# 壳层启动时对装双向接缝。根包 `pub use ledger_scheduled as scheduled_transactions`
+# 再导出保持原调用点路径。
+ledger-scheduled = { path = "crates/scheduled" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]

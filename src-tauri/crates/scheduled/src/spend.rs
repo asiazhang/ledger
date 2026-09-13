@@ -20,10 +20,10 @@ use chrono::{Datelike, Months, NaiveDate};
 use rusqlite::Connection;
 use serde::Serialize;
 
-use crate::db::query::{FromRow, query_all};
-use crate::error::Result;
-use crate::scheduled_transactions::models::RecurrenceType;
-use crate::transaction::amount;
+use super::models::RecurrenceType;
+use ledger_infra::db::query::{FromRow, query_all};
+use ledger_infra::error::Result;
+use ledger_transaction::amount;
 
 /// 逐订阅行：计划基础信息 + 该订阅本月/本年实际花费（本位币）。
 #[derive(Debug, Clone, Serialize)]
@@ -65,7 +65,7 @@ pub struct SubscriptionSpendOverview {
     pub months: Vec<SubscriptionMonthSpend>,
     /// 逐订阅行（含已取消/暂停计划，其历史实际花费如实保留）
     pub rows: Vec<SubscriptionSpendRow>,
-    /// 折算月成本合计（本位币，分）：只统计 active 计划，系数见 [`monthly_coefficient`]
+    /// 折算月成本合计（本位币，分）：只统计 active 计划，系数见 `monthly_coefficient`
     pub projected_month_native_cents: i64,
     /// 折算年成本合计（本位币，分）= 折算月成本 × 12；纯展示，不落库、不进流水与预算
     pub projected_year_native_cents: i64,

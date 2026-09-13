@@ -7,8 +7,8 @@ use super::common::{
     create_installment, create_subscription, create_transfer_plan, first_pending_occurrence,
     occurrence_status, read_txn,
 };
-use crate::test_support;
 use rusqlite::{Connection, params};
+use tauri_app_lib::test_support;
 
 // ---------------------------------------------------------------------------
 // 回归：非默认币种的定时交易折算（issue #59 核心 bug）
@@ -289,7 +289,7 @@ fn execute_occurrence_rejects_paused_plan() {
 /// 一期的部分唯一索引同时保证一笔落地至多被一期的回填认领）。
 #[test]
 fn execute_occurrence_with_preexisting_landing_completes_without_second_row() {
-    use crate::transaction::write::writer;
+    use ledger_transaction::write::writer;
 
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-a", "现金", "cash", "CNY", 0);
@@ -308,7 +308,7 @@ fn execute_occurrence_with_preexisting_landing_completes_without_second_row() {
     let norm = writer::normalize(
         &conn,
         &writer::Input {
-            kind: crate::transaction::amount::TransactionKind::Expense,
+            kind: ledger_transaction::amount::TransactionKind::Expense,
             amount_cents: 3000,
             currency_code: "CNY".into(),
             account_id: "acc-a".into(),
@@ -342,13 +342,13 @@ fn execute_occurrence_with_preexisting_landing_completes_without_second_row() {
     // 日志中含建档 op（create_subscription 经域入口产出，#860），但已落地路径
     // 不得产出**期次触发** op（落地 op 已存在于全局日志）。
     assert!(
-        !crate::sync_engine::read_ops(&conn)
+        !tauri_app_lib::sync_engine::read_ops(&conn)
             .unwrap()
             .iter()
             .any(|op| matches!(
                 &op.command,
-                crate::sync_engine::DomainCommand::Scheduled(
-                    crate::scheduled_transactions::ScheduledCommand::ExecuteOccurrence { .. }
+                tauri_app_lib::sync_engine::DomainCommand::Scheduled(
+                    tauri_app_lib::scheduled_transactions::ScheduledCommand::ExecuteOccurrence { .. }
                 )
             )),
         "已落地路径不产出期次 op"

@@ -3,9 +3,9 @@
 
 use super::super::*;
 use super::common::{first_pending_occurrence, read_txn};
-use crate::test_support;
 use rusqlite::Connection;
 use rusqlite::params;
+use tauri_app_lib::test_support;
 
 // ---------------------------------------------------------------------------
 // 商户复制（issue #190 / ADR-0028）：计划带商户 → 每期生成交易复制商户到流水
@@ -26,7 +26,7 @@ fn insert_merchant(conn: &Connection, name: &str) -> String {
 
 /// 软删商户（走商户域接缝）。
 fn soft_delete_merchant(conn: &Connection, id: &str) {
-    crate::merchants::delete_merchant(conn, id).unwrap();
+    tauri_app_lib::merchants::delete_merchant(conn, id).unwrap();
 }
 
 /// 创建带商户的订阅计划，返回计划 id。

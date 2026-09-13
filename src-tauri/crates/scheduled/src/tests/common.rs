@@ -1,12 +1,16 @@
 //! `scheduled_transactions` 测试薄皮：仅限本测试目录（`scheduled_transactions::tests`）
 //! 内部使用。通用夹具（建库两行序、账户与汇率种子）已上收统一测试工厂
-//! `crate::test_support`（spec #728 / issue #756 / ADR-0084 决策 7），本文件剩余函数
+//! `tauri_app_lib::test_support`（spec #728 / issue #756 / ADR-0084 决策 7），本文件剩余函数
 //! 全部为域特有编排——三类计划创建、期次状态与交易行读取器，是「工厂只收跨 ≥2 域
 //! 重复、单域编排留薄皮」准入规则（ADR-0084 决策 1）的参照样本。
+//!
+//! 测试实例纪律（#1098 拆 crate 起）：编排统一经 `tauri_app_lib::scheduled_transactions`
+//! 驱动根包图实例（与 tests/spend.rs 的名义类型消费一致，双实例名义类型不等价）；
+//! 入参全部为基本类型，不构成实例耦合面。
 
-use super::super::*;
 use rusqlite::Connection;
 use rusqlite::params;
+use tauri_app_lib::scheduled_transactions::*;
 
 /// 创建订阅计划（无上限，预生成窗口期次），返回计划 id。
 pub(crate) fn create_subscription(
