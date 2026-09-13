@@ -35,8 +35,7 @@
 
 use tauri_app_lib::db::new_uuid;
 use tauri_app_lib::sync_engine::{
-    ChannelBackend, ChannelLayout, S3Config, S3Transport, SyncChannelConfig, Transport,
-    probe_channel,
+    ChannelLayout, S3Config, S3Transport, SyncChannelConfig, Transport, probe_channel,
 };
 
 /// 真桶验收的凭据与目标（全部由用户在自己的 shell 里填写，见文档第 2 节）。
@@ -227,7 +226,6 @@ fn connectivity_probe_passes_and_leaves_the_channel_untouched() {
     // 空间，避免与真实同步数据互认。
     let space_id = format!("acceptance-{}", new_uuid());
     let channel = SyncChannelConfig {
-        backend: ChannelBackend::S3,
         space_id: space_id.clone(),
         endpoint: config.endpoint.clone(),
         region: config.region.clone(),
@@ -236,7 +234,6 @@ fn connectivity_probe_passes_and_leaves_the_channel_untouched() {
         access_key: config.access_key.clone(),
         secret_key: config.secret_key.clone(),
         path_style: config.path_style,
-        ..SyncChannelConfig::default()
     };
 
     probe_channel(&channel).expect("保存前探针应连通（凭据 / 目标 / 权限 / 网络任一未就位即失败）");
