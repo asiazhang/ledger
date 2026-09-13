@@ -4,6 +4,7 @@
     "categories": "Categories",
     "data": "Data",
     "scheduled": "Scheduled",
+    "features": "Features",
     "about": "About"
   },
   "categories": {
@@ -378,6 +379,21 @@
     "switchLabel": "Automatically post due installments when enabled",
     "body1": "When enabled, the app checks every 10 minutes while running and automatically posts due installments, with transaction dates faithfully taken from the planned dates; failed installments stay manual for retry, and paused or cancelled plans are untouched. Auto execution should be enabled on one machine only.",
     "body2": "This switch is a per-device preference: it does not migrate with backup or restore, and stays off by default on a new machine or after restoring a backup."
+  },
+  "features": {
+    "title": "Feature Toggles",
+    "intro": "Closing only hides the entry: no data is deleted, statistics and background behavior keep running, and you can turn it back on anytime.",
+    "descriptions": {
+      "budget": "Closing only hides the entry: budget data and its progress are unaffected.",
+      "reports": "Closing only hides the entry: reports still use all your data, with unchanged figures.",
+      "scheduled": "Closing only hides the entry: automatic execution keeps running, and existing plans are still recorded as usual.",
+      "merchants": "Closing only hides the entry: merchant names in transactions and merchant statistics stay available.",
+      "investments": "Closing only hides the entry: holdings, returns, and net worth still count the same way.",
+      "items": "Closing only hides the entry: item records are kept, and daily-cost figures are unchanged.",
+      "policies": "Closing only hides the entry: policy records are kept, and premium transactions still count in your statistics.",
+      "physicalAssets": "Closing only hides the entry: valuation records still count toward net worth.",
+      "insurers": "Closing only hides the entry: the insurer dictionary and your existing policies stay available."
+    }
   },
   "about": {
     "title": "About OpenLedger",

@@ -2,10 +2,15 @@
 /**
  * Tab 分域（issue #157 / ADR-0022；ADR-0034 移除币种只读展示并更名；#308 新增定时；
  * #444 移除商户 Tab——商户管理迁入「更多」聚合页，入口全应用唯一，ADR-0063；
- * issue #930「通用」定义放宽为不归属业务域页签的应用级偏好，日志卡片迁入）：
+ * issue #930「通用」定义放宽为不归属业务域页签的应用级偏好，日志卡片迁入；
+ * issue #1243 / ADR-0116 新增「功能」Tab——功能可见性开关体量独立成页，插在「关于」
+ * 之前）：
  * 通用（应用级偏好：轻量设备偏好为主 + 日志卡片）→ 分类（参考数据）→ 数据（备份 /
- * 存储位置 / 数据修复 子页签）→ 定时（定时计划域设备偏好）→ 关于（纯元信息，恒在末位，
- * 新增 Tab 一律插在它之前）。
+ * 存储位置 / 数据修复 子页签）→ 定时（定时计划域设备偏好，可经「功能」Tab 关闭后隐藏）
+ * → 功能（功能可见性开关）→ 关于（纯元信息，恒在末位，新增 Tab 一律插在它之前）。
+ *
+ * 设置面联动（issue #1243 范围 3 / ADR-0116 决策 4）：「功能」Tab 关闭「定时」后本页
+ * 「定时」pane 立即隐藏（v-if），重新打开即回原位置——关闭只隐藏入口，不改写任何清单。
  *
  * 「数据」pane 与其内部子页签均用 display-directive='show:lazy'：首次激活挂载后保持挂载。
  * key 必填：naive-ui ≥2.45（vapor 编译产物）对无 key 的 pane 列表按 index patch，
@@ -29,6 +34,7 @@ import {
   GridOutline,
   ServerOutline,
   RepeatOutline,
+  ToggleOutline,
   InformationCircleOutline,
 } from '@vicons/ionicons5'
 import GeneralSettings from '@/components/settings/GeneralSettings.vue'
@@ -40,8 +46,13 @@ import EncryptionSettings from '@/components/settings/EncryptionSettings.vue'
 import SyncSettings from '@/components/settings/SyncSettings.vue'
 import SearchDataSettings from '@/components/settings/SearchDataSettings.vue'
 import ScheduledSettings from '@/components/settings/ScheduledSettings.vue'
+import FeatureToggleSettings from '@/components/settings/FeatureToggleSettings.vue'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
+import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import { t } from '@ledger/i18n'
+
+// 「功能」Tab 的关闭集合读路径：设置面联动（「定时」Tab 隐藏）由本页消费。
+const featureToggles = useFeatureToggleStore()
 </script>
 
 <template>
@@ -86,9 +97,15 @@ import { t } from '@ledger/i18n'
         </NTabs>
       </NTabPane>
 
-      <NTabPane name="scheduled" key="scheduled">
+      <NTabPane v-if="!featureToggles.isFeatureClosed('scheduled')" name="scheduled" key="scheduled">
         <template #tab><span class="pane-tab"><NIcon :component="RepeatOutline" />{{ t('settings.tabs.scheduled') }}</span></template>
         <ScheduledSettings />
+      </NTabPane>
+
+      <!-- 功能可见性开关（issue #1243 / ADR-0116 决策 7）：体量独立成页，插在「关于」之前。 -->
+      <NTabPane name="features" key="features">
+        <template #tab><span class="pane-tab"><NIcon :component="ToggleOutline" />{{ t('settings.tabs.features') }}</span></template>
+        <FeatureToggleSettings />
       </NTabPane>
 
       <NTabPane name="about" key="about">
