@@ -30,7 +30,11 @@ pub mod budget;
 //（expand 形态，ledger-transaction 同款）。域内本体见 `ledger-categories` crate。
 pub use ledger_categories as categories;
 pub mod commands;
-pub mod currencies;
+// 币种域 crate（spec #1086 / issue #1095，P3 叶子域，参考数据三域之二）：币种字典、
+// 汇率与本位币基准自根包域目录拆出，根包以再导出形态保留原引用路径——壳层与其余
+// 域的 `crate::currencies::…` / `tauri_app_lib::currencies::…` 调用点零改动
+//（expand 形态，ledger-transaction 同款）。域内引擎见 `ledger-currencies` crate。
+pub use ledger_currencies as currencies;
 pub mod dashboard;
 pub mod investment;
 pub mod item;

@@ -98,6 +98,12 @@ ledger-categories = { path = "crates/categories" }
 # ——交易×商户接缝（#1092）的实现注册侧，壳层启动时对装。根包
 # `pub use ledger_merchants as merchants` 再导出保持原调用点路径。
 ledger-merchants = { path = "crates/merchants" }
+# 币种域 crate（spec #1086 / issue #1095，P3 叶子域，参考数据三域之二）：币种字典、
+# 汇率与本位币基准归位；依赖面只有基础设施、同步协议与核心交易域——本位币基准
+# 读取经注册点供给核心交易域接缝（下层提供实现、壳层启动接线，ADR-0112 决策 5），
+# 壳层启动时对装。根包 `pub use ledger_currencies as currencies` 再导出保持原
+# 调用点路径。
+ledger-currencies = { path = "crates/currencies" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]

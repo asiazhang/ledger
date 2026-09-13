@@ -15,7 +15,7 @@ use std::borrow::Cow;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use ledger_infra::error::Result;
 use ledger_sync_protocol::command::SyncCommand;
 use ledger_sync_protocol::op::record_local as record_op;
 
@@ -57,7 +57,9 @@ pub(crate) fn record_local(conn: &Connection, command: LedgerSettingCommand) -> 
 }
 
 /// 重放执行（同步引擎分派接缝）：按设置项转发到对应执行协议。
-pub(crate) fn replay_command(conn: &Connection, command: &LedgerSettingCommand) -> Result<()> {
+///（crate 拆分后跨 crate 消费：sync_engine::registry 经域路径驱动，#1095——
+/// pub(crate)→pub，签名与语义不变，#1092 replay_command 同款。）
+pub fn replay_command(conn: &Connection, command: &LedgerSettingCommand) -> Result<()> {
     match command {
         LedgerSettingCommand::SetBaseCurrency { code } => {
             super::base_currency::replay_set_base_currency(conn, code)

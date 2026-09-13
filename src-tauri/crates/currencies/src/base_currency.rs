@@ -18,8 +18,8 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::error::{AppError, Result};
-use crate::settings;
+use ledger_infra::error::{AppError, Result};
+use ledger_infra::settings;
 
 /// 本位币基准的默认值（与种子数据一致；缺 key / 旧版本备份恢复后缺表时回此值，
 /// 行为免费正确）。
@@ -80,5 +80,5 @@ pub(crate) fn replay_set_base_currency(conn: &Connection, code: &str) -> Result<
 /// #1092）：把本域权威读单点 [`current_base_currency`] 装入，壳层启动接线，
 /// 业务代码不直接调用。
 pub fn install_base_currency_hook() {
-    crate::transaction::amount::base_currency::register_base_currency_reader(current_base_currency);
+    ledger_transaction::amount::base_currency::register_base_currency_reader(current_base_currency);
 }
