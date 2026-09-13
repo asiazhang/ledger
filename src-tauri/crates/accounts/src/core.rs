@@ -61,15 +61,17 @@ fn funding_account_view(
         Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
         Err(e) => return Err(e.into()),
     };
-    Ok(Some(ledger_transaction::seams::funding::FundingAccountView {
-        class: if FUNDING_CASH_LIKE_TYPES.contains(&account_type) {
-            ledger_transaction::seams::funding::FundingAccountClass::CashLike
-        } else {
-            ledger_transaction::seams::funding::FundingAccountClass::Ineligible
+    Ok(Some(
+        ledger_transaction::seams::funding::FundingAccountView {
+            class: if FUNDING_CASH_LIKE_TYPES.contains(&account_type) {
+                ledger_transaction::seams::funding::FundingAccountClass::CashLike
+            } else {
+                ledger_transaction::seams::funding::FundingAccountClass::Ineligible
+            },
+            type_display: account_type.to_string(),
+            currency_code,
         },
-        type_display: account_type.to_string(),
-        currency_code,
-    }))
+    ))
 }
 
 /// 注册出资账户视图实现（幂等：进程级一次，重复注册保留首次）。调用点在壳层
