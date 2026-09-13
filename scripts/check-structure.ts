@@ -561,6 +561,7 @@ export const SYNC_ENGINE_MODULES: readonly WhitelistEntry[] = [
   { path: 'parked.rs', layer: '域目录', note: 'ParkedOp 挂起队列（ADR-0091 决策 7）：不可重放 op 的统一归宿，码化报错不阻塞其余重放、重投递幂等覆盖自愈' },
   { path: 'registry.rs', layer: '域目录', note: '重放注册表（ADR-0101）：14 个语义命令类型的适配绑定与 DomainCommand::subject 组装臂，注册完备由两处穷尽 match 的编译红保证' },
   { path: 'transport.rs', layer: '域目录', note: 'Transport 哑字节通道抽象（v1 唯一后端是 S3 兼容对象存储，两端同一代码路径；WebDAV 已随 #1221 退役）' },
+  { path: 'transport/s3.rs', layer: '域目录', note: 'S3 兼容对象存储后端（issue #1216 / ADR-0091 决策 1 修订）：SigV4 凭据寻址、分片上传与错误归一；transport.rs 是 mod 文件 + 子目录混合形状，条目分立使扫描面覆盖后端本体' },
   { path: 'trigger', layer: '域目录', note: '触发编排（issue #863 / ADR-0098）：通道配置与构库单点、三条自动触发入口与手动入口共用轮次编排、分平台门收在 start_triggers 单点、会话信封形态判定；install_after_write_hook 写后钩子经壳层/测试工厂/BDD world 装入（ADR-0091 决策 9）' },
 ]
 
