@@ -62,3 +62,5 @@ enum、serde 输出、`sync_ops.entity` 列取值、挂起行字段全部不动�
 > **勘误 4（门 (b) 基线勘误扩充：根共享接缝白名单）**：基线红点远不止 scheduled 一处——`record_local`（ops.rs，经根 re-export 被 9 个业务域 command.rs 引用）与 `device_id`（约 20 处业务域引用）均为业务域既有合法依赖（mod.rs 既有注释「域内共享接缝」）。严形态合法面据此定为：`command` 模块路径 ∪ 根 re-export 白名单 `{DomainCommand, record_local, device_id}`（三条各附缘由注释，认许边同款纪律）；内部模块路径（`engine::`/`ops::`/`model::`/…）一律红；门作用域限业务域目录（`commands/`、`test_support/`、tests 不在列）。scheduled 的 `engine::ReplayEffect` 在 ReplayEffect 挪入契约模块后自动转绿，无须白名单。
 
 > **勘误 5（落地细节）**：门 (a) 样本轮询测试落点 `sync_engine/tests/wire.rs`（契约 serde 一致性既有落点）；单 PR 交付（门 (b) 绿点依赖 ReplayEffect 挪位、门 (a) 依赖绑定与键派生就位，拆批产生基线红中间态）；LWW 复活用例落点 `sync_engine/tests/merge.rs`。
+
+> **修订注记（#1107，2026-09-13）：同步域 crate 化后的坐标同步**：多端同步域自根包域目录拆为 workspace 成员 `ledger-sync-engine`（spec #1086 P4 收官，ADR-0112），本文「sync_engine 内」各住址随迁 `crates/sync-engine/src/`——注册表 `registry.rs`、契约文件 `command.rs`、勘误 5 的测试落点 `sync_engine/tests/wire.rs`、`sync_engine/tests/merge.rs` 相应迁入 crate 内 `tests/`。决策骨架（trait 单点、绑定吸收形状、标签单源组装、门 a/b/c）不变；业务域→同步域引用的守门自 #1089 收紧为零容忍（协议面下放协议 crate），非本文勘误 4 的白名单形态。

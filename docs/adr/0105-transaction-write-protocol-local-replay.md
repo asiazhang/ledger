@@ -58,7 +58,7 @@ FIFO 取批 + 超额守卫四份拷贝与 revert / release 模板归 #1005（已
 - **形态级**：Local 的 op 载荷形状与 id 生成；Replay 的 id 携带、存活校验挂起联动、「重放不产本地 op」；
 - **不写调用形状断言**（ADR-0087）；形态对称性不靠测试兜底——由编译期单正文构造保证。
 
-存量 `transaction/tests/behavior.rs`、`transaction/tests/oplog.rs` 与 `sync_engine/tests/*` 的逐条归层清单随 spec 定案。
+存量 `transaction/tests/behavior.rs`、`transaction/tests/oplog.rs` 与 `sync_engine/tests/*`（#1107 起住 `crates/sync-engine/src/tests/`）的逐条归层清单随 spec 定案。
 
 ### 8. 附带定案
 

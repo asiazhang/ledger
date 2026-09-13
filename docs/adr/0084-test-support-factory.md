@@ -83,4 +83,4 @@ grilling（2026-09-07，两轮）逐项复核评审数字与当前工作树一�
 
 落点判定不变的部分：工厂仍是跨域深模块（决策 1 准入规则）、接口仍是 `&Connection` 自由函数集（决策 3）。落点判定随结构演进的部分：当前工厂仍住根包 `test_support/`（域目录尚在根包，环无必要）；业务域逐域拆出后按 spec #1086 以**独立测试支持 crate** 供各域 dev-dependency 引用——届时本决策 2 的「独立测试 crate」从否决项变为目标形态，`#[doc(hidden)]` 可见性机制随之迁入该 crate（生产 lib 导出面同步瘦身）。
 
-环非默认必选：负向用例可能被环击穿时以「测试不随迁」替代——协议 crate 先例：其根文档 compile_fail 负向用例要求 `tauri_app_lib` 不可见，取环会击穿之，DeviceId 单测因此留根包 `sync_engine/tests/`（理由留痕于该 crate Cargo.toml）。
+环非默认必选：负向用例可能被环击穿时以「测试不随迁」替代——协议 crate 先例：其根文档 compile_fail 负向用例要求 `tauri_app_lib` 不可见，取环会击穿之，DeviceId 单测因此留根包 `sync_engine/tests/`（#1107 起随域迁入 `crates/sync-engine/src/tests/`；理由留痕于该 crate Cargo.toml）。
