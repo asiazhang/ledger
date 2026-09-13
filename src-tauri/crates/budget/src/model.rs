@@ -9,8 +9,8 @@ use std::str::FromStr;
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
 
-use crate::db::query::FromRow;
-use crate::error::AppError;
+use ledger_infra::db::query::FromRow;
+use ledger_infra::error::AppError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

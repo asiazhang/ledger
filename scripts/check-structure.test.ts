@@ -8,6 +8,8 @@ import {
   ACCOUNTS_SRC_REL,
   BACKUP_MODULES,
   BACKUP_SRC_REL,
+  BUDGET_MODULES,
+  BUDGET_SRC_REL,
   CATEGORIES_MODULES,
   CATEGORIES_SRC_REL,
   CRATES,
@@ -88,6 +90,7 @@ function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, CURRENCIES_SRC_REL), CURRENCIES_MODULES)
   writeModuleStubs(join(srcTauri, POLICY_SRC_REL), POLICY_MODULES)
   writeModuleStubs(join(srcTauri, SCHEDULED_SRC_REL), SCHEDULED_MODULES)
+  writeModuleStubs(join(srcTauri, BUDGET_SRC_REL), BUDGET_MODULES)
 }
 
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
@@ -162,6 +165,15 @@ function isScheduledModulePath(rel: string): boolean {
   return SCHEDULED_ENTRY_PATHS.has(rel)
 }
 
+/** 预算域 crate 模块路径判定（精确文件名，#1101；`command.rs` / `model.rs` 与
+ *  交易域清单、`crud.rs` 与商户域清单撞名，路由优先级归先登记的 crate，夹具
+ *  对预算域只用无撞名的 `progress.rs`）。 */
+const BUDGET_ENTRY_PATHS = new Set(BUDGET_MODULES.map((m) => m.path))
+
+function isBudgetModulePath(rel: string): boolean {
+  return BUDGET_ENTRY_PATHS.has(rel)
+}
+
 /**
  * 写覆盖文件：按路径首段归位——基础设施模块（`db/…` / `error.rs` / …）落
  * `<srcTauri>/crates/infra/src`，备份域 crate 模块（`auto.rs` / `engine.rs`，#1091）
@@ -190,6 +202,8 @@ function placeOverride(srcTauri: string, relPath: string, content: string): void
           ? join(srcTauri, POLICY_SRC_REL)
         : isScheduledModulePath(relPath)
           ? join(srcTauri, SCHEDULED_SRC_REL)
+        : isBudgetModulePath(relPath)
+          ? join(srcTauri, BUDGET_SRC_REL)
           : join(srcTauri, 'src')
   const file = join(base, relPath)
   mkdirSync(join(file, '..'), { recursive: true })
@@ -777,6 +791,8 @@ interface CrateFixtureOverrides {
   policyManifest?: string
   /** 覆盖定时计划域 crate 的 `crates/scheduled/Cargo.toml`（依赖方向负向夹具，#1098） */
   scheduledManifest?: string
+  /** 覆盖预算域 crate 的 `crates/budget/Cargo.toml`（依赖方向负向夹具，#1101） */
+  budgetManifest?: string
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string
   /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
@@ -1098,6 +1114,28 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   )
   writeFileSync(join(srcTauri, 'crates', 'scheduled', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
+  // 预算域 crate（#1101，P3 叶子业务域 crate）：夹具与真实仓库同形——成员目录 +
+  // 门禁继承 + dev-dependency 测试环。
+  mkdirSync(join(srcTauri, 'crates', 'budget', 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'crates', 'budget', 'Cargo.toml'),
+    overrides.budgetManifest ??
+      [
+        '[package]',
+        'name = "ledger-budget"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[dev-dependencies]',
+        'tauri-app = { path = "../.." }',
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
+  )
+  writeFileSync(join(srcTauri, 'crates', 'budget', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
   writeFileSync(
@@ -1361,6 +1399,66 @@ describe('check-structure 保单域 crate（#1100 P3 叶子业务域 crate 自�
 
   it('保单域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
     // 缺省 policyManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
+  })
+})
+
+describe('check-structure 预算域 crate（#1101 P3 叶子业务域 crate 自根包拆出）', () => {
+  it('真实仓库默认通过：预算域 crate 模块级扫描入摘要', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`预算域模块 ${BUDGET_MODULES.length} 项`)
+  })
+
+  it('预算域 crate 模块引用壳层 → 红并定位文件行号', () => {
+    // 'progress.rs' 无撞名（command.rs / model.rs 与交易域清单、crud.rs 与商户域
+    // 清单撞名，路由优先级归先登记的 crate），经 placeOverride 落预算域 crate。
+    const args = makeFixture({ 'progress.rs': shellUse })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('反向依赖')
+    expect(r.output).toContain('progress.rs:1')
+  })
+
+  it('预算域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）', () => {
+    const args = makeFixture({
+      'progress.rs': 'use tauri_app_lib::sync_engine::engine::ReplayEffect;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域')
+    expect(r.output).toContain('progress.rs:1')
+  })
+
+  it('预算域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1101）', () => {
+    const args = makeCrateFixture({
+      budgetManifest:
+        '[package]\nname = "ledger-budget"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 依赖方向')
+    expect(r.output).toContain('ledger-budget')
+  })
+
+  it('预算域 crate 生产依赖核心交易域 crate → 绿（域→域合法上层依赖，度量矩阵消费侧，#1092）', () => {
+    // 预算进度 spent 口径消费交易域 kind→度量矩阵（ExpenseNet），是预算 → 核心
+    // 交易的单向依赖（域→域合法上层依赖），依赖面受 AC 约束（基础设施/协议/
+    // 核心交易域），不属禁边。
+    const args = makeCrateFixture({
+      budgetManifest:
+        '[package]\nname = "ledger-budget"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\nledger-transaction = { path = "../transaction" }\n\n' +
+        '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('预算域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
+    // 缺省 budgetManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
     const r = run(makeCrateFixture())
     expect(r.status).toBe(0)
   })

@@ -3115,6 +3115,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ledger-budget"
+version = "0.6.0"
+dependencies = [
+ "chrono",
+ "ledger-infra",
+ "ledger-sync-protocol",
+ "ledger-transaction",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri-app",
+]
+
+[[package]]
 name = "ledger-categories"
 version = "0.6.0"
 dependencies = [
@@ -5471,6 +5485,7 @@ dependencies = [
  "http-body-util",
  "ledger-accounts",
  "ledger-backup",
+ "ledger-budget",
  "ledger-categories",
  "ledger-currencies",
  "ledger-infra",
