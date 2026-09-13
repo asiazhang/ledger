@@ -21,8 +21,8 @@
 //! 买入/卖出协议（prepare/apply/revert 三件套，issue #72）、时点持仓推算、
 //! 走势与盈亏查询、手动报价、场外基金接入（按代码即拉 / AI fund 增强）、
 //! 「持仓标的」判定谓词与价格写入单点（现价缓存 upsert / 价格历史周采样
-//! upsert，自 `sync::persist` 随域归位迁入）、财务自由度口径（#405 自命令壳层
-//! 迁入）。
+//! upsert，自 `sync::persist`（行情同步域 `ledger-market-sync` crate）随域归位
+//! 迁入）、财务自由度口径（#405 自命令壳层迁入）。
 //!
 //! 接缝（域语言短名经本入口再导出，调用面用 `investment::` 前缀）：
 //! - [`command`]：同步命令（op 载荷形态、产出单点与重放分派，issue #861）——
@@ -48,8 +48,9 @@
 //!   价格刻度换算（`PRICE_UNITS_PER_FEN` / `price_value_to_cents`）、东财来源标记；
 //! - [`quote`]：行情接入接缝（QuoteAdoption，ADR-0103）——统一报价载荷
 //!   `Quote` 与落库半边 `adopt_quote`（建档 + 落现价一体）；查询半边实现在
-//!   行情同步域网络层（`sync::fetch_fund_quote_production` /
-//!   `sync::fetch_stock_quote_production`），统一注入签名 `(代码, 市场)`；
+//!   行情同步域 `ledger-market-sync` crate 网络层
+//!   （`sync::fetch_fund_quote_production` / `sync::fetch_stock_quote_production`，
+//!   `sync` 为根包再导出名），统一注入签名 `(代码, 市场)`；
 //! - [`reports`]：已实现盈亏汇总与按币种累计收益查询（issue #1077）；
 //! - [`source`]：交易列表标的来源反查（spec #704 / issue #709，按生成交易 id
 //!   批量取证券交易记录指向的标的展示字段）；
@@ -60,7 +61,8 @@
 //!   （尾差归末批次）与 `security_lot_adjustments` 审计落库（ADR-0106 决策 2/3，
 //!   issue #1049）；
 //! - [`stock`]：股票按（市场，代码）查询的领域规则——代码形态 → 市场单点推断、
-//!   报价币种推导（issue #693 / ADR-0081；东财访问在 `sync::stock`）；
+//!   报价币种推导（issue #693 / ADR-0081；东财访问在行情同步域
+//!   `ledger-market-sync` crate 的 `sync::stock`）；
 //! - [`trade`]：buy/sell/convert/split/dividend 协议分派与买卖/转换/份额调整明细投影
 //!   （`TransactionTrade` / `TransactionConvert`）；
 //! - [`trend`]：单标的 / 组合走势查询。

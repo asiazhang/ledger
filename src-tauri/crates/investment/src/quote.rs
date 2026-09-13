@@ -4,9 +4,10 @@
 //! 差异进通道。
 //!
 //! 两成员（ADR-0103 决策 1）：
-//! - **查询半边**（按代码取行情，纯取数不落库）：实现在行情同步域网络层
-//!   （`sync::fetch_fund_quote_production` / `sync::fetch_stock_quote_production`，
-//!   根包；crate 拆分后跨包路径不再做 rustdoc 链接），以统一注入签名
+//! - **查询半边**（按代码取行情，纯取数不落库）：实现在行情同步域
+//!   `ledger-market-sync` crate 网络层（`sync::fetch_fund_quote_production` /
+//!   `sync::fetch_stock_quote_production`；`sync` 为根包再导出名，crate 拆分后
+//!   跨包路径不做 rustdoc 链接），以统一注入签名
 //!   `FnMut(代码, 市场) -> Result<Quote>` 驱动——场外基金无交易所市场概念，
 //!   市场位恒传通道字典市场 `unknown`（见 [`super::fund`]）；
 //! - **落库半边**（[`adopt_quote`]，**建档 + 落现价一体**）：三个消费壳
@@ -83,8 +84,8 @@ impl Quote {
     }
 
     /// 场内通道的类型提示：缺省即 `Stock`（东财类型特征字段缺省/非零 → 股票，
-    /// 与探测单点 `sync::stock`（行情同步域，ledger-market-sync crate）同判，ADR-0081）——误判代价仅类型标签，
-    /// 已接受。
+    /// 与探测单点 `sync::stock`（行情同步域 `ledger-market-sync` crate，#1106）同判，
+    /// ADR-0081）——误判代价仅类型标签，已接受。
     pub fn stock_kind_hint(&self) -> InstrumentType {
         self.kind_hint.unwrap_or(InstrumentType::Stock)
     }

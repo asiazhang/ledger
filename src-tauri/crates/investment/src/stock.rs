@@ -1,7 +1,8 @@
 //! 股票按（市场，代码）查询与创建增强的领域规则收口（issue #693/#694/#696 /
 //! ADR-0081 决策 1/2）：代码形态 → 查询候选单点解析（显式 market 校验共用同一份
 //! 形态规则）、报价币种推导与创建增强的东财往返路由判定。东财网络访问在行情
-//! 同步域（`sync::stock`，统一注入签名的场内实例，ADR-0103 决策 2）；行情接入
+//! 同步域 `ledger-market-sync` crate（`sync::stock`，统一注入签名的场内实例，
+//! ADR-0103 决策 2）；行情接入
 //! 落库半边的场内通道（[`adopt_stock_quote`] / [`create_stock_degraded`]）镜像
 //! 场外基金的 `fund.rs` 同族接缝，供 stocks 查询端点、标的创建壳与后续添加投资
 //! 标的壳共用（spec #690 测试决策：唯一新增接缝，三个壳共用）。
@@ -22,7 +23,8 @@ use ledger_infra::error::{AppError, Result};
 
 /// 本接缝支持的查询市场闭集：沪深港 + 美股三市场（ADR-0081 决策 1/2，issue
 /// #696）。市场是行情路由的硬键，闭集在解析单点收口；行情 secid 映射见
-/// `sync::http::secid_prefix`（两者闭集同步扩展）。
+/// `sync::http::secid_prefix`（行情同步域 `ledger-market-sync` crate，两者闭集
+/// 同步扩展）。
 pub const STOCK_LOOKUP_MARKETS: &[&str] = &["sh", "sz", "hk", "nasdaq", "nyse", "amex"];
 
 /// 美股 ticker 缺省遍历的候选序（首个命中生效）：纳斯达克 → 纽交所 → 美交所。
@@ -249,7 +251,8 @@ where
 
 /// 添加投资标的·识别落库阶段（issue #697）：类型自动识别（行情命中 → stock、
 /// 东财类型特征 → etf，提示随行情在访问层投影为 `kind_hint`，探测单点
-/// `sync::stock::detect_kind_hint`）后经创建增强同一落库接缝
+/// `sync::stock::detect_kind_hint`（行情同步域 `ledger-market-sync` crate））后经
+/// 创建增强同一落库接缝
 ///（[`adopt_stock_quote`]：权威名称回填 + 精确市场落库 + 最新价落现价，来源
 /// manual、币种按市场推导）。与 AI 创建端点的差异只在类型来源：对话框无类型
 /// 入参，类型即识别结果（spec #690 用户故事 12）；误判代价仅类型标签，已接受
