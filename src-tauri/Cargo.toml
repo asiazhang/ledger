@@ -130,6 +130,11 @@ ledger-policy = { path = "crates/policy" }
 # 壳层启动时对装双向接缝。根包 `pub use ledger_scheduled as scheduled_transactions`
 # 再导出保持原调用点路径。
 ledger-scheduled = { path = "crates/scheduled" }
+# 预算域 crate（spec #1086 / issue #1101，P3 叶子业务域 crate）：预算 CRUD 与
+# 当前周期进度归位；依赖面只有基础设施、同步协议与核心交易域——进度 spent
+# 口径消费 kind→度量矩阵（ExpenseNet），无接缝无注册点、壳层启动零接线。根包
+# `pub use ledger_budget as budget` 再导出保持原调用点路径。
+ledger-budget = { path = "crates/budget" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]

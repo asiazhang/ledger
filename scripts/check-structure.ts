@@ -107,7 +107,6 @@ export type Layer = (typeof LAYER)[keyof typeof LAYER]
  */
 export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'item', layer: '域目录', note: '物品域（#397 阶段 1 归位，主体自 commands/item 随迁）' },
-  { path: 'budget', layer: '域目录', note: '预算域（#399 阶段 3 归位）' },
   { path: 'physical_asset', layer: '域目录', note: '实物资产域（issue #466 新建即归位，ADR-0064）' },
   { path: 'investment', layer: '域目录', note: '投资域（#401 阶段 5 归位，主体自 commands/investment 随迁；价格写入单点自 sync/persist 迁入）' },
   { path: 'reports', layer: '域目录', note: '报表域（#405 归位，月度汇总/分类/商户/日期极值聚合读模型，消费 transaction::amount 矩阵）' },
@@ -369,6 +368,27 @@ export const SCHEDULED_MODULES: readonly WhitelistEntry[] = [
 export const SCHEDULED_SRC_REL = 'crates/scheduled/src'
 
 /**
+ * 预算域 crate 的模块清单（spec #1086 / issue #1101）：路径相对
+ * `src-tauri/crates/budget/src`。P3 叶子业务域 crate——预算 CRUD、软删除与
+ * 当前周期进度（实时推导不落库）。依赖面只有基础设施、同步协议与核心交易域
+ * ——进度 spent 口径消费 kind→度量矩阵（ExpenseNet），对根包与同级业务域零
+ * 依赖，无接缝无注册点、壳层启动零接线；对壳层与同步域零容忍照扫（与备份/
+ * 交易 crate 同款，清单条目 layer 为域目录即入业务域扫描面）；反向引用由
+ * cargo 依赖图拒绝（生产依赖面无根包，dev-dependency 环只覆盖测试目标）。
+ * crate 根 lib.rs 是声明与再导出面（无守门靶向代码），与协议/备份/交易 crate
+ * 同款不入清单；tests.rs 为测试豁免形态不入清单。
+ */
+export const BUDGET_MODULES: readonly WhitelistEntry[] = [
+  { path: 'command.rs', layer: '域目录', note: '预算同步命令（issue #860 / ADR-0091）：op 载荷形态、产出单点与重放分派' },
+  { path: 'crud.rs', layer: '域目录', note: '预算 CRUD 域行为（issue #91/#183/#184）：写入校验（金额为正/支出分类/「分类+周期」唯一）与软删除' },
+  { path: 'model.rs', layer: '域目录', note: '预算域模型（#420 随域归位）：周期枚举、实体、入参与进度' },
+  { path: 'progress.rs', layer: '域目录', note: '当前周期进度（issue #182）：spent = expense_net 口径，参与 kind 由交易域度量矩阵导出' },
+]
+
+/** 预算域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-budget.dir 同源。 */
+export const BUDGET_SRC_REL = 'crates/budget/src'
+
+/**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
  * 与上面的 `LAYER`（单 crate 内的**模块路径**分层：域目录 / 基础设施）刻意分开——
  * 两者是不同粒度的事实源，同名值不合并（合并只会让任一侧语义被动漂移）。
@@ -473,6 +493,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/scheduled',
     layer: CRATE_LAYER.DOMAIN,
     note: '定时计划域 crate（#1098，P3 业务域：定时交易计划/期次引擎/自动执行追补/订阅花费，可被多端同步域依赖的独立编译单元，spec #1086）；依赖面只有基础设施、同步协议与核心交易域（期次落库/校验经 writer 接缝、花费合计经 amount 矩阵，#1092）——票面允许集内的备份域不声明：期次落账置脏与追补触发两条边已按注册点反转收敛（挂载点③/④，ADR-0112 决策 5，本域持注册点与实现侧、壳层启动对装），对壳层/同步域零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
+  },
+  {
+    name: 'ledger-budget',
+    dir: 'crates/budget',
+    layer: CRATE_LAYER.DOMAIN,
+    note: '预算域 crate（#1101，P3 叶子业务域 crate：预算 CRUD/软删除/当前周期进度，可被多端同步域依赖）；依赖面只有基础设施、同步协议与核心交易域——进度 spent 口径消费 kind→度量矩阵（ExpenseNet）是域→域合法上层依赖（预算 → 核心交易单向），无接缝无注册点、壳层启动零接线，对壳层与同步域零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
   },
 ]
 
@@ -1799,6 +1825,7 @@ function main(): void {
       ...collectRustFiles(join(srcTauriDir, CURRENCIES_SRC_REL), CURRENCIES_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, POLICY_SRC_REL), POLICY_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, SCHEDULED_SRC_REL), SCHEDULED_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, BUDGET_SRC_REL), BUDGET_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -1859,6 +1886,7 @@ function main(): void {
   scannedFiles += scanModuleEntries(CURRENCIES_MODULES, join(srcTauriDir, CURRENCIES_SRC_REL), problems)
   scannedFiles += scanModuleEntries(POLICY_MODULES, join(srcTauriDir, POLICY_SRC_REL), problems)
   scannedFiles += scanModuleEntries(SCHEDULED_MODULES, join(srcTauriDir, SCHEDULED_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(BUDGET_MODULES, join(srcTauriDir, BUDGET_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -1898,6 +1926,7 @@ function main(): void {
       `+ 币种域模块 ${CURRENCIES_MODULES.length} 项（crate ${CURRENCIES_SRC_REL}，#1095）` +
       `+ 保单域模块 ${POLICY_MODULES.length} 项（crate ${POLICY_SRC_REL}，#1100）` +
       `+ 定时计划域模块 ${SCHEDULED_MODULES.length} 项（crate ${SCHEDULED_SRC_REL}，#1098）` +
+      `+ 预算域模块 ${BUDGET_MODULES.length} 项（crate ${BUDGET_SRC_REL}，#1101）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +

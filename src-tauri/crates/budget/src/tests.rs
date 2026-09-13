@@ -6,15 +6,16 @@ use chrono::NaiveDate;
 use rusqlite::Connection;
 
 use super::model::{BudgetInput, BudgetPeriod};
-use crate::budget::{budget_progress_rows, create_budget, list_budgets, update_budget};
-use crate::db::now_iso;
-use crate::error::{AppError, ErrClass};
-use crate::transaction::amount::{Measure, TransactionKind, signed_amount};
+use crate::{budget_progress_rows, create_budget, list_budgets, update_budget};
+use ledger_infra::db::now_iso;
+use ledger_infra::error::{AppError, ErrClass};
 use ledger_sync_protocol::device::device_id;
+use ledger_transaction::amount::{Measure, TransactionKind, signed_amount};
 
 fn setup() -> Connection {
-    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
-    crate::test_support::open()
+    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）：
+    // 工厂住根包，经 dev-dependency 测试环消费（#1101，ledger-transaction 同款）。
+    tauri_app_lib::test_support::open()
 }
 
 /// 未知预算周期按 ADR-0050 码化（#1072）：闭集解析边界报稳定码与插值参数，
@@ -71,7 +72,7 @@ fn today() -> NaiveDate {
 
 fn insert_dummy_account(conn: &Connection) {
     // 外键脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）。
-    crate::test_support::seed_account(conn, "dummy", "虚拟账户", "cash", "CNY", 0);
+    tauri_app_lib::test_support::seed_account(conn, "dummy", "虚拟账户", "cash", "CNY", 0);
 }
 
 /// 夹具一行 = 一笔交易（kind 用 Amount 接缝的 TransactionKind 枚举表述）。

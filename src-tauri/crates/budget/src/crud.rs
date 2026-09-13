@@ -8,10 +8,10 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::command::{BudgetCommand, record_local};
 use super::model::{Budget, BudgetInput, BudgetPeriod};
-use crate::db::query::query_all;
-use crate::db::tx_scope::ensure_transaction;
-use crate::db::{new_uuid, now_iso};
-use crate::error::{AppError, Result};
+use ledger_infra::db::query::query_all;
+use ledger_infra::db::tx_scope::ensure_transaction;
+use ledger_infra::db::{new_uuid, now_iso};
+use ledger_infra::error::{AppError, Result};
 use ledger_sync_protocol::device::device_id;
 
 /// 列出全部未删除预算，排序按创建先后。

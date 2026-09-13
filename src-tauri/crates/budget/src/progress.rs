@@ -4,9 +4,9 @@ use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 
 use super::model::BudgetProgress;
-use crate::db::query::query_all;
-use crate::error::Result;
-use crate::transaction::amount::{Measure, contributing_kinds_sql, expense_net_expr};
+use ledger_infra::db::query::query_all;
+use ledger_infra::error::Result;
+use ledger_transaction::amount::{Measure, contributing_kinds_sql, expense_net_expr};
 
 /// 预算 spent = `expense_net`（毛支出 − 退款，退款冲减支出），与报表分类净值同口径；参与 kind 由矩阵导出（不含 buy/sell 等投资类）。
 /// 窗口为当前自然周期，由注入的 `today` 驱动、与存储的 start_date 无关（存量旧日期
