@@ -55,4 +55,4 @@
 
 - issue #30（父 spec）：交易列表服务端分页（items + total，offset 页码模式）
 - issue #32（T1）：服务端分页查询与全链路契约替换
-- `src-tauri/src/investment/`（`InstrumentListFilter/InstrumentListResult` 先例；#401 域归位前住 `src-tauri/src/commands/investment/`）
+- 投资域（`InstrumentListFilter/InstrumentListResult` 先例；历史坐标：`src-tauri/src/commands/investment/`（#401 域归位前）→ `src-tauri/src/investment/`（域归位后）→ `ledger-investment` crate（#1097 现役））
