@@ -10,9 +10,13 @@
 //! （WebDAV URL / 对象键 / 文件路径）。文件名集合由 [`super::channel`] 的
 //! 布局规则产出，全部为 URL 安全字符。
 //!
-//! 错误语义：凭据错误与网络失败均产生**明确可重试**的码化错误
-//! （`sync-channel.auth-failed` / `sync-channel.network-failed`），修正凭据
-//! 或网络恢复后重试同步轮次即可；失败不影响本地记账（同步是旁路写入）。
+//! 错误语义（issue #1219 五层分层）：**凭据错误**（`sync-channel.auth-failed`）、
+//! **目标不存在**（`sync-channel.target-missing`）、**权限不足**
+//! （`sync-channel.permission-denied`）、**网络不可达**
+//! （`sync-channel.network-failed`）与服务异常（`sync-channel.http-failed`）各成
+//! 一层，层与层给用户的下一步动作不同（改密钥 / 改桶名与端点 / 改授权 / 查网络 /
+//! 等恢复）。全部为**明确可重试**的码化错误；失败不影响本地记账（同步是旁路写入）。
+//! 文案一律通道无关——后端选谁（WebDAV / S3 兼容对象存储）不该改变用户读到的句子。
 
 pub mod s3;
 pub mod webdav;
@@ -35,11 +39,38 @@ pub trait Transport: Send + Sync {
     fn write_file(&self, path: &str, bytes: &[u8]) -> crate::error::Result<()>;
 }
 
-/// 凭据被拒（HTTP 401/403）的码化错误单点：明确、可重试（修正凭据后）。
+/// 凭据被拒（HTTP 401，或服务端的密钥/签名类错误码）的码化错误单点：明确、
+/// 可重试（修正凭据后）。
 pub(super) fn auth_failed_error() -> AppError {
     AppError::coded(
         "sync-channel.auth-failed",
-        "同步通道凭据被拒绝，请检查网盘账号与密码（或应用密码）设置",
+        "同步通道凭据被拒绝，请检查通道账号与密钥设置",
+    )
+}
+
+/// 权限不足（凭据有效但无权访问目标，HTTP 403 / `AccessDenied`）的码化错误
+/// 单点：明确、可自救（补授权或换凭据后重试）。
+///
+/// 与 [`auth_failed_error`] 分成两个码是 issue #1219 的分层要求：S3 对「密钥
+/// 不存在 / 签名不符 / 临时凭据过期」也回 403，一律并入「凭据被拒」会让拿着有效
+/// 密钥但桶策略没放行的用户收到错误的自救指引（去改密钥），反之亦然。
+pub(super) fn permission_denied_error() -> AppError {
+    AppError::coded(
+        "sync-channel.permission-denied",
+        "同步通道权限不足，请检查当前凭据是否具备该桶的读取与写入权限",
+    )
+}
+
+/// 目标不存在（桶名 / 区域 / 端点指错，HTTP 404 + `NoSuchBucket`）的码化错误
+/// 单点：明确、可自救（改配置后重试）。
+///
+/// 独立成码的必要性：对象存储对「桶不存在」与「对象不存在」都回 404，而后者是
+/// 同步增量拉取的常态输入（[`Transport::read_file`] 的 `None`）。不区分会把
+/// 「桶名写错」静默降级成「通道上还没有数据」。
+pub(super) fn target_missing_error() -> AppError {
+    AppError::coded(
+        "sync-channel.target-missing",
+        "同步通道目标不存在，请检查桶名、区域与端点地址是否正确",
     )
 }
 
@@ -52,7 +83,7 @@ pub(super) fn network_failed_error(detail: &str) -> AppError {
     )
 }
 
-/// 非预期 HTTP 状态的码化错误单点（网盘服务异常等，可重试）。
+/// 非预期 HTTP 状态的码化错误单点（通道服务异常等，可重试）。
 pub(super) fn http_failed_error(status: u16, detail: &str) -> AppError {
     AppError::codedp(
         "sync-channel.http-failed",

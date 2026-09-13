@@ -6,8 +6,15 @@ import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'
 import { formatIsoMinute } from '@/utils/datetime'
 import { restartAppShortly } from '@/utils/restart'
+import { useLoadable } from '@/composables/useLoadable'
 import AppModal from '@/components/AppModal.vue'
-import type { ParkedOpInfo, SyncChannelConfig, SyncCheckpointInfo, SyncStatus } from '@ledger/types'
+import type {
+  ParkedOpInfo,
+  SyncChannelConfig,
+  SyncChannelConfigInput,
+  SyncCheckpointInfo,
+  SyncStatus,
+} from '@ledger/types'
 
 // 多端同步卡片（issue #862 / #863 / #864 / #1218 / ADR-0091）：设置页「数据」
 // Tab 的同步可见面——上次同步时间、挂起数量、「立即同步」动作、挂起通知明细、
@@ -47,8 +54,8 @@ const parkedOps = ref<ParkedOpInfo[]>([])
 
 // 通道配置表单（S3 七字段 + 同步空间，issue #1218）：初值来自命令回显（未配置
 // 为空表单，空间字段填默认值），保存固定发 `backend: 's3'`——WebDAV 字段已从
-// 界面移除（后端字段与后端本体随 #1221 收口）。厂商预设下拉与「测试连接」按钮
-// 归 #1220 / #1219。
+// 界面移除（后端字段与后端本体随 #1221 收口）。保存前「测试连接」按钮在此
+//（issue #1219）：把未落库的表单交给后端做一次对象读取探针；厂商预设下拉归 #1220。
 //
 // 表单只装本界面拥有的字段：命令回显形态 `SyncChannelConfig` 里被判别的 WebDAV
 // 三字段没有输入面，却会随对象存进表单成为无人读的死状态，故回显时投影一次。
@@ -172,33 +179,64 @@ async function syncNow() {
 }
 
 /**
- * 保存通道配置（issue #1218）：S3 七字段与同步空间（跨端共识的世界身份；空值
- * 交由后端回默认），固定发 `backend: 's3'`。
+ * 表单 → 命令入参的单一转换点（保存与「测试连接」共用，issue #1218 / #1219）：
+ * S3 七字段与同步空间（跨端共识的世界身份；空值交由后端回默认），固定发
+ * `backend: 's3'`。
  *
  * 密钥取值：输入框有内容（用户改过）用新值，为空则沿用内存里的已保存值——这是
- * 「加载时不回显完整密钥」前提下仍能「不改密钥直接保存」的机制。保存成功后重新
+ * 「加载时不回显完整密钥」前提下仍能「不改密钥直接保存」的机制。两个动作共用本
+ * 转换点，「测通了就能存进去」才对同一份表单成立。
+ */
+function channelPayload(): SyncChannelConfigInput {
+  return {
+    backend: 's3',
+    space_id: form.value.space_id.trim() || undefined,
+    endpoint: form.value.endpoint,
+    region: form.value.region,
+    bucket: form.value.bucket,
+    prefix: form.value.prefix,
+    access_key: form.value.access_key,
+    secret_key: secretKeyInput.value !== '' ? secretKeyInput.value : form.value.secret_key,
+    path_style: form.value.path_style,
+  }
+}
+
+/**
+ * 保存通道配置（issue #1218）：表单经 [`channelPayload`] 落到后端；成功后重新
  * 回显，把落库结果（含后端归一化后的字段）呈现在表单上。
  */
 async function saveChannel() {
   saving.value = true
   try {
-    await api.setSyncChannelConfig({
-      backend: 's3',
-      space_id: form.value.space_id.trim() || undefined,
-      endpoint: form.value.endpoint,
-      region: form.value.region,
-      bucket: form.value.bucket,
-      prefix: form.value.prefix,
-      access_key: form.value.access_key,
-      secret_key: secretKeyInput.value !== '' ? secretKeyInput.value : form.value.secret_key,
-      path_style: form.value.path_style,
-    })
+    await api.setSyncChannelConfig(channelPayload())
     message.success(t('settings.data.sync.saveOk'))
     await Promise.all([refreshStatus(), refreshChannelConfig()])
   } catch (e: any) {
     message.error(t('settings.data.sync.saveFailed', { msg: errorMessage(e) }))
   } finally {
     saving.value = false
+  }
+}
+
+/**
+ * 保存前「测试连接」（issue #1219）：把当前表单（尚未落库）交给后端做一次对象
+ * 读取探针，当场回答「这份配置能不能用」——成功即通道可读；失败按后端分层码
+ * （凭据 / 目标 / 权限 / 网络 / 服务）本地化，给出可自救的下一步。
+ *
+ * 不写任何本地状态：探测不落库、不改本机已保存配置，用户改坏表单也不影响既有同步。
+ *
+ * 错误反馈走 [`useLoadable`] 的 error 通道（`showErrorToast` 单点，ADR-0040 /
+ * #1008）：新异步动作不得再添直弹 toast（异步守门只减不增）；成功另给轻量提示。
+ */
+const probe = useLoadable(async () => {
+  await api.testSyncChannelConnection(channelPayload())
+  return true
+})
+const testing = probe.loading
+
+async function testConnection() {
+  if (await probe.run()) {
+    message.success(t('settings.data.sync.testOk'))
   }
 }
 
@@ -400,13 +438,24 @@ async function confirmBootstrap() {
           data-testid="sync-space"
         />
         <NText depth="3" style="font-size: 12px">{{ t('settings.data.sync.spaceHint') }}</NText>
-        <NButton
-          :loading="saving"
-          data-testid="sync-save-channel"
-          @click="saveChannel"
-        >
-          {{ t('settings.data.sync.saveChannel') }}
-        </NButton>
+        <NSpace>
+          <!-- 保存前「测试连接」（issue #1219）：探测用的是当前表单而非落库配置，
+                用户可以在提交前先确认这份凭据 / 桶与网络可用。 -->
+          <NButton
+            :loading="testing"
+            data-testid="sync-test-connection"
+            @click="testConnection"
+          >
+            {{ t('settings.data.sync.testConnection') }}
+          </NButton>
+          <NButton
+            :loading="saving"
+            data-testid="sync-save-channel"
+            @click="saveChannel"
+          >
+            {{ t('settings.data.sync.saveChannel') }}
+          </NButton>
+        </NSpace>
       </NSpace>
 
       <!-- 检查点与新端加入（issue #864）：存量数据设备发布快照，全新设备引导加入。 -->

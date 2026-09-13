@@ -337,7 +337,7 @@
     "truncate-not-owner": "Only the originating device may truncate its own operation log stream"
   },
   "sync-channel": {
-    "auth-failed": "Sync channel credentials were rejected; check your cloud account and password (or app password) settings.",
+    "auth-failed": "Sync channel credentials were rejected; check the channel account and key settings.",
     "base-url-missing": "Sync channel address is required.",
     "book-id-invalid": "Invalid sync space (only lowercase letters, digits and hyphens); cannot build the sync directory.",
     "book-unavailable": "Book registry is unavailable; cannot determine the sync scope.",
@@ -351,14 +351,16 @@
     "manifest-corrupt": "Sync manifest is corrupt or unreadable: {0}",
     "manifest-version-newer": "Sync manifest is from a newer app version (manifest version {0}); upgrade before syncing.",
     "network-failed": "Sync channel network failure; check your network and retry: {0}",
-    "not-configured": "Sync channel is not configured; set up your cloud drive in Settings first.",
+    "not-configured": "Sync channel is not configured; fill in the sync channel settings first.",
     "passphrase-required": "The sync channel contains encrypted data; the master passphrase is required to read it.",
     "bootstrap-library-not-empty": "This device already has book data and cannot bootstrap from the channel (bootstrapping replaces the whole local book with the snapshot); use backup restore to merge data instead, or retry on a brand-new empty book.",
     "bootstrap-passphrase-mismatch": "The passphrase does not match this device's master passphrase: an encrypted library must bootstrap with its own master passphrase (channel snapshots are sealed with that same passphrase).",
     "bootstrap-form-mismatch": "The checkpoint on the channel is plaintext while this library is encrypted: turn off encryption in Settings first, or have the source device enable encryption and publish a new checkpoint.",
     "path-invalid": "Invalid sync channel path: {0}",
+    "permission-denied": "The sync channel reported insufficient permissions; check that the credentials may read and write the bucket.",
     "segment-corrupt": "Sync segment failed verification (possibly incomplete upload or corrupt); retry sync: {0}",
-    "segment-missing": "Sync segment file is missing on the channel (the cloud may not have finished syncing); retry later: {0}"
+    "segment-missing": "Sync segment file is missing on the channel (the channel may not have finished syncing); retry later: {0}",
+    "target-missing": "The sync channel target does not exist; check the bucket name, region and endpoint address."
   },
   "currency": {
     "base-invalid": "Base currency must be a currency from the dictionary: {0}"

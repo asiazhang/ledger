@@ -22,6 +22,7 @@ use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{
     BehaviorVersion, Credentials, Region, RequestChecksumCalculation, ResponseChecksumValidation,
 };
+use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::primitives::ByteStream;
@@ -30,7 +31,8 @@ use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use crate::error::{AppError, Result};
 
 use super::{
-    Transport, auth_failed_error, http_failed_error, network_failed_error, validate_logical_path,
+    Transport, auth_failed_error, http_failed_error, network_failed_error, permission_denied_error,
+    target_missing_error, validate_logical_path,
 };
 
 /// 触发分片上传的对象体积阈值。S3 单对象可整体 PUT，但大文件（检查点快照）
@@ -278,27 +280,65 @@ async fn upload_parts_and_complete(
 
 /// GetObject 的 404 归一：S3 无对象语义是 [`Transport::read_file`] 的 `None`
 /// 常态输入，不是错误。XML `NoSuchKey` 与裸 404 状态都收口到这里。
+///
+/// **`NoSuchBucket` 必须排除在外**：桶不存在同样是 404，把它当成 `None` 会让
+/// 「桶名写错」的端一路读空、静默当作「通道上还没有数据」（issue #1219 错误
+/// 分层）；它走 [`sdk_error`] 归 [`target_missing_error`]。
 fn get_object_missing(err: &SdkError<GetObjectError>) -> bool {
+    if service_code(err) == Some("NoSuchBucket") {
+        return false;
+    }
     err.raw_response()
         .map(|raw| raw.status().as_u16() == 404)
         .unwrap_or(false)
         || matches!(err.as_service_error(), Some(GetObjectError::NoSuchKey(_)))
 }
 
-/// SDK 错误 → 域码化错误：401/403 = 凭据被拒；连接/超时 = 网络失败；
-/// 其他服务端状态 = HTTP 异常。不裸上抛 SDK 细节给用户层以外的调用方。
-fn sdk_error<E>(err: &SdkError<E>) -> AppError {
+/// 凭据类服务端错误码：S3 对「密钥不存在 / 签名不符 / 临时凭据过期」回 403 而非
+/// 401，按错误码把它们与「凭据有效但没权限」（`AccessDenied`）分开——前者让用户
+/// 改密钥、后者让用户改授权，下一步动作不同（issue #1219 错误分层）。
+const CREDENTIAL_ERROR_CODES: &[&str] = &[
+    "InvalidAccessKeyId",
+    "SignatureDoesNotMatch",
+    "ExpiredToken",
+    "InvalidToken",
+    "TokenRefreshRequired",
+];
+
+/// 服务端错误码（XML `<Code>` 字段，如 `NoSuchBucket` / `AccessDenied`）；
+/// 非服务端错误（连接失败、构造失败等）回 `None`。
+fn service_code<E: ProvideErrorMetadata>(err: &SdkError<E>) -> Option<&str> {
+    err.as_service_error().and_then(|error| error.code())
+}
+
+/// SDK 错误 → 域码化错误：按「凭据错 / 目标不存在 / 权限不足 / 网络不可达 /
+/// 服务异常」五层归类（issue #1219）。不裸上抛 SDK 细节给用户层以外的调用方。
+fn sdk_error<E: ProvideErrorMetadata>(err: &SdkError<E>) -> AppError {
     if let Some(raw) = err.raw_response() {
-        let status = raw.status().as_u16();
-        return if status == 401 || status == 403 {
-            auth_failed_error()
-        } else {
-            http_failed_error(status, "S3 请求失败")
-        };
+        return classify_http_failure(raw.status().as_u16(), service_code(err));
     }
     match err {
         SdkError::ConstructionFailure(_) => AppError::Invalid(format!("S3 请求构造失败: {err}")),
         _ => network_failed_error(&err.to_string()),
+    }
+}
+
+/// 五层归类的单点：先按服务端错误码（同一 403 下 `AccessDenied` 是权限、
+/// `InvalidAccessKeyId` 是凭据），码未给出时退回 HTTP 状态（401 凭据 / 403 权限 /
+/// 其余服务异常）。
+fn classify_http_failure(status: u16, code: Option<&str>) -> AppError {
+    if let Some(code) = code {
+        match code {
+            "NoSuchBucket" => return target_missing_error(),
+            "AccessDenied" => return permission_denied_error(),
+            _ if CREDENTIAL_ERROR_CODES.contains(&code) => return auth_failed_error(),
+            _ => {}
+        }
+    }
+    match status {
+        401 => auth_failed_error(),
+        403 => permission_denied_error(),
+        _ => http_failed_error(status, "S3 请求失败"),
     }
 }
 

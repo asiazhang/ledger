@@ -1,14 +1,14 @@
-//! 多端同步命令壳（issue #862 / #863 / #864 / #1217 / ADR-0091）：同步状态查询、
-//! 手动同步轮次、通道配置（WebDAV / S3 兼容对象存储凭据）与检查点发布/预检/
-//! 引导（新端加入向导的命令面）。
+//! 多端同步命令壳（issue #862 / #863 / #864 / #1217 / #1219 / ADR-0091）：同步状态
+//! 查询、手动同步轮次、通道配置（WebDAV / S3 兼容对象存储凭据）、保存前的
+//! 「测试连接」探测与检查点发布/预检/引导（新端加入向导的命令面）。
 //!
 //! 只做参数解包、凭据/信封模式解析与轮次编排一行调用；通道布局、轮次协议、
 //! 幂等重放、挂起语义与触发编排全在 [`crate::sync_engine`]（域不依赖壳，
 //! ADR-0056），本文件不含业务语义。唯一例外是保存通道配置时的**用户输入门**
-//! （端点必须 https，见 [`ensure_secure_endpoint`]）：它约束人提交的表单形态，
-//! 不是通道语义——域侧 [`build_channel`] 对已落库配置（含既有的 http WebDAV
-//! 配置与测试直置配置）保持可用，照常跑自动轮次；该门住命令层是 #1217 的实现
-//! 决定（理由见函数注释）。
+//! （端点必须 https，见 [`ensure_secure_endpoint`]，保存与 [`test_sync_channel_connection`]
+//! 共用）：它约束人提交的表单形态，不是通道语义——域侧 [`build_channel`] 对已落库
+//! 配置（含既有的 http WebDAV 配置与测试直置配置）保持可用，照常跑自动轮次；该门
+//! 住命令层是 #1217 的实现决定（理由见函数注释）。
 //!
 //! - `sync_now` 写路径经统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
 //!   重放是行为编排之外的第 N 写入入口（ADR-0091，接缝契约与批量导入同待遇），
@@ -50,7 +50,7 @@ use crate::settings::{self, SettingKey};
 use crate::signals::{WriteEvidence, WriteOp};
 use crate::sync_engine::trigger::{
     DEFAULT_SPACE_ID, book_unavailable_error, build_channel, configured_channel,
-    not_configured_error, run_round_once,
+    not_configured_error, probe_channel, run_round_once,
 };
 use crate::sync_engine::{
     ChannelBackend, EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport,
@@ -333,23 +333,7 @@ pub async fn set_sync_channel_config<R: Runtime>(
 ) -> Result<()> {
     let conn = app.state::<DbState>().conn.clone();
     run_db("set_sync_channel_config", move || {
-        let space_id = config
-            .space_id
-            .unwrap_or_else(|| DEFAULT_SPACE_ID.to_string());
-        let config = SyncChannelConfig {
-            backend: config.backend,
-            base_url: config.base_url,
-            username: config.username,
-            password: config.password,
-            space_id,
-            endpoint: config.endpoint,
-            region: config.region,
-            bucket: config.bucket,
-            prefix: config.prefix,
-            access_key: config.access_key,
-            secret_key: config.secret_key,
-            path_style: config.path_style,
-        };
+        let config = normalize_channel_config(config);
         // 用户输入门（#1217）：端点为非 https 即拒（配置类码化错误）；空值留给
         // 构库单点报既有的 `sync-channel.base-url-missing`。
         ensure_secure_endpoint(&config)?;
@@ -360,6 +344,55 @@ pub async fn set_sync_channel_config<R: Runtime>(
         settings::set(&conn, SettingKey::SyncChannelConfig, &config)
     })
     .await
+}
+
+/// 保存前「测试连接」（issue #1219）：用表单里**尚未保存**的配置对通道做一次
+/// 对象读取探针，当场把「能不能用、问题出在凭据 / 桶名与端点 / 权限还是网络」
+/// 答给用户。零持久化副作用：不写 `app_settings`、不改本机既有的通道配置
+/// （失败也不留半配置状态），通道侧只发生一次 GET。
+///
+/// 探针读固定保留键、缺对象即连通，因此**不要求列桶权限**——最小权限子账号
+/// （只授权同步空间目录的 GetObject）判定为连通，与真实轮次读到的权限范围一致。
+/// 分层错误（`sync-channel.auth-failed` / `target-missing` / `permission-denied` /
+/// `network-failed` / `http-failed`）由域侧传输层单点产出，本壳只解包参数。
+///
+/// 与保存共用 [`ensure_secure_endpoint`] 用户输入门：探测会把凭据发到端点，明文
+/// http 与保存同规拒绝，避免「测试通过但存不进去」的双口径，也不让密钥走明文。
+///
+/// 走 [`run_db`] 的阻塞线程池：探针是同步阻塞 IO（域侧 S3 后端的桥接形态），
+/// 不能在事件循环线程上跑。
+#[tauri::command]
+pub async fn test_sync_channel_connection(config: SyncChannelConfigInput) -> Result<()> {
+    run_db("test_sync_channel_connection", move || {
+        let config = normalize_channel_config(config);
+        ensure_secure_endpoint(&config)?;
+        probe_channel(&config)
+    })
+    .await
+}
+
+/// 表单入参 → 持久化形态的规格化单点（保存与「测试连接」共用）：`space_id`
+/// 缺省回默认同步空间，其余字段原样搬运。
+///
+/// 两个命令共用同一次转换，是因为它们必须对同一份表单给出同一个结论——各写一份
+/// 转换会让「测试连接通过」与「保存后跑不起来」在字段缺省上分叉。
+fn normalize_channel_config(input: SyncChannelConfigInput) -> SyncChannelConfig {
+    SyncChannelConfig {
+        backend: input.backend,
+        base_url: input.base_url,
+        username: input.username,
+        password: input.password,
+        space_id: input
+            .space_id
+            .unwrap_or_else(|| DEFAULT_SPACE_ID.to_string()),
+        endpoint: input.endpoint,
+        region: input.region,
+        bucket: input.bucket,
+        prefix: input.prefix,
+        access_key: input.access_key,
+        secret_key: input.secret_key,
+        path_style: input.path_style,
+    }
 }
 
 /// 保存前的地址形态门（#1217）：通道端点只接受 `https://`（MVP 不提供 http 或

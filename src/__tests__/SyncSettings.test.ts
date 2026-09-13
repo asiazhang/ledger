@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { mockInvoke, wireInvokeSeam, lastInvokeArgs } from '@ledger/test-support/invoke-mock'
 import { messageCalls } from '@ledger/test-support/message-mock'
 import {
@@ -10,6 +10,12 @@ import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import type { ParkedOpInfo, SyncChannelConfig, SyncRoundReport, SyncStatus } from '@ledger/types'
 
 import SyncSettings from '@/components/settings/SyncSettings.vue'
+import { registerToastSink } from '@/composables/useLoadable'
+import { makeFakeSink, resetToastSink } from './factories'
+
+// 「测试连接」的失败反馈走 useLoadable 的错误通道（showErrorToast 单点）：
+// 每测把模块级 sink 复位回 no-op，避免用例间串味。
+afterEach(() => resetToastSink())
 
 // 引导成功后的原位重引导走 utils/restart 单点（Restore 同型）；组件测试只断言
 // 「成功即触发重启编排」，重启内部编排归 restart.test.ts。
@@ -183,7 +189,8 @@ describe('SyncSettings.vue', () => {
 
     expect(
       messageCalls().some(
-        (m) => m.method === 'error' && m.text.includes('同步通道尚未配置，请先在设置中填写网盘信息'),
+        (m) =>
+          m.method === 'error' && m.text.includes('同步通道尚未配置，请先在设置中填写同步通道信息'),
       ),
     ).toBe(true)
     expect(messageCalls().some((m) => m.text.includes('RAW'))).toBe(false)
@@ -378,6 +385,77 @@ describe('SyncSettings.vue', () => {
     expect(findInputByTestId(wrapper, 'sync-secret-key').attributes('placeholder')).toBe(
       'Secret Access Key',
     )
+  })
+
+  // ---- 保存前「测试连接」（issue #1219 验收项）----
+
+  it('测试连接：用当前表单（含未保存改动与新密钥）发起探测，成功即提示通道可读', async () => {
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: baseStatus,
+        get_sync_channel_config: baseConfig,
+        test_sync_channel_connection: null,
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+    mockInvoke.mockClear()
+
+    // 探测针对的是表单现状，不是落库配置：改桶、改密钥后点按钮，发的就是新值。
+    await findInputByTestId(wrapper, 'sync-bucket').setValue('other-bucket')
+    await findInputByTestId(wrapper, 'sync-secret-key').setValue('rotated-secret')
+    await findButtonByTestId(wrapper, 'sync-test-connection').trigger('click')
+    await flushPromises()
+
+    expect(lastInvokeArgs('test_sync_channel_connection')).toEqual({
+      config: {
+        backend: 's3',
+        space_id: 'family',
+        endpoint: 'https://s3.example.com',
+        region: 'us-east-1',
+        bucket: 'other-bucket',
+        prefix: 'sync',
+        access_key: 'AKIAEXAMPLE',
+        secret_key: 'rotated-secret',
+        path_style: true,
+      },
+    })
+    // 双断言（效果面）：成功提示在场，且**没有**顺带保存——探测不落库。
+    expect(
+      messageCalls().some((m) => m.method === 'success' && m.text.includes('连接成功')),
+    ).toBe(true)
+    expect(mockInvoke).not.toHaveBeenCalledWith('set_sync_channel_config', expect.anything())
+  })
+
+  it('测试连接失败：按后端分层码本地化呈现可自救提示，不透传后端原文', async () => {
+    const sink = makeFakeSink()
+    registerToastSink(sink)
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: baseStatus,
+        get_sync_channel_config: baseConfig,
+      },
+      overrides: {
+        // 403 + AccessDenied 的域侧分层码：与「凭据被拒」是两条不同的自救指引。
+        test_sync_channel_connection: () =>
+          Promise.reject({
+            kind: 'Invalid',
+            code: 'sync-channel.permission-denied',
+            message: 'RAW',
+          }),
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    await findButtonByTestId(wrapper, 'sync-test-connection').trigger('click')
+    await flushPromises()
+
+    expect(sink.error).toHaveBeenCalledWith(
+      '同步通道权限不足，请检查当前凭据是否具备该桶的读取与写入权限',
+    )
+    expect(sink.error).not.toHaveBeenCalledWith('RAW')
+    expect(messageCalls().some((m) => m.method === 'success')).toBe(false)
   })
 
   // ---- 挂起通知（issue #863 验收项）----

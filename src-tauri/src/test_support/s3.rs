@@ -26,6 +26,32 @@ pub enum S3Addressing {
     VirtualHost,
 }
 
+/// 桩的故障注入档（issue #1219 错误分层消费）：默认正常应答，注入后请求经
+/// 鉴权与寻址骨架校验即按该档失败，用于覆盖凭据 / 权限 / 目标三类自救指引。
+///
+/// 凭据档走错误码而非状态码表达：S3 对「密钥不存在」与「密钥有效但没权限」
+/// 都回 403，只有 XML `<Code>` 能区分两者——桩照此建模，后端分层才有可测输入。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum S3Deny {
+    /// 密钥不存在 / 签名不符：403 + `<Code>InvalidAccessKeyId</Code>`。
+    InvalidAccessKeyId,
+    /// 凭据有效但无权访问目标：403 + `<Code>AccessDenied</Code>`。
+    AccessDenied,
+    /// 桶不存在：404 + `<Code>NoSuchBucket</Code>`。
+    NoSuchBucket,
+}
+
+impl S3Deny {
+    /// 该档对应的 S3 错误码（XML `<Code>` 字段）。
+    pub fn code(self) -> &'static str {
+        match self {
+            S3Deny::InvalidAccessKeyId => "InvalidAccessKeyId",
+            S3Deny::AccessDenied => "AccessDenied",
+            S3Deny::NoSuchBucket => "NoSuchBucket",
+        }
+    }
+}
+
 /// S3 桩配置（默认值适用于多数用例；凭据范围用 access key 校验归属）。
 #[derive(Debug, Clone)]
 pub struct S3StubConfig {
@@ -33,6 +59,8 @@ pub struct S3StubConfig {
     pub bucket: String,
     pub access_key: String,
     pub addressing: S3Addressing,
+    /// 故障注入档（默认无故障）。
+    pub deny: Option<S3Deny>,
 }
 
 impl S3StubConfig {
@@ -42,7 +70,14 @@ impl S3StubConfig {
             bucket: "ledger-test".to_string(),
             access_key: "test-access-key".to_string(),
             addressing,
+            deny: None,
         }
+    }
+
+    /// 注入故障档：请求经鉴权与寻址骨架校验后按该档应答。
+    pub fn deny(mut self, deny: S3Deny) -> Self {
+        self.deny = Some(deny);
+        self
     }
 }
 
@@ -90,6 +125,27 @@ impl S3Stub {
     pub fn clear_requests(&self) {
         self.observations.lock().unwrap().clear();
     }
+
+    /// 指向本桩的 S3 通道配置（issue #1219）：探针单测与命令集成测试共用同一份
+    /// 「桩 → 通道配置」构造，不再由各测试目录各写一份搬运（CONTEXT-testing
+    /// 「目录级测试薄壳」：可通用化的夹具一律上收测试辅助层）。
+    ///
+    /// 密钥取固定值——桩只校验凭据**范围**（access key / region / service），
+    /// 不做密码学校验。
+    pub fn channel_config(&self, space: &str) -> crate::sync_engine::SyncChannelConfig {
+        crate::sync_engine::SyncChannelConfig {
+            backend: crate::sync_engine::ChannelBackend::S3,
+            endpoint: self.endpoint.clone(),
+            region: self.region.clone(),
+            bucket: self.bucket.clone(),
+            access_key: self.access_key.clone(),
+            secret_key: "test-secret".to_string(),
+            prefix: String::new(),
+            path_style: self.addressing == S3Addressing::PathStyle,
+            space_id: space.to_string(),
+            ..Default::default()
+        }
+    }
 }
 
 impl Drop for S3Stub {
@@ -104,6 +160,7 @@ struct StubState {
     bucket: String,
     access_key: String,
     addressing: S3Addressing,
+    deny: Option<S3Deny>,
     uploads: Mutex<HashMap<String, (String, String)>>,
     observations: Arc<Mutex<Vec<S3ObservedRequest>>>,
     violations: Arc<Mutex<Vec<String>>>,
@@ -117,6 +174,14 @@ fn xml_response(status: axum::http::StatusCode, body: String) -> axum::response:
         axum::http::HeaderValue::from_static("application/xml"),
     );
     response
+}
+
+/// S3 错误响应 XML：`<Code>` 是后端错误分层读取的字段（凭据 / 权限 / 目标）。
+fn error_xml(code: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+         <Error><Code>{code}</Code><Message>{code}</Message></Error>"
+    )
 }
 
 fn empty_response(status: axum::http::StatusCode) -> axum::response::Response {
@@ -272,14 +337,19 @@ pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
                 .lock()
                 .unwrap()
                 .push(format!("凭据范围 access key 不一致: {access_key:?}"));
-            return empty_response(StatusCode::FORBIDDEN);
+            // 真实 S3 对密钥不存在回 403 + 错误码（不是 401）：后端据此把
+            // 「密钥错」与「密钥对但没权限」分成两条自救指引。
+            return xml_response(
+                StatusCode::FORBIDDEN,
+                error_xml(S3Deny::InvalidAccessKeyId.code()),
+            );
         }
         if region != state.region || service != "s3" {
             state.violations.lock().unwrap().push(format!(
                 "凭据范围 region/service 不一致: {region}/{service} != {}/s3",
                 state.region
             ));
-            return empty_response(StatusCode::FORBIDDEN);
+            return xml_response(StatusCode::FORBIDDEN, error_xml("SignatureDoesNotMatch"));
         }
 
         let key = match addressing_key(&state, uri.path(), host.as_deref()) {
@@ -289,6 +359,16 @@ pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
                 return empty_response(StatusCode::BAD_REQUEST);
             }
         };
+
+        if let Some(deny) = state.deny {
+            return match deny {
+                S3Deny::InvalidAccessKeyId | S3Deny::AccessDenied => {
+                    xml_response(StatusCode::FORBIDDEN, error_xml(deny.code()))
+                }
+                S3Deny::NoSuchBucket => xml_response(StatusCode::NOT_FOUND, error_xml(deny.code())),
+            };
+        }
+
         let query = parse_query(uri.query().unwrap_or(""));
         let body = axum::body::to_bytes(request.into_body(), usize::MAX)
             .await
@@ -419,6 +499,7 @@ pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
         bucket: config.bucket.clone(),
         access_key: config.access_key.clone(),
         addressing: config.addressing,
+        deny: config.deny,
         uploads: Mutex::new(HashMap::new()),
         observations: observations.clone(),
         violations: violations.clone(),

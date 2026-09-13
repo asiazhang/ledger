@@ -79,7 +79,7 @@ pub use transport::{
 };
 pub use trigger::{
     ChannelBackend, SessionEnvelope, SyncChannel, SyncChannelConfig, TriggerTimings, build_channel,
-    configured_channel, run_auto_round, run_round_once, start_sync_scheduler,
+    configured_channel, probe_channel, run_auto_round, run_round_once, start_sync_scheduler,
     start_sync_scheduler_with, start_triggers, sync_after_write, sync_on_start,
 };
 

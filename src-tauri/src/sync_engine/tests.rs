@@ -28,6 +28,7 @@
 //! - [`envelope`]：SyncEnvelope 信封加密往返与码化错误（issue #859）
 //! - [`transport`]：WebDAV 哑字节通道后端对本地桩的行为与错误归一（issue #859）
 //! - [`transport_s3`]：S3 兼容对象存储后端对本地桩的行为、寻址、分片与错误归一（issue #1216）
+//! - [`probe`]：保存前「测试连接」的读取探针——缺对象=连通、权限/目标/网络分层（issue #1219）
 //! - [`channel`]：通道目录布局/manifest/同步轮次与两端文件交换集成（issue #859）
 
 mod budget;
@@ -46,6 +47,7 @@ mod ledger_setting;
 mod merge;
 mod parked;
 mod physical_asset;
+mod probe;
 mod reference_data;
 mod scheduled_plan;
 mod split;
