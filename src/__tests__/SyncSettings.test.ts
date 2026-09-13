@@ -705,7 +705,7 @@ describe('SyncSettings.vue 厂商预设（issue #1220）', () => {
 
     const endpoint = findInputByTestId(wrapper, 'sync-endpoint')
     expect((endpoint.element as HTMLInputElement).value).toBe(
-      'https://oss-cn-hangzhou.aliyuncs.com',
+      'https://s3.oss-cn-hangzhou.aliyuncs.com',
     )
     expect((findInputByTestId(wrapper, 'sync-region').element as HTMLInputElement).value).toBe(
       'cn-hangzhou',
@@ -724,7 +724,7 @@ describe('SyncSettings.vue 厂商预设（issue #1220）', () => {
     await beijing?.trigger('click')
     await flushPromises()
     expect((findInputByTestId(wrapper, 'sync-endpoint').element as HTMLInputElement).value).toBe(
-      'https://oss-cn-beijing.aliyuncs.com',
+      'https://s3.oss-cn-beijing.aliyuncs.com',
     )
     expect((findInputByTestId(wrapper, 'sync-region').element as HTMLInputElement).value).toBe(
       'cn-beijing',
@@ -759,7 +759,9 @@ describe('SyncSettings.vue 厂商预设（issue #1220）', () => {
     expect(wrapper.find('[data-testid="sync-vendor-tier"]').text()).toBe('未实测')
     // 官方文档外链：_blank 才能被系统浏览器打开（桌面壳 opener 的既有约定）。
     const docs = wrapper.find('[data-testid="sync-vendor-docs"]')
-    expect(docs.attributes('href')).toBe('https://help.aliyun.com/zh/oss/')
+    expect(docs.attributes('href')).toBe(
+      'https://help.aliyun.com/zh/oss/developer-reference/use-amazon-s3-sdks-to-access-oss',
+    )
     expect(docs.attributes('target')).toBe('_blank')
   })
 
@@ -812,7 +814,7 @@ describe('SyncSettings.vue 厂商预设（issue #1220）', () => {
       config: {
         backend: 's3',
         space_id: 'family',
-        endpoint: 'https://oss-cn-hangzhou.aliyuncs.com',
+        endpoint: 'https://s3.oss-cn-hangzhou.aliyuncs.com',
         region: 'cn-hangzhou',
         bucket: 'ledger-bucket',
         prefix: 'sync',

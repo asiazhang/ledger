@@ -42,7 +42,7 @@ describe('vendorOptions 下拉项构成', () => {
 describe('vendorPrefill 选中厂商预填', () => {
   it('缺省地域取该厂商常用地域首项，端点按模板替换', () => {
     expect(vendorPrefill('aliyun-oss')).toEqual({
-      endpoint: 'https://oss-cn-hangzhou.aliyuncs.com',
+      endpoint: 'https://s3.oss-cn-hangzhou.aliyuncs.com',
       region: 'cn-hangzhou',
       pathStyle: false,
     })
@@ -50,7 +50,7 @@ describe('vendorPrefill 选中厂商预填', () => {
 
   it('指定常用地域：端点与地域同步替换', () => {
     expect(vendorPrefill('aliyun-oss', 'cn-beijing')).toEqual({
-      endpoint: 'https://oss-cn-beijing.aliyuncs.com',
+      endpoint: 'https://s3.oss-cn-beijing.aliyuncs.com',
       region: 'cn-beijing',
       pathStyle: false,
     })
@@ -86,13 +86,20 @@ describe('vendorPrefill 选中厂商预填', () => {
 
 describe('matchVendorByEndpoint 端点反查', () => {
   it.each([
+    // 阿里云：S3 协议专属端点（预设模板）与原生端点都认。
+    ['https://s3.oss-cn-hangzhou.aliyuncs.com', 'aliyun-oss'],
+    ['https://bucket.s3.oss-cn-hangzhou.aliyuncs.com', 'aliyun-oss'],
     ['https://oss-cn-hangzhou.aliyuncs.com', 'aliyun-oss'],
     ['https://bucket.oss-cn-hangzhou.aliyuncs.com', 'aliyun-oss'],
+    // 腾讯云：COS 的 S3 兼容端点即其原生端点（虚拟托管）。
     ['https://cos.ap-guangzhou.myqcloud.com', 'tencent-cos'],
     ['https://bucket-1250000000.cos.ap-guangzhou.myqcloud.com', 'tencent-cos'],
     ['https://obs.cn-north-4.myhuaweicloud.com', 'huawei-obs'],
+    ['https://bucket.obs.cn-north-4.myhuaweicloud.com', 'huawei-obs'],
+    // 火山引擎：S3 协议专属端点是 tos-s3-*，与原生 tos-* 不同名。
+    ['https://tos-s3-cn-beijing.volces.com', 'volcengine-tos'],
+    ['https://bucket.tos-s3-cn-beijing.volces.com', 'volcengine-tos'],
     ['https://tos-cn-beijing.volces.com', 'volcengine-tos'],
-    ['https://bucket.tos-cn-beijing.volces.com', 'volcengine-tos'],
     ['https://s3.cn-east-1.qiniucs.com', 'qiniu-kodo'],
     ['https://my-bucket.s3.cn-east-1.qiniucs.com', 'qiniu-kodo'],
   ])('命中：%s → %s', (endpoint, expected) => {
@@ -100,8 +107,8 @@ describe('matchVendorByEndpoint 端点反查', () => {
   })
 
   it('省略 scheme 与大小写差异同样命中', () => {
-    expect(matchVendorByEndpoint('oss-cn-hangzhou.aliyuncs.com')).toBe('aliyun-oss')
-    expect(matchVendorByEndpoint('HTTPS://OSS-CN-HANGZHOU.ALIYUNCS.COM')).toBe('aliyun-oss')
+    expect(matchVendorByEndpoint('s3.oss-cn-hangzhou.aliyuncs.com')).toBe('aliyun-oss')
+    expect(matchVendorByEndpoint('HTTPS://S3.OSS-CN-HANGZHOU.ALIYUNCS.COM')).toBe('aliyun-oss')
   })
 
   it('未命中一律回「自定义」：自建域名、空串、非法地址、仿冒后缀', () => {
@@ -113,6 +120,19 @@ describe('matchVendorByEndpoint 端点反查', () => {
     // 后缀判据带前导点：仿冒域名不误判成厂商预设。
     expect(matchVendorByEndpoint('https://aliyuncs.com.evil.example')).toBe(CUSTOM_VENDOR_ID)
   })
+
+  it('同品牌的其他服务不算命中（只看品牌后缀会把 ECS/CDN 误判成对象存储）', () => {
+    // 服务段前缀 + 品牌后缀两端同时成立才算命中：华为云 ECS、腾讯云 CDN、
+    // 火山引擎其他 volces.com 服务都不是对象存储端点。
+    expect(matchVendorByEndpoint('https://ecs.cn-north-4.myhuaweicloud.com')).toBe(
+      CUSTOM_VENDOR_ID,
+    )
+    expect(matchVendorByEndpoint('https://cdn.myqcloud.com')).toBe(CUSTOM_VENDOR_ID)
+    expect(matchVendorByEndpoint('https://iam.volces.com')).toBe(CUSTOM_VENDOR_ID)
+    // 品牌域名本身（无服务段）也不算命中。
+    expect(matchVendorByEndpoint('https://myhuaweicloud.com')).toBe(CUSTOM_VENDOR_ID)
+    expect(matchVendorByEndpoint('https://aliyuncs.com')).toBe(CUSTOM_VENDOR_ID)
+  })
 })
 
 describe('vendorTierKey 档位标注映射', () => {
@@ -123,15 +143,24 @@ describe('vendorTierKey 档位标注映射', () => {
 })
 
 describe('预设表诚实性与完整性守门', () => {
-  it('每条预设必备：专名、模板占位符、常用地域、主机后缀、https 官方文档', () => {
+  it('每条预设必备：专名、模板占位符、常用地域、主机前后缀、https 官方文档', () => {
     expect(S3_VENDOR_PRESETS.length).toBeGreaterThan(0)
     for (const vendor of S3_VENDOR_PRESETS) {
       expect(vendor.name, vendor.id).not.toBe('')
       expect(vendor.endpointTemplate, vendor.id).toContain(REGION_PLACEHOLDER)
       expect(vendor.endpointTemplate, vendor.id).toMatch(/^https:\/\//)
       expect(vendor.regions.length, vendor.id).toBeGreaterThan(0)
+      expect(vendor.hostPrefixes.length, vendor.id).toBeGreaterThan(0)
       expect(vendor.hostSuffixes.length, vendor.id).toBeGreaterThan(0)
       expect(vendor.docsUrl, vendor.id).toMatch(/^https:\/\//)
+    }
+  })
+
+  it('模板与反查判据自洽：每个厂商的首项预填端点都能反查回自己', () => {
+    for (const vendor of S3_VENDOR_PRESETS) {
+      const prefill = vendorPrefill(vendor.id)
+      expect(prefill, vendor.id).not.toBeNull()
+      expect(matchVendorByEndpoint(prefill!.endpoint), vendor.id).toBe(vendor.id)
     }
   })
 

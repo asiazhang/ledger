@@ -36,6 +36,9 @@ export interface S3VendorPreset {
   readonly pathStyle: boolean
   /** 常用地域快捷项（地域代码同样是专名，不翻译）；首项为该厂商预填默认地域。 */
   readonly regions: readonly string[]
+  /** 端点主机名的服务段前缀（反查判据之一：`obs.` / `s3.oss-` 一类服务标识，避免同品牌
+   *  其他服务误判）。虚拟托管形态下 bucket 是更左的一段，比对时两级都试（见反查函数）。 */
+  readonly hostPrefixes: readonly string[]
   /** 端点主机名后缀（反查判据；含前导点，避免匹配到同名后缀的仿冒域名）。 */
   readonly hostSuffixes: readonly string[]
   /** 官方文档外链。 */
@@ -47,9 +50,11 @@ export interface S3VendorPreset {
 /**
  * 国内主流对象存储厂商预设表。
  *
- * 端点模板取自各家公开文档的 S3 兼容端点命名（地域段由用户在界面上选择或改成
- * 自建值）；寻址方式填各家文档的常见默认，全部可在界面上改成另一种。**这里只给
- * 常用地域快捷项，不是该厂商的全部地域**——用户可自行填写未列出的地域代码。
+ * 端点模板一律取各家公开文档里的 **S3 协议专属端点**（不是各家的原生 REST 端点：
+ * 阿里云是 `s3.oss-{region}.aliyuncs.com`、火山引擎是 `tos-s3-{region}.volces.com`，
+ * 二者都与原生端点不同名）；地域段由用户在界面上选择或改成自建值。寻址方式填各家
+ * 文档的默认（火山引擎 TOS 明确只支持虚拟托管），全部可在界面上改成另一种。**这里
+ * 只给常用地域快捷项，不是该厂商的全部地域**——用户可自行填写未列出的地域代码。
  *
  * 「是否接受 AWS SigV4」一类兼容性事实不在本表妄断：未实测厂商一律 `verified:
  * false`，界面上只如实标注「未实测」并给官方文档外链，兼容性结论留给 #1222 的
@@ -59,11 +64,12 @@ export const S3_VENDOR_PRESETS: readonly S3VendorPreset[] = [
   {
     id: 'aliyun-oss',
     name: '阿里云 OSS',
-    endpointTemplate: `https://oss-${REGION_PLACEHOLDER}.aliyuncs.com`,
+    endpointTemplate: `https://s3.oss-${REGION_PLACEHOLDER}.aliyuncs.com`,
     pathStyle: false,
     regions: ['cn-hangzhou', 'cn-shanghai', 'cn-beijing', 'cn-shenzhen', 'cn-guangzhou', 'cn-chengdu'],
+    hostPrefixes: ['s3.oss-', 'oss-'],
     hostSuffixes: ['.aliyuncs.com'],
-    docsUrl: 'https://help.aliyun.com/zh/oss/',
+    docsUrl: 'https://help.aliyun.com/zh/oss/developer-reference/use-amazon-s3-sdks-to-access-oss',
     verified: false,
   },
   {
@@ -72,6 +78,7 @@ export const S3_VENDOR_PRESETS: readonly S3VendorPreset[] = [
     endpointTemplate: `https://cos.${REGION_PLACEHOLDER}.myqcloud.com`,
     pathStyle: false,
     regions: ['ap-guangzhou', 'ap-beijing', 'ap-shanghai', 'ap-chengdu', 'ap-hongkong'],
+    hostPrefixes: ['cos.'],
     hostSuffixes: ['.myqcloud.com'],
     docsUrl: 'https://cloud.tencent.com/document/product/436',
     verified: false,
@@ -82,6 +89,7 @@ export const S3_VENDOR_PRESETS: readonly S3VendorPreset[] = [
     endpointTemplate: `https://obs.${REGION_PLACEHOLDER}.myhuaweicloud.com`,
     pathStyle: false,
     regions: ['cn-north-4', 'cn-east-3', 'cn-south-1', 'cn-southwest-2', 'cn-north-1'],
+    hostPrefixes: ['obs.'],
     hostSuffixes: ['.myhuaweicloud.com'],
     docsUrl: 'https://support.huaweicloud.com/obs/',
     verified: false,
@@ -89,11 +97,12 @@ export const S3_VENDOR_PRESETS: readonly S3VendorPreset[] = [
   {
     id: 'volcengine-tos',
     name: '火山引擎 TOS',
-    endpointTemplate: `https://tos-${REGION_PLACEHOLDER}.volces.com`,
+    endpointTemplate: `https://tos-s3-${REGION_PLACEHOLDER}.volces.com`,
     pathStyle: false,
     regions: ['cn-beijing', 'cn-shanghai', 'cn-guangzhou'],
+    hostPrefixes: ['tos-s3-', 'tos-'],
     hostSuffixes: ['.volces.com'],
-    docsUrl: 'https://www.volcengine.com/docs/6349',
+    docsUrl: 'https://www.volcengine.com/docs/6349/147050',
     verified: false,
   },
   {
@@ -102,6 +111,7 @@ export const S3_VENDOR_PRESETS: readonly S3VendorPreset[] = [
     endpointTemplate: `https://s3.${REGION_PLACEHOLDER}.qiniucs.com`,
     pathStyle: true,
     regions: ['cn-east-1', 'cn-east-2', 'cn-north-1', 'cn-south-1'],
+    hostPrefixes: ['s3.'],
     hostSuffixes: ['.qiniucs.com'],
     docsUrl: 'https://developer.qiniu.com/kodo/4088/s3-access-domainname',
     verified: false,
@@ -186,19 +196,30 @@ function hostnameOf(endpoint: string): string {
   return ''
 }
 
+/** 去掉主机名最左一段（虚拟托管形态的 bucket 前缀）；无剩余段返回空串。 */
+function withoutLeadingLabel(host: string): string {
+  const dot = host.indexOf('.')
+  return dot === -1 ? '' : host.slice(dot + 1)
+}
+
 /**
  * 按端点反查厂商（验收判据：命中回该厂商，未命中回 `CUSTOM_VENDOR_ID`）。
  *
- * 判据是主机名后缀，虚拟托管（`bucket.oss-cn-hangzhou.aliyuncs.com`）与
- * path-style（`oss-cn-hangzhou.aliyuncs.com`）同命中。空串、无法解析的地址与
- * 自建域名一律回「其他（自定义）」——不猜、不按模糊相似度兜底。
+ * 判据是「服务段前缀 + 品牌后缀」两端同时成立：只看品牌后缀会把同品牌的其他服务
+ * 误判成对象存储（如华为云 ECS 的 `ecs.cn-north-4.myhuaweicloud.com`），只看后缀
+ * 就是「未命中却回显厂商」，违反验收判据。虚拟托管形态下 bucket 是主机名最左一段
+ *（`bucket.obs.cn-north-4.myhuaweicloud.com`），故原样与「去掉最左一段」两级都试。
+ * 空串、无法解析的地址与自建域名一律回「其他（自定义）」——不猜、不按相似度兜底。
  */
 export function matchVendorByEndpoint(endpoint: string): string {
   const host = hostnameOf(endpoint)
   if (host === '') return CUSTOM_VENDOR_ID
+  const candidates = [host, withoutLeadingLabel(host)]
   const hit = S3_VENDOR_PRESETS.find((vendor) =>
-    vendor.hostSuffixes.some(
-      (suffix) => host === suffix.slice(1) || host.endsWith(suffix),
+    candidates.some(
+      (candidate) =>
+        vendor.hostSuffixes.some((suffix) => candidate.endsWith(suffix)) &&
+        vendor.hostPrefixes.some((prefix) => candidate.startsWith(prefix)),
     ),
   )
   return hit ? hit.id : CUSTOM_VENDOR_ID
