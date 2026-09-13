@@ -69,8 +69,10 @@
 // `[lints] workspace = true` 继承六件套门禁（漏写即红——clippy 本身不会报）；
 // 依赖方向按 壳 → 域 → 基础设施 单向核对；scripts/check.sh、scripts/test.sh 与
 // scripts/lint-fix.sh、CI workflow 的 cargo clippy/test/fmt 命令须显式 `--workspace`
-// 或词尾 `--all`（非虚拟 workspace 下默认只作用于根包，缺范围参数会静默漏检成员；
-// `--all-targets` 等 `--all*` 旗标不算范围——\b 匹配会在这里假绿，故按词尾判定）。
+// 或 `--all`（非虚拟 workspace 下默认只作用于根包，缺范围参数会静默漏检成员；
+// `--all-targets` 等 `--all*` 旗标不算范围——\b 匹配会在这里假绿，故按整词判定）；
+// 引号内的命令字样是说明文字不算命令面，且宿主里一条命令都核不到即红（空集假绿，
+// 见 maskShellQuoted / checkTsCargoArrays，#1112 第三轮审查）。
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-structure.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具：
@@ -700,12 +702,139 @@ const WORKSPACE_COMMAND_FILES = [
   'scripts/check.sh',
   'scripts/test.sh',
   'scripts/lint-fix.sh',
+  // 执行器程序化拼装 cargo 命令（`runChild(cargo, ['test', '--workspace', …])`）：
+  // 宿主形态是 .ts 而非 shell。该宿主的真实命令面是**数组形态**（cargo 标识符 + 数组
+  // 字面量），逐行字面量扫描只看得见说明文字（console.log 模板串），故另配数组形态核对
+  // （checkTsCargoArrays）真正约束命令面，见 #1112 第三轮审查 P2。
+  'scripts/test-exec.ts',
   '.github/workflows/build.yml',
 ] as const
 
-/** workspace 范围参数：`--workspace` 或 `--all`（后者仅在词尾，防止 `--all-targets` 假绿）。 */
+/** workspace 范围参数：`--workspace` 或 `--all`（精确词，防止 `--all-targets` 假绿）。 */
 const WORKSPACE_SCOPE_PATTERN = /(?:^|\s)--workspace(?:\s|$)/
 const ALL_SCOPE_PATTERN = /(?:^|\s)--all(?:\s|$)/
+
+/** cargo 命令词（workspace 范围核对的适用范围）。 */
+const CARGO_SUBCOMMANDS = ['clippy', 'test', 'fmt'] as const
+
+/**
+ * shell / YAML 引号与注释掩码（逐行，不跨行）：把解释性文字换成空格、保留列位置。
+ * 引号里的 `cargo test …` 是说明文字（`echo "( cd src-tauri && cargo test … )"`），
+ * `#` 之后是注释，都不构成命令面；不掩码会把 echo 字符串当成命令，把三条真命令全包成
+ * echo 后核对仍然全绿（#1112 第三轮审查 P1）。逐行做也保证一个未闭合引号不会吞掉
+ * 后续行。`.ts` 宿主不掩码——那里的命令面恰恰是字符串字面量。
+ */
+function maskShellQuoted(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      const chars = line.split('')
+      const blank = (from: number, to: number): void => {
+        for (let k = from; k < to && k < chars.length; k += 1) chars[k] = ' '
+      }
+      for (let i = 0; i < chars.length; i += 1) {
+        const c = chars[i]
+        // `#` 起注释：行首或前面是空白（`foo#bar` 不是注释）
+        if (c === '#' && (i === 0 || /\s/.test(chars[i - 1] as string))) {
+          blank(i, chars.length)
+          break
+        }
+        if (c !== '"' && c !== "'") continue
+        let j = i + 1
+        while (j < chars.length) {
+          if (c === '"' && chars[j] === '\\') {
+            j += 2
+            continue
+          }
+          if (chars[j] === c) break
+          j += 1
+        }
+        blank(i, Math.min(j + 1, chars.length))
+        i = j
+      }
+      return chars.join('')
+    })
+    .join('\n')
+}
+
+/** `.ts` 宿主里程序化拼装的 cargo 命令：数组起始行（1-based）+ 数组内的字符串元素。 */
+interface TsCargoArray {
+  line: number
+  elements: string[]
+}
+
+/** 注释行（`.ts` 的行注释 `//` 与块注释续行 ` * `）：注释里的命令字样不算命令面。 */
+function isTsCommentLine(trimmed: string): boolean {
+  return (
+    trimmed === '' ||
+    trimmed.startsWith('//') ||
+    trimmed.startsWith('/*') ||
+    trimmed.startsWith('*')
+  )
+}
+
+/**
+ * 找 `.ts` 宿主的数组形态 cargo 命令 `runChild(cargo, ['test', '--workspace', …])`：
+ * `cargo` 标识符 + 逗号之后，数组要么同行，要么紧随的下一个非空行以 `[` 开头（仓内
+ * 多行调用形态）；再向后收括号，取出引号字符串元素。不这样限定就会把 `f(cargo, x)`
+ * 之后随便一个数组误认成命令面。
+ */
+function tsCargoArrays(source: string): TsCargoArray[] {
+  const lines = source.split('\n')
+  const found: TsCargoArray[] = []
+  for (let i = 0; i < lines.length; i += 1) {
+    const raw = lines[i] ?? ''
+    if (isTsCommentLine(raw.trim())) continue
+    const marker = /\bcargo\s*,/.exec(raw)
+    if (marker === null) continue
+    let text = raw.slice(marker.index + marker[0].length)
+    let startLine = i
+    if (!text.includes('[')) {
+      let j = i + 1
+      while (j < lines.length && (lines[j] ?? '').trim() === '') j += 1
+      if (!(lines[j] ?? '').trim().startsWith('[')) continue
+      startLine = j
+      text = lines[j] ?? ''
+      i = j
+    }
+    const open = text.indexOf('[')
+    let j = i
+    while (text.indexOf(']', open + 1) === -1 && j + 1 < lines.length) {
+      j += 1
+      text += `\n${lines[j] ?? ''}`
+    }
+    const close = text.indexOf(']', open + 1)
+    if (close === -1) continue
+    const elements = [...text.slice(open, close + 1).matchAll(/'([^']*)'|"([^"]*)"/g)].map(
+      (m) => m[1] ?? m[2] ?? '',
+    )
+    found.push({ line: startLine + 1, elements })
+  }
+  return found
+}
+
+/**
+ * `.ts` 宿主的数组形态 cargo 命令核对（#1112 第三轮审查 P2）：逐行字面量扫描只看得见
+ * 说明文字（console.log 模板串），真实命令面是数组参数——首元素是 cargo 子命令时必须
+ * 带 workspace 范围。返回命中条数。
+ */
+function checkTsCargoArrays(rel: string, source: string, problems: string[]): number {
+  let hits = 0
+  for (const { line, elements } of tsCargoArrays(source)) {
+    const subcommand = elements[0]
+    if (subcommand === undefined || !(CARGO_SUBCOMMANDS as readonly string[]).includes(subcommand)) {
+      continue
+    }
+    hits += 1
+    if (elements.includes('--workspace') || elements.includes('--all')) continue
+    problems.push(
+      `✗ workspace 命令覆盖：${rel}:${line} cargo ${subcommand} 数组形态缺 '--workspace'` +
+        '（非虚拟 workspace 下默认只作用于根包，会静默漏检成员 crate）\n' +
+        `    ${elements.join(' ')}`,
+    )
+  }
+  return hits
+}
 
 /** 壳层依赖形态：模块路径引用（crate::commands::x / commands::x）与别名引入 */
 const SHELL_DEP_PATTERN = /\bcommands\s*::|\bcommands\s+as\b/
@@ -1428,18 +1557,28 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
       problems.push(`✗ workspace 命令覆盖：宿主文件不存在：${rel}`)
       continue
     }
-    const lines = readFileSync(abs, 'utf8').split('\n')
-    lines.forEach((line, i) => {
-      if (line.trim().startsWith('#')) return // 注释行（含 workflow 说明）不算命令
+    const source = readFileSync(abs, 'utf8')
+    // `.ts` 宿主的命令面是数组字面量（另核对）；shell / YAML 宿主先掩掉引号内内容，
+    // 否则 `echo "…cargo test…"` 这类说明文字会被当成命令（P1 假绿）。
+    const isTsHost = rel.endsWith('.ts')
+    const text = isTsHost ? source : maskShellQuoted(source)
+    let hits = isTsHost ? checkTsCargoArrays(rel, source, problems) : 0
+    text.split('\n').forEach((line, i) => {
+      // 注释行不算命令：shell / workflow 用 `#`，登记进来的 .ts 宿主（test-exec.ts）
+      // 用 `//` 与 `/** … */`（含 ` * ` 续行），注释里的 `cargo test` 只是说明文字，
+      // 不构成命令面。
+      const trimmed = line.trim()
+      if (trimmed === '' || trimmed.startsWith('#') || isTsCommentLine(trimmed)) return
       // 逐条命令核对（一行可有 `cargo fmt … && cargo clippy …` 多条：只看首个
       // 匹配会把未覆盖的 clippy 放过去）；命令段截到下一个 shell 控制符为止。
       const re = /\bcargo\s+(clippy|test|fmt)\b/g
       let m: RegExpExecArray | null
       while ((m = re.exec(line))) {
+        hits += 1
         const rest = line.slice(m.index)
         const end = rest.search(/&&|;|\|/)
         const segment = end === -1 ? rest : rest.slice(0, end)
-        // `--all` 仅在词尾才算 workspace 别名：`--all-targets` / `--all-features`
+        // `--all` 按整词才算 workspace 别名：`--all-targets` / `--all-features`
         // 的 `\b` 落在 `-` 前，用 \b 会假绿（本核对要拦的正是这一形态）。
         if (WORKSPACE_SCOPE_PATTERN.test(segment) || ALL_SCOPE_PATTERN.test(segment)) continue
         problems.push(
@@ -1449,6 +1588,15 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
         )
       }
     })
+    // 空集拒绝（与覆盖守门的「拒绝以空集假绿」同口径）：宿主里一条命令位置上的
+    // cargo 命令都没有——命令被 echo 成说明文字、被注释掉或整段删除时，逐条核对会
+    // 变成空转全绿（#1112 第三轮审查 P1）。
+    if (hits === 0) {
+      problems.push(
+        `✗ workspace 命令覆盖：${rel} 未发现任何命令位置上的 cargo 命令` +
+          '（引号内的说明文字不算命令）——拒绝以空集假绿，命令被 echo/注释/删除即红',
+      )
+    }
   }
 
   // ⑦ 测试导出生产编译门（ADR-0111 决策 5）：测试目标专用导出默认不进生产

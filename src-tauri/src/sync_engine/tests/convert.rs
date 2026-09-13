@@ -213,14 +213,21 @@ fn convert_create_replay_converges_lots_carried_cost_and_pnl() {
     );
 
     // 转出腿逐批次消耗：首批耗尽按「批次数额 − 此前已消耗」闭合、二批按数量比例单次舍入。
-    let expected_conversions = vec![
+    // 读侧按 buy_transaction_id 排序，而 UUIDv7 仅在毫秒内有序、同毫秒由随机位定序
+    // ——预期清单不能假设「创建序 == id 序」（#1112 范围外修复）。两侧按同一键归一后
+    // 比较，断言的仍是每批的消耗份额与结转成本（换批次序会改数值，仍可失败）。
+    let mut expected_conversions = vec![
         (buy1.clone(), 10.0, 10_000, 1_000),
         (buy2.clone(), 5.0, 20_000, 1_000),
     ];
-    assert_eq!(read_conversions(&conn_a, &convert_id), expected_conversions);
+    expected_conversions.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut conversions_a = read_conversions(&conn_a, &convert_id);
+    conversions_a.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(conversions_a, expected_conversions);
+    let mut conversions_b = read_conversions(&conn_b, &convert_id);
+    conversions_b.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(
-        read_conversions(&conn_b, &convert_id),
-        expected_conversions,
+        conversions_b, expected_conversions,
         "本地重建 FIFO 快照 ⇒ 同一逐批次消耗与结转成本"
     );
 

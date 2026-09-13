@@ -892,6 +892,8 @@ interface CrateFixtureOverrides {
   checkSh?: string
   testSh?: string
   lintFixSh?: string
+  /** 覆盖 `scripts/test-exec.ts`（cargo 命令宿主，workspace 范围负向夹具，#1112） */
+  testExecTs?: string
   workflow?: string
   /** 追加一个未登记的成员目录（crates/<name>）——新 crate 漏登记的负向夹具 */
   orphanCrate?: string
@@ -1396,6 +1398,13 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
       '( cd src-tauri && cargo fmt --all && cargo clippy --fix --workspace --all-targets --all-features --allow-dirty --allow-staged )\n',
   )
   writeFileSync(
+    join(root, 'scripts', 'test-exec.ts'),
+    overrides.testExecTs ??
+      '// 构建一次（口径说明：`cargo test` 默认执行面）\n' +
+        'const BUILD = "cargo test --workspace --no-run"\n' +
+        'runChild(cargo, ["test", "--workspace", "--no-run"], { cwd: BUILD })\n',
+  )
+  writeFileSync(
     join(root, '.github', 'workflows', 'build.yml'),
     overrides.workflow ??
       [
@@ -1496,6 +1505,54 @@ describe('check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
     expect(r.status).toBe(1)
     expect(r.output).toContain('缺 --workspace')
     expect(r.output).toContain('test.sh')
+  })
+
+  it('test-exec.ts（新 cargo 命令宿主，.ts 形态）缺 --workspace → 红（#1112 登记）', () => {
+    const args = makeCrateFixture({ testExecTs: 'const BUILD = "cargo test --no-run"\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('缺 --workspace')
+    expect(r.output).toContain('test-exec.ts')
+  })
+
+  it('test-exec.ts 注释里的 `cargo test` 不算命令（.ts 注释掩码，不假红）', () => {
+    const args = makeCrateFixture({
+      testExecTs:
+        '// 口径说明：`cargo test` 默认执行面\n' +
+        '/** 另一处：cargo test --no-run */\n' +
+        'const BUILD = "cargo test --workspace --no-run"\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('test-exec.ts 数组形态命令（真实命令面）缺 --workspace → 红（#1112 P2 登记生效）', () => {
+    // 真实 cargo 调用是程序化数组 `runChild(cargo, ['test', …])`，逐行字面量扫描只
+    // 看得见 console.log 的说明文字——登记若只匹配字面量就流于装饰（#1112 第三轮审查
+    // P2）。数组形态核对让登记真正约束命令面。
+    const args = makeCrateFixture({ testExecTs: "runChild(cargo, ['test', '--no-run'], { cwd: root })\n" })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('数组形态缺')
+    expect(r.output).toContain('test-exec.ts')
+  })
+
+  it('test-exec.ts 数组形态命令带 --workspace → 通过（数组面单独成立，不靠字面量兜底）', () => {
+    const args = makeCrateFixture({
+      testExecTs: "runChild(cargo, ['test', '--workspace', '--no-run'], { cwd: root })\n",
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('命令被 echo 包成说明文字 → 红（引号内不是命令面，拒绝空集假绿，#1112 P1）', () => {
+    // 相对固定点的假绿：三条真命令全包成 `echo "…cargo test…"` 后，逐行字面量扫描
+    // 仍把引号内的字样当成命令，核对全绿而实际一条测试都没跑。
+    const args = makeCrateFixture({ testSh: 'echo "( cd src-tauri && cargo test --workspace )"\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('未发现任何命令位置上的 cargo 命令')
+    expect(r.output).toContain('空集假绿')
   })
 
   it('`--all-targets` 等 `--all*` 旗标不算 workspace 范围 → 红（防假绿回归）', () => {

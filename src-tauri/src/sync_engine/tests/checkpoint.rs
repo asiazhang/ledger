@@ -22,6 +22,19 @@ fn device_of(conn: &rusqlite::Connection) -> String {
         .unwrap()
 }
 
+/// 来源设备（A）在本端的已应用位点：B 端同时持有**自己流**的位点行，位点清单
+/// 又是「按 DeviceId 序」的多行集合——用 `[0]` 取 A 流会随设备标识取值漂移
+/// （UUIDv7 同一毫秒内生成时，顺序由随机位决定；#1112 范围外修复，见该 PR）。
+/// 一律按 device_id 定位，断言只钉住「A 流水位」这一语义。
+fn position_of_stream(conn: &rusqlite::Connection, device_id: &str) -> i64 {
+    stream_positions(conn)
+        .unwrap()
+        .into_iter()
+        .find(|p| p.device_id == device_id)
+        .expect("位点行在列")
+        .applied_through
+}
+
 /// 交易行数（判据读取）。
 fn txn_count(conn: &rusqlite::Connection) -> i64 {
     conn.query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
@@ -271,8 +284,7 @@ fn positions_pinned_below_parked_op() {
 
     // op3 已应用，但位点被挂起的 op2 钉在 1（不越过任何未应用 op）。
     let dev_a = device_of(&conn_a);
-    assert_eq!(stream_positions(&conn_b).unwrap()[0].applied_through, 1);
-    assert_eq!(stream_positions(&conn_b).unwrap()[0].device_id, dev_a);
+    assert_eq!(position_of_stream(&conn_b, &dev_a), 1);
     assert_eq!(
         read_transaction(&conn_b, &t2).unwrap().amount_cents,
         2500,
@@ -293,7 +305,7 @@ fn truncation_is_owner_only_position_bounded_and_keeps_unapplied_ops() {
     assert_eq!(err.code(), Some("sync-engine.truncate-not-owner"));
 
     // 截断水位 = 各端上报位点的最小值（此处 B 对 A 流的位点为 1，被挂起 op 钉住）。
-    let watermark = stream_positions(&conn_b).unwrap()[0].applied_through;
+    let watermark = position_of_stream(&conn_b, &dev_a);
     let deleted = truncate_stream_before(&conn_a, &dev_a, watermark).unwrap();
     assert_eq!(deleted, 1, "只删位点之前（时钟 ≤ 1）的 op");
 
@@ -306,10 +318,7 @@ fn truncation_is_owner_only_position_bounded_and_keeps_unapplied_ops() {
     assert_balance_cache_matches_realtime(&conn_a);
 
     // 截断不碰位点表：位点仍在，增量拉取口径不回退。
-    assert_eq!(
-        stream_positions(&conn_b).unwrap()[0].applied_through,
-        watermark
-    );
+    assert_eq!(position_of_stream(&conn_b, &dev_a), watermark);
 }
 
 /// 截断后同步不断不复活：源端截掉自己的旧 op 后，对端全量重投不复活已删 op
@@ -320,7 +329,7 @@ fn sync_continues_after_truncation_without_resurrecting_truncated_ops() {
     let dev_a = device_of(&conn_a);
 
     // A 截掉位点之前的自己流 op（水位 = B 的挂起钉住位点 1）。
-    let watermark = stream_positions(&conn_b).unwrap()[0].applied_through;
+    let watermark = position_of_stream(&conn_b, &dev_a);
     truncate_stream_before(&conn_a, &dev_a, watermark).unwrap();
 
     // B 全量重投自己的日志（含 A 已截掉的 op1）：A 靠本机流位点跳过不复活；
@@ -444,7 +453,7 @@ fn advance_rolls_forward_across_backfilled_range() {
     let (conn_a, conn_b, _t2) = pinned_world();
     let dev_a = device_of(&conn_a);
     // pinned_world：B 对 A 流位点 = 1（op2 挂起钉住），日志持有 op1、op3。
-    assert_eq!(stream_positions(&conn_b).unwrap()[0].applied_through, 1);
+    assert_eq!(position_of_stream(&conn_b, &dev_a), 1);
     // 模拟「op2 补齐后成功应用」：经域内接缝落日志（绕过重放分派，仅此白盒）。
     let op2 = read_ops(&conn_a)
         .unwrap()

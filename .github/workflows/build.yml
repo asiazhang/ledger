@@ -73,6 +73,16 @@ jobs:
       - name: 后台服务成对拉起守门
         run: bun scripts/check-background-services.ts
 
+      # 测试执行覆盖守门（issue #1112）：并发入口（scripts/test-exec.ts）与非并发
+      # 入口（scripts/test.sh 的 e2e + doc-test）的覆盖范围必须与工作区测试目标
+      # 清单全等——新增测试目标不静默漏跑。纯静态发现（manifest + 目录形态），
+      # 不需 Rust 工具链，故与本 job 的其余守门同址。守门另自带两条接线/等价性
+      # 规则：本地 check.sh 与 CI 本步骤的接线缺失即红（源码扫描，先例 #959/#961），
+      # 测试运行期读 cargo 注入环境变量即红。删除该步骤即红：
+      # scripts/test-exec.test.ts 的接线用例。
+      - name: 测试执行覆盖守门
+        run: bun scripts/test-exec.ts check
+
       - name: 前端异步守门
         run: bun scripts/check-async-guards.ts
 
@@ -210,12 +220,14 @@ jobs:
       # 默认只作用于根包，缺范围参数会静默漏跑成员 crate；cargo 对没有对应 target
       # 的成员自动跳过，故 `--lib --test '*'` 的组合对成员 crate 安全。
       # 显式 target 选择：lib + 全部集成 target（tests/ 下每个 *.rs 与 */main.rs 各一个
-      # crate，当前 api_server / e2e / commands / sync_trigger_poll）。`--test` 的名称
-      # 支持 Unix glob（cargo 文档明确要求单引号防 shell 展开），`'*'` 命中全部集成
-      # target 而不含 bin——新增集成 target 自动进 CI，无「手工清单漏项静默漏跑」的
-      # 坑（issue #988）。刻意不用 `--tests`：它会连带 bin 测试，把 ledger-perf 的
-      # 生成器正确性单测（属性能工具链，perf-bench.yml 域，随每日常规基准一起运行）
-      # 拖回 PR CI。副作用：显式 target 选择不跑 doc-tests（当前为 0 个，无损失）。
+      # crate，当前 api_server / e2e / commands / real_bucket_acceptance /
+      # sync_trigger_poll）。`--test` 的名称支持 Unix glob（cargo 文档明确要求单引号
+      # 防 shell 展开），`'*'` 命中全部集成 target 而不含 bin——新增集成 target 自动
+      # 进 CI，无「手工清单漏项静默漏跑」的坑（issue #988）。刻意不用 `--tests`：它会
+      # 连带 bin 测试，把 ledger-perf 的生成器正确性单测（属性能工具链，perf-bench.yml
+      # 域，随每日常规基准一起运行）拖回 PR CI。副作用：显式 target 选择不跑 doc-tests
+      # （issue #1112 起的口径：本仓 doc-test 目标 17 个、当前有 4 条实际执行；CI 这里
+      # 仍不跑，本地 scripts/test.sh 已补 `cargo test --workspace --doc`）。
       - name: Rust 单元测试 + BDD/e2e 测试（cucumber）
         run: cargo test --workspace --lib --test '*'
 
