@@ -6,9 +6,9 @@ use chrono::NaiveDate;
 use rusqlite::Connection;
 
 use super::model::PolicyStats;
-use crate::db::query::{FromRow, query_all};
-use crate::error::Result;
-use crate::transaction::amount::{
+use ledger_infra::db::query::{FromRow, query_all};
+use ledger_infra::error::Result;
+use ledger_transaction::amount::{
     Measure, contributing_kinds_sql, policy_inflow_expr, policy_premium_expr,
 };
 
@@ -157,7 +157,7 @@ pub fn policy_stats(conn: &Connection, today: NaiveDate) -> Result<Vec<PolicySta
             let next_charge_date = next_charges.get(&policy_id).cloned();
             Ok(PolicyStats {
                 policy_id,
-                native_currency: crate::transaction::amount::default_currency_code(conn)?
+                native_currency: ledger_transaction::amount::default_currency_code(conn)?
                     .to_string(),
                 total_paid_native_cents,
                 total_inflow_native_cents,

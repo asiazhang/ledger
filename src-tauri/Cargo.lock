@@ -2674,6 +2674,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ledger-policy"
+version = "0.6.0"
+dependencies = [
+ "chrono",
+ "ledger-infra",
+ "ledger-sync-protocol",
+ "ledger-transaction",
+ "rusqlite",
+ "serde",
+ "tauri-app",
+]
+
+[[package]]
 name = "ledger-sync-protocol"
 version = "0.6.0"
 dependencies = [
@@ -4834,6 +4847,7 @@ dependencies = [
  "ledger-currencies",
  "ledger-infra",
  "ledger-merchants",
+ "ledger-policy",
  "ledger-sync-protocol",
  "ledger-transaction",
  "objc2",

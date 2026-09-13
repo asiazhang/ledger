@@ -3,7 +3,7 @@
 use rusqlite::{Connection, OptionalExtension};
 
 use super::model::PolicyInput;
-use crate::error::{AppError, Result};
+use ledger_infra::error::{AppError, Result};
 
 // ---------------------------------------------------------------------------
 // 校验与归一化（创建/编辑共用）

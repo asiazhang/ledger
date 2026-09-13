@@ -45,7 +45,12 @@ pub mod item;
 //（expand 形态，ledger-backup/ledger-transaction 同款）。
 pub use ledger_merchants as merchants;
 pub mod physical_asset;
-pub mod policy;
+// 保单域 crate（spec #1086 / issue #1100，P3 叶子业务域 crate）：保单静态档案
+// CRUD、保司字典与保单视角统计自根包域目录拆出，根包以再导出形态保留原引用
+// 路径——壳层（commands / api_server）、transaction_wiring 接线、sync_engine 重
+// 放分派与 e2e 的 `crate::policy::…` / `tauri_app_lib::policy::…` 调用点零改动
+//（expand 形态，ledger-transaction 同款）。域内本体见 `ledger-policy` crate。
+pub use ledger_policy as policy;
 pub mod reports;
 pub mod scheduled_transactions;
 pub mod sync;

@@ -4,11 +4,12 @@
 use rusqlite::Connection;
 
 use super::model::PolicyInput;
-use crate::policy::{create_insurer, create_policy, delete_policy, list_policies, update_policy};
+use crate::{create_insurer, create_policy, delete_policy, list_policies, update_policy};
 
 fn conn() -> Connection {
-    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
-    crate::test_support::open()
+    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）；
+    // 工厂住根包，经 dev-dependency 测试环消费（#1100，ledger-transaction 同款）。
+    tauri_app_lib::test_support::open()
 }
 
 fn input(insurer_id: &str) -> PolicyInput {
@@ -25,7 +26,7 @@ fn input(insurer_id: &str) -> PolicyInput {
 }
 
 fn seed_insurer(conn: &Connection, name: &str) -> String {
-    create_insurer(conn, crate::policy::InsurerInput { name: name.into() }).expect("创建保司失败")
+    create_insurer(conn, crate::InsurerInput { name: name.into() }).expect("创建保司失败")
 }
 
 fn create_ok(conn: &Connection, input: PolicyInput) -> String {
@@ -157,7 +158,7 @@ fn 编辑时保司未变_软删保司维持历史引用可继续编辑() {
     let insurer_id = seed_insurer(&conn, "平安保险");
     let id = create_ok(&conn, input(&insurer_id));
     // 建档后保司被软删：未换保司的编辑 = 维持历史引用（同 Writer 接缝语义）
-    crate::policy::delete_insurer(&conn, &insurer_id).unwrap();
+    crate::delete_insurer(&conn, &insurer_id).unwrap();
     let mut keep_input = input(&insurer_id);
     keep_input.product_name = "医疗险".into();
     update_policy(&conn, &id, keep_input, &mut || {}).unwrap();
@@ -165,7 +166,7 @@ fn 编辑时保司未变_软删保司维持历史引用可继续编辑() {
 
     // 换成另一个软删保司 = 新档案选择，仍被拒
     let insurer2 = seed_insurer(&conn, "已退保保司");
-    crate::policy::delete_insurer(&conn, &insurer2).unwrap();
+    crate::delete_insurer(&conn, &insurer2).unwrap();
     let mut switch_input = input(&insurer2);
     switch_input.product_name = "医疗险".into();
     let err = update_policy(&conn, &id, switch_input, &mut || {}).unwrap_err();
@@ -252,7 +253,7 @@ fn 建档校验各分支() {
 fn 软删保司不可再被新档案选择() {
     let conn = conn();
     let insurer_id = seed_insurer(&conn, "已退保保司");
-    crate::policy::delete_insurer(&conn, &insurer_id).unwrap();
+    crate::delete_insurer(&conn, &insurer_id).unwrap();
     let err = create_policy(&conn, input(&insurer_id), &mut || {}).unwrap_err();
     assert!(err.to_string().contains("保险公司不存在或已删除"));
 }
@@ -262,14 +263,14 @@ fn 软删保司不可再被新档案选择() {
 // 含协议期次的下期扣款日推导由 BDD `policy_stats.feature` 验收）
 // ---------------------------------------------------------------------------
 
-use crate::policy::policy_stats;
-use crate::transaction::TransactionInput;
-use crate::transaction::amount::TransactionKind;
-use crate::transaction::create_transaction_internal;
+use crate::policy_stats;
+use ledger_transaction::TransactionInput;
+use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::create_transaction_internal;
 
 fn insert_account(conn: &Connection, id: &str) {
     // 统计世界脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）。
-    crate::test_support::seed_account(conn, id, id, "cash", "CNY", 0);
+    tauri_app_lib::test_support::seed_account(conn, id, id, "cash", "CNY", 0);
 }
 
 fn linked_input(
@@ -330,7 +331,7 @@ fn 统计_挂单保费与流入实时合计且软删流水不计入() {
         i
     })
     .unwrap();
-    crate::transaction::delete_transaction_internal(&conn, &removed).unwrap();
+    ledger_transaction::delete_transaction_internal(&conn, &removed).unwrap();
 
     let stats = policy_stats(&conn, today(2026, 6, 1)).unwrap();
     assert_eq!(stats.len(), 1);
