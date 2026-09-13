@@ -417,9 +417,10 @@ const IPC_WRITE_ENTRY_EXCEPTIONS: &[(&str, WriteOp, &str)] = &[
     (
         "set_sync_channel_config",
         WriteOp::SetSyncChannelConfig,
-        "多端同步通道配置（issue #862）：WebDAV 凭据写 app_settings，经 settings.rs 单点收口、\
-         置脏豁免（ADR-0032/0017），刻意零信号——本机设备配置不同步（同步边界 SyncBoundary）；\
-         凭据构库校验（WebDavTransport::new）无 DB 写，不经写入口",
+        "多端同步通道配置（issue #862 / #1217）：通道凭据（WebDAV 组或 S3 组，按判别字段）写 \
+         app_settings，经 settings.rs 单点收口、置脏豁免（ADR-0032/0017），刻意零信号——本机\
+         设备配置不同步（同步边界 SyncBoundary）；地址形态门与凭据构库校验（域侧 \
+         `build_channel` 按后端起对应传输）无 DB 写，不经写入口",
     ),
     (
         "audit_balance_cache",

@@ -2,7 +2,7 @@
 //! 决策 5）。
 //!
 //! 直调命令函数（`#[tokio::test]`），覆盖壳行为：参数解包、错误码、**双端经
-//! 真实 WebDAV 桩「发布检查点 → 新端引导 → 双向增量收敛」整链**（验收判据
+//! 真实 S3 桩「发布检查点 → 新端引导 → 双向增量收敛」整链**（验收判据
 //! 「新端经 Checkpoint 引导」「手机记的账在桌面出现、桌面记的账在手机出现」
 //! 的自动化形态）与信封形态对齐（密文源端引导后本机转密文、双端互开对方段）。
 //! 引导的 SQL 级重建、位点采纳、schema 偏斜归域单测（`sync_engine::tests`，
@@ -19,11 +19,11 @@ use tauri_app_lib::db::data_location;
 use tauri_app_lib::db::encryption::{DbFileKind, enable_encryption_for_file, probe_file_kind};
 use tauri_app_lib::db::{self, DbState, open_connection_with_passphrase};
 use tauri_app_lib::error::AppError;
-use tauri_app_lib::test_support::{read_scalar_i64, spawn_webdav_stub};
+use tauri_app_lib::test_support::read_scalar_i64;
 
 use crate::isolation::isolate_home;
 use crate::sync_channel::{
-    STUB_PASS, STUB_USER, configure_channel, device_app, expense_input, fresh_app,
+    configure_channel, device_app, expense_input, fresh_app, spawn_sync_stub,
 };
 
 /// 断言码化错误命中的稳定码。
@@ -97,8 +97,8 @@ async fn publish_requires_channel_then_advances_generation() {
         .expect_err("未配置应被拒");
     assert_code(err, "sync-channel.not-configured");
 
-    let stub = spawn_webdav_stub(Some((STUB_USER, STUB_PASS)));
-    configure_channel(&app, &stub.base_url).await;
+    let stub = spawn_sync_stub();
+    configure_channel(&app, &stub);
 
     // 通道上还没有检查点：预检回 None。
     let precheck = get_sync_channel_checkpoint(app.clone())
@@ -129,11 +129,11 @@ async fn publish_requires_channel_then_advances_generation() {
 #[tokio::test]
 async fn dual_device_checkpoint_bootstrap_converges_both_ways() {
     isolate_home();
-    let stub = spawn_webdav_stub(Some((STUB_USER, STUB_PASS)));
+    let stub = spawn_sync_stub();
 
     // 桌面端 A（存量数据）：记账 → 同步（op 上通道）→ 发布检查点。
     let (app_a, _dir_a) = device_app("cp-a");
-    configure_channel(&app_a, &stub.base_url).await;
+    configure_channel(&app_a, &stub);
     let (acc_id, txn_a) = seed_account_and_expense(&app_a, 10_000, "桌面记的账").await;
     sync_now(app_a.clone(), None).await.expect("A 首轮应成功");
     let published = publish_sync_checkpoint(app_a.clone(), None)
@@ -142,7 +142,7 @@ async fn dual_device_checkpoint_bootstrap_converges_both_ways() {
 
     // 手机端 B（全新空库）：预检 → 引导。
     let (app_b, _dir_b) = device_app("cp-b");
-    configure_channel(&app_b, &stub.base_url).await;
+    configure_channel(&app_b, &stub);
     let precheck = get_sync_channel_checkpoint(app_b.clone())
         .await
         .expect("B 预检应成功")
@@ -226,11 +226,11 @@ async fn dual_device_checkpoint_bootstrap_converges_both_ways() {
 #[tokio::test]
 async fn bootstrap_refuses_library_with_user_data() {
     isolate_home();
-    let stub = spawn_webdav_stub(Some((STUB_USER, STUB_PASS)));
+    let stub = spawn_sync_stub();
 
     // 来源端发布检查点。
     let (app_a, _dir_a) = device_app("guard-a");
-    configure_channel(&app_a, &stub.base_url).await;
+    configure_channel(&app_a, &stub);
     let _ = seed_account_and_expense(&app_a, 5_000, "来源端").await;
     sync_now(app_a.clone(), None).await.expect("A 首轮应成功");
     publish_sync_checkpoint(app_a.clone(), None)
@@ -242,7 +242,7 @@ async fn bootstrap_refuses_library_with_user_data() {
     //（该守卫的真实保护对象：升级前已记帐的旧库；ADR-0086「无公开入口的
     // 库内状态直置」同款）。
     let (app_b, dir_b) = device_app("guard-b");
-    configure_channel(&app_b, &stub.base_url).await;
+    configure_channel(&app_b, &stub);
     let _ = seed_account_and_expense(&app_b, 900, "本机既有数据").await;
     let b_conn = app_b.state::<DbState>().conn.clone();
     b_conn
@@ -260,9 +260,9 @@ async fn bootstrap_refuses_library_with_user_data() {
 #[tokio::test]
 async fn bootstrap_without_published_checkpoint_is_coded() {
     isolate_home();
-    let stub = spawn_webdav_stub(Some((STUB_USER, STUB_PASS)));
+    let stub = spawn_sync_stub();
     let (app_b, _dir_b) = device_app("none-cp");
-    configure_channel(&app_b, &stub.base_url).await;
+    configure_channel(&app_b, &stub);
     let err = bootstrap_sync_from_channel(app_b.clone(), None)
         .await
         .expect_err("空通道引导应被拒");
@@ -274,7 +274,7 @@ async fn bootstrap_without_published_checkpoint_is_coded() {
 #[tokio::test]
 async fn encrypted_source_rekeys_fresh_joiner_and_rounds_stay_interoperable() {
     isolate_home();
-    let stub = spawn_webdav_stub(Some((STUB_USER, STUB_PASS)));
+    let stub = spawn_sync_stub();
     let master = "master-pass";
 
     // 源端 A：明文库建好 → 原位转密文 → 按口令重开连接挂载。
@@ -287,7 +287,7 @@ async fn encrypted_source_rekeys_fresh_joiner_and_rounds_stay_interoperable() {
         conn: std::sync::Arc::new(std::sync::Mutex::new(conn_a)),
     });
     let app_a = app_a.handle().clone();
-    configure_channel(&app_a, &stub.base_url).await;
+    configure_channel(&app_a, &stub);
     let (acc_id, _) = seed_account_and_expense(&app_a, 10_000, "密文源端").await;
 
     // 缺口令发布被拦（复用 resolve_passphrase 单点）；凭口令发布成功。
@@ -305,7 +305,7 @@ async fn encrypted_source_rekeys_fresh_joiner_and_rounds_stay_interoperable() {
 
     // 全新明文端 B：凭口令引导 → 整库换入 + 转为本机密文库。
     let (app_b, dir_b) = device_app("enc-b");
-    configure_channel(&app_b, &stub.base_url).await;
+    configure_channel(&app_b, &stub);
     let outcome = bootstrap_sync_from_channel(app_b.clone(), Some(master.into()))
         .await
         .expect("B 引导应成功");
@@ -367,7 +367,7 @@ async fn envelope_form_mismatch_guards_reject_before_bootstrap() {
     isolate_home();
 
     // 场景一：密文快照 × 密文本机、口令不一致 → bootstrap-passphrase-mismatch。
-    let stub1 = spawn_webdav_stub(Some((STUB_USER, STUB_PASS)));
+    let stub1 = spawn_sync_stub();
     let (app_a, dir_a) = fresh_app("mm-a");
     db::open_db_in(&dir_a).unwrap();
     let db_path_a = dir_a.join(data_location::DB_FILE_NAME);
@@ -377,7 +377,7 @@ async fn envelope_form_mismatch_guards_reject_before_bootstrap() {
         conn: std::sync::Arc::new(std::sync::Mutex::new(conn_a)),
     });
     let app_a = app_a.handle().clone();
-    configure_channel(&app_a, &stub1.base_url).await;
+    configure_channel(&app_a, &stub1);
     let _ = seed_account_and_expense(&app_a, 1_000, "来源端").await;
     sync_now(app_a.clone(), Some("channel-pass".into()))
         .await
@@ -395,16 +395,16 @@ async fn envelope_form_mismatch_guards_reject_before_bootstrap() {
         conn: std::sync::Arc::new(std::sync::Mutex::new(conn_b)),
     });
     let app_b = app_b.handle().clone();
-    configure_channel(&app_b, &stub1.base_url).await;
+    configure_channel(&app_b, &stub1);
     let err = bootstrap_sync_from_channel(app_b.clone(), Some("channel-pass".into()))
         .await
         .expect_err("口令不一致应被拒");
     assert_code(err, "sync-channel.bootstrap-passphrase-mismatch");
 
     // 场景二：明文快照 × 密文本机 → bootstrap-form-mismatch。
-    let stub2 = spawn_webdav_stub(Some((STUB_USER, STUB_PASS)));
+    let stub2 = spawn_sync_stub();
     let (app_c, _dir_c) = device_app("mm-c");
-    configure_channel(&app_c, &stub2.base_url).await;
+    configure_channel(&app_c, &stub2);
     let _ = seed_account_and_expense(&app_c, 2_000, "明文来源端").await;
     sync_now(app_c.clone(), None).await.expect("C 轮次应成功");
     publish_sync_checkpoint(app_c.clone(), None)
@@ -420,7 +420,7 @@ async fn envelope_form_mismatch_guards_reject_before_bootstrap() {
         conn: std::sync::Arc::new(std::sync::Mutex::new(conn_d)),
     });
     let app_d = app_d.handle().clone();
-    configure_channel(&app_d, &stub2.base_url).await;
+    configure_channel(&app_d, &stub2);
     let err = bootstrap_sync_from_channel(app_d.clone(), None)
         .await
         .expect_err("明文快照 × 密文本机应被拒");

@@ -345,6 +345,7 @@
     "checkpoint-missing": "同步通道上的检查点文件缺失，请重新发布检查点: {0}",
     "checkpoint-none": "同步通道上还没有检查点快照",
     "credentials-invalid": "同步通道账号或密码含非法字符",
+    "endpoint-insecure": "同步通道端点必须使用 https 地址",
     "envelope-corrupt": "同步信封损坏，无法解析：{0}",
     "http-failed": "同步通道服务异常（HTTP {0}）: {1}",
     "manifest-corrupt": "同步清单损坏或无法解析: {0}",

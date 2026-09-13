@@ -40,11 +40,21 @@ const passphrase = ref('')
 const parkedOps = ref<ParkedOpInfo[]>([])
 
 // 通道配置表单：初值来自命令回显（未配置为空表单，空间字段填默认值）。
+// 两组地址字段并存（WebDAV 组 / S3 组，按 backend 判别消费）：本票只做类型与
+// 保存载荷接线，S3 字段的输入控件、厂商预设与「测试连接」按钮归 #1218/#1219。
 const form = ref<SyncChannelConfig>({
+  backend: 'webdav',
   base_url: '',
   username: '',
   password: '',
   space_id: 'default',
+  endpoint: '',
+  region: '',
+  bucket: '',
+  prefix: '',
+  access_key: '',
+  secret_key: '',
+  path_style: false,
   configured: false,
 })
 
@@ -122,15 +132,23 @@ async function syncNow() {
   }
 }
 
-/** 保存通道配置：WebDAV 凭据与同步空间（跨端共识的世界身份；空值交由后端回默认）。 */
+/** 保存通道配置：凭据（按后端判别）与同步空间（跨端共识的世界身份；空值交由后端回默认）。 */
 async function saveChannel() {
   saving.value = true
   try {
     await api.setSyncChannelConfig({
+      backend: form.value.backend,
       base_url: form.value.base_url,
       username: form.value.username,
       password: form.value.password,
       space_id: form.value.space_id.trim() || undefined,
+      endpoint: form.value.endpoint,
+      region: form.value.region,
+      bucket: form.value.bucket,
+      prefix: form.value.prefix,
+      access_key: form.value.access_key,
+      secret_key: form.value.secret_key,
+      path_style: form.value.path_style,
     })
     message.success(t('settings.data.sync.saveOk'))
     await refreshStatus()

@@ -345,6 +345,7 @@
     "checkpoint-missing": "Checkpoint file is missing on the sync channel; publish a new checkpoint: {0}",
     "checkpoint-none": "No checkpoint snapshot exists on the sync channel yet.",
     "credentials-invalid": "Sync channel username or password contains invalid characters.",
+    "endpoint-insecure": "The sync channel endpoint must use https.",
     "envelope-corrupt": "Sync envelope is corrupt and cannot be parsed: {0}",
     "http-failed": "Sync channel service error (HTTP {0}): {1}",
     "manifest-corrupt": "Sync manifest is corrupt or unreadable: {0}",

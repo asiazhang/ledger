@@ -23,7 +23,9 @@ mod scheduler;
 mod session;
 
 pub(crate) use channel::DEFAULT_SPACE_ID;
-pub use channel::{SyncChannel, SyncChannelConfig, build_channel, configured_channel};
+pub use channel::{
+    ChannelBackend, SyncChannel, SyncChannelConfig, build_channel, configured_channel,
+};
 pub use scheduler::{
     TriggerTimings, book_unavailable_error, install_after_write_hook, not_configured_error,
     run_auto_round, run_round_once, start_sync_scheduler, start_sync_scheduler_with,
