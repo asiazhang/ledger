@@ -3,7 +3,7 @@
 //! 职责边界：
 //! - 设备级「自动执行」开关的真源是前端 localStorage 设备偏好（ADR-0017 边界：
 //!   刻意不入 `app_settings`——该表随 Backup/Restore 迁移，表达不了「这台执行、
-//!   那台不执行」），后端只持一份进程级运行时镜像 [`ENABLED`]（默认关），
+//!   那台不执行」），后端只持一份进程级运行时镜像 `ENABLED`（默认关），
 //!   由领域命令形状的推送命令（`commands::scheduled`）在应用启动与变更时更新；
 //! - 追补入口 [`run_catch_up`] 是唯一新增接缝：参数注入（连接、开关状态、今天
 //!   日期）→ 执行汇总，所有后端行为测试打这一个入口；期次执行本体沿用引擎既有
@@ -31,8 +31,8 @@ use chrono::{Local, NaiveDate};
 use rusqlite::{Connection, params};
 
 use super::engine::execute_occurrence;
-use crate::db::now_iso;
-use crate::error::Result;
+use ledger_infra::db::now_iso;
+use ledger_infra::error::Result;
 use ledger_sync_protocol::device::device_id;
 
 // ---------------------------------------------------------------------------

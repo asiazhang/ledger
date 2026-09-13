@@ -36,10 +36,11 @@
 // 与数据面惯用库（清单见 PROTOCOL_MODULES），反向引用由 cargo 依赖图拒绝
 //（协议 crate 根文档负向用例），本扫描再固化为规格。
 // 域间禁边（issue #1090 / spec #1086 形态推广）：三类写路径副作用（余额重算 /
-// 计划来源反查 / 期次落账置脏）的域间直接依赖随接缝反转消亡——
-// transaction→accounts、transaction→scheduled_transactions、
-// scheduled_transactions→backup 残留引用即红（认许边逐条留痕于
-// DOMAIN_PAIR_ALLOWED_EDGES，掩码后匹配，外挂测试豁免不变）。
+// 计划来源反查 / 期次落账置脏）的域间直接依赖随接缝反转消亡（认许边逐条留痕于
+// DOMAIN_PAIR_ALLOWED_EDGES，掩码后匹配，外挂测试豁免不变）。历史规则已随双方
+// crate 化全部退役：transaction 起点三条随 #1092、scheduled_transactions→backup
+// 一条随 #1098——文本清单不再辖，依赖方向改由 cargo 依赖图编译期拒绝
+//（生产依赖面无根包与未声明域）。
 // 模型域化禁令（ADR-0059 T7 / #424 收口落地，全树扫描、同样掩码与测试豁免）：
 // ① 全局模型模块路径残留禁令——`crate::models` / `tauri_app_lib::models` 即红：
 //    全局模型目录已随域归位消亡，防扁平命名空间复活（crate 根裸路径 `models::x`
@@ -105,7 +106,6 @@ export type Layer = (typeof LAYER)[keyof typeof LAYER]
  * CRATES（BACKUP_MODULES 承接模块级扫描）。
  */
 export const WHITELIST: readonly WhitelistEntry[] = [
-  { path: 'scheduled_transactions', layer: '域目录', note: '定时计划域' },
   { path: 'item', layer: '域目录', note: '物品域（#397 阶段 1 归位，主体自 commands/item 随迁）' },
   { path: 'budget', layer: '域目录', note: '预算域（#399 阶段 3 归位）' },
   { path: 'physical_asset', layer: '域目录', note: '实物资产域（issue #466 新建即归位，ADR-0064）' },
@@ -346,6 +346,27 @@ export const POLICY_MODULES: readonly WhitelistEntry[] = [
 
 /** 保单域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-policy.dir 同源。 */
 export const POLICY_SRC_REL = 'crates/policy/src'
+/**
+ * 定时计划域 crate 的模块清单（spec #1086 / issue #1098）：路径相对
+ * `src-tauri/crates/scheduled/src`。定时交易计划/期次引擎/自动执行追补/订阅花费。
+ * 对壳层与同步域零容忍照扫（与备份/交易 crate 同款，清单条目 layer 为域目录即入
+ * 业务域扫描面）；对核心交易域的引用是合法域→域上层依赖（期次落库/校验经 writer
+ * 接缝、花费合计经 amount 矩阵，#1092），由 cargo 依赖图与 CRATES 分层核对承担，
+ * 文本扫描不再辖。crate 根 lib.rs 是声明与再导出面（无守门靶向代码），与协议/
+ * 备份/交易 crate 同款不入清单，也不参与双向全等的磁盘枚举；tests.rs 与 tests/
+ * 均为测试豁免形态不入清单。
+ */
+export const SCHEDULED_MODULES: readonly WhitelistEntry[] = [
+  { path: 'auto_run.rs', layer: '域目录', note: '自动执行追补（唯一新增接缝，ADR-0042）：运行时镜像、追补入口、期次落账后置钩子注册点（挂载点③实现侧）与追补触发钩子实现（挂载点④，issue #1090/#1091）' },
+  { path: 'command.rs', layer: '域目录', note: '定时计划同步命令（op 载荷形态、产出单点与重放分派，issue #856 / #860）' },
+  { path: 'engine.rs', layer: '域目录', note: '计划/期次引擎（建档、状态机、期次展开与执行，issue #59/#230/#856）' },
+  { path: 'models.rs', layer: '域目录', note: '域集中模型（#419 随域归位）：计划/期次/扩展实体与入参、闭集枚举' },
+  { path: 'source.rs', layer: '域目录', note: '计划来源反查（spec #704/#1090 接缝反转实现侧）：模块私有，反查行不公开再导出，经 install_plan_source_hook 注册进核心交易域接缝' },
+  { path: 'spend.rs', layer: '域目录', note: '订阅花费双口径（ADR-0023，issue #160/#161/#395）' },
+]
+
+/** 定时计划域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-scheduled.dir 同源。 */
+export const SCHEDULED_SRC_REL = 'crates/scheduled/src'
 
 /**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
@@ -446,6 +467,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/policy',
     layer: CRATE_LAYER.DOMAIN,
     note: '保单域 crate（#1100，P3 叶子业务域 crate：保单静态档案 CRUD/保司字典/保单视角统计，可被多端同步域依赖）；依赖面只有基础设施、同步协议与核心交易域——统计读路径消费 kind→度量矩阵与折算口径，交易×保单接缝（#1092）的实现注册侧是域→域合法上层依赖（保单 → 核心交易单向），对壳层与同步域零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
+  },
+  {
+    name: 'ledger-scheduled',
+    dir: 'crates/scheduled',
+    layer: CRATE_LAYER.DOMAIN,
+    note: '定时计划域 crate（#1098，P3 业务域：定时交易计划/期次引擎/自动执行追补/订阅花费，可被多端同步域依赖的独立编译单元，spec #1086）；依赖面只有基础设施、同步协议与核心交易域（期次落库/校验经 writer 接缝、花费合计经 amount 矩阵，#1092）——票面允许集内的备份域不声明：期次落账置脏与追补触发两条边已按注册点反转收敛（挂载点③/④，ADR-0112 决策 5，本域持注册点与实现侧、壳层启动对装），对壳层/同步域零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
   },
 ]
 
@@ -629,22 +656,18 @@ interface DomainPairRule {
  * DOMAIN_PAIR_ALLOWED_EDGES），文本级扫描、掩码注释与字面量后匹配，别名改写
  * 不可达靠评审兑底。
  *
- * 以 transaction 为起点的禁边已随 #1092 crate 化退役：核心交易域拆为
- * ledger-transaction crate 后，对任何业务域/壳层的引用由 cargo 依赖图编译期
- * 拒绝（生产依赖面无根包），文本扫描不再可及（crate 名直引形态亦不存在——
- * 域层对下层 crate 的合法引用走 ledger_transaction::，方向合法不属禁边）。
+ * 起点域拆为独立 crate 后的禁边随 crate 化退役，文本清单不再辖、依赖方向改由
+ * cargo 依赖图编译期拒绝（生产依赖面无根包与未声明域）——以 transaction 为
+ * 起点的规则随 #1092（对业务域/壳层的引用由生产依赖面拒绝；crate 名直引形态
+ * 亦不存在——域层对下层 crate 的合法引用走 ledger_transaction::，方向合法不属
+ * 禁边）；scheduled_transactions→backup 一条随 #1098：定时计划域拆为
+ * ledger-scheduled crate 后，置脏实现已住 ledger-backup、追补触发实现住本域，
+ * 双向均经注册点接缝、壳层对装，本域生产依赖面不含 ledger-backup，构造
+ * `ledger_backup::` / 再导出面引用即编译失败，文本扫描不再可及。
  */
 export const DOMAIN_PAIR_FORBIDDEN: readonly DomainPairRule[] = [
-  {
-    from: 'scheduled_transactions',
-    to: 'backup',
-    extraPattern: /\bledger_backup\s*::/,
-    reason:
-      'issue #1090 / spec #1086 形态推广：期次落账置脏经注册点反转'
-      + '（auto_run 注册点 + backup::occurrence_dirty_hook 实现注册，#1091 起实现住 ledger-backup crate），'
-      + 'scheduled_transactions → backup 直接引用禁令——再导出面（crate::backup / '
-      + 'tauri_app_lib::backup）与 crate 名直引（ledger_backup::）两形都红',
-  },
+  // #1098 后为空：最后一条（scheduled_transactions → backup，含 crate 名直引
+  // extraPattern）已随定时计划域 crate 化退役，清单保留为空集留痕。
 ]
 
 /** 域间禁边认许边条目：文件相对路径（相对根 src）+ from/to + 成因留痕 */
@@ -1775,6 +1798,7 @@ function main(): void {
       ...collectRustFiles(join(srcTauriDir, MERCHANTS_SRC_REL), MERCHANTS_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, CURRENCIES_SRC_REL), CURRENCIES_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, POLICY_SRC_REL), POLICY_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, SCHEDULED_SRC_REL), SCHEDULED_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -1834,6 +1858,7 @@ function main(): void {
   scannedFiles += scanModuleEntries(MERCHANTS_MODULES, join(srcTauriDir, MERCHANTS_SRC_REL), problems)
   scannedFiles += scanModuleEntries(CURRENCIES_MODULES, join(srcTauriDir, CURRENCIES_SRC_REL), problems)
   scannedFiles += scanModuleEntries(POLICY_MODULES, join(srcTauriDir, POLICY_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(SCHEDULED_MODULES, join(srcTauriDir, SCHEDULED_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -1872,6 +1897,7 @@ function main(): void {
       `+ 商户域模块 ${MERCHANTS_MODULES.length} 项（crate ${MERCHANTS_SRC_REL}，#1096）` +
       `+ 币种域模块 ${CURRENCIES_MODULES.length} 项（crate ${CURRENCIES_SRC_REL}，#1095）` +
       `+ 保单域模块 ${POLICY_MODULES.length} 项（crate ${POLICY_SRC_REL}，#1100）` +
+      `+ 定时计划域模块 ${SCHEDULED_MODULES.length} 项（crate ${SCHEDULED_SRC_REL}，#1098）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +

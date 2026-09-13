@@ -23,6 +23,8 @@ import {
   POLICY_SRC_REL,
   PROTOCOL_MODULES,
   PROTOCOL_SRC_REL,
+  SCHEDULED_MODULES,
+  SCHEDULED_SRC_REL,
   TRANSACTION_MODULES,
   TRANSACTION_SRC_REL,
   TRANSACTION_ZONE_ALLOWED_EDGES,
@@ -85,6 +87,7 @@ function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, MERCHANTS_SRC_REL), MERCHANTS_MODULES)
   writeModuleStubs(join(srcTauri, CURRENCIES_SRC_REL), CURRENCIES_MODULES)
   writeModuleStubs(join(srcTauri, POLICY_SRC_REL), POLICY_MODULES)
+  writeModuleStubs(join(srcTauri, SCHEDULED_SRC_REL), SCHEDULED_MODULES)
 }
 
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
@@ -150,6 +153,15 @@ function isPolicyModulePath(rel: string): boolean {
   return POLICY_ENTRY_PATHS.has(rel)
 }
 
+/** 定时计划域 crate 模块路径判定（精确文件名，#1098；无撞名可用——`engine.rs`
+ *  归备份域、`command.rs` 归账户域，均在前序链先行占有；定时计划夹具只用
+ *  `auto_run.rs` / `models.rs` / `source.rs` / `spend.rs` 四名）。 */
+const SCHEDULED_ENTRY_PATHS = new Set(SCHEDULED_MODULES.map((m) => m.path))
+
+function isScheduledModulePath(rel: string): boolean {
+  return SCHEDULED_ENTRY_PATHS.has(rel)
+}
+
 /**
  * 写覆盖文件：按路径首段归位——基础设施模块（`db/…` / `error.rs` / …）落
  * `<srcTauri>/crates/infra/src`，备份域 crate 模块（`auto.rs` / `engine.rs`，#1091）
@@ -176,6 +188,8 @@ function placeOverride(srcTauri: string, relPath: string, content: string): void
           ? join(srcTauri, CURRENCIES_SRC_REL)
         : isPolicyModulePath(relPath)
           ? join(srcTauri, POLICY_SRC_REL)
+        : isScheduledModulePath(relPath)
+          ? join(srcTauri, SCHEDULED_SRC_REL)
           : join(srcTauri, 'src')
   const file = join(base, relPath)
   mkdirSync(join(file, '..'), { recursive: true })
@@ -434,13 +448,16 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
 
 describe('check-structure 业务域→同步域零容忍（ADR-0101 决策 4b / #1089 收紧）', () => {
   it('业务域引用同步域内部件（engine::/ops::/model::…）→ 红并定位文件行号', () => {
+    // 'auto_run.rs' 经 placeOverride 落定时计划域 crate（SCHEDULED_MODULES 派生
+    // 路由，#1098 起守门基准随迁 crate；原 scheduled_transactions/command.rs
+    // 域目录夹具随拆分消亡）。
     const args = makeFixture({
-      'scheduled_transactions/command.rs': 'use crate::sync_engine::engine::ReplayEffect;\n',
+      'auto_run.rs': 'use crate::sync_engine::engine::ReplayEffect;\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('业务域引用同步域')
-    expect(r.output).toContain('scheduled_transactions/command.rs:1')
+    expect(r.output).toContain('auto_run.rs:1')
     expect(r.output).toContain('sync_engine::engine')
   })
 
@@ -528,36 +545,13 @@ describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反
     expect(DOMAIN_PAIR_FORBIDDEN.some((r) => r.from === 'transaction')).toBe(false)
   })
 
-  it('scheduled_transactions 引用 backup（置脏旧形态）→ 红', () => {
-    const args = makeFixture({
-      'scheduled_transactions/auto_run.rs': 'crate::backup::mark_dirty(conn);\n',
-    })
-    const r = run(args)
-    expect(r.status).toBe(1)
-    expect(r.output).toContain('域间禁边')
-    expect(r.output).toContain('scheduled_transactions/auto_run.rs:1')
-  })
-
-  it('scheduled_transactions 引用 ledger_backup::（crate 名直引，#1091）→ 红', () => {
-    // #1091 起备份域实现住 ledger-backup crate：除再导出面（crate::backup /
-    // tauri_app_lib::backup）外，crate 名直引前缀同属禁令形态（extraPattern 并扫）。
-    const args = makeFixture({
-      'scheduled_transactions/auto_run.rs': 'ledger_backup::mark_dirty(conn);\n',
-    })
-    const r = run(args)
-    expect(r.status).toBe(1)
-    expect(r.output).toContain('域间禁边')
-    expect(r.output).toContain('scheduled_transactions/auto_run.rs:1')
-  })
-
-  it('根花括号列举首段同样识别 → 红（与 infra→域扫描同款形态）', () => {
-    const args = makeFixture({
-      'scheduled_transactions/source.rs':
-        'use crate::{backup::mark_dirty, db::query::query_all};\n',
-    })
-    const r = run(args)
-    expect(r.status).toBe(1)
-    expect(r.output).toContain('域间禁边')
+  it('scheduled_transactions→backup 禁边已随 crate 化退役（#1098）：文本清单不再辖，依赖方向归 cargo 依赖图', () => {
+    // 定时计划域拆为 ledger-scheduled crate 后：置脏实现住 ledger-backup、追补触发
+    // 实现住本域，双向均经注册点接缝、壳层对装；本域生产依赖面不含 ledger-backup，
+    // 构造引用即编译失败（守门基准随迁 SCHEDULED_MODULES：对壳层/同步域零容忍照
+    // 扫），故最后一条规则退役、清单归空（保留空集留痕）。
+    expect(DOMAIN_PAIR_FORBIDDEN.some((r) => r.from === 'scheduled_transactions')).toBe(false)
+    expect(DOMAIN_PAIR_FORBIDDEN).toHaveLength(0)
   })
 
   it('核心交易域 crate 模块引用壳层 → 红并定位文件行号（#1092 crate 化后守门基准随迁）', () => {
@@ -606,7 +600,7 @@ describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反
   it('外挂测试豁免不变：tests/ 目录引用禁边对不红（ADR-0056 决策 5）', () => {
     const args = makeFixture({
       'transaction/tests/balance_cache.rs': 'use ledger_transaction::read::list_transactions;\n',
-      'scheduled_transactions/tests/auto_run.rs': 'crate::backup::get_state(&conn);\n',
+      'tests/auto_run.rs': 'crate::backup::get_state(&conn);\n',
     })
     const r = run(args)
     expect(r.status).toBe(0)
@@ -622,13 +616,6 @@ describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反
     )
   })
 
-  it('删除即变红：禁边规则逐对生效，删对后同夹具转绿（对保护不假绿）', () => {
-    // 同一夹具在禁边在位时红；规则对逐条生效，删除规则须动脚本（清单外无豁免面）。
-    const fixture = {
-      'scheduled_transactions/auto_run.rs': 'crate::backup::mark_dirty(conn);\n',
-    }
-    expect(run(makeFixture(fixture)).status).toBe(1)
-  })
 })
 
 describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收口）', () => {
@@ -729,15 +716,17 @@ describe('check-structure 原生事务语句禁令（issue #1014 / #1003 定案 
   })
 
   it('COMMIT / ROLLBACK 手写同样识别 → 红', () => {
+    // 'source.rs' 经 placeOverride 落定时计划域 crate（SCHEDULED_MODULES 派生路由，
+    // #1098 起全树扫描覆盖 crate；原 scheduled_transactions/engine.rs 域目录夹具
+    // 随拆分消亡）。
     const args = makeFixture({
       'transaction/batch.rs': 'pub fn g(conn: &Connection) {\n    conn.execute("COMMIT", []);\n}\n',
-      'scheduled_transactions/engine.rs':
-        'pub fn h(conn: &Connection) {\n    conn.execute("ROLLBACK", []);\n}\n',
+      'source.rs': 'pub fn h(conn: &Connection) {\n    conn.execute("ROLLBACK", []);\n}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('transaction/batch.rs:2')
-    expect(r.output).toContain('scheduled_transactions/engine.rs:2')
+    expect(r.output).toContain('source.rs:2')
   })
 
   it('唯一合法住址 db/tx_scope.rs 内的原生事务语句 → 绿', () => {
@@ -786,6 +775,8 @@ interface CrateFixtureOverrides {
   currenciesManifest?: string
   /** 覆盖保单域 crate 的 `crates/policy/Cargo.toml`（依赖方向负向夹具，#1100） */
   policyManifest?: string
+  /** 覆盖定时计划域 crate 的 `crates/scheduled/Cargo.toml`（依赖方向负向夹具，#1098） */
+  scheduledManifest?: string
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string
   /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
@@ -1083,6 +1074,29 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
       ].join('\n'),
   )
   writeFileSync(join(srcTauri, 'crates', 'policy', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
+  // 定时计划域 crate（#1098，P3 业务域）：夹具与真实仓库同形——成员目录 + 门禁继承
+  // + dev-dependency 测试环（真实 crate 生产依赖面另有基础设施/协议/核心交易三行，
+  // 与依赖方向核对无关，夹具从简同其他域成员）。
+  mkdirSync(join(srcTauri, 'crates', 'scheduled', 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'crates', 'scheduled', 'Cargo.toml'),
+    overrides.scheduledManifest ??
+      [
+        '[package]',
+        'name = "ledger-scheduled"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[dev-dependencies]',
+        'tauri-app = { path = "../.." }',
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
+  )
+  writeFileSync(join(srcTauri, 'crates', 'scheduled', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
@@ -1559,6 +1573,72 @@ describe('check-structure 商户域 crate（#1096 参考数据域独立 crate �
 
   it('商户域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
     // 缺省 merchantsManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
+  })
+})
+
+describe('check-structure 定时计划域 crate（#1098 业务域 crate 自根包拆出）', () => {
+  it('真实仓库默认通过：定时计划域 crate 模块级扫描入摘要', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`定时计划域模块 ${SCHEDULED_MODULES.length} 项`)
+  })
+
+  it('夹具与真实仓库同形：定时计划域 crate 默认通过', () => {
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
+  })
+
+  it('定时计划域 crate 模块引用壳层 → 红并定位文件行号', () => {
+    // 'source.rs' 经 placeOverride 落定时计划域 crate（SCHEDULED_MODULES 派生路由，
+    // #1098；无撞名可用——engine.rs 归备份域、command.rs 归账户域，夹具只用
+    // auto_run / models / source / spend 四名）。
+    const args = makeFixture({ 'source.rs': shellUse })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('反向依赖')
+    expect(r.output).toContain('source.rs:1')
+  })
+
+  it('定时计划域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）', () => {
+    const args = makeFixture({
+      'spend.rs': 'use tauri_app_lib::sync_engine::registry::dispatch;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域')
+    expect(r.output).toContain('spend.rs:1')
+  })
+
+  it('定时计划域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1098）', () => {
+    const args = makeCrateFixture({
+      scheduledManifest:
+        '[package]\nname = "ledger-scheduled"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 依赖方向')
+    expect(r.output).toContain('ledger-scheduled')
+  })
+
+  it('定时计划域 crate 生产依赖备份域 crate → 绿（票面允许集内的域→域方向，#1098 AC）', () => {
+    // AC 允许集「基础设施、协议、核心交易域与备份域」：定时 → 备份是域→域方向，
+    // 分层同秩不违向（实际实现未声明该依赖——置脏/追补已按注册点反转，此处锁死
+    // 「允许集内不误报」的判定语义，与商户域→交易域用例同型）。
+    const args = makeCrateFixture({
+      scheduledManifest:
+        '[package]\nname = "ledger-scheduled"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\nledger-backup = { path = "../backup" }\n\n' +
+        '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('定时计划域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
+    // 缺省 scheduledManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
     const r = run(makeCrateFixture())
     expect(r.status).toBe(0)
   })
