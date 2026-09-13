@@ -1,14 +1,14 @@
-//! 多端同步命令壳（issue #862 / #863 / #864 / #1217 / #1219 / ADR-0091）：同步状态
-//! 查询、手动同步轮次、通道配置（WebDAV / S3 兼容对象存储凭据）、保存前的
+//! 多端同步命令壳（issue #862 / #863 / #864 / #1217 / #1219 / #1221 / ADR-0091）：
+//! 同步状态查询、手动同步轮次、通道配置（S3 兼容对象存储凭据）、保存前的
 //! 「测试连接」探测与检查点发布/预检/引导（新端加入向导的命令面）。
 //!
 //! 只做参数解包、凭据/信封模式解析与轮次编排一行调用；通道布局、轮次协议、
 //! 幂等重放、挂起语义与触发编排全在 [`crate::sync_engine`]（域不依赖壳，
 //! ADR-0056），本文件不含业务语义。唯一例外是保存通道配置时的**用户输入门**
-//! （端点必须 https，见 [`ensure_secure_endpoint`]，保存与 [`test_sync_channel_connection`]
-//! 共用）：它约束人提交的表单形态，不是通道语义——域侧 [`build_channel`] 对已落库
-//! 配置（含既有的 http WebDAV 配置与测试直置配置）保持可用，照常跑自动轮次；该门
-//! 住命令层是 #1217 的实现决定（理由见函数注释）。
+//! （端点必须 https，见 [`ensure_secure_endpoint`]，保存与
+//! [`test_sync_channel_connection`] 共用）：它约束人提交的表单形态，不是通道语义
+//! ——域侧 [`build_channel`] 对测试直置的明文 http S3 桩配置保持可用，照常跑
+//! 自动轮次；该门住命令层是 #1217 的实现决定（理由见函数注释）。
 //!
 //! - `sync_now` 写路径经统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
 //!   重放是行为编排之外的第 N 写入入口（ADR-0091，接缝契约与批量导入同待遇），
@@ -53,25 +53,17 @@ use crate::sync_engine::trigger::{
     not_configured_error, probe_channel, run_round_once,
 };
 use crate::sync_engine::{
-    ChannelBackend, EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport,
-    bootstrap_from_channel, parked_ops,
+    EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport, bootstrap_from_channel,
+    parked_ops,
 };
 use crate::write_entry::{Outcome, write_entry};
 use ledger_sync_protocol::device::device_id;
 
-/// 通道配置回显（设置页通道配置表单，issue #862；S3 字段 issue #1217）：未配置
-/// 时各字段为空串（`path_style` 为假）、`configured = false`，表单按空表单起填
-/// （空间字段由前端填默认值提示）。
+/// 通道配置回显（设置页通道配置表单，issue #862；S3 单后端形态 issue #1221）：
+/// 未配置时各字段为空串（`path_style` 为假）、`configured = false`，表单按空表单
+/// 起填（空间字段由前端填默认值提示）。
 #[derive(Debug, Serialize)]
 pub struct SyncChannelConfigState {
-    /// 后端判别（`webdav` / `s3`）。
-    pub backend: ChannelBackend,
-    /// 同步根目录 URL。
-    pub base_url: String,
-    /// WebDAV 账号。
-    pub username: String,
-    /// WebDAV 密码 / 应用密码（本机配置回显；响应体不经日志与 trace）。
-    pub password: String,
     /// 同步空间（跨端共识的世界身份）。
     pub space_id: String,
     /// S3 兼容端点。
@@ -94,22 +86,10 @@ pub struct SyncChannelConfigState {
 
 /// 通道配置写入参数（表单提交形态）。
 ///
-/// 新增字段带 serde 缺省：只发 WebDAV 组字段的旧前端与老配置形态照常反序列化
-/// （缺 `backend` 回 [`ChannelBackend::WebDav`]，#1217 兼容验收）。
+/// 新增字段带 serde 缺省；退役后端留下的多余键由 serde 默认忽略，老前端形态
+/// 照常反序列化（#1221：WebDAV 组字段与后端判别字段整体退役）。
 #[derive(Debug, Default, Deserialize)]
 pub struct SyncChannelConfigInput {
-    /// 后端判别（缺省回 WebDAV）。
-    #[serde(default)]
-    pub backend: ChannelBackend,
-    /// 同步根目录 URL。
-    #[serde(default)]
-    pub base_url: String,
-    /// WebDAV 账号。
-    #[serde(default)]
-    pub username: String,
-    /// WebDAV 密码 / 应用密码。
-    #[serde(default)]
-    pub password: String,
     /// 同步空间（缺省回 `default`；两端填同一值即同步同一世界）。
     pub space_id: Option<String>,
     /// S3 兼容端点。
@@ -288,10 +268,6 @@ pub async fn get_sync_channel_config<R: Runtime>(
     read_entry("get_sync_channel_config", conn, move |conn| {
         Ok(match configured_channel(conn)? {
             Some(config) => SyncChannelConfigState {
-                backend: config.backend,
-                base_url: config.base_url,
-                username: config.username,
-                password: config.password,
                 space_id: config.space_id,
                 endpoint: config.endpoint,
                 region: config.region,
@@ -303,10 +279,6 @@ pub async fn get_sync_channel_config<R: Runtime>(
                 configured: true,
             },
             None => SyncChannelConfigState {
-                backend: ChannelBackend::default(),
-                base_url: String::new(),
-                username: String::new(),
-                password: String::new(),
                 space_id: String::new(),
                 endpoint: String::new(),
                 region: String::new(),
@@ -378,10 +350,6 @@ pub async fn test_sync_channel_connection(config: SyncChannelConfigInput) -> Res
 /// 转换会让「测试连接通过」与「保存后跑不起来」在字段缺省上分叉。
 fn normalize_channel_config(input: SyncChannelConfigInput) -> SyncChannelConfig {
     SyncChannelConfig {
-        backend: input.backend,
-        base_url: input.base_url,
-        username: input.username,
-        password: input.password,
         space_id: input
             .space_id
             .unwrap_or_else(|| DEFAULT_SPACE_ID.to_string()),
@@ -400,15 +368,11 @@ fn normalize_channel_config(input: SyncChannelConfigInput) -> SyncChannelConfig 
 /// `sync-channel.base-url-missing`，本门不改变该口径。
 ///
 /// **为什么住命令层**：这是用户输入门而非通道语义——它只拦「人填的表单」，不
-/// 改变已落库配置的可用性（既有 http WebDAV 配置、测试直置的明文 S3 桩配置都
-/// 照常经 [`build_channel`] 跑轮次，#1221 收口前的存量升级路径因此不断）。域侧
-/// 构库单点保持「连接参数定型 + 布局构造」的单一职责，不掺入面向表单的策略；
-/// 取舍（含为何测试不经保存命令注入配置）记在 PR 正文。
+/// 改变已落库配置的可用性（测试直置的明文 http S3 桩配置照常经 [`build_channel`]
+/// 跑轮次）。域侧构库单点保持「连接参数定型 + 布局构造」的单一职责，不掺入
+/// 面向表单的策略；取舍（含为何测试不经保存命令注入配置）记在 PR 正文。
 fn ensure_secure_endpoint(config: &SyncChannelConfig) -> Result<()> {
-    let endpoint = match config.backend {
-        ChannelBackend::WebDav => config.base_url.trim(),
-        ChannelBackend::S3 => config.endpoint.trim(),
-    };
+    let endpoint = config.endpoint.trim();
     if endpoint.is_empty() || endpoint.to_ascii_lowercase().starts_with("https://") {
         return Ok(());
     }

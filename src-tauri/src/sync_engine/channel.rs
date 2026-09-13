@@ -1,6 +1,6 @@
 //! 通道层（issue #859 / ADR-0091 决策 1/8/9）：哑通道上的目录布局、清单
 //! （manifest）与同步轮次——把本域已有的引擎接缝（op 产出/幂等重放/位点/
-//! Checkpoint）接到网盘字节世界上。
+//! Checkpoint）接到对象存储字节世界上。
 //!
 //! 目录布局（wiki §7.3，按设备分流 + 分段追加 + 小 manifest）：
 //!
@@ -12,7 +12,7 @@
 //!                                   # 每来源设备一流，仅该设备可写，其余端只读
 //! ```
 //!
-//! 一致性纪律（WebDAV 无跨设备文件锁）：
+//! 一致性纪律（对象存储无跨设备文件锁）：
 //! - **按设备分流是正确性要求**：并发写冲突在物理上被流归属排除——每端只写
 //!   自己 `streams/<DeviceId>/` 下的文件，对他人目录只读；段文件按内容时钟
 //!   区间命名、永不覆盖他人段（op 只增不改，重传同段内容确定等同）。
@@ -274,7 +274,7 @@ struct RoundCtx<'a, 'p> {
 /// 通道轮次选项（段容量与封包参数；生产走默认值）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChannelOptions {
-    /// 单段最大 op 数（单文件永远有界，对网盘单文件限制与断点续传友好）。
+    /// 单段最大 op 数（单文件永远有界，对通道单文件限制与断点续传友好）。
     pub segment_max_ops: usize,
     /// 信封封包参数（KDF 迭代次数；见 [`envelope::EnvelopeParams`]）。
     pub envelope: EnvelopeParams,

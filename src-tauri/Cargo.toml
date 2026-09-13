@@ -65,9 +65,6 @@ sha2 = "0.11"
 # 迁移前经 rustls 启用的完全相同。密钥派生参数与 SQLCipher 默认 KDF 同量级
 # （PBKDF2 256k 迭代），复用「主口令派生密钥」的既有安全量级。
 aws-lc-rs = { version = "1.18", default-features = false, features = ["aws-lc-sys"] }
-# WebDAV Basic 凭据编码（issue #859）：base64 已随既有依赖树进锁（同版本 0.23），
-# 直接依赖化零新增传递依赖。
-base64 = "0.23"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 pinyin = "0.11"

@@ -8,7 +8,7 @@
 //! region / service 必须与桩配置一致；寻址形态（path-style / virtual-host）
 //! 必须与配置一致。签名正确性归官方 SDK，本桩只验证请求骨架。
 //!
-//! **可见性**：`pub` + `#[doc(hidden)]`（与 `webdav` 同款纪律）——集成测试链接
+//! **可见性**：`pub` + `#[doc(hidden)]`（与既有测试桩同款纪律）——集成测试链接
 //! 非 `#[cfg(test)]` 构建的 lib，经 `crate::test_support` 消费。
 // C 类豁免（ADR-0060）：仅测试用——桩体大量 unwrap 依赖测试期失败即红的语义，
 // 本文件随 test_support 文件级放行六件套（见 mod.rs 豁免声明）。
@@ -134,7 +134,6 @@ impl S3Stub {
     /// 不做密码学校验。
     pub fn channel_config(&self, space: &str) -> crate::sync_engine::SyncChannelConfig {
         crate::sync_engine::SyncChannelConfig {
-            backend: crate::sync_engine::ChannelBackend::S3,
             endpoint: self.endpoint.clone(),
             region: self.region.clone(),
             bucket: self.bucket.clone(),
@@ -143,7 +142,6 @@ impl S3Stub {
             prefix: String::new(),
             path_style: self.addressing == S3Addressing::PathStyle,
             space_id: space.to_string(),
-            ..Default::default()
         }
     }
 }

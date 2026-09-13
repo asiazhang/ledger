@@ -39,10 +39,10 @@ pub enum SettingKey {
     /// 成员，issue #858 / ADR-0091 决策 3）——后端消费（Amount 折算基准）故按
     /// ADR-0017 存库，随多端同步分发、全设备强制一致。
     LedgerBaseCurrency,
-    /// 多端同步通道配置（issue #862，JSON 对象：WebDAV base_url / username /
-    /// password）：本机设备配置（设备偏好，不同步——同步边界见多端同步域
-    /// SyncBoundary），属轻量设置项按 ADR-0017 存库；密码敏感性与主口令同级
-    /// 处置（不落日志 / trace，lib.rs 载荷脱敏单点遮蔽）。
+    /// 多端同步通道配置（issue #862 / #1221，JSON 对象：S3 兼容对象存储的
+    /// 端点 / 区域 / 桶 / 前缀 / 凭据）：本机设备配置（设备偏好，不同步——同步
+    /// 边界见多端同步域 SyncBoundary），属轻量设置项按 ADR-0017 存库；密钥敏感性
+    /// 与主口令同级处置（不落日志 / trace，lib.rs 载荷脱敏单点遮蔽）。
     SyncChannelConfig,
     /// 上次成功同步时刻（UTC ISO 字符串，issue #862）：设备本地运行时状态，
     /// 供同步卡片回显；同步轮次成功后随轮次事务写入，失败不更新。

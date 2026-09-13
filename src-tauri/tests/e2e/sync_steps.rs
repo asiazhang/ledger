@@ -30,7 +30,7 @@ use tauri_app_lib::sync_engine::trigger::{
     SessionEnvelope, SyncChannel, build_channel, configured_channel, run_auto_round, run_round_once,
 };
 use tauri_app_lib::sync_engine::{
-    ChannelBackend, ChannelLayout, DomainCommand, EnvelopeMode, SyncChannelConfig, SyncOp,
+    ChannelLayout, DomainCommand, EnvelopeMode, SyncChannelConfig, SyncOp,
 };
 use tauri_app_lib::transaction::{
     NormalizedTransaction, TransactionCommand, TransactionInput, TransactionKind,
@@ -68,7 +68,6 @@ fn channel_of(world: &LedgerWorld) -> SyncChannel {
 fn stub_channel_config(world: &LedgerWorld, space: &str) -> SyncChannelConfig {
     let stub = world.boot.sync_stub.as_ref().expect("场景应先起通道桩");
     SyncChannelConfig {
-        backend: ChannelBackend::S3,
         endpoint: stub.endpoint.clone(),
         region: stub.region.clone(),
         bucket: stub.bucket.clone(),
@@ -77,7 +76,6 @@ fn stub_channel_config(world: &LedgerWorld, space: &str) -> SyncChannelConfig {
         prefix: String::new(),
         path_style: true,
         space_id: space.to_string(),
-        ..Default::default()
     }
 }
 
@@ -221,7 +219,6 @@ fn point_to_unreachable_channel(world: &mut LedgerWorld) {
         &conn,
         SettingKey::SyncChannelConfig,
         &SyncChannelConfig {
-            backend: ChannelBackend::S3,
             endpoint: "https://127.0.0.1:9".into(),
             region: "us-east-1".into(),
             bucket: "ledger-test".into(),
@@ -230,7 +227,6 @@ fn point_to_unreachable_channel(world: &mut LedgerWorld) {
             prefix: String::new(),
             path_style: true,
             space_id: "default".into(),
-            ..Default::default()
         },
     )
     .expect("通道配置应落库");

@@ -7,7 +7,7 @@
 
 use crate::sync_engine::transport::Transport;
 use crate::sync_engine::transport::s3::{S3Config, S3Transport};
-use crate::sync_engine::{ChannelBackend, SyncChannelConfig, probe_channel};
+use crate::sync_engine::{SyncChannelConfig, probe_channel};
 use crate::test_support::{S3Addressing, S3Deny, S3StubConfig, spawn_s3_stub};
 
 /// 探针键（同步轮次从不写它；与 `ChannelLayout::probe_path` 同源）。
@@ -98,7 +98,6 @@ fn probe_reports_target_missing_for_missing_bucket() {
 #[test]
 fn probe_reports_network_failure_for_unreachable_endpoint() {
     let config = SyncChannelConfig {
-        backend: ChannelBackend::S3,
         endpoint: "http://127.0.0.1:1".to_string(),
         region: "us-east-1".to_string(),
         bucket: "ledger-test".to_string(),
