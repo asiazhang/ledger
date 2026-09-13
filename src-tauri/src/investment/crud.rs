@@ -369,7 +369,7 @@ pub fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<St
         kind: input.kind,
         name: input.name,
         currency_code: input.currency_code,
-        market: input.market.unwrap_or_else(|| "unknown".to_string()),
+        market: input.market.unwrap_or_else(|| UNKNOWN_MARKET.to_string()),
     };
     let (id, outcome) = write_instrument(conn, &new_uuid(), &row)?;
     match outcome {
@@ -402,6 +402,27 @@ pub(crate) enum InstrumentWrite {
     Unchanged,
 }
 
+/// 场外基金的市场位占位值（ADR-0038 决策 1）：场外基金没有交易所市场概念，
+/// 市场恒 unknown——创建缺省与守卫共用本值，避免字面量漂移。
+const UNKNOWN_MARKET: &str = "unknown";
+
+/// fund 类型标的市场恒 unknown 守卫（ADR-0038 决策 1 修订 / issue #1194）：
+/// 场外基金的市场位只是纯字典占位，不是交易所市场；fund 行携带任何非 unknown
+/// 市场一律码化拒绝（400）。守卫落在标的写入协议（本域写路径单点）而非逐个
+/// 调用入口，使不变量对全部创建通道成立——IPC 手动创建、AI/HTTP 通用创建、
+/// 东财增强与降级建行、同步命令重放；缺省（None）在 [`create_instrument`]
+/// 归一为 unknown，不触发本守卫。
+fn ensure_fund_market_unknown(kind: InstrumentType, market: &str) -> Result<()> {
+    if kind == InstrumentType::Fund && market != UNKNOWN_MARKET {
+        return Err(AppError::codedp(
+            "instrument.fund-market-forbidden",
+            format!("基金标的市场恒为未知：不能携带市场 {market}（场外基金无交易所市场概念）"),
+            &[market],
+        ));
+    }
+    Ok(())
+}
+
 /// 标的写入协议（本地创建与重放共用，无 op 产出）：按自然键（symbol, 类型）
 /// 幂等 upsert——未命中以 `insert_id` 新建（本地传新生成 id、重放携带源端 id，
 /// 两端收敛同一行），命中复用既有行 id 并只更新名称/市场（有变化才写）。
@@ -411,6 +432,7 @@ pub(crate) fn write_instrument(
     insert_id: &str,
     row: &InstrumentCommandRow,
 ) -> Result<(String, InstrumentWrite)> {
+    ensure_fund_market_unknown(row.kind, &row.market)?;
     let existing_id: Option<(String, Option<String>, String)> = conn
         .query_row(
             "SELECT id, name, market FROM instruments WHERE symbol=?1 AND instrument_type=?2",
@@ -462,6 +484,7 @@ pub(crate) fn write_instrument_update(
     name: Option<&str>,
     market: &str,
 ) -> Result<()> {
+    ensure_fund_market_unknown(kind, market)?;
     let changed = conn.execute(
         "UPDATE instruments SET name=?1, market=?2, updated_at=?3, version=version+1 \
          WHERE symbol=?4 AND instrument_type=?5",

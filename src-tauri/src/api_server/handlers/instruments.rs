@@ -109,7 +109,9 @@ pub struct InstrumentCreateInput {
     kind: InstrumentType,
     /// 标的名称（可选）
     name: Option<String>,
-    /// 交易市场（可选，缺省 unknown；sh / sz / hk / nasdaq / nyse / amex）
+    /// 交易市场（可选，缺省 unknown；sh / sz / hk / nasdaq / nyse / amex）。
+    /// fund 类型市场恒 unknown（场外基金无交易所市场概念，ADR-0038）：携带非
+    /// unknown 市场即 400（`instrument.fund-market-forbidden`）。
     market: Option<String>,
     /// 报价币种（可选；缺省按市场推导：沪深→CNY、港→HKD、美股三市场→USD、未知→CNY）
     currency_code: Option<String>,

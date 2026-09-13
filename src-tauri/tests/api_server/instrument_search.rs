@@ -339,7 +339,9 @@ async fn test_search_type_filter_disambiguates_same_symbol() {
         "000001",
         InstrumentType::Fund,
         Some("华夏成长混合"),
-        "sz",
+        // fund 市场恒 unknown（ADR-0038 / issue #1194）：种子须走合法形态，
+        // 本用例断言的类型消歧与市场值无关。
+        "unknown",
     );
     seed_instrument(
         &conn,
