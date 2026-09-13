@@ -4,7 +4,7 @@ import { createPinia } from "pinia";
 import App from "./App.vue";
 import { restoreLastView, router } from "./router";
 import { initAppLocale } from "@ledger/i18n";
-import { installGlobalErrorHandler } from "@/utils/global-error-handler";
+import { installGlobalErrorHandler } from "@/composables/global-error-handler";
 
 async function bootstrap() {
   const app = createApp(App);

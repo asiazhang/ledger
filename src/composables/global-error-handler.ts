@@ -6,6 +6,10 @@ import { api } from '@ledger/api'
 /**
  * 全局渲染错误兜底（issue #926）：`app.config.errorHandler` 单点安装。
  *
+ * 归位注记（issue #1156）：原住 src/utils，因上行引用 render-errors store 与
+ * api 违反 utils 叶子方向约束，迁入 composables（与 resolve-merchant 等引用
+ * store + api 的壳层辅助同住处）；内容与安装语义零变化，唯一消费方 main.ts。
+ *
  * 动机：渲染层异常（组件 render / 生命周期钩子 / 侦听器回调抛错）默认只进
  * console——生产 WebView 控制台不可见，用户只见「界面冻住」不见报错（见
  * 走势图表注册缺失事故）。本模块把这类错误变为两个可见面：
