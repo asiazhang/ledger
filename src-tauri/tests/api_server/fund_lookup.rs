@@ -63,6 +63,29 @@ async fn test_lookup_fund_with_unpublished_nav_returns_null_nav_fields() {
     );
 }
 
+#[tokio::test]
+async fn test_lookup_terminated_fund_from_archive_channel_returns_empty_class() {
+    // 已终止（清盘）基金经档案通道回退命中（ADR-0039 修订，issue #1212）：名称与
+    // 最后一期净值齐备；基金分类是搜索通道成员，档案通道缺省 → 投影为空串。
+    let hits = HashMap::from([(
+        "002503".to_string(),
+        FundStubHit {
+            name: "中银腾利混合C",
+            fund_class: "",
+            nav: Some((1.144, "2023-09-18")),
+        },
+    )]);
+    let (app, _conn, _calls) = setup_app_with_fund_stub(hits);
+
+    let (status, body) = get_json(&app, "/api/v1/funds/002503").await;
+    assert_eq!(status, StatusCode::OK, "已终止基金不再是查无此码: {body}");
+    assert_eq!(body["code"], "002503");
+    assert_eq!(body["name"], "中银腾利混合C");
+    assert_eq!(body["fund_class"], "", "档案通道无分类，投影为空串");
+    assert_eq!(body["nav_cents"], 11_440);
+    assert_eq!(body["nav_date"], "2023-09-18");
+}
+
 // ---------------------------------------------------------------------------
 // 错误：格式非法（不发起网络请求）与查无此码，均为 400 中文错误
 // ---------------------------------------------------------------------------
