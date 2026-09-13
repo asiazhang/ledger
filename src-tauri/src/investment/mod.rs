@@ -37,6 +37,9 @@
 //! - [`reports`]：已实现盈亏汇总与按币种累计收益查询（issue #1077）；
 //! - [`source`]：交易列表标的来源反查（spec #704 / issue #709，按生成交易 id
 //!   批量取证券交易记录指向的标的展示字段）；
+//! - [`staleness`]：价格过期检查（issue #1190）——打开投资页时的本地水位
+//!   检查：有通道标的的现价水位（行情采集时刻 / 净值日期）超出阈值、或持仓
+//!   标的没有现价时给出可同步计数，零网络请求；
 //! - [`split`]：份额调整（split）批次成本重述单点——按比例重述在用批次
 //!   （尾差归末批次）与 `security_lot_adjustments` 审计落库（ADR-0106 决策 2/3，
 //!   issue #1049）；
@@ -81,6 +84,7 @@ pub mod quote;
 pub mod reports;
 pub mod source;
 pub mod split;
+pub mod staleness;
 pub mod stock;
 pub mod trade;
 pub mod transaction_seam;
@@ -122,6 +126,7 @@ pub use manual_price::record_manual_price;
 pub use quote::{Quote, QuoteAdoptionInput, QuoteAdoptionOutcome};
 pub use reports::{query_cumulative_pnl_summary, query_realized_pnl_summary};
 pub use source::source_display_by_transaction_ids;
+pub use staleness::{PRICE_STALE_AFTER_DAYS, PriceStaleness, instrument_price_staleness};
 pub use stock::{
     ResolvedStockCode, StockCreateOutcome, StockCreateRoute, StockEnhancePlan,
     add_stock_instrument_with_quote, adopt_stock_quote, create_stock_degraded,

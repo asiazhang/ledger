@@ -160,6 +160,10 @@
     "progressFundPages": "Backfilling {code}: page {page}/{pages}",
     "progressAriaLabel": "Instrument info sync progress"
   },
+  "staleness": {
+    "message": "{count} instruments may have stale quotes / NAV (not updated for over {days} days, or a holding has no price); reports will use those stale prices.",
+    "goSync": "Sync Instrument Info"
+  },
   "market": {
     "sh": "Shanghai",
     "sz": "Shenzhen",

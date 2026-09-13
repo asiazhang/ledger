@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { NTabs, NTabPane, NIcon } from 'naive-ui'
+import { NAlert, NButton, NIcon, NSpace, NTabPane, NTabs } from 'naive-ui'
 import {
   StatsChartOutline,
   ListOutline,
@@ -11,6 +11,7 @@ import {
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { useFocusParam } from '@/composables/useFocusParam'
+import { usePriceStaleness } from '@/composables/usePriceStaleness'
 import { registerViewReset } from '@/composables/viewResetRegistry'
 import { useInvestmentsSessionStore } from '@/stores/investments-session'
 import RealizedPnlPanel from '@/components/investments/RealizedPnlPanel.vue'
@@ -49,6 +50,17 @@ function onViewTrend(inst: Instrument) {
   session.setActiveTab('trend')
 }
 
+// 价格过期提示（issue #1190）：打开投资页时做一次本地水位检查（零网络请求），
+// 有过期（或持仓缺现价）就提示并导向既有「同步标的信息」入口——刻意不做自动
+// 同步与定时轮询（ADR-0015 / ADR-0095 的显式触发口径保留，开页面不变成网络
+// 操作）。判定与阈值归后端投资域单点，本视图只渲染计数与阈值。
+// 「去同步」按钮切到标的页签：那里就是既有同步入口（按钮 + 进度条 + 结果
+// 消息复用同一 useInstrumentInfoSync 接缝），不新增第二套同步触发。
+const { staleCount, thresholdDays } = usePriceStaleness()
+function goSyncInstrumentInfo() {
+  session.setActiveTab('instruments')
+}
+
 // —— 来源跳转落点（spec #704 / issue #709，词汇表「实体定位参数（focus 参数）」）：
 // 挂载消费一次（读一次语义归 useFocusParam 单点）。标的落走势页签——标的浏览
 // 有分页、行高亮不可靠，走势页签是唯一焦点面：切页签后按 id 精确解析标的
@@ -72,33 +84,57 @@ onMounted(() => focusParam.consume())
 </script>
 
 <template>
-  <NTabs :value="activeTab" type="line" @update:value="onActiveTabChange">
-    <!-- pnl pane 用 display-directive='show'：内容保持挂载（v-show 隐藏），
-         筛选/汇总状态在 tab 切换间保留，与原视图顶层 ref 行为一致。
-         持仓/标的/走势 tab 保持默认 'if'，切回时重新挂载加载（ADR-0094 否决
-         KeepAlive）；持仓与走势的瞬态选择经投资页会话 store 恢复（issue #1192）。 -->
-    <NTabPane name="pnl" display-directive="show">
-      <template #tab><span class="pane-tab"><NIcon :component="StatsChartOutline" />{{ t('investments.tabs.pnl') }}</span></template>
-      <RealizedPnlPanel />
-    </NTabPane>
+  <NSpace vertical :size="16">
+    <!-- 价格过期提示（issue #1190）：有过期标的存在时出现，同步后再查即消失
+         （价格失效信号驱动重查）。文案含过期数量 + 判定阈值，动作直达标的页签
+         的既有「同步标的信息」入口。 -->
+    <NAlert
+      v-if="staleCount > 0"
+      type="warning"
+      :show-icon="true"
+      data-testid="price-staleness-alert"
+    >
+      {{ t('investments.staleness.message', { count: staleCount, days: thresholdDays }) }}
+      <NButton
+        size="tiny"
+        type="primary"
+        secondary
+        style="margin-left: 8px"
+        data-testid="price-staleness-go-sync"
+        @click="goSyncInstrumentInfo"
+      >
+        {{ t('investments.staleness.goSync') }}
+      </NButton>
+    </NAlert>
 
-    <!-- 持仓页签（issue #901）：原盈亏页顶部的持仓概览卡整体迁入，
-         卡内自带同步接缝与价格失效信号订阅，独立挂载即可自洽。 -->
-    <NTabPane name="holdings">
-      <template #tab><span class="pane-tab"><NIcon :component="PieChartOutline" />{{ t('investments.tabs.holdings') }}</span></template>
-      <HoldingsOverview />
-    </NTabPane>
+    <NTabs :value="activeTab" type="line" @update:value="onActiveTabChange">
+      <!-- pnl pane 用 display-directive='show'：内容保持挂载（v-show 隐藏），
+           筛选/汇总状态在 tab 切换间保留，与原视图顶层 ref 行为一致。
+           持仓/标的/走势 tab 保持默认 'if'，切回时重新挂载加载（ADR-0094 否决
+           KeepAlive）；持仓与走势的瞬态选择经投资页会话 store 恢复（issue #1192）。 -->
+      <NTabPane name="pnl" display-directive="show">
+        <template #tab><span class="pane-tab"><NIcon :component="StatsChartOutline" />{{ t('investments.tabs.pnl') }}</span></template>
+        <RealizedPnlPanel />
+      </NTabPane>
 
-    <NTabPane name="instruments">
-      <template #tab><span class="pane-tab"><NIcon :component="ListOutline" />{{ t('investments.tabs.instruments') }}</span></template>
-      <InstrumentBrowser @view-trend="onViewTrend" />
-    </NTabPane>
+      <!-- 持仓页签（issue #901）：原盈亏页顶部的持仓概览卡整体迁入，
+           卡内自带同步接缝与价格失效信号订阅，独立挂载即可自洽。 -->
+      <NTabPane name="holdings">
+        <template #tab><span class="pane-tab"><NIcon :component="PieChartOutline" />{{ t('investments.tabs.holdings') }}</span></template>
+        <HoldingsOverview />
+      </NTabPane>
 
-    <NTabPane name="trend">
-      <template #tab><span class="pane-tab"><NIcon :component="TrendingUpOutline" />{{ t('investments.tabs.trend') }}</span></template>
-      <PortfolioTrendPanel />
-    </NTabPane>
-  </NTabs>
+      <NTabPane name="instruments">
+        <template #tab><span class="pane-tab"><NIcon :component="ListOutline" />{{ t('investments.tabs.instruments') }}</span></template>
+        <InstrumentBrowser @view-trend="onViewTrend" />
+      </NTabPane>
+
+      <NTabPane name="trend">
+        <template #tab><span class="pane-tab"><NIcon :component="TrendingUpOutline" />{{ t('investments.tabs.trend') }}</span></template>
+        <PortfolioTrendPanel />
+      </NTabPane>
+    </NTabs>
+  </NSpace>
 </template>
 
 <style scoped>

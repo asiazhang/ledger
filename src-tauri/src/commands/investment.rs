@@ -26,7 +26,7 @@ use crate::investment::{
     AddFundResult, AddStockInstrumentResult, CurrencyCumulativePnl, Holding, Instrument,
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPriceTrend,
     ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter,
-    PortfolioValueTrend, RealizedPnlSummary, TransactionConvert, TransactionSplit,
+    PortfolioValueTrend, PriceStaleness, RealizedPnlSummary, TransactionConvert, TransactionSplit,
     TransactionTrade, TrendRange,
 };
 use crate::read_entry::read_entry;
@@ -38,6 +38,19 @@ pub async fn list_holdings(db: State<'_, DbState>) -> Result<Vec<Holding>> {
     let conn = db.conn.clone();
     read_entry("list_holdings", conn, move |conn| {
         investment_domain::list_holdings(conn)
+    })
+    .await
+}
+
+/// IPC 命令：价格过期检查（issue #1190）——打开投资页时的本地水位检查
+/// （零网络请求）：有通道标的的现价水位超出阈值、或持仓标的缺现价时给出计数，
+/// 供界面提示「价格可能已过期」并导向既有「同步标的信息」入口。只读本地库，
+/// 不触发任何同步（ADR-0015 / ADR-0095 的显式触发口径不变）。
+#[tauri::command]
+pub async fn instrument_price_staleness(db: State<'_, DbState>) -> Result<PriceStaleness> {
+    let conn = db.conn.clone();
+    read_entry("instrument_price_staleness", conn, move |conn| {
+        investment_domain::instrument_price_staleness(conn)
     })
     .await
 }

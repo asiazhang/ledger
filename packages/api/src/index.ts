@@ -55,6 +55,7 @@ import type {
   MarketPriceInput,
   ManualPriceInput,
   ManualPriceResult,
+  PriceStaleness,
   Policy,
   PolicyInput,
   PolicyStats,
@@ -289,6 +290,11 @@ export const api = {
 
   // 持仓
   listHoldings: () => invoke<Holding[]>('list_holdings'),
+
+  // 价格过期检查（issue #1190）：打开投资页时的本地水位检查（零网络请求）——
+  // 有通道标的的现价水位超出阈值、或持仓标的缺现价时的计数；计数为 0 不提示，
+  // 提示动作导向既有「同步标的信息」入口（不新增第二套同步触发）
+  instrumentPriceStaleness: () => invoke<PriceStaleness>('instrument_price_staleness'),
 
   // 走势（issue #138）：单标的周采样价格序列与组合市值周点曲线
   instrumentPriceTrend: (instrumentId: string, filter?: TrendRange | null) =>
