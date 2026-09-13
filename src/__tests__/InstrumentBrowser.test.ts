@@ -448,6 +448,52 @@ describe('InstrumentBrowser 自建标的删除（issue #292 / ADR-0036）', () =
   })
 })
 
+describe('InstrumentBrowser 价格来源列（issue #1189 / 词汇表「价格通道」）', () => {
+  /** 四行分别落在价格通道四值：行情 / 净值 / 手动报价 / 无来源 */
+  function rowsForPriceChannel() {
+    return [
+      makeInstrument({ id: 'inst-quote', symbol: '600000', type: 'stock', source: 'eastmoney', price_channel: 'quote' }),
+      makeInstrument({ id: 'inst-nav', symbol: '000001', type: 'fund', market: 'unknown', source: 'manual', price_channel: 'fund_nav' }),
+      makeInstrument({ id: 'inst-manual', symbol: '稳稳地幸福', type: 'other', market: 'unknown', source: 'manual', price_channel: 'manual' }),
+      makeInstrument({ id: 'inst-none', symbol: 'ghost1', type: 'stock', market: 'unknown', source: 'eastmoney', price_channel: 'none' }),
+    ]
+  }
+
+  function listWith(...items: Instrument[]) {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_instruments: () => Promise.resolve({ items, total: items.length }),
+      },
+    })
+  }
+
+  it('列头为「价格来源」，四通道各渲染对应标签（字典来源不再出现在列表）', async () => {
+    listWith(...rowsForPriceChannel())
+    const wrapper = mountBrowser()
+    await flushPromises()
+    const headers = wrapper.findAll('th').map((th) => th.text())
+    expect(headers).toContain('价格来源')
+    // 旧「来源」列（字典来源同步 / 手动）已从列表移除
+    expect(headers).not.toContain('来源')
+    const cells = wrapper.findAll('td[data-col-key="price_channel"]').map((c) => c.text())
+    expect(cells).toEqual(['行情', '净值', '手动报价', '无来源'])
+  })
+
+  it('删除准入只认字典来源（价格通道无关）：手动字典行可删，同步字典行不可删', async () => {
+    listWith(
+      // 字典来源 = 同步，价格通道 = 手动报价 → 不可删
+      makeInstrument({ id: 'inst-east-manualch', symbol: '600001', type: 'stock', market: 'unknown', source: 'eastmoney', price_channel: 'manual' }),
+      // 字典来源 = 手动，价格通道 = 净值 → 可删
+      makeInstrument({ id: 'inst-manual-nav', symbol: '000002', type: 'fund', market: 'unknown', source: 'manual', price_channel: 'fund_nav' }),
+    )
+    const wrapper = mountBrowser()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="delete-instrument-600001"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="delete-instrument-000002"]').exists()).toBe(true)
+  })
+})
+
 describe('InstrumentBrowser 行内录价入口（issue #291 / ADR-0036；通道判定收口 issue #1060）', () => {
   /** 六类行覆盖价格通道分区：行情 / 净值通道与无来源行无入口；手动报价通道有入口 */
   function rowsForQuoteGating() {

@@ -55,7 +55,7 @@
     "columns": {
       "symbol": "代码",
       "name": "名称",
-      "source": "来源",
+      "priceSource": "价格来源",
       "price": "现价",
       "market": "市场",
       "type": "类型",
@@ -172,6 +172,12 @@
   "source": {
     "eastmoney": "同步",
     "manual": "手动"
+  },
+  "priceChannel": {
+    "quote": "行情",
+    "fund_nav": "净值",
+    "manual": "手动报价",
+    "none": "无来源"
   },
   "type": {
     "stock": "股票",

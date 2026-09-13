@@ -67,6 +67,15 @@ export interface Instrument extends Syncable {
  * 与标的信息同步的通道分区同源。 */
 export type InstrumentPriceChannel = 'quote' | 'fund_nav' | 'manual' | 'none'
 
+/** 价格通道闭集镜像（判定单点在后端，此处仅供前端按序渲染 i18n 标签）；
+ * 显示标签在文案资源 investments.priceChannel.*（i18n，ADR-0049）。 */
+export const INSTRUMENT_PRICE_CHANNELS: InstrumentPriceChannel[] = [
+  'quote',
+  'fund_nav',
+  'manual',
+  'none',
+]
+
 export interface InstrumentInput {
   symbol: string
   type: InstrumentType

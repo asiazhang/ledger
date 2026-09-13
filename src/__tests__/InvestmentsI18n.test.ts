@@ -7,6 +7,7 @@ import { clickTab } from '@ledger/test-support/dom'
 import { mountWithDialog } from '@ledger/test-support/mount'
 import InvestmentsView from '@/views/InvestmentsView.vue'
 import InvestmentForm from '@/components/InvestmentForm.vue'
+import { makeInstrument } from './factories'
 
 // 走势图用共享桩组件替代（同 InvestmentsView.test.ts）
 vi.mock('vue-chartjs', async () => {
@@ -87,8 +88,29 @@ describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {
     // 空表列头英文
     const headers = wrapper.findAll('th').map((th) => th.text())
     expect(headers).toContain('Symbol')
-    expect(headers).toContain('Source')
+    expect(headers).toContain('Price Source')
     expect(headers).toContain('Manual Price')
+  })
+
+  it('标的页「价格来源」列四值渲染英文（issue #1189 / 词汇表「价格通道」）', async () => {
+    await applyLocale('en-US')
+    const rows = [
+      makeInstrument({ id: 'i-quote', symbol: '600000', type: 'stock', source: 'eastmoney', price_channel: 'quote' }),
+      makeInstrument({ id: 'i-nav', symbol: '000001', type: 'fund', market: 'unknown', source: 'manual', price_channel: 'fund_nav' }),
+      makeInstrument({ id: 'i-manual', symbol: 'HW-VR', type: 'other', market: 'unknown', source: 'manual', price_channel: 'manual' }),
+      makeInstrument({ id: 'i-none', symbol: 'ghost1', type: 'stock', market: 'unknown', source: 'eastmoney', price_channel: 'none' }),
+    ]
+    wireInvokeSeam({
+      defaults: EMPTY_INVESTMENT_DEFAULTS,
+      overrides: {
+        list_instruments: () => Promise.resolve({ items: rows, total: rows.length }),
+      },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await clickTab(wrapper, 'Instruments')
+    const cells = wrapper.findAll('td[data-col-key="price_channel"]').map((c) => c.text())
+    expect(cells).toEqual(['Quote', 'NAV', 'Manual Price', 'No Source'])
   })
 
   it('走势页渲染英文（区间预设 1M / All 与空态引导）', async () => {

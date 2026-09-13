@@ -20,7 +20,7 @@ import { useWindowTier } from '@/composables/useWindowTier'
 import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
 import {
-  INSTRUMENT_SOURCES,
+  INSTRUMENT_PRICE_CHANNELS,
   INSTRUMENT_TYPES,
   MARKET_FILTER_TYPES,
   MARKET_TYPES,
@@ -71,7 +71,7 @@ const marketOptions = computed(() =>
 )
 
 /** 枚举显示标签：闭集内经 t() 随界面语言切换；闭集外的库值原样回退（防脏数据渲染成 key） */
-function enumLabel(domain: 'source' | 'market' | 'type', closed: readonly string[], value: string): string {
+function enumLabel(domain: 'priceChannel' | 'market' | 'type', closed: readonly string[], value: string): string {
   return (closed as string[]).includes(value) ? t(`investments.${domain}.${value}`) : value
 }
 
@@ -203,18 +203,14 @@ const instrumentBrowseColumns = computed<DataTableColumn<Instrument>[]>(() => [
   { title: t('investments.browser.columns.symbol'), key: 'symbol', width: 100 },
   { title: t('investments.browser.columns.name'), key: 'name', width: 200 },
   {
-    title: t('investments.browser.columns.source'),
-    key: 'source',
-    width: 70,
+    // 价格来源列（issue #1189 / 词汇表「价格通道」）：展示后端派生的价格通道四值
+    // （行情 / 净值 / 手动报价 / 无来源），回答「价格能否自动更新、要不要手动录价」；
+    // 字典来源（同步 / 手动）只作删除准入，不进用户可见列表。
+    title: t('investments.browser.columns.priceSource'),
+    key: 'price_channel',
+    width: 90,
     render(row) {
-      const label = enumLabel('source', INSTRUMENT_SOURCES, row.source)
-      // 手动标 tag 突出（自建标的，ADR-0036），同步标为纯文本
-      if (row.source !== 'manual') return label
-      return h(
-        NTag,
-        { type: 'info', size: 'small', bordered: false, 'data-testid': 'source-manual' },
-        { default: () => label },
-      )
+      return enumLabel('priceChannel', INSTRUMENT_PRICE_CHANNELS, row.price_channel)
     },
   },
   {
