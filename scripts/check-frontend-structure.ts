@@ -98,6 +98,20 @@ export const PACKAGES: readonly PackageEntry[] = [
 /** workspace 成员 glob（pnpm-workspace.yaml 侧声明与本脚本核对同源）。 */
 const MEMBER_DIR_GLOB = 'packages/*'
 
+/** 规则⑥登记表：src/utils 禁入的 import 前缀（issue #1156，唯一事实源）。
+ *  utils 是壳内叶子目录（真叶子 + 纯函数 + i18n 依赖文案），对 stores / api /
+ *  components / views 的引用都是上行违规——既有三处接缝已随 #1156 归位，
+ *  此处封增量；测试侧以全等断言守登记项（删除任一登记项即测试红）。 */
+export const UTILS_FORBIDDEN_IMPORT_PREFIXES: readonly string[] = [
+  '@/stores',
+  '@ledger/api',
+  '@/components',
+  '@/views',
+]
+
+/** 规则⑥扫描根（相对仓库根，目录缺失时跳过——夹具基线不受影响）。 */
+const UTILS_SCAN_DIR = 'src/utils'
+
 /** 包名空间前缀（规则③④的跨包引用识别面）。 */
 const PACKAGE_NAME_PREFIX = '@ledger/'
 
@@ -462,6 +476,35 @@ function checkTestSupportPurity(
   }
 }
 
+/** 规则⑥：utils 方向约束——src/utils/** 的 import 说明符命中禁入前缀即红。
+ *  前缀命中按「全等或跨分隔符前缀」判定（@/stores 不误伤 @/storage 类形态）。 */
+function checkUtilsDirection(repoRoot: string, problems: string[]): void {
+  if (UTILS_FORBIDDEN_IMPORT_PREFIXES.length === 0) {
+    problems.push(
+      `✗ utils 方向约束：禁入前缀登记表为空\n` +
+        `    登记表（UTILS_FORBIDDEN_IMPORT_PREFIXES）是规则⑥的靶面（issue #1156），清空即门槛静默消失`,
+    )
+    return
+  }
+  const utilsRoot = join(repoRoot, UTILS_SCAN_DIR)
+  for (const f of collectSourceFiles(utilsRoot, UTILS_SCAN_DIR)) {
+    const source = readFileSync(f.abs, 'utf8')
+    for (const hit of scanImportSpecifiers(source)) {
+      const spec = hit.specifier
+      const matched = UTILS_FORBIDDEN_IMPORT_PREFIXES.find(
+        (p) => spec === p || spec.startsWith(`${p}/`),
+      )
+      if (!matched) continue
+      problems.push(
+        `✗ utils 方向约束：${f.rel}:${hit.line} 引用 ${spec}（禁入前缀 ${matched}）\n` +
+          `    ${hit.text}\n` +
+          `    src/utils 是壳内叶子（纯函数与真叶子），不得上行引用 stores / api / components / views\n` +
+          `    接缝迁到消费侧或改为入参注入（issue #1156）`,
+      )
+    }
+  }
+}
+
 /** 接线核对（删除即变红①）：两个宿主文件须有非注释的实际调用行 */
 function checkWiring(repoRoot: string, problems: string[]): void {
   for (const host of WIRING_HOSTS) {
@@ -513,6 +556,7 @@ function main(): void {
   checkDependencyDirection(repoRoot, registry, problems)
   checkImportShapes(repoRoot, registry, problems)
   checkTestSupportPurity(repoRoot, registry, problems)
+  checkUtilsDirection(repoRoot, problems)
   checkWiring(repoRoot, problems)
 
   if (problems.length > 0) {
@@ -526,6 +570,7 @@ function main(): void {
       `· 包依赖方向 ${registry.length} 包（方向表逐票补充）` +
       `· 跨包引用形态与深导入禁令扫描 ${collectSourceFiles(join(repoRoot, 'packages'), 'packages').length} 个文件` +
       `· 测试支持纯净性（${registry.filter((p) => p.testSupport).map((p) => p.name).join(' ') || '无'} 仅 devDependency 消费）` +
+      `· utils 方向约束（${UTILS_SCAN_DIR} ${collectSourceFiles(join(repoRoot, UTILS_SCAN_DIR), UTILS_SCAN_DIR).length} 个文件 × 禁入前缀 ${UTILS_FORBIDDEN_IMPORT_PREFIXES.length} 条，issue #1156）` +
       `· 接线核对（scripts/check.sh + CI frontend job）`,
   )
 }

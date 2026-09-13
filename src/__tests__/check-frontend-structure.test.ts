@@ -3,7 +3,11 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PACKAGES, SCRIPT_INVOCATION } from '../../scripts/check-frontend-structure.ts'
+import {
+  PACKAGES,
+  SCRIPT_INVOCATION,
+  UTILS_FORBIDDEN_IMPORT_PREFIXES,
+} from '../../scripts/check-frontend-structure.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-frontend-structure.ts（前端 workspace 结构
 // 守门，issue #1149）。脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛
@@ -383,6 +387,76 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
           testSupport: true,
           note: expect.any(String),
         },
+      ])
+    })
+  })
+
+  describe('规则⑥：utils 方向约束（src/utils 禁入 stores/api/components/views，#1156）', () => {
+    /** 建夹具 src/utils 源文件：内容逐条写入（一文件一场景，行号可断言）。
+     *  显式注入空登记表：规则⑥靶面在 src/utils，与 packages 无关。 */
+    function utilsFixture(...sources: string[]): string[] {
+      const args = fixtureRepo({ manifest: [] })
+      const root = args[0] as string
+      mkdirSync(join(root, 'src/utils'), { recursive: true })
+      sources.forEach((source, i) => {
+        writeFileSync(join(root, 'src/utils', `x${i}.ts`), source)
+      })
+      return args
+    }
+
+    it('删除即变红：src/utils import @/stores 即红（定位文件与行号）', () => {
+      const r = run(
+        utilsFixture(
+          "import { useReferenceStore } from '@/stores/reference'\nexport {}\n",
+        ),
+      )
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('utils 方向约束')
+      expect(r.output).toContain('src/utils/x0.ts:1')
+    })
+
+    it('src/utils import @ledger/api 即红', () => {
+      const r = run(utilsFixture("import { api } from '@ledger/api'\nexport {}\n"))
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('utils 方向约束')
+      expect(r.output).toContain('@ledger/api')
+    })
+
+    it('src/utils import @/components 与 @/views 即红', () => {
+      const r = run(
+        utilsFixture(
+          "import { A } from '@/components/Foo'\nimport { B } from '@/views/Bar'\nexport { A, B }\n",
+        ),
+      )
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('@/components')
+      expect(r.output).toContain('@/views')
+    })
+
+    it('utils 合法依赖绿：@ledger/* 包、utils 内部互引、相对路径', () => {
+      const r = run(
+        utilsFixture(
+          "import { formatAmount } from '@ledger/money'\n" +
+            "import type { Currency } from '@ledger/types'\n" +
+            "import { helper } from '@/utils/format'\n" +
+            "import { local } from './local'\n" +
+            'export const x = [formatAmount, helper, local]\n',
+        ),
+      )
+      expect(r.status).toBe(0)
+    })
+
+    it('src/utils 目录缺失不误报（夹具最小基线不受影响）', () => {
+      const r = run(fixtureRepo({ manifest: [] }))
+      expect(r.status).toBe(0)
+    })
+
+    it('删除规则登记项即变红：禁入前缀登记表与 #1156 票面全等', () => {
+      expect(UTILS_FORBIDDEN_IMPORT_PREFIXES).toEqual([
+        '@/stores',
+        '@ledger/api',
+        '@/components',
+        '@/views',
       ])
     })
   })
