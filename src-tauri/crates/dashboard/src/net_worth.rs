@@ -17,9 +17,9 @@
 use rusqlite::Connection;
 
 use super::model::DashboardOverview;
-use crate::db::now_iso;
-use crate::error::Result;
-use crate::transaction::amount;
+use ledger_infra::db::now_iso;
+use ledger_infra::error::Result;
+use ledger_transaction::amount;
 
 /// 参与净资产计算的贡献表及其指纹输入（指纹输入清单，单一真源）。
 /// 元组：(表名, 时间戳列, 同秒判别器)。

@@ -1,5 +1,6 @@
-//! 仪表盘域（issue #142；#405 域目录化 ADR-0056）：首页净资产跨币种合计，
-//! 只读聚合。
+//! 仪表盘领域 crate（Dashboard，issue #142；#405 域目录化 ADR-0056；spec
+//! #1086 / issue #1104 自根包域目录拆出，P3 叶子业务域 crate）：首页净资产
+//! 跨币种合计，只读聚合。
 //!
 //! 口径（ADR-0020，真实财富视角；第三腿 ADR-0064 决策 6）：
 //! 净资产 = Σ 非投资账户折本位币余额 + Σ 折本位币持仓市值
@@ -12,7 +13,7 @@
 //!   `market_value_cents` 为 NULL（从未录价或缺折算汇率）时按空值语义跳过；
 //! - 币种折算一律复用 [`amount::convert_to_native`]，缺汇率错误上抛
 //!   （中文错误信息），不静默混币种；
-//! - 实物资产腿复用 [`crate::physical_asset`] 域 API 的在持合计读口径
+//! - 实物资产腿复用 [`ledger_physical_asset`] 域 API 的在持合计读口径
 //!   （`list_physical_assets` 的 `holding_total_native_cents`，最新估值行经
 //!   Amount 接缝折算、缺汇率错误上抛、已处置 / 软删不计入），与实物资产
 //!   列表「家底合计」同源不漂移；
@@ -21,10 +22,24 @@
 //!
 //! 核心函数吃 `&Connection` 可直接单测/供 e2e 复用；IPC 参数解包与连接锁
 //! 管理在壳层 `commands::dashboard`（#405 压平为单文件纯壳）。依赖方向恒为
-//! 「壳层 → dashboard → 基础设施」，本模块不反向依赖壳层。净资产总览
-//! 读模型集中本域 [`model`]（#421 随域归位），消费方经域路径逐类型显式 import。
-//! 输入指纹推导、读探针与缓存回写收口本域 [`net_worth`]（ADR-0071 决策 3，
-//! 自 `db/net_worth.rs` 整块迁入），实时聚合公式留在域入口。
+//! 「壳层 → dashboard → 基础设施」，本 crate 不反向依赖壳层。净资产总览
+//! 读模型集中本域 [`model`]（#421 随域归位），消费方经域路径逐类型显式
+//! import。输入指纹推导、读探针与缓存回写收口本域 [`net_worth`]（ADR-0071
+//! 决策 3，自 `db/net_worth.rs` 整块迁入），实时聚合公式留在域入口。
+//!
+//! 依赖方向（spec #1086 / issue #1104 修订后 AC）：本 crate 消费基础设施、
+//! 账户域、核心交易域与实物资产域（`ledger-infra` / `ledger-accounts` /
+//! `ledger-transaction` / `ledger-physical-asset`，票面允许集「基础设施、
+//! 协议、核心交易域、账户域、实物资产域」的子集）——余额口径经账户域、
+//! 折算口径经核心交易域、第三腿经实物资产域单一读口径，均为上层域对底层
+//! 域的合法单向依赖（ADR-0112 决策 2）；本域是纯读模型、无同步命令，对同步
+//! 协议 crate 亦零生产依赖，无接缝无注册点、壳层启动零接线。对根包（壳层）
+//! 与同步域零直接依赖，反向引用由 cargo 依赖图编译期拒绝（生产依赖面无根包，
+//! 机器面负向核对住结构守门的 crate 依赖方向，Cargo.toml 注释留痕）。
+//!
+//! **测试布局**：域内无测试目标——纯读聚合由根包侧三层测试覆盖（壳层命令
+//! 集成与 e2e BDD `dashboard.feature`，断言与场景文本零改动），`cargo test
+//! -p ledger-dashboard` 当前为空集。
 
 mod model;
 
@@ -35,12 +50,11 @@ pub use net_worth::query_dashboard_overview;
 
 use rusqlite::Connection;
 
-use crate::accounts::AccountType;
-use crate::accounts::balance::list_account_balances_with_visibility;
-use crate::db::query::{FromRow, query_all};
-use crate::error::Result;
-use crate::physical_asset;
-use crate::transaction::amount;
+use ledger_accounts::AccountType;
+use ledger_accounts::balance::list_account_balances_with_visibility;
+use ledger_infra::db::query::{FromRow, query_all};
+use ledger_infra::error::Result;
+use ledger_transaction::amount;
 
 /// 持仓市值行：`v_holdings` 市值（账户本位币，可为 NULL）+ 账户币种。
 /// 与投资域 `financial_freedom::HoldingValue` 同形片段刻意不收拢（跨域共享
@@ -91,7 +105,7 @@ fn compute_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
     // 口径取数（缺汇率错误上抛，不静默漏算；已处置 / 软删不计入），与实物
     // 资产列表「家底合计」同源。
     let physical_assets_value_cents =
-        physical_asset::list_physical_assets(conn, None)?.holding_total_native_cents;
+        ledger_physical_asset::list_physical_assets(conn, None)?.holding_total_native_cents;
 
     Ok(DashboardOverview {
         native_currency: amount::default_currency_code(conn)?,

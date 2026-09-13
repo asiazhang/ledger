@@ -3154,6 +3154,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ledger-dashboard"
+version = "0.6.0"
+dependencies = [
+ "ledger-accounts",
+ "ledger-infra",
+ "ledger-physical-asset",
+ "ledger-transaction",
+ "rusqlite",
+ "serde",
+]
+
+[[package]]
 name = "ledger-infra"
 version = "0.6.0"
 dependencies = [
@@ -5526,6 +5538,7 @@ dependencies = [
  "ledger-budget",
  "ledger-categories",
  "ledger-currencies",
+ "ledger-dashboard",
  "ledger-infra",
  "ledger-item",
  "ledger-merchants",
