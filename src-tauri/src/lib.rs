@@ -48,7 +48,12 @@ pub mod item;
 // `crate::merchants::…` / `tauri_app_lib::merchants::…` 调用点零改动
 //（expand 形态，ledger-backup/ledger-transaction 同款）。
 pub use ledger_merchants as merchants;
-pub mod physical_asset;
+// 实物资产域 crate（spec #1086 / issue #1102，P3 叶子业务域 crate）：大件实物
+// 估值档案自根包域目录拆出，根包以再导出形态保留原引用路径——壳层（IPC/HTTP
+// 命令）、dashboard 净资产实物腿、sync_engine 重放分派与 e2e 的
+// `crate::physical_asset::…` / `tauri_app_lib::physical_asset::…` 调用点零改动
+//（expand 形态，ledger-policy 同款）。域内本体见 `ledger-physical-asset` crate。
+pub use ledger_physical_asset as physical_asset;
 // 保单域 crate（spec #1086 / issue #1100，P3 叶子业务域 crate）：保单静态档案
 // CRUD、保司字典与保单视角统计自根包域目录拆出，根包以再导出形态保留原引用
 // 路径——壳层（commands / api_server）、transaction_wiring 接线、sync_engine 重

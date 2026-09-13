@@ -1,0 +1,41 @@
+[package]
+name = "ledger-physical-asset"
+version = "0.6.0"
+description = "Ledger 实物资产域 crate：大件实物估值档案的建档/编辑/估值追加/处置（PhysicalAsset）"
+edition = "2024"
+publish = false
+# 版本与根包锁步（仓库约定：workspace 各成员同为 0.6.0）。
+
+[dependencies]
+# 实物资产域 crate（spec #1086 / issue #1102，P3 叶子业务域 crate）：依赖面只有
+# 基础设施、同步协议与核心交易域——当前估值折本位币消费交易域 Amount 口径
+#（`ledger-transaction::amount`，域间横向依赖，ADR-0056 决策 2 允许）；域→域
+# 依赖方向单一（实物资产 → 核心交易），反向引用由 cargo 依赖图编译期拒绝。
+# 对根包（壳层）与同步域零直接依赖：同步命令契约、op 产出与设备标识走
+# `ledger-sync-protocol`，重放分派住 sync_engine（业务域→同步域零容忍，
+# ADR-0101 决策 4b）。无接缝无注册点、壳层启动零接线（失效信号以 notify
+# 回调注入，保单/物品域同款）。
+ledger-infra = { path = "../infra" }
+ledger-sync-protocol = { path = "../sync-protocol" }
+ledger-transaction = { path = "../transaction" }
+chrono = { version = "0.4.45", features = ["serde"] }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+# 测试专用边（spec #1086 明文裁决「测试工厂与器具以 dev-dependency 环供各域
+# 复用，Cargo 允许」）：域测试经 dev-dependency 环消费根包测试工厂与共享断言
+#（test_support，ADR-0084）。dev-dependency 环由 Cargo 允许——测试目标与生产
+# 依赖图分离，不构成生产环；结构守门的依赖方向核对只辖生产依赖（本 crate 声明
+# tauri-app 为生产依赖即红，负向夹具见 check-structure.test.ts）。由于该环，
+# 本 crate 不能像协议 crate 那样以 `use tauri_app_lib::…` compile_fail 文档用例
+# 承载反向引用负向例（dev-dependency 对 doctest 可见，会击穿该形态）——反向
+# 引用的编译期拒绝由生产依赖面承担（lib 目标解析不到 dev-dependency），机器面
+# 负向核对住结构守门的 crate 依赖方向（ledger-backup/ledger-transaction crate
+# 同款留痕）。
+tauri-app = { path = "../.." }
+
+# 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+[lints]
+workspace = true
