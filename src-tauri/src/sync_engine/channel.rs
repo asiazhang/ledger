@@ -99,6 +99,13 @@ impl ChannelLayout {
         format!("{}/manifest.json", self.book_dir)
     }
 
+    /// 连通性探针对象路径（issue #1219 保存前「测试连接」）：同步轮次从不写它，
+    /// 是一枚保留的只读探针键——放在同步空间目录下，探测读到的权限范围才与真实
+    /// 轮次一致（最小权限子账号只授权该目录即可通过）。
+    pub fn probe_path(&self) -> String {
+        format!("{}/probe/connectivity", self.book_dir)
+    }
+
     /// 检查点目录。
     pub fn checkpoint_dir(&self) -> String {
         format!("{}/checkpoint", self.book_dir)
@@ -708,11 +715,11 @@ fn manifest_corrupt_error(detail: &str) -> AppError {
     )
 }
 
-/// 段缺失码化错误单点（网盘清单先行/文件未到齐；可重试）。
+/// 段缺失码化错误单点（通道清单先行/文件未到齐；可重试）。
 fn segment_missing_error(path: &str) -> AppError {
     AppError::codedp(
         "sync-channel.segment-missing",
-        format!("同步段文件在通道上缺失（网盘可能尚未同步完成），请稍后重试: {path}"),
+        format!("同步段文件在通道上缺失（通道可能尚未同步完成），请稍后重试: {path}"),
         &[path],
     )
 }

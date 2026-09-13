@@ -483,6 +483,11 @@ export const api = {
   getSyncChannelConfig: () => invoke<SyncChannelConfig>('get_sync_channel_config'),
   setSyncChannelConfig: (config: SyncChannelConfigInput) =>
     invoke<void>('set_sync_channel_config', { config }),
+  /** 保存前「测试连接」（issue #1219）：用表单里尚未保存的配置做一次对象读取
+   *  探针，成功即通道可读；失败按 `sync-channel.*` 码化错误分层（凭据 / 目标 /
+   *  权限 / 网络 / 服务）。不落库、不改本机配置。 */
+  testSyncChannelConnection: (config: SyncChannelConfigInput) =>
+    invoke<void>('test_sync_channel_connection', { config }),
   // 检查点发布/预检/引导（issue #864 新端加入向导）：存量数据设备先发布检查
   // 点；全新设备预检后引导（整库换入快照，成功后由调用方重启）。passphrase
   // 为主口令（密文快照开封与封包用，不落日志）。

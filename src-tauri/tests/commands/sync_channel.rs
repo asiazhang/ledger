@@ -33,7 +33,7 @@ use tauri::Manager;
 use tauri_app_lib::commands::accounts;
 use tauri_app_lib::commands::sync_channel::{
     SyncChannelConfigInput, get_parked_ops, get_sync_channel_config, get_sync_status,
-    set_sync_channel_config, sync_now,
+    set_sync_channel_config, sync_now, test_sync_channel_connection,
 };
 use tauri_app_lib::commands::{boot::BootCell, transactions};
 use tauri_app_lib::db::data_location;
@@ -110,29 +110,10 @@ pub(crate) fn expense_input(account_id: &str, amount_cents: i64, note: &str) -> 
     }
 }
 
-/// 场景通道密钥（桩不做密码学校验，取固定值；真实密钥字段只在配置形态里）。
-pub(crate) const STUB_SECRET: &str = "test-secret-key";
-
 /// 场景通道桩（S3 兼容服务，明文 http 端点——命令面保存门只收 https，故轮次
 /// 测试不经保存命令落配置，见 [`configure_channel`]）。
 pub(crate) fn spawn_sync_stub() -> S3Stub {
     spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle))
-}
-
-/// 场景通道配置（S3 后端 + 桩；`space` 是跨端共识的世界身份）。
-pub(crate) fn stub_config(stub: &S3Stub, space: &str) -> SyncChannelConfig {
-    SyncChannelConfig {
-        backend: ChannelBackend::S3,
-        endpoint: stub.endpoint.clone(),
-        region: stub.region.clone(),
-        bucket: stub.bucket.clone(),
-        access_key: stub.access_key.clone(),
-        secret_key: STUB_SECRET.into(),
-        prefix: String::new(),
-        path_style: true,
-        space_id: space.into(),
-        ..Default::default()
-    }
 }
 
 /// 两端配置同一 S3 桩与同一同步空间（跨端共识的世界身份）。
@@ -142,7 +123,7 @@ pub(crate) fn stub_config(stub: &S3Stub, space: &str) -> SyncChannelConfig {
 /// `non_https_endpoint_save_is_rejected` 单独覆盖）。本套件要钉的是「保存后的
 /// 配置 → 手动同步一轮」的整链，配置写入面与保存门各自已由专门用例覆盖。
 pub(crate) fn configure_channel(app: &tauri::AppHandle<tauri::test::MockRuntime>, stub: &S3Stub) {
-    let config = stub_config(stub, "family");
+    let config = stub.channel_config("family");
     let conn = app.state::<DbState>().conn.clone();
     let guard = conn.lock().unwrap();
     settings::set(&guard, SettingKey::SyncChannelConfig, &config).expect("通道配置应落库");
@@ -507,7 +488,7 @@ async fn parked_ops_are_visible_through_command_surface() {
     assert!(parked.is_empty(), "新端无挂起");
 
     // 对端投递一条引用不存在账户的 op：写段 + 归并 manifest（真实通道路径）。
-    deliver_unreplayable_op(stub_config(&stub, "family"));
+    deliver_unreplayable_op(stub.channel_config("family"));
 
     let report = sync_now(app.clone(), None).await.expect("同步应成功");
     assert_eq!(report.parked, 1, "不可重放 op 应挂起");
@@ -598,4 +579,64 @@ fn deliver_unreplayable_op_blocking(config: &SyncChannelConfig) {
         &payload,
     )
     .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 保存前「测试连接」（issue #1219）
+// ---------------------------------------------------------------------------
+
+/// 探测用表单入参（S3 组字段齐备；同步空间与寻址取缺省形态）。
+fn probe_input(endpoint: &str, bucket: &str) -> SyncChannelConfigInput {
+    SyncChannelConfigInput {
+        backend: ChannelBackend::S3,
+        endpoint: endpoint.into(),
+        region: "us-east-1".into(),
+        bucket: bucket.into(),
+        access_key: "test-access-key".into(),
+        secret_key: "test-secret-key".into(),
+        path_style: true,
+        space_id: Some("family".into()),
+        ..Default::default()
+    }
+}
+
+/// 探测命令真的走到了端点：不可达的 https 地址报分层的网络失败——**删除探测
+/// 接线（命令直接返回成功）本用例即变红**，是 #1219 的负向条目。
+///
+/// 同时钉「探测零副作用」：探测用的是表单里的另一份坏配置，不落库、不改已保存
+/// 的可用配置（用户改坏表单再点测试，不会污染既有同步）。
+#[tokio::test]
+async fn test_connection_probes_the_endpoint_and_leaves_saved_config_untouched() {
+    isolate_home();
+    let (app, _dir) = device_app("probe-wiring");
+    set_sync_channel_config(app.clone(), probe_input("https://s3.example.com", "ledger"))
+        .await
+        .expect("基准配置应保存成功");
+
+    let err = test_sync_channel_connection(probe_input("https://127.0.0.1:1", "ledger"))
+        .await
+        .expect_err("连不上的端点必须报失败");
+    assert_code(err, "sync-channel.network-failed");
+
+    let config = get_sync_channel_config(app.clone())
+        .await
+        .expect("配置应可读");
+    assert_eq!(
+        config.endpoint, "https://s3.example.com",
+        "探测不得改动已保存配置"
+    );
+    assert_eq!(config.bucket, "ledger");
+}
+
+/// 非 https 端点：与保存同规拒绝（探测会把凭据发到端点，明文 http 不放行），
+/// 错误码复用保存门的既有码。
+#[tokio::test]
+async fn test_connection_rejects_non_https_endpoint() {
+    isolate_home();
+    let (_app, _dir) = device_app("probe-insecure");
+
+    let err = test_sync_channel_connection(probe_input("http://127.0.0.1:9000", "ledger"))
+        .await
+        .expect_err("http 端点应被拒");
+    assert_code(err, "sync-channel.endpoint-insecure");
 }

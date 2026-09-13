@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::sync_engine::transport::Transport;
 use crate::sync_engine::transport::s3::{S3Config, S3Transport};
-use crate::test_support::{S3Addressing, S3Stub, S3StubConfig, spawn_s3_stub};
+use crate::test_support::{S3Addressing, S3Deny, S3Stub, S3StubConfig, spawn_s3_stub};
 
 /// 按桩配置构造可用传输（path-style / virtual-host 随桩）。
 fn transport(stub: &S3Stub, prefix: &str) -> S3Transport {
@@ -112,7 +112,8 @@ fn s3_ensure_dir_is_side_effect_free_noop() {
     );
 }
 
-/// 凭据范围不匹配：桩回 403，后端归一为可重试的 `sync-channel.auth-failed`。
+/// 凭据范围不匹配：桩回 403 + `InvalidAccessKeyId`（真实 S3 同形），后端归一为
+/// 可重试的 `sync-channel.auth-failed`——403 本身不足以判定「凭据错」，靠错误码。
 #[test]
 fn s3_credential_rejection_is_coded_auth_error() {
     let stub = path_style_stub();
@@ -135,6 +136,32 @@ fn s3_credential_rejection_is_coded_auth_error() {
         !stub.violations().is_empty(),
         "桩应记录凭据范围不一致的结构性违规"
     );
+}
+
+/// 错误分层（issue #1219）：403 + `AccessDenied` = 权限不足；404 + `NoSuchBucket`
+/// = 目标不存在——后者绝不能被读路径吞成「对象不存在」（`Ok(None)`），否则桶名
+/// 写错的端会把同步静默跑成「通道上什么都没有」。
+#[test]
+fn s3_access_denied_is_permission_error_and_missing_bucket_is_target_error() {
+    let denied =
+        spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle).deny(S3Deny::AccessDenied));
+    let s3 = transport(&denied, "");
+    let err = s3.read_file("book-x/manifest.json").unwrap_err();
+    assert!(
+        err.is_code("sync-channel.permission-denied"),
+        "AccessDenied 应归「权限不足」而不是「凭据被拒」，实际: {err:?}"
+    );
+
+    let missing_bucket =
+        spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle).deny(S3Deny::NoSuchBucket));
+    let s3 = transport(&missing_bucket, "");
+    let err = s3.read_file("book-x/manifest.json").unwrap_err();
+    assert!(
+        err.is_code("sync-channel.target-missing"),
+        "桶不存在的 404 不得被读路径归成「对象不存在」，实际: {err:?}"
+    );
+    let err = s3.write_file("book-x/manifest.json", b"{}").unwrap_err();
+    assert!(err.is_code("sync-channel.target-missing"), "实际: {err:?}");
 }
 
 /// 自定义端点 + path-style / virtual-host 开关都落到请求寻址形态上。

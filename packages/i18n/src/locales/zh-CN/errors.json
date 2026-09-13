@@ -337,7 +337,7 @@
     "truncate-not-owner": "只有来源设备有权截断自己的操作日志流"
   },
   "sync-channel": {
-    "auth-failed": "同步通道凭据被拒绝，请检查网盘账号与密码（或应用密码）设置",
+    "auth-failed": "同步通道凭据被拒绝，请检查通道账号与密钥设置",
     "base-url-missing": "同步通道地址不能为空",
     "book-id-invalid": "同步空间非法（仅限小写字母、数字与短横线），无法构造同步目录",
     "book-unavailable": "账本注册表不可用，无法确定同步范围",
@@ -351,14 +351,16 @@
     "manifest-corrupt": "同步清单损坏或无法解析: {0}",
     "manifest-version-newer": "同步清单来自更新版本的应用（清单版本 {0}），请升级后再同步",
     "network-failed": "同步通道网络失败，请检查网络后重试: {0}",
-    "not-configured": "同步通道尚未配置，请先在设置中填写网盘信息",
+    "not-configured": "同步通道尚未配置，请先在设置中填写同步通道信息",
     "passphrase-required": "同步通道上有加密数据，需要主口令才能读取",
     "bootstrap-library-not-empty": "本机已有账本数据，不能从通道引导（引导将以快照整库替换本机账本）；请改用备份恢复合并数据，或在本机是全新空账本时重试",
     "bootstrap-passphrase-mismatch": "输入的主口令与本机主口令不一致：密文库引导须以本机主口令进行（通道上的快照以同一主口令封包）",
     "bootstrap-form-mismatch": "通道上的检查点为明文，本机为密文库：请先在设置中关闭加密，或让来源端开启加密后重新发布检查点",
     "path-invalid": "同步通道路径非法: {0}",
+    "permission-denied": "同步通道权限不足，请检查当前凭据是否具备该桶的读取与写入权限",
     "segment-corrupt": "同步段文件校验失败（可能未完整上传或已损坏），请重试同步: {0}",
-    "segment-missing": "同步段文件在通道上缺失（网盘可能尚未同步完成），请稍后重试: {0}"
+    "segment-missing": "同步段文件在通道上缺失（通道可能尚未同步完成），请稍后重试: {0}",
+    "target-missing": "同步通道目标不存在，请检查桶名、区域与端点地址是否正确"
   },
   "currency": {
     "base-invalid": "本位币基准必须是币种字典中的币种：{0}"

@@ -4,7 +4,8 @@
 //!
 //! 职责地图（issue #958：每个文件只有一个变更原因，按「改一处只动一个文件」拆）：
 //! - [`channel`]（改「凭据与空间怎么配、句柄怎么跑轮次」只动这里）：通道配置持久化
-//!   形态与缺省值、配置读取与构库校验单点、轮次复用的通道句柄；
+//!   形态与缺省值、配置读取与构库校验单点、轮次复用的通道句柄、保存前的连通性
+//!   读取探针（issue #1219）；
 //! - [`session`]（改「口令从哪来」只动这里）：本机会话密钥形态单例——解锁密文库
 //!   或一次成功的手动同步后记入，同步轮次据此判定信封模式，且**不读钥匙串**
 //!   （钥匙串读取在发布构建下带生物认证门，后台轮询不得弹交互，ADR-0098）；
@@ -25,6 +26,7 @@ mod session;
 pub(crate) use channel::DEFAULT_SPACE_ID;
 pub use channel::{
     ChannelBackend, SyncChannel, SyncChannelConfig, build_channel, configured_channel,
+    probe_channel,
 };
 pub use scheduler::{
     TriggerTimings, book_unavailable_error, install_after_write_hook, not_configured_error,

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest'
+import { afterEach, beforeAll, describe, it, expect, vi } from 'vitest'
 import { mockInvoke, wireInvokeSeam, lastInvokeArgs } from '@ledger/test-support/invoke-mock'
 import { messageCalls } from '@ledger/test-support/message-mock'
 import {
@@ -10,6 +10,12 @@ import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import type { ParkedOpInfo, SyncChannelConfig, SyncRoundReport, SyncStatus } from '@ledger/types'
 
 import SyncSettings from '@/components/settings/SyncSettings.vue'
+import { registerToastSink } from '@/composables/useLoadable'
+import { makeFakeSink, resetToastSink } from './factories'
+
+// 「测试连接」的失败反馈走 useLoadable 的错误通道（showErrorToast 单点）：
+// 每测把模块级 sink 复位回 no-op，避免用例间串味。
+afterEach(() => resetToastSink())
 
 // 引导成功后的原位重引导走 utils/restart 单点（Restore 同型）；组件测试只断言
 // 「成功即触发重启编排」，重启内部编排归 restart.test.ts。
@@ -71,6 +77,33 @@ const emptyReport: SyncRoundReport = {
   skipped: 0,
   parked: 0,
   plaintext_mode: true,
+}
+
+// 厂商下拉的真实交互助手（issue #1220）：下拉菜单 teleport 到 body，选项须经
+// 点开-点选才可见。定义在文件作用域供「厂商预设」与「测试连接共存」两组用例共用
+// （同一段交互不写两遍）。
+
+/** 下拉里当前渲染出的选项文本（真实交互：点开选择框，菜单 teleport 到 body）。 */
+async function openVendorMenu(wrapper: ReturnType<typeof mount>): Promise<string[]> {
+  await wrapper.find('[data-testid="sync-vendor"] .n-base-selection').trigger('click')
+  await flushPromises()
+  return Array.from(document.body.querySelectorAll('.n-base-select-option')).map(
+    (el) => el.textContent?.trim() ?? '',
+  )
+}
+
+/** 模拟用户从下拉里点选一项（按可见选项文本匹配），点完菜单关闭。 */
+async function pickVendor(wrapper: ReturnType<typeof mount>, labelPart: string) {
+  const option = (await openVendorMenu(wrapper)).findIndex((text) => text.includes(labelPart))
+  expect(option, `下拉里应能看到「${labelPart}」选项`).toBeGreaterThanOrEqual(0)
+  const optionEl = document.body.querySelectorAll('.n-base-select-option')[option]
+  await new DOMWrapper(optionEl).trigger('click')
+  await flushPromises()
+}
+
+/** 下拉上显示出的当前选中文本（用户可观察的回显面）。 */
+function selectedVendorText(wrapper: ReturnType<typeof mount>): string {
+  return wrapper.find('[data-testid="sync-vendor"]').text()
 }
 
 describe('SyncSettings.vue', () => {
@@ -189,7 +222,8 @@ describe('SyncSettings.vue', () => {
 
     expect(
       messageCalls().some(
-        (m) => m.method === 'error' && m.text.includes('同步通道尚未配置，请先在设置中填写网盘信息'),
+        (m) =>
+          m.method === 'error' && m.text.includes('同步通道尚未配置，请先在设置中填写同步通道信息'),
       ),
     ).toBe(true)
     expect(messageCalls().some((m) => m.text.includes('RAW'))).toBe(false)
@@ -384,6 +418,103 @@ describe('SyncSettings.vue', () => {
     expect(findInputByTestId(wrapper, 'sync-secret-key').attributes('placeholder')).toBe(
       'Secret Access Key',
     )
+  })
+
+  // ---- 保存前「测试连接」（issue #1219 验收项）----
+
+  it('测试连接：用当前表单（含未保存改动与新密钥）发起探测，成功即提示通道可读', async () => {
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: baseStatus,
+        get_sync_channel_config: baseConfig,
+        test_sync_channel_connection: null,
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+    mockInvoke.mockClear()
+
+    // 探测针对的是表单现状，不是落库配置：改桶、改密钥后点按钮，发的就是新值。
+    await findInputByTestId(wrapper, 'sync-bucket').setValue('other-bucket')
+    await findInputByTestId(wrapper, 'sync-secret-key').setValue('rotated-secret')
+    await findButtonByTestId(wrapper, 'sync-test-connection').trigger('click')
+    await flushPromises()
+
+    expect(lastInvokeArgs('test_sync_channel_connection')).toEqual({
+      config: {
+        backend: 's3',
+        space_id: 'family',
+        endpoint: 'https://s3.example.com',
+        region: 'us-east-1',
+        bucket: 'other-bucket',
+        prefix: 'sync',
+        access_key: 'AKIAEXAMPLE',
+        secret_key: 'rotated-secret',
+        path_style: true,
+      },
+    })
+    // 双断言（效果面）：成功提示在场，且**没有**顺带保存——探测不落库。
+    expect(
+      messageCalls().some((m) => m.method === 'success' && m.text.includes('连接成功')),
+    ).toBe(true)
+    expect(mockInvoke).not.toHaveBeenCalledWith('set_sync_channel_config', expect.anything())
+  })
+
+  it('测试连接与厂商预设共存：探测读的是预填后的同一份表单，且不落库', async () => {
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: baseStatus,
+        get_sync_channel_config: baseConfig,
+        test_sync_channel_connection: null,
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    // 先走 #1220 的预填路径（选中厂商 → 预填端点/地域/寻址方式），再探测。
+    await pickVendor(wrapper, '阿里云 OSS')
+    await findButtonByTestId(wrapper, 'sync-test-connection').trigger('click')
+    await flushPromises()
+
+    const sent = lastInvokeArgs('test_sync_channel_connection') as {
+      config: { endpoint: string; region: string; path_style: boolean }
+    }
+    expect(sent.config.endpoint).toBe('https://s3.oss-cn-hangzhou.aliyuncs.com')
+    expect(sent.config.region).toBe('cn-hangzhou')
+    expect(sent.config.path_style).toBe(false)
+    // 共存语义：预填只写表单、探测只读表单，两者都不落库（无保存调用）。
+    expect(mockInvoke).not.toHaveBeenCalledWith('set_sync_channel_config', expect.anything())
+  })
+
+  it('测试连接失败：按后端分层码本地化呈现可自救提示，不透传后端原文', async () => {
+    const sink = makeFakeSink()
+    registerToastSink(sink)
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: baseStatus,
+        get_sync_channel_config: baseConfig,
+      },
+      overrides: {
+        // 403 + AccessDenied 的域侧分层码：与「凭据被拒」是两条不同的自救指引。
+        test_sync_channel_connection: () =>
+          Promise.reject({
+            kind: 'Invalid',
+            code: 'sync-channel.permission-denied',
+            message: 'RAW',
+          }),
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    await findButtonByTestId(wrapper, 'sync-test-connection').trigger('click')
+    await flushPromises()
+
+    expect(sink.error).toHaveBeenCalledWith(
+      '同步通道权限不足，请检查当前凭据是否具备该桶的读取与写入权限',
+    )
+    expect(sink.error).not.toHaveBeenCalledWith('RAW')
+    expect(messageCalls().some((m) => m.method === 'success')).toBe(false)
   })
 
   // ---- 挂起通知（issue #863 验收项）----
@@ -650,29 +781,6 @@ it('引导失败：码化错误本地化呈现且弹窗保持打开（可就地�
 // 仍可编辑、档位标注与官方文档外链、再次打开按端点反查回显、预设不落库。
 
 describe('SyncSettings.vue 厂商预设（issue #1220）', () => {
-  /** 下拉里当前渲染出的选项文本（真实交互：点开选择框，菜单 teleport 到 body）。 */
-  async function openVendorMenu(wrapper: ReturnType<typeof mount>): Promise<string[]> {
-    await wrapper.find('[data-testid="sync-vendor"] .n-base-selection').trigger('click')
-    await flushPromises()
-    return Array.from(document.body.querySelectorAll('.n-base-select-option')).map(
-      (el) => el.textContent?.trim() ?? '',
-    )
-  }
-
-  /** 模拟用户从下拉里点选一项（按可见选项文本匹配），点完菜单关闭。 */
-  async function pickVendor(wrapper: ReturnType<typeof mount>, labelPart: string) {
-    const option = (await openVendorMenu(wrapper)).findIndex((text) => text.includes(labelPart))
-    expect(option, `下拉里应能看到「${labelPart}」选项`).toBeGreaterThanOrEqual(0)
-    const optionEl = document.body.querySelectorAll('.n-base-select-option')[option]
-    await new DOMWrapper(optionEl).trigger('click')
-    await flushPromises()
-  }
-
-  /** 下拉上显示出的当前选中文本（用户可观察的回显面）。 */
-  function selectedVendorText(wrapper: ReturnType<typeof mount>): string {
-    return wrapper.find('[data-testid="sync-vendor"]').text()
-  }
-
   it('下拉包含国内主流厂商预设，末尾固定「其他（自定义）」', async () => {
     wireInvokeSeam({
       defaults: { get_sync_status: baseStatus, get_sync_channel_config: baseConfig },

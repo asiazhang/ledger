@@ -149,6 +149,22 @@ impl SyncChannel {
         peek_checkpoint_pointer(self.transport.as_ref(), &self.layout)
     }
 
+    /// 连通性探测（issue #1219 保存前「测试连接」）：对固定探针对象做一次
+    /// **读取**，缺对象（`Ok(None)`）视为连通——探针读的是同步轮次不写、
+    /// 也永远不要求其存在的保留键，因此「桶刚建、还是空的」与「桶名写错」
+    /// 被分成两条不同结论（前者连通、后者 [`crate::sync_engine::transport`]
+    /// 的 `sync-channel.target-missing`）。
+    ///
+    /// 只读是该探测的核心约束：最小权限子账号通常没有 `ListBucket` 权限，
+    /// 用列桶/列对象当探针会把「能同步」的账号判成不通。同理也不做写入探测——
+    /// 「保存前试写」会给用户的桶留垃圾对象，且与读取探针要回答的问题
+    /// （凭据 / 目标 / 权限 / 网络是否就位）无关。
+    pub fn probe_connection(&self) -> Result<()> {
+        self.transport
+            .read_file(&self.layout.probe_path())
+            .map(|_| ())
+    }
+
     /// 发布检查点（全量快照 + 位点成对封包上通道，manifest 换指针）：
     /// 与轮次同款「句柄交出传输与布局」形态，调用方不必解包句柄。
     ///
@@ -198,4 +214,14 @@ pub fn build_channel(config: &SyncChannelConfig) -> Result<SyncChannel> {
     };
     let layout = ChannelLayout::new(&config.space_id)?;
     Ok(SyncChannel { transport, layout })
+}
+
+/// 用一份（通常还没落库的）通道配置探测连通性（issue #1219 保存前
+/// 「测试连接」）：经 [`build_channel`] 单点做构库校验，再跑读取探针。
+///
+/// 与保存路径共用同一构库单点，是为了让「测试连接通过」与「保存后能同步」
+/// 给出同一个答案——探针读的正是轮次要读的通道与权限范围，不另起一套校验。
+/// 本函数只做只读探测：不改本机配置、不写通道。
+pub fn probe_channel(config: &SyncChannelConfig) -> Result<()> {
+    build_channel(config)?.probe_connection()
 }

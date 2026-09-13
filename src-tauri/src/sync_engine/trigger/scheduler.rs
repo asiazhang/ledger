@@ -291,7 +291,7 @@ fn run_auto_round_with_emit<R: Runtime>(
 pub fn not_configured_error() -> AppError {
     AppError::coded(
         "sync-channel.not-configured",
-        "同步通道尚未配置，请先在设置中填写网盘信息",
+        "同步通道尚未配置，请先在设置中填写同步通道信息",
     )
 }
 
