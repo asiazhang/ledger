@@ -1,7 +1,8 @@
 //! 场外基金的行情接入通道（ADR-0103）：按代码即拉添加（issue #301 / ADR-0038
 //! 决策 1）与 AI 创建端点 fund 增强（issue #304 / ADR-0039 决策 3）共用同一套
 //! 字典形态——手动输入 / AI 提交 6 位基金代码 → 查询半边取东财报价（名称 /
-//! 分类 / 最新单位净值 + 净值日期，`sync::fetch_fund_quote_production`）→
+//! 分类 / 最新单位净值 + 净值日期，`sync::fetch_fund_quote_production`，
+//! 行情同步域 `ledger-market-sync` crate，#1106）→
 //! 落库半边（[`adopt_fund_quote`]）落标的字典（类型 fund、市场恒 unknown、
 //! 来源 manual）与现价缓存（净值即价格、币种人民币、带净值日期）。查无此码
 //! 返回中文错误，不产生标的行。

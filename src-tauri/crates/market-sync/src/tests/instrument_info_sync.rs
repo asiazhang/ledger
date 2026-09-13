@@ -10,20 +10,20 @@ use std::cell::RefCell;
 use chrono::{Datelike, NaiveDate};
 use rusqlite::{Connection, params};
 
-use crate::error::{AppError, Result};
-use crate::investment::prices::{
-    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
-    upsert_price_history,
-};
-use crate::sync::fund_nav::{LsjzPage, NavPoint, NavQuery};
-use crate::sync::http::{
+use crate::fund_nav::{LsjzPage, NavPoint, NavQuery};
+use crate::http::{
     KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
     fx_secid_candidates, parse_klines, price_cents_from_raw, secid_prefix,
 };
-use crate::sync::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
-use crate::sync::{FundNavProgress, SyncProgress};
+use crate::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
+use crate::{FundNavProgress, SyncProgress};
+use ledger_infra::error::{AppError, Result};
+use ledger_investment::prices::{
+    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
+    upsert_price_history,
+};
 
-use crate::test_support::{seed_account, seed_instrument};
+use tauri_app_lib::test_support::{seed_account, seed_instrument};
 
 // ---------------------------------------------------------------------------
 // 持仓价格增量同步（issue #103）：secid 构造、ulist 响应解析、编排、跳过规则、
@@ -146,7 +146,7 @@ fn quote_channel_derivation_matches_secid_construction() {
     // 价格通道收口（issue #1060）：行情通道派生（投资域单点 `derive_price_channel`）
     // 与 secid 构造能力（同步域 `secid_prefix`）恒等——判「可行情」的市场必须恰是
     // 可构造 secid 的市场，否则 Quote 行进不了查询（静默跳过）或无通道行混进行情分区。
-    use crate::investment::{InstrumentType, PriceChannel, derive_price_channel};
+    use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
     for market in ["sh", "sz", "hk", "nasdaq", "nyse", "amex", "unknown"] {
         assert_eq!(
             derive_price_channel(InstrumentType::Stock, market, "600000") == PriceChannel::Quote,
@@ -232,7 +232,7 @@ fn ulist_items_without_precision_fall_back_to_market_scale() {
 
 #[test]
 fn incremental_sync_normalizes_symbol_suffix() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // schema 注释示例格式：symbol 带市场后缀（"600519.SH"），secid 应取裸代码 "1.600519"。
     insert_holding(&conn, "acc-1", "inst-sh", "600519.SH", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-hk", "00700.HK", "stock", "HKD", "hk");
@@ -268,7 +268,7 @@ fn incremental_sync_normalizes_symbol_suffix() {
 
 #[test]
 fn incremental_sync_all_missing_response_counts_all_skipped() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-a", "600001", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-b", "600002", "stock", "CNY", "sh");
 
@@ -295,7 +295,7 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
 
 #[test]
 fn incremental_sync_empty_library_returns_message() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     let mut fetch = mock_fetch(&[]);
     let result = do_incremental_sync_with(
         &conn,
@@ -315,7 +315,7 @@ fn incremental_sync_empty_library_returns_message() {
 
 #[test]
 fn incremental_sync_updates_holding_prices_only() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-sz", "000001", "stock", "CNY", "sz");
     insert_holding(&conn, "acc-3", "inst-hk", "00700", "stock", "HKD", "hk");
@@ -327,7 +327,7 @@ fn incremental_sync_updates_holding_prices_only() {
             price_cents: 999,
             currency_code: "CNY",
             // 预置旧价的时间点为夹具簿记，引用工厂固定时刻常量（ADR-0084 决策 5）。
-            priced_at: crate::test_support::FIXED_NOW,
+            priced_at: tauri_app_lib::test_support::FIXED_NOW,
             nav_date: None,
             source: Some("eastmoney"),
         },
@@ -385,7 +385,7 @@ fn incremental_sync_updates_holding_prices_only() {
 
 #[test]
 fn incremental_sync_skips_holdings_without_quote_source() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(
         &conn,
@@ -437,7 +437,7 @@ fn incremental_sync_skips_holdings_without_quote_source() {
 
 #[test]
 fn incremental_sync_keeps_old_price_when_suspended() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-sz", "000001", "stock", "CNY", "sz");
     // 停牌股已有旧价
@@ -448,7 +448,7 @@ fn incremental_sync_keeps_old_price_when_suspended() {
             price_cents: 888,
             currency_code: "CNY",
             // 预置旧价的时间点为夹具簿记，引用工厂固定时刻常量（ADR-0084 决策 5）。
-            priced_at: crate::test_support::FIXED_NOW,
+            priced_at: tauri_app_lib::test_support::FIXED_NOW,
             nav_date: None,
             source: Some("eastmoney"),
         },
@@ -482,7 +482,7 @@ fn incremental_sync_keeps_old_price_when_suspended() {
 
 #[test]
 fn incremental_sync_counts_missing_response_as_skipped() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-a", "600001", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-b", "600002", "stock", "CNY", "sh");
 
@@ -509,7 +509,7 @@ fn incremental_sync_counts_missing_response_as_skipped() {
 
 #[test]
 fn incremental_sync_skips_unknown_market() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-ok", "600519", "stock", "CNY", "sh");
     // 市场未知的持仓股票（如手动创建未设市场）：无法构造 secid，计入跳过
     insert_holding(
@@ -537,7 +537,7 @@ fn incremental_sync_skips_unknown_market() {
 
 #[test]
 fn incremental_sync_is_idempotent() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
     let prices = [("600519", Some(130280.0))];
@@ -579,7 +579,7 @@ fn incremental_sync_is_idempotent() {
 
 #[test]
 fn incremental_sync_dedupes_same_instrument_across_accounts() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     // 同一标的在另一账户也有持仓：应去重为一只、只查一次
     seed_account(&conn, "acc-2", "账户-acc-2", "investment", "CNY", 0);
@@ -610,7 +610,7 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
 
 #[test]
 fn incremental_sync_batches_by_fifty() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // 55 只股票：应拆为 2 批（50 + 5），每批 secid 数不超 ULIST_BATCH_SIZE
     for i in 0..55 {
         let symbol = format!("{:06}", 600000 + i);
@@ -661,7 +661,7 @@ fn incremental_sync_batches_by_fifty() {
 
 #[test]
 fn incremental_sync_propagates_fetch_error() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
     let mut fetch = |_: &str| Err(AppError::Io("模拟网络失败".into()));
@@ -807,7 +807,7 @@ fn fx_rows(conn: &Connection, base: &str, quote: &str) -> Vec<(String, f64)> {
 
 #[test]
 fn kline_backfill_downsamples_daily_to_weekly() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
     // 一段跨年日线：2025-12-29 ~ 2026-01-04 属同一 ISO 周（跨年边界），
@@ -852,7 +852,7 @@ fn kline_backfill_downsamples_daily_to_weekly() {
 
 #[test]
 fn kline_backfill_full_week_overwrite_is_idempotent() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     let prices = [("600519", Some(920.0))];
     let fx_log = RefCell::new(Vec::new());
@@ -911,7 +911,7 @@ fn kline_backfill_full_week_overwrite_is_idempotent() {
 
 #[test]
 fn kline_backfill_keeps_history_after_position_cleared() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-sz", "000001", "stock", "CNY", "sz");
 
@@ -981,7 +981,7 @@ fn kline_backfill_keeps_history_after_position_cleared() {
 
 #[test]
 fn kline_backfill_writes_fx_rate_history_alongside() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-hk", "00700", "stock", "HKD", "hk");
 
@@ -1039,7 +1039,7 @@ fn kline_backfill_writes_fx_rate_history_alongside() {
 
 #[test]
 fn kline_backfill_empty_history_keeps_quote_only() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     let prices = [("600519", Some(1000.0))];
     let fx_log = RefCell::new(Vec::new());
@@ -1069,7 +1069,7 @@ fn kline_backfill_empty_history_keeps_quote_only() {
 
 #[test]
 fn kline_backfill_fetch_error_propagates() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     let prices = [("600519", Some(1000.0))];
     let fx_log = RefCell::new(Vec::new());
@@ -1153,10 +1153,10 @@ fn week_key_matches_sqlite_week_start_column() {
     // Rust 侧降采样周键（week_monday）与 V010 week_start 生成列恒等——这是
     // 「整周覆盖幂等」的隐式契约：周键一旦漂移，ON CONFLICT 落点即错、产生重复周行。
     // 扫描跨年/闰年边界三年，每天与 SQLite 生成表达式比对。
-    use crate::sync::incremental::week_monday;
+    use crate::incremental::week_monday;
     use chrono::NaiveDate;
 
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     let mut d = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
     let end = NaiveDate::from_ymd_opt(2027, 12, 31).unwrap();
     while d <= end {
@@ -1343,7 +1343,7 @@ fn fund_price_of(conn: &Connection, instrument_id: &str) -> Option<(i64, Option<
 
 #[test]
 fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1415,7 +1415,7 @@ fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
 fn fund_first_sync_prefers_single_request_full_series() {
     // issue #1062：首刷一次请求拿整只基金历史净值并裁剪到近两年窗口，替代约 25
     // 次分页请求；窗口外更早的点被裁剪掉（回填深度语义不变）。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1492,7 +1492,7 @@ fn fund_first_sync_prefers_single_request_full_series() {
 fn fund_first_sync_full_series_failure_falls_back_to_pages() {
     // 单请求通道不可信（解析失败——生产就是「数据文件缺少可信单位净值序列」这条
     // 错误）：fail-closed 回退既有分页通道，分页结果照常落库——不静默丢数据。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1544,7 +1544,7 @@ fn fund_first_sync_full_series_failure_falls_back_to_pages() {
 fn fund_first_sync_full_series_empty_falls_back_to_pages() {
     // 单请求通道结构完好但为空（新基金未公布净值 / 裁剪后无窗口内点）：同样回退
     // 分页通道，不让一条不确定的空结果直接决定「无净值」。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1585,7 +1585,7 @@ fn fund_first_sync_full_series_empty_falls_back_to_pages() {
 fn fund_first_sync_full_series_without_window_points_falls_back_to_pages() {
     // 退市 / 清仓多年的基金：单请求通道返回的点全在近两年窗口外——裁剪为空后
     // 回退分页通道，不在窗口内凭空造点。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1630,7 +1630,7 @@ fn fund_first_sync_full_series_without_window_points_falls_back_to_pages() {
 fn fund_incremental_does_not_touch_single_request_full_series() {
     // 日常增量仍走既有历史净值接口：有历史序列的基金不发起单请求全量查询，
     // 即使单请求通道返回别值也不被消费（水位语义与 #1059 一致）。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1705,7 +1705,7 @@ fn fund_incremental_does_not_touch_single_request_full_series() {
 
 #[test]
 fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1793,7 +1793,7 @@ fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
 
 #[test]
 fn fund_incremental_up_to_date_counts_synced_without_write() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1866,7 +1866,7 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
 
 #[test]
 fn fund_first_sync_without_nav_counts_skipped() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1905,7 +1905,7 @@ fn fund_with_nav_date_but_no_history_backfills_two_years() {
     // 现价缓存（水位有值），但这只基金没有任何历史序列——首刷判据必须是
     // 「磁盘上有无历史序列」，不是「水位是否存在」。#303 的首刷回填验收在真实
     // 账本上未成立，根因即在此。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1996,7 +1996,7 @@ fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
     // 非对象，如缺 Referer 被拦截 / 风控）——不得按「已是最新」静默计成功。
     // 与 fund_incremental_up_to_date_counts_synced_without_write（同样是空窗口，
     // 但报文形态正常、空表可信）在同步统计上区分开。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -2071,7 +2071,7 @@ fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
 
 #[test]
 fn fund_rows_without_real_code_skip_without_fetch() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // 名称充代码的基金行（无真实代码，查不到净值）与债券：计入跳过、零请求。
     insert_holding(
         &conn,
@@ -2115,7 +2115,7 @@ fn fund_rows_without_real_code_skip_without_fetch() {
 
 #[test]
 fn fund_nav_fetch_error_propagates() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -2151,7 +2151,7 @@ fn fund_nav_fetch_error_propagates() {
 
 #[test]
 fn etf_holding_syncs_quote_and_kline_backfill() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "sh");
 
     // 批量报价按精度位换算（ETF f1=3，raw 4634 → 4.634 元 → 46340 万分之一元）。
@@ -2202,7 +2202,7 @@ fn etf_holding_syncs_quote_and_kline_backfill() {
 
 #[test]
 fn etf_holding_unknown_market_counts_skipped_without_requests() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // 市场未知的 ETF 持仓（如手动建档未设市场）：在行情分区内仍无法构造 secid，
     // 计入跳过且零请求（跳过统计与标的收集同源，不报错）。
     insert_holding(
@@ -2235,7 +2235,7 @@ fn etf_holding_unknown_market_counts_skipped_without_requests() {
 
 #[test]
 fn three_type_partitions_roll_up_into_one_result() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // 三分区一次钉住：行情分区 = stock + etf；净值通道 = fund；跳过 =
     // 名称充代码基金行 + bond + other。跳过统计与标的收集出自同一次收集（同源）。
     insert_holding(&conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "sh");
@@ -2377,7 +2377,7 @@ fn us_quotes_deserialize_with_thousand_scale() {
 
 #[test]
 fn us_stock_holding_syncs_quote_kline_and_usdcny() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // 美股持仓：纳斯达克标的、USD 币种（创建增强落库形态）。
     insert_holding(
         &conn,
@@ -2508,7 +2508,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
 #[test]
 fn us_stock_holdings_route_exact_secids_per_market() {
     // 三市场各一持仓：secid 前缀按精确市场映射（105/106/107），互不串市场。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-nq", "AAPL", "stock", "USD", "nasdaq");
     insert_holding(&conn, "acc-2", "inst-ny", "BABA", "stock", "USD", "nyse");
     insert_holding(&conn, "acc-3", "inst-am", "SPY", "stock", "USD", "amex");
@@ -2559,7 +2559,7 @@ fn clear_position(conn: &Connection, instrument_id: &str) {
 
 #[test]
 fn incremental_sync_includes_cleared_instrument() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-held", "600519", "stock", "CNY", "sh");
     insert_holding(
         &conn,
@@ -2600,7 +2600,7 @@ fn incremental_sync_includes_cleared_instrument() {
 
 #[test]
 fn incremental_sync_includes_never_traded_instrument() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // 纯建档未交易标的：只有 instruments 行，无任何交易/批次。
     seed_instrument(&conn, "inst-archived", "600000", "浦发银行", "CNY", "sh");
 
@@ -2624,7 +2624,7 @@ fn incremental_sync_includes_never_traded_instrument() {
 
 #[test]
 fn incremental_sync_refreshes_names_from_quote_batch() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // 既有行名称过时（如手工建错/旧数据源命名）：批量报价随行带回权威名称覆盖。
     seed_instrument(&conn, "inst-stale", "600519", "贵州茅台旧名", "CNY", "sh");
     let version_before: i64 = conn
@@ -2670,7 +2670,7 @@ fn incremental_sync_refreshes_names_from_quote_batch() {
 
 #[test]
 fn incremental_sync_skips_name_write_when_unchanged() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // 名称与权威名称一致：零变化零写入，不虚增 version。
     seed_instrument(&conn, "inst-fresh", "600519", "名称-600519", "CNY", "sh");
     let version_before: i64 = conn
@@ -2708,7 +2708,7 @@ fn incremental_sync_skips_name_write_when_unchanged() {
 
 #[test]
 fn fund_name_refresh_via_detail_lookup() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // 有真实代码的基金行（首刷查无净值的形态）：名称通道照常可达。
     insert_holding(
         &conn,
@@ -2759,7 +2759,7 @@ fn fund_name_refresh_via_detail_lookup() {
 
 #[test]
 fn fund_name_refresh_degrades_deterministic_not_found_to_skip() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // 基金在建成标的后终止：搜索索引与档案通道都不再可达（ADR-0039 修订，issue
     // #1212）——名称刷新降级为保留原名，不得中断整次同步。
     insert_holding(
@@ -2816,7 +2816,7 @@ fn fund_name_refresh_degrades_deterministic_not_found_to_skip() {
 #[test]
 fn fund_name_refresh_still_propagates_network_failure() {
     // 边界：只有确定性查无降级；网络类失败仍按既有契约上抛中断（ADR-0039 修订）。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -2850,7 +2850,7 @@ fn fund_name_refresh_still_propagates_network_failure() {
 
 #[test]
 fn fund_name_lookup_skips_name_as_code_rows_and_empty_names() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     // 名称充代码的基金行（非 6 位）：无通道，不发起名称查询；6 位行返回空名称也不写。
     insert_holding(
         &conn,
@@ -2901,7 +2901,7 @@ fn fund_name_lookup_skips_name_as_code_rows_and_empty_names() {
 #[test]
 fn any_written_covers_name_only_and_price_only_writes() {
     // 纯结果类型的证据判定语义：价格与名称任一写入即为真。
-    use crate::sync::SyncInstrumentInfoResult;
+    use crate::SyncInstrumentInfoResult;
     let base = |written: usize, renamed: usize| SyncInstrumentInfoResult {
         synced: 1,
         skipped: 0,
@@ -2928,7 +2928,7 @@ fn any_written_covers_name_only_and_price_only_writes() {
 
 #[test]
 fn progress_sequence_total_first_then_per_instrument_advance() {
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-a", "600001", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-b", "600002", "stock", "CNY", "sz");
 
@@ -2989,7 +2989,7 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
 fn progress_denominator_counts_channel_capable_instruments_only() {
     // 库内五行：沪股 1（行情通道）+ 市场未知股票 1（跳过）+ 债券 1（跳过）+
     // 名称充代码基金 1（跳过）+ 6 位代码基金 1（净值通道）→ 分母 = 2。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(
         &conn, "acc-2", "inst-unk", "NVDA", "stock", "USD", "unknown",
@@ -3057,7 +3057,7 @@ fn progress_denominator_counts_channel_capable_instruments_only() {
 fn progress_advances_even_when_quote_invalid_or_missing() {
     // 停牌（f2 无效）与查询无果（响应缺失）的行情标的：有通道即计格，
     // 不以成败计——推进速度对齐真实处理量，而非成功量。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-ok", "600001", "stock", "CNY", "sh");
     insert_holding(
         &conn,
@@ -3108,7 +3108,7 @@ fn progress_advances_even_when_quote_invalid_or_missing() {
 fn fund_up_to_date_still_advances_progress() {
     // 基金「已是最新」（增量窗口内无新净值）：处理成功计入 synced、零写入，
     // 但进度照常推进一格——百分比不卡住（user story 7）。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -3176,7 +3176,7 @@ fn fund_up_to_date_still_advances_progress() {
 #[test]
 fn fund_progress_advances_after_nav_and_name_complete() {
     // 基金「净值 + 名称」合并为一步：两件事都完成才推进一格。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -3231,7 +3231,7 @@ fn fund_first_sync_emits_page_level_progress_within_one_instrument() {
     // issue #1061：首刷一只基金要翻 3 页（total=45 → 3 页），页级明细让单只基金
     // 回填期间进度持续推进；done/total 的标的级口径不变——页推进不改 done、
     // 分母恒为有通道标的数（ADR-0095 决策 2 的不变量）。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -3303,7 +3303,7 @@ fn fund_page_progress_emitted_only_after_page_fetch_returns() {
     // 退避/重试等待（生产在 HTTP 层内完成，注入层不可见）期间不得产生虚假推进。
     // 篡改成「翻页前先报页码」会让事件顺序翻转为 progress-fund 先于 fetch-exit，
     // 本断言即变红。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -3380,7 +3380,7 @@ fn fund_page_progress_emitted_only_after_page_fetch_returns() {
 fn page_level_detail_only_for_multi_page_fund_sync() {
     // 单页基金（增量常态）与行情标的不产生页级明细——只有真正翻页的首刷/深回填
     // 才有页级推进，增量常态事件形状保持既有 { done, total } 两字段。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-stock", "600001", "stock", "CNY", "sh");
     insert_holding(
         &conn,
@@ -3428,7 +3428,7 @@ fn blocked_fund_pages_do_not_advance_page_progress() {
     // 非零 `TotalCount`、翻满整个窗口，也不算「已回填的一页」——被拦截期间不得让
     // 页码虚假推进（与 #1059「空响应不是成功」同源）。该基金最终计入跳过，
     // 标的级序列照常推进一格。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -3482,7 +3482,7 @@ fn blocked_fund_pages_do_not_advance_page_progress() {
 #[test]
 fn progress_not_emitted_for_empty_library() {
     // 空库：不发任何进度事件，返回既有「暂无标的可同步」提示（user story 15）。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     let mut fetch = mock_fetch(&[]);
     let log = RefCell::new(Vec::new());
     let mut progress = progress_recorder(&log);
@@ -3506,7 +3506,7 @@ fn progress_not_emitted_for_empty_library() {
 fn progress_not_emitted_when_no_channel_capable_instrument() {
     // 全部无通道（债券 + 名称充代码基金）：分母为 0，不发任何进度事件——
     // 空转不伪装成推进（user story 15），既有跳过统计提示照旧。
-    let conn = crate::test_support::open();
+    let conn = tauri_app_lib::test_support::open();
     insert_holding(
         &conn,
         "acc-1",

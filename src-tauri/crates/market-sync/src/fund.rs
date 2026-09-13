@@ -18,9 +18,9 @@ use serde::Deserialize;
 
 use super::fund_nav::{FundArchive, PINGZHONG_HOSTS, fetch_fund_archive_from};
 use super::http::{Pacer, RetryConfig, build_client, request_json_from_hosts};
-use crate::error::{AppError, Result};
-use crate::investment::Quote;
-use crate::investment::prices::price_value_to_cents;
+use ledger_infra::error::{AppError, Result};
+use ledger_investment::Quote;
+use ledger_investment::prices::price_value_to_cents;
 
 // 基金搜索建议接口：单主机（无公开镜像池），复用行情层的重试与限流泛型层。
 const FUND_SEARCH_HOSTS: &[&str] = &["https://fundsuggest.eastmoney.com"];

@@ -4,8 +4,8 @@
 
 use std::time::Duration;
 
-use crate::sync::fund::{FundSearchResponse, fetch_fund_quote_from, pick_fund_quote};
-use crate::sync::http::Pacer;
+use crate::fund::{FundSearchResponse, fetch_fund_quote_from, pick_fund_quote};
+use crate::http::Pacer;
 
 /// 真实响应形态：同一关键词命中基金（FundBaseInfo 非空）与股票（null）混排。
 const MIXED_RESPONSE: &str = r#"{

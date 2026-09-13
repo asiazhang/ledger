@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use crate::sync::http::{
+use crate::http::{
     Pacer, RetryConfig, UlistResponse, request_json_from_hosts, request_json_with_retry,
 };
 

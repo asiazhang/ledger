@@ -31,14 +31,14 @@ use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 
 use super::model::SyncInstrumentInfoResult;
-use crate::error::Result;
-use crate::investment::crud::refresh_instrument_name;
-use crate::investment::prices::{
+use ledger_infra::error::Result;
+use ledger_investment::crud::refresh_instrument_name;
+use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
     upsert_price_history,
 };
-use crate::investment::{InstrumentType, PriceChannel, derive_price_channel};
-use crate::transaction::amount::default_currency_code;
+use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
+use ledger_transaction::amount::default_currency_code;
 
 use super::fund_nav::{FundSyncStats, LsjzPage, NavPoint, NavQuery, sync_one_fund_nav};
 use super::http::{
@@ -229,7 +229,7 @@ where
                             price_cents: price,
                             currency_code: &inst.currency,
                             // 场内现价时点 = 写入时刻、无净值日期语义（ADR-0036）。
-                            priced_at: &crate::db::now_iso(),
+                            priced_at: &ledger_infra::db::now_iso(),
                             nav_date: None,
                             source: Some(EASTMONEY_PRICE_SOURCE),
                         },

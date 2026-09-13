@@ -7,11 +7,11 @@ use std::time::Duration;
 
 use chrono::NaiveDate;
 
-use crate::sync::fund_nav::{
+use crate::fund_nav::{
     LsjzResponse, NavPoint, NavQuery, fetch_nav_full_series_from, fetch_nav_page_from, nav_window,
     parse_fund_archive, parse_lsjz, parse_net_worth_trend,
 };
-use crate::sync::http::{Pacer, request_json_from_hosts};
+use crate::http::{Pacer, request_json_from_hosts};
 
 /// 真实 lsjz 响应形状（fundCode=110022，实测 2026-08）：Data.LSJZList 按净值
 /// 日期降序，DWJZ 为数字字符串，TotalCount 在顶层。
@@ -81,11 +81,11 @@ fn lsjz_invalid_nav_rows_are_filtered() {
     assert_eq!(
         points.points,
         vec![
-            crate::sync::fund_nav::NavPoint {
+            crate::fund_nav::NavPoint {
                 date: "2026-01-30".into(),
                 nav: 1.2345
             },
-            crate::sync::fund_nav::NavPoint {
+            crate::fund_nav::NavPoint {
                 date: "2026-01-26".into(),
                 nav: 2.5
             },
@@ -288,7 +288,7 @@ fn request_json_from_hosts_accepts_referer_argument() {
         &[("k", "v")],
         "/x",
         &[url.as_str()],
-        crate::sync::http::RetryConfig {
+        crate::http::RetryConfig {
             max_retries: 0,
             base_backoff: Duration::ZERO,
             max_throttle_retries: 0,

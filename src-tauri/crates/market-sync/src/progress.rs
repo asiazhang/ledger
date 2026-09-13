@@ -7,7 +7,7 @@
 //! 二者同在 `ledger:*` 命名空间但互不替代，发射判定也不经 signals 映射单点
 //!（映射单点只裁决失效信号，ADR-0044）。事件名常量与发射入口归本域收口
 //!（与 `events` 模块的分工先例一致：不经失效信号映射的带 payload 事件只共用
-//! 其 [`crate::events::post_emit_with`] 投递机制，本模块不进映射、不另起第二套）。
+//! 其 [`ledger_infra::events::post_emit_with`] 投递机制，本模块不进映射、不另起第二套）。
 //!
 //! 旧「标的全量同步」的进度事件（`sync-instruments:progress`）已随 ADR-0081
 //! 决策 3 整体退役；本事件是现役增量同步（InstrumentInfoSync）上的重建，
@@ -16,7 +16,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::events::post_emit_with;
+use ledger_infra::events::post_emit_with;
 
 /// 标的信息同步进度事件名（issue #897 / ADR-0095；带 payload，与无 payload 的
 /// 失效信号族同处 `ledger:*` 命名空间）。payload 见 [`SyncProgress`]。

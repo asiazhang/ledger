@@ -7,7 +7,7 @@
 
 ## 背景
 
-基金与股票的新增标的路径各走三段同形阶梯——取行情（sync 域网络层 `fetch_fund_detail_production`（`src-tauri/src/sync/fund.rs:136`）/ `fetch_stock_quote_production`（`src-tauri/src/sync/stock.rs:169`））→ 按代码解析/建档（investment 域 `add_fund_by_code_with`（`src-tauri/src/investment/fund.rs:139`）/ `fetch_stock_quote_for_add`（`src-tauri/src/investment/stock.rs:222`）+ `persist_fund_detail`（`src-tauri/src/investment/fund.rs:93`）/ `persist_stock_quote`（`src-tauri/src/investment/stock.rs:362`））→ 落价格（`upsert_market_price`，`src-tauri/src/investment/prices.rs:65`）。形状经 ADR-0038/0039/0081 演进已经对齐：注入拉取闭包同构（慢闭包在连接锁外）、persist 均为「建档 + 落价」一体。但接缝没有名字：payload 各写一份（`FundDetail` / `StockQuote` 同构不同形）、拉取闭包签名各异（`FnMut(&str)` vs `FnMut(&str, &str)`）、`upsert_market_price` 以 conn + 6 个业务位置参数暴露，7 个生产调用点各自重新记忆 `nav_date` / `source` 的通道语义。壳层编排节奏也不相同：基金 IPC 一枪式（查询即落库）、股票对话框两段式（查询回显、确认后落库）、AI 创建端点直调 persist。
+基金与股票的新增标的路径各走三段同形阶梯——取行情（行情同步域 `ledger-market-sync` crate 网络层 `fetch_fund_quote_production`（`src-tauri/crates/market-sync/src/fund.rs:194`）/ `fetch_stock_quote_production`（`src-tauri/crates/market-sync/src/stock.rs:174`））→ 按代码解析/建档（investment 域 `add_fund_by_code_with`（`src-tauri/src/investment/fund.rs:139`）/ `fetch_stock_quote_for_add`（`src-tauri/src/investment/stock.rs:222`）+ `persist_fund_detail`（`src-tauri/src/investment/fund.rs:93`）/ `persist_stock_quote`（`src-tauri/src/investment/stock.rs:362`））→ 落价格（`upsert_market_price`，`src-tauri/src/investment/prices.rs:65`）。形状经 ADR-0038/0039/0081 演进已经对齐：注入拉取闭包同构（慢闭包在连接锁外）、persist 均为「建档 + 落价」一体。但接缝没有名字：payload 各写一份（`FundDetail` / `StockQuote` 同构不同形）、拉取闭包签名各异（`FnMut(&str)` vs `FnMut(&str, &str)`）、`upsert_market_price` 以 conn + 6 个业务位置参数暴露，7 个生产调用点各自重新记忆 `nav_date` / `source` 的通道语义。壳层编排节奏也不相同：基金 IPC 一枪式（查询即落库）、股票对话框两段式（查询回显、确认后落库）、AI 创建端点直调 persist。
 
 ## 决策
 
@@ -47,3 +47,4 @@
 ## 修订记录
 
 - 2026-09-12 grilling 复核（模型审查）：决策 5 的「错误码零变化」与实现不符——同批实施引入并使用新码 `quote.market-missing`（中英模板同步）。纯重构的其余部分（契约形状、`source` 不 enum 化、schema 零变化）不变；新码随实际行为保留，本决策表述按实现改正。
+- 2026-09-13 随 spec #1086 / issue #1106 行情同步域拆 crate（`src-tauri/crates/market-sync`），背景段的行情同步域代码坐标自 `src-tauri/src/sync/…` 同步至新 crate；`fetch_fund_detail_production` 按可验证行为正名为 `fetch_fund_quote_production`（旧名在本文落笔时即已失真）。本文 investment 域坐标随 #1097 拆 crate 的同源漂移归 #1262 存量清理，未在本 PR 一并处理。

@@ -1,17 +1,17 @@
 //! 行情同步持久化（issue #137）：汇率历史周采样落库。
 //! 价格写入单点（现价缓存 / 价格历史周采样 upsert 与刻度换算）已随投资域归位
-//! 迁入 [`crate::investment::prices`]（#401 / ADR-0056），增量同步经域入口消费；
+//! 迁入 [`ledger_investment::prices`]（#401 / ADR-0056），增量同步经域入口消费；
 //! 标的字典应用（全量同步侧）已随 ADR-0081 决策 3 退役删除（issue #698）。
 
 use rusqlite::Connection;
 use rusqlite::params;
 
-use crate::db::{new_uuid, now_iso};
-use crate::error::Result;
+use ledger_infra::db::{new_uuid, now_iso};
+use ledger_infra::error::Result;
 use ledger_sync_protocol::device::device_id;
 
 /// 按 (币种对, ISO 周) 插入或覆盖一条周采样汇率历史，规则与投资域价格历史
-/// 周采样 upsert（[`crate::investment::prices::upsert_price_history`]）对齐
+/// 周采样 upsert（[`ledger_investment::prices::upsert_price_history`]）对齐
 /// （同周整周覆盖、同期采集）。`rate` 口径与 exchange_rates 一致：1 base = ? quote。
 pub(super) fn upsert_fx_rate_history(
     conn: &Connection,

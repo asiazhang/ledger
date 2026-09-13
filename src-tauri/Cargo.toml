@@ -167,6 +167,12 @@ ledger-item = { path = "crates/item" }
 # #1097 裁决显性化承认），行情同步域查询半边经注入接缝倒挂、壳层启动时对装。
 # 根包 `pub use ledger_investment as investment` 再导出保持原调用点路径。
 ledger-investment = { path = "crates/investment" }
+# 行情同步域 crate（spec #1086 / issue #1106，P4 首个拆出的业务域 crate）：东财
+# 行情抓取（批量报价 / 单点行情 / 日 K / 历史净值）与增量同步编排归位；依赖面
+# 只有基础设施、同步协议、核心交易域与投资域（票面 AC 允许集），对根包（壳层）
+# 与多端同步域零生产依赖。根包 `pub use ledger_market_sync as sync` 再导出保持
+# 原调用点路径（壳层同步命令、行情查询注入点）。
+ledger-market-sync = { path = "crates/market-sync" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]

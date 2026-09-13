@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
-use crate::error::{AppError, Result};
+use ledger_infra::error::{AppError, Result};
 
 // 批量报价接口路径：按 secid 一次携带多只跨市场代码查询最新价（增量同步用，issue #103）。
 // 响应 data 为列表对象（data.diff，条目 f12/f14/f1/f2），与已退役的 clist 接口同形、

@@ -87,7 +87,13 @@ pub use ledger_reports as reports;
 // `tauri_app_lib::scheduled_transactions::…` 调用点零改动（expand 形态，
 // ledger-backup/ledger-transaction 同款）。
 pub use ledger_scheduled as scheduled_transactions;
-pub mod sync;
+// 行情同步域 crate（spec #1086 / issue #1106，P4 首个拆出的业务域 crate）：东财行情
+// 抓取（批量报价 / 单点行情 / 日 K / 历史净值）与增量同步编排自根包域目录拆出，
+// 根包以再导出形态保留原引用路径——壳层（IPC 命令 `commands::sync`、
+// `commands::investment` 与 `api_server` 的行情查询注入点）的
+// `crate::sync::…` / `tauri_app_lib::sync::…` 调用点零改动（expand 形态，
+// ledger-transaction 同款）。域内本体见 `ledger-market-sync` crate。
+pub use ledger_market_sync as sync;
 pub mod sync_engine;
 // 信号守门测试（signals_cross_check，ADR-0044 决策 3 修订 / ADR-0073 决策 5）：
 // 写路径接线源码扫描核对，仅测试可见。
