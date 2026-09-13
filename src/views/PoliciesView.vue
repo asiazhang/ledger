@@ -100,9 +100,10 @@ function coverageText(row: Policy): string {
 }
 
 // —— 保单视角统计（issue #363）：实时推导，按行取 store 同源快照；
-// 合计展示经共享辅助（与详情摘要同口径），统计行未加载时显示占位 ——
+// 合计展示经共享辅助（与详情摘要同口径），统计行未加载时显示占位；
+// 币种解析由参考数据 store 注入（issue #1156 归位）——
 function statsAmountText(row: Policy, pick: (s: PolicyStats) => number): string {
-  return policyStatAmountText(policiesStore.statsById.get(row.id), pick)
+  return policyStatAmountText(policiesStore.statsById.get(row.id), pick, reference.getCurrency)
 }
 
 const columns: DataTableColumns<Policy> = [

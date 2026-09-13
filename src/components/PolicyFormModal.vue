@@ -79,11 +79,16 @@ const statsSummary = computed(() => {
 })
 
 const paidText = computed(() =>
-  policyStatAmountText(statsSummary.value, (s) => s.total_paid_native_cents),
+  // 币种解析由参考数据 store 注入（issue #1156 归位）：
+  policyStatAmountText(statsSummary.value, (s) => s.total_paid_native_cents, reference.getCurrency),
 )
 
 const inflowText = computed(() =>
-  policyStatAmountText(statsSummary.value, (s) => s.total_inflow_native_cents),
+  policyStatAmountText(
+    statsSummary.value,
+    (s) => s.total_inflow_native_cents,
+    reference.getCurrency,
+  ),
 )
 
 // 到期态摘要（与列表徽标同一推导口径）：止日空 = 长期/终身（永不判到期）；
