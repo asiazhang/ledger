@@ -37,6 +37,9 @@ fn build_test_app(
     let conn = Arc::new(Mutex::new(test_support::open()));
     let app = build_router(ApiState {
         conn: conn.clone(),
+        // 内存库按连接隔离，读槽与写槽共享同一连接句柄（与 DbState::open_in_memory
+        // 同形，issue #1280）：集成测试读写同库，断言语义零变化。
+        read_conn: conn.clone(),
         emitter,
         fund_fetch,
         stock_fetch,
@@ -68,6 +71,7 @@ pub(crate) fn setup_app_with_stock_fetch(
 pub(crate) fn setup_locked_app() -> Router {
     build_router(ApiState {
         conn: Arc::new(Mutex::new(test_support::open())),
+        read_conn: Arc::new(Mutex::new(test_support::open())),
         emitter: None,
         fund_fetch: None,
         stock_fetch: None,
@@ -83,6 +87,7 @@ pub(crate) fn setup_boot_failed_app() -> Router {
     boot_gate.set_failed(None);
     build_router(ApiState {
         conn: Arc::new(Mutex::new(test_support::open())),
+        read_conn: Arc::new(Mutex::new(test_support::open())),
         emitter: None,
         fund_fetch: None,
         stock_fetch: None,

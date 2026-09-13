@@ -393,8 +393,11 @@ async fn encrypted_library_requires_passphrase_and_seals_with_it() {
         tauri_app_lib::db::encryption::DbFileKind::Encrypted
     );
     let conn = db::open_connection_with_passphrase(&db_path, "master-pass").expect("密文库应可开");
+    let read_conn = db::open_connection_readonly_with_passphrase(&db_path, "master-pass")
+        .expect("密文读连接应可开");
     app.manage(DbState {
         conn: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+        read_conn: std::sync::Arc::new(std::sync::Mutex::new(read_conn)),
     });
     let app = app.handle().clone();
     configure_channel(&app, &stub);

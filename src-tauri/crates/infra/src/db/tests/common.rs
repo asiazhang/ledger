@@ -19,8 +19,10 @@ pub(super) fn write_test_state() -> DbState {
     // 触发的注册落在那一份的写入口静态上，本份实例仍是未注册态。故这里直接把自己的
     // 注册点接上备份域实现（幂等；函数指针只经 rusqlite 外部类型，跨实例类型相容）。
     crate::db::register_after_commit_hook(tauri_app_lib::backup::after_commit_hook);
+    let conn = Arc::new(Mutex::new(tauri_app_lib::test_support::open()));
     DbState {
-        conn: Arc::new(Mutex::new(tauri_app_lib::test_support::open())),
+        read_conn: conn.clone(),
+        conn,
     }
 }
 

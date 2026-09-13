@@ -53,8 +53,18 @@ fn reattach_app(
         None => db::open_connection_in(dir),
     }
     .expect("重挂连接应成功");
+    // 成对挂载（issue #1280 / ADR-0117）：读连接按同一文件与口令形态只读打开。
+    let read_conn = match passphrase {
+        Some(passphrase) => db::open_connection_readonly_with_passphrase(
+            dir.join(data_location::DB_FILE_NAME),
+            passphrase,
+        ),
+        None => db::open_connection_readonly_in(dir),
+    }
+    .expect("重挂读连接应成功");
     app.manage(DbState {
         conn: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+        read_conn: std::sync::Arc::new(std::sync::Mutex::new(read_conn)),
     });
     app.handle().clone()
 }
@@ -283,8 +293,11 @@ async fn encrypted_source_rekeys_fresh_joiner_and_rounds_stay_interoperable() {
     let db_path_a = dir_a.join(data_location::DB_FILE_NAME);
     enable_encryption_for_file(&db_path_a, master).expect("A 加密转换应成功");
     let conn_a = open_connection_with_passphrase(&db_path_a, master).expect("A 密文库应可开");
+    let read_a = db::open_connection_readonly_with_passphrase(&db_path_a, master)
+        .expect("A 密文读连接应可开");
     app_a.manage(DbState {
         conn: std::sync::Arc::new(std::sync::Mutex::new(conn_a)),
+        read_conn: std::sync::Arc::new(std::sync::Mutex::new(read_a)),
     });
     let app_a = app_a.handle().clone();
     configure_channel(&app_a, &stub);
@@ -373,8 +386,10 @@ async fn envelope_form_mismatch_guards_reject_before_bootstrap() {
     let db_path_a = dir_a.join(data_location::DB_FILE_NAME);
     enable_encryption_for_file(&db_path_a, "channel-pass").expect("A 加密转换应成功");
     let conn_a = open_connection_with_passphrase(&db_path_a, "channel-pass").unwrap();
+    let read_a = db::open_connection_readonly_with_passphrase(&db_path_a, "channel-pass").unwrap();
     app_a.manage(DbState {
         conn: std::sync::Arc::new(std::sync::Mutex::new(conn_a)),
+        read_conn: std::sync::Arc::new(std::sync::Mutex::new(read_a)),
     });
     let app_a = app_a.handle().clone();
     configure_channel(&app_a, &stub1);
@@ -391,8 +406,10 @@ async fn envelope_form_mismatch_guards_reject_before_bootstrap() {
     let db_path_b = dir_b.join(data_location::DB_FILE_NAME);
     enable_encryption_for_file(&db_path_b, "local-pass").expect("B 加密转换应成功");
     let conn_b = open_connection_with_passphrase(&db_path_b, "local-pass").unwrap();
+    let read_b = db::open_connection_readonly_with_passphrase(&db_path_b, "local-pass").unwrap();
     app_b.manage(DbState {
         conn: std::sync::Arc::new(std::sync::Mutex::new(conn_b)),
+        read_conn: std::sync::Arc::new(std::sync::Mutex::new(read_b)),
     });
     let app_b = app_b.handle().clone();
     configure_channel(&app_b, &stub1);
@@ -416,8 +433,10 @@ async fn envelope_form_mismatch_guards_reject_before_bootstrap() {
     let db_path_d = dir_d.join(data_location::DB_FILE_NAME);
     enable_encryption_for_file(&db_path_d, "local-pass").expect("D 加密转换应成功");
     let conn_d = open_connection_with_passphrase(&db_path_d, "local-pass").unwrap();
+    let read_d = db::open_connection_readonly_with_passphrase(&db_path_d, "local-pass").unwrap();
     app_d.manage(DbState {
         conn: std::sync::Arc::new(std::sync::Mutex::new(conn_d)),
+        read_conn: std::sync::Arc::new(std::sync::Mutex::new(read_d)),
     });
     let app_d = app_d.handle().clone();
     configure_channel(&app_d, &stub2);

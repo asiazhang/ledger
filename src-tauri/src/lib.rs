@@ -202,7 +202,7 @@ const BOOT_FAILURE_ALLOWED_COMMANDS: &[&str] = &[
 /// 成对性由本函数与 `scripts/check-background-services.ts` 文本守门共同保证：
 /// 两个域入口的生产调用只允许出现在本函数体内，其余位置命中即红。
 /// 各调度自持单次拉起守卫，原位重引导重复调用幂等（ADR-0080）。
-pub(crate) fn start_background_services(app: &tauri::AppHandle) {
+pub(crate) fn start_background_services<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     backup::start_scheduler(app);
     sync_engine::start_triggers(app);
 }
@@ -307,6 +307,7 @@ pub fn run() {
             api_server::start_http_server(
                 app.handle().clone(),
                 app.state::<db::DbState>().conn.clone(),
+                app.state::<db::DbState>().read_conn.clone(),
                 EncryptionGate::clone(&app.state::<EncryptionGate>()),
                 BootFailureGate::clone(&app.state::<BootFailureGate>()),
             );

@@ -35,7 +35,7 @@ use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_holdings(db: State<'_, DbState>) -> Result<Vec<Holding>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_holdings", conn, move |conn| {
         investment_domain::list_holdings(conn)
     })
@@ -48,7 +48,7 @@ pub async fn list_holdings(db: State<'_, DbState>) -> Result<Vec<Holding>> {
 /// 不触发任何同步（ADR-0015 / ADR-0095 的显式触发口径不变）。
 #[tauri::command]
 pub async fn instrument_price_staleness(db: State<'_, DbState>) -> Result<PriceStaleness> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("instrument_price_staleness", conn, move |conn| {
         investment_domain::instrument_price_staleness(conn)
     })
@@ -61,7 +61,7 @@ pub async fn instrument_price_trend(
     instrument_id: String,
     filter: Option<TrendRange>,
 ) -> Result<InstrumentPriceTrend> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     // 域入口单点（#401 域目录化）：BDD 步骤直调同一域函数，与 IPC 命令同一实现。
     read_entry("instrument_price_trend", conn, move |conn| {
         investment_domain::query_instrument_price_trend(
@@ -78,7 +78,7 @@ pub async fn portfolio_value_trend(
     db: State<'_, DbState>,
     filter: Option<TrendRange>,
 ) -> Result<PortfolioValueTrend> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     // 域入口单点（#401 域目录化）：BDD 步骤直调同一域函数，与 IPC 命令同一实现。
     read_entry("portfolio_value_trend", conn, move |conn| {
         investment_domain::query_portfolio_value_trend(conn, &filter.unwrap_or_default())
@@ -91,7 +91,7 @@ pub async fn realized_pnl_summary(
     db: State<'_, DbState>,
     filter: Option<PnlFilter>,
 ) -> Result<RealizedPnlSummary> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("realized_pnl_summary", conn, move |conn| {
         let filter = filter.unwrap_or(PnlFilter {
             account_id: None,
@@ -106,7 +106,7 @@ pub async fn realized_pnl_summary(
 /// 相加，覆盖持仓页签合计区与首页投资卡；只读聚合，无写入路径。
 #[tauri::command]
 pub async fn cumulative_pnl_summary(db: State<'_, DbState>) -> Result<Vec<CurrencyCumulativePnl>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("cumulative_pnl_summary", conn, move |conn| {
         investment_domain::query_cumulative_pnl_summary(conn)
     })
@@ -115,7 +115,7 @@ pub async fn cumulative_pnl_summary(db: State<'_, DbState>) -> Result<Vec<Curren
 
 #[tauri::command]
 pub async fn list_exchange_rates(db: State<'_, DbState>) -> Result<Vec<ExchangeRate>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_exchange_rates", conn, move |conn| {
         investment_domain::list_exchange_rates(conn)
     })
@@ -141,7 +141,7 @@ pub async fn create_exchange_rate(
 
 #[tauri::command]
 pub async fn list_market_prices(db: State<'_, DbState>) -> Result<Vec<MarketPrice>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_market_prices", conn, move |conn| {
         investment_domain::list_market_prices(conn)
     })
@@ -170,7 +170,7 @@ pub async fn list_instruments(
     db: State<'_, DbState>,
     filter: Option<InstrumentListFilter>,
 ) -> Result<InstrumentListResult> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_instruments", conn, move |conn| {
         let filter = filter.unwrap_or_default();
         investment_domain::list_instruments(conn, &filter)
@@ -183,7 +183,7 @@ pub async fn list_instruments(
 /// 标的对象与列表行同投影，清仓/无持仓标的照常返回（走势不依赖持仓）。
 #[tauri::command]
 pub async fn get_instrument(db: State<'_, DbState>, id: String) -> Result<Instrument> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("get_instrument", conn, move |conn| {
         investment_domain::get_instrument(conn, &id)
     })
@@ -212,7 +212,7 @@ pub async fn delete_instrument(
 
 #[tauri::command]
 pub async fn get_transaction_trade(db: State<'_, DbState>, id: String) -> Result<TransactionTrade> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("get_transaction_trade", conn, move |conn| {
         investment_domain::get_transaction_trade(conn, &id)
     })
@@ -226,7 +226,7 @@ pub async fn get_transaction_convert(
     db: State<'_, DbState>,
     id: String,
 ) -> Result<TransactionConvert> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("get_transaction_convert", conn, move |conn| {
         investment_domain::get_transaction_convert(conn, &id)
     })
@@ -238,7 +238,7 @@ pub async fn get_transaction_convert(
 /// 非 split 交易 NotFound）。
 #[tauri::command]
 pub async fn get_transaction_split(db: State<'_, DbState>, id: String) -> Result<TransactionSplit> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("get_transaction_split", conn, move |conn| {
         investment_domain::get_transaction_split(conn, &id)
     })

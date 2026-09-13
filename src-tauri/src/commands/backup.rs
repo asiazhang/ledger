@@ -19,7 +19,7 @@
 use std::path::Path;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::backup;
 use crate::backup::BackupScope;
@@ -31,7 +31,7 @@ use crate::backup::{
 use crate::commands::boot::current_boot;
 use crate::commands::data_location::effective_db_dir_of;
 use crate::db::data_location::DB_FILE_NAME;
-use crate::db::{DbState, run_db};
+use crate::db::{self, DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::read_entry::read_entry;
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
@@ -50,7 +50,10 @@ fn backup_scope_of<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<BackupScope>
 
 /// 把当前数据库备份为 zip 包写入 `target_path`（完整文件路径，含文件名）。
 #[tauri::command]
-pub async fn create_backup(app: AppHandle, target_path: String) -> Result<BackupResult> {
+pub async fn create_backup<R: Runtime>(
+    app: AppHandle<R>,
+    target_path: String,
+) -> Result<BackupResult> {
     let conn = app.state::<DbState>().conn.clone();
     run_db("create_backup", move || {
         let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
@@ -77,13 +80,17 @@ pub async fn create_backup(app: AppHandle, target_path: String) -> Result<Backup
 /// 「应用存活但无已打开库连接」（启动失败接管）时不再假定连接存在，不持锁、
 /// 不 panic，恢复照常可用（失败恢复屏的备份恢复通道由此成为可能，#602）。
 #[tauri::command]
-pub async fn restore_backup(
-    app: AppHandle,
+pub async fn restore_backup<R: Runtime>(
+    app: AppHandle<R>,
     backup_path: String,
     passphrase: Option<String>,
 ) -> Result<RestoreResult> {
     // 主连接可选（issue #601 前置修复）：无已打开库连接时不持锁、不 panic。
     let conn = app.try_state::<DbState>().map(|state| state.conn.clone());
+    // 读连接句柄（issue #1280 / ADR-0117 决策 3）：恢复成功后原位换出用。
+    let read_conn = app
+        .try_state::<DbState>()
+        .map(|state| state.read_conn.clone());
     let db_dir = effective_db_dir_of(&app)?;
     // 恢复安全备份落默认数据目录（词汇表 RestoreSafetyBackup 既有语义，不变）。
     let safety_dir = app
@@ -98,13 +105,28 @@ pub async fn restore_backup(
             Some(conn) => Some(conn.lock().map_err(|e| AppError::Db(e.to_string()))?),
             None => None,
         };
-        restore_db_from(
+        let result = restore_db_from(
             Path::new(&backup_path),
             &db_path,
             &safety_dir,
             expected,
             passphrase.as_deref(),
-        )
+        );
+        if result.is_ok() {
+            // 文件替换已成功：读连接立即换出（旧读连接仍指被替换前的旧 inode，
+            // rename 后句柄仍有效，继续读会给出陈旧数据——换出不得等到重启，
+            // issue #1280 / ADR-0117 决策 3）。失败仅记日志不改变恢复结果
+            //（ detachment 失败见 detach_read_conn 注释）；随后的原位重引导
+            // 按新库文件成对换入。换出在写连接锁内执行，与恢复本体串行化。
+            if let Some(read_conn) = &read_conn {
+                // 占位内存库换入读槽（同 DbState::placeholderize_read_conn 机制，
+                // 经槽级自由函数消费：本命令无 DbState 句柄也必须可用）。
+                if let Err(e) = db::replace_read_conn_slot(read_conn, db::open_in_memory()?) {
+                    tracing::error!(error = %e, "恢复后读连接换出失败，重启前读命令将持续报错");
+                }
+            }
+        }
+        result
     })
     .await
 }
@@ -204,7 +226,7 @@ pub struct AutoBackupSettingsState {
 /// 备份目录是前端 localStorage 偏好（ADR-0016），目录未配置提示由设置页自判。
 #[tauri::command]
 pub async fn get_auto_backup_state(app: AppHandle) -> Result<AutoBackupSettingsState> {
-    let conn = app.state::<DbState>().conn.clone();
+    let conn = app.state::<DbState>().read_conn.clone();
     read_entry("get_auto_backup_state", conn, move |conn| {
         let s = backup::get_state(conn)?;
         Ok(AutoBackupSettingsState {

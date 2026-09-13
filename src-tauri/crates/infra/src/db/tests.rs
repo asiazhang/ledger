@@ -10,7 +10,9 @@
 //! - `integrity`：完整性检查失败的码契约（ADR-0050 收口，#1072）；
 //! - `tx_scope`：事务作用域原语 `db::tx_scope::{ensure_transaction, hold_transaction}`
 //!   （嵌套感知「保证处于事务中」与无条件自持事务壳，ADR-0033 决策 2 /
-//!   issue #1013、#1014）。
+//!   issue #1013、#1014）；
+//! - `readonly`：只读连接与成对 DbState 读槽（读路径独立只读连接，
+//!   issue #1280 / ADR-0117）。
 
 mod common;
 mod dirty_marker;
@@ -18,6 +20,7 @@ mod holding;
 mod integrity;
 mod migrations;
 mod perf;
+mod readonly;
 mod run_db;
 mod schema_guard;
 mod tx_scope;

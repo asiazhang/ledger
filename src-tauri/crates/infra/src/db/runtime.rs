@@ -122,22 +122,65 @@ where
 // 应用状态
 // ---------------------------------------------------------------------------
 
+/// 应用状态：写连接 + 只读读连接（读路径独立只读连接，issue #1280 / ADR-0117）。
+///
+/// - `conn`（写连接）：维持单写者互斥——统一写入口 [`write()`] 与壳层统一写入口
+///   [`crate::write_entry`] 等既有接缝原样（ADR-0104：`read_entry` 消费的句柄
+///   类型不变，变的只是传入句柄指向读连接）；
+/// - `read_conn`（读连接）：只服务壳层统一读入口 [`crate::read_entry`]——只读
+///   flags + busy_timeout，读可用性不再受写者闸门约束。
+///
+/// 两槽同用「共享句柄 + 互斥体内槽替换」形态（ADR-0080：换入后壳层、HTTP 壳、
+/// 调度线程已持有的克隆同步可见）；换入/换出收口在既有换连单点（引导序列与
+/// 解锁/重置编排），成对换连，禁止任何路径手搓第二条连接绕开收口（ADR-0117
+/// 决策 4）。
 pub struct DbState {
     pub conn: Arc<Mutex<Connection>>,
+    pub read_conn: Arc<Mutex<Connection>>,
 }
 
 impl DbState {
     /// 打开内存库并完成迁移，包成共享锁形态（单元测试与 BDD 世界用）。
+    ///
+    /// 内存库按连接隔离（第二条内存连接是另一个空库），读槽与写槽共享同一
+    /// 连接句柄——读写共用同锁同库，与单连接时代测试语义一致（文件库场景
+    /// 的成对形态见 [`crate::db::open_db_in`]）。
     pub fn open_in_memory() -> Result<DbState> {
         let mut conn = open_in_memory()?;
         init_db(&mut conn)?;
+        let conn = Arc::new(Mutex::new(conn));
         Ok(DbState {
-            conn: Arc::new(Mutex::new(conn)),
+            read_conn: conn.clone(),
+            conn,
         })
+    }
+
+    /// 原位换入读连接（成对换连的读侧，issue #1280 / ADR-0117 决策 3）。
+    pub fn replace_read_conn(&self, conn: Connection) -> Result<()> {
+        replace_read_conn_slot(&self.read_conn, conn)
+    }
+
+    /// 读连接占位化（恢复 / 整库转换的原位换出，issue #1280 / ADR-0117 决策 3）：
+    /// 换入占位内存库（无业务表）——库文件已被替换/重命名后，旧读连接仍指旧
+    /// inode（rename 后句柄仍有效），继续读会给出陈旧数据，故换出不得等到重启；
+    /// 占位化后读命令报错（占位无表，归一化 AppError::Db），不静默回落写连接。
+    pub fn placeholderize_read_conn(&self) -> Result<()> {
+        self.replace_read_conn(open_in_memory()?)
     }
 
     /// 写入口的命令层便捷形态（语义见 [`write()`]）：`state.write(|conn| ...)`。
     pub fn write<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         write(&self.conn, f)
     }
+}
+
+/// 读连接槽的原位替换（共享句柄 + 互斥体内槽替换，ADR-0080 / ADR-0117 决策 3）：
+/// 已持有的 Arc 克隆同步可见；旧读连接随替换立即关闭（指向旧 inode 的句柄
+/// 不再存活）。恢复路径持有 [`DbState`] 的读槽 Arc 克隆而非应用状态句柄
+///（无 DbState 时命令仍可用，issue #601 前置修复），经本自由函数消费同一机制。
+pub fn replace_read_conn_slot(slot: &Arc<Mutex<Connection>>, conn: Connection) -> Result<()> {
+    let mut guard = slot.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    // 旧连接先出槽再显式丢弃（关闭旧文件句柄），新连接同刻就位。
+    drop(std::mem::replace(&mut *guard, conn));
+    Ok(())
 }

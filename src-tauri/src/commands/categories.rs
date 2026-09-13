@@ -27,7 +27,7 @@ pub async fn list_categories(
     db: State<'_, DbState>,
     include_deleted: Option<bool>,
 ) -> Result<Vec<Category>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_categories", conn, move |conn| {
         category_domain::list_categories(conn, include_deleted.unwrap_or(false))
     })

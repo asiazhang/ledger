@@ -27,7 +27,7 @@ pub async fn list_insurers(
     db: State<'_, DbState>,
     include_deleted: Option<bool>,
 ) -> Result<Vec<Insurer>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_insurers", conn, move |conn| {
         policy_domain::list_insurers(conn, include_deleted.unwrap_or(false))
     })

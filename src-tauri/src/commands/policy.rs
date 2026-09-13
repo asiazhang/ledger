@@ -26,7 +26,7 @@ use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_policies(db: State<'_, DbState>) -> Result<Vec<Policy>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_policies", conn, move |conn| {
         policy_domain::list_policies(conn)
     })
@@ -37,7 +37,7 @@ pub async fn list_policies(db: State<'_, DbState>) -> Result<Vec<Policy>> {
 /// today 注入本地今日，实时推导不落库、不发出失效信号。
 #[tauri::command]
 pub async fn list_policy_stats(db: State<'_, DbState>) -> Result<Vec<PolicyStats>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_policy_stats", conn, move |conn| {
         policy_domain::policy_stats(conn, chrono::Local::now().date_naive())
     })

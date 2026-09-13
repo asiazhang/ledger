@@ -43,6 +43,12 @@ pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 /// 跳过发射分支，或注入受控发射器观察「写请求返回后信号最终到达」的
 /// 外部行为（spec #367，`signal_delivery.rs`）。
 ///
+/// `conn` 为写连接（单写者互斥的既有接缝）；`read_conn` 为只读读连接
+///（issue #1280 / ADR-0117 决策 1）——读端点经 [`ReadConn`] 提取器消费，
+/// 写端点照旧经 `FromRef<ApiState> for Arc<Mutex<Connection>>` 取写连接。
+/// 两槽同用「共享句柄 + 互斥体内槽替换」形态：壳层换连后本状态持有的克隆
+/// 同步可见（ADR-0080）。
+///
 /// `fund_fetch` 为东财基金详情获取接缝：`None` = 生产路径（真实东财，
 /// `spawn_blocking` 连接锁外往返）；集成测试注入桩离线驱动（issue #304）。
 /// `stock_fetch` 为东财股票行情获取接缝，同构（issue #693）。
@@ -58,11 +64,25 @@ pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 #[derive(Clone)]
 pub struct ApiState {
     pub conn: Arc<Mutex<Connection>>,
+    pub read_conn: Arc<Mutex<Connection>>,
     pub emitter: EmitterSlot,
     pub fund_fetch: Option<FundQuoteFetcher>,
     pub stock_fetch: Option<StockQuoteFetcher>,
     pub lock_gate: EncryptionGate,
     pub boot_gate: BootFailureGate,
+}
+
+/// 读端点的连接提取器（issue #1280 / ADR-0117）：提取只读读连接句柄。
+/// `FromRef<ApiState> for Arc<Mutex<Connection>>` 保持返回写连接（写端点
+/// 既有提取零改动），读侧以新类型区分——读端点写法只多一层新类型解包，
+/// 连接句柄类型与读入口签名不变（ADR-0104）。
+#[derive(Clone)]
+pub struct ReadConn(pub Arc<Mutex<Connection>>);
+
+impl FromRef<ApiState> for ReadConn {
+    fn from_ref(state: &ApiState) -> Self {
+        Self(state.read_conn.clone())
+    }
 }
 
 impl FromRef<ApiState> for Arc<Mutex<Connection>> {

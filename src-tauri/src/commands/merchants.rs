@@ -27,7 +27,7 @@ pub async fn list_merchants(
     db: State<'_, DbState>,
     include_deleted: Option<bool>,
 ) -> Result<Vec<Merchant>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_merchants", conn, move |conn| {
         merchant_domain::list_merchants(conn, include_deleted.unwrap_or(false))
     })
@@ -40,7 +40,7 @@ pub async fn list_merchants(
 pub async fn list_merchant_transaction_counts(
     db: State<'_, DbState>,
 ) -> Result<Vec<MerchantTransactionCount>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_merchant_transaction_counts", conn, move |conn| {
         merchant_domain::transaction_counts(conn)
     })

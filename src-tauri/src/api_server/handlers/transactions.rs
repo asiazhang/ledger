@@ -12,7 +12,7 @@ use axum::http::StatusCode;
 use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
-use crate::api_server::state::EmitterSlot;
+use crate::api_server::state::{EmitterSlot, ReadConn};
 use crate::error::AppError;
 use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
@@ -53,10 +53,10 @@ use crate::write_entry::{Outcome, write_entry};
     )
 )]
 pub async fn list_transactions_handler(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(read): State<ReadConn>,
     Query(query): Query<TransactionListFilter>,
 ) -> Result<Json<TransactionListResult>, AppError> {
-    read_entry("GET /api/v1/transactions", conn, move |conn| {
+    read_entry("GET /api/v1/transactions", read.0, move |conn| {
         let result = crate::transaction::list_transactions_internal(conn, &query)?;
         Ok(Json(result))
     })

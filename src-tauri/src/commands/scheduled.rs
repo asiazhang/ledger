@@ -47,7 +47,7 @@ pub async fn create_scheduled_transaction(
 pub async fn list_scheduled_transactions(
     db: State<'_, DbState>,
 ) -> Result<Vec<ScheduledTransactionWithExt>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_scheduled_transactions", conn, move |conn| {
         scheduled_domain::list_plans(conn)
     })
@@ -59,7 +59,7 @@ pub async fn get_scheduled_transaction_detail(
     db: State<'_, DbState>,
     id: String,
 ) -> Result<ScheduledTransactionDetail> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("get_scheduled_transaction_detail", conn, move |conn| {
         scheduled_domain::get_plan_detail(conn, &id)
     })
@@ -151,7 +151,7 @@ pub async fn expand_scheduled_occurrences(
 pub async fn subscription_spend_overview(
     db: State<'_, DbState>,
 ) -> Result<SubscriptionSpendOverview> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("subscription_spend_overview", conn, move |conn| {
         scheduled_domain::query_subscription_spend(conn, chrono::Local::now().date_naive())
     })

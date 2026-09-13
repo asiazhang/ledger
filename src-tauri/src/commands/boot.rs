@@ -32,7 +32,7 @@ use crate::commands::encryption::resume_business_surface;
 use crate::db::boot::{BOOT_DB_UNREADABLE, BootFailureGate, BootPlan};
 use crate::db::data_location::Boot;
 use crate::db::encryption::EncryptionGate;
-use crate::db::{DbState, open_connection_in, reset_db_file, run_db};
+use crate::db::{DbState, open_connection_in, open_connection_readonly_in, reset_db_file, run_db};
 use crate::error::{AppError, Result};
 
 /// 引导结果的托管形态（issue #644 / ADR-0080）：`RwLock` 包裹——原位重引导
@@ -41,7 +41,7 @@ use crate::error::{AppError, Result};
 pub type BootCell = RwLock<Boot>;
 
 /// 登记引导结果：首次管理或原位整体换入（重引导路径）。
-fn register_boot(app: &AppHandle, boot: Boot) {
+fn register_boot<R: Runtime>(app: &AppHandle<R>, boot: Boot) {
     match app.try_state::<BootCell>() {
         Some(cell) => {
             let mut guard = cell.write().unwrap_or_else(|e| e.into_inner());
@@ -83,10 +83,15 @@ impl BootPhase {
     }
 }
 
-/// 把裸连接换入既有 `DbState`（原位重引导路径；Arc 共享，HTTP 壳/调度线程
+/// 把裸连接对换入既有 `DbState`（原位重引导路径；Arc 共享，HTTP 壳/调度线程
 /// 持有的克隆同步可见）或首次登记为应用状态（进程启动路径，[`DbState`]
-/// 形状自此恒在）。
-fn swap_or_manage_db_state(app: &AppHandle, conn: Connection) -> Result<()> {
+/// 形状自此恒在）。成对换连（issue #1280 / ADR-0117 决策 3）：写连接与读连接
+/// 同刻换入，换连窗口内不存在「读连接指旧库」的中间态。
+fn swap_or_manage_db_state<R: Runtime>(
+    app: &AppHandle<R>,
+    conn: Connection,
+    read_conn: Connection,
+) -> Result<()> {
     match app.try_state::<DbState>() {
         Some(existing) => {
             let mut guard = existing
@@ -94,21 +99,41 @@ fn swap_or_manage_db_state(app: &AppHandle, conn: Connection) -> Result<()> {
                 .lock()
                 .map_err(|e| AppError::Db(e.to_string()))?;
             *guard = conn;
+            drop(guard);
+            existing.replace_read_conn(read_conn)?;
         }
         None => {
             app.manage(DbState {
                 conn: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+                read_conn: std::sync::Arc::new(std::sync::Mutex::new(read_conn)),
             });
         }
     }
     Ok(())
 }
 
-/// 占位内存连接（锁定/启动失败期间维持 [`DbState`] 形状；门禁拦截业务 IPC，
-/// 占位连接不被触达；恢复/解锁路径成功后原位换入真实连接）。
-fn placeholder_db(app: &AppHandle) -> Result<()> {
+/// 占位内存连接对（锁定/启动失败期间维持 [`DbState`] 形状；门禁拦截业务 IPC，
+/// 占位连接不被触达；恢复/解锁路径成功后原位成对换入真实连接）。
+fn placeholder_db<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
     let conn = crate::db::open_in_memory()?;
-    swap_or_manage_db_state(app, conn)
+    let read_conn = crate::db::open_in_memory()?;
+    swap_or_manage_db_state(app, conn, read_conn)
+}
+
+/// 原位换出读连接（issue #1280 / ADR-0117 决策 3）：恢复 / 整库加密转换的文件
+/// 替换成功后立即调用——旧读连接指向被替换前的旧 inode（rename 后句柄仍有效），
+/// 继续读会给出陈旧数据，换出不得等到重启；换出后至原位重引导成对换入前，
+/// 读命令报错（占位内存库无业务表），不静默回落写连接。
+///
+/// 占位化失败仅记错误日志、不阻断命令：文件替换已成功，命令必须如实报告结果；
+/// 互斥体中毒时读命令本身也会持续报错（fail-closed，不存在陈旧读），随后的
+/// 原位重引导会成对换入新连接。
+pub(crate) fn detach_read_conn<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(state) = app.try_state::<DbState>()
+        && let Err(e) = state.placeholderize_read_conn()
+    {
+        tracing::error!(error = %e, "读连接换出失败，重启前读命令将持续报错");
+    }
 }
 
 /// 启动引导序列（issue #570 / #601 / #644 / ADR-0080）：DataLocation 引导 →
@@ -119,7 +144,7 @@ fn placeholder_db(app: &AppHandle) -> Result<()> {
 /// 门翻转次序 fail-closed：进入锁定/失败先把门立起再换连接（换连窗口内业务
 /// IPC 已被拦截）；回到就绪先换入真实连接再开门（开门前窗口内业务 IPC 同样
 /// 被拦截）——两向都不会把业务读写暴露给占位/旧连接。
-pub(crate) fn boot_sequence(app: &AppHandle) -> Result<BootPhase> {
+pub(crate) fn boot_sequence<R: Runtime>(app: &AppHandle<R>) -> Result<BootPhase> {
     let default_dir = default_data_dir(app)?;
     std::fs::create_dir_all(&default_dir).map_err(|e| AppError::Io(e.to_string()))?;
     let BootPlan { boot, disposition } = crate::db::boot::plan_boot(&default_dir);
@@ -144,8 +169,11 @@ pub(crate) fn boot_sequence(app: &AppHandle) -> Result<BootPhase> {
             Ok(BootPhase::AwaitUnlock)
         }
         crate::db::boot::BootDisposition::OpenPlaintext => {
+            // 成对建连（issue #1280 / ADR-0117 决策 3）：写连接先行完成迁移，
+            // 读连接以只读形态打开同一库文件；两连接同刻换入后再开门（fail-closed）。
             let conn = open_connection_in(&db_dir)?;
-            swap_or_manage_db_state(app, conn)?;
+            let read_conn = open_connection_readonly_in(&db_dir)?;
+            swap_or_manage_db_state(app, conn, read_conn)?;
             gate.set_locked(false);
             boot_gate.clear();
             // 日志等级接管（spec #608 / #611）：数据库就绪后按持久化档位 reload 一次
@@ -175,7 +203,7 @@ pub(crate) fn boot_sequence(app: &AppHandle) -> Result<BootPhase> {
 /// 占位连接维持形状，应用存活，由前端失败恢复屏接管。`Err` 仅在占位内存
 /// 库也建不起（登记本身失败）时上抛：启动路径 fail loud 退出（run() 二次
 /// 失败兑底），重引导路径留痕后保持失败态。
-pub(crate) fn recover_boot_failure(app: &AppHandle, error: &AppError) -> Result<()> {
+pub(crate) fn recover_boot_failure<R: Runtime>(app: &AppHandle<R>, error: &AppError) -> Result<()> {
     tracing::error!(error = %error, "数据库初始化失败，登记启动失败状态，交由前端失败恢复屏接管");
     // 失败码随门记录（issue #994 / ADR-0100）：漂移等码化失败原样上报，前端
     // 失败恢复屏按码区分「结构异常」与「库不可读」的文案与动作排序；非码化
@@ -188,7 +216,7 @@ pub(crate) fn recover_boot_failure(app: &AppHandle, error: &AppError) -> Result<
 /// `Failed` 相位——重引导失败不能把用户留在旧界面（旧连接已换出），必须
 /// 重载进失败恢复屏；启动路径需要区分「序列内失败」与「登记也失败」，
 /// 仍直接消费 [`boot_sequence`] 的 `Result`。
-pub(crate) fn try_boot_sequence(app: &AppHandle) -> BootPhase {
+pub(crate) fn try_boot_sequence<R: Runtime>(app: &AppHandle<R>) -> BootPhase {
     match boot_sequence(app) {
         Ok(phase) => phase,
         Err(e) => {
@@ -258,7 +286,7 @@ pub fn get_boot_status<R: Runtime>(app: AppHandle<R>) -> Result<BootStatus> {
 /// （形状乙，spec #498/#503 先例）；白名单保持既有放行（锁定/失败期间
 /// 恢复通道可达）。
 #[tauri::command]
-pub async fn restart_app(app: AppHandle) -> Result<()> {
+pub async fn restart_app<R: Runtime>(app: AppHandle<R>) -> Result<()> {
     tracing::info!("应用重启开始：原位重引导（进程不退出），完成后由前端重载 WebView");
     let handle = app.clone();
     // 原位重引导 = 可能换库（切换账本 / 恢复 / 转换后重开）：清空本会话密钥记忆
@@ -293,7 +321,7 @@ pub async fn restart_app(app: AppHandle) -> Result<()> {
 /// 业务可用起点编排（与解锁恢复同型）：原位换连 → 清失败门 → 日志档位
 /// 接管 → 拉起自动备份调度，应用随即进入全新空账本，无需重启。
 #[tauri::command]
-pub async fn reset_after_startup_failure(app: AppHandle) -> Result<()> {
+pub async fn reset_after_startup_failure<R: Runtime>(app: AppHandle<R>) -> Result<()> {
     let gate = app.state::<BootFailureGate>();
     if !gate.is_failed() {
         return Err(AppError::coded(
@@ -302,13 +330,15 @@ pub async fn reset_after_startup_failure(app: AppHandle) -> Result<()> {
         ));
     }
     let db_dir = effective_db_dir_of(&app)?;
-    let conn = run_db("reset_after_startup_failure", move || {
-        reset_db_file(&db_dir)
+    let (conn, read_conn) = run_db("reset_after_startup_failure", move || {
+        let conn = reset_db_file(&db_dir)?;
+        let read_conn = open_connection_readonly_in(&db_dir)?;
+        Ok((conn, read_conn))
     })
     .await?;
-    // 业务可用起点编排与解锁恢复同型（原位换连 → 日志档位接管 → 拉起调度），
+    // 业务可用起点编排与解锁恢复同型（原位成对换连 → 日志档位接管 → 拉起调度），
     // 锁定门翻转为无操作；此处再清启动失败门，业务 IPC 随即放行。
-    resume_business_surface(&app, conn)?;
+    resume_business_surface(&app, conn, read_conn)?;
     app.state::<BootFailureGate>().clear();
     tracing::info!("启动失败重置完成：旧库保留 .bak 副本，应用以全新明文空库进入");
     Ok(())

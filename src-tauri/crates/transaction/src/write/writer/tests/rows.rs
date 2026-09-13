@@ -297,8 +297,10 @@ fn writer_rows_do_not_mark_dirty_entry_does() {
     // 经写入口执行同样的落库（与 IPC 命令同形态）→ 提交点置脏，且置脏是幂等
     // 标记、不做「已脏跳过」优化。共享锁形态由工厂打开的连接构造（建库两行序
     // 的唯一入口是 test_support::open，ADR-0084 决策 8 规则 1）。
+    let conn = std::sync::Arc::new(std::sync::Mutex::new(test_support::open()));
     let state = ledger_infra::db::DbState {
-        conn: std::sync::Arc::new(std::sync::Mutex::new(test_support::open())),
+        read_conn: conn.clone(),
+        conn,
     };
     state
         .write(|conn| {

@@ -1,17 +1,14 @@
 //! 标的端点：搜索（统一模糊搜索、封顶返回）与幂等创建（含东财基金/股票增强）。
 
-use std::sync::{Arc, Mutex};
-
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use rusqlite::Connection;
 use serde::Deserialize;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::handlers::funds::fetch_fund_quote_for_api;
 use crate::api_server::handlers::stocks::fetch_stock_quote_first_hit_for_api;
-use crate::api_server::state::ApiState;
+use crate::api_server::state::{ApiState, ReadConn};
 use crate::error::AppError;
 use crate::investment::{
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentType, Quote,
@@ -62,7 +59,7 @@ pub struct InstrumentSearchQuery {
     )
 )]
 pub async fn search_instruments_handler(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(read): State<ReadConn>,
     Query(params): Query<InstrumentSearchQuery>,
 ) -> Result<Json<InstrumentListResult>, AppError> {
     // query 必填（trim 后为空视同缺失）：显式校验以返回统一 `{kind, message}` 中文错误。
@@ -91,7 +88,7 @@ pub async fn search_instruments_handler(
         page: Some(1),
         page_size: Some(limit as usize),
     };
-    read_entry("GET /api/v1/instruments", conn, move |conn| {
+    read_entry("GET /api/v1/instruments", read.0, move |conn| {
         Ok(Json(crate::investment::list_instruments(conn, &filter)?))
     })
     .await
