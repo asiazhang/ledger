@@ -11,14 +11,14 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   confirm: vi.fn(),
 }));
 // 重启钩子 mock：confirmRestore 成功后触发，断言恢复后重启语义用。
-vi.mock("@/utils/restart", () => ({ restartAppShortly: vi.fn() }));
+vi.mock("@/composables/restart", () => ({ restartAppShortly: vi.fn() }));
 
 import { useAppStore } from "@/stores/app";
 import {
   restoreCrossModeWarningKey,
   useBackup,
 } from "@/composables/useBackup";
-import { restartAppShortly } from "@/utils/restart";
+import { restartAppShortly } from "@/composables/restart";
 import { captureLastListener, mockListen } from "@ledger/test-support/listen-mock";
 import type { BackupFileInfo } from "@ledger/types";
 

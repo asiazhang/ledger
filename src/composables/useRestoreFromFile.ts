@@ -5,7 +5,7 @@ import { api } from '@ledger/api'
 import type { BackupMetaSummary } from '@ledger/types'
 import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'
-import { restartAppShortly } from '@/utils/restart'
+import { restartAppShortly } from '@/composables/restart'
 import { useModalIntent } from '@/composables/useModalIntent'
 import type { RestoreIntent } from '@/composables/useBackup'
 

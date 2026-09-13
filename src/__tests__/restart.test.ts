@@ -8,7 +8,7 @@ vi.mock('@ledger/api', () => ({
   },
 }))
 
-import { restartAppShortly } from '@/utils/restart'
+import { restartAppShortly } from '@/composables/restart'
 
 const reload = vi.fn()
 

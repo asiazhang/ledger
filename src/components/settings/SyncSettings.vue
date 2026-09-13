@@ -16,7 +16,7 @@ import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { errorMessage } from '@/utils/errors'
 import { formatIsoMinute } from '@/utils/datetime'
-import { restartAppShortly } from '@/utils/restart'
+import { restartAppShortly } from '@/composables/restart'
 import { useLoadable } from '@/composables/useLoadable'
 import {
   CUSTOM_VENDOR_ID,

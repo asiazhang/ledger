@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // 前端 workspace 结构守门（issue #1149 / spec #1148）：pnpm 子包骨架的边界门禁，
 // 为每一次包抽取提供可证伪的边界基线。本脚本不移动业务代码，只核结构。
-// 规则五类：
+// 规则六类：
 // ① 成员登记：packages/* 下的成员目录必须登记于本脚本 PACKAGES（磁盘 ↔ 清单双向
 //    全等，清单漂移 fail loud）——pnpm-workspace.yaml 的 glob 自动纳管目录，能「漏
 //    登记」的只有方向表登记册；新建成员目录不登记即红（删除即变红②）。
@@ -18,6 +18,10 @@
 //    devDependencies 被消费（根包与成员包一并核对，dependencies/optionalDependencies/
 //    peerDependencies 任一出现即红）；且测试支持包自身 dependencies 必须为空
 //    （替身与接缝所需运行面全部走 devDependencies）——生产依赖图零测试支持内容。
+// ⑥ 上行引用禁令（issue #1156）：`src/utils` 叶子层不得引用 `@/stores` /
+//    `@ledger/api` / `@/components` / `@/views`——上行越界接缝归位后把方向固化成
+//    登记项，登记项唯一事实源为 FORBIDDEN_UPWARD_IMPORTS；删除登记项即变红
+//    （登记表全等断言 + 夹具违规即红，issue #1156 验收判据）。
 // 删除即变红①：本脚本核对自身接线——scripts/check.sh 与 CI frontend job
 //（.github/workflows/build.yml）中必须存在实际调用行（非注释、非 echo 展示行），
 // 删除接线行即红（ADR-0087 断言强度：接线型守门的负向条目）。
@@ -462,6 +466,65 @@ function checkTestSupportPurity(
   }
 }
 
+/** 规则⑥ 上行引用禁令登记册（单一事实源，issue #1156）：按目录登记「不得引用的
+ *  上层目标」。每个条目 = 一段已固化的方向约束；条目本身即规格——删除/改动条目会
+ *  让 src/__tests__/check-frontend-structure.test.ts 的登记表全等断言变红
+ *  （删除即变红，issue #1156 验收判据）。 */
+export interface UpwardImportRule {
+  /** 被约束的源目录（相对仓库根，posix 分隔） */
+  dir: string
+  /** 禁止出现的 import 说明符：精确名或其 `名/子路径` */
+  forbidden: readonly string[]
+  note: string
+}
+
+/** 登记项（逐票补充）：首个条目来自 issue #1156——utils 三条上行越界边
+ *  （policy-stats → stores/reference、global-error-handler → stores/render-errors
+ *  与 api、restart → api）归位后，把「utils 是叶子层」固化成可证伪的方向登记。 */
+export const FORBIDDEN_UPWARD_IMPORTS: readonly UpwardImportRule[] = [
+  {
+    dir: 'src/utils',
+    forbidden: ['@/stores', '@ledger/api', '@/components', '@/views'],
+    note: 'utils 叶子层（issue #1156）：只放真叶子与纯函数，不得引用 stores / api / components / views',
+  },
+]
+
+/** 说明符是否命中登记的上行目标（精确名或其 `名/子路径`，避免 `@/storesX` 误伤） */
+function hitsForbiddenSpecifier(specifier: string, forbidden: readonly string[]): string | null {
+  for (const target of forbidden) {
+    if (specifier === target || specifier.startsWith(`${target}/`)) return target
+  }
+  return null
+}
+
+/** 规则⑥：登记目录不得出现登记的上行 import（文本级扫描，复用 import 捕形）。
+ *  登记目录缺失即红——拒绝以空集假绿（目录改名/漂移后规则静默失效）。 */
+function checkUpwardImports(repoRoot: string, problems: string[]): void {
+  for (const rule of FORBIDDEN_UPWARD_IMPORTS) {
+    const dir = join(repoRoot, rule.dir)
+    if (!existsSync(dir)) {
+      problems.push(
+        `✗ 上行引用禁令：登记目录不存在：${rule.dir}（${rule.note}）\n` +
+          `    目录改名/漂移后规则静默失效，须同步 FORBIDDEN_UPWARD_IMPORTS（issue #1156）`,
+      )
+      continue
+    }
+    for (const f of collectSourceFiles(dir, rule.dir)) {
+      const source = readFileSync(f.abs, 'utf8')
+      for (const hit of scanImportSpecifiers(source)) {
+        const target = hitsForbiddenSpecifier(hit.specifier, rule.forbidden)
+        if (!target) continue
+        problems.push(
+          `✗ 上行引用禁令：${f.rel}:${hit.line} 引用 ${hit.specifier}\n` +
+            `    ${hit.text}\n` +
+            `    ${rule.dir} 为叶子层，不得引用 ${target}；把接缝迁到消费侧或改入参注入` +
+            `（issue #1156 规则⑥）`,
+        )
+      }
+    }
+  }
+}
+
 /** 接线核对（删除即变红①）：两个宿主文件须有非注释的实际调用行 */
 function checkWiring(repoRoot: string, problems: string[]): void {
   for (const host of WIRING_HOSTS) {
@@ -513,6 +576,7 @@ function main(): void {
   checkDependencyDirection(repoRoot, registry, problems)
   checkImportShapes(repoRoot, registry, problems)
   checkTestSupportPurity(repoRoot, registry, problems)
+  checkUpwardImports(repoRoot, problems)
   checkWiring(repoRoot, problems)
 
   if (problems.length > 0) {
@@ -526,6 +590,7 @@ function main(): void {
       `· 包依赖方向 ${registry.length} 包（方向表逐票补充）` +
       `· 跨包引用形态与深导入禁令扫描 ${collectSourceFiles(join(repoRoot, 'packages'), 'packages').length} 个文件` +
       `· 测试支持纯净性（${registry.filter((p) => p.testSupport).map((p) => p.name).join(' ') || '无'} 仅 devDependency 消费）` +
+      `· 上行引用禁令 ${FORBIDDEN_UPWARD_IMPORTS.length} 条（${FORBIDDEN_UPWARD_IMPORTS.map((r) => r.dir).join(' ') || '无'}）` +
       `· 接线核对（scripts/check.sh + CI frontend job）`,
   )
 }
