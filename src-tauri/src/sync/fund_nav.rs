@@ -44,7 +44,7 @@ const MAX_NAV_PAGES: u64 = 40;
 
 // 基金详情页数据文件（pingzhongdata）：单主机（无公开镜像池），一次请求返回整只
 // 基金的全部历史净值（issue #1062）。仅服务首刷深回填，增量仍走 lsjz。
-const PINGZHONG_HOSTS: &[&str] = &["https://fund.eastmoney.com"];
+pub(super) const PINGZHONG_HOSTS: &[&str] = &["https://fund.eastmoney.com"];
 const PINGZHONG_PATH_PREFIX: &str = "/pingzhongdata/";
 
 /// lsjz 整体响应。`TotalCount` 在顶层；`Data` 正常为对象，被拦截形态（缺
@@ -103,6 +103,11 @@ pub(super) struct NavPoint {
 /// 净值（与历史净值接口 `DWJZ` 同口径，见 [`parse_net_worth_trend`]）。
 const NET_WORTH_TREND_VAR: &str = "Data_netWorthTrend";
 
+/// 同一数据文件里的基金名称与代码变量名（issue #1212 / ADR-0039 修订）：档案通道
+/// 据此判定「这份文件是不是本基金的」并取权威名称。
+const FUND_NAME_VAR: &str = "fS_name";
+const FUND_CODE_VAR: &str = "fS_code";
+
 /// 单位净值序列的单个元素：`x` = 净值日北京时间午夜的毫秒时间戳；`y` = 单位
 /// 净值（真实价格值，元）；其余字段（equityReturn / unitMoney）不消费。
 #[derive(Debug, Deserialize)]
@@ -131,6 +136,46 @@ pub(super) fn parse_net_worth_trend(js: &str) -> Option<Vec<NavPoint>> {
             })
             .collect(),
     )
+}
+
+/// 档案通道（基金详情页数据文件）的基金档案：权威名称 + 最后一期单位净值。搜索
+/// 索引只收在用基金，已终止（清盘）基金被东财摘出该索引（ADR-0039 修订，issue
+/// #1212），这两项由档案通道承接。
+pub(super) struct FundArchive {
+    pub(super) name: String,
+    pub(super) last_nav: Option<NavPoint>,
+}
+
+/// 解析档案通道响应：`fS_code` 与请求代码全等且 `fS_name` 非空才命中（与搜索通道
+/// 的 FCODE 全等同一防御纪律）；未声明 / 形态不符 / 代码不符均返回 None，由调用方
+/// 按「查无此码」处置。单位净值序列缺失或不可信时按「未取到净值」降级（名称仍可用），
+/// 与搜索通道「命中但未公布净值」同形。
+pub(super) fn parse_fund_archive(js: &str, code: &str) -> Option<FundArchive> {
+    let declared_code = extract_declared_string(js, FUND_CODE_VAR)?;
+    if declared_code != code {
+        return None;
+    }
+    let name = extract_declared_string(js, FUND_NAME_VAR)?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let last_nav = parse_net_worth_trend(js)
+        .and_then(|points| points.into_iter().max_by(|a, b| a.date.cmp(&b.date)));
+    Some(FundArchive {
+        name: name.to_string(),
+        last_nav,
+    })
+}
+
+/// 从 JS 文本里取出 `var <name> = "..."` 的字符串字面量（基金名称与代码的实际
+/// 形态不含转义，不做转义处理）。未声明 / 缺 `=` / 缺引号均返回 None。
+fn extract_declared_string<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    let after_name = &text[text.find(name)? + name.len()..];
+    let after_eq = &after_name[after_name.find('=')? + 1..];
+    let open = after_eq.find('"')?;
+    let rest = &after_eq[open + 1..];
+    let close = rest.find('"')?;
+    Some(&rest[..close])
 }
 
 /// 从 JS 文本里取出 `var <name> = [ ... ];` 的数组字面量：先定位变量名后的 `=`，
@@ -312,6 +357,33 @@ pub(super) fn fetch_nav_page_from(
         Some(referer.as_str()),
     )?;
     Ok(parse_lsjz(&resp))
+}
+
+/// 单请求全量净值通道（issue #1062）：一次 GET 基金详情页数据文件，解析
+/// 档案通道取数（issue #1212 / ADR-0039 修订）：一次 GET 基金详情页数据文件，解析
+/// 出权威名称与最后一期单位净值；主机池可注入（本地 HTTP 服务测试请求路径与解析）。
+/// `Ok(None)` = 这份文件不是本基金的（含无效代码被重定向到错误页的形态），由调用方
+/// 按查无此码处置；`Err` 只留给传输类失败（网络 / 限流耗尽重试），与既有「网络失败
+/// 上抛」契约一致。
+pub(super) fn fetch_fund_archive_from(
+    client: &reqwest::blocking::Client,
+    pacer: &mut Pacer,
+    code: &str,
+    hosts: &[&str],
+) -> Result<Option<FundArchive>> {
+    tracing::debug!(code, "基金档案通道查询");
+    let path = format!("{PINGZHONG_PATH_PREFIX}{code}.js");
+    let body = request_text_from_hosts(
+        client,
+        &[],
+        &path,
+        hosts,
+        RetryConfig::production(),
+        pacer,
+        &format!("fetch_fund_archive:{code}"),
+        None,
+    )?;
+    Ok(parse_fund_archive(&body, code))
 }
 
 /// 单请求全量净值通道（issue #1062）：一次 GET 基金详情页数据文件，解析

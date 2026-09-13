@@ -114,6 +114,38 @@ async fn test_create_fund_with_known_code_backfills_authoritative_name_and_price
 }
 
 #[tokio::test]
+async fn test_create_terminated_fund_from_archive_channel_succeeds() {
+    // 已终止（清盘）基金经档案通道回退命中（ADR-0039 修订，issue #1212）：建行成功、
+    // 回填权威名称与最后一期净值——AI 迁移不再只能降级 type=other 或跳过整行。
+    let hits = HashMap::from([(
+        "002503".to_string(),
+        FundStubHit {
+            name: "中银腾利混合C",
+            fund_class: "",
+            nav: Some((1.144, "2023-09-18")),
+        },
+    )]);
+    let (app, conn, calls) = setup_app_with_fund_stub(hits);
+
+    let (status, bytes) = post_instrument(&app, r#"{"symbol":"002503","type":"fund"}"#).await;
+    assert_eq!(status, StatusCode::CREATED, "已终止基金不再是 400 拒绝");
+    let id: String = serde_json::from_slice(&bytes).expect("201 应为裸 id 字符串");
+    assert!(!id.is_empty());
+
+    let row = fund_row(&conn, "002503");
+    assert_eq!(
+        row.name.as_deref(),
+        Some("中银腾利混合C"),
+        "名称取自档案通道"
+    );
+    assert_eq!(row.market, "unknown", "场外基金市场恒 unknown（ADR-0038）");
+    let (price_cents, nav_date, _) = row.price.expect("档案通道命中应落最后一期净值现价");
+    assert_eq!(price_cents, 11_440, "净值 1.1440 元 = 万分之一元刻度 11440");
+    assert_eq!(nav_date.as_deref(), Some("2023-09-18"));
+    assert_eq!(*calls.lock().unwrap(), vec!["002503".to_string()]);
+}
+
+#[tokio::test]
 async fn test_create_fund_with_known_code_but_no_nav_creates_without_price() {
     let hits = HashMap::from([(
         "012345".to_string(),

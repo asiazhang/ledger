@@ -9,9 +9,14 @@
 //! 指数等类别混排），基金条目带 `FundBaseInfo`（含 FCODE / SHORTNAME / FTYPE /
 //! DWJZ 单位净值 / FSRQ 净值日期）；同码股票条目 `FundBaseInfo` 为 null。
 //! 命中判定 = `FundBaseInfo` 存在且 FCODE 与请求代码全等（基金代码全局唯一）。
+//!
+//! 该索引只收**在用**基金：已终止（清盘）基金被东财摘出索引，但档案通道（基金
+//! 详情页数据文件）仍在服务。搜索未命中时回退档案通道改判「存在」并回填名称与
+//! 最后一期单位净值（ADR-0039 修订，issue #1212），两段皆未命中才是查无此码。
 
 use serde::Deserialize;
 
+use super::fund_nav::{FundArchive, PINGZHONG_HOSTS, fetch_fund_archive_from};
 use super::http::{Pacer, RetryConfig, build_client, request_json_from_hosts};
 use crate::error::{AppError, Result};
 use crate::investment::Quote;
@@ -114,11 +119,26 @@ pub(crate) fn pick_fund_quote(resp: &FundSearchResponse, code: &str) -> Option<Q
 }
 
 /// 按 6 位代码拉取基金报价（名称 / 分类 / 最新净值 + 净值日期）。
-/// 查无此码返回中文错误（Invalid），网络失败 / 风控拦截由 HTTP 层重试后上抛。
+/// 搜索通道未命中时回退档案通道（ADR-0039 修订，issue #1212）：已终止（清盘）
+/// 基金被东财摘出在用索引、档案文件仍在服务，据此改判为「存在」并回填权威名称
+/// 与最后一期单位净值（档案通道无基金分类，该成员缺省）。
+/// 两段皆未命中才返回查无此码的中文错误（Invalid），网络失败 / 风控拦截由 HTTP
+/// 层重试后上抛。
 pub(super) fn fetch_fund_quote(
     client: &reqwest::blocking::Client,
     pacer: &mut Pacer,
     code: &str,
+) -> Result<Quote> {
+    fetch_fund_quote_from(client, pacer, code, FUND_SEARCH_HOSTS, PINGZHONG_HOSTS)
+}
+
+/// 同 [`fetch_fund_quote`]，两个通道的主机池都可注入（本地 HTTP 服务测试回退路径）。
+pub(super) fn fetch_fund_quote_from(
+    client: &reqwest::blocking::Client,
+    pacer: &mut Pacer,
+    code: &str,
+    search_hosts: &[&str],
+    archive_hosts: &[&str],
 ) -> Result<Quote> {
     tracing::debug!(code, "基金行情查询");
     let params = [("m", "1"), ("key", code)];
@@ -126,19 +146,47 @@ pub(super) fn fetch_fund_quote(
         client,
         &params,
         FUND_SEARCH_PATH,
-        FUND_SEARCH_HOSTS,
+        search_hosts,
         RetryConfig::production(),
         pacer,
         &format!("fetch_fund_quote:{code}"),
         None,
     )?;
-    pick_fund_quote(&resp, code).ok_or_else(|| {
-        AppError::codedp(
-            "sync.fund-not-found",
-            format!("查无基金代码 {code}，请核对后重试"),
-            &[code],
-        )
-    })
+    if let Some(quote) = pick_fund_quote(&resp, code) {
+        return Ok(quote);
+    }
+    match fetch_fund_archive_from(client, pacer, code, archive_hosts)? {
+        Some(archive) => Ok(quote_from_archive(archive, code)),
+        None => Err(fund_not_found(code)),
+    }
+}
+
+/// 档案通道报价投影：公共成员（代码 / 名称 / 价格 / 价格日期）齐备，净值日期同为
+/// 价格日期（场外基金现价的行情日期就是净值本身对应的日期）；基金分类是搜索通道
+/// 成员，档案通道缺省。
+fn quote_from_archive(archive: FundArchive, code: &str) -> Quote {
+    let last_nav = archive.last_nav;
+    Quote {
+        code: code.to_string(),
+        name: archive.name,
+        price_cents: last_nav
+            .as_ref()
+            .map(|point| price_value_to_cents(point.nav)),
+        price_date: last_nav.as_ref().map(|point| point.date.clone()),
+        market: None,
+        kind_hint: None,
+        fund_class: None,
+        nav_date: last_nav.map(|point| point.date),
+    }
+}
+
+/// 「查无此码」码化错误（Invalid → 400）：搜索与档案两段皆未命中时的唯一出口。
+fn fund_not_found(code: &str) -> AppError {
+    AppError::codedp(
+        "sync.fund-not-found",
+        format!("查无基金代码 {code}，请核对后重试"),
+        &[code],
+    )
 }
 
 /// 生产拉取入口：构建客户端与限流器后执行单次详情查询（不经数据库连接，

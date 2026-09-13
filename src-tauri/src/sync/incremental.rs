@@ -312,7 +312,20 @@ where
                 &mut on_page,
             )?;
         }
-        let name = fetch_fund_name(&fund.symbol)?;
+        // 名称刷新遇「确定性查无」降级为保留原名（ADR-0039 修订，issue #1212）：基金
+        // 可能已终止（搜索索引与档案通道都不再可达），但这不该打断整次同步；网络类
+        // 失败仍按既有契约上抛。空名称 = 未取到，不落库。
+        let name = match fetch_fund_name(&fund.symbol) {
+            Ok(name) => name,
+            Err(error) if error.is_code("sync.fund-not-found") => {
+                tracing::warn!(
+                    code = %fund.symbol,
+                    "基金名称刷新查无此码（搜索索引与档案通道皆未命中），保留原名称"
+                );
+                String::new()
+            }
+            Err(error) => return Err(error),
+        };
         if refresh_instrument_name(conn, &fund.instrument_id, &name)? {
             renamed += 1;
         }

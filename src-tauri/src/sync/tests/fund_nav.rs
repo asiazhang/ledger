@@ -9,7 +9,7 @@ use chrono::NaiveDate;
 
 use crate::sync::fund_nav::{
     LsjzResponse, NavPoint, NavQuery, fetch_nav_full_series_from, fetch_nav_page_from, nav_window,
-    parse_lsjz, parse_net_worth_trend,
+    parse_fund_archive, parse_lsjz, parse_net_worth_trend,
 };
 use crate::sync::http::{Pacer, request_json_from_hosts};
 
@@ -348,4 +348,46 @@ fn nav_full_series_fetch_untrusted_body_errors_for_fallback() {
     let client = reqwest::blocking::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     assert!(fetch_nav_full_series_from(&client, &mut pacer, "110022", &[url.as_str()]).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// 档案通道解析（ADR-0039 修订，issue #1212）：同一份数据文件取权威名称与
+// 最后一期单位净值；命中判据 = 代码全等 + 名称非空。
+// ---------------------------------------------------------------------------
+
+/// 已终止基金 002503 的档案文件真实形态截取（名称 / 代码变量 + 单位净值序列末两点）。
+const ARCHIVE_JS: &str = r#"/*2023-11-19 00:21:59*/var ishb=false;var fS_name = "中银腾利混合C";var fS_code = "002503";
+var Data_netWorthTrend = [{"x":1694448000000,"y":1.138,"equityReturn":-0.09,"unitMoney":""},{"x":1694966400000,"y":1.144,"equityReturn":0.62,"unitMoney":""}];
+var Data_ACWorthTrend = [[1694966400000,1.415]];"#;
+
+#[test]
+fn parse_fund_archive_returns_name_and_last_nav() {
+    let archive = parse_fund_archive(ARCHIVE_JS, "002503").expect("代码全等 + 名称非空应命中");
+    assert_eq!(archive.name, "中银腾利混合C");
+    let last = archive.last_nav.expect("应带回最后一期单位净值");
+    assert_eq!(last.date, "2023-09-18", "取序列末点（净值日）");
+    assert_eq!(last.nav, 1.144);
+}
+
+#[test]
+fn parse_fund_archive_requires_code_equality_and_nonempty_name() {
+    // 同码防守：文件声明的代码与请求代码不符不得命中（与搜索通道 FCODE 全等同纪律）。
+    assert!(parse_fund_archive(ARCHIVE_JS, "003967").is_none());
+    // 名称空：不可作为权威名称落库。
+    let no_name = r#"var fS_name = "";var fS_code = "002503";"#;
+    assert!(parse_fund_archive(no_name, "002503").is_none());
+    // 无效代码被重定向到的错误页：没有声明变量，不命中。
+    assert!(parse_fund_archive("<html>blocked by waf</html>", "002503").is_none());
+    // 缺代码变量（形态不符）同样不命中。
+    assert!(parse_fund_archive(r#"var fS_name = "某基金";"#, "002503").is_none());
+}
+
+#[test]
+fn parse_fund_archive_degrades_to_name_only_without_nav_series() {
+    // 名称齐备但净值序列缺失 / 不可信：按「未取到净值」降级（与搜索通道
+    // 「命中但未公布净值」同形），名称仍可用于建行。
+    let js = r#"var fS_name = "某基金";var fS_code = "110022";"#;
+    let archive = parse_fund_archive(js, "110022").expect("名称齐备即命中");
+    assert_eq!(archive.name, "某基金");
+    assert!(archive.last_nav.is_none());
 }

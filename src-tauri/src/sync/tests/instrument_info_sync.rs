@@ -2758,6 +2758,97 @@ fn fund_name_refresh_via_detail_lookup() {
 }
 
 #[test]
+fn fund_name_refresh_degrades_deterministic_not_found_to_skip() {
+    let conn = crate::test_support::open();
+    // 基金在建成标的后终止：搜索索引与档案通道都不再可达（ADR-0039 修订，issue
+    // #1212）——名称刷新降级为保留原名，不得中断整次同步。
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "002503",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    let version_before: i64 = conn
+        .query_row(
+            "SELECT version FROM instruments WHERE id='inst-fund'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = no_nav;
+    let mut fund_name = |code: &str| {
+        assert_eq!(code, "002503");
+        Err(AppError::codedp(
+            "sync.fund-not-found",
+            "查无基金代码 002503，请核对后重试",
+            &["002503"],
+        ))
+    };
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut fund_name,
+        &mut no_progress,
+    )
+    .expect("确定性查无不得中断整次同步");
+
+    let (name, version): (String, i64) = conn
+        .query_row(
+            "SELECT name, version FROM instruments WHERE id='inst-fund'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(name, "名称-002503", "确定性查无时保留原名称");
+    assert_eq!(version, version_before, "未取到名称不写库、不虚增 version");
+    assert_eq!(result.renamed, 0);
+}
+
+#[test]
+fn fund_name_refresh_still_propagates_network_failure() {
+    // 边界：只有确定性查无降级；网络类失败仍按既有契约上抛中断（ADR-0039 修订）。
+    let conn = crate::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = no_nav;
+    let mut fund_name = |_: &str| Err(AppError::Io("HTTP 请求失败: 连接超时".into()));
+    let error = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut fund_name,
+        &mut no_progress,
+    )
+    .expect_err("网络失败仍应上抛中断");
+
+    assert!(
+        !error.is_code("sync.fund-not-found"),
+        "网络失败不得被误降级为跳过: {error:?}"
+    );
+}
+
+#[test]
 fn fund_name_lookup_skips_name_as_code_rows_and_empty_names() {
     let conn = crate::test_support::open();
     // 名称充代码的基金行（非 6 位）：无通道，不发起名称查询；6 位行返回空名称也不写。
