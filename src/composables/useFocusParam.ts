@@ -67,3 +67,13 @@ function readFocusId(query: LocationQuery): string | null {
   const value = Array.isArray(raw) ? raw[0] : raw
   return typeof value === 'string' && value !== '' ? value : null
 }
+
+/**
+ * focus 在场判定（跳转入口侧与消费侧共用的唯一口径）：路由守卫按「带实体定位参数
+ * 的访问是引用」放行已关闭功能的深链（issue #1244 / ADR-0116 决策 4），放行的依据
+ * 必须是目标视图真能消费到的那个 id——本判定与 readFocusId 同源，数组首元、空串
+ * 语义两侧一致，不在守卫里另写一遍读值规则。
+ */
+export function hasFocusParam(query: LocationQuery): boolean {
+  return readFocusId(query) !== null
+}

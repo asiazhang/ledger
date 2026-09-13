@@ -21,9 +21,13 @@ import type { TransactionSourceKind } from '@ledger/types'
  *   落所在组「更多」对应页签（落点尊重用户布局）。
  * - focus 统一装配：全部目标一律携带 focus=<实体 id>（一名一义，消费语义见
  *   useFocusParam——目标视图侧读一次助手，两文件共同构成来源跳转深模块）。
+ * - 关闭态（ADR-0116 决策 4）：目标功能被关闭时引用照常放行，但**不转收纳落点**——
+ *   关闭的功能不进组「更多」页签（ADR-0116 决策 3），容器页签会退化成无效落点、
+ *   focus 丢失；改落功能自有路由，由路由守卫按「裸入口回概览 / 引用放行」裁决。
  *
- * 纯函数纪律：不见 router、不见 store 实例——收纳状态经谓词入参注入（调用方
- * 传 sidebar-order store 的 isViewContained 绑定），组归属经顺序源模块词表
+ * 纯函数纪律：不见 router、不见 store 实例——收纳与关闭两轴状态经谓词入参注入
+ * （调用方传 sidebar-order store 的 isViewContained 与 feature-toggles store 的
+ * isFeatureClosed 绑定），组归属经顺序源模块词表
  * groupOfView 只读推导（收纳落点路由名沿用 App.vue「更多」链接的 `<组 id>-more`
  * 既有命名）；测试以普通函数直打（先例：行菜单编排、弹窗意图编排工厂测试形态）。
  */
@@ -74,11 +78,14 @@ export interface SourceJumpTarget {
  * 来源跳转目标计算：六类来源 × 主项/收纳两态 → 路由目标。
  * isContained 只会被问询本次跳转的目标视图（逐一定问，不问无关视图），
  * 调用方传 `(v) => useSidebarOrderStore().isViewContained(v)` 绑定即可。
+ * isClosed 同规矩（`(v) => useFeatureToggleStore().isFeatureClosed(v)` 绑定）：
+ * 为真即跳过收纳分流，落功能自有路由。
  */
 export function resolveSourceJumpTarget(
   kind: TransactionSourceKind,
   entityId: string,
   isContained: (view: SourceTargetView) => boolean,
+  isClosed: (view: SourceTargetView) => boolean,
 ): SourceJumpTarget {
   const { view, formTab } = KIND_TARGETS[kind]
 
@@ -86,7 +93,8 @@ export function resolveSourceJumpTarget(
   // scheduledTab 叠加（容器 query.tab 归容器，内嵌定时页签内存态，见文件头注释）。
   // 目标词表均为侧栏在册视图，groupOfView 恒有组；空值分支为词表防御
   // （回退独立路由，语义仍成立）。
-  if (isContained(view)) {
+  // 关闭态跳过组「更多」分流（文件头注释）：改由下方主项态分支落独立路由。
+  if (isContained(view) && !isClosed(view)) {
     const gid = groupOfView(view)
     if (gid) {
       const query: Record<string, string> = { tab: view, focus: entityId }
