@@ -1,0 +1,75 @@
+[package]
+name = "ledger-sync-engine"
+version = "0.6.0"
+description = "Ledger 多端同步域 crate：OpLog 基座、跨端全序与 LWW 合并、幂等重放与挂起队列、Checkpoint、通道层与触发编排"
+edition = "2024"
+publish = false
+# 版本与根包锁步（仓库约定：workspace 各成员同为 0.6.0）。
+
+[dependencies]
+# 多端同步域 crate（spec #1086 / issue #1107，P4 收官业务域 crate）：依赖面为
+# 票面 AC 允许集全量——基础设施（db 连接与事务原语 / error / fs_util / settings
+# / signals）、同步协议（op 行落库与读取、位点、设备标识、SyncCommand /
+# ReplayEffect 命令契约，#1089 下放）、核心交易域与各业务域（重放注册表把
+# 14 个语义命令绑定回各域写入接缝：ledger-transaction / ledger-scheduled /
+# ledger-accounts / ledger-categories / ledger-merchants / ledger-currencies /
+# ledger-budget / ledger-policy / ledger-item / ledger-physical-asset /
+# ledger-investment；轮次持锁复用备份域 lock_conn_with_timeout）——域→域均为
+# 上层域消费下层域的合法直呼（ADR-0112 决策 2）。对根包（壳层）零生产依赖，
+# 反向引用由 cargo 依赖图编译期拒绝（生产依赖面无根包，dev-dependency 环只
+# 覆盖测试目标）；任何业务域对本域零依赖（业务域→同步域零容忍，ADR-0101
+# 决策 4b / #1089 收紧，负向夹具见 check-structure.test.ts）。
+ledger-infra = { path = "../infra" }
+ledger-sync-protocol = { path = "../sync-protocol" }
+ledger-transaction = { path = "../transaction" }
+ledger-scheduled = { path = "../scheduled" }
+ledger-accounts = { path = "../accounts" }
+ledger-categories = { path = "../categories" }
+ledger-merchants = { path = "../merchants" }
+ledger-currencies = { path = "../currencies" }
+ledger-budget = { path = "../budget" }
+ledger-policy = { path = "../policy" }
+ledger-item = { path = "../item" }
+ledger-physical-asset = { path = "../physical-asset" }
+ledger-investment = { path = "../investment" }
+ledger-backup = { path = "../backup" }
+# 数据面惯用库：序列化与连接、信封加密基座（AES-256-GCM / PBKDF2-HMAC-SHA512，
+# 与根包同参数同基座）、S3 兼容对象存储通道后端（与根包同一 feature 面）、
+# 摘要与连接。`tauri` 只为触发编排的 AppHandle/Manager/Runtime 泛型面（分平台
+# 门收在域内 start_triggers 单点，ADR-0098 决策 4）——先例：ledger-backup /
+# ledger-market-sync 同持 `tauri`；本 crate 不消费壳层 `commands` 面。
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+# S3 异步 SDK 的阻塞桥接（transport/s3.rs AsyncBridge）：专用线程 + current-thread
+# runtime，与根包同版本；只需运行时能力（rt），不需要宏与时间驱动之外的 feature。
+tokio = { version = "1", features = ["rt"] }
+aws-lc-rs = { version = "1.18", default-features = false, features = ["aws-lc-sys"] }
+aws-sdk-s3 = { version = "1.146", default-features = false, features = [
+  "behavior-version-latest",
+  "default-https-client",
+  "http-1x",
+  "rt-tokio",
+] }
+tauri = { version = "2", features = ["tracing"] }
+tracing = "0.1"
+
+[dev-dependencies]
+# 测试专用边（spec #1086 明文裁决「测试工厂与器具以 dev-dependency 环供各域
+# 复用，Cargo 允许」）：随域迁入的域单测用根包的统一测试数据库工厂、S3 协议
+# 替身与共享断言（test_support，ADR-0084）建库、种子与起桩。dev-dependency 环
+# 由 Cargo 允许——测试目标与生产依赖图分离，不构成生产环；结构守门的依赖方向
+# 核对只辖生产依赖（本 crate 声明 tauri-app 为生产依赖即红，负向夹具见
+# check-structure.test.ts）。reqwest 供 S3 后端单测直连本地桩核对鉴权与错误
+# 归一（tests/transport_s3.rs，与产品 S3 客户端同基座）。
+tauri-app = { path = "../.." }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
+# DeviceId 单测（tests/device.rs）验证 op 身份字段是合法 UUID——与根包同版本。
+uuid = { version = "1.23", features = ["v7"] }
+
+# 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+[lints]
+workspace = true

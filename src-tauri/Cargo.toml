@@ -173,6 +173,14 @@ ledger-investment = { path = "crates/investment" }
 # 与多端同步域零生产依赖。根包 `pub use ledger_market_sync as sync` 再导出保持
 # 原调用点路径（壳层同步命令、行情查询注入点）。
 ledger-market-sync = { path = "crates/market-sync" }
+# 多端同步域 crate（spec #1086 / issue #1107，P4 收官业务域 crate）：OpLog 基座、
+# 跨端全序与 LWW 合并、幂等重放与挂起队列、Checkpoint、通道层与触发编排归位；
+# 依赖面为票面 AC 允许集全量——基础设施、同步协议、核心交易域与各业务域（重放
+# 注册表把 14 个语义命令绑定回各域写入接缝；轮次持锁复用备份域连接锁助手），
+# 任何业务域对本域零依赖（业务域→同步域零容忍，ADR-0101 决策 4b）。根包
+# `pub use ledger_sync_engine as sync_engine` 再导出保持原调用点路径（壳层同步
+# 通道命令、会话信封接线、后台服务编排点、测试工厂接线）。
+ledger-sync-engine = { path = "crates/sync-engine" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]
@@ -255,6 +263,14 @@ panic = "deny"
 todo = "deny"
 unimplemented = "deny"
 unreachable = "deny"
+
+# tauri 生态约定 cfg 名单（#1107）：多端同步域 crate 化后，分平台门
+#（#[cfg(desktop)]，ADR-0098 决策 4）首次住进无 build.rs 的 workspace 成员
+#（根包由 tauri-build 自动登记，成员 crate 无此机制）。unexpected_cfgs 的
+# check-cfg 名单是登记而非放行——只把这两个约定名从「未知」移入「已知」，
+# 不改变任何 lint 的默认级别；对不用这两个 cfg 的成员零影响。
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(desktop)', 'cfg(mobile)'] }
 
 # 根包同为 workspace 成员，六件套门禁经 workspace 继承（本表即继承接线）。
 [lints]

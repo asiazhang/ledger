@@ -3244,6 +3244,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "ledger-sync-engine"
+version = "0.6.0"
+dependencies = [
+ "aws-lc-rs",
+ "aws-sdk-s3",
+ "chrono",
+ "ledger-accounts",
+ "ledger-backup",
+ "ledger-budget",
+ "ledger-categories",
+ "ledger-currencies",
+ "ledger-infra",
+ "ledger-investment",
+ "ledger-item",
+ "ledger-merchants",
+ "ledger-physical-asset",
+ "ledger-policy",
+ "ledger-scheduled",
+ "ledger-sync-protocol",
+ "ledger-transaction",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tauri",
+ "tauri-app",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "ledger-sync-protocol"
 version = "0.6.0"
 dependencies = [
@@ -5476,6 +5509,7 @@ dependencies = [
  "ledger-policy",
  "ledger-reports",
  "ledger-scheduled",
+ "ledger-sync-engine",
  "ledger-sync-protocol",
  "ledger-transaction",
  "objc2",

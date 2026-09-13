@@ -70,15 +70,26 @@ export const GUARDED_NAMES: readonly GuardedName[] = [
   },
   {
     name: 'start_triggers',
-    wholeFile: ['sync_engine/trigger/scheduler.rs', 'sync_engine/trigger/mod.rs', 'sync_engine/mod.rs'],
+    // #1107 起同步域拆独立 crate：定义住 crate 的 trigger/scheduler.rs、接缝再导出住
+    // crate 根 lib.rs（根包 `pub use ledger_sync_engine as sync_engine;` 不含标识符
+    // 原文，不入列）。
+    wholeFile: [
+      'crates/sync-engine/src/trigger/scheduler.rs',
+      'crates/sync-engine/src/trigger/mod.rs',
+      'crates/sync-engine/src/lib.rs',
+    ],
     orchestratorBodyAllowed: true,
-    note: '同步触发编排单一入口（分平台门住址，ADR-0098 决策 4；issue #958 拆目录后定义住 trigger/scheduler.rs）',
+    note: '同步触发编排单一入口（分平台门住址，ADR-0098 决策 4；issue #958 拆目录后定义住 trigger/scheduler.rs，#1107 起住 ledger-sync-engine crate）',
   },
   {
     name: 'start_sync_scheduler',
-    wholeFile: ['sync_engine/trigger/scheduler.rs', 'sync_engine/trigger/mod.rs', 'sync_engine/mod.rs'],
+    wholeFile: [
+      'crates/sync-engine/src/trigger/scheduler.rs',
+      'crates/sync-engine/src/trigger/mod.rs',
+      'crates/sync-engine/src/lib.rs',
+    ],
     orchestratorBodyAllowed: false,
-    note: '桌面轮询线程拉起（仅 start_triggers 域内消费；直接调用即绕过分平台门，#863 缺陷 1 形态）',
+    note: '桌面轮询线程拉起（仅 start_triggers 域内消费；直接调用即绕过分平台门，#863 缺陷 1 形态；#1107 起住 ledger-sync-engine crate）',
   },
 ]
 
