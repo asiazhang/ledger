@@ -92,7 +92,10 @@ impl S3Transport {
                 "S3 桶名不能为空（同步通道配置缺陷）".to_string(),
             ));
         }
-        if config.region.trim().is_empty() {
+        // 空白归一与 endpoint / bucket / prefix 同规：区域参与 SigV4 签名范围，
+        // 带首尾空白会签出与桩/服务端不一致的凭据范围（只报鉴权失败，根因不可见）。
+        let region = config.region.trim().to_string();
+        if region.is_empty() {
             return Err(AppError::Invalid(
                 "S3 区域不能为空（同步通道配置缺陷）".to_string(),
             ));
@@ -104,7 +107,7 @@ impl S3Transport {
         let client = Client::from_conf(
             aws_sdk_s3::Config::builder()
                 .behavior_version(BehaviorVersion::latest())
-                .region(Region::new(config.region))
+                .region(Region::new(region))
                 .credentials_provider(Credentials::new(
                     config.access_key,
                     config.secret_key,
