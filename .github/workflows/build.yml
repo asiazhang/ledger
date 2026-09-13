@@ -16,15 +16,23 @@ permissions:
   contents: write
 
 jobs:
-  # CI 耗时基线（2026-09，run 33971568279）：frontend ≈229s（pnpm test 占 91%，
-  # vitest import+jsdom 环境创建是每文件固定成本，并行度仅 ~1.4 核），backend ≈222s
-  # （编译 76s + 固定 69s + clippy 19s + 测试执行 48s）。据此拆分为四个并行 job：
-  # 关键路径 = max(后端测试 ~180s, 前端测试分片 ~116s)，目标总时长 ~3 分钟。
+  # CI 耗时基线（2026-09-13，issue #1110 刷新）：来源 = 7 次成功 PR 运行（run
+  # 34747049405 / 34747417399 / 34747480095 / 34747583723 / 34748550902 /
+  # 34748847869 / 34749024124），runner 画像 = ubuntu-latest（Linux x64，4 vCPU，
+  # GitHub 托管），backend / backend-lint 挂预构建容器镜像（#1109，apt 已归零，
+  # 改为每 job 的容器初始化 19–31s），rust-cache 精确 key 命中（依赖缓存
+  # 1.14–1.18 GB）。实测（同批 7 次运行）：backend 后端测试 258–306s（典型 ~271s）
+  # ｜backend-lint 静态检查 81–96s｜frontend-test 分片 112–189s（典型 ~170s）
+  # ｜frontend 检查 39–87s。关键路径 = 后端测试 job（前端分片不再是决定项），
+  # PR 端到端 ≈ 4.3–5.1 分钟（job 跨度口径，不含排队）。
+  # 后端测试 job 的四段拆解、逐 run 表与「250s / 180s」推算见 backend job 注释；
+  # 数据、口径与局限见 docs/verification/1110-ci-compile-cache-baseline.md。
   # issue #1109 起，backend/backend-lint 挂预构建 CI 镜像（ci-image.yml 发布到
   # GHCR），job 内零 apt 安装；镜像内容与重建路径见 .github/docker/backend-ci.Dockerfile 头注。
 
   # 前端构建与一致性检查：vue-tsc 类型检查（前端 + 守门脚本与测试两个工程）+ oxlint lint
-  # （--deny-warnings，与本地 check.sh 同门槛）+ vite build + 守门脚本（Bun 运行时，ADR-0083），~25s。
+  # （--deny-warnings，与本地 check.sh 同门槛）+ vite build + 守门脚本（Bun 运行时，ADR-0083）；
+  # 2026-09-13 基线（7 次 PR 运行，run 34747049405–34749024124）39–87s，典型 ~50s。
   # 测试拆至 frontend-test 分片 job，二者并行。
   frontend:
     name: 前端检查
@@ -70,8 +78,10 @@ jobs:
       - name: 文档一致性检查
         run: ./scripts/check-docs.sh
 
-  # 前端测试按 shard 均分到 2 个并行 runner：vitest 单 job 208s（累计 586s），
-  # 分片后各 ~116s。不采用 isolate:false（worker 复用 jsdom 省每文件环境创建），
+  # 前端测试按 shard 均分到 2 个并行 runner：拆分前 vitest 单 job 208s（累计 586s）。
+  # 2026-09-13 基线（同批 7 次 PR 运行）：分片 1/2 126–189s、分片 2/2 112–175s——
+  # 两片不再均衡（分片成本受文件分布与 runner 波动双重影响），但都远低于后端测试
+  # job，不在关键路径上。不采用 isolate:false（worker 复用 jsdom 省每文件环境创建），
   # 因 pinia/i18n/fake timers 等模块级单例跨文件泄漏风险不可控，放弃该项收益。
   frontend-test:
     name: 前端测试（shard ${{ matrix.shard }}/2）
@@ -98,11 +108,35 @@ jobs:
       - name: Vitest 分片运行
         run: pnpm exec vitest run --shard=${{ matrix.shard }}/2
 
-  # 后端测试：fmt/clippy 拆至 backend-lint 并行（clippy 仅 ~19s，不值得占关键路径）。
-  # cargo test 本体 ~125s（编译 76s + cucumber e2e 388 场景 29s 等）。
+  # 后端测试：fmt/clippy 拆至 backend-lint 并行（clippy 仅 ~20–30s，不值得占关键路径）。
+  #
+  # 端到端基线（2026-09-13，issue #1110 刷新）：258–306s，典型 ~271s（7 次成功 PR
+  # 运行，run 34747049405–34749024124；runner 画像 = ubuntu-latest Linux x64 4 vCPU
+  # + 本 job 的预构建容器镜像；rust-cache 精确 key 命中，依赖缓存 1.14–1.18 GB）。
+  # 四段（逐 run 表见 docs/verification/1110-ci-compile-cache-baseline.md）：容器
+  # 初始化（镜像拉取）19–31s｜缓存恢复（下载+解压）30–42s｜编译 82–116s｜测试执行
+  # 102–121s；四段之和比端到端少 5–9s，差额是 setup/checkout/Post/stop containers
+  # 等固定开销。编译段口径 = `Finished test profile … in 1m22s–1m56s`；
+  # 执行段 = 首个测试二进制启动到 e2e 汇总，明细（2026-09-13 时点）：lib 单测 1229
+  # 用例分 16 个成员 crate + 根包共 17 个二进制（合计 ~51s）、api_server 236 用例 11s、
+  # commands 19 用例 6s、e2e 451 场景 3122 步 ~53s、sync_trigger_poll 1 用例 ~0s。
+  #
+  # 目标与不可达结论（spec #1086）：目标 job ≤250s，180s 只作方向。四条硬约束：
+  # ① 不加付费 larger runner；② 不缩减 CI 测试范围（不按路径过滤、e2e 不挪 nightly）；
+  # ③ 不引入 rustc-wrapper 类方案（编译加速归 kache）；④ 默认不拆后端测试为多 job。
+  # 180s 不可达推算：取本基线四段各自的最小观测值相加 = 19（容器）+ 30（缓存）
+  # + 82（编译）+ 102（执行）= 233s，已高于 180s 达 53s；且每段都被约束锁死——
+  # 执行段由约束②固定（时间就是用例本身），容器/缓存段是每 job 必付固定开销
+  # （约束④禁止用拆 job 摊薄，拆了要重复付），编译段在约束①（4 核 runner）与
+  # ③（唯一数量级工具=kache，CI 侧已被否决）下已无同量级可压项。250s 对应的是
+  # 233s + 残差（≈6–9s）≈ 240–242s 这一统计下界：需要各段同时接近最小观测值才成立
+  # （7 次运行中仅 1 次达 258s，其余 266–306s），故 250s 是乐观下界而非稳态目标；
+  # 本结论写回注释即为止损点，后续不再追逐 180s。
+  #
   # issue #1109：系统依赖（tauri 库 + mold + Rust stable 工具链）改由预构建镜像
   # 承载（ci-image.yml 发布，Dockerfile 见 .github/docker/backend-ci.Dockerfile），
-  # job 内零安装步骤——改前 apt 阶段 20–98s 波动（缓存命中也有 22–28s），改后 0s。
+  # job 内零安装步骤——改前 apt 阶段 20–98s 波动（缓存命中也有 22–28s），改后 0s
+  # （其成本移入上面的容器初始化段）。
   backend:
     name: 后端测试（Rust 单测 + BDD/e2e）
     if: "!startsWith(github.ref, 'refs/tags/')"
@@ -116,16 +150,38 @@ jobs:
       run:
         working-directory: src-tauri
     # CI 提速（仅 CI，本地开发不受影响）：
-    # - DEBUG=1：workspace 自身降 debuginfo 到 line-tables-only（依赖已同配置），
-    #   纯编译收益，backtrace 行号保留。
+    # - CARGO_PROFILE_DEV_DEBUG=0：CI 侧不带 debuginfo（issue #1110）。作用面只有
+    #   workspace 成员——
+    #   依赖的 debuginfo 由 Cargo.toml 的 [profile.dev.package."*"] 固定为
+    #   line-tables-only，不受本变量影响。代价：CI 失败时 backtrace 只有符号名、
+    #   没有行号（断言位置仍由测试输出给出）；本地不设本变量（默认 debuginfo=2
+    #   全量符号），调试体验不变。
+    #   收益边界（本票实测，勿重复追逐）：只省编译/链接时间，**不省缓存体积与解压
+    #   时间**——rust-cache 保存前把 workspace 成员产物整体剔出（只缓存依赖产物，
+    #   其 save.ts 取「workspace 根之外的包」再清理 target），依赖的 debuginfo 又已被
+    #   [profile.dev.package."*"] 钉在 line-tables-only，故本变量对缓存体积零影响。
+    #   直接证据：main run 34749230834 里 16 个成员 crate 全量冷编（debug=1）后，
+    #   Post 保存 1236735941 B 与恢复的 1236768034 B 基本等大（成员 debuginfo 从未
+    #   进过缓存）。spec #1086 里「缓存 2 GB → 约 1 GB、解包砍半」的预期不成立，
+    #   那 2.0 GB 是依赖侧 line-tables-only（db611ca7，2026-09-06）之前的历史值。
+    #   一次性代价：CARGO_ 前缀环境变量参与 rust-cache 的 key hash，本变量改动
+    #   ⇒ 该 job 的 key 变化 ⇒ 下一次运行冷编译并重存一份缓存，旧缓存待过期驱逐。
     # - RUSTFLAGS + mold：链接器换 mold（lib 与每个集成测试 crate 各全量链接一次，
     #   链接是 workspace 编译的大头），mold 已烘进镜像。
+    # - 增量编译（issue #1110 实测否决，刻意不设 CARGO_INCREMENTAL）：rust-cache
+    #   （@v2，CI 实测解析到 v2.9.2 / SHA 6323deb1）在 restore 阶段固定导出
+    #   CARGO_INCREMENTAL=0，保存前又删除增量产物，故 CI 每次
+    #   运行都从零增量状态开始，同一 job 内每个 crate 只编一次——没有复用机会，只多付
+    #   写增量产物的成本。本机同内容同 target dir 对照：inc=0 CPU 152.5s、inc=1
+    #   CPU 173.5s（+14%），增量产物 1.7 GB（≈ 现有依赖缓存的 1.5 倍，要跨运行复用
+    #   就得连它一起缓存）。本地热回路由 kache 承担（.kache.toml preserve_incremental，
+    #   workspace 全量重编命中缓存 4.6s），不需要 CI 侧开启。
     # - 刻意不用 OPT_LEVEL=1：实测（run 33975823593）负优化——workspace 大 crate
     #   的优化 pass 使编译 76s→2m43s，执行只省 ~14s，净 +60s，已回退。
     # 注意：RUSTFLAGS/debug 变更会使 cargo fingerprint 失效，变更后首跑全量冷编译
     # 一次（一次性成本），之后 rust-cache 恢复稳态。
     env:
-      CARGO_PROFILE_DEV_DEBUG: "1"
+      CARGO_PROFILE_DEV_DEBUG: "0"
       RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     steps:
       - uses: actions/checkout@v7
@@ -158,6 +214,9 @@ jobs:
 
   # 后端静态检查：与 backend job 同挂预构建镜像（issue #1109），fmt/clippy 组件
   # 已烘进镜像，job 内零安装步骤（改前 apt 阶段缓存命中也有 22s）。
+  # 刻意不设 CARGO_PROFILE_DEV_DEBUG（issue #1110）：clippy 走 check 形态——只产出
+  # metadata、不 codegen，debuginfo 水平既不改其耗时也几乎不改其缓存体积，设了只会
+  # 白换一次缓存 key（本 job 不在 PR 关键路径上，收益为零）。
   backend-lint:
     name: 后端静态检查（fmt + clippy）
     if: "!startsWith(github.ref, 'refs/tags/')"
