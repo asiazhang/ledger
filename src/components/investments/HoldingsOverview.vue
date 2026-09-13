@@ -10,7 +10,7 @@ import {
   NText,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
-import { computed, h } from 'vue'
+import { computed, h, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { t } from '@ledger/i18n'
@@ -21,6 +21,7 @@ import { pnlSemanticColor } from '@/theme/semantic-colors'
 import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
 import InstrumentLink from '@/components/InstrumentLink.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
+import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import PortfolioStatsCards from '@/components/investments/PortfolioStatsCards.vue'
 import { usePortfolioOverview, type PortfolioRow } from '@/composables/usePortfolioOverview'
 import {
@@ -65,6 +66,64 @@ const { syncing, resultMessage, status, progress, sync } = useInstrumentInfoSync
 usePricesChanged(() => {
   void refresh()
 })
+
+// ---------------------------------------------------------------------------
+// 缺价行可执行引导（issue #1193）：缺价行（市值/收益/合计一并缺）此前只显示
+// 「-」，用户拿不到下一步。行内按**后端派生的价格通道事实**分流（只读
+// `row.priceChannel`，前端不按类型 × 市场另推通道，词汇表「价格通道」）：
+// 行情 / 净值通道 → 触发既有「同步标的信息」接缝（与卡顶按钮同一份
+// useInstrumentInfoSync，在途短路天然复用）；手动报价通道 → 打开既有
+// ManualPriceModal（与标的页行内「录价」同一弹窗、同一 record_manual_price
+// 命令）；无来源 / 通道未知 → 不给引导（没有可落地的既有入口）。
+// 两个落点都是既有入口本身，不新增第二套触发机制。
+// ---------------------------------------------------------------------------
+const quoteTarget = ref<{ id: string; symbol: string } | null>(null)
+const quoteOpen = ref(false)
+const quoteMessage = ref<string | null>(null)
+
+function openQuote(row: PortfolioRow) {
+  quoteTarget.value = { id: row.instrumentId, symbol: row.symbol ?? row.instrumentName ?? '' }
+  quoteOpen.value = true
+}
+
+function onQuoted(message: string) {
+  // 只记页面级回执：行内现价/市值刷新由价格失效信号驱动（ADR-0031），不手动重拉
+  quoteMessage.value = message
+}
+
+/** 缺价行的引导动作（无引导时返回 null）：判定单点是 row.priceChannel（后端派生事实） */
+function missingPriceAction(row: PortfolioRow) {
+  const testidBase = row.symbol ?? row.holdingId
+  if (row.priceChannel === 'manual') {
+    return h(
+      NButton,
+      {
+        text: true,
+        type: 'primary',
+        size: 'tiny',
+        'data-testid': `missing-price-quote-${testidBase}`,
+        onClick: () => openQuote(row),
+      },
+      { default: () => t('investments.holdings.missingPrice.quote') },
+    )
+  }
+  if (row.priceChannel === 'quote' || row.priceChannel === 'fund_nav') {
+    return h(
+      NButton,
+      {
+        text: true,
+        type: 'primary',
+        size: 'tiny',
+        'data-testid': `missing-price-sync-${testidBase}`,
+        onClick: () => {
+          void sync()
+        },
+      },
+      { default: () => t('investments.holdings.missingPrice.sync') },
+    )
+  }
+  return null
+}
 
 // 盈亏数字着色：红涨绿跌（A股/基金语境，词汇表「盈亏涨跌色」），随主题取亮/暗变体
 
@@ -144,10 +203,20 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     className: 'tabular-nums',
     // 现价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示；
     // 净值日期已独立成列（issue #912），本列恢复单行渲染。
-    render: (r) =>
-      r.latestPriceCents === null
-        ? '-'
-        : formatPrice(r.latestPriceCents, reference.currencyMap.get(r.latestPriceCurrencyCode ?? '')),
+    // 缺价行（issue #1193）：空值语义仍是「-」，其后就地给下一步引导
+    // （行情/净值通道 → 同步标的信息，手动报价通道 → 录价；见 missingPriceAction）。
+    render: (r) => {
+      if (r.latestPriceCents !== null) {
+        return formatPrice(r.latestPriceCents, reference.currencyMap.get(r.latestPriceCurrencyCode ?? ''))
+      }
+      const action = missingPriceAction(r)
+      if (action === null) return '-'
+      return h(
+        'span',
+        { style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } },
+        ['-', action],
+      )
+    },
   },
   {
     title: t('investments.holdings.columns.navDate'),
@@ -216,6 +285,11 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
           {{ resultMessage }}
         </NText>
 
+        <!-- 缺价行「录价」引导的页面级回执（issue #1193）；行内数值刷新由价格失效信号驱动 -->
+        <NText v-if="quoteMessage" type="success" data-testid="manual-quote-result">
+          {{ quoteMessage }}
+        </NText>
+
         <NEmpty v-if="rows.length === 0 && !loading" :description="t('investments.holdings.empty')" />
         <template v-else-if="rows.length > 0">
           <!-- 三维过滤（issue #902）：搜索（300ms 防抖在 composable 内）+ 账户单选
@@ -271,5 +345,13 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
         </template>
       </NSpace>
     </NSpin>
+
+    <!-- 缺价行「录价」引导打开既有录价弹窗（issue #1193）：与标的页行内「录价」
+         同一弹窗、同一命令，不新增第二套入口；提交回执转页面级展示 -->
+    <ManualPriceModal
+      v-model:show="quoteOpen"
+      :instrument="quoteTarget"
+      @quoted="onQuoted"
+    />
   </NCard>
 </template>

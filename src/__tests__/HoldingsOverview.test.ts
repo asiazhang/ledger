@@ -95,8 +95,9 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     expect(await cellText('symbol')).toEqual(['000001', '600000'])
     expect(await cellText('quantity')).toEqual(['10', '100'])
     expect(await cellText('cost_basis')).toEqual([formatAmount(8000, cny), formatAmount(120000, cny)])
-    // 无行情行显示 -；现价列为价格刻度（formatPrice），其余列金额刻度（formatAmount）
-    expect(await cellText('latest_price')).toEqual(['-', formatPrice(150000, cny)])
+    // 无行情行现价列保留空值语义「-」并接行内引导（issue #1193：行情通道 → 同步）；
+    // 现价列为价格刻度（formatPrice），其余列金额刻度（formatAmount）
+    expect(await cellText('latest_price')).toEqual(['-同步', formatPrice(150000, cny)])
     expect(await cellText('market_value')).toEqual(['-', formatAmount(150000, cny)])
     expect(await cellText('unrealized_pnl')).toEqual(['-', formatAmount(30000, cny)])
   })
@@ -835,6 +836,120 @@ describe('HoldingsOverview 客户端分页（issue #912）', () => {
     } finally {
       await applyLocale('zh-CN')
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 缺价行可执行引导（issue #1193）：缺价行（市值/收益/合计一并缺）在现价列
+// 保留空值语义「-」，其后按价格通道给下一步——行情 / 净值通道落既有
+// 「同步标的信息」入口（同一 useInstrumentInfoSync 接缝），手动报价通道落
+// 既有「录价」弹窗（同一 ManualPriceModal + record_manual_price 命令）；
+// 无来源 / 通道未知行不给引导。判定只读后端派生的 price_channel（标的字典
+// 透传），前端不另推通道。
+// ---------------------------------------------------------------------------
+
+/** 四类缺价行：符号按 a1 < b1 < c1 < d1 排序，与通道对照一眼可辨 */
+const GUIDE_HOLDINGS: Holding[] = [
+  makeHolding({ id: 'gh-manual', instrument_id: 'g-inst-manual' }),
+  makeHolding({ id: 'gh-nav', instrument_id: 'g-inst-nav' }),
+  makeHolding({ id: 'gh-quote', instrument_id: 'g-inst-quote' }),
+  makeHolding({ id: 'gh-none', instrument_id: 'g-inst-none' }),
+]
+
+const GUIDE_INSTRUMENTS: Instrument[] = [
+  makeInstrument({
+    id: 'g-inst-manual',
+    symbol: 'a1',
+    name: '稳稳地幸福',
+    type: 'other',
+    market: 'unknown',
+    source: 'manual',
+    price_channel: 'manual',
+  }),
+  makeInstrument({
+    id: 'g-inst-nav',
+    symbol: 'b1',
+    name: '场外基金',
+    type: 'fund',
+    market: 'unknown',
+    source: 'manual',
+    price_channel: 'fund_nav',
+  }),
+  makeInstrument({ id: 'g-inst-quote', symbol: 'c1', name: '行情标的', price_channel: 'quote' }),
+  makeInstrument({
+    id: 'g-inst-none',
+    symbol: 'd1',
+    name: '无来源标的',
+    market: 'unknown',
+    price_channel: 'none',
+  }),
+]
+
+const GUIDE_DEFAULTS = {
+  list_holdings: GUIDE_HOLDINGS,
+  list_instruments: { items: GUIDE_INSTRUMENTS, total: GUIDE_INSTRUMENTS.length },
+  cumulative_pnl_summary: [],
+  sync_instrument_info: { synced: 1, skipped: 0, message: '已同步 1 只，跳过 0 只' },
+}
+
+describe('HoldingsOverview 缺价行可执行引导（issue #1193）', () => {
+  beforeEach(async () => {
+    resetPricesChangedHandler()
+    resetInstrumentInfoSyncForTest()
+    wireInvokeSeam({ defaults: GUIDE_DEFAULTS })
+    await useReferenceStore().refresh()
+  })
+
+  afterEach(() => {
+    if (wrapper) {
+      wrapper.unmount()
+      wrapper = undefined
+    }
+  })
+
+  it('行情通道缺价行：引导是既有「同步标的信息」入口，点击即发起同步并出结果回执', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    const btn = wrapper.find('[data-testid="missing-price-sync-c1"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toBe('同步')
+    await btn.trigger('click')
+    await flushPromises()
+    // 双断言：落点是既有同步命令（同接缝），且结果回执在卡内可见
+    expect(mockInvoke).toHaveBeenCalledWith('sync_instrument_info')
+    expect(wrapper.text()).toContain('已同步 1 只，跳过 0 只')
+  })
+
+  it('净值通道缺价行：引导同样落既有「同步标的信息」入口', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    const btn = wrapper.find('[data-testid="missing-price-sync-b1"]')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('sync_instrument_info')
+    expect(wrapper.text()).toContain('已同步 1 只，跳过 0 只')
+  })
+
+  it('手动报价通道缺价行：引导打开既有录价弹窗（不新增第二套入口）', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    const btn = wrapper.find('[data-testid="missing-price-quote-a1"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toBe('录价')
+    await btn.trigger('click')
+    await nextTick()
+    // 落点 = 既有 ManualPriceModal（与标的页行内「录价」同一弹窗）
+    expect(document.body.textContent).toContain('录价 — a1')
+  })
+
+  it('每行按自身价格通道分流：四类缺价行现价列呈「引导 + 无引导」对照', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    // 空值语义「-」保留，引导紧随其后；无来源行只有「-」
+    expect(await cellText('latest_price')).toEqual(['-录价', '-同步', '-同步', '-'])
+    expect(wrapper.find('[data-testid="missing-price-sync-d1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="missing-price-quote-d1"]').exists()).toBe(false)
   })
 })
 

@@ -23,6 +23,10 @@
     "sync": "同步标的信息",
     "empty": "暂无持仓",
     "filterNoMatch": "筛选条件下无匹配持仓",
+    "missingPrice": {
+      "sync": "同步",
+      "quote": "录价"
+    },
     "searchPlaceholder": "搜索标的（代码/名称/拼音）",
     "filterAccount": "全部账户",
     "columns": {
@@ -50,6 +54,8 @@
     "searchPlaceholder": "搜索代码或名称...",
     "allMarkets": "全部市场",
     "onlyInvested": "只看持仓",
+    "empty": "暂无标的",
+    "filterNoMatch": "筛选条件下无匹配标的",
     "addInstrument": "添加投资标的",
     "syncInstrumentInfo": "同步标的信息",
     "columns": {

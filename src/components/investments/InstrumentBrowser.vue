@@ -3,6 +3,7 @@ import { computed, h, onMounted, ref, watch } from 'vue'
 import {
   NButton,
   NDataTable,
+  NEmpty,
   NInput,
   NSpace,
   NSwitch,
@@ -104,6 +105,18 @@ watch(searchText, () => {
 })
 watch(selectedMarket, reload)
 watch(onlyInvested, reload)
+
+// 空态（issue #1193）：此前表格直接渲染，空库与筛选未命中都无提示。两态按
+// 「有没有生效的筛选意图」分流——无筛选（无搜索词 / 无市场 / 未勾选只看持仓）
+// = 库内无标的；否则 = 有标的但筛选无匹配（与持仓页签同构的两态区分）。
+const hasActiveFilter = computed(
+  () => searchText.value.trim() !== '' || selectedMarket.value !== null || onlyInvested.value,
+)
+const emptyDescription = computed(() =>
+  hasActiveFilter.value
+    ? t('investments.browser.filterNoMatch')
+    : t('investments.browser.empty'),
+)
 
 // 价格失效信号（ADR-0031）：标的信息同步/录价等实际写价后原地重拉——
 // 用 load() 保留分页与搜索状态；reload() 会重置到第 1 页，
@@ -387,7 +400,16 @@ const browseScrollX = computed(() => sumFixedColumnWidths(instrumentBrowseColumn
       remote
       :scroll-x="isMobileTier ? browseScrollX : undefined"
       :pagination="pagination"
-    />
+    >
+      <!-- 空态两态区分（issue #1193）：全部标的不在场 vs 筛选未命中；
+           testid 随态切换，测试按用户可观察文案断言 -->
+      <template #empty>
+        <NEmpty
+          :description="emptyDescription"
+          :data-testid="hasActiveFilter ? 'instruments-no-match' : 'instruments-empty'"
+        />
+      </template>
+    </NDataTable>
 
     <!-- 添加投资标的（issue #697 / spec #690；六通道修订 #826）：标的创建唯一
          入口——市场必选录入通道 + 按代码查询（命中自动识别类型并回填名称/最新价）；

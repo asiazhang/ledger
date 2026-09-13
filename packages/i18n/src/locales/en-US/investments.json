@@ -23,6 +23,10 @@
     "sync": "Sync Instrument Info",
     "empty": "No holdings",
     "filterNoMatch": "No holdings match the current filters",
+    "missingPrice": {
+      "sync": "Sync",
+      "quote": "Record"
+    },
     "searchPlaceholder": "Search instruments (symbol / name / pinyin)",
     "filterAccount": "All accounts",
     "columns": {
@@ -50,6 +54,8 @@
     "searchPlaceholder": "Search symbol or name...",
     "allMarkets": "All markets",
     "onlyInvested": "Holdings only",
+    "empty": "No instruments",
+    "filterNoMatch": "No instruments match the current filters",
     "syncInstrumentInfo": "Sync Instrument Info",
     "columns": {
       "symbol": "Symbol",

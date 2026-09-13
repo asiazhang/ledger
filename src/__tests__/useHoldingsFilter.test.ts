@@ -38,6 +38,7 @@ function makeRow(partial: Partial<PortfolioRow> & { holdingId: string }): Portfo
     marketValueCents: null,
     unrealizedPnlCents: null,
     valueCurrencyCode: 'CNY',
+    priceChannel: 'quote',
     ...partial,
   }
 }
