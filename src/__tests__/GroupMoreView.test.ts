@@ -6,6 +6,7 @@ import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import GroupMoreView from '@/views/GroupMoreView.vue'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
+import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import { makePolicy, makePolicyStats } from './factories'
 import { routes, router } from '@/router'
 import { formatAmount } from '@ledger/money'
@@ -65,6 +66,26 @@ beforeEach(() => {
 })
 
 describe('GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 1/5：页签序 = 收纳清单序）', () => {
+  it('关闭的收纳成员从页签消失，重开后按清单原位置恢复（issue #1242 / ADR-0116 决策 3）', async () => {
+    const featureToggles = useFeatureToggleStore()
+    featureToggles.setFeatureClosed('physicalAssets', true)
+    const { wrapper } = await mountGroupView('assets')
+    expect(containerTabs(wrapper)).toEqual(['保单', '保险公司'])
+
+    featureToggles.setFeatureClosed('physicalAssets', false)
+    await flushPromises()
+    expect(containerTabs(wrapper)).toEqual(['保单', '实物资产', '保险公司'])
+  })
+
+  it('同组收纳成员全部关闭时零页签，页签列表不保留不可达入口', async () => {
+    const featureToggles = useFeatureToggleStore()
+    for (const id of ['policies', 'physicalAssets', 'insurers'] as const) {
+      featureToggles.setFeatureClosed(id, true)
+    }
+    const { wrapper } = await mountGroupView('assets')
+    expect(wrapper.findAll('.n-tabs-tab').length).toBe(0)
+  })
+
   it('资产·更多：保单页签为默认页签（清单首位），实物资产、保司追加在后，保单视图整体装载、建档入口可用（issue #714：保司页签入资产组）', async () => {
     const { wrapper } = await mountGroupView('assets')
     expect(wrapper.findAll('.n-tabs-tab').map((t) => t.text())).toEqual(['保单', '实物资产', '保险公司'])

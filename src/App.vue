@@ -68,6 +68,7 @@ import {
   type ViewName,
   type ContainableViewName,
 } from '@/stores/sidebar-order'
+import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import { useWindowGuard } from '@/composables/useWindowGuard'
 import { useSystemBack } from '@/composables/useSystemBack'
 import { useWindowTier } from '@/composables/useWindowTier'
@@ -79,6 +80,8 @@ const route = useRoute()
 // 此处消费状态/写路径/谓词；键位面（viewShortcuts/shortcutHint）仍归 useViewShortcuts。
 const sidebarOrder = useSidebarOrderStore()
 const { applySidebarSort, applyMoveIntoMore, resetSidebarOrder, isSidebarMember } = sidebarOrder
+// 功能开关的存在层过滤（issue #1242 / ADR-0116 决策 3）：只筛入口，不改写侧栏顺序与收纳清单。
+const featureToggles = useFeatureToggleStore()
 // 视图快捷键：窗口内 Cmd/Ctrl+1..0 与 Cmd/Ctrl+, 切换视图（弹窗/确认框打开时自动抑制）
 const { viewShortcuts } = useViewShortcuts(router)
 
@@ -201,37 +204,40 @@ const inputMode = useInputMode()
 function buildMenuOptions(keyOf: Map<string, string | null>): MenuOption[] {
   // 入参含移回的种子成员（#475）：侧栏菜单项词表 = 主项 ∪ 出厂种子
   const item = (name: ViewName | ContainableViewName) => renderItem(name, keyOf.get(name) ?? null)
+  const closed = (name: ContainableViewName) => featureToggles.isFeatureClosed(name)
   return [
     item(FIRST_VIEW),
-    ...sidebarOrder.sidebarGroups.map((g): MenuOption => ({
-      type: 'group',
-      key: `sidebar-group:${g.id}`,
-      // 组标题行：组名 + 按需「更多」链接（issue #472/#473 / ADR-0063 决策 1）——
-      // 链接仅当组内存在收纳成员时渲染（菜单分组标题天然不可交互，链接是自定义渲染的新元素）；
-      // 折叠态不渲染组标题，链接随之不渲染（决策 6 天然成立）；链接无键位、不出快捷键提示。
-      label: () =>
-        h('div', { class: 'sidebar-group-title' }, [
-          h('span', t(`common.sidebarGroup.${g.id}`)),
-          sidebarOrder.sidebarContainment[g.id].length > 0
-            ? h('a',
-                {
-                  class: ['group-more-link', { 'is-active': route.name === `${g.id}-more` }],
-                  // 原生 tooltip 说明该组收纳了哪些功能，给「更多」一个可预期的去向
-                  title: sidebarOrder.sidebarContainment[g.id]
-                    .map((n) => viewLabel(n))
-                    .join(currentLocale.value === 'en-US' ? ', ' : '、'),
-                  onClick: () => { void router.push({ name: `${g.id}-more` }) },
-                },
-                [
-                  h(NIcon, { size: 14, class: 'group-more-icon' }, { default: () => h(LayersOutline) }),
-                  t('common.nav.more'),
-                  h(NIcon, { size: 12, class: 'group-more-caret' }, { default: () => h(ChevronForwardOutline) }),
-                ],
-              )
-            : null,
-        ]),
-      children: g.views.map((name) => item(name)),
-    })),
+    ...sidebarOrder.sidebarGroups.map((g): MenuOption => {
+      const visibleContainment = sidebarOrder.sidebarContainment[g.id].filter((name) => !closed(name))
+      return {
+        type: 'group',
+        key: `sidebar-group:${g.id}`,
+        // 组标题行：组名 + 按需「更多」链接（issue #472/#473 / ADR-0063 决策 1）——
+        // 链接仅当组内存在未关闭收纳成员时渲染；折叠态不渲染组标题，链接随之不渲染。
+        label: () =>
+          h('div', { class: 'sidebar-group-title' }, [
+            h('span', t(`common.sidebarGroup.${g.id}`)),
+            visibleContainment.length > 0
+              ? h('a',
+                  {
+                    class: ['group-more-link', { 'is-active': route.name === `${g.id}-more` }],
+                    // 原生 tooltip 只说明可见去向，不泄露已关闭功能。
+                    title: visibleContainment
+                      .map((n) => viewLabel(n))
+                      .join(currentLocale.value === 'en-US' ? ', ' : '、'),
+                    onClick: () => { void router.push({ name: `${g.id}-more` }) },
+                  },
+                  [
+                    h(NIcon, { size: 14, class: 'group-more-icon' }, { default: () => h(LayersOutline) }),
+                    t('common.nav.more'),
+                    h(NIcon, { size: 12, class: 'group-more-caret' }, { default: () => h(ChevronForwardOutline) }),
+                  ],
+                )
+              : null,
+          ]),
+        children: g.views.filter((name) => !closed(name)).map((name) => item(name)),
+      }
+    }),
     item(PENULTIMATE_VIEW),
     item(LAST_VIEW),
   ]

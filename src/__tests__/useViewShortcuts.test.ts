@@ -11,6 +11,7 @@ import {
   DEFAULT_VIEW_ORDER,
   ARRANGEABLE_VIEWS,
 } from '@/stores/sidebar-order'
+import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import type { SidebarGroupOrders } from '@/stores/sidebar-order'
 import { VIEW_STATE_KEYS } from '@/utils/view-state'
 
@@ -217,6 +218,14 @@ describe('启动读路径（issue #269/#359：读取已存组内序，经解析�
 })
 
 describe('matchViewShortcut', () => {
+  it('关闭的主项不占用键位：本组带内留空待命，不跨组压缩（issue #1242 / ADR-0116）', () => {
+    setPlatform('MacIntel')
+    useFeatureToggleStore().setFeatureClosed('budget', true)
+    expect(matchViewShortcut(press('3', { metaKey: true }))).toBeNull()
+    expect(matchViewShortcut(press('2', { metaKey: true }))).toBe('accounts')
+    expect(matchViewShortcut(press('4', { metaKey: true }))).toBe('investments')
+  })
+
   it('macOS 上 Cmd+` 与 Cmd+数字按固定组带命中对应视图', () => {
     setPlatform('MacIntel')
     expect(matchViewShortcut(press('`', { metaKey: true }))).toBe('dashboard')
@@ -355,6 +364,17 @@ function mountHost(router: Router) {
 }
 
 describe('useViewShortcuts（keydown 注册）', () => {
+  it('关闭的主项不可经键盘触发（issue #1242 / ADR-0116）', () => {
+    setPlatform('MacIntel')
+    useFeatureToggleStore().setFeatureClosed('budget', true)
+    const { router, push } = makeRouter('dashboard')
+    mountHost(router)
+    window.dispatchEvent(press('3', { metaKey: true }))
+    expect(push).not.toHaveBeenCalled()
+    window.dispatchEvent(press('2', { metaKey: true }))
+    expect(push).toHaveBeenCalledWith({ name: 'accounts' })
+  })
+
   it('命中快捷键时跳转到目标路由', () => {
     setPlatform('MacIntel')
     const { router, push } = makeRouter('dashboard')

@@ -7,7 +7,7 @@ import { clearClosedFeatures, getSavedClosedFeatures, saveClosedFeatures } from 
  * 唯一读写方——与侧栏顺序、收纳清单同族同归宿（localStorage、界面状态、不进 SQLite、
  * 无后端调用），跨账本共享（ADR-0017 轻量设置项，随本机不随账本迁移）。
  * 语义边界（ADR-0116 决策 1/3）：关闭只隐藏入口、不改写收纳清单——重新打开即回原位置。
- * 本票只做状态与读写：导航层过滤 / 设置页 UI / 路由守卫由后续票消费本 store，无用户可见变化。
+ * #1241 只做状态与读写；#1242 起侧栏 / 组「更多」/ 快捷键消费导航层过滤，设置页 UI / 路由守卫由后续票接入。
  */
 
 /**
@@ -67,8 +67,8 @@ export function parseClosedFeatures(raw: unknown): ClosableFeatureId[] {
 
 /**
  * 功能开关 store：设备级关闭集合的单一归宿（ViewState 词条覆盖的持久界面状态）。
- * 消费方（后续票）：侧栏菜单构建、GroupMoreView 页签、useViewShortcuts 键位带、
- * 路由守卫、设置页「功能」Tab 与「定时」Tab 联动。
+ * 已消费方：#1242 侧栏菜单构建、GroupMoreView 页签、useViewShortcuts 键位带；
+ * 后续消费方：路由守卫、设置页「功能」Tab 与「定时」Tab 联动。
  */
 export const useFeatureToggleStore = defineStore('feature-toggles', () => {
   // 启动读路径：原始值经解析防御——脏数据整体回退全开、非法项过滤、去重（issue #1241）。
