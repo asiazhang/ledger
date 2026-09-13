@@ -1,0 +1,48 @@
+[package]
+name = "ledger-investment"
+version = "0.6.0"
+description = "Ledger 投资域 crate：标的字典、市场数据、持仓与买卖协议、盈亏与走势（Instrument / Holding / TransactionTrade）"
+edition = "2024"
+publish = false
+# 版本与根包锁步（仓库约定：workspace 各成员同为 0.6.0）。
+
+[dependencies]
+# 投资域 crate（spec #1086 / issue #1097，P3 业务域 crate）：依赖面只有基础设施、
+# 同步协议、核心交易域、账户域与币种域——交易域接缝（`transaction::seams::investment`，
+# #1092）的实现注册侧经 `install_transaction_hooks` 装入（壳层启动接线，ADR-0112
+# 决策 5）；账户域（AccountType / 余额口径）与币种域（ExchangeRate / ExchangeRateInput，
+# #418 / ADR-0059「实体归属优先于消费方分布」：投资域是汇率的消费方与录入入口）
+# 是两条域→域合法上层依赖（上层域消费下层域，合法依赖直呼，ADR-0112 决策 2；
+# 后者经 #1097 裁决显性化承认——票面 AC 允许集扩一项，非新增耦合）。行情同步域
+# 的查询半边经注入接缝消费（`add_fund_by_code_with` / `add_stock_instrument_with_quote`
+# 注入签名，壳层接线），对根包（壳层）与行情/多端同步域零直接依赖，反向引用由
+# cargo 依赖图编译期拒绝。同步命令契约、op 产出与设备标识走 `ledger-sync-protocol`，
+# 重放分派住 sync_engine（业务域→同步域零容忍，ADR-0101 决策 4b）。
+ledger-infra = { path = "../infra" }
+ledger-sync-protocol = { path = "../sync-protocol" }
+ledger-transaction = { path = "../transaction" }
+ledger-accounts = { path = "../accounts" }
+ledger-currencies = { path = "../currencies" }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+serde = { version = "1", features = ["derive"] }
+utoipa = { version = "5", features = ["axum_extras"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+
+[dev-dependencies]
+# 测试专用边（spec #1086 明文裁决「测试工厂与器具以 dev-dependency 环供各域
+# 复用，Cargo 允许」）：域单测用根包的统一测试数据库工厂与共享断言
+# （test_support，ADR-0084）。dev-dependency 环由 Cargo 允许——测试目标与生产
+# 依赖图分离，不构成生产环；结构守门的依赖方向核对只辖生产依赖（本 crate 声明
+# tauri-app 为生产依赖即红，负向夹具见 check-structure.test.ts）。由于该环，
+# 本 crate 不能像协议 crate 那样以 `use tauri_app_lib::…` compile_fail 文档用例
+# 承载反向引用负向例（dev-dependency 对 doctest 可见，会击穿该形态）——反向
+# 引用的编译期拒绝由生产依赖面承担（lib 目标解析不到 dev-dependency），机器面
+# 负向核对住结构守门的 crate 依赖方向（ledger-accounts / ledger-merchants 同款
+# 留痕）。
+tauri-app = { path = "../.." }
+serde_json = "1"
+
+# 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+[lints]
+workspace = true
