@@ -15,7 +15,7 @@ import { useAppStore } from '@/stores/app'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import { useInputMode } from '@/composables/useInputMode'
-import { darkOverrides, lightOverrides } from '@/theme/overrides'
+import { darkOverrides, lightOverrides } from '@ledger/theme/overrides'
 import { t } from '@ledger/i18n'
 import type { TransactionSource } from '@ledger/types'
 
@@ -76,7 +76,7 @@ const displayName = computed(
 /** 软删保单不可点击（不提供落空的跳转）；其余来源可点击。 */
 const clickable = computed(() => props.source.status !== 'deleted')
 
-// 强调色与 MerchantLink/AccountLink 同源：theme/overrides.ts 单一来源，按当前主题取值。
+// 强调色与 MerchantLink/AccountLink 同源：@ledger/theme/overrides 单一来源，按当前主题取值。
 const accent = computed(() => {
   const common = app.theme === 'dark' ? darkOverrides.common : lightOverrides.common
   return {

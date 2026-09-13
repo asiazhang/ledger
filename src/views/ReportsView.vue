@@ -16,7 +16,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useReportsSessionStore } from '@/stores/reports-session'
 import { registerViewReset } from '@/composables/viewResetRegistry'
-import { kindSemanticColor } from '@/theme/semantic-colors'
+import { kindSemanticColor } from '@ledger/theme/semantic-colors'
 import {
   SOFT_BAR_PERCENTAGE,
   SOFT_BAR_RADIUS,
@@ -26,7 +26,7 @@ import {
   barEndAmountPlugin,
   softBarFillPlugin,
   softChartColors,
-} from '@/theme/chart-style'
+} from '@ledger/theme/chart-style'
 import { formatAmount, amountPrivacyEnabled } from '@ledger/money'
 import type { CategoryShare, MerchantSharesReport, MonthlySummary } from '@ledger/types'
 import {
@@ -59,7 +59,7 @@ const session = useReportsSessionStore()
 // 时同值守卫幂等无操作。
 registerViewReset(session.resetToDefault)
 // 月度收支图三根语义色柱随主题响应式换色（issue #435）：色值单一来源在
-// @/theme/semantic-colors，与交易列表/搜索金额列同源；barChartData 读
+// @ledger/theme/semantic-colors，与交易列表/搜索金额列同源；barChartData 读
 // app store 主题，切换外观即时重算，无需重建图表。
 const app = useAppStore()
 

@@ -7,6 +7,10 @@ import { fileURLToPath, URL } from 'node:url'
 const DOM_PACKAGE_TEST_GLOBS = [
   'packages/i18n/**/*.test.ts',
   'packages/storage/**/*.test.ts',
+  // theme 包（issue #1154）：theme-contract 测试断言根元素主题类换装（document.body）
+  // 与主题合同产出物捕获（@vanilla-extract/css/adapter 接缝），需 DOM 环境；同包
+  // 同目录的 design-tokens / semantic-colors 测试随同一登记整包落 jsdom。
+  'packages/theme/**/*.test.ts',
 ]
 
 export default defineConfig({

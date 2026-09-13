@@ -7,7 +7,7 @@ import { t } from '@ledger/i18n'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { useWindowTier } from '@/composables/useWindowTier'
-import { pnlSemanticColor } from '@/theme/semantic-colors'
+import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
 import { formatAmount } from '@ledger/money'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
 

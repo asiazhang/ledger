@@ -1,5 +1,5 @@
 import { globalStyle } from '@vanilla-extract/css'
-import { appVars } from '@/theme/app-theme.css.ts'
+import { appVars } from '@ledger/theme/app-theme.css.ts'
 
 /**
  * 记一笔悬浮按钮旁路样式（issue #846 / ADR-0088 决策 5，ADR-0093 样式方案）：

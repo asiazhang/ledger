@@ -1,5 +1,5 @@
 import { Chart as ChartJS, type Chart } from 'chart.js'
-import type { Theme } from '@/stores/app'
+import type { Theme } from './theme'
 import { formatAmount } from '@ledger/money'
 
 /**

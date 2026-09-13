@@ -8,7 +8,7 @@ import { formatAmount } from '@ledger/money'
 import type { Transaction, TransactionKind } from '@ledger/types'
 import type { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
-import { kindSemanticColor } from '@/theme/semantic-colors'
+import { kindSemanticColor } from '@ledger/theme/semantic-colors'
 import { t } from '@ledger/i18n'
 import AccountLink from '@/components/AccountLink.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
@@ -175,7 +175,7 @@ export function buildTransactionColumns(
       key: 'amount_native_cents',
       width: 125,
       // 金额按交易类型语义色着色（issue #435）：色值单一来源在
-      // @/theme/semantic-colors（六类型亮/暗两套）。主题在渲染时读取 app store
+      // @ledger/theme/semantic-colors（六类型亮/暗两套）。主题在渲染时读取 app store
       // 响应式取值：切换外观主题即时换色，无需重建列；借出/借入/收回/还款是
       // transfer 的派生视角（ADR-0053），随 transfer 同紫，不做派生级区分。
       // 单元格交互归 AmountCell（issue #843）：指针轴纯 span 零变化，触控轴

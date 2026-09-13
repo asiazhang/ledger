@@ -1,0 +1,27 @@
+{
+  "name": "@ledger/theme",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "主题包（issue #1154 / spec #1148 / ADR-0093 / issue #888）：语义色、中性设计令牌、组件库主题覆盖、vanilla-extract 主题合同（含 #888 运行时 adapter 接缝语义）与图表统一样式的唯一宿主；Theme 类型随包下移，应用壳反向从本包导入（全仓无第二处定义）。依赖方向：@ledger 范围内仅 → @ledger/types（TransactionKind）与 @ledger/money（formatAmount）；不依赖 stores / components / views / composables。源码直出，exports 按模块暴露——包名入口只出 Theme 类型，运行面走各模块子路径（不开运行期 barrel：naive-ui 与 vanilla-extract 的重模块面不扩散给全部消费文件），不建构建链；跨包引用必须命中 exports（check-frontend-structure.ts 守门）。",
+  "exports": {
+    ".": "./src/index.ts",
+    "./semantic-colors": "./src/semantic-colors.ts",
+    "./chart-style": "./src/chart-style.ts",
+    "./overrides": "./src/overrides.ts",
+    "./theme-contract": "./src/theme-contract.ts",
+    "./app-theme.css.ts": "./src/app-theme.css.ts",
+    "./sprinkles.css.ts": "./src/sprinkles.css.ts"
+  },
+  "dependencies": {
+    "@ledger/money": "workspace:*",
+    "@ledger/types": "workspace:*",
+    "@vanilla-extract/css": "^1.21.2",
+    "@vanilla-extract/sprinkles": "^1.7.1",
+    "chart.js": "^4.5.1",
+    "naive-ui": "^2.45.3"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.0"
+  }
+}

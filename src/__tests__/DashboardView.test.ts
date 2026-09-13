@@ -11,7 +11,7 @@ import { amountPrivacyEnabled, formatAmount } from '@ledger/money'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
 import { useAppStore } from '@/stores/app'
-import { pnlSemanticColor } from '@/theme/semantic-colors'
+import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
 import { NGrid, NProgress } from 'naive-ui'
 import {
   makeAccount,
