@@ -3129,6 +3129,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ledger-investment"
+version = "0.6.0"
+dependencies = [
+ "chrono",
+ "ledger-accounts",
+ "ledger-currencies",
+ "ledger-infra",
+ "ledger-sync-protocol",
+ "ledger-transaction",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri-app",
+ "utoipa",
+]
+
+[[package]]
 name = "ledger-item"
 version = "0.6.0"
 dependencies = [
@@ -5433,6 +5450,7 @@ dependencies = [
  "ledger-currencies",
  "ledger-dashboard",
  "ledger-infra",
+ "ledger-investment",
  "ledger-item",
  "ledger-merchants",
  "ledger-physical-asset",
