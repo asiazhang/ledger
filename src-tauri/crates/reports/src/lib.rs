@@ -1,5 +1,21 @@
-//! 报表域（issue #92 创建，issue #57 迁移 Amount 口径；#405 域目录化 ADR-0056）：
-//! 聚合分析读模型——月度汇总、分类聚合、商户排行与报表日期极值。
+// 测试整体豁免（ADR-0060）：clippy 六件套 deny 仅约束生产路径；单元测试目标
+// （含 src/** 内 #[cfg(test)] 模块与外挂 tests.rs）经 crate 根 cfg(test) 整体
+// 放行，生产构建零放宽。
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable
+    )
+)]
+
+//! 报表领域 crate（Report，issue #92 创建，issue #57 迁移 Amount 口径；#405 域
+//! 目录化 ADR-0056；spec #1086 / issue #1103 自根包域目录拆出，P3 叶子业务域
+//! crate）：聚合分析读模型——月度汇总、分类聚合、商户排行与报表日期极值。
 //!
 //! 金额口径全部由 `transaction::amount` 的 kind→度量矩阵单一真源驱动：
 //! - 月度汇总毛值三列：income = `income_net`（收入+分红）、
@@ -23,8 +39,20 @@
 //! 核心函数吃 `&Connection` 可直接单测；IPC 参数解包与连接锁管理在壳层
 //! `commands::reports`（#405 压平为单文件纯壳）。注册路径与前端调用零改动。
 //!
-//! 依赖方向恒为「壳层 → reports → 基础设施」，本模块不反向依赖壳层；
-//! 对 `transaction::amount` 的消费属域间横向依赖（ADR-0056 决策 2 允许）。
+//! 依赖方向（spec #1086 / issue #1103 AC）：本 crate 消费基础设施与核心交易域
+//!（`ledger-infra` / `ledger-transaction`，允许集「基础设施、协议、核心交易域」
+//! 的子集）——汇总口径由核心交易域 kind→度量矩阵单一真源驱动，属上层域对底层
+//! 域的合法单向依赖；本域是纯读模型、无同步命令，对同步协议 crate 亦零生产
+//! 依赖，无接缝无注册点、壳层启动零接线。对根包（壳层）与同步域零直接依赖，
+//! 反向引用由 cargo 依赖图编译期拒绝（生产依赖面无根包，dev-dependency 环只
+//! 覆盖测试目标；机器面负向核对住结构守门的 crate 依赖方向，Cargo.toml 注释
+//! 留痕）。
+//!
+//! **测试实例纪律（dev-dependency 环双实例，ledger-transaction/#1092 同款）**：
+//! `cargo test -p ledger-reports` 的依赖图内存在本 crate 的两份实例——被测本
+//! 实例与根包图内实例（静态与类型身份分离）。本域是纯读路径、不读任何接缝
+//! 注册静态，域单测直接驱动本实例；经壳层的旅程由根包侧三层测试（API/命令
+//! 集成、e2e BDD）走根包图实例覆盖，断言与场景文本零改动。
 
 #[cfg(test)]
 mod tests;
@@ -35,9 +63,9 @@ pub use model::{CategoryShare, DateRange, MerchantShare, MerchantSharesReport, M
 
 use rusqlite::Connection;
 
-use crate::db::query::query_all;
-use crate::error::Result;
-use crate::transaction::amount::{
+use ledger_infra::db::query::query_all;
+use ledger_infra::error::Result;
+use ledger_transaction::amount::{
     Measure, contributing_kinds_sql, expense_gross_expr, expense_net_expr, income_net_expr,
     refund_gross_expr,
 };

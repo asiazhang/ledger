@@ -108,7 +108,6 @@ export type Layer = (typeof LAYER)[keyof typeof LAYER]
 export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'item', layer: '域目录', note: '物品域（#397 阶段 1 归位，主体自 commands/item 随迁）' },
   { path: 'investment', layer: '域目录', note: '投资域（#401 阶段 5 归位，主体自 commands/investment 随迁；价格写入单点自 sync/persist 迁入）' },
-  { path: 'reports', layer: '域目录', note: '报表域（#405 归位，月度汇总/分类/商户/日期极值聚合读模型，消费 transaction::amount 矩阵）' },
   { path: 'dashboard', layer: '域目录', note: '仪表盘域（#405 归位，全仓净资产跨币种折算聚合）' },
   { path: 'sync', layer: '域目录', note: '行情同步域（#407 归位，HTTP 爬取/东财基金净值/同步编排自 commands/sync 随迁；全量修字典翼已退役，issue #698）' },
   { path: 'sync_engine', layer: '域目录', note: '多端同步域（issue #855 新建即归位，ADR-0091 OpLog 基座；与行情同步域 sync 相邻不同域）' },
@@ -411,6 +410,25 @@ export const PHYSICAL_ASSET_MODULES: readonly WhitelistEntry[] = [
 export const PHYSICAL_ASSET_SRC_REL = 'crates/physical-asset/src'
 
 /**
+ * 报表域 crate 的模块清单（spec #1086 / issue #1103）：路径相对
+ * `src-tauri/crates/reports/src`。P3 叶子业务域 crate——聚合分析读模型（月度
+ * 汇总/分类聚合/商户消费排行/报表日期极值），汇总口径全部由核心交易域
+ * kind→度量矩阵单一真源驱动。依赖面只有基础设施与核心交易域（允许集
+ * 「基础设施、协议、核心交易域」的子集——本域是纯读模型、无同步命令，对同步
+ * 协议 crate 亦零生产依赖），无接缝无注册点、壳层启动零接线；对壳层与同步域
+ * 零容忍照扫（与备份/交易 crate 同款，清单条目 layer 为域目录即入业务域扫描
+ * 面）；反向引用由 cargo 依赖图拒绝（生产依赖面无根包，dev-dependency 环只
+ * 覆盖测试目标）。crate 根 lib.rs 是声明与再导出面（无守门靶向代码），与
+ * 协议/备份/交易 crate 同款不入清单；tests.rs 为测试豁免形态不入清单。
+ */
+export const REPORTS_MODULES: readonly WhitelistEntry[] = [
+  { path: 'model.rs', layer: '域目录', note: '报表读模型（#421 随域归位）：月度汇总行 / 分类份额 / 商户排行行与载荷 / 日期极值对' },
+]
+
+/** 报表域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-reports.dir 同源。 */
+export const REPORTS_SRC_REL = 'crates/reports/src'
+
+/**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
  * 与上面的 `LAYER`（单 crate 内的**模块路径**分层：域目录 / 基础设施）刻意分开——
  * 两者是不同粒度的事实源，同名值不合并（合并只会让任一侧语义被动漂移）。
@@ -527,6 +545,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/physical-asset',
     layer: CRATE_LAYER.DOMAIN,
     note: '实物资产域 crate（#1102，P3 叶子业务域 crate：大件实物估值档案的建档/编辑/估值追加/处置/软删除，估值必填 = 首条估值历史行）；依赖面只有基础设施、同步协议与核心交易域——当前估值折本位币消费交易域 Amount 口径（域间横向依赖，ADR-0056 决策 2 允许），无接缝无注册点、壳层启动零接线（失效信号 notify 回调注入），对壳层与同步域零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
+  },
+  {
+    name: 'ledger-reports',
+    dir: 'crates/reports',
+    layer: CRATE_LAYER.DOMAIN,
+    note: '报表域 crate（#1103，P3 叶子业务域 crate：聚合分析读模型——月度汇总/分类聚合/商户消费排行/报表日期极值）；依赖面只有基础设施与核心交易域（汇总口径消费 kind→度量矩阵，reports → transaction 单向；允许集「基础设施、协议、核心交易域」的子集，纯读模型无同步命令），无接缝无注册点、壳层启动零接线，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
   },
 ]
 
@@ -1855,6 +1879,7 @@ function main(): void {
       ...collectRustFiles(join(srcTauriDir, SCHEDULED_SRC_REL), SCHEDULED_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, BUDGET_SRC_REL), BUDGET_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, PHYSICAL_ASSET_SRC_REL), PHYSICAL_ASSET_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, REPORTS_SRC_REL), REPORTS_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -1917,6 +1942,7 @@ function main(): void {
   scannedFiles += scanModuleEntries(SCHEDULED_MODULES, join(srcTauriDir, SCHEDULED_SRC_REL), problems)
   scannedFiles += scanModuleEntries(BUDGET_MODULES, join(srcTauriDir, BUDGET_SRC_REL), problems)
   scannedFiles += scanModuleEntries(PHYSICAL_ASSET_MODULES, join(srcTauriDir, PHYSICAL_ASSET_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(REPORTS_MODULES, join(srcTauriDir, REPORTS_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -1958,6 +1984,7 @@ function main(): void {
       `+ 定时计划域模块 ${SCHEDULED_MODULES.length} 项（crate ${SCHEDULED_SRC_REL}，#1098）` +
       `+ 预算域模块 ${BUDGET_MODULES.length} 项（crate ${BUDGET_SRC_REL}，#1101）` +
       `+ 实物资产域模块 ${PHYSICAL_ASSET_MODULES.length} 项（crate ${PHYSICAL_ASSET_SRC_REL}，#1102）` +
+      `+ 报表域模块 ${REPORTS_MODULES.length} 项（crate ${REPORTS_SRC_REL}，#1103）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +

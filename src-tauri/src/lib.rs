@@ -60,7 +60,12 @@ pub use ledger_physical_asset as physical_asset;
 // 放分派与 e2e 的 `crate::policy::…` / `tauri_app_lib::policy::…` 调用点零改动
 //（expand 形态，ledger-transaction 同款）。域内本体见 `ledger-policy` crate。
 pub use ledger_policy as policy;
-pub mod reports;
+// 报表域 crate（spec #1086 / issue #1103，P3 叶子业务域 crate）：聚合分析读模型
+//（月度汇总/分类聚合/商户排行/日期极值）自根包域目录拆出，根包以再导出形态
+// 保留原引用路径——壳层（IPC 命令）、ledger-perf 基准与 e2e 的
+// `crate::reports::…` / `tauri_app_lib::reports::…` 调用点零改动
+//（expand 形态，ledger-transaction 同款）。域内本体见 `ledger-reports` crate。
+pub use ledger_reports as reports;
 // 定时计划域 crate（spec #1086 / issue #1098，P3 业务域）：自根包域目录拆出，
 // 根包以再导出形态保留原引用路径——壳层（IPC/HTTP 命令）、双向接缝接线
 //（计划来源反查实现、期次落账置脏注册点、追补触发实现）、sync_engine 重放分派、
