@@ -11,6 +11,9 @@ import {
   getSavedContainment,
   saveContainmentLists,
   clearContainment,
+  getSavedClosedFeatures,
+  saveClosedFeatures,
+  clearClosedFeatures,
 } from '@/utils/view-state'
 
 describe('view-state route', () => {
@@ -137,5 +140,37 @@ describe('view-state sidebarContainment 写路径（issue #472）', () => {
 
   it('clearContainment 对不存在的 key 不报错', () => {
     expect(() => clearContainment()).not.toThrow()
+  })
+})
+
+describe('view-state closedFeatures（issue #1241：key 与读写助手，解析归 feature-toggles store）', () => {
+  it('无记录时返回 null', () => {
+    expect(getSavedClosedFeatures()).toBeNull()
+  })
+
+  it('saveClosedFeatures 写入数组 JSON，getSavedClosedFeatures 读回原始值', () => {
+    saveClosedFeatures(['investments', 'scheduled'])
+    expect(localStorage.getItem(VIEW_STATE_KEYS.closedFeatures)).toBe('["investments","scheduled"]')
+    expect(getSavedClosedFeatures()).toEqual(['investments', 'scheduled'])
+  })
+
+  it('脏形状原样透传（由解析防御整体回退全开），损坏的 JSON 回退 null', () => {
+    localStorage.setItem(VIEW_STATE_KEYS.closedFeatures, '"x"')
+    expect(getSavedClosedFeatures()).toBe('x')
+    localStorage.setItem(VIEW_STATE_KEYS.closedFeatures, 'not-json{')
+    expect(getSavedClosedFeatures()).toBeNull()
+  })
+})
+
+describe('view-state closedFeatures 写路径（issue #1241：空集合删记录）', () => {
+  it('clearClosedFeatures 移除 key，回退无记录态', () => {
+    saveClosedFeatures(['investments'])
+    clearClosedFeatures()
+    expect(localStorage.getItem(VIEW_STATE_KEYS.closedFeatures)).toBeNull()
+    expect(getSavedClosedFeatures()).toBeNull()
+  })
+
+  it('clearClosedFeatures 对不存在的 key 不报错', () => {
+    expect(() => clearClosedFeatures()).not.toThrow()
   })
 })

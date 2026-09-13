@@ -1,5 +1,5 @@
 // 视图状态（ViewState）持久化：当前视图、侧边栏折叠、侧栏组内顺序（issue #359）、
-// 每组收纳清单（issue #472 / ADR-0063）。
+// 每组收纳清单（issue #472 / ADR-0063）、已关闭功能清单（issue #1241 / ADR-0116）。
 // 约定：key 统一加 'view_state:' 前缀，与偏好（'appearance' 等）及业务数据（SQLite）分域。
 // 边界：不做"过度记忆"（筛选、滚动位置、列宽等一律不持久化）。
 
@@ -10,6 +10,7 @@ export const VIEW_STATE_KEYS = {
   sidebarCollapsed: 'view_state:sidebar_collapsed',
   sidebarOrder: 'view_state:sidebar_order',
   sidebarContainment: 'view_state:sidebar_containment',
+  closedFeatures: 'view_state:closed_features',
 } as const
 
 /** 上次所在视图的路由 name；无记录或数据损坏时返回 null（由调用方回退默认路由）。 */
@@ -68,4 +69,23 @@ export function saveContainmentLists(lists: unknown) {
 /** 清除收纳清单存储（恢复默认排序连收纳一起复位），回退无记录态。 */
 export function clearContainment() {
   removeLocal(VIEW_STATE_KEYS.sidebarContainment)
+}
+
+/**
+ * 已存「已关闭功能」清单（原始值，issue #1241 / ADR-0116）；无记录或数据损坏时返回 null。
+ * 与侧栏顺序、收纳清单同族：脏形状整体回退全开、非法 id 过滤、去重等解析防御
+ * 归 feature-toggles store parseClosedFeatures，此处不解析。
+ */
+export function getSavedClosedFeatures(): unknown {
+  return loadLocal<unknown>(VIEW_STATE_KEYS.closedFeatures, null)
+}
+
+/** 持久化「已关闭功能」清单（点选即写，写路径唯一出处）：数组形状。空集合不写、改走 clear。 */
+export function saveClosedFeatures(list: unknown) {
+  saveLocal(VIEW_STATE_KEYS.closedFeatures, list)
+}
+
+/** 清除「已关闭功能」存储（关闭集合清空即回默认全开），回退无记录态。 */
+export function clearClosedFeatures() {
+  removeLocal(VIEW_STATE_KEYS.closedFeatures)
 }

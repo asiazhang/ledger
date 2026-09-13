@@ -10,7 +10,7 @@ import { t } from '@ledger/i18n'
  * 侧栏为分组形态（issue #359 / ADR-0051）：组与组序固定（记账/资产/洞察），组内序可排
  * （右键菜单）且持久化对象收窄为组内序；分组标题不占键位、不参与排序与计数。
  * store 只持状态与写路径；键位带推导与键盘注册留守 useViewShortcuts（对 store 只读消费），
- * view-state.ts 仍是 view_state:* 四键唯一注册表，本 store 为 sidebar_order /
+ * view-state.ts 仍是 view_state:* 键注册表（唯一 key 注册处），本 store 为 sidebar_order /
  * sidebar_containment 两键唯一读写方（启动读 + 点选即写）。
  */
 
