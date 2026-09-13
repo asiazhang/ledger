@@ -14,7 +14,7 @@ use std::borrow::Cow;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use ledger_infra::error::Result;
 use ledger_sync_protocol::command::SyncCommand;
 use ledger_sync_protocol::op::record_local as record_op;
 
@@ -107,8 +107,10 @@ pub(crate) fn record_policy_local(conn: &Connection, command: PolicyCommand) -> 
     Ok(())
 }
 
-/// 重放执行（同步引擎分派接缝）：与本地写同一执行协议。
-pub(crate) fn replay_policy_command(conn: &Connection, command: &PolicyCommand) -> Result<()> {
+/// 重放执行（同步引擎分派接缝）：与本地写同一执行协议。crate 拆分后跨 crate
+/// 消费：sync_engine::registry 经根包再导出面分派（#1100，pub(crate)→pub，
+/// 签名与语义不变，#1092 replay_command 同款）。
+pub fn replay_policy_command(conn: &Connection, command: &PolicyCommand) -> Result<()> {
     match command {
         PolicyCommand::Create { id, row } => super::crud::replay_create(conn, id, row),
         PolicyCommand::Update { id, row } => super::crud::replay_update(conn, id, row),
@@ -159,8 +161,10 @@ pub(crate) fn record_insurer_local(conn: &Connection, command: InsurerCommand) -
     Ok(())
 }
 
-/// 重放执行（同步引擎分派接缝）：与本地写同一执行协议。
-pub(crate) fn replay_insurer_command(conn: &Connection, command: &InsurerCommand) -> Result<()> {
+/// 重放执行（同步引擎分派接缝）：与本地写同一执行协议。crate 拆分后跨 crate
+/// 消费：sync_engine::registry 经根包再导出面分派（#1100，pub(crate)→pub，
+/// 签名与语义不变，#1092 replay_command 同款）。
+pub fn replay_insurer_command(conn: &Connection, command: &InsurerCommand) -> Result<()> {
     match command {
         InsurerCommand::Create { id, name } => super::insurer::replay_create(conn, id, name),
         InsurerCommand::Update { id, name } => super::insurer::replay_update(conn, id, name),

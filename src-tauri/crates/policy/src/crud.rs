@@ -6,10 +6,10 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::command::{PolicyCommand, PolicyCommandRow, record_policy_local};
 use super::model::{Policy, PolicyInput, PolicySourceDisplay};
-use crate::db::query::{query_all, query_one};
-use crate::db::tx_scope::ensure_transaction;
-use crate::db::{new_uuid, now_iso};
-use crate::error::{AppError, Result};
+use ledger_infra::db::query::{query_all, query_one};
+use ledger_infra::db::tx_scope::ensure_transaction;
+use ledger_infra::db::{new_uuid, now_iso};
+use ledger_infra::error::{AppError, Result};
 use ledger_sync_protocol::device::device_id;
 
 use super::validation::validate_input;
@@ -242,19 +242,19 @@ pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
 fn policy_source_resolver(
     conn: &Connection,
     policy_ids: &[String],
-) -> Result<HashMap<String, crate::transaction::TransactionSource>> {
+) -> Result<HashMap<String, ledger_transaction::TransactionSource>> {
     Ok(source_display_by_ids(conn, policy_ids)?
         .into_iter()
         .map(|row| {
             (
                 row.id.clone(),
-                crate::transaction::TransactionSource {
-                    kind: crate::transaction::TransactionSourceKind::Policy,
+                ledger_transaction::TransactionSource {
+                    kind: ledger_transaction::TransactionSourceKind::Policy,
                     entity_id: row.id.clone(),
                     display_name: row.product_name.clone(),
                     status: row
                         .is_deleted
-                        .then_some(crate::transaction::TransactionSourceStatus::Deleted),
+                        .then_some(ledger_transaction::TransactionSourceStatus::Deleted),
                 },
             )
         })
@@ -264,5 +264,5 @@ fn policy_source_resolver(
 /// 注册保单直挂反查实现（幂等：进程级一次，重复注册保留首次）。调用点在壳层
 /// 启动接线与测试建库单点，与生产同形；业务代码不直接调用。
 pub fn install_source_hook() {
-    crate::transaction::seams::source::register_policy_source_resolver(policy_source_resolver);
+    ledger_transaction::seams::source::register_policy_source_resolver(policy_source_resolver);
 }

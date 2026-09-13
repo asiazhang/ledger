@@ -19,6 +19,8 @@ import {
   INFRA_SRC_REL,
   MERCHANTS_MODULES,
   MERCHANTS_SRC_REL,
+  POLICY_MODULES,
+  POLICY_SRC_REL,
   PROTOCOL_MODULES,
   PROTOCOL_SRC_REL,
   TRANSACTION_MODULES,
@@ -82,6 +84,7 @@ function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, CATEGORIES_SRC_REL), CATEGORIES_MODULES)
   writeModuleStubs(join(srcTauri, MERCHANTS_SRC_REL), MERCHANTS_MODULES)
   writeModuleStubs(join(srcTauri, CURRENCIES_SRC_REL), CURRENCIES_MODULES)
+  writeModuleStubs(join(srcTauri, POLICY_SRC_REL), POLICY_MODULES)
 }
 
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
@@ -138,6 +141,15 @@ function isCurrenciesModulePath(rel: string): boolean {
   return CURRENCIES_ENTRY_PATHS.has(rel)
 }
 
+/** 保单域 crate 模块路径判定（精确文件名，#1100；`command.rs` / `model.rs` 与
+ *  交易域清单、`crud.rs` 与商户域清单撞名，路由优先级归先登记的 crate，夹具
+ *  对保单域只用无撞名的 `insurer.rs` / `stats.rs` / `validation.rs`）。 */
+const POLICY_ENTRY_PATHS = new Set(POLICY_MODULES.map((m) => m.path))
+
+function isPolicyModulePath(rel: string): boolean {
+  return POLICY_ENTRY_PATHS.has(rel)
+}
+
 /**
  * 写覆盖文件：按路径首段归位——基础设施模块（`db/…` / `error.rs` / …）落
  * `<srcTauri>/crates/infra/src`，备份域 crate 模块（`auto.rs` / `engine.rs`，#1091）
@@ -162,6 +174,8 @@ function placeOverride(srcTauri: string, relPath: string, content: string): void
           ? join(srcTauri, MERCHANTS_SRC_REL)
         : isCurrenciesModulePath(relPath)
           ? join(srcTauri, CURRENCIES_SRC_REL)
+        : isPolicyModulePath(relPath)
+          ? join(srcTauri, POLICY_SRC_REL)
           : join(srcTauri, 'src')
   const file = join(base, relPath)
   mkdirSync(join(file, '..'), { recursive: true })
@@ -770,6 +784,8 @@ interface CrateFixtureOverrides {
   merchantsManifest?: string
   /** 覆盖币种域 crate 的 `crates/currencies/Cargo.toml`（依赖方向负向夹具，#1095） */
   currenciesManifest?: string
+  /** 覆盖保单域 crate 的 `crates/policy/Cargo.toml`（依赖方向负向夹具，#1100） */
+  policyManifest?: string
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string
   /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
@@ -1046,6 +1062,28 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   )
   writeFileSync(join(srcTauri, 'crates', 'currencies', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
+  // 保单域 crate（#1100，P3 叶子业务域 crate）：夹具与真实仓库同形——成员目录 +
+  // 门禁继承 + dev-dependency 测试环。
+  mkdirSync(join(srcTauri, 'crates', 'policy', 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'crates', 'policy', 'Cargo.toml'),
+    overrides.policyManifest ??
+      [
+        '[package]',
+        'name = "ledger-policy"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[dev-dependencies]',
+        'tauri-app = { path = "../.." }',
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
+  )
+  writeFileSync(join(srcTauri, 'crates', 'policy', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
   writeFileSync(
@@ -1251,6 +1289,66 @@ describe('check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
     expect(r.status).toBe(1)
     expect(r.output).toContain('crate 依赖方向')
     expect(r.output).toContain('ledger-currencies')
+  })
+})
+
+describe('check-structure 保单域 crate（#1100 P3 叶子业务域 crate 自根包拆出）', () => {
+  it('真实仓库默认通过：保单域 crate 模块级扫描入摘要', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`保单域模块 ${POLICY_MODULES.length} 项`)
+  })
+
+  it('保单域 crate 模块引用壳层 → 红并定位文件行号', () => {
+    // 'stats.rs' 无撞名（command.rs / model.rs 与交易域清单、crud.rs 与商户域
+    // 清单撞名，路由优先级归先登记的 crate），经 placeOverride 落保单域 crate。
+    const args = makeFixture({ 'stats.rs': shellUse })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('反向依赖')
+    expect(r.output).toContain('stats.rs:1')
+  })
+
+  it('保单域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）', () => {
+    const args = makeFixture({
+      'stats.rs': 'use tauri_app_lib::sync_engine::engine::ReplayEffect;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域')
+    expect(r.output).toContain('stats.rs:1')
+  })
+
+  it('保单域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1100）', () => {
+    const args = makeCrateFixture({
+      policyManifest:
+        '[package]\nname = "ledger-policy"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 依赖方向')
+    expect(r.output).toContain('ledger-policy')
+  })
+
+  it('保单域 crate 生产依赖核心交易域 crate → 绿（域→域合法上层依赖，接缝实现注册侧，#1092）', () => {
+    // 交易×保单接缝（来源列①反查）的实现注册是保单 → 核心交易的单向依赖（#1092
+    // 挂载点⑤反转后的合法方向），依赖面受 AC 约束（基础设施/协议/核心交易域），
+    // 不属禁边。
+    const args = makeCrateFixture({
+      policyManifest:
+        '[package]\nname = "ledger-policy"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\nledger-transaction = { path = "../transaction" }\n\n' +
+        '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('保单域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
+    // 缺省 policyManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
   })
 })
 

@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::query::FromRow;
+use ledger_infra::db::query::FromRow;
 
 /// 保单实体（读模型，全字段）。
 #[derive(Debug, Clone, Serialize, Deserialize)]

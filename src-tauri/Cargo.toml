@@ -118,6 +118,12 @@ ledger-merchants = { path = "crates/merchants" }
 # 壳层启动时对装。根包 `pub use ledger_currencies as currencies` 再导出保持原
 # 调用点路径。
 ledger-currencies = { path = "crates/currencies" }
+# 保单域 crate（spec #1086 / issue #1100，P3 叶子业务域 crate）：保单静态档案
+# CRUD、保司字典与保单视角统计归位；依赖面只有基础设施、同步协议与核心交易域
+# ——统计读路径消费 kind→度量矩阵与折算口径，交易×保单接缝（#1092）的实现注
+# 册侧住本域，壳层启动时对装。根包 `pub use ledger_policy as policy` 再导出保
+# 持原调用点路径。
+ledger-policy = { path = "crates/policy" }
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]
