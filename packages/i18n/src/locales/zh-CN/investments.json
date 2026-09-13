@@ -169,10 +169,6 @@
     "nyse": "美股",
     "amex": "美股"
   },
-  "source": {
-    "eastmoney": "同步",
-    "manual": "手动"
-  },
   "priceChannel": {
     "quote": "行情",
     "fund_nav": "净值",

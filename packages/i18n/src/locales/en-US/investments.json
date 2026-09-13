@@ -169,10 +169,6 @@
     "nyse": "US Stocks",
     "amex": "US Stocks"
   },
-  "source": {
-    "eastmoney": "Synced",
-    "manual": "Manual"
-  },
   "priceChannel": {
     "quote": "Quote",
     "fund_nav": "NAV",

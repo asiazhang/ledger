@@ -37,11 +37,9 @@ export type AddInstrumentChannel = 'sh' | 'sz' | 'hk' | 'us' | 'fund' | 'custom'
 /** 标的类型闭集；显示标签在文案资源 investments.type.*（i18n，ADR-0049） */
 export const INSTRUMENT_TYPES: InstrumentType[] = ['stock', 'fund', 'bond', 'etf', 'other']
 
-/** 字典条目来源（自建标的，ADR-0036）：与价格侧 source 同词表但语义正交，随行终身不变 */
+/** 字典条目来源（自建标的，ADR-0036）：与价格侧 source 同词表但语义正交，随行终身不变；
+ * 唯一功能消费是删除准入（仅手动行可删），不进用户可见列表（issue #1189）。 */
 export type InstrumentSource = 'eastmoney' | 'manual'
-
-/** 字典来源闭集；显示标签在文案资源 investments.source.*（i18n，ADR-0049） */
-export const INSTRUMENT_SOURCES: InstrumentSource[] = ['eastmoney', 'manual']
 
 /** 价格列刻度（ADR-0038）：投资域 price_cents 为万分之一元（元 × 10000），金额列仍是整数分 */
 export interface Instrument extends Syncable {
