@@ -9,6 +9,7 @@ import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vu
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
 import { amountPrivacyEnabled } from '@ledger/money'
 import { useReferenceStore } from '@/stores/reference'
+import { useInvestmentsSessionStore } from '@/stores/investments-session'
 import { makeInstrument } from './factories'
 import type {
   CategoryShare,
@@ -337,9 +338,9 @@ describe('投资趋势面：组合 / 单标的（y 轴刻度 / tooltip 同源掩
   })
 
   it('单标的模式（价格刻度 formatPrice）开启恒掩码，关闭态与现状逐字符一致', async () => {
-    const wrapper = mount(PortfolioTrendPanel, {
-      props: { entryInstrument: stockInstrument },
-    })
+    // 走势入口写会话 store（标的列表「走势」按钮同款，issue #1192 起面板无入口 props）
+    useInvestmentsSessionStore().showTrendInstrument(stockInstrument)
+    const wrapper = mount(PortfolioTrendPanel)
     await flushPromises()
     const options = wrapper.findComponent({ name: 'Line' }).props('options') as ChartOptions<'line'>
     const tick = linearTick(options, 'y')

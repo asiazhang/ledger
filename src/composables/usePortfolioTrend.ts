@@ -1,6 +1,12 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '@ledger/api'
 import { usePricesChanged } from '@/composables/usePricesChanged'
+import {
+  TREND_MODE_DEFAULT,
+  useInvestmentsSessionStore,
+  type TrendRangePreset,
+  type TrendViewMode,
+} from '@/stores/investments-session'
 import type {
   Instrument,
   InstrumentPriceTrend,
@@ -8,8 +14,9 @@ import type {
   TrendRange,
 } from '@ledger/types'
 
-/** 走势预设区间：1 月 / 3 月 / 1 年 / 全部（ADR-0019） */
-export type TrendRangePreset = '1m' | '3m' | '1y' | 'all'
+/** 走势预设区间与视图模式闭集随状态迁入投资页会话 store（issue #1192）；
+ * 此处再导出维持既有导入路径（消费方经本模块取用），不制造第二口径。 */
+export type { TrendRangePreset, TrendViewMode } from '@/stores/investments-session'
 
 export const TREND_RANGE_PRESETS: { value: TrendRangePreset; labelKey: string }[] = [
   { value: '1m', labelKey: 'investments.trend.range1m' },
@@ -17,9 +24,6 @@ export const TREND_RANGE_PRESETS: { value: TrendRangePreset; labelKey: string }[
   { value: '1y', labelKey: 'investments.trend.range1y' },
   { value: 'all', labelKey: 'investments.trend.rangeAll' },
 ]
-
-/** 走势视图模式：组合市值曲线 ↔ 单标的曲线同视图切换 */
-export type TrendMode = 'portfolio' | 'instrument'
 
 /** 某月天数（month 1-12） */
 function daysInMonth(year: number, month: number): number {
@@ -89,9 +93,6 @@ export function isTrendEmpty(points: { date: string; value: number }[]): boolean
   return points.length === 0
 }
 
-/** 默认预设区间：近一年（两年回填的中间视角，其余区间一键切换） */
-const DEFAULT_PRESET: TrendRangePreset = '1y'
-
 /** 单标的字典每页条数上限（list_instruments 单页上限，用于走势面板标的下拉） */
 const INSTRUMENT_FETCH_LIMIT = 500
 
@@ -99,12 +100,27 @@ const INSTRUMENT_FETCH_LIMIT = 500
  * 投资资产走势数据层（issue #139 / ADR-0019）：收口组合 / 单标的两种走势的
  * 获取与转换。查询区间由预设区间派生；数据由 T3 命令给出（区间裁剪、首有效
  * 点起始在后端完成），此处只做点位映射与空态判定。
+ *
+ * issue #1192 起「哪个模式 / 哪只标的 / 哪个预设区间」住投资页会话状态 store
+ * （ADR-0094 会话内保留）：切走页签再回来仍是离开时的那个标的，冷启动回默认
+ * 组合曲线、近一年。本工厂退为薄适配——状态投影转交会话 store（`instrument`
+ * 为 store 选中标的的投影，供面板渲染与取数共用同一 id），数据拉取、同键去重、
+ * 竞态治愈与价格失效信号重拉仍在实例内（每趟进入现拉，保留的是选择不是快照）。
  */
 export function usePortfolioTrend() {
-  const preset = ref<TrendRangePreset>(DEFAULT_PRESET)
-  const mode = ref<TrendMode>('portfolio')
-  /** 单标的模式下当前标的；null 表示尚未选择 */
-  const instrument = ref<Instrument | null>(null)
+  const session = useInvestmentsSessionStore()
+  // 状态投影是 store 的只读 ref：对外保留「可写 ref」形态（既有消费方与测试
+  // 零迁移），写回经 store 的意图入口转交，规则仍单点在 store 内。
+  const preset = computed<TrendRangePreset>({
+    get: () => session.trendPreset,
+    set: (value) => session.setTrendPreset(value),
+  })
+  const mode = computed<TrendViewMode>({
+    get: () => session.trendMode,
+    set: (value) => session.setTrendMode(value),
+  })
+  /** 当前选中标的（会话 store 是唯一事实源；null = 尚未选择） */
+  const instrument = computed<Instrument | null>(() => session.trendInstrument)
 
   const loading = ref(false)
   const portfolioTrend = ref<PortfolioValueTrend | null>(null)
@@ -167,13 +183,12 @@ export function usePortfolioTrend() {
 
   /** 切到单标的曲线（标的列表「走势」入口与面板下拉共用） */
   function showInstrument(inst: Instrument) {
-    mode.value = 'instrument'
-    instrument.value = inst
+    session.showTrendInstrument(inst)
   }
 
   /** 切回组合市值曲线 */
   function showPortfolio() {
-    mode.value = 'portfolio'
+    mode.value = TREND_MODE_DEFAULT
   }
 
   // 内部自动刷新（watch / 挂载首刷 / 价格失效信号）治愈失败：不再产生未处理

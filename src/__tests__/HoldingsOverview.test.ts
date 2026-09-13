@@ -781,7 +781,7 @@ describe('HoldingsOverview 客户端分页（issue #912）', () => {
     expect((await cellText('symbol'))[0]).toBe('001')
   })
 
-  it('页码与三维状态同瞬态：卸载重挂回第一页（离开视图回默认）', async () => {
+  it('页码随会话保留（issue #1192）：卸载重挂留在离开时的第二页', async () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
     await goToPage(2)
@@ -789,8 +789,33 @@ describe('HoldingsOverview 客户端分页（issue #912）', () => {
     wrapper.unmount()
     wrapper = mount(HoldingsOverview)
     await flushPromises()
-    expect(await cellText('symbol')).toHaveLength(20)
-    expect(wrapper.findAll('.n-pagination-item--active').map((el) => el.text())).toEqual(['1'])
+    expect(await cellText('symbol')).toHaveLength(5)
+    expect(wrapper.findAll('.n-pagination-item--active').map((el) => el.text())).toEqual(['2'])
+  })
+
+  it('恢复页码超出有效范围时钳制：数据缩到 1 页后不落空页、页码回第 1 页（issue #1192）', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    await goToPage(2)
+    expect(await cellText('symbol')).toHaveLength(5)
+    wrapper.unmount()
+    // 离开期间持仓缩到 15 行（单页；分页条随之收起，恢复的页码 2 已越界）
+    const shrunk = PAGE_HOLDINGS.slice(0, 15)
+    wireInvokeSeam({
+      defaults: {
+        ...PAGE_DEFAULTS,
+        list_holdings: shrunk,
+        list_instruments: { items: PAGE_INSTRUMENTS.slice(0, 15), total: 15 },
+      },
+      overrides: { list_accounts: PAGE_ACCOUNTS },
+    })
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    // 恢复页码 2 但只有 1 页：钳制后展示第 1 页全量 15 行，不落空页、不残留越界页码
+    expect(await cellText('symbol')).toHaveLength(15)
+    expect((await cellText('symbol'))[0]).toBe('001')
+    // 单一页码时不渲染分页条（既有形态），行集本身即第 1 页全量
+    expect(wrapper.find('.n-pagination').exists()).toBe(false)
   })
 
   it('单页行集不出现分页条（4 行三维过滤夹具回归不变）', async () => {

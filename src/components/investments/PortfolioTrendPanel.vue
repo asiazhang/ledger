@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed } from 'vue'
 import { NEmpty, NRadio, NRadioGroup, NSpace, NSpin, NText } from 'naive-ui'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { Line } from 'vue-chartjs'
@@ -14,23 +14,12 @@ import {
   TREND_RANGE_PRESETS,
   usePortfolioTrend,
 } from '@/composables/usePortfolioTrend'
-import type { Instrument } from '@ledger/types'
-
-// 标的列表「走势」入口带入的标的（单标的模式起点）；面板内也可经下拉切换
-const props = defineProps<{
-  entryInstrument?: Instrument | null
-}>()
 
 const reference = useReferenceStore()
+// 走势的选择（模式 / 选中标的 / 预设区间）住投资页会话状态 store（issue #1192，
+// ADR-0094 会话内保留）：标的列表「走势」入口与 focus 落点写 store，面板读同一
+// 事实源——页签重挂后仍是离开时的那个标的，组件不再持入口 props。
 const trend = usePortfolioTrend()
-
-watch(
-  () => props.entryInstrument,
-  (inst) => {
-    if (inst) trend.showInstrument(inst)
-  },
-  { immediate: true },
-)
 
 const instrumentOptions = computed(() =>
   trend.instruments.value.map((i) => ({
@@ -39,6 +28,8 @@ const instrumentOptions = computed(() =>
   })),
 )
 
+// 受控下拉桥接：读会话 store 的选中标的 id，写回经 store 的选中意图入口
+// （未在标的字典分页内的 id 不在选项面，写入天然不发生）。
 const selectedInstrumentId = computed({
   get: () => trend.instrument.value?.id ?? null,
   set: (id: string | null) => {

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import InvestmentsView from '@/views/InvestmentsView.vue'
 import { formatAmount } from '@ledger/money'
 import { clickTab, findTab, probeColor } from '@ledger/test-support/dom'
@@ -9,6 +10,10 @@ import { componentVm } from '@ledger/test-support/component-vm'
 import { mountWithDialog } from '@ledger/test-support/mount'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import { useAppStore } from '@/stores/app'
+import { useInvestmentsSessionStore } from '@/stores/investments-session'
+import { useWindowGuard } from '@/composables/useWindowGuard'
+import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
+import { clearViewResets, fireViewReset } from '@/composables/viewResetRegistry'
 import { pnlSemanticColor } from '@/theme/semantic-colors'
 import { makePnlSummary, mockHoldings } from './factories'
 import {
@@ -123,6 +128,8 @@ const INVESTMENT_DEFAULTS = {
 }
 
 beforeEach(async () => {
+  resetOverlays()
+  clearViewResets()
   resetPricesChangedHandler()
   // 参考 store 预载走接缝 opt-in 参数（五个 list 命令由桩层规范夹具兑底）。
   await wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, refreshReferenceStores: true }).ready
@@ -170,7 +177,7 @@ describe('InvestmentsView 标的 tab', () => {
     expect(wrapper.get('[data-testid="line-chart"]').text()).toContain('1500')
   })
 
-  it('离开走势 tab 清空入口标的：直入「走势」tab 回到默认组合曲线', async () => {
+  it('走势选中标的会话内保留（issue #1192）：切走页签再回来仍以同一标的查询出图', async () => {
     const wrapper = mountView()
     await nextTick()
     // 经标的列表入口进入单标的走势
@@ -178,22 +185,24 @@ describe('InvestmentsView 标的 tab', () => {
     await wrapper.find('[data-testid="view-trend-600000"]').trigger('click')
     await nextTick()
     await nextTick()
-    const instCallsAfterEntry = mockInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'instrument_price_trend',
-    ).length
-    expect(instCallsAfterEntry).toBe(1)
-    // 切到盈亏再直入走势：入口残留已清空，回到组合模式（无新的单标的查询）
+    expect(
+      mockInvoke.mock.calls.filter(([cmd]) => cmd === 'instrument_price_trend'),
+    ).toHaveLength(1)
+    expect(wrapper.get('[data-testid="line-chart"]').text()).toContain('600000 浦发银行')
+    // 切到盈亏再回走势：页签重挂（非 KeepAlive），单标的选中经会话 store 恢复
     await clickTab(wrapper, '盈亏')
     await clickTab(wrapper, '走势')
+    await flushPromises()
     const instCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'instrument_price_trend')
-    expect(instCalls.length).toBe(1)
-    // 组合走势空数据 → 引导文案（而非上一标的的单标的曲线）
-    expect(wrapper.text()).toContain('暂无历史价格数据')
+    expect(instCalls).toHaveLength(2)
+    expect((instCalls.at(-1)![1] as { instrumentId: string }).instrumentId).toBe('inst-1')
+    // 恢复的是选择不是快照：回到页签以同一标的现拉，仍出该标的的曲线
+    expect(wrapper.get('[data-testid="line-chart"]').text()).toContain('600000 浦发银行')
   })
 })
 
 /** 持仓迁为投资页独立页签（issue #901）：持仓概览卡整体迁入新持仓页签，
- * 盈亏页签收窄为纯已实现盈亏视图；页签选中维持组件本地瞬态。 */
+ * 盈亏页签收窄为纯已实现盈亏视图；页签选中自 issue #1192 起随会话保留。 */
 describe('InvestmentsView 持仓页签（issue #901）', () => {
   const cny = refCurrencies[0]
 
@@ -316,7 +325,7 @@ describe('InvestmentsView 持仓页签（issue #901）', () => {
     expect(wrapper.text()).not.toContain(formatAmount(150000, cny))
   })
 
-  it('页签选中为瞬态：卸载重挂回默认盈亏（不入 URL、不持久化）', async () => {
+  it('页签选中会话内保留（issue #1192）：卸载重挂回离开时的持仓页签', async () => {
     const wrapper = mountView()
     await flushPromises()
     await clickTab(wrapper, '持仓')
@@ -324,7 +333,7 @@ describe('InvestmentsView 持仓页签（issue #901）', () => {
     wrapper.unmount()
     const remounted = mountView()
     await flushPromises()
-    expect(remounted.findAll('.n-tabs-tab--active').map((el) => el.text())).toEqual(['盈亏'])
+    expect(remounted.findAll('.n-tabs-tab--active').map((el) => el.text())).toEqual(['持仓'])
   })
 })
 
@@ -405,48 +414,246 @@ describe('InvestmentsView 来源跳转落点（issue #709）', () => {
   })
 })
 
-/** 持仓页签三维过滤排序（issue #902）：筛选/排序状态全瞬态——页签内容为
- * display-directive 'if'，切走再切回即重挂回默认；重进投资视图同理。 */
-describe('InvestmentsView 持仓页签筛选瞬态（issue #902）', () => {
-  it('切走再切回持仓页签：搜索/账户/排序一律回默认、完整列表恢复', async () => {
+/**
+ * 持仓页签筛选/排序/页码会话内保留（issue #1192 / ADR-0094）：页签内容仍为
+ * display-directive 'if' 重挂（显式否决 KeepAlive），保留由投资页会话状态 store
+ * 承担——切走再切回恢复离开时的搜索/账户过滤/排序/页码，冷启动（新 pinia）回
+ * 默认，全程零写盘。删除保留接线（状态退回实例级瞬态）即下方断言变红。
+ */
+describe('InvestmentsView 持仓页签会话内保留（issue #1192）', () => {
+  /** 搜索输入 → 应用值：防抖窗口推进 + 微任务清空（HoldingsOverview 同款桥） */
+  async function typeSearch(wrapper: ReturnType<typeof mountView>, text: string) {
+    await wrapper.find('[data-testid="holdings-search"] input').setValue(text)
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+  }
+
+  /** 市值列头点击：首次点击落降序（受控排序形态见 HoldingsOverview 测试） */
+  async function clickMarketValueHeader(wrapper: ReturnType<typeof mountView>) {
+    await wrapper.findAll('th').find((th) => th.text() === '市值')!.trigger('click')
+    await flushPromises()
+  }
+
+  const symbols = (wrapper: ReturnType<typeof mountView>) =>
+    wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text())
+
+  /** 25 行持仓夹具：第二页余 5 行（页码保留的观察面；行键唯一避免表格复用） */
+  const manyHoldings = Array.from({ length: 25 }, (_, i) => ({
+    ...mockHoldings[i % mockHoldings.length]!,
+    id: `ph-${i}`,
+    instrument_id: mockHoldings[i % mockHoldings.length]!.instrument_id,
+  }))
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    mockRoute.query = {}
+    wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: mockHoldings } })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('切走再切回持仓页签：搜索/排序仍在，行集按恢复的选择现过滤', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await clickTab(wrapper, '持仓')
+    await flushPromises()
+    // 排序须先于搜索设置：行集合收窄为空态后列头不再可点
+    await clickMarketValueHeader(wrapper)
+    expect(symbols(wrapper)).toEqual(['600000', '000001'])
+    await typeSearch(wrapper, '600')
+    expect(symbols(wrapper)).toEqual(['600000'])
+    // 切到标的再回持仓：页签重挂，筛选/排序经会话 store 恢复（任一未保留即变红：
+    // 搜索丢失 → 两个代码行；排序丢失 → 000001 在首）
+    await clickTab(wrapper, '标的')
+    await clickTab(wrapper, '持仓')
+    await flushPromises()
+    expect(symbols(wrapper)).toEqual(['600000'])
+  })
+
+  it('切走再切回持仓页签：账户过滤与页码仍在（25 行夹具第二页恢复）', async () => {
+    wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: manyHoldings } })
+    const wrapper = mountView()
+    await flushPromises()
+    await clickTab(wrapper, '持仓')
+    await flushPromises()
+    // 账户过滤收窄（参考夹具的投资账户 acc-1；收窄后仍超一页）
+    componentVm(wrapper.findComponent('[data-testid="holdings-account-filter"]')).$emit(
+      'update:value',
+      'acc-1',
+    )
+    await flushPromises()
+    await wrapper
+      .findAll('.n-pagination-item')
+      .find((el) => el.text() === '2')!
+      .trigger('click')
+    await flushPromises()
+    const pageTwoRows = wrapper.findAll('td[data-col-key="symbol"]').length
+    expect(pageTwoRows).toBeLessThan(20)
+    await clickTab(wrapper, '标的')
+    await clickTab(wrapper, '持仓')
+    await flushPromises()
+    // 恢复账户过滤 + 第 2 页：行数与分页条当前页都留在离开时的位置
+    expect(wrapper.findAll('td[data-col-key="symbol"]').length).toBe(pageTwoRows)
+    expect(wrapper.findAll('.n-pagination-item--active').map((el) => el.text())).toEqual(['2'])
+  })
+
+  it('新 pinia 表达冷启动：页签与持仓筛选回默认，且全程零写盘', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await clickTab(wrapper, '持仓')
+    await flushPromises()
+    await clickMarketValueHeader(wrapper)
+    await typeSearch(wrapper, '600')
+    expect(symbols(wrapper)).toEqual(['600000'])
+    const keysBefore = Object.keys(localStorage)
+    wrapper.unmount()
+
+    // 新 pinia = 新会话（应用重启）：默认页签盈亏、持仓无筛选
+    // （store 复位断言独立于视图渲染：同时钉住「恢复的选择不是快照」与冷启动口径）
+    setActivePinia(createPinia())
+    const coldStore = useInvestmentsSessionStore()
+    expect(coldStore.activeTab).toBe('pnl')
+    expect(coldStore.holdingsSorter).toBeNull()
+    expect(coldStore.holdingsSearch).toBe('')
+    expect(coldStore.holdingsPage).toBe(1)
+    const second = mountView()
+    await flushPromises()
+    expect(second.findAll('.n-tabs-tab--active').map((el) => el.text())).toEqual(['盈亏'])
+    await clickTab(second, '持仓')
+    await flushPromises()
+    // 默认代码字母序（非离开时的市值降序）：'000001' < '600000'
+    expect(symbols(second)).toEqual(['000001', '600000'])
+    // 会话内保留零持久化：全程 localStorage 零写入
+    expect(Object.keys(localStorage)).toEqual(keysBefore)
+  })
+})
+
+/**
+ * ESC 复位接线（ADR-0094 决策 4）：投资视图向复位回调注册表声明 store 的
+ * resetToDefault，无弹层 ESC 经窗口行为守卫消费——复位即清除保留态本身
+ * （复位后离开再回来 = 默认），有弹层时不叠加动作。删除复位接线即下方断言变红。
+ */
+describe('InvestmentsView ESC 复位（issue #1192）', () => {
+  /** 窗口行为守卫宿主（App.vue 同构：守卫全局唯一） */
+  function mountGuardHost() {
+    const Host = defineComponent({
+      setup() {
+        useWindowGuard()
+        return () => h('div')
+      },
+    })
+    return mountWithDialog(Host)
+  }
+
+  function fireEscape() {
+    document.body.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    )
+  }
+
+  const symbols = (wrapper: ReturnType<typeof mountView>) =>
+    wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text())
+
+  it('无弹层 ESC：持仓筛选/排序清零回默认（清除保留态本身）', async () => {
     vi.useFakeTimers()
     try {
       wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: mockHoldings } })
+      const guard = mountGuardHost()
+      await flushPromises()
       const wrapper = mountView()
       await flushPromises()
       await clickTab(wrapper, '持仓')
       await flushPromises()
-      // 三维依次设置：市值列头排序落降序（600000 有值在前、缺价行 000001 末尾）；
-      // 搜索命中单行；账户过滤排除全部行（参考夹具无投资账户，选项面为空）——
-      // 排序须先于搜索/账户设置：行集合收窄为空态后列头不再可点
       await wrapper.findAll('th').find((th) => th.text() === '市值')!.trigger('click')
       await flushPromises()
-      expect(wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text())).toEqual([
-        '600000',
-        '000001',
-      ])
       await wrapper.find('[data-testid="holdings-search"] input').setValue('600')
-      componentVm(wrapper.findComponent('[data-testid="holdings-account-filter"]')).$emit(
-        'update:value',
-        'acc-x',
-      )
+      vi.advanceTimersByTime(300)
       await flushPromises()
-      // 过滤收窄为空态（搜索 × 账户均已生效）
-      expect(wrapper.find('[data-testid="holdings-no-match"]').exists()).toBe(true)
-      // 切到标的再回持仓：页签重挂，三维全回默认（任一残留都会使下方断言变红：
-      // 搜索残留 → 只剩 600000 行；账户残留 → 空态；排序残留 → 600000 在首）
-      await clickTab(wrapper, '标的')
+      expect(symbols(wrapper)).toEqual(['600000'])
+
+      fireEscape()
+      await flushPromises()
+      // 复位即清除保留态本身（页签回默认 + 筛选/排序/页码清零）：过滤残留会让
+      // 「回到默认全量列表」不成立、排序残留会让默认代码序不成立
+      expect(useInvestmentsSessionStore().holdingsSorter).toBeNull()
+      expect(useInvestmentsSessionStore().holdingsSearch).toBe('')
+      expect(useInvestmentsSessionStore().holdingsPage).toBe(1)
+      expect(wrapper.findAll('.n-tabs-tab--active').map((el) => el.text())).toEqual(['盈亏'])
       await clickTab(wrapper, '持仓')
       await flushPromises()
-      const searchInput = wrapper.find('[data-testid="holdings-search"] input')
-      expect((searchInput.element as HTMLInputElement).value).toBe('')
-      expect(wrapper.find('[data-testid="holdings-no-match"]').exists()).toBe(false)
-      expect(wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text())).toEqual([
-        '000001',
-        '600000',
-      ])
+      expect(symbols(wrapper)).toEqual(['000001', '600000'])
+      wrapper.unmount()
+      guard.unmount()
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('无弹层 ESC：走势选中标的清除、回到默认组合曲线（复位后重进仍是组合模式）', async () => {
+    const guard = mountGuardHost()
+    await flushPromises()
+    const wrapper = mountView()
+    await flushPromises()
+    await clickTab(wrapper, '标的')
+    await wrapper.find('[data-testid="view-trend-600000"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="line-chart"]').text()).toContain('600000 浦发银行')
+    const instrumentCallsAfterEntry = mockInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'instrument_price_trend',
+    ).length
+    expect(instrumentCallsAfterEntry).toBe(1)
+
+    fireEscape()
+    await flushPromises()
+    // 复位即清除保留态：选中标的从会话态消失（复位后离开再回来 = 默认组合曲线）
+    expect(useInvestmentsSessionStore().trendInstrumentId).toBeNull()
+    await clickTab(wrapper, '盈亏')
+    await clickTab(wrapper, '走势')
+    await flushPromises()
+    // 组合走势空数据 → 引导文案（而非上一标的的单标的曲线残留）
+    expect(wrapper.text()).toContain('暂无历史价格数据')
+    // 复位的保留态已清除：没有新的单标的查询发生（残留会以恢复的标的重拉现拉）
+    expect(
+      mockInvoke.mock.calls.filter(([cmd]) => cmd === 'instrument_price_trend'),
+    ).toHaveLength(instrumentCallsAfterEntry)
+    wrapper.unmount()
+    guard.unmount()
+  })
+
+  it('有弹层时 ESC 不复位：弹层库默认关闭行为接管，保留态不动', async () => {
+    vi.useFakeTimers()
+    try {
+      wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: mockHoldings } })
+      const guard = mountGuardHost()
+      await flushPromises()
+      const wrapper = mountView()
+      await flushPromises()
+      await clickTab(wrapper, '持仓')
+      await flushPromises()
+      await wrapper.find('[data-testid="holdings-search"] input').setValue('600')
+      vi.advanceTimersByTime(300)
+      await flushPromises()
+      const token = createOverlayToken('modal')
+      token.set(true)
+      fireEscape()
+      await flushPromises()
+      // 保留态不动（一次按键只做一件事：关弹层）
+      expect(symbols(wrapper)).toEqual(['600000'])
+      token.set(false)
+      wrapper.unmount()
+      guard.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('视图卸载即撤销复位注册：离开投资页后守卫消费不到本视图的保留态', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    expect(fireViewReset()).toBe(true)
+    wrapper.unmount()
+    expect(fireViewReset()).toBe(false)
   })
 })

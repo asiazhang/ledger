@@ -2,13 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { useReferenceStore } from '@/stores/reference'
+import { useInvestmentsSessionStore } from '@/stores/investments-session'
 import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
 import { makeInstrument } from './factories'
 import {
   firePricesChanged,
   resetPricesChangedHandler,
 } from './prices-changed-mock'
-import type { PortfolioValueTrend } from '@ledger/types'
+import type { Instrument, PortfolioValueTrend } from '@ledger/types'
 
 vi.mock('vue-chartjs', async () => {
   const { LineChartStub } = await import('./line-chart-stub')
@@ -86,6 +87,13 @@ beforeEach(async () => {
   await store.refresh()
 })
 
+/** 走势入口（标的列表「走势」按钮 / focus 落点同款）：写会话 store 后挂载面板——
+ * 入口标的是会话保留态，面板不再持入口 props（issue #1192）。 */
+function mountWithEntry(instrument: Instrument) {
+  useInvestmentsSessionStore().showTrendInstrument(instrument)
+  return mount(PortfolioTrendPanel)
+}
+
 function chartPayload(wrapper: ReturnType<typeof mount>): { labels: string[]; datasets: { data: number[] }[] } {
   const el = wrapper.get('[data-testid="line-chart"]')
   return JSON.parse(el.text())
@@ -154,9 +162,7 @@ describe('PortfolioTrendPanel 走势面板', () => {
         },
       },
     })
-    const wrapper = mount(PortfolioTrendPanel, {
-      props: { entryInstrument: stockInstrument },
-    })
+    const wrapper = mountWithEntry(stockInstrument)
     await flushPromises()
     const call = mockInvoke.mock.calls.filter(([c]) => c === 'instrument_price_trend').at(-1)!
     expect((call[1] as { instrumentId: string }).instrumentId).toBe('inst-1')
@@ -166,9 +172,7 @@ describe('PortfolioTrendPanel 走势面板', () => {
   })
 
   it('无价格来源标的（通道 = none）→ 「没有价格来源」边界说明，不发起走势查询、不出图', async () => {
-    const wrapper = mount(PortfolioTrendPanel, {
-      props: { entryInstrument: noSourceInstrument },
-    })
+    const wrapper = mountWithEntry(noSourceInstrument)
     await flushPromises()
     expect(wrapper.find('[data-testid="trend-no-source"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('没有价格来源')
@@ -192,9 +196,7 @@ describe('PortfolioTrendPanel 走势面板', () => {
         },
       },
     })
-    const wrapper = mount(PortfolioTrendPanel, {
-      props: { entryInstrument: fundInstrument },
-    })
+    const wrapper = mountWithEntry(fundInstrument)
     await flushPromises()
     // 发起净值走势查询并出图（此前被前端场内白名单拦截）
     const call = mockInvoke.mock.calls.filter(([c]) => c === 'instrument_price_trend').at(-1)!
@@ -218,9 +220,7 @@ describe('PortfolioTrendPanel 走势面板', () => {
         },
       },
     })
-    const wrapper = mount(PortfolioTrendPanel, {
-      props: { entryInstrument: manualInstrument },
-    })
+    const wrapper = mountWithEntry(manualInstrument)
     await flushPromises()
     const call = mockInvoke.mock.calls.filter(([c]) => c === 'instrument_price_trend').at(-1)!
     expect((call[1] as { instrumentId: string }).instrumentId).toBe('inst-manual')
@@ -237,9 +237,7 @@ describe('PortfolioTrendPanel 走势面板', () => {
         instrument_price_trend: { instrument_id: 'inst-fund', points: [] },
       },
     })
-    const wrapper = mount(PortfolioTrendPanel, {
-      props: { entryInstrument: fundInstrument },
-    })
+    const wrapper = mountWithEntry(fundInstrument)
     await flushPromises()
     expect(wrapper.find('[data-testid="trend-empty"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('暂无历史价格数据')
@@ -255,9 +253,7 @@ describe('PortfolioTrendPanel 走势面板', () => {
         instrument_price_trend: { instrument_id: 'inst-manual', points: [] },
       },
     })
-    const wrapper = mount(PortfolioTrendPanel, {
-      props: { entryInstrument: manualInstrument },
-    })
+    const wrapper = mountWithEntry(manualInstrument)
     await flushPromises()
     expect(wrapper.find('[data-testid="trend-empty"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('暂无历史价格数据')
