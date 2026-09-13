@@ -12,9 +12,9 @@
 //! 密文粒度 = 单个文件（段/快照各自封包），同一主口令派生同一密钥；盐与
 //! nonce 逐封包随机，同一原文两次封包密文不同。
 
-use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
-use ring::pbkdf2::PBKDF2_HMAC_SHA512;
-use ring::rand::{SecureRandom, SystemRandom};
+use aws_lc_rs::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
+use aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA512;
+use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 
 use crate::db;
 use crate::error::{AppError, Result};
@@ -181,7 +181,7 @@ fn derive_key(passphrase: &str, salt: &[u8], iterations: u32) -> Result<[u8; KEY
     let iterations = std::num::NonZeroU32::new(iterations)
         .ok_or_else(|| envelope_corrupt("信封 KDF 参数非法"))?;
     let mut key = [0u8; KEY_LEN];
-    ring::pbkdf2::derive(
+    aws_lc_rs::pbkdf2::derive(
         PBKDF2_HMAC_SHA512,
         iterations,
         salt,
