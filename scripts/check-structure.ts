@@ -110,7 +110,6 @@ export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'policy', layer: '域目录', note: '保单域（#398 阶段 2 归位）' },
   { path: 'budget', layer: '域目录', note: '预算域（#399 阶段 3 归位）' },
   { path: 'physical_asset', layer: '域目录', note: '实物资产域（issue #466 新建即归位，ADR-0064）' },
-  { path: 'investment', layer: '域目录', note: '投资域（#401 阶段 5 归位，主体自 commands/investment 随迁；价格写入单点自 sync/persist 迁入）' },
   { path: 'reports', layer: '域目录', note: '报表域（#405 归位，月度汇总/分类/商户/日期极值聚合读模型，消费 transaction::amount 矩阵）' },
   { path: 'dashboard', layer: '域目录', note: '仪表盘域（#405 归位，全仓净资产跨币种折算聚合）' },
   { path: 'sync', layer: '域目录', note: '行情同步域（#407 归位，HTTP 爬取/东财基金净值/同步编排自 commands/sync 随迁；全量修字典翼已退役，issue #698）' },
@@ -325,6 +324,44 @@ export const MERCHANTS_MODULES: readonly WhitelistEntry[] = [
 export const MERCHANTS_SRC_REL = 'crates/merchants/src'
 
 /**
+ * 投资域 crate 的模块清单（spec #1086 / issue #1097）：路径相对
+ * `src-tauri/crates/investment/src`。P3 业务域 crate——可被行情同步域与多端同步
+ * 域依赖的独立编译单元。对壳层与同步域零容忍照扫（与备份/交易 crate 同款，
+ * 清单条目 layer 为域目录即入业务域扫描面）；对核心交易域（接缝实现注册侧，
+ * #1092）、账户域（余额口径与 AccountType）与币种域（ExchangeRate /
+ * ExchangeRateInput，#418 / ADR-0059，#1097 裁决显性化承认）的引用是合法域→域
+ * 上层依赖，由 cargo 依赖图与 CRATES 分层核对承担，文本扫描不再辖；行情同步域
+ * 的查询半边经注入接缝消费（壳层接线），本域对同步域零直接依赖。crate 根
+ * lib.rs 是声明与再导出面（无守门靶向代码），与协议/备份/交易 crate 同款不入
+ * 清单；tests.rs 与 tests/ 为测试豁免形态不入清单。
+ */
+export const INVESTMENT_MODULES: readonly WhitelistEntry[] = [
+  { path: 'channel.rs', layer: '域目录', note: '价格通道派生（PriceChannel，issue #1060）——类型 × 市场 × 代码 → 行情/净值/手动报价/无来源的判定单点' },
+  { path: 'command.rs', layer: '域目录', note: '投资同步命令（op 载荷形态、产出单点与重放分派，issue #861）：标的字典/汇率/用户侧价格全域进 OpLog，东财行情外拉数据不进 op' },
+  { path: 'crud.rs', layer: '域目录', note: '标的字典/汇率/现价列表与写入、标的搜索（统一模糊搜索语义）、手动创建守卫与自建标的删除守卫' },
+  { path: 'financial_freedom.rs', layer: '域目录', note: '财务自由度口径——可投资资产 × 3% 安全提取率对年度预算总额的覆盖比例（只读，ADR-0048）' },
+  { path: 'fund.rs', layer: '域目录', note: '场外基金接入——6 位代码校验、行情接入落库半边、AI 降级建行、按代码即拉注入接缝' },
+  { path: 'holdings.rs', layer: '域目录', note: '时点持仓（AsOfHolding）推算单点' },
+  { path: 'lots.rs', layer: '域目录', note: '持仓批次（security_lots）单点——取批次、逐批次 FIFO 分摊与耗尽批次成本闭合、修改/删除路径的两个精确回补原语（issue #1018）' },
+  { path: 'manual_price.rs', layer: '域目录', note: '手动报价两落点（价格历史周采样 + 现价缓存映像规则）' },
+  { path: 'model.rs', layer: '域目录', note: '域集中模型——全量投资类型与财务自由度总览（#422 随域归位，经 crate 根逐类型再导出禁止 glob）' },
+  { path: 'predicates.rs', layer: '域目录', note: '「持仓标的」判定谓词单点（INVESTED_EXISTS）' },
+  { path: 'prices.rs', layer: '域目录', note: '价格写入单点——现价缓存 upsert、价格历史周采样 upsert、价格刻度换算、东财来源标记（#401 自 sync/persist 迁入）' },
+  { path: 'quote.rs', layer: '域目录', note: '行情接入接缝（QuoteAdoption，ADR-0103）——统一报价载荷 Quote 与落库半边 adopt_quote；查询半边实现在行情同步域网络层、经注入签名供给' },
+  { path: 'reports.rs', layer: '域目录', note: '已实现盈亏汇总与按币种累计收益查询（issue #1077）' },
+  { path: 'source.rs', layer: '域目录', note: '交易列表标的来源反查（spec #704 / issue #709）' },
+  { path: 'split.rs', layer: '域目录', note: '份额调整（split）批次成本重述单点——按比例重述在用批次与审计落库（ADR-0106 决策 2/3，issue #1049）' },
+  { path: 'stock.rs', layer: '域目录', note: '股票按（市场，代码）查询的领域规则——代码形态 → 市场单点推断、报价币种推导（issue #693 / ADR-0081）' },
+  { path: 'trade.rs', layer: '域目录', note: 'buy/sell/convert/split/dividend 协议分派与买卖/转换/份额调整明细投影（TransactionTrade / TransactionConvert）' },
+  { path: 'transaction_seam.rs', layer: '域目录', note: '交易域接缝实现（spec #1086 / issue #1092）——投资 kind 写路径装配/副作用与读路径投影的实现注册面，install_transaction_hooks 一次性装入（壳层启动接线）' },
+  { path: 'trend.rs', layer: '域目录', note: '单标的 / 组合走势查询' },
+  { path: 'unwind.rs', layer: '域目录', note: '持仓副作用撤销（Unwind）——修改/删除路径的守卫 → 级联/回补 → 清理模板单点（issue #1020，父 spec #1005 决策 D2/D3）' },
+]
+
+/** 投资域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-investment.dir 同源。 */
+export const INVESTMENT_SRC_REL = 'crates/investment/src'
+
+/**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
  * 与上面的 `LAYER`（单 crate 内的**模块路径**分层：域目录 / 基础设施）刻意分开——
  * 两者是不同粒度的事实源，同名值不合并（合并只会让任一侧语义被动漂移）。
@@ -417,6 +454,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/currencies',
     layer: CRATE_LAYER.DOMAIN,
     note: '币种域 crate（#1095，P3 叶子域，参考数据三域之二：币种字典/汇率/本位币基准，spec 明文裁决三域各自独立 crate 不合并）；依赖面只有基础设施、同步协议与核心交易域——本位币基准读取经注册点供给核心交易域接缝（下层提供实现、壳层启动接线，ADR-0112 决策 5），对壳层/同级业务域零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
+  },
+  {
+    name: 'ledger-investment',
+    dir: 'crates/investment',
+    layer: CRATE_LAYER.DOMAIN,
+    note: '投资域 crate（#1097，P3 业务域 crate：标的字典/市场数据/持仓与买卖协议/盈亏与走势，可被行情同步域与多端同步域依赖）；依赖面只有基础设施、同步协议、核心交易域、账户域与币种域——交易域接缝实现注册侧（#1092 挂载点⑤反转后的合法方向）与两条域→域上层依赖（投资 → 账户：AccountType/余额口径，spec 明文；投资 → 币种：ExchangeRate/ExchangeRateInput 汇率实体消费方与录入入口，#418/ADR-0059「实体归属优先于消费方分布」，#1097 裁决显性化承认、非新增耦合）均为上层域消费下层域的合法直呼（ADR-0112 决策 2），对壳层与行情/多端同步域零直接依赖（行情查询半边经注入接缝倒挂），反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
   },
 ]
 
@@ -1745,6 +1788,7 @@ function main(): void {
       ...collectRustFiles(join(srcTauriDir, CATEGORIES_SRC_REL), CATEGORIES_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, MERCHANTS_SRC_REL), MERCHANTS_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, CURRENCIES_SRC_REL), CURRENCIES_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, INVESTMENT_SRC_REL), INVESTMENT_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -1803,6 +1847,7 @@ function main(): void {
   scannedFiles += scanModuleEntries(CATEGORIES_MODULES, join(srcTauriDir, CATEGORIES_SRC_REL), problems)
   scannedFiles += scanModuleEntries(MERCHANTS_MODULES, join(srcTauriDir, MERCHANTS_SRC_REL), problems)
   scannedFiles += scanModuleEntries(CURRENCIES_MODULES, join(srcTauriDir, CURRENCIES_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(INVESTMENT_MODULES, join(srcTauriDir, INVESTMENT_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -1840,6 +1885,7 @@ function main(): void {
       `+ 分类域模块 ${CATEGORIES_MODULES.length} 项（crate ${CATEGORIES_SRC_REL}，#1094）` +
       `+ 商户域模块 ${MERCHANTS_MODULES.length} 项（crate ${MERCHANTS_SRC_REL}，#1096）` +
       `+ 币种域模块 ${CURRENCIES_MODULES.length} 项（crate ${CURRENCIES_SRC_REL}，#1095）` +
+      `+ 投资域模块 ${INVESTMENT_MODULES.length} 项（crate ${INVESTMENT_SRC_REL}，#1097）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +
