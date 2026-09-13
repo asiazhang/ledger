@@ -9,7 +9,6 @@ use crate::settings::{self, SettingKey};
 use crate::sync_engine::EnvelopeMode;
 use crate::sync_engine::SyncChannelConfig;
 use crate::sync_engine::tests::common::make_expense;
-use crate::sync_engine::transport::Transport;
 use crate::sync_engine::trigger::{
     SessionEnvelope, build_channel, configured_channel, run_auto_round, run_round_once,
 };

@@ -62,6 +62,7 @@
 
 mod assert;
 pub mod channel;
+pub mod s3;
 mod seed;
 #[cfg(test)]
 mod tests;
@@ -71,6 +72,7 @@ pub use assert::{
     assert_balance_cache_matches_realtime, extract_check_in_literals, read_scalar_i64,
 };
 pub use channel::publish_raw_segment;
+pub use s3::{S3Addressing, S3ObservedRequest, S3Stub, S3StubConfig, spawn_s3_stub};
 pub use seed::{
     seed_account, seed_exchange_rate, seed_fx_rate_history, seed_instrument, seed_investment_setup,
     seed_price_history,

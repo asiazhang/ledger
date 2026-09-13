@@ -14,10 +14,11 @@ use crate::sync_engine::channel::{
 use crate::sync_engine::envelope::{EnvelopeMode, EnvelopeParams, is_sealed};
 use crate::sync_engine::tests::common::{MemoryTransport, make_expense, read_transaction};
 use crate::sync_engine::transport::Transport;
+use crate::sync_engine::transport::s3::{S3Config, S3Transport};
 use crate::sync_engine::transport::webdav::{WebDavConfig, WebDavTransport};
 use crate::sync_engine::{OpOutcome, apply_ops, bootstrap_from_checkpoint, read_ops};
-use crate::test_support::spawn_webdav_stub;
 use crate::test_support::{self, seed_account};
+use crate::test_support::{S3Addressing, S3Stub, S3StubConfig, spawn_s3_stub, spawn_webdav_stub};
 use crate::transaction::write::protocol;
 
 /// 测试用低 KDF 迭代选项（信封格式语义与派生成本无关；生产默认值已在
@@ -33,6 +34,20 @@ fn fast_options() -> ChannelOptions {
 
 fn layout() -> ChannelLayout {
     ChannelLayout::new("0197abcd-0000-7000-8000-000000000001").unwrap()
+}
+
+/// 可用 S3 传输（path-style 对本地桩；对象键带前缀）。
+fn s3_transport(stub: &S3Stub, prefix: &str) -> S3Transport {
+    S3Transport::new(S3Config {
+        endpoint: stub.endpoint.clone(),
+        region: stub.region.clone(),
+        bucket: stub.bucket.clone(),
+        access_key: stub.access_key.clone(),
+        secret_key: "test-secret".to_string(),
+        prefix: prefix.to_string(),
+        path_style: stub.addressing == S3Addressing::PathStyle,
+    })
+    .unwrap()
 }
 
 /// 读取本机设备标识（判定依据读取，非夹具）。
@@ -449,6 +464,100 @@ fn two_end_file_exchange_over_local_webdav_stub() {
         read_transaction(&conn_a, &a_txn.id)
     );
     assert_eq!(read_ops(&conn_c).unwrap().len(), 2, "引导端含快照携带日志");
+}
+
+/// AC 集成：本地 S3 桩上的同步轮次——段发布、manifest 归并、增量拉取与
+/// 检查点发布/第三端引导都跑在真实 HTTP 对象存储语义上。
+#[test]
+fn two_end_file_exchange_over_local_s3_stub() {
+    let stub = spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle));
+    let s3 = s3_transport(&stub, "team/ledger");
+
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+    let a_txn = protocol::create(&conn_a, make_expense("acc-1", 10000, "A 先记")).unwrap();
+
+    let layout = layout();
+    let mode = EnvelopeMode::Plaintext;
+    let options = fast_options();
+
+    // A 发布：段文件 + manifest 归并上对象存储。
+    let report = run_round_with(&conn_a, &s3, &layout, &mode, &options).unwrap();
+    assert_eq!(report.uploaded_segments, 1);
+    assert_eq!(report.uploaded_ops, 1);
+    let manifest: ChannelManifest =
+        serde_json::from_slice(&s3.read_file(&layout.manifest_path()).unwrap().unwrap()).unwrap();
+    assert_eq!(
+        manifest.streams.len(),
+        1,
+        "A 轮流发布后 manifest 记录自己的流"
+    );
+    assert_eq!(manifest.streams[0].device_id, device_id_of(&conn_a));
+
+    // B 增量拉取 A 的段并重放。
+    let report = run_round_with(&conn_b, &s3, &layout, &mode, &options).unwrap();
+    assert_eq!(report.downloaded_segments, 1);
+    assert_eq!(report.applied, 1);
+    assert_eq!(
+        read_transaction(&conn_b, &a_txn.id),
+        read_transaction(&conn_a, &a_txn.id)
+    );
+
+    // B 回发自己的段：manifest 归并出两条流；A 已覆盖的段不再下载。
+    let b_txn = protocol::create(&conn_b, make_expense("acc-1", 2500, "B 后记")).unwrap();
+    let report = run_round_with(&conn_b, &s3, &layout, &mode, &options).unwrap();
+    assert_eq!(report.uploaded_segments, 1);
+    assert_eq!(
+        report.downloaded_segments, 0,
+        "位点已覆盖 A 流，不得重复下载"
+    );
+    let manifest: ChannelManifest =
+        serde_json::from_slice(&s3.read_file(&layout.manifest_path()).unwrap().unwrap()).unwrap();
+    assert_eq!(manifest.streams.len(), 2, "manifest 归并两侧流");
+
+    // A 增量拉取 B 的段。
+    let report = run_round_with(&conn_a, &s3, &layout, &mode, &options).unwrap();
+    assert_eq!(report.downloaded_segments, 1);
+    assert_eq!(report.applied, 1);
+    for conn in [&conn_a, &conn_b] {
+        assert_eq!(
+            read_transaction(conn, &a_txn.id),
+            read_transaction(&conn_a, &a_txn.id)
+        );
+        assert_eq!(
+            read_transaction(conn, &b_txn.id),
+            read_transaction(&conn_b, &b_txn.id)
+        );
+        assert_eq!(read_ops(conn).unwrap().len(), 2);
+    }
+
+    // 检查点经 S3 发布并由第三端引导。
+    publish_checkpoint_with(&conn_a, &s3, &layout, &mode, &options).unwrap();
+    let mut conn_c = test_support::open();
+    let fetched = fetch_checkpoint(&s3, &layout, None).unwrap();
+    bootstrap_from_checkpoint(&mut conn_c, &fetched.checkpoint, None).unwrap();
+    assert_eq!(
+        read_transaction(&conn_c, &a_txn.id),
+        read_transaction(&conn_a, &a_txn.id)
+    );
+    assert_eq!(read_ops(&conn_c).unwrap().len(), 2, "引导端含快照携带日志");
+
+    let requests = stub.requests();
+    assert!(
+        requests.iter().any(
+            |request| request.path.starts_with("/ledger-test/team/ledger/")
+                && request.path.ends_with("/manifest.json")
+        ),
+        "同步文件应经配置前缀映射到对象键"
+    );
+    assert!(
+        requests.iter().all(|request| request
+            .header("authorization")
+            .is_some_and(|value| value.starts_with("AWS4-HMAC-SHA256 "))),
+        "轮次中的每个 S3 请求都应带 SigV4 Authorization"
+    );
 }
 
 /// 加密模式的 WebDAV 端到端：通道上只有密文，对端凭口令解开（AC：同步包以

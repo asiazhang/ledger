@@ -2,8 +2,8 @@
 //!
 //! 通道只搬运同步文件、不理解载荷、不做任何合并与冲突处理——智能全在各端
 //! （ADR-0091 决策 1/2）。两端以同一抽象对接，桌面与移动端共享同一代码路径
-//! （域不依赖壳，ADR-0056）；v1 内置 WebDAV 后端（[`webdav`]），其余后端是
-//! 可逆工程决策。
+//! （域不依赖壳，ADR-0056）；内置 WebDAV（[`webdav`]）与 S3 兼容对象存储
+//! （[`s3`]）后端，其余后端是可逆工程决策。
 //!
 //! 路径语义：`path` 是相对同步根的逻辑路径（`/` 分隔，如
 //! `book-<id>/streams/<device>/seg-...enc`），由通道实现映射到实际地址
@@ -14,6 +14,7 @@
 //! （`sync-channel.auth-failed` / `sync-channel.network-failed`），修正凭据
 //! 或网络恢复后重试同步轮次即可；失败不影响本地记账（同步是旁路写入）。
 
+pub mod s3;
 pub mod webdav;
 
 use crate::error::AppError;
@@ -58,4 +59,20 @@ pub(super) fn http_failed_error(status: u16, detail: &str) -> AppError {
         format!("同步通道服务异常（HTTP {status}）: {detail}"),
         &[&status.to_string(), detail],
     )
+}
+
+/// 逻辑通道路径守卫单点：空路径、空段、`.` 与 `..` 一律拒绝（后端共用）。
+pub(super) fn validate_logical_path(path: &str) -> crate::error::Result<()> {
+    if path.is_empty()
+        || path
+            .split('/')
+            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+    {
+        return Err(AppError::codedp(
+            "sync-channel.path-invalid",
+            format!("同步通道路径非法: {path}"),
+            &[path],
+        ));
+    }
+    Ok(())
 }

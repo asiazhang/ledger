@@ -30,8 +30,8 @@ use tauri_app_lib::db::encryption::EncryptionGate;
 use tauri_app_lib::db::{self, DbState};
 use tauri_app_lib::settings::{self, SettingKey};
 use tauri_app_lib::sync_engine::{
-    ChannelManifest, Transport, TriggerTimings, build_channel, configured_channel,
-    start_sync_scheduler_with, sync_on_start,
+    ChannelManifest, TriggerTimings, build_channel, configured_channel, start_sync_scheduler_with,
+    sync_on_start,
 };
 use tauri_app_lib::test_support::spawn_webdav_stub;
 

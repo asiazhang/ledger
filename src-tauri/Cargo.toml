@@ -38,6 +38,17 @@ tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 axum = "0.8"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
+# S3 兼容对象存储通道后端（issue #1216 / ADR-0091 决策 1）：官方 SDK 提供
+# SigV4 签名、自定义端点与 path-style 寻址；显式凭据 + 自定义端点即可，
+# 不引入 aws-config 的环境配置链。校验和策略在 client 构建处显式配置为
+# WhenRequired（兼容优先，见 transport/s3.rs），不依赖环境变量。
+aws-sdk-s3 = { version = "1.146", default-features = false, features = [
+  "behavior-version-latest",
+  "default-https-client",
+  "http-1x",
+  "rt-tokio",
+  "rustls",
+] }
 tracing = "0.1"
 # 日志等级运行期 reload（spec #608）：`tracing-subscriber` 的 `reload` 模块在
 # std 下无条件可用；本版本（0.3.23）无独立 `reload` feature（可用 features 见解析）。

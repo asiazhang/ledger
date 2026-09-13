@@ -27,6 +27,7 @@
 //! - [`wire`]：op 信封序列化往返（wire 形态稳定性）
 //! - [`envelope`]：SyncEnvelope 信封加密往返与码化错误（issue #859）
 //! - [`transport`]：WebDAV 哑字节通道后端对本地桩的行为与错误归一（issue #859）
+//! - [`transport_s3`]：S3 兼容对象存储后端对本地桩的行为、寻址、分片与错误归一（issue #1216）
 //! - [`channel`]：通道目录布局/manifest/同步轮次与两端文件交换集成（issue #859）
 
 mod budget;
@@ -51,4 +52,5 @@ mod split;
 mod total_order;
 mod transaction_funding;
 mod transport;
+mod transport_s3;
 mod wire;

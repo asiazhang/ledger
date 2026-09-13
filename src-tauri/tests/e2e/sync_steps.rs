@@ -29,7 +29,7 @@ use tauri_app_lib::sync_engine::trigger::{
     SessionEnvelope, SyncChannel, build_channel, configured_channel, run_auto_round, run_round_once,
 };
 use tauri_app_lib::sync_engine::{
-    ChannelLayout, DomainCommand, EnvelopeMode, SyncChannelConfig, SyncOp, Transport,
+    ChannelLayout, DomainCommand, EnvelopeMode, SyncChannelConfig, SyncOp,
 };
 use tauri_app_lib::transaction::{
     NormalizedTransaction, TransactionCommand, TransactionInput, TransactionKind,
