@@ -1,9 +1,14 @@
-//! 多端同步命令壳（issue #862 / #863 / #864 / ADR-0091）：同步状态查询、手动同步
-//! 轮次、通道配置（WebDAV 凭据）与检查点发布/预检/引导（新端加入向导的命令面）。
+//! 多端同步命令壳（issue #862 / #863 / #864 / #1217 / ADR-0091）：同步状态查询、
+//! 手动同步轮次、通道配置（WebDAV / S3 兼容对象存储凭据）与检查点发布/预检/
+//! 引导（新端加入向导的命令面）。
 //!
 //! 只做参数解包、凭据/信封模式解析与轮次编排一行调用；通道布局、轮次协议、
 //! 幂等重放、挂起语义与触发编排全在 [`crate::sync_engine`]（域不依赖壳，
-//! ADR-0056），本文件不含业务语义。
+//! ADR-0056），本文件不含业务语义。唯一例外是保存通道配置时的**用户输入门**
+//! （端点必须 https，见 [`ensure_secure_endpoint`]）：它约束人提交的表单形态，
+//! 不是通道语义——域侧 [`build_channel`] 对已落库配置（含既有的 http WebDAV
+//! 配置与测试直置配置）保持可用，照常跑自动轮次；该门住命令层是 #1217 的实现
+//! 决定（理由见函数注释）。
 //!
 //! - `sync_now` 写路径经统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
 //!   重放是行为编排之外的第 N 写入入口（ADR-0091，接缝契约与批量导入同待遇），
@@ -15,10 +20,12 @@
 //!   轮次编排本身归域（`sync_engine::trigger`，issue #863）：本壳只解包口令、
 //!   解析信封模式并把轮次报告原样交出。
 //! - `set_sync_channel_config` 写 `app_settings` 经 [`crate::settings`] 单点收口
-//!   （置脏豁免，ADR-0032）：WebDAV 凭据是本机设备配置（不同步，同步边界见
-//!   多端同步域 SyncBoundary），写操作身份 `SetSyncChannelConfig` 以例外白名单
-//!   登记（见 `signals_cross_check`）；校验借域侧 `build_channel` 单点
-//!   （凭据构库 + 空间闭集，不发网络请求），错误码复用域的 `sync-channel.*`。
+//!   （置脏豁免，ADR-0032）：通道凭据是本机设备配置（不同步，同步边界见多端
+//!   同步域 SyncBoundary），写操作身份 `SetSyncChannelConfig` 以例外白名单登记
+//!   （见 `signals_cross_check`）；校验借域侧 `build_channel` 单点（凭据构库 +
+//!   空间闭集，不发网络请求），错误码复用域的 `sync-channel.*`。保存前另有
+//!   命令层用户输入门：端点为非 https 时拒绝（`sync-channel.endpoint-insecure`，
+//!   本版本不提供 http 或自签证书放行开关，#1217）。
 //!   同步世界身份（通道目录 `book-<space>`）由同步空间字段显式约定——账本登记
 //!   标识按 ADR-0089 是本机事实，跨设备不成立；两端配置同一空间即对齐同一世界
 //!   （v1 默认 `default`，多账本各自独立同步 = 各配一个空间）。
@@ -46,16 +53,19 @@ use crate::sync_engine::trigger::{
     not_configured_error, run_round_once,
 };
 use crate::sync_engine::{
-    EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport, bootstrap_from_channel,
-    parked_ops,
+    ChannelBackend, EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport,
+    bootstrap_from_channel, parked_ops,
 };
 use crate::write_entry::{Outcome, write_entry};
 use ledger_sync_protocol::device::device_id;
 
-/// 通道配置回显（设置页通道配置表单，issue #862）：未配置时各字段为空串、
-/// `configured = false`，表单按空表单起填（空间字段由前端填默认值提示）。
+/// 通道配置回显（设置页通道配置表单，issue #862；S3 字段 issue #1217）：未配置
+/// 时各字段为空串（`path_style` 为假）、`configured = false`，表单按空表单起填
+/// （空间字段由前端填默认值提示）。
 #[derive(Debug, Serialize)]
 pub struct SyncChannelConfigState {
+    /// 后端判别（`webdav` / `s3`）。
+    pub backend: ChannelBackend,
     /// 同步根目录 URL。
     pub base_url: String,
     /// WebDAV 账号。
@@ -64,21 +74,65 @@ pub struct SyncChannelConfigState {
     pub password: String,
     /// 同步空间（跨端共识的世界身份）。
     pub space_id: String,
+    /// S3 兼容端点。
+    pub endpoint: String,
+    /// S3 签名区域。
+    pub region: String,
+    /// S3 桶名。
+    pub bucket: String,
+    /// S3 对象键前缀。
+    pub prefix: String,
+    /// S3 Access Key ID。
+    pub access_key: String,
+    /// S3 Secret Access Key（本机配置回显；响应体不经日志与 trace）。
+    pub secret_key: String,
+    /// S3 寻址方式（`true` = path-style）。
+    pub path_style: bool,
     /// 是否已配置过（区分「空表单」与「保存过空值」的表单初态依据）。
     pub configured: bool,
 }
 
 /// 通道配置写入参数（表单提交形态）。
-#[derive(Debug, Deserialize)]
+///
+/// 新增字段带 serde 缺省：只发 WebDAV 组字段的旧前端与老配置形态照常反序列化
+/// （缺 `backend` 回 [`ChannelBackend::WebDav`]，#1217 兼容验收）。
+#[derive(Debug, Default, Deserialize)]
 pub struct SyncChannelConfigInput {
+    /// 后端判别（缺省回 WebDAV）。
+    #[serde(default)]
+    pub backend: ChannelBackend,
     /// 同步根目录 URL。
+    #[serde(default)]
     pub base_url: String,
     /// WebDAV 账号。
+    #[serde(default)]
     pub username: String,
     /// WebDAV 密码 / 应用密码。
+    #[serde(default)]
     pub password: String,
     /// 同步空间（缺省回 `default`；两端填同一值即同步同一世界）。
     pub space_id: Option<String>,
+    /// S3 兼容端点。
+    #[serde(default)]
+    pub endpoint: String,
+    /// S3 签名区域。
+    #[serde(default)]
+    pub region: String,
+    /// S3 桶名。
+    #[serde(default)]
+    pub bucket: String,
+    /// S3 对象键前缀。
+    #[serde(default)]
+    pub prefix: String,
+    /// S3 Access Key ID。
+    #[serde(default)]
+    pub access_key: String,
+    /// S3 Secret Access Key。
+    #[serde(default)]
+    pub secret_key: String,
+    /// S3 寻址方式（`true` = path-style）。
+    #[serde(default)]
+    pub path_style: bool,
 }
 
 /// 同步状态（设置页同步卡片回显，issue #862）。
@@ -86,7 +140,7 @@ pub struct SyncChannelConfigInput {
 pub struct SyncStatusState {
     /// 本机设备标识（首用生成并持久化，参与全序 tiebreak）。
     pub device_id: String,
-    /// 通道是否已配置（WebDAV 凭据已保存）。
+    /// 通道是否已配置（通道凭据已保存）。
     pub channel_configured: bool,
     /// 上次成功同步时刻（UTC ISO；从未同步为 `None`）。
     pub last_sync_at: Option<String>,
@@ -234,17 +288,33 @@ pub async fn get_sync_channel_config<R: Runtime>(
     read_entry("get_sync_channel_config", conn, move |conn| {
         Ok(match configured_channel(conn)? {
             Some(config) => SyncChannelConfigState {
+                backend: config.backend,
                 base_url: config.base_url,
                 username: config.username,
                 password: config.password,
                 space_id: config.space_id,
+                endpoint: config.endpoint,
+                region: config.region,
+                bucket: config.bucket,
+                prefix: config.prefix,
+                access_key: config.access_key,
+                secret_key: config.secret_key,
+                path_style: config.path_style,
                 configured: true,
             },
             None => SyncChannelConfigState {
+                backend: ChannelBackend::default(),
                 base_url: String::new(),
                 username: String::new(),
                 password: String::new(),
                 space_id: String::new(),
+                endpoint: String::new(),
+                region: String::new(),
+                bucket: String::new(),
+                prefix: String::new(),
+                access_key: String::new(),
+                secret_key: String::new(),
+                path_style: false,
                 configured: false,
             },
         })
@@ -252,9 +322,10 @@ pub async fn get_sync_channel_config<R: Runtime>(
     .await
 }
 
-/// 保存通道配置（issue #862）：WebDAV 凭据构库校验（`sync-channel.*` 码化错误，
-/// 不发网络请求）→ 经 settings 单点落 `app_settings`。置脏豁免路径（设备本机
-/// 配置，ADR-0032），零信号——设置页自读回显。
+/// 保存通道配置（issue #862 / #1217）：非 https 端点拒绝 → 凭据构库校验
+/// （`sync-channel.*` 码化错误，不发网络请求）→ 经 settings 单点落
+/// `app_settings`。置脏豁免路径（设备本机配置，ADR-0032），零信号——设置页自读
+/// 回显。两步校验都通过才写入：失败路径零写入，不产生半配置状态。
 #[tauri::command]
 pub async fn set_sync_channel_config<R: Runtime>(
     app: AppHandle<R>,
@@ -266,11 +337,22 @@ pub async fn set_sync_channel_config<R: Runtime>(
             .space_id
             .unwrap_or_else(|| DEFAULT_SPACE_ID.to_string());
         let config = SyncChannelConfig {
+            backend: config.backend,
             base_url: config.base_url,
             username: config.username,
             password: config.password,
             space_id,
+            endpoint: config.endpoint,
+            region: config.region,
+            bucket: config.bucket,
+            prefix: config.prefix,
+            access_key: config.access_key,
+            secret_key: config.secret_key,
+            path_style: config.path_style,
         };
+        // 用户输入门（#1217）：端点为非 https 即拒（配置类码化错误）；空值留给
+        // 构库单点报既有的 `sync-channel.base-url-missing`。
+        ensure_secure_endpoint(&config)?;
         // 校验单点（域侧 `build_channel`）：不通过不落库——错误码为域的
         // sync-channel.*。
         build_channel(&config)?;
@@ -278,6 +360,29 @@ pub async fn set_sync_channel_config<R: Runtime>(
         settings::set(&conn, SettingKey::SyncChannelConfig, &config)
     })
     .await
+}
+
+/// 保存前的地址形态门（#1217）：通道端点只接受 `https://`（MVP 不提供 http 或
+/// 自签证书放行开关）。空端点留给 [`build_channel`] 报既有码
+/// `sync-channel.base-url-missing`，本门不改变该口径。
+///
+/// **为什么住命令层**：这是用户输入门而非通道语义——它只拦「人填的表单」，不
+/// 改变已落库配置的可用性（既有 http WebDAV 配置、测试直置的明文 S3 桩配置都
+/// 照常经 [`build_channel`] 跑轮次，#1221 收口前的存量升级路径因此不断）。域侧
+/// 构库单点保持「连接参数定型 + 布局构造」的单一职责，不掺入面向表单的策略；
+/// 取舍（含为何测试不经保存命令注入配置）记在 PR 正文。
+fn ensure_secure_endpoint(config: &SyncChannelConfig) -> Result<()> {
+    let endpoint = match config.backend {
+        ChannelBackend::WebDav => config.base_url.trim(),
+        ChannelBackend::S3 => config.endpoint.trim(),
+    };
+    if endpoint.is_empty() || endpoint.to_ascii_lowercase().starts_with("https://") {
+        return Ok(());
+    }
+    Err(AppError::coded(
+        "sync-channel.endpoint-insecure",
+        "同步通道端点必须使用 https 地址",
+    ))
 }
 
 /// 口令解析与验证（ADR-0091 决策 8）：密文库回 `Some(主口令)`——显式参数优先

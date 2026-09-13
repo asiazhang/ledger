@@ -4,7 +4,7 @@
 //! 半边：去抖合流、未配置零动作）与「调度未拉起」的反例——**接线半边**（壳层
 //! 写入口 → `record_local` 写信号 → 调度线程去抖合流 → 轮次发布；业务可用起点
 //! → `sync_on_start` 后台轮次）零断言，删掉接线测试仍全绿。本文件用 mock 应用
-//! 加真实 WebDAV 桩（与 [`crate::sync_channel`] 同现场形态）钉接线半边：断言
+//! 加真实 S3 桩（与 [`crate::sync_channel`] 同现场形态）钉接线半边：断言
 //! 对准用户可观察结果（通道上出现本机段、上次同步时刻落库），不对准线程或
 //! 函数调用形状（CONTEXT-testing〈断言强度〉；测试三层权威见 ADR-0087）。
 //!
@@ -33,10 +33,9 @@ use tauri_app_lib::sync_engine::{
     ChannelManifest, TriggerTimings, build_channel, configured_channel, start_sync_scheduler_with,
     sync_on_start,
 };
-use tauri_app_lib::test_support::spawn_webdav_stub;
 
 use crate::isolation::isolate_home;
-use crate::sync_channel::{STUB_PASS, STUB_USER, configure_channel, expense_input, fresh_app};
+use crate::sync_channel::{configure_channel, expense_input, fresh_app, spawn_sync_stub};
 
 /// 调度线程现场（消费两扇门做锁定/失败空转判定）的设备应用：mock 应用 + 独立
 /// 临时目录文件库 + 引导登记态 + 两扇门（生产由 setup 首先登记，此处同型补齐；
@@ -136,9 +135,9 @@ fn wait_for_auto_round(conn: Arc<Mutex<Connection>>, space_id: &'static str) {
 #[tokio::test]
 async fn write_entry_enqueues_upload_via_scheduler() {
     isolate_home();
-    let stub = spawn_webdav_stub(Some((STUB_USER, STUB_PASS)));
+    let stub = spawn_sync_stub();
     let (app, _dir) = trigger_device_app("write-after");
-    configure_channel(&app, &stub.base_url).await;
+    configure_channel(&app, &stub);
 
     // 注入时机：短去抖（写后只等静默窗）+ 超长轮询（远超测试时长——接线断掉
     // 时不得被低频轮询「救活」，信号删除必须红）。本测试是本测试二进制内唯一
@@ -164,9 +163,9 @@ async fn write_entry_enqueues_upload_via_scheduler() {
 #[tokio::test]
 async fn sync_on_start_publishes_local_ops_to_channel() {
     isolate_home();
-    let stub = spawn_webdav_stub(Some((STUB_USER, STUB_PASS)));
+    let stub = spawn_sync_stub();
     let (app, _dir) = trigger_device_app("on-start");
-    configure_channel(&app, &stub.base_url).await;
+    configure_channel(&app, &stub);
 
     // 先经壳层写入口铺垫一笔（有可发布内容）。本测试不拉调度线程：写信号无
     // 接收端，零动作——「写路径对同步域无感」的另一形态顺带在位。

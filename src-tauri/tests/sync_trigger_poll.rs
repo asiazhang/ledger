@@ -32,15 +32,17 @@ use tauri_app_lib::db::data_location;
 use tauri_app_lib::db::encryption::EncryptionGate;
 use tauri_app_lib::db::{self, DbState};
 use tauri_app_lib::settings::{self, SettingKey};
-use tauri_app_lib::sync_engine::{SyncChannelConfig, TriggerTimings, start_sync_scheduler_with};
-use tauri_app_lib::test_support::spawn_webdav_stub;
+use tauri_app_lib::sync_engine::{
+    ChannelBackend, SyncChannelConfig, TriggerTimings, start_sync_scheduler_with,
+};
+use tauri_app_lib::test_support::{S3Addressing, S3StubConfig, spawn_s3_stub};
 
 /// 低频轮询到期自跑轮次：无任何本地写入（无写信号），`recv_timeout` 超时分支
 /// 兜底轮询 → 成功轮次把「上次同步时刻」落库。删掉调度线程的轮询分支（到期
 /// 不再跑轮）本测试红。
 #[tokio::test]
 async fn poll_interval_elapses_into_a_round() {
-    let stub = spawn_webdav_stub(Some(("alice", "app-pass")));
+    let stub = spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle));
 
     // 设备现场（与 tests/commands/sync_channel.rs 同型）：mock 应用 + 独立
     // 临时目录文件库 + 引导登记态 + 两扇门（调度线程做空转判定）。
@@ -65,10 +67,16 @@ async fn poll_interval_elapses_into_a_round() {
             &guard,
             SettingKey::SyncChannelConfig,
             &SyncChannelConfig {
-                base_url: stub.base_url.clone(),
-                username: "alice".into(),
-                password: "app-pass".into(),
+                backend: ChannelBackend::S3,
+                endpoint: stub.endpoint.clone(),
+                region: stub.region.clone(),
+                bucket: stub.bucket.clone(),
+                access_key: stub.access_key.clone(),
+                secret_key: "test-secret-key".into(),
+                prefix: String::new(),
+                path_style: true,
                 space_id: "family".into(),
+                ..Default::default()
             },
         )
         .unwrap();

@@ -7,11 +7,11 @@
 
 use crate::settings::{self, SettingKey};
 use crate::sync_engine::EnvelopeMode;
-use crate::sync_engine::SyncChannelConfig;
 use crate::sync_engine::tests::common::make_expense;
 use crate::sync_engine::trigger::{
     SessionEnvelope, build_channel, configured_channel, run_auto_round, run_round_once,
 };
+use crate::sync_engine::{ChannelBackend, SyncChannelConfig};
 use crate::test_support::{self, seed_account};
 use crate::transaction::write::protocol;
 
@@ -29,6 +29,7 @@ fn channel_config_roundtrip_through_settings_single_point() {
         username: "alice".into(),
         password: "app-pass".into(),
         space_id: "family".into(),
+        ..Default::default()
     };
     settings::set(&conn, SettingKey::SyncChannelConfig, &config).unwrap();
     assert_eq!(
@@ -46,6 +47,84 @@ fn missing_space_id_deserializes_to_default() {
     assert_eq!(config.space_id, "default");
 }
 
+/// 后端判别缺省回 WebDAV（#1217 兼容验收）：既有配置 JSON 没有 `backend` 键、
+/// 也没有任何 S3 字段键，反序列化照常——判别回 [`ChannelBackend::WebDav`]、
+/// S3 组字段取空串/假值。这是 #1221 删除 WebDAV 前老配置升级路径的根据。
+#[test]
+fn missing_backend_deserializes_to_webdav_with_empty_s3_fields() {
+    let config: SyncChannelConfig = serde_json::from_str(
+        r#"{"base_url":"https://dav.example.com/dav/","username":"n","password":"p"}"#,
+    )
+    .unwrap();
+    assert_eq!(config.backend, ChannelBackend::WebDav);
+    assert_eq!(config.endpoint, "");
+    assert_eq!(config.region, "");
+    assert_eq!(config.bucket, "");
+    assert_eq!(config.prefix, "");
+    assert_eq!(config.access_key, "");
+    assert_eq!(config.secret_key, "");
+    assert!(!config.path_style);
+}
+
+/// 后端判别 wire 形态（#1217）：serde 变体名恰为 `webdav` / `s3`，与前端
+/// `ChannelBackend` 联合类型逐字一致——`snake_case` 会把 `WebDav` 写成
+/// `web_dav`，前端发 `webdav` 时保存即反序列化失败（契约级回归，直接钉字符串）。
+#[test]
+fn backend_wire_values_match_frontend_union() {
+    assert_eq!(
+        serde_json::to_string(&ChannelBackend::WebDav).unwrap(),
+        "\"webdav\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ChannelBackend::S3).unwrap(),
+        "\"s3\""
+    );
+
+    // WebDAV 组字段是既有必填形态（老配置一直带它们），此处按应用实际落库形状给全；
+    // 只让 S3 组字段走 serde 缺省。
+    let s3: SyncChannelConfig = serde_json::from_str(
+        r#"{"backend":"s3","base_url":"","username":"","password":"",
+            "endpoint":"https://s3.example.com","space_id":"default"}"#,
+    )
+    .unwrap();
+    assert_eq!(s3.backend, ChannelBackend::S3, "前端发 s3 应可解析");
+    let webdav: SyncChannelConfig = serde_json::from_str(
+        r#"{"backend":"webdav","base_url":"https://dav.example.com",
+            "username":"alice","password":"app-pass"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        webdav.backend,
+        ChannelBackend::WebDav,
+        "前端发 webdav 应可解析"
+    );
+}
+
+/// 后端判别显式落库与读回（#1217 验收「配置保存与回显包含后端判别与 S3 字段」
+/// 的域侧半边）：S3 组字段随配置整体往返，不丢也不串到 WebDAV 组。
+#[test]
+fn s3_backend_config_roundtrips_through_settings_single_point() {
+    let conn = test_support::open();
+    let config = SyncChannelConfig {
+        backend: ChannelBackend::S3,
+        endpoint: "https://s3.example.com".into(),
+        region: "cn-hangzhou".into(),
+        bucket: "ledger".into(),
+        prefix: "sync/family".into(),
+        access_key: "ak".into(),
+        secret_key: "sk".into(),
+        path_style: true,
+        space_id: "family".into(),
+        ..Default::default()
+    };
+    settings::set(&conn, SettingKey::SyncChannelConfig, &config).unwrap();
+    assert_eq!(
+        configured_channel(&conn).unwrap().as_ref(),
+        Some(&config),
+        "S3 配置经同一单点读回，值与写入一致"
+    );
+}
+
 /// 构库单点：非法空间（清洗后为空）报码化错误；保存路径与本单点同源。
 #[test]
 fn build_channel_rejects_invalid_space_with_coded_error() {
@@ -54,6 +133,7 @@ fn build_channel_rejects_invalid_space_with_coded_error() {
         username: "u".into(),
         password: "p".into(),
         space_id: "///".into(),
+        ..Default::default()
     };
     // `SyncChannel` 不实现 `Debug`（内含 reqwest 客户端），故不用 `unwrap_err`：
     // 经 match 取错误，语义等价且不引入 Debug 约束。
@@ -121,6 +201,7 @@ fn round_once_stamps_last_sync_on_success() {
         username: "alice".into(),
         password: "app-pass".into(),
         space_id: "default".into(),
+        ..Default::default()
     };
     settings::set(&conn, SettingKey::SyncChannelConfig, &config).unwrap();
 

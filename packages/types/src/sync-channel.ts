@@ -16,22 +16,52 @@ export interface SyncStatus {
   library_encrypted: boolean
 }
 
-/// 通道配置回显（未配置时各字段为空串、configured 为 false）。
+/// 同步通道后端判别（缺省 `webdav`：判别字段落地晚于既有配置，#1217 兼容验收）。
+export type ChannelBackend = 'webdav' | 's3'
+
+/// 通道配置回显（未配置时各字段为空串/假值、configured 为 false）。
+/// 两组地址字段并存：`base_url`/`username`/`password` 归 WebDAV（随 #1221 退役），
+/// `endpoint` 起归 S3；消费哪组由 `backend` 判别。
 export interface SyncChannelConfig {
+  backend: ChannelBackend
   base_url: string
   username: string
   password: string
   /// 同步空间（跨端共识的世界身份，`book-<space>` 目录）
   space_id: string
+  /// S3 兼容端点（MVP 只接受 https）
+  endpoint: string
+  /// S3 签名区域
+  region: string
+  /// S3 桶名
+  bucket: string
+  /// S3 对象键前缀（空串 = 桶根）
+  prefix: string
+  /// S3 Access Key ID（公开标识，非密钥）
+  access_key: string
+  /// S3 Secret Access Key（后端与主口令同级脱敏，不落日志）
+  secret_key: string
+  /// 寻址方式：true = path-style
+  path_style: boolean
   configured: boolean
 }
 
-/// 通道配置写入参数（表单提交形态；space_id 缺省回 default）。
+/// 通道配置写入参数（表单提交形态）。
+/// 新字段在 Rust 侧带 serde 缺省：只发 WebDAV 组字段的旧调用方照常被接受
+/// （缺 backend 回 webdav）；`space_id` 缺省回 default。
 export interface SyncChannelConfigInput {
-  base_url: string
-  username: string
-  password: string
+  backend?: ChannelBackend
+  base_url?: string
+  username?: string
+  password?: string
   space_id?: string
+  endpoint?: string
+  region?: string
+  bucket?: string
+  prefix?: string
+  access_key?: string
+  secret_key?: string
+  path_style?: boolean
 }
 
 /// 一次同步轮次的报告（后端 SyncRoundReport）：发布/拉取/重放的逐项计数。

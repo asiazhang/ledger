@@ -5,8 +5,9 @@
 //!
 //! 步骤直调域层公开接缝（`sync_engine::trigger` 的通道配置/构库/轮次编排/会话
 //! 信封形态、`sync_engine::channel` 的通道取件），不经壳层（测试无应用运行时）；
-//! 通道用真实 WebDAV 桩（进程内 axum，域单测与命令集成测试同体消费，ADR-0084
-//! 决策 1），故「配置通道 → 触发同步 → 数据落库」是真实 HTTP 语义而非内存替身。
+//! 通道用真实 S3 桩（进程内 axum，域单测与命令集成测试同体消费，ADR-0084
+//! 决策 1；#1217 起场景通道换到 S3 后端），故「配置通道 → 触发同步 → 数据落库」
+//! 是真实 HTTP 语义而非内存替身。
 //!
 //! 桩按场景现起（`world.boot.sync_stub`，Drop 清理）：每个场景一个独立通道世界，
 //! 场景之间零串扰（域单测里桩是场景内局部量，同款纪律）。对端投递用「另起一个
@@ -15,7 +16,7 @@
 //! （`test_support::channel`，issue #956）按产品消费的字节形态成帧。
 //!
 //! 与测试工厂的分层边界（ADR-0086 决策 9）：本文件只共享两个**协议/线格式替身**
-//! —— `test_support::webdav` 的 **WebDAV 协议替身**（真实 HTTP 服务的进程内实现）
+//! —— `test_support::s3` 的 **S3 协议替身**（真实 HTTP 服务的进程内实现）
 //! 与 `test_support::channel` 的**通道线格式替身**（字节级成帧），两者均由
 //! ≥2 层同体消费（ADR-0084 准入）；**不消费工厂的建库/种子/默认值集**——BDD 侧
 //! 建库走产品开库入口（world 的 `DbState`）、种子走 `crate::common` 的 e2e 共享
@@ -29,7 +30,7 @@ use tauri_app_lib::sync_engine::trigger::{
     SessionEnvelope, SyncChannel, build_channel, configured_channel, run_auto_round, run_round_once,
 };
 use tauri_app_lib::sync_engine::{
-    ChannelLayout, DomainCommand, EnvelopeMode, SyncChannelConfig, SyncOp,
+    ChannelBackend, ChannelLayout, DomainCommand, EnvelopeMode, SyncChannelConfig, SyncOp,
 };
 use tauri_app_lib::transaction::{
     NormalizedTransaction, TransactionCommand, TransactionInput, TransactionKind,
@@ -40,7 +41,7 @@ use crate::step_inputs::expense_input;
 use crate::step_verbs::create_transaction_verb;
 use crate::world::LedgerWorld;
 use tauri_app_lib::db::DbState;
-use tauri_app_lib::test_support::{publish_raw_segment, spawn_webdav_stub};
+use tauri_app_lib::test_support::{S3Addressing, S3StubConfig, publish_raw_segment, spawn_s3_stub};
 
 /// 把阻塞的通道工作（reqwest 阻塞客户端 + 真 HTTP）移出异步上下文：cucumber
 /// 场景跑在 tokio 运行时内，阻塞客户端在其中构造/析构会 panic（「Cannot drop a
@@ -63,15 +64,21 @@ fn channel_of(world: &LedgerWorld) -> SyncChannel {
     blocking(|| build_channel(&config).expect("通道构库应成功"))
 }
 
-/// 桩的同步根 URL（场景应先配置通道）。
-fn stub_url(world: &LedgerWorld) -> String {
-    world
-        .boot
-        .sync_stub
-        .as_ref()
-        .expect("场景应先起通道桩")
-        .base_url
-        .clone()
+/// 场景通道配置（S3 后端 + 本场景桩；空间字段由调用方给）。
+fn stub_channel_config(world: &LedgerWorld, space: &str) -> SyncChannelConfig {
+    let stub = world.boot.sync_stub.as_ref().expect("场景应先起通道桩");
+    SyncChannelConfig {
+        backend: ChannelBackend::S3,
+        endpoint: stub.endpoint.clone(),
+        region: stub.region.clone(),
+        bucket: stub.bucket.clone(),
+        access_key: stub.access_key.clone(),
+        secret_key: "test-secret-key".into(),
+        prefix: String::new(),
+        path_style: true,
+        space_id: space.to_string(),
+        ..Default::default()
+    }
 }
 
 /// 本机设备标识（判定依据读取，非夹具）。
@@ -101,14 +108,9 @@ fn configure_channel_impl(world: &mut LedgerWorld, space: String) {
     SessionEnvelope::forget();
     // 通道桩按场景现起（同场景内重复配置复用同一桩——语义等价于「改配置」）。
     if world.boot.sync_stub.is_none() {
-        world.boot.sync_stub = Some(spawn_webdav_stub(None));
+        world.boot.sync_stub = Some(spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle)));
     }
-    let config = SyncChannelConfig {
-        base_url: stub_url(world),
-        username: String::new(),
-        password: String::new(),
-        space_id: space,
-    };
+    let config = stub_channel_config(world, &space);
     let conn = world_conn!(world);
     settings::set(&conn, SettingKey::SyncChannelConfig, &config).expect("通道配置应落库");
 }
@@ -145,15 +147,9 @@ fn peer_publishes(world: &mut LedgerWorld) {
         let conn = peer.conn.lock().expect("对端连接锁应可获取");
         seed_account_with_expenses(&conn, "对端现金", "对端记的账", 1, 2_500, "2026-02-01");
     }
-    let base_url = stub_url(world);
+    let peer_config = stub_channel_config(world, "default");
     blocking(|| {
-        let peer_channel = build_channel(&SyncChannelConfig {
-            base_url,
-            username: String::new(),
-            password: String::new(),
-            space_id: "default".into(),
-        })
-        .expect("对端通道构库应成功");
+        let peer_channel = build_channel(&peer_config).expect("对端通道构库应成功");
         let conn = peer.conn.lock().expect("对端连接锁应可获取");
         run_round_once(&conn, &peer_channel, &EnvelopeMode::Plaintext).expect("对端发布轮次应成功");
     });
@@ -225,10 +221,16 @@ fn point_to_unreachable_channel(world: &mut LedgerWorld) {
         &conn,
         SettingKey::SyncChannelConfig,
         &SyncChannelConfig {
-            base_url: "http://127.0.0.1:9/dav/".into(),
-            username: String::new(),
-            password: String::new(),
+            backend: ChannelBackend::S3,
+            endpoint: "https://127.0.0.1:9".into(),
+            region: "us-east-1".into(),
+            bucket: "ledger-test".into(),
+            access_key: "test-access-key".into(),
+            secret_key: "test-secret-key".into(),
+            prefix: String::new(),
+            path_style: true,
             space_id: "default".into(),
+            ..Default::default()
         },
     )
     .expect("通道配置应落库");

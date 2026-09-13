@@ -251,8 +251,9 @@ pub struct BootGroup {
     pub book_last_disposition: Option<Result<tauri_app_lib::db::boot::BootDisposition, String>>,
     /// 账本场景（issue #835）：最近一次账本清单聚合（列表命令内核同款）
     pub book_last_list: Option<tauri_app_lib::db::book_registry::BookListInfo>,
-    /// 同步场景的 WebDAV 通道桩（配置通道时起；Drop 清理，issue #863）
-    pub sync_stub: Option<tauri_app_lib::test_support::WebDavStub>,
+    /// 场景通道桩（S3 兼容服务，配置通道时起、Drop 清理；issue #1216，场景
+    /// 通道自 #1217 起走 S3 后端）。
+    pub sync_stub: Option<tauri_app_lib::test_support::S3Stub>,
     /// 同步自动轮次结果（`Ok(None)` = 零动作；`Err` = 静默失败路径，issue #863）
     pub sync_last_auto_round: Option<
         Result<Option<tauri_app_lib::sync_engine::SyncRoundReport>, tauri_app_lib::error::AppError>,

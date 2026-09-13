@@ -15,18 +15,46 @@ use crate::sync_engine::channel::{
 };
 use crate::sync_engine::envelope::EnvelopeMode;
 use crate::sync_engine::transport::Transport;
+use crate::sync_engine::transport::s3::{S3Config, S3Transport};
 use crate::sync_engine::transport::webdav::{WebDavConfig, WebDavTransport};
 
 /// 通道空间默认值（同步世界身份的 v1 共识形态，见 [`SyncChannelConfig::space_id`]）。
 pub(crate) const DEFAULT_SPACE_ID: &str = "default";
+
+/// 同步通道后端判别（issue #1217 / ADR-0091 决策 1 修订）：通道配置选哪条传输
+/// 实现。
+///
+/// serde 变体名取小写（`webdav` / `s3`，与前端 `ChannelBackend` 联合类型逐字
+/// 一致；注意 `snake_case` 会把 `WebDav` 写成 `web_dav`，故用 `lowercase`）；
+/// 缺省回 [`ChannelBackend::WebDav`]——判别字段落地晚于既有配置，老配置（没有
+/// `backend` 键）据此照常解析（#1217 验收「缺后端判别字段的既有配置仍可解
+/// 析」）。WebDAV 变体随 #1221 整体退役。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChannelBackend {
+    /// WebDAV 网盘目录（v1 既有后端，退出计划见 #1221）。
+    #[default]
+    WebDav,
+    /// S3 兼容对象存储（#1216 后端）。
+    S3,
+}
 
 /// 通道配置持久化形态（`app_settings` 的 `sync.channel.config`，JSON 对象）。
 ///
 /// 本机设备配置（不同步，同步边界见多端同步域 SyncBoundary）：凭据不随信封走，
 /// 新端各自配置。写入经设置域单点（壳层 `set_sync_channel_config`），读取经
 /// [`configured_channel`] 单点。
+///
+/// 判别字段 `backend` 决定 [`build_channel`] 消费哪组地址/凭据字段：WebDAV 组
+/// （`base_url` / `username` / `password`）与 S3 组（`endpoint` / `region` /
+/// `bucket` / `prefix` / `access_key` / `secret_key` / `path_style`）并存，
+/// 空字段不参与对应后端——WebDAV 组随 #1221 退役。新增字段一律带
+/// `#[serde(default)]`：老配置缺键照常解析。
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SyncChannelConfig {
+    /// 后端判别（缺省回 WebDAV，老配置升级路径）。
+    #[serde(default)]
+    pub backend: ChannelBackend,
     /// 同步根目录 URL。
     pub base_url: String,
     /// WebDAV 账号。
@@ -40,6 +68,30 @@ pub struct SyncChannelConfig {
     /// 一个空间。反序列化缺省回默认（旧配置升级）。
     #[serde(default = "default_space_id")]
     pub space_id: String,
+    /// S3 兼容端点（如 `https://s3.example.com`；MVP 只接受 https，非 https
+    /// 保存被壳层单点拒绝）。
+    #[serde(default)]
+    pub endpoint: String,
+    /// S3 签名区域（如 `cn-hangzhou`）。
+    #[serde(default)]
+    pub region: String,
+    /// S3 桶名。
+    #[serde(default)]
+    pub bucket: String,
+    /// S3 对象键前缀（空串 = 桶根；多账本各配一个前缀即落在同一桶的不同世界）。
+    #[serde(default)]
+    pub prefix: String,
+    /// S3 Access Key ID（标识，不是秘密；秘密字段见 [`Self::secret_key`]）。
+    #[serde(default)]
+    pub access_key: String,
+    /// S3 Secret Access Key（与主口令同级处置：进 IPC 脱敏白名单，不落日志与
+    /// 追踪，见 `shell_support::redact`）。
+    #[serde(default)]
+    pub secret_key: String,
+    /// 寻址方式：`true` = path-style（`/{bucket}/{key}`，自建兼容端点用），
+    /// `false` = virtual-host（默认；国内主流厂商多数只支持或推荐它）。
+    #[serde(default)]
+    pub path_style: bool,
 }
 
 /// [`SyncChannelConfig::space_id`] 的 serde 缺省值单点。
@@ -126,14 +178,24 @@ pub fn configured_channel(conn: &Connection) -> Result<Option<SyncChannelConfig>
 /// 从配置构库（连接参数定型 + 布局构造，不发网络请求；错误码复用域的
 /// `sync-channel.*`）。保存配置与轮次入口共用本单点，校验序列不重复。
 pub fn build_channel(config: &SyncChannelConfig) -> Result<SyncChannel> {
-    let transport = WebDavTransport::new(WebDavConfig {
-        base_url: config.base_url.clone(),
-        username: config.username.clone(),
-        password: config.password.clone(),
-    })?;
+    // 按判别字段分派（#1217）：两组字段并存，各后端只消费自己那组；两处构库
+    // 都只做参数定型，不发网络请求。
+    let transport: Box<dyn Transport> = match config.backend {
+        ChannelBackend::WebDav => Box::new(WebDavTransport::new(WebDavConfig {
+            base_url: config.base_url.clone(),
+            username: config.username.clone(),
+            password: config.password.clone(),
+        })?),
+        ChannelBackend::S3 => Box::new(S3Transport::new(S3Config {
+            endpoint: config.endpoint.clone(),
+            region: config.region.clone(),
+            bucket: config.bucket.clone(),
+            access_key: config.access_key.clone(),
+            secret_key: config.secret_key.clone(),
+            prefix: config.prefix.clone(),
+            path_style: config.path_style,
+        })?),
+    };
     let layout = ChannelLayout::new(&config.space_id)?;
-    Ok(SyncChannel {
-        transport: Box::new(transport),
-        layout,
-    })
+    Ok(SyncChannel { transport, layout })
 }

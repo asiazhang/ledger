@@ -29,10 +29,18 @@ const baseStatus: SyncStatus = {
 }
 
 const baseConfig: SyncChannelConfig = {
+  backend: 'webdav',
   base_url: 'https://dav.example.com/dav/ledger/',
   username: 'alice',
   password: 'app-pass',
   space_id: 'family',
+  endpoint: '',
+  region: '',
+  bucket: '',
+  prefix: '',
+  access_key: '',
+  secret_key: '',
+  path_style: false,
   configured: true,
 }
 
@@ -200,10 +208,18 @@ describe('SyncSettings.vue', () => {
 
     expect(lastInvokeArgs('set_sync_channel_config')).toEqual({
       config: {
+        backend: 'webdav',
         base_url: 'https://new.example.com/dav/',
         username: 'alice',
         password: 'app-pass',
         space_id: 'family',
+        endpoint: '',
+        region: '',
+        bucket: '',
+        prefix: '',
+        access_key: '',
+        secret_key: '',
+        path_style: false,
       },
     })
     expect(
