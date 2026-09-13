@@ -14,7 +14,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   confirm: vi.fn(),
 }))
 const restartAppShortly = vi.fn()
-vi.mock('@/utils/restart', () => ({ restartAppShortly: () => restartAppShortly() }))
+vi.mock('@/composables/restart', () => ({ restartAppShortly: () => restartAppShortly() }))
 const mockOpen = vi.mocked(open)
 
 

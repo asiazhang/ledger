@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
 }))
 const restartAppShortly = vi.fn()
-vi.mock('@/utils/restart', () => ({ restartAppShortly: () => restartAppShortly() }))
+vi.mock('@/composables/restart', () => ({ restartAppShortly: () => restartAppShortly() }))
 
 import { open } from '@tauri-apps/plugin-dialog'
 import UnlockScreen from '@/components/UnlockScreen.vue'
