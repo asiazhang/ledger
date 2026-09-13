@@ -235,7 +235,7 @@ pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
 // 交易×保单接缝实现（spec #1086 / issue #1092）：来源列①保单直挂反查
 // ---------------------------------------------------------------------------
 
-/// 来源列①保单直挂反查实现（核心交易域 `transaction::read` 注册点，#1092）：
+/// 来源列①保单直挂反查实现（核心交易域 `transaction::seams::source` 注册点，#1092）：
 /// 委托 [`source_display_by_ids`] 并映射为核心交易域来源模型（kind = Policy、
 /// entity = 保单 id、展示名 = 险种名、软删 → Deleted 标注——口径零变化，
 /// spec #704；软删保单照常返回，历史引用可达）。
@@ -264,5 +264,5 @@ fn policy_source_resolver(
 /// 注册保单直挂反查实现（幂等：进程级一次，重复注册保留首次）。调用点在壳层
 /// 启动接线与测试建库单点，与生产同形；业务代码不直接调用。
 pub fn install_source_hook() {
-    crate::transaction::read::register_policy_source_resolver(policy_source_resolver);
+    crate::transaction::seams::source::register_policy_source_resolver(policy_source_resolver);
 }

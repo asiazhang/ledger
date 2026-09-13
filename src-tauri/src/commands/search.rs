@@ -1,7 +1,7 @@
 //! IPC 命令壳 · 交易搜索（#403 域目录化 ADR-0056）：交易搜索命令。
 //!
 //! 只做参数解包与连接锁管理，不含业务语义；搜索查询权威在
-//! [`crate::transaction::search`]（核心交易域归位，#403 / ADR-0056）。
+//! [`crate::transaction::read::search`]（核心交易域归位，#403 / ADR-0056）。
 //!
 //! 命令 async 化（形状乙，spec #498 / #501）：DB 调用经连接层统一 helper
 //! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程。
@@ -52,7 +52,7 @@ pub async fn search_transactions(
 
 /// IPC 命令：备注拼音一键修复（issue #513）：显式回填全部积压并返回报告
 /// （回填行数 / 是否收敛 / 失败原因）。领域权威在
-/// [`crate::transaction::search`]（与搜索入口惰性回填同一实现，幂等）。
+/// [`crate::transaction::read::search`]（与搜索入口惰性回填同一实现，幂等）。
 #[tauri::command]
 pub async fn repair_note_pinyin(db: State<'_, DbState>) -> Result<NotePinyinRepairReport> {
     let conn = db.conn.clone();

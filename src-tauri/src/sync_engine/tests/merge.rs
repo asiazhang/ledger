@@ -15,7 +15,7 @@ use crate::scheduled_transactions::{execute_occurrence, occurrence_transaction_i
 use crate::test_support::{
     self, assert_balance_cache_matches_realtime, seed_account, seed_instrument,
 };
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 
 /// 并发修改同一笔交易：两端按全序取序末者（LWW），输者的 op 落日志可追溯。
 #[test]
@@ -31,15 +31,15 @@ fn concurrent_same_field_edits_converge_to_order_last() {
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
     // 共同基底：A 创建一笔交易，两端一致持有同一实体。
-    let id = behavior::create(&conn_a, make_expense("acc-1", 10000, "午饭"))
+    let id = protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭"))
         .unwrap()
         .id;
     wire_in(&conn_b, &wire_out(&conn_a));
 
     // 两端并发改同一字段（备注）：A 端时钟已到 2，B 端本地首写时钟为 1，
     // 全序判 A 的修改为序末者 → LWW 取 A。
-    behavior::update(&conn_a, &id, make_expense("acc-1", 10000, "A 改")).unwrap();
-    behavior::update(&conn_b, &id, make_expense("acc-1", 10000, "B 改")).unwrap();
+    protocol::update(&conn_a, &id, make_expense("acc-1", 10000, "A 改")).unwrap();
+    protocol::update(&conn_b, &id, make_expense("acc-1", 10000, "B 改")).unwrap();
 
     let reports_b = wire_in(&conn_b, &wire_out(&conn_a));
     let reports_a = wire_in(&conn_a, &wire_out(&conn_b));
@@ -153,13 +153,13 @@ fn delete_vs_concurrent_update_never_resurrects_loser_side_parks() {
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
-    let id = behavior::create(&conn_a, make_expense("acc-1", 10000, "午饭"))
+    let id = protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭"))
         .unwrap()
         .id;
     wire_in(&conn_b, &wire_out(&conn_a));
 
-    behavior::update(&conn_a, &id, make_expense("acc-1", 10000, "A 改")).unwrap();
-    behavior::delete(&conn_b, &id).unwrap();
+    protocol::update(&conn_a, &id, make_expense("acc-1", 10000, "A 改")).unwrap();
+    protocol::delete(&conn_b, &id).unwrap();
 
     wire_in(&conn_b, &wire_out(&conn_a));
     wire_in(&conn_a, &wire_out(&conn_b));

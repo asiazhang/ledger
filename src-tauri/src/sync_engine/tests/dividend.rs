@@ -20,7 +20,7 @@ use crate::test_support::{
 };
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 
 /// 双端铺垫：投资账户 + 标的（币种同账户）。种子直插的账户无写路径钩子，
 /// 夹具经既有接缝全量回填一次，缓存行才可比对。
@@ -121,7 +121,7 @@ fn assert_dividend_converged(conn_a: &Connection, conn_b: &Connection, tx_id: &s
 #[test]
 fn dividend_create_update_delete_replay_converges() {
     let (conn_a, conn_b) = seed_both_ends();
-    let tx_id = behavior::create(&conn_a, dividend_input("acc-dv", "inst-dv", 3000, "现场A"))
+    let tx_id = protocol::create(&conn_a, dividend_input("acc-dv", "inst-dv", 3000, "现场A"))
         .unwrap()
         .id;
 
@@ -147,7 +147,7 @@ fn dividend_create_update_delete_replay_converges() {
     );
 
     // update op（全字段替换）：摘除并重建扩展行、余额随之更新。
-    behavior::update(
+    protocol::update(
         &conn_a,
         &tx_id,
         dividend_input("acc-dv", "inst-dv", 5000, "现场B"),
@@ -159,7 +159,7 @@ fn dividend_create_update_delete_replay_converges() {
     assert_eq!(cumulative_of(&conn_a, "CNY"), 5000);
 
     // delete op：扩展行摘除、交易行软删、余额回退。
-    behavior::delete(&conn_a, &tx_id).unwrap();
+    protocol::delete(&conn_a, &tx_id).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
     assert_dividend_converged(&conn_a, &conn_b, &tx_id);
     assert_eq!(read_transaction(&conn_a, &tx_id).unwrap().is_deleted, 1);
@@ -185,7 +185,7 @@ fn dividend_dependency_missing_parks_then_redelivery_self_heals() {
     conn_b
         .execute("DELETE FROM instruments WHERE id='inst-dv'", [])
         .unwrap();
-    let tx_id = behavior::create(&conn_a, dividend_input("acc-dv", "inst-dv", 3000, "现场A"))
+    let tx_id = protocol::create(&conn_a, dividend_input("acc-dv", "inst-dv", 3000, "现场A"))
         .unwrap()
         .id;
     let wire = wire_out(&conn_a);
@@ -213,7 +213,7 @@ fn dividend_dependency_missing_parks_then_redelivery_self_heals() {
 #[test]
 fn dividend_currency_divergence_parks_without_booking() {
     let (conn_a, conn_b) = seed_both_ends();
-    let tx_id = behavior::create(&conn_a, dividend_input("acc-dv", "inst-dv", 3000, "现场A"))
+    let tx_id = protocol::create(&conn_a, dividend_input("acc-dv", "inst-dv", 3000, "现场A"))
         .unwrap()
         .id;
     let wire = wire_out(&conn_a);

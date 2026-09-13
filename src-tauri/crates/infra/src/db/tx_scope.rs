@@ -50,7 +50,7 @@ pub fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -
 /// 显式 ROLLBACK 报「cannot rollback」——统一后调用方看到真因。
 ///
 /// 外层持有者（BEGIN 无条件，非同款形状的嵌套感知拷贝）：批量导入批次事务
-/// （`transaction::batch`）、定时引擎期次执行（`scheduled_transactions::engine`，
+/// （`transaction::write::batch`）、定时引擎期次执行（`scheduled_transactions::engine`，
 /// ADR-0033 决策 6）、余额调整事务壳（`accounts::core`）。批次层语义（`PRAGMA
 /// optimize` / 汇总日志 / 期次日志 / 状态回填）保留在各自调用点外，不进本原语。
 pub fn hold_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {

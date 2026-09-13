@@ -13,7 +13,7 @@ use super::super::{
 use super::common::{make_expense, read_transaction, wire_in, wire_out};
 use crate::sync_engine::ops;
 use crate::test_support::{self, assert_balance_cache_matches_realtime, seed_account};
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 use ledger_sync_protocol::position as positions;
 
 /// 读本机设备标识（测试判据用）。
@@ -31,7 +31,7 @@ fn txn_count(conn: &rusqlite::Connection) -> i64 {
 /// 共同基底：A 端种子账户并创建一笔交易，返回交易 id。
 fn base_ledger(conn_a: &rusqlite::Connection) -> String {
     seed_account(conn_a, "acc-1", "现金", "cash", "CNY", 0);
-    behavior::create(conn_a, make_expense("acc-1", 10000, "午饭"))
+    protocol::create(conn_a, make_expense("acc-1", 10000, "午饭"))
         .unwrap()
         .id
 }
@@ -45,9 +45,9 @@ fn pinned_world() -> (rusqlite::Connection, rusqlite::Connection, String) {
     let id = base_ledger(&conn_a);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
     wire_in(&conn_b, &wire_out(&conn_a));
-    behavior::delete(&conn_b, &id).unwrap();
-    behavior::update(&conn_a, &id, make_expense("acc-1", 10000, "A 改")).unwrap();
-    let t2 = behavior::create(&conn_a, make_expense("acc-1", 2500, "咖啡"))
+    protocol::delete(&conn_b, &id).unwrap();
+    protocol::update(&conn_a, &id, make_expense("acc-1", 10000, "A 改")).unwrap();
+    let t2 = protocol::create(&conn_a, make_expense("acc-1", 2500, "咖啡"))
         .unwrap()
         .id;
     wire_in(&conn_b, &wire_out(&conn_a));
@@ -108,8 +108,8 @@ fn bootstrap_plus_ops_after_positions_reaches_source_state() {
     let cp = create_checkpoint(&conn_a).unwrap();
 
     // 快照之后 A 继续记账：改 t1、建 t2（位点之后的新 op）。
-    behavior::update(&conn_a, &id, make_expense("acc-1", 10000, "A 改")).unwrap();
-    let t2 = behavior::create(&conn_a, make_expense("acc-1", 2500, "咖啡"))
+    protocol::update(&conn_a, &id, make_expense("acc-1", 10000, "A 改")).unwrap();
+    let t2 = protocol::create(&conn_a, make_expense("acc-1", 2500, "咖啡"))
         .unwrap()
         .id;
 
@@ -146,7 +146,7 @@ fn deterministic_reconstruction_from_same_checkpoint() {
     let conn_a = test_support::open();
     let id = base_ledger(&conn_a);
     let cp = create_checkpoint(&conn_a).unwrap();
-    behavior::update(&conn_a, &id, make_expense("acc-1", 10000, "A 改")).unwrap();
+    protocol::update(&conn_a, &id, make_expense("acc-1", 10000, "A 改")).unwrap();
 
     let after = read_ops(&conn_a).unwrap();
     let rebuild = || {
@@ -181,7 +181,7 @@ fn bootstrap_swaps_device_identity_and_adopts_positions() {
     assert_ne!(dev_b, dev_a, "引导后本机持有自己的设备标识");
 
     // B 随后记账：op 落在 B 自己的新流，时钟从 1 起；A 流位点原样采纳。
-    let t2 = behavior::create(&conn_b, make_expense("acc-1", 2500, "咖啡"))
+    let t2 = protocol::create(&conn_b, make_expense("acc-1", 2500, "咖啡"))
         .unwrap()
         .id;
     let ops_b = read_ops(&conn_b).unwrap();
@@ -208,7 +208,7 @@ fn bootstrap_rejects_non_fresh_target() {
 
     // B 已有自己的日志（参与过同步）。
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
-    behavior::create(&conn_b, make_expense("acc-1", 100, "已有账")).unwrap();
+    protocol::create(&conn_b, make_expense("acc-1", 100, "已有账")).unwrap();
 
     let err = bootstrap_from_checkpoint(&mut conn_b, &cp, None).unwrap_err();
     assert_eq!(err.code(), Some("sync-engine.bootstrap-not-fresh"));
@@ -235,7 +235,7 @@ fn redelivery_of_ops_at_or_below_position_skips() {
     let mut conn_b = test_support::open();
     let id = base_ledger(&conn_a);
     let cp = create_checkpoint(&conn_a).unwrap();
-    behavior::update(&conn_a, &id, make_expense("acc-1", 10000, "A 改")).unwrap();
+    protocol::update(&conn_a, &id, make_expense("acc-1", 10000, "A 改")).unwrap();
 
     bootstrap_from_checkpoint(&mut conn_b, &cp, None).unwrap();
 
@@ -335,7 +335,7 @@ fn sync_continues_after_truncation_without_resurrecting_truncated_ops() {
     assert_eq!(txn_count(&conn_a), 2, "不复活、不重复");
 
     // 截断后新 op 继续正常同步：B 应用 A 的新流 op。
-    let t3 = behavior::create(&conn_a, make_expense("acc-1", 9900, "打车"))
+    let t3 = protocol::create(&conn_a, make_expense("acc-1", 9900, "打车"))
         .unwrap()
         .id;
     wire_in(&conn_b, &wire_out(&conn_a));
@@ -361,7 +361,7 @@ fn encrypted_checkpoint_roundtrip_and_passphrase_guards() {
     {
         let seed = test_support::open();
         seed_account(&seed, "acc-1", "现金", "cash", "CNY", 0);
-        behavior::create(&seed, make_expense("acc-1", 10000, "午饭")).unwrap();
+        protocol::create(&seed, make_expense("acc-1", 10000, "午饭")).unwrap();
         seed.execute(
             "VACUUM INTO ?1",
             rusqlite::params![db_path.to_string_lossy()],
@@ -416,7 +416,7 @@ fn first_sighting_with_pending_park_pins_position_below_it() {
     let conn_b = test_support::open();
     base_ledger(&conn_a);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
-    behavior::create(&conn_a, make_expense("acc-1", 2500, "咖啡")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 2500, "咖啡")).unwrap();
     // A 流 [op1, op2]；投递时 op1 的 wire 原文被篡改为不可解（合成挂起），
     // op2 正常解析应用——B 对 A 流首见裁决即含未应用缺口。
     let mut wire = wire_out(&conn_a);

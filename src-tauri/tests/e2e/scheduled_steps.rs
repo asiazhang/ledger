@@ -1,5 +1,5 @@
 //! 定时交易引擎（issue #71）的 BDD 步骤：在命令 seam 上断言
-//! - 引擎生成的交易经 transaction::writer 落库，`amount_native_cents` 由
+//! - 引擎生成的交易经 transaction::write::writer 落库，`amount_native_cents` 由
 //!   convert_to_native 折算（非硬编码 1:1），缺汇率报错且期次保持可重试；
 //! - 分期 / 订阅 / 定时转账生成的类型与金额不回归。
 //!

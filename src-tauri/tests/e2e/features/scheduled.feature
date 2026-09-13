@@ -1,5 +1,5 @@
 Feature: 定时交易引擎接入共享写入权威（native 折算）
-  定时引擎生成的交易经 transaction::writer 落库：本位币金额由 convert_to_native 折算
+  定时引擎生成的交易经 transaction::write::writer 落库：本位币金额由 convert_to_native 折算
   （而非硬编码 1:1），修复多币种启用后定时交易静默算错的隐患；
   分期 / 订阅 / 定时转账生成的类型与金额保持既有行为（issue #71）。
 

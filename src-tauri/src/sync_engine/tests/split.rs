@@ -19,7 +19,7 @@ use crate::test_support::{
 };
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 
 /// 双端铺垫：投资账户 + 标的（币种同账户）；种子直插的账户无写路径钩子，夹具经既有
 /// 接缝全量回填一次，缓存行才可比对。
@@ -145,13 +145,13 @@ fn assert_full_redelivery_is_idempotent(conn_a: &Connection, conn_b: &Connection
 /// A 端铺垫两批次 + 部分卖出：100 份 @1.00 元、200 份 @2.00 元、卖 40 份 @1.00 元。
 /// 返回 (买1 id, 买2 id, 卖 id)。
 fn seed_two_lots_with_partial_sell(conn: &Connection) -> (String, String, String) {
-    let buy1 = behavior::create(conn, buy_input("acc-sp", "inst-sp", 100.0, 10_000))
+    let buy1 = protocol::create(conn, buy_input("acc-sp", "inst-sp", 100.0, 10_000))
         .unwrap()
         .id;
-    let buy2 = behavior::create(conn, buy_input("acc-sp", "inst-sp", 200.0, 20_000))
+    let buy2 = protocol::create(conn, buy_input("acc-sp", "inst-sp", 200.0, 20_000))
         .unwrap()
         .id;
-    let sell = behavior::create(conn, sell_input("acc-sp", "inst-sp", 40.0, 10_000))
+    let sell = protocol::create(conn, sell_input("acc-sp", "inst-sp", 40.0, 10_000))
         .unwrap()
         .id;
     (buy1, buy2, sell)
@@ -186,7 +186,7 @@ fn split_create_replay_converges_lots_and_restatement() {
     let (conn_a, conn_b) = seed_both_ends();
     let (buy1, buy2, _sell) = seed_two_lots_with_partial_sell(&conn_a);
     // 重述前权威总成本：批次 1 锚点 10000 − 记录消耗 4000 = 6000；批次 2 = 40000。
-    let split_id = behavior::create(&conn_a, split_input("acc-sp", "inst-sp", 30.0))
+    let split_id = protocol::create(&conn_a, split_input("acc-sp", "inst-sp", 30.0))
         .unwrap()
         .id;
 
@@ -241,10 +241,10 @@ fn split_create_replay_converges_lots_and_restatement() {
 #[test]
 fn split_dependency_missing_parks_then_redelivery_self_heals() {
     let (conn_a, conn_b) = seed_both_ends();
-    let buy1 = behavior::create(&conn_a, buy_input("acc-sp", "inst-sp", 100.0, 10_000))
+    let buy1 = protocol::create(&conn_a, buy_input("acc-sp", "inst-sp", 100.0, 10_000))
         .unwrap()
         .id;
-    let split_id = behavior::create(&conn_a, split_input("acc-sp", "inst-sp", 30.0))
+    let split_id = protocol::create(&conn_a, split_input("acc-sp", "inst-sp", 30.0))
         .unwrap()
         .id;
     let wire = wire_out(&conn_a);
@@ -282,8 +282,8 @@ fn split_dependency_missing_parks_then_redelivery_self_heals() {
 #[test]
 fn split_op_with_divergent_restatement_parks_without_booking() {
     let (conn_a, conn_b) = seed_both_ends();
-    behavior::create(&conn_a, buy_input("acc-sp", "inst-sp", 100.0, 10_000)).unwrap();
-    let split_id = behavior::create(&conn_a, split_input("acc-sp", "inst-sp", 30.0))
+    protocol::create(&conn_a, buy_input("acc-sp", "inst-sp", 100.0, 10_000)).unwrap();
+    let split_id = protocol::create(&conn_a, split_input("acc-sp", "inst-sp", 30.0))
         .unwrap()
         .id;
     let wire = wire_out(&conn_a);
@@ -323,8 +323,8 @@ fn split_op_with_divergent_restatement_parks_without_booking() {
 #[test]
 fn legacy_split_op_without_fields_parks_without_booking() {
     let (conn_a, conn_b) = seed_both_ends();
-    behavior::create(&conn_a, buy_input("acc-sp", "inst-sp", 100.0, 10_000)).unwrap();
-    let split_id = behavior::create(&conn_a, split_input("acc-sp", "inst-sp", 30.0))
+    protocol::create(&conn_a, buy_input("acc-sp", "inst-sp", 100.0, 10_000)).unwrap();
+    let split_id = protocol::create(&conn_a, split_input("acc-sp", "inst-sp", 30.0))
         .unwrap()
         .id;
     let wire = wire_out(&conn_a);
@@ -360,14 +360,14 @@ fn legacy_split_op_without_fields_parks_without_booking() {
 fn split_update_and_delete_replay_converge() {
     let (conn_a, conn_b) = seed_both_ends();
     let (buy1, buy2, _sell) = seed_two_lots_with_partial_sell(&conn_a);
-    let split_id = behavior::create(&conn_a, split_input("acc-sp", "inst-sp", 20.0))
+    let split_id = protocol::create(&conn_a, split_input("acc-sp", "inst-sp", 20.0))
         .unwrap()
         .id;
     wire_in(&conn_b, &wire_out(&conn_a));
     assert_split_converged(&conn_a, &conn_b, &split_id);
 
     // 就地修改：Δ 20 → 50（先按审计精确回补旧重述，再按新 Δ 重建重述）。
-    behavior::update(&conn_a, &split_id, split_input("acc-sp", "inst-sp", 50.0)).unwrap();
+    protocol::update(&conn_a, &split_id, split_input("acc-sp", "inst-sp", 50.0)).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
     assert_eq!(
         split_extension(&conn_a, &split_id),
@@ -377,7 +377,7 @@ fn split_update_and_delete_replay_converge() {
     assert_split_converged(&conn_a, &conn_b, &split_id);
 
     // 删除重放：按重述审计逐批次精确回补（数量与每份成本含舍入一并还原），扩展行清除。
-    behavior::delete(&conn_a, &split_id).unwrap();
+    protocol::delete(&conn_a, &split_id).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
     assert_eq!(read_transaction(&conn_a, &split_id).unwrap().is_deleted, 1);
     assert_eq!(read_transaction(&conn_b, &split_id).unwrap().is_deleted, 1);

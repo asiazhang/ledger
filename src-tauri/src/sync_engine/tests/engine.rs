@@ -8,7 +8,7 @@
 use super::super::{ApplyReport, DomainCommand, OpOutcome, apply_ops, parked_ops, read_ops};
 use super::common::{make_expense, read_transaction};
 use crate::test_support::{self, assert_balance_cache_matches_realtime, seed_account};
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 
 /// A 端记账 → B 端重放：业务字段逐列一致 + 派生缓存经既有接缝重算自洽。
 #[test]
@@ -18,7 +18,7 @@ fn a_writes_b_replays_ledger_converges() {
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
-    let created = behavior::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
+    let created = protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
 
     let ops = read_ops(&conn_a).unwrap();
     assert_eq!(ops.len(), 1);
@@ -48,7 +48,7 @@ fn redelivery_of_same_ops_is_idempotent() {
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
-    behavior::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
     let ops = read_ops(&conn_a).unwrap();
     apply_ops(&conn_b, &ops).unwrap();
 
@@ -62,7 +62,7 @@ fn redelivery_of_same_ops_is_idempotent() {
     assert_eq!(count, 1, "重复投递不产生第二笔交易");
 
     // 部分重复（旧 op + 新 op 混合投递）同样安全。
-    behavior::create(&conn_a, make_expense("acc-1", 500, "咖啡")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 500, "咖啡")).unwrap();
     let all_a = read_ops(&conn_a).unwrap();
     assert_eq!(all_a.len(), 2);
     let mut mixed = ops;
@@ -80,20 +80,20 @@ fn update_and_delete_replay_keep_both_sides_equal() {
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
-    let id = behavior::create(&conn_a, make_expense("acc-1", 10000, "午饭"))
+    let id = protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭"))
         .unwrap()
         .id;
     apply_ops(&conn_b, &read_ops(&conn_a).unwrap()).unwrap();
 
     // 修改（全字段替换语义，含折算结果更新）。
-    behavior::update(&conn_a, &id, make_expense("acc-1", 25000, "午饭（改）")).unwrap();
+    protocol::update(&conn_a, &id, make_expense("acc-1", 25000, "午饭（改）")).unwrap();
     apply_ops(&conn_b, &read_ops(&conn_a).unwrap()).unwrap();
     let expected = read_transaction(&conn_a, &id).unwrap();
     assert_eq!(read_transaction(&conn_b, &id).unwrap(), expected);
     assert_eq!(expected.amount_native_cents, 25000);
 
     // 删除（软删）。
-    behavior::delete(&conn_a, &id).unwrap();
+    protocol::delete(&conn_a, &id).unwrap();
     apply_ops(&conn_b, &read_ops(&conn_a).unwrap()).unwrap();
     let expected = read_transaction(&conn_a, &id).unwrap();
     assert_eq!(read_transaction(&conn_b, &id).unwrap(), expected);
@@ -109,8 +109,8 @@ fn cross_device_ops_converge_to_same_total_order() {
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
     // 两端并发各记一笔（端内时钟同为 1，全序由 DeviceId tiebreak）。
-    behavior::create(&conn_a, make_expense("acc-1", 10000, "A 记")).unwrap();
-    behavior::create(&conn_b, make_expense("acc-1", 20000, "B 记")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 10000, "A 记")).unwrap();
+    protocol::create(&conn_b, make_expense("acc-1", 20000, "B 记")).unwrap();
 
     // 互换日志（各自重放对方，自己的 op 按标识跳过）。
     let ops_a = read_ops(&conn_a).unwrap();
@@ -165,8 +165,8 @@ fn dependency_failure_parks_without_blocking_batch_and_redelivery_applies() {
 
     // op1：合法（两端账户齐备）；op2：引用仅 A 端有的账户（B 端外键依赖失败）。
     seed_account(&conn_a, "acc-a-only", "A 独有账户", "cash", "CNY", 0);
-    behavior::create(&conn_a, make_expense("acc-1", 10000, "好的")).unwrap();
-    let bad = behavior::create(&conn_a, make_expense("acc-a-only", 500, "坏引用"))
+    protocol::create(&conn_a, make_expense("acc-1", 10000, "好的")).unwrap();
+    let bad = protocol::create(&conn_a, make_expense("acc-a-only", 500, "坏引用"))
         .unwrap()
         .id;
     let ops = read_ops(&conn_a).unwrap();

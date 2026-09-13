@@ -14,7 +14,7 @@ use crate::sync_engine::trigger::{
     SessionEnvelope, build_channel, configured_channel, run_auto_round, run_round_once,
 };
 use crate::test_support::{self, seed_account};
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 
 /// 通道配置单点：未配置回 `None`；保存后读回同值。
 #[test]
@@ -116,7 +116,7 @@ fn round_once_stamps_last_sync_on_success() {
     let stub = test_support::spawn_webdav_stub(Some(("alice", "app-pass")));
     let conn = test_support::open();
     seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
-    behavior::create(&conn, make_expense("acc-1", 10000, "午饭")).unwrap();
+    protocol::create(&conn, make_expense("acc-1", 10000, "午饭")).unwrap();
     let config = SyncChannelConfig {
         base_url: stub.base_url.clone(),
         username: "alice".into(),

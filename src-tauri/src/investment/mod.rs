@@ -47,7 +47,7 @@
 //! - [`trend`]：单标的 / 组合走势查询。
 //! - [`transaction_seam`]：交易域接缝实现（spec #1086 / issue #1092）——投资 kind
 //!   写路径装配/副作用与读路径投影的实现注册面（注册点住核心交易域
-//!   `transaction::investment_seam`，本域经 `install_transaction_hooks` 一次性装入，
+//!   `transaction::seams::investment`，本域经 `install_transaction_hooks` 一次性装入，
 //!   壳层启动接线）；`transaction → investment` 直接依赖边随接缝反转消亡。
 //! - [`unwind`]：持仓副作用撤销（Unwind）——修改/删除路径的守卫 → 级联/回补 → 清理
 //!   模板单点 `remove(conn, id, kind, mode)`，`trade.*` 守卫码与文案随迁（issue #1020，
@@ -142,7 +142,7 @@ pub use trade::{
     get_transaction_trade, prepare, release_for_delete, revert,
 };
 /// 交易域接缝接线入口（spec #1086 / issue #1092）：六个挂载点实现一次性装入，
-/// 壳层启动接线（`transaction::investment_seam` 注册点）。
+/// 壳层启动接线（`transaction::seams::investment` 注册点）。
 pub use transaction_seam::install_transaction_hooks;
 pub use trend::{query_instrument_price_trend, query_portfolio_value_trend};
 

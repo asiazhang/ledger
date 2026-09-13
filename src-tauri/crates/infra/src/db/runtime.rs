@@ -45,7 +45,7 @@ pub fn write<T>(conn: &Mutex<Connection>, f: impl FnOnce(&Connection) -> Result<
 /// 不知道副作用语义——数据库与备份域之间不再有 crate 依赖边（备份域是业务域，
 /// 基础设施不得反向引用）。实现由备份域提供、壳层在启动时注册；其余两类写路径
 /// 挂载点（受影响账户余额重算、计划来源解析）已由 #1090「写路径副作用接缝反转」
-/// 收口为同一形态（核心交易域 `transaction::write_effects` / `transaction::read`
+/// 收口为同一形态（核心交易域 `transaction::seams::balance` / `transaction::seams::source`
 /// 注册点，账户域 / 定时计划域实现），期次落账置脏同票收口（定时计划域
 /// `auto_run` 注册点、备份域实现）。
 pub type AfterCommitHook = fn(&Connection);

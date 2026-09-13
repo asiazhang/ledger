@@ -1,36 +1,7 @@
-//! 核心交易域测试索引（#403 域目录化随迁收口）。
+//! 核心交易域测试共享脚手架（crate 根测试目录唯一一份，ADR-0113 决策 6）。
 //!
-//! - [`amount`]：kind 边界、度量矩阵、SQL 片段聚合、本位币折算
-//! - [`audit`]：审计字段统一生成与 native 本位币折算
-//! - [`balance_cache`]：余额/净资产持久化缓存一致性（issue #491）
-//! - [`behavior`]：写删行为、refund 链、嵌套感知事务与即建商户证据
-//! - [`category`]：分类携带收口（issue #582）
-//! - [`common`]：交易行为/查询脚手架
-//! - [`merchant`]：商户携带收口与即建商户证据
-//! - [`oplog`]：op 产出——写成功追加含源端折算的 op、失败不残留（issue #855）
-//! - [`protocol`]：写入协议的协议级对称断言——Local / Replay 两形态同码同文案、
-//!   op 发射开关与 id 来源（issue #1004 / ADR-0105）
-//! - [`query`]：交易查询、排序与分页
-//! - [`search`]：统一模糊搜索语义与搜索行为
-//! - [`search_repair`]：拼音辅助数据一键修复（积压回填、幂等、收敛）
-//! - [`schema_cross_check`]：`transactions.kind` CHECK 字面量 ↔ `ALL` 互核（ADR-0108）
-//! - [`batch_common`]：批量写入共享脚手架
-//! - [`batch_create`]：批量写入、幂等键语义与批次汇总日志
-//! - [`batch_dedup`]：内容哈希与去重身份判定
+//! 各生产模块的测试外挂在 `<模块>/tests/`（如 `amount/tests/`、`write/protocol/tests/`），
+//! 经各自生产模块的 `#[cfg(test)] mod tests;` 声明；本目录只保留跨模块复用的域语义
+//! 输入构造器（[`common`]），路径段含 `tests` 自动落在守门豁免内。
 
-mod amount;
-mod audit;
-mod balance_cache;
-mod batch_common;
-mod batch_create;
-mod batch_dedup;
-mod behavior;
-mod category;
-mod common;
-mod merchant;
-mod oplog;
-mod protocol;
-mod query;
-mod schema_cross_check;
-mod search;
-mod search_repair;
+pub(crate) mod common;

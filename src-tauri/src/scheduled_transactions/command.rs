@@ -29,7 +29,7 @@ use std::borrow::Cow;
 use crate::db::{deterministic_uuid, now_iso};
 use crate::error::Result;
 use crate::transaction::NormalizedTransaction;
-use crate::transaction::writer;
+use crate::transaction::write::writer;
 use ledger_sync_protocol::command::{ReplayEffect, SyncCommand};
 use ledger_sync_protocol::device::device_id;
 use ledger_sync_protocol::op::record_local as record_op;

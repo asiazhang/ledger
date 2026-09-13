@@ -9,7 +9,7 @@ use super::super::{DomainCommand, OpOutcome, read_ops};
 use super::common::{make_expense, read_transaction, seed_device, wire_in, wire_out};
 use crate::currencies::{current_base_currency, set_base_currency};
 use crate::test_support::{self, seed_account, seed_exchange_rate};
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 
 /// 并发修改本位币基准：按全序取序末者（LWW），两端折算口径一致不分叉。
 ///
@@ -97,8 +97,8 @@ fn conversion_is_deterministic_across_devices_after_sync() {
     seed_exchange_rate(&conn_b, "EUR", "USD", 1.1);
     let mut input = make_expense("acc-1", 10000, "外币支出");
     input.currency_code = "EUR".into();
-    let id_a = behavior::create(&conn_a, input.clone()).unwrap().id;
-    let id_b = behavior::create(&conn_b, input).unwrap().id;
+    let id_a = protocol::create(&conn_a, input.clone()).unwrap().id;
+    let id_b = protocol::create(&conn_b, input).unwrap().id;
 
     let row_a = read_transaction(&conn_a, &id_a).unwrap();
     let row_b = read_transaction(&conn_b, &id_b).unwrap();

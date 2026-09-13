@@ -205,10 +205,10 @@ pub fn list_account_balances_with_visibility(
 /// 推导只看行上三个账户引用列。
 ///
 /// 接线状态（issue #1090 接缝反转后）：三条写入路径经核心交易域的注册点
-/// `transaction::write_effects::refresh_affected_balances` 到达本函数——创建
-/// （Writer 接缝 `transaction::writer::insert_row`，issue #533）、修改
+/// `transaction::seams::balance::refresh_affected_balances` 到达本函数——创建
+/// （Writer 接缝 `transaction::write::writer::insert_row`，issue #533）、修改
 /// （`writer::update_row`，旧 ∪ 新并集）与删除（行为层编排
-/// `transaction::behavior::soft_delete_transaction_row`，原行三端）。三条路径
+/// `transaction::write::protocol::soft_delete_transaction_row`，原行三端）。三条路径
 /// 都只交出行上账户引用三元组，推导仍在本函数单点；任何新写入口不得另造
 /// 第四份推导，也不得绕开接缝直接引用本模块。
 ///
@@ -253,7 +253,7 @@ fn now_iso_millis() -> String {
 /// 写路径余额刷新接缝的实现（[`install_balance_refresh_hook`] 的注册体）：
 /// 受影响账户推导（唯一定义点，[`affected_accounts`]）+ 同事务整体重算
 /// （[`refresh_account_balances`]），供核心交易域注册点
-/// `transaction::write_effects::refresh_affected_balances` 在创建/修改/软删落库后
+/// `transaction::seams::balance::refresh_affected_balances` 在创建/修改/软删落库后
 /// 同一写事务内调用（ADR-0067 语义零变化）。
 fn balance_refresh_hook(
     conn: &Connection,
@@ -271,7 +271,7 @@ fn balance_refresh_hook(
 /// 直接依赖（ADR-0071 决策 5 修订：transaction ⇄ accounts 双向横向边收敛为
 /// accounts → transaction 单向）。
 pub fn install_balance_refresh_hook() {
-    ledger_transaction::write_effects::register_balance_refresh_hook(balance_refresh_hook);
+    ledger_transaction::seams::balance::register_balance_refresh_hook(balance_refresh_hook);
 }
 
 /// 对给定账户按唯一口径表达式整体重算余额并写入缓存（禁止增量加减）。

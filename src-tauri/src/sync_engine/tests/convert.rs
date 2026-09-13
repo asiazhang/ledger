@@ -20,7 +20,7 @@ use crate::test_support::{
 };
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
-use crate::transaction::behavior;
+use crate::transaction::write::protocol;
 
 /// 双端铺垫：投资账户 + 转出/转入两标的（币种同账户，1:1 折算）。
 fn seed_both_ends() -> (Connection, Connection) {
@@ -171,13 +171,13 @@ fn convert_create_replay_converges_lots_carried_cost_and_pnl() {
     let (conn_a, conn_b) = seed_both_ends();
     // A 端：两笔建仓（单价 1.00 / 2.00 元）→ 转换 15 份（耗尽首批 10 + 部分耗二批 5）→
     // 卖出转入份额 5 份（成本随转换结转流入已实现盈亏）。
-    let buy1 = behavior::create(
+    let buy1 = protocol::create(
         &conn_a,
         buy_input("acc-cv", "inst-out", 10.0, 10_000, "2026-01-10"),
     )
     .unwrap()
     .id;
-    let buy2 = behavior::create(
+    let buy2 = protocol::create(
         &conn_a,
         buy_input("acc-cv", "inst-out", 10.0, 20_000, "2026-01-11"),
     )
@@ -185,7 +185,7 @@ fn convert_create_replay_converges_lots_carried_cost_and_pnl() {
     .id;
     wire_in(&conn_b, &wire_out(&conn_a));
 
-    let convert_id = behavior::create(
+    let convert_id = protocol::create(
         &conn_a,
         convert_input("acc-cv", "inst-out", "inst-in", 15.0, 15.0, 2_250, 2_250, 0),
     )
@@ -247,7 +247,7 @@ fn convert_create_replay_converges_lots_carried_cost_and_pnl() {
     }
 
     // 卖出转入份额 5 份：成本 667（round(5 × 13333 ÷ 100)）、盈亏 1500 − 667 = 833。
-    let sell_id = behavior::create(&conn_a, sell_input("acc-cv", "inst-in", 5.0, 30_000))
+    let sell_id = protocol::create(&conn_a, sell_input("acc-cv", "inst-in", 5.0, 30_000))
         .unwrap()
         .id;
     wire_in(&conn_b, &wire_out(&conn_a));
@@ -276,13 +276,13 @@ fn convert_create_replay_converges_lots_carried_cost_and_pnl() {
 #[test]
 fn convert_update_replay_rebuilds_both_legs() {
     let (conn_a, conn_b) = seed_both_ends();
-    let buy_id = behavior::create(
+    let buy_id = protocol::create(
         &conn_a,
         buy_input("acc-cv", "inst-out", 10.0, 10_000, "2026-01-10"),
     )
     .unwrap()
     .id;
-    let convert_id = behavior::create(
+    let convert_id = protocol::create(
         &conn_a,
         convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
     )
@@ -295,7 +295,7 @@ fn convert_update_replay_rebuilds_both_legs() {
     );
 
     // 就地修改：10 份 → 5 份（先回补旧转出腿，再按新输入重消耗）。
-    behavior::update(
+    protocol::update(
         &conn_a,
         &convert_id,
         convert_input("acc-cv", "inst-out", "inst-in", 5.0, 5.0, 550, 550, 0),
@@ -343,13 +343,13 @@ fn convert_update_replay_rebuilds_both_legs() {
 #[test]
 fn convert_delete_replay_reverses_both_legs() {
     let (conn_a, conn_b) = seed_both_ends();
-    let buy_id = behavior::create(
+    let buy_id = protocol::create(
         &conn_a,
         buy_input("acc-cv", "inst-out", 10.0, 10_000, "2026-01-10"),
     )
     .unwrap()
     .id;
-    let convert_id = behavior::create(
+    let convert_id = protocol::create(
         &conn_a,
         convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
     )
@@ -358,7 +358,7 @@ fn convert_delete_replay_reverses_both_legs() {
     wire_in(&conn_b, &wire_out(&conn_a));
 
     // 删除重放：转出腿逐批次精确回补、转入批次与转换明细行整批清理、转换行软删。
-    behavior::delete(&conn_a, &convert_id).unwrap();
+    protocol::delete(&conn_a, &convert_id).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
 
     let deleted = |conn: &Connection| read_transaction(conn, &convert_id).unwrap().is_deleted;
@@ -383,13 +383,13 @@ fn convert_delete_replay_reverses_both_legs() {
 #[test]
 fn convert_before_buy_parks_then_redelivery_self_heals() {
     let (conn_a, conn_b) = seed_both_ends();
-    let buy_id = behavior::create(
+    let buy_id = protocol::create(
         &conn_a,
         buy_input("acc-cv", "inst-out", 10.0, 10_000, "2026-01-10"),
     )
     .unwrap()
     .id;
-    let convert_id = behavior::create(
+    let convert_id = protocol::create(
         &conn_a,
         convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
     )
@@ -433,12 +433,12 @@ fn convert_before_buy_parks_then_redelivery_self_heals() {
 #[test]
 fn convert_op_schema_ahead_parks_then_retry_after_upgrade_succeeds() {
     let (conn_a, conn_b) = seed_both_ends();
-    behavior::create(
+    protocol::create(
         &conn_a,
         buy_input("acc-cv", "inst-out", 10.0, 10_000, "2026-01-10"),
     )
     .unwrap();
-    let convert_id = behavior::create(
+    let convert_id = protocol::create(
         &conn_a,
         convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
     )
@@ -488,7 +488,7 @@ fn convert_op_schema_ahead_parks_then_retry_after_upgrade_succeeds() {
 #[test]
 fn legacy_op_without_convert_member_replays_with_default_semantics() {
     let (conn_a, conn_b) = seed_both_ends();
-    let buy_id = behavior::create(
+    let buy_id = protocol::create(
         &conn_a,
         buy_input("acc-cv", "inst-out", 10.0, 10_000, "2026-01-10"),
     )
@@ -521,12 +521,12 @@ fn legacy_op_without_convert_member_replays_with_default_semantics() {
 #[test]
 fn legacy_convert_op_without_fields_parks_without_booking() {
     let (conn_a, conn_b) = seed_both_ends();
-    behavior::create(
+    protocol::create(
         &conn_a,
         buy_input("acc-cv", "inst-out", 10.0, 10_000, "2026-01-10"),
     )
     .unwrap();
-    let convert_id = behavior::create(
+    let convert_id = protocol::create(
         &conn_a,
         convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
     )
@@ -563,12 +563,12 @@ fn legacy_convert_op_without_fields_parks_without_booking() {
 #[test]
 fn convert_op_with_divergent_carried_cost_parks_without_booking() {
     let (conn_a, conn_b) = seed_both_ends();
-    behavior::create(
+    protocol::create(
         &conn_a,
         buy_input("acc-cv", "inst-out", 10.0, 10_000, "2026-01-10"),
     )
     .unwrap();
-    let convert_id = behavior::create(
+    let convert_id = protocol::create(
         &conn_a,
         convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
     )
@@ -602,12 +602,12 @@ fn convert_op_with_divergent_carried_cost_parks_without_booking() {
 #[test]
 fn convert_op_with_to_account_parks_without_booking() {
     let (conn_a, conn_b) = seed_both_ends();
-    behavior::create(
+    protocol::create(
         &conn_a,
         buy_input("acc-cv", "inst-out", 10.0, 10_000, "2026-01-10"),
     )
     .unwrap();
-    let convert_id = behavior::create(
+    let convert_id = protocol::create(
         &conn_a,
         convert_input("acc-cv", "inst-out", "inst-in", 10.0, 10.0, 1_100, 1_100, 0),
     )

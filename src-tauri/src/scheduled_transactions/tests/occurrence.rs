@@ -289,7 +289,7 @@ fn execute_occurrence_rejects_paused_plan() {
 /// 一期的部分唯一索引同时保证一笔落地至多被一期的回填认领）。
 #[test]
 fn execute_occurrence_with_preexisting_landing_completes_without_second_row() {
-    use crate::transaction::writer;
+    use crate::transaction::write::writer;
 
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-a", "现金", "cash", "CNY", 0);
