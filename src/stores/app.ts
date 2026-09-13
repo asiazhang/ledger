@@ -3,8 +3,7 @@ import { ref } from 'vue'
 import { loadLocal, saveLocal } from '@ledger/storage'
 import { getLocaleSetting, setLocaleSetting, type LocaleSetting } from '@ledger/i18n'
 import { amountPrivacyEnabled, AMOUNT_PRIVACY_STORAGE_KEY } from '@ledger/money'
-
-export type Theme = 'dark' | 'light'
+import type { Theme } from '@ledger/theme'
 
 /**
  * UI 设置（UI Settings）store：主题 / 默认币种 / 备份设置 / 设备级「自动执行」开关，本地持久化。

@@ -1,6 +1,5 @@
 import { style } from '@vanilla-extract/css'
-import { sprinkles } from '@/theme/sprinkles.css.ts'
-import { appVars } from '@/theme/app-theme.css.ts'
+import { appVars, sprinkles } from '@ledger/theme'
 
 /**
  * 投资合计三卡（总市值 / 持仓收益 / 累计收益）的形态样式（ADR-0093 样式方案，

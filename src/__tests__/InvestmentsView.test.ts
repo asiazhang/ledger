@@ -14,7 +14,7 @@ import { useInvestmentsSessionStore } from '@/stores/investments-session'
 import { useWindowGuard } from '@/composables/useWindowGuard'
 import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
 import { clearViewResets, fireViewReset } from '@/composables/viewResetRegistry'
-import { pnlSemanticColor } from '@/theme/semantic-colors'
+import { pnlSemanticColor } from '@ledger/theme'
 import { makePnlSummary, mockHoldings } from './factories'
 import {
   firePricesChanged,

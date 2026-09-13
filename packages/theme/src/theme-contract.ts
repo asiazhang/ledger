@@ -1,5 +1,5 @@
 import type { GlobalThemeOverrides } from 'naive-ui'
-import type { Theme } from '@/stores/app'
+import type { Theme } from './appearance'
 import { darkOverrides, lightOverrides } from './overrides'
 import { darkThemeClass, lightThemeClass } from './app-theme.css.ts'
 

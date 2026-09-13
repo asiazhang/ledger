@@ -15,7 +15,7 @@ import { componentVm } from '@ledger/test-support/component-vm'
 import { formatAmount, formatPrice } from '@ledger/money'
 import { probeColor } from '@ledger/test-support/dom'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
-import { pnlSemanticColor } from '@/theme/semantic-colors'
+import { pnlSemanticColor } from '@ledger/theme'
 import { useAppStore } from '@/stores/app'
 import {
   makeAccount,

@@ -7,11 +7,11 @@ import { DARK_FLOAT_LAYER, NEUTRAL_TOKENS } from './design-tokens'
  *
  * 约定：
  * - **中性常量从 token 派生，本模块不持独立副本**（issue #887）：圆角阶梯、
- *   背景分层、边框、文字灰阶的唯一来源是同层 `src/theme/design-tokens.ts`，
+ *   背景分层、边框、文字灰阶的唯一来源是同包 `design-tokens.ts`，
  *   一致性由派生保证而非人工同步；派生一致性由 Vitest 守门
- *   （`src/__tests__/design-tokens.test.ts`）。
+ *   （`packages/theme/src/__tests__/design-tokens.test.ts`）。
  * - 强调色（品牌色）与语义色（业务色）相互独立，且均不是中性常量：强调色留在
- *   本模块；语义色不在这里，收口于同层单一来源模块 `src/theme/semantic-colors.ts`
+ *   本模块；语义色不在这里，收口于同包单一来源模块 `semantic-colors.ts`
  *   （七种交易类型、亮/暗两套色值），交易列表/搜索金额列与报表月度收支图同源
  *   消费、随主题切换即时换色（issue #435）。
  * - 亮色主题保持现状等效：仅共享强调色（同色相加深版），其余保持 Naive 出厂

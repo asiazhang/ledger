@@ -45,7 +45,7 @@ import {
 import { useAppStore } from '@/stores/app'
 import { currentLocale, t } from '@ledger/i18n'
 import { viewLabel } from '@ledger/i18n/view-label'
-import { bindRootThemeClass, resolveAppTheme } from '@/theme/theme-contract'
+import { bindRootThemeClass, resolveAppTheme } from '@ledger/theme'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import UnlockScreen from '@/components/UnlockScreen.vue'
 import StartupFailureScreen from '@/components/StartupFailureScreen.vue'

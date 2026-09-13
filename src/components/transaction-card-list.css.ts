@@ -1,5 +1,5 @@
 import { globalStyle } from '@vanilla-extract/css'
-import { appVars } from '@/theme/app-theme.css.ts'
+import { appVars } from '@ledger/theme'
 
 /**
  * 移动档交易卡片列表旁路样式（issue #846 / ADR-0088 决策 9，ADR-0093 样式方案）：

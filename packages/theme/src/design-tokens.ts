@@ -1,5 +1,5 @@
 import { lightTheme } from 'naive-ui'
-import type { Theme } from '@/stores/app'
+import type { Theme } from './appearance'
 
 /**
  * 中性 Design Tokens 单一来源（issue #887 / ADR-0093）——圆角阶梯、背景分层、

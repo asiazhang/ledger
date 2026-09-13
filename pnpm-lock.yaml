@@ -124,6 +124,9 @@ importers:
       '@ledger/storage':
         specifier: workspace:*
         version: link:packages/storage
+      '@ledger/theme':
+        specifier: workspace:*
+        version: link:packages/theme
       '@ledger/types':
         specifier: workspace:*
         version: link:packages/types

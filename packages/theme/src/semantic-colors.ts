@@ -1,4 +1,4 @@
-import type { Theme } from '@/stores/app'
+import type { Theme } from './appearance'
 import type { TransactionKind } from '@ledger/types'
 
 /**
@@ -19,7 +19,7 @@ import type { TransactionKind } from '@ledger/types'
  *   的派生视角（ADR-0053），金额与普通转账同为紫色，不做派生级区分；基金转换
  *   （ADR-0099）是独立 kind，取独立色相（琥珀）与两腿买卖腿的买入/卖出色区分。
  * - 图表柱体允许对语义色做**同色相渐变**（沿数值轴向基线淡出，视觉柔化）：
- *   色相与类型绑定不变，渐变是绘制期呈现（`@/theme/chart-style` 的
+ *   色相与类型绑定不变，渐变是绘制期呈现（同包 `chart-style` 的
  *   softBarFillPlugin），不改动本模块色值，列表金额仍为实色。
  * - 值只在本模块出现：列表与图表不再硬编码色值（分类构成图等按 id 散列的
  *   任意配色不属于语义色，不归本模块）。

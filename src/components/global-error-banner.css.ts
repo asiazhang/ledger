@@ -1,5 +1,5 @@
 import { style } from '@vanilla-extract/css'
-import { sprinkles } from '@/theme/sprinkles.css.ts'
+import { sprinkles } from '@ledger/theme'
 
 /**
  * 全局渲染错误提示条旁路样式（issue #926 / ADR-0093 样式方案）：与组件同目录

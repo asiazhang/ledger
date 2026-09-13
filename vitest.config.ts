@@ -7,6 +7,10 @@ import { fileURLToPath, URL } from 'node:url'
 const DOM_PACKAGE_TEST_GLOBS = [
   'packages/i18n/**/*.test.ts',
   'packages/storage/**/*.test.ts',
+  // @ledger/theme：主题合同测试经 bindRootThemeClass 断言 document.body 类切换
+  //（issue #888 语义），需 jsdom；同包纯逻辑测试（design-tokens / semantic-colors）
+  // 随包登记一并落 jsdom（逐包登记粒度，见上注）。（issue #1154）
+  'packages/theme/**/*.test.ts',
 ]
 
 export default defineConfig({

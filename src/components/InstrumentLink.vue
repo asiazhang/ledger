@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
-import { darkOverrides, lightOverrides } from '@/theme/overrides'
+import { darkOverrides, lightOverrides } from '@ledger/theme'
 import { t } from '@ledger/i18n'
 import {
   INSTRUMENT_LINK_CLASS,
