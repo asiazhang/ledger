@@ -1,20 +1,25 @@
 # 测试执行按包并发（issue #1112 / 父 spec #1086）
 
-> workspace 拆成多 crate 后，`cargo test --workspace` 顺序启动每个测试二进制（本
-> commit 基线：23 个 libtest 二进制 + 1 个 cucumber e2e 二进制，另 17 个 doc-test
-> 目标），每个二进制各自按 CPU 数开满 libtest 线程。本票把「单测 + 集成测试」的
-> **执行**改为「构建一次 + 统一执行器调度全二进制并发」，e2e 与 doc-test 留在
-> cargo 自有入口不动；两条入口的覆盖范围由守门脚本锁死。本文件记录负向验收、
-> 同机改前/改后耗时与「是否继续投入含 e2e 同跑」的结论。
+> workspace 拆成多 crate 后，`cargo test --workspace` 顺序启动每个测试二进制，
+> 每个二进制各自按 CPU 数开满 libtest 线程。本票把「单测 + 集成测试」的**执行**
+> 改为「构建一次 + 统一执行器调度全二进制并发」，e2e 与 doc-test 留在 cargo 自有
+> 入口不动；两条入口的覆盖范围由守门脚本锁死。本文件记录负向验收、同机改前/改后
+> 耗时与「是否继续投入含 e2e 同跑」的结论。
+>
+> **数字单点**：目标清单的数量与种类以 `bun scripts/test-exec.ts plan` 的输出为唯一
+> 权威（下文只在「执行面与并行度口径」一处复述并标注复述时点）；本文件其余处的
+> 「23 个二进制」等字样是**该时点的实测快照**（耗时表/对拍表的行标签），清单漂移时
+> 无需逐处改数字，以 `plan` 为准。
 
 ## 交付物
 
 - `scripts/test-exec.ts`（新）：并发执行器 + 两入口覆盖守门。`run` 命令先跑守门，
   再以一条 `cargo test --workspace --no-run --message-format=json-render-diagnostics`
   构建一次，解析 cargo 报告的测试二进制清单，最后由执行器统一调度：全局并行度
-  = min(CPU 数, 待跑二进制数)，每个二进制固定 `RUST_TEST_THREADS=1`——总线程数
-  = 并行度，不存在「各二进制各自开满线程」的 CPU 超订；失败聚合报告，跑完全部
-  才退出。
+  = min(CPU 数, 待跑二进制数)，每个二进制固定 `RUST_TEST_THREADS=1`（只约束
+  libtest 线程）——**libtest 线程数 = 并行度**，不存在「各二进制各自开满 libtest
+  线程」的 CPU 超订；测试自起的 tokio 等运行时不在控制面（属经验证据，非守门）。
+  失败聚合报告，跑完全部才退出。
 - `scripts/test.sh`（改）：两条入口一次跑完 workspace 全部成员的测试面——并发
   入口（执行器）+ 非并发入口（`cargo test --workspace --test e2e`、
   `cargo test --workspace --doc`）。e2e 仍由 cargo 驱动，形态与拆 workspace 前
@@ -23,7 +28,10 @@
 - `scripts/check.sh` + `.github/workflows/build.yml`（改）：覆盖守门挂入本地门槛
   与 CI frontend job（纯静态发现，不需 Rust 工具链）。
 - `scripts/test-exec.test.ts`（新）：夹具负向用例（守门规则逐条「制造变红」）+
-  接线用例（删 `scripts/test.sh` 的入口调用、删 check.sh/CI 的守门步骤即红）。
+  接线用例（删任一入口调用/门禁接线即红）。断言观察面统一是 `check` 的**退出码与
+  输出**，不钉命令字符串形态（ADR-0087 断言强度）——`scripts/check.sh` 与 CI 的
+  门禁接线在单元测试里不会被管线执行，按 AGENTS.md 以源码扫描守门替代（先例
+  #959/#961），落在 `test-exec.ts` 的守门规则④内。
 
 ## 执行面与并行度口径
 
@@ -33,44 +41,74 @@
 - 并发入口承接：lib 单测 + bin 单测 + `harness = true` 的集成测试。
   非并发入口承接：`[[test]] harness = false` 的自定义 runner（当前 = e2e）+
   doc-test（测试二进制由 rustdoc 生成，不进 cargo 的 test artifact 报告）。
-- 当前清单（`bun scripts/test-exec.ts plan`）：41 个目标 = 并发入口 23（lib 单测
-  17 + bin 单测 2 + 集成测试 4）⊎ 非并发入口 18（e2e 1 + doc-test 17）。
+- **当前清单（唯一权威 = `bun scripts/test-exec.ts plan` 输出）**：41 个目标 =
+  并发入口 23（lib 单测 17 + bin 单测 2 + 集成测试 4）⊎ 非并发入口 18（e2e 1 +
+  doc-test 17）。上面这行是本文件里唯一复述清单数字的地方（#1112 审查发现：同一批
+  数字曾散住脚本头/文档/提交信息多处并实际漂移）。
 - 并行度上限默认取 CPU 数（本机 12）；`--jobs N` 是显式覆盖，N 超过 CPU 数时
   执行器会打印「显式超订」提示（默认路径不会超订）。
 
 ## 负向验收（删除即变红）
 
-守门三条（`bun scripts/test-exec.ts check`，挂在 `scripts/check.sh` 与 CI
+守门五条（`bun scripts/test-exec.ts check`，挂在 `scripts/check.sh` 与 CI
 frontend job；夹具用例见 `scripts/test-exec.test.ts`）：
 
-1. **新增测试目标未登记**：`[[test]] harness = false` 的声明集合必须与
-   `scripts/test.sh` 非并发入口的 `--test <name>` 名单**双向全等**。夹具用例
+1. **覆盖全集（规则①）**：工作区全部测试目标 = 并发入口承接 ⊎ 非并发入口承接，
+   互斥且无遗漏；空集一律拒绝假绿。目标清单自 manifest + 目录自动发现派生，新增
+   target / 新成员 crate 自动入列。
+2. **自定义 harness 登记（规则②）**：`[[test]] harness = false` 的声明集合必须与
+   `scripts/test.sh` 非并发入口的 `--test <name>` 名单**双向全等**——新增目标未
+   登记、登记失效或拼写漂移都红。夹具用例
    `新增 harness=false 测试目标未登记非并发入口 → 红` 断言的输出含新目标名与
    「静默漏跑」；本仓实测见下。
-2. **登记失效/漂移**：`--test <name>` 指向不存在或非 `harness = false` 的目标、
-   有 doc-test 目标却缺 `cargo test --workspace --doc`（或无 doc-test 目标却
-   留着 `--doc`）→ 红。
-3. **并发入口接线**：`scripts/test.sh` 未调用 `scripts/test-exec.ts` → 红；
-   `scripts/test-exec.test.ts` 另断言 `scripts/check.sh` 与 CI 含守门步骤
-   （删除即红，先例 `scripts/check-sh-rustdoc-gate.test.ts`）。
+3. **doc 入口与并发入口接线（规则③）**：存在 doc-test 目标 ⇔ `scripts/test.sh` 有
+   `cargo test --workspace --doc`（缺 `--doc`、无目标却留 `--doc` 都红）；
+   `--doc` 存在但缺 workspace 范围（`--workspace` 或词尾 `--all`）→ 红——非虚拟
+   workspace 下 `cargo test --doc` 只跑根包 doctest，成员 crate 的 doc-test 静默
+   漏跑而守门仍绿（#1112 审查补强）；`scripts/test.sh` 未调用 `scripts/test-exec.ts`
+   → 红。
+4. **门禁自身接线（规则④，#1112 审查补强）**：`scripts/check.sh` 与 CI frontend
+   job 必须调用 `check`，否则 → 红（接线在管线里、不由单元测试构建，按先例
+   #959/#961 以源码扫描守门）。
+5. **执行器等价性（规则⑤，#1112 审查补强）**：测试运行期读 cargo 注入环境变量
+   （`env::var("CARGO_*"/"OUT_DIR")`；编译期 `env!` 与 `build.rs` 的构建期读取不受
+   影响）→ 红——执行器只对齐 cwd 与 `RUST_TEST_THREADS`，不复制 cargo 运行期环境。
 
-**本仓实测（制造变红 → 恢复 → 变绿）**：
+**本仓实测（制造变红 → 恢复 → 变绿；均在真实仓库文件上做，`bun scripts/test-exec.ts
+check` 的退出码为观察面）**：
 
 | 步骤 | 操作 | 结果 |
 | --- | --- | --- |
 | 制造变红 | 新增 `src-tauri/tests/parallel_probe.rs` 并在 `src-tauri/Cargo.toml` 声明 `[[test]] name = "parallel_probe" harness = false` | `bun scripts/test-exec.ts check` 退出码 1，输出点名 `tauri-app::parallel_probe` 与「静默漏跑」 |
 | 恢复 | 删除该声明与文件 | `bun scripts/test-exec.ts check` 退出码 0 |
+| 制造变红 | 删 `scripts/test.sh` 的 `bun scripts/test-exec.ts` 行 | 退出码 1，输出「未调用并发入口（scripts/test-exec.ts）」 |
+| 恢复 | 加回该行 | 退出码 0 |
+| 制造变红 | 删 `scripts/test.sh` 的 `( cd src-tauri && cargo test --workspace --test e2e )` 行 | 退出码 1，输出点名 `tauri-app::e2e` 与「静默漏跑」 |
+| 恢复 | 加回该行 | 退出码 0 |
+| 制造变红 | `scripts/test.sh` 的 doc 行退化成 `cargo test --doc` | 退出码 1，输出「`--doc` 缺 workspace 范围」 |
+| 恢复 | 改回 `cargo test --workspace --doc` | 退出码 0 |
+| 制造变红 | `scripts/check.sh` 的守门行换成 `bun scripts/test-exec.ts plan` | 退出码 1，输出「scripts/check.sh 质量门槛序列（scripts/check.sh）未调用守门命令」 |
+| 恢复 | 改回 `check` | 退出码 0 |
+| 制造变红 | CI `run: bun scripts/test-exec.ts check` 换成 `run: echo "…"` | 退出码 1，输出「CI frontend job（.github/workflows/build.yml）未调用守门命令」 |
+| 恢复 | 改回 `check` | 退出码 0 |
 
-夹具侧的完整规则矩阵（11 条）由 `scripts/test-exec.test.ts` 覆盖，`pnpm exec
-vitest run scripts/test-exec.test.ts` 12/12 全绿；其中「删 `--test e2e`」「删
-`--doc`」「删并发入口调用」「`--test` 漂移」「auto* 开关」「未支持 members
-glob」各自对准一条可观察的失败输出。
+> 自证教训：`check.sh` 的改坏第一次**未被发现**——该脚本的 `echo "▶ 测试执行覆盖守门
+> (bun scripts/test-exec.ts check)"` 标签行含同样词序，被源码扫描误当接线（假绿）。
+> 接线判定随之收紧为「`bun` 必须落在命令位置（剥掉 YAML / 子 shell 装饰后的首个
+> 词）」，并补「只剩 echo 标签行 → 红」「接线带引号/前置参数 → 不假红」两条夹具用例。
+
+夹具侧的规则矩阵住 `scripts/test-exec.test.ts` 的第一个 describe（17 条），另加
+接线 describe 2 条（真实仓库通过 + 删 check.sh 接线即红），`pnpm exec vitest run
+scripts/test-exec.test.ts` **19/19 全绿**；其中「删 `--test e2e`」「删 `--doc`」
+「doc 缺 workspace 范围」「删并发入口调用」「`--test` 漂移」「auto* 开关」
+「未支持 members glob」「check.sh / CI 接线缺失或只剩 echo 标签」「运行期读 cargo
+注入环境」各自对准一条可观察的失败输出。
 
 全量质量门槛：`./scripts/check.sh` **退出码 0**（前端类型检查 + oxlint + clippy
 `--all-targets --all-features -D warnings` + fmt + rustdoc 门禁 + 全部守门脚本，
 其中含本次新增的「测试执行覆盖守门」步骤）；测试面证据见下段。
 
-`run` 命令另有第四道交叉核对：`cargo test --no-run` 实际构建出的测试二进制集合
+`run` 命令另有第六道交叉核对：`cargo test --workspace --no-run` 实际构建出的测试二进制集合
 必须与静态发现的目标清单全等——发现逻辑与 cargo 真实行为漂移即红，不给
 「清单看着对、实际漏跑」留口子。
 
@@ -85,6 +123,38 @@ glob」各自对准一条可观察的失败输出。
 - 测试进程 cwd 与 cargo 对齐到**各包根**（不是 workspace 根）：cargo 跑测试
   二进制时的 cwd 是包根，成员 crate 的测试若用相对路径，直接以 workspace 根
   为 cwd 会读到不同位置（等价性缺口）。执行器现按目标所属包根 spawn。
+
+**Review 补强（独立审查第二轮，Standards / Spec 两轴）**：
+
+- **验证文档计数失真**：原写「规则矩阵 11 条、12/12 全绿」，实际首个 describe 17
+  条、加接线 describe 2 条共 19 条（`pnpm exec vitest run scripts/test-exec.test.ts`
+  19/19）——已按实跑改写（本文上节）。
+- **接线断言钉命令行形态**：原用逐字正则锁 `test.sh` / `check.sh` / `build.yml` 的
+  命令行（加 `--locked`、换引号即假红），违反 ADR-0087「断言对准可观察结果、不钉
+  实现形状」。现改为：`test.sh` 三入口由守门读真实文件后的**退出码/输出**断言
+  （夹具逐条制造变红），`check.sh` 与 CI 接线并入守门规则 4 / 5 → 断言面统一为
+  `check` 的退出码；接线删除即红。接线扫描按 shell 词切分并要求 `bun` 落在命令
+  位置——加引号、多空白、前置参数不假红；纯粹的说明文字（含 echo 标签行）不算接线。
+- **「总线程数 = 并行度、无 CPU 超订」措辞过强**：`RUST_TEST_THREADS=1` 只约束
+  libtest 线程，测试自起的 tokio 运行时不受控（`api_server/router.rs` 的
+  `Runtime::new()` 等）。代码注释、脚本头与本文统一改为「**libtest 线程数 =
+  并行度**」，并发阶段跑绿属经验证据而非控制面承诺。
+- **新 cargo 命令宿主未登记**：`scripts/test-exec.ts` 程序化拼装 `cargo test
+  --workspace …`，但不在 `scripts/check-structure.ts` 的 `WORKSPACE_COMMAND_FILES`
+  内 → `--workspace` 元门禁静态不覆盖。已登记，并让该门禁认 `.ts` 的 `//` /
+  `/** … */` 注释行（注释里的 `cargo test` 是说明文字，不算命令面）；夹具侧补
+  「test-exec.ts 缺 `--workspace` → 红」与「注释里的 `cargo test` 不假红」两例。
+- **数字重复五处**：41/23/18 与并行度口径原同住脚本头、文档、提交信息多处，且已
+  实际漂移（12/12 vs 13/13）。现收敛为「唯一权威 = `bun scripts/test-exec.ts
+  plan` 输出」，脚本头不再复述数量，文档只在「执行面与并行度口径」一处复述并标注
+  时点（见文首「数字单点」）。
+- **执行器绕过 cargo 运行期注入环境**：处置取「显式守门」而非「复制环境」——
+  cargo 注入面（`CARGO_MANIFEST_DIR` / `CARGO_PKG_*` / `OUT_DIR` / `CARGO_BIN_EXE_*` /
+  动态库搜索路径）无法有界复制，只补其中几个会给「已等价」的假信心。改为：执行器
+  只对齐 cwd 与 `RUST_TEST_THREADS`，测试运行期读这些变量即 fail loud（守门规则⑤），
+  由引入者显式扩展执行器并更新守门。扫描复用结构守门的 Rust 词法掩码（注释掩去、
+  字面量保留），`build.rs` 的构建期读取与编译期 `env!` 不受影响；夹具覆盖「命中即红」
+  与「注释里提到不假红」两侧。
 
 ## 实测耗时（同机、同 commit 基线、缓存状态）
 
@@ -149,6 +219,17 @@ glob」各自对准一条可观察的失败输出。
 `./scripts/test.sh` 端到端退出码 0。
 
 ## 范围外修复（单独提交）
+
+> **与父 spec 的显式例外（需约束方确认）**：父 spec #1086 字面规定「既有测试不得因
+> 拆分而改动断言（断言与场景文本保持原样）」。下面两处确实改了既有断言，属**例外**，
+> 单独成一个提交（`dee66f6e`）并写明根因，理由三条：
+> ① 根因正当——断言把「创建序 == id 序」当既定事实，而 UUIDv7 只在毫秒内有序，
+> 是既有时序脆弱（并发执行把偶发变高频，不是拆分引入的语义变化）；
+> ② 断言未弱化——仍锚定同一域语义（A 流水位点；每批消耗份额与结转成本），只是把
+> 两侧按同一键归一后比较，换批次序会改数值；
+> ③ 范围外分流纪律——真实缺陷（用户可见的随机假红）直接修、单独提交、留痕，不夹带
+> 重构。已在 PR #1265 与 issue #1112 各留一条说明供 spec 维护者确认；**未**改 spec
+> 正文、未关闭 issue。
 
 并发执行（每个二进制 `RUST_TEST_THREADS=1`）把两个**既有**时序脆弱用例从偶发
 变成约 15–25% 必现，证据与根因如下（修复前后均为独立实测）：

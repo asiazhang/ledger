@@ -669,6 +669,10 @@ const WORKSPACE_COMMAND_FILES = [
   'scripts/check.sh',
   'scripts/test.sh',
   'scripts/lint-fix.sh',
+  // 执行器程序化拼装 cargo 命令（`runChild(cargo, ['test', '--workspace', …])`）：
+  // 宿主形态是 .ts 而非 shell，登记后命令字符串与注释里的 `cargo test` 形态同样受
+  // 「必须显式带 workspace 范围」核对（#1112 审查发现：新 cargo 宿主未登记）。
+  'scripts/test-exec.ts',
   '.github/workflows/build.yml',
 ] as const
 
@@ -1399,7 +1403,18 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     }
     const lines = readFileSync(abs, 'utf8').split('\n')
     lines.forEach((line, i) => {
-      if (line.trim().startsWith('#')) return // 注释行（含 workflow 说明）不算命令
+      // 注释行不算命令：shell / workflow 用 `#`，登记进来的 .ts 宿主（test-exec.ts）
+      // 用 `//` 与 `/** … */`（含 ` * ` 续行），注释里的 `cargo test` 只是说明文字，
+      // 不构成命令面。
+      const trimmed = line.trim()
+      if (
+        trimmed.startsWith('#') ||
+        trimmed.startsWith('//') ||
+        trimmed.startsWith('/*') ||
+        trimmed.startsWith('*')
+      ) {
+        return
+      }
       // 逐条命令核对（一行可有 `cargo fmt … && cargo clippy …` 多条：只看首个
       // 匹配会把未覆盖的 clippy 放过去）；命令段截到下一个 shell 控制符为止。
       const re = /\bcargo\s+(clippy|test|fmt)\b/g

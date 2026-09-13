@@ -6,8 +6,9 @@
 #
 # 入口① 并发（scripts/test-exec.ts）：一条 `cargo test --workspace --no-run` 构建
 #   一次，再由执行器统一调度全部测试二进制——全局并行度 = min(CPU 数, 待跑二进制
-#   数)，每个二进制固定 RUST_TEST_THREADS=1，消掉「各二进制各自开满线程」的 CPU
-#   超订与顺序执行的尾部空转；覆盖守门同址执行（新增测试目标不会被静默漏跑）。
+#   数)，每个二进制固定 RUST_TEST_THREADS=1（只约束 libtest 线程），消掉「各二进制
+#   各自开满 libtest 线程」的 CPU 超订与顺序执行的尾部空转；覆盖守门同址执行（新增
+#   测试目标不会被静默漏跑，接线删除即红）。
 # 入口② 非并发（cargo 自有 runner，两条命令）：e2e（cucumber，`harness = false`）
 #   与 doc-test 不纳并发调度，仍由 cargo 驱动，形态与拆 workspace 前一致。
 #

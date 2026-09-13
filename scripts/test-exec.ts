@@ -1,15 +1,17 @@
 #!/usr/bin/env bun
 // 测试执行器（issue #1112 / 父 spec #1086）：workspace 拆成多 crate 之后，
-// `cargo test --workspace` 把 24 个测试二进制**顺序**启动，每个二进制各自按
-// CPU 数开满 libtest 线程——进程启动开销与「最后一个二进制独占整机」的尾部
-// 空转是纯浪费。执行面按两条入口重划：
+// `cargo test --workspace` 把全部测试二进制**顺序**启动（当前清单与数量以
+// `bun scripts/test-exec.ts plan` 的输出为唯一权威，本文件不复述），每个二进制
+// 各自按 CPU 数开满 libtest 线程——进程启动开销与「最后一个二进制独占整机」的
+// 尾部空转是纯浪费。执行面按两条入口重划：
 //
 // ① 并发入口（本脚本默认命令 run，scripts/test.sh 第一条命令）：一条
 //    `cargo test --workspace --no-run --message-format=json-render-diagnostics`
 //    构建一次，解析 cargo 报告的测试二进制清单，再由本脚本统一调度——全局
 //    并行度 = min(--jobs 或 CPU 数, 待跑二进制数)，每个二进制固定
-//    `RUST_TEST_THREADS=1`，总线程数 = 并行度，不出现「各二进制各自开满线程」
-//    的 CPU 超订；失败聚合报告，跑完全部才退出。
+//    `RUST_TEST_THREADS=1`（只约束 libtest 线程），libtest 线程数 = 并行度，
+//    不出现「各二进制各自开满 libtest 线程」的 CPU 超订（测试自起的 tokio 等
+//    运行时不在控制面，属经验证据）；失败聚合报告，跑完全部才退出。
 // ② 非并发入口（scripts/test.sh 第二、三条命令）：e2e（cucumber，
 //    `harness = false`，自有 runner 与 CLI）与 doc-test（测试二进制由 rustdoc
 //    生成、不进 cargo 的 test artifact 报告）仍走 cargo 自有入口，不纳入并发
@@ -18,15 +20,21 @@
 // 覆盖守门（check 命令；scripts/test.sh 与 scripts/check.sh 同址执行，CI 亦挂）：
 // 目标清单口径与 `cargo test` 默认执行面全等——lib 单测 + bin 单测 + 集成测试 +
 // doc-test；example / bench 不在默认执行面（cargo 只构建 example、不跑 bench），
-// 故不入清单，但发现声明即提示，防口径漂移。守门三条（任一处漂移即红，fail loud）：
+// 故不入清单，但发现声明即提示，防口径漂移。守门五条（任一处漂移即红，fail loud）：
 //   ① 工作区全部测试目标 = 并发入口承接集合 ⊎ 非并发入口承接集合（互斥且无遗漏；
 //      目标清单自 manifest + 目录自动发现派生，新增 target / 新成员 crate 自动入列）；
 //   ② `[[test]] harness = false` 的声明集合 ⇔ scripts/test.sh 非并发入口的
 //      `--test <name>` 名单（双向全等——新增自定义 harness 目标未登记即红，登记
 //      失效或拼写漂移同样红）；
-//   ③ 存在 doc-test 目标 ⇔ scripts/test.sh 有 `cargo test --doc`；且 scripts/test.sh
-//      必须调用并发入口（删除调用即红）。
-// run 命令另有第四道交叉核对：`cargo test --no-run` 实际构建出的测试二进制集合
+//   ③ 存在 doc-test 目标 ⇔ scripts/test.sh 有 `cargo test --workspace --doc`
+//      （doc 命令必须带 workspace 范围——退化成 `cargo test --doc` 会让成员 crate
+//      的 doctest 静默漏跑而守门仍绿）；且 scripts/test.sh 必须调用并发入口
+//      （删除调用即红）；
+//   ④ 门禁自身接线：scripts/check.sh 与 CI frontend job 必须调用 `check`——接线
+//      在管线里、不由单元测试构建，按先例 #959/#961 以源码扫描守门（删除接线即红）；
+//   ⑤ 执行器等价性：测试运行期不得依赖 cargo 注入的环境变量（现状零命中，见
+//      cargoRuntimeEnvProblems 注）。
+// run 命令另有第六道交叉核对：`cargo test --no-run` 实际构建出的测试二进制集合
 // 必须与①的目标清单全等——发现逻辑与 cargo 真实行为漂移即红，不给「清单看着对、
 // 实际漏跑」留口子。unsupported manifest 形态（auto* 开关、lib harness=false、
 // 非尾随 `*` 的成员 glob）一律拒绝而非猜测。
@@ -42,6 +50,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { cpus } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+// 复用结构守门的 Rust 词法掩码（注释掩去、字面量保留）——不新建第二份词法器。
+import { maskNonCode } from './check-structure.ts'
 
 /** 根包（Rust workspace 根 = tauri 应用包）目录名，相对仓库根。 */
 const SRC_TAURI_DIR_NAME = 'src-tauri'
@@ -55,6 +65,11 @@ export const PARALLEL_ENTRY_MARKER = 'scripts/test-exec.ts'
 /** 非并发入口逐目标参数与 doc-test 开关（scripts/test.sh 命令行判据）。 */
 export const DELEGATED_TARGET_FLAG = '--test'
 export const DOC_FLAG = '--doc'
+
+/** workspace 范围参数：`--workspace` 或词尾 `--all`（后者仅在词尾才算别名，与
+ * check-structure.ts 的 WORKSPACE_COMMAND_FILES 核对同口径，防 `--all-targets` 假绿）。 */
+export const WORKSPACE_FLAG = '--workspace'
+export const ALL_FLAG = '--all'
 
 /** cargo `cargo test` 默认执行面的目标种类；`doc` 由 cargo 自有入口承接。 */
 export type TargetKind = 'lib' | 'bin' | 'test' | 'doc'
@@ -493,8 +508,14 @@ export function discoverTargets(rootDir: string): Discovery {
 export interface EntryWiring {
   /** `cargo test … --test <name>` 的 name 名单。 */
   tests: Set<string>
-  /** 是否有 `cargo test … --doc`。 */
+  /** 是否有 `cargo test … --doc`（doc 入口存在性）。 */
   doc: boolean
+  /**
+   * doc 入口的命令行是否带 workspace 范围（`--workspace` / 词尾 `--all`）。
+   * 只查 `--doc` 存在不够：退化成 `cargo test --doc`（非虚拟 workspace 下默认
+   * 只作用根包）会让成员 crate 的 doctest 静默漏跑而守门仍然绿。
+   */
+  docWorkspace: boolean
   /** 是否调用并发入口（scripts/test-exec.ts）。 */
   parallel: boolean
 }
@@ -503,22 +524,29 @@ export interface EntryWiring {
 export function parseEntryWiring(content: string): EntryWiring {
   const tests = new Set<string>()
   let doc = false
+  let docWorkspace = false
   let parallel = false
   for (const rawLine of content.split('\n')) {
     const line = rawLine.trim()
     if (line === '' || line.startsWith('#')) continue
     if (line.includes(PARALLEL_ENTRY_MARKER)) parallel = true
     const tokens = line.split(/[\s()]+/).filter((t) => t !== '')
+    const docOnLine = tokens.includes(DOC_FLAG)
+    if (docOnLine) {
+      doc = true
+      // workspace 范围必须与 --doc 同行：`--all` 仅在词尾才算别名
+      // （`--all-targets` / `--all-features` 不算，与 check-structure.ts 同口径）。
+      if (tokens.includes(WORKSPACE_FLAG) || tokens.at(-1) === ALL_FLAG) docWorkspace = true
+    }
     for (let i = 0; i < tokens.length; i += 1) {
       const token = tokens[i]
       if (token === DELEGATED_TARGET_FLAG) {
         const name = (tokens[i + 1] ?? '').replace(/^['"]|['"]$/g, '')
         if (name !== '') tests.add(name)
       }
-      if (token === DOC_FLAG) doc = true
     }
   }
-  return { tests, doc, parallel }
+  return { tests, doc, docWorkspace, parallel }
 }
 
 export interface CoverageResult {
@@ -531,6 +559,105 @@ export interface CoverageResult {
   /** cargo 自有入口承接的 doc-test。 */
   doc: DiscoveredTarget[]
   outOfFace: string[]
+}
+
+/**
+ * 门禁自身的接线宿主（守门规则④）：覆盖守门挂在 `scripts/check.sh` 质量门槛序列
+ * 与 CI frontend job。两处接线在本机单元测试里不会被管线执行（check.sh 要 cargo、
+ * CI 要远端），按 AGENTS.md「接线在本机 CI 不构建的分支内时以源码扫描守门替代」
+ * （先例 #959/#961）落成源码扫描——删除接线即 `check` 退出码非零，而 `check` 正是
+ * 单元测试与实际管线的共同观察面。
+ */
+const GATE_WIRING_HOSTS: readonly { rel: string; label: string }[] = [
+  { rel: join('scripts', 'check.sh'), label: 'scripts/check.sh 质量门槛序列' },
+  { rel: join('.github', 'workflows', 'build.yml'), label: 'CI frontend job' },
+]
+
+/** 命令行前缀装饰（不含命令语义）：YAML 列表项、workflow 的 `run:` 键、子 shell 括号等。 */
+const COMMAND_DECORATIONS = new Set(['-', 'run:', '(', '&&', ';', '|'])
+
+/**
+ * 源码扫描：非注释行里是否出现「`bun` → `scripts/test-exec.ts` → `check`」的命令词序。
+ * 按 shell 词切分而非逐字匹配整行——加引号、多空白、`bun --smol` 之类的前置参数、
+ * `check` 之后的额外参数都不假红；删掉调用或换成别的子命令（plan/run）即判定未接线。
+ *
+ * 关键约束：`bun` 必须出现在**命令位置**（剥掉 YAML/子 shell 装饰后的首个词）。否则
+ * `echo "…（bun scripts/test-exec.ts check）…"` 这类**说明文字**会被误判成接线——实测
+ * 把真实 check.sh 的命令改成 `plan` 后，仅剩的 echo 标签行仍能假绿（#1112 审查自证）。
+ */
+export function gateWiredIn(content: string): boolean {
+  const needle = ['bun', PARALLEL_ENTRY_MARKER, 'check']
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim()
+    if (line === '' || line.startsWith('#')) continue
+    const tokens = line.split(/[\s"'`()[\]{},]+/).filter((t) => t !== '')
+    let start = 0
+    while (start < tokens.length && COMMAND_DECORATIONS.has(tokens[start] as string)) start += 1
+    if (tokens[start] !== needle[0]) continue
+    let cursor = 0
+    for (let i = start; i < tokens.length; i += 1) {
+      if (tokens[i] === needle[cursor]) cursor += 1
+      if (cursor === needle.length) return true
+    }
+  }
+  return false
+}
+
+/** 门禁接线守门（守门规则④）：两块宿主都必须源码扫描到 `check` 调用。 */
+function gateWiringProblems(rootDir: string): string[] {
+  const problems: string[] = []
+  for (const host of GATE_WIRING_HOSTS) {
+    const path = join(rootDir, host.rel)
+    if (!existsSync(path)) {
+      problems.push(`✗ 覆盖守门接线：${host.label} 宿主文件不存在：${host.rel}`)
+      continue
+    }
+    if (!gateWiredIn(readFileSync(path, 'utf8'))) {
+      problems.push(
+        `✗ 覆盖守门接线：${host.label}（${host.rel}）未调用守门命令（\`bun ${PARALLEL_ENTRY_MARKER} check\`）——` +
+          `覆盖守门不在该管线执行，接线删除即红（源码扫描，先例 #959/#961）`,
+      )
+    }
+  }
+  return problems
+}
+
+/**
+ * 执行器等价性守门（守门规则⑤）：执行器直接 spawn 测试二进制，**不**复制 cargo
+ * 运行期注入的环境（`CARGO_MANIFEST_DIR` / `CARGO_PKG_*` / `OUT_DIR` / 动态库搜索
+ * 路径）。只对齐其中一部分会给「已等价」的假信心，故取 fail loud 处置：测试运行期
+ * （`env::var` / `env::var_os`；编译期 `env!` 不受影响）不得读这些变量，命中即红，
+ * 由引入者显式扩展执行器并更新本守门。构建脚本的构建期读取不属测试运行期，跳过。
+ * 扫描前经结构守门的 Rust 词法掩码（`maskNonCode(…, keepLiterals=true)`）掩去
+ * 注释、保留字面量——注释里提到这些变量名不误报，字面量本身才是判据。
+ */
+const CARGO_RUNTIME_ENV_PATTERN = /\benv::var(?:_os)?\s*\(\s*"(CARGO_[A-Z0-9_]+|OUT_DIR)"/g
+
+function cargoRuntimeEnvProblems(rootDir: string): string[] {
+  const problems: string[] = []
+  const walk = (dir: string): void => {
+    if (!isDirectory(dir)) return
+    for (const entry of readdirSync(dir).sort()) {
+      const path = join(dir, entry)
+      if (isDirectory(path)) {
+        if (entry === 'target') continue
+        walk(path)
+        continue
+      }
+      if (!entry.endsWith('.rs') || entry === 'build.rs') continue
+      const masked = maskNonCode(readFileSync(path, 'utf8'), true)
+      for (const match of masked.matchAll(CARGO_RUNTIME_ENV_PATTERN)) {
+        const line = masked.slice(0, match.index ?? 0).split('\n').length
+        problems.push(
+          `✗ 执行器等价性：${relative(rootDir, path)}:${line} 运行期读 cargo 注入环境变量 \`${match[1]}\`——` +
+            `执行器只对齐 cwd 与 RUST_TEST_THREADS，不复制该环境，测试将读到未定义值。` +
+            `请改走 cwd 相对定位，或先扩展 scripts/test-exec.ts 的 runChild 并更新本守门（issue #1112）`,
+        )
+      }
+    }
+  }
+  walk(join(rootDir, SRC_TAURI_DIR_NAME))
+  return problems
 }
 
 /** 覆盖守门：目标清单 ⇔ 两个入口的并集（互斥且无遗漏）。 */
@@ -570,6 +697,13 @@ export function checkCoverage(rootDir: string): CoverageResult {
         ` \`cargo test --workspace ${DOC_FLAG}\`——doc-test 静默漏跑`,
     )
   }
+  if (doc.length > 0 && wiring.doc && !wiring.docWorkspace) {
+    problems.push(
+      `✗ 覆盖守门：${TEST_SH_REL} 的 \`${DOC_FLAG}\` 缺 workspace 范围` +
+        `（\`${WORKSPACE_FLAG}\` 或词尾 \`${ALL_FLAG}\`）——非虚拟 workspace 下只跑根包的` +
+        ` doctest，其余成员 crate 的 doc-test 静默漏跑（守门仍绿）`,
+    )
+  }
   if (doc.length === 0 && wiring.doc) {
     problems.push(`✗ 覆盖守门：${TEST_SH_REL} 有 \`${DOC_FLAG}\`，但工作区无 doc-test 目标（登记失效）`)
   }
@@ -579,6 +713,8 @@ export function checkCoverage(rootDir: string): CoverageResult {
         `单元测试与集成测试未由统一执行器调度（删除接线即红）`,
     )
   }
+  problems.push(...gateWiringProblems(rootDir))
+  problems.push(...cargoRuntimeEnvProblems(rootDir))
 
   return { problems, targets: discovery.targets, parallel, delegated, doc, outOfFace: discovery.outOfFace }
 }
@@ -777,7 +913,7 @@ async function runAll(options: RunOptions): Promise<number> {
   for (const key of expected.keys()) {
     if (!build.executables.has(key)) {
       problems.push(
-        `✗ 执行面漂移：目标清单里的 ${key} 未被 cargo 构建（cargo test --no-run 无对应可执行文件）`,
+        `✗ 执行面漂移：目标清单里的 ${key} 未被 cargo 构建（cargo test --workspace --no-run 无对应可执行文件）`,
       )
     }
   }
@@ -800,7 +936,7 @@ async function runAll(options: RunOptions): Promise<number> {
   console.log(
     `▶ 并发执行 ${queue.length} 个测试二进制（全局并行度 ${width} = ` +
       `min(并行度上限 ${jobs}（默认 CPU 数 ${cpuCount}）, 待跑二进制数 ${queue.length})；` +
-      `每个二进制 RUST_TEST_THREADS=1，总线程数 = ${width}）`,
+      `每个二进制 RUST_TEST_THREADS=1（只约束 libtest 线程），libtest 线程数 = ${width}）`,
   )
   if (jobs > cpuCount) {
     console.log(
@@ -825,6 +961,9 @@ async function runAll(options: RunOptions): Promise<number> {
     const result = await runChild(executable, [], {
       // cwd 与 cargo 口径一致（各包根，不是 workspace 根）：成员 crate 的测试若
       // 用相对路径，直接以 workspace 根为 cwd 会读到不同位置（Spec 审查发现）。
+      // cargo 运行期注入的环境（CARGO_MANIFEST_DIR / CARGO_PKG_* / OUT_DIR /
+      // 动态库搜索路径）**不复制**——部分复制会制造「已等价」的假信心；现状等价
+      // 由守门规则⑤兜底（测试运行期读这些变量即红，见 cargoRuntimeEnvProblems）。
       cwd: target.cwd,
       env: { ...process.env, RUST_TEST_THREADS: '1' },
     })
