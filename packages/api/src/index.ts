@@ -473,8 +473,8 @@ export const api = {
   getBaseCurrency: () => invoke<BaseCurrencyState>('get_base_currency'),
   setBaseCurrency: (code: string) => invoke<BaseCurrencyState>('set_base_currency', { code }),
 
-  // 多端同步（issue #862 / #863，设置页「数据」Tab 同步卡片）：状态查询、手动
-  // 同步轮次、挂起清单与通道配置（WebDAV 凭据，本机设备配置不同步）。passphrase
+  // 多端同步（issue #862 / #863 / #1218，设置页「数据」Tab 同步卡片）：状态查询、
+  // 手动同步轮次、挂起清单与通道配置（S3 凭据，本机设备配置不同步）。passphrase
   // 为主口令（密文库同步封包用，不落日志），留空则后端回退本机已记住口令。
   // 自动触发（打开即同步 + 运行期低频轮询）由后端编排，前端零调用面。
   getSyncStatus: () => invoke<SyncStatus>('get_sync_status'),

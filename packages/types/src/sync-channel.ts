@@ -6,7 +6,7 @@
 export interface SyncStatus {
   /// 本机设备标识（首用生成并持久化，参与全序 tiebreak）
   device_id: string
-  /// 通道是否已配置（WebDAV 凭据已保存）
+  /// 通道是否已配置（当前后端的凭据已保存）
   channel_configured: boolean
   /// 上次成功同步时刻（UTC ISO；从未同步为 null）
   last_sync_at: string | null

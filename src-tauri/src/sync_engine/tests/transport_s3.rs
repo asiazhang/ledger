@@ -63,6 +63,31 @@ fn s3_put_get_roundtrip_missing_none_and_prefix_mapping() {
     );
 }
 
+/// 配置字段的空白归一（范围外修复，根因见提交信息）：与 endpoint / bucket /
+/// prefix 同规，region 也必须 trim 后再参与签名——区域是 SigV4 凭据范围的一节，
+/// 带首尾空白签出的范围与桩/服务端不一致，请求一律被拒而只显鉴权失败。
+#[test]
+fn s3_config_whitespace_is_normalized_before_signing() {
+    let stub = path_style_stub();
+    let s3 = S3Transport::new(S3Config {
+        endpoint: format!("  {}  ", stub.endpoint),
+        region: format!("  {}  ", stub.region),
+        bucket: format!("  {}  ", stub.bucket),
+        access_key: stub.access_key.clone(),
+        secret_key: "test-secret".to_string(),
+        prefix: "  team/ledger  ".to_string(),
+        path_style: true,
+    })
+    .unwrap();
+
+    let payload = b"payload".to_vec();
+    s3.write_file("book-x/objects/meta.json", &payload).unwrap();
+    assert_eq!(
+        s3.read_file("book-x/objects/meta.json").unwrap(),
+        Some(payload)
+    );
+}
+
 /// ensure_dir 是零副作用空操作：端点不可达也返回 Ok，桩上零请求。
 #[test]
 fn s3_ensure_dir_is_side_effect_free_noop() {

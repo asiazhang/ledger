@@ -29,18 +29,18 @@ const baseStatus: SyncStatus = {
 }
 
 const baseConfig: SyncChannelConfig = {
-  backend: 'webdav',
-  base_url: 'https://dav.example.com/dav/ledger/',
-  username: 'alice',
-  password: 'app-pass',
+  backend: 's3',
+  base_url: '',
+  username: '',
+  password: '',
   space_id: 'family',
-  endpoint: '',
-  region: '',
-  bucket: '',
-  prefix: '',
-  access_key: '',
-  secret_key: '',
-  path_style: false,
+  endpoint: 'https://s3.example.com',
+  region: 'us-east-1',
+  bucket: 'ledger-bucket',
+  prefix: 'sync',
+  access_key: 'AKIAEXAMPLE',
+  secret_key: 'secret-value',
+  path_style: true,
   configured: true,
 }
 
@@ -190,7 +190,125 @@ describe('SyncSettings.vue', () => {
     expect(mockInvoke).not.toHaveBeenCalledWith('get_sync_status')
   })
 
-  it('保存通道配置：表单值作为参数整体提交，成功提示并刷新状态', async () => {
+  it('保存通道配置：S3 表单落到后端，表单回显落库值（删除该接线即同步跑不起来）', async () => {
+    // 后端替身带状态：保存后回显「落库并归一化」的结果（端点去尾斜杠）。这样
+    // 「表单显示的是后端存下来的值」成为用户可观察判据——接线断掉时表单只留
+    // 用户敲的原始串，本用例即变红（负向条目，见 PR 正文）。
+    // 初态 = 已保存过配置（表单加载出 family 空间等既有值），随后用户改端点与桶再保存。
+    let stored: SyncChannelConfig = { ...baseConfig }
+    wireInvokeSeam({
+      defaults: { get_sync_status: baseStatus },
+      overrides: {
+        get_sync_channel_config: () => stored,
+        set_sync_channel_config: (args) => {
+          const input = (args as { config: Partial<SyncChannelConfig> }).config
+          stored = {
+            ...baseConfig,
+            ...input,
+            endpoint: String(input.endpoint).replace(/\/+$/, ''),
+            configured: true,
+          }
+          return null
+        },
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    await findInputByTestId(wrapper, 'sync-endpoint').setValue('https://s3.example.org/')
+    await findInputByTestId(wrapper, 'sync-bucket').setValue('new-bucket')
+    await findButtonByTestId(wrapper, 'sync-save-channel').trigger('click')
+    await flushPromises()
+
+    expect(lastInvokeArgs('set_sync_channel_config')).toEqual({
+      config: {
+        backend: 's3',
+        space_id: 'family',
+        endpoint: 'https://s3.example.org/',
+        region: 'us-east-1',
+        bucket: 'new-bucket',
+        prefix: 'sync',
+        access_key: 'AKIAEXAMPLE',
+        secret_key: 'secret-value',
+        path_style: true,
+      },
+    })
+    // 效果断言（用户可观察）：表单显示后端存下来的归一化端点，而非用户敲的原串。
+    expect(
+      (findInputByTestId(wrapper, 'sync-endpoint').element as HTMLInputElement).value,
+    ).toBe('https://s3.example.org')
+    expect((findInputByTestId(wrapper, 'sync-bucket').element as HTMLInputElement).value).toBe(
+      'new-bucket',
+    )
+    expect(
+      messageCalls().some((m) => m.method === 'success' && m.text.includes('已保存')),
+    ).toBe(true)
+  })
+
+  it('保存通道配置失败（非 https 端点被拒）：码化错误本地化呈现，不误报已保存', async () => {
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: baseStatus,
+        get_sync_channel_config: baseConfig,
+      },
+      overrides: {
+        set_sync_channel_config: () =>
+          Promise.reject({ kind: 'Invalid', code: 'sync-channel.endpoint-insecure', message: 'RAW' }),
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    await findInputByTestId(wrapper, 'sync-endpoint').setValue('http://s3.example.com')
+    await findButtonByTestId(wrapper, 'sync-save-channel').trigger('click')
+    await flushPromises()
+
+    expect(
+      messageCalls().some(
+        (m) => m.method === 'error' && m.text.includes('同步通道端点必须使用 https 地址'),
+      ),
+    ).toBe(true)
+    expect(messageCalls().some((m) => m.text.includes('RAW'))).toBe(false)
+    expect(
+      messageCalls().some((m) => m.method === 'success'),
+    ).toBe(false)
+  })
+
+  // ---- S3 表单与密钥回显口径（issue #1218 验收项）----
+
+  it('加载已保存配置：完整密钥不回显进输入框，占位提示留空即保持', async () => {
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: baseStatus,
+        get_sync_channel_config: baseConfig,
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    // 密钥是唯一不回显的字段：输入框为空，已保存值不出现在渲染结果里。
+    const secret = findInputByTestId(wrapper, 'sync-secret-key')
+    expect(secret.exists()).toBe(true)
+    expect((secret.element as HTMLInputElement).value).toBe('')
+    expect(wrapper.html()).not.toContain('secret-value')
+    expect(secret.attributes('placeholder')).toContain('留空则保持不变')
+    // 其余 S3 字段照常回显（端点/区域/桶/前缀/Access Key）。
+    expect((findInputByTestId(wrapper, 'sync-endpoint').element as HTMLInputElement).value).toBe(
+      'https://s3.example.com',
+    )
+    expect((findInputByTestId(wrapper, 'sync-region').element as HTMLInputElement).value).toBe(
+      'us-east-1',
+    )
+    expect((findInputByTestId(wrapper, 'sync-bucket').element as HTMLInputElement).value).toBe(
+      'ledger-bucket',
+    )
+    expect((findInputByTestId(wrapper, 'sync-prefix').element as HTMLInputElement).value).toBe('sync')
+    expect((findInputByTestId(wrapper, 'sync-access-key').element as HTMLInputElement).value).toBe(
+      'AKIAEXAMPLE',
+    )
+  })
+
+  it('密钥留空保存：沿用已保存密钥，不逼迫用户重输', async () => {
     wireInvokeSeam({
       defaults: {
         get_sync_status: baseStatus,
@@ -200,58 +318,66 @@ describe('SyncSettings.vue', () => {
     })
     const wrapper = mount(SyncSettings)
     await flushPromises()
-    mockInvoke.mockClear()
 
-    await findInputByTestId(wrapper, 'sync-url').setValue('https://new.example.com/dav/')
     await findButtonByTestId(wrapper, 'sync-save-channel').trigger('click')
     await flushPromises()
 
-    expect(lastInvokeArgs('set_sync_channel_config')).toEqual({
-      config: {
-        backend: 'webdav',
-        base_url: 'https://new.example.com/dav/',
-        username: 'alice',
-        password: 'app-pass',
-        space_id: 'family',
-        endpoint: '',
-        region: '',
-        bucket: '',
-        prefix: '',
-        access_key: '',
-        secret_key: '',
-        path_style: false,
-      },
-    })
+    const sent = lastInvokeArgs('set_sync_channel_config') as { config: { secret_key: string } }
+    expect(sent.config.secret_key).toBe('secret-value')
+    // 效果断言（双断言）：保存真的发生了——成功提示在场。
     expect(
       messageCalls().some((m) => m.method === 'success' && m.text.includes('已保存')),
     ).toBe(true)
-    expect(mockInvoke).toHaveBeenCalledWith('get_sync_status')
   })
 
-  it('保存通道配置失败（码化错误透出）：错误提示，配置不误报已保存', async () => {
+  it('输入新密钥保存：提交新值，同时不把旧值渲染上屏', async () => {
     wireInvokeSeam({
       defaults: {
         get_sync_status: baseStatus,
         get_sync_channel_config: baseConfig,
-      },
-      overrides: {
-        set_sync_channel_config: () =>
-          Promise.reject({ kind: 'Invalid', code: 'sync-channel.base-url-missing', message: 'RAW' }),
+        set_sync_channel_config: null,
       },
     })
     const wrapper = mount(SyncSettings)
     await flushPromises()
 
-    await findInputByTestId(wrapper, 'sync-url').setValue('')
+    await findInputByTestId(wrapper, 'sync-secret-key').setValue('rotated-secret')
     await findButtonByTestId(wrapper, 'sync-save-channel').trigger('click')
     await flushPromises()
 
+    const sent = lastInvokeArgs('set_sync_channel_config') as { config: { secret_key: string } }
+    expect(sent.config.secret_key).toBe('rotated-secret')
+    // 保存成功后的回显同样为空白输入框（密钥永不上屏）。
     expect(
-      messageCalls().some((m) => m.method === 'error' && m.text.includes('同步通道地址不能为空')),
-    ).toBe(true)
-    expect(
-      messageCalls().some((m) => m.method === 'success'),
-    ).toBe(false)
+      (findInputByTestId(wrapper, 'sync-secret-key').element as HTMLInputElement).value,
+    ).toBe('')
+  })
+
+  it('未配置通道：S3 空表单起填，密钥占位为普通字段名', async () => {
+    wireInvokeSeam({
+      defaults: {
+        get_sync_status: { ...baseStatus, channel_configured: false },
+        get_sync_channel_config: {
+          ...baseConfig,
+          endpoint: '',
+          region: '',
+          bucket: '',
+          prefix: '',
+          access_key: '',
+          secret_key: '',
+          path_style: false,
+          configured: false,
+        },
+      },
+    })
+    const wrapper = mount(SyncSettings)
+    await flushPromises()
+
+    expect((findInputByTestId(wrapper, 'sync-endpoint').element as HTMLInputElement).value).toBe('')
+    // 未保存过密钥时不提示「留空则保持不变」（那会让用户以为已有密钥在位）。
+    expect(findInputByTestId(wrapper, 'sync-secret-key').attributes('placeholder')).toBe(
+      'Secret Access Key',
+    )
   })
 
   // ---- 挂起通知（issue #863 验收项）----
