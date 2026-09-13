@@ -76,8 +76,9 @@ impl PartialSchema for PriceChannel {
 impl ToSchema for PriceChannel {}
 
 /// 行情通道的市场能力：已知市场（沪/深/港/美股三交易所）才可构造 secid 查询。
-/// 与行情同步网络层的 `sync::http::secid_prefix` 同一闭集——同步侧绑定测试钉住
-/// 两者一致（`sync::tests::instrument_info_sync`），改其一必同步另一。
+/// 与行情同步网络层的 `sync::http::secid_prefix`（行情同步域 `ledger-market-sync`
+/// crate，#1106）同一闭集——同步侧绑定测试钉住两者一致（该 crate 的
+/// `tests::instrument_info_sync`），改其一必同步另一。
 pub fn quote_market(market: &str) -> bool {
     matches!(market, "sh" | "sz" | "hk" | "nasdaq" | "nyse" | "amex")
 }

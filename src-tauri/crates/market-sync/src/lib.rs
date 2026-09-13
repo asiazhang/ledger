@@ -1,17 +1,33 @@
-//! 行情同步域（MarketSync，#407 域目录化归位，ADR-0056）。
+// 测试整体豁免（ADR-0060）：clippy 六件套 deny 仅约束生产路径；单元测试目标
+// （含 src/** 内 #[cfg(test)] 模块与外挂 tests/）经 crate 根 cfg(test) 整体
+// 放行，生产构建零放宽。
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable
+    )
+)]
+
+//! 行情同步域（MarketSync，#407 域目录化归位 ADR-0056；spec #1086 / issue #1106
+//! 自根包域目录拆为 workspace 成员 `ledger-market-sync`）。
 //!
 //! HTTP 网络爬取、东财基金访问与增量同步编排在本域收口：
 //! - [`http`]：HTTP 请求（含多主机切换、重试、限流冷却、Referer）与响应解析（报价
 //!   / 日 K / 汇率 K），价格换算按精度位单点收口（批量报价与单点行情共用），可独立测试；
 //! - [`fund`]：东财基金报价访问（按代码即拉，issue #301 / ADR-0038）——行情接入
-//!   接缝查询半边的场外实例（统一载荷 `investment::Quote`，ADR-0103）；
+//!   接缝查询半边的场外实例（统一载荷 [`ledger_investment::Quote`]，ADR-0103）；
 //! - [`stock`]：东财股票单点行情访问——按（市场，代码）实时查询（issue #693 /
 //!   ADR-0081），类型特征探测单点隔离，同接缝查询半边的场内实例；
 //! - [`fund_nav`]：东财历史净值通道——lsjz 访问、报文解析、水位语义与基金分区
 //!   编排（issue #303 / ADR-0038 决策 6）；首刷深回填另走详情页数据文件的
 //!   单请求全量通道、失败 fail-closed 回退 lsjz 分页（issue #1062）；
 //! - [`persist`]：`fx_rate_history` 周采样 upsert（issue #137；价格写入单点已随
-//!   投资域归位迁入 [`crate::investment::prices`]，#401 / ADR-0056）；
+//!   投资域归位迁入 [`ledger_investment::prices`]，#401 / ADR-0056）；
 //! - [`incremental`]：标的信息同步编排（issue #103，#137 升级，#303 基金分区，#695
 //!   ETF 纳入行情分区，#827 覆盖面放开至库内全部标的 + 名称随行刷新）——现价
 //!   upsert + 近两年日 K 回填周线落 `price_history` + 汇率 K 线落
@@ -22,19 +38,32 @@
 //!   载荷与 [`progress::ProgressEmitter`] 发射器接缝收口于此（不经失效信号映射，
 //!   只共用 `events` 的主线程非阻塞投递机制）；
 //! - [`model`]：域模型——标的信息同步结果类型（#407 随域归位；基金行情 DTO 已因
-//!   #422 Q11 归属修正迁入投资域，ADR-0103 后又收口为 `investment::quote`
-//!   的统一载荷 [`crate::investment::Quote`]）；
-//! - `tests`：外挂测试（HTTP 层经本地 HTTP 服务独立测试，不依赖真实网络）。
+//!   #422 Q11 归属修正迁入投资域，ADR-0103 后又收口为 `ledger_investment::quote`
+//!   的统一载荷 [`ledger_investment::Quote`]）；
+//! - `tests`：域内测试（HTTP 层经本地 HTTP 服务独立测试，不依赖真实网络）。
 //!
 //! 标的全量同步（修字典）已整体退役（ADR-0081 决策 3，issue #698）：编排、
 //! 进度/取消事件与中断状态随命令删除，股票字典修正归「按代码查询/创建带回
 //! 权威名称」（投资域 `stock` / `crud`）。
 //!
-//! 依赖方向：本域消费基础设施（`db` / `error` / `events`），横向消费投资域
-//! （价格写入单点 `prices` / 名称刷新接缝 / 持仓谓词 / 基金代码判定）与核心交易域
-//! （币种缺省推导 `transaction::amount`），不依赖壳层。壳层 `commands::sync`
-//! 只做参数解包与信号发射，对外暴露 `sync_instrument_info` 标的信息同步
-//! （刷价 + 沉淀历史 + 随行刷新名称，issue #827 改名）一个 IPC 命令。
+//! 依赖方向（spec #1086 / issue #1106 AC）：本 crate 消费**基础设施**（`db` 时间
+//! 与身份工厂 / `error` 码化错误 / `events` 主线程非阻塞投递）、**同步协议**
+//!（op 落库行的 `device_id` 字段）、**核心交易域**（币种缺省推导
+//! `transaction::amount::default_currency_code`）与**投资域**（价格写入单点
+//! `prices`、名称随行刷新 `crud`、通道派生 `channel` 与统一报价载荷 [`Quote`]，
+//! ADR-0103）——四条即票面 AC 允许集全量，域→域均为上层消费下层的合法直呼
+//!（ADR-0112 决策 2；本域为 P4 起点，不再反向依赖任何同级业务域）。对根包（壳层）
+//! 与多端同步域零生产依赖，反向引用由 cargo 依赖图编译期拒绝（生产依赖面无根包，
+//! dev-dependency 环只覆盖测试目标）。
+//!
+//! 兼容面（ADR-0112 决策 3「调用点零改动」）：根包以
+//! `pub use ledger_market_sync as sync;` 再导出保留原引用路径——壳层
+//! `commands::sync`（只做参数解包与信号发射，对外暴露 `sync_instrument_info`
+//! 标的信息同步一个 IPC 命令，刷价 + 沉淀历史 + 随行刷新名称，issue #827 改名）、
+//! `commands::investment` 与 `api_server` 的行情查询注入点、e2e 与汇总文档的
+//! `crate::sync::…` / `tauri_app_lib::sync::…` 引用零改动。
+//!
+//! [`Quote`]: ledger_investment::Quote
 
 mod fund;
 mod fund_nav;

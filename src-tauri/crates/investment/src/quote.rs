@@ -83,7 +83,7 @@ impl Quote {
     }
 
     /// 场内通道的类型提示：缺省即 `Stock`（东财类型特征字段缺省/非零 → 股票，
-    /// 与探测单点 `sync::stock`（行情同步域，根包）同判，ADR-0081）——误判代价仅类型标签，
+    /// 与探测单点 `sync::stock`（行情同步域，ledger-market-sync crate）同判，ADR-0081）——误判代价仅类型标签，
     /// 已接受。
     pub fn stock_kind_hint(&self) -> InstrumentType {
         self.kind_hint.unwrap_or(InstrumentType::Stock)

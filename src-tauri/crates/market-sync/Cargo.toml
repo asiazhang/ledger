@@ -1,0 +1,44 @@
+[package]
+name = "ledger-market-sync"
+version = "0.6.0"
+description = "Ledger 行情同步域 crate：东财行情抓取（批量报价 / 单点行情 / 日 K / 历史净值）与增量同步编排"
+edition = "2024"
+publish = false
+# 版本与根包锁步（仓库约定：workspace 各成员同为 0.6.0）。
+
+[dependencies]
+# 行情同步域 crate（spec #1086 / issue #1106，P4 首个拆出的业务域 crate）：依赖面
+# 只有基础设施（db / error / events）、同步协议（op 本地记录：`device_id`）、核心
+# 交易域（币种缺省推导 `amount::default_currency_code`）与投资域（价格写入单点
+# `prices` / 名称随行刷新 `crud` / 通道派生 `channel` 与统一报价载荷 `Quote`，
+# ADR-0103）——票面 AC 允许集四条全覆盖，域→域方向均为上层消费下层的合法直呼
+# （ADR-0112 决策 2）。对根包（壳层）零生产依赖，反向引用由 cargo 依赖图编译期
+# 拒绝（生产依赖面无根包，dev-dependency 环只覆盖测试目标）。
+ledger-infra = { path = "../infra" }
+ledger-sync-protocol = { path = "../sync-protocol" }
+ledger-transaction = { path = "../transaction" }
+ledger-investment = { path = "../investment" }
+# 数据面惯用库：HTTP 抓取（reqwest 阻塞客户端，与根包同一 feature 面）、报文解析、
+# 连接与日志。`tauri` 只为进度发射器接缝的生产实现（`ProgressEmitter for AppHandle`，
+# 由壳层传入的句柄投递主线程事件循环，ADR-0054 / ADR-0095）——先例：ledger-backup
+# 同持 `tauri`；本 crate 不消费壳层 `commands` 面。
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4.45", features = ["serde"] }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+tauri = { version = "2", features = ["tracing"] }
+tracing = "0.1"
+
+[dev-dependencies]
+# 测试专用边（spec #1086 明文裁决「测试工厂与器具以 dev-dependency 环供各域
+# 复用，Cargo 允许」）：随域迁入的域单测用根包的统一测试数据库工厂与共享断言
+# （test_support，ADR-0084）建库与种子。dev-dependency 环由 Cargo 允许——测试
+# 目标与生产依赖图分离，不构成生产环；结构守门的依赖方向核对只辖生产依赖
+#（本 crate 声明 tauri-app 为生产依赖即红，负向夹具见 check-structure.test.ts）。
+tauri-app = { path = "../.." }
+
+# 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+[lints]
+workspace = true

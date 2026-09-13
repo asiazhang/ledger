@@ -24,8 +24,8 @@ use chrono::NaiveDate;
 use rusqlite::{Connection, params};
 use serde::Deserialize;
 
-use crate::error::{AppError, Result};
-use crate::investment::prices::{
+use ledger_infra::error::{AppError, Result};
+use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
     upsert_price_history,
 };

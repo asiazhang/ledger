@@ -25,8 +25,8 @@ use super::http::{
     request_json_from_hosts, secid_prefix,
 };
 use super::incremental::beijing_date;
-use crate::error::{AppError, Result};
-use crate::investment::{InstrumentType, Quote};
+use ledger_infra::error::{AppError, Result};
+use ledger_investment::{InstrumentType, Quote};
 
 /// 单点行情查询字段：最新价 / 代码 / 名称 / 精度位 / 类型特征 / 更新时间戳。
 const STOCK_QUOTE_FIELDS: &str = "f43,f57,f58,f59,f62,f86";

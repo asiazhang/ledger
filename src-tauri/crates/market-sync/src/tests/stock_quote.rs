@@ -4,17 +4,17 @@
 //! 实测截取，字段拼读保持不变）：f62 类型特征钉住沪深 ETF/LOF/股票已知样本
 //!（场内基金类恒为 0），f59 精度位钉住 2 位/3 位两类缩放。
 
-use crate::investment::InstrumentType;
-use crate::sync::http::price_cents_from_raw;
-use crate::sync::stock::{
+use crate::http::price_cents_from_raw;
+use crate::stock::{
     StockQuoteResponse, detect_kind_hint, pick_stock_quote, price_date_from_timestamp,
 };
+use ledger_investment::InstrumentType;
 
 fn parse(raw: &str) -> StockQuoteResponse {
     serde_json::from_str(raw).expect("fixture 应为合法 JSON")
 }
 
-fn pick(raw: &str, market: &str, code: &str) -> Option<crate::investment::Quote> {
+fn pick(raw: &str, market: &str, code: &str) -> Option<ledger_investment::Quote> {
     pick_stock_quote(parse(raw), market, code)
 }
 

@@ -106,8 +106,7 @@ export type Layer = (typeof LAYER)[keyof typeof LAYER]
  * CRATES（BACKUP_MODULES 承接模块级扫描）。
  */
 export const WHITELIST: readonly WhitelistEntry[] = [
-  { path: 'sync', layer: '域目录', note: '行情同步域（#407 归位，HTTP 爬取/东财基金净值/同步编排自 commands/sync 随迁；全量修字典翼已退役，issue #698）' },
-  { path: 'sync_engine', layer: '域目录', note: '多端同步域（issue #855 新建即归位，ADR-0091 OpLog 基座；与行情同步域 sync 相邻不同域）' },
+  { path: 'sync_engine', layer: '域目录', note: '多端同步域（issue #855 新建即归位，ADR-0091 OpLog 基座；与行情同步域 ledger-market-sync 相邻不同域，行情域已随 #1106 拆出、本域待 #1107 拆出）' },
   { path: 'test_support', layer: '域目录', note: '测试支持域（统一测试数据库工厂与共享断言库，ADR-0084 / #751；依赖域与基础设施合法，对壳层零依赖）' },
 ]
 
@@ -508,6 +507,32 @@ export const INVESTMENT_MODULES: readonly WhitelistEntry[] = [
 export const INVESTMENT_SRC_REL = 'crates/investment/src'
 
 /**
+ * 行情同步域 crate 的模块清单（spec #1086 / issue #1106）：路径相对
+ * `src-tauri/crates/market-sync/src`。P4 首个业务域 crate——东财行情抓取（批量报价 /
+ * 单点行情 / 日 K / 历史净值）与增量同步编排，成为可被多端同步域依赖的独立编译
+ * 单元。依赖面为票面 AC 允许集全量：基础设施（db / error / events）、同步协议
+ *（op 落库行的 device_id）、核心交易域（币种缺省推导）与投资域（价格写入单点 /
+ * 名称随行刷新 / 通道派生 / 统一报价载荷，ADR-0103），均为上层域消费下层域的合法
+ * 直呼（ADR-0112 决策 2）；对壳层与多端同步域零容忍照扫（与备份/交易/投资 crate
+ * 同款，清单条目 layer 为域目录即入业务域扫描面）；反向引用由 cargo 依赖图拒绝
+ *（生产依赖面无根包）。crate 根 lib.rs 是声明与再导出面（无守门靶向代码），与
+ * 协议/备份/交易 crate 同款不入清单；tests.rs 与 tests/ 为测试豁免形态不入清单。
+ */
+export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
+  { path: 'fund.rs', layer: '域目录', note: '东财基金报价访问（按 6 位代码即拉，issue #301 / ADR-0038；搜索建议未命中回退档案通道改判存在，issue #1212）——行情接入接缝查询半边的场外实例，统一载荷 investment::Quote（ADR-0103）' },
+  { path: 'fund_nav.rs', layer: '域目录', note: '东财历史净值通道（issue #303 / ADR-0038 决策 6）：lsjz 报文解析、水位窗口与基金分区编排；首刷深回填走详情页数据文件单请求全量通道、失败 fail-closed 回退分页（issue #1062）' },
+  { path: 'http.rs', layer: '域目录', note: '行情 HTTP 网络层（issue #89）：多主机切换 / 重试 / 限流冷却 / Referer 与报价、日 K、汇率 K 报文解析；价格换算按随行精度位单点（批量报价与单点行情共用，#695）' },
+  { path: 'incremental.rs', layer: '域目录', note: '标的信息同步编排（issue #103 / #137 / #303 / #695 / #827）：批量报价 upsert 现价 + 近两年日 K 周采样 + 汇率 K 线 + 基金净值按水位增量 + 数据源权威名称随行刷新；抓取通道全部经闭包注入，编排不碰网络' },
+  { path: 'model.rs', layer: '域目录', note: '域模型（#407 随域归位）：标的信息同步结果类型 SyncInstrumentInfoResult' },
+  { path: 'persist.rs', layer: '域目录', note: '行情同步持久化（issue #137）：fx_rate_history 周采样 upsert（价格写入单点已随投资域归位迁入 ledger_investment::prices，#401）' },
+  { path: 'progress.rs', layer: '域目录', note: '同步进度事件（issue #897 / ADR-0095；页级明细 issue #1061）：事件名常量、payload 与 ProgressEmitter 发射器接缝收口（用后即弃的非失效信号，经 events 机制投递）' },
+  { path: 'stock.rs', layer: '域目录', note: '东财股票单点行情访问（issue #693 / ADR-0081）：按（市场，代码）实时查询，类型特征探测与更新时间戳投影单点隔离——接缝查询半边的场内实例' },
+]
+
+/** 行情同步域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-market-sync.dir 同源。 */
+export const MARKET_SYNC_SRC_REL = 'crates/market-sync/src'
+
+/**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
  * 与上面的 `LAYER`（单 crate 内的**模块路径**分层：域目录 / 基础设施）刻意分开——
  * 两者是不同粒度的事实源，同名值不合并（合并只会让任一侧语义被动漂移）。
@@ -648,6 +673,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/investment',
     layer: CRATE_LAYER.DOMAIN,
     note: '投资域 crate（#1097，P3 业务域 crate：标的字典/市场数据/持仓与买卖协议/盈亏与走势，可被行情同步域与多端同步域依赖）；依赖面只有基础设施、同步协议、核心交易域、账户域与币种域——交易域接缝实现注册侧（#1092 挂载点⑤反转后的合法方向）与两条域→域上层依赖（投资 → 账户：AccountType/余额口径，spec 明文；投资 → 币种：ExchangeRate/ExchangeRateInput 汇率实体消费方与录入入口，#418/ADR-0059「实体归属优先于消费方分布」，#1097 裁决显性化承认、非新增耦合）均为上层域消费下层域的合法直呼（ADR-0112 决策 2），对壳层与行情/多端同步域零直接依赖（行情查询半边经注入接缝倒挂），反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
+  },
+  {
+    name: 'ledger-market-sync',
+    dir: 'crates/market-sync',
+    layer: CRATE_LAYER.DOMAIN,
+    note: '行情同步域 crate（#1106，P4 首个业务域 crate：东财行情抓取——批量报价/单点行情/日 K/历史净值——与增量同步编排，成为可被多端同步域依赖的独立编译单元）；依赖面为票面 AC 允许集全量：基础设施（db/error/events）、同步协议（op 落库行 device_id）、核心交易域（币种缺省推导 amount::default_currency_code）、投资域（价格写入单点 prices/名称随行刷新 crud/通道派生 channel/统一报价载荷 Quote，ADR-0103）——四条域→域均为上层域消费下层域的合法直呼（ADR-0112 决策 2），对壳层与多端同步域零直接依赖（壳层同步命令经根包再导出面消费），反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
   },
 ]
 
@@ -1972,6 +2003,7 @@ function main(): void {
       ...collectRustFiles(join(srcTauriDir, ITEM_SRC_REL), ITEM_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, DASHBOARD_SRC_REL), DASHBOARD_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, INVESTMENT_SRC_REL), INVESTMENT_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, MARKET_SYNC_SRC_REL), MARKET_SYNC_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -2038,6 +2070,7 @@ function main(): void {
   scannedFiles += scanModuleEntries(ITEM_MODULES, join(srcTauriDir, ITEM_SRC_REL), problems)
   scannedFiles += scanModuleEntries(DASHBOARD_MODULES, join(srcTauriDir, DASHBOARD_SRC_REL), problems)
   scannedFiles += scanModuleEntries(INVESTMENT_MODULES, join(srcTauriDir, INVESTMENT_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(MARKET_SYNC_MODULES, join(srcTauriDir, MARKET_SYNC_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -2083,6 +2116,7 @@ function main(): void {
       `+ 物品域模块 ${ITEM_MODULES.length} 项（crate ${ITEM_SRC_REL}，#1099）` +
       `+ 仪表盘域模块 ${DASHBOARD_MODULES.length} 项（crate ${DASHBOARD_SRC_REL}，#1104）` +
       `+ 投资域模块 ${INVESTMENT_MODULES.length} 项（crate ${INVESTMENT_SRC_REL}，#1097）` +
+      `+ 行情同步域模块 ${MARKET_SYNC_MODULES.length} 项（crate ${MARKET_SYNC_SRC_REL}，#1106）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +
