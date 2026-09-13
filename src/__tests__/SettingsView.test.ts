@@ -4,12 +4,14 @@ import { findButton, findBodyButtonByTestId } from '@ledger/test-support/dom'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
+import { setActivePinia, createPinia } from 'pinia'
 
 import { useAppStore } from '@/stores/app'
 import { applyLocale } from '@ledger/i18n'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
 import { captureLastListener, mockListen } from '@ledger/test-support/listen-mock'
+import { getSavedClosedFeatures } from '@/utils/view-state'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
@@ -87,11 +89,11 @@ beforeEach(async () => {
   await base.ready
 })
 
-describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格局 5 页签）', () => {
-  it('Tab 格局为 通用 → 分类 → 数据 → 定时 → 关于，共 5 个，关于在末位（#308 定时；#444 商户 Tab 移除——商户管理迁入「更多」聚合页，入口唯一）', () => {
+describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格局 6 页签）', () => {
+  it('Tab 格局为 通用 → 分类 → 数据 → 定时 → 功能 → 关于，共 6 个，功能插在关于之前、关于在末位（#308 定时；#444 商户 Tab 移除；#1243 功能 Tab，ADR-0116 修订 ADR-0022）', () => {
     const wrapper = mount(SettingsView)
     const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
-    expect(labels).toEqual(['通用', '分类', '数据', '定时', '关于'])
+    expect(labels).toEqual(['通用', '分类', '数据', '定时', '功能', '关于'])
   })
 
   it('英文界面：Tab 页签以英文渲染，切回中文后恢复（issue #352）', async () => {
@@ -104,7 +106,7 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
       await applyLocale('zh-CN')
       await nextTick()
     }
-    expect(enLabels).toEqual(['General', 'Categories', 'Data', 'Scheduled', 'About'])
+    expect(enLabels).toEqual(['General', 'Categories', 'Data', 'Scheduled', 'Features', 'About'])
     // 切回中文后新挂载的组件恢复中文页签
     const wrapper = mount(SettingsView)
     expect(wrapper.findAll('.n-tabs-tab').map((tab) => tab.text())).toEqual([
@@ -112,6 +114,7 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
       '分类',
       '数据',
       '定时',
+      '功能',
       '关于',
     ])
   })
@@ -127,6 +130,44 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(labels).not.toContain('存储位置')
     // #444：商户管理迁入「更多」聚合页，设置页不再承载商户入口
     expect(labels).not.toContain('商户')
+  })
+
+  it('设置面联动：关闭「定时」后设置页「定时」Tab 消失，重新打开即回来（issue #1243 范围 3）', async () => {
+    const wrapper = mount(SettingsView)
+    await openTab(wrapper, '功能')
+    // 点选即关、不设确认（ADR-0116 决策 8）：关掉「定时」后本页 Tab 立即消失。
+    await wrapper.find('[data-testid="feature-toggle-scheduled"] .n-switch').trigger('click')
+    await nextTick()
+    const closedLabels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
+    expect(closedLabels).not.toContain('定时')
+    expect(closedLabels).toEqual(['通用', '分类', '数据', '功能', '关于'])
+    // 重新打开即回原位置（关闭不改写任何清单，ADR-0116 决策 3）。
+    await wrapper.find('[data-testid="feature-toggle-scheduled"] .n-switch').trigger('click')
+    await nextTick()
+    expect(wrapper.findAll('.n-tabs-tab').map((t) => t.text())).toContain('定时')
+  })
+
+  it('关闭「定时」跨启动保持：新一次启动的设置页仍无「定时」Tab，localStorage 为唯一落点（零后端调用）', async () => {
+    const wrapper = mount(SettingsView)
+    await openTab(wrapper, '功能')
+    await wrapper.find('[data-testid="feature-toggle-scheduled"] .n-switch').trigger('click')
+    await nextTick()
+    expect(getSavedClosedFeatures()).toEqual(['scheduled'])
+    wrapper.unmount()
+
+    // 「重启」= 新 Pinia：设置页与开关 store 一同重跑启动读路径（localStorage 未清）。
+    setActivePinia(createPinia())
+    const restarted = mount(SettingsView)
+    expect(restarted.findAll('.n-tabs-tab').map((t) => t.text())).not.toContain('定时')
+    await openTab(restarted, '功能')
+    const scheduledSwitch = restarted.find('[data-testid="feature-toggle-scheduled"] .n-switch')
+    expect(scheduledSwitch.attributes('aria-checked')).toBe('false')
+    // 开关只写 localStorage：拨动开关零后端调用（设置页其他卡片的既有调用不计）。
+    const callsBeforeToggle = mockInvoke.mock.calls.length
+    await scheduledSwitch.trigger('click')
+    await nextTick()
+    expect(mockInvoke.mock.calls.length).toBe(callsBeforeToggle)
+    expect(restarted.findAll('.n-tabs-tab').map((t) => t.text())).toContain('定时')
   })
 
   it('「通用」默认激活，含深色模式开关、展示币种下拉与日志卡片，不含账本级本位币基准（issue #858 币种设置拆分；issue #930 日志卡片迁入）', async () => {
