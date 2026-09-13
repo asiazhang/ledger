@@ -74,6 +74,16 @@ export const INSTRUMENT_PRICE_CHANNELS: InstrumentPriceChannel[] = [
   'none',
 ]
 
+/**
+ * 价格过期检查结果（issue #1190）：打开投资页时的本地水位检查（零网络请求）——
+ * 有价格通道标的的现价水位（行情采集时刻 / 净值日期）超出阈值，或持仓标的没有
+ * 现价时的计数；阈值随结果透出，提示文案不另抄一份天数。计数为 0 即不提示。
+ */
+export interface PriceStaleness {
+  stale_count: number
+  threshold_days: number
+}
+
 export interface InstrumentInput {
   symbol: string
   type: InstrumentType

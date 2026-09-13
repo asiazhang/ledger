@@ -166,6 +166,10 @@
     "progressFundPages": "回填 {code}：第 {page}/{pages} 页",
     "progressAriaLabel": "同步标的信息进度"
   },
+  "staleness": {
+    "message": "有 {count} 个标的的行情 / 净值可能已过期（超过 {days} 天未更新，或持仓缺现价）。",
+    "goSync": "去同步标的信息"
+  },
   "market": {
     "sh": "沪市",
     "sz": "深市",

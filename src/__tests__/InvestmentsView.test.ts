@@ -110,6 +110,8 @@ const INVESTMENT_DEFAULTS = {
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
   // 持仓概览（issue #110）：盈亏 tab 顶部会拉取当前持仓
   list_holdings: [],
+  // 价格过期检查（issue #1190）：打开投资页的本地水位检查，默认无过期
+  instrument_price_staleness: { stale_count: 0, threshold_days: 3 },
   // 累计收益聚合（issue #1077）：持仓概览同批拉取（全账本按币种分组）
   cumulative_pnl_summary: [{ currency_code: 'CNY', cumulative_pnl_cents: 45000 }],
   // 走势（issue #139）：标的列表「走势」入口切入走势 tab 时由面板拉取
@@ -343,6 +345,80 @@ describe('InvestmentsView 持仓页签（issue #901）', () => {
     const remounted = mountView()
     await flushPromises()
     expect(remounted.findAll('.n-tabs-tab--active').map((el) => el.text())).toEqual(['持仓'])
+  })
+})
+
+/** 价格过期提示（issue #1190）：打开投资页做一次本地水位检查（零网络请求）——
+ * 无过期不提示、不发任何同步请求；有过期时提示含过期数量与判定阈值，动作一键
+ * 进入既有「同步标的信息」入口（标的页签的既有按钮，不新增第二套同步触发）；
+ * 同步写价后价格失效信号驱动重查，提示随价格变新自动消失。 */
+describe('InvestmentsView 价格过期提示（issue #1190）', () => {
+  it('无过期：不提示，且不发任何同步请求（检查只读本地库）', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    // 打开投资页的本地水位检查恰好一次（「打开投资页时做一次」）
+    expect(
+      mockInvoke.mock.calls.filter(([cmd]) => cmd === 'instrument_price_staleness'),
+    ).toHaveLength(1)
+    expect(wrapper.find('[data-testid="price-staleness-alert"]').exists()).toBe(false)
+    // 零网络请求：打开页面绝不触发同步（ADR-0015 / ADR-0095 显式触发口径）
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'sync_instrument_info')).toHaveLength(0)
+  })
+
+  it('有过期：提示上屏含过期数量与阈值，按钮一键进入既有同步入口', async () => {
+    wireInvokeSeam({
+      defaults: {
+        ...INVESTMENT_DEFAULTS,
+        instrument_price_staleness: { stale_count: 3, threshold_days: 3 },
+      },
+      refreshReferenceStores: true,
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    const alert = wrapper.find('[data-testid="price-staleness-alert"]')
+    expect(alert.exists()).toBe(true)
+    // 含过期数量 + 判定阈值（阈值由后端透出，前端不另抄天数常量）
+    expect(alert.text()).toContain('3')
+    expect(alert.text()).toContain('过期')
+    expect(alert.text()).toContain('超过 3 天')
+    // 措辞只陈述标的自身：计数含已清仓标的，故不得宣称「报表会按陈旧价格计算」
+    // （报表只吃持仓，对已清仓标的不成立；口径见词汇表「价格过期提示」）
+    expect(alert.text()).not.toContain('报表')
+    // 入口默认不在场（标的页签懒挂载），点击后直达既有「同步标的信息」按钮
+    expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(false)
+    await wrapper.find('[data-testid="price-staleness-go-sync"]').trigger('click')
+    await flushPromises()
+    await nextTick()
+    expect(useInvestmentsSessionStore().activeTab).toBe('instruments')
+    expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(true)
+  })
+
+  it('同步写价后重查：提示随价格变新自动消失（价格失效信号驱动，ADR-0031）', async () => {
+    let checks = 0
+    // 本用例只关心重查时机，故检查命令经 overrides 提供动态应答（覆盖 defaults 静态值，
+    // 先例：同文件持仓重查用例的 list_holdings）
+    wireInvokeSeam({
+      defaults: INVESTMENT_DEFAULTS,
+      overrides: {
+        instrument_price_staleness: () =>
+          checks++ === 0
+            ? { stale_count: 2, threshold_days: 3 }
+            : { stale_count: 0, threshold_days: 3 },
+      },
+      refreshReferenceStores: true,
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="price-staleness-alert"]').exists()).toBe(true)
+
+    firePricesChanged()
+    await flushPromises()
+    expect(
+      mockInvoke.mock.calls.filter(([cmd]) => cmd === 'instrument_price_staleness'),
+    ).toHaveLength(2)
+    expect(wrapper.find('[data-testid="price-staleness-alert"]').exists()).toBe(false)
   })
 })
 

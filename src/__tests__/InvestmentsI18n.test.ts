@@ -26,6 +26,8 @@ vi.mock('vue-router', () => ({
 const EMPTY_INVESTMENT_DEFAULTS = {
   list_instruments: { items: [], total: 0 },
   list_holdings: [],
+  // 价格过期检查（issue #1190）：打开投资页的本地水位检查，默认无过期
+  instrument_price_staleness: { stale_count: 0, threshold_days: 3 },
   cumulative_pnl_summary: [],
   portfolio_value_trend: { currency_code: 'CNY', points: [] },
   realized_pnl_summary: {
@@ -125,6 +127,23 @@ describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {
     expect(text).toContain('All')
     // 组合走势空数据 → 英文引导文案
     expect(text).toContain('No historical price data')
+  })
+
+  it('价格过期提示渲染英文（issue #1190：数量 / 阈值插值 + 去同步按钮）', async () => {
+    await applyLocale('en-US')
+    wireInvokeSeam({
+      defaults: EMPTY_INVESTMENT_DEFAULTS,
+      overrides: {
+        instrument_price_staleness: () => ({ stale_count: 2, threshold_days: 3 }),
+      },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    const alert = wrapper.find('[data-testid="price-staleness-alert"]')
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toContain('2 instruments may have stale quotes / NAV')
+    expect(alert.text()).toContain('over 3 days')
+    expect(alert.text()).toContain('Sync Instrument Info')
   })
 
   it('投资表单渲染英文 label 与占位', async () => {

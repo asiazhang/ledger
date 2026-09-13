@@ -71,8 +71,9 @@ pub(super) struct SyncInstrument {
 /// 「当前有持仓」（`INVESTED_EXISTS`）放开为全库标的、按通道能力分区——清仓
 /// 标的恢复同步，纯建档未交易标的首次同步按既有近两年日 K/净值回填规则补
 /// 历史；无通道行（无行情类型、市场未知、名称充代码）由分区/编排自然计入
-/// 跳过。`INVESTED_EXISTS` 谓词自此只服务 invested 派生列、「只看持仓」过滤
-/// 与盈亏页持仓概览三处（见 `investment::predicates`）。按 symbol 升序；
+/// 跳过。`INVESTED_EXISTS` 谓词自此只服务标的列表持仓派生标记、「只看持仓」
+/// 过滤、持仓页签概览与价格过期提示的持仓缺现价判定（完整清单见
+/// `investment::predicates`，不在此复述处数）。按 symbol 升序；
 /// 通道分区在 Rust 侧完成（见 [`do_incremental_sync_with`]）。
 fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
     let sql = "SELECT i.id, i.symbol, i.market, i.currency_code, i.instrument_type \

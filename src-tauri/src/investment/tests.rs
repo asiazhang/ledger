@@ -26,6 +26,8 @@
 //! - [`stock_lookup`]：股票按（市场，代码）查询领域规则（市场推断 / 矛盾 400 / 币种推导，issue #693）
 //! - [`stock_create`]：股票创建增强的东财往返路由与落库接缝（权威名称 + 现价 / 降级市场保留，issue #694）
 //! - [`stock_add`]：「添加投资标的」股票侧录入——通道解析、查询遍历与识别落库（issue #697）
+//! - [`staleness`]：价格过期检查（issue #1190）——本地水位检查的判定矩阵
+//!   （水位阈值边界 / 北京日历日换算 / 持仓缺现价 / 手动与无来源通道豁免）
 //! - [`split`]：份额调整（split）写入与改删——按比例重述与尾差归末批次、部分卖出按
 //!   重述后每份成本结算（决策 2 唯一钉死处）、逐批次 before 快照精确回补（改 / 删）、
 //!   下游在用消耗守卫、无 split 行消耗回算恒等绑定、kind 变更拒绝
@@ -49,6 +51,7 @@ mod pnl;
 mod predicates;
 mod price_channel;
 mod split;
+mod staleness;
 mod stock_add;
 mod stock_create;
 mod stock_lookup;
