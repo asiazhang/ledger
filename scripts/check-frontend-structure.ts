@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // 前端 workspace 结构守门（issue #1149 / spec #1148）：pnpm 子包骨架的边界门禁，
 // 为每一次包抽取提供可证伪的边界基线。本脚本不移动业务代码，只核结构。
-// 规则五类：
+// 规则六类：
 // ① 成员登记：packages/* 下的成员目录必须登记于本脚本 PACKAGES（磁盘 ↔ 清单双向
 //    全等，清单漂移 fail loud）——pnpm-workspace.yaml 的 glob 自动纳管目录，能「漏
 //    登记」的只有方向表登记册；新建成员目录不登记即红（删除即变红②）。
@@ -18,6 +18,10 @@
 //    devDependencies 被消费（根包与成员包一并核对，dependencies/optionalDependencies/
 //    peerDependencies 任一出现即红）；且测试支持包自身 dependencies 必须为空
 //    （替身与接缝所需运行面全部走 devDependencies）——生产依赖图零测试支持内容。
+// ⑥ utils 方向约束（issue #1156）：src/utils/** 的 import 说明符不得命中禁入
+//    前缀登记表 UTILS_FORBIDDEN_IMPORT_PREFIXES（@/stores / @ledger/api /
+//    @/components / @/views）——utils 是壳内叶子，上行引用即红；登记表清空
+//    同样红，测试侧以全等断言守登记项（删除任一登记项即测试红）。
 // 删除即变红①：本脚本核对自身接线——scripts/check.sh 与 CI frontend job
 //（.github/workflows/build.yml）中必须存在实际调用行（非注释、非 echo 展示行），
 // 删除接线行即红（ADR-0087 断言强度：接线型守门的负向条目）。
