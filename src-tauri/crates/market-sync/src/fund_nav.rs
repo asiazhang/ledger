@@ -10,7 +10,7 @@
 //!   `Data_netWorthTrend` 得整只基金历史单位净值（口径与 lsjz `DWJZ` 逐值一致，
 //!   ADR-0038 修订记录有样本验证），仅首刷深回填用——抓取 / 解析失败或窗口内无点
 //!   fail-closed 回退 lsjz 分页，不静默丢数据；
-//! - 逐只编排 [`sync_one_fund_nav`] 接受注入的页抓取与单请求抓取两条闭包（生产接
+//! - 逐只编排 [`sync_one_fund_nav`] 接受作用域会话与注入的页抓取、单请求抓取两条闭包（生产接
 //!   HTTP 层，测试注入 mock）：首刷判据 = **磁盘上没有任何历史序列**（issue #1059
 //!   ——添加基金 / AI 导入已把最新净值落现价缓存、水位有值但 PriceHistory 为空，
 //!   此时按首刷回填近两年）；已有历史序列的基金以现价缓存的净值日期
@@ -21,7 +21,7 @@
 //!   后的页级推进经注入回调透传（issue #1061）。
 
 use chrono::NaiveDate;
-use rusqlite::{Connection, params};
+use rusqlite::params;
 use serde::Deserialize;
 
 use ledger_infra::error::{AppError, Result};
@@ -32,6 +32,7 @@ use ledger_investment::prices::{
 
 use super::fund::deserialize_flexible_f64;
 use super::http::{KlineBar, Pacer, RetryConfig, request_json_from_hosts, request_text_from_hosts};
+use super::session::ScopedSession;
 
 // 历史净值接口：单主机（无公开镜像池），复用行情层的重试与限流泛型层。
 const LSJZ_HOSTS: &[&str] = &["https://api.fund.eastmoney.com"];
@@ -509,8 +510,8 @@ where
     Ok((points, blocked))
 }
 
-pub(super) fn sync_one_fund_nav<N, S, P>(
-    conn: &Connection,
+pub(super) fn sync_one_fund_nav<Q, N, S, P>(
+    session: &Q,
     fund: &super::incremental::SyncInstrument,
     fetch_nav: &mut N,
     fetch_nav_full_series: &mut S,
@@ -518,6 +519,8 @@ pub(super) fn sync_one_fund_nav<N, S, P>(
     on_page: &mut P,
 ) -> Result<()>
 where
+    // 作用域会话接缝（issue #1275）：本函数读写库的唯一通道，签名层面取不到连接。
+    Q: ScopedSession,
     N: FnMut(&NavQuery) -> Result<LsjzPage>,
     S: FnMut(&str) -> Result<Vec<NavPoint>>,
     // 页级推进回调（issue #1061）：(已完成页, 总页数)。只在本页抓取返回之后发出
@@ -526,23 +529,27 @@ where
     P: FnMut(u64, u64),
 {
     let today = super::incremental::beijing_today();
-    // 水位 = 现价缓存的净值日期（股票行恒 NULL，基金行由 #301/本通道写入）。
-    let watermark: Option<String> = conn
-        .query_row(
-            "SELECT nav_date FROM market_prices WHERE instrument_id=?1",
-            params![fund.instrument_id],
-            |r| r.get(0),
-        )
-        .ok();
-    // 首刷判据 = 磁盘上没有任何历史序列（issue #1059）：添加基金 / AI 导入在
+    // 水位 = 现价缓存的净值日期（股票行恒 NULL，基金行由 #301/本通道写入）；首刷
+    // 判据 = 磁盘上没有任何历史序列（issue #1059）：添加基金 / AI 导入在
     // 「按代码即拉」时已把最新净值落现价缓存（水位有值）但 PriceHistory 为空，
     // 若以水位作增量起点，增量窗口只剩「水位次日」而近两年回填静默落空
     //（#303 验收在真实账本上未成立的根因）。水位只服务已有历史序列的增量。
-    let has_history: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM price_history WHERE instrument_id=?1)",
-        params![fund.instrument_id],
-        |r| r.get(0),
-    )?;
+    // 两条读经作用域会话短暂取一次连接完成（issue #1275）；抓取前不再触碰连接。
+    let (watermark, has_history) = session.with_connection(|conn| {
+        let watermark: Option<String> = conn
+            .query_row(
+                "SELECT nav_date FROM market_prices WHERE instrument_id=?1",
+                params![fund.instrument_id],
+                |r| r.get(0),
+            )
+            .ok();
+        let has_history: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM price_history WHERE instrument_id=?1)",
+            params![fund.instrument_id],
+            |r| r.get(0),
+        )?;
+        Ok((watermark, has_history))
+    })?;
     let first_fill = !has_history;
     let window_watermark = if first_fill {
         None
@@ -622,7 +629,8 @@ where
     }
 
     // 周采样落库：单位净值即价格（ADR-0038 决策 3），与日线共用降采样与
-    // 「整周覆盖」幂等（同周重复获取零重复行）。
+    // 「整周覆盖」幂等（同周重复获取零重复行）。落库经作用域会话短暂取一次
+    // 连接（issue #1275）；抓取已在会话之外完成。
     let bars: Vec<KlineBar> = points
         .iter()
         .map(|p| KlineBar {
@@ -630,16 +638,19 @@ where
             close: p.nav,
         })
         .collect();
-    for (trade_date, nav) in super::incremental::downsample_weekly(&bars) {
-        upsert_price_history(
-            conn,
-            &fund.instrument_id,
-            &trade_date,
-            price_value_to_cents(nav),
-            &fund.currency,
-            EASTMONEY_PRICE_SOURCE,
-        )?;
-    }
+    session.with_connection(|conn| {
+        for (trade_date, nav) in super::incremental::downsample_weekly(&bars) {
+            upsert_price_history(
+                conn,
+                &fund.instrument_id,
+                &trade_date,
+                price_value_to_cents(nav),
+                &fund.currency,
+                EASTMONEY_PRICE_SOURCE,
+            )?;
+        }
+        Ok(())
+    })?;
     // 现价 = 窗口内最新公布单位净值；priced_at = nav_date = 净值日期
     // （与 #301 添加基金同形；nav_date 兼任下次同步的水位）。
     // let-else 显式防线（#434，ADR-0060 A 类临时豁免已摘）：points 非空由
@@ -649,19 +660,21 @@ where
         tracing::warn!(code = %fund.symbol, "净值点意外为空，跳过现价更新");
         return Ok(());
     };
-    upsert_market_price(
-        conn,
-        &MarketPriceWrite {
-            instrument_id: &fund.instrument_id,
-            price_cents: price_value_to_cents(latest.nav),
-            currency_code: &fund.currency,
-            // 基金现价时点 = 净值日期（现价的行情日期就是净值本身对应的日期）；
-            // nav_date 兼任下次同步的水位。
-            priced_at: &latest.date,
-            nav_date: Some(&latest.date),
-            source: Some(EASTMONEY_PRICE_SOURCE),
-        },
-    )?;
+    session.with_connection(|conn| {
+        upsert_market_price(
+            conn,
+            &MarketPriceWrite {
+                instrument_id: &fund.instrument_id,
+                price_cents: price_value_to_cents(latest.nav),
+                currency_code: &fund.currency,
+                // 基金现价时点 = 净值日期（现价的行情日期就是净值本身对应的日期）；
+                // nav_date 兼任下次同步的水位。
+                priced_at: &latest.date,
+                nav_date: Some(&latest.date),
+                source: Some(EASTMONEY_PRICE_SOURCE),
+            },
+        )
+    })?;
     stats.synced += 1;
     stats.written += 1;
     Ok(())

@@ -23,6 +23,11 @@
 //! 网络）；生产经 [`do_incremental_sync`] 接 HTTP 层（复用主机池/重试/限流 pacer
 //! 与价格换算）。进度回调闭包是本函数唯一的对外观察点：编排核心不碰网络、不碰事件
 //! 系统，进度事件发射归壳层接线（见 `commands::sync`）。
+//!
+//! 编排与连接解耦（issue #1275 作用域会话接缝）：本模块所有函数的签名里没有
+//! 连接句柄——读写库一律经注入的 [`ScopedSession`] 短暂取一次连接，网络抓取
+//! 只发生在会话之外。「持着连接做网络 I/O」在类型上不可表达；会话实现在壳层
+//! 接线（生产 = 写入口已持连接的直通会话，见 `commands::sync`）。
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -47,6 +52,7 @@ use super::http::{
 };
 use super::persist::upsert_fx_rate_history;
 use super::progress::{FundNavProgress, SyncProgress};
+use super::session::ScopedSession;
 
 /// 持仓股票的报价代码：东财 secid 与响应 f12 均为裸代码（如 600519 / 00700）。
 /// 字典 symbol 可能带市场后缀（schema 注释示例格式如 "600519.SH"），取点号前段归一化。
@@ -121,11 +127,11 @@ fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
 /// 停牌/查询无果/「已是最新」照常推进——有通道标的不以成败计格）。`total` 为 0
 ///（全部无通道）不发任何进度事件，空转不伪装成推进。首刷/深回填的基金在页抓取
 /// 返回后额外带出 `fund` 页级明细（不改 `done`/`total`；单页不发）。
-// 六个抓取闭包 + conn + 进度回调共 8 参：网络接缝逐通道注入使然（与 HTTP 层
+// 六个抓取闭包 + 会话 + 进度回调共 8 参：网络接缝逐通道注入使然（与 HTTP 层
 // request_from_hosts 同形），参数表就是「本编排消费哪些外部通道」的清单。
 #[allow(clippy::too_many_arguments)]
-pub(super) fn do_incremental_sync_with<F, K, X, N, S, M, P>(
-    conn: &Connection,
+pub(super) fn do_incremental_sync_with<Q, F, K, X, N, S, M, P>(
+    session: &Q,
     fetch: &mut F,
     fetch_kline: &mut K,
     fetch_fx: &mut X,
@@ -135,6 +141,8 @@ pub(super) fn do_incremental_sync_with<F, K, X, N, S, M, P>(
     progress: &mut P,
 ) -> Result<SyncInstrumentInfoResult>
 where
+    // 作用域会话接缝（issue #1275）：读写库的唯一通道，签名层面取不到连接。
+    Q: ScopedSession,
     F: FnMut(&str) -> Result<Vec<StockItem>>,
     K: FnMut(&str) -> Result<Vec<KlineBar>>,
     X: FnMut(&str) -> Result<Vec<KlineBar>>,
@@ -150,7 +158,7 @@ where
     // 测试注入记录闭包。
     P: FnMut(SyncProgress),
 {
-    let held = collect_instruments(conn)?;
+    let held = session.with_connection(collect_instruments)?;
     // 单次收集库内全部标的（一条 SQL，无持仓前置，issue #827），按投资域派生的
     // 价格通道分区（issue #1060，判定单点 `derive_price_channel`）：行情分区
     // 构造 secid 查报价与日 K；净值分区（fund 且 6 位真实代码，ADR-0038 决策 6）
@@ -211,31 +219,36 @@ where
     let mut renamed = 0usize;
     for chunk in queryable.chunks(ULIST_BATCH_SIZE) {
         let secids: Vec<&str> = chunk.iter().map(|(secid, _)| secid.as_str()).collect();
+        // 批量报价是网络请求，在会话之外；响应落库（名称随行刷新 + 现价 upsert）
+        // 才短暂取一次连接（issue #1275）。
         let items = fetch(&secids.join(","))?;
         for item in &items {
             if let Some(inst) = meta.get(&item.code) {
-                // 名称随行刷新（issue #827）：以数据源权威名称覆盖（仅实际变化才落库）。
-                if refresh_instrument_name(conn, &inst.instrument_id, &item.name)? {
-                    renamed += 1;
-                }
-                // f2≤0（停牌/无效价）经 deserialize_positive_f64 已过滤为 None，此处跳过、保留旧价。
-                if let Some(raw) = item.price {
-                    // 换算按随行精度位单点（场内 ETF 三位小数报价，#695；缺 f1 按市场回退）。
-                    let price = price_cents_from_raw(raw, item.precision, &inst.market);
-                    upsert_market_price(
-                        conn,
-                        &MarketPriceWrite {
-                            instrument_id: &inst.instrument_id,
-                            price_cents: price,
-                            currency_code: &inst.currency,
-                            // 场内现价时点 = 写入时刻、无净值日期语义（ADR-0036）。
-                            priced_at: &ledger_infra::db::now_iso(),
-                            nav_date: None,
-                            source: Some(EASTMONEY_PRICE_SOURCE),
-                        },
-                    )?;
-                    synced_codes.insert(item.code.clone());
-                }
+                session.with_connection(|conn| {
+                    // 名称随行刷新（issue #827）：以数据源权威名称覆盖（仅实际变化才落库）。
+                    if refresh_instrument_name(conn, &inst.instrument_id, &item.name)? {
+                        renamed += 1;
+                    }
+                    // f2≤0（停牌/无效价）经 deserialize_positive_f64 已过滤为 None，此处跳过、保留旧价。
+                    if let Some(raw) = item.price {
+                        // 换算按随行精度位单点（场内 ETF 三位小数报价，#695；缺 f1 按市场回退）。
+                        let price = price_cents_from_raw(raw, item.precision, &inst.market);
+                        upsert_market_price(
+                            conn,
+                            &MarketPriceWrite {
+                                instrument_id: &inst.instrument_id,
+                                price_cents: price,
+                                currency_code: &inst.currency,
+                                // 场内现价时点 = 写入时刻、无净值日期语义（ADR-0036）。
+                                priced_at: &ledger_infra::db::now_iso(),
+                                nav_date: None,
+                                source: Some(EASTMONEY_PRICE_SOURCE),
+                            },
+                        )?;
+                        synced_codes.insert(item.code.clone());
+                    }
+                    Ok(())
+                })?;
             }
         }
 
@@ -243,17 +256,21 @@ where
         // 该标的一格）。覆盖行情分区全部标的（stock|etf，#695；清仓标的自 #827
         // 恢复采集）；停牌/整周无有效报价该周无点，不中断同步。
         for (secid, inst) in chunk {
+            // 日 K 抓取在会话之外；降采样落库才短暂取一次连接（issue #1275）。
             let bars = fetch_kline(secid)?;
-            for (trade_date, close) in downsample_weekly(&bars) {
-                upsert_price_history(
-                    conn,
-                    &inst.instrument_id,
-                    &trade_date,
-                    price_value_to_cents(close),
-                    &inst.currency,
-                    EASTMONEY_PRICE_SOURCE,
-                )?;
-            }
+            session.with_connection(|conn| {
+                for (trade_date, close) in downsample_weekly(&bars) {
+                    upsert_price_history(
+                        conn,
+                        &inst.instrument_id,
+                        &trade_date,
+                        price_value_to_cents(close),
+                        &inst.currency,
+                        EASTMONEY_PRICE_SOURCE,
+                    )?;
+                }
+                Ok(())
+            })?;
             done += 1;
             progress(SyncProgress::instrument(done, total));
         }
@@ -262,7 +279,7 @@ where
     // ③ 汇率 K 线回填 → FxRateHistory：仅非本位币币种对（与本位币相同的
     // 无需历史折算），与价格历史同期段采集、同周规则落库。汇率消费方含基金与股票
     // 的历史市值折算，币种对取全量标的（与分区无关）。
-    let native = default_currency_code(conn)?;
+    let native = session.with_connection(default_currency_code)?;
     let mut pairs: Vec<(String, String)> = held
         .iter()
         .map(|s| (s.currency.clone(), native.clone()))
@@ -272,9 +289,14 @@ where
     pairs.dedup();
     for (base, quote) in &pairs {
         let pair = format!("{base}{quote}");
-        for (trade_date, rate) in downsample_weekly(&fetch_fx(&pair)?) {
-            upsert_fx_rate_history(conn, base, quote, &trade_date, rate)?;
-        }
+        // 汇率 K 线抓取在会话之外；降采样落库才短暂取一次连接（issue #1275）。
+        let bars = fetch_fx(&pair)?;
+        session.with_connection(|conn| {
+            for (trade_date, rate) in downsample_weekly(&bars) {
+                upsert_fx_rate_history(conn, base, quote, &trade_date, rate)?;
+            }
+            Ok(())
+        })?;
     }
 
     // ④⑤ 基金分区逐只（issue #897 逐只合并推进）：历史净值回填（ADR-0038 决策 6，
@@ -305,7 +327,7 @@ where
                 });
             };
             sync_one_fund_nav(
-                conn,
+                session,
                 fund,
                 fetch_nav,
                 fetch_nav_full,
@@ -327,7 +349,10 @@ where
             }
             Err(error) => return Err(error),
         };
-        if refresh_instrument_name(conn, &fund.instrument_id, &name)? {
+        // 名称落库才短暂取一次连接（抓取在会话之外，issue #1275）。
+        if session
+            .with_connection(|conn| refresh_instrument_name(conn, &fund.instrument_id, &name))?
+        {
             renamed += 1;
         }
         done += 1;
@@ -408,12 +433,10 @@ pub(super) fn week_monday(d: NaiveDate) -> NaiveDate {
 /// 生产入口：接 HTTP 层的批量报价 / 日 K / 汇率 K 线 / 历史净值页 / 单请求全量净值 /
 /// 基金详情查询（复用主机池、重试、限流 pacer 与价格换算）。六个抓取闭包串行使用，
 /// pacer 以 RefCell 共享，保证全部请求之间仍然保持统一的限速间隔。进度回调透传调用方
-///（生产接事件发射，issue #897）。
-pub fn do_incremental_sync<P>(
-    conn: &Connection,
-    progress: &mut P,
-) -> Result<SyncInstrumentInfoResult>
+///（生产接事件发射，issue #897）。读写库经注入的作用域会话（issue #1275）。
+pub fn do_incremental_sync<Q, P>(session: &Q, progress: &mut P) -> Result<SyncInstrumentInfoResult>
 where
+    Q: ScopedSession,
     P: FnMut(SyncProgress),
 {
     let client = build_client()?;
@@ -429,7 +452,7 @@ where
     let mut fund_name =
         |code: &str| super::fetch_fund_quote_production(code).map(|quote| quote.name);
     do_incremental_sync_with(
-        conn,
+        session,
         &mut fetch,
         &mut kline,
         &mut fx,

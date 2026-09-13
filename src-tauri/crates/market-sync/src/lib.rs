@@ -37,6 +37,9 @@
 //!   `{ done, total }` 的 `ledger:instrument-sync-progress` 事件，事件名常量、
 //!   载荷与 [`progress::ProgressEmitter`] 发射器接缝收口于此（不经失效信号映射，
 //!   只共用 `events` 的主线程非阻塞投递机制）；
+//! - [`session`]：作用域会话接缝（issue #1275）——编排获取数据库连接的唯一
+//!   通道，域定义 trait、壳层实现并在命令壳接线；编排抓取路径在类型上取不到
+//!   连接（父 spec #1274 预重构，行为零变化）；
 //! - [`model`]：域模型——标的信息同步结果类型（#407 随域归位；基金行情 DTO 已因
 //!   #422 Q11 归属修正迁入投资域，ADR-0103 后又收口为 `ledger_investment::quote`
 //!   的统一载荷 [`ledger_investment::Quote`]）；
@@ -72,6 +75,7 @@ mod incremental;
 mod model;
 mod persist;
 mod progress;
+mod session;
 mod stock;
 
 #[cfg(test)]
@@ -81,4 +85,5 @@ pub use fund::fetch_fund_quote_production;
 pub use incremental::do_incremental_sync;
 pub use model::SyncInstrumentInfoResult;
 pub use progress::{FundNavProgress, INSTRUMENT_SYNC_PROGRESS, ProgressEmitter, SyncProgress};
+pub use session::ScopedSession;
 pub use stock::fetch_stock_quote_production;

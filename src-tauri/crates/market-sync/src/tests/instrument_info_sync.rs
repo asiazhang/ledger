@@ -16,6 +16,7 @@ use crate::http::{
     fx_secid_candidates, parse_klines, price_cents_from_raw, secid_prefix,
 };
 use crate::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
+use crate::session::ScopedSession;
 use crate::{FundNavProgress, SyncProgress};
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::{
@@ -105,6 +106,125 @@ fn market_price_of(conn: &Connection, instrument_id: &str) -> Option<i64> {
         |r| r.get(0),
     )
     .ok()
+}
+
+/// 测试态作用域会话（issue #1275）：把测试手里的连接直通给编排——与生产
+/// 「写入口已持连接的直通会话」（壳层 `commands::sync`）同语义，锁行为不在
+/// 本层测试面（会话自身的结构钉见下方 `orchestration_takes_connection_only_` 用例）。
+/// 有了它，既有用例的调用点零改动。
+impl ScopedSession for Connection {
+    fn with_connection<R, F>(&self, use_connection: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R>,
+    {
+        use_connection(self)
+    }
+}
+
+/// 新接缝自身的接口测试（issue #1275 结构钉）：记录型会话 + 记录型抓取闭包
+/// 驱动一次完整同步，断言「抓取闭包执行期间没有任何会话被取出」——网络
+/// 期间不持连接；事件全序同时钉住「读写只在会话内、抓取只在会话外」的
+/// 交织形状。这是作用域会话接缝的结构性质，不重复覆盖编排行为。
+#[test]
+fn orchestration_takes_connection_only_outside_fetch_closures() {
+    struct RecordingSession<'a> {
+        conn: &'a Connection,
+        log: &'a RefCell<Vec<&'static str>>,
+    }
+
+    impl ScopedSession for RecordingSession<'_> {
+        fn with_connection<R, F>(&self, use_connection: F) -> Result<R>
+        where
+            F: FnOnce(&Connection) -> Result<R>,
+        {
+            self.log.borrow_mut().push("take");
+            let result = use_connection(self.conn);
+            self.log.borrow_mut().push("release");
+            result
+        }
+    }
+
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
+
+    let log: RefCell<Vec<&'static str>> = RefCell::new(vec![]);
+    let session = RecordingSession {
+        conn: &conn,
+        log: &log,
+    };
+
+    let prices = [("600519", Some(130280.0))];
+    let mut fetch = mock_fetch(&prices);
+    let mut logging_fetch = |secids: &str| -> Result<Vec<StockItem>> {
+        log.borrow_mut().push("fetch:start");
+        let items = fetch(secids);
+        log.borrow_mut().push("fetch:end");
+        items
+    };
+    let mut logging_kline = |_: &str| -> Result<Vec<KlineBar>> {
+        log.borrow_mut().push("fetch:start");
+        log.borrow_mut().push("fetch:end");
+        Ok(vec![])
+    };
+
+    let result = do_incremental_sync_with(
+        &session,
+        &mut logging_fetch,
+        &mut logging_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_progress,
+    )
+    .unwrap();
+
+    // 编排真实跑完（行为侧锚：与既有用例同口径）。
+    assert_eq!(result.synced, 1);
+    assert_eq!(result.skipped, 0);
+
+    // 结构钉：全序 = 逐段「取连接→还」与「会话外抓取」的交替；抓取起止之间
+    // 不出现任何 take/release（网络期间不持连接）。一次行情标的事件顺序：
+    // 收集 → 批量报价（外） → 名称+现价落库 → 日 K 抓取（外） → 周线落库 →
+    // 本位币读取。日 K 样本为空仍取连接落空周线，与生产行为一致。
+    let log = log.borrow();
+    let mut in_fetch = false;
+    for &event in log.iter() {
+        match event {
+            "fetch:start" => {
+                assert!(!in_fetch, "抓取嵌套");
+                in_fetch = true;
+            }
+            "fetch:end" => {
+                assert!(in_fetch, "抓取起止不成对");
+                in_fetch = false;
+            }
+            "take" | "release" => assert!(
+                !in_fetch,
+                "抓取闭包执行期间不应有会话被取出（网络期间不持连接，issue #1275）"
+            ),
+            other => panic!("未知事件 {other}"),
+        }
+    }
+    assert!(!in_fetch, "抓取起止不成对");
+    assert_eq!(
+        *log,
+        vec![
+            "take",
+            "release", // 收集库内标的
+            "fetch:start",
+            "fetch:end", // 批量报价（会话外）
+            "take",
+            "release", // 名称随行刷新 + 现价 upsert
+            "fetch:start",
+            "fetch:end", // 日 K 抓取（会话外）
+            "take",
+            "release", // 周采样落库（样本空 → 零行）
+            "take",
+            "release", // 本位币读取
+        ],
+        "读写只在会话内、抓取只在会话外的交织形状（issue #1275）"
+    );
 }
 
 /// 模拟批量报价：对每个查询的 secid 生成条目。`prices` 为 code → 原始 f2

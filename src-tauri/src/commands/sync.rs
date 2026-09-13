@@ -10,13 +10,35 @@
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
 #![allow(clippy::unreachable)]
 
+use rusqlite::Connection;
 use tauri::{AppHandle, State};
 
 use crate::db::DbState;
 use crate::error::Result;
 use crate::signals::{WriteEvidence, WriteOp};
-use crate::sync::{ProgressEmitter, SyncInstrumentInfoResult, SyncProgress, do_incremental_sync};
+use crate::sync::{
+    ProgressEmitter, ScopedSession, SyncInstrumentInfoResult, SyncProgress, do_incremental_sync,
+};
 use crate::write_entry::{Outcome, write_entry};
+
+/// 生产会话接线（issue #1275）：把统一写入口闭包**已持有**的连接包成作用域
+/// 会话交给编排（[`ScopedSession`] 壳层实现）。本票为预重构，实现是直通：编排
+/// 每次取连接拿到的都是这把已持有的连接，锁跨度与先前「整段持有」逐字节一致
+/// （行为零变化）；作用域的意义在形状——编排路径在类型上取不到连接，网络 I/O
+/// 只能发生在会话之外（ADR-0069 决策 4 的结构化收口）。写入口改分段取锁后
+/// （父 spec #1274 实现决策 4），此处换装锁内短暂获取的会话实现，编排侧零改动。
+pub(crate) struct WriteEntrySession<'a> {
+    conn: &'a Connection,
+}
+
+impl ScopedSession for WriteEntrySession<'_> {
+    fn with_connection<R, F>(&self, use_connection: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R>,
+    {
+        use_connection(self.conn)
+    }
+}
 
 /// 生产进度接线（issue #897 / ADR-0095）：把编排的进度回调（标的级 `done`/
 /// `total`，基金深回填时带页级明细，issue #1061）接到进度事件发射器。独立成
@@ -63,9 +85,12 @@ pub async fn sync_instrument_info(
         // #246 审计补齐）；锁语义与先前整段持有一致（同步期间独占连接）。
         move |conn| {
             // 进度接线（issue #897）：编排进度回调 → 进度事件发射（非阻塞投递，
-            // 发射失败静默，不影响同步结果）。
+            // 发射失败静默，不影响同步结果）。会话接线（issue #1275）：写入口
+            // 已持有的连接包成作用域会话交给编排——编排的读写只经会话，网络
+            // I/O 在会话之外；本实现直通同一连接，锁跨度不变。
             let mut progress = progress_to_emitter(&progress_app);
-            do_incremental_sync(conn, &mut progress).map(|result| {
+            let session = WriteEntrySession { conn };
+            do_incremental_sync(&session, &mut progress).map(|result| {
                 // 证据 = 价格或名称实际写入（issue #827）：名称刷新同样让标的列表
                 // 失真，与价格写入同路计入「数据变了」。
                 let evidence = WriteEvidence::PriceWritten(result.any_written());
@@ -91,6 +116,38 @@ mod tests {
         fn emit_progress(&self, progress: SyncProgress) {
             self.0.lock().unwrap().push(progress);
         }
+    }
+
+    /// 壳层接线证明（issue #1275）：命令壳把写入口持有的连接包成作用域会话
+    /// 交给编排——会话交出的就是这把连接（经会话写入、原连接立即可读）。
+    /// 直通实现下两者本就是同一句柄；删除 [`WriteEntrySession`] 即无会话
+    /// 可交给编排，编译红即接线证明的负向半边（ADR-0087 断言强度）。
+    #[test]
+    fn command_shell_hands_write_entry_connection_to_orchestration_via_session() {
+        let conn = crate::test_support::open();
+        let session = WriteEntrySession { conn: &conn };
+
+        session
+            .with_connection(|c| {
+                use crate::error::AppError;
+                c.execute(
+                    "INSERT INTO categories (id, name, kind, created_at, updated_at, version, device_id) \
+                     VALUES ('cat-session', '会话', 'expense', ?1, ?1, 1, 'device-1')",
+                    [crate::test_support::FIXED_NOW],
+                )
+                .map_err(AppError::from)?;
+                Ok(())
+            })
+            .expect("经会话的写入应成功");
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM categories WHERE id = 'cat-session'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("查询应成功");
+        assert_eq!(count, 1, "会话交出的应是写入口持有的那把连接");
     }
 
     /// 壳层接线证明（issue #897 / ADR-0095；先例：信号发射两层测试——映射层
