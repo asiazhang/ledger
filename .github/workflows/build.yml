@@ -19,14 +19,15 @@ jobs:
   # CI 耗时基线（2026-09-13，issue #1110 刷新）：来源 = 7 次成功 PR 运行（run
   # 34747049405 / 34747417399 / 34747480095 / 34747583723 / 34748550902 /
   # 34748847869 / 34749024124），runner 画像 = ubuntu-latest（Linux x64，4 vCPU，
-  # GitHub 托管），backend / backend-lint 挂预构建容器镜像（#1109，apt 已归零，
-  # 改为每 job 的容器初始化 19–31s），rust-cache 精确 key 命中（依赖缓存
-  # 1.14–1.18 GB）。实测（同批 7 次运行）：backend 后端测试 258–306s（典型 ~271s）
-  # ｜backend-lint 静态检查 81–96s｜frontend-test 分片 112–189s（典型 ~170s）
-  # ｜frontend 检查 39–87s。关键路径 = 后端测试 job（前端分片不再是决定项），
-  # PR 端到端 ≈ 4.3–5.1 分钟（job 跨度口径，不含排队）。
-  # 后端测试 job 的四段拆解、逐 run 表与「250s / 180s」推算见 backend job 注释；
-  # 数据、口径与局限见 docs/verification/1110-ci-compile-cache-baseline.md。
+  # GitHub 托管）。backend / backend-lint 挂预构建容器镜像（#1109，apt 已归零），
+  # `Initialize containers` 步骤实测：backend job 19–31s、backend-lint job 20–32s
+  # （两 job 各自实测，不互相外推）。实测（同批 7 次运行）：backend 后端测试
+  # 258–306s（典型 ~271s）｜backend-lint 静态检查 81–96s｜frontend-test 分片
+  # 112–189s（典型 ~170s）｜frontend 检查 39–87s。关键路径 = 后端测试 job（前端分片
+  # 不再是决定项），PR 端到端 ≈ 4.3–5.1 分钟（job 跨度口径，不含排队）。
+  # 后端测试 job 的四段拆解与「180s 不可达 / 250s 乐观下界」推算（对外口径单点，含
+  # 下界数字）住 backend job 注释；逐 run 实测数据、口径定义与局限见
+  # docs/verification/1110-ci-compile-cache-baseline.md。
   # issue #1109 起，backend/backend-lint 挂预构建 CI 镜像（ci-image.yml 发布到
   # GHCR），job 内零 apt 安装；镜像内容与重建路径见 .github/docker/backend-ci.Dockerfile 头注。
 
@@ -110,28 +111,26 @@ jobs:
 
   # 后端测试：fmt/clippy 拆至 backend-lint 并行（clippy 仅 ~20–30s，不值得占关键路径）。
   #
-  # 端到端基线（2026-09-13，issue #1110 刷新）：258–306s，典型 ~271s（7 次成功 PR
-  # 运行，run 34747049405–34749024124；runner 画像 = ubuntu-latest Linux x64 4 vCPU
-  # + 本 job 的预构建容器镜像；rust-cache 精确 key 命中，依赖缓存 1.14–1.18 GB）。
-  # 四段（逐 run 表见 docs/verification/1110-ci-compile-cache-baseline.md）：容器
-  # 初始化（镜像拉取）19–31s｜缓存恢复（下载+解压）30–42s｜编译 82–116s｜测试执行
-  # 102–121s；四段之和比端到端少 5–9s，差额是 setup/checkout/Post/stop containers
-  # 等固定开销。编译段口径 = `Finished test profile … in 1m22s–1m56s`；
-  # 执行段 = 首个测试二进制启动到 e2e 汇总，明细（2026-09-13 时点）：lib 单测 1229
-  # 用例分 16 个成员 crate + 根包共 17 个二进制（合计 ~51s）、api_server 236 用例 11s、
-  # commands 19 用例 6s、e2e 451 场景 3122 步 ~53s、sync_trigger_poll 1 用例 ~0s。
+  # 端到端基线（2026-09-13，issue #1110 刷新）：258–306s，典型 ~271s（来源 = 7 次
+  # 成功 PR 运行 run 34747049405–34749024124；runner 画像 = ubuntu-latest Linux x64
+  # 4 vCPU + 本 job 的预构建容器镜像；rust-cache 精确 key 命中，依赖缓存
+  # 1.14–1.18 GB）。四段拆解（口径定义与逐 run 表见
+  # docs/verification/1110-ci-compile-cache-baseline.md）：容器初始化（镜像拉取）
+  # 19–31s｜缓存恢复（下载+解压）30–42s｜编译 82–116s｜测试执行 102–121s；四段之和
+  # 比端到端少 5–9s，差额是 setup/checkout/Post/stop containers 等固定开销。
   #
   # 目标与不可达结论（spec #1086）：目标 job ≤250s，180s 只作方向。四条硬约束：
   # ① 不加付费 larger runner；② 不缩减 CI 测试范围（不按路径过滤、e2e 不挪 nightly）；
   # ③ 不引入 rustc-wrapper 类方案（编译加速归 kache）；④ 默认不拆后端测试为多 job。
-  # 180s 不可达推算：取本基线四段各自的最小观测值相加 = 19（容器）+ 30（缓存）
-  # + 82（编译）+ 102（执行）= 233s，已高于 180s 达 53s；且每段都被约束锁死——
-  # 执行段由约束②固定（时间就是用例本身），容器/缓存段是每 job 必付固定开销
-  # （约束④禁止用拆 job 摊薄，拆了要重复付），编译段在约束①（4 核 runner）与
-  # ③（唯一数量级工具=kache，CI 侧已被否决）下已无同量级可压项。250s 对应的是
-  # 233s + 残差（≈6–9s）≈ 240–242s 这一统计下界：需要各段同时接近最小观测值才成立
-  # （7 次运行中仅 1 次达 258s，其余 266–306s），故 250s 是乐观下界而非稳态目标；
-  # 本结论写回注释即为止损点，后续不再追逐 180s。
+  # 「180s 不可达」推算（单一口径 = 四段各自最小观测值之和，不含残差；极值出处见
+  # 上述文档的逐 run 表）：19（容器）+ 30（缓存）+ 82（编译）+ 102（执行）= 233s，
+  # 已高于 180s 达 53s；同一口径计入残差 5–9s 则为 238–242s，结论不变。且每段都被
+  # 约束锁死——执行段由约束②固定（时间就是用例本身），容器/缓存段是每 job 必付固定
+  # 开销（约束④禁止用拆 job 摊薄，拆了要重复付），编译段在约束①（4 核 runner）与
+  # ③（唯一数量级工具=kache，CI 侧已被否决）下已无同量级可压项。250s 同口径 =
+  # 233s + 残差 5–9s ≈ 238–242s，需要各段同时接近最小观测值才成立（7 次运行中仅 1 次
+  # 达 258s，其余 266–306s），故 250s 是乐观下界而非稳态目标；本结论写回注释即为
+  # 止损点，后续不再追逐 180s。
   #
   # issue #1109：系统依赖（tauri 库 + mold + Rust stable 工具链）改由预构建镜像
   # 承载（ci-image.yml 发布，Dockerfile 见 .github/docker/backend-ci.Dockerfile），

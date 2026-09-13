@@ -2,15 +2,17 @@
 
 > 本票在 #1109 预构建镜像（apt 归零）之上做 CI 侧编译与缓存调优：CI 降调试信息、
 > 实测增量编译收益、刷新 CI 注释里的耗时基线，并把「既定约束下 180s 不可达」的
-> 推算写回注释止损。对外口径住 `.github/workflows/build.yml`（文件头 + backend /
-> backend-lint job 注释），本文件是实测数据、推导过程、口径与局限。
+> 推算写回注释止损。本文件是逐 run 实测数据、口径定义与局限；**对外口径与推论
+> （四段最小观测值之和、「180s 不可达」、「250s 是乐观下界」）单点住
+> `.github/workflows/build.yml` 的 backend job 注释**，其它处只留指针，避免同一批
+> 数字在多处漂移。
 
 ## 交付物
 
 - `.github/workflows/build.yml`：backend job `CARGO_PROFILE_DEV_DEBUG: "1"` → `"0"`；
   文件头耗时基线刷新；backend job 注释补四段拆解与「250s 目标 / 180s 不可达」推算；
   backend-lint job 注释说明为何刻意不设该变量。
-- 本文件：数据与局限。
+- 本文件：逐 run 实测数据、口径定义、AC 对照与局限。
 - 未改动的项：job 结构（仍是四 job + 并行分片，未拆后端测试）、测试范围与 target
   选择（`cargo test --workspace --lib --test '*'` 原样）、链接器与 RUSTFLAGS、
   rust-cache 输入（`prefix-key` / `save-if` 保持）、本地开发默认（本地不设
@@ -50,10 +52,11 @@ rustc-wrapper 命中依赖产物；测量期间其它 worktree 正在并发构�
 | debug=0, inc=0（样本 2） | 51.7s | 152.5s |
 | debug=0, inc=1（样本 1） | 47.0s | 173.5s |
 
-结论：CPU 时间 −28%（≈ −70s 的 rustc 工作量），wall 差异被并发负载淹没、不可比。
-落到 CI 侧，收益只体现在编译段（实测基线 82–116s，Linux x64 4 vCPU），方向与
-spec #1086 预估的「省 10–20s」一致，但本机数据无法外推到 CI 的秒数；逐 run 净收益
-待本票 merge 后的 main 运行回填（见「未验证项」）。
+结论：按同一配对（两组各自均值：debug=1 为 (218.3 + 225.4) / 2 = 221.9s；debug=0
+为 (167.2 + 152.5) / 2 = 159.9s）计，CPU 时间 221.9s → 159.9s，即 **−62.0s / −28%**；
+wall 差异被并发负载淹没、不可比。落到 CI 侧，收益只体现在编译段（实测基线
+82–116s，Linux x64 4 vCPU），方向与 spec #1086 预估的「省 10–20s」一致，但本机数据
+无法外推到 CI 的秒数；逐 run 净收益待本票 merge 后的 main 运行回填（见「未验证项」）。
 
 ### 缓存体积与解压时间：本变量**不改变**（推翻 spec #1086 的预估，留痕止损）
 
@@ -91,6 +94,7 @@ env hash 从 `259c68f2`（debug=1）变为 `7392abf3`（debug=0）——restore 
 | run | 缓存恢复 | 编译 | job 端到端 | 结论 |
 | --- | --- | --- | --- | --- |
 | 34751213388（本 PR，过渡态） | 1s（miss） | 5m36s | 8m11s | 一次性代价 |
+| 34751647185（本 PR 第二次运行，同一 env key） | 1s（miss） | 5m26s | 8m4s | 一次性代价 |
 | 基线均值（同 job，第三节） | 30–42s | 82–116s | 258–306s | 稳态 |
 
 影响面仅限带本改动的分支与 merge 后首个 main 运行（其余分支/PR 的 env hash 不变，
@@ -98,6 +102,33 @@ backend-lint 未设本变量），之后新 key 缓存固化即回到稳态。�
 留给维护者取舍）：把本变量降为 cargo 步骤级 `env`，env hash 保持 `259c68f2`，缓存
 内容不受影响（依赖产物与本变量无关，见本节 2），代价是该变量不再出现在 rust-cache
 的「Environment considered」清单里。
+
+### AC1 前提被推翻（实测反证）与本票实际交付
+
+issue #1110 的 AC1 原文：「CI 侧调试信息降级后缓存体积与解压耗时下降，本地开发体验
+不变」。逐半核实：
+
+- **「缓存体积与解压耗时下降」——前提被实测推翻。** 本节上一小节的证据表明
+  `CARGO_PROFILE_DEV_DEBUG` 对 rust-cache 的缓存体积与解压时间**零影响**（rust-cache
+  只缓存依赖产物，成员产物不进缓存；依赖的 debuginfo 又已被
+  `[profile.dev.package."*"]` 钉死）。spec #1086 期望的「2 GB → 约 1 GB、解包砍半」
+  不是本变量能带来的：那 2.0 GB 是依赖侧 line-tables-only（`db611ca7`）之前的历史值，
+  现行 1.14–1.18 GB 与 30–42s 的恢复段**已由 `db611ca7` 取得**。已在 issue #1086
+  留评论请 spec 维护者决定是否修订该条预期（不改 spec 正文、不改 issue 状态）。
+- **「本地开发体验不变」——成立。** 全仓只有 CI workflow 设该变量，本地不设 ⇒
+  profile.dev 仍是 debuginfo=2 全量符号。
+
+本票实际交付的价值（都有实测出处）：
+
+1. CI 编译/链接成本下降：本机配对实测 CPU 时间 −62.0s / −28%（见本节上表），
+   方向与 spec #1086 的「省 10–20s」一致；CI 侧秒数待 merge 后首次 main 运行回填。
+   变量确实生效的直接证据：本 PR 两次运行的 `Finished … in` 汇总行里 profile 段均为
+   `[unoptimized]`（无 debuginfo），而基线 run `34749230834` 为 `[unoptimized + debuginfo]`。
+2. 增量编译实测**否决**（第二节）：推翻「CI 开增量能省时间」的默认假设，并给出
+   结构性理由（rust-cache 强制 `CARGO_INCREMENTAL=0` 且保存前删增量产物）。
+3. 一次性冷编代价实测并留痕（本节「代价二」）：本改动进 rust-cache restore key 的
+   env hash，本 PR 两次运行都是全量冷编。
+4. 刷新后的耗时基线与「180s 不可达」推算写回 CI 注释（第三节数据、build.yml 注释）。
 
 ## 二、增量编译：实测后**否决**（不采纳 `CARGO_INCREMENTAL`）
 
@@ -137,23 +168,36 @@ GitHub 托管）+ job 级预构建容器镜像 `ghcr.io/asiazhang/ledger-ci-back
 
 ### 后端测试 job（关键路径）
 
+四段口径（可回指 GitHub Actions API 的 step 时间与 job 日志时间戳）：
+
+- **端到端** = job `startedAt` → `completedAt`（Actions API，秒）。
+- **容器初始化** = `Initialize containers` 步骤时长（Actions API，秒）。
+- **缓存恢复** = `Run Swatinem/rust-cache@v2` 步骤时长（Actions API，秒）。
+- **编译** = cargo 步骤起点（日志 `##[group]Run cargo test --workspace --lib --test '*'`）
+  → 日志里 cargo 的 `Finished … in` 汇总行，四舍五入到秒。该口径**含步骤启动开销**，
+  故比 cargo 自报的 `in` 值大 0–1s；cargo 自报值为 1m21s / 1m30s / 1m32s / 1m33s /
+  1m37s / 1m40s / 1m56s（对应下表自上而下的 run 顺序）。两者不可混称。
+- **测试执行** = `Rust 单元测试 + BDD/e2e 测试（cucumber）` 步骤时长（Actions API，
+  秒）− 编译段。于是「编译 + 执行」恒等于该步骤时长，不引入额外取整口径。
+
 | run | 端到端 | 容器初始化 | 缓存恢复 | 编译 | 测试执行 | 残差 |
 | --- | --- | --- | --- | --- | --- | --- |
 | 34747049405 | 267s | 19s | 34s | 91s | 115s | 8s |
 | 34747417399 | 280s | 22s | 30s | 101s | 121s | 6s |
-| 34747480095 | 266s | 20s | 30s | 93s | 118s | 5s |
-| 34747583723 | 271s | 20s | 31s | 98s | 117s | 5s |
+| 34747480095 | 266s | 20s | 30s | 92s | 119s | 5s |
+| 34747583723 | 271s | 20s | 31s | 97s | 117s | 6s |
 | 34748550902 | 306s | 28s | 35s | 116s | 118s | 9s |
 | 34748847869 | 258s | 31s | 34s | 82s | 102s | 9s |
-| 34749024124 | 291s | 28s | 42s | 95s | 119s | 7s |
+| 34749024124 | 291s | 28s | 42s | 94s | 119s | 8s |
 
 - 端到端 258–306s，典型（中位）271s；apt 阶段已归零（#1109），其成本并入容器初始化。
 - 残差 = 端到端 − 四段之和，5–9s，内容为 setup/checkout/Post rust-cache/stop
   containers 等固定开销（**不属于**任何可优化段）。
-- 编译段口径：cargo 自报 `Finished \`test\` profile … in 1m22s–1m56s`（从 cargo 步骤
-  起点到该行）。
-- 执行段口径：首个测试二进制启动到 e2e 汇总行（单次拆解 run `34749230834`）：lib 单测
-  1229 用例分 17 个二进制（~51s）、api_server 236 用例 11s、commands 19 用例 6s、
+- 四段观测极值（下表即出处）：容器初始化 19–31s、缓存恢复 30–42s、编译 82–116s、
+  测试执行 102–121s。各段最小观测值之和与「180s 不可达」推论的对外口径住
+  `.github/workflows/build.yml` 的 backend job 注释（单点），本文件不复制推论。
+- 执行段明细（单次拆解 run `34749230834`）：lib 单测 1229 用例分 16 个成员 crate +
+  根包共 17 个二进制（~51s）、api_server 236 用例 11s、commands 19 用例 6s、
   e2e 451 场景 3122 步 ~53s、sync_trigger_poll 1 用例 ~0s。
 
 ### 其余 job（同日同批）
@@ -171,27 +215,54 @@ GitHub 托管）+ job 级预构建容器镜像 `ghcr.io/asiazhang/ledger-ci-back
 
 ## 四、250s 目标与「180s 不可达」
 
-乐观下界（四段各取基线最小观测值，再加残差）：19（容器初始化）+ 30（缓存恢复）
-+ 82（编译）+ 102（执行）= 233s，加 6–9s 残差 ≈ 239–242s。
+按 spec #1086「这个结论需写进 CI 注释」的要求，**推算的对外口径是单点**：住
+`.github/workflows/build.yml` 的 backend job 注释（单一口径 = 四段各自最小观测值之和，
+不含残差；含残差的口径也写在同一处）。本文件不复制该推论的任何数字，避免两处漂移；
+支撑它的逐 run 数据见第三节，四条硬约束的枚举同样在 build.yml 注释里。
 
-- **180s 不可达**：下界 ≈ 240s 已高于 180s 达 60s；四条约束各自锁死一段——②固定执行段
-  （不能按路径过滤、e2e 不挪 nightly，时间就是用例本身），④固定固定开销（拆 job 会
-  重复付容器与缓存恢复，更慢），①③固定编译段（4 核 runner 的 codegen+链接下界；
-  编译侧唯一数量级工具 kache 在 CI 侧已被明令否决）。结论写回 CI 注释止损。
-- **250s 只在各段同时接近最小观测值时成立**：7 次运行中仅 1 次达 258s，其余 266–306s，
-  故 250s 是乐观下界而非稳态目标；本票后预期落在 250–300s 区间（编译段 −10~20s、
-  其余不变）。
+本票 merge 后编译段预期的小幅下降（本机 CPU 侧 −28%，CI 秒数未知）不改变上述结论。
 
-## 五、未验证项与局限
+## 五、AC5 对照：既有三层测试与静态检查结果不变
 
-- **本票的稳态收益仍未在本票 CI 运行中验证**：本 PR 的运行（run `34751213388`）因
-  env hash 变化走了全量冷编（见第一节「代价二」），其余四个 job 全绿、后端测试 job
-  通过（三层测试与静态检查结果不变，AC5 的运行证据）。稳态（debug=0 下缓存恢复命中、
-  成员重编）要等 merge 后首个 main 运行以新 key 保存缓存。回填方式：读该 main run 与
-  其后任一次 PR 运行的编译段耗时、Post 缓存大小，与本文件第三节基线对比。预期：
-  编译段小幅下降，缓存体积不变。
+对照方式：改前基线取 main 的 run `34749230834`（`8d987284`，debug=1，成员全量编译），
+本 PR 取 run `34751213388`（`765af9c3`，debug=0，冷编；本分支随后 rebase 到最新
+main，该 SHA 为 rebase 前的提交）。两组日志逐项核对：
+
+| 检查项 | 改前基线 run `34749230834` | 本 PR run `34751213388` |
+| --- | --- | --- |
+| 域 / 根包 lib 单测（17 个二进制 = 16 个成员 crate + 根包） | 1229 passed / 0 failed | 1229 passed / 0 failed |
+| API 集成（`tests/api_server`） | 236 passed / 0 failed | 236 passed / 0 failed |
+| 命令集成（`tests/commands`） | 19 passed / 0 failed | 19 passed / 0 failed |
+| e2e BDD（`tests/e2e`，cucumber） | 451 场景 / 3122 步 passed | 451 场景 / 3122 步 passed |
+| `tests/sync_trigger_poll` | 1 passed / 0 failed | 1 passed / 0 failed |
+| `tests/real_bucket_acceptance` | 0 passed / 4 ignored | 0 passed / 4 ignored |
+| 后端静态检查（fmt + clippy + 基础设施 rustdoc 门禁） | success | success |
+| 前端检查 / 前端测试分片 1、2 | success | success |
+
+逐项相等的来源是 job 日志里的 `test result:` 行与 cucumber 汇总行（单测计数按二进制
+逐个相加得 1229）。第二次运行的对照见下节「CI 复跑」。
+
+## 六、未验证项与局限
+
+- **本地门禁（AGENTS.md 完成标准 #2，本次修复补记，2026-09-13）**：在本 worktree
+  `.worktrees/issue-1110` 内实跑 `./scripts/check.sh` → **退出码 0**（前端类型检查与
+  lint、Rust clippy `--workspace --all-targets --all-features`、gate-off 编译检查、
+  `cargo fmt --all -- --check`、基础设施 rustdoc 门禁、文档一致性、命令注册一致性、
+  结构守门与其余守门脚本全部通过）；另单独复跑 `bun scripts/check-structure.ts` →
+  退出码 0（含 build.yml 里 cargo clippy/test/fmt 必须带 `--workspace` 的覆盖核对）、
+  `./scripts/check-docs.sh` → 退出码 0。workflow 的 YAML 语法用 PyYAML 6.0.3 的
+  `yaml.safe_load` 解析通过；本机未安装 `actionlint`，故未跑 actionlint。
+- **CI 复跑**：本 PR 第二次运行 run `34751647185`（head `94ef9806`，rebase 前）
+  同样全绿，与首次运行同为冷编（同一 env key，PR 不保存缓存）；其测试计数与静态检查
+  结果与上节 AC5 对照表的「本 PR」列逐项相同。
+- **本票的稳态收益仍未在本票 CI 运行中验证**：本 PR 的两次运行（run `34751213388`、
+  `34751647185`）都因 env hash 变化走了全量冷编（见第一节「代价二」），其余四个 job
+  全绿、后端测试 job 通过（三层测试与静态检查结果不变，见上节 AC5 对照表）。稳态
+  （debug=0 下缓存恢复命中、成员重编）要等 merge 后首个 main 运行以新 key 保存缓存。
+  回填方式：读该 main run 与其后任一次 PR 运行的编译段耗时、Post 缓存大小，与本文件
+  第三节基线对比。预期：编译段小幅下降，缓存体积不变。
 - **本机测量 ≠ CI 条件**：macOS arm64 + kache（CI 为 Linux x64 + rust-cache + mold），
   并发负载 load ≈ 20/12 核使 wall 不可比；只把 CPU 时间与体积对照当证据，未外推秒数。
-- 镜像体积与容器初始化时间（19–31s）未优化：其归属是 #1109 的镜像构建议题，不在本票
-  范围。
+- 镜像体积与本 job 的容器初始化时间（实测 19–31s）未优化：其归属是 #1109 的镜像构建
+  议题，不在本票范围。
 - e2e 单场景耗时异常（spec #1086 Further Notes）不在本票范围，未做诊断。
