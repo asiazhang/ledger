@@ -1,4 +1,4 @@
-import { mountView, listCalls, lastListFilter, tablePagination } from './common'
+import { mountView, listCalls, lastListFilter, tablePagination, openCreateDropdown } from './common'
 import { mockInvoke } from '@ledger/test-support/invoke-mock'
 import { describe, it, expect } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -101,17 +101,6 @@ describe('TransactionsView 记一笔 Modal（issue #141）', () => {
 })
 
 describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
-  /** 点击下拉箭头展开菜单，返回 document.body 中的菜单项文案列表。 */
-  async function openDropdown(wrapper: ReturnType<typeof mount>): Promise<string[]> {
-    const arrow = wrapper.find('button[aria-label="更多记账类型"]')
-    expect(arrow.exists()).toBe(true)
-    await arrow.trigger('click')
-    await flushPromises()
-    return [...document.body.querySelectorAll('.n-dropdown-option-body__label')].map(
-      (el) => el.textContent ?? '',
-    )
-  }
-
   /** 点击下拉菜单中指定文案的菜单项（click handler 绑在 option-body 上）。 */
   async function clickDropdownItem(label: string) {
     const item = [...document.body.querySelectorAll('.n-dropdown-option')].find(
@@ -126,7 +115,7 @@ describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
 
   it('下拉菜单为 7 项：5 个 kind 项标注快捷键（支出 a/收入 i/转账 z/买入 b/卖出 s），分隔线后借贷两项（借出/借入），无退款与转换（issue #150/#153/#374/#1048）', async () => {
     const wrapper = await mountView()
-    const labels = await openDropdown(wrapper)
+    const labels = await openCreateDropdown(wrapper)
     expect(labels).toEqual(['支出 a', '收入 i', '转账 z', '买入 b', '卖出 s', '借出', '借入'])
     expect(labels).not.toContain('退款')
     // 负向收口（ADR-0106 决策 10 / #1048）：convert 无手工录入入口，菜单里不存在该项
@@ -141,7 +130,7 @@ describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
     ['卖出 s', '卖出', 'sell'],
   ] as const)('点菜单项「%s」打开对应类型弹窗（无类型单选组）', async (label, kindLabel, kind) => {
     const wrapper = await mountView()
-    await openDropdown(wrapper)
+    await openCreateDropdown(wrapper)
     await clickDropdownItem(label)
     expect(wrapper.findComponent(NModal).props('show')).toBe(true)
     expect(wrapper.findComponent(NModal).props('title')).toBe(`记一笔 · ${kindLabel}`)
@@ -155,7 +144,7 @@ describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
     ['借入', 'borrow'],
   ] as const)('点借贷菜单项「%s」打开借贷变体弹窗（issue #374：kind=lend/borrow 预置方向，不新增交易类型）', async (label, kind) => {
     const wrapper = await mountView()
-    await openDropdown(wrapper)
+    await openCreateDropdown(wrapper)
     await clickDropdownItem(label)
     expect(wrapper.findComponent(NModal).props('show')).toBe(true)
     expect(wrapper.findComponent(NModal).props('title')).toBe(`记一笔 · ${label}`)
@@ -168,7 +157,7 @@ describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
 
   it('下拉展开后再点主体，仍直接打开支出弹窗（两击区互不干扰）', async () => {
     const wrapper = await mountView()
-    await openDropdown(wrapper)
+    await openCreateDropdown(wrapper)
     const btn = wrapper.findAll('button').find((b) => b.text().includes('记一笔'))!
     await btn.trigger('click')
     await flushPromises()

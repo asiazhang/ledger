@@ -23,7 +23,7 @@ globalStyle(`.${CREATE_FAB_CLASS}.n-button`, {
   borderRadius: '50%',
 })
 
-/** 类型选择轻弹层内容容器：五枚大号选项纵向排布。 */
+/** 类型选择轻弹层内容容器：大号选项纵向排布（数量随可用类型，默认全开五枚）。 */
 export const CREATE_FAB_SHEET_CLASS = 'create-fab-sheet'
 
 globalStyle(`.${CREATE_FAB_SHEET_CLASS}`, {
