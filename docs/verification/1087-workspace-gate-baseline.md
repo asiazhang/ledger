@@ -61,7 +61,11 @@ commit `de097771` 触发的 `Build` workflow（run `34618048780`，后端测试 
 
 对照基线：父 spec #1086 记录的「本票前」单 crate 编译为 113s（run 34599136819）、
 依赖缓存 2009 MB。缓存体积前后一致；编译耗时低于旧基线（单次运行的波动，本票
-不主张因果）。CI 阶段实测随 #1110「编译与缓存调优 + 基线刷新」继续跟踪。
+不主张因果）。CI 阶段实测随 #1110「编译与缓存调优 + 基线刷新」继续跟踪——#1110 已
+刷新基线（对外口径在 `.github/workflows/build.yml` 的 backend job 注释，逐 run 数据、
+口径与局限见 `docs/verification/1110-ci-compile-cache-baseline.md`）；注意本节的
+2009 MB 缓存是**依赖侧 line-tables-only（db611ca7）之前**的历史值，现行依赖缓存口径
+见该文档，本节不复制。
 
 ### 本机（控制变量：touch 源文件后重编，依赖全热）
 
