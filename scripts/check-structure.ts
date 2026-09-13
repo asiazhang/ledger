@@ -527,6 +527,7 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   { path: 'model.rs', layer: '域目录', note: '域模型（#407 随域归位）：标的信息同步结果类型 SyncInstrumentInfoResult' },
   { path: 'persist.rs', layer: '域目录', note: '行情同步持久化（issue #137）：fx_rate_history 周采样 upsert（价格写入单点已随投资域归位迁入 ledger_investment::prices，#401）' },
   { path: 'progress.rs', layer: '域目录', note: '同步进度事件（issue #897 / ADR-0095；页级明细 issue #1061）：事件名常量、payload 与 ProgressEmitter 发射器接缝收口（用后即弃的非失效信号，经 events 机制投递）' },
+  { path: 'session.rs', layer: '域目录', note: '作用域会话接缝（issue #1275 / ADR-0112 决策 5 挂载点⑥）：编排获取数据库连接的唯一通道——域定义 ScopedSession trait，壳层实现并在命令壳接线；编排抓取路径在类型上取不到连接' },
   { path: 'stock.rs', layer: '域目录', note: '东财股票单点行情访问（issue #693 / ADR-0081）：按（市场，代码）实时查询，类型特征探测与更新时间戳投影单点隔离——接缝查询半边的场内实例' },
 ]
 
