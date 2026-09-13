@@ -124,6 +124,14 @@ ledger-currencies = { path = "crates/currencies" }
 #（汇总口径消费 kind→度量矩阵），无接缝无注册点、壳层启动零接线。根包
 # `pub use ledger_reports as reports` 再导出保持原调用点路径。
 ledger-reports = { path = "crates/reports" }
+# 仪表盘域 crate（spec #1086 / issue #1104，P3 叶子业务域 crate）：首页净资产
+# 跨币种折算合计（真实财富视角三腿）与读探针缓存归位；依赖面为修订后票面
+# 允许集的子集——基础设施、账户域（余额口径）、核心交易域（折算口径）与实
+# 物资产域（第三腿在持合计单一读口径，ADR-0064 决策 6；账户域与实物资产域
+# 两项经维护者修订票面 AC 授权），纯读模型无同步命令，无接缝无注册点、壳
+# 层启动零接线。根包 `pub use ledger_dashboard as dashboard` 再导出保持原
+# 调用点路径。
+ledger-dashboard = { path = "crates/dashboard" }
 # 保单域 crate（spec #1086 / issue #1100，P3 叶子业务域 crate）：保单静态档案
 # CRUD、保司字典与保单视角统计归位；依赖面只有基础设施、同步协议与核心交易域
 # ——统计读路径消费 kind→度量矩阵与折算口径，交易×保单接缝（#1092）的实现注

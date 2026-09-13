@@ -1,0 +1,36 @@
+[package]
+name = "ledger-dashboard"
+version = "0.6.0"
+description = "Ledger 仪表盘域 crate：首页净资产跨币种折算合计与读探针缓存（Dashboard）"
+edition = "2024"
+publish = false
+# 版本与根包锁步（仓库约定：workspace 各成员同为 0.6.0）。
+
+[dependencies]
+# 仪表盘域 crate（spec #1086 / issue #1104，P3 叶子业务域 crate）：依赖面是
+# 修订后票面允许集「基础设施、协议、核心交易域、账户域、实物资产域」的子集
+# ——本域只消费基础设施（db / error）、账户域（余额口径与 AccountType）、
+# 核心交易域（amount 的折算与默认币种口径）与实物资产域（净资产第三腿的在持
+# 合计单一读口径，与实物资产列表「家底合计」同源不漂移，ADR-0064 决策 6）。
+# 三处域间横向依赖均为上层域对下层域的合法单向依赖（dashboard → accounts /
+# transaction / physical-asset，ADR-0056 决策 2 / ADR-0112 决策 2），账户域与
+# 实物资产域两项系维护者修订票面 AC 后授权（实物资产腿自 #469 起既有，初版
+# 票面遗漏，修订评论留痕）。本域是纯读模型、无同步命令，对同步协议 crate 亦
+# 零生产依赖；无接缝无注册点、壳层启动零接线。对根包（壳层）与同步域零直接
+# 依赖，反向引用由 cargo 依赖图编译期拒绝（本 crate 声明 tauri-app 为生产依赖
+# 即红，负向夹具见 check-structure.test.ts）。
+ledger-infra = { path = "../infra" }
+ledger-accounts = { path = "../accounts" }
+ledger-transaction = { path = "../transaction" }
+ledger-physical-asset = { path = "../physical-asset" }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+serde = { version = "1", features = ["derive"] }
+
+# 本 crate 域内无测试目标（测试全在根包侧三层：壳层命令集成与 e2e BDD，
+# 断言与场景文本零改动），故无 dev-dependency 环；域内测试立项时再按
+# ledger-reports 先例（dev-dependency 消费根包测试工厂，spec #1086）引入。
+#
+# 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+[lints]
+workspace = true

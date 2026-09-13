@@ -39,13 +39,18 @@ pub mod commands;
 // 域的 `crate::currencies::…` / `tauri_app_lib::currencies::…` 调用点零改动
 //（expand 形态，ledger-transaction 同款）。域内引擎见 `ledger-currencies` crate。
 pub use ledger_currencies as currencies;
-pub mod dashboard;
 // 物品域 crate（spec #1086 / issue #1099，P3 叶子域）：自根包域目录拆出，根包以
 // 再导出形态保留原引用路径——壳层（IPC/HTTP 命令）、transaction_wiring 接线、
 // sync_engine 重放分派与 e2e 的 `crate::item::…` / `tauri_app_lib::item::…`
 // 调用点零改动（expand 形态，ledger-backup/ledger-transaction 同款）。域内本体
 // 见 `ledger-item` crate。
 pub use ledger_item as item;
+// 仪表盘域 crate（spec #1086 / issue #1104，P3 叶子业务域 crate）：首页净资产
+// 跨币种折算合计自根包域目录拆出，根包以再导出形态保留原引用路径——壳层
+//（IPC 命令）、ledger-perf 基准与 e2e 的 `crate::dashboard::…` /
+// `tauri_app_lib::dashboard::…` 调用点零改动（expand 形态，ledger-reports
+// 同款）。域内本体见 `ledger-dashboard` crate。
+pub use ledger_dashboard as dashboard;
 pub mod investment;
 // 商户域 crate（spec #1086 / issue #1096，参考数据三域各自独立 crate）：自根包
 // 域目录拆出，根包以再导出形态保留原引用路径——壳层（IPC/HTTP 命令）、

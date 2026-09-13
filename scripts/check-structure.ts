@@ -107,7 +107,6 @@ export type Layer = (typeof LAYER)[keyof typeof LAYER]
  */
 export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'investment', layer: '域目录', note: '投资域（#401 阶段 5 归位，主体自 commands/investment 随迁；价格写入单点自 sync/persist 迁入）' },
-  { path: 'dashboard', layer: '域目录', note: '仪表盘域（#405 归位，全仓净资产跨币种折算聚合）' },
   { path: 'sync', layer: '域目录', note: '行情同步域（#407 归位，HTTP 爬取/东财基金净值/同步编排自 commands/sync 随迁；全量修字典翼已退役，issue #698）' },
   { path: 'sync_engine', layer: '域目录', note: '多端同步域（issue #855 新建即归位，ADR-0091 OpLog 基座；与行情同步域 sync 相邻不同域）' },
   { path: 'test_support', layer: '域目录', note: '测试支持域（统一测试数据库工厂与共享断言库，ADR-0084 / #751；依赖域与基础设施合法，对壳层零依赖）' },
@@ -448,6 +447,28 @@ export const ITEM_MODULES: readonly WhitelistEntry[] = [
 
 /** 物品域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-item.dir 同源。 */
 export const ITEM_SRC_REL = 'crates/item/src'
+/**
+ * 仪表盘域 crate 的模块清单（spec #1086 / issue #1104）：路径相对
+ * `src-tauri/crates/dashboard/src`。P3 叶子业务域 crate——首页净资产跨币种
+ * 折算合计（真实财富视角三腿：非投资账户余额 + 持仓市值 + 在持实物资产估值）
+ * 与读探针缓存（ADR-0067）。依赖面为修订后票面允许集「基础设施、协议、核心
+ * 交易域、账户域、实物资产域」的子集——基础设施（db/error）、账户域（余额口
+ * 径与 AccountType）、核心交易域（折算与默认币种口径）、实物资产域（第三腿
+ * 在持合计单一读口径，ADR-0064 决策 6；账户域与实物资产域两项系维护者修订
+ * 票面 AC 后授权，修订评论留痕），纯读模型无同步命令，对同步协议 crate 亦
+ * 零生产依赖；无接缝无注册点、壳层启动零接线；对壳层与同步域零容忍照扫
+ *（与备份/交易 crate 同款，清单条目 layer 为域目录即入业务域扫描面）；反向
+ * 引用由 cargo 依赖图拒绝（生产依赖面无根包）。crate 根 lib.rs 是声明与再导
+ * 出面（无守门靶向代码），与协议/备份/交易 crate 同款不入清单；域内无测试
+ * 目标（三层测试全在根包侧），无测试豁免形态条目。
+ */
+export const DASHBOARD_MODULES: readonly WhitelistEntry[] = [
+  { path: 'model.rs', layer: '域目录', note: '仪表盘读模型（#421 随域归位）：净资产总览五字段（净额/余额腿/持仓腿/实物腿/基准币种）' },
+  { path: 'net_worth.rs', layer: '域目录', note: '净资产缓存与读探针（issue #491 / ADR-0067，ADR-0071 决策 3 自 db/net_worth.rs 迁入）：输入指纹推导 / 失效判定 / 缓存回写' },
+]
+
+/** 仪表盘域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-dashboard.dir 同源。 */
+export const DASHBOARD_SRC_REL = 'crates/dashboard/src'
 
 /**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
@@ -578,6 +599,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/item',
     layer: CRATE_LAYER.DOMAIN,
     note: '物品域 crate（#1099，P3 叶子域：物品 CRUD/处置/每天使用成本聚合与溯源守卫）；依赖面只有基础设施、同步协议与核心交易域——交易×物品来源列反查接缝（#1092）的实现注册侧是域→域合法上层依赖（物品 → 核心交易单向），对壳层与同步域零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
+  },
+  {
+    name: 'ledger-dashboard',
+    dir: 'crates/dashboard',
+    layer: CRATE_LAYER.DOMAIN,
+    note: '仪表盘域 crate（#1104，P3 叶子业务域 crate：首页净资产跨币种折算合计——真实财富视角三腿——与读探针缓存 ADR-0067）；依赖面为修订后票面允许集的子集：基础设施（db/error）、账户域（余额口径与 AccountType）、核心交易域（折算与默认币种口径）、实物资产域（第三腿在持合计单一读口径，ADR-0064 决策 6；账户域与实物资产域两项系维护者修订票面 AC 后授权，dashboard → accounts/transaction/physical-asset 三向均为上层域对底层域合法单向依赖，ADR-0112 决策 2），纯读模型无同步命令，无接缝无注册点、壳层启动零接线，反向引用由生产依赖面编译期拒绝',
   },
 ]
 
@@ -1908,6 +1935,7 @@ function main(): void {
       ...collectRustFiles(join(srcTauriDir, PHYSICAL_ASSET_SRC_REL), PHYSICAL_ASSET_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, REPORTS_SRC_REL), REPORTS_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, ITEM_SRC_REL), ITEM_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, DASHBOARD_SRC_REL), DASHBOARD_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -1972,6 +2000,7 @@ function main(): void {
   scannedFiles += scanModuleEntries(PHYSICAL_ASSET_MODULES, join(srcTauriDir, PHYSICAL_ASSET_SRC_REL), problems)
   scannedFiles += scanModuleEntries(REPORTS_MODULES, join(srcTauriDir, REPORTS_SRC_REL), problems)
   scannedFiles += scanModuleEntries(ITEM_MODULES, join(srcTauriDir, ITEM_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(DASHBOARD_MODULES, join(srcTauriDir, DASHBOARD_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -2015,6 +2044,7 @@ function main(): void {
       `+ 实物资产域模块 ${PHYSICAL_ASSET_MODULES.length} 项（crate ${PHYSICAL_ASSET_SRC_REL}，#1102）` +
       `+ 报表域模块 ${REPORTS_MODULES.length} 项（crate ${REPORTS_SRC_REL}，#1103）` +
       `+ 物品域模块 ${ITEM_MODULES.length} 项（crate ${ITEM_SRC_REL}，#1099）` +
+      `+ 仪表盘域模块 ${DASHBOARD_MODULES.length} 项（crate ${DASHBOARD_SRC_REL}，#1104）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +
