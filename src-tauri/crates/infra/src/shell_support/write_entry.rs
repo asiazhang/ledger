@@ -36,12 +36,14 @@
 //! `signals_cross_check`）。域层写路径（ADR-0033 接缝）不纳入——本入口壳层专用。
 
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use rusqlite::Connection;
 
+use crate::db::probe_lock_hold;
 use crate::db::run_db;
 use crate::db::write as db_write;
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::events::SignalEmitter;
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
@@ -93,13 +95,86 @@ where
     Ok(value)
 }
 
+/// 分段写入口的取锁句柄（issue #1276）：把「短暂取一次连接」的仪式（锁失败
+/// 映射 + 持锁时长探针）内化一处。每段取锁只在 [`Self::with_connection`]
+/// 闭包体内可见、返回即释放——分钟级网络等待发生在分段与分段之间，结构上
+/// 不可能持在锁内（[`write_entry`] 整段形态的对应面）。
+pub struct SegmentLock<'a> {
+    conn: &'a Mutex<Connection>,
+}
+
+impl SegmentLock<'_> {
+    /// 构造一个分段取锁句柄（壳层命令壳与测试共用的唯一构造点，字段私有）。
+    pub fn new(conn: &Mutex<Connection>) -> SegmentLock<'_> {
+        SegmentLock { conn }
+    }
+
+    /// 短暂取一次连接执行一次读写。闭包业务 [`Result`] 原样传播，锁中毒映射
+    /// 与 [`crate::db::write`] / [`read_entry`](crate::read_entry::read_entry)
+    /// 同形；持锁时长照守（超阈值记日志、不静默，见 `db::probe_lock_hold`）。
+    pub fn with_connection<R, F>(&self, use_connection: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R>,
+    {
+        let hold_started = Instant::now();
+        let conn = self.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let result = use_connection(&conn);
+        probe_lock_hold(hold_started.elapsed());
+        result
+    }
+}
+
+/// 壳层统一写入口 · 分段取锁、整体裁决形态（issue #1276，父 spec #1274 实现
+/// 决策 4）：与 [`write_entry`] 同一仪式链，唯「锁跨度」不同——闭包拿到的不是
+/// 整段持有的连接，而是 [`SegmentLock`]：每段短暂取一次连接、用完即还，
+/// 分钟级网络等待发生在锁外。适用面：同步这类「抓取-落库交替」的长任务
+/// 命令（现役唯一调用点 `sync_instrument_info`）；常规写命令仍走整段形态。
+///
+/// - **一个写操作身份、恰好一次调用**：与整段形态同责，源码扫描守门把两种
+///   形态都计为写入口调用点（`signals_cross_check`）；
+/// - **整体裁决**：跨分段的「是否实际写过」由闭包随 [`Outcome`] 自行累积
+///   （同步编排的结果统计即累积体），在收尾点一次性生效——成功 → 经
+///   `db::write` 既有结构（锁 + `is_autocommit()` 复核 + 提交点置脏单点）
+///   **恰好一次**置脏（空闭包形态）；失败早退不置脏（与整段形态同构；
+///   「实际写过即置脏」的裁决修订由父 spec #1277 另票实施）；
+/// - **信号**：提交点置脏成功后发射（映射单点判定，ADR-0044），时序与整段
+///   形态一致。
+pub async fn write_entry_segmented<T, F>(
+    span: &'static str,
+    conn: Arc<Mutex<Connection>>,
+    emitter: Option<&dyn SignalEmitter>,
+    op: WriteOp,
+    f: F,
+) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&SegmentLock<'_>) -> Result<Outcome<T>> + Send + 'static,
+{
+    let (value, evidence) = run_db(span, move || {
+        let lock = SegmentLock::new(&conn);
+        let outcome = f(&lock)?;
+        // 整体裁决点：成功 → 空闭包过一次连接层统一写入口，复用其
+        // 「锁 + is_autocommit 复核 + 提交点置脏」结构；失败早退不置脏。
+        db_write(&conn, |_| Ok(()))?;
+        match outcome {
+            Outcome::Silent(value) => Ok((value, WriteEvidence::None)),
+            Outcome::Evidenced(value, evidence) => Ok((value, evidence)),
+        }
+    })
+    .await?;
+    if let Some(emitter) = emitter {
+        emit_for(emitter, op, evidence);
+    }
+    Ok(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::AppError;
     use crate::events::{BACKUPS_CHANGED, LEDGER_CHANGED, PRICES_CHANGED};
     use crate::signals::{WriteEvidence, WriteOp};
-    use crate::test_utils::GatedEmitter;
+    use crate::test_utils::{GATED_TIMEOUT, GatedEmitter};
     use rusqlite::params;
     use std::sync::Arc;
 
@@ -319,5 +394,165 @@ mod tests {
         ))
         .expect("入口应传播闭包的 Ok 值");
         assert_eq!(emitter.posted(), vec![BACKUPS_CHANGED]);
+    }
+
+    /// 分段写入口（issue #1276）：网络等待期间连接锁不被持有——闭包在两段
+    /// 之间阻塞（模拟分钟级抓取），另一持锁方此刻能取到同一连接，且先头段
+    /// 已提交的写入对它立即可读（用户可观察结果：同步在途时读命令照常出数）。
+    /// 整段形态（[`write_entry`]）下本性质不成立：锁被闭包整段持有，try_lock
+    /// 即失败。
+    #[test]
+    fn segmented_entry_holds_no_lock_during_closure_wait() {
+        let conn = fixture().0;
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let writer_conn = conn.clone();
+        let worker = std::thread::spawn(move || {
+            tauri::async_runtime::block_on(write_entry_segmented(
+                "test",
+                writer_conn,
+                None,
+                WriteOp::SyncInstrumentInfo,
+                move |lock| {
+                    lock.with_connection(|c| {
+                        c.execute(
+                            "INSERT INTO categories (id, name, kind, created_at, updated_at, version, device_id) \
+                             VALUES ('cat-seg-1', '段一', 'expense', '2026-01-10T00:00:00Z', '2026-01-10T00:00:00Z', 1, 'test')",
+                            [],
+                        )
+                        .map_err(AppError::from)?;
+                        Ok(())
+                    })?;
+                    // 模拟分钟级网络等待：发生在任何 with_connection 之外。
+                    entered_tx.send(()).expect("通知等待点应成功");
+                    release_rx
+                        .recv_timeout(GATED_TIMEOUT)
+                        .expect("测试应放行网络等待");
+                    lock.with_connection(|c| {
+                        c.execute(
+                            "INSERT INTO categories (id, name, kind, created_at, updated_at, version, device_id) \
+                             VALUES ('cat-seg-2', '段二', 'expense', '2026-01-10T00:00:00Z', '2026-01-10T00:00:00Z', 1, 'test')",
+                            [],
+                        )
+                        .map_err(AppError::from)?;
+                        Ok(())
+                    })?;
+                    Ok(Outcome::Evidenced(
+                        "done",
+                        WriteEvidence::PriceWritten(true),
+                    ))
+                },
+            ))
+        });
+
+        // 等闭包到达网络等待点（先头段已提交），此刻试取连接锁。
+        entered_rx
+            .recv_timeout(GATED_TIMEOUT)
+            .expect("闭包应到达网络等待点");
+        {
+            let guard = conn
+                .try_lock()
+                .expect("网络等待期间连接锁不应被持有（分段取锁核心性质）");
+            let count: i64 = guard
+                .query_row(
+                    "SELECT count(*) FROM categories WHERE id = 'cat-seg-1'",
+                    [],
+                    |r| r.get(0),
+                )
+                .expect("读回应成功");
+            assert_eq!(count, 1, "先头段的写入应已提交且对立即可读");
+        }
+        release_tx.send(()).expect("放行应成功");
+        let value = worker.join().expect("分段写入口应跑完").expect("应成功");
+        assert_eq!(value, "done");
+        let guard = conn.lock().expect("收尾锁应可取");
+        let count: i64 = guard
+            .query_row(
+                "SELECT count(*) FROM categories WHERE id LIKE 'cat-seg-%'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("读回应成功");
+        assert_eq!(count, 2, "两段写入都应落库");
+    }
+
+    /// 分段写入口的整体裁决（issue #1276）：成功 → 提交点置脏恰好生效（脏标
+    /// 记翻转）；中途失败 → 不置脏（与整段形态同构，裁决修订归 #1277）。
+    #[test]
+    fn segmented_entry_verdict_dirty_on_success_and_skip_on_failure() {
+        // 提交点后置动作接线（db::tests::common 同款：dev-dependency 环下静态
+        // 身份分离，显式接上备份域实现，幂等）。
+        crate::db::register_after_commit_hook(tauri_app_lib::backup::after_commit_hook);
+        fn dirty_of(conn: &Connection) -> bool {
+            tauri_app_lib::backup::get_state(conn)
+                .expect("调度状态应可读")
+                .dirty
+        }
+        fn reset_dirty(conn: &Connection) {
+            use crate::settings::SettingKey;
+            crate::settings::set(conn, SettingKey::AutoBackupDirty, &false)
+                .expect("重置脏标记应成功");
+        }
+
+        // 成功：段内写入 + 闭包 Ok → 收尾裁决点置脏。
+        let (conn, _emitter) = fixture();
+        {
+            let guard = conn.lock().expect("锁应可取");
+            reset_dirty(&guard);
+        }
+        tauri::async_runtime::block_on(write_entry_segmented(
+            "test",
+            conn.clone(),
+            None,
+            WriteOp::SyncInstrumentInfo,
+            move |lock| {
+                lock.with_connection(|c| {
+                    c.execute("UPDATE app_settings SET value = value WHERE key = 'x'", [])
+                        .map_err(AppError::from)?;
+                    Ok(())
+                })?;
+                Ok(Outcome::Silent(()))
+            },
+        ))
+        .expect("分段写入应成功");
+        assert!(
+            dirty_of(&conn.lock().expect("锁应可取")),
+            "成功收尾应经提交点置脏恰好生效"
+        );
+
+        // 失败：段内写入已 autocommit，闭包 Err → 不置脏、不发信号。
+        let (conn, emitter) = fixture();
+        {
+            let guard = conn.lock().expect("锁应可取");
+            reset_dirty(&guard);
+        }
+        let err = tauri::async_runtime::block_on(write_entry_segmented::<(), _>(
+            "test",
+            conn.clone(),
+            Some(&emitter),
+            WriteOp::SyncInstrumentInfo,
+            move |lock| {
+                lock.with_connection(|c| {
+                    c.execute(
+                        "INSERT INTO categories (id, name, kind, created_at, updated_at, version, device_id) \
+                         VALUES ('cat-seg-fail', '段', 'expense', '2026-01-10T00:00:00Z', '2026-01-10T00:00:00Z', 1, 'test')",
+                        [],
+                    )
+                    .map_err(AppError::from)?;
+                    Ok(())
+                })?;
+                Err(AppError::Invalid("中途失败".into()))
+            },
+        ))
+        .unwrap_err();
+        assert!(
+            matches!(err, AppError::Invalid(ref m) if m == "中途失败"),
+            "业务错误应原样传播，实际 {err:?}"
+        );
+        assert!(
+            !dirty_of(&conn.lock().expect("锁应可取")),
+            "失败收尾不应置脏（与整段形态同构）"
+        );
+        assert!(emitter.posted().is_empty(), "失败不应发信号");
     }
 }

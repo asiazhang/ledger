@@ -116,16 +116,16 @@ impl Default for Pacer {
 /// 原始 f2 与 f1，换算在 [`price_cents_from_raw`] 按精度位单点处理、缺省按市场
 /// 回退（[`f2_to_price`]）；响应条目可能缺 f14/f2/f1，名称/价格/精度均可缺省。
 #[derive(Debug, Deserialize)]
-pub(super) struct StockItem {
+pub struct StockItem {
     #[serde(rename = "f12")]
-    pub(super) code: String,
+    pub code: String,
     #[serde(rename = "f14", default)]
-    pub(super) name: String,
+    pub name: String,
     #[serde(rename = "f2", default, deserialize_with = "deserialize_positive_f64")]
-    pub(super) price: Option<f64>,
+    pub price: Option<f64>,
     /// 价格小数位（f1；缺省/异常时为 None，换算按市场回退）。
     #[serde(rename = "f1", default, deserialize_with = "deserialize_positive_f64")]
-    pub(super) precision: Option<f64>,
+    pub precision: Option<f64>,
 }
 
 /// 把可能缺失/非数值/非正数的字段（f2 价格、f1 精度位；停牌为 "-"、无效价 ≤0）
@@ -443,7 +443,7 @@ pub(super) fn fetch_ulist(
 
 /// 日 K 线单根样本：交易日（ISO 日期）与收盘价（真实价格值，非 f2 缩放值）。
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct KlineBar {
+pub struct KlineBar {
     pub(super) date: String,
     pub(super) close: f64,
 }

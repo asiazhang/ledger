@@ -20,6 +20,7 @@
 
 mod books;
 mod boot;
+mod instrument_sync;
 mod isolation;
 mod sync_channel;
 mod sync_checkpoint;
