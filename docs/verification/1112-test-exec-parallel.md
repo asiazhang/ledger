@@ -20,11 +20,13 @@
   libtest 线程）——**libtest 线程数 = 并行度**，不存在「各二进制各自开满 libtest
   线程」的 CPU 超订；测试自起的 tokio 等运行时不在控制面（属经验证据，非守门）。
   失败聚合报告，跑完全部才退出。
-- `scripts/test.sh`（改）：两条入口一次跑完 workspace 全部成员的测试面——并发
-  入口（执行器）+ 非并发入口（`cargo test --workspace --test e2e`、
-  `cargo test --workspace --doc`）。e2e 仍由 cargo 驱动，形态与拆 workspace 前
-  一致；新增 doc-test 入口是**补齐**（拆分前 `cargo test --workspace` 本就跑
-  doc-test，本仓现有 `compile_fail` / `ignore` 两个文档块）。
+- `scripts/test.sh`（改）：入口自检 + 两条入口一次跑完 workspace 全部成员的测试面
+  ——先跑 `bun scripts/test-exec.ts check` 核自己的接线，再走并发入口（执行器）+
+  非并发入口（`cargo test --workspace --test e2e`、`cargo test --workspace --doc`）。
+  e2e 仍由 cargo 驱动，形态与拆 workspace 前一致；新增 doc-test 入口是**补齐**
+  （拆分前 `cargo test --workspace` 本就跑 doc-test，本仓现有 `compile_fail` /
+  `ignore` 两个文档块）。自检让「入口命令被 echo/注释/删除」当场非零退出，不再
+  静默退出 0 却一条测试都没跑（#1112 第三轮审查 P1）。
 - `scripts/check.sh` + `.github/workflows/build.yml`（改）：覆盖守门挂入本地门槛
   与 CI frontend job（纯静态发现，不需 Rust 工具链）。
 - `scripts/test-exec.test.ts`（新）：夹具负向用例（守门规则逐条「制造变红」）+
@@ -63,10 +65,11 @@ frontend job；夹具用例见 `scripts/test-exec.test.ts`）：
    「静默漏跑」；本仓实测见下。
 3. **doc 入口与并发入口接线（规则③）**：存在 doc-test 目标 ⇔ `scripts/test.sh` 有
    `cargo test --workspace --doc`（缺 `--doc`、无目标却留 `--doc` 都红）；
-   `--doc` 存在但缺 workspace 范围（`--workspace` 或词尾 `--all`）→ 红——非虚拟
+   `--doc` 存在但缺 workspace 范围（`--workspace` 或 `--all`）→ 红——非虚拟
    workspace 下 `cargo test --doc` 只跑根包 doctest，成员 crate 的 doc-test 静默
-   漏跑而守门仍绿（#1112 审查补强）；`scripts/test.sh` 未调用 `scripts/test-exec.ts`
-   → 红。
+   漏跑而守门仍绿（#1112 审查补强）；`scripts/test.sh` 未调用并发入口的**运行**
+   命令 `bun scripts/test-exec.ts [run]` → 红（只留 `… check` 自检行不算运行接线，
+   否则删掉运行行也能假绿——#1112 第三轮审查）。
 4. **门禁自身接线（规则④，#1112 审查补强）**：`scripts/check.sh` 与 CI frontend
    job 必须调用 `check`，否则 → 红（接线在管线里、不由单元测试构建，按先例
    #959/#961 以源码扫描守门）。
@@ -97,12 +100,13 @@ check` 的退出码为观察面）**：
 > 接线判定随之收紧为「`bun` 必须落在命令位置（剥掉 YAML / 子 shell 装饰后的首个
 > 词）」，并补「只剩 echo 标签行 → 红」「接线带引号/前置参数 → 不假红」两条夹具用例。
 
-夹具侧的规则矩阵住 `scripts/test-exec.test.ts` 的第一个 describe（17 条），另加
+夹具侧的规则矩阵住 `scripts/test-exec.test.ts` 的第一个 describe（21 条），另加
 接线 describe 2 条（真实仓库通过 + 删 check.sh 接线即红），`pnpm exec vitest run
-scripts/test-exec.test.ts` **19/19 全绿**；其中「删 `--test e2e`」「删 `--doc`」
-「doc 缺 workspace 范围」「删并发入口调用」「`--test` 漂移」「auto* 开关」
-「未支持 members glob」「check.sh / CI 接线缺失或只剩 echo 标签」「运行期读 cargo
-注入环境」各自对准一条可观察的失败输出。
+scripts/test-exec.test.ts` **23/23 全绿**（第三轮审查后计数）；其中「删 `--test
+e2e`」「删 `--doc`」「doc 缺 workspace 范围」「删并发入口调用」「三条入口全被 echo
+包成说明文字」「只留自检行」「`--test` 漂移」「auto* 开关」「未支持 members glob」
+「check.sh / CI 接线缺失或只剩 echo 标签」「运行期读 cargo 注入环境」各自对准一条
+可观察的失败输出。
 
 全量质量门槛：`./scripts/check.sh` **退出码 0**（前端类型检查 + oxlint + clippy
 `--all-targets --all-features -D warnings` + fmt + rustdoc 门禁 + 全部守门脚本，
@@ -144,6 +148,8 @@ scripts/test-exec.test.ts` **19/19 全绿**；其中「删 `--test e2e`」「删
   内 → `--workspace` 元门禁静态不覆盖。已登记，并让该门禁认 `.ts` 的 `//` /
   `/** … */` 注释行（注释里的 `cargo test` 是说明文字，不算命令面）；夹具侧补
   「test-exec.ts 缺 `--workspace` → 红」与「注释里的 `cargo test` 不假红」两例。
+  （第三轮审查 P2 指出该登记当时只命中 `console.log` 模板串、对真实命令面
+  无约束力，已由数组形态核对补齐，见下节。）
 - **数字重复五处**：41/23/18 与并行度口径原同住脚本头、文档、提交信息多处，且已
   实际漂移（12/12 vs 13/13）。现收敛为「唯一权威 = `bun scripts/test-exec.ts
   plan` 输出」，脚本头不再复述数量，文档只在「执行面与并行度口径」一处复述并标注
@@ -155,6 +161,56 @@ scripts/test-exec.test.ts` **19/19 全绿**；其中「删 `--test e2e`」「删
   由引入者显式扩展执行器并更新守门。扫描复用结构守门的 Rust 词法掩码（注释掩去、
   字面量保留），`build.rs` 的构建期读取与编译期 `env!` 不受影响；夹具覆盖「命中即红」
   与「注释里提到不假红」两侧。
+
+**Review 补强（独立审查第三轮：封堵覆盖守门的强度削弱）**：
+
+- **P1（必修）· `scripts/test.sh` 入口的「说明文字假绿」**：上一轮把接线判定收紧成
+  「非注释行含子串 + 命令位置」时，命令位置判定只装在 `check.sh` 与 CI 两个宿主上，
+  规则②③（`--test <name>` / `--doc` / 并发入口）仍按子串与空白切词判定。把三条真
+  命令全包成 `echo "…"` 后实测：`bun scripts/test-exec.ts check` 退出码 **0**、
+  `bun scripts/check-structure.ts` 退出码 **0**、`./scripts/test.sh` 退出码 **0 且一条
+  测试都没跑**（相对固定点 `dee66f6e` 的强度削弱——旧逐字正则本来能拦住 echo 形态）。
+- **修法**：`scripts/test-exec.ts` 新增 quote-aware 的 shell 词法器
+  （`tokenizeShellLine` + `shellCommands`），引号内的空格/控制符不切词，行内按
+  `& | ; ( )` 切命令段，逐段剥掉 YAML 装饰（`-` / `run:`）、shell 前缀词
+  （`command` / `exec` / `env` / `if` / …）与 `VAR=x` 赋值后才认命令词——**命令词
+  不是 `cargo test` / `bun scripts/test-exec.ts` 就不算接线**。`parseEntryWiring` 与
+  `gateWiredIn` 统一走这一条路径；`--doc` 的 workspace 别名从「词尾 `--all`」放宽为
+  整词 `--all`（`cargo test --all --doc` 不再假红）。
+- **配套**：`scripts/test.sh` 加一行入口自检 `bun scripts/test-exec.ts check`（运行
+  接线被停用时立刻非零退出，不再静默退出 0）；同时把「运行接线」与自检行分开——
+  `bun scripts/test-exec.ts check` 满足的是守门规则④的宿主接线，不算规则③要求的
+  **运行**命令，否则删掉运行行只留自检行会重新假绿。
+- **`scripts/check-structure.ts` 侧**：`WORKSPACE_COMMAND_FILES` 逐行字面量扫描对
+  shell 宿主先做引号掩码（`maskShellQuoted`，引号内的命令字样是说明文字），并新增
+  「空集拒绝」——宿主里一条命令位置上的 cargo 命令都核不到即红，与覆盖守门的「拒绝
+  以空集假绿」同口径。**P2**：`.ts` 宿主的真实命令面是数组参数
+  （`runChild(cargo, ['test', '--workspace', …])`），原登记只命中 `console.log` 模板串、
+  属装饰性登记；新增 `tsCargoArrays` / `checkTsCargoArrays` 直接核对数组形态的
+  workspace 范围。
+
+**第三轮假绿复现（前后对照，均在真实仓库文件上做，做完 `git checkout -- <文件>` 还原）**：
+
+| 形态 | 改前 | 改后 |
+| --- | --- | --- |
+| `test.sh` 三条真命令全包成 `echo "…"` → `bun scripts/test-exec.ts check` | **0**（假绿） | **1**，点名 `tauri-app::e2e`「静默漏跑」+「`--doc` 静默漏跑」+「未调用并发入口」3 处 |
+| 同上 → `bun scripts/check-structure.ts` | **0**（假绿） | **1**：「未发现任何命令位置上的 cargo 命令——拒绝以空集假绿」 |
+| 同上 → `./scripts/test.sh` | **0** 且一条测试都没跑 | **1**（入口自检先行，同一组覆盖守门报错） |
+| 删运行入口行、保留自检行 → `check` | （该行删掉即红） | **1**：「未调用并发入口」——自检行不算运行接线 |
+| `command bun …` / `if bun …` / `LEDGER_JOBS=4 bun …` → `check` | — | **0**（合法前缀不假红） |
+| `cargo test --all --doc` → `check` | **1**（假红：只认词尾 `--all`） | **0** |
+| 删 `test-exec.ts` 数组里的 `'--workspace'` → `check-structure` | **0**（假绿：只命中 console.log 模板串） | **1**：`scripts/test-exec.ts:927 cargo test 数组形态缺 '--workspace'` |
+
+同一轮的既有形态复验（逐条删除/退化仍红，恢复即绿）：删 `test.sh` 并发入口行、
+删 e2e 行、doc 行退化 `cargo test --doc`、`check.sh` 只留 echo 标签行、CI 步骤换
+echo —— 五条均为退出码 **1** 并点名对应根因；恢复后 `bun scripts/test-exec.ts check`
+与 `bun scripts/check-structure.ts` 均退出码 0。
+
+门槛计数（第三轮修复后实跑）：`./scripts/check.sh` **退出码 0**；`pnpm exec vitest
+run scripts/test-exec.test.ts` **23/23**；`pnpm exec vitest run
+scripts/check-structure.test.ts` **197/197**；`./scripts/test.sh` **退出码 0**，并发入口
+23/23 二进制通过（1521 passed / 0 failed / 4 ignored）、e2e 453 场景 / 3139 步、
+doc-test 4 passed / 1 ignored —— 与「既有三层测试结果不变」一节逐项一致。
 
 ## 实测耗时（同机、同 commit 基线、缓存状态）
 

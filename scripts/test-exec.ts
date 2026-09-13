@@ -29,7 +29,11 @@
 //   ③ 存在 doc-test 目标 ⇔ scripts/test.sh 有 `cargo test --workspace --doc`
 //      （doc 命令必须带 workspace 范围——退化成 `cargo test --doc` 会让成员 crate
 //      的 doctest 静默漏跑而守门仍绿）；且 scripts/test.sh 必须调用并发入口
-//      （删除调用即红）；
+//      的**运行**命令 `bun scripts/test-exec.ts [run]`（删除即红；`… check` 自检行
+//      不算运行接线）；
+//     ②③ 与④同口径：只认**命令位置**的命令——非注释行里的说明文字（引号内的
+//      `echo "…bun scripts/test-exec.ts…"`）不算接线，否则把三条真命令全包成
+//      echo 字符串就能让两个入口一起假绿（#1112 第三轮审查实测）。
 //   ④ 门禁自身接线：scripts/check.sh 与 CI frontend job 必须调用 `check`——接线
 //      在管线里、不由单元测试构建，按先例 #959/#961 以源码扫描守门（删除接线即红）；
 //   ⑤ 执行器等价性：测试运行期不得依赖 cargo 注入的环境变量（现状零命中，见
@@ -66,8 +70,8 @@ export const PARALLEL_ENTRY_MARKER = 'scripts/test-exec.ts'
 export const DELEGATED_TARGET_FLAG = '--test'
 export const DOC_FLAG = '--doc'
 
-/** workspace 范围参数：`--workspace` 或词尾 `--all`（后者仅在词尾才算别名，与
- * check-structure.ts 的 WORKSPACE_COMMAND_FILES 核对同口径，防 `--all-targets` 假绿）。 */
+/** workspace 范围参数：`--workspace` 或 `--all`（精确 token 匹配，`--all-targets`
+ * / `--all-features` 不算；与 check-structure.ts 的 WORKSPACE_COMMAND_FILES 同口径）。 */
 export const WORKSPACE_FLAG = '--workspace'
 export const ALL_FLAG = '--all'
 
@@ -504,6 +508,127 @@ export function discoverTargets(rootDir: string): Discovery {
 
 // ── 两个入口的覆盖守门 ───────────────────────────────────────────────────
 
+/** shell 控制符：每个字符都是新命令的起点（`&&` / `||` / `;` / 管道 / 子 shell 括号）。 */
+const SHELL_CONTROL_CHARS = new Set(['&', '|', ';', '(', ')'])
+
+/**
+ * 命令名前可出现的 shell 前缀词（保留字 / 内建）：`if bun …` / `command bun …` /
+ * `env VAR=1 bun …` 都是合法调用形态，剥掉后仍算命令位置（避免偏严假红）。
+ */
+const COMMAND_PREFIX_WORDS = new Set([
+  'command',
+  'exec',
+  'env',
+  'nohup',
+  'time',
+  'if',
+  'then',
+  'else',
+  'elif',
+  'do',
+  'while',
+  'until',
+  '!',
+])
+
+/** `VAR=value` 赋值前缀（`VAR=x bun …`）同样不改变命令位置。 */
+const ENV_ASSIGNMENT_PREFIX = /^[A-Za-z_][A-Za-z0-9_]*=/
+
+/** 命令行首的书写装饰（YAML 列表项 / `run:` 键），不含命令语义。 */
+const COMMAND_LINE_DECORATIONS = new Set(['-', 'run:'])
+
+/**
+ * 把一行 shell/YAML 文本切成词：引号只脱壳，引号内的空格与控制符并入同一个词——
+ * `echo "bun scripts/test-exec.ts"` 因此是「命令词 echo + 一个说明文字词」，不会被
+ * 误当成 `bun` 接线；而 `bun "scripts/test-exec.ts" check` 脱壳后仍是 `bun` 接线。
+ * 引号外的 `& | ; ( )` 一律切成独立控制符 token（`check;` 也能归到 `check`）。
+ */
+function tokenizeShellLine(line: string): string[] {
+  const tokens: string[] = []
+  let current = ''
+  let started = false
+  const flush = (): void => {
+    if (started) tokens.push(current)
+    current = ''
+    started = false
+  }
+  for (let i = 0; i < line.length; i += 1) {
+    const c = line[i] as string
+    if (c === "'" || c === '"') {
+      let j = i + 1
+      while (j < line.length) {
+        const inner = line[j] as string
+        if (c === '"' && inner === '\\') {
+          current += line.slice(j, j + 2)
+          j += 2
+          continue
+        }
+        if (inner === c) break
+        current += inner
+        j += 1
+      }
+      started = true
+      i = j
+      continue
+    }
+    if (c === ' ' || c === '\t') {
+      flush()
+      continue
+    }
+    if (SHELL_CONTROL_CHARS.has(c)) {
+      flush()
+      tokens.push(c)
+      continue
+    }
+    current += c
+    started = true
+  }
+  flush()
+  return tokens
+}
+
+/** 剥掉行首装饰、前缀词与环境赋值，返回命令位置起的 argv；全被剥光则为空。 */
+function stripCommandPrefixes(tokens: string[]): string[] {
+  for (let start = 0; start < tokens.length; start += 1) {
+    const token = tokens[start] as string
+    if (
+      COMMAND_LINE_DECORATIONS.has(token) ||
+      COMMAND_PREFIX_WORDS.has(token) ||
+      ENV_ASSIGNMENT_PREFIX.test(token)
+    ) {
+      continue
+    }
+    return tokens.slice(start)
+  }
+  return []
+}
+
+/**
+ * 把脚本内容切成**命令位置**的 argv 列表：只看非注释行，行内按 shell 分隔符切段，
+ * 逐段剥前缀。判据必须落在命令位置——`echo "bun scripts/test-exec.ts"` 这类说明文字
+ * 虽然含命令字样，命令词却是 `echo`，不构成接线。上一版只判「非注释行含子串」，把
+ * scripts/test.sh 三条真命令全包成 `echo "…"` 后三个入口一起假绿（#1112 第三轮审查）。
+ */
+function shellCommands(content: string): string[][] {
+  const commands: string[][] = []
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim()
+    if (line === '' || line.startsWith('#')) continue
+    let segment: string[] = []
+    const flush = (): void => {
+      const argv = stripCommandPrefixes(segment)
+      if (argv.length > 0) commands.push(argv)
+      segment = []
+    }
+    for (const token of tokenizeShellLine(line)) {
+      if (SHELL_CONTROL_CHARS.has(token)) flush()
+      else segment.push(token)
+    }
+    flush()
+  }
+  return commands
+}
+
 /** scripts/test.sh 命令行里的非并发入口判据。 */
 export interface EntryWiring {
   /** `cargo test … --test <name>` 的 name 名单。 */
@@ -511,37 +636,50 @@ export interface EntryWiring {
   /** 是否有 `cargo test … --doc`（doc 入口存在性）。 */
   doc: boolean
   /**
-   * doc 入口的命令行是否带 workspace 范围（`--workspace` / 词尾 `--all`）。
+   * doc 入口的命令行是否带 workspace 范围（`--workspace` / `--all`）。
    * 只查 `--doc` 存在不够：退化成 `cargo test --doc`（非虚拟 workspace 下默认
    * 只作用根包）会让成员 crate 的 doctest 静默漏跑而守门仍然绿。
    */
   docWorkspace: boolean
-  /** 是否调用并发入口（scripts/test-exec.ts）。 */
+  /**
+   * 是否**运行**并发入口（`bun scripts/test-exec.ts [run]`）。入口自检行
+   * （`… check`）与 `… plan` 不算运行接线——否则把运行行删掉、只留自检行也能假绿。
+   */
   parallel: boolean
 }
 
-/** 解析 scripts/test.sh：只看非注释行（注释里的命令不算接线）。 */
+/**
+ * 解析 scripts/test.sh：只看**命令位置**的命令——注释、说明文字（引号里的命令字样）
+ * 与 echo 参数都不算接线。每条命令按命令词匹配：`cargo test …` 才贡献
+ * `--test <name>` / `--doc` 判据，`bun … scripts/test-exec.ts` 才贡献并发入口判据。
+ */
 export function parseEntryWiring(content: string): EntryWiring {
   const tests = new Set<string>()
   let doc = false
   let docWorkspace = false
   let parallel = false
-  for (const rawLine of content.split('\n')) {
-    const line = rawLine.trim()
-    if (line === '' || line.startsWith('#')) continue
-    if (line.includes(PARALLEL_ENTRY_MARKER)) parallel = true
-    const tokens = line.split(/[\s()]+/).filter((t) => t !== '')
-    const docOnLine = tokens.includes(DOC_FLAG)
-    if (docOnLine) {
-      doc = true
-      // workspace 范围必须与 --doc 同行：`--all` 仅在词尾才算别名
-      // （`--all-targets` / `--all-features` 不算，与 check-structure.ts 同口径）。
-      if (tokens.includes(WORKSPACE_FLAG) || tokens.at(-1) === ALL_FLAG) docWorkspace = true
+  for (const argv of shellCommands(content)) {
+    if (argv[0] === 'bun') {
+      // 并发入口：`bun [前置参数] scripts/test-exec.ts [run]`（引号形态由词切分归一）；
+      // `check` / `plan` 是守门与清单命令，不跑测试，不算运行接线。
+      const marker = argv.indexOf(PARALLEL_ENTRY_MARKER, 1)
+      if (marker !== -1) {
+        const subcommand = argv.slice(marker + 1).find((t) => !t.startsWith('-'))
+        if (subcommand === undefined || subcommand === 'run') parallel = true
+      }
+      continue
     }
-    for (let i = 0; i < tokens.length; i += 1) {
-      const token = tokens[i]
-      if (token === DELEGATED_TARGET_FLAG) {
-        const name = (tokens[i + 1] ?? '').replace(/^['"]|['"]$/g, '')
+    if (argv[0] !== 'cargo' || argv[1] !== 'test') continue
+    const args = argv.slice(2)
+    if (args.includes(DOC_FLAG)) {
+      doc = true
+      // workspace 范围必须落在同一条 `cargo test` 命令里；`--all` 是别名，精确 token
+      // 匹配（`--all-targets` / `--all-features` 不算，与 check-structure.ts 同口径）。
+      if (args.includes(WORKSPACE_FLAG) || args.includes(ALL_FLAG)) docWorkspace = true
+    }
+    for (let i = 0; i < args.length; i += 1) {
+      if (args[i] === DELEGATED_TARGET_FLAG) {
+        const name = args[i + 1] ?? ''
         if (name !== '') tests.add(name)
       }
     }
@@ -573,30 +711,23 @@ const GATE_WIRING_HOSTS: readonly { rel: string; label: string }[] = [
   { rel: join('.github', 'workflows', 'build.yml'), label: 'CI frontend job' },
 ]
 
-/** 命令行前缀装饰（不含命令语义）：YAML 列表项、workflow 的 `run:` 键、子 shell 括号等。 */
-const COMMAND_DECORATIONS = new Set(['-', 'run:', '(', '&&', ';', '|'])
-
 /**
- * 源码扫描：非注释行里是否出现「`bun` → `scripts/test-exec.ts` → `check`」的命令词序。
+ * 源码扫描：**命令位置**是否出现「`bun` → `scripts/test-exec.ts` → `check`」的命令词序。
  * 按 shell 词切分而非逐字匹配整行——加引号、多空白、`bun --smol` 之类的前置参数、
- * `check` 之后的额外参数都不假红；删掉调用或换成别的子命令（plan/run）即判定未接线。
+ * `check` 之后的额外参数、`command bun …` / `if bun …` / `VAR=x bun …` 都不假红；
+ * 删掉调用或换成别的子命令（plan/run）即判定未接线。
  *
- * 关键约束：`bun` 必须出现在**命令位置**（剥掉 YAML/子 shell 装饰后的首个词）。否则
- * `echo "…（bun scripts/test-exec.ts check）…"` 这类**说明文字**会被误判成接线——实测
- * 把真实 check.sh 的命令改成 `plan` 后，仅剩的 echo 标签行仍能假绿（#1112 审查自证）。
+ * 关键约束：`bun` 必须落在命令位置（见 shellCommands）。否则 `echo "…（bun
+ * scripts/test-exec.ts check）…"` 这类**说明文字**会被误判成接线——实测把真实
+ * check.sh 的命令改成 `plan` 后，仅剩的 echo 标签行仍能假绿（#1112 审查自证）。
  */
 export function gateWiredIn(content: string): boolean {
-  const needle = ['bun', PARALLEL_ENTRY_MARKER, 'check']
-  for (const rawLine of content.split('\n')) {
-    const line = rawLine.trim()
-    if (line === '' || line.startsWith('#')) continue
-    const tokens = line.split(/[\s"'`()[\]{},]+/).filter((t) => t !== '')
-    let start = 0
-    while (start < tokens.length && COMMAND_DECORATIONS.has(tokens[start] as string)) start += 1
-    if (tokens[start] !== needle[0]) continue
+  const needle = [PARALLEL_ENTRY_MARKER, 'check']
+  for (const argv of shellCommands(content)) {
+    if (argv[0] !== 'bun') continue
     let cursor = 0
-    for (let i = start; i < tokens.length; i += 1) {
-      if (tokens[i] === needle[cursor]) cursor += 1
+    for (let i = 1; i < argv.length; i += 1) {
+      if (argv[i] === needle[cursor]) cursor += 1
       if (cursor === needle.length) return true
     }
   }
@@ -700,7 +831,7 @@ export function checkCoverage(rootDir: string): CoverageResult {
   if (doc.length > 0 && wiring.doc && !wiring.docWorkspace) {
     problems.push(
       `✗ 覆盖守门：${TEST_SH_REL} 的 \`${DOC_FLAG}\` 缺 workspace 范围` +
-        `（\`${WORKSPACE_FLAG}\` 或词尾 \`${ALL_FLAG}\`）——非虚拟 workspace 下只跑根包的` +
+        `（\`${WORKSPACE_FLAG}\` 或 \`${ALL_FLAG}\`）——非虚拟 workspace 下只跑根包的` +
         ` doctest，其余成员 crate 的 doc-test 静默漏跑（守门仍绿）`,
     )
   }

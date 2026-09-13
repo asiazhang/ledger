@@ -45,6 +45,8 @@ interface FixtureOverrides {
 const DEFAULT_TEST_SH = [
   '#!/bin/sh',
   'set -eu',
+  '# 入口自检先行（真实 scripts/test.sh 同址接线）',
+  'bun scripts/test-exec.ts check',
   'bun scripts/test-exec.ts',
   '( cd src-tauri && cargo test --workspace --test e2e )',
   '( cd src-tauri && cargo test --workspace --doc )',
@@ -361,6 +363,95 @@ describe('测试执行器两入口覆盖守门（issue #1112）', () => {
     ])
     expect(r.status).toBe(1)
     expect(r.output).toContain('未调用并发入口')
+  })
+
+  it('scripts/test.sh 三条入口全被 echo 包成说明文字 → 红（说明文字不算命令位置）', () => {
+    // 相对固定点的强度削弱（#1112 第三轮审查 P1）：旧判定只看「非注释行含
+    // scripts/test-exec.ts 子串」与「按空白切词找 --test / --doc」，把三条真命令
+    // 全包成 echo "…" 后守门仍绿——而 `./scripts/test.sh` 一条测试都没跑，却因
+    // 三条 echo 全成功而退出 0。判据必须落在命令位置。
+    const r = run([
+      'check',
+      '--root',
+      makeFixture({
+        testSh: [
+          '#!/bin/sh',
+          'set -eu',
+          'bun scripts/test-exec.ts check',
+          'echo "bun scripts/test-exec.ts"',
+          'echo "( cd src-tauri && cargo test --workspace --test e2e )"',
+          'echo "( cd src-tauri && cargo test --workspace --doc )"',
+          '',
+        ].join('\n'),
+      }),
+    ])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('静默漏跑')
+    expect(r.output).toContain('未调用并发入口')
+  })
+
+  it('scripts/test.sh 只留自检行 `… check`、运行行被 echo → 红（自检行不算运行接线）', () => {
+    // 入口自检行与运行行都调 scripts/test-exec.ts：若按子串/词序判「已调用并发入口」，
+    // 删掉运行行只留 `check` 也能假绿，本轮把两者分开（run 才算运行接线）。
+    const r = run([
+      'check',
+      '--root',
+      makeFixture({
+        testSh: [
+          '#!/bin/sh',
+          'set -eu',
+          'bun scripts/test-exec.ts check',
+          'echo "bun scripts/test-exec.ts"',
+          '( cd src-tauri && cargo test --workspace --test e2e )',
+          '( cd src-tauri && cargo test --workspace --doc )',
+          '',
+        ].join('\n'),
+      }),
+    ])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('未调用并发入口')
+  })
+
+  it('scripts/test.sh 合法前缀写法（command / if / VAR=x）仍算运行接线 → 不假红', () => {
+    for (const parallelLine of [
+      'command bun scripts/test-exec.ts',
+      'if bun scripts/test-exec.ts; then :; fi',
+      'LEDGER_JOBS=4 bun scripts/test-exec.ts',
+    ]) {
+      const r = run([
+        'check',
+        '--root',
+        makeFixture({
+          testSh: [
+            '#!/bin/sh',
+            'set -eu',
+            parallelLine,
+            '( cd src-tauri && cargo test --workspace --test e2e )',
+            '( cd src-tauri && cargo test --workspace --doc )',
+            '',
+          ].join('\n'),
+        }),
+      ])
+      expect(r.status, parallelLine).toBe(0)
+    }
+  })
+
+  it('doc 入口用 `--all` 别名（`cargo test --all --doc`）→ 不假红', () => {
+    const r = run([
+      'check',
+      '--root',
+      makeFixture({
+        testSh: [
+          '#!/bin/sh',
+          'set -eu',
+          'bun scripts/test-exec.ts',
+          '( cd src-tauri && cargo test --workspace --test e2e )',
+          '( cd src-tauri && cargo test --all --doc )',
+          '',
+        ].join('\n'),
+      }),
+    ])
+    expect(r.status).toBe(0)
   })
 
   it('manifest 出现 auto* 开关（发现面被改写）→ 红（拒绝猜测）', () => {
