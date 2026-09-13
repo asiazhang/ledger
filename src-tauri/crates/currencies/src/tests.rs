@@ -1,11 +1,12 @@
-use crate::db::query::query_all;
-use crate::error::AppError;
+use ledger_infra::db::query::query_all;
+use ledger_infra::error::AppError;
 
 use super::model::Currency;
 
 fn setup() -> rusqlite::Connection {
-    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
-    crate::test_support::open()
+    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）；
+    // 工厂住根包，经 dev-dependency 测试环消费（#1095，ledger-transaction 同款）。
+    tauri_app_lib::test_support::open()
 }
 
 #[test]

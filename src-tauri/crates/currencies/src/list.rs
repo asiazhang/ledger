@@ -2,8 +2,8 @@
 
 use rusqlite::Connection;
 
-use crate::db::query::query_all;
-use crate::error::Result;
+use ledger_infra::db::query::query_all;
+use ledger_infra::error::Result;
 
 use super::model::Currency;
 

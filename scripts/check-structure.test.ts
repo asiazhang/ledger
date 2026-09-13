@@ -11,6 +11,8 @@ import {
   CATEGORIES_MODULES,
   CATEGORIES_SRC_REL,
   CRATES,
+  CURRENCIES_MODULES,
+  CURRENCIES_SRC_REL,
   DOMAIN_PAIR_ALLOWED_EDGES,
   DOMAIN_PAIR_FORBIDDEN,
   INFRA_MODULES,
@@ -79,6 +81,7 @@ function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, ACCOUNTS_SRC_REL), ACCOUNTS_MODULES)
   writeModuleStubs(join(srcTauri, CATEGORIES_SRC_REL), CATEGORIES_MODULES)
   writeModuleStubs(join(srcTauri, MERCHANTS_SRC_REL), MERCHANTS_MODULES)
+  writeModuleStubs(join(srcTauri, CURRENCIES_SRC_REL), CURRENCIES_MODULES)
 }
 
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
@@ -128,6 +131,13 @@ function isMerchantsModulePath(rel: string): boolean {
   return MERCHANTS_ENTRY_PATHS.has(rel)
 }
 
+/** 币种域 crate 模块路径判定（精确文件名，#1095；与基础设施/交易域清单无交集）。 */
+const CURRENCIES_ENTRY_PATHS = new Set(CURRENCIES_MODULES.map((m) => m.path))
+
+function isCurrenciesModulePath(rel: string): boolean {
+  return CURRENCIES_ENTRY_PATHS.has(rel)
+}
+
 /**
  * 写覆盖文件：按路径首段归位——基础设施模块（`db/…` / `error.rs` / …）落
  * `<srcTauri>/crates/infra/src`，备份域 crate 模块（`auto.rs` / `engine.rs`，#1091）
@@ -150,6 +160,8 @@ function placeOverride(srcTauri: string, relPath: string, content: string): void
           ? join(srcTauri, CATEGORIES_SRC_REL)
         : isMerchantsModulePath(relPath)
           ? join(srcTauri, MERCHANTS_SRC_REL)
+        : isCurrenciesModulePath(relPath)
+          ? join(srcTauri, CURRENCIES_SRC_REL)
           : join(srcTauri, 'src')
   const file = join(base, relPath)
   mkdirSync(join(file, '..'), { recursive: true })
@@ -756,6 +768,8 @@ interface CrateFixtureOverrides {
   categoriesManifest?: string
   /** 覆盖商户域 crate 的 `crates/merchants/Cargo.toml`（依赖方向负向夹具，#1096） */
   merchantsManifest?: string
+  /** 覆盖币种域 crate 的 `crates/currencies/Cargo.toml`（依赖方向负向夹具，#1095） */
+  currenciesManifest?: string
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string
   /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
@@ -1010,6 +1024,28 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   )
   writeFileSync(join(srcTauri, 'crates', 'merchants', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
+  // 币种域 crate（#1095，P3 叶子域）：夹具与真实仓库同形——成员目录 + 门禁继承 +
+  // dev-dependency 测试环。
+  mkdirSync(join(srcTauri, 'crates', 'currencies', 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'crates', 'currencies', 'Cargo.toml'),
+    overrides.currenciesManifest ??
+      [
+        '[package]',
+        'name = "ledger-currencies"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[dev-dependencies]',
+        'tauri-app = { path = "../.." }',
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
+  )
+  writeFileSync(join(srcTauri, 'crates', 'currencies', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
   writeFileSync(
@@ -1203,6 +1239,18 @@ describe('check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
     })
     const r = run(args)
     expect(r.status).toBe(0)
+  })
+
+  it('币种域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1095）', () => {
+    const args = makeCrateFixture({
+      currenciesManifest:
+        '[package]\nname = "ledger-currencies"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 依赖方向')
+    expect(r.output).toContain('ledger-currencies')
   })
 })
 
