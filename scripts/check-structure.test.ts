@@ -8,6 +8,8 @@ import {
   ACCOUNTS_SRC_REL,
   BACKUP_MODULES,
   BACKUP_SRC_REL,
+  CATEGORIES_MODULES,
+  CATEGORIES_SRC_REL,
   CRATES,
   DOMAIN_PAIR_ALLOWED_EDGES,
   DOMAIN_PAIR_FORBIDDEN,
@@ -73,6 +75,7 @@ function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, BACKUP_SRC_REL), BACKUP_MODULES)
   writeModuleStubs(join(srcTauri, TRANSACTION_SRC_REL), TRANSACTION_MODULES)
   writeModuleStubs(join(srcTauri, ACCOUNTS_SRC_REL), ACCOUNTS_MODULES)
+  writeModuleStubs(join(srcTauri, CATEGORIES_SRC_REL), CATEGORIES_MODULES)
 }
 
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
@@ -104,13 +107,23 @@ function isAccountsModulePath(rel: string): boolean {
   return ACCOUNTS_ENTRY_PATHS.has(rel)
 }
 
+/** 分类域 crate 模块路径判定（精确文件名，#1094；排在交易域之后——`command.rs`
+ *  / `model.rs` 两名与交易域清单撞名，撞名条目优先落交易域，夹具对分类域只用
+ *  无撞名的 `core.rs`）。 */
+const CATEGORIES_ENTRY_PATHS = new Set(CATEGORIES_MODULES.map((m) => m.path))
+
+function isCategoriesModulePath(rel: string): boolean {
+  return CATEGORIES_ENTRY_PATHS.has(rel)
+}
+
 /**
  * 写覆盖文件：按路径首段归位——基础设施模块（`db/…` / `error.rs` / …）落
  * `<srcTauri>/crates/infra/src`，备份域 crate 模块（`auto.rs` / `engine.rs`，#1091）
  * 落 `<srcTauri>/crates/backup/src`，核心交易域 crate 模块（#1092）与账户域 crate
- * 模块（#1093）各自落同名 crate，其余（域目录、壳层 `commands/` 等）落
- * `<srcTauri>/src`。账户域在交易域之后判定：`model.rs` / `command.rs` 两名
- * 为交易域清单先行占有（与 placeOverride 的先后链一致）。
+ * 模块（#1093）、分类域 crate 模块（#1094）各自落同名 crate，其余（域目录、壳层
+ * `commands/` 等）落 `<srcTauri>/src`。账户域与分类域在交易域之后判定：
+ * `model.rs` / `command.rs` 两名为交易域清单先行占有（与 placeOverride 的先后链
+ * 一致）。
  */
 function placeOverride(srcTauri: string, relPath: string, content: string): void {
   const base = isInfraModulePath(relPath)
@@ -121,6 +134,8 @@ function placeOverride(srcTauri: string, relPath: string, content: string): void
         ? join(srcTauri, TRANSACTION_SRC_REL)
         : isAccountsModulePath(relPath)
           ? join(srcTauri, ACCOUNTS_SRC_REL)
+        : isCategoriesModulePath(relPath)
+          ? join(srcTauri, CATEGORIES_SRC_REL)
           : join(srcTauri, 'src')
   const file = join(base, relPath)
   mkdirSync(join(file, '..'), { recursive: true })
@@ -723,6 +738,8 @@ interface CrateFixtureOverrides {
   transactionManifest?: string
   /** 覆盖账户域 crate 的 `crates/accounts/Cargo.toml`（依赖方向负向夹具，#1093） */
   accountsManifest?: string
+  /** 覆盖分类域 crate 的 `crates/categories/Cargo.toml`（依赖方向负向夹具，#1094） */
+  categoriesManifest?: string
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string
   /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
@@ -932,6 +949,28 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
       ].join('\n'),
   )
   writeFileSync(join(srcTauri, 'crates', 'accounts', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
+  // 分类域 crate（#1094，P3 叶子域）：夹具与真实仓库同形——成员目录 + 门禁继承
+  // + dev-dependency 测试环。
+  mkdirSync(join(srcTauri, 'crates', 'categories', 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'crates', 'categories', 'Cargo.toml'),
+    overrides.categoriesManifest ??
+      [
+        '[package]',
+        'name = "ledger-categories"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[dev-dependencies]',
+        'tauri-app = { path = "../.." }',
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
+  )
+  writeFileSync(join(srcTauri, 'crates', 'categories', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
@@ -1231,6 +1270,52 @@ describe('check-structure 账户域 crate（#1093 叶子业务域 crate 自根�
 
   it('账户域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
     // 缺省 accountsManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
+  })
+})
+
+describe('check-structure 分类域 crate（#1094 P3 叶子域自根包拆出）', () => {
+  it('真实仓库默认通过：分类域 crate 模块级扫描入摘要', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`分类域模块 ${CATEGORIES_MODULES.length} 项`)
+  })
+
+  it('分类域 crate 模块引用壳层 → 红并定位文件行号', () => {
+    // 'core.rs' 无撞名（`command.rs` / `model.rs` 与交易域清单撞名，路由优先
+    // 落交易域），经 placeOverride 落分类域 crate（CATEGORIES_MODULES 派生路由）。
+    const args = makeFixture({ 'core.rs': shellUse })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('反向依赖')
+    expect(r.output).toContain('core.rs:1')
+  })
+
+  it('分类域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）', () => {
+    const args = makeFixture({
+      'core.rs': 'use tauri_app_lib::sync_engine::engine::ReplayEffect;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域')
+    expect(r.output).toContain('core.rs:1')
+  })
+
+  it('分类域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面）', () => {
+    const args = makeCrateFixture({
+      categoriesManifest:
+        '[package]\nname = "ledger-categories"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 依赖方向')
+    expect(r.output).toContain('ledger-categories')
+  })
+
+  it('分类域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
+    // 缺省 categoriesManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
     const r = run(makeCrateFixture())
     expect(r.status).toBe(0)
   })

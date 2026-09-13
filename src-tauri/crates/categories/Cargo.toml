@@ -1,0 +1,36 @@
+[package]
+name = "ledger-categories"
+version = "0.6.0"
+description = "Ledger 分类域 crate：分类 CRUD、自然键幂等创建、两级分类校验、预算删除守卫与排序重排（Category）"
+edition = "2024"
+publish = false
+# 版本与根包锁步（仓库约定：workspace 各成员同为 0.6.0）。
+
+[dependencies]
+# 分类域 crate（spec #1086 / issue #1094，P3 叶子域，参考数据三域各自独立
+# crate 不合并）：依赖面是「基础设施、协议、核心交易域」允许集的子集——本域
+# 只消费基础设施（db / error）与同步协议（SyncCommand / op 产出 / 设备标识），
+# 对交易域与任何业务域、根包（壳层）零依赖。对壳层/域目录的反向引用由生产
+# 依赖面编译期拒绝（本 crate 声明 tauri-app 为生产依赖即红，负向夹具见
+# check-structure.test.ts）。
+ledger-infra = { path = "../infra" }
+ledger-sync-protocol = { path = "../sync-protocol" }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+serde = { version = "1", features = ["derive"] }
+utoipa = { version = "5", features = ["axum_extras"] }
+
+[dev-dependencies]
+# 测试专用边（spec #1086 明文裁决「测试工厂与器具以 dev-dependency 环供各域
+# 复用，Cargo 允许」）：域单测用根包的统一测试数据库工厂（test_support，
+# ADR-0084）建库。dev-dependency 环由 Cargo 允许——测试目标与生产依赖图分离，
+# 不构成生产环；结构守门的依赖方向核对只辖生产依赖。由于该环，本 crate 不能
+# 像协议 crate 那样以 `use tauri_app_lib::…` compile_fail 文档用例承载反向引用
+# 负向例（dev-dependency 对 doctest 可见，会击穿该形态）——反向引用的编译期
+# 拒绝由生产依赖面承担（lib 目标解析不到 dev-dependency），机器面负向核对住
+# 结构守门的 crate 依赖方向（ledger-transaction crate 同款留痕）。
+tauri-app = { path = "../.." }
+
+# 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+[lints]
+workspace = true

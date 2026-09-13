@@ -2608,6 +2608,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ledger-categories"
+version = "0.6.0"
+dependencies = [
+ "ledger-infra",
+ "ledger-sync-protocol",
+ "rusqlite",
+ "serde",
+ "tauri-app",
+ "utoipa",
+]
+
+[[package]]
 name = "ledger-infra"
 version = "0.6.0"
 dependencies = [
@@ -4790,6 +4802,7 @@ dependencies = [
  "http-body-util",
  "ledger-accounts",
  "ledger-backup",
+ "ledger-categories",
  "ledger-infra",
  "ledger-sync-protocol",
  "ledger-transaction",

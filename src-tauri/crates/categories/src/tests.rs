@@ -1,12 +1,16 @@
-use crate::db::query::query_all;
-use crate::db::{new_uuid, now_iso};
+use ledger_infra::db::query::query_all;
+use ledger_infra::db::{new_uuid, now_iso};
+use ledger_infra::error::{AppError, ErrClass};
 use ledger_sync_protocol::device::device_id;
 
 use super::model::Category;
 
 fn setup() -> rusqlite::Connection {
     // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
-    crate::test_support::open()
+    // 工厂住根包（tauri_app_lib），经 dev-dependency 环消费（本 crate Cargo.toml
+    // 注释留痕）；本域无接缝静态，直接驱动本实例与根包图实例等价（lib.rs
+    // 「测试实例纪律」段）。
+    tauri_app_lib::test_support::open()
 }
 
 fn list_categories(conn: &rusqlite::Connection) -> Vec<Category> {
@@ -112,8 +116,8 @@ fn delete_category_returns_not_found_for_missing_id() {
     let err = super::delete_category(&conn, "不存在的id").unwrap_err();
     assert!(matches!(
         err,
-        crate::error::AppError::Coded {
-            class: crate::error::ErrClass::NotFound,
+        AppError::Coded {
+            class: ErrClass::NotFound,
             ..
         }
     ));
@@ -136,8 +140,8 @@ fn delete_category_returns_not_found_for_already_deleted() {
     assert!(
         matches!(
             err,
-            crate::error::AppError::Coded {
-                class: crate::error::ErrClass::NotFound,
+            AppError::Coded {
+                class: ErrClass::NotFound,
                 ..
             }
         ),
@@ -179,7 +183,7 @@ fn delete_category_rejects_when_undeleted_budget_exists() {
     insert_budget_row(&conn, &id, 0);
     let err = super::delete_category(&conn, &id).unwrap_err();
     match err {
-        crate::error::AppError::Coded { code, message, .. } => {
+        AppError::Coded { code, message, .. } => {
             assert_eq!(code, "category.has-budget");
             assert!(
                 message.contains("请先删除对应预算"),
