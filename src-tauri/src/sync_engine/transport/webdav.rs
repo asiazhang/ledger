@@ -14,7 +14,9 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 
 use crate::error::{AppError, Result};
 
-use super::{Transport, auth_failed_error, http_failed_error, network_failed_error};
+use super::{
+    Transport, auth_failed_error, http_failed_error, network_failed_error, validate_logical_path,
+};
 
 /// WebDAV 连接配置（凭据与根目录；持久化归 #862 壳层设置面）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,17 +84,7 @@ impl WebDavTransport {
 
     /// 逻辑路径 → 完整 URL（路径段仅允许布局规则产出的安全字符；`..` 拒绝）。
     fn url_for(&self, path: &str) -> Result<String> {
-        if path.is_empty()
-            || path
-                .split('/')
-                .any(|seg| seg.is_empty() || seg == "." || seg == "..")
-        {
-            return Err(AppError::codedp(
-                "sync-channel.path-invalid",
-                format!("同步通道路径非法: {path}"),
-                &[path],
-            ));
-        }
+        validate_logical_path(path)?;
         Ok(format!("{}/{path}", self.base_url))
     }
 

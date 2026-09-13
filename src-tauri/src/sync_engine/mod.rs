@@ -15,8 +15,8 @@
 //!   Checkpoint 通道传递与新端取件。
 //! - [`trigger`]：触发编排（issue #863）——通道配置与构库单点、轮次编排与挂起
 //!   通知数据面、打开应用即同步与运行期低频轮询、会话密钥形态判定的信封模式。
-//! - [`transport`]：Transport 哑字节通道抽象（v1 内置 WebDAV 后端，两端同一
-//!   代码路径）。
+//! - [`transport`]：Transport 哑字节通道抽象（内置 WebDAV 与 S3 兼容对象存储
+//!   后端，两端同一代码路径）。
 //! - 位点与设备标识、op 行落库/读取（`sync_stream_positions` / `sync_device` /
 //!   `sync_ops` 表的唯一 SQL 收口）自 #1089 起下放协议 crate
 //!   `ledger-sync-protocol`（rank 0，业务域与 sync_engine 共同底座）；本域经
@@ -74,6 +74,7 @@ pub use model::SyncOp;
 pub use parked::ParkedOp;
 pub use transport::{
     Transport,
+    s3::{S3Config, S3Transport},
     webdav::{WebDavConfig, WebDavTransport},
 };
 pub use trigger::{

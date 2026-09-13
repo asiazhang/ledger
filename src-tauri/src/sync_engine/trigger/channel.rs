@@ -14,6 +14,7 @@ use crate::sync_engine::channel::{
     fetch_checkpoint, peek_checkpoint_pointer, publish_checkpoint, run_round_with,
 };
 use crate::sync_engine::envelope::EnvelopeMode;
+use crate::sync_engine::transport::Transport;
 use crate::sync_engine::transport::webdav::{WebDavConfig, WebDavTransport};
 
 /// 通道空间默认值（同步世界身份的 v1 共识形态，见 [`SyncChannelConfig::space_id`]）。
@@ -52,16 +53,23 @@ fn default_space_id() -> String {
 /// 不必解包传输与布局（issue #958 对 `transport()`/`layout()` 中间人的处置）。
 /// 两个访问器保留给测试夹具直接读写通道产物（e2e 读 manifest、投递坏段），
 /// 生产轮次不经它们解包。
-#[derive(Debug)]
 pub struct SyncChannel {
-    transport: WebDavTransport,
+    transport: Box<dyn Transport>,
     layout: ChannelLayout,
+}
+
+impl std::fmt::Debug for SyncChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SyncChannel")
+            .field("layout", &self.layout)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SyncChannel {
     /// 传输后端（测试夹具读通道产物用；生产轮次走 [`SyncChannel::run_round`]）。
-    pub fn transport(&self) -> &WebDavTransport {
-        &self.transport
+    pub fn transport(&self) -> &dyn Transport {
+        self.transport.as_ref()
     }
 
     /// 通道布局（同上）。
@@ -80,13 +88,13 @@ impl SyncChannel {
         mode: &EnvelopeMode<'_>,
         options: &ChannelOptions,
     ) -> Result<SyncRoundReport> {
-        run_round_with(conn, &self.transport, &self.layout, mode, options)
+        run_round_with(conn, self.transport.as_ref(), &self.layout, mode, options)
     }
 
     /// 读取通道上的当前检查点指针（不下载快照体；新端引导前的预检接缝，
     /// 壳层向导据此区分「通道上还没有检查点」与「发现检查点可引导」，#864）。
     pub fn checkpoint_pointer(&self) -> Result<Option<CheckpointPointer>> {
-        peek_checkpoint_pointer(&self.transport, &self.layout)
+        peek_checkpoint_pointer(self.transport.as_ref(), &self.layout)
     }
 
     /// 发布检查点（全量快照 + 位点成对封包上通道，manifest 换指针）：
@@ -99,14 +107,14 @@ impl SyncChannel {
         conn: &Connection,
         mode: &EnvelopeMode<'_>,
     ) -> Result<CheckpointPointer> {
-        publish_checkpoint(conn, &self.transport, &self.layout, mode)
+        publish_checkpoint(conn, self.transport.as_ref(), &self.layout, mode)
     }
 
     /// 拉取通道上的当前检查点（新端引导取件；解封凭主口令，明文模式免口令）。
     /// 返回值携带封包形态标记（[`FetchedCheckpoint::sealed`]），引导端据此
     /// 对齐本库加密形态（#864）。
     pub fn fetch_checkpoint(&self, passphrase: Option<&str>) -> Result<FetchedCheckpoint> {
-        fetch_checkpoint(&self.transport, &self.layout, passphrase)
+        fetch_checkpoint(self.transport.as_ref(), &self.layout, passphrase)
     }
 }
 
@@ -124,5 +132,8 @@ pub fn build_channel(config: &SyncChannelConfig) -> Result<SyncChannel> {
         password: config.password.clone(),
     })?;
     let layout = ChannelLayout::new(&config.space_id)?;
-    Ok(SyncChannel { transport, layout })
+    Ok(SyncChannel {
+        transport: Box::new(transport),
+        layout,
+    })
 }
