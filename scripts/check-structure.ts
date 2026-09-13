@@ -109,7 +109,6 @@ export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'item', layer: '域目录', note: '物品域（#397 阶段 1 归位，主体自 commands/item 随迁）' },
   { path: 'policy', layer: '域目录', note: '保单域（#398 阶段 2 归位）' },
   { path: 'budget', layer: '域目录', note: '预算域（#399 阶段 3 归位）' },
-  { path: 'merchants', layer: '域目录', note: '商户域（#400 阶段 4 归位）' },
   { path: 'physical_asset', layer: '域目录', note: '实物资产域（issue #466 新建即归位，ADR-0064）' },
   { path: 'investment', layer: '域目录', note: '投资域（#401 阶段 5 归位，主体自 commands/investment 随迁；价格写入单点自 sync/persist 迁入）' },
   { path: 'currencies', layer: '域目录', note: '币种域（#404 参考数据域归位，清单查询自 commands/currencies 迁入）' },
@@ -290,6 +289,24 @@ interface TransactionZoneEdge {
 export const TRANSACTION_ZONE_ALLOWED_EDGES: readonly TransactionZoneEdge[] = []
 
 /**
+ * 商户域 crate 的模块清单（spec #1086 / issue #1096）：路径相对
+ * `src-tauri/crates/merchants/src`。参考数据三域各自独立 crate、不合并（spec
+ * #1086 裁决）——商户字典的 CRUD 与按名查找/即建。对壳层与同步域零容忍照扫
+ *（与备份/交易 crate 同款，清单条目 layer 为域目录即入业务域扫描面）；对核心
+ * 交易域的引用是合法域→域上层依赖（交易×商户接缝的实现注册侧，#1092），由
+ * cargo 依赖图与 CRATES 分层核对承担，文本扫描不再辖。crate 根 lib.rs 是声明
+ * 与再导出面（无守门靶向代码），与协议/备份/交易 crate 同款不入清单。
+ */
+export const MERCHANTS_MODULES: readonly WhitelistEntry[] = [
+  { path: 'command.rs', layer: '域目录', note: '商户同步命令（op 载荷形态、产出单点与重放分派，issue #860）' },
+  { path: 'crud.rs', layer: '域目录', note: '商户字典域行为（列表/创建/改名/软删 + 按名查找/即建 + 交易×商户接缝实现注册，#1092）' },
+  { path: 'model.rs', layer: '域目录', note: '商户域模型（#419 随域归位）' },
+]
+
+/** 商户域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-merchants.dir 同源。 */
+export const MERCHANTS_SRC_REL = 'crates/merchants/src'
+
+/**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
  * 与上面的 `LAYER`（单 crate 内的**模块路径**分层：域目录 / 基础设施）刻意分开——
  * 两者是不同粒度的事实源，同名值不合并（合并只会让任一侧语义被动漂移）。
@@ -370,6 +387,12 @@ export const CRATES: readonly CrateEntry[] = [
     dir: 'crates/categories',
     layer: CRATE_LAYER.DOMAIN,
     note: '分类域 crate（#1094，P3 叶子域，参考数据三域各自独立 crate 不合并：分类 CRUD/幂等创建/预算删除守卫/排序重排）；依赖面只有基础设施与同步协议（允许集「基础设施、协议、核心交易域」的子集，对交易域亦零依赖），无接缝无注册点、壳层启动零接线，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
+  },
+  {
+    name: 'ledger-merchants',
+    dir: 'crates/merchants',
+    layer: CRATE_LAYER.DOMAIN,
+    note: '商户域 crate（#1096，参考数据三域各自独立 crate、不合并：商户字典 CRUD 与按名查找/即建）；依赖面只有基础设施、同步协议与核心交易域——交易×商户接缝（#1092）的实现注册侧是域→域合法上层依赖（商户 → 核心交易单向），对壳层与同步域零直接依赖，反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）',
   },
 ]
 
@@ -1696,6 +1719,7 @@ function main(): void {
       ...collectRustFiles(join(srcTauriDir, TRANSACTION_SRC_REL), TRANSACTION_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, ACCOUNTS_SRC_REL), ACCOUNTS_SRC_REL),
       ...collectRustFiles(join(srcTauriDir, CATEGORIES_SRC_REL), CATEGORIES_SRC_REL),
+      ...collectRustFiles(join(srcTauriDir, MERCHANTS_SRC_REL), MERCHANTS_SRC_REL),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -1752,6 +1776,7 @@ function main(): void {
   scannedFiles += scanModuleEntries(TRANSACTION_MODULES, join(srcTauriDir, TRANSACTION_SRC_REL), problems)
   scannedFiles += scanModuleEntries(ACCOUNTS_MODULES, join(srcTauriDir, ACCOUNTS_SRC_REL), problems)
   scannedFiles += scanModuleEntries(CATEGORIES_MODULES, join(srcTauriDir, CATEGORIES_SRC_REL), problems)
+  scannedFiles += scanModuleEntries(MERCHANTS_MODULES, join(srcTauriDir, MERCHANTS_SRC_REL), problems)
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -1787,6 +1812,7 @@ function main(): void {
       `+ 核心交易域模块 ${TRANSACTION_MODULES.length} 项（crate ${TRANSACTION_SRC_REL}，#1092）` +
       `+ 账户域模块 ${ACCOUNTS_MODULES.length} 项（crate ${ACCOUNTS_SRC_REL}，#1093）` +
       `+ 分类域模块 ${CATEGORIES_MODULES.length} 项（crate ${CATEGORIES_SRC_REL}，#1094）` +
+      `+ 商户域模块 ${MERCHANTS_MODULES.length} 项（crate ${MERCHANTS_SRC_REL}，#1096）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +

@@ -34,7 +34,12 @@ pub mod currencies;
 pub mod dashboard;
 pub mod investment;
 pub mod item;
-pub mod merchants;
+// 商户域 crate（spec #1086 / issue #1096，参考数据三域各自独立 crate）：自根包
+// 域目录拆出，根包以再导出形态保留原引用路径——壳层（IPC/HTTP 命令）、
+// transaction_wiring 接线、sync_engine 重放分派与 e2e 的
+// `crate::merchants::…` / `tauri_app_lib::merchants::…` 调用点零改动
+//（expand 形态，ledger-backup/ledger-transaction 同款）。
+pub use ledger_merchants as merchants;
 pub mod physical_asset;
 pub mod policy;
 pub mod reports;

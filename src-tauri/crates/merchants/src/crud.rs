@@ -9,10 +9,10 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::db::query::query_all;
-use crate::db::tx_scope::ensure_transaction;
-use crate::db::{new_uuid, now_iso};
-use crate::error::{AppError, Result};
+use ledger_infra::db::query::query_all;
+use ledger_infra::db::tx_scope::ensure_transaction;
+use ledger_infra::db::{new_uuid, now_iso};
+use ledger_infra::error::{AppError, Result};
 use ledger_sync_protocol::device::device_id;
 
 use super::command::{MerchantCommand, record_local};
@@ -266,8 +266,8 @@ pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
 /// 注册商户名归一化实现（核心交易域 `transaction::seams::merchant` 注册点，#1092）：
 /// 把按名查找与按名即建两支实现原子装入，壳层启动接线，业务代码不直接调用。
 pub fn install_merchant_hooks() {
-    crate::transaction::seams::merchant::register_merchant_hooks(
-        crate::transaction::seams::merchant::MerchantNameHooks {
+    ledger_transaction::seams::merchant::register_merchant_hooks(
+        ledger_transaction::seams::merchant::MerchantNameHooks {
             find_by_name: find_merchant_by_name,
             create_by_name: create_merchant_by_name,
         },
