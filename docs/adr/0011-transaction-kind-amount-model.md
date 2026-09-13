@@ -4,6 +4,8 @@
 - 日期：2026-08-25
 - 作者：Ledger 项目
 
+> 坐标注记（#1262）：本文写于 #401 域归位与后续 crate 拆分前。原文历史坐标为 Writer `src-tauri/src/transaction/writer.rs`、Amount `src-tauri/src/transaction/amount.rs`、写命令接线 `commands/transactions/write.rs`、领域模块 `src-tauri/src/transaction/{mod,amount,writer}.rs`、消费方 `db/balance.rs` / `reports` / `budget` / `scheduled_transactions/engine` / `commands/batch` / `commands/transactions` / `commands/investment`、删除项 `commands::fx::exchange_rate` / `convert_to_native` / `read.rs::update_transaction_row`。现役落点为 `ledger-transaction` crate 与各消费域；下文坐标按现行约定只写域 / crate 级。
+
 ## 背景
 
 「交易如何落库」与「金额如何折算」在 Ledger 里没有单一权威，导致三类问题：
@@ -17,8 +19,8 @@
 ## 决策
 
 1. **`transaction` 领域模块为唯一真源，含两个接缝：**
-   - **Writer 接缝**（`src-tauri/src/transaction/writer.rs`）：列映射 + 字段归一化 + 本位币折算 + INSERT/UPDATE。`normalize`（通用 kind：金额>0、transfer 必须有 `to_account_id`、refund 继承原支出账户/币种/分类）+ `insert_row`（模块内生成 id 与审计字段）+ `update_row`（保留 created_at 与幂等身份，version 递增）。所有写入路径（创建/修改、买入/卖出行、定时引擎、批量导入）都经它落库；幂等/去重、事务边界、buy/sell 持仓副作用留在命令层编排。
-   - **Amount 接缝**（`src-tauri/src/transaction/amount.rs`）：`TransactionKind` 枚举（8 种，唯一表示；DB/wire 边界的小写字符串映射经 `as_str`/`parse` 收口，serde 小写字符串序列化）+ kind→度量系数矩阵 + `convert_to_native` 本位币折算。
+   - **Writer 接缝**（transaction 域 `ledger-transaction` crate）：列映射 + 字段归一化 + 本位币折算 + INSERT/UPDATE。`normalize`（通用 kind：金额>0、transfer 必须有 `to_account_id`、refund 继承原支出账户/币种/分类）+ `insert_row`（模块内生成 id 与审计字段）+ `update_row`（保留 created_at 与幂等身份，version 递增）。所有写入路径（创建/修改、买入/卖出行、定时引擎、批量导入）都经它落库；幂等/去重、事务边界、buy/sell 持仓副作用留在命令层编排。
+   - **Amount 接缝**（transaction 域 `ledger-transaction` crate）：`TransactionKind` 枚举（8 种，唯一表示；DB/wire 边界的小写字符串映射经 `as_str`/`parse` 收口，serde 小写字符串序列化）+ kind→度量系数矩阵 + `convert_to_native` 本位币折算。
 2. **kind 真源为 8 种**，与 `transactions.kind` 的 CHECK 约束（V001）一一对应：
    `income` / `expense` / `transfer` / `refund` / `buy` / `sell` / `dividend` / `split`。
 3. **raw/native 分离语义唯一。** `amount_cents`（原始币种金额）与 `amount_native_cents`（本位币金额）在模块内语义唯一；`convert_to_native` 以**全局默认币种**（当前常量 `CNY`，未来读用户设置）为折算基准，**与账户币种无关**（避免跨账户漂移），正反向汇率兜底、缺汇率报错不静默混币种。MVP 阶段多币种汇率 1:1 保持不变。
@@ -51,7 +53,7 @@
 ## 代价
 
 1. **行为保持重构，收益在"未来改动成本"而非当下功能。** 当前 MVP 多币种 1:1，矩阵与折算的差异暂不可见；真实收益在汇率生效、新增 kind 时兑现。
-2. **命令层与领域模块之间存在接线转换。** `TransactionInput` ↔ `writer::Input`、`NormalizedTransaction` ↔ `writer::NormalizedRow` 需要字段映射（`commands/transactions/write.rs` 的 `to_writer_input`/`to_writer_row`），多一层薄转换。
+2. **命令层与领域模块之间存在接线转换。** `TransactionInput` ↔ `writer::Input`、`NormalizedTransaction` ↔ `writer::NormalizedRow` 需要字段映射（壳层交易写命令的 `to_writer_input`/`to_writer_row`），多一层薄转换。
 3. **buy/sell 的行归一化仍留在投资层**（`prepare_buy`/`prepare_sell` 产出 `NormalizedTransaction` 后经 `to_writer_row` 落库）；持仓/卖出副作用仍与交易写入耦合，属 spec #52 明确的"候选 2"（交易类型行为内聚）未处理项。
 
 ## 替代方案
@@ -63,8 +65,8 @@
 
 ## 影响
 
-- `transaction` 领域模块：`src-tauri/src/transaction/{mod,amount,writer}.rs`（+ 各自测试）。
-- 消费方接线：余额（`db/balance.rs` 走 `account_flow_expr`）、报表（`reports` 域走毛值三列 + `expense_net`/`income_net`）、预算（`budget` 域走 `expense_net`）、定时引擎（`scheduled_transactions/engine` 改经 `writer::normalize` 落库）、批量导入（`commands/batch` 编排 + writer 落库）、创建/修改/买入卖出行（`commands/transactions`/`commands/investment`）。
-- 删除：命令层旧 `normalize_transaction`/`row_to_normalized`（#61）、`commands::fx::exchange_rate`/`convert_to_native`（#60）、`read.rs::update_transaction_row`（#60）。
+- `transaction` 领域模块（`ledger-transaction` crate，含 Writer / Amount 接缝与各自测试）。
+- 消费方接线：余额（账户域余额计算走 `account_flow_expr`）、报表（报表域走毛值三列 + `expense_net`/`income_net`）、预算（预算域走 `expense_net`）、定时引擎（定时计划域改经 `writer::normalize` 落库）、批量导入（壳层批量导入编排 + writer 落库）、创建/修改/买入卖出行（交易与投资域写命令）。
+- 删除：命令层旧 `normalize_transaction`/`row_to_normalized`（#61）、旧 fx 折算助手（#60）、旧交易行更新助手（#60）。
 - 文档同步：`AGENTS.md` 修正 `transactions.kind` 为 8 种并指向模块接缝；`CONTEXT.md` 补充 Transaction Kind Mapping（8 种 + 度量矩阵）与 Amount Model（raw/native + 四度量）。
 - 无 schema 变更、无迁移（V001 的 CHECK 约束本就含 8 种 kind）。

@@ -7,7 +7,7 @@
 
 ## 背景
 
-基金与股票的新增标的路径各走三段同形阶梯——取行情（行情同步域 `ledger-market-sync` crate 网络层 `fetch_fund_quote_production`（`src-tauri/crates/market-sync/src/fund.rs:194`）/ `fetch_stock_quote_production`（`src-tauri/crates/market-sync/src/stock.rs:174`））→ 按代码解析/建档（investment 域 `add_fund_by_code_with`（`src-tauri/src/investment/fund.rs:139`）/ `fetch_stock_quote_for_add`（`src-tauri/src/investment/stock.rs:222`）+ `persist_fund_detail`（`src-tauri/src/investment/fund.rs:93`）/ `persist_stock_quote`（`src-tauri/src/investment/stock.rs:362`））→ 落价格（`upsert_market_price`，`src-tauri/src/investment/prices.rs:65`）。形状经 ADR-0038/0039/0081 演进已经对齐：注入拉取闭包同构（慢闭包在连接锁外）、persist 均为「建档 + 落价」一体。但接缝没有名字：payload 各写一份（`FundDetail` / `StockQuote` 同构不同形）、拉取闭包签名各异（`FnMut(&str)` vs `FnMut(&str, &str)`）、`upsert_market_price` 以 conn + 6 个业务位置参数暴露，7 个生产调用点各自重新记忆 `nav_date` / `source` 的通道语义。壳层编排节奏也不相同：基金 IPC 一枪式（查询即落库）、股票对话框两段式（查询回显、确认后落库）、AI 创建端点直调 persist。
+基金与股票的新增标的路径各走三段同形阶梯——取行情（行情同步域 `ledger-market-sync` crate 网络层 `fetch_fund_quote_production`（`src-tauri/crates/market-sync/src/fund.rs:194`）/ `fetch_stock_quote_production`（`src-tauri/crates/market-sync/src/stock.rs:174`））→ 按代码解析/建档（投资域 `ledger-investment` crate：`add_fund_by_code_with` / `fetch_stock_quote_for_add` + `persist_fund_detail`（现役名 `adopt_fund_quote`）/ `persist_stock_quote`（现役名 `adopt_stock_quote`））→ 落价格（同域 `upsert_market_price`）。形状经 ADR-0038/0039/0081 演进已经对齐：注入拉取闭包同构（慢闭包在连接锁外）、persist 均为「建档 + 落价」一体。但接缝没有名字：payload 各写一份（`FundDetail` / `StockQuote` 同构不同形）、拉取闭包签名各异（`FnMut(&str)` vs `FnMut(&str, &str)`）、`upsert_market_price` 以 conn + 6 个业务位置参数暴露，7 个生产调用点各自重新记忆 `nav_date` / `source` 的通道语义。壳层编排节奏也不相同：基金 IPC 一枪式（查询即落库）、股票对话框两段式（查询回显、确认后落库）、AI 创建端点直调 persist。
 
 ## 决策
 
@@ -16,7 +16,7 @@
 3. **边界：手动报价与标的信息同步留接缝外**。手动报价无查询步骤（用户直给日期 + 价）且落库形状不同（两落点 + 最新点映像规则 + op 产出）；标的信息同步是批量编排（分批报价 + 日 K 回填 + 确定进度 + 净值水位增量）。接缝语义收窄为「按代码从数据源取行情 → 建档 → 落价」的**新增标的路径**；三条价格写入路径（手动 / 同步 / 新增标的）共用价格写入单点——共用发生在写入单点层，不在接缝层。
 4. **价格写入单点改命名参数入口**：conn + 6 业务位置参数收敛为单一输入结构（含净值日期成员），不搞 builder。`source` 维持字符串词表**不 enum 化**——重放与既有写价命令两处透传 `Option<&str>` 是已发布行为，enum 化引入「未知值拒绝」的行为变化，违反纯重构纪律，类型化另立议题。通道语义留在各自通道、不收进写入单点：股票现价 `priced_at` = 写入时刻、基金 = 净值日期、净值水位比较归净值通道、最新点映像归手动报价。
 5. **契约零变化**：IPC / HTTP / AI 契约、错误码、schema 零变化；`AddFundResult` / `AddStockInstrumentResult` 回显投影保持各自形状。纯重构。
-6. **定序：与 #1005（lots / unwind 拆模块）无阻塞**。文件面不重叠（#1005 动 trade / behavior 与新增 lots / unwind；本票动 fund / stock / prices 与 sync 侧），可并行；共同触碰点仅 `investment/mod.rs` 模块声明，后者合入时一次 rebase。若实际串行执行，本票先行（体量小、不碰 trade）。
+6. **定序：与 #1005（lots / unwind 拆模块）无阻塞**。工作面不重叠（#1005 动投资域 trade / behavior 与新增 lots / unwind；本票动投资域行情接入与价格写入面、行情同步侧），可并行；共同触碰点仅投资域模块声明，后者合入时一次 rebase。若实际串行执行，本票先行（体量小、不碰 trade）。
 
 ## 理由
 
@@ -48,3 +48,4 @@
 
 - 2026-09-12 grilling 复核（模型审查）：决策 5 的「错误码零变化」与实现不符——同批实施引入并使用新码 `quote.market-missing`（中英模板同步）。纯重构的其余部分（契约形状、`source` 不 enum 化、schema 零变化）不变；新码随实际行为保留，本决策表述按实现改正。
 - 2026-09-13 随 spec #1086 / issue #1106 行情同步域拆 crate（`src-tauri/crates/market-sync`），背景段的行情同步域代码坐标自 `src-tauri/src/sync/…` 同步至新 crate；`fetch_fund_detail_production` 按可验证行为正名为 `fetch_fund_quote_production`（旧名在本文落笔时即已失真）。本文 investment 域坐标随 #1097 拆 crate 的同源漂移归 #1262 存量清理，未在本 PR 一并处理。
+- 2026-09-13 #1262 完成上述 investment 域坐标的存量清理：历史坐标为 `src-tauri/src/investment/{fund,stock,prices}.rs`（`fund` 139/93、`stock` 222/362、`prices` 65），现役落点为 `ledger-investment` crate（`persist_fund_detail` / `persist_stock_quote` 现役名 `adopt_fund_quote` / `adopt_stock_quote`）；按现行约定，现役坐标只写到域 / crate 级。

@@ -13,7 +13,7 @@
 - **前端状态、界面交互或弹层**：读 `docs/contexts/CONTEXT-reference-settings.md`、`docs/contexts/CONTEXT-ui-interaction.md` 及相关 ADR。
 - **用户可见文案或错误**：读相关域词汇表、ADR-0049/0050 和现有 i18n 实现。
 - **schema、migration 或数据模型改动**：读 `docs/model/README.md`、相关 migration 和 ADR，并检查发布边界。
-- **编写或修改领域词汇表、模型文档或 ADR**：先读 `docs/agents/domain.md`，遵守文档分层、术语唯一和代码坐标规则。
+- **编写或修改领域词汇表、模型文档或 ADR**：先读 `docs/agents/domain.md`，遵守文档分层、术语唯一和代码坐标规则（ADR 坐标收敛到域 / crate 级；标尺见 `CONTEXT-MAP.md`「结构约定」）。
 - **AI 导入**：读 `docs/contexts/CONTEXT-ai-import.md`、`src-tauri/prompts/ledger-api.md` 和实际 API 契约。
 - **HTTP 端点**：读实际路由、对应 API 契约和 API 集成测试；仅在属于 AI 导入时读取 AI 导入文档。
 - **Issue、PR、triage 或依赖关系**：按需读 `docs/agents/issue-tracker.md` 与 `docs/agents/triage-labels.md`。

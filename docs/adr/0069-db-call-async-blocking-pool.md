@@ -21,7 +21,7 @@
 
 - **单连接 + 互斥锁形态原样保留**（`Arc<Mutex<Connection>>`，ADR-0009 所记形态）：不做连接池、不做专用线程，锁语义与既有审计结论继续有效；
 - **连接层统一写入口零改动**（ADR-0032）：写路径仍在 `db::write` 闭包内置脏，提交点（闭包成功且 `is_autocommit()`）结构原样；
-- **新增连接层统一 DB 调用 helper `db::run_db`**：内部 `tauri::async_runtime::spawn_blocking`（显式句柄）把 DB 闭包放进 tauri 全局运行时的阻塞线程池，事件循环线程与 tokio worker 不再被 DB 调用占用。显式句柄保证从 HTTP 壳自建运行时调用亦安全——返回的 JoinHandle 是跨运行时 future，生产先例 `fetch_fund_detail_for_api`；
+- **新增连接层统一 DB 调用 helper `db::run_db`**：内部 `tauri::async_runtime::spawn_blocking`（显式句柄）把 DB 闭包放进 tauri 全局运行时的阻塞线程池，事件循环线程与 tokio worker 不再被 DB 调用占用。显式句柄保证从 HTTP 壳自建运行时调用亦安全——返回的 JoinHandle 是跨运行时 future，生产先例 `fetch_fund_quote_for_api`（原 `fetch_fund_detail_for_api`，ADR-0103 统一报价载荷时正名）；
 - **零新依赖**：helper 只用既有 tauri 运行时能力，供应链与版本配对风险为零。
 
 ### 2. 迁移面：全部触碰 DB 的命令与 handlers 经 helper；不触 DB 者保留原形态
