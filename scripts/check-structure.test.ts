@@ -19,6 +19,8 @@ import {
   DOMAIN_PAIR_FORBIDDEN,
   INFRA_MODULES,
   INFRA_SRC_REL,
+  ITEM_MODULES,
+  ITEM_SRC_REL,
   MERCHANTS_MODULES,
   MERCHANTS_SRC_REL,
   POLICY_MODULES,
@@ -91,6 +93,7 @@ function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, POLICY_SRC_REL), POLICY_MODULES)
   writeModuleStubs(join(srcTauri, SCHEDULED_SRC_REL), SCHEDULED_MODULES)
   writeModuleStubs(join(srcTauri, BUDGET_SRC_REL), BUDGET_MODULES)
+  writeModuleStubs(join(srcTauri, ITEM_SRC_REL), ITEM_MODULES)
 }
 
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
@@ -174,14 +177,25 @@ function isBudgetModulePath(rel: string): boolean {
   return BUDGET_ENTRY_PATHS.has(rel)
 }
 
+/** 物品域 crate 模块路径判定（精确文件名，#1099；与基础设施/交易清单无交集的
+ *  为 cost.rs / domain.rs / guard.rs——command.rs / model.rs 与交易清单同名，
+ *  路由优先级归交易 crate）。 */
+const ITEM_ENTRY_PATHS = new Set(ITEM_MODULES.map((m) => m.path))
+
+function isItemModulePath(rel: string): boolean {
+  return ITEM_ENTRY_PATHS.has(rel)
+}
+
 /**
  * 写覆盖文件：按路径首段归位——基础设施模块（`db/…` / `error.rs` / …）落
  * `<srcTauri>/crates/infra/src`，备份域 crate 模块（`auto.rs` / `engine.rs`，#1091）
  * 落 `<srcTauri>/crates/backup/src`，核心交易域 crate 模块（#1092）与账户域 crate
- * 模块（#1093）、分类域 crate 模块（#1094）、商户域 crate 模块（#1096）各自落同名
- * crate，其余（域目录、壳层 `commands/` 等）落 `<srcTauri>/src`。账户域与分类域
- * 在交易域之后判定：`model.rs` / `command.rs` 两名为交易域清单先行占有（与
- * placeOverride 的先后链一致；商户域撞名同理，仅 `crud.rs` 归商户 crate）。
+ * 模块（#1093）、分类域 crate 模块（#1094）、商户域 crate 模块（#1096）、币种域
+ * crate 模块（#1095）、物品域 crate 模块（#1099）各自落同名 crate，其余（域目录、
+ * 壳层 `commands/` 等）落 `<srcTauri>/src`。账户域与分类域在交易域之后判定：
+ * `model.rs` / `command.rs` 两名为交易域清单先行占有（与 placeOverride 的先后链
+ * 一致；商户域撞名同理，仅 `crud.rs` 归商户 crate；物品域撞名同理，仅
+ * `cost.rs` / `domain.rs` / `guard.rs` 归物品 crate）。
  */
 function placeOverride(srcTauri: string, relPath: string, content: string): void {
   const base = isInfraModulePath(relPath)
@@ -204,6 +218,8 @@ function placeOverride(srcTauri: string, relPath: string, content: string): void
           ? join(srcTauri, SCHEDULED_SRC_REL)
         : isBudgetModulePath(relPath)
           ? join(srcTauri, BUDGET_SRC_REL)
+        : isItemModulePath(relPath)
+          ? join(srcTauri, ITEM_SRC_REL)
           : join(srcTauri, 'src')
   const file = join(base, relPath)
   mkdirSync(join(file, '..'), { recursive: true })
@@ -244,11 +260,11 @@ describe('check-structure（结构守门）', () => {
   })
 
   it('域目录代码引用壳层 → 失败并定位文件行号', () => {
-    const args = makeFixture({ 'item/crud.rs': shellUse })
+    const args = makeFixture({ 'physical_asset/crud.rs': shellUse })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('反向依赖')
-    expect(r.output).toContain('item/crud.rs:1')
+    expect(r.output).toContain('physical_asset/crud.rs:1')
   })
 
   it('基础设施 crate 内代码引用壳层 → 失败并定位文件行号（#1088 归位后清单基准在 crate）', () => {
@@ -261,7 +277,7 @@ describe('check-structure（结构守门）', () => {
 
   it('注释与字符串中的 commands:: 不误报（掩码边界）', () => {
     const args = makeFixture({
-      'item/cost.rs': [
+      'physical_asset/cost.rs': [
         '/// 消费 `commands::item` 接缝（文档注释不算依赖）',
         '// 见 commands::foo 说明',
         'let url = "http://127.0.0.1:9527/commands::x";',
@@ -276,8 +292,8 @@ describe('check-structure（结构守门）', () => {
 
   it('外挂测试模块/目录豁免：tests.rs 与 tests/ 引用壳层不红（ADR-0056 决策 5）', () => {
     const args = makeFixture({
-      'item/tests.rs': shellUse,
-      'item/tests/scaffold.rs': shellUse,
+      'physical_asset/tests.rs': shellUse,
+      'physical_asset/tests/scaffold.rs': shellUse,
       'transaction/writer/tests/fixture.rs': shellUse,
     })
     const r = run(args)
@@ -293,11 +309,11 @@ describe('check-structure（结构守门）', () => {
 
   it('白名单路径缺失（清单漂移）→ fail loud', () => {
     const args = makeFixture()
-    rmSync(join(args[0], 'item'), { recursive: true, force: true })
+    rmSync(join(args[0], 'physical_asset'), { recursive: true, force: true })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('白名单路径不存在')
-    expect(r.output).toContain('item')
+    expect(r.output).toContain('physical_asset')
   })
 
   it('基础设施模块清单路径缺失（crate 内清单漂移）→ fail loud', () => {
@@ -311,8 +327,8 @@ describe('check-structure（结构守门）', () => {
 
   it('白名单条目只剩测试豁免文件（扫不到非测试文件）→ fail loud，拒绝假绿', () => {
     const args = makeFixture()
-    rmSync(join(args[0], 'item', 'mod.rs'))
-    writeFileSync(join(args[0], 'item', 'tests.rs'), shellUse) // 只剩豁免形态
+    rmSync(join(args[0], 'physical_asset', 'mod.rs'))
+    writeFileSync(join(args[0], 'physical_asset', 'tests.rs'), shellUse) // 只剩豁免形态
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('扫不到非测试')
@@ -390,9 +406,10 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
 
   it('非禁边对的域间横向引用不红（扫描范围仅基础设施条目，ADR-0071 决策 5）', () => {
     // transaction→accounts 自 #1090 起属域间禁边（另见域间禁边 describe）；
-    // 本用例改用非禁边对（item→backup）钉住「域间横向引用本身不在 infra 扫描范围」。
+    // 本用例改用非禁边对（physical_asset→backup；原 item 靶域已拆 crate，#1099）
+    // 钉住「域间横向引用本身不在 infra 扫描范围」。
     const args = makeFixture({
-      'item/crud.rs': 'use crate::backup::AutoBackupState;\npub fn x() {}\n',
+      'physical_asset/crud.rs': 'use crate::backup::AutoBackupState;\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(0)
@@ -477,7 +494,7 @@ describe('check-structure 业务域→同步域零容忍（ADR-0101 决策 4b / 
 
   it('契约模块与原白名单根符号亦红（#1089 零容忍：协议面下放协议 crate）', () => {
     const args = makeFixture({
-      'item/command.rs': [
+      'physical_asset/command.rs': [
         'use crate::sync_engine::command::ReplayEffect;',
         'use crate::sync_engine::{DomainCommand, record_local as record_op};',
         'use crate::sync_engine::device_id;',
@@ -489,12 +506,12 @@ describe('check-structure 业务域→同步域零容忍（ADR-0101 决策 4b / 
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('业务域引用同步域')
-    expect(r.output).toContain('item/command.rs:1')
+    expect(r.output).toContain('physical_asset/command.rs:1')
   })
 
   it('根花括号列举夹带任一符号 → 红（零容忍逐条判定）', () => {
     const args = makeFixture({
-      'item/command.rs': 'use crate::sync_engine::{DomainCommand, model::SyncOp};\n',
+      'physical_asset/command.rs': 'use crate::sync_engine::{DomainCommand, model::SyncOp};\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
@@ -503,7 +520,7 @@ describe('check-structure 业务域→同步域零容忍（ADR-0101 决策 4b / 
   })
 
   it('根 glob 引入 → 红（零容忍）', () => {
-    const args = makeFixture({ 'item/command.rs': 'use crate::sync_engine::*;\n' })
+    const args = makeFixture({ 'physical_asset/command.rs': 'use crate::sync_engine::*;\n' })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('业务域引用同步域')
@@ -511,12 +528,12 @@ describe('check-structure 业务域→同步域零容忍（ADR-0101 决策 4b / 
 
   it('根别名引入（use crate::sync_engine as se）→ 红（堵别名盲区）', () => {
     const args = makeFixture({
-      'item/command.rs': 'use crate::sync_engine as se;\npub fn x() {}\n',
+      'physical_asset/command.rs': 'use crate::sync_engine as se;\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('业务域引用同步域')
-    expect(r.output).toContain('item/command.rs:1')
+    expect(r.output).toContain('physical_asset/command.rs:1')
   })
 
   it('同步域自身与测试支持域不参与（作用域边界）', () => {
@@ -530,7 +547,7 @@ describe('check-structure 业务域→同步域零容忍（ADR-0101 决策 4b / 
 
   it('注释与字符串中的同步域内部路径不误报（掩码边界）', () => {
     const args = makeFixture({
-      'item/command.rs': [
+      'physical_asset/command.rs': [
         '/// 见 `crate::sync_engine::ops::record_local` 说明（文档注释不算引用）',
         '// crate::sync_engine::engine::dispatch',
         'let s = "crate::sync_engine::parked::ParkedOp";',
@@ -634,11 +651,11 @@ describe('check-structure 域间禁边（issue #1090 写路径副作用接缝反
 
 describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收口）', () => {
   it('规则①：crate::models 全局模型路径残留 → 红', () => {
-    const args = makeFixture({ 'item/crud.rs': 'use crate::models::Transaction;\npub fn x() {}\n' })
+    const args = makeFixture({ 'physical_asset/crud.rs': 'use crate::models::Transaction;\npub fn x() {}\n' })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('全局模型路径残留')
-    expect(r.output).toContain('item/crud.rs:1')
+    expect(r.output).toContain('physical_asset/crud.rs:1')
   })
 
   it('规则①：tauri_app_lib::models 形态同样识别 → 红', () => {
@@ -652,7 +669,7 @@ describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收�
 
   it('规则①：注释与字符串中的 models 路径不误报（掩码边界）', () => {
     const args = makeFixture({
-      'item/cost.rs': [
+      'physical_asset/cost.rs': [
         '/// 全局模型目录已消亡，crate::models 是历史形态（文档注释不算引用）',
         '// 见 crate::models::Transaction 说明',
         'let s = "crate::models::Transaction";',
@@ -665,24 +682,24 @@ describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收�
 
   it('规则①：外挂测试豁免（tests.rs / tests/ 目录不参与扫描）', () => {
     const args = makeFixture({
-      'item/tests.rs': 'use crate::models::Transaction;\n',
-      'item/tests/scaffold.rs': 'use tauri_app_lib::models::Transaction;\n',
+      'physical_asset/tests.rs': 'use crate::models::Transaction;\n',
+      'physical_asset/tests/scaffold.rs': 'use tauri_app_lib::models::Transaction;\n',
     })
     const r = run(args)
     expect(r.status).toBe(0)
   })
 
   it('规则②：域接缝 glob 再导出 pub use model::* → 红', () => {
-    const args = makeFixture({ 'item/mod.rs': 'mod model;\npub use model::*;\n' })
+    const args = makeFixture({ 'physical_asset/mod.rs': 'mod model;\npub use model::*;\n' })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('glob 再导出')
-    expect(r.output).toContain('item/mod.rs:2')
+    expect(r.output).toContain('physical_asset/mod.rs:2')
   })
 
   it('规则②：跨域拍平形态 pub use crate::x::model::* → 红', () => {
     const args = makeFixture({
-      'item/mod.rs': 'pub use crate::transaction::model::*;\n',
+      'physical_asset/mod.rs': 'pub use crate::transaction::model::*;\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
@@ -690,25 +707,25 @@ describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收�
   })
 
   it('规则②：旧全局目录同名形态 pub use models::* → 红', () => {
-    const args = makeFixture({ 'item/mod.rs': 'pub use models::*;\n' })
+    const args = makeFixture({ 'physical_asset/mod.rs': 'pub use models::*;\n' })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('glob 再导出')
   })
 
   it('规则②：域模型文件内 glob 聚合 pub use xxx::* → 红', () => {
-    const args = makeFixture({ 'item/model.rs': 'pub use super::crud::*;\n' })
+    const args = makeFixture({ 'physical_asset/model.rs': 'pub use super::crud::*;\n' })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('glob 聚合')
-    expect(r.output).toContain('item/model.rs:1')
+    expect(r.output).toContain('physical_asset/model.rs:1')
   })
 
   it('规则②：逐类型再导出与域内私有 glob 引用合规 → 绿', () => {
     const args = makeFixture({
-      'item/mod.rs': 'mod model;\npub use model::{Item, ItemInput};\n',
-      'item/behavior.rs': 'use super::model::*;\npub fn x() {}\n',
-      'item/model.rs': 'pub struct Item;\n',
+      'physical_asset/mod.rs': 'mod model;\npub use model::{Item, ItemInput};\n',
+      'physical_asset/behavior.rs': 'use super::model::*;\npub fn x() {}\n',
+      'physical_asset/model.rs': 'pub struct Item;\n',
     })
     const r = run(args)
     expect(r.status).toBe(0)
@@ -793,6 +810,8 @@ interface CrateFixtureOverrides {
   scheduledManifest?: string
   /** 覆盖预算域 crate 的 `crates/budget/Cargo.toml`（依赖方向负向夹具，#1101） */
   budgetManifest?: string
+  /** 覆盖物品域 crate 的 `crates/item/Cargo.toml`（依赖方向负向夹具，#1099） */
+  itemManifest?: string
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string
   /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
@@ -1135,6 +1154,28 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
       ].join('\n'),
   )
   writeFileSync(join(srcTauri, 'crates', 'budget', 'src', 'lib.rs'), 'pub fn stub() {}\n')
+
+  // 物品域 crate（#1099，P3 叶子域）：夹具与真实仓库同形——成员目录 + 门禁继承 +
+  // dev-dependency 测试环。
+  mkdirSync(join(srcTauri, 'crates', 'item', 'src'), { recursive: true })
+  writeFileSync(
+    join(srcTauri, 'crates', 'item', 'Cargo.toml'),
+    overrides.itemManifest ??
+      [
+        '[package]',
+        'name = "ledger-item"',
+        'version = "0.6.0"',
+        'edition = "2024"',
+        '',
+        '[dev-dependencies]',
+        'tauri-app = { path = "../.." }',
+        '',
+        '[lints]',
+        'workspace = true',
+        '',
+      ].join('\n'),
+  )
+  writeFileSync(join(srcTauri, 'crates', 'item', 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, 'crates', 'sync-protocol', 'src'), { recursive: true })
@@ -1742,6 +1783,65 @@ describe('check-structure 定时计划域 crate（#1098 业务域 crate 自根�
   })
 })
 
+describe('check-structure 物品域 crate（#1099 P3 叶子域自根包拆出）', () => {
+  it('真实仓库默认通过：物品域 crate 模块级扫描入摘要', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`物品域模块 ${ITEM_MODULES.length} 项`)
+  })
+
+  it('物品域 crate 模块引用壳层 → 红并定位文件行号', () => {
+    // 'guard.rs' 无撞名（`command.rs` / `model.rs` 与交易域清单撞名，路由优先
+    // 落交易域），经 placeOverride 落物品域 crate（ITEM_MODULES 派生路由，#1099）。
+    const args = makeFixture({ 'guard.rs': shellUse })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('反向依赖')
+    expect(r.output).toContain('guard.rs:1')
+  })
+
+  it('物品域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）', () => {
+    const args = makeFixture({
+      'guard.rs': 'use tauri_app_lib::sync_engine::engine::ReplayEffect;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('业务域引用同步域')
+    expect(r.output).toContain('guard.rs:1')
+  })
+
+  it('物品域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面）', () => {
+    const args = makeCrateFixture({
+      itemManifest:
+        '[package]\nname = "ledger-item"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('crate 依赖方向')
+    expect(r.output).toContain('ledger-item')
+  })
+
+  it('物品域 crate 生产依赖核心交易域 crate → 绿（域→域合法上层依赖，接缝实现注册侧，#1092）', () => {
+    // 交易×物品来源列反查接缝的实现注册是物品 → 核心交易的单向依赖（#1092 挂载
+    // 点⑤反转后的合法方向），依赖面受 AC 约束（基础设施/协议/核心交易域），不属禁边。
+    const args = makeCrateFixture({
+      itemManifest:
+        '[package]\nname = "ledger-item"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[dependencies]\nledger-transaction = { path = "../transaction" }\n\n' +
+        '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('物品域 crate 测试以 dev-dependency 反向依赖壳层 → 绿（测试专用边，spec #1086）', () => {
+    // 缺省 itemManifest 即该形态（与真实 crate 同形），单列用例锁死语义。
+    const r = run(makeCrateFixture())
+    expect(r.status).toBe(0)
+  })
+})
+
 describe('check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue #1132）', () => {
   it('真实仓库默认通过：cfg 门 + 生产依赖不启用 test-utils', () => {
     const r = run([])
@@ -2271,11 +2371,11 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
   })
 
   it('③ 模型目录成员的 glob 聚合 → 红（判据扩到目录形态，模型目录化不静默失靶）', () => {
-    const args = makeFixture({ 'item/model/price.rs': 'pub use crate::item::types::*;\npub fn x() {}\n' })
+    const args = makeFixture({ 'physical_asset/model/price.rs': 'pub use crate::physical_asset::types::*;\npub fn x() {}\n' })
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('域模型文件内 glob 聚合')
-    expect(r.output).toContain('item/model/price.rs')
+    expect(r.output).toContain('physical_asset/model/price.rs')
   })
 
   it('③ 模型文件名判据不回退：model.rs 内 glob 仍红（文件形态先行例）', () => {
@@ -2287,8 +2387,8 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
 
   it('③ 模型目录成员不含 glob → 绿（判据只拦聚合，不拦逐类型再导出与类型定义）', () => {
     const args = makeFixture({
-      'item/model/price.rs':
-        'pub struct Price;\npub use crate::item::types::{Price as ItemPrice};\npub fn x() {}\n',
+      'physical_asset/model/price.rs':
+        'pub struct Price;\npub use crate::physical_asset::types::{Price as ItemPrice};\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(0)

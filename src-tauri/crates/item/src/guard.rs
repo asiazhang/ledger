@@ -12,8 +12,8 @@
 use rusqlite::{Connection, OptionalExtension};
 
 use super::model::ItemInput;
-use crate::error::{AppError, Result};
-use crate::transaction::amount::TransactionKind;
+use ledger_infra::error::{AppError, Result};
+use ledger_transaction::amount::TransactionKind;
 
 /// 「物品必须关联购买交易创建」的码化拒绝（创建本地路径与重放路径共用，
 /// 用户可见文案单点维护）。
