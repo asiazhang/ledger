@@ -19,6 +19,10 @@
 //!   一致性断言走现有 pub 查询函数，本模块零手写业务 SQL。
 //! - 每次迭代从 pristine 快照恢复（源库复制 + 快照零改动）：迭代间数据集规模
 //!   固定，p95 是同一状态的真分位数——这是「量测结论可复现」的落点。
+//! - 恢复后预写一次提交冲净拷贝写回（量测有效性）：文件拷贝留下的 OS 脏页写回
+//!   若不先行吸收，会挂在恢复后第一次 fsync（被测导入的 COMMIT）上，大库上把
+//!   每次导入虚增到秒级——量到的是写回不是导入；机制见
+//!   [`restore_from_snapshot`]。
 //! - 刷新段开销不新增观测代码：余额缓存刷新（`INSERT INTO
 //!   account_balance_cache …`）的单条 SQL 耗时由连接工厂自动挂载的耗时日志
 //!   （perf_trace）全覆盖——慢查询（≥100ms）以 warn「慢查询」可见，全量明细
@@ -413,9 +417,27 @@ fn copy_db_files(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 /// 从快照恢复工作库：迭代间数据集规模固定的落点。
+///
+/// 恢复后紧跟一次预写提交（量测有效性）：文件拷贝会在 OS 页缓存里留下约整个
+/// 库文件大小的脏页，恢复后全进程第一次 fsync（即被量测导入的 COMMIT）会把
+/// 这笔写回一并冲掉——608MB 库上约 2.5s，与被测导入无关，却恰好落进计时窗口
+/// （DELETE 日志 + synchronous=FULL 下 fsync 计入提交语句）。预写必须产生
+/// 真实页写入：SQLite 对「值未变化的 UPDATE」跳过写页、提交零 fsync
+/// （`SET version = version` 形态吸收不了写回），故对单行做 version+1；fsync
+/// 按文件生效，一次提交即冲净拷贝写回，此后计时窗口量到的才是导入本身。
 fn restore_from_snapshot(snapshot: &Path, work: &Path) -> Result<(), String> {
     remove_db_files(work);
-    copy_db_files(snapshot, work)
+    copy_db_files(snapshot, work)?;
+    {
+        let conn = open_connection(work).map_err(|e| e.to_string())?;
+        conn.execute_batch(
+            "BEGIN IMMEDIATE; \
+             UPDATE accounts SET version = version + 1 WHERE id = (SELECT min(id) FROM accounts); \
+             COMMIT;",
+        )
+        .map_err(|e| format!("恢复后预写提交失败（拷贝写回吸收）：{e}"))?;
+    }
+    Ok(())
 }
 
 /// 删除库文件及其 -wal/-shm 伴生文件（尽力而为，不存在即忽略）。
