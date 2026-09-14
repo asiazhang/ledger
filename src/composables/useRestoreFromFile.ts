@@ -6,7 +6,7 @@ import type { BackupMetaSummary } from '@ledger/types'
 import { t } from '@ledger/i18n'
 import { errorMessage } from '@ledger/utils/errors'
 import { restartAppShortly } from '@/composables/restart'
-import { useModalIntent } from '@/composables/useModalIntent'
+import { useModalIntent } from '@ledger/modal-intent'
 import type { RestoreIntent } from '@/composables/useBackup'
 
 /**

@@ -101,6 +101,12 @@ export const PACKAGES: readonly PackageEntry[] = [
     note: '共享测试支持包（issue #1152）：全局测试接缝（invoke/message/matchMedia/listen/返回桥替身 + 每测清理）唯一宿主，消费只经 devDependency（testSupport 标志 → 规则⑤）；参考数据夹具类型边 @ledger/types 显式放行',
   },
   {
+    name: '@ledger/modal-intent',
+    dir: 'packages/modal-intent',
+    deps: [],
+    note: '弹窗意图编排包（issue #1316 / ADR-0072 / ADR-0118）：useModalIntent 通用工厂——模态弹窗「开启 / 目标 / 关闭」编排的唯一形态，工厂零业务语义、零外部依赖（无 store、无 api、无组件，不接弹层注册表 ADR-0035）；方向表恒空，外部依赖仅 vue',
+  },
+  {
     name: '@ledger/theme',
     dir: 'packages/theme',
     deps: ['@ledger/types', '@ledger/money'],
