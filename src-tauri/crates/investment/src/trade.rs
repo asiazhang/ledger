@@ -15,7 +15,7 @@ use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::command::{
     ConvertCommandFields, InvestmentCommandFields, SplitCommandFields,
 };
-use ledger_transaction::{ConvertFields, NormalizedTransaction, TransactionInput};
+use ledger_transaction::{ConvertFields, NormalizedTransaction, SecurityOrigin, TransactionInput};
 
 /// 查询账户本位币代码（原 `commands::fx::account_currency_code`，随投资域归位
 /// 迁入唯一消费方；交易行折算语义归核心交易域 `transaction::amount` 接缝）。
@@ -192,6 +192,10 @@ pub struct BuyPlan {
     /// 每份成本（万分之一元，含费用摊薄）：prepare 按标的类型单次舍入算定，
     /// apply 原样落批次——基金锚定权威金额、其余锚定成交单价（见 [`prepare_buy`]）。
     pub(crate) cost_per_unit_cents: i64,
+    /// 证券扩展行来源（issue #1343 / ADR-0115 修订）：`opening` = 期初存量——
+    /// 补记（持仓初始化）落进来的存量持仓，真实建仓时点未知，资金加权收益率
+    /// 据此不给该标的年化、改给未年化收益率。缺省即 `trade` 真实成交。
+    pub(crate) origin: SecurityOrigin,
 }
 
 /// 校验并归一化一笔买入交易（不落库）。创建与修改共用；
@@ -326,6 +330,7 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         price_cents,
         fee_cents,
         cost_per_unit_cents,
+        origin: input.origin.unwrap_or_default(),
     })
 }
 
@@ -1025,9 +1030,9 @@ fn create_buy_lot(conn: &Connection, transaction_id: &str, plan: &BuyPlan) -> Re
     // 费用摊薄，均单次舍入），此处原样落批次——摊薄算法单一归属 prepare（issue #302）；
     // 重放路径的成本随命令携带（源端折算），经 replay_plan 装配后同样原样落批次。
     conn.execute(
-        "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
-         VALUES (?1,?2,'buy',?3,?4,?5)",
-        rusqlite::params![transaction_id, plan.instrument_id, plan.quantity, plan.price_cents, plan.fee_cents],
+        "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents,origin) \
+         VALUES (?1,?2,'buy',?3,?4,?5,?6)",
+        rusqlite::params![transaction_id, plan.instrument_id, plan.quantity, plan.price_cents, plan.fee_cents, plan.origin.as_db()],
     )?;
     conn.execute(
         "INSERT INTO security_lots (id,account_id,instrument_id,buy_transaction_id,initial_quantity,remaining_quantity,cost_per_unit_cents,currency_code,created_at,updated_at,version,device_id) \
@@ -1301,6 +1306,9 @@ pub(crate) fn replay_plan(
                 price_cents: fields.price_cents,
                 fee_cents: fields.fee_cents,
                 cost_per_unit_cents,
+                // 来源随命令携带（issue #1343）：旧载荷缺省 None，按 `trade` 落——
+                // 与产出侧「非期初存量不写 `opening`」同口径。
+                origin: fields.origin.unwrap_or_default(),
             }))
         }
         TransactionKind::Sell => {

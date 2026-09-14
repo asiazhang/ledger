@@ -343,14 +343,23 @@ export interface MwrRange {
   end_date?: string | null
 }
 
-/** 单标的资金加权收益率行（持仓页每行，账户 × 标的粒度）：rate 为年化内部
- * 收益率（小数，0.1234 = 12.34%）；缺价跳过的行不出现（前端渲染「-」），
- * 现金流无解的行 rate 为 null（显式标注无法计算，不猜解） */
+/** 收益率口径（issue #1343 / ADR-0115 修订）：annualized = 年化内部收益率
+ * （XIRR，实际天数 / 365）；cumulative = 未年化收益率（累计收益 ÷ 累计投入，
+ * 用于含期初存量、真实建仓时点未知的标的）。两者**不可互算**，展示层按
+ * basis 标注口径 */
+export type MwrBasis = 'annualized' | 'cumulative'
+
+/** 单标的资金加权收益率行（持仓页每行，账户 × 标的粒度）：basis 标口径，rate 为
+ * 该口径下的收益率（小数，0.1234 = 12.34%）；缺价跳过的行不出现（前端渲染
+ * 「-」），无解（或未年化口径投入为零）的行 rate 为 null（显式标注无法计算，
+ * 不猜解） */
 export interface InstrumentMwr {
   account_id: string
   instrument_id: string
   /** 计价币种 = 账户币种（组内不跨币种折算） */
   currency_code: string
+  /** 本行收益率的口径（#1343） */
+  basis: MwrBasis
   rate: number | null
 }
 

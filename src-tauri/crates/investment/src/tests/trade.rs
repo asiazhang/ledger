@@ -766,6 +766,7 @@ fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
             out_amount_cents: None,
             in_amount_cents: None,
             idempotency_key: None,
+            origin: None,
         },
     )
     .unwrap()

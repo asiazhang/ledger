@@ -59,6 +59,7 @@ impl ledger_transaction::seams::investment::InvestmentPlan for Plan {
                 price_cents: b.price_cents,
                 fee_cents: b.fee_cents,
                 cost_per_unit_cents: Some(b.cost_per_unit_cents),
+                origin: Some(b.origin),
             }),
             Plan::Sell(s) => Some(InvestmentCommandFields {
                 instrument_id: s.instrument_id.clone(),
@@ -66,6 +67,7 @@ impl ledger_transaction::seams::investment::InvestmentPlan for Plan {
                 price_cents: s.price_cents,
                 fee_cents: s.fee_cents,
                 cost_per_unit_cents: None,
+                origin: None,
             }),
             // 现金分红（issue #1078 / ADR-0109）：语义字段只有标的 id，其余成员
             // 是占位（分红无份额 / 单价 / 手续费，行金额随归一化行携带）——重放端
@@ -76,6 +78,7 @@ impl ledger_transaction::seams::investment::InvestmentPlan for Plan {
                 price_cents: 0,
                 fee_cents: 0,
                 cost_per_unit_cents: None,
+                origin: None,
             }),
             Plan::Split(_) | Plan::Convert(_) => None,
         };

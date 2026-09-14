@@ -162,6 +162,7 @@ fn seed_transactions(conn: &Connection, count: usize) {
             out_amount_cents: None,
             in_amount_cents: None,
             idempotency_key: None,
+            origin: None,
         };
         ledger_transaction::create_transaction_internal(conn, input).unwrap();
     }

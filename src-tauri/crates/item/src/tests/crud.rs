@@ -74,6 +74,7 @@ fn seed_purchase_tx(conn: &Connection, date: &str, cost_cents: i64, currency: &s
             out_amount_cents: None,
             in_amount_cents: None,
             idempotency_key: None,
+            origin: None,
         },
     )
     .unwrap()

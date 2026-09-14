@@ -43,6 +43,7 @@ fn make_fund_buy_input(
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }
 
@@ -77,6 +78,7 @@ fn make_fund_sell_input(
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }
 

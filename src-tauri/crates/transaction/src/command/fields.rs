@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::model::SecurityOrigin;
+
 /// 转换 kind（convert）的命令字段（ADR-0099 决策 6 / issue #980）：随 op 携带的
 /// 语义输入与源端算定的结转成本。
 ///
@@ -78,4 +80,9 @@ pub struct InvestmentCommandFields {
     pub fee_cents: i64,
     /// 买入每份成本（万分之一元，含费用摊薄单次舍入，ADR-0038）；卖出为 None。
     pub cost_per_unit_cents: Option<i64>,
+    /// 证券扩展行来源（issue #1343 / ADR-0115 修订）：buy 的 `Some(opening)` =
+    /// 期初存量（补记存量持仓，真实建仓时点未知），`None` 与 `Some(trade)` 同义；
+    /// 卖出/分红恒 `None`。**只增不改**：本成员随本票补入，旧 op 载荷缺省为
+    /// `None`，重放按 `trade` 落。
+    pub origin: Option<SecurityOrigin>,
 }

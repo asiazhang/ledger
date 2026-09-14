@@ -15,7 +15,8 @@ mod transaction;
 
 pub use filter::TransactionListFilter;
 pub use input::{
-    CreateTransactionResult, TransactionBatchInput, TransactionInput, UpdateTransactionInput,
+    CreateTransactionResult, SecurityOrigin, TransactionBatchInput, TransactionInput,
+    UpdateTransactionInput,
 };
 pub use normalized::NormalizedTransaction;
 pub use repair::{NotePinyinRepairFailure, NotePinyinRepairReport, NotePinyinRepairStage};

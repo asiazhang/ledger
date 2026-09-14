@@ -692,6 +692,7 @@ fn make_sell_input(
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }
 
@@ -725,6 +726,7 @@ fn make_convert_input(
         out_amount_cents: Some(100_000),
         in_amount_cents: Some(100_000),
         idempotency_key: None,
+        origin: None,
     }
 }
 

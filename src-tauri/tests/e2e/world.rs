@@ -70,6 +70,7 @@ impl ImportedRow {
             out_amount_cents: None,
             in_amount_cents: None,
             idempotency_key: self.idempotency_key.clone(),
+            origin: None,
         }
     }
 }
