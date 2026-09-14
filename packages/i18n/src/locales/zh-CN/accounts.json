@@ -57,6 +57,21 @@
     "adjusted": "余额已调整",
     "adjustFailed": "调整失败: {message}"
   },
+  "credit": {
+    "limit": "信用额度",
+    "statementDay": "账单日",
+    "dueDay": "还款日",
+    "limitPlaceholder": "如 50000",
+    "dayPlaceholder": "1–31",
+    "initialBalanceCreditPlaceholder": "已有欠款请填负数",
+    "usedPercent": "已用 {percent}%",
+    "usageLabel": "额度使用",
+    "usageSummary": "已用 {used} · 可用 {available} · 使用率 {percent}%",
+    "usageUnset": "尚未填写信用额度",
+    "nextLabel": "下次账单节点",
+    "nextNodes": "账单日 {statement} · 还款日 {due}",
+    "nextNodesUnset": "尚未填写账单日与还款日"
+  },
   "type": {
     "cash": "现金",
     "bank": "银行卡",

@@ -20,7 +20,7 @@ use rusqlite::{Connection, OptionalExtension};
 use super::command::{AccountCommand, AccountCommandRow, record_local};
 use super::model::{
     Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountType,
-    AccountUpdateInput, BalanceCacheAudit, BalanceCacheDrift,
+    AccountUpdateInput, BalanceCacheAudit, BalanceCacheDrift, CreditTerms,
 };
 use crate::balance::refresh_account_balances;
 
@@ -98,6 +98,9 @@ fn create_within_transaction(conn: &Connection, input: &AccountInput) -> Result<
         currency_code: input.currency_code.clone(),
         initial_balance_cents: input.initial_balance_cents.unwrap_or(0),
         is_hidden: false,
+        credit_limit_cents: input.credit_limit_cents,
+        statement_day: input.statement_day,
+        due_day: input.due_day,
     };
     let id = write_create(conn, &new_uuid(), &row)?;
     record_local(
@@ -113,10 +116,14 @@ fn create_within_transaction(conn: &Connection, input: &AccountInput) -> Result<
 /// 账户落库协议（本地创建与重放共用，无 op 产出）：插入行 + 建余额缓存行
 /// （issue #491 / ADR-0067）。调用方保证处于写事务内。
 fn write_create(conn: &Connection, id: &str, row: &AccountCommandRow) -> Result<String> {
+    // 信用卡档案守卫（单点，三条写入路径共用：本地创建 / 重放创建 / 黑洞即建）：
+    // 仅 `credit` 账户可携带三字段，且各自范围合法。
+    CreditTerms::new(row.credit_limit_cents, row.statement_day, row.due_day)
+        .validate_for(row.kind)?;
     let now = now_iso();
     conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,1,?8,0,?9)",
+        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden,credit_limit_cents,statement_day,due_day) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,1,?8,0,?9,?10,?11,?12)",
         rusqlite::params![
             id,
             row.name,
@@ -127,6 +134,9 @@ fn write_create(conn: &Connection, id: &str, row: &AccountCommandRow) -> Result<
             now,
             device_id(conn)?,
             row.is_hidden,
+            row.credit_limit_cents,
+            row.statement_day,
+            row.due_day,
         ],
     )?;
     // 余额缓存写路径（issue #491 / ADR-0067）：新账户建缓存行（初始余额 + 零流水）。
@@ -199,7 +209,7 @@ fn write_delete(conn: &Connection, id: &str) -> Result<()> {
 pub fn get_account(conn: &Connection, id: &str) -> Result<Account> {
     query_all(
         conn,
-        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden \
+        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden,credit_limit_cents,statement_day,due_day \
          FROM accounts WHERE id=?1 AND is_deleted=0",
         rusqlite::params![id],
     )?
@@ -216,13 +226,16 @@ pub fn get_account(conn: &Connection, id: &str) -> Result<Account> {
 /// - `initial_balance_cents` 不在此改，归余额调整（见 ADR-0026）。
 pub fn update_account(conn: &Connection, id: &str, input: AccountUpdateInput) -> Result<()> {
     ensure_transaction(conn, || {
-        let (name, currency_code) = write_update(conn, id, &input)?;
+        let (name, currency_code, credit_terms) = write_update(conn, id, &input)?;
         record_local(
             conn,
             AccountCommand::Update {
                 id: id.to_string(),
                 name,
                 currency_code,
+                credit_limit_cents: credit_terms.credit_limit_cents,
+                statement_day: credit_terms.statement_day,
+                due_day: credit_terms.due_day,
             },
         )
     })
@@ -234,8 +247,24 @@ fn write_update(
     conn: &Connection,
     id: &str,
     input: &AccountUpdateInput,
-) -> Result<(String, String)> {
+) -> Result<(String, String, CreditTerms)> {
     let existing = get_account(conn, id)?;
+    // 信用卡档案字段三态解算（`Option<Option<..>>` 已在反序列化层分开「不改 / 清空」）：
+    // 仅真的「携带」（三字段任一在场）才走守卫与范围校验——非信用卡账户携带即拒；
+    // 未携带时零改动，也不会因既有档案值报错。
+    let carried = input.credit_limit_cents.is_some()
+        || input.statement_day.is_some()
+        || input.due_day.is_some();
+    let credit_terms = CreditTerms::new(
+        input
+            .credit_limit_cents
+            .unwrap_or(existing.credit_limit_cents),
+        input.statement_day.unwrap_or(existing.statement_day),
+        input.due_day.unwrap_or(existing.due_day),
+    );
+    if carried {
+        credit_terms.validate_for(existing.kind)?;
+    }
     let name = match input.name {
         Some(ref n) => {
             let trimmed = n.trim();
@@ -288,12 +317,21 @@ fn write_update(
         _ => existing.currency_code.clone(),
     };
     conn.execute(
-        "UPDATE accounts SET name=?2, currency_code=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?1",
-        rusqlite::params![id, &name, &currency_code, now_iso(), device_id(conn)?],
+        "UPDATE accounts SET name=?2, currency_code=?3, credit_limit_cents=?4, statement_day=?5, due_day=?6, updated_at=?7, version=version+1, device_id=?8 WHERE id=?1",
+        rusqlite::params![
+            id,
+            &name,
+            &currency_code,
+            credit_terms.credit_limit_cents,
+            credit_terms.statement_day,
+            credit_terms.due_day,
+            now_iso(),
+            device_id(conn)?
+        ],
     )?;
     // 余额缓存写路径：touch 缓存行时间戳（币种改动影响净资产折算口径，读探针需即时感知）。
     refresh_account_balances(conn, &[id])?;
-    Ok((name, currency_code))
+    Ok((name, currency_code, credit_terms))
 }
 
 /// 重放执行：创建（同事务内由同步引擎包裹；不产出 op）。
@@ -309,6 +347,9 @@ pub(crate) fn replay_update(
     id: &str,
     name: &str,
     currency_code: &str,
+    credit_limit_cents: Option<i64>,
+    statement_day: Option<i64>,
+    due_day: Option<i64>,
 ) -> Result<()> {
     write_update(
         conn,
@@ -316,6 +357,11 @@ pub(crate) fn replay_update(
         &AccountUpdateInput {
             name: Some(name.to_string()),
             currency_code: Some(currency_code.to_string()),
+            // 重放携带的是**落定值**（含空值），故一律包 `Some(..)`：`Some(None)` 即「置空」，
+            // 与本地编辑的「不改」形态区分开（这里全字段都是落定，不存在「不改」）。
+            credit_limit_cents: Some(credit_limit_cents),
+            statement_day: Some(statement_day),
+            due_day: Some(due_day),
         },
     )?;
     Ok(())
@@ -353,6 +399,9 @@ pub fn ensure_black_hole_account(conn: &Connection, currency_code: &str) -> Resu
         currency_code: currency_code.to_string(),
         initial_balance_cents: 0,
         is_hidden: true,
+        credit_limit_cents: None,
+        statement_day: None,
+        due_day: None,
     };
     let id = write_create(conn, &new_uuid(), &row)?;
     // op 产出接缝（issue #860）：黑洞即建也是账户写——随调用方事务追加创建 op，

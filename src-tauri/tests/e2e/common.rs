@@ -72,6 +72,9 @@ pub fn seed_account_with_expenses(
             kind: ledger_accounts::AccountType::Cash,
             currency_code: "CNY".into(),
             initial_balance_cents: Some(0),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap();

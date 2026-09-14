@@ -4,7 +4,7 @@ use tower::ServiceExt;
 
 use crate::common::{
     body_to_bytes, count_rows, create_account_json, create_account_via_api,
-    create_category_via_api, setup_app,
+    create_category_via_api, read_account_by_id, setup_app,
 };
 
 #[tokio::test]
@@ -385,4 +385,125 @@ async fn test_get_currencies_returns_seed_list() {
     assert_eq!(cny["decimal_places"], 2);
     let hkd = currencies.iter().find(|c| c["code"] == "HKD").unwrap();
     assert_eq!(hkd["name"], "港币");
+}
+
+// ---------------------------------------------------------------------------
+// 信用卡档案字段（spec #1327 / ADR-0119）：创建侧携带与拒绝（壳三件套 + 接线证明）。
+// ---------------------------------------------------------------------------
+
+/// 创建信用卡账户携带三个档案字段 → 201，且读出口读回同值。
+/// 接线证明：写入经 HTTP 进入账户写入接缝，直接可观察结果是列表读得到。
+#[tokio::test]
+async fn test_create_credit_account_persists_credit_terms() {
+    let (app, _) = setup_app();
+    let body = r#"{"name":"招行信用卡","type":"credit","currency_code":"CNY","initial_balance_cents":-12345,"credit_limit_cents":5000000,"statement_day":5,"due_day":25}"#;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/accounts")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let id: String = serde_json::from_slice(&body_to_bytes(response.into_body()).await).unwrap();
+
+    let account = read_account_by_id(&app, &id).await;
+    assert_eq!(account["type"], "credit");
+    assert_eq!(account["credit_limit_cents"], 5_000_000);
+    assert_eq!(account["statement_day"], 5);
+    assert_eq!(account["due_day"], 25);
+}
+
+/// 未携带档案字段的信用卡账户：三个字段读回 `null`（「未设置」与「额度为 0」不是
+/// 同一状态），且创建不报错。
+#[tokio::test]
+async fn test_create_credit_account_without_credit_terms_returns_nulls() {
+    let (app, _) = setup_app();
+    let body = r#"{"name":"无档案信用卡","type":"credit","currency_code":"CNY"}"#;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/accounts")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let id: String = serde_json::from_slice(&body_to_bytes(response.into_body()).await).unwrap();
+
+    let account = read_account_by_id(&app, &id).await;
+    assert!(account["credit_limit_cents"].is_null());
+    assert!(account["statement_day"].is_null());
+    assert!(account["due_day"].is_null());
+}
+
+/// 非信用卡账户携带档案字段 → 400 + 码化错误（账户类型与属性的对应关系不被破坏）。
+#[tokio::test]
+async fn test_create_non_credit_account_with_credit_terms_returns_400() {
+    let (app, _) = setup_app();
+    let body =
+        r#"{"name":"现金","type":"cash","currency_code":"CNY","credit_limit_cents":5000000}"#;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/accounts")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let err: serde_json::Value =
+        serde_json::from_slice(&body_to_bytes(response.into_body()).await).unwrap();
+    assert_eq!(err["kind"], "Invalid");
+    assert_eq!(err["code"], "account.credit-attribute-not-applicable");
+}
+
+/// 越界档案值 → 400 + 各自错误码（维度即矩阵：额度为正、账单日与还款日各自 1–31）。
+#[tokio::test]
+async fn test_create_credit_account_rejects_out_of_range_terms() {
+    let (app, _) = setup_app();
+    for (body, code) in [
+        (
+            r#"{"name":"额度为零","type":"credit","currency_code":"CNY","credit_limit_cents":0}"#,
+            "account.credit-limit-invalid",
+        ),
+        (
+            r#"{"name":"账单日越界","type":"credit","currency_code":"CNY","statement_day":32}"#,
+            "account.statement-day-invalid",
+        ),
+        (
+            r#"{"name":"还款日越界","type":"credit","currency_code":"CNY","due_day":0}"#,
+            "account.due-day-invalid",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/accounts")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{code}");
+        let err: serde_json::Value =
+            serde_json::from_slice(&body_to_bytes(response.into_body()).await).unwrap();
+        assert_eq!(err["code"], code);
+    }
 }

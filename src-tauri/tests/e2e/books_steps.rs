@@ -102,6 +102,9 @@ fn seed_book_expenses(conn: &rusqlite::Connection, account: &str, count: usize) 
                 kind: ledger_accounts::AccountType::Cash,
                 currency_code: "CNY".into(),
                 initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
             },
         )
         .expect("创建账户失败"),

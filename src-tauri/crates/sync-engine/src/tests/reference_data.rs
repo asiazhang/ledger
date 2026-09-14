@@ -26,6 +26,9 @@ fn account_input(name: &str) -> AccountInput {
         kind: AccountType::Cash,
         currency_code: "CNY".into(),
         initial_balance_cents: Some(1000),
+        credit_limit_cents: None,
+        statement_day: None,
+        due_day: None,
     }
 }
 
@@ -53,6 +56,9 @@ fn account_create_update_delete_ops_replay_and_converge() {
         AccountUpdateInput {
             name: Some("钱包".into()),
             currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap();
@@ -95,6 +101,9 @@ fn account_concurrent_edits_converge_to_order_last() {
         AccountUpdateInput {
             name: Some("甲".into()),
             currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap();
@@ -104,6 +113,9 @@ fn account_concurrent_edits_converge_to_order_last() {
         AccountUpdateInput {
             name: Some("乙".into()),
             currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap();
@@ -141,6 +153,9 @@ fn black_hole_adjust_produces_account_and_transaction_ops() {
             kind: AccountType::Cash,
             currency_code: "USD".into(),
             initial_balance_cents: Some(100),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap();
@@ -366,4 +381,139 @@ fn command_subject_is_entity_id_across_domains() {
         })
         .subject()
     );
+}
+
+// ---------------------------------------------------------------------------
+// 信用卡档案字段（spec #1327 / ADR-0119）：op 载荷随行与旧载荷承接。
+// ---------------------------------------------------------------------------
+
+/// 信用卡档案字段快照（额度 / 账单日 / 还款日）。
+fn read_credit_terms(conn: &Connection, id: &str) -> (Option<i64>, Option<i64>, Option<i64>) {
+    conn.query_row(
+        "SELECT credit_limit_cents, statement_day, due_day FROM accounts WHERE id=?1",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )
+    .unwrap()
+}
+
+/// 信用卡档案字段随账户 op 跨端收敛：否则「额度 / 账单日」会随设备漂移。
+/// 编辑与清空同走落定值语义（`None` = 置空），重放后两端相等。
+#[test]
+fn account_credit_terms_create_and_update_ops_replay_and_converge() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_device(&conn_a, "dev-a");
+    seed_device(&conn_b, "dev-b");
+
+    let id = create_account(
+        &conn_a,
+        AccountInput {
+            name: "招行信用卡".into(),
+            kind: AccountType::Credit,
+            currency_code: "CNY".into(),
+            initial_balance_cents: Some(-12_345),
+            credit_limit_cents: Some(5_000_000),
+            statement_day: Some(5),
+            due_day: Some(25),
+        },
+    )
+    .unwrap();
+    update_account(
+        &conn_a,
+        &id,
+        AccountUpdateInput {
+            name: None,
+            currency_code: None,
+            credit_limit_cents: Some(Some(6_000_000)),
+            statement_day: Some(Some(10)),
+            due_day: Some(Some(28)),
+        },
+    )
+    .unwrap();
+
+    let reports = wire_in(&conn_b, &wire_out(&conn_a));
+    assert!(
+        reports.iter().all(|r| r.outcome == OpOutcome::Applied),
+        "创建 + 编辑两条 op 应全部应用，实际: {reports:?}"
+    );
+    assert_eq!(
+        read_credit_terms(&conn_b, &id),
+        (Some(6_000_000), Some(10), Some(28))
+    );
+    assert_eq!(
+        read_credit_terms(&conn_b, &id),
+        read_credit_terms(&conn_a, &id),
+        "重放后档案两端一致"
+    );
+
+    // 清空也是落定值：单字段清空不牽动另两个，重放后两端仍相等。
+    update_account(
+        &conn_a,
+        &id,
+        AccountUpdateInput {
+            name: None,
+            currency_code: None,
+            credit_limit_cents: Some(None),
+            statement_day: None,
+            due_day: Some(None),
+        },
+    )
+    .unwrap();
+    let reports = wire_in(&conn_b, &wire_out(&conn_a));
+    assert!(
+        reports
+            .iter()
+            .all(|r| matches!(r.outcome, OpOutcome::Applied | OpOutcome::Skipped)),
+        "整批重投：已应用段跳过、新段应用，不得挂起或失败，实际: {reports:?}"
+    );
+    assert_eq!(read_credit_terms(&conn_b, &id), (None, Some(10), None));
+    assert_eq!(
+        read_credit_terms(&conn_b, &id),
+        read_credit_terms(&conn_a, &id)
+    );
+}
+
+/// 旧格式 op（V026 前设备产出）无信用卡档案键：重放照常应用、不挂起，档案按
+/// 「未设置」承接（与 V023 出资字段的旧载荷纪律同款：缺失即旧语义）。
+#[test]
+fn legacy_account_op_without_credit_fields_replays_as_unset() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_device(&conn_a, "dev-a");
+    seed_device(&conn_b, "dev-b");
+
+    let id = create_account(
+        &conn_a,
+        AccountInput {
+            kind: AccountType::Credit,
+            credit_limit_cents: Some(5_000_000),
+            statement_day: Some(5),
+            due_day: Some(25),
+            ..account_input("招行信用卡")
+        },
+    )
+    .unwrap();
+
+    // 把 op 改写成旧格式：行载荷无信用卡档案三键、schema 版本 24（V026 前）。
+    let mut legacy: serde_json::Value = serde_json::from_str(&wire_out(&conn_a)[0]).unwrap();
+    legacy["schema_version"] = serde_json::json!(24);
+    let row = legacy["command"]["payload"]["row"].as_object_mut().unwrap();
+    for key in ["credit_limit_cents", "statement_day", "due_day"] {
+        assert!(row.remove(key).is_some(), "前置：op 行载荷应携带 {key}");
+    }
+    let raw = serde_json::to_string(&legacy).unwrap();
+
+    let reports = wire_in(&conn_b, &[raw]);
+    assert!(
+        matches!(reports[0].outcome, OpOutcome::Applied),
+        "旧格式 op 应照常应用，实际: {:?}",
+        reports[0].outcome
+    );
+    assert_eq!(read_credit_terms(&conn_b, &id), (None, None, None));
+    assert_eq!(read_account(&conn_b, &id), read_account(&conn_a, &id));
+
+    // 已落日志（幂等重投跳过），不残留挂起。
+    let again = wire_in(&conn_b, &[serde_json::to_string(&legacy).unwrap()]);
+    assert_eq!(again[0].outcome, OpOutcome::Skipped);
 }

@@ -74,6 +74,9 @@ fn create_all_kinds_keep_cache_consistent() {
             kind: AccountType::Bank,
             currency_code: "CNY".into(),
             initial_balance_cents: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap();
@@ -376,6 +379,9 @@ fn account_create_and_delete_maintain_cache_rows() {
             kind: AccountType::Ewallet,
             currency_code: "CNY".into(),
             initial_balance_cents: Some(6800),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap();
@@ -404,6 +410,9 @@ fn adjust_balance_targets_exact_value_via_cache() {
             kind: AccountType::Bank,
             currency_code: "CNY".into(),
             initial_balance_cents: Some(1000),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap();

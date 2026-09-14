@@ -157,7 +157,7 @@ pub fn list_accounts_with_visibility(
     query_all(
         conn,
         &format!(
-            "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden \
+            "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden,credit_limit_cents,statement_day,due_day \
              FROM accounts WHERE {where_clause} ORDER BY created_at"
         ),
         [],

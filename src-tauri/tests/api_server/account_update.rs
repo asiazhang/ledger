@@ -335,3 +335,132 @@ async fn test_put_account_returns_404_for_missing_id() {
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
+
+// ---------------------------------------------------------------------------
+// 信用卡档案字段（spec #1327 / ADR-0119）：编辑三态（给值 / 不改 / 清空）与拒绝。
+// ---------------------------------------------------------------------------
+
+/// 建信用卡账户（`extra` 为附加的 JSON 片段，不出问题时传空串）并返回 id。
+async fn create_credit_account(app: &axum::Router, name: &str, extra: &str) -> String {
+    let comma = if extra.is_empty() { "" } else { "," };
+    let body =
+        format!(r#"{{"name":"{name}","type":"credit","currency_code":"CNY"{comma}{extra}}}"#);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/accounts")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    serde_json::from_slice(&body_to_bytes(response.into_body()).await).unwrap()
+}
+
+/// PUT 账户并返回状态码与响应体（400 时响应体是码化错误对象）。
+async fn put_account(app: &axum::Router, id: &str, body: &str) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/accounts/{id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = body_to_bytes(response.into_body()).await;
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+/// 编辑信用卡账户写入档案字段 → 200 且返回落定值。
+#[tokio::test]
+async fn test_put_account_sets_credit_terms() {
+    let (app, _) = setup_app();
+    let id = create_credit_account(&app, "招行信用卡", "").await;
+
+    let (status, updated) = put_account(
+        &app,
+        &id,
+        r#"{"credit_limit_cents":5000000,"statement_day":5,"due_day":25}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["credit_limit_cents"], 5_000_000);
+    assert_eq!(updated["statement_day"], 5);
+    assert_eq!(updated["due_day"], 25);
+}
+
+/// **三态语义在 HTTP 面成立**：显式 `null` 是「清空」而不是「不改」——serde 对
+/// `Option<Option<T>>` 会默认把两者折叠成同一个 `None`，本断言钉住区分器在位。
+#[tokio::test]
+async fn test_put_account_clears_credit_terms_with_explicit_null() {
+    let (app, _) = setup_app();
+    let id = create_credit_account(
+        &app,
+        "招行信用卡",
+        r#""credit_limit_cents":5000000,"statement_day":5,"due_day":25"#,
+    )
+    .await;
+
+    let (status, updated) = put_account(
+        &app,
+        &id,
+        r#"{"credit_limit_cents":null,"statement_day":null,"due_day":null}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        updated["credit_limit_cents"].is_null(),
+        "显式 null 必须清空"
+    );
+    assert!(updated["statement_day"].is_null());
+    assert!(updated["due_day"].is_null());
+}
+
+/// 键缺席 = 不改：只改名时档案三字段原样保留（清空需要显式 `null`）。
+#[tokio::test]
+async fn test_put_account_without_credit_fields_keeps_them() {
+    let (app, _) = setup_app();
+    let id = create_credit_account(
+        &app,
+        "招行信用卡",
+        r#""credit_limit_cents":5000000,"statement_day":5,"due_day":25"#,
+    )
+    .await;
+
+    let (status, updated) = put_account(&app, &id, r#"{"name":"招行信用卡Ⅰ"}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["name"], "招行信用卡Ⅰ");
+    assert_eq!(updated["credit_limit_cents"], 5_000_000);
+    assert_eq!(updated["statement_day"], 5);
+    assert_eq!(updated["due_day"], 25);
+}
+
+/// 非信用卡账户携带档案字段 → 400 + 码化错误，且账户值不变。
+#[tokio::test]
+async fn test_put_account_rejects_credit_terms_for_non_credit_type() {
+    let (app, _) = setup_app();
+    let id = create_account_via_api(&app, "现金").await;
+
+    let (status, err) = put_account(&app, &id, r#"{"statement_day":5}"#).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(err["kind"], "Invalid");
+    assert_eq!(err["code"], "account.credit-attribute-not-applicable");
+
+    let (_, account) = get_json(&app, "/api/v1/accounts").await;
+    let cash = account
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == id.as_str())
+        .unwrap();
+    assert!(cash["statement_day"].is_null(), "被拒绝的编辑不落库");
+}

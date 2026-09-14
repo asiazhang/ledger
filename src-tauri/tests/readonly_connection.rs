@@ -110,6 +110,9 @@ async fn seed_account(app: &AppHandle, name: &str, cents: i64) -> String {
             kind: ledger_accounts::AccountType::Cash,
             currency_code: "CNY".into(),
             initial_balance_cents: Some(cents),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .await

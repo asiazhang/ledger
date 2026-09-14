@@ -253,7 +253,9 @@ async fn test_openapi_doc_has_currencies_endpoint() {
 /// 或提预算），避免契约文档无界膨胀挤占 AI 上下文（32KB 预算在基金查询端点加入时
 /// 触线，issue #304 人工决策提至 40KB；40KB 在股票查询端点加入时触线，issue #693
 /// 人工决策提至 48KB：18 端点下契约是 AI 教学的唯一权威文本，拆分反而破坏
-/// 「一次拉取即自足」）。
+/// 「一次拉取即自足」）。spec #1327 / ADR-0119（信用卡档案字段）：三个新字段跨
+/// `Account` / `AccountInput` / `AccountUpdateInput` 三个 schema，字段描述已收敛到
+/// 单行后实测 49312 字节越 48KB，本票提至 50KB（与紧凑方言同票同因，ADR-0119 后果节）。
 #[tokio::test]
 async fn test_openapi_doc_size_within_budget() {
     let (app, _) = setup_app();
@@ -271,8 +273,8 @@ async fn test_openapi_doc_size_within_budget() {
 
     let bytes = body_to_bytes(response.into_body()).await;
     assert!(
-        bytes.len() <= 48 * 1024,
-        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 48KB）",
+        bytes.len() <= 50 * 1024,
+        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 50KB）",
         bytes.len()
     );
 }

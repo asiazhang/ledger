@@ -32,6 +32,11 @@ pub struct AccountCommandRow {
     /// 黑洞账户标志：余额调整即建路径携带 `true`，与种子同形（AI 导入域
     /// BlackHoleAccount）；常规创建恒 `false`。
     pub is_hidden: bool,
+    /// 信用卡档案字段（spec #1327 / ADR-0119）：仅 `credit` 账户可携带，
+    /// `None` = 未设置；旧日志无此三键时 serde 按 `None`（本域语义）承接。
+    pub credit_limit_cents: Option<i64>,
+    pub statement_day: Option<i64>,
+    pub due_day: Option<i64>,
 }
 
 /// 账户同步命令（serde：`action` 判别；作为 DomainCommand 信封的 payload 内嵌）。
@@ -40,11 +45,15 @@ pub struct AccountCommandRow {
 pub enum AccountCommand {
     /// 创建账户：实体 id 与语义行随命令携带（重放端不得重新生成 id）。
     Create { id: String, row: AccountCommandRow },
-    /// 修改账户（名称 / 币种为解决后的落定值，与本地修改同语义）。
+    /// 修改账户（名称 / 币种 / 信用卡档案为解决后的**落定值**，与本地修改同语义）。
+    /// 信用卡档案三字段一律为落定值（`None` = 置空），不存在「不改」形态。
     Update {
         id: String,
         name: String,
         currency_code: String,
+        credit_limit_cents: Option<i64>,
+        statement_day: Option<i64>,
+        due_day: Option<i64>,
     },
     /// 删除账户（软删除）：实体 id 足够——重放端执行与本地删除同一协议。
     Delete { id: String },
@@ -90,7 +99,18 @@ pub fn replay_command(conn: &Connection, command: &AccountCommand) -> Result<()>
             id,
             name,
             currency_code,
-        } => super::core::replay_update(conn, id, name, currency_code),
+            credit_limit_cents,
+            statement_day,
+            due_day,
+        } => super::core::replay_update(
+            conn,
+            id,
+            name,
+            currency_code,
+            *credit_limit_cents,
+            *statement_day,
+            *due_day,
+        ),
         AccountCommand::Delete { id } => super::core::replay_delete(conn, id),
     }
 }

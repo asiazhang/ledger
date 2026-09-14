@@ -3074,6 +3074,7 @@ dependencies = [
  "ledger-sync-protocol",
  "rusqlite",
  "serde",
+ "serde_json",
  "tauri-app",
  "utoipa",
 ]

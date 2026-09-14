@@ -10,6 +10,13 @@ export interface Account extends Syncable {
   initial_balance_cents: number
   created_at: string
   is_hidden: boolean
+  /** 信用卡档案字段（spec #1327 / ADR-0119）：仅 `credit` 账户可携带，`null`/缺省 = 未设置。
+   * **档案字段**：不参与余额与净资产口径（「还欠多少」由 `AccountBalance.balance_cents` 回答）。 */
+  credit_limit_cents?: number | null
+  /** 账单日：1–31 的「每月第 N 日」声明值（额度/账单日/还款日三者彼此独立可空）。 */
+  statement_day?: number | null
+  /** 还款日：1–31 的「每月第 N 日」声明值，与账单日不强制先后（银行存在跨月形态）。 */
+  due_day?: number | null
 }
 
 export interface AccountInput {
@@ -17,12 +24,20 @@ export interface AccountInput {
   type: AccountType
   currency_code: string
   initial_balance_cents?: number
+  /** 信用卡档案字段（仅信用卡账户可携带；缺省 = 未设置，事后可补填）。 */
+  credit_limit_cents?: number
+  statement_day?: number
+  due_day?: number
 }
 
-/** 账户编辑入参：type 不可改（参与余额符号归属）；币种仅无交易账户可改（后端拒绝）。 */
+/** 账户编辑入参：type 不可改（参与余额符号归属）；币种仅无交易账户可改（后端拒绝）。
+ * 信用卡档案字段三态：**缺省 = 不改、`null` = 清空、给值 = 落定该值**。 */
 export interface AccountUpdateInput {
   name?: string
   currency_code?: string
+  credit_limit_cents?: number | null
+  statement_day?: number | null
+  due_day?: number | null
 }
 
 /** 余额调整入参：校准到目标值，后端生成一笔与黑洞账户的转账（ADR-0026）。 */

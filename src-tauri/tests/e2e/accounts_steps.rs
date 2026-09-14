@@ -67,6 +67,9 @@ fn rename_account(world: &mut LedgerWorld, name: String, new_name: String) {
         AccountUpdateInput {
             name: Some(new_name),
             currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .err()
@@ -83,6 +86,9 @@ fn try_change_currency(world: &mut LedgerWorld, name: String, currency: String) 
         AccountUpdateInput {
             name: None,
             currency_code: Some(currency),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .err()

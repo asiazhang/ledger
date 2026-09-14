@@ -34,8 +34,33 @@ pub struct CategoryInput {
 #[derive(Debug, Deserialize)]
 pub struct CategoryUpdateInput {
     pub name: Option<String>,
-    pub icon: Option<String>,
+    /// 三态语义：**键缺席 = 不改、`null` = 清空图标、给值 = 落定该图标**。
+    ///
+    /// 与 [`Self::parent_id`] 同一根因、同一区分器：编辑弹窗的图标输入框清空后送
+    /// `null`（表达「不要图标了」），单层 `Option<String>` 只能把 `null` 读成
+    /// 「不改」——「清空图标」在 wire 上于是不可达（issue #1327 范围外修复）。
+    #[serde(default, deserialize_with = "double_option")]
+    pub icon: Option<Option<String>>,
+    /// 三态语义：**键缺席 = 不改、`null` = 清空（提升为顶级分类）、给值 = 落定该父**。
+    ///
+    /// 必须显式 `deserialize_with`：serde 对 `Option<Option<T>>` 会把「键缺席」与
+    /// 「值为 `null`」折叠成同一个 `None`（`null` 走 `Option` 的 `visit_unit`），
+    /// 不分开则「无父分类」在 wire 上不可达——编辑弹窗选「无父分类」会静默不生效
+    /// （修复留痕见 #1327 交付报告）。
+    #[serde(default, deserialize_with = "double_option")]
     pub parent_id: Option<Option<String>>,
+}
+
+/// 「键缺席 = 不改」与「值为 `null` = 清空」的反序列化区分器（见 [`CategoryUpdateInput`]）：
+/// 仅在键在场时被调用（缺席由 `#[serde(default)]` 交回 `None`），因此「键在场即 `Some`」
+/// 恰好等价于三态里的后两态。账户域信用卡档案字段有同款实现，收敛到共享工具属整理类
+/// 工作（issue #1330），不在缺陷修复范围内顺手做。
+fn double_option<'de, D>(deserializer: D) -> std::result::Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize as _;
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 /// 排序重排项（IPC 入参；同步命令 Reorder 变体随行载荷复用，issue #860）。

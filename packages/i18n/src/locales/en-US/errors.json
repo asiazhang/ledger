@@ -7,7 +7,11 @@
     "black-hole-adjust-unsupported": "balance adjustment is not supported for black hole accounts",
     "balance-overflow": "target balance overflows",
     "balance-no-change": "balance already equals target, no adjustment needed",
-    "type-unknown": "unknown account type: {0}"
+    "type-unknown": "unknown account type: {0}",
+    "credit-limit-invalid": "credit limit must be greater than 0",
+    "statement-day-invalid": "statement day must be between 1 and 31: {0}",
+    "due-day-invalid": "due day must be between 1 and 31: {0}",
+    "credit-attribute-not-applicable": "credit limit, statement day and due day apply to credit card accounts only"
   },
   "balance": {
     "cache-row-missing": "Account {0} is missing its balance cache row; run the balance cache audit to repair it"

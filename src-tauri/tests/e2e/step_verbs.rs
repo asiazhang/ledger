@@ -71,6 +71,9 @@ pub fn try_create_account_verb(
             .map_err(|e| AppError::Invalid(format!("非法账户类型 {kind}: {e}")))?,
         currency_code: currency.into(),
         initial_balance_cents,
+        credit_limit_cents: None,
+        statement_day: None,
+        due_day: None,
     };
     let id = create_account(&world_conn!(world), input)?;
     world.account_name_to_id.insert(name.into(), id.clone());

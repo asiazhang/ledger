@@ -394,6 +394,12 @@ async fn contract_transaction_input_quantity_describes_split_semantics() {
 /// issue #1123 复核：投资知识端点进入契约发现面（20 端点）后实测 22057 字节，
 /// 仍在 22KB 预算内（余量约 471B）——下一个新增端点/字段大概率触线，届时须人工
 /// 决策提预算或瘦身，延续本护栏的留痕传统。
+///
+/// spec #1327 / ADR-0119（信用卡档案字段：额度 / 账单日 / 还款日）：三个字段跨
+/// `Account` / `AccountInput` / `AccountUpdateInput` 三个 schema，字段描述先收敛到
+/// 单行（已削 374 字节、无冗余可再削）后实测 23192 字节仍越 22KB，本票提至 24KB。
+/// 不选「删描述换预算」：额度是档案字段，「不参与余额与净资产」必须写在契约里让
+/// AI 读到，删掉描述会让 AI 把额度误读成余额口径（ADR-0119 后果节留痕）。
 #[tokio::test]
 async fn contract_size_within_budget() {
     let (app, _) = setup_app();
@@ -409,8 +415,8 @@ async fn contract_size_within_budget() {
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = body_to_bytes(response.into_body()).await;
     assert!(
-        bytes.len() <= 22 * 1024,
-        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 22KB）",
+        bytes.len() <= 24 * 1024,
+        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 24KB）",
         bytes.len()
     );
 }
