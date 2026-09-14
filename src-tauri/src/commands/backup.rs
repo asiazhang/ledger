@@ -9,7 +9,7 @@
 //! `restart_app`（原位重引导）归口 `commands::boot`（issue #644 / ADR-0080）。
 //!
 //! 触碰 DB 与阻塞文件 IO 的命令 async 化（形状乙，spec #498 / #503）：DB/zip/
-//! 目录扫描等阻塞工作经连接层统一 helper [`crate::db::run_db`] 进 tauri 阻塞
+//! 目录扫描等阻塞工作经连接层统一 helper [`ledger_infra::db::run_db`] 进 tauri 阻塞
 //! 线程池执行，不占用界面事件循环线程；信号在 await 后发射。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
@@ -21,20 +21,20 @@ use std::path::Path;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime};
 
-use crate::backup;
-use crate::backup::BackupScope;
-use crate::backup::{
+use crate::commands::boot::current_boot;
+use crate::commands::data_location::effective_db_dir_of;
+use crate::shell_support::read_entry::read_entry;
+use ledger_backup as backup;
+use ledger_backup::BackupScope;
+use ledger_backup::{
     BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, PruneResult, RestoreResult,
     backup_db_to, expected_schema_version, list_managed_backups, probe_backup_meta,
     prune_managed_backups, restore_db_from,
 };
-use crate::commands::boot::current_boot;
-use crate::commands::data_location::effective_db_dir_of;
-use crate::db::data_location::DB_FILE_NAME;
-use crate::db::{self, DbState, run_db};
-use crate::error::{AppError, Result};
-use crate::read_entry::read_entry;
-use crate::signals::{WriteEvidence, WriteOp, emit_for};
+use ledger_infra::db::data_location::DB_FILE_NAME;
+use ledger_infra::db::{self, DbState, run_db};
+use ledger_infra::error::{AppError, Result};
+use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
 
 /// 当前活动账本的备份作用域（列表/清理命令共用，issue #836）：从引导快照的
 /// 注册表登记信息构造；注册表不可用（极端时序/损坏回退）时 `None`——退化为
@@ -244,9 +244,9 @@ pub async fn set_auto_backup_enabled(app: AppHandle, enabled: bool) -> Result<()
     let conn = app.state::<DbState>().conn.clone();
     run_db("set_auto_backup_enabled", move || {
         let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        crate::settings::set(
+        ledger_infra::settings::set(
             &conn,
-            crate::settings::SettingKey::AutoBackupEnabled,
+            ledger_infra::settings::SettingKey::AutoBackupEnabled,
             &enabled,
         )
     })

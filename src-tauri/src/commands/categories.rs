@@ -4,7 +4,7 @@
 //! 注册路径与前端调用保持不变。
 //!
 //! 全部命令 async 化（形状乙，spec #498 / #501）；写命令经壳层统一写入口
-//! [`crate::write_entry::write_entry`]（ADR-0073）：仪式（锁、事务、置脏、信号）
+//! [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：仪式（锁、事务、置脏、信号）
 //! 内化单点，参考写入成功发参考失效信号（映射单点判定，ADR-0044）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
@@ -13,13 +13,13 @@
 
 use tauri::State;
 
-use crate::categories as category_domain;
-use crate::categories::{Category, CategoryInput, CategoryUpdateInput, ReorderItem};
-use crate::db::DbState;
-use crate::error::Result;
-use crate::read_entry::read_entry;
-use crate::signals::WriteOp;
-use crate::write_entry::{Outcome, write_entry};
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_categories as category_domain;
+use ledger_categories::{Category, CategoryInput, CategoryUpdateInput, ReorderItem};
+use ledger_infra::db::DbState;
+use ledger_infra::error::Result;
+use ledger_infra::signals::WriteOp;
 
 /// 分类列表：默认仅未删除；`include_deleted=true` 返回含软删全量（issue #377，先例商户）。
 #[tauri::command]

@@ -5,10 +5,10 @@
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::error::AppError;
-use tauri_app_lib::item::ItemDailyCost;
-use tauri_app_lib::item::cost;
-use tauri_app_lib::item::domain::{calculate_item_cost, item_daily_total};
+use ledger_infra::error::AppError;
+use ledger_item::ItemDailyCost;
+use ledger_item::cost;
+use ledger_item::domain::{calculate_item_cost, item_daily_total};
 
 use crate::common::assert_last_error_contains;
 use crate::world::LedgerWorld;

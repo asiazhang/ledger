@@ -10,7 +10,7 @@
 //! ——域侧 [`build_channel`] 对测试直置的明文 http S3 桩配置保持可用，照常跑
 //! 自动轮次；该门住命令层是 #1217 的实现决定（理由见函数注释）。
 //!
-//! - `sync_now` 写路径经统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
+//! - `sync_now` 写路径经统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
 //!   重放是行为编排之外的第 N 写入入口（ADR-0091，接缝契约与批量导入同待遇），
 //!   外来 op 实际应用即账本数据变化——经 [`WriteOp::SyncRound`] 条件发参考失效
 //!   信号（证据 [`WriteEvidence::LedgerApplied`]），置脏照常在提交点发生。
@@ -41,22 +41,22 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::commands::encryption::{active_book_id, active_db_path};
-use crate::db::encryption::{DbFileKind, probe_file_kind, verify_source_passphrase};
-use crate::db::passphrase_cache::{self, CacheLoad};
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
-use crate::read_entry::read_entry;
-use crate::settings::{self, SettingKey};
-use crate::signals::{WriteEvidence, WriteOp};
-use crate::sync_engine::trigger::{
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_infra::db::encryption::{DbFileKind, probe_file_kind, verify_source_passphrase};
+use ledger_infra::db::passphrase_cache::{self, CacheLoad};
+use ledger_infra::db::{DbState, run_db};
+use ledger_infra::error::{AppError, Result};
+use ledger_infra::settings::{self, SettingKey};
+use ledger_infra::signals::{WriteEvidence, WriteOp};
+use ledger_sync_engine::trigger::{
     DEFAULT_SPACE_ID, book_unavailable_error, build_channel, configured_channel,
     not_configured_error, probe_channel, run_round_once,
 };
-use crate::sync_engine::{
+use ledger_sync_engine::{
     EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport, bootstrap_from_channel,
     parked_ops,
 };
-use crate::write_entry::{Outcome, write_entry};
 use ledger_sync_protocol::device::device_id;
 
 /// 通道配置回显（设置页通道配置表单，issue #862；S3 单后端形态 issue #1221）：
@@ -244,8 +244,8 @@ pub struct ParkedOpState {
     pub parked_at: String,
 }
 
-impl From<crate::sync_engine::ParkedOp> for ParkedOpState {
-    fn from(op: crate::sync_engine::ParkedOp) -> Self {
+impl From<ledger_sync_engine::ParkedOp> for ParkedOpState {
+    fn from(op: ledger_sync_engine::ParkedOp) -> Self {
         Self {
             op_id: op.op_id,
             device_id: op.device_id,
@@ -467,7 +467,7 @@ pub struct SyncCheckpointPublished {
 /// 换指针——存量数据的旧端把「新端可引导的来源」放上通道的唯一动作。
 ///
 /// 本命令是通道操作而非账本写入：本地数据零变化（零信号），且 `VACUUM INTO`
-/// 无法在事务内执行，故不经统一写入口 [`crate::write_entry::write_entry`]、
+/// 无法在事务内执行，故不经统一写入口 [`crate::shell_support::write_entry::write_entry`]、
 /// 直接持主连接锁调用（位点与快照同刻成对约束，`create_checkpoint`）。
 /// 信封模式解析与 `sync_now` 同款（`resolve_passphrase` 单点：密文库凭显式
 /// 口令或钥匙串，先验证后封包）。
@@ -501,7 +501,7 @@ pub async fn publish_sync_checkpoint<R: Runtime>(
     .await
 }
 
-/// 引导结果（域 [`crate::sync_engine::BootstrapOutcome`] 的 wire 投影）。
+/// 引导结果（域 [`ledger_sync_engine::BootstrapOutcome`] 的 wire 投影）。
 #[derive(Debug, Serialize)]
 pub struct SyncBootstrapOutcome {
     /// 采纳的检查点代数。
@@ -516,7 +516,7 @@ pub struct SyncBootstrapOutcome {
 /// 「加入即新库」的显式向导动作（ADR-0098 决策 5：不挂自动轮次），成功后由
 /// 前端原位重引导（`restart_app`）。
 ///
-/// 编排全在域单点 [`crate::sync_engine::bootstrap_from_channel`]（前置守卫、
+/// 编排全在域单点 [`ledger_sync_engine::bootstrap_from_channel`]（前置守卫、
 /// 信封形态对齐、整库换入、簿记清理与转密文决策）；本命令不经统一写入口
 /// （整库替换同 Restore 先例，零信号：引导后前端立即原位重引导，信号无消费
 /// 窗口），持主连接锁调用（快照拉取/换入与轮次同一互斥约束）。

@@ -11,14 +11,14 @@ use chrono::{Datelike, Months, NaiveDate};
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::budget::BudgetInput;
-use tauri_app_lib::budget::{budget_progress_rows, create_budget, delete_budget, update_budget};
-use tauri_app_lib::categories::{
+use ledger_budget::BudgetInput;
+use ledger_budget::{budget_progress_rows, create_budget, delete_budget, update_budget};
+use ledger_categories::{
     CategoryInput, create_category, delete_category as delete_category_domain,
     list_categories as list_categories_domain,
 };
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::create_transaction_internal;
+use ledger_transaction::TransactionInput;
+use ledger_transaction::create_transaction_internal;
 
 use crate::common::assert_last_error_contains;
 use crate::step_inputs::{expense_input as expense_input_factory, refund_input};

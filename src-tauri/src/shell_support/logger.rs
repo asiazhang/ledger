@@ -1,9 +1,9 @@
 //! 日志初始化与滚动清理（按天滚动、保留 7 天，issue #283）+ 日志档位闭集与
 //! 运行期滤镜接管（spec #608 / #611）。
 //!
-//! 壳机制暂住（ADR-0111 决策 2 / #1130）：本模块只被壳层消费（启动接线、
-//! 日志命令与设置命令壳），正住址是壳层，随 #1086 P5 壳层收敛迁出；
-//! 不得作为基础设施范式被引用。
+//! 壳层机制（spec #1086 P5 / #1108 壳层收敛）：本模块只被壳层消费（启动接线、
+//! 日志命令与设置命令壳），正住址即壳层根包；曾暂住
+//! `ledger-infra::shell_support`（ADR-0111 决策 2 / #1130），#1108 迁回。
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -88,9 +88,9 @@ pub fn set_level(level: LogLevel) {
 /// 闭集外字符串）同样回默认 info 并告警——读路径不因坏值上抛，行为免费正确。
 /// 界面展示的持久化档位与实际生效档位可能不一致（RUST_LOG 运行时覆盖），属已接受取舍。
 pub fn persisted_level(conn: &rusqlite::Connection) -> LogLevel {
-    let raw: String = crate::settings::get(
+    let raw: String = ledger_infra::settings::get(
         conn,
-        crate::settings::SettingKey::LogLevel,
+        ledger_infra::settings::SettingKey::LogLevel,
         "info".to_string(),
     )
     .unwrap_or_else(|e| {
@@ -125,17 +125,17 @@ pub fn apply_persisted_level(conn: &rusqlite::Connection) {
 pub fn set_persisted_level(
     conn: &rusqlite::Connection,
     level_str: &str,
-) -> crate::error::Result<()> {
+) -> ledger_infra::error::Result<()> {
     let level = level_str.parse::<LogLevel>().map_err(|e: String| {
-        crate::error::AppError::codedp(
+        ledger_infra::error::AppError::codedp(
             "settings.log-level-invalid",
             format!("日志等级非法：{e}"),
             &[level_str],
         )
     })?;
-    crate::settings::set(
+    ledger_infra::settings::set(
         conn,
-        crate::settings::SettingKey::LogLevel,
+        ledger_infra::settings::SettingKey::LogLevel,
         &level.directive(),
     )?;
     set_level(level);
@@ -212,7 +212,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::test_utils::{CaptureLayer, CapturedEvent, ensure_global_max_level};
+    use ledger_infra::test_utils::{CaptureLayer, CapturedEvent, ensure_global_max_level};
 
     /// 在指定档位滤镜作用下执行 `f`，返回捕获到的 tracing 事件。
     /// 先稳定全局最大级别（`ensure_global_max_level`），使 `debug!`/`trace!` 宏
@@ -310,7 +310,7 @@ mod tests {
 
     fn migrated_conn() -> rusqlite::Connection {
         // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
-        tauri_app_lib::test_support::open()
+        crate::test_support::open()
     }
 
     /// 缺 key / 缺表：`persisted_level` 回默认 info（`settings::get` 兑底）。
@@ -331,8 +331,12 @@ mod tests {
     #[test]
     fn persisted_level_falls_back_when_stored_value_outside_closed_set() {
         let conn = migrated_conn();
-        crate::settings::set(&conn, crate::settings::SettingKey::LogLevel, &"verbose")
-            .expect("写入闭集外字符串");
+        ledger_infra::settings::set(
+            &conn,
+            ledger_infra::settings::SettingKey::LogLevel,
+            &"verbose",
+        )
+        .expect("写入闭集外字符串");
         assert_eq!(persisted_level(&conn), LogLevel::Info);
     }
 

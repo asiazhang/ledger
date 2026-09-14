@@ -5,9 +5,9 @@ use axum::extract::State;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::ReadConn;
-use crate::currencies::Currency;
-use crate::error::AppError;
-use crate::read_entry::read_entry;
+use crate::shell_support::read_entry::read_entry;
+use ledger_currencies::Currency;
+use ledger_infra::error::AppError;
 
 #[utoipa::path(
     get,
@@ -25,7 +25,7 @@ pub async fn list_currencies_handler(
     State(read): State<ReadConn>,
 ) -> Result<Json<Vec<Currency>>, AppError> {
     read_entry("GET /api/v1/currencies", read.0, move |conn| {
-        Ok(Json(crate::currencies::list_currencies(conn)?))
+        Ok(Json(ledger_currencies::list_currencies(conn)?))
     })
     .await
 }

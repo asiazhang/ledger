@@ -522,8 +522,9 @@ describe('check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）
   it('真实仓库默认通过：基础设施→域零未认许引用（认许边留痕于脚本）', () => {
     const r = run([])
     expect(r.status).toBe(0)
-    // 生产挂载点 0（#1088 注册点反转消除 db/mod.rs→backup）+ settings/logger/write_entry/read_entry→test_support（ADR-0084，#758）
-    expect(r.output).toContain('认许边 4 条')
+    // 生产挂载点 0（#1088 注册点反转消除 db/mod.rs→backup）+ settings.rs→test_support
+    //（ADR-0084，#758）；shell_support 三条测试专用边随 #1108 迁出根包退役。
+    expect(r.output).toContain('认许边 1 条')
   })
 })
 
@@ -897,8 +898,6 @@ interface CrateFixtureOverrides {
   infraErrorRs?: string
   /** 覆盖 `crates/sync-protocol/Cargo.toml` 内容（域侧 http 启用负向夹具） */
   protocolManifest?: string
-  /** 覆盖根包 `src/lib.rs` 内容（test_utils 再导出 cfg 门负向夹具） */
-  rootLibRs?: string
   /** 覆盖 `src/api_server/handlers/import.rs` 内容（投资五节锚点 cfg 门负向夹具，#1185） */
   apiServerImportRs?: string
   /** 覆盖 `src/api_server/mod.rs` 内容（投资五节锚点再导出 cfg 门负向夹具，#1185） */
@@ -1011,13 +1010,9 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         '}\n',
   )
   mkdirSync(join(srcTauri, 'src'), { recursive: true })
-  writeFileSync(
-    join(srcTauri, 'src', 'lib.rs'),
-    overrides.rootLibRs ??
-      '#[cfg(any(test, feature = "test-utils"))]\n' +
-        '#[doc(hidden)]\n' +
-        'pub use ledger_infra::test_utils;\n',
-  )
+  // 根包 lib.rs 与真实仓库同形（#1108）：test_utils 再导出面已清除——测试器具
+  // 经 dev-dependency 以 ledger_infra::test_utils 直达，根包侧不再有门条目。
+  writeFileSync(join(srcTauri, 'src', 'lib.rs'), 'pub fn stub() {}\n')
 
   // 投资五节标题锚点（#1185）：夹具与真实仓库同形——常量住 handlers/import.rs、
   // 经 api_server/mod.rs 再导出，均带「放行测试」cfg 门（生产编译门默认绿）。
@@ -2583,16 +2578,6 @@ describe('check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
     expect(r.output).toContain('test_utils 生产编译门')
   })
 
-  it('根包再导出摘掉 cfg 门 → 红（生产构建会解析失败即变红）', () => {
-    const args = makeCrateFixture({
-      rootLibRs: '#[doc(hidden)]\npub use ledger_infra::test_utils;\n',
-    })
-    const r = run(args)
-    expect(r.status).toBe(1)
-    expect(r.output).toContain('test_utils 生产编译门')
-    expect(r.output).toContain('lib.rs')
-  })
-
   it('infra [features] default 含 test-utils → 红（默认 feature 即生产编入）', () => {
     const args = makeCrateFixture({
       memberManifest:
@@ -2831,24 +2816,13 @@ describe('check-structure INFRA_MODULES 双向全等 + crate 内分层断言（A
     expect(r.output).toContain('db/helper.rs:1')
   })
 
-  it('db 引用 shell_support / signals → 红', () => {
+  it('db 引用 signals → 红并定位文件行号（shell_support 靶已随 #1108 迁出退役）', () => {
     const args = makeFixture({
-      'db/runtime.rs': 'use crate::shell_support::write_entry;\nuse crate::signals::WriteOp;\npub fn x() {}\n',
+      'db/runtime.rs': 'use crate::signals::WriteOp;\npub fn x() {}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('shell_support')
     expect(r.output).toContain('signals')
-  })
-
-  it('boot 引用 shell_support → 红并定位文件行号', () => {
-    const args = makeFixture({
-      'boot/helper.rs': 'use crate::shell_support::logger;\npub fn x() {}\n',
-    })
-    const r = run(args)
-    expect(r.status).toBe(1)
-    expect(r.output).toContain('crate 内反向依赖')
-    expect(r.output).toContain('boot/helper.rs:1')
   })
 
   it('db/mod.rs 再导出 shim 合规绿；他文件同引用红', () => {
@@ -2874,7 +2848,7 @@ describe('check-structure INFRA_MODULES 双向全等 + crate 内分层断言（A
     const args = makeFixture({
       'db/helper.rs': [
         '/// [`crate::boot`] 升顶层（文档注释不算）',
-        '// crate::shell_support::write_entry',
+        '// 历史 shell_support 引用已随 #1108 迁出根包',
         'let s = "crate::signals::WriteOp";',
         'pub fn f() {}',
         '',

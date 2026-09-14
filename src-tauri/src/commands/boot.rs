@@ -3,18 +3,18 @@
 //! 启动期数据库打不开（明文库损坏等）不再弹原生「重置/退出」对话框、不再退出：
 //! 启动状态经 [`get_boot_status`] 暴露给前端（前端启动首屏选择的唯一依据），
 //! 失败时由启动失败恢复屏承担恢复通道——「重置为空库」（[`reset_after_startup_failure`]，
-//! 旧库按既有重置命名语义保留 `.bak` 副本，见 [`crate::db::reset_db_file`]，成功后
+//! 旧库按既有重置命名语义保留 `.bak` 副本，见 [`ledger_infra::db::reset_db_file`]，成功后
 //! 原位换连、拉起自动备份调度，应用随即进入全新空账本，无需重启）与「从备份文件
 //! 恢复…」（issue #602：复用既有 [`crate::commands::backup::restore_backup`] 全语义，
 //! 恢复成功后前端经 `restart_app` 自动重启；本文件只扩失败门白名单，恢复命令不变）。
 //! 明文模式日常启动零改动。
 //!
-//! 进程启动与重启共用同一段引导序列（[`boot_sequence`]，内核是 db 层 [`crate::db::boot::plan_boot`]）：
+//! 进程启动与重启共用同一段引导序列（[`boot_sequence`]，内核是 db 层 [`ledger_infra::db::boot::plan_boot`]）：
 //! 重启命令（[`restart_app`]，原位重引导）不再重建进程，而是原地重跑启动引导，
 //! 保证「重启后状态 = 新进程启动状态」恒成立（ADR-0080）。
 //!
 //! 只做参数解包与状态编排：库文件处置判定与启动失败门在 db 基础设施
-//! （[`crate::db::boot`]），重置的文件级语义在 [`crate::db`]，本文件不含领域规则。
+//! （[`ledger_infra::db::boot`]），重置的文件级语义在 [`crate::db`]，本文件不含领域规则。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -26,14 +26,16 @@ use rusqlite::Connection;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime};
 
-use crate::backup;
 use crate::commands::data_location::{default_data_dir, effective_db_dir_of};
 use crate::commands::encryption::resume_business_surface;
-use crate::db::boot::{BOOT_DB_UNREADABLE, BootFailureGate, BootPlan};
-use crate::db::data_location::Boot;
-use crate::db::encryption::EncryptionGate;
-use crate::db::{DbState, open_connection_in, open_connection_readonly_in, reset_db_file, run_db};
-use crate::error::{AppError, Result};
+use ledger_backup as backup;
+use ledger_infra::db::boot::{BOOT_DB_UNREADABLE, BootFailureGate, BootPlan};
+use ledger_infra::db::data_location::Boot;
+use ledger_infra::db::encryption::EncryptionGate;
+use ledger_infra::db::{
+    DbState, open_connection_in, open_connection_readonly_in, reset_db_file, run_db,
+};
+use ledger_infra::error::{AppError, Result};
 
 /// 引导结果的托管形态（issue #644 / ADR-0080）：`RwLock` 包裹——原位重引导
 /// 需要整体换入新引导结果，消费方只读克隆。登记/读取收口本模块的
@@ -115,8 +117,8 @@ fn swap_or_manage_db_state<R: Runtime>(
 /// 占位内存连接对（锁定/启动失败期间维持 [`DbState`] 形状；门禁拦截业务 IPC，
 /// 占位连接不被触达；恢复/解锁路径成功后原位成对换入真实连接）。
 fn placeholder_db<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
-    let conn = crate::db::open_in_memory()?;
-    let read_conn = crate::db::open_in_memory()?;
+    let conn = ledger_infra::db::open_in_memory()?;
+    let read_conn = ledger_infra::db::open_in_memory()?;
     swap_or_manage_db_state(app, conn, read_conn)
 }
 
@@ -147,7 +149,7 @@ pub(crate) fn detach_read_conn<R: Runtime>(app: &AppHandle<R>) {
 pub(crate) fn boot_sequence<R: Runtime>(app: &AppHandle<R>) -> Result<BootPhase> {
     let default_dir = default_data_dir(app)?;
     std::fs::create_dir_all(&default_dir).map_err(|e| AppError::Io(e.to_string()))?;
-    let BootPlan { boot, disposition } = crate::db::boot::plan_boot(&default_dir);
+    let BootPlan { boot, disposition } = ledger_infra::db::boot::plan_boot(&default_dir);
     if let Some(reason) = &boot.fallback_reason {
         tracing::warn!(reason = %reason, "DataLocation 引导发生回退，已改用默认数据目录");
     }
@@ -160,7 +162,7 @@ pub(crate) fn boot_sequence<R: Runtime>(app: &AppHandle<R>) -> Result<BootPhase>
     let gate = app.state::<EncryptionGate>();
     let boot_gate = app.state::<BootFailureGate>();
     match disposition? {
-        crate::db::boot::BootDisposition::AwaitUnlock => {
+        ledger_infra::db::boot::BootDisposition::AwaitUnlock => {
             // 占位连接只维持 DbState 形状（IPC/HTTP 壳在锁定期间被门禁拦截，
             // 不会触达）；解锁成功后原位换成凭主口令打开的真实连接。
             gate.set_locked(true);
@@ -168,7 +170,7 @@ pub(crate) fn boot_sequence<R: Runtime>(app: &AppHandle<R>) -> Result<BootPhase>
             tracing::info!(db_dir = %db_dir.display(), "检测到密文库，等待解锁");
             Ok(BootPhase::AwaitUnlock)
         }
-        crate::db::boot::BootDisposition::OpenPlaintext => {
+        ledger_infra::db::boot::BootDisposition::OpenPlaintext => {
             // 成对建连（issue #1280 / ADR-0117 决策 3）：写连接先行完成迁移，
             // 读连接以只读形态打开同一库文件；两连接同刻换入后再开门（fail-closed）。
             let conn = open_connection_in(&db_dir)?;
@@ -183,12 +185,12 @@ pub(crate) fn boot_sequence<R: Runtime>(app: &AppHandle<R>) -> Result<BootPhase>
             {
                 let state = app.state::<DbState>();
                 let conn = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-                crate::logger::apply_persisted_level(&conn);
+                crate::shell_support::logger::apply_persisted_level(&conn);
             }
             tracing::info!(db_dir = %db_dir.display(), "数据库初始化完成");
             Ok(BootPhase::Ready)
         }
-        crate::db::boot::BootDisposition::Unreadable => {
+        ledger_infra::db::boot::BootDisposition::Unreadable => {
             // 明文损坏主场景（issue #601）：库文件不可读，按启动失败处理——
             // 由调用方登记失败门、交由前端失败恢复屏接管。
             Err(AppError::coded(
@@ -292,7 +294,7 @@ pub async fn restart_app<R: Runtime>(app: AppHandle<R>) -> Result<()> {
     // 原位重引导 = 可能换库（切换账本 / 恢复 / 转换后重开）：清空本会话密钥记忆
     // （issue #863 / ADR-0098）——新库的密钥形态未知，等下一次解锁或手动同步
     // 重新记入，避免拿旧库口令去封新库的段（密文/明文错配会让对端无法开封）。
-    crate::sync_engine::SessionEnvelope::forget();
+    ledger_sync_engine::SessionEnvelope::forget();
     let phase = run_db("restart_app", move || Ok(try_boot_sequence(&handle))).await?;
     if phase == BootPhase::Ready {
         // 重引导落到就绪即拉起后台服务（issue #961 唯一编排点）：锁定/失败态
@@ -317,7 +319,7 @@ pub async fn restart_app<R: Runtime>(app: AppHandle<R>) -> Result<()> {
 /// 启动失败恢复通道①：重置为空库（issue #601 / ADR-0075 决策 5 修订）。
 ///
 /// 只在启动失败状态可达（失败恢复屏专用面）。旧库按既有重置命名语义保留
-/// `.bak` 副本（[`crate::db::reset_db_file`]），原位新建明文空库；成功后
+/// `.bak` 副本（[`ledger_infra::db::reset_db_file`]），原位新建明文空库；成功后
 /// 业务可用起点编排（与解锁恢复同型）：原位换连 → 清失败门 → 日志档位
 /// 接管 → 拉起自动备份调度，应用随即进入全新空账本，无需重启。
 #[tauri::command]

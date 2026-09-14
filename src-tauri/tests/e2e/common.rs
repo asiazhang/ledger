@@ -3,9 +3,9 @@ use std::path::Path;
 use rusqlite::Connection;
 use rusqlite::params;
 
-use tauri_app_lib::db::{open_connection, open_connection_with_passphrase};
-use tauri_app_lib::error::AppError;
-use tauri_app_lib::transaction::{Transaction, TransactionInput};
+use ledger_infra::db::{open_connection, open_connection_with_passphrase};
+use ledger_infra::error::AppError;
+use ledger_transaction::{Transaction, TransactionInput};
 
 use crate::step_inputs::expense_input;
 use crate::world::LedgerWorld;
@@ -65,11 +65,11 @@ pub fn seed_account_with_expenses(
     amount_base: i64,
     date: &str,
 ) -> String {
-    let id = tauri_app_lib::accounts::create_account(
+    let id = ledger_accounts::create_account(
         conn,
-        tauri_app_lib::accounts::AccountInput {
+        ledger_accounts::AccountInput {
             name: account.into(),
-            kind: tauri_app_lib::accounts::AccountType::Cash,
+            kind: ledger_accounts::AccountType::Cash,
             currency_code: "CNY".into(),
             initial_balance_cents: Some(0),
         },
@@ -80,7 +80,7 @@ pub fn seed_account_with_expenses(
             note: Some(format!("{note_prefix} {i}")),
             ..expense_input(amount_base + i as i64, &id, date)
         };
-        tauri_app_lib::transaction::create_transaction_internal(conn, input).unwrap();
+        ledger_transaction::create_transaction_internal(conn, input).unwrap();
     }
     id
 }

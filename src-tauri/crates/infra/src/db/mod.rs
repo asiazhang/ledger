@@ -24,7 +24,7 @@ pub use connection::{
     open_in_memory, reset_db_file, reset_db_in,
 };
 pub use migrate::{init_db, schema_version};
-pub(crate) use runtime::probe_lock_hold;
+pub use runtime::probe_lock_hold;
 pub use runtime::{
     AfterCommitHook, DbState, LOCK_HOLD_PROBE_THRESHOLD, register_after_commit_hook,
     replace_read_conn_slot, run_db, write,

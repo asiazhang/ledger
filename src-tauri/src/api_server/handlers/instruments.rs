@@ -9,16 +9,16 @@ use crate::api_server::error::ErrorResponse;
 use crate::api_server::handlers::funds::fetch_fund_quote_for_api;
 use crate::api_server::handlers::stocks::fetch_stock_quote_first_hit_for_api;
 use crate::api_server::state::{ApiState, ReadConn};
-use crate::error::AppError;
-use crate::investment::{
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_infra::error::AppError;
+use ledger_infra::signals::{WriteEvidence, WriteOp};
+use ledger_investment::{
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentType, Quote,
     StockCreateRoute, adopt_fund_quote, adopt_stock_quote, create_fund_degraded,
     create_stock_degraded, derive_quote_currency, is_six_digit_code, reject_carried_fund_market,
     route_stock_creation,
 };
-use crate::read_entry::read_entry;
-use crate::signals::{WriteEvidence, WriteOp};
-use crate::write_entry::{Outcome, write_entry};
 
 /// 标的搜索查询参数（`GET /api/v1/instruments`，issue #294 / ADR-0037）。
 #[derive(Debug, Deserialize)]
@@ -89,7 +89,7 @@ pub async fn search_instruments_handler(
         page_size: Some(limit as usize),
     };
     read_entry("GET /api/v1/instruments", read.0, move |conn| {
-        Ok(Json(crate::investment::list_instruments(conn, &filter)?))
+        Ok(Json(ledger_investment::list_instruments(conn, &filter)?))
     })
     .await
 }
@@ -115,7 +115,7 @@ pub struct InstrumentCreateInput {
     currency_code: Option<String>,
 }
 
-// 报价币种缺省推导已上收投资域单点 `crate::investment::derive_quote_currency`
+// 报价币种缺省推导已上收投资域单点 `ledger_investment::derive_quote_currency`
 // （issue #693 随股票查询接缝收口：stocks 查询端点投影同一推导，两处不漂移；
 // 推导规则与依据注释见该函数，ADR-0037 决策 2 / ADR-0081）。
 
@@ -264,7 +264,7 @@ pub async fn create_instrument_handler(
                         market: input.market.clone(),
                     };
                     (
-                        crate::investment::create_instrument(conn, generic_input)?,
+                        ledger_investment::create_instrument(conn, generic_input)?,
                         false,
                     )
                 }

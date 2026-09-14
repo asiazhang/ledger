@@ -11,14 +11,14 @@
 use cucumber::{given, then, when};
 use rusqlite::Connection;
 
-use tauri_app_lib::db::data_location::relocate_with_key;
-use tauri_app_lib::db::data_location::{self, DB_FILE_NAME};
-use tauri_app_lib::db::encryption::{
+use ledger_infra::db::data_location::relocate_with_key;
+use ledger_infra::db::data_location::{self, DB_FILE_NAME};
+use ledger_infra::db::encryption::{
     DbFileKind, change_passphrase_for_file, disable_encryption_for_file,
     enable_encryption_for_file, probe_file_kind, reset_encrypted_db_file, unlock_db_file,
 };
-use tauri_app_lib::db::{init_db, new_uuid, open_connection, open_connection_with_passphrase};
-use tauri_app_lib::error::AppError;
+use ledger_infra::db::{init_db, new_uuid, open_connection, open_connection_with_passphrase};
+use ledger_infra::error::AppError;
 
 use crate::common::{count_transactions, count_transactions_in_file, seed_account_with_expenses};
 use crate::world::LedgerWorld;
@@ -550,7 +550,7 @@ fn then_source_preserved(world: &mut LedgerWorld) {
 #[when(expr = "制定重引导计划")]
 fn when_plan_reboot(world: &mut LedgerWorld) {
     let default_dir = world.boot.enc_dir.clone().expect("尚未准备加密场景目录");
-    let plan = tauri_app_lib::db::boot::plan_boot(&default_dir);
+    let plan = ledger_infra::db::boot::plan_boot(&default_dir);
     world.boot.last_boot = Some(plan.boot);
     world.boot.enc_last_plan = Some(plan.disposition.map_err(|e| e.to_string()));
 }
@@ -575,7 +575,7 @@ fn then_plan_awaits_unlock(world: &mut LedgerWorld) {
         .expect("尚未制定重引导计划");
     assert_eq!(
         plan.as_ref().expect("重引导计划不应失败"),
-        &tauri_app_lib::db::boot::BootDisposition::AwaitUnlock,
+        &ledger_infra::db::boot::BootDisposition::AwaitUnlock,
         "重引导后密文库应推进到等待解锁（与启动同序列）"
     );
 }
@@ -589,7 +589,7 @@ fn then_plan_ready(world: &mut LedgerWorld) {
         .expect("尚未制定重引导计划");
     assert_eq!(
         plan.as_ref().expect("重引导计划不应失败"),
-        &tauri_app_lib::db::boot::BootDisposition::OpenPlaintext,
+        &ledger_infra::db::boot::BootDisposition::OpenPlaintext,
         "重引导后明文库应就绪建连（与启动同序列）"
     );
 }

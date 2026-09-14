@@ -6,8 +6,8 @@
 //! 顺序敏感：enum 顺序即 CHECK 字面量顺序即 OpenAPI `enum_values` 顺序，
 //! 三者同源同序。
 
+use tauri_app_lib::ledger_transaction::TransactionKind;
 use tauri_app_lib::test_support::{extract_check_in_literals, open};
-use tauri_app_lib::transaction::TransactionKind;
 
 /// V001 `transactions.kind` CHECK 字面量集与 `ALL` 的 `as_str` 集全等（含顺序）。
 #[test]

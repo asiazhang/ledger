@@ -12,94 +12,38 @@
     )
 )]
 
-// 账户域 crate（spec #1086 / issue #1093，P3 叶子业务域 crate）：自根包域目录
-// 拆出，根包以再导出形态保留原引用路径——壳层与其余域的 `crate::accounts::…`
-// / `tauri_app_lib::accounts::…` 调用点零改动（expand 形态，ledger-backup/
-// ledger-transaction 同款）。域内行为见 `ledger-accounts` crate。
-pub use ledger_accounts as accounts;
+// 业务域 crate 全家（spec #1086 / issues #1091–#1107）：备份、核心交易、账户、
+// 分类、商户、币种、报表、仪表盘、保单、定时计划、预算、实物资产、物品、投资、
+// 行情同步与多端同步 16 域自根包域目录逐域拆出成 crate。拆分期的别名再导出
+//（`pub use ledger_backup as backup` 等，保 `ledger_backup::…` 旧路径）已清除：
+// 壳层、域间与集成测试一律以 crate 本名直呼（`ledger_backup::…` 等）。
+// 本处仅保留 crate 本名再导出，服务于域 crate 测试的实例纪律（各域
+// Cargo.toml dev-dep 注释留痕）：被测 crate 在自身测试图内双实例——本地实例
+//（cfg(test) 构建）与根包图实例（tauri-app 依赖携带）——接缝注册静态由测试
+// 工厂（test_support::open）接在根包图实例上，走接缝的行为路径测试必须经
+// `tauri_app_lib::ledger_*` 驱动同一实例；生产路径不经本面（壳层直呼 crate 名）。
+pub use ledger_accounts;
+pub use ledger_backup;
+pub use ledger_budget;
+pub use ledger_categories;
+pub use ledger_currencies;
+pub use ledger_dashboard;
+pub use ledger_investment;
+pub use ledger_item;
+pub use ledger_market_sync;
+pub use ledger_merchants;
+pub use ledger_physical_asset;
+pub use ledger_policy;
+pub use ledger_reports;
+pub use ledger_scheduled;
+pub use ledger_sync_engine;
+pub use ledger_transaction;
 pub mod api_server;
-// 备份域 crate（spec #1086 / issue #1091，首个业务域 crate 自根包域目录拆出）：
-// 域目录 `src/backup` 整体迁入 `crates/backup`，根包以别名再导出保留原引用路径
-// ——`crate::backup::…` / `tauri_app_lib::backup::…` 调用点零改动（expand 形态，
-// #1088 基础设施再导出同款）。域内引擎与调度本体见 `ledger-backup` crate。
-pub use ledger_backup as backup;
-// 预算域 crate（spec #1086 / issue #1101，P3 叶子业务域 crate）：自根包域目录
-// 拆出，根包以再导出形态保留原引用路径——壳层（IPC 命令）、sync_engine 重放
-// 分派与 e2e 的 `crate::budget::…` / `tauri_app_lib::budget::…` 调用点零改动
-//（expand 形态，ledger-transaction 同款）。域内本体见 `ledger-budget` crate。
-pub use ledger_budget as budget;
-// 分类域 crate（spec #1086 / issue #1094，P3 叶子域）：自根包域目录拆出，根包
-// 以再导出形态保留原引用路径——壳层（commands / api_server）、同步域与其余域
-// 的 `crate::categories::…` / `tauri_app_lib::categories::…` 调用点零改动
-//（expand 形态，ledger-transaction 同款）。域内本体见 `ledger-categories` crate。
-pub use ledger_categories as categories;
 pub mod commands;
-// 币种域 crate（spec #1086 / issue #1095，P3 叶子域，参考数据三域之二）：币种字典、
-// 汇率与本位币基准自根包域目录拆出，根包以再导出形态保留原引用路径——壳层与其余
-// 域的 `crate::currencies::…` / `tauri_app_lib::currencies::…` 调用点零改动
-//（expand 形态，ledger-transaction 同款）。域内引擎见 `ledger-currencies` crate。
-pub use ledger_currencies as currencies;
-// 物品域 crate（spec #1086 / issue #1099，P3 叶子域）：自根包域目录拆出，根包以
-// 再导出形态保留原引用路径——壳层（IPC/HTTP 命令）、transaction_wiring 接线、
-// sync_engine 重放分派与 e2e 的 `crate::item::…` / `tauri_app_lib::item::…`
-// 调用点零改动（expand 形态，ledger-backup/ledger-transaction 同款）。域内本体
-// 见 `ledger-item` crate。
-pub use ledger_item as item;
-// 仪表盘域 crate（spec #1086 / issue #1104，P3 叶子业务域 crate）：首页净资产
-// 跨币种折算合计自根包域目录拆出，根包以再导出形态保留原引用路径——壳层
-//（IPC 命令）、ledger-perf 基准与 e2e 的 `crate::dashboard::…` /
-// `tauri_app_lib::dashboard::…` 调用点零改动（expand 形态，ledger-reports
-// 同款）。域内本体见 `ledger-dashboard` crate。
-pub use ledger_dashboard as dashboard;
-// 投资域 crate（spec #1086 / issue #1097，P3 业务域 crate）：自根包域目录拆出，
-// 根包以再导出形态保留原引用路径——壳层（IPC/HTTP 命令）、transaction_wiring 接线、
-// 行情同步域、sync_engine 重放分派、ledger-perf 与 e2e 的 `crate::investment::…` /
-// `tauri_app_lib::investment::…` 调用点零改动（expand 形态，ledger-merchants 同款）。
-pub use ledger_investment as investment;
-// 商户域 crate（spec #1086 / issue #1096，参考数据三域各自独立 crate）：自根包
-// 域目录拆出，根包以再导出形态保留原引用路径——壳层（IPC/HTTP 命令）、
-// transaction_wiring 接线、sync_engine 重放分派与 e2e 的
-// `crate::merchants::…` / `tauri_app_lib::merchants::…` 调用点零改动
-//（expand 形态，ledger-backup/ledger-transaction 同款）。
-pub use ledger_merchants as merchants;
-// 实物资产域 crate（spec #1086 / issue #1102，P3 叶子业务域 crate）：大件实物
-// 估值档案自根包域目录拆出，根包以再导出形态保留原引用路径——壳层（IPC/HTTP
-// 命令）、dashboard 净资产实物腿、sync_engine 重放分派与 e2e 的
-// `crate::physical_asset::…` / `tauri_app_lib::physical_asset::…` 调用点零改动
-//（expand 形态，ledger-policy 同款）。域内本体见 `ledger-physical-asset` crate。
-pub use ledger_physical_asset as physical_asset;
-// 保单域 crate（spec #1086 / issue #1100，P3 叶子业务域 crate）：保单静态档案
-// CRUD、保司字典与保单视角统计自根包域目录拆出，根包以再导出形态保留原引用
-// 路径——壳层（commands / api_server）、transaction_wiring 接线、sync_engine 重
-// 放分派与 e2e 的 `crate::policy::…` / `tauri_app_lib::policy::…` 调用点零改动
-//（expand 形态，ledger-transaction 同款）。域内本体见 `ledger-policy` crate。
-pub use ledger_policy as policy;
-// 报表域 crate（spec #1086 / issue #1103，P3 叶子业务域 crate）：聚合分析读模型
-//（月度汇总/分类聚合/商户排行/日期极值）自根包域目录拆出，根包以再导出形态
-// 保留原引用路径——壳层（IPC 命令）、ledger-perf 基准与 e2e 的
-// `crate::reports::…` / `tauri_app_lib::reports::…` 调用点零改动
-//（expand 形态，ledger-transaction 同款）。域内本体见 `ledger-reports` crate。
-pub use ledger_reports as reports;
-// 定时计划域 crate（spec #1086 / issue #1098，P3 业务域）：自根包域目录拆出，
-// 根包以再导出形态保留原引用路径——壳层（IPC/HTTP 命令）、双向接缝接线
-//（计划来源反查实现、期次落账置脏注册点、追补触发实现）、sync_engine 重放分派、
-// ledger-perf 与 e2e 的 `crate::scheduled_transactions::…` /
-// `tauri_app_lib::scheduled_transactions::…` 调用点零改动（expand 形态，
-// ledger-backup/ledger-transaction 同款）。
-pub use ledger_scheduled as scheduled_transactions;
-// 行情同步域 crate（spec #1086 / issue #1106，P4 首个拆出的业务域 crate）：东财行情
-// 抓取（批量报价 / 单点行情 / 日 K / 历史净值）与增量同步编排自根包域目录拆出，
-// 根包以再导出形态保留原引用路径——壳层（IPC 命令 `commands::sync`、
-// `commands::investment` 与 `api_server` 的行情查询注入点）的
-// `crate::sync::…` / `tauri_app_lib::sync::…` 调用点零改动（expand 形态，
-// ledger-transaction 同款）。域内本体见 `ledger-market-sync` crate。
-pub use ledger_market_sync as sync;
-// 多端同步域 crate（spec #1086 / issue #1107，P4 业务域 crate）：OpLog 基座、
-// 双端合并、Checkpoint 与同步触发编排自根包域目录拆出，根包以再导出形态保留
-// 原引用路径——壳层（IPC/HTTP 命令）、启动接线、测试工厂、命令集成与 e2e 的
-// `crate::sync_engine::…` / `tauri_app_lib::sync_engine::…` 调用点零改动
-//（expand 形态，ledger-market-sync 同款）。域内本体见 `ledger-sync-engine` crate。
-pub use ledger_sync_engine as sync_engine;
+// 壳层机制（spec #1086 P5 / issue #1108 壳层收敛）：壳层统一读写入口、IPC 载荷
+// 脱敏与日志初始化的正住址。曾暂住 `ledger-infra::shell_support`（ADR-0111
+// 决策 2 / #1130），本票迁回——基础设施不再承载任何只被壳层消费的机制。
+pub mod shell_support;
 // 信号守门测试（signals_cross_check，ADR-0044 决策 3 修订 / ADR-0073 决策 5）：
 // 写路径接线源码扫描核对，仅测试可见。
 #[cfg(test)]
@@ -113,11 +57,6 @@ mod sync_trigger_guard;
 //（C 类豁免声明，ADR-0060）。
 #[doc(hidden)]
 pub mod test_support;
-// 核心交易域 crate（spec #1086 / issue #1092，P2 首个底层业务域 crate）：自根包
-// 域目录拆出，根包以再导出形态保留原引用路径——壳层与其余域的
-// `crate::transaction::…` / `tauri_app_lib::transaction::…` 调用点零改动
-//（expand 形态，ledger-backup 同款）。
-pub use ledger_transaction as transaction;
 // 交易域接缝的组合安装入口（issue #1180）：核心交易域六向挂载点的 provider 级
 // `install_*` 在七个建库/启动入口逐字重复，收敛为本模块一处——聚合的只是壳层接线
 // 动作，注册点契约与实现住址不变。
@@ -125,32 +64,19 @@ pub mod transaction_wiring;
 
 use tauri::Manager;
 use tauri::ipc::Invoke;
-// 基础设施全量归位（spec #1086 / issue #1088）：数据库、错误、设置、文件工具、
-// 日志、事件、信号、闭集与壳层统一读写入口迁入 `ledger-infra`，根包以再导出
-// 形态保留原引用路径——域与壳层的 `crate::db::…` / `crate::error::…` 等调用点
-// 零改动即可编译（expand 形态）。#1130 起日志、读写入口与载荷脱敏在 crate 内
-// 收进 `shell_support` 暂住分组（ADR-0111 决策 2：正住址是壳层，#1086 P5 迁出），
-// 再导出面不变。
-pub use ledger_infra::{
-    closed_set, db, error, events, fs_util, logger, read_entry, settings, signals, write_entry,
-};
-// 测试支持器具随基础设施归位（issue #1088）：类型身份要求与 `events::SignalEmitter`
-// 同 crate，根包原路径 `crate::test_utils` / `tauri_app_lib::test_utils` 经再导出保持。
-// 生产构建不编译（ADR-0111 决策 5 / issue #1132）：仅 `cfg(test)` 与显式启用
-// `test-utils` feature 的测试构建含此再导出，feature 由根包自身 dev-dependency 启用。
-#[cfg(any(test, feature = "test-utils"))]
-#[doc(hidden)]
-pub use ledger_infra::test_utils;
-// IPC 载荷脱敏（issue #1087 首位成员）：调用面保持原函数名。
-use ledger_infra::redact::redact_passphrase_payload;
+// 基础设施（spec #1086 / issue #1088）：壳层以 crate 本名直接消费（#1108 起
+// 拆分期的再导出面清除，`crate::db` 等旧路径消亡），依赖方向由 cargo 依赖图强制。
+use ledger_infra::db;
+// IPC 载荷脱敏（issue #1087 首位成员）：调用面保持原函数名，模块已迁回壳层。
+use crate::shell_support::redact::redact_passphrase_payload;
 // 对话框兜底仅桌面参与（issue #558 / ADR-0074 决策 6）：移动端启动期 DB 初始化
 // 二次失败改走记日志后带错误退出，不引入主线程阻塞对话框（见 run() 的二次失败兜底）。
 #[cfg(desktop)]
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use crate::commands::boot::{boot_sequence, recover_boot_failure};
-use crate::db::boot::BootFailureGate;
-use crate::db::encryption::EncryptionGate;
+use ledger_infra::db::boot::BootFailureGate;
+use ledger_infra::db::encryption::EncryptionGate;
 
 // 命令注册单一来源（ADR-0047）：由 build.rs 扫描 #[tauri::command] 注解生成、
 // include! 进本 crate；命令注册零手工清单，新增/删除命令只改命令域文件本身。
@@ -190,8 +116,8 @@ const BOOT_FAILURE_ALLOWED_COMMANDS: &[&str] = &[
 ];
 
 /// 业务可用起点的**后台服务编排单一入口**（issue #961）：自动备份调度
-/// （[`backup::start_scheduler`]，轮询同轮承载定时计划追补）与多端同步触发
-/// （[`sync_engine::start_triggers`]，分平台门收在域内一处，ADR-0098 决策 4）
+/// （[`ledger_backup::start_scheduler`]，轮询同轮承载定时计划追补）与多端同步触发
+/// （[`ledger_sync_engine::start_triggers`]，分平台门收在域内一处，ADR-0098 决策 4）
 /// 必须在每个业务可用起点成对拉起——两个独立调用无机制保证成对，#863 会话
 /// 已由同一根因造成两次真实缺陷（分平台门漂移、`restart_app` 落 Ready 漏接
 /// 同步触发），且「缺失一个调用」不会让任何断言变红。全部业务可用起点只调
@@ -203,8 +129,8 @@ const BOOT_FAILURE_ALLOWED_COMMANDS: &[&str] = &[
 /// 两个域入口的生产调用只允许出现在本函数体内，其余位置命中即红。
 /// 各调度自持单次拉起守卫，原位重引导重复调用幂等（ADR-0080）。
 pub(crate) fn start_background_services<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    backup::start_scheduler(app);
-    sync_engine::start_triggers(app);
+    ledger_backup::start_scheduler(app);
+    ledger_sync_engine::start_triggers(app);
 }
 
 fn try_init_database(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -249,24 +175,24 @@ pub fn run() {
     #[allow(clippy::expect_used)]
     builder
         .setup(move |app| {
-            logger::init(app.handle());
+            shell_support::logger::init(app.handle());
             // 写路径副作用接缝接线（spec #1086 / issue #1088）：连接层写入口提交点的
             // 后置动作（置脏 + 写时顺带到期检查，ADR-0032）由备份域提供实现、壳层
             // 启动时注册——基础设施 crate 不再反向依赖业务域；注册先于任何建库/写库。
-            backup::install_after_commit_hook();
+            ledger_backup::install_after_commit_hook();
             // 写后即时同步接线（#1089 / ADR-0091 决策 9）：本地 op 产出单点在协议
             // crate（共享底座，不认识调度），响应闭包（去抖合流跑一轮）由本域提供、
             // 壳层启动时装入（幂等，先装者优先）。注册先于任何建库/写库。
-            sync_engine::trigger::install_after_write_hook();
+            ledger_sync_engine::trigger::install_after_write_hook();
             // 写路径副作用接缝接线（issue #1090 / spec #1086 形态推广）：核心交易域的
             // 余额刷新注册点与计划来源解析注册点，实现分别由账户域与定时计划域
             // 提供、壳层启动时接线（幂等）；期次落账置脏（#1090）实现由备份域
             // （crate，#1091 起 `ledger-backup`）提供、壳层对装——定时计划域对
             // 备份域零直接依赖。注册先于任何建库/写库。
-            accounts::balance::install_balance_refresh_hook();
-            scheduled_transactions::install_plan_source_hook();
-            scheduled_transactions::auto_run::register_after_occurrence_hook(
-                backup::occurrence_dirty_hook,
+            ledger_accounts::balance::install_balance_refresh_hook();
+            ledger_scheduled::install_plan_source_hook();
+            ledger_scheduled::auto_run::register_after_occurrence_hook(
+                ledger_backup::occurrence_dirty_hook,
             );
             // 交易域接缝接线（issue #1092 / #1180）：核心交易域对投资/商户/币种/
             // 物品/保单/账户六向的残留边经组合入口一次装入（幂等）。注册先于任何
@@ -275,7 +201,7 @@ pub fn run() {
             // 追补触发接线（issue #1091 / 挂载点④，ADR-0112 决策 5）：自动备份调度
             // 线程的追补判定实现由定时计划域提供（开关镜像 + 本地今天在实现内注入）、
             // 壳层启动时注册进备份域的注册点（幂等）——备份域对定时计划域零依赖。
-            backup::register_catch_up_hook(scheduled_transactions::auto_run::catch_up_hook);
+            ledger_backup::register_catch_up_hook(ledger_scheduled::auto_run::catch_up_hook);
             // 两扇进程级门先登记（boot_sequence 与 IPC/HTTP 门禁共同消费；实例
             // 由 run() 创建，同一份供 invoke wrapper 共享）：加密锁定门 + 启动
             // 失败门（issue #601）。
@@ -311,7 +237,7 @@ pub fn run() {
                 EncryptionGate::clone(&app.state::<EncryptionGate>()),
                 BootFailureGate::clone(&app.state::<BootFailureGate>()),
             );
-            // 自动备份（issue #125/#126）：目录镜像为进程级单例 [`backup::shared_prefs`]，
+            // 自动备份（issue #125/#126）：目录镜像为进程级单例 [`ledger_backup::shared_prefs`]，
             // 轮询调度线程与连接层写入口提交点检查（ADR-0032）共享同一份；
             // 退出兜底挂在下方 run 事件的 RunEvent::Exit 分支。
             // 锁定/启动失败期间不启动（issue #570 / #601 / ADR-0075 决策 5）：
@@ -328,8 +254,8 @@ pub fn run() {
             }
             // 备份产物变更信号（issue #129）：自动备份的深路径执行点
             // （连接层写入口提交点的写时顺带检查）拿不到 AppHandle，启动时注入镜像句柄一次，
-            // 之后经 [`events::emit_backups_changed_current`] 发射。
-            events::init_event_app(app.handle());
+            // 之后经 [`ledger_infra::events::emit_backups_changed_current`] 发射。
+            ledger_infra::events::init_event_app(app.handle());
             Ok(())
         })
         .invoke_handler(logged_invoke_handler(
@@ -342,7 +268,7 @@ pub fn run() {
         .run(|app, event| {
             // 应用退出兜底（issue #125/#386）：退出前若脏且当天尚未自动备份过则补一次（日界门约束）。
             if let tauri::RunEvent::Exit = event {
-                backup::exit_fallback(app);
+                ledger_backup::exit_fallback(app);
             }
         });
 }
@@ -367,7 +293,7 @@ fn logged_invoke_handler(
         // resolver 回码化错误后返回 true（本调用已应答，不进入命令处理）。
         if gate.is_locked() && !LOCKED_ALLOWED_COMMANDS.contains(&cmd.as_str()) {
             tracing::warn!(command = %cmd, "应用锁定期间拒绝 IPC 调用");
-            invoke.resolver.reject(crate::error::AppError::coded(
+            invoke.resolver.reject(ledger_infra::error::AppError::coded(
                 "encryption.locked",
                 "应用已锁定，请先解锁后再操作",
             ));

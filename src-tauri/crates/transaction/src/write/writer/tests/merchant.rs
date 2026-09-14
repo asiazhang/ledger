@@ -3,8 +3,8 @@
 
 use rusqlite::{Connection, params};
 
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::write::writer::{Input, insert_row, normalize};
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::write::writer::{Input, insert_row, normalize};
 
 use super::common::{input, insert_source_expense};
 use tauri_app_lib::test_support;

@@ -66,7 +66,7 @@
 //! `commands::sync`（只做参数解包与信号发射，对外暴露 `sync_instrument_info`
 //! 标的信息同步一个 IPC 命令，刷价 + 沉淀历史 + 随行刷新名称，issue #827 改名）、
 //! `commands::investment` 与 `api_server` 的行情查询注入点、e2e 与汇总文档的
-//! `crate::sync::…` / `tauri_app_lib::sync::…` 引用零改动。
+//! `crate::sync::…` / `tauri_app_lib::ledger_market_sync::…` 引用零改动。
 //!
 //! [`Quote`]: ledger_investment::Quote
 

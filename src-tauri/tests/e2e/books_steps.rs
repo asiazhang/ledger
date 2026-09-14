@@ -17,12 +17,12 @@ use std::path::Path;
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::db::book_registry::{self, Book, BookRegistry, RegistryRead};
-use tauri_app_lib::db::boot::BootDisposition;
-use tauri_app_lib::db::data_location::{self, DB_FILE_NAME};
-use tauri_app_lib::db::encryption::{enable_encryption_for_file, unlock_db_file};
-use tauri_app_lib::db::{DbState, open_connection_readonly_with_passphrase, open_db_in};
-use tauri_app_lib::reports::monthly_summary_rows;
+use ledger_infra::db::book_registry::{self, Book, BookRegistry, RegistryRead};
+use ledger_infra::db::boot::BootDisposition;
+use ledger_infra::db::data_location::{self, DB_FILE_NAME};
+use ledger_infra::db::encryption::{enable_encryption_for_file, unlock_db_file};
+use ledger_infra::db::{DbState, open_connection_readonly_with_passphrase, open_db_in};
+use ledger_reports::monthly_summary_rows;
 
 use crate::common::query_accounts_by_name;
 use crate::step_inputs::expense_input;
@@ -62,7 +62,7 @@ fn registered_book_by_name(default_dir: &Path, name: &str) -> Book {
 /// 无业务连接，与壳层连接换入同判据）。每次重引导先丢弃旧连接（换入语义）。
 fn replan_and_open(world: &mut LedgerWorld) {
     let dir = default_dir(world);
-    let plan = tauri_app_lib::db::boot::plan_boot(&dir);
+    let plan = ledger_infra::db::boot::plan_boot(&dir);
     let disposition = plan.disposition.map_err(|e| e.to_string());
     world.boot.last_boot = Some(plan.boot);
     world.boot.dl_conn = None;
@@ -95,11 +95,11 @@ fn seed_book_expenses(conn: &rusqlite::Connection, account: &str, count: usize) 
         |r| r.get::<_, String>(0),
     ) {
         Ok(id) => id,
-        Err(rusqlite::Error::QueryReturnedNoRows) => tauri_app_lib::accounts::create_account(
+        Err(rusqlite::Error::QueryReturnedNoRows) => ledger_accounts::create_account(
             conn,
-            tauri_app_lib::accounts::AccountInput {
+            ledger_accounts::AccountInput {
                 name: account.into(),
-                kind: tauri_app_lib::accounts::AccountType::Cash,
+                kind: ledger_accounts::AccountType::Cash,
                 currency_code: "CNY".into(),
                 initial_balance_cents: Some(0),
             },
@@ -109,8 +109,7 @@ fn seed_book_expenses(conn: &rusqlite::Connection, account: &str, count: usize) 
     };
     for i in 0..count {
         let input = expense_input(1000 + i as i64, &id, "2026-03-01");
-        tauri_app_lib::transaction::create_transaction_internal(conn, input)
-            .expect("写入种子支出失败");
+        ledger_transaction::create_transaction_internal(conn, input).expect("写入种子支出失败");
     }
 }
 

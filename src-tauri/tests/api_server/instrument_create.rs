@@ -15,8 +15,8 @@ use std::sync::{Arc, Mutex};
 use axum::http::StatusCode;
 use rusqlite::params;
 
+use ledger_infra::error::AppError;
 use tauri_app_lib::api_server::StockQuoteFetcher;
-use tauri_app_lib::error::AppError;
 
 use crate::common::{post_instrument, setup_app, setup_app_with_stock_fetch};
 

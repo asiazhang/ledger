@@ -12,25 +12,25 @@
 use rusqlite::{Connection, params};
 
 use crate::tests::common::{make_buy_input, make_input};
-use tauri_app_lib::accounts::balance::{compute_all_balances_with_visibility, compute_balance};
-use tauri_app_lib::accounts::{
+use ledger_accounts::balance::{compute_all_balances_with_visibility, compute_balance};
+use ledger_accounts::{
     AccountBalanceAdjustInput, AccountInput, AccountType, adjust_account_balance,
     audit_balance_cache, create_account, delete_account, list_account_balances_for_api,
     list_account_balances_with_visibility as domain_list_balances,
 };
-use tauri_app_lib::dashboard::query_dashboard_overview;
+use ledger_dashboard::query_dashboard_overview;
+use tauri_app_lib::ledger_transaction::TransactionBatch;
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::write::writer;
+use tauri_app_lib::ledger_transaction::*;
 use tauri_app_lib::test_support;
 use tauri_app_lib::test_support::assert_balance_cache_matches_realtime;
-use tauri_app_lib::transaction::TransactionBatch;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::write::writer;
-use tauri_app_lib::transaction::*;
 
 /// 缓存行种子（模拟 V017 迁移回填）：测试脚手架用裸 SQL 建账户（绕过
 /// `create_account` 域钩子），生产语义下存量账户由迁移一次性回填，此处
 /// 用同一整体重算接缝补齐，保证「每账户必有缓存行」不变量成立。
 fn backfill_scaffold_account(conn: &Connection, account_id: &str) {
-    tauri_app_lib::accounts::balance::refresh_account_balances(conn, &[account_id]).unwrap();
+    ledger_accounts::balance::refresh_account_balances(conn, &[account_id]).unwrap();
 }
 
 // 一致性对拍断言上收共享断言库（issue #751 / ADR-0084 决策 6）：本地断言体删除，
@@ -508,14 +508,14 @@ fn five_outlets_return_realtime_consistent_values() {
 
     // 出口 4：余额调整取数（cached_balance）与实时一致。
     assert_eq!(
-        tauri_app_lib::accounts::balance::cached_balance(&conn, "acc-o1").unwrap(),
+        ledger_accounts::balance::cached_balance(&conn, "acc-o1").unwrap(),
         compute_balance(&conn, "acc-o1").unwrap()
     );
 
     // 出口 5：财务自由度分子（投资账户现金腿 + 持仓市值，经同一缓存入口取数）。
     // 现金腿 = acc-o2 余额 596000（600000 转入 − 4000 买入，1:1 汇率）；
     // 持仓未录价按空值语义跳过（0）。分母预算为空 → 分子仍须与实时口径一致。
-    let freedom = tauri_app_lib::investment::query_financial_freedom(&conn).unwrap();
+    let freedom = ledger_investment::query_financial_freedom(&conn).unwrap();
     assert_eq!(
         freedom.numerator_cents, 596000,
         "财务自由度分子应与实时口径一致（投资账户现金腿读缓存）"
@@ -566,8 +566,8 @@ fn net_worth_probe_backfills_hits_and_self_heals() {
     // 首读：回填（迁移不回填净资产缓存，首读即自愈完成首次回填）。
     let first = query_dashboard_overview(&conn).unwrap();
     assert_eq!(first.net_worth_cents, 10000);
-    let fp = tauri_app_lib::dashboard::net_worth::current_fingerprint(&conn).unwrap();
-    let cached = tauri_app_lib::dashboard::net_worth::read_valid(&conn, &fp).unwrap();
+    let fp = ledger_dashboard::net_worth::current_fingerprint(&conn).unwrap();
+    let cached = ledger_dashboard::net_worth::read_valid(&conn, &fp).unwrap();
     assert!(cached.is_some(), "首读后应有指纹匹配的缓存行");
     assert_eq!(cached.unwrap().net_worth_cents, 10000);
 

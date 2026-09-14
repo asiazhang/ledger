@@ -25,10 +25,10 @@
 
 // #762 起全部工厂均已被迁移票消费（交易域 #761 + 计划域 #762），移除 dead_code 豁免。
 
-use tauri_app_lib::scheduled_transactions::{CreateScheduledInput, RecurrenceType, ScheduledKind};
-use tauri_app_lib::transaction::Transaction;
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
+use ledger_scheduled::{CreateScheduledInput, RecurrenceType, ScheduledKind};
+use ledger_transaction::Transaction;
+use ledger_transaction::TransactionInput;
+use ledger_transaction::amount::TransactionKind;
 
 // ---------------------------------------------------------------------------
 // 交易输入工厂：按已实现 kind 各设构造函数

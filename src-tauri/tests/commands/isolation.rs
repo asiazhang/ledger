@@ -25,7 +25,7 @@ pub(crate) fn isolate_home() {
     ISOLATE.call_once(|| {
         let root = std::env::temp_dir().join(format!(
             "ledger-commands-it-{}",
-            tauri_app_lib::db::new_uuid()
+            ledger_infra::db::new_uuid()
         ));
         std::fs::create_dir_all(&root).unwrap();
         // SAFETY：见函数文档。

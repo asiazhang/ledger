@@ -31,8 +31,9 @@ pub enum SettingKey {
     /// 下次备份到期时间（`Option<String>`，UTC ISO）。
     AutoBackupNextDueAt,
     /// 后端日志等级（闭集五档 error/warn/info/debug/trace 的档位字符串，默认 info，
-    /// 见 [`crate::logger::LogLevel`]）：后端消费、随 Backup/Restore 迁移（ADR-0006 / #611）。
-    /// 持久化表示取档位指令字符串（同 [`crate::logger::LogLevel::directive`]）。
+    /// 见壳层 `shell_support::logger::LogLevel`，#1108 迁出根包）：后端消费、随
+    /// Backup/Restore 迁移（ADR-0006 / #611）。持久化表示取档位指令字符串（同
+    /// `shell_support::logger::LogLevel::directive`）。
     LogLevel,
     /// 本位币基准（币种代码字符串，默认 "CNY"，读取口径归币种域
     /// `base_currency`）：账本级设置（LedgerLevelSetting 首个

@@ -5,10 +5,10 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::error::AppError;
-use tauri_app_lib::item::ItemInput;
-use tauri_app_lib::item::cost;
-use tauri_app_lib::item::domain;
+use ledger_infra::error::AppError;
+use ledger_item::ItemInput;
+use ledger_item::cost;
+use ledger_item::domain;
 
 use crate::common::assert_last_error_contains;
 use crate::items_common::build_input;

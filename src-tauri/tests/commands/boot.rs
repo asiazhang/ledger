@@ -21,11 +21,11 @@
     )
 )]
 
+use ledger_infra::db::boot::BootFailureGate;
+use ledger_infra::db::encryption::EncryptionGate;
+use ledger_infra::db::schema_guard::BOOT_SCHEMA_DRIFT;
 use tauri::Manager;
 use tauri_app_lib::commands::boot::get_boot_status;
-use tauri_app_lib::db::boot::BootFailureGate;
-use tauri_app_lib::db::encryption::EncryptionGate;
-use tauri_app_lib::db::schema_guard::BOOT_SCHEMA_DRIFT;
 
 use crate::isolation::isolate_home;
 use crate::sync_channel::fresh_app;

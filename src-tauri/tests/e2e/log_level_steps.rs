@@ -7,8 +7,8 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::error::AppError;
-use tauri_app_lib::logger;
+use ledger_infra::error::AppError;
+use tauri_app_lib::shell_support::logger;
 
 use crate::world::LedgerWorld;
 

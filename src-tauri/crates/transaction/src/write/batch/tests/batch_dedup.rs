@@ -6,9 +6,9 @@ use rusqlite::params;
 
 use ledger_infra::db::now_iso;
 use ledger_sync_protocol::device::device_id;
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::{
+use tauri_app_lib::ledger_transaction::TransactionInput;
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::{
     DedupIdentity, TransactionBatch, compute_dedup_hash, dedup_identity,
     delete_transaction_internal, update_transaction_internal,
 };

@@ -9,8 +9,8 @@
 use cucumber::then;
 use rusqlite::params;
 
-use tauri_app_lib::scheduled_transactions::ScheduledKind;
-use tauri_app_lib::transaction::{
+use ledger_scheduled::ScheduledKind;
+use ledger_transaction::{
     TransactionListFilter, TransactionSource, TransactionSourceKind, TransactionSourceStatus,
     list_transactions_internal,
 };
@@ -31,7 +31,7 @@ fn policy_id_by_number(world: &LedgerWorld, number: &str) -> String {
 /// 断言来源 = 保单来源（类型/实体 id/险种名/状态标注）：列表与搜索侧共用。
 fn assert_policy_source(
     world: &LedgerWorld,
-    source: &tauri_app_lib::transaction::TransactionSource,
+    source: &ledger_transaction::TransactionSource,
     policy_number: &str,
     product_name: &str,
     expected_status: Option<TransactionSourceStatus>,

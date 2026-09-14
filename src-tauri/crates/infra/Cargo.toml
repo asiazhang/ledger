@@ -18,8 +18,9 @@ http = ["dep:axum"]
 
 [dependencies]
 # 基础设施全量归位（spec #1086 / issue #1088）：依赖面与迁移前的根包同名依赖一致
-# ——本 crate 承接数据库、错误、设置、文件工具、日志、事件、信号、闭集与壳层
-# 统一读写入口，是全部业务域的共同底座；对外只经根包再导出面消费。
+# ——本 crate 承接数据库、错误、设置、文件工具、事件、信号与闭集，是全部业务域
+# 的共同底座（日志与壳层统一读写入口自 #1108 起迁回壳层根包）；对外只经
+# 根包再导出面消费。
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
 rusqlite_migration = "2.6"
 chrono = { version = "0.4.45", features = ["serde"] }
@@ -35,8 +36,10 @@ axum = { version = "0.8", optional = true }
 sha2 = "0.11"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 tracing = "0.1"
+# tracing-subscriber 仍被 test_utils（信号捕获 Layer，#1132 feature 门）与 db 单测
+# 消费，故留本 crate：test_utils 随 feature 编入 lib，对下游测试构建可见，
+# 依赖必须在常规 [dependencies]（dev-dependencies 不进下游闭包）。
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-appender = "0.2"
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：随 `db/passphrase_cache.rs`
 # 迁入本 crate，target 门禁与依赖声明同迁移前根包（macOS 专用）。
@@ -59,6 +62,11 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 # 住本 crate，不在此环上）。dev-dependency 环由 Cargo 允许——测试目标与生产依赖
 # 图分离，不构成生产环；结构守门的依赖方向核对只辖生产依赖。
 tauri-app = { path = "../.." }
+# 跨域对拍（备份置脏、交易金额折算、账户余额刷新接线）：#1108 起根包别名再导出
+# 清除，跨域引用以 crate 本名直呼（单实例，直呼与经根包再导出同一实例）。
+ledger-backup = { path = "../backup" }
+ledger-transaction = { path = "../transaction" }
+ledger-accounts = { path = "../accounts" }
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。

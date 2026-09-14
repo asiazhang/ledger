@@ -3,7 +3,7 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::physical_asset::{
+use ledger_physical_asset::{
     PhysicalAssetDisposeInput, delete_physical_asset as delete_physical_asset_domain,
     dispose_physical_asset as dispose_physical_asset_domain,
     list_physical_assets as list_physical_assets_domain,

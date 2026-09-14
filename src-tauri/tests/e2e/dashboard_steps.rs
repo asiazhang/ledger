@@ -2,10 +2,10 @@
 
 use cucumber::{given, then, when};
 
-use tauri_app_lib::dashboard::query_dashboard_overview;
-use tauri_app_lib::investment::prices::{MarketPriceWrite, upsert_market_price};
-use tauri_app_lib::investment::{InstrumentInput, InstrumentType, create_instrument};
-use tauri_app_lib::transaction::{TransactionKind, create_transaction_internal};
+use ledger_dashboard::query_dashboard_overview;
+use ledger_investment::prices::{MarketPriceWrite, upsert_market_price};
+use ledger_investment::{InstrumentInput, InstrumentType, create_instrument};
+use ledger_transaction::{TransactionKind, create_transaction_internal};
 
 use crate::common::instrument_id_by_symbol;
 use crate::step_inputs::trade_input;

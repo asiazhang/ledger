@@ -44,14 +44,14 @@ use std::time::{Duration, Instant};
 use tauri::Manager;
 type AppHandle = tauri::AppHandle<tauri::test::MockRuntime>;
 
+use ledger_infra::db::boot::BootFailureGate;
+use ledger_infra::db::encryption::EncryptionGate;
+use ledger_infra::db::{self, DbState};
 use tauri_app_lib::commands::accounts;
 use tauri_app_lib::commands::backup::{create_backup, restore_backup};
 use tauri_app_lib::commands::boot::{get_boot_status, restart_app};
 use tauri_app_lib::commands::dashboard::dashboard_overview;
 use tauri_app_lib::commands::encryption::{enable_encryption, unlock_encryption};
-use tauri_app_lib::db::boot::BootFailureGate;
-use tauri_app_lib::db::encryption::EncryptionGate;
-use tauri_app_lib::db::{self, DbState};
 
 /// `$HOME` 现场隔离（本二进制进程内一次；tests/commands/isolation 同型）：
 /// mock runtime 的 `app_data_dir()` 由 `$HOME` 派生，重定向后默认数据目录
@@ -93,7 +93,7 @@ fn app_dir_device_app() -> (tauri::App<tauri::test::MockRuntime>, PathBuf) {
         .app_data_dir()
         .expect("mock app 应可解析 app_data_dir");
     std::fs::create_dir_all(&dir).unwrap();
-    let boot = tauri_app_lib::db::data_location::boot(&dir);
+    let boot = ledger_infra::db::data_location::boot(&dir);
     app.manage(tauri_app_lib::commands::boot::BootCell::new(boot));
     app.manage(EncryptionGate::new(false));
     app.manage(BootFailureGate::new());
@@ -105,9 +105,9 @@ async fn seed_account(app: &AppHandle, name: &str, cents: i64) -> String {
     accounts::create_account(
         app.state(),
         app.clone(),
-        tauri_app_lib::accounts::AccountInput {
+        ledger_accounts::AccountInput {
             name: name.into(),
-            kind: tauri_app_lib::accounts::AccountType::Cash,
+            kind: ledger_accounts::AccountType::Cash,
             currency_code: "CNY".into(),
             initial_balance_cents: Some(cents),
         },
@@ -117,10 +117,7 @@ async fn seed_account(app: &AppHandle, name: &str, cents: i64) -> String {
 }
 
 /// 限时内读取账户列表并返回（超时即失败：读路径被写者闸门挡住的用户可观察形态）。
-async fn list_accounts_within(
-    app: &AppHandle,
-    limit: Duration,
-) -> Vec<tauri_app_lib::accounts::Account> {
+async fn list_accounts_within(app: &AppHandle, limit: Duration) -> Vec<ledger_accounts::Account> {
     tokio::time::timeout(limit, accounts::list_accounts(app.state()))
         .await
         .expect("读命令应在限时内返回（读不得被写者闸门无界阻挡）")
@@ -195,7 +192,7 @@ async fn unlock_swaps_in_read_connection_pair() {
     //（与 boot_sequence AwaitUnlock 相位同形：门立起、占位对维持形状）。
     let db_path = dir.join(db::data_location::DB_FILE_NAME);
     drop(db::open_db_in(&dir).unwrap());
-    tauri_app_lib::db::encryption::enable_encryption_for_file(&db_path, "主口令").unwrap();
+    ledger_infra::db::encryption::enable_encryption_for_file(&db_path, "主口令").unwrap();
     std::fs::remove_file(db_path.with_extension("db.bak")).unwrap();
     // 占位连接对：空目录文件库成对打开（维持 DbState 形状，非业务库）。
     let placeholder_dir = dir.join("placeholder-shape");
@@ -225,7 +222,7 @@ async fn file_replacement_swaps_read_conn_out_then_reboot_swaps_pair_back_in() {
     isolate_home();
     let (app, dir) = app_dir_device_app();
     let app = app.handle().clone();
-    let db_path = dir.join(tauri_app_lib::db::data_location::DB_FILE_NAME);
+    let db_path = dir.join(ledger_infra::db::data_location::DB_FILE_NAME);
     app.manage(db::open_db_in(&dir).unwrap());
 
     // ---------- 场景一：恢复 ----------
@@ -266,8 +263,8 @@ async fn file_replacement_swaps_read_conn_out_then_reboot_swaps_pair_back_in() {
         .await
         .expect("加密转换应成功");
     assert_eq!(
-        tauri_app_lib::db::encryption::probe_file_kind(&db_path).unwrap(),
-        tauri_app_lib::db::encryption::DbFileKind::Encrypted,
+        ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Encrypted,
         "转换产物应为密文库"
     );
     let stale_read =

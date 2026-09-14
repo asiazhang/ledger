@@ -1,6 +1,6 @@
 //! DataLocation 领域命令壳层（issue #133 / ADR-0018；#408 压平为纯壳）。
 //!
-//! 只做参数解包与 [`crate::db::data_location`] 调用：三步校验与信息聚合的
+//! 只做参数解包与 [`ledger_infra::db::data_location`] 调用：三步校验与信息聚合的
 //! 业务逻辑已下沉 db 基础设施，本文件不含领域规则。「更改位置」的三步校验
 //! 语义（① 自动创建目录、② 试写探针、③ 既有库二选一）见
 //! [`data_location::validate_and_commit`]；校验通过后意图写入指针文件，
@@ -9,7 +9,7 @@
 //!
 //! 全部命令 async 化（形状乙，spec #498 / #503）：目录创建/试写探针/指针
 //! 文件读写与聚合时的指针读取是阻塞文件 IO，经连接层统一 helper
-//! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程。
+//! [`ledger_infra::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -20,9 +20,9 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::commands::boot::current_boot;
-use crate::db::data_location;
-use crate::db::run_db;
-use crate::error::{AppError, Result};
+use ledger_infra::db::data_location;
+use ledger_infra::db::run_db;
+use ledger_infra::error::{AppError, Result};
 
 /// 默认应用数据目录（指针文件所在地，也是「恢复默认」的目标）。启动引导
 /// 序列（commands::boot）与 DataLocation 信息聚合共用的同一解析点。

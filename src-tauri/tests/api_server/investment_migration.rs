@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use tauri_app_lib::investment::InstrumentType;
+use ledger_investment::InstrumentType;
 use tauri_app_lib::test_support;
 use tower::ServiceExt;
 

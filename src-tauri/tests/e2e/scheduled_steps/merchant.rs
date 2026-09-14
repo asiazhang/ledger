@@ -8,7 +8,7 @@
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::scheduled_transactions::CreateScheduledInput;
+use ledger_scheduled::CreateScheduledInput;
 
 use crate::common::capture_expected_error;
 use crate::step_inputs::{

@@ -12,10 +12,10 @@ use std::path::PathBuf;
 
 use rusqlite::Connection;
 
-use tauri_app_lib::backup::{expected_schema_version, restore_db_from};
-use tauri_app_lib::db::data_location::{self, DB_FILE_NAME, effective_db_dir};
-use tauri_app_lib::db::encryption::{SQLITE_HEADER_MAGIC, enable_encryption_for_file};
-use tauri_app_lib::db::{boot, init_db, new_uuid, open_connection, open_db_in};
+use ledger_backup::{expected_schema_version, restore_db_from};
+use ledger_infra::db::data_location::{self, DB_FILE_NAME, effective_db_dir};
+use ledger_infra::db::encryption::{SQLITE_HEADER_MAGIC, enable_encryption_for_file};
+use ledger_infra::db::{boot, init_db, new_uuid, open_connection, open_db_in};
 
 use crate::common::seed_account_with_expenses;
 use crate::world::{LedgerWorld, StartupTakeover};

@@ -2,12 +2,12 @@
 
 use crate::tests::common::{make_buy_input, make_input};
 use rusqlite::Connection;
+use tauri_app_lib::ledger_transaction::*;
+use tauri_app_lib::ledger_transaction::{TransactionInput, TransactionListFilter};
 use tauri_app_lib::test_support;
-use tauri_app_lib::transaction::*;
-use tauri_app_lib::transaction::{TransactionInput, TransactionListFilter};
 
 use rusqlite::params;
-use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
 
 #[test]
 fn list_transactions_ordered_by_date_desc() {

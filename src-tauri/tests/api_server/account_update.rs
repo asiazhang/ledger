@@ -5,8 +5,8 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 use tracing_subscriber::layer::SubscriberExt;
 
+use ledger_infra::test_utils::{CaptureLayer, ensure_global_max_level};
 use tauri_app_lib::test_support;
-use tauri_app_lib::test_utils::{CaptureLayer, ensure_global_max_level};
 
 use crate::common::{
     batch_body, body_to_bytes, create_account_json, create_account_via_api,
@@ -202,7 +202,7 @@ async fn test_delete_category_then_reimport_recreates() {
 /// 冒烟/回归：HTTP 导入路径的 SQL 耗时事件应归因到 `tower_http::trace` 的请求 span
 /// （默认名为 `request`）。`TraceLayer::new_for_http()` 已挂载在 `build_router` 上，
 /// handler 内基于 `conn.lock()` 的同步查询在请求 span 内执行，hook 事件应继承该 span。
-/// 采集器具（`CaptureLayer`/`ensure_global_max_level`）来自 `tauri_app_lib::test_utils`，
+/// 采集器具（`CaptureLayer`/`ensure_global_max_level`）来自 `ledger_infra::test_utils`，
 /// 与单元测试 `db/tests.rs` 共用（避免重复实现）。
 #[tokio::test(flavor = "current_thread")]
 async fn test_http_sql_duration_attributed_to_request_span() {

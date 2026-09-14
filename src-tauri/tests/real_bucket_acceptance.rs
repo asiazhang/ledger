@@ -33,8 +33,8 @@
     )
 )]
 
-use tauri_app_lib::db::new_uuid;
-use tauri_app_lib::sync_engine::{
+use ledger_infra::db::new_uuid;
+use ledger_sync_engine::{
     ChannelLayout, S3Config, S3Transport, SyncChannelConfig, Transport, probe_channel,
 };
 

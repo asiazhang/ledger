@@ -1,9 +1,9 @@
 //! IPC 命令壳 · 保司（Insurer，issue #712 / ADR-0082）。
 //!
-//! 只负责参数解包与统一写入口一行调用；保司字典行为位于 [`crate::policy::insurer`]。
+//! 只负责参数解包与统一写入口一行调用；保司字典行为位于 [`ledger_policy::insurer`]。
 //!
 //! 全部命令 async 化（形状乙，spec #498 / #501）；写命令经壳层统一写入口
-//! [`crate::write_entry::write_entry`]（ADR-0073）：仪式内化单点，参考写入成功
+//! [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：仪式内化单点，参考写入成功
 //! 发参考失效信号（映射单点判定，ADR-0044）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
@@ -12,13 +12,13 @@
 
 use tauri::State;
 
-use crate::db::DbState;
-use crate::error::Result;
-use crate::policy as policy_domain;
-use crate::policy::{Insurer, InsurerInput, InsurerUpdateInput};
-use crate::read_entry::read_entry;
-use crate::signals::WriteOp;
-use crate::write_entry::{Outcome, write_entry};
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_infra::db::DbState;
+use ledger_infra::error::Result;
+use ledger_infra::signals::WriteOp;
+use ledger_policy as policy_domain;
+use ledger_policy::{Insurer, InsurerInput, InsurerUpdateInput};
 
 /// 保司列表：默认仅未删除；`include_deleted=true` 返回含软删全量
 /// （保司管理「显示已删」切换用，issue #714 消费）。

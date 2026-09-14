@@ -2,7 +2,7 @@
 //! issue #827 命令改名 `sync_holding_prices` → `sync_instrument_info`）。
 //!
 //! `sync_instrument_info` 写路径与信号经壳层统一写入口
-//! [`crate::write_entry::write_entry`]（ADR-0073）：仪式内化单点，证据随闭包
+//! [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：仪式内化单点，证据随闭包
 //! 返回必达。标的全量同步命令/中断命令与进度事件已随 ADR-0081 决策 3 整体
 //! 退役（issue #698）：股票字典修正归「按代码查询/创建带回权威名称」。
 
@@ -14,14 +14,16 @@ use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, Runtime, State};
 
-use crate::db::DbState;
-use crate::error::{AppError, Result};
-use crate::signals::{WriteEvidence, WriteOp};
-use crate::sync::{
+use crate::shell_support::write_entry::{
+    Outcome, SegmentLock, SegmentedFailure, write_entry_segmented,
+};
+use ledger_infra::db::DbState;
+use ledger_infra::error::{AppError, Result};
+use ledger_infra::signals::{WriteEvidence, WriteOp};
+use ledger_market_sync::{
     ProgressEmitter, ScopedSession, SyncFetchChannels, SyncInstrumentInfoResult, SyncProgress,
     WriteWitness, do_incremental_sync_channels,
 };
-use crate::write_entry::{Outcome, SegmentLock, SegmentedFailure, write_entry_segmented};
 
 /// 同步网络通道注入接缝（issue #1276）：生产**不管理**本状态（命令走生产通道
 /// 束），集成测试 manage 本状态并装入桩通道束，使「同步真实在途」可确定复现
@@ -139,7 +141,7 @@ pub async fn sync_instrument_info<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::FundNavProgress;
+    use ledger_market_sync::FundNavProgress;
     use std::sync::Mutex;
 
     /// 记录型假发射器：接收到的进度推进按序攒入缓冲（发射器接缝的测试注入
@@ -166,7 +168,7 @@ mod tests {
 
         session
             .with_connection(|c| {
-                use crate::error::AppError;
+                use ledger_infra::error::AppError;
                 c.execute(
                     "INSERT INTO categories (id, name, kind, created_at, updated_at, version, device_id) \
                      VALUES ('cat-session', '会话', 'expense', ?1, ?1, 1, 'device-1')",

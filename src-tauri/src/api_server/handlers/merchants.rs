@@ -1,6 +1,6 @@
 //! 商户端点：在用商户列表 + 改名（AI 导入契约，issue #194 / ADR-0028 / #884）。
 //!
-//! 写端点经壳层统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
+//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
 //! 事务、置脏、信号内化单点（与 IPC `update_merchant` 共享 `WriteOp::UpdateMerchant`，
 //! 参考数据写入静态映射发参考失效信号）；读端点经 `run_db`（形状乙）。
 
@@ -12,11 +12,11 @@ use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::{EmitterSlot, ReadConn};
-use crate::error::AppError;
-use crate::merchants::{Merchant, MerchantUpdateInput};
-use crate::read_entry::read_entry;
-use crate::signals::WriteOp;
-use crate::write_entry::{Outcome, write_entry};
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_infra::error::AppError;
+use ledger_infra::signals::WriteOp;
+use ledger_merchants::{Merchant, MerchantUpdateInput};
 
 /// 商户列表（AI 导入契约，issue #194 / ADR-0028）：供 AI 在提交交易前拉取在用商户，
 /// 按已有名字填 `merchant_name` 复用字典（避免同义名分裂商户字典）。仅返回在用行
@@ -40,7 +40,7 @@ pub async fn list_merchants_handler(
     State(read): State<ReadConn>,
 ) -> Result<Json<Vec<Merchant>>, AppError> {
     read_entry("GET /api/v1/merchants", read.0, move |conn| {
-        Ok(Json(crate::merchants::list_merchants(conn, false)?))
+        Ok(Json(ledger_merchants::list_merchants(conn, false)?))
     })
     .await
 }
@@ -83,8 +83,8 @@ pub async fn update_merchant_handler(
         emitter.as_deref(),
         WriteOp::UpdateMerchant,
         move |conn| {
-            crate::merchants::update_merchant(conn, &id, input)?;
-            let updated = crate::merchants::get_merchant(conn, &id)?;
+            ledger_merchants::update_merchant(conn, &id, input)?;
+            let updated = ledger_merchants::get_merchant(conn, &id)?;
             Ok(Outcome::Silent(updated))
         },
     )

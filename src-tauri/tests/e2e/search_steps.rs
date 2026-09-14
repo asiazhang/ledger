@@ -4,8 +4,8 @@ use crate::step_inputs::expense_input;
 use crate::step_verbs::create_exchange_rate_verb;
 use crate::step_verbs::create_transaction_verb;
 use crate::world::LedgerWorld;
-use tauri_app_lib::transaction::search_transactions_internal;
-use tauri_app_lib::transaction::{TransactionInput, TransactionSearchResult};
+use ledger_transaction::search_transactions_internal;
+use ledger_transaction::{TransactionInput, TransactionSearchResult};
 
 // ---------------------------------------------------------------------------
 // Given

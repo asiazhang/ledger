@@ -116,14 +116,11 @@ export interface RegisteredException {
  * 夹具命中逐条登记——实际命中 ≠ 登记数即红（漂移），命中清零也红（例外已
  * 收敛，登记条目应删除）；登记文件消失（改名/搬迁）同样红（清单漂移，与
  * EXEMPT_FILES 同纪律）。
+ *
+ * #1108 起当前为空：唯一例外 shell_support/write_entry.rs 随壳机制迁出根包
+ * 退役——本禁令辖基础设施 crate，壳层统一写入口写账本表是其本职，不在辖域。
  */
-export const REGISTERED_EXCEPTIONS: readonly RegisteredException[] = [
-  {
-    file: 'shell_support/write_entry.rs',
-    count: 4,
-    why: '内联 cfg(test) 测试夹具：验证写入口/分段写入口闭包拿到可用连接与分段落库（写入 categories 落库；issue #1276 分段取锁、整体裁决形态的锁自由与裁决测试同款）——测试侧业务表直置归公开写入口纪律辖域，此处登记防命中数漂移；路径随 #1130 壳机制分组（shell_support/）迁移更新',
-  },
-]
+export const REGISTERED_EXCEPTIONS: readonly RegisteredException[] = []
 
 // 迁移链 CREATE TABLE 提取形态（含 VIRTUAL / IF NOT EXISTS / 引号包裹 /
 // 库名前缀限定——`CREATE TABLE main.foo` 取末段标识符 foo 入清单）
@@ -315,7 +312,7 @@ function main(): void {
       `${MECHANISM_TABLES.map((t) => t.table).join(' / ')}）\n` +
       `  · 免扫文件（明示理由）：${EXEMPT_FILES.map((e) => `${e.file}（${e.why}）`).join('；')}\n` +
       `  · 已登记例外 ${REGISTERED_EXCEPTIONS.length} 条（严格相等校验）：` +
-      `${REGISTERED_EXCEPTIONS.map((e) => e.file).join('、')}\n` +
+      `${REGISTERED_EXCEPTIONS.length > 0 ? REGISTERED_EXCEPTIONS.map((e) => e.file).join('、') : '无——#1108 起壳机制迁出根包，例外随迁退役'}\n` +
       `  · 扫描 ${INFRA_SRC_REL} 非测试文件 ${scannedFiles.length} 个零生产命中（issue #1135 / ADR-0111）`,
   )
 }

@@ -2,12 +2,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::db::boot::BootFailureGate;
-use crate::db::encryption::EncryptionGate;
-use crate::error::AppError;
-use crate::events::SignalEmitter;
-use crate::investment::Quote;
 use axum::extract::FromRef;
+use ledger_infra::db::boot::BootFailureGate;
+use ledger_infra::db::encryption::EncryptionGate;
+use ledger_infra::error::AppError;
+use ledger_infra::events::SignalEmitter;
+use ledger_investment::Quote;
 use rusqlite::Connection;
 
 /// 东财基金报价获取函数接缝（issue #304 / ADR-0039）：`基金代码 → Result<Quote>`，
@@ -54,12 +54,12 @@ pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 /// `stock_fetch` 为东财股票行情获取接缝，同构（issue #693）。
 ///
 /// `lock_gate` 为加密锁定门（issue #570 / ADR-0075 决策 5）：与 IPC 壳共享
-/// 同一进程级门实例（`lib.rs` 创建的 [`crate::db::encryption::EncryptionGate`]），
+/// 同一进程级门实例（`lib.rs` 创建的 [`ledger_infra::db::encryption::EncryptionGate`]），
 /// 锁定期间门禁中间件对数据端点统一返回码化错误——AI 导入 HTTP 面在解锁前
 /// 不可用；明文库路径门不锁，行为零变化。
 ///
 /// `boot_gate` 为启动失败门（issue #601 / ADR-0075 决策 5 修订）：与 IPC 壳
-/// 共享同一实例（[`crate::db::boot::BootFailureGate`]），失败期间数据端点
+/// 共享同一实例（[`ledger_infra::db::boot::BootFailureGate`]），失败期间数据端点
 /// 同口径返回码化错误——占位连接不是业务库，不得触达。
 #[derive(Clone)]
 pub struct ApiState {

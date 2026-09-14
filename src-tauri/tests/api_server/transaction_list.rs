@@ -1,5 +1,5 @@
 use axum::http::StatusCode;
-use tauri_app_lib::investment::{InstrumentInput, InstrumentType, create_instrument};
+use ledger_investment::{InstrumentInput, InstrumentType, create_instrument};
 use tauri_app_lib::test_support;
 use tauri_app_lib::test_support::FIXED_NOW;
 

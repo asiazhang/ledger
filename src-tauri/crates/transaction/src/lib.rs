@@ -34,7 +34,7 @@
 //! **测试实例纪律（dev-dependency 环双实例）**：`cargo test -p ledger-transaction`
 //! 依赖图内存在本 crate 两份实例——被测本实例与根包图内实例。接缝注册静态由测试工厂
 //! （`tauri_app_lib::test_support::open`）接在根包图实例上，故走接缝的行为路径测试一律
-//! 经 `tauri_app_lib::transaction::…` 驱动；仅纯函数与守门用例（不读注册静态）直接驱动
+//! 经 `tauri_app_lib::ledger_transaction::…` 驱动；仅纯函数与守门用例（不读注册静态）直接驱动
 //! 本实例。带类型签名的钩子无法跨实例注册（名义类型不等价），这是测试实例划分的硬约束。
 
 pub mod amount;

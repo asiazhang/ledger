@@ -34,6 +34,9 @@ tauri = { version = "2", features = ["tracing"] }
 # 由生产依赖面承担（lib 目标解析不到 dev-dependency），机器面负向核对住
 # 结构守门的 crate 依赖方向。
 tauri-app = { path = "../.." }
+# 账户域余额口径（恢复往返对拍）：#1108 起根包别名再导出清除，跨域引用以
+# crate 本名直呼（单实例，直呼与经根包再导出同一实例）。
+ledger-accounts = { path = "../accounts" }
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。

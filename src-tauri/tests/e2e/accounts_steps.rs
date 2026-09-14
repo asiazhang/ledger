@@ -1,11 +1,11 @@
 use cucumber::{given, then, when};
 
-use tauri_app_lib::accounts::balance::compute_balance;
-use tauri_app_lib::accounts::{
+use ledger_accounts::balance::compute_balance;
+use ledger_accounts::{
     AccountBalanceAdjustInput, AccountUpdateInput, adjust_account_balance,
     delete_account as delete_account_domain, update_account,
 };
-use tauri_app_lib::transaction::delete_transaction_internal;
+use ledger_transaction::delete_transaction_internal;
 
 use crate::common::query_accounts_by_name;
 use crate::step_verbs::create_account_verb;

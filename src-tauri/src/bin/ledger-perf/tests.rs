@@ -1,7 +1,7 @@
 //! 生成器正确性单测（issue #459 验收项：写在 bin 模块内部、随常规测试循环运行）。
 //!
 //! 断言接缝（spec #458 测试决策）：标准连接工厂
-//! （[`tauri_app_lib::db::open_connection`] 打开生成的文件库、统一测试工厂
+//! （[`ledger_infra::db::open_connection`] 打开生成的文件库、统一测试工厂
 //! `test_support::open()` 对照产品迁移路径）+ 现有查询函数层（accounts / categories /
 //! merchants / transaction 读取接口）；仅 schema 级事实（user_version / foreign_key_check）
 //! 与无既有读 API 的画像事实（fx_rate_history 行数）用 PRAGMA / 原生 SQL。
@@ -13,20 +13,21 @@ use std::path::{Path, PathBuf};
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
-use tauri_app_lib::accounts;
-use tauri_app_lib::budget;
-use tauri_app_lib::categories;
-use tauri_app_lib::currencies;
-use tauri_app_lib::db::{open_connection, open_connection_in};
-use tauri_app_lib::investment::{self, InstrumentListFilter};
-use tauri_app_lib::merchants;
-use tauri_app_lib::scheduled_transactions;
+use ledger_accounts as accounts;
+use ledger_budget as budget;
+use ledger_categories as categories;
+use ledger_currencies as currencies;
+use ledger_infra::db::{open_connection, open_connection_in};
+use ledger_investment as investment;
+use ledger_investment::InstrumentListFilter;
+use ledger_merchants as merchants;
+use ledger_scheduled as scheduled_transactions;
+use ledger_transaction::TransactionListFilter;
+use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::pinyin_initials;
+use ledger_transaction::read::{get_transaction, list_transactions};
+use ledger_transaction::search_transactions_internal;
 use tauri_app_lib::test_support::{self, FIXED_NOW};
-use tauri_app_lib::transaction::TransactionListFilter;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::pinyin_initials;
-use tauri_app_lib::transaction::read::{get_transaction, list_transactions};
-use tauri_app_lib::transaction::search_transactions_internal;
 
 use super::bench::{self, BenchCli, BenchConfig, BenchMetrics, ParsedBench};
 use super::bench_import::{
@@ -34,8 +35,8 @@ use super::bench_import::{
 };
 use super::generate::{GenCounts, GenerateParams, generate_into};
 use super::{GenerateCli, ParsedArgs, parse_args};
-use tauri_app_lib::accounts::{Account, AccountType};
-use tauri_app_lib::transaction::compute_dedup_hash;
+use ledger_accounts::{Account, AccountType};
+use ledger_transaction::compute_dedup_hash;
 
 /// 解析并取 bench 运行参数（帮助请求在该测试套件中不该出现；
 /// 用法错误经 Result 返回供断言）。
@@ -254,7 +255,7 @@ fn bench_import_rows_are_deterministic_dedup_unique_and_distribution_shaped() {
     let uniform = bench_import::generate_inputs(5, &accounts, Distribution::Uniform, "CNY", date);
 
     // 确定性：同参数两次生成，去重身份序列逐行相等。
-    let hashes = |rows: &[tauri_app_lib::transaction::TransactionInput]| {
+    let hashes = |rows: &[ledger_transaction::TransactionInput]| {
         rows.iter().map(compute_dedup_hash).collect::<Vec<_>>()
     };
     assert_eq!(
@@ -667,7 +668,7 @@ fn temp_db(tag: &str) -> (PathBuf, PathBuf) {
     let dir = std::env::temp_dir().join(format!("ledger-perf-test-{}-{}", tag, std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     // 库文件名用产品常量：build 经 open_connection_in（按目录打开 ledger.db）建库。
-    let db = dir.join(tauri_app_lib::db::data_location::DB_FILE_NAME);
+    let db = dir.join(ledger_infra::db::data_location::DB_FILE_NAME);
     (dir, db)
 }
 

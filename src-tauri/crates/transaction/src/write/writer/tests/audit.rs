@@ -1,12 +1,12 @@
 //! 审计字段统一生成与 native 本位币折算（issue #60：统一经 Writer 落库）。
 
 use crate::tests::common::{make_buy_input, make_input};
+use tauri_app_lib::ledger_transaction::*;
 use tauri_app_lib::test_support;
-use tauri_app_lib::transaction::*;
 
 use rusqlite::params;
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::TransactionInput;
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
 
 // ---------------------------------------------------------------------------
 // issue #60：创建/修改/买入卖出行统一经 Writer 落库

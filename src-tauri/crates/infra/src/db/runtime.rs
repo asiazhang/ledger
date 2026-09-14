@@ -21,9 +21,9 @@ pub const LOCK_HOLD_PROBE_THRESHOLD: Duration = Duration::from_secs(1);
 /// ——「网络往返不得进锁」的纪律从注释与评审升级为运行时可观察的越界信号。
 /// 探针只记日志、不改变行为：阈值取值远大于任何合法单事务（毫秒级）、远小于
 /// 分钟级网络同步；越界即「慢闭包进锁」的嫌疑现场，由人工按坐标追认。
-/// 取锁点全部接哨：连接层写入口 [`write`]、壳层读入口（`read_entry`）与
-/// 分段写入口的 [`SegmentLock`](crate::write_entry::SegmentLock)。
-pub(crate) fn probe_lock_hold(hold: Duration) {
+/// 取锁点全部接哨：连接层写入口 [`write()`]、壳层读入口（`read_entry`）与
+/// 分段写入口的 `SegmentLock`（壳层 `shell_support::write_entry`，#1108 迁出根包）。
+pub fn probe_lock_hold(hold: Duration) {
     if hold >= LOCK_HOLD_PROBE_THRESHOLD {
         tracing::warn!(
             hold_ms = hold.as_millis() as u64,
@@ -152,9 +152,9 @@ where
 /// 应用状态：写连接 + 只读读连接（读路径独立只读连接，issue #1280 / ADR-0117）。
 ///
 /// - `conn`（写连接）：维持单写者互斥——统一写入口 [`write()`] 与壳层统一写入口
-///   [`crate::write_entry`] 等既有接缝原样（ADR-0104：`read_entry` 消费的句柄
-///   类型不变，变的只是传入句柄指向读连接）；
-/// - `read_conn`（读连接）：只服务壳层统一读入口 [`crate::read_entry`]——只读
+///   `shell_support::write_entry`（#1108 迁出根包）等既有接缝原样（ADR-0104：
+///   `read_entry` 消费的句柄类型不变，变的只是传入句柄指向读连接）；
+/// - `read_conn`（读连接）：只服务壳层统一读入口 `shell_support::read_entry`——只读
 ///   flags + busy_timeout，读可用性不再受写者闸门约束。
 ///
 /// 两槽同用「共享句柄 + 互斥体内槽替换」形态（ADR-0080：换入后壳层、HTTP 壳、

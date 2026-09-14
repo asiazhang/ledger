@@ -1,6 +1,6 @@
 //! 分类端点：列表 / 幂等创建 / 软删除。
 //!
-//! 写端点经壳层统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）；
+//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）；
 //! 读端点经 `run_db`（形状乙）。
 
 use std::sync::{Arc, Mutex};
@@ -12,11 +12,11 @@ use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::{EmitterSlot, ReadConn};
-use crate::categories::{Category, CategoryInput};
-use crate::error::AppError;
-use crate::read_entry::read_entry;
-use crate::signals::WriteOp;
-use crate::write_entry::{Outcome, write_entry};
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_categories::{Category, CategoryInput};
+use ledger_infra::error::AppError;
+use ledger_infra::signals::WriteOp;
 
 #[utoipa::path(
     get,
@@ -31,9 +31,9 @@ use crate::write_entry::{Outcome, write_entry};
 )]
 pub async fn list_categories_handler(
     State(read): State<ReadConn>,
-) -> Result<Json<Vec<crate::categories::Category>>, AppError> {
+) -> Result<Json<Vec<ledger_categories::Category>>, AppError> {
     read_entry("GET /api/v1/categories", read.0, move |conn| {
-        Ok(Json(crate::categories::list_categories(conn, false)?))
+        Ok(Json(ledger_categories::list_categories(conn, false)?))
     })
     .await
 }
@@ -68,7 +68,7 @@ pub async fn create_category_handler(
         conn,
         emitter.as_deref(),
         WriteOp::CreateCategory,
-        move |conn| crate::categories::create_category_idempotent(conn, input).map(Outcome::Silent),
+        move |conn| ledger_categories::create_category_idempotent(conn, input).map(Outcome::Silent),
     )
     .await
     .map(|id| (StatusCode::CREATED, Json(id)))
@@ -100,7 +100,7 @@ pub async fn delete_category_handler(
         conn,
         emitter.as_deref(),
         WriteOp::DeleteCategory,
-        move |conn| crate::categories::delete_category(conn, &id).map(Outcome::Silent),
+        move |conn| ledger_categories::delete_category(conn, &id).map(Outcome::Silent),
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)

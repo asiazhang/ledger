@@ -266,14 +266,12 @@ fn main() -> ExitCode {
     // 交易域写入协议，余额刷新实现须先注册（幂等，进程级一次；与壳层启动/测试
     // 工厂同形）——注册点在下层（核心交易域/定时计划域/备份域），实现由账户域/
     // 定时计划域/备份域提供；期次落账置脏与追补触发两条接缝同形对装（#1091）。
-    tauri_app_lib::accounts::balance::install_balance_refresh_hook();
-    tauri_app_lib::scheduled_transactions::install_plan_source_hook();
-    tauri_app_lib::scheduled_transactions::auto_run::register_after_occurrence_hook(
-        tauri_app_lib::backup::occurrence_dirty_hook,
+    ledger_accounts::balance::install_balance_refresh_hook();
+    ledger_scheduled::install_plan_source_hook();
+    ledger_scheduled::auto_run::register_after_occurrence_hook(
+        ledger_backup::occurrence_dirty_hook,
     );
-    tauri_app_lib::backup::register_catch_up_hook(
-        tauri_app_lib::scheduled_transactions::auto_run::catch_up_hook,
-    );
+    ledger_backup::register_catch_up_hook(ledger_scheduled::auto_run::catch_up_hook);
     // 交易域接缝接线（issue #1092 / #1180）：与壳层启动/测试工厂同形——六向实现经
     // 组合入口一次装入（幂等，进程级一次）。
     tauri_app_lib::transaction_wiring::install_all();

@@ -18,7 +18,7 @@ pub(super) fn write_test_state() -> DbState {
     // 环消费根包，拿到的是另一份 crate 实例（静态身份分离）——经 `test_support::open`
     // 触发的注册落在那一份的写入口静态上，本份实例仍是未注册态。故这里直接把自己的
     // 注册点接上备份域实现（幂等；函数指针只经 rusqlite 外部类型，跨实例类型相容）。
-    crate::db::register_after_commit_hook(tauri_app_lib::backup::after_commit_hook);
+    crate::db::register_after_commit_hook(ledger_backup::after_commit_hook);
     let conn = Arc::new(Mutex::new(tauri_app_lib::test_support::open()));
     DbState {
         read_conn: conn.clone(),
@@ -27,9 +27,9 @@ pub(super) fn write_test_state() -> DbState {
 }
 
 /// 读回自动备份调度状态（断言置脏语义用）。
-pub(super) fn dirty_state(state: &DbState) -> tauri_app_lib::backup::AutoBackupState {
+pub(super) fn dirty_state(state: &DbState) -> ledger_backup::AutoBackupState {
     let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
-    tauri_app_lib::backup::get_state(&conn).expect("读调度状态")
+    ledger_backup::get_state(&conn).expect("读调度状态")
 }
 
 // ---------------------------------------------------------------------------

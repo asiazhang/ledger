@@ -132,8 +132,8 @@ impl S3Stub {
     ///
     /// 密钥取固定值——桩只校验凭据**范围**（access key / region / service），
     /// 不做密码学校验。
-    pub fn channel_config(&self, space: &str) -> crate::sync_engine::SyncChannelConfig {
-        crate::sync_engine::SyncChannelConfig {
+    pub fn channel_config(&self, space: &str) -> ledger_sync_engine::SyncChannelConfig {
+        ledger_sync_engine::SyncChannelConfig {
             endpoint: self.endpoint.clone(),
             region: self.region.clone(),
             bucket: self.bucket.clone(),
@@ -417,7 +417,7 @@ pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
 
         if method == Method::POST {
             if query.contains_key("uploads") {
-                let upload_id = crate::db::new_uuid();
+                let upload_id = ledger_infra::db::new_uuid();
                 state
                     .uploads
                     .lock()
@@ -487,7 +487,8 @@ pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
         empty_response(StatusCode::METHOD_NOT_ALLOWED)
     }
 
-    let root = std::env::temp_dir().join(format!("ledger-s3-stub-{}", crate::db::new_uuid()));
+    let root =
+        std::env::temp_dir().join(format!("ledger-s3-stub-{}", ledger_infra::db::new_uuid()));
     std::fs::create_dir_all(&root).unwrap();
     let observations = Arc::new(Mutex::new(Vec::new()));
     let violations = Arc::new(Mutex::new(Vec::new()));

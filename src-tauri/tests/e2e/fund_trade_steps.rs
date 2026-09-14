@@ -5,10 +5,10 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::investment::{InstrumentInput, InstrumentType, create_instrument};
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::create_transaction_internal;
+use ledger_investment::{InstrumentInput, InstrumentType, create_instrument};
+use ledger_transaction::TransactionInput;
+use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::create_transaction_internal;
 
 use crate::common::{instrument_id_by_symbol, query_all_transactions};
 use crate::step_inputs::{buy_input, sell_input};

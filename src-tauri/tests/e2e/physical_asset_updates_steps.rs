@@ -9,7 +9,7 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::physical_asset::{
+use ledger_physical_asset::{
     PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
     update_physical_asset as update_physical_asset_domain,
     update_physical_asset_valuation as update_physical_asset_valuation_domain,

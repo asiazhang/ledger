@@ -10,7 +10,7 @@
 
 use rusqlite::Connection;
 use rusqlite::params;
-use tauri_app_lib::scheduled_transactions::*;
+use tauri_app_lib::ledger_scheduled::*;
 
 /// 创建订阅计划（无上限，预生成窗口期次），返回计划 id。
 pub(crate) fn create_subscription(

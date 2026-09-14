@@ -2,13 +2,13 @@ use cucumber::gherkin::Step;
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::accounts::{
+use ledger_accounts::{
     AccountInput, AccountType, create_account_idempotent, list_account_balances_for_api,
 };
-use tauri_app_lib::transaction::TransactionBatch;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::{TransactionInput, TransactionListFilter};
-use tauri_app_lib::transaction::{
+use ledger_transaction::TransactionBatch;
+use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::{TransactionInput, TransactionListFilter};
+use ledger_transaction::{
     delete_transaction_internal, list_transactions_internal, update_transaction_internal,
 };
 
@@ -319,7 +319,7 @@ fn check_batch_results(world: &mut LedgerWorld, duplicates: i64, new: i64) {
 /// 校验幂等键命中的去重结果携带该笔已有 id（并确证该 id 确为库中一笔未删除交易）。
 #[then(expr = "最近一次导入的去重结果应通过幂等键返回已有 id")]
 fn check_dup_returns_existing_id(world: &mut LedgerWorld) {
-    let dups: Vec<&tauri_app_lib::transaction::CreateTransactionResult> = world
+    let dups: Vec<&ledger_transaction::CreateTransactionResult> = world
         .txn
         .last_batch_results
         .iter()

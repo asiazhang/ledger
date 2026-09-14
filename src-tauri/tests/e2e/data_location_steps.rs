@@ -7,10 +7,10 @@
 use cucumber::{given, then, when};
 use rusqlite::Connection;
 
-use tauri_app_lib::db::data_location::{
+use ledger_infra::db::data_location::{
     WRITE_PROBE_FILE_NAME, gather_info_from_boot, validate_and_commit,
 };
-use tauri_app_lib::db::{
+use ledger_infra::db::{
     data_location, init_db, new_uuid, open_connection, open_db_in, reset_db_in,
 };
 
@@ -396,7 +396,7 @@ fn submit_to_active_dir(world: &mut LedgerWorld) {
 #[when(expr = "尝试新建账本应被拒绝（搬迁未完成）")]
 fn create_book_while_relocation_pending(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
-    let err = tauri_app_lib::db::book_registry::create_book_entry(&default_dir, "第三本")
+    let err = ledger_infra::db::book_registry::create_book_entry(&default_dir, "第三本")
         .expect_err("搬迁未完成期间新建账本应被拒绝");
     assert!(
         err.is_code("book.registry-busy"),
@@ -562,8 +562,8 @@ fn target_dir_with_db_no_pointer(world: &mut LedgerWorld, count: usize) {
 fn data_location_configured_books(
     default_dir: &std::path::Path,
 ) -> Result<Vec<(String, std::path::PathBuf)>, String> {
-    match tauri_app_lib::db::book_registry::read_registry(default_dir) {
-        tauri_app_lib::db::book_registry::RegistryRead::Resolved(registry) => Ok(registry
+    match ledger_infra::db::book_registry::read_registry(default_dir) {
+        ledger_infra::db::book_registry::RegistryRead::Resolved(registry) => Ok(registry
             .books
             .into_iter()
             .map(|book| (book.name, book.dir))

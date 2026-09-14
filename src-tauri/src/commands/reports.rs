@@ -7,7 +7,7 @@
 //! 只增不改：任一存在即期间口径，双缺省回退遗留参数口径。
 //!
 //! 全部命令 async 化（形状乙，spec #498 / #502）：DB 调用经连接层统一 helper
-//! [`crate::db::run_db`] 进 tauri 阻塞线程池执行（读路径锁内执行），不占用
+//! [`ledger_infra::db::run_db`] 进 tauri 阻塞线程池执行（读路径锁内执行），不占用
 //! 界面事件循环线程，对用户外部行为不变。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
@@ -16,11 +16,11 @@
 
 use tauri::State;
 
-use crate::db::DbState;
-use crate::error::Result;
-use crate::read_entry::read_entry;
-use crate::reports as reports_domain;
-use crate::reports::{CategoryShare, DateRange, MerchantSharesReport, MonthlySummary};
+use crate::shell_support::read_entry::read_entry;
+use ledger_infra::db::DbState;
+use ledger_infra::error::Result;
+use ledger_reports as reports_domain;
+use ledger_reports::{CategoryShare, DateRange, MerchantSharesReport, MonthlySummary};
 
 #[tauri::command]
 pub async fn monthly_summary(

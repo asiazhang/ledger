@@ -28,12 +28,12 @@ use super::handlers::transactions::{
 };
 use super::openapi::openapi_json_handler;
 use super::state::ApiState;
-use crate::db::encryption::EncryptionGate;
-use crate::error::AppError;
 use axum::extract::State;
 use axum::http::Request;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
+use ledger_infra::db::encryption::EncryptionGate;
+use ledger_infra::error::AppError;
 
 pub fn build_router(state: ApiState) -> Router {
     Router::new()
@@ -111,7 +111,7 @@ async fn startup_gate_middleware(
                 .into_response();
         }
         if state.boot_gate.is_failed() {
-            return crate::db::boot::gate_rejection_error().into_response();
+            return ledger_infra::db::boot::gate_rejection_error().into_response();
         }
     }
     next.run(req).await
@@ -122,7 +122,7 @@ pub fn start_http_server(
     state: Arc<Mutex<Connection>>,
     read_state: Arc<Mutex<Connection>>,
     lock_gate: EncryptionGate,
-    boot_gate: crate::db::boot::BootFailureGate,
+    boot_gate: ledger_infra::db::boot::BootFailureGate,
 ) {
     std::thread::spawn(move || {
         // B 类豁免（ADR-0060）：HTTP 壳启动期创建 Tokio 运行时，失败即无法运行。

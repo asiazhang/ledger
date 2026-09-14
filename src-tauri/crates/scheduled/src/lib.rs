@@ -37,7 +37,7 @@
 //! 实例与根包图内实例（静态与类型身份分离）。本域自有注册静态是期次落账置脏钩子
 //!（[`auto_run::register_after_occurrence_hook`]），由测试工厂
 //!（`tauri_app_lib::test_support::open`）接在根包图实例上，故走该路径的行为测试
-//!（tests/auto_run.rs）经 `tauri_app_lib::scheduled_transactions::…` 驱动；其余
+//!（tests/auto_run.rs）经 `tauri_app_lib::ledger_scheduled::…` 驱动；其余
 //! 用例不读本 crate 注册静态（经核心交易域接缝的静态随 ledger-transaction 单实例
 //! 编译共享），直接驱动本实例；建库一律经根包测试工厂（dev-dependency，ADR-0084）。
 

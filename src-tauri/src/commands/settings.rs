@@ -5,27 +5,27 @@
 #![allow(clippy::unreachable)]
 //!
 //! 只做参数解包、校验、持久化与运行期接管；领域缝（闭集校验、持久化表示、滤镜接管、
-//! 本位币基准校验与同步 op 产出）在 [`crate::logger`] 与 [`crate::currencies`]。
+//! 本位币基准校验与同步 op 产出）在 [`crate::shell_support::logger`] 与 [`crate::currencies`]。
 //! 本文件不含业务语义。
 //!
 //! - `set_log_level` 写 `app_settings` 经 settings 模块单点收口：按 ADR-0032 置脏豁免、
-//!   不发参考数据信号（设置不是账本数据），成功后才经 [`crate::logger::set_level`] 接管
+//!   不发参考数据信号（设置不是账本数据），成功后才经 [`crate::shell_support::logger::set_level`] 接管
 //!   运行期滤镜。写操作身份 `SetLogLevel` 以例外白名单登记（见 `signals_cross_check`）。
 //! - `set_base_currency`（issue #858，LedgerLevelSetting 首个成员）必须与同步 op
-//!   同事务落库（#855 纪律：写失败不残留 op），故经统一写入口 [`crate::write_entry::write_entry`]
+//!   同事务落库（#855 纪律：写失败不残留 op），故经统一写入口 [`crate::shell_support::write_entry::write_entry`]
 //!   而非置脏豁免路径——本位币基准是账本级数据（随同步/备份走），置脏语义成立；
 //!   信号刻意零（字典与流水未变，设置页自读回显）。
 
 use serde::Serialize;
 use tauri::Manager;
 
-use crate::currencies::current_base_currency;
-use crate::db::{DbState, run_db};
-use crate::error::{AppError, Result};
-use crate::logger;
-use crate::read_entry::read_entry;
-use crate::signals::WriteOp;
-use crate::write_entry::{Outcome, write_entry};
+use crate::shell_support::logger;
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_currencies::current_base_currency;
+use ledger_infra::db::{DbState, run_db};
+use ledger_infra::error::{AppError, Result};
+use ledger_infra::signals::WriteOp;
 
 /// 日志等级当前持久化档位（设置页「关于」Tab 下拉回显）。
 ///
@@ -97,7 +97,7 @@ pub async fn set_base_currency(app: tauri::AppHandle, code: String) -> Result<Ba
         Some(&app),
         WriteOp::SetBaseCurrency,
         move |conn| {
-            crate::currencies::set_base_currency(conn, &code)?;
+            ledger_currencies::set_base_currency(conn, &code)?;
             Ok(Outcome::Silent(BaseCurrencyState { code }))
         },
     )

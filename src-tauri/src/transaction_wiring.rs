@@ -11,12 +11,12 @@
 //! （#1092 判据不变）：任一入口漏调 [`install_all`] 都在该入口触达的写/读路径上以
 //! 既有 `transaction.*-unregistered` 错误码红给测试。
 
-use crate::accounts;
-use crate::currencies;
-use crate::investment;
-use crate::item;
-use crate::merchants;
-use crate::policy;
+use ledger_accounts as accounts;
+use ledger_currencies as currencies;
+use ledger_investment as investment;
+use ledger_item as item;
+use ledger_merchants as merchants;
+use ledger_policy as policy;
 
 /// 一次性装入六个提供域的挂载点实现：投资 6 钩子（计划装配/副作用/回退/释放 +
 /// 标的反查 + 转换两腿）、商户名钩子组、本位币基准、来源列保单/物品反查与出资账户

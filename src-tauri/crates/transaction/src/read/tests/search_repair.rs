@@ -5,9 +5,11 @@
 use rusqlite::Connection;
 
 use ledger_infra::error::Result;
+use tauri_app_lib::ledger_transaction::read::search::{
+    repair_note_pinyin, search_transactions_internal,
+};
+use tauri_app_lib::ledger_transaction::{NotePinyinRepairStage, TransactionSearchResult};
 use tauri_app_lib::test_support;
-use tauri_app_lib::transaction::read::search::{repair_note_pinyin, search_transactions_internal};
-use tauri_app_lib::transaction::{NotePinyinRepairStage, TransactionSearchResult};
 
 fn search(conn: &Connection, query: &str) -> Result<TransactionSearchResult> {
     search_transactions_internal(conn, query, 1, 20, None, None, None, None)

@@ -9,8 +9,8 @@ use utoipa::ToSchema;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::ApiState;
-use crate::error::AppError;
-use crate::investment::{
+use ledger_infra::error::AppError;
+use ledger_investment::{
     InstrumentType, Quote, ResolvedStockCode, derive_quote_currency, is_stock_lookup_miss,
     resolve_stock_quote_candidates,
 };
@@ -30,7 +30,7 @@ pub async fn fetch_stock_quote_for_api(
             let market = market.to_string();
             let code = code.to_string();
             tauri::async_runtime::spawn_blocking(move || {
-                crate::sync::fetch_stock_quote_production(&market, &code)
+                ledger_market_sync::fetch_stock_quote_production(&market, &code)
             })
             .await
             .map_err(|e| AppError::Io(format!("股票行情查询任务执行失败: {e}")))?

@@ -3,9 +3,9 @@
 
 use rusqlite::Connection;
 
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::write::funding::validate_funding_account;
 use tauri_app_lib::test_support;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::write::funding::validate_funding_account;
 
 fn setup(conn: &Connection) {
     test_support::seed_account(conn, "acc-cash", "现金", "cash", "CNY", 0);

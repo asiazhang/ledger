@@ -4,14 +4,14 @@
 use crate::tests::common::{make_buy_input, make_input};
 use ledger_infra::error::{AppError, ErrClass};
 use rusqlite::Connection;
+use tauri_app_lib::ledger_transaction::TransactionInput;
+use tauri_app_lib::ledger_transaction::*;
 use tauri_app_lib::test_support;
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::*;
 
 use ledger_infra::db::now_iso;
 use ledger_sync_protocol::device::device_id;
 use rusqlite::params;
-use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
 
 #[test]
 fn create_income_and_expense_transactions() {
