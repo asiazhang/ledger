@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
-import { judgeMinLengthText } from '@/utils/field-error'
+import { errorMessage } from '@ledger/utils/errors'
+import { judgeMinLengthText } from '@ledger/utils/field-error'
 import {
   assessPassphraseStrength,
   type PassphraseStrengthAssessment,
-} from '@/utils/passphrase-strength'
+} from '@ledger/utils/passphrase-strength'
 import { NAlert, NButton, NCard, NCheckbox, NCollapse, NCollapseItem, NForm, NFormItem, NInput, NSpace, NSpin, NText, NTooltip, useMessage } from 'naive-ui'
 import { computed, onMounted, ref, watch, type Ref } from 'vue'
 import { api } from '@ledger/api'
@@ -58,7 +58,7 @@ const confirmPassphrase = ref('')
 // 口令强度实时显示（issue #685，词汇表「口令强度」）：纯信息反馈，不拦截提交、
 // 不改提交可用性；只接新设主口令两框（开启加密「主口令」+ 修改主口令「新主口令」），
 // 确认字段与已存在口令的输入场景一律不接。判定与映射收口在
-// src/utils/passphrase-strength.ts，此处只消费（最后一次胜出守卫保证逐键刷新不串档）。
+// @ledger/utils/passphrase-strength，此处只消费（最后一次胜出守卫保证逐键刷新不串档）。
 function trackPassphraseStrength(source: Ref<string>) {
   const assessment = ref<PassphraseStrengthAssessment | null>(null)
   let latest = 0

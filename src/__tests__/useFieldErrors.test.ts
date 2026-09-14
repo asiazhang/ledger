@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { ref } from 'vue'
 import { useFieldErrors } from '@/composables/useFieldErrors'
-import { judgeAmountText, judgeQuantityText, judgePriceText } from '@/utils/field-error'
+import { judgeAmountText, judgeQuantityText, judgePriceText } from '@ledger/utils/field-error'
 
 /**
  * 表单级字段错误态装配工厂测试（ADR-0058 决策 4 补完 / issue #1007）：

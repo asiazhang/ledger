@@ -10,7 +10,7 @@ import {
   vendorOptions,
   vendorPrefill,
   vendorTierKey,
-} from '@/utils/s3-vendors'
+} from '../s3-vendors'
 
 /**
  * 厂商预设纯函数（issue #1220，父 spec #1214）。

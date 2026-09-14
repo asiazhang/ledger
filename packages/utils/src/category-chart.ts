@@ -2,7 +2,7 @@
 // 净额降序（负值柱如实沉底）、分类按 id 稳定配色（跨年份/跨数据顺序恒定）、
 // 未分类固定灰。柱尾只标金额；占比收进 tooltip，「金额 · 占比%」标签在此收口为纯函数。
 import type { Category, CategoryShare } from '@ledger/types'
-import { categoryRoot } from '@/utils/category-tree'
+import { categoryRoot } from './category-tree'
 import { formatAmount } from '@ledger/money'
 
 /** 未分类柱固定灰：与真实分类一眼区分 */

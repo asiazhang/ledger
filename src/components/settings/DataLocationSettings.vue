@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { NAlert, NButton, NCard, NSpace, NSpin, NText, useMessage } from 'naive-ui'
 import { onMounted, ref } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'

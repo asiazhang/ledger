@@ -35,7 +35,7 @@ import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from '@/components/mobile-cells'
 import { usePlanFocusLanding } from '@/composables/usePlanFocusLanding'
-import { scheduledStatusLabel } from '@/utils/scheduled'
+import { scheduledStatusLabel } from '@ledger/utils/scheduled'
 
 /**
  * 定时转账页签 = ScheduledPlanList 计划清单模块（ADR-0041）的薄适配器：

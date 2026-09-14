@@ -3,7 +3,7 @@ import { Chart as ChartJS } from 'chart.js'
 // 被测注册缝（issue #926）：导入统一注册模块即执行全量 register（模块级副作用，
 // 导入即发生）。注册表是真实 Chart.js registry，不经 vue-chartjs 桩——历史事故
 // （组件自持注册子集、桩测覆盖不到）正是本测试要钉死的回归面。
-import '@/utils/chart-registration'
+import '../chart-registration'
 
 describe('Chart.js 统一注册缝（issue #926）', () => {
   it('折线图与柱状图所需 controller / element / scale 全部已注册（防 "point" is not a registered element 回归）', () => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { computed, h, onMounted, ref } from 'vue'
 import { t } from '@ledger/i18n'
 import {
@@ -40,7 +40,7 @@ import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPane
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from '@/components/mobile-cells'
 import { usePlanFocusLanding } from '@/composables/usePlanFocusLanding'
-import { scheduledStatusLabel } from '@/utils/scheduled'
+import { scheduledStatusLabel } from '@ledger/utils/scheduled'
 
 /**
  * 订阅页签 = ScheduledPlanList 计划清单模块（ADR-0041 迁移步 2）的薄适配器：

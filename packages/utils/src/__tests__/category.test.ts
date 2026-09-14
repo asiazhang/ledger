@@ -6,7 +6,7 @@ import {
   categoryPath,
   buildCategoryTree,
   categoryRoot,
-} from '@/utils/category-tree'
+} from '../category-tree'
 
 function makeCategory(overrides: Partial<Category> = {}): Category {
   return {

@@ -9,7 +9,7 @@ import { Bar } from 'vue-chartjs'
 import type { ActiveElement, ChartOptions, TooltipItem } from 'chart.js'
 // Chart.js 统一注册模块（issue #926）：柱状图所需 controller/element/scale 一处
 // 注册，不再组件自持子集；导入即完成注册。
-import '@/utils/chart-registration'
+import '@ledger/utils/chart-registration'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'
@@ -34,13 +34,13 @@ import {
   categoryBarTotal,
   categoryBars,
   categoryDrilldownBars,
-} from '@/utils/category-chart'
-import { categoryRoot } from '@/utils/category-tree'
+} from '@ledger/utils/category-chart'
+import { categoryRoot } from '@ledger/utils/category-tree'
 import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import {
   DATED_TIME_PERIOD_PRESETS,
   type NullableDateRange,
-} from '@/utils/time-period'
+} from '@ledger/utils/time-period'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
 
 const reference = useReferenceStore()

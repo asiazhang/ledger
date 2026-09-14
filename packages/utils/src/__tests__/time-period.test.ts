@@ -19,7 +19,7 @@ import {
   type DatedTimePeriodPreset,
   type NaturalPeriod,
   type PeriodBoundary,
-} from '@/utils/time-period'
+} from '../time-period'
 
 /** 本地日历构造辅助：测试与实现同用本地时区口径，无 UTC 偏移歧义。 */
 const d = (y: number, m: number, day: number) => new Date(y, m - 1, day)
@@ -263,7 +263,7 @@ describe('formatPeriodLabel：期间标签本地化格式化（issue #383）', (
     try {
       const { initAppLocale } = await import('@ledger/i18n')
       await initAppLocale()
-      const { formatPeriodLabel: fmt } = await import('@/utils/time-period')
+      const { formatPeriodLabel: fmt } = await import('../time-period')
       expect(fmt({ unit: 'month', year: 2026, index: 1 })).toBe('Feb 2026')
       expect(fmt({ unit: 'month', year: 2026, index: 11 })).toBe('Dec 2026')
       expect(fmt({ unit: 'quarter', year: 2026, index: 0 })).toBe('Q1 2026')

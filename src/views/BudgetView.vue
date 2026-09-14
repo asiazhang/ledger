@@ -29,9 +29,9 @@ import {
   MOBILE_TOUCH_TARGET_STYLE,
 } from '@/components/mobile-cells'
 import { useReferenceStore } from '@/stores/reference'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { yuanToCents, formatAmount, centsToYuan } from '@ledger/money'
-import { todayStr } from '@/utils/date'
+import { todayStr } from '@ledger/utils/date'
 import type { BudgetInput, BudgetProgress } from '@ledger/types'
 
 const reference = useReferenceStore()

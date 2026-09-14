@@ -21,10 +21,10 @@ import { useRouter } from 'vue-router'
 import { useReferenceStore } from '@/stores/reference'
 import { useModalIntent } from '@/composables/useModalIntent'
 import { useWindowTier } from '@/composables/useWindowTier'
-import { matchLabel } from '@/utils/pinyin-filter'
+import { matchLabel } from '@ledger/utils/pinyin-filter'
 import { t } from '@ledger/i18n'
 import { formatQuantity } from '@ledger/money'
-import { sumFixedColumnWidths } from '@/utils/table'
+import { sumFixedColumnWidths } from '@ledger/utils/table'
 import type { Merchant, MerchantInput } from '@ledger/types'
 
 // 商户管理（issue #189 / ADR-0028）：字典为扁平表（无层级、无 sort_order，按名称排序），

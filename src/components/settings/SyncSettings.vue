@@ -14,8 +14,8 @@ import {
 import { computed, onMounted, ref } from 'vue'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
-import { errorMessage } from '@/utils/errors'
-import { formatIsoMinute } from '@/utils/datetime'
+import { errorMessage } from '@ledger/utils/errors'
+import { formatIsoMinute } from '@ledger/utils/datetime'
 import { restartAppShortly } from '@/composables/restart'
 import { useLoadable } from '@/composables/useLoadable'
 import {
@@ -26,7 +26,7 @@ import {
   vendorPrefill,
   vendorTierKey,
   type S3VendorPrefill,
-} from '@/utils/s3-vendors'
+} from '@ledger/utils/s3-vendors'
 import AppModal from '@/components/AppModal.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import { SYNC_HINT_CLASS } from '@/components/settings/sync-settings.css'

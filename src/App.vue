@@ -54,7 +54,7 @@ import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
 import GlobalBusyBar from '@/components/GlobalBusyBar.vue'
 import GlobalErrorBanner from '@/components/GlobalErrorBanner.vue'
 import BookSidebarEntry from '@/components/BookSidebarEntry.vue'
-import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
+import { loadSidebarCollapsed, saveSidebarCollapsed } from '@ledger/utils/view-state'
 import { shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
 import { useInputMode } from '@/composables/useInputMode'
 import {

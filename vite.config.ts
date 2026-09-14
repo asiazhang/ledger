@@ -27,7 +27,7 @@ function readWindowTierBreakpointPx(): number {
 const host = process.env.TAURI_DEV_HOST;
 
 // 构建期 Git 版本信息（tauri dev / tauri build 均经此配置生效），
-// 消费方见 src/utils/git-info.ts；非 Git 目录（如源码包构建）降级为空值。
+// 消费方见 packages/utils/src/git-info.ts（#1314 起随 @ledger/utils 成包）；非 Git 目录（如源码包构建）降级为空值。
 function gitSha(): string {
   try {
     return execSync("git rev-parse HEAD", { encoding: "utf-8" }).trim();

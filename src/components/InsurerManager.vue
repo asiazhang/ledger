@@ -18,7 +18,7 @@ import InsurerEditModal from '@/components/insurers/InsurerEditModal.vue'
 import { api } from '@ledger/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useModalIntent } from '@/composables/useModalIntent'
-import { matchLabel } from '@/utils/pinyin-filter'
+import { matchLabel } from '@ledger/utils/pinyin-filter'
 import { t } from '@ledger/i18n'
 import type { Insurer, InsurerInput } from '@ledger/types'
 

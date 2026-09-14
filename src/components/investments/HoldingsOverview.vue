@@ -33,7 +33,7 @@ import {
   HOLDINGS_PAGE_SIZE,
   type HoldingsSortColumn,
 } from '@/composables/useHoldingsFilter'
-import { sumFixedColumnWidths } from '@/utils/table'
+import { sumFixedColumnWidths } from '@ledger/utils/table'
 
 const reference = useReferenceStore()
 const appStore = useAppStore()

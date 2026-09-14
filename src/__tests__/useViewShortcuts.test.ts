@@ -13,7 +13,7 @@ import {
 } from '@/stores/sidebar-order'
 import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import type { SidebarGroupOrders } from '@/stores/sidebar-order'
-import { VIEW_STATE_KEYS } from '@/utils/view-state'
+import { VIEW_STATE_KEYS } from '@ledger/utils/view-state'
 
 // 视图快捷键（键位带段）测试：键位带推导纯逻辑 + 键盘注册，经 sidebar-order store 装配
 // （issue #549：顺序状态归位 store，此处只测键位面对 store 组内序的响应；排序/收纳的

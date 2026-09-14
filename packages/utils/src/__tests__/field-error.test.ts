@@ -7,13 +7,13 @@ import {
   judgeMinLengthText,
   fieldErrorKind,
   type AmountJudgment,
-} from '@/utils/field-error'
+} from '../field-error'
 
 /**
  * 字段错误态共享判定单点测试（ADR-0058 / issue #414，规则表接缝）：
  * 穷举金额格式错误闭集（解析失败 / 超出表示精度 / 必填为空）与
  * 错误态装配的时机口径（输入中即红；空值红在失焦或保存尝试后）。
- * 改判定口径只碰 src/utils/field-error.ts 一处，此处同步钉死。
+ * 改判定口径只碰 ../field-error 一处，此处同步钉死。
  */
 
 describe('judgeAmountText（金额格式判定闭集）', () => {

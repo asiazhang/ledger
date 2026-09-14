@@ -5,7 +5,7 @@ import { NDataTable, NForm, NProgress, NSelect, NInputNumber, NDatePicker, NModa
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { formatAmount } from '@ledger/money'
 import { useReferenceStore } from '@/stores/reference'
-import { todayStr } from '@/utils/date'
+import { todayStr } from '@ledger/utils/date'
 import BudgetView from '@/views/BudgetView.vue'
 import { messageApi } from '@ledger/test-support/message-mock'
 import { makeFakeSink, resetToastSink } from './factories'

@@ -1,7 +1,7 @@
 import { computed, h, ref } from 'vue'
 import type { DropdownOption } from 'naive-ui'
 import { defineStore } from 'pinia'
-import { getSavedSidebarOrder, saveSidebarOrders, clearSidebarOrder, getSavedContainment, saveContainmentLists, clearContainment } from '@/utils/view-state'
+import { getSavedSidebarOrder, saveSidebarOrders, clearSidebarOrder, getSavedContainment, saveContainmentLists, clearContainment } from '@ledger/utils/view-state'
 import { t } from '@ledger/i18n'
 
 /**

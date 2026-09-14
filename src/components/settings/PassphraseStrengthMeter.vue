@@ -2,7 +2,7 @@
 import { NProgress, NText } from 'naive-ui'
 import { computed } from 'vue'
 import { t } from '@ledger/i18n'
-import type { PassphraseStrengthAssessment, PassphraseStrengthTier } from '@/utils/passphrase-strength'
+import type { PassphraseStrengthAssessment, PassphraseStrengthTier } from '@ledger/utils/passphrase-strength'
 
 // 口令强度条（issue #685，词汇表「口令强度」）：纯展示组件——色条＋四档文字，
 // 消费 utils/passphrase-strength.ts 的评估结果，不做任何判定。

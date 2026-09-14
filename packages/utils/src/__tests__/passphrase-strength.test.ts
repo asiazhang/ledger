@@ -3,13 +3,13 @@ import {
   strengthForScore,
   assessPassphraseStrength,
   type PassphraseStrengthTier,
-} from '@/utils/passphrase-strength'
+} from '../passphrase-strength'
 
 /**
  * 口令强度收口单点测试（词汇表「口令强度」，备份与数据文件域；issue #685）：
  * 钉死 score→档位闭集映射（0–1 弱 / 2 中 / 3 强 / 4 极强）、空输入不评估、
  * 典型样例档位合理（password123 → 弱，长随机串 → 极强）。
- * 改判定口径只碰 src/utils/passphrase-strength.ts 一处，此处同步钉死。
+ * 改判定口径只碰 ../passphrase-strength 一处，此处同步钉死。
  */
 
 const ALL_TIERS: PassphraseStrengthTier[] = ['weak', 'medium', 'strong', 'very-strong']

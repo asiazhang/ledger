@@ -1,5 +1,5 @@
 import type { TransactionInput, TransactionKind } from '@ledger/types'
-import { toLocalDateISO } from '@/utils/date'
+import { toLocalDateISO } from '@ledger/utils/date'
 import { yuanToCents, yuanToPrice } from '@ledger/money'
 import { t } from '@ledger/i18n'
 

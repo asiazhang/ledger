@@ -25,7 +25,7 @@ import {
   type NullableDateRange,
   type PeriodUnit,
   type TimePeriodPreset,
-} from '@/utils/time-period'
+} from '@ledger/utils/time-period'
 
 /**
  * 时间范围快捷选择共享受控组件（issue #410 / ADR-0057 决策 5，#409 接缝 2 唯一新缝）：

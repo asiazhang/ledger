@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 
 /**
  * Loadable：前端异步任务统一生命周期模块（工厂形态 composable，ADR-0040 / issue #320）。

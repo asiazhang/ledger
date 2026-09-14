@@ -8,7 +8,7 @@
 // en 文案与后端 message 不同形，命中即证明码表存在且插值生效（非降级透传）。
 // 合法值清单经 `{1}` 插值——不在码表另抄一份（ADR-0108）。
 import { afterEach, describe, expect, it } from 'vitest'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '../errors'
 import { applyLocale } from '@ledger/i18n'
 
 describe('errors.json 闭集未知值码表（#1071）', () => {

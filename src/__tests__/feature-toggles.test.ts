@@ -13,7 +13,7 @@ import {
   getSavedClosedFeatures,
   saveSidebarOrders,
   saveContainmentLists,
-} from '@/utils/view-state'
+} from '@ledger/utils/view-state'
 
 // 功能开关状态基座接口测试（issue #1241 / ADR-0116 决策 2/6）。
 // 本票只做状态与读写，不做任何 UI 与过滤（后续票消费本 store 的关闭集合）。

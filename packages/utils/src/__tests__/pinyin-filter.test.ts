@@ -4,7 +4,7 @@ import {
   matchLabel,
   pinyinFilter,
   pinyinInitials,
-} from '@/utils/pinyin-filter'
+} from '../pinyin-filter'
 import type { SelectOption } from 'naive-ui'
 
 describe('pinyinInitials', () => {

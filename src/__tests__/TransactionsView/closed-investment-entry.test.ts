@@ -13,7 +13,7 @@ import {
   INVESTMENT_CREATE_KINDS,
   availableCreateKinds,
   isCreateKindAvailable,
-} from '@/utils/create-entry-kinds'
+} from '@ledger/utils/create-entry-kinds'
 
 /**
  * 关闭投资后交易页投资新建入口消失（issue #1245 / ADR-0116 决策 4「入口侧」）：

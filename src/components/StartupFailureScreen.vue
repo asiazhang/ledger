@@ -27,7 +27,7 @@ import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
 import { t } from '@ledger/i18n'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import { useFailureRestore } from '@/composables/useFailureRestore'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 
 const { resetFromFailure, bootErrorCode } = useEncryptionGate()
 const {

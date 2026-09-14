@@ -7,7 +7,7 @@ import {
   type ClosableFeatureId,
 } from '@/stores/feature-toggles'
 import { groupOfView } from '@/stores/sidebar-order'
-import { getSavedRouteName, saveRouteName } from '@/utils/view-state'
+import { getSavedRouteName, saveRouteName } from '@ledger/utils/view-state'
 
 /**
  * 关闭功能的裸路由守卫与上次视图回退（issue #1244 / ADR-0116 决策 4/5）。

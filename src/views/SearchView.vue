@@ -20,9 +20,9 @@ import { api } from '@ledger/api'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { buildTransactionColumns } from '@/components/transaction-columns'
-import { sumFixedColumnWidths } from '@/utils/table'
+import { sumFixedColumnWidths } from '@ledger/utils/table'
 import { type Transaction, type TransactionSearchFilter } from '@ledger/types'
-import type { NullableDateRange } from '@/utils/time-period'
+import type { NullableDateRange } from '@ledger/utils/time-period'
 import { yuanToCents, formatAmount } from '@ledger/money'
 
 const store = useAppStore()

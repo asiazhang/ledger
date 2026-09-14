@@ -4,7 +4,7 @@
 // paletteColor 纯函数单一来源。占比% 收 category-chart 的 sharePercent 单一来源，
 // 分母 = 后端载荷的全量合计（与 topN 截断无关，沿用既有 tooltip 同一取整口径）。
 import type { MerchantShare } from '@ledger/types'
-import { paletteColor, sharePercent } from '@/utils/category-chart'
+import { paletteColor, sharePercent } from './category-chart'
 
 /** 表格单行：后端返回序即行序。列为 商户名 | 金额内嵌条 | 金额数字 | 占比% | 笔数。 */
 export interface MerchantTableRow {

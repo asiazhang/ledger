@@ -6,7 +6,7 @@ import { Line } from 'vue-chartjs'
 import type { ChartOptions, TooltipItem } from 'chart.js'
 // Chart.js 统一注册模块（issue #926）：折线图所需 controller/element/scale 一处
 // 注册，不再组件自持子集（缺项曾致渲染错误循环冻结界面）；导入即完成注册。
-import '@/utils/chart-registration'
+import '@ledger/utils/chart-registration'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, formatPrice, amountPrivacyEnabled } from '@ledger/money'
 import { t } from '@ledger/i18n'

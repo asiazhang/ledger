@@ -4,7 +4,7 @@ import { messageCalls } from '@ledger/test-support/message-mock'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
-import { todayStr } from '@/utils/date'
+import { todayStr } from '@ledger/utils/date'
 import type { Account, Category, Currency, Merchant } from '@ledger/types'
 
 

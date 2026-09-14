@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { yuanToCents, formatAmount } from '@ledger/money'
 import { computed, h, onMounted, ref } from 'vue'
 import {

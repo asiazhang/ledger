@@ -6,7 +6,7 @@ import { defineComponent, h } from 'vue'
 import { NButton, NEmpty, NSelect } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import ReportsView from '@/views/ReportsView.vue'
-import { categoryColor } from '@/utils/category-chart'
+import { categoryColor } from '@ledger/utils/category-chart'
 import { useWindowGuard } from '@/composables/useWindowGuard'
 import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
 import { fireViewReset, clearViewResets } from '@/composables/viewResetRegistry'
@@ -14,7 +14,7 @@ import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS 
 import { makeCategory, makeFakeSink, resetToastSink } from './factories'
 import { registerToastSink } from '@/composables/useLoadable'
 import { formatAmount } from '@ledger/money'
-import type { NullableDateRange } from '@/utils/time-period'
+import type { NullableDateRange } from '@ledger/utils/time-period'
 import type { ReportDateRange } from '@ledger/types'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现（无币种形态），

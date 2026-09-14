@@ -6,10 +6,27 @@ import {
   categoryBarTotal,
   categoryDrilldownBars,
   barTooltipLabel,
-} from '@/utils/category-chart'
+} from '../category-chart'
 import type { Category, CategoryShare } from '@ledger/types'
-import { makeCategory } from './factories'
 import { formatAmount } from '@ledger/money'
+
+// 共享工厂 makeCategory 的包内自足副本（与 src/__tests__/factories.ts 同源同体；
+// 本测试随被测包搬迁后夹具不回指壳层）
+function makeCategory(partial: Partial<Category> & { id: string }): Category {
+  return {
+    name: partial.id,
+    kind: 'expense',
+    parent_id: null,
+    icon: null,
+    sort_order: 0,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+    ...partial,
+  }
+}
 
 const categories: Category[] = [
   makeCategory({ id: 'food', name: '餐饮' }),

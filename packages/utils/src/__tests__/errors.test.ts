@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '../errors'
 import { applyLocale, i18n } from '@ledger/i18n'
 
 describe('errorMessage', () => {

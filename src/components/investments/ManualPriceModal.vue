@@ -5,9 +5,9 @@ import AppModal from '@/components/AppModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
-import { errorMessage as extractErrorMessage } from '@/utils/errors'
+import { errorMessage as extractErrorMessage } from '@ledger/utils/errors'
 import { formatPrice, yuanToPrice } from '@ledger/money'
-import { todayStr } from '@/utils/date'
+import { todayStr } from '@ledger/utils/date'
 
 // 手动报价弹窗（issue #291 / ADR-0036）：无行情数据源标的的「日期 + 价格」
 // 单点录入。提交后一条通道两个落点（现价缓存 upsert + 价格历史周采样幂等覆盖，
