@@ -350,7 +350,7 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
       expect(r.output).toContain('须为 JSON 数组')
     })
 
-    it('PACKAGES 生产登记表与已落位包全等（#1150/#1151/#1152/#1153/#1154/#1155 抽包落位）', () => {
+    it('PACKAGES 生产登记表与已落位包全等（#1150/#1151/#1152/#1153/#1154/#1155/#1317 抽包落位）', () => {
       expect(PACKAGES).toEqual([
         {
           name: '@ledger/types',
@@ -392,6 +392,12 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
         {
           name: '@ledger/modal-intent',
           dir: 'packages/modal-intent',
+          deps: [],
+          note: expect.any(String),
+        },
+        {
+          name: '@ledger/row-context-menu',
+          dir: 'packages/row-context-menu',
           deps: [],
           note: expect.any(String),
         },
