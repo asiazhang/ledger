@@ -207,6 +207,9 @@
     "trend-start-date-invalid": "invalid start date: {0}",
     "trend-end-date-invalid": "invalid end date: {0}",
     "trend-range-invalid": "start date cannot be later than end date",
+    "mwr-date-invalid": "invalid money-weighted return date: {0}",
+    "mwr-range-invalid": "start date cannot be later than end date",
+    "mwr-account-missing": "the account behind a return cash flow does not exist or has been deleted: {0}",
     "query-required": "query must not be empty: instrument search is a search-style endpoint, please provide a keyword (no full listing)"
   },
   "fund": {

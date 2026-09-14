@@ -15,7 +15,7 @@ import { useWindowGuard } from '@/composables/useWindowGuard'
 import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
 import { clearViewResets, fireViewReset } from '@/composables/viewResetRegistry'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
-import { makePnlSummary, mockHoldings } from './factories'
+import { makeMwrSummary, makePnlSummary, mockHoldings } from './factories'
 import {
   firePricesChanged,
   resetPricesChangedHandler,
@@ -127,6 +127,8 @@ const INVESTMENT_DEFAULTS = {
     by_instrument: [],
     details: [],
   },
+  // 资金加权收益率（issue #1195）：持仓/盈亏两页签共用一次拉取
+  money_weighted_return_summary: makeMwrSummary({ by_instrument: [], by_account: [], total: [] }),
 }
 
 beforeEach(async () => {

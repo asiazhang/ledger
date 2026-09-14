@@ -21,6 +21,7 @@ import {
   makeAccount,
   makeHolding,
   makeInstrument,
+  makeMwrSummary,
   mockHoldings,
   mockInstruments,
 } from './factories'
@@ -52,6 +53,8 @@ const BASE_DEFAULTS = {
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
   // 累计收益（issue #1077 / #1078）：全账本按币种聚合，独立于持仓行（后端三腿相加）
   cumulative_pnl_summary: [{ currency_code: 'CNY', cumulative_pnl_cents: 48000 }],
+  // 资金加权收益率（issue #1195）：与金额口径并列的比例列，独立一次拉取
+  money_weighted_return_summary: makeMwrSummary(),
   sync_instrument_info: { synced: 2, skipped: 0, message: '已同步 2 只，跳过 0 只' },
 }
 
@@ -495,6 +498,7 @@ const FILTER_DEFAULTS = {
   list_instruments: { items: FILTER_INSTRUMENTS, total: FILTER_INSTRUMENTS.length },
   // 累计收益（issue #1077）：全账本口径，不随三维过滤收窄
   cumulative_pnl_summary: [{ currency_code: 'CNY', cumulative_pnl_cents: 26000 }],
+  money_weighted_return_summary: makeMwrSummary(),
   sync_instrument_info: { synced: 4, skipped: 0, message: '已同步 4 只，跳过 0 只' },
 }
 
@@ -695,6 +699,7 @@ const PAGE_DEFAULTS = {
   list_holdings: PAGE_HOLDINGS,
   list_instruments: { items: PAGE_INSTRUMENTS, total: PAGE_INSTRUMENTS.length },
   cumulative_pnl_summary: [],
+  money_weighted_return_summary: makeMwrSummary({ by_instrument: [], by_account: [], total: [] }),
   sync_instrument_info: { synced: 25, skipped: 0, message: '已同步 25 只，跳过 0 只' },
 }
 

@@ -37,6 +37,8 @@ const EMPTY_INVESTMENT_DEFAULTS = {
     by_instrument: [],
     details: [],
   },
+  // 资金加权收益率（issue #1195）：持仓/盈亏两页签共用一次拉取
+  money_weighted_return_summary: { by_instrument: [], by_account: [], total: [] },
 }
 
 // 英文渲染冒烟（issue #350）：切 en-US 后投资域文案走 en 资源；

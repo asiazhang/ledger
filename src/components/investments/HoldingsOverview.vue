@@ -25,6 +25,10 @@ import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import PortfolioStatsCards from '@/components/investments/PortfolioStatsCards.vue'
 import { usePortfolioOverview, type PortfolioRow } from '@/composables/usePortfolioOverview'
 import {
+  renderMwrRateCell,
+  useMoneyWeightedReturn,
+} from '@/composables/useMoneyWeightedReturn'
+import {
   useHoldingsFilter,
   HOLDINGS_PAGE_SIZE,
   type HoldingsSortColumn,
@@ -42,6 +46,10 @@ const appStore = useAppStore()
 // 累计收益是全账本口径、不随三维过滤收窄（已实现腿无法归到某行可见持仓），
 // 故直接来自 usePortfolioOverview 而非 useHoldingsFilter。
 const { rows, loading, refresh, totalCumulativePnlGroups } = usePortfolioOverview()
+// 资金加权收益率（issue #1195 / ADR-0115）：与金额口径并列的比例列，同一请求
+// 内自取（三消费面共用一次 money_weighted_return_summary）；期末市值随行情，
+// 价格失效信号重拉内化在本接缝（与上方 usePricesChanged 各自订阅，消费方自选）。
+const { instrumentRate } = useMoneyWeightedReturn()
 const {
   searchInput,
   setSearch,
@@ -263,6 +271,16 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
         formatAmount(r.unrealizedPnlCents, reference.currencyMap.get(r.valueCurrencyCode)),
       )
     },
+  },
+  {
+    // 资金加权收益率（issue #1195 / ADR-0115）：与金额口径并列、互不换算；
+    // 三态分流收口在 renderMwrRateCell 单点（与盈亏页收益率卡同款形态）。
+    title: t('investments.holdings.columns.mwr'),
+    key: 'mwr',
+    width: 120,
+    align: 'right',
+    className: 'tabular-nums',
+    render: (r) => renderMwrRateCell(instrumentRate(r.accountId, r.instrumentId), appStore.theme),
   },
 ])
 </script>

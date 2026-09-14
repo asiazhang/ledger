@@ -85,6 +85,18 @@ export function formatAmount(cents: number, currency?: Currency, locale: Locale 
   return `${sign}${symbol}${groupNumberString(trimmed, groupSizeFor(locale))}`
 }
 
+/** 收益率展示口径单点（issue #1195 / ADR-0115 资金加权收益率）：小数 → 百分数，
+ *  保留两位小数、非零恒带符号（+12.34% / -5.00% / 0.00%）。无注入态（无法计算）
+ *  的降级归调用方（「-」或「无法计算」，两处消费面各自语义），本函数只收数值。 */
+export function formatRate(rate: number, locale: Locale = currentLocale.value): string {
+  return new Intl.NumberFormat(locale, {
+    style: 'percent',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+    signDisplay: 'exceptZero',
+  }).format(rate)
+}
+
 /**
  * 分 → 元数值（表单初值等需要数值形态的场景；展示一律用 formatAmount）。
  * 与 formatAmount 共享同一换算口径（按币种小数位 10^dp），不要手写 /100。

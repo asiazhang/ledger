@@ -10,6 +10,10 @@ import { useWindowTier } from '@/composables/useWindowTier'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
 import { formatAmount } from '@ledger/money'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
+import {
+  renderMwrRateCell,
+  useMoneyWeightedReturn,
+} from '@/composables/useMoneyWeightedReturn'
 
 const reference = useReferenceStore()
 const appStore = useAppStore()
@@ -56,6 +60,51 @@ const yearColumns: DataTableColumn[] = [
 const accountCols: DataTableColumn[] = [
   { title: t('investments.pnl.columns.account'), key: 'account_name' },
   realizedPnlColumn(t('investments.pnl.columns.realizedPnl')),
+]
+
+// 资金加权收益率（issue #1195 / ADR-0115）：账户级与全账级两个粒度与金额口径
+// 并列、互不换算。账户行随账户筛选收窄（客户端过滤，行集本就全量返回）；
+// 全账行恒为全账本口径、不随筛选收窄（与持仓页签累计收益合计同一先例）；
+// 价格失效信号驱动的重拉内化在接缝，无需调用方手动刷新。
+const { summary: mwr } = useMoneyWeightedReturn()
+
+interface MwrRow {
+  scope: string
+  currency_code: string
+  rate: number | null
+  testid: string
+}
+
+const mwrRows = computed<MwrRow[]>(() => {
+  if (!mwr.value) return []
+  const accountRows: MwrRow[] = mwr.value.by_account
+    .filter((a) => !selectedAccountId.value || a.account_id === selectedAccountId.value)
+    .map((a) => ({
+      scope: a.account_name,
+      currency_code: a.currency_code,
+      rate: a.rate,
+      testid: `mwr-account-${a.account_id}`,
+    }))
+  const totalRows: MwrRow[] = mwr.value.total.map((g) => ({
+    scope: t('investments.pnl.total'),
+    currency_code: g.currency_code,
+    rate: g.rate,
+    testid: `mwr-total-${g.currency_code}`,
+  }))
+  return [...accountRows, ...totalRows]
+})
+
+const mwrColumns: DataTableColumn<MwrRow>[] = [
+  { title: t('investments.pnl.columns.account'), key: 'scope' },
+  { title: t('investments.pnl.columns.currency'), key: 'currency_code', width: 100 },
+  {
+    // 三态分流收口在 renderMwrRateCell 单点（与持仓页收益率列同款形态）。
+    title: t('investments.pnl.columns.mwr'),
+    key: 'rate',
+    align: 'right',
+    className: 'tabular-nums',
+    render: (row) => renderMwrRateCell(row.rate, appStore.theme),
+  },
 ]
 
 </script>
@@ -122,6 +171,21 @@ const accountCols: DataTableColumn[] = [
             </NCard>
           </NGi>
         </NGrid>
+
+        <!-- 资金加权收益率（issue #1195 / ADR-0115）：账户级 + 全账级（按币种分组、
+             不跨币种折算），与金额口径并列、互不换算；重拉由价格失效信号驱动
+             （接缝内化），账户筛选变化时与已实现盈亏同路重查对齐行集 -->
+        <NCard :title="t('investments.pnl.byMwr')" size="small">
+          <NDataTable
+            v-if="mwrRows.length > 0"
+            :columns="mwrColumns"
+            :data="mwrRows"
+            :row-key="(r: MwrRow) => r.testid"
+            :bordered="false"
+            size="small"
+          />
+          <NEmpty v-else :description="t('investments.pnl.emptyTable')" />
+        </NCard>
       </template>
     </NSpace>
   </NSpin>

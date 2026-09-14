@@ -8,6 +8,7 @@ import type {
   FinancialFreedomOverview,
   Holding,
   Instrument,
+  MoneyWeightedReturnSummary,
   ItemDailyTotal,
   PhysicalAsset,
   PhysicalAssetList,
@@ -360,6 +361,20 @@ export function makePnlSummary(partial: Partial<RealizedPnlSummary> = {}): Reali
     by_instrument: [
       { instrument_id: 'inst-1', symbol: '600000', name: '浦发银行', currency_code: 'CNY', realized_pnl_cents: 30000 },
     ],
+    ...partial,
+  }
+}
+
+/** money_weighted_return_summary 返回值工厂（issue #1195 / ADR-0115）：默认
+ * 单标的 +10%、账户 +10%、全账 CNY +10%；null 率（无解）与缺行（缺价跳过）
+ * 由用例经 partial / 覆写表达三态。 */
+export function makeMwrSummary(
+  partial: Partial<MoneyWeightedReturnSummary> = {},
+): MoneyWeightedReturnSummary {
+  return {
+    by_instrument: [{ account_id: 'acc-1', instrument_id: 'inst-1', currency_code: 'CNY', rate: 0.1 }],
+    by_account: [{ account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', rate: 0.1 }],
+    total: [{ currency_code: 'CNY', rate: 0.1 }],
     ...partial,
   }
 }

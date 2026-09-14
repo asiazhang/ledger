@@ -491,6 +491,7 @@ export const INVESTMENT_MODULES: readonly WhitelistEntry[] = [
   { path: 'lots.rs', layer: '域目录', note: '持仓批次（security_lots）单点——取批次、逐批次 FIFO 分摊与耗尽批次成本闭合、修改/删除路径的两个精确回补原语（issue #1018）' },
   { path: 'manual_price.rs', layer: '域目录', note: '手动报价两落点（价格历史周采样 + 现价缓存映像规则）' },
   { path: 'model.rs', layer: '域目录', note: '域集中模型——全量投资类型与财务自由度总览（#422 随域归位，经 crate 根逐类型再导出禁止 glob）' },
+  { path: 'mwr.rs', layer: '域目录', note: '资金加权收益率（MoneyWeightedReturn，ADR-0115 / issue #1195）——XIRR 求解器（确定性二分）与三消费面读投影（单标的 / 账户级 / 全账级），现金流与区间期初市值口径见模块头注' },
   { path: 'predicates.rs', layer: '域目录', note: '「持仓标的」判定谓词单点（INVESTED_EXISTS）' },
   { path: 'prices.rs', layer: '域目录', note: '价格写入单点——现价缓存 upsert、价格历史周采样 upsert、价格刻度换算、东财来源标记（#401 自 sync/persist 迁入）' },
   { path: 'quote.rs', layer: '域目录', note: '行情接入接缝（QuoteAdoption，ADR-0103）——统一报价载荷 Quote 与落库半边 adopt_quote；查询半边实现在行情同步域网络层、经注入签名供给' },

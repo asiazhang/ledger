@@ -207,6 +207,9 @@
     "trend-start-date-invalid": "起始日期格式无效: {0}",
     "trend-end-date-invalid": "截止日期格式无效: {0}",
     "trend-range-invalid": "起始日期不能晚于截止日期",
+    "mwr-date-invalid": "收益率查询日期格式无效: {0}",
+    "mwr-range-invalid": "起始日期不能晚于截止日期",
+    "mwr-account-missing": "收益现金流指向的账户不存在或已删除: {0}",
     "query-required": "query 不能为空：标的搜索为搜索式端点，请携带关键词（不做全量列表）"
   },
   "fund": {

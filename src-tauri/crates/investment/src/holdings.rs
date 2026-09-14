@@ -1,7 +1,10 @@
 //! 时点持仓（AsOfHolding，spec #168 / issue #218）：
 //! 投资域核心推算不变量「仅认 buy/sell 流水、sell 取负、按交易日（含当日）前缀求和」
-//! 的单点收敛模块。接口仅 [`holdings_as_of`] 一个入口：给定连接、可选标的、交易日，
-//! 返回该时点的持有数量（`instrument_id=None` 为全组合形态，所有标的数量之和）。
+//! 的单点收敛模块。接口入口 [`holdings_as_of`]：给定连接、可选标的、交易日，
+//! 返回该时点的持有数量（`instrument_id=None` 为全组合形态，所有标的数量之和）；
+//! 账户维度扩展形态 [`holdings_as_of_in`]（issue #1195：资金加权收益率的边界
+//! 市值需要（账户 × 标的）粒度的时点存量），单标的形态为其 `account_id=None`
+//! 薄委托——推算口径仍单点住本模块。
 //!
 //! 契约要点（与 CONTEXT-investment「时点持仓（AsOfHolding）」词条一致）：
 //!
@@ -35,6 +38,18 @@ pub fn holdings_as_of(
     instrument_id: Option<&str>,
     as_of_date: &str,
 ) -> Result<f64> {
+    holdings_as_of_in(conn, None, instrument_id, as_of_date)
+}
+
+/// [`holdings_as_of`] 的账户维度扩展形态（issue #1195）：`account_id=None`
+/// 即既有全组合 / 单标的形态（薄委托），`Some` 时只求和该账户名下的持仓变动
+/// ——资金加权收益率的边界市值需要（账户 × 标的）粒度的时点存量。
+pub fn holdings_as_of_in(
+    conn: &Connection,
+    account_id: Option<&str>,
+    instrument_id: Option<&str>,
+    as_of_date: &str,
+) -> Result<f64> {
     NaiveDate::parse_from_str(as_of_date, "%Y-%m-%d").map_err(|_| {
         AppError::codedp(
             "instrument.as-of-date-invalid",
@@ -46,7 +61,7 @@ pub fn holdings_as_of(
     // 口径内化为一条 SQL 的四臂 UNION ALL：仅认持仓变动流水（buy/sell）、
     // convert 两腿（行内两个方向）与 split 腿（带符号 Δ，ADR-0106 决策 8）、前缀求和
     // （含当日）；软删除账户与软删交易行一并排除（issue #217 定案、与 Holding
-    // 同口径）。
+    // 同口径）；账户维度过滤随 ?3 生效（None = 不限账户）。
     //
     // convert 一笔一行两腿：转出腿（instrument_id）记 −quantity，转入腿
     // （to_instrument_id）记 +to_quantity；单标的查询时只取命中那腿（转出腿用
@@ -62,6 +77,7 @@ pub fn holdings_as_of(
                      AND t.is_deleted = 0 \
                      AND a.is_deleted = 0 \
                      AND st.instrument_id = COALESCE(?2, st.instrument_id) \
+                     AND (?3 IS NULL OR t.account_id = ?3) \
                      AND t.date <= ?1 \
                    UNION ALL \
                    SELECT -st.quantity AS qty \
@@ -73,6 +89,7 @@ pub fn holdings_as_of(
                      AND t.is_deleted = 0 \
                      AND a.is_deleted = 0 \
                      AND st.instrument_id = COALESCE(?2, st.instrument_id) \
+                     AND (?3 IS NULL OR t.account_id = ?3) \
                      AND t.date <= ?1 \
                    UNION ALL \
                    SELECT st.to_quantity AS qty \
@@ -84,6 +101,7 @@ pub fn holdings_as_of(
                      AND t.is_deleted = 0 \
                      AND a.is_deleted = 0 \
                      AND st.to_instrument_id = COALESCE(?2, st.to_instrument_id) \
+                     AND (?3 IS NULL OR t.account_id = ?3) \
                      AND t.date <= ?1 \
                    UNION ALL \
                    SELECT st.quantity AS qty \
@@ -95,8 +113,12 @@ pub fn holdings_as_of(
                      AND t.is_deleted = 0 \
                      AND a.is_deleted = 0 \
                      AND st.instrument_id = COALESCE(?2, st.instrument_id) \
+                     AND (?3 IS NULL OR t.account_id = ?3) \
                      AND t.date <= ?1) \
                ";
-    let quantity: f64 = conn.query_row(sql, params![as_of_date, instrument_id], |r| r.get(0))?;
+    let quantity: f64 =
+        conn.query_row(sql, params![as_of_date, instrument_id, account_id], |r| {
+            r.get(0)
+        })?;
     Ok(quantity)
 }
