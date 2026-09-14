@@ -126,3 +126,17 @@ describe('跨账本投资汇总视图', () => {
     )
   })
 })
+
+// 接线负向判据（ADR-0087 断言强度）：路由记录是本功能的第二处接线——删除
+// routes 中的 cross-book-summary 记录，本断言变红（弹层入口 push 断言覆盖
+// 入口侧，本测试覆盖路由侧，两侧删除都有测试承接）。
+import { routes } from '@/router/index'
+
+describe('跨账本投资汇总路由接线', () => {
+  it('路由表存在 cross-book-summary 记录并指向本视图', () => {
+    const route = routes.find((r) => r.name === 'cross-book-summary')
+    expect(route).toBeDefined()
+    expect(String(route?.path)).toBe('/cross-book-summary')
+    expect(String(route?.component)).toContain('CrossBookSummaryView')
+  })
+})
