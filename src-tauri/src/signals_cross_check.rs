@@ -823,8 +823,8 @@ const STANDARD_LOCK_LINE: &str = ".lock().map_err(|e| AppError::Db(e.to_string()
 /// 读侧锁仪式豁免清单（ADR-0104 决策 6）：不经统一读/写入口、函数体保留手写
 /// 标准锁行的命令，逐个附动机。与写侧 [`IPC_WRITE_ENTRY_EXCEPTIONS`] **分立**——
 /// 两者核对的知识不同（写身份 vs 锁仪式），合并会混淆（ADR-0104 代价 2）。
-/// 全部 9 条来自 ADR-0104 决策 5 的 B/C 组结构性理由（写侧白名单写命令、锁内
-/// 文件/网络、分支锁、mut 守卫）；迁移后壳层手写标准锁行恰为本表 9 条，
+/// 全部 8 条来自 ADR-0104 决策 5 的 B/C 组结构性理由（写侧白名单写命令、锁内
+/// 文件/网络、分支锁、mut 守卫）；迁移后壳层手写标准锁行恰为本表 8 条，
 /// 以 `rg` 实测为准。HTTP 壳无例外（7 个读端点全部迁入读入口，ADR-0104 决策 7）。
 const IPC_READ_ENTRY_EXCEPTIONS: &[(&str, &str)] = &[
     (
@@ -850,10 +850,6 @@ const IPC_READ_ENTRY_EXCEPTIONS: &[(&str, &str)] = &[
     (
         "get_sync_status",
         "锁内文件探测（probe_file_kind 判库加密形态）：持锁窗口刻意含文件 IO，直连保持显式（ADR-0104 形状 C）",
-    ),
-    (
-        "get_sync_channel_checkpoint",
-        "锁内网络（checkpoint_pointer 拉 manifest 预检）：持锁触网刻意直连（ADR-0104 形状 C）",
     ),
     (
         "publish_sync_checkpoint",

@@ -432,14 +432,20 @@ pub struct SyncCheckpointInfoState {
 /// 预检通道上的当前检查点（issue #864 引导向导首步）：只读 manifest 不下载
 /// 快照体，向导据此区分「通道上还没有检查点（先去旧设备发布）」与「发现检查
 /// 点，可引导」。通道未配置报 `sync-channel.not-configured`。
+///
+/// 锁跨度（issue #1283 / ADR-0069 决策 4）：锁只为读取通道配置（`app_settings`
+/// 单行读，走读入口短锁）；manifest GET 是网络等待、不消费连接，在锁外经阻塞
+/// 线程池完成——网络慢或超时时不阻塞其它命令。返回形态与错误码不变。
 #[tauri::command]
 pub async fn get_sync_channel_checkpoint<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<Option<SyncCheckpointInfoState>> {
-    let conn = app.state::<DbState>().conn.clone();
+    let read_conn = app.state::<DbState>().read_conn.clone();
+    let config = read_entry("get_sync_channel_checkpoint", read_conn, move |conn| {
+        configured_channel(conn)?.ok_or_else(not_configured_error)
+    })
+    .await?;
     run_db("get_sync_channel_checkpoint", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        let config = configured_channel(&conn)?.ok_or_else(not_configured_error)?;
         let channel = build_channel(&config)?;
         Ok(channel
             .checkpoint_pointer()?
