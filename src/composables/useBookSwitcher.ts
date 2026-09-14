@@ -6,7 +6,7 @@ import { errorMessage } from '@ledger/utils/errors'
 import { useLoadable } from '@/composables/useLoadable'
 import { restartAppShortly } from '@/composables/restart'
 import { useAppDialog } from '@/composables/useAppDialog'
-import { useModalIntent } from '@/composables/useModalIntent'
+import { useModalIntent } from '@ledger/modal-intent'
 import type { Book } from '@ledger/types'
 
 /**

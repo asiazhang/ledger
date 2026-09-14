@@ -18,7 +18,7 @@ import {
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { useLoadable } from '@/composables/useLoadable'
-import { useModalIntent } from '@/composables/useModalIntent'
+import { useModalIntent } from '@ledger/modal-intent'
 import { useWindowTier } from '@/composables/useWindowTier'
 import AppModal from '@/components/AppModal.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'

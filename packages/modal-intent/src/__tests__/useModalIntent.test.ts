@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { nextTick, watch } from 'vue'
-import { useModalIntent } from '@/composables/useModalIntent'
+import { useModalIntent } from '../index'
 
 /**
  * ModalIntent（弹窗意图编排）模块测试（ADR-0072，词汇表「ModalIntent」词条）：

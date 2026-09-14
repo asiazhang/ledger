@@ -28,7 +28,7 @@ import {
   useScheduledPlanList,
   type ScheduledPlanRow,
 } from '@/composables/useScheduledPlanList'
-import { useModalIntent } from '@/composables/useModalIntent'
+import { useModalIntent } from '@ledger/modal-intent'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'

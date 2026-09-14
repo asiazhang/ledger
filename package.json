@@ -17,6 +17,7 @@
   "dependencies": {
     "@ledger/api": "workspace:*",
     "@ledger/i18n": "workspace:*",
+    "@ledger/modal-intent": "workspace:*",
     "@ledger/money": "workspace:*",
     "@ledger/storage": "workspace:*",
     "@ledger/theme": "workspace:*",

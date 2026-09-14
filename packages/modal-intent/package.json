@@ -1,0 +1,16 @@
+{
+  "name": "@ledger/modal-intent",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "弹窗意图编排包（issue #1316 / spec #1148 / ADR-0118 / ADR-0072）：useModalIntent 通用工厂——模态弹窗「开启 / 目标 / 关闭」编排的唯一形态（意图非空即显示、目标随开启递增序号、关闭清回空终态），词汇表「ModalIntent（弹窗意图编排）」词条的宿主。工厂零业务语义、零外部依赖（无 store、无 api、无组件），不接弹层注册表（弹层纯度，ADR-0035）；依赖方向：@ledger 范围内零依赖（方向表恒空），外部依赖仅 vue（readonly / ref 响应式原语）。源码直出，exports 仅暴露 . 单入口（消费面无子路径需求），不建构建链；跨包只能整引包名（深导入由 check-frontend-structure.ts 守门）。",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "vue": "^3.5.42"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.0"
+  }
+}

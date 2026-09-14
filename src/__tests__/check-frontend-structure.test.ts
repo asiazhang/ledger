@@ -390,6 +390,12 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
           note: expect.any(String),
         },
         {
+          name: '@ledger/modal-intent',
+          dir: 'packages/modal-intent',
+          deps: [],
+          note: expect.any(String),
+        },
+        {
           name: '@ledger/theme',
           dir: 'packages/theme',
           deps: ['@ledger/types', '@ledger/money'],
