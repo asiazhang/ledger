@@ -589,7 +589,8 @@ fn v025_funding_flow_aggregate_uses_funding_index() {
 fn v025_idempotency_dedup_uses_idempotency_key_index() {
     let conn = v016_world();
     // v016_world 的幂等键全 NULL（partial 索引之外）；补齐一部分活跃键并重算
-    // 统计，保证 planner 选择可代表真实导入库。
+    // 统计，保证 planner 选择可代表真实导入库。断言参数 k-tx-0003 即命中这批
+    // 键：id 后缀序号 3 被 3 整除。
     conn.execute_batch(
         "UPDATE transactions SET idempotency_key = 'k-' || id \
          WHERE is_deleted = 0 AND CAST(substr(id, 4) AS INTEGER) % 3 = 0;\
@@ -727,6 +728,74 @@ fn v025_account_reference_guard_uses_flow_indexes() {
         !plan.contains("SCAN transactions"),
         "守卫不应存在无索引的全表扫描: {plan}"
     );
+}
+
+/// 保单统计钉计划（V025 评估项 3）：逐保单聚合 JOIN 走保单部分覆盖索引——
+/// 索引按 policy_id 打头，GROUP BY 由索引序满足（无临时 B-tree），partial 谓词
+/// （policy_id IS NOT NULL AND is_deleted=0）与统计查询口径精确匹配。SQL 形状
+/// 与 policy/src/stats.rs `sum_by_policy` 同构（kind 集合取自 Amount 接缝矩阵：
+/// 保费侧贡献 kind 为 expense）。
+#[test]
+fn v025_policy_stats_uses_policy_covering_index() {
+    let conn = v025_world();
+    conn.execute_batch(
+        "INSERT INTO policies \
+         (id,insurer_id,policy_number,product_name,start_date,created_at,updated_at,version,device_id,is_deleted) \
+         SELECT 'pol-01', id, 'P-001', '测试险种', '2020-01-01', \
+                '2026-03-01T08:00:00Z','2026-03-01T08:00:00Z',1,'test',0 \
+         FROM insurers LIMIT 1; \
+         INSERT INTO transactions \
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,category_id,policy_id,\
+          date,created_at,updated_at,version,device_id,is_deleted) VALUES\
+          ('tx-pol-01','expense',1000,'CNY',1000,'acc-01','cat-01','pol-01','2026-02-10',\
+           '2026-03-01T08:00:00Z','2026-03-01T08:00:00Z',1,'test',0),\
+          ('tx-pol-02','expense',1000,'CNY',1000,'acc-01','cat-01','pol-01','2026-02-11',\
+           '2026-03-01T08:00:00Z','2026-03-01T08:00:00Z',1,'test',0); \
+         ANALYZE;",
+    )
+    .unwrap();
+
+    let plan = v016_plan(
+        &conn,
+        "SELECT t.policy_id, SUM(CASE t.kind WHEN 'expense' THEN t.amount_native_cents \
+         ELSE 0 END) FROM transactions t JOIN policies p ON p.id=t.policy_id \
+         WHERE t.is_deleted=0 AND t.kind IN ('expense') AND p.is_deleted=0 \
+         GROUP BY t.policy_id",
+        [],
+    );
+    assert!(
+        plan.contains("idx_transactions_policy"),
+        "保单统计应由保单部分覆盖索引驱动: {plan}"
+    );
+    assert!(
+        !plan.contains("TEMP B-TREE"),
+        "GROUP BY 应由索引序满足，无临时 B-tree: {plan}"
+    );
+}
+
+/// 零消费者索引已随 V025 删除（负向钉）：任一重新出现即为漂移。保留侧由上方
+/// 各计划断言反向钉住（INDEXED BY 断言在索引缺失时 prepare 直接报错）。
+#[test]
+fn v025_zero_consumer_indexes_dropped() {
+    let conn = test_support::open();
+
+    for name in [
+        "idx_transactions_amount",
+        "idx_transactions_refund",
+        "idx_transactions_sync",
+        "idx_transactions_account",
+        "idx_transactions_category",
+        "idx_transactions_deleted",
+    ] {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "零消费者索引 {name} 应已随 V025 删除");
+    }
 }
 
 /// 接线回归：在 `command` span 内执行 SQL，SQL 耗时事件应归因到该 span
