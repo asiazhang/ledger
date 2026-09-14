@@ -12,7 +12,7 @@ use rusqlite::Connection;
 
 use crate::accounts::{Account, AccountBalance, AccountInput, AccountUpdateInput};
 use crate::api_server::error::ErrorResponse;
-use crate::api_server::state::EmitterSlot;
+use crate::api_server::state::{EmitterSlot, ReadConn};
 use crate::error::AppError;
 use crate::read_entry::read_entry;
 use crate::signals::WriteOp;
@@ -31,9 +31,9 @@ use crate::write_entry::{Outcome, write_entry};
     )
 )]
 pub async fn list_accounts_handler(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(read): State<ReadConn>,
 ) -> Result<Json<Vec<Account>>, AppError> {
-    read_entry("GET /api/v1/accounts", conn, move |conn| {
+    read_entry("GET /api/v1/accounts", read.0, move |conn| {
         let accounts = crate::accounts::list_accounts_for_api(conn)?;
         Ok(Json(accounts))
     })
@@ -161,9 +161,9 @@ pub async fn delete_account_handler(
     )
 )]
 pub async fn list_account_balances_handler(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(read): State<ReadConn>,
 ) -> Result<Json<Vec<AccountBalance>>, AppError> {
-    read_entry("GET /api/v1/accounts/balances", conn, move |conn| {
+    read_entry("GET /api/v1/accounts/balances", read.0, move |conn| {
         let balances = crate::accounts::list_account_balances_for_api(conn)?;
         Ok(Json(balances))
     })

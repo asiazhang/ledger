@@ -615,7 +615,7 @@ static SCHEDULER_SPAWNED: AtomicBool = AtomicBool::new(false);
 /// 幂等（issue #644 / ADR-0080）：已在跑时本调用退化为无操作；每轮门检在
 /// 锁定/启动失败期间跳过备份与追补（占位连接不是业务库）——原位重引导把
 /// 门翻回锁定后，已存活的线程在门检处等待，解锁/恢复后自动继续。
-pub fn start_scheduler(app: &tauri::AppHandle) {
+pub fn start_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::Manager;
     if SCHEDULER_SPAWNED.swap(true, Ordering::SeqCst) {
         return;

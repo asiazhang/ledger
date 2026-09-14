@@ -1,12 +1,10 @@
 //! 币种端点：种子币种清单（导入映射用）。
 
-use std::sync::{Arc, Mutex};
-
 use axum::Json;
 use axum::extract::State;
-use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
+use crate::api_server::state::ReadConn;
 use crate::currencies::Currency;
 use crate::error::AppError;
 use crate::read_entry::read_entry;
@@ -24,9 +22,9 @@ use crate::read_entry::read_entry;
     )
 )]
 pub async fn list_currencies_handler(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(read): State<ReadConn>,
 ) -> Result<Json<Vec<Currency>>, AppError> {
-    read_entry("GET /api/v1/currencies", conn, move |conn| {
+    read_entry("GET /api/v1/currencies", read.0, move |conn| {
         Ok(Json(crate::currencies::list_currencies(conn)?))
     })
     .await

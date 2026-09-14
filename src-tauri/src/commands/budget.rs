@@ -24,7 +24,7 @@ use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_budgets(db: State<'_, DbState>) -> Result<Vec<Budget>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_budgets", conn, move |conn| {
         budget_domain::list_budgets(conn)
     })
@@ -87,7 +87,7 @@ pub async fn delete_budget(
 
 #[tauri::command]
 pub async fn budget_progress(db: State<'_, DbState>) -> Result<Vec<BudgetProgress>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("budget_progress", conn, move |conn| {
         budget_domain::budget_progress_rows(conn, Local::now().date_naive())
     })

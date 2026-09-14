@@ -27,7 +27,7 @@ use crate::write_entry::{Outcome, write_entry};
 /// 账户列表：默认仅未删除、不含隐藏账户（黑洞账户经 AI 侧端点/`*_for_api` 口径可见）。
 #[tauri::command]
 pub async fn list_accounts(db: State<'_, DbState>) -> Result<Vec<Account>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_accounts", conn, move |conn| {
         account_domain::list_accounts(conn)
     })
@@ -118,7 +118,7 @@ pub async fn adjust_account_balance(
 /// 批量查询所有账户余额，单次数据库往返完成。
 #[tauri::command]
 pub async fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalance>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_account_balances", conn, move |conn| {
         account_domain::list_account_balances_with_visibility(conn, false)
     })
@@ -130,6 +130,8 @@ pub async fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<Account
 /// 故不经 `db.write` 包装，直连锁内执行。
 #[tauri::command]
 pub async fn audit_balance_cache(db: State<'_, DbState>) -> Result<BalanceCacheAudit> {
+    // 只读甄别收口（issue #1280 / ADR-0117 代价 3）：审计发现漂移时于闭包内
+    // 修复（重算并 UPSERT 余额缓存），必须走写连接。
     let conn = db.conn.clone();
     // 写侧白名单身份保留（ADR-0104 决策 5）：仍是不经 write_entry 的声明写命令，
     // 闭包体与形状 A 同构，锁仪式归统一读入口。

@@ -34,7 +34,7 @@ pub async fn list_physical_assets(
     db: State<'_, DbState>,
     status: Option<String>,
 ) -> Result<PhysicalAssetList> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_physical_assets", conn, move |conn| {
         physical_asset_domain::list_physical_assets(conn, status.as_deref())
     })
@@ -43,7 +43,7 @@ pub async fn list_physical_assets(
 
 #[tauri::command]
 pub async fn get_physical_asset(db: State<'_, DbState>, id: String) -> Result<PhysicalAsset> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("get_physical_asset", conn, move |conn| {
         physical_asset_domain::get_physical_asset(conn, &id)
     })

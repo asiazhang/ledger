@@ -120,6 +120,7 @@ async fn startup_gate_middleware(
 pub fn start_http_server(
     app: AppHandle,
     state: Arc<Mutex<Connection>>,
+    read_state: Arc<Mutex<Connection>>,
     lock_gate: EncryptionGate,
     boot_gate: crate::db::boot::BootFailureGate,
 ) {
@@ -130,6 +131,7 @@ pub fn start_http_server(
         rt.block_on(async move {
             let router = build_router(ApiState {
                 conn: state,
+                read_conn: read_state,
                 emitter: Some(Arc::new(app)),
                 fund_fetch: None,
                 stock_fetch: None,

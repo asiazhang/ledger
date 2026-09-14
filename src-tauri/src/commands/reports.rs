@@ -29,7 +29,7 @@ pub async fn monthly_summary(
     from: Option<String>,
     to: Option<String>,
 ) -> Result<Vec<MonthlySummary>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("monthly_summary", conn, move |conn| {
         reports_domain::monthly_summary_rows(conn, year, from.as_deref(), to.as_deref())
     })
@@ -46,7 +46,7 @@ pub async fn merchant_shares(
     to: Option<String>,
     top_n: Option<i64>,
 ) -> Result<MerchantSharesReport> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("merchant_shares", conn, move |conn| {
         reports_domain::merchant_shares_report(conn, year, from.as_deref(), to.as_deref(), top_n)
     })
@@ -56,7 +56,7 @@ pub async fn merchant_shares(
 /// 报表日期极值范围（issue #266 / #389）：只读命令，返回未删交易日期极值对。
 #[tauri::command]
 pub async fn report_date_range(db: State<'_, DbState>) -> Result<DateRange> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("report_date_range", conn, move |conn| {
         reports_domain::query_report_date_range(conn)
     })
@@ -74,7 +74,7 @@ pub async fn category_shares(
     from: Option<String>,
     to: Option<String>,
 ) -> Result<Vec<CategoryShare>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("category_shares", conn, move |conn| {
         reports_domain::category_shares_rows(
             conn,

@@ -941,8 +941,12 @@ fn given_encrypted_file_lib(
     std::fs::remove_file(db_path.with_extension("db.bak")).unwrap();
     world.boot.enc_dir = Some(dir);
     let conn = open_connection_with_passphrase(&db_path, &passphrase).unwrap();
+    // 成对挂载（issue #1280 / ADR-0117）：读连接凭同一口令只读打开。
+    let read_conn =
+        tauri_app_lib::db::open_connection_readonly_with_passphrase(&db_path, &passphrase).unwrap();
     world.db = DbState {
         conn: Arc::new(Mutex::new(conn)),
+        read_conn: Arc::new(Mutex::new(read_conn)),
     };
 }
 

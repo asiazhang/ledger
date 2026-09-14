@@ -29,7 +29,7 @@ use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemWithDailyCost>> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_items", conn, domain::list_items).await
 }
 
@@ -41,7 +41,7 @@ pub async fn calculate_item_cost(
     id: String,
     reference_date: Option<String>,
 ) -> Result<ItemDailyCost> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("calculate_item_cost", conn, move |conn| {
         domain::calculate_item_cost(conn, &id, reference_date.as_deref())
     })
@@ -52,7 +52,7 @@ pub async fn calculate_item_cost(
 /// 供 dashboard 汇总卡展示（默认币种）。
 #[tauri::command]
 pub async fn item_daily_total(db: State<'_, DbState>) -> Result<ItemDailyTotal> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("item_daily_total", conn, move |conn| {
         domain::item_daily_total(conn)
     })

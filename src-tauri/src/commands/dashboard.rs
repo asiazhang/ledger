@@ -21,6 +21,9 @@ use crate::read_entry::read_entry;
 /// 首页净资产总览：本位币净资产及其三个组成。
 #[tauri::command]
 pub async fn dashboard_overview(db: State<'_, DbState>) -> Result<DashboardOverview> {
+    // 只读甄别收口（issue #1280 / ADR-0117 代价 3）：本命令闭包内含缓存自愈写
+    // （缓存失效时实时重算并 UPSERT 净资产缓存，域设计即「读探针回填」），
+    // 必须走写连接——走只读读连接会在只读约束上报错。锁仪式仍归统一读入口。
     let conn = db.conn.clone();
     read_entry("dashboard_overview", conn, move |conn| {
         dashboard_domain::query_dashboard_overview(conn)

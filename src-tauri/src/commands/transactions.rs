@@ -32,7 +32,7 @@ pub async fn list_transactions(
     db: State<'_, DbState>,
     filter: Option<TransactionListFilter>,
 ) -> Result<TransactionListResult> {
-    let conn = db.conn.clone();
+    let conn = db.read_conn.clone();
     read_entry("list_transactions", conn, move |conn| {
         let filter = filter.unwrap_or_default();
         transaction_domain::list_transactions_internal(conn, &filter)

@@ -34,6 +34,8 @@ pub async fn search_transactions(
     date_from: Option<String>,
     date_to: Option<String>,
 ) -> Result<TransactionSearchResult> {
+    // 只读甄别收口（issue #1280 / ADR-0117 代价 3）：搜索入口含拼音惰性回填写
+    // （存量行积压时 UPDATE transactions，域设计即搜索前自愈），必须走写连接。
     let conn = db.conn.clone();
     read_entry("search_transactions", conn, move |conn| {
         transaction_domain::search_transactions_internal(
@@ -55,6 +57,8 @@ pub async fn search_transactions(
 /// [`crate::transaction::read::search`]（与搜索入口惰性回填同一实现，幂等）。
 #[tauri::command]
 pub async fn repair_note_pinyin(db: State<'_, DbState>) -> Result<NotePinyinRepairReport> {
+    // 只读甄别收口（issue #1280 / ADR-0117 代价 3）：本命令本体就是回填写
+    //（UPDATE transactions），必须走写连接。
     let conn = db.conn.clone();
     // 写侧白名单身份保留（ADR-0104 决策 5）：仍是不经 write_entry 的声明写命令，
     // 闭包体与形状 A 同构，锁仪式归统一读入口。

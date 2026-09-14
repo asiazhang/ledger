@@ -84,7 +84,7 @@ pub(crate) fn active_book_id<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
 
 /// 转换类命令（开启/关闭/修改主口令）的共同门禁：应用处于锁定状态时
 /// 拒绝——转换只能在解锁后的运行中应用发起。
-fn ensure_unlocked(app: &AppHandle) -> Result<()> {
+fn ensure_unlocked<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
     if app.state::<EncryptionGate>().is_locked() {
         return Err(AppError::coded(
             "encryption.locked",
@@ -114,11 +114,17 @@ pub async fn get_encryption_status(app: AppHandle) -> Result<EncryptionStatus> {
 /// 连接 Arc 克隆全部可见），翻转锁定门、经唯一编排点成对拉起后台服务（自动
 /// 备份与同步触发，issue #961）；启动期等待中的搬迁
 /// （源库为密文库）在解锁后以主口令补做，成功即触发重启语义。
-async fn do_unlock(app: &AppHandle, passphrase: &str) -> Result<UnlockOutcome> {
+async fn do_unlock<R: Runtime>(app: &AppHandle<R>, passphrase: &str) -> Result<UnlockOutcome> {
     let db_path = active_db_path(app)?;
     let pass = passphrase.to_string();
-    let conn = run_db("unlock_encryption_core", move || {
-        encryption::unlock_db_file(&db_path, &pass)
+    let (conn, read_conn) = run_db("unlock_encryption_core", move || {
+        // 写连接先行：unlock_db_file 内部完成口令验证（首条读语句）与迁移——读
+        // 连接只在验证通过后凭同一口令打开（口令来源同源成对，issue #1280 /
+        // ADR-0117 决策 2）；读连接建连失败则整体失败，写连接不换入、门不翻转
+        //（fail-closed，可无限重试）。
+        let conn = encryption::unlock_db_file(&db_path, &pass)?;
+        let read_conn = crate::db::open_connection_readonly_with_passphrase(&db_path, &pass)?;
+        Ok((conn, read_conn))
     })
     .await?;
     // 本会话密钥记忆（issue #863 / ADR-0098）：解锁成功即记入会话形态，自动
@@ -126,7 +132,7 @@ async fn do_unlock(app: &AppHandle, passphrase: &str) -> Result<UnlockOutcome> {
     crate::sync_engine::SessionEnvelope::remember(crate::sync_engine::SessionEnvelope::Encrypted(
         passphrase.to_string(),
     ));
-    resume_business_surface(app, conn)?;
+    resume_business_surface(app, conn, read_conn)?;
 
     // 等待中的搬迁（issue #570）：源库为密文库时启动期无法搬迁，解锁后
     // 以主口令补做。失败不阻断解锁：应用继续以当前位置运行，意图保持
@@ -156,7 +162,10 @@ async fn do_unlock(app: &AppHandle, passphrase: &str) -> Result<UnlockOutcome> {
 
 /// 解锁：凭主口令打开密文库并进入应用（见 [`do_unlock`]）。
 #[tauri::command]
-pub async fn unlock_encryption(app: AppHandle, passphrase: String) -> Result<UnlockOutcome> {
+pub async fn unlock_encryption<R: Runtime>(
+    app: AppHandle<R>,
+    passphrase: String,
+) -> Result<UnlockOutcome> {
     let gate = app.state::<EncryptionGate>();
     if !gate.is_locked() {
         return Err(AppError::coded(
@@ -178,7 +187,9 @@ pub async fn unlock_encryption(app: AppHandle, passphrase: String) -> Result<Unl
 /// - 缓存口令已过期（错误口令，如恢复其它主口令的备份）：清掉缓存避免每次启动
 ///   都弹生物认证，并把错误上报（前端回退手输）。
 #[tauri::command]
-pub async fn unlock_with_remembered_passphrase(app: AppHandle) -> Result<UnlockOutcome> {
+pub async fn unlock_with_remembered_passphrase<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<UnlockOutcome> {
     let gate = app.state::<EncryptionGate>();
     if !gate.is_locked() {
         return Err(AppError::coded(
@@ -235,15 +246,23 @@ pub async fn unlock_with_remembered_passphrase(app: AppHandle) -> Result<UnlockO
 }
 
 /// 业务可用起点编排（解锁、忘记口令重置与启动失败重置共用，ADR-0075
-/// 决策 5 / issue #601）：新连接原位换入 DbState（Arc 形状不变，业务路径
-/// 下次锁连接即取到真实库）→ 翻转锁定门 → 经
-/// [`crate::start_background_services`] 成对拉起后台服务（自动备份调度 + 同步
-/// 触发，issue #961 唯一编排点）。锁定门翻转对未锁定路径（启动失败重置）是无操作。
-pub(crate) fn resume_business_surface(app: &AppHandle, conn: Connection) -> Result<()> {
+/// 决策 5 / issue #601）：新连接**成对**原位换入 DbState（写连接 + 读连接，
+/// issue #1280 / ADR-0117 决策 3；Arc 形状不变，业务路径下次取连接即拿到
+/// 真实库）→ 翻转锁定门 → 经 [`crate::start_background_services`] 成对拉起
+/// 后台服务（自动备份调度 + 同步触发，issue #961 唯一编排点）。锁定门翻转对
+/// 未锁定路径（启动失败重置）是无操作。调用方保证读连接与写连接同刻就绪
+///（读连接建连失败在换连之前整体失败，fail-closed）。
+pub(crate) fn resume_business_surface<R: Runtime>(
+    app: &AppHandle<R>,
+    conn: Connection,
+    read_conn: Connection,
+) -> Result<()> {
     {
         let state = app.state::<DbState>();
         let mut guard = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
         *guard = conn;
+        drop(guard);
+        state.replace_read_conn(read_conn)?;
     }
     app.state::<EncryptionGate>().set_locked(false);
     // 日志等级接管（spec #608 / #611）：解锁后真实库就绪，按持久化档位接管滤镜；
@@ -266,13 +285,16 @@ pub(crate) fn resume_business_surface(app: &AppHandle, conn: Connection) -> Resu
 /// 新口令重新打开；重启由前端经既有 `restart_app` 触发（与 Restore
 /// 「恢复成功后自动重启」同型）。
 #[tauri::command]
-pub async fn enable_encryption(app: AppHandle, passphrase: String) -> Result<()> {
+pub async fn enable_encryption<R: Runtime>(app: AppHandle<R>, passphrase: String) -> Result<()> {
     ensure_unlocked(&app)?;
     let db_path = active_db_path(&app)?;
     run_db("enable_encryption", move || {
         encryption::enable_encryption_for_file(&db_path, &passphrase)
     })
     .await?;
+    // 文件替换已成功：读连接立即换出（旧读连接仍指旧 inode，issue #1280 /
+    // ADR-0117 决策 3），随后的原位重引导按新库文件成对换入。
+    crate::commands::boot::detach_read_conn(&app);
     tracing::info!("整库加密转换完成，待重启以新口令重新打开");
     Ok(())
 }
@@ -282,7 +304,7 @@ pub async fn enable_encryption(app: AppHandle, passphrase: String) -> Result<()>
 /// 重启由启动探测接管：明文库不再出现解锁屏；重启由前端经既有
 /// `restart_app` 触发（Restore 同型）。
 #[tauri::command]
-pub async fn disable_encryption(app: AppHandle, passphrase: String) -> Result<()> {
+pub async fn disable_encryption<R: Runtime>(app: AppHandle<R>, passphrase: String) -> Result<()> {
     ensure_unlocked(&app)?;
     let db_path = active_db_path(&app)?;
     run_db("disable_encryption", move || {
@@ -300,6 +322,8 @@ pub async fn disable_encryption(app: AppHandle, passphrase: String) -> Result<()
     // 关闭加密后库为明文形态：记入明文形态（issue #863），后续自动轮次按明文
     // 直通（否则会拿旧口令去封明文段，对端无法开封）。
     crate::sync_engine::SessionEnvelope::remember(crate::sync_engine::SessionEnvelope::Plaintext);
+    // 文件替换已成功：读连接立即换出（与恢复同款 inode 语义，issue #1280）。
+    crate::commands::boot::detach_read_conn(&app);
     tracing::info!("整库转换完成（关闭加密），待重启以明文重新打开");
     Ok(())
 }
@@ -308,8 +332,8 @@ pub async fn disable_encryption(app: AppHandle, passphrase: String) -> Result<()
 /// 原子性语义见 [`encryption::change_passphrase_for_file`]）。完成后
 /// 重启以新口令解锁；重启由前端经既有 `restart_app` 触发（Restore 同型）。
 #[tauri::command]
-pub async fn change_encryption_passphrase(
-    app: AppHandle,
+pub async fn change_encryption_passphrase<R: Runtime>(
+    app: AppHandle<R>,
     passphrase: String,
     new_passphrase: String,
 ) -> Result<()> {
@@ -319,6 +343,9 @@ pub async fn change_encryption_passphrase(
         encryption::change_passphrase_for_file(&db_path, &passphrase, &new_passphrase)
     })
     .await?;
+    // 文件替换已成功：读连接立即换出（旧读连接凭旧口令打开旧 inode，
+    // ADR-0117 决策 3），随后的原位重引导按新库文件成对换入。
+    crate::commands::boot::detach_read_conn(&app);
     tracing::info!("整库转换完成（修改主口令），待重启以新口令重新打开");
     Ok(())
 }
@@ -331,7 +358,7 @@ pub async fn change_encryption_passphrase(
 /// 原位换连、翻 unlock、经唯一编排点成对拉起后台服务——应用随即回到明文模式的业务
 /// 可用状态，无需重启，可在设置页再次走开启加密流程。
 #[tauri::command]
-pub async fn reset_after_forgotten_passphrase(app: AppHandle) -> Result<()> {
+pub async fn reset_after_forgotten_passphrase<R: Runtime>(app: AppHandle<R>) -> Result<()> {
     let gate = app.state::<EncryptionGate>();
     if !gate.is_locked() {
         return Err(AppError::coded(
@@ -340,8 +367,11 @@ pub async fn reset_after_forgotten_passphrase(app: AppHandle) -> Result<()> {
         ));
     }
     let db_path = active_db_path(&app)?;
-    let conn = run_db("reset_after_forgotten_passphrase", move || {
-        encryption::reset_encrypted_db_file(&db_path)
+    let (conn, read_conn) = run_db("reset_after_forgotten_passphrase", move || {
+        let conn = encryption::reset_encrypted_db_file(&db_path)?;
+        // 新明文空库就绪后，读连接凭明文形态成对打开（同刻换入，issue #1280）。
+        let read_conn = crate::db::open_connection_readonly(&db_path)?;
+        Ok((conn, read_conn))
     })
     .await?;
     // 忘记口令重置：旧主口令不再适用，清钥匙串缓存（幂等，失败不阻断重置），
@@ -355,7 +385,7 @@ pub async fn reset_after_forgotten_passphrase(app: AppHandle) -> Result<()> {
         passphrase_cache::delete(book.as_deref())
     })
     .await;
-    resume_business_surface(&app, conn)?;
+    resume_business_surface(&app, conn, read_conn)?;
     tracing::info!("忘记口令重置完成，应用以全新明文空库回到明文模式");
     Ok(())
 }
@@ -381,7 +411,10 @@ pub async fn get_remember_passphrase_support() -> Result<RememberPassphraseSuppo
 /// 覆盖掉对的那个——自动轮次随后拿它封包，对端无法开封且段名幂等跳过会令
 /// 重传永不发生（与 `sync_now` 的「先验证后封包」同一理由）。
 #[tauri::command]
-pub async fn set_remember_passphrase(app: AppHandle, passphrase: String) -> Result<()> {
+pub async fn set_remember_passphrase<R: Runtime>(
+    app: AppHandle<R>,
+    passphrase: String,
+) -> Result<()> {
     ensure_unlocked(&app)?;
     // 条目按当前活动账本分域（issue #836）：开启/关闭/清除只影响对应账本。
     let book = active_book_id(&app);
@@ -395,7 +428,7 @@ pub async fn set_remember_passphrase(app: AppHandle, passphrase: String) -> Resu
 /// 重置后调用，使钥匙串不再持有可自动解锁的口令。只在解锁后可达；幂等（无缓存
 /// 也成功）。
 #[tauri::command]
-pub async fn clear_remember_passphrase(app: AppHandle) -> Result<()> {
+pub async fn clear_remember_passphrase<R: Runtime>(app: AppHandle<R>) -> Result<()> {
     ensure_unlocked(&app)?;
     let book = active_book_id(&app);
     run_db("clear_remember_passphrase", move || {

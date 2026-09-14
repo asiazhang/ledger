@@ -41,7 +41,7 @@ pub struct LogLevelState {
 /// 默认 info；库内残留闭集外字符串时回默认 info 并告警（读路径不因坏值上抛）。
 #[tauri::command]
 pub async fn get_log_level(app: tauri::AppHandle) -> Result<LogLevelState> {
-    let conn = app.state::<DbState>().conn.clone();
+    let conn = app.state::<DbState>().read_conn.clone();
     read_entry("get_log_level", conn, move |conn| {
         let level = logger::persisted_level(conn);
         Ok(LogLevelState {
@@ -75,7 +75,7 @@ pub struct BaseCurrencyState {
 /// 回默认 CNY（读路径不因缺 key 上抛）。
 #[tauri::command]
 pub async fn get_base_currency(app: tauri::AppHandle) -> Result<BaseCurrencyState> {
-    let conn = app.state::<DbState>().conn.clone();
+    let conn = app.state::<DbState>().read_conn.clone();
     read_entry("get_base_currency", conn, move |conn| {
         Ok(BaseCurrencyState {
             code: current_base_currency(conn)?,

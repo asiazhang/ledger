@@ -4,6 +4,7 @@
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use rusqlite::Connection;
 
@@ -16,6 +17,11 @@ use crate::error::{AppError, Result};
 /// 机制归 db（ADR-0111 决策 4：db 不引用引导层），引导层经
 /// [`crate::boot::data_location`] 再导出消费，外部原路径零改动。
 pub const DB_FILE_NAME: &str = "ledger.db";
+
+/// 并发容让的 busy_timeout（读路径独立只读连接，issue #1280 / ADR-0117 决策 4）：
+/// 读连接在写事务取 EXCLUSIVE 锁的提交瞬间窗口内在本超时内等待——取值与既有
+/// 整库转换连接的容让超时同源收口（不在调用点散布），转换连接自本常量取值。
+pub const CONCURRENT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 在指定目录打开库并完成 schema 迁移，返回裸连接（原位重引导的连接换入用：
 /// 换入目标是既有 [`DbState`] 的互斥体内槽，需要裸 `Connection` 才能移入，
@@ -30,19 +36,25 @@ pub fn open_connection_in(db_dir: &Path) -> Result<Connection> {
 }
 
 /// 在指定目录打开库并完成 schema 迁移（DataLocation 引导之后的建连步骤）：
-/// 裸连接包成共享锁形态。
+/// 写连接 + 只读读连接成对打开（读路径独立只读连接，issue #1280 / ADR-0117）：
+/// 迁移在写连接上完成后，读连接以只读形态打开同一库文件。裸连接包成共享锁形态。
 pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
     let conn = open_connection_in(db_dir)?;
+    let read_conn = open_connection_readonly_in(db_dir)?;
     Ok(DbState {
         conn: Arc::new(Mutex::new(conn)),
+        read_conn: Arc::new(Mutex::new(read_conn)),
     })
 }
 
 /// 启动失败重置兜底：把当前库改名 `.bak` 保留后重新打开（新建空库）。
 /// 只作用于引导解析出的生效目录，绝不删除任何文件。
 pub fn reset_db_in(db_dir: &Path) -> Result<DbState> {
+    let conn = reset_db_file(db_dir)?;
+    let read_conn = open_connection_readonly_in(db_dir)?;
     Ok(DbState {
-        conn: Arc::new(Mutex::new(reset_db_file(db_dir)?)),
+        conn: Arc::new(Mutex::new(conn)),
+        read_conn: Arc::new(Mutex::new(read_conn)),
     })
 }
 
@@ -102,6 +114,50 @@ pub fn open_connection_with_passphrase<P: AsRef<Path>>(
     passphrase: &str,
 ) -> Result<Connection> {
     finish_open(Connection::open(path)?, Some(passphrase))
+}
+
+/// 只读打开数据库连接（读路径独立只读连接，issue #1280 / ADR-0117 决策 1/4）：
+/// `SQLITE_OPEN_READ_ONLY` flags + busy_timeout（[`CONCURRENT_BUSY_TIMEOUT`]），
+/// 经建连收尾单点的只读形态收口（外键 + 耗时 hook 同形）。不执行迁移——迁移是
+/// 写操作，schema 由写连接的建连路径负责（成对建连时写连接先行）。
+/// 明文库路径：不设密钥，行为与密钥基座引入前一致。
+pub fn open_connection_readonly<P: AsRef<Path>>(path: P) -> Result<Connection> {
+    finish_open_readonly(
+        Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?,
+        None,
+    )
+}
+
+/// 以主口令只读打开密文库连接（issue #1280 / ADR-0117 决策 2）：密钥注入与写
+/// 连接同点同纪律（`PRAGMA key` 首条语句，trace 不落口令）；口令来源收口为
+/// 换连点在场且已验证的口令，与写连接同源成对。
+pub fn open_connection_readonly_with_passphrase<P: AsRef<Path>>(
+    path: P,
+    passphrase: &str,
+) -> Result<Connection> {
+    finish_open_readonly(
+        Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?,
+        Some(passphrase),
+    )
+}
+
+/// 在指定目录只读打开库（成对建连的读侧步骤，路径口径与 [`open_connection_in`]
+/// 同源：目录 + 固定 [`DB_FILE_NAME`]）。
+pub fn open_connection_readonly_in(db_dir: &Path) -> Result<Connection> {
+    open_connection_readonly(db_dir.join(DB_FILE_NAME))
+}
+
+/// 建连收尾单点（只读形态）：密钥注入（如有）→ busy_timeout → 外键 → 耗时 hook。
+fn finish_open_readonly(conn: Connection, passphrase: Option<&str>) -> Result<Connection> {
+    if let Some(passphrase) = passphrase {
+        // 与写连接同纪律：`PRAGMA key` 必须是连接上第一条语句，语句文本不进
+        // trace（耗时 hook 尚未安装）。
+        conn.pragma_update(None, "key", passphrase)?;
+    }
+    conn.busy_timeout(CONCURRENT_BUSY_TIMEOUT)?;
+    conn.execute("PRAGMA foreign_keys = ON", [])?;
+    perf_trace::install_perf_trace(&conn, perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD);
+    Ok(conn)
 }
 
 /// 建连收尾单点：密钥注入（如有）→ 外键 → 耗时 hook。

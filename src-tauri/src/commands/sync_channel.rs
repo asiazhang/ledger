@@ -212,7 +212,7 @@ pub async fn sync_now<R: Runtime>(
 /// 的 `parked_count` 回显，明细经本命令按需拉取。
 #[tauri::command]
 pub async fn get_parked_ops<R: Runtime>(app: AppHandle<R>) -> Result<Vec<ParkedOpState>> {
-    let conn = app.state::<DbState>().conn.clone();
+    let conn = app.state::<DbState>().read_conn.clone();
     read_entry("get_parked_ops", conn, move |conn| {
         Ok(parked_ops(conn)?
             .into_iter()
@@ -264,7 +264,7 @@ impl From<crate::sync_engine::ParkedOp> for ParkedOpState {
 pub async fn get_sync_channel_config<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<SyncChannelConfigState> {
-    let conn = app.state::<DbState>().conn.clone();
+    let conn = app.state::<DbState>().read_conn.clone();
     read_entry("get_sync_channel_config", conn, move |conn| {
         Ok(match configured_channel(conn)? {
             Some(config) => SyncChannelConfigState {

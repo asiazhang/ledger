@@ -21,7 +21,7 @@ use tauri_app_lib::db::book_registry::{self, Book, BookRegistry, RegistryRead};
 use tauri_app_lib::db::boot::BootDisposition;
 use tauri_app_lib::db::data_location::{self, DB_FILE_NAME};
 use tauri_app_lib::db::encryption::{enable_encryption_for_file, unlock_db_file};
-use tauri_app_lib::db::{DbState, open_db_in};
+use tauri_app_lib::db::{DbState, open_connection_readonly_with_passphrase, open_db_in};
 use tauri_app_lib::reports::monthly_summary_rows;
 
 use crate::common::query_accounts_by_name;
@@ -202,8 +202,14 @@ fn when_unlock_book(world: &mut LedgerWorld, passphrase: String) {
     let unlocked = unlock_db_file(&db_dir.join(DB_FILE_NAME), &passphrase);
     assert!(unlocked.is_ok(), "解锁当前账本失败: {:?}", unlocked.err());
     // 解锁成功即引导序列的连接换入：解锁连接成为当前账本连接。
+    // 成对换入（issue #1280 / ADR-0117）：读连接按同一口令只读打开。
+    let write_conn = unlocked.expect("已断言成功");
+    let read_conn =
+        open_connection_readonly_with_passphrase(db_dir.join(DB_FILE_NAME), &passphrase)
+            .expect("解锁读连接应可开");
     world.boot.dl_conn = Some(DbState {
-        conn: std::sync::Arc::new(std::sync::Mutex::new(unlocked.expect("已断言成功"))),
+        conn: std::sync::Arc::new(std::sync::Mutex::new(write_conn)),
+        read_conn: std::sync::Arc::new(std::sync::Mutex::new(read_conn)),
     });
 }
 

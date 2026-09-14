@@ -912,6 +912,27 @@ fn http_lock_ritual_must_go_through_read_entry() {
     }
 }
 
+/// 建连线收口守门（issue #1280 / ADR-0117 决策 4）：壳层源码不得直接调 rusqlite
+/// 的连接构造器（`Connection::open` / `open_with_flags`）——建连一律经基础设施
+/// `db` 的收口函数（明文/密文、写形/只读形、内存库），连接生命周期不得绕开
+/// 建连收尾单点手拷第二条连接（读连接时代每账本两连接，绕开收口即产生口令
+/// 注入与超时口径的漂移点）。基础设斲 `db` 内部与引导层自有裸连接（转换、
+/// 验证）不在扫描范围（本测试只扫壳层 `src/` 顶层）。
+#[test]
+fn shell_never_constructs_db_connections_directly() {
+    for (name, src) in read_sources("src") {
+        let masked = mask_non_code(&src);
+        for token in ["Connection::open(", "open_with_flags("] {
+            assert_eq!(
+                count_token(&masked, token),
+                0,
+                "壳层文件 {name} 出现连接构造器 {token}——建连必须经 db 收口函数，
+                 不得手拷第二条连接绕开建连收尾单点（ADR-0117 决策 4）"
+            );
+        }
+    }
+}
+
 /// 读侧豁免清单名字必须都在命令注册清单上（build.rs 生成的 ADR-0047 真源，
 /// 写侧同款死条目守卫）：命令改名 / 删除后旧条目静默残留为死条目，在此即红。
 #[test]
