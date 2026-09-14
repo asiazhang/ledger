@@ -532,6 +532,203 @@ fn v001_dedup_fallback_query_uses_dedup_hash_index_without_temp_btree() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// V025 索引清理前置断言（issue #1300）——「保留索引的既有计划」在删除迁移落地
+// 前先钉住：下列断言在含全部 V001–V024 索引的 schema 上写就并保持绿，DROP
+// 迁移合入后必须原样保持绿（验收判据「断言先行、删除后仍绿」）。计划断言按
+// 查询形状分两类：planner 在生产规模（50 万笔）稳定选中者用自然计划断言；
+// 小库统计边际上会摇摆（同一形状在不同规模被不同索引接管）而生产规模已有
+// 明确选择者用 INDEXED BY 钉定（先例：month_expr / note_search 产品侧钉定）。
+// ---------------------------------------------------------------------------
+
+/// V025 断言世界：[`v016_world`] 基础上加两笔互转（to_account_id 维度获得
+/// 真实行分布）并把买入行指到出资账户（funding_account_id 维度同此）——
+/// 各测试再按需局部 UPDATE + ANALYZE（先例：上方 dedup 兜底测试）。不改动
+/// `v016_world` 本身：其统计形态被上方多条既有断言依赖，追加行会扰动
+/// planner 在 date/list_order 等近缘索引间的选择。
+fn v025_world() -> Connection {
+    let conn = v016_world();
+    conn.execute_batch(
+        "INSERT INTO transactions \
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+          date,created_at,updated_at,version,device_id,is_deleted) VALUES\
+          ('tx-tr-01','transfer',500,'CNY',500,'acc-01','acc-02','2026-02-01',\
+           '2026-03-01T08:00:00Z','2026-03-01T08:00:00Z',1,'test',0),\
+          ('tx-tr-02','transfer',300,'CNY',300,'acc-02','acc-01','2026-02-02',\
+           '2026-03-01T08:00:00Z','2026-03-01T08:00:00Z',1,'test',0);\
+         UPDATE transactions SET funding_account_id='acc-01' WHERE id='tx-buy-01';\
+         ANALYZE;",
+    )
+    .unwrap();
+    conn
+}
+
+/// 出资端聚合钉计划（V023）：`funding_account_id` 等值定位走出资端覆盖索引
+/// （与 accounts/balance.rs 出资侧 account_flow 子查询同构，kind 符号矩阵不影
+/// 响索引选择）。
+#[test]
+fn v025_funding_flow_aggregate_uses_funding_index() {
+    let conn = v025_world();
+    let plan = v016_plan(
+        &conn,
+        "SELECT COALESCE(SUM(CASE t.kind WHEN 'buy' THEN t.amount_native_cents \
+         WHEN 'sell' THEN -t.amount_native_cents ELSE 0 END),0) FROM transactions t \
+         WHERE t.is_deleted=0 AND t.funding_account_id='acc-01'",
+        [],
+    );
+    assert!(
+        plan.contains("idx_transactions_funding"),
+        "出资侧聚合应由出资端索引驱动: {plan}"
+    );
+}
+
+/// 导入幂等键查重钉计划（V007）：带键行按键等值定位走部分唯一索引
+/// （batch.rs::dedup_identity 带键路径原句；无键行的 dedup_hash 兜底已由
+/// 上方专测钉住）。
+#[test]
+fn v025_idempotency_dedup_uses_idempotency_key_index() {
+    let conn = v016_world();
+    // v016_world 的幂等键全 NULL（partial 索引之外）；补齐一部分活跃键并重算
+    // 统计，保证 planner 选择可代表真实导入库。
+    conn.execute_batch(
+        "UPDATE transactions SET idempotency_key = 'k-' || id \
+         WHERE is_deleted = 0 AND CAST(substr(id, 4) AS INTEGER) % 3 = 0;\
+         ANALYZE;",
+    )
+    .unwrap();
+
+    let plan = v016_plan(
+        &conn,
+        "SELECT id FROM transactions \
+         WHERE idempotency_key=?1 AND is_deleted=0 LIMIT 1",
+        rusqlite::params!["k-tx-0003"],
+    );
+    assert!(
+        plan.contains("SEARCH") && !plan.contains("SCAN transactions"),
+        "幂等键查重应经索引 SEARCH 定位而非 SCAN 全表: {plan}"
+    );
+    assert!(
+        plan.contains("idx_transactions_idempotency_key"),
+        "幂等键查重应命中幂等键部分唯一索引: {plan}"
+    );
+}
+
+/// 商户筛选列表钉计划（V001，INDEXED BY）：`merchant_id=?` 筛选 + 列表序排序
+/// 的形状钉在商户索引上。生产规模（50 万笔）planner 实测选中本索引
+/// （issue #1300 全量 EXPLAIN 清单）；小库上 LIMIT 早停使 list_order 序扫描
+/// 在统计边际上常被误选，INDEXED BY 钉定防断言随规模摇摆。
+#[test]
+fn v025_merchant_filter_list_pinned_to_merchant_index() {
+    let conn = v025_world();
+    let plan = v016_plan(
+        &conn,
+        "SELECT id FROM transactions INDEXED BY idx_transactions_merchant \
+         WHERE is_deleted=0 AND merchant_id='m-01' \
+         ORDER BY date DESC, created_at DESC, id DESC LIMIT 20 OFFSET 0",
+        [],
+    );
+    assert!(
+        plan.contains("SEARCH") && plan.contains("idx_transactions_merchant"),
+        "商户筛选应由商户索引等值定位: {plan}"
+    );
+}
+
+/// 报表日期极值钉计划（V001，INDEXED BY）：MIN/MAX 两个标量子查询各自经日期
+/// 索引端点定位（reports/src/lib.rs 两标量改写形状）。date 与 list_order 同为
+/// date 打头的 partial 索引，小库统计边际上 planner 在两者间摇摆（生产规模
+/// 实测选中本索引，issue #1300），INDEXED BY 钉定防摇摆。
+#[test]
+fn v025_date_extremes_pinned_to_date_index() {
+    let conn = v025_world();
+    let plan = v016_plan(
+        &conn,
+        "SELECT (SELECT MIN(date) FROM transactions INDEXED BY idx_transactions_date \
+         WHERE is_deleted=0), \
+         (SELECT MAX(date) FROM transactions INDEXED BY idx_transactions_date \
+         WHERE is_deleted=0)",
+        [],
+    );
+    assert!(
+        plan.matches("idx_transactions_date").count() >= 2,
+        "MIN 与 MAX 两个标量子查询都应由日期索引定位: {plan}"
+    );
+}
+
+/// 搜索第一段钉计划（V018）：INDEXED BY 搜索覆盖索引的流式扫描为 index-only
+/// 且排序由索引列序满足（无临时 B-tree）——与 search.rs `build_stage1_query`
+/// 产品形状同构（词条 OR 组经 LIKE 谓词表达，账户/分类字典下推不影响形状）。
+#[test]
+fn v025_note_search_stage1_scans_note_search_index() {
+    let conn = v025_world();
+    let plan = v016_plan(
+        &conn,
+        "SELECT t.id FROM transactions t INDEXED BY idx_transactions_note_search \
+         WHERE t.is_deleted = 0 \
+         AND (t.note LIKE '%x%' ESCAPE '\\' OR t.note_pinyin LIKE '%x%' ESCAPE '\\') \
+         ORDER BY t.date DESC, t.created_at DESC, t.id DESC",
+        [],
+    );
+    assert!(
+        plan.contains("SCAN") && plan.contains("idx_transactions_note_search"),
+        "搜索第一段应流式扫描搜索覆盖索引: {plan}"
+    );
+    assert!(
+        !plan.contains("TEMP B-TREE"),
+        "排序应由索引列序满足，无临时 B-tree: {plan}"
+    );
+}
+
+/// 分类筛选列表钉计划（V016，INDEXED BY，issue #1300 评估项 2）：分类下钻形状
+/// 钉在分类覆盖索引上——删除语义重叠的 `idx_transactions_category` 后，生产
+/// 规模 planner 实测由本索引接管分类筛选列表（issue #1300 全量 EXPLAIN 复测）；
+/// 小库上 LIMIT 早停使 list_order 在统计边际上常被误选，INDEXED BY 钉定防摇摆。
+#[test]
+fn v025_category_filter_list_pinned_to_covering_index() {
+    let conn = v025_world();
+    let plan = v016_plan(
+        &conn,
+        "SELECT id FROM transactions INDEXED BY idx_transactions_category_covering \
+         WHERE is_deleted=0 AND category_id='cat-01' \
+         ORDER BY date DESC, created_at DESC, id DESC LIMIT 20 OFFSET 0",
+        [],
+    );
+    assert!(
+        plan.contains("SEARCH") && plan.contains("idx_transactions_category_covering"),
+        "分类筛选应由分类覆盖索引等值定位: {plan}"
+    );
+}
+
+/// 账户引用守卫钉计划（issue #1300 评估项 1）：币种锁守卫改写为双 EXISTS 后，
+/// 转出/转入两路各自经对应现金流索引等值定位（两索引 partial 谓词即
+/// is_deleted=0，与守卫口径精确匹配），杜绝退化为全表扫描——删除
+/// `idx_transactions_deleted` 后守卫不再有 is_deleted 前缀段扫可用，本断言
+/// 钉住改写形状的计划下限。SQL 形状与 accounts/src/core.rs `write_update`
+/// 币种锁守卫同构。
+#[test]
+fn v025_account_reference_guard_uses_flow_indexes() {
+    let conn = v025_world();
+    let plan = v016_plan(
+        &conn,
+        "SELECT CASE WHEN \
+         EXISTS(SELECT 1 FROM transactions WHERE account_id=?1 AND is_deleted=0) \
+         OR EXISTS(SELECT 1 FROM transactions WHERE to_account_id=?1 AND is_deleted=0) \
+         THEN 1 ELSE 0 END",
+        rusqlite::params!["acc-01"],
+    );
+    assert!(
+        plan.contains("idx_transactions_account_flow"),
+        "守卫转出侧应由转出现金流索引驱动: {plan}"
+    );
+    assert!(
+        plan.contains("idx_transactions_to_account_flow"),
+        "守卫转入侧应由转入现金流索引驱动: {plan}"
+    );
+    assert!(
+        !plan.contains("SCAN transactions"),
+        "守卫不应存在无索引的全表扫描: {plan}"
+    );
+}
+
 /// 接线回归：在 `command` span 内执行 SQL，SQL 耗时事件应归因到该 span
 /// （当前 span 名为 `command`）。这验证了 IPC 侧 `logged_invoke_handler`
 /// 用 `info_span!(command, id_hint)` 包裹命令执行后，hook 事件自动继承调用方 span
