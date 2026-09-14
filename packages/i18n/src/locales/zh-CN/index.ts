@@ -20,6 +20,7 @@ import unlock from './unlock.json'
 import startupFailure from './startupFailure.json'
 import errors from './errors.json'
 import books from './books.json'
+import crossBook from './crossBook.json'
 
 export default {
   common,
@@ -41,4 +42,5 @@ export default {
   startupFailure,
   errors,
   books,
+  crossBook,
 }

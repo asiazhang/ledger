@@ -1,0 +1,22 @@
+{
+  "convertedNote": "Books use different base currencies; amounts are converted to {currency} at current rates (historical rates only apply to trend charts)",
+  "sameCurrencyNote": "Books share the same base currency; amounts are added directly ({currency})",
+  "partialNote": "Some books are excluded; the totals below are partial",
+  "totals": {
+    "marketValue": "Market value",
+    "unrealizedPnl": "Unrealized P&L",
+    "cumulativePnl": "Cumulative P&L",
+    "investableAssets": "Investable assets"
+  },
+  "booksTitle": "Book inclusion status",
+  "status": {
+    "included": "Included",
+    "locked": "Locked, excluded",
+    "not_initialized": "Not initialized, excluded",
+    "schema_mismatch": "Version mismatch, excluded",
+    "unreadable": "Unreadable, excluded"
+  },
+  "activeTag": "Current",
+  "loadFailed": "Failed to load summary",
+  "retry": "Retry"
+}

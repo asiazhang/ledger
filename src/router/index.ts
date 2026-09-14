@@ -96,6 +96,15 @@ export const routes: RouteRecordRaw[] = [
     beforeEnter: featureRouteGuard('investments'),
   },
   {
+    // 跨账本投资汇总（issue #1196 / ADR-0114 决策 6）：独立只读路由，本内口径零改动；
+    // 入口＝账本切换弹层置顶项（不动活动指针、不触发重引导），不入侧栏分组。
+    path: '/cross-book-summary',
+    name: 'cross-book-summary',
+    component: () => import('@/views/CrossBookSummaryView.vue'),
+    // 投资功能关闭时汇总随行关闭（纯投资口径页，与投资路由同一开关）。
+    beforeEnter: featureRouteGuard('investments'),
+  },
+  {
     // 定时（issue #202）：自 #473 起不再是侧栏主项——主入口为记账组「更多」定时页签
     // （issue #473 / ADR-0063 决策 3）。独立路由保留供 ViewState 存量名解析与旧深链
     // （/subscriptions 重定向先例，issue #202）；侧栏不渲染、无键位。

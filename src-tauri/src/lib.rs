@@ -40,6 +40,7 @@ pub use ledger_sync_engine;
 pub use ledger_transaction;
 pub mod api_server;
 pub mod commands;
+pub mod cross_book_summary;
 // 壳层机制（spec #1086 P5 / issue #1108 壳层收敛）：壳层统一读写入口、IPC 载荷
 // 脱敏与日志初始化的正住址。曾暂住 `ledger-infra::shell_support`（ADR-0111
 // 决策 2 / #1130），本票迁回——基础设施不再承载任何只被壳层消费的机制。

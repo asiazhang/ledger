@@ -449,10 +449,22 @@ pub struct CurrencyPnl {
 /// **空值语义采 Holding 侧**：缺价 / 缺汇率的持仓其未实现腿为空值，不计入本组、
 /// 不以零计入（与持仓视图合计既有的「跳过空值」语义一致）；已实现腿来自平仓匹配，
 /// 不受当前持仓有无行情影响。某币种两腿皆空时该组不出现（由调用方渲染为空态）。
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CurrencyCumulativePnl {
     pub currency_code: String,
     pub cumulative_pnl_cents: i64,
+}
+
+/// 按币种分组的持仓合计行（issue #1196 / ADR-0114 跨账本汇总的域读投影）：
+/// 口径 = 持仓页签合计的既有形态（issue #902 / ADR-0107 同款「按币种分组、不跨币种
+/// 折算」）——金额为账户本位币（`v_holdings` 市值/未实现盈亏列），软删账户由视图
+/// 内建排除，隐藏账户照常计入（Holding 口径，issue #217 定案 Q2）；缺价/缺汇率的
+/// 空值跳过、不以零计入（两列皆空的币种组不出现，同累计收益的空组语义）。
+#[derive(Debug, Clone, Serialize)]
+pub struct CurrencyHoldingTotals {
+    pub currency_code: String,
+    pub market_value_cents: Option<i64>,
+    pub unrealized_pnl_cents: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -536,6 +548,16 @@ impl FromRow for CurrencyCumulativePnl {
         Ok(CurrencyCumulativePnl {
             currency_code: row.get(0)?,
             cumulative_pnl_cents: row.get(1)?,
+        })
+    }
+}
+
+impl FromRow for CurrencyHoldingTotals {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(CurrencyHoldingTotals {
+            currency_code: row.get(0)?,
+            market_value_cents: row.get(1)?,
+            unrealized_pnl_cents: row.get(2)?,
         })
     }
 }

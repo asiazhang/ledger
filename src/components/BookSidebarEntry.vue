@@ -11,12 +11,15 @@ import {
   NTag,
   NText,
 } from 'naive-ui'
-import { BookOutline, ChevronUpOutline, CreateOutline, TrashOutline } from '@vicons/ionicons5'
+import { BookOutline, ChevronForwardOutline, ChevronUpOutline, CreateOutline, TrashOutline } from '@vicons/ionicons5'
 import AppModal from '@/components/AppModal.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import AppPopover from '@/components/AppPopover.vue'
 import { useBookSwitcher } from '@/composables/useBookSwitcher'
 import { t } from '@ledger/i18n'
+import { useRouter } from 'vue-router'
+import { useFeatureToggleStore } from '@/stores/feature-toggles'
+import { computed } from 'vue'
 
 // 侧栏左下角账本入口与弹层（issue #834 / ADR-0089）：入口（当前账本名按钮 +
 // 折叠态浮标）是 useBookSwitcher 深模块的薄适配器——清单渲染、切换确认、
@@ -30,6 +33,22 @@ const props = defineProps<{
   /** 侧栏折叠态：折叠时入口切换为固定左下角的浮标图标形态（随时可达）。 */
   collapsed: boolean
 }>()
+
+const router = useRouter()
+const featureToggles = useFeatureToggleStore()
+
+// 跨账本投资汇总入口（issue #1196 / ADR-0114 决策 6）：非账本条目、仅导航——
+// 不动活动指针、不触发原位重引导；注册表损坏回退（清单不可信）时不可用；
+// 投资功能关闭时入口消失（纯投资口径页随投资开关，ADR-0116 决策 4）。
+const summaryAvailable = computed(
+  () => mutable.value && !loadFailed.value && !featureToggles.isFeatureClosed('investments'),
+)
+
+function openSummary(): void {
+  if (!summaryAvailable.value) return
+  closePanel()
+  void router.push({ name: 'cross-book-summary' })
+}
 
 const {
   books,
@@ -120,6 +139,21 @@ watch(
             {{ t('books.panel.retry') }}
           </NButton>
         </div>
+
+        <!-- 跨账本投资汇总置顶入口（非账本条目，仅导航，ADR-0114 决策 6）；
+             置于清单容器外，不改变 .book-list 的行序与选择器语义 -->
+        <button
+          v-if="summaryAvailable"
+          type="button"
+          class="book-summary-entry"
+          data-testid="book-summary-entry"
+          :disabled="!mutable || loadFailed"
+          :aria-label="t('books.entry.summary')"
+          @click="openSummary"
+        >
+          <span class="book-row-name">{{ t('books.entry.summary') }}</span>
+          <NIcon :size="14" class="book-summary-entry-caret"><ChevronForwardOutline /></NIcon>
+        </button>
 
         <div class="book-list">
           <div
@@ -358,5 +392,35 @@ watch(
 .book-row-action:disabled {
   cursor: not-allowed;
   opacity: 0.3;
+}
+
+/* 汇总入口：独立的按钮形态（不取账本行类名，账本清单行计数与选择器不受干扰） */
+.book-summary-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.book-summary-entry:hover:not(:disabled) {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.book-summary-entry:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.book-summary-entry-caret {
+  flex-shrink: 0;
+  opacity: 0.55;
 }
 </style>

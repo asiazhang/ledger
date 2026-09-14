@@ -1,7 +1,8 @@
 {
   "entry": {
     "label": "Books",
-    "open": "Books: view and switch books"
+    "open": "Books: view and switch books",
+    "summary": "All books (investment summary)"
   },
   "panel": {
     "current": "Current",

@@ -47,8 +47,13 @@ impl FromRow for HoldingValue {
     }
 }
 
-/// conn 级聚合：计算财务自由度总览（只读）。
-pub fn query_financial_freedom(conn: &Connection) -> Result<FinancialFreedomOverview> {
+/// conn 级聚合：可投资资产分子（折本位币，单点提取，issue #1196）。
+///
+/// 财务自由度的分子与跨账本汇总的「可投资资产」口径同源消费本函数：
+/// Σ 投资账户现金 + Σ 持仓市值，均折全局默认币种；排除隐藏账户（含黑洞——隐藏
+/// 投资账户的现金与持仓一并不进分子）；生活现金不计入；从未录价的持仓按空值
+/// 语义跳过，不以零计入；缺汇率错误上抛（码化 `fx.rate-missing`），不静默混币种。
+pub fn query_investable_assets_cents(conn: &Connection) -> Result<i64> {
     // 分子·投资账户现金：余额口径与账户列表一致（account_flow，排除隐藏/黑洞），
     // 仅取投资账户——未投入的现金不被持仓市值体现，漏算会低估可投资资产。
     let mut cash_sum = 0i64;
@@ -75,7 +80,13 @@ pub fn query_financial_freedom(conn: &Connection) -> Result<FinancialFreedomOver
             holdings_sum += amount::convert_to_native(conn, market_value_cents, &h.currency_code)?;
         }
     }
-    let numerator_cents = cash_sum + holdings_sum;
+    Ok(cash_sum + holdings_sum)
+}
+
+/// conn 级聚合：计算财务自由度总览（只读）。
+pub fn query_financial_freedom(conn: &Connection) -> Result<FinancialFreedomOverview> {
+    // 分子：投资账户现金 + 持仓市值，口径单点见 [`query_investable_assets_cents`]。
+    let numerator_cents = query_investable_assets_cents(conn)?;
 
     // 分母：年度预算总额（全部未删除预算，无窗口不滚动；月度 × 12 为节奏年化）。
     let denominator_cents: i64 = conn.query_row(

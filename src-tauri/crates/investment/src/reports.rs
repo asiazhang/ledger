@@ -1,8 +1,8 @@
 use rusqlite::Connection;
 
 use super::model::{
-    AccountPnl, CurrencyCumulativePnl, CurrencyPnl, InstrumentPnl, PnlFilter, RealizedPnlSummary,
-    YearPnl,
+    AccountPnl, CurrencyCumulativePnl, CurrencyHoldingTotals, CurrencyPnl, InstrumentPnl,
+    PnlFilter, RealizedPnlSummary, YearPnl,
 };
 use ledger_infra::db::query::query_all;
 use ledger_infra::error::Result;
@@ -47,6 +47,25 @@ pub fn query_cumulative_pnl_summary(conn: &Connection) -> Result<Vec<CurrencyCum
                    JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0 \
                    WHERE t.is_deleted = 0 AND t.kind='dividend' \
                ) GROUP BY currency_code ORDER BY currency_code";
+    query_all(conn, sql, [])
+}
+
+/// 按币种分组的持仓合计（issue #1196 / ADR-0114 跨账本汇总的域读投影）：
+/// 持仓页签合计既有口径的后端读函数——`v_holdings` 市值/未实现盈亏两列按账户
+/// 币种分组求和（issue #902 形态先例，同 ADR-0107 决策 6 口径），不跨币种折算。
+/// 软删账户由视图内建排除；隐藏账户照常计入（Holding 口径）；空值跳过、不以零
+/// 计入，两列皆空的币种组不出现（同 [`query_cumulative_pnl_summary`] 的空组语义）。
+pub fn query_holdings_summary_by_currency(conn: &Connection) -> Result<Vec<CurrencyHoldingTotals>> {
+    let sql = "SELECT currency_code, SUM(market_value_cents), SUM(unrealized_pnl_cents) FROM (\
+                   SELECT a.currency_code AS currency_code, \
+                          v.market_value_cents, v.unrealized_pnl_cents \
+                   FROM v_holdings v \
+                   JOIN accounts a ON a.id = v.account_id \
+               ) \
+               GROUP BY currency_code \
+               HAVING SUM(market_value_cents) IS NOT NULL \
+                   OR SUM(unrealized_pnl_cents) IS NOT NULL \
+               ORDER BY currency_code";
     query_all(conn, sql, [])
 }
 

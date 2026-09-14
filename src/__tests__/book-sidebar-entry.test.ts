@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
@@ -10,6 +10,14 @@ import { resetToastSink } from './factories'
 import { registerToastSink } from '@/composables/useLoadable'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import type { BookListInfo } from '@ledger/types'
+
+// 跨账本投资汇总入口导航（issue #1196 / ADR-0114 决策 6）：捕获 router.push。
+// 组件 setup 经 useRouter 取导航接缝；删除入口调用点即本文件 push 断言变红
+// （接线证明，ADR-0087 断言强度）。
+const pushMock = vi.fn()
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: pushMock }),
+}))
 
 // 侧栏左下角账本入口与弹层（issue #834 / ADR-0089）：弹层逻辑（清单渲染、切换
 // 意图、新建/改名/移除交互、折叠态浮标、注册表损坏警示）的组件级行为测试。
@@ -322,5 +330,43 @@ describe('账本入口（issue #834）：折叠态、不可变与回退警示', 
     const create = findBodyButton('新建账本')
     expect(create).toBeDefined()
     expect((create!.element as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+describe('跨账本投资汇总置顶入口（issue #1196 / ADR-0114 决策 6）', () => {
+  it('弹层置顶呈现「全部账本（投资汇总）」项；点击仅导航（不动活动指针、不触发重引导）', async () => {
+    const switchCallsBefore = callsOf('switch_book')
+    const wrapper = mountEntry()
+    await flushPromises()
+    await openPanel(wrapper)
+
+    const entry = bodySelector('[data-testid="book-summary-entry"]')
+    expect(entry).toBeDefined()
+    expect(entry!.text()).toContain('全部账本（投资汇总）')
+    expect(pushMock).not.toHaveBeenCalled()
+
+    await entry!.trigger('click')
+    await flushPromises()
+
+    // 接线证明：导航去跨账本汇总路由；不切换账本、不重载应用。
+    expect(pushMock).toHaveBeenCalledWith({ name: 'cross-book-summary' })
+    expect(callsOf('switch_book')).toBe(switchCallsBefore)
+    // 导航后收起弹层。
+    expect(panelRows()).toHaveLength(0)
+  })
+
+  it('注册表损坏回退（清单不可信）时汇总入口不渲染', async () => {
+    registry = {
+      books: [],
+      active_id: null,
+      mutable: false,
+      fallback_reason: '账本注册表已损坏，已回退默认账本',
+    }
+    const wrapper = mountEntry()
+    await flushPromises()
+    await openPanel(wrapper)
+
+    expect(bodySelector('[data-testid="book-summary-entry"]')).toBeUndefined()
+    expect(pushMock).not.toHaveBeenCalled()
   })
 })
