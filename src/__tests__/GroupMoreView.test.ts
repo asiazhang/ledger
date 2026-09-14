@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -12,6 +12,14 @@ import { routes, router } from '@/router'
 import { formatAmount } from '@ledger/money'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import type { SubscriptionSpendOverview } from '@ledger/types'
+
+// 定时页签（默认激活）内嵌 SubscriptionSpendPanel 的 <Bar> 走共享桩（issue #1335，
+// 先例 #160）：jsdom 无 2D context，真实 chart.js 取不到 canvas 会打「Failed to create
+// chart」error 输出污染 stderr；本测试只断言容器壳行为，不验证绘制。
+vi.mock('vue-chartjs', async () => {
+  const { BarChartStub } = await import('./line-chart-stub')
+  return { Bar: BarChartStub }
+})
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0]
