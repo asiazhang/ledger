@@ -68,7 +68,7 @@
 - **Linux（x64）**：`.deb`（Debian/Ubuntu 系，`sudo dpkg -i` 安装）或 `.AppImage`（`chmod +x` 后直接运行）。
 - **Android（arm64 APK）**：`.apk` 下载到真机直接安装（覆盖 arm64-v8a，2016 年后的绝大多数 Android 手机）；系统提示未知来源时，在「设置 → 应用 → 特殊访问权限 → 安装未知应用」中放行对应浏览器/文件管理器即可，升级同样直装新版本覆盖。
 
-> 安装包均未签名 / 未公证；Windows 与 Linux 版本发布初期未经真机验证，遇到问题请到 [Issues](https://github.com/asiazhang/ledger/issues) 反馈（决策记录见 [ADR-0066](docs/adr/0066-cross-platform-release.md) 与 [ADR-0074](docs/adr/0074-android-release.md)）。
+> 桌面三平台安装包未签名 / 未公证，Android APK 已用发布密钥签名；Windows 与 Linux 版本发布初期未经真机验证，遇到问题请到 [Issues](https://github.com/asiazhang/ledger/issues) 反馈（决策记录见 [ADR-0066](docs/adr/0066-cross-platform-release.md) 与 [ADR-0074](docs/adr/0074-android-release.md)）。
 
 ## 从源码构建
 
