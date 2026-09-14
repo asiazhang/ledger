@@ -8,6 +8,10 @@
 //! region / service 必须与桩配置一致；寻址形态（path-style / virtual-host）
 //! 必须与配置一致。签名正确性归官方 SDK，本桩只验证请求骨架。
 //!
+//! **请求闸门**（issue #1283）：`S3StubConfig::gated_requests` 让桩把请求记为
+//! 已观测后阻塞等待测试放行——「网络在途（请求已发出、应答未回）」因此成为可
+//! 确定复现的测试输入，持锁跨网络等待的调用点可用行为判据钉住（`S3Gate`）。
+//!
 //! **可见性**：`pub` + `#[doc(hidden)]`（与既有测试桩同款纪律）——集成测试链接
 //! 非 `#[cfg(test)]` 构建的 lib，经 `crate::test_support` 消费。
 // C 类豁免（ADR-0060）：仅测试用——桩体大量 unwrap 依赖测试期失败即红的语义，
@@ -15,6 +19,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// 桩期望的 S3 寻址形态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +66,9 @@ pub struct S3StubConfig {
     pub addressing: S3Addressing,
     /// 故障注入档（默认无故障）。
     pub deny: Option<S3Deny>,
+    /// 请求闸门（默认无闸门，请求即时应答）；只经 [`S3StubConfig::gated_requests`]
+    /// 注入，不开放字段直置。
+    gate: Option<S3RequestGate>,
 }
 
 impl S3StubConfig {
@@ -71,6 +79,7 @@ impl S3StubConfig {
             access_key: "test-access-key".to_string(),
             addressing,
             deny: None,
+            gate: None,
         }
     }
 
@@ -79,7 +88,54 @@ impl S3StubConfig {
         self.deny = Some(deny);
         self
     }
+
+    /// 注入请求闸门（issue #1283）：桩把请求记为已观测后阻塞等待测试放行，
+    /// 返回（注入后的配置, 测试侧放行把手）。「网络在途」因此成为可确定复现的
+    /// 测试输入——持锁跨网络等待的调用点靠它做行为判据（观测到请求即证明请求
+    /// 已到达而应答未回，见 [`S3Stub::requests`]），不必在测试里 sleep 猜时机。
+    pub fn gated_requests(mut self) -> (Self, S3Gate) {
+        let (release, release_rx) = std::sync::mpsc::channel();
+        self.gate = Some(S3RequestGate {
+            release: Arc::new(Mutex::new(release_rx)),
+        });
+        (self, S3Gate { release })
+    }
 }
+
+/// 请求闸门把手（测试侧）：放行已到达闸门的请求。
+#[derive(Debug)]
+pub struct S3Gate {
+    release: std::sync::mpsc::Sender<()>,
+}
+
+impl S3Gate {
+    /// 放行 `count` 个已到达并阻塞在闸门处的请求。
+    pub fn release(&self, count: usize) {
+        for _ in 0..count {
+            self.release.send(()).ok();
+        }
+    }
+}
+
+/// 请求闸门（桩侧，[`S3StubConfig::gated_requests`] 注入）：每个请求在此等测试
+/// 放行；等待上限只为「测试中途放弃放行」兜底，正常路径由测试显式放行。
+#[derive(Debug, Clone)]
+struct S3RequestGate {
+    release: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
+}
+
+impl S3RequestGate {
+    fn wait_release(&self) {
+        self.release
+            .lock()
+            .expect("闸门互斥体应可用")
+            .recv_timeout(GATE_WAIT_LIMIT)
+            .ok();
+    }
+}
+
+/// 闸门等待上限（测试兜底，见 [`S3RequestGate::wait_release`]）。
+const GATE_WAIT_LIMIT: Duration = Duration::from_secs(30);
 
 /// 桩观测到的一次 HTTP 请求（方法 / 路径 / 查询串 / Host / 请求头）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,6 +215,7 @@ struct StubState {
     access_key: String,
     addressing: S3Addressing,
     deny: Option<S3Deny>,
+    gate: Option<S3RequestGate>,
     uploads: Mutex<HashMap<String, (String, String)>>,
     observations: Arc<Mutex<Vec<S3ObservedRequest>>>,
     violations: Arc<Mutex<Vec<String>>>,
@@ -312,6 +369,12 @@ pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
             host: host.clone(),
             headers,
         });
+
+        // 请求闸门（issue #1283）：观测即已到达，此处阻塞到测试放行——「网络在途」
+        // （请求已发出、应答未回）由此可确定复现。
+        if let Some(gate) = &state.gate {
+            gate.wait_release();
+        }
 
         let Some(authorization) = authorization else {
             state.violations.lock().unwrap().push(format!(
@@ -499,6 +562,7 @@ pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
         access_key: config.access_key.clone(),
         addressing: config.addressing,
         deny: config.deny,
+        gate: config.gate,
         uploads: Mutex::new(HashMap::new()),
         observations: observations.clone(),
         violations: violations.clone(),
