@@ -5,9 +5,9 @@
 //! 「不要求列桶权限」另以桩观测到的请求面（只有一次对象 GET、无列桶/列对象、
 //! 无写请求）作证据——那是判据本身要求的最小权限结论，不是实现形状。
 
-use tauri_app_lib::sync_engine::transport::Transport;
-use tauri_app_lib::sync_engine::transport::s3::{S3Config, S3Transport};
-use tauri_app_lib::sync_engine::{SyncChannelConfig, probe_channel};
+use tauri_app_lib::ledger_sync_engine::transport::Transport;
+use tauri_app_lib::ledger_sync_engine::transport::s3::{S3Config, S3Transport};
+use tauri_app_lib::ledger_sync_engine::{SyncChannelConfig, probe_channel};
 use tauri_app_lib::test_support::{S3Addressing, S3Deny, S3StubConfig, spawn_s3_stub};
 
 /// 探针键（同步轮次从不写它；与 `ChannelLayout::probe_path` 同源）。

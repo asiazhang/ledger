@@ -8,8 +8,8 @@
 
 use cucumber::{given, then, when};
 
-use tauri_app_lib::accounts::{AccountInput, AccountType, create_account};
-use tauri_app_lib::investment::query_financial_freedom;
+use ledger_accounts::{AccountInput, AccountType, create_account};
+use ledger_investment::query_financial_freedom;
 
 use crate::world::LedgerWorld;
 
@@ -68,7 +68,7 @@ fn query_financial_freedom_step(world: &mut LedgerWorld) {
 // ---------------------------------------------------------------------------
 
 /// 取最近一次自由度快照（各 Then 断言共用）。
-fn overview_of(world: &LedgerWorld) -> &tauri_app_lib::investment::FinancialFreedomOverview {
+fn overview_of(world: &LedgerWorld) -> &ledger_investment::FinancialFreedomOverview {
     world
         .asset
         .last_financial_freedom

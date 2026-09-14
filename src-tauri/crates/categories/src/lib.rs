@@ -48,7 +48,7 @@
 //! 内单实例共享），带类型签名的钩子不存在，两份实例行为不可区分——域行为测试
 //! 直接驱动本实例、建库经根包测试工厂（`tauri_app_lib::test_support::open`）
 //! 是同一份源码的等价路径，无需像 ledger-transaction（接缝静态在根包图实例上
-//! 接线）那样强制经 `tauri_app_lib::categories::…` 驱动。依据留痕于本段与
+//! 接线）那样强制经 `tauri_app_lib::ledger_categories::…` 驱动。依据留痕于本段与
 //! Cargo.toml dev-dependencies 注释。
 
 mod command;

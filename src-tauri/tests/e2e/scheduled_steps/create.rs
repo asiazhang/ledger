@@ -8,8 +8,8 @@
 
 use cucumber::when;
 
-use tauri_app_lib::error::AppError;
-use tauri_app_lib::scheduled_transactions::CreateScheduledInput;
+use ledger_infra::error::AppError;
+use ledger_scheduled::CreateScheduledInput;
 
 use crate::step_inputs::{
     installment_plan_input, scheduled_transfer_plan_input, subscription_plan_input,

@@ -7,14 +7,14 @@ use super::common::{
 };
 use rusqlite::Connection;
 use rusqlite::params;
-use tauri_app_lib::scheduled_transactions::*;
+use tauri_app_lib::ledger_scheduled::*;
 use tauri_app_lib::test_support;
 
 // ---------------------------------------------------------------------------
 // 订阅花费——实际花费口径（issue #160，ADR-0023 决策二）
 // ---------------------------------------------------------------------------
 
-use tauri_app_lib::scheduled_transactions::query_subscription_spend;
+use tauri_app_lib::ledger_scheduled::query_subscription_spend;
 
 /// 执行计划前 N 条 pending 期次（scheduled_date 升序），返回生成的交易日期。
 fn execute_first_n_occurrences(conn: &Connection, plan_id: &str, n: usize) -> Vec<String> {

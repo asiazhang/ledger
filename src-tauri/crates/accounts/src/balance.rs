@@ -12,13 +12,14 @@
 //! compile_fail 负向用例钉死（再公开即红）：
 //!
 //! ```compile_fail
-//! use tauri_app_lib::accounts::balance::affected_accounts;
+//! use tauri_app_lib::ledger_accounts::balance::affected_accounts;
 //! ```
 //!
-//! 该负向例在 crate 化后语义不变：`tauri_app_lib::accounts` 是根包对
-//! `ledger_accounts` 的再导出面（dev-dependency 对 doctest 可见），而
-//! `affected_accounts` 私有性在两份实例中同源——路径解析不到私有项即编译
-//! 失败，compile_fail 成立；再公开即编译通过、本用例红。
+//! 该负向例在 crate 化后语义不变：`tauri_app_lib::ledger_accounts` 是根包对
+//! 本 crate 的本名再导出（#1108 起别名再导出清除，本名再导出留作域测试实例
+//! 纪律的驱动面，dev-dependency 对 doctest 可见），而 `affected_accounts`
+//! 私有性在两份实例中同源——路径解析不到私有项即编译失败，compile_fail
+//! 成立；再公开即编译通过、本用例红。
 
 use std::collections::HashMap;
 

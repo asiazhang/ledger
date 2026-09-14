@@ -20,8 +20,8 @@
 
 use std::sync::Arc;
 
-use tauri_app_lib::events;
-use tauri_app_lib::test_utils::GatedEmitter;
+use ledger_infra::events;
+use ledger_infra::test_utils::GatedEmitter;
 
 use crate::common::{
     batch_body, count_rows, create_account_via_api, delete_account_via_api, post_batch,

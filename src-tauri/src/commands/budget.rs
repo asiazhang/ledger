@@ -3,7 +3,7 @@
 //! 只负责参数解包与统一写入口一行调用；预算行为位于 [`crate::budget`]。
 //!
 //! 全部命令 async 化（形状乙，spec #498 / #502）；写命令经壳层统一写入口
-//! [`crate::write_entry::write_entry`]（ADR-0073）：仪式（锁、事务、置脏、信号）
+//! [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：仪式（锁、事务、置脏、信号）
 //! 内化单点。预算写入刻意零信号（映射单点显式登记），身份仍随入口流动——
 //! 未来补信号时天然生效。
 //
@@ -14,13 +14,13 @@
 use chrono::Local;
 use tauri::State;
 
-use crate::budget as budget_domain;
-use crate::budget::{Budget, BudgetInput, BudgetProgress, BudgetUpdateInput};
-use crate::db::DbState;
-use crate::error::Result;
-use crate::read_entry::read_entry;
-use crate::signals::WriteOp;
-use crate::write_entry::{Outcome, write_entry};
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_budget as budget_domain;
+use ledger_budget::{Budget, BudgetInput, BudgetProgress, BudgetUpdateInput};
+use ledger_infra::db::DbState;
+use ledger_infra::error::Result;
+use ledger_infra::signals::WriteOp;
 
 #[tauri::command]
 pub async fn list_budgets(db: State<'_, DbState>) -> Result<Vec<Budget>> {

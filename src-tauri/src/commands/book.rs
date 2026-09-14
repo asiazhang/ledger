@@ -2,7 +2,7 @@
 //!
 //! 只做参数解包与引导内核调用：登记变更的业务规则（同目录不得重复登记、
 //! 活动账本不可移除、目标可用性校验、首次登记落新格式）在引导内核
-//! [`crate::db::book_registry`]，写入时机契约预检（注册表可读 + 无推迟搬迁
+//! [`ledger_infra::db::book_registry`]，写入时机契约预检（注册表可读 + 无推迟搬迁
 //! 窗口）在 [`data_location::mutable_registry`]，本文件不含领域规则。
 //!
 //! 切换语义（ADR-0089 决策 3）：写活动指针落盘后返回目标账本，原位重引导由
@@ -10,7 +10,7 @@
 //! 引导序列按注册表进入目标账本（明文库直进主界面、密文库落解锁屏）。
 //!
 //! 全部命令 async 化（形状乙，spec #498/#503 先例）：注册表文件读写与目录
-//! 创建是阻塞文件 IO，经连接层统一 helper [`crate::db::run_db`] 进 tauri
+//! 创建是阻塞文件 IO，经连接层统一 helper [`ledger_infra::db::run_db`] 进 tauri
 //! 阻塞线程池执行，不占用界面事件循环线程（`commands::data_location` 同型）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
@@ -21,10 +21,10 @@ use tauri::{AppHandle, Runtime};
 
 use crate::commands::boot::current_boot;
 use crate::commands::data_location::default_data_dir;
-use crate::db::book_registry::{self, BookListInfo};
-use crate::db::data_location;
-use crate::db::run_db;
-use crate::error::Result;
+use ledger_infra::db::book_registry::{self, BookListInfo};
+use ledger_infra::db::data_location;
+use ledger_infra::db::run_db;
+use ledger_infra::error::Result;
 
 /// 列出全部已登记账本：清单、活动指针、登记变更可用性与回退警示。清单读
 /// 注册表最新落盘态（登记变更落盘后立即可见）；注册表损坏时清单为空且不可

@@ -4,32 +4,32 @@ use std::sync::{Arc, Mutex};
 
 use cucumber::{given, then, when};
 
-use tauri_app_lib::accounts::{AccountInput, AccountType, create_account};
-use tauri_app_lib::backup::{
+use ledger_accounts::{AccountInput, AccountType, create_account};
+use ledger_backup::{
     AUTO_BACKUP_PREFIX, AttemptOutcome, BackupKind, SkipReason, backup_db_to,
     expected_schema_version, get_state, list_managed_backups, read_backup_kind, read_backup_meta,
     restore_db_from, set_state,
 };
-use tauri_app_lib::categories::{
+use ledger_categories::{
     CategoryInput, create_category, delete_category as delete_category_domain,
 };
-use tauri_app_lib::currencies::ExchangeRateInput;
-use tauri_app_lib::db::encryption::{DbFileKind, enable_encryption_for_file, probe_file_kind};
-use tauri_app_lib::db::{
+use ledger_currencies::ExchangeRateInput;
+use ledger_infra::db::encryption::{DbFileKind, enable_encryption_for_file, probe_file_kind};
+use ledger_infra::db::{
     DbState, new_uuid, now_iso, open_connection, open_connection_with_passphrase,
 };
-use tauri_app_lib::error::AppError;
-use tauri_app_lib::investment::{
+use ledger_infra::error::AppError;
+use ledger_infra::settings::{self, SettingKey};
+use ledger_investment::{
     InstrumentInput, InstrumentType, MarketPriceInput, create_exchange_rate, create_instrument,
     create_market_price,
 };
-use tauri_app_lib::item::cost;
-use tauri_app_lib::item::domain::{create_item, delete_item, dispose_item, update_item};
-use tauri_app_lib::item::{ItemDisposeInput, ItemInput};
-use tauri_app_lib::settings::{self, SettingKey};
-use tauri_app_lib::transaction::TransactionBatch;
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::{delete_transaction_internal, update_transaction_internal};
+use ledger_item::cost;
+use ledger_item::domain::{create_item, delete_item, dispose_item, update_item};
+use ledger_item::{ItemDisposeInput, ItemInput};
+use ledger_transaction::TransactionBatch;
+use ledger_transaction::TransactionInput;
+use ledger_transaction::{delete_transaction_internal, update_transaction_internal};
 
 use crate::common::{count_transactions, count_transactions_in_file, seed_account_with_expenses};
 use crate::step_inputs::{expense_input, refund_input};
@@ -81,7 +81,7 @@ fn enc_backup_db_path(world: &LedgerWorld) -> PathBuf {
 /// 记录恢复尝试的结果：失败入 `last_error`/`last_app_error`（错误码断言用）。
 fn record_restore_outcome(
     world: &mut LedgerWorld,
-    result: tauri_app_lib::error::Result<impl Sized>,
+    result: ledger_infra::error::Result<impl Sized>,
 ) {
     if let Err(e) = result {
         world.last_error = Some(e.to_string());
@@ -117,11 +117,11 @@ fn auto_backup_with_active_book_scope(world: &mut LedgerWorld) {
         .dl_default_dir
         .clone()
         .expect("本场景需账本登记现场");
-    let registry = match tauri_app_lib::db::book_registry::read_registry(&default_dir) {
-        tauri_app_lib::db::book_registry::RegistryRead::Resolved(registry) => registry,
+    let registry = match ledger_infra::db::book_registry::read_registry(&default_dir) {
+        ledger_infra::db::book_registry::RegistryRead::Resolved(registry) => registry,
         other => panic!("注册表应可读，实际 {other:?}"),
     };
-    world.boot.backup_scope = Some(tauri_app_lib::backup::BackupScope::of_registry(&registry));
+    world.boot.backup_scope = Some(ledger_backup::BackupScope::of_registry(&registry));
     auto_backup_with_world_scope(world);
 }
 
@@ -133,8 +133,8 @@ fn backup_file_name_carries_book_id(world: &mut LedgerWorld) {
         .dl_default_dir
         .clone()
         .expect("本场景需账本登记现场");
-    let active_id = match tauri_app_lib::db::book_registry::read_registry(&default_dir) {
-        tauri_app_lib::db::book_registry::RegistryRead::Resolved(registry) => registry.active_id,
+    let active_id = match ledger_infra::db::book_registry::read_registry(&default_dir) {
+        ledger_infra::db::book_registry::RegistryRead::Resolved(registry) => registry.active_id,
         other => panic!("注册表应可读，实际 {other:?}"),
     };
     let path = world
@@ -173,12 +173,12 @@ fn auto_backup_with_world_scope(world: &mut LedgerWorld) {
 }
 
 fn run_due_on(
-    state: &tauri_app_lib::db::DbState,
+    state: &ledger_infra::db::DbState,
     dir: &std::path::Path,
-    scope: Option<&tauri_app_lib::backup::BackupScope>,
-) -> tauri_app_lib::backup::AttemptOutcome {
+    scope: Option<&ledger_backup::BackupScope>,
+) -> ledger_backup::AttemptOutcome {
     let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
-    tauri_app_lib::backup::run_due_backup(
+    ledger_backup::run_due_backup(
         &conn,
         Some(dir.to_str().unwrap()),
         "0.2.0",
@@ -190,9 +190,9 @@ fn run_due_on(
 fn run_due_on_ref(
     conn: &rusqlite::Connection,
     dir: &std::path::Path,
-    scope: Option<&tauri_app_lib::backup::BackupScope>,
-) -> tauri_app_lib::backup::AttemptOutcome {
-    tauri_app_lib::backup::run_due_backup(
+    scope: Option<&ledger_backup::BackupScope>,
+) -> ledger_backup::AttemptOutcome {
+    ledger_backup::run_due_backup(
         conn,
         Some(dir.to_str().unwrap()),
         "0.2.0",
@@ -434,7 +434,7 @@ fn fast_forward_backup_due(world: &mut LedgerWorld) {
             )
             .earliest()
             .expect("本地昨天正午应可解析");
-        state.last_backup_at = Some(tauri_app_lib::db::iso_at(
+        state.last_backup_at = Some(ledger_infra::db::iso_at(
             yesterday_noon.with_timezone(&chrono::Utc),
         ));
         set_state(&conn, &state).expect("回拨备份锚点");
@@ -449,7 +449,7 @@ fn fast_forward_backup_due(world: &mut LedgerWorld) {
 #[when(expr = "再次到期触发自动备份因日界门静默跳过")]
 fn due_trigger_skipped_by_day_gate(world: &mut LedgerWorld) {
     let anchor_before = get_state(&world_conn!(world)).unwrap().last_backup_at;
-    let outcome = tauri_app_lib::backup::run_due_backup(
+    let outcome = ledger_backup::run_due_backup(
         &world_conn!(world),
         Some(
             world
@@ -480,7 +480,7 @@ fn due_trigger_skipped_by_day_gate(world: &mut LedgerWorld) {
 #[when(expr = "退出兜底因日界门静默跳过")]
 fn exit_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
     let anchor_before = get_state(&world_conn!(world)).unwrap().last_backup_at;
-    let outcome = tauri_app_lib::backup::run_exit_backup(
+    let outcome = ledger_backup::run_exit_backup(
         &world_conn!(world),
         Some(
             world
@@ -513,7 +513,7 @@ fn exit_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
 #[when(expr = "跨日后触发自动备份数据库到临时目录")]
 fn auto_backup_next_day_to_temp(world: &mut LedgerWorld) {
     let dir = world.boot.auto_backup_dir.clone().expect("尚未自动备份");
-    let outcome = tauri_app_lib::backup::run_due_backup(
+    let outcome = ledger_backup::run_due_backup(
         &world_conn!(world),
         Some(dir.to_str().unwrap()),
         "0.2.0",
@@ -533,7 +533,7 @@ fn auto_backup_next_day_to_temp(world: &mut LedgerWorld) {
 #[when(expr = "首次兜底因日界门静默跳过")]
 fn first_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
     let anchor_before = get_state(&world_conn!(world)).unwrap().last_backup_at;
-    let outcome = tauri_app_lib::backup::run_first_backup(
+    let outcome = ledger_backup::run_first_backup(
         &world_conn!(world),
         Some(
             world
@@ -933,7 +933,7 @@ fn given_encrypted_file_lib(
     let db_path = dir.join("ledger.db");
     {
         let mut conn = open_connection(&db_path).unwrap();
-        tauri_app_lib::db::init_db(&mut conn).unwrap();
+        ledger_infra::db::init_db(&mut conn).unwrap();
         let id = seed_account_and_transactions(&conn, &account, "加密库种子交易", count);
         world.account_name_to_id.insert(account, id);
     }
@@ -943,7 +943,7 @@ fn given_encrypted_file_lib(
     let conn = open_connection_with_passphrase(&db_path, &passphrase).unwrap();
     // 成对挂载（issue #1280 / ADR-0117）：读连接凭同一口令只读打开。
     let read_conn =
-        tauri_app_lib::db::open_connection_readonly_with_passphrase(&db_path, &passphrase).unwrap();
+        ledger_infra::db::open_connection_readonly_with_passphrase(&db_path, &passphrase).unwrap();
     world.db = DbState {
         conn: Arc::new(Mutex::new(conn)),
         read_conn: Arc::new(Mutex::new(read_conn)),
@@ -958,7 +958,7 @@ fn given_plaintext_backup(world: &mut LedgerWorld, count: usize) {
     let db_path = dir.join("plain.db");
     {
         let mut conn = open_connection(&db_path).unwrap();
-        tauri_app_lib::db::init_db(&mut conn).unwrap();
+        ledger_infra::db::init_db(&mut conn).unwrap();
         seed_account_and_transactions(&conn, "现金", "明文库种子交易", count);
     }
     let target = dir.join("plaintext-backup.db.zip");
@@ -988,7 +988,7 @@ fn write_legacy_plaintext_backup(world: &mut LedgerWorld) {
         .join(format!("legacy-{}.db", new_uuid()));
     {
         let mut conn = open_connection(&plain_db).unwrap();
-        tauri_app_lib::db::init_db(&mut conn).unwrap();
+        ledger_infra::db::init_db(&mut conn).unwrap();
     }
     let target = dir.join("ledger-backup-20250101-010101.db.zip");
     let file = std::fs::File::create(&target).unwrap();

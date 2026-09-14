@@ -6,11 +6,11 @@
 use crate::tests::common::make_input;
 use ledger_infra::error::AppError;
 use rusqlite::{Connection, params};
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::*;
 use tauri_app_lib::test_support;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::*;
 
-/// 断言错误为码化拒绝且码/文案正确（锁定「码化拒绝」契约，先例：[`tauri_app_lib::categories::tests`]）。
+/// 断言错误为码化拒绝且码/文案正确（锁定「码化拒绝」契约，先例：[`ledger_categories::tests`]）。
 fn assert_coded_rejection(err: AppError, code: &str, message_part: &str) {
     match err {
         AppError::Coded {

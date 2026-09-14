@@ -6,7 +6,7 @@
 //! [`crate::investment`]（阶段 5 域目录归位，#401 / ADR-0056）。注册路径与
 //! 前端调用保持不变。
 //!
-//! 写命令经壳层统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
+//! 写命令经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
 //! 仪式（锁、事务、置脏、信号）内化单点，证据随闭包返回必达；读命令经
 //! `run_db`（形状乙，spec #498 / #503）。
 //! `add_fund_by_code` 的东财拉取（单请求叠加限流冷却重试最长可达分钟级）
@@ -18,20 +18,20 @@
 
 use tauri::State;
 
-use crate::currencies::{ExchangeRate, ExchangeRateInput};
-use crate::db::DbState;
-use crate::error::{AppError, Result};
-use crate::investment as investment_domain;
-use crate::investment::{
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_currencies::{ExchangeRate, ExchangeRateInput};
+use ledger_infra::db::DbState;
+use ledger_infra::error::{AppError, Result};
+use ledger_infra::signals::{WriteEvidence, WriteOp};
+use ledger_investment as investment_domain;
+use ledger_investment::{
     AddFundResult, AddStockInstrumentResult, CurrencyCumulativePnl, Holding, Instrument,
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPriceTrend,
     ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter,
     PortfolioValueTrend, PriceStaleness, RealizedPnlSummary, TransactionConvert, TransactionSplit,
     TransactionTrade, TrendRange,
 };
-use crate::read_entry::read_entry;
-use crate::signals::{WriteEvidence, WriteOp};
-use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_holdings(db: State<'_, DbState>) -> Result<Vec<Holding>> {
@@ -267,7 +267,7 @@ pub async fn add_fund_by_code(
     // （慢闭包纪律，形状与 `add_instrument_by_code` 同）。
     let fetch_code = code.clone();
     let quote = tauri::async_runtime::spawn_blocking(move || {
-        crate::sync::fetch_fund_quote_production(&fetch_code)
+        ledger_market_sync::fetch_fund_quote_production(&fetch_code)
     })
     .await
     .map_err(|e| AppError::Io(format!("基金详情查询任务执行失败: {e}")))??;
@@ -311,8 +311,9 @@ pub async fn add_instrument_by_code(
     // HTTP 层（主机池/重试/限流），未命中/临时错误以码化错误上抛给对话框分流。
     let quote = tauri::async_runtime::spawn_blocking(move || {
         // 统一注入签名（ADR-0103）：（代码，市场）——场内市场由候选解析单点产出。
-        let mut fetch =
-            |code: &str, market: &str| crate::sync::fetch_stock_quote_production(market, code);
+        let mut fetch = |code: &str, market: &str| {
+            ledger_market_sync::fetch_stock_quote_production(market, code)
+        };
         investment_domain::fetch_stock_quote_for_add(&market, &code, &mut fetch)
     })
     .await
@@ -387,7 +388,7 @@ pub async fn record_manual_price(
 #[cfg(test)]
 mod tests {
     /// `add_fund_by_code` 的东财拉取必须发生在连接锁外（慢闭包纪律，ADR-0069
-    /// 决策 4 / issue #1282）：生产拉取入口 [`crate::sync::fetch_fund_quote_production`]
+    /// 决策 4 / issue #1282）：生产拉取入口 [`ledger_market_sync::fetch_fund_quote_production`]
     /// 不经数据库连接，命令体把拉取放在 `write_entry` 之前即结构上不可能持锁；
     /// 拉取被移回统一写入口闭包（锁内）时本守门即红。IPC 命令路径无报价注入
     /// 接缝（生产入口直呼 `fetch_fund_quote_production`，行为测试无从注入慢

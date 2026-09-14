@@ -24,15 +24,15 @@ use std::time::{Duration, Instant};
 use rusqlite::Connection;
 use tauri::Manager;
 
-use tauri_app_lib::commands::{accounts, transactions};
-use tauri_app_lib::db::boot::BootFailureGate;
-use tauri_app_lib::db::encryption::EncryptionGate;
-use tauri_app_lib::db::{self, DbState};
-use tauri_app_lib::settings::{self, SettingKey};
-use tauri_app_lib::sync_engine::{
+use ledger_infra::db::boot::BootFailureGate;
+use ledger_infra::db::encryption::EncryptionGate;
+use ledger_infra::db::{self, DbState};
+use ledger_infra::settings::{self, SettingKey};
+use ledger_sync_engine::{
     ChannelManifest, TriggerTimings, build_channel, configured_channel, start_sync_scheduler_with,
     sync_on_start,
 };
+use tauri_app_lib::commands::{accounts, transactions};
 
 use crate::isolation::isolate_home;
 use crate::sync_channel::{configure_channel, expense_input, fresh_app, spawn_sync_stub};
@@ -54,9 +54,9 @@ async fn seed_own_ops(app: &tauri::AppHandle<tauri::test::MockRuntime>) {
     let acc_id = accounts::create_account(
         app.state(),
         app.clone(),
-        tauri_app_lib::accounts::AccountInput {
+        ledger_accounts::AccountInput {
             name: "现金".into(),
-            kind: tauri_app_lib::accounts::AccountType::Cash,
+            kind: ledger_accounts::AccountType::Cash,
             currency_code: "CNY".into(),
             initial_balance_cents: Some(0),
         },

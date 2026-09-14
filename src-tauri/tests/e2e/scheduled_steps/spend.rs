@@ -8,7 +8,7 @@
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::scheduled_transactions::{
+use ledger_scheduled::{
     CreateScheduledInput, RecurrenceType, ScheduledStatus, SubscriptionSpendOverview,
     query_subscription_spend,
 };

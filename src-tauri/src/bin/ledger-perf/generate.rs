@@ -16,9 +16,9 @@ use std::path::Path;
 use chrono::{Datelike, Duration, Months, NaiveDate};
 use rusqlite::Connection;
 
-use tauri_app_lib::categories;
-use tauri_app_lib::db::{init_db, open_connection};
-use tauri_app_lib::transaction::pinyin_initials;
+use ledger_categories as categories;
+use ledger_infra::db::{init_db, open_connection};
+use ledger_transaction::pinyin_initials;
 
 use super::GenerateCli;
 use super::investments::{self, MarketData, Portfolio, TradeKind};
@@ -306,8 +306,7 @@ pub(crate) fn generate_into(
     // 余额缓存回填（issue #491 / ADR-0067）：生成器绕过 Writer 接缝裸插数据，
     // 对应「存量用户升级后被 V017 回填」形态——读基准走缓存口径，缺缓存行会
     // 报码化错误而非实时聚合。
-    tauri_app_lib::accounts::balance::refresh_all_account_balances(conn)
-        .map_err(|e| e.to_string())?;
+    ledger_accounts::balance::refresh_all_account_balances(conn).map_err(|e| e.to_string())?;
 
     // 数据落定后全量 ANALYZE（issue #490）：基准库对应「存量用户升级后」形态
     // ——迁移尾部 ANALYZE 在建库时空表运行，统计须随数据重算；时点持仓等

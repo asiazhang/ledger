@@ -4,7 +4,7 @@
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::scheduled_transactions::{UpdateSubscriptionInput, update_subscription};
+use ledger_scheduled::{UpdateSubscriptionInput, update_subscription};
 
 use crate::common::assert_last_error_contains;
 use crate::world::LedgerWorld;

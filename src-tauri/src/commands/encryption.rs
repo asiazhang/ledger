@@ -2,15 +2,15 @@
 //! 开启加密、关闭加密、修改主口令、忘记口令重置（issue #573）、本机记住主口令
 //! （钥匙串缓存 + macOS 生物认证门，issue #574）。
 //!
-//! 只做参数解包与 [`crate::db::encryption`] / [`crate::db::data_location`] /
-//! [`crate::db::passphrase_cache`] 调用与状态编排：文件级转换（三形态同机制）、
+//! 只做参数解包与 [`ledger_infra::db::encryption`] / [`ledger_infra::db::data_location`] /
+//! [`ledger_infra::db::passphrase_cache`] 调用与状态编排：文件级转换（三形态同机制）、
 //! 解锁建连、搬迁补做、重置副本语义、钥匙串口令缓存都在 db 基础设施，
 //! 本文件不含领域规则。「本机记住」的偏好开关是前端 localStorage 轻量设置项
 //! （不落库、不随备份迁移），钥匙串缓存内容为主口令本身（密钥仍由口令派生）。
 //!
 //! 全部命令 async 化（形状乙，spec #498 / #503 先例）：转换导出、解锁建连、
 //! 搬迁补做与钥匙串读写（含生物认证阻塞）是阻塞 IO，经连接层统一 helper
-//! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程。
+//! [`ledger_infra::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -22,12 +22,12 @@ use tauri::{AppHandle, Manager, Runtime};
 
 use crate::commands::boot::current_boot;
 use crate::commands::data_location::default_data_dir;
-use crate::db::DbState;
-use crate::db::data_location::{self, DB_FILE_NAME};
-use crate::db::encryption::{self, DbFileKind, EncryptionGate};
-use crate::db::passphrase_cache::{self, CacheLoad, RememberMode};
-use crate::db::run_db;
-use crate::error::{AppError, Result};
+use ledger_infra::db::DbState;
+use ledger_infra::db::data_location::{self, DB_FILE_NAME};
+use ledger_infra::db::encryption::{self, DbFileKind, EncryptionGate};
+use ledger_infra::db::passphrase_cache::{self, CacheLoad, RememberMode};
+use ledger_infra::db::run_db;
+use ledger_infra::error::{AppError, Result};
 
 /// 加密状态（设置页加密卡片与启动解锁屏的消费形状）。
 #[derive(Debug, Serialize)]
@@ -73,7 +73,7 @@ pub(crate) fn active_db_path<R: Runtime>(app: &AppHandle<R>) -> Result<std::path
 /// 当前活动账本标识（issue #836：钥匙串自动解锁条目按本分域的依据）：从引导
 /// 快照的注册表取活动账本 id。注册表不可用（极端时序/损坏回退）时 `None`——
 /// 回退现场运行的是折叠默认账本，钥匙串退回历史无标识条目
-///（[`crate::db::passphrase_cache::account_for`]），升级用户不丢自动解锁。
+///（[`ledger_infra::db::passphrase_cache::account_for`]），升级用户不丢自动解锁。
 /// 多端同步壳层（issue #862）同源消费；ChannelLayout 需要非空 id，`None` 由
 /// 消费侧报码化错误。
 pub(crate) fn active_book_id<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
@@ -123,13 +123,14 @@ async fn do_unlock<R: Runtime>(app: &AppHandle<R>, passphrase: &str) -> Result<U
         // ADR-0117 决策 2）；读连接建连失败则整体失败，写连接不换入、门不翻转
         //（fail-closed，可无限重试）。
         let conn = encryption::unlock_db_file(&db_path, &pass)?;
-        let read_conn = crate::db::open_connection_readonly_with_passphrase(&db_path, &pass)?;
+        let read_conn =
+            ledger_infra::db::open_connection_readonly_with_passphrase(&db_path, &pass)?;
         Ok((conn, read_conn))
     })
     .await?;
     // 本会话密钥记忆（issue #863 / ADR-0098）：解锁成功即记入会话形态，自动
     // 同步轮次（打开即同步 / 低频轮询）无需再触钥匙串即可封包。
-    crate::sync_engine::SessionEnvelope::remember(crate::sync_engine::SessionEnvelope::Encrypted(
+    ledger_sync_engine::SessionEnvelope::remember(ledger_sync_engine::SessionEnvelope::Encrypted(
         passphrase.to_string(),
     ));
     resume_business_surface(app, conn, read_conn)?;
@@ -271,7 +272,7 @@ pub(crate) fn resume_business_surface<R: Runtime>(
     {
         let state = app.state::<DbState>();
         let conn = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        crate::logger::apply_persisted_level(&conn);
+        crate::shell_support::logger::apply_persisted_level(&conn);
     }
     tracing::info!("业务读写恢复（解锁/重置后），自动备份与多端同步调度拉起");
     // 后台服务成对拉起收在唯一编排点（issue #961）：解锁/重置后同步触发随之
@@ -321,7 +322,7 @@ pub async fn disable_encryption<R: Runtime>(app: AppHandle<R>, passphrase: Strin
     .await;
     // 关闭加密后库为明文形态：记入明文形态（issue #863），后续自动轮次按明文
     // 直通（否则会拿旧口令去封明文段，对端无法开封）。
-    crate::sync_engine::SessionEnvelope::remember(crate::sync_engine::SessionEnvelope::Plaintext);
+    ledger_sync_engine::SessionEnvelope::remember(ledger_sync_engine::SessionEnvelope::Plaintext);
     // 文件替换已成功：读连接立即换出（与恢复同款 inode 语义，issue #1280）。
     crate::commands::boot::detach_read_conn(&app);
     tracing::info!("整库转换完成（关闭加密），待重启以明文重新打开");
@@ -370,7 +371,7 @@ pub async fn reset_after_forgotten_passphrase<R: Runtime>(app: AppHandle<R>) -> 
     let (conn, read_conn) = run_db("reset_after_forgotten_passphrase", move || {
         let conn = encryption::reset_encrypted_db_file(&db_path)?;
         // 新明文空库就绪后，读连接凭明文形态成对打开（同刻换入，issue #1280）。
-        let read_conn = crate::db::open_connection_readonly(&db_path)?;
+        let read_conn = ledger_infra::db::open_connection_readonly(&db_path)?;
         Ok((conn, read_conn))
     })
     .await?;
@@ -380,7 +381,7 @@ pub async fn reset_after_forgotten_passphrase<R: Runtime>(app: AppHandle<R>) -> 
     let book = active_book_id(&app);
     // 忘记口令重置：旧主口令不再适用，清会话密钥记忆（issue #863）与钥匙串
     // 缓存（幂等，失败不阻断重置），不残留可自动解锁的旧口令。
-    crate::sync_engine::SessionEnvelope::forget();
+    ledger_sync_engine::SessionEnvelope::forget();
     let _ = run_db("clear_remember_after_reset", move || {
         passphrase_cache::delete(book.as_deref())
     })

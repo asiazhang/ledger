@@ -10,7 +10,7 @@
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::scheduled_transactions::{
+use ledger_scheduled::{
     CreateScheduledInput, RecurrenceType, ScheduledKind, UpdateSubscriptionInput, create_plan,
     update_subscription,
 };
@@ -147,7 +147,7 @@ fn create_policy_plan(
     recurrence: &str,
     start: &str,
     merchant_id: Option<String>,
-) -> tauri_app_lib::error::Result<String> {
+) -> ledger_infra::error::Result<String> {
     world.db.write(|conn| {
         create_plan(
             conn,

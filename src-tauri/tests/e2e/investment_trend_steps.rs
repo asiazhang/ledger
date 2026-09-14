@@ -16,13 +16,11 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::db::{new_uuid, now_iso};
-use tauri_app_lib::investment::prices::upsert_price_history;
-use tauri_app_lib::investment::{
-    TrendRange, query_instrument_price_trend, query_portfolio_value_trend,
-};
-use tauri_app_lib::transaction::TransactionKind;
-use tauri_app_lib::transaction::create_transaction_internal;
+use ledger_infra::db::{new_uuid, now_iso};
+use ledger_investment::prices::upsert_price_history;
+use ledger_investment::{TrendRange, query_instrument_price_trend, query_portfolio_value_trend};
+use ledger_transaction::TransactionKind;
+use ledger_transaction::create_transaction_internal;
 
 use crate::common::instrument_id_by_symbol;
 use crate::step_inputs::trade_input;

@@ -24,9 +24,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::http::StatusCode;
+use ledger_dashboard as dashboard;
+use ledger_investment::{Holding, PnlFilter, list_holdings, query_realized_pnl_summary};
 use rusqlite::Connection;
-use tauri_app_lib::dashboard;
-use tauri_app_lib::investment::{Holding, PnlFilter, list_holdings, query_realized_pnl_summary};
 use tauri_app_lib::test_support;
 
 use crate::common::{

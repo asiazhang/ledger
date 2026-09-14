@@ -8,7 +8,7 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::accounts::balance::{compute_balance, list_accounts_with_visibility};
+use ledger_accounts::balance::{compute_balance, list_accounts_with_visibility};
 
 /// 从 `CREATE TABLE` DDL 中提取 `CHECK(<col> IN ('a','b',…))` 的字面量清单
 /// （保序）。供闭集枚举 ↔ DB CHECK 冻结副本的测试期互核消费（ADR-0108）：

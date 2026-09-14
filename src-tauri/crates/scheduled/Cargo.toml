@@ -37,6 +37,11 @@ tracing = "0.1"
 # 负向核对住结构守门的 crate 依赖方向（ledger-backup/ledger-transaction crate 同款
 # 留痕）。
 tauri-app = { path = "../.." }
+# 跨域对拍（备份置脏联动、商户校验、同步 op 读取）：#1108 起根包别名再导出
+# 清除，跨域引用以 crate 本名直呼（单实例，直呼与经根包再导出同一实例）。
+ledger-backup = { path = "../backup" }
+ledger-merchants = { path = "../merchants" }
+ledger-sync-engine = { path = "../sync-engine" }
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。

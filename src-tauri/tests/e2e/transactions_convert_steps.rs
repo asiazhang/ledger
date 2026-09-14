@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::accounts::list_account_balances_for_api;
-use tauri_app_lib::transaction::TransactionInput;
+use ledger_accounts::list_account_balances_for_api;
+use ledger_transaction::TransactionInput;
 
 use crate::common::{capture_expected_error, instrument_id_by_symbol, query_all_transactions};
 use crate::step_inputs::convert_input;

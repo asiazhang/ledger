@@ -6,9 +6,9 @@ use utoipa::ToSchema;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::ApiState;
-use crate::error::AppError;
-use crate::investment::Quote;
-use crate::investment::validate_fund_code;
+use ledger_infra::error::AppError;
+use ledger_investment::Quote;
+use ledger_investment::validate_fund_code;
 
 /// 东财基金报价获取（查询与创建两端点共用，issue #304）：测试注入桩直接同步
 /// 调用（离线驱动）；生产路径经 `spawn_blocking` 在连接锁外完成阻塞网络往返
@@ -20,7 +20,7 @@ pub async fn fetch_fund_quote_for_api(state: &ApiState, code: &str) -> Result<Qu
         None => {
             let code = code.to_string();
             tauri::async_runtime::spawn_blocking(move || {
-                crate::sync::fetch_fund_quote_production(&code)
+                ledger_market_sync::fetch_fund_quote_production(&code)
             })
             .await
             .map_err(|e| AppError::Io(format!("基金详情查询任务执行失败: {e}")))?

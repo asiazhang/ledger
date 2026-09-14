@@ -298,12 +298,10 @@ fn transaction_currency_conversion() {
     seed_account(&conn, account_id, "现金", "cash", "CNY", 0);
     seed_exchange_rate(&conn, "USD", "CNY", 7.2);
 
-    let native =
-        tauri_app_lib::transaction::amount::convert_to_native(&conn, 10000, "USD").unwrap();
+    let native = ledger_transaction::amount::convert_to_native(&conn, 10000, "USD").unwrap();
     assert_eq!(native, 72000);
 
     // 同币种无需汇率，1:1 返回。
-    let native =
-        tauri_app_lib::transaction::amount::convert_to_native(&conn, 10000, "CNY").unwrap();
+    let native = ledger_transaction::amount::convert_to_native(&conn, 10000, "CNY").unwrap();
     assert_eq!(native, 10000);
 }

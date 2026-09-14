@@ -41,11 +41,12 @@ use std::time::Instant;
 use chrono::{Days, NaiveDate};
 use rusqlite::Connection;
 
-use tauri_app_lib::accounts::{self, Account, AccountType, balance};
-use tauri_app_lib::db::open_connection;
-use tauri_app_lib::reports as reports_domain;
-use tauri_app_lib::transaction::amount::{TransactionKind, default_currency_code};
-use tauri_app_lib::transaction::{BatchOutcome, TransactionBatch, TransactionInput};
+use ledger_accounts as accounts;
+use ledger_accounts::{Account, AccountType, balance};
+use ledger_infra::db::open_connection;
+use ledger_reports as reports_domain;
+use ledger_transaction::amount::{TransactionKind, default_currency_code};
+use ledger_transaction::{BatchOutcome, TransactionBatch, TransactionInput};
 
 use super::bench::percentile_ms;
 

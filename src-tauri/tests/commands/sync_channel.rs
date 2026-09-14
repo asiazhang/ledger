@@ -29,6 +29,13 @@
 
 use std::path::PathBuf;
 
+use ledger_infra::db::data_location;
+use ledger_infra::db::encryption::{enable_encryption_for_file, probe_file_kind};
+use ledger_infra::db::{self, DbState};
+use ledger_infra::error::AppError;
+use ledger_infra::settings::{self, SettingKey};
+use ledger_sync_engine::{EnvelopeMode, SyncChannelConfig};
+use ledger_transaction::{TransactionInput, TransactionKind};
 use tauri::Manager;
 use tauri_app_lib::commands::accounts;
 use tauri_app_lib::commands::sync_channel::{
@@ -36,16 +43,9 @@ use tauri_app_lib::commands::sync_channel::{
     set_sync_channel_config, sync_now, test_sync_channel_connection,
 };
 use tauri_app_lib::commands::{boot::BootCell, transactions};
-use tauri_app_lib::db::data_location;
-use tauri_app_lib::db::encryption::{enable_encryption_for_file, probe_file_kind};
-use tauri_app_lib::db::{self, DbState};
-use tauri_app_lib::error::AppError;
-use tauri_app_lib::settings::{self, SettingKey};
-use tauri_app_lib::sync_engine::{EnvelopeMode, SyncChannelConfig};
 use tauri_app_lib::test_support::{
     S3Addressing, S3Stub, S3StubConfig, read_scalar_i64, spawn_s3_stub,
 };
-use tauri_app_lib::transaction::{TransactionInput, TransactionKind};
 
 use crate::isolation::isolate_home;
 
@@ -55,13 +55,13 @@ pub(crate) fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, Pat
     // 写路径副作用接缝接线（issue #1090）：本套件经产品建缝拿文件库连接（不入
     // 测试工厂，ADR-0084 决策 3），建库单点的注册不覆盖本处——落库前显式注册
     // 余额刷新实现（幂等，进程级，与 BDD world 同款纪律）。
-    tauri_app_lib::accounts::balance::install_balance_refresh_hook();
+    ledger_accounts::balance::install_balance_refresh_hook();
     // 交易域接缝接线（issue #1092 / #1180）：与测试工厂同形——六向实现经组合入口
     // 一次装入（幂等，进程级）。
     tauri_app_lib::transaction_wiring::install_all();
     let dir = std::env::temp_dir().join(format!(
         "ledger-syncchannel-it-{tag}-{}",
-        tauri_app_lib::db::new_uuid()
+        ledger_infra::db::new_uuid()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let app = tauri::test::mock_app();
@@ -304,9 +304,9 @@ async fn dual_device_manual_sync_converges_over_real_s3_stub() {
     let acc_id = accounts::create_account(
         app_a.state(),
         app_a.clone(),
-        tauri_app_lib::accounts::AccountInput {
+        ledger_accounts::AccountInput {
             name: "现金".into(),
-            kind: tauri_app_lib::accounts::AccountType::Cash,
+            kind: ledger_accounts::AccountType::Cash,
             currency_code: "CNY".into(),
             initial_balance_cents: Some(0),
         },
@@ -390,7 +390,7 @@ async fn encrypted_library_requires_passphrase_and_seals_with_it() {
     enable_encryption_for_file(&db_path, "master-pass").expect("加密转换应成功");
     assert_eq!(
         probe_file_kind(&db_path).unwrap(),
-        tauri_app_lib::db::encryption::DbFileKind::Encrypted
+        ledger_infra::db::encryption::DbFileKind::Encrypted
     );
     let conn = db::open_connection_with_passphrase(&db_path, "master-pass").expect("密文库应可开");
     let read_conn = db::open_connection_readonly_with_passphrase(&db_path, "master-pass")
@@ -487,9 +487,9 @@ fn deliver_unreplayable_op(config: SyncChannelConfig) {
 }
 
 fn deliver_unreplayable_op_blocking(config: &SyncChannelConfig) {
-    use tauri_app_lib::sync_engine::{ChannelLayout, DomainCommand, SyncOp, build_channel};
+    use ledger_sync_engine::{ChannelLayout, DomainCommand, SyncOp, build_channel};
+    use ledger_transaction::{NormalizedTransaction, TransactionCommand};
     use tauri_app_lib::test_support::publish_raw_segment;
-    use tauri_app_lib::transaction::{NormalizedTransaction, TransactionCommand};
 
     let channel = build_channel(config).unwrap();
     let layout = ChannelLayout::new("family").unwrap();

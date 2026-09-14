@@ -24,14 +24,14 @@ use std::time::Instant;
 use chrono::{Months, NaiveDate};
 use rusqlite::Connection;
 
-use tauri_app_lib::accounts;
-use tauri_app_lib::dashboard as dashboard_domain;
-use tauri_app_lib::db::open_connection;
-use tauri_app_lib::db::perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD;
-use tauri_app_lib::investment::holdings::holdings_as_of;
-use tauri_app_lib::investment::list_holdings;
-use tauri_app_lib::reports as reports_domain;
-use tauri_app_lib::transaction::{
+use ledger_accounts as accounts;
+use ledger_dashboard as dashboard_domain;
+use ledger_infra::db::open_connection;
+use ledger_infra::db::perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD;
+use ledger_investment::holdings::holdings_as_of;
+use ledger_investment::list_holdings;
+use ledger_reports as reports_domain;
+use ledger_transaction::{
     TransactionListFilter, list_transactions_internal, search_transactions_internal,
 };
 

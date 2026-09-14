@@ -16,11 +16,11 @@ use std::time::{Duration, Instant};
 
 use tauri::{Listener, Manager};
 
+use ledger_infra::db::{self, DbState};
+use ledger_infra::events;
+use ledger_market_sync::{INSTRUMENT_SYNC_PROGRESS, StockItem, SyncFetchChannels};
 use tauri_app_lib::commands::sync::SyncChannelsSlot;
 use tauri_app_lib::commands::{investment, sync};
-use tauri_app_lib::db::{self, DbState};
-use tauri_app_lib::events;
-use tauri_app_lib::sync::{INSTRUMENT_SYNC_PROGRESS, StockItem, SyncFetchChannels};
 
 use crate::isolation::isolate_home;
 
@@ -71,12 +71,12 @@ fn gated_channels(
 fn reads_return_current_data_while_sync_in_flight() {
     isolate_home();
     // 提交点后置动作接线（置脏断言依赖；与生产启动接线同形，幂等）。
-    tauri_app_lib::backup::install_after_commit_hook();
+    ledger_backup::install_after_commit_hook();
     // 交易域接缝接线（fresh_app 同款）：编排的本位币读取钩子随此装入（幂等）。
     tauri_app_lib::transaction_wiring::install_all();
     let dir = std::env::temp_dir().join(format!(
         "ledger-instrumentsync-it-{}",
-        tauri_app_lib::db::new_uuid()
+        ledger_infra::db::new_uuid()
     ));
     std::fs::create_dir_all(&dir).expect("临时目录应可建");
     let app = tauri::test::mock_app();

@@ -35,6 +35,9 @@ utoipa = { version = "5", features = ["axum_extras"] }
 tauri-app = { path = "../.." }
 # 域单测经 test-utils feature 消费基础设施测试器具（信号捕获，#1132 cfg 门）。
 ledger-infra = { path = "../infra", features = ["test-utils"] }
+# 报表域跨域对拍（黑洞账户交易计入报表）：#1108 起根包别名再导出清除，跨域
+# 引用以 crate 本名直呼（单实例，直呼与经根包再导出同一实例）。
+ledger-reports = { path = "../reports" }
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。

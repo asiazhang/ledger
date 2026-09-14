@@ -4,13 +4,13 @@ use axum::Json;
 use axum::response::IntoResponse;
 use utoipa::OpenApi;
 
-use crate::accounts::{Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput};
-use crate::categories::{Category, CategoryInput};
-use crate::currencies::Currency;
-use crate::investment::{Instrument, InstrumentListResult, InstrumentType};
-use crate::merchants::{Merchant, MerchantUpdateInput};
-use crate::transaction::amount::TransactionKind;
-use crate::transaction::{
+use ledger_accounts::{Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput};
+use ledger_categories::{Category, CategoryInput};
+use ledger_currencies::Currency;
+use ledger_investment::{Instrument, InstrumentListResult, InstrumentType};
+use ledger_merchants::{Merchant, MerchantUpdateInput};
+use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::{
     CreateTransactionResult, Transaction, TransactionBatchInput, TransactionInput,
     TransactionListResult, TransactionSource, TransactionSourceKind, TransactionSourceStatus,
     UpdateTransactionInput,

@@ -7,15 +7,15 @@ use std::collections::{BTreeSet, HashMap};
 use rusqlite::Connection;
 
 use ledger_infra::error::Result;
-use tauri_app_lib::test_support;
-use tauri_app_lib::transaction::TransactionSearchResult;
-use tauri_app_lib::transaction::read::search::{
+use tauri_app_lib::ledger_transaction::TransactionSearchResult;
+use tauri_app_lib::ledger_transaction::read::search::{
     Stage1Filter, TermLowered, build_stage1_query, load_search_dicts, search_transactions_internal,
 };
-use tauri_app_lib::transaction::search_text::{
+use tauri_app_lib::ledger_transaction::search_text::{
     is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
 };
-use tauri_app_lib::transaction::write::writer::{NormalizedRow, insert_row, update_row};
+use tauri_app_lib::ledger_transaction::write::writer::{NormalizedRow, insert_row, update_row};
+use tauri_app_lib::test_support;
 
 /// 无筛选搜索（第 1 页、每页 20 条）。
 fn search(conn: &Connection, query: &str) -> Result<TransactionSearchResult> {
@@ -701,7 +701,7 @@ fn writer_seam_populates_note_pinyin_on_insert_and_update() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     let row = NormalizedRow {
-        kind: tauri_app_lib::transaction::TransactionKind::Expense,
+        kind: tauri_app_lib::ledger_transaction::TransactionKind::Expense,
         amount_cents: 1000,
         currency_code: "CNY".into(),
         amount_native_cents: 1000,

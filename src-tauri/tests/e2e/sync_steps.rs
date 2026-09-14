@@ -25,14 +25,12 @@
 use cucumber::{given, then, when};
 use rusqlite::Connection;
 
-use tauri_app_lib::settings::{self, SettingKey};
-use tauri_app_lib::sync_engine::trigger::{
+use ledger_infra::settings::{self, SettingKey};
+use ledger_sync_engine::trigger::{
     SessionEnvelope, SyncChannel, build_channel, configured_channel, run_auto_round, run_round_once,
 };
-use tauri_app_lib::sync_engine::{
-    ChannelLayout, DomainCommand, EnvelopeMode, SyncChannelConfig, SyncOp,
-};
-use tauri_app_lib::transaction::{
+use ledger_sync_engine::{ChannelLayout, DomainCommand, EnvelopeMode, SyncChannelConfig, SyncOp};
+use ledger_transaction::{
     NormalizedTransaction, TransactionCommand, TransactionInput, TransactionKind,
 };
 
@@ -40,7 +38,7 @@ use crate::common::seed_account_with_expenses;
 use crate::step_inputs::expense_input;
 use crate::step_verbs::create_transaction_verb;
 use crate::world::LedgerWorld;
-use tauri_app_lib::db::DbState;
+use ledger_infra::db::DbState;
 use tauri_app_lib::test_support::{S3Addressing, S3StubConfig, publish_raw_segment, spawn_s3_stub};
 
 /// 把阻塞的通道工作（reqwest 阻塞客户端 + 真 HTTP）移出异步上下文：cucumber
@@ -360,14 +358,14 @@ fn auto_sync_was_noop(world: &mut LedgerWorld) {
 #[then(expr = "挂起队列应有 {int} 条不可重放操作")]
 fn parked_count_is(world: &mut LedgerWorld, expected: usize) {
     let conn = world_conn!(world);
-    let parked = tauri_app_lib::sync_engine::parked_ops(&conn).expect("读挂起队列应成功");
+    let parked = ledger_sync_engine::parked_ops(&conn).expect("读挂起队列应成功");
     assert_eq!(parked.len(), expected, "挂起条数不匹配: {parked:?}");
 }
 
 #[then(expr = "挂起通知应携带码化原因")]
 fn parked_notice_has_code(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
-    let parked = tauri_app_lib::sync_engine::parked_ops(&conn).expect("读挂起队列应成功");
+    let parked = ledger_sync_engine::parked_ops(&conn).expect("读挂起队列应成功");
     let first = parked.first().expect("挂起队列应非空");
     assert!(
         first.code.contains('.'),

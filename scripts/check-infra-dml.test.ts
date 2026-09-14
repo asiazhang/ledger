@@ -41,26 +41,12 @@ const MIGRATION_SQL = [
   'CREATE TABLE sync_stream_positions (id TEXT PRIMARY KEY);',
 ].join('\n')
 
-/** 已登记例外文件的夹具内容：内联 cfg(test) 夹具恰 4 处命中（= 登记数，
- *  issue #1276 分段写入口的锁自由与整体裁决测试同款形状）。 */
-const WRITE_ENTRY_VIOLATION = [
-  '#[cfg(test)]',
-  'mod tests {',
-  '  #[test]',
-  '  fn t() {',
-  '    let _ = "INSERT INTO categories (id) VALUES (1)";',
-  '    let _ = "INSERT INTO categories (id) VALUES (2)";',
-  '    let _ = "INSERT INTO categories (id) VALUES (3)";',
-  '    let _ = "INSERT INTO categories (id) VALUES (4)";',
-  '  }',
-  '}',
-].join('\n')
-
-/** 形状同构默认文件：免扫文件与例外文件必在场，缺失即清单漂移红。 */
+/** 形状同构默认文件：免扫文件必在场，缺失即清单漂移红。
+ *  （已登记例外清单自 #1108 起为空——shell_support 随壳机制迁出根包，
+ *  例外随迁退役，夹具不再需要例外文件在场。） */
 const DEFAULT_INFRA_FILES: Record<string, string> = {
   'crates/infra/src/db/migrate.rs': 'pub fn migrate() {}',
   'crates/infra/src/db/schema_guard.rs': 'pub fn guard() {}',
-  'crates/infra/src/shell_support/write_entry.rs': WRITE_ENTRY_VIOLATION,
 }
 
 /** 建夹具目录（形状同构 src-tauri：migrations/ 与免扫文件必在；值为 null 表示
@@ -90,8 +76,8 @@ describe('check-infra-dml（基础设施账本数据表 DML 禁令，issue #1135
     // 免扫范围不靠沉默放行：成功输出逐条列出免扫文件与理由
     expect(r.output).toContain('db/migrate.rs')
     expect(r.output).toContain('db/schema_guard.rs')
-    // 已登记例外（write_entry.rs 内联测试夹具）明示
-    expect(r.output).toContain('已登记例外 1 条')
+    // 已登记例外明示：#1108 起清单为空（shell_support 迁出根包，例外随迁退役）
+    expect(r.output).toContain('已登记例外 0 条')
   })
 
   it('负向判据：基础设施生产代码对账本数据表的 DML 即红并定位到 文件:行', () => {
@@ -199,34 +185,6 @@ describe('check-infra-dml（基础设施账本数据表 DML 禁令，issue #1135
     expect(r.status).toBe(1)
     expect(r.output).toContain('crates/infra/src/db/conn_extra.rs:7')
     expect(r.output).toContain('INSERT INTO categories')
-  })
-
-  it('已登记例外（shell_support/write_entry.rs 内联测试夹具）严格相等校验：命中数漂移即红、命中清零即红', () => {
-    const violation = WRITE_ENTRY_VIOLATION
-    // 恰好 4 处命中 = 登记数：放行
-    const exact = makeFixture({})
-    expect(run([exact]).status).toBe(0)
-    expect(run([exact]).output).toContain('已登记例外 1 条')
-
-    // 登记文件消失（改名/搬迁）：清单漂移 fail loud（与 EXEMPT_FILES 同纪律）
-    const renamed = makeFixture({ 'crates/infra/src/shell_support/write_entry.rs': null })
-    const missing = run([renamed])
-    expect(missing.status).toBe(1)
-    expect(missing.output).toContain('例外清单漂移')
-
-    // 8 处命中 ≠ 登记的 4 处：红
-    const drifted = makeFixture({
-      'crates/infra/src/shell_support/write_entry.rs': violation + '\n' + violation,
-    })
-    const more = run([drifted])
-    expect(more.status).toBe(1)
-    expect(more.output).toContain('实际命中 8 处 ≠ 登记的 4 处')
-
-    // 命中清零：例外已收敛，登记条目应删除，红
-    const converged = makeFixture({ 'crates/infra/src/shell_support/write_entry.rs': 'pub fn x() {}' })
-    const gone = run([converged])
-    expect(gone.status).toBe(1)
-    expect(gone.output).toContain('例外已收敛')
   })
 
   it('外挂测试豁免（ADR-0056 决策 5）：tests.rs 文件与 tests/ 目录的夹具 SQL 不辖', () => {

@@ -1,10 +1,10 @@
 //! IPC 命令壳 · 交易搜索（#403 域目录化 ADR-0056）：交易搜索命令。
 //!
 //! 只做参数解包与连接锁管理，不含业务语义；搜索查询权威在
-//! [`crate::transaction::read::search`]（核心交易域归位，#403 / ADR-0056）。
+//! [`ledger_transaction::read::search`]（核心交易域归位，#403 / ADR-0056）。
 //!
 //! 命令 async 化（形状乙，spec #498 / #501）：DB 调用经连接层统一 helper
-//! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程。
+//! [`ledger_infra::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -12,11 +12,11 @@
 
 use tauri::State;
 
-use crate::db::DbState;
-use crate::error::Result;
-use crate::read_entry::read_entry;
-use crate::transaction as transaction_domain;
-use crate::transaction::{NotePinyinRepairReport, TransactionSearchResult};
+use crate::shell_support::read_entry::read_entry;
+use ledger_infra::db::DbState;
+use ledger_infra::error::Result;
+use ledger_transaction as transaction_domain;
+use ledger_transaction::{NotePinyinRepairReport, TransactionSearchResult};
 
 /// IPC 命令：搜索交易（可选金额/日期筛选与关键字 AND 组合）。
 /// 四个筛选参数与内部函数一一对应（issue #40），作为独立命令参数暴露，
@@ -54,7 +54,7 @@ pub async fn search_transactions(
 
 /// IPC 命令：备注拼音一键修复（issue #513）：显式回填全部积压并返回报告
 /// （回填行数 / 是否收敛 / 失败原因）。领域权威在
-/// [`crate::transaction::read::search`]（与搜索入口惰性回填同一实现，幂等）。
+/// [`ledger_transaction::read::search`]（与搜索入口惰性回填同一实现，幂等）。
 #[tauri::command]
 pub async fn repair_note_pinyin(db: State<'_, DbState>) -> Result<NotePinyinRepairReport> {
     // 只读甄别收口（issue #1280 / ADR-0117 代价 3）：本命令本体就是回填写

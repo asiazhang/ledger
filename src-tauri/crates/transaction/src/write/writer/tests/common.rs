@@ -6,9 +6,9 @@
 
 use rusqlite::{Connection, params};
 
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::write::writer::{Input, insert_row, normalize};
 use tauri_app_lib::test_support::FIXED_NOW;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::write::writer::{Input, insert_row, normalize};
 
 pub(super) fn insert_category(conn: &Connection, id: &str) {
     conn.execute(

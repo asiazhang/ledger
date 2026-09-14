@@ -17,9 +17,9 @@ use axum::Router;
 use axum::http::StatusCode;
 use rusqlite::params;
 
+use ledger_infra::error::AppError;
+use ledger_investment::{InstrumentType, Quote};
 use tauri_app_lib::api_server::StockQuoteFetcher;
-use tauri_app_lib::error::AppError;
-use tauri_app_lib::investment::{InstrumentType, Quote};
 
 use crate::common::{StockStubHit, get_json, post_instrument, setup_app_with_stock_stub};
 

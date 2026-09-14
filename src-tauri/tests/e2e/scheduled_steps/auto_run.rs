@@ -5,7 +5,7 @@
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::scheduled_transactions::run_catch_up;
+use ledger_scheduled::run_catch_up;
 
 use crate::world::LedgerWorld;
 

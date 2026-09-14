@@ -5,7 +5,7 @@
 //! [`crate::transaction`]（核心交易域归位，#403 / ADR-0056）。注册路径与
 //! 前端调用保持不变。
 //!
-//! 写命令经壳层统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
+//! 写命令经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
 //! 仪式（锁、事务、置脏、信号）内化单点，「即建商户」证据随闭包返回必达，
 //! 判定单点在 signals 映射（ADR-0044 / issue #331）；读命令经 `run_db`
 //!（形状乙，spec #498 / #502）。
@@ -16,16 +16,16 @@
 
 use tauri::{AppHandle, Runtime, State};
 
-use crate::db::DbState;
-use crate::error::Result;
-use crate::read_entry::read_entry;
-use crate::signals::WriteOp;
-use crate::transaction as transaction_domain;
-use crate::transaction::{
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_infra::db::DbState;
+use ledger_infra::error::Result;
+use ledger_infra::signals::WriteOp;
+use ledger_transaction as transaction_domain;
+use ledger_transaction::{
     CreateTransactionResult, TransactionInput, TransactionListFilter, TransactionListResult,
     UpdateTransactionInput,
 };
-use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_transactions(

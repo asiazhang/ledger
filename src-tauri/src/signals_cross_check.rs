@@ -28,7 +28,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::api_server::ApiDoc;
-use crate::signals::{Signal, WriteEvidence, WriteOp, signals_for};
+use ledger_infra::signals::{Signal, WriteEvidence, WriteOp, signals_for};
 use utoipa::OpenApi;
 
 include!(concat!(env!("OUT_DIR"), "/commands_manifest.rs"));
@@ -814,7 +814,7 @@ fn http_derived_endpoint_keys_are_in_openapi_contract() {
 // ---------------------------------------------------------------------------
 
 /// 壳层标准锁行模式（ADR-0104）：锁获取 + 锁失败映射的手抄仪式——全仓复制量
-/// 最大的一行。统一读入口 [`crate::read_entry::read_entry`] 体内单点之后，
+/// 最大的一行。统一读入口 [`crate::shell_support::read_entry::read_entry`] 体内单点之后，
 /// 壳层命令 / handler 函数体不应再手抄本行（确属不经读入口的命令进下方豁免
 /// 清单）。文本级扫描（掩码后匹配），换行拆写或别名改写不可达，靠评审兜底
 /// （与写侧扫描同款边界）。

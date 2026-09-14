@@ -342,13 +342,13 @@ fn execute_occurrence_with_preexisting_landing_completes_without_second_row() {
     // 日志中含建档 op（create_subscription 经域入口产出，#860），但已落地路径
     // 不得产出**期次触发** op（落地 op 已存在于全局日志）。
     assert!(
-        !tauri_app_lib::sync_engine::read_ops(&conn)
+        !ledger_sync_engine::read_ops(&conn)
             .unwrap()
             .iter()
             .any(|op| matches!(
                 &op.command,
-                tauri_app_lib::sync_engine::DomainCommand::Scheduled(
-                    tauri_app_lib::scheduled_transactions::ScheduledCommand::ExecuteOccurrence { .. }
+                ledger_sync_engine::DomainCommand::Scheduled(
+                    tauri_app_lib::ledger_scheduled::ScheduledCommand::ExecuteOccurrence { .. }
                 )
             )),
         "已落地路径不产出期次 op"

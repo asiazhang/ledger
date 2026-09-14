@@ -10,11 +10,11 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::error::AppError;
-use tauri_app_lib::item::cost;
-use tauri_app_lib::item::domain;
-use tauri_app_lib::item::{ItemInput, ItemStatus};
-use tauri_app_lib::transaction::{TransactionInput, create_transaction_internal};
+use ledger_infra::error::AppError;
+use ledger_item::cost;
+use ledger_item::domain;
+use ledger_item::{ItemInput, ItemStatus};
+use ledger_transaction::{TransactionInput, create_transaction_internal};
 
 use crate::common::assert_last_error_contains;
 use crate::items_common::build_input;

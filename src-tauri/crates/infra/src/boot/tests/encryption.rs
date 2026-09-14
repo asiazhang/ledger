@@ -122,13 +122,13 @@ use crate::db::{check_integrity, open_connection_with_passphrase as reopen_with_
 /// 在库中建一笔账户 + N 条种子交易（与真实写路径一致的 Writer 接缝，
 /// 账户插入含缓存行不变量，ADR-0067）。
 fn seed_transactions(conn: &Connection, count: usize) {
-    use tauri_app_lib::transaction::TransactionInput;
-    use tauri_app_lib::transaction::amount::TransactionKind;
+    use ledger_transaction::TransactionInput;
+    use ledger_transaction::amount::TransactionKind;
     // 写路径副作用接缝接线（issue #1090）：本测试经产品建缝拿文件库连接（不入
     // 测试工厂，ADR-0084 决策 3），建库单点的注册不覆盖本处——dev-dependency 环
     // 下 tauri_app_lib 是另一份实例（静态与类型身份分离），落库前显式注册余额
     // 刷新实现（幂等，与 BDD world 同款纪律）。
-    tauri_app_lib::accounts::balance::install_balance_refresh_hook();
+    ledger_accounts::balance::install_balance_refresh_hook();
     // 交易域接缝接线（issue #1092 / #1180）：与测试工厂同形——本处经 Writer/行为层
     // 写入，六向实现（计划装配/商户/本位币/来源列反查/转换两腿/出资账户视图）经
     // 组合入口一次装入（幂等，进程级）。
@@ -137,8 +137,7 @@ fn seed_transactions(conn: &Connection, count: usize) {
     // 工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）；裸种子绕过 Writer
     // 接缝，按 V017 迁移回填语义补建缓存行（ADR-0067）。
     tauri_app_lib::test_support::seed_account(conn, &account_id, "现金", "cash", "CNY", 0);
-    tauri_app_lib::accounts::balance::refresh_account_balances(conn, &[account_id.as_str()])
-        .unwrap();
+    ledger_accounts::balance::refresh_account_balances(conn, &[account_id.as_str()]).unwrap();
     for i in 0..count {
         let input = TransactionInput {
             merchant_name: None,
@@ -164,7 +163,7 @@ fn seed_transactions(conn: &Connection, count: usize) {
             in_amount_cents: None,
             idempotency_key: None,
         };
-        tauri_app_lib::transaction::create_transaction_internal(conn, input).unwrap();
+        ledger_transaction::create_transaction_internal(conn, input).unwrap();
     }
 }
 

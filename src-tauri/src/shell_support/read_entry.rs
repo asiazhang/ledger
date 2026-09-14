@@ -1,23 +1,24 @@
-//! 壳机制暂住（ADR-0111 决策 2 / #1130）：本模块只被壳层消费，正住址是壳层，
-//! 随 #1086 P5 壳层收敛迁出；不得作为基础设施范式被引用。
+//! 壳层机制（spec #1086 P5 / #1108 壳层收敛）：本模块只被壳层消费，正住址即
+//! 壳层根包；曾暂住 `ledger-infra::shell_support`（ADR-0111 决策 2 / #1130），
+//! #1108 迁回，不得被基础设施或域引用。
 //!
 //! 壳层统一读入口（ADR-0104，spec #1009 批次①）：连接句柄与读闭包进，其余全部
-//! 内化——[`crate::db::run_db`]（执行线程与 span 传播，ADR-0069，组合而非替代）→
-//! 锁行（锁失败映射，与 [`crate::db::write`] 同形）。
+//! 内化——[`ledger_infra::db::run_db`]（执行线程与 span 传播，ADR-0069，组合而非替代）→
+//! 锁行（锁失败映射，与 [`ledger_infra::db::write`] 同形）。
 //!
 //! 读命令的手抄仪式（克隆连接句柄 → 送阻塞线程池 → 锁失败映射 → span 归因）
 //! 收敛进本入口一处实现；读命令壳退回到它该有的样子：解包 + 一行调用。命名与
-//! [`crate::write_entry`] 对仗，保持「只留一种可模仿形态」（ADR-0069 立项动机之一）。
+//! [`crate::shell_support::write_entry`] 对仗，保持「只留一种可模仿形态」（ADR-0069 立项动机之一）。
 //!
 //! 语义锚（与迁移前逐字节一致，ADR-0104 决策 4）：
 //! - **执行线程**：闭包在 tauri 全局运行时的阻塞线程池执行（`run_db` 组合语义，
 //!   事件循环线程与 tokio worker 不被 DB 调用占用）；
 //! - **锁失败映射**：`conn.lock().map_err(|e| AppError::Db(e.to_string()))?`
-//!   体内单点——锁中毒归一化为 [`crate::error::AppError::Db`]；
+//!   体内单点——锁中毒归一化为 [`ledger_infra::error::AppError::Db`]；
 //! - **span 归因串**保留 `&'static str` 参数：IPC 传命令名字面量、HTTP 传
 //!   `"METHOD /path"` 端点键，SQL 日志逐字节不变（ADR-0009 / ADR-0068 零感知）；
 //! - **结果证据**：闭包业务错误原样传播、闭包 panic 归一化为
-//!   [`crate::error::AppError::Io`]（与 `run_db`/ADR-0069 先例同形）。
+//!   [`ledger_infra::error::AppError::Io`]（与 `run_db`/ADR-0069 先例同形）。
 //!
 //! 读路径无置脏维度（ADR-0032 置脏豁免单点不动，ADR-0104 关联）。域层读路径
 //! （ADR-0033 接缝）不纳入——本入口壳层专用。
@@ -27,17 +28,17 @@ use std::time::Instant;
 
 use rusqlite::Connection;
 
-use crate::db::{probe_lock_hold, run_db};
-use crate::error::{AppError, Result};
+use ledger_infra::db::{probe_lock_hold, run_db};
+use ledger_infra::error::{AppError, Result};
 
 /// 壳层统一读入口（ADR-0104 决策 2）：组合 `run_db`（阻塞线程池 + span 传播）
 /// → 锁行（锁失败映射体内单点）→ 读闭包。
 ///
 /// - `span`：SQL 归因串（`&'static str`，IPC 命令名 / HTTP 端点键，语义同
 ///   [`run_db`] 的 `command` 参数）；
-/// - 闭包业务错误原样传播、闭包 panic 归一化为 [`crate::error::AppError::Io`]
+/// - 闭包业务错误原样传播、闭包 panic 归一化为 [`ledger_infra::error::AppError::Io`]
 ///   （与 [`run_db`]/ADR-0069 先例同形）；锁中毒归一化为
-///   [`crate::error::AppError::Db`]（与 [`crate::db::write`] 同形）。
+///   [`ledger_infra::error::AppError::Db`]（与 [`ledger_infra::db::write`] 同形）。
 pub async fn read_entry<T, F>(span: &'static str, conn: Arc<Mutex<Connection>>, f: F) -> Result<T>
 where
     T: Send + 'static,
@@ -58,9 +59,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::AppError;
+    use crate::test_support::{open, seed_account};
+    use ledger_infra::error::AppError;
     use std::sync::Arc;
-    use tauri_app_lib::test_support::{open, seed_account};
 
     /// 内存库夹具（统一测试工厂建库，ADR-0084 决策 3/7）。
     fn fixture() -> Arc<Mutex<Connection>> {

@@ -1,6 +1,6 @@
 //! 账户端点：列表（含黑洞账户）/ 幂等创建 / 编辑 / 软删除 / 实时余额。
 //!
-//! 写端点经壳层统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
+//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
 //! 事务、置脏、信号内化单点；读端点经 `run_db`（形状乙）。
 
 use std::sync::{Arc, Mutex};
@@ -10,13 +10,13 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use rusqlite::Connection;
 
-use crate::accounts::{Account, AccountBalance, AccountInput, AccountUpdateInput};
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::{EmitterSlot, ReadConn};
-use crate::error::AppError;
-use crate::read_entry::read_entry;
-use crate::signals::WriteOp;
-use crate::write_entry::{Outcome, write_entry};
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_accounts::{Account, AccountBalance, AccountInput, AccountUpdateInput};
+use ledger_infra::error::AppError;
+use ledger_infra::signals::WriteOp;
 
 #[utoipa::path(
     get,
@@ -34,7 +34,7 @@ pub async fn list_accounts_handler(
     State(read): State<ReadConn>,
 ) -> Result<Json<Vec<Account>>, AppError> {
     read_entry("GET /api/v1/accounts", read.0, move |conn| {
-        let accounts = crate::accounts::list_accounts_for_api(conn)?;
+        let accounts = ledger_accounts::list_accounts_for_api(conn)?;
         Ok(Json(accounts))
     })
     .await
@@ -66,7 +66,7 @@ pub async fn create_account_handler(
         conn,
         emitter.as_deref(),
         WriteOp::CreateAccount,
-        move |conn| crate::accounts::create_account_idempotent(conn, input).map(Outcome::Silent),
+        move |conn| ledger_accounts::create_account_idempotent(conn, input).map(Outcome::Silent),
     )
     .await?;
     Ok((StatusCode::CREATED, Json(id)))
@@ -105,8 +105,8 @@ pub async fn update_account_handler(
         emitter.as_deref(),
         WriteOp::UpdateAccount,
         move |conn| {
-            crate::accounts::update_account(conn, &id, input)?;
-            let updated = crate::accounts::get_account(conn, &id)?;
+            ledger_accounts::update_account(conn, &id, input)?;
+            let updated = ledger_accounts::get_account(conn, &id)?;
             Ok(Outcome::Silent(updated))
         },
     )
@@ -140,7 +140,7 @@ pub async fn delete_account_handler(
         conn,
         emitter.as_deref(),
         WriteOp::DeleteAccount,
-        move |conn| crate::accounts::delete_account(conn, &id).map(Outcome::Silent),
+        move |conn| ledger_accounts::delete_account(conn, &id).map(Outcome::Silent),
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -164,7 +164,7 @@ pub async fn list_account_balances_handler(
     State(read): State<ReadConn>,
 ) -> Result<Json<Vec<AccountBalance>>, AppError> {
     read_entry("GET /api/v1/accounts/balances", read.0, move |conn| {
-        let balances = crate::accounts::list_account_balances_for_api(conn)?;
+        let balances = ledger_accounts::list_account_balances_for_api(conn)?;
         Ok(Json(balances))
     })
     .await

@@ -7,8 +7,8 @@
 use rusqlite::Connection;
 use rusqlite::params;
 
+use tauri_app_lib::ledger_transaction::amount::*;
 use tauri_app_lib::test_support;
-use tauri_app_lib::transaction::amount::*;
 
 fn insert_txn(
     conn: &Connection,
@@ -397,7 +397,7 @@ fn convert_to_native_same_currency_is_identity() {
 fn default_currency_code_reads_ledger_setting() {
     let conn = test_support::open();
     assert_eq!(default_currency_code(&conn).unwrap(), "CNY");
-    tauri_app_lib::currencies::set_base_currency(&conn, "USD").unwrap();
+    ledger_currencies::set_base_currency(&conn, "USD").unwrap();
     assert_eq!(default_currency_code(&conn).unwrap(), "USD");
 }
 
@@ -406,7 +406,7 @@ fn default_currency_code_reads_ledger_setting() {
 fn convert_to_native_follows_base_currency_setting() {
     let conn = test_support::open();
     test_support::seed_exchange_rate(&conn, "EUR", "USD", 1.1);
-    tauri_app_lib::currencies::set_base_currency(&conn, "USD").unwrap();
+    ledger_currencies::set_base_currency(&conn, "USD").unwrap();
     assert_eq!(convert_to_native(&conn, 10000, "EUR").unwrap(), 11000);
 }
 

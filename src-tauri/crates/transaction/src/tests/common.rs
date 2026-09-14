@@ -3,8 +3,8 @@
 //! `tauri_app_lib::test_support`（spec #728 / issue #757 / ADR-0084 决策 4/7），本文件剩余
 //! 函数全部为域语义输入构造器——非 DB 夹具，按准入规则（ADR-0084 决策 1）留域内。
 
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::TransactionInput;
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
 
 pub(crate) fn make_input(
     account_id: &str,

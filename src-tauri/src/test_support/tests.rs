@@ -6,7 +6,7 @@ use rusqlite::params;
 
 use super::{assert_balance_cache_matches_realtime, open, seed_account, seed_exchange_rate};
 use super::{seed_fx_rate_history, seed_instrument, seed_investment_setup, seed_price_history};
-use crate::accounts::balance::refresh_account_balances;
+use ledger_accounts::balance::refresh_account_balances;
 
 fn scalar(conn: &rusqlite::Connection, sql: &str) -> i64 {
     conn.query_row(sql, [], |r| r.get(0)).unwrap()

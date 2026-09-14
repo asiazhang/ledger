@@ -1,7 +1,7 @@
 //! IPC 命令壳 · 定时计划（ScheduledTransaction）。
 //!
 //! 全部触碰 DB 的命令 async 化（形状乙，spec #498 / #502）；写命令经壳层统一
-//! 写入口 [`crate::write_entry::write_entry`]（ADR-0073）：仪式（锁、事务、置脏、
+//! 写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：仪式（锁、事务、置脏、
 //! 信号）内化单点；读命令经 `run_db`。计划写入刻意零信号（映射单点显式登记），
 //! 身份仍随入口流动。
 //! `set_auto_execution_enabled` 是设备级运行时镜像推送（纯内存，不触 DB），
@@ -13,17 +13,17 @@
 
 use tauri::State;
 
-use crate::db::DbState;
-use crate::error::Result;
-use crate::read_entry::read_entry;
-use crate::scheduled_transactions as scheduled_domain;
-use crate::scheduled_transactions::{
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_infra::db::DbState;
+use ledger_infra::error::Result;
+use ledger_infra::signals::WriteOp;
+use ledger_scheduled as scheduled_domain;
+use ledger_scheduled::{
     CreateScheduledInput, ExecuteOccurrenceInput, ScheduledTransactionDetail,
     ScheduledTransactionWithExt, SubscriptionSpendOverview, UpdateStatusInput,
     UpdateSubscriptionInput,
 };
-use crate::signals::WriteOp;
-use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn create_scheduled_transaction(
@@ -165,6 +165,6 @@ pub async fn subscription_spend_overview(
 /// 表达不了「这台执行、那台不执行」的设备级语义，也会把自动化意外迁移到新设备。
 #[tauri::command]
 pub fn set_auto_execution_enabled(enabled: bool) -> Result<()> {
-    crate::scheduled_transactions::auto_run::set_enabled(enabled);
+    ledger_scheduled::auto_run::set_enabled(enabled);
     Ok(())
 }

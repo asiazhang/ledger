@@ -13,14 +13,14 @@
 
 use std::path::PathBuf;
 
+use ledger_infra::db::boot::plan_boot;
+use ledger_infra::db::data_location;
+use ledger_infra::db::data_location::DB_FILE_NAME;
+use ledger_infra::db::encryption::enable_encryption_for_file;
+use ledger_infra::error::AppError;
 use tauri::Manager;
 use tauri_app_lib::commands::book;
 use tauri_app_lib::commands::boot::BootCell;
-use tauri_app_lib::db::boot::plan_boot;
-use tauri_app_lib::db::data_location;
-use tauri_app_lib::db::data_location::DB_FILE_NAME;
-use tauri_app_lib::db::encryption::enable_encryption_for_file;
-use tauri_app_lib::error::AppError;
 
 use crate::isolation::isolate_home;
 
@@ -86,7 +86,7 @@ async fn book_registry_command_surface_end_to_end() {
         .await
         .expect("新建应成功");
     // 现场造密文库：产品入口建真库（含迁移，文件落盘）后转密文（e2e 同款接缝）。
-    let db_state = tauri_app_lib::db::open_db_in(&encrypted.dir).unwrap();
+    let db_state = ledger_infra::db::open_db_in(&encrypted.dir).unwrap();
     drop(db_state);
     enable_encryption_for_file(&encrypted.dir.join(DB_FILE_NAME), "pw-1234").unwrap();
 
@@ -98,7 +98,7 @@ async fn book_registry_command_surface_end_to_end() {
     assert!(
         matches!(
             plan.disposition,
-            Ok(tauri_app_lib::db::boot::BootDisposition::AwaitUnlock)
+            Ok(ledger_infra::db::boot::BootDisposition::AwaitUnlock)
         ),
         "密文库应落解锁屏相位，实际 {:?}",
         plan.disposition

@@ -5,9 +5,9 @@ use rusqlite::{Connection, params};
 
 use ledger_infra::signals::WriteEvidence;
 use ledger_infra::test_utils::{CapturedEvent, capture_events};
-use tauri_app_lib::transaction::TransactionBatch;
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::TransactionBatch;
+use tauri_app_lib::ledger_transaction::TransactionInput;
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
 use tracing::Level;
 
 use crate::tests::common::make_buy_input;

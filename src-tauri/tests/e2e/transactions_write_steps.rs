@@ -6,8 +6,8 @@
 
 use cucumber::{given, then, when};
 
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
+use ledger_transaction::TransactionInput;
+use ledger_transaction::amount::TransactionKind;
 
 use crate::common::{capture_expected_error, instrument_id_by_symbol, query_all_transactions};
 use crate::step_inputs::{buy_input, parse_kind, plain_input, trade_input};

@@ -1,8 +1,8 @@
 //! normalize 归一化校验：通用 kind 直通、金额 > 0、transfer 必填目标账户、
 //! 仅接受通用 kind（buy/sell/dividend/split 拒绝）、本位币折算（Amount 接缝）。
 
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::write::writer::{Input, normalize};
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::write::writer::{Input, normalize};
 
 use super::common::{input, insert_category};
 use tauri_app_lib::test_support;

@@ -8,6 +8,10 @@
 //! 引导的 SQL 级重建、位点采纳、schema 偏斜归域单测（`sync_engine::tests`，
 //! ADR-0087），此处只钉「命令壳 → 通道在位 → 拉取 → 整库换入 → 形态对齐」。
 
+use ledger_infra::db::data_location;
+use ledger_infra::db::encryption::{DbFileKind, enable_encryption_for_file, probe_file_kind};
+use ledger_infra::db::{self, DbState, open_connection_with_passphrase};
+use ledger_infra::error::AppError;
 use tauri::Manager;
 use tauri_app_lib::commands::accounts;
 use tauri_app_lib::commands::sync_channel::{
@@ -15,10 +19,6 @@ use tauri_app_lib::commands::sync_channel::{
     publish_sync_checkpoint, sync_now,
 };
 use tauri_app_lib::commands::{boot::BootCell, transactions};
-use tauri_app_lib::db::data_location;
-use tauri_app_lib::db::encryption::{DbFileKind, enable_encryption_for_file, probe_file_kind};
-use tauri_app_lib::db::{self, DbState, open_connection_with_passphrase};
-use tauri_app_lib::error::AppError;
 use tauri_app_lib::test_support::read_scalar_i64;
 
 use crate::isolation::isolate_home;
@@ -40,7 +40,7 @@ fn reattach_app(
 ) -> tauri::AppHandle<tauri::test::MockRuntime> {
     // 写路径副作用接缝接线（issue #1090）：本helper不经 fresh_app，落库前显式
     // 注册余额刷新实现（幂等，进程级）。
-    tauri_app_lib::accounts::balance::install_balance_refresh_hook();
+    ledger_accounts::balance::install_balance_refresh_hook();
     // 交易域接缝接线（issue #1092 / #1180）：与测试工厂同形——六向实现经组合入口
     // 一次装入（幂等，进程级）。
     tauri_app_lib::transaction_wiring::install_all();
@@ -77,9 +77,9 @@ async fn seed_account_and_expense(
     let acc_id = accounts::create_account(
         app.state(),
         app.clone(),
-        tauri_app_lib::accounts::AccountInput {
+        ledger_accounts::AccountInput {
             name: "现金".into(),
-            kind: tauri_app_lib::accounts::AccountType::Cash,
+            kind: ledger_accounts::AccountType::Cash,
             currency_code: "CNY".into(),
             initial_balance_cents: Some(0),
         },

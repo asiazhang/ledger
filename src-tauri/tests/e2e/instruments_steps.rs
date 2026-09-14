@@ -7,9 +7,9 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::db::{new_uuid, now_iso};
-use tauri_app_lib::error::Result;
-use tauri_app_lib::investment::{
+use ledger_infra::db::{new_uuid, now_iso};
+use ledger_infra::error::Result;
+use ledger_investment::{
     InstrumentInput, InstrumentListFilter, InstrumentType, Quote, add_fund_by_code_with,
     add_stock_instrument_with_quote, create_instrument_manual,
     delete_instrument as delete_instrument_domain, fetch_stock_quote_for_add, get_instrument,
@@ -413,7 +413,7 @@ fn add_fund_with_stub_no_nav(
 #[when(expr = "按代码添加基金 {string} 东财查无此码")]
 fn add_fund_with_stub_not_found(world: &mut LedgerWorld, code: String) {
     let mut fetch = |requested: &str, _market: &str| -> Result<Quote> {
-        Err(tauri_app_lib::error::AppError::Invalid(format!(
+        Err(ledger_infra::error::AppError::Invalid(format!(
             "查无基金代码 {requested}，请核对后重试",
         )))
     };
@@ -466,8 +466,8 @@ fn add_instrument_with_stub_quote(
     price: f64,
     kind_hint: String,
 ) {
-    let kind = tauri_app_lib::investment::InstrumentType::parse(&kind_hint)
-        .expect("未知类型提示（stock/etf）");
+    let kind =
+        ledger_investment::InstrumentType::parse(&kind_hint).expect("未知类型提示（stock/etf）");
     let mut fetch = move |code: &str, market: &str| -> Result<Quote> {
         if market == quote_market {
             Ok(Quote {
@@ -482,7 +482,7 @@ fn add_instrument_with_stub_quote(
                 nav_date: None,
             })
         } else {
-            Err(tauri_app_lib::error::AppError::codedp(
+            Err(ledger_infra::error::AppError::codedp(
                 "sync.stock-not-found",
                 format!("查无股票代码 {code}，请核对后重试"),
                 &[code],
@@ -496,7 +496,7 @@ fn add_instrument_with_stub_quote(
 fn add_instrument_with_stub_all_miss(world: &mut LedgerWorld, channel: String, code: String) {
     let mut fetch = |code: &str, market: &str| -> Result<Quote> {
         let _ = market;
-        Err(tauri_app_lib::error::AppError::codedp(
+        Err(ledger_infra::error::AppError::codedp(
             "sync.stock-not-found",
             format!("查无股票代码 {code}，请核对后重试"),
             &[code],
@@ -512,7 +512,7 @@ fn add_instrument_with_stub_temporary_failure(
     code: String,
 ) {
     let mut fetch = |_code: &str, _market: &str| -> Result<Quote> {
-        Err(tauri_app_lib::error::AppError::Io("东财临时不可达".into()))
+        Err(ledger_infra::error::AppError::Io("东财临时不可达".into()))
     };
     run_add_instrument(world, channel, code, &mut fetch);
 }

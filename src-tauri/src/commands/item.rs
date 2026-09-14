@@ -3,14 +3,14 @@
 //! 七个命令。
 //!
 //! 只做参数解包、事务壳与信号发射，不含业务语义；行为权威在
-//! [`crate::item::domain`]（阶段 1 域目录化，#397 / ADR-0056）。
+//! [`ledger_item::domain`]（阶段 1 域目录化，#397 / ADR-0056）。
 //!
 //! 信号约定：物品是独立领域（非参考数据，ADR-0014），复用 `ledger:changed`
 //! 同名事件——物品 store 与消费界面订阅后自动重拉。信号经统一写入口按写操作
 //! 身份发射（ADR-0073）；域内 notify 参数保留为 BDD 计数注入点（ADR-0044
 //! 决策 8），生产壳层传空回调。
 //!
-//! 写命令经壳层统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
+//! 写命令经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
 //! 仪式（锁、事务、置脏、信号）内化单点；读命令经 `run_db`（形状乙）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
@@ -19,13 +19,13 @@
 
 use tauri::State;
 
-use crate::db::DbState;
-use crate::error::Result;
-use crate::item::domain;
-use crate::item::{ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemWithDailyCost};
-use crate::read_entry::read_entry;
-use crate::signals::WriteOp;
-use crate::write_entry::{Outcome, write_entry};
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_infra::db::DbState;
+use ledger_infra::error::Result;
+use ledger_infra::signals::WriteOp;
+use ledger_item::domain;
+use ledger_item::{ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemWithDailyCost};
 
 #[tauri::command]
 pub async fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemWithDailyCost>> {

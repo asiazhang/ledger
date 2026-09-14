@@ -1,6 +1,6 @@
 //! 定时计划步骤的跨主题私有辅助（issue #263 拆分约定：跨主题 helper 收此）。
 
-use tauri_app_lib::scheduled_transactions::execute_occurrence;
+use ledger_scheduled::execute_occurrence;
 
 use crate::world::LedgerWorld;
 

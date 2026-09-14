@@ -4,9 +4,7 @@
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::scheduled_transactions::{
-    ScheduledTransactionDetail, expand_occurrences, get_plan_detail,
-};
+use ledger_scheduled::{ScheduledTransactionDetail, expand_occurrences, get_plan_detail};
 
 use crate::world::LedgerWorld;
 
@@ -37,7 +35,7 @@ fn mark_first_pending_failed(world: &mut LedgerWorld) {
         .execute(
             "UPDATE scheduled_transaction_occurrences SET status='failed', updated_at=?2, \
              version=version+1 WHERE id=?1",
-            params![occ_id, tauri_app_lib::db::now_iso()],
+            params![occ_id, ledger_infra::db::now_iso()],
         )
         .unwrap();
     world.plan.last_occurrence_id = Some(occ_id);

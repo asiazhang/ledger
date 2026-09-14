@@ -27,11 +27,11 @@ use rusqlite::Connection;
 
 use crate::tests::common::make_input;
 use ledger_infra::error::AppError;
-use tauri_app_lib::sync_engine::read_ops;
+use ledger_sync_engine::read_ops;
+use tauri_app_lib::ledger_transaction::TransactionCommand;
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::*;
 use tauri_app_lib::test_support::{self, seed_account, seed_instrument};
-use tauri_app_lib::transaction::TransactionCommand;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::*;
 
 /// 伪造/重放载荷构造器：随命令携带的归一化行（协议 Replay 形态的装配输入）。
 fn carried_row(kind: TransactionKind, account: &str, amount: i64) -> NormalizedTransaction {
@@ -66,7 +66,7 @@ fn seed_buy_and_convert(conn: &Connection) -> (String, String) {
     seed_account(conn, "acc-cv", "基金户", "investment", "CNY", 0);
     seed_instrument(conn, "inst-out", "006793", "转出基金", "CNY", "unknown");
     seed_instrument(conn, "inst-in", "519700", "转入基金", "CNY", "unknown");
-    let buy_input = tauri_app_lib::transaction::TransactionInput {
+    let buy_input = tauri_app_lib::ledger_transaction::TransactionInput {
         kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "CNY".into(),
@@ -79,7 +79,7 @@ fn seed_buy_and_convert(conn: &Connection) -> (String, String) {
         ..make_input("acc-cv", TransactionKind::Buy, 0, "2026-01-10")
     };
     let buy_id = create_transaction_internal(conn, buy_input).unwrap().id;
-    let convert_input = tauri_app_lib::transaction::TransactionInput {
+    let convert_input = tauri_app_lib::ledger_transaction::TransactionInput {
         kind: TransactionKind::Convert,
         amount_cents: 0,
         account_id: "acc-cv".into(),
@@ -115,7 +115,7 @@ fn create_dividend_same_terminal_state_both_forms() {
     seed(&conn_local);
     let local_id = create_transaction_internal(
         &conn_local,
-        tauri_app_lib::transaction::TransactionInput {
+        tauri_app_lib::ledger_transaction::TransactionInput {
             instrument_id: Some("inst-div".into()),
             ..make_input("acc-div", TransactionKind::Dividend, 3000, "2026-05-04")
         },
@@ -131,7 +131,7 @@ fn create_dividend_same_terminal_state_both_forms() {
         &TransactionCommand::Create {
             id: "sync-div-1".into(),
             row: carried_row(TransactionKind::Dividend, "acc-div", 3000),
-            investment: Some(tauri_app_lib::transaction::InvestmentCommandFields {
+            investment: Some(tauri_app_lib::ledger_transaction::InvestmentCommandFields {
                 instrument_id: "inst-div".into(),
                 quantity: 0.0,
                 price_cents: 0,
@@ -384,12 +384,14 @@ fn create_split_local_and_replay_enter_domain_guards() {
             id: "sync-split-2".into(),
             row: carried_row(TransactionKind::Split, "acc-split", 0),
             investment: None,
-            split: Some(tauri_app_lib::transaction::command::SplitCommandFields {
-                instrument_id: "inst-missing".into(),
-                delta_quantity: 5.0,
-                final_quantity: 5.0,
-                total_cost_cents: 0,
-            }),
+            split: Some(
+                tauri_app_lib::ledger_transaction::command::SplitCommandFields {
+                    instrument_id: "inst-missing".into(),
+                    delta_quantity: 5.0,
+                    final_quantity: 5.0,
+                    total_cost_cents: 0,
+                },
+            ),
             convert: None,
         },
     )

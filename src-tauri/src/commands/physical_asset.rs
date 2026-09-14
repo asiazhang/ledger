@@ -10,7 +10,7 @@
 //! （ADR-0073）；域内 notify 参数保留为 BDD 计数注入点（ADR-0044 决策 8），
 //! 生产壳层传空回调。
 //!
-//! 写命令经壳层统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
+//! 写命令经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
 //! 仪式（锁、事务、置脏、信号）内化单点；读命令经 `run_db`（形状乙）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
@@ -19,15 +19,15 @@
 
 use tauri::State;
 
-use crate::db::DbState;
-use crate::error::Result;
-use crate::physical_asset::{
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_infra::db::DbState;
+use ledger_infra::error::Result;
+use ledger_infra::signals::WriteOp;
+use ledger_physical_asset::{
     self as physical_asset_domain, PhysicalAsset, PhysicalAssetDisposeInput, PhysicalAssetInput,
     PhysicalAssetList, PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
 };
-use crate::read_entry::read_entry;
-use crate::signals::WriteOp;
-use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_physical_assets(

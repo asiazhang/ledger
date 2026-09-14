@@ -30,7 +30,7 @@ Rust 根（`src-tauri/`）是 workspace：根包仍是 tauri 应用包（壳层�
 
 下层不直调上层的路径内副作用：写路径副作用挂载点（置脏触发、余额重算、计划来源解析）按「下层定义注册点、上层注册实现、壳层启动时接线」反转，不为消除合法依赖引入端口/事件反转（ADR-0112 决策 5）；合法依赖（上层依赖下层）直呼。
 
-基础设施（`ledger-infra`，`src-tauri/crates/infra/`）只承诺两条：不依赖任何域 crate、不定义账本数据的口径与规则（账本数据的语义与算术一律归域，基础设施不得对账本数据表执行 DML）；跨层共享机制、引导层不变量、单点收口用的闭集与键名表在此合法（ADR-0111）。crate 内分四区：原语（顶层单文件）、db（库与连接机制）、boot（引导层）、shell_support（只被壳层消费的机制，暂住，随壳层收敛迁出）；events、signals、settings 为共享接缝。内部依赖方向：原语 ← db ← boot ← shell_support。
+基础设施（`ledger-infra`，`src-tauri/crates/infra/`）只承诺两条：不依赖任何域 crate、不定义账本数据的口径与规则（账本数据的语义与算术一律归域，基础设施不得对账本数据表执行 DML）；跨层共享机制、引导层不变量、单点收口用的闭集与键名表在此合法（ADR-0111）。crate 内分三区：原语（顶层单文件）、db（库与连接机制）、boot（引导层）；events、signals、settings 为共享接缝。内部依赖方向：原语 ← db ← boot 单向。壳层统一读写入口、载荷脱敏与日志初始化住根包 `src-tauri/src/shell_support/`（#1108 迁出正住址，暂住安排退役，见 ADR-0111 修订注记）——壳层机制不进基础设施，新只被壳层消费的机制直接归壳层。
 
 协议（`ledger-sync-protocol`）：多端同步的最底层共享协议，内容清单见 `check-structure.ts` 的 CRATES；业务域只依赖协议 crate，不依赖多端同步域。
 

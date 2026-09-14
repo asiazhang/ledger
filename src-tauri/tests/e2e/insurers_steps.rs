@@ -1,7 +1,7 @@
 use cucumber::{given, then, when};
 
-use tauri_app_lib::error::{AppError, ErrClass};
-use tauri_app_lib::policy::{
+use ledger_infra::error::{AppError, ErrClass};
+use ledger_policy::{
     InsurerInput, InsurerUpdateInput, create_insurer, create_insurer_by_name,
     delete_insurer as delete_insurer_domain, list_insurers as list_insurers_domain,
     update_insurer as update_insurer_domain,

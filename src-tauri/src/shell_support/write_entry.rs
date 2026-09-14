@@ -1,13 +1,14 @@
-//! 壳机制暂住（ADR-0111 决策 2 / #1130）：本模块只被壳层消费，正住址是壳层，
-//! 随 #1086 P5 壳层收敛迁出；不得作为基础设施范式被引用。
+//! 壳层机制（spec #1086 P5 / #1108 壳层收敛）：本模块只被壳层消费，正住址即
+//! 壳层根包；曾暂住 `ledger-infra::shell_support`（ADR-0111 决策 2 / #1130），
+//! #1108 迁回，不得被基础设施或域引用。
 //!
 //! 壳层统一写入口（ADR-0073，spec #523）：连接句柄、发射器、写操作身份、业务闭包进，
-//! 其余全部内化——[`crate::db::run_db`]（执行线程与 span 传播，ADR-0069，组合而非
-//! 替代）→ [`crate::db::write`]（锁失败映射、事务、提交点置脏，ADR-0032）→
-//! [`crate::signals::signals_for`]（映射单点，ADR-0044）→ 发射。
+//! 其余全部内化——[`ledger_infra::db::run_db`]（执行线程与 span 传播，ADR-0069，组合而非
+//! 替代）→ [`ledger_infra::db::write`]（锁失败映射、事务、提交点置脏，ADR-0032）→
+//! [`ledger_infra::signals::signals_for`]（映射单点，ADR-0044）→ 发射。
 //!
 //! 写命令的六行仪式（克隆连接句柄 → 送阻塞线程池 → 锁失败映射 → 开事务置脏 →
-//! 发信号）收敛进本入口一处实现；写操作身份（[`crate::signals::WriteOp`]）作为参数
+//! 发信号）收敛进本入口一处实现；写操作身份（[`ledger_infra::signals::WriteOp`]）作为参数
 //! 随闭包流动，两壳「命令 → 身份」声明表消亡为源码扫描派生物（守门见
 //! `signals_cross_check`，ADR-0073 决策 5）。命令壳退回到它该有的样子：
 //! 解包 + 一行调用。
@@ -16,10 +17,10 @@
 //! - **发射时序**：事务提交成功后发射（写失败早退不发）；发射走既有投递机制
 //!   （`SignalEmitter::post`，ADR-0054 主线程非阻塞投递），发射失败静默忽略、
 //!   不影响写结果（ADR-0044）。「发不发、发哪个」判定单点仍是
-//!   [`crate::signals::signals_for`]（穷尽 match，身份合法性唯一裁决者）；
+//!   [`ledger_infra::signals::signals_for`]（穷尽 match，身份合法性唯一裁决者）；
 //! - **结果证据**：经 [`Outcome`] 包装随闭包返回必达（ADR-0073 决策 2）——
 //!   [`Outcome::Silent`]（零证据）/ [`Outcome::Evidenced`]（携带
-//!   [`crate::signals::WriteEvidence`]），条件信号（价格写入 / 黑洞即建 / 商户即建）
+//!   [`ledger_infra::signals::WriteEvidence`]），条件信号（价格写入 / 黑洞即建 / 商户即建）
 //!   的「条件」一半由证据承载，「条件信号身份误用静默入口」的漂移被类型消灭；
 //! - **发射器参数归一**（ADR-0073 决策 3）：`Option<&dyn SignalEmitter>`——
 //!   [`tauri::AppHandle`] 即该接缝的生产实现（ADR-0054），IPC 壳透传 `Some(&app)`；
@@ -31,7 +32,7 @@
 //!   归因串与身份的漂移由扫描守门顺带核对（ADR-0073 决策 4/5）。
 //!
 //! 入口零豁免概念（ADR-0073 决策 6）：不设 bypass-dirty 参数，置脏豁免仍由
-//! [`crate::db::write`]/`settings.rs` 内层单点裁决（ADR-0032）；Restore 路径与
+//! [`ledger_infra::db::write`]/`settings.rs` 内层单点裁决（ADR-0032）；Restore 路径与
 //! 其余不经 `db::write` 的声明写命令不经本入口（例外白名单登记，见
 //! `signals_cross_check`）。域层写路径（ADR-0033 接缝）不纳入——本入口壳层专用。
 
@@ -40,12 +41,12 @@ use std::time::Instant;
 
 use rusqlite::Connection;
 
-use crate::db::probe_lock_hold;
-use crate::db::run_db;
-use crate::db::write as db_write;
-use crate::error::{AppError, Result};
-use crate::events::SignalEmitter;
-use crate::signals::{WriteEvidence, WriteOp, emit_for};
+use ledger_infra::db::probe_lock_hold;
+use ledger_infra::db::run_db;
+use ledger_infra::db::write as db_write;
+use ledger_infra::error::{AppError, Result};
+use ledger_infra::events::SignalEmitter;
+use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
 
 /// 写闭包的结果证据包装（ADR-0073 决策 2）：[`write_entry`] 的业务闭包统一返回
 /// `Result<Outcome<T>>`——单形态，证据只能从返回值来，「携带证据」是类型要求
@@ -65,7 +66,7 @@ pub enum Outcome<T> {
 /// - `span`：SQL 归因串（`&'static str`，IPC 命令名 / HTTP 端点键，语义同
 ///   [`run_db`] 的 `command` 参数）；
 /// - `emitter`：`None` 跳过发射（两侧既有测试态语义）；
-/// - 闭包业务错误原样传播、闭包 panic 归一化为 [`crate::error::AppError::Io`]
+/// - 闭包业务错误原样传播、闭包 panic 归一化为 [`ledger_infra::error::AppError::Io`]
 ///   （与 [`run_db`]/ADR-0069 先例同形）；写失败早退不发信号；
 /// - 发生在写事务提交成功之后、调用线程上（与迁移前壳层「await 后发射」
 ///   逐点同位）。
@@ -110,7 +111,7 @@ impl SegmentLock<'_> {
     }
 
     /// 短暂取一次连接执行一次读写。闭包业务 [`Result`] 原样传播，锁中毒映射
-    /// 与 [`crate::db::write`] / [`read_entry`](crate::read_entry::read_entry)
+    /// 与 [`ledger_infra::db::write`] / [`read_entry`](crate::shell_support::read_entry::read_entry)
     /// 同形；持锁时长照守（超阈值记日志、不静默，见 `db::probe_lock_hold`）。
     pub fn with_connection<R, F>(&self, use_connection: F) -> Result<R>
     where
@@ -208,17 +209,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::AppError;
-    use crate::events::{BACKUPS_CHANGED, LEDGER_CHANGED, PRICES_CHANGED};
-    use crate::signals::{WriteEvidence, WriteOp};
-    use crate::test_utils::{GATED_TIMEOUT, GatedEmitter};
+    use ledger_infra::error::AppError;
+    use ledger_infra::events::{BACKUPS_CHANGED, LEDGER_CHANGED, PRICES_CHANGED};
+    use ledger_infra::signals::{WriteEvidence, WriteOp};
+    use ledger_infra::test_utils::{GATED_TIMEOUT, GatedEmitter};
     use rusqlite::params;
     use std::sync::Arc;
 
     /// 内存库 + 闸门式假发射器的测试夹具。
     fn fixture() -> (Arc<Mutex<Connection>>, GatedEmitter) {
         // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
-        let conn = tauri_app_lib::test_support::open();
+        let conn = crate::test_support::open();
         (Arc::new(Mutex::new(conn)), GatedEmitter::gated())
     }
 
@@ -263,8 +264,8 @@ mod tests {
                         "测试",
                         "expense",
                         // 夹具簿记戳引用工厂固定时刻（ADR-0084 决策 5）。
-                        tauri_app_lib::test_support::FIXED_NOW,
-                        tauri_app_lib::test_support::FIXED_NOW,
+                        crate::test_support::FIXED_NOW,
+                        crate::test_support::FIXED_NOW,
                         1,
                         "device-1"
                     ],
@@ -520,15 +521,15 @@ mod tests {
     fn segmented_entry_verdict_dirty_on_success_and_skip_on_zero_write_failure() {
         // 提交点后置动作接线（db::tests::common 同款：dev-dependency 环下静态
         // 身份分离，显式接上备份域实现，幂等）。
-        crate::db::register_after_commit_hook(tauri_app_lib::backup::after_commit_hook);
+        ledger_infra::db::register_after_commit_hook(ledger_backup::after_commit_hook);
         fn dirty_of(conn: &Connection) -> bool {
-            tauri_app_lib::backup::get_state(conn)
+            ledger_backup::get_state(conn)
                 .expect("调度状态应可读")
                 .dirty
         }
         fn reset_dirty(conn: &Connection) {
-            use crate::settings::SettingKey;
-            crate::settings::set(conn, SettingKey::AutoBackupDirty, &false)
+            use ledger_infra::settings::SettingKey;
+            ledger_infra::settings::set(conn, SettingKey::AutoBackupDirty, &false)
                 .expect("重置脏标记应成功");
         }
 
@@ -590,9 +591,9 @@ mod tests {
     /// 仍报错，界面照收尾裁决自动刷新一次）。
     #[test]
     fn segmented_entry_failure_with_writes_marks_dirty_and_emits_signal() {
-        crate::db::register_after_commit_hook(tauri_app_lib::backup::after_commit_hook);
+        crate::db::register_after_commit_hook(ledger_backup::after_commit_hook);
         fn dirty_of(conn: &Connection) -> bool {
-            tauri_app_lib::backup::get_state(conn)
+            ledger_backup::get_state(conn)
                 .expect("调度状态应可读")
                 .dirty
         }
@@ -600,7 +601,8 @@ mod tests {
         let (conn, emitter) = fixture();
         {
             let guard = conn.lock().expect("锁应可取");
-            crate::settings::set(&guard, crate::settings::SettingKey::AutoBackupDirty, &false)
+            use ledger_infra::settings::SettingKey;
+            ledger_infra::settings::set(&guard, SettingKey::AutoBackupDirty, &false)
                 .expect("重置脏标记应成功");
         }
         let err = tauri::async_runtime::block_on(write_entry_segmented::<(), _>(

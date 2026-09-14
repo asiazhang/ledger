@@ -12,10 +12,10 @@
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::error::AppError;
-use tauri_app_lib::transaction::TransactionBatch;
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
+use ledger_infra::error::AppError;
+use ledger_transaction::TransactionBatch;
+use ledger_transaction::TransactionInput;
+use ledger_transaction::amount::TransactionKind;
 
 use crate::common::{instrument_id_by_symbol, query_all_transactions};
 use crate::step_inputs::existing_input;

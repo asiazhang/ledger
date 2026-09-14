@@ -538,7 +538,7 @@ fn hidden_account_transactions_included_in_reports() {
     insert_tx(&conn, "tx-normal", "income", 1000, "acc-normal", None);
     insert_tx(&conn, "tx-hidden", "expense", 2000, "acc-hidden", None);
 
-    let summary = tauri_app_lib::reports::monthly_summary_rows(&conn, 2026, None, None)
+    let summary = ledger_reports::monthly_summary_rows(&conn, 2026, None, None)
         .unwrap()
         .remove(0);
     assert_eq!(summary.income_cents, 1000);

@@ -4,7 +4,7 @@
 //! 注册路径与前端调用保持不变。
 //!
 //! 全部命令 async 化（形状乙，spec #498 / #501）；写命令经壳层统一写入口
-//! [`crate::write_entry::write_entry`]（ADR-0073）：仪式内化单点，参考写入成功
+//! [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：仪式内化单点，参考写入成功
 //! 发参考失效信号（映射单点判定，ADR-0044）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
@@ -13,13 +13,13 @@
 
 use tauri::State;
 
-use crate::db::DbState;
-use crate::error::Result;
-use crate::merchants as merchant_domain;
-use crate::merchants::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};
-use crate::read_entry::read_entry;
-use crate::signals::WriteOp;
-use crate::write_entry::{Outcome, write_entry};
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_infra::db::DbState;
+use ledger_infra::error::Result;
+use ledger_infra::signals::WriteOp;
+use ledger_merchants as merchant_domain;
+use ledger_merchants::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};
 
 /// 商户列表：默认仅未删除；`include_deleted=true` 返回含软删全量（交易筛选下拉用）。
 #[tauri::command]

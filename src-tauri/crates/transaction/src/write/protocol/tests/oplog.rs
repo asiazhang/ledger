@@ -8,15 +8,15 @@ use rusqlite::Connection;
 
 use crate::tests::common::{make_buy_input, make_input};
 use ledger_infra::db;
-use tauri_app_lib::sync_engine::{DomainCommand, SyncOp, read_ops};
+use ledger_sync_engine::{DomainCommand, SyncOp, read_ops};
+use tauri_app_lib::ledger_transaction::*;
 use tauri_app_lib::test_support;
-use tauri_app_lib::transaction::*;
 // 双实例辨析（dev-dependency 环）：DomainCommand 载荷经 tauri_app_lib 的
 // ledger-transaction 实例反序列化，解构须用同实例类型；crate 本地类型仅用于
 // 经行为入口造数。
 use ledger_sync_protocol::device::device_id;
-use tauri_app_lib::transaction::TransactionCommand;
-use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::TransactionCommand;
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
 
 /// 读全部 op 的便捷形态（断言权威：同步引擎公开接口）。
 fn ops(conn: &Connection) -> Vec<SyncOp> {

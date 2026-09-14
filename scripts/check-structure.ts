@@ -113,9 +113,10 @@ export const WHITELIST: readonly WhitelistEntry[] = [
 
 /**
  * 基础设施 crate 的模块清单（spec #1086 / issue #1088）：路径相对
- * `src-tauri/crates/infra/src`。数据库、错误、设置、文件工具、日志、事件、
- * 信号、闭集与壳层统一读写入口全量归位于此——它们对根包只以再导出面存在，
- * 故模块级守门（对壳层零依赖、基础设施→域认许边）随之落到 crate 根下扫描。
+ * `src-tauri/crates/infra/src`。数据库、错误、设置、文件工具、事件、信号与
+ * 闭集全量归位于此，模块级守门（对壳层零依赖、基础设施→域认许边）落在
+ * crate 根下扫描；壳层统一读写入口与载荷脱敏（shell_support）已随 #1108
+ * 迁出至根包 `src/shell_support`，不再入本清单。
  */
 export const INFRA_MODULES: readonly WhitelistEntry[] = [
   { path: 'lib.rs', layer: '基础设施', note: 'crate 根声明文件（#1134 双向全等起入清单）：pub mod 声明与再导出面（含 test_utils cfg 门，ADR-0111 决策 5 / #1132）——模块清单与 crate 实形的双向全等含根声明文件'},
@@ -128,7 +129,6 @@ export const INFRA_MODULES: readonly WhitelistEntry[] = [
   { path: 'fs_util.rs', layer: '基础设施', note: '文件级原子操作工具（备份与 DataLocation 搬迁共用，#408 纳入守门）' },
   { path: 'events.rs', layer: '基础设施', note: '事件发射机制（ADR-0054，#408 纳入守门；消费方跨出壳层——备份域、同步域，不随壳机制分组，ADR-0111 决策 2）' },
   { path: 'closed_set.rs', layer: '基础设施', note: '闭集字符串枚举宏（ADR-0108；模式先例 signals/write_op.rs write_op_set!，ADR-0102）' },
-  { path: 'shell_support', layer: '基础设施', note: '壳机制暂住分组（ADR-0111 决策 2 / #1130）：壳层统一写入口 write_entry（ADR-0073）、读入口 read_entry（ADR-0104）、IPC 载荷脱敏 redact、日志初始化 logger——只被壳层消费，正住址是壳层（#1086 P5 迁出）；crate 根再导出保持原调用点路径' },
   { path: 'test_utils.rs', layer: '基础设施', note: '测试器具（捕获 tracing 事件的 Layer / 闸门式假发射器，#1088 随类型身份约束归位；`#[cfg(any(test, feature = "test-utils"))]` + `#[doc(hidden)]`，默认不进生产编译，#1132）' },
 ]
 
@@ -609,13 +609,13 @@ export const CRATES: readonly CrateEntry[] = [
     name: 'tauri-app',
     dir: '.',
     layer: CRATE_LAYER.SHELL,
-    note: 'tauri 应用包：命令注册扫描、IPC/HTTP 壳与集成测试入口；过渡期仍承载尚未迁出的域，随 P1–P5 逐域迁出',
+    note: 'tauri 应用包：命令注册扫描、IPC/HTTP 壳、shell_support 壳机制（#1108 自基础设施迁入正住址）与集成测试入口；域业务语义已随 P1–P5 全量拆出（#1091–#1107），不再承载域目录',
   },
   {
     name: 'ledger-infra',
     dir: 'crates/infra',
     layer: CRATE_LAYER.INFRA,
-    note: '基础设施 crate（#1088 全量归位：数据库/错误/设置/文件工具/日志/事件/信号/闭集/壳层统一读写入口 + 载荷脱敏；对根包只以再导出面存在，基础设施→域生产边为 0——提交点后置动作经注册点反转，接线在壳层启动）',
+    note: '基础设施 crate（#1088 全量归位：数据库/错误/设置/文件工具/事件/信号/闭集；#1108 壳层统一读写入口与载荷脱敏迁出至根包 src/shell_support——基础设施不再承载只被壳层消费的机制，再导出面同步清除、消费方以 crate 本名直呼；基础设施→域生产边为 0——提交点后置动作经注册点反转，接线在壳层启动）',
   },
   {
     name: 'ledger-sync-protocol',
@@ -907,8 +907,9 @@ interface InfraDomainEdge {
  * #1088 挂载点清点（「数量有记录、不新增」）：原首条 `db/mod.rs→backup`
  * （ADR-0032 连接层提交点置脏单点，#246）在生产代码里被注册点反转消除——
  * 基础设施只留调用时机、备份域提供实现、壳层启动接线，crate 依赖图不再有
- * 基础设施→业务域边；清单因此由 5 条降为 4 条，且余下 4 条全是内联 cfg(test)
- * 经测试工厂建库的测试专用边（生产挂载点 0 条）。
+ * 基础设施→业务域边；清单因此由 5 条降为 4 条。#1108 shell_support 迁出根包，
+ * 其三条（logger/write_entry/read_entry→test_support）随迁退役，余下 1 条仍是
+ * 内联 cfg(test) 经测试工厂建库的测试专用边（生产挂载点 0 条）。
  */
 const INFRA_DOMAIN_ALLOWED_EDGES: readonly InfraDomainEdge[] = [
   {
@@ -916,33 +917,18 @@ const INFRA_DOMAIN_ALLOWED_EDGES: readonly InfraDomainEdge[] = [
     domain: 'test_support',
     reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/取常量（#758 收口），测试专用边、非产品依赖',
   },
-  {
-    file: 'shell_support/logger.rs',
-    domain: 'test_support',
-    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库（#758 收口），测试专用边、非产品依赖（#1130 起住 shell_support/）',
-  },
-  {
-    file: 'shell_support/write_entry.rs',
-    domain: 'test_support',
-    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/簿记戳引用 FIXED_NOW（#758 收口），测试专用边、非产品依赖（#1130 起住 shell_support/）',
-  },
-  {
-    file: 'shell_support/read_entry.rs',
-    domain: 'test_support',
-    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/种子（#758 收口），测试专用边、非产品依赖（#1130 起住 shell_support/）',
-  },
 ]
 
 /**
- * crate 内块间禁边（ADR-0111 决策 4 / #1134）：子目录级反向依赖断言——
- * 原语 ← db/ ← boot/ ← shell_support/ 单向，events / signals / settings 是被
- * 各层引用的共享接缝；db 不得引用 boot / shell_support / signals，boot 不得
- * 引用 shell_support。键 = 拥有该文件的块（路径首段），值 = 禁止引用的目标块；
- * 顶层单文件（ids / error / fs_util 等原语与共享接缝）不受块间禁边约束。
+ * crate 内块间禁边（ADR-0111 决策 4 / #1134；#1108 修订）：子目录级反向依赖
+ * 断言——原语 ← db/ ← boot/ 单向，events / signals / settings 是被各层引用的
+ * 共享接缝；db 不得引用 boot / signals。shell_support 靶随 #1108 迁出根包退役
+ *（块在 crate 内已不存在，残留引用归编译期拒绝）。键 = 拥有该文件的块
+ *（路径首段），值 = 禁止引用的目标块；顶层单文件（ids / error / fs_util 等
+ * 原语与共享接缝）不受块间禁边约束。
  */
 const INFRA_BLOCK_FORBIDDEN: Record<string, readonly string[]> = {
-  db: ['boot', 'shell_support', 'signals'],
-  boot: ['shell_support'],
+  db: ['boot', 'signals'],
 }
 
 /** 块间依赖形态：与 INFRA_DOMAIN_DEP_PATTERN 同款形态——crate 根前缀 + 目标块名，
@@ -1392,7 +1378,7 @@ function firstCfgLineBefore(lines: readonly string[], declIndex: number): string
 
 /**
  * 测试器具生产编译门的「放行测试」判定（ADR-0111 决策 5 / issue #1132）：声明
- * （`pub mod test_utils;` / `pub use ledger_infra::test_utils;`）前的属性链中须有
+ * （`pub mod test_utils;` 等）前的属性链中须有
  * 一条单行 `#[cfg(...)]`，且该 cfg 在 `test` 或 `test-utils` feature 下放行——无门、
  * `#[cfg(not(test))]` 等反向门、与测试无关的 cfg 一律不合格（判为生产会编译）。
  * 声明前允许注释与其它属性（如 `#[doc(hidden)]`），属性顺序不敏感。
@@ -1660,24 +1646,18 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
   // 编译，由构建形态保证，而非注释约定。删除即变红——clippy 走
   // `--all-features`、测试走 dev-dependency，都发现不了门被摘掉：
   //   ① infra `test_utils` 模块声明须带「放行测试」的 cfg 门（无门/反向门即生产编译）；
-  //   ② 根包 `test_utils` 再导出须带同一形态的门（无门即生产构建解析失败）；
-  //   ③ 生产依赖（`[dependencies]` 与 target 变体）不得对 ledger-infra 启用 test-utils；
-  //   ④ 根包与 infra 的 `[features] default` 不得包含 test-utils（默认 feature 即生产）；
-  //   ⑤ 投资五节标题锚点常量（issue #1185，住 `handlers/import.rs`）须带同一形态的门；
-  //   ⑥ 锚点再导出（`api_server/mod.rs`）须带同一形态的门。
+  //   ② 生产依赖（`[dependencies]` 与 target 变体）不得对 ledger-infra 启用 test-utils；
+  //   ③ 根包与 infra 的 `[features] default` 不得包含 test-utils（默认 feature 即生产）；
+  //   ④ 投资五节标题锚点常量（issue #1185，住 `handlers/import.rs`）须带同一形态的门；
+  //   ⑤ 锚点再导出（`api_server/mod.rs`）须带同一形态的门。
+  // （根包 `test_utils` 再导出面已随 #1108 清除——测试器具经 dev-dependency 以
+  // `ledger_infra::test_utils` 直达，根包侧门条目随之退役；再引入无门再导出会被
+  // 生产构建解析失败拦下。）
   const gatedDecls = [
     {
       file: join(srcTauriDir, INFRA_SRC_REL, 'lib.rs'),
       re: /^\s*pub\s+mod\s+test_utils\s*;/,
       label: 'pub mod test_utils;',
-      gate: 'test_utils 生产编译门',
-      src: 'ADR-0111 决策 5 / issue #1132',
-      productionArtifact: '测试器具',
-    },
-    {
-      file: join(srcTauriDir, 'src', 'lib.rs'),
-      re: /^\s*pub\s+use\s+ledger_infra::test_utils\s*;/,
-      label: 'pub use ledger_infra::test_utils;',
       gate: 'test_utils 生产编译门',
       src: 'ADR-0111 决策 5 / issue #1132',
       productionArtifact: '测试器具',
@@ -2136,7 +2116,7 @@ function scanModuleEntries(
       }
       if (isInfra) {
         // crate 内块间反向依赖（ADR-0111 决策 4 / #1134）：db 不得引用
-        // boot / shell_support / signals；boot 不得引用 shell_support；
+        // boot / signals（shell_support 已随 #1108 迁出根包）；
         // 认许边逐条留痕（INFRA_BLOCK_ALLOWED_EDGES），清单之外即红。
         const block = f.rel.split('/')[0]
         const forbiddenTargets = INFRA_BLOCK_FORBIDDEN[block]
@@ -2149,8 +2129,8 @@ function scanModuleEntries(
             problems.push(
               `✗ crate 内反向依赖：${block} 引用 ${hit.captured} → ${f.rel}:${hit.line}（${hit.match}）\n` +
                 `    ${hit.text}\n` +
-                `    crate 内分层（ADR-0111 决策 4）：原语 ← db ← boot ← shell_support 单向，` +
-                `db 不得引用 boot/shell_support/signals，boot 不得引用 shell_support；` +
+                `    crate 内分层（ADR-0111 决策 4；#1108 shell_support 迁出根包）：` +
+                `原语 ← db ← boot 单向，db 不得引用 boot/signals；` +
                 `设计意图边须逐条留痕于本脚本 INFRA_BLOCK_ALLOWED_EDGES（附 ADR 指针），` +
                 `或把逻辑下沉到更低的块`,
             )

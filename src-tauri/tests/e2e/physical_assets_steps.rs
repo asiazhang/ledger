@@ -8,7 +8,7 @@
 
 use cucumber::{given, then, when};
 
-use tauri_app_lib::physical_asset::{
+use ledger_physical_asset::{
     PhysicalAssetInput, create_physical_asset as create_physical_asset_domain,
     list_physical_assets as list_physical_assets_domain,
 };
@@ -128,7 +128,7 @@ fn get_physical_asset_detail(world: &mut LedgerWorld) {
         .last_physical_asset_id
         .clone()
         .expect("读取详情前应先创建实物资产");
-    match tauri_app_lib::physical_asset::get_physical_asset(&world_conn!(world), &id) {
+    match ledger_physical_asset::get_physical_asset(&world_conn!(world), &id) {
         Ok(asset) => world.asset.physical_asset_detail = Some(asset),
         Err(e) => panic!("读取实物资产详情应成功但失败: {e}"),
     }

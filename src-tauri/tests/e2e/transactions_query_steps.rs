@@ -3,10 +3,10 @@ use std::collections::HashSet;
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::db::new_uuid;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::list_transactions_internal;
-use tauri_app_lib::transaction::{TransactionInput, TransactionListFilter};
+use ledger_infra::db::new_uuid;
+use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::list_transactions_internal;
+use ledger_transaction::{TransactionInput, TransactionListFilter};
 
 use crate::common::query_all_transactions;
 use crate::step_inputs::{parse_kind, plain_input};

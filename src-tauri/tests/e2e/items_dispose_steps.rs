@@ -4,8 +4,8 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::item::ItemDisposeInput;
-use tauri_app_lib::item::domain::{delete_item, dispose_item};
+use ledger_item::ItemDisposeInput;
+use ledger_item::domain::{delete_item, dispose_item};
 
 use crate::common::assert_last_error_contains;
 use crate::world::LedgerWorld;
@@ -76,7 +76,7 @@ fn dispose_by_id(
     world: &mut LedgerWorld,
     id: &str,
     input: ItemDisposeInput,
-) -> Result<(), tauri_app_lib::error::AppError> {
+) -> Result<(), ledger_infra::error::AppError> {
     let mut signals = 0;
     let result = dispose_item(&world_conn!(world), id, input, &mut || signals += 1);
     world.item.item_signal_count = signals;

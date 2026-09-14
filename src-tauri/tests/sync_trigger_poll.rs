@@ -26,13 +26,13 @@ use std::time::{Duration, Instant};
 
 use tauri::Manager;
 
+use ledger_infra::db::boot::BootFailureGate;
+use ledger_infra::db::data_location;
+use ledger_infra::db::encryption::EncryptionGate;
+use ledger_infra::db::{self, DbState};
+use ledger_infra::settings::{self, SettingKey};
+use ledger_sync_engine::{SyncChannelConfig, TriggerTimings, start_sync_scheduler_with};
 use tauri_app_lib::commands::boot::BootCell;
-use tauri_app_lib::db::boot::BootFailureGate;
-use tauri_app_lib::db::data_location;
-use tauri_app_lib::db::encryption::EncryptionGate;
-use tauri_app_lib::db::{self, DbState};
-use tauri_app_lib::settings::{self, SettingKey};
-use tauri_app_lib::sync_engine::{SyncChannelConfig, TriggerTimings, start_sync_scheduler_with};
 use tauri_app_lib::test_support::{S3Addressing, S3StubConfig, spawn_s3_stub};
 
 /// 低频轮询到期自跑轮次：无任何本地写入（无写信号），`recv_timeout` 超时分支
@@ -46,7 +46,7 @@ async fn poll_interval_elapses_into_a_round() {
     // 临时目录文件库 + 引导登记态 + 两扇门（调度线程做空转判定）。
     let dir = std::env::temp_dir().join(format!(
         "ledger-sync-poll-it-{}",
-        tauri_app_lib::db::new_uuid()
+        ledger_infra::db::new_uuid()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let app = tauri::test::mock_app();

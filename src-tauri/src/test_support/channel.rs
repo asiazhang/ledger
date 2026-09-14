@@ -10,7 +10,7 @@
 //! 成帧），不是工厂的建库/种子/默认值集（ADR-0086 决策 9 不破）。
 //!
 //! **摘要口径单一实现**：本模块不另造摘要函数，直接消费产品侧
-//! [`crate::sync_engine::channel::sha256_hex`]（`#[doc(hidden)] pub`，见该函数注释；
+//! [`ledger_sync_engine::channel::sha256_hex`]（`#[doc(hidden)] pub`，见该函数注释；
 //! #1107 同步域 crate 化后跨 crate 消费）
 //! ——测试侧从此不可能自建第二份口径。
 //!
@@ -22,13 +22,13 @@
 //! 在 `block_in_place` 内调用——两者各自保持原有语义。
 // C 类豁免（ADR-0060）：仅测试用——本文件随 test_support 文件级放行六件套
 // （见 mod.rs 豁免声明）。
-use crate::error::{AppError, Result};
-use crate::sync_engine::channel::{
+use ledger_infra::error::{AppError, Result};
+use ledger_sync_engine::channel::{
     ChannelLayout, ChannelManifest, SegmentEntry, StreamManifest, sha256_hex,
 };
-use crate::sync_engine::envelope::{self, EnvelopeMode, EnvelopeParams};
-use crate::sync_engine::model::SyncOp;
-use crate::sync_engine::transport::Transport;
+use ledger_sync_engine::envelope::{self, EnvelopeMode, EnvelopeParams};
+use ledger_sync_engine::model::SyncOp;
+use ledger_sync_engine::transport::Transport;
 
 /// 单段 op 数上限：测试夹具按「一段」成帧（与通道选项默认段容量同量级；
 /// 调用方传入的 op 序列超出即切多段，与产品侧同形）。

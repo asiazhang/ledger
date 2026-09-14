@@ -1,15 +1,15 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::error::{AppError, ErrClass};
-use tauri_app_lib::merchants::{
+use ledger_infra::error::{AppError, ErrClass};
+use ledger_merchants::{
     MerchantInput, MerchantUpdateInput, create_merchant as create_merchant_domain,
     delete_merchant as delete_merchant_domain, list_merchants as list_merchants_domain,
     transaction_counts as transaction_counts_domain, update_merchant as update_merchant_domain,
 };
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::create_transaction_internal;
+use ledger_transaction::TransactionInput;
+use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::create_transaction_internal;
 
 use crate::common::query_all_transactions;
 use crate::step_inputs::{parse_kind, plain_input};

@@ -3,13 +3,13 @@
 
 use crate::tests::common::make_input;
 use rusqlite::Connection;
+use tauri_app_lib::ledger_transaction::*;
+use tauri_app_lib::ledger_transaction::{TransactionInput, TransactionListFilter};
 use tauri_app_lib::test_support;
-use tauri_app_lib::transaction::*;
-use tauri_app_lib::transaction::{TransactionInput, TransactionListFilter};
 
 use ledger_infra::signals::{Signal, WriteEvidence, WriteOp, signals_for};
 use rusqlite::params;
-use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
 
 // ---------------------------------------------------------------------------
 // 商户携带收口（issue #188 / ADR-0028 + issue #875 / ADR-0092）：行为层按 kind 拒绝/放行
@@ -306,7 +306,7 @@ fn read_back_carries_merchant_id_after_merchant_soft_delete_and_rename() {
     let listed = list_transactions_internal(&conn, &TransactionListFilter::default()).unwrap();
     assert_eq!(listed.items[0].merchant_id.as_deref(), Some("mer-jd"));
 
-    let searched = tauri_app_lib::transaction::search_transactions_internal(
+    let searched = tauri_app_lib::ledger_transaction::search_transactions_internal(
         &conn, "备注", 1, 10, None, None, None, None,
     )
     .unwrap();

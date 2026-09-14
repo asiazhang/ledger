@@ -164,11 +164,11 @@ fn round_once_stamps_last_sync_on_success() {
     // 测试实例纪律：`stub.channel_config` 来自根包测试工厂（dev-dependency），
     // 返回根包图内同步域实例的 `SyncChannelConfig`；本用例的通道/轮次路径随
     // 该实例驱动（ledger-transaction/#1092 同款），断言不变。
-    let channel = tauri_app_lib::sync_engine::build_channel(&config).unwrap();
-    let report = tauri_app_lib::sync_engine::run_round_once(
+    let channel = tauri_app_lib::ledger_sync_engine::build_channel(&config).unwrap();
+    let report = tauri_app_lib::ledger_sync_engine::run_round_once(
         &conn,
         &channel,
-        &tauri_app_lib::sync_engine::EnvelopeMode::Plaintext,
+        &tauri_app_lib::ledger_sync_engine::EnvelopeMode::Plaintext,
     )
     .unwrap();
     assert!(report.uploaded_ops >= 1, "本轮应上传本机 op");

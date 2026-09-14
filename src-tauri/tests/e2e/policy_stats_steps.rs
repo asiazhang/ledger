@@ -14,8 +14,8 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::policy::PolicyStats;
-use tauri_app_lib::policy::{delete_policy, policy_stats};
+use ledger_policy::PolicyStats;
+use ledger_policy::{delete_policy, policy_stats};
 
 use crate::world::LedgerWorld;
 

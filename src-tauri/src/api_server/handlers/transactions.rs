@@ -1,6 +1,6 @@
 //! 交易端点：列表（过滤 + 分页）/ 批量创建（默认去重）/ 全字段替换 / 软删除。
 //!
-//! 写端点经壳层统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
+//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
 //! 事务、置脏、信号内化单点，「即建商户」证据随闭包返回必达；读端点经
 //! `run_db`（形状乙）。
 
@@ -13,15 +13,15 @@ use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::{EmitterSlot, ReadConn};
-use crate::error::AppError;
-use crate::read_entry::read_entry;
-use crate::signals::WriteOp;
-use crate::transaction::amount::TransactionKind;
-use crate::transaction::{
+use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_infra::error::AppError;
+use ledger_infra::signals::WriteOp;
+use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::{
     CreateTransactionResult, Transaction, TransactionBatchInput, TransactionListFilter,
     TransactionListResult, UpdateTransactionInput,
 };
-use crate::write_entry::{Outcome, write_entry};
 
 #[utoipa::path(
     get,
@@ -57,7 +57,7 @@ pub async fn list_transactions_handler(
     Query(query): Query<TransactionListFilter>,
 ) -> Result<Json<TransactionListResult>, AppError> {
     read_entry("GET /api/v1/transactions", read.0, move |conn| {
-        let result = crate::transaction::list_transactions_internal(conn, &query)?;
+        let result = ledger_transaction::list_transactions_internal(conn, &query)?;
         Ok(Json(result))
     })
     .await
@@ -92,7 +92,7 @@ pub async fn batch_create_transactions_handler(
         emitter.as_deref(),
         WriteOp::BatchCreateTransactions,
         move |conn| {
-            crate::transaction::TransactionBatch::run(conn, body.transactions, body.dedup)
+            ledger_transaction::TransactionBatch::run(conn, body.transactions, body.dedup)
                 .map(|outcome| Outcome::Evidenced(outcome.results, outcome.evidence))
         },
     )
@@ -133,8 +133,8 @@ pub async fn update_transaction_handler(
         WriteOp::UpdateTransaction,
         move |conn| {
             let evidence =
-                crate::transaction::update_transaction_internal(conn, &id, input.into())?;
-            let updated = crate::transaction::get_transaction_internal(conn, &id)?;
+                ledger_transaction::update_transaction_internal(conn, &id, input.into())?;
+            let updated = ledger_transaction::get_transaction_internal(conn, &id)?;
             Ok(Outcome::Evidenced(updated, evidence))
         },
     )
@@ -174,7 +174,7 @@ pub async fn delete_transaction_handler(
         conn,
         emitter.as_deref(),
         WriteOp::DeleteTransaction,
-        move |conn| crate::transaction::delete_transaction_internal(conn, &id).map(Outcome::Silent),
+        move |conn| ledger_transaction::delete_transaction_internal(conn, &id).map(Outcome::Silent),
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)

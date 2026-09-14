@@ -18,14 +18,12 @@
 //! 步骤消费（「存在账户」前置旁路归零接线）。步骤动词是测试层唯一允许触发
 //! 写入的形态；写入失败被静默吞掉属违规（CONTEXT-testing「步骤动词」）。
 
-use tauri_app_lib::accounts::{AccountInput, AccountType, create_account};
-use tauri_app_lib::currencies::ExchangeRateInput;
-use tauri_app_lib::error::AppError;
-use tauri_app_lib::investment::create_exchange_rate;
-use tauri_app_lib::scheduled_transactions::{
-    CreateScheduledInput, ScheduledStatus, create_plan, update_plan_status,
-};
-use tauri_app_lib::transaction::{
+use ledger_accounts::{AccountInput, AccountType, create_account};
+use ledger_currencies::ExchangeRateInput;
+use ledger_infra::error::AppError;
+use ledger_investment::create_exchange_rate;
+use ledger_scheduled::{CreateScheduledInput, ScheduledStatus, create_plan, update_plan_status};
+use ledger_transaction::{
     TransactionInput, TransactionWrite, create_transaction, delete_transaction, update_transaction,
 };
 

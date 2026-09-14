@@ -4,7 +4,8 @@
 /// 承载条件信号的「条件」一半。默认 [`WriteEvidence::None`]（无证据，静态行决定信号）；
 /// 三类条件信号各占一个布尔变体，「真 / 假」由调用方按域内口径归一化（如
 /// sync `written > 0`、基金增强 `price_written`、行为层「即建商户」），
-/// 映射表内只保留一份「实际写入」判定（`WriteEvidence::price_written`，crate 内私有）。
+/// 映射表内只保留一份「实际写入」判定（`WriteEvidence::price_written`，公开——
+/// 消费方跨出本 crate：壳层写入口的失败收尾裁决与信号映射共用，#1108）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteEvidence {
     /// 无证据（默认）：信号完全由写操作身份的静态映射行决定。
@@ -25,8 +26,9 @@ pub enum WriteEvidence {
 impl WriteEvidence {
     /// 「实际写入」判定（映射内唯一一份，ADR-0044 决策 4）：价格证据为真。
     /// 其余证据形状（含 [`WriteEvidence::None`]）一律为否——证据错配保守降级为
-    /// 零信号，不发错信号。
-    pub(crate) fn price_written(&self) -> bool {
+    /// 零信号，不发错信号。信号映射与壳层统一写入口（失败收尾裁决，#1108 起
+    /// 住根包 `shell_support`）两处共享，故公开（同 `merchant_created` 先例）。
+    pub fn price_written(&self) -> bool {
         matches!(self, WriteEvidence::PriceWritten(true))
     }
 

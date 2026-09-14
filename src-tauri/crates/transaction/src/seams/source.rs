@@ -37,7 +37,7 @@ static PLAN_SOURCE_RESOLVER: OnceLock<PlanSourceResolver> = OnceLock::new();
 /// 计划反查行的公开再导出已消亡，私有性由本负向用例钉死：
 ///
 /// ```compile_fail
-/// use tauri_app_lib::scheduled_transactions::source_display_by_transaction_ids;
+/// use ledger_scheduled::source_display_by_transaction_ids;
 /// ```
 pub fn register_plan_source_resolver(resolver: PlanSourceResolver) {
     let _ = PLAN_SOURCE_RESOLVER.set(resolver);

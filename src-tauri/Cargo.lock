@@ -3027,6 +3027,7 @@ version = "0.6.0"
 dependencies = [
  "chrono",
  "ledger-infra",
+ "ledger-reports",
  "ledger-sync-protocol",
  "ledger-transaction",
  "rusqlite",
@@ -3040,6 +3041,7 @@ name = "ledger-backup"
 version = "0.6.0"
 dependencies = [
  "chrono",
+ "ledger-accounts",
  "ledger-infra",
  "rusqlite",
  "serde",
@@ -3108,6 +3110,9 @@ dependencies = [
  "axum",
  "block2",
  "chrono",
+ "ledger-accounts",
+ "ledger-backup",
+ "ledger-transaction",
  "objc2",
  "objc2-foundation",
  "objc2-local-authentication",
@@ -3122,7 +3127,6 @@ dependencies = [
  "tauri-app",
  "thiserror 2.0.20",
  "tracing",
- "tracing-appender",
  "tracing-subscriber",
  "uuid",
  "zip",
@@ -3233,7 +3237,10 @@ name = "ledger-scheduled"
 version = "0.6.0"
 dependencies = [
  "chrono",
+ "ledger-backup",
  "ledger-infra",
+ "ledger-merchants",
+ "ledger-sync-engine",
  "ledger-sync-protocol",
  "ledger-transaction",
  "rusqlite",
@@ -3291,7 +3298,15 @@ dependencies = [
 name = "ledger-transaction"
 version = "0.6.0"
 dependencies = [
+ "ledger-accounts",
+ "ledger-backup",
+ "ledger-categories",
+ "ledger-currencies",
+ "ledger-dashboard",
  "ledger-infra",
+ "ledger-investment",
+ "ledger-scheduled",
+ "ledger-sync-engine",
  "ledger-sync-protocol",
  "pinyin",
  "rusqlite",

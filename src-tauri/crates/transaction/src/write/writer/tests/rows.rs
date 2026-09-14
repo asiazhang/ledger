@@ -4,8 +4,8 @@
 
 use rusqlite::{Connection, params};
 
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::write::writer::{
+use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::write::writer::{
     Input, NormalizedRow, insert_row, normalize, update_row,
 };
 
@@ -285,12 +285,12 @@ fn writer_rows_do_not_mark_dirty_entry_does() {
     let row = normalize(&conn, &input(TransactionKind::Expense, 1500, "acc")).unwrap();
     let id = insert_row(&conn, &row).unwrap();
     assert!(
-        !tauri_app_lib::backup::get_state(&conn).unwrap().dirty,
+        !ledger_backup::get_state(&conn).unwrap().dirty,
         "Writer 落库本身不置脏（触发已上移写入口）"
     );
     update_row(&conn, &id, &row).unwrap();
     assert!(
-        !tauri_app_lib::backup::get_state(&conn).unwrap().dirty,
+        !ledger_backup::get_state(&conn).unwrap().dirty,
         "更新同样不置脏"
     );
 
@@ -308,7 +308,7 @@ fn writer_rows_do_not_mark_dirty_entry_does() {
             let row = normalize(conn, &input(TransactionKind::Expense, 1500, "acc")).unwrap();
             let id = insert_row(conn, &row).unwrap();
             assert!(
-                !tauri_app_lib::backup::get_state(conn).unwrap().dirty,
+                !ledger_backup::get_state(conn).unwrap().dirty,
                 "提交点之前（闭包内）不置脏"
             );
             update_row(conn, &id, &row)
@@ -316,7 +316,7 @@ fn writer_rows_do_not_mark_dirty_entry_does() {
         .unwrap();
     let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
     assert!(
-        tauri_app_lib::backup::get_state(&conn).unwrap().dirty,
+        ledger_backup::get_state(&conn).unwrap().dirty,
         "写入口提交点应置脏"
     );
 }

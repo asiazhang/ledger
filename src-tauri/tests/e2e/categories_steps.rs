@@ -4,7 +4,7 @@
 
 use cucumber::{given, then, when};
 
-use tauri_app_lib::categories::{
+use ledger_categories::{
     CategoryInput, create_category, delete_category as delete_category_domain,
     list_categories as list_categories_domain,
 };
