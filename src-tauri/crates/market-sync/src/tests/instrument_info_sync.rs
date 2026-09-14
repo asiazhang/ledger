@@ -16,6 +16,7 @@ use crate::http::{
     fx_secid_candidates, parse_klines, price_cents_from_raw, secid_prefix,
 };
 use crate::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
+use crate::model::WriteWitness;
 use crate::session::ScopedSession;
 use crate::{FundNavProgress, SyncProgress};
 use ledger_infra::error::{AppError, Result};
@@ -176,6 +177,7 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -369,6 +371,7 @@ fn incremental_sync_normalizes_symbol_suffix() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -404,6 +407,7 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -426,6 +430,7 @@ fn incremental_sync_empty_library_returns_message() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
     assert_eq!(result.synced, 0);
@@ -469,6 +474,7 @@ fn incremental_sync_updates_holding_prices_only() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -537,6 +543,7 @@ fn incremental_sync_skips_holdings_without_quote_source() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -587,6 +594,7 @@ fn incremental_sync_keeps_old_price_when_suspended() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -618,6 +626,7 @@ fn incremental_sync_counts_missing_response_as_skipped() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -647,6 +656,7 @@ fn incremental_sync_skips_unknown_market() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -671,6 +681,7 @@ fn incremental_sync_is_idempotent() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
     assert_eq!(first.synced, 1);
@@ -685,6 +696,7 @@ fn incremental_sync_is_idempotent() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
     assert_eq!(second.synced, 1);
@@ -716,6 +728,7 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -772,6 +785,7 @@ fn incremental_sync_batches_by_fifty() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -785,6 +799,7 @@ fn incremental_sync_propagates_fetch_error() {
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
     let mut fetch = |_: &str| Err(AppError::Io("模拟网络失败".into()));
+    let mut witness = WriteWitness::default();
     let err = do_incremental_sync_with(
         &conn,
         &mut fetch,
@@ -794,9 +809,148 @@ fn incremental_sync_propagates_fetch_error() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut witness,
     )
     .unwrap_err();
     assert!(err.to_string().contains("模拟网络失败"));
+    assert!(
+        !witness.any_written(),
+        "零写入失败：见证器保持清白（库未变，零证据零副作用，#1277）"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 写入见证（issue #1277）：跨分段的「是否实际写过」累积器。分段形态逐段
+// autocommit，中途失败的运行结果统计随错误丢失，见证器由调用方持有存活——
+// 壳层收尾裁决「实际写过即置脏即发信号」（成败同判）的证据源，本层钉住
+// 标记时机与口径。
+// ---------------------------------------------------------------------------
+
+/// 实际写过之后中途失败：见证器存活（失败 ≠ 未写过）。前面分段已落库的写入
+/// 是既成事实，失败收尾的置脏与信号判定据此归一为「实际写过」（#1277 AC）。
+#[test]
+fn witness_survives_mid_run_failure_after_write() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-a", "600001", "stock", "CNY", "sh");
+    insert_holding(&conn, "acc-2", "inst-b", "600002", "stock", "CNY", "sh");
+
+    // 批量报价成功（两只都落现价），随后日 K 抓取失败——报价写入已 autocommit、
+    // 失败回不去；见证器必须仍报告「写过」。
+    let prices = [("600001", Some(1000.0)), ("600002", Some(2000.0))];
+    let mut fetch = mock_fetch(&prices);
+    let mut kline = |_: &str| Err(AppError::Io("模拟日 K 网络失败".into()));
+    let mut witness = WriteWitness::default();
+    let err = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_progress,
+        &mut witness,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("模拟日 K 网络失败"));
+    assert!(
+        witness.any_written(),
+        "实际写过之后中途失败：见证器应存活（#1277：失败 ≠ 未写过）"
+    );
+    // 行为侧锚：价格确实已落库（分段 autocommit，失败也回不去）。
+    assert_eq!(market_price_of(&conn, "inst-a"), Some(100000));
+    assert_eq!(market_price_of(&conn, "inst-b"), Some(200000));
+}
+
+/// 成功路径镜像钉：见证器与结果统计同口径——`witness.any_written()` ==
+/// `result.any_written()`（有写入 / 零写入两侧），壳层用哪一份判定都不漂移。
+#[test]
+fn witness_mirrors_result_any_written_on_success() {
+    // 侧一：股票有效价 → 有写入，见证器与结果统计同为真。
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-a", "600001", "stock", "CNY", "sh");
+    let prices = [("600001", Some(1000.0))];
+    let mut fetch = mock_fetch(&prices);
+    let mut witness = WriteWitness::default();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_progress,
+        &mut witness,
+    )
+    .unwrap();
+    assert!(result.any_written());
+    assert_eq!(
+        witness.any_written(),
+        result.any_written(),
+        "有写入成功：见证器与结果统计同口径"
+    );
+
+    // 侧二：基金「已是最新」（增量窗口无新净值）且名称未取到 → 零写入，
+    // 见证器与结果统计同为清白。
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    let watermark = beijing_today()
+        .checked_sub_days(chrono::Days::new(7))
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string();
+    upsert_market_price(
+        &conn,
+        &MarketPriceWrite {
+            instrument_id: "inst-fund",
+            price_cents: 30000,
+            currency_code: "CNY",
+            priced_at: &watermark,
+            nav_date: Some(&watermark),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
+    )
+    .unwrap();
+    upsert_price_history(
+        &conn,
+        "inst-fund",
+        &watermark,
+        30000,
+        "CNY",
+        EASTMONEY_PRICE_SOURCE,
+    )
+    .unwrap();
+
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = no_nav;
+    let mut witness = WriteWitness::default();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_progress,
+        &mut witness,
+    )
+    .unwrap();
+    assert!(!result.any_written());
+    assert_eq!(
+        witness.any_written(),
+        result.any_written(),
+        "零写入成功（基金已最新 + 名称无变化）：见证器与结果统计同口径"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -955,6 +1109,7 @@ fn kline_backfill_downsamples_daily_to_weekly() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1000,6 +1155,7 @@ fn kline_backfill_full_week_overwrite_is_idempotent() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1015,6 +1171,7 @@ fn kline_backfill_full_week_overwrite_is_idempotent() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1060,6 +1217,7 @@ fn kline_backfill_keeps_history_after_position_cleared() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
     assert_eq!(price_history_rows(&conn, "inst-sh").len(), 1);
@@ -1084,6 +1242,7 @@ fn kline_backfill_keeps_history_after_position_cleared() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1133,6 +1292,7 @@ fn kline_backfill_writes_fx_rate_history_alongside() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1176,6 +1336,7 @@ fn kline_backfill_empty_history_keeps_quote_only() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1205,6 +1366,7 @@ fn kline_backfill_fetch_error_propagates() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap_err();
     assert!(err.to_string().contains("模拟日 K 请求失败"));
@@ -1497,6 +1659,7 @@ fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1569,6 +1732,7 @@ fn fund_first_sync_prefers_single_request_full_series() {
         &mut full,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1645,6 +1809,7 @@ fn fund_first_sync_full_series_failure_falls_back_to_pages() {
         &mut full,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1690,6 +1855,7 @@ fn fund_first_sync_full_series_empty_falls_back_to_pages() {
         &mut full,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1737,6 +1903,7 @@ fn fund_first_sync_full_series_without_window_points_falls_back_to_pages() {
         &mut full,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1808,6 +1975,7 @@ fn fund_incremental_does_not_touch_single_request_full_series() {
         &mut full,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1886,6 +2054,7 @@ fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -1964,6 +2133,7 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2008,6 +2178,7 @@ fn fund_first_sync_without_nav_counts_skipped() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2077,6 +2248,7 @@ fn fund_with_nav_date_but_no_history_backfills_two_years() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2171,6 +2343,7 @@ fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2224,6 +2397,7 @@ fn fund_rows_without_real_code_skip_without_fetch() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2257,6 +2431,7 @@ fn fund_nav_fetch_error_propagates() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap_err();
     assert!(err.to_string().contains("模拟净值请求失败"));
@@ -2299,6 +2474,7 @@ fn etf_holding_syncs_quote_and_kline_backfill() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2344,6 +2520,7 @@ fn etf_holding_unknown_market_counts_skipped_without_requests() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2431,6 +2608,7 @@ fn three_type_partitions_roll_up_into_one_result() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2545,6 +2723,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
     assert_eq!(result.synced, 1, "美股持仓应计入同步成功");
@@ -2608,6 +2787,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
     let price_rows: i64 = conn
@@ -2651,6 +2831,7 @@ fn us_stock_holdings_route_exact_secids_per_market() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2703,6 +2884,7 @@ fn incremental_sync_includes_cleared_instrument() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2735,6 +2917,7 @@ fn incremental_sync_includes_never_traded_instrument() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2766,6 +2949,7 @@ fn incremental_sync_refreshes_names_from_quote_batch() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2812,6 +2996,7 @@ fn incremental_sync_skips_name_write_when_unchanged() {
         &mut no_full_nav,
         &mut no_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2862,6 +3047,7 @@ fn fund_name_refresh_via_detail_lookup() {
         &mut no_full_nav,
         &mut fund_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -2918,6 +3104,7 @@ fn fund_name_refresh_degrades_deterministic_not_found_to_skip() {
         &mut no_full_nav,
         &mut fund_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .expect("确定性查无不得中断整次同步");
 
@@ -2959,6 +3146,7 @@ fn fund_name_refresh_still_propagates_network_failure() {
         &mut no_full_nav,
         &mut fund_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .expect_err("网络失败仍应上抛中断");
 
@@ -3007,6 +3195,7 @@ fn fund_name_lookup_skips_name_as_code_rows_and_empty_names() {
         &mut no_full_nav,
         &mut fund_name,
         &mut no_progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -3088,6 +3277,7 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
         &mut no_full_nav,
         &mut no_name,
         &mut progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -3158,6 +3348,7 @@ fn progress_denominator_counts_channel_capable_instruments_only() {
         &mut no_full_nav,
         &mut fund_name,
         &mut progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -3212,6 +3403,7 @@ fn progress_advances_even_when_quote_invalid_or_missing() {
         &mut no_full_nav,
         &mut no_name,
         &mut progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -3281,6 +3473,7 @@ fn fund_up_to_date_still_advances_progress() {
         &mut no_full_nav,
         &mut fund_name,
         &mut progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -3331,6 +3524,7 @@ fn fund_progress_advances_after_nav_and_name_complete() {
         &mut no_full_nav,
         &mut fund_name,
         &mut progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -3384,6 +3578,7 @@ fn fund_first_sync_emits_page_level_progress_within_one_instrument() {
         &mut no_full_nav,
         &mut no_name,
         &mut progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -3475,6 +3670,7 @@ fn fund_page_progress_emitted_only_after_page_fetch_returns() {
         &mut no_full_nav,
         &mut no_name,
         &mut progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -3527,6 +3723,7 @@ fn page_level_detail_only_for_multi_page_fund_sync() {
         &mut no_full_nav,
         &mut no_name,
         &mut progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -3583,6 +3780,7 @@ fn blocked_fund_pages_do_not_advance_page_progress() {
         &mut no_full_nav,
         &mut no_name,
         &mut progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -3615,6 +3813,7 @@ fn progress_not_emitted_for_empty_library() {
         &mut no_full_nav,
         &mut no_name,
         &mut progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 
@@ -3659,6 +3858,7 @@ fn progress_not_emitted_when_no_channel_capable_instrument() {
         &mut no_full_nav,
         &mut no_name,
         &mut progress,
+        &mut WriteWitness::default(),
     )
     .unwrap();
 

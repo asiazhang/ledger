@@ -40,3 +40,36 @@ impl SyncInstrumentInfoResult {
         self.written > 0 || self.renamed > 0
     }
 }
+
+/// 跨分段写入见证（issue #1277）：同步编排的「是否实际写过」累积器。
+///
+/// 增量同步是「抓取-落库交替」的长任务，分段形态逐段 autocommit：中途失败的
+/// 运行前面分段可能已落库，而结果统计（[`SyncInstrumentInfoResult`]）随错误
+/// 一同丢失——收尾裁决「实际写过即置脏即发信号」（成败同判，#1277 / ADR-0031）
+/// 需要一份独立于成败的累积证据。见证器由调用方持有（`&mut` 传入编排），编排
+/// 在每个实际写入点标记；失败时经壳层 [`SegmentedFailure`] 的证据位随错误必达
+/// （成功时与结果统计的 [`SyncInstrumentInfoResult::any_written`] 同口径等价，
+/// 测试钉住）。
+///
+/// 汇率 K 线落库不计入：与成功路径的零写入判定同口径（只有价格或名称写入
+/// 才发价格失效信号，`fx_rate_history` 变化不在其列）。
+///
+/// [`SegmentedFailure`]: ledger_infra::shell_support::write_entry::SegmentedFailure
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WriteWitness {
+    /// 是否发生过任何实际写入（幂等累积：见证器只回答「是否写过」）。
+    written: bool,
+}
+
+impl WriteWitness {
+    /// 记录一次实际写入（编排在每个落库成功点调用；幂等）。
+    pub fn mark_written(&mut self) {
+        self.written = true;
+    }
+
+    /// 是否发生过任何实际写入（与成功路径
+    /// [`SyncInstrumentInfoResult::any_written`] 同口径：价格或名称）。
+    pub fn any_written(&self) -> bool {
+        self.written
+    }
+}

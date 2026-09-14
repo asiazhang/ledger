@@ -21,7 +21,7 @@ use super::http::{
     KlineBar, Pacer, StockItem, build_client, fetch_fx_kline, fetch_kline, fetch_ulist,
 };
 use super::incremental::{do_incremental_sync_with, kline_beg};
-use super::model::SyncInstrumentInfoResult;
+use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use super::progress::SyncProgress;
 use super::session::ScopedSession;
 
@@ -124,13 +124,14 @@ impl SyncFetchChannels {
 
 /// 经通道束驱动标的信息同步编排：把束内六个闭包拆交给
 /// [`do_incremental_sync_with`](super::incremental::do_incremental_sync_with)
-/// （编排本体单点，签名不变）。命令壳经本入口跑同步——生产束
-/// （[`SyncFetchChannels::production`]）与测试注入束共用，锁形态与编排路径
-/// 零分叉。
+/// （编排本体单点，另透传写入见证，issue #1277）。命令壳经本入口跑同步——
+/// 生产束（[`SyncFetchChannels::production`]）与测试注入束共用，锁形态与
+/// 编排路径零分叉。
 pub fn do_incremental_sync_channels<Q, P>(
     session: &Q,
     channels: &mut SyncFetchChannels,
     progress: &mut P,
+    witness: &mut WriteWitness,
 ) -> Result<SyncInstrumentInfoResult>
 where
     Q: ScopedSession,
@@ -145,6 +146,7 @@ where
         &mut channels.fetch_nav_full,
         &mut channels.fetch_fund_name,
         progress,
+        witness,
     )
 }
 
@@ -192,11 +194,17 @@ mod tests {
         let conn = tauri_app_lib::test_support::open();
         let mut channels = stub_channels();
         let mut progress = |_| {};
-        let result =
-            do_incremental_sync_channels(&Passthrough(&conn), &mut channels, &mut progress)
-                .expect("空库同步应成功返回");
+        let mut witness = WriteWitness::default();
+        let result = do_incremental_sync_channels(
+            &Passthrough(&conn),
+            &mut channels,
+            &mut progress,
+            &mut witness,
+        )
+        .expect("空库同步应成功返回");
         assert_eq!(result.synced, 0);
         assert_eq!(result.skipped, 0);
         assert_eq!(result.message, "暂无标的可同步");
+        assert!(!witness.any_written(), "空库同步零写入，见证器不应标记");
     }
 }
