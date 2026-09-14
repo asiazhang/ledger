@@ -3,20 +3,20 @@ import { useMessage } from "naive-ui";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppStore } from "@/stores/app";
-import { formatIsoMinute } from "@/utils/datetime";
+import { formatIsoMinute } from "@ledger/utils/datetime";
 import { api } from "@ledger/api";
 import type { AutoBackupState, BackupFileInfo, BackupKind } from "@ledger/types";
-import { errorMessage } from "@/utils/errors";
+import { errorMessage } from "@ledger/utils/errors";
 import { t } from "@ledger/i18n";
 import { useRestoreFromFile } from "@/composables/useRestoreFromFile";
 import {
   defaultBackupFileName,
   isManagedBackupPath,
   normalizeBackupDir,
-} from "@/utils/backup-name";
+} from "@ledger/utils/backup-name";
 
 // 备份文件列表与滚动清理。命名规则与后端受管备份规则保持一致
-// （前缀集合与受管判定收口在 `src/utils/backup-name.ts`，issue #127）。
+// （前缀集合与受管判定收口在 `@ledger/utils/backup-name`，issue #127）。
 // 后端在自动备份完成 / 备份清理成功后发出 `ledger:backups-changed`
 // 无 payload 信号（issue #129，与 `ledger:changed` 平行），本模块订阅后
 // 自动刷新备份列表与自动备份状态；列表卡头部另有手动刷新按钮（issue #651），

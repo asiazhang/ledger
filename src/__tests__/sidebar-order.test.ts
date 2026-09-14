@@ -24,7 +24,7 @@ import {
 } from '@/stores/sidebar-order'
 import type { ViewName, ContainableViewName, SidebarGroupOrders, SidebarContainmentLists } from '@/stores/sidebar-order'
 import type { DropdownOption } from 'naive-ui'
-import { VIEW_STATE_KEYS, saveContainmentLists } from '@/utils/view-state'
+import { VIEW_STATE_KEYS, saveContainmentLists } from '@ledger/utils/view-state'
 
 // 侧栏排序 store 接口测试（issue #524/#549：排序状态机迁入 sidebar-order store）。
 // 「重启」惯用法 = setActivePinia(createPinia())：store 首次实例化即启动读路径

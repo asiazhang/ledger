@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { h, computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
@@ -17,7 +17,7 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import { formatAmount, yuanToCents, centsToYuan } from '@ledger/money'
-import { todayStr } from '@/utils/date'
+import { todayStr } from '@ledger/utils/date'
 import type {
   ItemDailyCost,
   ItemDisposeInput,
@@ -33,7 +33,7 @@ import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useModalIntent } from '@/composables/useModalIntent'
 import { useFocusParam } from '@/composables/useFocusParam'
 import { useWindowTier } from '@/composables/useWindowTier'
-import { sumFixedColumnWidths } from '@/utils/table'
+import { sumFixedColumnWidths } from '@ledger/utils/table'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useItemsStore } from '@/stores/items'

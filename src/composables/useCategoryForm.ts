@@ -4,7 +4,7 @@ import type { TreeSelectOption } from 'naive-ui'
 import { api } from '@ledger/api'
 import { centsToYuan } from '@ledger/money'
 import { buildExpenseIncomeInput } from '@/domain/transaction-input'
-import { judgeAmountText } from '@/utils/field-error'
+import { judgeAmountText } from '@ledger/utils/field-error'
 import { useFieldErrors } from '@/composables/useFieldErrors'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
@@ -12,7 +12,7 @@ import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared
 import { useMerchantField } from '@/composables/useMerchantField'
 import { t } from '@ledger/i18n'
 import type { Transaction } from '@ledger/types'
-import { errorMessage } from "@/utils/errors";
+import { errorMessage } from "@ledger/utils/errors";
 
 export function useCategoryForm(
   kind: 'expense' | 'income',

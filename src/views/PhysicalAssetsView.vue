@@ -20,7 +20,7 @@ import { useModalIntent } from '@/composables/useModalIntent'
 import { useWindowTier } from '@/composables/useWindowTier'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
 import { useReferenceStore } from '@/stores/reference'
-import { sumFixedColumnWidths } from '@/utils/table'
+import { sumFixedColumnWidths } from '@ledger/utils/table'
 import type { PhysicalAsset } from '@ledger/types'
 
 /**

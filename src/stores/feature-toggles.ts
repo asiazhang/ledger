@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { clearClosedFeatures, getSavedClosedFeatures, saveClosedFeatures } from '@/utils/view-state'
+import { clearClosedFeatures, getSavedClosedFeatures, saveClosedFeatures } from '@ledger/utils/view-state'
 
 /**
  * 功能开关状态基座（issue #1241 / ADR-0116 决策 2/6）：设备级「已关闭功能」闭集清单的

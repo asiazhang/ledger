@@ -6,7 +6,7 @@
 // 整个界面冻结（词汇表「Loadable」错误通道只覆盖 IPC 错误，渲染层错误此前
 // 只进 console，用户不可见）。
 //
-// 消费约定：图表组件一律 `import '@/utils/chart-registration'`（或显式导入
+// 消费约定：图表组件一律 `import '@ledger/utils/chart-registration'`（或显式导入
 // 本模块）后即用，不再各自 register；新增图表类型时在此扩注册，注册表由
 // portfolio-trend-chart-registration.test.ts 按真实 registry 守门。
 import {

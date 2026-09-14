@@ -11,7 +11,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
 import { useReferenceStore } from '@/stores/reference'
-import { paletteColor } from '@/utils/category-chart'
+import { paletteColor } from '@ledger/utils/category-chart'
 import { formatAmount } from '@ledger/money'
 import type { Merchant } from '@ledger/types'
 import type { MerchantSharesReport } from '@ledger/types'

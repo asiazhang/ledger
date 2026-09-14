@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { onMounted, ref } from 'vue'
 import { NCard, NButton, NSpace, NText, useMessage } from 'naive-ui'
 import { api } from '@ledger/api'

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { computed, ref } from 'vue'
 import { NButton, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
 import PinyinSelect from '@/components/PinyinSelect.vue'

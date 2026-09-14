@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t } from '@ledger/i18n'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { computed, h, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
@@ -46,10 +46,10 @@ import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
 import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import { buildTransactionColumns } from '@/components/transaction-columns'
-import { sumFixedColumnWidths } from '@/utils/table'
-import { availableCreateKinds, isCreateKindAvailable } from '@/utils/create-entry-kinds'
+import { sumFixedColumnWidths } from '@ledger/utils/table'
+import { availableCreateKinds, isCreateKindAvailable } from '@ledger/utils/create-entry-kinds'
 import { isLendingEntryKind } from '@/domain/lending'
-import { type NullableDateRange } from '@/utils/time-period'
+import { type NullableDateRange } from '@ledger/utils/time-period'
 import {
   LENDING_CREATE_DIRECTIONS,
   TRANSACTION_KINDS,

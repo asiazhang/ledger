@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { computed, ref, watch } from 'vue'
 import { NButton, NForm, NFormItem, NInput, NSpace, useMessage } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'

@@ -14,7 +14,7 @@ import {
   getSavedClosedFeatures,
   saveClosedFeatures,
   clearClosedFeatures,
-} from '@/utils/view-state'
+} from '../view-state'
 
 describe('view-state route', () => {
   it('无记录时返回 null', () => {

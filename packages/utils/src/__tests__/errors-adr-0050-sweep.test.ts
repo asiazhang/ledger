@@ -7,7 +7,7 @@
 // 独立文件原因同 errors-closed-set.test.ts：errors.test.ts 的 beforeEach 注入
 // 夹具会让 applyLocale 短路、跳过真实 locale bundle；本文件不注夹具。
 import { afterEach, describe, expect, it } from 'vitest'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '../errors'
 import { applyLocale } from '@ledger/i18n'
 
 interface Case {

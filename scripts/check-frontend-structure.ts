@@ -18,10 +18,13 @@
 //    devDependencies 被消费（根包与成员包一并核对，dependencies/optionalDependencies/
 //    peerDependencies 任一出现即红）；且测试支持包自身 dependencies 必须为空
 //    （替身与接缝所需运行面全部走 devDependencies）——生产依赖图零测试支持内容。
-// ⑥ 上行引用禁令（issue #1156）：`src/utils` 叶子层不得引用 `@/stores` /
-//    `@ledger/api` / `@/components` / `@/views`——上行越界接缝归位后把方向固化成
-//    登记项，登记项唯一事实源为 FORBIDDEN_UPWARD_IMPORTS；删除登记项即变红
-//    （登记表全等断言 + 夹具违规即红，issue #1156 验收判据）。
+// ⑥ 上行引用禁令（issue #1156）：登记目录不得引用登记的上层目标——上行越界接缝
+//    归位后把方向固化成登记项，登记项唯一事实源为 FORBIDDEN_UPWARD_IMPORTS；
+//    改动登记项即变红（登记表全等断言，issue #1156 验收判据）。
+//    #1314 起 src/utils 全量成包 @ledger/utils，唯一登记项（dir: 'src/utils'）随
+//    搬迁对象消失而收缩清空：包层上行形态改由规则②（方向表全等）、③（@/ 别名
+//    禁令）、④（深导入 exports 入口）在包边界接管，登记机制保留——后续目录级
+//    边界约束（如 ADR-0118 规则⑦深模块登记表）的登记处。
 // 删除即变红①：本脚本核对自身接线——scripts/check.sh 与 CI frontend job
 //（.github/workflows/build.yml）中必须存在实际调用行（非注释、非 echo 展示行），
 // 删除接线行即红（ADR-0087 断言强度：接线型守门的负向条目）。
@@ -102,6 +105,12 @@ export const PACKAGES: readonly PackageEntry[] = [
     dir: 'packages/theme',
     deps: ['@ledger/types', '@ledger/money'],
     note: '主题包（issue #1154 / ADR-0093 / issue #888）：语义色、中性设计令牌、组件库主题覆盖、vanilla-extract 主题合同与图表统一样式的单一来源，Theme 类型随包下移；@ledger 范围内只依赖 @ledger/types 与 @ledger/money，不依赖 stores / components / views / composables',
+  },
+  {
+    name: '@ledger/utils',
+    dir: 'packages/utils',
+    deps: ['@ledger/types', '@ledger/storage', '@ledger/i18n', '@ledger/money'],
+    note: '通用工具包（issue #1314 / ADR-0118 决策 2）：src/utils 叶子层全量平铺搬迁——日期/期间、分类树与图表数据形态、Chart.js 统一注册、码化错误本地化 errorMessage（ADR-0050）、字段错误、视图状态、拼音过滤等纯函数单一来源；方向表与实际 import 全等（types / storage / i18n / money），exports 逐模块子路径暴露不开运行期 barrel；不依赖 stores / components / views / composables',
   },
 ]
 
@@ -484,16 +493,10 @@ export interface UpwardImportRule {
   note: string
 }
 
-/** 登记项（逐票补充）：首个条目来自 issue #1156——utils 三条上行越界边
- *  （policy-stats → stores/reference、global-error-handler → stores/render-errors
- *  与 api、restart → api）归位后，把「utils 是叶子层」固化成可证伪的方向登记。 */
-export const FORBIDDEN_UPWARD_IMPORTS: readonly UpwardImportRule[] = [
-  {
-    dir: 'src/utils',
-    forbidden: ['@/stores', '@ledger/api', '@/components', '@/views'],
-    note: 'utils 叶子层（issue #1156）：只放真叶子与纯函数，不得引用 stores / api / components / views',
-  },
-]
+/** 登记项（逐票补充）：#1314 起 src/utils 成包 @ledger/utils，唯一登记项
+ *  （issue #1156 的 utils 四条上行禁令）随搬迁对象消失而收缩，现为空集——
+ *  包层上行由规则②③④接管（见规则⑥头注）；新增目录级约束在此登记。 */
+export const FORBIDDEN_UPWARD_IMPORTS: readonly UpwardImportRule[] = []
 
 /** 说明符是否命中登记的上行目标（精确名或其 `名/子路径`，避免 `@/storesX` 误伤） */
 function hitsForbiddenSpecifier(specifier: string, forbidden: readonly string[]): string | null {

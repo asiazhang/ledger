@@ -1,0 +1,43 @@
+{
+  "name": "@ledger/utils",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "通用工具包（issue #1314 / spec #1148 / ADR-0118 决策 2）：src/utils 叶子层全量平铺搬迁——日期/期间、分类树与图表数据形态、Chart.js 统一注册、码化错误本地化 errorMessage（ADR-0050）、表单字段错误、视图状态持久化、拼音过滤、口令强度、S3 预设等纯函数单一来源。依赖方向：@ledger 范围内 → @ledger/types / @ledger/storage / @ledger/i18n / @ledger/money（与实际 import 全等）；不依赖 stores / components / views / composables。源码直出，exports 按模块逐条暴露（逐文件一条，不开运行期 barrel、无根入口——跨包引用必须走 ./模块 子路径并命中 exports，check-frontend-structure.ts 守门）；不建构建链、不设包内 tsconfig。",
+  "exports": {
+    "./backup-name": "./src/backup-name.ts",
+    "./category-chart": "./src/category-chart.ts",
+    "./category-tree": "./src/category-tree.ts",
+    "./chart-registration": "./src/chart-registration.ts",
+    "./create-entry-kinds": "./src/create-entry-kinds.ts",
+    "./date": "./src/date.ts",
+    "./datetime": "./src/datetime.ts",
+    "./errors": "./src/errors.ts",
+    "./field-error": "./src/field-error.ts",
+    "./git-info": "./src/git-info.ts",
+    "./icon": "./src/icon.ts",
+    "./installment": "./src/installment.ts",
+    "./merchant-chart": "./src/merchant-chart.ts",
+    "./passphrase-strength": "./src/passphrase-strength.ts",
+    "./pinyin-filter": "./src/pinyin-filter.ts",
+    "./s3-vendors": "./src/s3-vendors.ts",
+    "./scheduled": "./src/scheduled.ts",
+    "./table": "./src/table.ts",
+    "./time-period": "./src/time-period.ts",
+    "./view-state": "./src/view-state.ts"
+  },
+  "dependencies": {
+    "@ledger/types": "workspace:*",
+    "@ledger/storage": "workspace:*",
+    "@ledger/i18n": "workspace:*",
+    "@ledger/money": "workspace:*",
+    "@vicons/ionicons5": "^0.13.0",
+    "chart.js": "^4.5.1",
+    "naive-ui": "^2.45.3",
+    "pinyin-pro": "^3.29.3",
+    "vue": "^3.5.42"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.0"
+  }
+}

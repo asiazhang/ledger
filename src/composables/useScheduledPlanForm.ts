@@ -6,9 +6,9 @@ import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
 import { resolveMerchantRef } from '@/composables/resolve-merchant'
 import { api } from '@ledger/api'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { t } from '@ledger/i18n'
-import { todayStr } from '@/utils/date'
+import { todayStr } from '@ledger/utils/date'
 import type { CreateScheduledInput, RecurrenceType, ScheduledKind } from '@ledger/types'
 
 /** 形态特化字段（ADR-0041：分期总额/期数、转账转入账户与总期数留页签）：

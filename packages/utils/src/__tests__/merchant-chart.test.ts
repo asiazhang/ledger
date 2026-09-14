@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { merchantTableRows } from '@/utils/merchant-chart'
-import { paletteColor } from '@/utils/category-chart'
+import { merchantTableRows } from '../merchant-chart'
+import { paletteColor } from '../category-chart'
 import type { MerchantShare } from '@ledger/types'
 
 // 商户消费排行表格行构建纯函数（issue #618 表格化）：排序与 topN 截断已收口后端

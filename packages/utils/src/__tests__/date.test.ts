@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { todayStr, toLocalDateISO } from '@/utils/date'
+import { todayStr, toLocalDateISO } from '../date'
 
 describe('toLocalDateISO（本地日历日 → YYYY-MM-DD，issue #214）', () => {
   it('本地构造的日期取本地年月日（Date 输入）', () => {

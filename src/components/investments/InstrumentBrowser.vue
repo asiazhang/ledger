@@ -19,7 +19,7 @@ import { usePricesChanged } from '@/composables/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { useWindowTier } from '@/composables/useWindowTier'
 import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
-import { errorMessage as extractErrorMessage } from '@/utils/errors'
+import { errorMessage as extractErrorMessage } from '@ledger/utils/errors'
 import {
   INSTRUMENT_PRICE_CHANNELS,
   INSTRUMENT_TYPES,
@@ -27,7 +27,7 @@ import {
   MARKET_TYPES,
 } from '@ledger/types'
 import { formatPrice } from '@ledger/money'
-import { sumFixedColumnWidths } from '@/utils/table'
+import { sumFixedColumnWidths } from '@ledger/utils/table'
 import AppSelect from '@/components/AppSelect.vue'
 import AddInstrumentModal from '@/components/investments/AddInstrumentModal.vue'
 import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'

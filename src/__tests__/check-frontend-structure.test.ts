@@ -52,8 +52,6 @@ function fixtureRepo(opts: {
   omitWiring?: ('check.sh' | 'build.yml')[]
   /** 是否写夹具登记表 JSON（返回参数含 manifest 路径） */
   manifest?: FixtureEntry[]
-  /** 跳过 src/utils 登记目录创建（规则⑥「登记目录缺失即红」靶形，issue #1156） */
-  omitUtilsDir?: boolean
 }): string[] {
   const root = mkdtempSync(join(tmpdir(), 'check-frontend-structure-'))
   tempDirs.push(root)
@@ -63,8 +61,6 @@ function fixtureRepo(opts: {
   }
   writeFileSync(join(root, 'pnpm-workspace.yaml'), yamlLines.join('\n') + '\n')
   mkdirSync(join(root, 'packages'), { recursive: true })
-  // 规则⑥ 登记目录 src/utils（issue #1156）：默认创建，omitUtilsDir 制造缺失靶形
-  if (!opts.omitUtilsDir) mkdirSync(join(root, 'src', 'utils'), { recursive: true })
   for (const dir of opts.memberDirs ?? []) {
     mkdirSync(join(root, 'packages', dir), { recursive: true })
   }
@@ -223,7 +219,9 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
     }
 
     it('@/ 别名即红，定位文件与行号', () => {
-      const r = run(packageWithSource("import { helper } from '@/utils/format'\nexport { helper }\n"))
+      // 夹具路径取非 utils 的壳层目录（#1314 起该别名形态全仓零残留）：
+      // 靶形是 @/ 别名本身，具体子路径任意
+      const r = run(packageWithSource("import { helper } from '@/lib/format'\nexport { helper }\n"))
       expect(r.status).toBe(1)
       expect(r.output).toContain('@/ 别名')
       expect(r.output).toContain('packages/a/src/x.ts:1')
@@ -244,7 +242,7 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
     })
 
     it('注释中的 import 形态不误报', () => {
-      const r = run(packageWithSource("// import { helper } from '@/utils/format'\nexport {}\n"))
+      const r = run(packageWithSource("// import { helper } from '@/lib/format'\nexport {}\n"))
       expect(r.status).toBe(0)
     })
   })
@@ -397,6 +395,12 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
           deps: ['@ledger/types', '@ledger/money'],
           note: expect.any(String),
         },
+        {
+          name: '@ledger/utils',
+          dir: 'packages/utils',
+          deps: ['@ledger/types', '@ledger/storage', '@ledger/i18n', '@ledger/money'],
+          note: expect.any(String),
+        },
       ])
     })
   })
@@ -456,78 +460,13 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
     })
   })
 
-  describe('规则⑥：utils 叶子层禁上行（#1156）', () => {
-    /** 夹具：向登记目录 src/utils 写入给定 import（其余骨架最小绿，空登记表注入） */
-    function utilsWithSource(source: string): string[] {
-      const args = fixtureRepo({ manifest: [] })
-      const root = args[0] as string
-      writeFileSync(join(root, 'src', 'utils', 'x.ts'), source)
-      return args
-    }
-
-    it('删除规则登记项即变红：登记表与已固化约束全等', () => {
-      expect(FORBIDDEN_UPWARD_IMPORTS).toEqual([
-        {
-          dir: 'src/utils',
-          forbidden: ['@/stores', '@ledger/api', '@/components', '@/views'],
-          note: expect.any(String),
-        },
-      ])
-    })
-
-    // 矩阵（CONTEXT-testing.md「矩阵」）：四个上行目标仅数据不同，共用同一断言体——
-    // 每行 = 一条登记项（删除该登记项 → 本行变红）
-    it.each([
-      {
-        target: '@/stores',
-        source: "import { useReferenceStore } from '@/stores/reference'\nexport { useReferenceStore }\n",
-      },
-      {
-        target: '@ledger/api',
-        source: "import { api } from '@ledger/api'\nexport { api }\n",
-      },
-      {
-        target: '@/components',
-        source: "import AppModal from '@/components/AppModal.vue'\nexport { AppModal }\n",
-      },
-      {
-        target: '@/views',
-        source: "import DashboardView from '@/views/DashboardView.vue'\nexport { DashboardView }\n",
-      },
-    ])('utils 引用 $target 即红（该登记项的归位靶形）', ({ target, source }) => {
-      const r = run(utilsWithSource(source))
-      expect(r.status).toBe(1)
-      expect(r.output).toContain('上行引用禁令')
-      expect(r.output).toContain('src/utils/x.ts:1')
-      expect(r.output).toContain(target)
-    })
-
-    it('utils 引用纯包与相对路径绿（叶子层本职）', () => {
-      const r = run(
-        utilsWithSource(
-          "import { formatAmount } from '@ledger/money'\nimport { sibling } from './sibling'\nexport { formatAmount, sibling }\n",
-        ),
-      )
-      expect(r.status).toBe(0)
-    })
-
-    it('壳层目录（非 utils）引用 api 不受本规则约束绿', () => {
-      const args = fixtureRepo({ manifest: [] })
-      const root = args[0] as string
-      mkdirSync(join(root, 'src', 'composables'), { recursive: true })
-      writeFileSync(
-        join(root, 'src', 'composables', 'x.ts'),
-        "import { api } from '@ledger/api'\nexport { api }\n",
-      )
-      const r = run(args)
-      expect(r.status).toBe(0)
-    })
-
-    it('登记目录缺失即红（目录改名/漂移拒绝空集假绿）', () => {
-      const r = run(fixtureRepo({ manifest: [], omitUtilsDir: true }))
-      expect(r.status).toBe(1)
-      expect(r.output).toContain('上行引用禁令')
-      expect(r.output).toContain('登记目录不存在')
+  describe('规则⑥：上行引用禁令登记册（#1156 设立 / #1314 收缩）', () => {
+    // #1314 起 src/utils 全量成包 @ledger/utils，唯一登记项（dir: 'src/utils' 的
+    // 四条上行禁令）随搬迁对象消失而收缩清空——包层上行由规则②③④接管；登记
+    // 机制保留（后续目录级边界约束的登记处）。本断言钉住空集现状：登记项的
+    // 增删都必须是有意识的登记表变更，改而不验即红。
+    it('登记表与已固化约束全等（#1314 后为空集）', () => {
+      expect(FORBIDDEN_UPWARD_IMPORTS).toEqual([])
     })
   })
 })

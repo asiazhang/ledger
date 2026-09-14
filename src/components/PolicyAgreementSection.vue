@@ -10,8 +10,8 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import { formatAmount } from '@ledger/money'
-import { errorMessage } from '@/utils/errors'
-import { scheduledStatusLabel } from '@/utils/scheduled'
+import { errorMessage } from '@ledger/utils/errors'
+import { scheduledStatusLabel } from '@ledger/utils/scheduled'
 import { scheduledRecurrenceLabel } from '@/composables/useScheduledPlanList'
 import { api } from '@ledger/api'
 import { useReferenceStore } from '@/stores/reference'

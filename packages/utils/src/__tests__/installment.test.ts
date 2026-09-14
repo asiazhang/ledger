@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { installmentSchedule } from '@/utils/installment'
+import { installmentSchedule } from '../installment'
 
 /**
  * 分期每期金额预览纯函数（issue #204）。

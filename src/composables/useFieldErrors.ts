@@ -1,10 +1,10 @@
 import { computed, reactive, ref, type ComputedRef, type Ref } from 'vue'
-import { fieldErrorKind, type FieldErrorKind } from '@/utils/field-error'
+import { fieldErrorKind, type FieldErrorKind } from '@ledger/utils/field-error'
 
 /**
  * useFieldErrors：字段错误态装配工厂（表单级，ADR-0058 决策 4 补完 / issue #1007）。
  *
- * 判定口径全仓单点在 src/utils/field-error.ts（纯函数层，含全部格式口径）；本模块
+ * 判定口径全仓单点在 @ledger/utils/field-error（纯函数层，含全部格式口径）；本模块
  * 收编装配半，替换各表单重复的「判定 + 时机 → 错误态」脚手架：
  * - 字段按「原始文本 ref + 判定函数（可选启用条件）」一行声明；
  * - 产出每字段视图（error / 已解析值 value / markBlurred）与表单聚合

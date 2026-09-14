@@ -9,11 +9,11 @@ import {
   PRICE_UNITS_PER_FEN,
   PRICE_UNITS_PER_YUAN,
 } from '@ledger/money'
-import { judgeQuantityText, judgePriceText } from '@/utils/field-error'
+import { judgeQuantityText, judgePriceText } from '@ledger/utils/field-error'
 import { useFieldErrors } from '@/composables/useFieldErrors'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { buildTradeInput } from '@/domain/transaction-input'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { useAppStore } from '@/stores/app'
 import type { Instrument, Transaction, TransactionTrade } from '@ledger/types'
 

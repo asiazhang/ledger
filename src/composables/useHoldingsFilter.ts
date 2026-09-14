@@ -1,7 +1,7 @@
 import { computed, onScopeDispose, readonly, type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
-import { matchLabel } from '@/utils/pinyin-filter'
+import { matchLabel } from '@ledger/utils/pinyin-filter'
 import { sumByCurrency, type CurrencyAmountGroup, type PortfolioRow } from '@/composables/usePortfolioOverview'
 import {
   HOLDINGS_PAGE_SIZE,

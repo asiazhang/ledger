@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NFormItem, NInput, NSpace, NText } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
 import { t } from '@ledger/i18n'
-import { errorMessage, errorCodeOf } from '@/utils/errors'
+import { errorMessage, errorCodeOf } from '@ledger/utils/errors'
 import {
   BACKUP_PASSPHRASE_REQUIRED,
   restoreCrossModeWarningKey,

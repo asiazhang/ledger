@@ -16,7 +16,7 @@
  * 唯一例外是标签文案：经 i18n 单例按当前界面语言现取（ADR-0049 模块级 t()
  * 模式，响应式上下文中调用随语言切换即时重渲染），非入参可注入。
  */
-import { formatLocalDateISO } from '@/utils/date'
+import { formatLocalDateISO } from './date'
 import { t } from '@ledger/i18n'
 
 /** 带日期区间的预设闭集（「全部」无区间，单独作默认态哨兵）。 */
