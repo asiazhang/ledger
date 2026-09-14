@@ -33,6 +33,8 @@
 //!   upsert + 近两年日 K 回填周线落 `price_history` + 汇率 K 线落
 //!   `fx_rate_history`（ADR-0019）+ 基金历史净值按水位增量回填（ADR-0038 决策 6）
 //!   + 数据源权威名称随行刷新（「随用随修 + 同步随行刷新」，ADR-0036/0081 修订）；
+//! - [`channels`]：同步网络通道束（issue #1276）——六个抓取闭包的打包形态，
+//!   生产接 HTTP 层、测试注入桩经命令壳换装；
 //! - [`progress`]：同步确定进度事件（issue #897 / ADR-0095）——带 payload
 //!   `{ done, total }` 的 `ledger:instrument-sync-progress` 事件，事件名常量、
 //!   载荷与 [`progress::ProgressEmitter`] 发射器接缝收口于此（不经失效信号映射，
@@ -68,6 +70,7 @@
 //!
 //! [`Quote`]: ledger_investment::Quote
 
+mod channels;
 mod fund;
 mod fund_nav;
 mod http;
@@ -81,8 +84,12 @@ mod stock;
 #[cfg(test)]
 mod tests;
 
+pub use channels::{SyncFetchChannels, do_incremental_sync_channels};
+// 通道束载荷 DTO（issue #1276）：通道束是壳层注入接缝的公开面，桩实现方需要
+// 能命名与构造应答形状（StockItem 可构造；Kline/Nav 形状测试回空表即可命名）。
 pub use fund::fetch_fund_quote_production;
-pub use incremental::do_incremental_sync;
+pub use fund_nav::{LsjzPage, NavPoint, NavQuery};
+pub use http::{KlineBar, StockItem};
 pub use model::SyncInstrumentInfoResult;
 pub use progress::{FundNavProgress, INSTRUMENT_SYNC_PROGRESS, ProgressEmitter, SyncProgress};
 pub use session::ScopedSession;

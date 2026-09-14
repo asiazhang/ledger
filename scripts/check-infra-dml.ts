@@ -120,8 +120,8 @@ export interface RegisteredException {
 export const REGISTERED_EXCEPTIONS: readonly RegisteredException[] = [
   {
     file: 'shell_support/write_entry.rs',
-    count: 1,
-    why: '内联 cfg(test) 测试夹具：验证写入口闭包拿到可用连接（写入 categories 落库）——测试侧业务表直置归公开写入口纪律辖域，此处登记防命中数漂移；路径随 #1130 壳机制分组（shell_support/）迁移更新',
+    count: 4,
+    why: '内联 cfg(test) 测试夹具：验证写入口/分段写入口闭包拿到可用连接与分段落库（写入 categories 落库；issue #1276 分段取锁、整体裁决形态的锁自由与裁决测试同款）——测试侧业务表直置归公开写入口纪律辖域，此处登记防命中数漂移；路径随 #1130 壳机制分组（shell_support/）迁移更新',
   },
 ]
 

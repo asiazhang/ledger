@@ -24,8 +24,10 @@ pub use connection::{
     open_in_memory, reset_db_file, reset_db_in,
 };
 pub use migrate::{init_db, schema_version};
+pub(crate) use runtime::probe_lock_hold;
 pub use runtime::{
-    AfterCommitHook, DbState, register_after_commit_hook, replace_read_conn_slot, run_db, write,
+    AfterCommitHook, DbState, LOCK_HOLD_PROBE_THRESHOLD, register_after_commit_hook,
+    replace_read_conn_slot, run_db, write,
 };
 
 // 迁移集合保持 crate 内可见面（tests 与 schema_guard 经此消费，非公开 API）。

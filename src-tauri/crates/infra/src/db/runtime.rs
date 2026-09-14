@@ -3,12 +3,35 @@
 //! helper（ADR-0069 形状乙，spec #498）与应用状态 [`DbState`]。
 
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
 use super::connection::open_in_memory;
 use super::migrate::init_db;
 use crate::error::{AppError, Result};
+
+/// 持锁时长探针阈值（issue #1276 守门③）：单次取锁的持有时长超过即记 warn。
+/// 定值远大于任何合法单事务（毫秒级），远小于分钟级网络同步——越界即值得人工
+/// 看一眼的异常信号，不是失败判定。
+pub const LOCK_HOLD_PROBE_THRESHOLD: Duration = Duration::from_secs(1);
+
+/// 运行时持锁时长探针（issue #1276 守门③，ADR-0069 决策 4 修订的守门半边）：
+/// 连接锁单次持有的时长超过 [`LOCK_HOLD_PROBE_THRESHOLD`] 即记 warn 日志
+/// ——「网络往返不得进锁」的纪律从注释与评审升级为运行时可观察的越界信号。
+/// 探针只记日志、不改变行为：阈值取值远大于任何合法单事务（毫秒级）、远小于
+/// 分钟级网络同步；越界即「慢闭包进锁」的嫌疑现场，由人工按坐标追认。
+/// 取锁点全部接哨：连接层写入口 [`write`]、壳层读入口（`read_entry`）与
+/// 分段写入口的 [`SegmentLock`](crate::write_entry::SegmentLock)。
+pub(crate) fn probe_lock_hold(hold: Duration) {
+    if hold >= LOCK_HOLD_PROBE_THRESHOLD {
+        tracing::warn!(
+            hold_ms = hold.as_millis() as u64,
+            threshold_ms = LOCK_HOLD_PROBE_THRESHOLD.as_millis() as u64,
+            "连接锁持有时长超过阈值（疑似慢闭包进锁，ADR-0069 决策 4：分钟级网络往返不得进锁）"
+        );
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 连接层统一写入口（ADR-0032）
@@ -30,11 +53,15 @@ use crate::error::{AppError, Result};
 /// 裸 `BEGIN`/`COMMIT`/`ROLLBACK` 写法。耗时日志等其它连接级横切机制收口时
 /// 并入本入口（单独开票）。
 pub fn write<T>(conn: &Mutex<Connection>, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+    // 持锁时长探针（issue #1276 守门③）：从取锁成功到还锁全程计时，整段形态
+    // 的长持锁（如误把网络等待写回闭包内）在此现形。
+    let hold_started = Instant::now();
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let result = f(&conn);
     if result.is_ok() && conn.is_autocommit() {
         after_commit(&conn);
     }
+    probe_lock_hold(hold_started.elapsed());
     result
 }
 

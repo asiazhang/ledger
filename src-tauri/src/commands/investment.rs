@@ -10,7 +10,7 @@
 //! 仪式（锁、事务、置脏、信号）内化单点，证据随闭包返回必达；读命令经
 //! `run_db`（形状乙，spec #498 / #503）。
 //! `add_fund_by_code` 的东财拉取（单请求叠加限流冷却重试最长可达分钟级）
-//! 在闭包内、连接锁外先行完成，任何形状下不进锁（慢闭包纪律）。
+//! 经 `spawn_blocking` 在连接锁外先行完成，任何形状下不进锁（慢闭包纪律）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -245,13 +245,15 @@ pub async fn get_transaction_split(db: State<'_, DbState>, id: String) -> Result
     .await
 }
 
-/// IPC 命令：按 6 位基金代码即拉添加场外基金（issue #301 / ADR-0038）。东财
-/// 拉取（名称/分类/最新净值）在连接锁外完成（单请求叠加限流冷却重试最长可达
-/// 分钟级，任何形状下不进锁）；落库与信号经统一写入口（ADR-0073），编排经
-/// `investment::add_fund_by_code_with` 同一接缝（拉取已在锁外完成，注入闭包
-/// 直接回放结果，与测试/BDD 同一套校验→拉取→落库实现）。落现价即广播价格
-/// 失效信号（ADR-0031），未取到净值仅建标的零信号（零变化不广播）；「是否发」
-/// 判定单点在 signals 映射（ADR-0044 / issue #333），入口只传递证据。
+/// IPC 命令：按 6 位基金代码即拉添加场外基金（issue #301 / ADR-0038）。
+/// 格式校验即刻拒绝（不发网络请求）→ 东财拉取（名称/分类/最新净值）经
+/// `spawn_blocking` 在连接锁外完成（单请求叠加限流冷却重试最长可达分钟级，
+/// 任何形状下不进锁，慢闭包纪律，与 `add_instrument_by_code` 同形）→ 落库
+/// 与信号经统一写入口（ADR-0073），编排经 `investment::add_fund_by_code_with`
+/// 同一接缝（拉取已在锁外完成，注入闭包直接回放结果，与测试/BDD 同一套
+/// 校验→拉取→落库实现）。落现价即广播价格失效信号（ADR-0031），未取到净值
+/// 仅建标的零信号（零变化不广播）；「是否发」判定单点在 signals 映射
+/// （ADR-0044 / issue #333），入口只传递证据。
 #[tauri::command]
 pub async fn add_fund_by_code(
     db: tauri::State<'_, DbState>,
@@ -261,16 +263,23 @@ pub async fn add_fund_by_code(
     // 格式非法即刻拒绝，不发起网络请求。
     investment_domain::validate_fund_code(&code)?;
     let conn = db.conn.clone();
+    // 网络拉取在锁外：单请求叠加限流冷却重试最长可达分钟级，不阻塞其它命令
+    // （慢闭包纪律，形状与 `add_instrument_by_code` 同）。
+    let fetch_code = code.clone();
+    let quote = tauri::async_runtime::spawn_blocking(move || {
+        crate::sync::fetch_fund_quote_production(&fetch_code)
+    })
+    .await
+    .map_err(|e| AppError::Io(format!("基金详情查询任务执行失败: {e}")))??;
+    // 落库阶段经统一写入口：拉取已完成，闭包纯落库（编排单点：经接缝以已拉取
+    // 的报价驱动，注入闭包同值回放；统一注入签名为（代码，市场），场外基金
+    // 无交易所市场，市场位不消费）。
     write_entry(
         "add_fund_by_code",
         conn,
         Some(&app),
         WriteOp::AddFundByCode,
         move |conn| {
-            // 网络拉取在锁外：单请求叠加限流冷却重试最长可达分钟级，不阻塞其它命令。
-            let quote = crate::sync::fetch_fund_quote_production(&code)?;
-            // 编排单点：经接缝以已拉取的报价驱动（注入闭包同值回放；统一注入签名
-            // 为（代码，市场），场外基金无交易所市场，市场位不消费）。
             let mut fetch = |_: &str, _: &str| Ok(quote.clone());
             investment_domain::add_fund_by_code_with(conn, &code, &mut fetch).map(|result| {
                 let evidence = WriteEvidence::PriceWritten(result.price_written);
@@ -373,4 +382,54 @@ pub async fn record_manual_price(
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    /// `add_fund_by_code` 的东财拉取必须发生在连接锁外（慢闭包纪律，ADR-0069
+    /// 决策 4 / issue #1282）：生产拉取入口 [`crate::sync::fetch_fund_quote_production`]
+    /// 不经数据库连接，命令体把拉取放在 `write_entry` 之前即结构上不可能持锁；
+    /// 拉取被移回统一写入口闭包（锁内）时本守门即红。IPC 命令路径无报价注入
+    /// 接缝（生产入口直呼 `fetch_fund_quote_production`，行为测试无从注入慢
+    /// 拉取观察锁竞争），与先例 #959/#961 同口径以源码扫描守门（系统化持锁
+    /// 守门衔接 #1276）；掩码器具复用 `signals_cross_check`，规则无第二份。
+    #[test]
+    fn fund_fetch_happens_before_write_entry_in_add_fund_by_code() {
+        let text = crate::signals_cross_check::mask_non_code(include_str!("investment.rs"));
+        // 定位命令体：函数签名后首个花括号起，掩码文本上花括号配对到命令体结束。
+        let fn_anchor = text
+            .find("pub async fn add_fund_by_code(")
+            .expect("add_fund_by_code 命令应在位");
+        let body_start = fn_anchor + text[fn_anchor..].find('{').expect("命令体应有大括号");
+        let mut depth = 0usize;
+        let mut body_end = text.len();
+        for (idx, ch) in text[body_start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        body_end = body_start + idx + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let body = &text[body_start..body_end];
+        let write_at = body
+            .find("write_entry(")
+            .expect("落库应经统一写入口 write_entry");
+        let fetch_count = body.matches("fetch_fund_quote_production(").count();
+        assert_eq!(fetch_count, 1, "东财拉取入口在命令体内应恰出现一次");
+        let fetch_at = body
+            .find("fetch_fund_quote_production(")
+            .expect("东财拉取入口应在命令体内");
+        assert!(
+            fetch_at < write_at,
+            "东财拉取（单请求叠加限流冷却重试最长可达分钟级）必须在 write_entry \
+             之前完成——移回统一写入口闭包即在连接锁内执行网络等待，阻塞全应用 \
+             IPC/HTTP 读写（ADR-0069 决策 4 / issue #1282）"
+        );
+    }
 }

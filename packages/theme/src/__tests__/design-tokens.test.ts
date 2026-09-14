@@ -45,10 +45,10 @@ describe('darkOverrides 中性常量从 token 派生（防派生断裂为手工�
     expect(darkOverrides.Menu?.borderRadius).toBe(token.radius.small)
   })
 
-  it('组件级圆角仅保留真实主题变量：Button/Select/DatePicker 无该变量（圆角经 common.borderRadius 传播，无效键已清理）', () => {
-    expect(darkOverrides.Button).toBeUndefined()
-    expect(darkOverrides.Select).toBeUndefined()
-    expect(darkOverrides.DatePicker).toBeUndefined()
+  it('组件级圆角仅保留真实主题变量：Button/Select/DatePicker 无该变量（圆角经 common.borderRadius 传播，无效键已清理；键存在性断言兼容 overrides 的 satisfies 精确推断，issue #1268）', () => {
+    expect('Button' in darkOverrides).toBe(false)
+    expect('Select' in darkOverrides).toBe(false)
+    expect('DatePicker' in darkOverrides).toBe(false)
   })
 
   it('背景分层与 token 同源', () => {

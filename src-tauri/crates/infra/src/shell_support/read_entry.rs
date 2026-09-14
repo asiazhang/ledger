@@ -23,10 +23,11 @@
 //! （ADR-0033 接缝）不纳入——本入口壳层专用。
 
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use rusqlite::Connection;
 
-use crate::db::run_db;
+use crate::db::{probe_lock_hold, run_db};
 use crate::error::{AppError, Result};
 
 /// 壳层统一读入口（ADR-0104 决策 2）：组合 `run_db`（阻塞线程池 + span 传播）
@@ -43,8 +44,13 @@ where
     F: FnOnce(&Connection) -> Result<T> + Send + 'static,
 {
     run_db(span, move || {
+        // 持锁时长探针（issue #1276 守门③）：读路径同守——读闭包内误做网络
+        // 等待同样在此现形。
+        let hold_started = Instant::now();
         let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        f(&conn)
+        let result = f(&conn);
+        probe_lock_hold(hold_started.elapsed());
+        result
     })
     .await
 }

@@ -14,7 +14,7 @@
 //! 命名归位 `ledger:*` 命名空间。
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 
 use ledger_infra::events::post_emit_with;
 
@@ -76,7 +76,7 @@ pub trait ProgressEmitter: Send + Sync {
 /// 生产实现：payload 事件经 [`post_emit_with`] 投递**主线程事件循环队尾**非阻塞
 /// 执行（spec #364 / ADR-0054 同一投递机制——编排运行在写线程/阻塞线程池上，
 /// 就地 emit 会走 `webviews_lock` 同步等待路径，有跨线程死锁前科）。
-impl ProgressEmitter for AppHandle {
+impl<R: Runtime> ProgressEmitter for AppHandle<R> {
     fn emit_progress(&self, progress: SyncProgress) {
         let handle = self.clone();
         post_emit_with(self, move || {

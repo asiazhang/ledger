@@ -94,7 +94,7 @@ pub(super) struct LsjzItem {
 
 /// 一个净值采样点：净值日期 + 单位净值（真实价格值，元）。
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct NavPoint {
+pub struct NavPoint {
     pub(super) date: String,
     pub(super) nav: f64,
 }
@@ -232,7 +232,7 @@ fn beijing_date_from_epoch_ms(ms: i64) -> Option<String> {
 /// 总数，供分页循环定界）+ 报文形态（`blocked` = 空响应/被拦截，见
 /// [`parse_lsjz`]）。
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct LsjzPage {
+pub struct LsjzPage {
     pub(super) points: Vec<NavPoint>,
     pub(super) total: u64,
     /// 空响应/异常形态（`Data` 缺省或非对象，如缺 Referer 被拦截 / 风控）：
@@ -242,7 +242,7 @@ pub(super) struct LsjzPage {
 
 /// 一只基金的单页查询（注入接缝的请求形状）：日期闭区间、页码 1 起。
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct NavQuery {
+pub struct NavQuery {
     pub(super) code: String,
     pub(super) start_date: String,
     pub(super) end_date: String,

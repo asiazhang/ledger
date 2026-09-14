@@ -311,10 +311,28 @@ fn has_bypass_write_or_emit(masked: &str, include_http_emit: bool) -> bool {
     include_http_emit && count_token(masked, "emit_after_write(") > 0
 }
 
-/// 从原文中提取 `write_entry(` 调用点的首个字符串字面量（span 归因串）。
+/// 写入口调用形态闭集（issue #1276）：整段（`write_entry(`）与分段取锁、
+/// 整体裁决（`write_entry_segmented(`）。分段名的文本包含前缀 `write_entry`
+/// 但后随 `_` 不构成 `write_entry(`，需两枚举逐一计数；「每个命令/端点恰好
+/// 一处写入口调用」的裁决对两种形态同责（父 spec #1274 实现决策 4）。
+const WRITE_ENTRY_CALL_TOKENS: [&str; 2] = ["write_entry(", "write_entry_segmented("];
+
+/// 掩码文本中写入口调用点总数（两种形态合计）。
+fn write_entry_call_count(masked: &str) -> usize {
+    WRITE_ENTRY_CALL_TOKENS
+        .iter()
+        .map(|token| count_token(masked, token))
+        .sum()
+}
+
+/// 从原文中提取写入口调用点（两种形态取先出现者）的首个字符串字面量（span
+/// 归因串）。
 fn write_entry_span(raw: &str) -> Option<String> {
-    let pos = raw.find("write_entry(")? + "write_entry(".len();
-    let rest = raw[pos..].trim_start();
+    let (pos, token) = WRITE_ENTRY_CALL_TOKENS
+        .iter()
+        .filter_map(|token| raw.find(token).map(|p| (p, *token)))
+        .min_by_key(|(p, _)| *p)?;
+    let rest = raw[pos + token.len()..].trim_start();
     let rest = rest.strip_prefix('"')?;
     let end = rest.find('"')?;
     Some(rest[..end].to_string())
@@ -439,7 +457,7 @@ const IPC_WRITE_ENTRY_EXCEPTIONS: &[(&str, WriteOp, &str)] = &[
 fn ipc_derived_declarations() -> Vec<(String, WriteOp)> {
     let mut declared = Vec::new();
     for chunk in ipc_command_chunks() {
-        let call_sites = count_token(&chunk.masked, "write_entry(");
+        let call_sites = write_entry_call_count(&chunk.masked);
         if call_sites == 0 {
             continue;
         }
@@ -490,7 +508,7 @@ fn http_handler_chunks() -> Vec<Chunk> {
 fn http_derived_declarations() -> Vec<(String, WriteOp)> {
     let mut declared = Vec::new();
     for chunk in http_handler_chunks() {
-        let call_sites = count_token(&chunk.masked, "write_entry(");
+        let call_sites = write_entry_call_count(&chunk.masked);
         if call_sites == 0 {
             continue;
         }
@@ -648,7 +666,7 @@ fn ipc_write_calls_must_go_through_write_entry() {
         .map(|(n, _, _)| *n)
         .collect();
     for chunk in ipc_command_chunks() {
-        let has_write_entry = count_token(&chunk.masked, "write_entry(") > 0;
+        let has_write_entry = write_entry_call_count(&chunk.masked) > 0;
         if has_write_entry || !has_bypass_write_or_emit(&chunk.masked, false) {
             continue;
         }
@@ -667,7 +685,7 @@ fn ipc_write_calls_must_go_through_write_entry() {
 #[test]
 fn ipc_write_entry_span_matches_command_name() {
     for chunk in ipc_command_chunks() {
-        if count_token(&chunk.masked, "write_entry(") == 0 {
+        if write_entry_call_count(&chunk.masked) == 0 {
             continue;
         }
         let span = write_entry_span(&chunk.raw).unwrap_or_else(|| {
@@ -740,7 +758,7 @@ fn ipc_write_entry_exceptions_only_contain_registered_commands() {
 #[test]
 fn http_write_calls_must_go_through_write_entry() {
     for chunk in http_handler_chunks() {
-        let has_write_entry = count_token(&chunk.masked, "write_entry(") > 0;
+        let has_write_entry = write_entry_call_count(&chunk.masked) > 0;
         if has_write_entry || !has_bypass_write_or_emit(&chunk.masked, true) {
             continue;
         }
@@ -758,7 +776,7 @@ fn http_write_calls_must_go_through_write_entry() {
 #[test]
 fn http_write_entry_span_matches_endpoint_key() {
     for chunk in http_handler_chunks() {
-        if count_token(&chunk.masked, "write_entry(") == 0 {
+        if write_entry_call_count(&chunk.masked) == 0 {
             continue;
         }
         let span = write_entry_span(&chunk.raw).unwrap_or_else(|| {
@@ -861,7 +879,7 @@ fn ipc_lock_ritual_must_go_through_read_entry() {
     let exceptions: HashSet<&str> = IPC_READ_ENTRY_EXCEPTIONS.iter().map(|(n, _)| *n).collect();
     for chunk in ipc_command_chunks() {
         let through_entry = count_token(&chunk.masked, "read_entry(") > 0
-            || count_token(&chunk.masked, "write_entry(") > 0;
+            || write_entry_call_count(&chunk.masked) > 0;
         if through_entry || !has_handwritten_lock(&chunk.masked) {
             continue;
         }
@@ -882,7 +900,7 @@ fn ipc_lock_ritual_must_go_through_read_entry() {
 fn http_lock_ritual_must_go_through_read_entry() {
     for chunk in http_handler_chunks() {
         let through_entry = count_token(&chunk.masked, "read_entry(") > 0
-            || count_token(&chunk.masked, "write_entry(") > 0;
+            || write_entry_call_count(&chunk.masked) > 0;
         if through_entry || !has_handwritten_lock(&chunk.masked) {
             continue;
         }
