@@ -29,6 +29,9 @@ utoipa = { version = "5", features = ["axum_extras"] }
 # 拒绝由生产依赖面承担（lib 目标解析不到 dev-dependency），机器面负向核对住
 # 结构守门的 crate 依赖方向（ledger-transaction crate 同款留痕）。
 tauri-app = { path = "../.." }
+# 更新入参的 wire 三态（键缺席 / null / 给值）需要反序列化验证（issue #1327 范围外
+# 修复的边界断言）：与域内生产依赖无关，只在测试目标生效。
+serde_json = "1"
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。

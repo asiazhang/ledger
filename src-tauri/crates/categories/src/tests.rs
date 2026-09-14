@@ -256,6 +256,109 @@ fn update_category_updates_fields() {
     assert_eq!(updated.icon.as_deref(), Some("🍕"));
 }
 
+/// 更新入参的三态在 wire 上必须分开（issue #1327 范围外修复）：编辑弹窗送
+/// `parent_id: null` 表达「无父分类」，但 serde 对 `Option<Option<String>>` 默认把
+/// 「值为 null」与「键缺席」折叠成同一个 `None`——那样「提升为顶级分类」静默不生效
+/// （弹窗却提示已更新）。本断言就是那条区分器的哨兵：删掉 `deserialize_with` 即红。
+#[test]
+fn category_update_input_distinguishes_null_from_missing_parent() {
+    use super::model::CategoryUpdateInput;
+
+    let cleared: CategoryUpdateInput = serde_json::from_str(r#"{"parent_id":null}"#).unwrap();
+    assert_eq!(
+        cleared.parent_id,
+        Some(None),
+        "显式 null = 清空（提升为顶级分类）"
+    );
+
+    let untouched: CategoryUpdateInput = serde_json::from_str("{}").unwrap();
+    assert_eq!(untouched.parent_id, None, "键缺席 = 不改");
+
+    let set: CategoryUpdateInput = serde_json::from_str(r#"{"parent_id":"cat-1"}"#).unwrap();
+    assert_eq!(set.parent_id, Some(Some("cat-1".to_string())));
+}
+
+/// 三态的行为面（经公开写入口）：`Some(None)` 把子分类提升为顶级分类，
+/// 而 `None`（不改）不能把已有的父子关系弄丢。
+#[test]
+fn update_category_promotes_child_to_top_level_with_explicit_none() {
+    use super::model::{CategoryInput, CategoryUpdateInput};
+
+    let conn = setup();
+    let parent = super::create_category(
+        &conn,
+        CategoryInput {
+            name: "父分类".into(),
+            kind: "expense".into(),
+            parent_id: None,
+            icon: None,
+        },
+    )
+    .unwrap();
+    let child = super::create_category(
+        &conn,
+        CategoryInput {
+            name: "子分类".into(),
+            kind: "expense".into(),
+            parent_id: Some(parent.clone()),
+            icon: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        parent_id_of(&conn, &child).as_deref(),
+        Some(parent.as_str())
+    );
+
+    super::update_category(
+        &conn,
+        &child,
+        CategoryUpdateInput {
+            name: None,
+            icon: None,
+            parent_id: Some(None),
+        },
+    )
+    .unwrap();
+    assert_eq!(parent_id_of(&conn, &child), None, "显式清空即顶级分类");
+
+    // 挂回去后只改名（`parent_id` 键缺席）：父子关系不得被动掉
+    super::update_category(
+        &conn,
+        &child,
+        CategoryUpdateInput {
+            name: None,
+            icon: None,
+            parent_id: Some(Some(parent.clone())),
+        },
+    )
+    .unwrap();
+    super::update_category(
+        &conn,
+        &child,
+        CategoryUpdateInput {
+            name: Some("子分类Ⅱ".into()),
+            icon: None,
+            parent_id: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        parent_id_of(&conn, &child).as_deref(),
+        Some(parent.as_str())
+    );
+}
+
+/// 分类的父分类 id（未设置返回 `None`）。
+fn parent_id_of(conn: &rusqlite::Connection, id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT parent_id FROM categories WHERE id=?1",
+        rusqlite::params![id],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
 #[test]
 fn reorder_categories_sets_sort_order() {
     let conn = setup();
