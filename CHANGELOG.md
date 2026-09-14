@@ -44,6 +44,7 @@
 - **AI 导入**：导入知识新增份额调整教学——字段位置、方向符号（`+` 折算 / 结转 / 送股、`−` 缩股）、无现金腿与「余额不变但持仓市值随份额变化」的对账口径、纠错边界；契约 `quantity` 字段说明带出方向与无现金腿语义，`split` 可用而 `dividend` 仍不受支持（[#1054]）。
 - **发布**：Android arm64 APK 进入发布矩阵，随 GitHub Release 发布（[#559]）。
 - **发布**：Android APK 发布签名就绪——发布构建以 CI secrets 注入 keystore 签名，tag 构建缺签名 secrets 直接失败；试跑产物经 apksigner 校验可真机直装（[#560]）。
+- **发布**：README「安装」节同步发布签名口径——Android APK 已用发布密钥签名，桌面三平台维持未签名 / 未公证（[#561]）。
 - **报表**：报表页接入 ESC 复位（[#894]）。
 - **投资**：持仓页签新增「标的前提下钻」——标的代码可点击，跳交易页按该账户 + 该标的过滤，该标的的完整交易历史一键可达（ADR-0107）。
 - **投资**：盈亏页按标的汇总行代码可点击，跳交易页按标的过滤——含已清仓标的，是清仓标的卖出流水的唯一入口（ADR-0107）。
@@ -282,6 +283,7 @@
 [#526]: https://github.com/asiazhang/ledger/issues/526
 [#559]: https://github.com/asiazhang/ledger/issues/559
 [#560]: https://github.com/asiazhang/ledger/issues/560
+[#561]: https://github.com/asiazhang/ledger/issues/561
 [#566]: https://github.com/asiazhang/ledger/issues/566
 [#582]: https://github.com/asiazhang/ledger/issues/582
 [#584]: https://github.com/asiazhang/ledger/issues/584
