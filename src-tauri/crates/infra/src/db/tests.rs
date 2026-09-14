@@ -10,12 +10,14 @@
 //! - `integrity`：完整性检查失败的码契约（ADR-0050 收口，#1072）；
 //! - `tx_scope`：事务作用域原语 `db::tx_scope::{ensure_transaction, hold_transaction}`
 //!   （嵌套感知「保证处于事务中」与无条件自持事务壳，ADR-0033 决策 2 /
-//!   issue #1013、#1014）。
+//!   issue #1013、#1014）；
+//! - `lock_probe`：持锁时长探针（issue #1276 守门③）：超阈值记 warn、不静默。
 
 mod common;
 mod dirty_marker;
 mod holding;
 mod integrity;
+mod lock_probe;
 mod migrations;
 mod perf;
 mod run_db;

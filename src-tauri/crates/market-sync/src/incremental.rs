@@ -19,17 +19,16 @@
 //! 汇率 K 三个闭包（同一签名 `&str → Result<Vec<_>>`）、历史净值页闭包
 //!（[`NavQuery`] → [`LsjzPage`]）、单请求全量净值闭包（`&str → Result<Vec<NavPoint>>`，
 //! 首刷深回填用，issue #1062）、基金名称闭包（`&str → Result<String>`）与进度回调
-//! 闭包（`done, total`，issue #897 / ADR-0095），测试以 mock 数据驱动（不依赖真实
-//! 网络）；生产经 [`do_incremental_sync`] 接 HTTP 层（复用主机池/重试/限流 pacer
+//! 闭包（`done, total`，issue #897），测试以 mock 数据驱动（不依赖真实网络）；
+//! 生产经 [`super::channels`] 的通道束接 HTTP 层（复用主机池/重试/限流 pacer
 //! 与价格换算）。进度回调闭包是本函数唯一的对外观察点：编排核心不碰网络、不碰事件
 //! 系统，进度事件发射归壳层接线（见 `commands::sync`）。
 //!
 //! 编排与连接解耦（issue #1275 作用域会话接缝）：本模块所有函数的签名里没有
 //! 连接句柄——读写库一律经注入的 [`ScopedSession`] 短暂取一次连接，网络抓取
 //! 只发生在会话之外。「持着连接做网络 I/O」在类型上不可表达；会话实现在壳层
-//! 接线（生产 = 写入口已持连接的直通会话，见 `commands::sync`）。
+//! 接线（生产 = 分段写入口的短暂取锁会话，见 `commands::sync`）。
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{Datelike, NaiveDate};
@@ -46,10 +45,7 @@ use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 use ledger_transaction::amount::default_currency_code;
 
 use super::fund_nav::{FundSyncStats, LsjzPage, NavPoint, NavQuery, sync_one_fund_nav};
-use super::http::{
-    KlineBar, Pacer, StockItem, ULIST_BATCH_SIZE, build_client, fetch_fx_kline, fetch_kline,
-    fetch_ulist, price_cents_from_raw, secid_prefix,
-};
+use super::http::{KlineBar, StockItem, ULIST_BATCH_SIZE, price_cents_from_raw, secid_prefix};
 use super::persist::upsert_fx_rate_history;
 use super::progress::{FundNavProgress, SyncProgress};
 use super::session::ScopedSession;
@@ -399,8 +395,9 @@ pub(super) fn two_years_ago(today: NaiveDate) -> NaiveDate {
         .unwrap_or(today)
 }
 
-/// 近两年回填窗口起点（YYYYMMDD 形态，日 K 接口参数用）。
-fn kline_beg() -> String {
+/// 近两年回填窗口起点（YYYYMMDD 形态，日 K 接口参数用）。生产通道束构造时
+/// 取一次（`channels::SyncFetchChannels::production`，每次同步一次的口径不变）。
+pub(crate) fn kline_beg() -> String {
     two_years_ago(beijing_today()).format("%Y%m%d").to_string()
 }
 
@@ -428,37 +425,4 @@ pub(super) fn downsample_weekly(bars: &[KlineBar]) -> Vec<(String, f64)> {
 /// 防止周定义单侧调整后静默漂移。
 pub(super) fn week_monday(d: NaiveDate) -> NaiveDate {
     d - chrono::Duration::days(d.weekday().num_days_from_monday() as i64)
-}
-
-/// 生产入口：接 HTTP 层的批量报价 / 日 K / 汇率 K 线 / 历史净值页 / 单请求全量净值 /
-/// 基金详情查询（复用主机池、重试、限流 pacer 与价格换算）。六个抓取闭包串行使用，
-/// pacer 以 RefCell 共享，保证全部请求之间仍然保持统一的限速间隔。进度回调透传调用方
-///（生产接事件发射，issue #897）。读写库经注入的作用域会话（issue #1275）。
-pub fn do_incremental_sync<Q, P>(session: &Q, progress: &mut P) -> Result<SyncInstrumentInfoResult>
-where
-    Q: ScopedSession,
-    P: FnMut(SyncProgress),
-{
-    let client = build_client()?;
-    let pacer = RefCell::new(Pacer::default());
-    let beg = kline_beg();
-    let mut fetch = |secids: &str| fetch_ulist(&client, &mut pacer.borrow_mut(), secids);
-    let mut kline = |secid: &str| fetch_kline(&client, &mut pacer.borrow_mut(), secid, &beg);
-    let mut fx = |pair: &str| fetch_fx_kline(&client, &mut pacer.borrow_mut(), pair, &beg);
-    let mut nav =
-        |query: &NavQuery| super::fund_nav::fetch_nav_page(&client, &mut pacer.borrow_mut(), query);
-    let mut nav_full =
-        |code: &str| super::fund_nav::fetch_nav_full_series(&client, &mut pacer.borrow_mut(), code);
-    let mut fund_name =
-        |code: &str| super::fetch_fund_quote_production(code).map(|quote| quote.name);
-    do_incremental_sync_with(
-        session,
-        &mut fetch,
-        &mut kline,
-        &mut fx,
-        &mut nav,
-        &mut nav_full,
-        &mut fund_name,
-        progress,
-    )
 }

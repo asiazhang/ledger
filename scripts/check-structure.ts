@@ -520,6 +520,7 @@ export const INVESTMENT_SRC_REL = 'crates/investment/src'
  * 协议/备份/交易 crate 同款不入清单；tests.rs 与 tests/ 为测试豁免形态不入清单。
  */
 export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
+  { path: 'channels.rs', layer: '域目录', note: '同步网络通道束（issue #1276）：六个抓取闭包的打包形态与生产/测试换装接缝——生产接 HTTP 层（主机池/限流 pacer 单点），测试注入桩经命令壳 SyncChannelsSlot 换装使「同步真实在途」可确定复现；编排本体经 do_incremental_sync_channels 单点拆交' },
   { path: 'fund.rs', layer: '域目录', note: '东财基金报价访问（按 6 位代码即拉，issue #301 / ADR-0038；搜索建议未命中回退档案通道改判存在，issue #1212）——行情接入接缝查询半边的场外实例，统一载荷 investment::Quote（ADR-0103）' },
   { path: 'fund_nav.rs', layer: '域目录', note: '东财历史净值通道（issue #303 / ADR-0038 决策 6）：lsjz 报文解析、水位窗口与基金分区编排；首刷深回填走详情页数据文件单请求全量通道、失败 fail-closed 回退分页（issue #1062）' },
   { path: 'http.rs', layer: '域目录', note: '行情 HTTP 网络层（issue #89）：多主机切换 / 重试 / 限流冷却 / Referer 与报价、日 K、汇率 K 报文解析；价格换算按随行精度位单点（批量报价与单点行情共用，#695）' },

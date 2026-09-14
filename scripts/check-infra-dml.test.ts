@@ -41,13 +41,17 @@ const MIGRATION_SQL = [
   'CREATE TABLE sync_stream_positions (id TEXT PRIMARY KEY);',
 ].join('\n')
 
-/** 已登记例外文件的夹具内容：内联 cfg(test) 夹具恰 1 处命中（= 登记数）。 */
+/** 已登记例外文件的夹具内容：内联 cfg(test) 夹具恰 4 处命中（= 登记数，
+ *  issue #1276 分段写入口的锁自由与整体裁决测试同款形状）。 */
 const WRITE_ENTRY_VIOLATION = [
   '#[cfg(test)]',
   'mod tests {',
   '  #[test]',
   '  fn t() {',
   '    let _ = "INSERT INTO categories (id) VALUES (1)";',
+  '    let _ = "INSERT INTO categories (id) VALUES (2)";',
+  '    let _ = "INSERT INTO categories (id) VALUES (3)";',
+  '    let _ = "INSERT INTO categories (id) VALUES (4)";',
   '  }',
   '}',
 ].join('\n')
@@ -199,7 +203,7 @@ describe('check-infra-dml（基础设施账本数据表 DML 禁令，issue #1135
 
   it('已登记例外（shell_support/write_entry.rs 内联测试夹具）严格相等校验：命中数漂移即红、命中清零即红', () => {
     const violation = WRITE_ENTRY_VIOLATION
-    // 恰好 1 处命中 = 登记数：放行
+    // 恰好 4 处命中 = 登记数：放行
     const exact = makeFixture({})
     expect(run([exact]).status).toBe(0)
     expect(run([exact]).output).toContain('已登记例外 1 条')
@@ -210,13 +214,13 @@ describe('check-infra-dml（基础设施账本数据表 DML 禁令，issue #1135
     expect(missing.status).toBe(1)
     expect(missing.output).toContain('例外清单漂移')
 
-    // 2 处命中 ≠ 登记的 1 处：红
+    // 8 处命中 ≠ 登记的 4 处：红
     const drifted = makeFixture({
       'crates/infra/src/shell_support/write_entry.rs': violation + '\n' + violation,
     })
     const more = run([drifted])
     expect(more.status).toBe(1)
-    expect(more.output).toContain('实际命中 2 处 ≠ 登记的 1 处')
+    expect(more.output).toContain('实际命中 8 处 ≠ 登记的 4 处')
 
     // 命中清零：例外已收敛，登记条目应删除，红
     const converged = makeFixture({ 'crates/infra/src/shell_support/write_entry.rs': 'pub fn x() {}' })

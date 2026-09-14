@@ -11,32 +11,41 @@
 #![allow(clippy::unreachable)]
 
 use rusqlite::Connection;
-use tauri::{AppHandle, State};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::db::DbState;
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::signals::{WriteEvidence, WriteOp};
 use crate::sync::{
-    ProgressEmitter, ScopedSession, SyncInstrumentInfoResult, SyncProgress, do_incremental_sync,
+    ProgressEmitter, ScopedSession, SyncFetchChannels, SyncInstrumentInfoResult, SyncProgress,
+    do_incremental_sync_channels,
 };
-use crate::write_entry::{Outcome, write_entry};
+use crate::write_entry::{Outcome, SegmentLock, write_entry_segmented};
 
-/// 生产会话接线（issue #1275）：把统一写入口闭包**已持有**的连接包成作用域
-/// 会话交给编排（[`ScopedSession`] 壳层实现）。本票为预重构，实现是直通：编排
-/// 每次取连接拿到的都是这把已持有的连接，锁跨度与先前「整段持有」逐字节一致
-/// （行为零变化）；作用域的意义在形状——编排路径在类型上取不到连接，网络 I/O
-/// 只能发生在会话之外（ADR-0069 决策 4 的结构化收口）。写入口改分段取锁后
-/// （父 spec #1274 实现决策 4），此处换装锁内短暂获取的会话实现，编排侧零改动。
-pub(crate) struct WriteEntrySession<'a> {
-    conn: &'a Connection,
+/// 同步网络通道注入接缝（issue #1276）：生产**不管理**本状态（命令走生产通道
+/// 束），集成测试 manage 本状态并装入桩通道束，使「同步真实在途」可确定复现
+/// ——门控的抓取闭包发生在会话与锁之外，读命令可读性测试与分段锁形态在注入
+/// 桩下原样运行。形态沿用既有注入体例（`FundQuoteFetcher` / `StockQuoteFetcher`
+/// 同款：缺省生产实现、测试注入桩）。
+pub struct SyncChannelsSlot(pub Arc<Mutex<SyncFetchChannels>>);
+
+/// 生产会话接线（issue #1276，换装 #1275 预留的分段会话）：把分段写入口的
+/// [`SegmentLock`] 包成作用域会话交给编排（[`ScopedSession`] 壳层实现）。编排
+/// 每次取连接都经这里短暂锁一次、用完即还；分钟级网络等待发生在分段与分段
+/// 之间（会话之外）——同步在途时同一把连接对读命令保持可取，读命令不再被
+/// 整段锁挡住（父 spec #1274 路线 A 的落点）。编排侧零改动（#1275 已把读写
+/// 全部收进会话接缝）。
+pub(crate) struct SegmentSession<'a> {
+    lock: &'a SegmentLock<'a>,
 }
 
-impl ScopedSession for WriteEntrySession<'_> {
+impl ScopedSession for SegmentSession<'_> {
     fn with_connection<R, F>(&self, use_connection: F) -> Result<R>
     where
         F: FnOnce(&Connection) -> Result<R>,
     {
-        use_connection(self.conn)
+        self.lock.with_connection(use_connection)
     }
 }
 
@@ -66,31 +75,42 @@ pub(crate) fn progress_to_emitter(emitter: &dyn ProgressEmitter) -> impl FnMut(S
 /// 「是否发」判定已于 #333 归一化进 signals 映射单点（`signals_for` +
 /// [`WriteEvidence::PriceWritten`]，ADR-0044）：入口只把终态归一化为证据——
 /// 到达保留落库的终态按 `result.any_written()`（价格或名称实际写入），失败无
-/// 证据零信号（写失败早退不发）。
+/// 证据零信号（写失败早退不发）。分段取锁、整体裁决形态（issue #1276）：仍是
+/// 恰好一处写入口调用、一个写操作身份；跨分段的「是否实际写过」由编排的结果
+/// 统计随 [`Outcome`] 累积，在收尾裁决点一次性置脏、一次发射。
 #[tauri::command]
-pub async fn sync_instrument_info(
+pub async fn sync_instrument_info<R: Runtime>(
     db: State<'_, DbState>,
-    app: AppHandle,
+    app: AppHandle<R>,
 ) -> Result<SyncInstrumentInfoResult> {
     let conn = db.conn.clone();
     // 进度发射器归进写闭包自有的一份句柄：`app` 同时被下方发射器参数借用，
     // 闭包（Send + 'static）捕获克隆件（issue #897）。
     let progress_app = app.clone();
-    write_entry(
+    // 通道束换装（issue #1276）：测试注入桩优先（`SyncChannelsSlot` 管理态），
+    // 生产默认生产通道束（每次同步构造，与先前整段形态同口径）。
+    let channels = match app.try_state::<SyncChannelsSlot>() {
+        Some(slot) => slot.0.clone(),
+        None => Arc::new(Mutex::new(SyncFetchChannels::production()?)),
+    };
+    write_entry_segmented(
         "sync_instrument_info",
         conn,
         Some(&app),
         WriteOp::SyncInstrumentInfo,
         // 行情/汇率/历史/名称落库成功即置脏，提交点写时顺带到期检查（ADR-0032，
-        // #246 审计补齐）；锁语义与先前整段持有一致（同步期间独占连接）。
-        move |conn| {
+        // #246 审计补齐）；分段取锁、整体裁决：置脏与信号在收尾点各一次。
+        move |lock| {
             // 进度接线（issue #897）：编排进度回调 → 进度事件发射（非阻塞投递，
-            // 发射失败静默，不影响同步结果）。会话接线（issue #1275）：写入口
-            // 已持有的连接包成作用域会话交给编排——编排的读写只经会话，网络
-            // I/O 在会话之外；本实现直通同一连接，锁跨度不变。
+            // 发射失败静默，不影响同步结果）。会话接线（issue #1275/#1276）：
+            // 分段锁包成作用域会话交给编排——编排的读写只经会话短暂取锁，
+            // 网络 I/O 在会话之外。
             let mut progress = progress_to_emitter(&progress_app);
-            let session = WriteEntrySession { conn };
-            do_incremental_sync(&session, &mut progress).map(|result| {
+            let mut channels = channels
+                .lock()
+                .map_err(|e| AppError::Db(format!("同步通道束互斥体损坏: {e}")))?;
+            let session = SegmentSession { lock };
+            do_incremental_sync_channels(&session, &mut channels, &mut progress).map(|result| {
                 // 证据 = 价格或名称实际写入（issue #827）：名称刷新同样让标的列表
                 // 失真，与价格写入同路计入「数据变了」。
                 let evidence = WriteEvidence::PriceWritten(result.any_written());
@@ -118,14 +138,16 @@ mod tests {
         }
     }
 
-    /// 壳层接线证明（issue #1275）：命令壳把写入口持有的连接包成作用域会话
-    /// 交给编排——会话交出的就是这把连接（经会话写入、原连接立即可读）。
-    /// 直通实现下两者本就是同一句柄；删除 [`WriteEntrySession`] 即无会话
-    /// 可交给编排，编译红即接线证明的负向半边（ADR-0087 断言强度）。
+    /// 壳层接线证明（issue #1275/#1276 换装）：命令壳把分段锁包成作用域会话
+    /// 交给编排——经会话写入、同一连接立即可读（分段取锁：每次短暂锁、用完
+    /// 即还）。删除 [`SegmentSession`] 即无会话可交给编排，编译红即接线证明
+    /// 的负向半边（ADR-0087 断言强度）。
     #[test]
     fn command_shell_hands_write_entry_connection_to_orchestration_via_session() {
         let conn = crate::test_support::open();
-        let session = WriteEntrySession { conn: &conn };
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(conn));
+        let lock = SegmentLock::new(&shared);
+        let session = SegmentSession { lock: &lock };
 
         session
             .with_connection(|c| {
@@ -140,7 +162,10 @@ mod tests {
             })
             .expect("经会话的写入应成功");
 
-        let count: i64 = conn
+        // 分段语义：with_connection 返回后锁已释放，另一持锁方能取到同一连接。
+        let count: i64 = shared
+            .lock()
+            .expect("段后锁应可取（短暂锁已还）")
             .query_row(
                 "SELECT count(*) FROM categories WHERE id = 'cat-session'",
                 [],
