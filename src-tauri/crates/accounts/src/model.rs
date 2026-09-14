@@ -92,6 +92,12 @@ pub struct Account {
     pub is_deleted: bool,
     /// 黑洞账户标志：对用户侧列表/余额/下拉选择器隐藏，但交易仍参与交易列表与报表。
     pub is_hidden: bool,
+    /// 信用额度（整数分，仅信用卡；`None` = 未设置）。档案字段，不参与余额与净资产。
+    pub credit_limit_cents: Option<i64>,
+    /// 账单日（1–31 的每月第 N 日声明值，仅信用卡；`None` = 未设置）。
+    pub statement_day: Option<i64>,
+    /// 还款日（1–31 的每月第 N 日声明值，仅信用卡；`None` = 未设置）。
+    pub due_day: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -101,6 +107,10 @@ pub struct AccountInput {
     pub kind: AccountType,
     pub currency_code: String,
     pub initial_balance_cents: Option<i64>,
+    /// 信用卡档案字段（仅 `credit` 账户；缺省/`null` = 未设置，三个字段彼此独立）。
+    pub credit_limit_cents: Option<i64>,
+    pub statement_day: Option<i64>,
+    pub due_day: Option<i64>,
 }
 
 /// 账户编辑入参（IPC `update_account` / HTTP `PUT /api/v1/accounts/{id}`）。
@@ -112,6 +122,99 @@ pub struct AccountUpdateInput {
     pub name: Option<String>,
     /// 仅无交易账户可改（有交易时改币种会使历史折算口径错乱，后端拒绝）。
     pub currency_code: Option<String>,
+    /// 信用卡档案字段三态：键缺席 = 不改、`null` = 清空、给值 = 落定该值（见 [`double_option`]）。
+    ///
+    /// 必须显式 `deserialize_with`：serde 对 `Option<Option<T>>` 会把「键缺席」与
+    /// 「值为 `null`」折叠成同一个 `None`（`null` 走 `Option` 的 `visit_unit`），
+    /// 不分开则「清空」在 wire 上不可达。
+    #[serde(default, deserialize_with = "double_option")]
+    pub credit_limit_cents: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub statement_day: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub due_day: Option<Option<i64>>,
+}
+
+/// 信用卡档案字段三件套——**不是** wire 形态（wire 与库列都是三个扁平字段），而是
+/// 守卫与范围校验的单点载体：三条写入路径（本地创建 / 本地编辑 / 同步重放）消费同一
+/// 入口，规则只写一遍（spec #1327 / ADR-0119）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CreditTerms {
+    pub credit_limit_cents: Option<i64>,
+    pub statement_day: Option<i64>,
+    pub due_day: Option<i64>,
+}
+
+impl CreditTerms {
+    /// 自三个扁平字段装配（入参序：信用额度 / 账单日 / 还款日）。
+    pub fn new(
+        credit_limit_cents: Option<i64>,
+        statement_day: Option<i64>,
+        due_day: Option<i64>,
+    ) -> Self {
+        Self {
+            credit_limit_cents,
+            statement_day,
+            due_day,
+        }
+    }
+
+    /// 三字段是否全未设置——「未携带信用卡档案」的判据。
+    pub fn is_unset(&self) -> bool {
+        self.credit_limit_cents.is_none() && self.statement_day.is_none() && self.due_day.is_none()
+    }
+
+    /// 携带守卫 + 范围校验（单点）：
+    /// - 非空即要求账户类型为 `credit`，否则拒绝——额度与账单日是信用卡的档案，
+    ///   挂到现金或负债账户上会让账户类型与属性失去对应关系；
+    /// - 信用额度须为正整数分（`0` 与负数非法，`None` 才是「未设置」）；
+    /// - 账单日 / 还款日须落在 1–31（月末钳制不在存储层，见 [`Account`] 字段注释）。
+    pub fn validate_for(&self, kind: AccountType) -> Result<(), AppError> {
+        if self.is_unset() {
+            return Ok(());
+        }
+        if kind != AccountType::Credit {
+            return Err(AppError::coded(
+                "account.credit-attribute-not-applicable",
+                "信用额度、账单日与还款日仅信用卡账户可填写",
+            ));
+        }
+        if self.credit_limit_cents.is_some_and(|limit| limit <= 0) {
+            return Err(AppError::coded(
+                "account.credit-limit-invalid",
+                "信用额度必须大于 0",
+            ));
+        }
+        for (day, code, label) in [
+            (
+                self.statement_day,
+                "account.statement-day-invalid",
+                "账单日",
+            ),
+            (self.due_day, "account.due-day-invalid", "还款日"),
+        ] {
+            if let Some(day) = day.filter(|d| !(1..=31).contains(d)) {
+                let value = day.to_string();
+                return Err(AppError::codedp(
+                    code,
+                    format!("{label}必须在 1 到 31 之间: {value}"),
+                    &[value.as_str()],
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// 「键缺席 = 不改」与「值为 `null` = 清空」的反序列化区分器（见 [`AccountUpdateInput`]）：
+/// 仅在键在场时被调用（缺席由 `#[serde(default)]` 交回 `None`），因此「键在场即 `Some`」
+/// 恰好等价于三态里的后两态。
+fn double_option<'de, D>(deserializer: D) -> std::result::Result<Option<Option<i64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize as _;
+    Option::<i64>::deserialize(deserializer).map(Some)
 }
 
 /// 余额调整入参（IPC `adjust_account_balance`）：把余额校准到目标值，
@@ -162,6 +265,9 @@ impl FromRow for Account {
             device_id: row.get(8)?,
             is_deleted: row.get::<_, i64>(9)? != 0,
             is_hidden: row.get::<_, i64>(10)? != 0,
+            credit_limit_cents: row.get(11)?,
+            statement_day: row.get(12)?,
+            due_day: row.get(13)?,
         })
     }
 }

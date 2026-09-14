@@ -59,6 +59,9 @@ async fn seed_own_ops(app: &tauri::AppHandle<tauri::test::MockRuntime>) {
             kind: ledger_accounts::AccountType::Cash,
             currency_code: "CNY".into(),
             initial_balance_cents: Some(0),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .await

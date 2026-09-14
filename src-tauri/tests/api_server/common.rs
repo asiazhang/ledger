@@ -383,6 +383,19 @@ pub(crate) async fn get_json(app: &Router, uri: &str) -> (StatusCode, serde_json
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
+/// 按 id 取单个账户（HTTP 面无线上的单账户读端点：读回走列表读出口）。
+pub(crate) async fn read_account_by_id(app: &Router, id: &str) -> serde_json::Value {
+    let (status, accounts) = get_json(app, "/api/v1/accounts").await;
+    assert_eq!(status, StatusCode::OK);
+    accounts
+        .as_array()
+        .expect("账户列表应为数组")
+        .iter()
+        .find(|a| a["id"] == id)
+        .cloned()
+        .unwrap_or_else(|| panic!("账户 {id} 应在列表内"))
+}
+
 /// GET 但不反序列化响应体（4xx 拒绝响应体非 JSON 契约，只需状态码时用）。
 pub(crate) async fn get_status(app: &Router, uri: &str) -> StatusCode {
     let response = app

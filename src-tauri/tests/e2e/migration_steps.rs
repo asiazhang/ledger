@@ -142,6 +142,9 @@ fn reimport_create_account(world: &mut LedgerWorld, name: String, kind: String, 
             kind: account_kind,
             currency_code: currency,
             initial_balance_cents: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .expect("幂等创建账户失败");

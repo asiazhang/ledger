@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { lastInvokeArgs, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { fireProp } from '@ledger/test-support/component-vm'
 import { mount, flushPromises } from '@vue/test-utils'
-import { NDataTable, NDialogProvider, NDropdown, NForm, NInput, NModal } from 'naive-ui'
+import { NDataTable, NDialogProvider, NDropdown, NForm, NInput, NInputNumber, NModal, NSelect } from 'naive-ui'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { h, nextTick } from 'vue'
 import AccountsView from '@/views/AccountsView.vue'
@@ -304,5 +304,198 @@ describe('AccountsView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词�
     amountPrivacyEnabled.value = false
     await nextTick()
     expect(wrapper.text()).toContain(visible)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 信用卡档案字段（spec #1327 / ADR-0119）：列表使用率小字、新增表单条件字段、
+// 编辑弹窗档案输入与只读摘要、提交三字段。
+describe('AccountsView 信用卡档案（spec #1327 / ADR-0119）', () => {
+  /** 本 describe 专用夹具：两张信用卡（6% 与 95% 使用率）、一张已还清卡、
+   * 一张未设额度卡、一笔现金账户（验证非信用卡行不受影响）。 */
+  const cardBalances: AccountBalance[] = [
+    {
+      account: {
+        ...makeAccount('acc-credit', '招行信用卡'),
+        type: 'credit',
+        credit_limit_cents: 5_000_000,
+        statement_day: 5,
+        due_day: 25,
+      },
+      balance_cents: -320_000,
+    },
+    {
+      account: {
+        ...makeAccount('acc-hot', '中信信用卡'),
+        type: 'credit',
+        credit_limit_cents: 1_000_000,
+        statement_day: 20,
+        due_day: 8,
+      },
+      balance_cents: -950_000,
+    },
+    { account: makeAccount('acc-cash', '现金'), balance_cents: 1000 },
+    {
+      account: { ...makeAccount('acc-nolimit', '无额度卡'), type: 'credit' },
+      balance_cents: -500,
+    },
+    {
+      account: {
+        ...makeAccount('acc-clear', '已还清卡'),
+        type: 'credit',
+        credit_limit_cents: 1_000_000,
+      },
+      balance_cents: 0,
+    },
+  ]
+
+  const CNY = { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }
+
+  async function wireCards() {
+    await wireInvokeSeam({
+      // update_account 是保存路径的命令面：无桩即「未命中报错」让提交失败（弹窗不关）。
+      defaults: { list_account_balances: cardBalances, update_account: null },
+      overrides: { list_accounts: cardBalances.map((b) => b.account) },
+      refreshReferenceStores: true,
+    }).ready
+  }
+
+  function mountView() {
+    return mount(NDialogProvider, {
+      slots: { default: () => h(AccountsView) },
+    })
+  }
+
+  function bodyRows(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('.n-data-table-tbody .n-data-table-tr')
+  }
+
+  /** 行菜单（选项含 edit key）与打开某行编辑弹窗。 */
+  function rowMenu(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAllComponents(NDropdown).find((d) =>
+      (d.props('options') as Array<{ key?: string }>).some((o) => o.key === 'edit'),
+    )!
+  }
+
+  async function openEditOnRow(wrapper: ReturnType<typeof mount>, index: number) {
+    await wrapper.findAll('button[aria-label="更多操作"]')[index].trigger('click')
+    await flushPromises()
+    fireProp(rowMenu(wrapper), 'onSelect', 'edit')
+    await flushPromises()
+  }
+
+  function editForm(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAllComponents(NForm)[1]
+  }
+
+  function editModal(wrapper: ReturnType<typeof mount>) {
+    return wrapper
+      .findAllComponents(NModal)
+      .find((m) => m.props('title') === '编辑账户')!
+  }
+
+  it('列表：信用卡行在既有余额单元格内多一行使用率；无欠款/未设额度/非信用卡行都不显示', async () => {
+    await wireCards()
+    const wrapper = mountView()
+    await flushPromises()
+    const rows = bodyRows(wrapper)
+    expect(rows[0].text()).toContain('已用 6%')
+    expect(rows[1].text()).toContain('已用 95%')
+    expect(rows[2].text(), '现金账户不是信用卡').not.toContain('已用')
+    expect(rows[3].text(), '未设额度算不出使用率').not.toContain('已用')
+    expect(rows[4].text(), '已还清（0%）不显示').not.toContain('已用')
+  })
+
+  it('列表：使用率 ≥90% 才用警示色（其余用弱化小字，两者不同）', async () => {
+    await wireCards()
+    const wrapper = mountView()
+    await flushPromises()
+    const line = (wrapper: ReturnType<typeof mount>, index: number, text: string) =>
+      bodyRows(wrapper)[index]
+        .findAll('div')
+        .find((d) => d.text() === text)!
+    expect(line(wrapper, 1, '已用 95%').attributes('style')).toContain('color')
+    expect(line(wrapper, 0, '已用 6%').attributes('style')).not.toContain('color')
+  })
+
+  it('移动档：信用卡小字仍在余额单元格内，列结构不变（三列）', async () => {
+    setFakeMedia({ width: 600 })
+    await wireCards()
+    const wrapper = mountView()
+    await flushPromises()
+    const table = wrapper.findComponent(NDataTable)
+    expect((table.props('columns') as unknown[]).length).toBe(3)
+    expect(bodyRows(wrapper)[0].text()).toContain('已用 6%')
+  })
+
+  it('新增表单：选「信用卡」才出现额度/账单日/还款日三个输入', async () => {
+    await wireCards()
+    const wrapper = mountView()
+    await flushPromises()
+    const createForm = () => wrapper.findAllComponents(NForm)[0]
+    expect(createForm().text()).not.toContain('信用额度')
+
+    wrapper.findAllComponents(NSelect)[0].vm.$emit('update:value', 'credit')
+    await flushPromises()
+    expect(createForm().text()).toContain('信用额度')
+    expect(createForm().text()).toContain('账单日')
+    expect(createForm().text()).toContain('还款日')
+
+    wrapper.findAllComponents(NSelect)[0].vm.$emit('update:value', 'bank')
+    await flushPromises()
+    expect(createForm().text()).not.toContain('信用额度')
+  })
+
+  it('编辑弹窗：信用卡账户回填档案输入并显示只读额度用量与下次账单节点（ISO 具体日期）', async () => {
+    await wireCards()
+    const wrapper = mountView()
+    await flushPromises()
+    await openEditOnRow(wrapper, 0)
+    const form = editForm(wrapper)
+    expect(form.text()).toContain('信用额度')
+    // 额度以元回填（5,000,000 分 = 50000 元）
+    expect(form.findAllComponents(NInputNumber)[0].props('value')).toBe(50_000)
+    expect(form.findAllComponents(NInputNumber)[1].props('value')).toBe(5)
+    expect(form.findAllComponents(NInputNumber)[2].props('value')).toBe(25)
+    // 只读摘要：额度用量按派生口径 + 下次账单节点是两个具体日期
+    expect(form.text()).toContain('额度使用')
+    expect(form.text(), '已用额度按账户币种格式化').toContain(formatAmount(320_000, CNY))
+    expect(form.text(), '可用额度 = 额度 + 余额').toContain(formatAmount(4_680_000, CNY))
+    expect(form.text()).toContain('使用率 6%')
+    expect(form.text()).toContain('下次账单节点')
+    const dates = form.text().match(/\d{4}-\d{2}-\d{2}/g) ?? []
+    expect(dates.length, '账单日与还款日各给一个具体日期').toBeGreaterThanOrEqual(2)
+  })
+
+  it('编辑弹窗：非信用卡账户不出现档案输入与摘要', async () => {
+    await wireCards()
+    const wrapper = mountView()
+    await flushPromises()
+    await openEditOnRow(wrapper, 2)
+    const form = editForm(wrapper)
+    expect(form.text()).not.toContain('信用额度')
+    expect(form.text()).not.toContain('额度使用')
+  })
+
+  it('提交编辑：信用卡账户的档案三字段随 PUT 落定（调用事实 + 弹窗关闭效果）', async () => {
+    await wireCards()
+    const wrapper = mountView()
+    await flushPromises()
+    await openEditOnRow(wrapper, 0)
+    const inputs = editForm(wrapper).findAllComponents(NInputNumber)
+    inputs[0].vm.$emit('update:value', 60_000)
+    inputs[2].vm.$emit('update:value', null)
+    await flushPromises()
+    const save = editForm(wrapper)
+      .findAll('button')
+      .find((b) => b.text() === '保存')!
+    await save.trigger('click')
+    await flushPromises()
+
+    const args = lastInvokeArgs('update_account').input as Record<string, unknown>
+    expect(args.credit_limit_cents).toBe(6_000_000)
+    expect(args.statement_day).toBe(5)
+    expect(args.due_day, '清空的还款日以 null 落定').toBeNull()
+    expect(editModal(wrapper).props('show'), '保存成功后关闭弹窗').toBe(false)
   })
 })

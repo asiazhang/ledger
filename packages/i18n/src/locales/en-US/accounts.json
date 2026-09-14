@@ -57,6 +57,21 @@
     "adjusted": "Balance adjusted",
     "adjustFailed": "Failed to adjust: {message}"
   },
+  "credit": {
+    "limit": "Credit Limit",
+    "statementDay": "Statement Day",
+    "dueDay": "Due Day",
+    "limitPlaceholder": "e.g. 50000",
+    "dayPlaceholder": "1–31",
+    "initialBalanceCreditPlaceholder": "Enter existing debt as a negative number",
+    "usedPercent": "{percent}% used",
+    "usageLabel": "Credit Usage",
+    "usageSummary": "{used} used · {available} available · {percent}% used",
+    "usageUnset": "Credit limit not set yet",
+    "nextLabel": "Next Statement Cycle",
+    "nextNodes": "Statement {statement} · Due {due}",
+    "nextNodesUnset": "Statement day and due day not set yet"
+  },
   "type": {
     "cash": "Cash",
     "bank": "Bank Card",

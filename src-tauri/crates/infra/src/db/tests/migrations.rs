@@ -66,9 +66,9 @@ fn init_db_is_idempotent_and_seeds_defaults() {
     assert_eq!(mismatched, 0);
 }
 
-/// 当前迁移序列长度（V001–V025，V005 移除不回填，共 24 条）；新增迁移时随
+/// 当前迁移序列长度（V001–V026，V005 移除不回填，共 25 条）；新增迁移时随
 /// `migrations()` 同步更新。钉住「从零迁移到最新」的完整性基线。
-const LATEST_SCHEMA_VERSION: usize = 24;
+const LATEST_SCHEMA_VERSION: usize = 25;
 
 /// 从零迁移完整性（内存库从零 → 最新）：user_version 停在最新、全库完整性
 /// 检查通过、每条迁移的签名表/列在场。漏跑或中途失败的迁移批次会停在半途
@@ -143,6 +143,10 @@ fn migration_from_zero_reaches_latest_completely() {
         // V002 就地修改（issue #977）：基金转换的转入腿列（同批另增 to_quantity /
         // out_amount_cents / in_amount_cents 与转出消耗表，形状锁见 convert 专测）。
         ("security_transactions", "to_instrument_id"),
+        // V026（spec #1327 / ADR-0119）：信用卡档案列（额度 / 账单日 / 还款日）。
+        ("accounts", "credit_limit_cents"),
+        ("accounts", "statement_day"),
+        ("accounts", "due_day"),
     ] {
         let hit: i64 = conn
             .query_row(

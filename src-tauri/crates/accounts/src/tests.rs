@@ -13,7 +13,7 @@ fn setup() -> rusqlite::Connection {
 fn list_accounts(conn: &rusqlite::Connection) -> Vec<Account> {
     query_all(
         conn,
-        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden \
+        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden,credit_limit_cents,statement_day,due_day \
          FROM accounts WHERE is_deleted=0 AND is_hidden=0 ORDER BY created_at",
         [],
     )
@@ -572,7 +572,7 @@ fn seed_contains_black_hole_accounts_for_cny_and_hkd() {
 // update_account（编辑账户）
 // ---------------------------------------------------------------------------
 
-use super::model::{AccountBalanceAdjustInput, AccountUpdateInput};
+use super::model::{AccountBalanceAdjustInput, AccountInput, AccountType, AccountUpdateInput};
 
 fn find_black_hole(conn: &rusqlite::Connection, currency: &str) -> Option<String> {
     conn.query_row(
@@ -593,6 +593,9 @@ fn update_account_renames_and_bumps_version() {
         AccountUpdateInput {
             name: Some("新名".into()),
             currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap();
@@ -612,6 +615,9 @@ fn update_account_rejects_empty_name() {
         AccountUpdateInput {
             name: Some("   ".into()),
             currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap_err();
@@ -630,6 +636,9 @@ fn update_account_rejects_currency_change_when_has_transactions() {
         AccountUpdateInput {
             name: None,
             currency_code: Some("HKD".into()),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap_err();
@@ -652,6 +661,9 @@ fn update_account_allows_currency_change_without_transactions() {
         AccountUpdateInput {
             name: None,
             currency_code: Some("HKD".into()),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap();
@@ -671,6 +683,9 @@ fn update_account_rejects_unknown_currency() {
         AccountUpdateInput {
             name: None,
             currency_code: Some("XYZ".into()),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap_err();
@@ -687,6 +702,9 @@ fn update_account_returns_not_found_for_missing_id() {
         AccountUpdateInput {
             name: Some("任意".into()),
             currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .unwrap_err();
@@ -880,4 +898,391 @@ fn adjust_deleted_adjustment_tx_reverts_balance() {
     )
     .unwrap();
     assert_eq!(balance(&conn, "acc-adj-7"), 0, "删除调整交易即恢复原余额");
+}
+
+// ---------------------------------------------------------------------------
+// 信用卡档案字段（spec #1327 / ADR-0119）：携带守卫、范围校验、三态编辑语义，
+// 与「档案不参与余额口径」的负向守卫。
+// ---------------------------------------------------------------------------
+
+/// 信用卡账户建参助手（CNY、无期初余额、无档案字段，逐项覆写）。
+fn credit_input(name: &str) -> AccountInput {
+    AccountInput {
+        name: name.into(),
+        kind: AccountType::Credit,
+        currency_code: "CNY".into(),
+        initial_balance_cents: None,
+        credit_limit_cents: None,
+        statement_day: None,
+        due_day: None,
+    }
+}
+
+/// 创建信用卡账户并携带三个档案字段 → 读回同值。**声明值原样存储**：月末钳制
+/// （31 日 → 2 月取 28/29 日）只发生在展示层的「下次账单日」派生，不进库。
+#[test]
+fn create_credit_account_persists_credit_terms() {
+    let conn = setup();
+    let id = super::create_account(
+        &conn,
+        AccountInput {
+            credit_limit_cents: Some(5_000_000),
+            statement_day: Some(31),
+            due_day: Some(1),
+            ..credit_input("招行信用卡")
+        },
+    )
+    .unwrap();
+    let account = super::get_account(&conn, &id).unwrap();
+    assert_eq!(account.credit_limit_cents, Some(5_000_000));
+    assert_eq!(
+        account.statement_day,
+        Some(31),
+        "声明值原样存储（不做月末钳制）"
+    );
+    assert_eq!(
+        account.due_day,
+        Some(1),
+        "账单日与还款日不强制先后（跨月形态合法）"
+    );
+}
+
+/// 三个字段彼此独立可空：只填额度、只填日子、全不填都要能建。
+#[test]
+fn create_credit_account_allows_partial_credit_terms() {
+    let conn = setup();
+    let only_limit = super::create_account(
+        &conn,
+        AccountInput {
+            credit_limit_cents: Some(1_000_000),
+            ..credit_input("只填额度")
+        },
+    )
+    .unwrap();
+    let account = super::get_account(&conn, &only_limit).unwrap();
+    assert_eq!(account.credit_limit_cents, Some(1_000_000));
+    assert_eq!(account.statement_day, None);
+    assert_eq!(account.due_day, None);
+
+    let only_days = super::create_account(
+        &conn,
+        AccountInput {
+            statement_day: Some(5),
+            due_day: Some(25),
+            ..credit_input("只填日子")
+        },
+    )
+    .unwrap();
+    let account = super::get_account(&conn, &only_days).unwrap();
+    assert_eq!(account.credit_limit_cents, None, "额度未填不报错");
+    assert_eq!(account.statement_day, Some(5));
+    assert_eq!(account.due_day, Some(25));
+}
+
+/// 非信用卡账户携带档案字段 → 拒绝，且不落库（账户类型与属性的对应关系不被破坏）。
+#[test]
+fn create_non_credit_account_rejects_credit_terms() {
+    let conn = setup();
+    for (kind, name) in [
+        (AccountType::Cash, "现金"),
+        (AccountType::Bank, "银行卡"),
+        (AccountType::Debt, "负债"),
+        (AccountType::Receivable, "借出款"),
+    ] {
+        let err = super::create_account(
+            &conn,
+            AccountInput {
+                name: name.into(),
+                kind,
+                credit_limit_cents: Some(1_000_000),
+                ..credit_input(name)
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AppError::Coded {
+                    class: ErrClass::Invalid,
+                    ..
+                }
+            ),
+            "{kind} 携带信用额度应被拒绝"
+        );
+        assert!(err.to_string().contains("仅信用卡账户可填写"));
+    }
+    let names: Vec<String> = super::list_accounts_for_api(&conn)
+        .unwrap()
+        .into_iter()
+        .map(|a| a.name)
+        .collect();
+    assert!(
+        !names
+            .iter()
+            .any(|n| n == "现金" || n == "银行卡" || n == "负债" || n == "借出款"),
+        "被拒绝的创建不落库"
+    );
+}
+
+/// 额度必须为正整数分：0 与负数非法（`None` 才是「未设置」，两者不可混同）。
+#[test]
+fn credit_limit_must_be_positive() {
+    let conn = setup();
+    for limit in [0, -1, -10_000] {
+        let err = super::create_account(
+            &conn,
+            AccountInput {
+                credit_limit_cents: Some(limit),
+                ..credit_input("额度非法")
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Coded {
+                class: ErrClass::Invalid,
+                ..
+            }
+        ));
+        assert!(err.to_string().contains("信用额度必须大于 0"));
+    }
+}
+
+/// 账单日与还款日必须落在 1–31：越界失败，码与文案各自区分（不混成一个错误）。
+#[test]
+fn credit_days_must_be_within_1_to_31() {
+    let conn = setup();
+    for day in [0, 32, -1] {
+        let err = super::create_account(
+            &conn,
+            AccountInput {
+                statement_day: Some(day),
+                ..credit_input("账单日非法")
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("账单日必须在 1 到 31 之间"));
+        assert!(
+            err.to_string().contains(&day.to_string()),
+            "越界值随消息带出"
+        );
+
+        let err = super::create_account(
+            &conn,
+            AccountInput {
+                due_day: Some(day),
+                ..credit_input("还款日非法")
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("还款日必须在 1 到 31 之间"));
+    }
+}
+
+/// 编辑三态：给值落定 / 缺席保持原值 / `Some(None)` 清空——三个字段彼此独立，
+/// 且清空只作用于被给的字段。
+#[test]
+fn update_credit_terms_supports_set_keep_and_clear() {
+    let conn = setup();
+    let id = super::create_account(
+        &conn,
+        AccountInput {
+            credit_limit_cents: Some(1_000_000),
+            statement_day: Some(5),
+            due_day: Some(25),
+            ..credit_input("信用卡")
+        },
+    )
+    .unwrap();
+    let terms = |conn: &rusqlite::Connection| {
+        let a = super::get_account(conn, &id).unwrap();
+        (a.credit_limit_cents, a.statement_day, a.due_day)
+    };
+
+    // 缺席 = 不改：只改名字，三字段原样保留
+    super::update_account(
+        &conn,
+        &id,
+        AccountUpdateInput {
+            name: Some("信用卡Ⅰ".into()),
+            currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(terms(&conn), (Some(1_000_000), Some(5), Some(25)));
+
+    // 给值 = 落定（未被给的字段保持原值）
+    super::update_account(
+        &conn,
+        &id,
+        AccountUpdateInput {
+            name: None,
+            currency_code: None,
+            credit_limit_cents: Some(Some(2_000_000)),
+            statement_day: Some(Some(10)),
+            due_day: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(terms(&conn), (Some(2_000_000), Some(10), Some(25)));
+
+    // `Some(None)` = 清空（单字段独立清空，不牵连另两个）
+    super::update_account(
+        &conn,
+        &id,
+        AccountUpdateInput {
+            name: None,
+            currency_code: None,
+            credit_limit_cents: Some(None),
+            statement_day: None,
+            due_day: Some(None),
+        },
+    )
+    .unwrap();
+    assert_eq!(terms(&conn), (None, Some(10), None));
+}
+
+/// 编辑非法档案值 → 拒绝且不落任何字段（拒绝是整体失败，不是部分写入）。
+#[test]
+fn update_rejects_invalid_credit_terms_without_writing() {
+    let conn = setup();
+    let id = super::create_account(
+        &conn,
+        AccountInput {
+            credit_limit_cents: Some(1_000_000),
+            statement_day: Some(5),
+            due_day: Some(25),
+            ..credit_input("信用卡")
+        },
+    )
+    .unwrap();
+    let err = super::update_account(
+        &conn,
+        &id,
+        AccountUpdateInput {
+            name: Some("改了个名".into()),
+            currency_code: None,
+            credit_limit_cents: Some(Some(0)),
+            statement_day: Some(Some(99)),
+            due_day: None,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        AppError::Coded {
+            class: ErrClass::Invalid,
+            ..
+        }
+    ));
+    let account = super::get_account(&conn, &id).unwrap();
+    assert_eq!(account.name, "信用卡", "非法编辑不落名字等任何字段");
+    assert_eq!(
+        (account.credit_limit_cents, account.statement_day),
+        (Some(1_000_000), Some(5))
+    );
+}
+
+/// 编辑非信用卡账户携带档案字段 → 拒绝。
+#[test]
+fn update_non_credit_account_rejects_credit_terms() {
+    let conn = setup();
+    insert_account(&conn, "acc-c-9", "现金", "cash", "CNY", 0);
+    let err = super::update_account(
+        &conn,
+        "acc-c-9",
+        AccountUpdateInput {
+            name: None,
+            currency_code: None,
+            credit_limit_cents: None,
+            statement_day: Some(Some(5)),
+            due_day: None,
+        },
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("仅信用卡账户可填写"));
+}
+
+/// 读路径同样带出档案字段（列表列清单在查询处重复，UI 消费的是列表读出口）。
+#[test]
+fn list_accounts_carries_credit_terms() {
+    let conn = setup();
+    let id = super::create_account(
+        &conn,
+        AccountInput {
+            credit_limit_cents: Some(5_000_000),
+            statement_day: Some(5),
+            due_day: Some(25),
+            ..credit_input("招行信用卡")
+        },
+    )
+    .unwrap();
+    let listed = super::list_accounts(&conn)
+        .unwrap()
+        .into_iter()
+        .find(|a| a.id == id)
+        .expect("新建账户应在列表内");
+    assert_eq!(listed.credit_limit_cents, Some(5_000_000));
+    assert_eq!(listed.statement_day, Some(5));
+    assert_eq!(listed.due_day, Some(25));
+
+    let balances = crate::balance::list_account_balances_with_visibility(&conn, false).unwrap();
+    let row = balances
+        .into_iter()
+        .find(|b| b.account.id == id)
+        .expect("新建账户应在余额清单内");
+    assert_eq!(row.account.credit_limit_cents, Some(5_000_000));
+}
+
+/// 负向守卫：改/清档案字段不改变账户余额——额度是档案不是钱，信用卡欠款仍由
+/// 余额唯一表达（余额缓存与实时口径同值，额度不进缓存写路径）。
+#[test]
+fn credit_terms_do_not_change_account_balance() {
+    let conn = setup();
+    let id = super::create_account(
+        &conn,
+        AccountInput {
+            initial_balance_cents: Some(-20_000),
+            ..credit_input("招行信用卡")
+        },
+    )
+    .unwrap();
+    let before = balance(&conn, &id);
+    assert_eq!(before, -20_000, "建账既有欠款经期初余额（负值）表达");
+
+    super::update_account(
+        &conn,
+        &id,
+        AccountUpdateInput {
+            name: None,
+            currency_code: None,
+            credit_limit_cents: Some(Some(5_000_000)),
+            statement_day: Some(Some(5)),
+            due_day: Some(Some(25)),
+        },
+    )
+    .unwrap();
+    assert_eq!(balance(&conn, &id), before, "补填额度不改变余额");
+
+    super::update_account(
+        &conn,
+        &id,
+        AccountUpdateInput {
+            name: None,
+            currency_code: None,
+            credit_limit_cents: Some(None),
+            statement_day: Some(None),
+            due_day: Some(None),
+        },
+    )
+    .unwrap();
+    assert_eq!(balance(&conn, &id), before, "清空额度不改变余额");
+    assert_eq!(
+        crate::balance::cached_balance(&conn, &id).unwrap(),
+        before,
+        "缓存口径与实时口径同值"
+    );
 }

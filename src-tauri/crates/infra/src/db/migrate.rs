@@ -80,6 +80,9 @@ pub(crate) fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../../../migrations/V025__transaction_index_cleanup.sql"
             )),
+            M::up(include_str!(
+                "../../../../migrations/V026__account_credit_terms.sql"
+            )),
         ])
     })
 }

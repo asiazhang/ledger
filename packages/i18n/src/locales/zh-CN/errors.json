@@ -7,7 +7,11 @@
     "black-hole-adjust-unsupported": "黑洞账户不支持余额调整",
     "balance-overflow": "目标余额溢出",
     "balance-no-change": "余额已等于目标值，无需调整",
-    "type-unknown": "未知账户类型: {0}"
+    "type-unknown": "未知账户类型: {0}",
+    "credit-limit-invalid": "信用额度必须大于 0",
+    "statement-day-invalid": "账单日必须在 1 到 31 之间: {0}",
+    "due-day-invalid": "还款日必须在 1 到 31 之间: {0}",
+    "credit-attribute-not-applicable": "信用额度、账单日与还款日仅信用卡账户可填写"
   },
   "balance": {
     "cache-row-missing": "账户 {0} 缺少余额缓存行，请执行余额缓存审计修复"

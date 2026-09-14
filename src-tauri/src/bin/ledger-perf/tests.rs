@@ -310,6 +310,9 @@ fn acct(id: &str, kind: AccountType, ccy: &str) -> Account {
         device_id: "test".to_string(),
         is_deleted: false,
         is_hidden: false,
+        credit_limit_cents: None,
+        statement_day: None,
+        due_day: None,
     }
 }
 

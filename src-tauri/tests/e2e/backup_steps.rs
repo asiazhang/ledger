@@ -605,6 +605,9 @@ fn create_account_via_entry(world: &mut LedgerWorld, name: String, kind: String,
         kind: kind.parse::<AccountType>().expect("非法账户类型"),
         currency_code: currency,
         initial_balance_cents: None,
+        credit_limit_cents: None,
+        statement_day: None,
+        due_day: None,
     };
     world
         .db

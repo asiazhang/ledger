@@ -36,6 +36,9 @@ fn create_hidden_account(
             kind: kind.parse::<AccountType>().expect("非法账户类型"),
             currency_code: currency,
             initial_balance_cents: Some(initial_balance),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
         },
     )
     .expect("创建隐藏账户失败");
