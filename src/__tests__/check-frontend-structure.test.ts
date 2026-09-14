@@ -41,7 +41,8 @@ interface FixtureEntry {
   note: string
 }
 
-/** 建夹具仓库根：workspace yaml（glob 声明）+ 空成员目录 + 两个接线宿主。
+/** 建夹具仓库根：workspace yaml（glob 声明）+ 空成员目录 + 两个接线宿主 + 不可注入
+ *  登记表的既有登记项（规则⑥目录 src/utils、规则⑦模块 useTransactionFilter.ts）。
  *  与真实仓库同构的最小绿基线；opts 覆盖缺口场景。 */
 function fixtureRepo(opts: {
   /** 是否写 pnpm-workspace.yaml 的 packages/* 声明（缺省写；false = 缺声明场景） */
@@ -61,6 +62,14 @@ function fixtureRepo(opts: {
   }
   writeFileSync(join(root, 'pnpm-workspace.yaml'), yamlLines.join('\n') + '\n')
   mkdirSync(join(root, 'packages'), { recursive: true })
+  // 规则⑦ 登记模块 src/composables/useTransactionFilter.ts（issue #1323）：默认创建——
+  // 规则⑦登记表不可注入（生产 DEEP_MODULE_BOUNDARIES 单一事实源），夹具绿基线须
+  // 自足含全部登记项，否则「登记模块不存在」假红（同规则⑥夹具建 src/utils 的形制）
+  mkdirSync(join(root, 'src', 'composables'), { recursive: true })
+  writeFileSync(
+    join(root, 'src', 'composables', 'useTransactionFilter.ts'),
+    'export const useTransactionFilter = () => ({})\n',
+  )
   for (const dir of opts.memberDirs ?? []) {
     mkdirSync(join(root, 'packages', dir), { recursive: true })
   }

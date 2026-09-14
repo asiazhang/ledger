@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // 前端 workspace 结构守门（issue #1149 / spec #1148）：pnpm 子包骨架的边界门禁，
 // 为每一次包抽取提供可证伪的边界基线。本脚本不移动业务代码，只核结构。
-// 规则六类：
+// 规则七类：
 // ① 成员登记：packages/* 下的成员目录必须登记于本脚本 PACKAGES（磁盘 ↔ 清单双向
 //    全等，清单漂移 fail loud）——pnpm-workspace.yaml 的 glob 自动纳管目录，能「漏
 //    登记」的只有方向表登记册；新建成员目录不登记即红（删除即变红②）。
@@ -25,6 +25,13 @@
 //    搬迁对象消失而收缩清空：包层上行形态改由规则②（方向表全等）、③（@/ 别名
 //    禁令）、④（深导入 exports 入口）在包边界接管，登记机制保留——后续目录级
 //    边界约束（如 ADR-0118 规则⑦深模块登记表）的登记处。
+// ⑦ 深模块边界登记表（issue #1323 / ADR-0118 决策 7）：不成包的深模块以「允许消费
+//    方白名单」守门，登记 { 模块文件 → 允许消费方闭集 }，登记项唯一事实源为
+//    DEEP_MODULE_BOUNDARIES；扫描 src/ + packages/ 源文件（排除测试文件——单测引用
+//    被测对象是天然形态，白名单表达生产消费面）的 import（@/ 别名与相对路径统一
+//    解析落点后比对），消费方不在白名单内即红；登记模块文件不存在即红（改名/删除
+//    后拒绝规则静默失效）；删除登记项即变红（登记表全等断言 + 夹具违规即红，
+//    issue #1323 验收判据）。
 // 删除即变红①：本脚本核对自身接线——scripts/check.sh 与 CI frontend job
 //（.github/workflows/build.yml）中必须存在实际调用行（非注释、非 echo 展示行），
 // 删除接线行即红（ADR-0087 断言强度：接线型守门的负向条目）。
@@ -546,6 +553,88 @@ function checkUpwardImports(repoRoot: string, problems: string[]): void {
   }
 }
 
+/** 规则⑦ 深模块边界登记条目（单一事实源，issue #1323 / ADR-0118 决策 7）：路径相对
+ *  仓库根，posix 分隔。 */
+export interface DeepModuleBoundary {
+  /** 深模块文件路径（相对仓库根） */
+  module: string
+  /** 允许的消费方目录/文件闭集（相对仓库根；目录为前缀闭集） */
+  allowedConsumers: readonly string[]
+  note: string
+}
+
+/** 深模块边界登记册（issue #1323）：不成包的深模块（依赖壳内状态故过不了成包判据
+ *  1，ADR-0118 决策 1/4）以白名单固化生产消费面；每新增一项登记追加一行。条目本身
+ *  即规格——删除/改动条目会让 scripts/check-frontend-structure.test.ts 的登记表全等
+ *  断言变红（删除即变红，issue #1323 验收判据）。 */
+export const DEEP_MODULE_BOUNDARIES: readonly DeepModuleBoundary[] = [
+  {
+    module: 'src/composables/useTransactionFilter.ts',
+    allowedConsumers: ['src/views'],
+    note: '交易列表过滤深模块（ADR-0030/0094）：依赖壳内 pinia store（交易页会话级 store）故不成包（ADR-0118 决策 4），消费面 = 交易页与报表页',
+  },
+]
+
+/** 消费方 rel 路径是否命中白名单条目（目录为前缀闭集：`src/views` 放行 `src/views/` 整棵树） */
+function consumerAllowed(consumerRel: string, allowed: readonly string[]): boolean {
+  return allowed.some((dir) => consumerRel === dir || consumerRel.startsWith(`${dir}/`))
+}
+
+/** import 说明符解析为仓库相对路径（`@/` 别名指向 src/；相对路径自消费方文件解析；
+ *  包名与 bare 说明符不指向壳内文件，返回 null） */
+function resolveShellSpecifier(repoRoot: string, consumerAbs: string, specifier: string): string {
+  const abs = specifier.startsWith('@/')
+    ? join(repoRoot, 'src', specifier.slice(2))
+    : resolve(dirname(consumerAbs), specifier)
+  return relative(repoRoot, abs)
+}
+
+/** 说明符解析落点是否命中登记模块（精确文件，或 TS 无扩展名 / 编译 .js 形态） */
+function hitsDeepModule(candRel: string, moduleRel: string): boolean {
+  if (candRel === moduleRel) return true
+  const stem = moduleRel.replace(/\.ts$/, '')
+  return candRel === stem || candRel === `${stem}.js`
+}
+
+/** 测试文件不在规则⑦扫描面：单测引用被测对象是天然形态，白名单表达生产消费面 */
+function isTestFile(rel: string): boolean {
+  return rel.split('/').includes('__tests__') || /\.(test|spec)\.[tj]sx?$/.test(rel)
+}
+
+/** 规则⑦：登记模块的消费方必须全在白名单内（文本级扫描 src/ + packages/ 源码树，
+ *  复用 import 捕形与注释掩码）。登记模块文件缺失即红——拒绝以空集假绿（模块
+ *  改名/删除后规则静默失效，同规则⑥登记目录缺失形制）。 */
+function checkDeepModuleBoundaries(repoRoot: string, problems: string[]): void {
+  for (const entry of DEEP_MODULE_BOUNDARIES) {
+    const moduleAbs = join(repoRoot, entry.module)
+    if (!existsSync(moduleAbs)) {
+      problems.push(
+        `✗ 深模块边界：登记模块不存在：${entry.module}（${entry.note}）\n` +
+          `    模块改名/删除后规则静默失效，须同步 DEEP_MODULE_BOUNDARIES（issue #1323 规则⑦）`,
+      )
+      continue
+    }
+    for (const tree of ['src', 'packages']) {
+      for (const f of collectSourceFiles(join(repoRoot, tree), tree)) {
+        if (isTestFile(f.rel)) continue
+        const source = readFileSync(f.abs, 'utf8')
+        for (const hit of scanImportSpecifiers(source)) {
+          if (!hit.specifier.startsWith('@/') && !hit.specifier.startsWith('.')) continue
+          const candRel = resolveShellSpecifier(repoRoot, f.abs, hit.specifier)
+          if (!hitsDeepModule(candRel, entry.module)) continue
+          if (consumerAllowed(f.rel, entry.allowedConsumers)) continue
+          problems.push(
+            `✗ 深模块边界：${f.rel}:${hit.line} 消费 ${entry.module}\n` +
+              `    ${hit.text}\n` +
+              `    ${entry.module} 为深模块，消费方限于白名单（${entry.allowedConsumers.join(' ')}）；` +
+              `新消费方先评估扩白名单或改接缝（issue #1323 规则⑦ / ADR-0118 决策 7）`,
+          )
+        }
+      }
+    }
+  }
+}
+
 /** 接线核对（删除即变红①）：两个宿主文件须有非注释的实际调用行 */
 function checkWiring(repoRoot: string, problems: string[]): void {
   for (const host of WIRING_HOSTS) {
@@ -598,6 +687,7 @@ function main(): void {
   checkImportShapes(repoRoot, registry, problems)
   checkTestSupportPurity(repoRoot, registry, problems)
   checkUpwardImports(repoRoot, problems)
+  checkDeepModuleBoundaries(repoRoot, problems)
   checkWiring(repoRoot, problems)
 
   if (problems.length > 0) {
@@ -612,6 +702,7 @@ function main(): void {
       `· 跨包引用形态与深导入禁令扫描 ${collectSourceFiles(join(repoRoot, 'packages'), 'packages').length} 个文件` +
       `· 测试支持纯净性（${registry.filter((p) => p.testSupport).map((p) => p.name).join(' ') || '无'} 仅 devDependency 消费）` +
       `· 上行引用禁令 ${FORBIDDEN_UPWARD_IMPORTS.length} 条（${FORBIDDEN_UPWARD_IMPORTS.map((r) => r.dir).join(' ') || '无'}）` +
+      `· 深模块边界 ${DEEP_MODULE_BOUNDARIES.length} 项（${DEEP_MODULE_BOUNDARIES.map((e) => e.module).join(' ') || '无'}）` +
       `· 接线核对（scripts/check.sh + CI frontend job）`,
   )
 }
