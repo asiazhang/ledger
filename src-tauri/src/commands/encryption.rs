@@ -60,7 +60,7 @@ pub struct RememberPassphraseSupport {
 
 /// 生效目录中的库文件路径（引导结果登记的单一来源，经 BootCell 只读快照；
 /// 未登记时回退默认数据目录，与 [`crate::commands::data_location::effective_db_dir_of`
-/// 同一兑底语义）。多端同步壳层（commands/sync_channel.rs，issue #862）同源消费——
+/// 同一兜底语义）。多端同步壳层（commands/sync_channel.rs，issue #862）同源消费——
 /// 信封模式按本库加密形态判定的探测对象即此路径。
 pub(crate) fn active_db_path<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf> {
     let db_dir = match current_boot(app) {
