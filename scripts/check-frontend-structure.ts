@@ -107,6 +107,12 @@ export const PACKAGES: readonly PackageEntry[] = [
     note: '弹窗意图编排包（issue #1316 / ADR-0072 / ADR-0118）：useModalIntent 通用工厂——模态弹窗「开启 / 目标 / 关闭」编排的唯一形态，工厂零业务语义、零外部依赖（无 store、无 api、无组件，不接弹层注册表 ADR-0035）；方向表恒空，外部依赖仅 vue',
   },
   {
+    name: '@ledger/row-context-menu',
+    dir: 'packages/row-context-menu',
+    deps: [],
+    note: '行右键菜单编排包（issue #1317 / ADR-0077 / ADR-0118）：useRowContextMenu 工厂——行菜单打开/重定位/关闭/选中全部时序的单一实现；方向表恒空仅依赖 vue；不接弹层注册表（ADR-0035）与不调 preventDefault 的既有禁令随包保持，菜单选项构建与业务动作分派留视图',
+  },
+  {
     name: '@ledger/theme',
     dir: 'packages/theme',
     deps: ['@ledger/types', '@ledger/money'],

@@ -124,6 +124,9 @@ importers:
       '@ledger/money':
         specifier: workspace:*
         version: link:packages/money
+      '@ledger/row-context-menu':
+        specifier: workspace:*
+        version: link:packages/row-context-menu
       '@ledger/storage':
         specifier: workspace:*
         version: link:packages/storage
@@ -274,6 +277,12 @@ importers:
       '@ledger/types':
         specifier: workspace:*
         version: link:../types
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+
+  packages/row-context-menu:
+    dependencies:
       vue:
         specifier: ^3.5.42
         version: 3.5.42(typescript@6.0.3)

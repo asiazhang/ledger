@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
-import { useRowContextMenu } from '@/composables/useRowContextMenu'
+import { useRowContextMenu } from '../useRowContextMenu'
 
 /**
  * RowContextMenu（行右键菜单编排）模块测试（spec #522 / issue #550）：
