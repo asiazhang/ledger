@@ -382,6 +382,23 @@
         "incomplete": "Repair incomplete, see the report",
         "repairFailed": "Repair failed: {msg}"
       }
+    },
+    "balanceCache": {
+      "title": "Account balance cache",
+      "hint": "Account balances and net worth are read from a persistent cache. When a cache row is missing or disagrees with a live recomputation, the affected pages report an error instead of falling back to live calculation. Repair compares every account, rewrites the cache, and returns the pre-repair difference snapshot. Safe to run repeatedly.",
+      "repair": "Repair now",
+      "columns": {
+        "account": "Account",
+        "cached": "Cached before repair",
+        "actual": "Live recomputation"
+      },
+      "report": {
+        "doneTitle": "Repair complete: {n} accounts corrected",
+        "doneBody": "Divergent accounts were recomputed from the live basis and written back; balances and net worth are consistent again.",
+        "noopTitle": "Nothing to repair",
+        "noopBody": "All {n} accounts matched their live recomputation; nothing was changed.",
+        "missing": "(cache row missing)"
+      }
     }
   },
   "scheduled": {

@@ -20,8 +20,8 @@
  * 「数据」pane 内部子页签（issue #568）：备份 / 存储位置 / 加密 / 同步（issue #862）/
  * 数据修复——纯信息架构重组，
  * 三个组件原样迁入、功能项一个不少；备份目录随备份走（ADR-0022 既有归属裁决）；
- * 「数据修复」是伞形标签（现仅 SearchDataSettings 搜索派生数据一键修复，issue #513，
- * 后续修复工具归入）。子页签同用 show:lazy + 显式 key：切子页签备份列表不卸载重拉
+ * 「数据修复」是伞形标签（SearchDataSettings 搜索派生数据一键修复，issue #513；
+ * BalanceCacheSettings 余额缓存审计修复，ADR-0067 决策 5）。子页签同用 show:lazy + 显式 key：切子页签备份列表不卸载重拉
  * （缓存语义与顶级「数据」pane 同法）；子页签选中态不持久化（无 v-model，下级页签
  * 不持久化原则，与顶级页签现状一致），离开设置页再回来默认回「备份」；
  * 纯文字无图标，「分类」页签支出/收入子 Tab 先例。
@@ -45,6 +45,7 @@ import DataLocationSettings from '@/components/settings/DataLocationSettings.vue
 import EncryptionSettings from '@/components/settings/EncryptionSettings.vue'
 import SyncSettings from '@/components/settings/SyncSettings.vue'
 import SearchDataSettings from '@/components/settings/SearchDataSettings.vue'
+import BalanceCacheSettings from '@/components/settings/BalanceCacheSettings.vue'
 import ScheduledSettings from '@/components/settings/ScheduledSettings.vue'
 import FeatureToggleSettings from '@/components/settings/FeatureToggleSettings.vue'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
@@ -92,8 +93,13 @@ const featureToggles = useFeatureToggleStore()
           <NTabPane name="sync" key="sync" :tab="t('settings.data.tabs.sync')" display-directive="show:lazy">
             <SyncSettings />
           </NTabPane>
+          <!-- 数据修复（伞形标签）：两张卡片各自独立，无相互依赖——搜索派生数据与
+               余额缓存的修复语义互不相干，触发顺序任意。 -->
           <NTabPane name="repair" key="repair" :tab="t('settings.data.tabs.repair')" display-directive="show:lazy">
-            <SearchDataSettings />
+            <div :class="SETTINGS_CARD_STACK_CLASS">
+              <SearchDataSettings />
+              <BalanceCacheSettings />
+            </div>
           </NTabPane>
         </NTabs>
       </NTabPane>
