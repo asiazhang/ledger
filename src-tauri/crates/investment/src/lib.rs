@@ -127,7 +127,8 @@ pub use model::{
     FinancialFreedomOverview, Holding, Instrument, InstrumentInput, InstrumentListFilter,
     InstrumentListResult, InstrumentPnl, InstrumentPriceTrend, InstrumentSourceDisplay,
     InstrumentType, ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter,
-    PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary,
+    PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, CurrencyHoldingTotals,
+    RealizedPnlSummary,
     TransactionConvert, TransactionSplit, TransactionTrade, TrendRange, YearPnl,
 };
 
@@ -142,14 +143,16 @@ pub use crud::{
     delete_instrument, get_instrument, list_exchange_rates, list_holdings, list_instruments,
     list_market_prices,
 };
-pub use financial_freedom::query_financial_freedom;
+pub use financial_freedom::{query_financial_freedom, query_investable_assets_cents};
 pub use fund::{
     FundCreateOutcome, add_fund_by_code_with, adopt_fund_quote, create_fund_degraded,
     is_six_digit_code, reject_carried_fund_market, validate_fund_code,
 };
 pub use manual_price::record_manual_price;
 pub use quote::{Quote, QuoteAdoptionInput, QuoteAdoptionOutcome};
-pub use reports::{query_cumulative_pnl_summary, query_realized_pnl_summary};
+pub use reports::{
+    query_cumulative_pnl_summary, query_holdings_summary_by_currency, query_realized_pnl_summary,
+};
 pub use source::source_display_by_transaction_ids;
 pub use staleness::{PRICE_STALE_AFTER_DAYS, PriceStaleness, instrument_price_staleness};
 pub use stock::{

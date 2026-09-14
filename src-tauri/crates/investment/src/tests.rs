@@ -17,6 +17,8 @@
 //! - [`fund_trade`]：场外基金申赎记账——金额权威、单价反算、成本锚定与盈亏闭合不变式（issue #302 / ADR-0038）
 //! - [`pnl`]：已实现盈亏汇总
 //! - [`cumulative_pnl`]：累计收益按币种聚合（未实现 + 已实现两腿相加，issue #1077）
+//! - [`holdings_summary`]：持仓合计按币种分组读投影与可投资资产分子提取
+//!   （issue #1196 / ADR-0114 跨账本汇总的域读接缝）
 //! - [`dividend`]：现金分红（dividend）写入——现金腿 + 标的扩展行、任意在用账户、
 //!   无持仓可录、守卫齐全、kind 变更拒绝与改 / 删回退（issue #1078 / ADR-0109）
 //! - [`trend`]：走势查询（单标的 / 组合）
@@ -40,6 +42,7 @@ mod dividend;
 mod fund_add;
 mod fund_trade;
 mod holdings_as_of;
+mod holdings_summary;
 mod instrument_create;
 mod instrument_delete;
 mod instrument_list;
