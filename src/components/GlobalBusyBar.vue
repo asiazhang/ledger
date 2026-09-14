@@ -8,7 +8,7 @@
 // env 恒 0，位置不变（≥840 零变化）。
 import { useThemeVars } from 'naive-ui'
 import { busyVisible } from '@ledger/api'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 import { t } from '@ledger/i18n'
 
 // 强调色取自应用主题（useThemeVars 需在 NConfigProvider 子树内），亮暗主题即时换色

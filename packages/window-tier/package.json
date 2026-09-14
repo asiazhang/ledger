@@ -1,0 +1,17 @@
+{
+  "name": "@ledger/window-tier",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "窗口分级包（issue #1315 / spec #1148 / ADR-0088 / ADR-0118 决策 5）：宽度轴唯一事实源——单一断点两档的「宽度信号 → 档位」纯映射 composable。断点常量 WINDOW_TIER_BREAKPOINT_PX 全仓唯一收口于包内 src/useWindowTier.ts，vite.config.ts 构建期按源码路径运行时提取（收口漂移 fail-loud；ADR-0118 决策 5：构建期契约保留，只换收口点坐标），CSS 媒体查询经构建期占位符替换消费同值。依赖方向：生产仅 vue（@ledger 方向表仅测试边 → @ledger/test-support，媒体查询换档接缝，devDependencies 消费，check-frontend-structure.ts 规则⑤）；不依赖 stores / components / views。源码直出，exports 指向 src/useWindowTier.ts（单文件包，不设 barrel 中转），不建构建链；跨包只能整引包名（深导入由 check-frontend-structure.ts 守门）。",
+  "exports": {
+    ".": "./src/useWindowTier.ts"
+  },
+  "dependencies": {
+    "vue": "^3.5.42"
+  },
+  "devDependencies": {
+    "@ledger/test-support": "workspace:*",
+    "vitest": "^5.0.0"
+  }
+}

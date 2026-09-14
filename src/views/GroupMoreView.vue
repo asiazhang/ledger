@@ -31,7 +31,7 @@ import ReportsView from '@/views/ReportsView.vue'
 import SearchView from '@/views/SearchView.vue'
 import { useSidebarOrderStore, buildTabContextMenuOptions } from '@/stores/sidebar-order'
 import { useFeatureToggleStore } from '@/stores/feature-toggles'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 import type { ContainableViewName, SidebarGroupId } from '@/stores/sidebar-order'
 
 /**

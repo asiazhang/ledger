@@ -22,7 +22,7 @@ import { formatAmount, yuanToCents } from '@ledger/money'
 import { installmentSchedule } from '@ledger/utils/installment'
 import { useReferenceStore } from '@/stores/reference'
 import { useModalIntent } from '@ledger/modal-intent'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import {
   scheduledRecurrenceLabel,

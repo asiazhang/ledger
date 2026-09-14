@@ -3,7 +3,7 @@ import { useRouter } from 'vue-router'
 import { onBackButtonPress } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { closeTopOverlay, hasOpenOverlay } from '@/composables/overlayRegistry'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 
 /**
  * 系统返回桥接（issue #845 / ADR-0088 决策 7，词汇表「系统返回语义」）：

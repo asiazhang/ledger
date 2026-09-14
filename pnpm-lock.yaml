@@ -139,6 +139,9 @@ importers:
       '@ledger/utils':
         specifier: workspace:*
         version: link:packages/utils
+      '@ledger/window-tier':
+        specifier: workspace:*
+        version: link:packages/window-tier
       '@tauri-apps/api':
         specifier: ^2.11.1
         version: 2.11.1
@@ -377,6 +380,19 @@ importers:
         specifier: ^3.5.42
         version: 3.5.42(typescript@6.0.3)
     devDependencies:
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
+
+  packages/window-tier:
+    dependencies:
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+    devDependencies:
+      '@ledger/test-support':
+        specifier: workspace:*
+        version: link:../test-support
       vitest:
         specifier: ^5.0.0
         version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))

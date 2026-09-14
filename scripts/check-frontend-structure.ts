@@ -131,6 +131,12 @@ export const PACKAGES: readonly PackageEntry[] = [
     deps: ['@ledger/types', '@ledger/storage', '@ledger/i18n', '@ledger/money'],
     note: '通用工具包（issue #1314 / ADR-0118 决策 2）：src/utils 叶子层全量平铺搬迁——日期/期间、分类树与图表数据形态、Chart.js 统一注册、码化错误本地化 errorMessage（ADR-0050）、字段错误、视图状态、拼音过滤等纯函数单一来源；方向表与实际 import 全等（types / storage / i18n / money），exports 逐模块子路径暴露不开运行期 barrel；不依赖 stores / components / views / composables',
   },
+  {
+    name: '@ledger/window-tier',
+    dir: 'packages/window-tier',
+    deps: ['@ledger/test-support'],
+    note: '窗口分级包（issue #1315 / ADR-0088 / ADR-0118 决策 5）：宽度轴唯一事实源——单一断点两档「宽度信号 → 档位」纯映射 composable；断点常量 WINDOW_TIER_BREAKPOINT_PX 全仓唯一收口包内 src/useWindowTier.ts，vite.config.ts 构建期按源码路径提取（收口漂移 fail-loud，构建期契约保留只换坐标），CSS 媒体查询经占位符替换消费同值；生产依赖仅 vue，@ledger 方向表仅测试边 → @ledger/test-support（媒体查询换档接缝，devDependencies 消费，规则⑤）；不依赖 stores / components / views',
+  },
 ]
 
 /** workspace 成员 glob（pnpm-workspace.yaml 侧声明与本脚本核对同源）。 */

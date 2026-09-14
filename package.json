@@ -24,6 +24,7 @@
     "@ledger/theme": "workspace:*",
     "@ledger/types": "workspace:*",
     "@ledger/utils": "workspace:*",
+    "@ledger/window-tier": "workspace:*",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-opener": "^2.5.5",

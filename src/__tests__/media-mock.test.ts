@@ -6,7 +6,7 @@ import {
   setFakeMedia,
 } from '@ledger/test-support/media-mock'
 import { useInputMode } from '@/composables/useInputMode'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 import { mountFlushed } from '@ledger/test-support/mount'
 
 /**
