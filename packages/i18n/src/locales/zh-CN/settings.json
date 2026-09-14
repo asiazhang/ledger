@@ -398,9 +398,6 @@
         "noopTitle": "无需修复",
         "noopBody": "全部 {n} 个账户的缓存与实时重算一致，未做改动。",
         "missing": "（缓存行缺失）"
-      },
-      "msg": {
-        "repairFailed": "修复失败: {msg}"
       }
     }
   },

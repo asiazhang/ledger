@@ -398,9 +398,6 @@
         "noopTitle": "Nothing to repair",
         "noopBody": "All {n} accounts matched their live recomputation; nothing was changed.",
         "missing": "(cache row missing)"
-      },
-      "msg": {
-        "repairFailed": "Repair failed: {msg}"
       }
     }
   },

@@ -6,6 +6,9 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import type { BalanceCacheAudit } from '@ledger/types'
 
+import { makeFakeSink, resetToastSink } from './factories'
+import { registerToastSink } from '@/composables/useLoadable'
+
 import BalanceCacheSettings from '@/components/settings/BalanceCacheSettings.vue'
 
 /** 有漂移的报告（含「缓存行缺失」形态：cached_cents 为 null）。 */
@@ -28,6 +31,7 @@ const cleanReport: BalanceCacheAudit = {
 describe('BalanceCacheSettings.vue', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    resetToastSink()
   })
 
   it('点击一键修复调用 audit_balance_cache，逐户差异就地展示（含缓存缺失形态）', async () => {
@@ -58,14 +62,16 @@ describe('BalanceCacheSettings.vue', () => {
     expect(wrapper.find('[data-testid="balance-cache-drifts"]').exists()).toBe(false)
   })
 
-  it('命令异常：错误反馈，且不呈现修复完成报告', async () => {
+  it('命令异常：错误走 useLoadable error 通道（裸 errorMessage），且不呈现修复完成报告', async () => {
+    const sink = makeFakeSink()
+    registerToastSink(sink)
     wireInvokeSeam({
       overrides: { audit_balance_cache: () => Promise.reject(new Error('database is locked')) },
     })
     const wrapper = mount(BalanceCacheSettings)
     await findButton(wrapper, '一键修复')!.trigger('click')
     await flushPromises()
-    expect(messageApi.error).toHaveBeenCalled()
+    expect(sink.error).toHaveBeenCalledWith('database is locked')
     expect(wrapper.html()).not.toContain('修复完成')
   })
 })

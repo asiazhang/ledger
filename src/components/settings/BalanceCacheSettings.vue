@@ -4,8 +4,8 @@ import { NAlert, NButton, NCard, NDataTable, NSpace, NText, useMessage } from 'n
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { formatAmount } from '@ledger/money'
-import { errorMessage } from '@/utils/errors'
 import { useReferenceStore } from '@/stores/reference'
+import { useLoadable } from '@/composables/useLoadable'
 import type { BalanceCacheAudit } from '@ledger/types'
 
 // 账户余额缓存卡片（ADR-0067 决策 5「手动审计兜底」的界面入口）：账户余额与
@@ -18,7 +18,6 @@ const message = useMessage()
 const reference = useReferenceStore()
 
 const report = ref<BalanceCacheAudit | null>(null)
-const repairing = ref(false)
 
 /** 漂移行的账户币种：账户名与币种都取自参考表（同一账户 id 的单一来源），
  *  参考表未收录该 id（如缓存行指向已删账户）时退化为无币种格式化。 */
@@ -65,16 +64,17 @@ const reportView = computed(() => {
       }
 })
 
-/** 触发一键修复：幂等，重复执行安全；报告就地覆盖呈现。 */
+/** 触发一键修复：幂等，重复执行安全；报告就地覆盖呈现。修复命令交由 useLoadable
+ *  承载：loading 与错误反馈走其 error 通道（showErrorToast 单点，#1008 / 异步
+ *  守门规则 2：catch 内直弹 toast 基线只减不增），成功另给轻量提示。 */
+const repairAction = useLoadable(() => api.auditBalanceCache())
+const repairing = repairAction.loading
+
 async function repair() {
-  repairing.value = true
-  try {
-    report.value = await api.auditBalanceCache()
+  const r = await repairAction.run()
+  if (r !== null) {
+    report.value = r
     message.success(reportView.value!.title)
-  } catch (e: any) {
-    message.error(t('settings.data.balanceCache.msg.repairFailed', { msg: errorMessage(e) }))
-  } finally {
-    repairing.value = false
   }
 }
 </script>
