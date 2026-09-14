@@ -248,14 +248,20 @@ fn write_update(
     };
     let currency_code = match input.currency_code {
         Some(ref code) if code != &existing.currency_code => {
-            let referenced: bool = conn
-                .query_row(
-                    "SELECT 1 FROM transactions WHERE (account_id=?1 OR to_account_id=?1) AND is_deleted=0 LIMIT 1",
-                    rusqlite::params![id],
-                    |_| Ok(true),
-                )
-                .optional()?
-                .is_some();
+            // 币种锁守卫（issue #1300 评估项 1）：双 EXISTS 各走对应现金流覆盖索引
+            // （partial 谓词即 is_deleted=0，与守卫口径精确匹配）。原单句 OR 形状
+            // 依赖 idx_transactions_deleted 的 is_deleted 前缀段扫（该索引已随
+            // V025 删除）：无引用账户的最坏情况需遍历整段索引并逐行回表，608MB
+            // 基准库实测 ~0.8s；改写后为两次 B 树等值定位，微秒级。计划断言见
+            // infra db/tests/perf.rs v025_account_reference_guard_uses_flow_indexes。
+            let referenced: bool = conn.query_row(
+                "SELECT CASE WHEN \
+                     EXISTS(SELECT 1 FROM transactions WHERE account_id=?1 AND is_deleted=0) \
+                     OR EXISTS(SELECT 1 FROM transactions WHERE to_account_id=?1 AND is_deleted=0) \
+                     THEN 1 ELSE 0 END",
+                rusqlite::params![id],
+                |r| r.get(0),
+            )?;
             if referenced {
                 return Err(AppError::coded(
                     "account.currency-locked",

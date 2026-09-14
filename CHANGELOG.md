@@ -58,6 +58,7 @@
 
 ### Changed
 
+- **性能**：transactions 索引清理——删除 6 个零消费者/语义重叠索引，每行交易写入少维护 5 棵 B 树，批量导入与手工记账写路径同步受益；同批将账户币种锁守卫改写为双 EXISTS 查询（608MB 基准库实测最坏 ~0.8s → 微秒级）、新增保单统计部分覆盖索引（逐保单聚合不再全量跳扫）（[#1300]）。
 - **AI 导入**：导入知识改为分级自足——`GET /api/v1/import/knowledge` 返回知识索引 + 非投资节（记账主路径一次拉取即覆盖），投资五节改从新端点按需获取；基础知识内嵌知识索引，写明何时需要读投资节，端点身份与媒体类型不变（[#1123]，ADR-0110）。
 - **AI 导入**：AI 菜单的入口提示词措辞对齐双形态——承认 AI 记账与数据迁移两种并列会话形态，「迁移为主、直录为辅」的说法退役；入口骨架（三步与「不删后重导」纪律）不变（[#1122]，ADR-0110）。
 - **AI 导入**：导入去重内容哈希纳入出资账户——仅出资账户不同的两笔导入不再互相去重；历史行（无出资账户）去重行为不变（[#939]，ADR-0096）。
@@ -364,6 +365,7 @@
 [#1078]: https://github.com/asiazhang/ledger/issues/1078
 [#1122]: https://github.com/asiazhang/ledger/issues/1122
 [#1123]: https://github.com/asiazhang/ledger/issues/1123
+[#1300]: https://github.com/asiazhang/ledger/issues/1300
 [#1124]: https://github.com/asiazhang/ledger/issues/1124
 [#1215]: https://github.com/asiazhang/ledger/issues/1215
 [#1216]: https://github.com/asiazhang/ledger/issues/1216
