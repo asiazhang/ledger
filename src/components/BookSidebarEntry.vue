@@ -18,6 +18,8 @@ import AppPopover from '@/components/AppPopover.vue'
 import { useBookSwitcher } from '@/composables/useBookSwitcher'
 import { t } from '@ledger/i18n'
 import { useRouter } from 'vue-router'
+import { useFeatureToggleStore } from '@/stores/feature-toggles'
+import { computed } from 'vue'
 
 // 侧栏左下角账本入口与弹层（issue #834 / ADR-0089）：入口（当前账本名按钮 +
 // 折叠态浮标）是 useBookSwitcher 深模块的薄适配器——清单渲染、切换确认、
@@ -33,11 +35,17 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const featureToggles = useFeatureToggleStore()
 
 // 跨账本投资汇总入口（issue #1196 / ADR-0114 决策 6）：非账本条目、仅导航——
-// 不动活动指针、不触发原位重引导；注册表损坏回退（清单不可信）时不可用。
+// 不动活动指针、不触发原位重引导；注册表损坏回退（清单不可信）时不可用；
+// 投资功能关闭时入口消失（纯投资口径页随投资开关，ADR-0116 决策 4）。
+const summaryAvailable = computed(
+  () => mutable.value && !loadFailed.value && !featureToggles.isFeatureClosed('investments'),
+)
+
 function openSummary(): void {
-  if (!mutable.value || loadFailed.value) return
+  if (!summaryAvailable.value) return
   closePanel()
   void router.push({ name: 'cross-book-summary' })
 }
@@ -135,6 +143,7 @@ watch(
         <!-- 跨账本投资汇总置顶入口（非账本条目，仅导航，ADR-0114 决策 6）；
              置于清单容器外，不改变 .book-list 的行序与选择器语义 -->
         <button
+          v-if="summaryAvailable"
           type="button"
           class="book-summary-entry"
           data-testid="book-summary-entry"

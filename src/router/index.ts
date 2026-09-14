@@ -101,6 +101,8 @@ export const routes: RouteRecordRaw[] = [
     path: '/cross-book-summary',
     name: 'cross-book-summary',
     component: () => import('@/views/CrossBookSummaryView.vue'),
+    // 投资功能关闭时汇总随行关闭（纯投资口径页，与投资路由同一开关）。
+    beforeEnter: featureRouteGuard('investments'),
   },
   {
     // 定时（issue #202）：自 #473 起不再是侧栏主项——主入口为记账组「更多」定时页签

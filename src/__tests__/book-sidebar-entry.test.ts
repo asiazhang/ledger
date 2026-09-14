@@ -355,7 +355,7 @@ describe('跨账本投资汇总置顶入口（issue #1196 / ADR-0114 决策 6）
     expect(panelRows()).toHaveLength(0)
   })
 
-  it('注册表损坏回退（清单不可信）时汇总入口禁用', async () => {
+  it('注册表损坏回退（清单不可信）时汇总入口不渲染', async () => {
     registry = {
       books: [],
       active_id: null,
@@ -366,10 +366,7 @@ describe('跨账本投资汇总置顶入口（issue #1196 / ADR-0114 决策 6）
     await flushPromises()
     await openPanel(wrapper)
 
-    const entry = bodySelector('[data-testid="book-summary-entry"]')!
-    expect((entry.element as HTMLButtonElement).disabled).toBe(true)
-    await entry.trigger('click')
-    await flushPromises()
+    expect(bodySelector('[data-testid="book-summary-entry"]')).toBeUndefined()
     expect(pushMock).not.toHaveBeenCalled()
   })
 })

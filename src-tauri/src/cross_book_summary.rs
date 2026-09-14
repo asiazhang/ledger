@@ -75,6 +75,8 @@ pub struct CrossBookInvestmentSummary {
 /// 单本投资口径原始读数（金额带币种，折算前）。
 #[derive(Debug, Clone, Default)]
 pub struct BookInvestmentReading {
+    /// 本内默认币种（本位币基准）：逐本位币与目标币是否一致的判定源。
+    pub native_currency: String,
     /// 持仓市值/持仓收益按币种分组（账户币口径）。
     pub holding_totals: Vec<investment::CurrencyHoldingTotals>,
     /// 累计收益按币种分组（域读投影原样）。
@@ -91,6 +93,7 @@ pub fn read_book_investment(conn: &Connection) -> Result<BookInvestmentReading> 
     let investable_assets_cents = investment::query_investable_assets_cents(conn)?;
     let native_currency = amount::default_currency_code(conn)?;
     Ok(BookInvestmentReading {
+        native_currency: native_currency.clone(),
         holding_totals,
         cumulative_pnl,
         investable_assets: Some((native_currency, investable_assets_cents)),
@@ -108,7 +111,9 @@ pub struct MergedTotals {
 }
 
 /// 内存合并器（纯函数，折算经注入闭包）：币种＝目标币种直接相加，否则折算并置
-/// `converted`。空值组按域空值语义跳过、不以零计入。
+/// `converted`；任一计入本的本位币≠目标币同样置 `converted`——位币不一致时
+/// 「按当期汇率折算」是口径事实（ADR-0114 决策 3），与本次实际是否发生折算无关。
+/// 空值组按域空值语义跳过、不以零计入。
 pub fn merge_readings(
     readings: &[BookInvestmentReading],
     target_currency: &str,
@@ -119,7 +124,9 @@ pub fn merge_readings(
         unrealized_pnl_cents: 0,
         cumulative_pnl_cents: 0,
         investable_assets_cents: 0,
-        converted: false,
+        converted: readings
+            .iter()
+            .any(|r| r.native_currency != target_currency),
     };
     let mut add = |sum: &mut i64, cents: i64, currency: &str| -> Result<()> {
         if currency == target_currency {
@@ -233,11 +240,13 @@ mod tests {
     fn same_currency_adds_directly_without_conversion() {
         let readings = vec![
             BookInvestmentReading {
+                native_currency: "CNY".into(),
                 holding_totals: vec![totals("CNY", Some(120_000), Some(20_000))],
                 cumulative_pnl: vec![cumulative("CNY", 45_000)],
                 investable_assets: Some(("CNY".into(), 170_000)),
             },
             BookInvestmentReading {
+                native_currency: "CNY".into(),
                 holding_totals: vec![totals("CNY", Some(1_000), Some(-500))],
                 cumulative_pnl: vec![cumulative("CNY", 500)],
                 investable_assets: Some(("CNY".into(), 1_500)),
@@ -264,6 +273,7 @@ mod tests {
     fn mixed_currencies_convert_and_flag() {
         let readings = vec![
             BookInvestmentReading {
+                native_currency: "CNY".into(),
                 // CNY 本：直加；NULL 市值组跳过未实现列。
                 holding_totals: vec![
                     totals("CNY", Some(100_000), Some(10_000)),
@@ -273,6 +283,7 @@ mod tests {
                 investable_assets: Some(("CNY".into(), 110_000)),
             },
             BookInvestmentReading {
+                native_currency: "USD".into(),
                 // USD 本：全部折算（×7）。
                 holding_totals: vec![totals("USD", Some(12_000), Some(2_000))],
                 cumulative_pnl: vec![cumulative("HKD", 700)],
@@ -308,6 +319,7 @@ mod tests {
     #[test]
     fn conversion_error_propagates() {
         let readings = vec![BookInvestmentReading {
+            native_currency: "USD".into(),
             holding_totals: vec![totals("USD", Some(12_000), None)],
             cumulative_pnl: vec![],
             investable_assets: None,
@@ -317,6 +329,24 @@ mod tests {
         })
         .unwrap_err();
         assert!(matches!(err, ledger_infra::error::AppError::Invalid(_)));
+    }
+
+    /// 位币不一致本身就是折算口径事实：计入本的本位币≠目标币时，即使本次金额
+    /// 全部同币种、零折算发生，也置 `converted`（ADR-0114 决策 3 标注义务）。
+    #[test]
+    fn base_currency_divergence_flags_converted_even_without_amount_conversion() {
+        let readings = vec![BookInvestmentReading {
+            native_currency: "USD".into(),
+            holding_totals: vec![totals("CNY", Some(100_000), Some(10_000))],
+            cumulative_pnl: vec![],
+            investable_assets: Some(("CNY".into(), 110_000)),
+        }];
+        let merged = merge_readings(&readings, "CNY", &mut |_cents, _cur| {
+            panic!("金额全部同币种，不应触发折算闭包")
+        })
+        .unwrap();
+        assert!(merged.converted, "位币不一致应置折算口径标注");
+        assert_eq!(merged.investable_assets_cents, 110_000);
     }
 
     fn totals(
