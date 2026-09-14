@@ -214,7 +214,8 @@ fn write_update(
     }
 
     let name = input.name.clone().unwrap_or(existing.name);
-    let icon = input.icon.clone().or(existing.icon);
+    // 三态：`None` = 键缺席（不改）、`Some(..)` = 落定值（`Some(None)` 即清空图标）
+    let icon = input.icon.clone().unwrap_or(existing.icon);
 
     conn.execute(
         "UPDATE categories SET name=?1, icon=?2, parent_id=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
@@ -265,7 +266,9 @@ pub(crate) fn replay_update(
         id,
         &CategoryUpdateInput {
             name: Some(name.to_string()),
-            icon: icon.map(String::from),
+            // 重放携带的是**落定值**（含空值），故一律包 `Some(..)`：`Some(None)` 即置空，
+            // 与本地编辑的「不改」形态区分开（这里不存在「不改」）。
+            icon: Some(icon.map(String::from)),
             parent_id: Some(parent_id.map(String::from)),
         },
     )?;

@@ -242,7 +242,7 @@ fn update_category_updates_fields() {
 
     let input = CategoryUpdateInput {
         name: Some("更新后".into()),
-        icon: Some("🍕".into()),
+        icon: Some(Some("🍕".into())),
         parent_id: None,
     };
     conn.execute(
@@ -261,21 +261,93 @@ fn update_category_updates_fields() {
 /// 「值为 null」与「键缺席」折叠成同一个 `None`——那样「提升为顶级分类」静默不生效
 /// （弹窗却提示已更新）。本断言就是那条区分器的哨兵：删掉 `deserialize_with` 即红。
 #[test]
-fn category_update_input_distinguishes_null_from_missing_parent() {
+fn category_update_input_distinguishes_null_from_missing_fields() {
     use super::model::CategoryUpdateInput;
 
+    // 父分类：`null` = 提升为顶级分类、键缺席 = 不改、给值 = 落定该父
     let cleared: CategoryUpdateInput = serde_json::from_str(r#"{"parent_id":null}"#).unwrap();
     assert_eq!(
         cleared.parent_id,
         Some(None),
         "显式 null = 清空（提升为顶级分类）"
     );
-
     let untouched: CategoryUpdateInput = serde_json::from_str("{}").unwrap();
     assert_eq!(untouched.parent_id, None, "键缺席 = 不改");
-
     let set: CategoryUpdateInput = serde_json::from_str(r#"{"parent_id":"cat-1"}"#).unwrap();
     assert_eq!(set.parent_id, Some(Some("cat-1".to_string())));
+
+    // 图标：同款三态（`null` = 清空图标）
+    let icon_cleared: CategoryUpdateInput = serde_json::from_str(r#"{"icon":null}"#).unwrap();
+    assert_eq!(icon_cleared.icon, Some(None), "显式 null = 清空图标");
+    let icon_untouched: CategoryUpdateInput = serde_json::from_str("{}").unwrap();
+    assert_eq!(icon_untouched.icon, None, "键缺席 = 不改");
+    let icon_set: CategoryUpdateInput = serde_json::from_str(r#"{"icon":"🍕"}"#).unwrap();
+    assert_eq!(icon_set.icon, Some(Some("🍕".to_string())));
+}
+
+/// 三态的行为面（经公开写入口）：`Some(None)` 清空图标（编辑弹窗把图标输入框清空
+/// 后送 `null`），而键缺席（`None`）不得抹掉既有图标。
+#[test]
+fn update_category_clears_icon_with_explicit_none() {
+    use super::model::{CategoryInput, CategoryUpdateInput};
+
+    let conn = setup();
+    let id = super::create_category(
+        &conn,
+        CategoryInput {
+            name: "带图标".into(),
+            kind: "expense".into(),
+            parent_id: None,
+            icon: Some("🍕".into()),
+        },
+    )
+    .unwrap();
+    assert_eq!(icon_of(&conn, &id).as_deref(), Some("🍕"));
+
+    super::update_category(
+        &conn,
+        &id,
+        CategoryUpdateInput {
+            name: None,
+            icon: Some(None),
+            parent_id: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(icon_of(&conn, &id), None, "显式清空即无图标");
+
+    // 键缺席 = 不改：只改名不得抹掉图标
+    super::update_category(
+        &conn,
+        &id,
+        CategoryUpdateInput {
+            name: None,
+            icon: Some(Some("🍜".into())),
+            parent_id: None,
+        },
+    )
+    .unwrap();
+    super::update_category(
+        &conn,
+        &id,
+        CategoryUpdateInput {
+            name: Some("带图标Ⅱ".into()),
+            icon: None,
+            parent_id: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(icon_of(&conn, &id).as_deref(), Some("🍜"));
+}
+
+/// 分类图标（未设置返回 `None`）。
+fn icon_of(conn: &rusqlite::Connection, id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT icon FROM categories WHERE id=?1",
+        rusqlite::params![id],
+        |r| r.get(0),
+    )
+    .unwrap()
 }
 
 /// 三态的行为面（经公开写入口）：`Some(None)` 把子分类提升为顶级分类，
