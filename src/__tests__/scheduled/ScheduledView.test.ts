@@ -1,10 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import ScheduledView from '@/views/ScheduledView.vue'
 import { routes, router } from '@/router'
 import type { SubscriptionSpendOverview } from '@ledger/types'
+
+// 订阅花费页签内嵌 SubscriptionSpendPanel 的 <Bar> 走共享桩（issue #1335，先例 #160、
+// #378）：jsdom 无 2D context，真实 chart.js 取不到 canvas 会打「Failed to create
+// chart」error 输出污染 stderr；本测试只断言页签结构，不验证绘制。
+vi.mock('vue-chartjs', async () => {
+  const { BarChartStub } = await import('../line-chart-stub')
+  return { Bar: BarChartStub }
+})
 
 /** 订阅花费总览空数据（子页签挂载即拉取）。 */
 const emptySpendOverview: SubscriptionSpendOverview = {
