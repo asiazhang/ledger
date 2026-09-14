@@ -5,20 +5,24 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, URL } from "node:url";
 
-// 窗口分级断点唯一收口于 src/composables/useWindowTier.ts 的 WINDOW_TIER_BREAKPOINT_PX
-// （ADR-0088 决策 2）。本配置以源码为唯一事实源运行时提取：不静态 import src 文件
-// （避免把产品源码拉进 tsconfig.node.json 的类型工程边界），且收口漂移在构建期
-// fail-loud——收口点改名或移位而不修此提取，tauri dev/build 立即报错。
+// 窗口分级断点唯一收口于 packages/window-tier/src/useWindowTier.ts 的
+// WINDOW_TIER_BREAKPOINT_PX（ADR-0088 决策 2；#1315 起包化为 @ledger/window-tier，
+// ADR-0118 决策 5：构建期契约保留，只换收口点坐标）。本配置以源码为唯一事实源运行时
+// 提取：不静态 import 包源码（避免把产品源码拉进 tsconfig.node.json 的类型工程边界），
+// 且收口漂移在构建期 fail-loud——收口点改名或移位而不修此提取，tauri dev/build 立即报错。
 export const WINDOW_TIER_BREAKPOINT_PX = readWindowTierBreakpointPx();
 
 function readWindowTierBreakpointPx(): number {
   // vitest 转换后 import.meta.url 非 file: scheme（check-test-support.test.ts 同款
   // 前提）：vite 与 vitest 的进程 cwd 都是仓库根，以 cwd 定位收口点。
-  const source = readFileSync(join(process.cwd(), "src/composables/useWindowTier.ts"), "utf-8");
+  const source = readFileSync(
+    join(process.cwd(), "packages/window-tier/src/useWindowTier.ts"),
+    "utf-8",
+  );
   const m = /export const WINDOW_TIER_BREAKPOINT_PX = (\d+)/.exec(source);
   if (!m) {
     throw new Error(
-      "窗口分级断点不在唯一收口点 src/composables/useWindowTier.ts —— 收口漂移，请恢复 WINDOW_TIER_BREAKPOINT_PX 或同步修正本提取",
+      "窗口分级断点不在唯一收口点 packages/window-tier/src/useWindowTier.ts —— 收口漂移，请恢复 WINDOW_TIER_BREAKPOINT_PX 或同步修正本提取",
     );
   }
   return Number(m[1]);
@@ -27,7 +31,7 @@ function readWindowTierBreakpointPx(): number {
 const host = process.env.TAURI_DEV_HOST;
 
 // 构建期 Git 版本信息（tauri dev / tauri build 均经此配置生效），
-// 消费方见 src/utils/git-info.ts；非 Git 目录（如源码包构建）降级为空值。
+// 消费方见 packages/utils/src/git-info.ts（#1314 起随 @ledger/utils 成包）；非 Git 目录（如源码包构建）降级为空值。
 function gitSha(): string {
   try {
     return execSync("git rev-parse HEAD", { encoding: "utf-8" }).trim();
@@ -79,10 +83,11 @@ function windowTierBreakpointCss(): Plugin {
 export default defineConfig(async () => ({
   // vanilla-extract 插件（issue #888 / ADR-0093）：构建期把 *.css.ts 编译为
   // 静态 CSS，无 codegen 产物目录；置于 vue 插件之前（官方推荐顺序）。
-  // 惰性动态导入：本模块被 useWindowTier.test.ts 直接导入（断点占位符替换
-  // 函数的测试消费方），静态引入 esbuild（vanilla-extract 依赖链）会在该测试
-  // 的 jsdom 环境下触发 TextEncoder 不变式崩溃；动态导入使导入本模块不拉起
-  // esbuild，仅真实 vite 构建时加载插件。
+  // 惰性动态导入：本模块被 src/__tests__/window-tier-build-contract.test.ts 直接
+  // 导入（断点占位符替换函数的测试消费方，#1315 起壳侧契约测试与包内 composable
+  // 测试分置——包内禁止相对路径穿越，守门规则③），静态引入 esbuild
+  // （vanilla-extract 依赖链）会在该测试的 jsdom 环境下触发 TextEncoder 不变式崩溃；
+  // 动态导入使导入本模块不拉起 esbuild，仅真实 vite 构建时加载插件。
   plugins: [
     (await import("@vanilla-extract/vite-plugin")).vanillaExtractPlugin(),
     vue(),

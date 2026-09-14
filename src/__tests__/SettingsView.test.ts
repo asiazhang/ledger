@@ -11,7 +11,7 @@ import { applyLocale } from '@ledger/i18n'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
 import { captureLastListener, mockListen } from '@ledger/test-support/listen-mock'
-import { getSavedClosedFeatures } from '@/utils/view-state'
+import { getSavedClosedFeatures } from '@ledger/utils/view-state'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),

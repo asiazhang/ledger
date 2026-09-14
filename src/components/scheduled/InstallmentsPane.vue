@@ -19,10 +19,10 @@ import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import AppTreeSelect from '@/components/AppTreeSelect.vue'
 import { formatAmount, yuanToCents } from '@ledger/money'
-import { installmentSchedule } from '@/utils/installment'
+import { installmentSchedule } from '@ledger/utils/installment'
 import { useReferenceStore } from '@/stores/reference'
-import { useModalIntent } from '@/composables/useModalIntent'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useModalIntent } from '@ledger/modal-intent'
+import { useWindowTier } from '@ledger/window-tier'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import {
   scheduledRecurrenceLabel,
@@ -36,7 +36,7 @@ import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from '@/components/mobile-cells'
 import { usePlanFocusLanding } from '@/composables/usePlanFocusLanding'
-import { scheduledStatusLabel } from '@/utils/scheduled'
+import { scheduledStatusLabel } from '@ledger/utils/scheduled'
 
 /**
  * 分期页签 = ScheduledPlanList 计划清单模块（ADR-0041 迁移步 3）的薄适配器：

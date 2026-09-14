@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { NModal } from 'naive-ui'
 import { useOverlayReporting } from '@/composables/useOverlayReporting'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 import { MOBILE_CARD_CLASS } from './app-modal.css.ts'
 
 // AppModal（issue #251）：薄封装 NModal，收口弹层关闭语义——

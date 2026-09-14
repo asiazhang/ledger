@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { NCard, NDataTable, NEmpty, NSpace, NSpin, useMessage, type DataTableColumns } from 'naive-ui'
 import { Bar } from 'vue-chartjs'
 import type { ChartOptions, TooltipItem } from 'chart.js'
 // Chart.js 统一注册模块（issue #926）：柱状图所需 controller/element/scale 一处
 // 注册，不再组件自持子集；导入即完成注册。
-import '@/utils/chart-registration'
+import '@ledger/utils/chart-registration'
 import { api } from '@ledger/api'
 import { formatAmount, amountPrivacyEnabled } from '@ledger/money'
 import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'
-import { scheduledStatusLabel } from '@/utils/scheduled'
+import { scheduledStatusLabel } from '@ledger/utils/scheduled'
 import type { SubscriptionSpendOverview, SubscriptionSpendRow } from '@ledger/types'
 
 // 订阅花费双口径分析区（issue #160/#161，ADR-0023 决策二）：

@@ -11,6 +11,15 @@ const DOM_PACKAGE_TEST_GLOBS = [
   // 与主题合同产出物捕获（@vanilla-extract/css/adapter 接缝），需 DOM 环境；同包
   // 同目录的 design-tokens / semantic-colors 测试随同一登记整包落 jsdom。
   'packages/theme/**/*.test.ts',
+  // utils 包（issue #1314）：view-state 测试直读 localStorage（Storage.prototype
+  // 平台语义）、time-period 测试经 window.navigator.language 触发 fresh-module
+  // 语言重初始化，需 DOM 环境；同包纯逻辑测试随同一登记整包落 jsdom（先例
+  // theme）——与搬迁前 app project 环境逐字同构，行为零变化。
+  'packages/utils/**/*.test.ts',
+  // window-tier 包（issue #1315）：useWindowTier 断言走 window.matchMedia 换档接缝
+  // （@ledger/test-support/media-mock），需 DOM 环境；断点构建期契约测试（消费
+  // vite.config 提取与占位符替换）留壳侧 app project（src/__tests__），不落本登记。
+  'packages/window-tier/**/*.test.ts',
 ]
 
 export default defineConfig({

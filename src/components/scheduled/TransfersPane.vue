@@ -20,7 +20,7 @@ import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import { formatAmount, yuanToCents } from '@ledger/money'
 import type { ScheduledTransactionOccurrence } from '@ledger/types'
 import { useReferenceStore } from '@/stores/reference'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 import {
   earliestPendingOccurrence,
   scheduledRecurrenceLabel,
@@ -28,14 +28,14 @@ import {
   useScheduledPlanList,
   type ScheduledPlanRow,
 } from '@/composables/useScheduledPlanList'
-import { useModalIntent } from '@/composables/useModalIntent'
+import { useModalIntent } from '@ledger/modal-intent'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from '@/components/mobile-cells'
 import { usePlanFocusLanding } from '@/composables/usePlanFocusLanding'
-import { scheduledStatusLabel } from '@/utils/scheduled'
+import { scheduledStatusLabel } from '@ledger/utils/scheduled'
 
 /**
  * 定时转账页签 = ScheduledPlanList 计划清单模块（ADR-0041）的薄适配器：

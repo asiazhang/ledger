@@ -1,8 +1,8 @@
 import { useMessage } from 'naive-ui'
 import type { Ref } from 'vue'
-import { useModalIntent } from '@/composables/useModalIntent'
+import { useModalIntent } from '@ledger/modal-intent'
 import { api } from '@ledger/api'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { t } from '@ledger/i18n'
 import type {
   CreateFormKind,

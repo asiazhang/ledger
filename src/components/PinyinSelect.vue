@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { pinyinFilter } from '@/utils/pinyin-filter'
+import { pinyinFilter } from '@ledger/utils/pinyin-filter'
 import AppSelect from '@/components/AppSelect.vue'
 
 // 拼音可搜下拉（issue #198 试点，ADR-0027 统一模糊搜索语义）：

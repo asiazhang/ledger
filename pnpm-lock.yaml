@@ -118,9 +118,15 @@ importers:
       '@ledger/i18n':
         specifier: workspace:*
         version: link:packages/i18n
+      '@ledger/modal-intent':
+        specifier: workspace:*
+        version: link:packages/modal-intent
       '@ledger/money':
         specifier: workspace:*
         version: link:packages/money
+      '@ledger/row-context-menu':
+        specifier: workspace:*
+        version: link:packages/row-context-menu
       '@ledger/storage':
         specifier: workspace:*
         version: link:packages/storage
@@ -130,6 +136,12 @@ importers:
       '@ledger/types':
         specifier: workspace:*
         version: link:packages/types
+      '@ledger/utils':
+        specifier: workspace:*
+        version: link:packages/utils
+      '@ledger/window-tier':
+        specifier: workspace:*
+        version: link:packages/window-tier
       '@tauri-apps/api':
         specifier: ^2.11.1
         version: 2.11.1
@@ -250,6 +262,16 @@ importers:
         specifier: ^5.0.0
         version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
 
+  packages/modal-intent:
+    dependencies:
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+    devDependencies:
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
+
   packages/money:
     dependencies:
       '@ledger/i18n':
@@ -258,6 +280,12 @@ importers:
       '@ledger/types':
         specifier: workspace:*
         version: link:../types
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+
+  packages/row-context-menu:
+    dependencies:
       vue:
         specifier: ^3.5.42
         version: 3.5.42(typescript@6.0.3)
@@ -318,9 +346,56 @@ importers:
     devDependencies:
       vitest:
         specifier: ^5.0.0
-        version: 5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
 
   packages/types: {}
+
+  packages/utils:
+    dependencies:
+      '@ledger/i18n':
+        specifier: workspace:*
+        version: link:../i18n
+      '@ledger/money':
+        specifier: workspace:*
+        version: link:../money
+      '@ledger/storage':
+        specifier: workspace:*
+        version: link:../storage
+      '@ledger/types':
+        specifier: workspace:*
+        version: link:../types
+      '@vicons/ionicons5':
+        specifier: ^0.13.0
+        version: 0.13.0
+      chart.js:
+        specifier: ^4.5.1
+        version: 4.5.1
+      naive-ui:
+        specifier: ^2.45.3
+        version: 2.45.3(patch_hash=1d273c9e8f7755836be7d55daae02418e67717cd9ee9f835fe703fbaae0ef403)(vue@3.5.42(typescript@6.0.3))
+      pinyin-pro:
+        specifier: ^3.29.3
+        version: 3.29.3
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+    devDependencies:
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
+
+  packages/window-tier:
+    dependencies:
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+    devDependencies:
+      '@ledger/test-support':
+        specifier: workspace:*
+        version: link:../test-support
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
 
 packages:
 

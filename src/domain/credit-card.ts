@@ -1,5 +1,5 @@
 import type { Account } from '@ledger/types'
-import { formatLocalDateISO } from '@/utils/date'
+import { formatLocalDateISO } from '@ledger/utils/date'
 
 /**
  * 信用卡档案派生（spec #1327 / ADR-0119）：额度用量与「下次账单日 / 下次还款日」。

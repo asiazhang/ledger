@@ -2,11 +2,11 @@ import { computed, onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { useLoadable } from '@/composables/useLoadable'
 import { restartAppShortly } from '@/composables/restart'
 import { useAppDialog } from '@/composables/useAppDialog'
-import { useModalIntent } from '@/composables/useModalIntent'
+import { useModalIntent } from '@ledger/modal-intent'
 import type { Book } from '@ledger/types'
 
 /**

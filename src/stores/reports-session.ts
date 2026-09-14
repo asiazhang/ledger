@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { presetRange, type DateRange } from '@/utils/time-period'
+import { presetRange, type DateRange } from '@ledger/utils/time-period'
 
 /** 商户排行 TopN 档位闭集（issue #588）：仅 Top 5 / Top 10 两档，不设「全部」。 */
 export const MERCHANT_TOP_N_OPTIONS = [5, 10] as const

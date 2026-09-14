@@ -64,6 +64,19 @@ globalStyle(`.${MOBILE_CARD_CLASS} .n-form-item--left-labelled .n-form-item-labe
 })
 
 /**
+ * 左置标签详情表（NDescriptions `label-placement="left"` + bordered，交易只读
+ * 详情与物品详情）的标签列宽收口：表格自动布局按各列 min-content 分宽，中文
+ * 标签可在任意字间断行（min-content = 单字），内容列一长（标的「代码 + 名称」、
+ * 每天成本明细等）标签列即被压成「一字一行」。标签列改不可断行后，其列宽下限
+ * = 标签整宽，内容列让位换行——两列形态与全部字段可见性都不翻转，故不走
+ * 表单那样翻标签上置（词汇表移动档条款的「标签上置」针对挤压输入宽度的表单）。
+ */
+globalStyle(
+  `.${MOBILE_CARD_CLASS} .n-descriptions--left-label-placement .n-descriptions-table-header`,
+  { whiteSpace: 'nowrap' },
+)
+
+/**
  * 按钮行底部固定：节奏容器（ADR-0079 决策 4 的 12px NSpace vertical）撑满
  * 剩余高度，其末块（「取消 + 主操作」按钮行，调用点统一编排在此）以 auto
  * 外边距推至卡片底部——主操作拇指可及。内容超高时滚动、auto 边距归零，

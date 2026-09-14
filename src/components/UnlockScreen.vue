@@ -46,7 +46,7 @@ import { t } from '@ledger/i18n'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import { useRestoreFromFile } from '@/composables/useRestoreFromFile'
 import { useAppStore } from '@/stores/app'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { restartAppShortly } from '@/composables/restart'
 import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 

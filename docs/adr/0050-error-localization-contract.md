@@ -32,7 +32,7 @@
 3. **码化错误携带归类**：`Coded` 变体内含 `class`（Invalid→400 / NotFound→404），
    序列化后 `kind` 取归类同值（`Invalid` / `NotFound`），HTTP 状态与 IPC 语义同既有
    口径。
-4. **前端按码本地化，降级透传**：错误展示唯一接缝 `errorMessage(e)`（`src/utils/errors.ts`）
+4. **前端按码本地化，降级透传**：错误展示唯一接缝 `errorMessage(e)`（`@ledger/utils` 包；原坐标 `src/utils/errors.ts`，#1314 成包时收敛）
    扩展——错误带码且当前语言配置了 `errors.<code>` 文案（码内点号即文案嵌套路径）则
    用 `params` 插值翻译（如缺汇率错误插出 USD→CNY 完整语句）；无码、未知码或未配
    翻译的新错误一律透传后端中文原文——**用户永远读到可读的错误信息，绝不显示 key

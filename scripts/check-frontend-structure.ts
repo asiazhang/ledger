@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // 前端 workspace 结构守门（issue #1149 / spec #1148）：pnpm 子包骨架的边界门禁，
 // 为每一次包抽取提供可证伪的边界基线。本脚本不移动业务代码，只核结构。
-// 规则六类：
+// 规则七类：
 // ① 成员登记：packages/* 下的成员目录必须登记于本脚本 PACKAGES（磁盘 ↔ 清单双向
 //    全等，清单漂移 fail loud）——pnpm-workspace.yaml 的 glob 自动纳管目录，能「漏
 //    登记」的只有方向表登记册；新建成员目录不登记即红（删除即变红②）。
@@ -18,10 +18,20 @@
 //    devDependencies 被消费（根包与成员包一并核对，dependencies/optionalDependencies/
 //    peerDependencies 任一出现即红）；且测试支持包自身 dependencies 必须为空
 //    （替身与接缝所需运行面全部走 devDependencies）——生产依赖图零测试支持内容。
-// ⑥ 上行引用禁令（issue #1156）：`src/utils` 叶子层不得引用 `@/stores` /
-//    `@ledger/api` / `@/components` / `@/views`——上行越界接缝归位后把方向固化成
-//    登记项，登记项唯一事实源为 FORBIDDEN_UPWARD_IMPORTS；删除登记项即变红
-//    （登记表全等断言 + 夹具违规即红，issue #1156 验收判据）。
+// ⑥ 上行引用禁令（issue #1156）：登记目录不得引用登记的上层目标——上行越界接缝
+//    归位后把方向固化成登记项，登记项唯一事实源为 FORBIDDEN_UPWARD_IMPORTS；
+//    改动登记项即变红（登记表全等断言，issue #1156 验收判据）。
+//    #1314 起 src/utils 全量成包 @ledger/utils，唯一登记项（dir: 'src/utils'）随
+//    搬迁对象消失而收缩清空：包层上行形态改由规则②（方向表全等）、③（@/ 别名
+//    禁令）、④（深导入 exports 入口）在包边界接管，登记机制保留——后续目录级
+//    边界约束（如 ADR-0118 规则⑦深模块登记表）的登记处。
+// ⑦ 深模块边界登记表（issue #1323 / ADR-0118 决策 7）：不成包的深模块以「允许消费
+//    方白名单」守门，登记 { 模块文件 → 允许消费方闭集 }，登记项唯一事实源为
+//    DEEP_MODULE_BOUNDARIES；扫描 src/ + packages/ 源文件（排除测试文件——单测引用
+//    被测对象是天然形态，白名单表达生产消费面）的 import（@/ 别名与相对路径统一
+//    解析落点后比对），消费方不在白名单内即红；登记模块文件不存在即红（改名/删除
+//    后拒绝规则静默失效）；删除登记项即变红（登记表全等断言 + 夹具违规即红，
+//    issue #1323 验收判据）。
 // 删除即变红①：本脚本核对自身接线——scripts/check.sh 与 CI frontend job
 //（.github/workflows/build.yml）中必须存在实际调用行（非注释、非 echo 展示行），
 // 删除接线行即红（ADR-0087 断言强度：接线型守门的负向条目）。
@@ -98,10 +108,34 @@ export const PACKAGES: readonly PackageEntry[] = [
     note: '共享测试支持包（issue #1152）：全局测试接缝（invoke/message/matchMedia/listen/返回桥替身 + 每测清理）唯一宿主，消费只经 devDependency（testSupport 标志 → 规则⑤）；参考数据夹具类型边 @ledger/types 显式放行',
   },
   {
+    name: '@ledger/modal-intent',
+    dir: 'packages/modal-intent',
+    deps: [],
+    note: '弹窗意图编排包（issue #1316 / ADR-0072 / ADR-0118）：useModalIntent 通用工厂——模态弹窗「开启 / 目标 / 关闭」编排的唯一形态，工厂零业务语义、零外部依赖（无 store、无 api、无组件，不接弹层注册表 ADR-0035）；方向表恒空，外部依赖仅 vue',
+  },
+  {
+    name: '@ledger/row-context-menu',
+    dir: 'packages/row-context-menu',
+    deps: [],
+    note: '行右键菜单编排包（issue #1317 / ADR-0077 / ADR-0118）：useRowContextMenu 工厂——行菜单打开/重定位/关闭/选中全部时序的单一实现；方向表恒空仅依赖 vue；不接弹层注册表（ADR-0035）与不调 preventDefault 的既有禁令随包保持，菜单选项构建与业务动作分派留视图',
+  },
+  {
     name: '@ledger/theme',
     dir: 'packages/theme',
     deps: ['@ledger/types', '@ledger/money'],
     note: '主题包（issue #1154 / ADR-0093 / issue #888）：语义色、中性设计令牌、组件库主题覆盖、vanilla-extract 主题合同与图表统一样式的单一来源，Theme 类型随包下移；@ledger 范围内只依赖 @ledger/types 与 @ledger/money，不依赖 stores / components / views / composables',
+  },
+  {
+    name: '@ledger/utils',
+    dir: 'packages/utils',
+    deps: ['@ledger/types', '@ledger/storage', '@ledger/i18n', '@ledger/money'],
+    note: '通用工具包（issue #1314 / ADR-0118 决策 2）：src/utils 叶子层全量平铺搬迁——日期/期间、分类树与图表数据形态、Chart.js 统一注册、码化错误本地化 errorMessage（ADR-0050）、字段错误、视图状态、拼音过滤等纯函数单一来源；方向表与实际 import 全等（types / storage / i18n / money），exports 逐模块子路径暴露不开运行期 barrel；不依赖 stores / components / views / composables',
+  },
+  {
+    name: '@ledger/window-tier',
+    dir: 'packages/window-tier',
+    deps: ['@ledger/test-support'],
+    note: '窗口分级包（issue #1315 / ADR-0088 / ADR-0118 决策 5）：宽度轴唯一事实源——单一断点两档「宽度信号 → 档位」纯映射 composable；断点常量 WINDOW_TIER_BREAKPOINT_PX 全仓唯一收口包内 src/useWindowTier.ts，vite.config.ts 构建期按源码路径提取（收口漂移 fail-loud，构建期契约保留只换坐标），CSS 媒体查询经占位符替换消费同值；生产依赖仅 vue，@ledger 方向表仅测试边 → @ledger/test-support（媒体查询换档接缝，devDependencies 消费，规则⑤）；不依赖 stores / components / views',
   },
 ]
 
@@ -484,16 +518,10 @@ export interface UpwardImportRule {
   note: string
 }
 
-/** 登记项（逐票补充）：首个条目来自 issue #1156——utils 三条上行越界边
- *  （policy-stats → stores/reference、global-error-handler → stores/render-errors
- *  与 api、restart → api）归位后，把「utils 是叶子层」固化成可证伪的方向登记。 */
-export const FORBIDDEN_UPWARD_IMPORTS: readonly UpwardImportRule[] = [
-  {
-    dir: 'src/utils',
-    forbidden: ['@/stores', '@ledger/api', '@/components', '@/views'],
-    note: 'utils 叶子层（issue #1156）：只放真叶子与纯函数，不得引用 stores / api / components / views',
-  },
-]
+/** 登记项（逐票补充）：#1314 起 src/utils 成包 @ledger/utils，唯一登记项
+ *  （issue #1156 的 utils 四条上行禁令）随搬迁对象消失而收缩，现为空集——
+ *  包层上行由规则②③④接管（见规则⑥头注）；新增目录级约束在此登记。 */
+export const FORBIDDEN_UPWARD_IMPORTS: readonly UpwardImportRule[] = []
 
 /** 说明符是否命中登记的上行目标（精确名或其 `名/子路径`，避免 `@/storesX` 误伤） */
 function hitsForbiddenSpecifier(specifier: string, forbidden: readonly string[]): string | null {
@@ -526,6 +554,88 @@ function checkUpwardImports(repoRoot: string, problems: string[]): void {
             `    ${rule.dir} 为叶子层，不得引用 ${target}；把接缝迁到消费侧或改入参注入` +
             `（issue #1156 规则⑥）`,
         )
+      }
+    }
+  }
+}
+
+/** 规则⑦ 深模块边界登记条目（单一事实源，issue #1323 / ADR-0118 决策 7）：路径相对
+ *  仓库根，posix 分隔。 */
+export interface DeepModuleBoundary {
+  /** 深模块文件路径（相对仓库根） */
+  module: string
+  /** 允许的消费方目录/文件闭集（相对仓库根；目录为前缀闭集） */
+  allowedConsumers: readonly string[]
+  note: string
+}
+
+/** 深模块边界登记册（issue #1323）：不成包的深模块（依赖壳内状态故过不了成包判据
+ *  1，ADR-0118 决策 1/4）以白名单固化生产消费面；每新增一项登记追加一行。条目本身
+ *  即规格——删除/改动条目会让 scripts/check-frontend-structure.test.ts 的登记表全等
+ *  断言变红（删除即变红，issue #1323 验收判据）。 */
+export const DEEP_MODULE_BOUNDARIES: readonly DeepModuleBoundary[] = [
+  {
+    module: 'src/composables/useTransactionFilter.ts',
+    allowedConsumers: ['src/views'],
+    note: '交易列表过滤深模块（ADR-0030/0094）：依赖壳内 pinia store（交易页会话级 store）故不成包（ADR-0118 决策 4），消费面 = 交易页与报表页',
+  },
+]
+
+/** 消费方 rel 路径是否命中白名单条目（目录为前缀闭集：`src/views` 放行 `src/views/` 整棵树） */
+function consumerAllowed(consumerRel: string, allowed: readonly string[]): boolean {
+  return allowed.some((dir) => consumerRel === dir || consumerRel.startsWith(`${dir}/`))
+}
+
+/** import 说明符解析为仓库相对路径（`@/` 别名指向 src/；相对路径自消费方文件解析；
+ *  包名与 bare 说明符不指向壳内文件，返回 null） */
+function resolveShellSpecifier(repoRoot: string, consumerAbs: string, specifier: string): string {
+  const abs = specifier.startsWith('@/')
+    ? join(repoRoot, 'src', specifier.slice(2))
+    : resolve(dirname(consumerAbs), specifier)
+  return relative(repoRoot, abs)
+}
+
+/** 说明符解析落点是否命中登记模块（精确文件，或 TS 无扩展名 / 编译 .js 形态） */
+function hitsDeepModule(candRel: string, moduleRel: string): boolean {
+  if (candRel === moduleRel) return true
+  const stem = moduleRel.replace(/\.ts$/, '')
+  return candRel === stem || candRel === `${stem}.js`
+}
+
+/** 测试文件不在规则⑦扫描面：单测引用被测对象是天然形态，白名单表达生产消费面 */
+function isTestFile(rel: string): boolean {
+  return rel.split('/').includes('__tests__') || /\.(test|spec)\.[tj]sx?$/.test(rel)
+}
+
+/** 规则⑦：登记模块的消费方必须全在白名单内（文本级扫描 src/ + packages/ 源码树，
+ *  复用 import 捕形与注释掩码）。登记模块文件缺失即红——拒绝以空集假绿（模块
+ *  改名/删除后规则静默失效，同规则⑥登记目录缺失形制）。 */
+function checkDeepModuleBoundaries(repoRoot: string, problems: string[]): void {
+  for (const entry of DEEP_MODULE_BOUNDARIES) {
+    const moduleAbs = join(repoRoot, entry.module)
+    if (!existsSync(moduleAbs)) {
+      problems.push(
+        `✗ 深模块边界：登记模块不存在：${entry.module}（${entry.note}）\n` +
+          `    模块改名/删除后规则静默失效，须同步 DEEP_MODULE_BOUNDARIES（issue #1323 规则⑦）`,
+      )
+      continue
+    }
+    for (const tree of ['src', 'packages']) {
+      for (const f of collectSourceFiles(join(repoRoot, tree), tree)) {
+        if (isTestFile(f.rel)) continue
+        const source = readFileSync(f.abs, 'utf8')
+        for (const hit of scanImportSpecifiers(source)) {
+          if (!hit.specifier.startsWith('@/') && !hit.specifier.startsWith('.')) continue
+          const candRel = resolveShellSpecifier(repoRoot, f.abs, hit.specifier)
+          if (!hitsDeepModule(candRel, entry.module)) continue
+          if (consumerAllowed(f.rel, entry.allowedConsumers)) continue
+          problems.push(
+            `✗ 深模块边界：${f.rel}:${hit.line} 消费 ${entry.module}\n` +
+              `    ${hit.text}\n` +
+              `    ${entry.module} 为深模块，消费方限于白名单（${entry.allowedConsumers.join(' ')}）；` +
+              `新消费方先评估扩白名单或改接缝（issue #1323 规则⑦ / ADR-0118 决策 7）`,
+          )
+        }
       }
     }
   }
@@ -583,6 +693,7 @@ function main(): void {
   checkImportShapes(repoRoot, registry, problems)
   checkTestSupportPurity(repoRoot, registry, problems)
   checkUpwardImports(repoRoot, problems)
+  checkDeepModuleBoundaries(repoRoot, problems)
   checkWiring(repoRoot, problems)
 
   if (problems.length > 0) {
@@ -597,6 +708,7 @@ function main(): void {
       `· 跨包引用形态与深导入禁令扫描 ${collectSourceFiles(join(repoRoot, 'packages'), 'packages').length} 个文件` +
       `· 测试支持纯净性（${registry.filter((p) => p.testSupport).map((p) => p.name).join(' ') || '无'} 仅 devDependency 消费）` +
       `· 上行引用禁令 ${FORBIDDEN_UPWARD_IMPORTS.length} 条（${FORBIDDEN_UPWARD_IMPORTS.map((r) => r.dir).join(' ') || '无'}）` +
+      `· 深模块边界 ${DEEP_MODULE_BOUNDARIES.length} 项（${DEEP_MODULE_BOUNDARIES.map((e) => e.module).join(' ') || '无'}）` +
       `· 接线核对（scripts/check.sh + CI frontend job）`,
   )
 }

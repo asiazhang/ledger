@@ -18,8 +18,8 @@ import {
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { useLoadable } from '@/composables/useLoadable'
-import { useModalIntent } from '@/composables/useModalIntent'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useModalIntent } from '@ledger/modal-intent'
+import { useWindowTier } from '@ledger/window-tier'
 import AppModal from '@/components/AppModal.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
@@ -29,9 +29,9 @@ import {
   MOBILE_TOUCH_TARGET_STYLE,
 } from '@/components/mobile-cells'
 import { useReferenceStore } from '@/stores/reference'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { yuanToCents, formatAmount, centsToYuan } from '@ledger/money'
-import { todayStr } from '@/utils/date'
+import { todayStr } from '@ledger/utils/date'
 import type { BudgetInput, BudgetProgress } from '@ledger/types'
 
 const reference = useReferenceStore()

@@ -10,6 +10,14 @@ vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {} }),
   useRouter: () => ({ push: vi.fn() }),
 }))
+
+// 内嵌 SubscriptionSpendPanel 的 <Bar> 走共享桩（issue #1335，先例 #160）：jsdom 无
+// 2D context，真实 chart.js 取不到 canvas 会打「Failed to create chart」error 输出污染
+// stderr；目录级桩掉说明符，本目录测试只关心清单与弹窗行为，不验证绘制。
+vi.mock('vue-chartjs', async () => {
+  const { BarChartStub } = await import('../../line-chart-stub')
+  return { Bar: BarChartStub }
+})
 import type {
   Account,
   Category,

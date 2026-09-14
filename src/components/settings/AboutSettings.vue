@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { NCard, NSpace, NText, useMessage } from 'naive-ui'
 import pkg from '@/../package.json'
-import { gitShaFull, gitVersionLabel } from '@/utils/git-info'
+import { gitShaFull, gitVersionLabel } from '@ledger/utils/git-info'
 import { t } from '@ledger/i18n'
 
 const message = useMessage()

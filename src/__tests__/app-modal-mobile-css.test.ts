@@ -78,6 +78,11 @@ describe('弹窗移动档 CSS 产出物（issue #844，收口 app-modal.css.ts�
     expect(align.rule).toMatchObject({ textAlign: 'left' })
   })
 
+  it('左置标签详情表：标签列不逐字折行（窄屏内容列挤压的收口）', () => {
+    const nowrap = blockOf('.n-descriptions--left-label-placement .n-descriptions-table-header')
+    expect(nowrap.rule).toMatchObject({ whiteSpace: 'nowrap' })
+  })
+
   it('按钮行底部固定：表单与其节奏容器撑满、末块（按钮行）推至底部', () => {
     expect(blockOf('form.n-form:not(.n-form--inline)').rule).toMatchObject({
       display: 'flex',

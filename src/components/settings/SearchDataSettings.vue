@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { NAlert, NButton, NCard, NSpace, NText, useMessage } from 'naive-ui'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import type { NotePinyinRepairReport } from '@ledger/types'
 
 // 拼音搜索数据卡片（issue #513）：交易搜索的拼音辅助数据（备注拼音冗余列）

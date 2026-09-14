@@ -6,7 +6,7 @@ import AppSelect from '@/components/AppSelect.vue'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'
-import { errorCodeOf, errorMessage as extractErrorMessage } from '@/utils/errors'
+import { errorCodeOf, errorMessage as extractErrorMessage } from '@ledger/utils/errors'
 import { formatPrice } from '@ledger/money'
 import type {
   AddInstrumentChannel,

@@ -9,7 +9,7 @@ import { registerToastSink } from '@/composables/useLoadable'
 import { makeFakeSink, resetToastSink } from './factories'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
-import { DATED_TIME_PERIOD_PRESETS, type NullableDateRange } from '@/utils/time-period'
+import { DATED_TIME_PERIOD_PRESETS, type NullableDateRange } from '@ledger/utils/time-period'
 
 
 // jsdom 未实现元素滚动（naive-ui 日期面板打开时会 scrollTo），补空实现避免

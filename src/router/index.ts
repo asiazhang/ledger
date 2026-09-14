@@ -6,7 +6,7 @@ import {
   type RouteRecordRaw,
   type Router,
 } from 'vue-router'
-import { getSavedRouteName, saveRouteName } from '@/utils/view-state'
+import { getSavedRouteName, saveRouteName } from '@ledger/utils/view-state'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import {
   isClosableFeature,

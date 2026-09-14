@@ -17,7 +17,7 @@ import {
   categoryPath as pureCategoryPath,
   buildCategoryTree as pureBuildCategoryTree,
   type CategoryTreeNode,
-} from '@/utils/category-tree'
+} from '@ledger/utils/category-tree'
 
 /** 参考数据加载状态：`idle` 为初始瞬态（self-init 同步置为 `loading`，外部基本观察不到）。 */
 export type ReferenceStatus = 'idle' | 'loading' | 'ready' | 'error'

@@ -2,7 +2,7 @@
 import { NButton, NIcon, useMessage } from 'naive-ui'
 import { CopyOutline } from '@vicons/ionicons5'
 import { t } from '@ledger/i18n'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 
 /**
  * 交易备注复制按钮（显式复制通道，见 CONTEXT-ui-interaction「界面文本不可选」）：

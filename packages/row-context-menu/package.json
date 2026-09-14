@@ -1,0 +1,13 @@
+{
+  "name": "@ledger/row-context-menu",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "行右键菜单编排包（issue #1317 / spec #1148 / ADR-0118 / ADR-0077）：useRowContextMenu 工厂——行菜单「打开 / 重定位 / 关闭 / 选中」全部时序的单一实现，单判别状态非空即显示。@ledger 范围内方向表恒空（deps: []，仅依赖 vue）；不依赖 stores / components / views / composables。既有禁令随包保持：不接弹层注册表（ADR-0035——开/关上报由薄封装 AppDropdown 的 attrs watch 承担）、不调 preventDefault（原生菜单拦截单点归窗口行为守卫，issue #154）、工厂永不读行内容只存储回传。菜单选项构建与业务动作分派留视图。源码直出，exports 仅包名单入口，不建构建链；跨包引用必须命中 exports（check-frontend-structure.ts 守门）。",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "vue": "^3.5.42"
+  }
+}

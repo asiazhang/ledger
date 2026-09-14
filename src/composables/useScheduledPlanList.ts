@@ -3,9 +3,9 @@ import type { ComputedRef, Ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@ledger/api'
 import { useLoadable } from '@/composables/useLoadable'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { t } from '@ledger/i18n'
-import { scheduledStatusLabel } from '@/utils/scheduled'
+import { scheduledStatusLabel } from '@ledger/utils/scheduled'
 import type {
   RecurrenceType,
   ScheduledKind,

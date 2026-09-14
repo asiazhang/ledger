@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
+import { errorMessage } from '@ledger/utils/errors'
 import { computed, h } from 'vue'
 import { NButton, NIcon, NSpace, NTree, useMessage } from 'naive-ui'
 import type { TreeOption, TreeDropInfo } from 'naive-ui'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import { api } from '@ledger/api'
 import { useReferenceStore } from '@/stores/reference'
-import { useWindowTier } from '@/composables/useWindowTier'
-import { getIconComponent } from '@/utils/icon'
-import { buildCategoryTree } from '@/utils/category-tree'
+import { useWindowTier } from '@ledger/window-tier'
+import { getIconComponent } from '@ledger/utils/icon'
+import { buildCategoryTree } from '@ledger/utils/category-tree'
 import { t } from '@ledger/i18n'
 import type { Category, CategoryKind } from '@ledger/types'
 

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { S3_VENDOR_PRESETS } from '@/utils/s3-vendors'
+import { S3_VENDOR_PRESETS } from '@ledger/utils/s3-vendors'
 
 /**
  * 真桶验收清单 ↔ 预设档位一致守门（issue #1222，父 spec #1214）。
