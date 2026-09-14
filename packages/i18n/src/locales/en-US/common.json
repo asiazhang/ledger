@@ -25,7 +25,8 @@
     "insurers": "Insurers",
     "bookkeeping-more": "Bookkeeping · More",
     "assets-more": "Assets · More",
-    "insights-more": "Insights · More"
+    "insights-more": "Insights · More",
+    "crossBookSummary": "Investment Summary"
   },
   "sidebarGroup": {
     "bookkeeping": "Bookkeeping",

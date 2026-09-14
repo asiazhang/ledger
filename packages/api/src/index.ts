@@ -29,6 +29,7 @@ import type {
   CreateTransactionResult,
   Currency,
   CurrencyCumulativePnl,
+  CrossBookInvestmentSummary,
   DashboardOverview,
   DataLocationChangeOutcome,
   DataLocationInfo,
@@ -422,6 +423,10 @@ export const api = {
   // 账本注册表（issue #833 / ADR-0089）：列出/新建/切换/改名/移除。切换只写
   // 活动指针落盘，原位重引导由前端在成功后经 restartAppShortly 重载进目标账本
   // （明文库直进主界面、密文库落解锁屏）。
+  // 跨账本投资汇总（issue #1196 / ADR-0114）：只读合计，折算与逐本状态全在后端完成。
+  crossBookInvestmentSummary: () =>
+    invoke<CrossBookInvestmentSummary>('cross_book_investment_summary'),
+
   listBooks: () => invoke<BookListInfo>('list_books'),
   createBook: (name: string) => invoke<Book>('create_book', { name }),
   switchBook: (id: string) => invoke<Book>('switch_book', { id }),

@@ -36,15 +36,16 @@ pub async fn cross_book_investment_summary<R: Runtime>(
     // ① 注册表（引导配置，打开任何库之前必须可读）：损坏/未配置 → 汇总不可用，
     //    码化拒绝（前端入口在注册表健康时才展示，此处为深链兜底）。
     let default_dir = default_data_dir(&app)?;
-    let registry = run_db("cross_book_summary:registry", move || {
-        match book_registry::read_registry(&default_dir) {
+    let registry = run_db(
+        "cross_book_summary:registry",
+        move || match book_registry::read_registry(&default_dir) {
             book_registry::RegistryRead::Resolved(registry) => Ok(registry),
             _ => Err(AppError::coded(
                 "book.registry-unavailable",
                 REGISTRY_UNAVAILABLE_MESSAGE,
             )),
-        }
-    })
+        },
+    )
     .await?;
     let books = registry.books;
     // 活动指针：校验通过的注册表必达（String 非可缺省，data_location 同款防御面无需要）。

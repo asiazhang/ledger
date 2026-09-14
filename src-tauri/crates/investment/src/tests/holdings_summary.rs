@@ -9,8 +9,7 @@
 //!   `query_financial_freedom` 的 `numerator_cents` 绑定相等（同一口径两处不得漂移）；
 //!   口径归 InvestableAssets 词汇表（排除隐藏账户、生活现金不计入、缺汇率错误上抛）。
 
-use ledger_transaction::amount::TransactionKind;
-use ledger_transaction::{create_transaction_internal, TransactionInput};
+use ledger_transaction::{TransactionInput, create_transaction_internal};
 
 use super::super::*;
 use super::common::*;

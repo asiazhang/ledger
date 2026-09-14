@@ -1,0 +1,22 @@
+{
+  "convertedNote": "各账本位币不一致，已按当期汇率折算为 {currency}；历史汇率仅属走势曲线",
+  "sameCurrencyNote": "各账本位币一致，直接相加（{currency}）",
+  "partialNote": "部分账本未计入，以下合计为部分合计",
+  "totals": {
+    "marketValue": "持仓市值",
+    "unrealizedPnl": "持仓收益",
+    "cumulativePnl": "累计收益",
+    "investableAssets": "可投资资产"
+  },
+  "booksTitle": "账本计入状态",
+  "status": {
+    "included": "已计入",
+    "locked": "未解锁、未计入",
+    "not_initialized": "尚未初始化、未计入",
+    "schema_mismatch": "版本不一致、未计入",
+    "unreadable": "读取失败、未计入"
+  },
+  "activeTag": "当前",
+  "loadFailed": "汇总读取失败",
+  "retry": "重试"
+}

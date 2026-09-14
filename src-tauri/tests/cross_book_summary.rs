@@ -27,8 +27,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Once;
 
 use ledger_infra::db::data_location::{self, DB_FILE_NAME};
-use ledger_infra::db::{open_connection_in, open_connection_readonly_in, schema_version};
 use ledger_infra::db::encryption::enable_encryption_for_file;
+use ledger_infra::db::{open_connection_in, open_connection_readonly_in, schema_version};
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::{TransactionInput, create_transaction_internal};
 use tauri::Manager;
@@ -220,7 +220,8 @@ async fn cross_book_summary_command_surface_journey() {
         let conn = open_connection_in(&stale.dir).unwrap();
         drop(conn);
         let raw = rusqlite::Connection::open(stale.dir.join(DB_FILE_NAME)).unwrap();
-        raw.pragma_update(None, "user_version", active_version - 1).unwrap();
+        raw.pragma_update(None, "user_version", active_version - 1)
+            .unwrap();
     }
 
     // -----------------------------------------------------------------

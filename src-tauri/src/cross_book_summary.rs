@@ -26,9 +26,9 @@ use serde::Serialize;
 
 use ledger_infra::db::book_registry::Book;
 use ledger_infra::db::data_location::DB_FILE_NAME;
+use ledger_infra::db::encryption::DbFileKind;
 use ledger_infra::db::encryption::probe_file_kind;
 use ledger_infra::db::{open_connection_readonly_in, schema_version};
-use ledger_infra::db::encryption::DbFileKind;
 use ledger_infra::error::Result;
 use ledger_investment as investment;
 use ledger_transaction::amount;
