@@ -1,6 +1,6 @@
 # ADR-0111: infra crate 内部组织与定位口径——跨层共享内核、引导层与壳机制暂住
 
-- 状态：已接受（grilling 定稿 2026-09-12；实施按「后续票」段拆票，本文不直接改代码）
+- 状态：已接受（grilling 定稿 2026-09-12；实施按「后续票」段拆票，本文不直接改代码；修订：决策 2 的 shell_support 暂住安排随 #1108 壳层收敛退役——壳机制迁出至根包 `src/shell_support`，crate 内四区缩为三区，见文末修订注记）
 - 日期：2026-09-12
 - 作者：Ledger 项目
 - 关联：spec #1086（crate 拆分 P0–P5——本文只定 crate 内部形状，不碰拆分轴）；issue #1111（crate 拆分 ADR 与分层指导同步——相邻但不同轴的记录；ADR 编号与 issue 编号命名空间无关）；细化 ADR-0056 决策 1 的「无域语义」定性、ADR-0071 的守门对象；修订 ADR-0073 / ADR-0104 的模块住址（接缝契约不动）；引用 ADR-0089（引导层）、ADR-0044 / ADR-0102（失效信号映射与 `WriteOp` 闭集单点）、ADR-0069 / ADR-0032（阻塞线程池 helper、置脏单点）、ADR-0100（schema 漂移守卫）
@@ -89,3 +89,12 @@
 - #1134 — 守门补强：双向全等 + 子目录覆盖 + crate 内分层断言（含「删除断言即变红」负向判据；阻塞于 #1127–#1131）；
 - #1135 — 守门补强：账本数据表 DML 禁令；
 - #1136 — 范围外发现：ADR-0104 状态行与实现不符。
+
+## 修订注记（#1108，2026-09-14）：shell_support 迁出根包，暂住安排退役
+
+决策 2 的「`shell_support/`（暂住）」条目与决策 3/4 中涉及该目录的表述按原文保留作历史；#1108 落地壳层收敛后，现行形状如下：
+
+- **迁出住址**：壳层统一读/写入口、载荷脱敏与日志初始化（`logger` / `write_entry` / `read_entry` / `redact`）自 `crates/infra/src/shell_support/` 迁至根包 `src/shell_support/`——壳层收敛由根包承接（#1086 P5 未另立壳层 crate，tauri 应用根包即壳），暂住安排随之退役，基础设施不再承载只被壳层消费的机制；
+- **crate 内四区缩为三区**：原语（顶层单文件）、`db/`、`boot/` 加共享接缝（`events` / `signals` / `settings`）；crate 内分层断言收缩为原语 ← `db/` ← `boot/` 单向，`INFRA_BLOCK_FORBIDDEN` 的 `shell_support` 靶随迁删除（残留引用归编译期拒绝）；
+- **守门同步**：`INFRA_MODULES` 不再登记 `shell_support`；基础设施→域认许边随迁退役 3 条测试专用边（`shell_support/*` → `test_support`，消费方随迁根包，走根包 `test_support` 直呼），余 1 条；`check-infra-dml` 对 `shell_support/write_entry.rs` 内联测试夹具的例外登记随迁退役（DML 禁令辖基础设施 crate，壳层统一写入口写账本表是其本职）；根包 `test_utils` 再导出面同步清除，测试器具经 dev-dependency 以 `ledger_infra::test_utils` 直达；
+- **口径影响**：决策 1 的两条定位口径不变且更纯净——基础设施全部在册模块均为跨层共享机制、引导层不变量或单点收口闭集，不再有「暂住」这一中间状态。
