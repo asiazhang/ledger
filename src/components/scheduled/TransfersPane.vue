@@ -20,7 +20,7 @@ import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import { formatAmount, yuanToCents } from '@ledger/money'
 import type { ScheduledTransactionOccurrence } from '@ledger/types'
 import { useReferenceStore } from '@/stores/reference'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 import {
   earliestPendingOccurrence,
   scheduledRecurrenceLabel,

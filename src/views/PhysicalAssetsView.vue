@@ -17,7 +17,7 @@ import PhysicalAssetValuationModal from '@/components/PhysicalAssetValuationModa
 import PhysicalAssetDisposeModal from '@/components/PhysicalAssetDisposeModal.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import { useModalIntent } from '@ledger/modal-intent'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
 import { useReferenceStore } from '@/stores/reference'
 import { sumFixedColumnWidths } from '@ledger/utils/table'

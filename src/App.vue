@@ -71,7 +71,7 @@ import {
 import { useFeatureToggleStore } from '@/stores/feature-toggles'
 import { useWindowGuard } from '@/composables/useWindowGuard'
 import { useSystemBack } from '@/composables/useSystemBack'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 
 const router = useRouter()
 const route = useRoute()

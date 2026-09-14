@@ -23,7 +23,7 @@ import type { ScheduledTransactionOccurrence } from '@ledger/types'
 import { api } from '@ledger/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useModalIntent } from '@ledger/modal-intent'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import {
   earliestPendingOccurrence,

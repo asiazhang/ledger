@@ -2,21 +2,20 @@ import { describe, expect, it } from 'vitest'
 import { effectScope } from 'vue'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import {
-  substituteWindowTierBreakpoint,
-  WINDOW_TIER_BREAKPOINT_PX as BUILD_WINDOW_TIER_BREAKPOINT_PX,
-  WINDOW_TIER_CSS_TOKEN,
-} from '../../vite.config'
-import {
   useWindowTier,
   WINDOW_TIER_BREAKPOINT_PX,
   type WindowTier,
-} from '@/composables/useWindowTier'
+} from '../useWindowTier'
 
 /**
  * 窗口分级（Window Tier）模块测试（issue #841，ADR-0088 决策 2 / 词汇表「窗口分级」）：
  * composable 只锁「宽度信号 → 档位」纯映射——断点两侧边界与实时换档；
  * 形态断言（按档位渲染什么）不上浮到本层。换档一律经媒体查询测试接缝
  * （@ledger/test-support/media-mock），宽度不散落魔法数字——断言值由唯一断点常量派生。
+ *
+ * 包落位（issue #1315 / spec #1148）：测试随被测 composable 成包；断点构建期契约
+ * （vite.config 提取与占位符替换）的测试留壳侧 src/__tests__/window-tier-build-contract.test.ts
+ * ——包内禁止相对路径穿越（check-frontend-structure.ts 规则③），断言原文未动。
  */
 
 /** 在指定视口宽下取档位（effectScope 内实例化，避免无作用域告警）。 */
@@ -63,24 +62,5 @@ describe('useWindowTier 实时换档（媒体查询 change 驱动）', () => {
 
     setFakeMedia({ width: WINDOW_TIER_BREAKPOINT_PX - 1 })
     expect(tier.value).toBe('mobile')
-  })
-})
-
-describe('断点唯一收口：构建期共享（CSS 占位符替换，issue #841）', () => {
-  it('构建期消费的断点值与唯一收口点常量同源（vite.config 从源码提取）', () => {
-    expect(BUILD_WINDOW_TIER_BREAKPOINT_PX).toBe(WINDOW_TIER_BREAKPOINT_PX)
-  })
-
-  it('CSS 占位符被替换为唯一断点常量值，占位符不再残留', () => {
-    const css = `@media (max-width: ${WINDOW_TIER_CSS_TOKEN}px) { .x { color: red } }`
-    const out = substituteWindowTierBreakpoint(css)
-    expect(out).not.toContain(WINDOW_TIER_CSS_TOKEN)
-    expect(out).toContain(`(max-width: ${WINDOW_TIER_BREAKPOINT_PX}px)`)
-    expect(out).toContain('.x { color: red }') // 非占位符内容原样保留
-  })
-
-  it('不含占位符的源码原样返回（插件零干扰前提）', () => {
-    const css = '@media (prefers-reduced-motion: reduce) { .busy { opacity: 0.5 } }'
-    expect(substituteWindowTierBreakpoint(css)).toBe(css)
   })
 })

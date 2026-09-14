@@ -17,7 +17,7 @@ import { t } from '@ledger/i18n'
 import { useInstrumentInfoSync } from '@/composables/useInstrumentInfoSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
 import { errorMessage as extractErrorMessage } from '@ledger/utils/errors'
 import {

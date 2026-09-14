@@ -14,7 +14,7 @@ import {
 import type { DataTableColumn } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import TransactionCardList from '@/components/TransactionCardList.vue'
-import { useWindowTier } from '@/composables/useWindowTier'
+import { useWindowTier } from '@ledger/window-tier'
 import { useLoadable } from '@/composables/useLoadable'
 import { api } from '@ledger/api'
 import { useAppStore } from '@/stores/app'
