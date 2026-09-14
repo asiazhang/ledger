@@ -19,9 +19,9 @@ use crate::error::{AppError, Result};
 use crate::signals::{WriteEvidence, WriteOp};
 use crate::sync::{
     ProgressEmitter, ScopedSession, SyncFetchChannels, SyncInstrumentInfoResult, SyncProgress,
-    do_incremental_sync_channels,
+    WriteWitness, do_incremental_sync_channels,
 };
-use crate::write_entry::{Outcome, SegmentLock, write_entry_segmented};
+use crate::write_entry::{Outcome, SegmentLock, SegmentedFailure, write_entry_segmented};
 
 /// 同步网络通道注入接缝（issue #1276）：生产**不管理**本状态（命令走生产通道
 /// 束），集成测试 manage 本状态并装入桩通道束，使「同步真实在途」可确定复现
@@ -62,9 +62,11 @@ pub(crate) fn progress_to_emitter(emitter: &dyn ProgressEmitter) -> impl FnMut(S
 /// 行情报价/K 线通道，场外基金走历史净值通道逐只按水位增量回填（ADR-0038 决策
 /// 6）；有通道的行以数据源权威名称随行刷新（ADR-0036/0081 修订）；无通道行计入
 /// 跳过；空库返回明确提示而非报错。异步执行（后台线程池），不阻塞主线程；返回
-/// 结果统计（同步 N 只 / 跳过 M 只），前端据此轻量提示。成功且实际写入价格**或**
-/// 名称（`any_written()`）时发价格失效信号（ADR-0031）：零变化（空库/全部跳过/
-/// 基金无新净值且名称无变化）为库内零变化，不广播。
+/// 结果统计（同步 N 只 / 跳过 M 只），前端据此轻量提示。实际写入价格**或**
+/// 名称时发价格失效信号（ADR-0031；成败同判，issue #1277）：零变化（空库/
+/// 全部跳过/基金无新净值且名称无变化/失败且未写过）为库内零变化，不广播、
+/// 不置脏——分段形态逐段 autocommit，中途失败的运行已落库的写入仍然生效
+/// （失败 ≠ 未写过），收尾裁决按实际写入归一。
 ///
 /// 同步全程发确定进度事件（issue #897 / ADR-0095）：编排的进度回调经
 /// [`progress_to_emitter`] 接到 `ledger:instrument-sync-progress` 带 payload 事件
@@ -74,10 +76,12 @@ pub(crate) fn progress_to_emitter(emitter: &dyn ProgressEmitter) -> impl FnMut(S
 ///
 /// 「是否发」判定已于 #333 归一化进 signals 映射单点（`signals_for` +
 /// [`WriteEvidence::PriceWritten`]，ADR-0044）：入口只把终态归一化为证据——
-/// 到达保留落库的终态按 `result.any_written()`（价格或名称实际写入），失败无
-/// 证据零信号（写失败早退不发）。分段取锁、整体裁决形态（issue #1276）：仍是
-/// 恰好一处写入口调用、一个写操作身份；跨分段的「是否实际写过」由编排的结果
-/// 统计随 [`Outcome`] 累积，在收尾裁决点一次性置脏、一次发射。
+/// 成败同判（issue #1277）：编排的写入见证（[`WriteWitness`]，每个实际写入点
+/// 标记，跨分段累积）同时是成功与失败终态的证据源——实际写过即置脏即发信号，
+/// 零写入（空库/全部跳过/失败且未写过）不置脏不广播；失败的业务错误在发射后
+/// 原样上抛，用户可见语义不变。分段取锁、整体裁决形态（issue #1276）：仍是
+/// 恰好一处写入口调用、一个写操作身份；跨分段的「是否实际写过」由见证器累积，
+/// 在收尾裁决点一次性置脏、一次发射。
 #[tauri::command]
 pub async fn sync_instrument_info<R: Runtime>(
     db: State<'_, DbState>,
@@ -110,12 +114,23 @@ pub async fn sync_instrument_info<R: Runtime>(
                 .lock()
                 .map_err(|e| AppError::Db(format!("同步通道束互斥体损坏: {e}")))?;
             let session = SegmentSession { lock };
-            do_incremental_sync_channels(&session, &mut channels, &mut progress).map(|result| {
-                // 证据 = 价格或名称实际写入（issue #827）：名称刷新同样让标的列表
-                // 失真，与价格写入同路计入「数据变了」。
-                let evidence = WriteEvidence::PriceWritten(result.any_written());
-                Outcome::Evidenced(result, evidence)
-            })
+            // 写入见证（issue #1277）：编排的每个实际写入点标记，跨分段累积；
+            // 成败同判的同一份证据源（成功时与结果统计 any_written() 同口径，
+            // 失败时结果统计随错误丢失，见证器是唯一幸存的证据）。
+            let mut witness = WriteWitness::default();
+            do_incremental_sync_channels(&session, &mut channels, &mut progress, &mut witness)
+                .map(|result| {
+                    // 证据 = 价格或名称实际写入（issue #827）：名称刷新同样让
+                    // 标的列表失真，与价格写入同路计入「数据变了」。
+                    let evidence = WriteEvidence::PriceWritten(witness.any_written());
+                    Outcome::Evidenced(result, evidence)
+                })
+                .map_err(|error| SegmentedFailure {
+                    // 失败收尾同样按实际写入裁决（#1277）：证据随失败必达，
+                    // 收尾点置脏并发信号后错误原样上抛。
+                    error,
+                    evidence: WriteEvidence::PriceWritten(witness.any_written()),
+                })
         },
     )
     .await

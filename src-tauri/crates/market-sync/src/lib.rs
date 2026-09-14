@@ -90,7 +90,7 @@ pub use channels::{SyncFetchChannels, do_incremental_sync_channels};
 pub use fund::fetch_fund_quote_production;
 pub use fund_nav::{LsjzPage, NavPoint, NavQuery};
 pub use http::{KlineBar, StockItem};
-pub use model::SyncInstrumentInfoResult;
+pub use model::{SyncInstrumentInfoResult, WriteWitness};
 pub use progress::{FundNavProgress, INSTRUMENT_SYNC_PROGRESS, ProgressEmitter, SyncProgress};
 pub use session::ScopedSession;
 pub use stock::fetch_stock_quote_production;

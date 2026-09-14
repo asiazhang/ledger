@@ -124,21 +124,48 @@ impl SegmentLock<'_> {
     }
 }
 
+/// 分段写闭包的失败载荷（issue #1277）：业务错误原样 + 跨分段累积的写入证据。
+/// 分段形态逐段 autocommit，**失败 ≠ 未写过**——中途失败的运行前面分段可能
+/// 已落库，「实际写过即置脏即发信号」的收尾裁决需要证据随失败必达（ADR-0073
+/// 决策 2 的证据必达原则延伸到失败路径）；裸 `Err(AppError)` 无处携带证据，
+/// 故分段形态的错误侧是本类型而非裸错误。不经编排的错误（如锁失败映射）经
+/// [`From::<AppError>`] 归一，证据为 [`WriteEvidence::None`]——无写入证据的
+/// 失败收尾零置脏零信号。
+#[derive(Debug)]
+pub struct SegmentedFailure {
+    /// 业务错误：发射后原样上抛给调用方（不二次包装）。
+    pub error: AppError,
+    /// 跨分段累积的「是否实际写过」证据（同步编排的写入 witness 即累积体）。
+    pub evidence: WriteEvidence,
+}
+
+impl From<AppError> for SegmentedFailure {
+    fn from(error: AppError) -> Self {
+        Self {
+            error,
+            evidence: WriteEvidence::None,
+        }
+    }
+}
+
 /// 壳层统一写入口 · 分段取锁、整体裁决形态（issue #1276，父 spec #1274 实现
-/// 决策 4）：与 [`write_entry`] 同一仪式链，唯「锁跨度」不同——闭包拿到的不是
-/// 整段持有的连接，而是 [`SegmentLock`]：每段短暂取一次连接、用完即还，
-/// 分钟级网络等待发生在锁外。适用面：同步这类「抓取-落库交替」的长任务
-/// 命令（现役唯一调用点 `sync_instrument_info`）；常规写命令仍走整段形态。
+/// 决策 4；裁决口径经 issue #1277 修订为「实际写过即置脏」）：与 [`write_entry`]
+/// 同一仪式链，唯「锁跨度」不同——闭包拿到的不是整段持有的连接，而是
+/// [`SegmentLock`]：每段短暂取一次连接、用完即还，分钟级网络等待发生在锁外。
+/// 适用面：同步这类「抓取-落库交替」的长任务命令（现役唯一调用点
+/// `sync_instrument_info`）；常规写命令仍走整段形态。
 ///
 /// - **一个写操作身份、恰好一次调用**：与整段形态同责，源码扫描守门把两种
 ///   形态都计为写入口调用点（`signals_cross_check`）；
-/// - **整体裁决**：跨分段的「是否实际写过」由闭包随 [`Outcome`] 自行累积
-///   （同步编排的结果统计即累积体），在收尾点一次性生效——成功 → 经
-///   `db::write` 既有结构（锁 + `is_autocommit()` 复核 + 提交点置脏单点）
-///   **恰好一次**置脏（空闭包形态）；失败早退不置脏（与整段形态同构；
-///   「实际写过即置脏」的裁决修订由父 spec #1277 另票实施）；
-/// - **信号**：提交点置脏成功后发射（映射单点判定，ADR-0044），时序与整段
-///   形态一致。
+/// - **整体裁决（issue #1277 修订）**：跨分段的「是否实际写过」由闭包随
+///   [`SegmentedFailure`] 累积（同步编排的写入 witness 即累积体），在收尾
+///   裁决点一次性生效——成功收尾 → 经 `db::write` 既有结构（锁 +
+///   `is_autocommit()` 复核 + 提交点置脏单点）**恰好一次**置脏（空闭包形态）；
+///   失败收尾 → 证据为「实际写过」同样经同一提交点置脏，零写入失败不置脏
+///   （库未变，零证据零副作用）；
+/// - **信号**：收尾裁决（提交点置脏）完成后发射，成败同判（映射单点判定，
+///   ADR-0044）；失败的业务错误在发射后原样上抛——用户可见语义不变：失败
+///   仍报错，界面照收尾裁决自动刷新一次。
 pub async fn write_entry_segmented<T, F>(
     span: &'static str,
     conn: Arc<Mutex<Connection>>,
@@ -148,24 +175,34 @@ pub async fn write_entry_segmented<T, F>(
 ) -> Result<T>
 where
     T: Send + 'static,
-    F: FnOnce(&SegmentLock<'_>) -> Result<Outcome<T>> + Send + 'static,
+    F: FnOnce(&SegmentLock<'_>) -> std::result::Result<Outcome<T>, SegmentedFailure>
+        + Send
+        + 'static,
 {
-    let (value, evidence) = run_db(span, move || {
+    let (result, evidence) = run_db(span, move || {
         let lock = SegmentLock::new(&conn);
-        let outcome = f(&lock)?;
-        // 整体裁决点：成功 → 空闭包过一次连接层统一写入口，复用其
-        // 「锁 + is_autocommit 复核 + 提交点置脏」结构；失败早退不置脏。
-        db_write(&conn, |_| Ok(()))?;
-        match outcome {
-            Outcome::Silent(value) => Ok((value, WriteEvidence::None)),
-            Outcome::Evidenced(value, evidence) => Ok((value, evidence)),
+        // 结果归一：成功带 Outcome 证据，失败带跨分段累积的证据（issue #1277）。
+        let (result, evidence) = match f(&lock) {
+            Ok(Outcome::Silent(value)) => (Ok(value), WriteEvidence::None),
+            Ok(Outcome::Evidenced(value, evidence)) => (Ok(value), evidence),
+            Err(failure) => (Err(failure.error), failure.evidence),
+        };
+        // 整体裁决点（issue #1277）：「实际写过即置脏」——成功收尾照旧无条件
+        // 过一次连接层统一写入口（锁 + is_autocommit 复核 + 提交点置脏单点，
+        // 空闭包形态）；失败收尾按跨分段累积的证据裁决，零写入失败不置脏。
+        // 置脏与信号的「实际写入」判定同源（同一份证据），不另造第二套口径。
+        if result.is_ok() || evidence.price_written() {
+            db_write(&conn, |_| Ok(()))?;
         }
+        Ok((result, evidence))
     })
     .await?;
+    // 发射时序：收尾裁决（提交点置脏）完成后发射，成败同判（issue #1277）；
+    // 映射单点判定（ADR-0044），发射失败静默忽略，不影响写结果。
     if let Some(emitter) = emitter {
         emit_for(emitter, op, evidence);
     }
-    Ok(value)
+    result
 }
 
 #[cfg(test)]
@@ -476,10 +513,11 @@ mod tests {
         assert_eq!(count, 2, "两段写入都应落库");
     }
 
-    /// 分段写入口的整体裁决（issue #1276）：成功 → 提交点置脏恰好生效（脏标
-    /// 记翻转）；中途失败 → 不置脏（与整段形态同构，裁决修订归 #1277）。
+    /// 分段写入口的整体裁决（issue #1276；裁决口径经 #1277 修订为「实际写过
+    /// 即置脏」）：成功 → 提交点置脏恰好生效（脏标记翻转）；零写入失败 →
+    /// 不置脏不发信号（库未变，零证据零副作用，与整段形态同构）。
     #[test]
-    fn segmented_entry_verdict_dirty_on_success_and_skip_on_failure() {
+    fn segmented_entry_verdict_dirty_on_success_and_skip_on_zero_write_failure() {
         // 提交点后置动作接线（db::tests::common 同款：dev-dependency 环下静态
         // 身份分离，显式接上备份域实现，幂等）。
         crate::db::register_after_commit_hook(tauri_app_lib::backup::after_commit_hook);
@@ -520,7 +558,8 @@ mod tests {
             "成功收尾应经提交点置脏恰好生效"
         );
 
-        // 失败：段内写入已 autocommit，闭包 Err → 不置脏、不发信号。
+        // 失败（零写入）：闭包 Err 且跨分段零写入 → 不置脏、不发信号
+        // （#1277：失败 ≠ 未写过，零写入失败才是「库未变」的不置脏情形）。
         let (conn, emitter) = fixture();
         {
             let guard = conn.lock().expect("锁应可取");
@@ -531,7 +570,46 @@ mod tests {
             conn.clone(),
             Some(&emitter),
             WriteOp::SyncInstrumentInfo,
+            move |_lock| Err(AppError::Invalid("中途失败".into()).into()),
+        ))
+        .unwrap_err();
+        assert!(
+            matches!(err, AppError::Invalid(ref m) if m == "中途失败"),
+            "业务错误应原样传播，实际 {err:?}"
+        );
+        assert!(
+            !dirty_of(&conn.lock().expect("锁应可取")),
+            "零写入失败收尾不应置脏（与整段形态同构）"
+        );
+        assert!(emitter.posted().is_empty(), "零写入失败不应发信号");
+    }
+
+    /// 分段写入口的整体裁决 · 失败但实际写过（issue #1277）：前面分段已 autocommit
+    /// 落库的写入随 [`SegmentedFailure`] 的证据到达收尾裁决点——失败收尾仍置脏
+    /// 并发价格失效信号（成败同判），业务错误原样上抛（用户可见语义不变：失败
+    /// 仍报错，界面照收尾裁决自动刷新一次）。
+    #[test]
+    fn segmented_entry_failure_with_writes_marks_dirty_and_emits_signal() {
+        crate::db::register_after_commit_hook(tauri_app_lib::backup::after_commit_hook);
+        fn dirty_of(conn: &Connection) -> bool {
+            tauri_app_lib::backup::get_state(conn)
+                .expect("调度状态应可读")
+                .dirty
+        }
+
+        let (conn, emitter) = fixture();
+        {
+            let guard = conn.lock().expect("锁应可取");
+            crate::settings::set(&guard, crate::settings::SettingKey::AutoBackupDirty, &false)
+                .expect("重置脏标记应成功");
+        }
+        let err = tauri::async_runtime::block_on(write_entry_segmented::<(), _>(
+            "test",
+            conn.clone(),
+            Some(&emitter),
+            WriteOp::SyncInstrumentInfo,
             move |lock| {
+                // 先头分段实际落库（分段 autocommit，失败也回不去）。
                 lock.with_connection(|c| {
                     c.execute(
                         "INSERT INTO categories (id, name, kind, created_at, updated_at, version, device_id) \
@@ -541,7 +619,12 @@ mod tests {
                     .map_err(AppError::from)?;
                     Ok(())
                 })?;
-                Err(AppError::Invalid("中途失败".into()))
+                // 后续分段失败：写入证据随失败载荷必达（ADR-0073 决策 2 的
+                // 证据必达原则延伸到失败路径）。
+                Err(SegmentedFailure {
+                    error: AppError::Invalid("中途失败".into()),
+                    evidence: WriteEvidence::PriceWritten(true),
+                })
             },
         ))
         .unwrap_err();
@@ -550,9 +633,13 @@ mod tests {
             "业务错误应原样传播，实际 {err:?}"
         );
         assert!(
-            !dirty_of(&conn.lock().expect("锁应可取")),
-            "失败收尾不应置脏（与整段形态同构）"
+            dirty_of(&conn.lock().expect("锁应可取")),
+            "实际写过的失败收尾应置脏（#1277：实际写过即置脏）"
         );
-        assert!(emitter.posted().is_empty(), "失败不应发信号");
+        assert_eq!(
+            emitter.posted(),
+            vec![PRICES_CHANGED],
+            "实际写过的失败收尾应发价格失效信号（成败同判）"
+        );
     }
 }

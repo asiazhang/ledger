@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 
-use super::model::SyncInstrumentInfoResult;
+use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use ledger_infra::error::Result;
 use ledger_investment::crud::refresh_instrument_name;
 use ledger_investment::prices::{
@@ -123,8 +123,14 @@ fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
 /// 停牌/查询无果/「已是最新」照常推进——有通道标的不以成败计格）。`total` 为 0
 ///（全部无通道）不发任何进度事件，空转不伪装成推进。首刷/深回填的基金在页抓取
 /// 返回后额外带出 `fund` 页级明细（不改 `done`/`total`；单页不发）。
-// 六个抓取闭包 + 会话 + 进度回调共 8 参：网络接缝逐通道注入使然（与 HTTP 层
-// request_from_hosts 同形），参数表就是「本编排消费哪些外部通道」的清单。
+///
+/// 写入见证（issue #1277）：每个实际写入点（行情报价落库 / 名称随行刷新 /
+/// 基金净值落库 / 基金名称刷新）在落库成功后标记 [`WriteWitness`]——中途失败的
+/// 运行结果统计随错误丢失，见证器由调用方持有（`&mut` 传入）存活，壳层据此把
+/// 「实际写过」的失败收尾归一为证据（成败同判，见 `commands::sync`）。
+// 六个抓取闭包 + 会话 + 进度回调 + 写入见证共 9 参：网络接缝逐通道注入使然
+//（与 HTTP 层 request_from_hosts 同形），参数表就是「本编排消费哪些外部通道」
+// 的清单。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn do_incremental_sync_with<Q, F, K, X, N, S, M, P>(
     session: &Q,
@@ -135,6 +141,7 @@ pub(super) fn do_incremental_sync_with<Q, F, K, X, N, S, M, P>(
     fetch_nav_full: &mut S,
     fetch_fund_name: &mut M,
     progress: &mut P,
+    witness: &mut WriteWitness,
 ) -> Result<SyncInstrumentInfoResult>
 where
     // 作用域会话接缝（issue #1275）：读写库的唯一通道，签名层面取不到连接。
@@ -224,6 +231,7 @@ where
                     // 名称随行刷新（issue #827）：以数据源权威名称覆盖（仅实际变化才落库）。
                     if refresh_instrument_name(conn, &inst.instrument_id, &item.name)? {
                         renamed += 1;
+                        witness.mark_written();
                     }
                     // f2≤0（停牌/无效价）经 deserialize_positive_f64 已过滤为 None，此处跳过、保留旧价。
                     if let Some(raw) = item.price {
@@ -242,6 +250,7 @@ where
                             },
                         )?;
                         synced_codes.insert(item.code.clone());
+                        witness.mark_written();
                     }
                     Ok(())
                 })?;
@@ -274,7 +283,9 @@ where
 
     // ③ 汇率 K 线回填 → FxRateHistory：仅非本位币币种对（与本位币相同的
     // 无需历史折算），与价格历史同期段采集、同周规则落库。汇率消费方含基金与股票
-    // 的历史市值折算，币种对取全量标的（与分区无关）。
+    // 的历史市值折算，币种对取全量标的（与分区无关）。汇率落库不计入写入见证
+    //（issue #1277）：与成功路径的零写入判定同口径——只有价格或名称写入才发
+    // 价格失效信号，汇率历史变化不在其列。
     let native = session.with_connection(default_currency_code)?;
     let mut pairs: Vec<(String, String)> = held
         .iter()
@@ -322,6 +333,7 @@ where
                     }),
                 });
             };
+            let written_before = fund_stats.written;
             sync_one_fund_nav(
                 session,
                 fund,
@@ -330,6 +342,10 @@ where
                 &mut fund_stats,
                 &mut on_page,
             )?;
+            // 净值实际落库才标记（「已是最新」不算写入，与 fund_stats.written 同判）。
+            if fund_stats.written > written_before {
+                witness.mark_written();
+            }
         }
         // 名称刷新遇「确定性查无」降级为保留原名（ADR-0039 修订，issue #1212）：基金
         // 可能已终止（搜索索引与档案通道都不再可达），但这不该打断整次同步；网络类
@@ -350,6 +366,7 @@ where
             .with_connection(|conn| refresh_instrument_name(conn, &fund.instrument_id, &name))?
         {
             renamed += 1;
+            witness.mark_written();
         }
         done += 1;
         progress(SyncProgress::instrument(done, total));
