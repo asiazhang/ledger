@@ -28,9 +28,9 @@ use ledger_investment as investment_domain;
 use ledger_investment::{
     AddFundResult, AddStockInstrumentResult, CurrencyCumulativePnl, Holding, Instrument,
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPriceTrend,
-    ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter,
-    PortfolioValueTrend, PriceStaleness, RealizedPnlSummary, TransactionConvert, TransactionSplit,
-    TransactionTrade, TrendRange,
+    ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, MoneyWeightedReturnSummary,
+    MwrRange, PnlFilter, PortfolioValueTrend, PriceStaleness, RealizedPnlSummary,
+    TransactionConvert, TransactionSplit, TransactionTrade, TrendRange,
 };
 
 #[tauri::command]
@@ -109,6 +109,21 @@ pub async fn cumulative_pnl_summary(db: State<'_, DbState>) -> Result<Vec<Curren
     let conn = db.read_conn.clone();
     read_entry("cumulative_pnl_summary", conn, move |conn| {
         investment_domain::query_cumulative_pnl_summary(conn)
+    })
+    .await
+}
+
+/// IPC 命令：资金加权收益率（ADR-0115 / issue #1195）——三个消费面（持仓页单
+/// 标的 / 盈亏页账户级与全账级）共用的只读投影，可选区间（区间开始存量持仓按
+/// 区间首日市值折为期初投入，收益率的输入假设、不改账务）。无写入路径。
+#[tauri::command]
+pub async fn money_weighted_return_summary(
+    db: State<'_, DbState>,
+    range: Option<MwrRange>,
+) -> Result<MoneyWeightedReturnSummary> {
+    let conn = db.read_conn.clone();
+    read_entry("money_weighted_return_summary", conn, move |conn| {
+        investment_domain::query_money_weighted_return_summary(conn, &range.unwrap_or_default())
     })
     .await
 }

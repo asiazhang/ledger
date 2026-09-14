@@ -12,10 +12,15 @@
     "filterInstrument": "搜索标的（代码/名称/拼音）",
     "byYear": "按年度汇总",
     "byAccount": "按账户汇总",
+    "byMwr": "资金加权收益率",
+    "total": "全账",
+    "notComputable": "无法计算",
     "columns": {
       "account": "账户",
       "realizedPnl": "已实现盈亏",
-      "year": "年度"
+      "year": "年度",
+      "currency": "币种",
+      "mwr": "资金加权收益率"
     }
   },
   "holdings": {
@@ -38,7 +43,8 @@
       "price": "现价",
       "navDate": "净值日期",
       "marketValue": "市值",
-      "unrealizedPnl": "持仓收益"
+      "unrealizedPnl": "持仓收益",
+      "mwr": "资金加权收益率"
     }
   },
   "concepts": {

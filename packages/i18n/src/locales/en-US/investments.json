@@ -15,8 +15,13 @@
     "columns": {
       "account": "Account",
       "realizedPnl": "Realized P&L",
-      "year": "Year"
-    }
+      "year": "Year",
+      "currency": "Currency",
+      "mwr": "Money-Weighted Return"
+    },
+    "byMwr": "Money-Weighted Return",
+    "total": "Overall",
+    "notComputable": "N/A"
   },
   "holdings": {
     "title": "Current Holdings",
@@ -38,7 +43,8 @@
       "price": "Price",
       "navDate": "NAV Date",
       "marketValue": "Market Value",
-      "unrealizedPnl": "Holding P&L"
+      "unrealizedPnl": "Holding P&L",
+      "mwr": "Money-Weighted Return"
     }
   },
   "concepts": {

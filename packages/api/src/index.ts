@@ -69,6 +69,8 @@ import type {
   InsurerInput,
   InsurerUpdateInput,
   MonthlySummary,
+  MoneyWeightedReturnSummary,
+  MwrRange,
   PhysicalAsset,
   PhysicalAssetDisposeInput,
   PhysicalAssetInput,
@@ -313,6 +315,13 @@ export const api = {
   // 持仓页签合计区与首页投资卡共用（不做跨币种折算，缺价行情不计入）
   cumulativePnlSummary: () =>
     invoke<CurrencyCumulativePnl[]>('cumulative_pnl_summary'),
+  // 资金加权收益率（ADR-0115 / issue #1195）：三个消费面（持仓页单标的 /
+  // 盈亏页账户级与全账级）共用的只读投影；可选区间（区间开始存量持仓按
+  // 区间首日市值折为期初投入，收益率的输入假设、不改账务）
+  moneyWeightedReturnSummary: (range?: MwrRange | null) =>
+    invoke<MoneyWeightedReturnSummary>('money_weighted_return_summary', {
+      range: range ?? null,
+    }),
 
   // 物品（issue #116）：独立领域（非参考数据），写入后由后端发 ledger:changed
   listItems: () => invoke<ItemWithDailyCost[]>('list_items'),

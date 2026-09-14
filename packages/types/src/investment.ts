@@ -334,3 +334,44 @@ export interface PortfolioValueTrend {
   currency_code: string
   points: PortfolioTrendPoint[]
 }
+
+/** 资金加权收益率查询区间（issue #1195 / ADR-0115）：可选起止 ISO 日期，缺省
+ * 表示该侧不设界（自首笔流水起算、截至今日现值）；区间开始存量持仓按区间首日
+ * 市值折为期初投入（收益率的输入假设，不改账务） */
+export interface MwrRange {
+  start_date?: string | null
+  end_date?: string | null
+}
+
+/** 单标的资金加权收益率行（持仓页每行，账户 × 标的粒度）：rate 为年化内部
+ * 收益率（小数，0.1234 = 12.34%）；缺价跳过的行不出现（前端渲染「-」），
+ * 现金流无解的行 rate 为 null（显式标注无法计算，不猜解） */
+export interface InstrumentMwr {
+  account_id: string
+  instrument_id: string
+  /** 计价币种 = 账户币种（组内不跨币种折算） */
+  currency_code: string
+  rate: number | null
+}
+
+/** 账户级资金加权收益率行（盈亏页账户粒度）：只覆盖投资账户 */
+export interface AccountMwr {
+  account_id: string
+  account_name: string
+  currency_code: string
+  rate: number | null
+}
+
+/** 全账级按币种分组的资金加权收益率行：不做跨币种折算，各币种独立解年化 */
+export interface CurrencyMwr {
+  currency_code: string
+  rate: number | null
+}
+
+/** 资金加权收益率汇总（ADR-0115 / issue #1195）：三个消费面（持仓页单标的 /
+ * 盈亏页账户级与全账级）共用的只读投影 */
+export interface MoneyWeightedReturnSummary {
+  by_instrument: InstrumentMwr[]
+  by_account: AccountMwr[]
+  total: CurrencyMwr[]
+}

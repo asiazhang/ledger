@@ -40,6 +40,9 @@
 //!   耗尽批次成本闭合、结转成本合计、修改/删除路径的两个精确回补原语
 //!   （issue #1018，父 spec #1005 决策 D4）；
 //! - [`manual_price`]：手动报价两落点（价格历史周采样 + 现价缓存映像规则）；
+//! - [`mwr`]：资金加权收益率（MoneyWeightedReturn，ADR-0115 / issue #1195）——
+//!   XIRR 求解器（确定性二分）与三消费面读投影（持仓页单标的 / 盈亏页账户级
+//!   与全账级），现金流、区间期初市值、空值与无解口径见模块头注；
 //! - [`model`]：域集中模型——全量投资类型与财务自由度总览（#422 模型域化随域
 //!   归位），经本入口逐类型再导出（禁止 glob）；行情 DTO 已随 ADR-0103 收口为
 //!   [`quote`] 模块的统一载荷；
@@ -103,6 +106,7 @@ pub mod fund;
 pub mod holdings;
 pub mod lots;
 pub mod manual_price;
+pub mod mwr;
 pub mod predicates;
 pub mod prices;
 pub mod quote;
@@ -149,6 +153,10 @@ pub use fund::{
     is_six_digit_code, reject_carried_fund_market, validate_fund_code,
 };
 pub use manual_price::record_manual_price;
+pub use mwr::{
+    AccountMwr, CurrencyMwr, InstrumentMwr, MoneyWeightedReturnSummary, MwrRange,
+    query_money_weighted_return_summary,
+};
 pub use quote::{Quote, QuoteAdoptionInput, QuoteAdoptionOutcome};
 pub use reports::{
     query_cumulative_pnl_summary, query_holdings_summary_by_currency, query_realized_pnl_summary,
