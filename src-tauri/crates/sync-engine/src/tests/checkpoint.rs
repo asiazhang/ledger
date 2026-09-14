@@ -483,8 +483,10 @@ fn bootstrap_migrates_older_schema_snapshot() {
     let id = base_ledger(&conn_a);
     let cp22 = create_checkpoint(&conn_a).unwrap();
 
-    // 把快照化成 V021 时代的真实形态：卸下 V022 位点表、V023 出资列与 V026 信用卡
-    // 档案列（快照取自当前最新 schema，逐版回退到此时代才叫「V021 时代的真实形态」）
+    // 把快照化成 V021 时代的真实形态：卸下 V022 位点表、V023 出资列、V026 信用卡
+    // 档案列与 V027 期初存量列（快照取自当前最新 schema，逐版回退到此时代才叫
+    // 「V021 时代的真实形态」；新增迁移若往 V021 之后加对象，须在此同步卸下——
+    // 否则前向迁移重放该条 DDL 会撞 duplicate column）
     //（先卸部分索引再卸列，SQLite 限制：索引列不可直接 DROP COLUMN）并回拨
     // user_version（user_version 以迁移条目计：V005 移除不回填，V022 = 第 21 条，
     // V021 时代 = 20）。V025 起迁移链含 DROP：模拟旧时代快照还须把「该时代
@@ -512,6 +514,9 @@ fn bootstrap_migrates_older_schema_snapshot() {
                 .execute(&format!("ALTER TABLE accounts DROP COLUMN {column}"), [])
                 .unwrap();
         }
+        stale
+            .execute("ALTER TABLE security_transactions DROP COLUMN origin", [])
+            .unwrap();
         stale
             .execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_refund ON transactions(refund_of_transaction_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_sync ON transactions(updated_at, device_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_deleted ON transactions(is_deleted, updated_at);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_amount ON transactions(amount_cents);",
