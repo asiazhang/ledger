@@ -6,12 +6,19 @@
 //!
 //! 判据权威 = 同步引擎公开接口；双端场景 = 同进程两个引擎实例 + 内存假 Transport。
 
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
 use super::super::{
     OpOutcome, apply_ops, bootstrap_from_checkpoint, create_checkpoint, ops_after_positions,
     parked_ops, read_ops, stream_positions, truncate_stream_before,
 };
 use super::common::{make_expense, read_transaction, wire_in, wire_out};
+use crate::channel::{ChannelLayout, publish_checkpoint};
+use crate::envelope::EnvelopeMode;
 use crate::ops;
+use crate::transport::Transport;
 use ledger_sync_protocol::position as positions;
 use ledger_transaction::write::protocol;
 use tauri_app_lib::test_support::{self, assert_balance_cache_matches_realtime, seed_account};
@@ -445,6 +452,283 @@ fn first_sighting_with_pending_park_pins_position_below_it() {
         "首见建行被挂起缺口挡在 0，不越过未应用 op"
     );
     assert_eq!(parked_ops(&conn_b).unwrap().len(), 1, "op1 挂起待裁决");
+}
+
+// ---------------------------------------------------------------------------
+// 引导编排的锁段形状（issue #1285，ADR-0120 判据同簇适用）：整库快照下载是
+// 纯网络等待、在连接段之外完成（ADR-0069 决策 4）；段2 复验前置守卫把
+// 「判空后被写」的并发本地写收敛为显式报错，不被快照静默覆盖（丢账）。
+// ---------------------------------------------------------------------------
+
+/// 共享字节通道：发布侧与引导侧各持传输替身、读写同一份文件。
+type SharedFiles = Arc<Mutex<BTreeMap<String, Vec<u8>>>>;
+
+/// 通道读钩子形态（入参为通道对象路径）。
+type FetchHook = Box<dyn Fn(&str) + Send + Sync>;
+
+/// 内存通道传输替身：引导侧挂「读通道文件」钩子——引导下载段的两次通道读
+///（manifest、快照体）在钩子处触发，此刻即「网络在途」。
+struct FetchObservedTransport {
+    files: SharedFiles,
+    on_read: Option<FetchHook>,
+}
+
+impl FetchObservedTransport {
+    /// 发布侧实例：无钩子（发布的通道读不进引导的事件序）。
+    fn publisher(files: &SharedFiles) -> Self {
+        Self {
+            files: files.clone(),
+            on_read: None,
+        }
+    }
+
+    /// 引导侧实例：每次通道读先执行钩子再应答。
+    fn observer(files: &SharedFiles, on_read: impl Fn(&str) + Send + Sync + 'static) -> Self {
+        Self {
+            files: files.clone(),
+            on_read: Some(Box::new(on_read)),
+        }
+    }
+}
+
+impl Transport for FetchObservedTransport {
+    fn ensure_dir(&self, _path: &str) -> ledger_infra::error::Result<()> {
+        Ok(())
+    }
+
+    fn read_file(&self, path: &str) -> ledger_infra::error::Result<Option<Vec<u8>>> {
+        if let Some(on_read) = &self.on_read {
+            on_read(path);
+        }
+        Ok(self.files.lock().unwrap().get(path).cloned())
+    }
+
+    fn write_file(&self, path: &str, bytes: &[u8]) -> ledger_infra::error::Result<()> {
+        self.files
+            .lock()
+            .unwrap()
+            .insert(path.to_string(), bytes.to_vec());
+        Ok(())
+    }
+}
+
+/// 段接缝替身（同壳层实现的取锁形状：互斥体 + 每段短取、用毕即还）；段事件
+/// 与「连接存活」标记共享给下载段钩子——下载期间互斥体必然空闲。
+struct SegmentsStub {
+    conn: Arc<Mutex<rusqlite::Connection>>,
+    events: Arc<Mutex<Vec<&'static str>>>,
+    conn_live: Arc<AtomicBool>,
+}
+
+impl SegmentsStub {
+    fn new(conn: rusqlite::Connection) -> Self {
+        Self {
+            conn: Arc::new(Mutex::new(conn)),
+            events: Arc::new(Mutex::new(Vec::new())),
+            conn_live: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl crate::BootstrapConnSegments for SegmentsStub {
+    fn with_conn<T>(
+        &self,
+        use_conn: impl FnOnce(&mut rusqlite::Connection) -> ledger_infra::error::Result<T>,
+    ) -> ledger_infra::error::Result<T> {
+        self.events.lock().unwrap().push("seg-start");
+        let mut guard = self.conn.lock().unwrap();
+        self.conn_live.store(true, Ordering::SeqCst);
+        let result = use_conn(&mut guard);
+        self.conn_live.store(false, Ordering::SeqCst);
+        drop(guard);
+        self.events.lock().unwrap().push("seg-end");
+        result
+    }
+}
+
+/// 测试用通道布局（固定空间 id，与其它用例隔离）。
+fn bootstrap_layout() -> ChannelLayout {
+    ChannelLayout::new("0197abcd-0000-7000-8000-000000000085").unwrap()
+}
+
+/// 来源端 A（账户 + 一笔「午饭」支出）把检查点发布到共享字节通道，返回快照
+/// 携带的交易 id。
+fn publish_source_checkpoint(files: &SharedFiles) -> String {
+    let conn_a = test_support::open();
+    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    let id = protocol::create(&conn_a, make_expense("acc-1", 10_000, "午饭"))
+        .unwrap()
+        .id;
+    let publisher = FetchObservedTransport::publisher(files);
+    publish_checkpoint(
+        &conn_a,
+        &publisher,
+        &bootstrap_layout(),
+        &EnvelopeMode::Plaintext,
+    )
+    .unwrap();
+    id
+}
+
+/// 无注入钩子的引导侧通道：每次通道读记入事件序（manifest / 快照体）并
+/// 断言此刻无连接存活（下载段不持连接）。
+fn observed_channel(
+    files: &SharedFiles,
+    events: Arc<Mutex<Vec<&'static str>>>,
+    conn_live: Arc<AtomicBool>,
+) -> crate::SyncChannel {
+    observed_channel_with_snapshot_hook(files, events, conn_live, || ())
+}
+
+/// 带注入钩子的引导侧通道：快照体读时（即下载在途）额外执行 `on_snapshot`
+///（模拟下载在途时落进本机的并发写）；manifest 读只记事件不注入。
+fn observed_channel_with_snapshot_hook(
+    files: &SharedFiles,
+    events: Arc<Mutex<Vec<&'static str>>>,
+    conn_live: Arc<AtomicBool>,
+    on_snapshot: impl Fn() + Send + Sync + 'static,
+) -> crate::SyncChannel {
+    let on_snapshot = Mutex::new(on_snapshot);
+    let hook = move |path: &str| {
+        let (event, is_snapshot) = if path.ends_with("/manifest.json") {
+            ("fetch-manifest", false)
+        } else {
+            ("fetch-snapshot", true)
+        };
+        if is_snapshot {
+            (on_snapshot.lock().unwrap())();
+        }
+        events.lock().unwrap().push(event);
+        assert!(
+            !conn_live.load(Ordering::SeqCst),
+            "{event} 必须发生在连接段之外（下载段不持连接，ADR-0069 决策 4）"
+        );
+    };
+    crate::SyncChannel::from_parts(
+        Box::new(FetchObservedTransport::observer(files, hook)),
+        bootstrap_layout(),
+    )
+}
+
+/// 形态对齐守卫的本机库路径（域单测用内存库；明文 × 明文场景该路径只被
+/// probe，不发生文件写入）。
+fn probe_only_db_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "ledger-bootstrap-domain-{}.db",
+        ledger_infra::db::new_uuid()
+    ))
+}
+
+/// 引导事件序的期望形态：段1（前置守卫）→ manifest 读 → 快照体读 →
+/// 段2（复验 + 换入），两次通道读都严格落在两段之间。
+fn assert_fetch_between_segments(events: &[&'static str]) {
+    assert_eq!(
+        events,
+        [
+            "seg-start",
+            "seg-end",
+            "fetch-manifest",
+            "fetch-snapshot",
+            "seg-start",
+            "seg-end"
+        ],
+        "下载段必须整体位于两段之间（段1 前置守卫 → 锁外下载 → 段2 复验换入）"
+    );
+}
+
+/// 核心形状（issue #1285）：前置守卫（段1）→ 整库快照下载（连接段外，纯网络
+/// 等待）→ 复验 + 整库换入（段2）——下载不持连接，引导结果与整段持锁形状一致。
+#[test]
+fn bootstrap_fetch_runs_between_conn_segments_without_live_connection() {
+    let files: SharedFiles = Arc::new(Mutex::new(BTreeMap::new()));
+    let source_txn = publish_source_checkpoint(&files);
+
+    let harness = SegmentsStub::new(test_support::open());
+    let channel = observed_channel(&files, harness.events.clone(), harness.conn_live.clone());
+
+    let outcome =
+        crate::bootstrap_from_channel(&harness, &probe_only_db_path(), &channel, None).unwrap();
+    assert_eq!(outcome.generation, 1, "采纳通道当前检查点代数");
+    assert!(outcome.size > 0);
+    assert!(!outcome.reencrypted, "明文快照 × 明文本机无转换");
+
+    // 引导结果与整段持锁形状一致：快照数据就位（判据权威 = 域公开接口）。
+    let conn = harness.conn.lock().unwrap();
+    assert_eq!(
+        read_transaction(&conn, &source_txn).unwrap().amount_cents,
+        10_000,
+        "快照携带的交易随引导就位"
+    );
+}
+
+/// 复验收敛（issue #1285）：下载期间落进的本机写在段2 复验被显式拒绝——
+/// 不静默覆盖（换入是整库重建语义，覆盖即丢账），本机写原样保留。
+#[test]
+fn bootstrap_local_write_during_download_is_caught_by_recheck_not_overwritten() {
+    let files: SharedFiles = Arc::new(Mutex::new(BTreeMap::new()));
+    let source_txn = publish_source_checkpoint(&files);
+
+    let harness = SegmentsStub::new(test_support::open());
+    // 下载段钩子模拟「并发本地写」：快照体在途时往本机落一个用户事实行
+    //（账户行即探针闭集成员；直置不经写入口，同前同步时代存量库守卫先例）。
+    let racer_conn = harness.conn.clone();
+    let channel = observed_channel_with_snapshot_hook(
+        &files,
+        harness.events.clone(),
+        harness.conn_live.clone(),
+        move || {
+            let conn = racer_conn.lock().unwrap();
+            seed_account(&conn, "acc-race", "下载期间落的账", "cash", "CNY", 0);
+        },
+    );
+
+    let err =
+        crate::bootstrap_from_channel(&harness, &probe_only_db_path(), &channel, None).unwrap_err();
+    assert_eq!(
+        err.code(),
+        Some("sync-channel.bootstrap-library-not-empty"),
+        "段2 复验把「判空后被写」收敛为显式报错"
+    );
+    assert_fetch_between_segments(&harness.events.lock().unwrap());
+
+    // 拒绝零副作用：本机写原样保留，快照未换入（来源数据不在场）。
+    let conn = harness.conn.lock().unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT count(*) FROM accounts WHERE id = 'acc-race'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1,
+        "下载期间落进的本机写不被快照覆盖"
+    );
+    assert!(
+        read_transaction(&conn, &source_txn).is_none(),
+        "复验拒绝先于整库换入，快照内容不得就位"
+    );
+}
+
+/// 前置守卫 fail fast（段1）：本机已有用户业务数据时引导在下载前被拒——
+/// 不浪费整库快照下载（通道读零次）。
+#[test]
+fn bootstrap_preflight_failure_skips_download_entirely() {
+    let files: SharedFiles = Arc::new(Mutex::new(BTreeMap::new()));
+    let _source_txn = publish_source_checkpoint(&files);
+
+    let conn_b = test_support::open();
+    seed_account(&conn_b, "acc-local", "本地已有数据", "cash", "CNY", 0);
+    let harness = SegmentsStub::new(conn_b);
+    let channel = observed_channel(&files, harness.events.clone(), harness.conn_live.clone());
+
+    let err =
+        crate::bootstrap_from_channel(&harness, &probe_only_db_path(), &channel, None).unwrap_err();
+    assert_eq!(err.code(), Some("sync-channel.bootstrap-library-not-empty"));
+    assert_eq!(
+        *harness.events.lock().unwrap(),
+        ["seg-start", "seg-end"],
+        "前置守卫在段1 拒绝，下载段不发生（通道读零次）"
+    );
 }
 
 /// 位点前滚吸收已补齐区段：挂起 op 补齐后落日志，下一次推进前滚跨过整段

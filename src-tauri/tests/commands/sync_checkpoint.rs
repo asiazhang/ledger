@@ -5,8 +5,10 @@
 //! 真实 S3 桩「发布检查点 → 新端引导 → 双向增量收敛」整链**（验收判据
 //! 「新端经 Checkpoint 引导」「手机记的账在桌面出现、桌面记的账在手机出现」
 //! 的自动化形态）与信封形态对齐（密文源端引导后本机转密文、双端互开对方段）。
-//! 另钉预检的锁跨度（issue #1283）：manifest GET 在网络在途时不得占据任何连接
-//! 锁——负向判据（ADR-0087 断言强度）把网络调用移回锁内即红。
+//! 另钉预检与引导的锁跨度（issue #1283 / #1285）：manifest GET 与整库快照
+//! 下载在网络在途时不得占据写连接锁——负向判据（ADR-0087 断言强度）把网络
+//! 调用移回锁内即红；引导下载在途落进的本机写被显式拒绝、不静默覆盖（引导
+//! 侧复验语义的「删除即变红」权威归域单测，见 sync-engine 域 checkpoint 测试）。
 //! 引导的 SQL 级重建、位点采纳、schema 偏斜归域单测（`sync_engine::tests`，
 //! ADR-0087），此处只钉「命令壳 → 通道在位 → 拉取 → 整库换入 → 形态对齐」。
 
@@ -24,7 +26,7 @@ use tauri_app_lib::commands::sync_channel::{
 };
 use tauri_app_lib::commands::{boot::BootCell, transactions};
 use tauri_app_lib::test_support::{
-    S3Addressing, S3Stub, S3StubConfig, read_scalar_i64, spawn_s3_stub,
+    S3Addressing, S3Gate, S3Stub, S3StubConfig, read_scalar_i64, spawn_s3_stub,
 };
 
 use crate::isolation::isolate_home;
@@ -32,8 +34,8 @@ use crate::sync_channel::{
     configure_channel, device_app, expense_input, fresh_app, spawn_sync_stub,
 };
 
-/// 预检发出通道请求的限时（真实 HTTP 到本机桩，正常在毫秒级）。
-const PRECHECK_REQUEST_LIMIT: Duration = Duration::from_secs(5);
+/// 预检/引导发出通道请求的限时（真实 HTTP 到本机桩，正常在毫秒级）。
+const CHANNEL_REQUEST_LIMIT: Duration = Duration::from_secs(5);
 /// 其它命令应在限时内完成——超时即「连接锁被网络等待占据」。
 const COMMAND_LIMIT: Duration = Duration::from_secs(2);
 
@@ -44,14 +46,50 @@ fn assert_code(err: AppError, code: &str) {
 
 /// 等桩观测到预检发出的通道请求（此刻请求已到达、应答未回，即网络在途）。
 async fn wait_for_channel_request(stub: &S3Stub, limit: Duration) {
+    wait_for_channel_request_after(stub, 0, limit).await;
+}
+
+/// 等桩观测到第 `baseline` 个请求之后的下一个通道请求（此前请求属前置阶段，
+/// 已放行完毕；新到达的请求此刻被闸门挡住，即网络在途）。
+async fn wait_for_channel_request_after(stub: &S3Stub, baseline: usize, limit: Duration) {
     let deadline = Instant::now() + limit;
-    while stub.requests().is_empty() {
+    while stub.requests().len() <= baseline {
         assert!(
             Instant::now() < deadline,
-            "预检应在限时内发出通道请求（manifest 读）"
+            "应在限时内发出通道请求（观测到 {baseline} 个后无新请求）"
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+}
+
+/// 让一个通道命令任务在闸门桩上跑完：每观测到一个未放行的新请求放行一个
+///（每轮至多一个，令牌与请求一一对应），任务结束时不留多余令牌——其后被
+/// 闸住的才是被测调用点的请求。返回命令结果。
+async fn drain_through_gate<T>(
+    task: tokio::task::JoinHandle<ledger_infra::error::Result<T>>,
+    stub: &S3Stub,
+    gate: &S3Gate,
+    mut released: usize,
+) -> ledger_infra::error::Result<T> {
+    loop {
+        let observed = stub.requests().len();
+        if observed > released {
+            gate.release(1);
+            released += 1;
+            continue;
+        }
+        if task.is_finished() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let result = task.await.expect("闸门放行任务不应 panic");
+    assert_eq!(
+        stub.requests().len(),
+        released,
+        "闸门令牌应逐个放行、不留余量"
+    );
+    result
 }
 
 /// 在既有目录上重新挂一台「设备」（模拟原位重引导后的新连接）：mock 应用 +
@@ -184,7 +222,7 @@ async fn checkpoint_precheck_network_wait_does_not_block_other_commands() {
     configure_channel(&app, &stub);
 
     let precheck = tokio::spawn(get_sync_channel_checkpoint(app.clone()));
-    wait_for_channel_request(&stub, PRECHECK_REQUEST_LIMIT).await;
+    wait_for_channel_request(&stub, CHANNEL_REQUEST_LIMIT).await;
 
     // 网络在途：其它命令照常读写——探针取读连接（读入口）、写命令取写连接
     //（统一写入口），两条锁都不得被网络等待占据。
@@ -220,6 +258,100 @@ async fn checkpoint_precheck_network_wait_does_not_block_other_commands() {
     created
         .expect("预检网络在途时写命令应在限时内完成——写连接锁不得被网络等待占据")
         .expect("写命令应成功");
+}
+
+/// 引导的锁跨度与复验收敛（issue #1285 / ADR-0120 判据同簇 / ADR-0069 决策 4）：
+/// 整库快照下载是纯网络等待、在主连接锁外完成——下载在途时读命令与写命令
+/// 限时完成；下载期间落进的本机写被引导显式拒绝，不被快照静默覆盖（丢账
+/// 窗口 → 显式错误）。
+///
+/// **负向判据（ADR-0087 断言强度）**：把 `fetch_checkpoint` 移回连接锁存活期
+/// 内（本票修复前的形状），下面的写命令在限时内拿不到锁，本测试即红。
+///
+/// 错误码分层说明（防误读）：本测试的并发写经统一写入口 `create_account`，
+/// 必产出 op → 段2 复验与 `bootstrap_from_checkpoint` 内层同步三表权威守卫
+/// 都命中且同报 `sync-engine.bootstrap-not-fresh`（内层守卫兜底，本测试对
+/// 二者不可分辨）；段2 复验独有的「用户数据探针半场」（不经 op 产出的写入）
+/// 其「删除复验即红」的权威在域单测
+/// `bootstrap_local_write_during_download_is_caught_by_recheck_not_overwritten`
+///（直置用户事实行，删复验即被静默覆盖）。
+#[tokio::test]
+async fn bootstrap_download_in_flight_keeps_commands_responsive_and_racy_write_errors() {
+    isolate_home();
+    let (config, gate) = S3StubConfig::new(S3Addressing::PathStyle).gated_requests();
+    let stub = spawn_s3_stub(config);
+
+    // 来源端 A（存量数据）：记账 → 发布检查点。发布的通道请求被闸门逐个挡住、
+    // 逐个放行，结束时不留多余令牌——其后被闸住的正是引导的下载段。
+    let (app_a, _dir_a) = device_app("bootstrap-lock-a");
+    configure_channel(&app_a, &stub);
+    let (source_acc, _txn) = seed_account_and_expense(&app_a, 10_000, "来源端").await;
+    drain_through_gate(
+        tokio::spawn(publish_sync_checkpoint(app_a.clone(), None)),
+        &stub,
+        &gate,
+        0,
+    )
+    .await
+    .expect("A 发布检查点应成功");
+
+    // 引导端 B（全新空库）：引导任务的第一个通道请求（manifest GET）到达即被
+    // 闸住——此刻整库快照下载在途。
+    let (app_b, _dir_b) = device_app("bootstrap-lock-b");
+    configure_channel(&app_b, &stub);
+    let baseline = stub.requests().len();
+    let bootstrap = tokio::spawn(bootstrap_sync_from_channel(app_b.clone(), None));
+    wait_for_channel_request_after(&stub, baseline, CHANNEL_REQUEST_LIMIT).await;
+
+    // 网络在途：读命令与写命令限时完成——写连接锁不得被下载占据；写命令落进的
+    // 本机写即「前置守卫判空后被写」的并发写。
+    let listed = tokio::time::timeout(COMMAND_LIMIT, accounts::list_accounts(app_b.state())).await;
+    let raced = tokio::time::timeout(
+        COMMAND_LIMIT,
+        accounts::create_account(
+            app_b.state(),
+            app_b.clone(),
+            ledger_accounts::AccountInput {
+                name: "下载期间落的账".into(),
+                kind: ledger_accounts::AccountType::Cash,
+                currency_code: "CNY".into(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        ),
+    )
+    .await;
+
+    // 放行 manifest GET 与快照 GET，引导收尾：段2 复验命中显式报错（op 产出
+    // 命中同步三表优先分支；错误码分层说明见函数注释）。
+    gate.release(2);
+    let err = bootstrap
+        .await
+        .expect("引导任务不应 panic")
+        .expect_err("下载期间落账的引导应被复验显式拒绝");
+    assert_code(err, "sync-engine.bootstrap-not-fresh");
+
+    listed
+        .expect("下载在途时读命令应在限时内完成——读路径不得被网络等待占据")
+        .expect("读命令应成功");
+    let race_acc = raced
+        .expect("下载在途时写命令应在限时内完成——写连接锁不得被网络等待占据")
+        .expect("写命令应成功");
+
+    // 显式报错零副作用：本机写原样保留，快照未换入（来源端数据不在场）。
+    let b_accounts = accounts::list_accounts(app_b.state())
+        .await
+        .expect("B 账户应可读");
+    assert!(
+        b_accounts.iter().any(|a| a.id == race_acc),
+        "下载期间落进的本机写不被快照覆盖（复验收敛为显式报错而非丢账）"
+    );
+    assert!(
+        !b_accounts.iter().any(|a| a.id == source_acc),
+        "复验拒绝先于整库换入，快照内容不得就位"
+    );
 }
 
 #[tokio::test]

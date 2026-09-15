@@ -37,6 +37,7 @@ use ledger_infra::fs_util;
 use ledger_sync_protocol::device;
 use ledger_sync_protocol::position::{self as positions, StreamPosition};
 
+use super::channel::FetchedCheckpoint;
 use super::ops;
 use super::trigger::SyncChannel;
 
@@ -425,12 +426,12 @@ fn first_sync_table_not_empty(conn: &Connection) -> Result<Option<&'static str>>
     Ok(None)
 }
 
-/// 引导前置守卫（fail fast，[`bootstrap_from_channel`] 在拉取快照前调用；
-/// [`bootstrap_from_checkpoint`] 内部对同步三表的复验仍是权威）：目标必须是
-/// 「全新空库」——未参与同步且无用户业务数据。已参与同步报
-/// `sync-engine.bootstrap-not-fresh`（优先于业务数据判定：已加入同步的端重试
-/// 引导，正确提示是「已参与同步」而非「本机有数据」）；残留业务数据报
-/// `sync-channel.bootstrap-library-not-empty`。
+/// 引导前置守卫（fail fast，[`bootstrap_from_channel`] 在拉取快照前的段1
+/// 调用、并在段2 换入前复验；[`bootstrap_from_checkpoint`] 内部对同步三表的
+/// 复验仍是权威）：目标必须是「全新空库」——未参与同步且无用户业务数据。
+/// 已参与同步报 `sync-engine.bootstrap-not-fresh`（优先于业务数据判定：已加入
+/// 同步的端重试引导，正确提示是「已参与同步」而非「本机有数据」）；残留业务
+/// 数据报 `sync-channel.bootstrap-library-not-empty`。
 pub(crate) fn bootstrap_preflight(conn: &Connection) -> Result<()> {
     if let Some(table) = first_sync_table_not_empty(conn)? {
         return Err(AppError::codedp(
@@ -507,40 +508,71 @@ pub struct BootstrapOutcome {
     pub reencrypted: bool,
 }
 
+/// 引导的连接段接缝（issue #1285，ADR-0120 判据同簇适用）：引导编排对主连接
+/// 的全部消费按段短取——每段在闭包体内可见、返回即释放；整库快照下载在段与
+/// 段之间进行，结构上拿不到连接（ADR-0069 决策 4：网络任何形状不得进锁）。
+/// 域定义接缝、壳层实现并在命令闭包内接线（依赖方向：域不依赖壳，ADR-0112）。
+pub trait BootstrapConnSegments {
+    /// 短取一次连接执行一段数据库步骤。锁失败映射与持锁时长探针（超阈值记
+    /// 日志，#1276 口径）归实现方；业务 [`Result`](ledger_infra::error::Result)
+    /// 原样传播。
+    fn with_conn<T>(&self, use_conn: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T>;
+}
+
 /// 新端从通道检查点引导的编排单点（壳层「从通道引导本端」向导的领域接缝，
-/// issue #864）：拉取 → 信封形态对齐 → 整库换入 → 簿记清理 → （密文快照 ×
-/// 明文本机时）整库转密文。必须在单连接互斥锁内调用（快照拉取/换入与轮次
-/// 同一互斥约束）。
+/// issue #864）：前置守卫（段1）→ 拉取（锁外）→ 复验 + 信封形态对齐 →
+/// 整库换入 → 簿记清理 →（密文快照 × 明文本机时）整库转密文（段2）。连接经
+/// [`BootstrapConnSegments`] 按段短取——「快照拉取/换入与轮次同一互斥约束」
+/// 的旧契约随 ADR-0120 裁决退役：下载段属纯网络等待，锁只盖数据库步骤；
+/// 「preflight → 换入」与并发本地写的互斥由段2 承接。
 ///
 /// 序列：
-/// 1. 前置守卫（fail fast，不浪费拉取）：[`bootstrap_preflight`]——未参与
-///    同步且无用户业务数据；
-/// 2. 拉取检查点：信封自描述，密文快照凭口令开封（缺口令报
-///    `sync-engine.checkpoint-passphrase-required` 可重试，错误口令报
-///    `encryption.passphrase-incorrect`）；
-/// 3. 信封形态对齐守卫：同一通道的段必须同形态可开（明文端开不了密文段、
+/// 1. 段1（连接锁内）前置守卫（fail fast，不浪费拉取）：
+///    [`bootstrap_preflight`]——未参与同步且无用户业务数据；
+/// 2. 段间（连接锁外）拉取检查点：整库快照网络下载，信封自描述，密文快照
+///    凭口令开封（缺口令报 `sync-engine.checkpoint-passphrase-required` 可
+///    重试，错误口令报 `encryption.passphrase-incorrect`）；
+/// 3. 段2（连接锁内）复验前置守卫：下载不持锁，「判空后被写」的并发本地写
+///    在此重新判空——命中即显式报错（`sync-engine.bootstrap-not-fresh` /
+///    `sync-channel.bootstrap-library-not-empty`），不被快照静默覆盖；
+/// 4. 信封形态对齐守卫：同一通道的段必须同形态可开（明文端开不了密文段、
 ///    密文端封的段明文对端开不了）——引导端必须对齐快照形态：密文快照 ×
 ///    密文本机时输入口令必须就是本机主口令（后续轮次以本机口令封段，两把
 ///    钥匙会让对端解不开），不一致报 `sync-channel.bootstrap-passphrase-mismatch`；
 ///    明文快照 × 密文本机拒绝（`sync-channel.bootstrap-form-mismatch`）；
-/// 4. 整库换入（[`bootstrap_from_checkpoint`]，同步三表权威复验）；
-/// 5. 清「上次成功同步时刻」（本机簿记事实，快照携带的是来源端取值；在
+/// 5. 整库换入（[`bootstrap_from_checkpoint`]，同步三表权威复验）；
+/// 6. 清「上次成功同步时刻」（本机簿记事实，快照携带的是来源端取值；在
 ///    文件级转换前执行——转换的原子替换会让本连接指向被换下的旧文件，
 ///    此后一切写路径不得再经它）；
-/// 6. 密文快照 × 明文本机：复用备份域机制整库转密文（文件级原子替换，
+/// 7. 密文快照 × 明文本机：复用备份域机制整库转密文（文件级原子替换，
 ///    重启后新连接凭口令打开）。转换失败的可恢复路径：本机已是引导后的
 ///    完整数据，经既有「开启加密」以同一主口令转换即重新对齐通道形态。
-pub fn bootstrap_from_channel(
-    conn: &mut Connection,
+pub fn bootstrap_from_channel<S: BootstrapConnSegments>(
+    segments: &S,
     db_path: &Path,
     channel: &SyncChannel,
     passphrase: Option<&str>,
 ) -> Result<BootstrapOutcome> {
-    // 1. 前置守卫（fail fast）。
-    bootstrap_preflight(conn)?;
-    // 2. 拉取检查点（持锁；快照体整库下载）。
+    // 段1：前置守卫（fail fast，通道读零次）。
+    segments.with_conn(|conn| bootstrap_preflight(conn))?;
+    // 段间：拉取检查点（锁外；快照体整库下载，纯网络等待、不消费连接）。
     let fetched = channel.fetch_checkpoint(passphrase)?;
-    // 3. 信封形态对齐守卫（替换本机数据前判定，失败零副作用）。
+    // 段2：复验 + 换入（对并发本地写互斥到换入完成）。
+    segments.with_conn(|conn| bootstrap_apply(conn, db_path, &fetched, passphrase))
+}
+
+/// 段2（连接锁内）落地半场：复验前置守卫 → 信封形态对齐守卫 → 整库换入 →
+/// 簿记清理 → 转密文（步骤 3–7，见 [`bootstrap_from_channel`] 序列说明）。
+fn bootstrap_apply(
+    conn: &mut Connection,
+    db_path: &Path,
+    fetched: &FetchedCheckpoint,
+    passphrase: Option<&str>,
+) -> Result<BootstrapOutcome> {
+    // 复验前置守卫（issue #1285）：下载段不持锁，前置守卫判空后、换入前落进
+    // 的并发本地写在此重新判空——显式报错，不静默覆盖（丢账）。
+    bootstrap_preflight(conn)?;
+    // 信封形态对齐守卫（替换本机数据前判定，失败零副作用）。
     let local_encrypted =
         db::encryption::probe_file_kind(db_path)? == db::encryption::DbFileKind::Encrypted;
     if fetched.sealed && local_encrypted {
@@ -559,11 +591,11 @@ pub fn bootstrap_from_channel(
         ));
     }
     let reencrypted = fetched.sealed && !local_encrypted;
-    // 4. 整库换入（同步三表权威复验）。
+    // 整库换入（同步三表权威复验）。
     bootstrap_from_checkpoint(conn, &fetched.checkpoint, passphrase)?;
-    // 5. 本机簿记事实不采纳来源端取值（时序约束见序列说明）。
+    // 本机簿记事实不采纳来源端取值（时序约束见序列说明）。
     ledger_infra::settings::clear(conn, ledger_infra::settings::SettingKey::SyncLastSyncAt)?;
-    // 6. 密文快照 × 明文本机：整库转密文（文件级原子替换，复用备份域机制）。
+    // 密文快照 × 明文本机：整库转密文（文件级原子替换，复用备份域机制）。
     if reencrypted {
         db::encryption::enable_encryption_for_file(db_path, passphrase.unwrap_or_default())?;
     }
