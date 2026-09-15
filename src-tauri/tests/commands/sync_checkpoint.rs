@@ -5,8 +5,9 @@
 //! 真实 S3 桩「发布检查点 → 新端引导 → 双向增量收敛」整链**（验收判据
 //! 「新端经 Checkpoint 引导」「手机记的账在桌面出现、桌面记的账在手机出现」
 //! 的自动化形态）与信封形态对齐（密文源端引导后本机转密文、双端互开对方段）。
-//! 另钉预检的锁跨度（issue #1283）：manifest GET 在网络在途时不得占据任何连接
-//! 锁——负向判据（ADR-0087 断言强度）把网络调用移回锁内即红。
+//! 另钉预检（issue #1283）与发布（issue #1284）的锁跨度：manifest GET、封包与
+//! 上传在网络在途时不得占据任何连接锁——负向判据（ADR-0087 断言强度）把网络
+//! 调用移回锁内即红。
 //! 引导的 SQL 级重建、位点采纳、schema 偏斜归域单测（`sync_engine::tests`，
 //! ADR-0087），此处只钉「命令壳 → 通道在位 → 拉取 → 整库换入 → 形态对齐」。
 
@@ -32,8 +33,8 @@ use crate::sync_channel::{
     configure_channel, device_app, expense_input, fresh_app, spawn_sync_stub,
 };
 
-/// 预检发出通道请求的限时（真实 HTTP 到本机桩，正常在毫秒级）。
-const PRECHECK_REQUEST_LIMIT: Duration = Duration::from_secs(5);
+/// 命令发出通道请求的限时（真实 HTTP 到本机桩，正常在毫秒级）。
+const CHANNEL_REQUEST_LIMIT: Duration = Duration::from_secs(5);
 /// 其它命令应在限时内完成——超时即「连接锁被网络等待占据」。
 const COMMAND_LIMIT: Duration = Duration::from_secs(2);
 
@@ -42,13 +43,13 @@ fn assert_code(err: AppError, code: &str) {
     assert!(err.is_code(code), "期望 {code}，实际 {err:?}");
 }
 
-/// 等桩观测到预检发出的通道请求（此刻请求已到达、应答未回，即网络在途）。
+/// 等桩观测到命令发出的通道请求（此刻请求已到达、应答未回，即网络在途）。
 async fn wait_for_channel_request(stub: &S3Stub, limit: Duration) {
     let deadline = Instant::now() + limit;
     while stub.requests().is_empty() {
         assert!(
             Instant::now() < deadline,
-            "预检应在限时内发出通道请求（manifest 读）"
+            "命令应在限时内发出通道请求（manifest 读）"
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -184,7 +185,7 @@ async fn checkpoint_precheck_network_wait_does_not_block_other_commands() {
     configure_channel(&app, &stub);
 
     let precheck = tokio::spawn(get_sync_channel_checkpoint(app.clone()));
-    wait_for_channel_request(&stub, PRECHECK_REQUEST_LIMIT).await;
+    wait_for_channel_request(&stub, CHANNEL_REQUEST_LIMIT).await;
 
     // 网络在途：其它命令照常读写——探针取读连接（读入口）、写命令取写连接
     //（统一写入口），两条锁都不得被网络等待占据。
@@ -219,6 +220,67 @@ async fn checkpoint_precheck_network_wait_does_not_block_other_commands() {
         .expect("读命令应成功");
     created
         .expect("预检网络在途时写命令应在限时内完成——写连接锁不得被网络等待占据")
+        .expect("写命令应成功");
+}
+
+/// 发布的锁跨度（issue #1284 / ADR-0069 决策 4，判据同 ADR-0120）：主连接锁只盖
+/// 快照产出（位点与快照同刻成对，`create_checkpoint`），封包（KDF）与通道网络
+/// 往返（manifest 读、检查点上传、manifest 换指针）出锁——网络慢或超时时其它
+/// 命令照常读写。
+///
+/// **负向判据（ADR-0087 断言强度）**：把发布段移回 `conn.lock()` 存活期内（本票
+/// 修复前的形状——整段发布持锁），桩闸门挡住发布的首个通道请求期间，下面的写
+/// 命令在限时内等不到连接锁，本测试即红。
+#[tokio::test]
+async fn checkpoint_publish_network_wait_does_not_block_other_commands() {
+    isolate_home();
+    // 桩闸门把「发布的网络在途」做成可确定复现的输入：请求到达即记账并阻塞，
+    // 测试放行才应答。S3 后端的 ensure_dir 是无副作用空操作，发布的首个通道
+    // 请求是 manifest 读；放行按请求计数，足够覆盖全部三次往返。
+    let (config, gate) = S3StubConfig::new(S3Addressing::PathStyle).gated_requests();
+    let stub = spawn_s3_stub(config);
+    let (app, _dir) = device_app("publish-lock");
+    configure_channel(&app, &stub);
+
+    let publish = tokio::spawn(publish_sync_checkpoint(app.clone(), None));
+    wait_for_channel_request(&stub, CHANNEL_REQUEST_LIMIT).await;
+
+    // 网络在途：其它命令照常读写——写命令取写连接（统一写入口）、读命令取读
+    // 连接（读入口），两条锁都不得被发布段的网络等待占据。
+    let listed = tokio::time::timeout(COMMAND_LIMIT, accounts::list_accounts(app.state())).await;
+    let created = tokio::time::timeout(
+        COMMAND_LIMIT,
+        accounts::create_account(
+            app.state(),
+            app.clone(),
+            ledger_accounts::AccountInput {
+                name: "发布期间的账户".into(),
+                kind: ledger_accounts::AccountType::Cash,
+                currency_code: "CNY".into(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        ),
+    )
+    .await;
+
+    // 先放行网络与发布任务再断言：测试失败（修复回退）时不把桩线程悬在闸门上。
+    // 闸门按请求计数放行：发布全程三次通道往返（manifest 读、检查点上传、
+    // manifest 换指针），8 只是与预检测试 release(1) 同风的充足余量。
+    gate.release(8);
+    let published = publish
+        .await
+        .expect("发布任务不应 panic")
+        .expect("发布应成功");
+    assert_eq!(published.generation, 1);
+    assert!(published.plaintext_mode, "明文库发布应标记明文模式");
+    listed
+        .expect("发布网络在途时读命令应在限时内完成——连接锁不得被网络等待占据")
+        .expect("读命令应成功");
+    created
+        .expect("发布网络在途时写命令应在限时内完成——连接锁不得被网络等待占据")
         .expect("写命令应成功");
 }
 

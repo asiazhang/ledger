@@ -36,8 +36,10 @@
 //! manifest 本身是纯元数据（设备 id、序号区间、密文 hash），两个模式下都不
 //! 封包，保证弱原子性下的归并始终可读。
 //!
-//! 调用契约：`publish_checkpoint*` 须在单连接互斥锁内调用（[`checkpoint::
-//! create_checkpoint`] 的位点/快照同刻成对约束，#862 轮次形态消费）。
+//! 调用契约：检查点发布两段式——产出段 [`checkpoint::create_checkpoint`] 须在
+//! 单连接互斥锁内调用（位点/快照同刻成对约束）；发布段 [`upload_checkpoint`]
+//! 只消费已定格的快照字节与通道（封包 KDF + 网络往返），不消费连接，在连接锁
+//! 外调用（#1284；判据同 ADR-0120——网络等待出锁，连接锁只盖数据库步骤）。
 
 use std::collections::BTreeMap;
 
@@ -51,7 +53,7 @@ use ledger_infra::error::{AppError, Result};
 use ledger_sync_protocol::device;
 use ledger_sync_protocol::position as positions;
 
-use super::checkpoint::{self, Checkpoint};
+use super::checkpoint::Checkpoint;
 use super::engine;
 use super::envelope::{self, EnvelopeMode, EnvelopeParams};
 use super::model::SyncOp;
@@ -502,29 +504,35 @@ fn pull_foreign_streams(
     Ok(())
 }
 
-/// 发布检查点：全量快照 + 位点成对封包上通道，manifest 换指针（写新文件 →
-/// 完整上传 → 原子换指针；并发发布的代数撞号由 hash 校验兜底）。
+/// 发布检查点——发布段：快照字节 + 位点成对封包上通道，manifest 换指针（写新
+/// 文件 → 完整上传 → 原子换指针；并发发布的代数撞号由 hash 校验兜底）。
 ///
-/// 须在单连接互斥锁内调用（位点与快照同刻成对，见 [`checkpoint::
-/// create_checkpoint`]）。
-pub fn publish_checkpoint(
-    conn: &Connection,
+/// 只消费已定格的快照字节（产出段 [`checkpoint::create_checkpoint`]，须在单
+/// 连接互斥锁内调用完成位点与快照同刻成对）；本段封包（KDF）与网络往返不
+/// 消费连接——在连接锁外调用（#1284，判据同 ADR-0120）。
+pub fn upload_checkpoint(
     transport: &dyn Transport,
     layout: &ChannelLayout,
     mode: &EnvelopeMode<'_>,
+    checkpoint: &Checkpoint,
 ) -> Result<CheckpointPointer> {
-    publish_checkpoint_with(conn, transport, layout, mode, &ChannelOptions::default())
+    upload_checkpoint_with(
+        transport,
+        layout,
+        mode,
+        checkpoint,
+        &ChannelOptions::default(),
+    )
 }
 
-/// 发布检查点（显式选项）。
-pub fn publish_checkpoint_with(
-    conn: &Connection,
+/// 发布检查点——发布段（显式选项；两段式分界见 [`upload_checkpoint`]）。
+pub fn upload_checkpoint_with(
     transport: &dyn Transport,
     layout: &ChannelLayout,
     mode: &EnvelopeMode<'_>,
+    checkpoint: &Checkpoint,
     options: &ChannelOptions,
 ) -> Result<CheckpointPointer> {
-    let checkpoint = checkpoint::create_checkpoint(conn)?;
     transport.ensure_dir(&layout.checkpoint_dir())?;
 
     let remote = read_manifest(transport, layout)?;
@@ -535,7 +543,7 @@ pub fn publish_checkpoint_with(
         .unwrap_or(0)
         + 1;
     let sealed = envelope::seal(
-        &frame_checkpoint_bundle(&checkpoint)?,
+        &frame_checkpoint_bundle(checkpoint)?,
         mode,
         &options.envelope,
     )?;

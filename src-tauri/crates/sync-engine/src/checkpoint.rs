@@ -60,7 +60,9 @@ pub struct Checkpoint {
 /// 任意时刻产出 Checkpoint：整库一致性快照 + 本端位点表。
 ///
 /// 必须在单连接互斥锁内调用（位点与快照同刻成对的保证）；不得处于写事务中
-/// （`VACUUM INTO` 无法在事务内执行）。
+/// （`VACUUM INTO` 无法在事务内执行）。成对约束只辖产出段：其后的封包与上传
+/// （[`super::channel::upload_checkpoint`]）只消费本函数定格的快照字节，不
+/// 消费连接，在连接锁外完成（#1284，判据同 ADR-0120）。
 pub fn create_checkpoint(conn: &Connection) -> Result<Checkpoint> {
     let snapshot_path = temp_snapshot_path("cp");
     let result = (|| -> Result<Checkpoint> {
