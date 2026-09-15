@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel::{
     ChannelLayout, ChannelOptions, CheckpointPointer, FetchedCheckpoint, SyncRoundReport,
-    fetch_checkpoint, peek_checkpoint_pointer, publish_checkpoint, run_round_with,
+    fetch_checkpoint, peek_checkpoint_pointer, run_round_with, upload_checkpoint,
 };
+use crate::checkpoint::Checkpoint;
 use crate::envelope::EnvelopeMode;
 use crate::transport::Transport;
 use crate::transport::s3::{S3Config, S3Transport};
@@ -136,17 +137,18 @@ impl SyncChannel {
             .map(|_| ())
     }
 
-    /// 发布检查点（全量快照 + 位点成对封包上通道，manifest 换指针）：
+    /// 发布检查点——发布段（快照字节 + 位点成对封包上通道，manifest 换指针）：
     /// 与轮次同款「句柄交出传输与布局」形态，调用方不必解包句柄。
     ///
-    /// 须在单连接互斥锁内调用（位点与快照同刻成对，
-    /// [`crate::checkpoint::create_checkpoint`] 约束）。
-    pub fn publish_checkpoint(
+    /// 消费的是已定格的快照字节（产出段 [`crate::checkpoint::create_checkpoint`]，
+    /// 须在单连接互斥锁内调用完成位点与快照同刻成对）；本段封包（KDF）与网络
+    /// 往返不消费连接——在连接锁外调用（#1284，判据同 ADR-0120）。
+    pub fn upload_checkpoint(
         &self,
-        conn: &Connection,
+        checkpoint: &Checkpoint,
         mode: &EnvelopeMode<'_>,
     ) -> Result<CheckpointPointer> {
-        publish_checkpoint(conn, self.transport.as_ref(), &self.layout, mode)
+        upload_checkpoint(self.transport.as_ref(), &self.layout, mode, checkpoint)
     }
 
     /// 拉取通道上的当前检查点（新端引导取件；解封凭主口令，明文模式免口令）。

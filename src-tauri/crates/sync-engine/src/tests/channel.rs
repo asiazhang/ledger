@@ -8,14 +8,14 @@
 use rusqlite::Connection;
 
 use crate::channel::{
-    ChannelLayout, ChannelManifest, ChannelOptions, fetch_checkpoint, publish_checkpoint,
-    publish_checkpoint_with, run_round, run_round_with,
+    ChannelLayout, ChannelManifest, ChannelOptions, fetch_checkpoint, run_round, run_round_with,
+    upload_checkpoint, upload_checkpoint_with,
 };
 use crate::envelope::{EnvelopeMode, EnvelopeParams, is_sealed};
 use crate::tests::common::{MemoryTransport, make_expense, read_transaction};
 use crate::transport::Transport;
 use crate::transport::s3::{S3Config, S3Transport};
-use crate::{OpOutcome, apply_ops, bootstrap_from_checkpoint, read_ops};
+use crate::{OpOutcome, apply_ops, bootstrap_from_checkpoint, create_checkpoint, read_ops};
 use ledger_transaction::write::protocol;
 use tauri_app_lib::test_support::{self, seed_account};
 use tauri_app_lib::test_support::{S3Addressing, S3Deny, S3Stub, S3StubConfig, spawn_s3_stub};
@@ -375,7 +375,8 @@ fn checkpoint_publish_bootstrap_and_increment_over_channel() {
     let layout = layout();
     let mode = EnvelopeMode::Plaintext;
     run_round(&conn_a, &mem, &layout, &mode).unwrap();
-    let pointer = publish_checkpoint(&conn_a, &mem, &layout, &mode).unwrap();
+    let frozen = create_checkpoint(&conn_a).unwrap();
+    let pointer = upload_checkpoint(&mem, &layout, &mode, &frozen).unwrap();
     assert_eq!(pointer.generation, 1);
 
     let raw = mem
@@ -408,12 +409,63 @@ fn checkpoint_publish_bootstrap_and_increment_over_channel() {
     );
 
     // 第二次发布：代数推进、指针换到新文件。
-    let pointer2 = publish_checkpoint_with(&conn_a, &mem, &layout, &mode, &fast_options()).unwrap();
+    let frozen2 = create_checkpoint(&conn_a).unwrap();
+    let pointer2 = upload_checkpoint_with(&mem, &layout, &mode, &frozen2, &fast_options()).unwrap();
     assert_eq!(pointer2.generation, 2);
     assert_ne!(pointer2.file, pointer.file);
     let manifest: ChannelManifest =
         serde_json::from_slice(&mem.read_file(&layout.manifest_path()).unwrap().unwrap()).unwrap();
     assert_eq!(manifest.checkpoint.unwrap().file, pointer2.file);
+}
+
+/// 发布段只消费已定格的快照字节（#1284 判据：成对约束只为产出段而立）：产出
+/// 段放锁后连接上的新写入不进本次发布的快照，位点与快照仍同刻成对——引导端
+/// 不重放快照内的 op，快照后的增量照常重放（快照 + 其后 op = 一致状态）。
+#[test]
+fn upload_publishes_frozen_snapshot_pairs_with_positions() {
+    let conn_a = test_support::open();
+    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    let first = protocol::create(&conn_a, make_expense("acc-1", 10000, "快照前")).unwrap();
+
+    // 产出段（真实调用方由主连接锁保证互斥）：快照与位点在此同刻定格。
+    let frozen = create_checkpoint(&conn_a).unwrap();
+
+    // 模拟封包/上传期间的并发写入（发布段不持锁，本地写不被挡）：这笔 op 晚于
+    // 快照，不得进本次发布的快照与位点。
+    let late = protocol::create(&conn_a, make_expense("acc-1", 700, "上传期间")).unwrap();
+
+    // 发布段只拿快照字节：不触连接，快照字节不随后续写入漂移。
+    let mem = MemoryTransport::new();
+    let layout = layout();
+    let pointer = upload_checkpoint(&mem, &layout, &EnvelopeMode::Plaintext, &frozen).unwrap();
+    assert_eq!(pointer.generation, 1);
+
+    // 引导端拿到的是定格快照：快照前那笔在、上传期间那笔不在；位点定格在快照
+    // 时刻的流头（两半同刻成对）。
+    let fetched = fetch_checkpoint(&mem, &layout, None).unwrap();
+    assert_eq!(
+        fetched.checkpoint.positions[0].applied_through, 1,
+        "位点定格在快照时刻"
+    );
+    let mut conn_c = test_support::open();
+    bootstrap_from_checkpoint(&mut conn_c, &fetched.checkpoint, None).unwrap();
+    assert!(
+        read_transaction(&conn_c, &first.id).is_some(),
+        "快照内数据就位"
+    );
+    assert!(
+        read_transaction(&conn_c, &late.id).is_none(),
+        "快照后的写入不得随快照就位"
+    );
+
+    // 快照后的增量经下一轮重放照常到达：成对性不因两段拆分而破。
+    run_round(&conn_a, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    let report = run_round(&conn_c, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    assert_eq!(report.applied, 1, "只重放位点之后的增量");
+    assert_eq!(
+        read_transaction(&conn_c, &late.id),
+        read_transaction(&conn_a, &late.id)
+    );
 }
 
 /// AC 集成：本地 S3 桩上的同步轮次——段发布、manifest 归并、增量拉取与
@@ -484,7 +536,8 @@ fn two_end_file_exchange_over_local_s3_stub() {
     }
 
     // 检查点经 S3 发布并由第三端引导。
-    publish_checkpoint_with(&conn_a, &s3, &layout, &mode, &options).unwrap();
+    let frozen = create_checkpoint(&conn_a).unwrap();
+    upload_checkpoint_with(&s3, &layout, &mode, &frozen, &options).unwrap();
     let mut conn_c = test_support::open();
     let fetched = fetch_checkpoint(&s3, &layout, None).unwrap();
     bootstrap_from_checkpoint(&mut conn_c, &fetched.checkpoint, None).unwrap();
@@ -546,7 +599,8 @@ fn encrypted_exchange_over_local_s3_stub() {
     );
 
     // 密文检查点拉取回带封包标记（引导端对齐本库加密形态的依据，#864）。
-    publish_checkpoint_with(&conn_a, &s3, &layout, &mode, &fast_options()).unwrap();
+    let frozen = create_checkpoint(&conn_a).unwrap();
+    upload_checkpoint_with(&s3, &layout, &mode, &frozen, &fast_options()).unwrap();
     let fetched = fetch_checkpoint(&s3, &layout, Some("两端共知的口令")).unwrap();
     assert!(fetched.sealed, "密文模式检查点应回带封包标记");
     assert!(!fetched.checkpoint.snapshot.is_empty());
