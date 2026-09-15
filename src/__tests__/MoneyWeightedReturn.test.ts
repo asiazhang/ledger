@@ -260,6 +260,24 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
     wrapper.unmount()
   })
 
+  it('口径说明接线：已实现盈亏两表列头与收益率卡各带说明触发器（issue #1369）', async () => {
+    // 断言对准用户可观察结果：删掉任一挂点的 ConceptLabel 接线即找不到触发器、本用例变红
+    wireInvokeSeam({
+      defaults: { realized_pnl_summary: makePnlSummary(), money_weighted_return_summary: makeMwrSummary() },
+    })
+    const wrapper = mountWithDialog(RealizedPnlPanel)
+    await flushPromises()
+    for (const id of ['pnl-realized-info', 'pnl-mwr-info', 'pnl-mwr-card-info']) {
+      expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true)
+    }
+    // 已实现盈亏口径：不含未实现与分红（与持仓收益、累计收益三者的边界）
+    await wrapper.find('[data-testid="pnl-realized-info"]').trigger('mouseenter')
+    await new Promise((r) => setTimeout(r, 200))
+    await flushPromises()
+    expect(document.body.querySelector('.n-popover')!.textContent).toContain('不含现金分红')
+    wrapper.unmount()
+  })
+
   it('盈亏页合集含期初存量：账户级与全账级整项标未年化（issue #1346）', async () => {
     // 后端对合集（账户级 / 全账级）含期初存量标的的行改给未年化口径并随行带
     // basis=cumulative（#1346）；展示层必须同样标出口径，否则整户补记场景的

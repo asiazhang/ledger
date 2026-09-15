@@ -7,6 +7,7 @@ import { t } from '@ledger/i18n'
 import { formatAmount } from '@ledger/money'
 import { errorMessage } from '@ledger/utils/errors'
 import { useCrossBookSummary } from '@/investment/useCrossBookSummary'
+import ConceptLabel from '@/investment/ConceptLabel.vue'
 import { useReferenceStore } from '@/stores/reference'
 import type { CrossBookBookStatus } from '@ledger/types'
 import {
@@ -49,6 +50,9 @@ const cards = computed(() => {
   ].map(({ key, cents }) => ({
     key,
     label: t(`crossBook.totals.${key}`),
+    // 口径说明复用投资域 concepts（issue #1369）：同名口径不写第二份措辞，
+    // 跨本语境差异（逐本折算、未解锁/未建库不计入）由 crossBook 作用域句承担
+    concept: key,
     amount: formatAmount(cents, reference.currencyMap.get(s.target_currency)),
   }))
 })
@@ -75,7 +79,14 @@ function statusText(status: CrossBookBookStatus): string {
 
       <div :class="cardsGrid">
         <NCard v-for="card in cards" :key="card.key" size="small">
-          <NText depth="3" :class="cardLabel">{{ card.label }}</NText>
+          <NText depth="3" :class="cardLabel">
+            <ConceptLabel
+              :label="card.label"
+              :concept="card.concept"
+              scope="crossBook"
+              :test-id="`cross-book-${card.key}`"
+            />
+          </NText>
           <div :class="cardAmount" :data-testid="`summary-${card.key}`">
             {{ card.amount }}
           </div>

@@ -125,6 +125,26 @@ describe('跨账本投资汇总视图', () => {
       formatAmount(120_000, CNY),
     )
   })
+
+  it('四个合计口径各带说明触发器，并挂跨本作用域句（issue #1369）', async () => {
+    const wrapper = await mountView()
+    // 断言对准用户可观察结果：删掉任一卡的口径说明接线即找不到触发器、本用例变红
+    for (const key of ['marketValue', 'unrealizedPnl', 'cumulativePnl', 'investableAssets']) {
+      const trigger = wrapper.find(`[data-testid="cross-book-${key}-info"]`)
+      expect(trigger.exists(), key).toBe(true)
+      // aria 用本表位标签（跨本页展示词「持仓市值」与投资页「总市值」不同名）
+      expect(trigger.attributes('aria-label')).toContain('说明')
+    }
+    // 可投资资产口径与其余三个不同：隐藏账户不计入、且是财务自由度的分子
+    await wrapper.find('[data-testid="cross-book-investableAssets-info"]').trigger('mouseenter')
+    await new Promise((r) => setTimeout(r, 200))
+    await flushPromises()
+    const tip = document.body.querySelector('.n-popover')!
+    expect(tip.textContent).toContain('隐藏账户与负债都不计入')
+    // 跨本作用域句：逐本折算到主账本本位币、未解锁/未建库的账本不计入
+    expect(tip.textContent).toContain('未解锁或未建库的账本不计入')
+    wrapper.unmount()
+  })
 })
 
 // 接线负向判据（ADR-0087 断言强度）：路由记录是本功能的第二处接线——删除
