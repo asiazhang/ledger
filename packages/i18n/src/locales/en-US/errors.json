@@ -343,7 +343,8 @@
     "bootstrap-not-fresh": "This device already participates in sync ({0} is not empty); bootstrapping is refused to avoid overwriting existing sync state.",
     "checkpoint-schema-newer": "The checkpoint snapshot is from a newer app version (snapshot schema v{0} > current v{1}); upgrade the app before bootstrapping.",
     "checkpoint-fk-violation": "Checkpoint snapshot failed foreign-key verification ({0} violation(s)); the snapshot is unusable.",
-    "truncate-not-owner": "Only the originating device may truncate its own operation log stream"
+    "truncate-not-owner": "Only the originating device may truncate its own operation log stream",
+    "round-lock-give-up": "connection lock unavailable within the time limit; this sync round was skipped (will retry next round)"
   },
   "sync-channel": {
     "auth-failed": "Sync channel credentials were rejected; check the channel account and key settings.",

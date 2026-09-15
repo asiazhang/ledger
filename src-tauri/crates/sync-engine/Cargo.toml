@@ -57,6 +57,10 @@ tauri = { version = "2", features = ["tracing"] }
 # 引用的编译期拒绝由生产依赖面承担（lib 目标解析不到 dev-dependency），
 # 机器面负向核对住结构守门的 crate 依赖方向。
 tauri-app = { path = "../.." }
+# 域单测经 test-utils feature 消费基础设施测试器具（信号捕获，#1132 cfg 门；
+# 放 dev-dependencies：生产构建不编译测试器具，ADR-0111 决策 5，与
+# accounts/transaction 同形）。
+ledger-infra = { path = "../infra", features = ["test-utils"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
 uuid = { version = "1.23", features = ["v7", "v5", "serde"] }
 

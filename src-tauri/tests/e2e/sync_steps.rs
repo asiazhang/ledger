@@ -29,7 +29,9 @@ use ledger_infra::settings::{self, SettingKey};
 use ledger_sync_engine::trigger::{
     SessionEnvelope, SyncChannel, build_channel, configured_channel, run_auto_round, run_round_once,
 };
-use ledger_sync_engine::{ChannelLayout, DomainCommand, EnvelopeMode, SyncChannelConfig, SyncOp};
+use ledger_sync_engine::{
+    ChannelLayout, DirectConn, DomainCommand, EnvelopeMode, SyncChannelConfig, SyncOp,
+};
 use ledger_transaction::{
     NormalizedTransaction, TransactionCommand, TransactionInput, TransactionKind,
 };
@@ -147,7 +149,12 @@ fn peer_publishes(world: &mut LedgerWorld) {
     blocking(|| {
         let peer_channel = build_channel(&peer_config).expect("对端通道构库应成功");
         let conn = peer.conn.lock().expect("对端连接锁应可获取");
-        run_round_once(&conn, &peer_channel, &EnvelopeMode::Plaintext).expect("对端发布轮次应成功");
+        run_round_once(
+            &DirectConn::new(&conn),
+            &peer_channel,
+            &EnvelopeMode::Plaintext,
+        )
+        .expect("对端发布轮次应成功");
     });
 }
 
@@ -238,7 +245,7 @@ fn point_to_unreachable_channel(world: &mut LedgerWorld) {
 fn auto_sync_once(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     world.boot.sync_last_auto_round = Some(blocking(|| {
-        run_auto_round(&conn, &SessionEnvelope::Plaintext)
+        run_auto_round(&DirectConn::new(&conn), &SessionEnvelope::Plaintext)
     }));
 }
 
@@ -246,7 +253,7 @@ fn auto_sync_once(world: &mut LedgerWorld) {
 fn manual_sync_once(world: &mut LedgerWorld) {
     let channel = channel_of(world);
     let conn = world_conn!(world);
-    match blocking(|| run_round_once(&conn, &channel, &EnvelopeMode::Plaintext)) {
+    match blocking(|| run_round_once(&DirectConn::new(&conn), &channel, &EnvelopeMode::Plaintext)) {
         Ok(report) => {
             world.boot.sync_last_report = Some(report);
             world.last_app_error = None;
@@ -262,7 +269,9 @@ fn auto_sync_encrypted_session(world: &mut LedgerWorld) {
     let session = SessionEnvelope::current();
     world.boot.sync_session_encrypted = matches!(session, SessionEnvelope::Encrypted(_));
     let conn = world_conn!(world);
-    world.boot.sync_last_auto_round = Some(blocking(|| run_auto_round(&conn, &session)));
+    world.boot.sync_last_auto_round = Some(blocking(|| {
+        run_auto_round(&DirectConn::new(&conn), &session)
+    }));
     SessionEnvelope::forget();
 }
 

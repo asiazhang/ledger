@@ -81,9 +81,10 @@ pub mod transport;
 pub mod trigger;
 
 pub use channel::{
-    ChannelLayout, ChannelManifest, ChannelOptions, CheckpointPointer, FetchedCheckpoint,
-    SegmentEntry, StreamManifest, SyncRoundReport, fetch_checkpoint, run_round, run_round_with,
-    upload_checkpoint, upload_checkpoint_with,
+    ChannelLayout, ChannelManifest, ChannelOptions, CheckpointPointer, ConnSegment, DirectConn,
+    FetchedCheckpoint, RoundConn, SegmentEntry, StreamManifest, SyncRoundReport,
+    connection_round_key, fetch_checkpoint, run_round, run_round_with, upload_checkpoint,
+    upload_checkpoint_with,
 };
 pub use checkpoint::{
     BootstrapConnSegments, BootstrapOutcome, Checkpoint, bootstrap_from_channel,
