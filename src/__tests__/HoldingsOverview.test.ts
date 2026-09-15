@@ -213,6 +213,29 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     expect(tip!.textContent).toContain('全账本')
   })
 
+  it('持仓表列头口径说明：成本/现价/市值/持仓收益/收益率各带说明触发器（issue #1369）', async () => {
+    // 断言对准用户可观察结果：删掉任一列头的 ConceptLabel 接线即找不到触发器、本用例变红
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    for (const id of [
+      'holdings-cost-info',
+      'holdings-price-info',
+      'holdings-market-value-info',
+      'holdings-unrealized-pnl-info',
+      'holdings-mwr-info',
+    ]) {
+      expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true)
+    }
+    // 收益率列头挂 mwr 作用域句：删掉 scope 变体即本断言变红（口径本身不随筛选收窄）
+    await wrapper.find('[data-testid="holdings-mwr-info"]').trigger('mouseenter')
+    await new Promise((r) => setTimeout(r, 200))
+    await flushPromises()
+    const tip = document.body.querySelector('.n-popover')
+    // 三态口径的核心事实：年化与未年化不可互算（防误读诉求，ADR-0115 修订）
+    expect(tip!.textContent).toContain('两者不可互算')
+    expect(tip!.textContent).toContain('不随搜索或标的筛选收窄')
+  })
+
   it('触控轴：口径说明点按可达（入弹层注册表的气泡），热区外扩到 ≥48px', async () => {
     setFakeMedia({ width: 600, hover: 'none', pointer: 'coarse' })
     wrapper = mount(HoldingsOverview)
@@ -229,7 +252,10 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     const popover = document.body.querySelector('.n-popover')
     expect(popover).not.toBeNull()
     expect(popover!.textContent).toContain('数量 × 最新价格')
-    expect(popover!.textContent).toContain('无行情的持仓不计入')
+    // 边界句随 issue #1369 修订：缺价与缺汇率两种不计入同句给出
+    expect(popover!.textContent).toContain('缺现价或缺汇率的持仓不计入')
+    // 持仓页作用域句：合计随过滤子集更新（首页同一组件挂 wholeLedger 变体）
+    expect(popover!.textContent).toContain('随当前搜索与账户过滤收窄')
     // 卸载触控挂载，避免已开启的气泡泄入后续指针轴断言
     wrapper!.unmount()
     wrapper = undefined

@@ -13,8 +13,9 @@ import { marker, trigger } from './mwr-rate-cell.css.ts'
  * - 年化（缺省）：纯文本 span，桌面与触控零变化；
  * - 未年化（`annualized = false`）：百分数后跟角标「*」——ADR-0115 修订防误读
  *   诉求的在场标注，但不占列宽；解释文案两轴同源（i18n
- *   `investments.pnl.cumulativeTip`），指针轴悬停即现（裸 NTooltip，与合计三卡
- *   概念说明同款）、触控轴点按弹出（经 AppPopover 入弹层注册表）。
+ *   `investments.concepts.mwrCumulativeTip`，issue #1369 起与其余口径说明同住
+ *   概念命名空间），指针轴悬停即现（裸 NTooltip，与合计三卡概念说明同款）、
+ *   触控轴点按弹出（经 AppPopover 入弹层注册表）。
  *
  * 颜色由调用方计算传入（pnlSemanticColor 口径不变，归 renderMwrRateCell 三态
  * 单点）；输入轴信号经 useInputMode 唯一事实源消费，换轴实时切换形态
@@ -33,7 +34,7 @@ const inputMode = useInputMode()
 const isTouch = computed(() => inputMode.value === 'touch')
 
 const text = computed(() => formatRate(props.rate))
-const tip = computed(() => t('investments.pnl.cumulativeTip'))
+const tip = computed(() => t('investments.concepts.mwrCumulativeTip'))
 const marked = computed(() => props.annualized === false)
 
 /** 触控触发器的读屏替代：数值 + 口径解释一并可达（指针轴不挂 role，零变化） */

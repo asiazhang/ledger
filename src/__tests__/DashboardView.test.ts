@@ -230,6 +230,19 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
     expect(document.body.querySelector('.n-popover')?.textContent).toContain('累计分红')
   })
 
+  it('投资概览卡口径说明挂 wholeLedger 作用域句（与持仓页 filtered 变体分家，issue #1369）', async () => {
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="investment-overview-card"]')
+    // 首页三卡取全部持仓、不随任何筛选收窄——与持仓页同一组件、不同作用域变体
+    await card.find('[data-testid="dashboard-total-market-value-info"]').trigger('mouseenter')
+    await new Promise((r) => setTimeout(r, 200))
+    await flushPromises()
+    const tip = document.body.querySelector('.n-popover')!
+    expect(tip.textContent).toContain('覆盖全账本的持仓')
+    expect(tip.textContent).not.toContain('随当前搜索与账户过滤收窄')
+    wrapper.unmount()
+  })
+
   it('多币种持仓按币种分组展示，组间以「 / 」连接', async () => {
     const usdAccount = makeAccount({ id: 'acc-2', name: '美股账户', currency_code: 'USD' })
     const usdHolding = makeHolding({

@@ -23,6 +23,7 @@ import InstrumentLink from '@/investment/InstrumentLink.vue'
 import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import ManualPriceModal from '@/investment/ManualPriceModal.vue'
 import PortfolioStatsCards from '@/investment/PortfolioStatsCards.vue'
+import ConceptLabel from '@/investment/ConceptLabel.vue'
 import { usePortfolioOverview, type PortfolioRow } from '@/investment/usePortfolioOverview'
 import {
   renderMwrRateCell,
@@ -202,7 +203,13 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     render: (r) => formatQuantity(r.quantity),
   },
   {
-    title: t('investments.holdings.columns.cost'),
+    // 成本口径（issue #1369）：FIFO 剩余批次成本，易被读成「累计投入」
+    title: () =>
+      h(ConceptLabel, {
+        label: t('investments.holdings.columns.cost'),
+        concept: 'cost',
+        testId: 'holdings-cost',
+      }),
     key: 'cost_basis',
     width: 120,
     align: 'right',
@@ -210,7 +217,13 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     render: (r) => formatAmount(r.costBasisCents, reference.currencyMap.get(r.costCurrencyCode)),
   },
   {
-    title: t('investments.holdings.columns.price'),
+    // 现价口径（issue #1369）：基金行显示的是最新**单位净值**，列名不随类型改名
+    title: () =>
+      h(ConceptLabel, {
+        label: t('investments.holdings.columns.price'),
+        concept: 'price',
+        testId: 'holdings-price',
+      }),
     key: 'latest_price',
     width: 110,
     align: 'right',
@@ -243,7 +256,13 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     render: (r) => r.latestNavDate ?? '-',
   },
   {
-    title: t('investments.holdings.columns.marketValue'),
+    // 市值口径（issue #1369）：与合计三卡同一概念、不同标签（市值 vs 总市值）
+    title: () =>
+      h(ConceptLabel, {
+        label: t('investments.holdings.columns.marketValue'),
+        concept: 'marketValue',
+        testId: 'holdings-market-value',
+      }),
     key: 'market_value',
     width: 120,
     align: 'right',
@@ -256,7 +275,13 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
         : formatAmount(r.marketValueCents, reference.currencyMap.get(r.valueCurrencyCode)),
   },
   {
-    title: t('investments.holdings.columns.unrealizedPnl'),
+    // 持仓收益口径（issue #1369）：与合计三卡同一概念（展示词 = 未实现盈亏）
+    title: () =>
+      h(ConceptLabel, {
+        label: t('investments.holdings.columns.unrealizedPnl'),
+        concept: 'unrealizedPnl',
+        testId: 'holdings-unrealized-pnl',
+      }),
     key: 'unrealized_pnl',
     width: 130,
     align: 'right',
@@ -276,7 +301,14 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     // 资金加权收益率（issue #1195 / ADR-0115）：与金额口径并列、互不换算；
     // 三态分流与口径标注收口在 renderMwrRateCell 单点（与盈亏页收益率卡同款形态）；
     // 含期初存量的标的按行携带的 basis 带角标「*」（issue #1343，解释双轴可达）。
-    title: t('investments.holdings.columns.mwr'),
+    // 收益率口径（issue #1369）：三态与「不随筛选收窄」需在场说明
+    title: () =>
+      h(ConceptLabel, {
+        label: t('investments.holdings.columns.mwr'),
+        concept: 'mwr',
+        scope: 'mwr',
+        testId: 'holdings-mwr',
+      }),
     key: 'mwr',
     width: 150,
     align: 'right',
@@ -347,6 +379,7 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
                口径（不受搜索/账户过滤收窄），见 usePortfolioOverview 注记。 -->
           <PortfolioStatsCards
             test-id-prefix="total-"
+            scope="filtered"
             :market-value-groups="totalMarketValueGroups"
             :unrealized-pnl-groups="totalUnrealizedPnlGroups"
             :cumulative-pnl-groups="totalCumulativePnlGroups"
