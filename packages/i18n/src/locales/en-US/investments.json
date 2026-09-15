@@ -22,7 +22,7 @@
     "byMwr": "Money-Weighted Return",
     "total": "Overall",
     "notComputable": "N/A",
-    "cumulativeTip": "Not annualized: cumulative P&L ÷ cumulative investment (inception date unknown)"
+    "cumulativeTip": "Not annualized: cumulative P&L ÷ cumulative investment (contains holdings with unknown inception date)"
   },
   "holdings": {
     "title": "Current Holdings",

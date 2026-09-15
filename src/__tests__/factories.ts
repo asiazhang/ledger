@@ -259,8 +259,10 @@ export function makeMwrSummary(
         rate: 0.1,
       },
     ],
-    by_account: [{ account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', rate: 0.1 }],
-    total: [{ currency_code: 'CNY', rate: 0.1 }],
+    by_account: [
+      { account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', basis: 'annualized', rate: 0.1 },
+    ],
+    total: [{ currency_code: 'CNY', basis: 'annualized', rate: 0.1 }],
     ...partial,
   }
 }
