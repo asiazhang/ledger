@@ -16,7 +16,10 @@
 
 use serde::Deserialize;
 
-use super::fund_nav::{FundArchive, PINGZHONG_HOSTS, fetch_fund_archive_from};
+use super::fund_nav::{
+    FundArchive, MONEY_FUND_UNIT_NAV, PINGZHONG_HOSTS, fetch_fund_archive_from,
+    is_money_fund_type_code,
+};
 use super::http::{Pacer, RetryConfig, build_client, request_json_from_hosts};
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::Quote;
@@ -50,9 +53,13 @@ pub(crate) struct FundBaseInfo {
     /// 基金简称（如「华夏成长混合」）；接口偶发缺省时回退条目外层 NAME。
     #[serde(rename = "SHORTNAME", default)]
     pub(crate) shortname: Option<String>,
-    /// 东财基金分类（如「混合型-灵活」）。
+    /// 东财基金分类（如「混合型-灵活」），只作展示不参与拒绝。
     #[serde(rename = "FTYPE", default)]
     pub(crate) ftype: String,
+    /// 东财基金类型码（`005` = 货币型，与历史净值接口 `FundType` 同一枚代码
+    /// 表，issue #1342）；货基的 `DWJZ` 是万份收益而非单位净值。
+    #[serde(rename = "FUNDTYPE", default)]
+    pub(crate) fund_type: String,
     /// 最新单位净值（真实价格值，元）：数字或数字字符串，未公布为 null。
     #[serde(
         rename = "DWJZ",
@@ -97,24 +104,40 @@ pub(crate) fn pick_fund_quote(resp: &FundSearchResponse, code: &str) -> Option<Q
         .clone()
         .filter(|n| !n.trim().is_empty())
         .or_else(|| item.name.clone())?;
-    // 净值对（值 + 日期）齐备才有效：任一缺省按「未取到净值」处理（不落现价）。
-    // 价格在此换算为万分之一元刻度（ADR-0038），与场内通道同载荷同刻度。
-    let nav_date = match (base.dwjz, base.fsrq.as_deref()) {
-        (Some(nav), Some(date)) if nav > 0.0 && !date.trim().is_empty() => {
-            Some((price_value_to_cents(nav), date.trim().to_string()))
+    // 货币基金（issue #1342）：`DWJZ` 列是万份收益而非单位净值，现价按恒定
+    // 单位净值 1.0000 落，净值日期仍取收益日期 `FSRQ`；收益值（含 0 / 缺省）
+    // 不参与现价有效性，否则货基偶发无价。非货基维持原口径：净值对（值 + 日期）
+    // 齐备才有效，任一缺省按「未取到净值」处理（不落现价）。
+    let fsrq = base
+        .fsrq
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty());
+    let (price_cents, nav_date) = if is_money_fund_type_code(&base.fund_type) {
+        let date = fsrq.map(str::to_string);
+        (
+            date.as_ref()
+                .map(|_| price_value_to_cents(MONEY_FUND_UNIT_NAV)),
+            date,
+        )
+    } else {
+        match (base.dwjz, fsrq) {
+            (Some(nav), Some(date)) if nav > 0.0 => {
+                (Some(price_value_to_cents(nav)), Some(date.to_string()))
+            }
+            _ => (None, None),
         }
-        _ => None,
     };
     Some(Quote {
         code: base.fcode.clone(),
         name: name.trim().to_string(),
-        price_cents: nav_date.as_ref().map(|(cents, _)| *cents),
+        price_cents,
         // 场外基金的价格日期即净值日期（现价的行情日期就是净值本身对应的日期）。
-        price_date: nav_date.as_ref().map(|(_, date)| date.clone()),
+        price_date: nav_date.clone(),
         market: None,
         kind_hint: None,
         fund_class: Some(base.ftype.trim().to_string()),
-        nav_date: nav_date.map(|(_, date)| date),
+        nav_date,
     })
 }
 

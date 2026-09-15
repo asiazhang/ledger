@@ -138,6 +138,62 @@ fn name_falls_back_to_item_name() {
 }
 
 // ---------------------------------------------------------------------------
+// 货币基金口径（issue #1342）：搜索索引的 DWJZ 对货基是万份收益而非单位净值
+//（000905 实测 DWJZ=0.3117），类型码 FUNDTYPE=005 是判定信号；命中即按恒定
+// 单位净值 1.0000 落现价，净值日期仍取收益日期 FSRQ。
+// ---------------------------------------------------------------------------
+
+/// 真实搜索命中形态（货币基金 000905，实测 2026-09-15）。
+const MONEY_FUND_RESPONSE: &str = r#"{"ErrCode":0,"Datas":[
+    {"CODE":"000905","NAME":"鹏华安盈宝货币A","CATEGORY":700,"CATEGORYDESC":"基金",
+     "FundBaseInfo":{"_id":"000905","FCODE":"000905","FSRQ":"2026-09-14","DWJZ":0.3117,
+       "SHORTNAME":"鹏华安盈宝货币A","FUNDTYPE":"005","FTYPE":"货币型-普通货币"}}
+]}"#;
+
+#[test]
+fn money_fund_quote_pins_price_to_constant_unit_nav() {
+    let quote = pick_fund_quote(&parse(MONEY_FUND_RESPONSE), "000905").expect("应命中");
+    assert_eq!(
+        quote.price_cents,
+        Some(10_000),
+        "货基单位净值恒 1.0000，万份收益 0.3117 不得入价"
+    );
+    assert_eq!(
+        quote.nav_date.as_deref(),
+        Some("2026-09-14"),
+        "净值日期 = 万份收益日期"
+    );
+    assert_eq!(quote.price_date.as_deref(), Some("2026-09-14"));
+    assert_eq!(
+        quote.fund_class.as_deref(),
+        Some("货币型-普通货币"),
+        "基金分类仍随行展示，不参与拒绝"
+    );
+}
+
+#[test]
+fn money_fund_quote_ignores_income_value() {
+    // 收益值不参与现价有效性：万份收益为 0（零收益日）甚至缺省，类型 + 净值
+    // 日期齐备即落 1.0000——按收益值过滤会让货基偶发无价。
+    let zero = r#"{"Datas":[{"NAME":"汇添富货币C","FundBaseInfo":{"FCODE":"000642","FUNDTYPE":"005",
+        "FTYPE":"货币型-普通货币","DWJZ":0,"FSRQ":"2026-09-14"}}]}"#;
+    let quote = pick_fund_quote(&parse(zero), "000642").expect("应命中");
+    assert_eq!(quote.price_cents, Some(10_000));
+
+    let no_income = r#"{"Datas":[{"NAME":"汇添富货币C","FundBaseInfo":{"FCODE":"000642","FUNDTYPE":"005",
+        "FTYPE":"货币型-普通货币","DWJZ":null,"FSRQ":"2026-09-14"}}]}"#;
+    let quote = pick_fund_quote(&parse(no_income), "000642").expect("应命中");
+    assert_eq!(quote.price_cents, Some(10_000));
+    assert_eq!(quote.nav_date.as_deref(), Some("2026-09-14"));
+
+    // 无净值日期（形态异常）仍不落现价：日期是现价时点与水位，缺了无从落。
+    let no_date = r#"{"Datas":[{"NAME":"汇添富货币C","FundBaseInfo":{"FCODE":"000642","FUNDTYPE":"005",
+        "FTYPE":"货币型-普通货币","DWJZ":0.3117,"FSRQ":null}}]}"#;
+    let quote = pick_fund_quote(&parse(no_date), "000642").expect("应命中");
+    assert_eq!(quote.price_cents, None);
+}
+
+// ---------------------------------------------------------------------------
 // 搜索索引未命中 → 档案通道回退（ADR-0039 修订，issue #1212）
 // 本地 HTTP 服务同一端口分派两个通道的路径，验证回退接线与投影。
 // ---------------------------------------------------------------------------
