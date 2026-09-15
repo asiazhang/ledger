@@ -86,8 +86,8 @@ pub use channel::{
     upload_checkpoint, upload_checkpoint_with,
 };
 pub use checkpoint::{
-    BootstrapOutcome, Checkpoint, bootstrap_from_channel, bootstrap_from_checkpoint,
-    create_checkpoint, truncate_stream_before,
+    BootstrapConnSegments, BootstrapOutcome, Checkpoint, bootstrap_from_channel,
+    bootstrap_from_checkpoint, create_checkpoint, truncate_stream_before,
 };
 pub use command::DomainCommand;
 pub use engine::{

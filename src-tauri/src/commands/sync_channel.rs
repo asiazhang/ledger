@@ -37,7 +37,10 @@
 //!   无需再触钥匙串即可封包。主口令/凭据不落日志与 trace（ADR-0075，lib.rs
 //!   载荷脱敏单点遮蔽 `passphrase` 与 `password` 字段）。
 
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::commands::encryption::{active_book_id, active_db_path};
@@ -45,7 +48,7 @@ use crate::shell_support::read_entry::read_entry;
 use crate::shell_support::write_entry::{Outcome, write_entry};
 use ledger_infra::db::encryption::{DbFileKind, probe_file_kind, verify_source_passphrase};
 use ledger_infra::db::passphrase_cache::{self, CacheLoad};
-use ledger_infra::db::{DbState, run_db};
+use ledger_infra::db::{DbState, probe_lock_hold, run_db};
 use ledger_infra::error::{AppError, Result};
 use ledger_infra::settings::{self, SettingKey};
 use ledger_infra::signals::{WriteEvidence, WriteOp};
@@ -541,25 +544,36 @@ pub struct SyncBootstrapOutcome {
 /// 前端原位重引导（`restart_app`）。
 ///
 /// 编排全在域单点 [`ledger_sync_engine::bootstrap_from_channel`]（前置守卫、
-/// 信封形态对齐、整库换入、簿记清理与转密文决策）；本命令不经统一写入口
-/// （整库替换同 Restore 先例，零信号：引导后前端立即原位重引导，信号无消费
-/// 窗口），持主连接锁调用（快照拉取/换入与轮次同一互斥约束）。
+/// 拉取、复验、信封形态对齐、整库换入、簿记清理与转密文决策）；本命令不经
+/// 统一写入口（整库替换同 Restore 先例，零信号：引导后前端立即原位重引导，
+/// 信号无消费窗口）。
+///
+/// 锁跨度（issue #1285 / ADR-0120 判据同簇适用）：配置读取走读入口短锁
+///（同 #1283 预检先例）；主连接经段接缝按段短取——段1 前置守卫、段2 复验 +
+/// 整库换入（对并发本地写互斥，防静默覆盖丢账），中间的整库快照下载是纯
+/// 网络等待、在锁外完成（ADR-0069 决策 4）。锁失败映射与持锁时长探针内化
+/// 在 [`MainConnSegments`]。
 #[tauri::command]
 pub async fn bootstrap_sync_from_channel<R: Runtime>(
     app: AppHandle<R>,
     passphrase: Option<String>,
 ) -> Result<SyncBootstrapOutcome> {
+    let read_conn = app.state::<DbState>().read_conn.clone();
+    // 通道在位性前置（读入口短锁）：未配置即早退，不触网。
+    let config = read_entry("bootstrap_sync_from_channel", read_conn, move |conn| {
+        configured_channel(conn)?.ok_or_else(not_configured_error)
+    })
+    .await?;
     let conn = app.state::<DbState>().conn.clone();
     let db_path = active_db_path(&app)?;
     run_db("bootstrap_sync_from_channel", move || {
-        let mut conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        // 通道在位性前置：未配置即早退，不触网。
-        let config = configured_channel(&conn)?.ok_or_else(not_configured_error)?;
         let channel = build_channel(&config)?;
         // 编排归域（`bootstrap_from_channel`，ADR-0056）：前置守卫、拉取、
-        // 信封形态对齐、整库换入、簿记清理与转密文决策全在域内单点，本壳
-        // 只解包口令并把结果投影为 wire 形态。
-        let outcome = bootstrap_from_channel(&mut conn, &db_path, &channel, passphrase.as_deref())?;
+        // 复验、信封形态对齐、整库换入、簿记清理与转密文决策全在域内单点，
+        // 本壳只实现段接缝（[`MainConnSegments`]，短取锁）并把结果投影为
+        // wire 形态。
+        let segments = MainConnSegments { conn };
+        let outcome = bootstrap_from_channel(&segments, &db_path, &channel, passphrase.as_deref())?;
         Ok(SyncBootstrapOutcome {
             generation: outcome.generation,
             size: outcome.size,
@@ -567,4 +581,27 @@ pub async fn bootstrap_sync_from_channel<R: Runtime>(
         })
     })
     .await
+}
+
+/// 引导命令的主连接段接缝实现（issue #1285，域接缝
+/// [`ledger_sync_engine::BootstrapConnSegments`] 的壳侧唯一实现）：每段短取
+/// 一次主连接——锁失败映射与持锁时长探针（#1276 口径）内化此处；返回即
+/// 释放，整库快照下载发生在段与段之间，结构上不占锁。
+///
+/// 与分段写入口的 [`crate::shell_support::write_entry::SegmentLock`] 同形状的
+/// 近亲，不合并的原因：引导不经写入口（零信号，Restore 先例），且换入段需
+/// `&mut Connection`（SegmentLock 只递 `&Connection`）——就近住命令文件，
+/// 经读侧豁免清单看守（signals_cross_check）。
+struct MainConnSegments {
+    conn: Arc<Mutex<Connection>>,
+}
+
+impl ledger_sync_engine::BootstrapConnSegments for MainConnSegments {
+    fn with_conn<T>(&self, use_conn: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
+        let hold_started = Instant::now();
+        let mut conn = self.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let result = use_conn(&mut conn);
+        probe_lock_hold(hold_started.elapsed());
+        result
+    }
 }

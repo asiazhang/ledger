@@ -91,6 +91,13 @@ impl std::fmt::Debug for SyncChannel {
 }
 
 impl SyncChannel {
+    /// 测试构造（域单测合成通道：内存假 Transport 直装；生产构库走
+    /// [`build_channel`] 单点，不发网络请求）。
+    #[cfg(test)]
+    pub(crate) fn from_parts(transport: Box<dyn Transport>, layout: ChannelLayout) -> Self {
+        Self { transport, layout }
+    }
+
     /// 传输后端（测试夹具读通道产物用；生产轮次走 [`SyncChannel::run_round`]）。
     pub fn transport(&self) -> &dyn Transport {
         self.transport.as_ref()
