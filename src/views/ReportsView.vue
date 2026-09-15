@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { NButton, NCard, NSpace, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import { useInputMode } from '@/composables/useInputMode'
-import { useLoadable } from '@/composables/useLoadable'
+import { useLoadable } from '@ledger/loadable'
 import { Bar } from 'vue-chartjs'
 import type { ActiveElement, ChartOptions, TooltipItem } from 'chart.js'
 // Chart.js 统一注册模块（issue #926）：柱状图所需 controller/element/scale 一处

@@ -8,7 +8,7 @@ import {
   makeSubscriptionPlan,
   makeTransferPlan,
 } from './factories'
-import { registerToastSink } from '@/composables/useLoadable'
+import { registerToastSink } from '@ledger/loadable'
 import { defineComponent, type PropType } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import {

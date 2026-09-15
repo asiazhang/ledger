@@ -1,6 +1,6 @@
 import { onMounted, ref } from 'vue'
 import { api } from '@ledger/api'
-import { useLoadable } from '@/composables/useLoadable'
+import { useLoadable } from '@ledger/loadable'
 import type { FinancialFreedomOverview } from '@ledger/types'
 
 /**

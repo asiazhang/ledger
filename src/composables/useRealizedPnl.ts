@@ -1,6 +1,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { api } from '@ledger/api'
-import { useLoadable } from '@/composables/useLoadable'
+import { useLoadable } from '@ledger/loadable'
 import { useReferenceStore } from '@/stores/reference'
 import type { RealizedPnlSummary } from '@ledger/types'
 

@@ -4,7 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { withSetup } from '@ledger/test-support/mount'
 import { defineComponent } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
-import { registerToastSink } from '@/composables/useLoadable'
+import { registerToastSink } from '@ledger/loadable'
 import {
   formatCurrencyGroups,
   sumByCurrency,

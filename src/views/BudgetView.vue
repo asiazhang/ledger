@@ -17,7 +17,7 @@ import {
 } from 'naive-ui'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
-import { useLoadable } from '@/composables/useLoadable'
+import { useLoadable } from '@ledger/loadable'
 import { useModalIntent } from '@ledger/modal-intent'
 import { useWindowTier } from '@ledger/window-tier'
 import AppModal from '@/components/AppModal.vue'

@@ -1,5 +1,5 @@
 import { vi, type Mock } from 'vitest'
-import { registerToastSink, type ToastSink } from '@/composables/useLoadable'
+import { registerToastSink, type ToastSink } from '@ledger/loadable'
 import type {
   Account,
   Category,
