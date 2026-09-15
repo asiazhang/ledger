@@ -2,7 +2,7 @@
 //! 接口形状）、净值同步水位窗口语义、Referer 头传播。全部离线驱动，不依赖真实
 //! 网络；基金分区编排（水位增量回填的端到端语义）见 `instrument_info_sync.rs`。
 
-use std::sync::Arc;
+use super::spawn_header_capture_server;
 use std::time::Duration;
 
 use chrono::NaiveDate;
@@ -338,33 +338,6 @@ fn nav_window_boundary_watermark_near_window_start() {
 // ---------------------------------------------------------------------------
 // Referer 与页查询（本地 HTTP 服务验证头传播与报文组装，不依赖真实网络）
 // ---------------------------------------------------------------------------
-
-/// 起一个捕获请求头的本地 HTTP 服务，返回 (基础地址, 请求头收集器)。
-fn spawn_header_capture_server(body: String) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
-    use std::io::{Read, Write};
-
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let heads = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let heads_clone = heads.clone();
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { break };
-            let mut buf = [0u8; 4096];
-            let _ = stream.read(&mut buf);
-            heads_clone
-                .lock()
-                .unwrap()
-                .push(String::from_utf8_lossy(&buf).to_string());
-            let resp = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(resp.as_bytes());
-        }
-    });
-    (url, heads)
-}
 
 #[test]
 fn nav_page_fetch_sends_referer_and_parses() {

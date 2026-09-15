@@ -522,11 +522,13 @@ export const INVESTMENT_SRC_REL = 'crates/investment/src'
  * 协议/备份/交易 crate 同款不入清单；tests.rs 与 tests/ 为测试豁免形态不入清单。
  */
 export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
+  { path: 'bulk.rs', layer: '域目录', note: '行情批量取数面（ADR-0121 / issue #1374）：名称全量字典 + 场外基金净值全市场批量面（各整次同步一次请求）、fail-closed 降级、同步内熔断、跨同步记忆（BulkFetchCircuit）与覆盖缺口容忍；取数方式与价格来源正交' },
   { path: 'channels.rs', layer: '域目录', note: '同步网络通道束（issue #1276）：六个抓取闭包的打包形态与生产/测试换装接缝——生产接 HTTP 层（主机池/限流 pacer 单点），测试注入桩经命令壳 SyncChannelsSlot 换装使「同步真实在途」可确定复现；编排本体经 do_incremental_sync_channels 单点拆交' },
   { path: 'fund.rs', layer: '域目录', note: '东财基金报价访问（按 6 位代码即拉，issue #301 / ADR-0038；搜索建议未命中回退档案通道改判存在，issue #1212）——行情接入接缝查询半边的场外实例，统一载荷 investment::Quote（ADR-0103）' },
   { path: 'fund_nav.rs', layer: '域目录', note: '东财历史净值通道（issue #303 / ADR-0038 决策 6）：lsjz 报文解析、水位窗口与基金分区编排；首刷深回填走详情页数据文件单请求全量通道、失败 fail-closed 回退分页（issue #1062）' },
   { path: 'http.rs', layer: '域目录', note: '行情 HTTP 网络层（issue #89）：多主机切换 / 重试 / 限流冷却 / Referer 与报价、日 K、汇率 K 报文解析；价格换算按随行精度位单点（批量报价与单点行情共用，#695）' },
   { path: 'incremental.rs', layer: '域目录', note: '标的信息同步编排（issue #103 / #137 / #303 / #695 / #827）：批量报价 upsert 现价 + 近两年日 K 周采样 + 汇率 K 线 + 基金净值按水位增量 + 数据源权威名称随行刷新；抓取通道全部经闭包注入，编排不碰网络' },
+  { path: 'js.rs', layer: '域目录', note: 'JS 文本字面量提取原语（fund_nav / bulk）：从 `.js` 数据文件的 `var x = […]` 与对象字段 `datas:[…]` 两种赋值形态取出数组 / 字符串字面量，被拦截形态天然缺声明即返回 None' },
   { path: 'model.rs', layer: '域目录', note: '域模型（#407 随域归位）：标的信息同步结果类型 SyncInstrumentInfoResult' },
   { path: 'persist.rs', layer: '域目录', note: '行情同步持久化（issue #137）：fx_rate_history 周采样 upsert（价格写入单点已随投资域归位迁入 ledger_investment::prices，#401）' },
   { path: 'progress.rs', layer: '域目录', note: '同步进度事件（issue #897 / ADR-0095；页级明细 issue #1061）：事件名常量、payload 与 ProgressEmitter 发射器接缝收口（用后即弃的非失效信号，经 events 机制投递）' },

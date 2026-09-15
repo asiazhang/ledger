@@ -18,7 +18,9 @@ use tauri::{Listener, Manager};
 
 use ledger_infra::db::{self, DbState};
 use ledger_infra::events;
-use ledger_market_sync::{INSTRUMENT_SYNC_PROGRESS, StockItem, SyncFetchChannels};
+use ledger_market_sync::{
+    BulkFetchSurfaces, INSTRUMENT_SYNC_PROGRESS, StockItem, SyncFetchChannels,
+};
 use tauri_app_lib::commands::sync::SyncChannelsSlot;
 use tauri_app_lib::commands::{investment, sync};
 
@@ -35,7 +37,8 @@ fn remaining(deadline: Instant) -> Duration {
 
 /// 门控批量报价桩的通道束：首次批量报价（同步的会话外网络等待点）先通知
 /// 「已在途」，再等测试放行并返回一条有效报价。其余通道全部空应答（测试
-/// 现场无基金标的，净值/名称通道不应被触达）。
+/// 现场无基金标的，净值/名称通道与两个批量取数面都不应被触达——净值分区为空时
+/// 编排不试取数面，[`BulkFetchSurfaces::absent`] 只是束字段的合法占位）。
 fn gated_channels(
     entered: std::sync::mpsc::Sender<()>,
     release: std::sync::mpsc::Receiver<()>,
@@ -58,6 +61,7 @@ fn gated_channels(
         fetch_nav: Box::new(|_| unreachable!("测试现场无基金标的，净值通道不应被触达")),
         fetch_nav_full: Box::new(|_| unreachable!("测试现场无基金标的，全量净值通道不应被触达")),
         fetch_fund_name: Box::new(|_| unreachable!("测试现场无基金标的，名称通道不应被触达")),
+        bulk: BulkFetchSurfaces::absent(),
     };
     SyncChannelsSlot(Arc::new(Mutex::new(channels)))
 }
