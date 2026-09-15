@@ -8,7 +8,7 @@ import {
   nextOccurrenceOfDay,
   usedCreditCents,
   type CreditAccountFields,
-} from '@/domain/credit-card'
+} from '@/accounts/credit-card'
 
 /** 本地日历日构造（与 `date.test.ts` 同纪律：本地构造，跨时区稳定）。 */
 const d = (year: number, month1: number, day: number) => new Date(year, month1 - 1, day)

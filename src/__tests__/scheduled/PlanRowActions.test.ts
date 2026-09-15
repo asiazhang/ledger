@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NPopconfirm } from 'naive-ui'
-import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
+import PlanRowActions from '@/scheduled/PlanRowActions.vue'
 import type { ScheduledPlanRowAction } from '@ledger/scheduled-plan-list'
 
 /**

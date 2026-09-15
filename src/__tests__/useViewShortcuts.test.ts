@@ -11,7 +11,7 @@ import {
   DEFAULT_VIEW_ORDER,
   ARRANGEABLE_VIEWS,
 } from '@/stores/sidebar-order'
-import { useFeatureToggleStore } from '@/stores/feature-toggles'
+import { useFeatureToggleStore } from '@/settings/feature-toggles'
 import type { SidebarGroupOrders } from '@/stores/sidebar-order'
 import { VIEW_STATE_KEYS } from '@ledger/utils/view-state'
 

@@ -4,8 +4,8 @@ import { defineComponent, watch } from 'vue'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createTestingPinia } from '@pinia/testing'
-import { useTransactionFilter, UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
-import type { UseTransactionFilterReturn } from '@/composables/useTransactionFilter'
+import { useTransactionFilter, UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/transaction/useTransactionFilter'
+import type { UseTransactionFilterReturn } from '@/transaction/useTransactionFilter'
 import { useReferenceStore } from '@/stores/reference'
 import type {
   Account,

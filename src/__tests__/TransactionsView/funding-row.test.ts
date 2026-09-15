@@ -2,7 +2,7 @@ import { pushMock, makeTxn, mountView, setTxnDb } from './common'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
-import AccountLink from '@/components/AccountLink.vue'
+import AccountLink from '@/accounts/AccountLink.vue'
 import type { Transaction } from '@ledger/types'
 
 /** 买入/卖出行出资账户双链接（issue #937 / ADR-0096，方向修正 issue #1030）：

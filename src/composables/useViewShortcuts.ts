@@ -1,7 +1,7 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import type { Router } from 'vue-router'
 import { hasOpenOverlay } from '@ledger/ui-kit/overlayRegistry'
-import { useFeatureToggleStore } from '@/stores/feature-toggles'
+import { useFeatureToggleStore } from '@/settings/feature-toggles'
 import { useSidebarOrderStore, FIRST_VIEW, PENULTIMATE_VIEW, LAST_VIEW, SIDEBAR_GROUPS } from '@/stores/sidebar-order'
 import type { SidebarGroupId, SidebarGroupOrders } from '@/stores/sidebar-order'
 

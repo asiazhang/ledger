@@ -14,9 +14,9 @@ import { kindSemanticColor } from '@ledger/theme/semantic-colors'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
-import AccountLink from '@/components/AccountLink.vue'
-import ConvertDetail from '@/components/ConvertDetail.vue'
-import TransactionCardList from '@/components/TransactionCardList.vue'
+import AccountLink from '@/accounts/AccountLink.vue'
+import ConvertDetail from '@/investment/ConvertDetail.vue'
+import TransactionCardList from '@/transaction/TransactionCardList.vue'
 
 /**
  * 交易页移动档（issue #846 / ADR-0088 决策 9 断点双渲染）：组件测试主接缝。

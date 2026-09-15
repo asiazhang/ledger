@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { useReportsSessionStore } from '@/stores/reports-session'
+import { useReportsSessionStore } from '@/reports/reports-session'
 
 // 固定「今天」= 2026-01-15（本地）：默认「当年」快照派生随之确定
 //（ReportsView 测试同款前提），期望年份一律用字面量 2026。

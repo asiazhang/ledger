@@ -7,7 +7,7 @@ import {
   isClosableFeature,
   parseClosedFeatures,
   useFeatureToggleStore,
-} from '@/stores/feature-toggles'
+} from '@/settings/feature-toggles'
 import {
   VIEW_STATE_KEYS,
   getSavedClosedFeatures,

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { useCategoryForm } from '@/composables/useCategoryForm'
+import { useCategoryForm } from '@/categories/useCategoryForm'
 import { useReferenceStore } from '@/stores/reference'
-import { usePoliciesStore } from '@/stores/policies'
+import { usePoliciesStore } from '@/policy/policies'
 import type { Merchant, Policy, Transaction } from '@ledger/types'
 
 

@@ -3,7 +3,7 @@ import { flushPromises } from '@vue/test-utils'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { withSetup } from '@ledger/test-support/mount'
 import { useReferenceStore } from '@/stores/reference'
-import { useDashboardOverview } from '@/composables/useDashboardOverview'
+import { useDashboardOverview } from '@/dashboard/useDashboardOverview'
 import { registerToastSink } from '@ledger/loadable'
 import { makeFakeSink, makeOverview, resetToastSink } from './factories'
 

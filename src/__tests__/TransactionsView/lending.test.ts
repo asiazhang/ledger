@@ -4,10 +4,10 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NButton, NModal, NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
-import LendingForm from '@/components/LendingForm.vue'
+import LendingForm from '@/transaction/LendingForm.vue'
 import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import TransferForm from '@/components/TransferForm.vue'
-import TransactionForm from '@/components/TransactionForm.vue'
+import TransferForm from '@/transaction/TransferForm.vue'
+import TransactionForm from '@/transaction/TransactionForm.vue'
 import type { Account } from '@ledger/types'
 
 /** 覆盖资金侧 + 借出侧 + 负债侧的账户集（经 setAccountDb 注入，issue #374）。 */

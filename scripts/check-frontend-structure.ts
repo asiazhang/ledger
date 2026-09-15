@@ -612,9 +612,9 @@ export interface DeepModuleBoundary {
  *  断言变红（删除即变红，issue #1323 验收判据）。 */
 export const DEEP_MODULE_BOUNDARIES: readonly DeepModuleBoundary[] = [
   {
-    module: 'src/composables/useTransactionFilter.ts',
+    module: 'src/transaction/useTransactionFilter.ts',
     allowedConsumers: ['src/views'],
-    note: '交易列表过滤深模块（ADR-0030/0094）：依赖壳内 pinia store（交易页会话级 store）故不成包（ADR-0118 决策 4），消费面 = 交易页与报表页',
+    note: '交易列表过滤深模块（ADR-0030/0094）：依赖壳内 pinia store（交易页会话级 store）故不成包（ADR-0118 决策 4），消费面 = 交易页与报表页；#1159 起随交易域归位 src/transaction/',
   },
 ]
 

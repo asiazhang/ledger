@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import AmountCell from '@/components/AmountCell.vue'
+import AmountCell from '@/transaction/AmountCell.vue'
 import { hasOpenOverlay, resetOverlays } from '@ledger/ui-kit/overlayRegistry'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 

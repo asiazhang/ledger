@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
-import CategoryEditModal from '@/components/categories/CategoryEditModal.vue'
+import MerchantEditModal from '@/merchants/MerchantEditModal.vue'
+import CategoryEditModal from '@/categories/CategoryEditModal.vue'
 import type { Merchant, Category } from '@ledger/types'
 
 // 参考数据管理弹窗排版统一（issue #637，spec #630）：商户编辑与分类编辑

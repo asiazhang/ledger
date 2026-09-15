@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
-import PolicyFormModal from '@/components/PolicyFormModal.vue'
+import PolicyFormModal from '@/policy/PolicyFormModal.vue'
 import type { Policy } from '@ledger/types'
 import { componentVm } from '@ledger/test-support/component-vm'
 

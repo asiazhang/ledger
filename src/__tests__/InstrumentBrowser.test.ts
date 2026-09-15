@@ -5,11 +5,11 @@ import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
 import { assertMobileTierScrollX } from '@ledger/test-support/mobile-scroll-x'
 import { useReferenceStore } from '@/stores/reference'
-import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
+import InstrumentBrowser from '@/investment/InstrumentBrowser.vue'
 import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
   resetInstrumentInfoSyncForTest,
-} from '@/composables/useInstrumentInfoSync'
+} from '@/investment/useInstrumentInfoSync'
 import { captureListenHandlers } from '@ledger/test-support/listen-mock'
 import { makeInstrument } from './factories'
 import {
@@ -20,7 +20,7 @@ import type { Instrument } from '@ledger/types'
 
 // 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
 // 测试中手动触发模拟后端 emit；捕获/触发辅助收在 prices-changed-mock 共享。
-vi.mock('@/composables/usePricesChanged', async () => {
+vi.mock('@/investment/usePricesChanged', async () => {
   const { capturePricesChangedHandler } = await import('./prices-changed-mock')
   return {
     usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),

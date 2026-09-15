@@ -14,7 +14,7 @@ import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
-import { useReportsSessionStore } from '@/stores/reports-session'
+import { useReportsSessionStore } from '@/reports/reports-session'
 import { registerViewReset } from '@/composables/viewResetRegistry'
 import { kindSemanticColor } from '@ledger/theme/semantic-colors'
 import {
@@ -36,12 +36,12 @@ import {
   categoryDrilldownBars,
 } from '@ledger/utils/category-chart'
 import { categoryRoot } from '@ledger/utils/category-tree'
-import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
+import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/transaction/useTransactionFilter'
 import {
   DATED_TIME_PERIOD_PRESETS,
   type NullableDateRange,
 } from '@ledger/utils/time-period'
-import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
+import MerchantRankingPanel from '@/reports/MerchantRankingPanel.vue'
 
 const reference = useReferenceStore()
 const router = useRouter()

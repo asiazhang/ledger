@@ -6,7 +6,7 @@ import { makeAccount } from './factories'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { REFERENCE_DEFAULTS } from '@ledger/test-support/reference-stubs'
 import { useReferenceStore } from '@/stores/reference'
-import { useInvestmentsSessionStore } from '@/stores/investments-session'
+import { useInvestmentsSessionStore } from '@/investment/investments-session'
 import {
   HOLDINGS_SEARCH_DEBOUNCE_MS,
   filterHoldings,
@@ -14,8 +14,8 @@ import {
   holdingMatchesSearch,
   sortHoldings,
   useHoldingsFilter,
-} from '@/composables/useHoldingsFilter'
-import type { PortfolioRow } from '@/composables/usePortfolioOverview'
+} from '@/investment/useHoldingsFilter'
+import type { PortfolioRow } from '@/investment/usePortfolioOverview'
 import type { Account } from '@ledger/types'
 
 // ---------------------------------------------------------------------------

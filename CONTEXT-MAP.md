@@ -9,6 +9,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 - **跨域共享术语归核心交易域**：被多个域消费的概念（Transaction、Amount Model、Transaction Kind Mapping、Category、DefaultCurrency 等）只在核心交易域定义；其他域以「见核心交易域 X」引用，不复制定义。
 - **新增术语进哪份文件**：按自然域归属放入对应分域；若它是被多域消费的共享概念，进核心交易域；单列小域只接纳体量小且与既有域边界清晰的独立概念（如物品域）。
 - **代码可查事实不进文档（三层标尺 + ADR 坐标收敛）**：分域词汇表与模型文档按一条标尺取舍内容——**甲类删**：实现坐标（文件路径、函数名、参数名、字段清单、DDL、正则、公式等能从代码直接查出的事实），schema 字段以 migration、行为以代码为唯一事实来源；**乙类留**：作为术语本体的标识符（表名、视图名、事件名、信号名、接缝名、列名），只作专名出现、不复述结构；**丙类留**：闭集性、口径归属、边界、动机等纯语义。导航职责收口 AGENTS.md，语义职责收口词汇表，二者不互相复述。ADR 按同一取向收敛坐标——现役落点保留域、crate 与模块/函数专名，不写文件路径与行号；历史对照可在注记中保留旧坐标原文并加注现役落点。已存在但未失真的历史坐标不做一次性迁移，漂移命中时随修订收敛。ADR 不纳入脚本⑤扫描，扫描范围仍限分域词汇表与模型文档。
+- **前端壳内按域归位（issue #1159 / ADR-0118 决策 4/5）**：壳内域源码按自然域分目录，与后端业务域 crate 多数同名对应（同名例外与无独立目录的域见本条内注），域目录即「哪一域对应哪个目录」的单一清单——`src/accounts/`、`src/backup/`（备份与数据文件域的前端面）、`src/categories/`、`src/dashboard/`（首页卡片数据层）、`src/investment/`、`src/item/`、`src/merchants/`、`src/physical-asset/`、`src/policy/`（含保司字典）、`src/reports/`、`src/scheduled/`、`src/settings/`（设置页签、功能开关与账本侧栏入口，对应参考数据与设置域的后端设置/账本面，币种与本位币前端面同住此目录）、`src/transaction/`，每域一目录收拢本域组件、composable、store 与纯逻辑；预算域前端仅预算视图、无独立目录，行情同步（ledger-market-sync）与多端同步（ledger-sync-engine）的前端面分别住在 investment 与 settings。**跨域件落点**：不属任何单一域的壳件留在 `src/components/`、`src/composables/`、`src/stores/` 三根目录（应用壳与界面交互件；stores 根仅存 app / reference / render-errors / sidebar-order 四件）；通用件住 `packages/*`（`@ledger/ui-kit` 等，成员闭集与深模块成包裁定见 ADR-0118）；视图（`src/views/`）、路由（`src/router/`）与应用入口留壳不随域搬。
 - 一致性校验（地图与文件对应、术语唯一、导航一致、代码坐标）由独立检查脚本 `scripts/check-docs.sh` 守住，挂入 `scripts/check.sh` 质量门槛。
 
 ## 分域一览

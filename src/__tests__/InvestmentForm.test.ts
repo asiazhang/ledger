@@ -4,7 +4,7 @@ import { findButton } from '@ledger/test-support/dom'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
-import InvestmentForm from '@/components/InvestmentForm.vue'
+import InvestmentForm from '@/investment/InvestmentForm.vue'
 import { makeAccount } from './factories'
 import type { Account, Instrument } from '@ledger/types'
 

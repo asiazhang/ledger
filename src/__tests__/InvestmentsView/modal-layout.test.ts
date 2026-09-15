@@ -3,9 +3,9 @@ import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { mountFlushed, mountWithDialog } from '@ledger/test-support/mount'
-import AddInstrumentModal from '@/components/investments/AddInstrumentModal.vue'
-import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
-import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
+import AddInstrumentModal from '@/investment/AddInstrumentModal.vue'
+import ManualPriceModal from '@/investment/ManualPriceModal.vue'
+import InstrumentBrowser from '@/investment/InstrumentBrowser.vue'
 import { makeInstrument } from '../factories'
 
 // 投资弹窗族排版统一（issue #638，spec #630）：弹窗的卡片外观收敛为

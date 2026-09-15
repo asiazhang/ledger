@@ -4,7 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
-import AddInstrumentModal from '@/components/investments/AddInstrumentModal.vue'
+import AddInstrumentModal from '@/investment/AddInstrumentModal.vue'
 import type { Currency } from '@ledger/types'
 
 const mockCurrencies: Currency[] = [

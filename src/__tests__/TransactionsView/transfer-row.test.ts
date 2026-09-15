@@ -2,7 +2,7 @@ import { pushMock, makeTxn, mountView, setTxnDb } from './common'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
-import AccountLink from '@/components/AccountLink.vue'
+import AccountLink from '@/accounts/AccountLink.vue'
 import type { Transaction } from '@ledger/types'
 
 describe('TransactionsView 转账行双向账户名（issue #99）', () => {

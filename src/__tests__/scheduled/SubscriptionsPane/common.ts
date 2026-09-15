@@ -2,7 +2,7 @@ import { vi } from 'vitest'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mountFlushed } from '@ledger/test-support/mount'
 import { makeSubscriptionPlan } from '../../factories'
-import SubscriptionsPane from '@/components/scheduled/SubscriptionsPane.vue'
+import SubscriptionsPane from '@/scheduled/SubscriptionsPane.vue'
 
 // 列表商户列渲染 MerchantLink（顶层 useRouter 下钻）：pane 直挂不走完整视图路由，
 // 目录级桩掉说明符（与 ScheduledView.test.ts 提供真实路由的视图级测试分层）。

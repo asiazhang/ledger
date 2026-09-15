@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { useReferenceStore } from '@/stores/reference'
-import { resolveLendingDirection } from '@/domain/lending'
-import { useLendingForm } from '@/composables/useLendingForm'
+import { resolveLendingDirection } from '@/transaction/lending'
+import { useLendingForm } from '@/transaction/useLendingForm'
 import type { Account, Transaction } from '@ledger/types'
 
 

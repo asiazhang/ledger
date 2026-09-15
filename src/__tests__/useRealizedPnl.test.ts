@@ -4,7 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { withSetup } from '@ledger/test-support/mount'
 import { defineComponent } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
-import { useRealizedPnl } from '@/composables/useRealizedPnl'
+import { useRealizedPnl } from '@/investment/useRealizedPnl'
 import { registerToastSink } from '@ledger/loadable'
 import type { RealizedPnlSummary } from '@ledger/types'
 import {

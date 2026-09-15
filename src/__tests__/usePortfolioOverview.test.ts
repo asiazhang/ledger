@@ -9,7 +9,7 @@ import {
   formatCurrencyGroups,
   sumByCurrency,
   usePortfolioOverview,
-} from '@/composables/usePortfolioOverview'
+} from '@/investment/usePortfolioOverview'
 import {
   makeFakeSink,
   mockAccounts,

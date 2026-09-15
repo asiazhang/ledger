@@ -62,12 +62,13 @@ function fixtureRepo(opts: {
   }
   writeFileSync(join(root, 'pnpm-workspace.yaml'), yamlLines.join('\n') + '\n')
   mkdirSync(join(root, 'packages'), { recursive: true })
-  // 规则⑦ 登记模块 src/composables/useTransactionFilter.ts（issue #1323）：默认创建——
-  // 规则⑦登记表不可注入（生产 DEEP_MODULE_BOUNDARIES 单一事实源），夹具绿基线须
-  // 自足含全部登记项，否则「登记模块不存在」假红（同规则⑥夹具建 src/utils 的形制）
-  mkdirSync(join(root, 'src', 'composables'), { recursive: true })
+  // 规则⑦ 登记模块 src/transaction/useTransactionFilter.ts（issue #1323，#1159 起随交易域
+  // 归位 src/transaction/）：默认创建——规则⑦登记表不可注入（生产 DEEP_MODULE_BOUNDARIES
+  // 单一事实源），夹具绿基线须自足含全部登记项，否则「登记模块不存在」假红
+  //（同规则⑥夹具建 src/utils 的形制）
+  mkdirSync(join(root, 'src', 'transaction'), { recursive: true })
   writeFileSync(
-    join(root, 'src', 'composables', 'useTransactionFilter.ts'),
+    join(root, 'src', 'transaction', 'useTransactionFilter.ts'),
     'export const useTransactionFilter = () => ({})\n',
   )
   for (const dir of opts.memberDirs ?? []) {
