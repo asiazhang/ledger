@@ -102,13 +102,14 @@ fn lsjz_invalid_nav_rows_are_filtered() {
 
 /// 真实 lsjz 响应形状（货币基金 000905，实测 2026-09-15）：Data.FundType=005、
 /// Data.SYType=每万份收益——DWJZ 列的 0.3117 是万份收益而非单位净值；0.0000
-/// 是零收益日（周末归零前的真实形态），负值是货基偶发的负万份收益。
+/// 是零收益日（周末归零前的真实形态），负值是货基偶发的负万份收益，null 是
+/// 收益值缺省行——三者都不得影响日期收录。
 const MONEY_FUND_PAYLOAD: &str = r#"{"Data":{"LSJZList":[{"FSRQ":"2026-09-14","DWJZ":"0.3117","LJJZ":"1.1410","SDATE":"","ACTUALSYI":"","NAVTYPE":"1","JZZZL":"0.00","SGZT":"限制大额申购","SHZT":"开放赎回","FHFCZ":"","FHFCZ10":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-09-13","DWJZ":"0.0000","LJJZ":"1.1410","SDATE":"","ACTUALSYI":"","NAVTYPE":"1","JZZZL":"0.00","SGZT":"限制大额申购","SHZT":"开放赎回","FHFCZ":"","FHFCZ10":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-09-12","DWJZ":"-0.6228","LJJZ":"1.1409","SDATE":"","ACTUALSYI":"","NAVTYPE":"1","JZZZL":"0.00","SGZT":"限制大额申购","SHZT":"开放赎回","FHFCZ":"","FHFCZ10":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-09-11","DWJZ":null,"LJJZ":"1.1410","SDATE":"","ACTUALSYI":"","NAVTYPE":"1","JZZZL":"0.00","SGZT":"限制大额申购","SHZT":"开放赎回","FHFCZ":"","FHFCZ10":"","FHFCBZ":"","DTYPE":null,"FHSP":""}],"FundType":"005","SYType":"每万份收益","isNewType":false,"Feature":null},"ErrCode":0,"ErrMsg":null,"TotalCount":3431,"Expansion":null,"PageSize":4,"PageIndex":1}"#;
 
 #[test]
 fn lsjz_money_fund_income_column_normalizes_to_unit_nav() {
-    // 货基判定命中：单位净值恒 1.0000，万份收益数值（含 0 与负值）不进价格——
-    // 收益日期照常收录（现价日期与水位语义依赖它）。DWJZ 缺省的形态异常行仍过滤。
+    // 货基判定命中：日期即净值日本体，单位净值恒 1.0000——万份收益数值（含 0
+    // 与负值）甚至缺省（null）都不影响行有效性，也不进价格。
     let resp: LsjzResponse = serde_json::from_str(MONEY_FUND_PAYLOAD).unwrap();
     let parsed = parse_lsjz(&resp);
     assert!(!parsed.blocked);
@@ -127,7 +128,28 @@ fn lsjz_money_fund_income_column_normalizes_to_unit_nav() {
                 date: "2026-09-12".into(),
                 nav: 1.0
             },
+            NavPoint {
+                date: "2026-09-11".into(),
+                nav: 1.0
+            },
         ]
+    );
+}
+
+#[test]
+fn lsjz_money_fund_signal_unknown_shape_never_fails_response() {
+    // 判定信号（FundType/SYType）未知 wire 形态（如数字）：宽容归缺省，整页
+    // 照常解析、不中断同步——信号缺席的代价是退回旧口径，不是报错。
+    let json = r#"{"Data":{"LSJZList":[{"FSRQ":"2026-01-30","DWJZ":"3.3480"}],"FundType":5,"SYType":7},"TotalCount":1}"#;
+    let resp: LsjzResponse = serde_json::from_str(json).unwrap();
+    let parsed = parse_lsjz(&resp);
+    assert_eq!(
+        parsed.points,
+        vec![NavPoint {
+            date: "2026-01-30".into(),
+            nav: 3.348
+        }],
+        "信号缺席按普通基金口径解析原值"
     );
 }
 
@@ -495,8 +517,7 @@ fn nav_full_series_prefers_net_worth_trend_when_both_series_exist() {
     let points =
         fetch_nav_full_series_from(&client, &mut pacer, "110022", &[url.as_str()]).unwrap();
     assert_eq!(points.len(), 3);
-    assert_eq!(points[0].nav, 1.0, "取单位净值序列原值，不是 1.0 归一化");
-    assert_eq!(points[2].nav, 1.006);
+    assert_eq!(points[2].nav, 1.006, "取单位净值序列原值，不是 1.0 归一化");
 }
 
 // ---------------------------------------------------------------------------

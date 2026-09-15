@@ -7,8 +7,9 @@
 //!
 //! 接口：基金搜索建议 `FundSearchAPI.ashx`——搜索关键词命中多条（基金 / 股票 /
 //! 指数等类别混排），基金条目带 `FundBaseInfo`（含 FCODE / SHORTNAME / FTYPE /
-//! DWJZ 单位净值 / FSRQ 净值日期）；同码股票条目 `FundBaseInfo` 为 null。
-//! 命中判定 = `FundBaseInfo` 存在且 FCODE 与请求代码全等（基金代码全局唯一）。
+//! FUNDTYPE 类型码 / DWJZ 单位净值 / FSRQ 净值日期）；同码股票条目
+//! `FundBaseInfo` 为 null。命中判定 = `FundBaseInfo` 存在且 FCODE 与请求代码
+//! 全等（基金代码全局唯一）。
 //!
 //! 该索引只收**在用**基金：已终止（清盘）基金被东财摘出索引，但档案通道（基金
 //! 详情页数据文件）仍在服务。搜索未命中时回退档案通道改判「存在」并回填名称与
@@ -57,9 +58,14 @@ pub(crate) struct FundBaseInfo {
     #[serde(rename = "FTYPE", default)]
     pub(crate) ftype: String,
     /// 东财基金类型码（`005` = 货币型，与历史净值接口 `FundType` 同一枚代码
-    /// 表，issue #1342）；货基的 `DWJZ` 是万份收益而非单位净值。
-    #[serde(rename = "FUNDTYPE", default)]
-    pub(crate) fund_type: String,
+    /// 表，issue #1342）；货基的 `DWJZ` 是万份收益而非单位净值。宽容解析：
+    /// 未知形态归缺省（信号缺席代价 = 退回旧口径），不使整页报文失败。
+    #[serde(
+        rename = "FUNDTYPE",
+        default,
+        deserialize_with = "deserialize_flexible_string"
+    )]
+    pub(crate) fund_type: Option<String>,
     /// 最新单位净值（真实价格值，元）：数字或数字字符串，未公布为 null。
     #[serde(
         rename = "DWJZ",
@@ -82,6 +88,25 @@ where
     Ok(match value {
         serde_json::Value::Number(n) => n.as_f64(),
         serde_json::Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    })
+}
+
+/// 字符串字段兼容任意 wire 形态且**不使报文失败**（基金类型码 / 收益披露声明
+/// 等判定信号，issue #1342）：字符串去首尾空白；其余形态（数字、null 等）归为
+/// 缺省——信号缺席的代价只是退回修复前口径，不得让整页解析失败中断同步。
+pub(super) fn deserialize_flexible_string<'de, D>(
+    d: D,
+) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => {
+            let s = s.trim();
+            (!s.is_empty()).then(|| s.to_string())
+        }
+        serde_json::Value::Number(n) => Some(n.to_string()),
         _ => None,
     })
 }
@@ -113,7 +138,11 @@ pub(crate) fn pick_fund_quote(resp: &FundSearchResponse, code: &str) -> Option<Q
         .as_deref()
         .map(str::trim)
         .filter(|d| !d.is_empty());
-    let (price_cents, nav_date) = if is_money_fund_type_code(&base.fund_type) {
+    let (price_cents, nav_date) = if base
+        .fund_type
+        .as_deref()
+        .is_some_and(is_money_fund_type_code)
+    {
         let date = fsrq.map(str::to_string);
         (
             date.as_ref()

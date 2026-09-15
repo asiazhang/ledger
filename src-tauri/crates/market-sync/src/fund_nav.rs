@@ -36,7 +36,7 @@ use ledger_investment::prices::{
     upsert_price_history,
 };
 
-use super::fund::deserialize_flexible_f64;
+use super::fund::{deserialize_flexible_f64, deserialize_flexible_string};
 use super::http::{KlineBar, Pacer, RetryConfig, request_json_from_hosts, request_text_from_hosts};
 use super::session::ScopedSession;
 
@@ -81,12 +81,21 @@ pub(super) struct LsjzData {
     #[serde(rename = "LSJZList", default)]
     pub(super) lsjz_list: Option<Vec<LsjzItem>>,
     /// 东财基金类型码（`005` = 货币型，与搜索通道 `FUNDTYPE` 同一枚代码表，
-    /// issue #1342）；已终止基金等形态会缺省。
-    #[serde(rename = "FundType", default)]
+    /// issue #1342）；宽容解析，未知形态归缺省（不使整页报文失败），已终止
+    /// 基金等形态会缺省。
+    #[serde(
+        rename = "FundType",
+        default,
+        deserialize_with = "deserialize_flexible_string"
+    )]
     pub(super) fund_type: Option<String>,
     /// 收益披露口径声明：`每万份收益` = `DWJZ` 列承载的是万份收益而非单位
-    /// 净值（issue #1342）；非收益型基金缺省。
-    #[serde(rename = "SYType", default)]
+    /// 净值（issue #1342）；非收益型基金缺省。宽容解析同上。
+    #[serde(
+        rename = "SYType",
+        default,
+        deserialize_with = "deserialize_flexible_string"
+    )]
     pub(super) sy_type: Option<String>,
 }
 
@@ -192,6 +201,11 @@ pub(super) struct FundArchive {
     pub(super) last_nav: Option<NavPoint>,
 }
 
+/// 序列里的最新净值点（按净值日期；水位与「最后一期净值」同此判）。
+fn latest_point(points: Option<Vec<NavPoint>>) -> Option<NavPoint> {
+    points?.into_iter().max_by(|a, b| a.date.cmp(&b.date))
+}
+
 /// 解析档案通道响应：`fS_code` 与请求代码全等且 `fS_name` 非空才命中（与搜索通道
 /// 的 FCODE 全等同一防御纪律）；未声明 / 形态不符 / 代码不符均返回 None，由调用方
 /// 按「查无此码」处置。单位净值序列缺失或不可信时按「未取到净值」降级（名称仍可用），
@@ -205,15 +219,11 @@ pub(super) fn parse_fund_archive(js: &str, code: &str) -> Option<FundArchive> {
     if name.is_empty() {
         return None;
     }
-    let last_nav = parse_net_worth_trend(js)
-        .and_then(|points| points.into_iter().max_by(|a, b| a.date.cmp(&b.date)))
-        .or_else(|| {
-            // 货基没有单位净值序列：最后一期净值 = 最新收益日 × 恒定单位净值
-            // 1.0000（issue #1342）——档案回退报价据此落 1.0000 而非无价。
-            parse_money_fund_income_series(js)?
-                .into_iter()
-                .max_by(|a, b| a.date.cmp(&b.date))
-        });
+    let last_nav = latest_point(parse_net_worth_trend(js)).or_else(|| {
+        // 货基没有单位净值序列：最后一期净值 = 最新收益日 × 恒定单位净值
+        // 1.0000（issue #1342）——档案回退报价据此落 1.0000 而非无价。
+        latest_point(parse_money_fund_income_series(js))
+    });
     Some(FundArchive {
         name: name.to_string(),
         last_nav,
@@ -334,8 +344,8 @@ pub struct NavQuery {
 /// 负责把它们区分开（issue #1059）。
 ///
 /// 货币基金（[`is_money_fund_lsjz`] 命中，issue #1342）：`DWJZ` 列是万份收益
-/// 而非单位净值，单位净值恒 [`MONEY_FUND_UNIT_NAV`]——只认收益日期，收益值
-/// （含 0 与偶发负值）不参与行有效性，不进价格。
+/// 而非单位净值，单位净值恒 [`MONEY_FUND_UNIT_NAV`]——日期即净值日本体，
+/// 收益值是否在场 / 为何值（含 0 与偶发负值）不影响行有效性，不进价格。
 pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzPage {
     let data = match &resp.data {
         Some(LsjzDataField::Data(data)) => data,
@@ -360,7 +370,7 @@ pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzPage {
                 return None;
             }
             let nav = if money_fund {
-                item.dwjz.map(|_| MONEY_FUND_UNIT_NAV)?
+                MONEY_FUND_UNIT_NAV
             } else {
                 item.dwjz.filter(|nav| *nav > 0.0)?
             };
