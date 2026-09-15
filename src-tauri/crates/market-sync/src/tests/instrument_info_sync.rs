@@ -1623,6 +1623,19 @@ fn fund_price_of(conn: &Connection, instrument_id: &str) -> Option<(i64, Option<
     .ok()
 }
 
+/// 注入「第 3 个周点（2026-01-19 当周）写入失败」的测试侧故障，供 ADR-0122
+/// 决策 8 / issue #1373 的负向判据共用：`BEFORE INSERT` 触发器
+/// `RAISE(ABORT)`，产品代码零 hook。降采样按周升序落库，故前两个周点先写、
+/// 第三个失败——逐周点提交会留下前两行，整只一次提交回滚后零行。
+fn inject_week_write_failure(conn: &Connection) {
+    conn.execute_batch(
+        "CREATE TRIGGER inject_week_write_failure BEFORE INSERT ON price_history \
+         WHEN NEW.trade_date='2026-01-19' \
+         BEGIN SELECT RAISE(ABORT, '注入周点写入失败'); END;",
+    )
+    .unwrap();
+}
+
 #[test]
 fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
     let conn = tauri_app_lib::test_support::open();
@@ -2363,6 +2376,277 @@ fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
 }
 
 #[test]
+fn fund_backfill_write_failure_leaves_no_history() {
+    // ADR-0122 决策 8 负向条目（issue #1373）：单只回填整只一次提交——第 N 个周点
+    // 写入失败时整只回滚，磁盘上不留半根历史，下次运行仍是首刷重新采集。
+    // 失败注入见 [`inject_week_write_failure`]；逐周点提交会留下前两个周点使本例变红。
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    inject_week_write_failure(&conn);
+
+    // 单请求全量通道返回跨四周的单位净值序列（升序）：第 3 周写入触发注入失败。
+    let series = [
+        ("2026-01-05".to_string(), 1.000),
+        ("2026-01-12".to_string(), 1.100),
+        ("2026-01-19".to_string(), 1.200),
+        ("2026-01-30".to_string(), 1.300),
+    ];
+    let full_requested = RefCell::new(Vec::new());
+    let full = [("110022", full_series(&series))];
+    let mut full_nav = mock_full_nav(&full, &full_requested);
+    let mut fetch = mock_fetch(&[]);
+    let err = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut full_nav,
+        &mut no_name,
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string().contains("注入周点写入失败"),
+        "注入的写入失败应原样上抛：{err}"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![],
+        "第 N 个周点写入失败时整只回滚，不留半根历史（下次运行仍按首刷重新采集）"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        None,
+        "整只一次提交：现价与历史同事务，回滚后不留现价"
+    );
+
+    // 「且下次运行会重新采集它」（AC 第二条）：解除注入后重跑，仍按首刷全量通道
+    // 把整只历史补回——零行 → 首刷判据为真，正是原子性要保住的等价。
+    conn.execute_batch("DROP TRIGGER inject_week_write_failure;")
+        .unwrap();
+    let mut full_nav_retry = mock_full_nav(&full, &full_requested);
+    let retry = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut full_nav_retry,
+        &mut no_name,
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+    assert_eq!(retry.synced, 1, "解除注入后重跑按首刷重新采集");
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund").len(),
+        4,
+        "下次运行补回整只历史（4 个周点）"
+    );
+}
+
+#[test]
+fn fund_partial_blocked_page_skips_whole_instrument() {
+    // ADR-0122 决策 8（issue #1373）：部分页被拦截（空响应）时本轮窗口不完整，
+    // 整只不落库、计入跳过并在日志标注——不再沿用「记警告后继续落已采点」的旧行为
+    //（半根历史会让「有历史序列」冒充「历史完整」）。
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    // 首页有净值点、次页被拦截（空响应、非零 TotalCount）：total=45 → 3 页。
+    let pages = [(
+        "110022",
+        vec![
+            nav_page(45, &[("2026-01-30", 3.348), ("2026-01-28", 3.293)]),
+            LsjzPage {
+                points: vec![],
+                total: 45,
+                blocked: true,
+            },
+        ],
+    )];
+    let requested = RefCell::new(Vec::new());
+    let mut nav = mock_nav(&pages, &requested);
+    let mut fetch = mock_fetch(&[]);
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+
+    assert_eq!(result.synced, 0, "部分页被拦截不得计成功");
+    assert_eq!(result.skipped, 1, "部分页被拦截整只计入跳过");
+    assert_eq!(result.written, 0);
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![],
+        "整只不落库：被拦截的部分页宁可整只留空重试，不留半根历史"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        None,
+        "整只不落库时不写现价"
+    );
+}
+
+#[test]
+fn fund_incremental_partial_blocked_page_keeps_existing_history_and_watermark() {
+    // ADR-0122 决策 8（issue #1373）的日间常态分支：已有历史序列的基金在增量窗口
+    // 内被部分拦截时同样整只不落库——本轮已采净值点丢弃、既有历史点原样保留、
+    // 水位不前进（下次从同一水位重取），不留下半根新历史。
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    let watermark = "2026-01-20".to_string();
+    upsert_market_price(
+        &conn,
+        &MarketPriceWrite {
+            instrument_id: "inst-fund",
+            price_cents: 30000,
+            currency_code: "CNY",
+            priced_at: &watermark,
+            nav_date: Some(&watermark),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
+    )
+    .unwrap();
+    upsert_price_history(
+        &conn,
+        "inst-fund",
+        &watermark,
+        30000,
+        "CNY",
+        EASTMONEY_PRICE_SOURCE,
+    )
+    .unwrap();
+
+    // 增量窗口（水位次日 2026-01-21 起）：首页有净值点、次页被拦截（total=45 → 3 页）。
+    let pages = [(
+        "110022",
+        vec![
+            nav_page(45, &[("2026-01-30", 3.348)]),
+            LsjzPage {
+                points: vec![],
+                total: 45,
+                blocked: true,
+            },
+        ],
+    )];
+    let requested = RefCell::new(Vec::new());
+    let mut nav = mock_nav(&pages, &requested);
+    let mut fetch = mock_fetch(&[]);
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+
+    assert_eq!(result.synced, 0, "部分页被拦截不得计成功");
+    assert_eq!(result.skipped, 1, "部分页被拦截整只计入跳过");
+    assert_eq!(result.written, 0);
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![(watermark.clone(), 30000, "CNY".to_string())],
+        "本轮已采点不落库，既有历史点原样保留"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((30000, Some(watermark.clone()))),
+        "整只不落库则水位不前进（下次从同一水位重取）"
+    );
+    assert_eq!(requested.borrow()[0].start_date, "2026-01-21");
+}
+
+#[test]
+fn fund_page_cap_truncation_skips_whole_instrument() {
+    // ADR-0122 决策 8（issue #1373）：页数触顶（服务端 TotalCount 异常，窗口已知
+    // 未采全）与部分页被拦截同待遇——整只不落库、计入跳过；不再沿用「记警告后
+    // 继续落已采点」。触顶若照旧落库，缺失段会因「有历史序列」为真而永久化。
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    // total=1000 → raw_pages=50 > MAX_NAV_PAGES(40)：触顶，首页已采净值点也不落库。
+    let pages = [("110022", vec![nav_page(1000, &[("2026-01-30", 3.348)])])];
+    let requested = RefCell::new(Vec::new());
+    let mut nav = mock_nav(&pages, &requested);
+    let mut fetch = mock_fetch(&[]);
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+
+    assert_eq!(result.synced, 0, "页数触顶不得计成功");
+    assert_eq!(result.skipped, 1, "页数触顶整只计入跳过");
+    assert_eq!(result.written, 0);
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![],
+        "整只不落库：触顶的窗口宁可整只留空重试，不留半根历史"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        None,
+        "整只不落库时不写现价"
+    );
+}
+
+#[test]
 fn fund_rows_without_real_code_skip_without_fetch() {
     let conn = tauri_app_lib::test_support::open();
     // 名称充代码的基金行（无真实代码，查不到净值）与债券：计入跳过、零请求。
@@ -2493,6 +2777,58 @@ fn etf_holding_syncs_quote_and_kline_backfill() {
             ("2026-01-12".into(), 46_490, "CNY".into()),
         ],
         "ETF 近两年回填与股票同规则周采样落 PriceHistory"
+    );
+}
+
+#[test]
+fn quote_kline_backfill_write_failure_leaves_no_history() {
+    // ADR-0122 决策 8 / issue #1373 负向条目：行情分区（stock|etf）的历史回填也
+    // 整只一次提交——第 N 个周点写入失败时整只回滚，磁盘上不留半根历史。
+    // 失败注入见 [`inject_week_write_failure`]；逐周点提交会留下前两个周点使本例变红。
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "sh");
+    inject_week_write_failure(&conn);
+
+    let mut fetch = |_: &str| {
+        Ok(vec![StockItem {
+            name: "沪深300ETF华泰柏瑞".into(),
+            code: "510300".into(),
+            price: Some(4634.0),
+            precision: Some(3.0),
+        }])
+    };
+    // 跨四周日 K（升序）：第 3 周写入触发注入失败。
+    let klines = [(
+        "1.510300",
+        vec![
+            bar("2026-01-05", 4.600),
+            bar("2026-01-12", 4.649),
+            bar("2026-01-19", 4.700),
+            bar("2026-01-30", 4.720),
+        ],
+    )];
+    let mut kline = mock_kline(&klines);
+    let err = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string().contains("注入周点写入失败"),
+        "注入的写入失败应原样上抛：{err}"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-etf"),
+        vec![],
+        "第 N 个周点写入失败时整只回滚，不留半根历史"
     );
 }
 
