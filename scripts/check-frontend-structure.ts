@@ -149,6 +149,12 @@ export const PACKAGES: readonly PackageEntry[] = [
     deps: ['@ledger/utils'],
     note: '异步任务生命周期包（issue #1318 / ADR-0040 / ADR-0118 决策 4/6）：useLoadable 统一异步任务生命周期深模块——loading 置收、错误文案归一、竞态裁决（后发覆盖先发）与 invalidate 作废在途的单一实现，竞态序号唯一合法住址随包（check-async-guards 规则 1 豁免坐标同步为包内路径）；模块级 toast sink 单例随包 ESM 持有、对外只暴露 registerToastSink 注册接口，应用入口 MessageSinkBridge 经导入接线，不引入注入机制（ADR-0118 决策 6）；依赖 @ledger/utils（errorMessage）单向成边；不依赖 stores / components / views',
   },
+  {
+    name: '@ledger/ui-kit',
+    dir: 'packages/ui-kit',
+    deps: ['@ledger/utils', '@ledger/i18n', '@ledger/window-tier', '@ledger/test-support'],
+    note: '界面通用件包（issue #1320 / ADR-0118 决策 3/5/6）：App* 弹层薄封装 8 件 + overlay 单例族（overlayRegistry + useOverlayReporting，ADR-0035 一体族，注册接口语义一字不改）+ 通用件 4 项（AppDangerConfirmModal / PinyinSelect / NoteCopyButton / app-modal.css.ts），成员闭集逐项定界不得自行增删（CreateFab 等域/应用专属留壳，#1159 按域归位）；方向表与实际 import 全等（utils / i18n / window-tier；测试边 → test-support，devDependencies 消费，规则⑤），exports 逐组件/逐模块子路径暴露（.vue 直接作 exports 落点，.css.ts 同 theme 先例）；不依赖 stores / views / 壳内 composables',
+  },
 ]
 
 /** workspace 成员 glob（pnpm-workspace.yaml 侧声明与本脚本核对同源）。 */

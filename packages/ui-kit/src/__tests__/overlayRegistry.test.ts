@@ -8,17 +8,15 @@ import {
   hasOpenOverlay,
   openOverlayNames,
   resetOverlays,
-} from '@/composables/overlayRegistry'
-import AppSelect from '@/components/AppSelect.vue'
-import AppModal from '@/components/AppModal.vue'
-import AppDropdown from '@/components/AppDropdown.vue'
-import AppDatePicker from '@/components/AppDatePicker.vue'
-import AppPopover from '@/components/AppPopover.vue'
-import AppPopconfirm from '@/components/AppPopconfirm.vue'
-import AppTreeSelect from '@/components/AppTreeSelect.vue'
-import PinyinSelect from '@/components/PinyinSelect.vue'
-import { NDialogProvider } from 'naive-ui'
-import { useAppDialog } from '@/composables/useAppDialog'
+} from '../overlayRegistry'
+import AppSelect from '../AppSelect.vue'
+import AppModal from '../AppModal.vue'
+import AppDropdown from '../AppDropdown.vue'
+import AppDatePicker from '../AppDatePicker.vue'
+import AppPopover from '../AppPopover.vue'
+import AppPopconfirm from '../AppPopconfirm.vue'
+import AppTreeSelect from '../AppTreeSelect.vue'
+import PinyinSelect from '../PinyinSelect.vue'
 
 afterEach(() => resetOverlays())
 
@@ -278,21 +276,6 @@ describe('封装关闭通道（closeTopOverlay 消费面，issue #845）', () =>
     await flushPromises()
     expect(hasOpenOverlay()).toBe(false)
     wrapper.unmount()
-  })
-
-  it('useAppDialog：closeTopOverlay 走 destroy()（删除确认等命令式对话框）', async () => {
-    const Host = defineComponent({
-      setup() {
-        const dialog = useAppDialog()
-        return () => h('button', { onClick: () => dialog.warning({ title: 't', content: 'c' }) }, 'del')
-      },
-    })
-    const wrapper = mount(NDialogProvider, { slots: { default: () => h(Host) } })
-    await wrapper.find('button').trigger('click')
-    expect(hasOpenOverlay()).toBe(true)
-
-    expect(closeTopOverlay()).toBe(true)
-    expect(hasOpenOverlay()).toBe(false)
   })
 
   it('受控但未提供监听器的退化用法不可关：返回 false、注册表保持（消费方吞掉返回键）', async () => {

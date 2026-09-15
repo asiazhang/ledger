@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from '@ledger/api'
 import { errorMessage } from '@ledger/utils/errors'
 import { NButton, NCard, NSpace, NText, useMessage } from 'naive-ui'
-import AppSelect from '@/components/AppSelect.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
 import { t } from '@ledger/i18n'
 
 const message = useMessage()

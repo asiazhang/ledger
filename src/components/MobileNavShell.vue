@@ -5,7 +5,7 @@ import { NIcon, NMenu, useThemeVars } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
 import { MenuOutline } from '@vicons/ionicons5'
 import { t } from '@ledger/i18n'
-import AppDrawer from '@/components/AppDrawer.vue'
+import AppDrawer from '@ledger/ui-kit/AppDrawer.vue'
 
 /**
  * 移动档导航壳（issue #842 / ADR-0088 决策 4，词汇表「导航抽屉」）：

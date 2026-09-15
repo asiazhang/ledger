@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import MobileNavShell from '@/components/MobileNavShell.vue'
-import { hasOpenOverlay } from '@/composables/overlayRegistry'
+import { hasOpenOverlay } from '@ledger/ui-kit/overlayRegistry'
 import { pressReleaseOn } from '@ledger/test-support/dom'
 import { openMobileDrawer, drawerMenuItemTexts, findDrawerItem } from '@ledger/test-support/mobile-nav'
 

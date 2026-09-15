@@ -6,7 +6,7 @@ import { setFakeMedia } from '@ledger/test-support/media-mock'
 import App from '@/App.vue'
 import { routes } from '@/router'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
-import { hasOpenOverlay } from '@/composables/overlayRegistry'
+import { hasOpenOverlay } from '@ledger/ui-kit/overlayRegistry'
 import {
   openMobileDrawer,
   drawerMenuItemTexts,

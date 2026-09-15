@@ -25,6 +25,7 @@
     "@ledger/storage": "workspace:*",
     "@ledger/theme": "workspace:*",
     "@ledger/types": "workspace:*",
+    "@ledger/ui-kit": "workspace:*",
     "@ledger/utils": "workspace:*",
     "@ledger/window-tier": "workspace:*",
     "@tauri-apps/api": "^2.11.1",

@@ -6,7 +6,7 @@ import { NSelect } from 'naive-ui'
 import { routeMock, makeTxn, setTxnDb, mountView, listCalls, lastListFilter, bodyRows, tablePagination, pushMock } from './common'
 import { mockInvoke } from '@ledger/test-support/invoke-mock'
 import { useWindowGuard } from '@/composables/useWindowGuard'
-import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
+import { createOverlayToken, resetOverlays } from '@ledger/ui-kit/overlayRegistry'
 import { fireViewReset, clearViewResets } from '@/composables/viewResetRegistry'
 import type { VueWrapper } from '@vue/test-utils'
 

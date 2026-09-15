@@ -8,7 +8,7 @@ import { openMobileDrawer } from '@ledger/test-support/mobile-nav'
 import App from '@/App.vue'
 import { mount } from '@vue/test-utils'
 import { routes } from '@/router'
-import { hasOpenOverlay } from '@/composables/overlayRegistry'
+import { hasOpenOverlay } from '@ledger/ui-kit/overlayRegistry'
 
 /**
  * App 壳系统返回桥接（issue #845 / ADR-0088 决策 7）：真壳链路（App 挂载

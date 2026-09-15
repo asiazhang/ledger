@@ -48,7 +48,7 @@ import { useRestoreFromFile } from '@/composables/useRestoreFromFile'
 import { useAppStore } from '@/stores/app'
 import { errorMessage } from '@ledger/utils/errors'
 import { restartAppShortly } from '@/composables/restart'
-import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
+import AppDangerConfirmModal from '@ledger/ui-kit/AppDangerConfirmModal.vue'
 
 const {
   unlock,

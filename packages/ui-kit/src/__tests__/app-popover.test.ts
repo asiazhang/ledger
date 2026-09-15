@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, nextTick } from 'vue'
-import AppPopover from '@/components/AppPopover.vue'
-import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
+import AppPopover from '../AppPopover.vue'
+import { hasOpenOverlay, resetOverlays } from '../overlayRegistry'
 
 // AppPopover 薄封装契约（issue #834 / ADR-0035 接线）：内容透传渲染 + 开/关
 // 实时上报弹层注册表（快捷键抑制零新机制）。完整交互行为由消费方组件测试

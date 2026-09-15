@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NFormItem, NInput, NSpace, NText } from 'naive-ui'
-import AppModal from '@/components/AppModal.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
 import { t } from '@ledger/i18n'
 import { errorMessage, errorCodeOf } from '@ledger/utils/errors'
 import {

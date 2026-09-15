@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import AppPopover from '@/components/AppPopover.vue'
+import AppPopover from '@ledger/ui-kit/AppPopover.vue'
 import { useInputMode } from '@/composables/useInputMode'
 
 /**

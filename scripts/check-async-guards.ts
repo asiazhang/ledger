@@ -22,7 +22,7 @@
 // 下调基线——与样式块白名单「迁移一个删一个」同一纪律（基线即规格，不留陈目）。
 // 存量收编本身（连带 i18n 键与插值名清理）另立专项（#1039 Out of Scope），本门只封增量。
 //
-// 扫描边界：src 与 packages/loadable/src 下 .ts/.vue 文本级行扫描（含 __tests__，
+// 扫描边界：src、packages/loadable/src 与 packages/ui-kit/src 下 .ts/.vue 文本级行扫描（含 __tests__，
 // 当前零命中；扫描根清单 SCAN_ROOTS 随接缝/基线文件出壳逐票扩展，后续包抽取携
 // 基线文件出壳时同步追加）；行首注释行（// /* * <!--）跳过——注释提及靶形态
 // 不误报；多行块注释内部行与跨行调用形态不可达，靠评审兜底。守门自身包装测试已随
@@ -49,9 +49,9 @@ const HAND_ROLLED_SEQ_PATTERN = /\blet\s+\w*[Ss]eq\s*=\s*0\b/
  *  单一事实源无双源漂移）。 */
 export const SEQ_SEAM_FILE = 'packages/loadable/src/useLoadable.ts'
 
-/** 扫描根清单（相对仓库根）：src 应用壳 + 已收编接缝的包内 src 树——接缝/基线
- *  文件搬到哪，扫描根跟到哪；后续包抽取携接缝或基线文件出壳时逐票追加。 */
-const SCAN_ROOTS: readonly string[] = ['src', 'packages/loadable/src']
+/** 扫描根清单（相对仓库根）：src 应用壳 + 已收编接缝/基线文件的包内 src 树——接缝/
+ *  基线文件搬到哪，扫描根跟到哪；后续包抽取携接缝或基线文件出壳时逐票追加。 */
+const SCAN_ROOTS: readonly string[] = ['src', 'packages/loadable/src', 'packages/ui-kit/src']
 
 /** 规则 2 形态：catch 内直弹 toast 模板（单行；errorMessage 为 utils/errors 统一错误提取） */
 const CATCH_TOAST_PATTERN = /message\.error\(\s*t\([^\n]*errorMessage/
@@ -65,7 +65,6 @@ const CATCH_TOAST_PATTERN = /message\.error\(\s*t\([^\n]*errorMessage/
  */
 export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   'src/components/AddItemForm.vue': 1,
-  'src/components/NoteCopyButton.vue': 1,
   'src/components/PhysicalAssetDisposeModal.vue': 1,
   'src/components/PhysicalAssetFormModal.vue': 1,
   'src/components/PhysicalAssetValuationModal.vue': 1,
@@ -95,6 +94,7 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   'src/views/ItemsView.vue': 4,
   'src/views/PoliciesView.vue': 1,
   'src/views/TransactionsView.vue': 2,
+  'packages/ui-kit/src/NoteCopyButton.vue': 1,
 }
 
 /** 行首注释形态：整行跳过（行内尾注与多行块注释内部行不可达，靠评审兜底） */

@@ -5,7 +5,7 @@ import { onMounted, ref } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
-import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
+import AppDangerConfirmModal from '@ledger/ui-kit/AppDangerConfirmModal.vue'
 import type { DataLocationChangeOutcome, DataLocationInfo } from '@ledger/types'
 
 // 数据存储位置卡片（issue #134 / ADR-0018）：消费 #133 命令层契约。

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import NoteCopyButton from '@/components/NoteCopyButton.vue'
+import NoteCopyButton from '../NoteCopyButton.vue'
 import { messageApi } from '@ledger/test-support/message-mock'
 
 /** 备注复制按钮（显式复制通道，见「界面文本不可选」词条）：复制走 clipboard API，

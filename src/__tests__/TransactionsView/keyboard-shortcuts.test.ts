@@ -2,7 +2,7 @@ import { mountView } from './common'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { NModal } from 'naive-ui'
-import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
+import { createOverlayToken, resetOverlays } from '@ledger/ui-kit/overlayRegistry'
 import TransactionForm from '@/components/TransactionForm.vue'
 
 describe('TransactionsView 裸键快捷键（issue #153）', () => {

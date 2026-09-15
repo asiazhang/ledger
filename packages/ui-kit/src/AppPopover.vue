@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NPopover } from 'naive-ui'
-import { useOverlayReporting } from '@/composables/useOverlayReporting'
+import { useOverlayReporting } from './useOverlayReporting'
 
 // 薄封装 NPopover，接入弹层注册表（ADR-0035）：应用内的 NPopover 一律经本
 // 组件使用，弹层开/关状态实时上报，驱动快捷键抑制。default（内容）/trigger

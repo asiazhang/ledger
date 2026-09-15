@@ -11,9 +11,9 @@ import {
   mockWindowDestroy,
 } from '@ledger/test-support/back-mock'
 import { useSystemBack } from '@/composables/useSystemBack'
-import { createOverlayToken, hasOpenOverlay, openOverlayNames, resetOverlays } from '@/composables/overlayRegistry'
+import { createOverlayToken, hasOpenOverlay, openOverlayNames, resetOverlays } from '@ledger/ui-kit/overlayRegistry'
 import { useAppDialog } from '@/composables/useAppDialog'
-import AppModal from '@/components/AppModal.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
 import { routes } from '@/router'
 
 /**

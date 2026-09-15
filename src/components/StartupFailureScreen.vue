@@ -22,7 +22,7 @@
  */
 import { NAlert, NButton, NCard, NSpace, NText, useMessage } from 'naive-ui'
 import { computed, ref } from 'vue'
-import AppModal from '@/components/AppModal.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
 import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
 import { t } from '@ledger/i18n'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'

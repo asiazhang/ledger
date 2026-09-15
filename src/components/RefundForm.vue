@@ -8,10 +8,10 @@ import {
   NSpace,
 } from 'naive-ui'
 import { t } from '@ledger/i18n'
-import AppSelect from '@/components/AppSelect.vue'
-import AppDatePicker from '@/components/AppDatePicker.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
+import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
 import { useRefundForm } from '@/composables/useRefundForm'
-import PinyinSelect from '@/components/PinyinSelect.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import { formatAmount } from '@ledger/money'
 import { useReferenceStore } from '@/stores/reference'
 import type { Transaction } from '@ledger/types'

@@ -12,7 +12,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 
 import { open } from '@tauri-apps/plugin-dialog'
 import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
-import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
+import AppDangerConfirmModal from '@ledger/ui-kit/AppDangerConfirmModal.vue'
 
 const mockOpen = vi.mocked(open)
 

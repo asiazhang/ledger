@@ -2,7 +2,7 @@ import { setTxnDb, makeTxn, mountView, listCalls, lastListFilter, tablePaginatio
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NButton, NDatePicker } from 'naive-ui'
-import AppDatePicker from '@/components/AppDatePicker.vue'
+import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
 import type { Transaction } from '@ledger/types'
 
 /**

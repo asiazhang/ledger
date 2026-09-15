@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NDatePicker } from 'naive-ui'
-import { useOverlayReporting } from '@/composables/useOverlayReporting'
+import { useOverlayReporting } from './useOverlayReporting'
 
 // 薄封装 NDatePicker，接入弹层注册表（ADR-0035）：应用内的 NDatePicker 一律经
 // 本组件使用，面板开/关状态实时上报，驱动快捷键抑制。其余 props/attrs/slots

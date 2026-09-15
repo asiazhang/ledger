@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NDrawer } from 'naive-ui'
-import { useOverlayReporting } from '@/composables/useOverlayReporting'
+import { useOverlayReporting } from './useOverlayReporting'
 
 // AppDrawer（issue #842 / ADR-0088 决策 4）：薄封装 NDrawer——导航抽屉（移动档壳层，
 // 词汇表「导航抽屉」）的唯一使用形态，接入弹层注册表（ADR-0035）：开/关状态实时上报，

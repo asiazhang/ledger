@@ -14,8 +14,8 @@ import {
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import AppDatePicker from '@/components/AppDatePicker.vue'
-import AppSelect from '@/components/AppSelect.vue'
+import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
 import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import { formatAmount, yuanToCents } from '@ledger/money'
 import type { ScheduledTransactionOccurrence } from '@ledger/types'
@@ -30,8 +30,8 @@ import {
 } from '@/composables/useScheduledPlanList'
 import { useModalIntent } from '@ledger/modal-intent'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
-import AppModal from '@/components/AppModal.vue'
-import PinyinSelect from '@/components/PinyinSelect.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from '@/components/mobile-cells'
 import { usePlanFocusLanding } from '@/composables/usePlanFocusLanding'

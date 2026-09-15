@@ -28,7 +28,7 @@ import {
 } from '@ledger/types'
 import { formatPrice } from '@ledger/money'
 import { sumFixedColumnWidths } from '@ledger/utils/table'
-import AppSelect from '@/components/AppSelect.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
 import AddInstrumentModal from '@/components/investments/AddInstrumentModal.vue'
 import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import type { Instrument, MarketType } from '@ledger/types'

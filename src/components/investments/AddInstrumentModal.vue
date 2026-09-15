@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NButton, NForm, NFormItem, NInput, NSpace, NText } from 'naive-ui'
-import AppModal from '@/components/AppModal.vue'
-import AppSelect from '@/components/AppSelect.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { useReferenceStore } from '@/stores/reference'

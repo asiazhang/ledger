@@ -2,7 +2,7 @@
 import { errorMessage } from '@ledger/utils/errors'
 import { computed, ref } from 'vue'
 import { NButton, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
-import PinyinSelect from '@/components/PinyinSelect.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import { api } from '@ledger/api'
 import { useReferenceStore } from '@/stores/reference'
 import { t } from '@ledger/i18n'
