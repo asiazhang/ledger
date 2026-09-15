@@ -12,7 +12,7 @@ import {
   isClosableFeature,
   useFeatureToggleStore,
   type ClosableFeatureId,
-} from '@/stores/feature-toggles'
+} from '@/settings/feature-toggles'
 import { hasFocusParam } from '@/composables/useFocusParam'
 
 /**
@@ -145,7 +145,7 @@ export const routes: RouteRecordRaw[] = [
     // 后以主项身份入侧栏，侧栏/键位导航按 name 路由——独立路由自本票起必须存在。
     path: '/merchants',
     name: 'merchants',
-    component: () => import('@/components/MerchantManager.vue'),
+    component: () => import('@/merchants/MerchantManager.vue'),
     beforeEnter: featureRouteGuard('merchants'),
   },
   {
@@ -161,7 +161,7 @@ export const routes: RouteRecordRaw[] = [
     // 侧栏导航按 name 路由——独立路由渲染保司管理页。
     path: '/insurers',
     name: 'insurers',
-    component: () => import('@/components/InsurerManager.vue'),
+    component: () => import('@/policy/InsurerManager.vue'),
     beforeEnter: featureRouteGuard('insurers', { target: 'assets-more', tab: 'insurers' }),
   },
   {

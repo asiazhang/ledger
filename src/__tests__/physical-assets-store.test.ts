@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { captureListenHandlers, type CapturedListener } from '@ledger/test-support/listen-mock'
 import { flushPromises } from '@vue/test-utils'
-import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
+import { usePhysicalAssetsStore } from '@/physical-asset/physicalAssets'
 import { makePhysicalAsset, makePhysicalAssetList } from './factories'
 import type {
   PhysicalAsset,

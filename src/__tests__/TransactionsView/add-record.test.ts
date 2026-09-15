@@ -3,11 +3,11 @@ import { mockInvoke } from '@ledger/test-support/invoke-mock'
 import { describe, it, expect } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect, NButton, NModal, NInput, NRadioGroup } from 'naive-ui'
-import CategoryForm from '@/components/CategoryForm.vue'
-import TransferForm from '@/components/TransferForm.vue'
-import LendingForm from '@/components/LendingForm.vue'
-import InvestmentForm from '@/components/InvestmentForm.vue'
-import TransactionForm from '@/components/TransactionForm.vue'
+import CategoryForm from '@/categories/CategoryForm.vue'
+import TransferForm from '@/transaction/TransferForm.vue'
+import LendingForm from '@/transaction/LendingForm.vue'
+import InvestmentForm from '@/investment/InvestmentForm.vue'
+import TransactionForm from '@/transaction/TransactionForm.vue'
 
 describe('TransactionsView 记一笔 Modal（issue #141）', () => {
   /** 打开「记一笔」弹窗（点击工具栏按钮后等弹窗挂载）。 */

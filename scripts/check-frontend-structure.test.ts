@@ -36,8 +36,8 @@ afterAll(() => {
 })
 
 /** 规则⑦ 夹具仓库根：其余规则的最小绿基线（空包登记表注入 + 接线宿主 + 规则⑥登记
- *  目录 src/utils）+ 登记模块本体 src/composables/useTransactionFilter.ts（默认创建；
- *  omitModule = 「登记模块不存在」靶形）。返回 spawnSync args。 */
+ *  目录 src/utils）+ 登记模块本体 src/transaction/useTransactionFilter.ts（#1159 起随交易
+ *  域归位；默认创建；omitModule = 「登记模块不存在」靶形）。返回 spawnSync args。 */
 function fixtureRepo(opts: { omitModule?: boolean } = {}): string[] {
   const root = mkdtempSync(join(tmpdir(), 'check-frontend-structure-rule7-'))
   tempDirs.push(root)
@@ -57,9 +57,9 @@ function fixtureRepo(opts: { omitModule?: boolean } = {}): string[] {
   )
   mkdirSync(join(root, 'src', 'utils'), { recursive: true })
   if (!opts.omitModule) {
-    mkdirSync(join(root, 'src', 'composables'), { recursive: true })
+    mkdirSync(join(root, 'src', 'transaction'), { recursive: true })
     writeFileSync(
-      join(root, 'src', 'composables', 'useTransactionFilter.ts'),
+      join(root, 'src', 'transaction', 'useTransactionFilter.ts'),
       'export const useTransactionFilter = () => ({})\n',
     )
   }
@@ -77,7 +77,7 @@ describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', 
   it('删除规则登记项即变红：登记表与已固化边界全等（首批唯一条目 TransactionFilter → src/views）', () => {
     expect(DEEP_MODULE_BOUNDARIES).toEqual([
       {
-        module: 'src/composables/useTransactionFilter.ts',
+        module: 'src/transaction/useTransactionFilter.ts',
         allowedConsumers: ['src/views'],
         note: expect.any(String),
       },
@@ -89,7 +89,7 @@ describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', 
     writeSource(
       args[0] as string,
       'src/views/TransactionsView.vue',
-      "<script setup lang=\"ts\">\nimport { useTransactionFilter } from '@/composables/useTransactionFilter'\n</script>\n",
+      "<script setup lang=\"ts\">\nimport { useTransactionFilter } from '@/transaction/useTransactionFilter'\n</script>\n",
     )
     const r = run(args)
     expect(r.status).toBe(0)
@@ -101,13 +101,13 @@ describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', 
     writeSource(
       root,
       'src/components/FilterPanel.vue',
-      "<script setup lang=\"ts\">\nimport { useTransactionFilter } from '@/composables/useTransactionFilter'\n</script>\n",
+      "<script setup lang=\"ts\">\nimport { useTransactionFilter } from '@/transaction/useTransactionFilter'\n</script>\n",
     )
     const r = run(args)
     expect(r.status).toBe(1)
     expect(r.output).toContain('深模块边界')
     expect(r.output).toContain('src/components/FilterPanel.vue:2')
-    expect(r.output).toContain('src/composables/useTransactionFilter.ts')
+    expect(r.output).toContain('src/transaction/useTransactionFilter.ts')
     expect(r.output).toContain('src/views')
   })
 
@@ -116,7 +116,7 @@ describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', 
     writeSource(
       args[0] as string,
       'src/components/Drilldown.vue',
-      "import { useTransactionFilter } from '../composables/useTransactionFilter'\nexport { useTransactionFilter }\n",
+      "import { useTransactionFilter } from '../transaction/useTransactionFilter'\nexport { useTransactionFilter }\n",
     )
     const r = run(args)
     expect(r.status).toBe(1)
@@ -129,7 +129,7 @@ describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', 
     writeSource(
       args[0] as string,
       'src/__tests__/useTransactionFilter.test.ts',
-      "import { useTransactionFilter } from '@/composables/useTransactionFilter'\nit('smoke', () => {})\n",
+      "import { useTransactionFilter } from '@/transaction/useTransactionFilter'\nit('smoke', () => {})\n",
     )
     const r = run(args)
     expect(r.status).toBe(0)
@@ -140,7 +140,7 @@ describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', 
     writeSource(
       args[0] as string,
       'src/components/Legacy.vue',
-      "<script setup lang=\"ts\">\n// import { useTransactionFilter } from '@/composables/useTransactionFilter'\n</script>\n",
+      "<script setup lang=\"ts\">\n// import { useTransactionFilter } from '@/transaction/useTransactionFilter'\n</script>\n",
     )
     const r = run(args)
     expect(r.status).toBe(0)

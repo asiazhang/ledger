@@ -4,13 +4,13 @@ import {
   buildRefundInput,
   buildTradeInput,
   buildTransferInput,
-} from '@/domain/transaction-input'
+} from '@/transaction/transaction-input'
 import type {
   ExpenseIncomeFormState,
   RefundFormState,
   TradeFormState,
   TransferFormState,
-} from '@/domain/transaction-input'
+} from '@/transaction/transaction-input'
 
 /** 本地日历日构造时间戳（按本地时区分量构造，读取也走本地分量——任何机器时区下往返一致） */
 function localTs(year: number, month1: number, day: number, hour = 12, minute = 0): number {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
+import SyncProgressBar from '@/investment/SyncProgressBar.vue'
 import type { InstrumentSyncProgress } from '@ledger/types'
 
 /**

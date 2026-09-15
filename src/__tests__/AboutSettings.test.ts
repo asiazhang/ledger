@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import AboutSettings from '@/components/settings/AboutSettings.vue'
+import AboutSettings from '@/settings/AboutSettings.vue'
 
 // 日志等级与打开日志目录用例已随入口迁至「通用」Tab（issue #930），见 LogSettings.test.ts；
 // 本文件只保留「关于」纯元信息（应用名称 / Git 版本）用例。

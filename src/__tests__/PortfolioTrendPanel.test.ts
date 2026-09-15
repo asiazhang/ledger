@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { useReferenceStore } from '@/stores/reference'
-import { useInvestmentsSessionStore } from '@/stores/investments-session'
-import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
+import { useInvestmentsSessionStore } from '@/investment/investments-session'
+import PortfolioTrendPanel from '@/investment/PortfolioTrendPanel.vue'
 import { componentVm } from '@ledger/test-support/component-vm'
 import { makeInstrument } from './factories'
 import {
@@ -19,7 +19,7 @@ vi.mock('vue-chartjs', async () => {
 
 // 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
 // 测试中手动触发模拟后端 emit；捕获/触发辅助收在 prices-changed-mock 共享。
-vi.mock('@/composables/usePricesChanged', async () => {
+vi.mock('@/investment/usePricesChanged', async () => {
   const { capturePricesChangedHandler } = await import('./prices-changed-mock')
   return {
     usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),

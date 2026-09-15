@@ -8,7 +8,7 @@ import {
   NPopconfirm,
   NProgress,
 } from 'naive-ui'
-import InstallmentsPane from '@/components/scheduled/InstallmentsPane.vue'
+import InstallmentsPane from '@/scheduled/InstallmentsPane.vue'
 import { findInputByTestId as findInput } from '@ledger/test-support/dom'
 import { mountFlushed } from '@ledger/test-support/mount'
 import { setFakeMedia } from '@ledger/test-support/media-mock'

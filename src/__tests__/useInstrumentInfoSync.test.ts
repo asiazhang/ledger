@@ -10,7 +10,7 @@ import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
   resetInstrumentInfoSyncForTest,
   useInstrumentInfoSync,
-} from '@/composables/useInstrumentInfoSync'
+} from '@/investment/useInstrumentInfoSync'
 
 
 describe('useInstrumentInfoSync 标的信息同步（标的页/盈亏页共用接缝）', () => {

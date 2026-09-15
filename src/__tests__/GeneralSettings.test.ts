@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
-import GeneralSettings from '@/components/settings/GeneralSettings.vue'
+import GeneralSettings from '@/settings/GeneralSettings.vue'
 
 /**
  * GeneralSettings 组件测试（issue #858 币种设置拆分后；issue #930 日志卡片迁入）：本组件

@@ -8,9 +8,9 @@ import {
   PulseOutline,
   SyncOutline,
 } from '@vicons/ionicons5'
-import SubscriptionsPane from '@/components/scheduled/SubscriptionsPane.vue'
-import InstallmentsPane from '@/components/scheduled/InstallmentsPane.vue'
-import TransfersPane from '@/components/scheduled/TransfersPane.vue'
+import SubscriptionsPane from '@/scheduled/SubscriptionsPane.vue'
+import InstallmentsPane from '@/scheduled/InstallmentsPane.vue'
+import TransfersPane from '@/scheduled/TransfersPane.vue'
 import { useFocusParam } from '@/composables/useFocusParam'
 import type { ScheduledFormTab } from '@/components/source-jump'
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
+import MerchantRankingPanel from '@/reports/MerchantRankingPanel.vue'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 
 // 行内商户名渲染 MerchantLink（顶层 useRouter 下钻）：本面板测试不走路由，

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { captureListenHandlers, type CapturedListener } from '@ledger/test-support/listen-mock'
 import { flushPromises } from '@vue/test-utils'
-import { useItemsStore } from '@/stores/items'
+import { useItemsStore } from '@/item/items'
 import type { ItemInput, ItemWithDailyCost } from '@ledger/types'
 
 function baseItem(over: Partial<ItemWithDailyCost> = {}): ItemWithDailyCost {

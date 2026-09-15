@@ -5,7 +5,7 @@ import {
   TREND_MODE_DEFAULT,
   TREND_PRESET_DEFAULT,
   useInvestmentsSessionStore,
-} from '@/stores/investments-session'
+} from '@/investment/investments-session'
 import { makeInstrument } from './factories'
 
 afterEach(() => {

@@ -5,7 +5,7 @@ import { findButton } from '@ledger/test-support/dom'
 import { mount, flushPromises } from '@vue/test-utils'
 import type { NotePinyinRepairReport } from '@ledger/types'
 
-import SearchDataSettings from '@/components/settings/SearchDataSettings.vue'
+import SearchDataSettings from '@/settings/SearchDataSettings.vue'
 
 const convergedReport: NotePinyinRepairReport = {
   backfilled: 3,

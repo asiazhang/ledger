@@ -5,11 +5,11 @@ import { NDataTable } from 'naive-ui'
 import { nextTick } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import { applyLocale } from '@ledger/i18n'
-import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
+import HoldingsOverview from '@/investment/HoldingsOverview.vue'
 import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
   resetInstrumentInfoSyncForTest,
-} from '@/composables/useInstrumentInfoSync'
+} from '@/investment/useInstrumentInfoSync'
 import { captureListenHandlers } from '@ledger/test-support/listen-mock'
 import { componentVm } from '@ledger/test-support/component-vm'
 import { formatAmount, formatPrice } from '@ledger/money'
@@ -39,7 +39,7 @@ import {
 // 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
 // 测试中手动触发模拟后端 emit；失败/零更新路径后端不 emit，即无重拉。
 // 捕获/触发辅助收在 prices-changed-mock 共享（三个价格消费方测试同构）。
-vi.mock('@/composables/usePricesChanged', async () => {
+vi.mock('@/investment/usePricesChanged', async () => {
   const { capturePricesChangedHandler } = await import('./prices-changed-mock')
   return {
     usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),

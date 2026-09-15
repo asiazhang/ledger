@@ -7,7 +7,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   PRICES_CHANGED_EVENT,
   usePricesChanged,
-} from "@/composables/usePricesChanged";
+} from "@/investment/usePricesChanged";
 
 
 /** 承载 composable 生命周期的宿主组件。 */

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
+import PlanDetailModal from '@/scheduled/PlanDetailModal.vue'
 import { mountFlushed } from '@ledger/test-support/mount'
 import { makeOccurrence } from '../factories'
 import { formatAmount } from '@ledger/money'

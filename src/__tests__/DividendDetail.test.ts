@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NButton, NInput, NInputNumber } from 'naive-ui'
-import DividendDetail from '@/components/DividendDetail.vue'
+import DividendDetail from '@/investment/DividendDetail.vue'
 import { makeTransaction } from './factories'
 
 /**

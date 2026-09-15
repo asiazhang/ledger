@@ -6,7 +6,7 @@ import { NDataTable, NDialogProvider, NDropdown, NForm, NInput, NInputNumber, NM
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { h, nextTick } from 'vue'
 import AccountsView from '@/views/AccountsView.vue'
-import AccountLink from '@/components/AccountLink.vue'
+import AccountLink from '@/accounts/AccountLink.vue'
 import { amountPrivacyEnabled, formatAmount } from '@ledger/money'
 import type { Account, AccountBalance } from '@ledger/types'
 

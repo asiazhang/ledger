@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { useReferenceStore } from '@/stores/reference'
-import RefundForm from '@/components/RefundForm.vue'
+import RefundForm from '@/transaction/RefundForm.vue'
 import type { Transaction } from '@ledger/types'
 
 

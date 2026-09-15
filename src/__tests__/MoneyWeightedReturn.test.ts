@@ -7,12 +7,12 @@ import { mountWithDialog } from '@ledger/test-support/mount'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { firePricesChanged, resetPricesChangedHandler } from './prices-changed-mock'
 import { makeMwrSummary, makePnlSummary } from './factories'
-import RealizedPnlPanel from '@/components/investments/RealizedPnlPanel.vue'
-import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
+import RealizedPnlPanel from '@/investment/RealizedPnlPanel.vue'
+import HoldingsOverview from '@/investment/HoldingsOverview.vue'
 
 // 价格失效信号订阅 mock（同 HoldingsOverview.test.ts 基座）：捕获订阅回调，
 // 用例手动触发模拟后端 emit。
-vi.mock('@/composables/usePricesChanged', async () => {
+vi.mock('@/investment/usePricesChanged', async () => {
   const { capturePricesChangedHandler } = await import('./prices-changed-mock')
   return {
     usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),

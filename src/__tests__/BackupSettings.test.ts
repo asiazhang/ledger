@@ -4,7 +4,7 @@ import { messageApi } from '@ledger/test-support/message-mock'
 import { findButton, findButtonByTestId, findBodyButtonByTestId } from '@ledger/test-support/dom'
 import { mount, flushPromises } from '@vue/test-utils'
 
-import BackupSettings from '@/components/settings/BackupSettings.vue'
+import BackupSettings from '@/settings/BackupSettings.vue'
 import { useAppStore } from '@/stores/app'
 import type { BackupFileInfo } from '@ledger/types'
 

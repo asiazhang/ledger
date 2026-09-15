@@ -6,7 +6,7 @@ import { NIcon } from 'naive-ui'
 import { t } from '@ledger/i18n'
 import { formatAmount } from '@ledger/money'
 import { errorMessage } from '@ledger/utils/errors'
-import { useCrossBookSummary } from '@/composables/useCrossBookSummary'
+import { useCrossBookSummary } from '@/investment/useCrossBookSummary'
 import { useReferenceStore } from '@/stores/reference'
 import type { CrossBookBookStatus } from '@ledger/types'
 import {

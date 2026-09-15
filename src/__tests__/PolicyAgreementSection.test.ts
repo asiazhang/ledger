@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
-import PolicyAgreementSection from '@/components/PolicyAgreementSection.vue'
+import PolicyAgreementSection from '@/policy/PolicyAgreementSection.vue'
 import { makePolicy } from './factories'
 import { formatAmount } from '@ledger/money'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'

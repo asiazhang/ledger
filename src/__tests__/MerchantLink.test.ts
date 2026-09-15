@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import MerchantLink from '@/components/MerchantLink.vue'
+import MerchantLink from '@/merchants/MerchantLink.vue'
 import { useAppStore } from '@/stores/app'
 
 // MerchantLink 经 useRouter 跳转（AccountLink 同款 pushMock 断言先例）

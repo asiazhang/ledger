@@ -1,0 +1,434 @@
+<script setup lang="ts">
+import { computed, h, onMounted, ref, watch } from 'vue'
+import {
+  NButton,
+  NDataTable,
+  NEmpty,
+  NInput,
+  NSpace,
+  NSwitch,
+  NTag,
+  NText,
+} from 'naive-ui'
+import type { DataTableColumn } from 'naive-ui'
+import { api } from '@ledger/api'
+import { useReferenceStore } from '@/stores/reference'
+import { t } from '@ledger/i18n'
+import { useInstrumentInfoSync } from '@/investment/useInstrumentInfoSync'
+import { usePricesChanged } from '@/investment/usePricesChanged'
+import { useAppDialog } from '@/composables/useAppDialog'
+import { useWindowTier } from '@ledger/window-tier'
+import SyncProgressBar from '@/investment/SyncProgressBar.vue'
+import { errorMessage as extractErrorMessage } from '@ledger/utils/errors'
+import {
+  INSTRUMENT_PRICE_CHANNELS,
+  INSTRUMENT_TYPES,
+  MARKET_FILTER_TYPES,
+  MARKET_TYPES,
+} from '@ledger/types'
+import { formatPrice } from '@ledger/money'
+import { sumFixedColumnWidths } from '@ledger/utils/table'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
+import AddInstrumentModal from '@/investment/AddInstrumentModal.vue'
+import ManualPriceModal from '@/investment/ManualPriceModal.vue'
+import type { Instrument, MarketType } from '@ledger/types'
+
+const reference = useReferenceStore()
+
+// 移动档横向滚动下限（issue #849 / ADR-0088 决策 11 票⑨）：标的明细表 10 列固定宽
+// 在窄屏无法并读，移动档挂 scroll-x = 固定列宽总和（词汇表「表格列形态」窄窗口由
+// 横向滚动吸收，触屏滑动可达全部列），桌面档不挂（既有压缩行为一字不变）。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
+// 同步接缝（与盈亏页共用）：按钮 loading + 轻量消息反馈 + 确定进度条
+//（issue #897，两入口同一份展示组件、同一份共享进度状态）。
+const { syncing, resultMessage, status, progress, sync } = useInstrumentInfoSync()
+// 删除二次确认（issue #292）：与账户删除同语义（useAppDialog 命令式对话框，
+// ADR-0035 接入弹层注册表驱动快捷键抑制）
+const dialog = useAppDialog()
+
+// 标的行「走势」入口（issue #139）：向视图层发出带标的信息的事件，由其切换到走势 tab
+const emit = defineEmits<{ 'view-trend': [instrument: Instrument] }>()
+
+// 标的全量同步入口/组装已随 ADR-0081 决策 3 整体退役（issue #698）：
+// 股票字典修正归「按代码查询/创建带回权威名称」。
+
+// 标的浏览（服务端分页 + 搜索）
+const searchText = ref('')
+const selectedMarket = ref<MarketType | null>(null)
+// 只看持仓标的（issue #108）：勾选后仅列出有当前持仓的标的
+const onlyInvested = ref(false)
+const instruments = ref<Instrument[]>([])
+const total = ref(0)
+const page = ref(1)
+const pageSize = 50
+const loading = ref(false)
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+
+const marketOptions = computed(() =>
+  // 筛选下拉不展开美股三交易所选项（后端筛选为精确匹配，UI 只显「美股」，
+  // ADR-0081）；市场列的枚举标签翻译仍用全闭集 MARKET_TYPES。
+  MARKET_FILTER_TYPES.map((value) => ({ label: t(`investments.market.${value}`), value })),
+)
+
+/** 枚举显示标签：闭集内经 t() 随界面语言切换；闭集外的库值原样回退（防脏数据渲染成 key） */
+function enumLabel(domain: 'priceChannel' | 'market' | 'type', closed: readonly string[], value: string): string {
+  return (closed as string[]).includes(value) ? t(`investments.${domain}.${value}`) : value
+}
+
+async function load() {
+  loading.value = true
+  try {
+    const res = await api.listInstruments({
+      search: searchText.value.trim() || null,
+      market: selectedMarket.value,
+      // only_invested 为 false/缺省时不过滤，仅勾选时传 true
+      only_invested: onlyInvested.value ? true : null,
+      page: page.value,
+      page_size: pageSize,
+    })
+    instruments.value = res.items
+    total.value = res.total
+  } finally {
+    loading.value = false
+  }
+}
+
+function reload() {
+  page.value = 1
+  load()
+}
+
+watch(searchText, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(reload, 300)
+})
+watch(selectedMarket, reload)
+watch(onlyInvested, reload)
+
+// 空态（issue #1193）：此前表格直接渲染，空库与筛选未命中都无提示。两态按
+// 「有没有生效的筛选意图」分流——无筛选（无搜索词 / 无市场 / 未勾选只看持仓）
+// = 库内无标的；否则 = 有标的但筛选无匹配（与持仓页签同构的两态区分）。
+const hasActiveFilter = computed(
+  () => searchText.value.trim() !== '' || selectedMarket.value !== null || onlyInvested.value,
+)
+const emptyDescription = computed(() =>
+  hasActiveFilter.value
+    ? t('investments.browser.filterNoMatch')
+    : t('investments.browser.empty'),
+)
+
+// 价格失效信号（ADR-0031）：标的信息同步/录价等实际写价后原地重拉——
+// 用 load() 保留分页与搜索状态；reload() 会重置到第 1 页，
+// 抽走用户视线下的行（issue #238）。
+usePricesChanged(() => {
+  void load()
+})
+
+// ---------------------------------------------------------------------------
+// 添加投资标的（issue #697 / spec #690；六通道修订 #826）：标的创建的唯一入口——
+// 市场必选录入通道 + 按代码查询（命中自动识别类型并回填权威名称与最新价）；
+// 自定义标的通道零查询直接建档，查询未命中只报错并引导切换该通道。既有
+// 「新建标的」独立弹窗与「添加基金」独立入口随本入口收编退役。
+// ---------------------------------------------------------------------------
+const addInstrumentOpen = ref(false)
+
+/** 页面级成功回执（展示命中回显/自定义标的建档结果；重拉后仍可见） */
+const addInstrumentMessage = ref<string | null>(null)
+
+function onInstrumentAdded(message: string) {
+  addInstrumentMessage.value = message
+  // 新标的行上列表：回到第 1 页重拉（命中落价的价格缓存刷新由价格失效信号驱动）
+  reload()
+}
+
+// ---------------------------------------------------------------------------
+// 自建标的删除（issue #292 / ADR-0036 决策 5）：仅手动来源且无任何 buy/sell
+// 流水引用（security_transactions 无行）的标的可物理删除，守卫在后端前置检查；
+// 同步来源标的不渲染删除动作（字典修正由按代码查询/创建带回权威名称承担，
+// ADR-0081）。行内删除 → useAppDialog
+// 二次确认（遮罩点击不构成关闭意图）→ 确认后调 IPC 命令并本地重拉。
+// ---------------------------------------------------------------------------
+const deleteMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null)
+
+async function removeInstrument(row: Instrument) {
+  const label = row.name || row.symbol
+  try {
+    await api.deleteInstrument(row.id)
+    deleteMessage.value = { type: 'success', text: t('investments.browser.deleteSuccess', { name: label }) }
+    // 原地重拉保留搜索/分页状态；若当前页删空则回退一页
+    await load()
+    if (instruments.value.length === 0 && page.value > 1) {
+      page.value -= 1
+      await load()
+    }
+  } catch (e) {
+    // 后端守卫拒删（如确认间隙已产生买卖流水）：中文错误原样展示
+    deleteMessage.value = { type: 'error', text: t('investments.browser.deleteFailed', { message: extractErrorMessage(e) }) }
+  }
+}
+
+/** 删除走 useAppDialog 二次确认（与账户删除同语义）：取消不删，确认后才删除。
+ * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
+function confirmDeleteInstrument(row: Instrument) {
+  dialog.warning({
+    title: t('investments.browser.deleteTitle'),
+    content: t('investments.browser.deleteContent', { name: row.name || row.symbol }),
+    positiveText: t('investments.browser.deleteConfirm'),
+    negativeText: t('investments.browser.deleteCancel'),
+    maskClosable: false,
+    onPositiveClick: () => removeInstrument(row),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 手动报价（issue #291 / ADR-0036）：行内「录价」动作只对手动报价通道的标的
+// 开放（后端派生价格通道判定，issue #1060 收口——自建标的与名称充代码基金行）；
+// 报价弹窗提交后后端广播价格失效信号，现价列刷新由本组件既有的
+// usePricesChanged 订阅完成，此处零手动重拉。
+// ---------------------------------------------------------------------------
+const quoteTarget = ref<Instrument | null>(null)
+const quoteOpen = ref(false)
+const quoteMessage = ref<string | null>(null)
+
+function openQuote(row: Instrument) {
+  quoteTarget.value = row
+  quoteOpen.value = true
+}
+
+function onQuoted(message: string) {
+  // 只记页面级回执：现价列刷新由价格失效信号驱动（信号在信号处理中已保留
+  // 分页/搜索状态原地重拉），调用方不手动重拉。
+  quoteMessage.value = message
+}
+
+const pagination = computed(() => ({
+  page: page.value,
+  pageSize,
+  itemCount: total.value,
+  onChange: (p: number) => {
+    page.value = p
+    load()
+  },
+}))
+
+const instrumentBrowseColumns = computed<DataTableColumn<Instrument>[]>(() => [
+  { title: t('investments.browser.columns.symbol'), key: 'symbol', width: 100 },
+  { title: t('investments.browser.columns.name'), key: 'name', width: 200 },
+  {
+    // 价格来源列（issue #1189 / 词汇表「价格通道」）：展示后端派生的价格通道四值
+    // （行情 / 净值 / 手动报价 / 无来源），回答「价格能否自动更新、要不要手动录价」；
+    // 字典来源（同步 / 手动）只作删除准入，不进用户可见列表。
+    title: t('investments.browser.columns.priceSource'),
+    key: 'price_channel',
+    width: 90,
+    render(row) {
+      return enumLabel('priceChannel', INSTRUMENT_PRICE_CHANNELS, row.price_channel)
+    },
+  },
+  {
+    title: t('investments.browser.columns.price'),
+    key: 'price_cents',
+    width: 100,
+    render(row) {
+      if (row.price_cents === null || row.price_cents === undefined) return '-'
+      // 现价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示
+      const ccy = reference.currencyMap.get(row.currency_code)
+      return formatPrice(row.price_cents, ccy)
+    },
+  },
+  {
+    title: t('investments.browser.columns.market'),
+    key: 'market',
+    width: 80,
+    render(row) {
+      return enumLabel('market', MARKET_TYPES, row.market)
+    },
+  },
+  {
+    title: t('investments.browser.columns.type'),
+    key: 'type',
+    width: 80,
+    render(row) {
+      return enumLabel('type', INSTRUMENT_TYPES, row.type)
+    },
+  },
+  { title: t('investments.browser.columns.currency'), key: 'currency_code', width: 60 },
+  {
+    title: t('investments.browser.columns.trend'),
+    key: 'trend',
+    width: 70,
+    render(row) {
+      return h(
+        NButton,
+        {
+          size: 'tiny',
+          secondary: true,
+          'data-testid': `view-trend-${row.symbol}`,
+          onClick: () => emit('view-trend', row),
+        },
+        { default: () => t('investments.browser.trendAction') },
+      )
+    },
+  },
+  {
+    // 录价（issue #291 / ADR-0036）：只对手动报价通道的标的开放（后端派生价格
+    // 通道判定，issue #1060）；行情 / 净值通道的现价归同步，无来源行无入口。
+    title: t('investments.browser.columns.quote'),
+    key: 'quote',
+    width: 70,
+    render(row) {
+      if (row.price_channel !== 'manual') return '-'
+      return h(
+        NButton,
+        {
+          size: 'tiny',
+          secondary: true,
+          'data-testid': `quote-${row.symbol}`,
+          onClick: () => openQuote(row),
+        },
+        { default: () => t('investments.browser.quoteAction') },
+      )
+    },
+  },
+  {
+    title: t('investments.browser.columns.invested'),
+    key: 'invested',
+    width: 80,
+    render(row) {
+      if (!row.invested) return '-'
+      return h(
+        NTag,
+        { type: 'success', size: 'small', bordered: false },
+        { default: () => t('investments.browser.investedTag') },
+      )
+    },
+  },
+  {
+    // 操作列（issue #292 / ADR-0036）：删除仅对自建标的开放；同步来源标的
+    // 一律不可删，不渲染动作（后端守卫同样拒删，双保险）
+    title: t('investments.browser.columns.actions'),
+    key: 'actions',
+    width: 70,
+    render(row) {
+      if (row.source !== 'manual') return '-'
+      return h(
+        NButton,
+        {
+          size: 'tiny',
+          type: 'error',
+          secondary: true,
+          'data-testid': `delete-instrument-${row.symbol}`,
+          onClick: () => confirmDeleteInstrument(row),
+        },
+        { default: () => t('investments.browser.deleteAction') },
+      )
+    },
+  },
+])
+
+onMounted(load)
+
+/** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
+const browseScrollX = computed(() => sumFixedColumnWidths(instrumentBrowseColumns.value))
+</script>
+
+<template>
+  <NSpace vertical :size="12">
+    <!-- 同步确定进度条（issue #897）：列表顶部就近反馈，与盈亏页同一展示组件 -->
+    <SyncProgressBar :progress="progress" />
+    <NSpace align="center" :size="12">
+      <NInput
+        v-model:value="searchText"
+        :placeholder="t('investments.browser.searchPlaceholder')"
+        clearable
+        style="width: 240px"
+      />
+      <AppSelect
+        v-model:value="selectedMarket"
+        :options="marketOptions"
+        :placeholder="t('investments.browser.allMarkets')"
+        clearable
+        style="width: 140px"
+      />
+      <NSwitch
+        v-model:value="onlyInvested"
+        size="small"
+        data-testid="only-invested-switch"
+      />
+      <span style="font-size: 13px">{{ t('investments.browser.onlyInvested') }}</span>
+      <NButton
+        secondary
+        size="small"
+        data-testid="add-instrument"
+        @click="addInstrumentOpen = true"
+      >
+        {{ t('investments.browser.addInstrument') }}
+      </NButton>
+      <NButton
+        type="primary"
+        size="small"
+        :loading="syncing"
+        data-testid="sync-instrument-info"
+        @click="sync"
+      >
+        {{ t('investments.browser.syncInstrumentInfo') }}
+      </NButton>
+    </NSpace>
+    <NText v-if="resultMessage" :type="status === 'error' ? 'error' : 'info'">
+      {{ resultMessage }}
+    </NText>
+    <NText v-if="addInstrumentMessage" type="success" data-testid="add-instrument-result">
+      {{ addInstrumentMessage }}
+    </NText>
+    <NText
+      v-if="deleteMessage"
+      :type="deleteMessage.type"
+      data-testid="delete-instrument-result"
+    >
+      {{ deleteMessage.text }}
+    </NText>
+    <NText v-if="quoteMessage" type="success" data-testid="manual-quote-result">
+      {{ quoteMessage }}
+    </NText>
+    <NDataTable
+      :columns="instrumentBrowseColumns"
+      :data="instruments"
+      :loading="loading"
+      :bordered="false"
+      size="small"
+      remote
+      :scroll-x="isMobileTier ? browseScrollX : undefined"
+      :pagination="pagination"
+    >
+      <!-- 空态两态区分（issue #1193）：全部标的不在场 vs 筛选未命中；
+           testid 随态切换，测试按用户可观察文案断言。加载门与持仓页同款：
+           首载/筛选重拉在途不渲染空态，否则空库会先闪现「暂无标的」再出列表 -->
+      <template #empty>
+        <NEmpty
+          v-if="!loading"
+          :description="emptyDescription"
+          :data-testid="hasActiveFilter ? 'instruments-no-match' : 'instruments-empty'"
+        />
+      </template>
+    </NDataTable>
+
+    <!-- 添加投资标的（issue #697 / spec #690；六通道修订 #826）：标的创建唯一
+         入口——市场必选录入通道 + 按代码查询（命中自动识别类型并回填名称/最新价）；
+         自定义标的通道零查询直接建档，未命中只报错并引导切换该通道；场外基金
+         通道即原「添加基金」按代码即拉，语义不变。既有「新建标的」独立弹窗随
+         本入口收编退役 -->
+    <AddInstrumentModal
+      v-model:show="addInstrumentOpen"
+      @added="onInstrumentAdded"
+    />
+
+    <!-- 手动报价（issue #291 / ADR-0036）：日期 + 价格弹窗；录价成功后现价列
+         经价格失效信号自动刷新（本组件顶部既有订阅），此处只记页面级回执 -->
+    <ManualPriceModal
+      v-model:show="quoteOpen"
+      :instrument="quoteTarget"
+      @quoted="onQuoted"
+    />
+  </NSpace>
+</template>

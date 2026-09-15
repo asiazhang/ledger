@@ -6,7 +6,7 @@ import type { TransactionKind } from '@ledger/types'
  *
  * 七种交易类型（支出/收入/转账/退款/买入/卖出/转换）各一个专属色，
  * 每色亮/暗两套色值，随外观主题（Appearance）切换。消费方：
- * - 交易列工厂（`src/components/transaction-columns.ts`，交易列表与搜索结果共用）
+ * - 交易列工厂（`src/transaction/transaction-columns.ts`，交易列表与搜索结果共用）
  *   的金额单元格，运行时响应式读取主题取色；
  * - 报表页月度收支图（ReportsView）收入/支出/退款三根语义色柱，与列表同源。
  *

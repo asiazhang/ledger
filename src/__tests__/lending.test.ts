@@ -7,7 +7,7 @@ import {
   lendingAccountSide,
   lendingLabelKey,
   type LendingDirection,
-} from '@/domain/lending'
+} from '@/transaction/lending'
 import { ACCOUNT_TYPES, TRANSACTION_KINDS, type AccountType } from '@ledger/types'
 
 /** 测试真值表（与实现独立）：账户类型的借贷侧别归类 */

@@ -6,7 +6,7 @@ import { applyLocale } from '@ledger/i18n'
 import { clickTab } from '@ledger/test-support/dom'
 import { mountWithDialog } from '@ledger/test-support/mount'
 import InvestmentsView from '@/views/InvestmentsView.vue'
-import InvestmentForm from '@/components/InvestmentForm.vue'
+import InvestmentForm from '@/investment/InvestmentForm.vue'
 import { makeInstrument } from './factories'
 
 // 走势图用共享桩组件替代（同 InvestmentsView.test.ts）

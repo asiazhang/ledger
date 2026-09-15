@@ -9,7 +9,7 @@ import {
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import type { ParkedOpInfo, SyncChannelConfig, SyncRoundReport, SyncStatus } from '@ledger/types'
 
-import SyncSettings from '@/components/settings/SyncSettings.vue'
+import SyncSettings from '@/settings/SyncSettings.vue'
 import { registerToastSink } from '@ledger/loadable'
 import { makeFakeSink, resetToastSink } from './factories'
 
@@ -19,8 +19,8 @@ afterEach(() => resetToastSink())
 
 // 引导成功后的原位重引导走 composables/restart 单点（Restore 同型）；组件测试只断言
 // 「成功即触发重启编排」，重启内部编排归 restart.test.ts。
-vi.mock('@/composables/restart', () => ({ restartAppShortly: vi.fn() }))
-import { restartAppShortly } from '@/composables/restart'
+vi.mock('@/backup/restart', () => ({ restartAppShortly: vi.fn() }))
+import { restartAppShortly } from '@/backup/restart'
 
 // jsdom 未实现元素滚动（naive-ui 下拉菜单打开时会 scrollTo），补空实现避免打断
 // Vue 调度队列（仅影响本文件的厂商下拉交互用例，QuickTimeRange.test.ts 先例）。

@@ -16,30 +16,31 @@ import { join, relative } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { parse } from 'vue/compiler-sfc'
 
-/** 存量 <style> 块白名单（issue #888 交付时点快照，按路径排序）：
+/** 存量 <style> 块白名单（issue #888 交付时点快照，按路径排序；#1159 起源码按域
+ *  归位，域文件路径同步为域目录坐标 src/<域>/）：
  *  试点组件 AiPromptView.vue 已迁出，不在此列；其余随触碰渐进迁移，
  *  迁移一个删一个，不允许只增不减。路径以仓库根为基准、正斜杠分隔。 */
 const STYLE_BLOCK_WHITELIST: string[] = [
   'src/App.vue',
-  'src/components/AccountLink.vue',
-  'src/components/AmountCell.vue',
-  'src/components/BookSidebarEntry.vue',
+  'src/accounts/AccountLink.vue',
+  'src/backup/StartupFailureScreen.vue',
+  'src/backup/UnlockScreen.vue',
   'src/components/GlobalBusyBar.vue',
-  'src/components/MerchantLink.vue',
   'src/components/MobileNavShell.vue',
-  'src/components/PhysicalAssetDisposeModal.vue',
-  'src/components/PhysicalAssetValuationModal.vue',
-  'src/components/PolicyFormModal.vue',
   'src/components/QuickTimeRange.vue',
-  'src/components/SourceLink.vue',
-  'src/components/StartupFailureScreen.vue',
-  'src/components/UnlockScreen.vue',
-  'src/components/investments/PortfolioTrendPanel.vue',
-  'src/components/reports/MerchantRankingPanel.vue',
-  'src/components/scheduled/PlanDetailModal.vue',
-  'src/components/scheduled/SubscriptionSpendPanel.vue',
-  'src/components/settings/EncryptionSettings.vue',
-  'src/components/settings/PassphraseStrengthMeter.vue',
+  'src/investment/PortfolioTrendPanel.vue',
+  'src/merchants/MerchantLink.vue',
+  'src/physical-asset/PhysicalAssetDisposeModal.vue',
+  'src/physical-asset/PhysicalAssetValuationModal.vue',
+  'src/policy/PolicyFormModal.vue',
+  'src/reports/MerchantRankingPanel.vue',
+  'src/scheduled/PlanDetailModal.vue',
+  'src/scheduled/SubscriptionSpendPanel.vue',
+  'src/settings/BookSidebarEntry.vue',
+  'src/settings/EncryptionSettings.vue',
+  'src/settings/PassphraseStrengthMeter.vue',
+  'src/transaction/AmountCell.vue',
+  'src/transaction/SourceLink.vue',
   'src/views/GroupMoreView.vue',
   'src/views/InvestmentsView.vue',
   'src/views/ItemsView.vue',
