@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { ref } from 'vue'
-import { useFieldErrors } from '@/composables/useFieldErrors'
+import { useFieldErrors } from '../useFieldErrors'
 import { judgeAmountText, judgeQuantityText, judgePriceText } from '@ledger/utils/field-error'
 
 /**
  * 表单级字段错误态装配工厂测试（ADR-0058 决策 4 补完 / issue #1007）：
  * 以 Vue 响应式直接驱动、不挂组件，钉死「文本 + 时机事件 → error / value」全表、
  * hasError 聚合、reset 清时机、enabled 抑制。判定口径闭集归
- * src/__tests__/field-error.test.ts（纯函数层），此处只验证装配。
+ * packages/utils/src/__tests__/field-error.test.ts（纯函数层），此处只验证装配。
  */
 describe('useFieldErrors（字段错误态装配工厂，issue #1007）', () => {
   it('初始空文本：无错误态、无已解析值、聚合无错误', () => {

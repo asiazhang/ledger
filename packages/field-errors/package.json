@@ -1,0 +1,17 @@
+{
+  "name": "@ledger/field-errors",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "字段错误态装配包（issue #1319 / spec #1148 / ADR-0058 / ADR-0118 决策 4）：useFieldErrors 表单级装配工厂——字段按「原始文本 ref + 判定函数（可选启用条件）」一行声明，产出每字段错误态与已解析值、聚合提交禁用与重置；「只收口径不代判时机」——失焦/保存尝试事件仍由消费方显式上报，判定口径全仓单点在 @ledger/utils/field-error（纯函数层，随 #1314 归 utils 包，本包 import 不复制）。依赖方向：@ledger 范围内仅 → @ledger/utils（与实际 import 全等）；不依赖 stores / components / views / composables。源码直出，exports 指向 src/useFieldErrors.ts（单文件包，不设 barrel 中转），不建构建链、不设包内 tsconfig；跨包只能整引包名（深导入由 check-frontend-structure.ts 守门）。",
+  "exports": {
+    ".": "./src/useFieldErrors.ts"
+  },
+  "dependencies": {
+    "@ledger/utils": "workspace:*",
+    "vue": "^3.5.42"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.0"
+  }
+}

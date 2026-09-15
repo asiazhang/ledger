@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@ledger/api": "workspace:*",
+    "@ledger/field-errors": "workspace:*",
     "@ledger/i18n": "workspace:*",
     "@ledger/loadable": "workspace:*",
     "@ledger/modal-intent": "workspace:*",
