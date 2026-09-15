@@ -11,6 +11,7 @@ import {
   resetInstrumentInfoSyncForTest,
 } from '@/investment/useInstrumentInfoSync'
 import { captureListenHandlers } from '@ledger/test-support/listen-mock'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { makeInstrument } from './factories'
 import {
   firePricesChanged,
@@ -104,6 +105,18 @@ describe('InstrumentBrowser 标的页工具栏', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="only-invested-switch"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('只看持仓')
+  })
+
+  it('现价列头带口径说明触发器：基金行显示的是单位净值（issue #1369）', async () => {
+    const wrapper = mountBrowser()
+    await flushPromises()
+    // 断言对准用户可观察结果：删掉列头 ConceptLabel 接线即找不到触发器、本用例变红
+    const trigger = wrapper.find('[data-testid="browser-price-info"]')
+    expect(trigger.exists()).toBe(true)
+    expect(trigger.attributes('aria-label')).toBe('现价说明')
+    // 名实边界：列名叫「现价」，基金行装的却是最新单位净值（与价格来源列「净值」不矛盾）
+    expect(await hoverTipText(trigger)).toContain('单位净值')
+    wrapper.unmount()
   })
 
   it('勾选「只看持仓」后标的查询携带 only_invested=true', async () => {

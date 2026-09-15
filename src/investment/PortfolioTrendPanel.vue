@@ -8,6 +8,7 @@ import type { ChartOptions, TooltipItem } from 'chart.js'
 // 注册，不再组件自持子集（缺项曾致渲染错误循环冻结界面）；导入即完成注册。
 import '@ledger/utils/chart-registration'
 import { useReferenceStore } from '@/stores/reference'
+import ConceptLabel from '@/investment/ConceptLabel.vue'
 import { formatAmount, formatPrice, amountPrivacyEnabled } from '@ledger/money'
 import { t } from '@ledger/i18n'
 import {
@@ -162,6 +163,20 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
           {{ t(p.labelKey) }}
         </NRadio>
       </NRadioGroup>
+    </NSpace>
+
+    <!-- 曲线口径说明（issue #1369）：随模式切换「组合市值 vs 单标的」两个概念，
+         回答的都是「这条线画的是什么」——常驻 ⓘ 与币种标注同排，不随空态消失。 -->
+    <NSpace align="center" :size="8">
+      <ConceptLabel
+        :label="
+          trend.mode.value === 'portfolio'
+            ? t('investments.trend.modePortfolio')
+            : t('investments.trend.modeInstrument')
+        "
+        :concept="trend.mode.value === 'portfolio' ? 'portfolioTrend' : 'instrumentTrend'"
+        test-id="trend-concept"
+      />
       <NText v-if="currencyCaption" depth="3" data-testid="trend-currency">
         {{ currencyCaption }}
       </NText>

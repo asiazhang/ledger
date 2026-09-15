@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { NButton, NGi, NGrid, NIcon, NStatistic, NTooltip } from 'naive-ui'
-import { InformationCircleOutline } from '@vicons/ionicons5'
+import { NGi, NGrid, NStatistic } from 'naive-ui'
 import { computed } from 'vue'
 import { t } from '@ledger/i18n'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
-import { useInputMode } from '@/composables/useInputMode'
 import { useWindowTier } from '@ledger/window-tier'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
-import AppPopover from '@ledger/ui-kit/AppPopover.vue'
-import { currencyAmountSegments, type CurrencyAmountGroup } from '@/investment/usePortfolioOverview'
+import ConceptLabel from '@/investment/ConceptLabel.vue'
+import type { ConceptKey, ConceptScope } from '@/investment/concept-tips'
+import {
+  currencyAmountSegments,
+  type CurrencyAmountGroup,
+  type CurrencyAmountSegment,
+} from '@/investment/usePortfolioOverview'
 import { statsCard, statsLabel, statsSeparator, statsValue } from './portfolio-stats.css.ts'
 
 /**
@@ -20,10 +23,8 @@ import { statsCard, statsLabel, statsSeparator, statsValue } from './portfolio-s
  *   断点口径接窗口分级唯一事实源、不自立断点；
  * - 颜色：盈亏两卡逐币种按自身符号着盈亏涨跌色（红涨绿跌），总市值卡保持中性
  *   （词汇表「盈亏涨跌色」——涨跌色不外溢到市值）；
- * - 概念说明按输入轴分面（ADR-0088 决策 6 悬停一击可达，先例见首页财务自由度卡）：
- *   指针轴悬停即现（裸 NTooltip，不在 ADR-0035 弹层注册表枚举内）；触控轴悬停
- *   不可达，改点按气泡（经 AppPopover 入弹层注册表），触发器以全局工具类扩热区；
- *   文案两轴同源，且标签/口径/aria 三个概念各一份（i18n `investments.concepts`）。
+ * - 概念说明归 ConceptLabel（issue #1369：标签 + 常驻 ⓘ、按输入轴分面，ADR-0088
+ *   决策 6），本组件只声明每个卡的 concept 键与作用域，文案与双轴形态不再在本文件。
  *
  * 纯展示：三组按币种合计与卡片 testid 前缀由消费方传入，取数口径留在各页。
  */
@@ -36,36 +37,54 @@ const props = defineProps<{
   cumulativePnlGroups: CurrencyAmountGroup[]
   /** 卡片 data-testid 前缀（含结尾连字符）：持仓页 `total-`、首页 `dashboard-total-` */
   testIdPrefix: string
+  /**
+   * 页面作用域：持仓页合计随过滤子集更新（`filtered`）、首页恒为全部持仓
+   * （`wholeLedger`）。累计收益不受此影响，逐卡覆写为 `wholeLedger`。
+   */
+  scope: ConceptScope
 }>()
 
 const reference = useReferenceStore()
 const appStore = useAppStore()
 const windowTier = useWindowTier()
-const inputMode = useInputMode()
 const isMobileTier = computed(() => windowTier.value === 'mobile')
-const isTouch = computed(() => inputMode.value === 'touch')
 
-// 三卡一次算好：标签/口径说明取自 investments.concepts（投资域概念的唯一文案源），
+// 三卡一次算好：标签取自 investments.concepts（投资域概念的唯一文案源）、口径说明
+// 由 ConceptLabel 按 concept 键现取（同源，调用方给不出第二份措辞），
 // 分组段走 currencyAmountSegments（与 formatCurrencyGroups 同一分组展示单点）。
-const stats = computed(() => [
+interface StatCard {
+  testId: string
+  label: string
+  /** 概念闭集成员（concept-tips.ts）：拼错即编译期报错，不进 i18n 缺 key 路径 */
+  concept: ConceptKey
+  scope: ConceptScope
+  pnl: boolean
+  segments: CurrencyAmountSegment[]
+}
+
+const stats = computed<StatCard[]>(() => [
   {
     testId: `${props.testIdPrefix}market-value`,
     label: t('investments.concepts.marketValue'),
-    tip: t('investments.concepts.marketValueTip'),
+    concept: 'marketValue',
+    scope: props.scope,
     pnl: false,
     segments: currencyAmountSegments(props.marketValueGroups, reference.currencyMap),
   },
   {
     testId: `${props.testIdPrefix}unrealized-pnl`,
     label: t('investments.concepts.unrealizedPnl'),
-    tip: t('investments.concepts.unrealizedPnlTip'),
+    concept: 'unrealizedPnl',
+    scope: props.scope,
     pnl: true,
     segments: currencyAmountSegments(props.unrealizedPnlGroups, reference.currencyMap),
   },
   {
     testId: `${props.testIdPrefix}cumulative-pnl`,
     label: t('investments.concepts.cumulativePnl'),
-    tip: t('investments.concepts.cumulativePnlTip'),
+    concept: 'cumulativePnl',
+    // 累计收益两处都是全账本口径：不随持仓页的搜索/账户过滤收窄
+    scope: 'wholeLedger',
     pnl: true,
     segments: currencyAmountSegments(props.cumulativePnlGroups, reference.currencyMap),
   },
@@ -85,37 +104,12 @@ function statValueStyle(pnl: boolean, cents: number) {
           <span :class="statsLabel">
             <!-- 概念名自成一个元素：与触发器之间的纯空白节点被编译器去除，
                  标签文案不因加图标而多出空格（卡片 .text() 逐字口径不变） -->
-            <span>{{ stat.label }}</span>
-            <NTooltip v-if="!isTouch" placement="top" :style="{ maxWidth: '320px' }">
-              <template #trigger>
-                <NButton
-                  text
-                  :aria-label="t('investments.concepts.tipAria', { concept: stat.label })"
-                  :data-testid="`${stat.testId}-info`"
-                >
-                  <NIcon :size="14" color="var(--n-label-text-color, #999)">
-                    <InformationCircleOutline />
-                  </NIcon>
-                </NButton>
-              </template>
-              {{ stat.tip }}
-            </NTooltip>
-            <AppPopover v-else trigger="click" placement="top" :style="{ maxWidth: '320px' }">
-              <template #trigger>
-                <NButton
-                  text
-                  class="touch-hit-area"
-                  :style="{ '--touch-hit-inset': '-10px -10px' }"
-                  :aria-label="t('investments.concepts.tipAria', { concept: stat.label })"
-                  :data-testid="`${stat.testId}-info`"
-                >
-                  <NIcon :size="14" color="var(--n-label-text-color, #999)">
-                    <InformationCircleOutline />
-                  </NIcon>
-                </NButton>
-              </template>
-              {{ stat.tip }}
-            </AppPopover>
+            <ConceptLabel
+              :label="stat.label"
+              :concept="stat.concept"
+              :scope="stat.scope"
+              :test-id="stat.testId"
+            />
           </span>
         </template>
         <span :class="statsValue" :data-testid="`${stat.testId}-value`">

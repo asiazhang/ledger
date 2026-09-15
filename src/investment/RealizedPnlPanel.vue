@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h } from 'vue'
+import { computed, h, type VNodeChild } from 'vue'
 import { NCard, NDataTable, NEmpty, NGi, NGrid, NSpace, NSpin } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
@@ -10,6 +10,7 @@ import { useWindowTier } from '@ledger/window-tier'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
 import { formatAmount } from '@ledger/money'
 import { useRealizedPnl } from '@/investment/useRealizedPnl'
+import ConceptLabel from '@/investment/ConceptLabel.vue'
 import {
   renderMwrRateCell,
   useMoneyWeightedReturn,
@@ -37,7 +38,7 @@ const {
 // 匹配行币种，与持仓页签行同款口径）；数值列右对齐 + 等宽数字（词汇表「表格列形态」
 // 约定，两张汇总表同一单点收口）；数字着盈亏涨跌色（红涨绿跌，与持仓页签
 // 「持仓收益」列、合计三卡同一 semantic-colors 接缝），随主题取亮/暗变体。
-function realizedPnlColumn(title: string): DataTableColumn {
+function realizedPnlColumn(title: string | (() => VNodeChild)): DataTableColumn {
   return {
     title,
     key: 'realized_pnl_cents',
@@ -53,14 +54,22 @@ function realizedPnlColumn(title: string): DataTableColumn {
   }
 }
 
+// 已实现盈亏口径（issue #1369）：FIFO 卖出匹配、已扣卖出手续费、不含未实现与分红
+const realizedPnlTitle = () =>
+  h(ConceptLabel, {
+    label: t('investments.pnl.columns.realizedPnl'),
+    concept: 'realizedPnl',
+    testId: 'pnl-realized',
+  })
+
 const yearColumns: DataTableColumn[] = [
   { title: t('investments.pnl.columns.year'), key: 'year' },
-  realizedPnlColumn(t('investments.pnl.columns.realizedPnl')),
+  realizedPnlColumn(realizedPnlTitle),
 ]
 
 const accountCols: DataTableColumn[] = [
   { title: t('investments.pnl.columns.account'), key: 'account_name' },
-  realizedPnlColumn(t('investments.pnl.columns.realizedPnl')),
+  realizedPnlColumn(realizedPnlTitle),
 ]
 
 // 资金加权收益率（issue #1195 / ADR-0115）：账户级与全账级两个粒度与金额口径
@@ -105,7 +114,15 @@ const mwrColumns: DataTableColumn<MwrRow>[] = [
   {
     // 三态与口径标注都收口在 renderMwrRateCell 单点（与持仓页收益率列同款形态；
     // issue #1346：合集含期初存量的行按 basis 标未年化角标）。
-    title: t('investments.pnl.columns.mwr'),
+    // 收益率口径（issue #1369）：三态与「不随筛选/标的收窄」需在场说明；
+    // 「不随筛选收窄」是该口径自身的属性（按完整历史计算），写在 mwrTip 正文里，
+    // 故不挂作用域变体——变体只承担随页面语境变化的作用域差异
+    title: () =>
+      h(ConceptLabel, {
+        label: t('investments.pnl.columns.mwr'),
+        concept: 'mwr',
+        testId: 'pnl-mwr',
+      }),
     key: 'rate',
     align: 'right',
     className: 'tabular-nums',
@@ -181,7 +198,14 @@ const mwrColumns: DataTableColumn<MwrRow>[] = [
         <!-- 资金加权收益率（issue #1195 / ADR-0115）：账户级 + 全账级（按币种分组、
              不跨币种折算），与金额口径并列、互不换算；重拉由价格失效信号驱动
              （接缝内化），账户筛选变化时与已实现盈亏同路重查对齐行集 -->
-        <NCard :title="t('investments.pnl.byMwr')" size="small">
+        <NCard size="small">
+          <template #header>
+            <ConceptLabel
+              :label="t('investments.pnl.byMwr')"
+              concept="mwr"
+              test-id="pnl-mwr-card"
+            />
+          </template>
           <NDataTable
             v-if="mwrRows.length > 0"
             :columns="mwrColumns"

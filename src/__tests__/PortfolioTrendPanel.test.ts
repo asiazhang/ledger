@@ -5,6 +5,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useInvestmentsSessionStore } from '@/investment/investments-session'
 import PortfolioTrendPanel from '@/investment/PortfolioTrendPanel.vue'
 import { componentVm } from '@ledger/test-support/component-vm'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { makeInstrument } from './factories'
 import {
   firePricesChanged,
@@ -301,5 +302,28 @@ describe('PortfolioTrendPanel 走势面板', () => {
     expect(calls.length).toBe(before + 1)
     // 图表序列随重拉结果刷新
     expect(chartPayload(wrapper).datasets[0].data).toEqual([100000, 110000])
+  })
+
+  it('曲线口径说明随模式切换概念：组合市值 / 单标的两条曲线各带说明（issue #1369）', async () => {
+    const wrapper = mount(PortfolioTrendPanel)
+    await flushPromises()
+    // 断言对准用户可观察结果：删掉口径说明接线即找不到触发器、本用例变红
+    const trigger = wrapper.find('[data-testid="trend-concept-info"]')
+    expect(trigger.exists()).toBe(true)
+    expect(trigger.attributes('aria-label')).toBe('组合市值说明')
+    // 组合曲线画的是历史市值：不含现金账户、跨币种用同期历史汇率（不是当期汇率）
+    const tip = await hoverTipText(trigger)
+    expect(tip).toContain('历史市值')
+    expect(tip).toContain('同期历史汇率')
+    wrapper.unmount()
+
+    // 单标的：同一挂点换成该概念的口径（价格序列，不是持仓市值也不是收益率）；
+    // 另起一次挂载而非切换模式——已开启的 tooltip 不跨挂载复用
+    const instrumentWrapper = mountWithEntry(stockInstrument)
+    await flushPromises()
+    const instrumentTrigger = instrumentWrapper.find('[data-testid="trend-concept-info"]')
+    expect(instrumentTrigger.attributes('aria-label')).toBe('单标的说明')
+    expect(await hoverTipText(instrumentTrigger)).toContain('不是持仓市值')
+    instrumentWrapper.unmount()
   })
 })

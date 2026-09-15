@@ -15,6 +15,7 @@ import { componentVm } from '@ledger/test-support/component-vm'
 import { formatAmount, formatPrice } from '@ledger/money'
 import { probeColor } from '@ledger/test-support/dom'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
 import { useAppStore } from '@/stores/app'
 import {
@@ -201,16 +202,31 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
       expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true)
     }
     expect(document.body.textContent).not.toContain('累计分红')
-    await wrapper.find('[data-testid="total-cumulative-pnl-info"]').trigger('mouseenter')
-    // NTooltip delay 默认 100ms（防误触），jsdom 等真实时钟而非 flushPromises
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
-    const tip = document.body.querySelector('.n-popover')
-    expect(tip).not.toBeNull()
+    const tipText = await hoverTipText(wrapper.find('[data-testid="total-cumulative-pnl-info"]'))
     // 累计收益口径：三腿相加（未实现 + 已实现 + 分红）且全账本、不跨币种
-    expect(tip!.textContent).toContain('已实现盈亏')
-    expect(tip!.textContent).toContain('累计分红')
-    expect(tip!.textContent).toContain('全账本')
+    expect(tipText).toContain('已实现盈亏')
+    expect(tipText).toContain('累计分红')
+    expect(tipText).toContain('全账本')
+  })
+
+  it('持仓表列头口径说明：成本/现价/市值/持仓收益/收益率各带说明触发器（issue #1369）', async () => {
+    // 断言对准用户可观察结果：删掉任一列头的 ConceptLabel 接线即找不到触发器、本用例变红
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    for (const id of [
+      'holdings-cost-info',
+      'holdings-price-info',
+      'holdings-market-value-info',
+      'holdings-unrealized-pnl-info',
+      'holdings-mwr-info',
+    ]) {
+      expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true)
+    }
+    const mwrTip = await hoverTipText(wrapper.find('[data-testid="holdings-mwr-info"]'))
+    // 三态口径的核心事实：年化与未年化不可互算（防误读诉求，ADR-0115 修订）
+    expect(mwrTip).toContain('两者不可互算')
+    // 「不随筛选收窄」是该口径自身属性：写在 mwrTip 正文里（删掉该句即本断言变红）
+    expect(mwrTip).toContain('不随搜索或标的筛选收窄')
   })
 
   it('触控轴：口径说明点按可达（入弹层注册表的气泡），热区外扩到 ≥48px', async () => {
@@ -229,7 +245,10 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     const popover = document.body.querySelector('.n-popover')
     expect(popover).not.toBeNull()
     expect(popover!.textContent).toContain('数量 × 最新价格')
-    expect(popover!.textContent).toContain('无行情的持仓不计入')
+    // 边界句随 issue #1369 修订：缺价与缺汇率两种不计入同句给出
+    expect(popover!.textContent).toContain('缺现价或缺汇率的持仓不计入')
+    // 持仓页作用域句：合计随过滤子集更新（首页同一组件挂 wholeLedger 变体）
+    expect(popover!.textContent).toContain('随当前搜索与账户过滤收窄')
     // 卸载触控挂载，避免已开启的气泡泄入后续指针轴断言
     wrapper!.unmount()
     wrapper = undefined

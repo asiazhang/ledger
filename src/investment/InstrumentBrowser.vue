@@ -19,6 +19,7 @@ import { usePricesChanged } from '@/investment/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { useWindowTier } from '@ledger/window-tier'
 import SyncProgressBar from '@/investment/SyncProgressBar.vue'
+import ConceptLabel from '@/investment/ConceptLabel.vue'
 import { errorMessage as extractErrorMessage } from '@ledger/utils/errors'
 import {
   INSTRUMENT_PRICE_CHANNELS,
@@ -227,7 +228,13 @@ const instrumentBrowseColumns = computed<DataTableColumn<Instrument>[]>(() => [
     },
   },
   {
-    title: t('investments.browser.columns.price'),
+    // 现价口径（issue #1369）：基金行显示的是最新单位净值，列名不随类型改名
+    title: () =>
+      h(ConceptLabel, {
+        label: t('investments.browser.columns.price'),
+        concept: 'price',
+        testId: 'browser-price',
+      }),
     key: 'price_cents',
     width: 100,
     render(row) {

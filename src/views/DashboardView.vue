@@ -210,6 +210,7 @@ onMounted(async () => {
       <PortfolioStatsCards
         v-if="holdingRows.length > 0"
         test-id-prefix="dashboard-total-"
+        scope="wholeLedger"
         :market-value-groups="totalMarketValueGroups"
         :unrealized-pnl-groups="totalUnrealizedPnlGroups"
         :cumulative-pnl-groups="totalCumulativePnlGroups"

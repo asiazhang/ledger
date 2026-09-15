@@ -5,6 +5,7 @@ import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { componentVm } from '@ledger/test-support/component-vm'
 import { mountWithDialog } from '@ledger/test-support/mount'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { firePricesChanged, resetPricesChangedHandler } from './prices-changed-mock'
 import { makeMwrSummary, makePnlSummary } from './factories'
 import RealizedPnlPanel from '@/investment/RealizedPnlPanel.vue'
@@ -201,19 +202,14 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
         }),
       },
     })
-    // 指针轴：悬停触发器 → 口径解释 tooltip（NTooltip delay 默认 100ms，
-    // jsdom 真实时钟等待——HoldingsOverview.test.ts 同款）
+    // 指针轴：悬停触发器 → 口径解释 tooltip（开启仪式收在 test-support/tooltip）
     const wrapper = mountWithDialog(HoldingsOverview)
     await flushPromises()
     const trigger = wrapper.find('td[data-col-key="mwr"] [data-mwr-marker]')
     expect(trigger.exists()).toBe(true)
-    await trigger.trigger('mouseenter')
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
-    const tip = document.body.querySelector('.n-popover')
-    expect(tip).not.toBeNull()
-    expect(tip!.textContent).toContain('未年化')
-    expect(tip!.textContent).toContain('累计收益')
+    const tip = await hoverTipText(trigger)
+    expect(tip).toContain('未年化')
+    expect(tip).toContain('累计收益')
     wrapper.unmount()
 
     // 触控轴：hover 不可达 → 点按触发器出同一文案气泡（AppPopover 入弹层注册表）
@@ -257,6 +253,23 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
     expect(scopeTexts).toEqual(['证券账户A', '全账', '全账'])
     const currencyTexts = wrapper.findAll('td[data-col-key="currency_code"]').map((c) => c.text())
     expect(currencyTexts).toEqual(['CNY', 'CNY', 'USD'])
+    wrapper.unmount()
+  })
+
+  it('口径说明接线：已实现盈亏两表列头与收益率卡各带说明触发器（issue #1369）', async () => {
+    // 断言对准用户可观察结果：删掉任一挂点的 ConceptLabel 接线即找不到触发器、本用例变红
+    wireInvokeSeam({
+      defaults: { realized_pnl_summary: makePnlSummary(), money_weighted_return_summary: makeMwrSummary() },
+    })
+    const wrapper = mountWithDialog(RealizedPnlPanel)
+    await flushPromises()
+    for (const id of ['pnl-realized-info', 'pnl-mwr-info', 'pnl-mwr-card-info']) {
+      expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true)
+    }
+    // 已实现盈亏口径：不含未实现与分红（与持仓收益、累计收益三者的边界）
+    expect(await hoverTipText(wrapper.find('[data-testid="pnl-realized-info"]'))).toContain(
+      '不含现金分红',
+    )
     wrapper.unmount()
   })
 
