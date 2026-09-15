@@ -62,25 +62,32 @@
 //   3a；Once 无委托形态、非声明形的局部布线包装不可达。3b 按行首判定跳过注释行、
 //   不做字符串掩码——字符串内恰好含完整声明形态文本理论上可误红（现实中未见）。
 //
-// 规则 4（#822）：测试文件内定义领域数据工厂即红——组件测试数据工厂唯一定义点
-// 在共享工厂层出口（#1322 前为 src/__tests__/factories.ts；#1322 抽
-// scheduled-plan-list 包时计划/期次四厂随测试面上收
-// @ledger/test-support/plan-factories，壳侧 factories.ts 改再导出），
+// 规则 4（#822；#1364 辖域扩到共享测试替身）：测试文件内定义领域数据工厂与共享
+// 测试替身即红——组件测试数据工厂唯一定义点在共享工厂层出口
+// （#1322 前为 src/__tests__/factories.ts；#1322 抽 scheduled-plan-list 包时
+// 计划/期次四厂随测试面上收 @ledger/test-support/plan-factories，壳侧 factories.ts
+// 改再导出），toast sink 假件唯一定义点在共享测试支持包
+// （packages/test-support/src/toast-sink.ts，#1354 上收），
 // 测试文件本地定义即副本回潮。
-//   名单（精确声明名）：makePlan / makeSubscriptionPlan / makeInstallmentPlan /
-//   makeTransferPlan / makeOccurrence。交易侧 makeTxn / makeTransaction 待 #821
+//   名单（精确声明名）：领域数据工厂 makePlan / makeSubscriptionPlan /
+//   makeInstallmentPlan / makeTransferPlan / makeOccurrence；共享测试替身
+//   makeFakeSink / resetToastSink。交易侧 makeTxn / makeTransaction 待 #821
 //   收敛落地后补入名单——本票与 #821 文件面不相交、互不阻塞，名单先行会让其
 //   未收敛副本在守门直接变红。
-//   白名单（相对各扫描区间的 posix 路径）：factories.ts（壳侧再导出层）与
-//   plan-factories.ts（#1322 起的唯一定义点住址）与
-//   TransactionsView/common.ts（#821 交易薄壳一行包装，交易名补入名单时生效）。
-//   双源代价（登记处）：名单与共享工厂层出口须人工同步——新增共享工厂必须同步
-//   本名单，否则该厂的新副本不被拦截。
-//   文本盲区（靠评审兜底）：改名逃逸（工厂改名或换名定义即逃逸名单）；仅识别
+//   白名单（`<扫描区间>:<相对该区间的 posix 路径>`，区间名见 ScanTarget.zone）：
+//   app:factories.ts（壳侧再导出层）与 seam-home:plan-factories.ts（#1322 起的
+//   唯一定义点住址）与 app:TransactionsView/common.ts（#821 交易薄壳一行包装，
+//   交易名补入名单时生效）与 seam-home:toast-sink.ts（#1364 起的替身唯一定义点
+//   住址）。键含区间是因为各区间 rel 基准不同——只按相对路径放行会让别的区间里
+//   同名文件（如壳侧 src/__tests__/toast-sink.ts）静默逃逸；壳侧再导出层与
+//   plan-factories 同款：`export {} from` 非声明形不命中正则，白名单是双保险。
+//   双源代价（登记处）：名单与各唯一定义点出口须人工同步——新增共享工厂或共享
+//   测试替身必须同步本名单，否则其新副本不被拦截。
+//   文本盲区（靠评审兜底）：改名逃逸（工厂/替身改名或换名定义即逃逸名单）；仅识别
 //   function/const/let/var 声明形，注释行整行跳过、字符串内无声明前缀不匹配，
-//   与规则 3b 同款行首判定。规则 4 在 seam 宿主与包内测试同样不豁免——
-//   唯一定义点不在 seam 宿主，测试 helper 内本地定义名单工厂同样是回潮
-//   （豁免分工与规则 1/3 不同是有意为之）。
+//   与规则 3b 同款行首判定。规则 4 在 seam 宿主与包内测试同样不豁免：替身唯一
+//   定义点虽住 seam 宿主，放行靠白名单精确路径而非整区豁免；包内测试 helper 内
+//   本地定义名单名同样是回潮（豁免分工与规则 1/3 不同是有意为之）。
 //
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-test-stubs.ts`。
@@ -354,31 +361,41 @@ function findLocalWiringWrapper(rel: string, source: string): string[] {
   return hits
 }
 
-// —— 规则 4：领域数据工厂本地定义（声明形出现即红；注释行整行跳过，字符串内
-//    无声明关键字前缀不匹配——与规则 3b 同款行首判定） ——
-// 名单与共享工厂层出口人工同步（双源代价，见头注释）：新增共享工厂必须同步此清单；
-// 交易侧 makeTxn/makeTransaction 待 #821 收敛落地后补入。
+// —— 规则 4：共享测试替身 / 领域数据工厂本地定义（声明形出现即红；注释行整行跳过，
+//    字符串内无声明关键字前缀不匹配——与规则 3b 同款行首判定） ——
+// 名单与各唯一定义点出口人工同步（双源代价，见头注释）：新增共享工厂或共享测试替身
+// 必须同步此清单；交易侧 makeTxn/makeTransaction 待 #821 收敛落地后补入。
 const FACTORY_NAMES = [
   'makePlan',
   'makeSubscriptionPlan',
   'makeInstallmentPlan',
   'makeTransferPlan',
   'makeOccurrence',
+  // 共享测试替身（#1364）：toast sink 假件（#1354 上收）唯一定义点
+  // @ledger/test-support/toast-sink，测试文件本地复制声明即红。
+  'makeFakeSink',
+  'resetToastSink',
 ]
 const FACTORY_DECL = new RegExp(
   `\\b(?:function\\s+|(?:const|let|var)\\s+)(${FACTORY_NAMES.join('|')})\\b`,
   'g',
 )
-// 白名单按相对各扫描区间的 posix 路径登记：唯一定义点 + 交易薄壳一行包装（#821）。
+// 白名单按 `<扫描区间>:<相对该区间的 posix 路径>` 登记：唯一定义点 + 交易薄壳一行
+// 包装（#821）。键必须带区间——各区间 rel 基准不同（app = testsDir、seam-home =
+// seam 宿主、pkg-tests = packages 根），只按相对路径放行会让别的区间里的同名文件
+// 静默逃逸（如壳侧 src/__tests__/toast-sink.ts 定义替身却绿）。
 // #1322 起计划/期次四厂（subscription/installment/scheduled_transfer/occurrence）
 // 上收 @ledger/test-support/plan-factories——抽 scheduled-plan-list 包时其包内测试
 // 跟随被测包，而规则 4 不豁免包内测试与 seam 宿主，唯一定义点随测试面上收，
-// seam-home 区间相对路径 'plan-factories.ts' 登记为新住址；壳侧 factories.ts 改
-// 再导出，仍在本白名单（壳侧测试经 './factories' 消费，import 面不变）。
+// seam-home 区间路径登记为新住址；壳侧 factories.ts 改再导出，仍在 app 区间白名单
+// （壳侧测试经 './factories' 消费，import 面不变）。
+// #1364 同款：toast sink 假件（makeFakeSink/resetToastSink，#1354 上收）唯一定义点
+// 住 seam 宿主，按区间 + 精确路径放行，不做整区豁免。
 const FACTORY_WHITELIST = new Set([
-  'factories.ts',
-  'plan-factories.ts',
-  join('TransactionsView', 'common.ts'),
+  'app:factories.ts',
+  'seam-home:plan-factories.ts',
+  `app:${join('TransactionsView', 'common.ts')}`,
+  'seam-home:toast-sink.ts',
 ])
 
 function findFactoryDefinition(rel: string, source: string): string[] {
@@ -390,7 +407,7 @@ function findFactoryDefinition(rel: string, source: string): string[] {
     let m: RegExpExecArray | null
     while ((m = FACTORY_DECL.exec(line))) {
       hits.push(
-        `  ${rel}:${i + 1}  领域数据工厂本地定义（${m[1]}）——组件测试数据工厂唯一定义点在共享工厂层，消费共享出口而非本地定义`,
+        `  ${rel}:${i + 1}  共享测试替身/领域数据工厂本地定义（${m[1]}）——唯一定义点在共享工厂层或共享测试支持包，消费共享出口而非本地定义`,
       )
     }
   })
@@ -417,7 +434,7 @@ function main(): void {
     const rule2 = findDuplicateWiring(target.rel, source, units)
     const rule3a = inSeamHome ? [] : findHandWrittenDispatchStub(target.rel, source, units)
     const rule3b = inSeamHome ? [] : findLocalWiringWrapper(target.rel, source)
-    const rule4 = FACTORY_WHITELIST.has(target.rel.split(sep).join('/'))
+    const rule4 = FACTORY_WHITELIST.has(`${target.zone}:${target.rel.split(sep).join('/')}`)
       ? []
       : findFactoryDefinition(target.rel, source)
     handWired += rule1.length
@@ -430,14 +447,14 @@ function main(): void {
 
   if (violations.length > 0) {
     console.error(
-      `✗ 测试桩守门：发现 ${handWired} 处手搓参考数据桩、${duplicated} 处同回调重复桩、${dispatchStubs} 处手写 invoke 分发桩、${wiringWrappers} 处本地布线包装、${factoryDefs} 处领域数据工厂本地定义（登记处命令：${commands.join(' ')}）\n` +
+      `✗ 测试桩守门：发现 ${handWired} 处手搓参考数据桩、${duplicated} 处同回调重复桩、${dispatchStubs} 处手写 invoke 分发桩、${wiringWrappers} 处本地布线包装、${factoryDefs} 处共享测试替身/领域数据工厂本地定义（登记处命令：${commands.join(' ')}）\n` +
         violations.join('\n') +
         `\ninvoke 布线唯一接缝：wireInvokeSeam（${relative(process.cwd(), join(seamHomeDir, 'invoke-mock.ts'))}，issue #746/#750/#1152，ADR-0085）`,
     )
     process.exit(1)
   }
 
-  console.log(`✅ 测试桩守门通过（登记处 ${commands.length} 条命令；同回调重复 0、手写分发桩 0、本地布线包装 0、领域数据工厂本地定义 0；testsDir=${relative(process.cwd(), testsDir)}、seamHome=${relative(process.cwd(), seamHomeDir)}、包内测试纳管）`)
+  console.log(`✅ 测试桩守门通过（登记处 ${commands.length} 条命令；同回调重复 0、手写分发桩 0、本地布线包装 0、共享测试替身/领域数据工厂本地定义 0；testsDir=${relative(process.cwd(), testsDir)}、seamHome=${relative(process.cwd(), seamHomeDir)}、包内测试纳管）`)
 }
 
 // 仅直接运行时执行 main；被测试/其他工具 import 时只取导出的扫描函数。
