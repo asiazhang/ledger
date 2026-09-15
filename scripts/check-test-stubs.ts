@@ -74,11 +74,13 @@
 //   makeFakeSink / resetToastSink。交易侧 makeTxn / makeTransaction 待 #821
 //   收敛落地后补入名单——本票与 #821 文件面不相交、互不阻塞，名单先行会让其
 //   未收敛副本在守门直接变红。
-//   白名单（相对各扫描区间的 posix 路径）：factories.ts（壳侧再导出层）与
-//   plan-factories.ts（#1322 起的唯一定义点住址）与
-//   TransactionsView/common.ts（#821 交易薄壳一行包装，交易名补入名单时生效）与
-//   toast-sink.ts（#1364 起的替身唯一定义点住址）。壳侧再导出层与 plan-factories
-//   同款：`export {} from` 非声明形不命中正则，白名单是双保险。
+//   白名单（`<扫描区间>:<相对该区间的 posix 路径>`，区间名见 ScanTarget.zone）：
+//   app:factories.ts（壳侧再导出层）与 seam-home:plan-factories.ts（#1322 起的
+//   唯一定义点住址）与 app:TransactionsView/common.ts（#821 交易薄壳一行包装，
+//   交易名补入名单时生效）与 seam-home:toast-sink.ts（#1364 起的替身唯一定义点
+//   住址）。键含区间是因为各区间 rel 基准不同——只按相对路径放行会让别的区间里
+//   同名文件（如壳侧 src/__tests__/toast-sink.ts）静默逃逸；壳侧再导出层与
+//   plan-factories 同款：`export {} from` 非声明形不命中正则，白名单是双保险。
 //   双源代价（登记处）：名单与各唯一定义点出口须人工同步——新增共享工厂或共享
 //   测试替身必须同步本名单，否则其新副本不被拦截。
 //   文本盲区（靠评审兜底）：改名逃逸（工厂/替身改名或换名定义即逃逸名单）；仅识别
@@ -378,19 +380,22 @@ const FACTORY_DECL = new RegExp(
   `\\b(?:function\\s+|(?:const|let|var)\\s+)(${FACTORY_NAMES.join('|')})\\b`,
   'g',
 )
-// 白名单按相对各扫描区间的 posix 路径登记：唯一定义点 + 交易薄壳一行包装（#821）。
+// 白名单按 `<扫描区间>:<相对该区间的 posix 路径>` 登记：唯一定义点 + 交易薄壳一行
+// 包装（#821）。键必须带区间——各区间 rel 基准不同（app = testsDir、seam-home =
+// seam 宿主、pkg-tests = packages 根），只按相对路径放行会让别的区间里的同名文件
+// 静默逃逸（如壳侧 src/__tests__/toast-sink.ts 定义替身却绿）。
 // #1322 起计划/期次四厂（subscription/installment/scheduled_transfer/occurrence）
 // 上收 @ledger/test-support/plan-factories——抽 scheduled-plan-list 包时其包内测试
 // 跟随被测包，而规则 4 不豁免包内测试与 seam 宿主，唯一定义点随测试面上收，
-// seam-home 区间相对路径 'plan-factories.ts' 登记为新住址；壳侧 factories.ts 改
-// 再导出，仍在本白名单（壳侧测试经 './factories' 消费，import 面不变）。
+// seam-home 区间路径登记为新住址；壳侧 factories.ts 改再导出，仍在 app 区间白名单
+// （壳侧测试经 './factories' 消费，import 面不变）。
 // #1364 同款：toast sink 假件（makeFakeSink/resetToastSink，#1354 上收）唯一定义点
-// 住 seam 宿主（相对路径 'toast-sink.ts'），按精确路径放行，不做整区豁免。
+// 住 seam 宿主，按区间 + 精确路径放行，不做整区豁免。
 const FACTORY_WHITELIST = new Set([
-  'factories.ts',
-  'plan-factories.ts',
-  join('TransactionsView', 'common.ts'),
-  'toast-sink.ts',
+  'app:factories.ts',
+  'seam-home:plan-factories.ts',
+  `app:${join('TransactionsView', 'common.ts')}`,
+  'seam-home:toast-sink.ts',
 ])
 
 function findFactoryDefinition(rel: string, source: string): string[] {
@@ -429,7 +434,7 @@ function main(): void {
     const rule2 = findDuplicateWiring(target.rel, source, units)
     const rule3a = inSeamHome ? [] : findHandWrittenDispatchStub(target.rel, source, units)
     const rule3b = inSeamHome ? [] : findLocalWiringWrapper(target.rel, source)
-    const rule4 = FACTORY_WHITELIST.has(target.rel.split(sep).join('/'))
+    const rule4 = FACTORY_WHITELIST.has(`${target.zone}:${target.rel.split(sep).join('/')}`)
       ? []
       : findFactoryDefinition(target.rel, source)
     handWired += rule1.length

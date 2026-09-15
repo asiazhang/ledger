@@ -578,7 +578,7 @@ export { makeFakeSink, resetToastSink }
     }
   })
 
-  it('toast sink 假件唯一定义点（seam 宿主 toast-sink.ts）白名单不拦（#1364）', () => {
+  it('toast sink 假件唯一定义点（seam 宿主 toast-sink.ts）白名单不拦——删本白名单行即红（#1364 负向条目）', () => {
     const dirs = makeFixture()
     writeFileSync(
       join(dirs.seamHome, 'toast-sink.ts'),
@@ -591,19 +591,17 @@ export function resetToastSink(): void {}
     expect(runFixture(dirs).status).toBe(0)
   })
 
-  it('白名单只认精确路径：seam 宿主内换名文件的同名替身定义仍红（删白名单行即变红的负向哨兵，#1364）', () => {
-    const dirs = makeFixture()
-    writeFileSync(
-      join(dirs.seamHome, 'sink-copy.ts'),
-      `export function makeFakeSink() {
+  it('白名单按扫描区间精确放行：同名文件住别的区间仍是回潮（app 区间 toast-sink.ts 定义即红，#1364）', () => {
+    const dirs = makeFixture({
+      'toast-sink.ts': `export function makeFakeSink() {
   return { error: () => {} }
 }
 export function resetToastSink(): void {}
 `,
-    )
+    })
     const r = runFixture(dirs)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('sink-copy.ts')
+    expect(r.output).toContain('toast-sink.ts')
     expect(r.output).toContain('makeFakeSink')
     expect(r.output).toContain('resetToastSink')
   })
