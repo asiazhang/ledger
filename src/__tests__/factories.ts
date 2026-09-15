@@ -1,5 +1,3 @@
-import { vi, type Mock } from 'vitest'
-import { registerToastSink, type ToastSink } from '@ledger/loadable'
 import type {
   Account,
   Category,
@@ -29,10 +27,16 @@ export {
   makeOccurrence,
 } from '@ledger/test-support/plan-factories'
 
+// toast sink 假件自 #1354 起上收共享测试支持包（@ledger/test-support/toast-sink）：
+// @ledger/loadable 与 @ledger/scheduled-plan-list 包内测试不可引用壳侧 factories
+// （结构守门规则③），同实现局部替身随测试面上收，唯一定义点在包内；
+// 此处再导出保持壳侧既有 import 面（'./factories'）不变。
+export { makeFakeSink, resetToastSink } from '@ledger/test-support/toast-sink'
+
 /**
  * 组件/composable 测试的共享数据工厂（issue #110 审查：消除测试文件间重复）。
  * invoke 布线一律走唯一接缝 wireInvokeSeam（@ledger/test-support/invoke-mock.ts，ADR-0085），
- * 本文件只承载数据夹具与 toast sink 假件，不含任何布线能力。
+ * 本文件只承载数据夹具（toast sink 假件见 @ledger/test-support/toast-sink），不含任何布线能力。
  */
 
 export const mockCurrencies: Currency[] = [
@@ -267,11 +271,6 @@ export function makeMwrSummary(
   }
 }
 
-/** 假 toast sink：记录 error toast 调用（Loadable 默认策略经 sink 弹出，断言只看 sink 面） */
-export function makeFakeSink(): ToastSink & { error: Mock<(content: string) => void> } {
-  return { error: vi.fn<(content: string) => void>() }
-}
-
 /** 实物资产实体夹具（issue #466）：全字段读模型 + 当前估值三件套。 */
 export function makePhysicalAsset(partial: Partial<PhysicalAsset> & { id: string }): PhysicalAsset {
   return {
@@ -307,9 +306,4 @@ export function makePhysicalAssetList(
     native_currency: 'CNY',
     ...partial,
   }
-}
-
-/** 每用例复位 sink 为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰 */
-export function resetToastSink(): void {
-  registerToastSink({ error: () => {} })
 }
