@@ -125,11 +125,11 @@ impl SyncChannel {
     /// [`super::scheduler::run_round_once`]——通道配置不为簿记而改。
     pub fn run_round<S: RoundConn>(
         &self,
-        conn: &S,
+        locks: &S,
         mode: &EnvelopeMode<'_>,
         options: &ChannelOptions,
     ) -> Result<SyncRoundReport> {
-        run_round_with(conn, self.transport.as_ref(), &self.layout, mode, options)
+        run_round_with(locks, self.transport.as_ref(), &self.layout, mode, options)
     }
 
     /// 读取通道上的当前检查点指针（不下载快照体；新端引导前的预检接缝，

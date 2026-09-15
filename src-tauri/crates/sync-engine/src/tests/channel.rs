@@ -6,10 +6,11 @@
 //! S3 桩（AC：本地通道桩上的两端文件交换集成测试）。
 
 use rusqlite::Connection;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use crate::channel::{
-    ChannelLayout, ChannelManifest, ChannelOptions, fetch_checkpoint, run_round, run_round_with,
-    upload_checkpoint, upload_checkpoint_with,
+    ChannelLayout, ChannelManifest, ChannelOptions, ConnSegment, RoundConn, connection_round_key,
+    fetch_checkpoint, run_round, run_round_with, upload_checkpoint, upload_checkpoint_with,
 };
 use crate::envelope::{EnvelopeMode, EnvelopeParams, is_sealed};
 use crate::tests::common::{MemoryTransport, direct, make_expense, read_transaction};
@@ -648,10 +649,6 @@ fn failed_round_leaves_local_ledger_untouched() {
 // ---------------------------------------------------------------------------
 // 网络段出锁（issue #1339 / ADR-0120 决策 1/2）：网络段不持连接锁——负向判据
 // ---------------------------------------------------------------------------
-
-use std::sync::{Arc, Mutex as StdMutex};
-
-use crate::channel::{ConnSegment, RoundConn, connection_round_key};
 
 /// 测试用轮次连接源：每段对共享互斥体短取一次锁（生产 `AutoRoundConn` 同型，
 /// 阻塞等待无放弃口径），用完即还。

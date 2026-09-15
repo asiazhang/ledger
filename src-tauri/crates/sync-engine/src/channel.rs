@@ -344,7 +344,7 @@ impl RoundConn for DirectConn<'_> {
 /// 单个同步轮次的共享上下文（恒结伴参数的聚合）。连接消费一律经
 /// [`RoundConn`] 接缝分段短取（ADR-0120 决策 2）。
 struct RoundCtx<'a, 'p, S: RoundConn> {
-    conn: &'a S,
+    locks: &'a S,
     transport: &'a dyn Transport,
     layout: &'a ChannelLayout,
     mode: &'a EnvelopeMode<'p>,
@@ -400,30 +400,30 @@ pub struct SyncRoundReport {
 /// 部分静默状态；已上传的段与已应用的重放各自原子（重试轮次幂等续作），
 /// 本地记账不受影响（失败语义三分重述见模块文档）。
 pub fn run_round<S: RoundConn>(
-    conn: &S,
+    locks: &S,
     transport: &dyn Transport,
     layout: &ChannelLayout,
     mode: &EnvelopeMode<'_>,
 ) -> Result<SyncRoundReport> {
-    run_round_with(conn, transport, layout, mode, &ChannelOptions::default())
+    run_round_with(locks, transport, layout, mode, &ChannelOptions::default())
 }
 
 /// 执行一次同步轮次（显式选项；测试注入低 KDF 迭代与段容量）。
 pub fn run_round_with<S: RoundConn>(
-    conn: &S,
+    locks: &S,
     transport: &dyn Transport,
     layout: &ChannelLayout,
     mode: &EnvelopeMode<'_>,
     options: &ChannelOptions,
 ) -> Result<SyncRoundReport> {
     // 读段：本机 DeviceId（首用生成并持久化）。
-    let device_id = conn.with_connection(ConnSegment::Read, device::device_id)?;
+    let device_id = locks.with_connection(ConnSegment::Read, device::device_id)?;
     transport.ensure_dir(&layout.book_dir())?;
     transport.ensure_dir(&layout.checkpoint_dir())?;
     transport.ensure_dir(&layout.streams_dir())?;
 
     let ctx = RoundCtx {
-        conn,
+        locks,
         transport,
         layout,
         mode,
@@ -484,7 +484,7 @@ fn publish_own_ops<S: RoundConn>(
     // （KDF）与上传都是网络段，不消费连接。发布位点的通道视图取自 manifest 而
     // 非本地表——「清单写回失败」后重传同段内容确定等同（op 只增不改），天然
     // 幂等；本地不为此新增状态。
-    let own_ops = ctx.conn.with_connection(ConnSegment::Read, |conn| {
+    let own_ops = ctx.locks.with_connection(ConnSegment::Read, |conn| {
         ops::read_own_since(conn, device_id, remote_own.uploaded_through())
     })?;
     if own_ops.is_empty() {
@@ -555,7 +555,7 @@ fn pull_foreign_streams<S: RoundConn>(
     // 读段：全部他人流的位点一次短取（位点在本轮内不变——位点只随重放推进，
     // 重放只发生在本轮：同端同库至多一轮在途，本地写不触位点）。
     let positions: std::collections::BTreeMap<String, i64> =
-        ctx.conn.with_connection(ConnSegment::Read, |conn| {
+        ctx.locks.with_connection(ConnSegment::Read, |conn| {
             manifest
                 .streams
                 .iter()
@@ -596,7 +596,7 @@ fn pull_foreign_streams<S: RoundConn>(
                 return Err(segment_corrupt_error(&path));
             }
             // 重放段：本段重放短取一次锁（逐条事务在引擎内逐条提交，逐条原子）。
-            let reports = ctx.conn.with_connection(ConnSegment::Replay, |conn| {
+            let reports = ctx.locks.with_connection(ConnSegment::Replay, |conn| {
                 engine::apply_ops(conn, &incoming)
             })?;
             for item in reports {

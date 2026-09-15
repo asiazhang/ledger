@@ -273,6 +273,16 @@ use crate::channel::SyncRoundReport;
 use crate::trigger::run_round_once;
 use std::sync::{Arc, Mutex};
 
+/// 登记一轮在途并要求成功（域单测速记：InFlight 即测试前提被破坏）。
+fn begin_expect(key: u64) -> crate::trigger::round_gate::RoundHandle {
+    match crate::trigger::round_gate::begin_round(key) {
+        crate::trigger::round_gate::RoundStart::Began(handle) => handle,
+        crate::trigger::round_gate::RoundStart::InFlight(_) => {
+            panic!("空闲键上登记应成功")
+        }
+    }
+}
+
 /// 内存假通道的轮次句柄（`SyncChannel::from_parts` 测试接缝，不经真实 S3）。
 /// 本组用例全链随被测本实例驱动（域单测纪律：`crate::…`）。
 fn memory_channel() -> crate::trigger::SyncChannel {
@@ -304,12 +314,7 @@ fn auto_round_skips_while_round_in_flight() {
     let key = crate::DirectConn::new(&conn).round_key();
 
     // 登记一轮在途（本测试扮演在途执行体）。
-    let handle = match crate::trigger::round_gate::begin_round(key) {
-        crate::trigger::round_gate::RoundStart::Began(handle) => handle,
-        crate::trigger::round_gate::RoundStart::InFlight(_) => {
-            panic!("空闲库上登记应成功")
-        }
-    };
+    let handle = begin_expect(key);
 
     // 在途：自动入口放弃本轮——零动作（不触网、不写通道、不落成功时刻）。
     let outcome =
@@ -360,12 +365,7 @@ fn manual_round_waits_and_reuses_in_flight_report() {
     // 在途执行体：另一线程稍后交出一份带标记的报告（上传段数 9——空通道真跑
     // 一轮不可能产出）。
     let key = crate::DirectConn::new(&conn).round_key();
-    let handle = match crate::trigger::round_gate::begin_round(key) {
-        crate::trigger::round_gate::RoundStart::Began(handle) => handle,
-        crate::trigger::round_gate::RoundStart::InFlight(_) => {
-            panic!("空闲库上登记应成功")
-        }
-    };
+    let handle = begin_expect(key);
     let completer = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(100));
         handle.complete(Ok(SyncRoundReport {
@@ -406,23 +406,13 @@ fn in_flight_mutex_keys_by_connection_identity() {
     let key_b = crate::DirectConn::new(&conn_b).round_key();
     assert_ne!(key_a, key_b, "不同连接是不同库，身份键应不同");
 
-    let handle_a = match crate::trigger::round_gate::begin_round(key_a) {
-        crate::trigger::round_gate::RoundStart::Began(handle) => handle,
-        crate::trigger::round_gate::RoundStart::InFlight(_) => {
-            panic!("空闲库上登记应成功")
-        }
-    };
+    let handle_a = begin_expect(key_a);
     // 同键：撞上在途。异键：并行登记成功。
     assert!(matches!(
         crate::trigger::round_gate::begin_round(key_a),
         crate::trigger::round_gate::RoundStart::InFlight(_)
     ));
-    let handle_b = match crate::trigger::round_gate::begin_round(key_b) {
-        crate::trigger::round_gate::RoundStart::Began(handle) => handle,
-        crate::trigger::round_gate::RoundStart::InFlight(_) => {
-            panic!("异键登记不应互斥")
-        }
-    };
+    let handle_b = begin_expect(key_b);
     handle_a.complete(Ok(SyncRoundReport::default()));
     handle_b.complete(Ok(SyncRoundReport::default()));
 }
@@ -515,5 +505,102 @@ fn failed_round_does_not_stamp_last_sync() {
         settings::get::<Option<String>>(&conn, SettingKey::SyncLastSyncAt, None).unwrap(),
         None,
         "中途失败不更新成功时刻（整体裁决点才落库）"
+    );
+}
+
+/// 已提交重放留存（ADR-0120 决策 6 / issue #1339 验收「失败语义」）：他人流两段
+/// 之间失败——失败点之前已提交的重放留存（逐条原子，不是回滚前缀），成功时刻
+/// 不落库；段文件重传（内容确定等同）后重试，已重放 op 经幂等去重不重复应用，
+/// 整轮成功后成功时刻才落库。
+#[test]
+fn replay_committed_before_midround_failure_survives_and_resumes() {
+    use crate::tests::common::{MemoryTransport, seed_device};
+    use crate::transport::Transport;
+    use ledger_transaction::write::protocol;
+
+    let (conn_a, conn_b) = (test_support::open(), test_support::open());
+    seed_device(&conn_a, "dev-a");
+    seed_device(&conn_b, "dev-b");
+    seed_account(&conn_a, "acc-a", "现金", "cash", "CNY", 0);
+    seed_account(&conn_b, "acc-a", "现金", "cash", "CNY", 0);
+    let first = protocol::create(&conn_a, make_expense("acc-a", 1000, "第一笔")).unwrap();
+    let second = protocol::create(&conn_a, make_expense("acc-a", 2000, "第二笔")).unwrap();
+
+    // A 端按单 op 容量发布两段。
+    let transport = MemoryTransport::new();
+    let layout = crate::ChannelLayout::new("default").unwrap();
+    let options = crate::ChannelOptions {
+        segment_max_ops: 1,
+        ..crate::ChannelOptions::default()
+    };
+    crate::run_round_with(
+        &direct(&conn_a),
+        &transport,
+        &layout,
+        &EnvelopeMode::Plaintext,
+        &options,
+    )
+    .unwrap();
+    let manifest: crate::ChannelManifest = serde_json::from_slice(
+        &transport
+            .read_file(&layout.manifest_path())
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest.streams[0].segments.len(), 2, "A 端应发布两段");
+    // 故障注入：摘走第二段的段文件（manifest 仍列出它——「清单先行、文件未到齐」
+    // 的既有通道形态，段缺失错误由此产生）；原字节留作重传样本。
+    let second_file = manifest.streams[0].segments[1].file.clone();
+    let second_path = layout.stream_file_path("dev-a", &second_file);
+    let second_bytes = transport.read_file(&second_path).unwrap().unwrap();
+    transport.files_remove(&second_path);
+
+    // B 端第一轮：第一段重放提交，第二段缺失 → 轮次失败。
+    let channel = crate::trigger::SyncChannel::from_parts(Box::new(transport), layout.clone());
+    let error = run_round_once(&direct(&conn_b), &channel, &EnvelopeMode::Plaintext).unwrap_err();
+    assert!(
+        error.is_code("sync-channel.segment-missing"),
+        "第二段缺失应让轮次失败，实际 {error:?}"
+    );
+    assert!(
+        crate::tests::common::read_transaction(&conn_b, &first.id).is_some(),
+        "失败点之前已提交的重放应留存（不是回滚前缀）"
+    );
+    assert!(
+        crate::tests::common::read_transaction(&conn_b, &second.id).is_none(),
+        "失败点之后的 op 不应已应用"
+    );
+    assert_eq!(
+        settings::get::<Option<String>>(&conn_b, SettingKey::SyncLastSyncAt, None).unwrap(),
+        None,
+        "失败轮次不更新成功时刻"
+    );
+
+    // 段重传（内容确定等同，通道纪律）后 B 端重试：第一段的 op 经已知 op / 位点
+    // 门幂等跳过（不重复应用），第二段照常应用，整轮成功后成功时刻才落库。
+    channel
+        .transport()
+        .write_file(&second_path, &second_bytes)
+        .unwrap();
+
+    let report = run_round_once(&direct(&conn_b), &channel, &EnvelopeMode::Plaintext).unwrap();
+    assert!(report.applied >= 1, "补齐段应被应用，实际 {report:?}");
+    assert_eq!(
+        crate::tests::common::read_transaction(&conn_b, &first.id)
+            .unwrap()
+            .amount_cents,
+        1000,
+        "已提交重放幂等续作：第一笔不重复、不变形"
+    );
+    assert!(
+        crate::tests::common::read_transaction(&conn_b, &second.id).is_some(),
+        "补齐段落地第二笔"
+    );
+    assert!(
+        settings::get::<Option<String>>(&conn_b, SettingKey::SyncLastSyncAt, None)
+            .unwrap()
+            .is_some(),
+        "整轮成功后成功时刻才落库"
     );
 }
