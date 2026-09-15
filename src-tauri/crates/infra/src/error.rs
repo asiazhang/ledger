@@ -18,7 +18,7 @@ impl ErrClass {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum AppError {
     #[error("数据库错误: {0}")]
     Db(String),

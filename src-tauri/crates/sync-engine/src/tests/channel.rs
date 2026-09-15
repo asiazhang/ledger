@@ -12,7 +12,7 @@ use crate::channel::{
     upload_checkpoint, upload_checkpoint_with,
 };
 use crate::envelope::{EnvelopeMode, EnvelopeParams, is_sealed};
-use crate::tests::common::{MemoryTransport, make_expense, read_transaction};
+use crate::tests::common::{MemoryTransport, direct, make_expense, read_transaction};
 use crate::transport::Transport;
 use crate::transport::s3::{S3Config, S3Transport};
 use crate::{OpOutcome, apply_ops, bootstrap_from_checkpoint, create_checkpoint, read_ops};
@@ -66,7 +66,7 @@ fn round_publishes_own_ops_and_manifest_records_segments() {
 
     let mem = MemoryTransport::new();
     let layout = layout();
-    let report = run_round(&conn, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    let report = run_round(&direct(&conn), &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
     assert_eq!(report.uploaded_segments, 1);
     assert_eq!(report.uploaded_ops, 2);
     assert!(
@@ -107,9 +107,9 @@ fn round_pull_applies_foreign_ops_and_is_incremental() {
 
     let mem = MemoryTransport::new();
     let layout = layout();
-    run_round(&conn_a, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
 
-    let report = run_round(&conn_b, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    let report = run_round(&direct(&conn_b), &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
     assert_eq!(report.downloaded_segments, 1);
     assert_eq!(report.applied, 2);
     assert_eq!(
@@ -119,14 +119,14 @@ fn round_pull_applies_foreign_ops_and_is_incremental() {
     );
 
     // 幂等：位点已覆盖全部段，重跑无下载、无重放。
-    let report = run_round(&conn_b, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    let report = run_round(&direct(&conn_b), &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
     assert_eq!(report.downloaded_segments, 0);
     assert_eq!(report.applied, 0);
 
     // 增量：A 新增一笔 → 新段；B 只拉新段。
     protocol::create(&conn_a, make_expense("acc-1", 700, "打车")).unwrap();
-    run_round(&conn_a, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
-    let report = run_round(&conn_b, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    let report = run_round(&direct(&conn_b), &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
     assert_eq!(report.downloaded_segments, 1);
     assert_eq!(report.applied, 1);
     let ops_a = read_ops(&conn_a).unwrap();
@@ -147,9 +147,9 @@ fn two_way_exchange_converges_over_channel() {
 
     let mem = MemoryTransport::new();
     let mode = EnvelopeMode::Plaintext;
-    run_round(&conn_a, &mem, &layout(), &mode).unwrap();
-    run_round(&conn_b, &mem, &layout(), &mode).unwrap(); // B 拉 A + 发布自己
-    run_round(&conn_a, &mem, &layout(), &mode).unwrap(); // A 拉 B
+    run_round(&direct(&conn_a), &mem, &layout(), &mode).unwrap();
+    run_round(&direct(&conn_b), &mem, &layout(), &mode).unwrap(); // B 拉 A + 发布自己
+    run_round(&direct(&conn_a), &mem, &layout(), &mode).unwrap(); // A 拉 B
 
     for conn in [&conn_a, &conn_b] {
         assert!(read_transaction(conn, &a_txn.id).is_some());
@@ -189,9 +189,9 @@ fn concurrent_offline_writes_all_survive_exchange() {
 
     let mem = MemoryTransport::new();
     let mode = EnvelopeMode::Plaintext;
-    run_round(&conn_a, &mem, &layout(), &mode).unwrap();
-    run_round(&conn_b, &mem, &layout(), &mode).unwrap();
-    run_round(&conn_a, &mem, &layout(), &mode).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout(), &mode).unwrap();
+    run_round(&direct(&conn_b), &mem, &layout(), &mode).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout(), &mode).unwrap();
 
     assert_eq!(read_ops(&conn_a).unwrap().len(), 4);
     assert_eq!(read_ops(&conn_b).unwrap().len(), 4);
@@ -219,8 +219,14 @@ fn segments_split_by_capacity_and_all_apply() {
         segment_max_ops: 1,
         ..fast_options()
     };
-    let report =
-        run_round_with(&conn_a, &mem, &layout, &EnvelopeMode::Plaintext, &options).unwrap();
+    let report = run_round_with(
+        &direct(&conn_a),
+        &mem,
+        &layout,
+        &EnvelopeMode::Plaintext,
+        &options,
+    )
+    .unwrap();
     assert_eq!(report.uploaded_segments, 3, "每段 1 条 op，3 段");
 
     let manifest: ChannelManifest =
@@ -233,8 +239,14 @@ fn segments_split_by_capacity_and_all_apply() {
         assert!(segment.file.contains(&format!("seg-{:010}", i + 1)));
     }
 
-    let report =
-        run_round_with(&conn_b, &mem, &layout, &EnvelopeMode::Plaintext, &options).unwrap();
+    let report = run_round_with(
+        &direct(&conn_b),
+        &mem,
+        &layout,
+        &EnvelopeMode::Plaintext,
+        &options,
+    )
+    .unwrap();
     assert_eq!(report.downloaded_segments, 3);
     assert_eq!(report.applied, 3);
 }
@@ -251,13 +263,13 @@ fn tampered_segment_is_detected_by_manifest_hash() {
 
     let mem = MemoryTransport::new();
     let layout = layout();
-    run_round(&conn_a, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
 
     let device = device_id_of(&conn_a);
     mem.write_file(&layout.segment_path(&device, 1, 1), b"corrupted-bytes")
         .unwrap();
 
-    let err = run_round(&conn_b, &mem, &layout, &EnvelopeMode::Plaintext).unwrap_err();
+    let err = run_round(&direct(&conn_b), &mem, &layout, &EnvelopeMode::Plaintext).unwrap_err();
     assert!(err.is_code("sync-channel.segment-corrupt"), "实际: {err:?}");
     assert!(read_transaction(&conn_b, "none").is_none());
 }
@@ -274,12 +286,12 @@ fn missing_segment_file_fails_loud() {
 
     let mem = MemoryTransport::new();
     let layout = layout();
-    run_round(&conn_a, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
     let device = device_id_of(&conn_a);
     // 直接抹掉段文件（manifest 仍在）。
     mem.files_remove(&layout.segment_path(&device, 1, 1));
 
-    let err = run_round(&conn_b, &mem, &layout, &EnvelopeMode::Plaintext).unwrap_err();
+    let err = run_round(&direct(&conn_b), &mem, &layout, &EnvelopeMode::Plaintext).unwrap_err();
     assert!(err.is_code("sync-channel.segment-missing"), "实际: {err:?}");
 }
 
@@ -295,11 +307,11 @@ fn corrupt_manifest_fails_loud() {
 
     let mem = MemoryTransport::new();
     let layout = layout();
-    run_round(&conn_a, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
     mem.write_file(&layout.manifest_path(), b"{broken json")
         .unwrap();
 
-    let err = run_round(&conn_b, &mem, &layout, &EnvelopeMode::Plaintext).unwrap_err();
+    let err = run_round(&direct(&conn_b), &mem, &layout, &EnvelopeMode::Plaintext).unwrap_err();
     assert!(
         err.is_code("sync-channel.manifest-corrupt"),
         "实际: {err:?}"
@@ -321,7 +333,7 @@ fn encrypted_channel_exchanges_only_ciphertext() {
     let mode = EnvelopeMode::Encrypted {
         passphrase: "共享主口令",
     };
-    let report = run_round_with(&conn_a, &mem, &layout, &mode, &fast_options()).unwrap();
+    let report = run_round_with(&direct(&conn_a), &mem, &layout, &mode, &fast_options()).unwrap();
     assert!(!report.plaintext_mode);
 
     // 通道上是密文：不是合法 JSON 的 op 明文，且带信封魔数。
@@ -340,21 +352,21 @@ fn encrypted_channel_exchanges_only_ciphertext() {
     let wrong = EnvelopeMode::Encrypted {
         passphrase: "错误口令",
     };
-    let err = run_round_with(&conn_b, &mem, &layout, &wrong, &fast_options()).unwrap_err();
+    let err = run_round_with(&direct(&conn_b), &mem, &layout, &wrong, &fast_options()).unwrap_err();
     assert!(
         err.is_code("encryption.passphrase-incorrect"),
         "实际: {err:?}"
     );
 
     // 明文模式对端拉到密文：缺口令报可重试错误（混合世界显性失败）。
-    let err = run_round(&conn_b, &mem, &layout, &EnvelopeMode::Plaintext).unwrap_err();
+    let err = run_round(&direct(&conn_b), &mem, &layout, &EnvelopeMode::Plaintext).unwrap_err();
     assert!(
         err.is_code("sync-channel.passphrase-required"),
         "实际: {err:?}"
     );
 
     // 正确口令：解开并应用。
-    let report = run_round_with(&conn_b, &mem, &layout, &mode, &fast_options()).unwrap();
+    let report = run_round_with(&direct(&conn_b), &mem, &layout, &mode, &fast_options()).unwrap();
     assert_eq!(report.applied, 1);
     assert_eq!(
         read_transaction(&conn_b, &created.id),
@@ -374,7 +386,7 @@ fn checkpoint_publish_bootstrap_and_increment_over_channel() {
     let mem = MemoryTransport::new();
     let layout = layout();
     let mode = EnvelopeMode::Plaintext;
-    run_round(&conn_a, &mem, &layout, &mode).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
     let frozen = create_checkpoint(&conn_a).unwrap();
     let pointer = upload_checkpoint(&mem, &layout, &mode, &frozen).unwrap();
     assert_eq!(pointer.generation, 1);
@@ -400,8 +412,8 @@ fn checkpoint_publish_bootstrap_and_increment_over_channel() {
 
     // A 增量一笔 → C 只重放检查点之后的 op。
     let late = protocol::create(&conn_a, make_expense("acc-1", 700, "快照后的账")).unwrap();
-    run_round(&conn_a, &mem, &layout, &mode).unwrap();
-    let report = run_round(&conn_c, &mem, &layout, &mode).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    let report = run_round(&direct(&conn_c), &mem, &layout, &mode).unwrap();
     assert_eq!(report.applied, 1, "只重放位点之后的增量");
     assert_eq!(
         read_transaction(&conn_c, &late.id),
@@ -459,8 +471,8 @@ fn upload_publishes_frozen_snapshot_pairs_with_positions() {
     );
 
     // 快照后的增量经下一轮重放照常到达：成对性不因两段拆分而破。
-    run_round(&conn_a, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
-    let report = run_round(&conn_c, &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
+    let report = run_round(&direct(&conn_c), &mem, &layout, &EnvelopeMode::Plaintext).unwrap();
     assert_eq!(report.applied, 1, "只重放位点之后的增量");
     assert_eq!(
         read_transaction(&conn_c, &late.id),
@@ -486,7 +498,7 @@ fn two_end_file_exchange_over_local_s3_stub() {
     let options = fast_options();
 
     // A 发布：段文件 + manifest 归并上对象存储。
-    let report = run_round_with(&conn_a, &s3, &layout, &mode, &options).unwrap();
+    let report = run_round_with(&direct(&conn_a), &s3, &layout, &mode, &options).unwrap();
     assert_eq!(report.uploaded_segments, 1);
     assert_eq!(report.uploaded_ops, 1);
     let manifest: ChannelManifest =
@@ -499,7 +511,7 @@ fn two_end_file_exchange_over_local_s3_stub() {
     assert_eq!(manifest.streams[0].device_id, device_id_of(&conn_a));
 
     // B 增量拉取 A 的段并重放。
-    let report = run_round_with(&conn_b, &s3, &layout, &mode, &options).unwrap();
+    let report = run_round_with(&direct(&conn_b), &s3, &layout, &mode, &options).unwrap();
     assert_eq!(report.downloaded_segments, 1);
     assert_eq!(report.applied, 1);
     assert_eq!(
@@ -509,7 +521,7 @@ fn two_end_file_exchange_over_local_s3_stub() {
 
     // B 回发自己的段：manifest 归并出两条流；A 已覆盖的段不再下载。
     let b_txn = protocol::create(&conn_b, make_expense("acc-1", 2500, "B 后记")).unwrap();
-    let report = run_round_with(&conn_b, &s3, &layout, &mode, &options).unwrap();
+    let report = run_round_with(&direct(&conn_b), &s3, &layout, &mode, &options).unwrap();
     assert_eq!(report.uploaded_segments, 1);
     assert_eq!(
         report.downloaded_segments, 0,
@@ -520,7 +532,7 @@ fn two_end_file_exchange_over_local_s3_stub() {
     assert_eq!(manifest.streams.len(), 2, "manifest 归并两侧流");
 
     // A 增量拉取 B 的段。
-    let report = run_round_with(&conn_a, &s3, &layout, &mode, &options).unwrap();
+    let report = run_round_with(&direct(&conn_a), &s3, &layout, &mode, &options).unwrap();
     assert_eq!(report.downloaded_segments, 1);
     assert_eq!(report.applied, 1);
     for conn in [&conn_a, &conn_b] {
@@ -580,7 +592,7 @@ fn encrypted_exchange_over_local_s3_stub() {
     let mode = EnvelopeMode::Encrypted {
         passphrase: "两端共知的口令",
     };
-    run_round_with(&conn_a, &s3, &layout, &mode, &fast_options()).unwrap();
+    run_round_with(&direct(&conn_a), &s3, &layout, &mode, &fast_options()).unwrap();
 
     let manifest: ChannelManifest =
         serde_json::from_slice(&s3.read_file(&layout.manifest_path()).unwrap().unwrap()).unwrap();
@@ -591,7 +603,7 @@ fn encrypted_exchange_over_local_s3_stub() {
         .unwrap();
     assert!(is_sealed(&raw), "对象存储上必须是密文信封");
 
-    let report = run_round_with(&conn_b, &s3, &layout, &mode, &fast_options()).unwrap();
+    let report = run_round_with(&direct(&conn_b), &s3, &layout, &mode, &fast_options()).unwrap();
     assert_eq!(report.applied, 1);
     assert_eq!(
         read_transaction(&conn_b, &created.id),
@@ -617,7 +629,7 @@ fn failed_round_leaves_local_ledger_untouched() {
     seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
     let before = protocol::create(&conn, make_expense("acc-1", 100, "失败前")).unwrap();
 
-    let err = run_round(&conn, &s3, &layout(), &EnvelopeMode::Plaintext).unwrap_err();
+    let err = run_round(&direct(&conn), &s3, &layout(), &EnvelopeMode::Plaintext).unwrap_err();
     assert!(err.is_code("sync-channel.auth-failed"));
 
     // 本地记账照常：同步失败后写入成功、既有数据原样。
@@ -631,4 +643,156 @@ fn failed_round_leaves_local_ledger_untouched() {
         200
     );
     assert_balance_cache_matches_realtime(&conn);
+}
+
+// ---------------------------------------------------------------------------
+// 网络段出锁（issue #1339 / ADR-0120 决策 1/2）：网络段不持连接锁——负向判据
+// ---------------------------------------------------------------------------
+
+use std::sync::{Arc, Mutex as StdMutex};
+
+use crate::channel::{ConnSegment, RoundConn, connection_round_key};
+
+/// 测试用轮次连接源：每段对共享互斥体短取一次锁（生产 `AutoRoundConn` 同型，
+/// 阻塞等待无放弃口径），用完即还。
+struct SegmentedConn {
+    conn: Arc<StdMutex<Connection>>,
+}
+
+impl RoundConn for SegmentedConn {
+    fn with_connection<R, F>(
+        &self,
+        _segment: ConnSegment,
+        use_connection: F,
+    ) -> ledger_infra::error::Result<R>
+    where
+        F: FnOnce(&Connection) -> ledger_infra::error::Result<R>,
+    {
+        let guard = self.conn.lock().unwrap();
+        use_connection(&guard)
+    }
+
+    fn round_key(&self) -> u64 {
+        connection_round_key(&self.conn)
+    }
+}
+
+/// 探测型 Transport 包装：每次网络往返现场试取一次连接锁——锁被持有即记一次
+/// 违例（「网络段持连接锁」的直接证据）。同时记录往返次数，防断言空转。
+struct LockProbeTransport {
+    inner: Arc<MemoryTransport>,
+    conn: Arc<StdMutex<Connection>>,
+    violations: StdMutex<Vec<String>>,
+    round_trips: StdMutex<usize>,
+}
+
+impl LockProbeTransport {
+    fn new(inner: Arc<MemoryTransport>, conn: Arc<StdMutex<Connection>>) -> Self {
+        Self {
+            inner,
+            conn,
+            violations: StdMutex::new(Vec::new()),
+            round_trips: StdMutex::new(0),
+        }
+    }
+
+    fn probe(&self, op: &str, path: &str) {
+        *self.round_trips.lock().unwrap() += 1;
+        if self.conn.try_lock().is_err() {
+            self.violations
+                .lock()
+                .unwrap()
+                .push(format!("{op} {path}（网络往返期间连接锁被持有）"));
+        }
+    }
+}
+
+impl Transport for LockProbeTransport {
+    fn ensure_dir(&self, path: &str) -> ledger_infra::error::Result<()> {
+        self.inner.ensure_dir(path)
+    }
+
+    fn read_file(&self, path: &str) -> ledger_infra::error::Result<Option<Vec<u8>>> {
+        self.probe("read", path);
+        self.inner.read_file(path)
+    }
+
+    fn write_file(&self, path: &str, bytes: &[u8]) -> ledger_infra::error::Result<()> {
+        self.probe("write", path);
+        self.inner.write_file(path, bytes)
+    }
+}
+
+/// 网络段不持连接锁（ADR-0120 决策 1/2 负向判据，ADR-0087）：发布与拉取的
+/// 每一次网络往返（manifest 读写、段上传、段下载）现场试取连接锁都必须可得
+/// ——把网络段移回整轮持锁（本票修复前的形状），违规清单非空，本测试即红。
+/// 往返计数同时防断言空转（通道上没有任何网络往返时「零违例」是假绿）。
+#[test]
+fn network_segments_hold_no_connection_lock() {
+    let conn_a = Arc::new(StdMutex::new(test_support::open()));
+    let conn_b = Arc::new(StdMutex::new(test_support::open()));
+    seed_account(&conn_a.lock().unwrap(), "acc-1", "现金", "cash", "CNY", 0);
+    seed_account(&conn_b.lock().unwrap(), "acc-1", "现金", "cash", "CNY", 0);
+    let created = protocol::create(
+        &conn_a.lock().unwrap(),
+        make_expense("acc-1", 10000, "A 先记"),
+    )
+    .unwrap();
+    let store = Arc::new(MemoryTransport::new());
+    let layout = layout();
+    let mode = EnvelopeMode::Plaintext;
+    let options = fast_options();
+
+    // A 端发布：manifest 读 + 段上传 + manifest 写回，全程网络段出锁。
+    let probe_a = LockProbeTransport::new(Arc::clone(&store), Arc::clone(&conn_a));
+    let report = run_round_with(
+        &SegmentedConn {
+            conn: Arc::clone(&conn_a),
+        },
+        &probe_a,
+        &layout,
+        &mode,
+        &options,
+    )
+    .unwrap();
+    assert_eq!(report.uploaded_ops, 1, "A 端应发布一笔 op");
+    let trips_a = *probe_a.round_trips.lock().unwrap();
+    assert!(
+        trips_a >= 2,
+        "A 端应有 manifest 读 + 段上传等多次网络往返，实际 {trips_a}"
+    );
+    assert!(
+        probe_a.violations.lock().unwrap().is_empty(),
+        "A 端网络往返期间连接锁被持有：{:?}",
+        probe_a.violations.lock().unwrap()
+    );
+
+    // B 端拉取：manifest 读 + 段下载（网络段出锁），重放段各自短取锁。
+    let probe_b = LockProbeTransport::new(Arc::clone(&store), Arc::clone(&conn_b));
+    run_round_with(
+        &SegmentedConn {
+            conn: Arc::clone(&conn_b),
+        },
+        &probe_b,
+        &layout,
+        &mode,
+        &options,
+    )
+    .unwrap();
+    let trips_b = *probe_b.round_trips.lock().unwrap();
+    assert!(
+        trips_b >= 2,
+        "B 端应有 manifest 读 + 段下载等多次网络往返，实际 {trips_b}"
+    );
+    assert!(
+        probe_b.violations.lock().unwrap().is_empty(),
+        "B 端网络往返期间连接锁被持有：{:?}",
+        probe_b.violations.lock().unwrap()
+    );
+
+    // 数据语义不因分段取锁改变：A 端的 op 经拉取 + 重放在 B 端收敛。
+    assert!(
+        read_transaction(&conn_b.lock().unwrap(), &created.id).is_some(),
+        "B 端应经拉取重放收敛 A 端的交易"
+    );
 }

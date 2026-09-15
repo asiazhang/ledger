@@ -13,7 +13,7 @@ publish = false
 # 零生产依赖、对任何业务域零反向依赖。域→域方向均为上层消费下层的合法直呼
 # （ADR-0112 决策 2）；对根包（壳层）的反向引用由 cargo 依赖图编译期拒绝
 # （生产依赖面无根包，dev-dependency 环只覆盖测试目标）。
-ledger-infra = { path = "../infra" }
+ledger-infra = { path = "../infra", features = ["test-utils"] }
 ledger-sync-protocol = { path = "../sync-protocol" }
 ledger-transaction = { path = "../transaction" }
 ledger-accounts = { path = "../accounts" }

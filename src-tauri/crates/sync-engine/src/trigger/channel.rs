@@ -8,8 +8,8 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::channel::{
-    ChannelLayout, ChannelOptions, CheckpointPointer, FetchedCheckpoint, SyncRoundReport,
-    fetch_checkpoint, peek_checkpoint_pointer, run_round_with, upload_checkpoint,
+    ChannelLayout, ChannelOptions, CheckpointPointer, FetchedCheckpoint, RoundConn,
+    SyncRoundReport, fetch_checkpoint, peek_checkpoint_pointer, run_round_with, upload_checkpoint,
 };
 use crate::checkpoint::Checkpoint;
 use crate::envelope::EnvelopeMode;
@@ -108,14 +108,24 @@ impl SyncChannel {
         &self.layout
     }
 
+    /// 测试接缝（`sha256_hex` 同款 `#[doc(hidden)]` 放宽，ADR-0084 决策 2）：
+    /// 以给定的传输与布局直接构造句柄——触发编排域单测以内存假 Transport 驱动
+    /// `run_round_once` / `run_auto_round` 全链，不经真实 S3。生产路径不经本
+    /// 构造器（生产一律经 [`build_channel`]）。
+    #[doc(hidden)]
+    pub fn from_parts(transport: Box<dyn Transport>, layout: ChannelLayout) -> Self {
+        Self { transport, layout }
+    }
+
     /// 跑一轮通道协议（发布自己流 + 拉取他人流）：把本句柄持有的传输与布局
     /// 一起交给 [`run_round_with`]，调用方不必解包句柄。
     ///
-    /// 只做轮次协议本身；「成功时刻落库」是调度侧簿记，留在
+    /// 分段取锁（ADR-0120 决策 2）：连接经 [`RoundConn`] 接缝按数据库段短取，
+    /// 网络段不消费连接；只做轮次协议本身，「成功时刻落库」是调度侧簿记，留在
     /// [`super::scheduler::run_round_once`]——通道配置不为簿记而改。
-    pub fn run_round(
+    pub fn run_round<S: RoundConn>(
         &self,
-        conn: &Connection,
+        conn: &S,
         mode: &EnvelopeMode<'_>,
         options: &ChannelOptions,
     ) -> Result<SyncRoundReport> {

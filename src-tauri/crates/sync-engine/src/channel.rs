@@ -36,6 +36,17 @@
 //! manifest 本身是纯元数据（设备 id、序号区间、密文 hash），两个模式下都不
 //! 封包，保证弱原子性下的归并始终可读。
 //!
+//! 调用契约（同步轮次，#1339 / ADR-0120 决策 2/3/4）：轮次**分段取锁**——连接锁
+//! 只盖数据库步骤（读段：DeviceId/位点/待发布 op；重放段：逐段下载后的逐条
+//! 事务重放；落库段：「上次成功同步时刻」），经 [`RoundConn`] 接缝每段各自短取
+//! 一次；网络段（manifest 读/写、段上传/下载、封包与解封含 KDF）在连接锁外
+//! 完成，任何形状下不得进锁（ADR-0069 决策 4）。同端轮次顺序性由域内轮次在途
+//! 互斥承接（`trigger` 的轮次在途互斥单点，同端同库任一时刻至多一轮在途），
+//! manifest 的读-改-写由它独占；通道层既有的「并发整体替换由下一轮归并自愈」
+//! 保留为纵深兜底。失败语义按 ADR-0120 决策 6 三分：已上传段原子（内容确定
+//! 等同、重传幂等）、已重放 op 逐条原子、manifest 回写失败由下一轮归并续作；
+//! 「上次成功同步时刻」只在整轮成功后的整体裁决点落库（`trigger` 编排单点）。
+//!
 //! 调用契约：检查点发布两段式——产出段 [`checkpoint::create_checkpoint`] 须在
 //! 单连接互斥锁内调用（位点/快照同刻成对约束）；发布段 [`upload_checkpoint`]
 //! 只消费已定格的快照字节与通道（封包 KDF + 网络往返），不消费连接，在连接锁
@@ -264,9 +275,76 @@ pub struct CheckpointPointer {
     pub created_at: String,
 }
 
-/// 单个同步轮次的共享上下文（恒结伴参数的聚合）。
-struct RoundCtx<'a, 'p> {
+/// 轮次内消费连接的数据库段闭集（ADR-0120 决策 2 的表格承载）：连接锁只盖
+/// 这三类步骤，每处各自短取一次。新增轮次步骤必须显式归类——数据库段加入
+/// 本闭集，网络段（manifest 读/写、段上传/下载、封包与解封含 KDF）不进取锁
+/// 路径——分类缺失即 ADR-0069 决策 4 的旧退化路径重现（ADR-0120「后果」）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnSegment {
+    /// 读段：本机 DeviceId、位点、自己流待发布 op 的读取。
+    Read,
+    /// 重放段：逐段下载后对已解封 op 的重放（逐条事务在闭包内逐条提交）。
+    Replay,
+    /// 落库段：「上次成功同步时刻」的设置写入（整轮成功后的整体裁决点）。
+    Bookkeep,
+}
+
+/// 轮次连接取用接缝（ADR-0120 决策 2/4）：轮次协议对连接的全部消费都经本接缝，
+/// 每次短暂取用一次、用完即还——分钟级网络等待结构上不可能持在锁内。取锁口径
+/// 由实现决定：壳层手动入口经分段写入口的 `SegmentLock` 适配（阻塞等待，锁失败
+/// 映射与写入口同形）；调度侧自动入口经连接锁等待单点短取，任一段拿不到锁即
+/// 放弃本轮（既有「拿不到锁就跳过本轮」口径）；测试与进程内工具用
+/// [`DirectConn`] 直通已持连接。
+pub trait RoundConn {
+    /// 取用一次连接执行一个数据库段（[`ConnSegment`] 闭集之外的步骤不得消费连接）。
+    fn with_connection<R, F>(&self, segment: ConnSegment, use_connection: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R>;
+
+    /// 轮次身份键（同端同库判据，ADR-0120 决策 3）：同键轮次经在途互斥串行
+    /// （任一时刻至多一轮在途），异键并行。生产实现以连接互斥体地址为键。
+    fn round_key(&self) -> u64;
+}
+
+/// 连接互斥体的轮次身份键单点（[`RoundConn::round_key`] 的生产口径）：共享句柄
+/// 指向同一互斥体即同端同库（壳层与调度侧持同一 [`DbState`](ledger_infra::db::DbState)
+/// 句柄的克隆，键恒同）；原位换连在互斥体内换槽，地址不变，身份连续。
+pub fn connection_round_key(conn: &std::sync::Mutex<Connection>) -> u64 {
+    std::ptr::from_ref(conn) as u64
+}
+
+/// 直通连接源：调用方已持有连接（域单测、e2e 步骤与进程内工具形态）。
+/// 每段直接复用该连接，不取锁、不给放弃口径——「拿不到锁即放弃」的语义归生产
+/// 实现策。轮次身份键取连接对象地址（互斥体内槽），与生产实现的互斥体地址
+/// 不是同一身份空间；同一连接上的全部直通轮次天然同键，勿与生产连接源混用。
+pub struct DirectConn<'a> {
     conn: &'a Connection,
+}
+
+impl<'a> DirectConn<'a> {
+    /// 包一份已持有的连接（构造参数经解引用强转适配守卫形态）。
+    pub fn new(conn: &'a Connection) -> Self {
+        Self { conn }
+    }
+}
+
+impl RoundConn for DirectConn<'_> {
+    fn with_connection<R, F>(&self, _segment: ConnSegment, use_connection: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R>,
+    {
+        use_connection(self.conn)
+    }
+
+    fn round_key(&self) -> u64 {
+        std::ptr::from_ref(self.conn) as u64
+    }
+}
+
+/// 单个同步轮次的共享上下文（恒结伴参数的聚合）。连接消费一律经
+/// [`RoundConn`] 接缝分段短取（ADR-0120 决策 2）。
+struct RoundCtx<'a, 'p, S: RoundConn> {
+    conn: &'a S,
     transport: &'a dyn Transport,
     layout: &'a ChannelLayout,
     mode: &'a EnvelopeMode<'p>,
@@ -316,10 +394,13 @@ pub struct SyncRoundReport {
 
 /// 执行一次同步轮次（默认选项）：发布自己流新 op + 拉取他人流增量。
 ///
-/// 失败即整体报错返回（凭据/网络/损坏均有码化错误），不产生部分静默状态；
-/// 已上传的段与已应用的重放各自原子（重试轮次幂等续作），本地记账不受影响。
-pub fn run_round(
-    conn: &Connection,
+/// 分段取锁（ADR-0120 决策 2）：连接只经 [`RoundConn`] 接缝按数据库段短取
+/// （读段 / 重放段 / 落库段），manifest 读/写、段上传/下载、封包与解封全部
+/// 在连接外完成。失败即整体报错返回（凭据/网络/损坏均有码化错误），不产生
+/// 部分静默状态；已上传的段与已应用的重放各自原子（重试轮次幂等续作），
+/// 本地记账不受影响（失败语义三分重述见模块文档）。
+pub fn run_round<S: RoundConn>(
+    conn: &S,
     transport: &dyn Transport,
     layout: &ChannelLayout,
     mode: &EnvelopeMode<'_>,
@@ -328,14 +409,15 @@ pub fn run_round(
 }
 
 /// 执行一次同步轮次（显式选项；测试注入低 KDF 迭代与段容量）。
-pub fn run_round_with(
-    conn: &Connection,
+pub fn run_round_with<S: RoundConn>(
+    conn: &S,
     transport: &dyn Transport,
     layout: &ChannelLayout,
     mode: &EnvelopeMode<'_>,
     options: &ChannelOptions,
 ) -> Result<SyncRoundReport> {
-    let device_id = device::device_id(conn)?;
+    // 读段：本机 DeviceId（首用生成并持久化）。
+    let device_id = conn.with_connection(ConnSegment::Read, device::device_id)?;
     transport.ensure_dir(&layout.book_dir())?;
     transport.ensure_dir(&layout.checkpoint_dir())?;
     transport.ensure_dir(&layout.streams_dir())?;
@@ -362,7 +444,9 @@ pub fn run_round_with(
         transport.write_file(&layout.manifest_path(), &manifest.serialize()?)?;
     }
 
-    // 拉取：他人流按本端位点跳过已覆盖段（manifest 视图），逐段校验 → 解封 → 应用。
+    // 拉取：他人流按本端位点跳过已覆盖段（manifest 视图），逐段下载（网络段）
+    // → 逐段重放（重放段，交错粒度保持逐段下载 → 逐段重放：内存以段为界，
+    // ADR-0120 决策 5）。
     pull_foreign_streams(&ctx, &device_id, &manifest, &mut report)?;
     Ok(report)
 }
@@ -380,8 +464,8 @@ fn read_manifest(transport: &dyn Transport, layout: &ChannelLayout) -> Result<Ch
 ///
 /// 上传位点取自 manifest 而非本地表——「清单写回失败」后重传同段内容确定
 /// 等同（op 只增不改），天然幂等；本地不为此新增状态。
-fn publish_own_ops(
-    ctx: &RoundCtx<'_, '_>,
+fn publish_own_ops<S: RoundConn>(
+    ctx: &RoundCtx<'_, '_, S>,
     device_id: &str,
     remote: &ChannelManifest,
     manifest: &mut ChannelManifest,
@@ -396,7 +480,13 @@ fn publish_own_ops(
             device_id: device_id.to_string(),
             segments: Vec::new(),
         });
-    let own_ops = ops::read_own_since(ctx.conn, device_id, remote_own.uploaded_through())?;
+    // 读段：自通道上传位点之后的本机 op 一次读出（短取锁）；此后的切段、封包
+    // （KDF）与上传都是网络段，不消费连接。发布位点的通道视图取自 manifest 而
+    // 非本地表——「清单写回失败」后重传同段内容确定等同（op 只增不改），天然
+    // 幂等；本地不为此新增状态。
+    let own_ops = ctx.conn.with_connection(ConnSegment::Read, |conn| {
+        ops::read_own_since(conn, device_id, remote_own.uploaded_through())
+    })?;
     if own_ops.is_empty() {
         return Ok(());
     }
@@ -452,8 +542,8 @@ fn publish_own_ops(
 
 /// 拉取他人流：按本端位点跳过已覆盖段；段下载后校验尺寸与 hash，解封解析，
 /// 经同步引擎幂等重放（LWW / 挂起 / 去重语义全在引擎，通道不重复裁决）。
-fn pull_foreign_streams(
-    ctx: &RoundCtx<'_, '_>,
+fn pull_foreign_streams<S: RoundConn>(
+    ctx: &RoundCtx<'_, '_, S>,
     device_id: &str,
     manifest: &ChannelManifest,
     report: &mut SyncRoundReport,
@@ -462,15 +552,32 @@ fn pull_foreign_streams(
         EnvelopeMode::Encrypted { passphrase } => Some(*passphrase),
         EnvelopeMode::Plaintext => None,
     };
+    // 读段：全部他人流的位点一次短取（位点在本轮内不变——位点只随重放推进，
+    // 重放只发生在本轮：同端同库至多一轮在途，本地写不触位点）。
+    let positions: std::collections::BTreeMap<String, i64> =
+        ctx.conn.with_connection(ConnSegment::Read, |conn| {
+            manifest
+                .streams
+                .iter()
+                .filter(|stream| stream.device_id != device_id)
+                .map(|stream| {
+                    Ok((
+                        stream.device_id.clone(),
+                        positions::position_of(conn, &stream.device_id)?.unwrap_or(0),
+                    ))
+                })
+                .collect()
+        })?;
     for stream in &manifest.streams {
         if stream.device_id == device_id {
             continue;
         }
-        let position = positions::position_of(ctx.conn, &stream.device_id)?.unwrap_or(0);
+        let position = positions[&stream.device_id];
         for segment in &stream.segments {
             if segment.last_clock <= position {
                 continue; // 位点已覆盖整段：无需下载。
             }
+            // 网络段：段下载 + 校验 + 解封（含 KDF）不消费连接。
             let path = ctx
                 .layout
                 .stream_file_path(&stream.device_id, &segment.file);
@@ -488,7 +595,10 @@ fn pull_foreign_streams(
             if incoming.iter().any(|op| op.device_id != stream.device_id) {
                 return Err(segment_corrupt_error(&path));
             }
-            let reports = engine::apply_ops(ctx.conn, &incoming)?;
+            // 重放段：本段重放短取一次锁（逐条事务在引擎内逐条提交，逐条原子）。
+            let reports = ctx.conn.with_connection(ConnSegment::Replay, |conn| {
+                engine::apply_ops(conn, &incoming)
+            })?;
             for item in reports {
                 match item.outcome {
                     super::OpOutcome::Applied => report.applied += 1,

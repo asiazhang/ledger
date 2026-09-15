@@ -7,6 +7,7 @@
 
 use crate::EnvelopeMode;
 use crate::SyncChannelConfig;
+use crate::tests::common::direct;
 use crate::tests::common::make_expense;
 use crate::trigger::{SessionEnvelope, build_channel, configured_channel, run_auto_round};
 use ledger_infra::settings::{self, SettingKey};
@@ -140,7 +141,7 @@ fn session_envelope_follows_session_passphrase() {
 #[test]
 fn auto_round_without_channel_is_a_noop() {
     let conn = test_support::open();
-    let outcome = run_auto_round(&conn, &SessionEnvelope::Plaintext).unwrap();
+    let outcome = run_auto_round(&direct(&conn), &SessionEnvelope::Plaintext).unwrap();
     assert!(outcome.is_none(), "未配置通道：自动轮次零动作");
     assert_eq!(
         settings::get::<Option<String>>(&conn, SettingKey::SyncLastSyncAt, None).unwrap(),
@@ -166,7 +167,7 @@ fn round_once_stamps_last_sync_on_success() {
     // 该实例驱动（ledger-transaction/#1092 同款），断言不变。
     let channel = tauri_app_lib::ledger_sync_engine::build_channel(&config).unwrap();
     let report = tauri_app_lib::ledger_sync_engine::run_round_once(
-        &conn,
+        &tauri_app_lib::ledger_sync_engine::DirectConn::new(&conn),
         &channel,
         &tauri_app_lib::ledger_sync_engine::EnvelopeMode::Plaintext,
     )
@@ -261,4 +262,258 @@ fn write_signal_is_delivered_into_the_channel() {
     // 未装通道（未拉起调度 / 单测环境）：零动作，不 panic。
     let empty: OnceLock<std::sync::mpsc::Sender<()>> = OnceLock::new();
     crate::trigger::notify_write_signal(&empty);
+}
+
+// ---------------------------------------------------------------------------
+// 轮次在途互斥（issue #1339 / ADR-0120 决策 3）与调度侧分段取锁口径
+// ---------------------------------------------------------------------------
+
+use crate::RoundConn;
+use crate::channel::SyncRoundReport;
+use crate::trigger::run_round_once;
+use std::sync::{Arc, Mutex};
+
+/// 内存假通道的轮次句柄（`SyncChannel::from_parts` 测试接缝，不经真实 S3）。
+/// 本组用例全链随被测本实例驱动（域单测纪律：`crate::…`）。
+fn memory_channel() -> crate::trigger::SyncChannel {
+    use crate::tests::common::MemoryTransport;
+    crate::trigger::SyncChannel::from_parts(
+        Box::new(MemoryTransport::new()),
+        crate::ChannelLayout::new("default").unwrap(),
+    )
+}
+
+/// 在途互斥接线 · 自动入口（负向判据，ADR-0087）：在途时重复触发**不启动第二
+/// 轮**——自动入口放弃本轮（`None`，通道零写入、成功时刻不落），在途轮次交出
+/// 结果后下一轮照常跑。删除 [`run_round_gated`] 的 `begin_round` 接线，第一段
+/// 的 `run_auto_round` 会真的跑轮次（`Some` + manifest 出现），本测试即红。
+#[test]
+fn auto_round_skips_while_round_in_flight() {
+    let stub = test_support::spawn_s3_stub(test_support::S3StubConfig::new(
+        test_support::S3Addressing::PathStyle,
+    ));
+    let conn = test_support::open();
+    seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
+    protocol::create(&conn, make_expense("acc-1", 10000, "午饭")).unwrap();
+    let config = stub.channel_config("default");
+    settings::set(&conn, SettingKey::SyncChannelConfig, &config).unwrap();
+    let channel = tauri_app_lib::ledger_sync_engine::build_channel(&config).unwrap();
+
+    // 测试实例纪律：轮次/通道路径随根包图内实例驱动（同上 run_round_once 用例）；
+    // 轮次身份键是裸地址值，实例无关。trait 方法经本实例导入的 RoundConn 调用。
+    let key = crate::DirectConn::new(&conn).round_key();
+
+    // 登记一轮在途（本测试扮演在途执行体）。
+    let handle = match crate::trigger::round_gate::begin_round(key) {
+        crate::trigger::round_gate::RoundStart::Began(handle) => handle,
+        crate::trigger::round_gate::RoundStart::InFlight(_) => {
+            panic!("空闲库上登记应成功")
+        }
+    };
+
+    // 在途：自动入口放弃本轮——零动作（不触网、不写通道、不落成功时刻）。
+    let outcome =
+        run_auto_round(&crate::DirectConn::new(&conn), &SessionEnvelope::Plaintext).unwrap();
+    assert!(
+        outcome.is_none(),
+        "在途时自动轮次应放弃本轮，实际 {outcome:?}"
+    );
+    assert_eq!(
+        settings::get::<Option<String>>(&conn, SettingKey::SyncLastSyncAt, None).unwrap(),
+        None,
+        "放弃本轮不更新成功时刻"
+    );
+    assert!(
+        channel
+            .transport()
+            .read_file(&channel.layout().manifest_path())
+            .unwrap()
+            .is_none(),
+        "放弃本轮不触通道（manifest 不应出现）"
+    );
+
+    // 在途轮次交出结果（句柄释放即在途登记清空）后，下一轮照常跑。
+    handle.complete(Ok(SyncRoundReport::default()));
+    let outcome =
+        run_auto_round(&crate::DirectConn::new(&conn), &SessionEnvelope::Plaintext).unwrap();
+    let report = outcome.expect("在途清空后自动轮次应执行");
+    assert!(
+        report.uploaded_ops >= 1,
+        "在途清空后的轮次应真实发布本机 op，实际 {report:?}"
+    );
+    assert!(
+        settings::get::<Option<String>>(&conn, SettingKey::SyncLastSyncAt, None)
+            .unwrap()
+            .is_some(),
+        "执行成功的轮次落成功时刻"
+    );
+}
+
+/// 在途互斥接线 · 手动入口（负向判据，ADR-0087）：在途时重复触发**不启动第二
+/// 轮**——等待并交出同一轮次报告（回显形态在 #1339 定夺留痕）。删除接线，手动
+/// 入口会自己跑一轮（空通道 → 全零报告），拿不到在途轮次的标记报告，本测试即红。
+#[test]
+fn manual_round_waits_and_reuses_in_flight_report() {
+    let conn = test_support::open();
+    let channel = memory_channel();
+
+    // 在途执行体：另一线程稍后交出一份带标记的报告（上传段数 9——空通道真跑
+    // 一轮不可能产出）。
+    let key = crate::DirectConn::new(&conn).round_key();
+    let handle = match crate::trigger::round_gate::begin_round(key) {
+        crate::trigger::round_gate::RoundStart::Began(handle) => handle,
+        crate::trigger::round_gate::RoundStart::InFlight(_) => {
+            panic!("空闲库上登记应成功")
+        }
+    };
+    let completer = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        handle.complete(Ok(SyncRoundReport {
+            uploaded_segments: 9,
+            ..SyncRoundReport::default()
+        }));
+    });
+
+    // 手动入口：等待并复用唯一在途轮次的报告（自己不跑轮次：manifest 保持缺席）。
+    let report = run_round_once(
+        &crate::DirectConn::new(&conn),
+        &channel,
+        &EnvelopeMode::Plaintext,
+    )
+    .unwrap();
+    completer.join().unwrap();
+    assert_eq!(
+        report.uploaded_segments, 9,
+        "手动入口应交出在途轮次的报告（复用，而非自己再跑一轮）"
+    );
+    assert!(
+        channel
+            .transport()
+            .read_file(&channel.layout().manifest_path())
+            .unwrap()
+            .is_none(),
+        "复用在途轮次时本入口不应再写通道"
+    );
+}
+
+/// 在途互斥按轮次身份键分键（同端同库判据）：同键至多一轮在途，异键（不同库）
+/// 并行不互斥。
+#[test]
+fn in_flight_mutex_keys_by_connection_identity() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    let key_a = crate::DirectConn::new(&conn_a).round_key();
+    let key_b = crate::DirectConn::new(&conn_b).round_key();
+    assert_ne!(key_a, key_b, "不同连接是不同库，身份键应不同");
+
+    let handle_a = match crate::trigger::round_gate::begin_round(key_a) {
+        crate::trigger::round_gate::RoundStart::Began(handle) => handle,
+        crate::trigger::round_gate::RoundStart::InFlight(_) => {
+            panic!("空闲库上登记应成功")
+        }
+    };
+    // 同键：撞上在途。异键：并行登记成功。
+    assert!(matches!(
+        crate::trigger::round_gate::begin_round(key_a),
+        crate::trigger::round_gate::RoundStart::InFlight(_)
+    ));
+    let handle_b = match crate::trigger::round_gate::begin_round(key_b) {
+        crate::trigger::round_gate::RoundStart::Began(handle) => handle,
+        crate::trigger::round_gate::RoundStart::InFlight(_) => {
+            panic!("异键登记不应互斥")
+        }
+    };
+    handle_a.complete(Ok(SyncRoundReport::default()));
+    handle_b.complete(Ok(SyncRoundReport::default()));
+}
+
+/// 调度侧的放弃口径（ADR-0120 决策 2/4）：任一段拿不到连接锁即整体放弃本轮
+/// ——连接源报码化放弃错误，自动入口把它静默归一为 `None`（真实失败照常上抛）。
+#[test]
+fn auto_round_gives_up_silently_when_connection_lock_is_busy() {
+    let conn = Arc::new(Mutex::new(test_support::open()));
+    let locks = super::scheduler::AutoRoundConn::new(&conn);
+
+    // 锁被别人持有：连接源报放弃错误（稳定码），自动入口静默归一为 `None`。
+    let held = conn.lock().unwrap();
+    let error = locks
+        .with_connection(crate::channel::ConnSegment::Read, |_| Ok(()))
+        .unwrap_err();
+    assert!(
+        error.is_code("sync-engine.round-lock-give-up"),
+        "拿不到锁应报放弃码，实际 {error:?}"
+    );
+    let outcome = super::scheduler::run_auto_round(&locks, &SessionEnvelope::Plaintext).unwrap();
+    assert!(
+        outcome.is_none(),
+        "拿不到锁的自动轮次应静默放弃，实际 {outcome:?}"
+    );
+    drop(held);
+
+    // 锁可得：连接源直通（配置未设置 → 零动作 `None`，但那是配置分支，不是放弃）。
+    let outcome = super::scheduler::run_auto_round(&locks, &SessionEnvelope::Plaintext).unwrap();
+    assert!(outcome.is_none(), "未配置通道：零动作");
+}
+
+/// 持锁时长探针覆盖轮次分段（#1276 守门③ / #1339）：调度侧轮次连接源的每段
+/// 持锁超阈值记 warn、不静默——把段内的慢闭包（如误入的网络等待）照出来。
+#[test]
+fn auto_round_source_probes_lock_hold_past_threshold() {
+    use ledger_infra::test_utils::capture_events;
+    use tracing::Level;
+
+    let conn = Arc::new(Mutex::new(test_support::open()));
+    let locks = super::scheduler::AutoRoundConn::new(&conn);
+
+    let events = capture_events(|| {
+        locks
+            .with_connection(crate::channel::ConnSegment::Read, |_| {
+                std::thread::sleep(std::time::Duration::from_millis(1100));
+                Ok(())
+            })
+            .unwrap();
+    });
+    assert!(
+        events.iter().any(|e| e.level == Level::WARN),
+        "段内持锁超阈值应记 warn（探针覆盖轮次分段），实际捕获 {events:?}"
+    );
+}
+
+/// 轮次编排单点的落库段（ADR-0120 决策 6）：中途失败不更新「上次成功同步时刻」
+/// ——失败经 [`run_round_once`] 上抛，成功时刻保持缺席。
+#[test]
+fn failed_round_does_not_stamp_last_sync() {
+    use crate::tests::common::{MemoryTransport, seed_device};
+    use crate::transport::Transport;
+
+    let conn = test_support::open();
+    // 通道上有一个他人流，但段文件缺失：轮次在拉取段必然失败。
+    let transport = MemoryTransport::new();
+    let manifest = r#"{"version":1,"streams":[{"device_id":"peer-1","segments":[
+        {"file":"seg-0000000001-0000000002.enc","first_clock":1,"last_clock":2,
+         "size":3,"sha256":"aa"}]}],"checkpoint":null}"#;
+    transport
+        .write_file("book-default/manifest.json", manifest.as_bytes())
+        .unwrap();
+    seed_device(&conn, "local-dev");
+    let channel = crate::trigger::SyncChannel::from_parts(
+        Box::new(transport),
+        crate::ChannelLayout::new("default").unwrap(),
+    );
+
+    let error = run_round_once(
+        &crate::DirectConn::new(&conn),
+        &channel,
+        &EnvelopeMode::Plaintext,
+    )
+    .unwrap_err();
+    assert!(
+        error.is_code("sync-channel.segment-missing"),
+        "段缺失应上抛，实际 {error:?}"
+    );
+    assert_eq!(
+        settings::get::<Option<String>>(&conn, SettingKey::SyncLastSyncAt, None).unwrap(),
+        None,
+        "中途失败不更新成功时刻（整体裁决点才落库）"
+    );
 }

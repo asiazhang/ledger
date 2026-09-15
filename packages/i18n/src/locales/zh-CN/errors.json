@@ -343,7 +343,8 @@
     "bootstrap-not-fresh": "本机已参与同步（{0} 非空），拒绝整库引导以免覆盖既有同步状态",
     "checkpoint-schema-newer": "检查点快照来自更高版本的应用（快照 schema v{0} > 当前 v{1}），请升级应用后再引导",
     "checkpoint-fk-violation": "检查点快照外键校验失败（{0} 处），快照不可用",
-    "truncate-not-owner": "只有来源设备有权截断自己的操作日志流"
+    "truncate-not-owner": "只有来源设备有权截断自己的操作日志流",
+    "round-lock-give-up": "连接锁在时限内不可得，放弃本轮同步（下一轮重试）"
   },
   "sync-channel": {
     "auth-failed": "同步通道凭据被拒绝，请检查通道账号与密钥设置",
