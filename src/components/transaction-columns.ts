@@ -13,7 +13,7 @@ import { t } from '@ledger/i18n'
 import AccountLink from '@/components/AccountLink.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
 import SourceLink from '@/components/SourceLink.vue'
-import NoteCopyButton from '@/components/NoteCopyButton.vue'
+import NoteCopyButton from '@ledger/ui-kit/NoteCopyButton.vue'
 import AmountCell from '@/components/AmountCell.vue'
 import { lendingLabelKey, resolveLendingDirection } from '@/domain/lending'
 

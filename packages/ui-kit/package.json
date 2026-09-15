@@ -1,0 +1,37 @@
+{
+  "name": "@ledger/ui-kit",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "界面通用件包（issue #1320 / spec #1148 / ADR-0118 决策 3/5/6）：App* 弹层薄封装 8 件（AppDatePicker / AppDrawer / AppDropdown / AppModal / AppPopconfirm / AppPopover / AppSelect / AppTreeSelect）、overlay 单例族（overlayRegistry + useOverlayReporting，ADR-0035 一体族——8 件封装全部依赖 useOverlayReporting，拆开任何一侧都切出自然族）与通用件 4 项（AppDangerConfirmModal / PinyinSelect / NoteCopyButton / app-modal.css.ts）的唯一宿主；成员闭集逐项定界于 ADR-0118 决策 5，不得自行增删（CreateFab、instrument-link.css.ts、create-fab.css.ts 及其余全部组件留壳，#1159 按域归位）。overlay 注册表为模块级单例，随包 ESM 模块级持有（ADR-0118 决策 6），包对外只暴露注册接口，壳侧 5 个 composable 消费方（useAppDialog / useCreateShortcuts / useSystemBack / useViewShortcuts / useWindowGuard）经导入完成接线，注册接口语义一字不改（ADR-0035）。依赖方向：@ledger 范围内 → @ledger/utils（pinyin-filter / errors）/ @ledger/i18n（NoteCopyButton 文案）/ @ledger/window-tier（AppModal 窗口分级，与实际 import 全等）；不依赖 stores / views / 壳内 composables。源码直出，exports 逐组件/逐模块子路径暴露（.vue 文件直接作 exports 落点，.css.ts 同 theme 包先例；不开运行期 barrel、无根入口）；不建构建链、不设包内 tsconfig。",
+  "exports": {
+    "./AppDangerConfirmModal.vue": "./src/AppDangerConfirmModal.vue",
+    "./AppDatePicker.vue": "./src/AppDatePicker.vue",
+    "./AppDrawer.vue": "./src/AppDrawer.vue",
+    "./AppDropdown.vue": "./src/AppDropdown.vue",
+    "./AppModal.vue": "./src/AppModal.vue",
+    "./AppPopconfirm.vue": "./src/AppPopconfirm.vue",
+    "./AppPopover.vue": "./src/AppPopover.vue",
+    "./AppSelect.vue": "./src/AppSelect.vue",
+    "./AppTreeSelect.vue": "./src/AppTreeSelect.vue",
+    "./NoteCopyButton.vue": "./src/NoteCopyButton.vue",
+    "./PinyinSelect.vue": "./src/PinyinSelect.vue",
+    "./app-modal.css.ts": "./src/app-modal.css.ts",
+    "./overlayRegistry": "./src/overlayRegistry.ts",
+    "./useOverlayReporting": "./src/useOverlayReporting.ts"
+  },
+  "dependencies": {
+    "@ledger/i18n": "workspace:*",
+    "@ledger/utils": "workspace:*",
+    "@ledger/window-tier": "workspace:*",
+    "@vicons/ionicons5": "^0.13.0",
+    "@vanilla-extract/css": "^1.21.2",
+    "naive-ui": "^2.45.3",
+    "vue": "^3.5.42"
+  },
+  "devDependencies": {
+    "@ledger/test-support": "workspace:*",
+    "@vue/test-utils": "^2.5.0",
+    "vitest": "^5.0.0"
+  }
+}

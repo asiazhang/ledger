@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { NButton, NForm, NFormItem, NInput, NSpace, useMessage } from 'naive-ui'
-import AppModal from '@/components/AppModal.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import type { Merchant, MerchantUpdateInput } from '@ledger/types'

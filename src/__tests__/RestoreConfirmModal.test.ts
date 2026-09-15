@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NInput } from 'naive-ui'
-import AppModal from '@/components/AppModal.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
 import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
 import type { RestoreIntent } from '@/composables/useBackup'
 

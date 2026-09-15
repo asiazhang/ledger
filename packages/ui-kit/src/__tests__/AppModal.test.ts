@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, nextTick, ref } from 'vue'
-import AppModal from '@/components/AppModal.vue'
-import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
-import { MOBILE_CARD_CLASS } from '@/components/app-modal.css.ts'
+import AppModal from '../AppModal.vue'
+import AppDangerConfirmModal from '../AppDangerConfirmModal.vue'
+import { MOBILE_CARD_CLASS } from '../app-modal.css.ts'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
-import { hasOpenOverlay, openOverlayNames, resetOverlays } from '@/composables/overlayRegistry'
+import { hasOpenOverlay, openOverlayNames, resetOverlays } from '../overlayRegistry'
 
 /** 在 body 上查找遮罩元素（弹层抑制同款信号，见 useViewShortcuts）。 */
 function findMask(): HTMLElement {

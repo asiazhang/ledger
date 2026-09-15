@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NSelect } from 'naive-ui'
-import { useOverlayReporting } from '@/composables/useOverlayReporting'
+import { useOverlayReporting } from './useOverlayReporting'
 
 // 薄封装 NSelect，接入弹层注册表（ADR-0035）：应用内的 NSelect 一律经本组件
 // 使用，开/关状态实时上报，驱动快捷键抑制。其余 props/attrs/slots 原样透传。

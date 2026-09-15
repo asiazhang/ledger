@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
 import { NButton, NForm, NFormItem, NInput, NSpace, NSwitch, NText, useMessage } from 'naive-ui'
-import AppModal from '@/components/AppModal.vue'
-import AppDatePicker from '@/components/AppDatePicker.vue'
-import AppSelect from '@/components/AppSelect.vue'
-import PinyinSelect from '@/components/PinyinSelect.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
+import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import PolicyAgreementFields from '@/components/PolicyAgreementFields.vue'
 // 编辑模式的协议历史区（v-if=editing）：模板曾未 import、渲染为未知元素，
 // 编辑弹窗协议历史实际不显示——本票顺手修复（issue #713 改动本文件时发现）。

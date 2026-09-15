@@ -27,6 +27,7 @@
     "packages/loadable/src/__tests__/**/*.ts",
     "packages/transaction-modal-state/src/__tests__/**/*.ts",
     "packages/theme/src/__tests__/**/*.ts",
+    "packages/ui-kit/src/__tests__/**/*.ts",
     "packages/test-support/src/**/*.ts"
   ]
 }

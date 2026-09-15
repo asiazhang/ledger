@@ -15,7 +15,7 @@ import { LockClosedOutline } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useBackup } from '@/composables/useBackup'
 import { t } from '@ledger/i18n'
-import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
+import AppDangerConfirmModal from '@ledger/ui-kit/AppDangerConfirmModal.vue'
 import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
 import { SETTINGS_CARD_STACK_CLASS } from '@/components/settings/settings-layout.css.ts'
 

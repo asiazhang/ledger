@@ -155,6 +155,12 @@ export const PACKAGES: readonly PackageEntry[] = [
     deps: ['@ledger/modal-intent', '@ledger/api', '@ledger/i18n', '@ledger/types', '@ledger/utils', '@ledger/test-support'],
     note: '交易弹窗编排包（issue #1321 / ADR-0045 / ADR-0118 决策 4）：TransactionModalState——交易列表五个弹窗共享的「开启/目标/关闭」编排，意图闭集五单一判别联合唯一事实源，显示开关由「意图非空」派生；ModalIntent 工厂（ADR-0072）之上首个适配器，「先取明细再开窗、失败不开窗、last-open-wins」异步时序守卫留适配器层；直接 import api 与 useMessage 的既有形态随包保持不做注入；方向表与实际 import 全等（票面四包 + types 类型边，测试边 → test-support 仅 devDependencies 消费，规则⑤）；不依赖 stores / components / views',
   },
+  {
+    name: '@ledger/ui-kit',
+    dir: 'packages/ui-kit',
+    deps: ['@ledger/utils', '@ledger/i18n', '@ledger/window-tier', '@ledger/test-support'],
+    note: '界面通用件包（issue #1320 / ADR-0118 决策 3/5/6）：App* 弹层薄封装 8 件 + overlay 单例族（overlayRegistry + useOverlayReporting，ADR-0035 一体族，注册接口语义一字不改）+ 通用件 4 项（AppDangerConfirmModal / PinyinSelect / NoteCopyButton / app-modal.css.ts），成员闭集逐项定界不得自行增删（CreateFab 等域/应用专属留壳，#1159 按域归位）；方向表与实际 import 全等（utils / i18n / window-tier；测试边 → test-support，devDependencies 消费，规则⑤），exports 逐组件/逐模块子路径暴露（.vue 直接作 exports 落点，.css.ts 同 theme 先例）；不依赖 stores / views / 壳内 composables',
+  },
 ]
 
 /** workspace 成员 glob（pnpm-workspace.yaml 侧声明与本脚本核对同源）。 */

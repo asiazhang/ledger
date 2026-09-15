@@ -20,6 +20,11 @@ const DOM_PACKAGE_TEST_GLOBS = [
   // （@ledger/test-support/media-mock），需 DOM 环境；断点构建期契约测试（消费
   // vite.config 提取与占位符替换）留壳侧 app project（src/__tests__），不落本登记。
   'packages/window-tier/**/*.test.ts',
+  // ui-kit 包（issue #1320）：App* 封装族与 overlayRegistry 组件测试挂载组件、
+  // 断言 teleport DOM 与 naive-ui 交互，需 DOM 环境；app-modal-mobile-css 测试
+  // 经 vanilla-extract adapter 接缝捕获产出物（theme-contract 同款）随整包登记
+  // 落 jsdom（先例 theme）——与搬迁前 app project 环境逐字同构，行为零变化。
+  'packages/ui-kit/**/*.test.ts',
 ]
 
 export default defineConfig({
@@ -65,7 +70,7 @@ export default defineConfig({
     // - packages-dom（jsdom）：DOM 依存包内测试的显式登记处（组件挂载或
     //   Storage.prototype 平台语义需 jsdom；原「组件型包测试落位时再扩 jsdom
     //   project」的预定扩位，issue #1151 起 @ledger/i18n / @ledger/storage
-    //   先行落入）。#1157 ui-kit 落位时并入本 project。
+    //   先行落入）。ui-kit 落位即并入本 project（issue #1320，登记见上方 DOM 表）。
     projects: [
       {
         test: {

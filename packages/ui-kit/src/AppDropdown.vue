@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NDropdown } from 'naive-ui'
-import { useOverlayReporting } from '@/composables/useOverlayReporting'
+import { useOverlayReporting } from './useOverlayReporting'
 
 // 薄封装 NDropdown，接入弹层注册表（ADR-0035）：应用内的 NDropdown 一律经本
 // 组件使用，菜单开/关状态实时上报，驱动快捷键抑制。其余 props/attrs/slots

@@ -20,7 +20,7 @@ import {
   dateZhCN,
   type MenuOption,
 } from 'naive-ui'
-import AppDropdown from '@/components/AppDropdown.vue'
+import AppDropdown from '@ledger/ui-kit/AppDropdown.vue'
 import MobileNavShell from '@/components/MobileNavShell.vue'
 import {
   HomeOutline,

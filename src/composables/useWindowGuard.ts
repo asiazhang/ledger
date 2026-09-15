@@ -1,6 +1,6 @@
 import { onMounted, onUnmounted } from 'vue'
 import { isEditableTarget } from '@/composables/useCreateShortcuts'
-import { hasOpenOverlay } from '@/composables/overlayRegistry'
+import { hasOpenOverlay } from '@ledger/ui-kit/overlayRegistry'
 import { fireViewReset } from '@/composables/viewResetRegistry'
 
 /**

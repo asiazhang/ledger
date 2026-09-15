@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { NTooltip } from 'naive-ui'
 import { formatRate } from '@ledger/money'
 import { t } from '@ledger/i18n'
-import AppPopover from '@/components/AppPopover.vue'
+import AppPopover from '@ledger/ui-kit/AppPopover.vue'
 import { useInputMode } from '@/composables/useInputMode'
 import { marker, trigger } from './mwr-rate-cell.css.ts'
 

@@ -5,9 +5,9 @@ import {
 import { describe, it, expect, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { NModal, NSelect } from 'naive-ui'
-import { resetOverlays } from '@/composables/overlayRegistry'
+import { resetOverlays } from '@ledger/ui-kit/overlayRegistry'
 import { useFeatureToggleStore } from '@/stores/feature-toggles'
-import AppSelect from '@/components/AppSelect.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
 import {
   INVESTMENT_CREATE_KINDS,

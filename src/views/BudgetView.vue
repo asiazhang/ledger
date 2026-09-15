@@ -20,9 +20,9 @@ import { t } from '@ledger/i18n'
 import { useLoadable } from '@ledger/loadable'
 import { useModalIntent } from '@ledger/modal-intent'
 import { useWindowTier } from '@ledger/window-tier'
-import AppModal from '@/components/AppModal.vue'
-import AppPopconfirm from '@/components/AppPopconfirm.vue'
-import PinyinSelect from '@/components/PinyinSelect.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
+import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import {
   MOBILE_CELL_STYLE,
   MOBILE_SUB_STYLE,

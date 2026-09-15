@@ -1,5 +1,5 @@
 import { onUnmounted, watch } from 'vue'
-import { hasOpenOverlay } from '@/composables/overlayRegistry'
+import { hasOpenOverlay } from '@ledger/ui-kit/overlayRegistry'
 import { useInputMode } from '@/composables/useInputMode'
 import type { CreateTransactionKind } from '@ledger/types'
 

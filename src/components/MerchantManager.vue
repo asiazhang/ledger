@@ -14,7 +14,7 @@ import {
   type DataTableColumn,
   type PaginationProps,
 } from 'naive-ui'
-import AppPopconfirm from '@/components/AppPopconfirm.vue'
+import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
 import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
 import { api } from '@ledger/api'
 import { useRouter } from 'vue-router'

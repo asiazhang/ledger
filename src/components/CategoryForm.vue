@@ -6,10 +6,10 @@ import {
   NButton,
   NSpace,
 } from 'naive-ui'
-import PinyinSelect from '@/components/PinyinSelect.vue'
-import AppSelect from '@/components/AppSelect.vue'
-import AppTreeSelect from '@/components/AppTreeSelect.vue'
-import AppDatePicker from '@/components/AppDatePicker.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
+import AppTreeSelect from '@ledger/ui-kit/AppTreeSelect.vue'
+import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
 import { useCategoryForm } from '@/composables/useCategoryForm'
 import { t } from '@ledger/i18n'
 import type { Transaction } from '@ledger/types'

@@ -2,7 +2,7 @@ import { onScopeDispose, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { onBackButtonPress } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { closeTopOverlay, hasOpenOverlay } from '@/composables/overlayRegistry'
+import { closeTopOverlay, hasOpenOverlay } from '@ledger/ui-kit/overlayRegistry'
 import { useWindowTier } from '@ledger/window-tier'
 
 /**
