@@ -108,15 +108,6 @@ impl SyncChannel {
         &self.layout
     }
 
-    /// 测试接缝（`sha256_hex` 同款 `#[doc(hidden)]` 放宽，ADR-0084 决策 2）：
-    /// 以给定的传输与布局直接构造句柄——触发编排域单测以内存假 Transport 驱动
-    /// `run_round_once` / `run_auto_round` 全链，不经真实 S3。生产路径不经本
-    /// 构造器（生产一律经 [`build_channel`]）。
-    #[doc(hidden)]
-    pub fn from_parts(transport: Box<dyn Transport>, layout: ChannelLayout) -> Self {
-        Self { transport, layout }
-    }
-
     /// 跑一轮通道协议（发布自己流 + 拉取他人流）：把本句柄持有的传输与布局
     /// 一起交给 [`run_round_with`]，调用方不必解包句柄。
     ///
