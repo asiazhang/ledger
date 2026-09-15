@@ -610,6 +610,33 @@ fn mwr_range_converts_boundary_value_with_period_fx_rate() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn mwr_range_includes_start_day_dividend() {
+    // 范围外修复回归：分红是仓位外现金、不在期初市值折算内——起始日（含）的
+    // 分红照常入集，只有起始日之前的窗口外流水排除。区间 [2026-07-01, 2027-01-01]：
+    // 期初折算 −10000、当日分红 +500、期末现值 +10000（184d）→
+    // r = (10000/9500)^(365/184) − 1（若起始日分红被折算吞掉，解应恰为 0）。
+    let conn = open();
+    seed_account(&conn, "acc-dd", "A 股户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-dd", "600519", "贵州茅台", "CNY", "unknown");
+    create_transaction_internal(
+        &conn,
+        buy_on("acc-dd", "inst-dd", 10.0, 100_000, 0, "2026-01-01"),
+    )
+    .unwrap();
+    create_transaction_internal(&conn, dividend_on("acc-dd", "inst-dd", 500, "2026-07-01"))
+        .unwrap();
+    seed_price_history(&conn, "ph-dd-1", "inst-dd", "2026-07-01", 100_000, "CNY");
+    seed_market_price(&conn, "inst-dd", 100_000, "CNY");
+
+    let range = MwrRange {
+        start_date: Some("2026-07-01".into()),
+        end_date: Some(TODAY.into()),
+    };
+    let summary = mwr_on(&conn, &range);
+    assert_close(account_rate(&summary, "acc-dd"), 0.107_106_976_057_223_55);
+}
+
+#[test]
 fn mwr_rejects_invalid_range() {
     let conn = open();
     let bad_format = MwrRange {

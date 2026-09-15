@@ -424,9 +424,16 @@ fn load_cash_flows(
             continue;
         }
         // 区间过滤 `(start, end]`：含期初存量的对例外（生命周期度量，见函数头注）。
+        // 分红是仓位外现金、不在期初市值折算内：起始日（含）的分红照常入集，
+        // 仅起始日之前的窗口外流水排除（范围外修复：起始日分红被折算吞掉）。
         let lifetime = opening_pairs.contains(&out_key)
             || in_key.as_ref().is_some_and(|k| opening_pairs.contains(k));
-        if !lifetime && !in_range(date, start, end) {
+        let in_window = if row.kind == "dividend" {
+            !start.is_some_and(|s| date < s) && in_range(date, None, end)
+        } else {
+            in_range(date, start, end)
+        };
+        if !lifetime && !in_window {
             continue;
         }
         if row.kind == "convert" {
