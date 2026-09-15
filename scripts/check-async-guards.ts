@@ -51,7 +51,7 @@ export const SEQ_SEAM_FILE = 'packages/loadable/src/useLoadable.ts'
 
 /** 扫描根清单（相对仓库根）：src 应用壳 + 已收编接缝的包内 src 树——接缝/基线
  *  文件搬到哪，扫描根跟到哪；后续包抽取携接缝或基线文件出壳时逐票追加。 */
-const SCAN_ROOTS: readonly string[] = ['src', 'packages/loadable/src']
+const SCAN_ROOTS: readonly string[] = ['src', 'packages/loadable/src', 'packages/transaction-modal-state/src']
 
 /** 规则 2 形态：catch 内直弹 toast 模板（单行；errorMessage 为 utils/errors 统一错误提取） */
 const CATCH_TOAST_PATTERN = /message\.error\(\s*t\([^\n]*errorMessage/
@@ -59,7 +59,8 @@ const CATCH_TOAST_PATTERN = /message\.error\(\s*t\([^\n]*errorMessage/
 /**
  * 规则 2 存量基线（#1039 交付时点实测快照：61 处 / 31 文件；键相对扫描根、posix
  * 分隔，值为该文件允许的命中行数；#1318 扫描根扩至包内 src 树，键由相对 src
- * 改挂仓库根，值不变）。现计数须与基线全等：新增红、收缩未同步同样红
+ * 改挂仓库根，值不变；#1321 起 useTransactionModalState 条目随包出壳，键同步为
+ * 包内路径，值不变）。现计数须与基线全等：新增红、收缩未同步同样红
  * ——收编一处下调一处，收编至零删除条目；基线条目指向的文件不可达亦红（清单漂移
  * fail loud）。新增条目不允许：基线只减不增。
  */
@@ -88,7 +89,7 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   'src/composables/useRestoreFromFile.ts': 2,
   'src/composables/useScheduledPlanForm.ts': 1,
   'src/composables/useScheduledPlanList.ts': 1,
-  'src/composables/useTransactionModalState.ts': 2,
+  'packages/transaction-modal-state/src/useTransactionModalState.ts': 2,
   'src/views/AccountsView.vue': 4,
   'src/views/AiPromptView.vue': 2,
   'src/views/BudgetView.vue': 3,
