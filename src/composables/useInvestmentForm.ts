@@ -10,7 +10,7 @@ import {
   PRICE_UNITS_PER_YUAN,
 } from '@ledger/money'
 import { judgeQuantityText, judgePriceText } from '@ledger/utils/field-error'
-import { useFieldErrors } from '@/composables/useFieldErrors'
+import { useFieldErrors } from '@ledger/field-errors'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { buildTradeInput } from '@/domain/transaction-input'
 import { errorMessage } from '@ledger/utils/errors'

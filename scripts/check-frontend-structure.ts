@@ -132,6 +132,12 @@ export const PACKAGES: readonly PackageEntry[] = [
     note: '通用工具包（issue #1314 / ADR-0118 决策 2）：src/utils 叶子层全量平铺搬迁——日期/期间、分类树与图表数据形态、Chart.js 统一注册、码化错误本地化 errorMessage（ADR-0050）、字段错误、视图状态、拼音过滤等纯函数单一来源；方向表与实际 import 全等（types / storage / i18n / money），exports 逐模块子路径暴露不开运行期 barrel；不依赖 stores / components / views / composables',
   },
   {
+    name: '@ledger/field-errors',
+    dir: 'packages/field-errors',
+    deps: ['@ledger/utils'],
+    note: '字段错误态装配包（issue #1319 / ADR-0058 / ADR-0118 决策 4）：useFieldErrors 表单级装配工厂——字段按「原始文本 ref + 判定函数（可选启用条件）」声明，产出每字段错误态与已解析值、聚合提交禁用与重置；只收口径不代判时机，判定口径单点在 @ledger/utils/field-error（#1314 归 utils 包，本包 import 不复制）；方向表与实际 import 全等（仅 @ledger/utils）；不依赖 stores / components / views / composables',
+  },
+  {
     name: '@ledger/window-tier',
     dir: 'packages/window-tier',
     deps: ['@ledger/test-support'],
