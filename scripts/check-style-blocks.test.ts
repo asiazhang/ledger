@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { STYLE_BLOCK_WHITELIST } from '../scripts/check-style-blocks.ts'
@@ -49,7 +49,13 @@ const STUB_WITH_STYLE = [
  *  <style> 块——白名单即存量携带者登记表，全量桩即夹具绿基线）；omit 指定的条目
  *  不落盘（文件删除/改名后未同步白名单的陈目形态）。返回夹具仓库根。 */
 function makeFixture(omit?: string): string {
-  const root = mkdtempSync(join(tmpdir(), 'check-style-blocks-'))
+  // 夹具根必须**解析后**再当 cwd 与扫描根传入（issue #1368）：macOS 的 os.tmpdir()
+  // 是 /var/folders/…，而 /var 是指向 /private/var 的符号链接，子进程里
+  // process.cwd() 拿到的是解析后的 /private/var/…——两串不同源时守门的
+  // relative(process.cwd(), file) 会算出 ../../../var/folders/…，白名单对比全数失配，
+  // 夹具绿基线恒红（Linux 的 /tmp 非符号链接，故 CI 掩盖了此缺陷）。
+  // 生产调用不受影响：门槛不带扫描根参数，默认根由脚本自身路径推出，与 cwd 同源。
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'check-style-blocks-')))
   tempDirs.push(root)
   for (const rel of STYLE_BLOCK_WHITELIST) {
     if (rel === omit) continue
@@ -100,6 +106,9 @@ describe('check-style-blocks（样式块守门）', () => {
     expect(r.status).toBe(1)
     expect(r.output).toContain('不可达')
     expect(r.output).toContain(omitted)
+    // 只有被 omit 的那一条不可达（issue #1368）：夹具路径同源时归一化必然落在夹具上，
+    // 报出多条即归一化再次失配（曾经在 macOS 上以「全部不可达」假红）。
+    expect(r.output.match(/不可达/g)).toHaveLength(1)
   })
 
   it('删除白名单条目即红：文件仍带 <style> 块时回潮分支拦截（只减不增，#1360）', () => {
