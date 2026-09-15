@@ -953,3 +953,50 @@ fn mwr_mixed_collection_range_keeps_cumulative_with_lifetime_opening() {
     assert_eq!(total_basis(&summary, "CNY"), Some(MwrBasis::Cumulative));
     assert_close(total_rate(&summary, "CNY"), 1000.0 / 15000.0);
 }
+
+#[test]
+fn mwr_degraded_collection_excludes_unvalued_pairs_from_aggregate() {
+    // 降级合集的空值语义不变（#1346）：缺价 / 缺汇率的对整对跳过，不入未年化
+    // 的 Σ分子 / Σ分母——期初存量（10000 → 11000）+ 真实成交（5000 → 6000）
+    // + 缺价成交（投入 8000）：合计应为 2000/15000；若缺价对被错误计入则是
+    // 2000/23000。
+    let conn = open();
+    seed_account(&conn, "acc-du", "雪球基金", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        "inst-du-op",
+        "003156",
+        "招商招悦纯债A",
+        "CNY",
+        "unknown",
+    );
+    seed_instrument(&conn, "inst-du-tr", "000001", "平安银行", "CNY", "unknown");
+    seed_instrument(&conn, "inst-du-np", "600000", "浦发银行", "CNY", "unknown");
+    create_transaction_internal(
+        &conn,
+        opening_buy_on("acc-du", "inst-du-op", 10.0, 100_000, 0, "2026-06-30"),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        buy_on("acc-du", "inst-du-tr", 5.0, 100_000, 0, "2026-08-01"),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        buy_on("acc-du", "inst-du-np", 8.0, 100_000, 0, "2026-08-01"),
+    )
+    .unwrap();
+    // 只有前两个标的有现价；inst-du-np 缺价。
+    seed_market_price(&conn, "inst-du-op", 110_000, "CNY");
+    seed_market_price(&conn, "inst-du-tr", 120_000, "CNY");
+
+    let summary = mwr_on(&conn, &MwrRange::default());
+    assert_eq!(
+        account_basis(&summary, "acc-du"),
+        Some(MwrBasis::Cumulative)
+    );
+    assert_close(account_rate(&summary, "acc-du"), 2000.0 / 15000.0);
+    assert_eq!(total_basis(&summary, "CNY"), Some(MwrBasis::Cumulative));
+    assert_close(total_rate(&summary, "CNY"), 2000.0 / 15000.0);
+}
