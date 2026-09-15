@@ -3,12 +3,12 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { TOAST_BASELINE } from '../scripts/check-async-guards.ts'
+import { SEQ_SEAM_FILE, TOAST_BASELINE } from '../scripts/check-async-guards.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-async-guards.ts（前端异步守门，issue #1039）。
 // 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。
 // 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
-// 通过位置参数把扫描目标指向临时夹具目录。
+// 通过位置参数把扫描目标指向临时夹具仓库根（布局与生产 SCAN_ROOTS 同构）。
 // 夹具基线清单自助手导出的 TOAST_BASELINE 派生（单一事实源，无双源漂移）；
 // （vitest 转换后 import.meta.url 非 file: scheme，取进程 cwd = 仓库根定位脚本）
 const script = join(process.cwd(), 'scripts', 'check-async-guards.ts')
@@ -39,23 +39,30 @@ function toastStub(count: number): string {
 }
 
 /**
- * 建临时夹具：按脚本导出的 TOAST_BASELINE 生成全部条目（每文件恰好基线计数行），
- * 再按 overrides 追加/覆盖文件（值为完整文件内容）。返回脚本参数（夹具扫描根）。
+ * 建临时夹具：按脚本导出的 TOAST_BASELINE 生成全部条目（每文件恰好基线计数行，
+ * 键相对夹具仓库根、含 src/ 前缀——与生产 SCAN_ROOTS 布局同构），再落接缝住址桩
+ * （守门前置要求住址文件可达，缺失即红；withSeam=false 时省略，供住址不可达用例），
+ * 最后按 overrides 追加/覆盖文件（键同样相对仓库根）。返回脚本参数（夹具仓库根）。
  */
-function makeFixture(overrides: Record<string, string> = {}): string[] {
-  const src = mkdtempSync(join(tmpdir(), 'check-async-guards-'))
-  tempDirs.push(src)
+function makeFixture(overrides: Record<string, string> = {}, withSeam = true): string[] {
+  const root = mkdtempSync(join(tmpdir(), 'check-async-guards-'))
+  tempDirs.push(root)
   for (const [relPath, count] of Object.entries(TOAST_BASELINE)) {
-    const abs = join(src, relPath)
+    const abs = join(root, relPath)
     mkdirSync(join(abs, '..'), { recursive: true })
     writeFileSync(abs, toastStub(count))
   }
+  if (withSeam) {
+    const seam = join(root, SEQ_SEAM_FILE)
+    mkdirSync(join(seam, '..'), { recursive: true })
+    writeFileSync(seam, 'export {}\n')
+  }
   for (const [relPath, content] of Object.entries(overrides)) {
-    const file = join(src, relPath)
+    const file = join(root, relPath)
     mkdirSync(join(file, '..'), { recursive: true })
     writeFileSync(file, content)
   }
-  return [src]
+  return [root]
 }
 
 describe('check-async-guards（前端异步守门）', () => {
@@ -79,31 +86,39 @@ describe('check-async-guards（前端异步守门）', () => {
     expect(r.output).toContain('空集')
   })
 
+  it('接缝住址不可达即红（搬迁未同步 SEQ_SEAM_FILE，拒绝白名单静默失效）', () => {
+    // withSeam=false：不落接缝住址桩，其他源文件齐备，唯独住址缺失
+    const r = run(makeFixture({}, false))
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('住址不可达')
+    expect(r.output).toContain(SEQ_SEAM_FILE)
+  })
+
   describe('规则 1：手搓竞态序号（硬零容忍，唯一合法住址 useLoadable）', () => {
     it('let fetchSeq = 0 即红，定位文件与行号', () => {
       const r = run(
         makeFixture({
-          'views/BadView.ts': `export function reload() {\n  let fetchSeq = 0\n  fetchSeq++\n}`,
+          'src/views/BadView.ts': `export function reload() {\n  let fetchSeq = 0\n  fetchSeq++\n}`,
         }),
       )
       expect(r.status).toBe(1)
       expect(r.output).toContain('手搓竞态序号')
-      expect(r.output).toContain('views/BadView.ts:2')
+      expect(r.output).toContain('src/views/BadView.ts:2')
     })
 
     it('裸名 let seq = 0（接缝外）同样红（加宽面）', () => {
       const r = run(
-        makeFixture({ 'composables/useOther.ts': 'let seq = 0\nexport {} \n' }),
+        makeFixture({ 'src/composables/useOther.ts': 'let seq = 0\nexport {} \n' }),
       )
       expect(r.status).toBe(1)
       expect(r.output).toContain('手搓竞态序号')
-      expect(r.output).toContain('composables/useOther.ts:1')
+      expect(r.output).toContain('src/composables/useOther.ts:1')
     })
 
-    it('唯一合法住址：composables/useLoadable.ts 内 let seq = 0 绿', () => {
+    it('唯一合法住址：packages/loadable/src/useLoadable.ts 内 let seq = 0 绿（#1318 随包搬迁）', () => {
       const r = run(
         makeFixture({
-          'composables/useLoadable.ts': 'let seq = 0\nexport const x = seq\n',
+          [SEQ_SEAM_FILE]: 'let seq = 0\nexport const x = seq\n',
         }),
       )
       expect(r.status).toBe(0)
@@ -112,7 +127,7 @@ describe('check-async-guards（前端异步守门）', () => {
     it('注释行不误报：// let fetchSeq = 0 绿', () => {
       const r = run(
         makeFixture({
-          'views/CommentView.ts': '// let fetchSeq = 0\nexport {}\n',
+          'src/views/CommentView.ts': '// let fetchSeq = 0\nexport {}\n',
         }),
       )
       expect(r.status).toBe(0)
@@ -123,46 +138,46 @@ describe('check-async-guards（前端异步守门）', () => {
     it('基线文件回潮（4 → 5）即红，报新增行号', () => {
       const r = run(
         makeFixture({
-          'views/ItemsView.vue': toastStub(5),
+          'src/views/ItemsView.vue': toastStub(5),
         }),
       )
       expect(r.status).toBe(1)
       expect(r.output).toContain('回潮')
-      expect(r.output).toContain('views/ItemsView.vue')
+      expect(r.output).toContain('src/views/ItemsView.vue')
       expect(r.output).toContain('5')
     })
 
     it('基线收缩未同步（4 → 3）即红，提示下调基线', () => {
       const r = run(
         makeFixture({
-          'views/ItemsView.vue': toastStub(3),
+          'src/views/ItemsView.vue': toastStub(3),
         }),
       )
       expect(r.status).toBe(1)
       expect(r.output).toContain('基线待收缩')
-      expect(r.output).toContain('views/ItemsView.vue')
+      expect(r.output).toContain('src/views/ItemsView.vue')
     })
 
     it('基线条目清零即红，提示删除条目（基线只减不增、不挂陈目）', () => {
       const r = run(
         makeFixture({
-          'views/PoliciesView.vue': 'export {}\n',
+          'src/views/PoliciesView.vue': 'export {}\n',
         }),
       )
       expect(r.status).toBe(1)
       expect(r.output).toContain('基线待收缩')
-      expect(r.output).toContain('views/PoliciesView.vue')
+      expect(r.output).toContain('src/views/PoliciesView.vue')
     })
 
     it('基线外文件新增直弹 toast 即红', () => {
       const r = run(
         makeFixture({
-          'components/NewWidget.vue': `${TOAST_LINE}\n`,
+          'src/components/NewWidget.vue': `${TOAST_LINE}\n`,
         }),
       )
       expect(r.status).toBe(1)
       expect(r.output).toContain('回潮')
-      expect(r.output).toContain('components/NewWidget.vue')
+      expect(r.output).toContain('src/components/NewWidget.vue')
     })
 
     it('注释行不误报：真实 4 处 + 注释 1 行仍与基线全等（绿）', () => {
@@ -178,14 +193,14 @@ describe('check-async-guards（前端异步守门）', () => {
       const dir = mkdtempSync(join(tmpdir(), 'check-async-guards-missing-'))
       tempDirs.push(dir)
       for (const [relPath, count] of Object.entries(TOAST_BASELINE)) {
-        if (relPath === 'views/PoliciesView.vue') continue
+        if (relPath === 'src/views/PoliciesView.vue') continue
         const abs = join(dir, relPath)
         mkdirSync(join(abs, '..'), { recursive: true })
         writeFileSync(abs, toastStub(count))
       }
       const r = run([dir])
       expect(r.status).toBe(1)
-      expect(r.output).toContain('views/PoliciesView.vue')
+      expect(r.output).toContain('src/views/PoliciesView.vue')
     })
   })
 })

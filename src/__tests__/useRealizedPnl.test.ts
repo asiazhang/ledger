@@ -5,7 +5,7 @@ import { withSetup } from '@ledger/test-support/mount'
 import { defineComponent } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
-import { registerToastSink } from '@/composables/useLoadable'
+import { registerToastSink } from '@ledger/loadable'
 import type { RealizedPnlSummary } from '@ledger/types'
 import {
   makeAccount,

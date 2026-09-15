@@ -12,7 +12,7 @@ import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry
 import { fireViewReset, clearViewResets } from '@/composables/viewResetRegistry'
 import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import { makeCategory, makeFakeSink, resetToastSink } from './factories'
-import { registerToastSink } from '@/composables/useLoadable'
+import { registerToastSink } from '@ledger/loadable'
 import { formatAmount } from '@ledger/money'
 import type { NullableDateRange } from '@ledger/utils/time-period'
 import type { ReportDateRange } from '@ledger/types'

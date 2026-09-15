@@ -24,6 +24,7 @@
     "src/**/*.d.ts",
     "packages/money/src/__tests__/**/*.ts",
     "packages/row-context-menu/src/__tests__/**/*.ts",
+    "packages/loadable/src/__tests__/**/*.ts",
     "packages/theme/src/__tests__/**/*.ts",
     "packages/test-support/src/**/*.ts"
   ]

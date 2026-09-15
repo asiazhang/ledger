@@ -7,7 +7,7 @@ import { lastInvokeArgs, mockInvoke, wireInvokeSeam, type InvokeSeamOverride } f
 import { clickDialogButton, dialogText, findBodyButton, visibleModalText } from '@ledger/test-support/dom'
 import { messageApi, messageCalls } from '@ledger/test-support/message-mock'
 import { resetToastSink } from './factories'
-import { registerToastSink } from '@/composables/useLoadable'
+import { registerToastSink } from '@ledger/loadable'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import type { BookListInfo } from '@ledger/types'
 

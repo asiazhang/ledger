@@ -5,7 +5,7 @@ import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { formatAmount } from '@ledger/money'
 import { useReferenceStore } from '@/stores/reference'
-import { useLoadable } from '@/composables/useLoadable'
+import { useLoadable } from '@ledger/loadable'
 import type { BalanceCacheAudit } from '@ledger/types'
 
 // 账户余额缓存卡片（ADR-0067 决策 5「手动审计兜底」的界面入口）：账户余额与

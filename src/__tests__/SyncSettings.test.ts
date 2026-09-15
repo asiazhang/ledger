@@ -10,7 +10,7 @@ import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import type { ParkedOpInfo, SyncChannelConfig, SyncRoundReport, SyncStatus } from '@ledger/types'
 
 import SyncSettings from '@/components/settings/SyncSettings.vue'
-import { registerToastSink } from '@/composables/useLoadable'
+import { registerToastSink } from '@ledger/loadable'
 import { makeFakeSink, resetToastSink } from './factories'
 
 // 「测试连接」的失败反馈走 useLoadable 的错误通道（showErrorToast 单点）：

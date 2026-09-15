@@ -7,7 +7,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import type { BalanceCacheAudit } from '@ledger/types'
 
 import { makeFakeSink, resetToastSink } from './factories'
-import { registerToastSink } from '@/composables/useLoadable'
+import { registerToastSink } from '@ledger/loadable'
 
 import BalanceCacheSettings from '@/components/settings/BalanceCacheSettings.vue'
 

@@ -121,6 +121,9 @@ importers:
       '@ledger/i18n':
         specifier: workspace:*
         version: link:packages/i18n
+      '@ledger/loadable':
+        specifier: workspace:*
+        version: link:packages/loadable
       '@ledger/modal-intent':
         specifier: workspace:*
         version: link:packages/modal-intent
@@ -274,6 +277,19 @@ importers:
       '@vue/test-utils':
         specifier: ^2.5.0
         version: 2.5.0(@vue/compiler-dom@3.5.42)(@vue/server-renderer@3.5.42)(vue@3.5.42(typescript@6.0.3))
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
+
+  packages/loadable:
+    dependencies:
+      '@ledger/utils':
+        specifier: workspace:*
+        version: link:../utils
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+    devDependencies:
       vitest:
         specifier: ^5.0.0
         version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))

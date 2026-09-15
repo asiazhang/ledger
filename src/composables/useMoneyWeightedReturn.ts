@@ -5,7 +5,7 @@ import { t } from '@ledger/i18n'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
 import type { Theme } from '@ledger/theme'
 import MwrRateCell from '@/components/investments/MwrRateCell.vue'
-import { useLoadable } from '@/composables/useLoadable'
+import { useLoadable } from '@ledger/loadable'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import type { MoneyWeightedReturnSummary, MwrBasis } from '@ledger/types'
 

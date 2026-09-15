@@ -1,6 +1,15 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { useLoadable, registerToastSink } from '@/composables/useLoadable'
-import { makeFakeSink, resetToastSink } from './factories'
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
+import { useLoadable, registerToastSink, type ToastSink } from '../useLoadable'
+
+/** 假 sink（与壳侧 src/__tests__/factories.ts 的 makeFakeSink 同实现）：断言默认策略的 toast 通道 */
+function makeFakeSink(): ToastSink & { error: Mock<(content: string) => void> } {
+  return { error: vi.fn<(content: string) => void>() }
+}
+
+/** 复位为 no-op sink，模拟「注册前」默认态（同壳侧 factories.ts，防模块级 sink 状态串扰） */
+function resetToastSink(): void {
+  registerToastSink({ error: () => {} })
+}
 
 /** 手动完结的延迟 Promise：控制任务完结时机以构造竞态 */
 function deferred<T>() {
