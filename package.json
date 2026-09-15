@@ -22,6 +22,7 @@
     "@ledger/modal-intent": "workspace:*",
     "@ledger/money": "workspace:*",
     "@ledger/row-context-menu": "workspace:*",
+    "@ledger/scheduled-plan-list": "workspace:*",
     "@ledger/storage": "workspace:*",
     "@ledger/transaction-modal-state": "workspace:*",
     "@ledger/theme": "workspace:*",

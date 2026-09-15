@@ -63,12 +63,16 @@
 //   不做字符串掩码——字符串内恰好含完整声明形态文本理论上可误红（现实中未见）。
 //
 // 规则 4（#822）：测试文件内定义领域数据工厂即红——组件测试数据工厂唯一定义点
-// 在共享工厂层出口（src/__tests__/factories.ts），测试文件本地定义即副本回潮。
+// 在共享工厂层出口（#1322 前为 src/__tests__/factories.ts；#1322 抽
+// scheduled-plan-list 包时计划/期次四厂随测试面上收
+// @ledger/test-support/plan-factories，壳侧 factories.ts 改再导出），
+// 测试文件本地定义即副本回潮。
 //   名单（精确声明名）：makePlan / makeSubscriptionPlan / makeInstallmentPlan /
 //   makeTransferPlan / makeOccurrence。交易侧 makeTxn / makeTransaction 待 #821
 //   收敛落地后补入名单——本票与 #821 文件面不相交、互不阻塞，名单先行会让其
 //   未收敛副本在守门直接变红。
-//   白名单（相对各扫描区间的 posix 路径）：factories.ts（唯一定义点）与
+//   白名单（相对各扫描区间的 posix 路径）：factories.ts（壳侧再导出层）与
+//   plan-factories.ts（#1322 起的唯一定义点住址）与
 //   TransactionsView/common.ts（#821 交易薄壳一行包装，交易名补入名单时生效）。
 //   双源代价（登记处）：名单与共享工厂层出口须人工同步——新增共享工厂必须同步
 //   本名单，否则该厂的新副本不被拦截。
@@ -365,8 +369,17 @@ const FACTORY_DECL = new RegExp(
   `\\b(?:function\\s+|(?:const|let|var)\\s+)(${FACTORY_NAMES.join('|')})\\b`,
   'g',
 )
-// 白名单按相对 testsDir 的 posix 路径登记：唯一定义点 + 交易薄壳一行包装（#821）
-const FACTORY_WHITELIST = new Set(['factories.ts', join('TransactionsView', 'common.ts')])
+// 白名单按相对各扫描区间的 posix 路径登记：唯一定义点 + 交易薄壳一行包装（#821）。
+// #1322 起计划/期次四厂（subscription/installment/scheduled_transfer/occurrence）
+// 上收 @ledger/test-support/plan-factories——抽 scheduled-plan-list 包时其包内测试
+// 跟随被测包，而规则 4 不豁免包内测试与 seam 宿主，唯一定义点随测试面上收，
+// seam-home 区间相对路径 'plan-factories.ts' 登记为新住址；壳侧 factories.ts 改
+// 再导出，仍在本白名单（壳侧测试经 './factories' 消费，import 面不变）。
+const FACTORY_WHITELIST = new Set([
+  'factories.ts',
+  'plan-factories.ts',
+  join('TransactionsView', 'common.ts'),
+])
 
 function findFactoryDefinition(rel: string, source: string): string[] {
   const hits: string[] = []

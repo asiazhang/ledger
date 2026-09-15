@@ -54,6 +54,7 @@ export const SEQ_SEAM_FILE = 'packages/loadable/src/useLoadable.ts'
 const SCAN_ROOTS: readonly string[] = [
   'src',
   'packages/loadable/src',
+  'packages/scheduled-plan-list/src',
   'packages/ui-kit/src',
   'packages/transaction-modal-state/src',
 ]
@@ -92,7 +93,6 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   'src/composables/useRefundForm.ts': 1,
   'src/composables/useRestoreFromFile.ts': 2,
   'src/composables/useScheduledPlanForm.ts': 1,
-  'src/composables/useScheduledPlanList.ts': 1,
   'packages/transaction-modal-state/src/useTransactionModalState.ts': 2,
   'src/views/AccountsView.vue': 4,
   'src/views/AiPromptView.vue': 2,
@@ -100,6 +100,8 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   'src/views/ItemsView.vue': 4,
   'src/views/PoliciesView.vue': 1,
   'src/views/TransactionsView.vue': 2,
+  // #1322 起计划清单接缝随包出壳，基线键改挂仓库根包内路径（值不变）
+  'packages/scheduled-plan-list/src/useScheduledPlanList.ts': 1,
   'packages/ui-kit/src/NoteCopyButton.vue': 1,
 }
 

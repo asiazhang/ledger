@@ -9,7 +9,7 @@ import { todayStr } from '@ledger/utils/date'
 import { yuanToCents } from '@ledger/money'
 import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
-import { scheduledRecurrenceOptions } from '@/composables/useScheduledPlanList'
+import { scheduledRecurrenceOptions } from '@ledger/scheduled-plan-list'
 import type { CreateScheduledInput, RecurrenceType } from '@ledger/types'
 
 /**

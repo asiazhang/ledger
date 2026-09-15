@@ -29,7 +29,7 @@ import {
   scheduledRecurrenceOptions,
   useScheduledPlanList,
   type ScheduledPlanRow,
-} from '@/composables/useScheduledPlanList'
+} from '@ledger/scheduled-plan-list'
 import AppModal from '@ledger/ui-kit/AppModal.vue'
 import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'

@@ -1,14 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from '@ledger/test-support/invoke-mock'
 import { messageCalls } from '@ledger/test-support/message-mock'
-import { makeFakeSink, resetToastSink } from './factories'
+import { registerToastSink, type ToastSink } from '@ledger/loadable'
 import {
   makeInstallmentPlan,
   makeOccurrence,
   makeSubscriptionPlan,
   makeTransferPlan,
-} from './factories'
-import { registerToastSink } from '@ledger/loadable'
+} from '@ledger/test-support/plan-factories'
 import { defineComponent, type PropType } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import {
@@ -18,7 +17,7 @@ import {
   useScheduledPlanList,
   type ScheduledPlanRow,
   type UseScheduledPlanListReturn,
-} from '@/composables/useScheduledPlanList'
+} from '../useScheduledPlanList'
 import type {
   ScheduledKind,
   ScheduledTransactionDetail,
@@ -27,7 +26,24 @@ import type {
 } from '@ledger/types'
 
 // ---------------------------------------------------------------------------
-// 数据工厂：计划/期次消费共享层出口（factories，#822 收敛）；详情组装留守本地
+// 局部替身（#1318 先例）：假 sink 与壳侧 factories.ts 同实现，双源上收
+// @ledger/test-support 另立票（#1354）；计划/期次数据工厂不在本地定义之列
+// （结构守门规则 4：唯一定义点在共享工厂层出口），消费
+// @ledger/test-support/plan-factories（#1322 上收住址）。
+// ---------------------------------------------------------------------------
+
+/** 假 toast sink：记录 error toast 调用（Loadable 默认策略经 sink 弹出，断言只看 sink 面） */
+function makeFakeSink(): ToastSink & { error: Mock<(content: string) => void> } {
+  return { error: vi.fn<(content: string) => void>() }
+}
+
+/** 每用例复位 sink 为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰 */
+function resetToastSink(): void {
+  registerToastSink({ error: () => {} })
+}
+
+// ---------------------------------------------------------------------------
+// 详情组装留守本地
 // ---------------------------------------------------------------------------
 
 function makeDetail(

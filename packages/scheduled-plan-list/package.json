@@ -1,0 +1,23 @@
+{
+  "name": "@ledger/scheduled-plan-list",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "计划清单包（issue #1322 / spec #1148 / ADR-0041 / ADR-0118 决策 4）：ScheduledPlanList 计划清单深模块——定时计划三业务形态（分期/订阅/定时转账）共享的清单编排单一实现（清单加载与刷新、状态过滤、Plan Lifecycle 操作、行操作描述符、周期选项/周期标签与最早 pending 期次），「定时」页三页签是它的薄适配器。纪律门槛随包保持：形态分支只表达「能力有无」，形态特化计算体留适配器（防上帝模块）；弹层纯度（ADR-0035）——不引用任何组件、不接弹层注册表，确认弹层由适配器渲染；文案经 t() 调用时现取（ADR-0049）。依赖方向与实际 import 全等（@ledger/api / @ledger/i18n / @ledger/loadable / @ledger/types / @ledger/utils，外部依赖 naive-ui + vue）；不依赖 stores / components / views / composables。源码直出，exports 指向 src/useScheduledPlanList.ts（单文件包，不设 barrel 中转），不建构建链；跨包只能整引包名（深导入由 check-frontend-structure.ts 守门）。",
+  "exports": {
+    ".": "./src/useScheduledPlanList.ts"
+  },
+  "dependencies": {
+    "@ledger/api": "workspace:*",
+    "@ledger/i18n": "workspace:*",
+    "@ledger/loadable": "workspace:*",
+    "@ledger/types": "workspace:*",
+    "@ledger/utils": "workspace:*",
+    "naive-ui": "^2.45.3",
+    "vue": "^3.5.42"
+  },
+  "devDependencies": {
+    "@ledger/test-support": "workspace:*",
+    "vitest": "^5.0.0"
+  }
+}

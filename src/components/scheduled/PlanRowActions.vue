@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { NButton, NSpace } from 'naive-ui'
 import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
 import { MOBILE_TOUCH_TARGET_STYLE } from '@/components/mobile-cells'
-import type { ScheduledPlanRowAction } from '@/composables/useScheduledPlanList'
+import type { ScheduledPlanRowAction } from '@ledger/scheduled-plan-list'
 
 /**
  * 行操作渲染组件（ADR-0041 决策 7 / spec #520）：无状态展示组件——

@@ -150,6 +150,19 @@ export const PACKAGES: readonly PackageEntry[] = [
     note: '异步任务生命周期包（issue #1318 / ADR-0040 / ADR-0118 决策 4/6）：useLoadable 统一异步任务生命周期深模块——loading 置收、错误文案归一、竞态裁决（后发覆盖先发）与 invalidate 作废在途的单一实现，竞态序号唯一合法住址随包（check-async-guards 规则 1 豁免坐标同步为包内路径）；模块级 toast sink 单例随包 ESM 持有、对外只暴露 registerToastSink 注册接口，应用入口 MessageSinkBridge 经导入接线，不引入注入机制（ADR-0118 决策 6）；依赖 @ledger/utils（errorMessage）单向成边；不依赖 stores / components / views',
   },
   {
+    name: '@ledger/scheduled-plan-list',
+    dir: 'packages/scheduled-plan-list',
+    deps: [
+      '@ledger/api',
+      '@ledger/i18n',
+      '@ledger/loadable',
+      '@ledger/test-support',
+      '@ledger/types',
+      '@ledger/utils',
+    ],
+    note: '计划清单包（issue #1322 / ADR-0041 / ADR-0118 决策 4）：ScheduledPlanList 计划清单深模块——定时计划三业务形态共享的清单编排（加载/刷新、状态过滤、Plan Lifecycle 操作、行操作描述符、周期选项/标签）单一实现，三页签是薄适配器；「不得 import 组件与弹层注册表」禁令随包保持（弹层纯度 ADR-0035）；方向表与实际 import 全等（api / i18n / loadable / types / utils，测试边 → test-support 仅 devDependencies，规则⑤）；不依赖 stores / components / views / composables',
+  },
+  {
     name: '@ledger/transaction-modal-state',
     dir: 'packages/transaction-modal-state',
     deps: ['@ledger/modal-intent', '@ledger/api', '@ledger/i18n', '@ledger/types', '@ledger/utils', '@ledger/test-support'],
