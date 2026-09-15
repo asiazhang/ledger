@@ -843,6 +843,68 @@ fn mwr_opening_balance_with_real_flows_skips_when_fold_price_missing() {
 }
 
 #[test]
+fn mwr_opening_balance_with_real_flows_folds_at_period_fx_rate() {
+    // 判据 1 的「× 同期汇率」腿：USD 标的、CNY 账户，t0 折算按价格行同期汇率
+    // （USD→CNY @ 7.0）折入，不用当期汇率近似——与区间期初市值同一历史折算
+    // 纪律。折算 = 15 份 × 10 USD × 7.0 = 1050 元 = 105000 分；现值 = 15 × 11 ×
+    // 7.0 = 115500 分。手算：r = (1155/1050)^(365/122) − 1。
+    let conn = open();
+    seed_account(&conn, "acc-of", "雪球基金", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-of", "AAPL", "Apple", "USD", "unknown");
+    create_transaction_internal(
+        &conn,
+        opening_buy_on("acc-of", "inst-of", 10.0, 100_000, 0, "2026-06-30"),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        buy_on("acc-of", "inst-of", 5.0, 100_000, 0, "2026-09-01"),
+    )
+    .unwrap();
+    seed_price_history(&conn, "ph-of-1", "inst-of", "2026-09-01", 100_000, "USD");
+    seed_fx_rate_history(&conn, "fxh-of-1", "USD", "CNY", "2026-09-01", 7.0);
+    seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+    seed_market_price(&conn, "inst-of", 110_000, "USD");
+
+    let summary = mwr_on(&conn, &MwrRange::default());
+    assert_eq!(
+        instrument_basis(&summary, "acc-of", "inst-of"),
+        Some(MwrBasis::Annualized)
+    );
+    assert_close(
+        instrument_rate(&summary, "acc-of", "inst-of"),
+        0.329_960_587_626_393_8,
+    );
+}
+
+#[test]
+fn mwr_opening_balance_with_real_flows_skips_when_fold_fx_missing() {
+    // 判据 3 的「缺历史汇率」腿：t0 折算缺同期汇率（现价与当期汇率俱在，唯
+    // 历史汇率缺）→ 按既有空值语义整行跳过、不入合计。
+    let conn = open();
+    seed_account(&conn, "acc-nf", "雪球基金", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-nf", "AAPL", "Apple", "USD", "unknown");
+    create_transaction_internal(
+        &conn,
+        opening_buy_on("acc-nf", "inst-nf", 10.0, 100_000, 0, "2026-06-30"),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        buy_on("acc-nf", "inst-nf", 5.0, 100_000, 0, "2026-09-01"),
+    )
+    .unwrap();
+    seed_price_history(&conn, "ph-nf-1", "inst-nf", "2026-09-01", 100_000, "USD");
+    seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+    seed_market_price(&conn, "inst-nf", 110_000, "USD");
+
+    let summary = mwr_on(&conn, &MwrRange::default());
+    assert_eq!(instrument_rate(&summary, "acc-nf", "inst-nf"), None);
+    assert_eq!(account_rate(&summary, "acc-nf"), None);
+    assert_eq!(total_rate(&summary, "CNY"), None);
+}
+
+#[test]
 fn mwr_mixed_account_merges_restored_flows_with_regular_pairs() {
     // 同账户混布普通标的与「存量 + 真实流水」标的：恢复后的现金流并入账户级
     // 合计（若仍按含期初存量整对排除，账户解应恰为普通标的的 10%）。

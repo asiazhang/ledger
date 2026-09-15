@@ -271,7 +271,7 @@ pub fn query_money_weighted_return_summary_on(
     for p in pairs.values() {
         // 仅存量无流水的对与缺料的对同规退出全账级合计（ADR-0115 决策 4 /
         // issue #1343）；存量 + 真实流水的对自 #1345 起现金流完整，随普通对入合计。
-        if p.unvalued || (p.has_opening && p.first_real_flow.is_none()) {
+        if p.unvalued || p.opening_only() {
             continue;
         }
         by_currency
@@ -429,7 +429,7 @@ fn load_cash_flows(
         let lifetime = opening_pairs.contains(&out_key)
             || in_key.as_ref().is_some_and(|k| opening_pairs.contains(k));
         let in_window = if row.kind == "dividend" {
-            !start.is_some_and(|s| date < s) && in_range(date, None, end)
+            start.is_none_or(|s| date >= s) && in_range(date, None, end)
         } else {
             in_range(date, start, end)
         };
@@ -440,14 +440,14 @@ fn load_cash_flows(
             // 转换两腿（单标的粒度）：转出腿为正、转入腿为负，值 = 结转成本
             // （convert 行金额锚点，ADR-0099 / ADR-0115 决策 2）。
             let out_leg = row.instrument_id.clone();
-            if !folded_at_first_real_flow(pairs, &out_key, date, &row.kind, &first_real) {
+            if !register_t0_and_should_fold(pairs, &out_key, date, &row.kind, &first_real) {
                 pairs
                     .entry((row.account_id.clone(), out_leg))
                     .or_default()
                     .push(date, row.amount_cents as f64);
             }
             if let Some(in_key) = in_key
-                && !folded_at_first_real_flow(pairs, &in_key, date, &row.kind, &first_real)
+                && !register_t0_and_should_fold(pairs, &in_key, date, &row.kind, &first_real)
             {
                 pairs
                     .entry(in_key)
@@ -462,7 +462,7 @@ fn load_cash_flows(
             "sell" | "dividend" => row.amount_cents as f64,
             _ => continue,
         };
-        if !folded_at_first_real_flow(pairs, &out_key, date, &row.kind, &first_real) {
+        if !register_t0_and_should_fold(pairs, &out_key, date, &row.kind, &first_real) {
             pairs
                 .entry((row.account_id.clone(), row.instrument_id.clone()))
                 .or_default()
@@ -472,10 +472,12 @@ fn load_cash_flows(
     Ok(())
 }
 
-/// 期初存量对的首笔真实流水日（t0）随行登记；返回该笔流水是否由 t0 折算承载
-/// ——该日的持仓变动流水不入集（与区间起始日约定同款）；分红是仓位外现金、
-/// 不在折算内，恒入集（issue #1345）。非期初存量对无 t0 登记，恒返回 `false`。
-fn folded_at_first_real_flow(
+/// 期初存量对的首笔真实流水日（t0）随行登记；返回该笔流水是否应由 t0 折算
+/// 承载——该日的持仓变动流水不入集（与区间起始日约定同款）；分红是仓位外
+/// 现金、不在折算内，恒入集（issue #1345）。非期初存量对无 t0 登记，恒返回
+/// `false`（名字里的 register 是本函数的承重副作用：[`PairFlows::
+/// first_real_flow`] 由此建立，measure / 合计 / 边界三面依赖它）。
+fn register_t0_and_should_fold(
     pairs: &mut BTreeMap<(String, String), PairFlows>,
     key: &(String, String),
     date: NaiveDate,
@@ -513,6 +515,12 @@ struct PairFlows {
 }
 
 impl PairFlows {
+    /// 仅期初存量、无真实流水：年化不适用、现金流不入账户级与全账级合计的
+    /// 形态判据（issue #1343 / #1345）。
+    fn opening_only(&self) -> bool {
+        self.has_opening && self.first_real_flow.is_none()
+    }
+
     fn push(&mut self, date: NaiveDate, amount: f64) {
         self.flows.push((date, amount));
     }
@@ -522,7 +530,7 @@ impl PairFlows {
     /// 改给未年化收益率；存量 + 真实流水的对年化恢复（起算点 = 首笔真实流水，
     /// 期初投入由 [`apply_boundaries`] 折入）；其余对解年化。
     fn measure(&self) -> (MwrBasis, Option<f64>) {
-        if self.has_opening && self.first_real_flow.is_none() {
+        if self.opening_only() {
             (MwrBasis::Cumulative, self.cumulative_rate())
         } else {
             // 以该对现金流解年化：时间为实际天数 / 365，自首笔现金流起算。
@@ -565,7 +573,7 @@ fn merged_flows(
 ) -> Option<Vec<(NaiveDate, f64)>> {
     let mut out: Vec<(NaiveDate, f64)> = Vec::new();
     for (key, p) in pairs {
-        if p.unvalued || !pred(key) || (p.has_opening && p.first_real_flow.is_none()) {
+        if p.unvalued || !pred(key) || p.opening_only() {
             continue;
         }
         out.extend(p.flows.iter().cloned());
@@ -640,10 +648,12 @@ impl FromRow for AccountRow {
 /// 对每个（账户 × 标的）对施加边界现金流：
 /// - 区间开始有存量 → 期初投入 `−(区间首日市值)`（负现金流，ADR-0115 决策 3）；
 /// - 区间结束有存量 → 期末现金流 `+(末日市值)`；不设界时取 `v_holdings` 现值
-///   （现价 + 当期汇率，Holding 空值语义：缺价 / 缺汇率为 NULL）。
+///   （现价 + 当期汇率，Holding 空值语义：缺价 / 缺汇率为 NULL）；
+/// - 含期初存量且有真实流水的对（issue #1345）→ 期初投入改由首笔真实流水日
+///   （t0）市值折入，区间边界不施加、期末恒取现值（见函数体内注释）。
 ///
-/// 边界市值缺料（历史价格或同期汇率缺失）而有存量 → 该对标 `unvalued`，整体
-/// 跳过。同时装载当前持仓标志与各对的计价币种（账户币种）。
+/// 边界 / 折算市值缺料（历史价格或同期汇率缺失）而有存量 → 该对标 `unvalued`，
+/// 整体跳过。同时装载当前持仓标志与各对的计价币种（账户币种）。
 fn apply_boundaries(
     conn: &Connection,
     start: Option<NaiveDate>,
@@ -731,6 +741,7 @@ fn apply_boundaries(
                 let quantity =
                     holdings_as_of_in(conn, Some(&key.0), Some(&key.1), &t0.to_string())?;
                 if quantity > QTY_GUARD_EPSILON {
+                    // fold_values 按 pairs 全体起算日预载，本处索引必命中。
                     match fold_values[&t0].market_value(quantity, &key.1, &pair.currency_code) {
                         Some(v) => pair.flows.push((t0, -(v as f64))),
                         None => pair.unvalued = true,
