@@ -115,6 +115,9 @@ importers:
       '@ledger/api':
         specifier: workspace:*
         version: link:packages/api
+      '@ledger/field-errors':
+        specifier: workspace:*
+        version: link:packages/field-errors
       '@ledger/i18n':
         specifier: workspace:*
         version: link:packages/i18n
@@ -242,6 +245,19 @@ importers:
       vue:
         specifier: ^3.5.42
         version: 3.5.42(typescript@6.0.3)
+
+  packages/field-errors:
+    dependencies:
+      '@ledger/utils':
+        specifier: workspace:*
+        version: link:../utils
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+    devDependencies:
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
 
   packages/i18n:
     dependencies:
