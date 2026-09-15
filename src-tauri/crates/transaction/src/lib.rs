@@ -51,9 +51,10 @@ mod model;
 
 pub use model::{
     ConvertFields, CreateTransactionResult, NormalizedTransaction, NotePinyinRepairFailure,
-    NotePinyinRepairReport, NotePinyinRepairStage, Transaction, TransactionBatchInput,
-    TransactionInput, TransactionListFilter, TransactionListResult, TransactionSearchResult,
-    TransactionSource, TransactionSourceKind, TransactionSourceStatus, UpdateTransactionInput,
+    NotePinyinRepairReport, NotePinyinRepairStage, SecurityOrigin, Transaction,
+    TransactionBatchInput, TransactionInput, TransactionListFilter, TransactionListResult,
+    TransactionSearchResult, TransactionSource, TransactionSourceKind, TransactionSourceStatus,
+    UpdateTransactionInput,
 };
 
 pub use amount::{

@@ -21,7 +21,8 @@
     },
     "byMwr": "Money-Weighted Return",
     "total": "Overall",
-    "notComputable": "N/A"
+    "notComputable": "N/A",
+    "cumulativeSuffix": " (not annualized)"
   },
   "holdings": {
     "title": "Current Holdings",

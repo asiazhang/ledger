@@ -137,6 +137,7 @@ fn create_dividend_same_terminal_state_both_forms() {
                 price_cents: 0,
                 fee_cents: 0,
                 cost_per_unit_cents: None,
+                origin: None,
             }),
             split: None,
             convert: None,

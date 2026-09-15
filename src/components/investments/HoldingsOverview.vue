@@ -49,7 +49,7 @@ const { rows, loading, refresh, totalCumulativePnlGroups } = usePortfolioOvervie
 // 资金加权收益率（issue #1195 / ADR-0115）：与金额口径并列的比例列，同一请求
 // 内自取（三消费面共用一次 money_weighted_return_summary）；期末市值随行情，
 // 价格失效信号重拉内化在本接缝（与上方 usePricesChanged 各自订阅，消费方自选）。
-const { instrumentRate } = useMoneyWeightedReturn()
+const { instrumentMwr } = useMoneyWeightedReturn()
 const {
   searchInput,
   setSearch,
@@ -274,13 +274,17 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
   },
   {
     // 资金加权收益率（issue #1195 / ADR-0115）：与金额口径并列、互不换算；
-    // 三态分流收口在 renderMwrRateCell 单点（与盈亏页收益率卡同款形态）。
+    // 三态分流与口径标注收口在 renderMwrRateCell 单点（与盈亏页收益率卡同款形态）；
+    // 含期初存量的标的按行携带的 basis 标「未年化」（issue #1343）。
     title: t('investments.holdings.columns.mwr'),
     key: 'mwr',
-    width: 120,
+    width: 150,
     align: 'right',
     className: 'tabular-nums',
-    render: (r) => renderMwrRateCell(instrumentRate(r.accountId, r.instrumentId), appStore.theme),
+    render: (r) => {
+      const mwr = instrumentMwr(r.accountId, r.instrumentId)
+      return renderMwrRateCell(mwr?.rate, appStore.theme, mwr?.basis)
+    },
   },
 ])
 </script>

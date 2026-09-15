@@ -70,6 +70,7 @@ fn make_income_input(account_id: &str, amount_cents: i64, currency: &str) -> Tra
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }
 

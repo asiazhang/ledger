@@ -1,6 +1,7 @@
 //! 步骤输入工厂（L1，issue #760 / ADR-0086 决策 1、2）：BDD 步骤层构造领域输入
 //! 结构体的**纯函数**——热点字段作位置参数（金额/账户/日期），其余取合法且语义
 //! 中性的默认值，冷字段经结构体更新语法覆盖（`TransactionInput { note: Some(..),
+//! ..expense_input(..),
 //! ..expense_input(..) }`）。与物品域构造助手、域内测试工厂两先例同形，不引入
 //! builder。
 //!
@@ -65,6 +66,7 @@ fn txn_base(
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }
 
@@ -116,6 +118,7 @@ pub fn refund_input(
 /// 买入输入（非基金路径为默认）：标的、数量、单价为热点；**金额置零**（per-kind
 /// 矩阵：非基金标的走单价权威，行金额 = 数量 × 单价 + 手续费由后端重算，提交值
 /// 不被采信）。场外基金走金额权威（ADR-0038）：经结构体更新覆盖
+/// `TransactionInput { price_cents: None, amount_cents: 确认金额, ..buy_input(..),
 /// `TransactionInput { price_cents: None, amount_cents: 确认金额, ..buy_input(..) }`。
 /// 币种以后端读到的账户币种为准，提交值不落行。
 pub fn buy_input(
@@ -256,6 +259,7 @@ pub fn existing_input(existing: &Transaction) -> TransactionInput {
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }
 

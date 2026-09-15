@@ -66,6 +66,7 @@ fn dividend_input(
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }
 

@@ -9,6 +9,34 @@ use utoipa::ToSchema;
 
 use crate::amount::TransactionKind;
 
+/// 证券扩展行的来源口径（issue #1343 / ADR-0115 修订）：投资域词汇「期初存量」的
+/// 契约投影。
+///
+/// - `trade`：真实成交（默认，也是缺省值）；
+/// - `opening`：期初存量——补记（持仓初始化）落进来的存量持仓，真实建仓时点未知。
+///   它不是当日真实入金，资金加权收益率据此把该标的判为「年化不适用」，改给
+///   未年化收益率。
+///
+/// 仅 buy 可携带（行为层准入守卫拒绝其余 kind）；wire 形态为小写字符串，与
+/// `security_transactions.origin` 的取值一一对应。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityOrigin {
+    #[default]
+    Trade,
+    Opening,
+}
+
+impl SecurityOrigin {
+    /// 落库取值（`security_transactions.origin` 闭集字面量）。
+    pub fn as_db(self) -> &'static str {
+        match self {
+            Self::Trade => "trade",
+            Self::Opening => "opening",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct TransactionInput {
     /// 交易类型枚举（serde 小写字符串反序列化）。非法 kind 在反序列化阶段报 400
@@ -64,6 +92,11 @@ pub struct TransactionInput {
     pub out_amount_cents: Option<i64>,
     /// 转入金额（仅 convert，整数分，必须 > 0）：确认单转入端金额。
     pub in_amount_cents: Option<i64>,
+    /// 证券扩展行来源（issue #1343 / ADR-0115 修订）：仅 buy 可携带，
+    /// `"opening"` = 期初存量——补记（持仓初始化）落进来的存量持仓，真实建仓时点
+    /// 未知。它不是当日真实入金，资金加权收益率据此不给该标的年化、改给未年化
+    /// 收益率。缺省（不提交）即 `"trade"` 真实成交；其余 kind 携带返回 400。
+    pub origin: Option<SecurityOrigin>,
     /// 客户端提供的、内容无关的导入幂等键（指向"该交易来自源文件哪一行"）。
     /// 带键时批量导入以其为准去重（同键跳过、内容无关）；无键时回退内容哈希兜底。
     pub idempotency_key: Option<String>,
@@ -113,6 +146,9 @@ pub struct UpdateTransactionInput {
     pub out_amount_cents: Option<i64>,
     /// 转入金额（分）。
     pub in_amount_cents: Option<i64>,
+    /// 证券扩展行来源（与 `TransactionInput.origin` 同一契约）：仅 buy 可携带，
+    /// `"opening"` = 期初存量。就地修改为全字段替换，缺省即回落 `"trade"`。
+    pub origin: Option<SecurityOrigin>,
 }
 
 impl From<UpdateTransactionInput> for TransactionInput {
@@ -142,6 +178,7 @@ impl From<UpdateTransactionInput> for TransactionInput {
             to_quantity: u.to_quantity,
             out_amount_cents: u.out_amount_cents,
             in_amount_cents: u.in_amount_cents,
+            origin: u.origin,
             idempotency_key: None,
         }
     }

@@ -72,8 +72,11 @@ afterEach(() => {
   resetPricesChangedHandler()
 })
 
-function mwrCellTexts(wrapper: ReturnType<typeof mount>): string[] {
-  return wrapper.findAll('td[data-col-key="rate"]').map((c) => c.text())
+function mwrCellTexts(
+  wrapper: ReturnType<typeof mount>,
+  colKey: 'rate' | 'mwr' = 'rate',
+): string[] {
+  return wrapper.findAll(`td[data-col-key="${colKey}"]`).map((c) => c.text())
 }
 
 describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => {
@@ -85,8 +88,20 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
         ...HOLDINGS_DEFAULTS,
         money_weighted_return_summary: makeMwrSummary({
           by_instrument: [
-            { account_id: 'acc-1', instrument_id: 'inst-1', currency_code: 'CNY', rate: 0.1 },
-            { account_id: 'acc-1', instrument_id: 'inst-2', currency_code: 'CNY', rate: null },
+            {
+              account_id: 'acc-1',
+              instrument_id: 'inst-1',
+              currency_code: 'CNY',
+              basis: 'annualized',
+              rate: 0.1,
+            },
+            {
+              account_id: 'acc-1',
+              instrument_id: 'inst-2',
+              currency_code: 'CNY',
+              basis: 'annualized',
+              rate: null,
+            },
           ],
         }),
       },
@@ -112,7 +127,13 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
       overrides: {
         money_weighted_return_summary: makeMwrSummary({
           by_instrument: [
-            { account_id: 'acc-1', instrument_id: 'inst-1', currency_code: 'CNY', rate: 0.1 },
+            {
+              account_id: 'acc-1',
+              instrument_id: 'inst-1',
+              currency_code: 'CNY',
+              basis: 'annualized',
+              rate: 0.1,
+            },
           ],
         }),
       },
@@ -124,6 +145,41 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
     expect(cells2).toEqual(['-', '+10.00%'])
     wrapper.unmount()
     wrapper2.unmount()
+  })
+
+  it('期初存量标的：按行口径标「未年化」，年化标的保持原样（issue #1343）', async () => {
+    // 后端为含期初存量的行带 basis=cumulative（3.16% 是累计收益 ÷ 累计投入，
+    // 不是年化）；展示层必须标出口径，否则会被读成年化值。
+    wireInvokeSeam({
+      defaults: {
+        ...HOLDINGS_DEFAULTS,
+        money_weighted_return_summary: makeMwrSummary({
+          by_instrument: [
+            {
+              account_id: 'acc-1',
+              instrument_id: 'inst-1',
+              currency_code: 'CNY',
+              basis: 'cumulative',
+              rate: 0.0316,
+            },
+            {
+              account_id: 'acc-1',
+              instrument_id: 'inst-2',
+              currency_code: 'CNY',
+              basis: 'annualized',
+              rate: 0.1,
+            },
+          ],
+        }),
+      },
+    })
+    const wrapper = mountWithDialog(HoldingsOverview)
+    await flushPromises()
+
+    // 行序按标的代码字母序（issue #902 默认序）：inst-2（000001，年化）在前、
+    // inst-1（600000，未年化）在后。
+    expect(mwrCellTexts(wrapper, 'mwr')).toEqual(['+10.00%', '+3.16%（未年化）'])
+    wrapper.unmount()
   })
 
   it('盈亏页资金加权收益率卡：账户行 + 全账行（按币种分组），无解显式标注', async () => {

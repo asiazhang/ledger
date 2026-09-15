@@ -12,7 +12,7 @@
 
 use chrono::NaiveDate;
 use ledger_transaction::{
-    TransactionInput, create_transaction_internal, delete_transaction_internal,
+    SecurityOrigin, TransactionInput, create_transaction_internal, delete_transaction_internal,
 };
 
 use super::super::mwr::xirr;
@@ -88,6 +88,22 @@ fn sell_on(
     }
 }
 
+/// 期初存量买入输入（issue #1343）：`origin = opening`，其余同 [`buy_on`]。
+fn opening_buy_on(
+    account_id: &str,
+    instrument_id: &str,
+    qty: f64,
+    price: i64,
+    fee: i64,
+    date: &str,
+) -> TransactionInput {
+    TransactionInput {
+        date: date.into(),
+        origin: Some(SecurityOrigin::Opening),
+        ..make_buy_input(account_id, instrument_id, qty, price, fee)
+    }
+}
+
 /// 现金分红输入（金额权威，到账账户 = `account_id`）。
 fn dividend_on(
     account_id: &str,
@@ -130,6 +146,19 @@ fn total_rate(summary: &MoneyWeightedReturnSummary, currency: &str) -> Option<f6
         .iter()
         .find(|r| r.currency_code == currency)
         .and_then(|r| r.rate)
+}
+
+/// 单标的行的口径（行缺失即 `None`）。
+fn instrument_basis(
+    summary: &MoneyWeightedReturnSummary,
+    account_id: &str,
+    instrument_id: &str,
+) -> Option<MwrBasis> {
+    summary
+        .by_instrument
+        .iter()
+        .find(|r| r.account_id == account_id && r.instrument_id == instrument_id)
+        .map(|r| r.basis)
 }
 
 fn assert_close(actual: Option<f64>, expected: f64) {
@@ -228,6 +257,8 @@ fn mwr_single_buy_and_hold_matches_hand_computed_rate() {
     assert_close(account_rate(&summary, "acc-m1"), 0.1);
     assert_close(total_rate(&summary, "CNY"), 0.1);
     assert_eq!(summary.by_instrument[0].currency_code, "CNY");
+    // 非期初存量的标的仍是**年化**口径（#1343 不改变既有行为）。
+    assert_eq!(summary.by_instrument[0].basis, MwrBasis::Annualized);
 }
 
 #[test]
@@ -623,4 +654,124 @@ fn mwr_excludes_soft_deleted_accounts_and_transactions() {
     // 软删买入已回补批次：恰为「买 10000 → 期末 11000（10 份 × 11 元）」→ 手算 r = 10%
     // （若软删流水未排除，流为 −15500、市值为 16500，解必不同）。
     assert_close(account_rate(&summary, "acc-sd"), 0.1);
+}
+
+// ---------------------------------------------------------------------------
+// 期初存量（issue #1343 / ADR-0115 修订）：不计现金流、年化不适用、改给未年化
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mwr_opening_balance_reports_cumulative_rate_instead_of_annualized() {
+    // 补记存量（真实建仓时点未知）：成本 10000 分、现值 11000 分。
+    // 年化不适用（不给数）；未年化 = 累计收益 ÷ 累计投入 = 1000 / 10000 = 10%。
+    let conn = open();
+    seed_account(&conn, "acc-op", "雪球基金", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        "inst-op",
+        "003156",
+        "招商招悦纯债A",
+        "CNY",
+        "unknown",
+    );
+    create_transaction_internal(
+        &conn,
+        opening_buy_on("acc-op", "inst-op", 10.0, 100_000, 0, "2026-06-30"),
+    )
+    .unwrap();
+    seed_market_price(&conn, "inst-op", 110_000, "CNY");
+
+    let summary = mwr_on(&conn, &MwrRange::default());
+    assert_eq!(
+        instrument_basis(&summary, "acc-op", "inst-op"),
+        Some(MwrBasis::Cumulative),
+        "含期初存量的标的应标未年化口径"
+    );
+    assert_close(instrument_rate(&summary, "acc-op", "inst-op"), 0.1);
+    // 含期初存量的对退出账户级与全账级年化合计（「不给数就不入合计」空值语义）。
+    assert_eq!(account_rate(&summary, "acc-op"), None);
+    assert_eq!(total_rate(&summary, "CNY"), None);
+}
+
+#[test]
+fn mwr_opening_balance_then_real_buy_uses_lifetime_cumulative() {
+    // 期初存量 10000（10 份 @ 10 元）+ 之后真实买入 5000（5 份 @ 10 元）→
+    // 现值 15 份 × 11 元 = 16500；累计收益 1500 ÷ 累计投入 15000 = 10%。
+    let conn = open();
+    seed_account(&conn, "acc-ob", "雪球基金", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        "inst-ob",
+        "003156",
+        "招商招悦纯债A",
+        "CNY",
+        "unknown",
+    );
+    create_transaction_internal(
+        &conn,
+        opening_buy_on("acc-ob", "inst-ob", 10.0, 100_000, 0, "2026-06-30"),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        buy_on("acc-ob", "inst-ob", 5.0, 100_000, 0, "2026-09-01"),
+    )
+    .unwrap();
+    seed_market_price(&conn, "inst-ob", 110_000, "CNY");
+
+    let summary = mwr_on(&conn, &MwrRange::default());
+    assert_eq!(
+        instrument_basis(&summary, "acc-ob", "inst-ob"),
+        Some(MwrBasis::Cumulative)
+    );
+    assert_close(instrument_rate(&summary, "acc-ob", "inst-ob"), 0.1);
+}
+
+#[test]
+fn mwr_opening_balance_ignores_range_boundaries() {
+    // 期初存量标的的未年化口径是**生命周期**度量：选了区间也不改口径、不折期初
+    // 市值（区间边界一律不施加），结果与不设区间逐位相同。
+    let conn = open();
+    seed_account(&conn, "acc-or", "雪球基金", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        "inst-or",
+        "003156",
+        "招商招悦纯债A",
+        "CNY",
+        "unknown",
+    );
+    create_transaction_internal(
+        &conn,
+        opening_buy_on("acc-or", "inst-or", 10.0, 100_000, 0, "2026-06-30"),
+    )
+    .unwrap();
+    seed_market_price(&conn, "inst-or", 110_000, "CNY");
+
+    let range = MwrRange {
+        start_date: Some("2026-09-01".into()),
+        end_date: Some("2026-12-31".into()),
+    };
+    let summary = mwr_on(&conn, &range);
+    assert_eq!(
+        instrument_basis(&summary, "acc-or", "inst-or"),
+        Some(MwrBasis::Cumulative)
+    );
+    assert_close(instrument_rate(&summary, "acc-or", "inst-or"), 0.1);
+}
+
+#[test]
+fn mwr_origin_is_rejected_on_non_buy_kinds() {
+    // 准入守卫（issue #1343）：`origin` 只描述证券扩展行的来源，只有 buy 有该扩展行。
+    let conn = open();
+    seed_account(&conn, "acc-og", "A 股户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-og", "600519", "贵州茅台", "CNY", "unknown");
+    let mut input = sell_on("acc-og", "inst-og", 1.0, 100_000, 0, "2026-01-01");
+    input.origin = Some(SecurityOrigin::Opening);
+
+    let error = create_transaction_internal(&conn, input).unwrap_err();
+    assert!(
+        error.to_string().contains("不能携带证券来源口径"),
+        "卖出携带 origin 应被准入守卫拒绝，实际: {error}"
+    );
 }

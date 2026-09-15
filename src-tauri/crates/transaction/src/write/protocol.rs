@@ -563,6 +563,15 @@ fn guard_reference_admission(input: &TransactionInput) -> Result<()> {
             &[&kind.to_string()],
         ));
     }
+    // 期初存量准入（issue #1343 / ADR-0115 修订）：`origin` 描述的是证券扩展行的
+    // 来源，只有 buy 有证券扩展行——其余 kind 携带即拒绝（比照保单/分类准入先例）。
+    if input.origin.is_some() && !matches!(kind, TransactionKind::Buy) {
+        return Err(AppError::codedp(
+            "transaction.origin-unsupported",
+            format!("交易类型 {kind} 不能携带证券来源口径"),
+            &[&kind.to_string()],
+        ));
+    }
     Ok(())
 }
 

@@ -15,6 +15,7 @@
     "byMwr": "资金加权收益率",
     "total": "全账",
     "notComputable": "无法计算",
+    "cumulativeSuffix": "（未年化）",
     "columns": {
       "account": "账户",
       "realizedPnl": "已实现盈亏",

@@ -117,6 +117,7 @@ pub(super) fn make_buy_input(
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }
 
@@ -150,6 +151,7 @@ pub(super) fn make_sell_input(
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }
 
@@ -190,6 +192,7 @@ pub(super) fn make_convert_input(
         out_amount_cents: Some(out_amount_cents),
         in_amount_cents: Some(in_amount_cents),
         idempotency_key: None,
+        origin: None,
     }
 }
 
@@ -223,6 +226,7 @@ pub(super) fn make_split_input(
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }
 
@@ -258,6 +262,7 @@ pub(super) fn make_dividend_input(
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }
 
@@ -293,5 +298,6 @@ pub(super) fn make_trade_input(
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }

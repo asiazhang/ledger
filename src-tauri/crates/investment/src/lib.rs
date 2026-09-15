@@ -154,7 +154,7 @@ pub use fund::{
 };
 pub use manual_price::record_manual_price;
 pub use mwr::{
-    AccountMwr, CurrencyMwr, InstrumentMwr, MoneyWeightedReturnSummary, MwrRange,
+    AccountMwr, CurrencyMwr, InstrumentMwr, MoneyWeightedReturnSummary, MwrBasis, MwrRange,
     query_money_weighted_return_summary,
 };
 pub use quote::{Quote, QuoteAdoptionInput, QuoteAdoptionOutcome};

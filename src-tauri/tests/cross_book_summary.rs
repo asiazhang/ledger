@@ -95,6 +95,7 @@ fn buy_input(account_id: &str, instrument_id: &str) -> TransactionInput {
         out_amount_cents: None,
         in_amount_cents: None,
         idempotency_key: None,
+        origin: None,
     }
 }
 

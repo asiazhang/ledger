@@ -199,6 +199,9 @@ async fn checkpoint_precheck_network_wait_does_not_block_other_commands() {
                 kind: ledger_accounts::AccountType::Cash,
                 currency_code: "CNY".into(),
                 initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
             },
         ),
     )
