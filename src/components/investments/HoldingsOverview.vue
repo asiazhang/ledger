@@ -275,7 +275,7 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
   {
     // 资金加权收益率（issue #1195 / ADR-0115）：与金额口径并列、互不换算；
     // 三态分流与口径标注收口在 renderMwrRateCell 单点（与盈亏页收益率卡同款形态）；
-    // 含期初存量的标的按行携带的 basis 标「未年化」（issue #1343）。
+    // 含期初存量的标的按行携带的 basis 带角标「*」（issue #1343，解释双轴可达）。
     title: t('investments.holdings.columns.mwr'),
     key: 'mwr',
     width: 150,

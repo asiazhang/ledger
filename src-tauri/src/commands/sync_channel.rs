@@ -58,7 +58,7 @@ use ledger_sync_engine::trigger::{
 };
 use ledger_sync_engine::{
     EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport, bootstrap_from_channel,
-    parked_ops,
+    create_checkpoint, parked_ops,
 };
 use ledger_sync_protocol::device::device_id;
 
@@ -476,31 +476,49 @@ pub struct SyncCheckpointPublished {
 /// 换指针——存量数据的旧端把「新端可引导的来源」放上通道的唯一动作。
 ///
 /// 本命令是通道操作而非账本写入：本地数据零变化（零信号），且 `VACUUM INTO`
-/// 无法在事务内执行，故不经统一写入口 [`crate::shell_support::write_entry::write_entry`]、
-/// 直接持主连接锁调用（位点与快照同刻成对约束，`create_checkpoint`）。
-/// 信封模式解析与 `sync_now` 同款（`resolve_passphrase` 单点：密文库凭显式
-/// 口令或钥匙串，先验证后封包）。
+/// 无法在事务内执行，故不经统一写入口 [`crate::shell_support::write_entry::write_entry`]。
+/// 锁跨度（issue #1284，判据同 ADR-0120 / ADR-0069 决策 4）：通道配置读取走
+/// 读入口短锁；主连接锁只盖快照产出（位点与快照同刻成对约束，
+/// `create_checkpoint`）；口令解析、封包（KDF）与三次通道往返不消费连接，
+/// 出锁执行——发布期间网络慢或超时不再阻塞全应用读写。信封模式解析与
+/// `sync_now` 同款（`resolve_passphrase` 单点：密文库凭显式口令或钥匙串，
+/// 先验证后封包）。
 #[tauri::command]
 pub async fn publish_sync_checkpoint<R: Runtime>(
     app: AppHandle<R>,
     passphrase: Option<String>,
 ) -> Result<SyncCheckpointPublished> {
+    let read_conn = app.state::<DbState>().read_conn.clone();
     let conn = app.state::<DbState>().conn.clone();
     let db_path = active_db_path(&app)?;
     let book = active_book_id(&app);
+
+    // 通道在位性前置（读入口短锁）：未配置即早退，不触网。
+    let config = read_entry("publish_sync_checkpoint", read_conn, |conn| {
+        configured_channel(conn)?.ok_or_else(not_configured_error)
+    })
+    .await?;
+
     run_db("publish_sync_checkpoint", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        let config = configured_channel(&conn)?.ok_or_else(not_configured_error)?;
+        // 账本门与构库单点：不发网络请求（错误码为域的 sync-channel.*）。
         if book.is_none() {
             return Err(book_unavailable_error());
         }
         let channel = build_channel(&config)?;
+        // 口令持有串活在轮次作用域，信封模式借出形态对齐（无泄漏）。
         let passphrase_holder = resolve_passphrase(&db_path, book.as_deref(), passphrase)?;
         let mode = match &passphrase_holder {
             Some(passphrase) => EnvelopeMode::Encrypted { passphrase },
             None => EnvelopeMode::Plaintext,
         };
-        let pointer = channel.publish_checkpoint(&conn, &mode)?;
+        // 锁内段：快照产出——位点与快照同刻成对是唯一需要连接互斥的步骤，
+        // 主连接锁只盖这一步，随语句块立即释放。
+        let checkpoint = {
+            let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+            create_checkpoint(&conn)?
+        };
+        // 锁外段：封包（KDF）与通道网络往返（检查点上传、manifest 换指针）。
+        let pointer = channel.upload_checkpoint(&checkpoint, &mode)?;
         Ok(SyncCheckpointPublished {
             generation: pointer.generation,
             size: pointer.size,

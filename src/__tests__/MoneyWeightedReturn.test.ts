@@ -4,6 +4,7 @@ import { nextTick } from 'vue'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { componentVm } from '@ledger/test-support/component-vm'
 import { mountWithDialog } from '@ledger/test-support/mount'
+import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { firePricesChanged, resetPricesChangedHandler } from './prices-changed-mock'
 import { makeMwrSummary, makePnlSummary } from './factories'
 import RealizedPnlPanel from '@/components/investments/RealizedPnlPanel.vue'
@@ -147,7 +148,7 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
     wrapper2.unmount()
   })
 
-  it('期初存量标的：按行口径标「未年化」，年化标的保持原样（issue #1343）', async () => {
+  it('期初存量标的：按行口径带「*」角标，年化标的保持原样（issue #1343）', async () => {
     // 后端为含期初存量的行带 basis=cumulative（3.16% 是累计收益 ÷ 累计投入，
     // 不是年化）；展示层必须标出口径，否则会被读成年化值。
     wireInvokeSeam({
@@ -177,9 +178,57 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
     await flushPromises()
 
     // 行序按标的代码字母序（issue #902 默认序）：inst-2（000001，年化）在前、
-    // inst-1（600000，未年化）在后。
-    expect(mwrCellTexts(wrapper, 'mwr')).toEqual(['+10.00%', '+3.16%（未年化）'])
+    // inst-1（600000，未年化）在后。未年化标注 = 角标「*」（解释收进 tooltip，
+    // 不占列宽）。
+    expect(mwrCellTexts(wrapper, 'mwr')).toEqual(['+10.00%', '+3.16%*'])
     wrapper.unmount()
+  })
+
+  it('未年化角标的解释双轴可达：指针悬停出 tooltip、触控点按出气泡（ADR-0088 决策 6）', async () => {
+    wireInvokeSeam({
+      defaults: {
+        ...HOLDINGS_DEFAULTS,
+        money_weighted_return_summary: makeMwrSummary({
+          by_instrument: [
+            {
+              account_id: 'acc-1',
+              instrument_id: 'inst-1',
+              currency_code: 'CNY',
+              basis: 'cumulative',
+              rate: 0.0316,
+            },
+          ],
+        }),
+      },
+    })
+    // 指针轴：悬停触发器 → 口径解释 tooltip（NTooltip delay 默认 100ms，
+    // jsdom 真实时钟等待——HoldingsOverview.test.ts 同款）
+    const wrapper = mountWithDialog(HoldingsOverview)
+    await flushPromises()
+    const trigger = wrapper.find('td[data-col-key="mwr"] [data-mwr-marker]')
+    expect(trigger.exists()).toBe(true)
+    await trigger.trigger('mouseenter')
+    await new Promise((r) => setTimeout(r, 200))
+    await flushPromises()
+    const tip = document.body.querySelector('.n-popover')
+    expect(tip).not.toBeNull()
+    expect(tip!.textContent).toContain('未年化')
+    expect(tip!.textContent).toContain('累计收益')
+    wrapper.unmount()
+
+    // 触控轴：hover 不可达 → 点按触发器出同一文案气泡（AppPopover 入弹层注册表）
+    setFakeMedia({ width: 600, hover: 'none', pointer: 'coarse' })
+    const touchWrapper = mountWithDialog(HoldingsOverview)
+    await flushPromises()
+    const touchTrigger = touchWrapper.find('td[data-col-key="mwr"] [data-mwr-marker]')
+    expect(touchTrigger.exists()).toBe(true)
+    await touchTrigger.trigger('click')
+    await flushPromises()
+    const popover = document.body.querySelector('.n-popover')
+    expect(popover).not.toBeNull()
+    expect(popover!.textContent).toContain('未年化')
+    // 卸载触控挂载，避免已开启的气泡泄入后续用例（HoldingsOverview.test.ts 同款纪律）
+    touchWrapper.unmount()
   })
 
   it('盈亏页资金加权收益率卡：账户行 + 全账行（按币种分组），无解显式标注', async () => {

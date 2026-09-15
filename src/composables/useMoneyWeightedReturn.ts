@@ -2,9 +2,9 @@ import { onMounted, ref } from 'vue'
 import { h, type VNode } from 'vue'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
-import { formatRate } from '@ledger/money'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
 import type { Theme } from '@ledger/theme'
+import MwrRateCell from '@/components/investments/MwrRateCell.vue'
 import { useLoadable } from '@/composables/useLoadable'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import type { MoneyWeightedReturnSummary, MwrBasis } from '@ledger/types'
@@ -12,12 +12,14 @@ import type { MoneyWeightedReturnSummary, MwrBasis } from '@ledger/types'
 /**
  * 收益率单元格三态渲染单点（issue #1195 / ADR-0115）：行缺失（缺价跳过）→
  * 「-」（与缺价行金额列空值语义一致）；现金流无解 →「无法计算」（显式标注、
- * 不猜解）；可计算 → 盈亏涨跌色百分数。持仓页收益率列与盈亏页收益率卡共用
- * 同一形态，不各写一份三态分流。
+ * 不猜解）；可计算 → MwrRateCell（盈亏涨跌色百分数）。持仓页收益率列与盈亏页
+ * 收益率卡共用同一形态，不各写一份三态分流。
  *
  * 口径标注（issue #1343 / ADR-0115 修订）：含期初存量（补记存量持仓、真实建仓
- * 时点未知）的标的走**未年化**口径，`basis` 非 `annualized` 时在百分数后补一句
- * 「未年化」——两种口径不可互算，不给标注会让用户把 3.16% 读成年化值。
+ * 时点未知）的标的走**未年化**口径，`basis` 非 `annualized` 时在百分数后跟角标
+ * 「*」——两种口径不可互算，不给标注会让用户把 3.16% 读成年化值；解释文案指针
+ * 轴悬停即现、触控轴点按可达（ADR-0088 决策 6）。三态归本函数、输入轴交互归
+ * 组件（AmountCell 同款分工），纯渲染函数不引入 useInputMode。
  */
 export function renderMwrRateCell(
   rate: number | null | undefined,
@@ -26,8 +28,11 @@ export function renderMwrRateCell(
 ): string | VNode {
   if (rate === undefined) return '-'
   if (rate === null) return t('investments.pnl.notComputable')
-  const label = basis === 'annualized' ? '' : t('investments.pnl.cumulativeSuffix')
-  return h('span', { style: { color: pnlSemanticColor(rate, theme) } }, formatRate(rate) + label)
+  return h(MwrRateCell, {
+    rate,
+    color: pnlSemanticColor(rate, theme),
+    annualized: basis === 'annualized',
+  })
 }
 
 /**

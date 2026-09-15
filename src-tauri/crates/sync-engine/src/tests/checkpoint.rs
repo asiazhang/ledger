@@ -15,7 +15,7 @@ use super::super::{
     parked_ops, read_ops, stream_positions, truncate_stream_before,
 };
 use super::common::{make_expense, read_transaction, wire_in, wire_out};
-use crate::channel::{ChannelLayout, publish_checkpoint};
+use crate::channel::{ChannelLayout, upload_checkpoint};
 use crate::envelope::EnvelopeMode;
 use crate::ops;
 use crate::transport::Transport;
@@ -559,12 +559,14 @@ fn publish_source_checkpoint(files: &SharedFiles) -> String {
     let id = protocol::create(&conn_a, make_expense("acc-1", 10_000, "午饭"))
         .unwrap()
         .id;
+    // 两段式发布（#1284 后形态）：产出段定格快照 + 发布段封包上通道。
+    let frozen = create_checkpoint(&conn_a).unwrap();
     let publisher = FetchObservedTransport::publisher(files);
-    publish_checkpoint(
-        &conn_a,
+    upload_checkpoint(
         &publisher,
         &bootstrap_layout(),
         &EnvelopeMode::Plaintext,
+        &frozen,
     )
     .unwrap();
     id

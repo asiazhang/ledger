@@ -2,6 +2,12 @@
 //! 报文解析、净值同步水位语义与基金分区编排；首刷深回填另走单请求全量通道
 //!（基金详情页数据文件，issue #1062）。
 //!
+//! 货币基金口径（issue #1342）：货基的万份收益列不是单位净值（货基单位净值恒
+//! [`MONEY_FUND_UNIT_NAV`]，收益以份额结转体现），三个取数面各自响应自报口径
+//! 判定——lsjz 看 `SYType`/`FundType`，搜索通道看 `FUNDTYPE`（[`is_money_fund_type_code`]），
+//! 详情页数据文件看「缺单位净值序列而有万份收益序列」；命中即归一化为恒定净值，
+//! 万份收益数值与累计净值都不参与（份额已含结转收益，再乘累计净值会重复计）。
+//!
 //! - 报文解析（[`parse_lsjz`]）与水位窗口（[`nav_window`]）为纯函数，fixture
 //!   单测见 `tests/fund_nav.rs`（真实报文形状，不依赖真实网络）；
 //! - 页抓取（[`fetch_nav_page`]）复用行情 HTTP 层的主机池 / 重试 / 限流泛型层；
@@ -30,7 +36,7 @@ use ledger_investment::prices::{
     upsert_price_history,
 };
 
-use super::fund::deserialize_flexible_f64;
+use super::fund::{deserialize_flexible_f64, deserialize_flexible_string};
 use super::http::{KlineBar, Pacer, RetryConfig, request_json_from_hosts, request_text_from_hosts};
 use super::session::ScopedSession;
 
@@ -74,6 +80,23 @@ pub(super) enum LsjzDataField {
 pub(super) struct LsjzData {
     #[serde(rename = "LSJZList", default)]
     pub(super) lsjz_list: Option<Vec<LsjzItem>>,
+    /// 东财基金类型码（`005` = 货币型，与搜索通道 `FUNDTYPE` 同一枚代码表，
+    /// issue #1342）；宽容解析，未知形态归缺省（不使整页报文失败），已终止
+    /// 基金等形态会缺省。
+    #[serde(
+        rename = "FundType",
+        default,
+        deserialize_with = "deserialize_flexible_string"
+    )]
+    pub(super) fund_type: Option<String>,
+    /// 收益披露口径声明：`每万份收益` = `DWJZ` 列承载的是万份收益而非单位
+    /// 净值（issue #1342）；非收益型基金缺省。宽容解析同上。
+    #[serde(
+        rename = "SYType",
+        default,
+        deserialize_with = "deserialize_flexible_string"
+    )]
+    pub(super) sy_type: Option<String>,
 }
 
 /// 历史净值单行：净值日期 + 单位净值。只解析消费的两列，其余（累计净值、
@@ -103,6 +126,37 @@ pub struct NavPoint {
 /// `Data_ACWorthTrend`（累计净值，`[时间戳, 值]` 数组）——本通道刻意只取单位
 /// 净值（与历史净值接口 `DWJZ` 同口径，见 [`parse_net_worth_trend`]）。
 const NET_WORTH_TREND_VAR: &str = "Data_netWorthTrend";
+
+/// 同一数据文件里万份收益序列的变量名（`[北京时间午夜毫秒时间戳, 万份收益]`
+/// 升序数组）：货币基金没有单位净值序列，本通道以「缺 [`NET_WORTH_TREND_VAR`]
+/// 而有本序列」为货基特征，收益日期 × 恒定单位净值收录（issue #1342）。
+const MONEY_INCOME_TREND_VAR: &str = "Data_millionCopiesIncome";
+
+/// 东财基金类型码「货币型」：搜索通道 `FUNDTYPE` 与历史净值接口 `FundType`
+/// 共用同一枚代码表（issue #1342）。
+const MONEY_FUND_TYPE_CODE: &str = "005";
+
+/// 历史净值接口 `SYType` 的收益披露声明值：`DWJZ` 列承载万份收益而非单位净值
+///（issue #1342）。
+const MONEY_FUND_INCOME_SYTYPE: &str = "每万份收益";
+
+/// 货币基金的恒定单位净值（issue #1342）：收益以份额结转体现，单位净值恒为
+/// 1.0000——现价与净值序列都按此值收录，万份收益数值不参与。
+pub(super) const MONEY_FUND_UNIT_NAV: f64 = 1.0;
+
+/// 按东财基金类型码判定货币基金（issue #1342）：搜索通道（`FUNDTYPE`）与
+/// 历史净值接口（`FundType`）共用，代码表 [`MONEY_FUND_TYPE_CODE`]。
+pub(super) fn is_money_fund_type_code(code: &str) -> bool {
+    code.trim() == MONEY_FUND_TYPE_CODE
+}
+
+/// 历史净值接口响应的货币基金判定（issue #1342）：接口自报「收益口径 = 每万
+/// 份收益」（`DWJZ` 列不是净值）或基金类型码为货币型，任一命中即按货币基金
+/// 口径收录。两个信号实测同现；任一缺省（已终止基金等形态）由另一个兜住。
+fn is_money_fund_lsjz(sy_type: Option<&str>, fund_type: Option<&str>) -> bool {
+    sy_type.map(str::trim) == Some(MONEY_FUND_INCOME_SYTYPE)
+        || fund_type.is_some_and(is_money_fund_type_code)
+}
 
 /// 同一数据文件里的基金名称与代码变量名（issue #1212 / ADR-0039 修订）：档案通道
 /// 据此判定「这份文件是不是本基金的」并取权威名称。
@@ -147,6 +201,11 @@ pub(super) struct FundArchive {
     pub(super) last_nav: Option<NavPoint>,
 }
 
+/// 序列里的最新净值点（按净值日期；水位与「最后一期净值」同此判）。
+fn latest_point(points: Option<Vec<NavPoint>>) -> Option<NavPoint> {
+    points?.into_iter().max_by(|a, b| a.date.cmp(&b.date))
+}
+
 /// 解析档案通道响应：`fS_code` 与请求代码全等且 `fS_name` 非空才命中（与搜索通道
 /// 的 FCODE 全等同一防御纪律）；未声明 / 形态不符 / 代码不符均返回 None，由调用方
 /// 按「查无此码」处置。单位净值序列缺失或不可信时按「未取到净值」降级（名称仍可用），
@@ -160,8 +219,11 @@ pub(super) fn parse_fund_archive(js: &str, code: &str) -> Option<FundArchive> {
     if name.is_empty() {
         return None;
     }
-    let last_nav = parse_net_worth_trend(js)
-        .and_then(|points| points.into_iter().max_by(|a, b| a.date.cmp(&b.date)));
+    let last_nav = latest_point(parse_net_worth_trend(js)).or_else(|| {
+        // 货基没有单位净值序列：最后一期净值 = 最新收益日 × 恒定单位净值
+        // 1.0000（issue #1342）——档案回退报价据此落 1.0000 而非无价。
+        latest_point(parse_money_fund_income_series(js))
+    });
     Some(FundArchive {
         name: name.to_string(),
         last_nav,
@@ -228,6 +290,32 @@ fn beijing_date_from_epoch_ms(ms: i64) -> Option<String> {
     )
 }
 
+/// 解析货币基金档案文件里的**万份收益序列**（issue #1342）：货基没有单位净值
+/// 序列（`Data_netWorthTrend` 缺省），单位净值恒 [`MONEY_FUND_UNIT_NAV`]，本
+/// 函数把收益序列的日期投影成净值点（收益值不消费，含 0 与偶发负值）；时间戳
+/// 不可解析的行静默过滤，与 [`parse_net_worth_trend`] 同姿态。
+///
+/// 返回值语义与 [`parse_net_worth_trend`] 一致：`None` = 变量缺省 / 数组截断 /
+/// 元素形态不符——数据不可信，调用方 fail-closed 回退分页通道；`Some(vec![])`
+/// = 结构完好但序列为空（新基金无收益记录），是可信空结果。
+pub(super) fn parse_money_fund_income_series(js: &str) -> Option<Vec<NavPoint>> {
+    let array = extract_declared_json_array(js, MONEY_INCOME_TREND_VAR)?;
+    // 元素为 `[毫秒时间戳, 万份收益]` 对：时间戳即净值日本体；收益值类型放宽
+    // 承接任意形态（不消费），只为保住日期。
+    let raw: Vec<(i64, serde_json::Value)> = serde_json::from_str(array).ok()?;
+    Some(
+        raw.into_iter()
+            .filter_map(|(timestamp, _)| {
+                let date = beijing_date_from_epoch_ms(timestamp)?;
+                Some(NavPoint {
+                    date,
+                    nav: MONEY_FUND_UNIT_NAV,
+                })
+            })
+            .collect(),
+    )
+}
+
 /// 一页净值的解析结果：有效净值点 + 窗口内总条数（服务端按起止日期过滤后的
 /// 总数，供分页循环定界）+ 报文形态（`blocked` = 空响应/被拦截，见
 /// [`parse_lsjz`]）。
@@ -254,6 +342,10 @@ pub struct NavQuery {
 /// 形态（`Data:""` / [`LsjzDataField::Blocked`]，含 `Data` 缺省）得空表并标记
 /// `blocked`——空表有两种语义（抓取不可信 vs 窗口内确实没有新净值），解析层
 /// 负责把它们区分开（issue #1059）。
+///
+/// 货币基金（[`is_money_fund_lsjz`] 命中，issue #1342）：`DWJZ` 列是万份收益
+/// 而非单位净值，单位净值恒 [`MONEY_FUND_UNIT_NAV`]——日期即净值日本体，
+/// 收益值是否在场 / 为何值（含 0 与偶发负值）不影响行有效性，不进价格。
 pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzPage {
     let data = match &resp.data {
         Some(LsjzDataField::Data(data)) => data,
@@ -266,6 +358,7 @@ pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzPage {
             };
         }
     };
+    let money_fund = is_money_fund_lsjz(data.sy_type.as_deref(), data.fund_type.as_deref());
     let points = data
         .lsjz_list
         .as_deref()
@@ -273,8 +366,15 @@ pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzPage {
         .iter()
         .filter_map(|item| {
             let date = item.fsrq.trim();
-            let nav = item.dwjz?;
-            (nav > 0.0 && !date.is_empty()).then(|| NavPoint {
+            if date.is_empty() {
+                return None;
+            }
+            let nav = if money_fund {
+                MONEY_FUND_UNIT_NAV
+            } else {
+                item.dwjz.filter(|nav| *nav > 0.0)?
+            };
+            Some(NavPoint {
                 date: date.to_string(),
                 nav,
             })
@@ -421,8 +521,12 @@ pub(super) fn fetch_nav_full_series_from(
         &format!("fetch_nav_full_series:{code}"),
         None,
     )?;
+    // 先按单位净值序列解析；货币基金没有该序列，按万份收益序列收录（日期 ×
+    // 恒定单位净值 1.0000，issue #1342）。两段皆不可信才 Err——调用方据此
+    // fail-closed 回退分页通道，不把不可信结果当「无净值」。
     parse_net_worth_trend(&body)
-        .ok_or_else(|| AppError::Parse(format!("基金 {code} 详情页数据文件缺少可信的单位净值序列")))
+        .or_else(|| parse_money_fund_income_series(&body))
+        .ok_or_else(|| AppError::Parse(format!("基金 {code} 详情页数据文件缺少可信的净值序列")))
 }
 
 /// 基金分区的同步统计（与 [`super::incremental`] 的股票统计同源汇总）：
