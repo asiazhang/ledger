@@ -23,6 +23,7 @@
     "@ledger/money": "workspace:*",
     "@ledger/row-context-menu": "workspace:*",
     "@ledger/storage": "workspace:*",
+    "@ledger/transaction-modal-state": "workspace:*",
     "@ledger/theme": "workspace:*",
     "@ledger/types": "workspace:*",
     "@ledger/ui-kit": "workspace:*",
