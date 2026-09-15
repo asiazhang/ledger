@@ -14,6 +14,7 @@ import {
   renderMwrRateCell,
   useMoneyWeightedReturn,
 } from '@/investment/useMoneyWeightedReturn'
+import type { MwrBasis } from '@ledger/types'
 
 const reference = useReferenceStore()
 const appStore = useAppStore()
@@ -71,6 +72,8 @@ const { summary: mwr } = useMoneyWeightedReturn()
 interface MwrRow {
   scope: string
   currency_code: string
+  /** 本行口径（issue #1346）：合集含期初存量的行由后端标为未年化 */
+  basis: MwrBasis
   rate: number | null
   testid: string
 }
@@ -82,12 +85,14 @@ const mwrRows = computed<MwrRow[]>(() => {
     .map((a) => ({
       scope: a.account_name,
       currency_code: a.currency_code,
+      basis: a.basis,
       rate: a.rate,
       testid: `mwr-account-${a.account_id}`,
     }))
   const totalRows: MwrRow[] = mwr.value.total.map((g) => ({
     scope: t('investments.pnl.total'),
     currency_code: g.currency_code,
+    basis: g.basis,
     rate: g.rate,
     testid: `mwr-total-${g.currency_code}`,
   }))
@@ -98,12 +103,13 @@ const mwrColumns: DataTableColumn<MwrRow>[] = [
   { title: t('investments.pnl.columns.account'), key: 'scope' },
   { title: t('investments.pnl.columns.currency'), key: 'currency_code', width: 100 },
   {
-    // 三态分流收口在 renderMwrRateCell 单点（与持仓页收益率列同款形态）。
+    // 三态与口径标注都收口在 renderMwrRateCell 单点（与持仓页收益率列同款形态；
+    // issue #1346：合集含期初存量的行按 basis 标未年化角标）。
     title: t('investments.pnl.columns.mwr'),
     key: 'rate',
     align: 'right',
     className: 'tabular-nums',
-    render: (row) => renderMwrRateCell(row.rate, appStore.theme),
+    render: (row) => renderMwrRateCell(row.rate, appStore.theme, row.basis),
   },
 ]
 

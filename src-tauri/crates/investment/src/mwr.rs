@@ -33,6 +33,11 @@
 //! **无解不给数（ADR-0115 代价 1）**：现金流多次变号可能无解或多解，此时
 //! 收益率输出 `None`（前端显式标注无法计算），绝不猜一个解。
 //!
+//! **合集口径（issue #1346 / ADR-0115 修订）**：账户级与全账级合集含期初存量
+//! 时整项降级为未年化——分子（累计收益）分母（累计投入）对全合集各自汇总后
+//! 相除、随行标口径；不含期初存量时维持年化逐位不变。缺价 / 缺汇率的对仍整
+//! 对跳过、不入任何口径的合计（空值语义不变）。
+//!
 //! **展示粒度（ADR-0115 决策 5）**：持仓页每行（账户 × 标的）单标的收益率、
 //! 盈亏页账户级与全账级；同一算法两个消费面，不新开页面。
 
@@ -160,18 +165,25 @@ pub struct InstrumentMwr {
 }
 
 /// 账户级收益率行（盈亏页账户粒度）：只覆盖投资账户（与盈亏页账户下拉同谓词）。
+/// `basis` 标本行口径（issue #1346）：名下合集含期初存量时整项给未年化，
+/// 否则年化（不含期初存量时逐位不变）。
 #[derive(Debug, Serialize)]
 pub struct AccountMwr {
     pub account_id: String,
     pub account_name: String,
     pub currency_code: String,
+    /// 本行收益率的口径（`annualized` / `cumulative`，issue #1346）。
+    pub basis: MwrBasis,
     pub rate: Option<f64>,
 }
 
-/// 全账级按币种分组的收益率行：不做跨币种折算，各币种独立解年化。
+/// 全账级按币种分组的收益率行：不做跨币种折算，各币种独立解年化；该币种合集
+/// 含期初存量时整项给未年化（issue #1346），口径随行标记。
 #[derive(Debug, Serialize)]
 pub struct CurrencyMwr {
     pub currency_code: String,
+    /// 本行收益率的口径（`annualized` / `cumulative`，issue #1346）。
+    pub basis: MwrBasis,
     pub rate: Option<f64>,
 }
 
@@ -218,8 +230,9 @@ pub fn query_money_weighted_return_summary_on(
     // 3. 三个消费面同一算法：
     //    - 单标的：当前持仓对（v_holdings / 区间末日仍有存量）逐对给收益率——
     //      真实成交标的走年化，含期初存量的标的走未年化（口径随行给，ADR-0115 修订）；
-    //    - 账户级：投资账户名下未被跳过标的的流合集（含期初存量的对退出合计）；
-    //    - 全账级：按币种分组的全部未被跳过标的流合集（含到账非投资账户的分红）。
+    //    - 账户级：名下未被跳过标的的合集——含期初存量时整项给未年化
+    //      （分子分母各自汇总，issue #1346），否则年化（逐位不变）；
+    //    - 全账级：按币种分组的合集，口径裁决同账户级（含到账非投资账户的分红）。
     let by_instrument: Vec<InstrumentMwr> = pairs
         .iter()
         .filter(|(_, p)| p.current_position && !p.unvalued)
@@ -244,12 +257,25 @@ pub fn query_money_weighted_return_summary_on(
         .into_iter()
         .filter(|a| a.is_investment)
         .filter_map(|a| {
-            let flows = merged_flows(&pairs, |key| key.0 == a.id)?;
+            // 名下未被跳过（缺料）的合集：合集非空才有行——整户补记（只有期初
+            // 存量）的账户自此不再缺席（issue #1346）。
+            let owned: Vec<&PairFlows> = pairs
+                .iter()
+                .filter(|(key, p)| !p.unvalued && key.0 == a.id)
+                .map(|(_, p)| p)
+                .collect();
+            if owned.is_empty() {
+                return None;
+            }
+            let (basis, rate) = measure_collection(owned.iter().copied(), || {
+                merged_flows(&pairs, |key| key.0 == a.id)
+            });
             Some(AccountMwr {
                 account_id: a.id,
                 account_name: a.name,
                 currency_code: a.currency_code,
-                rate: rate_of(&flows),
+                basis,
+                rate,
             })
         })
         .collect();
@@ -259,23 +285,30 @@ pub fn query_money_weighted_return_summary_on(
             .then(x.currency_code.cmp(&y.currency_code))
     });
 
-    let mut by_currency: BTreeMap<String, Vec<(NaiveDate, f64)>> = BTreeMap::new();
+    // 按币种分组的合集（缺料对仍排除）：口径裁决与账户级同规（issue #1346）。
+    let mut by_currency: BTreeMap<String, Vec<&PairFlows>> = BTreeMap::new();
     for p in pairs.values() {
-        // 含期初存量的对与缺料的对同规退出全账级合计（ADR-0115 决策 4 / issue #1343）。
-        if p.unvalued || p.has_opening {
+        if p.unvalued {
             continue;
         }
         by_currency
             .entry(p.currency_code.clone())
             .or_default()
-            .extend(p.flows.iter().cloned());
+            .push(p);
     }
     let total: Vec<CurrencyMwr> = by_currency
         .into_iter()
-        .filter(|(_, flows)| !flows.is_empty())
-        .map(|(currency_code, flows)| CurrencyMwr {
-            currency_code,
-            rate: rate_of(&flows),
+        .map(|(currency_code, group)| {
+            let (basis, rate) = measure_collection(group.iter().copied(), || {
+                let flows: Vec<(NaiveDate, f64)> =
+                    group.iter().flat_map(|p| p.flows.iter().cloned()).collect();
+                if flows.is_empty() { None } else { Some(flows) }
+            });
+            CurrencyMwr {
+                currency_code,
+                basis,
+                rate,
+            }
         })
         .collect();
 
@@ -455,33 +488,71 @@ impl PairFlows {
         }
     }
 
-    /// 未年化收益率 = 累计收益 ÷ 累计投入（ADR-0115 修订；口径动机与「与年化
-    /// 不可互算」的说明见词汇表「资金加权收益率」词条与 ADR-0115 修订记录）：
+    /// 未年化收益率的分子（累计收益）与分母（累计投入）（ADR-0115 修订；
+    /// 口径动机与「与年化不可互算」的说明见词汇表「资金加权收益率」词条与
+    /// ADR-0115 修订记录）——拆成两腿供合集聚合复用（issue #1346）：
     /// - 累计收益 = Σ现金流（含期末市值，期初存量买入为负）− 期初存量买入额；
     ///   卖出 / 分红为正，已实现与分红因此天然入账（ADR-0109 三腿口径）；
     /// - 累计投入 = 期初存量买入额 + Σ负向现金流绝对值（买入 + 转换转入腿）。
-    ///
-    /// 投入为零（无任何买入）时无解，输出 `None`——沿用「不给数不猜数」的空值语义。
-    fn cumulative_rate(&self) -> Option<f64> {
+    fn cumulative_profit(&self) -> f64 {
         let opening = self.opening_invested_cents as f64;
-        let signed: f64 = self.flows.iter().map(|(_, cf)| *cf).sum();
-        let invested = opening
+        self.flows.iter().map(|(_, cf)| *cf).sum::<f64>() - opening
+    }
+
+    fn cumulative_invested(&self) -> f64 {
+        let opening = self.opening_invested_cents as f64;
+        opening
             + self
                 .flows
                 .iter()
                 .filter(|(_, cf)| *cf < 0.0)
                 .map(|(_, cf)| -*cf)
-                .sum::<f64>();
+                .sum::<f64>()
+    }
+
+    /// 未年化收益率 = 累计收益 ÷ 累计投入：投入为零（无任何买入）时无解，
+    /// 输出 `None`——沿用「不给数不猜数」的空值语义。
+    fn cumulative_rate(&self) -> Option<f64> {
+        let invested = self.cumulative_invested();
         if invested <= 0.0 {
             return None;
         }
-        Some((signed - opening) / invested)
+        Some(self.cumulative_profit() / invested)
     }
 }
 
-/// 合并若干对的现金流（整体跳过的对除外）：账户级消费面共用。含期初存量的对
-/// 一并排除——它的现金流时点不完整，并入年化合计会把「无时点」的存量错当入金
-/// （与缺价跳过同一「不给数就不入合计」语义，ADR-0115 决策 4 / issue #1343）。
+/// 合集（账户级 / 全账级）的口径与收益率（issue #1346 / ADR-0115 修订）：
+/// 合集含期初存量时**整项降级为未年化**——分子（累计收益）分母（累计投入）
+/// 对全合集各自汇总后相除，覆盖全部投入；不含期初存量时维持年化（XIRR 解
+/// 合并现金流，逐位不变）。不拆两行：两个口径不可互算，并列会让「该合集赚
+/// 了百分之几」出现两个不可比的答案，且年化行只覆盖真实成交残余、会被误读。
+fn measure_collection<'a>(
+    pairs: impl Iterator<Item = &'a PairFlows>,
+    merged: impl FnOnce() -> Option<Vec<(NaiveDate, f64)>>,
+) -> (MwrBasis, Option<f64>) {
+    let all: Vec<&PairFlows> = pairs.collect();
+    if all.iter().any(|p| p.has_opening) {
+        (MwrBasis::Cumulative, aggregate_cumulative_rate(&all))
+    } else {
+        (MwrBasis::Annualized, merged().and_then(|f| rate_of(&f)))
+    }
+}
+
+/// 合集未年化收益率：Σ累计收益 ÷ Σ累计投入（各自汇总；分母非正不给数）。
+fn aggregate_cumulative_rate(pairs: &[&PairFlows]) -> Option<f64> {
+    let invested: f64 = pairs.iter().map(|p| p.cumulative_invested()).sum();
+    if invested <= 0.0 {
+        return None;
+    }
+    let profit: f64 = pairs.iter().map(|p| p.cumulative_profit()).sum();
+    Some(profit / invested)
+}
+
+/// 合并若干对的现金流（整体跳过的对除外）：账户级消费面的年化分支消费。
+/// 含期初存量的对一并排除——它的现金流时点不完整，并入年化合计会把「无时点」
+/// 的存量错当入金（与缺价跳过同一「不给数就不入合计」语义，ADR-0115 决策 4 /
+/// issue #1343）；含期初存量的合集已整项改给未年化（[`measure_collection`]，
+/// issue #1346），此排除只剩缺料（unvalued）对会命中。
 fn merged_flows(
     pairs: &BTreeMap<(String, String), PairFlows>,
     pred: impl Fn(&(String, String)) -> bool,

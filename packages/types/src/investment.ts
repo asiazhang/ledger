@@ -363,17 +363,23 @@ export interface InstrumentMwr {
   rate: number | null
 }
 
-/** 账户级资金加权收益率行（盈亏页账户粒度）：只覆盖投资账户 */
+/** 账户级资金加权收益率行（盈亏页账户粒度）：只覆盖投资账户；basis 标本行
+ * 口径——名下合集含期初存量标的时整项给未年化（#1346），否则年化 */
 export interface AccountMwr {
   account_id: string
   account_name: string
   currency_code: string
+  /** 本行收益率的口径（#1346） */
+  basis: MwrBasis
   rate: number | null
 }
 
-/** 全账级按币种分组的资金加权收益率行：不做跨币种折算，各币种独立解年化 */
+/** 全账级按币种分组的资金加权收益率行：不做跨币种折算；basis 同 AccountMwr
+ * （该币种合集含期初存量标的时整项给未年化，#1346） */
 export interface CurrencyMwr {
   currency_code: string
+  /** 本行收益率的口径（#1346） */
+  basis: MwrBasis
   rate: number | null
 }
 

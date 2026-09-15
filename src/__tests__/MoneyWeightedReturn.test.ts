@@ -237,11 +237,11 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
         realized_pnl_summary: makePnlSummary(),
         money_weighted_return_summary: makeMwrSummary({
           by_account: [
-            { account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', rate: 0.1 },
+            { account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', basis: 'annualized', rate: 0.1 },
           ],
           total: [
-            { currency_code: 'CNY', rate: 0.08 },
-            { currency_code: 'USD', rate: null },
+            { currency_code: 'CNY', basis: 'annualized', rate: 0.08 },
+            { currency_code: 'USD', basis: 'annualized', rate: null },
           ],
         }),
       },
@@ -260,14 +260,41 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
     wrapper.unmount()
   })
 
+  it('盈亏页合集含期初存量：账户级与全账级整项标未年化（issue #1346）', async () => {
+    // 后端对合集（账户级 / 全账级）含期初存量标的的行改给未年化口径并随行带
+    // basis=cumulative（#1346）；展示层必须同样标出口径，否则整户补记场景的
+    // 收益率会被读成年化值。
+    wireInvokeSeam({
+      defaults: {
+        realized_pnl_summary: makePnlSummary(),
+        money_weighted_return_summary: makeMwrSummary({
+          by_account: [
+            { account_id: 'acc-1', account_name: '雪球基金', currency_code: 'CNY', basis: 'cumulative', rate: 0.0316 },
+          ],
+          total: [{ currency_code: 'CNY', basis: 'cumulative', rate: 0.028 }],
+        }),
+      },
+    })
+    const wrapper = mountWithDialog(RealizedPnlPanel)
+    await flushPromises()
+
+    // 未年化行带角标「*」（解释收进 tooltip，与持仓页收益率列同款形态）；
+    // 角标元素在场（口径标注的载体）。
+    expect(mwrCellTexts(wrapper)).toEqual(['+3.16%*', '+2.80%*'])
+    const scopeTexts = wrapper.findAll('td[data-col-key="scope"]').map((c) => c.text())
+    expect(scopeTexts).toEqual(['雪球基金', '全账'])
+    expect(wrapper.findAll('td[data-col-key="rate"] [data-mwr-marker]')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
   it('盈亏页账户筛选收窄账户行，全账行保持全账本口径', async () => {
     wireInvokeSeam({
       defaults: {
         realized_pnl_summary: makePnlSummary(),
         money_weighted_return_summary: makeMwrSummary({
           by_account: [
-            { account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', rate: 0.1 },
-            { account_id: 'acc-2', account_name: '基金账户B', currency_code: 'CNY', rate: -0.05 },
+            { account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', basis: 'annualized', rate: 0.1 },
+            { account_id: 'acc-2', account_name: '基金账户B', currency_code: 'CNY', basis: 'annualized', rate: -0.05 },
           ],
         }),
       },
