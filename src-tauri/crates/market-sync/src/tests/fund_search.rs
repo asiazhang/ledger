@@ -193,6 +193,20 @@ fn money_fund_quote_ignores_income_value() {
     assert_eq!(quote.price_cents, None);
 }
 
+#[test]
+fn money_fund_signal_unknown_shape_never_fails_quote() {
+    // 判定信号（FUNDTYPE）未知 wire 形态（如数字）：宽容归缺省，报价照常命中
+    // ——信号缺席的代价是退回旧口径，不是整页解析失败。
+    let numeric = r#"{"Datas":[{"NAME":"某基金","FundBaseInfo":{"FCODE":"000001",
+        "FUNDTYPE":5,"FTYPE":"混合型-灵活","DWJZ":1.318,"FSRQ":"2026-08-28"}}]}"#;
+    let quote = pick_fund_quote(&parse(numeric), "000001").expect("应命中");
+    assert_eq!(
+        quote.price_cents,
+        Some(13_180),
+        "信号缺席按普通基金口径解析原值"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 搜索索引未命中 → 档案通道回退（ADR-0039 修订，issue #1212）
 // 本地 HTTP 服务同一端口分派两个通道的路径，验证回退接线与投影。
