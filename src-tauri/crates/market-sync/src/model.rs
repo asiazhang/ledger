@@ -30,6 +30,16 @@ pub struct SyncInstrumentInfoResult {
     /// 与 [`Self::written`] 一同参与零写入判定。不进 IPC 线。
     #[serde(skip)]
     pub renamed: usize,
+    /// 本次同步是否降级走逐标的通道（ADR-0121 决策 3，issue #1374）：批量取数面
+    /// 失败或处于跨同步停用期时为真。不进 IPC 线——「已降级、本次较慢」的用户可见
+    /// 文案接线归 issue #1376，本字段先落事实与日志统计。
+    #[serde(skip)]
+    pub bulk_degraded: bool,
+    /// 批量取数面**覆盖缺口**的标的数（ADR-0121 决策 3，issue #1374）：批量面没
+    /// 收录（新成立 / 已终止 / 清盘 / 部分货币基金）而逐条回退补齐的只数。缺口不是
+    /// 失败——不进降级判定、不触发熔断，只在日志与统计上与失败分开。不进 IPC 线。
+    #[serde(skip)]
+    pub bulk_gaps: usize,
 }
 
 impl SyncInstrumentInfoResult {

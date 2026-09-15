@@ -4,6 +4,7 @@
 //! 本层现服务增量同步批量报价、单点行情、日 K 与基金净值通道。
 
 use std::collections::HashMap;
+use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -38,8 +39,11 @@ const KLINE_KLT_DAILY: &str = "101";
 const KLINE_FQT_NONE: &str = "0";
 /// 日 K 区间终点（远期占位，实际覆盖由 beg 控制近两年窗口）。
 const KLINE_END: &str = "20500101";
-// 每批最多携带的 secid 数（东财批量报价接口支持一次查多只，约 50 只/请求已足够小、避开限流）。
-pub(super) const ULIST_BATCH_SIZE: usize = 50;
+// 每批最多携带的 secid 数。批量报价接口实测一次 500 个 secid 稳定、800 个可用、
+// 1000 个触发 503（2026-09-15 实测，见 docs/research/market-quote-data-sources.md
+// §3.1）；取 300 留足余量——批量面「每批一次请求」的批大小按实测可用量级，不再
+// 按「越小越安全」的保守值把请求量按标的数摊开（ADR-0121 决策 1 / issue #1374）。
+pub(super) const ULIST_BATCH_SIZE: usize = 300;
 // 优先使用延迟行情主机池：push2 实时主机曾被东财对该出口 IP 触发风控（连接重置），
 // push2delay 返回相同数据结构且对批量访问更稳定。
 pub(super) const API_HOSTS: &[&str] = &[
@@ -50,9 +54,18 @@ pub(super) const API_HOSTS: &[&str] = &[
     "https://90.push2delay.eastmoney.com",
     "https://push2.eastmoney.com",
 ];
-// 东方财富公开行情接口限频约 60 次/分钟（1 次/秒），此处留更多余量并串行访问。
-// 出口 IP 会被 onegate WAF 间歇性限流（返回 200 非 JSON 拦截页或 429），限流窗口约 2-4 分钟自动恢复。
-const REQUEST_INTERVAL: Duration = Duration::from_millis(2000);
+// 东方财富公开行情接口限频约 60 次/分钟（1 次/秒）——这就是「正常状态贴近数据源
+// 可承受量级」的起点（ADR-0121 决策 5）。出口 IP 会被 onegate WAF 间歇性限流
+//（返回 200 非 JSON 拦截页或 429），限流窗口约 2-4 分钟自动恢复；写死的固定间隔
+// 在两个方向上都错（保守值浪费额度、激进值撞风控），故限速随观测自适应：
+// 命中限流/风控页即降速并复用既有冷却，之后每成功一次逐步回升到本起点。
+const REQUEST_INTERVAL: Duration = Duration::from_millis(1000);
+/// 自适应限速的降速倍数（命中限流 / 疑似风控页时）。
+const PACER_SLOWDOWN_FACTOR: u32 = 2;
+/// 自适应限速的回升步长：每次成功请求把间隔降 10%（不低过起点）。
+const PACER_RECOVERY_STEPS: u32 = 10;
+/// 自适应限速的上限（连续被限流时的最大请求间隔）。
+const PACER_MAX_INTERVAL: Duration = Duration::from_secs(8);
 const MAX_RETRIES: u32 = 3;
 const BASE_BACKOFF: Duration = Duration::from_secs(1);
 const THROTTLE_COOLDOWN: Duration = Duration::from_secs(30);
@@ -79,10 +92,18 @@ impl RetryConfig {
     }
 }
 
-/// 串行限速器：保证相邻两次 HTTP 请求之间至少间隔 interval。
+/// 串行自适应限速器（ADR-0121 决策 5）：保证相邻两次 HTTP 请求之间至少间隔当前
+/// 间隔，间隔随观测自适应——正常状态停在构造时的基线（生产 = 数据源可承受量级），
+/// 命中限流响应或疑似风控页翻倍降速（上限 [`PACER_MAX_INTERVAL`]），此后每成功
+/// 一次逐步回升（[`PACER_RECOVERY_STEPS`] 步回到基线）。
+///
+/// 基线即构造间隔，也是回升下限与降速下限的锚：测试传零间隔即整只限速器惰性
+///（降速乘零仍是零），不因自适应逻辑凭空产生等待。
 pub(super) struct Pacer {
     last: Option<Instant>,
     interval: Duration,
+    /// 基线间隔（正常状态的目标值）：回升不低过它、降速以它为起点。
+    baseline: Duration,
 }
 
 impl Pacer {
@@ -90,6 +111,7 @@ impl Pacer {
         Self {
             last: None,
             interval,
+            baseline: interval,
         }
     }
 
@@ -102,12 +124,44 @@ impl Pacer {
         }
         self.last = Some(Instant::now());
     }
+
+    /// 当前请求间隔（观测与测试用）：限速自适应的可观察面。
+    pub(super) fn interval(&self) -> Duration {
+        self.interval
+    }
+
+    /// 一次成功请求（响应按预期解析）：间隔逐步回升到基线——
+    /// 「恢复后逐步回升」，不一步跳回（避免风控窗口刚过就重新撞上）。
+    pub(super) fn record_success(&mut self) {
+        if self.interval > self.baseline {
+            let step = self.interval / PACER_RECOVERY_STEPS;
+            let next = self
+                .interval
+                .saturating_sub(step.max(Duration::from_millis(1)));
+            self.interval = next.max(self.baseline);
+        }
+    }
+
+    /// 命中限流响应（429）或疑似风控页（非 JSON 拦截页）：翻倍降速（封顶）。
+    /// 冷却等待复用 `RetryConfig::throttle_cooldown`（本处只调间隔）。
+    pub(super) fn record_throttled(&mut self) {
+        let next = self.interval.saturating_mul(PACER_SLOWDOWN_FACTOR);
+        self.interval = next.min(PACER_MAX_INTERVAL.max(self.interval));
+    }
 }
 
 impl Default for Pacer {
     fn default() -> Self {
         Self::new(REQUEST_INTERVAL)
     }
+}
+
+/// 取一次限流 pacer（毒化映射 [`AppError::Io`]：串行使用下锁竞争不存在，
+/// 毒化仅发生于抓取 panic，属基础设施失败）。
+pub(super) fn lock_pacer(pacer: &Mutex<Pacer>) -> Result<MutexGuard<'_, Pacer>> {
+    pacer
+        .lock()
+        .map_err(|e| AppError::Io(format!("限流器互斥体损坏: {e}")))
 }
 
 /// 行情接口返回的单个股票条目（字段 f12=代码, f14=名称, f2=价格原始值, f1=价格精度位）。
@@ -370,8 +424,15 @@ where
 
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             throttle_attempts += 1;
+            // 限速自适应（ADR-0121 决策 5）：限流响应即降速一档，冷却等待复用
+            // 既有 `throttle_cooldown`（不新增等待机制）。
+            pacer.record_throttled();
             if throttle_attempts <= cfg.max_throttle_retries {
-                tracing::warn!(ctx = %ctx, attempt = throttle_attempts, "触发接口限流(429)，冷却后重试");
+                tracing::warn!(
+                    ctx = %ctx, attempt = throttle_attempts,
+                    interval_ms = pacer.interval().as_millis() as u64,
+                    "触发接口限流(429)，降速并冷却后重试"
+                );
                 thread::sleep(cfg.throttle_cooldown);
                 continue;
             }
@@ -387,16 +448,23 @@ where
             }
         };
         match parse(&bytes) {
-            Ok(parsed) => return Ok(parsed),
+            Ok(parsed) => {
+                // 成功即逐步回升（恢复后不一步跳回基线）。
+                pacer.record_success();
+                return Ok(parsed);
+            }
             Err(e) => {
                 let head = String::from_utf8_lossy(&bytes[..bytes.len().min(120)]);
                 throttle_attempts += 1;
+                // 疑似风控拦截页（非 JSON 响应）与 429 同待遇：降速一档再冷却。
+                pacer.record_throttled();
                 if throttle_attempts <= cfg.max_throttle_retries {
                     tracing::warn!(
                         ctx = %ctx, attempt = throttle_attempts, status = %status,
                         content_type = %content_type, content_encoding = %content_encoding,
+                        interval_ms = pacer.interval().as_millis() as u64,
                         body_head = %head, error = %e,
-                        "响应解析失败（疑似被风控拦截），冷却后重试"
+                        "响应解析失败（疑似被风控拦截），降速并冷却后重试"
                     );
                     thread::sleep(cfg.throttle_cooldown);
                     continue;
