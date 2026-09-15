@@ -9,7 +9,7 @@ use chrono::NaiveDate;
 
 use crate::fund_nav::{
     LsjzResponse, NavPoint, NavQuery, fetch_nav_full_series_from, fetch_nav_page_from, nav_window,
-    parse_fund_archive, parse_lsjz, parse_net_worth_trend,
+    parse_fund_archive, parse_lsjz, parse_money_fund_income_series, parse_net_worth_trend,
 };
 use crate::http::{Pacer, request_json_from_hosts};
 
@@ -92,6 +92,109 @@ fn lsjz_invalid_nav_rows_are_filtered() {
         ]
     );
     assert!(!points.blocked);
+}
+
+// ---------------------------------------------------------------------------
+// 货币基金口径（issue #1342）：货基的万份收益列不是单位净值——lsjz 响应自报
+// 收益口径（SYType=每万份收益 / FundType=005）即判定，单位净值恒 1.0000，
+// 只取收益日期；档案文件缺单位净值序列而有万份收益序列是货基特征。
+// ---------------------------------------------------------------------------
+
+/// 真实 lsjz 响应形状（货币基金 000905，实测 2026-09-15）：Data.FundType=005、
+/// Data.SYType=每万份收益——DWJZ 列的 0.3117 是万份收益而非单位净值；0.0000
+/// 是零收益日（周末归零前的真实形态），负值是货基偶发的负万份收益。
+const MONEY_FUND_PAYLOAD: &str = r#"{"Data":{"LSJZList":[{"FSRQ":"2026-09-14","DWJZ":"0.3117","LJJZ":"1.1410","SDATE":"","ACTUALSYI":"","NAVTYPE":"1","JZZZL":"0.00","SGZT":"限制大额申购","SHZT":"开放赎回","FHFCZ":"","FHFCZ10":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-09-13","DWJZ":"0.0000","LJJZ":"1.1410","SDATE":"","ACTUALSYI":"","NAVTYPE":"1","JZZZL":"0.00","SGZT":"限制大额申购","SHZT":"开放赎回","FHFCZ":"","FHFCZ10":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-09-12","DWJZ":"-0.6228","LJJZ":"1.1409","SDATE":"","ACTUALSYI":"","NAVTYPE":"1","JZZZL":"0.00","SGZT":"限制大额申购","SHZT":"开放赎回","FHFCZ":"","FHFCZ10":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-09-11","DWJZ":null,"LJJZ":"1.1410","SDATE":"","ACTUALSYI":"","NAVTYPE":"1","JZZZL":"0.00","SGZT":"限制大额申购","SHZT":"开放赎回","FHFCZ":"","FHFCZ10":"","FHFCBZ":"","DTYPE":null,"FHSP":""}],"FundType":"005","SYType":"每万份收益","isNewType":false,"Feature":null},"ErrCode":0,"ErrMsg":null,"TotalCount":3431,"Expansion":null,"PageSize":4,"PageIndex":1}"#;
+
+#[test]
+fn lsjz_money_fund_income_column_normalizes_to_unit_nav() {
+    // 货基判定命中：单位净值恒 1.0000，万份收益数值（含 0 与负值）不进价格——
+    // 收益日期照常收录（现价日期与水位语义依赖它）。DWJZ 缺省的形态异常行仍过滤。
+    let resp: LsjzResponse = serde_json::from_str(MONEY_FUND_PAYLOAD).unwrap();
+    let parsed = parse_lsjz(&resp);
+    assert!(!parsed.blocked);
+    assert_eq!(
+        parsed.points,
+        vec![
+            NavPoint {
+                date: "2026-09-14".into(),
+                nav: 1.0
+            },
+            NavPoint {
+                date: "2026-09-13".into(),
+                nav: 1.0
+            },
+            NavPoint {
+                date: "2026-09-12".into(),
+                nav: 1.0
+            },
+        ]
+    );
+}
+
+#[test]
+fn lsjz_money_fund_detected_by_fund_type_code_alone() {
+    // SYType 缺省而 FundType=005：类型码单信号同样判定（两信号任一命中即真）。
+    let json = r#"{"Data":{"LSJZList":[{"FSRQ":"2026-09-14","DWJZ":"0.3117"}],"FundType":"005","SYType":null},"TotalCount":1}"#;
+    let resp: LsjzResponse = serde_json::from_str(json).unwrap();
+    let parsed = parse_lsjz(&resp);
+    assert_eq!(
+        parsed.points,
+        vec![NavPoint {
+            date: "2026-09-14".into(),
+            nav: 1.0
+        }]
+    );
+}
+
+/// 真实货币基金档案文件片段（000905，实测 2026-09-15）：没有单位净值序列变量
+/// `Data_netWorthTrend`，万份收益序列 `Data_millionCopiesIncome` 为
+/// `[北京时间午夜毫秒时间戳, 万份收益]` 升序数组。
+const MONEY_FUND_ARCHIVE_JS: &str = r#"/*货币基金*/var ishb=true;var fS_name = "鹏华安盈宝货币A";var fS_code = "000905";
+var Data_millionCopiesIncome = [[1694448000000,0.5807],[1694534400000,0.5809],[1694620800000,-0.5811]];
+var Data_sevenDaysYearIncome = [[1694448000000,2.114],[1694534400000,2.115]];
+"#;
+
+#[test]
+fn parse_money_fund_income_series_projects_income_dates_to_unit_nav() {
+    // 收益序列的日期 × 恒定单位净值 1.0000；收益值（含负值）不消费；时间戳语义
+    // 与单位净值序列一致（北京时间午夜毫秒 → 净值日期）。
+    let points = parse_money_fund_income_series(MONEY_FUND_ARCHIVE_JS).unwrap();
+    assert_eq!(
+        points,
+        vec![
+            NavPoint {
+                date: "2023-09-12".into(),
+                nav: 1.0
+            },
+            NavPoint {
+                date: "2023-09-13".into(),
+                nav: 1.0
+            },
+            NavPoint {
+                date: "2023-09-14".into(),
+                nav: 1.0
+            },
+        ]
+    );
+}
+
+#[test]
+fn parse_money_fund_income_series_missing_or_malformed_is_none() {
+    // 缺变量、整体不是数组、数组被截断、元素不是 [时间戳, 值] 对：都不可信，
+    // 返回 None（与单位净值序列解析同姿态）。
+    assert_eq!(parse_money_fund_income_series("var fS_name = \"x\";"), None);
+    assert_eq!(
+        parse_money_fund_income_series("var Data_millionCopiesIncome = 5;"),
+        None
+    );
+    assert_eq!(
+        parse_money_fund_income_series("var Data_millionCopiesIncome = [[1694448000000,0.58]"),
+        None
+    );
+    assert_eq!(
+        parse_money_fund_income_series("var Data_millionCopiesIncome = [[1694448000000]];"),
+        None
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +453,52 @@ fn nav_full_series_fetch_untrusted_body_errors_for_fallback() {
     assert!(fetch_nav_full_series_from(&client, &mut pacer, "110022", &[url.as_str()]).is_err());
 }
 
+#[test]
+fn nav_full_series_serves_money_fund_from_income_series() {
+    // 货币基金没有单位净值序列：单请求通道直接按万份收益序列收录（日期 ×
+    // 恒定单位净值 1.0000，issue #1342），不再必然失败回退分页通道。
+    let (url, _) = spawn_header_capture_server(MONEY_FUND_ARCHIVE_JS.to_string());
+    let client = reqwest::blocking::Client::new();
+    let mut pacer = Pacer::new(Duration::ZERO);
+    let points =
+        fetch_nav_full_series_from(&client, &mut pacer, "000905", &[url.as_str()]).unwrap();
+    assert_eq!(
+        points,
+        vec![
+            NavPoint {
+                date: "2023-09-12".into(),
+                nav: 1.0
+            },
+            NavPoint {
+                date: "2023-09-13".into(),
+                nav: 1.0
+            },
+            NavPoint {
+                date: "2023-09-14".into(),
+                nav: 1.0
+            },
+        ]
+    );
+}
+
+#[test]
+fn nav_full_series_prefers_net_worth_trend_when_both_series_exist() {
+    // 两序列并存的防御形态：单位净值序列优先——货基特征判定只在缺单位净值
+    // 序列时生效，普通基金永不按 1.0000 收录。
+    let both = format!(
+        "{}\nvar Data_millionCopiesIncome = [[1694448000000,9.99]];",
+        REAL_PINGZHONG_SNIPPET
+    );
+    let (url, _) = spawn_header_capture_server(both);
+    let client = reqwest::blocking::Client::new();
+    let mut pacer = Pacer::new(Duration::ZERO);
+    let points =
+        fetch_nav_full_series_from(&client, &mut pacer, "110022", &[url.as_str()]).unwrap();
+    assert_eq!(points.len(), 3);
+    assert_eq!(points[0].nav, 1.0, "取单位净值序列原值，不是 1.0 归一化");
+    assert_eq!(points[2].nav, 1.006);
+}
+
 // ---------------------------------------------------------------------------
 // 档案通道解析（ADR-0039 修订，issue #1212）：同一份数据文件取权威名称与
 // 最后一期单位净值；命中判据 = 代码全等 + 名称非空。
@@ -390,4 +539,15 @@ fn parse_fund_archive_degrades_to_name_only_without_nav_series() {
     let archive = parse_fund_archive(js, "110022").expect("名称齐备即命中");
     assert_eq!(archive.name, "某基金");
     assert!(archive.last_nav.is_none());
+}
+
+#[test]
+fn parse_fund_archive_money_fund_last_nav_is_unit_nav_on_latest_income_date() {
+    // 货基没有单位净值序列：最后一期净值 = 最新收益日 × 恒定单位净值 1.0000
+    //（issue #1342），档案回退报价据此落 1.0000 而非无价或万份收益。
+    let archive = parse_fund_archive(MONEY_FUND_ARCHIVE_JS, "000905").expect("代码全等应命中");
+    assert_eq!(archive.name, "鹏华安盈宝货币A");
+    let last = archive.last_nav.expect("货基按收益序列取最后一期净值");
+    assert_eq!(last.date, "2023-09-14");
+    assert_eq!(last.nav, 1.0);
 }
