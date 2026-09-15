@@ -657,7 +657,8 @@ fn mwr_excludes_soft_deleted_accounts_and_transactions() {
 }
 
 // ---------------------------------------------------------------------------
-// 期初存量（issue #1343 / ADR-0115 修订）：不计现金流、年化不适用、改给未年化
+// 期初存量（issue #1343 / ADR-0115 修订）：不计现金流；仅存量无流水不给年化、
+// 改给未年化；存量 + 真实流水年化恢复、起算点顺延到首笔真实流水（issue #1345）
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -694,9 +695,12 @@ fn mwr_opening_balance_reports_cumulative_rate_instead_of_annualized() {
 }
 
 #[test]
-fn mwr_opening_balance_then_real_buy_uses_lifetime_cumulative() {
-    // 期初存量 10000（10 份 @ 10 元）+ 之后真实买入 5000（5 份 @ 10 元）→
-    // 现值 15 份 × 11 元 = 16500；累计收益 1500 ÷ 累计投入 15000 = 10%。
+fn mwr_opening_balance_with_real_flows_restores_annualized_from_first_real_flow() {
+    // 期初存量 10000（10 份 @ 10 元，2026-06-30 补记）+ 首笔真实流水 = 2026-09-01
+    // 再买 5000（5 份 @ 10 元）→ 年化恢复：以首笔真实流水为起算点，期前存量按该日
+    // 市值（时点持仓 15 份 × ≤ 该日最新周线 11 元 = 16500 分）折为期初投入；现值
+    // 15 份 × 12 元 = 18000 分。手算：−16500(122d) / +18000 → r = (18/16.5)^(365/122) − 1。
+    // （再买当日流水由折算承载不入集，若重复入集或折算漏含当日买入，解必不同。）
     let conn = open();
     seed_account(&conn, "acc-ob", "雪球基金", "investment", "CNY", 0);
     seed_instrument(
@@ -717,19 +721,152 @@ fn mwr_opening_balance_then_real_buy_uses_lifetime_cumulative() {
         buy_on("acc-ob", "inst-ob", 5.0, 100_000, 0, "2026-09-01"),
     )
     .unwrap();
-    seed_market_price(&conn, "inst-ob", 110_000, "CNY");
+    seed_price_history(&conn, "ph-ob-1", "inst-ob", "2026-09-01", 110_000, "CNY");
+    seed_market_price(&conn, "inst-ob", 120_000, "CNY");
 
     let summary = mwr_on(&conn, &MwrRange::default());
     assert_eq!(
         instrument_basis(&summary, "acc-ob", "inst-ob"),
-        Some(MwrBasis::Cumulative)
+        Some(MwrBasis::Annualized),
+        "含期初存量且有真实流水的标的应恢复年化口径"
     );
-    assert_close(instrument_rate(&summary, "acc-ob", "inst-ob"), 0.1);
+    assert_close(
+        instrument_rate(&summary, "acc-ob", "inst-ob"),
+        0.297_346_368_102_668_93,
+    );
+    // 恢复年化后现金流重新计入账户级与全账级合计（与该标的同解）。
+    assert_close(account_rate(&summary, "acc-ob"), 0.297_346_368_102_668_93);
+    assert_close(total_rate(&summary, "CNY"), 0.297_346_368_102_668_93);
+}
+
+#[test]
+fn mwr_opening_balance_with_real_flows_ignores_range_selection() {
+    // 含期初存量的对不受区间选择影响（#1343 纪律延续，issue #1345）：起算点恒为
+    // 首笔真实流水、期末恒取现值，区间边界一律不施加——选了区间与不选同解。
+    let conn = open();
+    seed_account(&conn, "acc-or", "雪球基金", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        "inst-or",
+        "003156",
+        "招商招悦纯债A",
+        "CNY",
+        "unknown",
+    );
+    create_transaction_internal(
+        &conn,
+        opening_buy_on("acc-or", "inst-or", 10.0, 100_000, 0, "2026-06-30"),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        buy_on("acc-or", "inst-or", 5.0, 100_000, 0, "2026-09-01"),
+    )
+    .unwrap();
+    seed_price_history(&conn, "ph-or-1", "inst-or", "2026-09-01", 110_000, "CNY");
+    seed_market_price(&conn, "inst-or", 120_000, "CNY");
+
+    let range = MwrRange {
+        start_date: Some("2026-10-01".into()),
+        end_date: Some("2026-12-31".into()),
+    };
+    let summary = mwr_on(&conn, &range);
+    assert_eq!(
+        instrument_basis(&summary, "acc-or", "inst-or"),
+        Some(MwrBasis::Annualized)
+    );
+    assert_close(
+        instrument_rate(&summary, "acc-or", "inst-or"),
+        0.297_346_368_102_668_93,
+    );
+}
+
+#[test]
+fn mwr_opening_balance_with_real_flows_skips_when_fold_price_missing() {
+    // 期前存量折价缺历史价格（≤ 首笔真实流水日无周线点）→ 按既有空值语义整行
+    // 跳过：行不给数、现金流不入账户级与全账级合计（不给数就不入合计）。
+    let conn = open();
+    seed_account(&conn, "acc-np", "雪球基金", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        "inst-np",
+        "003156",
+        "招商招悦纯债A",
+        "CNY",
+        "unknown",
+    );
+    create_transaction_internal(
+        &conn,
+        opening_buy_on("acc-np", "inst-np", 10.0, 100_000, 0, "2026-06-30"),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        buy_on("acc-np", "inst-np", 5.0, 100_000, 0, "2026-09-01"),
+    )
+    .unwrap();
+    // 唯一周线点落在首笔真实流水之后：折算缺料。
+    seed_price_history(&conn, "ph-np-1", "inst-np", "2026-10-01", 110_000, "CNY");
+    seed_market_price(&conn, "inst-np", 120_000, "CNY");
+
+    let summary = mwr_on(&conn, &MwrRange::default());
+    assert_eq!(instrument_rate(&summary, "acc-np", "inst-np"), None);
+    assert_eq!(account_rate(&summary, "acc-np"), None);
+    assert_eq!(total_rate(&summary, "CNY"), None);
+}
+
+#[test]
+fn mwr_mixed_account_merges_restored_flows_with_regular_pairs() {
+    // 同账户混布普通标的与「存量 + 真实流水」标的：恢复后的现金流并入账户级
+    // 合计（若仍按含期初存量整对排除，账户解应恰为普通标的的 10%）。
+    // 账户流：−10000(0d) −16500(243d) +11000+18000(365d)，手算解 16.4057%。
+    let conn = open();
+    seed_account(&conn, "acc-mx", "雪球基金", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-mr", "600519", "贵州茅台", "CNY", "unknown");
+    seed_instrument(
+        &conn,
+        "inst-mo",
+        "003156",
+        "招商招悦纯债A",
+        "CNY",
+        "unknown",
+    );
+    // 普通标的：买 10000 分 → 现值 11000 分（年化 10%）。
+    create_transaction_internal(
+        &conn,
+        buy_on("acc-mx", "inst-mr", 10.0, 100_000, 0, "2026-01-01"),
+    )
+    .unwrap();
+    seed_market_price(&conn, "inst-mr", 110_000, "CNY");
+    // 存量 + 真实流水标的：折算 −16500（2026-09-01）→ 现值 18000 分。
+    create_transaction_internal(
+        &conn,
+        opening_buy_on("acc-mx", "inst-mo", 10.0, 100_000, 0, "2026-06-30"),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        buy_on("acc-mx", "inst-mo", 5.0, 100_000, 0, "2026-09-01"),
+    )
+    .unwrap();
+    seed_price_history(&conn, "ph-mo-1", "inst-mo", "2026-09-01", 110_000, "CNY");
+    seed_market_price(&conn, "inst-mo", 120_000, "CNY");
+
+    let summary = mwr_on(&conn, &MwrRange::default());
+    // 两个单标的行各自口径不互相污染（普通标的逐位不变，issue #1345 验收 4）。
+    assert_close(instrument_rate(&summary, "acc-mx", "inst-mr"), 0.1);
+    assert_close(
+        instrument_rate(&summary, "acc-mx", "inst-mo"),
+        0.297_346_368_102_668_93,
+    );
+    // 账户级与全账级并入恢复后的现金流。
+    assert_close(account_rate(&summary, "acc-mx"), 0.164_056_601_667_387_7);
+    assert_close(total_rate(&summary, "CNY"), 0.164_056_601_667_387_7);
 }
 
 #[test]
 fn mwr_opening_balance_ignores_range_boundaries() {
-    // 期初存量标的的未年化口径是**生命周期**度量：选了区间也不改口径、不折期初
+    // 仅期初存量标的的未年化口径是**生命周期**度量：选了区间也不改口径、不折期初
     // 市值（区间边界一律不施加），结果与不设区间逐位相同。
     let conn = open();
     seed_account(&conn, "acc-or", "雪球基金", "investment", "CNY", 0);
