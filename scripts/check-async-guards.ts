@@ -49,9 +49,13 @@ const HAND_ROLLED_SEQ_PATTERN = /\blet\s+\w*[Ss]eq\s*=\s*0\b/
  *  单一事实源无双源漂移）。 */
 export const SEQ_SEAM_FILE = 'packages/loadable/src/useLoadable.ts'
 
-/** 扫描根清单（相对仓库根）：src 应用壳 + 已收编接缝的包内 src 树——接缝/基线
- *  文件搬到哪，扫描根跟到哪；后续包抽取携接缝或基线文件出壳时逐票追加。 */
-const SCAN_ROOTS: readonly string[] = ['src', 'packages/loadable/src']
+/** 扫描根清单（相对仓库根）：src 应用壳 + 已收编接缝/基线文件的包内 src 树——接缝/
+ *  基线文件搬到哪，扫描根跟到哪；后续包抽取携接缝或基线文件出壳时逐票追加。 */
+const SCAN_ROOTS: readonly string[] = [
+  'src',
+  'packages/loadable/src',
+  'packages/scheduled-plan-list/src',
+]
 
 /** 规则 2 形态：catch 内直弹 toast 模板（单行；errorMessage 为 utils/errors 统一错误提取） */
 const CATCH_TOAST_PATTERN = /message\.error\(\s*t\([^\n]*errorMessage/
@@ -87,7 +91,6 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   'src/composables/useRefundForm.ts': 1,
   'src/composables/useRestoreFromFile.ts': 2,
   'src/composables/useScheduledPlanForm.ts': 1,
-  'src/composables/useScheduledPlanList.ts': 1,
   'src/composables/useTransactionModalState.ts': 2,
   'src/views/AccountsView.vue': 4,
   'src/views/AiPromptView.vue': 2,
@@ -95,6 +98,8 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   'src/views/ItemsView.vue': 4,
   'src/views/PoliciesView.vue': 1,
   'src/views/TransactionsView.vue': 2,
+  // #1322 起计划清单接缝随包出壳，基线键改挂仓库根包内路径（值不变）
+  'packages/scheduled-plan-list/src/useScheduledPlanList.ts': 1,
 }
 
 /** 行首注释形态：整行跳过（行内尾注与多行块注释内部行不可达，靠评审兜底） */

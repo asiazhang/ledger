@@ -12,7 +12,7 @@ import {
 import { formatAmount } from '@ledger/money'
 import { errorMessage } from '@ledger/utils/errors'
 import { scheduledStatusLabel } from '@ledger/utils/scheduled'
-import { scheduledRecurrenceLabel } from '@/composables/useScheduledPlanList'
+import { scheduledRecurrenceLabel } from '@ledger/scheduled-plan-list'
 import { api } from '@ledger/api'
 import { useReferenceStore } from '@/stores/reference'
 import type { Policy, ScheduledTransactionWithExt } from '@ledger/types'

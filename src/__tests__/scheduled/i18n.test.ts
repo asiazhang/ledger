@@ -7,7 +7,7 @@ import ScheduledView from '@/views/ScheduledView.vue'
 import { routes } from '@/router'
 import { applyLocale } from '@ledger/i18n'
 import { occurrenceStatusLabel, scheduledStatusLabel } from '@ledger/utils/scheduled'
-import { scheduledRecurrenceLabel, scheduledRecurrenceOptions } from '@/composables/useScheduledPlanList'
+import { scheduledRecurrenceLabel, scheduledRecurrenceOptions } from '@ledger/scheduled-plan-list'
 import type { SubscriptionSpendOverview } from '@ledger/types'
 
 /**

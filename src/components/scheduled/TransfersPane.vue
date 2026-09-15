@@ -27,7 +27,7 @@ import {
   scheduledRecurrenceOptions,
   useScheduledPlanList,
   type ScheduledPlanRow,
-} from '@/composables/useScheduledPlanList'
+} from '@ledger/scheduled-plan-list'
 import { useModalIntent } from '@ledger/modal-intent'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import AppModal from '@/components/AppModal.vue'

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NPopconfirm } from 'naive-ui'
 import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
-import type { ScheduledPlanRowAction } from '@/composables/useScheduledPlanList'
+import type { ScheduledPlanRowAction } from '@ledger/scheduled-plan-list'
 
 /**
  * 共享行操作渲染组件冒烟（spec #520 接缝二）：确认分支、测试锚点、空占位各覆盖一次。

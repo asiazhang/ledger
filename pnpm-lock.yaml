@@ -133,6 +133,9 @@ importers:
       '@ledger/row-context-menu':
         specifier: workspace:*
         version: link:packages/row-context-menu
+      '@ledger/scheduled-plan-list':
+        specifier: workspace:*
+        version: link:packages/scheduled-plan-list
       '@ledger/storage':
         specifier: workspace:*
         version: link:packages/storage
@@ -321,6 +324,37 @@ importers:
       vue:
         specifier: ^3.5.42
         version: 3.5.42(typescript@6.0.3)
+
+  packages/scheduled-plan-list:
+    dependencies:
+      '@ledger/api':
+        specifier: workspace:*
+        version: link:../api
+      '@ledger/i18n':
+        specifier: workspace:*
+        version: link:../i18n
+      '@ledger/loadable':
+        specifier: workspace:*
+        version: link:../loadable
+      '@ledger/types':
+        specifier: workspace:*
+        version: link:../types
+      '@ledger/utils':
+        specifier: workspace:*
+        version: link:../utils
+      naive-ui:
+        specifier: ^2.45.3
+        version: 2.45.3(patch_hash=1d273c9e8f7755836be7d55daae02418e67717cd9ee9f835fe703fbaae0ef403)(vue@3.5.42(typescript@6.0.3))
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+    devDependencies:
+      '@ledger/test-support':
+        specifier: workspace:*
+        version: link:../test-support
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
 
   packages/storage:
     devDependencies:

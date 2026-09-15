@@ -20,6 +20,10 @@ const DOM_PACKAGE_TEST_GLOBS = [
   // （@ledger/test-support/media-mock），需 DOM 环境；断点构建期契约测试（消费
   // vite.config 提取与占位符替换）留壳侧 app project（src/__tests__），不落本登记。
   'packages/window-tier/**/*.test.ts',
+  // scheduled-plan-list 包（issue #1322）：useScheduledPlanList 测试以最小挂载壳直打
+  // 工厂实例（@vue/test-utils mount，naive-ui useMessage 经 setup 全局替身发放），需
+  // DOM 环境；同包无其他测试文件，整包落 jsdom。
+  'packages/scheduled-plan-list/**/*.test.ts',
 ]
 
 export default defineConfig({
