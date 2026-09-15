@@ -30,6 +30,7 @@ use chrono::NaiveDate;
 use rusqlite::params;
 use serde::Deserialize;
 
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
@@ -47,7 +48,8 @@ const LSJZ_PATH: &str = "/f10/lsjz";
 /// 每页条数：服务端硬上限（请求更大值实测仍按 20 生效，2026-08），分页循环按此定界。
 const LSJZ_PAGE_SIZE: u64 = 20;
 /// 单只基金单次同步的页数上限：近两年窗口约 25 页（≈500 个净值日 ÷ 20），
-/// 上限兜底防异常 TotalCount 导致的失控翻页（触顶记警告日志、保留已采净值点）。
+/// 上限兜底防异常 TotalCount 导致的失控翻页。触顶即窗口已知未采全，整只不落库
+///（见 [`NavPages::truncated`]，ADR-0122 决策 8 / issue #1373）。
 const MAX_NAV_PAGES: u64 = 40;
 
 // 基金详情页数据文件（pingzhongdata）：单主机（无公开镜像池），一次请求返回整只
@@ -510,6 +512,9 @@ pub(super) struct FundSyncStats {
 /// （最新单位净值即当日现价与当周采样点，[`land_bulk_point`] 直接落库）、逐只通道
 /// 接管（首刷 / 缺周点补齐）；未覆盖或未命中即逐只通道。逐只路径自身的窗口、周采样
 /// 与落库口径不因取数面而变。
+/// 周采样与现价落库在**一只一个事务**里整只一次提交（ADR-0122 决策 8 / issue
+/// #1373）：第 N 个周点写入失败或中途中断整体回滚，磁盘上不留半根历史——「有历史
+/// 序列」与「历史完整」由此等价，首刷判据（ADR-0038 决策 6）依赖的正是这个等价。
 /// 两条抓取闭包由调用方注入（生产接 HTTP 层，测试 mock），本函数不触碰网络；
 /// 单只结果累加进调用方的 `stats`；页级推进经注入的 `on_page` 回调透传
 ///（issue #1061——每页抓取返回后报告「已完成页/总页数」，抓取内部的退避/重试
@@ -519,20 +524,40 @@ pub(super) struct FundSyncStats {
 /// **前置条件**：`fund` 为 6 位真实代码的有通道基金行——名称充代码行（查不到
 /// 净值）由调用方计入跳过、零请求（issue #897 起跳过判定与分母口径同收编排层）。
 /// 跳过语义：首刷查无净值与**空响应/被拦截**（issue #1059）计入 `skipped`，
-/// 不报错不中断；单只网络失败与股票通道一致——上抛中断同步（跳过统计只收
-/// 「无法拉取」的行，不含网络失败）。
+/// 不报错不中断；其中**本轮窗口不完整**（部分页空响应或页数触顶，ADR-0122 决策 8 /
+/// issue #1373）整只不落库并计入跳过，不留半根历史（原「记警告后继续落已采点」
+/// 退役）；单只网络失败与股票通道一致——上抛中断同步（跳过统计只收「无法拉取」
+/// 的行，不含网络失败）。
+/// 分页通道的采集结果（ADR-0122 决策 8 / issue #1373）：净值点 + 两个「本轮窗口
+/// 不可信」标记——任一为真都让整只不落库、宁可整只留空重试，不留半根历史。
+struct NavPages {
+    points: Vec<NavPoint>,
+    /// 任意一页空响应（报文 `Data` 缺省 / 非对象：疑似被拦截 / 风控）。
+    blocked: bool,
+    /// 页数触顶（服务端 `TotalCount` 异常，窗口已知未采全，见 [`MAX_NAV_PAGES`]）。
+    truncated: bool,
+}
+
+impl NavPages {
+    /// 本轮窗口是否完整可信：完整才允许整只落库（ADR-0122 决策 8）。
+    fn is_complete(&self) -> bool {
+        !self.blocked && !self.truncated
+    }
+}
+
 /// 分页通道取净值点（首刷回退与增量共用）：按服务端总数翻页（页大小为服务端硬
 /// 上限），先攒齐全部净值点再一次性降采样——跨页同周的采样必须取最后一个净值日，
-/// 逐页落库会用后页的更早日期覆盖前页采样。返回净值点与「任意一页空响应」标记；
-/// 页级推进经 `on_page` 透传（issue #1061）：只在本页抓取返回之后发出（抓取内部
-/// 的退避/重试等待不产生推进），单页（pages ≤ 1）不发。
+/// 逐页落库会用后页的更早日期覆盖前页采样。返回净值点与「本轮窗口不可信」标记
+///（空响应 / 页数触顶，见 [`NavPages`]）；页级推进经 `on_page` 透传（issue #1061）：
+/// 只在本页抓取返回之后发出（抓取内部的退避/重试等待不产生推进），单页
+///（pages ≤ 1）不发。
 fn fetch_nav_pages<N, P>(
     fetch_nav: &mut N,
     code: &str,
     start: &str,
     end: &str,
     on_page: &mut P,
-) -> Result<(Vec<NavPoint>, bool)>
+) -> Result<NavPages>
 where
     N: FnMut(&NavQuery) -> Result<LsjzPage>,
     P: FnMut(u64, u64),
@@ -551,9 +576,9 @@ where
         .max(points.len() as u64)
         .div_ceil(LSJZ_PAGE_SIZE);
     let pages = raw_pages.min(MAX_NAV_PAGES);
-    if raw_pages > MAX_NAV_PAGES {
-        tracing::warn!(code = %code, total = %first.total, "历史净值页数触顶，窗口可能未采全");
-    }
+    // 触顶即窗口已知未采全（ADR-0122 决策 8）：不在此落已采点，统一由调用方按
+    // 「窗口不完整」整只跳过，日志也在那里带出（含触发原因）。
+    let truncated = raw_pages > MAX_NAV_PAGES;
     // 页级推进只在真正翻页时发出；首页在抓取返回、总页数已知后立即报告。
     // 位置固定在 fetch_nav 之后——抓取闭包内部的退避/重试等待不产生推进
     //（issue #1061 的「等待不伪装成推进」由这一先后关系保证）。空响应页
@@ -574,7 +599,11 @@ where
             on_page(page, pages);
         }
     }
-    Ok((points, blocked))
+    Ok(NavPages {
+        points,
+        blocked,
+        truncated,
+    })
 }
 
 /// 取数面命中时逐只净值通道的角色（ADR-0121 取数面 / ADR-0122 决策 2）。
@@ -768,13 +797,17 @@ where
     };
 
     // 单请求通道命中即免去分页；否则回退既有分页通道（首刷近两年 / 增量水位次日）。
-    let (points, blocked) = match full_points {
-        Some(points) => (points, false),
+    let collected = match full_points {
+        Some(points) => NavPages {
+            points,
+            blocked: false,
+            truncated: false,
+        },
         None => fetch_nav_pages(fetch_nav, &fund.symbol, &start, &end, on_page)?,
     };
 
-    if points.is_empty() {
-        if blocked {
+    if collected.points.is_empty() {
+        if collected.blocked {
             // 空响应（Data 缺省 / 非对象）= 疑似被拦截或异常：结果不可信，不
             // 得计入成功（issue #1059）。与「窗口内确实无新净值」在统计上分
             // 开——此路计入跳过；日志带出原形态，便于与 T+1 正常空窗对照。
@@ -793,38 +826,21 @@ where
         }
         return Ok(());
     }
-    if blocked {
-        // 部分页空响应：已采净值点有效并照常落库，但本轮窗口不完整（先例：
-        // 页数触顶同样记警告、保留已采点，见 MAX_NAV_PAGES）。
+    if !collected.is_complete() {
+        // 本轮窗口不完整（部分页空响应或页数触顶，ADR-0122 决策 8 / issue #1373）：
+        // 整只不落库、计入跳过并在日志标注——宁可整只留空重试，不留半根历史。
+        // 半根历史会让「有历史序列」冒充「历史完整」，首刷判据（ADR-0038 决策 6）
+        // 据此失效；原「记警告后继续落已采点」的旧行为随本决策退役。
         tracing::warn!(
             code = %fund.symbol, first_fill,
-            "历史净值部分页返回空响应（疑似被拦截/异常），本轮窗口可能未采全"
+            blocked = collected.blocked, truncated = collected.truncated,
+            "历史净值窗口不完整（部分页空响应或页数触顶），整只不落库并计入跳过待下次重试"
         );
+        stats.skipped += 1;
+        return Ok(());
     }
+    let points = collected.points;
 
-    // 周采样落库：单位净值即价格（ADR-0038 决策 3），与日线共用降采样与
-    // 「整周覆盖」幂等（同周重复获取零重复行）。落库经作用域会话短暂取一次
-    // 连接（issue #1275）；抓取已在会话之外完成。
-    let bars: Vec<KlineBar> = points
-        .iter()
-        .map(|p| KlineBar {
-            date: p.date.clone(),
-            close: p.nav,
-        })
-        .collect();
-    session.with_connection(|conn| {
-        for (trade_date, nav) in super::incremental::downsample_weekly(&bars) {
-            upsert_price_history(
-                conn,
-                &fund.instrument_id,
-                &trade_date,
-                price_value_to_cents(nav),
-                &fund.currency,
-                EASTMONEY_PRICE_SOURCE,
-            )?;
-        }
-        Ok(())
-    })?;
     // 现价 = 窗口内最新公布单位净值；priced_at = nav_date = 净值日期
     // （与 #301 添加基金同形；nav_date 兼任下次同步的水位）。
     // let-else 显式防线（#434，ADR-0060 A 类临时豁免已摘）：points 非空由
@@ -834,20 +850,47 @@ where
         tracing::warn!(code = %fund.symbol, "净值点意外为空，跳过现价更新");
         return Ok(());
     };
+
+    // 周采样与现价落库同在一只一个事务里（ADR-0122 决策 8 / issue #1373）：单只
+    // 标的的历史回填整只一次提交，第 N 个周点写入失败或中途中断整体回滚，磁盘上
+    // 不留半根历史——「有历史序列」与「历史完整」由此等价，首刷判据（ADR-0038
+    // 决策 6）依赖的正是这个等价。单位净值即价格（ADR-0038 决策 3），与日线共用
+    // 降采样与「整周覆盖」幂等（同周重复获取零重复行）。落库经作用域会话短暂取
+    // 一次连接（issue #1275）；抓取已在会话之外完成。事务经 [`ensure_transaction`]
+    // （ADR-0033 嵌套感知）：连接 autocommit 则自持事务、已在事务中则加入外层。
+    // 「一只一事务」的前提是写错误**不被吞**——本函数的写失败一律经 `?` 上抛，
+    // 加入外层时由外层持有者回滚，同样整只不留；任一层吞掉写错误才会破坏前提。
+    let bars: Vec<KlineBar> = points
+        .iter()
+        .map(|p| KlineBar {
+            date: p.date.clone(),
+            close: p.nav,
+        })
+        .collect();
     session.with_connection(|conn| {
-        upsert_market_price(
-            conn,
-            &MarketPriceWrite {
-                instrument_id: &fund.instrument_id,
-                price_cents: price_value_to_cents(latest.nav),
-                currency_code: &fund.currency,
-                // 基金现价时点 = 净值日期（现价的行情日期就是净值本身对应的日期）；
-                // nav_date 兼任下次同步的水位。
-                priced_at: &latest.date,
-                nav_date: Some(&latest.date),
-                source: Some(EASTMONEY_PRICE_SOURCE),
-            },
-        )
+        ensure_transaction(conn, || {
+            // 周采样落库（与日 K 回填共用单点），与现价写在同一事务里整只一次提交。
+            super::incremental::write_weekly_price_history(
+                conn,
+                &fund.instrument_id,
+                &fund.currency,
+                &bars,
+            )?;
+            upsert_market_price(
+                conn,
+                &MarketPriceWrite {
+                    instrument_id: &fund.instrument_id,
+                    price_cents: price_value_to_cents(latest.nav),
+                    currency_code: &fund.currency,
+                    // 基金现价时点 = 净值日期（现价的行情日期就是净值本身对应的日期）；
+                    // nav_date 兼任下次同步的水位。
+                    priced_at: &latest.date,
+                    nav_date: Some(&latest.date),
+                    source: Some(EASTMONEY_PRICE_SOURCE),
+                },
+            )?;
+            Ok(())
+        })
     })?;
     stats.synced += 1;
     stats.written += 1;

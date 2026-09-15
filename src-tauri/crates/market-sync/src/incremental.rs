@@ -10,6 +10,9 @@
 //! 已有序列者按水位增量（issue #1059）；
 //! ⑤ 有通道的行以数据源权威名称随行刷新标的字典名称（行情通道零额外请求，
 //! 基金通道逐只详情查询；「随用随修 + 同步随行刷新」，ADR-0036/0081 修订）。
+//! 单只标的的历史回填整只一次提交（ADR-0122 决策 8 / issue #1373）：日 K 周线
+//! 与基金净值周线的落库各自在一只一个事务内，第 N 个周点写入失败或中途中断
+//! 整体回滚——不留半根历史，「有历史序列」与「历史完整」等价。
 //! 类型分区在 Rust 侧完成，不增删标的、不改市场。
 //! 职责切分（ADR-0015，修订见 ADR-0081 / issue #827）：同步刷价格、沉淀历史、
 //! 随行修名称；按代码查询/创建随用随修（全量同步翼已随 ADR-0081 决策 3
@@ -42,6 +45,7 @@ use rusqlite::Connection;
 
 use super::bulk::{BulkCoverage, BulkFetchSurfaces, FundNameDictionary, FundNavTable};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_investment::crud::refresh_instrument_name;
 use ledger_investment::prices::{
@@ -375,22 +379,17 @@ where
 
         // ② 近两年日 K 回填 → 周线降采样落 PriceHistory（批内逐只，与报价合并为
         // 该标的一格）。覆盖行情分区全部标的（stock|etf，#695；清仓标的自 #827
-        // 恢复采集）；停牌/整周无有效报价该周无点，不中断同步。
+        // 恢复采集）；停牌/整周无有效报价该周无点，不中断同步。单只整只一次提交
+        //（ADR-0122 决策 8 / issue #1373）：第 N 个周点写入失败整体回滚，不留半根
+        // 历史——「有历史序列」与「历史完整」由此等价。事务经 [`ensure_transaction`]
+        //（ADR-0033 嵌套感知）：autocommit 连接自持事务、已在事务中则加入外层。
         for (secid, inst) in chunk {
             // 日 K 抓取在会话之外；降采样落库才短暂取一次连接（issue #1275）。
             let bars = fetch_kline(secid)?;
             session.with_connection(|conn| {
-                for (trade_date, close) in downsample_weekly(&bars) {
-                    upsert_price_history(
-                        conn,
-                        &inst.instrument_id,
-                        &trade_date,
-                        price_value_to_cents(close),
-                        &inst.currency,
-                        EASTMONEY_PRICE_SOURCE,
-                    )?;
-                }
-                Ok(())
+                ensure_transaction(conn, || {
+                    write_weekly_price_history(conn, &inst.instrument_id, &inst.currency, &bars)
+                })
             })?;
             done += 1;
             progress(SyncProgress::instrument(done, total));
@@ -595,6 +594,34 @@ pub(super) fn downsample_weekly(bars: &[KlineBar]) -> Vec<(String, f64)> {
         by_week.insert(week_monday(d), (bar.date.clone(), bar.close));
     }
     by_week.into_values().collect()
+}
+
+/// 单只标的的周采样历史落库（ADR-0122 决策 8 / issue #1373）：日 K 回填与基金
+/// 净值回填两条通道共用的「降采样 + 逐周 upsert」形体，不另写第二份采样落库。
+/// 「整周覆盖」幂等由 `upsert_price_history` 的 UNIQUE 约束保证（同周重复获取
+/// 零重复行）。
+///
+/// 本函数只写行、**不开事务**：调用方必须在**一只一个事务**里包住它
+///（[`ensure_transaction`]），否则第 N 个周点写入失败会留下半根历史。两个现役
+/// 调用点（行情分区日 K 回填、基金净值回填）都已如此接线；基金侧另有现价与
+/// 历史同事务的需求，故事务边界留在调用方而非本函数。
+pub(super) fn write_weekly_price_history(
+    conn: &Connection,
+    instrument_id: &str,
+    currency: &str,
+    bars: &[KlineBar],
+) -> Result<()> {
+    for (trade_date, close) in downsample_weekly(bars) {
+        upsert_price_history(
+            conn,
+            instrument_id,
+            &trade_date,
+            price_value_to_cents(close),
+            currency,
+            EASTMONEY_PRICE_SOURCE,
+        )?;
+    }
+    Ok(())
 }
 
 /// 该日所属 ISO 周的周一：降采样的周键，与 price_history / fx_rate_history 的
