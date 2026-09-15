@@ -3,7 +3,10 @@
 // （scoped / 非 scoped / module 一律算），存量携带者以下方白名单冻结——白名单外
 // 新增 <style> 块即拦截。新样式一律走组件旁路 vanilla-extract 样式文件
 // （*.css.ts，与组件同目录共置），存量随触碰渐进迁移（boy-scout），迁移后把
-// 文件从白名单移除。
+// 文件从白名单移除。白名单是登记表而非备忘录，双向核验：白名单外的 <style>
+// 块即红（正向），白名单条目指向的文件在扫描面内不可达同样即红——文件删除/
+// 改名/搬迁后未同步清单时陈目不静默存留（#1360，清单漂移 fail loud，同
+// TOAST_BASELINE 不可达检查与结构守门规则⑥⑦形制）。
 // 不设注释豁免通道：逃逸 = 显式回 ADR 讨论后改脚本（与 check-dialog-forms.ts
 // 同一纪律）。样式类型安全由 vue-tsc / Vite 构建期把守，本脚本只守样式块纪律。
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
@@ -19,8 +22,10 @@ import { parse } from 'vue/compiler-sfc'
 /** 存量 <style> 块白名单（issue #888 交付时点快照，按路径排序；#1159 起源码按域
  *  归位，域文件路径同步为域目录坐标 src/<域>/）：
  *  试点组件 AiPromptView.vue 已迁出，不在此列；其余随触碰渐进迁移，
- *  迁移一个删一个，不允许只增不减。路径以仓库根为基准、正斜杠分隔。 */
-const STYLE_BLOCK_WHITELIST: string[] = [
+ *  迁移一个删一个，不允许只增不减；条目指向的文件必须可达，不可达即红（#1360）。
+ *  路径以仓库根为基准、正斜杠分隔。导出供包装测试夹具派生（单一事实源，
+ *  TOAST_BASELINE 同款纪律）。 */
+export const STYLE_BLOCK_WHITELIST: readonly string[] = [
   'src/App.vue',
   'src/accounts/AccountLink.vue',
   'src/backup/StartupFailureScreen.vue',
@@ -97,13 +102,22 @@ function main(): void {
       violations.push(normalizePath(file))
     }
   }
-  if (violations.length === 0 && failures.length === 0) {
+  // 反向存在性断言（#1360）：白名单条目必须在扫描面内可达，陈目即红
+  const scannedRels = new Set(files.map((file) => normalizePath(file)))
+  const unreachable = STYLE_BLOCK_WHITELIST.filter((rel) => !scannedRels.has(rel))
+  if (violations.length === 0 && failures.length === 0 && unreachable.length === 0) {
     console.log(
-      `✅ 样式块守门：${files.length} 个 .vue 文件检查通过——白名单（${STYLE_BLOCK_WHITELIST.length} 个存量文件）外零 <style> 块（ADR-0093）`,
+      `✅ 样式块守门：${files.length} 个 .vue 文件检查通过——白名单（${STYLE_BLOCK_WHITELIST.length} 个存量文件）外零 <style> 块且全条目可达（ADR-0093 / #1360）`,
     )
     return
   }
   for (const f of failures) console.error(f)
+  for (const rel of unreachable) {
+    console.error(
+      `✗ 白名单条目不可达：${rel}——文件删除/改名/搬迁后未同步 STYLE_BLOCK_WHITELIST` +
+        `（清单漂移 fail loud，#1360；请同步删除或改写该条目，陈目不静默存留）`,
+    )
+  }
   for (const v of violations) {
     console.error(
       `✗ 新增 <style> 块：${v}\n  样式方案守门（ADR-0093 / issue #888）：白名单外禁止 <style> 块，` +
@@ -114,8 +128,9 @@ function main(): void {
   process.exit(1)
 }
 
-// 仅直接运行时执行 main；导出的检查函数供其他脚本/后续工具复用。按 issue #888
-// 测试决策，本守门不写单测——脚本运行即检查，挂入 check.sh 随 CI 执行。
+// 仅直接运行时执行 main；导出的检查函数与白名单清单供包装测试/后续工具复用。
+// 包装测试随 #1360 补齐（scripts/check-style-blocks.test.ts，spawnSync 进程级
+// 断言退出码与输出，同 check-async-guards.test.ts 形制），挂 check.sh 随 CI 执行。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
 }
