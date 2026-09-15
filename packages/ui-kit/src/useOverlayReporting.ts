@@ -1,6 +1,6 @@
 import { computed, onScopeDispose, ref, useAttrs, watch } from 'vue'
 import type { Ref } from 'vue'
-import { createOverlayToken } from '@/composables/overlayRegistry'
+import { createOverlayToken } from './overlayRegistry'
 
 /**
  * 弹层封装统一上报与关闭通道（issue #845 / ADR-0035 / ADR-0088 决策 7）。

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NButton, NForm, NFormItem, NInputNumber, NSpace, NText } from 'naive-ui'
-import AppModal from '@/components/AppModal.vue'
-import AppDatePicker from '@/components/AppDatePicker.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
+import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { errorMessage as extractErrorMessage } from '@ledger/utils/errors'

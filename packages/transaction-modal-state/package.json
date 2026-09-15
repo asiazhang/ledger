@@ -1,0 +1,24 @@
+{
+  "name": "@ledger/transaction-modal-state",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "交易弹窗编排包（issue #1321 / spec #1148 / ADR-0045 / ADR-0118 决策 4）：TransactionModalState——交易列表五个弹窗（记一笔/退款/只读详情/编辑/加入物品）共享的「开启/目标/关闭」编排，意图闭集五的单一判别联合是唯一事实源，显示开关由「意图非空」派生；已迁为 ModalIntent 工厂（@ledger/modal-intent，ADR-0072）之上的首个适配器，交易弹窗族特有的「先取明细再开窗、失败不开窗、last-open-wins」异步时序守卫留适配器层。直接 import api（@ledger/api）与 useMessage（naive-ui）的既有形态随包保持，不做注入（先例 useScheduledPlanList）。依赖方向：@ledger 范围内 modal-intent + api + i18n + types + utils，与实际 import 全等（ADR-0118 决策 4 表载四包外，types 为意图载荷类型边、经实际 import 核实收敛）；不依赖 stores / components / views。源码直出，exports 指向 src/useTransactionModalState.ts（单文件包，不设 barrel 中转，先例 loadable/window-tier），不建构建链；跨包只能整引包名（深导入由 check-frontend-structure.ts 守门）。",
+  "exports": {
+    ".": "./src/useTransactionModalState.ts"
+  },
+  "dependencies": {
+    "@ledger/api": "workspace:*",
+    "@ledger/i18n": "workspace:*",
+    "@ledger/modal-intent": "workspace:*",
+    "@ledger/types": "workspace:*",
+    "@ledger/utils": "workspace:*",
+    "naive-ui": "^2.45.3",
+    "vue": "^3.5.42"
+  },
+  "devDependencies": {
+    "@ledger/test-support": "workspace:*",
+    "@vue/test-utils": "^2.5.0",
+    "vitest": "^5.0.0"
+  }
+}

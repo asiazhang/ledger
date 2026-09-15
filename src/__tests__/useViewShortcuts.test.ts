@@ -3,8 +3,8 @@ import { defineComponent, h } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import type { Router } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
-import AppDropdown from '@/components/AppDropdown.vue'
-import { createOverlayToken, openOverlayNames, resetOverlays, hasOpenOverlay } from '@/composables/overlayRegistry'
+import AppDropdown from '@ledger/ui-kit/AppDropdown.vue'
+import { createOverlayToken, openOverlayNames, resetOverlays, hasOpenOverlay } from '@ledger/ui-kit/overlayRegistry'
 import { deriveViewShortcuts, matchViewShortcut, shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
 import {
   useSidebarOrderStore,

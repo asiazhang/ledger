@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NCard, NSpace, NSwitch, NText } from 'naive-ui'
-import AppSelect from '@/components/AppSelect.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
 import LogSettings from '@/components/settings/LogSettings.vue'
 import { SETTINGS_CARD_STACK_CLASS } from '@/components/settings/settings-layout.css.ts'
 import { useAppStore } from '@/stores/app'

@@ -7,9 +7,9 @@ import {
   NSpace,
 } from 'naive-ui'
 import { t } from '@ledger/i18n'
-import AppSelect from '@/components/AppSelect.vue'
-import AppDatePicker from '@/components/AppDatePicker.vue'
-import PinyinSelect from '@/components/PinyinSelect.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
+import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import { useTransferForm } from '@/composables/useTransferForm'
 import type { Transaction } from '@ledger/types'
 

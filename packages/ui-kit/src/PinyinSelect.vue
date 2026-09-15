@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { pinyinFilter } from '@ledger/utils/pinyin-filter'
-import AppSelect from '@/components/AppSelect.vue'
+import AppSelect from './AppSelect.vue'
 
 // 拼音可搜下拉（issue #198 试点，ADR-0027 统一模糊搜索语义）：
 // 薄封装 AppSelect（其内为 NSelect），收口 filterable + 拼音 filter + 弹层注册表

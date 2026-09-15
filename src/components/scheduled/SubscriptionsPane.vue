@@ -15,9 +15,9 @@ import {
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import AppDatePicker from '@/components/AppDatePicker.vue'
-import AppSelect from '@/components/AppSelect.vue'
-import AppTreeSelect from '@/components/AppTreeSelect.vue'
+import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
+import AppTreeSelect from '@ledger/ui-kit/AppTreeSelect.vue'
 import { formatAmount, yuanToCents } from '@ledger/money'
 import type { ScheduledTransactionOccurrence } from '@ledger/types'
 import { api } from '@ledger/api'
@@ -33,8 +33,8 @@ import {
   type ScheduledPlanRow,
   type ScheduledPlanRowAction,
 } from '@ledger/scheduled-plan-list'
-import AppModal from '@/components/AppModal.vue'
-import PinyinSelect from '@/components/PinyinSelect.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'

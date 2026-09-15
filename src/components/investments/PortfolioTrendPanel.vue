@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NEmpty, NRadio, NRadioGroup, NSpace, NSpin, NText } from 'naive-ui'
-import PinyinSelect from '@/components/PinyinSelect.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import { Line } from 'vue-chartjs'
 import type { ChartOptions, TooltipItem } from 'chart.js'
 // Chart.js 统一注册模块（issue #926）：折线图所需 controller/element/scale 一处

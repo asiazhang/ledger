@@ -13,7 +13,7 @@ import { setFileScope, endFileScope } from '@vanilla-extract/css/fileScope'
  * 期产出 CSS，静态导入会先于 adapter 装配完成求值。
  */
 
-let cssModule: (typeof import('@/components/app-modal.css.ts')) | null = null
+let cssModule: (typeof import('../app-modal.css.ts')) | null = null
 type CapturedBlock = { type: string; selector?: string; rule?: Record<string, unknown> }
 let capturedBlocks: CapturedBlock[] = []
 
@@ -30,9 +30,9 @@ beforeAll(async () => {
   setAdapter(adapter)
   // vitest 不挂 ve 插件（见 vitest.config.ts）：运行时求值需显式提供 file scope，
   // 指向真实模块路径使标识符与构建同构。
-  setFileScope('src/components/app-modal.css.ts')
+  setFileScope('packages/ui-kit/src/app-modal.css.ts')
   try {
-    cssModule = await import('@/components/app-modal.css.ts')
+    cssModule = await import('../app-modal.css.ts')
   } finally {
     endFileScope()
     removeAdapter()

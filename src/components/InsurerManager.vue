@@ -13,7 +13,7 @@ import {
   useMessage,
   type DataTableColumn,
 } from 'naive-ui'
-import AppPopconfirm from '@/components/AppPopconfirm.vue'
+import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
 import InsurerEditModal from '@/components/insurers/InsurerEditModal.vue'
 import { api } from '@ledger/api'
 import { useReferenceStore } from '@/stores/reference'

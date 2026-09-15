@@ -12,9 +12,9 @@ import {
   NText,
 } from 'naive-ui'
 import { BookOutline, ChevronForwardOutline, ChevronUpOutline, CreateOutline, TrashOutline } from '@vicons/ionicons5'
-import AppModal from '@/components/AppModal.vue'
-import AppPopconfirm from '@/components/AppPopconfirm.vue'
-import AppPopover from '@/components/AppPopover.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
+import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
+import AppPopover from '@ledger/ui-kit/AppPopover.vue'
 import { useBookSwitcher } from '@/composables/useBookSwitcher'
 import { t } from '@ledger/i18n'
 import { useRouter } from 'vue-router'

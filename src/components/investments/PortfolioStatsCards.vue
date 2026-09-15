@@ -8,7 +8,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useInputMode } from '@/composables/useInputMode'
 import { useWindowTier } from '@ledger/window-tier'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
-import AppPopover from '@/components/AppPopover.vue'
+import AppPopover from '@ledger/ui-kit/AppPopover.vue'
 import { currencyAmountSegments, type CurrencyAmountGroup } from '@/composables/usePortfolioOverview'
 import { statsCard, statsLabel, statsSeparator, statsValue } from './portfolio-stats.css.ts'
 

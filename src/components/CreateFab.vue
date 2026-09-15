@@ -4,7 +4,7 @@ import { NButton, NIcon } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import type { CreateTransactionKind } from '@ledger/types'
 import { t } from '@ledger/i18n'
-import AppPopover from '@/components/AppPopover.vue'
+import AppPopover from '@ledger/ui-kit/AppPopover.vue'
 import {
   CREATE_FAB_CLASS,
   CREATE_FAB_SHEET_CLASS,

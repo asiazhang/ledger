@@ -1,7 +1,7 @@
 import { useDialog } from 'naive-ui'
 import type { DialogOptions, DialogReactive } from 'naive-ui'
-import { createOverlayToken } from '@/composables/overlayRegistry'
-import type { OverlayCloseRequest } from '@/composables/overlayRegistry'
+import { createOverlayToken } from '@ledger/ui-kit/overlayRegistry'
+import type { OverlayCloseRequest } from '@ledger/ui-kit/overlayRegistry'
 
 /**
  * useAppDialog（ADR-0035）：useDialog 的接线封装，删除确认等命令式对话框

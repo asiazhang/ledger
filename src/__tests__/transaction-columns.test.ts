@@ -6,7 +6,7 @@ import {
   type ReferenceStore,
 } from '@/components/transaction-columns'
 import SourceLink from '@/components/SourceLink.vue'
-import NoteCopyButton from '@/components/NoteCopyButton.vue'
+import NoteCopyButton from '@ledger/ui-kit/NoteCopyButton.vue'
 import AmountCell from '@/components/AmountCell.vue'
 import { useAppStore } from '@/stores/app'
 import { kindSemanticColor } from '@ledger/theme/semantic-colors'

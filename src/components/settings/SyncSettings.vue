@@ -27,8 +27,8 @@ import {
   vendorTierKey,
   type S3VendorPrefill,
 } from '@ledger/utils/s3-vendors'
-import AppModal from '@/components/AppModal.vue'
-import AppSelect from '@/components/AppSelect.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
 import { SYNC_HINT_CLASS } from '@/components/settings/sync-settings.css'
 import type {
   ParkedOpInfo,

@@ -22,7 +22,7 @@
 // 下调基线——与样式块白名单「迁移一个删一个」同一纪律（基线即规格，不留陈目）。
 // 存量收编本身（连带 i18n 键与插值名清理）另立专项（#1039 Out of Scope），本门只封增量。
 //
-// 扫描边界：src 与 packages/loadable/src 下 .ts/.vue 文本级行扫描（含 __tests__，
+// 扫描边界：src、packages/loadable/src、packages/ui-kit/src 与 packages/transaction-modal-state/src 下 .ts/.vue 文本级行扫描（含 __tests__，
 // 当前零命中；扫描根清单 SCAN_ROOTS 随接缝/基线文件出壳逐票扩展，后续包抽取携
 // 基线文件出壳时同步追加）；行首注释行（// /* * <!--）跳过——注释提及靶形态
 // 不误报；多行块注释内部行与跨行调用形态不可达，靠评审兜底。守门自身包装测试已随
@@ -55,6 +55,8 @@ const SCAN_ROOTS: readonly string[] = [
   'src',
   'packages/loadable/src',
   'packages/scheduled-plan-list/src',
+  'packages/ui-kit/src',
+  'packages/transaction-modal-state/src',
 ]
 
 /** 规则 2 形态：catch 内直弹 toast 模板（单行；errorMessage 为 utils/errors 统一错误提取） */
@@ -63,13 +65,13 @@ const CATCH_TOAST_PATTERN = /message\.error\(\s*t\([^\n]*errorMessage/
 /**
  * 规则 2 存量基线（#1039 交付时点实测快照：61 处 / 31 文件；键相对扫描根、posix
  * 分隔，值为该文件允许的命中行数；#1318 扫描根扩至包内 src 树，键由相对 src
- * 改挂仓库根，值不变）。现计数须与基线全等：新增红、收缩未同步同样红
+ * 改挂仓库根，值不变；#1321 起 useTransactionModalState 条目随包出壳，键同步为
+ * 包内路径，值不变）。现计数须与基线全等：新增红、收缩未同步同样红
  * ——收编一处下调一处，收编至零删除条目；基线条目指向的文件不可达亦红（清单漂移
  * fail loud）。新增条目不允许：基线只减不增。
  */
 export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   'src/components/AddItemForm.vue': 1,
-  'src/components/NoteCopyButton.vue': 1,
   'src/components/PhysicalAssetDisposeModal.vue': 1,
   'src/components/PhysicalAssetFormModal.vue': 1,
   'src/components/PhysicalAssetValuationModal.vue': 1,
@@ -91,7 +93,7 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   'src/composables/useRefundForm.ts': 1,
   'src/composables/useRestoreFromFile.ts': 2,
   'src/composables/useScheduledPlanForm.ts': 1,
-  'src/composables/useTransactionModalState.ts': 2,
+  'packages/transaction-modal-state/src/useTransactionModalState.ts': 2,
   'src/views/AccountsView.vue': 4,
   'src/views/AiPromptView.vue': 2,
   'src/views/BudgetView.vue': 3,
@@ -100,6 +102,7 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   'src/views/TransactionsView.vue': 2,
   // #1322 起计划清单接缝随包出壳，基线键改挂仓库根包内路径（值不变）
   'packages/scheduled-plan-list/src/useScheduledPlanList.ts': 1,
+  'packages/ui-kit/src/NoteCopyButton.vue': 1,
 }
 
 /** 行首注释形态：整行跳过（行内尾注与多行块注释内部行不可达，靠评审兜底） */

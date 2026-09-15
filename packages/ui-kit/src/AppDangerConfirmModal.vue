@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NAlert, NButton, NSpace, NText } from 'naive-ui'
-import AppModal from '@/components/AppModal.vue'
+import AppModal from './AppModal.vue'
 
 /**
  * 危险确认弹窗共享封装（issue #650 / ADR-0078）：模态危险操作确认的两级形态收口——

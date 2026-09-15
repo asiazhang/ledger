@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { NFormItem, NInput, NInputNumber, NSpace } from 'naive-ui'
-import AppDatePicker from '@/components/AppDatePicker.vue'
-import AppSelect from '@/components/AppSelect.vue'
-import PinyinSelect from '@/components/PinyinSelect.vue'
+import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
+import AppSelect from '@ledger/ui-kit/AppSelect.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import { t } from '@ledger/i18n'
 import { todayStr } from '@ledger/utils/date'
 import { yuanToCents } from '@ledger/money'

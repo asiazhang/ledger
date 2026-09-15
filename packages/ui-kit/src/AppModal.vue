@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NModal } from 'naive-ui'
-import { useOverlayReporting } from '@/composables/useOverlayReporting'
+import { useOverlayReporting } from './useOverlayReporting'
 import { useWindowTier } from '@ledger/window-tier'
 import { MOBILE_CARD_CLASS } from './app-modal.css.ts'
 

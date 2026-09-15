@@ -7,7 +7,7 @@ import {
   isEditableTarget,
   useCreateShortcuts,
 } from '@/composables/useCreateShortcuts'
-import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
+import { createOverlayToken, resetOverlays } from '@ledger/ui-kit/overlayRegistry'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { CREATE_KINDS } from '@ledger/types'
 import type { CreateTransactionKind } from '@ledger/types'

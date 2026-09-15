@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NPopconfirm } from 'naive-ui'
-import { useOverlayReporting } from '@/composables/useOverlayReporting'
+import { useOverlayReporting } from './useOverlayReporting'
 
 // 薄封装 NPopconfirm，接入弹层注册表（ADR-0035）：应用内的 NPopconfirm 一律经
 // 本组件使用，气泡开/关状态实时上报，驱动快捷键抑制。default/trigger/icon 等

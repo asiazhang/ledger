@@ -1,14 +1,43 @@
 import { describe, expect, it } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { flushPromises } from '@vue/test-utils'
-import { makeTransaction } from '@/__tests__/factories'
 import { messageCalls } from '@ledger/test-support/message-mock'
-import { useTransactionModalState } from '@/composables/useTransactionModalState'
-import type { TransactionConvert, TransactionSplit, TransactionTrade } from '@ledger/types'
+import { useTransactionModalState } from '../useTransactionModalState'
+import type { Transaction, TransactionConvert, TransactionSplit, TransactionTrade } from '@ledger/types'
 
 // ---------------------------------------------------------------------------
-// 数据工厂：买卖明细（交易行走共享 makeTransaction，factories.ts）
+// 数据工厂：共享工厂 makeTransaction 的包内自足副本（与 src/__tests__/factories.ts
+// 同源同体；本测试随被测包搬迁后夹具不回指壳层），交易行工厂；买卖明细 makeTrade
+// 在此之上覆写（先例：packages/utils category-chart 测试的 makeCategory 自足副本）
 // ---------------------------------------------------------------------------
+
+function makeTransaction(partial: Partial<Transaction> & { id: string }): Transaction {
+  return {
+    kind: 'expense',
+    amount_cents: 10000,
+    currency_code: 'CNY',
+    amount_native_cents: 10000,
+    account_id: 'acc-1',
+    to_account_id: null,
+    funding_account_id: null,
+    category_id: null,
+    merchant_id: null,
+    policy_id: null,
+    refund_of_transaction_id: null,
+    note: null,
+    date: '2026-01-01',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+    // 来源列默认无来源（列表/搜索读路径才填充）；来源场景显式传 source
+    source: null,
+    // 转换扩展默认无（仅 convert 行由列表/搜索读路径填充）；转换场景显式传 convert
+    convert: null,
+    ...partial,
+  }
+}
 
 function makeTrade(overrides: Partial<TransactionTrade> = {}): TransactionTrade {
   return {

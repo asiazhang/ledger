@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect, NButton } from 'naive-ui'
 import { fireProp } from '@ledger/test-support/component-vm'
-import PinyinSelect from '@/components/PinyinSelect.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
 import type { Merchant, Transaction } from '@ledger/types'
 

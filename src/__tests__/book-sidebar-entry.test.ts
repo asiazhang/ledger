@@ -8,7 +8,7 @@ import { clickDialogButton, dialogText, findBodyButton, visibleModalText } from 
 import { messageApi, messageCalls } from '@ledger/test-support/message-mock'
 import { resetToastSink } from './factories'
 import { registerToastSink } from '@ledger/loadable'
-import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
+import { hasOpenOverlay, resetOverlays } from '@ledger/ui-kit/overlayRegistry'
 import type { BookListInfo } from '@ledger/types'
 
 // 跨账本投资汇总入口导航（issue #1196 / ADR-0114 决策 6）：捕获 router.push。

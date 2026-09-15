@@ -2,7 +2,7 @@
 import { computed, h } from 'vue'
 import { NCard, NDataTable, NEmpty, NGi, NGrid, NSpace, NSpin } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
-import PinyinSelect from '@/components/PinyinSelect.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import { t } from '@ledger/i18n'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'

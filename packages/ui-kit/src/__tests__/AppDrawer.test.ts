@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, ref } from 'vue'
-import AppDrawer from '@/components/AppDrawer.vue'
-import { hasOpenOverlay, openOverlayNames } from '@/composables/overlayRegistry'
+import AppDrawer from '../AppDrawer.vue'
+import { hasOpenOverlay, openOverlayNames } from '../overlayRegistry'
 
 /** 受控宿主：以 show 状态驱动 AppDrawer（生产用法 v-model:show 的等价形态） */
 function mountDrawer(initialShow: boolean) {

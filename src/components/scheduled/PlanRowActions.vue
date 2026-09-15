@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NButton, NSpace } from 'naive-ui'
-import AppPopconfirm from '@/components/AppPopconfirm.vue'
+import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
 import { MOBILE_TOUCH_TARGET_STYLE } from '@/components/mobile-cells'
 import type { ScheduledPlanRowAction } from '@ledger/scheduled-plan-list'
 
