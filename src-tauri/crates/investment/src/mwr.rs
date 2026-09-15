@@ -32,13 +32,20 @@
 //!
 //! **期初存量与年化起算点（issue #1343 / #1345）**：期初存量行（`origin =
 //! opening`）不是真实入金、不入现金流集。仅含存量、无真实流水的对年化没有输入
-//! ——改给未年化口径（累计收益 ÷ 累计投入），现金流不入合计；存量 + 真实流水
-//! 的对年化恢复：以**首笔真实流水**为起算点，期前存量按该日市值折为一笔期初
-//! 投入（复用决策 3 机制：时点持仓 × ≤ 该日最新周线 × 同期汇率），区间边界对
-//! 含期初存量的对一律不施加（#1343 纪律延续）。
+//! ——改给未年化口径（累计收益 ÷ 累计投入）；存量 + 真实流水的对年化恢复：以
+//! **首笔真实流水**为起算点，期前存量按该日市值折为一笔期初投入（复用决策 3
+//! 机制：时点持仓 × ≤ 该日最新周线 × 同期汇率），区间边界对含期初存量的对一律
+//! 不施加（#1343 纪律延续）。折算是年化帧的市值锚：未年化口径仍按成本口径
+//! （期初存量买入额 + 全部真实成本流），折算不进其分子分母。
 //!
 //! **无解不给数（ADR-0115 代价 1）**：现金流多次变号可能无解或多解，此时
 //! 收益率输出 `None`（前端显式标注无法计算），绝不猜一个解。
+//!
+//! **合集口径（issue #1346 / ADR-0115 修订；触发随 #1345 收窄）**：账户级与
+//! 全账级合集含**仅存量、无真实流水**的对时整项降级为未年化——分子（累计收益）
+//! 分母（累计投入）对全合集各自汇总后相除、随行标口径；存量 + 真实流水的对
+//! 年化恢复后随普通对入年化合集、不再触发降级。不含仅存量对时维持年化逐位
+//! 不变。缺价 / 缺汇率的对仍整对跳过、不入任何口径的合计（空值语义不变）。
 //!
 //! **展示粒度（ADR-0115 决策 5）**：持仓页每行（账户 × 标的）单标的收益率、
 //! 盈亏页账户级与全账级；同一算法两个消费面，不新开页面。
@@ -167,18 +174,26 @@ pub struct InstrumentMwr {
 }
 
 /// 账户级收益率行（盈亏页账户粒度）：只覆盖投资账户（与盈亏页账户下拉同谓词）。
+/// `basis` 标本行口径（issue #1346；触发随 #1345 收窄）：名下合集含**仅存量、
+/// 无真实流水**的对时整项给未年化，否则年化（不含该形态时逐位不变）。
 #[derive(Debug, Serialize)]
 pub struct AccountMwr {
     pub account_id: String,
     pub account_name: String,
     pub currency_code: String,
+    /// 本行收益率的口径（`annualized` / `cumulative`，issue #1346）。
+    pub basis: MwrBasis,
     pub rate: Option<f64>,
 }
 
-/// 全账级按币种分组的收益率行：不做跨币种折算，各币种独立解年化。
+/// 全账级按币种分组的收益率行：不做跨币种折算，各币种独立解年化；该币种合集
+/// 含**仅存量、无真实流水**的对时整项给未年化（issue #1346；触发随 #1345 收窄），
+/// 口径随行标记。
 #[derive(Debug, Serialize)]
 pub struct CurrencyMwr {
     pub currency_code: String,
+    /// 本行收益率的口径（`annualized` / `cumulative`，issue #1346）。
+    pub basis: MwrBasis,
     pub rate: Option<f64>,
 }
 
@@ -226,8 +241,10 @@ pub fn query_money_weighted_return_summary_on(
     //    - 单标的：当前持仓对（v_holdings / 区间末日仍有存量）逐对给收益率——
     //      普通对与「存量 + 真实流水」对走年化，仅存量无流水的对走未年化
     //      （口径随行给，ADR-0115 修订 / issue #1345）；
-    //    - 账户级：投资账户名下未被跳过标的的流合集（仅存量无流水的对退出合计）；
-    //    - 全账级：按币种分组的全部未被跳过标的流合集（含到账非投资账户的分红）。
+    //    - 账户级：名下未被跳过标的的合集——含**仅存量、无真实流水**的对时
+    //      整项降级给未年化（分子分母各自汇总，issue #1346；#1345 后存量 +
+    //      真实流水的对年化恢复，不再触发降级），否则年化（逐位不变）；
+    //    - 全账级：按币种分组的合集，口径裁决同账户级（含到账非投资账户的分红）。
     let by_instrument: Vec<InstrumentMwr> = pairs
         .iter()
         .filter(|(_, p)| p.current_position && !p.unvalued)
@@ -252,12 +269,23 @@ pub fn query_money_weighted_return_summary_on(
         .into_iter()
         .filter(|a| a.is_investment)
         .filter_map(|a| {
-            let flows = merged_flows(&pairs, |key| key.0 == a.id)?;
+            // 名下未被跳过（缺料）的合集：合集非空才有行——整户补记（只有期初
+            // 存量）的账户自此不再缺席（issue #1346）。
+            let owned: Vec<&PairFlows> = pairs
+                .iter()
+                .filter(|(key, p)| !p.unvalued && key.0 == a.id)
+                .map(|(_, p)| p)
+                .collect();
+            if owned.is_empty() {
+                return None;
+            }
+            let (basis, rate) = measure_collection(&owned);
             Some(AccountMwr {
                 account_id: a.id,
                 account_name: a.name,
                 currency_code: a.currency_code,
-                rate: rate_of(&flows),
+                basis,
+                rate,
             })
         })
         .collect();
@@ -267,24 +295,28 @@ pub fn query_money_weighted_return_summary_on(
             .then(x.currency_code.cmp(&y.currency_code))
     });
 
-    let mut by_currency: BTreeMap<String, Vec<(NaiveDate, f64)>> = BTreeMap::new();
+    // 按币种分组的合集（缺料对仍排除）：口径裁决与账户级同规（issue #1346）。
+    let mut by_currency: BTreeMap<String, Vec<&PairFlows>> = BTreeMap::new();
     for p in pairs.values() {
-        // 仅存量无流水的对与缺料的对同规退出全账级合计（ADR-0115 决策 4 /
-        // issue #1343）；存量 + 真实流水的对自 #1345 起现金流完整，随普通对入合计。
-        if p.unvalued || p.opening_only() {
+        // 缺料对整对跳过；仅存量无流水的对保留在组内，由合集聚合按未年化
+        // 口径消化（issue #1346）。
+        if p.unvalued {
             continue;
         }
         by_currency
             .entry(p.currency_code.clone())
             .or_default()
-            .extend(p.flows.iter().cloned());
+            .push(p);
     }
     let total: Vec<CurrencyMwr> = by_currency
         .into_iter()
-        .filter(|(_, flows)| !flows.is_empty())
-        .map(|(currency_code, flows)| CurrencyMwr {
-            currency_code,
-            rate: rate_of(&flows),
+        .map(|(currency_code, group)| {
+            let (basis, rate) = measure_collection(&group);
+            CurrencyMwr {
+                currency_code,
+                basis,
+                rate,
+            }
         })
         .collect();
 
@@ -440,19 +472,24 @@ fn load_cash_flows(
             // 转换两腿（单标的粒度）：转出腿为正、转入腿为负，值 = 结转成本
             // （convert 行金额锚点，ADR-0099 / ADR-0115 决策 2）。
             let out_leg = row.instrument_id.clone();
-            if !register_t0_and_should_fold(pairs, &out_key, date, &row.kind, &first_real) {
+            if !route_t0_day_flow(
+                pairs,
+                &out_key,
+                date,
+                &row.kind,
+                row.amount_cents as f64,
+                &first_real,
+            ) {
                 pairs
                     .entry((row.account_id.clone(), out_leg))
                     .or_default()
                     .push(date, row.amount_cents as f64);
             }
-            if let Some(in_key) = in_key
-                && !register_t0_and_should_fold(pairs, &in_key, date, &row.kind, &first_real)
-            {
-                pairs
-                    .entry(in_key)
-                    .or_default()
-                    .push(date, -(row.amount_cents as f64));
+            if let Some(in_key) = in_key {
+                let in_leg_amount = -(row.amount_cents as f64);
+                if !route_t0_day_flow(pairs, &in_key, date, &row.kind, in_leg_amount, &first_real) {
+                    pairs.entry(in_key).or_default().push(date, in_leg_amount);
+                }
             }
             continue;
         }
@@ -462,7 +499,7 @@ fn load_cash_flows(
             "sell" | "dividend" => row.amount_cents as f64,
             _ => continue,
         };
-        if !register_t0_and_should_fold(pairs, &out_key, date, &row.kind, &first_real) {
+        if !route_t0_day_flow(pairs, &out_key, date, &row.kind, signed, &first_real) {
             pairs
                 .entry((row.account_id.clone(), row.instrument_id.clone()))
                 .or_default()
@@ -472,16 +509,18 @@ fn load_cash_flows(
     Ok(())
 }
 
-/// 期初存量对的首笔真实流水日（t0）随行登记；返回该笔流水是否应由 t0 折算
-/// 承载——该日的持仓变动流水不入集（与区间起始日约定同款）；分红是仓位外
-/// 现金、不在折算内，恒入集（issue #1345）。非期初存量对无 t0 登记，恒返回
-/// `false`（名字里的 register 是本函数的承重副作用：[`PairFlows::
-/// first_real_flow`] 由此建立，measure / 合计 / 边界三面依赖它）。
-fn register_t0_and_should_fold(
+/// 期初存量对的首笔真实流水日（t0）随行登记；该日的持仓变动流水（买卖 /
+/// 转换腿）改道入 [`PairFlows::t0_day_cost_flows`]——年化帧由 t0 折算承载
+/// （时点市值锚），累计帧按成本入账；分红是仓位外现金、不在折算内，恒入
+/// [`PairFlows::flows`]（issue #1345）。非期初存量对无 t0 登记，恒返回
+/// `false`（名字里的 route 是本函数的承重副作用：[`PairFlows::first_real_flow`]
+/// 由此建立，measure / 合计 / 边界三面依赖它）。
+fn route_t0_day_flow(
     pairs: &mut BTreeMap<(String, String), PairFlows>,
     key: &(String, String),
     date: NaiveDate,
     kind: &str,
+    amount: f64,
     first_real: &BTreeMap<(String, String), NaiveDate>,
 ) -> bool {
     if first_real.get(key) != Some(&date) {
@@ -489,16 +528,26 @@ fn register_t0_and_should_fold(
     }
     let pair = pairs.entry(key.clone()).or_default();
     pair.first_real_flow = Some(date);
-    kind != "dividend"
+    if kind == "dividend" {
+        return false;
+    }
+    pair.t0_day_cost_flows.push((date, amount));
+    true
 }
 
 /// 一个（账户 × 标的）对的现金流集与边界状态。
 #[derive(Default)]
 struct PairFlows {
     /// 真实成交的带日期现金流（金额单位分，符号即方向）；期初存量行不在其中。
-    /// 含期初存量且有真实流水的对另由 [`apply_boundaries`] 追加 t0 期初投入与
-    /// 期末现值两笔边界现金流（issue #1345）。
+    /// 含期初存量且有真实流水的对：t0 当日的持仓变动流水不在此（改道
+    /// [`PairFlows::t0_day_cost_flows`]），期末现值由 [`apply_boundaries`] 追加。
     flows: Vec<(NaiveDate, f64)>,
+    /// t0 当日的持仓变动成本流（年化帧由折算承载；累计帧按成本入账，与 flows
+    /// 同尺，issue #1345）。
+    t0_day_cost_flows: Vec<(NaiveDate, f64)>,
+    /// t0 折算（期前存量按首笔真实流水日市值折的期初投入，负值；年化帧专用，
+    /// 累计帧的成本口径不含它），由 [`apply_boundaries`] 写入（issue #1345）。
+    t0_fold: Option<(NaiveDate, f64)>,
     /// 期初存量买入额合计（分，正数）：不进现金流集，只进未年化口径的投入与累计。
     opening_invested_cents: i64,
     /// 该对含期初存量（真实建仓时点未知）：仅存量、无真实流水时年化不适用。
@@ -533,52 +582,90 @@ impl PairFlows {
         if self.opening_only() {
             (MwrBasis::Cumulative, self.cumulative_rate())
         } else {
-            // 以该对现金流解年化：时间为实际天数 / 365，自首笔现金流起算。
-            (MwrBasis::Annualized, rate_of(&self.flows))
+            (MwrBasis::Annualized, self.annualized_rate())
         }
     }
 
-    /// 未年化收益率 = 累计收益 ÷ 累计投入（ADR-0115 修订；口径动机与「与年化
-    /// 不可互算」的说明见词汇表「资金加权收益率」词条与 ADR-0115 修订记录）：
-    /// - 累计收益 = Σ现金流（含期末市值，期初存量买入为负）− 期初存量买入额；
-    ///   卖出 / 分红为正，已实现与分红因此天然入账（ADR-0109 三腿口径）；
+    /// 年化帧解年化：flows + t0 折算（t0 日的持仓变动已在折算内，见
+    /// [`route_t0_day_flow`]），时间为实际天数 / 365，自首笔现金流起算。
+    fn annualized_rate(&self) -> Option<f64> {
+        match &self.t0_fold {
+            None => rate_of(&self.flows),
+            Some(fold) => {
+                let mut all = Vec::with_capacity(self.flows.len() + 1);
+                all.extend(self.flows.iter().copied());
+                all.push(*fold);
+                rate_of(&all)
+            }
+        }
+    }
+
+    /// 年化帧的全部现金流（flows + t0 折算）：合集年化分支合并用。
+    fn annualized_flows(&self) -> impl Iterator<Item = (NaiveDate, f64)> + '_ {
+        self.flows
+            .iter()
+            .copied()
+            .chain(self.t0_fold.iter().copied())
+    }
+
+    /// 未年化收益率的分子（累计收益）与分母（累计投入）（ADR-0115 修订；
+    /// 口径动机与「与年化不可互算」的说明见词汇表「资金加权收益率」词条与
+    /// ADR-0115 修订记录）——拆成两腿供合集聚合复用（issue #1346）：
+    /// - 累计收益 = Σ真实流（flows + t0 日成本流，含期末现值）− 期初存量买入额；
+    ///   卖出 / 分红为正，已实现与分红因此天然入账（ADR-0109 三腿口径）；t0 折算
+    ///   是年化帧的市值锚、不进成本帧（issue #1345）；
     /// - 累计投入 = 期初存量买入额 + Σ负向现金流绝对值（买入 + 转换转入腿）。
-    ///
-    /// 投入为零（无任何买入）时无解，输出 `None`——沿用「不给数不猜数」的空值语义。
-    fn cumulative_rate(&self) -> Option<f64> {
+    fn cumulative_profit(&self) -> f64 {
         let opening = self.opening_invested_cents as f64;
-        let signed: f64 = self.flows.iter().map(|(_, cf)| *cf).sum();
-        let invested = opening
+        self.cost_flows().map(|(_, cf)| *cf).sum::<f64>() - opening
+    }
+
+    fn cumulative_invested(&self) -> f64 {
+        self.opening_invested_cents as f64
             + self
-                .flows
-                .iter()
+                .cost_flows()
                 .filter(|(_, cf)| *cf < 0.0)
                 .map(|(_, cf)| -*cf)
-                .sum::<f64>();
-        if invested <= 0.0 {
-            return None;
-        }
-        Some((signed - opening) / invested)
+                .sum::<f64>()
+    }
+
+    /// 未年化帧的全部真实流（flows + t0 日成本流，成本口径）。
+    fn cost_flows(&self) -> impl Iterator<Item = &(NaiveDate, f64)> {
+        self.flows.iter().chain(self.t0_day_cost_flows.iter())
+    }
+
+    /// 未年化收益率 = 累计收益 ÷ 累计投入：单对形态即合集聚合的退化情形
+    /// （投入为零时无解，输出 `None`——沿用「不给数不猜数」的空值语义）。
+    fn cumulative_rate(&self) -> Option<f64> {
+        aggregate_cumulative_rate(std::slice::from_ref(&self))
     }
 }
 
-/// 合并若干对的现金流（整体跳过的对除外）：账户级消费面共用。仅期初存量、无
-/// 真实流水的对一并排除——它没有年化口径、现金流时点不完整，并入年化合计会把
-/// 「无时点」的存量错当入金（与缺价跳过同一「不给数就不入合计」语义，ADR-0115
-/// 决策 4 / issue #1343）；存量 + 真实流水的对自 issue #1345 起现金流由 t0 折算
-/// 补齐，随普通对入合计。
-fn merged_flows(
-    pairs: &BTreeMap<(String, String), PairFlows>,
-    pred: impl Fn(&(String, String)) -> bool,
-) -> Option<Vec<(NaiveDate, f64)>> {
-    let mut out: Vec<(NaiveDate, f64)> = Vec::new();
-    for (key, p) in pairs {
-        if p.unvalued || !pred(key) || p.opening_only() {
-            continue;
-        }
-        out.extend(p.flows.iter().cloned());
+/// 合集（账户级 / 全账级）的口径与收益率（issue #1346 / ADR-0115 修订；
+/// 降级触发随 #1345 收窄）：合集含**仅存量、无真实流水**的对时**整项降级为
+/// 未年化**——分子（累计收益）分母（累计投入）对全合集各自汇总后相除，覆盖
+/// 全部投入；否则维持年化（XIRR 解合并现金流；「存量 + 真实流水」对的年化帧
+/// 由 t0 折算补齐，随普通对合并，issue #1345）。不拆两行：两个口径不可互算，
+/// 并列会让「该合集赚了百分之几」出现两个不可比的答案，且年化行只覆盖真实
+/// 成交残余、会被误读。
+fn measure_collection(pairs: &[&PairFlows]) -> (MwrBasis, Option<f64>) {
+    if pairs.iter().any(|p| p.opening_only()) {
+        (MwrBasis::Cumulative, aggregate_cumulative_rate(pairs))
+    } else {
+        let flows: Vec<(NaiveDate, f64)> =
+            pairs.iter().flat_map(|p| p.annualized_flows()).collect();
+        (MwrBasis::Annualized, rate_of(&flows))
     }
-    if out.is_empty() { None } else { Some(out) }
+}
+
+/// 合集未年化收益率：Σ累计收益 ÷ Σ累计投入（各自汇总；分母非正不给数）。
+fn aggregate_cumulative_rate(pairs: &[&PairFlows]) -> Option<f64> {
+    let invested: f64 = pairs.iter().map(|p| p.cumulative_invested()).sum();
+    if invested <= 0.0 {
+        return None;
+    }
+    let profit: f64 = pairs.iter().map(|p| p.cumulative_profit()).sum();
+    Some(profit / invested)
 }
 
 /// 给定现金流解年化：时间为实际天数 / 365，自首笔流水起算（空集 `None`）。
@@ -742,8 +829,11 @@ fn apply_boundaries(
                     holdings_as_of_in(conn, Some(&key.0), Some(&key.1), &t0.to_string())?;
                 if quantity > QTY_GUARD_EPSILON {
                     // fold_values 按 pairs 全体起算日预载，本处索引必命中。
+                    // 折算只进年化帧（t0_fold），不进成本帧的 flows——未年化
+                    // 口径的分子分母按期初存量买入额 + 真实成本流计，市值锚
+                    // 不得混入（issue #1345）。
                     match fold_values[&t0].market_value(quantity, &key.1, &pair.currency_code) {
-                        Some(v) => pair.flows.push((t0, -(v as f64))),
+                        Some(v) => pair.t0_fold = Some((t0, -(v as f64))),
                         None => pair.unvalued = true,
                     }
                 }

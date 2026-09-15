@@ -47,7 +47,9 @@ export function renderMwrRateCell(
  * 查询语义（缺省无区间 = 自首笔流水起算、截至今日现值）；三个消费面共用
  * 同一次请求：持仓页签逐行取 `by_instrument`（按 账户 × 标的 定位），盈亏页
  * 取 `by_account` 与 `total`。行缺失 = 缺价跳过（展示「-」）；`rate` 为 null =
- * 现金流无解（展示「无法计算」，不猜解——ADR-0115 代价 1）。
+ * 现金流无解（展示「无法计算」，不猜解——ADR-0115 代价 1）。各消费面行均自带
+ * `basis` 口径标记：合集（账户级 / 全账级）含期初存量的行由后端整项标为
+ * 未年化（issue #1346），展示层经 renderMwrRateCell 标注。
  */
 export function useMoneyWeightedReturn() {
   const summary = ref<MoneyWeightedReturnSummary | null>(null)

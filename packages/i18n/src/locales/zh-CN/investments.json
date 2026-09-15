@@ -15,7 +15,7 @@
     "byMwr": "资金加权收益率",
     "total": "全账",
     "notComputable": "无法计算",
-    "cumulativeTip": "未年化：累计收益 ÷ 累计投入（建仓时点未知，不给年化）",
+    "cumulativeTip": "未年化：累计收益 ÷ 累计投入（含建仓时点未知的持仓，不给年化）",
     "columns": {
       "account": "账户",
       "realizedPnl": "已实现盈亏",
