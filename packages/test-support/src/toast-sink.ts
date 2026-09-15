@@ -5,7 +5,7 @@ import { registerToastSink, type ToastSink } from '@ledger/loadable'
  * toast sink 假件（issue #1354：双源上收共享测试支持包）：
  * 壳侧 src/__tests__/factories.ts 与 @ledger/loadable、@ledger/scheduled-plan-list
  * 包内测试的局部替身同实现收拢此处——唯一定义点，ToastSink 结构演化时只改这一处
- * （副本防回潮暂无守门，check-test-stubs 规则 4 名单不含替身名，靠评审兜底）。
+ * （副本防回潮由 check-test-stubs 规则 4 名单 + 本文件白名单守门，issue #1364）。
  * 消费形态：包名深导入 `@ledger/test-support/toast-sink`（exports `./*`
  * 通配）。替身引用被替对象：复位须经产品注册接口 registerToastSink（@ledger/loadable，
  * devDependencies 消费，规则⑤）。

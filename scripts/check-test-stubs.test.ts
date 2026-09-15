@@ -509,7 +509,7 @@ export const legacy = { fn: 'invokeHandler' }`,
   })
 })
 
-describe('check-test-stubs 领域数据工厂本地定义检测（#822 规则 4）', () => {
+describe('check-test-stubs 共享测试替身/领域数据工厂本地定义检测（#822/#1364 规则 4）', () => {
   it('测试文件 function 声明名单内工厂即红：报文件与工厂名', () => {
     const dirs = makeFixture({
       'SomeView.test.ts': `import { makeSubscriptionPlan } from './factories'
@@ -559,6 +559,53 @@ export { makeTransferPlan }
     ]) {
       expect(r.output).toContain(name)
     }
+  })
+
+  it('共享测试替身名单（makeFakeSink/resetToastSink）本地定义即红：报文件与替身名（#1364）', () => {
+    const dirs = makeFixture({
+      'SinkCopy.test.ts': `function makeFakeSink() {
+  return { error: () => {} }
+}
+const resetToastSink = () => {}
+export { makeFakeSink, resetToastSink }
+`,
+    })
+    const r = runFixture(dirs)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('SinkCopy.test.ts')
+    for (const name of ['makeFakeSink', 'resetToastSink']) {
+      expect(r.output).toContain(name)
+    }
+  })
+
+  it('toast sink 假件唯一定义点（seam 宿主 toast-sink.ts）白名单不拦（#1364）', () => {
+    const dirs = makeFixture()
+    writeFileSync(
+      join(dirs.seamHome, 'toast-sink.ts'),
+      `export function makeFakeSink() {
+  return { error: () => {} }
+}
+export function resetToastSink(): void {}
+`,
+    )
+    expect(runFixture(dirs).status).toBe(0)
+  })
+
+  it('白名单只认精确路径：seam 宿主内换名文件的同名替身定义仍红（删白名单行即变红的负向哨兵，#1364）', () => {
+    const dirs = makeFixture()
+    writeFileSync(
+      join(dirs.seamHome, 'sink-copy.ts'),
+      `export function makeFakeSink() {
+  return { error: () => {} }
+}
+export function resetToastSink(): void {}
+`,
+    )
+    const r = runFixture(dirs)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('sink-copy.ts')
+    expect(r.output).toContain('makeFakeSink')
+    expect(r.output).toContain('resetToastSink')
   })
 
   it('共享工厂层出口 factories.ts 白名单不拦（唯一定义点）', () => {
