@@ -98,3 +98,7 @@
 - **crate 内四区缩为三区**：原语（顶层单文件）、`db/`、`boot/` 加共享接缝（`events` / `signals` / `settings`）；crate 内分层断言收缩为原语 ← `db/` ← `boot/` 单向，`INFRA_BLOCK_FORBIDDEN` 的 `shell_support` 靶随迁删除（残留引用归编译期拒绝）；
 - **守门同步**：`INFRA_MODULES` 不再登记 `shell_support`；基础设施→域认许边随迁退役 3 条测试专用边（`shell_support/*` → `test_support`，消费方随迁根包，走根包 `test_support` 直呼），余 1 条；`check-infra-dml` 对 `shell_support/write_entry.rs` 内联测试夹具的例外登记随迁退役（DML 禁令辖基础设施 crate，壳层统一写入口写账本表是其本职）；根包 `test_utils` 再导出面同步清除，测试器具经 dev-dependency 以 `ledger_infra::test_utils` 直达；
 - **口径影响**：决策 1 的两条定位口径不变且更纯净——基础设施全部在册模块均为跨层共享机制、引导层不变量或单点收口闭集，不再有「暂住」这一中间状态。
+
+## 修订注记（#1330，2026-09-15）：原语区新增 serde_util
+
+决策 2 原语区清单新增顶层单文件 `serde_util`——wire 入参「键缺席 vs 值为 `null`」三态区分器（泛型 `double_option`：serde 对 `Option<Option<T>>` 默认把键缺席与 `null` 折叠成同一 `None`，须显式 `deserialize_with` 才能让「清空」在 wire 上可达），自账户域信用卡档案字段（spec #1327 引入）与分类域 icon / parent_id（#1327 范围外修复引入）的两份同源拷贝收敛而来，归位依据是决策 1「跨层共享机制」口径——纯 serde 机制、不定义任何账本数据口径。三区形状与 crate 内分层（原语 ← `db/` ← `boot/`）不变，`INFRA_MODULES` 同步登记。

@@ -22,8 +22,8 @@
 //! 以再导出形态保留原引用路径（`crate::db` 等），域与壳层的既有调用点零改动。
 //!
 //! crate 内部组织（ADR-0111 决策 2）：`boot/`（引导层，#1131 升顶层）、
-//! 原语区（`error` / `fs_util` / `closed_set` / `ids`）、`db/`（库文件与连接
-//! 机制）与共享接缝（`events` / `signals` / `settings`）。
+//! 原语区（`error` / `fs_util` / `closed_set` / `ids` / `serde_util`）、
+//! `db/`（库文件与连接机制）与共享接缝（`events` / `signals` / `settings`）。
 //! 壳机制（壳层统一读写入口、IPC 载荷脱敏、日志初始化）原以 `shell_support`
 //! 分组暂住本 crate（ADR-0111 决策 2 / #1130），已随 #1086 P5 壳层收敛迁回
 //! 壳层根包（#1108）：本 crate 不再承载任何只被壳层消费的机制。失效信号投递
@@ -42,6 +42,7 @@ pub mod error;
 pub mod events;
 pub mod fs_util;
 pub mod ids;
+pub mod serde_util;
 pub mod settings;
 pub mod signals;
 // 测试支持：捕获 tracing 事件的 Layer、全局最大级别稳定器与闸门式假发射器。
