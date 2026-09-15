@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { formatAmount } from '@ledger/money'
 import CrossBookSummaryView from '@/views/CrossBookSummaryView.vue'
 import type { Currency, CrossBookInvestmentSummary } from '@ledger/types'
@@ -136,13 +137,12 @@ describe('跨账本投资汇总视图', () => {
       expect(trigger.attributes('aria-label')).toContain('说明')
     }
     // 可投资资产口径与其余三个不同：隐藏账户不计入、且是财务自由度的分子
-    await wrapper.find('[data-testid="cross-book-investableAssets-info"]').trigger('mouseenter')
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
-    const tip = document.body.querySelector('.n-popover')!
-    expect(tip.textContent).toContain('隐藏账户与负债都不计入')
+    const tip = await hoverTipText(
+      wrapper.find('[data-testid="cross-book-investableAssets-info"]'),
+    )
+    expect(tip).toContain('隐藏账户与负债都不计入')
     // 跨本作用域句：逐本折算到主账本本位币、未解锁/未建库的账本不计入
-    expect(tip.textContent).toContain('未解锁或未建库的账本不计入')
+    expect(tip).toContain('未解锁或未建库的账本不计入')
     wrapper.unmount()
   })
 })

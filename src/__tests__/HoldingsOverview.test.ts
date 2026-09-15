@@ -15,6 +15,7 @@ import { componentVm } from '@ledger/test-support/component-vm'
 import { formatAmount, formatPrice } from '@ledger/money'
 import { probeColor } from '@ledger/test-support/dom'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
 import { useAppStore } from '@/stores/app'
 import {
@@ -201,16 +202,11 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
       expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true)
     }
     expect(document.body.textContent).not.toContain('累计分红')
-    await wrapper.find('[data-testid="total-cumulative-pnl-info"]').trigger('mouseenter')
-    // NTooltip delay 默认 100ms（防误触），jsdom 等真实时钟而非 flushPromises
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
-    const tip = document.body.querySelector('.n-popover')
-    expect(tip).not.toBeNull()
+    const tipText = await hoverTipText(wrapper.find('[data-testid="total-cumulative-pnl-info"]'))
     // 累计收益口径：三腿相加（未实现 + 已实现 + 分红）且全账本、不跨币种
-    expect(tip!.textContent).toContain('已实现盈亏')
-    expect(tip!.textContent).toContain('累计分红')
-    expect(tip!.textContent).toContain('全账本')
+    expect(tipText).toContain('已实现盈亏')
+    expect(tipText).toContain('累计分红')
+    expect(tipText).toContain('全账本')
   })
 
   it('持仓表列头口径说明：成本/现价/市值/持仓收益/收益率各带说明触发器（issue #1369）', async () => {
@@ -226,14 +222,11 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     ]) {
       expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true)
     }
-    // 收益率列头挂 mwr 作用域句：删掉 scope 变体即本断言变红（口径本身不随筛选收窄）
-    await wrapper.find('[data-testid="holdings-mwr-info"]').trigger('mouseenter')
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
-    const tip = document.body.querySelector('.n-popover')
+    const mwrTip = await hoverTipText(wrapper.find('[data-testid="holdings-mwr-info"]'))
     // 三态口径的核心事实：年化与未年化不可互算（防误读诉求，ADR-0115 修订）
-    expect(tip!.textContent).toContain('两者不可互算')
-    expect(tip!.textContent).toContain('不随搜索或标的筛选收窄')
+    expect(mwrTip).toContain('两者不可互算')
+    // 「不随筛选收窄」是该口径自身属性：写在 mwrTip 正文里（删掉该句即本断言变红）
+    expect(mwrTip).toContain('不随搜索或标的筛选收窄')
   })
 
   it('触控轴：口径说明点按可达（入弹层注册表的气泡），热区外扩到 ≥48px', async () => {

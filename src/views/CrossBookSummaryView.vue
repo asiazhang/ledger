@@ -8,6 +8,7 @@ import { formatAmount } from '@ledger/money'
 import { errorMessage } from '@ledger/utils/errors'
 import { useCrossBookSummary } from '@/investment/useCrossBookSummary'
 import ConceptLabel from '@/investment/ConceptLabel.vue'
+import type { ConceptKey } from '@/investment/concept-tips'
 import { useReferenceStore } from '@/stores/reference'
 import type { CrossBookBookStatus } from '@ledger/types'
 import {
@@ -42,12 +43,13 @@ const hasExcluded = computed(() =>
 const cards = computed(() => {
   const s = summary.value
   if (!s) return []
-  return [
+  const totals: { key: ConceptKey; cents: number }[] = [
     { key: 'marketValue', cents: s.market_value_cents },
     { key: 'unrealizedPnl', cents: s.unrealized_pnl_cents },
     { key: 'cumulativePnl', cents: s.cumulative_pnl_cents },
     { key: 'investableAssets', cents: s.investable_assets_cents },
-  ].map(({ key, cents }) => ({
+  ]
+  return totals.map(({ key, cents }) => ({
     key,
     label: t(`crossBook.totals.${key}`),
     // 口径说明复用投资域 concepts（issue #1369）：同名口径不写第二份措辞，

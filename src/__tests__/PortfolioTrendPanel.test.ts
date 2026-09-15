@@ -5,6 +5,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useInvestmentsSessionStore } from '@/investment/investments-session'
 import PortfolioTrendPanel from '@/investment/PortfolioTrendPanel.vue'
 import { componentVm } from '@ledger/test-support/component-vm'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { makeInstrument } from './factories'
 import {
   firePricesChanged,
@@ -310,13 +311,10 @@ describe('PortfolioTrendPanel 走势面板', () => {
     const trigger = wrapper.find('[data-testid="trend-concept-info"]')
     expect(trigger.exists()).toBe(true)
     expect(trigger.attributes('aria-label')).toBe('组合市值说明')
-    await trigger.trigger('mouseenter')
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
     // 组合曲线画的是历史市值：不含现金账户、跨币种用同期历史汇率（不是当期汇率）
-    const tip = document.body.querySelector('.n-popover')!
-    expect(tip.textContent).toContain('历史市值')
-    expect(tip.textContent).toContain('同期历史汇率')
+    const tip = await hoverTipText(trigger)
+    expect(tip).toContain('历史市值')
+    expect(tip).toContain('同期历史汇率')
     wrapper.unmount()
 
     // 单标的：同一挂点换成该概念的口径（价格序列，不是持仓市值也不是收益率）；
@@ -325,10 +323,7 @@ describe('PortfolioTrendPanel 走势面板', () => {
     await flushPromises()
     const instrumentTrigger = instrumentWrapper.find('[data-testid="trend-concept-info"]')
     expect(instrumentTrigger.attributes('aria-label')).toBe('单标的说明')
-    await instrumentTrigger.trigger('mouseenter')
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
-    expect(document.body.querySelector('.n-popover')!.textContent).toContain('不是持仓市值')
+    expect(await hoverTipText(instrumentTrigger)).toContain('不是持仓市值')
     instrumentWrapper.unmount()
   })
 })

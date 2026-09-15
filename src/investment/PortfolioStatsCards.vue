@@ -7,8 +7,12 @@ import { useReferenceStore } from '@/stores/reference'
 import { useWindowTier } from '@ledger/window-tier'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
 import ConceptLabel from '@/investment/ConceptLabel.vue'
-import type { ConceptScope } from '@/investment/ConceptLabel.vue'
-import { currencyAmountSegments, type CurrencyAmountGroup } from '@/investment/usePortfolioOverview'
+import type { ConceptKey, ConceptScope } from '@/investment/concept-tips'
+import {
+  currencyAmountSegments,
+  type CurrencyAmountGroup,
+  type CurrencyAmountSegment,
+} from '@/investment/usePortfolioOverview'
 import { statsCard, statsLabel, statsSeparator, statsValue } from './portfolio-stats.css.ts'
 
 /**
@@ -48,7 +52,17 @@ const isMobileTier = computed(() => windowTier.value === 'mobile')
 // 三卡一次算好：标签取自 investments.concepts（投资域概念的唯一文案源）、口径说明
 // 由 ConceptLabel 按 concept 键现取（同源，调用方给不出第二份措辞），
 // 分组段走 currencyAmountSegments（与 formatCurrencyGroups 同一分组展示单点）。
-const stats = computed(() => [
+interface StatCard {
+  testId: string
+  label: string
+  /** 概念闭集成员（concept-tips.ts）：拼错即编译期报错，不进 i18n 缺 key 路径 */
+  concept: ConceptKey
+  scope: ConceptScope
+  pnl: boolean
+  segments: CurrencyAmountSegment[]
+}
+
+const stats = computed<StatCard[]>(() => [
   {
     testId: `${props.testIdPrefix}market-value`,
     label: t('investments.concepts.marketValue'),
@@ -70,7 +84,7 @@ const stats = computed(() => [
     label: t('investments.concepts.cumulativePnl'),
     concept: 'cumulativePnl',
     // 累计收益两处都是全账本口径：不随持仓页的搜索/账户过滤收窄
-    scope: 'wholeLedger' as ConceptScope,
+    scope: 'wholeLedger',
     pnl: true,
     segments: currencyAmountSegments(props.cumulativePnlGroups, reference.currencyMap),
   },

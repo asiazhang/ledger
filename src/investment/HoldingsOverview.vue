@@ -301,12 +301,12 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     // 资金加权收益率（issue #1195 / ADR-0115）：与金额口径并列、互不换算；
     // 三态分流与口径标注收口在 renderMwrRateCell 单点（与盈亏页收益率卡同款形态）；
     // 含期初存量的标的按行携带的 basis 带角标「*」（issue #1343，解释双轴可达）。
-    // 收益率口径（issue #1369）：三态与「不随筛选收窄」需在场说明
+    // 收益率口径（issue #1369）：三态与「不随筛选收窄」需在场说明（该属性写在
+    // mwrTip 正文里——它不随页面语境变化，故不挂作用域变体）
     title: () =>
       h(ConceptLabel, {
         label: t('investments.holdings.columns.mwr'),
         concept: 'mwr',
-        scope: 'mwr',
         testId: 'holdings-mwr',
       }),
     key: 'mwr',

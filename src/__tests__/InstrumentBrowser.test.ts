@@ -11,6 +11,7 @@ import {
   resetInstrumentInfoSyncForTest,
 } from '@/investment/useInstrumentInfoSync'
 import { captureListenHandlers } from '@ledger/test-support/listen-mock'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { makeInstrument } from './factories'
 import {
   firePricesChanged,
@@ -113,11 +114,8 @@ describe('InstrumentBrowser 标的页工具栏', () => {
     const trigger = wrapper.find('[data-testid="browser-price-info"]')
     expect(trigger.exists()).toBe(true)
     expect(trigger.attributes('aria-label')).toBe('现价说明')
-    await trigger.trigger('mouseenter')
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
     // 名实边界：列名叫「现价」，基金行装的却是最新单位净值（与价格来源列「净值」不矛盾）
-    expect(document.body.querySelector('.n-popover')!.textContent).toContain('单位净值')
+    expect(await hoverTipText(trigger)).toContain('单位净值')
     wrapper.unmount()
   })
 

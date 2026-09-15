@@ -114,12 +114,13 @@ const mwrColumns: DataTableColumn<MwrRow>[] = [
   {
     // 三态与口径标注都收口在 renderMwrRateCell 单点（与持仓页收益率列同款形态；
     // issue #1346：合集含期初存量的行按 basis 标未年化角标）。
-    // 收益率口径（issue #1369）：三态与「不随筛选/标的收窄」需在场说明
+    // 收益率口径（issue #1369）：三态与「不随筛选/标的收窄」需在场说明；
+    // 「不随筛选收窄」是该口径自身的属性（按完整历史计算），写在 mwrTip 正文里，
+    // 故不挂作用域变体——变体只承担随页面语境变化的作用域差异
     title: () =>
       h(ConceptLabel, {
         label: t('investments.pnl.columns.mwr'),
         concept: 'mwr',
-        scope: 'mwr',
         testId: 'pnl-mwr',
       }),
     key: 'rate',
@@ -202,7 +203,6 @@ const mwrColumns: DataTableColumn<MwrRow>[] = [
             <ConceptLabel
               :label="t('investments.pnl.byMwr')"
               concept="mwr"
-              scope="mwr"
               test-id="pnl-mwr-card"
             />
           </template>

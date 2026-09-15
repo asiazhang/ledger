@@ -3,6 +3,7 @@ import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { findButton, probeColor } from '@ledger/test-support/dom'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { nextTick } from 'vue'
 import { applyLocale } from '@ledger/i18n'
 import DashboardView from '@/views/DashboardView.vue'
@@ -224,22 +225,17 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
       expect(card.find(`[data-testid="${id}-info"]`).exists(), id).toBe(true)
     }
     // 说明文案与持仓页同一份（investments.concepts），不复制第二份措辞
-    await card.find('[data-testid="dashboard-total-cumulative-pnl-info"]').trigger('mouseenter')
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
-    expect(document.body.querySelector('.n-popover')?.textContent).toContain('累计分红')
+    const tip = await hoverTipText(card.find('[data-testid="dashboard-total-cumulative-pnl-info"]'))
+    expect(tip).toContain('累计分红')
   })
 
   it('投资概览卡口径说明挂 wholeLedger 作用域句（与持仓页 filtered 变体分家，issue #1369）', async () => {
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="investment-overview-card"]')
     // 首页三卡取全部持仓、不随任何筛选收窄——与持仓页同一组件、不同作用域变体
-    await card.find('[data-testid="dashboard-total-market-value-info"]').trigger('mouseenter')
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
-    const tip = document.body.querySelector('.n-popover')!
-    expect(tip.textContent).toContain('覆盖全账本的持仓')
-    expect(tip.textContent).not.toContain('随当前搜索与账户过滤收窄')
+    const tip = await hoverTipText(card.find('[data-testid="dashboard-total-market-value-info"]'))
+    expect(tip).toContain('覆盖全账本的持仓')
+    expect(tip).not.toContain('随当前搜索与账户过滤收窄')
     wrapper.unmount()
   })
 
@@ -439,13 +435,7 @@ describe('DashboardView 财务自由度卡计算口径提示（tooltip）', () =
     // 悬停前口径说明不在页面上
     expect(document.body.textContent).not.toContain('安全提取率')
 
-    await trigger.trigger('mouseenter')
-    // NTooltip delay 默认 100ms（防误触），jsdom 等真实时钟而非 flushPromises
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
-    const tip = document.body.querySelector('.n-popover')
-    expect(tip).not.toBeNull()
-    const text = tip!.textContent ?? ''
+    const text = await hoverTipText(trigger)
     // 公式：3% 乘数是百分比无法从分子/分母直接推出的原因，必须写明
     expect(text).toContain('可投资资产 × 3% ÷ 年度预算总额')
     // 分子构成与不口径：不含生活现金与负债
