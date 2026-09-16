@@ -52,7 +52,8 @@ use ledger_investment::predicates::INVESTED_EXISTS;
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 
 use super::channels::SyncFetchChannels;
-use super::fund_nav::{BackfillOutcome, LsjzPage, NavPoint, NavQuery, backfill_one_fund_history};
+use super::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
+use super::fund_nav::{LsjzPage, NavPoint, NavQuery};
 use super::http::{KlineBar, secid_prefix};
 use super::incremental::{
     SyncInstrument, backfill_fx_pairs, beijing_today, downsample_weekly, quote_code, week_monday,

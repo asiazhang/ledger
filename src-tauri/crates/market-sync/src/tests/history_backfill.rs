@@ -15,7 +15,8 @@ use chrono::{Datelike, Days, Duration as ChronoDuration, Months, NaiveDate};
 use rusqlite::{Connection, params};
 
 use crate::SyncProgress;
-use crate::fund_nav::{BackfillOutcome, LsjzPage, NavPoint, NavQuery, backfill_one_fund_history};
+use crate::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
+use crate::fund_nav::{LsjzPage, NavPoint, NavQuery};
 use crate::history::{HistoryBackfillStats, run_history_backfill_round};
 use crate::http::KlineBar;
 use crate::incremental::{SyncInstrument, beijing_today, week_monday};
