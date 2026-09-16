@@ -1,6 +1,6 @@
 # ADR-0104: 壳层读路径仪式收敛——统一读入口 `read_entry`（锁仪式单点 + 源扫描守门）
 
-- 状态：已接受（spec #1009 grilling 定稿；两批均已落地：①`read_entry` 入口 + 单测（#1028），②51 处机械替换 + 守门上线（#1029）；结构白名单已在 `check-structure` 登记，源扫描接线在 `signals_cross_check` 的 IPC/HTTP 手写锁行反向守门与 `IPC_READ_ENTRY_EXCEPTIONS` 死条目核对）。修订：模块住址自 ADR-0111 起改为壳机制暂住区，#1108 壳层收敛已迁出至根包 `src/shell_support` 正住址（见 ADR-0111 修订注记），组合契约（阻塞线程池投放 + 锁失败归一化 + span 归因）不变；豁免清单自 issue #1284 起 7 条——`get_sync_channel_checkpoint`（#1283）与 `publish_sync_checkpoint`（#1284，配置读取迁入读入口，仅余快照产出短锁）的形状 C 登记相继撤销（见决策 6 修订注记）
+- 状态：已接受（spec #1009 grilling 定稿；两批均已落地：①`read_entry` 入口 + 单测（#1028），②51 处机械替换 + 守门上线（#1029）；结构白名单已在 `check-structure` 登记，源扫描接线在 `signals_cross_check` 的 IPC/HTTP 手写锁行反向守门与 `IPC_READ_ENTRY_EXCEPTIONS` 死条目核对）。修订：模块住址自 ADR-0111 起改为壳机制暂住区，#1108 壳层收敛已迁出至根包 `src/shell_support` 正住址（见 ADR-0111 修订注记），组合契约（阻塞线程池投放 + 锁失败归一化 + span 归因）不变；豁免清单自 issue #1284 起 7 条——`get_sync_channel_checkpoint`（#1283）与 `publish_sync_checkpoint`（#1284，配置读取迁入读入口，仅余快照产出短锁）的形状 C 登记相继撤销（见决策 6 修订注记）；消费句柄类型经 ADR-0125 决策 1/4 更替为门面读句柄（issue #1410 落地）——仪式语义与豁免清单原样，组合执行环境由阻塞线程池改为门面读 DB 线程；写槽读形态入口 read_entry_on_write 承载 ADR-0117 甄别结论的四命令（读形态但闭包内含惰性写，必须走写连接）——「只留一种可模仿形态」的判据不变：常规读命令一律走 read_entry，该入口是甄别结论的显式承载而非第二可选形态
 - 日期：2026-09-11
 - 作者：Ledger 项目
 - 关联：spec #1009（架构走查 2026-09-11 候选 7，grilling 定稿与本 ADR 同日）；ADR-0073（统一写入口先例，本入口与之对称；其决策 6「读侧不跟进」由本 ADR 翻案，0073 状态行已加修订指针）；ADR-0069（`run_db` 阻塞线程池与 span 归因的唯一拥有者，read_entry 组合之而非替代）；ADR-0056（壳层职责与基础设施白名单，白名单追加一行）；ADR-0047（命令注册扫描面不变）；ADR-0032（置脏豁免单点不动——读路径无置脏维度）

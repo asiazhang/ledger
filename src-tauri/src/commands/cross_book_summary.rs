@@ -54,7 +54,7 @@ pub async fn cross_book_investment_summary<R: Runtime>(
     // ② 活动本 schema 版本（活动本建连必经迁移，其版本即当前应用 schema 版本）。
     let active_schema_version = read_entry(
         "cross_book_summary:schema_version",
-        db.read_conn.clone(),
+        db.read_handle(),
         ledger_infra::db::schema_version,
     )
     .await?;
@@ -68,7 +68,7 @@ pub async fn cross_book_investment_summary<R: Runtime>(
     .await?;
 
     // ④ 活动本读数 + 当期汇率折算合并（汇率取活动本汇率表，ADR-0114 决策 3）。
-    read_entry("cross_book_summary", db.read_conn.clone(), move |conn| {
+    read_entry("cross_book_summary", db.read_handle(), move |conn| {
         readings.push(read_book_investment(conn)?);
         let target_currency = amount::default_currency_code(conn)?;
         let totals = merge_readings(&readings, &target_currency, &mut |cents, currency| {

@@ -519,6 +519,48 @@ fn facade_handle_is_send_and_sync() {
     assert_send_sync::<DbFacade>();
 }
 
+/// 门面句柄（ADR-0125 决策 1/4，issue #1410）按槽解析门面：安装过进程级门面的
+/// 槽解析到那一份（写句柄的作业在写线程、读句柄的作业在读线程）；未安装的槽
+/// 惰性拉起（测试世界形态），且不被误判为进程级安装。
+#[test]
+fn handles_resolve_process_level_facade_and_route_by_direction() {
+    let state = write_test_state();
+    crate::db::install_facade(&state.slots()).expect("安装应成功");
+    assert!(
+        crate::db::facade_installed(&state.conn),
+        "安装过的写槽应被判为进程级门面"
+    );
+
+    let thread_name = || std::thread::current().name().map(str::to_string);
+    let write = state.write_handle();
+    let read = state.read_handle();
+    let write_thread =
+        tauri::async_runtime::block_on(write.run_raw("test", move |_conn| Ok(thread_name())))
+            .expect("写句柄作业应成功");
+    let read_thread =
+        tauri::async_runtime::block_on(read.run("test", move |_conn| Ok(thread_name())))
+            .expect("读句柄作业应成功");
+    assert_eq!(
+        write_thread.as_deref(),
+        Some("db-write"),
+        "写句柄的作业应在写 DB 线程执行"
+    );
+    assert_eq!(
+        read_thread.as_deref(),
+        Some("db-read"),
+        "读句柄的作业应在读 DB 线程执行（读侧不进写者闸门，ADR-0117）"
+    );
+
+    // 未安装的槽：句柄惰性拉起门面（测试世界与命令层直呼同形），不产生固定条目。
+    let lazy_state = write_test_state();
+    let lazy = lazy_state.write_handle();
+    tauri::async_runtime::block_on(lazy.run("test", |_conn| Ok(()))).expect("惰性门面作业应成功");
+    assert!(
+        !crate::db::facade_installed(&lazy_state.conn),
+        "惰性拉起的门面不是进程级安装——「不静默恢复」的账不落在它身上"
+    );
+}
+
 /// 停机：投停机消息并 join 两条 DB 线程（槽句柄随之释放），停机后投递 fail-loud
 /// 报错（不静默丢弃作业）。
 #[test]

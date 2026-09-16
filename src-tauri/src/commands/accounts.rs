@@ -13,7 +13,7 @@
 
 use tauri::{AppHandle, Runtime, State};
 
-use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::read_entry::{read_entry, read_entry_on_write};
 use crate::shell_support::write_entry::{Outcome, write_entry};
 use ledger_accounts as account_domain;
 use ledger_accounts::{
@@ -27,7 +27,7 @@ use ledger_infra::signals::{WriteEvidence, WriteOp};
 /// 账户列表：默认仅未删除、不含隐藏账户（黑洞账户经 AI 侧端点/`*_for_api` 口径可见）。
 #[tauri::command]
 pub async fn list_accounts(db: State<'_, DbState>) -> Result<Vec<Account>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_accounts", conn, move |conn| {
         account_domain::list_accounts(conn)
     })
@@ -41,7 +41,7 @@ pub async fn create_account<R: Runtime>(
     input: AccountInput,
 ) -> Result<String> {
     // 壳层统一写入口（ADR-0073）：置脏、信号内化单点，参考写入成功发参考失效信号。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_account",
         conn,
@@ -58,7 +58,7 @@ pub async fn delete_account(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "delete_account",
         conn,
@@ -76,7 +76,7 @@ pub async fn update_account(
     id: String,
     input: AccountUpdateInput,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "update_account",
         conn,
@@ -100,7 +100,7 @@ pub async fn adjust_account_balance(
 ) -> Result<String> {
     // 核心逻辑自管事务（BEGIN/COMMIT/ROLLBACK），提交点置脏/到期检查由写入口
     // 在 `is_autocommit()` 复核时单点承接；黑洞即建证据随闭包返回必达。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "adjust_account_balance",
         conn,
@@ -118,7 +118,7 @@ pub async fn adjust_account_balance(
 /// 批量查询所有账户余额，单次数据库往返完成。
 #[tauri::command]
 pub async fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalance>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_account_balances", conn, move |conn| {
         account_domain::list_account_balances_with_visibility(conn, false)
     })
@@ -132,10 +132,10 @@ pub async fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<Account
 pub async fn audit_balance_cache(db: State<'_, DbState>) -> Result<BalanceCacheAudit> {
     // 只读甄别收口（issue #1280 / ADR-0117 代价 3）：审计发现漂移时于闭包内
     // 修复（重算并 UPSERT 余额缓存），必须走写连接。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     // 写侧白名单身份保留（ADR-0104 决策 5）：仍是不经 write_entry 的声明写命令，
     // 闭包体与形状 A 同构，锁仪式归统一读入口。
-    read_entry("audit_balance_cache", conn, move |conn| {
+    read_entry_on_write("audit_balance_cache", conn, move |conn| {
         account_domain::audit_balance_cache(conn)
     })
     .await

@@ -32,7 +32,7 @@ pub async fn list_transactions(
     db: State<'_, DbState>,
     filter: Option<TransactionListFilter>,
 ) -> Result<TransactionListResult> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_transactions", conn, move |conn| {
         let filter = filter.unwrap_or_default();
         transaction_domain::list_transactions_internal(conn, &filter)
@@ -48,7 +48,7 @@ pub async fn create_transaction<R: Runtime>(
     input: TransactionInput,
 ) -> Result<String> {
     // 创建编排入口（issue #228 / ADR-0033）：行为层自持事务，中途失败整体回滚。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_transaction",
         conn,
@@ -71,7 +71,7 @@ pub async fn create_transactions(
 ) -> Result<Vec<CreateTransactionResult>> {
     // 批次事务由 run 自持（issue #245），提交点置脏/到期检查单点；整批回滚不置脏
     // 由写入口闭包失败语义保证。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_transactions",
         conn,
@@ -100,7 +100,7 @@ pub async fn update_transaction(
     input: UpdateTransactionInput,
 ) -> Result<()> {
     // 修改编排入口（issue #229 / ADR-0033）：行为层自持事务，中途失败整体回滚。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "update_transaction",
         conn,
@@ -121,7 +121,7 @@ pub async fn delete_transaction(
     id: String,
 ) -> Result<()> {
     // 删除编排入口（issue #229 / ADR-0033）：持仓清理与软删同事务，中途失败整体回滚。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "delete_transaction",
         conn,

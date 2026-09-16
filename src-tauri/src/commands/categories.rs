@@ -27,7 +27,7 @@ pub async fn list_categories(
     db: State<'_, DbState>,
     include_deleted: Option<bool>,
 ) -> Result<Vec<Category>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_categories", conn, move |conn| {
         category_domain::list_categories(conn, include_deleted.unwrap_or(false))
     })
@@ -40,7 +40,7 @@ pub async fn create_category(
     app: tauri::AppHandle,
     input: CategoryInput,
 ) -> Result<String> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_category",
         conn,
@@ -58,7 +58,7 @@ pub async fn update_category(
     id: String,
     input: CategoryUpdateInput,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "update_category",
         conn,
@@ -75,7 +75,7 @@ pub async fn reorder_categories(
     app: tauri::AppHandle,
     items: Vec<ReorderItem>,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "reorder_categories",
         conn,
@@ -92,7 +92,7 @@ pub async fn delete_category(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "delete_category",
         conn,

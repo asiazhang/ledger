@@ -35,7 +35,7 @@ use ledger_investment::{
 
 #[tauri::command]
 pub async fn list_holdings(db: State<'_, DbState>) -> Result<Vec<Holding>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_holdings", conn, move |conn| {
         investment_domain::list_holdings(conn)
     })
@@ -48,7 +48,7 @@ pub async fn list_holdings(db: State<'_, DbState>) -> Result<Vec<Holding>> {
 /// 不触发任何同步（ADR-0015 / ADR-0095 的显式触发口径不变）。
 #[tauri::command]
 pub async fn instrument_price_staleness(db: State<'_, DbState>) -> Result<PriceStaleness> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("instrument_price_staleness", conn, move |conn| {
         investment_domain::instrument_price_staleness(conn)
     })
@@ -61,7 +61,7 @@ pub async fn instrument_price_trend(
     instrument_id: String,
     filter: Option<TrendRange>,
 ) -> Result<InstrumentPriceTrend> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     // 域入口单点（#401 域目录化）：BDD 步骤直调同一域函数，与 IPC 命令同一实现。
     read_entry("instrument_price_trend", conn, move |conn| {
         investment_domain::query_instrument_price_trend(
@@ -78,7 +78,7 @@ pub async fn portfolio_value_trend(
     db: State<'_, DbState>,
     filter: Option<TrendRange>,
 ) -> Result<PortfolioValueTrend> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     // 域入口单点（#401 域目录化）：BDD 步骤直调同一域函数，与 IPC 命令同一实现。
     read_entry("portfolio_value_trend", conn, move |conn| {
         investment_domain::query_portfolio_value_trend(conn, &filter.unwrap_or_default())
@@ -91,7 +91,7 @@ pub async fn realized_pnl_summary(
     db: State<'_, DbState>,
     filter: Option<PnlFilter>,
 ) -> Result<RealizedPnlSummary> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("realized_pnl_summary", conn, move |conn| {
         let filter = filter.unwrap_or(PnlFilter {
             account_id: None,
@@ -106,7 +106,7 @@ pub async fn realized_pnl_summary(
 /// 相加，覆盖持仓页签合计区与首页投资卡；只读聚合，无写入路径。
 #[tauri::command]
 pub async fn cumulative_pnl_summary(db: State<'_, DbState>) -> Result<Vec<CurrencyCumulativePnl>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("cumulative_pnl_summary", conn, move |conn| {
         investment_domain::query_cumulative_pnl_summary(conn)
     })
@@ -121,7 +121,7 @@ pub async fn money_weighted_return_summary(
     db: State<'_, DbState>,
     range: Option<MwrRange>,
 ) -> Result<MoneyWeightedReturnSummary> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("money_weighted_return_summary", conn, move |conn| {
         investment_domain::query_money_weighted_return_summary(conn, &range.unwrap_or_default())
     })
@@ -130,7 +130,7 @@ pub async fn money_weighted_return_summary(
 
 #[tauri::command]
 pub async fn list_exchange_rates(db: State<'_, DbState>) -> Result<Vec<ExchangeRate>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_exchange_rates", conn, move |conn| {
         investment_domain::list_exchange_rates(conn)
     })
@@ -143,7 +143,7 @@ pub async fn create_exchange_rate(
     app: tauri::AppHandle,
     input: ExchangeRateInput,
 ) -> Result<String> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_exchange_rate",
         conn,
@@ -156,7 +156,7 @@ pub async fn create_exchange_rate(
 
 #[tauri::command]
 pub async fn list_market_prices(db: State<'_, DbState>) -> Result<Vec<MarketPrice>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_market_prices", conn, move |conn| {
         investment_domain::list_market_prices(conn)
     })
@@ -169,7 +169,7 @@ pub async fn create_market_price(
     app: tauri::AppHandle,
     input: MarketPriceInput,
 ) -> Result<String> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_market_price",
         conn,
@@ -185,7 +185,7 @@ pub async fn list_instruments(
     db: State<'_, DbState>,
     filter: Option<InstrumentListFilter>,
 ) -> Result<InstrumentListResult> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_instruments", conn, move |conn| {
         let filter = filter.unwrap_or_default();
         investment_domain::list_instruments(conn, &filter)
@@ -198,7 +198,7 @@ pub async fn list_instruments(
 /// 标的对象与列表行同投影，清仓/无持仓标的照常返回（走势不依赖持仓）。
 #[tauri::command]
 pub async fn get_instrument(db: State<'_, DbState>, id: String) -> Result<Instrument> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("get_instrument", conn, move |conn| {
         investment_domain::get_instrument(conn, &id)
     })
@@ -214,7 +214,7 @@ pub async fn delete_instrument(
     // 删除只动标的字典（及级联的价格行），不发失效信号——无流水引用的标的无
     // 持仓/走势消费方，前端标的列表本地重拉（issue #292 验收项）；零信号身份
     // 仍经写入口流动，未来补信号时天然生效（ADR-0073 决策 3）。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "delete_instrument",
         conn,
@@ -227,7 +227,7 @@ pub async fn delete_instrument(
 
 #[tauri::command]
 pub async fn get_transaction_trade(db: State<'_, DbState>, id: String) -> Result<TransactionTrade> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("get_transaction_trade", conn, move |conn| {
         investment_domain::get_transaction_trade(conn, &id)
     })
@@ -241,7 +241,7 @@ pub async fn get_transaction_convert(
     db: State<'_, DbState>,
     id: String,
 ) -> Result<TransactionConvert> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("get_transaction_convert", conn, move |conn| {
         investment_domain::get_transaction_convert(conn, &id)
     })
@@ -253,7 +253,7 @@ pub async fn get_transaction_convert(
 /// 非 split 交易 NotFound）。
 #[tauri::command]
 pub async fn get_transaction_split(db: State<'_, DbState>, id: String) -> Result<TransactionSplit> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("get_transaction_split", conn, move |conn| {
         investment_domain::get_transaction_split(conn, &id)
     })
@@ -277,7 +277,7 @@ pub async fn add_fund_by_code(
 ) -> Result<AddFundResult> {
     // 格式非法即刻拒绝，不发起网络请求。
     investment_domain::validate_fund_code(&code)?;
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     // 网络拉取在锁外：单请求叠加限流冷却重试最长可达分钟级，不阻塞其它命令
     // （慢闭包纪律，形状与 `add_instrument_by_code` 同）。
     let fetch_code = code.clone();
@@ -321,7 +321,7 @@ pub async fn add_instrument_by_code(
     market: String,
     code: String,
 ) -> Result<AddStockInstrumentResult> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     // 查询阶段在锁外：网络往返不进锁（慢闭包纪律）；生产拉取闭包与同步域同一
     // HTTP 层（主机池/重试/限流），未命中/临时错误以码化错误上抛给对话框分流。
     let quote = tauri::async_runtime::spawn_blocking(move || {
@@ -358,7 +358,7 @@ pub async fn create_instrument(
 ) -> Result<String> {
     // 手动创建入口守卫（类型白名单 + 名称必填，ADR-0036 决策 3）在先，写路径
     // 经统一写入口（ADR-0073）：成功即置脏（含同名标的信息更新的 upsert 分支）。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_instrument",
         conn,
@@ -383,7 +383,7 @@ pub async fn record_manual_price(
     app: tauri::AppHandle,
     input: ManualPriceInput,
 ) -> Result<ManualPriceResult> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "record_manual_price",
         conn,

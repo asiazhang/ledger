@@ -32,7 +32,7 @@ pub async fn create_scheduled_transaction(
     input: CreateScheduledInput,
 ) -> Result<String> {
     // 计划与期次属账本数据，成功即置脏（ADR-0032，#246 审计补齐）。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_scheduled_transaction",
         conn,
@@ -47,7 +47,7 @@ pub async fn create_scheduled_transaction(
 pub async fn list_scheduled_transactions(
     db: State<'_, DbState>,
 ) -> Result<Vec<ScheduledTransactionWithExt>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_scheduled_transactions", conn, move |conn| {
         scheduled_domain::list_plans(conn)
     })
@@ -59,7 +59,7 @@ pub async fn get_scheduled_transaction_detail(
     db: State<'_, DbState>,
     id: String,
 ) -> Result<ScheduledTransactionDetail> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("get_scheduled_transaction_detail", conn, move |conn| {
         scheduled_domain::get_plan_detail(conn, &id)
     })
@@ -73,7 +73,7 @@ pub async fn update_scheduled_transaction_status(
     input: UpdateStatusInput,
 ) -> Result<()> {
     // 状态变更成功即置脏（ADR-0032，#246 审计补齐）。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "update_scheduled_transaction_status",
         conn,
@@ -96,7 +96,7 @@ pub async fn update_scheduled_subscription(
     input: UpdateSubscriptionInput,
 ) -> Result<()> {
     // 订阅编辑成功即置脏（ADR-0032，#246 审计补齐）。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "update_scheduled_subscription",
         conn,
@@ -114,7 +114,7 @@ pub async fn execute_scheduled_occurrence(
     input: ExecuteOccurrenceInput,
 ) -> Result<String> {
     // 期次执行落交易行（Writer 接缝交易增），经写入口置脏（ADR-0032）。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "execute_scheduled_occurrence",
         conn,
@@ -134,7 +134,7 @@ pub async fn expand_scheduled_occurrences(
     id: String,
 ) -> Result<Vec<String>> {
     // 期次回填写入成功即置脏（ADR-0032，#246 审计补齐）。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "expand_scheduled_occurrences",
         conn,
@@ -151,7 +151,7 @@ pub async fn expand_scheduled_occurrences(
 pub async fn subscription_spend_overview(
     db: State<'_, DbState>,
 ) -> Result<SubscriptionSpendOverview> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("subscription_spend_overview", conn, move |conn| {
         scheduled_domain::query_subscription_spend(conn, chrono::Local::now().date_naive())
     })

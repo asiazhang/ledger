@@ -27,7 +27,7 @@ pub async fn list_merchants(
     db: State<'_, DbState>,
     include_deleted: Option<bool>,
 ) -> Result<Vec<Merchant>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_merchants", conn, move |conn| {
         merchant_domain::list_merchants(conn, include_deleted.unwrap_or(false))
     })
@@ -40,7 +40,7 @@ pub async fn list_merchants(
 pub async fn list_merchant_transaction_counts(
     db: State<'_, DbState>,
 ) -> Result<Vec<MerchantTransactionCount>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_merchant_transaction_counts", conn, move |conn| {
         merchant_domain::transaction_counts(conn)
     })
@@ -53,7 +53,7 @@ pub async fn create_merchant(
     app: tauri::AppHandle,
     input: MerchantInput,
 ) -> Result<String> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_merchant",
         conn,
@@ -71,7 +71,7 @@ pub async fn update_merchant(
     id: String,
     input: MerchantUpdateInput,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "update_merchant",
         conn,
@@ -88,7 +88,7 @@ pub async fn delete_merchant(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "delete_merchant",
         conn,

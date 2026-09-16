@@ -24,7 +24,7 @@ use ledger_investment::FinancialFreedomOverview;
 /// 财务自由度总览：可投资资产 × 3% 安全提取率对年度预算总额的覆盖比例（只读）。
 #[tauri::command]
 pub async fn financial_freedom(db: State<'_, DbState>) -> Result<FinancialFreedomOverview> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("financial_freedom", conn, move |conn| {
         investment_domain::query_financial_freedom(conn)
     })

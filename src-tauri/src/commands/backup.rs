@@ -54,12 +54,15 @@ pub async fn create_backup<R: Runtime>(
     app: AppHandle<R>,
     target_path: String,
 ) -> Result<BackupResult> {
-    let conn = app.state::<DbState>().conn.clone();
-    run_db("create_backup", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        let app_version = app.package_info().version.to_string();
+    // 取用形态经 ADR-0125 决策 1/2 更替为门面写槽**裸作业**（issue #1410）：快照
+    // 仍须在连接锁内取一致视图（作业整段持槽，语义与迁移前逐字一致）；裸作业不触
+    // 提交点置脏——备份是只读快照，不经统一写入口的置脏/到期检查（ADR-0032 豁免
+    // 同源：这里本就不是一次账本写入）。
+    let db = app.state::<DbState>().write_handle();
+    let app_version = app.package_info().version.to_string();
+    db.run_raw("create_backup", move |conn| {
         backup_db_to(
-            &conn,
+            conn,
             Path::new(&target_path),
             &app_version,
             BackupKind::Manual,
@@ -226,7 +229,7 @@ pub struct AutoBackupSettingsState {
 /// 备份目录是前端 localStorage 偏好（ADR-0016），目录未配置提示由设置页自判。
 #[tauri::command]
 pub async fn get_auto_backup_state(app: AppHandle) -> Result<AutoBackupSettingsState> {
-    let conn = app.state::<DbState>().read_conn.clone();
+    let conn = app.state::<DbState>().read_handle();
     read_entry("get_auto_backup_state", conn, move |conn| {
         let s = backup::get_state(conn)?;
         Ok(AutoBackupSettingsState {
@@ -241,11 +244,12 @@ pub async fn get_auto_backup_state(app: AppHandle) -> Result<AutoBackupSettingsS
 /// （经 [`crate::settings`] 收口），调度线程下次检查即刻生效；目录镜像不动。
 #[tauri::command]
 pub async fn set_auto_backup_enabled(app: AppHandle, enabled: bool) -> Result<()> {
-    let conn = app.state::<DbState>().conn.clone();
-    run_db("set_auto_backup_enabled", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    // 设置 KV 写入经 `settings` 单点收口（ADR-0032 置脏豁免）：门面写槽**裸作业**
+    // ——取用独占收在门面内，置脏语义与迁移前一致（不过统一写入口）。
+    let db = app.state::<DbState>().write_handle();
+    db.run_raw("set_auto_backup_enabled", move |conn| {
         ledger_infra::settings::set(
-            &conn,
+            conn,
             ledger_infra::settings::SettingKey::AutoBackupEnabled,
             &enabled,
         )

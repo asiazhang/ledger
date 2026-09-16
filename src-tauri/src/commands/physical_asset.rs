@@ -34,7 +34,7 @@ pub async fn list_physical_assets(
     db: State<'_, DbState>,
     status: Option<String>,
 ) -> Result<PhysicalAssetList> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_physical_assets", conn, move |conn| {
         physical_asset_domain::list_physical_assets(conn, status.as_deref())
     })
@@ -43,7 +43,7 @@ pub async fn list_physical_assets(
 
 #[tauri::command]
 pub async fn get_physical_asset(db: State<'_, DbState>, id: String) -> Result<PhysicalAsset> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("get_physical_asset", conn, move |conn| {
         physical_asset_domain::get_physical_asset(conn, &id)
     })
@@ -58,7 +58,7 @@ pub async fn create_physical_asset(
 ) -> Result<String> {
     // 域内自持事务保证资产行 + 首条估值行两表原子；域事务在闭包返回前已
     // 提交，写入口的 is_autocommit 复核与置脏照常生效（ADR-0033 嵌套感知）。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_physical_asset",
         conn,
@@ -82,7 +82,7 @@ pub async fn update_physical_asset(
     input: PhysicalAssetUpdateInput,
 ) -> Result<()> {
     // 单表更新，域函数内无自持事务。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "update_physical_asset",
         conn,
@@ -104,7 +104,7 @@ pub async fn dispose_physical_asset(
     input: PhysicalAssetDisposeInput,
 ) -> Result<()> {
     // 状态标记 + 处置信息落库；单表更新。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "dispose_physical_asset",
         conn,
@@ -125,7 +125,7 @@ pub async fn delete_physical_asset(
     id: String,
 ) -> Result<()> {
     // 软删标志落库；单表更新。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "delete_physical_asset",
         conn,
@@ -146,7 +146,7 @@ pub async fn update_physical_asset_valuation(
     input: PhysicalAssetValuationInput,
 ) -> Result<()> {
     // 追加估值历史行；单表插入。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "update_physical_asset_valuation",
         conn,

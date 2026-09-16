@@ -89,7 +89,7 @@ pub async fn sync_instrument_info<R: Runtime>(
     db: State<'_, DbState>,
     app: AppHandle<R>,
 ) -> Result<SyncInstrumentInfoResult> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     // 进度发射器归进写闭包自有的一份句柄：`app` 同时被下方发射器参数借用，
     // 闭包（Send + 'static）捕获克隆件（issue #897）。
     let progress_app = app.clone();
@@ -171,7 +171,13 @@ mod tests {
     fn command_shell_hands_write_entry_connection_to_orchestration_via_session() {
         let conn = crate::test_support::open();
         let shared = std::sync::Arc::new(std::sync::Mutex::new(conn));
-        let lock = SegmentLock::new(&shared);
+        // 分段锁经门面写句柄构造（issue #1410）：写槽由句柄交出，命令壳不再自取连接槽。
+        let handle = ledger_infra::db::DbSlotPair::new(
+            std::sync::Arc::clone(&shared),
+            std::sync::Arc::clone(&shared),
+        )
+        .write_handle();
+        let lock = SegmentLock::new(&handle);
         let session = SegmentSession { lock: &lock };
 
         session

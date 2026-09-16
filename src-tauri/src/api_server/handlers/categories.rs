@@ -3,18 +3,16 @@
 //! 写端点经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）；
 //! 读端点经 `run_db`（形状乙）。
 
-use std::sync::{Arc, Mutex};
-
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::{EmitterSlot, ReadConn};
 use crate::shell_support::read_entry::read_entry;
 use crate::shell_support::write_entry::{Outcome, write_entry};
 use ledger_categories::{Category, CategoryInput};
+use ledger_infra::db::DbWriteHandle;
 use ledger_infra::error::AppError;
 use ledger_infra::signals::WriteOp;
 
@@ -53,7 +51,7 @@ pub async fn list_categories_handler(
     )
 )]
 pub async fn create_category_handler(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(conn): State<DbWriteHandle>,
     State(emitter): State<EmitterSlot>,
     body: String,
 ) -> Result<(StatusCode, Json<String>), AppError> {
@@ -91,7 +89,7 @@ pub async fn create_category_handler(
     )
 )]
 pub async fn delete_category_handler(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(conn): State<DbWriteHandle>,
     State(emitter): State<EmitterSlot>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {

@@ -2,16 +2,17 @@
 //! 壳层根包；曾暂住 `ledger-infra::shell_support`（ADR-0111 决策 2 / #1130），
 //! #1108 迁回，不得被基础设施或域引用。
 //!
-//! 壳层统一写入口（ADR-0073，spec #523）：连接句柄、发射器、写操作身份、业务闭包进，
-//! 其余全部内化——[`ledger_infra::db::run_db`]（执行线程与 span 传播，ADR-0069，组合而非
-//! 替代）→ [`ledger_infra::db::write`]（锁失败映射、事务、提交点置脏，ADR-0032）→
+//! 壳层统一写入口（ADR-0073，spec #523）：**门面写句柄**（ADR-0125 决策 1/4，
+//! issue #1410）、发射器、写操作身份、业务闭包进，其余全部内化——
+//! [`ledger_infra::db::DbWriteHandle`]（门面写 DB 线程执行 + 取用独占，ADR-0125
+//! 决策 1）→ 连接层统一写入口的「已持锁」形态（事务、提交点置脏，ADR-0032）→
 //! [`ledger_infra::signals::signals_for`]（映射单点，ADR-0044）→ 发射。
 //!
 //! 写命令的六行仪式（克隆连接句柄 → 送阻塞线程池 → 锁失败映射 → 开事务置脏 →
-//! 发信号）收敛进本入口一处实现；写操作身份（[`ledger_infra::signals::WriteOp`]）作为参数
-//! 随闭包流动，两壳「命令 → 身份」声明表消亡为源码扫描派生物（守门见
-//! `signals_cross_check`，ADR-0073 决策 5）。命令壳退回到它该有的样子：
-//! 解包 + 一行调用。
+//! 发信号）自 ADR-0125 起改道：调用点取门面写句柄交给本入口，仪式仍收在本入口
+//! 一处实现；写操作身份（[`ledger_infra::signals::WriteOp`]）作为参数随闭包流动，
+//! 两壳「命令 → 身份」声明表消亡为源码扫描派生物（守门见 `signals_cross_check`，
+//! ADR-0073 决策 5）。命令壳退回到它该有的样子：解包 + 一行调用。
 //!
 //! 语义锚（与迁移前逐字节一致）：
 //! - **发射时序**：事务提交成功后发射（写失败早退不发）；发射走既有投递机制
@@ -32,8 +33,8 @@
 //!   归因串与身份的漂移由扫描守门顺带核对（ADR-0073 决策 4/5）。
 //!
 //! 入口零豁免概念（ADR-0073 决策 6）：不设 bypass-dirty 参数，置脏豁免仍由
-//! [`ledger_infra::db::write`]/`settings.rs` 内层单点裁决（ADR-0032）；Restore 路径与
-//! 其余不经 `db::write` 的声明写命令不经本入口（例外白名单登记，见
+//! 连接层「已持锁」写入口/`settings.rs` 内层单点裁决（ADR-0032）；Restore 路径与
+//! 其余不经统一写入口的声明写命令不经本入口（例外白名单登记，见
 //! `signals_cross_check`）。域层写路径（ADR-0033 接缝）不纳入——本入口壳层专用。
 
 use std::sync::{Arc, Mutex};
@@ -41,9 +42,9 @@ use std::time::Instant;
 
 use rusqlite::Connection;
 
+use ledger_infra::db::DbWriteHandle;
 use ledger_infra::db::probe_lock_hold;
 use ledger_infra::db::run_db;
-use ledger_infra::db::write as db_write;
 use ledger_infra::error::{AppError, Result};
 use ledger_infra::events::SignalEmitter;
 use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
@@ -60,19 +61,20 @@ pub enum Outcome<T> {
     Evidenced(T, WriteEvidence),
 }
 
-/// 壳层统一写入口（ADR-0073 决策 1）：按序组合 `run_db`（阻塞线程池 + span
-/// 传播）→ `db::write`（锁失败映射、事务、提交点置脏）→ `signals_for` → 发射。
+/// 壳层统一写入口（ADR-0073 决策 1；取用形态经 ADR-0125 决策 1/4 更替为门面写
+/// 句柄，issue #1410）：按序组合门面写作业（写 DB 线程 + span 传播 + 连接层
+/// 统一写入口的已持锁形态）→ `signals_for` → 发射。
 ///
 /// - `span`：SQL 归因串（`&'static str`，IPC 命令名 / HTTP 端点键，语义同
-///   [`run_db`] 的 `command` 参数）；
+///   门面作业的 `command` 参数）；
 /// - `emitter`：`None` 跳过发射（两侧既有测试态语义）；
 /// - 闭包业务错误原样传播、闭包 panic 归一化为 [`ledger_infra::error::AppError::Io`]
-///   （与 [`run_db`]/ADR-0069 先例同形）；写失败早退不发信号；
+///   （与 ADR-0069 先例同形）；写失败早退不发信号；
 /// - 发生在写事务提交成功之后、调用线程上（与迁移前壳层「await 后发射」
 ///   逐点同位）。
 pub async fn write_entry<T, F>(
     span: &'static str,
-    conn: Arc<Mutex<Connection>>,
+    db: DbWriteHandle,
     emitter: Option<&dyn SignalEmitter>,
     op: WriteOp,
     f: F,
@@ -81,13 +83,12 @@ where
     T: Send + 'static,
     F: FnOnce(&Connection) -> Result<Outcome<T>> + Send + 'static,
 {
-    let (value, evidence) = run_db(span, move || {
-        db_write(&conn, |conn| match f(conn)? {
+    let (value, evidence) = db
+        .run(span, move |conn| match f(conn)? {
             Outcome::Silent(value) => Ok((value, WriteEvidence::None)),
             Outcome::Evidenced(value, evidence) => Ok((value, evidence)),
         })
-    })
-    .await?;
+        .await?;
     // 事务提交成功后发射（映射单点判定，ADR-0044）：emit_for = signals_for +
     // emit_all，发射失败静默忽略，不影响写结果。
     if let Some(emitter) = emitter {
@@ -96,23 +97,33 @@ where
     Ok(value)
 }
 
-/// 分段写入口的取锁句柄（issue #1276）：把「短暂取一次连接」的仪式（锁失败
-/// 映射 + 持锁时长探针）内化一处。每段取锁只在 [`Self::with_connection`]
-/// 闭包体内可见、返回即释放——分钟级网络等待发生在分段与分段之间，结构上
-/// 不可能持在锁内（[`write_entry`] 整段形态的对应面）。
+/// 分段写入口的取锁句柄（issue #1276；取用形态经 ADR-0125 决策 8 更替，issue
+/// #1410）：把「短暂取一次连接」内化一处。每段取连接只在
+/// [`Self::with_connection`] 闭包体内可见、返回即释放——分钟级网络等待发生在
+/// 分段与分段之间，结构上不可能持在锁内（[`write_entry`] 整段形态的对应面）。
+///
+/// **每一段取连接仍是直锁**（ADR-0125 决策 8 首句明许：连接槽 `lock()` 可住门面
+/// 与壳层统一入口）：分段编排体仍在阻塞线程上（`run_db`），其闭包借用编排现场
+/// （`&mut progress` / `&mut channels` 一类），不满足门面作业要求的 `Send + 'static`
+/// ——「每段取连接由门面作业取代」随作用域会话接缝异步化（issue #1412）落地，
+/// 届时本形态与写槽访问器一并退役。收尾裁决（提交点置脏）已是门面作业，锁跨度
+/// 与分段语义（#1276）不变。
 pub struct SegmentLock<'a> {
-    conn: &'a Mutex<Connection>,
+    /// 门面写句柄的写槽（过渡形态直锁半边，见类型文档）。
+    conn: &'a Arc<Mutex<Connection>>,
 }
 
-impl SegmentLock<'_> {
+impl<'a> SegmentLock<'a> {
     /// 构造一个分段取锁句柄（壳层命令壳与测试共用的唯一构造点，字段私有）。
-    pub fn new(conn: &Mutex<Connection>) -> SegmentLock<'_> {
-        SegmentLock { conn }
+    pub fn new(db: &'a DbWriteHandle) -> SegmentLock<'a> {
+        SegmentLock {
+            conn: db.write_slot(),
+        }
     }
 
     /// 短暂取一次连接执行一次读写。闭包业务 [`Result`] 原样传播，锁中毒映射
-    /// 与 [`ledger_infra::db::write`] / [`read_entry`](crate::shell_support::read_entry::read_entry)
-    /// 同形；持锁时长照守（超阈值记日志、不静默，见 `db::probe_lock_hold`）。
+    /// 与 [`read_entry`](crate::shell_support::read_entry::read_entry) 同形；持锁
+    /// 时长照守（超阈值记日志、不静默，见 `db::probe_lock_hold`）。
     pub fn with_connection<R, F>(&self, use_connection: F) -> Result<R>
     where
         F: FnOnce(&Connection) -> Result<R>,
@@ -150,9 +161,11 @@ impl From<AppError> for SegmentedFailure {
 }
 
 /// 壳层统一写入口 · 分段取锁、整体裁决形态（issue #1276，父 spec #1274 实现
-/// 决策 4；裁决口径经 issue #1277 修订为「实际写过即置脏」）：与 [`write_entry`]
+/// 决策 4；裁决口径经 issue #1277 修订为「实际写过即置脏」；每一段取连接经
+/// ADR-0125 决策 2 改为门面作业，issue #1410）：与 [`write_entry`]
 /// 同一仪式链，唯「锁跨度」不同——闭包拿到的不是整段持有的连接，而是
-/// [`SegmentLock`]：每段短暂取一次连接、用完即还，分钟级网络等待发生在锁外。
+/// [`SegmentLock`]：每段短暂取一次连接（门面写槽裸作业）、用完即还，分钟级
+/// 网络等待发生在锁外。
 /// 适用面：同步这类「抓取-落库交替」的长任务命令（现役调用点
 /// `sync_instrument_info` 与 `sync_now`——后者自 #1339 起随 ADR-0120 把同步
 /// 轮次的网络段出锁）；常规写命令仍走整段形态。
@@ -161,7 +174,7 @@ impl From<AppError> for SegmentedFailure {
 ///   形态都计为写入口调用点（`signals_cross_check`）；
 /// - **整体裁决（issue #1277 修订）**：跨分段的「是否实际写过」由闭包随
 ///   [`SegmentedFailure`] 累积（同步编排的写入 witness 即累积体），在收尾
-///   裁决点一次性生效——成功收尾 → 经 `db::write` 既有结构（锁 +
+///   裁决点一次性生效——成功收尾 → 经写作业既有结构（门面写 DB 线程持槽 +
 ///   `is_autocommit()` 复核 + 提交点置脏单点）**恰好一次**置脏（空闭包形态）；
 ///   失败收尾 → 证据为「实际写过」同样经同一提交点置脏，零写入失败不置脏
 ///   （库未变，零证据零副作用）；
@@ -170,7 +183,7 @@ impl From<AppError> for SegmentedFailure {
 ///   仍报错，界面照收尾裁决自动刷新一次。
 pub async fn write_entry_segmented<T, F>(
     span: &'static str,
-    conn: Arc<Mutex<Connection>>,
+    db: DbWriteHandle,
     emitter: Option<&dyn SignalEmitter>,
     op: WriteOp,
     f: F,
@@ -182,7 +195,7 @@ where
         + 'static,
 {
     let (result, evidence) = run_db(span, move || {
-        let lock = SegmentLock::new(&conn);
+        let lock = SegmentLock::new(&db);
         // 结果归一：成功带 Outcome 证据，失败带跨分段累积的证据（issue #1277）。
         let (result, evidence) = match f(&lock) {
             Ok(Outcome::Silent(value)) => (Ok(value), WriteEvidence::None),
@@ -190,11 +203,11 @@ where
             Err(failure) => (Err(failure.error), failure.evidence),
         };
         // 整体裁决点（issue #1277）：「实际写过即置脏」——成功收尾照旧无条件
-        // 过一次连接层统一写入口（锁 + is_autocommit 复核 + 提交点置脏单点，
-        // 空闭包形态）；失败收尾按跨分段累积的证据裁决，零写入失败不置脏。
+        // 过一次写作业（门面写 DB 线程持槽 + is_autocommit 复核 + 提交点置脏
+        // 单点，空闭包形态）；失败收尾按跨分段累积的证据裁决，零写入失败不置脏。
         // 置脏与信号的「实际写入」判定同源（同一份证据），不另造第二套口径。
         if result.is_ok() || evidence.price_written() {
-            db_write(&conn, |_| Ok(()))?;
+            db.run_blocking(span, |_| Ok(()))?;
         }
         Ok((result, evidence))
     })
@@ -210,35 +223,50 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ledger_infra::db::DbState;
     use ledger_infra::error::AppError;
     use ledger_infra::events::{BACKUPS_CHANGED, LEDGER_CHANGED, PRICES_CHANGED};
     use ledger_infra::signals::{WriteEvidence, WriteOp};
     use ledger_infra::test_utils::{GATED_TIMEOUT, GatedEmitter};
     use rusqlite::params;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
-    /// 内存库 + 闸门式假发射器的测试夹具。
-    fn fixture() -> (Arc<Mutex<Connection>>, GatedEmitter) {
+    /// 内存库状态 + 闸门式假发射器的测试夹具：写读两槽同指一连接（与
+    /// `DbState::open_in_memory` 同形），写句柄经具名访问器取——测试世界构造保持
+    /// 「裸库 + 状态」原形（ADR-0125 决策 4）；裸槽留作直锁断言（测试面豁免）。
+    fn fixture() -> (DbState, GatedEmitter) {
         // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
         let conn = crate::test_support::open();
-        (Arc::new(Mutex::new(conn)), GatedEmitter::gated())
+        let conn = Arc::new(Mutex::new(conn));
+        (
+            DbState {
+                conn: Arc::clone(&conn),
+                read_conn: conn,
+            },
+            GatedEmitter::gated(),
+        )
     }
 
-    /// 静默闭包：Ok 值带回 await 点，闭包在阻塞线程池执行（run_db 组合语义）。
+    /// 静默闭包：Ok 值带回 await 点，闭包在**门面写 DB 线程**执行（ADR-0125 决策 1）。
     #[test]
     fn silent_closure_executes_and_returns_value() {
-        let (conn, _emitter) = fixture();
+        let (state, _emitter) = fixture();
         let caller = std::thread::current().id();
         let value = tauri::async_runtime::block_on(write_entry(
             "test",
-            conn,
+            state.write_handle(),
             None,
             WriteOp::CreateAccount,
             move |_conn| {
                 assert_ne!(
                     std::thread::current().id(),
                     caller,
-                    "闭包应在阻塞线程池线程执行（run_db 组合语义）"
+                    "闭包应在门面写 DB 线程执行，不在调用线程内联"
+                );
+                assert_eq!(
+                    std::thread::current().name(),
+                    Some("db-write"),
+                    "写作业应在写 DB 线程上执行"
                 );
                 Ok(Outcome::Silent(41 + 1))
             },
@@ -250,10 +278,10 @@ mod tests {
     /// 闭包拿到可用连接：写入落库（连接机制内化但真实可用）。
     #[test]
     fn closure_receives_usable_connection_and_write_persists() {
-        let (conn, _emitter) = fixture();
+        let (state, _emitter) = fixture();
         tauri::async_runtime::block_on(write_entry(
             "test",
-            conn.clone(),
+            state.write_handle(),
             None,
             WriteOp::CreateCategory,
             move |conn| {
@@ -276,7 +304,8 @@ mod tests {
             },
         ))
         .expect("写入应成功");
-        let count: i64 = conn
+        let count: i64 = state
+            .conn
             .lock()
             .expect("锁应可获取")
             .query_row(
@@ -292,10 +321,10 @@ mod tests {
     /// 条件为假 → 零信号（「发不发」判定在映射单点，入口只传递）。
     #[test]
     fn evidenced_evidence_reaches_signal_mapping() {
-        let (conn, emitter) = fixture();
+        let (state, emitter) = fixture();
         let value = tauri::async_runtime::block_on(write_entry(
             "test",
-            conn,
+            state.write_handle(),
             Some(&emitter),
             WriteOp::SyncInstrumentInfo,
             move |_conn| {
@@ -314,10 +343,10 @@ mod tests {
         );
 
         // 同身份、证据为假 → 零信号。
-        let (conn, emitter) = fixture();
+        let (state, emitter) = fixture();
         tauri::async_runtime::block_on(write_entry(
             "test",
-            conn,
+            state.write_handle(),
             Some(&emitter),
             WriteOp::SyncInstrumentInfo,
             move |_conn| Ok(Outcome::Evidenced(1, WriteEvidence::PriceWritten(false))),
@@ -329,10 +358,10 @@ mod tests {
     /// 身份传递：静态映射行身份（无证据）按 signals_for 发对应信号。
     #[test]
     fn identity_drives_static_signal_row() {
-        let (conn, emitter) = fixture();
+        let (state, emitter) = fixture();
         tauri::async_runtime::block_on(write_entry(
             "test",
-            conn,
+            state.write_handle(),
             Some(&emitter),
             WriteOp::CreateAccount,
             move |_conn| Ok(Outcome::Silent("id")),
@@ -348,10 +377,10 @@ mod tests {
     /// 发射器 None：跳过发射（两侧既有测试态语义），写结果不受影响。
     #[test]
     fn none_emitter_skips_emission() {
-        let (conn, _emitter) = fixture();
+        let (state, _emitter) = fixture();
         let value = tauri::async_runtime::block_on(write_entry(
             "test",
-            conn,
+            state.write_handle(),
             None,
             WriteOp::CreateAccount,
             move |_conn| Ok(Outcome::Silent("id")),
@@ -363,10 +392,10 @@ mod tests {
     /// 业务错误原样传播（不二次包装），且失败早退不发信号。
     #[test]
     fn business_error_propagates_verbatim_without_emission() {
-        let (conn, emitter) = fixture();
+        let (state, emitter) = fixture();
         let err = tauri::async_runtime::block_on(write_entry::<(), _>(
             "test",
-            conn,
+            state.write_handle(),
             Some(&emitter),
             WriteOp::CreateAccount,
             move |_conn| Err(AppError::Invalid("boom".into())),
@@ -379,13 +408,13 @@ mod tests {
         assert!(emitter.posted().is_empty(), "写失败不应发信号");
     }
 
-    /// 闭包 panic → JoinError 归一化为 AppError::Io（ADR-0069 先例同形），不发信号。
+    /// 闭包 panic → 归一化为 AppError::Io（ADR-0069 先例同形），不发信号。
     #[test]
     fn closure_panic_normalizes_to_io_error_without_emission() {
-        let (conn, emitter) = fixture();
+        let (state, emitter) = fixture();
         let err = tauri::async_runtime::block_on(write_entry::<(), _>(
             "test",
-            conn,
+            state.write_handle(),
             Some(&emitter),
             WriteOp::PruneBackups,
             move |_conn| -> Result<Outcome<()>> { panic!("闭包内崩溃") },
@@ -402,10 +431,10 @@ mod tests {
     /// ——黑洞即建证据驱动账户域条件信号（ADR-0044 决策 4）。
     #[test]
     fn black_hole_evidence_drives_conditional_signal() {
-        let (conn, emitter) = fixture();
+        let (state, emitter) = fixture();
         tauri::async_runtime::block_on(write_entry(
             "test",
-            conn,
+            state.write_handle(),
             Some(&emitter),
             WriteOp::AdjustAccountBalance,
             move |_conn| {
@@ -423,10 +452,10 @@ mod tests {
         );
 
         // 备份域身份对照：静态行 BackupsChanged（身份 → 信号，与证据无关）。
-        let (conn, emitter) = fixture();
+        let (state, emitter) = fixture();
         tauri::async_runtime::block_on(write_entry(
             "test",
-            conn,
+            state.write_handle(),
             Some(&emitter),
             WriteOp::PruneBackups,
             move |_conn| Ok(Outcome::Silent(())),
@@ -436,20 +465,22 @@ mod tests {
     }
 
     /// 分段写入口（issue #1276）：网络等待期间连接锁不被持有——闭包在两段
-    /// 之间阻塞（模拟分钟级抓取），另一持锁方此刻能取到同一连接，且先头段
+    /// 之间阻塞（模拟分钟级抓取，分段取连接已由门面作业承接，ADR-0125 决策 2 /
+    /// issue #1410），另一持锁方此刻能取到同一连接，且先头段
     /// 已提交的写入对它立即可读（用户可观察结果：同步在途时读命令照常出数）。
     /// 整段形态（[`write_entry`]）下本性质不成立：锁被闭包整段持有，try_lock
     /// 即失败。
     #[test]
     fn segmented_entry_holds_no_lock_during_closure_wait() {
-        let conn = fixture().0;
+        let state = fixture().0;
+        let conn = Arc::clone(&state.conn);
+        let handle = state.write_handle();
         let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
-        let writer_conn = conn.clone();
         let worker = std::thread::spawn(move || {
             tauri::async_runtime::block_on(write_entry_segmented(
                 "test",
-                writer_conn,
+                handle,
                 None,
                 WriteOp::SyncInstrumentInfo,
                 move |lock| {
@@ -535,14 +566,14 @@ mod tests {
         }
 
         // 成功：段内写入 + 闭包 Ok → 收尾裁决点置脏。
-        let (conn, _emitter) = fixture();
+        let (state, _emitter) = fixture();
         {
-            let guard = conn.lock().expect("锁应可取");
+            let guard = state.conn.lock().expect("锁应可取");
             reset_dirty(&guard);
         }
         tauri::async_runtime::block_on(write_entry_segmented(
             "test",
-            conn.clone(),
+            state.write_handle(),
             None,
             WriteOp::SyncInstrumentInfo,
             move |lock| {
@@ -556,20 +587,20 @@ mod tests {
         ))
         .expect("分段写入应成功");
         assert!(
-            dirty_of(&conn.lock().expect("锁应可取")),
+            dirty_of(&state.conn.lock().expect("锁应可取")),
             "成功收尾应经提交点置脏恰好生效"
         );
 
         // 失败（零写入）：闭包 Err 且跨分段零写入 → 不置脏、不发信号
         // （#1277：失败 ≠ 未写过，零写入失败才是「库未变」的不置脏情形）。
-        let (conn, emitter) = fixture();
+        let (state, emitter) = fixture();
         {
-            let guard = conn.lock().expect("锁应可取");
+            let guard = state.conn.lock().expect("锁应可取");
             reset_dirty(&guard);
         }
         let err = tauri::async_runtime::block_on(write_entry_segmented::<(), _>(
             "test",
-            conn.clone(),
+            state.write_handle(),
             Some(&emitter),
             WriteOp::SyncInstrumentInfo,
             move |_lock| Err(AppError::Invalid("中途失败".into()).into()),
@@ -580,7 +611,7 @@ mod tests {
             "业务错误应原样传播，实际 {err:?}"
         );
         assert!(
-            !dirty_of(&conn.lock().expect("锁应可取")),
+            !dirty_of(&state.conn.lock().expect("锁应可取")),
             "零写入失败收尾不应置脏（与整段形态同构）"
         );
         assert!(emitter.posted().is_empty(), "零写入失败不应发信号");
@@ -599,16 +630,16 @@ mod tests {
                 .dirty
         }
 
-        let (conn, emitter) = fixture();
+        let (state, emitter) = fixture();
         {
-            let guard = conn.lock().expect("锁应可取");
+            let guard = state.conn.lock().expect("锁应可取");
             use ledger_infra::settings::SettingKey;
             ledger_infra::settings::set(&guard, SettingKey::AutoBackupDirty, &false)
                 .expect("重置脏标记应成功");
         }
         let err = tauri::async_runtime::block_on(write_entry_segmented::<(), _>(
             "test",
-            conn.clone(),
+            state.write_handle(),
             Some(&emitter),
             WriteOp::SyncInstrumentInfo,
             move |lock| {
@@ -636,7 +667,7 @@ mod tests {
             "业务错误应原样传播，实际 {err:?}"
         );
         assert!(
-            dirty_of(&conn.lock().expect("锁应可取")),
+            dirty_of(&state.conn.lock().expect("锁应可取")),
             "实际写过的失败收尾应置脏（#1277：实际写过即置脏）"
         );
         assert_eq!(

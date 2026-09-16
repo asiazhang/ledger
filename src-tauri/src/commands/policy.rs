@@ -26,7 +26,7 @@ use ledger_policy::{self as policy_domain, Policy, PolicyInput, PolicyStats};
 
 #[tauri::command]
 pub async fn list_policies(db: State<'_, DbState>) -> Result<Vec<Policy>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_policies", conn, move |conn| {
         policy_domain::list_policies(conn)
     })
@@ -37,7 +37,7 @@ pub async fn list_policies(db: State<'_, DbState>) -> Result<Vec<Policy>> {
 /// today 注入本地今日，实时推导不落库、不发出失效信号。
 #[tauri::command]
 pub async fn list_policy_stats(db: State<'_, DbState>) -> Result<Vec<PolicyStats>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_policy_stats", conn, move |conn| {
         policy_domain::policy_stats(conn, chrono::Local::now().date_naive())
     })
@@ -50,7 +50,7 @@ pub async fn create_policy(
     app: tauri::AppHandle,
     input: PolicyInput,
 ) -> Result<String> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_policy",
         conn,
@@ -70,7 +70,7 @@ pub async fn update_policy(
     id: String,
     input: PolicyInput,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "update_policy",
         conn,
@@ -87,7 +87,7 @@ pub async fn delete_policy(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "delete_policy",
         conn,

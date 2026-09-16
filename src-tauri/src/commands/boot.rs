@@ -33,7 +33,7 @@ use ledger_infra::db::boot::{BOOT_DB_UNREADABLE, BootFailureGate, BootPlan};
 use ledger_infra::db::data_location::Boot;
 use ledger_infra::db::encryption::EncryptionGate;
 use ledger_infra::db::{
-    DbState, open_connection_in, open_connection_readonly_in, reset_db_file, run_db,
+    DbState, install_facade, open_connection_in, open_connection_readonly_in, reset_db_file, run_db,
 };
 use ledger_infra::error::{AppError, Result};
 
@@ -98,7 +98,13 @@ fn swap_or_manage_db_state<R: Runtime>(
     match app.try_state::<DbState>() {
         Some(existing) => existing.swap_pair(conn, read_conn)?,
         None => {
-            app.manage(DbState::from_pair(conn, read_conn));
+            let state = DbState::from_pair(conn, read_conn);
+            // 进程级门面安装（ADR-0125 决策 1/4/8，issue #1410）：门面状态（连接
+            // 不可信标记、探针口径）跨命令常驻——不安装则每个句柄各自一笔账，
+            // 「标记后不静默恢复」会退化为每命令一重置。换连换的是槽内连接
+            // （门面线程经换连代次识别，issue #1409），此处只装一次。
+            install_facade(&state.slots())?;
+            app.manage(state);
         }
     }
     Ok(())

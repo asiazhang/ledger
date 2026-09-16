@@ -4,17 +4,15 @@
 //! 事务、置脏、信号内化单点，「即建商户」证据随闭包返回必达；读端点经
 //! `run_db`（形状乙）。
 
-use std::sync::{Arc, Mutex};
-
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::{EmitterSlot, ReadConn};
 use crate::shell_support::read_entry::read_entry;
 use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_infra::db::DbWriteHandle;
 use ledger_infra::error::AppError;
 use ledger_infra::signals::WriteOp;
 use ledger_transaction::amount::TransactionKind;
@@ -79,7 +77,7 @@ pub async fn list_transactions_handler(
     )
 )]
 pub async fn batch_create_transactions_handler(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(conn): State<DbWriteHandle>,
     State(emitter): State<EmitterSlot>,
     Json(body): Json<TransactionBatchInput>,
 ) -> Result<Json<Vec<CreateTransactionResult>>, AppError> {
@@ -119,7 +117,7 @@ pub async fn batch_create_transactions_handler(
     )
 )]
 pub async fn update_transaction_handler(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(conn): State<DbWriteHandle>,
     State(emitter): State<EmitterSlot>,
     Path(id): Path<String>,
     Json(input): Json<UpdateTransactionInput>,
@@ -163,7 +161,7 @@ pub async fn update_transaction_handler(
     )
 )]
 pub async fn delete_transaction_handler(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(conn): State<DbWriteHandle>,
     State(emitter): State<EmitterSlot>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
