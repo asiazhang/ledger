@@ -94,11 +94,13 @@ pub async fn sync_instrument_info<R: Runtime>(
     // 闭包（Send + 'static）捕获克隆件（issue #897）。
     let progress_app = app.clone();
     // 通道束换装（issue #1276）：测试注入桩优先（`SyncChannelsSlot` 管理态），
-    // 生产默认生产通道束（每次同步构造，与先前整段形态同口径）。
-    let channels = match app.try_state::<SyncChannelsSlot>() {
-        Some(slot) => slot.0.clone(),
-        None => Arc::new(Mutex::new(SyncFetchChannels::production()?)),
-    };
+    // 生产默认生产通道束。注入槽句柄（`Arc` 克隆）先取出，束体留在写闭包内构造
+    // （issue #1403）：reqwest 阻塞客户端自持运行时，其构造与销毁都必须在异步
+    // 上下文之外——命令体是 tauri 在 tokio worker 上轮询的 async fn，在此构造
+    // 即撞 reqwest debug 断言 panic；构造点归写闭包所在阻塞线程（`run_db`）。
+    let injected_slot = app
+        .try_state::<SyncChannelsSlot>()
+        .map(|slot| slot.0.clone());
     write_entry_segmented(
         "sync_instrument_info",
         conn,
@@ -112,6 +114,12 @@ pub async fn sync_instrument_info<R: Runtime>(
             // 分段锁包成作用域会话交给编排——编排的读写只经会话短暂取锁，
             // 网络 I/O 在会话之外。
             let mut progress = progress_to_emitter(&progress_app);
+            // 生产通道束的构造点（issue #1403，每次同步一次）：本闭包经 `run_db`
+            // 在阻塞线程池执行，与 #1276 之前整段形态的构造线程语义一致。
+            let channels = match &injected_slot {
+                Some(slot) => slot.clone(),
+                None => Arc::new(Mutex::new(SyncFetchChannels::production()?)),
+            };
             let mut channels = channels
                 .lock()
                 .map_err(|e| AppError::Db(format!("同步通道束互斥体损坏: {e}")))?;
