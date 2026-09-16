@@ -1,6 +1,6 @@
 # ADR 0066: 跨平台发布——Windows/Linux 入发布矩阵、单 Release 汇总、全平台暂不签名
 
-- 状态：已接受
+- 状态：已接受（修订：缓行清单中「应用内自动更新（Tauri updater）」由 ADR-0124 收回落地，见文末修订注记）
 - 日期：2026-09-04
 - 作者：Ledger 项目
 - 关联：根 README「安装」节；发布流程配置 `.run-release.json`（run-release）；CI 基线 `.github/workflows/build.yml`
@@ -40,3 +40,7 @@
 - 根 README「安装」节列各平台产物与未签名放行提示。
 - 词汇表不新增条目：构建/发布是工程基建，不是应用域词汇。
 - 缓行清单：macOS Intel 与各平台 arm64、MSI、签名与公证、应用内自动更新（Tauri updater）、移动端。
+
+## 修订注记（ADR-0124，2026-09-16）：缓行项「应用内自动更新」收回
+
+决策 5 缓行清单中的「应用内自动更新（Tauri updater）」由 ADR-0124 落地：桌面三平台自更新、GitHub Releases 静态清单、更新签名、全询问式流程与更新前备份接缝见该文。其余缓行项（macOS Intel 与各平台 arm64、MSI、Windows/Linux 平台代码签名）维持缓行。另留痕两处决策 4 的现状演进：Android 侧「全平台暂不签名」已由 ADR-0074 决策 3 取代；macOS 侧已另行完成 Developer ID 签名与公证（验证记录见 docs/verification/658-ci-signing-notarization.md，未立 ADR）。
