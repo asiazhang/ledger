@@ -180,6 +180,7 @@
   },
   "sync": {
     "failed": "Sync failed: {message}",
+    "degraded": "Degraded: this sync is slower",
     "progress": "Syncing instruments {done}/{total}",
     "progressFundPages": "Backfilling {code}: page {page}/{pages}",
     "progressAriaLabel": "Instrument info sync progress"

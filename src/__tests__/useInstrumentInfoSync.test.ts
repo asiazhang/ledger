@@ -290,3 +290,87 @@ describe('useInstrumentInfoSync 同步进度（issue #897）', () => {
     await expect(p).resolves.toBe('success')
   })
 })
+
+// ---------------------------------------------------------------------------
+// 降级可见（ADR-0121 决策 4 / issue #1376）：本次同步回退到逐标的通道时，
+// 接缝带出「已降级」事实位，两入口据此渲染「已降级、本次较慢」标注；正常
+//（批量面命中）路径不带。状态为模块级单例、随终态反馈同生命周期。
+// ---------------------------------------------------------------------------
+
+describe('useInstrumentInfoSync 降级事实位（issue #1376）', () => {
+  it('结果带 bulk_degraded:true 时接缝产出降级事实，两实例同显', async () => {
+    mockInvoke.mockResolvedValue({
+      synced: 3,
+      skipped: 0,
+      message: '已同步 3 只，跳过 0 只',
+      bulk_degraded: true,
+    })
+    const first = useInstrumentInfoSync()
+    await first.sync()
+    expect(first.degraded.value).toBe(true)
+    // 模块级单例：短路/后到入口看到同一份降级事实（与结果消息零分叉同形）
+    const second = useInstrumentInfoSync()
+    expect(second.degraded.value).toBe(true)
+  })
+
+  it('正常路径（批量面命中，bulk_degraded:false）不产出降级事实', async () => {
+    mockInvoke.mockResolvedValue({
+      synced: 3,
+      skipped: 0,
+      message: '已同步 3 只，跳过 0 只',
+      bulk_degraded: false,
+    })
+    const { degraded, sync } = useInstrumentInfoSync()
+    await sync()
+    expect(degraded.value).toBe(false)
+  })
+
+  it('降级事实随下一次同步开始清空（上次的标注不残留），失败终态同样清空', async () => {
+    mockInvoke.mockResolvedValueOnce({
+      synced: 3,
+      skipped: 0,
+      message: '已同步 3 只，跳过 0 只',
+      bulk_degraded: true,
+    })
+    const { degraded, sync } = useInstrumentInfoSync()
+    await sync()
+    expect(degraded.value).toBe(true)
+
+    // 新一次同步开始：降级事实清空（与结果消息同生命周期）；本次正常结束后
+    // 不再带标注。
+    mockInvoke.mockResolvedValueOnce({
+      synced: 3,
+      skipped: 0,
+      message: '已同步 3 只，跳过 0 只',
+      bulk_degraded: false,
+    })
+    const pending = sync()
+    expect(degraded.value).toBe(false)
+    await pending
+    expect(degraded.value).toBe(false)
+
+    // 失败终态：降级事实同样不残留（错误消息接棒，降级标注随终态收起）
+    mockInvoke.mockResolvedValueOnce({
+      synced: 3,
+      skipped: 0,
+      message: '已同步 3 只，跳过 0 只',
+      bulk_degraded: true,
+    })
+    await sync()
+    expect(degraded.value).toBe(true)
+    mockInvoke.mockRejectedValueOnce(new Error('网络错误'))
+    await expect(sync()).resolves.toBe('error')
+    expect(degraded.value).toBe(false)
+  })
+
+  it('结果缺失 bulk_degraded 字段（旧后端形状）按未降级处置，不误报标注', async () => {
+    mockInvoke.mockResolvedValue({
+      synced: 1,
+      skipped: 0,
+      message: '已同步 1 只，跳过 0 只',
+    })
+    const { degraded, sync } = useInstrumentInfoSync()
+    await sync()
+    expect(degraded.value).toBe(false)
+  })
+})
