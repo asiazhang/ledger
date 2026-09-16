@@ -230,6 +230,15 @@ export function usePortfolioTrend() {
   const chartSeries = computed(() => toTrendChartSeries(trendPoints.value))
   const isEmpty = computed(() => isTrendEmpty(trendPoints.value))
 
+  /** 走势空态的补全状态（ADR-0122 决策 5 / issue #1377 三态判据）：当前模式读
+   * 投影的 `backfill` 字段直出（后端只增字段，仅空采样点且有通道无历史序列时
+   * 携带）；有采样点时恒为 null，空态渲染按三态分派。 */
+  const backfill = computed(() =>
+    mode.value === 'portfolio'
+      ? portfolioTrend.value?.backfill ?? null
+      : instrumentTrend.value?.backfill ?? null,
+  )
+
   /**
    * 曲线金额币种：组合走势为后端折算的本位币；单标的走势取采样点的报价币种
    * （同一标的价格序列币种恒定，任取一点）。
@@ -247,6 +256,7 @@ export function usePortfolioTrend() {
     loading,
     chartSeries,
     isEmpty,
+    backfill,
     currencyCode,
     refresh,
     setMode,

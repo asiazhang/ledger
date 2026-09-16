@@ -46,12 +46,25 @@ const priceChannel = computed(() =>
   trend.mode.value === 'instrument' ? trend.instrument.value?.price_channel ?? null : null,
 )
 
-/** 有通道无数据的引导文案：手动报价通道引导去「录价」，其余通道引导去同步 */
-const emptyExtra = computed(() =>
-  priceChannel.value === 'manual'
-    ? t('investments.trend.emptyExtraManual')
-    : t('investments.trend.emptyExtra'),
-)
+/** 有通道无数据的引导文案：手动报价通道引导去「录价」；其余通道按补全状态
+ * 三态（ADR-0122 决策 5 / issue #1377）——不再有指向「同步标的信息」的回填
+ * 文案（同步只刷现价，历史由后台补全，按了也不会立即有曲线）。 */
+const emptyExtra = computed(() => {
+  if (priceChannel.value === 'manual') {
+    return t('investments.trend.emptyExtraManual')
+  }
+  const state = trend.backfill.value?.state
+  if (state === 'running') {
+    const { done, total } = trend.backfill.value!
+    return total != null
+      ? t('investments.trend.emptyBackfillProgress', { done: done ?? 0, total })
+      : t('investments.trend.emptyBackfillRunning')
+  }
+  if (state === 'retry_pending') return t('investments.trend.emptyBackfillRetryPending')
+  if (state === 'no_data') return t('investments.trend.emptyBackfillNoData')
+  // 无补全字段（区间裁剪 / 持仓与价格周错开等）：既有空态文案的中性改写。
+  return t('investments.trend.emptyNoPointsInRange')
+})
 
 const currency = computed(() =>
   trend.currencyCode.value ? reference.currencyMap.get(trend.currencyCode.value) : undefined,
@@ -197,7 +210,8 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
         </template>
       </NEmpty>
 
-      <!-- 有通道无历史数据：按通道给可执行引导——净值/行情通道去同步，手动报价通道去录价 -->
+      <!-- 有通道无历史数据：手动报价通道引导录价；补全通道按空态三态给答案
+           （补全中带计数 / 待重试 / 无数据），不再指向同步按钮（issue #1377）。 -->
       <NEmpty
         v-else-if="trend.isEmpty.value"
         data-testid="trend-empty"
@@ -205,7 +219,12 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
         size="large"
       >
         <template #extra>
-          <NText depth="3">
+          <NText
+            depth="3"
+            :data-testid="
+              trend.backfill.value ? 'trend-empty-backfill' : 'trend-empty-neutral'
+            "
+          >
             {{ emptyExtra }}
           </NText>
         </template>

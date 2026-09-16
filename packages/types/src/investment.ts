@@ -309,6 +309,21 @@ export interface TrendRange {
   end_date?: string | null
 }
 
+/** 走势空态补全状态三态闭集（与后端 serde snake_case 字面量一一对应，ADR-0122
+ * 决策 5 / issue #1377）：running = 补全中；retry_pending = 补全失败待重试；
+ * no_data = 无数据（确实没有可采的历史序列）。 */
+export type TrendBackfillState = 'running' | 'retry_pending' | 'no_data'
+
+/** 走势空态的补全状态（读投影只增字段）：仅当采样点为空且标的有价格写入
+ * 通道而磁盘上没有任何历史序列时携带；其余场景缺省不序列化（旧消费方零破坏）。 */
+export interface TrendBackfillStatus {
+  state: TrendBackfillState
+  /** 在途轮次已完成的标的数（仅 running 且有在途轮次时携带）。 */
+  done?: number
+  /** 在途轮次的队列总长（仅 running 且有在途轮次时携带）。 */
+  total?: number
+}
+
 /** 单标的走势采样点：周采样交易日 + 收盘价（报价币种万分之一元，价格刻度见上） */
 export interface PriceTrendPoint {
   date: string
@@ -320,6 +335,8 @@ export interface PriceTrendPoint {
 export interface InstrumentPriceTrend {
   instrument_id: string
   points: PriceTrendPoint[]
+  /** 补全状态（issue #1377）：仅空采样点且有通道无历史序列时携带。 */
+  backfill?: TrendBackfillStatus
 }
 
 /** 组合走势采样点：该周组合总市值（分，本位币） */
@@ -333,6 +350,8 @@ export interface PortfolioValueTrend {
   /** 折算基准（本位币） */
   currency_code: string
   points: PortfolioTrendPoint[]
+  /** 补全状态（issue #1377）：仅空采样点且库内存在有通道无历史序列的标的时携带。 */
+  backfill?: TrendBackfillStatus
 }
 
 /** 资金加权收益率查询区间（issue #1195 / ADR-0115）：可选起止 ISO 日期，缺省

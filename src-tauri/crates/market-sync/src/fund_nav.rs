@@ -16,8 +16,10 @@
 //!   `Data_netWorthTrend` 得整只基金历史单位净值（口径与 lsjz `DWJZ` 逐值一致，
 //!   ADR-0038 修订记录有样本验证），仅首刷深回填用——抓取 / 解析失败或窗口内无点
 //!   fail-closed 回退 lsjz 分页，不静默丢数据；
-//! - 逐只编排 [`sync_one_fund_nav`] 接受作用域会话与注入的页抓取、单请求抓取两条闭包（生产接
-//!   HTTP 层，测试注入 mock）：首刷判据 = **磁盘上没有任何历史序列**（issue #1059
+//! - 逐只编排分两单元（issue #1377 现价与历史解耦收口）：现价刷新
+//!   [`refresh_one_fund_price`]（服务标的信息同步，只刷现价——取数面命中整只零
+//!   请求，未命中退逐只短窗、页数封顶）；历史回填 [`backfill_one_fund_history`]
+//!   （服务价格历史后台补全）：首刷判据 = **磁盘上没有任何历史序列**（issue #1059
 //!   ——添加基金 / AI 导入已把最新净值落现价缓存、水位有值但 PriceHistory 为空，
 //!   此时按首刷回填近两年）；已有历史序列的基金以现价缓存的净值日期
 //!   （`market_prices.nav_date`，#301 落）为水位，从水位次日起按页增量（常态每只一页，
@@ -51,6 +53,16 @@ const LSJZ_PAGE_SIZE: u64 = 20;
 /// 上限兜底防异常 TotalCount 导致的失控翻页。触顶即窗口已知未采全，整只不落库
 ///（见 [`NavPages::truncated`]，ADR-0122 决策 8 / issue #1373）。
 const MAX_NAV_PAGES: u64 = 40;
+
+/// 现价刷新逐只回退的页数封顶（issue #1377）：现价刷新不是历史采集，逐只回退只
+/// 服务「把现价刷到最新」与顺带落上近几个缺周点；封顶 2 页（≈ 8 周净值日）内
+/// 窗口完整才落库，更深的缺口整只不落、交价格历史后台补全在下一窗口深采——
+/// 水位不得推进到未落周点之前（否则缺周点永久漏采，见 [`refresh_one_fund_price`]）。
+const REFRESH_MAX_NAV_PAGES: u64 = 2;
+
+/// 现价刷新逐只回退的无历史序列短窗（issue #1377）：首刷的历史由后台补全整根
+/// 回填，现价刷新只为这类标的拿「最新公布净值」——一个月窗口单页量级、常数请求。
+const REFRESH_RECENT_WINDOW_MONTHS: chrono::Months = chrono::Months::new(1);
 
 // 基金详情页数据文件（pingzhongdata）：单主机（无公开镜像池），一次请求返回整只
 // 基金的全部历史净值（issue #1062）。仅服务首刷深回填，增量仍走 lsjz。
@@ -345,7 +357,7 @@ pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzPage {
 /// 净值同步窗口（ADR-0038 决策 6）：有水位（现价缓存的净值日期）则从水位
 /// 次日起（增量）；无水位为首刷，回填近两年。水位非法（理论不可达——写入侧
 /// 恒为接口返回的 ISO 日期）按首刷兜底自愈，重复回填由周采样幂等覆盖吸收。
-/// 起点只由入参水位决定；「是否首刷」由调用方（[`sync_one_fund_nav`]）按有无
+/// 起点只由入参水位决定；「是否首刷」由调用方（[`backfill_one_fund_history`]）按有无
 /// 历史序列判定后传 None 表达（issue #1059），本函数不含那一层判据。
 /// 返回 `(start, end)` 闭区间（ISO 日期）。
 pub(super) fn nav_window(watermark: Option<&str>, today: NaiveDate) -> (String, String) {
@@ -500,222 +512,14 @@ pub(super) struct FundSyncStats {
     pub(super) written: usize,
 }
 
-/// 单只 fund 标的的净值增量同步（ADR-0038 决策 6；收集面随 issue #827 放开至
-/// 库内全部 fund 行）：**首刷判据 = 磁盘上没有任何历史序列**（issue #1059）。
-/// 首刷回填近两年——优先走单请求全量通道（详情页数据文件，issue #1062），抓取/
-/// 解析失败或窗口内无点则 fail-closed 回退 lsjz 分页通道；已有历史序列的基金走
-/// lsjz 分页，以现价缓存的净值日期为水位增量（水位当日不重拉、只取水位次日之后）。
-/// 净值点降采样落 PriceHistory（同周整周覆盖幂等），窗口内最新公布净值落现价缓存
-/// （现价 = 单位净值、priced_at = nav_date = 净值日期，与 #301 添加基金同形）。
-/// `latest_hint` 是批量取数面（[`super::bulk`] / ADR-0121）带来的「整市场最新净值」
-/// 条目：命中时由 [`bulk_decision`] 判三类——无新净值（整只零请求）、当周新净值
-/// （最新单位净值即当日现价与当周采样点，[`land_bulk_point`] 直接落库）、逐只通道
-/// 接管（首刷 / 缺周点补齐）；未覆盖或未命中即逐只通道。逐只路径自身的窗口、周采样
-/// 与落库口径不因取数面而变。
-/// 周采样与现价落库在**一只一个事务**里整只一次提交（ADR-0122 决策 8 / issue
-/// #1373）：第 N 个周点写入失败或中途中断整体回滚，磁盘上不留半根历史——「有历史
-/// 序列」与「历史完整」由此等价，首刷判据（ADR-0038 决策 6）依赖的正是这个等价。
-/// 两条抓取闭包由调用方注入（生产接 HTTP 层，测试 mock），本函数不触碰网络；
-/// 单只结果累加进调用方的 `stats`；页级推进经注入的 `on_page` 回调透传
-///（issue #1061——每页抓取返回后报告「已完成页/总页数」，抓取内部的退避/重试
-/// 等待不产生推进）。基金间的遍历、名称随行刷新与标的级进度推进归编排层
-///（issue #897）。
-///
-/// **前置条件**：`fund` 为 6 位真实代码的有通道基金行——名称充代码行（查不到
-/// 净值）由调用方计入跳过、零请求（issue #897 起跳过判定与分母口径同收编排层）。
-/// 跳过语义：首刷查无净值与**空响应/被拦截**（issue #1059）计入 `skipped`，
-/// 不报错不中断；其中**本轮窗口不完整**（部分页空响应或页数触顶，ADR-0122 决策 8 /
-/// issue #1373）整只不落库并计入跳过，不留半根历史（原「记警告后继续落已采点」
-/// 退役）；单只网络失败与股票通道一致——上抛中断同步（跳过统计只收「无法拉取」
-/// 的行，不含网络失败）。
-/// 分页通道的采集结果（ADR-0122 决策 8 / issue #1373）：净值点 + 两个「本轮窗口
-/// 不可信」标记——任一为真都让整只不落库、宁可整只留空重试，不留半根历史。
-struct NavPages {
-    points: Vec<NavPoint>,
-    /// 任意一页空响应（报文 `Data` 缺省 / 非对象：疑似被拦截 / 风控）。
-    blocked: bool,
-    /// 页数触顶（服务端 `TotalCount` 异常，窗口已知未采全，见 [`MAX_NAV_PAGES`]）。
-    truncated: bool,
-}
-
-impl NavPages {
-    /// 本轮窗口是否完整可信：完整才允许整只落库（ADR-0122 决策 8）。
-    fn is_complete(&self) -> bool {
-        !self.blocked && !self.truncated
-    }
-}
-
-/// 分页通道取净值点（首刷回退与增量共用）：按服务端总数翻页（页大小为服务端硬
-/// 上限），先攒齐全部净值点再一次性降采样——跨页同周的采样必须取最后一个净值日，
-/// 逐页落库会用后页的更早日期覆盖前页采样。返回净值点与「本轮窗口不可信」标记
-///（空响应 / 页数触顶，见 [`NavPages`]）；页级推进经 `on_page` 透传（issue #1061）：
-/// 只在本页抓取返回之后发出（抓取内部的退避/重试等待不产生推进），单页
-///（pages ≤ 1）不发。
-fn fetch_nav_pages<N, P>(
-    fetch_nav: &mut N,
-    code: &str,
-    start: &str,
-    end: &str,
-    on_page: &mut P,
-) -> Result<NavPages>
-where
-    N: FnMut(&NavQuery) -> Result<LsjzPage>,
-    P: FnMut(u64, u64),
-{
-    let query = |page: u64| NavQuery {
-        code: code.to_string(),
-        start_date: start.to_string(),
-        end_date: end.to_string(),
-        page,
-    };
-    let first = fetch_nav(&query(1))?;
-    let mut blocked = first.blocked;
-    let mut points = first.points;
-    let raw_pages = first
-        .total
-        .max(points.len() as u64)
-        .div_ceil(LSJZ_PAGE_SIZE);
-    let pages = raw_pages.min(MAX_NAV_PAGES);
-    // 触顶即窗口已知未采全（ADR-0122 决策 8）：不在此落已采点，统一由调用方按
-    // 「窗口不完整」整只跳过，日志也在那里带出（含触发原因）。
-    let truncated = raw_pages > MAX_NAV_PAGES;
-    // 页级推进只在真正翻页时发出；首页在抓取返回、总页数已知后立即报告。
-    // 位置固定在 fetch_nav 之后——抓取闭包内部的退避/重试等待不产生推进
-    //（issue #1061 的「等待不伪装成推进」由这一先后关系保证）。空响应页
-    //（`blocked`，Data 缺省/非对象：疑似被拦截/异常）不算「已回填的一页」，
-    // 不推进页码——被风控拦截期间同样不得虚假推进（与 #1059 空响应区分同源）。
-    let page_level = pages > 1;
-    if page_level && !blocked {
-        on_page(1, pages);
-    }
-    for page in 2..=pages {
-        let next = fetch_nav(&query(page))?;
-        // 任意一页空响应都让本轮窗口不完整（页 1 空 → 整轮不可信；后续页空 →
-        // 已采净值点照常落库、窗口可能缺尾），统一由调用方按形态分流。
-        let blocked_page = next.blocked;
-        blocked |= blocked_page;
-        points.extend(next.points);
-        if page_level && !blocked_page {
-            on_page(page, pages);
-        }
-    }
-    Ok(NavPages {
-        points,
-        blocked,
-        truncated,
-    })
-}
-
-/// 取数面命中时逐只净值通道的角色（ADR-0121 取数面 / ADR-0122 决策 2）。
-enum BulkDecision<'a> {
-    /// 批量面证明没有新净值（最新净值日期不晚于水位）：现价已是最新，整只零请求。
-    NothingNew,
-    /// 批量面报出比水位更新的当周净值：它的最新单位净值就是当日现价与该周采样点
-    /// （周采样要的正是「该周最后一个有报价交易日的价格」），直接落库、整只零请求。
-    LandFromBulk(&'a BulkNavPoint),
-    /// 逐只通道接管：首刷（要的是整根序列，不是「有没有新净值」）、缺周点补齐
-    /// （中间缺失的周点只有逐只窗口能补）或批量面未覆盖（缺口）。
-    PerInstrument,
-}
-
-/// 取数面命中时的三分类判据（ADR-0122 决策 2 的「逐只采集只服务首刷与缺周点补齐」
-/// 落在本函数）：这是「这次刷新用几次请求」的判定单点——判定为前两类即零逐只请求，
-/// 请求量因此不随基金数增长。
-fn bulk_decision<'a>(
-    first_fill: bool,
-    latest_hint: Option<&'a BulkNavPoint>,
-    watermark: Option<&str>,
-) -> BulkDecision<'a> {
-    if first_fill {
-        return BulkDecision::PerInstrument;
-    }
-    let Some(hint) = latest_hint else {
-        return BulkDecision::PerInstrument;
-    };
-    if hint.is_not_newer_than(watermark) {
-        return BulkDecision::NothingNew;
-    }
-    if week_gap_needs_per_instrument(watermark, &hint.date) {
-        return BulkDecision::PerInstrument;
-    }
-    BulkDecision::LandFromBulk(hint)
-}
-
-/// 缺周点补齐判据（ADR-0122 决策 2）：水位落后批量面最新净值所在自然周**超过
-/// 一周**（例如应用数周未开）时，中间缺失的周点只有逐只窗口能补——逐只通道接管。
-/// 同一周或只差一周（常态的跨周）不触发：批量面的最新净值就是当周采样点，上一周
-/// 的采样点已在上一周落库。水位缺失或不可解析时保守接管（宁可多一次请求，
-/// 不静默丢周点）。
-fn week_gap_needs_per_instrument(watermark: Option<&str>, bulk_date: &str) -> bool {
-    let parse = |date: &str| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok();
-    let (Some(watermark), Some(bulk_date)) = (watermark.and_then(parse), parse(bulk_date)) else {
-        return true;
-    };
-    super::incremental::week_monday(bulk_date) - super::incremental::week_monday(watermark)
-        > chrono::Duration::days(7)
-}
-
-/// 把批量取数面的最新单位净值直接落库（ADR-0122 决策 2）：现价缓存（现价 = 单位
-/// 净值、`priced_at` = `nav_date` = 净值日期，与逐只通道同形）+ 当周采样点（每周
-/// 至多一条、整周覆盖幂等——落库单点与逐只通道共用 `upsert_price_history`）。
-/// 只在批量面报出比水位更新的净值时调用（见 [`bulk_decision`]）。
-fn land_bulk_point<Q: ScopedSession>(
+/// 基金分区水位与首刷判据的共享读（issue #1377 自两单元抽出）：水位 = 现价缓存
+/// 的净值日期；首刷判据 = 磁盘上没有任何历史序列（issue #1059）。两条读经作用域
+/// 会话短暂取一次连接完成（issue #1275）；抓取前不再触碰连接。
+fn read_fund_watermark<Q: ScopedSession>(
     session: &Q,
     fund: &super::incremental::SyncInstrument,
-    hint: &BulkNavPoint,
-) -> Result<()> {
-    let price_cents = price_value_to_cents(hint.nav);
+) -> Result<(Option<String>, bool)> {
     session.with_connection(|conn| {
-        upsert_market_price(
-            conn,
-            &MarketPriceWrite {
-                instrument_id: &fund.instrument_id,
-                price_cents,
-                currency_code: &fund.currency,
-                priced_at: &hint.date,
-                nav_date: Some(&hint.date),
-                source: Some(EASTMONEY_PRICE_SOURCE),
-            },
-        )?;
-        upsert_price_history(
-            conn,
-            &fund.instrument_id,
-            &hint.date,
-            price_cents,
-            &fund.currency,
-            EASTMONEY_PRICE_SOURCE,
-        )
-    })?;
-    Ok(())
-}
-
-pub(super) fn sync_one_fund_nav<Q, N, S, P>(
-    session: &Q,
-    fund: &super::incremental::SyncInstrument,
-    latest_hint: Option<&BulkNavPoint>,
-    fetch_nav: &mut N,
-    fetch_nav_full_series: &mut S,
-    stats: &mut FundSyncStats,
-    on_page: &mut P,
-) -> Result<()>
-where
-    // 作用域会话接缝（issue #1275）：本函数读写库的唯一通道，签名层面取不到连接。
-    Q: ScopedSession,
-    N: FnMut(&NavQuery) -> Result<LsjzPage>,
-    S: FnMut(&str) -> Result<Vec<NavPoint>>,
-    // 页级推进回调（issue #1061）：(已完成页, 总页数)。只在本页抓取返回之后发出
-    //（抓取内部的退避/重试等待不产生推进）；单页（pages ≤ 1）不发——增量常态
-    // 的事件形状与频率不变。
-    P: FnMut(u64, u64),
-{
-    let today = super::incremental::beijing_today();
-    // 水位 = 现价缓存的净值日期（股票行恒 NULL，基金行由 #301/本通道写入）；首刷
-    // 判据 = 磁盘上没有任何历史序列（issue #1059）：添加基金 / AI 导入在
-    // 「按代码即拉」时已把最新净值落现价缓存（水位有值）但 PriceHistory 为空，
-    // 若以水位作增量起点，增量窗口只剩「水位次日」而近两年回填静默落空
-    //（#303 验收在真实账本上未成立的根因）。水位只服务已有历史序列的增量。
-    // 两条读经作用域会话短暂取一次连接完成（issue #1275）；抓取前不再触碰连接。
-    let (watermark, has_history) = session.with_connection(|conn| {
         let watermark: Option<String> = conn
             .query_row(
                 "SELECT nav_date FROM market_prices WHERE instrument_id=?1",
@@ -723,18 +527,52 @@ where
                 |r| r.get(0),
             )
             .ok();
-        let has_history: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM price_history WHERE instrument_id=?1)",
-            params![fund.instrument_id],
-            |r| r.get(0),
-        )?;
+        let has_history = ledger_investment::backfill::has_any_history(conn, &fund.instrument_id)?;
         Ok((watermark, has_history))
-    })?;
-    let first_fill = !has_history;
+    })
+}
+
+/// 单只 fund 标的的现价刷新单元（ADR-0122 决策 2/3 / issue #1377）：只刷现价、
+/// 不承担历史——首刷深回填与缺周点深补归价格历史后台补全
+///（[`backfill_one_fund_history`]）。取数面（[`super::bulk`]）命中时整只零请求：
+/// 无新净值（批量面最新净值日期不晚于水位）即「已是最新」；新净值直落现价缓存，
+/// 有历史序列者连当周采样点一并落库（[`land_bulk_point`]，周采样语义不变）。
+/// 未命中（缺口 / 降级 / 停用期）退回逐只通道，窗口按「现价刷新」收窄——
+/// 有历史序列者从水位次日增量但页数封顶（[`REFRESH_MAX_NAV_PAGES`]）：窗口
+/// 完整才整只落库；更深缺口整只不落、交后台补全——**水位不得推进到未落周点
+/// 之前**，否则缺周点在队列判定（水位判缺）里永久消失。无历史序列者取近一个月
+/// 短窗（[`REFRESH_RECENT_WINDOW_MONTHS`]）的最新净值落现价，历史一行为零、
+/// 不落采样点（历史归后台补全首刷）。
+/// 单只结果累加进调用方的 `stats`；页级推进经注入的 `on_page` 回调透传
+///（issue #1061）。基金间的遍历、名称随行刷新与标的级进度推进归编排层
+///（issue #897）。跳过语义与 [`backfill_one_fund_history`] 一致：查无净值与
+/// 空响应/被拦截计入 `skipped`，不报错不中断；单只网络失败上抛中断同步。
+///
+/// **前置条件**：`fund` 为 6 位真实代码的有通道基金行——名称充代码行（查不到
+/// 净值）由调用方计入跳过、零请求（issue #897 起跳过判定与分母口径同收编排层）。
+pub(super) fn refresh_one_fund_price<Q, N, P>(
+    session: &Q,
+    fund: &super::incremental::SyncInstrument,
+    latest_hint: Option<&BulkNavPoint>,
+    fetch_nav: &mut N,
+    stats: &mut FundSyncStats,
+    on_page: &mut P,
+) -> Result<()>
+where
+    // 作用域会话接缝（issue #1275）：本函数读写库的唯一通道，签名层面取不到连接。
+    Q: ScopedSession,
+    N: FnMut(&NavQuery) -> Result<LsjzPage>,
+    // 页级推进回调（issue #1061）：(已完成页, 总页数)。只在本页抓取返回之后发出
+    //（抓取内部的退避/重试等待不产生推进）；单页（pages ≤ 1）不发——增量常态
+    // 的事件形状与频率不变。
+    P: FnMut(u64, u64),
+{
+    let today = super::incremental::beijing_today();
+    let (watermark, has_history) = read_fund_watermark(session, fund)?;
     // 取数面命中时整只零请求（ADR-0121 取数面把「要不要发逐只请求」的判断从
-    // 「每标的一次请求」降为「整市场一次请求」）——逐只通道只在首刷、缺周点补齐与
-    // 批量面未覆盖时接管。
-    match bulk_decision(first_fill, latest_hint, watermark.as_deref()) {
+    // 「每标的一次请求」降为「整市场一次请求」）——逐只通道只在缺周点补齐与
+    // 批量面未覆盖时接管（issue #1377：首刷不再接管，历史归后台补全）。
+    match bulk_decision(latest_hint, watermark.as_deref()) {
         BulkDecision::NothingNew => {
             stats.synced += 1;
             return Ok(());
@@ -749,11 +587,177 @@ where
             if let Some(hint) = latest_hint {
                 tracing::debug!(
                     code = %fund.symbol, watermark = ?watermark, bulk_date = %hint.date,
-                    "批量面已报出新净值但水位落后超过一个自然周，逐只通道补齐缺失周点"
+                    "批量面已报出新净值但水位落后超过一个自然周，逐只短窗补齐缺失周点（封顶页数内）"
                 );
             }
         }
     }
+    // 逐只回退的窗口按「现价刷新」收窄（issue #1377）：有历史序列者从水位次日
+    // 增量（封顶页数内窗口完整才落库）；无历史序列者取近一个月短窗拿最新净值。
+    let (start, end) = if has_history {
+        nav_window(watermark.as_deref(), today)
+    } else {
+        let start = today
+            .checked_sub_months(REFRESH_RECENT_WINDOW_MONTHS)
+            .unwrap_or(today);
+        (
+            start.format("%Y-%m-%d").to_string(),
+            today.format("%Y-%m-%d").to_string(),
+        )
+    };
+    let collected = fetch_nav_pages(
+        fetch_nav,
+        &fund.symbol,
+        &start,
+        &end,
+        REFRESH_MAX_NAV_PAGES,
+        on_page,
+    )?;
+
+    if collected.points.is_empty() {
+        if collected.blocked {
+            // 空响应（Data 缺省 / 非对象）= 疑似被拦截或异常：结果不可信，不
+            // 得计入成功（issue #1059）。与「窗口内确实无新净值」在统计上分
+            // 开——此路计入跳过；日志带出原形态，便于与 T+1 正常空窗对照。
+            tracing::warn!(
+                code = %fund.symbol, has_history, watermark = ?watermark,
+                "历史净值返回空响应（疑似被拦截/异常），本轮无法判定是否有新净值"
+            );
+            stats.skipped += 1;
+        } else if has_history {
+            // 增量窗口内确实无新净值（T+1 正常空窗）：现价已是最新，处理成功
+            // 但不落库、不计跳过。
+            stats.synced += 1;
+        } else {
+            // 查无净值（查无此码 / 新基金未公布首期）：无法拉取，计入跳过。
+            stats.skipped += 1;
+        }
+        return Ok(());
+    }
+    if !collected.is_complete() {
+        // 窗口不完整（深度缺周点超出封顶页数或页被拦截，issue #1377）：整只
+        // 不落库并在日志标注——水位不得推进到未落周点之前（否则缺周点永久
+        // 漏采），交价格历史后台补全在下一窗口深采；现价刷新不承担深补。
+        tracing::warn!(
+            code = %fund.symbol, has_history,
+            blocked = collected.blocked, truncated = collected.truncated,
+            "现价刷新短窗不完整（深度缺周点或被拦截），整只不落库、交后台补全深采"
+        );
+        stats.skipped += 1;
+        return Ok(());
+    }
+    let points = collected.points;
+    // 现价 = 窗口内最新公布单位净值（let-else 显式防线，#434 同款）：points
+    // 非空由前文判空保证，此臂理论不可达；一旦前置防线被移除，此处记警告并
+    // 跳过该只、不中断同步。
+    let Some(latest) = points.iter().max_by_key(|p| p.date.as_str()) else {
+        tracing::warn!(code = %fund.symbol, "净值点意外为空，跳过现价更新");
+        return Ok(());
+    };
+    // 无新净值防线：短窗拿到的最新净值不新于水位即「已是最新」（无历史序列者
+    // 的常态——按代码即拉已落过同一净值），零写入不虚增价格失效信号。
+    if watermark
+        .as_deref()
+        .is_some_and(|w| latest.date.as_str() <= w)
+    {
+        stats.synced += 1;
+        return Ok(());
+    }
+    // 当周采样点（仅有历史序列者）与现价落库同在一只一个事务里（ADR-0122
+    // 决策 8 / issue #1373 同形体）：写失败整体回滚，不留半根。
+    let bars: Vec<KlineBar> = points
+        .iter()
+        .map(|p| KlineBar {
+            date: p.date.clone(),
+            close: p.nav,
+        })
+        .collect();
+    session.with_connection(|conn| {
+        ensure_transaction(conn, || {
+            if has_history {
+                // 窗口内缺失的近期周点顺带落库（封顶页数保证了窗口完整；
+                // 深度缺周点已在上方交后台补全）。
+                super::incremental::write_weekly_price_history(
+                    conn,
+                    &fund.instrument_id,
+                    &fund.currency,
+                    &bars,
+                )?;
+            }
+            upsert_market_price(
+                conn,
+                &MarketPriceWrite {
+                    instrument_id: &fund.instrument_id,
+                    price_cents: price_value_to_cents(latest.nav),
+                    currency_code: &fund.currency,
+                    // 基金现价时点 = 净值日期（现价的行情日期就是净值本身对应的日期）；
+                    // nav_date 兼任下次同步的水位。
+                    priced_at: &latest.date,
+                    nav_date: Some(&latest.date),
+                    source: Some(EASTMONEY_PRICE_SOURCE),
+                },
+            )?;
+            Ok(())
+        })
+    })?;
+    stats.synced += 1;
+    stats.written += 1;
+    Ok(())
+}
+
+/// 单只基金历史回填的结局（issue #1377 走势空态三态的判据输入）：`written` =
+/// 是否实际落库；`inconclusive` = 本轮窗口不完整（部分页空响应或页数触顶）——
+/// 整只不落库、结果不可信，后台补全据此把该只记为「待重试」而非「无数据」
+///（被拦截 ≠ 数据源没有可采序列）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct BackfillOutcome {
+    pub(super) written: bool,
+    pub(super) inconclusive: bool,
+}
+
+/// 单只 fund 标的的**历史回填**单元（ADR-0038 决策 6 / ADR-0122 决策 2；issue
+/// #1377 起归价格历史后台补全专用——现价刷新走 [`refresh_one_fund_price`]，
+/// 「同步标的信息」不再承担首刷）：**首刷判据 = 磁盘上没有任何历史序列**（issue
+/// #1059）。首刷回填近两年——优先走单请求全量通道（详情页数据文件，issue
+/// #1062），抓取/解析失败或窗口内无点则 fail-closed 回退 lsjz 分页通道；已有
+/// 历史序列的基金走 lsjz 分页，以现价缓存的净值日期为水位增量（水位当日不重拉、
+/// 只取水位次日之后）。净值点降采样落 PriceHistory（同周整周覆盖幂等），窗口内
+/// 最新公布净值落现价缓存（现价 = 单位净值、priced_at = nav_date = 净值日期，
+/// 与 #301 添加基金同形）。周采样与现价落库在**一只一个事务**里整只一次提交
+///（ADR-0122 决策 8 / issue #1373）：第 N 个周点写入失败或中途中断整体回滚，
+/// 磁盘上不留半根历史——「有历史序列」与「历史完整」由此等价，首刷判据（ADR-0038
+/// 决策 6）依赖的正是这个等价。页级推进经注入的 `on_page` 回调透传（issue
+/// #1061——每页抓取返回后报告「已完成页/总页数」，抓取内部的退避/重试等待不
+/// 产生推进）。
+///
+/// **前置条件**：`fund` 为 6 位真实代码的有通道基金行。跳过语义：首刷查无净值
+/// 与**空响应/被拦截**（issue #1059）不报错不中断，以 [`BackfillOutcome`] 表达
+/// 结局；其中**本轮窗口不完整**（部分页空响应或页数触顶，ADR-0122 决策 8 /
+/// issue #1373）整只不落库并记 `inconclusive`，不留半根历史；单只网络失败上抛
+///（后台补全编排单只失败不中断本轮）。
+pub(super) fn backfill_one_fund_history<Q, N, S, P>(
+    session: &Q,
+    fund: &super::incremental::SyncInstrument,
+    fetch_nav: &mut N,
+    fetch_nav_full_series: &mut S,
+    on_page: &mut P,
+) -> Result<BackfillOutcome>
+where
+    // 作用域会话接缝（issue #1275）：本函数读写库的唯一通道，签名层面取不到连接。
+    Q: ScopedSession,
+    N: FnMut(&NavQuery) -> Result<LsjzPage>,
+    S: FnMut(&str) -> Result<Vec<NavPoint>>,
+    P: FnMut(u64, u64),
+{
+    let today = super::incremental::beijing_today();
+    // 水位 = 现价缓存的净值日期（股票行恒 NULL，基金行由 #301/本通道写入）；首刷
+    // 判据 = 磁盘上没有任何历史序列（issue #1059）：添加基金 / AI 导入在
+    // 「按代码即拉」时已把最新净值落现价缓存（水位有值）但 PriceHistory 为空，
+    // 若以水位作增量起点，增量窗口只剩「水位次日」而近两年回填静默落空
+    //（#303 验收在真实账本上未成立的根因）。水位只服务已有历史序列的增量。
+    // 两条读经作用域会话短暂取一次连接完成（issue #1275）；抓取前不再触碰连接。
+    let (watermark, has_history) = read_fund_watermark(session, fund)?;
+    let first_fill = !has_history;
     let window_watermark = if first_fill {
         None
     } else {
@@ -803,41 +807,50 @@ where
             blocked: false,
             truncated: false,
         },
-        None => fetch_nav_pages(fetch_nav, &fund.symbol, &start, &end, on_page)?,
+        None => fetch_nav_pages(
+            fetch_nav,
+            &fund.symbol,
+            &start,
+            &end,
+            MAX_NAV_PAGES,
+            on_page,
+        )?,
     };
 
     if collected.points.is_empty() {
         if collected.blocked {
             // 空响应（Data 缺省 / 非对象）= 疑似被拦截或异常：结果不可信，不
-            // 得计入成功（issue #1059）。与「窗口内确实无新净值」在统计上分
-            // 开——此路计入跳过；日志带出原形态，便于与 T+1 正常空窗对照。
+            // 得计入成功（issue #1059）。此路记 `inconclusive`——被拦截 ≠
+            // 数据源没有可采序列，空态按「待重试」而非「无数据」（issue #1377）。
             tracing::warn!(
                 code = %fund.symbol, first_fill, watermark = ?watermark,
                 "历史净值返回空响应（疑似被拦截/异常），本轮无法判定是否有新净值"
             );
-            stats.skipped += 1;
-        } else if first_fill {
-            // 首刷查无净值（查无此码 / 新基金未公布首期）：无法拉取，计入跳过。
-            stats.skipped += 1;
-        } else {
-            // 增量窗口内确实无新净值（T+1 正常空窗）：现价已是最新，处理成功
-            // 但不落库、不计跳过。
-            stats.synced += 1;
+            return Ok(BackfillOutcome {
+                written: false,
+                inconclusive: true,
+            });
         }
-        return Ok(());
+        // 首刷查无净值（查无此码 / 新基金未公布首期）与增量窗口内确实无新净值
+        //（T+1 正常空窗）：结局确定——无可采数据 / 已是最新。
+        return Ok(BackfillOutcome {
+            written: false,
+            inconclusive: false,
+        });
     }
     if !collected.is_complete() {
         // 本轮窗口不完整（部分页空响应或页数触顶，ADR-0122 决策 8 / issue #1373）：
-        // 整只不落库、计入跳过并在日志标注——宁可整只留空重试，不留半根历史。
-        // 半根历史会让「有历史序列」冒充「历史完整」，首刷判据（ADR-0038 决策 6）
-        // 据此失效；原「记警告后继续落已采点」的旧行为随本决策退役。
+        // 整只不落库——宁可整只留空重试，不留半根历史。半根历史会让「有历史序列」
+        // 冒充「历史完整」，首刷判据（ADR-0038 决策 6）据此失效。结局按待重试。
         tracing::warn!(
             code = %fund.symbol, first_fill,
             blocked = collected.blocked, truncated = collected.truncated,
-            "历史净值窗口不完整（部分页空响应或页数触顶），整只不落库并计入跳过待下次重试"
+            "历史净值窗口不完整（部分页空响应或页数触顶），整只不落库待下次重试"
         );
-        stats.skipped += 1;
-        return Ok(());
+        return Ok(BackfillOutcome {
+            written: false,
+            inconclusive: true,
+        });
     }
     let points = collected.points;
 
@@ -848,7 +861,10 @@ where
     // 该只、不中断同步。
     let Some(latest) = points.iter().max_by_key(|p| p.date.as_str()) else {
         tracing::warn!(code = %fund.symbol, "净值点意外为空，跳过现价更新");
-        return Ok(());
+        return Ok(BackfillOutcome {
+            written: false,
+            inconclusive: false,
+        });
     };
 
     // 周采样与现价落库同在一只一个事务里（ADR-0122 决策 8 / issue #1373）：单只
@@ -892,7 +908,177 @@ where
             Ok(())
         })
     })?;
-    stats.synced += 1;
-    stats.written += 1;
+    Ok(BackfillOutcome {
+        written: true,
+        inconclusive: false,
+    })
+}
+
+/// 分页通道的采集结果（ADR-0122 决策 8 / issue #1373）：净值点 + 两个「本轮窗口
+/// 不可信」标记——任一为真都让整只不落库、宁可整只留空重试，不留半根历史。
+struct NavPages {
+    points: Vec<NavPoint>,
+    /// 任意一页空响应（报文 `Data` 缺省 / 非对象：疑似被拦截 / 风控）。
+    blocked: bool,
+    /// 页数触顶（服务端 `TotalCount` 异常，窗口已知未采全，见 [`MAX_NAV_PAGES`]）。
+    truncated: bool,
+}
+
+impl NavPages {
+    /// 本轮窗口是否完整可信：完整才允许整只落库（ADR-0122 决策 8）。
+    fn is_complete(&self) -> bool {
+        !self.blocked && !self.truncated
+    }
+}
+
+/// 分页通道取净值点（首刷回退与增量共用）：按服务端总数翻页（页大小为服务端硬
+/// 上限），先攒齐全部净值点再一次性降采样——跨页同周的采样必须取最后一个净值日，
+/// 逐页落库会用后页的更早日期覆盖前页采样。返回净值点与「本轮窗口不可信」标记
+///（空响应 / 页数触顶，见 [`NavPages`]）；页级推进经 `on_page` 透传（issue #1061）：
+/// 只在本页抓取返回之后发出（抓取内部的退避/重试等待不产生推进），单页
+///（pages ≤ 1）不发。`max_pages` 是页数触顶上限（历史回填取 [`MAX_NAV_PAGES`]，
+/// 现价刷新短窗取 [`REFRESH_MAX_NAV_PAGES`]，issue #1377）。
+fn fetch_nav_pages<N, P>(
+    fetch_nav: &mut N,
+    code: &str,
+    start: &str,
+    end: &str,
+    max_pages: u64,
+    on_page: &mut P,
+) -> Result<NavPages>
+where
+    N: FnMut(&NavQuery) -> Result<LsjzPage>,
+    P: FnMut(u64, u64),
+{
+    let query = |page: u64| NavQuery {
+        code: code.to_string(),
+        start_date: start.to_string(),
+        end_date: end.to_string(),
+        page,
+    };
+    let first = fetch_nav(&query(1))?;
+    let mut blocked = first.blocked;
+    let mut points = first.points;
+    let raw_pages = first
+        .total
+        .max(points.len() as u64)
+        .div_ceil(LSJZ_PAGE_SIZE);
+    let pages = raw_pages.min(max_pages);
+    // 触顶即窗口已知未采全（ADR-0122 决策 8）：不在此落已采点，统一由调用方按
+    // 「窗口不完整」整只跳过，日志也在那里带出（含触发原因）。
+    let truncated = raw_pages > max_pages;
+    // 页级推进只在真正翻页时发出；首页在抓取返回、总页数已知后立即报告。
+    // 位置固定在 fetch_nav 之后——抓取闭包内部的退避/重试等待不产生推进
+    //（issue #1061 的「等待不伪装成推进」由这一先后关系保证）。空响应页
+    //（`blocked`，Data 缺省/非对象：疑似被拦截/异常）不算「已回填的一页」，
+    // 不推进页码——被风控拦截期间同样不得虚假推进（与 #1059 空响应区分同源）。
+    let page_level = pages > 1;
+    if page_level && !blocked {
+        on_page(1, pages);
+    }
+    for page in 2..=pages {
+        let next = fetch_nav(&query(page))?;
+        // 任意一页空响应都让本轮窗口不完整（页 1 空 → 整轮不可信；后续页空 →
+        // 已采净值点照常落库、窗口可能缺尾），统一由调用方按形态分流。
+        let blocked_page = next.blocked;
+        blocked |= blocked_page;
+        points.extend(next.points);
+        if page_level && !blocked_page {
+            on_page(page, pages);
+        }
+    }
+    Ok(NavPages {
+        points,
+        blocked,
+        truncated,
+    })
+}
+
+/// 取数面命中时逐只净值通道的角色（ADR-0121 取数面 / ADR-0122 决策 2；现价
+/// 刷新侧的判据，issue #1377 起首刷不再在现价刷新路径——首刷归后台补全）。
+enum BulkDecision<'a> {
+    /// 批量面证明没有新净值（最新净值日期不晚于水位）：现价已是最新，整只零请求。
+    NothingNew,
+    /// 批量面报出比水位更新的当周净值：它的最新单位净值就是当日现价与该周采样点
+    /// （周采样要的正是「该周最后一个有报价交易日的价格」），直接落库、整只零请求。
+    LandFromBulk(&'a BulkNavPoint),
+    /// 逐只通道接管：水位落后批量面最新净值所在自然周超过一周（缺周点补齐——
+    /// 批量面的单点落不了中间缺失的周点）或批量面未覆盖（缺口）。
+    PerInstrument,
+}
+
+/// 取数面命中时的三分类判据（ADR-0122 决策 2「逐只采集只服务首刷与缺周点补齐」
+/// 的现价刷新半边，issue #1377）：这是「这次刷新用几次请求」的判定单点——判定为
+/// 前两类即零逐只请求，请求量因此不随基金数增长。
+fn bulk_decision<'a>(
+    latest_hint: Option<&'a BulkNavPoint>,
+    watermark: Option<&str>,
+) -> BulkDecision<'a> {
+    let Some(hint) = latest_hint else {
+        return BulkDecision::PerInstrument;
+    };
+    if hint.is_not_newer_than(watermark) {
+        return BulkDecision::NothingNew;
+    }
+    if week_gap_needs_per_instrument(watermark, &hint.date) {
+        return BulkDecision::PerInstrument;
+    }
+    BulkDecision::LandFromBulk(hint)
+}
+
+/// 缺周点补齐判据（ADR-0122 决策 2）：水位落后批量面最新净值所在自然周**超过
+/// 一周**（例如应用数周未开）时，中间缺失的周点只有逐只窗口能补——逐只通道接管。
+/// 同一周或只差一周（常态的跨周）不触发：批量面的最新净值就是当周采样点，上一周
+/// 的采样点已在上一周落库。水位缺失或不可解析时保守接管（宁可多一次请求，
+/// 不静默丢周点）。
+fn week_gap_needs_per_instrument(watermark: Option<&str>, bulk_date: &str) -> bool {
+    let parse = |date: &str| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok();
+    let (Some(watermark), Some(bulk_date)) = (watermark.and_then(parse), parse(bulk_date)) else {
+        return true;
+    };
+    super::incremental::week_monday(bulk_date) - super::incremental::week_monday(watermark)
+        > chrono::Duration::days(7)
+}
+
+/// 把批量取数面的最新单位净值直接落库（ADR-0122 决策 2 / issue #1377）：现价
+/// 缓存（现价 = 单位净值、`priced_at` = `nav_date` = 净值日期，与逐只通道同形）
+/// 外加当周采样点（每周至多一条、整周覆盖幂等——落库单点与逐只通道共用
+/// `upsert_price_history`）。只在批量面报出比水位更新的净值时调用（见
+/// [`bulk_decision`]）。
+///
+/// 当周采样点只落**已有历史序列**的标的：无历史序列者落单点会让「有历史序列」
+/// 冒充「历史完整」，永久破坏首刷判据（ADR-0038 决策 6）——首刷的历史由后台
+/// 补全整根回填（issue #1377）。
+fn land_bulk_point<Q: ScopedSession>(
+    session: &Q,
+    fund: &super::incremental::SyncInstrument,
+    hint: &BulkNavPoint,
+) -> Result<()> {
+    let price_cents = price_value_to_cents(hint.nav);
+    session.with_connection(|conn| {
+        let has_history = ledger_investment::backfill::has_any_history(conn, &fund.instrument_id)?;
+        upsert_market_price(
+            conn,
+            &MarketPriceWrite {
+                instrument_id: &fund.instrument_id,
+                price_cents,
+                currency_code: &fund.currency,
+                priced_at: &hint.date,
+                nav_date: Some(&hint.date),
+                source: Some(EASTMONEY_PRICE_SOURCE),
+            },
+        )?;
+        if has_history {
+            upsert_price_history(
+                conn,
+                &fund.instrument_id,
+                &hint.date,
+                price_cents,
+                &fund.currency,
+                EASTMONEY_PRICE_SOURCE,
+            )?;
+        }
+        Ok(())
+    })?;
     Ok(())
 }

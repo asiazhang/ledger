@@ -25,6 +25,8 @@ ledger-accounts = { path = "../accounts" }
 ledger-currencies = { path = "../currencies" }
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
 serde = { version = "1", features = ["derive"] }
+# 结构化日志（域内运行态快照的毒化降级告警等；transaction / backup 域同款）。
+tracing = "0.1"
 utoipa = { version = "5", features = ["axum_extras"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 

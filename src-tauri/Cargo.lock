@@ -3147,6 +3147,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tauri-app",
+ "tracing",
  "utoipa",
 ]
 

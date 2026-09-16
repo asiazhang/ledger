@@ -126,8 +126,12 @@
     "noSource": "No price source for this instrument",
     "noSourceExtra": "Stock instruments with an unknown market are not covered by market data collection and do not accept manual price entry, so no trend chart is available.",
     "empty": "No historical price data",
-    "emptyExtra": "Click “Sync Instrument Info” in the instrument list to backfill the last two years of quotes, then the trend will appear.",
-    "emptyExtraManual": "Click “Record Price” in the instrument list to enter a price, then the trend will appear."
+    "emptyNoPointsInRange": "No sample points in this range. Try a longer range.",
+    "emptyExtraManual": "Click “Record Price” in the instrument list to enter a price, then the trend will appear.",
+    "emptyBackfillRunning": "Backfilling price history; the trend will appear once it finishes.",
+    "emptyBackfillProgress": "Backfilling price history ({done}/{total}); the trend will appear once it finishes.",
+    "emptyBackfillRetryPending": "Backfill has not succeeded yet; it will retry automatically later.",
+    "emptyBackfillNoData": "No collectable price history (unknown code, no NAV published yet, or delisted)."
   },
   "form": {
     "amount": "Amount",
@@ -187,7 +191,8 @@
   },
   "staleness": {
     "message": "{count} instruments may have stale quotes / NAV (not updated for over {days} days, or a holding has no price).",
-    "goSync": "Sync Instrument Info"
+    "goSync": "Sync Instrument Info",
+    "hint": "Sync refreshes current prices only; trend history is backfilled automatically in the background."
   },
   "market": {
     "sh": "Shanghai",

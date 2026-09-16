@@ -10,9 +10,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use chrono::{Datelike, NaiveDate};
 use rusqlite::{Connection, params};
 
+use crate::SyncProgress;
 use crate::bulk::{
     BULK_DISABLE_PERIOD, BULK_FAILURE_THRESHOLD, BulkFetchCircuit, BulkFetchSurfaces, BulkNavPoint,
     FundNameDictionary, FundNavTable,
@@ -27,11 +27,9 @@ use crate::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
 use crate::model::WriteWitness;
 use crate::session::ScopedSession;
 use crate::{FetchFundName, FetchNavFull, FetchNavPage};
-use crate::{FundNavProgress, SyncProgress};
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::{
-    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
-    upsert_price_history,
+    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, upsert_market_price, upsert_price_history,
 };
 
 use super::{insert_holding, insert_lot};
@@ -104,19 +102,12 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
         log.borrow_mut().push("fetch:end");
         items
     };
-    let mut logging_kline = |_: &str| -> Result<Vec<KlineBar>> {
-        log.borrow_mut().push("fetch:start");
-        log.borrow_mut().push("fetch:end");
-        Ok(vec![])
-    };
 
     let result = do_incremental_sync_with(
         &session,
         &mut logging_fetch,
-        &mut logging_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -130,9 +121,7 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
 
     // 结构钉：全序 = 逐段「取连接→还」与「会话外抓取」的交替；抓取起止之间
     // 不出现任何 take/release（网络期间不持连接）。一次行情标的事件顺序：
-    // 收集 → 批量报价（外） → 名称+现价落库 → 日 K 抓取（外） → 周线落库 →
-    // 本位币读取。日 K 样本为空 = 全部无新点，零写入不取连接（ADR-0122
-    // 收尾裁决口径，issue #1375 起 backfill_stock_history 空样本零写早退）。
+    // 收集 → 批量报价（外） → 名称+现价落库（含当周采样点判定）。
     let log = log.borrow();
     let mut in_fetch = false;
     for &event in log.iter() {
@@ -161,11 +150,9 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
             "fetch:start",
             "fetch:end", // 批量报价（会话外）
             "take",
-            "release", // 名称随行刷新 + 现价 upsert
-            "fetch:start",
-            "fetch:end", // 日 K 抓取（会话外；样本空 → 全部无新点零写入，不取连接）
+            "release", // 名称随行刷新 + 现价 upsert + 当周采样点判定
             "take",
-            "release", // 本位币读取
+            "release", // 本位币读取（汇率回填；无非本位币币种对则零抓取）
         ],
         "读写只在会话内、抓取只在会话外的交织形状（issue #1275）"
     );
@@ -307,10 +294,8 @@ fn incremental_sync_normalizes_symbol_suffix() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -344,10 +329,8 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -368,10 +351,8 @@ fn incremental_sync_empty_library_returns_message() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -413,10 +394,8 @@ fn incremental_sync_updates_holding_prices_only() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -483,10 +462,8 @@ fn incremental_sync_skips_holdings_without_quote_source() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -535,10 +512,8 @@ fn incremental_sync_keeps_old_price_when_suspended() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -568,10 +543,8 @@ fn incremental_sync_counts_missing_response_as_skipped() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -599,10 +572,8 @@ fn incremental_sync_skips_unknown_market() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -625,10 +596,8 @@ fn incremental_sync_is_idempotent() {
     let first = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -641,10 +610,8 @@ fn incremental_sync_is_idempotent() {
     let second = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -674,10 +641,8 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -733,10 +698,8 @@ fn incremental_sync_pulls_a_daily_ledgers_quotes_in_one_batch() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -792,10 +755,8 @@ fn incremental_sync_batches_quote_requests_by_the_batch_size_constant() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -817,10 +778,8 @@ fn incremental_sync_propagates_fetch_error() {
     let err = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -847,35 +806,41 @@ fn incremental_sync_propagates_fetch_error() {
 fn witness_survives_mid_run_failure_after_write() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-a", "600001", "stock", "CNY", "sh");
-    insert_holding(&conn, "acc-2", "inst-b", "600002", "stock", "CNY", "sh");
+    insert_holding(
+        &conn,
+        "acc-2",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
 
-    // 批量报价成功（两只都落现价），随后日 K 抓取失败——报价写入已 autocommit、
-    // 失败回不去；见证器必须仍报告「写过」。
-    let prices = [("600001", Some(1000.0)), ("600002", Some(2000.0))];
+    // 批量报价成功（股票落现价），随后基金净值抓取失败——报价写入已 autocommit、
+    // 失败回不去；见证器必须仍报告「写过」。现价与历史解耦后（issue #1377），
+    // 同步中途的网络失败来自基金净值通道（日 K 已归后台补全）。
+    let prices = [("600001", Some(1000.0))];
     let mut fetch = mock_fetch(&prices);
-    let mut kline = |_: &str| Err(AppError::Io("模拟日 K 网络失败".into()));
+    let mut nav = |_: &NavQuery| Err(AppError::Io("模拟净值网络失败".into()));
     let mut witness = WriteWitness::default();
     let err = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut kline,
         &mut no_fx,
-        &mut no_nav,
-        &mut no_full_nav,
+        &mut nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
         &mut witness,
     )
     .unwrap_err();
-    assert!(err.to_string().contains("模拟日 K 网络失败"));
+    assert!(err.to_string().contains("模拟净值网络失败"));
     assert!(
         witness.any_written(),
         "实际写过之后中途失败：见证器应存活（#1277：失败 ≠ 未写过）"
     );
     // 行为侧锚：价格确实已落库（分段 autocommit，失败也回不去）。
     assert_eq!(market_price_of(&conn, "inst-a"), Some(100000));
-    assert_eq!(market_price_of(&conn, "inst-b"), Some(200000));
 }
 
 /// 成功路径镜像钉：见证器与结果统计同口径——`witness.any_written()` ==
@@ -891,10 +856,8 @@ fn witness_mirrors_result_any_written_on_success() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -953,10 +916,8 @@ fn witness_mirrors_result_any_written_on_success() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -985,25 +946,6 @@ fn bar(date: &str, close: f64) -> KlineBar {
     }
 }
 
-/// 模拟日 K 抓取：按完整 secid（如 "1.600519"）返回日线样本；未命中返回空
-/// （模拟全段停牌 / 无效代码）。
-fn mock_kline<'a>(
-    by_secid: &'a [(&'a str, Vec<KlineBar>)],
-) -> impl FnMut(&str) -> Result<Vec<KlineBar>> + 'a {
-    move |secid: &str| {
-        Ok(by_secid
-            .iter()
-            .find(|(s, _)| *s == secid)
-            .map(|(_, bars)| bars.clone())
-            .unwrap_or_default())
-    }
-}
-
-/// 空实现：既有用例只关心现价行为时注入（历史回填接缝的最小桩）。
-fn no_kline(_: &str) -> Result<Vec<KlineBar>> {
-    Ok(vec![])
-}
-
 /// 空实现：同 [`no_kline`]，用于汇率回填。
 fn no_fx(_: &str) -> Result<Vec<KlineBar>> {
     Ok(vec![])
@@ -1017,12 +959,6 @@ fn no_nav(_: &NavQuery) -> Result<LsjzPage> {
         total: 0,
         blocked: false,
     })
-}
-
-/// 空实现：既有用例不关心单请求全量净值通道时注入。空序列 = 通道不可用，编排
-/// 据此回退分页通道（与真实解析失败同路）——既有首刷用例仍走分页桩。
-fn no_full_nav(_: &str) -> Result<Vec<NavPoint>> {
-    Ok(vec![])
 }
 
 /// 空实现：既有用例不关心基金名称刷新时注入（返回空串 = 未取到名称，不落库）。
@@ -1105,266 +1041,21 @@ fn fx_rows(conn: &Connection, base: &str, quote: &str) -> Vec<(String, f64)> {
 }
 
 #[test]
-fn kline_backfill_downsamples_daily_to_weekly() {
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
-
-    // 一段跨年日线：2025-12-29 ~ 2026-01-04 属同一 ISO 周（跨年边界），
-    // 元旦假期整周缺价跳点；其余周取最后一个有报价交易日。
-    let bars = vec![
-        bar("2025-12-24", 10.00), // 该周（12-22 起）最后一交易日
-        bar("2025-12-29", 10.05), // 跨年周首个交易日
-        bar("2025-12-31", 10.10), // 跨年周最后一交易日（1/1-1/4 假期）
-        // 2026-01-05 ~ 01-09 整周节假日无报价：该周无点
-        bar("2026-01-12", 10.30),
-        bar("2026-01-13", 10.40), // 该周最后交易日
-    ];
-    let klines = [("1.600519", bars)];
-    let prices = [("600519", Some(1040.0))];
-    let fx_log = RefCell::new(Vec::new());
-    let mut fetch = mock_fetch(&prices);
-    let mut kline = mock_kline(&klines);
-    let mut fx = mock_fx(&[], &fx_log);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut kline,
-        &mut fx,
-        &mut no_nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(result.synced, 1);
-    assert_eq!(
-        price_history_rows(&conn, "inst-sh"),
-        vec![
-            ("2025-12-24".into(), 100000, "CNY".into()),
-            ("2025-12-31".into(), 101000, "CNY".into()),
-            ("2026-01-13".into(), 104000, "CNY".into()),
-        ],
-        "每周取最后一个有报价交易日的收盘价；整周缺价该周无点"
-    );
-}
-
-#[test]
-fn kline_backfill_full_week_overwrite_is_idempotent() {
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
-    let prices = [("600519", Some(920.0))];
-    let fx_log = RefCell::new(Vec::new());
-
-    // 第一轮回填：该周最后交易日为周五 01-09。
-    let first = [(
-        "1.600519",
-        vec![bar("2026-01-05", 9.00), bar("2026-01-09", 9.50)],
-    )];
-    // 第二轮回填：周五修正为缺价，最后交易日变为周四 01-08。
-    let second = [(
-        "1.600519",
-        vec![bar("2026-01-05", 9.00), bar("2026-01-08", 9.20)],
-    )];
-
-    let mut fetch = mock_fetch(&prices);
-    let mut kline = mock_kline(&first);
-    let mut fx = mock_fx(&[], &fx_log);
-    do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut kline,
-        &mut fx,
-        &mut no_nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    let mut fetch = mock_fetch(&prices);
-    let mut kline = mock_kline(&second);
-    let mut fx = mock_fx(&[], &fx_log);
-    do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut kline,
-        &mut fx,
-        &mut no_nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(
-        price_history_rows(&conn, "inst-sh"),
-        vec![("2026-01-08".into(), 92000, "CNY".into())],
-        "同周重复回填整周覆盖：采样日与价格取最新一次抓取"
-    );
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(count, 1, "重复回填零重复行");
-}
-
-#[test]
-fn kline_backfill_keeps_history_after_position_cleared() {
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
-    insert_holding(&conn, "acc-2", "inst-sz", "000001", "stock", "CNY", "sz");
-
-    let bars = [
-        (
-            "1.600519",
-            vec![bar("2026-01-05", 10.00), bar("2026-01-06", 10.10)],
-        ),
-        (
-            "0.000001",
-            vec![bar("2026-01-05", 11.00), bar("2026-01-06", 11.20)],
-        ),
-    ];
-    let prices = [("600519", Some(1010.0)), ("000001", Some(1120.0))];
-    let fx_log = RefCell::new(Vec::new());
-
-    let mut fetch = mock_fetch(&prices);
-    let mut kline = mock_kline(&bars);
-    let mut fx = mock_fx(&[], &fx_log);
-    do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut kline,
-        &mut fx,
-        &mut no_nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-    assert_eq!(price_history_rows(&conn, "inst-sh").len(), 1);
-    assert_eq!(price_history_rows(&conn, "inst-sz").len(), 1);
-
-    // 清仓 inst-sh（#827 起仍参与采集）：重复回填经周采样幂等仍单行，历史保留不删。
-    conn.execute(
-        "DELETE FROM security_lots WHERE instrument_id='inst-sh'",
-        [],
-    )
-    .unwrap();
-
-    let mut fetch = mock_fetch(&prices);
-    let mut kline = mock_kline(&bars);
-    let mut fx = mock_fx(&[], &fx_log);
-    do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut kline,
-        &mut fx,
-        &mut no_nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(
-        price_history_rows(&conn, "inst-sh").len(),
-        1,
-        "清仓后历史保留不删"
-    );
-    assert_eq!(price_history_rows(&conn, "inst-sz").len(), 1);
-    let total: i64 = conn
-        .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(total, 2);
-}
-
-#[test]
-fn kline_backfill_writes_fx_rate_history_alongside() {
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
-    insert_holding(&conn, "acc-2", "inst-hk", "00700", "stock", "HKD", "hk");
-
-    let klines = [
-        (
-            "1.600519",
-            vec![bar("2026-01-05", 10.00), bar("2026-01-13", 10.40)],
-        ),
-        (
-            "116.00700",
-            vec![bar("2026-01-05", 475.00), bar("2026-01-13", 480.00)],
-        ),
-    ];
-    let prices = [("600519", Some(1040.0)), ("00700", Some(480000.0))];
-    let fx_bars = [(
-        "HKDCNY",
-        vec![bar("2026-01-05", 0.91), bar("2026-01-13", 0.92)],
-    )];
-    let fx_log = RefCell::new(Vec::new());
-    let mut fetch = mock_fetch(&prices);
-    let mut kline = mock_kline(&klines);
-    let mut fx = mock_fx(&fx_bars, &fx_log);
-    do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut kline,
-        &mut fx,
-        &mut no_nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    // 汇率与价格同期段（同周规则）落 FxRateHistory：base=HKD、quote=本位币 CNY。
-    assert_eq!(
-        fx_rows(&conn, "HKD", "CNY"),
-        vec![("2026-01-05".into(), 0.91), ("2026-01-13".into(), 0.92)],
-    );
-    // 价格历史同期落库（收盘价 ×10000 得万分之一元：475.00 → 4750000，ADR-0038 刻度）。
-    assert_eq!(
-        price_history_rows(&conn, "inst-hk"),
-        vec![
-            ("2026-01-05".into(), 4750000, "HKD".into()),
-            ("2026-01-13".into(), 4800000, "HKD".into()),
-        ],
-    );
-    // 仅非本位币币种对触发汇率抓取（CNY 股票不查汇率）。
-    assert_eq!(fx_log.borrow().as_slice(), ["HKDCNY"]);
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM fx_rate_history", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(count, 2, "每币种对每周至多一条");
-}
-
-#[test]
-fn kline_backfill_empty_history_keeps_quote_only() {
+fn sync_writes_no_price_history_quote_only() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     let prices = [("600519", Some(1000.0))];
     let fx_log = RefCell::new(Vec::new());
     let mut fetch = mock_fetch(&prices);
-    // 无任何日线（全段停牌 / 新上市不足一周）：历史缺 gracefully，现价照常更新。
-    let mut kline = mock_kline(&[]);
     let mut fx = mock_fx(&[], &fx_log);
+    // 现价与历史解耦（ADR-0122 / issue #1377）：同步只刷现价——无历史序列的
+    // 标的也不落任何采样点（单点会冒充历史完整、永久破坏后台补全的首刷判据），
+    // 编排的参数表里已无日 K 通道（编译期不可表达）。
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -1377,32 +1068,57 @@ fn kline_backfill_empty_history_keeps_quote_only() {
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(count, 0);
+    assert_eq!(count, 0, "同步不回填历史（归价格历史后台补全）");
 }
 
 #[test]
-fn kline_backfill_fetch_error_propagates() {
+fn sync_lands_current_week_point_for_instrument_with_existing_history() {
+    // 当周采样点直落（ADR-0122 决策 2 / issue #1377）：已有历史序列的行情标的，
+    // 现价刷新携带的当日有效报价即当周采样点——不另发逐只日 K 请求（编排的
+    // 参数表已无日 K 通道，编译期不可表达），周采样语义不变（每周至多一条、
+    // 同周整周覆盖幂等）；历史深采集仍归后台补全。
+    let today_date = beijing_today();
+    let today = today_date.format("%Y-%m-%d").to_string();
+    let old_date = (today_date - chrono::Duration::days(14))
+        .format("%Y-%m-%d")
+        .to_string();
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
+    upsert_price_history(
+        &conn,
+        "inst-sh",
+        &old_date,
+        90000,
+        "CNY",
+        EASTMONEY_PRICE_SOURCE,
+    )
+    .unwrap();
     let prices = [("600519", Some(1000.0))];
     let fx_log = RefCell::new(Vec::new());
     let mut fetch = mock_fetch(&prices);
-    let mut kline = |_: &str| Err(AppError::Io("模拟日 K 请求失败".into()));
     let mut fx = mock_fx(&[], &fx_log);
-    let err = do_incremental_sync_with(
+    let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
-    .unwrap_err();
-    assert!(err.to_string().contains("模拟日 K 请求失败"));
+    .unwrap();
+
+    assert_eq!(result.synced, 1);
+    assert_eq!(market_price_of(&conn, "inst-sh"), Some(100000));
+    assert_eq!(
+        price_history_rows(&conn, "inst-sh"),
+        vec![
+            (old_date, 90000, "CNY".into()),
+            (today, 100000, "CNY".into()),
+        ],
+        "当周采样点由现价刷新直落：上一周点与当周点并存",
+    );
 }
 
 #[test]
@@ -1531,86 +1247,6 @@ fn mock_nav<'a>(
     }
 }
 
-/// 日序列（日期升序的 (日期, 单位净值)）→ 单请求全量通道的净值点序列。
-fn full_series(series: &[(String, f64)]) -> Vec<NavPoint> {
-    series
-        .iter()
-        .map(|(date, nav)| NavPoint {
-            date: date.clone(),
-            nav: *nav,
-        })
-        .collect()
-}
-
-/// 模拟单请求全量净值通道：按代码返回整只基金的**全部历史**单位净值，并记录请求
-/// 的代码（断言首刷一次请求、增量不触碰本通道）。
-fn mock_full_nav<'a>(
-    series_by_code: &'a [(&'a str, Vec<NavPoint>)],
-    requested: &'a RefCell<Vec<String>>,
-) -> impl FnMut(&str) -> Result<Vec<NavPoint>> + 'a {
-    move |code: &str| {
-        requested.borrow_mut().push(code.to_string());
-        Ok(series_by_code
-            .iter()
-            .find(|(c, _)| *c == code)
-            .map(|(_, points)| points.clone())
-            .unwrap_or_default())
-    }
-}
-
-/// 逐交易日净值序列（周一至周五各一条、日期升序、单位净值温和上抬）：真实净值
-/// 按日公布，周线回填的覆盖深度由降采样后每周一点体现。
-fn daily_nav_series(start: NaiveDate, end: NaiveDate) -> Vec<(String, f64)> {
-    let mut series = Vec::new();
-    let mut nav = 1.0_f64;
-    let mut day = start;
-    while day <= end {
-        if day.weekday().num_days_from_monday() < 5 {
-            nav += 0.001;
-            series.push((day.format("%Y-%m-%d").to_string(), nav));
-        }
-        day = day.succ_opt().unwrap();
-    }
-    series
-}
-
-/// 窗口敏感的历史净值页 mock（页大小 = 服务端硬上限 20，返回前按日期降序）：
-/// 按 `[start_date, end_date]` 闭区间从固定序列里过滤，`total` = 窗口内条数。
-/// 窗口起点错（如把「添加时写入的净值日期」当增量水位）会直接少采或不采净值点，
-/// 于是「首刷回填补齐两年」的断言对准同步后可查询到的周点覆盖深度，而不是函数
-/// 或调用形状（issue #1059 负向条目）。
-fn mock_nav_series<'a>(
-    series: &'a [(String, f64)],
-    requested: &'a RefCell<Vec<NavQuery>>,
-) -> impl FnMut(&NavQuery) -> Result<LsjzPage> + 'a {
-    move |query: &NavQuery| {
-        requested.borrow_mut().push(query.clone());
-        let mut in_window: Vec<&(String, f64)> = series
-            .iter()
-            .filter(|(date, _)| {
-                date.as_str() >= query.start_date.as_str()
-                    && date.as_str() <= query.end_date.as_str()
-            })
-            .collect();
-        in_window.sort_by(|a, b| b.0.cmp(&a.0));
-        let total = in_window.len() as u64;
-        let points = in_window
-            .into_iter()
-            .skip(((query.page - 1) * 20) as usize)
-            .take(20)
-            .map(|(date, nav)| NavPoint {
-                date: date.clone(),
-                nav: *nav,
-            })
-            .collect();
-        Ok(LsjzPage {
-            points,
-            total,
-            blocked: false,
-        })
-    }
-}
-
 #[test]
 fn beijing_date_shifts_utc_by_plus_8h() {
     // 北京日历 = UTC 时刻 + 8h 后取日期部分：16:00 UTC 是北京午夜边界，
@@ -1637,15 +1273,6 @@ fn beijing_date_shifts_utc_by_plus_8h() {
     );
 }
 
-/// 近两年首刷窗口起点（与 kline_beg / nav_window 同式，测试侧独立重算）。
-fn expected_first_sync_start() -> String {
-    beijing_today()
-        .checked_sub_months(chrono::Months::new(24))
-        .unwrap()
-        .format("%Y-%m-%d")
-        .to_string()
-}
-
 /// 基金现价缓存的 (price_cents, nav_date)（无行返回 None）。
 fn fund_price_of(conn: &Connection, instrument_id: &str) -> Option<(i64, Option<String>)> {
     conn.query_row(
@@ -1654,558 +1281,6 @@ fn fund_price_of(conn: &Connection, instrument_id: &str) -> Option<(i64, Option<
         |r| Ok((r.get(0)?, r.get(1)?)),
     )
     .ok()
-}
-
-/// 注入「第 3 个周点（2026-01-19 当周）写入失败」的测试侧故障，供 ADR-0122
-/// 决策 8 / issue #1373 的负向判据共用：`BEFORE INSERT` 触发器
-/// `RAISE(ABORT)`，产品代码零 hook。降采样按周升序落库，故前两个周点先写、
-/// 第三个失败——逐周点提交会留下前两行，整只一次提交回滚后零行。
-fn inject_week_write_failure(conn: &Connection) {
-    conn.execute_batch(
-        "CREATE TRIGGER inject_week_write_failure BEFORE INSERT ON price_history \
-         WHEN NEW.trade_date='2026-01-19' \
-         BEGIN SELECT RAISE(ABORT, '注入周点写入失败'); END;",
-    )
-    .unwrap();
-}
-
-#[test]
-fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-
-    // 首刷（无水位）：窗口 = 近两年。total=45 → 3 页；净值页按日期降序返回，
-    // 第 1/2 页跨页同属 ISO 周（2026-01-26 起）——攒齐后一次降采样必须取该周
-    // 最后一个净值日（01-30 周五），逐页落库会被后页的更早日期覆盖。
-    let pages = [(
-        "110022",
-        vec![
-            nav_page(45, &[("2026-01-30", 3.348), ("2026-01-28", 3.293)]),
-            nav_page(45, &[("2026-01-26", 3.25), ("2025-12-31", 3.1)]),
-            nav_page(45, &[]),
-        ],
-    )];
-    let requested = RefCell::new(Vec::new());
-    let mut fetch = mock_fetch(&[]);
-    let mut nav = mock_nav(&pages, &requested);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(result.synced, 1);
-    assert_eq!(result.skipped, 0);
-    assert_eq!(result.written, 1);
-
-    // 翻页：首页起点 = 近两年窗口起点，共 3 页、全部同窗口。
-    let requested = requested.borrow();
-    assert_eq!(requested.len(), 3);
-    for q in requested.iter() {
-        assert_eq!(q.code, "110022");
-        assert_eq!(q.start_date, expected_first_sync_start());
-    }
-    assert_eq!(requested[0].page, 1);
-    assert_eq!(requested[1].page, 2);
-    assert_eq!(requested[2].page, 3);
-
-    // 周采样：跨页同周取最后净值日；单位净值 ×10000 得万分之一元（ADR-0038）。
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![
-            ("2025-12-31".into(), 31000, "CNY".into()),
-            ("2026-01-30".into(), 33480, "CNY".into()),
-        ],
-    );
-
-    // 现价 = 窗口内最新公布单位净值，priced_at = nav_date = 净值日期（下次水位）。
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((33480, Some("2026-01-30".into()))),
-    );
-}
-
-#[test]
-fn fund_first_sync_prefers_single_request_full_series() {
-    // issue #1062：首刷一次请求拿整只基金历史净值并裁剪到近两年窗口，替代约 25
-    // 次分页请求；窗口外更早的点被裁剪掉（回填深度语义不变）。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-
-    let window_start = beijing_today()
-        .checked_sub_months(chrono::Months::new(24))
-        .unwrap();
-    let five_years_ago = beijing_today()
-        .checked_sub_months(chrono::Months::new(60))
-        .unwrap();
-    let series = daily_nav_series(five_years_ago, beijing_today());
-    let full_by_code = [("110022", full_series(&series))];
-    let full_requested = RefCell::new(Vec::new());
-    let mut full = mock_full_nav(&full_by_code, &full_requested);
-    let page_requested = RefCell::new(Vec::new());
-    let mut nav = mock_nav(&[], &page_requested);
-
-    let mut fetch = mock_fetch(&[]);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut full,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(result.synced, 1);
-    assert_eq!(result.written, 1);
-    {
-        let requested = full_requested.borrow();
-        assert_eq!(requested.len(), 1, "首刷每次一条请求");
-        assert_eq!(requested[0], "110022", "按基金代码取全量");
-    }
-    assert!(
-        page_requested.borrow().is_empty(),
-        "单请求通道命中后不得再分页（一次请求取代约 25 次）"
-    );
-
-    // 落库覆盖深度 = 近两年周线；窗口外更早的点被裁剪掉。
-    let rows = price_history_rows(&conn, "inst-fund");
-    assert!(
-        rows.len() >= 100,
-        "近两年应有约 104 个周点，实际 {}",
-        rows.len()
-    );
-    let earliest = rows.first().unwrap().0.as_str();
-    let expected_start = expected_first_sync_start();
-    let first_week_end = (window_start + chrono::Days::new(6))
-        .format("%Y-%m-%d")
-        .to_string();
-    assert!(
-        earliest >= expected_start.as_str() && earliest <= first_week_end.as_str(),
-        "最早周点应落在两年窗口首周内（窗口外点被裁剪）：{earliest} ∉ [{expected_start}, {first_week_end}]"
-    );
-
-    let latest = series.last().unwrap();
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((price_value_to_cents(latest.1), Some(latest.0.clone()))),
-    );
-}
-
-#[test]
-fn fund_first_sync_full_series_failure_falls_back_to_pages() {
-    // 单请求通道不可信（解析失败——生产就是「数据文件缺少可信单位净值序列」这条
-    // 错误）：fail-closed 回退既有分页通道，分页结果照常落库——不静默丢数据。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-
-    let mut full = |_: &str| {
-        Err(AppError::Parse(
-            "基金 110022 详情页数据文件缺少可信的单位净值序列".into(),
-        ))
-    };
-    let requested = RefCell::new(Vec::new());
-    let pages = [(
-        "110022",
-        vec![nav_page(2, &[("2026-01-30", 3.348), ("2026-01-29", 3.42)])],
-    )];
-    let mut nav = mock_nav(&pages, &requested);
-
-    let mut fetch = mock_fetch(&[]);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut full,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(result.written, 1);
-    assert_eq!(requested.borrow().len(), 1, "回退分页通道");
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![("2026-01-30".into(), 33480, "CNY".into())],
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((33480, Some("2026-01-30".into()))),
-    );
-}
-
-#[test]
-fn fund_first_sync_full_series_empty_falls_back_to_pages() {
-    // 单请求通道结构完好但为空（新基金未公布净值 / 裁剪后无窗口内点）：同样回退
-    // 分页通道，不让一条不确定的空结果直接决定「无净值」。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-
-    let mut full = |_: &str| Ok(vec![]);
-    let requested = RefCell::new(Vec::new());
-    let pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.348)])])];
-    let mut nav = mock_nav(&pages, &requested);
-
-    let mut fetch = mock_fetch(&[]);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut full,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(result.written, 1);
-    assert_eq!(requested.borrow().len(), 1, "空结果回退分页通道");
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((33480, Some("2026-01-30".into()))),
-    );
-}
-
-#[test]
-fn fund_first_sync_full_series_without_window_points_falls_back_to_pages() {
-    // 退市 / 清仓多年的基金：单请求通道返回的点全在近两年窗口外——裁剪为空后
-    // 回退分页通道，不在窗口内凭空造点。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-
-    let stale = vec![NavPoint {
-        date: "2010-08-20".into(),
-        nav: 1.0,
-    }];
-    let full_by_code = [("110022", stale)];
-    let full_requested = RefCell::new(Vec::new());
-    let mut full = mock_full_nav(&full_by_code, &full_requested);
-    let requested = RefCell::new(Vec::new());
-    let pages = [("110022", vec![nav_page(0, &[])])];
-    let mut nav = mock_nav(&pages, &requested);
-
-    let mut fetch = mock_fetch(&[]);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut full,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(requested.borrow().len(), 1, "窗口外点回退分页通道");
-    assert_eq!(full_requested.borrow().len(), 1, "首刷先查单请求通道");
-    assert_eq!(price_history_rows(&conn, "inst-fund"), vec![]);
-    assert_eq!(result.skipped, 1, "查无窗口内净值计入跳过");
-}
-
-#[test]
-fn fund_incremental_does_not_touch_single_request_full_series() {
-    // 日常增量仍走既有历史净值接口：有历史序列的基金不发起单请求全量查询，
-    // 即使单请求通道返回别值也不被消费（水位语义与 #1059 一致）。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-    upsert_market_price(
-        &conn,
-        &MarketPriceWrite {
-            instrument_id: "inst-fund",
-            price_cents: 30000,
-            currency_code: "CNY",
-            priced_at: "2026-01-28",
-            nav_date: Some("2026-01-28"),
-            source: Some(EASTMONEY_PRICE_SOURCE),
-        },
-    )
-    .unwrap();
-    upsert_price_history(
-        &conn,
-        "inst-fund",
-        "2026-01-28",
-        30000,
-        "CNY",
-        EASTMONEY_PRICE_SOURCE,
-    )
-    .unwrap();
-
-    let full_by_code = [(
-        "110022",
-        vec![NavPoint {
-            date: "2026-01-30".into(),
-            nav: 9.99,
-        }],
-    )];
-    let full_requested = RefCell::new(Vec::new());
-    let mut full = mock_full_nav(&full_by_code, &full_requested);
-    let requested = RefCell::new(Vec::new());
-    let pages = [(
-        "110022",
-        vec![nav_page(2, &[("2026-01-30", 3.348), ("2026-01-29", 3.42)])],
-    )];
-    let mut nav = mock_nav(&pages, &requested);
-
-    let mut fetch = mock_fetch(&[]);
-    do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut full,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(requested.borrow().len(), 1, "增量走分页通道");
-    assert!(
-        full_requested.borrow().is_empty(),
-        "有历史序列的增量不触碰单请求全量通道"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((33480, Some("2026-01-30".into()))),
-        "取分页通道的净值，不采信单请求通道的另一值"
-    );
-}
-
-#[test]
-fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-    // 水位 = 现价缓存的净值日期 01-28（周三），上一轮已把该周采样写到周三。
-    upsert_market_price(
-        &conn,
-        &MarketPriceWrite {
-            instrument_id: "inst-fund",
-            price_cents: 30000,
-            currency_code: "CNY",
-            priced_at: "2026-01-28",
-            nav_date: Some("2026-01-28"),
-            source: Some(EASTMONEY_PRICE_SOURCE),
-        },
-    )
-    .unwrap();
-    upsert_price_history(
-        &conn,
-        "inst-fund",
-        "2026-01-28",
-        30000,
-        "CNY",
-        EASTMONEY_PRICE_SOURCE,
-    )
-    .unwrap();
-    // 更早一周的历史点应原样保留（增量不回看）。
-    upsert_price_history(
-        &conn,
-        "inst-fund",
-        "2026-01-23",
-        31000,
-        "CNY",
-        EASTMONEY_PRICE_SOURCE,
-    )
-    .unwrap();
-
-    // 窗口 = 水位次日起，单页两行（total=2 → 1 页）：周四、周五新净值；
-    // 周五与水位同周——该周采样整周覆盖为周五。
-    let pages = [(
-        "110022",
-        vec![nav_page(2, &[("2026-01-30", 3.348), ("2026-01-29", 3.42)])],
-    )];
-    let requested = RefCell::new(Vec::new());
-    let mut fetch = mock_fetch(&[]);
-    let mut nav = mock_nav(&pages, &requested);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(result.synced, 1);
-    assert_eq!(result.skipped, 0);
-    assert_eq!(result.written, 1);
-
-    let requested = requested.borrow();
-    assert_eq!(requested.len(), 1, "常态增量每只一页");
-    assert_eq!(requested[0].start_date, "2026-01-29", "从水位次日起");
-
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![
-            ("2026-01-23".into(), 31000, "CNY".into()),
-            ("2026-01-30".into(), 33480, "CNY".into()),
-        ],
-        "水位当日不重拉；同周新净值整周覆盖采样日"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((33480, Some("2026-01-30".into()))),
-    );
-}
-
-#[test]
-fn fund_incremental_up_to_date_counts_synced_without_write() {
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-    // 水位较新（一周内），窗口内无新净值（mock 返回空页）。
-    let watermark = beijing_today()
-        .checked_sub_days(chrono::Days::new(7))
-        .unwrap()
-        .format("%Y-%m-%d")
-        .to_string();
-    upsert_market_price(
-        &conn,
-        &MarketPriceWrite {
-            instrument_id: "inst-fund",
-            price_cents: 30000,
-            currency_code: "CNY",
-            priced_at: &watermark,
-            nav_date: Some(&watermark),
-            source: Some(EASTMONEY_PRICE_SOURCE),
-        },
-    )
-    .unwrap();
-    // 已有历史序列：水位只在「已回填过」的基金上作增量起点（issue #1059）。
-    upsert_price_history(
-        &conn,
-        "inst-fund",
-        &watermark,
-        30000,
-        "CNY",
-        EASTMONEY_PRICE_SOURCE,
-    )
-    .unwrap();
-
-    let requested = RefCell::new(Vec::new());
-    let mut fetch = mock_fetch(&[]);
-    let mut nav = mock_nav(&[], &requested);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    // 「已是最新」= 处理成功但不落库：synced 计入、written 为 0（零变化不广播）。
-    assert_eq!(result.synced, 1);
-    assert_eq!(result.skipped, 0);
-    assert_eq!(result.written, 0);
-    assert_eq!(result.message, "已同步 1 只，跳过 0 只");
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((30000, Some(watermark))),
-        "无新净值不动现价"
-    );
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund").len(),
-        1,
-        "无新净值零落库：既有历史点原样保留（水位增量语义，issue #1059）"
-    );
 }
 
 #[test]
@@ -2226,10 +1301,8 @@ fn fund_first_sync_without_nav_counts_skipped() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -2243,456 +1316,6 @@ fn fund_first_sync_without_nav_counts_skipped() {
     assert_eq!(result.written, 0);
     assert_eq!(fund_price_of(&conn, "inst-fund"), None);
     assert_eq!(result.message, "已同步 0 只，跳过 1 只");
-}
-
-#[test]
-fn fund_with_nav_date_but_no_history_backfills_two_years() {
-    // issue #1059：添加基金 / AI 导入在「按代码即拉」时已把最新净值日期写进
-    // 现价缓存（水位有值），但这只基金没有任何历史序列——首刷判据必须是
-    // 「磁盘上有无历史序列」，不是「水位是否存在」。#303 的首刷回填验收在真实
-    // 账本上未成立，根因即在此。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-    // 添加基金路径的产物：现价缓存有净值日期（水位），PriceHistory 为空。
-    let watermark = beijing_today()
-        .checked_sub_days(chrono::Days::new(1))
-        .unwrap()
-        .format("%Y-%m-%d")
-        .to_string();
-    upsert_market_price(
-        &conn,
-        &MarketPriceWrite {
-            instrument_id: "inst-fund",
-            price_cents: 35000,
-            currency_code: "CNY",
-            priced_at: &watermark,
-            nav_date: Some(&watermark),
-            source: Some(EASTMONEY_PRICE_SOURCE),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![],
-        "前置：无任何历史序列（水位冒充已回填的现场）"
-    );
-
-    // 近两年逐交易日净值序列 + 窗口敏感 mock：起点若按水位增量取，窗口会被压成
-    // 一天、几乎采不到净值点（现价也就不再更新）。
-    let start = beijing_today()
-        .checked_sub_months(chrono::Months::new(24))
-        .unwrap();
-    let series = daily_nav_series(start, beijing_today());
-    let requested = RefCell::new(Vec::new());
-    let mut nav = mock_nav_series(&series, &requested);
-    let mut fetch = mock_fetch(&[]);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(result.synced, 1);
-    assert_eq!(result.skipped, 0);
-    assert_eq!(result.written, 1);
-
-    // 同步后可查询到的净值周点覆盖深度 = 近两年（约 104 周），而不是「水位之后
-    // 的那几天」——断言对准周点覆盖深度，不对准函数或调用形状。
-    let rows = price_history_rows(&conn, "inst-fund");
-    assert!(
-        rows.len() >= 100,
-        "首刷应回填近两年周线，实际只有 {} 个周点",
-        rows.len()
-    );
-    let earliest = rows.first().unwrap().0.as_str();
-    let window_start = expected_first_sync_start();
-    let first_week_end = (start + chrono::Days::new(6))
-        .format("%Y-%m-%d")
-        .to_string();
-    assert!(
-        earliest >= window_start.as_str() && earliest <= first_week_end.as_str(),
-        "最早周点应落在两年窗口的首周内：{earliest} ∉ [{window_start}, {first_week_end}]"
-    );
-
-    // 现价 = 窗口内最新公布净值（序列末点），与 #301 添加基金同形。
-    let latest = series.last().unwrap();
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((price_value_to_cents(latest.1), Some(latest.0.clone()))),
-    );
-}
-
-#[test]
-fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
-    // issue #1059：有水位、有历史序列，但历史净值接口返回空响应（Data 缺省 /
-    // 非对象，如缺 Referer 被拦截 / 风控）——不得按「已是最新」静默计成功。
-    // 与 fund_incremental_up_to_date_counts_synced_without_write（同样是空窗口，
-    // 但报文形态正常、空表可信）在同步统计上区分开。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-    let watermark = beijing_today()
-        .checked_sub_days(chrono::Days::new(7))
-        .unwrap()
-        .format("%Y-%m-%d")
-        .to_string();
-    upsert_market_price(
-        &conn,
-        &MarketPriceWrite {
-            instrument_id: "inst-fund",
-            price_cents: 30000,
-            currency_code: "CNY",
-            priced_at: &watermark,
-            nav_date: Some(&watermark),
-            source: Some(EASTMONEY_PRICE_SOURCE),
-        },
-    )
-    .unwrap();
-    // 已有历史序列：增量语义生效（水位次日起）。
-    upsert_price_history(
-        &conn,
-        "inst-fund",
-        &watermark,
-        30000,
-        "CNY",
-        EASTMONEY_PRICE_SOURCE,
-    )
-    .unwrap();
-
-    let mut fetch = mock_fetch(&[]);
-    let mut blocked_nav = |_: &NavQuery| {
-        Ok(LsjzPage {
-            points: vec![],
-            total: 0,
-            blocked: true,
-        })
-    };
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut blocked_nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(result.synced, 0, "空响应不得计成功");
-    assert_eq!(result.skipped, 1, "空响应计入跳过（不是「已是最新」）");
-    assert_eq!(result.written, 0);
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((30000, Some(watermark.clone()))),
-        "空响应不动现价、水位不前进"
-    );
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund").len(),
-        1,
-        "空响应零落库（原有历史点原样保留）"
-    );
-}
-
-#[test]
-fn fund_backfill_write_failure_leaves_no_history() {
-    // ADR-0122 决策 8 负向条目（issue #1373）：单只回填整只一次提交——第 N 个周点
-    // 写入失败时整只回滚，磁盘上不留半根历史，下次运行仍是首刷重新采集。
-    // 失败注入见 [`inject_week_write_failure`]；逐周点提交会留下前两个周点使本例变红。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-    inject_week_write_failure(&conn);
-
-    // 单请求全量通道返回跨四周的单位净值序列（升序）：第 3 周写入触发注入失败。
-    let series = [
-        ("2026-01-05".to_string(), 1.000),
-        ("2026-01-12".to_string(), 1.100),
-        ("2026-01-19".to_string(), 1.200),
-        ("2026-01-30".to_string(), 1.300),
-    ];
-    let full_requested = RefCell::new(Vec::new());
-    let full = [("110022", full_series(&series))];
-    let mut full_nav = mock_full_nav(&full, &full_requested);
-    let mut fetch = mock_fetch(&[]);
-    let err = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut no_nav,
-        &mut full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap_err();
-
-    assert!(
-        err.to_string().contains("注入周点写入失败"),
-        "注入的写入失败应原样上抛：{err}"
-    );
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![],
-        "第 N 个周点写入失败时整只回滚，不留半根历史（下次运行仍按首刷重新采集）"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        None,
-        "整只一次提交：现价与历史同事务，回滚后不留现价"
-    );
-
-    // 「且下次运行会重新采集它」（AC 第二条）：解除注入后重跑，仍按首刷全量通道
-    // 把整只历史补回——零行 → 首刷判据为真，正是原子性要保住的等价。
-    conn.execute_batch("DROP TRIGGER inject_week_write_failure;")
-        .unwrap();
-    let mut full_nav_retry = mock_full_nav(&full, &full_requested);
-    let retry = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut no_nav,
-        &mut full_nav_retry,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-    assert_eq!(retry.synced, 1, "解除注入后重跑按首刷重新采集");
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund").len(),
-        4,
-        "下次运行补回整只历史（4 个周点）"
-    );
-}
-
-#[test]
-fn fund_partial_blocked_page_skips_whole_instrument() {
-    // ADR-0122 决策 8（issue #1373）：部分页被拦截（空响应）时本轮窗口不完整，
-    // 整只不落库、计入跳过并在日志标注——不再沿用「记警告后继续落已采点」的旧行为
-    //（半根历史会让「有历史序列」冒充「历史完整」）。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-
-    // 首页有净值点、次页被拦截（空响应、非零 TotalCount）：total=45 → 3 页。
-    let pages = [(
-        "110022",
-        vec![
-            nav_page(45, &[("2026-01-30", 3.348), ("2026-01-28", 3.293)]),
-            LsjzPage {
-                points: vec![],
-                total: 45,
-                blocked: true,
-            },
-        ],
-    )];
-    let requested = RefCell::new(Vec::new());
-    let mut nav = mock_nav(&pages, &requested);
-    let mut fetch = mock_fetch(&[]);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(result.synced, 0, "部分页被拦截不得计成功");
-    assert_eq!(result.skipped, 1, "部分页被拦截整只计入跳过");
-    assert_eq!(result.written, 0);
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![],
-        "整只不落库：被拦截的部分页宁可整只留空重试，不留半根历史"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        None,
-        "整只不落库时不写现价"
-    );
-}
-
-#[test]
-fn fund_incremental_partial_blocked_page_keeps_existing_history_and_watermark() {
-    // ADR-0122 决策 8（issue #1373）的日间常态分支：已有历史序列的基金在增量窗口
-    // 内被部分拦截时同样整只不落库——本轮已采净值点丢弃、既有历史点原样保留、
-    // 水位不前进（下次从同一水位重取），不留下半根新历史。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-    let watermark = "2026-01-20".to_string();
-    upsert_market_price(
-        &conn,
-        &MarketPriceWrite {
-            instrument_id: "inst-fund",
-            price_cents: 30000,
-            currency_code: "CNY",
-            priced_at: &watermark,
-            nav_date: Some(&watermark),
-            source: Some(EASTMONEY_PRICE_SOURCE),
-        },
-    )
-    .unwrap();
-    upsert_price_history(
-        &conn,
-        "inst-fund",
-        &watermark,
-        30000,
-        "CNY",
-        EASTMONEY_PRICE_SOURCE,
-    )
-    .unwrap();
-
-    // 增量窗口（水位次日 2026-01-21 起）：首页有净值点、次页被拦截（total=45 → 3 页）。
-    let pages = [(
-        "110022",
-        vec![
-            nav_page(45, &[("2026-01-30", 3.348)]),
-            LsjzPage {
-                points: vec![],
-                total: 45,
-                blocked: true,
-            },
-        ],
-    )];
-    let requested = RefCell::new(Vec::new());
-    let mut nav = mock_nav(&pages, &requested);
-    let mut fetch = mock_fetch(&[]);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(result.synced, 0, "部分页被拦截不得计成功");
-    assert_eq!(result.skipped, 1, "部分页被拦截整只计入跳过");
-    assert_eq!(result.written, 0);
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![(watermark.clone(), 30000, "CNY".to_string())],
-        "本轮已采点不落库，既有历史点原样保留"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((30000, Some(watermark.clone()))),
-        "整只不落库则水位不前进（下次从同一水位重取）"
-    );
-    assert_eq!(requested.borrow()[0].start_date, "2026-01-21");
-}
-
-#[test]
-fn fund_page_cap_truncation_skips_whole_instrument() {
-    // ADR-0122 决策 8（issue #1373）：页数触顶（服务端 TotalCount 异常，窗口已知
-    // 未采全）与部分页被拦截同待遇——整只不落库、计入跳过；不再沿用「记警告后
-    // 继续落已采点」。触顶若照旧落库，缺失段会因「有历史序列」为真而永久化。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-
-    // total=1000 → raw_pages=50 > MAX_NAV_PAGES(40)：触顶，首页已采净值点也不落库。
-    let pages = [("110022", vec![nav_page(1000, &[("2026-01-30", 3.348)])])];
-    let requested = RefCell::new(Vec::new());
-    let mut nav = mock_nav(&pages, &requested);
-    let mut fetch = mock_fetch(&[]);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(result.synced, 0, "页数触顶不得计成功");
-    assert_eq!(result.skipped, 1, "页数触顶整只计入跳过");
-    assert_eq!(result.written, 0);
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![],
-        "整只不落库：触顶的窗口宁可整只留空重试，不留半根历史"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        None,
-        "整只不落库时不写现价"
-    );
 }
 
 #[test]
@@ -2724,10 +1347,8 @@ fn fund_rows_without_real_code_skip_without_fetch() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -2759,10 +1380,8 @@ fn fund_nav_fetch_error_propagates() {
     let err = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -2780,7 +1399,7 @@ fn fund_nav_fetch_error_propagates() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn etf_holding_syncs_quote_and_kline_backfill() {
+fn etf_holding_syncs_quote_only_without_history() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "sh");
 
@@ -2793,20 +1412,13 @@ fn etf_holding_syncs_quote_and_kline_backfill() {
             precision: Some(3.0),
         }])
     };
-    // 近两年日 K 回填样本（真实价格值）：跨两周，各周取最后一个有报价交易日。
-    let klines = [(
-        "1.510300",
-        vec![bar("2026-01-05", 4.600), bar("2026-01-12", 4.649)],
-    )];
-    let mut kline = mock_kline(&klines);
 
+    // 现价与历史解耦（ADR-0122 / issue #1377）：ETF 同步只刷现价，不回填历史。
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -2822,67 +1434,10 @@ fn etf_holding_syncs_quote_and_kline_backfill() {
         Some(46_340),
         "ETF 报价按精度位换算（f1=3，三位小数报价）"
     );
-    assert_eq!(
-        price_history_rows(&conn, "inst-etf"),
-        vec![
-            ("2026-01-05".into(), 46_000, "CNY".into()),
-            ("2026-01-12".into(), 46_490, "CNY".into()),
-        ],
-        "ETF 近两年回填与股票同规则周采样落 PriceHistory"
-    );
-}
-
-#[test]
-fn quote_kline_backfill_write_failure_leaves_no_history() {
-    // ADR-0122 决策 8 / issue #1373 负向条目：行情分区（stock|etf）的历史回填也
-    // 整只一次提交——第 N 个周点写入失败时整只回滚，磁盘上不留半根历史。
-    // 失败注入见 [`inject_week_write_failure`]；逐周点提交会留下前两个周点使本例变红。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(&conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "sh");
-    inject_week_write_failure(&conn);
-
-    let mut fetch = |_: &str| {
-        Ok(vec![StockItem {
-            name: "沪深300ETF华泰柏瑞".into(),
-            code: "510300".into(),
-            price: Some(4634.0),
-            precision: Some(3.0),
-        }])
-    };
-    // 跨四周日 K（升序）：第 3 周写入触发注入失败。
-    let klines = [(
-        "1.510300",
-        vec![
-            bar("2026-01-05", 4.600),
-            bar("2026-01-12", 4.649),
-            bar("2026-01-19", 4.700),
-            bar("2026-01-30", 4.720),
-        ],
-    )];
-    let mut kline = mock_kline(&klines);
-    let err = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut kline,
-        &mut no_fx,
-        &mut no_nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut no_progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap_err();
-
-    assert!(
-        err.to_string().contains("注入周点写入失败"),
-        "注入的写入失败应原样上抛：{err}"
-    );
-    assert_eq!(
-        price_history_rows(&conn, "inst-etf"),
-        vec![],
-        "第 N 个周点写入失败时整只回滚，不留半根历史"
-    );
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0, "同步不回填历史（归价格历史后台补全）");
 }
 
 #[test]
@@ -2899,14 +1454,11 @@ fn etf_holding_unknown_market_counts_skipped_without_requests() {
         secid_log.borrow_mut().push(secids.to_string());
         Ok(vec![])
     };
-    let mut kline = mock_kline(&[]);
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -2987,15 +1539,12 @@ fn three_type_partitions_roll_up_into_one_result() {
     let pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.348)])])];
     let nav_requested = RefCell::new(Vec::new());
     let mut nav = mock_nav(&pages, &nav_requested);
-    let mut kline = mock_kline(&[]);
 
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -3004,7 +1553,7 @@ fn three_type_partitions_roll_up_into_one_result() {
     .unwrap();
 
     // synced = 行情分区 2（股票+ETF）+ 基金 1；skipped = 名称充代码基金 + 债券 + 其他；
-    // written = 实际落价 3（基金首刷落净值计入）。
+    // written = 实际落价 3（基金短窗净值落现价计入，issue #1377）。
     assert_eq!(result.synced, 3);
     assert_eq!(result.skipped, 3);
     assert_eq!(result.written, 3);
@@ -3090,12 +1639,6 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
             precision: None,
         }])
     };
-    // 近两年日 K 回填样本（美股美元价）：跨两周（01-02 周五、01-08 周四），末周取最后交易日。
-    let klines = [(
-        "105.AAPL",
-        vec![bar("2026-01-02", 315.10), bar("2026-01-08", 319.97)],
-    )];
-    let mut kline = mock_kline(&klines);
 
     // USDCNY 汇率同期采集（持仓币种 USD ≠ 本位币 CNY）：记录被请求的币种对。
     let fx_log = RefCell::new(Vec::new());
@@ -3105,13 +1648,12 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
     )];
     let mut fx = mock_fx(&fx_pairs, &fx_log);
 
+    // 现价与历史解耦（issue #1377）：同步刷现价 + 汇率同期采集，不回填日 K。
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -3137,15 +1679,11 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
     assert_eq!(price_ccy, "USD");
     assert_eq!(source, EASTMONEY_PRICE_SOURCE);
 
-    // 日 K 周采样回填：价格历史以 USD 落库，刻度同万分之一元。
-    assert_eq!(
-        price_history_rows(&conn, "inst-aapl"),
-        vec![
-            ("2026-01-02".into(), 3_151_000, "USD".into()),
-            ("2026-01-08".into(), 3_199_700, "USD".into()),
-        ],
-        "近两年回填按周采样落 PriceHistory（每周取最后交易日）"
-    );
+    // 同步不回填价格历史（归价格历史后台补全，issue #1377）。
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
 
     // USDCNY 汇率同期落 FxRateHistory（候选序钉住见 fx_secid_candidates 测试）。
     assert_eq!(
@@ -3158,7 +1696,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         vec![("2026-01-02".into(), 7.02), ("2026-01-08".into(), 7.01)],
     );
 
-    // 重跑幂等：现价覆盖更新、价格/汇率历史同周整周覆盖，零重复行。
+    // 重跑幂等：现价覆盖更新、汇率历史同周整周覆盖，零重复行。
     let mut fetch = |secids: &str| -> Result<Vec<StockItem>> {
         secid_log.borrow_mut().push(secids.to_string());
         Ok(vec![StockItem {
@@ -3168,28 +1706,21 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
             precision: None,
         }])
     };
-    let mut kline = mock_kline(&klines);
     let mut fx = mock_fx(&fx_pairs, &fx_log);
     do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
     .unwrap();
-    let price_rows: i64 = conn
-        .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
-        .unwrap();
     let fx_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM fx_rate_history", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(price_rows, 2, "价格历史零重复行");
     assert_eq!(fx_count, 2, "汇率历史零重复行");
     assert_eq!(
         market_price_of(&conn, "inst-aapl"),
@@ -3211,17 +1742,14 @@ fn us_stock_holdings_route_exact_secids_per_market() {
         secid_log.borrow_mut().push(secids.to_string());
         Ok(vec![])
     };
-    let mut kline = mock_kline(&[]);
     let fx_log = RefCell::new(Vec::new());
     let usdcny = [("USDCNY", vec![bar("2026-01-05", 7.02)])];
     let mut fx = mock_fx(&usdcny, &fx_log);
     do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut kline,
         &mut fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -3272,10 +1800,8 @@ fn incremental_sync_includes_cleared_instrument() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -3306,10 +1832,8 @@ fn incremental_sync_includes_never_traded_instrument() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -3339,10 +1863,8 @@ fn incremental_sync_refreshes_names_from_quote_batch() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -3387,10 +1909,8 @@ fn incremental_sync_skips_name_write_when_unchanged() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -3439,10 +1959,8 @@ fn fund_name_refresh_via_detail_lookup() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut fund_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -3497,10 +2015,8 @@ fn fund_name_refresh_degrades_deterministic_not_found_to_skip() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut fund_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -3540,10 +2056,8 @@ fn fund_name_refresh_still_propagates_network_failure() {
     let error = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut fund_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -3590,10 +2104,8 @@ fn fund_name_lookup_skips_name_as_code_rows_and_empty_names() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut fund_name,
         &mut no_bulk(),
         &mut no_progress,
@@ -3646,7 +2158,8 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
     insert_holding(&conn, "acc-2", "inst-b", "600002", "stock", "CNY", "sz");
 
     // 统一事件日志：total 必须先于任何抓取请求（收集与分区完成立即发）；
-    // 每只标的在其日 K 回填完成后推进一格（报价 + 日 K 合并计格）。
+    // 每只标的在报价落库后推进一格（现价 + 名称合并计格；历史日 K 已移出同步，
+    // issue #1377）。
     let events = RefCell::new(Vec::new());
     let mut fetch = |secids: &str| {
         events.borrow_mut().push(format!("fetch:{secids}"));
@@ -3663,10 +2176,6 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
             })
             .collect())
     };
-    let mut kline = |secid: &str| {
-        events.borrow_mut().push(format!("kline:{secid}"));
-        Ok(vec![])
-    };
     let mut progress = |progress: SyncProgress| {
         events
             .borrow_mut()
@@ -3675,10 +2184,8 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
     do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut progress,
@@ -3691,12 +2198,10 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
         vec![
             "progress:0/2".to_string(),
             "fetch:1.600001,0.600002".to_string(),
-            "kline:1.600001".to_string(),
             "progress:1/2".to_string(),
-            "kline:0.600002".to_string(),
             "progress:2/2".to_string(),
         ],
-        "total 先于首个请求发出；逐标的在其日 K 完成后推进一格"
+        "total 先于首个请求发出；报价批完成后逐标的推进一格"
     );
 }
 
@@ -3747,10 +2252,8 @@ fn progress_denominator_counts_channel_capable_instruments_only() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut fund_name,
         &mut no_bulk(),
         &mut progress,
@@ -3803,10 +2306,8 @@ fn progress_advances_even_when_quote_invalid_or_missing() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut progress,
@@ -3874,10 +2375,8 @@ fn fund_up_to_date_still_advances_progress() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut fund_name,
         &mut no_bulk(),
         &mut progress,
@@ -3926,10 +2425,8 @@ fn fund_progress_advances_after_nav_and_name_complete() {
     do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut fund_name,
         &mut no_bulk(),
         &mut progress,
@@ -3946,160 +2443,6 @@ fn fund_progress_advances_after_nav_and_name_complete() {
             "progress:1/1".to_string(),
         ],
         "先发 total；净值与名称都完成后才推进该基金的一格"
-    );
-}
-
-#[test]
-fn fund_first_sync_emits_page_level_progress_within_one_instrument() {
-    // issue #1061：首刷一只基金要翻 3 页（total=45 → 3 页），页级明细让单只基金
-    // 回填期间进度持续推进；done/total 的标的级口径不变——页推进不改 done、
-    // 分母恒为有通道标的数（ADR-0095 决策 2 的不变量）。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-
-    let pages = [(
-        "110022",
-        vec![
-            nav_page(45, &[("2026-01-30", 3.348)]),
-            nav_page(45, &[("2025-12-31", 3.1)]),
-            nav_page(45, &[("2025-12-30", 3.0)]),
-        ],
-    )];
-    let requested = RefCell::new(Vec::new());
-    let mut fetch = mock_fetch(&[]);
-    let mut nav = mock_nav(&pages, &requested);
-    let log = RefCell::new(Vec::new());
-    let mut progress = |progress: SyncProgress| log.borrow_mut().push(progress);
-    do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    let fund_page = |page: u64| SyncProgress {
-        done: 0,
-        total: 1,
-        fund: Some(FundNavProgress {
-            code: "110022".into(),
-            page,
-            pages: 3,
-        }),
-    };
-    assert_eq!(
-        *log.borrow(),
-        vec![
-            SyncProgress {
-                done: 0,
-                total: 1,
-                fund: None,
-            },
-            fund_page(1),
-            fund_page(2),
-            fund_page(3),
-            SyncProgress {
-                done: 1,
-                total: 1,
-                fund: None,
-            },
-        ],
-        "单只基金回填期间逐页推进；页级明细不改 done/total 的标的级口径"
-    );
-}
-
-#[test]
-fn fund_page_progress_emitted_only_after_page_fetch_returns() {
-    // issue #1061 负向条目：页级推进只在本页抓取返回之后发出——抓取闭包内部的
-    // 退避/重试等待（生产在 HTTP 层内完成，注入层不可见）期间不得产生虚假推进。
-    // 篡改成「翻页前先报页码」会让事件顺序翻转为 progress-fund 先于 fetch-exit，
-    // 本断言即变红。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-
-    let events = RefCell::new(Vec::new());
-    let mut fetch = mock_fetch(&[]);
-    // 注入闭包在抓取内部先记 enter、模拟（内部已完成）退避等待、再记 exit 并返回
-    // 本页——编排看到的只有一次闭合调用。
-    let mut nav = |query: &NavQuery| {
-        events
-            .borrow_mut()
-            .push(format!("fetch-enter:{}", query.page));
-        events
-            .borrow_mut()
-            .push(format!("retry-wait:{}", query.page));
-        // 就地断言：本页抓取尚未返回时（含内部退避/重试等待），不得已经出现本页
-        // 的页级推进——「等待不伪装成推进」在抓取进行中即成立，而非只靠事后的
-        // 事件顺序对齐。
-        assert!(
-            !events
-                .borrow()
-                .iter()
-                .any(|e| e == &format!("progress-fund:{}", query.page)),
-            "页级推进在本页抓取返回之前就出现了（等待被伪装成推进）"
-        );
-        events
-            .borrow_mut()
-            .push(format!("fetch-exit:{}", query.page));
-        Ok(nav_page(40, &[]))
-    };
-    let mut progress = |progress: SyncProgress| {
-        events.borrow_mut().push(match progress.fund {
-            Some(fund) => format!("progress-fund:{}", fund.page),
-            None => format!("progress:{}/{}", progress.done, progress.total),
-        });
-    };
-    do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    assert_eq!(
-        *events.borrow(),
-        vec![
-            "progress:0/1".to_string(),
-            "fetch-enter:1".to_string(),
-            "retry-wait:1".to_string(),
-            "fetch-exit:1".to_string(),
-            "progress-fund:1".to_string(),
-            "fetch-enter:2".to_string(),
-            "retry-wait:2".to_string(),
-            "fetch-exit:2".to_string(),
-            "progress-fund:2".to_string(),
-            "progress:1/1".to_string(),
-        ],
-        "页级推进严格晚于本页抓取返回；抓取内部的退避等待不产生推进"
     );
 }
 
@@ -4128,10 +2471,8 @@ fn page_level_detail_only_for_multi_page_fund_sync() {
     do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut progress,
@@ -4152,65 +2493,6 @@ fn page_level_detail_only_for_multi_page_fund_sync() {
 }
 
 #[test]
-fn blocked_fund_pages_do_not_advance_page_progress() {
-    // issue #1061 负向条目：风控拦截形态（`Data` 缺省/非对象，`blocked`）即使带着
-    // 非零 `TotalCount`、翻满整个窗口，也不算「已回填的一页」——被拦截期间不得让
-    // 页码虚假推进（与 #1059「空响应不是成功」同源）。该基金最终计入跳过，
-    // 标的级序列照常推进一格。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(
-        &conn,
-        "acc-1",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-
-    // total=45 → 3 页，每页都是被拦截空响应。
-    let blocked_page = || LsjzPage {
-        points: vec![],
-        total: 45,
-        blocked: true,
-    };
-    let pages = [(
-        "110022",
-        vec![blocked_page(), blocked_page(), blocked_page()],
-    )];
-    let requested = RefCell::new(Vec::new());
-    let mut fetch = mock_fetch(&[]);
-    let mut nav = mock_nav(&pages, &requested);
-    let log = RefCell::new(Vec::new());
-    let mut progress = |progress: SyncProgress| log.borrow_mut().push(progress);
-    let result = do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_kline,
-        &mut no_fx,
-        &mut nav,
-        &mut no_full_nav,
-        &mut no_name,
-        &mut no_bulk(),
-        &mut progress,
-        &mut WriteWitness::default(),
-    )
-    .unwrap();
-
-    let events = log.borrow();
-    assert!(
-        events.iter().all(|e| e.fund.is_none()),
-        "被拦截页不产生页级推进：{events:?}"
-    );
-    assert_eq!(
-        events.iter().map(|e| (e.done, e.total)).collect::<Vec<_>>(),
-        vec![(0, 1), (1, 1)],
-        "标的级序列照常推进一格；被拦截不虚报页级进度"
-    );
-    assert_eq!(result.skipped, 1);
-}
-
-#[test]
 fn progress_not_emitted_for_empty_library() {
     // 空库：不发任何进度事件，返回既有「暂无标的可同步」提示（user story 15）。
     let conn = tauri_app_lib::test_support::open();
@@ -4220,10 +2502,8 @@ fn progress_not_emitted_for_empty_library() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut no_nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut progress,
@@ -4266,10 +2546,8 @@ fn progress_not_emitted_when_no_channel_capable_instrument() {
     let result = do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_kline,
         &mut no_fx,
         &mut nav,
-        &mut no_full_nav,
         &mut no_name,
         &mut no_bulk(),
         &mut progress,
@@ -5234,5 +3512,83 @@ fn bulk_week_gap_beyond_one_week_falls_back_per_instrument_to_fill_missing_weeks
             (watermark, 30000, "CNY".into()),
             (today, 35000, "CNY".into()),
         ]
+    );
+}
+
+#[test]
+fn fund_bulk_hit_without_history_writes_price_but_no_weekly_point() {
+    // 首刷判据保护（ADR-0038 决策 6 / ADR-0122 决策 2 / issue #1377）：无历史序列
+    // 的基金（按代码即拉已落现价缓存、后台补全尚未首刷），批量面的最新净值只
+    // 落现价缓存——单点落进 price_history 会让「有历史序列」冒充「历史完整」，
+    // 后台补全的近两年首刷将永久落空。
+    let today_date = beijing_today();
+    let yesterday = (today_date - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+    let today = today_date.format("%Y-%m-%d").to_string();
+    let conn = tauri_app_lib::test_support::open();
+    seed_fund(&conn, "inst-fund-0", "100000", "权威名称-100000");
+    // 只落现价缓存（首刷前基金的真实形态）：水位有值、历史序列为空。
+    upsert_market_price(
+        &conn,
+        &MarketPriceWrite {
+            instrument_id: "inst-fund-0",
+            price_cents: 30000,
+            currency_code: "CNY",
+            priced_at: &yesterday,
+            nav_date: Some(&yesterday),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
+    )
+    .unwrap();
+
+    let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+    let mut channels = fund_channels(
+        QuoteChannelCalls::default(),
+        empty_nav(per_fund_nav_calls.clone()),
+        Box::new(|_| Ok(vec![])),
+        counting_name(Arc::new(AtomicUsize::new(0))),
+        bulk_surfaces(
+            Box::new(|| Ok(FundNameDictionary::new())),
+            Box::new({
+                let today = today.clone();
+                move || {
+                    let mut table = FundNavTable::new();
+                    table.insert(
+                        "100000".to_string(),
+                        BulkNavPoint {
+                            date: today.clone(),
+                            nav: 3.5,
+                        },
+                    );
+                    Ok(table)
+                }
+            }),
+            Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        ),
+    );
+
+    let result = do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        per_fund_nav_calls.load(Ordering::SeqCst),
+        0,
+        "批量面命中：零逐只请求"
+    );
+    assert_eq!(result.written, 1);
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund-0"),
+        Some((35000, Some(today.clone())))
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund-0"),
+        vec![],
+        "无历史序列不落采样点：单点会冒充历史完整、永久破坏首刷判据",
     );
 }

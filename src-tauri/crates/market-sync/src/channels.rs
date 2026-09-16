@@ -166,11 +166,12 @@ impl Lane {
     }
 }
 
-/// 经通道束驱动标的信息同步编排：把束内六个闭包拆交给
+/// 经通道束驱动标的信息同步编排：把束内现价刷新所需的闭包拆交给
 /// [`do_incremental_sync_with`](super::incremental::do_incremental_sync_with)
 /// （编排本体单点，另透传写入见证，issue #1277）。命令壳经本入口跑同步——
 /// 生产束（[`SyncFetchChannels::production`]）与测试注入束共用，锁形态与
-/// 编排路径零分叉。
+/// 编排路径零分叉。日 K 与单请求全量净值两通道不进现价刷新编排（issue #1377
+/// 现价与历史解耦）：束内保留它们供价格历史后台补全消费。
 pub fn do_incremental_sync_channels<Q, P>(
     session: &Q,
     channels: &mut SyncFetchChannels,
@@ -184,10 +185,8 @@ where
     do_incremental_sync_with(
         session,
         &mut channels.fetch_ulist,
-        &mut channels.fetch_kline,
         &mut channels.fetch_fx,
         &mut channels.fetch_nav,
-        &mut channels.fetch_nav_full,
         &mut channels.fetch_fund_name,
         &mut channels.bulk,
         progress,

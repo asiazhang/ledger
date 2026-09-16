@@ -87,9 +87,19 @@ pub fn query_instrument_price_trend(
         points.push(row?);
     }
 
+    // 补全状态（ADR-0122 决策 5 / issue #1377，读投影只增字段）：仅空采样点时
+    // 判定——有历史者无空态可言；判定内部再筛「有通道而没有任何历史序列」的
+    // 标的（区间裁剪导致的空不携带该字段）。
+    let backfill = if points.is_empty() {
+        super::backfill::instrument_trend_backfill_status(conn, instrument_id)?
+    } else {
+        None
+    };
+
     Ok(InstrumentPriceTrend {
         instrument_id: instrument_id.to_string(),
         points,
+        backfill,
     })
 }
 
@@ -200,9 +210,19 @@ pub fn query_portfolio_value_trend(
         }
     }
 
+    // 补全状态（ADR-0122 决策 5 / issue #1377，读投影只增字段）：仅空采样点时
+    // 对「有通道而无任何历史序列」的标的聚合三态；历史齐全而曲线仍空（区间
+    // 裁剪 / 持仓与价格周错开）不携带该字段，前端按既有空态文案渲染。
+    let backfill = if points.is_empty() {
+        super::backfill::portfolio_trend_backfill_status(conn)?
+    } else {
+        None
+    };
+
     Ok(PortfolioValueTrend {
         currency_code: native.to_string(),
         points,
+        backfill,
     })
 }
 

@@ -15,18 +15,19 @@
 //!   同级按 symbol 升序。
 //! - **一轮补全**（[`run_history_backfill_round`]）：排空队列——逐只调用
 //!   单只历史回填单元（行情标的 = [`backfill_stock_history`]，基金 =
-//!   [`sync_one_fund_nav`]，两者与手动同步共用同一单元，幂等不冲突）；单只
+//!   [`backfill_one_fund_history`]，issue #1377 起本两单元为后台补全专用——
+//!   「同步标的信息」只刷现价，不再与手动同步共用历史采集）；单只
 //!   网络失败**不中断**本轮（记日志继续排空，无用户可打断也无用户可报），
 //!   失败者靠派生事实在下一窗口自然重进队列。基金首刷的页级明细随进度事件
-//!   带出（issue #1061 的明细随首刷深回填迁入本任务）。
+//!   带出（issue #1061 的明细随首刷深回填迁入本任务），并登记走势空态三态
+//!   的判据输入（轮次计数与尝试结局，投资域 [`ledger_investment::backfill`]）。
 //! - **调度**（[`start_history_backfill`]）：启动后延迟一轮 + 每个自然日窗口
 //!   各一轮的巡检线程；每轮门检锁定/启动失败（先例：自动备份调度）；启动
 //!   接线在壳层后台服务编排单点（issue #961 名单）。
 //!
-//! 与手动同步的过渡态关系（issue #1375）：手动同步的历史行为此时不变，两条
-//! 路径都能补历史且幂等无冲突——写入全是「现价覆盖 + 同周整周覆盖」的幂等
-//! upsert，数据库互斥由短段取锁天然串行；并发重复采集只浪费请求、不产生
-//! 半根历史或重复行。
+//! 与手动同步的解耦关系（issue #1377 收尾）：手动同步只刷现价（含当周采样点
+//! 直落），不再采集历史；写入同是「现价覆盖 + 同周整周覆盖」的幂等 upsert，
+//! 数据库互斥由短段取锁天然串行，两路并发不产生半根历史或重复行。
 //!
 //! 收尾裁决与手动同步同形（issue #1277 成败同判）：本轮实际写过价格数据
 //! （写入见证 [`WriteWitness`]）→ 提交点置脏一次 + 发既有价格失效信号；
@@ -51,7 +52,7 @@ use ledger_investment::predicates::INVESTED_EXISTS;
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 
 use super::channels::SyncFetchChannels;
-use super::fund_nav::{FundSyncStats, LsjzPage, NavPoint, NavQuery, sync_one_fund_nav};
+use super::fund_nav::{BackfillOutcome, LsjzPage, NavPoint, NavQuery, backfill_one_fund_history};
 use super::http::{KlineBar, secid_prefix};
 use super::incremental::{
     SyncInstrument, backfill_fx_pairs, beijing_today, downsample_weekly, quote_code, week_monday,
@@ -60,16 +61,20 @@ use super::incremental::{
 use super::model::WriteWitness;
 use super::progress::{BackfillProgressEmitter, FundNavProgress, SyncProgress};
 use super::session::ScopedSession;
-use ledger_investment::prices::price_value_to_cents;
+use ledger_investment::backfill;
+use ledger_investment::prices::{
+    EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_price_history,
+};
 
 /// 应用启动后的首轮延迟：让出启动期（引导、参考数据装载、首屏渲染），再开始
-/// 第一轮补全。延迟是可逆工程决策，测试注入 [`BackfillTimings`] 覆写。
-const STARTUP_DELAY: Duration = Duration::from_secs(30);
+/// 第一轮补全。延迟是可逆工程决策，测试注入 [`BackfillTimings`] 覆写。后台
+/// 每日现价刷新（[`super::daily_refresh`]）与同一节奏（同形调度，issue #1377）。
+pub(super) const STARTUP_DELAY: Duration = Duration::from_secs(30);
 
 /// 自然日窗口的巡检周期：线程低频醒来比对北京日历日，跨日即跑当天的窗口。
 /// 与自动备份调度、多端同步轮询同一「低频」品味（分钟级间隔，代价为零——
 /// 每次巡检只做一次日期比对）。
-const WINDOW_POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
+pub(super) const WINDOW_POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
 /// 缺周点判据（ADR-0122 决策 2「逐只采集只服务首刷与缺周点」的队列半边）：
 /// 参考点（行情标的历史的最新周点 / 基金水位的净值日期）落后当前自然周**超过
@@ -86,7 +91,7 @@ fn week_behind(reference: Option<&str>, today: NaiveDate) -> bool {
 }
 
 /// 一只标的的补全目标（通道分区的产物）：行情标的按 secid 拉日 K，基金走
-/// 历史净值通道（首刷近两年 / 水位增量，与手动同步同一单元同一窗口语义）。
+/// 历史净值通道（首刷近两年 / 水位增量；issue #1377 起本通道为后台补全专用）。
 enum BackfillTarget {
     Quote { secid: String },
     FundNav,
@@ -183,13 +188,14 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
     Ok(queue)
 }
 
-/// 单只行情标的的历史回填单元（issue #1375 自增量同步编排抽出，两条路径共用）：
+/// 单只行情标的的历史回填单元（issue #1375 自增量同步编排抽出；issue #1377
+/// 起归后台补全专用——现价刷新不再发逐只日 K 请求）：
 /// 一次日 K 请求 + 周采样降采样落 `price_history`，单只整只一次提交
 ///（ADR-0122 决策 8 / issue #1373，事务经 [`ensure_transaction`] 嵌套感知）。
 /// 返回是否实际落库新周点；**全部无新点（已入库且同值）零写入**——返回
 /// false，调用方不置脏不广播（收尾裁决口径「全部无新点不置脏不广播」，
-/// ADR-0122；停牌/退市股持续在队的每日重采因此不空发信号）。手动同步路径
-/// 不消费该返回值，有新点时的数据结果与无条件重写逐位一致（整周覆盖幂等）。
+/// ADR-0122；停牌/退市股持续在队的每日重采因此不空发信号）。有新点时的
+/// 数据结果与无条件重写逐位一致（整周覆盖幂等）。
 ///
 /// 抓取在会话之外、落库短暂取一次连接（issue #1275 纪律，与抽取前同形）。
 pub(super) fn backfill_stock_history<Q, K>(
@@ -244,6 +250,58 @@ fn has_new_weekly_point(
     Ok(false)
 }
 
+/// 现价刷新直落当周采样点（ADR-0122 决策 2 / issue #1377）：只服务**已有历史
+/// 序列**的标的（无序列者落单点会让「有历史序列」冒充「历史完整」，永久破坏
+/// 首刷判据——历史由后台补全整根回填）；且仅当该周点确实新（库内无此周、或
+/// 同周不同值）才写——「每周至多一条、取该周最后一个有报价交易日、整周覆盖
+/// 幂等」语义不变，同周同值零写入。返回是否实际落库（调用方据此决定是否计入
+/// 写入见证）。
+///
+/// `trade_date` 取同步当日（批量报价响应不携带行情日期）：周末 / 节假日同步时
+/// 点的价格是最近交易日的收盘价，而日期标签落在同步日——价格正确、周归属正确
+///（周键按 ISO 周算），仅横轴标签可能落在非交易日；下一个有报价交易日的同步
+/// 以同周覆盖改写回真实交易日（整周覆盖幂等），仓库无交易日历事实源（见价格
+/// 过期提示词条），不为标签引入第二口径。
+pub(super) fn land_current_week_point(
+    conn: &Connection,
+    instrument_id: &str,
+    currency: &str,
+    trade_date: &str,
+    price_cents: i64,
+) -> Result<bool> {
+    if !ledger_investment::backfill::has_any_history(conn, instrument_id)? {
+        return Ok(false);
+    }
+    let date = NaiveDate::parse_from_str(trade_date, "%Y-%m-%d")
+        .map_err(|e| AppError::Parse(format!("非法交易日 {trade_date}: {e}")))?;
+    let monday = week_monday(date);
+    let sunday = monday + chrono::Duration::days(6);
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT price_cents FROM price_history \
+             WHERE instrument_id = ?1 AND trade_date >= ?2 AND trade_date <= ?3",
+            params![
+                instrument_id,
+                monday.format("%Y-%m-%d").to_string(),
+                sunday.format("%Y-%m-%d").to_string(),
+            ],
+            |row| row.get(0),
+        )
+        .ok();
+    if existing == Some(price_cents) {
+        return Ok(false);
+    }
+    upsert_price_history(
+        conn,
+        instrument_id,
+        trade_date,
+        price_cents,
+        currency,
+        EASTMONEY_PRICE_SOURCE,
+    )?;
+    Ok(true)
+}
+
 /// 一轮补全的统计：`queued` = 进队标的数，`failed` = 单只失败数（已记日志，
 /// 靠派生事实在下一窗口重进队列）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,7 +318,7 @@ pub(super) struct HistoryBackfillStats {
 ///
 /// 单只网络失败不中断本轮（记 warn 继续）：无用户在场，失败的标的靠派生事实
 /// 在下一窗口自然重进队列；单只原子（issue #1373）保证失败不留半根历史。
-/// 汇率失败同样不中断（辅助性折算序列，缺失周点由后续窗口或手动同步补齐）。
+/// 汇率失败同样不中断（辅助性折算序列，缺失段由后续窗口的后台补全补齐）。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_history_backfill_round<Q, K, X, N, S, P>(
     session: &Q,
@@ -288,18 +346,17 @@ where
         });
     }
     progress(SyncProgress::instrument(0, total));
+    // 运行态发布（issue #1377 走势空态三态的判据输入）：登记在途计数分母并清空
+    // 上一轮的尝试结局表——队列按派生事实重新收集，旧结局不再可信。
+    backfill::round_started(total);
     let mut done = 0usize;
     let mut failed = 0usize;
 
     for item in &queue {
-        let mut fund_stats = FundSyncStats {
-            synced: 0,
-            skipped: 0,
-            written: 0,
-        };
-        let result = match &item.target {
+        let result: Result<(bool, bool)> = match &item.target {
             BackfillTarget::Quote { secid } => {
                 backfill_stock_history(session, fetch_kline, secid, &item.instrument)
+                    .map(|written| (written, false))
             }
             BackfillTarget::FundNav => {
                 // 页级推进（issue #1061）：done/total 仍是标的级口径，页抓取
@@ -317,23 +374,21 @@ where
                     });
                 };
                 // 队列只收「历史不完整」的基金：首刷与缺周点补齐正是逐只通道
-                // 的两种接管形态，`latest_hint` 恒 None（批量面的「无新净值 /
-                // 当周点位直落」短路对不完整者不可达，见 bulk_decision）。
-                sync_one_fund_nav(
+                // 的两种接管形态（issue #1377 起本单元为后台补全专用，现价刷新
+                // 走 refresh_one_fund_price）。
+                backfill_one_fund_history(
                     session,
                     &item.instrument,
-                    None,
                     fetch_nav,
                     fetch_nav_full,
-                    &mut fund_stats,
                     &mut on_page,
                 )
-                .map(|()| fund_stats.written > 0)
+                .map(|outcome: BackfillOutcome| (outcome.written, outcome.inconclusive))
             }
         };
-        match result {
-            Ok(wrote) => {
-                if wrote {
+        match &result {
+            Ok((written, _)) => {
+                if *written {
                     witness.mark_written();
                 }
             }
@@ -346,9 +401,30 @@ where
                 );
             }
         }
+        // 尝试结局登记（issue #1377 走势空态三态的判据输入）：仅对**仍无历史
+        // 序列**的标的记录——成功落库者不再入空态。结局二分：确定完成且无可采
+        //（Ok 且非不可信）= 无数据；失败或窗口不完整（被拦截 ≠ 数据源没有）=
+        // 待重试。存在性检查失败不致命（记警告，三态暂按「补全中」处理）。
+        let attempt_failed = match &result {
+            Ok((_, false)) => backfill::BackfillAttempt::NoData,
+            Ok((_, true)) | Err(_) => backfill::BackfillAttempt::Failed,
+        };
+        match session.with_connection(|conn| {
+            ledger_investment::backfill::has_any_history(conn, &item.instrument.instrument_id)
+        }) {
+            Ok(false) => backfill::record_attempt(&item.instrument.instrument_id, attempt_failed),
+            Ok(true) => {}
+            Err(error) => tracing::warn!(
+                instrument = %item.instrument.symbol, %error,
+                "补全后历史存在性检查失败，三态判据暂按补全中处理"
+            ),
+        }
         done += 1;
+        backfill::round_progress(done);
         progress(SyncProgress::instrument(done, total));
     }
+    // 在途计数收起（尝试结局表保留到下一轮开始，轮间窗口的空态判定消费它）。
+    backfill::round_finished();
 
     // 汇率 K 线同期补齐（与手动同步 §③ 同一单元）：只取本轮队列标的的币种对
     // ——本轮实际在补的曲线才需要同期折算序列；已完整标的的汇率序列已在库。
@@ -367,9 +443,10 @@ where
 /// 的短段取用——每次短暂取锁、用完即还，分钟级网络等待发生在段与段之外
 ///（与命令壳 `SegmentSession` 同一纪律；后台线程不在命令壳上，实现随编排住
 /// 本域，先例：多端同步调度侧 `AutoRoundConn`）。毒化映射与持锁时长探针与
-/// 写入口同形。
-struct SharedConnSession {
-    conn: Arc<Mutex<Connection>>,
+/// 写入口同形。后台每日现价刷新（[`super::daily_refresh`]）共用同一实现
+///（同一纪律、同一连接）。
+pub(super) struct SharedConnSession {
+    pub(super) conn: Arc<Mutex<Connection>>,
 }
 
 impl ScopedSession for SharedConnSession {
