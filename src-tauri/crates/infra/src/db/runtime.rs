@@ -167,6 +167,16 @@ pub struct DbState {
 }
 
 impl DbState {
+    /// 连接对构造单点（issue #1303）：裸连接对 → 共享锁形态的 [`DbState`]。
+    /// 生产结构体字面量全部经本构造器（`open_db_in` / `reset_db_in` + 壳层
+    /// 首登记），字段直拼不再新增。
+    pub fn from_pair(conn: Connection, read_conn: Connection) -> Self {
+        DbState {
+            conn: Arc::new(Mutex::new(conn)),
+            read_conn: Arc::new(Mutex::new(read_conn)),
+        }
+    }
+
     /// 打开内存库并完成迁移，包成共享锁形态（单元测试与 BDD 世界用）。
     ///
     /// 内存库按连接隔离（第二条内存连接是另一个空库），读槽与写槽共享同一
@@ -182,8 +192,26 @@ impl DbState {
         })
     }
 
+    /// 成对换入原语（issue #1303 / ADR-0117 决策 3）：「锁写槽→替换→还锁→
+    /// 换读槽」的机械序列单点——返回后可观察行为是写读两槽指向同一库；机械
+    /// 序列内两槽可能短暂分属两库的窗口由调用点的门翻转次序屏蔽（进锁定/失败
+    /// 先立门再换出、回到就绪先换入再开门，fail-closed，ADR-0117 决策 3），
+    /// 业务读写触达不到。收口既有换连单点（引导序列连接换入步骤与解锁/重置
+    /// 编排）消费，禁止任何路径手搓第二个副本绕开本原语（ADR-0117 决策 4
+    /// 换连半边，壳层源扫描守门）。
+    pub fn swap_pair(&self, conn: Connection, read_conn: Connection) -> Result<()> {
+        let mut guard = self.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        *guard = conn;
+        drop(guard);
+        self.replace_read_conn(read_conn)
+    }
+
     /// 原位换入读连接（成对换连的读侧，issue #1280 / ADR-0117 决策 3）。
-    pub fn replace_read_conn(&self, conn: Connection) -> Result<()> {
+    ///
+    /// `pub(crate)`（issue #1303）：生产面换入一律走成对原语 [`DbState::swap_pair`]，
+    /// 读槽单槽换入在本 crate 之外再无合法调用点——绕开成对原语编译即错（守门
+    /// 的编译期半边）。
+    pub(crate) fn replace_read_conn(&self, conn: Connection) -> Result<()> {
         replace_read_conn_slot(&self.read_conn, conn)
     }
 
