@@ -14,9 +14,12 @@
 //! - `lock_probe`：持锁时长探针（issue #1276 守门③）：超阈值记 warn、不静默。
 //! - `readonly`：只读连接与成对 DbState 读槽（读路径独立只读连接，
 //!   issue #1280 / ADR-0117）。
+//! - `facade`：异步 DB 门面（写读两线程、作业通道、panic 回滚与连接不可信语义，
+//!   ADR-0125 决策 1–3 / issue #1408）。
 
 mod common;
 mod dirty_marker;
+mod facade;
 mod holding;
 mod integrity;
 mod lock_probe;

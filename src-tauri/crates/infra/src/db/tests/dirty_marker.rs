@@ -88,3 +88,27 @@ fn write_closure_committing_own_tx_marks_dirty() {
         .expect("闭包成功");
     assert!(dirty_state(&state).dirty, "提交点应置脏");
 }
+
+/// 已持锁形态（ADR-0125 决策 2 / issue #1408）：异步 DB 门面线程持槽锁后经
+/// `db::write_locked` 执行——置脏语义与取锁形态同源（同一实现），故提交点置脏、
+/// 未提交（显式事务在途）不置脏两条判据在已持锁形态下逐条成立。
+#[test]
+fn write_locked_marks_dirty_only_at_commit_point() {
+    let state = write_test_state();
+    assert!(!dirty_state(&state).dirty, "初始应为洁");
+    {
+        let guard = state.conn.lock().unwrap_or_else(|e| e.into_inner());
+        crate::db::write_locked(&guard, |_conn| Ok(())).expect("已持锁形态成功");
+    }
+    assert!(dirty_state(&state).dirty, "已持锁形态的提交点应置脏");
+
+    // 未提交就返回（事务在途）→ 不置脏；回滚后仍不置脏（提交点复核同源）。
+    let state = write_test_state();
+    {
+        let guard = state.conn.lock().unwrap_or_else(|e| e.into_inner());
+        guard.execute("BEGIN", []).expect("开事务");
+        crate::db::write_locked(&guard, |_conn| Ok(())).expect("未提交成功");
+        guard.execute("ROLLBACK", []).expect("回滚");
+    }
+    assert!(!dirty_state(&state).dirty, "未提交不置脏（提交点复核）");
+}

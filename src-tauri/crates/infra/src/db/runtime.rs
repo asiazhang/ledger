@@ -23,6 +23,11 @@ pub const LOCK_HOLD_PROBE_THRESHOLD: Duration = Duration::from_secs(1);
 /// 分钟级网络同步；越界即「慢闭包进锁」的嫌疑现场，由人工按坐标追认。
 /// 取锁点全部接哨：连接层写入口 [`write()`]、壳层读入口（`read_entry`）与
 /// 分段写入口的 `SegmentLock`（壳层 `shell_support::write_entry`，#1108 迁出根包）。
+///
+/// **门面形态的语义承接**（ADR-0125 决策 2，issue #1408）：异步 DB 门面把取锁
+/// 收进 DB 线程后，同一探针的量纲由「持有互斥锁时长」变为「**作业占用 DB 线程
+/// 时长**」——门面线程为整个作业持有槽锁，两者在门面形态下同区间；阈值与告警
+/// 口径（越界即 warn、不静默）不变，故共用本函数，不另立第二套阈值。
 pub fn probe_lock_hold(hold: Duration) {
     if hold >= LOCK_HOLD_PROBE_THRESHOLD {
         tracing::warn!(
@@ -37,10 +42,13 @@ pub fn probe_lock_hold(hold: Duration) {
 // 连接层统一写入口（ADR-0032）
 // ---------------------------------------------------------------------------
 
-/// 连接层统一写入口：锁连接执行写闭包（ADR-0032，spec #173）。
+/// 连接层统一写入口 · **已持锁形态**（ADR-0125 决策 2，issue #1408）：调用方
+/// 已持有连接槽锁（异步 DB 门面的 DB 线程），本函数只做写入口的语义部分——
+/// 执行写闭包 → 「闭包成功且已回到提交点（`is_autocommit()`）」单点执行置脏 +
+/// 写时到期检查。取锁、锁失败映射与持锁时长探针归取锁方。
 ///
 /// 置脏触发的单点，业务写路径对备份域零感知：
-/// - 锁连接 → 执行闭包；
+/// - 执行闭包；
 /// - 闭包成功且事务已提交（`is_autocommit()`，含闭包内部自行 `BEGIN`/`COMMIT`
 ///   后回到提交点）→ 单点执行置脏 + 写时顺带到期检查；
 /// - 闭包失败（事务回滚）不置脏；未提交就返回（显式事务仍打开）同样不置脏——
@@ -49,18 +57,34 @@ pub fn probe_lock_hold(hold: Duration) {
 /// 豁免清单集中在「不经过本入口的写方」：设置与调度状态写入（`app_settings`
 /// 全表，经 [`crate::settings`] 单点收口）与恢复（Restore）路径。
 ///
-/// 薄 wrapper 边界：只做「锁 + 写后置动作/检查」，不接管事务管理——闭包内保留
-/// 裸 `BEGIN`/`COMMIT`/`ROLLBACK` 写法。耗时日志等其它连接级横切机制收口时
-/// 并入本入口（单独开票）。
+/// 薄 wrapper 边界：只做「写后置动作/检查」，不接管事务管理——闭包内保留
+/// 裸 `BEGIN`/`COMMIT`/`ROLLBACK` 写法（原生事务语句的合法住址见
+/// [`crate::db::tx_scope`]）。耗时日志等其它连接级横切机制收口时并入本入口
+/// （单独开票）。
+///
+/// 与取锁形态 [`write()`] 的关系：置脏语义只有本函数一处实现，`write` 是它
+/// 叠加「取锁 + 探针」的薄壳。门面作业经本形态执行（门面线程持锁，闭包内再取
+/// 同一槽即自死锁，由 ADR-0125 决策 1 的取用独占与结构守门挡住）。
+pub fn write_locked<T>(conn: &Connection, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+    let result = f(conn);
+    if result.is_ok() && conn.is_autocommit() {
+        after_commit(conn);
+    }
+    result
+}
+
+/// 连接层统一写入口 · 取锁形态（ADR-0032）：锁住连接槽后执行 [`write_locked`]。
+///
+/// **过渡形态**（issue #1408）：门面落地后，调用方的取锁本应由 DB 线程承担
+/// （ADR-0125 决策 1「取用独占收在门面内」）——命令层与三处统一入口的改道随
+/// #1410 落地，届时生产面无本形态调用点。存量消费方（壳层统一写入口、`DbState::write`
+/// 与域侧零星调用）在改道前经本形态过渡，语义与迁移前逐字一致。
 pub fn write<T>(conn: &Mutex<Connection>, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     // 持锁时长探针（issue #1276 守门③）：从取锁成功到还锁全程计时，整段形态
     // 的长持锁（如误把网络等待写回闭包内）在此现形。
     let hold_started = Instant::now();
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let result = f(&conn);
-    if result.is_ok() && conn.is_autocommit() {
-        after_commit(&conn);
-    }
+    let result = write_locked(&conn, f);
     probe_lock_hold(hold_started.elapsed());
     result
 }
@@ -133,16 +157,31 @@ where
     let dispatch = tracing::dispatcher::get_default(tracing::Dispatch::clone);
     let caller_span = tracing::Span::current();
     tauri::async_runtime::spawn_blocking(move || {
-        tracing::dispatcher::with_default(&dispatch, || {
-            let _caller = caller_span.enter();
-            // 调用点无 span（IPC 异步命令）→ 重建命令 span 兜底维持归因。
-            let command_span = tracing::info_span!("command", command);
-            let _command = caller_span.is_none().then(|| command_span.enter());
-            f()
-        })
+        with_caller_context(&dispatch, &caller_span, command, f)
     })
     .await
     .map_err(|e| AppError::Io(format!("数据库任务执行失败: {e}")))?
+}
+
+/// 跨线程携带调用点上下文的执行单点（ADR-0069 决策 3）：在调用点 dispatcher 下、
+/// 以调用点 span 为当前 span 执行 `f`；调用点无 span（IPC 异步命令）时重建
+/// `command` span 兜底——SQL 耗时归因口径的唯一实现处，阻塞线程池 helper
+/// [`run_db`] 与异步 DB 门面（`db::facade`）共用，归因不因形态而漂移。
+///
+/// 调用方负责在调用点（异步上下文那一侧）捕获 [`tracing::dispatcher::get_default`]
+/// 与 [`tracing::Span::current`] 并随闭包带入线程——线程局部上下文不会自动跟随。
+pub(crate) fn with_caller_context<R>(
+    dispatch: &tracing::Dispatch,
+    caller_span: &tracing::Span,
+    command: &'static str,
+    f: impl FnOnce() -> R,
+) -> R {
+    tracing::dispatcher::with_default(dispatch, || {
+        let _caller = caller_span.enter();
+        let command_span = tracing::info_span!("command", command);
+        let _command = caller_span.is_none().then(|| command_span.enter());
+        f()
+    })
 }
 
 // ---------------------------------------------------------------------------
