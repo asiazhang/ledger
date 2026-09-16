@@ -117,21 +117,23 @@ const BOOT_FAILURE_ALLOWED_COMMANDS: &[&str] = &[
 ];
 
 /// 业务可用起点的**后台服务编排单一入口**（issue #961）：自动备份调度
-/// （[`ledger_backup::start_scheduler`]，轮询同轮承载定时计划追补）与多端同步触发
+/// （[`ledger_backup::start_scheduler`]，轮询同轮承载定时计划追补）、多端同步触发
 /// （[`ledger_sync_engine::start_triggers`]，分平台门收在域内一处，ADR-0098 决策 4）
-/// 必须在每个业务可用起点成对拉起——两个独立调用无机制保证成对，#863 会话
-/// 已由同一根因造成两次真实缺陷（分平台门漂移、`restart_app` 落 Ready 漏接
-/// 同步触发），且「缺失一个调用」不会让任何断言变红。全部业务可用起点只调
-/// 本函数：
+/// 与价格历史后台补全（[`ledger_market_sync::start_history_backfill`]，
+/// ADR-0122 / issue #1375）必须在每个业务可用起点成组拉起——多个独立调用无
+/// 机制保证成组，#863 会话已由同一根因造成两次真实缺陷（分平台门漂移、
+/// `restart_app` 落 Ready 漏接同步触发），且「缺失一个调用」不会让任何断言
+/// 变红。全部业务可用起点只调本函数：
 /// ① `lib.rs` setup 就绪（锁定/失败不拉，守卫在调用方）；
 /// ② `resume_business_surface`（解锁 / 忘记口令重置 / 启动失败重置共用）；
 /// ③ `restart_app` 原位重引导落 `Ready`（不经 setup 也不经解锁路径）。
-/// 成对性由本函数与 `scripts/check-background-services.ts` 文本守门共同保证：
-/// 两个域入口的生产调用只允许出现在本函数体内，其余位置命中即红。
+/// 成组性由本函数与 `scripts/check-background-services.ts` 文本守门共同保证：
+/// 各域入口的生产调用只允许出现在本函数体内，其余位置命中即红。
 /// 各调度自持单次拉起守卫，原位重引导重复调用幂等（ADR-0080）。
 pub(crate) fn start_background_services<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     ledger_backup::start_scheduler(app);
     ledger_sync_engine::start_triggers(app);
+    ledger_market_sync::start_history_backfill(app);
 }
 
 fn try_init_database(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -245,12 +247,13 @@ pub fn run() {
             // 解锁先于一切业务读写，失败期间库不可用；调度分别由解锁命令与
             // 启动失败重置命令在恢复成功后拉起（轮询同轮承载定时追补）。
             if !locked && !boot_failed {
-                // 后台服务成对拉起收在唯一编排点（issue #961）：自动备份 +
-                // 多端同步触发，分平台分流收在域侧 `start_triggers` 一处
-                // （ADR-0098 决策 4 / ADR-0074 决策 6 先例）。锁定/启动失败
-                // 期间不启动（issue #570 / #601 / ADR-0075 决策 5）：解锁先于
-                // 一切业务读写，失败期间库不可用；调度分别由解锁命令与启动
-                // 失败重置命令在恢复成功后经同一编排点拉起。
+                // 后台服务成组拉起收在唯一编排点（issue #961）：自动备份 +
+                // 多端同步触发 + 价格历史后台补全（issue #1375），分平台分流
+                // 收在域侧 `start_triggers` 一处（ADR-0098 决策 4 / ADR-0074
+                // 决策 6 先例）。锁定/启动失败期间不启动（issue #570 / #601 /
+                // ADR-0075 决策 5）：解锁先于一切业务读写，失败期间库不可用；
+                // 调度分别由解锁命令与启动失败重置命令在恢复成功后经同一
+                // 编排点拉起。
                 start_background_services(app.handle());
             }
             // 备份产物变更信号（issue #129）：自动备份的深路径执行点

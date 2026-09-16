@@ -33,6 +33,10 @@
 //!   upsert + 近两年日 K 回填周线落 `price_history` + 汇率 K 线落
 //!   `fx_rate_history`（ADR-0019）+ 基金历史净值按水位增量回填（ADR-0038 决策 6）
 //!   + 数据源权威名称随行刷新（「随用随修 + 同步随行刷新」，ADR-0036/0081 修订）；
+//! - [`history`]：价格历史后台补全（ADR-0122 / issue #1375）——派生事实队列
+//!   （有价格通道但历史不完整，持仓优先）+ 一轮排空（与手动同步共用的单只
+//!   回填单元，幂等无冲突）+ 启动延迟与自然日窗口调度 + 收尾裁决（置脏 +
+//!   价格失效信号）；唯一可见面是静默标的级计数（新事件名，见 [`progress`]）；
 //! - [`channels`]：同步网络通道束（issue #1276）——六个逐标的抓取闭包 + 两个批量
 //!   取数面的打包形态，生产接 HTTP 层、测试注入桩经命令壳换装；
 //! - [`bulk`]：行情批量取数面（ADR-0121 / issue #1374）——名称全量字典 + 场外基金
@@ -77,6 +81,7 @@ mod bulk;
 mod channels;
 mod fund;
 mod fund_nav;
+mod history;
 mod http;
 mod incremental;
 mod js;
@@ -101,8 +106,14 @@ pub use channels::{
 // 能命名与构造应答形状（StockItem 可构造；Kline/Nav 形状测试回空表即可命名）。
 pub use fund::fetch_fund_quote_production;
 pub use fund_nav::{LsjzPage, NavPoint, NavQuery};
+pub use history::{
+    BackfillChannelsSlot, BackfillTimings, start_history_backfill, start_history_backfill_with,
+};
 pub use http::{KlineBar, StockItem};
 pub use model::{SyncInstrumentInfoResult, WriteWitness};
-pub use progress::{FundNavProgress, INSTRUMENT_SYNC_PROGRESS, ProgressEmitter, SyncProgress};
+pub use progress::{
+    BackfillProgressEmitter, FundNavProgress, HISTORY_BACKFILL_PROGRESS, INSTRUMENT_SYNC_PROGRESS,
+    ProgressEmitter, SyncProgress,
+};
 pub use session::ScopedSession;
 pub use stock::fetch_stock_quote_production;

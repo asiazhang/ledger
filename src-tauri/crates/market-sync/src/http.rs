@@ -4,7 +4,8 @@
 //! 本层现服务增量同步批量报价、单点行情、日 K 与基金净值通道。
 
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -162,6 +163,52 @@ pub(super) fn lock_pacer(pacer: &Mutex<Pacer>) -> Result<MutexGuard<'_, Pacer>> 
     pacer
         .lock()
         .map_err(|e| AppError::Io(format!("限流器互斥体损坏: {e}")))
+}
+
+/// 进程级共享限速器单例（issue #1375 额度让路）：前台（用户动作：手动同步）与
+/// 后台补全两条通道束共享同一份 `Pacer`——数据源的请求额度是进程全局的，
+/// 相邻两次请求（不管来自哪条车道）之间都保持当前间隔。先例：
+/// `bulk::shared_circuit`（跨同步记忆的进程级单例，通道束每次重建而记忆不随束
+/// 消亡）；限速器同理——束每次同步/每轮重建，限速状态必须活在束之外。
+pub(super) fn shared_pacer() -> Arc<Mutex<Pacer>> {
+    static SHARED: OnceLock<Arc<Mutex<Pacer>>> = OnceLock::new();
+    SHARED
+        .get_or_init(|| Arc::new(Mutex::new(Pacer::default())))
+        .clone()
+}
+
+/// 前台在途计数（issue #1375 让行语义的状态位）：前台车道每个请求在途期间
+/// 持有一个 [`ForegroundGuard`]，计数即「此刻有前台请求在途」；后台车道发
+/// 请求前等它归零。原子量足够：让行是尽力而为的礼让语义，硬保证由共享
+/// pacer 的互斥串行承担。
+static FOREGROUND_INFLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// 前台在途守卫（RAII）：构造即计数 +1，作用域结束（请求完成/失败/panic）
+/// 自动 -1。前台车道的抓取闭包在请求前构造，闭包返回时自然释放。
+pub(super) struct ForegroundGuard;
+
+impl ForegroundGuard {
+    pub(super) fn enter() -> Self {
+        FOREGROUND_INFLIGHT.fetch_add(1, Ordering::SeqCst);
+        ForegroundGuard
+    }
+}
+
+impl Drop for ForegroundGuard {
+    fn drop(&mut self) {
+        FOREGROUND_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// 后台让行等待（issue #1375）：前台请求在途期间自旋等待归零，绝不与前台
+/// 并发抢额度——用户动作优先于后台补全。归零窗口极短（前台请求本身被共享
+/// pacer 限速），轮询间隔取小让后台能及时察觉恢复。
+const FOREGROUND_YIELD_POLL: Duration = Duration::from_millis(50);
+
+pub(super) fn wait_foreground_idle() {
+    while FOREGROUND_INFLIGHT.load(Ordering::SeqCst) > 0 {
+        thread::sleep(FOREGROUND_YIELD_POLL);
+    }
 }
 
 /// 行情接口返回的单个股票条目（字段 f12=代码, f14=名称, f2=价格原始值, f1=价格精度位）。
@@ -510,10 +557,21 @@ pub(super) fn fetch_ulist(
 }
 
 /// 日 K 线单根样本：交易日（ISO 日期）与收盘价（真实价格值，非 f2 缩放值）。
+/// 字段私有、构造经 [`KlineBar::new`]——通道束是壳层注入接缝的公开面，桩实现
+/// 方需要能构造应答形状（issue #1375 后台补全注入接缝同需）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct KlineBar {
     pub(super) date: String,
     pub(super) close: f64,
+}
+
+impl KlineBar {
+    pub fn new(date: impl Into<String>, close: f64) -> Self {
+        Self {
+            date: date.into(),
+            close,
+        }
+    }
 }
 
 /// 日 K 接口响应：`data` 为 null（无效 secid / 无数据）时视为空序列而非错误，

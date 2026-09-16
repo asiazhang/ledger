@@ -526,6 +526,7 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   { path: 'channels.rs', layer: '域目录', note: '同步网络通道束（issue #1276）：六个抓取闭包的打包形态与生产/测试换装接缝——生产接 HTTP 层（主机池/限流 pacer 单点），测试注入桩经命令壳 SyncChannelsSlot 换装使「同步真实在途」可确定复现；编排本体经 do_incremental_sync_channels 单点拆交' },
   { path: 'fund.rs', layer: '域目录', note: '东财基金报价访问（按 6 位代码即拉，issue #301 / ADR-0038；搜索建议未命中回退档案通道改判存在，issue #1212）——行情接入接缝查询半边的场外实例，统一载荷 investment::Quote（ADR-0103）' },
   { path: 'fund_nav.rs', layer: '域目录', note: '东财历史净值通道（issue #303 / ADR-0038 决策 6）：lsjz 报文解析、水位窗口与基金分区编排；首刷深回填走详情页数据文件单请求全量通道、失败 fail-closed 回退分页（issue #1062）' },
+  { path: 'history.rs', layer: '域目录', note: '价格历史后台补全（ADR-0122 / issue #1375）：派生事实队列（有价格通道但历史不完整，持仓优先）+ 一轮排空（与手动同步共用的单只回填单元，单只失败不中断、幂等无冲突）+ 启动延迟与自然日窗口调度（后台服务编排单点接线，issue #961 名单）+ 收尾裁决（置脏 + 价格失效信号，成败同判）；后台车道生产束（全局限速器让行前台）经 BackfillChannelsSlot 注入接缝换装' },
   { path: 'http.rs', layer: '域目录', note: '行情 HTTP 网络层（issue #89）：多主机切换 / 重试 / 限流冷却 / Referer 与报价、日 K、汇率 K 报文解析；价格换算按随行精度位单点（批量报价与单点行情共用，#695）' },
   { path: 'incremental.rs', layer: '域目录', note: '标的信息同步编排（issue #103 / #137 / #303 / #695 / #827）：批量报价 upsert 现价 + 近两年日 K 周采样 + 汇率 K 线 + 基金净值按水位增量 + 数据源权威名称随行刷新；抓取通道全部经闭包注入，编排不碰网络' },
   { path: 'js.rs', layer: '域目录', note: 'JS 文本字面量提取原语（fund_nav / bulk）：从 `.js` 数据文件的 `var x = […]` 与对象字段 `datas:[…]` 两种赋值形态取出数组 / 字符串字面量，被拦截形态天然缺声明即返回 None' },

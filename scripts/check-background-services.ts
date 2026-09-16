@@ -1,15 +1,16 @@
 #!/usr/bin/env bun
-// 后台服务成对拉起守门（issue #961）：`backup::start_scheduler`（自动备份调度，
-// 轮询同轮承载定时追补）与 `sync_engine::start_triggers`（同步触发编排，分平台
-// 门收在域内一处，ADR-0098 决策 4）在**所有业务可用起点**必须成对拉起。
-// 两调用各自独立书写时无任何机制保证成对——#863 会话已由同一根因造成两次
+// 后台服务成组拉起守门（issue #961 / #1375）：`backup::start_scheduler`（自动备份调度，
+// 轮询同轮承载定时追补）、`sync_engine::start_triggers`（同步触发编排，分平台
+// 门收在域内一处，ADR-0098 决策 4）与 `market_sync::start_history_backfill`
+//（价格历史后台补全，ADR-0122 / issue #1375）在**所有业务可用起点**必须成组拉起。
+// 各调用独立书写时无任何机制保证成组——#863 会话已由同一根因造成两次
 // 真实缺陷（分平台门漂移、`restart_app` 落 Ready 漏接同步触发），且「缺失一个
 // 调用」不会让任何断言变红。守门规则（「白名单即规格」，ADR-0056 决策 4 哲学）：
 //
-// ① 这两个域入口的**生产调用**只允许出现在壳层唯一编排点 `lib.rs` 的
+// ① 这些域入口的**生产调用**只允许出现在壳层唯一编排点 `lib.rs` 的
 //    `start_background_services` 函数体内；其余位置命中即红——新加入口只调
 //    其中一个（或干脆各写各的）必然在此变红。
-// ② 编排点函数体内两个标识符必须**同时**出现（成对性在单点自证）；删掉
+// ② 编排点函数体内全部受守标识符必须**同时**出现（成组性在单点自证）；删掉
 //    其一或整函数即红（「删除即变红」，与 #963 同一验收哲学）。
 // ③ `sync_engine::start_sync_scheduler`（桌面轮询线程拉起）一并纳入守门：
 //    它是分平台门的域内实现细节（仅 `start_triggers` 消费），直接调用即绕过
@@ -43,8 +44,8 @@ import { maskNonCode } from './check-structure.ts'
 export const ORCHESTRATOR_FILE = 'lib.rs'
 export const ORCHESTRATOR_FN = 'start_background_services'
 
-/** 成对拉起名单（编排点函数体内必须同时出现的两个域入口） */
-const PAIRED_NAMES = ['start_scheduler', 'start_triggers'] as const
+/** 成组拉起名单（编排点函数体内必须同时出现的各域入口） */
+const PAIRED_NAMES = ['start_scheduler', 'start_triggers', 'start_history_backfill'] as const
 
 /**
  * 受守标识符及其合法住址（导出供测试夹具派生，check-structure.test.ts 消费
@@ -87,6 +88,15 @@ export const GUARDED_NAMES: readonly GuardedName[] = [
     ],
     orchestratorBodyAllowed: false,
     note: '桌面轮询线程拉起（仅 start_triggers 域内消费；直接调用即绕过分平台门，#863 缺陷 1 形态）',
+  },
+  {
+    name: 'start_history_backfill',
+    wholeFile: [
+      'crates/market-sync/src/history.rs',
+      'crates/market-sync/src/lib.rs',
+    ],
+    orchestratorBodyAllowed: true,
+    note: '价格历史后台补全调度入口（ADR-0122 / issue #1375；定义住 ledger-market-sync crate 的 history.rs，crate 根再导出）',
   },
 ]
 
@@ -234,7 +244,7 @@ function main(): void {
       for (const name of PAIRED_NAMES) {
         if (!bodyHits.has(name)) {
           problems.push(
-            `✗ 成对性破坏：${ORCHESTRATOR_FILE} 的 \`${ORCHESTRATOR_FN}\` 函数体内缺少 \`${name}\`` +
+            `✗ 成组性破坏：${ORCHESTRATOR_FILE} 的 \`${ORCHESTRATOR_FN}\` 函数体内缺少 \`${name}\`` +
               `——后台服务只拉一半，缺失一侧的业务在本会话静默失效（#863 两次缺陷的形态）`,
           )
         }
@@ -300,14 +310,14 @@ function main(): void {
   if (problems.length > 0) {
     for (const p of problems) console.error(p)
     console.error(
-      `❌ 后台服务成对拉起守门失败：${problems.length} 处问题` +
+      `❌ 后台服务成组拉起守门失败：${problems.length} 处问题` +
         `（单点编排 + 白名单即规格，见 issue #961 / ADR-0056 决策 4 哲学）`,
     )
     process.exit(1)
   }
   const pathCount = new Set(GUARDED_NAMES.flatMap((g) => [...g.wholeFile])).size
   console.log(
-    `✓ 后台服务成对拉起守门：受守入口 ${GUARDED_NAMES.length} 个` +
+    `✓ 后台服务成组拉起守门：受守入口 ${GUARDED_NAMES.length} 个` +
       `（${GUARDED_NAMES.map((g) => g.name).join(' / ')}）· 白名单路径 ${pathCount} 个（定义与再导出）` +
       ` · 生产调用收敛于 \`${ORCHESTRATOR_FN}\` 单点 · 启动接线 ${BOOT_WIRING.length} 项已接线（#1088）` +
       ` · 全树扫描 ${files.length} 个非测试文件零脱离`,
