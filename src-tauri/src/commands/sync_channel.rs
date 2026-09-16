@@ -223,6 +223,8 @@ pub async fn sync_now<R: Runtime>(
             let report = run_round_once(&locks, &channel, &mode)?;
             // 成功轮次记入本会话形态（打开即同步与低频轮询不再触钥匙串）；
             // 明文库记「明文形态」——同一单点同时承载两态（issue #863）。
+            // 保留原位（issue #1395 留痕时序理由）：记入时机归域侧——只有轮次
+            // 成功才可记，不属业务可用起点，不随 resume 签名表达。
             match &passphrase_holder {
                 Some(passphrase) => {
                     SessionEnvelope::remember(SessionEnvelope::Encrypted(passphrase.clone()))

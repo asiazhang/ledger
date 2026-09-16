@@ -126,8 +126,9 @@ fn session_envelope_follows_session_passphrase() {
         EnvelopeMode::Encrypted { passphrase } if passphrase == "master-pass"
     ));
 
-    // 换库清空（原位重引导 / 忘记口令重置 / 关闭加密）：新库形态未知，回明文
-    // 形态等下一次解锁或手动同步重新记入——避免拿旧库口令去封新库的段。
+    // 换库清空（原位重引导，`restart_app` 单点）：新库形态未知，回明文
+    // 形态等下一次解锁或手动同步重新记入——避免拿旧库口令去封新库的段
+    //（忘记口令 / 启动失败重置已改随 resume 签名记入明文，issue #1395）。
     SessionEnvelope::forget();
     assert_eq!(SessionEnvelope::current(), SessionEnvelope::Plaintext);
     assert_eq!(
