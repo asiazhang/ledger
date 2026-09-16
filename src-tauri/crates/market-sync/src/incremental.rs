@@ -20,8 +20,7 @@
 //!
 //! 编排与网络解耦：核心流程 [`do_incremental_sync_with`] 接受注入的批量报价 / 日 K /
 //! 汇率 K 三个闭包（同一签名 `&str → Result<Vec<_>>`）、历史净值页闭包
-//!（[`NavQuery`] → [`LsjzPage`]）、单请求全量净值闭包（`&str → Result<Vec<NavPoint>>`，
-//! 首刷深回填用，issue #1062）、基金名称闭包（`&str → Result<String>`）与进度回调
+//!（[`NavQuery`] → [`LsjzPage`]）、基金名称闭包（`&str → Result<String>`）与进度回调
 //! 闭包（`done, total`，issue #897），测试以 mock 数据驱动（不依赖真实网络）；
 //! 生产经 [`super::channels`] 的通道束接 HTTP 层（复用主机池/重试/限流 pacer
 //! 与价格换算）。进度回调闭包是本函数唯一的对外观察点：编排核心不碰网络、不碰事件
@@ -54,7 +53,7 @@ use ledger_investment::prices::{
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 use ledger_transaction::amount::default_currency_code;
 
-use super::fund_nav::{FundSyncStats, LsjzPage, NavPoint, NavQuery, sync_one_fund_nav};
+use super::fund_nav::{FundSyncStats, LsjzPage, NavQuery, refresh_one_fund_price};
 use super::http::{KlineBar, StockItem, ULIST_BATCH_SIZE, price_cents_from_raw, secid_prefix};
 use super::persist::upsert_fx_rate_history;
 use super::progress::{FundNavProgress, SyncProgress};
@@ -215,16 +214,18 @@ fn take_bulk_surface<T: BulkCoverage>(
     }
 }
 
-/// 标的信息同步核心流程：单次收集库内全部标的并按通道分区 → 行情分区（stock|etf，
-/// #695）构造 secid 批量报价 upsert 现价（换算按随行精度位单点）、名称随行刷新、
-/// 日 K 回填周线；基金侧先取两个批量取数面（ADR-0121，未命中 / 失败 / 停用一律
-/// 回退逐标的通道），再逐只历史净值按水位增量回填（ADR-0038 决策 6，委托
-/// [`sync_one_fund_nav`]）与逐只名称刷新；汇率 K 线同期落 `fx_rate_history` →
-/// 结果统计。注入面 = 六个抓取闭包 + 批量取数面 + 一个进度回调（issue #897；生产接
+/// 标的信息同步核心流程（ADR-0122 / issue #1377 起只刷现价）：单次收集库内全部
+/// 标的并按通道分区 → 行情分区（stock|etf，#695）构造 secid 批量报价 upsert 现价
+///（换算按随行精度位单点）、名称随行刷新、有历史序列者由现价刷新直落当周采样点
+///（不另发逐只请求）；汇率 K 线同期落 `fx_rate_history` → 基金侧先取两个批量取
+/// 数面（ADR-0121，未命中 / 失败 / 停用一律回退逐标的短窗），逐只刷新现价与名称
+///（委托 [`refresh_one_fund_price`]）→ 结果统计。**不再回填价格历史**：首刷深
+/// 回填与缺周点补齐归价格历史后台补全（[`super::history`]）。
+/// 注入面 = 四个抓取闭包 + 批量取数面 + 一个进度回调（issue #897；生产接
 /// HTTP 层与事件发射，测试注入 mock），本函数不触碰网络、不碰事件系统。
 /// 返回统计：`synced` = 处理成功的标的数（行情分区有效价 + 基金处理成功，含基金
 /// 「已是最新」）；`skipped` = 无通道行（无行情类型/市场未知/名称充代码）、停牌/
-/// 无效价/查询无果、首刷查无净值与空响应（疑似被拦截/异常，issue #1059）的基金；
+/// 无效价/查询无果、查无净值与空响应（疑似被拦截/异常，issue #1059）的基金；
 /// `written` = 实际写入价格的标的数，
 /// `renamed` = 名称被刷新的标的数（两者共同决定价格失效信号：零变化不广播，
 /// 基金无新净值不算价格写入，issue #827）。
@@ -232,29 +233,28 @@ fn take_bulk_surface<T: BulkCoverage>(
 /// 进度回调（issue #897 / ADR-0095；页级明细 issue #1061）：载荷 `done`/`total`
 /// 的分母 `total` 为**有通道标的数**（可构造查询的行情标的 + 有真实代码的基金；
 /// 无通道行不计），收集与分区完成后立即发 `{ done: 0, total }`；此后每完成一个
-/// 有通道标的推进一格（报价+日 K 合并为行情标的一格，净值+名称合并为基金一格；
+/// 有通道标的推进一格（现价+名称合并为各通道标的的一格；
 /// 停牌/查询无果/「已是最新」照常推进——有通道标的不以成败计格）。`total` 为 0
-///（全部无通道）不发任何进度事件，空转不伪装成推进。首刷/深回填的基金在页抓取
+///（全部无通道）不发任何进度事件，空转不伪装成推进。逐只短窗翻页的基金在页抓取
 /// 返回后额外带出 `fund` 页级明细（不改 `done`/`total`；单页不发）。
 ///
-/// 写入见证（issue #1277）：每个实际写入点（行情报价落库 / 名称随行刷新 /
-/// 基金净值落库 / 基金名称刷新）在落库成功后标记 [`WriteWitness`]——中途失败的
-/// 运行结果统计随错误丢失，见证器由调用方持有（`&mut` 传入）存活，壳层据此把
-/// 「实际写过」的失败收尾归一为证据（成败同判，见 `commands::sync`）。
+/// 写入见证（issue #1277）：每个实际写入点（行情报价落库 / 当周采样点落库 /
+/// 名称随行刷新 / 基金净值落库 / 基金名称刷新）在落库成功后标记 [`WriteWitness`]
+/// ——中途失败的运行结果统计随错误丢失，见证器由调用方持有（`&mut` 传入）存活，
+/// 壳层据此把「实际写过」的失败收尾归一为证据（成败同判，见 `commands::sync`）。
 /// 取数面注入（ADR-0121 / issue #1374）：`bulk` 是名称全量字典 + 场外基金净值
 /// 全市场批量面 + 跨同步记忆的打包束（生产接 HTTP 层、测试注入桩，见
 /// [`super::channels`]）。批量面只回答「这次刷新用几次请求」，不改变价格来源归属。
-// 六个逐标的抓取闭包 + 取数面 + 会话 + 进度回调 + 写入见证共 10 参：网络接缝
+// 四个逐标的抓取闭包 + 取数面 + 会话 + 进度回调 + 写入见证共 8 参：网络接缝
 // 逐通道注入使然（与 HTTP 层 request_from_hosts 同形），参数表就是「本编排消费
-// 哪些外部通道」的清单。
+// 哪些外部通道」的清单（issue #1377 起日 K 与单请求全量净值两通道归后台补全，
+// 不在本编排的参数表）。
 #[allow(clippy::too_many_arguments)]
-pub(super) fn do_incremental_sync_with<Q, F, K, X, N, S, M, P>(
+pub(super) fn do_incremental_sync_with<Q, F, X, N, M, P>(
     session: &Q,
     fetch: &mut F,
-    fetch_kline: &mut K,
     fetch_fx: &mut X,
     fetch_nav: &mut N,
-    fetch_nav_full: &mut S,
     fetch_fund_name: &mut M,
     bulk: &mut BulkFetchSurfaces,
     progress: &mut P,
@@ -264,12 +264,8 @@ where
     // 作用域会话接缝（issue #1275）：读写库的唯一通道，签名层面取不到连接。
     Q: ScopedSession,
     F: FnMut(&str) -> Result<Vec<StockItem>>,
-    K: FnMut(&str) -> Result<Vec<KlineBar>>,
     X: FnMut(&str) -> Result<Vec<KlineBar>>,
     N: FnMut(&NavQuery) -> Result<LsjzPage>,
-    // 单请求全量净值闭包（issue #1062）：6 位基金代码 → 整只基金历史单位净值；
-    // 仅首刷深回填用，失败由 sync_one_fund_nav fail-closed 回退 fetch_nav 分页通道。
-    S: FnMut(&str) -> Result<Vec<NavPoint>>,
     // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
     // （不落库）。生产接基金详情通道，测试注入 mock。
     M: FnMut(&str) -> Result<String>,
@@ -335,8 +331,9 @@ where
 
     // ① 按批查询并 upsert 现价（幂等：每标的一条 market_prices 覆盖更新，原行为不变），
     // 名称随行刷新（issue #827）：批量报价响应携带数据源权威名称（f14），零额外请求，
-    // 与价格解耦——停牌无价仍刷名称。报价 + 日 K 合并为该标的一格（issue #897）：
-    // 批内逐只回填日 K 后推进一格，停牌/查询无果照常推进。
+    // 与价格解耦——停牌无价仍刷名称。报价 + 当周采样点直落合并为该标的一格
+    //（issue #897；历史日 K 已移出本编排，ADR-0122 / issue #1377），停牌/查询无果
+    // 照常推进。
     let mut synced_codes: HashSet<String> = HashSet::new();
     let mut renamed = 0usize;
     for chunk in queryable.chunks(ULIST_BATCH_SIZE) {
@@ -370,33 +367,41 @@ where
                         )?;
                         synced_codes.insert(item.code.clone());
                         witness.mark_written();
+                        // 当周采样点直落（ADR-0122 决策 2 / issue #1377）：现价刷新
+                        // 已携带该标的当日有效报价，有历史序列者把当周点一并落库，
+                        // 不另发逐只日 K 请求；无历史序列者不落（单点会冒充历史完整，
+                        // 破坏后台补全的首刷判据）；同周同值零写入。
+                        let today = beijing_today().format("%Y-%m-%d").to_string();
+                        super::history::land_current_week_point(
+                            conn,
+                            &inst.instrument_id,
+                            &inst.currency,
+                            &today,
+                            price,
+                        )?;
                     }
                     Ok(())
                 })?;
             }
         }
 
-        // ② 近两年日 K 回填 → 周线降采样落 PriceHistory（批内逐只，与报价合并为
-        // 该标的一格）。覆盖行情分区全部标的（stock|etf，#695；清仓标的自 #827
-        // 恢复采集）；停牌/整周无有效报价该周无点，不中断同步。单只整只一次提交
-        //（ADR-0122 决策 8 / issue #1373）：第 N 个周点写入失败整体回滚，不留半根
-        // 历史——「有历史序列」与「历史完整」由此等价。抓取与落库已抽成单只历史
-        // 回填单元（[`super::history::backfill_stock_history`]，issue #1375 与后台
-        // 补全共用），进度推进仍归本编排（报价 + 日 K 合并一格，issue #897）。
-        for (secid, inst) in chunk {
-            super::history::backfill_stock_history(session, fetch_kline, secid, inst)?;
+        // 进度推进（issue #897）：批内每只有通道标的一格——现价 + 当周采样点 +
+        // 名称随行刷新合并为一格，停牌/查询无果照常推进（不以成败计格）。
+        // 历史日 K 回填已随 ADR-0122 / issue #1377 移出本编排（归后台补全），
+        // 行情分区的逐只请求自此消失。
+        for _ in chunk {
             done += 1;
             progress(SyncProgress::instrument(done, total));
         }
     }
 
-    // ③ 汇率 K 线回填 → FxRateHistory：共用单元（[`backfill_fx_pairs`]，issue
+    // ② 汇率 K 线回填 → FxRateHistory：共用单元（[`backfill_fx_pairs`]，issue
     // #1375 起与后台补全共用），仅非本位币币种对，与价格历史同期段采集。
     // 汇率落库不计入写入见证（issue #1277）：与成功路径的零写入判定同口径——
     // 只有价格或名称写入才发价格失效信号，汇率历史变化不在其列。
     backfill_fx_pairs(session, fetch_fx, held.iter().map(|s| s.currency.clone()))?;
 
-    // ④ 批量取数面（ADR-0121 / issue #1374）：名称全量字典 + 场外基金净值全市场
+    // ③ 批量取数面（ADR-0121 / issue #1374）：名称全量字典 + 场外基金净值全市场
     // 批量面，各整次同步最多一次请求——请求量自此不再随基金数线性增长；净值分区
     // 为空则零请求（无标的可刷，不白撞数据源）。失败 / 停用 / 未覆盖的标的在下方
     // 逐标的通道 fail-closed 兜底（缺口与失败分开统计，见 [`fetch_bulk_surfaces`]）。
@@ -407,13 +412,14 @@ where
         fetch_bulk_surfaces(bulk)
     };
 
-    // ⑤ 基金分区逐只（issue #897 逐只合并推进）：历史净值回填（ADR-0038 决策 6，
-    // 委托 [`sync_one_fund_nav`]——无历史序列者首刷近两年、已有序列者按净值日期
-    // 水位增量，issue #1059）+ 权威名称随行刷新（issue #827）合并为该基金的一格；
-    // 「已是最新（无新净值）」同样推进。名称与耗时随取数面改写：批量面命中即零
-    // 请求（名称全量字典 / 净值批量面的最新净值日期即「是否有新净值」的判据），
-    // 未覆盖的标的退回既有逐标的通道（名称走基金详情通道、净值走 lsjz 分页）。
-    // 名称充代码行无通道：不进净值分区（不进分母、零请求），计入跳过（见上）。
+    // ④ 基金分区逐只（issue #897 逐只合并推进）：现价刷新（ADR-0122 决策 2，
+    // 委托 [`refresh_one_fund_price`]——批量面命中整只零请求，未覆盖/降级退逐只
+    // 短窗，issue #1377 起不再承担首刷与缺周点深补）+ 权威名称随行刷新
+    //（issue #827）合并为该基金的一格；「已是最新（无新净值）」同样推进。名称与
+    // 耗时随取数面改写：批量面命中即零请求（名称全量字典 / 净值批量面的最新净值
+    // 日期即「是否有新净值」的判据），未覆盖的标的退回既有逐标的通道（名称走
+    // 基金详情通道、净值走 lsjz 短窗）。名称充代码行无通道：不进净值分区（不进
+    // 分母、零请求），计入跳过（见上）。
     let mut fund_stats = FundSyncStats {
         synced: 0,
         skipped: 0,
@@ -446,12 +452,11 @@ where
                 });
             };
             let written_before = fund_stats.written;
-            sync_one_fund_nav(
+            refresh_one_fund_price(
                 session,
                 fund,
                 latest_hint,
                 fetch_nav,
-                fetch_nav_full,
                 &mut fund_stats,
                 &mut on_page,
             )?;

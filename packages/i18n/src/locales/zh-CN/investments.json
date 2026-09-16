@@ -126,8 +126,12 @@
     "noSource": "该标的没有价格来源",
     "noSourceExtra": "市场未知的股票类标的不参与行情采集，也不开放手动录价，无法绘制走势。",
     "empty": "暂无历史价格数据",
-    "emptyExtra": "点击标的列表的「同步标的信息」回填近两年行情后，即可查看走势。",
-    "emptyExtraManual": "点击标的列表的「录价」录入价格后，即可查看走势。"
+    "emptyNoPointsInRange": "当前区间内暂无采样点，可尝试更长的区间。",
+    "emptyExtraManual": "点击标的列表的「录价」录入价格后，即可查看走势。",
+    "emptyBackfillRunning": "历史数据补全中，完成后即可查看走势。",
+    "emptyBackfillProgress": "历史数据补全中（{done}/{total}），完成后即可查看走势。",
+    "emptyBackfillRetryPending": "历史补全暂未成功，后台稍后会自动重试。",
+    "emptyBackfillNoData": "没有可采集的历史数据（如查无此码、新基金未披露净值或已退市）。"
   },
   "form": {
     "amount": "金额",
@@ -187,7 +191,8 @@
   },
   "staleness": {
     "message": "有 {count} 个标的的行情 / 净值可能已过期（超过 {days} 天未更新，或持仓缺现价）。",
-    "goSync": "去同步标的信息"
+    "goSync": "去同步标的信息",
+    "hint": "同步只刷新现价；走势历史由后台自动补全。"
   },
   "market": {
     "sh": "沪市",

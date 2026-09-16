@@ -412,3 +412,240 @@ fn portfolio_trend_keeps_hidden_account_flow() {
         .unwrap();
     assert_eq!(holding_rows, 1);
 }
+
+// ---------------------------------------------------------------------------
+// 走势空态三态（ADR-0122 决策 5 / issue #1377）：补全中（带计数）/ 补全失败
+// 待重试 / 无数据。判定消费派生事实（通道 + 历史）与后台补全的运行态快照
+// （进程内全局态），状态触达用例以测试锁串行化，避免并行用例互踩同一份快照。
+// ---------------------------------------------------------------------------
+
+/// 运行态快照是进程级单例：触达它的用例先取这把锁（先例：共享单例的用例间
+/// 串行化，与「每个用例独立数据库」不同层——锁只管快照，不管库）。
+fn backfill_state_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+}
+
+fn backfill_status(
+    state: TrendBackfillState,
+    done: Option<usize>,
+    total: Option<usize>,
+) -> TrendBackfillStatus {
+    TrendBackfillStatus { state, done, total }
+}
+
+#[test]
+fn instrument_trend_empty_carries_backfill_field_only_for_collectable_without_history() {
+    let _guard = backfill_state_lock();
+    let conn = open();
+
+    // 行情通道标的（stock + sh + 6 位代码）无历史：空态带「补全中」——无在途
+    // 轮次时的诚实缺省（后台任务会采它，派生事实与队列同源）。
+    insert_instrument_with_market(
+        &conn,
+        "inst-bf-q",
+        "600519",
+        "贵州茅台",
+        "CNY",
+        "sh",
+        "stock",
+    );
+    let trend =
+        trend::query_instrument_price_trend(&conn, "inst-bf-q", &TrendRange::default()).unwrap();
+    assert!(trend.points.is_empty());
+    assert_eq!(
+        trend.backfill,
+        Some(backfill_status(TrendBackfillState::Running, None, None)),
+        "有通道无历史 = 补全中（无在途轮次时无计数）"
+    );
+
+    // 有历史序列者无空态可言：区间裁剪导致的空不携带该字段。
+    seed_price_history(
+        &conn,
+        "ph-bf-1",
+        "inst-bf-q",
+        "2026-01-05",
+        1_000_000,
+        "CNY",
+    );
+    let trend = trend::query_instrument_price_trend(
+        &conn,
+        "inst-bf-q",
+        &TrendRange {
+            start_date: Some("2027-01-01".into()),
+            end_date: None,
+        },
+    )
+    .unwrap();
+    assert!(trend.points.is_empty());
+    assert_eq!(trend.backfill, None, "有历史者的空（区间裁剪）不带补全状态");
+
+    // 手动报价通道（other + unknown + 非代码形态）：不在补全面，空态不带字段
+    //（前端按既有「录价」引导渲染）。
+    insert_instrument_with_market(
+        &conn,
+        "inst-bf-m",
+        "稳稳地幸福",
+        "且慢组合",
+        "CNY",
+        "unknown",
+        "other",
+    );
+    let trend =
+        trend::query_instrument_price_trend(&conn, "inst-bf-m", &TrendRange::default()).unwrap();
+    assert!(trend.points.is_empty());
+    assert_eq!(trend.backfill, None, "手动通道不归后台补全");
+
+    // 无来源（stock + unknown）：同样不带字段（既有「没有价格来源」边界说明）。
+    insert_instrument_with_market(
+        &conn,
+        "inst-bf-n",
+        "ghost1",
+        "幽灵股票",
+        "CNY",
+        "unknown",
+        "stock",
+    );
+    let trend =
+        trend::query_instrument_price_trend(&conn, "inst-bf-n", &TrendRange::default()).unwrap();
+    assert!(trend.points.is_empty());
+    assert_eq!(trend.backfill, None, "无来源标的没有可采序列，不冒充补全中");
+}
+
+#[test]
+fn instrument_trend_backfill_reflects_round_lifecycle_and_attempt_outcomes() {
+    let _guard = backfill_state_lock();
+    let conn = open();
+    insert_fund_instrument(&conn, "inst-bf-f", "000001", "中国蓝图");
+
+    // 一轮在途：补全中带计数，随标的级推进（与进度事件同口径）。
+    backfill::round_started(2);
+    let trend =
+        trend::query_instrument_price_trend(&conn, "inst-bf-f", &TrendRange::default()).unwrap();
+    assert_eq!(
+        trend.backfill,
+        Some(backfill_status(
+            TrendBackfillState::Running,
+            Some(0),
+            Some(2)
+        ))
+    );
+    backfill::round_progress(1);
+    let trend =
+        trend::query_instrument_price_trend(&conn, "inst-bf-f", &TrendRange::default()).unwrap();
+    assert_eq!(
+        trend.backfill,
+        Some(backfill_status(
+            TrendBackfillState::Running,
+            Some(1),
+            Some(2)
+        ))
+    );
+
+    // 本轮尝试后仍无历史，结局 = 无数据（查无此码）：空态答「无数据」。
+    backfill::record_attempt("inst-bf-f", backfill::BackfillAttempt::NoData);
+    let trend =
+        trend::query_instrument_price_trend(&conn, "inst-bf-f", &TrendRange::default()).unwrap();
+    assert_eq!(
+        trend.backfill,
+        Some(backfill_status(TrendBackfillState::NoData, None, None))
+    );
+
+    // 结局 = 失败（网络错误 / 窗口不完整）：空态答「待重试」。
+    backfill::record_attempt("inst-bf-f", backfill::BackfillAttempt::Failed);
+    let trend =
+        trend::query_instrument_price_trend(&conn, "inst-bf-f", &TrendRange::default()).unwrap();
+    assert_eq!(
+        trend.backfill,
+        Some(backfill_status(
+            TrendBackfillState::RetryPending,
+            None,
+            None
+        ))
+    );
+
+    // 轮次收起后在途计数消失，但结局表保留——轮间窗口的空态依然可答。
+    backfill::round_finished();
+    let trend =
+        trend::query_instrument_price_trend(&conn, "inst-bf-f", &TrendRange::default()).unwrap();
+    assert_eq!(
+        trend.backfill,
+        Some(backfill_status(
+            TrendBackfillState::RetryPending,
+            None,
+            None
+        ))
+    );
+
+    // 新一轮开始：旧结局清空（队列按派生事实重收集），回「补全中」带新计数。
+    backfill::round_started(1);
+    let trend =
+        trend::query_instrument_price_trend(&conn, "inst-bf-f", &TrendRange::default()).unwrap();
+    assert_eq!(
+        trend.backfill,
+        Some(backfill_status(
+            TrendBackfillState::Running,
+            Some(0),
+            Some(1)
+        ))
+    );
+    backfill::round_finished();
+}
+
+#[test]
+fn portfolio_trend_backfill_aggregates_pending_instruments() {
+    let _guard = backfill_state_lock();
+    let conn = open();
+    insert_fund_instrument(&conn, "inst-pf-a", "110022", "易方达消费行业");
+    insert_fund_instrument(&conn, "inst-pf-b", "000001", "中国蓝图混合");
+
+    // 都未尝试：补全中（无在途轮次时无计数）。
+    let trend = trend::query_portfolio_value_trend(&conn, &TrendRange::default()).unwrap();
+    assert!(trend.points.is_empty());
+    assert_eq!(
+        trend.backfill,
+        Some(backfill_status(TrendBackfillState::Running, None, None))
+    );
+
+    // 一只在途轮次中：带计数。
+    backfill::round_started(2);
+    backfill::round_progress(1);
+    let trend = trend::query_portfolio_value_trend(&conn, &TrendRange::default()).unwrap();
+    assert_eq!(
+        trend.backfill,
+        Some(backfill_status(
+            TrendBackfillState::Running,
+            Some(1),
+            Some(2)
+        ))
+    );
+    backfill::round_finished();
+
+    // 尝试后一只有数据、一只失败：任一待重试即「待重试」（对用户可行动）。
+    backfill::record_attempt("inst-pf-a", backfill::BackfillAttempt::NoData);
+    backfill::record_attempt("inst-pf-b", backfill::BackfillAttempt::Failed);
+    let trend = trend::query_portfolio_value_trend(&conn, &TrendRange::default()).unwrap();
+    assert_eq!(
+        trend.backfill,
+        Some(backfill_status(
+            TrendBackfillState::RetryPending,
+            None,
+            None
+        ))
+    );
+
+    // 全部无可采：无数据（不再显示永远等不来的「补全中」）。
+    backfill::record_attempt("inst-pf-b", backfill::BackfillAttempt::NoData);
+    let trend = trend::query_portfolio_value_trend(&conn, &TrendRange::default()).unwrap();
+    assert_eq!(
+        trend.backfill,
+        Some(backfill_status(TrendBackfillState::NoData, None, None))
+    );
+
+    // 历史齐全者不进聚合：两基金都有历史后，字段消失（组合空态另有原因）。
+    seed_price_history(&conn, "ph-pf-a", "inst-pf-a", "2026-01-05", 10_000, "CNY");
+    seed_price_history(&conn, "ph-pf-b", "inst-pf-b", "2026-01-05", 10_000, "CNY");
+    let trend = trend::query_portfolio_value_trend(&conn, &TrendRange::default()).unwrap();
+    assert_eq!(trend.backfill, None, "没有待补全标的不携带聚合状态");
+}

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::openapi::{ObjectBuilder, RefOr, Schema, Type};
 use utoipa::{PartialSchema, ToSchema};
 
+use super::backfill::TrendBackfillStatus;
 use super::channel::PriceChannel;
 use ledger_infra::closed_set::closed_set;
 use ledger_infra::db::query::FromRow;
@@ -652,6 +653,12 @@ pub struct PriceTrendPoint {
 pub struct InstrumentPriceTrend {
     pub instrument_id: String,
     pub points: Vec<PriceTrendPoint>,
+    /// 补全状态（ADR-0122 决策 5 / issue #1377，读投影只增字段）：仅当采样点
+    /// 为空且标的有价格写入通道（行情 / 净值）而磁盘上没有任何历史序列时携带
+    /// ——走势空态三态（补全中 / 待重试 / 无数据）的判据；其余场景缺省不序列化，
+    /// 旧消费方零破坏。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backfill: Option<TrendBackfillStatus>,
 }
 
 /// 组合走势采样点：该周各持仓标的「持有数量 × 周线价格」折算到本位币后的合计。
@@ -670,6 +677,11 @@ pub struct PortfolioValueTrend {
     /// 折算基准（本位币）。
     pub currency_code: String,
     pub points: Vec<PortfolioTrendPoint>,
+    /// 补全状态（ADR-0122 决策 5 / issue #1377，读投影只增字段）：仅当采样点
+    /// 为空且库内存在「有价格写入通道而没有任何历史序列」的标的时携带（聚合
+    /// 三态）；其余场景缺省不序列化。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backfill: Option<TrendBackfillStatus>,
 }
 
 // ---------------------------------------------------------------------------

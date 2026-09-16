@@ -27,6 +27,9 @@
 //! 接缝（域语言短名经本入口再导出，调用面用 `investment::` 前缀）：
 //! - [`command`]：同步命令（op 载荷形态、产出单点与重放分派，issue #861）——
 //!   标的字典 / 汇率 / 用户侧价格写入全域进 OpLog，东财行情外拉数据不进 op；
+//! - [`backfill`]：价格历史后台补全的运行态快照与走势空态三态判定（ADR-0122
+//!   决策 5 / issue #1377）——派生事实（通道 + 无历史）与运行态快照（轮次计数、
+//!   尝试结局）合成三态；发布方是行情同步域（上层直呼，ADR-0112 决策 5）；
 //! - [`channel`]：价格通道派生（PriceChannel，issue #1060）——类型 × 市场 × 代码
 //!   → 行情 / 净值 / 手动报价 / 无来源的判定单点，同步分区与标的读投影共用；
 //! - [`crud`]：标的字典 / 汇率 / 现价列表与写入、标的搜索（含统一模糊搜索语义）、
@@ -98,6 +101,7 @@
 //! IPC 参数解包、事务边界、命令注册和失效信号发射留在投资命令壳层
 //! （`commands::investment`）。
 
+pub mod backfill;
 pub mod channel;
 pub mod command;
 pub mod crud;
@@ -140,6 +144,7 @@ pub use model::{
 /// 与 ADR-0056 阶段 1 定格形状一致（先例：`item::domain`、`merchants::crud`）。
 /// 模块级接缝（[`holdings`] / [`prices`] / [`predicates`]）按样板留在模块路径
 /// 消费（先例：`item::guard` / `item::cost` 不再导出到根）。
+pub use backfill::{TrendBackfillState, TrendBackfillStatus};
 pub use channel::{PriceChannel, derive_price_channel};
 pub use command::{ExchangeRateCommand, InstrumentCommand, PriceCommand};
 pub use crud::{

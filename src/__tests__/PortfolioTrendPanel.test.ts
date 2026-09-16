@@ -139,16 +139,41 @@ describe('PortfolioTrendPanel 走势面板', () => {
     expect((last[1] as { filter: { start_date: string } }).filter.start_date).toBeTruthy()
   })
 
-  it('组合走势无数据 → 引导文案提示去「同步标的信息」', async () => {
+  it('组合走势无数据且无补全状态 → 中性空态，不出现指向同步按钮的回填文案', async () => {
     wireInvokeSeam({
       defaults: PANEL_DEFAULTS,
-      overrides: { portfolio_value_trend: { currency_code: 'CNY', points: [] } },
+      overrides: {
+        portfolio_value_trend: { currency_code: 'CNY', points: [] },
+      },
     })
     const wrapper = mount(PortfolioTrendPanel)
     await flushPromises()
     expect(wrapper.text()).toContain('暂无历史价格数据')
-    expect(wrapper.text()).toContain('同步标的信息')
+    // 回填文案退场（issue #1377）：同步只刷现价，历史归后台补全——按了也不会
+    // 立即有曲线，指向按钮即死路
+    expect(wrapper.text()).not.toContain('同步标的信息')
+    expect(wrapper.text()).toContain('更长的区间')
     expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
+  })
+
+  it('组合走势无数据且库内有待补全标的 → 空态三态：补全中（带计数）', async () => {
+    wireInvokeSeam({
+      defaults: PANEL_DEFAULTS,
+      overrides: {
+        portfolio_value_trend: {
+          currency_code: 'CNY',
+          points: [],
+          backfill: { state: 'running', done: 13, total: 228 },
+        },
+      },
+    })
+    const wrapper = mount(PortfolioTrendPanel)
+    await flushPromises()
+    const extra = wrapper.get('[data-testid="trend-empty-backfill"]')
+    expect(extra.text()).toContain('补全中')
+    expect(extra.text()).toContain('13/228')
+    // 三态均不指向同步按钮（存在性断言：删掉三态分支即变红）
+    expect(wrapper.text()).not.toContain('同步标的信息')
   })
 
   it('标的列表带入单标的：以标的 id 查询并标注计价币种', async () => {
@@ -231,7 +256,53 @@ describe('PortfolioTrendPanel 走势面板', () => {
     expect(wrapper.find('[data-testid="trend-no-source"]').exists()).toBe(false)
   })
 
-  it('有通道无数据：行情 / 净值通道引导去「同步标的信息」，不出图', async () => {
+  it('有通道无数据（单标的）：空态三态——补全中 / 待重试 / 无数据，均不指向同步按钮', async () => {
+    // 三态由后端读投影只增字段携带（issue #1377）：前端按 state 分派文案。
+    const cases: Array<{
+      backfill: { state: 'running' | 'retry_pending' | 'no_data'; done?: number; total?: number }
+      expectText: string
+      notText?: string
+    }> = [
+      {
+        backfill: { state: 'running', done: 1, total: 3 },
+        expectText: '补全中（1/3）',
+      },
+      {
+        backfill: { state: 'running' },
+        expectText: '补全中',
+        notText: '补全中（',
+      },
+      {
+        backfill: { state: 'retry_pending' },
+        expectText: '自动重试',
+      },
+      {
+        backfill: { state: 'no_data' },
+        expectText: '没有可采集的历史数据',
+      },
+    ]
+    for (const item of cases) {
+      wireInvokeSeam({
+        defaults: PANEL_DEFAULTS,
+        overrides: {
+          portfolio_value_trend: portfolioTrendResponse,
+          instrument_price_trend: { instrument_id: 'inst-fund', points: [], backfill: item.backfill },
+        },
+      })
+      const wrapper = mountWithEntry(fundInstrument)
+      await flushPromises()
+      expect(wrapper.find('[data-testid="trend-empty-backfill"]').exists()).toBe(true)
+      const extra = wrapper.get('[data-testid="trend-empty-backfill"]')
+      expect(extra.text()).toContain(item.expectText)
+      if (item.notText) expect(extra.text()).not.toContain(item.notText)
+      // 空态不再出现指向同步按钮的回填文案（按了没反应的死路）
+      expect(wrapper.text()).not.toContain('同步标的信息')
+      expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
+      wrapper.unmount()
+    }
+  })
+
+  it('有历史序列的标的区间裁剪到空：不携带补全状态，给中性文案', async () => {
     wireInvokeSeam({
       defaults: PANEL_DEFAULTS,
       overrides: {
@@ -241,13 +312,12 @@ describe('PortfolioTrendPanel 走势面板', () => {
     })
     const wrapper = mountWithEntry(fundInstrument)
     await flushPromises()
-    expect(wrapper.find('[data-testid="trend-empty"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('暂无历史价格数据')
-    expect(wrapper.text()).toContain('同步标的信息')
+    expect(wrapper.find('[data-testid="trend-empty-neutral"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('更长的区间')
     expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
   })
 
-  it('有通道无数据：手动报价通道引导去「录价」，与同步引导是两种不同文案', async () => {
+  it('有通道无数据：手动报价通道引导去「录价」，与补全三态是两种不同文案', async () => {
     wireInvokeSeam({
       defaults: PANEL_DEFAULTS,
       overrides: {
@@ -261,6 +331,9 @@ describe('PortfolioTrendPanel 走势面板', () => {
     expect(wrapper.text()).toContain('暂无历史价格数据')
     expect(wrapper.text()).toContain('录价')
     expect(wrapper.text()).not.toContain('同步标的信息')
+    // 手动通道不归后台补全：后端不携带补全状态，前端也不显示三态文案
+    expect(wrapper.find('[data-testid="trend-empty-backfill"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('补全中')
     expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
   })
 

@@ -234,6 +234,41 @@ describe('usePortfolioTrend 走势数据层', () => {
     expect(isEmpty.value).toBe(true)
   })
 
+  it('补全状态随当前模式读投影直出（issue #1377）：空采样点时暴露给空态渲染', async () => {
+    wireInvokeSeam({
+      overrides: {
+        ...BASE_OVERRIDES,
+        portfolio_value_trend: {
+          currency_code: 'CNY',
+          points: [],
+          backfill: { state: 'running', done: 7, total: 20 },
+        },
+        instrument_price_trend: {
+          instrument_id: 'inst-1',
+          points: [],
+          backfill: { state: 'retry_pending' },
+        },
+      },
+    })
+    const { refresh, mode, backfill } = withSetup(() => usePortfolioTrend())
+    await refresh()
+    // 组合模式：读投影的 backfill 字段直出
+    expect(backfill.value).toEqual({ state: 'running', done: 7, total: 20 })
+    enterInstrument(
+      makeInstrument({ id: 'inst-1', symbol: '600000', name: '浦发银行', type: 'stock', market: 'sh' }),
+    )
+    await refresh()
+    expect(mode.value).toBe('instrument')
+    // 单标的模式：同一接缝切到单标的读投影的字段
+    expect(backfill.value).toEqual({ state: 'retry_pending' })
+  })
+
+  it('有采样点时不携带补全状态（后端缺省不序列化，投影恒为 null）', async () => {
+    const { refresh, backfill } = withSetup(() => usePortfolioTrend())
+    await refresh()
+    expect(backfill.value).toBeNull()
+  })
+
   it('setMode 切回组合模式后保留选中标的（再切回单标的仍见上次那只）', async () => {
     const { mode, setMode } = withSetup(() => usePortfolioTrend())
     enterInstrument(makeInstrument({ id: 'inst-1', type: 'stock', market: 'sh' }))

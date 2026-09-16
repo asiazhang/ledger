@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { NAlert, NButton, NIcon, NSpace, NTabPane, NTabs } from 'naive-ui'
+import { NAlert, NButton, NIcon, NSpace, NTabPane, NTabs, NText } from 'naive-ui'
 import {
   StatsChartOutline,
   ListOutline,
@@ -88,7 +88,8 @@ onMounted(() => focusParam.consume())
   <NSpace vertical :size="16">
     <!-- 价格过期提示（issue #1190）：有过期标的存在时出现，同步后再查即消失
          （价格失效信号驱动重查）。文案含过期数量 + 判定阈值，动作直达标的页签
-         的既有「同步标的信息」入口。 -->
+         的既有「同步标的信息」入口；分工说明（issue #1377）：导向的入口只修
+         现价，不修历史——历史归后台补全，避免「点了同步曲线还在」的误解。 -->
     <NAlert
       v-if="staleCount > 0"
       type="warning"
@@ -106,6 +107,13 @@ onMounted(() => focusParam.consume())
       >
         {{ t('investments.staleness.goSync') }}
       </NButton>
+      <NText
+        depth="3"
+        data-testid="price-staleness-hint"
+        style="display: block; margin-top: 4px"
+      >
+        {{ t('investments.staleness.hint') }}
+      </NText>
     </NAlert>
 
     <!-- 价格历史后台补全的静默计数（issue #1375 / ADR-0122）：只读、不可点、
