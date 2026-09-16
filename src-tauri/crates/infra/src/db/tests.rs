@@ -15,7 +15,8 @@
 //! - `readonly`：只读连接与成对 DbState 读槽（读路径独立只读连接，
 //!   issue #1280 / ADR-0117）。
 //! - `facade`：异步 DB 门面（写读两线程、作业通道、panic 回滚与连接不可信语义，
-//!   ADR-0125 决策 1–3 / issue #1408）。
+//!   ADR-0125 决策 1–3 / issue #1408；换连承接——成对换连在门面下成立、换连后
+//!   新连接重置不可信标记，同 ADR 决策 2 / issue #1409）。
 
 mod common;
 mod dirty_marker;

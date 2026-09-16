@@ -3,6 +3,10 @@
 //! 读侧独立于写侧（长写不挡读）、跨线程 span / dispatcher 归因不漂移、作业 panic
 //! 不毒化互斥体且回滚未提交事务、连接不可信后后续作业 fail-loud、停机与探针语义。
 //!
+//! 换连承接（ADR-0125 决策 2 / 决策 3，issue #1409）：成对换连在门面下成立
+//!（换连与在途作业互斥、对后续作业立即可见，写读两槽各自断言）、换连后新连接
+//! 重置连接不可信标记（决策 3 的「退役 / 重建」）。
+//!
 //! 失败注入口径（ADR-0087 断言强度）：SQLite 无确定性的「回滚失败」注入手段——
 //! 探针实证（本票实施期实测，2026-09）：第二连接持 SHARED 锁时写事务 `ROLLBACK`
 //! 成功、`PRAGMA query_only = ON` 在途事务上 `ROLLBACK` 成功、中途
@@ -580,5 +584,221 @@ fn slow_job_warns_past_probe_threshold() {
             .iter()
             .any(|e| e.level == Level::WARN && e.fields.iter().any(|(k, _)| k == "hold_ms")),
         "作业占用 DB 线程超阈值应记 warn，实际捕获: {events:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 换连承接：四条路径的成对换连在门面下成立（ADR-0125 决策 2 / 决策 3，issue #1409）
+// ---------------------------------------------------------------------------
+
+/// 给定连接上是否存在该账户（断言「哪个库可见」用：迁移自带种子账户，按 id 判定
+/// 不受其干扰；测试侧只读数、不写表）。
+fn has_account(conn: &rusqlite::Connection, id: &str) -> bool {
+    conn.query_row("SELECT count(*) FROM accounts WHERE id = ?1", [id], |r| {
+        r.get::<_, i64>(0)
+    })
+    .expect("账户存在性查询应成功")
+        > 0
+}
+
+/// 经读作业断言账户存在性（门面下读槽的可观察面）。
+fn facade_has_account(facade: &DbFacade, id: &str) -> bool {
+    // 作业闭包需 `'static`：账户 id 随闭包一并带走。
+    let id = id.to_string();
+    tauri::async_runtime::block_on(facade.run_read("test", move |conn| Ok(has_account(conn, &id))))
+        .expect("读作业应成功")
+}
+
+/// 换连承接 · 成对换连在门面下成立（ADR-0125 决策 2，issue #1409）：门面运行期间
+/// 经成对换连原语换库，门面后续的**读作业**（读槽）与**写作业**（写槽）都应看到
+/// 新库——门面线程为每个作业重新取槽，换连与在途作业共用槽互斥体，故换连对门面
+/// 立即可见。
+///
+/// 负向判据（ADR-0087，删除即变红）：成对原语退化为「只换写槽」→ 读作业仍读到旧
+/// 库，本测试的读断言红；退化为「只换读槽」→ 写作业仍落在旧库，写槽断言红。
+#[test]
+fn facade_jobs_observe_paired_swap_in_both_slots() {
+    let (_old_dir, state) = file_state("swap-old");
+    let facade = DbFacade::start(&state).expect("门面应启动");
+    tauri::async_runtime::block_on(facade.run_write("test", |conn| {
+        tauri_app_lib::test_support::seed_account(conn, "acct-old", "旧库", "cash", "CNY", 1111);
+        Ok(())
+    }))
+    .expect("旧库写作业应成功");
+    assert!(
+        facade_has_account(&facade, "acct-old"),
+        "换连前读作业应看到旧库的账户"
+    );
+
+    // 新库：独立目录成对建连（产品建连缝：迁移在写连接上完成、读连接只读同库），
+    // 种子种在换入前的裸连接上。
+    let new_dir = std::env::temp_dir().join(format!(
+        "ledger-db-facade-swap-new-{}",
+        crate::db::new_uuid()
+    ));
+    std::fs::create_dir_all(&new_dir).unwrap();
+    let new_conn = crate::db::open_connection_in(&new_dir).expect("新库写连接应建成");
+    let new_read = crate::db::open_connection_readonly_in(&new_dir).expect("新库读连接应建成");
+    tauri_app_lib::test_support::seed_account(&new_conn, "acct-new", "新库", "cash", "CNY", 2222);
+
+    state.swap_pair(new_conn, new_read).expect("成对换连应成功");
+
+    // 读槽：换连后读作业必须走读槽看到新库（漏换读槽 → 仍读到「旧库」，此处红）。
+    assert!(
+        facade_has_account(&facade, "acct-new"),
+        "换连后读作业应看到新库（成对原语漏换读槽即红）"
+    );
+    assert!(
+        !facade_has_account(&facade, "acct-old"),
+        "换连后读作业不应再看到旧库（两槽应一致指向新库）"
+    );
+    // 写槽：换连后写作业必须落在新库（漏换写槽 → 写进旧库）。
+    tauri::async_runtime::block_on(facade.run_write("test", |conn| {
+        tauri_app_lib::test_support::seed_account(conn, "acct-post", "换连后", "cash", "CNY", 3333);
+        Ok(())
+    }))
+    .expect("换连后写作业应成功");
+    {
+        let guard = state.conn.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(
+            has_account(&guard, "acct-new") && has_account(&guard, "acct-post"),
+            "换连后写作业应落在新库（成对原语漏换写槽即写进旧库）"
+        );
+        assert!(!has_account(&guard, "acct-old"), "换连后写槽不应再指向旧库");
+    }
+    // 跨槽一致：写槽的写入经读槽可见——两槽同指新库（成对换连的可观察结果）。
+    assert!(
+        facade_has_account(&facade, "acct-post"),
+        "读槽应看到写槽落在新库的写入（两槽一致指向新库）"
+    );
+}
+
+/// 换连后新连接重置不可信标记（ADR-0125 决策 2 承接 / 决策 3「是否退役或重建该连接
+/// 由实施票按现场判定」，issue #1409 判定为换连即重建）：连接被标记不可信后经成对
+/// 换连换入新连接，门面写侧与读侧都恢复服务——标记是**连接**级的，旧连接的失败态
+/// 不被新连接继承。
+///
+/// 负向判据（ADR-0087，删除即变红）：去掉 DB 线程取锁后的换连代次比对（复位调用点）
+/// → 换连后门面仍报旧错误，本测试的「恢复服务」断言红。两条 DB 线程各自的标记都
+/// 先被真实打上（写侧、读侧各触发一次恢复失败），故任一条线程漏掉复位都变红。
+#[test]
+fn swap_pair_resets_untrusted_mark_for_new_connection() {
+    let state = write_test_state();
+    let facade = DbFacade::start(&state).expect("门面应启动");
+    let runs = Arc::new(AtomicUsize::new(0));
+    // 写侧触发「连接不可信」：作业 panic 后回滚失败（SQLite 无确定性回滚失败手段，
+    // 用门面内仅测试构建可见的注入开关；口径与上文的同族判据一致）。
+    let write_first = {
+        let runs = Arc::clone(&runs);
+        tauri::async_runtime::block_on(facade.run_write::<(), _>(
+            "test",
+            move |conn| -> crate::error::Result<()> {
+                conn.execute("BEGIN", []).map_err(AppError::from)?;
+                crate::db::facade::force_next_recovery_failure();
+                runs.fetch_add(1, Ordering::SeqCst);
+                panic!("注入 panic：恢复失败");
+            },
+        ))
+        .unwrap_err()
+    };
+    assert!(
+        matches!(write_first, AppError::Db(ref m) if m.contains("回滚失败")),
+        "恢复失败应作为该作业的错误上报，实际 {write_first:?}"
+    );
+    assert_later_jobs_fail_loud(&facade, &write_first, &runs, 1);
+    // 读侧同样打上「连接不可信」（读线程的标记独立于写线程）：注入开关在回滚之前
+    // 短路，故这里不必先开事务——判据只关心「标记已被打上」。
+    let read_first = tauri::async_runtime::block_on(facade.run_read::<(), _>(
+        "test",
+        |_conn| -> crate::error::Result<()> {
+            crate::db::facade::force_next_recovery_failure();
+            panic!("注入 panic：读侧恢复失败");
+        },
+    ))
+    .unwrap_err();
+    assert!(
+        matches!(read_first, AppError::Db(ref m) if m.contains("回滚失败")),
+        "读侧恢复失败应作为该作业的错误上报，实际 {read_first:?}"
+    );
+    for _ in 0..2 {
+        let later =
+            tauri::async_runtime::block_on(facade.run_read::<(), _>("test", |_conn| Ok(())))
+                .unwrap_err();
+        assert_eq!(
+            later.to_string(),
+            read_first.to_string(),
+            "读侧连接不可信后应 fail-loud 报同一错误"
+        );
+    }
+
+    // 成对换连：槽换成新的一对连接（换连原语沿用 ADR-0117 决策 3，不改门面作业）。
+    state
+        .swap_pair(
+            tauri_app_lib::test_support::open(),
+            tauri_app_lib::test_support::open(),
+        )
+        .expect("成对换连应成功");
+
+    // 新连接服务：旧连接的失败态不继承——写侧、读侧各自线程的标记都须复位。
+    assert_eq!(
+        tauri::async_runtime::block_on(facade.run_write("test", |_conn| Ok(7)))
+            .expect("换连后写侧应恢复服务"),
+        7,
+        "换连换入的新连接不应继承写侧旧连接的不可信标记"
+    );
+    assert_eq!(
+        tauri::async_runtime::block_on(facade.run_read("test", |conn| {
+            conn.query_row("SELECT 1", [], |r| r.get::<_, i64>(0))
+                .map_err(AppError::from)
+        }))
+        .expect("换连后读侧应恢复服务"),
+        1,
+        "换连换入的新连接不应继承读侧旧连接的不可信标记"
+    );
+}
+
+/// 读槽单槽换出（恢复 / 整库转换路径的 `placeholderize_read_conn`，issue #1280 /
+/// ADR-0117 决策 3）在门面下的承接（issue #1409）：读槽换出也抬高换连代次——
+/// 读作业既须看到换出后的占位槽（换出对门面立即可见），也须复位读线程的不可信标记。
+///
+/// 负向判据（ADR-0087，删除即变红）：读槽替换不抬高代次（或门面不比对该槽代次）
+/// → 读侧仍报旧的不可信错误，本测试的「读侧恢复服务」断言红。
+#[test]
+fn read_slot_only_swap_out_is_observed_and_resets_read_mark() {
+    let (_dir, state) = file_state("swap-out-read");
+    let facade = DbFacade::start(&state).expect("门面应启动");
+    // 读侧打上「连接不可信」（读线程的标记独立于写线程）。
+    let read_first = tauri::async_runtime::block_on(facade.run_read::<(), _>(
+        "test",
+        |_conn| -> crate::error::Result<()> {
+            crate::db::facade::force_next_recovery_failure();
+            panic!("注入 panic：读侧恢复失败");
+        },
+    ))
+    .unwrap_err();
+    assert!(
+        matches!(read_first, AppError::Db(_)),
+        "读侧恢复失败应上报 Db 错误，实际 {read_first:?}"
+    );
+
+    // 读槽单槽换出（占位内存库）：与恢复 / 转换路径同款调用点。
+    state.placeholderize_read_conn().expect("读槽换出应成功");
+
+    // 读侧恢复服务，且用的确是换出后的占位库（无业务表）——换出对门面可见。
+    let placeholder_error =
+        tauri::async_runtime::block_on(facade.run_read::<(), _>("test", |conn| {
+            conn.query_row("SELECT count(*) FROM accounts", [], |r| r.get::<_, i64>(0))?;
+            Ok(())
+        }))
+        .expect_err("占位库无业务表，读作业应报错（换出对门面立即可见）");
+    assert!(
+        matches!(placeholder_error, AppError::Db(_)),
+        "占位槽上的读应报 Db 错误，实际 {placeholder_error:?}"
+    );
+    assert_eq!(
+        tauri::async_runtime::block_on(facade.run_read("test", |_conn| Ok(11)))
+            .expect("读槽换出后读侧应恢复服务（不继承旧的不可信标记）"),
+        11,
+        "读槽换出应复位读线程的不可信标记"
     );
 }

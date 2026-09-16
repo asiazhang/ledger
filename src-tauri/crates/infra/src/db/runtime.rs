@@ -2,7 +2,9 @@
 //! 统一写入口与提交点后置钩子注册（ADR-0032 / spec #1086）、统一 DB 调用
 //! helper（ADR-0069 形状乙，spec #498）与应用状态 [`DbState`]。
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
@@ -185,6 +187,95 @@ pub(crate) fn with_caller_context<R>(
 }
 
 // ---------------------------------------------------------------------------
+// 连接槽换连代次（ADR-0125 决策 2「换连承接」/ 决策 3「退役或重建」，issue #1409）
+// ---------------------------------------------------------------------------
+
+/// 连接槽换连代次表：以槽（`Arc<Mutex<Connection>>`）的分配地址为键，登记一个
+/// 单调代次。
+///
+/// **为什么需要它**：连接槽受 ADR-0125 决策 4 保护（测试世界与调用面零改造，
+/// `DbState` 不加字段），成对换连原语（[`DbState::swap_pair`] /
+/// [`replace_read_conn_slot`]）因此无法在类型上把「本槽已被换连」告知异步 DB
+/// 门面；而门面的「连接不可信」标记（ADR-0125 决策 3）是**连接**级的——换连换
+/// 进来的是另一条连接，旧连接的失败态不该被它继承。决策 3 把「是否退役或重建
+/// 该连接」交给实施票按现场判定，issue #1409 判定为：换连即重建，标记随之复位。
+/// 代次把这个事实旁挂在槽之外，门面线程取到槽锁后比对即识别换连，不动槽类型。
+///
+/// 键用槽 Arc 的分配地址：Arc 存活期间地址稳定，且一个地址不可能同时对应两条
+/// 存活的 Arc；值为 `Weak`，槽全部释放后条目自然失效并在下次登记时清理（测试
+/// 世界创建 / 销毁大量 `DbState`，防表无界增长）。
+static SLOT_SWAP_EPOCHS: OnceLock<Mutex<HashMap<usize, Weak<AtomicU64>>>> = OnceLock::new();
+
+/// 取槽的换连代次句柄（未登记则新建）；消费方经 [`SlotWatch`] 使用，不直接持有。
+fn slot_swap_epoch_handle(slot: &Arc<Mutex<Connection>>) -> Arc<AtomicU64> {
+    let key = Arc::as_ptr(slot) as usize;
+    let mut table = SLOT_SWAP_EPOCHS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(existing) = table.get(&key).and_then(Weak::upgrade) {
+        return existing;
+    }
+    // 顺带清理失效条目（槽已释放、代次句柄随之消失）；表只随存活槽增长。
+    table.retain(|_, weak| weak.strong_count() > 0);
+    let epoch = Arc::new(AtomicU64::new(0));
+    table.insert(key, Arc::downgrade(&epoch));
+    epoch
+}
+
+/// 抬高槽的换连代次（成对换连原语在**持有槽锁期间**调用）：门面线程取到槽锁
+/// 后读到的代次要么已含本次换连、要么不含，不存在「换连已落地但代次未抬」的
+/// 窗口（锁内抬高与锁内读取代次的先后由互斥锁排序）。
+fn bump_slot_swap_epoch(slot: &Arc<Mutex<Connection>>) {
+    slot_swap_epoch_handle(slot).fetch_add(1, Ordering::SeqCst);
+}
+
+/// 连接槽观测句柄（ADR-0125 决策 2 的换连承接，issue #1409）：把「观测哪个槽」与
+/// 「上次看到的换连代次」绑成一件。异步 DB 门面每条 DB 线程持有一个——取到槽锁
+/// 后经 [`SlotWatch::observe_swap`] 识别换连，据此复位连接不可信标记。
+///
+/// 句柄持槽的 Arc 克隆，故槽的分配地址在门面存活期间稳定——代次表
+/// （[`SLOT_SWAP_EPOCHS`]）的键在门面使用期间不会失效，也不会被另一条槽顶替。
+pub(crate) struct SlotWatch {
+    /// 被观测的连接槽（门面为整个作业持它的锁）。
+    slot: Arc<Mutex<Connection>>,
+    /// 本槽的换连代次（与换连原语的抬高同源）。
+    epoch: Arc<AtomicU64>,
+    /// 上一次观测到的代次（基线）。`Cell` 而非 `&mut`：观测发生在槽锁守卫仍在手的
+    /// 时候（守卫借自本结构），单线程使用，故内部可变即可。
+    seen: std::cell::Cell<u64>,
+}
+
+impl SlotWatch {
+    /// 开始观测一个连接槽：取出（或新建）本槽的换连代次，并记下当前代次作基线。
+    pub(crate) fn new(slot: &Arc<Mutex<Connection>>) -> Self {
+        let epoch = slot_swap_epoch_handle(slot);
+        let seen = epoch.load(Ordering::SeqCst);
+        SlotWatch {
+            slot: Arc::clone(slot),
+            epoch,
+            seen: std::cell::Cell::new(seen),
+        }
+    }
+
+    /// 被观测的槽（门面取锁用）。
+    pub(crate) fn slot(&self) -> &Mutex<Connection> {
+        &self.slot
+    }
+
+    /// 自上次观测以来是否发生过换连。**须在持有本槽锁之后调用**：换连原语在槽锁
+    /// 内抬高代次，锁内比对才没有竞速窗口（锁外读会读到旧代次却已用上新连接）。
+    pub(crate) fn observe_swap(&self) -> bool {
+        let current = self.epoch.load(Ordering::SeqCst);
+        if current == self.seen.get() {
+            return false;
+        }
+        self.seen.set(current);
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 应用状态
 // ---------------------------------------------------------------------------
 
@@ -238,9 +329,16 @@ impl DbState {
     /// 业务读写触达不到。收口既有换连单点（引导序列连接换入步骤与解锁/重置
     /// 编排）消费，禁止任何路径手搓第二个副本绕开本原语（ADR-0117 决策 4
     /// 换连半边，壳层源扫描守门）。
+    ///
+    /// 换连两侧都在槽锁内抬高本槽的换连代次（issue #1409 / ADR-0125 决策 2 的
+    /// 换连承接）：异步 DB 门面的 DB 线程取到槽锁后比对代次即识别换连，据此
+    /// 复位连接不可信标记（决策 3 的「退役 / 重建」）。
     pub fn swap_pair(&self, conn: Connection, read_conn: Connection) -> Result<()> {
         let mut guard = self.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
         *guard = conn;
+        // 换连代次在槽锁内抬高（issue #1409）：异步 DB 门面的 DB 线程取到槽锁后
+        // 读到的代次要么已含本次换连、要么不含，识别不依赖时序。
+        bump_slot_swap_epoch(&self.conn);
         drop(guard);
         self.replace_read_conn(read_conn)
     }
@@ -276,5 +374,7 @@ pub fn replace_read_conn_slot(slot: &Arc<Mutex<Connection>>, conn: Connection) -
     let mut guard = slot.lock().map_err(|e| AppError::Db(e.to_string()))?;
     // 旧连接先出槽再显式丢弃（关闭旧文件句柄），新连接同刻就位。
     drop(std::mem::replace(&mut *guard, conn));
+    // 读槽换连代次（issue #1409）：与成对原语写槽半边同址同形制。
+    bump_slot_swap_epoch(slot);
     Ok(())
 }
