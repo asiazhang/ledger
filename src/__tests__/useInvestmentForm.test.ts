@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { useReferenceStore } from '@/stores/reference'
 import { useInvestmentForm } from '@/investment/useInvestmentForm'
-import { makeAccount } from './factories'
+import { makeAccount, makeInstrument } from './factories'
 import type { Account, Instrument, Transaction, TransactionTrade } from '@ledger/types'
 
 
@@ -518,5 +519,89 @@ describe('useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
     await form.submit()
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'update_transaction')!
     expect((call[1] as { input: { funding_account_id: string | null } }).input.funding_account_id).toBeNull()
+  })
+})
+
+describe('useInvestmentForm 标的远程搜索在途竞态（issue #1401）', () => {
+  /** 手动完结的 list_instruments 替身：测试按用例节奏 resolve，制造乱序到达 */
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((res) => {
+      resolve = res
+    })
+    return { promise, resolve }
+  }
+
+  /** 单标的搜索结果夹具：symbol 即查询词，便于按用户可见候选断言是哪次查询的结果 */
+  function resultFor(symbol: string, name: string) {
+    return { items: [makeInstrument({ id: `ins-${symbol}`, symbol, name })], total: 1 }
+  }
+
+  it('先发请求迟到不覆盖后发结果：候选呈现后发查询的标的', async () => {
+    vi.useFakeTimers()
+    try {
+      const first = deferred<{ items: Instrument[]; total: number }>()
+      const second = deferred<{ items: Instrument[]; total: number }>()
+      let calls = 0
+      wireInvokeSeam({
+        overrides: {
+          ...BASE_OVERRIDES,
+          list_instruments: () => {
+            calls += 1
+            return calls === 1 ? first.promise : second.promise
+          },
+        },
+      })
+      const form = useInvestmentForm('buy')
+      form.searchInstruments('AAA')
+      // 各自推进过防抖窗口：两次查询都实际发出，才构成乱序到达的竞态
+      await vi.advanceTimersByTimeAsync(300)
+      form.searchInstruments('BBB')
+      await vi.advanceTimersByTimeAsync(300)
+      expect(calls).toBe(2)
+
+      // 后发先到，先发迟到：呈现的应是后发查询的结果（删掉纪元守卫本断言变红）
+      second.resolve(resultFor('BBB', '后发'))
+      await flushPromises()
+      first.resolve(resultFor('AAA', '先发'))
+      await flushPromises()
+
+      expect(form.instrumentOptions.value).toEqual([{ label: 'BBB · 后发', value: 'ins-BBB' }])
+      expect(form.searchingInstruments.value).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('清空输入作废在途：先前发出的非空请求迟到不再填回候选', async () => {
+    vi.useFakeTimers()
+    try {
+      const pending = deferred<{ items: Instrument[]; total: number }>()
+      let calls = 0
+      wireInvokeSeam({
+        overrides: {
+          ...BASE_OVERRIDES,
+          list_instruments: () => {
+            calls += 1
+            return pending.promise
+          },
+        },
+      })
+      const form = useInvestmentForm('buy')
+      form.searchInstruments('AAA')
+      await vi.advanceTimersByTimeAsync(300)
+      // 请求确实已发出（否则本用例会退化为「从未在途」而假绿）
+      expect(calls).toBe(1)
+      form.searchInstruments('')
+      await vi.advanceTimersByTimeAsync(300) // 空查询落地清空
+      expect(form.instrumentOptions.value).toEqual([])
+
+      pending.resolve(resultFor('AAA', '先发'))
+      await flushPromises()
+      expect(form.instrumentOptions.value).toEqual([])
+      expect(form.searchingInstruments.value).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

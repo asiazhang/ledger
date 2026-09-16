@@ -12,6 +12,7 @@ import {
 import { judgeQuantityText, judgePriceText } from '@ledger/utils/field-error'
 import { useFieldErrors } from '@ledger/field-errors'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
+import { createLatestWinsGuard } from '@/composables/latest-wins'
 import { buildTradeInput } from '@/transaction/transaction-input'
 import { errorMessage } from '@ledger/utils/errors'
 import { useAppStore } from '@/stores/app'
@@ -70,6 +71,8 @@ export function useInvestmentForm(
   const instruments = ref<Instrument[]>([])
   const searchingInstruments = ref(false)
   let searchTimer: ReturnType<typeof setTimeout> | undefined
+  /** 搜索在途竞态纪元（issue #1401）：每次输入开启新纪元，迟到旧纪元结果不落位 */
+  const searchEpoch = createLatestWinsGuard()
 
   // 投资账户谓词单点收口在参考 store（与盈亏页账户下拉同源，词汇表 RealizedPnl 词条）
   const investmentAccountOptions = computed(() =>
@@ -199,22 +202,28 @@ export function useInvestmentForm(
     return Math.round(raw * 100) / 100
   })
 
-  /** 远程搜索标的（防抖），不前端全量驻留 */
+  /** 远程搜索标的（防抖），不前端全量驻留。每次输入即开启新纪元（issue #1401）：
+   *  此前发出的在途请求随之过期，清空输入后其迟到结果也不再填回候选列表。 */
   function searchInstruments(query: string) {
+    const myEpoch = searchEpoch.start()
     clearTimeout(searchTimer)
     searchTimer = setTimeout(async () => {
+      if (!searchEpoch.isCurrent(myEpoch)) return
       if (!query.trim()) {
         instruments.value = []
+        searchingInstruments.value = false
         return
       }
       searchingInstruments.value = true
       try {
         const res = await api.listInstruments({ search: query.trim(), page_size: 50 })
+        if (!searchEpoch.isCurrent(myEpoch)) return
         instruments.value = res.items
       } catch {
+        if (!searchEpoch.isCurrent(myEpoch)) return
         instruments.value = []
       } finally {
-        searchingInstruments.value = false
+        if (searchEpoch.isCurrent(myEpoch)) searchingInstruments.value = false
       }
     }, 300)
   }
