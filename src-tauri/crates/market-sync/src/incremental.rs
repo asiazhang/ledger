@@ -53,7 +53,8 @@ use ledger_investment::prices::{
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 use ledger_transaction::amount::default_currency_code;
 
-use super::fund_nav::{FundSyncStats, LsjzPage, NavQuery, refresh_one_fund_price};
+use super::fund_nav::{LsjzPage, NavQuery};
+use super::fund_price_refresh::{FundSyncStats, refresh_one_fund_price};
 use super::http::{KlineBar, StockItem, ULIST_BATCH_SIZE, price_cents_from_raw, secid_prefix};
 use super::persist::upsert_fx_rate_history;
 use super::progress::{FundNavProgress, SyncProgress};

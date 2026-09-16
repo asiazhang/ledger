@@ -23,9 +23,15 @@
 //!   接缝查询半边的场外实例（统一载荷 [`ledger_investment::Quote`]，ADR-0103）；
 //! - [`stock`]：东财股票单点行情访问——按（市场，代码）实时查询（issue #693 /
 //!   ADR-0081），类型特征探测单点隔离，同接缝查询半边的场内实例；
-//! - [`fund_nav`]：东财历史净值通道——lsjz 访问、报文解析、水位语义与基金分区
-//!   编排（issue #303 / ADR-0038 决策 6）；首刷深回填另走详情页数据文件的
-//!   单请求全量通道、失败 fail-closed 回退 lsjz 分页（issue #1062）；
+//! - [`fund_nav`]：东财历史净值共享件（issue #303 / ADR-0038 决策 6；issue #1388
+//!   自通道拆出编排后留守）——lsjz / 详情页数据文件访问与报文解析、净值水位窗口、
+//!   分页器与水位读；首刷深回填另走详情页数据文件的单请求全量通道、失败
+//!   fail-closed 回退 lsjz 分页（issue #1062）；
+//! - [`fund_price_refresh`]：基金现价刷新单元（issue #1377 / #1388）——服务标的
+//!   信息同步的逐只编排：批量面命中零请求、未命中退逐只短窗封顶；
+//! - [`fund_backfill`]：基金历史回填单元（issue #1062 / #1377 / #1388）——服务
+//!   价格历史后台补全的逐只编排：首刷近两年（单请求全量通道优先、fail-closed
+//!   回退分页）、增量按水位；
 //! - [`persist`]：`fx_rate_history` 周采样 upsert（issue #137；价格写入单点已随
 //!   投资域归位迁入 [`ledger_investment::prices`]，#401 / ADR-0056）；
 //! - [`incremental`]：标的信息同步编排（issue #103，#137 升级，#303 基金分区，#695
@@ -87,7 +93,9 @@ mod bulk;
 mod channels;
 mod daily_refresh;
 mod fund;
+mod fund_backfill;
 mod fund_nav;
+mod fund_price_refresh;
 mod history;
 mod http;
 mod incremental;
