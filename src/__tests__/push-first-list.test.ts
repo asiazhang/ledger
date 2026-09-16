@@ -223,4 +223,139 @@ describe('createPushFirstList（push-first 清单生命周期工厂，ADR-0123�
     createPushFirstList<string[]>(() => Promise.resolve([]), () => {})
     expect(handlers.length).toBe(2)
   })
+
+  it('invalidate 作废在途：迟到结果不落位（不 apply、version 不变），loading 收尾（ADR-0040 invalidate 先例）', async () => {
+    const first = deferred<string[]>()
+    const sink = ref<string[]>([])
+    let loadCalls = 0
+    const list = createPushFirstList<string[]>(
+      () => {
+        loadCalls++
+        return loadCalls === 1 ? Promise.resolve(['init']) : first.promise
+      },
+      (snapshot) => {
+        sink.value = snapshot
+      },
+    )
+    await flushPromises()
+    expect(sink.value).toEqual(['init'])
+
+    // 第二次加载在途时作废
+    const reloading = list.refresh()
+    expect(list.status.value).toBe('loading')
+    list.invalidate()
+    // loading 收尾：数据面仍展示上次成功快照 → ready（error/ready/idle 不动）
+    expect(list.status.value).toBe('ready')
+
+    // 迟到的在途结果：不 apply、version 不变、对旧调用方静默 resolve
+    first.resolve(['late'])
+    await reloading
+    expect(sink.value).toEqual(['init'])
+    expect(list.version.value).toBe(1)
+    expect(list.status.value).toBe('ready')
+  })
+
+  it('invalidate 后 refresh 不合并进旧纪元在途：立即新拉，新结果正常落位', async () => {
+    const stale = deferred<string[]>()
+    const fresh = deferred<string[]>()
+    const sink = ref<string[]>([])
+    let loadCalls = 0
+    const list = createPushFirstList<string[]>(
+      () => {
+        loadCalls++
+        if (loadCalls === 1) return Promise.resolve(['init'])
+        if (loadCalls === 2) return stale.promise
+        return fresh.promise
+      },
+      (snapshot) => {
+        sink.value = snapshot
+      },
+    )
+    await flushPromises()
+
+    // 第二次加载在途（旧纪元）
+    void list.refresh()
+    expect(loadCalls).toBe(2)
+
+    // invalidate 后 refresh：不合并进旧纪元在途，立即第三次加载
+    list.invalidate()
+    const reloading = list.refresh()
+    expect(loadCalls).toBe(3)
+    expect(list.status.value).toBe('loading')
+
+    // 旧纪元结果先到：不落位
+    stale.resolve(['stale'])
+    await flushPromises()
+    expect(sink.value).toEqual(['init'])
+    expect(list.status.value).toBe('loading')
+
+    // 新纪元结果后到：正常落位
+    fresh.resolve(['fresh'])
+    await reloading
+    expect(sink.value).toEqual(['fresh'])
+    expect(list.version.value).toBe(2)
+    expect(list.status.value).toBe('ready')
+  })
+
+  it('旧纪元加载失败同样作废：不置 error、对旧调用方静默 resolve；新纪元失败照常 error', async () => {
+    const stale = deferred<string[]>()
+    const fresh = deferred<string[]>()
+    const sink = ref<string[]>([])
+    let loadCalls = 0
+    const list = createPushFirstList<string[]>(
+      () => {
+        loadCalls++
+        if (loadCalls === 1) return Promise.resolve(['init'])
+        if (loadCalls === 2) return stale.promise
+        return fresh.promise
+      },
+      (snapshot) => {
+        sink.value = snapshot
+      },
+    )
+    await flushPromises()
+
+    void list.refresh() // 旧纪元在途
+    list.invalidate()
+    const reloading = list.refresh() // 新纪元新拉
+
+    // 旧纪元失败：不置 error，旧 promise 静默 resolve（被取代的意图不报错）
+    stale.reject(new Error('stale boom'))
+    await flushPromises()
+    expect(list.status.value).toBe('loading')
+    expect(sink.value).toEqual(['init'])
+
+    // 新纪元失败：照常 error、上抛
+    fresh.reject(new Error('fresh boom'))
+    await expect(reloading).rejects.toThrow('fresh boom')
+    expect(list.status.value).toBe('error')
+    expect(list.version.value).toBe(1)
+  })
+
+  it('invalidate 的 loading 收尾：初载在途（无成功快照）时回 idle，error 不动', async () => {
+    const first = deferred<string[]>()
+    let loadCalls = 0
+    const sink = ref<string[]>([])
+    const list = createPushFirstList<string[]>(
+      () => {
+        loadCalls++
+        return loadCalls === 1 ? first.promise : Promise.reject(new Error('boom'))
+      },
+      (snapshot) => {
+        sink.value = snapshot
+      },
+    )
+    // 初载在途时作废：无成功快照可展示 → 回 idle
+    list.invalidate()
+    expect(list.status.value).toBe('idle')
+    first.resolve(['late'])
+    await flushPromises()
+    expect(sink.value).toEqual([])
+
+    // error 态作废：error 不动
+    await list.refresh().catch(() => {})
+    expect(list.status.value).toBe('error')
+    list.invalidate()
+    expect(list.status.value).toBe('error')
+  })
 })
