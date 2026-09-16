@@ -19,7 +19,9 @@ import type {
  * 清单生命周期（self-init / `ledger:changed` 失效重拉 / stale-while-revalidate
  * 整体替换 / 在途合并 / status / version）内化在 push-first 工厂单点
  * （`createPushFirstList`，ADR-0123）；本店只留快照落位（列表 + 在持合计同源
- * 快照）、筛选参数（statusFilter 闭包进 load，#468 T3）与领域动作。
+ * 快照）、筛选参数（statusFilter 闭包进 load，#468 T3）与领域动作。筛选切换
+ * 先作废在途再重拉（`invalidate`，issue #1381）：旧筛选的在途结果已过期，
+ * 不合并进新筛选的重拉。
  *
  * 列表只含未删除资产，默认口径 = 在持（「列表默认只看在持资产」，处置 /
  * 软删过滤由 T3 承接）；顶部合计消费后端同源在持估值合计（折本位币，
@@ -34,7 +36,7 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
    *  在持合计口径与筛选无关（后端恒算在持，回看已处置时合计不变）。 */
   const statusFilter = ref<'holding' | 'disposed'>('holding')
 
-  const { status, version, refresh } = createPushFirstList(
+  const { status, version, refresh, invalidate } = createPushFirstList(
     () => api.listPhysicalAssets(statusFilter.value),
     (list) => {
       assets.value = list.assets
@@ -44,10 +46,12 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
   )
 
   /** 切换状态筛选（issue #468 T3）：在持 / 已处置，切换后立即按新筛选重拉；
-   *  后续 ledger:changed 信号重拉沿用当前筛选。 */
+   *  后续 ledger:changed 信号重拉沿用当前筛选。重拉前先作废在途（issue #1381）：
+   *  旧筛选发起的在途重拉已过期，不再被合并、其迟到结果不落位。 */
   async function setStatusFilter(filter: 'holding' | 'disposed'): Promise<void> {
     if (statusFilter.value === filter) return
     statusFilter.value = filter
+    invalidate()
     await refresh()
   }
 

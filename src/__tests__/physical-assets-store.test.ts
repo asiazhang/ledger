@@ -8,12 +8,22 @@ import type {
   PhysicalAsset,
   PhysicalAssetDisposeInput,
   PhysicalAssetInput,
+  PhysicalAssetList,
   PhysicalAssetUpdateInput,
   PhysicalAssetValuationInput,
 } from '@ledger/types'
 
 function baseAsset(over: Partial<PhysicalAsset> = {}): PhysicalAsset {
   return makePhysicalAsset({ id: 'asset-1', ...over })
+}
+
+/** 手动完结的 load 替身：测试按用例节奏 resolve（竞态回归用，同 push-first-list.test）。 */
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
 }
 
 const createInput: PhysicalAssetInput = {
@@ -297,6 +307,57 @@ describe('usePhysicalAssetsStore', () => {
     handlers.forEach((h) => h({ event: 'ledger:changed', payload: null }))
     await flushPromises()
     expect(seenStatus[seenStatus.length - 1]).toBe('disposed')
+  })
+
+  it('筛选切换落在旧筛选在途重拉期间：作废旧纪元、按新筛选新拉，旧结果不落位（issue #1381）', async () => {
+    const holding = [baseAsset()]
+    const disposed = [
+      baseAsset({ id: 'asset-9', name: '旧车', status: 'disposed', current_valuation_native_cents: null }),
+    ]
+    const seenStatus: string[] = []
+    const stale = deferred<PhysicalAssetList>()
+    const fresh = deferred<PhysicalAssetList>()
+    let listCalls = 0
+    wireInvokeSeam({
+      overrides: {
+        list_physical_assets: (args) => {
+          const status = (args as { status: string | null }).status
+          seenStatus.push(status ?? 'holding')
+          listCalls++
+          if (listCalls === 1) {
+            return Promise.resolve(makePhysicalAssetList({ assets: holding }))
+          }
+          // ledger:changed 按旧筛选发起的重拉，保持到测试节奏才完结
+          if (listCalls === 2) return stale.promise
+          return fresh.promise
+        },
+      },
+    })
+    const store = usePhysicalAssetsStore()
+    await flushPromises()
+
+    // 旧筛选（holding）在途重拉期间切换筛选
+    handlers.forEach((h) => h({ event: 'ledger:changed', payload: null }))
+    await flushPromises()
+    expect(seenStatus).toEqual(['holding', 'holding'])
+
+    const switching = store.setStatusFilter('disposed')
+    // 作废在途：立即按新筛选新拉，不合并进旧筛选的在途
+    expect(seenStatus).toEqual(['holding', 'holding', 'disposed'])
+    expect(store.statusFilter).toBe('disposed')
+
+    // 旧纪元结果迟到：不落位（载荷不同于当前展示，误落位即被晾出；
+    //  修复前新筛选合并进旧在途，旧结果在此落旧筛选数据）
+    stale.resolve(makePhysicalAssetList({ assets: [baseAsset({ id: 'asset-2', name: '在途期间新建的资产' })] }))
+    await flushPromises()
+    expect(store.assets[0].id).toBe('asset-1')
+    expect(store.assets[0].name).toBe('客厅油画')
+
+    // 新纪元结果：按新筛选落位
+    fresh.resolve(makePhysicalAssetList({ assets: disposed }))
+    await switching
+    expect(store.assets[0].name).toBe('旧车')
+    expect(store.assets[0].status).toBe('disposed')
   })
 
   it('写入成功后重拉失败不反转写动作成败：动作正常返回，失败信号由 status 承载（ADR-0123 决策 3）', async () => {
