@@ -172,6 +172,76 @@ fn sync_triggers_start_from_every_business_surface_via_single_entry() {
     );
 }
 
+/// 会话信封记忆的生产调用点闭集与 resume 体内位次（issue #1395 / ADR-0098 决策
+/// 3 修订注记）：「业务可用起点 → SessionEnvelope 记忆」的关系已编码进
+/// `resume_business_surface` 签名（纯值参数 `session`，写入为函数体首行），
+/// 生产调用只许住在闭集三处（各有时序理由，ADR-0098 决策 3 修订注记）：
+/// - `encryption.rs`：resume 体内写入（解锁/重置三起点随签名声明）+ 关闭加密
+///   记明文（待重启、不经 resume）；
+/// - `boot.rs`：`restart_app` 记 forget（必须先于换库）；
+/// - `sync_channel.rs`：`sync_now` 成功轮次后记入（时机归域侧）。
+///
+/// 位次半边：resume 体内信封写入必须先于尾部 `start_background_services`
+/// 调用——打开即同步（sync_on_start）与写后触发即时消费会话形态；写入移到
+/// 拉起之后或整体删除（后者另使独立集成测试红，双保险）即在此红。
+#[test]
+fn session_envelope_writes_stay_in_closed_set_with_resume_write_first() {
+    let sources = all_rust_sources();
+
+    // 闭集：生产调用点（注释与字符串掩码后）只许住三处保留原位。
+    let mut writers: Vec<&str> = sources
+        .iter()
+        .filter(|(_, src)| {
+            let text = production_text(src);
+            text.contains("SessionEnvelope::remember(") || text.contains("SessionEnvelope::forget(")
+        })
+        .map(|(path, _)| path.as_str())
+        .collect();
+    writers.sort_unstable();
+    assert_eq!(
+        writers,
+        [
+            "src/commands/boot.rs",
+            "src/commands/encryption.rs",
+            "src/commands/sync_channel.rs",
+        ],
+        "SessionEnvelope 记忆生产调用点漂移——记入/清空只许住在 resume 体内与三处
+         保留原位（encryption.rs / boot.rs restart_app / sync_channel.rs sync_now，
+         issue #1395 / ADR-0098 决策 3 修订注记）；业务可用起点应经 resume 签名
+         声明信封形态，不新增散落调用点"
+    );
+
+    // 位次：resume 体内信封写入先于尾部 start_background_services 调用
+    //（desktop-gate 位次比较同款）。写入整体删除时同样红——命中退化为文件内
+    // disable_encryption 的保留原位，必在编排点之后。
+    let src = &sources
+        .iter()
+        .find(|(path, _)| path == "src/commands/encryption.rs")
+        .expect("encryption.rs 应在壳层源码内")
+        .1;
+    let text = production_text(src);
+    let resume_pos = text
+        .find("fn resume_business_surface")
+        .expect("resume_business_surface 应在 encryption.rs 内");
+    let remember_rel = text[resume_pos..]
+        .find("SessionEnvelope::remember(")
+        .unwrap_or_else(|| {
+            panic!(
+                "resume 体内缺信封写入——解锁/忘记口令重置/启动失败重置三起点的会话形态
+             应随 resume 签名声明、写入为函数体首行（issue #1395 / ADR-0098 决策 3）"
+            )
+        });
+    let start_rel = text[resume_pos..]
+        .find("start_background_services(")
+        .expect("resume 应经唯一编排点拉起后台服务（issue #961）");
+    assert!(
+        remember_rel < start_rel,
+        "resume 体内信封写入必须先于 start_background_services——打开即同步与写后
+         触发即时消费会话形态（issue #1395 / ADR-0098 决策 3）；信封写入被移到拉起
+         之后或整体删除即在此变红"
+    );
+}
+
 /// 分平台门收在 start_triggers 单点（ADR-0098 决策 4）：`#[cfg(desktop)]` 在
 /// 触发编排源码恰一处、贴在 start_triggers 内的调度线程拉起上、打开即同步
 /// （sync_on_start）在门外全平台无条件跑——门被搬回调用点、复制多份或打开即

@@ -280,6 +280,9 @@ pub async fn restart_app<R: Runtime>(app: AppHandle<R>) -> Result<()> {
     // 原位重引导 = 可能换库（切换账本 / 恢复 / 转换后重开）：清空本会话密钥记忆
     // （issue #863 / ADR-0098）——新库的密钥形态未知，等下一次解锁或手动同步
     // 重新记入，避免拿旧库口令去封新库的段（密文/明文错配会让对端无法开封）。
+    // 清空必须先于换库（issue #1395 留痕时序理由）：落 Ready 时本会话
+    // 调度线程仍活，换库后的写后触发若仍携旧库口令即错封；不经 resume
+    //（信封形态未知，不能随起点签名声明，只能清空等待重新记入）。
     ledger_sync_engine::SessionEnvelope::forget();
     let phase = run_db("restart_app", move || Ok(try_boot_sequence(&handle))).await?;
     if phase == BootPhase::Ready {
@@ -326,7 +329,16 @@ pub async fn reset_after_startup_failure<R: Runtime>(app: AppHandle<R>) -> Resul
     .await?;
     // 业务可用起点编排与解锁恢复同型（原位成对换连 → 日志档位接管 → 拉起调度），
     // 锁定门翻转为无操作；此处再清启动失败门，业务 IPC 随即放行。
-    resume_business_surface(&app, conn, read_conn)?;
+    // 会话信封随起点签名记入明文（issue #1395 / ADR-0098 决策 3 修订注记）：
+    // 今日可证 no-op——失败态会话信封必为 None（进程内从无解锁/成功轮次，
+    // 重引导路径 restart_app 已先 forget），`current()` 对 None 的回退即明文；
+    // 声明的是该起点的不变量。
+    resume_business_surface(
+        &app,
+        ledger_sync_engine::SessionEnvelope::Plaintext,
+        conn,
+        read_conn,
+    )?;
     app.state::<BootFailureGate>().clear();
     tracing::info!("启动失败重置完成：旧库保留 .bak 副本，应用以全新明文空库进入");
     Ok(())

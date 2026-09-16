@@ -1,6 +1,7 @@
-//! 本机会话密钥形态（issue #958 拆分自 `trigger.rs`；#863 / ADR-0098 决策 3）：
-//! 解锁密文库或一次成功的手动同步后记入，同步轮次据此判定信封模式；进程级单例，
-//! 与解锁态同生命周期。
+//! 本机会话密钥形态（issue #958 拆分自 `trigger.rs`；#863 / ADR-0098 决策 3；
+//! #1395 记入点收进 resume 签名）：解锁 / 重置业务可用起点随
+//! `resume_business_surface` 签名声明记入，一次成功的手动同步在轮次后记入，
+//! 同步轮次据此判定信封模式；进程级单例，与解锁态同生命周期。
 //!
 //! 变更原因单一：改「口令从哪来」或失效时机只动本文件。轮次编排对它的消费见
 //! [`super::scheduler`]，通道配置见 [`super::channel`]。
@@ -15,8 +16,8 @@ use crate::envelope::EnvelopeMode;
 /// 同步轮次据此判定信封模式。进程级单例，与解锁态同生命周期。
 static SESSION_ENVELOPE: std::sync::Mutex<Option<SessionEnvelope>> = std::sync::Mutex::new(None);
 
-/// 本机会话的密钥形态：解锁密文库或一次成功的手动同步后记入，同步轮次
-/// 据此判定信封模式。
+/// 本机会话的密钥形态：解锁 / 重置起点随 `resume_business_surface` 签名声明
+/// 记入、一次成功的手动同步在轮次后记入，同步轮次据此判定信封模式。
 ///
 /// 自动轮询**不读钥匙串**：钥匙串读取在发布构建下先过 LocalAuthentication 门
 /// （弹 Touch ID，ADR-0075 决策 3 / issue #866），后台轮询不得弹交互；本会话
@@ -31,14 +32,17 @@ pub enum SessionEnvelope {
 }
 
 impl SessionEnvelope {
-    /// 记入本会话形态（解锁成功 / 一次成功的手动同步 / 用户设置记住口令）。
+    /// 记入本会话形态（解锁/重置起点随 `resume_business_surface` 签名声明
+    /// 记入；一次成功的手动同步在轮次后记入；关闭加密记入明文）。「设置页
+    /// 启用自动解锁」不是记入点：该路径的口令未经校验，不得覆盖已验证口令。
     pub fn remember(session: SessionEnvelope) {
         *SESSION_ENVELOPE.lock().unwrap_or_else(|e| e.into_inner()) = Some(session);
     }
 
-    /// 清空本会话记忆（引导换库、忘记口令重置、关闭加密等改变库身份的路径）：
-    /// 新库形态未知，等下一次解锁/手动同步重新记入——避免拿旧库口令去封新库的段
-    /// （密文/明文错配会让对端无法开封）。
+    /// 清空本会话记忆（原位重引导的换库路径，`restart_app` 单点）：新库形态
+    /// 未知，等下一次解锁/手动同步重新记入——避免拿旧库口令去封新库的段
+    /// （密文/明文错配会让对端无法开封）。必须先于换库调用：落 Ready 时调度
+    /// 线程仍活（issue #1395 留痕时序理由）。
     pub fn forget() {
         *SESSION_ENVELOPE.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
