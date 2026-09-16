@@ -15,6 +15,10 @@
 //!   仍是同一条结构，只是触发者变成 DB 线程；作业占用 DB 线程时长照走
 //!   `probe_lock_hold`（阈值与告警口径不变）；调用点 dispatcher 与 span 跨线程
 //!   显式带入（与 `db::run_db` 同款），SQL 归因不漂移；
+//! - **换连承接**（决策 2，issue #1409）：换连仍走 ADR-0117 决策 3 的成对原语
+//!   （不改门面作业），门面线程与换连原语共用连接槽互斥体，故换连与在途作业互斥、
+//!   对换连后的作业立即可见；换连原语在槽锁内抬高「换连代次」，DB 线程取锁后比对
+//!   代次即识别换连并复位连接不可信标记（决策 3 的退役 / 重建）；
 //! - **panic 语义**（决策 3）：`catch_unwind` 位于连接槽守卫作用域**之内**——panic
 //!   在守卫释放前被拦下，互斥体不中毒；随后回滚未提交事务（`tx_scope::rollback_if_open`）、
 //!   错误经通道 fail-loud 上报，DB 线程不死也不静默重启。回滚失败或连接状态不可信
@@ -27,8 +31,8 @@
 
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Mutex;
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
@@ -37,7 +41,7 @@ use tokio::sync::oneshot;
 use tracing::Span;
 use tracing::dispatcher::Dispatch;
 
-use super::runtime::{DbState, probe_lock_hold, with_caller_context, write_locked};
+use super::runtime::{DbState, SlotWatch, probe_lock_hold, with_caller_context, write_locked};
 use super::tx_scope::rollback_if_open;
 use crate::error::{AppError, Result};
 
@@ -80,9 +84,13 @@ enum WorkerMsg {
 /// **标记的生命周期 = 门面线程的生命周期**（本票现场判定）：连接槽与成对构造点受
 /// ADR-0125 决策 4 保护（测试世界零改造，`DbState` 不加字段），故标记不挂连接槽。
 /// 生产接线是进程级单例门面（#1410），单例生命周期内「标记后不静默恢复」成立；槽锁
-/// 中毒这一诱发因本身持久（同槽再锁仍中毒），故重起门面也不会静默服务它。跨门面实例
-/// 的持续标记与「换连后新连接是否重置标记」（#1409 四条换连路径）由该票按现场裁决——
-/// 本票不预置无消费方的复位接口。
+/// 中毒这一诱发因本身持久（同槽再锁仍中毒），故重起门面也不会静默服务它。
+///
+/// **换连即复位**（ADR-0125 决策 3 把「退役 / 重建该连接」交给实施票，issue #1409
+/// 判定为复位）：标记是**连接**级的，换连换进来的是另一条连接，旧连接的失败态不
+/// 继承。识别手段是换连原语在槽锁内抬高的「换连代次」（`db::runtime::slot_swap_epoch`），
+/// 复位发生在作业取到槽锁之后、不可信判定之前。非换连路径上的失败态仍持续——复位
+/// 只认「槽被换连」这一事实，不认「槽当下能不能锁上」，不静默恢复服务。
 enum ConnectionTrust {
     Trusted,
     Untrusted(AppError),
@@ -95,6 +103,23 @@ impl ConnectionTrust {
             ConnectionTrust::Trusted => None,
             ConnectionTrust::Untrusted(error) => Some(error.clone()),
         }
+    }
+
+    /// 是否已标记不可信。
+    fn is_untrusted(&self) -> bool {
+        matches!(self, ConnectionTrust::Untrusted(_))
+    }
+
+    /// 换连后复位（ADR-0125 决策 3 的「退役 / 重建」由实施票判定，issue #1409）：
+    /// 槽内连接已被换连原语换成另一条连接，旧连接的失败态不继承。只有确实清掉了
+    /// 标记才留痕——「服务从拒答恢复」是可观察事件，按警告级别记，不静默。
+    fn reset_after_swap(&mut self) {
+        if self.is_untrusted() {
+            tracing::warn!(
+                "连接槽已换连：新连接重置不可信标记（ADR-0125 决策 3 退役/重建，issue #1409）"
+            );
+        }
+        *self = ConnectionTrust::Trusted;
     }
 
     /// 标记连接不可信（记错误日志、保留首个错误——「报同一错误」的载体）。
@@ -128,11 +153,14 @@ struct DbWorker {
 
 impl DbWorker {
     /// 拉起一条 DB 线程，接管给定连接槽的共享句柄。
-    fn spawn(name: &'static str, slot: Arc<Mutex<Connection>>) -> Result<DbWorker> {
+    ///
+    /// `watch` 是槽的观测句柄（issue #1409）：DB 线程靠它在取到槽锁后识别「槽已被
+    /// 换连」，据此复位连接不可信标记。
+    fn spawn(name: &'static str, watch: SlotWatch) -> Result<DbWorker> {
         let (sender, receiver) = mpsc::channel::<WorkerMsg>();
         let handle = thread::Builder::new()
             .name(name.to_string())
-            .spawn(move || run_worker(name, &slot, &receiver))
+            .spawn(move || run_worker(name, watch, &receiver))
             .map_err(|e| AppError::Io(format!("数据库门面线程 {name} 启动失败: {e}")))?;
         Ok(DbWorker {
             name,
@@ -239,8 +267,8 @@ impl DbFacade {
     /// 调用线程内联执行）。
     pub fn start(state: &DbState) -> Result<DbFacade> {
         Ok(DbFacade {
-            write: DbWorker::spawn(WRITE_THREAD_NAME, Arc::clone(&state.conn))?,
-            read: DbWorker::spawn(READ_THREAD_NAME, Arc::clone(&state.read_conn))?,
+            write: DbWorker::spawn(WRITE_THREAD_NAME, SlotWatch::new(&state.conn))?,
+            read: DbWorker::spawn(READ_THREAD_NAME, SlotWatch::new(&state.read_conn))?,
         })
     }
 
@@ -296,18 +324,23 @@ async fn await_reply<T>(receiver: oneshot::Receiver<Result<T>>) -> Result<T> {
 }
 
 /// DB 线程主循环：逐条消费作业，直到停机消息或全部发送端释放。
-fn run_worker(name: &'static str, slot: &Mutex<Connection>, receiver: &mpsc::Receiver<WorkerMsg>) {
+fn run_worker(name: &'static str, watch: SlotWatch, receiver: &mpsc::Receiver<WorkerMsg>) {
     let mut trust = ConnectionTrust::Trusted;
     while let Ok(message) = receiver.recv() {
         match message {
             WorkerMsg::Shutdown => break,
-            WorkerMsg::Job(job) => run_job(name, slot, &mut trust, job),
+            WorkerMsg::Job(job) => run_job(name, &watch, &mut trust, job),
         }
     }
 }
 
 /// 执行一条作业：取连接槽锁 → 守卫作用域内执行（含 panic 拦截）→ 回传结果。
-fn run_job(name: &'static str, slot: &Mutex<Connection>, trust: &mut ConnectionTrust, job: Job) {
+///
+/// 取锁之后先比对换连代次（issue #1409）：换连原语在槽锁内抬高代次，故本处读到
+/// 的值要么已含换连、要么不含——「槽已换连」即复位连接不可信标记（ADR-0125
+/// 决策 3：退役 / 重建由实施票判定），不可信判定随后按（可能已复位）的标记走。
+/// 代次比对必须在槽锁内，锁外读会与换连竞速（读到旧代次却用上了新连接）。
+fn run_job(name: &'static str, watch: &SlotWatch, trust: &mut ConnectionTrust, job: Job) {
     let Job {
         command,
         dispatch,
@@ -315,15 +348,9 @@ fn run_job(name: &'static str, slot: &Mutex<Connection>, trust: &mut ConnectionT
         run,
         reply,
     } = job;
-    // 连接已不可信：后续作业一律 fail-loud 报同一错误，不静默恢复服务（ADR-0125 决策 3）。
-    if let Some(error) = trust.untrusted_error() {
-        tracing::error!(thread = name, "数据库连接不可信，作业拒绝执行");
-        reply(Err(error));
-        return;
-    }
     // 作业占用 DB 线程时长探针（ADR-0125 决策 2）：阈值与告警口径与既有持锁探针同源。
     let started = Instant::now();
-    let guard = match slot.lock() {
+    let guard = match watch.slot().lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
             // 槽锁中毒（迁移期仍有直锁调用点，闭包 panic 会毒化互斥体）：连接状态
@@ -334,6 +361,20 @@ fn run_job(name: &'static str, slot: &Mutex<Connection>, trust: &mut ConnectionT
             return;
         }
     };
+    // 换连承接下来到这里（issue #1409）：槽锁在手，代次读数与换连原语的抬高同序。
+    if watch.observe_swap() {
+        trust.reset_after_swap();
+    }
+    // 连接已不可信（且本次未换连）：后续作业一律 fail-loud 报同一错误，不静默
+    // 恢复服务（ADR-0125 决策 3）。判定基准是标记本身，不是「槽当下能不能锁上」
+    // ——标记被清除而槽能锁上时仍拒服务（判据见 `untrusted_connection_fails_loud_*`）。
+    // 槽锁已中毒这一路在取锁处先行返回：错误文本由 `PoisonError` 稳定给出，同样
+    // fail-loud、同样逐字一致，语义不弱化。
+    if let Some(error) = trust.untrusted_error() {
+        tracing::error!(thread = name, "数据库连接不可信，作业拒绝执行");
+        reply(Err(error));
+        return;
+    }
     // 上下文承接与阻塞线程池 helper 同一实现（`with_caller_context`）：作业在调用方
     // dispatcher 与 span 内执行，调用点无 span 时重建 `command` span——归因不漂移。
     with_caller_context(&dispatch, &caller_span, command, || {
