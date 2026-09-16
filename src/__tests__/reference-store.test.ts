@@ -1,11 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import {
-  captureLastListener,
-  mockListen,
-  type CapturedListener,
-} from '@ledger/test-support/listen-mock'
-import { flushPromises } from '@vue/test-utils'
 import { useReferenceStore } from '@/stores/reference'
 import type { Account, Category, Currency, Insurer, Merchant } from '@ledger/types'
 
@@ -76,34 +70,6 @@ const mockInsurers: Insurer[] = [
   },
 ]
 
-/** 重拉/事件后的新数据（用于验证 stale-while-revalidate 的替换）。 */
-const newCurrencies: Currency[] = [
-  { code: 'EUR', name: '欧元', symbol: '€', decimal_places: 2 },
-]
-const newAccounts: Account[] = [
-  {
-    id: 'acc-new', name: '新账户', type: 'bank', currency_code: 'USD',
-    initial_balance_cents: 0, created_at: '2026-02-01T00:00:00Z',
-    updated_at: '2026-02-01T00:00:00Z', version: 1, device_id: 'test',
-    is_deleted: false, is_hidden: false,
-  },
-]
-const newCategories: Category[] = [
-  {
-    id: 'cat-new', name: '新分类', kind: 'expense', parent_id: null,
-    icon: null, sort_order: 0, created_at: '2026-02-01T00:00:00Z',
-    updated_at: '2026-02-01T00:00:00Z', version: 1, device_id: 'test',
-    is_deleted: false,
-  },
-]
-const newMerchants: Merchant[] = [
-  {
-    id: 'mch-new', name: '新商户',
-    updated_at: '2026-02-01T00:00:00Z',
-    version: 1, device_id: 'test', is_deleted: false,
-  },
-]
-
 // 参考命令桩统一走接缝（issue #725）；本文件以自身夹具为被测数据，全量覆写。
 function mockListCommands() {
   wireInvokeSeam({
@@ -121,6 +87,11 @@ beforeEach(() => {
   mockListCommands()
 })
 
+/**
+ * 机制断言（self-init / SWR / 在途合并 / 事件重拉 / status-version / 失败与恢复）
+ * 已收口到 push-first-list.test.ts 工厂单点；事件重拉的端到端域规则
+ * （失效机制唯一，ADR-0012）由 reference-push.integration.test.ts 保留店级钉死。
+ */
 describe('useReferenceStore', () => {
   it('初始状态为空', () => {
     const store = useReferenceStore()
@@ -292,209 +263,5 @@ describe('useReferenceStore', () => {
     // 返回种子里对应 code 的那行币种（含 symbol/小数位全字段，store 克隆后深等），非格式断言
     expect(store.getCurrency('CNY')).toStrictEqual(mockCurrencies[0])
     expect(store.getCurrency('EUR')).toBeUndefined()
-  })
-})
-
-describe('useReferenceStore 失效信号与 push 生命周期', () => {
-  let readChangedHandler: () => CapturedListener | null
-
-  beforeEach(() => {
-    readChangedHandler = captureLastListener()
-  })
-
-  it('首次访问 self-init 自动触发一次加载（无需手动调用 load*）', async () => {
-    const store = useReferenceStore()
-    // self-init 同步发起了五张参考表的拉取（恰一次）
-    expect(
-      mockInvoke.mock.calls.filter(([cmd]) => cmd.startsWith('list_')),
-    ).toHaveLength(5)
-    await store.refresh()
-    expect(store.currencies).toEqual(mockCurrencies)
-    expect(store.accounts).toEqual(mockAccounts)
-    expect(store.categories).toEqual(mockCategories)
-  })
-
-  it('status/version 迁移：self-init → loading → ready，成功重拉 version 自增', async () => {
-    const store = useReferenceStore()
-    expect(store.status).toBe('loading') // self-init 同步置位
-    expect(store.version).toBe(0)
-    await store.refresh()
-    expect(store.status).toBe('ready')
-    expect(store.version).toBe(1)
-    await store.refresh()
-    expect(store.status).toBe('ready')
-    expect(store.version).toBe(2)
-  })
-
-  it('listen 在 store 首次访问时注册一次（订阅 ledger:changed）', () => {
-    useReferenceStore()
-    // pinia store 为单例：再次访问不重复注册
-    useReferenceStore()
-    expect(mockListen).toHaveBeenCalledTimes(1)
-    expect(mockListen).toHaveBeenCalledWith('ledger:changed', expect.any(Function))
-  })
-
-  it('ledger:changed 到达后置 loading 并保留旧数据（不闪空），完成后替换', async () => {
-    const store = useReferenceStore()
-    await store.refresh()
-
-    let resolveCats!: (v: Category[]) => void
-    wireInvokeSeam({
-      overrides: {
-        list_currencies: newCurrencies,
-        list_accounts: newAccounts,
-        list_categories: () =>
-          new Promise((res) => {
-            resolveCats = res
-          }),
-        list_merchants: newMerchants,
-        list_insurers: mockInsurers,
-      },
-    })
-    readChangedHandler()?.({ payload: undefined })
-    // 事件到达即置 loading，旧数据保留（stale-while-revalidate）
-    expect(store.status).toBe('loading')
-    expect(store.currencies).toEqual(mockCurrencies)
-    expect(store.accounts).toEqual(mockAccounts)
-    expect(store.categories).toEqual(mockCategories)
-
-    resolveCats(newCategories)
-    await flushPromises()
-    expect(store.status).toBe('ready')
-    expect(store.currencies).toEqual(newCurrencies)
-    expect(store.accounts).toEqual(newAccounts)
-    expect(store.categories).toEqual(newCategories)
-    expect(store.version).toBe(2)
-  })
-
-  it('触发 ledger:changed 后五表自动更新，派生映射随之更新', async () => {
-    const store = useReferenceStore()
-    await store.refresh()
-    expect(store.currencyMap.get('CNY')?.name).toBe('人民币')
-
-    wireInvokeSeam({
-      overrides: {
-        list_currencies: newCurrencies,
-        list_accounts: newAccounts,
-        list_categories: newCategories,
-        list_merchants: newMerchants,
-        list_insurers: mockInsurers,
-      },
-    })
-    readChangedHandler()?.({ payload: undefined })
-    await flushPromises()
-
-    expect(store.currencies).toEqual(newCurrencies)
-    expect(store.accounts).toEqual(newAccounts)
-    expect(store.categories).toEqual(newCategories)
-    // 派生映射（computed）自动更新
-    expect(store.currencyMap.get('EUR')?.name).toBe('欧元')
-    expect(store.currencyMap.get('CNY')).toBeUndefined()
-    expect(store.accountMap.get('acc-new')?.name).toBe('新账户')
-    expect(store.categoryMap.get('cat-new')?.name).toBe('新分类')
-    expect(store.rootCategories.map((c) => c.id)).toEqual(['cat-new'])
-    expect(store.version).toBe(2)
-  })
-
-  it('并发 refresh 合并为一次 IPC', async () => {
-    const store = useReferenceStore()
-    await store.refresh()
-    mockInvoke.mockClear()
-
-    let resolveCats!: (v: Category[]) => void
-    wireInvokeSeam({
-      overrides: {
-        list_currencies: newCurrencies,
-        list_accounts: newAccounts,
-        list_categories: () =>
-          new Promise((res) => {
-            resolveCats = res
-          }),
-        list_merchants: newMerchants,
-        list_insurers: mockInsurers,
-      },
-    })
-
-    const p1 = store.refresh()
-    const p2 = store.refresh()
-    const p3 = store.refresh()
-    // 三次并发调用只发起一次加载（五张表各一次 IPC）
-    expect(
-      mockInvoke.mock.calls.filter(([cmd]) => cmd.startsWith('list_')),
-    ).toHaveLength(5)
-    resolveCats(newCategories)
-    await Promise.all([p1, p2, p3])
-    expect(store.categories).toEqual(newCategories)
-    expect(store.version).toBe(2)
-  })
-
-  it('重拉不闪空：加载期间保留旧数据，成功后才整体替换', async () => {
-    const store = useReferenceStore()
-    await store.refresh()
-
-    let resolveCats!: (v: Category[]) => void
-    wireInvokeSeam({
-      overrides: {
-        list_currencies: newCurrencies,
-        list_accounts: newAccounts,
-        list_categories: () =>
-          new Promise((res) => {
-            resolveCats = res
-          }),
-        list_merchants: newMerchants,
-        list_insurers: mockInsurers,
-      },
-    })
-
-    const p = store.refresh()
-    // 重拉期间：status=loading，旧数据原样保留（不闪空）
-    expect(store.status).toBe('loading')
-    expect(store.currencies).toEqual(mockCurrencies)
-    expect(store.accounts).toEqual(mockAccounts)
-    expect(store.categories).toEqual(mockCategories)
-
-    resolveCats(newCategories)
-    await p
-    expect(store.status).toBe('ready')
-    expect(store.currencies).toEqual(newCurrencies)
-    expect(store.accounts).toEqual(newAccounts)
-    expect(store.categories).toEqual(newCategories)
-    expect(store.version).toBe(2)
-  })
-
-  it('重拉失败 → status=error、保留旧数据、version 不变', async () => {
-    const store = useReferenceStore()
-    await store.refresh()
-
-    wireInvokeSeam({ overrides: { list_currencies: () => Promise.reject(new Error('db 错误')) } })
-    await expect(store.refresh()).rejects.toThrow('db 错误')
-    expect(store.status).toBe('error')
-    expect(store.version).toBe(1)
-    expect(store.currencies).toEqual(mockCurrencies)
-    expect(store.accounts).toEqual(mockAccounts)
-    expect(store.categories).toEqual(mockCategories)
-  })
-
-  it('失败后 refresh 可恢复：error → loading → ready，version 续增', async () => {
-    const store = useReferenceStore()
-    await store.refresh()
-
-    wireInvokeSeam({ overrides: { list_currencies: () => Promise.reject(new Error('db 错误')) } })
-    await expect(store.refresh()).rejects.toThrow('db 错误')
-    expect(store.status).toBe('error')
-
-    wireInvokeSeam({
-      overrides: {
-        list_currencies: newCurrencies,
-        list_accounts: newAccounts,
-        list_categories: newCategories,
-        list_merchants: newMerchants,
-        list_insurers: mockInsurers,
-      },
-    })
-    await store.refresh()
-    expect(store.status).toBe('ready')
-    expect(store.version).toBe(2)
-    expect(store.currencies).toEqual(newCurrencies)
   })
 })

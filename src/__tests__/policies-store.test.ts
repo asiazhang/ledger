@@ -1,6 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { captureListenHandlers, type CapturedListener } from '@ledger/test-support/listen-mock'
 import { flushPromises } from '@vue/test-utils'
 import { usePoliciesStore } from '@/policy/policies'
 import { makePolicy, makePolicyStats } from './factories'
@@ -25,73 +24,12 @@ const createInput: PolicyInput = {
   note: null,
 }
 
-/** 捕获 ledger:changed 监听处理器（store 创建时注册） */
-let handlers: CapturedListener[]
-
-beforeEach(() => {
-  handlers = captureListenHandlers()
-})
+/**
+ * 机制断言（self-init / SWR / 在途合并 / 事件重拉 / status-version / 部分失败不落位）
+ * 已收口到 push-first-list.test.ts 工厂单点（ADR-0123 决策 6）；本文件只留领域动作断言。
+ */
 
 describe('usePoliciesStore', () => {
-  it('首次访问自动加载（self-init），加载后 status=ready、version=1', async () => {
-    wireInvokeSeam({
-      overrides: {
-        list_policies: [basePolicy()],
-        list_policy_stats: [baseStats()],
-      },
-    })
-    const store = usePoliciesStore()
-    await flushPromises()
-    expect(store.policies).toHaveLength(1)
-    expect(store.policies[0].policy_number).toBe('P2026-001')
-    expect(store.status).toBe('ready')
-    expect(store.version).toBe(1)
-  })
-
-  it('加载失败时 status=error，不抛出（self-init 静默）', async () => {
-    wireInvokeSeam({
-      overrides: {
-        list_policies: () => Promise.reject(new Error('boom')),
-        list_policy_stats: [],
-      },
-    })
-    const store = usePoliciesStore()
-    await flushPromises()
-    expect(store.status).toBe('error')
-    expect(store.policies).toEqual([])
-  })
-
-  it('ledger:changed 触发重拉（stale-while-revalidate：在途不闪空，成功后整体替换）', async () => {
-    const initial = [basePolicy()]
-    const fresh = [basePolicy(), basePolicy({ id: 'policy-2', policy_number: 'P2026-002' })]
-    let resolveSecond: (items: Policy[]) => void = () => {}
-    let listCalls = 0
-    wireInvokeSeam({
-      defaults: { list_policy_stats: [baseStats()] },
-      overrides: {
-        list_policies: () => {
-          listCalls++
-          if (listCalls === 1) return Promise.resolve(initial)
-          return new Promise<Policy[]>((resolve) => {
-            resolveSecond = resolve
-          })
-        },
-      },
-    })
-    const store = usePoliciesStore()
-    await flushPromises()
-    expect(store.policies).toEqual(initial)
-
-    handlers.forEach((h) => h({ event: 'ledger:changed', payload: null }))
-    await flushPromises()
-    // 第二次拉取在途：旧数据保留，不闪空
-    expect(store.policies).toEqual(initial)
-    resolveSecond(fresh)
-    await flushPromises()
-    expect(store.policies).toEqual(fresh)
-    expect(store.version).toBe(2)
-  })
-
   it('create 成功后立即重拉并返回 id', async () => {
     let listCalls = 0
     wireInvokeSeam({
@@ -160,20 +98,6 @@ describe('usePoliciesStore', () => {
     expect(store.statsById.get('missing')).toBeUndefined()
   })
 
-  it('统计拉取失败与列表失败同语义：status=error（整体失败，不部分更新）', async () => {
-    wireInvokeSeam({
-      overrides: {
-        list_policies: [basePolicy()],
-        list_policy_stats: () => Promise.reject(new Error('stats boom')),
-      },
-    })
-    const store = usePoliciesStore()
-    await flushPromises()
-    expect(store.status).toBe('error')
-    expect(store.policies).toEqual([])
-    expect(store.stats).toEqual([])
-  })
-
   it('create 失败向上抛（调用方展示错误，弹窗不关）', async () => {
     wireInvokeSeam({
       overrides: {
@@ -185,5 +109,25 @@ describe('usePoliciesStore', () => {
     const store = usePoliciesStore()
     await flushPromises()
     await expect(store.create(createInput)).rejects.toThrow('保单号不能为空')
+  })
+
+  it('写入成功后重拉失败不反转写动作成败：动作正常返回，失败信号由 status 承载（ADR-0123 决策 3）', async () => {
+    let listCalls = 0
+    wireInvokeSeam({
+      overrides: {
+        list_policies: () => {
+          listCalls++
+          return listCalls === 1 ? Promise.resolve([basePolicy()]) : Promise.reject(new Error('重拉失败'))
+        },
+        list_policy_stats: [],
+        create_policy: () => 'new-1',
+      },
+    })
+    const store = usePoliciesStore()
+    await flushPromises()
+
+    // 已落库的建档不因重拉失败误报「保存失败」，动作正常返回 id
+    await expect(store.create(createInput)).resolves.toBe('new-1')
+    expect(store.status).toBe('error')
   })
 })

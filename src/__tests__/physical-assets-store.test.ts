@@ -8,7 +8,6 @@ import type {
   PhysicalAsset,
   PhysicalAssetDisposeInput,
   PhysicalAssetInput,
-  PhysicalAssetList,
   PhysicalAssetUpdateInput,
   PhysicalAssetValuationInput,
 } from '@ledger/types'
@@ -34,8 +33,14 @@ beforeEach(() => {
   handlers = captureListenHandlers()
 })
 
+/**
+ * 机制断言（self-init / SWR / 在途合并 / 事件重拉 / status-version）已收口到
+ * push-first-list.test.ts 工厂单点（ADR-0123 决策 6）；本文件只留领域动作断言
+ * （写命令调用、写后触发重拉、筛选参数与同源快照拆分等本店特有行为）。
+ */
+
 describe('usePhysicalAssetsStore', () => {
-  it('首次访问自动加载（self-init）：列表与在持合计同批就位，status=ready', async () => {
+  it('列表与在持合计同批就位：后端同源快照拆分落位（含折算币种）', async () => {
     const asset = baseAsset()
     wireInvokeSeam({
       defaults: {
@@ -51,54 +56,6 @@ describe('usePhysicalAssetsStore', () => {
     expect(store.assets[0].name).toBe('客厅油画')
     expect(store.holdingTotalNativeCents).toBe(5_000_000)
     expect(store.nativeCurrency).toBe('CNY')
-    expect(store.status).toBe('ready')
-    expect(store.version).toBe(1)
-  })
-
-  it('加载失败时 status=error，不抛出（self-init 静默；缺汇率报错走同一通道）', async () => {
-    wireInvokeSeam({
-      overrides: {
-        list_physical_assets: () => Promise.reject(new Error('未找到 USD -> CNY 的汇率')),
-      },
-    })
-    const store = usePhysicalAssetsStore()
-    await flushPromises()
-    expect(store.status).toBe('error')
-    expect(store.assets).toEqual([])
-  })
-
-  it('ledger:changed 触发静默重拉（stale-while-revalidate：在途不闪空，成功后整体替换）', async () => {
-    const initial = [baseAsset()]
-    const fresh = [baseAsset(), baseAsset({ id: 'asset-2', name: '代步车' })]
-    let resolveSecond: (list: PhysicalAssetList) => void = () => {}
-    let listCalls = 0
-    wireInvokeSeam({
-      overrides: {
-        list_physical_assets: () => {
-          listCalls++
-          if (listCalls === 1)
-            return Promise.resolve(
-              makePhysicalAssetList({ assets: initial, holding_total_native_cents: 5_000_000 }),
-            )
-          return new Promise<PhysicalAssetList>((resolve) => {
-            resolveSecond = resolve
-          })
-        },
-      },
-    })
-    const store = usePhysicalAssetsStore()
-    await flushPromises()
-    expect(store.assets).toEqual(initial)
-
-    handlers.forEach((h) => h({ event: 'ledger:changed', payload: null }))
-    await flushPromises()
-    // 第二次拉取在途：旧数据保留，不闪空
-    expect(store.assets).toEqual(initial)
-    resolveSecond(makePhysicalAssetList({ assets: fresh, holding_total_native_cents: 13_000_000 }))
-    await flushPromises()
-    expect(store.assets).toEqual(fresh)
-    expect(store.holdingTotalNativeCents).toBe(13_000_000)
-    expect(store.version).toBe(2)
   })
 
   it('create 成功后立即重拉并返回 id（建档后列表与合计随之更新）', async () => {
@@ -340,5 +297,28 @@ describe('usePhysicalAssetsStore', () => {
     handlers.forEach((h) => h({ event: 'ledger:changed', payload: null }))
     await flushPromises()
     expect(seenStatus[seenStatus.length - 1]).toBe('disposed')
+  })
+
+  it('写入成功后重拉失败不反转写动作成败：动作正常返回，失败信号由 status 承载（ADR-0123 决策 3）', async () => {
+    let listCalls = 0
+    wireInvokeSeam({
+      overrides: {
+        list_physical_assets: () => {
+          listCalls++
+          return listCalls === 1
+            ? Promise.resolve(makePhysicalAssetList({ assets: [baseAsset()] }))
+            : Promise.reject(new Error('重拉失败'))
+        },
+        delete_physical_asset: (args) => {
+          expect(args).toMatchObject({ id: 'asset-1' })
+        },
+      },
+    })
+    const store = usePhysicalAssetsStore()
+    await flushPromises()
+
+    // 已落库的删除不因重拉失败误报「删除失败」，动作正常返回
+    await expect(store.remove('asset-1')).resolves.toBeUndefined()
+    expect(store.status).toBe('error')
   })
 })
