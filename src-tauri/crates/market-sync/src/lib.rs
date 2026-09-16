@@ -34,6 +34,9 @@
 //!   逐只请求）+ 汇率 K 线落 `fx_rate_history`（ADR-0019）+ 基金现价刷新（批量面
 //!   命中零请求，未命中退逐只短窗）+ 数据源权威名称随行刷新（「随用随修 + 同步
 //!   随行刷新」，ADR-0036/0081 修订）；历史采集归 [`history`]；
+//! - [`daily_refresh`]：现价刷新的后台每日形态（ADR-0122 决策 3 / issue #1377）
+//!   ——启动后延迟补跑一次 + 每自然日窗口一次，与手动同步同形同取数面（后台
+//!   车道让行、不占用户动作在途槽位、收尾裁决同判）；
 //! - [`history`]：价格历史后台补全（ADR-0122 / issue #1375）——派生事实队列
 //!   （有价格通道但历史不完整，持仓优先）+ 一轮排空（后台补全专用的单只
 //!   回填单元，issue #1377 起不再与现价刷新共用）+ 启动延迟与自然日窗口调度 +
@@ -73,7 +76,8 @@
 //! 兼容面（ADR-0112 决策 3「调用点零改动」）：根包以
 //! `pub use ledger_market_sync as sync;` 再导出保留原引用路径——壳层
 //! `commands::sync`（只做参数解包与信号发射，对外暴露 `sync_instrument_info`
-//! 标的信息同步一个 IPC 命令，刷价 + 沉淀历史 + 随行刷新名称，issue #827 改名）、
+//! 标的信息同步一个 IPC 命令，只刷现价 + 名称随行刷新，issue #827 改名、
+//! ADR-0122 / issue #1377 起 history 采集移出）、
 //! `commands::investment` 与 `api_server` 的行情查询注入点、e2e 与汇总文档的
 //! `crate::sync::…` / `tauri_app_lib::ledger_market_sync::…` 引用零改动。
 //!
@@ -81,6 +85,7 @@
 
 mod bulk;
 mod channels;
+mod daily_refresh;
 mod fund;
 mod fund_nav;
 mod history;
@@ -103,6 +108,10 @@ pub use bulk::{
 pub use channels::{
     FetchFundName, FetchKline, FetchNavFull, FetchNavPage, FetchUlist, SyncFetchChannels,
     do_incremental_sync_channels,
+};
+pub use daily_refresh::{
+    DailyPriceRefreshChannelsSlot, DailyPriceRefreshTimings, start_daily_price_refresh,
+    start_daily_price_refresh_with,
 };
 // 通道束载荷 DTO（issue #1276）：通道束是壳层注入接缝的公开面，桩实现方需要
 // 能命名与构造应答形状（StockItem 可构造；Kline/Nav 形状测试回空表即可命名）。

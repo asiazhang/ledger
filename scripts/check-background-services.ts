@@ -45,7 +45,12 @@ export const ORCHESTRATOR_FILE = 'lib.rs'
 export const ORCHESTRATOR_FN = 'start_background_services'
 
 /** 成组拉起名单（编排点函数体内必须同时出现的各域入口） */
-const PAIRED_NAMES = ['start_scheduler', 'start_triggers', 'start_history_backfill'] as const
+const PAIRED_NAMES = [
+  'start_scheduler',
+  'start_triggers',
+  'start_history_backfill',
+  'start_daily_price_refresh',
+] as const
 
 /**
  * 受守标识符及其合法住址（导出供测试夹具派生，check-structure.test.ts 消费
@@ -97,6 +102,15 @@ export const GUARDED_NAMES: readonly GuardedName[] = [
     ],
     orchestratorBodyAllowed: true,
     note: '价格历史后台补全调度入口（ADR-0122 / issue #1375；定义住 ledger-market-sync crate 的 history.rs，crate 根再导出）',
+  },
+  {
+    name: 'start_daily_price_refresh',
+    wholeFile: [
+      'crates/market-sync/src/daily_refresh.rs',
+      'crates/market-sync/src/lib.rs',
+    ],
+    orchestratorBodyAllowed: true,
+    note: '后台每日现价刷新调度入口（ADR-0122 决策 3 / issue #1377；定义住 ledger-market-sync crate 的 daily_refresh.rs，crate 根再导出）',
   },
 ]
 

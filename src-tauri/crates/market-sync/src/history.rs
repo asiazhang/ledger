@@ -67,13 +67,14 @@ use ledger_investment::prices::{
 };
 
 /// 应用启动后的首轮延迟：让出启动期（引导、参考数据装载、首屏渲染），再开始
-/// 第一轮补全。延迟是可逆工程决策，测试注入 [`BackfillTimings`] 覆写。
-const STARTUP_DELAY: Duration = Duration::from_secs(30);
+/// 第一轮补全。延迟是可逆工程决策，测试注入 [`BackfillTimings`] 覆写。后台
+/// 每日现价刷新（[`super::daily_refresh`]）与同一节奏（同形调度，issue #1377）。
+pub(super) const STARTUP_DELAY: Duration = Duration::from_secs(30);
 
 /// 自然日窗口的巡检周期：线程低频醒来比对北京日历日，跨日即跑当天的窗口。
 /// 与自动备份调度、多端同步轮询同一「低频」品味（分钟级间隔，代价为零——
 /// 每次巡检只做一次日期比对）。
-const WINDOW_POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
+pub(super) const WINDOW_POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
 /// 缺周点判据（ADR-0122 决策 2「逐只采集只服务首刷与缺周点」的队列半边）：
 /// 参考点（行情标的历史的最新周点 / 基金水位的净值日期）落后当前自然周**超过
@@ -249,23 +250,18 @@ fn has_new_weekly_point(
     Ok(false)
 }
 
-/// 磁盘上是否有任何历史序列（全局判据，与区间无关）——走势空态三态的
-/// 「尝试后仍无历史」判定与首刷判据（ADR-0038 决策 6）共用的读半边。
-pub(super) fn has_any_history(conn: &Connection, instrument_id: &str) -> Result<bool> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM price_history WHERE instrument_id = ?1)",
-        params![instrument_id],
-        |row| row.get(0),
-    )
-    .map_err(Into::into)
-}
-
 /// 现价刷新直落当周采样点（ADR-0122 决策 2 / issue #1377）：只服务**已有历史
 /// 序列**的标的（无序列者落单点会让「有历史序列」冒充「历史完整」，永久破坏
 /// 首刷判据——历史由后台补全整根回填）；且仅当该周点确实新（库内无此周、或
 /// 同周不同值）才写——「每周至多一条、取该周最后一个有报价交易日、整周覆盖
 /// 幂等」语义不变，同周同值零写入。返回是否实际落库（调用方据此决定是否计入
 /// 写入见证）。
+///
+/// `trade_date` 取同步当日（批量报价响应不携带行情日期）：周末 / 节假日同步时
+/// 点的价格是最近交易日的收盘价，而日期标签落在同步日——价格正确、周归属正确
+///（周键按 ISO 周算），仅横轴标签可能落在非交易日；下一个有报价交易日的同步
+/// 以同周覆盖改写回真实交易日（整周覆盖幂等），仓库无交易日历事实源（见价格
+/// 过期提示词条），不为标签引入第二口径。
 pub(super) fn land_current_week_point(
     conn: &Connection,
     instrument_id: &str,
@@ -273,7 +269,7 @@ pub(super) fn land_current_week_point(
     trade_date: &str,
     price_cents: i64,
 ) -> Result<bool> {
-    if !has_any_history(conn, instrument_id)? {
+    if !ledger_investment::backfill::has_any_history(conn, instrument_id)? {
         return Ok(false);
     }
     let date = NaiveDate::parse_from_str(trade_date, "%Y-%m-%d")
@@ -413,8 +409,9 @@ where
             Ok((_, false)) => backfill::BackfillAttempt::NoData,
             Ok((_, true)) | Err(_) => backfill::BackfillAttempt::Failed,
         };
-        match session.with_connection(|conn| has_any_history(conn, &item.instrument.instrument_id))
-        {
+        match session.with_connection(|conn| {
+            ledger_investment::backfill::has_any_history(conn, &item.instrument.instrument_id)
+        }) {
             Ok(false) => backfill::record_attempt(&item.instrument.instrument_id, attempt_failed),
             Ok(true) => {}
             Err(error) => tracing::warn!(
@@ -446,9 +443,10 @@ where
 /// 的短段取用——每次短暂取锁、用完即还，分钟级网络等待发生在段与段之外
 ///（与命令壳 `SegmentSession` 同一纪律；后台线程不在命令壳上，实现随编排住
 /// 本域，先例：多端同步调度侧 `AutoRoundConn`）。毒化映射与持锁时长探针与
-/// 写入口同形。
-struct SharedConnSession {
-    conn: Arc<Mutex<Connection>>,
+/// 写入口同形。后台每日现价刷新（[`super::daily_refresh`]）共用同一实现
+///（同一纪律、同一连接）。
+pub(super) struct SharedConnSession {
+    pub(super) conn: Arc<Mutex<Connection>>,
 }
 
 impl ScopedSession for SharedConnSession {

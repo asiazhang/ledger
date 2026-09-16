@@ -527,11 +527,7 @@ fn read_fund_watermark<Q: ScopedSession>(
                 |r| r.get(0),
             )
             .ok();
-        let has_history: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM price_history WHERE instrument_id=?1)",
-            params![fund.instrument_id],
-            |r| r.get(0),
-        )?;
+        let has_history = ledger_investment::backfill::has_any_history(conn, &fund.instrument_id)?;
         Ok((watermark, has_history))
     })
 }
@@ -1060,11 +1056,7 @@ fn land_bulk_point<Q: ScopedSession>(
 ) -> Result<()> {
     let price_cents = price_value_to_cents(hint.nav);
     session.with_connection(|conn| {
-        let has_history: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM price_history WHERE instrument_id=?1)",
-            params![fund.instrument_id],
-            |r| r.get(0),
-        )?;
+        let has_history = ledger_investment::backfill::has_any_history(conn, &fund.instrument_id)?;
         upsert_market_price(
             conn,
             &MarketPriceWrite {

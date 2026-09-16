@@ -120,7 +120,9 @@ const BOOT_FAILURE_ALLOWED_COMMANDS: &[&str] = &[
 /// （[`ledger_backup::start_scheduler`]，轮询同轮承载定时计划追补）、多端同步触发
 /// （[`ledger_sync_engine::start_triggers`]，分平台门收在域内一处，ADR-0098 决策 4）
 /// 与价格历史后台补全（[`ledger_market_sync::start_history_backfill`]，
-/// ADR-0122 / issue #1375）必须在每个业务可用起点成组拉起——多个独立调用无
+/// ADR-0122 / issue #1375）及后台每日现价刷新（
+/// [`ledger_market_sync::start_daily_price_refresh`]，ADR-0122 决策 3 /
+/// issue #1377）必须在每个业务可用起点成组拉起——多个独立调用无
 /// 机制保证成组，#863 会话已由同一根因造成两次真实缺陷（分平台门漂移、
 /// `restart_app` 落 Ready 漏接同步触发），且「缺失一个调用」不会让任何断言
 /// 变红。全部业务可用起点只调本函数：
@@ -134,6 +136,7 @@ pub(crate) fn start_background_services<R: tauri::Runtime>(app: &tauri::AppHandl
     ledger_backup::start_scheduler(app);
     ledger_sync_engine::start_triggers(app);
     ledger_market_sync::start_history_backfill(app);
+    ledger_market_sync::start_daily_price_refresh(app);
 }
 
 fn try_init_database(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {

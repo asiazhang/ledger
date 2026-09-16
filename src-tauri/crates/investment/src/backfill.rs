@@ -55,6 +55,9 @@ static RUN: std::sync::LazyLock<Mutex<BackfillRunState>> =
     std::sync::LazyLock::new(|| Mutex::new(BackfillRunState::default()));
 
 /// 快照读取（毒化互斥体按默认值降级：三态退化为「补全中」，不 panic）。
+/// 毒化策略全模块统一：**读侧恢复 + 告警，写侧告警 + 跳过**——运行态是
+/// 可重建的进程内判据（轮次与结局都会随下一轮重置），写跳过不产生不可自愈
+/// 的错态；告警保证毒化（持锁恐慌）不静默。
 fn snapshot() -> BackfillRunState {
     match RUN.lock() {
         Ok(state) => state.clone(),
@@ -82,26 +85,42 @@ pub fn round_started(total: usize) {
 
 /// 一轮补全的标的级推进（每处理完一只调用一次，成败同计格，与进度事件同口径）。
 pub fn round_progress(done: usize) {
-    if let Ok(mut state) = RUN.lock()
-        && let Some((_, total)) = state.running
-    {
-        state.running = Some((done, total));
+    match RUN.lock() {
+        Ok(mut state) => {
+            if let Some((_, total)) = state.running {
+                state.running = Some((done, total));
+            }
+        }
+        Err(poisoned) => {
+            tracing::warn!("后台补全运行态互斥体损坏，轮次推进未登记");
+            drop(poisoned.into_inner());
+        }
     }
 }
 
 /// 一轮补全结束：在途计数收起；尝试结局表保留到下一轮开始——轮间窗口的空态
 /// 判定消费的正是它（「无数据 / 待重试」在两轮之间依然可答）。
 pub fn round_finished() {
-    if let Ok(mut state) = RUN.lock() {
-        state.running = None;
+    match RUN.lock() {
+        Ok(mut state) => state.running = None,
+        Err(poisoned) => {
+            tracing::warn!("后台补全运行态互斥体损坏，轮次收起未登记");
+            drop(poisoned.into_inner());
+        }
     }
 }
 
 /// 记录一只标的的尝试结局：调用方（行情同步域）在单只补全单元返回后调用，
 /// 且仅当该标的**仍无历史序列**时（有历史序列者无需记录，空态判定不再消费）。
 pub fn record_attempt(instrument_id: &str, attempt: BackfillAttempt) {
-    if let Ok(mut state) = RUN.lock() {
-        state.attempts.insert(instrument_id.to_string(), attempt);
+    match RUN.lock() {
+        Ok(mut state) => {
+            state.attempts.insert(instrument_id.to_string(), attempt);
+        }
+        Err(poisoned) => {
+            tracing::warn!(instrument = %instrument_id, "后台补全运行态互斥体损坏，尝试结局未登记");
+            drop(poisoned.into_inner());
+        }
     }
 }
 
@@ -249,8 +268,10 @@ fn is_collectable_instrument(conn: &Connection, instrument_id: &str) -> Result<b
 }
 
 /// 磁盘上是否有任何历史序列（全局判据，与区间裁剪无关）——首刷判据
-///（ADR-0038 决策 6 / issue #1059）的读半边。
-pub(crate) fn has_any_history(conn: &Connection, instrument_id: &str) -> Result<bool> {
+///（ADR-0038 决策 6 / issue #1059）的读半边。单一判定点（本域唯一住址）：
+/// 行情同步域的回填编排、现价刷新落周点与水位读均消费本函数，不另留第二份
+/// EXISTS 口径（issue #1377）。
+pub fn has_any_history(conn: &Connection, instrument_id: &str) -> Result<bool> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM price_history WHERE instrument_id = ?1)",
         [instrument_id],
