@@ -45,7 +45,6 @@ use rusqlite::Connection;
 
 use super::bulk::{BulkCoverage, BulkFetchSurfaces, FundNameDictionary, FundNavTable};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
-use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_investment::crud::refresh_instrument_name;
 use ledger_investment::prices::{
@@ -63,7 +62,7 @@ use super::session::ScopedSession;
 
 /// 持仓股票的报价代码：东财 secid 与响应 f12 均为裸代码（如 600519 / 00700）。
 /// 字典 symbol 可能带市场后缀（schema 注释示例格式如 "600519.SH"），取点号前段归一化。
-fn quote_code(symbol: &str) -> &str {
+pub(super) fn quote_code(symbol: &str) -> &str {
     symbol.split('.').next().unwrap_or(symbol)
 }
 
@@ -381,45 +380,21 @@ where
         // 该标的一格）。覆盖行情分区全部标的（stock|etf，#695；清仓标的自 #827
         // 恢复采集）；停牌/整周无有效报价该周无点，不中断同步。单只整只一次提交
         //（ADR-0122 决策 8 / issue #1373）：第 N 个周点写入失败整体回滚，不留半根
-        // 历史——「有历史序列」与「历史完整」由此等价。事务经 [`ensure_transaction`]
-        //（ADR-0033 嵌套感知）：autocommit 连接自持事务、已在事务中则加入外层。
+        // 历史——「有历史序列」与「历史完整」由此等价。抓取与落库已抽成单只历史
+        // 回填单元（[`super::history::backfill_stock_history`]，issue #1375 与后台
+        // 补全共用），进度推进仍归本编排（报价 + 日 K 合并一格，issue #897）。
         for (secid, inst) in chunk {
-            // 日 K 抓取在会话之外；降采样落库才短暂取一次连接（issue #1275）。
-            let bars = fetch_kline(secid)?;
-            session.with_connection(|conn| {
-                ensure_transaction(conn, || {
-                    write_weekly_price_history(conn, &inst.instrument_id, &inst.currency, &bars)
-                })
-            })?;
+            super::history::backfill_stock_history(session, fetch_kline, secid, inst)?;
             done += 1;
             progress(SyncProgress::instrument(done, total));
         }
     }
 
-    // ③ 汇率 K 线回填 → FxRateHistory：仅非本位币币种对（与本位币相同的
-    // 无需历史折算），与价格历史同期段采集、同周规则落库。汇率消费方含基金与股票
-    // 的历史市值折算，币种对取全量标的（与分区无关）。汇率落库不计入写入见证
-    //（issue #1277）：与成功路径的零写入判定同口径——只有价格或名称写入才发
-    // 价格失效信号，汇率历史变化不在其列。
-    let native = session.with_connection(default_currency_code)?;
-    let mut pairs: Vec<(String, String)> = held
-        .iter()
-        .map(|s| (s.currency.clone(), native.clone()))
-        .filter(|(base, quote)| base != quote)
-        .collect();
-    pairs.sort();
-    pairs.dedup();
-    for (base, quote) in &pairs {
-        let pair = format!("{base}{quote}");
-        // 汇率 K 线抓取在会话之外；降采样落库才短暂取一次连接（issue #1275）。
-        let bars = fetch_fx(&pair)?;
-        session.with_connection(|conn| {
-            for (trade_date, rate) in downsample_weekly(&bars) {
-                upsert_fx_rate_history(conn, base, quote, &trade_date, rate)?;
-            }
-            Ok(())
-        })?;
-    }
+    // ③ 汇率 K 线回填 → FxRateHistory：共用单元（[`backfill_fx_pairs`]，issue
+    // #1375 起与后台补全共用），仅非本位币币种对，与价格历史同期段采集。
+    // 汇率落库不计入写入见证（issue #1277）：与成功路径的零写入判定同口径——
+    // 只有价格或名称写入才发价格失效信号，汇率历史变化不在其列。
+    backfill_fx_pairs(session, fetch_fx, held.iter().map(|s| s.currency.clone()))?;
 
     // ④ 批量取数面（ADR-0121 / issue #1374）：名称全量字典 + 场外基金净值全市场
     // 批量面，各整次同步最多一次请求——请求量自此不再随基金数线性增长；净值分区
@@ -553,7 +528,7 @@ where
 /// 北京时间今天（A 股/基金净值日历以北京时间为准）。北京日历日 = UTC 时刻
 /// 加 8 小时后取日期部分，UTC+8 算术直接得日期、无 Option 无 expect
 ///（ADR-0060 的 A 类临时豁免已由 #434 结构性消除）。
-pub(super) fn beijing_today() -> NaiveDate {
+pub(crate) fn beijing_today() -> NaiveDate {
     beijing_date(chrono::Utc::now())
 }
 
@@ -599,7 +574,8 @@ pub(super) fn downsample_weekly(bars: &[KlineBar]) -> Vec<(String, f64)> {
 /// 单只标的的周采样历史落库（ADR-0122 决策 8 / issue #1373）：日 K 回填与基金
 /// 净值回填两条通道共用的「降采样 + 逐周 upsert」形体，不另写第二份采样落库。
 /// 「整周覆盖」幂等由 `upsert_price_history` 的 UNIQUE 约束保证（同周重复获取
-/// 零重复行）。
+/// 零重复行）。返回本次落库的周点数（调用方可据此判定「是否实际写过」；既有
+/// 调用点不消费该返回值，行为不变）。
 ///
 /// 本函数只写行、**不开事务**：调用方必须在**一只一个事务**里包住它
 ///（[`ensure_transaction`]），否则第 N 个周点写入失败会留下半根历史。两个现役
@@ -610,8 +586,10 @@ pub(super) fn write_weekly_price_history(
     instrument_id: &str,
     currency: &str,
     bars: &[KlineBar],
-) -> Result<()> {
-    for (trade_date, close) in downsample_weekly(bars) {
+) -> Result<usize> {
+    let points = downsample_weekly(bars);
+    let count = points.len();
+    for (trade_date, close) in points {
         upsert_price_history(
             conn,
             instrument_id,
@@ -620,6 +598,39 @@ pub(super) fn write_weekly_price_history(
             currency,
             EASTMONEY_PRICE_SOURCE,
         )?;
+    }
+    Ok(count)
+}
+
+/// 汇率 K 线回填（ADR-0019；issue #1375 起手动同步与后台补全共用单元）：给定
+/// 标的币种集合中，仅非本位币币种对（与本位币相同的无需历史折算）按同期段
+/// 采集、同周规则落库。汇率消费方含基金与股票的历史市值折算。
+pub(super) fn backfill_fx_pairs<Q, X>(
+    session: &Q,
+    fetch_fx: &mut X,
+    currencies: impl Iterator<Item = String>,
+) -> Result<()>
+where
+    Q: ScopedSession,
+    X: FnMut(&str) -> Result<Vec<KlineBar>>,
+{
+    let native = session.with_connection(default_currency_code)?;
+    let mut pairs: Vec<(String, String)> = currencies
+        .map(|base| (base, native.clone()))
+        .filter(|(base, quote)| base != quote)
+        .collect();
+    pairs.sort();
+    pairs.dedup();
+    for (base, quote) in &pairs {
+        let pair = format!("{base}{quote}");
+        // 汇率 K 线抓取在会话之外；降采样落库才短暂取一次连接（issue #1275）。
+        let bars = fetch_fx(&pair)?;
+        session.with_connection(|conn| {
+            for (trade_date, rate) in downsample_weekly(&bars) {
+                upsert_fx_rate_history(conn, base, quote, &trade_date, rate)?;
+            }
+            Ok(())
+        })?;
     }
     Ok(())
 }

@@ -1,0 +1,258 @@
+//! 价格历史后台补全接线测试（ADR-0122 / issue #1375）。
+//!
+//! **独立测试二进制**（不经 tests/commands 目标）：调度线程的单次拉起守卫是
+//! 进程级单例，接线行为断言须在独立进程现场注入短时机（先例：
+//! `tests/sync_trigger_poll.rs`，issue #959）。
+//!
+//! 断言全部对准用户可观察结果（CONTEXT-testing〈断言强度〉）：
+//! - 启动接线所拉起的调度线程真实跑出补全：无历史标的的历史自己长出来
+//!   （price_history 落行）、静默计数进度事件照发、实际写入发既有价格失效
+//!   信号。本测试直接驱动启动入口（编排点是 `pub(crate)`，集成测试不可达，
+//!   先例 `sync_trigger_poll.rs` 同形）；「删除 lib.rs 启动接线即变红」的
+//!   负向判据由 `scripts/check-background-services.ts` 源码扫描守门承担
+//!   （接线在测试不可直达的启动路径上以扫描守门替代，#959 / #961 先例）；
+//! - 后台补全在途（门控桩阻塞在抓取点）时，前台同步命令照常完成、不被拒绝
+//!   ——后台任务不占用「用户动作在途唯一」的槽位（ADR-0122 额度让路）。
+
+// 测试整体豁免（ADR-0060）：集成测试 crate 经 cfg(test) 放行六件套，生产构建零放宽。
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable
+    )
+)]
+
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use tauri::{Listener, Manager};
+
+use ledger_infra::db::{self, DbState};
+use ledger_infra::events;
+use ledger_market_sync::{
+    BackfillChannelsSlot, BackfillTimings, BulkFetchSurfaces, HISTORY_BACKFILL_PROGRESS, KlineBar,
+    StockItem, SyncFetchChannels, start_history_backfill_with,
+};
+use tauri_app_lib::commands::sync::{SyncChannelsSlot, sync_instrument_info};
+
+/// 门控桩的后台通道束：日 K 抓取点先通知「后台已在途」，再等测试放行并返回
+/// 两个不同周的周线样本——price_history 的行只能来自后台补全（前台同步的
+/// 日 K 桩返回空表，见下方前台桩）。抓取计数供「同日窗口不重跑」断言消费。
+fn gated_backfill_channels(
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+    kline_calls: Arc<std::sync::atomic::AtomicUsize>,
+) -> BackfillChannelsSlot {
+    let channels = SyncFetchChannels {
+        fetch_ulist: Box::new(|_| unreachable!("后台补全不刷现价，批量报价通道不应被触达")),
+        fetch_kline: Box::new(move |_secid| {
+            kline_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            entered.send(()).expect("在途通知应可送达");
+            release
+                .recv_timeout(Duration::from_secs(10))
+                .expect("测试应放行后台抓取");
+            Ok(vec![
+                KlineBar::new("2026-01-05", 12.0),
+                KlineBar::new("2026-01-12", 13.0),
+            ])
+        }),
+        fetch_fx: Box::new(|_| Ok(vec![])),
+        fetch_nav: Box::new(|_| unreachable!("测试现场无基金标的，净值通道不应被触达")),
+        fetch_nav_full: Box::new(|_| unreachable!("测试现场无基金标的，全量净值通道不应被触达")),
+        fetch_fund_name: Box::new(|_| unreachable!("测试现场无基金标的，名称通道不应被触达")),
+        bulk: BulkFetchSurfaces::absent(),
+    };
+    BackfillChannelsSlot(Arc::new(Mutex::new(channels)))
+}
+
+/// 前台同步命令的桩通道束：批量报价返回一条有效报价（现价照常落库），日 K
+/// 返回空表——price_history 不因前台同步产生任何行，隔离出「历史只能来自
+/// 后台补全」的断言面。
+fn frontend_sync_channels() -> SyncChannelsSlot {
+    let channels = SyncFetchChannels {
+        fetch_ulist: Box::new(|_| {
+            Ok(vec![StockItem {
+                code: "600519".into(),
+                name: "贵州茅台".into(),
+                price: Some(1302.80),
+                precision: None,
+            }])
+        }),
+        fetch_kline: Box::new(|_| Ok(vec![])),
+        fetch_fx: Box::new(|_| Ok(vec![])),
+        fetch_nav: Box::new(|_| unreachable!("测试现场无基金标的，净值通道不应被触达")),
+        fetch_nav_full: Box::new(|_| unreachable!("测试现场无基金标的，全量净值通道不应被触达")),
+        fetch_fund_name: Box::new(|_| unreachable!("测试现场无基金标的，名称通道不应被触达")),
+        bulk: BulkFetchSurfaces::absent(),
+    };
+    SyncChannelsSlot(Arc::new(Mutex::new(channels)))
+}
+
+/// 接线全流程：启动接线跑出后台补全（历史落行 + 静默计数 + 价格失效信号），
+/// 且后台在途时前台同步不被拒绝。删掉 `start_background_services` 的启动接线
+/// （或让后台占用前台槽位）本测试红。
+#[test]
+fn startup_wiring_backfills_history_and_frontend_sync_stays_unblocked() {
+    // 提交点后置动作接线（置脏断言依赖）与交易域接缝接线（本位币读取钩子），
+    // 与生产启动接线同形，幂等。
+    ledger_backup::install_after_commit_hook();
+    tauri_app_lib::transaction_wiring::install_all();
+
+    // 设备现场（sync_trigger_poll 同款）：mock 应用 + 独立临时目录文件库 +
+    // 两扇门（调度线程做空转判定）。
+    let dir = std::env::temp_dir().join(format!(
+        "ledger-history-backfill-it-{}",
+        ledger_infra::db::new_uuid()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let app = tauri::test::mock_app();
+    app.manage(db::open_db_in(&dir).unwrap());
+    app.manage(ledger_infra::db::encryption::EncryptionGate::new(false));
+    app.manage(ledger_infra::db::boot::BootFailureGate::new());
+
+    // 静态基线：一只沪市股票标的、无任何历史序列（首刷形态，队列必收）。
+    let conn = app.state::<DbState>().conn.clone();
+    {
+        let guard = conn.lock().unwrap();
+        tauri_app_lib::test_support::seed_instrument(
+            &guard,
+            "inst-1",
+            "600519",
+            "贵州茅台",
+            "CNY",
+            "sh",
+        );
+    }
+
+    // 注入两车道桩束：后台门控（在途可控），前台独立桩（同步可独立完成）。
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let kline_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    app.manage(gated_backfill_channels(
+        entered_tx,
+        release_rx,
+        kline_calls.clone(),
+    ));
+    app.manage(frontend_sync_channels());
+
+    // 订阅两类用户可观察事件：静默计数进度与价格失效信号。
+    let progress_log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    {
+        let log = progress_log.clone();
+        app.listen(HISTORY_BACKFILL_PROGRESS, move |event| {
+            log.lock().unwrap().push(event.payload().to_string());
+        });
+    }
+    let price_signals: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    {
+        let log = price_signals.clone();
+        app.listen(events::PRICES_CHANGED, move |_| {
+            *log.lock().unwrap() += 1;
+        });
+    }
+
+    // 启动接线（生产唯一编排点的同款调用）：注入短时机（生产 30 秒延迟）。
+    eprintln!("[probe] before start_history_backfill_with");
+    start_history_backfill_with(
+        app.handle(),
+        BackfillTimings {
+            startup_delay: Duration::from_millis(100),
+            // 巡检周期取短：轮询在窗口内多次到期，同日不得重跑（下方断言）。
+            window_poll: Duration::from_millis(300),
+        },
+    );
+
+    // 等后台补全真实在途（门控抓取点）。
+    eprintln!("[probe] waiting for background in-flight");
+    entered_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("后台补全应到达日 K 抓取点");
+    eprintln!("[probe] background in-flight reached");
+
+    // 后台在途窗口内，前台同步命令照常完成、不被拒绝（不占用户动作在途槽位）。
+    {
+        let handle = app.handle().clone();
+        let result = tauri::async_runtime::block_on(sync_instrument_info(
+            handle.state::<DbState>(),
+            handle.clone(),
+        ));
+        eprintln!("[probe] sync command returned");
+        match result {
+            Ok(result) => {
+                assert_eq!(
+                    result.synced, 1,
+                    "前台同步照常刷现价（后台在途不拒绝前台动作）"
+                );
+            }
+            Err(err) => panic!("后台在途时前台同步不应被拒绝：{err}"),
+        }
+    }
+
+    // 放行后台抓取：补全完成，历史落行（只能来自后台——前台日 K 桩为空表）。
+    eprintln!("[probe] releasing background gate");
+    release_tx.send(()).expect("放行应成功");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let rows: i64 = {
+            let guard = conn.lock().unwrap();
+            guard
+                .query_row(
+                    "SELECT count(*) FROM price_history WHERE instrument_id='inst-1'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        if rows >= 2 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "启动接线未在限时内补齐历史（price_history 未落行）"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // 静默计数进度事件照发（唯一用户可见面），实际写入发既有价格失效信号。
+    // 块作用域限定守卫：Mutex 不可重入，下方同日窗口断言要再次取同一锁。
+    {
+        let progress = progress_log.lock().unwrap();
+        assert!(!progress.is_empty(), "后台补全应发出静默标的级计数进度事件");
+        // 载荷为标的级 { done, total } 形状（结构断言，不做子串匹配）。
+        let payloads: Vec<serde_json::Value> = progress
+            .iter()
+            .map(|payload| serde_json::from_str(payload).expect("进度载荷应为合法 JSON"))
+            .collect();
+        assert!(
+            payloads.iter().any(|payload| {
+                payload["total"] == serde_json::json!(1) && payload["done"].is_number()
+            }),
+            "进度载荷应为标的级 done/total 形状，实际 {payloads:?}"
+        );
+    }
+    assert!(
+        *price_signals.lock().unwrap() >= 2,
+        "前台同步与后台补全的实际写入各自发价格失效信号（成败同判的收尾裁决）"
+    );
+
+    // 同日窗口不重跑（AC「每个自然日窗口各跑一次」）：巡检多次到期后，日 K
+    // 抓取仍只有首轮那一次，进度事件不再重新点亮（无第二轮的 { done: 0 }）。
+    std::thread::sleep(Duration::from_millis(1_000));
+    assert_eq!(
+        kline_calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "同一自然日窗口内巡检到期不得重跑第二轮"
+    );
+    let progress_now = progress_log.lock().unwrap().len();
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        progress_log.lock().unwrap().len(),
+        progress_now,
+        "同日窗口内不产生新进度事件（done=0 的第二轮首帧不出现）"
+    );
+}

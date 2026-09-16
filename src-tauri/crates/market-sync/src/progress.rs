@@ -12,6 +12,11 @@
 //! 旧「标的全量同步」的进度事件（`sync-instruments:progress`）已随 ADR-0081
 //! 决策 3 整体退役；本事件是现役增量同步（InstrumentInfoSync）上的重建，
 //! 命名归位 `ledger:*` 命名空间。
+//!
+//! 价格历史后台补全（issue #1375）沿用同一 payload 形状、另起新事件名
+//!（[`HISTORY_BACKFILL_PROGRESS`]，发射器接缝 [`BackfillProgressEmitter`]）
+//! ——静默计数面与手动同步的进度条互不串台：两个事件各走各的发射器，
+//! 后台推进绝不点亮前端的手动同步进度条，反之亦然。
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
@@ -21,6 +26,10 @@ use ledger_infra::events::post_emit_with;
 /// 标的信息同步进度事件名（issue #897 / ADR-0095；带 payload，与无 payload 的
 /// 失效信号族同处 `ledger:*` 命名空间）。payload 见 [`SyncProgress`]。
 pub const INSTRUMENT_SYNC_PROGRESS: &str = "ledger:instrument-sync-progress";
+
+/// 价格历史后台补全进度事件名（issue #1375）：与手动同步进度事件同 payload
+/// 形状（[`SyncProgress`]）、不同事件名——静默计数面的唯一事件来路。
+pub const HISTORY_BACKFILL_PROGRESS: &str = "ledger:history-backfill-progress";
 
 /// 场外基金深回填的**页级明细**（issue #1061）：正在按页拉取的基金代码与
 /// 「已完成页 / 总页数」。只在真正翻页（`pages > 1`）时随进度事件带出——
@@ -81,6 +90,26 @@ impl<R: Runtime> ProgressEmitter for AppHandle<R> {
         let handle = self.clone();
         post_emit_with(self, move || {
             let _ = handle.emit(INSTRUMENT_SYNC_PROGRESS, progress);
+        });
+    }
+}
+
+/// 后台补全进度发射器接缝（issue #1375）：与 [`ProgressEmitter`] 同型的类型化
+/// 载体，仅事件名不同（[`HISTORY_BACKFILL_PROGRESS`]）——payload 同为
+/// [`SyncProgress`]。唯一实现约定同前：**非阻塞**交接即返回；投递失败静默。
+/// 独立 trait 而非复用 [`ProgressEmitter`]，因为 `AppHandle` 只能有一个同名
+/// trait 实现：两个事件名必须各走各的接缝，后台推进才不会点亮手动同步进度条。
+pub trait BackfillProgressEmitter: Send + Sync {
+    /// 投递一次后台补全进度推进。实现必须非阻塞：交接即返回，不等送达。
+    fn emit_backfill_progress(&self, progress: SyncProgress);
+}
+
+/// 生产实现：与 [`ProgressEmitter for AppHandle`] 同一投递机制，事件名换本事件。
+impl<R: Runtime> BackfillProgressEmitter for AppHandle<R> {
+    fn emit_backfill_progress(&self, progress: SyncProgress) {
+        let handle = self.clone();
+        post_emit_with(self, move || {
+            let _ = handle.emit(HISTORY_BACKFILL_PROGRESS, progress);
         });
     }
 }

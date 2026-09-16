@@ -16,6 +16,7 @@ import { registerViewReset } from '@/composables/viewResetRegistry'
 import { useInvestmentsSessionStore } from '@/investment/investments-session'
 import RealizedPnlPanel from '@/investment/RealizedPnlPanel.vue'
 import HoldingsOverview from '@/investment/HoldingsOverview.vue'
+import HistoryBackfillIndicator from '@/investment/HistoryBackfillIndicator.vue'
 import InstrumentBrowser from '@/investment/InstrumentBrowser.vue'
 import PortfolioTrendPanel from '@/investment/PortfolioTrendPanel.vue'
 import type { Instrument } from '@ledger/types'
@@ -106,6 +107,11 @@ onMounted(() => focusParam.consume())
         {{ t('investments.staleness.goSync') }}
       </NButton>
     </NAlert>
+
+    <!-- 价格历史后台补全的静默计数（issue #1375 / ADR-0122）：只读、不可点、
+         不占全局忙碌条、终态静默收起——走势曲线的历史由后台任务自行补齐的
+         唯一可见面。 -->
+    <HistoryBackfillIndicator />
 
     <NTabs :value="activeTab" type="line" @update:value="onActiveTabChange">
       <!-- pnl pane 用 display-directive='show'：内容保持挂载（v-show 隐藏），

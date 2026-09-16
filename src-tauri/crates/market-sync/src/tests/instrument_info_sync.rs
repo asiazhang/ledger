@@ -34,80 +34,13 @@ use ledger_investment::prices::{
     upsert_price_history,
 };
 
+use super::{insert_holding, insert_lot};
 use tauri_app_lib::test_support::{seed_account, seed_instrument};
 
 // ---------------------------------------------------------------------------
 // 持仓价格增量同步（issue #103）：secid 构造、ulist 响应解析、编排、跳过规则、
 // 结果统计与幂等。编排经注入 mock 查询函数驱动，不依赖真实网络。
 // ---------------------------------------------------------------------------
-
-/// 直插一条持仓（账户 + 标的 + 交易 + 批次），绕过交易行为层以聚焦增量同步自身逻辑。
-/// 账户/标的经工厂种子（spec #728 / ADR-0084 决策 4）；标的类型工厂固定 stock，
-/// bond/other/fund 等域变体经类型修正表达——类型是本域 secid 构造/跳过规则的
-/// 行为输入，不入工厂种子。
-fn insert_holding(
-    conn: &Connection,
-    account_id: &str,
-    instrument_id: &str,
-    symbol: &str,
-    kind: &str,
-    currency: &str,
-    market: &str,
-) {
-    seed_account(
-        conn,
-        account_id,
-        &format!("账户-{account_id}"),
-        "investment",
-        currency,
-        0,
-    );
-    seed_instrument(
-        conn,
-        instrument_id,
-        symbol,
-        &format!("名称-{symbol}"),
-        currency,
-        market,
-    );
-    if kind != "stock" {
-        conn.execute(
-            "UPDATE instruments SET instrument_type=?1 WHERE id=?2",
-            params![kind, instrument_id],
-        )
-        .unwrap();
-    }
-    insert_lot(conn, account_id, instrument_id, currency);
-}
-
-/// 直插一笔买入交易 + 持仓批次（绕过交易行为层，聚焦同步自身逻辑）。
-fn insert_lot(conn: &Connection, account_id: &str, instrument_id: &str, currency: &str) {
-    let txn_id = format!("txn-{account_id}-{instrument_id}");
-    conn.execute(
-        "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id) \
-         VALUES (?1,'buy',1000,?2,1000,?3,'2026-01-10','2026-01-10T00:00:00Z','2026-01-10T00:00:00Z',1,'test')",
-        params![txn_id, currency, account_id],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
-         VALUES (?1,?2,'buy',10,100,0)",
-        params![txn_id, instrument_id],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO security_lots (id,account_id,instrument_id,buy_transaction_id,initial_quantity,remaining_quantity,cost_per_unit_cents,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,10,10,100,?5,'2026-01-10T00:00:00Z','2026-01-10T00:00:00Z',1,'test')",
-        params![
-            format!("lot-{account_id}-{instrument_id}"),
-            account_id,
-            instrument_id,
-            txn_id,
-            currency
-        ],
-    )
-    .unwrap();
-}
 
 fn market_price_of(conn: &Connection, instrument_id: &str) -> Option<i64> {
     conn.query_row(
@@ -198,7 +131,8 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
     // 结构钉：全序 = 逐段「取连接→还」与「会话外抓取」的交替；抓取起止之间
     // 不出现任何 take/release（网络期间不持连接）。一次行情标的事件顺序：
     // 收集 → 批量报价（外） → 名称+现价落库 → 日 K 抓取（外） → 周线落库 →
-    // 本位币读取。日 K 样本为空仍取连接落空周线，与生产行为一致。
+    // 本位币读取。日 K 样本为空 = 全部无新点，零写入不取连接（ADR-0122
+    // 收尾裁决口径，issue #1375 起 backfill_stock_history 空样本零写早退）。
     let log = log.borrow();
     let mut in_fetch = false;
     for &event in log.iter() {
@@ -229,9 +163,7 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
             "take",
             "release", // 名称随行刷新 + 现价 upsert
             "fetch:start",
-            "fetch:end", // 日 K 抓取（会话外）
-            "take",
-            "release", // 周采样落库（样本空 → 零行）
+            "fetch:end", // 日 K 抓取（会话外；样本空 → 全部无新点零写入，不取连接）
             "take",
             "release", // 本位币读取
         ],

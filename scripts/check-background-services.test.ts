@@ -34,10 +34,12 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
 })
 
-/** 编排点夹具：函数体内两个成对入口同时出现（合法唯一形态） */
+/** 编排点夹具：函数体内全部域入口同时出现（合法唯一形态；名单自 PAIRED_NAMES 派生则将双源，
+ *  此处按当前名单手写，新增后台服务时随编排点同步） */
 const orchestratorPaired = `pub fn ${ORCHESTRATOR_FN}(app: &tauri::AppHandle) {
     backup::start_scheduler(app);
     sync_engine::start_triggers(app);
+    market_sync::start_history_backfill(app);
 }
 `
 
@@ -120,14 +122,14 @@ describe('check-background-services（后台服务成对拉起守门，issue #96
     expect(r.status).toBe(0)
   })
 
-  it('编排点函数体缺一侧 → 成对性破坏报红', () => {
+  it('编排点函数体缺一侧 → 成组性破坏报红', () => {
     const args = makeFixture({
       [ORCHESTRATOR_FILE]:
         `pub fn ${ORCHESTRATOR_FN}(app: &tauri::AppHandle) {\n    backup::start_scheduler(app);\n}\n`,
     })
     const r = run(args)
     expect(r.status).toBe(1)
-    expect(r.output).toContain('成对性破坏')
+    expect(r.output).toContain('成组性破坏')
     expect(r.output).toContain('start_triggers')
   })
 

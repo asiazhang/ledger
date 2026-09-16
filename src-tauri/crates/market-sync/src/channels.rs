@@ -12,8 +12,12 @@
 //!
 //! 通道束只换装抓取闭包，不触其他接缝：会话（[`super::session`]）、进度发射
 //! （[`super::progress`]）与编排本体对生产/测试零分叉。
-
-use std::sync::{Arc, Mutex};
+//!
+//! 车道（issue #1375 额度让路）：生产束分前台（[`SyncFetchChannels::production`]，
+//! 手动同步等用户动作）与后台（[`SyncFetchChannels::production_backfill`]，价格
+//! 历史补全）两条——同一进程级全局限速器（[`super::http::shared_pacer`]）串行
+//! 两道车流的相邻请求，前台请求在途时后台车道让行（[`super::http::wait_foreground_idle`]
+//! 等归零再发），前台对数据源的响应时间不被后台拖慢。
 
 use ledger_infra::error::Result;
 
@@ -21,7 +25,8 @@ use super::bulk::BulkFetchSurfaces;
 use super::fund::fetch_fund_quote_production;
 use super::fund_nav::{LsjzPage, NavPoint, NavQuery, fetch_nav_full_series, fetch_nav_page};
 use super::http::{
-    KlineBar, Pacer, StockItem, build_client, fetch_fx_kline, fetch_kline, fetch_ulist, lock_pacer,
+    ForegroundGuard, KlineBar, StockItem, build_client, fetch_fx_kline, fetch_kline, fetch_ulist,
+    lock_pacer, shared_pacer, wait_foreground_idle,
 };
 use super::incremental::{do_incremental_sync_with, kline_beg};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
@@ -62,19 +67,31 @@ pub struct SyncFetchChannels {
 }
 
 impl SyncFetchChannels {
-    /// 生产通道束：六个闭包接 HTTP 层（`build_client` 主机池 / 重试；pacer 以
-    /// `Arc<Mutex<_>>` 共享，保证全部请求之间仍保持统一的限速间隔——与先前
-    /// `do_incremental_sync` 局部闭包的共享语义逐字节一致）。回填窗口起点在
-    /// 束构造时取一次（与先前每次同步取一次同口径）。
+    /// 生产通道束（前台车道，手动同步等用户动作）：六个闭包接 HTTP 层
+    ///（`build_client` 主机池 / 重试；pacer 取**进程级全局限速器**单点，issue
+    /// #1375——与后台补全共用同一份数据源额度）。回填窗口起点在束构造时取
+    /// 一次（与先前每次同步取一次同口径）。
     pub fn production() -> Result<Self> {
+        Self::production_lane(Lane::Foreground)
+    }
+
+    /// 生产通道束（后台车道，issue #1375 价格历史补全）：同一全局限速器，但
+    /// 请求前不占前台在途计数、反而**让行**——前台请求在途时后台等归零再发，
+    /// 用户动作优先于后台补全。束形状与前台车道完全一致（编排消费零分叉）。
+    pub fn production_backfill() -> Result<Self> {
+        Self::production_lane(Lane::Backfill)
+    }
+
+    fn production_lane(lane: Lane) -> Result<Self> {
         let client = build_client()?;
-        let pacer = Arc::new(Mutex::new(Pacer::default()));
+        let pacer = shared_pacer();
         let beg = kline_beg();
         Ok(Self {
             fetch_ulist: {
                 let client = client.clone();
                 let pacer = pacer.clone();
                 Box::new(move |secids: &str| {
+                    let _foreground = lane.before_request();
                     let mut pacer = lock_pacer(&pacer)?;
                     fetch_ulist(&client, &mut pacer, secids)
                 })
@@ -84,6 +101,7 @@ impl SyncFetchChannels {
                 let pacer = pacer.clone();
                 let beg = beg.clone();
                 Box::new(move |secid: &str| {
+                    let _foreground = lane.before_request();
                     let mut pacer = lock_pacer(&pacer)?;
                     fetch_kline(&client, &mut pacer, secid, &beg)
                 })
@@ -93,6 +111,7 @@ impl SyncFetchChannels {
                 let pacer = pacer.clone();
                 let beg = beg.clone();
                 Box::new(move |pair: &str| {
+                    let _foreground = lane.before_request();
                     let mut pacer = lock_pacer(&pacer)?;
                     fetch_fx_kline(&client, &mut pacer, pair, &beg)
                 })
@@ -101,6 +120,7 @@ impl SyncFetchChannels {
                 let client = client.clone();
                 let pacer = pacer.clone();
                 Box::new(move |query: &NavQuery| {
+                    let _foreground = lane.before_request();
                     let mut pacer = lock_pacer(&pacer)?;
                     fetch_nav_page(&client, &mut pacer, query)
                 })
@@ -109,15 +129,40 @@ impl SyncFetchChannels {
                 let client = client.clone();
                 let pacer = pacer.clone();
                 Box::new(move |code: &str| {
+                    let _foreground = lane.before_request();
                     let mut pacer = lock_pacer(&pacer)?;
                     fetch_nav_full_series(&client, &mut pacer, code)
                 })
             },
             fetch_fund_name: Box::new(move |code: &str| {
+                let _foreground = lane.before_request();
                 fetch_fund_quote_production(code).map(|quote| quote.name)
             }),
             bulk: BulkFetchSurfaces::production(&client, pacer),
         })
+    }
+}
+
+/// 通道车道（issue #1375）：前台请求在途计数（[`ForegroundGuard`]）让后台让行；
+/// 后台请求发前等在途归零。闭包请求前的统一前置动作收在 [`Lane::before_request`]：
+/// 前台车道返回在途守卫（RAII，闭包返回自动释放），后台车道等待归零、返回 None。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lane {
+    Foreground,
+    Backfill,
+}
+
+impl Lane {
+    /// 请求前置动作：前台 = 标记在途；后台 = 让行等待归零。返回的守卫必须
+    /// 以 `let _foreground = …` 绑定存活到请求结束（`let _ = …` 会立即丢弃）。
+    fn before_request(&self) -> Option<ForegroundGuard> {
+        match self {
+            Lane::Foreground => Some(ForegroundGuard::enter()),
+            Lane::Backfill => {
+                wait_foreground_idle();
+                None
+            }
+        }
     }
 }
 

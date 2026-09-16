@@ -240,5 +240,9 @@
     "nav": "最新净值 {price}（{date}）",
     "navMissing": "暂未取到净值",
     "customSuccess": "已创建标的：{name}（{symbol}）"
+  },
+  "backfill": {
+    "progress": "历史数据补全中 {done}/{total}",
+    "progressFundPages": "回填 {code}：第 {page}/{pages} 页"
   }
 }

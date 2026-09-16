@@ -240,5 +240,9 @@
     "nav": "Latest NAV {price} ({date})",
     "navMissing": "NAV not available yet",
     "customSuccess": "Instrument created: {name} ({symbol})"
+  },
+  "backfill": {
+    "progress": "Backfilling price history {done}/{total}",
+    "progressFundPages": "Backfilling {code}: page {page}/{pages}"
   }
 }
