@@ -9,7 +9,7 @@ import {
 } from '@ledger/test-support/mobile-nav'
 import App from '@/App.vue'
 import { routes } from '@/router'
-import { useFeatureToggleStore } from '@/stores/feature-toggles'
+import { useFeatureToggleStore } from '@/settings/feature-toggles'
 import { VIEW_STATE_KEYS } from '@ledger/utils/view-state'
 
 // 功能开关的导航层过滤（issue #1242 / ADR-0116 决策 3）：关闭只隐藏入口、

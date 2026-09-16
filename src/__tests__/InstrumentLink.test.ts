@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import InstrumentLink from '@/components/InstrumentLink.vue'
+import InstrumentLink from '@/investment/InstrumentLink.vue'
 import { useAppStore } from '@/stores/app'
 
 // 标的下钻经 useRouter（AccountLink/MerchantLink 同款 pushMock 断言先例）

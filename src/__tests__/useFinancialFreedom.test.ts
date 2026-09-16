@@ -3,8 +3,8 @@ import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { withSetup } from '@ledger/test-support/mount'
 import { defineComponent } from 'vue'
-import { useFinancialFreedom } from '@/composables/useFinancialFreedom'
-import { registerToastSink } from '@/composables/useLoadable'
+import { useFinancialFreedom } from '@/dashboard/useFinancialFreedom'
+import { registerToastSink } from '@ledger/loadable'
 import { makeFakeSink, makeFinancialFreedom, resetToastSink } from './factories'
 
 

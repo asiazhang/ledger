@@ -26,17 +26,17 @@ import type {
   Transaction,
 } from '@ledger/types'
 import { api } from '@ledger/api'
-import AppModal from '@/components/AppModal.vue'
-import AppDatePicker from '@/components/AppDatePicker.vue'
-import AppPopconfirm from '@/components/AppPopconfirm.vue'
-import PinyinSelect from '@/components/PinyinSelect.vue'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
+import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
+import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
+import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import { useModalIntent } from '@ledger/modal-intent'
 import { useFocusParam } from '@/composables/useFocusParam'
 import { useWindowTier } from '@ledger/window-tier'
 import { sumFixedColumnWidths } from '@ledger/utils/table'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
-import { useItemsStore } from '@/stores/items'
+import { useItemsStore } from '@/item/items'
 import { t } from '@ledger/i18n'
 
 const reference = useReferenceStore()

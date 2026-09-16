@@ -12,9 +12,9 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   save: vi.fn(),
 }))
 
-import EncryptionSettings from '@/components/settings/EncryptionSettings.vue'
-import { useEncryptionGate } from '@/composables/useEncryptionGate'
-import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
+import EncryptionSettings from '@/settings/EncryptionSettings.vue'
+import { useEncryptionGate } from '@/backup/useEncryptionGate'
+import { hasOpenOverlay, resetOverlays } from '@ledger/ui-kit/overlayRegistry'
 import { useAppStore } from '@/stores/app'
 
 

@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 
-import StartupFailureScreen from '@/components/StartupFailureScreen.vue'
-import { useEncryptionGate } from '@/composables/useEncryptionGate'
+import StartupFailureScreen from '@/backup/StartupFailureScreen.vue'
+import { useEncryptionGate } from '@/backup/useEncryptionGate'
 import { open } from '@tauri-apps/plugin-dialog'
 
 // 文件选择与重启单点 mock（先例 useBackup.test.ts；restartAppShortly 内含
@@ -14,7 +14,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   confirm: vi.fn(),
 }))
 const restartAppShortly = vi.fn()
-vi.mock('@/composables/restart', () => ({ restartAppShortly: () => restartAppShortly() }))
+vi.mock('@/backup/restart', () => ({ restartAppShortly: () => restartAppShortly() }))
 const mockOpen = vi.mocked(open)
 
 

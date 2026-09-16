@@ -122,16 +122,14 @@ pub struct AccountUpdateInput {
     pub name: Option<String>,
     /// 仅无交易账户可改（有交易时改币种会使历史折算口径错乱，后端拒绝）。
     pub currency_code: Option<String>,
-    /// 信用卡档案字段三态：键缺席 = 不改、`null` = 清空、给值 = 落定该值（见 [`double_option`]）。
-    ///
-    /// 必须显式 `deserialize_with`：serde 对 `Option<Option<T>>` 会把「键缺席」与
-    /// 「值为 `null`」折叠成同一个 `None`（`null` 走 `Option` 的 `visit_unit`），
-    /// 不分开则「清空」在 wire 上不可达。
-    #[serde(default, deserialize_with = "double_option")]
+    /// 信用卡档案字段三态：键缺席 = 不改、`null` = 清空、给值 = 落定该值
+    /// （区分器 [`ledger_infra::serde_util::double_option`]：serde 默认把
+    /// 「键缺席」与「值为 `null`」折叠成同一 `None`，原理与用法见其模块文档）。
+    #[serde(default, deserialize_with = "ledger_infra::serde_util::double_option")]
     pub credit_limit_cents: Option<Option<i64>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "ledger_infra::serde_util::double_option")]
     pub statement_day: Option<Option<i64>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "ledger_infra::serde_util::double_option")]
     pub due_day: Option<Option<i64>>,
 }
 
@@ -204,17 +202,6 @@ impl CreditTerms {
         }
         Ok(())
     }
-}
-
-/// 「键缺席 = 不改」与「值为 `null` = 清空」的反序列化区分器（见 [`AccountUpdateInput`]）：
-/// 仅在键在场时被调用（缺席由 `#[serde(default)]` 交回 `None`），因此「键在场即 `Some`」
-/// 恰好等价于三态里的后两态。
-fn double_option<'de, D>(deserializer: D) -> std::result::Result<Option<Option<i64>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::Deserialize as _;
-    Option::<i64>::deserialize(deserializer).map(Some)
 }
 
 /// 余额调整入参（IPC `adjust_account_balance`）：把余额校准到目标值，

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NInput } from 'naive-ui'
-import AppModal from '@/components/AppModal.vue'
-import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
-import type { RestoreIntent } from '@/composables/useBackup'
+import AppModal from '@ledger/ui-kit/AppModal.vue'
+import RestoreConfirmModal from '@/backup/RestoreConfirmModal.vue'
+import type { RestoreIntent } from '@/backup/useBackup'
 
 // 恢复确认弹窗（issue #572 / ADR-0075 决策 7）：钉住跨模式显著警告文案与
 // 密文备份主口令输入面——文案经 i18n，断言当前语言渲染出的完整句子。

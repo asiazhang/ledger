@@ -5,14 +5,15 @@ import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { componentVm } from '@ledger/test-support/component-vm'
 import { mountWithDialog } from '@ledger/test-support/mount'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { firePricesChanged, resetPricesChangedHandler } from './prices-changed-mock'
 import { makeMwrSummary, makePnlSummary } from './factories'
-import RealizedPnlPanel from '@/components/investments/RealizedPnlPanel.vue'
-import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
+import RealizedPnlPanel from '@/investment/RealizedPnlPanel.vue'
+import HoldingsOverview from '@/investment/HoldingsOverview.vue'
 
 // 价格失效信号订阅 mock（同 HoldingsOverview.test.ts 基座）：捕获订阅回调，
 // 用例手动触发模拟后端 emit。
-vi.mock('@/composables/usePricesChanged', async () => {
+vi.mock('@/investment/usePricesChanged', async () => {
   const { capturePricesChangedHandler } = await import('./prices-changed-mock')
   return {
     usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),
@@ -201,19 +202,14 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
         }),
       },
     })
-    // 指针轴：悬停触发器 → 口径解释 tooltip（NTooltip delay 默认 100ms，
-    // jsdom 真实时钟等待——HoldingsOverview.test.ts 同款）
+    // 指针轴：悬停触发器 → 口径解释 tooltip（开启仪式收在 test-support/tooltip）
     const wrapper = mountWithDialog(HoldingsOverview)
     await flushPromises()
     const trigger = wrapper.find('td[data-col-key="mwr"] [data-mwr-marker]')
     expect(trigger.exists()).toBe(true)
-    await trigger.trigger('mouseenter')
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
-    const tip = document.body.querySelector('.n-popover')
-    expect(tip).not.toBeNull()
-    expect(tip!.textContent).toContain('未年化')
-    expect(tip!.textContent).toContain('累计收益')
+    const tip = await hoverTipText(trigger)
+    expect(tip).toContain('未年化')
+    expect(tip).toContain('累计收益')
     wrapper.unmount()
 
     // 触控轴：hover 不可达 → 点按触发器出同一文案气泡（AppPopover 入弹层注册表）
@@ -237,11 +233,11 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
         realized_pnl_summary: makePnlSummary(),
         money_weighted_return_summary: makeMwrSummary({
           by_account: [
-            { account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', rate: 0.1 },
+            { account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', basis: 'annualized', rate: 0.1 },
           ],
           total: [
-            { currency_code: 'CNY', rate: 0.08 },
-            { currency_code: 'USD', rate: null },
+            { currency_code: 'CNY', basis: 'annualized', rate: 0.08 },
+            { currency_code: 'USD', basis: 'annualized', rate: null },
           ],
         }),
       },
@@ -260,14 +256,58 @@ describe('资金加权收益率前端接线（issue #1195 / ADR-0115）', () => 
     wrapper.unmount()
   })
 
+  it('口径说明接线：已实现盈亏两表列头与收益率卡各带说明触发器（issue #1369）', async () => {
+    // 断言对准用户可观察结果：删掉任一挂点的 ConceptLabel 接线即找不到触发器、本用例变红
+    wireInvokeSeam({
+      defaults: { realized_pnl_summary: makePnlSummary(), money_weighted_return_summary: makeMwrSummary() },
+    })
+    const wrapper = mountWithDialog(RealizedPnlPanel)
+    await flushPromises()
+    for (const id of ['pnl-realized-info', 'pnl-mwr-info', 'pnl-mwr-card-info']) {
+      expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true)
+    }
+    // 已实现盈亏口径：不含未实现与分红（与持仓收益、累计收益三者的边界）
+    expect(await hoverTipText(wrapper.find('[data-testid="pnl-realized-info"]'))).toContain(
+      '不含现金分红',
+    )
+    wrapper.unmount()
+  })
+
+  it('盈亏页合集含期初存量：账户级与全账级整项标未年化（issue #1346）', async () => {
+    // 后端对合集（账户级 / 全账级）含期初存量标的的行改给未年化口径并随行带
+    // basis=cumulative（#1346）；展示层必须同样标出口径，否则整户补记场景的
+    // 收益率会被读成年化值。
+    wireInvokeSeam({
+      defaults: {
+        realized_pnl_summary: makePnlSummary(),
+        money_weighted_return_summary: makeMwrSummary({
+          by_account: [
+            { account_id: 'acc-1', account_name: '雪球基金', currency_code: 'CNY', basis: 'cumulative', rate: 0.0316 },
+          ],
+          total: [{ currency_code: 'CNY', basis: 'cumulative', rate: 0.028 }],
+        }),
+      },
+    })
+    const wrapper = mountWithDialog(RealizedPnlPanel)
+    await flushPromises()
+
+    // 未年化行带角标「*」（解释收进 tooltip，与持仓页收益率列同款形态）；
+    // 角标元素在场（口径标注的载体）。
+    expect(mwrCellTexts(wrapper)).toEqual(['+3.16%*', '+2.80%*'])
+    const scopeTexts = wrapper.findAll('td[data-col-key="scope"]').map((c) => c.text())
+    expect(scopeTexts).toEqual(['雪球基金', '全账'])
+    expect(wrapper.findAll('td[data-col-key="rate"] [data-mwr-marker]')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
   it('盈亏页账户筛选收窄账户行，全账行保持全账本口径', async () => {
     wireInvokeSeam({
       defaults: {
         realized_pnl_summary: makePnlSummary(),
         money_weighted_return_summary: makeMwrSummary({
           by_account: [
-            { account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', rate: 0.1 },
-            { account_id: 'acc-2', account_name: '基金账户B', currency_code: 'CNY', rate: -0.05 },
+            { account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', basis: 'annualized', rate: 0.1 },
+            { account_id: 'acc-2', account_name: '基金账户B', currency_code: 'CNY', basis: 'annualized', rate: -0.05 },
           ],
         }),
       },

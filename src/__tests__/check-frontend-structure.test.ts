@@ -62,12 +62,13 @@ function fixtureRepo(opts: {
   }
   writeFileSync(join(root, 'pnpm-workspace.yaml'), yamlLines.join('\n') + '\n')
   mkdirSync(join(root, 'packages'), { recursive: true })
-  // 规则⑦ 登记模块 src/composables/useTransactionFilter.ts（issue #1323）：默认创建——
-  // 规则⑦登记表不可注入（生产 DEEP_MODULE_BOUNDARIES 单一事实源），夹具绿基线须
-  // 自足含全部登记项，否则「登记模块不存在」假红（同规则⑥夹具建 src/utils 的形制）
-  mkdirSync(join(root, 'src', 'composables'), { recursive: true })
+  // 规则⑦ 登记模块 src/transaction/useTransactionFilter.ts（issue #1323，#1159 起随交易域
+  // 归位 src/transaction/）：默认创建——规则⑦登记表不可注入（生产 DEEP_MODULE_BOUNDARIES
+  // 单一事实源），夹具绿基线须自足含全部登记项，否则「登记模块不存在」假红
+  //（同规则⑥夹具建 src/utils 的形制）
+  mkdirSync(join(root, 'src', 'transaction'), { recursive: true })
   writeFileSync(
-    join(root, 'src', 'composables', 'useTransactionFilter.ts'),
+    join(root, 'src', 'transaction', 'useTransactionFilter.ts'),
     'export const useTransactionFilter = () => ({})\n',
   )
   for (const dir of opts.memberDirs ?? []) {
@@ -359,7 +360,7 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
       expect(r.output).toContain('须为 JSON 数组')
     })
 
-    it('PACKAGES 生产登记表与已落位包全等（#1150/#1151/#1152/#1153/#1154/#1155/#1315/#1317 抽包落位）', () => {
+    it('PACKAGES 生产登记表与已落位包全等（#1150/#1151/#1152/#1153/#1154/#1155/#1315/#1317/#1318/#1319/#1320/#1321/#1322 抽包落位；#1354 测试边同步）', () => {
       expect(PACKAGES).toEqual([
         {
           name: '@ledger/types',
@@ -394,7 +395,7 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
         {
           name: '@ledger/test-support',
           dir: 'packages/test-support',
-          deps: ['@ledger/types'],
+          deps: ['@ledger/types', '@ledger/loadable'],
           testSupport: true,
           note: expect.any(String),
         },
@@ -423,9 +424,46 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
           note: expect.any(String),
         },
         {
+          name: '@ledger/field-errors',
+          dir: 'packages/field-errors',
+          deps: ['@ledger/utils'],
+          note: expect.any(String),
+        },
+        {
           name: '@ledger/window-tier',
           dir: 'packages/window-tier',
           deps: ['@ledger/test-support'],
+          note: expect.any(String),
+        },
+        {
+          name: '@ledger/loadable',
+          dir: 'packages/loadable',
+          deps: ['@ledger/utils', '@ledger/test-support'],
+          note: expect.any(String),
+        },
+        {
+          name: '@ledger/scheduled-plan-list',
+          dir: 'packages/scheduled-plan-list',
+          deps: [
+            '@ledger/api',
+            '@ledger/i18n',
+            '@ledger/loadable',
+            '@ledger/test-support',
+            '@ledger/types',
+            '@ledger/utils',
+          ],
+          note: expect.any(String),
+        },
+        {
+          name: '@ledger/transaction-modal-state',
+          dir: 'packages/transaction-modal-state',
+          deps: ['@ledger/modal-intent', '@ledger/api', '@ledger/i18n', '@ledger/types', '@ledger/utils', '@ledger/test-support'],
+          note: expect.any(String),
+        },
+        {
+          name: '@ledger/ui-kit',
+          dir: 'packages/ui-kit',
+          deps: ['@ledger/utils', '@ledger/i18n', '@ledger/window-tier', '@ledger/test-support'],
           note: expect.any(String),
         },
       ])

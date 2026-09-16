@@ -3,7 +3,7 @@ import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { messageApi } from '@ledger/test-support/message-mock'
 import { findBodyButton } from '@ledger/test-support/dom'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
-import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
+import MerchantEditModal from '@/merchants/MerchantEditModal.vue'
 import type { Merchant } from '@ledger/types'
 
 const mockMerchant: Merchant = {

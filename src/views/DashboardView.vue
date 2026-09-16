@@ -19,17 +19,17 @@ import { NIcon } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
-import { useDashboardOverview } from '@/composables/useDashboardOverview'
-import { useFinancialFreedom } from '@/composables/useFinancialFreedom'
+import { useDashboardOverview } from '@/dashboard/useDashboardOverview'
+import { useFinancialFreedom } from '@/dashboard/useFinancialFreedom'
 import { useInputMode } from '@/composables/useInputMode'
-import { useItemDailyTotal } from '@/composables/useItemDailyTotal'
+import { useItemDailyTotal } from '@/dashboard/useItemDailyTotal'
 import { useWindowTier } from '@ledger/window-tier'
 import { useReferenceStore } from '@/stores/reference'
-import AppPopover from '@/components/AppPopover.vue'
+import AppPopover from '@ledger/ui-kit/AppPopover.vue'
 import { formatAmount } from '@ledger/money'
 import type { BudgetProgress, MonthlySummary } from '@ledger/types'
-import { usePortfolioOverview } from '@/composables/usePortfolioOverview'
-import PortfolioStatsCards from '@/components/investments/PortfolioStatsCards.vue'
+import { usePortfolioOverview } from '@/investment/usePortfolioOverview'
+import PortfolioStatsCards from '@/investment/PortfolioStatsCards.vue'
 
 // 首页财务全貌仪表盘（issue #140）：净资产总览卡（issue #143）+ 投资概览卡（issue #145）
 // + 本月收支与预算进度（issue #144）。
@@ -210,6 +210,7 @@ onMounted(async () => {
       <PortfolioStatsCards
         v-if="holdingRows.length > 0"
         test-id-prefix="dashboard-total-"
+        scope="wholeLedger"
         :market-value-groups="totalMarketValueGroups"
         :unrealized-pnl-groups="totalUnrealizedPnlGroups"
         :cumulative-pnl-groups="totalCumulativePnlGroups"

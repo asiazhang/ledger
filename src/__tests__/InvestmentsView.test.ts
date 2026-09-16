@@ -10,9 +10,9 @@ import { componentVm } from '@ledger/test-support/component-vm'
 import { mountWithDialog } from '@ledger/test-support/mount'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
 import { useAppStore } from '@/stores/app'
-import { useInvestmentsSessionStore } from '@/stores/investments-session'
+import { useInvestmentsSessionStore } from '@/investment/investments-session'
 import { useWindowGuard } from '@/composables/useWindowGuard'
-import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
+import { createOverlayToken, resetOverlays } from '@ledger/ui-kit/overlayRegistry'
 import { clearViewResets, fireViewReset } from '@/composables/viewResetRegistry'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
 import { makeMwrSummary, makePnlSummary, mockHoldings } from './factories'
@@ -30,7 +30,7 @@ vi.mock('vue-chartjs', async () => {
 
 // 价格失效信号订阅 mock（同 HoldingsOverview.test.ts 基座）：捕获订阅回调，
 // 视图级用例手动触发模拟后端 emit（同步写价 → 持仓自动刷新，issue #901）。
-vi.mock('@/composables/usePricesChanged', async () => {
+vi.mock('@/investment/usePricesChanged', async () => {
   const { capturePricesChangedHandler } = await import('./prices-changed-mock')
   return {
     usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),

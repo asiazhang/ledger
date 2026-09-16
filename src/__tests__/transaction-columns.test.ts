@@ -4,10 +4,10 @@ import type { VNode } from 'vue'
 import {
   buildTransactionColumns,
   type ReferenceStore,
-} from '@/components/transaction-columns'
-import SourceLink from '@/components/SourceLink.vue'
-import NoteCopyButton from '@/components/NoteCopyButton.vue'
-import AmountCell from '@/components/AmountCell.vue'
+} from '@/transaction/transaction-columns'
+import SourceLink from '@/transaction/SourceLink.vue'
+import NoteCopyButton from '@ledger/ui-kit/NoteCopyButton.vue'
+import AmountCell from '@/transaction/AmountCell.vue'
 import { useAppStore } from '@/stores/app'
 import { kindSemanticColor } from '@ledger/theme/semantic-colors'
 import { TRANSACTION_KINDS, type Transaction, type TransactionSource } from '@ledger/types'

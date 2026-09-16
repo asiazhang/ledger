@@ -115,9 +115,15 @@ importers:
       '@ledger/api':
         specifier: workspace:*
         version: link:packages/api
+      '@ledger/field-errors':
+        specifier: workspace:*
+        version: link:packages/field-errors
       '@ledger/i18n':
         specifier: workspace:*
         version: link:packages/i18n
+      '@ledger/loadable':
+        specifier: workspace:*
+        version: link:packages/loadable
       '@ledger/modal-intent':
         specifier: workspace:*
         version: link:packages/modal-intent
@@ -127,15 +133,24 @@ importers:
       '@ledger/row-context-menu':
         specifier: workspace:*
         version: link:packages/row-context-menu
+      '@ledger/scheduled-plan-list':
+        specifier: workspace:*
+        version: link:packages/scheduled-plan-list
       '@ledger/storage':
         specifier: workspace:*
         version: link:packages/storage
       '@ledger/theme':
         specifier: workspace:*
         version: link:packages/theme
+      '@ledger/transaction-modal-state':
+        specifier: workspace:*
+        version: link:packages/transaction-modal-state
       '@ledger/types':
         specifier: workspace:*
         version: link:packages/types
+      '@ledger/ui-kit':
+        specifier: workspace:*
+        version: link:packages/ui-kit
       '@ledger/utils':
         specifier: workspace:*
         version: link:packages/utils
@@ -243,6 +258,19 @@ importers:
         specifier: ^3.5.42
         version: 3.5.42(typescript@6.0.3)
 
+  packages/field-errors:
+    dependencies:
+      '@ledger/utils':
+        specifier: workspace:*
+        version: link:../utils
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+    devDependencies:
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
+
   packages/i18n:
     dependencies:
       '@ledger/storage':
@@ -258,6 +286,22 @@ importers:
       '@vue/test-utils':
         specifier: ^2.5.0
         version: 2.5.0(@vue/compiler-dom@3.5.42)(@vue/server-renderer@3.5.42)(vue@3.5.42(typescript@6.0.3))
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
+
+  packages/loadable:
+    dependencies:
+      '@ledger/utils':
+        specifier: workspace:*
+        version: link:../utils
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+    devDependencies:
+      '@ledger/test-support':
+        specifier: workspace:*
+        version: link:../test-support
       vitest:
         specifier: ^5.0.0
         version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
@@ -290,6 +334,37 @@ importers:
         specifier: ^3.5.42
         version: 3.5.42(typescript@6.0.3)
 
+  packages/scheduled-plan-list:
+    dependencies:
+      '@ledger/api':
+        specifier: workspace:*
+        version: link:../api
+      '@ledger/i18n':
+        specifier: workspace:*
+        version: link:../i18n
+      '@ledger/loadable':
+        specifier: workspace:*
+        version: link:../loadable
+      '@ledger/types':
+        specifier: workspace:*
+        version: link:../types
+      '@ledger/utils':
+        specifier: workspace:*
+        version: link:../utils
+      naive-ui:
+        specifier: ^2.45.3
+        version: 2.45.3(patch_hash=1d273c9e8f7755836be7d55daae02418e67717cd9ee9f835fe703fbaae0ef403)(vue@3.5.42(typescript@6.0.3))
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+    devDependencies:
+      '@ledger/test-support':
+        specifier: workspace:*
+        version: link:../test-support
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
+
   packages/storage:
     devDependencies:
       vitest:
@@ -298,6 +373,9 @@ importers:
 
   packages/test-support:
     devDependencies:
+      '@ledger/loadable':
+        specifier: workspace:*
+        version: link:../loadable
       '@ledger/types':
         specifier: workspace:*
         version: link:../types
@@ -348,7 +426,75 @@ importers:
         specifier: ^5.0.0
         version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
 
+  packages/transaction-modal-state:
+    dependencies:
+      '@ledger/api':
+        specifier: workspace:*
+        version: link:../api
+      '@ledger/i18n':
+        specifier: workspace:*
+        version: link:../i18n
+      '@ledger/modal-intent':
+        specifier: workspace:*
+        version: link:../modal-intent
+      '@ledger/types':
+        specifier: workspace:*
+        version: link:../types
+      '@ledger/utils':
+        specifier: workspace:*
+        version: link:../utils
+      naive-ui:
+        specifier: ^2.45.3
+        version: 2.45.3(patch_hash=1d273c9e8f7755836be7d55daae02418e67717cd9ee9f835fe703fbaae0ef403)(vue@3.5.42(typescript@6.0.3))
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+    devDependencies:
+      '@ledger/test-support':
+        specifier: workspace:*
+        version: link:../test-support
+      '@vue/test-utils':
+        specifier: ^2.5.0
+        version: 2.5.0(@vue/compiler-dom@3.5.42)(@vue/server-renderer@3.5.42)(vue@3.5.42(typescript@6.0.3))
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
+
   packages/types: {}
+
+  packages/ui-kit:
+    dependencies:
+      '@ledger/i18n':
+        specifier: workspace:*
+        version: link:../i18n
+      '@ledger/utils':
+        specifier: workspace:*
+        version: link:../utils
+      '@ledger/window-tier':
+        specifier: workspace:*
+        version: link:../window-tier
+      '@vanilla-extract/css':
+        specifier: ^1.21.2
+        version: 1.21.2
+      '@vicons/ionicons5':
+        specifier: ^0.13.0
+        version: 0.13.0
+      naive-ui:
+        specifier: ^2.45.3
+        version: 2.45.3(patch_hash=1d273c9e8f7755836be7d55daae02418e67717cd9ee9f835fe703fbaae0ef403)(vue@3.5.42(typescript@6.0.3))
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@6.0.3)
+    devDependencies:
+      '@ledger/test-support':
+        specifier: workspace:*
+        version: link:../test-support
+      '@vue/test-utils':
+        specifier: ^2.5.0
+        version: 2.5.0(@vue/compiler-dom@3.5.42)(@vue/server-renderer@3.5.42)(vue@3.5.42(typescript@6.0.3))
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2))
 
   packages/utils:
     dependencies:

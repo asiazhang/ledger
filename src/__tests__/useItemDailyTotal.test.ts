@@ -3,9 +3,9 @@ import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { withSetup } from '@ledger/test-support/mount'
 import { defineComponent } from 'vue'
-import { useItemsStore } from '@/stores/items'
-import { useItemDailyTotal } from '@/composables/useItemDailyTotal'
-import { registerToastSink } from '@/composables/useLoadable'
+import { useItemsStore } from '@/item/items'
+import { useItemDailyTotal } from '@/dashboard/useItemDailyTotal'
+import { registerToastSink } from '@ledger/loadable'
 import { makeFakeSink, makeItemDailyTotal, resetToastSink } from './factories'
 
 

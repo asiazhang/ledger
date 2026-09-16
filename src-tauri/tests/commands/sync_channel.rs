@@ -598,3 +598,270 @@ async fn test_connection_rejects_non_https_endpoint() {
         .expect_err("http 端点应被拒");
     assert_code(err, "sync-channel.endpoint-insecure");
 }
+
+// ---------------------------------------------------------------------------
+// 手动同步轮次的锁跨度与在途互斥（issue #1339 / ADR-0120）
+// ---------------------------------------------------------------------------
+
+use std::time::{Duration, Instant};
+
+/// 等桩观测到命令发出的通道请求（此刻请求已到达、应答未回，即网络在途）。
+async fn wait_for_channel_request(stub: &S3Stub, limit: Duration) {
+    let deadline = Instant::now() + limit;
+    while stub.requests().is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "同步应在限时内发出通道请求（manifest 读）"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// 手动同步的锁跨度（ADR-0120 决策 2/4，判据同 #1283/#1284 先例）：网络在途
+/// （manifest 读已到桩、应答未回）时，读命令与写命令照常在限时内完成——连接锁
+/// 只盖轮次数据库步骤，网络段出锁。
+///
+/// **负向判据（ADR-0087 断言强度）**：把轮次改回整轮持锁（本票修复前的形状，
+/// `sync_now` 经整段写入口持连接锁跑完全部网络往返），桩闸门挡住首个通道请求
+/// 期间，下面的命令在限时内等不到连接锁，本测试即红。
+#[tokio::test]
+async fn sync_now_network_wait_does_not_block_other_commands() {
+    isolate_home();
+    // 桩闸门把「同步的网络在途」做成可确定复现的输入。先铺一笔本机 op：
+    // 轮次全程 manifest 读、段上传、manifest 写回三次往返，全部过闸门。
+    let (config, gate) = S3StubConfig::new(S3Addressing::PathStyle).gated_requests();
+    let stub = spawn_s3_stub(config);
+    let (app, _dir) = device_app("sync-lock");
+    configure_channel(&app, &stub);
+
+    let acc_id = accounts::create_account(
+        app.state(),
+        app.clone(),
+        ledger_accounts::AccountInput {
+            name: "现金".into(),
+            kind: ledger_accounts::AccountType::Cash,
+            currency_code: "CNY".into(),
+            initial_balance_cents: Some(0),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .await
+    .expect("建户应成功");
+    transactions::create_transaction(
+        app.state(),
+        app.clone(),
+        expense_input(&acc_id, 10_000, "同步在途前的账"),
+    )
+    .await
+    .expect("记账应成功");
+
+    let sync = tokio::spawn(sync_now(app.clone(), None));
+    wait_for_channel_request(&stub, Duration::from_secs(5)).await;
+
+    // 网络在途：其它命令照常读写——读命令取读连接（读入口）、写命令取写连接
+    //（统一写入口），两条锁都不得被轮次的网络等待占据。
+    let listed =
+        tokio::time::timeout(Duration::from_secs(2), accounts::list_accounts(app.state())).await;
+    let created = tokio::time::timeout(
+        Duration::from_secs(2),
+        accounts::create_account(
+            app.state(),
+            app.clone(),
+            ledger_accounts::AccountInput {
+                name: "同步在途的账户".into(),
+                kind: ledger_accounts::AccountType::Cash,
+                currency_code: "CNY".into(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        ),
+    )
+    .await;
+
+    // 先放行网络与同步任务再断言：测试失败（修复回退）时不把桩线程悬在闸门上。
+    gate.release(8);
+    let report = sync.await.expect("同步任务不应 panic").expect("同步应成功");
+    // 铺垫含建户 + 记账（各产出 op，随域形态可能伴随设置类 op）；数量不是本
+    // 测试的判定目标——本测试钉的是网络在途时其它命令不被挡。
+    assert!(
+        report.uploaded_ops >= 2,
+        "本轮应上传铺垫的本机 op，实际 {report:?}"
+    );
+    listed
+        .expect("同步网络在途时读命令应在限时内完成——读连接锁不得被网络等待占据")
+        .expect("读命令应成功");
+    created
+        .expect("同步网络在途时写命令应在限时内完成——写连接锁不得被网络等待占据")
+        .expect("写命令应成功");
+}
+
+/// 手动入口在途不启动第二轮（ADR-0120 决策 3）：第一轮网络在途时重复触发
+/// 「立即同步」，不产生第二个轮次的通道请求；在途轮次完成后，两次触发拿到
+/// **同一份轮次报告**。
+///
+/// **负向判据（ADR-0087 断言强度）**：删除轮次在途互斥接线，第二次触发的轮次
+/// 也会打到桩闸门上（观测请求增长），本测试即红。
+#[tokio::test]
+async fn sync_now_reuses_in_flight_round_instead_of_running_a_second() {
+    isolate_home();
+    let (config, gate) = S3StubConfig::new(S3Addressing::PathStyle).gated_requests();
+    let stub = spawn_s3_stub(config);
+    let (app, _dir) = device_app("sync-inflight");
+    configure_channel(&app, &stub);
+
+    let acc_id = accounts::create_account(
+        app.state(),
+        app.clone(),
+        ledger_accounts::AccountInput {
+            name: "现金".into(),
+            kind: ledger_accounts::AccountType::Cash,
+            currency_code: "CNY".into(),
+            initial_balance_cents: Some(0),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .await
+    .expect("建户应成功");
+    transactions::create_transaction(
+        app.state(),
+        app.clone(),
+        expense_input(&acc_id, 10_000, "在途轮次的账"),
+    )
+    .await
+    .expect("记账应成功");
+
+    let first = tokio::spawn(sync_now(app.clone(), None));
+    wait_for_channel_request(&stub, Duration::from_secs(5)).await;
+
+    // 第一轮网络在途：重复触发不启动第二轮——短暂窗口内桩不得观测到新请求。
+    let second = tokio::spawn(sync_now(app.clone(), None));
+    let deadline = Instant::now() + Duration::from_millis(400);
+    while Instant::now() < deadline {
+        assert!(
+            stub.requests().len() <= 1,
+            "在途时重复触发不得启动第二轮（桩只应看到第一轮的请求），实际 {:?}",
+            stub.requests()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // 放行第一轮：两次触发都成功，且拿到同一份报告（复用唯一在途轮次）。
+    gate.release(8);
+    let first_report = first
+        .await
+        .expect("第一轮任务不应 panic")
+        .expect("第一轮应成功");
+    let second_report = second
+        .await
+        .expect("重复触发任务不应 panic")
+        .expect("重复触发应成功（复用在途轮次）");
+    assert_eq!(first_report, second_report, "两次触发应拿到同一份轮次报告");
+}
+
+/// 失败语义（ADR-0120 决策 6）：中途失败不更新「上次成功同步时刻」；已上传段
+/// 留存通道，恢复后下一轮幂等续作、不重复上传。
+#[tokio::test]
+async fn failed_round_keeps_uploaded_segment_and_success_time() {
+    isolate_home();
+    let stub = spawn_sync_stub();
+    let (app, _dir) = device_app("sync-failure");
+    configure_channel(&app, &stub);
+
+    let acc_id = accounts::create_account(
+        app.state(),
+        app.clone(),
+        ledger_accounts::AccountInput {
+            name: "现金".into(),
+            kind: ledger_accounts::AccountType::Cash,
+            currency_code: "CNY".into(),
+            initial_balance_cents: Some(0),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .await
+    .expect("建户应成功");
+    transactions::create_transaction(
+        app.state(),
+        app.clone(),
+        expense_input(&acc_id, 10_000, "失败前的账"),
+    )
+    .await
+    .expect("记账应成功");
+
+    // 第一轮成功：段上通道、成功时刻落库。
+    let report = sync_now(app.clone(), None).await.expect("首轮应成功");
+    assert!(report.uploaded_ops >= 1, "首轮应上传铺垫的本机 op");
+    let stamp = get_sync_status(app.clone())
+        .await
+        .expect("状态应可读")
+        .last_sync_at
+        .expect("成功轮次应落成功时刻");
+
+    // 指向不可达端点：下一轮在网络段失败——成功时刻不得被更新。
+    let conn = app.state::<DbState>().conn.clone();
+    {
+        let guard = conn.lock().unwrap();
+        let mut broken = stub.channel_config("family");
+        broken.endpoint = "http://127.0.0.1:9".into();
+        settings::set(&guard, SettingKey::SyncChannelConfig, &broken).expect("坏配置应落库");
+    }
+    let device: String = {
+        let guard = conn.lock().unwrap();
+        guard
+            .query_row("SELECT id FROM sync_device LIMIT 1", [], |r| r.get(0))
+            .expect("本机设备标识应已生成")
+    };
+    sync_now(app.clone(), None)
+        .await
+        .expect_err("不可达通道应让轮次失败");
+    assert_eq!(
+        get_sync_status(app.clone())
+            .await
+            .expect("状态应可读")
+            .last_sync_at,
+        Some(stamp.clone()),
+        "失败轮次不得更新成功时刻"
+    );
+
+    // 已上传段留存通道；恢复配置后下一轮幂等续作——段不重复上传。
+    let segment_puts = |stub: &S3Stub| {
+        stub.requests()
+            .iter()
+            .filter(|r| r.method == "PUT" && r.path.contains(&format!("/streams/{device}/seg-")))
+            .count()
+    };
+    assert_eq!(segment_puts(&stub), 1, "失败轮次不得回滚已上传段");
+    {
+        let guard = conn.lock().unwrap();
+        settings::set(
+            &guard,
+            SettingKey::SyncChannelConfig,
+            &stub.channel_config("family"),
+        )
+        .expect("恢复配置应落库");
+    }
+    sync_now(app.clone(), None)
+        .await
+        .expect("恢复后的轮次应成功");
+    assert_eq!(
+        segment_puts(&stub),
+        1,
+        "已上传段重传幂等（同段名跳过），不重复上传"
+    );
+    assert_ne!(
+        get_sync_status(app.clone())
+            .await
+            .expect("状态应可读")
+            .last_sync_at,
+        None,
+        "恢复后的成功轮次保持成功时刻在位"
+    );
+}

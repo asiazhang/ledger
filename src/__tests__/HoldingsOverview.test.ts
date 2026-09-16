@@ -5,16 +5,17 @@ import { NDataTable } from 'naive-ui'
 import { nextTick } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import { applyLocale } from '@ledger/i18n'
-import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
+import HoldingsOverview from '@/investment/HoldingsOverview.vue'
 import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
   resetInstrumentInfoSyncForTest,
-} from '@/composables/useInstrumentInfoSync'
+} from '@/investment/useInstrumentInfoSync'
 import { captureListenHandlers } from '@ledger/test-support/listen-mock'
 import { componentVm } from '@ledger/test-support/component-vm'
 import { formatAmount, formatPrice } from '@ledger/money'
 import { probeColor } from '@ledger/test-support/dom'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
 import { useAppStore } from '@/stores/app'
 import {
@@ -39,7 +40,7 @@ import {
 // 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
 // 测试中手动触发模拟后端 emit；失败/零更新路径后端不 emit，即无重拉。
 // 捕获/触发辅助收在 prices-changed-mock 共享（三个价格消费方测试同构）。
-vi.mock('@/composables/usePricesChanged', async () => {
+vi.mock('@/investment/usePricesChanged', async () => {
   const { capturePricesChangedHandler } = await import('./prices-changed-mock')
   return {
     usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),
@@ -201,16 +202,31 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
       expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true)
     }
     expect(document.body.textContent).not.toContain('累计分红')
-    await wrapper.find('[data-testid="total-cumulative-pnl-info"]').trigger('mouseenter')
-    // NTooltip delay 默认 100ms（防误触），jsdom 等真实时钟而非 flushPromises
-    await new Promise((r) => setTimeout(r, 200))
-    await flushPromises()
-    const tip = document.body.querySelector('.n-popover')
-    expect(tip).not.toBeNull()
+    const tipText = await hoverTipText(wrapper.find('[data-testid="total-cumulative-pnl-info"]'))
     // 累计收益口径：三腿相加（未实现 + 已实现 + 分红）且全账本、不跨币种
-    expect(tip!.textContent).toContain('已实现盈亏')
-    expect(tip!.textContent).toContain('累计分红')
-    expect(tip!.textContent).toContain('全账本')
+    expect(tipText).toContain('已实现盈亏')
+    expect(tipText).toContain('累计分红')
+    expect(tipText).toContain('全账本')
+  })
+
+  it('持仓表列头口径说明：成本/现价/市值/持仓收益/收益率各带说明触发器（issue #1369）', async () => {
+    // 断言对准用户可观察结果：删掉任一列头的 ConceptLabel 接线即找不到触发器、本用例变红
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    for (const id of [
+      'holdings-cost-info',
+      'holdings-price-info',
+      'holdings-market-value-info',
+      'holdings-unrealized-pnl-info',
+      'holdings-mwr-info',
+    ]) {
+      expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true)
+    }
+    const mwrTip = await hoverTipText(wrapper.find('[data-testid="holdings-mwr-info"]'))
+    // 三态口径的核心事实：年化与未年化不可互算（防误读诉求，ADR-0115 修订）
+    expect(mwrTip).toContain('两者不可互算')
+    // 「不随筛选收窄」是该口径自身属性：写在 mwrTip 正文里（删掉该句即本断言变红）
+    expect(mwrTip).toContain('不随搜索或标的筛选收窄')
   })
 
   it('触控轴：口径说明点按可达（入弹层注册表的气泡），热区外扩到 ≥48px', async () => {
@@ -229,7 +245,10 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     const popover = document.body.querySelector('.n-popover')
     expect(popover).not.toBeNull()
     expect(popover!.textContent).toContain('数量 × 最新价格')
-    expect(popover!.textContent).toContain('无行情的持仓不计入')
+    // 边界句随 issue #1369 修订：缺价与缺汇率两种不计入同句给出
+    expect(popover!.textContent).toContain('缺现价或缺汇率的持仓不计入')
+    // 持仓页作用域句：合计随过滤子集更新（首页同一组件挂 wholeLedger 变体）
+    expect(popover!.textContent).toContain('随当前搜索与账户过滤收窄')
     // 卸载触控挂载，避免已开启的气泡泄入后续指针轴断言
     wrapper!.unmount()
     wrapper = undefined
@@ -432,6 +451,52 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     expect(wrapper.text()).toContain('同步失败：网络错误')
     // 失败路径后端不 emit（ADR-0031 决策 2），即无重拉
     expect(mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length).toBe(callsBefore)
+  })
+
+  it('同步降级时明示「已降级、本次较慢」（issue #1376 存在性断言，ADR-0087）', async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        sync_instrument_info: {
+          synced: 3,
+          skipped: 0,
+          message: '已同步 3 只，跳过 0 只',
+          bulk_degraded: true,
+        },
+      },
+    })
+    resetInstrumentInfoSyncForTest()
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    // 同步前无降级标注
+    expect(wrapper.find('[data-testid="instrument-sync-degraded"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
+    await flushPromises()
+    // 删除降级标注的渲染，本断言即红（接线型负向判据）
+    const notice = wrapper.find('[data-testid="instrument-sync-degraded"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toBe('已降级、本次较慢')
+  })
+
+  it('正常路径（批量面命中，bulk_degraded:false）不渲染降级标注（issue #1376）', async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        sync_instrument_info: {
+          synced: 3,
+          skipped: 0,
+          message: '已同步 3 只，跳过 0 只',
+          bulk_degraded: false,
+        },
+      },
+    })
+    resetInstrumentInfoSyncForTest()
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="instrument-sync-degraded"]').exists()).toBe(false)
   })
 })
 

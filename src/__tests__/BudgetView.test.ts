@@ -9,7 +9,7 @@ import { todayStr } from '@ledger/utils/date'
 import BudgetView from '@/views/BudgetView.vue'
 import { messageApi } from '@ledger/test-support/message-mock'
 import { makeFakeSink, resetToastSink } from './factories'
-import { registerToastSink } from '@/composables/useLoadable'
+import { registerToastSink } from '@ledger/loadable'
 import { findButton, findBodyButton } from '@ledger/test-support/dom'
 import type { BudgetProgress, Category } from '@ledger/types'
 

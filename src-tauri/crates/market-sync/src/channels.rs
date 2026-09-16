@@ -1,7 +1,9 @@
-//! 同步网络通道束（issue #1276）：六个抓取通道的打包形态与生产/测试换装接缝。
+//! 同步网络通道束（issue #1276）：六个逐标的抓取通道 + 两个批量取数面
+//!（ADR-0121 / issue #1374）的打包形态与生产/测试换装接缝。
 //!
-//! 编排（[`super::incremental`]）消费六个抓取闭包（批量报价 / 日 K / 汇率 K /
-//! 历史净值页 / 单请求全量净值 / 基金名称，见 `do_incremental_sync_with`）。
+//! 编排（[`super::incremental`]）消费六个逐标的抓取闭包（批量报价 / 日 K / 汇率 K /
+//! 历史净值页 / 单请求全量净值 / 基金名称）与两个批量取数面（名称全量字典 /
+//! 场外基金净值全市场批量面，见 `do_incremental_sync_with`）。
 //! 本模块把它们打成**一个通道束**：生产经 [`SyncFetchChannels::production`]
 //! 接 HTTP 层（复用主机池 / 重试 / 限流 pacer 与价格换算），测试把桩闭包装进
 //! 同一结构注入命令壳（壳层 `SyncChannelsSlot` 管理态，issue #1276 的「命令壳
@@ -11,27 +13,20 @@
 //! 通道束只换装抓取闭包，不触其他接缝：会话（[`super::session`]）、进度发射
 //! （[`super::progress`]）与编排本体对生产/测试零分叉。
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
-use ledger_infra::error::{AppError, Result};
+use ledger_infra::error::Result;
 
+use super::bulk::BulkFetchSurfaces;
 use super::fund::fetch_fund_quote_production;
 use super::fund_nav::{LsjzPage, NavPoint, NavQuery, fetch_nav_full_series, fetch_nav_page};
 use super::http::{
-    KlineBar, Pacer, StockItem, build_client, fetch_fx_kline, fetch_kline, fetch_ulist,
+    KlineBar, Pacer, StockItem, build_client, fetch_fx_kline, fetch_kline, fetch_ulist, lock_pacer,
 };
 use super::incremental::{do_incremental_sync_with, kline_beg};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use super::progress::SyncProgress;
 use super::session::ScopedSession;
-
-/// 取一次限流 pacer（毒化映射 [`AppError::Io`]：串行使用下锁竞争不存在，
-/// 毒化仅发生于抓取 panic，属基础设施失败）。
-fn lock_pacer(pacer: &Mutex<Pacer>) -> Result<MutexGuard<'_, Pacer>> {
-    pacer
-        .lock()
-        .map_err(|e| AppError::Io(format!("限流器互斥体损坏: {e}")))
-}
 
 /// 抓取通道闭包的统一形态（`Box<dyn FnMut>` 别名，降低束字段签名复杂度；限
 /// `Send` 以便整束经互斥体跨线程交接）。
@@ -45,9 +40,9 @@ pub type FetchNavFull = Box<dyn FnMut(&str) -> Result<Vec<NavPoint>> + Send>;
 /// 基金详情名称抓取通道闭包形态（issue #827）。
 pub type FetchFundName = Box<dyn FnMut(&str) -> Result<String> + Send>;
 
-/// 六个抓取通道的打包束：闭包签名与编排注入点逐一同形。生产实现共享一个
-/// HTTP client 与限流 pacer（`Arc<Mutex<_>>` 内部可变，串行使用下与既有局部
-/// `RefCell` 共享语义一致）；测试实现为注入桩。
+/// 六个逐标的抓取通道 + 两个批量取数面的打包束：闭包签名与编排注入点逐一同形。
+/// 生产实现共享一个 HTTP client 与限流 pacer（`Arc<Mutex<_>>` 内部可变，串行
+/// 使用下与既有局部 `RefCell` 共享语义一致，批量面同样经它限速）；测试实现为注入桩。
 pub struct SyncFetchChannels {
     /// 批量报价（东财 ulist）：secid 逗号串 → 报价条目。
     pub fetch_ulist: FetchUlist,
@@ -61,6 +56,9 @@ pub struct SyncFetchChannels {
     pub fetch_nav_full: FetchNavFull,
     /// 基金详情名称（issue #827）：代码 → 数据源权威名称。
     pub fetch_fund_name: FetchFundName,
+    /// 批量取数面（ADR-0121 / issue #1374）：名称全量字典 + 场外基金净值全市场
+    /// 批量面 + 跨同步记忆。
+    pub bulk: BulkFetchSurfaces,
 }
 
 impl SyncFetchChannels {
@@ -118,6 +116,7 @@ impl SyncFetchChannels {
             fetch_fund_name: Box::new(move |code: &str| {
                 fetch_fund_quote_production(code).map(|quote| quote.name)
             }),
+            bulk: BulkFetchSurfaces::production(&client, pacer),
         })
     }
 }
@@ -145,6 +144,7 @@ where
         &mut channels.fetch_nav,
         &mut channels.fetch_nav_full,
         &mut channels.fetch_fund_name,
+        &mut channels.bulk,
         progress,
         witness,
     )
@@ -171,6 +171,7 @@ mod tests {
             }),
             fetch_nav_full: Box::new(|_| Ok(vec![])),
             fetch_fund_name: Box::new(|_| Ok(String::new())),
+            bulk: BulkFetchSurfaces::absent(),
         }
     }
 

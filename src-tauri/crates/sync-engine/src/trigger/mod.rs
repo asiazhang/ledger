@@ -20,6 +20,7 @@
 //! 「自动轮询不做新端引导」两条留痕见 ADR-0098。
 
 mod channel;
+mod round_gate;
 mod scheduler;
 mod session;
 

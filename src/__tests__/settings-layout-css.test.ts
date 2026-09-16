@@ -11,7 +11,7 @@ import { setFileScope, endFileScope } from '@vanilla-extract/css/fileScope'
  * 求值期产出 CSS，静态导入会先于 adapter 装配完成求值。
  */
 
-let cssModule: (typeof import('@/components/settings/settings-layout.css.ts')) | null = null
+let cssModule: (typeof import('@/settings/settings-layout.css.ts')) | null = null
 type CapturedBlock = { type: string; selector?: string; rule?: Record<string, unknown> }
 let capturedBlocks: CapturedBlock[] = []
 
@@ -28,9 +28,9 @@ beforeAll(async () => {
   setAdapter(adapter)
   // vitest 不挂 ve 插件（见 vitest.config.ts）：运行时求值需显式提供 file scope，
   // 指向真实模块路径使标识符与构建同构。
-  setFileScope('src/components/settings/settings-layout.css.ts')
+  setFileScope('src/settings/settings-layout.css.ts')
   try {
-    cssModule = await import('@/components/settings/settings-layout.css.ts')
+    cssModule = await import('@/settings/settings-layout.css.ts')
   } finally {
     endFileScope()
     removeAdapter()

@@ -5,8 +5,8 @@ import { NPopconfirm } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import { messageApi } from '@ledger/test-support/message-mock'
 import { findBodyButton, findButton } from '@ledger/test-support/dom'
-import InsurerManager from '@/components/InsurerManager.vue'
-import InsurerEditModal from '@/components/insurers/InsurerEditModal.vue'
+import InsurerManager from '@/policy/InsurerManager.vue'
+import InsurerEditModal from '@/policy/InsurerEditModal.vue'
 import type { Insurer } from '@ledger/types'
 
 

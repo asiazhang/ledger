@@ -16,6 +16,103 @@ fn fast_cfg(max_retries: u32, max_throttle_retries: u32) -> RetryConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 自适应限速（ADR-0121 决策 5 / issue #1374）：不再写死每请求 2 秒——正常停在
+// 「数据源可承受量级」的基线，遇限流响应 / 疑似风控页降速并复用既有冷却，恢复后
+// 逐步回升到基线。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pacer_slows_down_on_throttle_and_recovers_gradually_to_the_baseline() {
+    let baseline = Duration::from_secs(1);
+    let mut pacer = Pacer::new(baseline);
+    assert_eq!(pacer.interval(), baseline, "正常状态贴近数据源可承受量级");
+
+    pacer.record_throttled();
+    assert_eq!(pacer.interval(), baseline * 2, "命限流即降速一档");
+    pacer.record_throttled();
+    assert_eq!(pacer.interval(), baseline * 4);
+    for _ in 0..8 {
+        pacer.record_throttled();
+    }
+    assert_eq!(pacer.interval(), Duration::from_secs(8), "降速有上限");
+
+    // 恢复：每次成功只回升一步（不一步跳回基线——风控窗口刚过就重新撞上是坏性格）。
+    let mut previous = pacer.interval();
+    for _ in 0..40 {
+        pacer.record_success();
+        assert!(pacer.interval() <= previous, "回升单调不加速");
+        assert!(pacer.interval() >= baseline, "回升不低过基线");
+        previous = pacer.interval();
+    }
+    assert_eq!(pacer.interval(), baseline, "最终回到基线");
+}
+
+#[test]
+fn pacer_zero_interval_stays_inert() {
+    // 测试把间隔传零时，自适应逻辑不得凭空产生等待（既有用例的构造面不变）。
+    let mut pacer = Pacer::new(Duration::ZERO);
+    pacer.record_throttled();
+    pacer.record_success();
+    assert_eq!(pacer.interval(), Duration::ZERO);
+}
+
+#[test]
+fn throttle_responses_slow_the_request_interval() {
+    // 疑似风控页（200 + 非 JSON）与 429 都是「对方在限我们」的信号：降速一档，
+    // 冷却等待复用既有 throttle_cooldown（本用例把它压到 1ms）。
+    let url = spawn_http_server(|n| {
+        if n == 1 {
+            (200, "risk control page".into())
+        } else {
+            (200, r#"{"data":{"diff":[]}}"#.into())
+        }
+    });
+    let client = reqwest::blocking::Client::new();
+    let baseline = Duration::from_secs(1);
+    let mut pacer = Pacer::new(baseline);
+    let params = [("fs", "test")];
+    let _ = request_json_with_retry::<UlistResponse>(
+        &client,
+        &url,
+        &params,
+        &mut pacer,
+        "test",
+        fast_cfg(3, 3),
+        None,
+    )
+    .unwrap();
+    assert!(
+        pacer.interval() > baseline,
+        "疑似风控页应把请求间隔降下来，实际 {:?}",
+        pacer.interval()
+    );
+
+    let url = spawn_http_server(|n| {
+        if n == 1 {
+            (429, "rate limited".into())
+        } else {
+            (200, r#"{"data":{"diff":[]}}"#.into())
+        }
+    });
+    let mut pacer = Pacer::new(baseline);
+    let _ = request_json_with_retry::<UlistResponse>(
+        &client,
+        &url,
+        &params,
+        &mut pacer,
+        "test",
+        fast_cfg(3, 3),
+        None,
+    )
+    .unwrap();
+    assert!(
+        pacer.interval() > baseline,
+        "限流响应应把请求间隔降下来，实际 {:?}",
+        pacer.interval()
+    );
+}
+
 /// 起一个本地 HTTP 服务，按调用次数回调响应 (status, body)，返回基础地址。
 fn spawn_http_server(responder: impl Fn(usize) -> (u16, String) + Send + 'static) -> String {
     use std::io::{Read, Write};

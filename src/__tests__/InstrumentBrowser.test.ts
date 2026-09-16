@@ -5,12 +5,13 @@ import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
 import { assertMobileTierScrollX } from '@ledger/test-support/mobile-scroll-x'
 import { useReferenceStore } from '@/stores/reference'
-import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
+import InstrumentBrowser from '@/investment/InstrumentBrowser.vue'
 import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
   resetInstrumentInfoSyncForTest,
-} from '@/composables/useInstrumentInfoSync'
+} from '@/investment/useInstrumentInfoSync'
 import { captureListenHandlers } from '@ledger/test-support/listen-mock'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { makeInstrument } from './factories'
 import {
   firePricesChanged,
@@ -20,7 +21,7 @@ import type { Instrument } from '@ledger/types'
 
 // 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
 // 测试中手动触发模拟后端 emit；捕获/触发辅助收在 prices-changed-mock 共享。
-vi.mock('@/composables/usePricesChanged', async () => {
+vi.mock('@/investment/usePricesChanged', async () => {
   const { capturePricesChangedHandler } = await import('./prices-changed-mock')
   return {
     usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),
@@ -104,6 +105,18 @@ describe('InstrumentBrowser 标的页工具栏', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="only-invested-switch"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('只看持仓')
+  })
+
+  it('现价列头带口径说明触发器：基金行显示的是单位净值（issue #1369）', async () => {
+    const wrapper = mountBrowser()
+    await flushPromises()
+    // 断言对准用户可观察结果：删掉列头 ConceptLabel 接线即找不到触发器、本用例变红
+    const trigger = wrapper.find('[data-testid="browser-price-info"]')
+    expect(trigger.exists()).toBe(true)
+    expect(trigger.attributes('aria-label')).toBe('现价说明')
+    // 名实边界：列名叫「现价」，基金行装的却是最新单位净值（与价格来源列「净值」不矛盾）
+    expect(await hoverTipText(trigger)).toContain('单位净值')
+    wrapper.unmount()
   })
 
   it('勾选「只看持仓」后标的查询携带 only_invested=true', async () => {
@@ -199,6 +212,54 @@ describe('InstrumentBrowser 同步标的信息按钮', () => {
     await flushPromises()
     // 失败消息应包含具体原因，而非字符串化的 [object Object]
     expect(wrapper.text()).toContain('同步失败：网络错误')
+  })
+
+  it('同步降级时明示「已降级、本次较慢」（issue #1376 存在性断言，ADR-0087）', async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        sync_instrument_info: () =>
+          Promise.resolve({
+            synced: 3,
+            skipped: 0,
+            message: '已同步 3 只，跳过 0 只',
+            bulk_degraded: true,
+          }),
+      },
+    })
+    resetInstrumentInfoSyncForTest()
+    const wrapper = mountBrowser()
+    await flushPromises()
+    // 同步前无降级标注
+    expect(wrapper.find('[data-testid="instrument-sync-degraded"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
+    await flushPromises()
+    // 删除降级标注的渲染，本断言即红（接线型负向判据）
+    const notice = wrapper.find('[data-testid="instrument-sync-degraded"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toBe('已降级、本次较慢')
+  })
+
+  it('正常路径（批量面命中，bulk_degraded:false）不渲染降级标注（issue #1376）', async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        sync_instrument_info: () =>
+          Promise.resolve({
+            synced: 3,
+            skipped: 0,
+            message: '已同步 3 只，跳过 0 只',
+            bulk_degraded: false,
+          }),
+      },
+    })
+    resetInstrumentInfoSyncForTest()
+    const wrapper = mountBrowser()
+    await flushPromises()
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="instrument-sync-degraded"]').exists()).toBe(false)
   })
 })
 

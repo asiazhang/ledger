@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
+import PlanDetailModal from '@/scheduled/PlanDetailModal.vue'
 import { mountFlushed } from '@ledger/test-support/mount'
 import { makeOccurrence } from '../factories'
 import { formatAmount } from '@ledger/money'
 import { refCurrencies } from '@ledger/test-support/reference-stubs'
-import { MOBILE_CARD_CLASS } from '@/components/app-modal.css.ts'
+import { MOBILE_CARD_CLASS } from '@ledger/ui-kit/app-modal.css.ts'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import type {
   Account,

@@ -5,7 +5,7 @@ import {
   CLOSABLE_FEATURES,
   useFeatureToggleStore,
   type ClosableFeatureId,
-} from '@/stores/feature-toggles'
+} from '@/settings/feature-toggles'
 import { groupOfView } from '@/stores/sidebar-order'
 import { getSavedRouteName, saveRouteName } from '@ledger/utils/view-state'
 

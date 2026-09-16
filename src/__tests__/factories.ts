@@ -1,5 +1,3 @@
-import { vi, type Mock } from 'vitest'
-import { registerToastSink, type ToastSink } from '@/composables/useLoadable'
 import type {
   Account,
   Category,
@@ -15,16 +13,30 @@ import type {
   Policy,
   PolicyStats,
   RealizedPnlSummary,
-  ScheduledTransaction,
-  ScheduledTransactionOccurrence,
-  ScheduledTransactionWithExt,
   Transaction,
 } from '@ledger/types'
+
+// 计划实体工厂三形态 + 期次工厂自 #1322 起上收共享测试支持包
+// （@ledger/test-support/plan-factories）：抽 @ledger/scheduled-plan-list 时包内
+// 测试跟随被测包，结构守门规则 4 禁测试文件本地定义名单工厂，共享工厂层出口
+// 随测试面上收；此处再导出保持壳侧既有 import 面（'./factories'）不变。
+export {
+  makeSubscriptionPlan,
+  makeInstallmentPlan,
+  makeTransferPlan,
+  makeOccurrence,
+} from '@ledger/test-support/plan-factories'
+
+// toast sink 假件自 #1354 起上收共享测试支持包（@ledger/test-support/toast-sink）：
+// @ledger/loadable 与 @ledger/scheduled-plan-list 包内测试不可引用壳侧 factories
+// （结构守门规则③），同实现局部替身随测试面上收，唯一定义点在包内；
+// 此处再导出保持壳侧既有 import 面（'./factories'）不变。
+export { makeFakeSink, resetToastSink } from '@ledger/test-support/toast-sink'
 
 /**
  * 组件/composable 测试的共享数据工厂（issue #110 审查：消除测试文件间重复）。
  * invoke 布线一律走唯一接缝 wireInvokeSeam（@ledger/test-support/invoke-mock.ts，ADR-0085），
- * 本文件只承载数据夹具与 toast sink 假件，不含任何布线能力。
+ * 本文件只承载数据夹具（toast sink 假件见 @ledger/test-support/toast-sink），不含任何布线能力。
  */
 
 export const mockCurrencies: Currency[] = [
@@ -200,137 +212,7 @@ export function makeTransaction(partial: Partial<Transaction> & { id: string }):
 }
 
 /**
- * 计划实体工厂三形态 + 期次工厂（issue #822）：计划按三形态各设一厂，形态不变量
- * 由工厂保证而非调用方自觉（分期每期金额 = 总额÷期数向下取整、转账对方账户随参）。
- * partial 覆盖面 core-only，扩展字段走形态专属参数；期次默认额与订阅厂默认额同源
- * （1500 分），默认计划 + 默认期次组合自洽。
- */
-
-/** 订阅计划工厂：core.kind 固定 subscription；商户为形态专属参数（可携，默认无）。 */
-export function makeSubscriptionPlan(
-  partial: Partial<ScheduledTransaction> & { id: string },
-  merchant_id: string | null = null,
-): ScheduledTransactionWithExt {
-  const core: ScheduledTransaction = {
-    kind: 'subscription',
-    status: 'active',
-    account_id: 'acc-1',
-    category_id: 'cat-1',
-    amount_cents: 1500,
-    currency_code: 'CNY',
-    recurrence_type: 'monthly',
-    recurrence_interval: 1,
-    recurrence_day: null,
-    start_date: '2026-01-01',
-    note: '视频会员',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...partial,
-  }
-  return {
-    core,
-    merchant_id,
-    policy_id: null,
-    total_amount_cents: null,
-    total_occurrences: null,
-    to_account_id: null,
-  }
-}
-
-/** 分期计划工厂：core.kind 固定 installment；总额与期数必传，每期金额厂内派生保证不变量。 */
-export function makeInstallmentPlan(
-  partial: Partial<ScheduledTransaction> & { id: string },
-  total_amount_cents: number,
-  total_occurrences: number,
-  merchant_id: string | null = null,
-): ScheduledTransactionWithExt {
-  const core: ScheduledTransaction = {
-    kind: 'installment',
-    status: 'active',
-    account_id: 'acc-1',
-    category_id: 'cat-1',
-    amount_cents: Math.floor(total_amount_cents / total_occurrences),
-    currency_code: 'CNY',
-    recurrence_type: 'monthly',
-    recurrence_interval: 1,
-    recurrence_day: null,
-    start_date: '2026-01-01',
-    note: '手机分期',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...partial,
-  }
-  return {
-    core,
-    merchant_id,
-    policy_id: null,
-    total_amount_cents,
-    total_occurrences,
-    to_account_id: null,
-  }
-}
-
-/** 定时转账计划工厂：core.kind 固定 scheduled_transfer；对方账户必传，期数可选（一次性为 null）。 */
-export function makeTransferPlan(
-  partial: Partial<ScheduledTransaction> & { id: string },
-  to_account_id: string | null,
-  total_occurrences: number | null = null,
-): ScheduledTransactionWithExt {
-  const core: ScheduledTransaction = {
-    kind: 'scheduled_transfer',
-    status: 'active',
-    account_id: 'acc-cny1',
-    category_id: null,
-    amount_cents: 50000,
-    currency_code: 'CNY',
-    recurrence_type: 'monthly',
-    recurrence_interval: 1,
-    recurrence_day: null,
-    start_date: '2026-01-01',
-    note: null,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...partial,
-  }
-  return {
-    core,
-    merchant_id: null,
-    policy_id: null,
-    total_amount_cents: null,
-    total_occurrences,
-    to_account_id,
-  }
-}
-
-/** 期次工厂：默认挂在 plan-1（与各厂默认用例 id 惯例衔接）、pending、1500 分。 */
-export function makeOccurrence(
-  partial: Partial<ScheduledTransactionOccurrence> & { id: string },
-): ScheduledTransactionOccurrence {
-  return {
-    scheduled_transaction_id: 'plan-1',
-    scheduled_date: '2026-03-01',
-    status: 'pending',
-    transaction_id: null,
-    amount_cents: 1500,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...partial,
-  }
-}
-
-/** item_daily_total 返回值工厂（issue #122）：默认人民币本位币、每天成本 123.45 元、3 件在用 */
+ * item_daily_total 返回值工厂（issue #122）：默认人民币本位币、每天成本 123.45 元、3 件在用 */
 export function makeItemDailyTotal(partial: Partial<ItemDailyTotal> = {}): ItemDailyTotal {
   return { native_currency: 'CNY', per_day_cents: 12345, item_count: 3, ...partial }
 }
@@ -381,15 +263,12 @@ export function makeMwrSummary(
         rate: 0.1,
       },
     ],
-    by_account: [{ account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', rate: 0.1 }],
-    total: [{ currency_code: 'CNY', rate: 0.1 }],
+    by_account: [
+      { account_id: 'acc-1', account_name: '证券账户A', currency_code: 'CNY', basis: 'annualized', rate: 0.1 },
+    ],
+    total: [{ currency_code: 'CNY', basis: 'annualized', rate: 0.1 }],
     ...partial,
   }
-}
-
-/** 假 toast sink：记录 error toast 调用（Loadable 默认策略经 sink 弹出，断言只看 sink 面） */
-export function makeFakeSink(): ToastSink & { error: Mock<(content: string) => void> } {
-  return { error: vi.fn<(content: string) => void>() }
 }
 
 /** 实物资产实体夹具（issue #466）：全字段读模型 + 当前估值三件套。 */
@@ -427,9 +306,4 @@ export function makePhysicalAssetList(
     native_currency: 'CNY',
     ...partial,
   }
-}
-
-/** 每用例复位 sink 为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰 */
-export function resetToastSink(): void {
-  registerToastSink({ error: () => {} })
 }

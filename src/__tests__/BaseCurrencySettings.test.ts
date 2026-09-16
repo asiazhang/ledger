@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mockInvoke, wireInvokeSeam, lastInvokeArgs } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
-import BaseCurrencySettings from '@/components/settings/BaseCurrencySettings.vue'
+import BaseCurrencySettings from '@/settings/BaseCurrencySettings.vue'
 
 /**
  * 本位币基准卡片组件测试（issue #858）：invoke 测试接缝布线（ADR-0085），

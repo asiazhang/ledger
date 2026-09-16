@@ -10,13 +10,21 @@
 //! ——域侧 [`build_channel`] 对测试直置的明文 http S3 桩配置保持可用，照常跑
 //! 自动轮次；该门住命令层是 #1217 的实现决定（理由见函数注释）。
 //!
-//! - `sync_now` 写路径经统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
-//!   重放是行为编排之外的第 N 写入入口（ADR-0091，接缝契约与批量导入同待遇），
-//!   外来 op 实际应用即账本数据变化——经 [`WriteOp::SyncRound`] 条件发参考失效
-//!   信号（证据 [`WriteEvidence::LedgerApplied`]），置脏照常在提交点发生。
-//!   轮次期间持主连接锁（与 `sync_instrument_info` 网络同步同形）：通道轮次的
-//!   发布/拉取/重放本就要求单连接互斥（checkpoint 成对约束同源），失败上抛
-//!   不产生部分本地状态（已上传段内容确定等同，重试轮次幂等续作）。
+//! - `sync_now` 写路径经分段取锁、整体裁决形态的统一写入口
+//!   [`crate::shell_support::write_entry::write_entry_segmented`]（#1276 形态，
+//!   ADR-0120 决策 4）：仍是一个写操作身份、一次提交点置脏、一次信号发射；重放
+//!   是行为编排之外的第 N 写入入口（ADR-0091，接缝契约与批量导入同待遇），外来
+//!   op 实际应用即账本数据变化——经 [`WriteOp::SyncRound`] 条件发参考失效信号
+//!   （证据 [`WriteEvidence::LedgerApplied`]），置脏照常在收尾裁决点发生。
+//!   连接锁只盖轮次的数据库步骤（读段/重放段/落库段，经 [`SegmentRoundConn`]
+//!   每段短取）；manifest 读/写、段上传/下载、封包与解封（含 KDF）是网络段，
+//!   在锁外完成——同步在途时本地记账、导入与读命令不再被整轮同步挡住（ADR-0120）。
+//!   同端轮次顺序性由域内轮次在途互斥承接：在途时重复触发不启动第二轮，等待
+//!   并交出同一轮次报告（回显形态随实施票 #1339 定夺并留痕：取「等待并复用」，
+//!   与 ADR-0095 前端「进行中重复触发复用唯一在途同步」口径同款）。失败语义
+//!   按 ADR-0120 决策 6 三分：已上传段原子（内容确定等同、重传幂等）、已重放
+//!   op 逐条原子、manifest 回写失败由下一轮归并续作自愈；「上次成功同步时刻」
+//!   只在整轮成功后的整体裁决点落库，中途失败 / 放弃不更新。
 //!   轮次编排本身归域（`sync_engine::trigger`，issue #863）：本壳只解包口令、
 //!   解析信封模式并把轮次报告原样交出。
 //! - `set_sync_channel_config` 写 `app_settings` 经 [`crate::settings`] 单点收口
@@ -37,25 +45,29 @@
 //!   无需再触钥匙串即可封包。主口令/凭据不落日志与 trace（ADR-0075，lib.rs
 //!   载荷脱敏单点遮蔽 `passphrase` 与 `password` 字段）。
 
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::commands::encryption::{active_book_id, active_db_path};
 use crate::shell_support::read_entry::read_entry;
-use crate::shell_support::write_entry::{Outcome, write_entry};
+use crate::shell_support::write_entry::{Outcome, SegmentLock, write_entry_segmented};
 use ledger_infra::db::encryption::{DbFileKind, probe_file_kind, verify_source_passphrase};
 use ledger_infra::db::passphrase_cache::{self, CacheLoad};
-use ledger_infra::db::{DbState, run_db};
+use ledger_infra::db::{DbState, probe_lock_hold, run_db};
 use ledger_infra::error::{AppError, Result};
 use ledger_infra::settings::{self, SettingKey};
 use ledger_infra::signals::{WriteEvidence, WriteOp};
+use ledger_sync_engine::channel::{ConnSegment, RoundConn};
 use ledger_sync_engine::trigger::{
     DEFAULT_SPACE_ID, book_unavailable_error, build_channel, configured_channel,
     not_configured_error, probe_channel, run_round_once,
 };
 use ledger_sync_engine::{
     EnvelopeMode, SessionEnvelope, SyncChannelConfig, SyncRoundReport, bootstrap_from_channel,
-    create_checkpoint, parked_ops,
+    connection_round_key, create_checkpoint, parked_ops,
 };
 use ledger_sync_protocol::device::device_id;
 
@@ -151,16 +163,23 @@ pub async fn get_sync_status<R: Runtime>(app: AppHandle<R>) -> Result<SyncStatus
     .await
 }
 
-/// 手动同步（issue #862「立即同步」/ #863 轮次编排）：执行一次同步轮次——发布
-/// 自己流新 op + 拉取他人流增量并经同步引擎幂等重放。返回轮次报告（上传/应用/
-/// 挂起计数，前端据此轻量提示）；`plaintext_mode` 为真表示本轮明文上通道
-/// （界面显著提示）。挂起明细经 [`get_parked_ops`] 查询（同步卡片回显面）。
+/// 手动同步（issue #862「立即同步」/ #863 轮次编排 / #1339 分段取锁）：执行一次
+/// 同步轮次——发布自己流新 op + 拉取他人流增量并经同步引擎幂等重放。返回轮次
+/// 报告（上传/应用/挂起计数，前端据此轻量提示）；`plaintext_mode` 为真表示本轮
+/// 明文上通道（界面显著提示）。挂起明细经 [`get_parked_ops`] 查询（同步卡片回
+/// 显面）。
 ///
 /// 信封模式解析见模块文档；`passphrase` 为密文库下的显式主口令（不落日志，
 /// 留空则回退本机已记住口令，均不可得报 `sync-channel.passphrase-required`）。
 /// 通道未配置报 `sync-channel.not-configured`；账本注册表不可用报
-/// `sync-channel.book-unavailable`。成功后随轮次事务更新「上次成功同步时刻」，
+/// `sync-channel.book-unavailable`。成功后随整体裁决点更新「上次成功同步时刻」，
 /// 并把口令记入本机会话（后续自动轮询无需再触钥匙串）。
+///
+/// 锁跨度（ADR-0120 决策 2/4）：连接锁只盖轮次数据库步骤（经 [`SegmentRoundConn`]
+/// 每段短取）；网络段（通道配置构库、口令解析验证、manifest 读写、段上传下载、
+/// 封包解封）不消费连接、在分段之间执行——同步在途时本地读写照常。在途时重复
+/// 触发不启动第二轮：等待并交出同一轮次报告（ADR-0120 决策 3，回显形态见模块
+/// 文档）。
 #[tauri::command]
 pub async fn sync_now<R: Runtime>(
     app: AppHandle<R>,
@@ -169,27 +188,39 @@ pub async fn sync_now<R: Runtime>(
     let conn = app.state::<DbState>().conn.clone();
     let db_path = active_db_path(&app)?;
     let book = active_book_id(&app);
-    write_entry(
+    // 轮次身份键（同端同库判据，ADR-0120 决策 3）：写入口持有的同一连接互斥体，
+    // 与调度侧自动轮次同键——三个触发入口在在途互斥下串行。
+    let round_key = connection_round_key(&conn);
+    write_entry_segmented(
         "sync_now",
         conn,
         Some(&app),
         WriteOp::SyncRound,
-        move |conn| {
-            // 通道在位性前置：未配置即早退，不触网。
-            let config = configured_channel(conn)?.ok_or_else(not_configured_error)?;
+        move |lock| {
+            // 读段（短取锁）：通道在位性前置——未配置即早退，不触网。
+            let config = lock
+                .with_connection(configured_channel)?
+                .ok_or_else(not_configured_error)?;
             // 注册表在位性门禁（同步以活动账本为范围；世界身份走同步空间，
             // 见 [`SyncChannelConfig::space_id]）：损坏回退现场拒绝同步。
             if book.is_none() {
-                return Err(book_unavailable_error());
+                return Err(book_unavailable_error().into());
             }
             let channel = build_channel(&config)?;
-            // 口令持有串活在轮次作用域，信封模式借出形态对齐（无泄漏）。
+            // 口令解析与验证不消费连接（文件探针 + 钥匙串 + 独立验证连接），
+            // 在分段之间（锁外）执行。
             let passphrase_holder = resolve_passphrase(&db_path, book.as_deref(), passphrase)?;
             let mode = match passphrase_holder {
                 Some(ref passphrase) => EnvelopeMode::Encrypted { passphrase },
                 None => EnvelopeMode::Plaintext,
             };
-            let report = run_round_once(conn, &channel, &mode)?;
+            // 轮次：数据库段经分段锁短取（读段/重放段/落库段），网络段出锁；
+            // 同端顺序性由域内轮次在途互斥承接（ADR-0120 决策 3）。
+            let locks = SegmentRoundConn {
+                lock,
+                key: round_key,
+            };
+            let report = run_round_once(&locks, &channel, &mode)?;
             // 成功轮次记入本会话形态（打开即同步与低频轮询不再触钥匙串）；
             // 明文库记「明文形态」——同一单点同时承载两态（issue #863）。
             match &passphrase_holder {
@@ -205,6 +236,29 @@ pub async fn sync_now<R: Runtime>(
         },
     )
     .await
+}
+
+/// 手动同步轮次的连接源（ADR-0120 决策 4：手动入口复用分段写入口形态）：
+/// 把分段写入口的 [`SegmentLock`] 包成轮次连接接缝交给编排（`SegmentSession`
+/// 先例同款，`sync_instrument_info`）。轮次的每个数据库段经分段锁短暂取一次
+/// 连接、用完即还；网络段发生在分段之间（锁外）。轮次身份键取自写入口持有的
+/// 同一连接互斥体（构造时定格，与调度侧自动轮次同键）。
+struct SegmentRoundConn<'a> {
+    lock: &'a SegmentLock<'a>,
+    key: u64,
+}
+
+impl RoundConn for SegmentRoundConn<'_> {
+    fn with_connection<R, F>(&self, _segment: ConnSegment, use_connection: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R>,
+    {
+        self.lock.with_connection(use_connection)
+    }
+
+    fn round_key(&self) -> u64 {
+        self.key
+    }
 }
 
 /// 读取挂起操作清单（issue #863 挂起通知数据面）：不可重放 op 的身份与码化
@@ -541,25 +595,36 @@ pub struct SyncBootstrapOutcome {
 /// 前端原位重引导（`restart_app`）。
 ///
 /// 编排全在域单点 [`ledger_sync_engine::bootstrap_from_channel`]（前置守卫、
-/// 信封形态对齐、整库换入、簿记清理与转密文决策）；本命令不经统一写入口
-/// （整库替换同 Restore 先例，零信号：引导后前端立即原位重引导，信号无消费
-/// 窗口），持主连接锁调用（快照拉取/换入与轮次同一互斥约束）。
+/// 拉取、复验、信封形态对齐、整库换入、簿记清理与转密文决策）；本命令不经
+/// 统一写入口（整库替换同 Restore 先例，零信号：引导后前端立即原位重引导，
+/// 信号无消费窗口）。
+///
+/// 锁跨度（issue #1285 / ADR-0120 判据同簇适用）：配置读取走读入口短锁
+///（同 #1283 预检先例）；主连接经段接缝按段短取——段1 前置守卫、段2 复验 +
+/// 整库换入（对并发本地写互斥，防静默覆盖丢账），中间的整库快照下载是纯
+/// 网络等待、在锁外完成（ADR-0069 决策 4）。锁失败映射与持锁时长探针内化
+/// 在 [`MainConnSegments`]。
 #[tauri::command]
 pub async fn bootstrap_sync_from_channel<R: Runtime>(
     app: AppHandle<R>,
     passphrase: Option<String>,
 ) -> Result<SyncBootstrapOutcome> {
+    let read_conn = app.state::<DbState>().read_conn.clone();
+    // 通道在位性前置（读入口短锁）：未配置即早退，不触网。
+    let config = read_entry("bootstrap_sync_from_channel", read_conn, move |conn| {
+        configured_channel(conn)?.ok_or_else(not_configured_error)
+    })
+    .await?;
     let conn = app.state::<DbState>().conn.clone();
     let db_path = active_db_path(&app)?;
     run_db("bootstrap_sync_from_channel", move || {
-        let mut conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        // 通道在位性前置：未配置即早退，不触网。
-        let config = configured_channel(&conn)?.ok_or_else(not_configured_error)?;
         let channel = build_channel(&config)?;
         // 编排归域（`bootstrap_from_channel`，ADR-0056）：前置守卫、拉取、
-        // 信封形态对齐、整库换入、簿记清理与转密文决策全在域内单点，本壳
-        // 只解包口令并把结果投影为 wire 形态。
-        let outcome = bootstrap_from_channel(&mut conn, &db_path, &channel, passphrase.as_deref())?;
+        // 复验、信封形态对齐、整库换入、簿记清理与转密文决策全在域内单点，
+        // 本壳只实现段接缝（[`MainConnSegments`]，短取锁）并把结果投影为
+        // wire 形态。
+        let segments = MainConnSegments { conn };
+        let outcome = bootstrap_from_channel(&segments, &db_path, &channel, passphrase.as_deref())?;
         Ok(SyncBootstrapOutcome {
             generation: outcome.generation,
             size: outcome.size,
@@ -567,4 +632,27 @@ pub async fn bootstrap_sync_from_channel<R: Runtime>(
         })
     })
     .await
+}
+
+/// 引导命令的主连接段接缝实现（issue #1285，域接缝
+/// [`ledger_sync_engine::BootstrapConnSegments`] 的壳侧唯一实现）：每段短取
+/// 一次主连接——锁失败映射与持锁时长探针（#1276 口径）内化此处；返回即
+/// 释放，整库快照下载发生在段与段之间，结构上不占锁。
+///
+/// 与分段写入口的 [`crate::shell_support::write_entry::SegmentLock`] 同形状的
+/// 近亲，不合并的原因：引导不经写入口（零信号，Restore 先例），且换入段需
+/// `&mut Connection`（SegmentLock 只递 `&Connection`）——就近住命令文件，
+/// 经读侧豁免清单看守（signals_cross_check）。
+struct MainConnSegments {
+    conn: Arc<Mutex<Connection>>,
+}
+
+impl ledger_sync_engine::BootstrapConnSegments for MainConnSegments {
+    fn with_conn<T>(&self, use_conn: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
+        let hold_started = Instant::now();
+        let mut conn = self.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let result = use_conn(&mut conn);
+        probe_lock_hold(hold_started.elapsed());
+        result
+    }
 }

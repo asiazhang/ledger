@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { captureListenHandlers, type CapturedListener } from '@ledger/test-support/listen-mock'
 import { flushPromises } from '@vue/test-utils'
-import { usePoliciesStore } from '@/stores/policies'
+import { usePoliciesStore } from '@/policy/policies'
 import { makePolicy, makePolicyStats } from './factories'
 import type { Policy, PolicyInput, PolicyStats } from '@ledger/types'
 

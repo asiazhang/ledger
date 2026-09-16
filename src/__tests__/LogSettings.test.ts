@@ -4,7 +4,7 @@ import { messageApi } from '@ledger/test-support/message-mock'
 import { findButton } from '@ledger/test-support/dom'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
-import LogSettings from '@/components/settings/LogSettings.vue'
+import LogSettings from '@/settings/LogSettings.vue'
 
 // 日志卡片（issue #930）：自 AboutSettings 迁入「通用」Tab，IPC 契约与文案逐字不变
 // （get_log_level / set_log_level / open_log_dir，spec #608 / #611）。

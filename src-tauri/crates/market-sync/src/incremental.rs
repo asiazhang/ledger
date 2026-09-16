@@ -10,6 +10,9 @@
 //! 已有序列者按水位增量（issue #1059）；
 //! ⑤ 有通道的行以数据源权威名称随行刷新标的字典名称（行情通道零额外请求，
 //! 基金通道逐只详情查询；「随用随修 + 同步随行刷新」，ADR-0036/0081 修订）。
+//! 单只标的的历史回填整只一次提交（ADR-0122 决策 8 / issue #1373）：日 K 周线
+//! 与基金净值周线的落库各自在一只一个事务内，第 N 个周点写入失败或中途中断
+//! 整体回滚——不留半根历史，「有历史序列」与「历史完整」等价。
 //! 类型分区在 Rust 侧完成，不增删标的、不改市场。
 //! 职责切分（ADR-0015，修订见 ADR-0081 / issue #827）：同步刷价格、沉淀历史、
 //! 随行修名称；按代码查询/创建随用随修（全量同步翼已随 ADR-0081 决策 3
@@ -24,17 +27,25 @@
 //! 与价格换算）。进度回调闭包是本函数唯一的对外观察点：编排核心不碰网络、不碰事件
 //! 系统，进度事件发射归壳层接线（见 `commands::sync`）。
 //!
+//! 取数面（ADR-0121 / issue #1374）：基金名称与场外基金现价改走**批量取数面**
+//!（[`super::bulk`]：名称全量字典 + 场外基金净值全市场批量面，各整次同步最多一次
+//! 请求），批量面失败 / 停用 / 未覆盖（缺口）一律 fail-closed 回退既有逐标的通道；
+//! 缺口与失败在日志与统计上分开，缺口不触发熔断。
+//!
 //! 编排与连接解耦（issue #1275 作用域会话接缝）：本模块所有函数的签名里没有
 //! 连接句柄——读写库一律经注入的 [`ScopedSession`] 短暂取一次连接，网络抓取
 //! 只发生在会话之外。「持着连接做网络 I/O」在类型上不可表达；会话实现在壳层
 //! 接线（生产 = 分段写入口的短暂取锁会话，见 `commands::sync`）。
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::time::Instant;
 
 use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 
+use super::bulk::{BulkCoverage, BulkFetchSurfaces, FundNameDictionary, FundNavTable};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_investment::crud::refresh_instrument_name;
 use ledger_investment::prices::{
@@ -103,11 +114,114 @@ fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
     Ok(instruments)
 }
 
+/// 本次同步从批量取数面取回的数据（ADR-0121 / issue #1374）。
+struct BulkData {
+    /// 名称全量字典（None = 未命中 / 未尝试 → 逐只名称通道兜底）。
+    names: Option<FundNameDictionary>,
+    /// 场外基金净值批量面（None = 未命中 / 未尝试 → 逐只净值通道兜底）。
+    nav: Option<FundNavTable>,
+    /// 本次同步是否降级（批量面失败或处于停用期）：降级对用户可见的事实位
+    ///（文案接线归 issue #1376，本票先落事实与日志统计）。
+    degraded: bool,
+}
+
+impl BulkData {
+    /// 无标的可刷（净值分区为空）：不尝试也不降级——零请求是「没得刷」的自然结果。
+    fn none() -> Self {
+        Self {
+            names: None,
+            nav: None,
+            degraded: false,
+        }
+    }
+
+    /// 本次同步没走上批量取数面（停用期或面失败）：降级，逐标的通道兜底。
+    fn unavailable() -> Self {
+        Self {
+            names: None,
+            nav: None,
+            degraded: true,
+        }
+    }
+}
+
+/// 取两个批量取数面（ADR-0121 决策 1/3）：先场外基金净值批量面、后名称全量字典
+/// ——价格是本动作的主产出。两个面各整次同步**最多一次请求**。
+///
+/// 熔断（决策 3）：跨同步记忆判定处于停用期时一面都不试（零请求，直接回退逐标的
+/// 通道）；任一面失败即本次同步熔断——后续**不再尝试任何批量面**（本函数是批量面
+/// 的唯一调用点，故按条缺口补齐的逐条回退不会再撞一次批量面）。逐标的通道随后
+/// fail-closed 兜底，价格与名称照常落库。
+///
+/// 失败与缺口是两件事：失败进跨同步记忆、降级事实与 warn 日志；缺口（批量面没
+/// 收录该标的）只体现在逐条回退的 debug 日志与 `bulk_gaps` 统计上，不触发熔断。
+fn fetch_bulk_surfaces(bulk: &mut BulkFetchSurfaces) -> BulkData {
+    let now = Instant::now();
+    // 状态判定在锁内、网络请求在锁外（ADR-0069 决策 4 同款纪律：网络等待不进锁）。
+    let allowed = match bulk.circuit.lock() {
+        Ok(mut circuit) => circuit.should_attempt(now),
+        Err(error) => {
+            tracing::warn!(%error, "批量取数面跨同步记忆互斥体损坏，本次同步按降级处理");
+            false
+        }
+    };
+    if !allowed {
+        tracing::info!("批量取数面处于停用期（连续失败达阈值），本次同步全部走逐标的通道");
+        return BulkData::unavailable();
+    }
+
+    let nav = take_bulk_surface("场外基金净值批量面", &mut bulk.nav);
+    // 同步内熔断（决策 3）：一面失败即本次同步不再尝试其余批量面——否则每只标的
+    // 都先试一次批量面再回退，请求量比改造前更多。
+    let names = if nav.is_some() {
+        take_bulk_surface("基金名称全量字典", &mut bulk.names)
+    } else {
+        None
+    };
+    let failed = nav.is_none() || names.is_none();
+
+    match bulk.circuit.lock() {
+        Ok(mut circuit) => {
+            if failed {
+                circuit.record_failure(now);
+            } else {
+                circuit.record_success();
+            }
+        }
+        Err(error) => tracing::warn!(%error, "批量取数面跨同步记忆互斥体损坏，本次结果未记入"),
+    }
+
+    BulkData {
+        names,
+        nav,
+        degraded: failed,
+    }
+}
+
+/// 取一个批量面：命中记覆盖规模（debug），失败记 warn 并返回 None——由调用方按
+/// 熔断契约处置（一面失败即本次同步不再尝试其余面，见 [`fetch_bulk_surfaces`]）。
+fn take_bulk_surface<T: BulkCoverage>(
+    surface: &'static str,
+    fetch: &mut impl FnMut() -> Result<T>,
+) -> Option<T> {
+    match fetch() {
+        Ok(data) => {
+            tracing::debug!(surface, covered = data.covered(), "行情批量取数面命中");
+            Some(data)
+        }
+        Err(error) => {
+            tracing::warn!(surface, %error, "行情批量取数面失败，本次同步回退逐标的通道");
+            None
+        }
+    }
+}
+
 /// 标的信息同步核心流程：单次收集库内全部标的并按通道分区 → 行情分区（stock|etf，
 /// #695）构造 secid 批量报价 upsert 现价（换算按随行精度位单点）、名称随行刷新、
-/// 日 K 回填周线；基金侧逐只历史净值按水位增量回填（ADR-0038 决策 6，委托
+/// 日 K 回填周线；基金侧先取两个批量取数面（ADR-0121，未命中 / 失败 / 停用一律
+/// 回退逐标的通道），再逐只历史净值按水位增量回填（ADR-0038 决策 6，委托
 /// [`sync_one_fund_nav`]）与逐只名称刷新；汇率 K 线同期落 `fx_rate_history` →
-/// 结果统计。七个回调均由调用方注入（六个抓取 + 一个进度回调，issue #897；生产接
+/// 结果统计。注入面 = 六个抓取闭包 + 批量取数面 + 一个进度回调（issue #897；生产接
 /// HTTP 层与事件发射，测试注入 mock），本函数不触碰网络、不碰事件系统。
 /// 返回统计：`synced` = 处理成功的标的数（行情分区有效价 + 基金处理成功，含基金
 /// 「已是最新」）；`skipped` = 无通道行（无行情类型/市场未知/名称充代码）、停牌/
@@ -128,9 +242,12 @@ fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
 /// 基金净值落库 / 基金名称刷新）在落库成功后标记 [`WriteWitness`]——中途失败的
 /// 运行结果统计随错误丢失，见证器由调用方持有（`&mut` 传入）存活，壳层据此把
 /// 「实际写过」的失败收尾归一为证据（成败同判，见 `commands::sync`）。
-// 六个抓取闭包 + 会话 + 进度回调 + 写入见证共 9 参：网络接缝逐通道注入使然
-//（与 HTTP 层 request_from_hosts 同形），参数表就是「本编排消费哪些外部通道」
-// 的清单。
+/// 取数面注入（ADR-0121 / issue #1374）：`bulk` 是名称全量字典 + 场外基金净值
+/// 全市场批量面 + 跨同步记忆的打包束（生产接 HTTP 层、测试注入桩，见
+/// [`super::channels`]）。批量面只回答「这次刷新用几次请求」，不改变价格来源归属。
+// 六个逐标的抓取闭包 + 取数面 + 会话 + 进度回调 + 写入见证共 10 参：网络接缝
+// 逐通道注入使然（与 HTTP 层 request_from_hosts 同形），参数表就是「本编排消费
+// 哪些外部通道」的清单。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn do_incremental_sync_with<Q, F, K, X, N, S, M, P>(
     session: &Q,
@@ -140,6 +257,7 @@ pub(super) fn do_incremental_sync_with<Q, F, K, X, N, S, M, P>(
     fetch_nav: &mut N,
     fetch_nav_full: &mut S,
     fetch_fund_name: &mut M,
+    bulk: &mut BulkFetchSurfaces,
     progress: &mut P,
     witness: &mut WriteWitness,
 ) -> Result<SyncInstrumentInfoResult>
@@ -185,6 +303,8 @@ where
             message: "暂无标的可同步".into(),
             written: 0,
             renamed: 0,
+            bulk_degraded: false,
+            bulk_gaps: 0,
         });
     }
 
@@ -259,22 +379,17 @@ where
 
         // ② 近两年日 K 回填 → 周线降采样落 PriceHistory（批内逐只，与报价合并为
         // 该标的一格）。覆盖行情分区全部标的（stock|etf，#695；清仓标的自 #827
-        // 恢复采集）；停牌/整周无有效报价该周无点，不中断同步。
+        // 恢复采集）；停牌/整周无有效报价该周无点，不中断同步。单只整只一次提交
+        //（ADR-0122 决策 8 / issue #1373）：第 N 个周点写入失败整体回滚，不留半根
+        // 历史——「有历史序列」与「历史完整」由此等价。事务经 [`ensure_transaction`]
+        //（ADR-0033 嵌套感知）：autocommit 连接自持事务、已在事务中则加入外层。
         for (secid, inst) in chunk {
             // 日 K 抓取在会话之外；降采样落库才短暂取一次连接（issue #1275）。
             let bars = fetch_kline(secid)?;
             session.with_connection(|conn| {
-                for (trade_date, close) in downsample_weekly(&bars) {
-                    upsert_price_history(
-                        conn,
-                        &inst.instrument_id,
-                        &trade_date,
-                        price_value_to_cents(close),
-                        &inst.currency,
-                        EASTMONEY_PRICE_SOURCE,
-                    )?;
-                }
-                Ok(())
+                ensure_transaction(conn, || {
+                    write_weekly_price_history(conn, &inst.instrument_id, &inst.currency, &bars)
+                })
             })?;
             done += 1;
             progress(SyncProgress::instrument(done, total));
@@ -306,11 +421,23 @@ where
         })?;
     }
 
-    // ④⑤ 基金分区逐只（issue #897 逐只合并推进）：历史净值回填（ADR-0038 决策 6，
+    // ④ 批量取数面（ADR-0121 / issue #1374）：名称全量字典 + 场外基金净值全市场
+    // 批量面，各整次同步最多一次请求——请求量自此不再随基金数线性增长；净值分区
+    // 为空则零请求（无标的可刷，不白撞数据源）。失败 / 停用 / 未覆盖的标的在下方
+    // 逐标的通道 fail-closed 兜底（缺口与失败分开统计，见 [`fetch_bulk_surfaces`]）。
+    let mut bulk_gaps = 0usize;
+    let bulk_data = if funds.is_empty() {
+        BulkData::none()
+    } else {
+        fetch_bulk_surfaces(bulk)
+    };
+
+    // ⑤ 基金分区逐只（issue #897 逐只合并推进）：历史净值回填（ADR-0038 决策 6，
     // 委托 [`sync_one_fund_nav`]——无历史序列者首刷近两年、已有序列者按净值日期
-    // 水位增量，issue #1059）+ 权威名称随行刷新（issue #827，净值报文不携带名称，
-    // 逐只经基金详情通道；每只有码基金一请求）合并为该基金的一格——净值与名称都
-    // 完成才推进；「已是最新（无新净值）」同样推进。
+    // 水位增量，issue #1059）+ 权威名称随行刷新（issue #827）合并为该基金的一格；
+    // 「已是最新（无新净值）」同样推进。名称与耗时随取数面改写：批量面命中即零
+    // 请求（名称全量字典 / 净值批量面的最新净值日期即「是否有新净值」的判据），
+    // 未覆盖的标的退回既有逐标的通道（名称走基金详情通道、净值走 lsjz 分页）。
     // 名称充代码行无通道：不进净值分区（不进分母、零请求），计入跳过（见上）。
     let mut fund_stats = FundSyncStats {
         synced: 0,
@@ -321,6 +448,16 @@ where
         // 页级推进（issue #1061）：`done`/`total` 仍是标的级口径，页抓取返回后
         // 才带出本基金的页明细——抓取内部的退避/重试等待不产生推进。
         let code = fund.symbol.clone();
+        // 净值批量面命中 → 逐只同步以「最新净值日期」作水位判据（无新净值即整只
+        // 零请求）；未覆盖 = 缺口，逐条回退逐标的通道补齐，不触发熔断。
+        let latest_hint = bulk_data.nav.as_ref().and_then(|table| table.get(&code));
+        if bulk_data.nav.is_some() && latest_hint.is_none() {
+            bulk_gaps += 1;
+            tracing::debug!(
+                code = %code,
+                "场外基金净值批量面未覆盖该标的（新成立 / 已终止 / 清盘 / 部分货币基金），逐只通道补齐"
+            );
+        }
         {
             let mut on_page = |page: u64, pages: u64| {
                 progress(SyncProgress {
@@ -337,6 +474,7 @@ where
             sync_one_fund_nav(
                 session,
                 fund,
+                latest_hint,
                 fetch_nav,
                 fetch_nav_full,
                 &mut fund_stats,
@@ -347,19 +485,29 @@ where
                 witness.mark_written();
             }
         }
-        // 名称刷新遇「确定性查无」降级为保留原名（ADR-0039 修订，issue #1212）：基金
-        // 可能已终止（搜索索引与档案通道都不再可达），但这不该打断整次同步；网络类
-        // 失败仍按既有契约上抛。空名称 = 未取到，不落库。
-        let name = match fetch_fund_name(&fund.symbol) {
-            Ok(name) => name,
-            Err(error) if error.is_code("sync.fund-not-found") => {
-                tracing::warn!(
-                    code = %fund.symbol,
-                    "基金名称刷新查无此码（搜索索引与档案通道皆未命中），保留原名称"
-                );
-                String::new()
+        // 名称随行刷新（issue #827；取数面随 ADR-0121 改写）：全量字典命中即零
+        // 请求（与净值批量面同一次同步的常数级请求量的一部分）；未覆盖的标的退回
+        // 逐只详情通道——遇「确定性查无」降级为保留原名（ADR-0039 修订，
+        // issue #1212）：基金可能已终止（搜索索引与档案通道都不再可达），但这不该
+        // 打断整次同步；网络类失败仍按既有契约上抛。空名称 = 未取到，不落库。
+        let name = match bulk_data.names.as_ref().and_then(|dict| dict.get(&code)) {
+            Some(name) => name.clone(),
+            None => {
+                if bulk_data.names.is_some() {
+                    tracing::debug!(code = %code, "名称全量字典未覆盖该标的，逐只名称通道补齐");
+                }
+                match fetch_fund_name(&fund.symbol) {
+                    Ok(name) => name,
+                    Err(error) if error.is_code("sync.fund-not-found") => {
+                        tracing::warn!(
+                            code = %fund.symbol,
+                            "基金名称刷新查无此码（搜索索引与档案通道皆未命中），保留原名称"
+                        );
+                        String::new()
+                    }
+                    Err(error) => return Err(error),
+                }
             }
-            Err(error) => return Err(error),
         };
         // 名称落库才短暂取一次连接（抓取在会话之外，issue #1275）。
         if session
@@ -380,12 +528,24 @@ where
     let skipped = no_quote_source + skipped_unqueryable + invalid + fund_stats.skipped;
     // 实际写入 = 股票有效价 + 基金实际落库净值（基金「已是最新」不算写入）。
     let written = synced_codes.len() + fund_stats.written;
+    // 取数面统计收尾（ADR-0121 决策 3）：缺口与失败在统计上分开——缺口（批量面
+    // 没收录该标的）逐条回退补齐、不触发熔断；失败（面报错或处于停用期）按熔断
+    // 契约整体回退逐标的通道，并带出降级事实。
+    if bulk_data.degraded || bulk_gaps > 0 {
+        tracing::info!(
+            bulk_degraded = bulk_data.degraded,
+            bulk_gaps,
+            "行情批量取数面统计：缺口逐条回退，失败整体降级"
+        );
+    }
 
     Ok(SyncInstrumentInfoResult {
         synced,
         skipped,
         written,
         renamed,
+        bulk_degraded: bulk_data.degraded,
+        bulk_gaps,
         message: format!("已同步 {synced} 只，跳过 {skipped} 只"),
     })
 }
@@ -434,6 +594,34 @@ pub(super) fn downsample_weekly(bars: &[KlineBar]) -> Vec<(String, f64)> {
         by_week.insert(week_monday(d), (bar.date.clone(), bar.close));
     }
     by_week.into_values().collect()
+}
+
+/// 单只标的的周采样历史落库（ADR-0122 决策 8 / issue #1373）：日 K 回填与基金
+/// 净值回填两条通道共用的「降采样 + 逐周 upsert」形体，不另写第二份采样落库。
+/// 「整周覆盖」幂等由 `upsert_price_history` 的 UNIQUE 约束保证（同周重复获取
+/// 零重复行）。
+///
+/// 本函数只写行、**不开事务**：调用方必须在**一只一个事务**里包住它
+///（[`ensure_transaction`]），否则第 N 个周点写入失败会留下半根历史。两个现役
+/// 调用点（行情分区日 K 回填、基金净值回填）都已如此接线；基金侧另有现价与
+/// 历史同事务的需求，故事务边界留在调用方而非本函数。
+pub(super) fn write_weekly_price_history(
+    conn: &Connection,
+    instrument_id: &str,
+    currency: &str,
+    bars: &[KlineBar],
+) -> Result<()> {
+    for (trade_date, close) in downsample_weekly(bars) {
+        upsert_price_history(
+            conn,
+            instrument_id,
+            &trade_date,
+            price_value_to_cents(close),
+            currency,
+            EASTMONEY_PRICE_SOURCE,
+        )?;
+    }
+    Ok(())
 }
 
 /// 该日所属 ISO 周的周一：降采样的周键，与 price_history / fx_rate_history 的

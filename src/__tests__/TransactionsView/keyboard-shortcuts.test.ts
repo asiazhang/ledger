@@ -2,8 +2,8 @@ import { mountView } from './common'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { NModal } from 'naive-ui'
-import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
-import TransactionForm from '@/components/TransactionForm.vue'
+import { createOverlayToken, resetOverlays } from '@ledger/ui-kit/overlayRegistry'
+import TransactionForm from '@/transaction/TransactionForm.vue'
 
 describe('TransactionsView 裸键快捷键（issue #153）', () => {
   // 注册表是模块级状态，需每测复位（body 清空由全局壳层承担）

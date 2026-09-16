@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import AccountLink from '@/components/AccountLink.vue'
+import AccountLink from '@/accounts/AccountLink.vue'
 import { useAppStore } from '@/stores/app'
 
 

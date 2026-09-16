@@ -9,6 +9,10 @@ export interface SyncInstrumentInfoResult {
   skipped: number
   /// 结果提示文案（空库时为「暂无标的可同步」），供轻量消息直接展示
   message: string
+  /// 降级事实位（issue #1376 / ADR-0121 决策 4）：本次同步回退到逐标的通道
+  /// （批量取数面失败或跨同步停用期）时为真，界面据此明示「已降级、本次较慢」；
+  /// 正常（批量面命中）路径为假。缺口（批量面未覆盖的逐条回退）不是降级。
+  bulk_degraded: boolean
 }
 
 /// 场外基金深回填的页级明细（issue #1061）：正在回填的基金代码与

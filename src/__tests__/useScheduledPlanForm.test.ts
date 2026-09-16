@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { messageCalls } from '@ledger/test-support/message-mock'
-import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
+import { useScheduledPlanForm } from '@/scheduled/useScheduledPlanForm'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { todayStr } from '@ledger/utils/date'

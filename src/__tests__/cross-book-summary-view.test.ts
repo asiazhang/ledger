@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { hoverTipText } from '@ledger/test-support/tooltip'
 import { formatAmount } from '@ledger/money'
 import CrossBookSummaryView from '@/views/CrossBookSummaryView.vue'
 import type { Currency, CrossBookInvestmentSummary } from '@ledger/types'
@@ -124,6 +125,25 @@ describe('跨账本投资汇总视图', () => {
     expect(wrapper.find('[data-testid="summary-marketValue"]').text()).toBe(
       formatAmount(120_000, CNY),
     )
+  })
+
+  it('四个合计口径各带说明触发器，并挂跨本作用域句（issue #1369）', async () => {
+    const wrapper = await mountView()
+    // 断言对准用户可观察结果：删掉任一卡的口径说明接线即找不到触发器、本用例变红
+    for (const key of ['marketValue', 'unrealizedPnl', 'cumulativePnl', 'investableAssets']) {
+      const trigger = wrapper.find(`[data-testid="cross-book-${key}-info"]`)
+      expect(trigger.exists(), key).toBe(true)
+      // aria 用本表位标签（跨本页展示词「持仓市值」与投资页「总市值」不同名）
+      expect(trigger.attributes('aria-label')).toContain('说明')
+    }
+    // 可投资资产口径与其余三个不同：隐藏账户不计入、且是财务自由度的分子
+    const tip = await hoverTipText(
+      wrapper.find('[data-testid="cross-book-investableAssets-info"]'),
+    )
+    expect(tip).toContain('隐藏账户与负债都不计入')
+    // 跨本作用域句：逐本折算到主账本本位币、未解锁/未建库的账本不计入
+    expect(tip).toContain('未解锁或未建库的账本不计入')
+    wrapper.unmount()
   })
 })
 

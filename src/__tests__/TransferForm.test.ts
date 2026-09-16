@@ -4,7 +4,7 @@ import { makeTransaction } from './factories'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
-import TransferForm from '@/components/TransferForm.vue'
+import TransferForm from '@/transaction/TransferForm.vue'
 import type { Account, Transaction } from '@ledger/types'
 
 

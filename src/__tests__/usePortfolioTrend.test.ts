@@ -7,13 +7,13 @@ import {
 } from '@ledger/test-support/invoke-mock'
 import { withSetup } from '@ledger/test-support/mount'
 import { useReferenceStore } from '@/stores/reference'
-import { useInvestmentsSessionStore } from '@/stores/investments-session'
+import { useInvestmentsSessionStore } from '@/investment/investments-session'
 import {
   toTrendRange,
   toTrendChartSeries,
   isTrendEmpty,
   usePortfolioTrend,
-} from '@/composables/usePortfolioTrend'
+} from '@/investment/usePortfolioTrend'
 import type { Instrument, InstrumentPriceChannel, PortfolioValueTrend } from '@ledger/types'
 import { makeInstrument } from './factories'
 

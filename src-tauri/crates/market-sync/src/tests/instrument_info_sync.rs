@@ -6,10 +6,18 @@
 //! 真实网络。
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use chrono::{Datelike, NaiveDate};
 use rusqlite::{Connection, params};
 
+use crate::bulk::{
+    BULK_DISABLE_PERIOD, BULK_FAILURE_THRESHOLD, BulkFetchCircuit, BulkFetchSurfaces, BulkNavPoint,
+    FundNameDictionary, FundNavTable,
+};
+use crate::channels::{SyncFetchChannels, do_incremental_sync_channels};
 use crate::fund_nav::{LsjzPage, NavPoint, NavQuery};
 use crate::http::{
     KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
@@ -18,6 +26,7 @@ use crate::http::{
 use crate::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
 use crate::model::WriteWitness;
 use crate::session::ScopedSession;
+use crate::{FetchFundName, FetchNavFull, FetchNavPage};
 use crate::{FundNavProgress, SyncProgress};
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::{
@@ -176,6 +185,7 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -370,6 +380,7 @@ fn incremental_sync_normalizes_symbol_suffix() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -406,6 +417,7 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -429,6 +441,7 @@ fn incremental_sync_empty_library_returns_message() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -473,6 +486,7 @@ fn incremental_sync_updates_holding_prices_only() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -542,6 +556,7 @@ fn incremental_sync_skips_holdings_without_quote_source() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -593,6 +608,7 @@ fn incremental_sync_keeps_old_price_when_suspended() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -625,6 +641,7 @@ fn incremental_sync_counts_missing_response_as_skipped() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -655,6 +672,7 @@ fn incremental_sync_skips_unknown_market() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -680,6 +698,7 @@ fn incremental_sync_is_idempotent() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -695,6 +714,7 @@ fn incremental_sync_is_idempotent() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -727,6 +747,7 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -742,10 +763,70 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
 }
 
 #[test]
-fn incremental_sync_batches_by_fifty() {
+fn incremental_sync_pulls_a_daily_ledgers_quotes_in_one_batch() {
+    // ADR-0121 验收 8（可观察面是请求数，不是常量本身）：233 只行情标的的账本，
+    // 批量报价的请求数是 1 次——小于旧的批大小 50 会把同一账本拆成 5 次请求。
     let conn = tauri_app_lib::test_support::open();
-    // 55 只股票：应拆为 2 批（50 + 5），每批 secid 数不超 ULIST_BATCH_SIZE
-    for i in 0..55 {
+    let total = 233;
+    for i in 0..total {
+        let symbol = format!("{:06}", 600000 + i);
+        insert_holding(
+            &conn,
+            &format!("acc-{i}"),
+            &format!("inst-{i}"),
+            &symbol,
+            "stock",
+            "CNY",
+            "sh",
+        );
+    }
+
+    let mut batch_sizes: Vec<usize> = Vec::new();
+    let mut fetch = |secids: &str| {
+        let codes: Vec<&str> = secids.split(',').collect();
+        batch_sizes.push(codes.len());
+        Ok(codes
+            .iter()
+            .map(|secid| {
+                let code = secid.split('.').nth(1).unwrap().to_string();
+                StockItem {
+                    code,
+                    name: "名称".into(),
+                    price: Some(1000.0),
+                    precision: None,
+                }
+            })
+            .collect())
+    };
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_bulk(),
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+
+    assert_eq!(result.synced, total);
+    assert_eq!(
+        batch_sizes,
+        vec![total],
+        "账本量级的行情标的应在一次批量报价请求内取回"
+    );
+}
+
+#[test]
+fn incremental_sync_batches_quote_requests_by_the_batch_size_constant() {
+    let conn = tauri_app_lib::test_support::open();
+    // 常量 + 5 只股票：应拆为 2 批（常量 + 5），每批 secid 数不超 ULIST_BATCH_SIZE
+    // ——拆批规则按常量走（超量仍会拆，不会硬塞一个请求）。
+    let total = ULIST_BATCH_SIZE + 5;
+    for i in 0..total {
         let symbol = format!("{:06}", 600000 + i);
         insert_holding(
             &conn,
@@ -784,13 +865,14 @@ fn incremental_sync_batches_by_fifty() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
     .unwrap();
 
-    assert_eq!(result.synced, 55);
-    assert_eq!(batch_sizes, vec![50, 5]);
+    assert_eq!(result.synced, total);
+    assert_eq!(batch_sizes, vec![ULIST_BATCH_SIZE, 5]);
 }
 
 #[test]
@@ -808,6 +890,7 @@ fn incremental_sync_propagates_fetch_error() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut witness,
     )
@@ -848,6 +931,7 @@ fn witness_survives_mid_run_failure_after_write() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut witness,
     )
@@ -880,6 +964,7 @@ fn witness_mirrors_result_any_written_on_success() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut witness,
     )
@@ -941,6 +1026,7 @@ fn witness_mirrors_result_any_written_on_success() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut witness,
     )
@@ -1014,6 +1100,13 @@ fn no_name(_: &str) -> Result<String> {
 
 /// 空实现：既有用例不关心进度序列时注入（进度回调最小桩，issue #897）。
 fn no_progress(_progress: SyncProgress) {}
+
+/// 无批量取数面的注入桩（issue #1374）：两面恒定报「零覆盖」，所有标的按缺口走
+/// 逐标的通道——既有用例断言的正是逐标的路径（降级兜底路径），行为与改造前逐字节
+/// 一致。批量取数面自身的行为断言见 `tests/bulk_fetch.rs` 与本文件下方取数面用例。
+fn no_bulk() -> BulkFetchSurfaces {
+    BulkFetchSurfaces::absent()
+}
 
 /// 进度记录闭包：把**标的级一格的** (done, total) 推进序列攒进测试侧共享缓冲
 ///（与 [`mock_fx`] 的请求记录同纪律：缓冲由测试持有，断言时 borrow）。基金
@@ -1108,6 +1201,7 @@ fn kline_backfill_downsamples_daily_to_weekly() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1154,6 +1248,7 @@ fn kline_backfill_full_week_overwrite_is_idempotent() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1170,6 +1265,7 @@ fn kline_backfill_full_week_overwrite_is_idempotent() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1216,6 +1312,7 @@ fn kline_backfill_keeps_history_after_position_cleared() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1241,6 +1338,7 @@ fn kline_backfill_keeps_history_after_position_cleared() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1291,6 +1389,7 @@ fn kline_backfill_writes_fx_rate_history_alongside() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1335,6 +1434,7 @@ fn kline_backfill_empty_history_keeps_quote_only() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1365,6 +1465,7 @@ fn kline_backfill_fetch_error_propagates() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1623,6 +1724,19 @@ fn fund_price_of(conn: &Connection, instrument_id: &str) -> Option<(i64, Option<
     .ok()
 }
 
+/// 注入「第 3 个周点（2026-01-19 当周）写入失败」的测试侧故障，供 ADR-0122
+/// 决策 8 / issue #1373 的负向判据共用：`BEFORE INSERT` 触发器
+/// `RAISE(ABORT)`，产品代码零 hook。降采样按周升序落库，故前两个周点先写、
+/// 第三个失败——逐周点提交会留下前两行，整只一次提交回滚后零行。
+fn inject_week_write_failure(conn: &Connection) {
+    conn.execute_batch(
+        "CREATE TRIGGER inject_week_write_failure BEFORE INSERT ON price_history \
+         WHEN NEW.trade_date='2026-01-19' \
+         BEGIN SELECT RAISE(ABORT, '注入周点写入失败'); END;",
+    )
+    .unwrap();
+}
+
 #[test]
 fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
     let conn = tauri_app_lib::test_support::open();
@@ -1658,6 +1772,7 @@ fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1731,6 +1846,7 @@ fn fund_first_sync_prefers_single_request_full_series() {
         &mut nav,
         &mut full,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1808,6 +1924,7 @@ fn fund_first_sync_full_series_failure_falls_back_to_pages() {
         &mut nav,
         &mut full,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1854,6 +1971,7 @@ fn fund_first_sync_full_series_empty_falls_back_to_pages() {
         &mut nav,
         &mut full,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1902,6 +2020,7 @@ fn fund_first_sync_full_series_without_window_points_falls_back_to_pages() {
         &mut nav,
         &mut full,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -1974,6 +2093,7 @@ fn fund_incremental_does_not_touch_single_request_full_series() {
         &mut nav,
         &mut full,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2053,6 +2173,7 @@ fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2132,6 +2253,7 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2177,6 +2299,7 @@ fn fund_first_sync_without_nav_counts_skipped() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2247,6 +2370,7 @@ fn fund_with_nav_date_but_no_history_backfills_two_years() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2342,6 +2466,7 @@ fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
         &mut blocked_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2359,6 +2484,282 @@ fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
         price_history_rows(&conn, "inst-fund").len(),
         1,
         "空响应零落库（原有历史点原样保留）"
+    );
+}
+
+#[test]
+fn fund_backfill_write_failure_leaves_no_history() {
+    // ADR-0122 决策 8 负向条目（issue #1373）：单只回填整只一次提交——第 N 个周点
+    // 写入失败时整只回滚，磁盘上不留半根历史，下次运行仍是首刷重新采集。
+    // 失败注入见 [`inject_week_write_failure`]；逐周点提交会留下前两个周点使本例变红。
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    inject_week_write_failure(&conn);
+
+    // 单请求全量通道返回跨四周的单位净值序列（升序）：第 3 周写入触发注入失败。
+    let series = [
+        ("2026-01-05".to_string(), 1.000),
+        ("2026-01-12".to_string(), 1.100),
+        ("2026-01-19".to_string(), 1.200),
+        ("2026-01-30".to_string(), 1.300),
+    ];
+    let full_requested = RefCell::new(Vec::new());
+    let full = [("110022", full_series(&series))];
+    let mut full_nav = mock_full_nav(&full, &full_requested);
+    let mut fetch = mock_fetch(&[]);
+    let err = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut full_nav,
+        &mut no_name,
+        &mut no_bulk(),
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string().contains("注入周点写入失败"),
+        "注入的写入失败应原样上抛：{err}"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![],
+        "第 N 个周点写入失败时整只回滚，不留半根历史（下次运行仍按首刷重新采集）"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        None,
+        "整只一次提交：现价与历史同事务，回滚后不留现价"
+    );
+
+    // 「且下次运行会重新采集它」（AC 第二条）：解除注入后重跑，仍按首刷全量通道
+    // 把整只历史补回——零行 → 首刷判据为真，正是原子性要保住的等价。
+    conn.execute_batch("DROP TRIGGER inject_week_write_failure;")
+        .unwrap();
+    let mut full_nav_retry = mock_full_nav(&full, &full_requested);
+    let retry = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut full_nav_retry,
+        &mut no_name,
+        &mut no_bulk(),
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+    assert_eq!(retry.synced, 1, "解除注入后重跑按首刷重新采集");
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund").len(),
+        4,
+        "下次运行补回整只历史（4 个周点）"
+    );
+}
+
+#[test]
+fn fund_partial_blocked_page_skips_whole_instrument() {
+    // ADR-0122 决策 8（issue #1373）：部分页被拦截（空响应）时本轮窗口不完整，
+    // 整只不落库、计入跳过并在日志标注——不再沿用「记警告后继续落已采点」的旧行为
+    //（半根历史会让「有历史序列」冒充「历史完整」）。
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    // 首页有净值点、次页被拦截（空响应、非零 TotalCount）：total=45 → 3 页。
+    let pages = [(
+        "110022",
+        vec![
+            nav_page(45, &[("2026-01-30", 3.348), ("2026-01-28", 3.293)]),
+            LsjzPage {
+                points: vec![],
+                total: 45,
+                blocked: true,
+            },
+        ],
+    )];
+    let requested = RefCell::new(Vec::new());
+    let mut nav = mock_nav(&pages, &requested);
+    let mut fetch = mock_fetch(&[]);
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_bulk(),
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+
+    assert_eq!(result.synced, 0, "部分页被拦截不得计成功");
+    assert_eq!(result.skipped, 1, "部分页被拦截整只计入跳过");
+    assert_eq!(result.written, 0);
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![],
+        "整只不落库：被拦截的部分页宁可整只留空重试，不留半根历史"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        None,
+        "整只不落库时不写现价"
+    );
+}
+
+#[test]
+fn fund_incremental_partial_blocked_page_keeps_existing_history_and_watermark() {
+    // ADR-0122 决策 8（issue #1373）的日间常态分支：已有历史序列的基金在增量窗口
+    // 内被部分拦截时同样整只不落库——本轮已采净值点丢弃、既有历史点原样保留、
+    // 水位不前进（下次从同一水位重取），不留下半根新历史。
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    let watermark = "2026-01-20".to_string();
+    upsert_market_price(
+        &conn,
+        &MarketPriceWrite {
+            instrument_id: "inst-fund",
+            price_cents: 30000,
+            currency_code: "CNY",
+            priced_at: &watermark,
+            nav_date: Some(&watermark),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
+    )
+    .unwrap();
+    upsert_price_history(
+        &conn,
+        "inst-fund",
+        &watermark,
+        30000,
+        "CNY",
+        EASTMONEY_PRICE_SOURCE,
+    )
+    .unwrap();
+
+    // 增量窗口（水位次日 2026-01-21 起）：首页有净值点、次页被拦截（total=45 → 3 页）。
+    let pages = [(
+        "110022",
+        vec![
+            nav_page(45, &[("2026-01-30", 3.348)]),
+            LsjzPage {
+                points: vec![],
+                total: 45,
+                blocked: true,
+            },
+        ],
+    )];
+    let requested = RefCell::new(Vec::new());
+    let mut nav = mock_nav(&pages, &requested);
+    let mut fetch = mock_fetch(&[]);
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_bulk(),
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+
+    assert_eq!(result.synced, 0, "部分页被拦截不得计成功");
+    assert_eq!(result.skipped, 1, "部分页被拦截整只计入跳过");
+    assert_eq!(result.written, 0);
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![(watermark.clone(), 30000, "CNY".to_string())],
+        "本轮已采点不落库，既有历史点原样保留"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((30000, Some(watermark.clone()))),
+        "整只不落库则水位不前进（下次从同一水位重取）"
+    );
+    assert_eq!(requested.borrow()[0].start_date, "2026-01-21");
+}
+
+#[test]
+fn fund_page_cap_truncation_skips_whole_instrument() {
+    // ADR-0122 决策 8（issue #1373）：页数触顶（服务端 TotalCount 异常，窗口已知
+    // 未采全）与部分页被拦截同待遇——整只不落库、计入跳过；不再沿用「记警告后
+    // 继续落已采点」。触顶若照旧落库，缺失段会因「有历史序列」为真而永久化。
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    // total=1000 → raw_pages=50 > MAX_NAV_PAGES(40)：触顶，首页已采净值点也不落库。
+    let pages = [("110022", vec![nav_page(1000, &[("2026-01-30", 3.348)])])];
+    let requested = RefCell::new(Vec::new());
+    let mut nav = mock_nav(&pages, &requested);
+    let mut fetch = mock_fetch(&[]);
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_bulk(),
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+
+    assert_eq!(result.synced, 0, "页数触顶不得计成功");
+    assert_eq!(result.skipped, 1, "页数触顶整只计入跳过");
+    assert_eq!(result.written, 0);
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![],
+        "整只不落库：触顶的窗口宁可整只留空重试，不留半根历史"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        None,
+        "整只不落库时不写现价"
     );
 }
 
@@ -2396,6 +2797,7 @@ fn fund_rows_without_real_code_skip_without_fetch() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2430,6 +2832,7 @@ fn fund_nav_fetch_error_propagates() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2473,6 +2876,7 @@ fn etf_holding_syncs_quote_and_kline_backfill() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2493,6 +2897,59 @@ fn etf_holding_syncs_quote_and_kline_backfill() {
             ("2026-01-12".into(), 46_490, "CNY".into()),
         ],
         "ETF 近两年回填与股票同规则周采样落 PriceHistory"
+    );
+}
+
+#[test]
+fn quote_kline_backfill_write_failure_leaves_no_history() {
+    // ADR-0122 决策 8 / issue #1373 负向条目：行情分区（stock|etf）的历史回填也
+    // 整只一次提交——第 N 个周点写入失败时整只回滚，磁盘上不留半根历史。
+    // 失败注入见 [`inject_week_write_failure`]；逐周点提交会留下前两个周点使本例变红。
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "sh");
+    inject_week_write_failure(&conn);
+
+    let mut fetch = |_: &str| {
+        Ok(vec![StockItem {
+            name: "沪深300ETF华泰柏瑞".into(),
+            code: "510300".into(),
+            price: Some(4634.0),
+            precision: Some(3.0),
+        }])
+    };
+    // 跨四周日 K（升序）：第 3 周写入触发注入失败。
+    let klines = [(
+        "1.510300",
+        vec![
+            bar("2026-01-05", 4.600),
+            bar("2026-01-12", 4.649),
+            bar("2026-01-19", 4.700),
+            bar("2026-01-30", 4.720),
+        ],
+    )];
+    let mut kline = mock_kline(&klines);
+    let err = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_full_nav,
+        &mut no_name,
+        &mut no_bulk(),
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string().contains("注入周点写入失败"),
+        "注入的写入失败应原样上抛：{err}"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-etf"),
+        vec![],
+        "第 N 个周点写入失败时整只回滚，不留半根历史"
     );
 }
 
@@ -2519,6 +2976,7 @@ fn etf_holding_unknown_market_counts_skipped_without_requests() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2607,6 +3065,7 @@ fn three_type_partitions_roll_up_into_one_result() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2722,6 +3181,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2786,6 +3246,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2830,6 +3291,7 @@ fn us_stock_holdings_route_exact_secids_per_market() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2883,6 +3345,7 @@ fn incremental_sync_includes_cleared_instrument() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2916,6 +3379,7 @@ fn incremental_sync_includes_never_traded_instrument() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2948,6 +3412,7 @@ fn incremental_sync_refreshes_names_from_quote_batch() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -2995,6 +3460,7 @@ fn incremental_sync_skips_name_write_when_unchanged() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -3046,6 +3512,7 @@ fn fund_name_refresh_via_detail_lookup() {
         &mut nav,
         &mut no_full_nav,
         &mut fund_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -3103,6 +3570,7 @@ fn fund_name_refresh_degrades_deterministic_not_found_to_skip() {
         &mut nav,
         &mut no_full_nav,
         &mut fund_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -3145,6 +3613,7 @@ fn fund_name_refresh_still_propagates_network_failure() {
         &mut nav,
         &mut no_full_nav,
         &mut fund_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -3194,6 +3663,7 @@ fn fund_name_lookup_skips_name_as_code_rows_and_empty_names() {
         &mut nav,
         &mut no_full_nav,
         &mut fund_name,
+        &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
     )
@@ -3217,6 +3687,8 @@ fn any_written_covers_name_only_and_price_only_writes() {
         message: String::new(),
         written,
         renamed,
+        bulk_degraded: false,
+        bulk_gaps: 0,
     };
     assert!(base(1, 0).any_written(), "价格写入");
     assert!(
@@ -3276,6 +3748,7 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
     )
@@ -3347,6 +3820,7 @@ fn progress_denominator_counts_channel_capable_instruments_only() {
         &mut nav,
         &mut no_full_nav,
         &mut fund_name,
+        &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
     )
@@ -3402,6 +3876,7 @@ fn progress_advances_even_when_quote_invalid_or_missing() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
     )
@@ -3472,6 +3947,7 @@ fn fund_up_to_date_still_advances_progress() {
         &mut nav,
         &mut no_full_nav,
         &mut fund_name,
+        &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
     )
@@ -3523,6 +3999,7 @@ fn fund_progress_advances_after_nav_and_name_complete() {
         &mut nav,
         &mut no_full_nav,
         &mut fund_name,
+        &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
     )
@@ -3577,6 +4054,7 @@ fn fund_first_sync_emits_page_level_progress_within_one_instrument() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
     )
@@ -3669,6 +4147,7 @@ fn fund_page_progress_emitted_only_after_page_fetch_returns() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
     )
@@ -3722,6 +4201,7 @@ fn page_level_detail_only_for_multi_page_fund_sync() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
     )
@@ -3779,6 +4259,7 @@ fn blocked_fund_pages_do_not_advance_page_progress() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
     )
@@ -3812,6 +4293,7 @@ fn progress_not_emitted_for_empty_library() {
         &mut no_nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
     )
@@ -3857,6 +4339,7 @@ fn progress_not_emitted_when_no_channel_capable_instrument() {
         &mut nav,
         &mut no_full_nav,
         &mut no_name,
+        &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
     )
@@ -3864,4 +4347,960 @@ fn progress_not_emitted_when_no_channel_capable_instrument() {
 
     assert!(log.borrow().is_empty(), "分母为 0 不发 total");
     assert_eq!(result.skipped, 2);
+}
+
+// ---------------------------------------------------------------------------
+// 行情批量取数面（ADR-0121 / issue #1374）：日常现价刷新改走批量取数面。
+//
+// 本组用例经**生产同款入口** `do_incremental_sync_channels`（通道束拆交）驱动：
+// 两个批量面就在束里，删掉通道束的取数面接线即断，下面「请求数收敛」「失败逐只
+// 兜底」「缺口不熔断」的断言全部变红（负向判据）。
+// ---------------------------------------------------------------------------
+
+/// 基金标的的直插种子：账户 + 标的（fund / 6 位代码）+ 一笔买入，再覆写名称
+/// （名称随行刷新的输入面：与数据源权威名称不同才应落库）。
+fn seed_fund(conn: &Connection, instrument_id: &str, code: &str, name: &str) {
+    insert_holding(
+        conn,
+        &format!("acc-{instrument_id}"),
+        instrument_id,
+        code,
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    conn.execute(
+        "UPDATE instruments SET name=?1 WHERE id=?2",
+        params![name, instrument_id],
+    )
+    .unwrap();
+}
+
+/// 直插该基金的既有历史序列与现价水位（水位 = 现价缓存的净值日期，兼任历史
+/// 增量水位）：已有历史序列即非首刷，逐只通道走的正是水位增量路径。
+fn seed_fund_history(conn: &Connection, instrument_id: &str, watermark: &str) {
+    upsert_price_history(
+        conn,
+        instrument_id,
+        watermark,
+        30000,
+        "CNY",
+        EASTMONEY_PRICE_SOURCE,
+    )
+    .unwrap();
+    upsert_market_price(
+        conn,
+        &MarketPriceWrite {
+            instrument_id,
+            price_cents: 30000,
+            currency_code: "CNY",
+            priced_at: watermark,
+            nav_date: Some(watermark),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
+    )
+    .unwrap();
+}
+
+/// 标的行当前名称。
+fn instrument_name(conn: &Connection, instrument_id: &str) -> String {
+    conn.query_row(
+        "SELECT name FROM instruments WHERE id=?1",
+        params![instrument_id],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+/// 标的行当前版本（「零变化不写库不虚增版本」的可观察面）。
+fn instrument_version(conn: &Connection, instrument_id: &str) -> i64 {
+    conn.query_row(
+        "SELECT version FROM instruments WHERE id=?1",
+        params![instrument_id],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+/// 行情三通道（批量报价 / 日 K / 汇率）的调用计数：用例现场只有场外基金标的，
+/// 这三条通道恒不应被触达——被触达即计数 + 断言面（同时硬失败，避免静默）。
+#[derive(Clone, Default)]
+struct QuoteChannelCalls {
+    ulist: Arc<AtomicUsize>,
+    kline: Arc<AtomicUsize>,
+    fx: Arc<AtomicUsize>,
+}
+
+impl QuoteChannelCalls {
+    fn total(&self) -> usize {
+        self.ulist.load(Ordering::SeqCst)
+            + self.kline.load(Ordering::SeqCst)
+            + self.fx.load(Ordering::SeqCst)
+    }
+}
+
+/// 批量取数面编排用例的通道束：行情三通道计到 [`QuoteChannelCalls`] 上并硬失败
+/// （用例现场无行情标的），逐标的基金通道与两个批量面由用例注入。
+fn fund_channels(
+    quote_calls: QuoteChannelCalls,
+    fetch_nav: FetchNavPage,
+    fetch_nav_full: FetchNavFull,
+    fetch_fund_name: FetchFundName,
+    bulk: BulkFetchSurfaces,
+) -> SyncFetchChannels {
+    SyncFetchChannels {
+        fetch_ulist: Box::new({
+            let calls = quote_calls.ulist.clone();
+            move |_: &str| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                unreachable!("用例现场无行情通道标的")
+            }
+        }),
+        fetch_kline: Box::new({
+            let calls = quote_calls.kline.clone();
+            move |_: &str| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                unreachable!("用例现场无行情通道标的")
+            }
+        }),
+        fetch_fx: Box::new({
+            let calls = quote_calls.fx.clone();
+            move |_: &str| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                unreachable!("用例现场无行情通道标的")
+            }
+        }),
+        fetch_nav,
+        fetch_nav_full,
+        fetch_fund_name,
+        bulk,
+    }
+}
+
+/// 两个批量面的注入桩（调用次数由用例经各自计数器观察）+ 跨同步记忆句柄。
+fn bulk_surfaces(
+    names: Box<dyn FnMut() -> Result<FundNameDictionary> + Send>,
+    nav: Box<dyn FnMut() -> Result<FundNavTable> + Send>,
+    circuit: Arc<Mutex<BulkFetchCircuit>>,
+) -> BulkFetchSurfaces {
+    BulkFetchSurfaces {
+        names,
+        nav,
+        circuit,
+    }
+}
+
+/// 逐标的净值页桩：固定返回同一页（给定日期单点），并累加调用次数。
+fn counting_nav(calls: Arc<AtomicUsize>, date: String, nav: f64) -> FetchNavPage {
+    Box::new(move |_: &NavQuery| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Ok(nav_page(1, &[(date.as_str(), nav)]))
+    })
+}
+
+/// 空净值页桩（窗口内无新净值）：即便被触达也不会写库，只留调用事实。
+fn empty_nav(calls: Arc<AtomicUsize>) -> FetchNavPage {
+    Box::new(move |_: &NavQuery| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Ok(LsjzPage {
+            points: vec![],
+            total: 0,
+            blocked: false,
+        })
+    })
+}
+
+/// 逐标的名称桩：返回数据源权威名称（`权威名称-<代码>`），并累加调用次数。
+fn counting_name(calls: Arc<AtomicUsize>) -> FetchFundName {
+    Box::new(move |code: &str| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Ok(format!("权威名称-{code}"))
+    })
+}
+
+/// 一次批量面用例运行的请求计数（「请求数常数级」断言的可观察面）。
+#[derive(Debug, PartialEq, Eq)]
+struct RequestCounts {
+    quote: usize,
+    per_fund_nav: usize,
+    per_fund_nav_full: usize,
+    per_fund_name: usize,
+    bulk_names: usize,
+    bulk_nav: usize,
+}
+
+#[test]
+fn bulk_surfaces_pin_daily_sync_request_count_to_a_constant() {
+    // 用户可观察结果（ADR-0121 验收 1）：233 只标的（其中 232 只场外基金）的账本，
+    // 单次同步的取数请求数是常数级（名称 1 次 + 基金净值批量面 1 次），不再随标的
+    // 数线性增长——本用例用 4 只与 232 只两个账本对照同一组断言。
+    //
+    // 账本取「有新净值的那一天」（水位昨日、批量面报今日）：这是日常最常态，也是
+    // 「秒级」必须成立的那一天——当周新净值与当周采样点由批量面直接落库，逐只通道
+    // 零请求。只覆盖「无新净值」的账本会漏掉这条性质。
+    let today_date = beijing_today();
+    let yesterday = (today_date - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+    let today = today_date.format("%Y-%m-%d").to_string();
+    let mut observed = Vec::new();
+
+    for fund_count in [4usize, 232] {
+        let conn = tauri_app_lib::test_support::open();
+        let mut codes = Vec::new();
+        for i in 0..fund_count {
+            let code = format!("{:06}", 100000 + i);
+            let instrument_id = format!("inst-fund-{i:03}");
+            // 第 0 只刻意给陈旧名称：只有实际变化才落库的那条判据要有样本。
+            let name = if i == 0 {
+                "陈旧名称".to_string()
+            } else {
+                format!("权威名称-{code}")
+            };
+            seed_fund(&conn, &instrument_id, &code, &name);
+            seed_fund_history(&conn, &instrument_id, &yesterday);
+            codes.push(code);
+        }
+        // 无价格通道的行（自建债券）：同一账本里的跳过行，零请求。
+        seed_instrument(&conn, "inst-bond", "BOND-X", "自建债券", "CNY", "unknown");
+        conn.execute(
+            "UPDATE instruments SET instrument_type='bond' WHERE id='inst-bond'",
+            [],
+        )
+        .unwrap();
+
+        let versions_before: Vec<i64> = (0..fund_count)
+            .map(|i| instrument_version(&conn, &format!("inst-fund-{i:03}")))
+            .collect();
+        let bulletin_names: FundNameDictionary = codes
+            .iter()
+            .map(|code| (code.clone(), format!("权威名称-{code}")))
+            .collect();
+        let bulletin_nav: FundNavTable = codes
+            .iter()
+            .map(|code| {
+                (
+                    code.clone(),
+                    BulkNavPoint {
+                        date: today.clone(),
+                        nav: 3.5,
+                    },
+                )
+            })
+            .collect();
+
+        let quote_calls = QuoteChannelCalls::default();
+        let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+        let per_fund_nav_full_calls = Arc::new(AtomicUsize::new(0));
+        let per_fund_name_calls = Arc::new(AtomicUsize::new(0));
+        let bulk_names_calls = Arc::new(AtomicUsize::new(0));
+        let bulk_nav_calls = Arc::new(AtomicUsize::new(0));
+        let mut channels = fund_channels(
+            quote_calls.clone(),
+            empty_nav(per_fund_nav_calls.clone()),
+            {
+                let calls = per_fund_nav_full_calls.clone();
+                Box::new(move |_: &str| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![])
+                })
+            },
+            {
+                let calls = per_fund_name_calls.clone();
+                Box::new(move |_: &str| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    // 逐只名称通道若被触达，名称不会被刷新——下面「仅变化者落库」
+                    // 的断言同时是「这条通道没被用到」的证据。
+                    Ok(String::new())
+                })
+            },
+            bulk_surfaces(
+                {
+                    let calls = bulk_names_calls.clone();
+                    Box::new(move || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(bulletin_names.clone())
+                    })
+                },
+                {
+                    let calls = bulk_nav_calls.clone();
+                    Box::new(move || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(bulletin_nav.clone())
+                    })
+                },
+                Arc::new(Mutex::new(BulkFetchCircuit::new())),
+            ),
+        );
+
+        let result = do_incremental_sync_channels(
+            &conn,
+            &mut channels,
+            &mut |_| {},
+            &mut WriteWitness::default(),
+        )
+        .unwrap();
+
+        let counts = RequestCounts {
+            quote: quote_calls.total(),
+            per_fund_nav: per_fund_nav_calls.load(Ordering::SeqCst),
+            per_fund_nav_full: per_fund_nav_full_calls.load(Ordering::SeqCst),
+            per_fund_name: per_fund_name_calls.load(Ordering::SeqCst),
+            bulk_names: bulk_names_calls.load(Ordering::SeqCst),
+            bulk_nav: bulk_nav_calls.load(Ordering::SeqCst),
+        };
+        assert_eq!(
+            counts,
+            RequestCounts {
+                quote: 0,
+                per_fund_nav: 0,
+                per_fund_nav_full: 0,
+                per_fund_name: 0,
+                bulk_names: 1,
+                bulk_nav: 1,
+            },
+            "取数请求数应为常数级（名称 1 次 + 净值批量面 1 次），实际 {counts:?}"
+        );
+        observed.push(counts);
+
+        // 结果统计：基金现价全部由批量面落库，跳过行只算债券。
+        assert_eq!(result.synced, fund_count);
+        assert_eq!(result.skipped, 1);
+        assert_eq!(result.written, fund_count, "当周新净值由批量面落现价");
+        // 现价与净值日期取自批量面（来源标记不变，ADR-0121 决策 2）：`priced_at`
+        // = `nav_date` = 批量面的净值日期。
+        assert_eq!(
+            fund_price_of(&conn, "inst-fund-000"),
+            Some((35000, Some(today.clone()))),
+            "现价由批量面的最新单位净值落库"
+        );
+        assert_eq!(result.renamed, 1, "只有名称实际变化的那只落库");
+        assert_eq!(result.bulk_gaps, 0);
+        assert!(!result.bulk_degraded, "批量面命中即不带降级事实");
+
+        // 名称仍以数据源权威名称覆盖标的行名称：仅变化者落库、零变化不虚增版本。
+        assert_eq!(instrument_name(&conn, "inst-fund-000"), "权威名称-100000");
+        assert_eq!(
+            instrument_version(&conn, "inst-fund-000"),
+            versions_before[0] + 1,
+            "名称实际变化才落库（版本 +1）"
+        );
+        if fund_count > 1 {
+            assert_eq!(instrument_name(&conn, "inst-fund-001"), "权威名称-100001");
+            assert_eq!(
+                instrument_version(&conn, "inst-fund-001"),
+                versions_before[1],
+                "零名称变化不写库、不虚增版本"
+            );
+        }
+    }
+
+    assert_eq!(
+        observed[0], observed[1],
+        "请求数与标的数无关：4 只与 232 只账本的取数面调用次数相同"
+    );
+}
+
+#[test]
+fn bulk_nav_failure_falls_back_per_instrument_and_trips_the_in_sync_breaker() {
+    // ADR-0121 验收 3/4：批量面失败一律 fail-closed 回退逐只通道（价格与名称仍
+    // 正确落库），且**一面失败即本次同步熔断**——后续不再试其余批量面，也不按
+    // 标的一次次地试。
+    let today = beijing_today().format("%Y-%m-%d").to_string();
+    let yesterday = (beijing_today() - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+    let conn = tauri_app_lib::test_support::open();
+    let mut codes = Vec::new();
+    for i in 0..3 {
+        let code = format!("{:06}", 100000 + i);
+        seed_fund(&conn, &format!("inst-fund-{i}"), &code, "陈旧名称");
+        seed_fund_history(&conn, &format!("inst-fund-{i}"), &yesterday);
+        codes.push(code);
+    }
+
+    let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+    let per_fund_name_calls = Arc::new(AtomicUsize::new(0));
+    let bulk_names_calls = Arc::new(AtomicUsize::new(0));
+    let bulk_nav_calls = Arc::new(AtomicUsize::new(0));
+    let circuit = Arc::new(Mutex::new(BulkFetchCircuit::new()));
+    let mut channels = fund_channels(
+        QuoteChannelCalls::default(),
+        counting_nav(per_fund_nav_calls.clone(), today.clone(), 5.0),
+        Box::new(|_| Ok(vec![])),
+        counting_name(per_fund_name_calls.clone()),
+        bulk_surfaces(
+            {
+                let calls = bulk_names_calls.clone();
+                Box::new(move || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(FundNameDictionary::new())
+                })
+            },
+            {
+                let calls = bulk_nav_calls.clone();
+                Box::new(move || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Err(AppError::Io("净值批量面被风控拦截".into()))
+                })
+            },
+            circuit.clone(),
+        ),
+    );
+
+    let result = do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        bulk_nav_calls.load(Ordering::SeqCst),
+        1,
+        "批量面每次同步最多试一次"
+    );
+    assert_eq!(
+        bulk_names_calls.load(Ordering::SeqCst),
+        0,
+        "同步内熔断：一面失败后其余批量面同样不再尝试"
+    );
+    assert_eq!(
+        per_fund_nav_calls.load(Ordering::SeqCst),
+        3,
+        "逐只净值通道兜底（每只一页增量）"
+    );
+    assert_eq!(
+        per_fund_name_calls.load(Ordering::SeqCst),
+        3,
+        "逐只名称通道兜底"
+    );
+    assert!(result.bulk_degraded, "回退逐只通道即带出降级事实");
+    assert_eq!(result.synced, 3);
+    // 价格与名称仍正确落库：逐只通道拿到的是水位次日的新净值与新权威名称。
+    for (i, code) in codes.iter().enumerate() {
+        let instrument_id = format!("inst-fund-{i}");
+        assert_eq!(
+            fund_price_of(&conn, &instrument_id),
+            Some((50000, Some(today.clone()))),
+            "第 {code} 只价格应由逐只通道补齐"
+        );
+        assert_eq!(
+            instrument_name(&conn, &instrument_id),
+            format!("权威名称-{code}")
+        );
+    }
+    assert_eq!(
+        circuit.lock().unwrap().consecutive_failures(),
+        1,
+        "失败记入跨同步记忆"
+    );
+}
+
+#[test]
+fn bulk_name_dictionary_failure_falls_back_to_per_instrument_names() {
+    // 名称全量字典失败（净值批量面已命中）：名称 fail-closed 回退逐只详情通道、
+    // 权威名称照常落库；净值面已取回的数据不浪费——本次同步是「部分降级」，
+    // 降级事实照带（文案接线归 #1376）。
+    let today = beijing_today().format("%Y-%m-%d").to_string();
+    let conn = tauri_app_lib::test_support::open();
+    let mut codes = Vec::new();
+    for i in 0..2 {
+        let code = format!("{:06}", 100000 + i);
+        seed_fund(&conn, &format!("inst-fund-{i}"), &code, "陈旧名称");
+        seed_fund_history(&conn, &format!("inst-fund-{i}"), &today);
+        codes.push(code);
+    }
+
+    let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+    let per_fund_name_calls = Arc::new(AtomicUsize::new(0));
+    let bulk_names_calls = Arc::new(AtomicUsize::new(0));
+    let bulk_nav_calls = Arc::new(AtomicUsize::new(0));
+    let bulletin_nav: FundNavTable = codes
+        .iter()
+        .map(|code| {
+            (
+                code.clone(),
+                BulkNavPoint {
+                    date: today.clone(),
+                    nav: 3.0,
+                },
+            )
+        })
+        .collect();
+    let mut channels = fund_channels(
+        QuoteChannelCalls::default(),
+        empty_nav(per_fund_nav_calls.clone()),
+        Box::new(|_| Ok(vec![])),
+        counting_name(per_fund_name_calls.clone()),
+        bulk_surfaces(
+            {
+                let calls = bulk_names_calls.clone();
+                Box::new(move || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Err(AppError::Io("名称全量字典被风控拦截".into()))
+                })
+            },
+            {
+                let calls = bulk_nav_calls.clone();
+                Box::new(move || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(bulletin_nav.clone())
+                })
+            },
+            Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        ),
+    );
+
+    let result = do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+
+    assert_eq!(bulk_nav_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        bulk_names_calls.load(Ordering::SeqCst),
+        1,
+        "名称面在净值面之后：净值面失败才不试它，这里是名称面自己失败"
+    );
+    assert_eq!(
+        per_fund_nav_calls.load(Ordering::SeqCst),
+        0,
+        "净值面已命中且水位当日：逐只净值通道不应被触达"
+    );
+    assert_eq!(
+        per_fund_name_calls.load(Ordering::SeqCst),
+        2,
+        "名称逐只通道兜底"
+    );
+    assert!(result.bulk_degraded);
+    assert_eq!(result.renamed, 2);
+    for (i, code) in codes.iter().enumerate() {
+        assert_eq!(
+            instrument_name(&conn, &format!("inst-fund-{i}")),
+            format!("权威名称-{code}")
+        );
+    }
+}
+
+#[test]
+fn bulk_coverage_gaps_fall_back_per_item_without_tripping_the_circuit() {
+    // ADR-0121 验收 6：批量面不承诺覆盖全部基金（新成立 / 已终止 / 清盘 / 部分
+    // 货币基金不在排行列表内）——缺失的标的按**缺口**逐条回退补齐，价格照常落库，
+    // 且不触发熔断；缺口与失败在统计上分开（`bulk_gaps` vs `bulk_degraded`）。
+    let today = beijing_today().format("%Y-%m-%d").to_string();
+    let conn = tauri_app_lib::test_support::open();
+    // 三只基金：排行面只收录前两只（第三只按货币基金的现实缺席建模）。
+    let covered = [("inst-fund-0", "100000"), ("inst-fund-1", "100001")];
+    let gap = ("inst-fund-2", "000198");
+    for (instrument_id, code) in covered.iter().chain(std::iter::once(&gap)) {
+        seed_fund(&conn, instrument_id, code, "陈旧名称");
+        seed_fund_history(&conn, instrument_id, &today);
+    }
+
+    let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+    let per_fund_name_calls = Arc::new(AtomicUsize::new(0));
+    let bulk_names_calls = Arc::new(AtomicUsize::new(0));
+    let bulk_nav_calls = Arc::new(AtomicUsize::new(0));
+    let circuit = Arc::new(Mutex::new(BulkFetchCircuit::new()));
+    let bulletin_names: FundNameDictionary = covered
+        .iter()
+        .chain(std::iter::once(&gap))
+        .map(|(_, code)| (code.to_string(), format!("权威名称-{code}")))
+        .collect();
+    // 排行面：被收录的两只水位当日（无新净值，零逐只请求）；缺席的那只不出现。
+    let bulletin_nav: FundNavTable = covered
+        .iter()
+        .map(|(_, code)| {
+            (
+                code.to_string(),
+                BulkNavPoint {
+                    date: today.clone(),
+                    nav: 3.0,
+                },
+            )
+        })
+        .collect();
+
+    let run = || {
+        let mut channels = fund_channels(
+            QuoteChannelCalls::default(),
+            counting_nav(per_fund_nav_calls.clone(), today.clone(), 3.0),
+            Box::new(|_| Ok(vec![])),
+            counting_name(per_fund_name_calls.clone()),
+            bulk_surfaces(
+                {
+                    let calls = bulk_names_calls.clone();
+                    let dictionary = bulletin_names.clone();
+                    Box::new(move || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(dictionary.clone())
+                    })
+                },
+                {
+                    let calls = bulk_nav_calls.clone();
+                    let table = bulletin_nav.clone();
+                    Box::new(move || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(table.clone())
+                    })
+                },
+                circuit.clone(),
+            ),
+        );
+        do_incremental_sync_channels(
+            &conn,
+            &mut channels,
+            &mut |_| {},
+            &mut WriteWitness::default(),
+        )
+        .unwrap()
+    };
+
+    let result = run();
+
+    assert_eq!(bulk_nav_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(bulk_names_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        per_fund_nav_calls.load(Ordering::SeqCst),
+        1,
+        "只有缺口那只走逐只净值通道"
+    );
+    assert_eq!(
+        per_fund_name_calls.load(Ordering::SeqCst),
+        0,
+        "名称字典覆盖全部标的（含货基）：零逐只名称请求"
+    );
+    assert_eq!(result.bulk_gaps, 1, "缺口计入缺口统计");
+    assert!(!result.bulk_degraded, "缺口不是失败：不带降级事实");
+    assert_eq!(
+        circuit.lock().unwrap().consecutive_failures(),
+        0,
+        "缺口不触发熔断"
+    );
+    // 缺口标的的价格与历史仍正确落库（逐条回退补齐）。
+    assert_eq!(instrument_name(&conn, gap.0), "权威名称-000198");
+    assert_eq!(
+        fund_price_of(&conn, gap.0),
+        Some((30000, Some(today.clone())))
+    );
+    assert_eq!(
+        price_history_rows(&conn, gap.0),
+        vec![(today.clone(), 30000, "CNY".into())],
+        "缺口标的的当周采样照常落库"
+    );
+
+    // 缺口不熔断：下一次同步仍照试批量面（请求数再 +1，逐只通道仍只服务缺口）。
+    let second = run();
+    assert_eq!(
+        bulk_nav_calls.load(Ordering::SeqCst),
+        2,
+        "缺口不熔断：下一次同步照试净值批量面"
+    );
+    assert_eq!(per_fund_nav_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(second.bulk_gaps, 1);
+    assert!(!second.bulk_degraded);
+}
+
+#[test]
+fn bulk_surfaces_stay_disabled_after_threshold_failures_and_half_open_after_the_period() {
+    // ADR-0121 验收 5（跨同步记忆）：连续失败达阈值后停用批量面一个期限，停用期内
+    // 零批量请求（避免在风控窗口里每轮都撞一次）；到期先半开试一次，成功即恢复。
+    let today = beijing_today().format("%Y-%m-%d").to_string();
+    let conn = tauri_app_lib::test_support::open();
+    seed_fund(&conn, "inst-fund-0", "100000", "权威名称-100000");
+    seed_fund_history(&conn, "inst-fund-0", &today);
+
+    let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+    let bulk_nav_calls = Arc::new(AtomicUsize::new(0));
+    let bulk_names_calls = Arc::new(AtomicUsize::new(0));
+    let circuit = Arc::new(Mutex::new(BulkFetchCircuit::new()));
+    // 前 [`BULK_FAILURE_THRESHOLD`] 次同步的净值批量面失败，其后成功（半开试探与
+    // 恢复的样本）。
+    let failing = Arc::new(AtomicUsize::new(0));
+    let bulletin_nav: FundNavTable = [(
+        "100000".to_string(),
+        BulkNavPoint {
+            date: today.clone(),
+            nav: 3.0,
+        },
+    )]
+    .into_iter()
+    .collect();
+
+    let run = || {
+        let mut channels = fund_channels(
+            QuoteChannelCalls::default(),
+            empty_nav(per_fund_nav_calls.clone()),
+            Box::new(|_| Ok(vec![])),
+            Box::new(|_: &str| Ok(String::new())),
+            bulk_surfaces(
+                {
+                    let calls = bulk_names_calls.clone();
+                    Box::new(move || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(FundNameDictionary::new())
+                    })
+                },
+                {
+                    let calls = bulk_nav_calls.clone();
+                    let failing = failing.clone();
+                    let table = bulletin_nav.clone();
+                    Box::new(move || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        if failing.load(Ordering::SeqCst) < BULK_FAILURE_THRESHOLD as usize {
+                            Err(AppError::Io("净值批量面连续失败".into()))
+                        } else {
+                            Ok(table.clone())
+                        }
+                    })
+                },
+                circuit.clone(),
+            ),
+        );
+        do_incremental_sync_channels(
+            &conn,
+            &mut channels,
+            &mut |_| {},
+            &mut WriteWitness::default(),
+        )
+        .unwrap()
+    };
+
+    // 阈值内：每次同步都试一次批量面（失败逐只兜底），连续失败计数累加。
+    for round in 1..=BULK_FAILURE_THRESHOLD {
+        let result = run();
+        assert!(
+            result.bulk_degraded,
+            "round {round}: bulk_nav={} per_fund_nav={} synced={} skipped={}",
+            bulk_nav_calls.load(Ordering::SeqCst),
+            per_fund_nav_calls.load(Ordering::SeqCst),
+            result.synced,
+            result.skipped
+        );
+        failing.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(
+            bulk_nav_calls.load(Ordering::SeqCst),
+            round as usize,
+            "第 {round} 次同步应各试一次批量面"
+        );
+    }
+    assert!(circuit.lock().unwrap().is_disabled(Instant::now()));
+    let degraded_fallback_calls = per_fund_nav_calls.load(Ordering::SeqCst);
+    assert_eq!(
+        degraded_fallback_calls, BULK_FAILURE_THRESHOLD as usize,
+        "阈值内每轮都逐只兜底"
+    );
+
+    // 停用期内：零批量请求（连名称字典也不试），全部逐只兜底。
+    let result = run();
+    assert_eq!(
+        bulk_nav_calls.load(Ordering::SeqCst),
+        BULK_FAILURE_THRESHOLD as usize,
+        "停用期内不再撞批量面"
+    );
+    assert_eq!(bulk_names_calls.load(Ordering::SeqCst), 0);
+    assert!(result.bulk_degraded, "停用期同样是降级形态");
+    assert_eq!(
+        per_fund_nav_calls.load(Ordering::SeqCst),
+        degraded_fallback_calls + 1
+    );
+
+    // 停用到期（把窗口挪到过去即「期限已过」）：先半开试一次——成功即恢复常态。
+    circuit.lock().unwrap().record_failure(
+        Instant::now()
+            .checked_sub(BULK_DISABLE_PERIOD + Duration::from_secs(1))
+            .expect("测试时钟应可回拨"),
+    );
+    let result = run();
+    assert_eq!(
+        bulk_nav_calls.load(Ordering::SeqCst),
+        BULK_FAILURE_THRESHOLD as usize + 1,
+        "到期先半开试一次"
+    );
+    assert_eq!(
+        bulk_names_calls.load(Ordering::SeqCst),
+        1,
+        "半开成功即两面恢复"
+    );
+    assert!(!result.bulk_degraded);
+    assert!(
+        !circuit.lock().unwrap().is_disabled(Instant::now()),
+        "半开试探成功即解除停用"
+    );
+    assert_eq!(
+        per_fund_nav_calls.load(Ordering::SeqCst),
+        degraded_fallback_calls + 1,
+        "半开成功后不再需要逐只兜底"
+    );
+
+    let result = run();
+    assert_eq!(
+        bulk_nav_calls.load(Ordering::SeqCst),
+        BULK_FAILURE_THRESHOLD as usize + 2,
+        "恢复后每轮同步照常走批量面"
+    );
+    assert!(!result.bulk_degraded);
+}
+
+#[test]
+fn bulk_nav_point_of_the_current_week_lands_price_and_weekly_sample_without_per_instrument_requests()
+ {
+    // 日常最常态，也是「秒级」必须成立的那一天：批量面报了比水位更新的净值（昨日
+    // → 今日）。此时它的最新单位净值就是当日现价与该周采样点（ADR-0122 决策 2），
+    // 直接落库、整只零请求——请求量不因「有新净值」而回到随标的数线性增长。
+    let today_date = beijing_today();
+    let watermark_date = today_date - chrono::Duration::days(1);
+    let today = today_date.format("%Y-%m-%d").to_string();
+    let watermark = watermark_date.format("%Y-%m-%d").to_string();
+    let conn = tauri_app_lib::test_support::open();
+    seed_fund(&conn, "inst-fund-0", "100000", "权威名称-100000");
+    seed_fund_history(&conn, "inst-fund-0", &watermark);
+
+    let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+    let mut channels = fund_channels(
+        QuoteChannelCalls::default(),
+        empty_nav(per_fund_nav_calls.clone()),
+        Box::new(|_| Ok(vec![])),
+        counting_name(Arc::new(AtomicUsize::new(0))),
+        bulk_surfaces(
+            Box::new(|| Ok(FundNameDictionary::new())),
+            Box::new({
+                let today = today.clone();
+                move || {
+                    let mut table = FundNavTable::new();
+                    table.insert(
+                        "100000".to_string(),
+                        BulkNavPoint {
+                            date: today.clone(),
+                            nav: 3.5,
+                        },
+                    );
+                    Ok(table)
+                }
+            }),
+            Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        ),
+    );
+
+    let result = do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        per_fund_nav_calls.load(Ordering::SeqCst),
+        0,
+        "当周新净值由批量取数落库：逐只净值通道不应被触达"
+    );
+    assert_eq!(result.written, 1);
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund-0"),
+        Some((35000, Some(today.clone())))
+    );
+    // 当周采样点由批量取数落库：同周则整周覆盖（一条、取该周最新净值日），跨周则
+    // 与上一周的采样点并存。
+    let expected = if crate::incremental::week_monday(watermark_date)
+        == crate::incremental::week_monday(today_date)
+    {
+        vec![(today.clone(), 35000, "CNY".into())]
+    } else {
+        vec![
+            (watermark.clone(), 30000, "CNY".into()),
+            (today.clone(), 35000, "CNY".into()),
+        ]
+    };
+    assert_eq!(price_history_rows(&conn, "inst-fund-0"), expected);
+}
+
+#[test]
+fn bulk_week_gap_beyond_one_week_falls_back_per_instrument_to_fill_missing_weeks() {
+    // 缺周点补齐（ADR-0122 决策 2）：水位落后批量面最新净值所在自然周超过一周
+    // （应用数周未开），中间缺失的周点只有逐只窗口能补——逐只通道接管，从水位次日
+    // 起增量补齐；价格与周采样照常落库。
+    let today_date = beijing_today();
+    let watermark_date = today_date - chrono::Duration::days(14);
+    let today = today_date.format("%Y-%m-%d").to_string();
+    let watermark = watermark_date.format("%Y-%m-%d").to_string();
+    let conn = tauri_app_lib::test_support::open();
+    seed_fund(&conn, "inst-fund-0", "100000", "权威名称-100000");
+    seed_fund_history(&conn, "inst-fund-0", &watermark);
+
+    let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+    let requested = Arc::new(Mutex::new(Vec::new()));
+    let requested_clone = requested.clone();
+    let per_fund_calls = per_fund_nav_calls.clone();
+    let page_date = today.clone();
+    let mut channels = fund_channels(
+        QuoteChannelCalls::default(),
+        Box::new(move |query: &NavQuery| {
+            per_fund_calls.fetch_add(1, Ordering::SeqCst);
+            requested_clone.lock().unwrap().push(query.clone());
+            Ok(nav_page(1, &[(page_date.as_str(), 3.5)]))
+        }),
+        Box::new(|_| Ok(vec![])),
+        counting_name(Arc::new(AtomicUsize::new(0))),
+        bulk_surfaces(
+            Box::new(|| Ok(FundNameDictionary::new())),
+            Box::new({
+                let today = today.clone();
+                move || {
+                    let mut table = FundNavTable::new();
+                    table.insert(
+                        "100000".to_string(),
+                        BulkNavPoint {
+                            date: today.clone(),
+                            nav: 3.5,
+                        },
+                    );
+                    Ok(table)
+                }
+            }),
+            Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        ),
+    );
+
+    let result = do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut WriteWitness::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        per_fund_nav_calls.load(Ordering::SeqCst),
+        1,
+        "水位落后超过一周即逐只补齐缺失周点"
+    );
+    let requested = requested.lock().unwrap();
+    assert_eq!(requested.len(), 1);
+    assert_eq!(
+        requested[0].start_date,
+        (watermark_date + chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string(),
+        "增量窗口自水位次日起"
+    );
+    assert_eq!(requested[0].end_date, today);
+    assert_eq!(result.written, 1);
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund-0"),
+        Some((35000, Some(today.clone())))
+    );
+    // 水位与今日相隔两周（必跨 ISO 周）：两条周采样点并存，新增点落在当周。
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund-0"),
+        vec![
+            (watermark, 30000, "CNY".into()),
+            (today, 35000, "CNY".into()),
+        ]
+    );
 }

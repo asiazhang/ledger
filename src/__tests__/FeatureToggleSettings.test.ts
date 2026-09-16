@@ -5,12 +5,12 @@ import { nextTick } from 'vue'
 import { mockInvoke } from '@ledger/test-support/invoke-mock'
 import { applyLocale, t } from '@ledger/i18n'
 
-import FeatureToggleSettings from '@/components/settings/FeatureToggleSettings.vue'
+import FeatureToggleSettings from '@/settings/FeatureToggleSettings.vue'
 import {
   CLOSABLE_FEATURES,
   NON_CLOSABLE_FEATURES,
   useFeatureToggleStore,
-} from '@/stores/feature-toggles'
+} from '@/settings/feature-toggles'
 import { getSavedClosedFeatures } from '@ledger/utils/view-state'
 
 // 设置页「功能」Tab 内容（issue #1243 / ADR-0116 决策 2/7/8）：九项可关功能各一行

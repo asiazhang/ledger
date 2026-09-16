@@ -5,10 +5,16 @@
 
 use rusqlite::Connection;
 
-use crate::{ingest_ops, read_ops};
+use crate::{DirectConn, ingest_ops, read_ops};
 use ledger_transaction::TransactionInput;
 use ledger_transaction::amount::TransactionKind;
 use tauri_app_lib::test_support::FIXED_NOW;
+
+/// 直通连接源速记（轮次测试：调用方已持连接的形态，#1339 分段取锁接缝的
+/// 测试侧替身——连接源由调用方持有时，段内直通、无锁口径）。
+pub(crate) fn direct(conn: &Connection) -> DirectConn<'_> {
+    DirectConn::new(conn)
+}
 
 /// 内存假 Transport 的线路形态：读端全部 op 的 wire 序列（JSON 字符串，#859
 /// 真通道接线前的合成通道；schema 偏斜场景由此可合成）。

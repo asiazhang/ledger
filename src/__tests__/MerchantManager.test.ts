@@ -6,7 +6,7 @@ import { NDataTable, NPopconfirm } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import { messageApi } from '@ledger/test-support/message-mock'
 import { findButton } from '@ledger/test-support/dom'
-import MerchantManager from '@/components/MerchantManager.vue'
+import MerchantManager from '@/merchants/MerchantManager.vue'
 import type { Merchant } from '@ledger/types'
 
 const { pushMock } = vi.hoisted(() => ({

@@ -10,11 +10,11 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
 }))
 const restartAppShortly = vi.fn()
-vi.mock('@/composables/restart', () => ({ restartAppShortly: () => restartAppShortly() }))
+vi.mock('@/backup/restart', () => ({ restartAppShortly: () => restartAppShortly() }))
 
 import { open } from '@tauri-apps/plugin-dialog'
-import UnlockScreen from '@/components/UnlockScreen.vue'
-import { AUTO_UNLOCK_TIMEOUT_MS, useEncryptionGate } from '@/composables/useEncryptionGate'
+import UnlockScreen from '@/backup/UnlockScreen.vue'
+import { AUTO_UNLOCK_TIMEOUT_MS, useEncryptionGate } from '@/backup/useEncryptionGate'
 import { useAppStore } from '@/stores/app'
 
 const mockOpen = vi.mocked(open)

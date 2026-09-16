@@ -856,7 +856,8 @@ const IPC_READ_ENTRY_EXCEPTIONS: &[(&str, &str)] = &[
     ),
     (
         "bootstrap_sync_from_channel",
-        "mut 守卫（整库换入需 &mut Connection）：非读闭包形状（ADR-0104 形状 C）",
+        "段接缝实现（issue #1285）：整库换入需 &mut Connection，段1 前置守卫与段2 复验换手写短锁、\
+         整库快照下载在锁外；配置读取已走 read_entry，非整段读闭包形状（ADR-0104 形状 C）",
     ),
 ];
 

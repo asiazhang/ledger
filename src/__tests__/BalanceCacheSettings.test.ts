@@ -7,9 +7,9 @@ import { setActivePinia, createPinia } from 'pinia'
 import type { BalanceCacheAudit } from '@ledger/types'
 
 import { makeFakeSink, resetToastSink } from './factories'
-import { registerToastSink } from '@/composables/useLoadable'
+import { registerToastSink } from '@ledger/loadable'
 
-import BalanceCacheSettings from '@/components/settings/BalanceCacheSettings.vue'
+import BalanceCacheSettings from '@/settings/BalanceCacheSettings.vue'
 
 /** 有漂移的报告（含「缓存行缺失」形态：cached_cents 为 null）。 */
 const driftReport: BalanceCacheAudit = {

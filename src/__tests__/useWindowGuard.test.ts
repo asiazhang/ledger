@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { useWindowGuard } from '@/composables/useWindowGuard'
-import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
+import { createOverlayToken, resetOverlays } from '@ledger/ui-kit/overlayRegistry'
 import { registerViewReset, clearViewResets } from '@/composables/viewResetRegistry'
 
 /**

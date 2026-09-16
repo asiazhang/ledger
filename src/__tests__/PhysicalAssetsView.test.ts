@@ -4,7 +4,7 @@ import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { findButtonByTestId, findBodyButtonByTestId } from '@ledger/test-support/dom'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import PhysicalAssetsView from '@/views/PhysicalAssetsView.vue'
-import PhysicalAssetFormModal from '@/components/PhysicalAssetFormModal.vue'
+import PhysicalAssetFormModal from '@/physical-asset/PhysicalAssetFormModal.vue'
 import { makePhysicalAsset, makePhysicalAssetList } from './factories'
 import type { Currency, PhysicalAsset, PhysicalAssetList } from '@ledger/types'
 

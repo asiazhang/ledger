@@ -4,8 +4,8 @@ import type { DropdownOption } from 'naive-ui'
 import type { VNode } from 'vue'
 import { CreateOutline, SwapHorizontalOutline, TrashOutline } from '@vicons/ionicons5'
 import { applyLocale } from '@ledger/i18n'
-import { buildAccountRowMenuOptions } from '@/components/account-row-menu'
-import { renderRowMenuIcon } from '@/components/transaction-row-menu'
+import { buildAccountRowMenuOptions } from '@/accounts/account-row-menu'
+import { renderRowMenuIcon } from '@/transaction/transaction-row-menu'
 
 /** 渲染 DropdownOption.icon 工厂，取出其中的图标组件（用于断言挂了哪个图标）。 */
 function iconComponentOf(option: DropdownOption): unknown {

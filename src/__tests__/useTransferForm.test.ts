@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { useTransferForm } from '@/composables/useTransferForm'
+import { useTransferForm } from '@/transaction/useTransferForm'
 import type { Account, Transaction } from '@ledger/types'
 
 

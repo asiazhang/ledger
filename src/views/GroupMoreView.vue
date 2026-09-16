@@ -3,7 +3,7 @@ import { computed, h, nextTick, ref, type Component, type VNode } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { t } from '@ledger/i18n'
 import { NTabs, NTabPane, NIcon } from 'naive-ui'
-import AppDropdown from '@/components/AppDropdown.vue'
+import AppDropdown from '@ledger/ui-kit/AppDropdown.vue'
 import {
   ShieldCheckmarkOutline,
   CubeOutline,
@@ -20,8 +20,8 @@ import {
 import PoliciesView from '@/views/PoliciesView.vue'
 import PhysicalAssetsView from '@/views/PhysicalAssetsView.vue'
 import ScheduledView from '@/views/ScheduledView.vue'
-import MerchantManager from '@/components/MerchantManager.vue'
-import InsurerManager from '@/components/InsurerManager.vue'
+import MerchantManager from '@/merchants/MerchantManager.vue'
+import InsurerManager from '@/policy/InsurerManager.vue'
 import TransactionsView from '@/views/TransactionsView.vue'
 import AccountsView from '@/views/AccountsView.vue'
 import BudgetView from '@/views/BudgetView.vue'
@@ -30,7 +30,7 @@ import ItemsView from '@/views/ItemsView.vue'
 import ReportsView from '@/views/ReportsView.vue'
 import SearchView from '@/views/SearchView.vue'
 import { useSidebarOrderStore, buildTabContextMenuOptions } from '@/stores/sidebar-order'
-import { useFeatureToggleStore } from '@/stores/feature-toggles'
+import { useFeatureToggleStore } from '@/settings/feature-toggles'
 import { useWindowTier } from '@ledger/window-tier'
 import type { ContainableViewName, SidebarGroupId } from '@/stores/sidebar-order'
 

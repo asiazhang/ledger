@@ -8,8 +8,8 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::channel::{
-    ChannelLayout, ChannelOptions, CheckpointPointer, FetchedCheckpoint, SyncRoundReport,
-    fetch_checkpoint, peek_checkpoint_pointer, run_round_with, upload_checkpoint,
+    ChannelLayout, ChannelOptions, CheckpointPointer, FetchedCheckpoint, RoundConn,
+    SyncRoundReport, fetch_checkpoint, peek_checkpoint_pointer, run_round_with, upload_checkpoint,
 };
 use crate::checkpoint::Checkpoint;
 use crate::envelope::EnvelopeMode;
@@ -91,6 +91,13 @@ impl std::fmt::Debug for SyncChannel {
 }
 
 impl SyncChannel {
+    /// 测试构造（域单测合成通道：内存假 Transport 直装；生产构库走
+    /// [`build_channel`] 单点，不发网络请求）。
+    #[cfg(test)]
+    pub(crate) fn from_parts(transport: Box<dyn Transport>, layout: ChannelLayout) -> Self {
+        Self { transport, layout }
+    }
+
     /// 传输后端（测试夹具读通道产物用；生产轮次走 [`SyncChannel::run_round`]）。
     pub fn transport(&self) -> &dyn Transport {
         self.transport.as_ref()
@@ -104,15 +111,16 @@ impl SyncChannel {
     /// 跑一轮通道协议（发布自己流 + 拉取他人流）：把本句柄持有的传输与布局
     /// 一起交给 [`run_round_with`]，调用方不必解包句柄。
     ///
-    /// 只做轮次协议本身；「成功时刻落库」是调度侧簿记，留在
+    /// 分段取锁（ADR-0120 决策 2）：连接经 [`RoundConn`] 接缝按数据库段短取，
+    /// 网络段不消费连接；只做轮次协议本身，「成功时刻落库」是调度侧簿记，留在
     /// [`super::scheduler::run_round_once`]——通道配置不为簿记而改。
-    pub fn run_round(
+    pub fn run_round<S: RoundConn>(
         &self,
-        conn: &Connection,
+        locks: &S,
         mode: &EnvelopeMode<'_>,
         options: &ChannelOptions,
     ) -> Result<SyncRoundReport> {
-        run_round_with(conn, self.transport.as_ref(), &self.layout, mode, options)
+        run_round_with(locks, self.transport.as_ref(), &self.layout, mode, options)
     }
 
     /// 读取通道上的当前检查点指针（不下载快照体；新端引导前的预检接缝，

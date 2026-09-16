@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import SettingsView from '@/views/SettingsView.vue'
-import CategoryManager from '@/components/CategoryManager.vue'
+import CategoryManager from '@/categories/CategoryManager.vue'
 
 beforeEach(async () => {
   // 参考 store 预载走接缝 opt-in 参数（五个 list 命令由桩层内建规范夹具兜底，

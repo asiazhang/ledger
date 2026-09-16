@@ -3,15 +3,15 @@ import { defineComponent, h } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import type { Router } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
-import AppDropdown from '@/components/AppDropdown.vue'
-import { createOverlayToken, openOverlayNames, resetOverlays, hasOpenOverlay } from '@/composables/overlayRegistry'
+import AppDropdown from '@ledger/ui-kit/AppDropdown.vue'
+import { createOverlayToken, openOverlayNames, resetOverlays, hasOpenOverlay } from '@ledger/ui-kit/overlayRegistry'
 import { deriveViewShortcuts, matchViewShortcut, shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
 import {
   useSidebarOrderStore,
   DEFAULT_VIEW_ORDER,
   ARRANGEABLE_VIEWS,
 } from '@/stores/sidebar-order'
-import { useFeatureToggleStore } from '@/stores/feature-toggles'
+import { useFeatureToggleStore } from '@/settings/feature-toggles'
 import type { SidebarGroupOrders } from '@/stores/sidebar-order'
 import { VIEW_STATE_KEYS } from '@ledger/utils/view-state'
 

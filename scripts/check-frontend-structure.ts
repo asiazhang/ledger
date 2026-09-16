@@ -103,9 +103,9 @@ export const PACKAGES: readonly PackageEntry[] = [
   {
     name: '@ledger/test-support',
     dir: 'packages/test-support',
-    deps: ['@ledger/types'],
+    deps: ['@ledger/types', '@ledger/loadable'],
     testSupport: true,
-    note: '共享测试支持包（issue #1152）：全局测试接缝（invoke/message/matchMedia/listen/返回桥替身 + 每测清理）唯一宿主，消费只经 devDependency（testSupport 标志 → 规则⑤）；参考数据夹具类型边 @ledger/types 显式放行',
+    note: '共享测试支持包（issue #1152）：全局测试接缝（invoke/message/matchMedia/listen/返回桥替身 + 每测清理）唯一宿主，消费只经 devDependency（testSupport 标志 → 规则⑤）；参考数据夹具类型边 @ledger/types 显式放行；toast sink 假件 makeFakeSink/resetToastSink 唯一定义点随包（#1354），替身引用被替对象 → @ledger/loadable（devDependencies，规则⑤）',
   },
   {
     name: '@ledger/modal-intent',
@@ -132,10 +132,47 @@ export const PACKAGES: readonly PackageEntry[] = [
     note: '通用工具包（issue #1314 / ADR-0118 决策 2）：src/utils 叶子层全量平铺搬迁——日期/期间、分类树与图表数据形态、Chart.js 统一注册、码化错误本地化 errorMessage（ADR-0050）、字段错误、视图状态、拼音过滤等纯函数单一来源；方向表与实际 import 全等（types / storage / i18n / money），exports 逐模块子路径暴露不开运行期 barrel；不依赖 stores / components / views / composables',
   },
   {
+    name: '@ledger/field-errors',
+    dir: 'packages/field-errors',
+    deps: ['@ledger/utils'],
+    note: '字段错误态装配包（issue #1319 / ADR-0058 / ADR-0118 决策 4）：useFieldErrors 表单级装配工厂——字段按「原始文本 ref + 判定函数（可选启用条件）」声明，产出每字段错误态与已解析值、聚合提交禁用与重置；只收口径不代判时机，判定口径单点在 @ledger/utils/field-error（#1314 归 utils 包，本包 import 不复制）；方向表与实际 import 全等（仅 @ledger/utils）；不依赖 stores / components / views / composables',
+  },
+  {
     name: '@ledger/window-tier',
     dir: 'packages/window-tier',
     deps: ['@ledger/test-support'],
     note: '窗口分级包（issue #1315 / ADR-0088 / ADR-0118 决策 5）：宽度轴唯一事实源——单一断点两档「宽度信号 → 档位」纯映射 composable；断点常量 WINDOW_TIER_BREAKPOINT_PX 全仓唯一收口包内 src/useWindowTier.ts，vite.config.ts 构建期按源码路径提取（收口漂移 fail-loud，构建期契约保留只换坐标），CSS 媒体查询经占位符替换消费同值；生产依赖仅 vue，@ledger 方向表仅测试边 → @ledger/test-support（媒体查询换档接缝，devDependencies 消费，规则⑤）；不依赖 stores / components / views',
+  },
+  {
+    name: '@ledger/loadable',
+    dir: 'packages/loadable',
+    deps: ['@ledger/utils', '@ledger/test-support'],
+    note: '异步任务生命周期包（issue #1318 / ADR-0040 / ADR-0118 决策 4/6）：useLoadable 统一异步任务生命周期深模块——loading 置收、错误文案归一、竞态裁决（后发覆盖先发）与 invalidate 作废在途的单一实现，竞态序号唯一合法住址随包（check-async-guards 规则 1 豁免坐标同步为包内路径）；模块级 toast sink 单例随包 ESM 持有、对外只暴露 registerToastSink 注册接口，应用入口 MessageSinkBridge 经导入接线，不引入注入机制（ADR-0118 决策 6）；依赖 @ledger/utils（errorMessage）单向成边；测试边 → test-support（假 sink 假件唯一定义点，#1354，devDependencies 消费，规则⑤）；不依赖 stores / components / views',
+  },
+  {
+    name: '@ledger/scheduled-plan-list',
+    dir: 'packages/scheduled-plan-list',
+    deps: [
+      '@ledger/api',
+      '@ledger/i18n',
+      '@ledger/loadable',
+      '@ledger/test-support',
+      '@ledger/types',
+      '@ledger/utils',
+    ],
+    note: '计划清单包（issue #1322 / ADR-0041 / ADR-0118 决策 4）：ScheduledPlanList 计划清单深模块——定时计划三业务形态共享的清单编排（加载/刷新、状态过滤、Plan Lifecycle 操作、行操作描述符、周期选项/标签）单一实现，三页签是薄适配器；「不得 import 组件与弹层注册表」禁令随包保持（弹层纯度 ADR-0035）；方向表与实际 import 全等（api / i18n / loadable / types / utils，测试边 → test-support 仅 devDependencies，规则⑤）；不依赖 stores / components / views / composables',
+  },
+  {
+    name: '@ledger/transaction-modal-state',
+    dir: 'packages/transaction-modal-state',
+    deps: ['@ledger/modal-intent', '@ledger/api', '@ledger/i18n', '@ledger/types', '@ledger/utils', '@ledger/test-support'],
+    note: '交易弹窗编排包（issue #1321 / ADR-0045 / ADR-0118 决策 4）：TransactionModalState——交易列表五个弹窗共享的「开启/目标/关闭」编排，意图闭集五单一判别联合唯一事实源，显示开关由「意图非空」派生；ModalIntent 工厂（ADR-0072）之上首个适配器，「先取明细再开窗、失败不开窗、last-open-wins」异步时序守卫留适配器层；直接 import api 与 useMessage 的既有形态随包保持不做注入；方向表与实际 import 全等（票面四包 + types 类型边，测试边 → test-support 仅 devDependencies 消费，规则⑤）；不依赖 stores / components / views',
+  },
+  {
+    name: '@ledger/ui-kit',
+    dir: 'packages/ui-kit',
+    deps: ['@ledger/utils', '@ledger/i18n', '@ledger/window-tier', '@ledger/test-support'],
+    note: '界面通用件包（issue #1320 / ADR-0118 决策 3/5/6）：App* 弹层薄封装 8 件 + overlay 单例族（overlayRegistry + useOverlayReporting，ADR-0035 一体族，注册接口语义一字不改）+ 通用件 4 项（AppDangerConfirmModal / PinyinSelect / NoteCopyButton / app-modal.css.ts），成员闭集逐项定界不得自行增删（CreateFab 等域/应用专属留壳，#1159 按域归位）；方向表与实际 import 全等（utils / i18n / window-tier；测试边 → test-support，devDependencies 消费，规则⑤），exports 逐组件/逐模块子路径暴露（.vue 直接作 exports 落点，.css.ts 同 theme 先例）；不依赖 stores / views / 壳内 composables',
   },
 ]
 
@@ -575,9 +612,9 @@ export interface DeepModuleBoundary {
  *  断言变红（删除即变红，issue #1323 验收判据）。 */
 export const DEEP_MODULE_BOUNDARIES: readonly DeepModuleBoundary[] = [
   {
-    module: 'src/composables/useTransactionFilter.ts',
+    module: 'src/transaction/useTransactionFilter.ts',
     allowedConsumers: ['src/views'],
-    note: '交易列表过滤深模块（ADR-0030/0094）：依赖壳内 pinia store（交易页会话级 store）故不成包（ADR-0118 决策 4），消费面 = 交易页与报表页',
+    note: '交易列表过滤深模块（ADR-0030/0094）：依赖壳内 pinia store（交易页会话级 store）故不成包（ADR-0118 决策 4），消费面 = 交易页与报表页；#1159 起随交易域归位 src/transaction/',
   },
 ]
 

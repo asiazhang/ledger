@@ -5,7 +5,7 @@ import { findButton, findButtonByTestId, findBodyButtonByTestId } from '@ledger/
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
-import BackupSettings from '@/components/settings/BackupSettings.vue'
+import BackupSettings from '@/settings/BackupSettings.vue'
 import { useAppStore } from '@/stores/app'
 import type { BackupFileInfo } from '@ledger/types'
 
