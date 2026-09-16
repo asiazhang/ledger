@@ -929,6 +929,56 @@ fn shell_never_constructs_db_connections_directly() {
     }
 }
 
+/// 换连线收口守门（issue #1303 / ADR-0117 决策 4 换连半边，#961 同款纪律，
+/// 与建连守门同址同形制）：连接换装原语（成对 [`DbState::swap_pair`]、读槽
+/// `replace_read_conn(_slot)`、`placeholderize_read_conn`）的生产调用点
+/// 白名单——换入/换出收口既有换连单点，出现第三个手搓换装副本即红：
+/// - `boot.rs`：引导序列连接换入（`swap_or_manage_db_state`：换入或首登记）
+///   与占位化（`detach_read_conn`）；
+/// - `encryption.rs`：解锁/重置编排（`resume_business_surface` 直呼
+///   `swap_pair`，ADR-0112 决策 5 合法依赖直呼）；
+/// - `backup.rs`：恢复路径槽级换出豁免（无 DbState 句柄也必须可用，
+///   issue #601 前置修复，经槽级自由函数消费同一机制）。
+///
+/// 扫描根 = 壳层 `src` 顶层 + `src/commands`（与建连守门同款非递归单层，
+/// `api_server`/`shell_support` 等子目录不在本守门范围，同款评审兑底边界）；
+/// 基础设施 `db` 内部（原语本体与同 crate 单测）不在扫描范围。读槽单槽换入
+/// 的编译期半边由 `replace_read_conn` 的 `pub(crate)` 收窄承担（issue #1303）。
+#[test]
+fn shell_connection_swaps_stay_in_whitelisted_files() {
+    const SWAP_FILE_WHITELIST: [&str; 3] = ["boot.rs", "encryption.rs", "backup.rs"];
+    const SWAP_PRIMITIVE_TOKENS: [&str; 4] = [
+        "swap_pair(",
+        "replace_read_conn(",
+        "replace_read_conn_slot(",
+        "placeholderize_read_conn(",
+    ];
+    for root in ["src", "src/commands"] {
+        for (name, src) in read_sources(root) {
+            let masked = mask_non_code(&src);
+            let hits: Vec<&str> = SWAP_PRIMITIVE_TOKENS
+                .iter()
+                .filter(|token| count_token(&masked, token) > 0)
+                .copied()
+                .collect();
+            if SWAP_FILE_WHITELIST.contains(&name.as_str()) {
+                assert!(
+                    !hits.is_empty(),
+                    "换装白名单文件 {name} 已无任何换装原语调用——死条目
+                     （文件已改名或换装点已迁走），请同步更新白名单"
+                );
+            } else {
+                assert!(
+                    hits.is_empty(),
+                    "壳层文件 {name} 出现换装原语调用 {hits:?}——换入/换出必须收口
+                     既有换连单点（boot.rs 引导换入、encryption.rs 解锁/重置编排、
+                     backup.rs 恢复槽级换出豁免），不得手搓新副本（ADR-0117 决策 4）"
+                );
+            }
+        }
+    }
+}
+
 /// 读侧豁免清单名字必须都在命令注册清单上（build.rs 生成的 ADR-0047 真源，
 /// 写侧同款死条目守卫）：命令改名 / 删除后旧条目静默残留为死条目，在此即红。
 #[test]

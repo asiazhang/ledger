@@ -247,33 +247,24 @@ pub async fn unlock_with_remembered_passphrase<R: Runtime>(
 }
 
 /// 业务可用起点编排（解锁、忘记口令重置与启动失败重置共用，ADR-0075
-/// 决策 5 / issue #601）：新连接**成对**原位换入 DbState（写连接 + 读连接，
-/// issue #1280 / ADR-0117 决策 3；Arc 形状不变，业务路径下次取连接即拿到
-/// 真实库）→ 翻转锁定门 → 经 [`crate::start_background_services`] 成对拉起
-/// 后台服务（自动备份调度 + 同步触发，issue #961 唯一编排点）。锁定门翻转对
-/// 未锁定路径（启动失败重置）是无操作。调用方保证读连接与写连接同刻就绪
-///（读连接建连失败在换连之前整体失败，fail-closed）。
+/// 决策 5 / issue #601）：新连接经基础设施成对原语 [`DbState::swap_pair`]
+/// **成对**原位换入 DbState（写连接 + 读连接同刻换入，issue #1280 / #1303 /
+/// ADR-0117 决策 3；Arc 形状不变，业务路径下次取连接即拿到真实库）→ 翻转
+/// 锁定门 → 经 [`crate::start_background_services`] 成对拉起后台服务（自动
+/// 备份调度 + 同步触发，issue #961 唯一编排点）。锁定门翻转对未锁定路径
+///（启动失败重置）是无操作。调用方保证读连接与写连接同刻就绪（读连接建连
+/// 失败在换连之前整体失败，fail-closed）。
 pub(crate) fn resume_business_surface<R: Runtime>(
     app: &AppHandle<R>,
     conn: Connection,
     read_conn: Connection,
 ) -> Result<()> {
-    {
-        let state = app.state::<DbState>();
-        let mut guard = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        *guard = conn;
-        drop(guard);
-        state.replace_read_conn(read_conn)?;
-    }
+    app.state::<DbState>().swap_pair(conn, read_conn)?;
     app.state::<EncryptionGate>().set_locked(false);
     // 日志等级接管（spec #608 / #611）：解锁后真实库就绪，按持久化档位接管滤镜；
     // 显式 RUST_LOG 在本次启动内优先，此时不覆盖。锁定期未读到持久化档位，
-    // 解锁是密文库的正式接管点（与启动期明文库的 `init_database` 对齐）。
-    {
-        let state = app.state::<DbState>();
-        let conn = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        crate::shell_support::logger::apply_persisted_level(&conn);
-    }
+    // 解锁是密文库的正式接管点（与启动期明文库的引导序列对齐）。
+    crate::shell_support::logger::apply_persisted_level_via_state(app)?;
     tracing::info!("业务读写恢复（解锁/重置后），自动备份与多端同步调度拉起");
     // 后台服务成对拉起收在唯一编排点（issue #961）：解锁/重置后同步触发随之
     // 恢复——打开即同步的兜底路径（密文库会话在解锁前不可达，ADR-0098 决策 4）。

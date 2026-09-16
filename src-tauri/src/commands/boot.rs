@@ -87,28 +87,18 @@ impl BootPhase {
 
 /// 把裸连接对换入既有 `DbState`（原位重引导路径；Arc 共享，HTTP 壳/调度线程
 /// 持有的克隆同步可见）或首次登记为应用状态（进程启动路径，[`DbState`]
-/// 形状自此恒在）。成对换连（issue #1280 / ADR-0117 决策 3）：写连接与读连接
-/// 同刻换入，换连窗口内不存在「读连接指旧库」的中间态。
+/// 形状自此恒在）。换入机械序列收口基础设施成对原语 [`DbState::swap_pair`]
+///（issue #1303：返回后两槽一致指向新库，中间窗口由门翻转次序屏蔽）；
+/// 首登记与换入的分派是壳层生命周期关切（ADR-0111），留驻本文件。
 fn swap_or_manage_db_state<R: Runtime>(
     app: &AppHandle<R>,
     conn: Connection,
     read_conn: Connection,
 ) -> Result<()> {
     match app.try_state::<DbState>() {
-        Some(existing) => {
-            let mut guard = existing
-                .conn
-                .lock()
-                .map_err(|e| AppError::Db(e.to_string()))?;
-            *guard = conn;
-            drop(guard);
-            existing.replace_read_conn(read_conn)?;
-        }
+        Some(existing) => existing.swap_pair(conn, read_conn)?,
         None => {
-            app.manage(DbState {
-                conn: std::sync::Arc::new(std::sync::Mutex::new(conn)),
-                read_conn: std::sync::Arc::new(std::sync::Mutex::new(read_conn)),
-            });
+            app.manage(DbState::from_pair(conn, read_conn));
         }
     }
     Ok(())
@@ -182,11 +172,7 @@ pub(crate) fn boot_sequence<R: Runtime>(app: &AppHandle<R>) -> Result<BootPhase>
             //（此前短暂按「RUST_LOG 环境变量或默认 info」运行，属 ADR-0006 接受的启动窗口）；
             // 显式 RUST_LOG 在本次启动内优先级最高，此时不覆盖。密文库为占位连接，
             // 此步随解锁换连后（`resume_business_surface`）再做。
-            {
-                let state = app.state::<DbState>();
-                let conn = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-                crate::shell_support::logger::apply_persisted_level(&conn);
-            }
+            crate::shell_support::logger::apply_persisted_level_via_state(app)?;
             tracing::info!(db_dir = %db_dir.display(), "数据库初始化完成");
             Ok(BootPhase::Ready)
         }

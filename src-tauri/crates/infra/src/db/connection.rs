@@ -3,7 +3,6 @@
 //! 全部生产建连路径统一收口 [`init_db`]（schema 守卫尾部接线，ADR-0100）。
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rusqlite::Connection;
@@ -41,10 +40,7 @@ pub fn open_connection_in(db_dir: &Path) -> Result<Connection> {
 pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
     let conn = open_connection_in(db_dir)?;
     let read_conn = open_connection_readonly_in(db_dir)?;
-    Ok(DbState {
-        conn: Arc::new(Mutex::new(conn)),
-        read_conn: Arc::new(Mutex::new(read_conn)),
-    })
+    Ok(DbState::from_pair(conn, read_conn))
 }
 
 /// 启动失败重置兜底：把当前库改名 `.bak` 保留后重新打开（新建空库）。
@@ -52,10 +48,7 @@ pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
 pub fn reset_db_in(db_dir: &Path) -> Result<DbState> {
     let conn = reset_db_file(db_dir)?;
     let read_conn = open_connection_readonly_in(db_dir)?;
-    Ok(DbState {
-        conn: Arc::new(Mutex::new(conn)),
-        read_conn: Arc::new(Mutex::new(read_conn)),
-    })
+    Ok(DbState::from_pair(conn, read_conn))
 }
 
 /// 重置核心（连接形态，issue #601）：把当前库改名 `.bak` 保留后原位新建

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::OnceLock;
 
-use tauri::Manager;
+use tauri::{AppHandle, Manager, Runtime};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::Layer;
@@ -116,6 +116,23 @@ pub fn apply_persisted_level(conn: &rusqlite::Connection) {
     let level = persisted_level(conn);
     tracing::info!(level = %level.directive(), "按持久化档位接管全局日志滤镜");
     set_level(level);
+}
+
+/// 日志档位接管的应用状态形态（issue #1303 收单）：锁写连接读持久化档位并
+/// 接管运行期滤镜——启动引导（明文库就绪后）与业务可用起点编排（解锁/重置
+/// 成对换连后）两处消费，接替逐处手抄的「取状态 + 锁 + [`apply_persisted_level`]」
+/// 重复块。锁获取失败映射与两处原手抄行逐字节一致；[`DbState`] 未登记时 panic
+///（与 `app.state` 原语义一致——两处调用点均在连接就绪之后）。
+pub fn apply_persisted_level_via_state<R: Runtime>(
+    app: &AppHandle<R>,
+) -> ledger_infra::error::Result<()> {
+    let state = app.state::<ledger_infra::db::DbState>();
+    let conn = state
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))?;
+    apply_persisted_level(&conn);
+    Ok(())
 }
 
 /// 校验闭集 + 持久化 + 运行期接管（`set_log_level` 命令与 BDD 共用，spec #611）：

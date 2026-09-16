@@ -16,13 +16,17 @@ fn temp_dir(tag: &str) -> PathBuf {
     dir
 }
 
-fn plaintext_db(tag: &str) -> PathBuf {
+fn seeded_db(tag: &str, account: &str, balance: i64) -> PathBuf {
     let dir = temp_dir(tag);
     let db = dir.join(crate::db::connection::DB_FILE_NAME);
     let mut conn = open_connection(&db).unwrap();
     migrations().to_latest(&mut conn).unwrap();
-    tauri_app_lib::test_support::seed_account(&conn, "acct-1", "现金", "cash", "CNY", 12345);
+    tauri_app_lib::test_support::seed_account(&conn, account, "现金", "cash", "CNY", balance);
     db
+}
+
+fn plaintext_db(tag: &str) -> PathBuf {
+    seeded_db(tag, "acct-1", 12345)
 }
 
 /// 只读连接读到已提交真实行；写入被只读约束拒绝（「读路径无写」从纪律变成
@@ -163,4 +167,48 @@ fn read_slot_replacement_and_placeholderization() {
             .unwrap()
     };
     assert_eq!(balance, 12345, "换回后同一克隆应读到真实库");
+}
+
+/// 成对换入原语 `swap_pair`（issue #1303 / ADR-0117 决策 3）：机械序列
+/// 「锁写槽→替换→还锁→换读槽」单点——经事先持有的两槽 Arc 克隆断言返回后
+/// 写读两槽**一致**指向新库、旧库数据两槽不可见。`swap_pair` 退化为任一
+/// 单槽换入（漏换写槽或漏换读槽）即在本测试变红。
+#[test]
+fn swap_pair_swaps_both_slots_visible_via_held_clones() {
+    let old_db = seeded_db("swap-old", "acct-old", 1111);
+    let new_db = seeded_db("swap-new", "acct-new", 2222);
+    let state = crate::db::open_db_in(old_db.parent().unwrap()).unwrap();
+    // 事先持有的两槽克隆（ADR-0080 语义：换入后壳层、HTTP 壳、调度线程已持有的
+    // 克隆同步可见）。
+    let write_clone = state.conn.clone();
+    let read_clone = state.read_conn.clone();
+
+    state
+        .swap_pair(
+            crate::db::open_connection_in(new_db.parent().unwrap()).unwrap(),
+            crate::db::open_connection_readonly_in(new_db.parent().unwrap()).unwrap(),
+        )
+        .unwrap();
+
+    for (slot_name, slot) in [("写槽", &write_clone), ("读槽", &read_clone)] {
+        let guard = slot.lock().unwrap();
+        let balance: i64 = guard
+            .query_row(
+                "SELECT initial_balance_cents FROM accounts WHERE id = 'acct-new'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or_else(|e| panic!("{slot_name} 应指向新库（acct-new 可读），实际 {e}"));
+        assert_eq!(balance, 2222, "{slot_name} 读到的应为新库数据");
+        assert!(
+            guard
+                .query_row::<i64, _, _>(
+                    "SELECT initial_balance_cents FROM accounts WHERE id = 'acct-old'",
+                    [],
+                    |r| r.get(0),
+                )
+                .is_err(),
+            "{slot_name} 不应再看到旧库数据（acct-old 仅存在于旧库）"
+        );
+    }
 }
