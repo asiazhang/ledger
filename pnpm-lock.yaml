@@ -373,9 +373,6 @@ importers:
 
   packages/test-support:
     devDependencies:
-      '@ledger/loadable':
-        specifier: workspace:*
-        version: link:../loadable
       '@ledger/types':
         specifier: workspace:*
         version: link:../types

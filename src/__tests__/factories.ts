@@ -31,7 +31,14 @@ export {
 // @ledger/loadable 与 @ledger/scheduled-plan-list 包内测试不可引用壳侧 factories
 // （结构守门规则③），同实现局部替身随测试面上收，唯一定义点在包内；
 // 此处再导出保持壳侧既有 import 面（'./factories'）不变。
-export { makeFakeSink, resetToastSink } from '@ledger/test-support/toast-sink'
+import { registerToastSink } from '@ledger/loadable'
+import { makeFakeSink, resetToastSink as resetToastSinkSupport } from '@ledger/test-support/toast-sink'
+
+export { makeFakeSink }
+
+export function resetToastSink(): void {
+  resetToastSinkSupport(registerToastSink)
+}
 
 /**
  * 组件/composable 测试的共享数据工厂（issue #110 审查：消除测试文件间重复）。

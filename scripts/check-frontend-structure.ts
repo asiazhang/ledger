@@ -103,9 +103,9 @@ export const PACKAGES: readonly PackageEntry[] = [
   {
     name: '@ledger/test-support',
     dir: 'packages/test-support',
-    deps: ['@ledger/types', '@ledger/loadable'],
+    deps: ['@ledger/types'],
     testSupport: true,
-    note: '共享测试支持包（issue #1152）：全局测试接缝（invoke/message/matchMedia/listen/返回桥替身 + 每测清理）唯一宿主，消费只经 devDependency（testSupport 标志 → 规则⑤）；参考数据夹具类型边 @ledger/types 显式放行；toast sink 假件 makeFakeSink/resetToastSink 唯一定义点随包（#1354），替身引用被替对象 → @ledger/loadable（devDependencies，规则⑤）',
+    note: '共享测试支持包（issue #1152）：全局测试接缝（invoke/message/matchMedia/listen/返回桥替身 + 每测清理）唯一宿主，消费只经 devDependency（testSupport 标志 → 规则⑤）；参考数据夹具类型边 @ledger/types 显式放行；toast sink 假件 makeFakeSink/resetToastSink 唯一定义点随包（#1354），复位通过调用方传入 @ledger/loadable 的注册接口完成，避免测试支持包反向依赖被测包造成 workspace 环',
   },
   {
     name: '@ledger/modal-intent',
