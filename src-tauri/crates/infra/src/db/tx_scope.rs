@@ -12,6 +12,11 @@
 //!
 //! 跨域消费经 `crate::db::tx_scope::` 显式 import，交易域不再出口事务原语（#1013）。
 //!
+//! 第三只原语 [`rollback_if_open`]（issue #1408 / ADR-0125 决策 3）：异步 DB 门面
+//! 的作业 panic 恢复收尾——「未提交事务整体回滚 + 提交点复核」的两步判据。它与
+//! 上述两只原语同属事务能力（原生事务语句的唯一合法住址即本文件，结构守门
+//! `check-structure.ts` 的 `NATIVE_TX_STMT_ALLOWED`）。
+//!
 //! 行为单测：`tests/tx_scope.rs` 锁定两原语的行为——嵌套加入外层 / 自持失败整体
 //! 回滚 / COMMIT 失败尽力回滚清理 / ROLLBACK 自身失败不遮蔽原错误 / 无条件自持提交
 //! 与已在事务中自然报错（失败注入用纯测试侧手段：SQLite 触发器 RAISE(ABORT) /
@@ -71,4 +76,27 @@ pub fn hold_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> 
             Err(e)
         }
     }
+}
+
+/// panic 恢复收尾：把连接带回「无未提交事务」的可服务状态，并如实回答成功与否。
+///
+/// 消费方是异步 DB 门面（ADR-0125 决策 3，issue #1408）：作业 panic 被
+/// `catch_unwind` 拦下后，DB 线程按本原语裁决连接可信性——
+/// - 已回到提交点（`is_autocommit`，作业没开事务或已自行提交）：无事可做；
+/// - 未提交就 panic：整体回滚，回滚后必须**复核**已回到提交点——回滚语句成功但
+///   连接仍留在事务中，说明状态不可信，同样如实上抛（不静默当作恢复成功）；
+/// - 回滚自身失败：原样上抛。
+///
+/// 错误上抛而非吞掉的语义由调用方承接（标记连接不可信 + 后续作业 fail-loud），
+/// 本原语不决定退役或重建（ADR-0125 决策 3 只承诺「不静默」）。
+pub fn rollback_if_open(conn: &Connection) -> Result<()> {
+    if !conn.is_autocommit() {
+        conn.execute("ROLLBACK", [])?;
+    }
+    if !conn.is_autocommit() {
+        return Err(crate::error::AppError::Db(
+            "回滚后连接仍未回到提交点，连接状态不可信".into(),
+        ));
+    }
+    Ok(())
 }
