@@ -3,6 +3,7 @@ import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { messageApi } from '@ledger/test-support/message-mock'
 import { findButton, findButtonByTestId, findBodyButtonByTestId } from '@ledger/test-support/dom'
 import { mount, flushPromises } from '@vue/test-utils'
+import { nextTick } from 'vue'
 
 import BackupSettings from '@/components/settings/BackupSettings.vue'
 import { useAppStore } from '@/stores/app'
@@ -308,5 +309,94 @@ describe('BackupSettings 复制与访达定位通道（issue #653）', () => {
     expect(messageApi.error).toHaveBeenCalledWith(expect.stringContaining('复制路径失败'))
     expect(messageApi.success.mock.calls.length).toBe(successBefore)
     void wrapper
+  })
+})
+
+describe('BackupSettings 备份列表客户端切片分页（issue #1383）', () => {
+  /** 12 份受管备份：页大小 10 下两页（第二页余量 2 行），文件名内序号可辨识 */
+  const PAGE_BACKUPS: BackupFileInfo[] = Array.from({ length: 12 }, (_, i): BackupFileInfo => {
+    const seq = String(i).padStart(2, '0')
+    const name = `ledger-auto-20260201-09${seq}00.db.zip`
+    return {
+      file_name: name,
+      path: `/Users/me/backups/${name}`,
+      size_bytes: 1024 + i,
+      created_at: `2026-02-01T09:${seq}:00Z`,
+      kind: 'auto',
+      encrypted: false,
+    }
+  })
+
+  /** 点分页条页码项（.n-pagination-item 文本即页码；前后键无文本不参与匹配） */
+  async function goToPage(wrapper: ReturnType<typeof mount>, page: number) {
+    await wrapper.findAll('.n-pagination-item').find((el) => el.text() === String(page))!.trigger('click')
+    await nextTick()
+  }
+
+  it('超一页时分页条出现：首页 10 行、第二页余量 2 行、翻回恢复；计数文案为切片前全量口径', async () => {
+    wireInvokeSeam({ defaults: { list_backups: PAGE_BACKUPS, get_auto_backup_state: AUTO_BACKUP_ON } })
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+
+    expect(wrapper.find('.n-pagination').exists()).toBe(true)
+    // 计数在切片前判定：显示全量 12，与可见页无关
+    expect(wrapper.html()).toContain('当前共 12 个备份')
+    expect(wrapper.findAll('tbody tr')).toHaveLength(10)
+    expect(wrapper.findAll('tbody tr')[0].text()).toContain(PAGE_BACKUPS[0].file_name)
+
+    await goToPage(wrapper, 2)
+    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+    expect(wrapper.findAll('tbody tr')[0].text()).toContain(PAGE_BACKUPS[10].file_name)
+
+    await goToPage(wrapper, 1)
+    expect(wrapper.findAll('tbody tr')).toHaveLength(10)
+    expect(wrapper.findAll('tbody tr')[0].text()).toContain(PAGE_BACKUPS[0].file_name)
+  })
+
+  it('单页行集不出现分页条：全量直显不出翻页噪声', async () => {
+    wireInvokeSeam({ defaults: { list_backups: [encryptedBackup, plaintextBackup], get_auto_backup_state: AUTO_BACKUP_ON } })
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+
+    expect(wrapper.find('.n-pagination').exists()).toBe(false)
+    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+  })
+
+  it('数据重拉保持当前页：第二页时手动刷新，仍留第二页', async () => {
+    let disk: BackupFileInfo[] = PAGE_BACKUPS
+    wireInvokeSeam({
+      defaults: { get_auto_backup_state: AUTO_BACKUP_ON },
+      overrides: { list_backups: () => Promise.resolve(disk) },
+    })
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+    await goToPage(wrapper, 2)
+    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+
+    await findButtonByTestId(wrapper, 'backup-list-refresh').trigger('click')
+    await flushPromises()
+    // 数据重拉不是过滤意图：保持当前页（新备份的可见反馈由「最近备份」行承担）
+    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+    expect(wrapper.findAll('.n-pagination-item--active').map((el) => el.text())).toEqual(['2'])
+  })
+
+  it('行集收缩页码越界时回落：第二页时磁盘缩到单页，刷新后钳回第一页、分页条收起', async () => {
+    let disk: BackupFileInfo[] = PAGE_BACKUPS
+    wireInvokeSeam({
+      defaults: { get_auto_backup_state: AUTO_BACKUP_ON },
+      overrides: { list_backups: () => Promise.resolve(disk) },
+    })
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+    await goToPage(wrapper, 2)
+    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+
+    // 文件管理器手动删文件后刷新：行集缩到 5（单页），原页码 2 已越界
+    disk = PAGE_BACKUPS.slice(0, 5)
+    await findButtonByTestId(wrapper, 'backup-list-refresh').trigger('click')
+    await flushPromises()
+    // 回落到有效范围：不落空页、不留陈旧页码；单页分页条收起
+    expect(wrapper.findAll('tbody tr')).toHaveLength(5)
+    expect(wrapper.find('.n-pagination').exists()).toBe(false)
   })
 })
