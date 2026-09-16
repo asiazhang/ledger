@@ -17,7 +17,7 @@ function deferred<T>() {
 
 beforeEach(() => {
   // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
-  resetToastSink()
+  resetToastSink(registerToastSink)
 })
 
 describe('useLoadable 异步任务模块（ADR-0040 / issue #320）', () => {

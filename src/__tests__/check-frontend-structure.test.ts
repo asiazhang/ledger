@@ -395,7 +395,7 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
         {
           name: '@ledger/test-support',
           dir: 'packages/test-support',
-          deps: ['@ledger/types', '@ledger/loadable'],
+          deps: ['@ledger/types'],
           testSupport: true,
           note: expect.any(String),
         },

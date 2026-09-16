@@ -141,7 +141,7 @@ beforeEach(() => {
   mockPlans = []
   mockDetails.clear()
   failList = false
-  resetToastSink()
+  resetToastSink(registerToastSink)
   wireInvokeSeam({ overrides: PLAN_INVOKE })
 })
 
