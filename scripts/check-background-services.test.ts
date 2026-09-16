@@ -40,6 +40,7 @@ const orchestratorPaired = `pub fn ${ORCHESTRATOR_FN}(app: &tauri::AppHandle) {
     backup::start_scheduler(app);
     sync_engine::start_triggers(app);
     market_sync::start_history_backfill(app);
+    market_sync::start_daily_price_refresh(app);
 }
 `
 
