@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h } from 'vue'
+import { computed, h, ref, watch } from 'vue'
 import {
   NAlert,
   NButton,
@@ -51,6 +51,30 @@ const {
   refreshing,
   refreshList,
 } = useBackup()
+
+// 客户端切片分页（issue #1383）：备份列表是有界快照列表（受管产物受保留上限封顶，
+// ADR-0008 分界的有界侧），行集一次全量拉取、翻页只是展示切片，不发数据请求。
+// 页大小固定 10，无页大小选择器与快捷跳页；单页收起分页条（paginate-single-page，
+// 持仓页签先例）。页码组件内持有、每次进入回第一页（商户管理表先例，对 ADR-0094
+// 默认粒度的显式豁免）；数据重拉（新备份/清理/手动刷新）保持当前页——页码越界时
+// 回落到有效范围，不落空页、不留陈旧页码（词条「回退不归零」等价形态）。
+const BACKUP_PAGE_SIZE = 10
+const currentPage = ref(1)
+
+const maxPage = computed(() =>
+  Math.max(1, Math.ceil(backups.value.length / BACKUP_PAGE_SIZE)),
+)
+watch(maxPage, (max) => {
+  if (currentPage.value > max) currentPage.value = max
+})
+
+const pagination = computed(() => ({
+  page: currentPage.value,
+  pageSize: BACKUP_PAGE_SIZE,
+  onChange: (next: number) => {
+    currentPage.value = next
+  },
+}))
 
 const backupColumns = [
   { title: () => t('settings.data.backup.columns.fileName'), key: 'file_name' },
@@ -198,6 +222,8 @@ const backupColumns = [
             :data="backupRows"
             :bordered="false"
             size="small"
+            :pagination="pagination"
+            :paginate-single-page="false"
             :empty="store.backupDir ? t('settings.data.backup.emptyWithDir') : t('settings.data.backup.emptyNoDir')"
           />
         </NSpace>
