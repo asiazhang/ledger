@@ -1,6 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { captureListenHandlers, type CapturedListener } from '@ledger/test-support/listen-mock'
 import { flushPromises } from '@vue/test-utils'
 import { useItemsStore } from '@/item/items'
 import type { ItemInput, ItemWithDailyCost } from '@ledger/types'
@@ -38,66 +37,12 @@ const createInput: ItemInput = {
   note: null,
 }
 
-/** 捕获 ledger:changed 监听处理器（store 创建时注册） */
-let handlers: CapturedListener[]
-
-beforeEach(() => {
-  handlers = captureListenHandlers()
-})
+/**
+ * 机制断言（self-init / SWR / 在途合并 / 事件重拉 / status-version）已收口到
+ * push-first-list.test.ts 工厂单点（ADR-0123 决策 6）；本文件只留领域动作断言。
+ */
 
 describe('useItemsStore', () => {
-  it('首次访问自动加载（self-init），加载后 status=ready、version=1', async () => {
-    wireInvokeSeam({ defaults: { list_items: [baseItem()] } })
-    const store = useItemsStore()
-    await flushPromises()
-    expect(store.items).toHaveLength(1)
-    expect(store.items[0].name).toBe('手机')
-    expect(store.status).toBe('ready')
-    expect(store.version).toBe(1)
-  })
-
-  it('加载失败时 status=error，不抛出（self-init 静默）', async () => {
-    wireInvokeSeam({ overrides: { list_items: () => Promise.reject(new Error('boom')) } })
-    const store = useItemsStore()
-    await flushPromises()
-    expect(store.status).toBe('error')
-    expect(store.items).toEqual([])
-  })
-
-  it('ledger:changed 触发重拉（stale-while-revalidate：在途不闪空，成功后整体替换）', async () => {
-    const initial = [baseItem()]
-    const fresh = [baseItem(), baseItem({ id: 'item-2', name: '笔记本' })]
-    let resolveSecond: (items: ItemWithDailyCost[]) => void = () => {}
-    let listCalls = 0
-    wireInvokeSeam({
-      overrides: {
-        list_items: () => {
-          listCalls++
-          if (listCalls === 1) return Promise.resolve(initial)
-          return new Promise<ItemWithDailyCost[]>((resolve) => {
-            resolveSecond = resolve
-          })
-        },
-      },
-    })
-    const store = useItemsStore()
-    await flushPromises()
-    expect(store.items).toEqual(initial)
-    expect(store.version).toBe(1)
-
-    handlers.forEach((h) => h({ event: 'ledger:changed', payload: null }))
-    await flushPromises()
-    // 重拉在途：旧数据保留（不闪空）
-    expect(store.items).toEqual(initial)
-    expect(store.status).toBe('loading')
-
-    resolveSecond(fresh)
-    await flushPromises()
-    expect(store.items).toEqual(fresh)
-    expect(store.version).toBe(2)
-    expect(store.status).toBe('ready')
-  })
-
   it('create 调用 create_item 后立即重拉，创建返回即可见新物品', async () => {
     const initial = [baseItem()]
     const created = baseItem({ id: 'item-new', name: '笔记本', total_cost_cents: 500_000 })
@@ -264,5 +209,24 @@ describe('useItemsStore', () => {
 
     await expect(store.remove('item-1')).rejects.toThrow('物品不存在')
     expect(store.items).toEqual(initial)
+  })
+
+  it('写入成功后重拉失败不反转写动作成败：动作正常返回，失败信号由 status 承载（ADR-0123 决策 3）', async () => {
+    let listCalls = 0
+    wireInvokeSeam({
+      overrides: {
+        list_items: () => {
+          listCalls++
+          return listCalls === 1 ? Promise.resolve([baseItem()]) : Promise.reject(new Error('重拉失败'))
+        },
+        create_item: () => 'item-new',
+      },
+    })
+    const store = useItemsStore()
+    await flushPromises()
+
+    // 已落库的建档不因重拉失败误报「保存失败」，动作正常返回 id
+    await expect(store.create(createInput)).resolves.toBe('item-new')
+    expect(store.status).toBe('error')
   })
 })

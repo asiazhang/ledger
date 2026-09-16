@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { listen } from '@tauri-apps/api/event'
 import { api } from '@ledger/api'
+import { createPushFirstList } from '@/composables/push-first-list'
 import {
   isFundingCandidateAccount,
   type Account,
@@ -19,9 +19,6 @@ import {
   type CategoryTreeNode,
 } from '@ledger/utils/category-tree'
 
-/** 参考数据加载状态：`idle` 为初始瞬态（self-init 同步置为 `loading`，外部基本观察不到）。 */
-export type ReferenceStatus = 'idle' | 'loading' | 'ready' | 'error'
-
 /**
  * 参考数据（Reference Data）单一来源 store。
  *
@@ -29,18 +26,16 @@ export type ReferenceStatus = 'idle' | 'loading' | 'ready' | 'error'
  * `insurers`（保险域自有，ADR-0082，issue #714）及全部派生映射
  * （账户/分类/币种/商户映射）与分类树逻辑，作为字典/枚举的单一来源，消费端一律从本 store 读取。
  *
- * 生命周期（push-first）：
- * - 首次访问 self-init：store 首次被创建时自动触发一次加载；
- * - 订阅后端 `ledger:changed`：参考写入成功后自动重拉四表
- *   （stale-while-revalidate：拉取期间保留旧数据，全部成功才整体替换，不闪空）；
- * - 派生映射为 computed，随数组自动更新。
+ * 清单生命周期（self-init / `ledger:changed` 失效重拉 / stale-while-revalidate
+ * 多表全成才整体替换 / 在途合并 / status / version）内化在 push-first 工厂单点
+ * （`createPushFirstList`，ADR-0123）；本店只留快照落位（含删全量拆分）、
+ * 派生映射（computed，随数组自动更新）与字典查询。
  *
- * 失效机制唯一：事件驱动（`ledger:changed`）是唯一的重拉触发源，无 pull 侧兜底。
- * 失效信号：`status`（idle/loading/ready/error）与 `version`（每次成功重拉自增），
- * 供观测加载状态与重拉次数。动作：`refresh()`（强制重拉，在途合并去重）。
+ * 失效机制唯一：事件驱动（`ledger:changed`）是唯一的重拉触发源，无 pull 侧兜底
+ * （领域规则，ADR-0012；工厂是其实现载体）。
  */
 /**
- * 含删全量字典行的统一拆分（reload 内分类/商户/保司三处同构）：
+ * 含删全量字典行的统一拆分（apply 落位内分类/商户/保司三处同构）：
  * 在用行进字典，软删行进显示/管理视图缓存 Map（历史引用与「显示已删」共用）。
  */
 function splitDeleted<T extends Syncable & { id: string }>(all: T[]): { active: T[]; deleted: Map<string, T> } {
@@ -79,12 +74,34 @@ export const useReferenceStore = defineStore('reference', () => {
    */
   const deletedInsurers = ref(new Map<string, Insurer>())
 
-  // —— 失效信号 ——
-  const status = ref<ReferenceStatus>('idle')
-  const version = ref(0)
-
-  /** 在途加载 promise（并发调用合并去重）。 */
-  let inFlight: Promise<void> | null = null
+  // —— 失效信号（工厂产出，观测加载状态与重拉次数） ——
+  const { status, version, refresh } = createPushFirstList(
+    () =>
+      Promise.all([
+        api.listCurrencies(),
+        api.listAccounts(),
+        // 分类拉含软删全量，按 is_deleted 拆分：在用进字典，软删进显示/校验缓存
+        // （历史交易口径，issue #377，先例商户 issue #191）
+        api.listCategories({ includeDeleted: true }),
+        // 商户拉含软删全量，按 is_deleted 拆分：在用进字典，软删进显示缓存（issue #191）
+        api.listMerchants({ includeDeleted: true }),
+        // 保司拉含已删全量，按 is_deleted 拆分：在用进字典，已删进管理视图显示缓存（issue #714）
+        api.listInsurers({ includeDeleted: true }),
+      ]),
+    ([cs, as, catsAll, msAll, insAll]) => {
+      currencies.value = cs
+      accounts.value = as
+      const cats = splitDeleted(catsAll)
+      categories.value = cats.active
+      deletedCategories.value = cats.deleted
+      const ms = splitDeleted(msAll)
+      merchants.value = ms.active
+      deletedMerchants.value = ms.deleted
+      const ins = splitDeleted(insAll)
+      insurers.value = ins.active
+      deletedInsurers.value = ins.deleted
+    },
+  )
 
   const currencyMap = computed(() => {
     const m = new Map<string, Currency>()
@@ -183,72 +200,10 @@ export const useReferenceStore = defineStore('reference', () => {
   }
 
   /**
-   * 核心：一次完整重拉，stale-while-revalidate。
-   * 拉取期间保留旧数据；四表全部成功才整体替换（避免闪空与部分更新）。
+   * 一次完整重拉由工厂承载（stale-while-revalidate：拉取期间保留旧数据，
+   * 五源全成才整体替换——部分失败不落位）；push 生命周期（self-init 与
+   * ledger:changed 订阅）由工厂内化（ADR-0123）。
    */
-  async function reload(): Promise<void> {
-    status.value = 'loading'
-    try {
-      const [cs, as, catsAll, msAll, insAll] = await Promise.all([
-        api.listCurrencies(),
-        api.listAccounts(),
-        // 分类拉含软删全量，按 is_deleted 拆分：在用进字典，软删进显示/校验缓存
-        // （历史交易口径，issue #377，先例商户 issue #191）
-        api.listCategories({ includeDeleted: true }),
-        // 商户拉含软删全量，按 is_deleted 拆分：在用进字典，软删进显示缓存（issue #191）
-        api.listMerchants({ includeDeleted: true }),
-        // 保司拉含已删全量，按 is_deleted 拆分：在用进字典，已删进管理视图显示缓存（issue #714）
-        api.listInsurers({ includeDeleted: true }),
-      ])
-      currencies.value = cs
-      accounts.value = as
-      const cats = splitDeleted(catsAll)
-      categories.value = cats.active
-      deletedCategories.value = cats.deleted
-      const ms = splitDeleted(msAll)
-      merchants.value = ms.active
-      deletedMerchants.value = ms.deleted
-      const ins = splitDeleted(insAll)
-      insurers.value = ins.active
-      deletedInsurers.value = ins.deleted
-      version.value += 1
-      status.value = 'ready'
-    } catch (e) {
-      status.value = 'error'
-      throw e
-    }
-  }
-
-  /** 在途去重：并发调用（self-init / refresh / 事件）合并为同一次加载。 */
-  function reloadMerged(): Promise<void> {
-    if (inFlight) return inFlight
-    inFlight = reload().finally(() => {
-      inFlight = null
-    })
-    return inFlight
-  }
-
-  /** 强制重拉（在途时合并，避免 IPC 风暴）。 */
-  function refresh(): Promise<void> {
-    return reloadMerged()
-  }
-
-  // —— push 生命周期 ——
-  // 首次访问 self-init：触发一次加载（失败静默，失败信号已由 status 承载）。
-  void refresh().catch(() => {
-    /* noop */
-  })
-
-  // 订阅后端 ledger:changed：参考数据已失效 → 静默重拉（stale-while-revalidate）。
-  // 注：注册为异步；注册完成前到达的事件会丢失（窗口极窄：应用启动瞬间，
-  // AI 导入写入几乎不会恰好发生在该时刻；后续任一 refresh/事件仍会兜底）。
-  listen('ledger:changed', () => {
-    void refresh().catch(() => {
-      /* noop：失败信号已由 status 承载 */
-    })
-  }).catch(() => {
-    /* 监听注册失败不阻塞 store（本地事件，极少发生） */
-  })
 
   function getCurrency(code: string): Currency | undefined {
     return currencyMap.value.get(code)

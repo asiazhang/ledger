@@ -1,28 +1,25 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { listen } from '@tauri-apps/api/event'
 import { api } from '@ledger/api'
+import { createPushFirstList } from '@/composables/push-first-list'
 import type {
   PhysicalAsset,
   PhysicalAssetDisposeInput,
   PhysicalAssetInput,
-  PhysicalAssetList,
   PhysicalAssetUpdateInput,
   PhysicalAssetValuationInput,
 } from '@ledger/types'
-
-/** 实物资产加载状态：`idle` 为初始瞬态（self-init 同步置为 `loading`，外部基本观察不到）。 */
-export type PhysicalAssetsStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 /**
  * 实物资产（PhysicalAsset）领域 store（issue #466 / ADR-0064）。
  *
  * 实物资产是大件实物的估值档案（实物资产分域词汇表 `PhysicalAsset`），
- * **不进** `useReferenceStore`（不是可选值字典），拥有自己的单一来源 store
- * （镜像 `usePoliciesStore` 的 push-first 生命周期）：
- * - 首次访问 self-init：store 首次被创建时自动触发一次加载；
- * - 订阅后端 `ledger:changed`：实物资产写入（本 store 或后续写路径）成功后
- *   自动静默重拉（stale-while-revalidate：拉取期间保留旧数据，成功后整体替换）。
+ * **不进** `useReferenceStore`（不是可选值字典），拥有自己的单一来源 store。
+ *
+ * 清单生命周期（self-init / `ledger:changed` 失效重拉 / stale-while-revalidate
+ * 整体替换 / 在途合并 / status / version）内化在 push-first 工厂单点
+ * （`createPushFirstList`，ADR-0123）；本店只留快照落位（列表 + 在持合计同源
+ * 快照）、筛选参数（statusFilter 闭包进 load，#468 T3）与领域动作。
  *
  * 列表只含未删除资产，默认口径 = 在持（「列表默认只看在持资产」，处置 /
  * 软删过滤由 T3 承接）；顶部合计消费后端同源在持估值合计（折本位币，
@@ -33,52 +30,25 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
   /** 在持估值合计（本位币，分）与折算基准币种（后端列表同源快照）。 */
   const holdingTotalNativeCents = ref(0)
   const nativeCurrency = ref('')
-  const status = ref<PhysicalAssetsStatus>('idle')
-  const version = ref(0)
   /** 状态筛选（issue #468 T3）：默认只看在持；「已处置」筛选回看完整档案。
    *  在持合计口径与筛选无关（后端恒算在持，回看已处置时合计不变）。 */
   const statusFilter = ref<'holding' | 'disposed'>('holding')
 
-  /** 在途加载 promise（并发调用合并去重）。 */
-  let inFlight: Promise<void> | null = null
-
-  /** 一次完整重拉：拉取期间保留旧数据，成功后整体替换（避免闪空与部分更新；
-   *  任一失败则整体失败，失败信号由 status 承载）。 */
-  async function reload(): Promise<void> {
-    status.value = 'loading'
-    try {
-      const list: PhysicalAssetList = await api.listPhysicalAssets(statusFilter.value)
+  const { status, version, refresh } = createPushFirstList(
+    () => api.listPhysicalAssets(statusFilter.value),
+    (list) => {
       assets.value = list.assets
       holdingTotalNativeCents.value = list.holding_total_native_cents
       nativeCurrency.value = list.native_currency
-      version.value += 1
-      status.value = 'ready'
-    } catch (e) {
-      status.value = 'error'
-      throw e
-    }
-  }
-
-  /** 在途去重：并发调用（self-init / refresh / create / 事件）合并为同一次加载。 */
-  function reloadMerged(): Promise<void> {
-    if (inFlight) return inFlight
-    inFlight = reload().finally(() => {
-      inFlight = null
-    })
-    return inFlight
-  }
-
-  /** 强制刷新（在途时合并，避免 IPC 风暴）。 */
-  function refresh(): Promise<void> {
-    return reloadMerged()
-  }
+    },
+  )
 
   /** 切换状态筛选（issue #468 T3）：在持 / 已处置，切换后立即按新筛选重拉；
    *  后续 ledger:changed 信号重拉沿用当前筛选。 */
   async function setStatusFilter(filter: 'holding' | 'disposed'): Promise<void> {
     if (statusFilter.value === filter) return
     statusFilter.value = filter
-    await reloadMerged()
+    await refresh()
   }
 
   /** 建档（估值必填 = 首条估值历史行）：写入成功即返回 id，不因重拉失败
@@ -129,20 +99,7 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
     })
   }
 
-  // —— push 生命周期 ——
-  // 首次访问 self-init：触发一次加载（失败静默，失败信号已由 status 承载）。
-  void refresh().catch(() => {
-    /* noop */
-  })
-
-  // 订阅后端 ledger:changed：实物资产写入即失效 → 静默重拉（stale-while-revalidate）。
-  listen('ledger:changed', () => {
-    void refresh().catch(() => {
-      /* noop：失败信号已由 status 承载 */
-    })
-  }).catch(() => {
-    /* 监听注册失败不阻塞 store（本地事件，极少发生） */
-  })
+  // push 生命周期（self-init 与 ledger:changed 订阅）由工厂内化（ADR-0123）。
 
   return {
     assets,
