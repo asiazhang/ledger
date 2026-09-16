@@ -235,10 +235,24 @@ fn startup_wiring_backfills_history_and_frontend_sync_stays_unblocked() {
             "进度载荷应为标的级 done/total 形状，实际 {payloads:?}"
         );
     }
-    assert!(
-        *price_signals.lock().unwrap() >= 2,
-        "前台同步与后台补全的实际写入各自发价格失效信号（成败同判的收尾裁决）"
-    );
+    // 信号发射点在收尾裁决（数据落库 → 置脏 → 发射），**行可见不蕴含信号已
+    // 送达**：后台补全的发射落在本轮收尾之后，与前台的发射之间天然有先后差。
+    // 断言对准用户可观察契约「信号最终到达、不丢失」，故带超时等待（正常路径
+    // 毫秒级即过；发射被删只剩单条时超时失败——负向判据不因等待而软化。先例：
+    // `test_utils::GatedEmitter::wait_delivered` 的谓词等待与超时上界哲学）。
+    let signal_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let delivered = *price_signals.lock().unwrap();
+        if delivered >= 2 {
+            break;
+        }
+        assert!(
+            Instant::now() < signal_deadline,
+            "前台同步与后台补全的实际写入各自发价格失效信号（成败同判的收尾裁决）：\
+             限时内只到达 {delivered} 次"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 
     // 同日窗口不重跑（AC「每个自然日窗口各跑一次」）：巡检多次到期后，日 K
     // 抓取仍只有首轮那一次，进度事件不再重新点亮（无第二轮的 { done: 0 }）。

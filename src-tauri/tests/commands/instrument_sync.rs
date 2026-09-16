@@ -391,3 +391,35 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
         "正常（批量面命中）路径不应带降级事实，实际 {normal_json}"
     );
 }
+
+/// 生产通道束构造路径的负向判据（issue #1403）：命令壳**不注入**桩通道束时
+/// （生产分支）必须在阻塞线程上构造生产束并正常返回——空库在编排里早退
+///（「暂无标的可同步」），生产束只被构造、不发任何网络请求，故断言确定性成立。
+/// 把构造放回异步上下文（tokio worker / `block_on` 所在线程），reqwest 阻塞
+/// 客户端在 debug 构建下的断言即在构造点 panic，本测试变红（修复前已在本机
+/// 红过）——「删除接线即变红」的负向半边（ADR-0087 断言强度）。
+#[test]
+fn production_channels_construct_outside_async_context_on_empty_db() {
+    isolate_home();
+    // 提交点后置动作与交易域接缝接线（与上两测同形，幂等）。
+    ledger_backup::install_after_commit_hook();
+    tauri_app_lib::transaction_wiring::install_all();
+    let dir = std::env::temp_dir().join(format!(
+        "ledger-instrumentsync-production-it-{}",
+        ledger_infra::db::new_uuid()
+    ));
+    std::fs::create_dir_all(&dir).expect("临时目录应可建");
+    let app = tauri::test::mock_app();
+    app.manage(db::open_db_in(&dir).expect("文件库应可开"));
+
+    // 刻意**不** manage `SyncChannelsSlot`：本例走命令壳的生产通道束分支。
+    let result = tauri::async_runtime::block_on(sync::sync_instrument_info(
+        app.state::<DbState>(),
+        app.handle().clone(),
+    ))
+    .expect("空库同步应正常返回");
+
+    assert_eq!(result.synced, 0, "空库同步不应有成功标的");
+    assert_eq!(result.skipped, 0, "空库同步不应有跳过标的");
+    assert_eq!(result.message, "暂无标的可同步", "空库应返回明确提示");
+}
