@@ -17,9 +17,11 @@ use std::time::{Duration, Instant};
 use tauri::{Listener, Manager};
 
 use ledger_infra::db::{self, DbState};
+use ledger_infra::error::{AppError, Result};
 use ledger_infra::events;
 use ledger_market_sync::{
-    BulkFetchSurfaces, INSTRUMENT_SYNC_PROGRESS, StockItem, SyncFetchChannels,
+    BulkFetchCircuit, BulkFetchSurfaces, FundNameDictionary, FundNavTable,
+    INSTRUMENT_SYNC_PROGRESS, StockItem, SyncFetchChannels,
 };
 use tauri_app_lib::commands::sync::SyncChannelsSlot;
 use tauri_app_lib::commands::{investment, sync};
@@ -245,5 +247,147 @@ fn reads_return_current_data_while_sync_in_flight() {
         *price_signals.lock().unwrap(),
         1,
         "成功且实际写入应发恰好一次价格失效信号（映射单点判定）"
+    );
+}
+
+/// 批量面降级事实随 IPC 结果透出（ADR-0121 决策 4，issue #1376）：批量取数面
+/// 失败回退逐只通道时，IPC 结果 JSON 带出 `bulk_degraded: true`；批量面正常
+/// 命中路径带 `bulk_degraded: false`。断言对准**序列化 JSON**（前端经 invoke
+/// 实际收到的形状）——降级字段若退回 `#[serde(skip)]`（不进 IPC 线），结构体
+/// 字段断言仍绿而 IPC 面静默失真，本测试即红（接线型负向判据）。
+///
+/// 降级场景取「净值面命中 + 名称面失败」形态：一面失败即本次同步降级
+///（ADR-0121 决策 3），而净值面命中使该基金按「无新净值」整只零逐只请求——
+/// 逐只净值通道不被触达（stub unreachable 即钉住），同步仍成功返回（fail-closed
+/// 不丢数据），结果带降级事实。两场景共用同一基金基线：现价缓存水位 + 历史
+/// 序列各一行（批量面「无新净值」判据依赖，issue #1059 首刷判据）。
+#[test]
+fn bulk_degradation_fact_reaches_the_ipc_result() {
+    isolate_home();
+    // 提交点后置动作与交易域接缝接线（与生产启动接线同形，幂等；写入口的
+    // 本位币读取依赖后者，缺装即报 transaction.base-currency-reader-unregistered
+    // ——单跑本测试时无其他测试代装，必显真实缺陷）。
+    ledger_backup::install_after_commit_hook();
+    tauri_app_lib::transaction_wiring::install_all();
+    let dir = std::env::temp_dir().join(format!(
+        "ledger-instrumentsync-degraded-it-{}",
+        ledger_infra::db::new_uuid()
+    ));
+    std::fs::create_dir_all(&dir).expect("临时目录应可建");
+    let app = tauri::test::mock_app();
+    app.manage(db::open_db_in(&dir).expect("文件库应可开"));
+
+    // 静态基线：一只场外基金（fund + 6 位真实代码 → 净值分区，issue #1060 判定
+    // 单点；直插 SQL 为域测试同款先例，ADR-0084 造数纪律）。
+    let conn = app.state::<DbState>().conn.clone();
+    {
+        let guard = conn.lock().expect("种子写入锁应可取");
+        tauri_app_lib::test_support::seed_instrument(
+            &guard,
+            "inst-fund",
+            "110022",
+            "易方达消费行业",
+            "CNY",
+            "unknown",
+        );
+        guard
+            .execute(
+                "UPDATE instruments SET instrument_type='fund' WHERE id='inst-fund'",
+                [],
+            )
+            .expect("种子基金类型应落库");
+        // 现价缓存水位 + 历史序列：非首刷、水位同日 → 净值面命中即「无新净值」，
+        // 整只零逐只请求（fund_nav 的 bulk_decision 判据）。
+        guard
+            .execute(
+                "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,nav_date,source,created_at,updated_at,version,device_id) \
+                 VALUES ('mp-1','inst-fund',33480,'CNY','2026-01-30','2026-01-30','eastmoney','2026-01-30T00:00:00Z','2026-01-30T00:00:00Z',1,'test')",
+                [],
+            )
+            .expect("种子现价缓存应落库");
+        tauri_app_lib::test_support::seed_price_history(
+            &guard,
+            "ph-1",
+            "inst-fund",
+            "2026-01-30",
+            33480,
+            "CNY",
+        );
+    }
+
+    /// 逐只通道桩：无行情标的（报价/K 线/汇率不触达）；净值两通道不触达
+    ///（净值面命中即「无新净值」零逐只请求，触达即测试场景失真）；名称通道
+    /// 返回权威名称（名称面未覆盖时逐只兜底的合法应答）。
+    fn per_item_channels() -> SyncFetchChannels {
+        SyncFetchChannels {
+            fetch_ulist: Box::new(|_| Ok(vec![])),
+            fetch_kline: Box::new(|_| unreachable!("测试现场无行情标的，K 线通道不应被触达")),
+            fetch_fx: Box::new(|_| unreachable!("测试现场无外币标的，汇率通道不应被触达")),
+            fetch_nav: Box::new(|_| unreachable!("净值面命中即无新净值，逐只净值通道不应被触达")),
+            fetch_nav_full: Box::new(|_| {
+                unreachable!("净值面命中即无新净值，单请求全量净值通道不应被触达")
+            }),
+            fetch_fund_name: Box::new(|_| Ok("权威名称-110022".into())),
+            bulk: BulkFetchSurfaces::absent(),
+        }
+    }
+
+    /// 净值批量面命中桩：收录该基金且最新净值日期不晚于水位（无新净值）。
+    fn nav_hit() -> Result<FundNavTable> {
+        Ok(FundNavTable::from([(
+            "110022".to_string(),
+            ledger_market_sync::BulkNavPoint {
+                date: "2026-01-30".into(),
+                nav: 3.348,
+            },
+        )]))
+    }
+
+    // 注入通道束槽并持锁句柄：两场景经同一槽原地换装批量面（tauri manage
+    // 对已存在状态不替换，二次 manage 是静默无效操作）。
+    let slot = Arc::new(Mutex::new(per_item_channels()));
+    app.manage(SyncChannelsSlot(slot.clone()));
+    let run_sync = || {
+        let handle = app.handle().clone();
+        tauri::async_runtime::block_on(sync::sync_instrument_info(
+            handle.state::<DbState>(),
+            handle.clone(),
+        ))
+    };
+
+    // 场景一（降级）：名称全量字典报错 → 一面失败即本次同步降级（净值面已命中，
+    // 逐只路径不受影响）→ 结果带 `bulk_degraded: true`。
+    let degraded = {
+        let mut channels = per_item_channels();
+        channels.bulk = BulkFetchSurfaces {
+            names: Box::new(|| Err(AppError::Io("名称字典被风控拦截".into()))),
+            nav: Box::new(nav_hit),
+            circuit: Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        };
+        *slot.lock().expect("通道束槽应可锁") = channels;
+        run_sync().expect("降级路径同步应成功返回（fail-closed 不丢数据）")
+    };
+    let degraded_json = serde_json::to_string(&degraded).expect("结果应可序列化");
+    assert!(
+        degraded_json.contains("\"bulk_degraded\":true"),
+        "降级事实应进 IPC 线，实际 {degraded_json}"
+    );
+
+    // 场景二（正常）：两个批量面全部命中 → 结果带 `bulk_degraded: false`——
+    // 正常路径不带降级事实。通道束经同一槽原地换装。
+    let normal = {
+        let mut channels = per_item_channels();
+        channels.bulk = BulkFetchSurfaces {
+            names: Box::new(|| Ok(FundNameDictionary::new())),
+            nav: Box::new(nav_hit),
+            circuit: Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        };
+        *slot.lock().expect("通道束槽应可锁") = channels;
+        run_sync().expect("正常路径同步应成功返回")
+    };
+    let normal_json = serde_json::to_string(&normal).expect("结果应可序列化");
+    assert!(
+        normal_json.contains("\"bulk_degraded\":false"),
+        "正常（批量面命中）路径不应带降级事实，实际 {normal_json}"
     );
 }

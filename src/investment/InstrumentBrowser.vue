@@ -19,6 +19,7 @@ import { usePricesChanged } from '@/investment/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { useWindowTier } from '@ledger/window-tier'
 import SyncProgressBar from '@/investment/SyncProgressBar.vue'
+import SyncDegradedNotice from '@/investment/SyncDegradedNotice.vue'
 import ConceptLabel from '@/investment/ConceptLabel.vue'
 import { errorMessage as extractErrorMessage } from '@ledger/utils/errors'
 import {
@@ -43,7 +44,7 @@ const windowTier = useWindowTier()
 const isMobileTier = computed(() => windowTier.value === 'mobile')
 // 同步接缝（与盈亏页共用）：按钮 loading + 轻量消息反馈 + 确定进度条
 //（issue #897，两入口同一份展示组件、同一份共享进度状态）。
-const { syncing, resultMessage, status, progress, sync } = useInstrumentInfoSync()
+const { syncing, resultMessage, status, progress, degraded, sync } = useInstrumentInfoSync()
 // 删除二次确认（issue #292）：与账户删除同语义（useAppDialog 命令式对话框，
 // ADR-0035 接入弹层注册表驱动快捷键抑制）
 const dialog = useAppDialog()
@@ -385,6 +386,8 @@ const browseScrollX = computed(() => sumFixedColumnWidths(instrumentBrowseColumn
     <NText v-if="resultMessage" :type="status === 'error' ? 'error' : 'info'">
       {{ resultMessage }}
     </NText>
+    <!-- 降级可见（issue #1376 / ADR-0121 决策 4）：回退逐标的通道时明示本次较慢 -->
+    <SyncDegradedNotice :degraded="degraded" />
     <NText v-if="addInstrumentMessage" type="success" data-testid="add-instrument-result">
       {{ addInstrumentMessage }}
     </NText>

@@ -46,6 +46,12 @@ const resultMessage = ref<string | null>(null)
 const status = ref<InstrumentInfoSyncStatus>('idle')
 /** 最近一次同步结果（含同步/跳过统计），便于调用方按需展示 */
 const lastResult = ref<SyncInstrumentInfoResult | null>(null)
+/**
+ * 降级事实位（issue #1376 / ADR-0121 决策 4）：本次同步回退到逐标的通道时为真，
+ * 两入口据此渲染「已降级、本次较慢」标注；正常（批量面命中）路径为假。与结果
+ * 消息同生命周期：新一次同步开始即清空，失败终态不残留。
+ */
+const degraded = ref(false)
 /** 确定进度（issue #897）：终态收起清空，两入口共享同一份 */
 const progress = ref<InstrumentSyncProgress | null>(null)
 
@@ -106,6 +112,7 @@ export function resetInstrumentInfoSyncForTest(): void {
   status.value = 'idle'
   lastResult.value = null
   progress.value = null
+  degraded.value = false
   inFlightSyncs = 0
   inFlight = null
   subscribed = false
@@ -128,12 +135,15 @@ export function useInstrumentInfoSync() {
     status.value = 'idle'
     lastResult.value = null
     progress.value = null
+    degraded.value = false
     inFlightSyncs += 1
     inFlight = (async () => {
       try {
         const res = await api.syncInstrumentInfo()
         lastResult.value = res
         resultMessage.value = res.message
+        // 降级事实随结果带出（issue #1376）：缺失字段（旧后端形状）按未降级处置。
+        degraded.value = res.bulk_degraded === true
         status.value = 'success'
         return 'success'
       } catch (e: any) {
@@ -152,5 +162,5 @@ export function useInstrumentInfoSync() {
     return inFlight
   }
 
-  return { syncing, resultMessage, status, lastResult, progress, sync }
+  return { syncing, resultMessage, status, lastResult, progress, degraded, sync }
 }

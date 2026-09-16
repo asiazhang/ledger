@@ -452,6 +452,52 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     // 失败路径后端不 emit（ADR-0031 决策 2），即无重拉
     expect(mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length).toBe(callsBefore)
   })
+
+  it('同步降级时明示「已降级、本次较慢」（issue #1376 存在性断言，ADR-0087）', async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        sync_instrument_info: {
+          synced: 3,
+          skipped: 0,
+          message: '已同步 3 只，跳过 0 只',
+          bulk_degraded: true,
+        },
+      },
+    })
+    resetInstrumentInfoSyncForTest()
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    // 同步前无降级标注
+    expect(wrapper.find('[data-testid="instrument-sync-degraded"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
+    await flushPromises()
+    // 删除降级标注的渲染，本断言即红（接线型负向判据）
+    const notice = wrapper.find('[data-testid="instrument-sync-degraded"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toBe('已降级、本次较慢')
+  })
+
+  it('正常路径（批量面命中，bulk_degraded:false）不渲染降级标注（issue #1376）', async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        sync_instrument_info: {
+          synced: 3,
+          skipped: 0,
+          message: '已同步 3 只，跳过 0 只',
+          bulk_degraded: false,
+        },
+      },
+    })
+    resetInstrumentInfoSyncForTest()
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="instrument-sync-degraded"]').exists()).toBe(false)
+  })
 })
 
 // ---------------------------------------------------------------------------

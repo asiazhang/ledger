@@ -19,6 +19,7 @@ import { useInstrumentInfoSync } from '@/investment/useInstrumentInfoSync'
 import { usePricesChanged } from '@/investment/usePricesChanged'
 import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
 import SyncProgressBar from '@/investment/SyncProgressBar.vue'
+import SyncDegradedNotice from '@/investment/SyncDegradedNotice.vue'
 import InstrumentLink from '@/investment/InstrumentLink.vue'
 import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
 import ManualPriceModal from '@/investment/ManualPriceModal.vue'
@@ -70,7 +71,7 @@ const {
 // SyncProgressBar 展示组件、同一份共享进度状态）。同步后重拉不绑在调用方自觉里：后端实际
 // 写价后 emit 价格失效信号（ADR-0031），此处订阅重拉现价/市值（含本卡
 // 所在隐藏 tab 常驻挂载的场景）；失败/零更新后端不 emit，无谓重拉也不发生。
-const { syncing, resultMessage, status, progress, sync } = useInstrumentInfoSync()
+const { syncing, resultMessage, status, progress, degraded, sync } = useInstrumentInfoSync()
 
 usePricesChanged(() => {
   void refresh()
@@ -344,6 +345,9 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
         <NText v-if="resultMessage" :type="status === 'error' ? 'error' : 'info'">
           {{ resultMessage }}
         </NText>
+
+        <!-- 降级可见（issue #1376 / ADR-0121 决策 4）：回退逐标的通道时明示本次较慢 -->
+        <SyncDegradedNotice :degraded="degraded" />
 
         <!-- 缺价行「录价」引导的页面级回执（issue #1193）；行内数值刷新由价格失效信号驱动 -->
         <NText v-if="quoteMessage" type="success" data-testid="manual-quote-result">
