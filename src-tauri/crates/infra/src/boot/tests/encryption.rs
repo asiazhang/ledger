@@ -418,3 +418,197 @@ fn reset_rejects_non_encrypted_file() {
     let err = reset_encrypted_db_file(&missing).unwrap_err();
     assert_eq!(code_of(&err), Some("encryption.db-missing"));
 }
+
+// ---------------------------------------------------------------------------
+// 外来形态明文库：保留字节探测与启动归一化（issue #1453）
+// ---------------------------------------------------------------------------
+
+use crate::db::encryption::{normalize_plaintext_db_file, probe_file};
+use crate::test_utils::{
+    FOREIGN_RESERVED_BYTES, read_reserved_byte, write_foreign_form_plaintext_db,
+};
+
+/// 夹具自证（issue #1453）：按字节构造的一页空库 + SQLite 自身写表写行，得到的
+/// 是**合法**（可打开、完整性检查通过、读写正常）且保留字节 = 12 的明文库——
+/// 与现场库（外部工具写坏保留字节的合法库）同形。夹具若不成立，本组测试就
+/// 证明不了任何事，故这条先钉住夹具本身。
+#[test]
+fn foreign_form_plaintext_fixture_is_a_valid_db_with_reserved_bytes() {
+    let dir = temp_dir("foreign-fixture");
+    let db = dir.join("ledger.db");
+    write_foreign_form_plaintext_db(&db, 3);
+
+    let probe = probe_file(&db).unwrap();
+    assert_eq!(probe.kind, DbFileKind::Plaintext);
+    assert_eq!(probe.reserved_bytes, Some(FOREIGN_RESERVED_BYTES));
+    assert_eq!(read_reserved_byte(&db), FOREIGN_RESERVED_BYTES);
+
+    // 合法：明文建连、完整性检查通过、数据可读。
+    let conn = open_connection(&db).unwrap();
+    check_integrity(&conn).unwrap();
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM fixture_probe", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 3);
+}
+
+/// 根因级证明（issue #1453）：外来形态明文库在归一化前**无法** `VACUUM INTO`
+///（SQLCipher 的无 KEY ATTACH 推断路径报 `unable to open database`），归一化后
+/// 可执行且产物保留字节 = 0。前一半同时是夹具复现性的证明：该语句若在此不再
+/// 失败（夹具失效或引擎行为变化），本用例即变红，附带的失败形态即现场根因。
+#[test]
+fn foreign_form_db_breaks_vacuum_into_until_normalized() {
+    let dir = temp_dir("foreign-vacuum");
+    let db = dir.join("ledger.db");
+    write_foreign_form_plaintext_db(&db, 3);
+    let snapshot = dir.join("snapshot.db");
+    let vacuum_into = |path: &Path| format!("VACUUM INTO '{}'", path.display());
+
+    // 归一化前：备份/检查点产出的同款语句必然失败（现场根因）。
+    {
+        let conn = open_connection(&db).unwrap();
+        // 只断言「失败」这一可观察行为，不钉驱动报错文本（SQLCipher/SQLite 版本
+        // 升级会改措辞，断言措辞属实现形状守护）。
+        let attempt = conn.execute_batch(&vacuum_into(&snapshot));
+        assert!(
+            attempt.is_err(),
+            "外来形态库应复现「不带 KEY 的 ATTACH 打不开」根因（夹具失效即在此变红）"
+        );
+    }
+    std::fs::remove_file(&snapshot).ok();
+
+    normalize_plaintext_db_file(&db).unwrap();
+
+    // 归一化后：同一条语句可执行，且产物本身是干净形态（不会把污染传给备份）。
+    {
+        let conn = open_connection(&db).unwrap();
+        conn.execute_batch(&vacuum_into(&snapshot)).unwrap();
+    }
+    assert_eq!(read_reserved_byte(&snapshot), 0);
+}
+
+/// 归一化正向（issue #1453 验收判据）：畸形夹具经归一化后保留字节归零、
+/// `integrity_check` 通过、`sqlite_master` 对象数与 `user_version` 与源一致、
+/// 数据完整；旧形态留 `.bak` 副本。
+#[test]
+fn normalize_rewrites_foreign_form_db_and_preserves_data() {
+    let dir = temp_dir("normalize");
+    let db = dir.join("ledger.db");
+    write_foreign_form_plaintext_db(&db, 3);
+    // 非零 user_version：钉住「显式对齐」而不是依赖导出函数顺带复制。
+    {
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch("PRAGMA user_version = 42").unwrap();
+    }
+    let objects_before: i64 = {
+        let conn = Connection::open(&db).unwrap();
+        conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get(0))
+            .unwrap()
+    };
+
+    normalize_plaintext_db_file(&db).unwrap();
+
+    assert_eq!(read_reserved_byte(&db), 0, "归一化后保留字节应归零");
+    assert_eq!(probe_file(&db).unwrap().reserved_bytes, Some(0));
+    let conn = open_connection(&db).unwrap();
+    check_integrity(&conn).unwrap();
+    let objects_after: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(objects_after, objects_before, "对象数应与源一致");
+    let user_version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(user_version, 42, "schema 版本应与源一致");
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM fixture_probe", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 3, "数据应完整保留");
+
+    // 转换前形态保留为 `.bak` 副本（仍是外来形态，可留作排查）。
+    let bak = db.with_extension("db.bak");
+    assert!(bak.exists(), "旧形态应按既有转换语义保留 .bak 副本");
+    assert_eq!(read_reserved_byte(&bak), FOREIGN_RESERVED_BYTES);
+}
+
+/// 回归保护（issue #1453）：应用自有形态的明文库零改动——文件一个字节都不
+/// 重写、不产生 `.bak` 副本（归一化只在命中外来形态时发生）。
+#[test]
+fn normalize_leaves_app_owned_plaintext_db_untouched() {
+    let dir = temp_dir("normalize-owned");
+    let db = dir.join("ledger.db");
+    {
+        let mut conn = open_connection(&db).unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        seed_transactions(&conn, 2);
+    }
+    let before = std::fs::read(&db).unwrap();
+
+    normalize_plaintext_db_file(&db).unwrap();
+
+    assert_eq!(
+        std::fs::read(&db).unwrap(),
+        before,
+        "应用自有形态的明文库不应被重写"
+    );
+    assert!(!db.with_extension("db.bak").exists(), "不应产生副本");
+}
+
+/// 归一化失败（导出落不了盘）时原库原样保留、无任何残留：与整库转换共用同一
+/// 失败路径（ADR-0075 决策 6 的既有原子性语义）。启动编排据此把失败登记为
+/// 启动失败（码化错误 `boot.db-normalize-failed` 由壳层 `boot_sequence` 映射，
+/// 交既有失败恢复屏），用户不会「带病运行」。
+#[test]
+fn normalize_failure_keeps_original_db_intact() {
+    if !readonly_trigger_available() {
+        eprintln!(
+            "跳过：目录只读触发手段在当前环境不可用（root 架空权限位或非 Unix），失败路径由 Linux 非 root CI 覆盖（issue #791）"
+        );
+        return;
+    }
+
+    let dir = temp_dir("normalize-fail");
+    let db = dir.join("ledger.db");
+    write_foreign_form_plaintext_db(&db, 2);
+    let original_bytes = std::fs::read(&db).unwrap();
+
+    // 目录置为不可写，归一化的临时产物（temp_sibling）无法落盘。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    }
+
+    normalize_plaintext_db_file(&db).unwrap_err();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    // 原库字节不变、仍是外来形态、可正常打开且数据完整；无 `.bak`、无临时残留。
+    assert_eq!(
+        std::fs::read(&db).unwrap(),
+        original_bytes,
+        "归一化失败不得改动原库任何字节"
+    );
+    assert_eq!(read_reserved_byte(&db), FOREIGN_RESERVED_BYTES);
+    assert!(!db.with_extension("db.bak").exists(), "失败不得产生副本");
+    let leftovers: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        leftovers
+            .iter()
+            .all(|name| !name.starts_with(".ledger.db.")),
+        "不应残留归一化临时文件: {leftovers:?}"
+    );
+    let conn = open_connection(&db).unwrap();
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM fixture_probe", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 2, "原库数据完整可读");
+}

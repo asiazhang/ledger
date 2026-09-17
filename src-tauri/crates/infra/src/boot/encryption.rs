@@ -1,5 +1,6 @@
-//! 加密引擎基座：库文件头探测（issue #569 / ADR-0075 决策 4）、整库转换
-//! 三形态与解锁（issue #570/#571 / ADR-0075 决策 5/6）、忘记口令重置
+//! 加密引擎基座：库文件头探测（issue #569 / ADR-0075 决策 4；#1453 起同一次
+//! 读取同时给出明文库的每页保留字节）、整库转换三形态与解锁（issue #570/#571 /
+//! ADR-0075 决策 5/6）、外来形态明文库归一化（issue #1453）、忘记口令重置
 //! （issue #573 / 决策 2/5）、进程级锁定门。
 //!
 //! 加密状态是**库文件的属性**，随备份、恢复、复制自然流动；探测判定只读
@@ -7,6 +8,8 @@
 //! 例外」仍是 DataLocation，不再扩大）。明文库有固定文件头
 //! （[`SQLITE_HEADER_MAGIC`]），SQLCipher 密文库头部为随机盐——读前
 //! 16 字节即可可靠判定；空文件（不存在或不足 16 字节）按明文新装对待。
+//! 同一次读取续读 5 字节还给出明文库的每页保留字节（偏移 20），供启动期
+//! 识别「外来形态明文库」（issue #1453）。
 //!
 //! 建连密钥缝在 [`crate::db::open_connection_with_passphrase`]（与明文路径
 //! 同点的单一注入处）；转换与解锁是文件级操作，行为语义见各函数文档。
@@ -35,20 +38,60 @@ pub enum DbFileKind {
     Empty,
 }
 
-/// 探测库文件的明文/密文三态。文件即真相：只读该文件头 16 字节，
-/// 不依赖任何库外引导状态（ADR-0075 决策 4）。
+/// 探测库文件的明文/密文三态（[`probe_file`] 的三态视图，既有消费方零改动）。
+/// 文件即真相，不依赖任何库外引导状态（ADR-0075 决策 4）。
 ///
 /// 文件不存在，或可读字节不足 16（含 0 字节）→ [`DbFileKind::Empty`]
 /// （不足以构成任何一种库文件，按新装语义解释）；其余读取失败
 /// （权限等）原样上抛。
 pub fn probe_file_kind(path: &Path) -> Result<DbFileKind> {
+    Ok(probe_file(path)?.kind)
+}
+
+/// 明文库文件头里「每页保留字节」字段的偏移（SQLite 文件格式：偏移 20 的
+/// 1 字节）。应用自有的明文库恒为 0；非 0 即外部工具写入的**外来形态**
+/// （issue #1453：macOS 自带 `/usr/bin/sqlite3` 的 VACUUM 按自身编解码器写 12），
+/// 该形态在 SQLCipher 的 ATTACH 推断路径上必然失败（见
+/// [`normalize_plaintext_db_file`]）。
+pub const HEADER_RESERVED_BYTES_OFFSET: usize = 20;
+
+/// 头探测一次读入的字节数：魔数 16 字节（偏移 0）+ 页大小 2 字节（16）+ 读写
+/// 版本 2 字节（18）+ 保留字节 1 字节（20）= 21。既有唯一读头点的一次读取同时
+/// 给出三态与保留字节，不新增第二份头解析（issue #1453）。
+const HEADER_PROBE_BYTES: usize = HEADER_RESERVED_BYTES_OFFSET + 1;
+
+/// 库文件头探测结果（issue #1453）：三态 + 明文库的每页保留字节。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DbFileProbe {
+    /// 明文库 / 密文库 / 空文件三态。
+    pub kind: DbFileKind,
+    /// 明文库的每页保留字节（文件头偏移 20）；非明文库与空文件为 `None`，
+    /// 魔数完整但不足 21 字节的截断文件同样为 `None`（值不可读）。
+    pub reserved_bytes: Option<u8>,
+}
+
+/// 探测库文件头：三态判定 + 明文库的每页保留字节（issue #1453 在既有唯一
+/// 读头点上扩展）。文件即真相：只读该文件头 21 字节，不依赖任何库外引导
+/// 状态（ADR-0075 决策 4）。
+///
+/// 文件不存在、或可读字节不足 16（含 0 字节）→ [`DbFileKind::Empty`]
+/// （不足以构成任何一种库文件，按新装语义解释）；魔数完整但字节数落在
+/// 16..=20 的截断文件 → [`DbFileKind::Plaintext`] 且保留字节未知（既有三态
+/// 判定零改动，建连失败由调用方按启动失败消化）；其余读取失败（权限等）
+/// 原样上抛。
+pub fn probe_file(path: &Path) -> Result<DbFileProbe> {
     use std::io::Read;
     let mut file = match std::fs::File::open(path) {
         Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(DbFileKind::Empty),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(DbFileProbe {
+                kind: DbFileKind::Empty,
+                reserved_bytes: None,
+            });
+        }
         Err(e) => return Err(e.into()),
     };
-    let mut header = [0u8; 16];
+    let mut header = [0u8; HEADER_PROBE_BYTES];
     let mut filled = 0;
     while filled < header.len() {
         let n = file.read(&mut header[filled..])?;
@@ -57,13 +100,22 @@ pub fn probe_file_kind(path: &Path) -> Result<DbFileKind> {
         }
         filled += n;
     }
-    if filled < header.len() {
-        return Ok(DbFileKind::Empty);
+    if filled < SQLITE_HEADER_MAGIC.len() {
+        return Ok(DbFileProbe {
+            kind: DbFileKind::Empty,
+            reserved_bytes: None,
+        });
     }
-    Ok(if header == SQLITE_HEADER_MAGIC {
-        DbFileKind::Plaintext
-    } else {
-        DbFileKind::Encrypted
+    if header[..SQLITE_HEADER_MAGIC.len()] != SQLITE_HEADER_MAGIC {
+        return Ok(DbFileProbe {
+            kind: DbFileKind::Encrypted,
+            reserved_bytes: None,
+        });
+    }
+    Ok(DbFileProbe {
+        kind: DbFileKind::Plaintext,
+        reserved_bytes: (filled > HEADER_RESERVED_BYTES_OFFSET)
+            .then(|| header[HEADER_RESERVED_BYTES_OFFSET]),
     })
 }
 
@@ -128,7 +180,8 @@ impl EncryptionGate {
 }
 
 // ---------------------------------------------------------------------------
-// 整库加密转换（issue #570/#571 / ADR-0075 决策 6：开启 / 关闭 / 修改主口令三形态同机制）
+// 整库转换（issue #570/#571 / ADR-0075 决策 6：开启 / 关闭 / 修改主口令三形态
+// 同机制；issue #1453：明文 → 明文的形态归一化复用同一转换核心）
 // ---------------------------------------------------------------------------
 
 /// 把明文库整库一次性转换为密文库（用户显式开启加密，issue #570）。
@@ -205,6 +258,44 @@ pub fn change_passphrase_for_file(
     require_encrypted_file(db_path)?;
     verify_source_passphrase(db_path, current_passphrase)?;
     convert_db_file(db_path, Some(current_passphrase), Some(new_passphrase))
+}
+
+/// 归一化**外来形态**明文库（issue #1453）：把「每页保留字节 ≠ 0」的明文库
+/// 整库重写为应用自有形态（保留字节 = 0）。
+///
+/// 为什么必须归一化：SQLCipher 给 `ATTACH` 加的补丁在「主库请求的保留字节 > 0」
+/// 时推断主库是加密库、附加库继承同一密钥；明文库没有密钥，于是
+/// `sqlcipherCodecAttach` 返回 `SQLITE_MISUSE`——`VACUUM INTO`（备份、同步检查点
+/// 产出）内部那条**不带 KEY** 的 ATTACH 因此全灭（报 `unable to open database`），
+/// 而库本身合法、`integrity_check` 通过、日常读写正常。启动期在**建连之前**
+/// 重写一次即根治：此刻没有连接指向旧 inode，重写不需要换连编排（运行期做同样
+/// 的事要把锁从几十毫秒拉到百毫秒级）。
+///
+/// 机制复用既有整库转换链的「明文 → 明文」形态（同一转换核心，不新增导出/
+/// 替换/校验实现）：显式 `ATTACH … KEY ''`（空钥匙 = 明文目标，
+/// 绕过隐式密钥继承）+ SQL 级导出 + 显式对齐 `user_version` + 试开校验 +
+/// 原子替换启用 + 保留 `.bak` 副本。
+///
+/// 已归零的明文库直接返回、**不动文件**（正常明文库零改动）；失败清理临时
+/// 产物、原库原样保留。形态门禁在调用方（[`super::disposition::classify_for_boot`]
+/// 只把外来形态明文库判给本函数）；非明文库的保留字节无意义，此处按内部
+/// 前置条件拒绝（无码——不可达路径，真正的用户可见失败由调用方码化）。
+pub fn normalize_plaintext_db_file(db_path: &Path) -> Result<()> {
+    match probe_file(db_path)?.reserved_bytes {
+        Some(reserved) if reserved != 0 => {
+            convert_db_file(db_path, None, None)?;
+            tracing::info!(
+                reserved_bytes = reserved,
+                "外来形态明文库已归一化（每页保留字节归零）"
+            );
+            Ok(())
+        }
+        Some(_) => Ok(()),
+        None => Err(AppError::Io(format!(
+            "外来形态归一化仅适用于明文库: {}",
+            db_path.display()
+        ))),
+    }
 }
 
 /// 转换核心：三形态共用的文件级机制——以 `source_passphrase` 打开源库

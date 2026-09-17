@@ -1,4 +1,5 @@
-//! 测试支持：捕获 tracing 事件的 Layer、全局最大级别稳定器与闸门式假发射器。
+//! 测试支持：捕获 tracing 事件的 Layer、全局最大级别稳定器、闸门式假发射器
+//! 与外来形态明文库夹具（issue #1453）。
 //!
 //! 供本 crate 的单元测试（`db/tests.rs`、`signals/tests/emit_blocking.rs`）与
 //! 集成测试（`tests/api_server/`）共用，避免两处重复实现采集器具
@@ -250,5 +251,82 @@ impl SignalEmitter for GatedEmitter {
         let mut state = lock.lock().unwrap();
         state.posted.push(event);
         cv.notify_all();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 外来形态明文库夹具（issue #1453）
+// ---------------------------------------------------------------------------
+
+/// 外部工具写进明文库头的「每页保留字节」值（issue #1453 现场值：macOS 自带
+/// `/usr/bin/sqlite3` 的 VACUUM 按自身编解码器把偏移 20 写成 12）。
+pub const FOREIGN_RESERVED_BYTES: u8 = 12;
+
+/// 夹具页大小（与 SQLite 默认一致；保留字节是页尾额外字节，不影响页的
+/// 落盘长度）。
+const FIXTURE_PAGE_SIZE: usize = 4096;
+
+/// 读库文件偏移 20 的每页保留字节（夹具与结果断言共用）。
+///
+/// 直读一个字节是**文件事实**，与产品 [`crate::boot::encryption::probe_file`]
+/// 的判定互不共用实现——同一字节两处各读一次，产品给出的答案由产品函数单独
+/// 断言（避免「用被测实现验证被测实现」）。
+pub fn read_reserved_byte(path: &std::path::Path) -> u8 {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).unwrap();
+    file.seek(SeekFrom::Start(
+        crate::boot::encryption::HEADER_RESERVED_BYTES_OFFSET as u64,
+    ))
+    .unwrap();
+    let mut byte = [0u8; 1];
+    file.read_exact(&mut byte).unwrap();
+    byte[0]
+}
+
+/// 按字节构造一枚**合法**的一页明文空库：头字段齐备、偏移 20 =
+/// [`FOREIGN_RESERVED_BYTES`]。零对象（`sqlite_master` 页 0 个单元）故无页内
+/// 布局可错——唯一形态差异就是保留字节，连同页内容区起点的可用页大小一起
+/// 自洽（`page_size - reserved`）。
+fn foreign_form_empty_page() -> Vec<u8> {
+    let mut page = vec![0u8; FIXTURE_PAGE_SIZE];
+    // 100 字节文件头（SQLite 文件格式）：魔数、页大小、读写版本、保留字节、
+    // 载荷分数、变更计数 1、页数 1、schema 格式 4、UTF-8。
+    page[..16].copy_from_slice(&crate::boot::encryption::SQLITE_HEADER_MAGIC);
+    page[16..18].copy_from_slice(&(FIXTURE_PAGE_SIZE as u16).to_be_bytes());
+    page[18] = 1;
+    page[19] = 1;
+    page[20] = FOREIGN_RESERVED_BYTES;
+    page[21] = 64;
+    page[22] = 32;
+    page[23] = 32;
+    page[24..28].copy_from_slice(&1u32.to_be_bytes());
+    page[28..32].copy_from_slice(&1u32.to_be_bytes());
+    page[44..48].copy_from_slice(&4u32.to_be_bytes());
+    page[56..60].copy_from_slice(&1u32.to_be_bytes());
+    // 页 1 的 b-tree 页头：表叶子页、0 个单元、内容区起点 = 可用页大小。
+    let usable = FIXTURE_PAGE_SIZE - usize::from(FOREIGN_RESERVED_BYTES);
+    page[100] = 0x0d;
+    page[105..107].copy_from_slice(&(usable as u16).to_be_bytes());
+    page
+}
+
+/// 写出一枚**外来形态**明文库夹具（issue #1453）：先落一页合法空库
+///（偏移 20 = [`FOREIGN_RESERVED_BYTES`]），再交给 SQLite 自身建表写 `rows`
+/// 行——页布局由 SQLite 按保留字节维护，得到「合法、可读写、带数据」的外来
+/// 形态夹具；仓库不提交二进制夹具。
+///
+/// 供基础设施单测（`boot::tests`）与壳启动集成测试共用——夹具是**文件形态**
+/// 事实，两份实现会漂移出「单测绿、集成测试另一种库」的假覆盖。
+pub fn write_foreign_form_plaintext_db(path: &std::path::Path, rows: usize) {
+    std::fs::write(path, foreign_form_empty_page()).unwrap();
+    let conn = rusqlite::Connection::open(path).unwrap();
+    conn.execute_batch("CREATE TABLE fixture_probe(name TEXT)")
+        .unwrap();
+    for i in 0..rows {
+        conn.execute(
+            "INSERT INTO fixture_probe(name) VALUES (?1)",
+            [format!("夹具行-{i}")],
+        )
+        .unwrap();
     }
 }

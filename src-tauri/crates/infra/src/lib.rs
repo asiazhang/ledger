@@ -45,7 +45,8 @@ pub mod ids;
 pub mod serde_util;
 pub mod settings;
 pub mod signals;
-// 测试支持：捕获 tracing 事件的 Layer、全局最大级别稳定器与闸门式假发射器。
+// 测试支持：捕获 tracing 事件的 Layer、全局最大级别稳定器、闸门式假发射器
+// 与外来形态明文库夹具（issue #1453）。
 // 本模块与基础设施类型（`events::SignalEmitter`）同 crate 是硬约束——经 dev-dependency
 // 环消费会让消费方拿到第二份 infra 类型实例（类型身份不相容，issue #1088 实测），
 // 故随基础设施归位；消费方（根包、域 crate）直接以 `ledger_infra::test_utils` 引用。

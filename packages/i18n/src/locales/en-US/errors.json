@@ -313,6 +313,7 @@
   },
   "boot": {
     "db-unreadable": "Startup failed; the database is unavailable. Reset or restore from the recovery screen first.",
+    "db-normalize-failed": "The ledger database file has an unexpected layout that couldn't be repaired automatically. Restart the app to retry, or restore from a backup file.",
     "not-failed": "The app is not in a startup-failure state; nothing to reset.",
     "schema-drift": "The database schema is abnormal; restore from a backup or reset."
   },

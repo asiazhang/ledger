@@ -27,6 +27,11 @@ use super::encryption::{self, DbFileKind};
 /// 码化错误，前端按码本地化失败恢复屏文案，IPC/HTTP 门禁拒绝同码。
 pub const BOOT_DB_UNREADABLE: &str = "boot.db-unreadable";
 
+/// 外来形态明文库归一化失败的稳定错误码（issue #1453）：启动期重写外来形态
+/// 明文库（每页保留字节 ≠ 0）失败（导出/校验/替换任一步）时的码化错误，原库
+/// 保持原样，经启动失败门交既有失败恢复屏（未知码按既有单一呈现回退）。
+pub const BOOT_DB_NORMALIZE_FAILED: &str = "boot.db-normalize-failed";
+
 /// 门禁拒绝用的单一错误构造（IPC 壳与 HTTP 壳共用，避免码 + 消息双份漂移）。
 pub fn gate_rejection_error() -> crate::error::AppError {
     crate::error::AppError::coded(
@@ -104,10 +109,13 @@ impl Default for BootFailureGate {
     }
 }
 
-/// 启动期库文件处置判定（issue #601）：在头探测之上区分三种启动去向。
+/// 启动期库文件处置判定（issue #601 / #1453）：在头探测之上区分四种启动去向。
 ///
-/// - [`BootDisposition::OpenPlaintext`]：明文库/空文件，正常建连（明文日常
-///   启动零改动；建连失败由调用方按启动失败处理）；
+/// - [`BootDisposition::OpenPlaintext`]：应用自有形态的明文库（每页保留字节
+///   0）/空文件，正常建连（明文日常启动零改动；建连失败由调用方按启动失败
+///   处理）；
+/// - [`BootDisposition::NormalizePlaintext`]：明文库但每页保留字节 ≠ 0——
+///   外部工具写入的**外来形态**（issue #1453），建连前先整库归一化；
 /// - [`BootDisposition::AwaitUnlock`]：真密文库（头部非明文魔数**且**具备
 ///   密文库页对齐落盘形态），进入锁定等待解锁（#570 既有路径）；
 /// - [`BootDisposition::Unreadable`]：头部非明文魔数且无密文库形态的损坏
@@ -115,8 +123,15 @@ impl Default for BootFailureGate {
 ///
 /// 探测本身的 IO 失败（权限等）原样上抛，由调用方与建连失败同路处理。
 pub fn classify_for_boot(path: &Path) -> Result<BootDisposition> {
-    match encryption::probe_file_kind(path)? {
-        DbFileKind::Plaintext | DbFileKind::Empty => Ok(BootDisposition::OpenPlaintext),
+    let probe = encryption::probe_file(path)?;
+    match probe.kind {
+        DbFileKind::Plaintext => Ok(match probe.reserved_bytes {
+            // 保留字节 0（或头部截断、值不可读）：应用自有形态，直接建连。
+            Some(0) | None => BootDisposition::OpenPlaintext,
+            // 外来形态明文库：建连前先归一化（issue #1453）。
+            Some(_) => BootDisposition::NormalizePlaintext,
+        }),
+        DbFileKind::Empty => Ok(BootDisposition::OpenPlaintext),
         DbFileKind::Encrypted => {
             if encryption::has_encrypted_file_layout(path) {
                 Ok(BootDisposition::AwaitUnlock)
@@ -127,11 +142,13 @@ pub fn classify_for_boot(path: &Path) -> Result<BootDisposition> {
     }
 }
 
-/// [`classify_for_boot`] 的三态结果。
+/// [`classify_for_boot`] 的四态结果。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BootDisposition {
-    /// 明文库/空文件：正常建连路径。
+    /// 应用自有形态的明文库（每页保留字节 0）/空文件：正常建连路径。
     OpenPlaintext,
+    /// 外来形态明文库（每页保留字节 ≠ 0，issue #1453）：建连前先整库归一化。
+    NormalizePlaintext,
     /// 真密文库：进入锁定等待解锁（#570 既有路径）。
     AwaitUnlock,
     /// 损坏残留：按启动失败处理（issue #601）。
