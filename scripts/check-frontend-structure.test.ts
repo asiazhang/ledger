@@ -1,5 +1,4 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,28 +6,20 @@ import {
   DEEP_MODULE_BOUNDARIES,
   SCRIPT_INVOCATION,
 } from '../scripts/check-frontend-structure.ts'
+import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-frontend-structure.ts 的规则⑦「深模块边界
 // 登记表」（issue #1323 / ADR-0118 决策 7）。与守门脚本测试先例同形制（#1158：测试
 // 与所测脚本同目录；#1149 起既有 src/__tests__/check-frontend-structure.test.ts 覆盖
 // 规则①—⑥与接线核对，本文件只覆盖新增的规则⑦）。脚本以 Bun 运行时执行（ADR-0083）：
-// spawnSync('bun') 与门槛调用同款，测的就是门槛路径。按测试决策只测外部可观察结果
-// ——进程退出码与输出（ADR-0087 断言强度），不触及脚本内部函数形状；通过位置参数
-// 把校验目标指向临时夹具仓库根（[repo-root] [packages-manifest.json]），夹具登记表
-// 经 arg2 JSON 注入空表隔离规则①—⑤，规则⑦登记表不可注入（生产 DEEP_MODULE_BOUNDARIES
-// 单一事实源，对夹具目录扫描，与规则⑥同形制）。
-// （vitest 转换后 import.meta.url 非 file: scheme，取进程 cwd = 仓库根定位脚本）
-const script = join(process.cwd(), 'scripts', 'check-frontend-structure.ts')
-
-interface RunResult {
-  status: number
-  output: string
-}
-
-function run(args: string[]): RunResult {
-  const r = spawnSync('bun', [script, ...args], { encoding: 'utf8' })
-  return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
-}
+// runGateScript 以 spawnSync('bun') 与门槛调用同款拉起，测的就是门槛路径。按测试
+// 决策只测外部可观察结果——进程退出码与输出（ADR-0087 断言强度），不触及脚本内部
+// 函数形状；通过位置参数把校验目标指向临时夹具仓库根（[repo-root]
+// [packages-manifest.json]），夹具登记表经 arg2 JSON 注入空表隔离规则①—⑤，规则⑦
+// 登记表不可注入（生产 DEEP_MODULE_BOUNDARIES 单一事实源，对夹具目录扫描，与规则⑥
+// 同形制）。
+const script = gateScript('check-frontend-structure.ts')
+const run = (args: string[]) => runGateScript(script, args)
 
 const tempDirs: string[] = []
 afterAll(() => {

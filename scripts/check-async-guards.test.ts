@@ -1,27 +1,18 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SEQ_SEAM_FILE, TOAST_BASELINE } from '../scripts/check-async-guards.ts'
+import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-async-guards.ts（前端异步守门，issue #1039）。
-// 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。
+// 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛
+// 调用同款拉起，测的就是门槛路径。
 // 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
 // 通过位置参数把扫描目标指向临时夹具仓库根（布局与生产 SCAN_ROOTS 同构）。
-// 夹具基线清单自助手导出的 TOAST_BASELINE 派生（单一事实源，无双源漂移）；
-// （vitest 转换后 import.meta.url 非 file: scheme，取进程 cwd = 仓库根定位脚本）
-const script = join(process.cwd(), 'scripts', 'check-async-guards.ts')
-
-interface RunResult {
-  status: number
-  output: string
-}
-
-function run(args: string[]): RunResult {
-  const r = spawnSync('bun', [script, ...args], { encoding: 'utf8' })
-  return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
-}
+// 夹具基线清单自助手导出的 TOAST_BASELINE 派生（单一事实源，无双源漂移）。
+const script = gateScript('check-async-guards.ts')
+const run = (args: string[]) => runGateScript(script, args)
 
 const tempDirs: string[] = []
 afterAll(() => {

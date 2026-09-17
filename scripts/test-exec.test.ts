@@ -1,25 +1,16 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 
 // 被测对象是仓库工具脚本 scripts/test-exec.ts（测试执行器与两入口覆盖守门，
-// issue #1112）。脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用
-// 同款，测的就是门槛路径。按测试决策只测外部可观察结果——进程退出码与输出，
-// 不测内部函数；夹具经 `--root` 指向临时工作区（只需 manifest + 目录形态，
-// 守门不调用 cargo，仓与 CI 上均零依赖）。
-const script = join(process.cwd(), 'scripts', 'test-exec.ts')
-
-interface RunResult {
-  status: number
-  output: string
-}
-
-function run(args: string[]): RunResult {
-  const r = spawnSync('bun', [script, ...args], { encoding: 'utf8' })
-  return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
-}
+// issue #1112）。脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以
+// spawnSync('bun') 与门槛调用同款拉起，测的就是门槛路径。按测试决策只测外部
+// 可观察结果——进程退出码与输出，不测内部函数；夹具经 `--root` 指向临时工作区
+// （只需 manifest + 目录形态，守门不调用 cargo，仓与 CI 上均零依赖）。
+const script = gateScript('test-exec.ts')
+const run = (args: string[]) => runGateScript(script, args)
 
 const tempDirs: string[] = []
 afterAll(() => {
