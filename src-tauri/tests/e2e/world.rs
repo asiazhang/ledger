@@ -16,12 +16,24 @@ use ledger_transaction::{
 /// 连接守卫（BDD 步骤专用宏）：取连接锁，展开为字段访问链——
 /// 借用发生在 `world.db.conn` 字段路径上而非整个 world，与步骤内对
 /// world 其他字段的赋值共存（disjoint borrow）。守卫需跨语句存活时
-/// 先绑定局部变量（`let conn = world_conn!(world);`）。迁移期过渡形态
-/// （ADR-0032）：置脏语义相关写路径应优先走 `world.db.write` 写入口。
+/// 先绑定局部变量（`let conn = world_conn!(world);`）。置脏语义相关
+/// 写路径应经 `world_write!` 走连接层统一写入口。
 macro_rules! world_conn {
     ($world:expr) => {
         $world.db.conn.lock().unwrap_or_else(|e| e.into_inner())
     };
+}
+
+/// 写入口（BDD 步骤专用宏）：置脏语义相关写路径经连接层统一写入口的已持锁
+/// 形态执行——取锁写入口（`DbState::write`）已随 issue #1438 退役，测试面与
+/// 门面作业同款「调用方持锁 + `write_locked`」（置脏与提交点语义同一实现）。
+/// 借用发生在 `world.db.conn` 字段路径上，与 `world_conn!` 同款 disjoint
+/// borrow 约束；闭包需引用 world 其它字段时先取出局部变量。
+macro_rules! world_write {
+    ($world:expr, $f:expr) => {{
+        let conn = $world.db.conn.lock().unwrap_or_else(|e| e.into_inner());
+        ledger_infra::db::write_locked(&conn, $f)
+    }};
 }
 
 /// 批量导入的一行（重跑导入时据此重建 `TransactionInput`）。
@@ -271,7 +283,7 @@ pub struct BootGroup {
 #[world(init = Self::new)]
 pub struct LedgerWorld {
     /// 数据库连接（写入口形态，ADR-0032）：断言/读路径经 [`LedgerWorld::conn`]
-    /// 取守卫，置脏语义相关写路径经 `db.write` 走连接层统一写入口。
+    /// 取守卫，置脏语义相关写路径经 `world_write!` 走连接层统一写入口。
     pub db: DbState,
     /// 账户名称到 ID 的映射（Given 步骤插入账户后注册，含种子黑洞账户）
     pub account_name_to_id: HashMap<String, String>,

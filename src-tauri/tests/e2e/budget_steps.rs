@@ -230,7 +230,7 @@ fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: Stri
         amount_cents: amount,
         start_date: ymd(scenario_today(world)),
     };
-    world.last_error = match world.db.write(|conn| create_budget(conn, &input)) {
+    world.last_error = match world_write!(world, |conn| create_budget(conn, &input)) {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };
@@ -252,10 +252,7 @@ fn update_budget_via_command(world: &mut LedgerWorld, name: String, amount: i64)
             |r| r.get(0),
         )
         .unwrap_or_else(|e| panic!("分类 '{}' 没有可编辑的预算: {e}", name));
-    world.last_error = match world
-        .db
-        .write(|conn| update_budget(conn, &budget_id, amount))
-    {
+    world.last_error = match world_write!(world, |conn| update_budget(conn, &budget_id, amount)) {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };
@@ -273,7 +270,7 @@ fn delete_budget_via_command(world: &mut LedgerWorld, name: String) {
             |r| r.get(0),
         )
         .unwrap_or_else(|e| panic!("分类 '{name}' 没有可删除的预算: {e}"));
-    world.last_error = match world.db.write(|conn| delete_budget(conn, &budget_id)) {
+    world.last_error = match world_write!(world, |conn| delete_budget(conn, &budget_id)) {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };
@@ -288,7 +285,7 @@ fn delete_budget_via_command(world: &mut LedgerWorld, name: String) {
 #[when(expr = "尝试删除分类 {string}")]
 fn delete_category_via_command(world: &mut LedgerWorld, name: String) {
     let id = category_id_any(&world_conn!(world), &name);
-    world.last_error = match world.db.write(|conn| delete_category_domain(conn, &id)) {
+    world.last_error = match world_write!(world, |conn| delete_category_domain(conn, &id)) {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };

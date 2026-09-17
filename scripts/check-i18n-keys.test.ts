@@ -1,18 +1,19 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-i18n-keys.ts（i18n key 全等校验门槛 +
 // 码化错误模板覆盖守门，issue #1188 / ADR-0050）。
-// 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。
+// 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛
+// 调用同款拉起，测的就是门槛路径。
 // 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
 // 通过位置参数把扫描目标指向临时夹具目录（仿 check-commands.test.ts 先例）。
 // 注意：目录名即域前缀（common.json 内层不再重复域名）。
 // 夹具布局：<root>/locales/{zh-CN,en-US}（固定含空 errors.json，码化覆盖守门的比对对象）
 // + <root>/rust（Rust 扫描根，默认无码化构造点）。
-const script = join(process.cwd(), 'scripts', 'check-i18n-keys.ts')
+const script = gateScript('check-i18n-keys.ts')
 
 const tmpDirs: string[] = []
 
@@ -47,10 +48,7 @@ function makeFixture(
 }
 
 function run(root: string) {
-  const r = spawnSync('bun', [script, join(root, 'locales'), join(root, 'rust')], {
-    encoding: 'utf8',
-  })
-  return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
+  return runGateScript(script, [join(root, 'locales'), join(root, 'rust')])
 }
 
 afterAll(() => {

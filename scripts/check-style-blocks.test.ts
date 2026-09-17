@@ -1,30 +1,21 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { STYLE_BLOCK_WHITELIST } from '../scripts/check-style-blocks.ts'
+import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-style-blocks.ts（样式块守门，issue #888 /
-// ADR-0093）。脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，
-// 测的就是门槛路径。按测试决策只测外部可观察结果——进程退出码与输出（ADR-0087
-// 断言强度），不测内部函数；通过位置参数把扫描目标指向临时夹具仓库根（布局与生产
-// 扫描面同构：白名单键含 src/ 前缀、相对仓库根），spawnSync 的 cwd 同步指向夹具根
-// ——守门的路径归一化以 cwd 为基准，夹具运行时归一化须落在夹具上。
+// ADR-0093）。脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun')
+// 与门槛调用同款拉起，测的就是门槛路径。按测试决策只测外部可观察结果——进程退出码
+// 与输出（ADR-0087 断言强度），不测内部函数；通过位置参数把扫描目标指向临时夹具仓库根
+// （布局与生产扫描面同构：白名单键含 src/ 前缀、相对仓库根），spawnSync 的 cwd 同步
+// 指向夹具根——守门的路径归一化以 cwd 为基准，夹具运行时归一化须落在夹具上。
 // 夹具文件清单自助手导出的 STYLE_BLOCK_WHITELIST 派生（单一事实源，无双源漂移，
-// TOAST_BASELINE 同款纪律）；（vitest 转换后 import.meta.url 非 file: scheme，
-// 取进程 cwd = 仓库根定位脚本）
-const script = join(process.cwd(), 'scripts', 'check-style-blocks.ts')
-
-interface RunResult {
-  status: number
-  output: string
-}
-
-function run(args: string[], cwd?: string, scriptPath = script): RunResult {
-  const r = spawnSync('bun', [scriptPath, ...args], { encoding: 'utf8', cwd })
-  return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
-}
+// TOAST_BASELINE 同款纪律）。
+const script = gateScript('check-style-blocks.ts')
+const run = (args: string[], cwd?: string, scriptPath = script) =>
+  runGateScript(scriptPath, args, { cwd })
 
 const tempDirs: string[] = []
 afterAll(() => {

@@ -411,10 +411,7 @@ fn delete_last_transaction(world: &mut LedgerWorld) {
         .clone()
         .expect("没有可删除的交易");
     // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）删除，成功即置脏。
-    world
-        .db
-        .write(|conn| delete_transaction_internal(conn, &id))
-        .unwrap();
+    world_write!(world, |conn| delete_transaction_internal(conn, &id)).unwrap();
 }
 
 /// 快进跨过本地日界（issue #386）：把上次备份锚点拨到昨天（本地日期，取本地昨天
@@ -609,10 +606,7 @@ fn create_account_via_entry(world: &mut LedgerWorld, name: String, kind: String,
         statement_day: None,
         due_day: None,
     };
-    world
-        .db
-        .write(|conn| create_account(conn, input))
-        .expect("创建账户失败");
+    world_write!(world, |conn| create_account(conn, input)).expect("创建账户失败");
 }
 
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建分类，成功即置脏。
@@ -624,10 +618,7 @@ fn create_category_via_entry(world: &mut LedgerWorld, name: String, kind: String
         parent_id: None,
         icon: None,
     };
-    world
-        .db
-        .write(|conn| create_category(conn, input))
-        .expect("创建分类失败");
+    world_write!(world, |conn| create_category(conn, input)).expect("创建分类失败");
 }
 
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）软删分类，成功即置脏。
@@ -642,10 +633,7 @@ fn delete_category_via_entry(world: &mut LedgerWorld, name: String) {
         )
         .expect("分类不存在")
     };
-    world
-        .db
-        .write(|conn| delete_category_domain(conn, &id))
-        .expect("删除分类失败");
+    world_write!(world, |conn| delete_category_domain(conn, &id)).expect("删除分类失败");
 }
 
 /// 尝试把最近创建的交易改为非法金额（金额必须大于 0）：修改事务内失败回滚，
@@ -658,13 +646,11 @@ fn update_last_transaction_invalid_amount(world: &mut LedgerWorld) {
         .clone()
         .expect("没有可修改的交易");
     let input = expense_input(0, "acc-any", "2026-02-01");
-    world.last_error = match world
-        .db
-        .write(|conn| update_transaction_internal(conn, &id, input))
-    {
-        Ok(_) => Some(String::from("预期失败但成功了")),
-        Err(e) => Some(e.to_string()),
-    };
+    world.last_error =
+        match world_write!(world, |conn| update_transaction_internal(conn, &id, input)) {
+            Ok(_) => Some(String::from("预期失败但成功了")),
+            Err(e) => Some(e.to_string()),
+        };
 }
 
 // ---------------------------------------------------------------------------
@@ -688,9 +674,7 @@ fn batch_import_expenses_via_entry(
             expense_input(cents, &account_id, &format!("2026-02-{:02}", i + 1))
         })
         .collect();
-    let results = world
-        .db
-        .write(|conn| TransactionBatch::run(conn, inputs, true))
+    let results = world_write!(world, |conn| TransactionBatch::run(conn, inputs, true))
         .expect("批量导入失败")
         .results;
     assert!(
@@ -707,10 +691,11 @@ fn batch_import_rollback_via_entry(world: &mut LedgerWorld) {
     let account_id = world.account_id("现金");
     let expense = expense_input(1500, &account_id, "2026-02-01");
     let refund = refund_input(500, &account_id, "tx-no-such", "2026-02-01");
-    world.last_error = match world
-        .db
-        .write(|conn| TransactionBatch::run(conn, vec![expense, refund], true))
-    {
+    world.last_error = match world_write!(world, |conn| TransactionBatch::run(
+        conn,
+        vec![expense, refund],
+        true
+    )) {
         Ok(_) => Some(String::from("预期失败但成功了")),
         Err(e) => Some(e.to_string()),
     };
@@ -738,10 +723,8 @@ fn create_item_via_entry(world: &mut LedgerWorld, name: String) {
         note: None,
         purchase_transaction_id: Some(tx_id),
     };
-    let id = world
-        .db
-        .write(|conn| create_item(conn, input, &mut || {}))
-        .expect("创建物品失败");
+    let id =
+        world_write!(world, |conn| create_item(conn, input, &mut || {})).expect("创建物品失败");
     world.item.last_item_id = Some(id);
 }
 
@@ -769,10 +752,7 @@ fn update_last_item_note_via_entry(world: &mut LedgerWorld, note: String) {
         note: if note.is_empty() { None } else { Some(note) },
         purchase_transaction_id: None, // None = 维持既有溯源
     };
-    world
-        .db
-        .write(|conn| update_item(conn, &id, input, &mut || {}))
-        .expect("修改物品失败");
+    world_write!(world, |conn| update_item(conn, &id, input, &mut || {})).expect("修改物品失败");
 }
 
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）以今天为处置日处置最近
@@ -784,10 +764,7 @@ fn dispose_last_item_today_via_entry(world: &mut LedgerWorld) {
         disposal_date: cost::today().format("%Y-%m-%d").to_string(),
         residual_value_cents: None,
     };
-    world
-        .db
-        .write(|conn| dispose_item(conn, &id, input, &mut || {}))
-        .expect("处置物品失败");
+    world_write!(world, |conn| dispose_item(conn, &id, input, &mut || {})).expect("处置物品失败");
 }
 
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）软删除最近创建的物品，
@@ -795,10 +772,7 @@ fn dispose_last_item_today_via_entry(world: &mut LedgerWorld) {
 #[when(expr = "软删除最近创建的物品")]
 fn delete_last_item_via_entry(world: &mut LedgerWorld) {
     let id = world.item.last_item_id.clone().expect("没有已创建的物品");
-    world
-        .db
-        .write(|conn| delete_item(conn, &id, &mut || {}))
-        .expect("软删除物品失败");
+    world_write!(world, |conn| delete_item(conn, &id, &mut || {})).expect("软删除物品失败");
 }
 
 // ---------------------------------------------------------------------------
@@ -815,10 +789,7 @@ fn write_exchange_rate_via_entry(world: &mut LedgerWorld, base: String, quote: S
         priced_at: now_iso(),
         source: None,
     };
-    world
-        .db
-        .write(|conn| create_exchange_rate(conn, input))
-        .expect("写入汇率失败");
+    world_write!(world, |conn| create_exchange_rate(conn, input)).expect("写入汇率失败");
 }
 
 /// 新建标的的共用实现（新增性写入与同名信息更新两条步骤同款）。
@@ -835,10 +806,7 @@ fn create_instrument_entry(
         currency_code: currency,
         market: None,
     };
-    world
-        .db
-        .write(|conn| create_instrument(conn, input))
-        .expect("新建标的失败");
+    world_write!(world, |conn| create_instrument(conn, input)).expect("新建标的失败");
 }
 
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）新建标的，成功即置脏。
@@ -888,10 +856,7 @@ fn write_market_price_via_entry(
         priced_at: now_iso(),
         source: None,
     };
-    world
-        .db
-        .write(|conn| create_market_price(conn, input))
-        .expect("写入行情失败");
+    world_write!(world, |conn| create_market_price(conn, input)).expect("写入行情失败");
 }
 
 #[then(expr = "恢复的数据库自动备份状态应为「未脏且已重新计时」")]

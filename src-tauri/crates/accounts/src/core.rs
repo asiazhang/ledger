@@ -1,7 +1,7 @@
 //! 账户域核心逻辑（issue #91 域内收口，#404 自命令壳层迁入）：CRUD / 幂等创建 /
 //! 软删除 / 余额清单 / 黑洞账户与余额调整编排。
 //!
-//! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域零感知，
+//! 置脏触发已收口连接层统一写入口（`db::write_locked`，ADR-0032）：本模块对备份域零感知，
 //! 写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
 //!
 //! 余额调整的交易写入经行为层创建编排入口（issue #310，ADR-0033）：本模块只
@@ -503,7 +503,7 @@ pub fn adjust_account_balance(
 }
 
 /// 手动审计命令领域逻辑（issue #491 / ADR-0067）：全账户实时重算 vs 余额缓存，
-/// 逐账户比对→修复（整体重算回写）→差异报告。唯一允许绕过 db::write 的缓存修复
+/// 逐账户比对→修复（整体重算回写）→差异报告。唯一允许绕过统一写入口的缓存修复
 /// 写入（与设置/恢复同列豁免形态）：缓存为派生数据，修复不置脏、不发信号。
 pub fn audit_balance_cache(conn: &Connection) -> Result<BalanceCacheAudit> {
     let accounts = crate::balance::list_accounts_with_visibility(conn, true)?;

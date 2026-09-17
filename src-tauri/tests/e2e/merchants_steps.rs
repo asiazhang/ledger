@@ -34,10 +34,11 @@ fn given_merchant(world: &mut LedgerWorld, name: String) {
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032），成功即置脏。
 #[when(expr = "创建商户 {string}")]
 fn create_merchant(world: &mut LedgerWorld, name: String) {
-    let id = world
-        .db
-        .write(|conn| create_merchant_domain(conn, MerchantInput { name: name.clone() }))
-        .expect("创建商户失败");
+    let id = world_write!(world, |conn| create_merchant_domain(
+        conn,
+        MerchantInput { name: name.clone() }
+    ))
+    .expect("创建商户失败");
     world.merchant_name_to_id.insert(name, id);
 }
 

@@ -1,14 +1,15 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-dialog-forms.ts（弹窗表单行距节奏守门）。
-// 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。
+// 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛
+// 调用同款拉起，测的就是门槛路径。
 // 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
 // 通过位置参数把扫描目标指向临时夹具目录（仿 check-i18n-keys.test.ts 先例）。
-const script = join(process.cwd(), 'scripts', 'check-dialog-forms.ts')
+const script = gateScript('check-dialog-forms.ts')
 
 const tmpDirs: string[] = []
 
@@ -23,8 +24,7 @@ function makeFixture(files: Record<string, string>): string {
 }
 
 function run(scanRoot: string) {
-  const r = spawnSync('bun', [script, scanRoot], { encoding: 'utf8' })
-  return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
+  return runGateScript(script, [scanRoot])
 }
 
 afterAll(() => {
