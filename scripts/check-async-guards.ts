@@ -89,7 +89,6 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   'src/settings/DataLocationSettings.vue': 3,
   'src/settings/LogSettings.vue': 2,
   'src/settings/SearchDataSettings.vue': 1,
-  'src/settings/SyncSettings.vue': 6,
   'src/backup/useBackup.ts': 6,
   'src/transaction/useRefundForm.ts': 1,
   'src/backup/useRestoreFromFile.ts': 2,

@@ -9,394 +9,65 @@ import {
   NSwitch,
   NTag,
   NText,
-  useMessage,
 } from 'naive-ui'
-import { computed, onMounted, ref } from 'vue'
-import { api } from '@ledger/api'
 import { t } from '@ledger/i18n'
 import { errorMessage } from '@ledger/utils/errors'
-import { formatIsoMinute } from '@ledger/utils/datetime'
-import { restartAppShortly } from '@/backup/restart'
-import { useLoadable } from '@ledger/loadable'
-import {
-  CUSTOM_VENDOR_ID,
-  findVendorPreset,
-  matchVendorByEndpoint,
-  vendorOptions,
-  vendorPrefill,
-  vendorTierKey,
-  type S3VendorPrefill,
-} from '@ledger/utils/s3-vendors'
+import { vendorTierKey } from '@ledger/utils/s3-vendors'
 import AppModal from '@ledger/ui-kit/AppModal.vue'
 import AppSelect from '@ledger/ui-kit/AppSelect.vue'
 import { SYNC_HINT_CLASS } from '@/settings/sync-settings.css'
-import type {
-  ParkedOpInfo,
-  SyncChannelConfig,
-  SyncChannelConfigInput,
-  SyncCheckpointInfo,
-  SyncStatus,
-} from '@ledger/types'
+import { useSyncCard } from '@/settings/useSyncCard'
 
 // 多端同步卡片（issue #862 / #863 / #864 / #1218 / ADR-0091）：设置页「数据」
 // Tab 的同步可见面——上次同步时间、挂起数量、「立即同步」动作、挂起通知明细、
 // 通道配置表单（S3 凭据，issue #1218）与检查点发布/引导（新端加入向导）。
-// 显示值一律来自命令返回（AppSettings 权威），不走 localStorage；通道配置是
-// 本机设备配置（不同步）。
-// 明文模式的显著提示是 ADR-0091 决策 8 的界面义务：未开加密时同步数据明文上
-// 通道，警示常驻卡片。
 //
-// 密钥回显口径（#1218 验收「加载时不回显完整密钥」）：命令面照旧回显
-// `secret_key`（「不改密钥直接保存」需要它），界面层不把该值渲染进输入框——
-// 密钥输入框恒以空串起填，已保存值只留在内存表单里；用户未改动即沿用旧值、
-// 改动即提交新值。这样既不看走漏密钥，也不逼迫每次保存重输密钥。
+// 本组件是 useSyncCard 深模块（issue #1397）的薄 adapter：加载与动作编排
+// （状态 / 挂起明细 / 通道配置 / 检查点 / 引导向导）全部内化在模块中，这里只做
+// 渲染接线——明文/密文警示 Alert（ADR-0091 决策 8 的界面义务）、引导向导的
+// AppModal 模板与文案留在组件；挂起明细逐条经 `utils/errors.ts` 的 `errorMessage`
+// 按码本地化（含 params 插值；码未命中或 params 不足则降级透传后端原文），挂起
+// 原因的码→文案实现单点在 errors.ts，此处不自建（issue #957）。
 //
-// 自动触发（打开应用即同步 + 运行期低频轮询）由后端编排，前端零调用面；本卡片
-// 只呈现「同步到什么状态」。挂起通知（issue #863 验收项）：数量 > 0 时展开明细，
-// 逐条经 `utils/errors.ts` 的 `errorMessage` 按码本地化（含 params 插值；码未命中
-// 或 params 不足则降级透传后端原文），供用户知道哪些操作待裁决——挂起原因
-// 的码→文案实现单点在 errors.ts，此处不自建（issue #957）。
-//
-// 检查点（issue #864）：存量数据的设备先「发布检查点」把全量快照放上通道；
-// 全新设备（典型是手机）经「从通道引导本端」预检 → 确认 → 整库换入 → 重启。
-// 引导是 ADR-0098 决策 5 钉死的显式向导动作（不挂自动轮次），确认步展示
-// 「整库替换 + 重启」后果；成功后经 restartAppShortly 原位重引导（Restore
-// 同型，Android 上表现为应用退出重开，ADR-0074 决策 6 既有差异）。
+// 密钥输入框恒以空串起填、已保存值不上屏的回显口径见 useSyncCard 头注；本组件
+// 只负责把 secretKeyInput 绑上输入框。
 
-const message = useMessage()
+const {
+  status,
+  statusLoading,
+  lastSyncText,
+  parkedOps,
+  passphrase,
+  syncing,
+  syncNow,
+  form,
+  secretKeyInput,
+  secretKeyPlaceholder,
+  selectedVendor,
+  selectedVendorPreset,
+  vendorSelectOptions,
+  onVendorChange,
+  applyVendorRegion,
+  testing,
+  testConnection,
+  saving,
+  saveChannel,
+  publishing,
+  publishCheckpoint,
+  bootstrapShow,
+  prechecking,
+  precheckError,
+  checkpointInfo,
+  bootstrapPassphrase,
+  bootstrapping,
+  openBootstrap,
+  confirmBootstrap,
+} = useSyncCard()
 
-const status = ref<SyncStatus | null>(null)
-const loading = ref(false)
-const syncing = ref(false)
-const saving = ref(false)
-// 口令输入：仅密文库需要（留空则后端回退本机已记住口令）；不落任何本地存储。
-const passphrase = ref('')
-// 挂起操作明细（issue #863 挂起通知）：数量 > 0 时按需拉取，展示码化原因。
-const parkedOps = ref<ParkedOpInfo[]>([])
-
-// 通道配置表单（S3 七字段 + 同步空间，issue #1218 / #1219 / #1220 / #1221）：
-// 初值来自命令回显（未配置为空表单，空间字段填默认值）；v1 唯一后端是 S3 兼容
-// 对象存储，配置面没有后端判别字段（WebDAV 已随 #1221 整体退役）。厂商预设下拉
-//（issue #1220）只做界面预填与端点反查回显，不落库、不进后端契约；保存前
-//「测试连接」（issue #1219）读的正是同一份表单当前值——预填与手改都算数，
-// 因为探测在点击那一刻取表单快照，二者没有共享的写入状态可冲突。
-//
-// 表单只装本界面拥有的字段：命令回显形态 `SyncChannelConfig` 的字段与输入面
-// 一一对应，回显时投影一次以隔开「契约对象」与「草稿对象」两类状态。
-type ChannelForm = Pick<
-  SyncChannelConfig,
-  | 'space_id'
-  | 'endpoint'
-  | 'region'
-  | 'bucket'
-  | 'prefix'
-  | 'access_key'
-  | 'secret_key'
-  | 'path_style'
->
-
-const form = ref<ChannelForm>({
-  space_id: 'default',
-  endpoint: '',
-  region: '',
-  bucket: '',
-  prefix: '',
-  access_key: '',
-  secret_key: '',
-  path_style: false,
-})
-
-// 密钥输入缓冲（#1218 验收「加载时不回显完整密钥」）：输入框只绑本 ref，加载与
-// 保存成功后一律清回空串——已保存密钥只活在 form.secret_key（内存），不上屏。
-const secretKeyInput = ref('')
-
-/** 密钥输入框占位：已保存过密钥时提示「留空则保持不变」，否则是普通字段名。 */
-const secretKeyPlaceholder = computed(() =>
-  form.value.secret_key
-    ? t('settings.data.sync.secretKeySavedPlaceholder')
-    : t('settings.data.sync.secretKeyPlaceholder'),
-)
-
-// 厂商预设（issue #1220）：用户选中的厂商判别键。它只是界面态——不随表单保存，
-// 命令面 `SyncChannelConfig` 也没有厂商字段；「是谁」由端点反查决定（再次打开
-// 或保存回显时按端点重算），所以这条状态不可能是落库数据的第二事实源。
-const selectedVendor = ref<string>(CUSTOM_VENDOR_ID)
-
-/** 当前选中厂商的预设（「其他（自定义）」或未知 id 为 null）。 */
-const selectedVendorPreset = computed(() => findVendorPreset(selectedVendor.value))
-
-/**
- * 下拉项：预设按声明序 + 末尾固定「其他（自定义）」（issue #1220 验收判据）。
- * 选项标签 = 厂商专名 + 档位标注（options 里的 name 不进翻译，档位文案经 i18n）。
- */
-const vendorSelectOptions = computed(() =>
-  vendorOptions().map((option) => ({
-    value: option.id,
-    label: option.custom
-      ? t('settings.data.sync.vendorCustom')
-      : t('settings.data.sync.vendorOption', {
-          name: option.name,
-          tier: t(vendorTierKey(option.verified)),
-        }),
-  })),
-)
-
-/**
- * 选中厂商：预填端点模板、默认地域与寻址方式（纯函数产出的值，本处只落表单）。
- * 「其他（自定义）」不预填——字段保持用户已填内容，等待用户自己写端点。
- */
-function onVendorChange(vendorId: string) {
-  selectedVendor.value = vendorId
-  const prefill = vendorPrefill(vendorId)
-  if (prefill) applyPrefill(prefill)
-}
-
-/** 常用地域快捷项：换地域即按当前厂商模板重写端点（字段随后仍可手改）。 */
-function applyVendorRegion(region: string) {
-  const prefill = vendorPrefill(selectedVendor.value, region)
-  if (prefill) applyPrefill(prefill)
-}
-
-/** 预填值落进表单的单一落点（选中预填与地域快捷项共用，避免两处各写一遍字段）。 */
-function applyPrefill(prefill: S3VendorPrefill) {
-  form.value.endpoint = prefill.endpoint
-  form.value.region = prefill.region
-  form.value.path_style = prefill.pathStyle
-}
-
-async function refreshStatus() {
-  loading.value = true
-  try {
-    status.value = await api.getSyncStatus()
-    await refreshParkedOps()
-  } catch (e: any) {
-    message.error(t('settings.data.sync.loadFailed', { msg: errorMessage(e) }))
-  } finally {
-    loading.value = false
-  }
-}
-
-/** 拉取挂起明细（issue #863）：仅当数量 > 0 时调用，避免无谓 IPC。 */
-async function refreshParkedOps() {
-  if (!status.value || status.value.parked_count === 0) {
-    parkedOps.value = []
-    return
-  }
-  try {
-    parkedOps.value = await api.getParkedOps()
-  } catch (e: any) {
-    // 明细拉取失败不升级为卡片级错误：数量仍由状态回显，重试即下次刷新。
-    console.warn('挂起明细拉取失败', e)
-    parkedOps.value = []
-  }
-}
-
-async function refreshChannelConfig() {
-  try {
-    const config = await api.getSyncChannelConfig()
-    // 投影进表单（不持有回显对象本体）：表单的 v-model 会就地改写所绑对象，
-    // 直接拿 IPC 契约快照当草稿纸用，等于把响应体当可变状态。
-    form.value = {
-      space_id: config.configured ? config.space_id : 'default',
-      endpoint: config.endpoint,
-      region: config.region,
-      bucket: config.bucket,
-      prefix: config.prefix,
-      access_key: config.access_key,
-      secret_key: config.secret_key,
-      path_style: config.path_style,
-    }
-    // 密钥输入恒从空白起（不回显完整密钥）；已保存值留在 form 内供「留空沿用」。
-    secretKeyInput.value = ''
-    // 厂商回显按端点反查（issue #1220 验收判据）：命中厂商即回显该厂商，未命中
-    //（自建服务、空表单、改过的端点）回「其他（自定义）」——不额外落库厂商字段。
-    selectedVendor.value = matchVendorByEndpoint(form.value.endpoint)
-  } catch (e: any) {
-    message.error(t('settings.data.sync.loadFailed', { msg: errorMessage(e) }))
-  }
-}
-
-onMounted(async () => {
-  await Promise.all([refreshStatus(), refreshChannelConfig()])
-})
-
-/** 上次同步时刻展示文本（ISO → 本地可读截断，单一格式化点 utils/datetime）。 */
-const lastSyncText = computed(() =>
-  status.value?.last_sync_at
-    ? formatIsoMinute(status.value.last_sync_at)
-    : t('settings.data.sync.neverSynced'),
-)
-
-/** 立即同步：手动触发一轮同步，成功轻量提示轮次报告并刷新状态。 */
-async function syncNow() {
-  syncing.value = true
-  try {
-    const report = await api.syncNow(passphrase.value || undefined)
-    message.success(
-      t('settings.data.sync.syncOk', {
-        uploaded: report.uploaded_ops,
-        applied: report.applied,
-        parked: report.parked,
-      }),
-    )
-    await refreshStatus()
-    if (report.parked > 0) {
-      message.warning(
-        t('settings.data.sync.parkedToast', { count: report.parked }),
-      )
-    }
-  } catch (e: any) {
-    message.error(t('settings.data.sync.syncFailed', { msg: errorMessage(e) }))
-  } finally {
-    syncing.value = false
-  }
-}
-
-/**
- * 表单 → 命令入参的单一转换点（保存与「测试连接」共用，issue #1218 / #1219）：
- * S3 七字段与同步空间（跨端共识的世界身份；空值交由后端回默认）。
- *
- * 密钥取值：输入框有内容（用户改过）用新值，为空则沿用内存里的已保存值——这是
- * 「加载时不回显完整密钥」前提下仍能「不改密钥直接保存」的机制。两个动作共用本
- * 转换点，「测通了就能存进去」才对同一份表单成立。
- */
-function channelPayload(): SyncChannelConfigInput {
-  return {
-    space_id: form.value.space_id.trim() || undefined,
-    endpoint: form.value.endpoint,
-    region: form.value.region,
-    bucket: form.value.bucket,
-    prefix: form.value.prefix,
-    access_key: form.value.access_key,
-    secret_key: secretKeyInput.value !== '' ? secretKeyInput.value : form.value.secret_key,
-    path_style: form.value.path_style,
-  }
-}
-
-/**
- * 保存通道配置（issue #1218）：表单经 [`channelPayload`] 落到后端；保存成功后重新
- * 回显，把落库结果（含后端归一化后的字段）呈现在表单上。
- */
-async function saveChannel() {
-  saving.value = true
-  try {
-    await api.setSyncChannelConfig(channelPayload())
-    message.success(t('settings.data.sync.saveOk'))
-    await Promise.all([refreshStatus(), refreshChannelConfig()])
-  } catch (e: any) {
-    message.error(t('settings.data.sync.saveFailed', { msg: errorMessage(e) }))
-  } finally {
-    saving.value = false
-  }
-}
-
-/**
- * 保存前「测试连接」（issue #1219）：把当前表单（尚未落库）交给后端做一次对象
- * 读取探针，当场回答「这份配置能不能用」——成功即通道可读；失败按后端分层码
- * （凭据 / 目标 / 权限 / 网络 / 服务）本地化，给出可自救的下一步。
- *
- * 探测与厂商预设共存的方式很直接：探测在点击那一刻取一次表单快照（
- * [`channelPayload`]），所以「下拉预填 / 地域快捷项 / 手改」的结果一视同仁，
- * 两者不共享任何写入状态；按钮态也各管各的（`probe.loading` vs `saving`），
- * 预填不因探测而禁用，探测不因预填而失效。
- *
- * 不写任何本地状态：探测不落库、不改本机已保存配置，用户改坏表单也不影响既有同步。
- *
- * 错误反馈走 [`useLoadable`] 的 error 通道（`showErrorToast` 单点，ADR-0040 /
- * #1008）：新异步动作不得再添直弹 toast（异步守门只减不增）；成功另给轻量提示。
- */
-const probe = useLoadable(async () => {
-  await api.testSyncChannelConnection(channelPayload())
-  return true
-})
-const testing = probe.loading
-
-async function testConnection() {
-  if (await probe.run()) {
-    message.success(t('settings.data.sync.testOk'))
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 检查点发布与新端引导（issue #864）：命令面 get_sync_channel_checkpoint /
-// publish_sync_checkpoint / bootstrap_sync_from_channel；引导是显式向导动作
-//（ADR-0098 决策 5），确认步展示整库替换与重启后果，成功即原位重引导。
-// ---------------------------------------------------------------------------
-
-/** 快照体大小展示文本（字节 → MB，一位小数；仅向导展示用）。 */
+/** 快照体大小展示文本（字节 → MB，一位小数；向导回显渲染用——toast 插值助手的
+ *  同名实现 module 私有，文案与模板留组件故此处保留渲染侧一份，口径一致）。 */
 function formatSizeMb(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-const publishing = ref(false)
-
-/** 发布检查点到通道：存量数据的设备把「新端可引导的来源」放上通道。 */
-async function publishCheckpoint() {
-  publishing.value = true
-  try {
-    const result = await api.publishSyncCheckpoint(passphrase.value || undefined)
-    message.success(
-      t('settings.data.sync.publishOk', {
-        generation: result.generation,
-        size: formatSizeMb(result.size),
-      }),
-    )
-    if (result.plaintext_mode) {
-      // 明文显著提示（ADR-0091 决策 8）：快照整库明文上通道，与常驻卡片警示同义。
-      message.warning(t('settings.data.sync.publishPlaintextToast'))
-    }
-  } catch (e: any) {
-    message.error(t('settings.data.sync.publishFailed', { msg: errorMessage(e) }))
-  } finally {
-    publishing.value = false
-  }
-}
-
-// 引导向导状态：预检三态（loading / found + 指针 / none）+ 口令 + 提交中。
-const bootstrapShow = ref(false)
-const prechecking = ref(false)
-const checkpointInfo = ref<SyncCheckpointInfo | null>(null)
-const precheckFailed = ref('')
-const bootstrapPassphrase = ref('')
-const bootstrapping = ref(false)
-
-/** 打开引导向导并预检通道（只读 manifest，不下载快照体）。 */
-async function openBootstrap() {
-  bootstrapShow.value = true
-  bootstrapPassphrase.value = ''
-  checkpointInfo.value = null
-  precheckFailed.value = ''
-  prechecking.value = true
-  try {
-    checkpointInfo.value = await api.getSyncChannelCheckpoint()
-  } catch (e: any) {
-    precheckFailed.value = errorMessage(e)
-  } finally {
-    prechecking.value = false
-  }
-}
-
-/** 确认引导：整库换入通道快照，成功后原位重引导（Restart 同型，重启载入数据）。 */
-async function confirmBootstrap() {
-  if (!checkpointInfo.value || bootstrapping.value) return
-  bootstrapping.value = true
-  try {
-    const outcome = await api.bootstrapSyncFromChannel(bootstrapPassphrase.value || undefined)
-    bootstrapShow.value = false
-    message.success(
-      t('settings.data.sync.bootstrapOk', {
-        generation: outcome.generation,
-        size: formatSizeMb(outcome.size),
-        reencrypted: outcome.reencrypted ? t('settings.data.sync.bootstrapReencrypted') : '',
-      }),
-    )
-    restartAppShortly()
-  } catch (e: any) {
-    // 引导失败弹窗保持打开：口令错误/形态不一致可就地修正重试（Restore 同语义）。
-    message.error(t('settings.data.sync.bootstrapFailed', { msg: errorMessage(e) }))
-  } finally {
-    bootstrapping.value = false
-  }
 }
 </script>
 
@@ -451,7 +122,7 @@ async function confirmBootstrap() {
         <NButton
           type="primary"
           :loading="syncing"
-          :disabled="loading"
+          :disabled="statusLoading"
           data-testid="sync-now"
           @click="syncNow"
         >
@@ -619,8 +290,8 @@ async function confirmBootstrap() {
           <NText depth="3">{{ t('settings.data.sync.bootstrapPrechecking') }}</NText>
         </NSpace>
         <template v-else>
-          <NAlert v-if="precheckFailed" type="error" :show-icon="true">
-            {{ t('settings.data.sync.bootstrapPrecheckFailed', { msg: precheckFailed }) }}
+          <NAlert v-if="precheckError" type="error" :show-icon="true">
+            {{ t('settings.data.sync.bootstrapPrecheckFailed', { msg: precheckError }) }}
           </NAlert>
           <NAlert v-else-if="!checkpointInfo" type="info" :show-icon="true">
             {{ t('settings.data.sync.bootstrapNotFound') }}

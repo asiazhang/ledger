@@ -264,8 +264,6 @@
       "parkedHint": "Some sync ops could not be applied locally and await redelivery; they will retry automatically after upgrading or filling in missing data.",
       "syncNow": "Sync now",
       "syncOk": "Sync finished: uploaded {uploaded}, applied {applied}, parked {parked}.",
-      "syncFailed": "Sync failed: {msg}",
-      "loadFailed": "Failed to load sync status: {msg}",
       "plaintextWarning": "Encryption is off for this book: sync data will be stored in object storage as plaintext. To sync encrypted, enable encryption on the Encryption tab first.",
       "encryptedHint": "This library is encrypted: sync data will be sealed with your master passphrase before upload.",
       "passphrasePlaceholder": "Master passphrase (leave empty to use the remembered one)",
@@ -290,7 +288,6 @@
       "saveChannel": "Save settings",
       "testConnection": "Test connection",
       "saveOk": "Channel settings saved",
-      "saveFailed": "Failed to save channel settings: {msg}",
       "testOk": "Connected: the channel is readable — this configuration can sync.",
       "testFailed": "Connection failed: {msg}",
       "colon": ": ",
@@ -302,7 +299,6 @@
       "publishCheckpoint": "Publish checkpoint to channel",
       "publishOk": "Checkpoint published: generation {generation}, {size}",
       "publishPlaintextToast": "This checkpoint was published unencrypted: the snapshot is stored in object storage as plaintext.",
-      "publishFailed": "Failed to publish checkpoint: {msg}",
       "bootstrapTitle": "Bootstrap from channel…",
       "bootstrapModalTitle": "Bootstrap from channel",
       "bootstrapWarning": "Bootstrapping replaces this device's entire book with the channel snapshot; existing local data will be lost, and the app restarts afterwards. Only use this on a brand-new empty book.",
@@ -314,8 +310,7 @@
       "bootstrapCancel": "Cancel",
       "bootstrapConfirm": "Bootstrap & restart",
       "bootstrapOk": "Bootstrap finished: adopted generation {generation} ({size}){reencrypted}. The app will restart now.",
-      "bootstrapReencrypted": ", and this library was converted to encrypted (enter the master passphrase to unlock after restart)",
-      "bootstrapFailed": "Bootstrap failed: {msg}"
+      "bootstrapReencrypted": ", and this library was converted to encrypted (enter the master passphrase to unlock after restart)"
     },
     "source": {
       "auto": "Auto",
