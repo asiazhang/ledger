@@ -4,7 +4,7 @@
 //! 撞名都返回明确错误（`AppError::Invalid`）。软删商户不再出现在列表（不可再被
 //! 新交易选择），历史交易引用照常保留（交易侧校验见 `transaction::write::writer::normalize`）。
 //!
-//! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域零感知，
+//! 置脏触发已收口连接层统一写入口（`db::write_locked`，ADR-0032）：本模块对备份域零感知，
 //! 写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
 
 use rusqlite::{Connection, OptionalExtension};

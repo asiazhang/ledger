@@ -3,7 +3,7 @@
 //!   （含 V010 price/fx history 周唯一约束）；
 //! - `holding`：净值视图 `v_holdings` 折算语义与交易本位币折算；
 //! - `perf`：耗时分级边界、perf trace 接线（ADR-0009）与聚合覆盖索引；
-//! - `dirty_marker`：连接层统一写入口 `db::write` 置脏语义（ADR-0032）；
+//! - `dirty_marker`：连接层统一写入口（`db::write_locked`）置脏语义（ADR-0032）；
 //! - `run_db`：统一 DB 调用 helper `db::run_db`（形状乙，spec #498 / #501）；
 //! - `schema_guard`：schema 漂移守卫机制（内存参照库方向性 diff，
 //!   issue #992 / ADR-0100）；

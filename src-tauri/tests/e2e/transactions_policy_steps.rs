@@ -231,9 +231,7 @@ fn batch_import_with_policy(world: &mut LedgerWorld, step: &cucumber::gherkin::S
             )
         })
         .collect();
-    let _ = world
-        .db
-        .write(|conn| TransactionBatch::run(conn, inputs, true))
+    let _ = world_write!(world, |conn| TransactionBatch::run(conn, inputs, true))
         .expect("批量导入挂单交易失败");
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }

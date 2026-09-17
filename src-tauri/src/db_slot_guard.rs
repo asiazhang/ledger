@@ -32,11 +32,14 @@ const FACADE_SOURCE: &str = "crates/infra/src/db/facade.rs";
 /// 内其它互斥体（入队 sender、登记表）区分，否则删掉真正的取槽锁也能假绿。
 const FACADE_SLOT_LOCK_TOKEN: &str = "watch.slot().lock()";
 
-/// 取锁写入口 bypass token（`db::write(` / `ledger_infra::db::write(` 都含此
-/// token）：壳层生产面零命中——门面落地后壳层写路径一律经门面句柄
-///（`DbWriteHandle::run*`）。迁移期它辖「存量消费方改道」（#1412 已把行情域
-/// 后台车道迁完）；收尾后（issue #1414）它转常设规则：壳层出现即回潮（取锁
-/// 形态绕开门面的取用独占，且不产生连接槽 `lock()` 文本，规则一抓不到）。
+/// 已退役取锁写入口的回潮哨兵（`db::write(` / `ledger_infra::db::write(` 都含此
+/// token）：取锁形态本体（`runtime::write` / `DbState::write`）已随 issue #1438
+/// 删除——写路径一律经门面句柄（`DbWriteHandle::run*`）或测试面自取槽锁后直呼
+/// `write_locked`。同名再入编译即错；本文本规则保留为**常设哨兵**，辖本守门
+/// 扫描面（壳层 `src/**` + 基础设施非 `db` 区）：扫描面内出现即回潮——取锁
+/// 形态绕开门面的取用独占，且不产生连接槽 `lock()` 文本，规则一抓不到；文本级
+/// 扫描的别名盲区靠评审兜底（与本守门其余规则同款取舍）。域侧不在扫描面，
+/// 同步轮次直锁半边（#1405）按豁免台账正交保留。
 const LOCKING_WRITE_ENTRY_TOKEN: &str = "db::write(";
 
 /// 豁免台账（ADR-0125 决策 8，issue #1410）：逐条技术原因 + 覆盖文件。
@@ -161,8 +164,8 @@ fn first_registration_installs_process_level_facade() {
     );
 }
 
-/// 壳层生产面零命中取锁写入口（`db::write`）：门面独占的唯一取用面
-///（迁移期辖改道核对，收尾后为常设规则，issue #1414）。
+/// 壳层生产面零命中已退役取锁写入口（`db::write` 回潮哨兵，issue #1438）：
+/// 门面独占的唯一取用面。
 #[test]
 fn shell_has_no_locking_write_entry_bypass() {
     let mut hits: Vec<String> = Vec::new();
@@ -176,8 +179,8 @@ fn shell_has_no_locking_write_entry_bypass() {
     }
     assert!(
         hits.is_empty(),
-        "壳层生产面出现取锁写入口 `db::write`（{hits:?}）——写路径一律经门面句柄\
-         （ADR-0125 决策 1/2，issue #1410）；确需连接槽取用的路径按豁免台账登记并说明"
+        "壳层生产面出现已退役取锁写入口 `db::write`（{hits:?}）——写路径一律经门面句柄\
+         （ADR-0125 决策 1/2，issue #1410 / #1438）；确需连接槽取用的路径按豁免台账登记并说明"
     );
 }
 

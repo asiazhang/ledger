@@ -25,10 +25,7 @@ fn create_fund_instrument(world: &mut LedgerWorld, symbol: String, name: String)
         currency_code: "CNY".into(),
         market: None,
     };
-    world
-        .db
-        .write(|conn| create_instrument(conn, input))
-        .expect("新建基金标的失败");
+    world_write!(world, |conn| create_instrument(conn, input)).expect("新建基金标的失败");
 }
 
 /// 确认单三联（issue #302 金额权威）：份额、整分金额、手续费——基金申赎步骤的

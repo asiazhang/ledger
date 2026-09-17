@@ -46,31 +46,29 @@ fn create_policy_agreement(
     start: String,
 ) {
     let policy_id = world.policy.last_policy_id.clone().expect("尚无保单");
-    let id = world
-        .db
-        .write(|conn| {
-            create_plan(
-                conn,
-                CreateScheduledInput {
-                    kind: ScheduledKind::Subscription,
-                    account_id: world.account_id(&account),
-                    category_id: None,
-                    amount_cents: amount,
-                    currency_code: currency,
-                    recurrence_type: parse_recurrence(&recurrence),
-                    recurrence_interval: 1,
-                    recurrence_day: None,
-                    start_date: start,
-                    note: None,
-                    merchant_id: None,
-                    policy_id: Some(policy_id),
-                    total_amount_cents: None,
-                    total_occurrences: None,
-                    to_account_id: None,
-                },
-            )
-        })
-        .expect("创建保单缴费协议应成功但失败");
+    let id = world_write!(world, |conn| {
+        create_plan(
+            conn,
+            CreateScheduledInput {
+                kind: ScheduledKind::Subscription,
+                account_id: world.account_id(&account),
+                category_id: None,
+                amount_cents: amount,
+                currency_code: currency,
+                recurrence_type: parse_recurrence(&recurrence),
+                recurrence_interval: 1,
+                recurrence_day: None,
+                start_date: start,
+                note: None,
+                merchant_id: None,
+                policy_id: Some(policy_id),
+                total_amount_cents: None,
+                total_occurrences: None,
+                to_account_id: None,
+            },
+        )
+    })
+    .expect("创建保单缴费协议应成功但失败");
     world.plan.last_plan_id = Some(id);
 }
 
@@ -148,7 +146,7 @@ fn create_policy_plan(
     start: &str,
     merchant_id: Option<String>,
 ) -> ledger_infra::error::Result<String> {
-    world.db.write(|conn| {
+    world_write!(world, |conn| {
         create_plan(
             conn,
             CreateScheduledInput {
@@ -186,7 +184,7 @@ fn try_edit_policy_plan_merchant(world: &mut LedgerWorld, merchant: String) {
             )
             .unwrap();
     let merchant_id = world.merchant_id(&merchant);
-    let result = world.db.write(|conn| {
+    let result = world_write!(world, |conn| {
         update_subscription(
             conn,
             UpdateSubscriptionInput {
@@ -220,7 +218,7 @@ fn try_create_installment_with_policy(
 ) {
     // 保单 id 解析在写闭包外：policy_id_by_number 内部取连接锁，闭包内调用会自锁死锁。
     let policy_id = policy_id_by_number(world, &policy_number);
-    let result = world.db.write(|conn| {
+    let result = world_write!(world, |conn| {
         create_plan(
             conn,
             CreateScheduledInput {
@@ -263,7 +261,7 @@ fn try_create_transfer_with_policy(
 ) {
     // 保单 id 解析在写闭包外（同上，避免闭包内重入连接锁）。
     let policy_id = policy_id_by_number(world, &policy_number);
-    let result = world.db.write(|conn| {
+    let result = world_write!(world, |conn| {
         create_plan(
             conn,
             CreateScheduledInput {

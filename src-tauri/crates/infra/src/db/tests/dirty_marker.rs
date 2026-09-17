@@ -1,5 +1,5 @@
-//! 连接层统一写入口 `db::write` 的置脏语义测试（ADR-0032）：成功置脏、失败不置脏、
-//! 闭包内自管事务延迟到提交点，以及目录未配置时不记备份锚点。
+//! 连接层统一写入口（`write_locked`，已持锁形态）的置脏语义测试（ADR-0032）：
+//! 成功置脏、失败不置脏、闭包内自管事务延迟到提交点，以及目录未配置时不记备份锚点。
 
 use crate::error::AppError;
 use tauri_app_lib::test_support::FIXED_NOW;
@@ -7,7 +7,8 @@ use tauri_app_lib::test_support::FIXED_NOW;
 use super::common::{dirty_state, write_test_state};
 
 // ---------------------------------------------------------------------------
-// 连接层统一写入口 db::write（ADR-0032）
+// 连接层统一写入口（write_locked，测试面自取槽锁后直呼——取锁便捷形态已退役，
+// issue #1438；置脏语义与门面作业同源同一实现，ADR-0125 决策 2）
 // ---------------------------------------------------------------------------
 
 /// 闭包成功且已提交（autocommit）→ 单点置脏；目录未配置时到期检查静默跳过
@@ -16,7 +17,10 @@ use super::common::{dirty_state, write_test_state};
 fn write_ok_marks_dirty() {
     let state = write_test_state();
     assert!(!dirty_state(&state).dirty, "初始应为洁");
-    state.write(|_conn| Ok(())).expect("写入口成功");
+    {
+        let guard = state.conn.lock().unwrap_or_else(|e| e.into_inner());
+        crate::db::write_locked(&guard, |_conn| Ok(())).expect("写入口成功");
+    }
     assert!(dirty_state(&state).dirty, "闭包成功后应置脏");
     assert_eq!(
         dirty_state(&state).last_backup_at,
@@ -29,9 +33,13 @@ fn write_ok_marks_dirty() {
 #[test]
 fn write_err_does_not_mark_dirty() {
     let state = write_test_state();
-    let err = state
-        .write(|_conn| Err::<(), AppError>(AppError::Invalid("boom".into())))
-        .unwrap_err();
+    let err = {
+        let guard = state.conn.lock().unwrap_or_else(|e| e.into_inner());
+        crate::db::write_locked(&guard, |_conn| {
+            Err::<(), AppError>(AppError::Invalid("boom".into()))
+        })
+        .unwrap_err()
+    };
     assert!(err.to_string().contains("boom"));
     assert!(!dirty_state(&state).dirty, "闭包失败不应置脏");
 }
@@ -41,8 +49,9 @@ fn write_err_does_not_mark_dirty() {
 #[test]
 fn write_inside_open_transaction_defers_to_commit_point() {
     let state = write_test_state();
-    state
-        .write(|conn| {
+    {
+        let guard = state.conn.lock().unwrap_or_else(|e| e.into_inner());
+        crate::db::write_locked(&guard, |conn| {
             conn.execute("BEGIN", [])?;
             // 任意一笔真实写（未提交）：用调度状态 KV，避开业务表外键；
             // 时刻值为夹具簿记，引用工厂固定时刻常量（ADR-0084 决策 5）。
@@ -54,6 +63,7 @@ fn write_inside_open_transaction_defers_to_commit_point() {
             Ok(())
         })
         .expect("闭包成功");
+    }
     assert!(!dirty_state(&state).dirty, "未提交不置脏");
     {
         let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
@@ -74,8 +84,9 @@ fn write_inside_open_transaction_defers_to_commit_point() {
 #[test]
 fn write_closure_committing_own_tx_marks_dirty() {
     let state = write_test_state();
-    state
-        .write(|conn| {
+    {
+        let guard = state.conn.lock().unwrap_or_else(|e| e.into_inner());
+        crate::db::write_locked(&guard, |conn| {
             conn.execute("BEGIN", [])?;
             crate::settings::set(
                 conn,
@@ -86,12 +97,13 @@ fn write_closure_committing_own_tx_marks_dirty() {
             Ok(())
         })
         .expect("闭包成功");
+    }
     assert!(dirty_state(&state).dirty, "提交点应置脏");
 }
 
 /// 已持锁形态（ADR-0125 决策 2 / issue #1408）：异步 DB 门面线程持槽锁后经
-/// `db::write_locked` 执行——置脏语义与取锁形态同源（同一实现），故提交点置脏、
-/// 未提交（显式事务在途）不置脏两条判据在已持锁形态下逐条成立。
+/// `db::write_locked` 执行——提交点置脏、未提交（显式事务在途）不置脏两条判据
+/// 在门面同款调用形态下逐条成立。
 #[test]
 fn write_locked_marks_dirty_only_at_commit_point() {
     let state = write_test_state();

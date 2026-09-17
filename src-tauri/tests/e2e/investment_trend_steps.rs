@@ -144,9 +144,7 @@ fn create_trade(
         date,
     );
     // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建，提交点置脏/到期检查。
-    let result = world
-        .db
-        .write(|conn| create_transaction_internal(conn, input));
+    let result = world_write!(world, |conn| create_transaction_internal(conn, input));
     assert!(result.is_ok(), "创建 {kind:?} 交易失败: {:?}", result.err());
 }
 

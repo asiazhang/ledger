@@ -26,10 +26,7 @@ fn create_instrument_fixture(world: &mut LedgerWorld, symbol: String, currency: 
         currency_code: currency,
         market: None,
     };
-    world
-        .db
-        .write(|conn| create_instrument(conn, input))
-        .expect("新建标的失败");
+    world_write!(world, |conn| create_instrument(conn, input)).expect("新建标的失败");
 }
 
 /// 插入标的市场现价（market_prices 每标的仅保留最新一行）：经投资域现价缓存

@@ -97,7 +97,7 @@ pub fn try_create_transaction_verb(
     world: &mut LedgerWorld,
     input: TransactionInput,
 ) -> Result<String, AppError> {
-    let write: TransactionWrite = world.db.write(|conn| create_transaction(conn, input))?;
+    let write: TransactionWrite = world_write!(world, |conn| create_transaction(conn, input))?;
     world.txn.last_transaction_id = Some(write.id.clone());
     Ok(write.id)
 }
@@ -168,10 +168,7 @@ pub fn try_update_transaction_verb(
     id: &str,
     input: TransactionInput,
 ) -> Result<(), AppError> {
-    world
-        .db
-        .write(|conn| update_transaction(conn, id, input))
-        .map(|_| ())
+    world_write!(world, |conn| update_transaction(conn, id, input)).map(|_| ())
 }
 
 /// 删除动词（软删）：经 delete 编排入口写入；失败即 panic。
@@ -181,7 +178,7 @@ pub fn delete_transaction_verb(world: &mut LedgerWorld, id: &str) {
 
 /// [`delete_transaction_verb`] 的 try 形态：不 panic，删除失败原样返回行为层错误。
 pub fn try_delete_transaction_verb(world: &mut LedgerWorld, id: &str) -> Result<(), AppError> {
-    world.db.write(|conn| delete_transaction(conn, id))
+    world_write!(world, |conn| delete_transaction(conn, id))
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +196,7 @@ pub fn try_create_plan_verb(
     world: &mut LedgerWorld,
     input: CreateScheduledInput,
 ) -> Result<String, AppError> {
-    let id = world.db.write(|conn| create_plan(conn, input))?;
+    let id = world_write!(world, |conn| create_plan(conn, input))?;
     world.plan.last_plan_id = Some(id.clone());
     Ok(id)
 }
@@ -282,10 +279,7 @@ pub(crate) fn account_currency_code(world: &LedgerWorld, account_id: &str) -> St
 /// `update_plan_status`（暂停/恢复/取消命令体）变更状态；失败即 panic。
 /// 不为测试开旁路——期次状态回写等无公开入口的直置不在此列（归 #764 例外裁决）。
 pub fn update_plan_status_verb(world: &mut LedgerWorld, id: &str, status: ScheduledStatus) {
-    world
-        .db
-        .write(|conn| update_plan_status(conn, id, status))
-        .expect("计划状态变更失败");
+    world_write!(world, |conn| update_plan_status(conn, id, status)).expect("计划状态变更失败");
 }
 
 // ---------------------------------------------------------------------------
