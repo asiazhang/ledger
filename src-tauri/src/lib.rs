@@ -57,6 +57,10 @@ mod sync_trigger_guard;
 // 出现在异步 DB 门面与壳层统一入口；豁免台账 + 死条目断言，仅测试可见。
 #[cfg(test)]
 mod db_slot_guard;
+// 阻塞客户端禁令守门（ADR-0125 决策 8，issue #1414）：生产面 `reqwest::blocking`
+// 零命中，源码扫描守门，仅测试可见。
+#[cfg(test)]
+mod blocking_client_guard;
 // 统一测试数据库工厂与共享断言库（ADR-0084，issue #751）：建库/种子/对拍断言
 // 单一入口，域测试与外部集成测试共用；仅测试消费，生产路径不得消费
 //（C 类豁免声明，ADR-0060）。

@@ -18,8 +18,9 @@
 //! `#[cfg(test)]` 构建的 lib，经 `crate::test_support` 消费。
 //!
 //! **线程归属留调用方**：本助手只做 IO，不接管线程。命令面集成测试在独立 OS
-//! 线程内调用（reqwest 阻塞客户端不得在 tokio 运行时内构造/析构），BDD 步骤
-//! 在 `block_in_place` 内调用——两者各自保持原有语义。
+//! 线程内调用（S3 传输桥的阻塞读写不得占用 tokio 运行时线程，多端同步域异步化
+//! #1405 另案前传输面同步形态），BDD 步骤在 `block_in_place` 内调用——两者各
+//! 自保持原有语义。
 // C 类豁免（ADR-0060）：仅测试用——本文件随 test_support 文件级放行六件套
 // （见 mod.rs 豁免声明）。
 use ledger_infra::error::{AppError, Result};
