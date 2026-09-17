@@ -43,17 +43,17 @@ use crate::world::LedgerWorld;
 use ledger_infra::db::DbState;
 use tauri_app_lib::test_support::{S3Addressing, S3StubConfig, publish_raw_segment, spawn_s3_stub};
 
-/// 把阻塞的通道工作（reqwest 阻塞客户端 + 真 HTTP）移出异步上下文：cucumber
-/// 场景跑在 tokio 运行时内，阻塞客户端在其中构造/析构会 panic（「Cannot drop a
-/// runtime in a context where blocking is not allowed」）。`block_in_place` 声明
-/// 「本段要阻塞」——与产品侧把同步轮次放进 `run_db` 阻塞线程池同一语义
+/// 把阻塞的通道工作（S3 传输桥的真 HTTP 往返）移出异步上下文：cucumber
+/// 场景跑在 tokio 运行时内，S3 传输桥自持专用线程与阻塞等待（多端同步域异步化
+/// #1405 另案前传输面同步形态），直接占用运行时线程会拖死调度。`block_in_place`
+/// 声明「本段要阻塞」——与产品侧把同步轮次放进阻塞线程池同一语义
 ///（ADR-0069 / 壳层 `sync_now` 的接线形态）。
 fn blocking<T>(f: impl FnOnce() -> T) -> T {
     tokio::task::block_in_place(f)
 }
 
 /// 场景级通道句柄（world 不持它——通道是配置产物，随场景现构）。
-/// 构库本身要建 reqwest 阻塞客户端，故整段在阻塞上下文中执行（见 [`blocking`]）。
+/// 构库本身要起 S3 传输桥（自持专用线程），故整段在阻塞上下文中执行（见 [`blocking`]）。
 fn channel_of(world: &LedgerWorld) -> SyncChannel {
     let config = {
         let conn = world_conn!(world);

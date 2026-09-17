@@ -32,11 +32,11 @@ const FACADE_SOURCE: &str = "crates/infra/src/db/facade.rs";
 /// 内其它互斥体（入队 sender、登记表）区分，否则删掉真正的取槽锁也能假绿。
 const FACADE_SLOT_LOCK_TOKEN: &str = "watch.slot().lock()";
 
-/// 过渡形态取锁写入口（`db::write(` / `ledger_infra::db::write(` 都含此 token）：
-/// 壳层生产面零命中——门面落地后壳层写路径一律经门面句柄（`DbWriteHandle::run*`）；
-/// 存量消费方只剩行情域后台两条车道（随 ADR-0125 决策 5/7 的异步化迁移，见
-/// issue #1412 / #1413），域侧不在本守门扫描面上。壳层出现即回潮（取锁形态绕开
-/// 门面的取用独占，且不产生连接槽 `lock()` 文本，规则一抓不到）。
+/// 取锁写入口 bypass token（`db::write(` / `ledger_infra::db::write(` 都含此
+/// token）：壳层生产面零命中——门面落地后壳层写路径一律经门面句柄
+///（`DbWriteHandle::run*`）。迁移期它辖「存量消费方改道」（#1412 已把行情域
+/// 后台车道迁完）；收尾后（issue #1414）它转常设规则：壳层出现即回潮（取锁
+/// 形态绕开门面的取用独占，且不产生连接槽 `lock()` 文本，规则一抓不到）。
 const LOCKING_WRITE_ENTRY_TOKEN: &str = "db::write(";
 
 /// 豁免台账（ADR-0125 决策 8，issue #1410）：逐条技术原因 + 覆盖文件。
@@ -161,7 +161,8 @@ fn first_registration_installs_process_level_facade() {
     );
 }
 
-/// 壳层生产面零命中取锁写入口（`db::write` 过渡形态）：门面独占的唯一取用面。
+/// 壳层生产面零命中取锁写入口（`db::write`）：门面独占的唯一取用面
+///（迁移期辖改道核对，收尾后为常设规则，issue #1414）。
 #[test]
 fn shell_has_no_locking_write_entry_bypass() {
     let mut hits: Vec<String> = Vec::new();
