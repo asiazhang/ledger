@@ -441,27 +441,26 @@ mod tests {
              IPC/HTTP 读写（ADR-0069 决策 4 / issue #1282）"
         );
         // 阻塞包装禁令（ADR-0125 决策 7 / issue #1413）：拉取在异步命令体内直接
-        // await，`spawn_blocking` 包装与 JoinError 归一化（「任务执行失败」错
-        // 误消息）不得回归——回归即把网络等待挪回阻塞池线程，异步上下文里重新
-        // 出现阻塞资源（#1403 同款纪律退化面）。
+        // await，`spawn_blocking` 阻塞包装不得回归——回归即把网络等待挪回阻塞池
+        // 线程，异步上下文里重新出现阻塞资源（#1403 同款纪律退化面）。同层的
+        // JoinError 归一化错误消息（「任务执行失败」）断言已按断言强度删除
+        // （issue #1443）：字面量在掩码文本上不可达、永真无变红路径，且该消息
+        // 是阻塞包装 JoinError 归一化的伴生形态——本决策要拦的回归是「包装 +
+        // 归一化」整体回归，`spawn_blocking` 令牌断言已覆盖，消息断言无独有
+        // 守护责任。
         assert!(
             !body.contains("spawn_blocking"),
             "add_fund_by_code 不得回归 spawn_blocking 阻塞包装（ADR-0125 决策 7 / \
              issue #1413）：async 生产入口在命令体直接 await"
-        );
-        assert!(
-            !body.contains("任务执行失败"),
-            "add_fund_by_code 不得回归 JoinError 归一化错误消息（ADR-0125 决策 7 / \
-             issue #1413）"
         );
     }
 
     /// `add_instrument_by_code` 的查询阶段同款守门（ADR-0125 决策 7 / issue #1413）：
     /// 生产拉取闭包直接接 async 生产入口（`fetch_stock_quote_production`），查询
     /// 编排（`fetch_stock_quote_for_add`）在命令体 await——阻塞包装（同步闭包 +
-    /// `spawn_blocking` + JoinError 归一化）回归即红。行为分支触真实网络、测试面
-    /// 不可达，以源码扫描守门（先例 #959/#961，ADR-0087）；词法器具单点住
-    /// `test_support::scan`（#1433）。
+    /// `spawn_blocking`）回归即红，JoinError 归一化消息断言按断言强度删除
+    /// （#1443）。行为分支触真实网络、测试面不可达，以源码扫描守门（先例
+    /// #959/#961，ADR-0087）；词法器具单点住 `test_support::scan`（#1433）。
     #[test]
     fn instrument_query_uses_async_production_entry_without_blocking_wrapper() {
         let text = crate::test_support::scan::mask_non_code(include_str!("investment.rs"));
@@ -479,11 +478,6 @@ mod tests {
             !body.contains("spawn_blocking"),
             "add_instrument_by_code 不得回归 spawn_blocking 阻塞包装（ADR-0125 决策 7 / \
              issue #1413）：async 生产入口在命令体直接 await"
-        );
-        assert!(
-            !body.contains("任务执行失败"),
-            "add_instrument_by_code 不得回归 JoinError 归一化错误消息（ADR-0125 决策 7 / \
-             issue #1413）"
         );
     }
 }
