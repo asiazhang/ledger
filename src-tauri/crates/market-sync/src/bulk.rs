@@ -15,7 +15,8 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use ledger_infra::error::{AppError, Result};
 
-use super::http::{Pacer, RetryConfig, block_on, lock_pacer, request_text_from_hosts};
+use super::channels::FetchFuture;
+use super::http::{Pacer, RetryConfig, lock_pacer, request_text_from_hosts};
 
 /// 全量名称字典：基金代码 → 数据源权威名称。
 pub type FundNameDictionary = HashMap<String, String>;
@@ -50,10 +51,11 @@ impl<K, V> BulkCoverage for HashMap<K, V> {
     }
 }
 
-/// 名称全量字典抓取通道闭包形态（整次同步一次请求）。
-pub type FetchFundNameDictionary = Box<dyn FnMut() -> Result<FundNameDictionary> + Send>;
+/// 名称全量字典抓取通道闭包形态（整次同步一次请求）：网络等待以 `await`
+/// 表达（ADR-0125 决策 5 / issue #1412），闭包返回装箱 future。
+pub type FetchFundNameDictionary = Box<dyn FnMut() -> FetchFuture<FundNameDictionary> + Send>;
 /// 场外基金净值批量面抓取通道闭包形态（整次同步一次请求）。
-pub type FetchFundNavTable = Box<dyn FnMut() -> Result<FundNavTable> + Send>;
+pub type FetchFundNavTable = Box<dyn FnMut() -> FetchFuture<FundNavTable> + Send>;
 
 /// 跨同步记忆阈值：连续这么多次同步的批量取数失败后停用批量面（ADR-0121 决策 3）。
 pub const BULK_FAILURE_THRESHOLD: u32 = 3;
@@ -158,7 +160,9 @@ impl BulkFetchSurfaces {
                 let client = client.clone();
                 let pacer = pacer.clone();
                 Box::new(move || {
-                    block_on(async {
+                    let client = client.clone();
+                    let pacer = pacer.clone();
+                    Box::pin(async move {
                         let mut pacer = lock_pacer(&pacer).await;
                         fetch_fund_name_dictionary(&client, &mut pacer).await
                     })
@@ -167,7 +171,9 @@ impl BulkFetchSurfaces {
             nav: {
                 let client = client.clone();
                 Box::new(move || {
-                    block_on(async {
+                    let client = client.clone();
+                    let pacer = pacer.clone();
+                    Box::pin(async move {
                         let mut pacer = lock_pacer(&pacer).await;
                         fetch_fund_nav_table(&client, &mut pacer).await
                     })
@@ -183,8 +189,8 @@ impl BulkFetchSurfaces {
     /// 记忆句柄随构造独立发放，不共享生产单例（测试之间零串扰）。
     pub fn absent() -> Self {
         Self {
-            names: Box::new(|| Ok(FundNameDictionary::new())),
-            nav: Box::new(|| Ok(FundNavTable::new())),
+            names: Box::new(|| Box::pin(async { Ok(FundNameDictionary::new()) })),
+            nav: Box::new(|| Box::pin(async { Ok(FundNavTable::new()) })),
             circuit: Arc::new(Mutex::new(BulkFetchCircuit::new())),
         }
     }

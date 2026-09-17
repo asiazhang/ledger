@@ -49,25 +49,45 @@ fn gated_backfill_channels(
     kline_calls: Arc<std::sync::atomic::AtomicUsize>,
 ) -> BackfillChannelsSlot {
     let channels = SyncFetchChannels {
-        fetch_ulist: Box::new(|_| unreachable!("后台补全不刷现价，批量报价通道不应被触达")),
+        fetch_ulist: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("后台补全不刷现价，批量报价通道不应被触达")
+            })
+        }),
+        // 门控等待在闭包同步段完成（编排调用闭包即阻塞在途），应答装箱为 future
+        // ——「后台补全真实在途」语义与断言不变（issue #1412 通道闭包 async 形态）。
         fetch_kline: Box::new(move |_secid| {
             kline_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             entered.send(()).expect("在途通知应可送达");
             release
                 .recv_timeout(Duration::from_secs(10))
                 .expect("测试应放行后台抓取");
-            Ok(vec![
-                KlineBar::new("2026-01-05", 12.0),
-                KlineBar::new("2026-01-12", 13.0),
-            ])
+            Box::pin(async move {
+                Ok(vec![
+                    KlineBar::new("2026-01-05", 12.0),
+                    KlineBar::new("2026-01-12", 13.0),
+                ])
+            })
         }),
-        fetch_fx: Box::new(|_| Ok(vec![])),
-        fetch_nav: Box::new(|_| unreachable!("测试现场无基金标的，净值通道不应被触达")),
-        fetch_nav_full: Box::new(|_| unreachable!("测试现场无基金标的，全量净值通道不应被触达")),
-        fetch_fund_name: Box::new(|_| unreachable!("测试现场无基金标的，名称通道不应被触达")),
+        fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+        fetch_nav: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，净值通道不应被触达")
+            })
+        }),
+        fetch_nav_full: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，全量净值通道不应被触达")
+            })
+        }),
+        fetch_fund_name: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，名称通道不应被触达")
+            })
+        }),
         bulk: BulkFetchSurfaces::absent(),
     };
-    BackfillChannelsSlot(Arc::new(Mutex::new(channels)))
+    BackfillChannelsSlot(Arc::new(tokio::sync::Mutex::new(channels)))
 }
 
 /// 前台同步命令的桩通道束：批量报价返回一条有效报价（现价照常落库），日 K
@@ -76,21 +96,35 @@ fn gated_backfill_channels(
 fn frontend_sync_channels() -> SyncChannelsSlot {
     let channels = SyncFetchChannels {
         fetch_ulist: Box::new(|_| {
-            Ok(vec![StockItem {
-                code: "600519".into(),
-                name: "贵州茅台".into(),
-                price: Some(1302.80),
-                precision: None,
-            }])
+            Box::pin(async move {
+                Ok(vec![StockItem {
+                    code: "600519".into(),
+                    name: "贵州茅台".into(),
+                    price: Some(1302.80),
+                    precision: None,
+                }])
+            })
         }),
-        fetch_kline: Box::new(|_| Ok(vec![])),
-        fetch_fx: Box::new(|_| Ok(vec![])),
-        fetch_nav: Box::new(|_| unreachable!("测试现场无基金标的，净值通道不应被触达")),
-        fetch_nav_full: Box::new(|_| unreachable!("测试现场无基金标的，全量净值通道不应被触达")),
-        fetch_fund_name: Box::new(|_| unreachable!("测试现场无基金标的，名称通道不应被触达")),
+        fetch_kline: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+        fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+        fetch_nav: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，净值通道不应被触达")
+            })
+        }),
+        fetch_nav_full: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，全量净值通道不应被触达")
+            })
+        }),
+        fetch_fund_name: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，名称通道不应被触达")
+            })
+        }),
         bulk: BulkFetchSurfaces::absent(),
     };
-    SyncChannelsSlot(Arc::new(Mutex::new(channels)))
+    SyncChannelsSlot(Arc::new(tokio::sync::Mutex::new(channels)))
 }
 
 /// 接线全流程：启动接线跑出后台补全（历史落行 + 静默计数 + 价格失效信号），

@@ -9,12 +9,13 @@
 //! 手动同步编排，改为直接驱动逐只回填入口断言（首刷近两年、单请求全量通道优先
 //! 与回退、水位增量、空响应/触顶整只不落库、单只一事务原子）。
 
-use std::cell::RefCell;
-
 use chrono::{Datelike, Days, Duration as ChronoDuration, Months, NaiveDate};
 use rusqlite::{Connection, params};
 
+use std::sync::Mutex;
+
 use crate::SyncProgress;
+use crate::channels::FetchFuture;
 use crate::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
 use crate::fund_nav::{LsjzPage, NavPoint, NavQuery};
 use crate::history::{HistoryBackfillStats, run_history_backfill_round};
@@ -129,7 +130,7 @@ type ObservedProgress = (usize, usize, Option<(String, u64, u64)>);
 struct Harness {
     /// 处理序日志：行情标的记 `kline:<secid>`，基金页记 `nav:<code>`，基金单
     /// 请求全量通道记 `full:<code>`，汇率记 `fx:<pair>`。
-    log: RefCell<Vec<String>>,
+    log: Mutex<Vec<String>>,
     /// secid → 日线样本；未命中 = 空表（零有效周点）。
     klines: Vec<(&'static str, Vec<KlineBar>)>,
     /// 注入单只失败：命中该 secid 的日 K 请求返回 Err。
@@ -143,7 +144,7 @@ struct Harness {
 impl Harness {
     fn new() -> Self {
         Self {
-            log: RefCell::new(vec![]),
+            log: Mutex::new(vec![]),
             klines: vec![],
             fail_kline: None,
             nav_pages: vec![],
@@ -172,7 +173,7 @@ impl Harness {
     }
 
     fn requested(&self) -> Vec<String> {
-        self.log.borrow().clone()
+        self.log.lock().unwrap().clone()
     }
 
     fn nav_page_hits(&self, code: &str) -> usize {
@@ -183,7 +184,7 @@ impl Harness {
     }
 
     fn fetch_kline(&self, secid: &str) -> Result<Vec<KlineBar>> {
-        self.log.borrow_mut().push(format!("kline:{secid}"));
+        self.log.lock().unwrap().push(format!("kline:{secid}"));
         if self.fail_kline.map(|f| f == secid).unwrap_or(false) {
             return Err(AppError::Io("日 K 抓取失败".into()));
         }
@@ -196,7 +197,7 @@ impl Harness {
     }
 
     fn fetch_nav(&self, query: &NavQuery) -> Result<LsjzPage> {
-        self.log.borrow_mut().push(format!("nav:{}", query.code));
+        self.log.lock().unwrap().push(format!("nav:{}", query.code));
         let page_index = (query.page - 1) as usize;
         Ok(self
             .nav_pages
@@ -211,14 +212,14 @@ impl Harness {
     }
 
     fn fetch_nav_full(&self, code: &str) -> Result<Vec<NavPoint>> {
-        self.log.borrow_mut().push(format!("full:{code}"));
+        self.log.lock().unwrap().push(format!("full:{code}"));
         // 单请求全量通道统一失败：让首刷走分页通道，页级明细由此可观察（与
         // 既有首刷用例同路——fail-closed 回退分页）。
         Err(AppError::Io("全量通道不可用".into()))
     }
 
     fn fetch_fx(&self, pair: &str) -> Result<Vec<KlineBar>> {
-        self.log.borrow_mut().push(format!("fx:{pair}"));
+        self.log.lock().unwrap().push(format!("fx:{pair}"));
         Ok(self
             .fx
             .iter()
@@ -233,14 +234,14 @@ fn run_round(
     conn: &Connection,
     harness: &Harness,
 ) -> (Result<HistoryBackfillStats>, Vec<SyncProgress>, bool) {
-    let progress_log: RefCell<Vec<SyncProgress>> = RefCell::new(vec![]);
+    let progress_log: Mutex<Vec<SyncProgress>> = Mutex::new(vec![]);
     let mut witness = WriteWitness::default();
-    let mut fetch_kline = |secid: &str| harness.fetch_kline(secid);
-    let mut fetch_fx = |pair: &str| harness.fetch_fx(pair);
-    let mut fetch_nav = |query: &NavQuery| harness.fetch_nav(query);
-    let mut fetch_nav_full = |code: &str| harness.fetch_nav_full(code);
-    let mut progress = |p: SyncProgress| progress_log.borrow_mut().push(p);
-    let result = run_history_backfill_round(
+    let mut fetch_kline = |secid: &str| super::ready(harness.fetch_kline(secid));
+    let mut fetch_fx = |pair: &str| super::ready(harness.fetch_fx(pair));
+    let mut fetch_nav = |query: &NavQuery| super::ready(harness.fetch_nav(query));
+    let mut fetch_nav_full = |code: &str| super::ready(harness.fetch_nav_full(code));
+    let mut progress = |p: SyncProgress| progress_log.lock().unwrap().push(p);
+    let result = tauri::async_runtime::block_on(run_history_backfill_round(
         conn,
         &mut fetch_kline,
         &mut fetch_fx,
@@ -248,8 +249,12 @@ fn run_round(
         &mut fetch_nav_full,
         &mut progress,
         &mut witness,
-    );
-    (result, progress_log.into_inner(), witness.any_written())
+    ));
+    (
+        result,
+        progress_log.lock().unwrap().clone(),
+        witness.any_written(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -666,15 +671,15 @@ fn fund_instrument(id: &str, code: &str) -> SyncInstrument {
 
 /// 直驱逐只回填：页级推进回调置空（页级明细断言归上方 run_history_backfill_round
 /// 的用例，此处不重复），返回结局。
-fn run_fund_backfill<N, S>(
+async fn run_fund_backfill<N, S>(
     conn: &Connection,
     fund: &SyncInstrument,
     fetch_nav: &mut N,
     fetch_full: &mut S,
 ) -> Result<BackfillOutcome>
 where
-    N: FnMut(&NavQuery) -> Result<LsjzPage>,
-    S: FnMut(&str) -> Result<Vec<NavPoint>>,
+    N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
+    S: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
 {
     backfill_one_fund_history(
         conn,
@@ -683,27 +688,28 @@ where
         fetch_full,
         &mut |_done: u64, _total: u64| {},
     )
+    .await
 }
 
 /// 空实现：既有用例只关心单请求全量通道时注入（分页通道最小桩，形态 = 窗口
 /// 内确实无净值、非拦截）。
-fn empty_nav(_: &NavQuery) -> Result<LsjzPage> {
-    Ok(LsjzPage {
+fn empty_nav(_: &NavQuery) -> FetchFuture<LsjzPage> {
+    super::ready(Ok(LsjzPage {
         points: vec![],
         total: 0,
         blocked: false,
-    })
+    }))
 }
 
 /// 模拟历史净值页抓取：按代码返回页序列（下标 = 页码 − 1，越界页返回空），
 /// 并记录全部查询（断言水位窗口、翻页与「非可拉取行零请求」）。
 fn mock_nav<'a>(
     pages_by_code: &'a [(&'a str, Vec<LsjzPage>)],
-    requested: &'a RefCell<Vec<NavQuery>>,
-) -> impl FnMut(&NavQuery) -> Result<LsjzPage> + 'a {
+    requested: &'a Mutex<Vec<NavQuery>>,
+) -> impl FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send + 'a {
     move |query: &NavQuery| {
-        requested.borrow_mut().push(query.clone());
-        Ok(pages_by_code
+        requested.lock().unwrap().push(query.clone());
+        super::ready(Ok(pages_by_code
             .iter()
             .find(|(c, _)| *c == query.code)
             .and_then(|(_, pages)| pages.get((query.page - 1) as usize))
@@ -712,7 +718,7 @@ fn mock_nav<'a>(
                 points: vec![],
                 total: 0,
                 blocked: false,
-            }))
+            })))
     }
 }
 
@@ -731,15 +737,15 @@ fn full_series(series: &[(String, f64)]) -> Vec<NavPoint> {
 /// 请求的代码（断言首刷一次请求、增量不触碰本通道）。
 fn mock_full_nav<'a>(
     series_by_code: &'a [(&'a str, Vec<NavPoint>)],
-    requested: &'a RefCell<Vec<String>>,
-) -> impl FnMut(&str) -> Result<Vec<NavPoint>> + 'a {
+    requested: &'a Mutex<Vec<String>>,
+) -> impl FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send + 'a {
     move |code: &str| {
-        requested.borrow_mut().push(code.to_string());
-        Ok(series_by_code
+        requested.lock().unwrap().push(code.to_string());
+        super::ready(Ok(series_by_code
             .iter()
             .find(|(c, _)| *c == code)
             .map(|(_, points)| points.clone())
-            .unwrap_or_default())
+            .unwrap_or_default()))
     }
 }
 
@@ -766,10 +772,10 @@ fn daily_nav_series(start: NaiveDate, end: NaiveDate) -> Vec<(String, f64)> {
 /// 或调用形状（issue #1059 负向条目）。
 fn mock_nav_series<'a>(
     series: &'a [(String, f64)],
-    requested: &'a RefCell<Vec<NavQuery>>,
-) -> impl FnMut(&NavQuery) -> Result<LsjzPage> + 'a {
+    requested: &'a Mutex<Vec<NavQuery>>,
+) -> impl FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send + 'a {
     move |query: &NavQuery| {
-        requested.borrow_mut().push(query.clone());
+        requested.lock().unwrap().push(query.clone());
         let mut in_window: Vec<&(String, f64)> = series
             .iter()
             .filter(|(date, _)| {
@@ -788,11 +794,11 @@ fn mock_nav_series<'a>(
                 nav: *nav,
             })
             .collect();
-        Ok(LsjzPage {
+        super::ready(Ok(LsjzPage {
             points,
             total,
             blocked: false,
-        })
+        }))
     }
 }
 
@@ -899,17 +905,19 @@ fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
             nav_page(45, &[]),
         ],
     )];
-    let requested = RefCell::new(Vec::new());
-    let full_requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
+    let full_requested = Mutex::new(Vec::new());
     let mut nav = mock_nav(&pages, &requested);
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
     assert!(outcome.written, "首刷跨页回填应落库");
     assert!(!outcome.inconclusive);
 
     // 翻页：首页起点 = 近两年窗口起点，共 3 页、全部同窗口。
-    let requested = requested.borrow();
+    let requested = requested.lock().unwrap();
     assert_eq!(requested.len(), 3);
     for q in requested.iter() {
         assert_eq!(q.code, "110022");
@@ -947,22 +955,24 @@ fn fund_first_sync_prefers_single_request_full_series() {
     let five_years_ago = beijing_today().checked_sub_months(Months::new(60)).unwrap();
     let series = daily_nav_series(five_years_ago, beijing_today());
     let full_by_code = [("110022", full_series(&series))];
-    let full_requested = RefCell::new(Vec::new());
+    let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&full_by_code, &full_requested);
-    let page_requested = RefCell::new(Vec::new());
+    let page_requested = Mutex::new(Vec::new());
     let mut nav = mock_nav(&[], &page_requested);
 
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
     assert!(outcome.written);
     assert!(!outcome.inconclusive);
     {
-        let requested = full_requested.borrow();
+        let requested = full_requested.lock().unwrap();
         assert_eq!(requested.len(), 1, "首刷每次一条请求");
         assert_eq!(requested[0], "110022", "按基金代码取全量");
     }
     assert!(
-        page_requested.borrow().is_empty(),
+        page_requested.lock().unwrap().is_empty(),
         "单请求通道命中后不得再分页（一次请求取代约 25 次）"
     );
 
@@ -996,23 +1006,25 @@ fn fund_first_sync_full_series_failure_falls_back_to_pages() {
     insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
     let fund = fund_instrument("inst-fund", "110022");
 
-    let mut full = |_: &str| -> Result<Vec<NavPoint>> {
-        Err(AppError::Parse(
+    let mut full = |_: &str| {
+        super::ready(Err(AppError::Parse(
             "基金 110022 详情页数据文件缺少可信的单位净值序列".into(),
-        ))
+        )))
     };
-    let requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
     let pages = [(
         "110022",
         vec![nav_page(2, &[("2026-01-30", 3.348), ("2026-01-29", 3.42)])],
     )];
     let mut nav = mock_nav(&pages, &requested);
 
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
     assert!(outcome.written);
     assert!(!outcome.inconclusive);
-    assert_eq!(requested.borrow().len(), 1, "回退分页通道");
+    assert_eq!(requested.lock().unwrap().len(), 1, "回退分页通道");
     assert_eq!(
         price_history_rows(&conn, "inst-fund"),
         vec![("2026-01-30".into(), 33480, "CNY".into())],
@@ -1031,16 +1043,18 @@ fn fund_first_sync_full_series_empty_falls_back_to_pages() {
     insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
     let fund = fund_instrument("inst-fund", "110022");
 
-    let mut full = |_: &str| -> Result<Vec<NavPoint>> { Ok(vec![]) };
-    let requested = RefCell::new(Vec::new());
+    let mut full = |_: &str| super::ready(Ok(vec![]));
+    let requested = Mutex::new(Vec::new());
     let pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.348)])])];
     let mut nav = mock_nav(&pages, &requested);
 
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
     assert!(outcome.written);
     assert!(!outcome.inconclusive);
-    assert_eq!(requested.borrow().len(), 1, "空结果回退分页通道");
+    assert_eq!(requested.lock().unwrap().len(), 1, "空结果回退分页通道");
     assert_eq!(
         fund_price_of(&conn, "inst-fund"),
         Some((33480, Some("2026-01-30".into()))),
@@ -1060,16 +1074,22 @@ fn fund_first_sync_full_series_without_window_points_falls_back_to_pages() {
         nav: 1.0,
     }];
     let full_by_code = [("110022", stale)];
-    let full_requested = RefCell::new(Vec::new());
+    let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&full_by_code, &full_requested);
-    let requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
     let pages = [("110022", vec![nav_page(0, &[])])];
     let mut nav = mock_nav(&pages, &requested);
 
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
-    assert_eq!(requested.borrow().len(), 1, "窗口外点回退分页通道");
-    assert_eq!(full_requested.borrow().len(), 1, "首刷先查单请求通道");
+    assert_eq!(requested.lock().unwrap().len(), 1, "窗口外点回退分页通道");
+    assert_eq!(
+        full_requested.lock().unwrap().len(),
+        1,
+        "首刷先查单请求通道"
+    );
     assert_eq!(price_history_rows(&conn, "inst-fund"), vec![]);
     assert!(!outcome.written, "查无窗口内净值不落库（原断言：计入跳过）");
     assert!(
@@ -1094,21 +1114,23 @@ fn fund_incremental_does_not_touch_single_request_full_series() {
             nav: 9.99,
         }],
     )];
-    let full_requested = RefCell::new(Vec::new());
+    let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&full_by_code, &full_requested);
-    let requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
     let pages = [(
         "110022",
         vec![nav_page(2, &[("2026-01-30", 3.348), ("2026-01-29", 3.42)])],
     )];
     let mut nav = mock_nav(&pages, &requested);
 
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
     assert!(outcome.written);
-    assert_eq!(requested.borrow().len(), 1, "增量走分页通道");
+    assert_eq!(requested.lock().unwrap().len(), 1, "增量走分页通道");
     assert!(
-        full_requested.borrow().is_empty(),
+        full_requested.lock().unwrap().is_empty(),
         "有历史序列的增量不触碰单请求全量通道"
     );
     assert_eq!(
@@ -1143,16 +1165,18 @@ fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
         "110022",
         vec![nav_page(2, &[("2026-01-30", 3.348), ("2026-01-29", 3.42)])],
     )];
-    let requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
     let mut nav = mock_nav(&pages, &requested);
-    let full_requested = RefCell::new(Vec::new());
+    let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
     assert!(outcome.written);
     assert!(!outcome.inconclusive);
 
-    let requested = requested.borrow();
+    let requested = requested.lock().unwrap();
     assert_eq!(requested.len(), 1, "常态增量每只一页");
     assert_eq!(requested[0].start_date, "2026-01-29", "从水位次日起");
 
@@ -1181,11 +1205,13 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
     let watermark = date_offset(7);
     seed_fund_price(&conn, "inst-fund", 30000, &watermark, true);
 
-    let requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
     let mut nav = mock_nav(&[], &requested);
-    let full_requested = RefCell::new(Vec::new());
+    let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
     // 「已是最新」= 结局确定但不落库：written 为 false、非「窗口不完整」
     //（原断言：synced 计入、written 为 0、零变化不广播）。
@@ -1197,7 +1223,10 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
         },
         "已是最新：结局确定且零写入"
     );
-    assert!(full_requested.borrow().is_empty(), "有历史序列不碰全量通道");
+    assert!(
+        full_requested.lock().unwrap().is_empty(),
+        "有历史序列不碰全量通道"
+    );
     assert_eq!(
         fund_price_of(&conn, "inst-fund"),
         Some((30000, Some(watermark))),
@@ -1233,15 +1262,21 @@ fn fund_with_nav_date_but_no_history_backfills_two_years() {
     // 一天、几乎采不到净值点（现价也就不再更新）。
     let start = beijing_today().checked_sub_months(Months::new(24)).unwrap();
     let series = daily_nav_series(start, beijing_today());
-    let requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
     let mut nav = mock_nav_series(&series, &requested);
-    let full_requested = RefCell::new(Vec::new());
+    let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
     assert!(outcome.written);
     assert!(!outcome.inconclusive);
-    assert_eq!(full_requested.borrow().len(), 1, "首刷先试单请求全量通道");
+    assert_eq!(
+        full_requested.lock().unwrap().len(),
+        1,
+        "首刷先试单请求全量通道"
+    );
 
     // 回填后可查询到的净值周点覆盖深度 = 近两年（约 104 周），而不是「水位之后
     // 的那几天」——断言对准周点覆盖深度，不对准函数或调用形状。
@@ -1280,16 +1315,18 @@ fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
     let watermark = date_offset(7);
     seed_fund_price(&conn, "inst-fund", 30000, &watermark, true);
 
-    let mut nav = |_: &NavQuery| -> Result<LsjzPage> {
-        Ok(LsjzPage {
+    let mut nav = |_: &NavQuery| {
+        super::ready(Ok(LsjzPage {
             points: vec![],
             total: 0,
             blocked: true,
-        })
+        }))
     };
-    let full_requested = RefCell::new(Vec::new());
+    let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
     // 空响应不可信：结局 = 窗口不完整待重试（原断言：不计 synced、计跳过）。
     assert_eq!(
@@ -1330,10 +1367,12 @@ fn fund_backfill_write_failure_leaves_no_history() {
         ("2026-01-30".to_string(), 1.300),
     ];
     let full = [("110022", full_series(&series))];
-    let full_requested = RefCell::new(Vec::new());
+    let full_requested = Mutex::new(Vec::new());
     let mut full_nav = mock_full_nav(&full, &full_requested);
     let mut nav = empty_nav;
-    let err = run_fund_backfill(&conn, &fund, &mut nav, &mut full_nav).unwrap_err();
+    let err =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full_nav))
+            .unwrap_err();
 
     assert!(
         err.to_string().contains("注入周点写入失败"),
@@ -1356,7 +1395,13 @@ fn fund_backfill_write_failure_leaves_no_history() {
         .unwrap();
     let mut full_nav_retry = mock_full_nav(&full, &full_requested);
     let mut nav_retry = empty_nav;
-    let retry = run_fund_backfill(&conn, &fund, &mut nav_retry, &mut full_nav_retry).unwrap();
+    let retry = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav_retry,
+        &mut full_nav_retry,
+    ))
+    .unwrap();
     assert!(
         retry.written,
         "解除注入后重跑按首刷重新采集（原断言 synced=1）"
@@ -1390,11 +1435,13 @@ fn fund_partial_blocked_page_skips_whole_instrument() {
             },
         ],
     )];
-    let requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
     let mut nav = mock_nav(&pages, &requested);
-    let full_requested = RefCell::new(Vec::new());
+    let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
     // 部分页被拦截不得计成功：结局 = 窗口不完整待重试（原断言：计跳过）。
     assert_eq!(
@@ -1441,11 +1488,13 @@ fn fund_incremental_partial_blocked_page_keeps_existing_history_and_watermark() 
             },
         ],
     )];
-    let requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
     let mut nav = mock_nav(&pages, &requested);
-    let full_requested = RefCell::new(Vec::new());
+    let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
     // 部分页被拦截不得计成功：结局 = 窗口不完整待重试（原断言：计跳过）。
     assert_eq!(
@@ -1465,7 +1514,7 @@ fn fund_incremental_partial_blocked_page_keeps_existing_history_and_watermark() 
         Some((30000, Some(watermark.clone()))),
         "整只不落库则水位不前进（下次从同一水位重取）"
     );
-    assert_eq!(requested.borrow()[0].start_date, "2026-01-21");
+    assert_eq!(requested.lock().unwrap()[0].start_date, "2026-01-21");
 }
 
 #[test]
@@ -1479,11 +1528,13 @@ fn fund_page_cap_truncation_skips_whole_instrument() {
 
     // total=1000 → raw_pages=50 > MAX_NAV_PAGES(40)：触顶，首页已采净值点也不落库。
     let pages = [("110022", vec![nav_page(1000, &[("2026-01-30", 3.348)])])];
-    let requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
     let mut nav = mock_nav(&pages, &requested);
-    let full_requested = RefCell::new(Vec::new());
+    let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = run_fund_backfill(&conn, &fund, &mut nav, &mut full).unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
 
     // 页数触顶不得计成功：结局 = 窗口已知未采全，按待重试（原断言：计跳过）。
     assert_eq!(

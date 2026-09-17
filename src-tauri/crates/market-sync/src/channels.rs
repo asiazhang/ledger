@@ -10,6 +10,10 @@
 //! 同步网络通道注入接缝」）——「同步真实在途」由此可确定复现，编排与命令壳的
 //! 锁形态在注入桩下原样运行，测试面与生产行为之间不再有形状差。
 //!
+//! 抓取闭包为 **async 形态**（ADR-0125 决策 5 / issue #1412）：返回装箱 future、
+//! 网络等待以 `await` 表达，#1411 的过渡同步桥不再经本模块。闭包入参为引用、
+//! future 需 `'static`，实现侧在构造 future 前把入参拷为自有数据。
+//!
 //! 通道束只换装抓取闭包，不触其他接缝：会话（[`super::session`]）、进度发射
 //! （[`super::progress`]）与编排本体对生产/测试零分叉。
 //!
@@ -19,31 +23,36 @@
 //! 两道车流的相邻请求，前台请求在途时后台车道让行（[`super::http::wait_foreground_idle`]
 //! 等归零再发），前台对数据源的响应时间不被后台拖慢。
 
+use std::future::Future;
+use std::pin::Pin;
+
 use ledger_infra::error::Result;
 
 use super::bulk::BulkFetchSurfaces;
 use super::fund::fetch_fund_quote;
 use super::fund_nav::{LsjzPage, NavPoint, NavQuery, fetch_nav_full_series, fetch_nav_page};
 use super::http::{
-    ForegroundGuard, KlineBar, Pacer, StockItem, block_on, build_client, fetch_fx_kline,
-    fetch_kline, fetch_ulist, lock_pacer, shared_pacer, wait_foreground_idle,
+    ForegroundGuard, KlineBar, Pacer, StockItem, build_client, fetch_fx_kline, fetch_kline,
+    fetch_ulist, lock_pacer, shared_pacer, wait_foreground_idle,
 };
 use super::incremental::{do_incremental_sync_with, kline_beg};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use super::progress::SyncProgress;
 use super::session::ScopedSession;
 
-/// 抓取通道闭包的统一形态（`Box<dyn FnMut>` 别名，降低束字段签名复杂度；限
-/// `Send` 以便整束经互斥体跨线程交接）。
-pub type FetchUlist = Box<dyn FnMut(&str) -> Result<Vec<StockItem>> + Send>;
+/// 抓取通道 future 的装箱形态：网络等待以 `await` 表达（ADR-0125 决策 5 /
+/// issue #1412）；限 `Send` 以便整束经互斥体跨线程交接。
+pub type FetchFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
+/// 抓取通道闭包的统一形态（`Box<dyn FnMut>` 别名，降低束字段签名复杂度）。
+pub type FetchUlist = Box<dyn FnMut(&str) -> FetchFuture<Vec<StockItem>> + Send>;
 /// 日 K / 汇率 K 抓取通道闭包形态（两通道同签名，别名共用）。
-pub type FetchKline = Box<dyn FnMut(&str) -> Result<Vec<KlineBar>> + Send>;
+pub type FetchKline = Box<dyn FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send>;
 /// 历史净值页抓取通道闭包形态。
-pub type FetchNavPage = Box<dyn FnMut(&NavQuery) -> Result<LsjzPage> + Send>;
+pub type FetchNavPage = Box<dyn FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send>;
 /// 单请求全量净值抓取通道闭包形态（issue #1062 首刷深回填通道）。
-pub type FetchNavFull = Box<dyn FnMut(&str) -> Result<Vec<NavPoint>> + Send>;
+pub type FetchNavFull = Box<dyn FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send>;
 /// 基金详情名称抓取通道闭包形态（issue #827）。
-pub type FetchFundName = Box<dyn FnMut(&str) -> Result<String> + Send>;
+pub type FetchFundName = Box<dyn FnMut(&str) -> FetchFuture<String> + Send>;
 
 /// 六个逐标的抓取通道 + 两个批量取数面的打包束：闭包签名与编排注入点逐一同形。
 /// 生产实现共享一个异步 HTTP client 与限流 pacer（`Arc<tokio::sync::Mutex<_>>`
@@ -92,10 +101,13 @@ impl SyncFetchChannels {
                 let client = client.clone();
                 let pacer = pacer.clone();
                 Box::new(move |secids: &str| {
-                    block_on(async {
+                    let secids = secids.to_string();
+                    let client = client.clone();
+                    let pacer = pacer.clone();
+                    Box::pin(async move {
                         let _foreground = lane.before_request().await;
                         let mut pacer = lock_pacer(&pacer).await;
-                        fetch_ulist(&client, &mut pacer, secids).await
+                        fetch_ulist(&client, &mut pacer, &secids).await
                     })
                 })
             },
@@ -104,10 +116,14 @@ impl SyncFetchChannels {
                 let pacer = pacer.clone();
                 let beg = beg.clone();
                 Box::new(move |secid: &str| {
-                    block_on(async {
+                    let secid = secid.to_string();
+                    let client = client.clone();
+                    let pacer = pacer.clone();
+                    let beg = beg.clone();
+                    Box::pin(async move {
                         let _foreground = lane.before_request().await;
                         let mut pacer = lock_pacer(&pacer).await;
-                        fetch_kline(&client, &mut pacer, secid, &beg).await
+                        fetch_kline(&client, &mut pacer, &secid, &beg).await
                     })
                 })
             },
@@ -116,10 +132,14 @@ impl SyncFetchChannels {
                 let pacer = pacer.clone();
                 let beg = beg.clone();
                 Box::new(move |pair: &str| {
-                    block_on(async {
+                    let pair = pair.to_string();
+                    let client = client.clone();
+                    let pacer = pacer.clone();
+                    let beg = beg.clone();
+                    Box::pin(async move {
                         let _foreground = lane.before_request().await;
                         let mut pacer = lock_pacer(&pacer).await;
-                        fetch_fx_kline(&client, &mut pacer, pair, &beg).await
+                        fetch_fx_kline(&client, &mut pacer, &pair, &beg).await
                     })
                 })
             },
@@ -127,10 +147,13 @@ impl SyncFetchChannels {
                 let client = client.clone();
                 let pacer = pacer.clone();
                 Box::new(move |query: &NavQuery| {
-                    block_on(async {
+                    let query = query.clone();
+                    let client = client.clone();
+                    let pacer = pacer.clone();
+                    Box::pin(async move {
                         let _foreground = lane.before_request().await;
                         let mut pacer = lock_pacer(&pacer).await;
-                        fetch_nav_page(&client, &mut pacer, query).await
+                        fetch_nav_page(&client, &mut pacer, &query).await
                     })
                 })
             },
@@ -138,22 +161,26 @@ impl SyncFetchChannels {
                 let client = client.clone();
                 let pacer = pacer.clone();
                 Box::new(move |code: &str| {
-                    block_on(async {
+                    let code = code.to_string();
+                    let client = client.clone();
+                    let pacer = pacer.clone();
+                    Box::pin(async move {
                         let _foreground = lane.before_request().await;
                         let mut pacer = lock_pacer(&pacer).await;
-                        fetch_nav_full_series(&client, &mut pacer, code).await
+                        fetch_nav_full_series(&client, &mut pacer, &code).await
                     })
                 })
             },
             fetch_fund_name: Box::new(move |code: &str| {
-                block_on(async {
+                let code = code.to_string();
+                Box::pin(async move {
                     let _foreground = lane.before_request().await;
                     // 基金详情通道自带客户端与独立限速器（与共享 pacer 无关），
                     // 与既有 `fetch_fund_quote_production` 同形，但在同一异步块内
                     // 完成以让前台在途守卫覆盖整次请求。
                     let client = build_client()?;
                     let mut pacer = Pacer::default();
-                    fetch_fund_quote(&client, &mut pacer, code)
+                    fetch_fund_quote(&client, &mut pacer, &code)
                         .await
                         .map(|quote| quote.name)
                 })
@@ -193,7 +220,7 @@ impl Lane {
 /// 生产束（[`SyncFetchChannels::production`]）与测试注入束共用，锁形态与
 /// 编排路径零分叉。日 K 与单请求全量净值两通道不进现价刷新编排（issue #1377
 /// 现价与历史解耦）：束内保留它们供价格历史后台补全消费。
-pub fn do_incremental_sync_channels<Q, P>(
+pub async fn do_incremental_sync_channels<Q, P>(
     session: &Q,
     channels: &mut SyncFetchChannels,
     progress: &mut P,
@@ -201,7 +228,7 @@ pub fn do_incremental_sync_channels<Q, P>(
 ) -> Result<SyncInstrumentInfoResult>
 where
     Q: ScopedSession,
-    P: FnMut(SyncProgress),
+    P: FnMut(SyncProgress) + Send,
 {
     do_incremental_sync_with(
         session,
@@ -213,6 +240,7 @@ where
         progress,
         witness,
     )
+    .await
 }
 
 #[cfg(test)]
@@ -224,30 +252,35 @@ mod tests {
     /// `production` 同型——命令壳换装时对两侧零分叉。
     fn stub_channels() -> SyncFetchChannels {
         SyncFetchChannels {
-            fetch_ulist: Box::new(|_| Ok(vec![])),
-            fetch_kline: Box::new(|_| Ok(vec![])),
-            fetch_fx: Box::new(|_| Ok(vec![])),
+            fetch_ulist: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+            fetch_kline: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+            fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_nav: Box::new(|_| {
-                Ok(LsjzPage {
-                    points: vec![],
-                    total: 0,
-                    blocked: false,
+                Box::pin(async {
+                    Ok(LsjzPage {
+                        points: vec![],
+                        total: 0,
+                        blocked: false,
+                    })
                 })
             }),
-            fetch_nav_full: Box::new(|_| Ok(vec![])),
-            fetch_fund_name: Box::new(|_| Ok(String::new())),
+            fetch_nav_full: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+            fetch_fund_name: Box::new(|_| Box::pin(async { Ok(String::new()) })),
             bulk: BulkFetchSurfaces::absent(),
         }
     }
 
+    /// 直通会话（测试态）：作业闭包在 `await` 点内联完成——future 立即就绪，
+    /// 连接引用不进 future 状态（`ready` 的载荷是业务结果）。
     struct Passthrough<'a>(&'a Connection);
 
     impl ScopedSession for Passthrough<'_> {
-        fn with_connection<R, F>(&self, use_connection: F) -> Result<R>
+        fn with_connection<R, F>(&self, use_connection: F) -> impl Future<Output = Result<R>> + Send
         where
-            F: FnOnce(&Connection) -> Result<R>,
+            F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+            R: Send + 'static,
         {
-            use_connection(self.0)
+            std::future::ready(use_connection(self.0))
         }
     }
 
@@ -261,12 +294,12 @@ mod tests {
         let mut channels = stub_channels();
         let mut progress = |_| {};
         let mut witness = WriteWitness::default();
-        let result = do_incremental_sync_channels(
+        let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
             &Passthrough(&conn),
             &mut channels,
             &mut progress,
             &mut witness,
-        )
+        ))
         .expect("空库同步应成功返回");
         assert_eq!(result.synced, 0);
         assert_eq!(result.skipped, 0);

@@ -50,27 +50,47 @@ fn gated_daily_refresh_channels(
     ulist_calls: Arc<std::sync::atomic::AtomicUsize>,
 ) -> DailyPriceRefreshChannelsSlot {
     let channels = SyncFetchChannels {
+        // 门控等待在闭包同步段完成（编排调用闭包即阻塞在途），应答装箱为 future
+        // ——「后台刷新真实在途」语义与断言不变（issue #1412 通道闭包 async 形态）。
         fetch_ulist: Box::new(move |_secids| {
             ulist_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             entered.send(()).expect("在途通知应可送达");
             release
                 .recv_timeout(Duration::from_secs(10))
                 .expect("测试应放行后台抓取");
-            Ok(vec![StockItem {
-                code: "600519".into(),
-                name: "贵州茅台".into(),
-                price: Some(1300.0),
-                precision: None,
-            }])
+            Box::pin(async move {
+                Ok(vec![StockItem {
+                    code: "600519".into(),
+                    name: "贵州茅台".into(),
+                    price: Some(1300.0),
+                    precision: None,
+                }])
+            })
         }),
-        fetch_kline: Box::new(|_| unreachable!("现价刷新不发逐只日 K 请求（issue #1377）")),
-        fetch_fx: Box::new(|_| Ok(vec![])),
-        fetch_nav: Box::new(|_| unreachable!("测试现场无基金标的，净值通道不应被触达")),
-        fetch_nav_full: Box::new(|_| unreachable!("测试现场无基金标的，全量净值通道不应被触达")),
-        fetch_fund_name: Box::new(|_| unreachable!("测试现场无基金标的，名称通道不应被触达")),
+        fetch_kline: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("现价刷新不发逐只日 K 请求（issue #1377）")
+            })
+        }),
+        fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+        fetch_nav: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，净值通道不应被触达")
+            })
+        }),
+        fetch_nav_full: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，全量净值通道不应被触达")
+            })
+        }),
+        fetch_fund_name: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，名称通道不应被触达")
+            })
+        }),
         bulk: BulkFetchSurfaces::absent(),
     };
-    DailyPriceRefreshChannelsSlot(Arc::new(Mutex::new(channels)))
+    DailyPriceRefreshChannelsSlot(Arc::new(tokio::sync::Mutex::new(channels)))
 }
 
 /// 前台同步命令的桩通道束：批量报价返回与后台桩**不同**的报价（1302.80 元），
@@ -78,21 +98,39 @@ fn gated_daily_refresh_channels(
 fn frontend_sync_channels() -> SyncChannelsSlot {
     let channels = SyncFetchChannels {
         fetch_ulist: Box::new(|_| {
-            Ok(vec![StockItem {
-                code: "600519".into(),
-                name: "贵州茅台".into(),
-                price: Some(1302.80),
-                precision: None,
-            }])
+            Box::pin(async move {
+                Ok(vec![StockItem {
+                    code: "600519".into(),
+                    name: "贵州茅台".into(),
+                    price: Some(1302.80),
+                    precision: None,
+                }])
+            })
         }),
-        fetch_kline: Box::new(|_| unreachable!("现价刷新不发逐只日 K 请求（issue #1377）")),
-        fetch_fx: Box::new(|_| Ok(vec![])),
-        fetch_nav: Box::new(|_| unreachable!("测试现场无基金标的，净值通道不应被触达")),
-        fetch_nav_full: Box::new(|_| unreachable!("测试现场无基金标的，全量净值通道不应被触达")),
-        fetch_fund_name: Box::new(|_| unreachable!("测试现场无基金标的，名称通道不应被触达")),
+        fetch_kline: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("现价刷新不发逐只日 K 请求（issue #1377）")
+            })
+        }),
+        fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+        fetch_nav: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，净值通道不应被触达")
+            })
+        }),
+        fetch_nav_full: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，全量净值通道不应被触达")
+            })
+        }),
+        fetch_fund_name: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，名称通道不应被触达")
+            })
+        }),
         bulk: BulkFetchSurfaces::absent(),
     };
-    SyncChannelsSlot(Arc::new(Mutex::new(channels)))
+    SyncChannelsSlot(Arc::new(tokio::sync::Mutex::new(channels)))
 }
 
 /// 接线全流程：启动接线跑出每日现价刷新（现价落行 + 价格失效信号），且后台在

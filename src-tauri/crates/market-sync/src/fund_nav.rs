@@ -28,6 +28,7 @@ use serde::Deserialize;
 
 use ledger_infra::error::{AppError, Result};
 
+use super::channels::FetchFuture;
 use super::fund::{deserialize_flexible_f64, deserialize_flexible_string};
 use super::http::{Pacer, RetryConfig, request_json_from_hosts, request_text_from_hosts};
 use super::session::ScopedSession;
@@ -482,21 +483,24 @@ pub(super) async fn fetch_nav_full_series_from(
 /// 基金分区水位与首刷判据的共享读（issue #1377 自两单元抽出）：水位 = 现价缓存
 /// 的净值日期；首刷判据 = 磁盘上没有任何历史序列（issue #1059）。两条读经作用域
 /// 会话短暂取一次连接完成（issue #1275）；抓取前不再触碰连接。
-pub(super) fn read_fund_watermark<Q: ScopedSession>(
+pub(super) async fn read_fund_watermark<Q: ScopedSession>(
     session: &Q,
     fund: &super::incremental::SyncInstrument,
 ) -> Result<(Option<String>, bool)> {
-    session.with_connection(|conn| {
-        let watermark: Option<String> = conn
-            .query_row(
-                "SELECT nav_date FROM market_prices WHERE instrument_id=?1",
-                params![fund.instrument_id],
-                |r| r.get(0),
-            )
-            .ok();
-        let has_history = ledger_investment::backfill::has_any_history(conn, &fund.instrument_id)?;
-        Ok((watermark, has_history))
-    })
+    let instrument_id = fund.instrument_id.clone();
+    session
+        .with_connection(move |conn| {
+            let watermark: Option<String> = conn
+                .query_row(
+                    "SELECT nav_date FROM market_prices WHERE instrument_id=?1",
+                    params![instrument_id],
+                    |r| r.get(0),
+                )
+                .ok();
+            let has_history = ledger_investment::backfill::has_any_history(conn, &instrument_id)?;
+            Ok((watermark, has_history))
+        })
+        .await
 }
 
 /// 分页通道的采集结果（ADR-0122 决策 8 / issue #1373）：净值点 + 两个「本轮窗口
@@ -523,7 +527,7 @@ impl NavPages {
 /// 只在本页抓取返回之后发出（抓取内部的退避/重试等待不产生推进），单页
 ///（pages ≤ 1）不发。`max_pages` 是页数触顶上限（历史回填取 `MAX_NAV_PAGES`，
 /// 现价刷新短窗取 `REFRESH_MAX_NAV_PAGES`，issue #1377）。
-pub(super) fn fetch_nav_pages<N, P>(
+pub(super) async fn fetch_nav_pages<N, P>(
     fetch_nav: &mut N,
     code: &str,
     start: &str,
@@ -532,8 +536,8 @@ pub(super) fn fetch_nav_pages<N, P>(
     on_page: &mut P,
 ) -> Result<NavPages>
 where
-    N: FnMut(&NavQuery) -> Result<LsjzPage>,
-    P: FnMut(u64, u64),
+    N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
+    P: FnMut(u64, u64) + Send,
 {
     let query = |page: u64| NavQuery {
         code: code.to_string(),
@@ -541,7 +545,7 @@ where
         end_date: end.to_string(),
         page,
     };
-    let first = fetch_nav(&query(1))?;
+    let first = fetch_nav(&query(1)).await?;
     let mut blocked = first.blocked;
     let mut points = first.points;
     let raw_pages = first
@@ -562,7 +566,7 @@ where
         on_page(1, pages);
     }
     for page in 2..=pages {
-        let next = fetch_nav(&query(page))?;
+        let next = fetch_nav(&query(page)).await?;
         // 任意一页空响应都让本轮窗口不完整（页 1 空 → 整轮不可信；后续页空 →
         // 已采净值点照常落库、窗口可能缺尾），统一由调用方按形态分流。
         let blocked_page = next.blocked;

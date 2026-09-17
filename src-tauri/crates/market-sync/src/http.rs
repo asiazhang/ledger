@@ -1,8 +1,9 @@
 //! 行情 HTTP 网络层（issue #89）：东财行情接口请求、多主机切换、重试与限流冷却、
 //! 响应解析。与数据库无关，可独立测试（见 `tests.rs` 中本地 HTTP 服务用例）。
 //! 客户端与等待原语为异步形态（reqwest async / 异步睡眠 / 异步互斥体，issue #1411
-//! / ADR-0125 决策 5/6）；编排仍为同步形状的过渡期由 [`block_on`] 同步桥驱动，
-//! 编排 async 化（issue #1412）后桥删除。
+//! / ADR-0125 决策 5/6）；同步编排与通道束闭包已随 #1412 直接 `.await`，同步桥
+//! 只余两壳生产入口（`fetch_stock_quote_production` / `fetch_fund_quote_production`，
+//! 接缝 async 化随 issue #1413）在用。
 //! 标的全量同步（clist 分页爬取）已随 ADR-0081 决策 3 退役删除（issue #698），
 //! 本层现服务增量同步批量报价、单点行情、日 K 与基金净值通道。
 
@@ -223,9 +224,10 @@ async fn sleep(duration: Duration) {
     tokio::time::sleep(duration).await;
 }
 
-/// 过渡期同步桥（ADR-0125 决策 5/6）：异步 HTTP 核心在编排仍为同步形状的
-/// 过渡态下，经全局运行时驱动到完成。编排 async 化（issue #1412）后本桥删除，
-/// 网络等待以 `.await` 直接表达。
+/// 过渡期同步桥（ADR-0125 决策 5/6，余留面）：异步 HTTP 核心在同步调用方
+///（两壳生产入口 `fetch_stock_quote_production` / `fetch_fund_quote_production`
+/// ——投资域注入接缝与 HTTP 壳的同步签名，async 化随 issue #1413）与测试驱动
+/// 处经全局运行时驱动到完成。
 ///
 /// 调用约束：底层 `Runtime::block_on` **不得从运行时 worker 线程调用**（会
 /// panic「Cannot start a runtime from within a runtime」）。当前全部调用点都在

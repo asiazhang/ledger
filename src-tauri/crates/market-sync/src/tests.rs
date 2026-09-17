@@ -14,6 +14,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use ledger_infra::error::Result;
 use rusqlite::{Connection, params};
 use tauri_app_lib::test_support::{seed_account, seed_instrument};
 
@@ -28,6 +29,13 @@ mod stock_quote;
 // ---------------------------------------------------------------------------
 // 共享测试脚手架（一份）
 // ---------------------------------------------------------------------------
+
+/// 桩适配器（issue #1412）：同步应答值 → 通道 future（抓取闭包 async 形态后的
+/// 最小包装——既有桩闭包的应答逻辑保持同步表达式，只在出口装箱为立即就绪的
+/// future，调用点零改动）。
+pub(super) fn ready<T: Send + 'static>(value: Result<T>) -> crate::channels::FetchFuture<T> {
+    Box::pin(std::future::ready(value))
+}
 
 /// 直插一条持仓（账户 + 标的 + 交易 + 批次），绕过交易行为层以聚焦增量同步自身逻辑。
 /// 账户/标的经工厂种子（spec #728 / ADR-0084 决策 4）；标的类型工厂固定 stock，

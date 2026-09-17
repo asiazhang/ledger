@@ -31,12 +31,15 @@
 //! 请求），批量面失败 / 停用 / 未覆盖（缺口）一律 fail-closed 回退既有逐标的通道；
 //! 缺口与失败在日志与统计上分开，缺口不触发熔断。
 //!
-//! 编排与连接解耦（issue #1275 作用域会话接缝）：本模块所有函数的签名里没有
-//! 连接句柄——读写库一律经注入的 [`ScopedSession`] 短暂取一次连接，网络抓取
-//! 只发生在会话之外。「持着连接做网络 I/O」在类型上不可表达；会话实现在壳层
-//! 接线（生产 = 分段写入口的短暂取锁会话，见 `commands::sync`）。
+//! 编排与连接解耦（issue #1275 作用域会话接缝；async 形态见 #1412 / ADR-0125
+//! 决策 5）：本模块所有函数的签名里没有连接句柄——读写库一律经注入的
+//! [`ScopedSession`] 短暂取一次连接（取连接作业 async、闭包内同步 rusqlite），
+//! 网络抓取只发生在会话之外且以 `await` 表达。「持着连接做网络 I/O」在类型上
+//! 不可表达；会话生产实现 = 门面写槽裸作业会话（[`super::session::FacadeWriteSession`]），
+//! 命令壳侧与域内后台车道各自持门面句柄接线。
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use chrono::{Datelike, NaiveDate};
@@ -53,6 +56,7 @@ use ledger_investment::prices::{
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 use ledger_transaction::amount::default_currency_code;
 
+use super::channels::FetchFuture;
 use super::fund_nav::{LsjzPage, NavQuery};
 use super::fund_price_refresh::{FundSyncStats, refresh_one_fund_price};
 use super::http::{KlineBar, StockItem, ULIST_BATCH_SIZE, price_cents_from_raw, secid_prefix};
@@ -154,7 +158,7 @@ impl BulkData {
 ///
 /// 失败与缺口是两件事：失败进跨同步记忆、降级事实与 warn 日志；缺口（批量面没
 /// 收录该标的）只体现在逐条回退的 debug 日志与 `bulk_gaps` 统计上，不触发熔断。
-fn fetch_bulk_surfaces(bulk: &mut BulkFetchSurfaces) -> BulkData {
+async fn fetch_bulk_surfaces(bulk: &mut BulkFetchSurfaces) -> BulkData {
     let now = Instant::now();
     // 状态判定在锁内、网络请求在锁外（ADR-0069 决策 4 同款纪律：网络等待不进锁）。
     let allowed = match bulk.circuit.lock() {
@@ -169,11 +173,11 @@ fn fetch_bulk_surfaces(bulk: &mut BulkFetchSurfaces) -> BulkData {
         return BulkData::unavailable();
     }
 
-    let nav = take_bulk_surface("场外基金净值批量面", &mut bulk.nav);
+    let nav = take_bulk_surface("场外基金净值批量面", &mut bulk.nav).await;
     // 同步内熔断（决策 3）：一面失败即本次同步不再尝试其余批量面——否则每只标的
     // 都先试一次批量面再回退，请求量比改造前更多。
     let names = if nav.is_some() {
-        take_bulk_surface("基金名称全量字典", &mut bulk.names)
+        take_bulk_surface("基金名称全量字典", &mut bulk.names).await
     } else {
         None
     };
@@ -199,11 +203,11 @@ fn fetch_bulk_surfaces(bulk: &mut BulkFetchSurfaces) -> BulkData {
 
 /// 取一个批量面：命中记覆盖规模（debug），失败记 warn 并返回 None——由调用方按
 /// 熔断契约处置（一面失败即本次同步不再尝试其余面，见 [`fetch_bulk_surfaces`]）。
-fn take_bulk_surface<T: BulkCoverage>(
+async fn take_bulk_surface<T: BulkCoverage>(
     surface: &'static str,
-    fetch: &mut impl FnMut() -> Result<T>,
+    fetch: &mut impl FnMut() -> FetchFuture<T>,
 ) -> Option<T> {
-    match fetch() {
+    match fetch().await {
         Ok(data) => {
             tracing::debug!(surface, covered = data.covered(), "行情批量取数面命中");
             Some(data)
@@ -251,7 +255,7 @@ fn take_bulk_surface<T: BulkCoverage>(
 // 哪些外部通道」的清单（issue #1377 起日 K 与单请求全量净值两通道归后台补全，
 // 不在本编排的参数表）。
 #[allow(clippy::too_many_arguments)]
-pub(super) fn do_incremental_sync_with<Q, F, X, N, M, P>(
+pub(super) async fn do_incremental_sync_with<Q, F, X, N, M, P>(
     session: &Q,
     fetch: &mut F,
     fetch_fx: &mut X,
@@ -262,20 +266,21 @@ pub(super) fn do_incremental_sync_with<Q, F, X, N, M, P>(
     witness: &mut WriteWitness,
 ) -> Result<SyncInstrumentInfoResult>
 where
-    // 作用域会话接缝（issue #1275）：读写库的唯一通道，签名层面取不到连接。
+    // 作用域会话接缝（issue #1275 / #1412 async 形态）：读写库的唯一通道，
+    // 签名层面取不到连接。
     Q: ScopedSession,
-    F: FnMut(&str) -> Result<Vec<StockItem>>,
-    X: FnMut(&str) -> Result<Vec<KlineBar>>,
-    N: FnMut(&NavQuery) -> Result<LsjzPage>,
+    F: FnMut(&str) -> FetchFuture<Vec<StockItem>> + Send,
+    X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
+    N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
     // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
     // （不落库）。生产接基金详情通道，测试注入 mock。
-    M: FnMut(&str) -> Result<String>,
+    M: FnMut(&str) -> FetchFuture<String> + Send,
     // 进度回调闭包（issue #897 / ADR-0095；页级明细 issue #1061）：三字段载荷，
     // 逐有通道标的推进、基金深回填带页级明细；生产接事件发射（壳层接线），
     // 测试注入记录闭包。
-    P: FnMut(SyncProgress),
+    P: FnMut(SyncProgress) + Send,
 {
-    let held = session.with_connection(collect_instruments)?;
+    let held = session.with_connection(collect_instruments).await?;
     // 单次收集库内全部标的（一条 SQL，无持仓前置，issue #827），按投资域派生的
     // 价格通道分区（issue #1060，判定单点 `derive_price_channel`）：行情分区
     // 构造 secid 查报价与日 K；净值分区（fund 且 6 位真实代码，ADR-0038 决策 6）
@@ -339,50 +344,82 @@ where
     let mut renamed = 0usize;
     for chunk in queryable.chunks(ULIST_BATCH_SIZE) {
         let secids: Vec<&str> = chunk.iter().map(|(secid, _)| secid.as_str()).collect();
-        // 批量报价是网络请求，在会话之外；响应落库（名称随行刷新 + 现价 upsert）
-        // 才短暂取一次连接（issue #1275）。
-        let items = fetch(&secids.join(","))?;
+        // 批量报价是网络请求，在会话之外（await，issue #1412）；响应落库（名称
+        // 随行刷新 + 现价 upsert）才短暂取一次连接（issue #1275）。
+        let items = fetch(&secids.join(",")).await?;
         for item in &items {
             if let Some(inst) = meta.get(&item.code) {
-                session.with_connection(|conn| {
-                    // 名称随行刷新（issue #827）：以数据源权威名称覆盖（仅实际变化才落库）。
-                    if refresh_instrument_name(conn, &inst.instrument_id, &item.name)? {
-                        renamed += 1;
-                        witness.mark_written();
+                // 落库作业（门面作业形态，Send + 'static）：编现场的见证器 / 计数器
+                // 进不了闭包，各写入点的成功标记经共享缓冲带出，await 之后回填——
+                // 成败同判的见证语义逐字不变（后续步失败时前面已 autocommit 的
+                // 写入仍计见证，issue #1277）。
+                let marks = Arc::new(Mutex::new(Vec::new()));
+                let sink = Arc::clone(&marks);
+                let renamed_now = session
+                    .with_connection({
+                        let instrument_id = inst.instrument_id.clone();
+                        let currency = inst.currency.clone();
+                        let market = inst.market.clone();
+                        let name = item.name.clone();
+                        let raw = item.price;
+                        let precision = item.precision;
+                        move |conn| {
+                            // 名称随行刷新（issue #827）：以数据源权威名称覆盖（仅实际变化才落库）。
+                            if refresh_instrument_name(conn, &instrument_id, &name)? {
+                                mark(&sink, StockMark::Renamed);
+                            }
+                            // f2≤0（停牌/无效价）经 deserialize_positive_f64 已过滤为 None，此处跳过、保留旧价。
+                            if let Some(raw) = raw {
+                                // 换算按随行精度位单点（场内 ETF 三位小数报价，#695；缺 f1 按市场回退）。
+                                let price = price_cents_from_raw(raw, precision, &market);
+                                upsert_market_price(
+                                    conn,
+                                    &MarketPriceWrite {
+                                        instrument_id: &instrument_id,
+                                        price_cents: price,
+                                        currency_code: &currency,
+                                        // 场内现价时点 = 写入时刻、无净值日期语义（ADR-0036）。
+                                        priced_at: &ledger_infra::db::now_iso(),
+                                        nav_date: None,
+                                        source: Some(EASTMONEY_PRICE_SOURCE),
+                                    },
+                                )?;
+                                mark(&sink, StockMark::Priced);
+                                // 当周采样点直落（ADR-0122 决策 2 / issue #1377）：现价刷新
+                                // 已携带该标的当日有效报价，有历史序列者把当周点一并落库，
+                                // 不另发逐只日 K 请求；无历史序列者不落（单点会冒充历史完整，
+                                // 破坏后台补全的首刷判据）；同周同值零写入。
+                                let today = beijing_today().format("%Y-%m-%d").to_string();
+                                super::history::land_current_week_point(
+                                    conn,
+                                    &instrument_id,
+                                    &currency,
+                                    &today,
+                                    price,
+                                )?;
+                            }
+                            Ok(())
+                        }
+                    })
+                    .await;
+                // 标记回填在错误判定之前：部分写入已 autocommit，见证照记（#1277）。
+                for mark in marks
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .drain(..)
+                {
+                    match mark {
+                        StockMark::Renamed => {
+                            renamed += 1;
+                            witness.mark_written();
+                        }
+                        StockMark::Priced => {
+                            synced_codes.insert(item.code.clone());
+                            witness.mark_written();
+                        }
                     }
-                    // f2≤0（停牌/无效价）经 deserialize_positive_f64 已过滤为 None，此处跳过、保留旧价。
-                    if let Some(raw) = item.price {
-                        // 换算按随行精度位单点（场内 ETF 三位小数报价，#695；缺 f1 按市场回退）。
-                        let price = price_cents_from_raw(raw, item.precision, &inst.market);
-                        upsert_market_price(
-                            conn,
-                            &MarketPriceWrite {
-                                instrument_id: &inst.instrument_id,
-                                price_cents: price,
-                                currency_code: &inst.currency,
-                                // 场内现价时点 = 写入时刻、无净值日期语义（ADR-0036）。
-                                priced_at: &ledger_infra::db::now_iso(),
-                                nav_date: None,
-                                source: Some(EASTMONEY_PRICE_SOURCE),
-                            },
-                        )?;
-                        synced_codes.insert(item.code.clone());
-                        witness.mark_written();
-                        // 当周采样点直落（ADR-0122 决策 2 / issue #1377）：现价刷新
-                        // 已携带该标的当日有效报价，有历史序列者把当周点一并落库，
-                        // 不另发逐只日 K 请求；无历史序列者不落（单点会冒充历史完整，
-                        // 破坏后台补全的首刷判据）；同周同值零写入。
-                        let today = beijing_today().format("%Y-%m-%d").to_string();
-                        super::history::land_current_week_point(
-                            conn,
-                            &inst.instrument_id,
-                            &inst.currency,
-                            &today,
-                            price,
-                        )?;
-                    }
-                    Ok(())
-                })?;
+                }
+                renamed_now?;
             }
         }
 
@@ -400,7 +437,7 @@ where
     // #1375 起与后台补全共用），仅非本位币币种对，与价格历史同期段采集。
     // 汇率落库不计入写入见证（issue #1277）：与成功路径的零写入判定同口径——
     // 只有价格或名称写入才发价格失效信号，汇率历史变化不在其列。
-    backfill_fx_pairs(session, fetch_fx, held.iter().map(|s| s.currency.clone()))?;
+    backfill_fx_pairs(session, fetch_fx, held.iter().map(|s| s.currency.clone())).await?;
 
     // ③ 批量取数面（ADR-0121 / issue #1374）：名称全量字典 + 场外基金净值全市场
     // 批量面，各整次同步最多一次请求——请求量自此不再随基金数线性增长；净值分区
@@ -410,7 +447,7 @@ where
     let bulk_data = if funds.is_empty() {
         BulkData::none()
     } else {
-        fetch_bulk_surfaces(bulk)
+        fetch_bulk_surfaces(bulk).await
     };
 
     // ④ 基金分区逐只（issue #897 逐只合并推进）：现价刷新（ADR-0122 决策 2，
@@ -460,7 +497,8 @@ where
                 fetch_nav,
                 &mut fund_stats,
                 &mut on_page,
-            )?;
+            )
+            .await?;
             // 净值实际落库才标记（「已是最新」不算写入，与 fund_stats.written 同判）。
             if fund_stats.written > written_before {
                 witness.mark_written();
@@ -477,7 +515,7 @@ where
                 if bulk_data.names.is_some() {
                     tracing::debug!(code = %code, "名称全量字典未覆盖该标的，逐只名称通道补齐");
                 }
-                match fetch_fund_name(&fund.symbol) {
+                match fetch_fund_name(&fund.symbol).await {
                     Ok(name) => name,
                     Err(error) if error.is_code("sync.fund-not-found") => {
                         tracing::warn!(
@@ -490,9 +528,11 @@ where
                 }
             }
         };
-        // 名称落库才短暂取一次连接（抓取在会话之外，issue #1275）。
+        // 名称落库才短暂取一次连接（抓取在会话之外，issue #1275 / #1412 async 形态）。
+        let instrument_id = fund.instrument_id.clone();
         if session
-            .with_connection(|conn| refresh_instrument_name(conn, &fund.instrument_id, &name))?
+            .with_connection(move |conn| refresh_instrument_name(conn, &instrument_id, &name))
+            .await?
         {
             renamed += 1;
             witness.mark_written();
@@ -611,16 +651,16 @@ pub(super) fn write_weekly_price_history(
 /// 汇率 K 线回填（ADR-0019；issue #1375 起手动同步与后台补全共用单元）：给定
 /// 标的币种集合中，仅非本位币币种对（与本位币相同的无需历史折算）按同期段
 /// 采集、同周规则落库。汇率消费方含基金与股票的历史市值折算。
-pub(super) fn backfill_fx_pairs<Q, X>(
+pub(super) async fn backfill_fx_pairs<Q, X>(
     session: &Q,
     fetch_fx: &mut X,
     currencies: impl Iterator<Item = String>,
 ) -> Result<()>
 where
     Q: ScopedSession,
-    X: FnMut(&str) -> Result<Vec<KlineBar>>,
+    X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
 {
-    let native = session.with_connection(default_currency_code)?;
+    let native = session.with_connection(default_currency_code).await?;
     let mut pairs: Vec<(String, String)> = currencies
         .map(|base| (base, native.clone()))
         .filter(|(base, quote)| base != quote)
@@ -629,16 +669,39 @@ where
     pairs.dedup();
     for (base, quote) in &pairs {
         let pair = format!("{base}{quote}");
-        // 汇率 K 线抓取在会话之外；降采样落库才短暂取一次连接（issue #1275）。
-        let bars = fetch_fx(&pair)?;
-        session.with_connection(|conn| {
-            for (trade_date, rate) in downsample_weekly(&bars) {
-                upsert_fx_rate_history(conn, base, quote, &trade_date, rate)?;
-            }
-            Ok(())
-        })?;
+        // 汇率 K 线抓取在会话之外（await）；降采样落库才短暂取一次连接（issue #1275）。
+        let bars = fetch_fx(&pair).await?;
+        let (base, quote) = (base.clone(), quote.clone());
+        session
+            .with_connection(move |conn| {
+                for (trade_date, rate) in downsample_weekly(&bars) {
+                    upsert_fx_rate_history(conn, &base, &quote, &trade_date, rate)?;
+                }
+                Ok(())
+            })
+            .await?;
     }
     Ok(())
+}
+
+/// 行情分区单只落库作业的写入点标记（issue #1412）：作业闭包是 `Send + 'static`
+/// 形态，编排在现场的见证器与计数器进不了闭包——各写入点的成功标记经共享缓冲
+/// 带出，`await` 之后回填（后续步失败时前面已 autocommit 的写入仍计见证，
+/// issue #1277 语义逐字保持）。
+enum StockMark {
+    /// 名称随行刷新已落库。
+    Renamed,
+    /// 现价已落库。
+    Priced,
+}
+
+/// [`StockMark`] 的作业侧落点：互斥体中毒时按原样取用（标记缓冲只在本作业与
+/// 同一 `await` 链上的回填点之间传递，中毒仅发生于作业 panic，且 panic 后回填
+/// 仍须尽力而为——错误本身沿编排 `Result` 上抛）。
+fn mark(sink: &Mutex<Vec<StockMark>>, mark: StockMark) {
+    sink.lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .push(mark);
 }
 
 /// 该日所属 ISO 周的周一：降采样的周键，与 price_history / fx_rate_history 的

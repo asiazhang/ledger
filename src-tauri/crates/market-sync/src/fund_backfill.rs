@@ -12,6 +12,7 @@ use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
 };
 
+use super::channels::FetchFuture;
 use super::fund_nav::{
     LsjzPage, NavPages, NavPoint, NavQuery, fetch_nav_pages, nav_window, read_fund_watermark,
 };
@@ -54,7 +55,7 @@ pub(super) struct BackfillOutcome {
 /// 结局；其中**本轮窗口不完整**（部分页空响应或页数触顶，ADR-0122 决策 8 /
 /// issue #1373）整只不落库并记 `inconclusive`，不留半根历史；单只网络失败上抛
 ///（后台补全编排单只失败不中断本轮）。
-pub(super) fn backfill_one_fund_history<Q, N, S, P>(
+pub(super) async fn backfill_one_fund_history<Q, N, S, P>(
     session: &Q,
     fund: &super::incremental::SyncInstrument,
     fetch_nav: &mut N,
@@ -64,9 +65,9 @@ pub(super) fn backfill_one_fund_history<Q, N, S, P>(
 where
     // 作用域会话接缝（issue #1275）：本函数读写库的唯一通道，签名层面取不到连接。
     Q: ScopedSession,
-    N: FnMut(&NavQuery) -> Result<LsjzPage>,
-    S: FnMut(&str) -> Result<Vec<NavPoint>>,
-    P: FnMut(u64, u64),
+    N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
+    S: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
+    P: FnMut(u64, u64) + Send,
 {
     let today = super::incremental::beijing_today();
     // 水位 = 现价缓存的净值日期（股票行恒 NULL，基金行由 #301/本通道写入）；首刷
@@ -75,7 +76,7 @@ where
     // 若以水位作增量起点，增量窗口只剩「水位次日」而近两年回填静默落空
     //（#303 验收在真实账本上未成立的根因）。水位只服务已有历史序列的增量。
     // 两条读经作用域会话短暂取一次连接完成（issue #1275）；抓取前不再触碰连接。
-    let (watermark, has_history) = read_fund_watermark(session, fund)?;
+    let (watermark, has_history) = read_fund_watermark(session, fund).await?;
     let first_fill = !has_history;
     let window_watermark = if first_fill {
         None
@@ -89,7 +90,7 @@ where
     // 失败 / 解析不出序列 / 窗口内无点都 fail-closed 回退分页通道，不静默丢数据；
     // 已有历史序列的增量不触碰本通道（日常增量仍走 lsjz）。
     let full_points = if first_fill {
-        match fetch_nav_full_series(&fund.symbol) {
+        match fetch_nav_full_series(&fund.symbol).await {
             Ok(points) => {
                 let clipped: Vec<NavPoint> = points
                     .into_iter()
@@ -126,14 +127,17 @@ where
             blocked: false,
             truncated: false,
         },
-        None => fetch_nav_pages(
-            fetch_nav,
-            &fund.symbol,
-            &start,
-            &end,
-            MAX_NAV_PAGES,
-            on_page,
-        )?,
+        None => {
+            fetch_nav_pages(
+                fetch_nav,
+                &fund.symbol,
+                &start,
+                &end,
+                MAX_NAV_PAGES,
+                on_page,
+            )
+            .await?
+        }
     };
 
     if collected.points.is_empty() {
@@ -202,31 +206,37 @@ where
             close: p.nav,
         })
         .collect();
-    session.with_connection(|conn| {
-        ensure_transaction(conn, || {
-            // 周采样落库（与日 K 回填共用单点），与现价写在同一事务里整只一次提交。
-            super::incremental::write_weekly_price_history(
-                conn,
-                &fund.instrument_id,
-                &fund.currency,
-                &bars,
-            )?;
-            upsert_market_price(
-                conn,
-                &MarketPriceWrite {
-                    instrument_id: &fund.instrument_id,
-                    price_cents: price_value_to_cents(latest.nav),
-                    currency_code: &fund.currency,
-                    // 基金现价时点 = 净值日期（现价的行情日期就是净值本身对应的日期）；
-                    // nav_date 兼任下次同步的水位。
-                    priced_at: &latest.date,
-                    nav_date: Some(&latest.date),
-                    source: Some(EASTMONEY_PRICE_SOURCE),
-                },
-            )?;
-            Ok(())
+    let instrument_id = fund.instrument_id.clone();
+    let currency = fund.currency.clone();
+    let latest_date = latest.date.clone();
+    let latest_nav = latest.nav;
+    session
+        .with_connection(move |conn| {
+            ensure_transaction(conn, || {
+                // 周采样落库（与日 K 回填共用单点），与现价写在同一事务里整只一次提交。
+                super::incremental::write_weekly_price_history(
+                    conn,
+                    &instrument_id,
+                    &currency,
+                    &bars,
+                )?;
+                upsert_market_price(
+                    conn,
+                    &MarketPriceWrite {
+                        instrument_id: &instrument_id,
+                        price_cents: price_value_to_cents(latest_nav),
+                        currency_code: &currency,
+                        // 基金现价时点 = 净值日期（现价的行情日期就是净值本身对应的日期）；
+                        // nav_date 兼任下次同步的水位。
+                        priced_at: &latest_date,
+                        nav_date: Some(&latest_date),
+                        source: Some(EASTMONEY_PRICE_SOURCE),
+                    },
+                )?;
+                Ok(())
+            })
         })
-    })?;
+        .await?;
     Ok(BackfillOutcome {
         written: true,
         inconclusive: false,

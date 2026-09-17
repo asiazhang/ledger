@@ -45,10 +45,11 @@ const LOCKING_WRITE_ENTRY_TOKEN: &str = "db::write(";
 const SLOT_LOCK_EXEMPTIONS: &[(&str, &str)] = &[
     (
         "src/shell_support/write_entry.rs",
-        "壳层统一写入口 · 分段形态：每一段取连接仍是直锁（ADR-0125 决策 8 首句明许——连接槽 lock() \
-         允许住门面与壳层统一入口）。分段编排闭包借用编排现场，不满足门面作业要求的 Send + 'static，\
-         「每段取连接由门面作业取代」随作用域会话接缝异步化（#1412）一并落地；本形态与 \
-         DbWriteHandle::write_slot 届时退役。",
+        "壳层统一写入口 · 分段形态（同步轮次半边）：每一段取连接仍是直锁（ADR-0125 决策 8 首句明许——连接槽 lock() \
+         允许住门面与壳层统一入口）。标的信息同步已随 #1412 改走 async 分段入口（门面裸作业会话）；\
+         同步轮次的 RoundConn 接缝（ADR-0120 决策 4）闭包借用轮次现场，不满足门面作业要求的 \
+         Send + 'static，同步域异步化（#1405 另案）前仍走直锁；本形态与 DbWriteHandle::write_slot \
+         随之保留。",
     ),
     (
         "src/commands/backup.rs",
