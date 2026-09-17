@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import {
   BOOT_WIRING,
   GUARDED_NAMES,
+  LANE_FILES,
   ORCHESTRATOR_FILE,
   ORCHESTRATOR_FN,
 } from '../scripts/check-background-services.ts'
@@ -75,7 +76,13 @@ function makeFixture(overrides: Record<string, string> = {}): string[] {
   for (const [relPath, names] of namesByPath) {
     const abs = resolve(relPath)
     mkdirSync(join(abs, '..'), { recursive: true })
-    writeFileSync(abs, `pub use crate::x::{${names.join(', ')}}; // 再导出桩\n`)
+    // 车道文件（issue #1413 车道执行器守门）须写入合法异步形态：spawn 拉起 +
+    // tokio::time::sleep 异步定时、零自建线程（与 LANE_EXECUTOR/LANE_TIMER_TOKEN
+    // 同源，夹具即规格）。
+    const laneTokens = (LANE_FILES as readonly string[]).includes(relPath)
+      ? `tauri::async_runtime::spawn(async move { tokio::time::sleep(std::time::Duration::from_millis(1)).await; });\n`
+      : ''
+    writeFileSync(abs, `pub use crate::x::{${names.join(', ')}}; // 再导出桩\n${laneTokens}`)
   }
   const files: Record<string, string> = {
     [ORCHESTRATOR_FILE]: bootWiring + orchestratorPaired,
@@ -193,5 +200,29 @@ describe('check-background-services（后台服务成对拉起守门，issue #96
     for (const wiring of BOOT_WIRING) {
       expect(r.output).toContain(wiring.name)
     }
+  })
+
+  it('车道改回自建线程 → 车道执行器守门报红（删除即变红，#1413 / ADR-0125 决策 7）', () => {
+    const lane = LANE_FILES[0]
+    const srcArg = makeFixture({
+      [lane.replace(/^crates\//, '../crates/')]:
+        'pub fn start_history_backfill(app: &tauri::AppHandle) {\n    std::thread::spawn(move || { std::thread::sleep(std::time::Duration::from_secs(1)); });\n}\n',
+    })
+    const r = run(srcArg)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('车道回归自建线程')
+    expect(r.output).toContain('thread::spawn')
+  })
+
+  it('车道文件删掉异步执行器接线 → 报红（删除即变红，#1413）', () => {
+    const lane = LANE_FILES[1]
+    const srcArg = makeFixture({
+      [lane.replace(/^crates\//, '../crates/')]:
+        'pub fn start_daily_price_refresh(app: &tauri::AppHandle) {}\n',
+    })
+    const r = run(srcArg)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('车道执行器接线缺失')
+    expect(r.output).toContain('tauri::async_runtime::spawn')
   })
 })

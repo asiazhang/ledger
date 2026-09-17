@@ -21,7 +21,7 @@ use serde::Deserialize;
 
 use super::fund::deserialize_flexible_f64;
 use super::http::{
-    API_HOSTS, Pacer, RetryConfig, STOCK_GET_PATH, block_on, build_client, price_cents_from_raw,
+    API_HOSTS, Pacer, RetryConfig, STOCK_GET_PATH, build_client, price_cents_from_raw,
     request_json_from_hosts, secid_prefix,
 };
 use super::incremental::beijing_date;
@@ -171,13 +171,11 @@ pub(super) async fn fetch_stock_quote(
 
 /// 生产拉取入口：构建客户端与限流器后执行单次行情查询（不经数据库连接，
 /// 供 HTTP 壳在连接锁外完成网络往返，先例：`fetch_fund_quote_production`，
-/// 单请求叠加限流冷却重试最长可达分钟级）。过渡期同步桥（ADR-0125 决策 5/6）：
-/// 异步 HTTP 核心经全局运行时驱动；壳层接缝 async 化（issue #1413）后本入口改
-/// async、桥删除。
-pub fn fetch_stock_quote_production(market: &str, code: &str) -> Result<Quote> {
+/// 单请求叠加限流冷却重试最长可达分钟级）。async 形态（ADR-0125 决策 5/7，
+/// issue #1413）：网络等待以 `await` 表达，在异步上下文内直接可调，#1411 的
+/// 过渡同步桥已随接缝 async 化拆除。
+pub async fn fetch_stock_quote_production(market: &str, code: &str) -> Result<Quote> {
     let client = build_client()?;
-    block_on(async {
-        let mut pacer = Pacer::default();
-        fetch_stock_quote(&client, &mut pacer, market, code).await
-    })
+    let mut pacer = Pacer::default();
+    fetch_stock_quote(&client, &mut pacer, market, code).await
 }

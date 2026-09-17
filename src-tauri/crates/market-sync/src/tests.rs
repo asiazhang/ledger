@@ -132,3 +132,213 @@ pub(super) fn spawn_header_capture_server(body: String) -> (String, Arc<Mutex<Ve
     });
     (url, heads)
 }
+
+// ---------------------------------------------------------------------------
+// 异步运行时形态守门（ADR-0125 决策 5/7 / issue #1413，删除即变红）
+// ---------------------------------------------------------------------------
+
+/// 生产面源码轻掩码：掐掉行注释与文档注释（`//` 起至行尾；字符串字面量内的
+/// `//` 不受影响——引号配对检测，转义引号不计）。块注释未处理（本 crate 生产面
+/// 无以块注释包裹受守令牌的形态），经别名改名的间接引用文本不可达——两者均靠
+/// 评审兜底，与守门家族同款取舍。
+fn mask_line_comments(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut in_string = false;
+    let mut chars = source.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '"' {
+            in_string = !in_string;
+            out.push(c);
+        } else if !in_string && c == '/' && chars.peek() == Some(&'/') {
+            // 行注释：吞到行尾（换行保留，列位不保——本守门只做令牌判定）。
+            for c in chars.by_ref() {
+                if c == '\n' {
+                    out.push('\n');
+                    break;
+                }
+            }
+        } else if !in_string && c == '\'' {
+            // 生命周期与 char 字面量在本 crate 生产面无受守令牌冲突，原样透传。
+            out.push(c);
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// 抹掉内联 `#[cfg(test)] mod … { … }` 块（花括号配对）：本守门只辖生产路径，
+/// 内联测试模块里的驱动代码（block_on 驱动 async 编排的同步测试、本地 HTTP
+/// 服务的线程）不是生产执行环境；外挂测试面（tests.rs / tests/）本就不在
+/// 扫描文件清单里。
+fn blank_inline_test_modules(source: &str) -> String {
+    let bytes: Vec<char> = source.chars().collect();
+    let mut out = bytes.clone();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let rest: String = bytes[i..].iter().collect();
+        if let Some(rel) = rest.strip_prefix("#[cfg(test)]") {
+            let head = i + "#[cfg(test)]".len();
+            let after: String = bytes[head..].iter().collect();
+            let trimmed = after.trim_start();
+            if trimmed.starts_with("mod") {
+                // 找到模块体开括号（跳过 mod 名与修饰符）。
+                if let Some(open_off) = after.find('{') {
+                    let open_idx = head + open_off;
+                    let mut depth = 0usize;
+                    let mut j = open_idx;
+                    while j < bytes.len() {
+                        match bytes[j] {
+                            '{' => depth += 1,
+                            '}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    for k in out.iter_mut().take(j + 1).skip(i) {
+                                        if *k != '\n' {
+                                            *k = ' ';
+                                        }
+                                    }
+                                    i = j + 1;
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                        j += 1;
+                    }
+                    if depth != 0 {
+                        break; // 不配对（不会发生），防御性退出
+                    }
+                    continue;
+                }
+            }
+            i = head + rel.len();
+            continue;
+        }
+        i += 1;
+    }
+    out.into_iter().collect()
+}
+
+/// 列出本 crate 全部生产源文件（相对 `src/`，排除 tests.rs 与 tests/ 目录），
+/// 排序固定保证失败输出确定。
+fn production_source_files() -> Vec<(&'static str, String)> {
+    let mut files: Vec<(&'static str, String)> = vec![
+        ("bulk.rs", include_str!("bulk.rs").to_string()),
+        ("channels.rs", include_str!("channels.rs").to_string()),
+        (
+            "daily_refresh.rs",
+            include_str!("daily_refresh.rs").to_string(),
+        ),
+        ("fund.rs", include_str!("fund.rs").to_string()),
+        (
+            "fund_backfill.rs",
+            include_str!("fund_backfill.rs").to_string(),
+        ),
+        ("fund_nav.rs", include_str!("fund_nav.rs").to_string()),
+        (
+            "fund_price_refresh.rs",
+            include_str!("fund_price_refresh.rs").to_string(),
+        ),
+        ("history.rs", include_str!("history.rs").to_string()),
+        ("http.rs", include_str!("http.rs").to_string()),
+        ("incremental.rs", include_str!("incremental.rs").to_string()),
+        ("js.rs", include_str!("js.rs").to_string()),
+        ("lib.rs", include_str!("lib.rs").to_string()),
+        ("model.rs", include_str!("model.rs").to_string()),
+        ("persist.rs", include_str!("persist.rs").to_string()),
+        ("progress.rs", include_str!("progress.rs").to_string()),
+        ("session.rs", include_str!("session.rs").to_string()),
+        ("stock.rs", include_str!("stock.rs").to_string()),
+    ];
+    files.sort_by_key(|(name, _)| *name);
+    files
+}
+
+/// 后台两条车道必须是挂全局运行时的 async 任务（ADR-0125 决策 7 / issue #1413，
+/// 删除即变红）：调度入口以 `tauri::async_runtime::spawn` 拉起 async 任务，启动
+/// 延迟与自然日窗口用 `tokio::time::sleep` 异步定时；生产面零自建线程。把车道
+/// 改回 `std::thread::spawn` + `std::thread::sleep`（或删掉异步执行器接线）本测
+/// 即红——「删除即变红」的负向半边，与 `scripts/check-background-services.ts`
+/// 的成对拉起守门互补（那边管「在哪拉起」，本测管「以什么执行器拉起」）。
+#[test]
+fn background_lanes_are_global_runtime_async_tasks() {
+    let sources: Vec<(&'static str, String)> = production_source_files()
+        .into_iter()
+        .map(|(name, src)| (name, blank_inline_test_modules(&mask_line_comments(&src))))
+        .collect();
+
+    // 生产面零自建线程：车道线程是 ADR-0125 决策 7 显式去除的执行环境，回归
+    // 即在异步上下文之外多出一条自持运行时状态的线程。
+    let thread_hits: Vec<&str> = sources
+        .iter()
+        .filter(|(_, src)| src.contains("thread::spawn"))
+        .map(|(name, _)| *name)
+        .collect();
+    assert!(
+        thread_hits.is_empty(),
+        "行情同步域生产面出现自建线程 {thread_hits:?}——后台车道必须是挂全局运行时的 \
+         async 任务（tauri::async_runtime::spawn + tokio::time::sleep，ADR-0125 决策 7）"
+    );
+
+    for (name, src) in &sources {
+        let is_lane = matches!(*name, "daily_refresh.rs" | "history.rs");
+        if !is_lane {
+            continue;
+        }
+        assert!(
+            src.contains("tauri::async_runtime::spawn"),
+            "{name} 调度入口应以 tauri::async_runtime::spawn 拉起 async 任务 \
+             （ADR-0125 决策 7 / issue #1413）"
+        );
+        assert!(
+            src.contains("tokio::time::sleep"),
+            "{name} 的启动延迟与自然日窗口应用 tokio::time::sleep 异步定时 \
+             （ADR-0125 决策 7 / issue #1413）"
+        );
+        assert!(
+            !src.contains("std::thread::sleep"),
+            "{name} 不得回归 std::thread::sleep 阻塞定时（ADR-0125 决策 7）"
+        );
+    }
+}
+
+/// 生产面零阻塞驱动点（ADR-0125 决策 5/7，删除即变红）：#1411 过渡同步桥随
+/// #1413 拆除后，本 crate 生产面不得再出现 `block_on`——回归形态（两壳生产入口
+/// 改回同步形状并重新引入桥驱动）在异步任务路径上触达即运行时 panic（#1403
+/// 同款现场）；两壳生产入口必须保持 `async fn`（壳层接缝直接 `await`，无包装）。
+#[test]
+fn production_face_has_no_blocking_bridge() {
+    let sources: Vec<(&'static str, String)> = production_source_files()
+        .into_iter()
+        .map(|(name, src)| (name, blank_inline_test_modules(&mask_line_comments(&src))))
+        .collect();
+
+    let bridge_hits: Vec<&str> = sources
+        .iter()
+        .filter(|(_, src)| src.contains("block_on"))
+        .map(|(name, _)| *name)
+        .collect();
+    assert!(
+        bridge_hits.is_empty(),
+        "行情同步域生产面出现阻塞驱动点 block_on {bridge_hits:?}——过渡同步桥已随 \
+         issue #1413 拆除，网络等待一律以 await 表达（ADR-0125 决策 5/7）"
+    );
+
+    for (name, src) in &sources {
+        let is_entry = matches!((*name, ()), ("fund.rs", ()) | ("stock.rs", ()));
+        if !is_entry {
+            continue;
+        }
+        let needle = if *name == "fund.rs" {
+            "pub async fn fetch_fund_quote_production"
+        } else {
+            "pub async fn fetch_stock_quote_production"
+        };
+        assert!(
+            src.contains(needle),
+            "{name} 的生产拉取入口必须保持 async fn（{needle}）——壳层接缝在异步上下文 \
+             直接 await，改回同步形状即重引阻塞驱动（ADR-0125 决策 5/7 / issue #1413）"
+        );
+    }
+}

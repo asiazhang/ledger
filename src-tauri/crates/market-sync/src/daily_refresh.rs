@@ -7,7 +7,7 @@
 //! 前端进度条只在手动同步在途时消费事件，后台推进不点亮 UI）、同一收尾裁决
 //!（实际写入 → 置脏 + 价格失效信号，成败同判）。与手动形态的差异只有三处：
 //!
-//! - **触发**：系统自动（本模块调度线程），不占「用户动作在途唯一」槽位
+//! - **触发**：系统自动（本模块调度任务），不占「用户动作在途唯一」槽位
 //!   ——在途唯一是前端对用户可见动作防重复点击的承诺，不管辖系统自己的任务；
 //! - **车道**：后台车道（[`super::channels::SyncFetchChannels::production_backfill`]），
 //!   同一进程级全局限速器、前台请求在途时让行（ADR-0122 决策 6「共享额度让路」）；
@@ -17,7 +17,9 @@
 //!（[`super::history::start_history_backfill`]）同构：进程级单次拉起守卫
 //!（原位重引导幂等，ADR-0080）、每轮门检（锁定/启动失败期间不触碰占位连接）、
 //! 自然日窗口比对北京日历日；启动接线收进壳层后台服务编排单点（issue #961
-//! 名单，`scripts/check-background-services.ts` 守门）。
+//! 名单，`scripts/check-background-services.ts` 守门）。两条车道均为挂全局
+//! 运行时的 async 任务（ADR-0125 决策 7 / issue #1413），异步定时承载启动
+//! 延迟与自然日窗口。
 //!
 //! 首刷与历史采集不归本任务：现价刷新不落单点（无历史序列者落单点会冒充
 //! 「历史完整」，破坏首刷判据），历史归价格历史后台补全（[`super::history`]）。
@@ -70,8 +72,10 @@ impl Default for DailyPriceRefreshTimings {
 }
 
 /// 后台每日现价刷新的启动入口（壳层后台服务编排单点调用，issue #961 名单）：
-/// 进程级单次拉起（原位重引导重复调用幂等，ADR-0080），spawned 线程自持
-/// 「启动延迟补跑一次 + 每自然日窗口一次」的巡检循环。
+/// 进程级单次拉起（原位重引导重复调用幂等，ADR-0080），async 任务自持
+/// 「启动延迟补跑一次 + 每自然日窗口一次」的巡检循环（挂全局运行时，
+/// ADR-0125 决策 7 / issue #1413：启动延迟与自然日窗口用异步定时，不再自建
+/// OS 线程；执行器 = `tauri::async_runtime`）。
 pub fn start_daily_price_refresh<R: Runtime>(app: &AppHandle<R>) {
     start_daily_price_refresh_with(app, DailyPriceRefreshTimings::default());
 }
@@ -89,10 +93,10 @@ pub fn start_daily_price_refresh_with<R: Runtime>(
     let gate = EncryptionGate::clone(&app.state::<EncryptionGate>());
     let boot_gate = BootFailureGate::clone(&app.state::<BootFailureGate>());
     let handle = app.clone();
-    std::thread::spawn(move || {
-        // 启动延迟：让出启动期再补跑当天首轮；应用退出即线程随进程硬停，
+    tauri::async_runtime::spawn(async move {
+        // 启动延迟：让出启动期再补跑当天首轮；应用退出即任务随进程硬停，
         // 无需优雅关闭（写入全是幂等 upsert，中断无残留）。
-        std::thread::sleep(timings.startup_delay);
+        tokio::time::sleep(timings.startup_delay).await;
         let mut last_round_date: Option<chrono::NaiveDate> = None;
         loop {
             // 每轮门检（先例：自动备份调度，issue #644 / ADR-0080）：锁定/
@@ -102,10 +106,10 @@ pub fn start_daily_price_refresh_with<R: Runtime>(
                 let today = beijing_today();
                 if last_round_date != Some(today) {
                     last_round_date = Some(today);
-                    run_daily_refresh_round(&handle);
+                    run_daily_refresh_round(&handle).await;
                 }
             }
-            std::thread::sleep(timings.window_poll);
+            tokio::time::sleep(timings.window_poll).await;
         }
     });
 }
@@ -114,19 +118,20 @@ pub fn start_daily_price_refresh_with<R: Runtime>(
 ///（[`DailyPriceRefreshChannelsSlot`] 管理态），生产建后台车道束——同一全局限
 /// 速器、前台在途时让行）+ 门面写槽裸作业会话 + 手动形态同款进度事件 + 写入
 /// 见证。失败静默等下一窗口（无用户可报）；实际写入的收尾裁决与手动同步同判
-/// ——置脏一次 + 发既有价格失效信号，零写入不置脏不广播。async 编排经全局
-/// 运行时在调度线程上驱动到完成（issue #1412）。
-fn run_daily_refresh_round<R: Runtime>(app: &AppHandle<R>) {
+/// ——置脏一次 + 发既有价格失效信号，零写入不置脏不广播。async 形态
+///（ADR-0125 决策 7 / issue #1413）：编排直接在车道 async 任务上 `await`，
+/// 不再经全局运行时跨线程驱动。
+async fn run_daily_refresh_round<R: Runtime>(app: &AppHandle<R>) {
     let write = app.state::<DbState>().write_handle();
     let slot = app
         .try_state::<DailyPriceRefreshChannelsSlot>()
         .map(|s| s.0.clone());
     let (result, any_written) = match slot {
-        Some(arc) => tauri::async_runtime::block_on(run_round_with_channels(app, &write, &arc)),
+        Some(arc) => run_round_with_channels(app, &write, &arc).await,
         None => match SyncFetchChannels::production_backfill() {
             Ok(channels) => {
                 let channels = tokio::sync::Mutex::new(channels);
-                tauri::async_runtime::block_on(run_round_with_channels(app, &write, &channels))
+                run_round_with_channels(app, &write, &channels).await
             }
             Err(error) => (Err(error), false),
         },
@@ -134,9 +139,10 @@ fn run_daily_refresh_round<R: Runtime>(app: &AppHandle<R>) {
 
     // 收尾裁决（issue #1277 成败同判，与手动同步同形）：本轮实际写过价格或
     // 名称 → 提交点置脏一次 + 发既有价格失效信号；零写入不置脏不广播。
-    // 置脏失败记日志不静默吞运行结果（脏标记待下次写入补上）。
+    // 置脏失败记日志不静默吞运行结果（脏标记待下次写入补上）。置脏经门面
+    // 异步作业投递（车道已是 async 任务，不再用阻塞等待形态）。
     if any_written {
-        if let Err(error) = write.run_blocking("daily_price_refresh", |_| Ok(())) {
+        if let Err(error) = write.run("daily_price_refresh", |_| Ok(())).await {
             tracing::warn!(%error, "每日现价刷新收尾置脏失败（脏标记待下次写入补上）");
         }
         emit_for(

@@ -622,7 +622,7 @@ fn background_lane_yields_while_foreground_in_flight() {
     let foreground = crate::http::ForegroundGuard::enter();
     let (done_tx, done_rx) = mpsc::channel();
     let waiter = thread::spawn(move || {
-        crate::http::block_on(crate::http::wait_foreground_idle());
+        tauri::async_runtime::block_on(crate::http::wait_foreground_idle());
         done_tx.send(()).expect("放行通知应可送达");
     });
     // 前台在途：给后台足够时间误判归零，仍未放行即让行成立。

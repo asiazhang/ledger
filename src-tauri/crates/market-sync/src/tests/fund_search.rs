@@ -261,7 +261,7 @@ fn quote_falls_back_to_archive_channel_when_search_index_misses() {
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
 
-    let quote = crate::http::block_on(fetch_fund_quote_from(
+    let quote = tauri::async_runtime::block_on(fetch_fund_quote_from(
         &client,
         &mut pacer,
         "002503",
@@ -286,7 +286,7 @@ fn quote_reports_not_found_when_archive_channel_also_misses() {
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
 
-    let error = crate::http::block_on(fetch_fund_quote_from(
+    let error = tauri::async_runtime::block_on(fetch_fund_quote_from(
         &client,
         &mut pacer,
         "002503",

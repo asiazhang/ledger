@@ -346,7 +346,9 @@ fn assert_get_instrument_error(world: &mut LedgerWorld, fragment: String) {
 // ---------------------------------------------------------------------------
 
 /// 驱动添加基金编排接缝并把错误记入 world（供 Then 断言；成功经重列标的/现价缓存断言）。
-/// 获取函数收到请求代码时须全等（桩只对目标代码返回详情）。
+/// 获取函数收到请求代码时须全等（桩只对目标代码返回详情）。接缝保持同步形状
+///（ADR-0125 决策 7 / issue #1413：闭包是锁外已拉取报价的同步回放/离线桩，
+/// 不承载网络等待；连接不跨任何 `await`）。
 fn run_add_fund<F>(world: &mut LedgerWorld, code: String, fetch: F)
 where
     F: FnMut(&str, &str) -> Result<Quote>,
@@ -435,12 +437,17 @@ fn add_fund_with_stub_not_found(world: &mut LedgerWorld, code: String) {
 
 /// 股票添加的桩驱动组合：命中市场与行情内容随参数给定；`quote_market` 为 None
 /// 时桩恒未命中（查无此码），`Err(Io)` 形态以 `temporary_failure` 开关表达。
-fn run_add_instrument<F>(world: &mut LedgerWorld, channel: String, code: String, fetch: &mut F)
-where
-    F: FnMut(&str, &str) -> Result<Quote>,
+async fn run_add_instrument<F, Fut>(
+    world: &mut LedgerWorld,
+    channel: String,
+    code: String,
+    fetch: &mut F,
+) where
+    F: FnMut(&str, &str) -> Fut,
+    Fut: std::future::Future<Output = Result<Quote>>,
 {
     // 查询阶段（生产在连接锁外）：通道解析 → 候选遍历。
-    let quote = match fetch_stock_quote_for_add(&channel, &code, fetch) {
+    let quote = match fetch_stock_quote_for_add(&channel, &code, fetch).await {
         Ok(quote) => quote,
         Err(e) => {
             world.last_error = Some(e.to_string());
@@ -457,7 +464,7 @@ where
 #[when(
     expr = "按代码添加投资标的 市场 {string} 代码 {string} 行情命中名称 {string} 市场 {string} 现价 {float} 类型提示 {string}"
 )]
-fn add_instrument_with_stub_quote(
+async fn add_instrument_with_stub_quote(
     world: &mut LedgerWorld,
     channel: String,
     code: String,
@@ -468,53 +475,62 @@ fn add_instrument_with_stub_quote(
 ) {
     let kind =
         ledger_investment::InstrumentType::parse(&kind_hint).expect("未知类型提示（stock/etf）");
-    let mut fetch = move |code: &str, market: &str| -> Result<Quote> {
-        if market == quote_market {
-            Ok(Quote {
-                // 代码回显请求归一化形态（与访问层回显同构：命中判定 = 回显全等）。
-                code: code.to_string(),
-                name: name.clone(),
-                price_cents: Some(price_value_to_cents(price)),
-                price_date: Some("2026-09-04".to_string()),
-                market: Some(market.to_string()),
-                kind_hint: Some(kind),
-                fund_class: None,
-                nav_date: None,
-            })
-        } else {
-            Err(ledger_infra::error::AppError::codedp(
-                "sync.stock-not-found",
-                format!("查无股票代码 {code}，请核对后重试"),
-                &[code],
-            ))
+    let mut fetch = move |code: &str, market: &str| {
+        let code = code.to_string();
+        let market = market.to_string();
+        let quote_market = quote_market.clone();
+        let name = name.clone();
+        async move {
+            if market == quote_market {
+                Ok(Quote {
+                    // 代码回显请求归一化形态（与访问层回显同构：命中判定 = 回显全等）。
+                    code,
+                    name,
+                    price_cents: Some(price_value_to_cents(price)),
+                    price_date: Some("2026-09-04".to_string()),
+                    market: Some(market),
+                    kind_hint: Some(kind),
+                    fund_class: None,
+                    nav_date: None,
+                })
+            } else {
+                Err(ledger_infra::error::AppError::codedp(
+                    "sync.stock-not-found",
+                    format!("查无股票代码 {code}，请核对后重试"),
+                    &[&code],
+                ))
+            }
         }
     };
-    run_add_instrument(world, channel, code, &mut fetch);
+    run_add_instrument(world, channel, code, &mut fetch).await;
 }
 
 #[when(expr = "按代码添加投资标的 市场 {string} 代码 {string} 行情查无此码")]
-fn add_instrument_with_stub_all_miss(world: &mut LedgerWorld, channel: String, code: String) {
-    let mut fetch = |code: &str, market: &str| -> Result<Quote> {
+async fn add_instrument_with_stub_all_miss(world: &mut LedgerWorld, channel: String, code: String) {
+    let mut fetch = |code: &str, market: &str| {
         let _ = market;
-        Err(ledger_infra::error::AppError::codedp(
-            "sync.stock-not-found",
-            format!("查无股票代码 {code}，请核对后重试"),
-            &[code],
-        ))
+        let code = code.to_string();
+        async move {
+            Err(ledger_infra::error::AppError::codedp(
+                "sync.stock-not-found",
+                format!("查无股票代码 {code}，请核对后重试"),
+                &[&code],
+            ))
+        }
     };
-    run_add_instrument(world, channel, code, &mut fetch);
+    run_add_instrument(world, channel, code, &mut fetch).await;
 }
 
 #[when(expr = "按代码添加投资标的 市场 {string} 代码 {string} 行情临时不可达")]
-fn add_instrument_with_stub_temporary_failure(
+async fn add_instrument_with_stub_temporary_failure(
     world: &mut LedgerWorld,
     channel: String,
     code: String,
 ) {
-    let mut fetch = |_code: &str, _market: &str| -> Result<Quote> {
+    let mut fetch = |_code: &str, _market: &str| async move {
         Err(ledger_infra::error::AppError::Io("东财临时不可达".into()))
     };
-    run_add_instrument(world, channel, code, &mut fetch);
+    run_add_instrument(world, channel, code, &mut fetch).await;
 }
 
 // ---------------------------------------------------------------------------

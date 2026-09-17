@@ -12,7 +12,7 @@ use crate::{
     resolve_add_stock_channel,
 };
 use ledger_infra::error::AppError;
-use tauri_app_lib::test_support::open;
+use tauri_app_lib::test_support::{block_on, open};
 
 /// 构造行情桩的命中回报：统一报价载荷（ADR-0103）自带（市场，代码，价格，类型提示）。
 fn hit_quote(market: &str, code: &str, kind: InstrumentType) -> Quote {
@@ -46,19 +46,22 @@ type RequestTrack = Rc<RefCell<Vec<(String, String)>>>;
 fn tracking_fetch(
     hit: Option<(&'static str, Quote)>,
 ) -> (
-    impl FnMut(&str, &str) -> ledger_infra::error::Result<Quote>,
+    impl FnMut(&str, &str) -> std::future::Ready<ledger_infra::error::Result<Quote>>,
     RequestTrack,
 ) {
     let requests: RequestTrack = Rc::new(RefCell::new(Vec::new()));
     let track = Rc::clone(&requests);
     (
+        // async 接缝桩（ADR-0125 决策 7 / issue #1413）：应答值为立即就绪的 future。
         move |code: &str, market: &str| {
             track
                 .borrow_mut()
                 .push((market.to_string(), code.to_string()));
             match &hit {
-                Some((hit_market, quote)) if *hit_market == market => Ok(quote.clone()),
-                _ => Err(miss(code)),
+                Some((hit_market, quote)) if *hit_market == market => {
+                    std::future::ready(Ok(quote.clone()))
+                }
+                _ => std::future::ready(Err(miss(code))),
             }
         },
         requests,
@@ -108,7 +111,7 @@ fn sh_channel_hits_first_candidate_with_normalized_code() {
         "sh",
         hit_quote("sh", "600519", InstrumentType::Stock),
     )));
-    let quote = fetch_stock_quote_for_add("sh", "600519", &mut fetch).unwrap();
+    let quote = block_on(fetch_stock_quote_for_add("sh", "600519", &mut fetch)).unwrap();
     assert_eq!(quote.stock_market().unwrap(), "sh");
     assert_eq!(quote.code, "600519");
     assert_eq!(
@@ -124,7 +127,7 @@ fn hk_channel_normalizes_code_before_fetch() {
         "hk",
         hit_quote("hk", "00700", InstrumentType::Stock),
     )));
-    let quote = fetch_stock_quote_for_add("hk", "700", &mut fetch).unwrap();
+    let quote = block_on(fetch_stock_quote_for_add("hk", "700", &mut fetch)).unwrap();
     assert_eq!(quote.code, "00700", "港股左补零归一后发起查询与落库");
     assert_eq!(*requests.borrow(), vec![("hk".into(), "00700".into())]);
 }
@@ -135,7 +138,7 @@ fn us_channel_traverses_candidates_until_first_hit() {
         "amex",
         hit_quote("amex", "AAPL", InstrumentType::Stock),
     )));
-    let quote = fetch_stock_quote_for_add("us", "aapl", &mut fetch).unwrap();
+    let quote = block_on(fetch_stock_quote_for_add("us", "aapl", &mut fetch)).unwrap();
     assert_eq!(
         quote.stock_market().unwrap(),
         "amex",
@@ -155,7 +158,7 @@ fn us_channel_traverses_candidates_until_first_hit() {
 #[test]
 fn all_candidates_miss_surfaces_not_found() {
     let (mut fetch, requests) = tracking_fetch(None);
-    let err = fetch_stock_quote_for_add("us", "NOPE", &mut fetch).unwrap_err();
+    let err = block_on(fetch_stock_quote_for_add("us", "NOPE", &mut fetch)).unwrap_err();
     assert!(
         err.is_code("sync.stock-not-found"),
         "全候选未命中报查无此码: {err}"
@@ -167,7 +170,7 @@ fn all_candidates_miss_surfaces_not_found() {
 fn explicit_market_conflict_rejects_before_any_fetch() {
     let (mut fetch, requests) = tracking_fetch(None);
     // 沪通道 + 港股形态代码：形态矛盾在候选解析单点拒绝，不发起网络。
-    let err = fetch_stock_quote_for_add("sh", "700", &mut fetch).unwrap_err();
+    let err = block_on(fetch_stock_quote_for_add("sh", "700", &mut fetch)).unwrap_err();
     assert!(
         err.is_code("stock.market-conflict"),
         "形态矛盾显式 400: {err}"
@@ -178,7 +181,7 @@ fn explicit_market_conflict_rejects_before_any_fetch() {
 #[test]
 fn beijing_exchange_code_rejects_before_any_fetch() {
     let (mut fetch, requests) = tracking_fetch(None);
-    let err = fetch_stock_quote_for_add("sh", "430047", &mut fetch).unwrap_err();
+    let err = block_on(fetch_stock_quote_for_add("sh", "430047", &mut fetch)).unwrap_err();
     assert!(
         err.is_code("stock.bse-unsupported"),
         "北交所暂不支持: {err}"
@@ -190,13 +193,13 @@ fn beijing_exchange_code_rejects_before_any_fetch() {
 fn temporary_error_stops_traversal_immediately() {
     let requests = Rc::new(RefCell::new(Vec::new()));
     let track = Rc::clone(&requests);
-    let mut fetch = move |code: &str, market: &str| -> ledger_infra::error::Result<Quote> {
+    let mut fetch = move |code: &str, market: &str| {
         track
             .borrow_mut()
             .push((market.to_string(), code.to_string()));
-        Err(AppError::Io("东财临时不可达".into()))
+        std::future::ready(Err(AppError::Io("东财临时不可达".into())))
     };
-    let err = fetch_stock_quote_for_add("us", "AAPL", &mut fetch).unwrap_err();
+    let err = block_on(fetch_stock_quote_for_add("us", "AAPL", &mut fetch)).unwrap_err();
     assert!(matches!(err, AppError::Io(_)), "临时错误上抛不盲试");
     assert_eq!(requests.borrow().len(), 1, "首个候选即中止，不继续遍历");
 }

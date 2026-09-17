@@ -10,21 +10,15 @@ use ledger_infra::error::AppError;
 use ledger_investment::Quote;
 use ledger_investment::validate_fund_code;
 
-/// 东财基金报价获取（查询与创建两端点共用，issue #304）：测试注入桩直接同步
-/// 调用（离线驱动）；生产路径经 `spawn_blocking` 在连接锁外完成阻塞网络往返
-/// （单请求叠加限流冷却重试最长可达分钟级，先例：`add_fund_by_code` 命令的
-/// 网络拉取在锁外完成，不阻塞其它命令）。
+/// 东财基金报价获取（查询与创建两端点共用，issue #304）：测试注入桩直接在
+/// 异步上下文 await（离线驱动）；生产路径为 async 生产入口直接 `await`
+///（连接锁外完成网络往返，单请求叠加限流冷却重试最长可达分钟级，先例：
+/// `add_fund_by_code` 命令的网络拉取在锁外完成，不阻塞其它命令；async 形态
+/// ADR-0125 决策 7 / issue #1413，`spawn_blocking` 包装与 JoinError 归一化删除）。
 pub async fn fetch_fund_quote_for_api(state: &ApiState, code: &str) -> Result<Quote, AppError> {
     match &state.fund_fetch {
-        Some(fetch) => fetch(code),
-        None => {
-            let code = code.to_string();
-            tauri::async_runtime::spawn_blocking(move || {
-                ledger_market_sync::fetch_fund_quote_production(&code)
-            })
-            .await
-            .map_err(|e| AppError::Io(format!("基金详情查询任务执行失败: {e}")))?
-        }
+        Some(fetch) => fetch(code).await,
+        None => ledger_market_sync::fetch_fund_quote_production(code).await,
     }
 }
 

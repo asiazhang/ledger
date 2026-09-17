@@ -121,6 +121,25 @@ export interface BootWiring {
   note: string
 }
 
+/**
+ * 后台车道执行器守门（issue #1413 / ADR-0125 决策 7）：行情同步域 crate 的生产面
+ * 禁止自建 OS 线程——两条后台车道（价格历史补全 / 每日现价刷新）必须是挂全局
+ * 运行时的 async 任务（`tauri::async_runtime::spawn` 拉起 + `tokio::time::sleep`
+ * 异步定时）。改回 `std::thread::spawn` / `std::thread::sleep` 即红；删掉异步
+ * 执行器或异步定时接线同样红。扫描面 = 行情域 crate 生产源码（tests.rs 与
+ * tests/ 目录为测试豁免形态，与家族一致）；文本级扫描，掩码注释与字面量
+ *（复用 maskNonCode），别名盲区靠评审兜底。
+ */
+export const MARKET_SYNC_SRC_REL = 'crates/market-sync/src'
+export const LANE_EXECUTOR_TOKEN = 'tauri::async_runtime::spawn'
+export const LANE_TIMER_TOKEN = 'tokio::time::sleep'
+export const LANE_BANNED_TOKENS = ['thread::spawn', 'std::thread::sleep'] as const
+/** 两条车道的住址（相对行情域 crate src；与 GUARDED_NAMES 的 wholeFile 同源路径） */
+export const LANE_FILES = [
+  'crates/market-sync/src/daily_refresh.rs',
+  'crates/market-sync/src/history.rs',
+] as const
+
 /** 整文件豁免路径解析：`crates/` 前缀相对 src-tauri 根（域 crate，#1091），其余相对根 src。 */
 function wholeFilePath(srcDir: string, relPath: string): string {
   return relPath.startsWith('crates/') ? join(srcDir, '..', relPath) : join(srcDir, relPath)
@@ -289,6 +308,43 @@ function main(): void {
     }
   }
 
+  // 后台车道执行器守门（issue #1413 / ADR-0125 决策 7）：两车道必须以全局运行时
+  // async 任务拉起 + 异步定时，生产面零自建线程。目录缺失 fail loud（拒绝以
+  // 空集假绿通过，与全树扫描同款取舍）。
+  const marketSyncSrcDir = join(srcDir, '..', MARKET_SYNC_SRC_REL)
+  let laneFiles: { abs: string; rel: string }[] = []
+  try {
+    laneFiles = collectRustFiles(marketSyncSrcDir, MARKET_SYNC_SRC_REL)
+  } catch {
+    problems.push(
+      `✗ 车道执行器扫描面不可达：${MARKET_SYNC_SRC_REL}——行情域 crate 目录漂移，拒绝以空集假绿通过`,
+    )
+  }
+  for (const f of laneFiles) {
+    const masked = maskNonCode(readFileSync(f.abs, 'utf8'))
+    const isLaneFile = (LANE_FILES as readonly string[]).includes(f.rel)
+    if (isLaneFile) {
+      for (const token of [LANE_EXECUTOR_TOKEN, LANE_TIMER_TOKEN]) {
+        if (!new RegExp(`\\b${token.replace(/::/g, '\\s*::\\s*')}\\b`).test(masked)) {
+          problems.push(
+            `✗ 车道执行器接线缺失：${f.rel} 未以 \`${token}\` 表达${token === LANE_TIMER_TOKEN ? '异步定时（启动延迟/自然日窗口）' : 'async 任务拉起'}\n` +
+              `    车道必须是挂全局运行时的 async 任务（ADR-0125 决策 7 / issue #1413）；删掉接线不会让\n` +
+              `    行为测试直接变红，故以源码扫描守门（#959 / #961 先例）`,
+          )
+        }
+      }
+    }
+    for (const token of LANE_BANNED_TOKENS) {
+      if (new RegExp(`\\b${token.replace(/::/g, '\\s*::\\s*')}\\b`).test(masked)) {
+        problems.push(
+          `✗ 车道回归自建线程：${f.rel} 出现 \`${token}\`\n` +
+            `    后台两条车道（价格历史补全 / 每日现价刷新）必须是挂全局运行时的 async 任务\n` +
+            `   （tauri::async_runtime::spawn + tokio::time::sleep，ADR-0125 决策 7 / issue #1413）`,
+        )
+      }
+    }
+  }
+
   let files: { abs: string; rel: string }[] = []
   try {
     files = collectRustFiles(srcDir, '')
@@ -334,6 +390,7 @@ function main(): void {
     `✓ 后台服务成组拉起守门：受守入口 ${GUARDED_NAMES.length} 个` +
       `（${GUARDED_NAMES.map((g) => g.name).join(' / ')}）· 白名单路径 ${pathCount} 个（定义与再导出）` +
       ` · 生产调用收敛于 \`${ORCHESTRATOR_FN}\` 单点 · 启动接线 ${BOOT_WIRING.length} 项已接线（#1088）` +
+      ` · 车道执行器守门 ${laneFiles.length} 个生产文件零自建线程（#1413）` +
       ` · 全树扫描 ${files.length} 个非测试文件零脱离`,
   )
 }

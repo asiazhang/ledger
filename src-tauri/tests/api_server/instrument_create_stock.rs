@@ -270,26 +270,29 @@ fn toggle_stub(
             .lock()
             .unwrap()
             .push((market.to_string(), code.to_string()));
-        if down.load(Ordering::SeqCst) {
-            return Err(AppError::Io("东财网络不可达".into()));
-        }
-        match hits.get(&format!("{market}/{code}")) {
-            Some(hit) => Ok(Quote {
-                code: code.to_string(),
-                name: hit.name.to_string(),
-                price_cents: hit.price.map(|(p, _)| p),
-                price_date: hit.price.map(|(_, d)| d.to_string()),
-                market: Some(market.to_string()),
-                kind_hint: Some(hit.kind_hint),
-                fund_class: None,
-                nav_date: None,
-            }),
-            None => Err(AppError::codedp(
-                "sync.stock-not-found",
-                format!("查无股票代码 {code}，请核对后重试"),
-                &[code],
-            )),
-        }
+        let result = if down.load(Ordering::SeqCst) {
+            Err(AppError::Io("东财网络不可达".into()))
+        } else {
+            match hits.get(&format!("{market}/{code}")) {
+                Some(hit) => Ok(Quote {
+                    code: code.to_string(),
+                    name: hit.name.to_string(),
+                    price_cents: hit.price.map(|(p, _)| p),
+                    price_date: hit.price.map(|(_, d)| d.to_string()),
+                    market: Some(market.to_string()),
+                    kind_hint: Some(hit.kind_hint),
+                    fund_class: None,
+                    nav_date: None,
+                }),
+                None => Err(AppError::codedp(
+                    "sync.stock-not-found",
+                    format!("查无股票代码 {code}，请核对后重试"),
+                    &[code],
+                )),
+            }
+        };
+        // async 接缝（ADR-0125 决策 7 / issue #1413）：应答值装箱为立即就绪的 future。
+        Box::pin(std::future::ready(result))
     })
 }
 

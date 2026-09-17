@@ -124,7 +124,7 @@ pub(crate) fn fund_fetch_stub(
 ) -> FundQuoteFetcher {
     Arc::new(move |code: &str| {
         calls.lock().unwrap().push(code.to_string());
-        match hits.get(code) {
+        let result = match hits.get(code) {
             Some(hit) => Ok(Quote {
                 code: code.to_string(),
                 name: hit.name.to_string(),
@@ -141,7 +141,10 @@ pub(crate) fn fund_fetch_stub(
                 format!("查无基金代码 {code}，请核对后重试"),
                 &[code],
             )),
-        }
+        };
+        // async 接缝（ADR-0125 决策 7 / issue #1413）：同步应答值装箱为立即就绪
+        // 的 future——桩的应答逻辑保持同步表达式，离线驱动语义不变。
+        Box::pin(std::future::ready(result))
     })
 }
 
@@ -184,7 +187,7 @@ pub(crate) fn stock_fetch_stub(
             .lock()
             .unwrap()
             .push((market.to_string(), code.to_string()));
-        match hits.get(&format!("{market}/{code}")) {
+        let result = match hits.get(&format!("{market}/{code}")) {
             Some(hit) => Ok(Quote {
                 code: code.to_string(),
                 name: hit.name.to_string(),
@@ -200,7 +203,10 @@ pub(crate) fn stock_fetch_stub(
                 format!("查无股票代码 {code}，请核对后重试"),
                 &[code],
             )),
-        }
+        };
+        // async 接缝（ADR-0125 决策 7 / issue #1413）：同步应答值装箱为立即就绪
+        // 的 future——桩的应答逻辑保持同步表达式，离线驱动语义不变。
+        Box::pin(std::future::ready(result))
     })
 }
 
