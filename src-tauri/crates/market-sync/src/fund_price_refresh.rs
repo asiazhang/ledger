@@ -16,6 +16,7 @@ use ledger_investment::prices::{
 };
 
 use super::bulk::BulkNavPoint;
+use super::channels::FetchFuture;
 use super::fund_nav::{LsjzPage, NavQuery, fetch_nav_pages, nav_window, read_fund_watermark};
 use super::http::KlineBar;
 use super::session::ScopedSession;
@@ -59,7 +60,7 @@ pub(super) struct FundSyncStats {
 ///
 /// **前置条件**：`fund` 为 6 位真实代码的有通道基金行——名称充代码行（查不到
 /// 净值）由调用方计入跳过、零请求（issue #897 起跳过判定与分母口径同收编排层）。
-pub(super) fn refresh_one_fund_price<Q, N, P>(
+pub(super) async fn refresh_one_fund_price<Q, N, P>(
     session: &Q,
     fund: &super::incremental::SyncInstrument,
     latest_hint: Option<&BulkNavPoint>,
@@ -70,14 +71,14 @@ pub(super) fn refresh_one_fund_price<Q, N, P>(
 where
     // 作用域会话接缝（issue #1275）：本函数读写库的唯一通道，签名层面取不到连接。
     Q: ScopedSession,
-    N: FnMut(&NavQuery) -> Result<LsjzPage>,
+    N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
     // 页级推进回调（issue #1061）：(已完成页, 总页数)。只在本页抓取返回之后发出
     //（抓取内部的退避/重试等待不产生推进）；单页（pages ≤ 1）不发——增量常态
     // 的事件形状与频率不变。
-    P: FnMut(u64, u64),
+    P: FnMut(u64, u64) + Send,
 {
     let today = super::incremental::beijing_today();
-    let (watermark, has_history) = read_fund_watermark(session, fund)?;
+    let (watermark, has_history) = read_fund_watermark(session, fund).await?;
     // 取数面命中时整只零请求（ADR-0121 取数面把「要不要发逐只请求」的判断从
     // 「每标的一次请求」降为「整市场一次请求」）——逐只通道只在缺周点补齐与
     // 批量面未覆盖时接管（issue #1377：首刷不再接管，历史归后台补全）。
@@ -87,7 +88,7 @@ where
             return Ok(());
         }
         BulkDecision::LandFromBulk(hint) => {
-            land_bulk_point(session, fund, hint)?;
+            land_bulk_point(session, fund, hint).await?;
             stats.synced += 1;
             stats.written += 1;
             return Ok(());
@@ -121,7 +122,8 @@ where
         &end,
         REFRESH_MAX_NAV_PAGES,
         on_page,
-    )?;
+    )
+    .await?;
 
     if collected.points.is_empty() {
         if collected.blocked {
@@ -173,7 +175,9 @@ where
         return Ok(());
     }
     // 当周采样点（仅有历史序列者）与现价落库同在一只一个事务里（ADR-0122
-    // 决策 8 / issue #1373 同形体）：写失败整体回滚，不留半根。
+    // 决策 8 / issue #1373 同形体）：写失败整体回滚，不留半根。落库经作用域
+    // 会话短暂取一次连接（issue #1275 / #1412 async 形态）；事务经
+    // [`ensure_transaction`]（ADR-0033 嵌套感知）。
     let bars: Vec<KlineBar> = points
         .iter()
         .map(|p| KlineBar {
@@ -181,34 +185,40 @@ where
             close: p.nav,
         })
         .collect();
-    session.with_connection(|conn| {
-        ensure_transaction(conn, || {
-            if has_history {
-                // 窗口内缺失的近期周点顺带落库（封顶页数保证了窗口完整；
-                // 深度缺周点已在上方交后台补全）。
-                super::incremental::write_weekly_price_history(
+    let instrument_id = fund.instrument_id.clone();
+    let currency = fund.currency.clone();
+    let latest_date = latest.date.clone();
+    let latest_nav = latest.nav;
+    session
+        .with_connection(move |conn| {
+            ensure_transaction(conn, || {
+                if has_history {
+                    // 窗口内缺失的近期周点顺带落库（封顶页数保证了窗口完整；
+                    // 深度缺周点已在上方交后台补全）。
+                    super::incremental::write_weekly_price_history(
+                        conn,
+                        &instrument_id,
+                        &currency,
+                        &bars,
+                    )?;
+                }
+                upsert_market_price(
                     conn,
-                    &fund.instrument_id,
-                    &fund.currency,
-                    &bars,
+                    &MarketPriceWrite {
+                        instrument_id: &instrument_id,
+                        price_cents: price_value_to_cents(latest_nav),
+                        currency_code: &currency,
+                        // 基金现价时点 = 净值日期（现价的行情日期就是净值本身对应的日期）；
+                        // nav_date 兼任下次同步的水位。
+                        priced_at: &latest_date,
+                        nav_date: Some(&latest_date),
+                        source: Some(EASTMONEY_PRICE_SOURCE),
+                    },
                 )?;
-            }
-            upsert_market_price(
-                conn,
-                &MarketPriceWrite {
-                    instrument_id: &fund.instrument_id,
-                    price_cents: price_value_to_cents(latest.nav),
-                    currency_code: &fund.currency,
-                    // 基金现价时点 = 净值日期（现价的行情日期就是净值本身对应的日期）；
-                    // nav_date 兼任下次同步的水位。
-                    priced_at: &latest.date,
-                    nav_date: Some(&latest.date),
-                    source: Some(EASTMONEY_PRICE_SOURCE),
-                },
-            )?;
-            Ok(())
+                Ok(())
+            })
         })
-    })?;
+        .await?;
     stats.synced += 1;
     stats.written += 1;
     Ok(())
@@ -269,36 +279,41 @@ fn week_gap_needs_per_instrument(watermark: Option<&str>, bulk_date: &str) -> bo
 /// 当周采样点只落**已有历史序列**的标的：无历史序列者落单点会让「有历史序列」
 /// 冒充「历史完整」，永久破坏首刷判据（ADR-0038 决策 6）——首刷的历史由后台
 /// 补全整根回填（issue #1377）。
-fn land_bulk_point<Q: ScopedSession>(
+async fn land_bulk_point<Q: ScopedSession>(
     session: &Q,
     fund: &super::incremental::SyncInstrument,
     hint: &BulkNavPoint,
 ) -> Result<()> {
     let price_cents = price_value_to_cents(hint.nav);
-    session.with_connection(|conn| {
-        let has_history = ledger_investment::backfill::has_any_history(conn, &fund.instrument_id)?;
-        upsert_market_price(
-            conn,
-            &MarketPriceWrite {
-                instrument_id: &fund.instrument_id,
-                price_cents,
-                currency_code: &fund.currency,
-                priced_at: &hint.date,
-                nav_date: Some(&hint.date),
-                source: Some(EASTMONEY_PRICE_SOURCE),
-            },
-        )?;
-        if has_history {
-            upsert_price_history(
+    let instrument_id = fund.instrument_id.clone();
+    let currency = fund.currency.clone();
+    let hint_date = hint.date.clone();
+    session
+        .with_connection(move |conn| {
+            let has_history = ledger_investment::backfill::has_any_history(conn, &instrument_id)?;
+            upsert_market_price(
                 conn,
-                &fund.instrument_id,
-                &hint.date,
-                price_cents,
-                &fund.currency,
-                EASTMONEY_PRICE_SOURCE,
+                &MarketPriceWrite {
+                    instrument_id: &instrument_id,
+                    price_cents,
+                    currency_code: &currency,
+                    priced_at: &hint_date,
+                    nav_date: Some(&hint_date),
+                    source: Some(EASTMONEY_PRICE_SOURCE),
+                },
             )?;
-        }
-        Ok(())
-    })?;
+            if has_history {
+                upsert_price_history(
+                    conn,
+                    &instrument_id,
+                    &hint_date,
+                    price_cents,
+                    &currency,
+                    EASTMONEY_PRICE_SOURCE,
+                )?;
+            }
+            Ok(())
+        })
+        .await?;
     Ok(())
 }

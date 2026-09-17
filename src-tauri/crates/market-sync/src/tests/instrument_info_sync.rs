@@ -5,7 +5,6 @@
 //! 编排经注入 mock 查询 / kline / fx / 净值 / 基金名称闭包与进度回调驱动，不依赖
 //! 真实网络。
 
-use std::cell::RefCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -15,9 +14,9 @@ use rusqlite::{Connection, params};
 use crate::SyncProgress;
 use crate::bulk::{
     BULK_DISABLE_PERIOD, BULK_FAILURE_THRESHOLD, BulkFetchCircuit, BulkFetchSurfaces, BulkNavPoint,
-    FundNameDictionary, FundNavTable,
+    FetchFundNameDictionary, FetchFundNavTable, FundNameDictionary, FundNavTable,
 };
-use crate::channels::{SyncFetchChannels, do_incremental_sync_channels};
+use crate::channels::{FetchFuture, SyncFetchChannels, do_incremental_sync_channels};
 use crate::fund_nav::{LsjzPage, NavPoint, NavQuery};
 use crate::http::{
     KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
@@ -54,11 +53,16 @@ fn market_price_of(conn: &Connection, instrument_id: &str) -> Option<i64> {
 /// 本层测试面（会话自身的结构钉见下方 `orchestration_takes_connection_only_` 用例）。
 /// 有了它，既有用例的调用点零改动。
 impl ScopedSession for Connection {
-    fn with_connection<R, F>(&self, use_connection: F) -> Result<R>
+    fn with_connection<R, F>(
+        &self,
+        use_connection: F,
+    ) -> impl std::future::Future<Output = Result<R>> + Send
     where
-        F: FnOnce(&Connection) -> Result<R>,
+        F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
     {
-        use_connection(self)
+        // 作业内联完成（测试态直通）：连接引用不进 future 状态。
+        std::future::ready(use_connection(self))
     }
 }
 
@@ -70,25 +74,31 @@ impl ScopedSession for Connection {
 fn orchestration_takes_connection_only_outside_fetch_closures() {
     struct RecordingSession<'a> {
         conn: &'a Connection,
-        log: &'a RefCell<Vec<&'static str>>,
+        log: &'a Mutex<Vec<&'static str>>,
     }
 
     impl ScopedSession for RecordingSession<'_> {
-        fn with_connection<R, F>(&self, use_connection: F) -> Result<R>
+        fn with_connection<R, F>(
+            &self,
+            use_connection: F,
+        ) -> impl std::future::Future<Output = Result<R>> + Send
         where
-            F: FnOnce(&Connection) -> Result<R>,
+            F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+            R: Send + 'static,
         {
-            self.log.borrow_mut().push("take");
+            // 作业内联完成（测试态直通）：take/release 与连接读写在同步段完成，
+            // 连接引用不进 future 状态（Send 由就绪 future 的载荷保证）。
+            self.log.lock().unwrap().push("take");
             let result = use_connection(self.conn);
-            self.log.borrow_mut().push("release");
-            result
+            self.log.lock().unwrap().push("release");
+            std::future::ready(result)
         }
     }
 
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
-    let log: RefCell<Vec<&'static str>> = RefCell::new(vec![]);
+    let log: Mutex<Vec<&'static str>> = Mutex::new(vec![]);
     let session = RecordingSession {
         conn: &conn,
         log: &log,
@@ -96,14 +106,14 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let mut logging_fetch = |secids: &str| -> Result<Vec<StockItem>> {
-        log.borrow_mut().push("fetch:start");
+    let mut logging_fetch = |secids: &str| {
+        log.lock().unwrap().push("fetch:start");
         let items = fetch(secids);
-        log.borrow_mut().push("fetch:end");
+        log.lock().unwrap().push("fetch:end");
         items
     };
 
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &session,
         &mut logging_fetch,
         &mut no_fx,
@@ -112,7 +122,7 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     // 编排真实跑完（行为侧锚：与既有用例同口径）。
@@ -122,7 +132,7 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
     // 结构钉：全序 = 逐段「取连接→还」与「会话外抓取」的交替；抓取起止之间
     // 不出现任何 take/release（网络期间不持连接）。一次行情标的事件顺序：
     // 收集 → 批量报价（外） → 名称+现价落库（含当周采样点判定）。
-    let log = log.borrow();
+    let log = log.lock().unwrap();
     let mut in_fetch = false;
     for &event in log.iter() {
         match event {
@@ -162,7 +172,7 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
 /// （None 表示停牌/无效价），不在映射中的代码不返回（模拟查询无果）。
 fn mock_fetch<'a>(
     prices: &'a [(&'a str, Option<f64>)],
-) -> impl FnMut(&str) -> Result<Vec<StockItem>> + 'a {
+) -> impl FnMut(&str) -> FetchFuture<Vec<StockItem>> + Send + 'a {
     move |secids: &str| {
         let mut items = Vec::new();
         for secid in secids.split(',') {
@@ -176,7 +186,7 @@ fn mock_fetch<'a>(
                 });
             }
         }
-        Ok(items)
+        super::ready(Ok(items))
     }
 }
 
@@ -291,7 +301,7 @@ fn incremental_sync_normalizes_symbol_suffix() {
     // mock 按响应侧裸代码（f12）返回：归一化后应能匹配并写入价格。
     let prices = [("600519", Some(130280.0)), ("00700", Some(445400.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -300,7 +310,7 @@ fn incremental_sync_normalizes_symbol_suffix() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 2);
@@ -326,7 +336,7 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
     // 查询全部无果（如整批代码无效、响应 data:null）：不报错、全部计入跳过。
     let prices: [(&str, Option<f64>); 0] = [];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -335,7 +345,7 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 0);
@@ -348,7 +358,7 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
 fn incremental_sync_empty_library_returns_message() {
     let conn = tauri_app_lib::test_support::open();
     let mut fetch = mock_fetch(&[]);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -357,7 +367,7 @@ fn incremental_sync_empty_library_returns_message() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
     assert_eq!(result.synced, 0);
     assert_eq!(result.skipped, 0);
@@ -391,7 +401,7 @@ fn incremental_sync_updates_holding_prices_only() {
         ("00700", Some(445400.0)),
     ];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -400,7 +410,7 @@ fn incremental_sync_updates_holding_prices_only() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 3);
@@ -459,7 +469,7 @@ fn incremental_sync_skips_holdings_without_quote_source() {
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -468,7 +478,7 @@ fn incremental_sync_skips_holdings_without_quote_source() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 1);
@@ -509,7 +519,7 @@ fn incremental_sync_keeps_old_price_when_suspended() {
     // 600519 正常价；000001 停牌（f2 无效 → None）
     let prices = [("600519", Some(130280.0)), ("000001", None)];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -518,7 +528,7 @@ fn incremental_sync_keeps_old_price_when_suspended() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 1);
@@ -540,7 +550,7 @@ fn incremental_sync_counts_missing_response_as_skipped() {
     // mock 只返回 600001：600002 查询无果（响应缺失）→ 计入跳过
     let prices = [("600001", Some(1000.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -549,7 +559,7 @@ fn incremental_sync_counts_missing_response_as_skipped() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 1);
@@ -569,7 +579,7 @@ fn incremental_sync_skips_unknown_market() {
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -578,7 +588,7 @@ fn incremental_sync_skips_unknown_market() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 1);
@@ -593,7 +603,7 @@ fn incremental_sync_is_idempotent() {
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let first = do_incremental_sync_with(
+    let first = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -602,12 +612,12 @@ fn incremental_sync_is_idempotent() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
     assert_eq!(first.synced, 1);
 
     let mut fetch = mock_fetch(&prices);
-    let second = do_incremental_sync_with(
+    let second = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -616,7 +626,7 @@ fn incremental_sync_is_idempotent() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
     assert_eq!(second.synced, 1);
 
@@ -638,7 +648,7 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
 
     let prices = [("600519", Some(1000.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -647,7 +657,7 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 1);
@@ -682,7 +692,7 @@ fn incremental_sync_pulls_a_daily_ledgers_quotes_in_one_batch() {
     let mut fetch = |secids: &str| {
         let codes: Vec<&str> = secids.split(',').collect();
         batch_sizes.push(codes.len());
-        Ok(codes
+        super::ready(Ok(codes
             .iter()
             .map(|secid| {
                 let code = secid.split('.').nth(1).unwrap().to_string();
@@ -693,9 +703,9 @@ fn incremental_sync_pulls_a_daily_ledgers_quotes_in_one_batch() {
                     precision: None,
                 }
             })
-            .collect())
+            .collect()))
     };
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -704,7 +714,7 @@ fn incremental_sync_pulls_a_daily_ledgers_quotes_in_one_batch() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, total);
@@ -739,7 +749,7 @@ fn incremental_sync_batches_quote_requests_by_the_batch_size_constant() {
         let codes: Vec<&str> = secids.split(',').collect();
         assert!(codes.len() <= ULIST_BATCH_SIZE);
         batch_sizes.push(codes.len());
-        Ok(codes
+        super::ready(Ok(codes
             .iter()
             .map(|secid| {
                 let code = secid.split('.').nth(1).unwrap().to_string();
@@ -750,9 +760,9 @@ fn incremental_sync_batches_quote_requests_by_the_batch_size_constant() {
                     precision: None,
                 }
             })
-            .collect())
+            .collect()))
     };
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -761,7 +771,7 @@ fn incremental_sync_batches_quote_requests_by_the_batch_size_constant() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, total);
@@ -773,9 +783,9 @@ fn incremental_sync_propagates_fetch_error() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
-    let mut fetch = |_: &str| Err(AppError::Io("模拟网络失败".into()));
+    let mut fetch = |_: &str| super::ready(Err(AppError::Io("模拟网络失败".into())));
     let mut witness = WriteWitness::default();
-    let err = do_incremental_sync_with(
+    let err = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -784,7 +794,7 @@ fn incremental_sync_propagates_fetch_error() {
         &mut no_bulk(),
         &mut no_progress,
         &mut witness,
-    )
+    ))
     .unwrap_err();
     assert!(err.to_string().contains("模拟网络失败"));
     assert!(
@@ -821,9 +831,9 @@ fn witness_survives_mid_run_failure_after_write() {
     // 同步中途的网络失败来自基金净值通道（日 K 已归后台补全）。
     let prices = [("600001", Some(1000.0))];
     let mut fetch = mock_fetch(&prices);
-    let mut nav = |_: &NavQuery| Err(AppError::Io("模拟净值网络失败".into()));
+    let mut nav = |_: &NavQuery| super::ready(Err(AppError::Io("模拟净值网络失败".into())));
     let mut witness = WriteWitness::default();
-    let err = do_incremental_sync_with(
+    let err = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -832,7 +842,7 @@ fn witness_survives_mid_run_failure_after_write() {
         &mut no_bulk(),
         &mut no_progress,
         &mut witness,
-    )
+    ))
     .unwrap_err();
     assert!(err.to_string().contains("模拟净值网络失败"));
     assert!(
@@ -853,7 +863,7 @@ fn witness_mirrors_result_any_written_on_success() {
     let prices = [("600001", Some(1000.0))];
     let mut fetch = mock_fetch(&prices);
     let mut witness = WriteWitness::default();
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -862,7 +872,7 @@ fn witness_mirrors_result_any_written_on_success() {
         &mut no_bulk(),
         &mut no_progress,
         &mut witness,
-    )
+    ))
     .unwrap();
     assert!(result.any_written());
     assert_eq!(
@@ -913,7 +923,7 @@ fn witness_mirrors_result_any_written_on_success() {
     let mut fetch = mock_fetch(&[]);
     let mut nav = no_nav;
     let mut witness = WriteWitness::default();
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -922,7 +932,7 @@ fn witness_mirrors_result_any_written_on_success() {
         &mut no_bulk(),
         &mut no_progress,
         &mut witness,
-    )
+    ))
     .unwrap();
     assert!(!result.any_written());
     assert_eq!(
@@ -947,23 +957,23 @@ fn bar(date: &str, close: f64) -> KlineBar {
 }
 
 /// 空实现：同 [`no_kline`]，用于汇率回填。
-fn no_fx(_: &str) -> Result<Vec<KlineBar>> {
-    Ok(vec![])
+fn no_fx(_: &str) -> FetchFuture<Vec<KlineBar>> {
+    super::ready(Ok(vec![]))
 }
 
 /// 空实现：既有用例只关心股票/汇率行为时注入（净值通道最小桩，首刷查无净值
 /// 形态——基金计入跳过）。
-fn no_nav(_: &NavQuery) -> Result<LsjzPage> {
-    Ok(LsjzPage {
+fn no_nav(_: &NavQuery) -> FetchFuture<LsjzPage> {
+    super::ready(Ok(LsjzPage {
         points: vec![],
         total: 0,
         blocked: false,
-    })
+    }))
 }
 
 /// 空实现：既有用例不关心基金名称刷新时注入（返回空串 = 未取到名称，不落库）。
-fn no_name(_: &str) -> Result<String> {
-    Ok(String::new())
+fn no_name(_: &str) -> FetchFuture<String> {
+    super::ready(Ok(String::new()))
 }
 
 /// 空实现：既有用例不关心进度序列时注入（进度回调最小桩，issue #897）。
@@ -980,10 +990,10 @@ fn no_bulk() -> BulkFetchSurfaces {
 ///（与 [`mock_fx`] 的请求记录同纪律：缓冲由测试持有，断言时 borrow）。基金
 /// 页级明细（issue #1061）由 `fund.is_some()` 的专用记录覆盖，本闭包只收标的级
 /// 推进——既有断言对准的正是那一层序列。
-fn progress_recorder<'a>(log: &'a RefCell<Vec<(usize, usize)>>) -> impl FnMut(SyncProgress) + 'a {
+fn progress_recorder<'a>(log: &'a Mutex<Vec<(usize, usize)>>) -> impl FnMut(SyncProgress) + 'a {
     move |progress| {
         if progress.fund.is_none() {
-            log.borrow_mut().push((progress.done, progress.total));
+            log.lock().unwrap().push((progress.done, progress.total));
         }
     }
 }
@@ -992,15 +1002,15 @@ fn progress_recorder<'a>(log: &'a RefCell<Vec<(usize, usize)>>) -> impl FnMut(Sy
 /// 并记录被请求的币种对（断言只对非本位币发起抓取）。
 fn mock_fx<'a>(
     by_pair: &'a [(&'a str, Vec<KlineBar>)],
-    requested: &'a RefCell<Vec<String>>,
-) -> impl FnMut(&str) -> Result<Vec<KlineBar>> + 'a {
+    requested: &'a Mutex<Vec<String>>,
+) -> impl FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send + 'a {
     move |pair: &str| {
-        requested.borrow_mut().push(pair.to_string());
-        Ok(by_pair
+        requested.lock().unwrap().push(pair.to_string());
+        super::ready(Ok(by_pair
             .iter()
             .find(|(p, _)| *p == pair)
             .map(|(_, bars)| bars.clone())
-            .unwrap_or_default())
+            .unwrap_or_default()))
     }
 }
 
@@ -1045,13 +1055,13 @@ fn sync_writes_no_price_history_quote_only() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     let prices = [("600519", Some(1000.0))];
-    let fx_log = RefCell::new(Vec::new());
+    let fx_log = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&prices);
     let mut fx = mock_fx(&[], &fx_log);
     // 现价与历史解耦（ADR-0122 / issue #1377）：同步只刷现价——无历史序列的
     // 标的也不落任何采样点（单点会冒充历史完整、永久破坏后台补全的首刷判据），
     // 编排的参数表里已无日 K 通道（编译期不可表达）。
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut fx,
@@ -1060,7 +1070,7 @@ fn sync_writes_no_price_history_quote_only() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 1, "无历史不中断同步");
@@ -1094,10 +1104,10 @@ fn sync_lands_current_week_point_for_instrument_with_existing_history() {
     )
     .unwrap();
     let prices = [("600519", Some(1000.0))];
-    let fx_log = RefCell::new(Vec::new());
+    let fx_log = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&prices);
     let mut fx = mock_fx(&[], &fx_log);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut fx,
@@ -1106,7 +1116,7 @@ fn sync_lands_current_week_point_for_instrument_with_existing_history() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 1);
@@ -1230,11 +1240,11 @@ fn nav_page(total: u64, points: &[(&str, f64)]) -> LsjzPage {
 /// 并记录全部查询（断言水位窗口、翻页与「非可拉取行零请求」）。
 fn mock_nav<'a>(
     pages_by_code: &'a [(&'a str, Vec<LsjzPage>)],
-    requested: &'a RefCell<Vec<NavQuery>>,
-) -> impl FnMut(&NavQuery) -> Result<LsjzPage> + 'a {
+    requested: &'a Mutex<Vec<NavQuery>>,
+) -> impl FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send + 'a {
     move |query: &NavQuery| {
-        requested.borrow_mut().push(query.clone());
-        Ok(pages_by_code
+        requested.lock().unwrap().push(query.clone());
+        super::ready(Ok(pages_by_code
             .iter()
             .find(|(c, _)| *c == query.code)
             .and_then(|(_, pages)| pages.get((query.page - 1) as usize))
@@ -1243,7 +1253,7 @@ fn mock_nav<'a>(
                 points: vec![],
                 total: 0,
                 blocked: false,
-            }))
+            })))
     }
 }
 
@@ -1298,7 +1308,7 @@ fn fund_first_sync_without_nav_counts_skipped() {
 
     let mut fetch = mock_fetch(&[]);
     let mut nav = no_nav;
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -1307,7 +1317,7 @@ fn fund_first_sync_without_nav_counts_skipped() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     // 首刷查无净值（查无此码 / 新基金未公布首期）：计入跳过，不报错不落价。
@@ -1341,10 +1351,10 @@ fn fund_rows_without_real_code_skip_without_fetch() {
         "unknown",
     );
 
-    let requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&[]);
     let mut nav = mock_nav(&[], &requested);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -1353,13 +1363,16 @@ fn fund_rows_without_real_code_skip_without_fetch() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 0);
     assert_eq!(result.skipped, 2);
     assert_eq!(result.written, 0);
-    assert!(requested.borrow().is_empty(), "不可拉取行不得发起净值请求");
+    assert!(
+        requested.lock().unwrap().is_empty(),
+        "不可拉取行不得发起净值请求"
+    );
 }
 
 #[test]
@@ -1376,8 +1389,8 @@ fn fund_nav_fetch_error_propagates() {
     );
 
     let mut fetch = mock_fetch(&[]);
-    let mut nav = |_: &NavQuery| Err(AppError::Io("模拟净值请求失败".into()));
-    let err = do_incremental_sync_with(
+    let mut nav = |_: &NavQuery| super::ready(Err(AppError::Io("模拟净值请求失败".into())));
+    let err = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -1386,7 +1399,7 @@ fn fund_nav_fetch_error_propagates() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap_err();
     assert!(err.to_string().contains("模拟净值请求失败"));
 }
@@ -1405,16 +1418,16 @@ fn etf_holding_syncs_quote_only_without_history() {
 
     // 批量报价按精度位换算（ETF f1=3，raw 4634 → 4.634 元 → 46340 万分之一元）。
     let mut fetch = |_: &str| {
-        Ok(vec![StockItem {
+        super::ready(Ok(vec![StockItem {
             name: "沪深300ETF华泰柏瑞".into(),
             code: "510300".into(),
             price: Some(4634.0),
             precision: Some(3.0),
-        }])
+        }]))
     };
 
     // 现价与历史解耦（ADR-0122 / issue #1377）：ETF 同步只刷现价，不回填历史。
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -1423,7 +1436,7 @@ fn etf_holding_syncs_quote_only_without_history() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 1, "ETF 持仓走行情通道计入同步成功");
@@ -1449,12 +1462,12 @@ fn etf_holding_unknown_market_counts_skipped_without_requests() {
         &conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "unknown",
     );
 
-    let secid_log = RefCell::new(Vec::new());
-    let mut fetch = |secids: &str| -> Result<Vec<StockItem>> {
-        secid_log.borrow_mut().push(secids.to_string());
-        Ok(vec![])
+    let secid_log = Mutex::new(Vec::new());
+    let mut fetch = |secids: &str| {
+        secid_log.lock().unwrap().push(secids.to_string());
+        super::ready(Ok(vec![]))
     };
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -1463,12 +1476,15 @@ fn etf_holding_unknown_market_counts_skipped_without_requests() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 0);
     assert_eq!(result.skipped, 1, "市场未知在行情分区内仍计入跳过");
-    assert!(secid_log.borrow().is_empty(), "不可查询行不得发起报价请求");
+    assert!(
+        secid_log.lock().unwrap().is_empty(),
+        "不可查询行不得发起报价请求"
+    );
     assert_eq!(market_price_of(&conn, "inst-etf"), None);
 }
 
@@ -1518,10 +1534,10 @@ fn three_type_partitions_roll_up_into_one_result() {
 
     // 报价批次同时携带股票与 ETF（同一分区、同批构造 secid，收集按 symbol 升序）；
     // 精度位随行：ETF f1=3、股票 f1=2。
-    let secid_log = RefCell::new(Vec::new());
-    let mut fetch = |secids: &str| -> Result<Vec<StockItem>> {
-        secid_log.borrow_mut().push(secids.to_string());
-        Ok(vec![
+    let secid_log = Mutex::new(Vec::new());
+    let mut fetch = |secids: &str| {
+        secid_log.lock().unwrap().push(secids.to_string());
+        super::ready(Ok(vec![
             StockItem {
                 name: "沪深300ETF华泰柏瑞".into(),
                 code: "510300".into(),
@@ -1534,13 +1550,13 @@ fn three_type_partitions_roll_up_into_one_result() {
                 price: Some(131601.0),
                 precision: Some(2.0),
             },
-        ])
+        ]))
     };
     let pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.348)])])];
-    let nav_requested = RefCell::new(Vec::new());
+    let nav_requested = Mutex::new(Vec::new());
     let mut nav = mock_nav(&pages, &nav_requested);
 
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -1549,7 +1565,7 @@ fn three_type_partitions_roll_up_into_one_result() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     // synced = 行情分区 2（股票+ETF）+ 基金 1；skipped = 名称充代码基金 + 债券 + 其他；
@@ -1559,12 +1575,13 @@ fn three_type_partitions_roll_up_into_one_result() {
     assert_eq!(result.written, 3);
     assert_eq!(result.message, "已同步 3 只，跳过 3 只");
     assert_eq!(
-        *secid_log.borrow(),
+        *secid_log.lock().unwrap(),
         vec!["1.510300,1.600519".to_string()],
         "股票与 ETF 同走行情分区、同批查询（收集按 symbol 升序）"
     );
     let nav_codes: Vec<String> = nav_requested
-        .borrow()
+        .lock()
+        .unwrap()
         .iter()
         .map(|q| q.code.clone())
         .collect();
@@ -1628,20 +1645,20 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
     );
 
     // 记录批量报价请求的完整 secid 串：断言按精确市场构造 105.AAPL（零候选开销）。
-    let secid_log = RefCell::new(Vec::new());
-    let mut fetch = |secids: &str| -> Result<Vec<StockItem>> {
-        secid_log.borrow_mut().push(secids.to_string());
+    let secid_log = Mutex::new(Vec::new());
+    let mut fetch = |secids: &str| {
+        secid_log.lock().unwrap().push(secids.to_string());
         // 原始 f2（3 位小数刻度）：AAPL $319.97 → 319970。
-        Ok(vec![StockItem {
+        super::ready(Ok(vec![StockItem {
             name: "苹果".into(),
             code: "AAPL".into(),
             price: Some(319_970.0),
             precision: None,
-        }])
+        }]))
     };
 
     // USDCNY 汇率同期采集（持仓币种 USD ≠ 本位币 CNY）：记录被请求的币种对。
-    let fx_log = RefCell::new(Vec::new());
+    let fx_log = Mutex::new(Vec::new());
     let fx_pairs = [(
         "USDCNY",
         vec![bar("2026-01-02", 7.02), bar("2026-01-08", 7.01)],
@@ -1649,7 +1666,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
     let mut fx = mock_fx(&fx_pairs, &fx_log);
 
     // 现价与历史解耦（issue #1377）：同步刷现价 + 汇率同期采集，不回填日 K。
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut fx,
@@ -1658,14 +1675,14 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
     assert_eq!(result.synced, 1, "美股持仓应计入同步成功");
     assert_eq!(result.skipped, 0);
     assert_eq!(result.written, 1, "实际落价应计入写入（信号判定）");
 
     // secid 按精确市场构造：105.AAPL（#692 已扩 105/106/107 映射）。
-    assert_eq!(*secid_log.borrow(), vec!["105.AAPL".to_string()]);
+    assert_eq!(*secid_log.lock().unwrap(), vec!["105.AAPL".to_string()]);
 
     // 现价：f2 319970 × 10 = 3199700 万分之一元（$319.97），币种 USD。
     assert_eq!(market_price_of(&conn, "inst-aapl"), Some(3_199_700));
@@ -1687,7 +1704,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
 
     // USDCNY 汇率同期落 FxRateHistory（候选序钉住见 fx_secid_candidates 测试）。
     assert_eq!(
-        *fx_log.borrow(),
+        *fx_log.lock().unwrap(),
         vec!["USDCNY".to_string()],
         "只对非本位币币种对发起汇率抓取"
     );
@@ -1697,17 +1714,17 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
     );
 
     // 重跑幂等：现价覆盖更新、汇率历史同周整周覆盖，零重复行。
-    let mut fetch = |secids: &str| -> Result<Vec<StockItem>> {
-        secid_log.borrow_mut().push(secids.to_string());
-        Ok(vec![StockItem {
+    let mut fetch = |secids: &str| {
+        secid_log.lock().unwrap().push(secids.to_string());
+        super::ready(Ok(vec![StockItem {
             name: "苹果".into(),
             code: "AAPL".into(),
             price: Some(320_000.0),
             precision: None,
-        }])
+        }]))
     };
     let mut fx = mock_fx(&fx_pairs, &fx_log);
-    do_incremental_sync_with(
+    tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut fx,
@@ -1716,7 +1733,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
     let fx_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM fx_rate_history", [], |r| r.get(0))
@@ -1737,15 +1754,15 @@ fn us_stock_holdings_route_exact_secids_per_market() {
     insert_holding(&conn, "acc-2", "inst-ny", "BABA", "stock", "USD", "nyse");
     insert_holding(&conn, "acc-3", "inst-am", "SPY", "stock", "USD", "amex");
 
-    let secid_log = RefCell::new(Vec::new());
-    let mut fetch = |secids: &str| -> Result<Vec<StockItem>> {
-        secid_log.borrow_mut().push(secids.to_string());
-        Ok(vec![])
+    let secid_log = Mutex::new(Vec::new());
+    let mut fetch = |secids: &str| {
+        secid_log.lock().unwrap().push(secids.to_string());
+        super::ready(Ok(vec![]))
     };
-    let fx_log = RefCell::new(Vec::new());
+    let fx_log = Mutex::new(Vec::new());
     let usdcny = [("USDCNY", vec![bar("2026-01-05", 7.02)])];
     let mut fx = mock_fx(&usdcny, &fx_log);
-    do_incremental_sync_with(
+    tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut fx,
@@ -1754,11 +1771,11 @@ fn us_stock_holdings_route_exact_secids_per_market() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(
-        *secid_log.borrow(),
+        *secid_log.lock().unwrap(),
         vec!["105.AAPL,106.BABA,107.SPY".to_string()],
         "三市场持仓同批查询，secid 各自按精确前缀构造（收集按 symbol 升序）"
     );
@@ -1797,7 +1814,7 @@ fn incremental_sync_includes_cleared_instrument() {
 
     let prices = [("600519", Some(130280.0)), ("000001", Some(1173.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -1806,7 +1823,7 @@ fn incremental_sync_includes_cleared_instrument() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(
@@ -1829,7 +1846,7 @@ fn incremental_sync_includes_never_traded_instrument() {
 
     let prices = [("600000", Some(1000.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -1838,7 +1855,7 @@ fn incremental_sync_includes_never_traded_instrument() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(result.synced, 1, "未交易标的首次同步照常刷价");
@@ -1860,7 +1877,7 @@ fn incremental_sync_refreshes_names_from_quote_batch() {
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -1869,7 +1886,7 @@ fn incremental_sync_refreshes_names_from_quote_batch() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     let (name, version): (String, i64) = conn
@@ -1906,7 +1923,7 @@ fn incremental_sync_skips_name_write_when_unchanged() {
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -1915,7 +1932,7 @@ fn incremental_sync_skips_name_write_when_unchanged() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     let version: i64 = conn
@@ -1954,9 +1971,9 @@ fn fund_name_refresh_via_detail_lookup() {
     let mut nav = no_nav;
     let mut fund_name = |code: &str| {
         assert_eq!(code, "110022");
-        Ok("易方达优质精选混合".to_string())
+        super::ready(Ok("易方达优质精选混合".to_string()))
     };
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -1965,7 +1982,7 @@ fn fund_name_refresh_via_detail_lookup() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     let (name, version): (String, i64) = conn
@@ -2006,13 +2023,13 @@ fn fund_name_refresh_degrades_deterministic_not_found_to_skip() {
     let mut nav = no_nav;
     let mut fund_name = |code: &str| {
         assert_eq!(code, "002503");
-        Err(AppError::codedp(
+        super::ready(Err(AppError::codedp(
             "sync.fund-not-found",
             "查无基金代码 002503，请核对后重试",
             &["002503"],
-        ))
+        )))
     };
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -2021,7 +2038,7 @@ fn fund_name_refresh_degrades_deterministic_not_found_to_skip() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .expect("确定性查无不得中断整次同步");
 
     let (name, version): (String, i64) = conn
@@ -2052,8 +2069,8 @@ fn fund_name_refresh_still_propagates_network_failure() {
 
     let mut fetch = mock_fetch(&[]);
     let mut nav = no_nav;
-    let mut fund_name = |_: &str| Err(AppError::Io("HTTP 请求失败: 连接超时".into()));
-    let error = do_incremental_sync_with(
+    let mut fund_name = |_: &str| super::ready(Err(AppError::Io("HTTP 请求失败: 连接超时".into())));
+    let error = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -2062,7 +2079,7 @@ fn fund_name_refresh_still_propagates_network_failure() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .expect_err("网络失败仍应上抛中断");
 
     assert!(
@@ -2094,14 +2111,14 @@ fn fund_name_lookup_skips_name_as_code_rows_and_empty_names() {
         "unknown",
     );
 
-    let name_requests = RefCell::new(Vec::new());
+    let name_requests = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&[]);
     let mut nav = no_nav;
     let mut fund_name = |code: &str| {
-        name_requests.borrow_mut().push(code.to_string());
-        Ok(String::new())
+        name_requests.lock().unwrap().push(code.to_string());
+        super::ready(Ok(String::new()))
     };
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -2110,11 +2127,11 @@ fn fund_name_lookup_skips_name_as_code_rows_and_empty_names() {
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(
-        *name_requests.borrow(),
+        *name_requests.lock().unwrap(),
         vec!["110022".to_string()],
         "仅 6 位代码的基金行发起名称查询"
     );
@@ -2160,10 +2177,10 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
     // 统一事件日志：total 必须先于任何抓取请求（收集与分区完成立即发）；
     // 每只标的在报价落库后推进一格（现价 + 名称合并计格；历史日 K 已移出同步，
     // issue #1377）。
-    let events = RefCell::new(Vec::new());
+    let events = Mutex::new(Vec::new());
     let mut fetch = |secids: &str| {
-        events.borrow_mut().push(format!("fetch:{secids}"));
-        Ok(secids
+        events.lock().unwrap().push(format!("fetch:{secids}"));
+        super::ready(Ok(secids
             .split(',')
             .map(|secid| {
                 let code = secid.split('.').nth(1).unwrap().to_string();
@@ -2174,14 +2191,15 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
                     precision: None,
                 }
             })
-            .collect())
+            .collect()))
     };
     let mut progress = |progress: SyncProgress| {
         events
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .push(format!("progress:{}/{}", progress.done, progress.total));
     };
-    do_incremental_sync_with(
+    tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -2190,11 +2208,11 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(
-        *events.borrow(),
+        *events.lock().unwrap(),
         vec![
             "progress:0/2".to_string(),
             "fetch:1.600001,0.600002".to_string(),
@@ -2242,14 +2260,14 @@ fn progress_denominator_counts_channel_capable_instruments_only() {
         "unknown",
     );
 
-    let requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&[("600519", Some(1000.0))]);
     let fund_pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.3)])])];
     let mut nav = mock_nav(&fund_pages, &requested);
-    let mut fund_name = |code: &str| Ok(format!("权威-{code}"));
-    let log = RefCell::new(Vec::new());
+    let mut fund_name = |code: &str| super::ready(Ok(format!("权威-{code}")));
+    let log = Mutex::new(Vec::new());
     let mut progress = progress_recorder(&log);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -2258,11 +2276,11 @@ fn progress_denominator_counts_channel_capable_instruments_only() {
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(
-        *log.borrow(),
+        *log.lock().unwrap(),
         vec![(0, 2), (1, 2), (2, 2)],
         "分母只含有通道标的（行情 1 + 有码基金 1），跳过行不进分母、零推进"
     );
@@ -2301,9 +2319,9 @@ fn progress_advances_even_when_quote_invalid_or_missing() {
     // 600002 停牌（None）、600003 不在响应中（查询无果）。
     let prices = [("600001", Some(1000.0)), ("600002", None)];
     let mut fetch = mock_fetch(&prices);
-    let log = RefCell::new(Vec::new());
+    let log = Mutex::new(Vec::new());
     let mut progress = progress_recorder(&log);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -2312,11 +2330,11 @@ fn progress_advances_even_when_quote_invalid_or_missing() {
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(
-        *log.borrow(),
+        *log.lock().unwrap(),
         vec![(0, 3), (1, 3), (2, 3), (3, 3)],
         "停牌/查询无果的行情标的照常推进"
     );
@@ -2369,10 +2387,10 @@ fn fund_up_to_date_still_advances_progress() {
 
     let mut fetch = mock_fetch(&[]);
     let mut nav = no_nav;
-    let mut fund_name = |code: &str| Ok(format!("权威-{code}"));
-    let log = RefCell::new(Vec::new());
+    let mut fund_name = |code: &str| super::ready(Ok(format!("权威-{code}")));
+    let log = Mutex::new(Vec::new());
     let mut progress = progress_recorder(&log);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -2381,11 +2399,11 @@ fn fund_up_to_date_still_advances_progress() {
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(
-        *log.borrow(),
+        *log.lock().unwrap(),
         vec![(0, 1), (1, 1)],
         "「已是最新」的基金推进一格，进度不卡在 0%"
     );
@@ -2407,22 +2425,23 @@ fn fund_progress_advances_after_nav_and_name_complete() {
         "unknown",
     );
 
-    let events = RefCell::new(Vec::new());
+    let events = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&[]);
     let mut nav = |query: &NavQuery| {
-        events.borrow_mut().push(format!("nav:{}", query.code));
-        Ok(nav_page(1, &[("2026-01-30", 3.3)]))
+        events.lock().unwrap().push(format!("nav:{}", query.code));
+        super::ready(Ok(nav_page(1, &[("2026-01-30", 3.3)])))
     };
     let mut fund_name = |code: &str| {
-        events.borrow_mut().push(format!("name:{code}"));
-        Ok(format!("权威-{code}"))
+        events.lock().unwrap().push(format!("name:{code}"));
+        super::ready(Ok(format!("权威-{code}")))
     };
     let mut progress = |progress: SyncProgress| {
         events
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .push(format!("progress:{}/{}", progress.done, progress.total));
     };
-    do_incremental_sync_with(
+    tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -2431,11 +2450,11 @@ fn fund_progress_advances_after_nav_and_name_complete() {
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(
-        *events.borrow(),
+        *events.lock().unwrap(),
         vec![
             "progress:0/1".to_string(),
             "nav:110022".to_string(),
@@ -2463,12 +2482,12 @@ fn page_level_detail_only_for_multi_page_fund_sync() {
     );
 
     let pages = [("110022", vec![nav_page(2, &[("2026-01-30", 3.3)])])];
-    let requested = RefCell::new(Vec::new());
+    let requested = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&[("600001", Some(1000.0))]);
     let mut nav = mock_nav(&pages, &requested);
-    let log = RefCell::new(Vec::new());
-    let mut progress = |progress: SyncProgress| log.borrow_mut().push(progress);
-    do_incremental_sync_with(
+    let log = Mutex::new(Vec::new());
+    let mut progress = |progress: SyncProgress| log.lock().unwrap().push(progress);
+    tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -2477,10 +2496,10 @@ fn page_level_detail_only_for_multi_page_fund_sync() {
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
-    let events = log.borrow();
+    let events = log.lock().unwrap();
     assert!(
         events.iter().all(|e| e.fund.is_none()),
         "单页基金与行情标的不产生页级明细：{events:?}"
@@ -2497,9 +2516,9 @@ fn progress_not_emitted_for_empty_library() {
     // 空库：不发任何进度事件，返回既有「暂无标的可同步」提示（user story 15）。
     let conn = tauri_app_lib::test_support::open();
     let mut fetch = mock_fetch(&[]);
-    let log = RefCell::new(Vec::new());
+    let log = Mutex::new(Vec::new());
     let mut progress = progress_recorder(&log);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -2508,10 +2527,10 @@ fn progress_not_emitted_for_empty_library() {
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
-    assert!(log.borrow().is_empty(), "空库不发 total");
+    assert!(log.lock().unwrap().is_empty(), "空库不发 total");
     assert_eq!(result.message, "暂无标的可同步");
 }
 
@@ -2541,9 +2560,9 @@ fn progress_not_emitted_when_no_channel_capable_instrument() {
 
     let mut fetch = mock_fetch(&[]);
     let mut nav = no_nav;
-    let log = RefCell::new(Vec::new());
+    let log = Mutex::new(Vec::new());
     let mut progress = progress_recorder(&log);
-    let result = do_incremental_sync_with(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
         &mut no_fx,
@@ -2552,10 +2571,10 @@ fn progress_not_emitted_when_no_channel_capable_instrument() {
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
-    assert!(log.borrow().is_empty(), "分母为 0 不发 total");
+    assert!(log.lock().unwrap().is_empty(), "分母为 0 不发 total");
     assert_eq!(result.skipped, 2);
 }
 
@@ -2689,8 +2708,8 @@ fn fund_channels(
 
 /// 两个批量面的注入桩（调用次数由用例经各自计数器观察）+ 跨同步记忆句柄。
 fn bulk_surfaces(
-    names: Box<dyn FnMut() -> Result<FundNameDictionary> + Send>,
-    nav: Box<dyn FnMut() -> Result<FundNavTable> + Send>,
+    names: FetchFundNameDictionary,
+    nav: FetchFundNavTable,
     circuit: Arc<Mutex<BulkFetchCircuit>>,
 ) -> BulkFetchSurfaces {
     BulkFetchSurfaces {
@@ -2703,19 +2722,26 @@ fn bulk_surfaces(
 /// 逐标的净值页桩：固定返回同一页（给定日期单点），并累加调用次数。
 fn counting_nav(calls: Arc<AtomicUsize>, date: String, nav: f64) -> FetchNavPage {
     Box::new(move |_: &NavQuery| {
-        calls.fetch_add(1, Ordering::SeqCst);
-        Ok(nav_page(1, &[(date.as_str(), nav)]))
+        let calls = calls.clone();
+        let date = date.clone();
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(nav_page(1, &[(date.as_str(), nav)]))
+        })
     })
 }
 
 /// 空净值页桩（窗口内无新净值）：即便被触达也不会写库，只留调用事实。
 fn empty_nav(calls: Arc<AtomicUsize>) -> FetchNavPage {
     Box::new(move |_: &NavQuery| {
-        calls.fetch_add(1, Ordering::SeqCst);
-        Ok(LsjzPage {
-            points: vec![],
-            total: 0,
-            blocked: false,
+        let calls = calls.clone();
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(LsjzPage {
+                points: vec![],
+                total: 0,
+                blocked: false,
+            })
         })
     })
 }
@@ -2723,8 +2749,12 @@ fn empty_nav(calls: Arc<AtomicUsize>) -> FetchNavPage {
 /// 逐标的名称桩：返回数据源权威名称（`权威名称-<代码>`），并累加调用次数。
 fn counting_name(calls: Arc<AtomicUsize>) -> FetchFundName {
     Box::new(move |code: &str| {
-        calls.fetch_add(1, Ordering::SeqCst);
-        Ok(format!("权威名称-{code}"))
+        let calls = calls.clone();
+        let name = format!("权威名称-{code}");
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(name)
+        })
     })
 }
 
@@ -2811,17 +2841,23 @@ fn bulk_surfaces_pin_daily_sync_request_count_to_a_constant() {
             {
                 let calls = per_fund_nav_full_calls.clone();
                 Box::new(move |_: &str| {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    Ok(vec![])
+                    let calls = calls.clone();
+                    Box::pin(async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(vec![])
+                    })
                 })
             },
             {
                 let calls = per_fund_name_calls.clone();
                 Box::new(move |_: &str| {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    // 逐只名称通道若被触达，名称不会被刷新——下面「仅变化者落库」
-                    // 的断言同时是「这条通道没被用到」的证据。
-                    Ok(String::new())
+                    let calls = calls.clone();
+                    Box::pin(async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        // 逐只名称通道若被触达，名称不会被刷新——下面「仅变化者落库」
+                        // 的断言同时是「这条通道没被用到」的证据。
+                        Ok(String::new())
+                    })
                 })
             },
             bulk_surfaces(
@@ -2829,26 +2865,28 @@ fn bulk_surfaces_pin_daily_sync_request_count_to_a_constant() {
                     let calls = bulk_names_calls.clone();
                     Box::new(move || {
                         calls.fetch_add(1, Ordering::SeqCst);
-                        Ok(bulletin_names.clone())
+                        let names = bulletin_names.clone();
+                        Box::pin(async move { Ok(names) })
                     })
                 },
                 {
                     let calls = bulk_nav_calls.clone();
                     Box::new(move || {
                         calls.fetch_add(1, Ordering::SeqCst);
-                        Ok(bulletin_nav.clone())
+                        let nav = bulletin_nav.clone();
+                        Box::pin(async move { Ok(nav) })
                     })
                 },
                 Arc::new(Mutex::new(BulkFetchCircuit::new())),
             ),
         );
 
-        let result = do_incremental_sync_channels(
+        let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
             &conn,
             &mut channels,
             &mut |_| {},
             &mut WriteWitness::default(),
-        )
+        ))
         .unwrap();
 
         let counts = RequestCounts {
@@ -2937,33 +2975,39 @@ fn bulk_nav_failure_falls_back_per_instrument_and_trips_the_in_sync_breaker() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         counting_nav(per_fund_nav_calls.clone(), today.clone(), 5.0),
-        Box::new(|_| Ok(vec![])),
+        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(per_fund_name_calls.clone()),
         bulk_surfaces(
             {
                 let calls = bulk_names_calls.clone();
                 Box::new(move || {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    Ok(FundNameDictionary::new())
+                    let calls = calls.clone();
+                    Box::pin(async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(FundNameDictionary::new())
+                    })
                 })
             },
             {
                 let calls = bulk_nav_calls.clone();
                 Box::new(move || {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    Err(AppError::Io("净值批量面被风控拦截".into()))
+                    let calls = calls.clone();
+                    Box::pin(async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Err(AppError::Io("净值批量面被风控拦截".into()))
+                    })
                 })
             },
             circuit.clone(),
         ),
     );
 
-    let result = do_incremental_sync_channels(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
         &conn,
         &mut channels,
         &mut |_| {},
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(
@@ -3042,33 +3086,36 @@ fn bulk_name_dictionary_failure_falls_back_to_per_instrument_names() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| Ok(vec![])),
+        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(per_fund_name_calls.clone()),
         bulk_surfaces(
             {
                 let calls = bulk_names_calls.clone();
                 Box::new(move || {
                     calls.fetch_add(1, Ordering::SeqCst);
-                    Err(AppError::Io("名称全量字典被风控拦截".into()))
+                    Box::pin(async move {
+                        Err(AppError::Io("名称全量字典被风控拦截".into()))
+                    })
                 })
             },
             {
                 let calls = bulk_nav_calls.clone();
                 Box::new(move || {
                     calls.fetch_add(1, Ordering::SeqCst);
-                    Ok(bulletin_nav.clone())
+                    let nav = bulletin_nav.clone();
+                    Box::pin(async move { Ok(nav) })
                 })
             },
             Arc::new(Mutex::new(BulkFetchCircuit::new())),
         ),
     );
 
-    let result = do_incremental_sync_channels(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
         &conn,
         &mut channels,
         &mut |_| {},
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(bulk_nav_calls.load(Ordering::SeqCst), 1);
@@ -3140,7 +3187,7 @@ fn bulk_coverage_gaps_fall_back_per_item_without_tripping_the_circuit() {
         let mut channels = fund_channels(
             QuoteChannelCalls::default(),
             counting_nav(per_fund_nav_calls.clone(), today.clone(), 3.0),
-            Box::new(|_| Ok(vec![])),
+            Box::new(|_| super::ready(Ok(vec![]))),
             counting_name(per_fund_name_calls.clone()),
             bulk_surfaces(
                 {
@@ -3148,7 +3195,8 @@ fn bulk_coverage_gaps_fall_back_per_item_without_tripping_the_circuit() {
                     let dictionary = bulletin_names.clone();
                     Box::new(move || {
                         calls.fetch_add(1, Ordering::SeqCst);
-                        Ok(dictionary.clone())
+                        let dictionary = dictionary.clone();
+                        Box::pin(async move { Ok(dictionary) })
                     })
                 },
                 {
@@ -3156,18 +3204,19 @@ fn bulk_coverage_gaps_fall_back_per_item_without_tripping_the_circuit() {
                     let table = bulletin_nav.clone();
                     Box::new(move || {
                         calls.fetch_add(1, Ordering::SeqCst);
-                        Ok(table.clone())
+                        let table = table.clone();
+                        Box::pin(async move { Ok(table) })
                     })
                 },
                 circuit.clone(),
             ),
         );
-        do_incremental_sync_channels(
+        tauri::async_runtime::block_on(do_incremental_sync_channels(
             &conn,
             &mut channels,
             &mut |_| {},
             &mut WriteWitness::default(),
-        )
+        ))
         .unwrap()
     };
 
@@ -3246,14 +3295,14 @@ fn bulk_surfaces_stay_disabled_after_threshold_failures_and_half_open_after_the_
         let mut channels = fund_channels(
             QuoteChannelCalls::default(),
             empty_nav(per_fund_nav_calls.clone()),
-            Box::new(|_| Ok(vec![])),
-            Box::new(|_: &str| Ok(String::new())),
+            Box::new(|_| super::ready(Ok(vec![]))),
+            Box::new(|_: &str| super::ready(Ok(String::new()))),
             bulk_surfaces(
                 {
                     let calls = bulk_names_calls.clone();
                     Box::new(move || {
                         calls.fetch_add(1, Ordering::SeqCst);
-                        Ok(FundNameDictionary::new())
+                        Box::pin(async move { Ok(FundNameDictionary::new()) })
                     })
                 },
                 {
@@ -3262,22 +3311,26 @@ fn bulk_surfaces_stay_disabled_after_threshold_failures_and_half_open_after_the_
                     let table = bulletin_nav.clone();
                     Box::new(move || {
                         calls.fetch_add(1, Ordering::SeqCst);
-                        if failing.load(Ordering::SeqCst) < BULK_FAILURE_THRESHOLD as usize {
-                            Err(AppError::Io("净值批量面连续失败".into()))
-                        } else {
-                            Ok(table.clone())
-                        }
+                        let failing = failing.clone();
+                        let table = table.clone();
+                        Box::pin(async move {
+                            if failing.load(Ordering::SeqCst) < BULK_FAILURE_THRESHOLD as usize {
+                                Err(AppError::Io("净值批量面连续失败".into()))
+                            } else {
+                                Ok(table)
+                            }
+                        })
                     })
                 },
                 circuit.clone(),
             ),
         );
-        do_incremental_sync_channels(
+        tauri::async_runtime::block_on(do_incremental_sync_channels(
             &conn,
             &mut channels,
             &mut |_| {},
             &mut WriteWitness::default(),
-        )
+        ))
         .unwrap()
     };
 
@@ -3375,10 +3428,10 @@ fn bulk_nav_point_of_the_current_week_lands_price_and_weekly_sample_without_per_
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| Ok(vec![])),
+        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(Arc::new(AtomicUsize::new(0))),
         bulk_surfaces(
-            Box::new(|| Ok(FundNameDictionary::new())),
+            Box::new(|| super::ready(Ok(FundNameDictionary::new()))),
             Box::new({
                 let today = today.clone();
                 move || {
@@ -3390,19 +3443,19 @@ fn bulk_nav_point_of_the_current_week_lands_price_and_weekly_sample_without_per_
                             nav: 3.5,
                         },
                     );
-                    Ok(table)
+                    super::ready(Ok(table))
                 }
             }),
             Arc::new(Mutex::new(BulkFetchCircuit::new())),
         ),
     );
 
-    let result = do_incremental_sync_channels(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
         &conn,
         &mut channels,
         &mut |_| {},
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(
@@ -3453,12 +3506,12 @@ fn bulk_week_gap_beyond_one_week_falls_back_per_instrument_to_fill_missing_weeks
         Box::new(move |query: &NavQuery| {
             per_fund_calls.fetch_add(1, Ordering::SeqCst);
             requested_clone.lock().unwrap().push(query.clone());
-            Ok(nav_page(1, &[(page_date.as_str(), 3.5)]))
+            super::ready(Ok(nav_page(1, &[(page_date.as_str(), 3.5)])))
         }),
-        Box::new(|_| Ok(vec![])),
+        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(Arc::new(AtomicUsize::new(0))),
         bulk_surfaces(
-            Box::new(|| Ok(FundNameDictionary::new())),
+            Box::new(|| super::ready(Ok(FundNameDictionary::new()))),
             Box::new({
                 let today = today.clone();
                 move || {
@@ -3470,19 +3523,19 @@ fn bulk_week_gap_beyond_one_week_falls_back_per_instrument_to_fill_missing_weeks
                             nav: 3.5,
                         },
                     );
-                    Ok(table)
+                    super::ready(Ok(table))
                 }
             }),
             Arc::new(Mutex::new(BulkFetchCircuit::new())),
         ),
     );
 
-    let result = do_incremental_sync_channels(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
         &conn,
         &mut channels,
         &mut |_| {},
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(
@@ -3546,10 +3599,10 @@ fn fund_bulk_hit_without_history_writes_price_but_no_weekly_point() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| Ok(vec![])),
+        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(Arc::new(AtomicUsize::new(0))),
         bulk_surfaces(
-            Box::new(|| Ok(FundNameDictionary::new())),
+            Box::new(|| super::ready(Ok(FundNameDictionary::new()))),
             Box::new({
                 let today = today.clone();
                 move || {
@@ -3561,19 +3614,19 @@ fn fund_bulk_hit_without_history_writes_price_but_no_weekly_point() {
                             nav: 3.5,
                         },
                     );
-                    Ok(table)
+                    super::ready(Ok(table))
                 }
             }),
             Arc::new(Mutex::new(BulkFetchCircuit::new())),
         ),
     );
 
-    let result = do_incremental_sync_channels(
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
         &conn,
         &mut channels,
         &mut |_| {},
         &mut WriteWitness::default(),
-    )
+    ))
     .unwrap();
 
     assert_eq!(

@@ -37,14 +37,14 @@
 //! 其余不经统一写入口的声明写命令不经本入口（例外白名单登记，见
 //! `signals_cross_check`）。域层写路径（ADR-0033 接缝）不纳入——本入口壳层专用。
 
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use rusqlite::Connection;
 
 use ledger_infra::db::DbWriteHandle;
-use ledger_infra::db::probe_lock_hold;
-use ledger_infra::db::run_db;
+use ledger_infra::db::{probe_lock_hold, run_db};
 use ledger_infra::error::{AppError, Result};
 use ledger_infra::events::SignalEmitter;
 use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
@@ -102,14 +102,14 @@ where
 /// [`Self::with_connection`] 闭包体内可见、返回即释放——分钟级网络等待发生在
 /// 分段与分段之间，结构上不可能持在锁内（[`write_entry`] 整段形态的对应面）。
 ///
-/// **每一段取连接仍是直锁**（ADR-0125 决策 8 首句明许：连接槽 `lock()` 可住门面
-/// 与壳层统一入口）：分段编排体仍在阻塞线程上（`run_db`），其闭包借用编排现场
-/// （`&mut progress` / `&mut channels` 一类），不满足门面作业要求的 `Send + 'static`
-/// ——「每段取连接由门面作业取代」随作用域会话接缝异步化（issue #1412）落地，
-/// 届时本形态与写槽访问器一并退役。收尾裁决（提交点置脏）已是门面作业，锁跨度
-/// 与分段语义（#1276）不变。
+/// **余留消费面只有同步轮次**（ADR-0125 决策 8 豁免台账）：标的信息同步命令已
+/// 随 #1412 改走 async 分段入口（[`write_entry_segmented_async`] + 门面写槽
+/// 裸作业会话）；`sync_now` 的轮次连接接缝（同步域 [`RoundConn`]，
+/// ADR-0120 决策 4）闭包借用轮次现场、不满足门面作业要求的 `Send + 'static`
+/// ——同步域异步化（同根因残余点 #1405 另案）前仍走直锁，该半边与写槽访问器
+/// 随之保留。收尾裁决（提交点置脏）已是门面作业，锁跨度与分段语义（#1276）不变。
 pub struct SegmentLock<'a> {
-    /// 门面写句柄的写槽（过渡形态直锁半边，见类型文档）。
+    /// 门面写句柄的写槽（直锁半边，余留消费面见类型文档）。
     conn: &'a Arc<Mutex<Connection>>,
 }
 
@@ -160,17 +160,16 @@ impl From<AppError> for SegmentedFailure {
     }
 }
 
-/// 壳层统一写入口 · 分段取锁、整体裁决形态（issue #1276，父 spec #1274 实现
+/// 壳层统一写入口 · 分段取连接、整体裁决形态（issue #1276，父 spec #1274 实现
 /// 决策 4；裁决口径经 issue #1277 修订为「实际写过即置脏」；每一段取连接经
-/// ADR-0125 决策 2 改为门面作业，issue #1410）：与 [`write_entry`]
+/// ADR-0125 决策 2/8 改为门面裸作业，issue #1410/#1412）：与 [`write_entry`]
 /// 同一仪式链，唯「锁跨度」不同——闭包拿到的不是整段持有的连接，而是
-/// [`SegmentLock`]：每段短暂取一次连接（门面写槽裸作业）、用完即还，分钟级
-/// 网络等待发生在锁外。
-/// 适用面：同步这类「抓取-落库交替」的长任务命令（现役调用点
-/// `sync_instrument_info` 与 `sync_now`——后者自 #1339 起随 ADR-0120 把同步
-/// 轮次的网络段出锁）；常规写命令仍走整段形态。
+/// [`SegmentLock`]：每段短暂取一次连接、用完即还，分钟级网络等待发生在锁外。
+/// 适用面：阻塞线程上的「抓取-落库交替」长任务编排（现役调用点 `sync_now`
+/// ——自 #1339 起随 ADR-0120 把同步轮次的网络段出锁）；async 编排体（同步
+/// 标的信息命令，issue #1412）走 [`write_entry_segmented_async`]。
 ///
-/// - **一个写操作身份、恰好一次调用**：与整段形态同责，源码扫描守门把两种
+/// - **一个写操作身份、恰好一次调用**：与整段形态同责，源码扫描守门把各种
 ///   形态都计为写入口调用点（`signals_cross_check`）；
 /// - **整体裁决（issue #1277 修订）**：跨分段的「是否实际写过」由闭包随
 ///   [`SegmentedFailure`] 累积（同步编排的写入 witness 即累积体），在收尾
@@ -214,6 +213,41 @@ where
     .await?;
     // 发射时序：收尾裁决（提交点置脏）完成后发射，成败同判（issue #1277）；
     // 映射单点判定（ADR-0044），发射失败静默忽略，不影响写结果。
+    if let Some(emitter) = emitter {
+        emit_for(emitter, op, evidence);
+    }
+    result
+}
+
+/// 壳层统一写入口 · 分段形态的 **async 编排体**变体（issue #1412，ADR-0125
+/// 决策 5）：与 [`write_entry_segmented`] 同一仪式链（分段取连接、整体裁决、
+/// 信号发射），唯「编排体所在」不同——闭包返回的 future 在**调用方的异步任务
+/// 上**轮询（网络等待以 `await` 表达，不占阻塞线程与 DB 线程），每段取连接经
+/// 作用域会话接缝（[`FacadeWriteSession`](ledger_market_sync::FacadeWriteSession)
+/// 的 [`DbWriteHandle::run_raw`]）投门面作业。闭包借用编排现场（进度回调 /
+/// 通道束守卫一类）不再是问题：future 不进阻塞线程池，无须 `Send + 'static`。
+/// 适用面：现役调用点 `sync_instrument_info`。
+pub async fn write_entry_segmented_async<T, Fut>(
+    span: &'static str,
+    db: DbWriteHandle,
+    emitter: Option<&dyn SignalEmitter>,
+    op: WriteOp,
+    f: Fut,
+) -> Result<T>
+where
+    Fut: Future<Output = std::result::Result<Outcome<T>, SegmentedFailure>> + Send,
+{
+    // 结果归一（与同步形态同源）：成功带 Outcome 证据，失败带跨分段累积的证据。
+    let (result, evidence) = match f.await {
+        Ok(Outcome::Silent(value)) => (Ok(value), WriteEvidence::None),
+        Ok(Outcome::Evidenced(value, evidence)) => (Ok(value), evidence),
+        Err(failure) => (Err(failure.error), failure.evidence),
+    };
+    // 整体裁决点（issue #1277）：与同步形态同责，恰好一次置脏（见上）。
+    if result.is_ok() || evidence.price_written() {
+        db.run(span, |_| Ok(())).await?;
+    }
+    // 发射时序与同步形态同源：收尾裁决完成后发射，成败同判。
     if let Some(emitter) = emitter {
         emit_for(emitter, op, evidence);
     }

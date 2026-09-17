@@ -34,9 +34,9 @@
 //! 零写入不置脏不广播。汇率 K 线同期补齐（与价格历史同期段采集，ADR-0019），
 //! 与手动同步同口径不计入写入见证。
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
@@ -45,13 +45,13 @@ use tauri::{AppHandle, Manager, Runtime};
 use ledger_infra::db::boot::BootFailureGate;
 use ledger_infra::db::encryption::EncryptionGate;
 use ledger_infra::db::tx_scope::ensure_transaction;
-use ledger_infra::db::{DbState, probe_lock_hold};
+use ledger_infra::db::{DbState, DbWriteHandle};
 use ledger_infra::error::{AppError, Result};
 use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
 use ledger_investment::predicates::INVESTED_EXISTS;
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 
-use super::channels::SyncFetchChannels;
+use super::channels::{FetchFuture, SyncFetchChannels};
 use super::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
 use super::fund_nav::{LsjzPage, NavPoint, NavQuery};
 use super::http::{KlineBar, secid_prefix};
@@ -61,7 +61,7 @@ use super::incremental::{
 };
 use super::model::WriteWitness;
 use super::progress::{BackfillProgressEmitter, FundNavProgress, SyncProgress};
-use super::session::ScopedSession;
+use super::session::{FacadeWriteSession, ScopedSession};
 use ledger_investment::backfill;
 use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_price_history,
@@ -198,8 +198,9 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
 /// ADR-0122；停牌/退市股持续在队的每日重采因此不空发信号）。有新点时的
 /// 数据结果与无条件重写逐位一致（整周覆盖幂等）。
 ///
-/// 抓取在会话之外、落库短暂取一次连接（issue #1275 纪律，与抽取前同形）。
-pub(super) fn backfill_stock_history<Q, K>(
+/// 抓取在会话之外（await）、落库短暂取一次连接（issue #1275 / #1412 async 形态，
+/// 与抽取前同形）。
+pub(super) async fn backfill_stock_history<Q, K>(
     session: &Q,
     fetch_kline: &mut K,
     secid: &str,
@@ -207,24 +208,28 @@ pub(super) fn backfill_stock_history<Q, K>(
 ) -> Result<bool>
 where
     Q: ScopedSession,
-    K: FnMut(&str) -> Result<Vec<KlineBar>>,
+    K: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
 {
-    let bars = fetch_kline(secid)?;
+    let bars = fetch_kline(secid).await?;
     let points = downsample_weekly(&bars);
     if points.is_empty() {
         return Ok(false);
     }
-    let has_new =
-        session.with_connection(|conn| has_new_weekly_point(conn, &inst.instrument_id, &points))?;
+    let instrument_id = inst.instrument_id.clone();
+    let has_new = session
+        .with_connection(move |conn| has_new_weekly_point(conn, &instrument_id, &points))
+        .await?;
     if !has_new {
         return Ok(false);
     }
+    let (instrument_id, currency) = (inst.instrument_id.clone(), inst.currency.clone());
     session
-        .with_connection(|conn| {
+        .with_connection(move |conn| {
             ensure_transaction(conn, || {
-                write_weekly_price_history(conn, &inst.instrument_id, &inst.currency, &bars)
+                write_weekly_price_history(conn, &instrument_id, &currency, &bars)
             })
         })
+        .await
         .map(|written| written > 0)
 }
 
@@ -321,7 +326,7 @@ pub(super) struct HistoryBackfillStats {
 /// 在下一窗口自然重进队列；单只原子（issue #1373）保证失败不留半根历史。
 /// 汇率失败同样不中断（辅助性折算序列，缺失段由后续窗口的后台补全补齐）。
 #[allow(clippy::too_many_arguments)]
-pub(super) fn run_history_backfill_round<Q, K, X, N, S, P>(
+pub(super) async fn run_history_backfill_round<Q, K, X, N, S, P>(
     session: &Q,
     fetch_kline: &mut K,
     fetch_fx: &mut X,
@@ -332,13 +337,13 @@ pub(super) fn run_history_backfill_round<Q, K, X, N, S, P>(
 ) -> Result<HistoryBackfillStats>
 where
     Q: ScopedSession,
-    K: FnMut(&str) -> Result<Vec<KlineBar>>,
-    X: FnMut(&str) -> Result<Vec<KlineBar>>,
-    N: FnMut(&NavQuery) -> Result<LsjzPage>,
-    S: FnMut(&str) -> Result<Vec<NavPoint>>,
-    P: FnMut(SyncProgress),
+    K: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
+    X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
+    N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
+    S: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
+    P: FnMut(SyncProgress) + Send,
 {
-    let queue = session.with_connection(collect_backfill_queue)?;
+    let queue = session.with_connection(collect_backfill_queue).await?;
     let total = queue.len();
     if total == 0 {
         return Ok(HistoryBackfillStats {
@@ -357,6 +362,7 @@ where
         let result: Result<(bool, bool)> = match &item.target {
             BackfillTarget::Quote { secid } => {
                 backfill_stock_history(session, fetch_kline, secid, &item.instrument)
+                    .await
                     .map(|written| (written, false))
             }
             BackfillTarget::FundNav => {
@@ -384,6 +390,7 @@ where
                     fetch_nav_full,
                     &mut on_page,
                 )
+                .await
                 .map(|outcome: BackfillOutcome| (outcome.written, outcome.inconclusive))
             }
         };
@@ -410,9 +417,13 @@ where
             Ok((_, false)) => backfill::BackfillAttempt::NoData,
             Ok((_, true)) | Err(_) => backfill::BackfillAttempt::Failed,
         };
-        match session.with_connection(|conn| {
-            ledger_investment::backfill::has_any_history(conn, &item.instrument.instrument_id)
-        }) {
+        let instrument_id = item.instrument.instrument_id.clone();
+        match session
+            .with_connection(move |conn| {
+                ledger_investment::backfill::has_any_history(conn, &instrument_id)
+            })
+            .await
+        {
             Ok(false) => backfill::record_attempt(&item.instrument.instrument_id, attempt_failed),
             Ok(true) => {}
             Err(error) => tracing::warn!(
@@ -430,7 +441,7 @@ where
     // 汇率 K 线同期补齐（与手动同步 §③ 同一单元）：只取本轮队列标的的币种对
     // ——本轮实际在补的曲线才需要同期折算序列；已完整标的的汇率序列已在库。
     let currencies = queue.iter().map(|item| item.instrument.currency.clone());
-    if let Err(error) = backfill_fx_pairs(session, fetch_fx, currencies) {
+    if let Err(error) = backfill_fx_pairs(session, fetch_fx, currencies).await {
         tracing::warn!(%error, "历史补全汇率序列补齐失败（不中断本轮，缺失段后续补齐）");
     }
 
@@ -440,29 +451,14 @@ where
     })
 }
 
-/// 后台补全的共享连接会话（后台线程侧的 [`ScopedSession`] 实现）：连接互斥体
-/// 的短段取用——每次短暂取锁、用完即还，分钟级网络等待发生在段与段之外
-///（与命令壳 `SegmentSession` 同一纪律；后台线程不在命令壳上，实现随编排住
-/// 本域，先例：多端同步调度侧 `AutoRoundConn`）。毒化映射与持锁时长探针与
-/// 写入口同形。后台每日现价刷新（[`super::daily_refresh`]）共用同一实现
-///（同一纪律、同一连接）。
-pub(super) struct SharedConnSession {
-    pub(super) conn: Arc<Mutex<Connection>>,
-}
-
-impl ScopedSession for SharedConnSession {
-    fn with_connection<R, F>(&self, use_connection: F) -> Result<R>
-    where
-        F: FnOnce(&Connection) -> Result<R>,
-    {
-        let hold_started = Instant::now();
-        let conn = self.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        let result = use_connection(&conn);
-        probe_lock_hold(hold_started.elapsed());
-        result
-    }
-}
-
+/// 后台补全的会话（后台车道侧）：门面写槽裸作业会话（[`FacadeWriteSession`]，
+/// issue #1412 async 形态）——每轮补全经作用域会话短暂投递门面作业，分钟级
+/// 网络等待发生在段与段之外且不占用 DB 线程（与命令壳同一接缝、同一纪律；
+/// 先例：多端同步调度侧 `AutoRoundConn`）。后台车道的连接取用不再直锁连接槽
+///（ADR-0125 决策 5）；每日现价刷新（[`super::daily_refresh`]）共用同一形态。
+/// 调度线程仍是自建 OS 线程（转 async 任务归后续票 M2-3），经全局运行时驱动
+/// async 编排（[`tauri::async_runtime::block_on`]，专用线程上调用安全）。
+///
 /// 后台补全进度发射的壳层接线（与命令壳 `progress_to_emitter` 同型）：把编排
 /// 的进度回调接到后台补全事件发射器（非阻塞投递，发射失败静默）。
 pub(super) fn backfill_progress_to_emitter(
@@ -473,8 +469,9 @@ pub(super) fn backfill_progress_to_emitter(
 
 /// 后台补全通道注入接缝（issue #1375，先例：命令壳 `SyncChannelsSlot`）：生产
 /// **不管理**本状态（每轮建后台车道生产束），集成测试 manage 本状态并装入
-/// 门控桩束，使「后台补全真实在途」可确定复现。
-pub struct BackfillChannelsSlot(pub Arc<Mutex<SyncFetchChannels>>);
+/// 门控桩束，使「后台补全真实在途」可确定复现。异步互斥体：通道束引用在
+/// `.await` 之间存活（issue #1412 通道束闭包 async 化）。
+pub struct BackfillChannelsSlot(pub Arc<tokio::sync::Mutex<SyncFetchChannels>>);
 
 /// 调度时机的显式参数（启动延迟与自然日窗口巡检周期）：生产走默认值，接线型
 /// 集成测试注入短时机——断言只等窗口到达，不被生产常数拖慢（先例：
@@ -510,7 +507,6 @@ pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: Back
     if SPAWNED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let conn = Arc::clone(&app.state::<DbState>().conn);
     let gate = EncryptionGate::clone(&app.state::<EncryptionGate>());
     let boot_gate = BootFailureGate::clone(&app.state::<BootFailureGate>());
     let handle = app.clone();
@@ -527,7 +523,7 @@ pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: Back
                 let today = beijing_today();
                 if last_round_date != Some(today) {
                     last_round_date = Some(today);
-                    run_backfill_round_gated(&handle, &conn);
+                    run_backfill_round_gated(&handle);
                 }
             }
             std::thread::sleep(timings.window_poll);
@@ -537,19 +533,19 @@ pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: Back
 
 /// 跑一轮补全（通道束换装 + 会话 + 见证 + 收尾裁决的单轮编排）：测试桩束优先
 ///（[`BackfillChannelsSlot`] 管理态），生产每轮建后台车道束（请求前让行前台、
-/// 共享全局限速器）。失败静默等下一窗口（无用户可报，先例：自动轮次）。
-fn run_backfill_round_gated<R: Runtime>(app: &AppHandle<R>, conn: &Arc<Mutex<Connection>>) {
+/// 共享全局限速器）。失败静默等下一窗口（无用户可报，先例：自动轮次）。async
+/// 编排经全局运行时在调度线程上驱动到完成（issue #1412）。
+fn run_backfill_round_gated<R: Runtime>(app: &AppHandle<R>) {
+    let write = app.state::<DbState>().write_handle();
     let slot = app.try_state::<BackfillChannelsSlot>().map(|s| s.0.clone());
     let (result, any_written) = match slot {
-        Some(arc) => match arc.lock() {
-            Ok(mut channels) => run_round_with_channels(app, conn, &mut channels),
-            Err(error) => (
-                Err(AppError::Db(format!("后台补全通道束互斥体损坏: {error}"))),
-                false,
-            ),
-        },
+        Some(arc) => tauri::async_runtime::block_on(run_round_with_channels(app, &write, &arc)),
         None => match SyncFetchChannels::production_backfill() {
-            Ok(mut channels) => run_round_with_channels(app, conn, &mut channels),
+            Ok(channels) => tauri::async_runtime::block_on(run_round_with_channels(
+                app,
+                &write,
+                &Arc::new(tokio::sync::Mutex::new(channels)),
+            )),
             Err(error) => (Err(error), false),
         },
     };
@@ -558,7 +554,7 @@ fn run_backfill_round_gated<R: Runtime>(app: &AppHandle<R>, conn: &Arc<Mutex<Con
     // 置脏一次 + 发既有价格失效信号，消费方由信号驱动重拉；零写入（队列空/
     // 全部无新点/失败未写过）不置脏不广播。置脏失败记日志不静默吞运行结果。
     if any_written {
-        if let Err(error) = ledger_infra::db::write(conn, |_| Ok(())) {
+        if let Err(error) = write.run_blocking("history_backfill", |_| Ok(())) {
             tracing::warn!(%error, "历史补全收尾置脏失败（脏标记待下次写入补上）");
         }
         emit_for(
@@ -578,28 +574,37 @@ fn run_backfill_round_gated<R: Runtime>(app: &AppHandle<R>, conn: &Arc<Mutex<Con
     }
 }
 
-/// 持束跑一轮：会话（共享连接短段取用）+ 进度发射（后台补全事件）+ 写入见证。
+/// 持束跑一轮：会话（门面写槽裸作业会话）+ 进度发射（后台补全事件）+ 写入见证。
 /// 返回 (编排结果, 是否实际写过)——见证跨单只失败存活（成败同判的证据源，
 /// 与手动同步同形）。
-fn run_round_with_channels<R: Runtime>(
+async fn run_round_with_channels<R: Runtime>(
     app: &AppHandle<R>,
-    conn: &Arc<Mutex<Connection>>,
-    channels: &mut SyncFetchChannels,
+    write: &DbWriteHandle,
+    channels: &Arc<tokio::sync::Mutex<SyncFetchChannels>>,
 ) -> (Result<HistoryBackfillStats>, bool) {
     let mut witness = WriteWitness::default();
-    let session = SharedConnSession {
-        conn: Arc::clone(conn),
-    };
+    let session = FacadeWriteSession::new(write.clone(), "history_backfill");
     let mut progress = backfill_progress_to_emitter(app);
+    let mut channels = channels.lock().await;
+    // 借用拆字段：互斥体守卫经 DerefMut 的整体借用不可拆（借用检查按整守卫
+    // 记账），先解引用再按字段拆借，四条通道互不重叠地交给编排。
+    let SyncFetchChannels {
+        fetch_kline,
+        fetch_fx,
+        fetch_nav,
+        fetch_nav_full,
+        ..
+    } = &mut *channels;
     let result = run_history_backfill_round(
         &session,
-        &mut channels.fetch_kline,
-        &mut channels.fetch_fx,
-        &mut channels.fetch_nav,
-        &mut channels.fetch_nav_full,
+        fetch_kline,
+        fetch_fx,
+        fetch_nav,
+        fetch_nav_full,
         &mut progress,
         &mut witness,
-    );
+    )
+    .await;
     let any_written = witness.any_written();
     (result, any_written)
 }

@@ -312,10 +312,15 @@ fn has_bypass_write_or_emit(masked: &str, include_http_emit: bool) -> bool {
 }
 
 /// 写入口调用形态闭集（issue #1276）：整段（`write_entry(`）与分段取锁、
-/// 整体裁决（`write_entry_segmented(`）。分段名的文本包含前缀 `write_entry`
-/// 但后随 `_` 不构成 `write_entry(`，需两枚举逐一计数；「每个命令/端点恰好
-/// 一处写入口调用」的裁决对两种形态同责（父 spec #1274 实现决策 4）。
-const WRITE_ENTRY_CALL_TOKENS: [&str; 2] = ["write_entry(", "write_entry_segmented("];
+/// 整体裁决（`write_entry_segmented(`，同步轮次形态）及 async 编排体分段形态
+///（`write_entry_segmented_async(`，issue #1412）。「每个命令/端点恰好一处写
+/// 入口调用」的裁决对各形态同责（父 spec #1274 实现决策 4）；三个分段名共享
+/// 前缀 `write_entry_segmented`，后随 `_` 不构成前名，需逐一枚举计数。
+const WRITE_ENTRY_CALL_TOKENS: [&str; 3] = [
+    "write_entry(",
+    "write_entry_segmented(",
+    "write_entry_segmented_async(",
+];
 
 /// 掩码文本中写入口调用点总数（两种形态合计）。
 fn write_entry_call_count(masked: &str) -> usize {

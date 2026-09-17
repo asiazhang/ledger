@@ -134,5 +134,5 @@ pub use progress::{
     BackfillProgressEmitter, FundNavProgress, HISTORY_BACKFILL_PROGRESS, INSTRUMENT_SYNC_PROGRESS,
     ProgressEmitter, SyncProgress,
 };
-pub use session::ScopedSession;
+pub use session::{FacadeWriteSession, ScopedSession};
 pub use stock::fetch_stock_quote_production;

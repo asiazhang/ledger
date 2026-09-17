@@ -1,16 +1,26 @@
-//! 标的信息同步在途可读性集成测试（issue #1276，父 spec #1274 路线 A 验收）。
+//! 标的信息同步在途可读性集成测试（issue #1276，父 spec #1274 路线 A 验收；
+//! #1412 随作用域会话接缝 async 化收敛）。
 //!
 //! 权威断言层（ADR-0087）：「同步真实在途时读命令能在时限内返回当前已提交
-//! 数据」的失败面在壳层锁跨度，修复落在命令壳的分段写入口，故权威测试在此。
-//! 复现手段是命令壳的同步网络通道注入接缝（`SyncChannelsSlot`，issue #1276）：
-//! 注入门控桩通道束，同步在批量报价抓取点真实在途（阻塞在会话与锁之外），
-//! 此时直调读命令（持仓、标的）断言及时返回；把命令壳改回整段持锁，读命令
-//! 会在锁上等满整次同步——限时断言即红（负向判据，删除接线即变红）。
+//! 数据」的失败面在命令壳的分段取连接，故权威测试在此。复现手段是命令壳的
+//! 同步网络通道注入接缝（`SyncChannelsSlot`，issue #1276）：注入门控桩通道束，
+//! 同步在批量报价抓取点真实在途（阻塞在会话与门面作业之外），此时直调读命令
+//!（持仓、标的）断言及时返回；把命令壳改回持连接等待，读命令会等满整次同步
+//! ——限时断言即红（负向判据，删除接线即变红）。
+//!
+//! **负向判据的两个世界**（issue #1412）：读写分离连接（ADR-0117）下，文件库
+//! 的读命令走只读连接与门面读线程，写槽被占不影响读路径——用例
+//! `reads_return_current_data_while_sync_in_flight` 是用户旅程形态（文件库）；
+//! `in_memory_reads_return_while_sync_in_flight`（内存库，写读两槽同指一连接）
+//! 才对「持连接等待」有真实判定力：写槽被作业占用时读作业在同一把连接互斥体
+//! 上排队，读命令超时即红。
 //!
 //! 断言全部对准用户可观察结果（读命令在时限内返回、返回内容为当前已提交
 //! 数据、进度事件照发、成功后价格与失效信号可见），不对准线程、锁对象或
 //! 函数调用形状（CONTEXT-testing〈断言强度〉）。
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -46,26 +56,42 @@ fn gated_channels(
     release: std::sync::mpsc::Receiver<()>,
 ) -> SyncChannelsSlot {
     let channels = SyncFetchChannels {
+        // 门控等待在闭包同步段完成（编排调用闭包即阻塞在途），应答装箱为 future
+        // ——「同步真实在途」语义与断言不变（issue #1412 通道闭包 async 形态）。
         fetch_ulist: Box::new(move |_secids| {
             entered.send(()).expect("在途通知应可送达");
             release
                 .recv_timeout(Duration::from_secs(10))
                 .expect("测试应放行批量报价");
-            Ok(vec![StockItem {
-                code: "600519".into(),
-                name: "贵州茅台".into(),
-                price: Some(1302.80),
-                precision: None,
-            }])
+            Box::pin(async move {
+                Ok(vec![StockItem {
+                    code: "600519".into(),
+                    name: "贵州茅台".into(),
+                    price: Some(1302.80),
+                    precision: None,
+                }])
+            })
         }),
-        fetch_kline: Box::new(|_| Ok(vec![])),
-        fetch_fx: Box::new(|_| Ok(vec![])),
-        fetch_nav: Box::new(|_| unreachable!("测试现场无基金标的，净值通道不应被触达")),
-        fetch_nav_full: Box::new(|_| unreachable!("测试现场无基金标的，全量净值通道不应被触达")),
-        fetch_fund_name: Box::new(|_| unreachable!("测试现场无基金标的，名称通道不应被触达")),
+        fetch_kline: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+        fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+        fetch_nav: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，净值通道不应被触达")
+            })
+        }),
+        fetch_nav_full: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，全量净值通道不应被触达")
+            })
+        }),
+        fetch_fund_name: Box::new(|_| {
+            Box::pin(async {
+                unreachable!("测试现场无基金标的，名称通道不应被触达")
+            })
+        }),
         bulk: BulkFetchSurfaces::absent(),
     };
-    SyncChannelsSlot(Arc::new(Mutex::new(channels)))
+    SyncChannelsSlot(Arc::new(tokio::sync::Mutex::new(channels)))
 }
 
 /// 同步在途时读命令照常出数（issue #1276 核心验收 + 负向判据）：
@@ -250,6 +276,112 @@ fn reads_return_current_data_while_sync_in_flight() {
     );
 }
 
+/// 同步在途可读性 · 内存库负向守卫（issue #1412 负向判据的判定力所在）：写读
+/// 两槽同指一连接的内存库世界里，同步在途（门控桩阻塞在抓取点、会话与门面
+/// 作业之外）期间读命令限时返回且内容为当前已提交数据。若把网络等待挪回连接
+/// 作业内（持连接等待），门面写线程持槽阻塞，读作业在同一把连接互斥体上排队
+/// ——读命令超时，本测试红（ADR-0087 删除即变红；文件库下读命令走只读连接
+/// 不受写槽占用影响，见模块头注释，故负向半边由本用例承担）。
+#[test]
+fn in_memory_reads_return_while_sync_in_flight() {
+    isolate_home();
+    ledger_backup::install_after_commit_hook();
+    tauri_app_lib::transaction_wiring::install_all();
+    let app = tauri::test::mock_app();
+    // 内存库：写读两槽同指一连接（测试世界形态，ADR-0125 决策 4）；建库经
+    // test_support 工厂（ADR-0084 建库唯一入口）。
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(tauri_app_lib::test_support::open()));
+    app.manage(db::DbState {
+        conn: std::sync::Arc::clone(&shared),
+        read_conn: shared,
+    });
+
+    // 静态基线：一只沪市股票标的（种子直插，域测试同款先例）。
+    let conn = app.state::<DbState>().conn.clone();
+    {
+        let guard = conn.lock().expect("种子写入锁应可取");
+        tauri_app_lib::test_support::seed_instrument(
+            &guard,
+            "inst-1",
+            "600519",
+            "贵州茅台",
+            "CNY",
+            "sh",
+        );
+    }
+
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    app.manage(gated_channels(entered_tx, release_rx));
+
+    let sync_handle = app.handle().clone();
+    let sync_worker = std::thread::spawn(move || {
+        tauri::async_runtime::block_on(sync::sync_instrument_info(
+            sync_handle.state::<DbState>(),
+            sync_handle.clone(),
+        ))
+    });
+
+    // 等同步真实在途（批量报价抓取点），此刻读命令限时直调。
+    entered_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("同步应到达批量报价抓取点");
+    let read_deadline = Instant::now() + IN_FLIGHT_READ_TIMEOUT;
+
+    let holdings_rx = {
+        let handle = app.handle().clone();
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            let json = tauri::async_runtime::block_on(async {
+                let holdings = investment::list_holdings(handle.state::<DbState>())
+                    .await
+                    .expect("持仓读命令应成功");
+                serde_json::to_string(&holdings).expect("持仓应可序列化")
+            });
+            let _ = tx.send(json);
+        });
+        rx
+    };
+    // 夹具只种标的（无持仓批次）：持仓读在此仅验「在途窗口内限时返回」。
+    let holdings = holdings_rx
+        .recv_timeout(remaining(read_deadline))
+        .unwrap_or_else(|_| panic!("持仓读命令应在时限内返回（同步在途不挡读）"));
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&holdings).is_ok(),
+        "在途窗口内持仓读应返回合法应答，实际 {holdings}"
+    );
+
+    let instruments_rx = {
+        let handle = app.handle().clone();
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            let json = tauri::async_runtime::block_on(async {
+                let instruments = investment::list_instruments(handle.state::<DbState>(), None)
+                    .await
+                    .expect("标的读命令应成功");
+                serde_json::to_string(&instruments).expect("标的应可序列化")
+            });
+            let _ = tx.send(json);
+        });
+        rx
+    };
+    let instruments = instruments_rx
+        .recv_timeout(remaining(read_deadline))
+        .unwrap_or_else(|_| panic!("标的读命令应在时限内返回（同步在途不挡读）"));
+    assert!(
+        instruments.contains("600519"),
+        "在途窗口内标的读应返回当前已提交数据，实际 {instruments}"
+    );
+
+    // 放行：同步收尾，新价落库。
+    release_tx.send(()).expect("放行应成功");
+    let result = sync_worker
+        .join()
+        .expect("同步命令应跑完")
+        .expect("同步应成功");
+    assert_eq!(result.synced, 1, "报价有效应计同步");
+}
+
 /// 批量面降级事实随 IPC 结果透出（ADR-0121 决策 4，issue #1376）：批量取数面
 /// 失败回退逐只通道时，IPC 结果 JSON 带出 `bulk_degraded: true`；批量面正常
 /// 命中路径带 `bulk_degraded: false`。断言对准**序列化 JSON**（前端经 invoke
@@ -320,32 +452,49 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
     /// 返回权威名称（名称面未覆盖时逐只兜底的合法应答）。
     fn per_item_channels() -> SyncFetchChannels {
         SyncFetchChannels {
-            fetch_ulist: Box::new(|_| Ok(vec![])),
-            fetch_kline: Box::new(|_| unreachable!("测试现场无行情标的，K 线通道不应被触达")),
-            fetch_fx: Box::new(|_| unreachable!("测试现场无外币标的，汇率通道不应被触达")),
-            fetch_nav: Box::new(|_| unreachable!("净值面命中即无新净值，逐只净值通道不应被触达")),
-            fetch_nav_full: Box::new(|_| {
-                unreachable!("净值面命中即无新净值，单请求全量净值通道不应被触达")
+            fetch_ulist: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+            fetch_kline: Box::new(|_| {
+                Box::pin(async {
+                    unreachable!("测试现场无行情标的，K 线通道不应被触达")
+                })
             }),
-            fetch_fund_name: Box::new(|_| Ok("权威名称-110022".into())),
+            fetch_fx: Box::new(|_| {
+                Box::pin(async {
+                    unreachable!("测试现场无外币标的，汇率通道不应被触达")
+                })
+            }),
+            fetch_nav: Box::new(|_| {
+                Box::pin(async {
+                    unreachable!("净值面命中即无新净值，逐只净值通道不应被触达")
+                })
+            }),
+            fetch_nav_full: Box::new(|_| {
+                Box::pin(async {
+                    unreachable!("净值面命中即无新净值，单请求全量净值通道不应被触达")
+                })
+            }),
+            fetch_fund_name: Box::new(|_| Box::pin(async { Ok("权威名称-110022".into()) })),
             bulk: BulkFetchSurfaces::absent(),
         }
     }
 
     /// 净值批量面命中桩：收录该基金且最新净值日期不晚于水位（无新净值）。
-    fn nav_hit() -> Result<FundNavTable> {
-        Ok(FundNavTable::from([(
-            "110022".to_string(),
-            ledger_market_sync::BulkNavPoint {
-                date: "2026-01-30".into(),
-                nav: 3.348,
-            },
-        )]))
+    /// 批量面为 async 闭包（issue #1412）：应答装箱为就绪 future。
+    fn nav_hit() -> Pin<Box<dyn Future<Output = Result<FundNavTable>> + Send>> {
+        Box::pin(async {
+            Ok(FundNavTable::from([(
+                "110022".to_string(),
+                ledger_market_sync::BulkNavPoint {
+                    date: "2026-01-30".into(),
+                    nav: 3.348,
+                },
+            )]))
+        })
     }
 
     // 注入通道束槽并持锁句柄：两场景经同一槽原地换装批量面（tauri manage
     // 对已存在状态不替换，二次 manage 是静默无效操作）。
-    let slot = Arc::new(Mutex::new(per_item_channels()));
+    let slot = Arc::new(tokio::sync::Mutex::new(per_item_channels()));
     app.manage(SyncChannelsSlot(slot.clone()));
     let run_sync = || {
         let handle = app.handle().clone();
@@ -360,11 +509,13 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
     let degraded = {
         let mut channels = per_item_channels();
         channels.bulk = BulkFetchSurfaces {
-            names: Box::new(|| Err(AppError::Io("名称字典被风控拦截".into()))),
+            names: Box::new(|| {
+                Box::pin(async { Err(AppError::Io("名称字典被风控拦截".into())) })
+            }),
             nav: Box::new(nav_hit),
             circuit: Arc::new(Mutex::new(BulkFetchCircuit::new())),
         };
-        *slot.lock().expect("通道束槽应可锁") = channels;
+        *slot.blocking_lock() = channels;
         run_sync().expect("降级路径同步应成功返回（fail-closed 不丢数据）")
     };
     let degraded_json = serde_json::to_string(&degraded).expect("结果应可序列化");
@@ -378,11 +529,11 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
     let normal = {
         let mut channels = per_item_channels();
         channels.bulk = BulkFetchSurfaces {
-            names: Box::new(|| Ok(FundNameDictionary::new())),
+            names: Box::new(|| Box::pin(async { Ok(FundNameDictionary::new()) })),
             nav: Box::new(nav_hit),
             circuit: Arc::new(Mutex::new(BulkFetchCircuit::new())),
         };
-        *slot.lock().expect("通道束槽应可锁") = channels;
+        *slot.blocking_lock() = channels;
         run_sync().expect("正常路径同步应成功返回")
     };
     let normal_json = serde_json::to_string(&normal).expect("结果应可序列化");
