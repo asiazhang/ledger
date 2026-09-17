@@ -524,6 +524,7 @@ export const INVESTMENT_SRC_REL = 'crates/investment/src'
 export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   { path: 'bulk.rs', layer: '域目录', note: '行情批量取数面（ADR-0121 / issue #1374）：名称全量字典 + 场外基金净值全市场批量面（各整次同步一次请求）、fail-closed 降级、同步内熔断、跨同步记忆（BulkFetchCircuit）与覆盖缺口容忍；取数方式与价格来源正交' },
   { path: 'channels.rs', layer: '域目录', note: '同步网络通道束（issue #1276）：六个抓取闭包的打包形态与生产/测试换装接缝——生产接 HTTP 层（主机池/限流 pacer 单点），测试注入桩经命令壳 SyncChannelsSlot 换装使「同步真实在途」可确定复现；编排本体经 do_incremental_sync_channels 单点拆交' },
+  { path: 'daily_refresh.rs', layer: '域目录', note: '现价刷新的后台每日形态（ADR-0122 决策 3 / issue #1377）：启动后延迟补跑一次 + 每自然日窗口一次（自然日窗口巡检与进程级单次拉起守卫）；与手动形态同编排、同进度事件、同收尾裁决，差异只有触发方式、后台车道与静默失败面；单轮骨架（换装/会话/见证/裁决/发射/失败日志）经 lane.rs 单点（issue #1426），本模块只留编排与统计日志' },
   { path: 'fund.rs', layer: '域目录', note: '东财基金报价访问（按 6 位代码即拉，issue #301 / ADR-0038；搜索建议未命中回退档案通道改判存在，issue #1212）——行情接入接缝查询半边的场外实例，统一载荷 investment::Quote（ADR-0103）' },
   { path: 'fund_backfill.rs', layer: '域目录', note: '基金历史回填单元（issue #1062 / #1377 / #1388 自 fund_nav 拆出）：服务价格历史后台补全的逐只编排——首刷判据 = 磁盘无历史序列、首刷近两年（单请求全量通道优先、fail-closed 回退分页、页数上限 40）、增量按水位；一只一事务不留半根历史' },
   { path: 'fund_nav.rs', layer: '域目录', note: '东财历史净值共享件（issue #303 / ADR-0038 决策 6；issue #1388 拆出编排单元后留守）：lsjz / 详情页数据文件访问与报文解析、货基口径、净值水位窗口、分页器与水位读；单请求全量通道 fail-closed 回退分页（issue #1062）' },
@@ -532,6 +533,7 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   { path: 'http.rs', layer: '域目录', note: '行情 HTTP 网络层（issue #89）：多主机切换 / 重试 / 限流冷却 / Referer 与报价、日 K、汇率 K 报文解析；价格换算按随行精度位单点（批量报价与单点行情共用，#695）' },
   { path: 'incremental.rs', layer: '域目录', note: '标的信息同步编排（issue #103 / #137 / #303 / #695 / #827）：批量报价 upsert 现价 + 近两年日 K 周采样 + 汇率 K 线 + 基金净值按水位增量 + 数据源权威名称随行刷新；抓取通道全部经闭包注入，编排不碰网络' },
   { path: 'js.rs', layer: '域目录', note: 'JS 文本字面量提取原语（fund_nav / bulk）：从 `.js` 数据文件的 `var x = […]` 与对象字段 `datas:[…]` 两种赋值形态取出数组 / 字符串字面量，被拦截形态天然缺声明即返回 None' },
+  { path: 'lane.rs', layer: '域目录', note: '后台车道单轮骨架（issue #1426）：价格历史补全与每日现价刷新两条后台车道共用的单轮单点——通道束换装（管理态桩槽优先、生产后台车道束兜底）、门面写槽裸作业会话、进度发射接线（事件名按车道选）、写入见证、收尾裁决（置脏 + 价格失效信号，成败同判）与失败日志；车道侧只留编排（LaneRound 实现）与统计日志（ADR-0122 决策 3「同形调度」的代码单点）' },
   { path: 'model.rs', layer: '域目录', note: '域模型（#407 随域归位）：标的信息同步结果类型 SyncInstrumentInfoResult' },
   { path: 'persist.rs', layer: '域目录', note: '行情同步持久化（issue #137）：fx_rate_history 周采样 upsert（价格写入单点已随投资域归位迁入 ledger_investment::prices，#401）' },
   { path: 'progress.rs', layer: '域目录', note: '同步进度事件（issue #897 / ADR-0095；页级明细 issue #1061）：事件名常量、payload 与 ProgressEmitter 发射器接缝收口（用后即弃的非失效信号，经 events 机制投递）' },

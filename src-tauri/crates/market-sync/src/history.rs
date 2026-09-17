@@ -46,9 +46,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use ledger_infra::db::boot::BootFailureGate;
 use ledger_infra::db::encryption::EncryptionGate;
 use ledger_infra::db::tx_scope::ensure_transaction;
-use ledger_infra::db::{DbState, DbWriteHandle};
 use ledger_infra::error::{AppError, Result};
-use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
 use ledger_investment::predicates::INVESTED_EXISTS;
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 
@@ -60,8 +58,12 @@ use super::incremental::{
     SyncInstrument, backfill_fx_pairs, beijing_today, downsample_weekly, quote_code, week_monday,
     write_weekly_price_history,
 };
+use super::lane::{
+    LaneChannelsSlot, LaneId, LaneRound, LaneRoundFuture, progress_forwarder,
+    run_background_lane_round,
+};
 use super::model::WriteWitness;
-use super::progress::{BackfillProgressEmitter, FundNavProgress, SyncProgress};
+use super::progress::{FundNavProgress, SyncProgress};
 use super::session::{FacadeWriteSession, ScopedSession};
 use ledger_investment::backfill;
 use ledger_investment::prices::{
@@ -452,27 +454,19 @@ where
     })
 }
 
-/// 后台补全的会话（后台车道侧）：门面写槽裸作业会话（[`FacadeWriteSession`]，
-/// issue #1412 async 形态）——每轮补全经作用域会话短暂投递门面作业，分钟级
-/// 网络等待发生在段与段之外且不占用 DB 线程（与命令壳同一接缝、同一纪律；
-/// 先例：多端同步调度侧 `AutoRoundConn`）。后台车道的连接取用不再直锁连接槽
-///（ADR-0125 决策 5）；每日现价刷新（[`super::daily_refresh`]）共用同一形态。
-/// 车道本体已是挂全局运行时的 async 任务（已随 #1413 转为，ADR-0125 决策 7），
-/// 编排直接在任务上 `await`。
-///
-/// 后台补全进度发射的壳层接线（与命令壳 `progress_to_emitter` 同型）：把编排
-/// 的进度回调接到后台补全事件发射器（非阻塞投递，发射失败静默）。
-pub(super) fn backfill_progress_to_emitter(
-    emitter: &dyn BackfillProgressEmitter,
-) -> impl FnMut(SyncProgress) + '_ {
-    move |progress| emitter.emit_backfill_progress(progress)
-}
-
 /// 后台补全通道注入接缝（issue #1375，先例：命令壳 `SyncChannelsSlot`）：生产
 /// **不管理**本状态（每轮建后台车道生产束），集成测试 manage 本状态并装入
 /// 门控桩束，使「后台补全真实在途」可确定复现。异步互斥体：通道束引用在
 /// `.await` 之间存活（issue #1412 通道束闭包 async 化）。
 pub struct BackfillChannelsSlot(pub Arc<tokio::sync::Mutex<SyncFetchChannels>>);
+
+/// 槽接缝实现（骨架定义接缝、车道就地提供槽类型，issue #1426）：骨架按同一形状
+/// 解包本状态，不反向认识本车道。
+impl LaneChannelsSlot for BackfillChannelsSlot {
+    fn shared(&self) -> Arc<tokio::sync::Mutex<SyncFetchChannels>> {
+        self.0.clone()
+    }
+}
 
 /// 调度时机的显式参数（启动延迟与自然日窗口巡检周期）：生产走默认值，接线型
 /// 集成测试注入短时机——断言只等窗口到达，不被生产常数拖慢（先例：
@@ -534,39 +528,59 @@ pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: Back
     });
 }
 
-/// 跑一轮补全（通道束换装 + 会话 + 见证 + 收尾裁决的单轮编排）：测试桩束优先
-///（[`BackfillChannelsSlot`] 管理态），生产每轮建后台车道束（请求前让行前台、
-/// 共享全局限速器）。失败静默等下一窗口（无用户可报，先例：自动轮次）。async
-/// 形态（ADR-0125 决策 7 / issue #1413）：编排直接在车道 async 任务上 `await`，
-/// 不再经全局运行时跨线程驱动。
-async fn run_backfill_round_gated<R: Runtime>(app: &AppHandle<R>) {
-    let write = app.state::<DbState>().write_handle();
-    let slot = app.try_state::<BackfillChannelsSlot>().map(|s| s.0.clone());
-    let (result, any_written) = match slot {
-        Some(arc) => run_round_with_channels(app, &write, &arc).await,
-        None => match SyncFetchChannels::production_backfill() {
-            Ok(channels) => {
-                let channels = tokio::sync::Mutex::new(channels);
-                run_round_with_channels(app, &write, &channels).await
-            }
-            Err(error) => (Err(error), false),
-        },
-    };
+/// 价格历史补全的编排（骨架的编排输入，issue #1426）：一轮排空
+///（[`run_history_backfill_round`]，含汇率 K 线同期补齐），进度走静默计数事件面
+///（骨架按 [`LaneProgress::HistoryBackfill`] 接线）。
+struct HistoryBackfillRound;
 
-    // 整体裁决（issue #1277 成败同判同形）：本轮实际写过价格数据 → 提交点
-    // 置脏一次 + 发既有价格失效信号，消费方由信号驱动重拉；零写入（队列空/
-    // 全部无新点/失败未写过）不置脏不广播。置脏失败记日志不静默吞运行结果。
-    // 置脏经门面异步作业投递（车道已是 async 任务，不再用阻塞等待形态）。
-    if any_written {
-        if let Err(error) = write.run("history_backfill", |_| Ok(())).await {
-            tracing::warn!(%error, "历史补全收尾置脏失败（脏标记待下次写入补上）");
-        }
-        emit_for(
-            app,
-            WriteOp::SyncInstrumentInfo,
-            WriteEvidence::PriceWritten(true),
-        );
+impl LaneRound for HistoryBackfillRound {
+    type Stats = HistoryBackfillStats;
+
+    fn run<'a>(
+        &'a self,
+        session: &'a FacadeWriteSession,
+        channels: &'a mut SyncFetchChannels,
+        progress: &'a mut (dyn FnMut(SyncProgress) + Send),
+        witness: &'a mut WriteWitness,
+    ) -> LaneRoundFuture<'a, Self::Stats> {
+        Box::pin(async move {
+            // 借用拆字段：编排各通道由独立参数消费（历史补全不消费批量取数面），
+            // 四条通道互不重叠地交给编排。
+            let SyncFetchChannels {
+                fetch_kline,
+                fetch_fx,
+                fetch_nav,
+                fetch_nav_full,
+                ..
+            } = channels;
+            // 骨架交来进度接缝的 trait 对象，编排接缝要泛型 `FnMut`：经骨架的
+            // 转接单点（[`super::lane::progress_forwarder`]）交给编排。
+            let mut forward = progress_forwarder(progress);
+            run_history_backfill_round(
+                session,
+                fetch_kline,
+                fetch_fx,
+                fetch_nav,
+                fetch_nav_full,
+                &mut forward,
+                witness,
+            )
+            .await
+        })
     }
+}
+
+/// 跑一轮补全（后台车道单轮骨架，issue #1426）：换装 / 会话 / 见证 / 裁决 / 发射 /
+/// 失败日志归 [`super::lane`] 单点（与每日现价刷新共用），本函数只留本车道的统计
+/// 日志。async 形态（ADR-0125 决策 7 / issue #1413）：编排直接在车道 async 任务上
+/// `await`，不再经全局运行时跨线程驱动。
+async fn run_backfill_round_gated<R: Runtime>(app: &AppHandle<R>) {
+    let result = run_background_lane_round::<R, BackfillChannelsSlot, _>(
+        app,
+        LaneId::HistoryBackfill,
+        HistoryBackfillRound,
+    )
+    .await;
     match result {
         Ok(stats) if stats.queued == 0 => tracing::debug!("历史补全队列空，本轮零动作"),
         Ok(stats) => tracing::info!(
@@ -574,41 +588,7 @@ async fn run_backfill_round_gated<R: Runtime>(app: &AppHandle<R>) {
             failed = stats.failed,
             "价格历史后台补全一轮完成"
         ),
-        Err(error) => tracing::warn!(%error, "价格历史后台补全一轮失败（静默等下一窗口）"),
+        // 失败已由骨架按车道记日志（静默等下一窗口），此处不重复。
+        Err(_) => {}
     }
-}
-
-/// 持束跑一轮：会话（门面写槽裸作业会话）+ 进度发射（后台补全事件）+ 写入见证。
-/// 返回 (编排结果, 是否实际写过)——见证跨单只失败存活（成败同判的证据源，
-/// 与手动同步同形）。
-async fn run_round_with_channels<R: Runtime>(
-    app: &AppHandle<R>,
-    write: &DbWriteHandle,
-    channels: &tokio::sync::Mutex<SyncFetchChannels>,
-) -> (Result<HistoryBackfillStats>, bool) {
-    let mut witness = WriteWitness::default();
-    let session = FacadeWriteSession::new(write.clone(), "history_backfill");
-    let mut progress = backfill_progress_to_emitter(app);
-    let mut channels = channels.lock().await;
-    // 借用拆字段：互斥体守卫经 DerefMut 的整体借用不可拆（借用检查按整守卫
-    // 记账），先解引用再按字段拆借，四条通道互不重叠地交给编排。
-    let SyncFetchChannels {
-        fetch_kline,
-        fetch_fx,
-        fetch_nav,
-        fetch_nav_full,
-        ..
-    } = &mut *channels;
-    let result = run_history_backfill_round(
-        &session,
-        fetch_kline,
-        fetch_fx,
-        fetch_nav,
-        fetch_nav_full,
-        &mut progress,
-        &mut witness,
-    )
-    .await;
-    let any_written = witness.any_written();
-    (result, any_written)
 }
