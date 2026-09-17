@@ -22,6 +22,8 @@
 
 use std::future::Future;
 
+use rusqlite::Connection;
+
 use ledger_infra::db::DbWriteHandle;
 use ledger_infra::error::Result;
 
@@ -42,8 +44,6 @@ pub trait ScopedSession {
         F: FnOnce(&Connection) -> Result<R> + Send + 'static,
         R: Send + 'static;
 }
-
-use rusqlite::Connection;
 
 /// 门面写槽裸作业会话（生产实现，issue #1412）：把 [`DbWriteHandle`] 的写槽
 /// **裸作业**（[`DbWriteHandle::run_raw`]）包成作用域会话交给编排。

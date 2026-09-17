@@ -8,8 +8,6 @@
 //! 形态的非 JSON 文本，被拦截形态必须报错、不得伪装成「零覆盖」（决策 3）。
 
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -17,6 +15,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use ledger_infra::error::{AppError, Result};
 
+use super::channels::FetchFuture;
 use super::http::{Pacer, RetryConfig, lock_pacer, request_text_from_hosts};
 
 /// 全量名称字典：基金代码 → 数据源权威名称。
@@ -54,11 +53,9 @@ impl<K, V> BulkCoverage for HashMap<K, V> {
 
 /// 名称全量字典抓取通道闭包形态（整次同步一次请求）：网络等待以 `await`
 /// 表达（ADR-0125 决策 5 / issue #1412），闭包返回装箱 future。
-pub type FetchFundNameDictionary =
-    Box<dyn FnMut() -> Pin<Box<dyn Future<Output = Result<FundNameDictionary>> + Send>> + Send>;
+pub type FetchFundNameDictionary = Box<dyn FnMut() -> FetchFuture<FundNameDictionary> + Send>;
 /// 场外基金净值批量面抓取通道闭包形态（整次同步一次请求）。
-pub type FetchFundNavTable =
-    Box<dyn FnMut() -> Pin<Box<dyn Future<Output = Result<FundNavTable>> + Send>> + Send>;
+pub type FetchFundNavTable = Box<dyn FnMut() -> FetchFuture<FundNavTable> + Send>;
 
 /// 跨同步记忆阈值：连续这么多次同步的批量取数失败后停用批量面（ADR-0121 决策 3）。
 pub const BULK_FAILURE_THRESHOLD: u32 = 3;

@@ -152,9 +152,9 @@ mod tests {
 
     /// 壳层接线证明（issue #1275/#1276 换装，#1412 async 形态）：命令壳把门面
     /// 写槽裸作业会话交给编排——经会话写入落库、作业后立即可读（分段取连接：
-    /// 每次短暂投递门面作业、用完即还，且作业在门面写 DB 线程执行）。删除
-    /// [`facade_session`] 即无会话可交给编排，编译红即接线证明的负向半边
-    ///（ADR-0087 断言强度）。
+    /// 每次短暂投递门面作业、用完即还）。删除 [`facade_session`] 即无会话可交
+    /// 给编排，编译红即接线证明的负向半边（ADR-0087 断言强度）；作业执行线程
+    /// 归属（门面写 DB 线程）由 write_entry 入口测试钉住，不在此重复。
     #[test]
     fn command_shell_hands_write_entry_connection_to_orchestration_via_session() {
         let conn = crate::test_support::open();

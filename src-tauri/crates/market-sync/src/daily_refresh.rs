@@ -124,11 +124,10 @@ fn run_daily_refresh_round<R: Runtime>(app: &AppHandle<R>) {
     let (result, any_written) = match slot {
         Some(arc) => tauri::async_runtime::block_on(run_round_with_channels(app, &write, &arc)),
         None => match SyncFetchChannels::production_backfill() {
-            Ok(channels) => tauri::async_runtime::block_on(run_round_with_channels(
-                app,
-                &write,
-                &Arc::new(tokio::sync::Mutex::new(channels)),
-            )),
+            Ok(channels) => {
+                let channels = tokio::sync::Mutex::new(channels);
+                tauri::async_runtime::block_on(run_round_with_channels(app, &write, &channels))
+            }
             Err(error) => (Err(error), false),
         },
     };
@@ -166,7 +165,7 @@ fn run_daily_refresh_round<R: Runtime>(app: &AppHandle<R>) {
 async fn run_round_with_channels<R: Runtime>(
     app: &AppHandle<R>,
     write: &DbWriteHandle,
-    channels: &Arc<tokio::sync::Mutex<SyncFetchChannels>>,
+    channels: &tokio::sync::Mutex<SyncFetchChannels>,
 ) -> (Result<super::model::SyncInstrumentInfoResult>, bool) {
     let mut witness = WriteWitness::default();
     let session = FacadeWriteSession::new(write.clone(), "daily_price_refresh");

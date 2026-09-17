@@ -160,6 +160,40 @@ impl From<AppError> for SegmentedFailure {
     }
 }
 
+/// 分段形态的共享收尾单点（两个入口共用，裁决口径不漂移）：
+/// [`segmented_normalize`]（结果归一）、[`segmented_needs_dirty_job`]（整体裁决
+/// 的置脏门）、[`segmented_emit_after_verdict`]（收尾裁决完成后的发射）。
+
+/// 结果归一：成功带 Outcome 证据，失败带跨分段累积的证据（issue #1277）。
+fn segmented_normalize<T>(
+    result: std::result::Result<Outcome<T>, SegmentedFailure>,
+) -> (Result<T>, WriteEvidence) {
+    match result {
+        Ok(Outcome::Silent(value)) => (Ok(value), WriteEvidence::None),
+        Ok(Outcome::Evidenced(value, evidence)) => (Ok(value), evidence),
+        Err(failure) => (Err(failure.error), failure.evidence),
+    }
+}
+
+/// 整体裁决点（issue #1277）的置脏门：「实际写过即置脏」——成功收尾无条件过
+/// 一次置脏作业；失败收尾按跨分段累积的证据裁决，零写入失败不置脏（库未变，
+/// 零证据零副作用）。置脏与信号的「实际写入」判定同源（同一份证据）。
+fn segmented_needs_dirty_job<T>(result: &Result<T>, evidence: &WriteEvidence) -> bool {
+    result.is_ok() || evidence.price_written()
+}
+
+/// 发射时序：收尾裁决（提交点置脏）完成后发射，成败同判（issue #1277）；映射
+/// 单点判定（ADR-0044），发射失败静默忽略，不影响写结果。
+fn segmented_emit_after_verdict(
+    emitter: Option<&dyn SignalEmitter>,
+    op: WriteOp,
+    evidence: WriteEvidence,
+) {
+    if let Some(emitter) = emitter {
+        emit_for(emitter, op, evidence);
+    }
+}
+
 /// 壳层统一写入口 · 分段取连接、整体裁决形态（issue #1276，父 spec #1274 实现
 /// 决策 4；裁决口径经 issue #1277 修订为「实际写过即置脏」；每一段取连接经
 /// ADR-0125 决策 2/8 改为门面裸作业，issue #1410/#1412）：与 [`write_entry`]
@@ -195,27 +229,14 @@ where
 {
     let (result, evidence) = run_db(span, move || {
         let lock = SegmentLock::new(&db);
-        // 结果归一：成功带 Outcome 证据，失败带跨分段累积的证据（issue #1277）。
-        let (result, evidence) = match f(&lock) {
-            Ok(Outcome::Silent(value)) => (Ok(value), WriteEvidence::None),
-            Ok(Outcome::Evidenced(value, evidence)) => (Ok(value), evidence),
-            Err(failure) => (Err(failure.error), failure.evidence),
-        };
-        // 整体裁决点（issue #1277）：「实际写过即置脏」——成功收尾照旧无条件
-        // 过一次写作业（门面写 DB 线程持槽 + is_autocommit 复核 + 提交点置脏
-        // 单点，空闭包形态）；失败收尾按跨分段累积的证据裁决，零写入失败不置脏。
-        // 置脏与信号的「实际写入」判定同源（同一份证据），不另造第二套口径。
-        if result.is_ok() || evidence.price_written() {
+        let (result, evidence) = segmented_normalize(f(&lock));
+        if segmented_needs_dirty_job(&result, &evidence) {
             db.run_blocking(span, |_| Ok(()))?;
         }
         Ok((result, evidence))
     })
     .await?;
-    // 发射时序：收尾裁决（提交点置脏）完成后发射，成败同判（issue #1277）；
-    // 映射单点判定（ADR-0044），发射失败静默忽略，不影响写结果。
-    if let Some(emitter) = emitter {
-        emit_for(emitter, op, evidence);
-    }
+    segmented_emit_after_verdict(emitter, op, evidence);
     result
 }
 
@@ -237,20 +258,12 @@ pub async fn write_entry_segmented_async<T, Fut>(
 where
     Fut: Future<Output = std::result::Result<Outcome<T>, SegmentedFailure>> + Send,
 {
-    // 结果归一（与同步形态同源）：成功带 Outcome 证据，失败带跨分段累积的证据。
-    let (result, evidence) = match f.await {
-        Ok(Outcome::Silent(value)) => (Ok(value), WriteEvidence::None),
-        Ok(Outcome::Evidenced(value, evidence)) => (Ok(value), evidence),
-        Err(failure) => (Err(failure.error), failure.evidence),
-    };
-    // 整体裁决点（issue #1277）：与同步形态同责，恰好一次置脏（见上）。
-    if result.is_ok() || evidence.price_written() {
+    let (result, evidence) = segmented_normalize(f.await);
+    // 整体裁决点（issue #1277）：与同步形态同责，恰好一次置脏（空闭包形态）。
+    if segmented_needs_dirty_job(&result, &evidence) {
         db.run(span, |_| Ok(())).await?;
     }
-    // 发射时序与同步形态同源：收尾裁决完成后发射，成败同判。
-    if let Some(emitter) = emitter {
-        emit_for(emitter, op, evidence);
-    }
+    segmented_emit_after_verdict(emitter, op, evidence);
     result
 }
 
