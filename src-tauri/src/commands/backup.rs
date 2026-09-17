@@ -17,7 +17,6 @@
 #![allow(clippy::unreachable)]
 
 use std::path::Path;
-use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime};
@@ -27,6 +26,7 @@ use crate::commands::data_location::effective_db_dir_of;
 use crate::shell_support::read_entry::read_entry;
 use ledger_backup as backup;
 use ledger_backup::BackupScope;
+use ledger_backup::LOCK_TIMEOUT as BACKUP_LOCK_TIMEOUT;
 use ledger_backup::{
     BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, PruneResult, RestoreResult,
     backup_db_to, expected_schema_version, list_managed_backups, probe_backup_meta,
@@ -36,10 +36,6 @@ use ledger_infra::db::data_location::DB_FILE_NAME;
 use ledger_infra::db::{self, DbState, LockOutcome, run_db};
 use ledger_infra::error::{AppError, Result};
 use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
-
-/// 首次兜底等待写槽的时限（原 `backup::LOCK_TIMEOUT` 的同值承接，issue #1415）：
-/// 与调度线程 / 退出兜底同口径——排队等了这么久仍拿不到连接就放弃本轮兜底机会。
-const FIRST_FALLBACK_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 当前活动账本的备份作用域（列表/清理命令共用，issue #836）：从引导快照的
 /// 注册表登记信息构造；注册表不可用（极端时序/损坏回退）时 `None`——退化为
@@ -211,19 +207,18 @@ pub async fn set_auto_backup_dir(app: AppHandle, dir: String) -> Result<()> {
         let conn = app.state::<DbState>().write_handle();
         let version = app.package_info().version.to_string();
         let scope = backup_scope_of(&app);
-        let outcome =
-            conn.run_raw_blocking_within("backup.first-fallback", FIRST_FALLBACK_LOCK_TIMEOUT, {
-                move |conn| {
-                    let _ = backup::run_first_backup(
-                        conn,
-                        normalized.as_deref(),
-                        &version,
-                        chrono::Utc::now(),
-                        scope.as_ref(),
-                    );
-                    Ok(())
-                }
-            });
+        let outcome = conn.run_raw_blocking_within("backup.first-fallback", BACKUP_LOCK_TIMEOUT, {
+            move |conn| {
+                let _ = backup::run_first_backup(
+                    conn,
+                    normalized.as_deref(),
+                    &version,
+                    chrono::Utc::now(),
+                    scope.as_ref(),
+                );
+                Ok(())
+            }
+        });
         match outcome {
             LockOutcome::Abandoned => {
                 tracing::warn!("首次兜底等待数据库连接超时，放弃本轮兜底");

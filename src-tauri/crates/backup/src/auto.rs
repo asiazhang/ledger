@@ -288,7 +288,10 @@ pub const AUTO_BACKUP_PREFIX: &str = "ledger-auto-";
 /// 轮询检查周期：每 10 分钟醒来检查一次到期判定（ADR-0016 及其修订注记：原 30 分钟）。
 const CHECK_INTERVAL_SECS: u64 = 10 * 60;
 /// 执行备份时等待 DB 连接锁的超时；超时跳过本轮、保留脏标记，下个周期重试。
-const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+///
+/// **同时是壳层首次兜底的时限**（`pub`，issue #1415）：三处备份域取用点同值同口径，
+/// 常量住在本域以免各处各写一份 5s 字面量。
+pub const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 自动备份产物文件名：`ledger-auto-YYYYMMDD-HHMMSS[-<账本标识>].db.zip`。
 /// 时间戳按 `now` 自身时区渲染，纯函数不做任何时区换算——运行时传注入时刻的
@@ -629,6 +632,27 @@ fn run_scheduled_round(
     run_catch_up_hook(conn);
 }
 
+/// 限时等待作业结果的统一收尾（issue #1415）：三处备份域取用点（调度轮次 /
+/// 退出兜底 / 壳层首次兜底）对 [`LockOutcome`] 的处理逐字同源——放弃本轮与作业
+/// 失败都只记日志、不上抛、不复位脏标记（下次触发即重试）。调用方只关心
+/// 「本轮作业是否执行」，job 内已各自处理业务结果。
+fn log_timed_outcome(trigger: &str, outcome: LockOutcome<()>) {
+    match outcome {
+        // 作业体尚未开始就被调用方弃权：本轮跳过、保留脏标记，下个周期重试。
+        LockOutcome::Abandoned => {
+            tracing::warn!(
+                trigger,
+                timeout_ms = LOCK_TIMEOUT.as_millis() as u64,
+                "等待数据库连接超时，跳过本轮"
+            );
+        }
+        LockOutcome::Ran(Ok(())) => {}
+        LockOutcome::Ran(Err(error)) => {
+            tracing::warn!(trigger, error = %error, "本轮备份作业失败，跳过本轮");
+        }
+    }
+}
+
 /// 启动调度轮询线程（标准轮询线程模式：spawn + sleep）。
 ///
 /// 单一 tick 双判定（issue #307 / ADR-0042）：每轮先做自动备份到期判定，再做
@@ -676,14 +700,7 @@ pub fn start_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                     Ok(())
                 }
             });
-            match outcome {
-                // 排队超时（`Abandoned`）时作业体零执行：跳过本轮、保留脏标记。
-                LockOutcome::Abandoned => continue,
-                LockOutcome::Ran(Ok(())) => {}
-                LockOutcome::Ran(Err(error)) => {
-                    tracing::warn!(error = %error, "本轮自动备份作业失败，跳过本轮");
-                }
-            }
+            log_timed_outcome("scheduler-round", outcome);
         }
     });
 }
@@ -702,15 +719,9 @@ pub fn exit_fallback(app: &tauri::AppHandle) {
         run_exit_backup(conn, dir.as_deref(), &version, Utc::now(), scope.as_ref());
         Ok(())
     });
-    match outcome {
-        LockOutcome::Abandoned => {
-            tracing::warn!("退出兜底等待数据库连接超时，本轮放弃（退出后无下一轮）");
-        }
-        LockOutcome::Ran(Ok(())) => {}
-        LockOutcome::Ran(Err(error)) => {
-            tracing::warn!(error = %error, "退出兜底作业失败");
-        }
-    }
+    // 退出后没有下一轮：放弃或失败同样只能在日志里留痕（`log_timed_outcome` 的
+    // 告警即此留痕），不上抛、不打断退出序列。
+    log_timed_outcome("exit-fallback", outcome);
 }
 
 #[cfg(test)]
@@ -1344,7 +1355,8 @@ mod scheduler_tests {
     /// 与调度线程的「跳过本轮、下个周期重试」同口径。
     ///
     /// 负向（ADR-0087，删除即变红）：取掉限时放弃语义（改回无界等待）→ 调用方会
-    /// 等到测试放锁才返回，`LockOutcome::Abandoned` 断言红。
+    /// 一直等在槽锁上（本测试自持锁，没人会放），结果回不来——主线程的带时限接收
+    /// 把它判红而不是挂起；`LockOutcome::Abandoned` 断言在能返回的前提下同样红。
     #[test]
     fn timed_round_gives_up_while_connection_is_busy() {
         let c = conn();
@@ -1353,23 +1365,36 @@ mod scheduler_tests {
         let state = scheduled_state(c);
         let handle = state.write_handle();
         let hold = state.conn.lock().expect("测试应拿到写槽");
-        let outcome =
-            handle.run_raw_blocking_within("backup.scheduler-round", Duration::from_millis(50), {
-                let dir = dir.to_str().unwrap().to_string();
-                move |conn| {
-                    Ok(run_due_backup(
-                        conn,
-                        Some(dir.as_str()),
-                        "0.2.0",
-                        Utc::now(),
-                        None,
-                    ))
-                }
+        // 投递线程夹在槽锁（测试持有）与作业通道（DB 线程阻塞在等槽锁）之间：
+        // 主线程用带时限的接收取回结果，放弃语义被取掉时判红而不是挂起。
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let handle = &handle;
+            let dir_for_job = dir.to_str().unwrap().to_string();
+            scope.spawn(move || {
+                let outcome = handle.run_raw_blocking_within(
+                    "backup.scheduler-round",
+                    Duration::from_millis(50),
+                    move |conn| {
+                        Ok(run_due_backup(
+                            conn,
+                            Some(dir_for_job.as_str()),
+                            "0.2.0",
+                            Utc::now(),
+                            None,
+                        ))
+                    },
+                );
+                let _ = done_tx.send(outcome);
             });
-        assert!(
-            matches!(outcome, LockOutcome::Abandoned),
-            "等连接超时本轮应放弃（零执行），实际 {outcome:?}"
-        );
+            let outcome = done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("弃权应在时限附近返回：作业体若未被局限时放弃，这里拿不到结果");
+            assert!(
+                matches!(outcome, LockOutcome::Abandoned),
+                "等连接超时本轮应放弃（零执行），实际 {outcome:?}"
+            );
+        });
         drop(hold);
         assert!(
             get_state(&state.conn.lock().expect("取回写槽"))

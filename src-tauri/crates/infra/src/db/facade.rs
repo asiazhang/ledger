@@ -52,6 +52,12 @@ const WRITE_THREAD_NAME: &str = "db-write";
 /// 读 DB 线程名（语义同 `WRITE_THREAD_NAME`）。
 const READ_THREAD_NAME: &str = "db-read";
 
+/// 作业结果丢失的错误载荷（issue #1415 收为单点）：回传通道先于结果断开，只可能是
+/// DB 线程已退出（停机或装配失败）——fail-loud，不静默当作成功。
+fn worker_gone_error(name: &str) -> AppError {
+    AppError::Io(format!("数据库门面线程 {name} 已退出，作业结果丢失"))
+}
+
 /// 作业结果（类型擦除）：Ok 侧是业务值装箱、Err 侧是原样传播的错误。
 type ErasedOutcome = Result<Box<dyn Any + Send>>;
 
@@ -208,9 +214,7 @@ impl DbWorker {
             // 接收端已放弃等待时静默丢弃——不是失败。
             let _ = reply_tx.send(result);
         }))?;
-        reply_rx.recv().map_err(|_| {
-            AppError::Io(format!("数据库门面线程 {} 已退出，作业结果丢失", self.name))
-        })?
+        reply_rx.recv().map_err(|_| worker_gone_error(self.name))?
     }
 
     /// 限时等待的阻塞提交（ADR-0125 决策 8 豁免台账退役，issue #1415）：语义同
@@ -262,18 +266,16 @@ impl DbWorker {
                 if job_gate.abandon() {
                     LockOutcome::Abandoned
                 } else {
-                    LockOutcome::Ran(reply_rx.recv().unwrap_or_else(|_| {
-                        Err(AppError::Io(format!(
-                            "数据库门面线程 {} 已退出，作业结果丢失",
-                            self.name
-                        )))
-                    }))
+                    LockOutcome::Ran(
+                        reply_rx
+                            .recv()
+                            .unwrap_or_else(|_| Err(worker_gone_error(self.name))),
+                    )
                 }
             }
-            Err(RecvTimeoutError::Disconnected) => LockOutcome::Ran(Err(AppError::Io(format!(
-                "数据库门面线程 {} 已退出，作业结果丢失",
-                self.name
-            )))),
+            Err(RecvTimeoutError::Disconnected) => {
+                LockOutcome::Ran(Err(worker_gone_error(self.name)))
+            }
         }
     }
 
@@ -464,9 +466,11 @@ impl DbFacade {
     /// `timeout`——等不到作业开始执行就放弃本轮（返回
     /// [`LockOutcome::Abandoned`]，作业体零执行），已在途则等它出结果。
     ///
-    /// 消费面：备份自动调度与追补（「取不到连接就放弃本轮、下个周期重试」）与
-    /// 多端同步调度侧的轮次取连接（`ledger_backup::lock_conn_with_timeout` 的
-    /// 现役实现，同豁免台账先例）。
+    /// 消费面：备份自动调度与追补、退出兜底与壳层首次兜底（「取不到连接就放弃
+    /// 本轮、下个周期重试」，ADR-0125 决策 8 豁免台账退役，issue #1415）。多端
+    /// 同步调度侧的轮次取连接**尚未**走本入口（`RoundConn` 接缝闭包借用轮次现场、
+    /// 不满足作业要求的 `Send + 'static`，仍走 `ledger_backup::lock_conn_with_timeout`
+    /// 的直锁形态），收编随多端同步域异步化另案（#1405）一并评估。
     pub fn run_write_raw_blocking_within<T, F>(
         &self,
         command: &'static str,

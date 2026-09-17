@@ -103,8 +103,9 @@ fn timed_job_runs_and_returns_value_when_slot_is_free() {
 /// 核心判据，issue #1415）：调用方拿到 [`LockOutcome::Abandoned`]。
 ///
 /// 负向（ADR-0087，删除即变红）：取掉限时放弃语义（改回无界等待）→ 本测试的
-/// `run_raw_blocking_within` 会一直等到测试放锁才返回，`Ran` 分支断言红；
-/// 「排队中可放弃」被削弱成「等到底再执行」时，作业体执行次数断言同样红。
+/// 调用方会一直等在槽锁上（本测试自持锁，没人会放），结果根本回不来——等结果的
+/// 接收超时把它判成红，不会以挂起来伪装通过；「排队中可放弃」被削弱成「等到底
+/// 再执行」时，作业体执行次数断言同样红。
 #[test]
 fn timed_job_abandons_without_running_body_when_slot_is_busy() {
     let (_dir, state) = file_state("timed-abandon");
@@ -112,35 +113,41 @@ fn timed_job_abandons_without_running_body_when_slot_is_busy() {
     let hold = state.conn.lock().expect("测试应拿到写槽");
     let runs = Arc::new(AtomicUsize::new(0));
     let first_attempt = Arc::clone(&runs);
-    // 作业只能进队：投递线程在槽锁（测试持有）与作业通道（DB 线程 blocked 在等
-    // 槽锁）之间——调用方自己不得在持锁状态下等作业，故投递给独立线程。
-    let outcome = std::thread::scope(|scope| {
-        let call = scope.spawn(|| {
-            let started = Instant::now();
-            let outcome = facade.run_write_raw_blocking_within(
-                "test",
-                Duration::from_millis(50),
-                move |_conn| {
-                    first_attempt.fetch_add(1, Ordering::SeqCst);
-                    Ok(())
-                },
+    // 作业只能进队：投递线程夹在槽锁（测试持有）与作业通道（DB 线程阻塞在等槽锁）
+    // 之间——调用方自己不得在持锁状态下等作业，故投递给独立线程，并在主线程用
+    // **带时限的接收**取回结果：放弃语义被取掉时这里判红而不是挂起。
+    let outcome = {
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let facade = &facade;
+            scope.spawn(move || {
+                let started = Instant::now();
+                let outcome = facade.run_write_raw_blocking_within(
+                    "test",
+                    Duration::from_millis(50),
+                    move |_conn| {
+                        first_attempt.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    },
+                );
+                let _ = done_tx.send((outcome, started.elapsed()));
+            });
+            let (outcome, elapsed) = done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("弃权应在时限附近返回：作业体若未被局限时放弃，这里拿不到结果");
+            assert!(
+                elapsed < Duration::from_secs(1),
+                "等槽期间到达时限就应弃权返回，不应等到槽释放（实际 {elapsed:?}）"
             );
-            (outcome, started.elapsed())
-        });
-        // 等过时限：调用方应在时限附近返回（而不是等槽释放）。
-        let (outcome, elapsed) = call.join().expect("投递线程应正常返回");
-        // 槽仍在测试手里：被放弃的作业不得在槽释放后就地补跑。
-        assert_eq!(
-            runs.load(Ordering::SeqCst),
-            0,
-            "排队中被放弃的作业不得执行作业体（零副作用）"
-        );
-        assert!(
-            elapsed < Duration::from_secs(1),
-            "等槽期间到达时限就应弃权返回，不应等到槽释放（实际 {elapsed:?}）"
-        );
-        outcome
-    });
+            outcome
+        })
+    };
+    // 槽仍在测试手里：被放弃的作业不得在槽释放后就地补跑。
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        0,
+        "排队中被放弃的作业不得执行作业体（零副作用）"
+    );
     assert!(
         matches!(outcome, LockOutcome::Abandoned),
         "槽被占用超过时限应放弃本轮，实际 {outcome:?}"

@@ -224,7 +224,11 @@ fn scan_surface_covers_shell_and_infra() {
 /// 退出兜底 / 首次兜底不再自取槽锁」这件事只有把住址钉住才守得住——白名单外零
 /// 命中与死条目断言对「同一文件内换一处直锁」都无感（备份次数的调度住域 crate，
 /// 更不在本守门扫描面上）。取用的等价物是门面的限时等待写槽裸作业，故同时钉住
-/// 它的落地住址与「域内不得再有标准锁行」。
+/// 它的落地住址，并禁止调度域回到自取槽锁的等待入口
+/// （`lock_conn_with_timeout`——域侧直锁走 `try_lock` 轮询，不是壳层标准锁行形态，
+/// 拿 `STANDARD_LOCK_LINE` 判它会得到一条永真断言）。扫描面因此显式伸进备份域
+/// crate（ADR-0125 决策 8 原本把该域的守门留给域侧自身与评审，本票把这一条取用
+/// 纪律的住址钉死，只辖这一处）。
 #[test]
 fn backup_acquisition_points_go_through_facade_timed_job() {
     let shell = std::fs::read_to_string(scan_root().join("src/commands/backup.rs"))
@@ -243,8 +247,14 @@ fn backup_acquisition_points_go_through_facade_timed_job() {
              ADR-0125 决策 8 豁免台账退役，issue #1415）"
         );
     }
+    // 回潮哨兵：取用点若改回直锁助手，助手**调用**会重新出现在这份源码里。判据按
+    // 「定义之外不再出现」——定义本身（`pub fn lock_conn_with_timeout(`）由本票
+    // 保留给多端同步调度侧，若把它一并判红，守门会以「定义在即命中」的方式误红。
+    let masked = production_text(&scheduler);
+    let without_definition = masked.replacen("pub fn lock_conn_with_timeout(", "", 1);
     assert!(
-        !scheduler.contains(STANDARD_LOCK_LINE),
-        "备份调度域内不得再出现连接槽直锁（取用独占收在门面内，issue #1415）"
+        !without_definition.contains("lock_conn_with_timeout"),
+        "备份调度域内不得再回到自取槽锁的等待形态（取用独占收在门面内，issue #1415）：\
+         `lock_conn_with_timeout` 的余留消费面只有多端同步调度侧"
     );
 }
