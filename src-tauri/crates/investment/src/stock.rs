@@ -13,6 +13,8 @@
 //! 首个命中生效，大写归一）；4/8 开头为北交所代码，显式 400 暂不支持（另行
 //! 议题）；其余形态（字母数字混杂等）不推断。
 
+use std::future::Future;
+
 use rusqlite::params;
 
 use super::crud;
@@ -217,20 +219,26 @@ pub fn resolve_add_stock_channel(channel: &str) -> Result<Option<&'static str>> 
 
 /// 「添加投资标的」查询阶段（issue #697，spec #690 唯一接缝的 IPC 侧编排，注入
 /// 形态与基金按代码即拉接缝同构——行情接入查询半边的统一签名
-/// `(代码, 市场) → Result<Quote>`，ADR-0103 决策 2）：通道解析 → 候选解析
+/// `(代码, 市场) → Result<Quote>`，ADR-0103 决策 2；async 形态 ADR-0125 决策 7 /
+/// issue #1413：闭包返回 future，网络等待以 `await` 表达）：通道解析 → 候选解析
 ///（全部拒绝路径在发起网络前，先例：基金代码格式校验）→ 按候选序遍历（未命中
 /// 继续、临时错误立即上抛，「哪些错误算未命中」谓词 [`is_stock_lookup_miss`]）。
-/// 本函数不触数据库：生产壳在连接锁外以生产拉取闭包驱动（慢闭包纪律，先例：
+/// 本函数不触数据库：生产壳在连接锁外以生产拉取闭包 await（慢闭包纪律，先例：
 /// `fetch_fund_quote_production`），测试与 BDD 以注入桩离线驱动。
-pub fn fetch_stock_quote_for_add<F>(channel: &str, code: &str, fetch: &mut F) -> Result<Quote>
+pub async fn fetch_stock_quote_for_add<F, Fut>(
+    channel: &str,
+    code: &str,
+    fetch: &mut F,
+) -> Result<Quote>
 where
-    F: FnMut(&str, &str) -> Result<Quote>,
+    F: FnMut(&str, &str) -> Fut,
+    Fut: Future<Output = Result<Quote>>,
 {
     let market = resolve_add_stock_channel(channel)?;
     let candidates = resolve_stock_quote_candidates(market, code)?;
     let mut last_miss: Option<AppError> = None;
     for candidate in &candidates {
-        match fetch(&candidate.code, candidate.market) {
+        match fetch(&candidate.code, candidate.market).await {
             Ok(quote) => return Ok(quote),
             Err(e) if is_stock_lookup_miss(&e) => last_miss = Some(e),
             Err(e) => return Err(e),

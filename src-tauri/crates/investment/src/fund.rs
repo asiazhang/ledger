@@ -12,6 +12,13 @@
 //! 测试与 BDD 以 stub 离线驱动（不依赖真实网络）；生产命令在锁外完成网络拉取后
 //! 调 [`adopt_fund_quote`] 落库（见 `commands::investment` 壳的 `add_fund_by_code`
 //! 命令）。
+//!
+//! 本接缝在 ADR-0125 决策 7 / issue #1413 的异步化中**保持同步形状**：接缝闭包
+//! 在全部消费方都是「锁外已拉取报价的同步回放」（生产）或离线桩（测试 / BDD），
+//! 不承载网络等待；真正的网络等待在生产入口（`fetch_fund_quote_production`）处
+//! 以 `await` 表达。而连接与拉取交织的形状一旦 async 化，连接守卫必然跨 `await`
+//! 持有（`&Connection` 跨 await 即非 Send，BDD 世界的锁亦然）——同步形状正是
+//! 「连接不跨网络等待」的结构保证。
 
 use rusqlite::Connection;
 

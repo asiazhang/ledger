@@ -219,30 +219,33 @@ fn toggle_stub(
 ) -> FundQuoteFetcher {
     Arc::new(move |code: &str| {
         calls.lock().unwrap().push(code.to_string());
-        if down.load(Ordering::SeqCst) {
-            return Err(AppError::Io("东财网络不可达".into()));
-        }
-        match hits.get(code) {
-            Some(hit) => Ok(ledger_investment::Quote {
-                code: code.to_string(),
-                name: hit.name.to_string(),
-                // 场外通道：价格已在访问层换算为万分之一元刻度，价格日期即净值日期。
-                price_cents: hit
-                    .nav
-                    .map(|(nav, _)| ledger_investment::prices::price_value_to_cents(nav)),
-                price_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
-                market: None,
-                kind_hint: None,
-                fund_class: Some(hit.fund_class.to_string()),
-                nav_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
-            }),
-            // 未命中形状与生产同源（码化 sync.fund-not-found，#1186），不回退裸 Invalid。
-            None => Err(AppError::codedp(
-                "sync.fund-not-found",
-                format!("查无基金代码 {code}，请核对后重试"),
-                &[code],
-            )),
-        }
+        let result = if down.load(Ordering::SeqCst) {
+            Err(AppError::Io("东财网络不可达".into()))
+        } else {
+            match hits.get(code) {
+                Some(hit) => Ok(ledger_investment::Quote {
+                    code: code.to_string(),
+                    name: hit.name.to_string(),
+                    // 场外通道：价格已在访问层换算为万分之一元刻度，价格日期即净值日期。
+                    price_cents: hit
+                        .nav
+                        .map(|(nav, _)| ledger_investment::prices::price_value_to_cents(nav)),
+                    price_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
+                    market: None,
+                    kind_hint: None,
+                    fund_class: Some(hit.fund_class.to_string()),
+                    nav_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
+                }),
+                // 未命中形状与生产同源（码化 sync.fund-not-found，#1186），不回退裸 Invalid。
+                None => Err(AppError::codedp(
+                    "sync.fund-not-found",
+                    format!("查无基金代码 {code}，请核对后重试"),
+                    &[code],
+                )),
+            }
+        };
+        // async 接缝（ADR-0125 决策 7 / issue #1413）：应答值装箱为立即就绪的 future。
+        crate::common::ready_quote(result)
     })
 }
 

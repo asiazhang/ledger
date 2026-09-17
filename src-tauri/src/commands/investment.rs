@@ -9,8 +9,9 @@
 //! 写命令经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
 //! 仪式（锁、事务、置脏、信号）内化单点，证据随闭包返回必达；读命令经
 //! `run_db`（形状乙，spec #498 / #503）。
-//! `add_fund_by_code` 的东财拉取（单请求叠加限流冷却重试最长可达分钟级）
-//! 经 `spawn_blocking` 在连接锁外先行完成，任何形状下不进锁（慢闭包纪律）。
+//! `add_fund_by_code` 的东财拉取（单请求叠加限流冷却重试最长可达分钟级）在
+//! 命令体直接 `await`（async 生产入口，ADR-0125 决策 7 / issue #1413），连接锁外
+//! 先行完成，任何形状下不进锁（慢闭包纪律）；`spawn_blocking` 包装已删。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -22,7 +23,7 @@ use crate::shell_support::read_entry::read_entry;
 use crate::shell_support::write_entry::{Outcome, write_entry};
 use ledger_currencies::{ExchangeRate, ExchangeRateInput};
 use ledger_infra::db::DbState;
-use ledger_infra::error::{AppError, Result};
+use ledger_infra::error::Result;
 use ledger_infra::signals::{WriteEvidence, WriteOp};
 use ledger_investment as investment_domain;
 use ledger_investment::{
@@ -261,14 +262,16 @@ pub async fn get_transaction_split(db: State<'_, DbState>, id: String) -> Result
 }
 
 /// IPC 命令：按 6 位基金代码即拉添加场外基金（issue #301 / ADR-0038）。
-/// 格式校验即刻拒绝（不发网络请求）→ 东财拉取（名称/分类/最新净值）经
-/// `spawn_blocking` 在连接锁外完成（单请求叠加限流冷却重试最长可达分钟级，
-/// 任何形状下不进锁，慢闭包纪律，与 `add_instrument_by_code` 同形）→ 落库
-/// 与信号经统一写入口（ADR-0073），编排经 `investment::add_fund_by_code_with`
-/// 同一接缝（拉取已在锁外完成，注入闭包直接回放结果，与测试/BDD 同一套
-/// 校验→拉取→落库实现）。落现价即广播价格失效信号（ADR-0031），未取到净值
-/// 仅建标的零信号（零变化不广播）；「是否发」判定单点在 signals 映射
-/// （ADR-0044 / issue #333），入口只传递证据。
+/// 格式校验即刻拒绝（不发网络请求）→ 东财拉取（名称/分类/最新净值）在命令体
+/// 直接 `await`（连接锁外，单请求叠加限流冷却重试最长可达分钟级，任何形状下
+/// 不进锁，慢闭包纪律；async 形态 ADR-0125 决策 7 / issue #1413：生产入口已
+/// async 化，`spawn_blocking` 包装与 JoinError 归一化删除）→ 落库与信号经统一
+/// 写入口（ADR-0073），编排经 `investment::add_fund_by_code_with` 同一接缝
+///（拉取已在锁外完成，注入闭包同步回放结果，与测试/BDD 同一套校验→拉取→落库
+/// 实现；接缝闭包不承载网络等待，同步形状即「连接不跨网络等待」的结构保证）。
+/// 落现价即广播价格失效信号（ADR-0031），未取到净值仅建标的零信号（零变化不
+/// 广播）；「是否发」判定单点在 signals 映射（ADR-0044 / issue #333），入口只
+/// 传递证据。
 #[tauri::command]
 pub async fn add_fund_by_code(
     db: tauri::State<'_, DbState>,
@@ -279,15 +282,10 @@ pub async fn add_fund_by_code(
     investment_domain::validate_fund_code(&code)?;
     let conn = db.write_handle();
     // 网络拉取在锁外：单请求叠加限流冷却重试最长可达分钟级，不阻塞其它命令
-    // （慢闭包纪律，形状与 `add_instrument_by_code` 同）。
-    let fetch_code = code.clone();
-    let quote = tauri::async_runtime::spawn_blocking(move || {
-        ledger_market_sync::fetch_fund_quote_production(&fetch_code)
-    })
-    .await
-    .map_err(|e| AppError::Io(format!("基金详情查询任务执行失败: {e}")))??;
+    // （慢闭包纪律）；async 生产入口直接 await，无阻塞包装。
+    let quote = ledger_market_sync::fetch_fund_quote_production(&code).await?;
     // 落库阶段经统一写入口：拉取已完成，闭包纯落库（编排单点：经接缝以已拉取
-    // 的报价驱动，注入闭包同值回放；统一注入签名为（代码，市场），场外基金
+    // 的报价驱动，注入闭包同步回放；统一注入签名为（代码，市场），场外基金
     // 无交易所市场，市场位不消费）。
     write_entry(
         "add_fund_by_code",
@@ -322,17 +320,19 @@ pub async fn add_instrument_by_code(
     code: String,
 ) -> Result<AddStockInstrumentResult> {
     let conn = db.write_handle();
-    // 查询阶段在锁外：网络往返不进锁（慢闭包纪律）；生产拉取闭包与同步域同一
-    // HTTP 层（主机池/重试/限流），未命中/临时错误以码化错误上抛给对话框分流。
-    let quote = tauri::async_runtime::spawn_blocking(move || {
-        // 统一注入签名（ADR-0103）：（代码，市场）——场内市场由候选解析单点产出。
-        let mut fetch = |code: &str, market: &str| {
-            ledger_market_sync::fetch_stock_quote_production(market, code)
-        };
-        investment_domain::fetch_stock_quote_for_add(&market, &code, &mut fetch)
-    })
-    .await
-    .map_err(|e| AppError::Io(format!("投资标的查询任务执行失败: {e}")))??;
+    // 查询阶段在锁外：网络往返不进锁（慢闭包纪律）；生产拉取闭包直接接 async
+    // 生产入口（与同步域同一 HTTP 层：主机池/重试/限流），查询编排（通道解析 →
+    // 候选遍历）在本命令体 await（ADR-0125 决策 7 / issue #1413：注入闭包返回
+    // future，`spawn_blocking` 包装与 JoinError 归一化删除），未命中/临时错误以
+    // 码化错误上抛给对话框分流。
+    let mut fetch = |code: &str, market: &str| {
+        // 统一注入签名（ADR-0103）：（代码，市场）——闭包同步段拷贝入参为自有
+        // 数据，future 无借用（与通道束闭包同款约定）。
+        let code = code.to_string();
+        let market = market.to_string();
+        async move { ledger_market_sync::fetch_stock_quote_production(&market, &code).await }
+    };
+    let quote = investment_domain::fetch_stock_quote_for_add(&market, &code, &mut fetch).await?;
     // 识别落库阶段经统一写入口：类型 = 行情 kind_hint（识别语义在投资域单点），
     // 证据随闭包返回必达（价格失效信号广播判定）。
     write_entry(
@@ -446,6 +446,70 @@ mod tests {
             "东财拉取（单请求叠加限流冷却重试最长可达分钟级）必须在 write_entry \
              之前完成——移回统一写入口闭包即在连接锁内执行网络等待，阻塞全应用 \
              IPC/HTTP 读写（ADR-0069 决策 4 / issue #1282）"
+        );
+        // 阻塞包装禁令（ADR-0125 决策 7 / issue #1413）：拉取在异步命令体内直接
+        // await，`spawn_blocking` 包装与 JoinError 归一化（「任务执行失败」错
+        // 误消息）不得回归——回归即把网络等待挪回阻塞池线程，异步上下文里重新
+        // 出现阻塞资源（#1403 同款纪律退化面）。
+        assert!(
+            !body.contains("spawn_blocking"),
+            "add_fund_by_code 不得回归 spawn_blocking 阻塞包装（ADR-0125 决策 7 / \
+             issue #1413）：async 生产入口在命令体直接 await"
+        );
+        assert!(
+            !body.contains("任务执行失败"),
+            "add_fund_by_code 不得回归 JoinError 归一化错误消息（ADR-0125 决策 7 / \
+             issue #1413）"
+        );
+    }
+
+    /// `add_instrument_by_code` 的查询阶段同款守门（ADR-0125 决策 7 / issue #1413）：
+    /// 生产拉取闭包直接接 async 生产入口（`fetch_stock_quote_production`），查询
+    /// 编排（`fetch_stock_quote_for_add`）在命令体 await——阻塞包装（同步闭包 +
+    /// `spawn_blocking` + JoinError 归一化）回归即红。行为分支触真实网络、测试面
+    /// 不可达，以源码扫描守门（先例 #959/#961，ADR-0087）；掩码器具复用
+    /// `signals_cross_check`，规则无第二份。
+    #[test]
+    fn instrument_query_uses_async_production_entry_without_blocking_wrapper() {
+        let text = crate::signals_cross_check::mask_non_code(include_str!("investment.rs"));
+        let fn_anchor = text
+            .find("pub async fn add_instrument_by_code(")
+            .expect("add_instrument_by_code 命令应在位");
+        let body_start = fn_anchor + text[fn_anchor..].find('{').expect("命令体应有大括号");
+        let mut depth = 0usize;
+        let mut body_end = text.len();
+        for (idx, ch) in text[body_start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        body_end = body_start + idx + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let body = &text[body_start..body_end];
+        assert_eq!(
+            body.matches("fetch_stock_quote_production(").count(),
+            1,
+            "股票生产拉取入口在命令体内应恰出现一次（查询闭包直呼生产入口，接线不被绕过）"
+        );
+        assert!(
+            body.contains("fetch_stock_quote_for_add("),
+            "查询编排应经投资域接缝 fetch_stock_quote_for_add（spec #690 唯一接缝）"
+        );
+        assert!(
+            !body.contains("spawn_blocking"),
+            "add_instrument_by_code 不得回归 spawn_blocking 阻塞包装（ADR-0125 决策 7 / \
+             issue #1413）：async 生产入口在命令体直接 await"
+        );
+        assert!(
+            !body.contains("任务执行失败"),
+            "add_instrument_by_code 不得回归 JoinError 归一化错误消息（ADR-0125 决策 7 / \
+             issue #1413）"
         );
     }
 }

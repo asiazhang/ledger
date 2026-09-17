@@ -1,14 +1,13 @@
 //! 行情 HTTP 网络层（issue #89）：东财行情接口请求、多主机切换、重试与限流冷却、
 //! 响应解析。与数据库无关，可独立测试（见 `tests.rs` 中本地 HTTP 服务用例）。
 //! 客户端与等待原语为异步形态（reqwest async / 异步睡眠 / 异步互斥体，issue #1411
-//! / ADR-0125 决策 5/6）；同步编排与通道束闭包已随 #1412 直接 `.await`，同步桥
-//! 只余两壳生产入口（`fetch_stock_quote_production` / `fetch_fund_quote_production`，
-//! 接缝 async 化随 issue #1413）在用。
+//! / ADR-0125 决策 5/6）；同步编排与通道束闭包已随 #1412 直接 `.await`，两壳生产
+//! 入口与投资域注入闭包已随 #1413 async 化，#1411 过渡同步桥拆除——本层生产面
+//! 不再有任何阻塞驱动点。
 //! 标的全量同步（clist 分页爬取）已随 ADR-0081 决策 3 退役删除（issue #698），
 //! 本层现服务增量同步批量报价、单点行情、日 K 与基金净值通道。
 
 use std::collections::HashMap;
-use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -222,21 +221,6 @@ pub(super) async fn wait_foreground_idle() {
 /// 不占用调用线程。
 async fn sleep(duration: Duration) {
     tokio::time::sleep(duration).await;
-}
-
-/// 过渡期同步桥（ADR-0125 决策 5/6，余留面）：异步 HTTP 核心在同步调用方
-///（两壳生产入口 `fetch_stock_quote_production` / `fetch_fund_quote_production`
-/// ——投资域注入接缝与 HTTP 壳的同步签名，async 化随 issue #1413）与测试驱动
-/// 处经全局运行时驱动到完成。
-///
-/// 调用约束：底层 `Runtime::block_on` **不得从运行时 worker 线程调用**（会
-/// panic「Cannot start a runtime from within a runtime」）。当前全部调用点都在
-/// `spawn_blocking` 闭包或 `std::thread` 专用线程上（阻塞池线程只 `Handle::enter`
-/// 而不置 runtime-entered，故安全）；新增调用点若沿异步任务路径触达本桥即运行时
-/// panic，接线时须核对。`tauri::async_runtime::safe_block_on` 能承接该判断，但为
-/// crate 私有不可用。
-pub(super) fn block_on<F: Future>(future: F) -> F::Output {
-    tauri::async_runtime::block_on(future)
 }
 
 /// 行情接口返回的单个股票条目（字段 f12=代码, f14=名称, f2=价格原始值, f1=价格精度位）。

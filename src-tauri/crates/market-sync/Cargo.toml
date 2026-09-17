@@ -21,9 +21,9 @@ ledger-investment = { path = "../investment" }
 # 数据面惯用库：HTTP 抓取（reqwest 异步客户端，issue #1411 / ADR-0125 决策 5：
 # 不再自持运行时线程）、报文解析、连接与日志。`tauri` 只为进度发射器接缝的生产实现
 # （`ProgressEmitter for AppHandle`，由壳层传入的句柄投递主线程事件循环，ADR-0054 /
-# ADR-0095）与过渡期同步桥（`async_runtime::block_on`，#1412 编排 async 化后只余
-# 两壳生产入口与测试驱动在用，随 #1413 拆除）——先例：ledger-backup 同持
-# `tauri`；本 crate 不消费壳层 `commands` 面。
+# ADR-0095）与全局运行时异步执行器（两条后台车道的 `async_runtime::spawn`，
+# ADR-0125 决策 7 / issue #1413）——先例：ledger-backup 同持 `tauri`；本 crate
+# 不消费壳层 `commands` 面。
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
 # 异步互斥体（pacer 跨 `.await` 持有，ADR-0125 决策 6）与异步睡眠（限速 / 退避 /
 # 让行）。运行时由 tauri 全局运行时提供（本 crate 不自建运行时）。

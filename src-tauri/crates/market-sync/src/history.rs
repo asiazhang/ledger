@@ -22,7 +22,8 @@
 //!   带出（issue #1061 的明细随首刷深回填迁入本任务），并登记走势空态三态
 //!   的判据输入（轮次计数与尝试结局，投资域 [`ledger_investment::backfill`]）。
 //! - **调度**（[`start_history_backfill`]）：启动后延迟一轮 + 每个自然日窗口
-//!   各一轮的巡检线程；每轮门检锁定/启动失败（先例：自动备份调度）；启动
+//!   各一轮的巡检任务（挂全局运行时的 async 任务，ADR-0125 决策 7 / #1413）；
+//!   每轮门检锁定/启动失败（先例：自动备份调度）；启动
 //!   接线在壳层后台服务编排单点（issue #961 名单）。
 //!
 //! 与手动同步的解耦关系（issue #1377 收尾）：手动同步只刷现价（含当周采样点
@@ -72,7 +73,7 @@ use ledger_investment::prices::{
 /// 每日现价刷新（[`super::daily_refresh`]）与同一节奏（同形调度，issue #1377）。
 pub(super) const STARTUP_DELAY: Duration = Duration::from_secs(30);
 
-/// 自然日窗口的巡检周期：线程低频醒来比对北京日历日，跨日即跑当天的窗口。
+/// 自然日窗口的巡检周期：任务低频醒来比对北京日历日，跨日即跑当天的窗口。
 /// 与自动备份调度、多端同步轮询同一「低频」品味（分钟级间隔，代价为零——
 /// 每次巡检只做一次日期比对）。
 pub(super) const WINDOW_POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -456,8 +457,8 @@ where
 /// 网络等待发生在段与段之外且不占用 DB 线程（与命令壳同一接缝、同一纪律；
 /// 先例：多端同步调度侧 `AutoRoundConn`）。后台车道的连接取用不再直锁连接槽
 ///（ADR-0125 决策 5）；每日现价刷新（[`super::daily_refresh`]）共用同一形态。
-/// 调度线程仍是自建 OS 线程（转 async 任务归后续票 M2-3），经全局运行时驱动
-/// async 编排（[`tauri::async_runtime::block_on`]，专用线程上调用安全）。
+/// 车道本体已是挂全局运行时的 async 任务（已随 #1413 转为，ADR-0125 决策 7），
+/// 编排直接在任务上 `await`。
 ///
 /// 后台补全进度发射的壳层接线（与命令壳 `progress_to_emitter` 同型）：把编排
 /// 的进度回调接到后台补全事件发射器（非阻塞投递，发射失败静默）。
@@ -494,8 +495,10 @@ impl Default for BackfillTimings {
 }
 
 /// 价格历史后台补全的启动入口（壳层后台服务编排单点调用，issue #961 名单）：
-/// 进程级单次拉起（原位重引导重复调用幂等，ADR-0080），spawned 线程自持
-/// 「启动延迟一轮 + 每自然日窗口一轮」的巡检循环。
+/// 进程级单次拉起（原位重引导重复调用幂等，ADR-0080），async 任务自持
+/// 「启动延迟一轮 + 每自然日窗口一轮」的巡检循环（挂全局运行时，ADR-0125
+/// 决策 7 / issue #1413：启动延迟与自然日窗口用异步定时，不再自建 OS 线程；
+/// 执行器 = `tauri::async_runtime`）。
 pub fn start_history_backfill<R: Runtime>(app: &AppHandle<R>) {
     start_history_backfill_with(app, BackfillTimings::default());
 }
@@ -510,10 +513,10 @@ pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: Back
     let gate = EncryptionGate::clone(&app.state::<EncryptionGate>());
     let boot_gate = BootFailureGate::clone(&app.state::<BootFailureGate>());
     let handle = app.clone();
-    std::thread::spawn(move || {
-        // 启动延迟（issue #1375）：让出启动期再开始第一轮；应用退出即线程随
+    tauri::async_runtime::spawn(async move {
+        // 启动延迟（issue #1375）：让出启动期再开始第一轮；应用退出即任务随
         // 进程硬停，无需优雅关闭（单只原子保证中断不留半根历史）。
-        std::thread::sleep(timings.startup_delay);
+        tokio::time::sleep(timings.startup_delay).await;
         let mut last_round_date: Option<NaiveDate> = None;
         loop {
             // 每轮门检（先例：自动备份调度，issue #644 / ADR-0080）：锁定/
@@ -523,10 +526,10 @@ pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: Back
                 let today = beijing_today();
                 if last_round_date != Some(today) {
                     last_round_date = Some(today);
-                    run_backfill_round_gated(&handle);
+                    run_backfill_round_gated(&handle).await;
                 }
             }
-            std::thread::sleep(timings.window_poll);
+            tokio::time::sleep(timings.window_poll).await;
         }
     });
 }
@@ -534,16 +537,17 @@ pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: Back
 /// 跑一轮补全（通道束换装 + 会话 + 见证 + 收尾裁决的单轮编排）：测试桩束优先
 ///（[`BackfillChannelsSlot`] 管理态），生产每轮建后台车道束（请求前让行前台、
 /// 共享全局限速器）。失败静默等下一窗口（无用户可报，先例：自动轮次）。async
-/// 编排经全局运行时在调度线程上驱动到完成（issue #1412）。
-fn run_backfill_round_gated<R: Runtime>(app: &AppHandle<R>) {
+/// 形态（ADR-0125 决策 7 / issue #1413）：编排直接在车道 async 任务上 `await`，
+/// 不再经全局运行时跨线程驱动。
+async fn run_backfill_round_gated<R: Runtime>(app: &AppHandle<R>) {
     let write = app.state::<DbState>().write_handle();
     let slot = app.try_state::<BackfillChannelsSlot>().map(|s| s.0.clone());
     let (result, any_written) = match slot {
-        Some(arc) => tauri::async_runtime::block_on(run_round_with_channels(app, &write, &arc)),
+        Some(arc) => run_round_with_channels(app, &write, &arc).await,
         None => match SyncFetchChannels::production_backfill() {
             Ok(channels) => {
                 let channels = tokio::sync::Mutex::new(channels);
-                tauri::async_runtime::block_on(run_round_with_channels(app, &write, &channels))
+                run_round_with_channels(app, &write, &channels).await
             }
             Err(error) => (Err(error), false),
         },
@@ -552,8 +556,9 @@ fn run_backfill_round_gated<R: Runtime>(app: &AppHandle<R>) {
     // 整体裁决（issue #1277 成败同判同形）：本轮实际写过价格数据 → 提交点
     // 置脏一次 + 发既有价格失效信号，消费方由信号驱动重拉；零写入（队列空/
     // 全部无新点/失败未写过）不置脏不广播。置脏失败记日志不静默吞运行结果。
+    // 置脏经门面异步作业投递（车道已是 async 任务，不再用阻塞等待形态）。
     if any_written {
-        if let Err(error) = write.run_blocking("history_backfill", |_| Ok(())) {
+        if let Err(error) = write.run("history_backfill", |_| Ok(())).await {
             tracing::warn!(%error, "历史补全收尾置脏失败（脏标记待下次写入补上）");
         }
         emit_for(

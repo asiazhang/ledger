@@ -350,7 +350,7 @@ fn nav_page_fetch_sends_referer_and_parses() {
         end_date: "2026-08-29".into(),
         page: 1,
     };
-    let page = crate::http::block_on(fetch_nav_page_from(
+    let page = tauri::async_runtime::block_on(fetch_nav_page_from(
         &client,
         &mut pacer,
         &query,
@@ -387,7 +387,7 @@ fn request_json_from_hosts_accepts_referer_argument() {
     let (url, heads) = spawn_header_capture_server(r#"{"ok":1}"#.to_string());
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let _: serde_json::Value = crate::http::block_on(request_json_from_hosts(
+    let _: serde_json::Value = tauri::async_runtime::block_on(request_json_from_hosts(
         &client,
         &[("k", "v")],
         "/x",
@@ -417,7 +417,7 @@ fn nav_full_series_fetch_reads_single_file() {
     let (url, heads) = spawn_header_capture_server(REAL_PINGZHONG_SNIPPET.to_string());
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let points = crate::http::block_on(fetch_nav_full_series_from(
+    let points = tauri::async_runtime::block_on(fetch_nav_full_series_from(
         &client,
         &mut pacer,
         "110022",
@@ -457,7 +457,7 @@ fn nav_full_series_fetch_untrusted_body_errors_for_fallback() {
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     assert!(
-        crate::http::block_on(fetch_nav_full_series_from(
+        tauri::async_runtime::block_on(fetch_nav_full_series_from(
             &client,
             &mut pacer,
             "110022",
@@ -474,7 +474,7 @@ fn nav_full_series_serves_money_fund_from_income_series() {
     let (url, _) = spawn_header_capture_server(MONEY_FUND_ARCHIVE_JS.to_string());
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let points = crate::http::block_on(fetch_nav_full_series_from(
+    let points = tauri::async_runtime::block_on(fetch_nav_full_series_from(
         &client,
         &mut pacer,
         "000905",
@@ -511,7 +511,7 @@ fn nav_full_series_prefers_net_worth_trend_when_both_series_exist() {
     let (url, _) = spawn_header_capture_server(both);
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let points = crate::http::block_on(fetch_nav_full_series_from(
+    let points = tauri::async_runtime::block_on(fetch_nav_full_series_from(
         &client,
         &mut pacer,
         "110022",

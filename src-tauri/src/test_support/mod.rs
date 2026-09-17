@@ -79,12 +79,23 @@ pub use seed::{
     seed_price_history,
 };
 
+use std::future::Future;
+
 use rusqlite::Connection;
 
 /// 夹具簿记戳的统一固定时刻（ADR-0084 决策 5）：种子的 created_at/updated_at 等
 /// 非行为输入列由工厂内部发放此值，调用点不再出现默认时刻字面量；域时刻是测试的
 /// 行为输入，经种子参数显式传入、默认值引用本常量。
 pub const FIXED_NOW: &str = "2026-01-01T00:00:00Z";
+
+/// 同步测试驱动 async 域接缝的唯一入口（ADR-0125 决策 5/7）：域编排 async 化后
+///（issue #1412/#1413），同步 `#[test]` 经全局运行时（tauri::async_runtime）把
+/// async 调用驱动到完成——先用例 investment 域的 `add_fund_by_code_with` /
+/// `fetch_stock_quote_for_add`（issue #1413）。跨 ≥2 域复用（investment /
+/// sync-engine），按准入规则收编；测试线程不在任何运行时上下文内，驱动安全。
+pub fn block_on<F: Future>(future: F) -> F::Output {
+    tauri::async_runtime::block_on(future)
+}
 
 /// 零配置打开已初始化的内存测试库：`db::open_in_memory()`（外键 + perf hook）+
 /// `db::init_db()`（迁移 + 默认种子）两行序的唯一承载（ADR-0084 决策 3：建库的

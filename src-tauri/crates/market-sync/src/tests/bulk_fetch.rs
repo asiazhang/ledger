@@ -77,7 +77,7 @@ fn name_dictionary_fetch_reads_the_static_data_file() {
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
 
-    let dictionary = crate::http::block_on(fetch_fund_name_dictionary_from(
+    let dictionary = tauri::async_runtime::block_on(fetch_fund_name_dictionary_from(
         &client,
         &mut pacer,
         &[url.as_str()],
@@ -101,7 +101,7 @@ fn nav_table_fetch_sends_referer_and_pulls_the_whole_market_page() {
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
 
-    let table = crate::http::block_on(fetch_fund_nav_table_from(
+    let table = tauri::async_runtime::block_on(fetch_fund_nav_table_from(
         &client,
         &mut pacer,
         &[url.as_str()],
@@ -137,7 +137,7 @@ fn blocked_pages_fail_closed_instead_of_reporting_no_coverage() {
     let mut pacer = Pacer::new(baseline);
 
     assert!(
-        crate::http::block_on(fetch_fund_name_dictionary_from(
+        tauri::async_runtime::block_on(fetch_fund_name_dictionary_from(
             &client,
             &mut pacer,
             &[url.as_str()]
@@ -152,7 +152,7 @@ fn blocked_pages_fail_closed_instead_of_reporting_no_coverage() {
     );
     let after_blocks = pacer.interval();
     assert!(
-        crate::http::block_on(fetch_fund_nav_table_from(
+        tauri::async_runtime::block_on(fetch_fund_nav_table_from(
             &client,
             &mut pacer,
             &[url.as_str()]

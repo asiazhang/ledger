@@ -21,7 +21,7 @@ use super::fund_nav::{
     FundArchive, MONEY_FUND_UNIT_NAV, PINGZHONG_HOSTS, fetch_fund_archive_from,
     is_money_fund_type_code,
 };
-use super::http::{Pacer, RetryConfig, block_on, build_client, request_json_from_hosts};
+use super::http::{Pacer, RetryConfig, build_client, request_json_from_hosts};
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::Quote;
 use ledger_investment::prices::price_value_to_cents;
@@ -243,13 +243,11 @@ fn fund_not_found(code: &str) -> AppError {
 }
 
 /// 生产拉取入口：构建客户端与限流器后执行单次详情查询（不经数据库连接，
-/// 供 IPC 命令在获取连接锁之前完成网络往返，避免长限流重试阻塞其它命令）。
-/// 过渡期同步桥（ADR-0125 决策 5/6）：异步 HTTP 核心经全局运行时驱动；壳层
-/// 接缝 async 化（issue #1413）后本入口改 async、桥删除。
-pub fn fetch_fund_quote_production(code: &str) -> Result<Quote> {
+/// 供两壳在连接锁外完成网络往返，避免长限流重试阻塞其它命令）。async 形态
+///（ADR-0125 决策 5/7，issue #1413）：网络等待以 `await` 表达，在异步上下文
+/// 内直接可调，#1411 的过渡同步桥已随接缝 async 化拆除。
+pub async fn fetch_fund_quote_production(code: &str) -> Result<Quote> {
     let client = build_client()?;
-    block_on(async {
-        let mut pacer = Pacer::default();
-        fetch_fund_quote(&client, &mut pacer, code).await
-    })
+    let mut pacer = Pacer::default();
+    fetch_fund_quote(&client, &mut pacer, code).await
 }

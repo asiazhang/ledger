@@ -16,25 +16,18 @@ use ledger_investment::{
 };
 
 /// 东财股票行情获取（查询端点与创建增强、添加投资标的壳共用，issue #693）：
-/// 测试注入桩直接同步调用（离线驱动）；生产路径经 `spawn_blocking` 在连接锁外
-/// 完成阻塞网络往返（单请求叠加限流冷却重试最长可达分钟级，先例：
-/// `fetch_fund_quote_for_api`，网络往返不进连接锁）。
+/// 测试注入桩直接在异步上下文 await（离线驱动）；生产路径为 async 生产入口
+/// 直接 `await`（连接锁外完成网络往返，单请求叠加限流冷却重试最长可达分钟级，
+/// 先例：`fetch_fund_quote_for_api`，网络往返不进连接锁；async 形态 ADR-0125
+/// 决策 7 / issue #1413，`spawn_blocking` 包装与 JoinError 归一化删除）。
 pub async fn fetch_stock_quote_for_api(
     state: &ApiState,
     market: &str,
     code: &str,
 ) -> Result<Quote, AppError> {
     match &state.stock_fetch {
-        Some(fetch) => fetch(market, code),
-        None => {
-            let market = market.to_string();
-            let code = code.to_string();
-            tauri::async_runtime::spawn_blocking(move || {
-                ledger_market_sync::fetch_stock_quote_production(&market, &code)
-            })
-            .await
-            .map_err(|e| AppError::Io(format!("股票行情查询任务执行失败: {e}")))?
-        }
+        Some(fetch) => fetch(market, code).await,
+        None => ledger_market_sync::fetch_stock_quote_production(market, code).await,
     }
 }
 
