@@ -1,11 +1,8 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  DEEP_MODULE_BOUNDARIES,
-  SCRIPT_INVOCATION,
-} from '../scripts/check-frontend-structure.ts'
+import { DEEP_MODULE_BOUNDARIES } from '../scripts/check-frontend-structure.ts'
+import { cleanupFixtureRepos, fixtureRepo } from './check-frontend-structure.fixture.ts'
 import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-frontend-structure.ts 的规则⑦「深模块边界
@@ -18,50 +15,15 @@ import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 // [packages-manifest.json]），夹具登记表经 arg2 JSON 注入空表隔离规则①—⑤，规则⑦
 // 登记表不可注入（生产 DEEP_MODULE_BOUNDARIES 单一事实源，对夹具目录扫描，与规则⑥
 // 同形制）。
+// 夹具仓库根 builder 住共享辅助 ./check-frontend-structure.fixture.ts（issue #1435：
+// 与 src/__tests__ 侧两份手写副本收敛为单份，规则⑥⑦登记项按生产登记表迭代创建，
+// 新增登记项夹具零编辑；本文件显式注入空登记表隔离规则①—⑤）。
 const script = gateScript('check-frontend-structure.ts')
 const run = (args: string[]) => runGateScript(script, args)
 
-const tempDirs: string[] = []
 afterAll(() => {
-  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
+  cleanupFixtureRepos()
 })
-
-/** 规则⑦ 夹具仓库根：其余规则的最小绿基线（空包登记表注入 + 接线宿主 + 规则⑥登记
- *  目录 src/utils）+ 登记模块本体（生产登记表不可注入，夹具绿基线须自足含全部登记项：
- *  src/transaction/useTransactionFilter.ts 与 src/investment/useInstrumentSearch.ts，
- *  #1308 起后者入表；默认创建；omitModule = 「登记模块不存在」靶形）。返回 spawnSync args。 */
-function fixtureRepo(opts: { omitModule?: boolean } = {}): string[] {
-  const root = mkdtempSync(join(tmpdir(), 'check-frontend-structure-rule7-'))
-  tempDirs.push(root)
-  writeFileSync(
-    join(root, 'pnpm-workspace.yaml'),
-    ['packages:', '  # 夹具注释', '  - packages/*', 'allowBuilds:', '  esbuild: true'].join('\n') +
-      '\n',
-  )
-  mkdirSync(join(root, 'packages'), { recursive: true })
-  writeFileSync(join(root, 'fixture-manifest.json'), JSON.stringify([], null, 2))
-  mkdirSync(join(root, 'scripts'), { recursive: true })
-  writeFileSync(join(root, 'scripts', 'check.sh'), `#!/bin/sh\n${SCRIPT_INVOCATION}\n`)
-  mkdirSync(join(root, '.github', 'workflows'), { recursive: true })
-  writeFileSync(
-    join(root, '.github', 'workflows', 'build.yml'),
-    `jobs:\n  frontend:\n    steps:\n      - name: 前端结构守门检查\n        run: ${SCRIPT_INVOCATION}\n`,
-  )
-  mkdirSync(join(root, 'src', 'utils'), { recursive: true })
-  if (!opts.omitModule) {
-    mkdirSync(join(root, 'src', 'transaction'), { recursive: true })
-    writeFileSync(
-      join(root, 'src', 'transaction', 'useTransactionFilter.ts'),
-      'export const useTransactionFilter = () => ({})\n',
-    )
-    mkdirSync(join(root, 'src', 'investment'), { recursive: true })
-    writeFileSync(
-      join(root, 'src', 'investment', 'useInstrumentSearch.ts'),
-      'export const useInstrumentSearch = () => ({})\n',
-    )
-  }
-  return [root, join(root, 'fixture-manifest.json')]
-}
 
 /** 向夹具写入源文件（路径相对夹具根，posix 分隔） */
 function writeSource(root: string, rel: string, source: string): void {
@@ -86,8 +48,18 @@ describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', 
     ])
   })
 
+  it('夹具绿基线自足：全部登记模块文件在夹具内就位（#1435：登记表迭代创建，登记项增长夹具零编辑）', () => {
+    const args = fixtureRepo({ manifest: [] })
+    for (const entry of DEEP_MODULE_BOUNDARIES) {
+      expect(
+        existsSync(join(args[0] as string, ...entry.module.split('/'))),
+        `夹具缺登记模块：${entry.module}`,
+      ).toBe(true)
+    }
+  })
+
   it('白名单内消费绿（src/views 消费面：TransactionsView / ReportsView 形态）', () => {
-    const args = fixtureRepo()
+    const args = fixtureRepo({ manifest: [] })
     writeSource(
       args[0] as string,
       'src/views/TransactionsView.vue',
@@ -98,7 +70,7 @@ describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', 
   })
 
   it('白名单外消费即红：报告消费方文件、行号、被消费模块与白名单（失败信息可读）', () => {
-    const args = fixtureRepo()
+    const args = fixtureRepo({ manifest: [] })
     const root = args[0] as string
     writeSource(
       root,
@@ -114,7 +86,7 @@ describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', 
   })
 
   it('相对路径形态同样命中（解析落点比对，非仅 @/ 别名文本）', () => {
-    const args = fixtureRepo()
+    const args = fixtureRepo({ manifest: [] })
     writeSource(
       args[0] as string,
       'src/components/Drilldown.vue',
@@ -127,7 +99,7 @@ describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', 
   })
 
   it('测试文件消费放行（单测引用被测对象是天然形态，白名单表达生产消费面）', () => {
-    const args = fixtureRepo()
+    const args = fixtureRepo({ manifest: [] })
     writeSource(
       args[0] as string,
       'src/__tests__/useTransactionFilter.test.ts',
@@ -138,7 +110,7 @@ describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', 
   })
 
   it('注释中的 import 形态不误报（复用注释掩码机制）', () => {
-    const args = fixtureRepo()
+    const args = fixtureRepo({ manifest: [] })
     writeSource(
       args[0] as string,
       'src/components/Legacy.vue',
@@ -149,7 +121,7 @@ describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', 
   })
 
   it('登记模块文件不存在即红（模块改名/删除后拒绝规则静默失效，同规则⑥形制）', () => {
-    const r = run(fixtureRepo({ omitModule: true }))
+    const r = run(fixtureRepo({ manifest: [], omitModule: true }))
     expect(r.status).toBe(1)
     expect(r.output).toContain('深模块边界')
     expect(r.output).toContain('登记模块不存在')

@@ -180,8 +180,8 @@ fn reads_return_current_data_while_sync_in_flight() {
         });
     }
 
-    // 同步在途：独立线程 block_on 驱动命令（写入口 → run_db 阻塞线程池与
-    // 生产同链），批量报价门未放行前同步持续在途。
+    // 同步在途：独立线程 block_on 驱动命令（与生产同链：async 命令任务 → 门面
+    // 写槽作业），批量报价门未放行前同步持续在途。
     let sync_handle = app.handle().clone();
     let sync_worker = std::thread::spawn(move || {
         tauri::async_runtime::block_on(sync::sync_instrument_info(
@@ -543,14 +543,16 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
     );
 }
 
-/// 生产通道束构造路径的负向判据（issue #1403）：命令壳**不注入**桩通道束时
-/// （生产分支）必须在阻塞线程上构造生产束并正常返回——空库在编排里早退
-///（「暂无标的可同步」），生产束只被构造、不发任何网络请求，故断言确定性成立。
-/// 把构造放回异步上下文（tokio worker / `block_on` 所在线程），reqwest 阻塞
-/// 客户端在 debug 构建下的断言即在构造点 panic，本测试变红（修复前已在本机
-/// 红过）——「删除接线即变红」的负向半边（ADR-0087 断言强度）。
+/// 生产通道束构造路径的覆盖测试（issue #1403）：命令壳**不注入**桩通道束时
+/// （生产分支）须正常走完「构造生产束 → 空库早退」（「暂无标的可同步」），
+/// 生产束只被构造、不发任何网络请求，故断言确定性成立。
+///
+/// 本测试的身世：#1404 时代它是负向判据——构造回异步上下文会撞 reqwest 阻塞
+/// 客户端的 debug 断言 panic。阻塞客户端退役（#1411/#1413，ADR-0125 决策 9）后
+/// panic 形态不再存在，判据按 ADR-0125 决策 8 的「生产分支覆盖」收口：生产行为
+/// 分支（不注入桩）必须留在测试面可达处，防止纪律退化沿不可达分支合入主干。
 #[test]
-fn production_channels_construct_outside_async_context_on_empty_db() {
+fn production_channels_branch_runs_empty_db_to_early_exit() {
     isolate_home();
     // 提交点后置动作与交易域接缝接线（与上两测同形，幂等）。
     ledger_backup::install_after_commit_hook();

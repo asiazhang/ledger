@@ -5534,7 +5534,6 @@ dependencies = [
  "objc2-local-authentication",
  "pinyin",
  "regex",
- "reqwest",
  "rusqlite",
  "rusqlite_migration",
  "security-framework",

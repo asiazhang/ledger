@@ -37,7 +37,9 @@ thiserror = "2.0.18"
 tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 axum = "0.8"
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
+# reqwest 不在本包依赖里：行情 HTTP 面住 ledger-market-sync（reqwest async，
+# issue #1411 / ADR-0125 决策 5），壳层对数据源零直连；阻塞形态的依赖声明
+#（含 blocking feature）随收尾票 #1414 移除，生产图内不再激活 blocking。
 tracing = "0.1"
 # 日志等级运行期 reload（spec #608）：`tracing-subscriber` 的 `reload` 模块在
 # std 下无条件可用；本版本（0.3.23）无独立 `reload` feature（可用 features 见解析）。

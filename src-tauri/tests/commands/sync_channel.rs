@@ -481,9 +481,9 @@ async fn parked_ops_are_visible_through_command_surface() {
 
 /// 对端投递一条引用不存在账户的 op（段 + manifest 两条真实通道写）。
 ///
-/// 走独立 OS 线程：reqwest 阻塞客户端在 tokio 运行时内构造/析构会 panic
-///（「Cannot drop a runtime in a context where blocking is not allowed」）——
-/// 与产品侧把阻塞 IO 放进阻塞线程池同一语义（ADR-0069 / 壳层 `sync_now` 形态）。
+/// 走独立 OS 线程：S3 传输桥的真 HTTP 往返与阻塞等待（多端同步域异步化 #1405
+/// 另案前传输面同步形态）不得占用 tokio 运行时线程——与产品侧把阻塞 IO 放进
+/// 阻塞线程池同一语义（ADR-0069 / 壳层 `sync_now` 形态）。
 fn deliver_unreplayable_op(config: SyncChannelConfig) {
     std::thread::spawn(move || deliver_unreplayable_op_blocking(&config))
         .join()
