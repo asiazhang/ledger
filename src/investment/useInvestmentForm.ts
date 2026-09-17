@@ -12,11 +12,11 @@ import {
 import { judgeQuantityText, judgePriceText } from '@ledger/utils/field-error'
 import { useFieldErrors } from '@ledger/field-errors'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
-import { createLatestWinsGuard } from '@/composables/latest-wins'
+import { useInstrumentSearch } from '@/investment/useInstrumentSearch'
 import { buildTradeInput } from '@/transaction/transaction-input'
 import { errorMessage } from '@ledger/utils/errors'
 import { useAppStore } from '@/stores/app'
-import type { Instrument, Transaction, TransactionTrade } from '@ledger/types'
+import type { Transaction, TransactionTrade } from '@ledger/types'
 
 export function useInvestmentForm(
   kind: 'buy' | 'sell',
@@ -68,11 +68,11 @@ export function useInvestmentForm(
     return account?.currency_code ?? app.defaultCurrency
   })
 
-  const instruments = ref<Instrument[]>([])
-  const searchingInstruments = ref(false)
-  let searchTimer: ReturnType<typeof setTimeout> | undefined
-  /** 搜索在途竞态纪元（issue #1401）：每次输入开启新纪元，迟到旧纪元结果不落位 */
-  const searchEpoch = createLatestWinsGuard()
+  // 标的远程搜索编排收口 useInstrumentSearch（issue #1308）：防抖、空查询清空、
+  // 吞错与在途纪元（#1401）内化于模块；本层消费原始标的候选与在途标志，
+  // options 投影与基金判定仍属表单领域形态（grilling 决策 4），对外成员名不变。
+  const { items: instruments, searching: searchingInstruments, search: searchInstruments } =
+    useInstrumentSearch()
 
   // 投资账户谓词单点收口在参考 store（与盈亏页账户下拉同源，词汇表 RealizedPnl 词条）
   const investmentAccountOptions = computed(() =>
@@ -201,32 +201,6 @@ export function useInvestmentForm(
       : quantityValue.value * priceValue.value - feeValue
     return Math.round(raw * 100) / 100
   })
-
-  /** 远程搜索标的（防抖），不前端全量驻留。每次输入即开启新纪元（issue #1401）：
-   *  此前发出的在途请求随之过期，清空输入后其迟到结果也不再填回候选列表。 */
-  function searchInstruments(query: string) {
-    const myEpoch = searchEpoch.start()
-    clearTimeout(searchTimer)
-    searchTimer = setTimeout(async () => {
-      if (!searchEpoch.isCurrent(myEpoch)) return
-      if (!query.trim()) {
-        instruments.value = []
-        searchingInstruments.value = false
-        return
-      }
-      searchingInstruments.value = true
-      try {
-        const res = await api.listInstruments({ search: query.trim(), page_size: 50 })
-        if (!searchEpoch.isCurrent(myEpoch)) return
-        instruments.value = res.items
-      } catch {
-        if (!searchEpoch.isCurrent(myEpoch)) return
-        instruments.value = []
-      } finally {
-        if (searchEpoch.isCurrent(myEpoch)) searchingInstruments.value = false
-      }
-    }, 300)
-  }
 
   async function submit() {
     // 保存尝试即触发空值兜底红态（fieldErrorKind 的 saveAttempted 输入）

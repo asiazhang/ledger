@@ -2,7 +2,7 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from '@ledger/api'
 import { useLoadable } from '@ledger/loadable'
 import { useReferenceStore } from '@/stores/reference'
-import { createLatestWinsGuard } from '@/composables/latest-wins'
+import { useInstrumentSearch } from '@/investment/useInstrumentSearch'
 import type { RealizedPnlSummary } from '@ledger/types'
 
 /**
@@ -12,8 +12,9 @@ import type { RealizedPnlSummary } from '@ledger/types'
  * 错误展示（默认 toast + error 双通道）、竞态裁决全部内化进 Loadable；refresh 为 0 元
  * 发起，闭包内自读当前账户/标的筛选。刷新失败不再静默/产生未处理 rejection（spec 治愈
  * 清单①）：error 置位 + 默认 toast，summary 保持原值不清空成空态。
- * 防抖远程标的搜索与其刻意吞错是「刻意静默不收编」的合法形态（词汇表 Loadable 边界），
- * 保持原样不迁入。
+ * 标的搜索的刻意吞错仍是「刻意静默不收编」的合法形态（词汇表 Loadable 边界），
+ * 取数编排自 #1308 起收口 useInstrumentSearch（对 Loadable 的边界不变），本层只做
+ * 候选投影（label 拼法）与选中合并。
  */
 export function useRealizedPnl() {
   const reference = useReferenceStore()
@@ -28,13 +29,17 @@ export function useRealizedPnl() {
     reference.investmentAccounts.map((a) => ({ label: a.name, value: a.id })),
   )
 
-  // 标的筛选下拉（远程搜索，不前端全量驻留）
-  const searchInstrumentOptions = ref<{ label: string; value: string }[]>([])
+  // 标的筛选下拉：取数编排收口 useInstrumentSearch（issue #1308，对外成员名不变），
+  // 本层只做候选投影（「代码 · 名称」label 拼法）与选中项合并
+  const { items: searchedInstruments, searching: searchingInstruments, search: searchInstruments } =
+    useInstrumentSearch()
+  const searchInstrumentOptions = computed(() =>
+    searchedInstruments.value.map((i) => ({
+      label: `${i.symbol}${i.name ? ` · ${i.name}` : ''}`,
+      value: i.id,
+    })),
+  )
   const selectedInstrumentOption = ref<{ label: string; value: string } | null>(null)
-  const searchingInstruments = ref(false)
-  let instrumentSearchTimer: ReturnType<typeof setTimeout> | undefined
-  /** 搜索在途竞态纪元（issue #1401）：每次输入开启新纪元，迟到旧纪元结果不落位 */
-  const instrumentSearchEpoch = createLatestWinsGuard()
 
   const pnlInstrumentOptions = computed(() => {
     const opts = [...searchInstrumentOptions.value]
@@ -44,35 +49,6 @@ export function useRealizedPnl() {
     }
     return opts
   })
-
-  /** 远程搜索标的（防抖）。每次输入即开启新纪元（issue #1401）：此后迟到的旧纪元
-   *  结果不落位，清空输入后先前发出的非空请求也不再把候选列表填回。 */
-  async function searchInstruments(query: string) {
-    const myEpoch = instrumentSearchEpoch.start()
-    clearTimeout(instrumentSearchTimer)
-    instrumentSearchTimer = setTimeout(async () => {
-      if (!instrumentSearchEpoch.isCurrent(myEpoch)) return
-      if (!query.trim()) {
-        searchInstrumentOptions.value = []
-        searchingInstruments.value = false
-        return
-      }
-      searchingInstruments.value = true
-      try {
-        const res = await api.listInstruments({ search: query.trim(), page_size: 50 })
-        if (!instrumentSearchEpoch.isCurrent(myEpoch)) return
-        searchInstrumentOptions.value = res.items.map((i) => ({
-          label: `${i.symbol}${i.name ? ` · ${i.name}` : ''}`,
-          value: i.id,
-        }))
-      } catch {
-        if (!instrumentSearchEpoch.isCurrent(myEpoch)) return
-        searchInstrumentOptions.value = []
-      } finally {
-        if (instrumentSearchEpoch.isCurrent(myEpoch)) searchingInstruments.value = false
-      }
-    }, 300)
-  }
 
   const { loading, error, run } = useLoadable(async () => {
     // 0 元闭包自读当前筛选：发起时点即最新筛选，无需传参

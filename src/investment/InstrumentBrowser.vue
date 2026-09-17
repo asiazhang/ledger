@@ -18,6 +18,7 @@ import { useInstrumentInfoSync } from '@/investment/useInstrumentInfoSync'
 import { usePricesChanged } from '@/investment/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { createLatestWinsGuard } from '@/composables/latest-wins'
+import { SEARCH_DEBOUNCE_MS } from '@/composables/search-debounce'
 import { useWindowTier } from '@ledger/window-tier'
 import SyncProgressBar from '@/investment/SyncProgressBar.vue'
 import SyncDegradedNotice from '@/investment/SyncDegradedNotice.vue'
@@ -109,7 +110,9 @@ function reload() {
 
 watch(searchText, () => {
   clearTimeout(searchTimer)
-  searchTimer = setTimeout(reload, 300)
+  // 本组件是服务端分页列表读路径（#1308 决策 1）：不属 useInstrumentSearch 接缝，
+  // 只共用跨域防抖常量
+  searchTimer = setTimeout(reload, SEARCH_DEBOUNCE_MS)
 })
 watch(selectedMarket, reload)
 watch(onlyInvested, reload)

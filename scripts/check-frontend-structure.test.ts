@@ -36,8 +36,9 @@ afterAll(() => {
 })
 
 /** 规则⑦ 夹具仓库根：其余规则的最小绿基线（空包登记表注入 + 接线宿主 + 规则⑥登记
- *  目录 src/utils）+ 登记模块本体 src/transaction/useTransactionFilter.ts（#1159 起随交易
- *  域归位；默认创建；omitModule = 「登记模块不存在」靶形）。返回 spawnSync args。 */
+ *  目录 src/utils）+ 登记模块本体（生产登记表不可注入，夹具绿基线须自足含全部登记项：
+ *  src/transaction/useTransactionFilter.ts 与 src/investment/useInstrumentSearch.ts，
+ *  #1308 起后者入表；默认创建；omitModule = 「登记模块不存在」靶形）。返回 spawnSync args。 */
 function fixtureRepo(opts: { omitModule?: boolean } = {}): string[] {
   const root = mkdtempSync(join(tmpdir(), 'check-frontend-structure-rule7-'))
   tempDirs.push(root)
@@ -62,6 +63,11 @@ function fixtureRepo(opts: { omitModule?: boolean } = {}): string[] {
       join(root, 'src', 'transaction', 'useTransactionFilter.ts'),
       'export const useTransactionFilter = () => ({})\n',
     )
+    mkdirSync(join(root, 'src', 'investment'), { recursive: true })
+    writeFileSync(
+      join(root, 'src', 'investment', 'useInstrumentSearch.ts'),
+      'export const useInstrumentSearch = () => ({})\n',
+    )
   }
   return [root, join(root, 'fixture-manifest.json')]
 }
@@ -74,11 +80,16 @@ function writeSource(root: string, rel: string, source: string): void {
 }
 
 describe('规则⑦：深模块边界登记表（#1323 / ADR-0118 决策 7）', () => {
-  it('删除规则登记项即变红：登记表与已固化边界全等（首批唯一条目 TransactionFilter → src/views）', () => {
+  it('删除规则登记项即变红：登记表与已固化边界全等（TransactionFilter → src/views；#1308 起 useInstrumentSearch → src/investment）', () => {
     expect(DEEP_MODULE_BOUNDARIES).toEqual([
       {
         module: 'src/transaction/useTransactionFilter.ts',
         allowedConsumers: ['src/views'],
+        note: expect.any(String),
+      },
+      {
+        module: 'src/investment/useInstrumentSearch.ts',
+        allowedConsumers: ['src/investment'],
         note: expect.any(String),
       },
     ])
