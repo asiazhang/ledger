@@ -1,256 +1,81 @@
 <script setup lang="ts">
-import { errorMessage } from '@ledger/utils/errors'
-import { judgeMinLengthText } from '@ledger/utils/field-error'
 import {
-  assessPassphraseStrength,
-  type PassphraseStrengthAssessment,
-} from '@ledger/utils/passphrase-strength'
-import { NAlert, NButton, NCard, NCheckbox, NCollapse, NCollapseItem, NForm, NFormItem, NInput, NSpace, NSpin, NText, NTooltip, useMessage } from 'naive-ui'
-import { computed, onMounted, ref, watch, type Ref } from 'vue'
-import { api } from '@ledger/api'
+  NAlert,
+  NButton,
+  NCard,
+  NCheckbox,
+  NCollapse,
+  NCollapseItem,
+  NForm,
+  NFormItem,
+  NInput,
+  NSpace,
+  NSpin,
+  NText,
+  NTooltip,
+} from 'naive-ui'
 import { t } from '@ledger/i18n'
-import { restartAppShortly } from '@/backup/restart'
-import { useAppStore } from '@/stores/app'
-import { useEncryptionGate } from '@/backup/useEncryptionGate'
 import AppDangerConfirmModal from '@ledger/ui-kit/AppDangerConfirmModal.vue'
 import AppModal from '@ledger/ui-kit/AppModal.vue'
 import PassphraseStrengthMeter from '@/settings/PassphraseStrengthMeter.vue'
-import type { EncryptionStatus } from '@ledger/types'
+import { PASSPHRASE_MIN_LENGTH, useEncryptionTransitions } from '@/backup/useEncryptionTransitions'
 
 // 加密卡片（issue #570/#571 / #574 / ADR-0075；#654 重排）：数据文件管理域的加密模式开关。
-// 形态对标 DataLocationSettings——命令往返、组件内状态。转换由后端完成
-// （三形态同一套整库转换机制、失败原库原样保留），成功后应用重启：
-// 开启/修改主口令由启动解锁屏接管，关闭后不再出现解锁屏。
+// 三条形态转换流（开启 / 修改主口令 / 关闭）与自动解锁启用的编排住
+// useEncryptionTransitions 深模块（issue #1396，备份与数据文件域，与
+// useEncryptionGate / restart 同区）；本组件是它的薄 adapter：只留设置页签面——
+// 状态渲染、四个确认弹窗（AppDangerConfirmModal / AppModal）的模板与 i18n 文案
+// props（「确认弹层文案留调用方」，ADR-0078）。
 // 已加密形态为日常视图：「已开启」标识 + 自动解锁；修改主口令、关闭加密两个
 // 低频流程收进默认收起的折叠区（展开后流程与分级确认不变，ADR-0078）。
-// 自动解锁（issue #654 重做）：偏好是前端 localStorage 轻量设置项（app store），
-// 钥匙串缓存内容为主口令本身；平台不支持（v1 非 macOS）时隐藏该区块。
-
-const message = useMessage()
-const store = useAppStore()
-const { rememberSupport, loadRememberSupport, syncRememberCache, clearRememberCache } =
-  useEncryptionGate()
-
-const status = ref<EncryptionStatus | null>(null)
-const loading = ref(false)
-const loadError = ref('')
-const submitting = ref(false)
-const submittingChange = ref(false)
-const submittingDisable = ref(false)
-
-// 开启加密确认弹窗（issue #650 / ADR-0078）：迁入共享危险确认封装（error 级），
-// 承载无后门后果说明（忘记主口令 = 数据不可恢复）。`enableConfirmShow` 为受控显示开关。
-const enableConfirmShow = ref(false)
-// 修改主口令确认弹窗（issue #650 / ADR-0078）：从系统原生 confirm 升级为同封装的
-// error 级应用内弹窗——与开启加密风险同级（遗忘新口令同样数据不可读）。
-const changeConfirmShow = ref(false)
-// 关闭加密确认弹窗（issue #652 / ADR-0078）：warning 级——破坏性但有兜底
-// （既有密文副本保留、可再开启），原生 confirm 退役。
-const disableConfirmShow = ref(false)
-
-// 主口令最小长度（issue #650）：≥8，仅前端判定（后端契约不动）；走字段错误态
-// 既有口径（ADR-0058）：短口令即时红显、提交禁用，不拦截键入。
-const PASSPHRASE_MIN_LENGTH = 8
-
-const passphrase = ref('')
-const confirmPassphrase = ref('')
-
-// 口令强度实时显示（issue #685，词汇表「口令强度」）：纯信息反馈，不拦截提交、
-// 不改提交可用性；只接新设主口令两框（开启加密「主口令」+ 修改主口令「新主口令」），
-// 确认字段与已存在口令的输入场景一律不接。判定与映射收口在
-// @ledger/utils/passphrase-strength，此处只消费（最后一次胜出守卫保证逐键刷新不串档）。
-function trackPassphraseStrength(source: Ref<string>) {
-  const assessment = ref<PassphraseStrengthAssessment | null>(null)
-  let latest = 0
-  watch(source, (value) => {
-    const seq = ++latest
-    void assessPassphraseStrength(value).then((result) => {
-      if (seq === latest) assessment.value = result
-    })
-  })
-  return assessment
-}
-
-const passphraseStrength = trackPassphraseStrength(passphrase)
-
-/** 新设主口令过短（字段错误态：格式类即时红，空值不在此列、走既有禁用逻辑）。 */
-const passphraseTooShort = computed(
-  () => judgeMinLengthText(passphrase.value, PASSPHRASE_MIN_LENGTH).kind === 'too-short',
-)
-
-/** 两次输入一致才允许提交（确认输错的即时反馈）。 */
-const mismatch = computed(
-  () => confirmPassphrase.value.length > 0 && confirmPassphrase.value !== passphrase.value,
-)
-
-// 修改主口令（已加密形态）：旧口令验证 + 新口令（含确认、须不同于旧口令）。
-const changeOld = ref('')
-const changeNew = ref('')
-const changeConfirm = ref('')
-const changeNewStrength = trackPassphraseStrength(changeNew)
-const changeMismatch = computed(
-  () => changeConfirm.value.length > 0 && changeConfirm.value !== changeNew.value,
-)
-const changeUnchanged = computed(
-  () => changeNew.value.length > 0 && changeNew.value === changeOld.value,
-)
-/** 轮换后的新主口令同样受最小长度约束（issue #650），不弱于初始要求。 */
-const changeNewTooShort = computed(
-  () => judgeMinLengthText(changeNew.value, PASSPHRASE_MIN_LENGTH).kind === 'too-short',
-)
-const changeReady = computed(
-  () =>
-    changeOld.value.length > 0 &&
-    changeNew.value.length > 0 &&
-    !changeMismatch.value &&
-    !changeUnchanged.value &&
-    !changeNewTooShort.value,
-)
-
-// 关闭加密（已加密形态）：需当前主口令——文件级转换凭口令读取密文库。
-const disablePassphrase = ref('')
-
-// 自动解锁（issue #654 重做）：状态唯一事实源 = store.rememberPassphrase（偏好与
-// 钥匙串缓存同批建立/清除，无本地开关镜像）。「开关开着但未生效」的可持续中间态
-// 从形态上消灭：启用 = 「启用自动解锁…」按钮弹小窗，凭当前主口令建立缓存、成功才
-// 置偏好；关闭 = 立即清缓存恢复手输并提示。
-const enableRemember = ref(false)
-const changeRemember = ref(store.rememberPassphrase)
-const autoUnlockModalShow = ref(false)
-const autoUnlockPass = ref('')
-const autoUnlockError = ref('')
-const autoUnlockSubmitting = ref(false)
-
-async function refresh() {
-  loading.value = true
-  loadError.value = ''
-  try {
-    status.value = await api.getEncryptionStatus()
-  } catch (e: any) {
-    loadError.value = errorMessage(e)
-    message.error(loadError.value)
-  } finally {
-    loading.value = false
-  }
-}
-
-onMounted(() => {
-  void refresh()
-  void loadRememberSupport()
-})
-
-/** 开启加密第一步：弹确认弹窗（无后门后果说明），确认后执行整库转换。 */
-function requestEnable() {
-  if (submitting.value || mismatch.value || !passphrase.value || passphraseTooShort.value) return
-  enableConfirmShow.value = true
-}
-
-/** 开启加密确认：转换 → 提示重启（Restore 同型：成功 toast 后延迟重启）。 */
-async function confirmEnable() {
-  enableConfirmShow.value = false
-  if (submitting.value || mismatch.value || !passphrase.value) return
-  submitting.value = true
-  try {
-    await api.enableEncryption(passphrase.value)
-    const cached = await syncRememberCache(passphrase.value, enableRemember.value)
-    if (!cached) message.warning(t('settings.data.encryption.rememberFailed'))
-    passphrase.value = ''
-    confirmPassphrase.value = ''
-    message.success(t('settings.data.encryption.okToast'))
-    // 转换已落盘，重启以凭新口令重新打开（toast 先落地，Restore 先例）。
-    restartAppShortly()
-  } catch (e: any) {
-    message.error(errorMessage(e))
-  } finally {
-    submitting.value = false
-  }
-}
-
-/** 自动解锁是否已启用（唯一事实源 = 偏好，与钥匙串缓存同批建立/清除）。 */
-const autoUnlockOn = computed(() => store.rememberPassphrase)
-
-/** 启用自动解锁第一步：打开小弹窗（清上次输入与错误）。 */
-function openAutoUnlockModal() {
-  autoUnlockPass.value = ''
-  autoUnlockError.value = ''
-  autoUnlockModalShow.value = true
-}
-
-/** 启用自动解锁确认：凭当前主口令建立缓存，成功才置偏好并提示；
- *  口令错误就地报错（弹窗保持打开可重试）、不启用——不存在中间态。 */
-async function confirmAutoUnlock() {
-  if (autoUnlockSubmitting.value || !autoUnlockPass.value) return
-  autoUnlockSubmitting.value = true
-  autoUnlockError.value = ''
-  try {
-    await api.setRememberPassphrase(autoUnlockPass.value)
-    store.setRememberPassphrase(true)
-    autoUnlockModalShow.value = false
-    autoUnlockPass.value = ''
-    message.success(t('settings.data.encryption.rememberEnabled'))
-  } catch (e: any) {
-    autoUnlockError.value = errorMessage(e)
-  } finally {
-    autoUnlockSubmitting.value = false
-  }
-}
-
-/** 关闭自动解锁：立即清缓存恢复手输并提示（清缓存幂等，无失败悬挂态）。 */
-async function disableAutoUnlock() {
-  await clearRememberCache()
-  message.success(t('settings.data.encryption.rememberDisabledToast'))
-}
-
-/** 修改主口令第一步：弹 error 级确认弹窗（无后门后果说明，ADR-0078），确认后执行转换。 */
-function requestChange() {
-  if (submittingChange.value || !changeReady.value) return
-  changeConfirmShow.value = true
-}
-
-/** 修改主口令确认：旧口令验证通过后转入新口令的新库，完成后重启以新口令解锁。 */
-async function confirmChange() {
-  changeConfirmShow.value = false
-  if (submittingChange.value || !changeReady.value) return
-  submittingChange.value = true
-  try {
-    await api.changeEncryptionPassphrase(changeOld.value, changeNew.value)
-    const cached = await syncRememberCache(changeNew.value, changeRemember.value)
-    if (!cached) message.warning(t('settings.data.encryption.rememberFailed'))
-    changeOld.value = ''
-    changeNew.value = ''
-    changeConfirm.value = ''
-    message.success(t('settings.data.encryption.changeOkToast'))
-    restartAppShortly()
-  } catch (e: any) {
-    message.error(errorMessage(e))
-  } finally {
-    submittingChange.value = false
-  }
-}
-
-/** 关闭加密第一步：弹 warning 级确认弹窗（兜底说明，ADR-0078），确认后执行转换。 */
-function requestDisable() {
-  if (submittingDisable.value || !disablePassphrase.value) return
-  disableConfirmShow.value = true
-}
-
-/** 关闭加密确认：整库转回明文库，完成后重启，不再出现解锁屏。 */
-async function confirmDisable() {
-  disableConfirmShow.value = false
-  if (submittingDisable.value || !disablePassphrase.value) return
-  submittingDisable.value = true
-  try {
-    await api.disableEncryption(disablePassphrase.value)
-    await clearRememberCache()
-    disablePassphrase.value = ''
-    message.success(t('settings.data.encryption.disableOkToast'))
-    restartAppShortly()
-  } catch (e: any) {
-    message.error(errorMessage(e))
-  } finally {
-    submittingDisable.value = false
-  }
-}
+const {
+  // 状态加载
+  status,
+  statusLoading,
+  statusError,
+  refresh,
+  // 开启流
+  passphrase,
+  confirmPassphrase,
+  enableRemember,
+  passphraseStrength,
+  passphraseTooShort,
+  mismatch,
+  enableConfirmShow,
+  requestEnable,
+  confirmEnable,
+  submitting,
+  // 修改流
+  changeOld,
+  changeNew,
+  changeConfirm,
+  changeRemember,
+  changeNewStrength,
+  changeMismatch,
+  changeUnchanged,
+  changeNewTooShort,
+  changeReady,
+  changeConfirmShow,
+  requestChange,
+  confirmChange,
+  submittingChange,
+  // 关闭流
+  disablePassphrase,
+  disableConfirmShow,
+  requestDisable,
+  confirmDisable,
+  submittingDisable,
+  // 自动解锁
+  rememberSupport,
+  autoUnlockOn,
+  autoUnlockModalShow,
+  autoUnlockPass,
+  autoUnlockError,
+  autoUnlockSubmitting,
+  openAutoUnlockModal,
+  confirmAutoUnlock,
+  disableAutoUnlock,
+} = useEncryptionTransitions()
 </script>
 
 <template>
@@ -258,9 +83,9 @@ async function confirmDisable() {
     <NSpace vertical :size="12">
       <NText depth="3">{{ t('settings.data.encryption.hint') }}</NText>
 
-      <NSpin :show="loading">
-        <NSpace v-if="loadError" align="center" :size="12">
-          <NText type="error">{{ loadError }}</NText>
+      <NSpin :show="statusLoading">
+        <NSpace v-if="statusError" align="center" :size="12">
+          <NText type="error">{{ statusError }}</NText>
           <NButton size="small" @click="refresh">{{ t('settings.data.encryption.retry') }}</NButton>
         </NSpace>
 
