@@ -103,12 +103,12 @@
 
 从 [GitHub Releases](https://github.com/asiazhang/ledger/releases) 下载对应平台的安装包：
 
-- **macOS（Apple Silicon）**：`.dmg`，拖入「应用程序」即可。未签名：首次打开若被 Gatekeeper 拦截，右键「打开」或到「系统设置 → 隐私与安全性」放行。
+- **macOS（Apple Silicon）**：`.dmg`，拖入「应用程序」即可。已用 Developer ID 证书签名并经 Apple 公证，Gatekeeper 正常放行。
 - **Windows（x64）**：`.exe`（NSIS 安装器），双击按向导安装。未签名：SmartScreen 出现「已保护你的电脑」时点「更多信息 → 仍要运行」。
 - **Linux（x64）**：`.deb`（Debian/Ubuntu 系，`sudo dpkg -i` 安装）或 `.AppImage`（`chmod +x` 后直接运行）。
 - **Android（arm64 APK）**：`.apk` 下载到真机直接安装（覆盖 arm64-v8a，2016 年后的绝大多数 Android 手机）；系统提示未知来源时，在「设置 → 应用 → 特殊访问权限 → 安装未知应用」中放行对应浏览器/文件管理器即可，升级同样直装新版本覆盖。
 
-> 桌面三平台安装包未签名 / 未公证，Android APK 已用发布密钥签名；Windows 与 Linux 版本发布初期未经真机验证，遇到问题请到 [Issues](https://github.com/asiazhang/ledger/issues) 反馈（决策记录见 [ADR-0066](docs/adr/0066-cross-platform-release.md) 与 [ADR-0074](docs/adr/0074-android-release.md)）。
+> macOS 安装包已用 Developer ID 证书签名并经 Apple 公证（验证记录见 [docs/verification/658-ci-signing-notarization.md](docs/verification/658-ci-signing-notarization.md)）；Windows 安装包未签名，Android APK 已用发布密钥签名；Linux 生态无统一代码签名机制。Windows 与 Linux 版本发布初期未经真机验证，遇到问题请到 [Issues](https://github.com/asiazhang/ledger/issues) 反馈（决策记录见 [ADR-0066](docs/adr/0066-cross-platform-release.md) 与 [ADR-0074](docs/adr/0074-android-release.md)）。
 
 ## 从源码构建
 
