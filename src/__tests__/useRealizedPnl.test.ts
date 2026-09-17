@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { deferred } from '@ledger/test-support/deferred'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { flushPromises, mount } from '@vue/test-utils'
 import { withSetup } from '@ledger/test-support/mount'
@@ -258,14 +259,6 @@ describe('useRealizedPnl 失败治愈（issue #325 Loadable 薄壳化）', () =>
 })
 
 describe('useRealizedPnl 标的远程搜索在途竞态（issue #1401）', () => {
-  function deferred<T>() {
-    let resolve!: (value: T) => void
-    const promise = new Promise<T>((res) => {
-      resolve = res
-    })
-    return { promise, resolve }
-  }
-
   it('先发请求迟到不覆盖后发结果：候选呈现后发搜索的标的', async () => {
     vi.useFakeTimers()
     try {

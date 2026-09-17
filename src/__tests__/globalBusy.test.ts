@@ -1,19 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { deferred } from '@ledger/test-support/deferred'
 import { mockInvoke, wireInvokeSeam, type AppInvokeHandler } from '@ledger/test-support/invoke-mock'
 import { api } from '@ledger/api'
 import { busyVisible, resetGlobalBusy } from '@ledger/api/global-busy'
-
-
-/** 手动完结的延迟 Promise：控制 invoke 完结时机以构造阈值与并发竞态 */
-function deferred<T = unknown>() {
-  let resolve!: (value: T) => void
-  let reject!: (reason?: unknown) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
-}
 
 beforeEach(() => {
   vi.useFakeTimers()

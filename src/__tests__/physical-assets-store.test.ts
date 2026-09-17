@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { deferred } from '@ledger/test-support/deferred'
 import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { captureListenHandlers, type CapturedListener } from '@ledger/test-support/listen-mock'
 import { flushPromises } from '@vue/test-utils'
@@ -15,15 +16,6 @@ import type {
 
 function baseAsset(over: Partial<PhysicalAsset> = {}): PhysicalAsset {
   return makePhysicalAsset({ id: 'asset-1', ...over })
-}
-
-/** 手动完结的 load 替身：测试按用例节奏 resolve（竞态回归用，同 push-first-list.test）。 */
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((res) => {
-    resolve = res
-  })
-  return { promise, resolve }
 }
 
 const createInput: PhysicalAssetInput = {

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { deferred } from '@ledger/test-support/deferred'
 import {
   captureListenHandlers,
   mockListen,
@@ -7,17 +8,6 @@ import {
 import { flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createPushFirstList } from '@/composables/push-first-list'
-
-/** 手动完结的 load 替身：测试按用例节奏 resolve / reject。 */
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (reason: unknown) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
-}
 
 /** 捕获 ledger:changed 监听处理器（工厂创建时注册） */
 let handlers: CapturedListener[]

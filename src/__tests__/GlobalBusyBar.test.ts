@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { deferred } from '@ledger/test-support/deferred'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import GlobalBusyBar from '@/components/GlobalBusyBar.vue'
 import { trackBusy, resetGlobalBusy } from '@ledger/api/global-busy'
@@ -9,14 +10,6 @@ import { trackBusy, resetGlobalBusy } from '@ledger/api/global-busy'
  * （移动档顶缘随安全区下移；具体像素归 CSS，不测像素值，spec #838 测试决策）。
  * 忙碌态走真实路径：trackBusy + 300ms 阈值（fake timers 推进）。
  */
-
-function deferred<T = unknown>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((res) => {
-    resolve = res
-  })
-  return { promise, resolve }
-}
 
 beforeEach(() => {
   vi.useFakeTimers()
