@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
+import { deferred } from '@ledger/test-support/deferred'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { useReferenceStore } from '@/stores/reference'
 import { useInvestmentForm } from '@/investment/useInvestmentForm'
@@ -523,15 +524,6 @@ describe('useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
 })
 
 describe('useInvestmentForm 标的远程搜索在途竞态（issue #1401）', () => {
-  /** 手动完结的 list_instruments 替身：测试按用例节奏 resolve，制造乱序到达 */
-  function deferred<T>() {
-    let resolve!: (value: T) => void
-    const promise = new Promise<T>((res) => {
-      resolve = res
-    })
-    return { promise, resolve }
-  }
-
   /** 单标的搜索结果夹具：symbol 即查询词，便于按用户可见候选断言是哪次查询的结果 */
   function resultFor(symbol: string, name: string) {
     return { items: [makeInstrument({ id: `ins-${symbol}`, symbol, name })], total: 1 }
