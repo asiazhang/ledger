@@ -90,3 +90,11 @@ grilling（2026-09-07，两轮）逐项复核评审数字与当前工作树一�
 上条「DeviceId 单测留根包 `sync_engine/tests/`」的落点随 #1107 变更：多端同步域自根包拆为 `ledger-sync-engine`，其 `[dev-dependencies] tauri-app` 测试环只进入该域 crate 的测试目标，协议 crate（`ledger-sync-protocol`）自身仍无环，根文档 `compile_fail` 负向用例继续由 `cargo test --workspace --doc` 守卫。DeviceId 单测随域迁入 `crates/sync-engine/src/tests/device.rs`，断言与场景文本不变。
 
 同票的跨 crate 可见性变更：`channel::sha256_hex` 随测试支持域跨 crate 消费由 `pub(crate)` 再放宽为 `#[doc(hidden)] pub`（#956 注记的第二次放宽），产品消费者仍只有通道模块；用途与单一维护点不变。
+
+## 修订注记（#1433，2026-09-17）：源码扫描掩码器具上收 `test_support::scan`
+
+源码扫描守门的词法掩码与花括号配对曾三处同型：壳层信号守门的 `mask_non_code`、TS 侧守门脚本 `check-structure.ts` 的 `maskNonCode`、market-sync 车道守门的轻量行注释掩码（#1413 自述取舍）。Rust 侧两处上收为 `test_support::scan` 单一维护点：`mask_non_code`（注释与字符串/char 字面量等长空白掩码）+ `matching_brace_end`（掩码文本花括号配对原语）；消费面 = 壳层信号/连接槽/同步触发/行情接缝守门与命令面扫描测试、market-sync 车道守门（经既有 `tauri-app` dev-dependency 环，无新依赖边）。花括号配对四处手写同型（信号守门函数体定位、触发守门 cfg(test) 剔除、命令体提取、车道守门内联测试模块抹除）随同一原语归一。
+
+- **双源登记**：与 TS 侧 `maskNonCode` 是同一条词法规则的两个运行时载体（守门脚本跑 Bun、Rust 测试跑 cargo，单份实现不可共享），规则改动必须两侧同步；共享语料夹具被双侧测试消费，任一侧单独改规则即红。
+- **准入与可见性**：沿决策 1 放宽面先例（#956 通道线格式替身——跨 ≥2 域同体消费的测试器具）与决策 2（`pub mod` + `#[doc(hidden)]`）；词汇表锚定见 CONTEXT-testing「源码扫描掩码器具」。
+- **已知双源边界**（本票如实化，未扩规则）：`r##"…"##` 多级 `#` 与 `'\u{…}'` 转义两实现一致地不按字面量识别（两侧旧注释声称支持、与实现不符，本票改为如实描述）；非 ASCII 标识符紧邻原始串等病态形态 TS 侧按 ASCII/UTF-16 近似；`keepLiterals` 扩展形态 TS 侧独有（#1014，Rust 消费面无此需求）。扩展属规则改动，须两侧同步 + 语料更新。另：掩码器具原始串标识符前缀判定的 i==0 下溢（被扫文本以 `r"` 起始即 panic）随本票以独立修复提交更正，语料首 token 字节 0 的原始串行锁定该路径。
