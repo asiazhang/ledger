@@ -95,9 +95,10 @@ pub async fn sync_instrument_info<R: Runtime>(
     let progress_app = app.clone();
     // 通道束换装（issue #1276）：测试注入桩优先（`SyncChannelsSlot` 管理态），
     // 生产默认生产通道束。注入槽句柄（`Arc` 克隆）先取出，束体留在写闭包内构造
-    // （issue #1403）：reqwest 阻塞客户端自持运行时，其构造与销毁都必须在异步
-    // 上下文之外——命令体是 tauri 在 tokio worker 上轮询的 async fn，在此构造
-    // 即撞 reqwest debug 断言 panic；构造点归写闭包所在阻塞线程（`run_db`）。
+    // （issue #1403）：命令体是 tauri 在 tokio worker 上轮询的 async fn，而束内
+    // 抓取闭包以同步桥（`http::block_on`，ADR-0125 决策 5 过渡态）驱动异步 HTTP
+    // ——同步桥不得在运行时 worker 线程上调用；构造点（及调用点）归写闭包所在
+    // 阻塞线程（`run_db`），与 #1403 之前整段形态的线程语义一致。
     let injected_slot = app
         .try_state::<SyncChannelsSlot>()
         .map(|slot| slot.0.clone());

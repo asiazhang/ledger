@@ -342,7 +342,7 @@ fn nav_window_boundary_watermark_near_window_start() {
 #[test]
 fn nav_page_fetch_sends_referer_and_parses() {
     let (url, heads) = spawn_header_capture_server(REAL_PAYLOAD.to_string());
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let query = NavQuery {
         code: "110022".into(),
@@ -350,7 +350,13 @@ fn nav_page_fetch_sends_referer_and_parses() {
         end_date: "2026-08-29".into(),
         page: 1,
     };
-    let page = fetch_nav_page_from(&client, &mut pacer, &query, &[url.as_str()]).unwrap();
+    let page = crate::http::block_on(fetch_nav_page_from(
+        &client,
+        &mut pacer,
+        &query,
+        &[url.as_str()],
+    ))
+    .unwrap();
 
     // 报文组装：请求行携带 fundCode / pageIndex / pageSize / startDate / endDate。
     let head = &heads.lock().unwrap()[0];
@@ -379,9 +385,9 @@ fn nav_page_fetch_sends_referer_and_parses() {
 fn request_json_from_hosts_accepts_referer_argument() {
     // 泛型层 Referer 参数的传播（None 以外形状，供历史净值等接口复用）。
     let (url, heads) = spawn_header_capture_server(r#"{"ok":1}"#.to_string());
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let _: serde_json::Value = request_json_from_hosts(
+    let _: serde_json::Value = crate::http::block_on(request_json_from_hosts(
         &client,
         &[("k", "v")],
         "/x",
@@ -395,7 +401,7 @@ fn request_json_from_hosts_accepts_referer_argument() {
         &mut pacer,
         "test",
         Some("http://ref.example/"),
-    )
+    ))
     .unwrap();
     let head = &heads.lock().unwrap()[0];
     assert!(
@@ -409,10 +415,15 @@ fn nav_full_series_fetch_reads_single_file() {
     // 单请求全量净值通道：一次 GET 详情页数据文件即取整只基金的历史净值序列
     // （issue #1062）。本地 HTTP 服务验证请求路径与报文解析，不依赖真实网络。
     let (url, heads) = spawn_header_capture_server(REAL_PINGZHONG_SNIPPET.to_string());
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let points =
-        fetch_nav_full_series_from(&client, &mut pacer, "110022", &[url.as_str()]).unwrap();
+    let points = crate::http::block_on(fetch_nav_full_series_from(
+        &client,
+        &mut pacer,
+        "110022",
+        &[url.as_str()],
+    ))
+    .unwrap();
 
     let head = &heads.lock().unwrap()[0];
     assert!(
@@ -443,9 +454,17 @@ fn nav_full_series_fetch_untrusted_body_errors_for_fallback() {
     // 被风控拦截形态（HTML 而非数据文件）：解析不可信 → 返回 Err，上层 fail-closed
     // 回退分页通道，不把空结果当「无净值」静默吞掉。
     let (url, _) = spawn_header_capture_server("<html>blocked by waf</html>".to_string());
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    assert!(fetch_nav_full_series_from(&client, &mut pacer, "110022", &[url.as_str()]).is_err());
+    assert!(
+        crate::http::block_on(fetch_nav_full_series_from(
+            &client,
+            &mut pacer,
+            "110022",
+            &[url.as_str()]
+        ))
+        .is_err()
+    );
 }
 
 #[test]
@@ -453,10 +472,15 @@ fn nav_full_series_serves_money_fund_from_income_series() {
     // 货币基金没有单位净值序列：单请求通道直接按万份收益序列收录（日期 ×
     // 恒定单位净值 1.0000，issue #1342），不再必然失败回退分页通道。
     let (url, _) = spawn_header_capture_server(MONEY_FUND_ARCHIVE_JS.to_string());
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let points =
-        fetch_nav_full_series_from(&client, &mut pacer, "000905", &[url.as_str()]).unwrap();
+    let points = crate::http::block_on(fetch_nav_full_series_from(
+        &client,
+        &mut pacer,
+        "000905",
+        &[url.as_str()],
+    ))
+    .unwrap();
     assert_eq!(
         points,
         vec![
@@ -485,10 +509,15 @@ fn nav_full_series_prefers_net_worth_trend_when_both_series_exist() {
         REAL_PINGZHONG_SNIPPET
     );
     let (url, _) = spawn_header_capture_server(both);
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let points =
-        fetch_nav_full_series_from(&client, &mut pacer, "110022", &[url.as_str()]).unwrap();
+    let points = crate::http::block_on(fetch_nav_full_series_from(
+        &client,
+        &mut pacer,
+        "110022",
+        &[url.as_str()],
+    ))
+    .unwrap();
     assert_eq!(points.len(), 3);
     assert_eq!(points[2].nav, 1.006, "取单位净值序列原值，不是 1.0 归一化");
 }

@@ -11,9 +11,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use tokio::sync::Mutex as AsyncMutex;
+
 use ledger_infra::error::{AppError, Result};
 
-use super::http::{Pacer, RetryConfig, lock_pacer, request_text_from_hosts};
+use super::http::{Pacer, RetryConfig, block_on, lock_pacer, request_text_from_hosts};
 
 /// 全量名称字典：基金代码 → 数据源权威名称。
 pub type FundNameDictionary = HashMap<String, String>;
@@ -150,21 +152,25 @@ pub struct BulkFetchSurfaces {
 impl BulkFetchSurfaces {
     /// 生产构造：两面接 HTTP 层（复用主机池 / 重试 / 自适应限速 pacer），跨同步
     /// 记忆取进程级单例（每次同步新建通道束不保留状态）。
-    pub(super) fn production(client: &reqwest::blocking::Client, pacer: Arc<Mutex<Pacer>>) -> Self {
+    pub(super) fn production(client: &reqwest::Client, pacer: Arc<AsyncMutex<Pacer>>) -> Self {
         Self {
             names: {
                 let client = client.clone();
                 let pacer = pacer.clone();
                 Box::new(move || {
-                    let mut pacer = lock_pacer(&pacer)?;
-                    fetch_fund_name_dictionary(&client, &mut pacer)
+                    block_on(async {
+                        let mut pacer = lock_pacer(&pacer).await;
+                        fetch_fund_name_dictionary(&client, &mut pacer).await
+                    })
                 })
             },
             nav: {
                 let client = client.clone();
                 Box::new(move || {
-                    let mut pacer = lock_pacer(&pacer)?;
-                    fetch_fund_nav_table(&client, &mut pacer)
+                    block_on(async {
+                        let mut pacer = lock_pacer(&pacer).await;
+                        fetch_fund_nav_table(&client, &mut pacer).await
+                    })
                 })
             },
             circuit: shared_circuit(),
@@ -200,17 +206,17 @@ const FUND_NAV_RANKING_PAGE_SIZE: &str = "30000";
 /// 拉取名称全量字典（一次请求覆盖全市场基金代码与权威名称）。报文被拦截（风控
 /// HTML 页）或数据数组不可信时返回 `Err`——调用方 fail-closed 回退逐只名称通道，
 /// 不把不可信结果当「查无此码」。
-pub(super) fn fetch_fund_name_dictionary(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_fund_name_dictionary(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
 ) -> Result<FundNameDictionary> {
-    fetch_fund_name_dictionary_from(client, pacer, FUND_NAME_DICTIONARY_HOSTS)
+    fetch_fund_name_dictionary_from(client, pacer, FUND_NAME_DICTIONARY_HOSTS).await
 }
 
 /// 同 [`fetch_fund_name_dictionary`]，主机池可注入（本地 HTTP 服务测试请求形态与
 /// 被拦截响应处置，先例：`fund_nav::fetch_nav_full_series_from`）。
-pub(super) fn fetch_fund_name_dictionary_from(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_fund_name_dictionary_from(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
     hosts: &[&str],
 ) -> Result<FundNameDictionary> {
@@ -224,7 +230,8 @@ pub(super) fn fetch_fund_name_dictionary_from(
         pacer,
         "fetch_fund_name_dictionary",
         None,
-    )?;
+    )
+    .await?;
     parse_fund_name_dictionary(&body).ok_or_else(|| {
         // 文本通道的解析恒成功，疑似风控页在 HTTP 层看不见——降速信号由做可信度
         // 判定的这一层补上（ADR-0121 决策 5）。
@@ -236,17 +243,17 @@ pub(super) fn fetch_fund_name_dictionary_from(
 /// 拉取场外基金净值批量面（一次请求覆盖全市场基金的最新单位净值与净值日期）。
 /// 报文缺 `datas` 数组（被拦截 / `ErrCode=-999` 无权限）时返回 `Err`——调用方
 /// fail-closed 回退逐只净值通道。
-pub(super) fn fetch_fund_nav_table(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_fund_nav_table(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
 ) -> Result<FundNavTable> {
-    fetch_fund_nav_table_from(client, pacer, FUND_NAV_RANKING_HOSTS)
+    fetch_fund_nav_table_from(client, pacer, FUND_NAV_RANKING_HOSTS).await
 }
 
 /// 同 [`fetch_fund_nav_table`]，主机池可注入（本地 HTTP 服务测试请求参数 /
 /// Referer 传播与被拦截响应处置）。
-pub(super) fn fetch_fund_nav_table_from(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_fund_nav_table_from(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
     hosts: &[&str],
 ) -> Result<FundNavTable> {
@@ -276,7 +283,8 @@ pub(super) fn fetch_fund_nav_table_from(
         pacer,
         "fetch_fund_nav_table",
         Some(FUND_NAV_RANKING_REFERER),
-    )?;
+    )
+    .await?;
     parse_fund_nav_table(&body).ok_or_else(|| {
         pacer.record_throttled();
         AppError::Parse("场外基金净值批量面缺少可信的数据数组（疑似被风控拦截）".into())
