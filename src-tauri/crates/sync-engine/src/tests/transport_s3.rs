@@ -5,7 +5,10 @@
 use std::sync::Arc;
 
 use crate::transport::Transport;
-use crate::transport::s3::{S3Config, S3Transport};
+use crate::transport::s3::{
+    AsyncBridge, S3Config, S3Transport, spawn_bridge_thread, transport_runtime,
+};
+use ledger_infra::error::AppError;
 use tauri_app_lib::test_support::{S3Addressing, S3Deny, S3Stub, S3StubConfig, spawn_s3_stub};
 
 /// 按桩配置构造可用传输（path-style / virtual-host 随桩）。
@@ -349,4 +352,56 @@ async fn s3_calls_from_tokio_contexts_do_not_panic() {
     .await
     .unwrap();
     assert_eq!(read.as_deref(), Some(b"{}".as_slice()));
+}
+
+/// 启动失败不留阻塞资源（issue #1405）：线程创建失败是启动路径上唯一在**调用方
+/// 线程**可见的失败分支，此时调用方线程上不得存在 runtime——它在桥接线程闭包内
+/// 构建，闭包没跑过就没有 runtime 可销毁。
+///
+/// **负向判据（ADR-0087）**：把启动单点里的 runtime 构建移回调用方线程，构造出
+/// 的 runtime 随未启动的闭包在调用方线程销毁——本测试自身就跑在异步上下文里，
+/// 于是撞 tokio 的 drop panic（#1403/#1405 同根因的现场形态），本测试即红。
+/// 生产经 `spawn` → `spawn_with` 走同一启动单点（构建件与线程创建件都由生产
+/// 注入），所以这条判据守住的是生产形态，不是测试专用的旁路。
+#[tokio::test]
+async fn bridge_startup_failure_keeps_caller_thread_free_of_blocking_resource() {
+    let failed = AsyncBridge::spawn_with(transport_runtime, |_body| {
+        Err(std::io::Error::other("桥接线程不可创建（测试注入）"))
+    });
+    let Err(err) = failed else {
+        panic!("线程创建失败必须在构造点 fail loud 回报调用方");
+    };
+    assert!(
+        err.is_code("sync-channel.network-failed"),
+        "线程创建失败沿用既有的网络层可重试错误，实际: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("测试注入"),
+        "失败原因应原样回传调用方，实际: {err:?}"
+    );
+}
+
+/// 启动握手（issue #1405）：runtime 构建在桥接线程内失败必须经握手回传调用方
+/// fail loud——失败要止在构造点，既不能留下一个没有执行者的通道让后续调用撞
+/// 「桥接线程不可用」，也不能让调用方以为桥已经就绪。
+///
+/// **负向判据（ADR-0087）**：删掉构建失败的握手回传（例如只 `return` 不发送），
+/// 构造点即返回 `Ok`（或退回笼统的「线程启动失败」），本测试的失败原因断言变红。
+#[test]
+fn bridge_runtime_build_failure_is_reported_at_construction() {
+    let failed = AsyncBridge::spawn_with(
+        || {
+            Err(AppError::Invalid(
+                "运行时初始化失败（测试注入）".to_string(),
+            ))
+        },
+        spawn_bridge_thread,
+    );
+    let Err(err) = failed else {
+        panic!("runtime 构建失败必须在构造点 fail loud 回报调用方");
+    };
+    assert!(
+        err.to_string().contains("测试注入"),
+        "构建失败原因应原样回传调用方，实际: {err:?}"
+    );
 }
