@@ -101,8 +101,9 @@ pub(crate) fn mask_non_code(text: &str) -> String {
             && (bytes[i + 1] == '"' || (bytes[i + 1] == '#' && i + 2 < n && bytes[i + 2] == '"'))
         {
             // 原始字符串 r"…" / r#"…"#；前一字符为标识符成分时是普通名字，不误伤
-            let prev_is_ident = i > 0 && bytes[i - 1].is_alphanumeric() || bytes[i - 1] == '_';
-            if prev_is_ident && i > 0 {
+            // i==0 时右侧子式不可求值（&& 优先级高于 ||，0-1 下溢 panic），整式收进守卫
+            let prev_is_ident = i > 0 && (bytes[i - 1].is_alphanumeric() || bytes[i - 1] == '_');
+            if prev_is_ident {
                 i += 1;
                 continue;
             }
