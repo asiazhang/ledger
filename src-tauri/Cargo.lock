@@ -3127,6 +3127,7 @@ dependencies = [
  "tauri",
  "tauri-app",
  "thiserror 2.0.20",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -3179,6 +3180,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-app",
+ "tokio",
  "tracing",
 ]
 

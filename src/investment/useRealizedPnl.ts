@@ -2,6 +2,7 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from '@ledger/api'
 import { useLoadable } from '@ledger/loadable'
 import { useReferenceStore } from '@/stores/reference'
+import { createLatestWinsGuard } from '@/composables/latest-wins'
 import type { RealizedPnlSummary } from '@ledger/types'
 
 /**
@@ -32,6 +33,8 @@ export function useRealizedPnl() {
   const selectedInstrumentOption = ref<{ label: string; value: string } | null>(null)
   const searchingInstruments = ref(false)
   let instrumentSearchTimer: ReturnType<typeof setTimeout> | undefined
+  /** 搜索在途竞态纪元（issue #1401）：每次输入开启新纪元，迟到旧纪元结果不落位 */
+  const instrumentSearchEpoch = createLatestWinsGuard()
 
   const pnlInstrumentOptions = computed(() => {
     const opts = [...searchInstrumentOptions.value]
@@ -42,24 +45,31 @@ export function useRealizedPnl() {
     return opts
   })
 
+  /** 远程搜索标的（防抖）。每次输入即开启新纪元（issue #1401）：此后迟到的旧纪元
+   *  结果不落位，清空输入后先前发出的非空请求也不再把候选列表填回。 */
   async function searchInstruments(query: string) {
+    const myEpoch = instrumentSearchEpoch.start()
     clearTimeout(instrumentSearchTimer)
     instrumentSearchTimer = setTimeout(async () => {
+      if (!instrumentSearchEpoch.isCurrent(myEpoch)) return
       if (!query.trim()) {
         searchInstrumentOptions.value = []
+        searchingInstruments.value = false
         return
       }
       searchingInstruments.value = true
       try {
         const res = await api.listInstruments({ search: query.trim(), page_size: 50 })
+        if (!instrumentSearchEpoch.isCurrent(myEpoch)) return
         searchInstrumentOptions.value = res.items.map((i) => ({
           label: `${i.symbol}${i.name ? ` · ${i.name}` : ''}`,
           value: i.id,
         }))
       } catch {
+        if (!instrumentSearchEpoch.isCurrent(myEpoch)) return
         searchInstrumentOptions.value = []
       } finally {
-        searchingInstruments.value = false
+        if (instrumentSearchEpoch.isCurrent(myEpoch)) searchingInstruments.value = false
       }
     }, 300)
   }

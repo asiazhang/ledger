@@ -689,3 +689,49 @@ describe('InstrumentBrowser 空态（issue #1193）', () => {
     expect(empty.text()).toBe('暂无标的')
   })
 })
+
+describe('InstrumentBrowser 列表查询在途竞态（issue #1401）', () => {
+  /** 手动完结的 list_instruments 替身：测试按用例节奏 resolve，制造乱序到达 */
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((res) => {
+      resolve = res
+    })
+    return { promise, resolve }
+  }
+
+  it('先发查询迟到不覆盖后发结果：列表呈现后发查询的行', async () => {
+    const first = deferred<{ items: Instrument[]; total: number }>()
+    const second = deferred<{ items: Instrument[]; total: number }>()
+    let calls = 0
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_instruments: () => {
+          calls += 1
+          if (calls === 1) {
+            return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })
+          }
+          return calls === 2 ? first.promise : second.promise
+        },
+      },
+    })
+    const wrapper = mountBrowser()
+    await flushPromises()
+    // 两次无防抖查询（勾选 / 取消「只看持仓」），两次都实际发出才构成乱序到达
+    const sw = wrapper.find('[data-testid="only-invested-switch"]')
+    await sw.trigger('click')
+    await sw.trigger('click')
+    expect(calls).toBe(3)
+
+    // 后发 B 先到达
+    second.resolve({ items: [makeInstrument({ id: 'inst-b', symbol: 'BBB', name: '后发' })], total: 1 })
+    await flushPromises()
+    // 先发 A 迟到：不得覆盖后发结果（删掉纪元守卫本断言变红）
+    first.resolve({ items: [makeInstrument({ id: 'inst-a', symbol: 'AAA', name: '先发' })], total: 1 })
+    await flushPromises()
+
+    const symbols = wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text())
+    expect(symbols).toEqual(['BBB'])
+  })
+})

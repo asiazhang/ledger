@@ -17,6 +17,7 @@ import { t } from '@ledger/i18n'
 import { useInstrumentInfoSync } from '@/investment/useInstrumentInfoSync'
 import { usePricesChanged } from '@/investment/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
+import { createLatestWinsGuard } from '@/composables/latest-wins'
 import { useWindowTier } from '@ledger/window-tier'
 import SyncProgressBar from '@/investment/SyncProgressBar.vue'
 import SyncDegradedNotice from '@/investment/SyncDegradedNotice.vue'
@@ -66,6 +67,9 @@ const page = ref(1)
 const pageSize = 50
 const loading = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | undefined
+/** 列表查询在途竞态纪元（issue #1401）：市场 / 只看持仓 / 翻页无防抖，快速切换会
+ *  与在途查询乱序；每次 load 开启新纪元，迟到旧纪元结果不落位（items 与 total 同源） */
+const loadEpoch = createLatestWinsGuard()
 
 const marketOptions = computed(() =>
   // 筛选下拉不展开美股三交易所选项（后端筛选为精确匹配，UI 只显「美股」，
@@ -79,6 +83,7 @@ function enumLabel(domain: 'priceChannel' | 'market' | 'type', closed: readonly 
 }
 
 async function load() {
+  const myEpoch = loadEpoch.start()
   loading.value = true
   try {
     const res = await api.listInstruments({
@@ -89,10 +94,11 @@ async function load() {
       page: page.value,
       page_size: pageSize,
     })
+    if (!loadEpoch.isCurrent(myEpoch)) return
     instruments.value = res.items
     total.value = res.total
   } finally {
-    loading.value = false
+    if (loadEpoch.isCurrent(myEpoch)) loading.value = false
   }
 }
 

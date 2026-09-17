@@ -1,15 +1,19 @@
 //! 行情 HTTP 网络层（issue #89）：东财行情接口请求、多主机切换、重试与限流冷却、
 //! 响应解析。与数据库无关，可独立测试（见 `tests.rs` 中本地 HTTP 服务用例）。
+//! 客户端与等待原语为异步形态（reqwest async / 异步睡眠 / 异步互斥体，issue #1411
+//! / ADR-0125 决策 5/6）；编排仍为同步形状的过渡期由 [`block_on`] 同步桥驱动，
+//! 编排 async 化（issue #1412）后桥删除。
 //! 标的全量同步（clist 分页爬取）已随 ADR-0081 决策 3 退役删除（issue #698），
 //! 本层现服务增量同步批量报价、单点行情、日 K 与基金净值通道。
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
-use std::thread;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
+use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 
 use ledger_infra::error::{AppError, Result};
 
@@ -116,11 +120,13 @@ impl Pacer {
         }
     }
 
-    pub(super) fn wait(&mut self) {
+    /// 发起一次请求前的等待：不足当前间隔则异步睡满（ADR-0125 决策 6——等待
+    /// 原语异步化，间隔与串行保证不变）。
+    pub(super) async fn wait(&mut self) {
         if let Some(last) = self.last {
             let elapsed = last.elapsed();
             if elapsed < self.interval {
-                thread::sleep(self.interval - elapsed);
+                sleep(self.interval - elapsed).await;
             }
         }
         self.last = Some(Instant::now());
@@ -157,12 +163,12 @@ impl Default for Pacer {
     }
 }
 
-/// 取一次限流 pacer（毒化映射 [`AppError::Io`]：串行使用下锁竞争不存在，
-/// 毒化仅发生于抓取 panic，属基础设施失败）。
-pub(super) fn lock_pacer(pacer: &Mutex<Pacer>) -> Result<MutexGuard<'_, Pacer>> {
-    pacer
-        .lock()
-        .map_err(|e| AppError::Io(format!("限流器互斥体损坏: {e}")))
+/// 取一次限流 pacer 的异步守卫：从发请求前一直持有到响应处理完（ADR-0125
+/// 决策 6——锁的粒度不变，只把 `std` 互斥体换成可在 `.await` 之间持有的异步
+/// 互斥体；`std` 守卫跨 `await` 持有会让 future 失去 `Send`）。异步互斥体无
+/// 中毒语义：抓取 panic 不再毒化限速状态。
+pub(super) async fn lock_pacer(pacer: &AsyncMutex<Pacer>) -> AsyncMutexGuard<'_, Pacer> {
+    pacer.lock().await
 }
 
 /// 进程级共享限速器单例（issue #1375 额度让路）：前台（用户动作：手动同步）与
@@ -170,10 +176,10 @@ pub(super) fn lock_pacer(pacer: &Mutex<Pacer>) -> Result<MutexGuard<'_, Pacer>> 
 /// 相邻两次请求（不管来自哪条车道）之间都保持当前间隔。先例：
 /// `bulk::shared_circuit`（跨同步记忆的进程级单例，通道束每次重建而记忆不随束
 /// 消亡）；限速器同理——束每次同步/每轮重建，限速状态必须活在束之外。
-pub(super) fn shared_pacer() -> Arc<Mutex<Pacer>> {
-    static SHARED: OnceLock<Arc<Mutex<Pacer>>> = OnceLock::new();
+pub(super) fn shared_pacer() -> Arc<AsyncMutex<Pacer>> {
+    static SHARED: OnceLock<Arc<AsyncMutex<Pacer>>> = OnceLock::new();
     SHARED
-        .get_or_init(|| Arc::new(Mutex::new(Pacer::default())))
+        .get_or_init(|| Arc::new(AsyncMutex::new(Pacer::default())))
         .clone()
 }
 
@@ -200,15 +206,35 @@ impl Drop for ForegroundGuard {
     }
 }
 
-/// 后台让行等待（issue #1375）：前台请求在途期间自旋等待归零，绝不与前台
+/// 后台让行等待（issue #1375）：前台请求在途期间异步轮询等待归零，绝不与前台
 /// 并发抢额度——用户动作优先于后台补全。归零窗口极短（前台请求本身被共享
 /// pacer 限速），轮询间隔取小让后台能及时察觉恢复。
 const FOREGROUND_YIELD_POLL: Duration = Duration::from_millis(50);
 
-pub(super) fn wait_foreground_idle() {
+pub(super) async fn wait_foreground_idle() {
     while FOREGROUND_INFLIGHT.load(Ordering::SeqCst) > 0 {
-        thread::sleep(FOREGROUND_YIELD_POLL);
+        sleep(FOREGROUND_YIELD_POLL).await;
     }
+}
+
+/// 异步睡眠原语（ADR-0125 决策 6）：限速等待、退避与让行自旋统一走这里，
+/// 不占用调用线程。
+async fn sleep(duration: Duration) {
+    tokio::time::sleep(duration).await;
+}
+
+/// 过渡期同步桥（ADR-0125 决策 5/6）：异步 HTTP 核心在编排仍为同步形状的
+/// 过渡态下，经全局运行时驱动到完成。编排 async 化（issue #1412）后本桥删除，
+/// 网络等待以 `.await` 直接表达。
+///
+/// 调用约束：底层 `Runtime::block_on` **不得从运行时 worker 线程调用**（会
+/// panic「Cannot start a runtime from within a runtime」）。当前全部调用点都在
+/// `spawn_blocking` 闭包或 `std::thread` 专用线程上（阻塞池线程只 `Handle::enter`
+/// 而不置 runtime-entered，故安全）；新增调用点若沿异步任务路径触达本桥即运行时
+/// panic，接线时须核对。`tauri::async_runtime::safe_block_on` 能承接该判断，但为
+/// crate 私有不可用。
+pub(super) fn block_on<F: Future>(future: F) -> F::Output {
+    tauri::async_runtime::block_on(future)
 }
 
 /// 行情接口返回的单个股票条目（字段 f12=代码, f14=名称, f2=价格原始值, f1=价格精度位）。
@@ -303,9 +329,11 @@ impl DiffField {
     }
 }
 
-/// 构建行情 HTTP 客户端（增量同步与按代码查询通道共用，UA 保持一致）。
-pub(super) fn build_client() -> Result<reqwest::blocking::Client> {
-    reqwest::blocking::Client::builder()
+/// 构建行情 HTTP 客户端（异步 reqwest，issue #1411 / ADR-0125 决策 5：不再自持
+/// 运行时线程，构造与请求等待都不再要求调用线程不在异步上下文；增量同步与
+/// 按代码查询通道共用，UA 保持一致）。
+pub(super) fn build_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
         .user_agent("Mozilla/5.0")
         .build()
         .map_err(|e| AppError::Io(e.to_string()))
@@ -327,8 +355,8 @@ pub(super) fn secid_prefix(market: &str) -> Option<&'static str> {
 
 /// 发送请求并解析 JSON，按序尝试多个主机，对传输错误做短退避、对限流拦截做长冷却重试。
 #[allow(clippy::too_many_arguments)]
-pub(super) fn request_json_from_hosts<T>(
-    client: &reqwest::blocking::Client,
+pub(super) async fn request_json_from_hosts<T>(
+    client: &reqwest::Client,
     params: &[(&str, &str)],
     path: &str,
     hosts: &[&str],
@@ -340,40 +368,10 @@ pub(super) fn request_json_from_hosts<T>(
 where
     T: serde::de::DeserializeOwned,
 {
-    request_from_hosts(path, hosts, |url| {
-        request_json_with_retry::<T>(client, url, params, pacer, ctx, cfg, referer)
-    })
-}
-
-/// 同 [`request_json_from_hosts`] 的多主机切换，但返回**原始文本**（非 JSON 的
-/// 数据文件通道用，如基金详情页 `.js`；issue #1062）。解析与可信度判定留给调用方
-/// （文本层无法区分正常数据文件与被拦截 HTML 页，那是解析层的判据）。
-#[allow(clippy::too_many_arguments)]
-pub(super) fn request_text_from_hosts(
-    client: &reqwest::blocking::Client,
-    params: &[(&str, &str)],
-    path: &str,
-    hosts: &[&str],
-    cfg: RetryConfig,
-    pacer: &mut Pacer,
-    ctx: &str,
-    referer: Option<&str>,
-) -> Result<String> {
-    request_from_hosts(path, hosts, |url| {
-        request_text_with_retry(client, url, params, pacer, ctx, cfg, referer)
-    })
-}
-
-/// 多主机请求核心：按序尝试多个主机、首个成功即返回，全失败时把各主机错误汇聚成
-/// 一条错误（便于定位是哪个镜像挂了）。单主机重试与解析由 `attempt` 承载。
-fn request_from_hosts<T, A>(path: &str, hosts: &[&str], mut attempt: A) -> Result<T>
-where
-    A: FnMut(&str) -> Result<T>,
-{
     let mut failures: Vec<String> = Vec::new();
     for host in hosts {
         let url = format!("{host}{path}");
-        match attempt(&url) {
+        match request_json_with_retry::<T>(client, &url, params, pacer, ctx, cfg, referer).await {
             Ok(resp) => return Ok(resp),
             Err(e) => failures.push(format!("{host}: {e}")),
         }
@@ -384,8 +382,36 @@ where
     )))
 }
 
-pub(super) fn request_json_with_retry<T>(
-    client: &reqwest::blocking::Client,
+/// 同 [`request_json_from_hosts`] 的多主机切换，但返回**原始文本**（非 JSON 的
+/// 数据文件通道用，如基金详情页 `.js`；issue #1062）。解析与可信度判定留给调用方
+/// （文本层无法区分正常数据文件与被拦截 HTML 页，那是解析层的判据）。
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn request_text_from_hosts(
+    client: &reqwest::Client,
+    params: &[(&str, &str)],
+    path: &str,
+    hosts: &[&str],
+    cfg: RetryConfig,
+    pacer: &mut Pacer,
+    ctx: &str,
+    referer: Option<&str>,
+) -> Result<String> {
+    let mut failures: Vec<String> = Vec::new();
+    for host in hosts {
+        let url = format!("{host}{path}");
+        match request_text_with_retry(client, &url, params, pacer, ctx, cfg, referer).await {
+            Ok(resp) => return Ok(resp),
+            Err(e) => failures.push(format!("{host}: {e}")),
+        }
+    }
+    Err(AppError::Io(format!(
+        "全部行情主机请求失败: {}",
+        failures.join("; ")
+    )))
+}
+
+pub(super) async fn request_json_with_retry<T>(
+    client: &reqwest::Client,
     url: &str,
     params: &[(&str, &str)],
     pacer: &mut Pacer,
@@ -399,12 +425,13 @@ where
     request_with_retry(client, url, params, pacer, ctx, cfg, referer, &|bytes| {
         serde_json::from_slice::<T>(bytes).map_err(|e| format!("JSON 解析失败: {e}"))
     })
+    .await
 }
 
 /// 单主机请求重试 + 原样文本返回（非 JSON 数据文件通道，issue #1062）。
 #[allow(clippy::too_many_arguments)]
-pub(super) fn request_text_with_retry(
-    client: &reqwest::blocking::Client,
+pub(super) async fn request_text_with_retry(
+    client: &reqwest::Client,
     url: &str,
     params: &[(&str, &str)],
     pacer: &mut Pacer,
@@ -415,14 +442,16 @@ pub(super) fn request_text_with_retry(
     request_with_retry(client, url, params, pacer, ctx, cfg, referer, &|bytes| {
         String::from_utf8(bytes.to_vec()).map_err(|e| format!("响应解码失败: {e}"))
     })
+    .await
 }
 
-/// 单主机请求重试核心（多主机版本 [`request_from_hosts`] 的底座）：串行限速 →
-/// 发送 → 传输错误短退避 / 429 长冷却 / 响应字节解析；解析失败按「疑似被风控拦截」
-/// 长冷却重试，与既有 JSON 行为一致。纯文本通道的解析恒成功，据此复用同一套重试。
+/// 单主机请求重试核心：串行限速 → 发送 → 传输错误短退避 / 429 长冷却 / 响应字节
+/// 解析；解析失败按「疑似被风控拦截」长冷却重试，与既有 JSON 行为一致。纯文本通道
+/// 的解析恒成功，据此复用同一套重试。异步形态下所有等待（限速、退避、冷却）等价
+/// 迁移为异步睡眠，串行与重试语义不变（ADR-0125 决策 5/6）。
 #[allow(clippy::too_many_arguments)]
-fn request_with_retry<T, P>(
-    client: &reqwest::blocking::Client,
+async fn request_with_retry<T, P>(
+    client: &reqwest::Client,
     url: &str,
     params: &[(&str, &str)],
     pacer: &mut Pacer,
@@ -437,19 +466,19 @@ where
     let mut transport_attempts = 0u32;
     let mut throttle_attempts = 0u32;
     loop {
-        pacer.wait();
+        pacer.wait().await;
         // 部分东财接口（如历史净值 lsjz）要求带 Referer 头，缺省被拦截（issue #303）。
         let mut req = client.get(url).query(params).timeout(REQUEST_TIMEOUT);
         if let Some(referer) = referer {
             req = req.header(reqwest::header::REFERER, referer);
         }
-        let resp = match req.send() {
+        let resp = match req.send().await {
             Ok(r) => r,
             Err(e) => {
                 transport_attempts += 1;
                 if transport_attempts <= cfg.max_retries {
                     tracing::warn!(ctx = %ctx, attempt = transport_attempts, error = %e, "HTTP 请求失败，准备重试");
-                    thread::sleep(cfg.base_backoff * (1u32 << (transport_attempts - 1)));
+                    sleep(cfg.base_backoff * (1u32 << (transport_attempts - 1))).await;
                     continue;
                 }
                 tracing::error!(ctx = %ctx, error = %e, "HTTP 请求失败");
@@ -480,17 +509,17 @@ where
                     interval_ms = pacer.interval().as_millis() as u64,
                     "触发接口限流(429)，降速并冷却后重试"
                 );
-                thread::sleep(cfg.throttle_cooldown);
+                sleep(cfg.throttle_cooldown).await;
                 continue;
             }
             return Err(AppError::Io("接口限流(429)，请稍后再试".into()));
         }
 
-        let bytes = match resp.bytes() {
+        let bytes = match resp.bytes().await {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!(ctx = %ctx, error = %e, "读取响应失败");
-                thread::sleep(cfg.throttle_cooldown);
+                sleep(cfg.throttle_cooldown).await;
                 continue;
             }
         };
@@ -513,7 +542,7 @@ where
                         body_head = %head, error = %e,
                         "响应解析失败（疑似被风控拦截），降速并冷却后重试"
                     );
-                    thread::sleep(cfg.throttle_cooldown);
+                    sleep(cfg.throttle_cooldown).await;
                     continue;
                 }
                 tracing::error!(
@@ -530,8 +559,8 @@ where
 /// 按 secid 批量查询最新价（跨市场一次携带多只，复用 clist 同一套主机池/重试/限流与解析）。
 /// `secids` 为逗号分隔的东财 secid 串（形如 `1.600519,0.000001,116.00700`）。
 /// 响应 `data` 为 null（全部代码无效）时返回空列表，不报错。
-pub(super) fn fetch_ulist(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_ulist(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
     secids: &str,
 ) -> Result<Vec<StockItem>> {
@@ -548,7 +577,8 @@ pub(super) fn fetch_ulist(
         pacer,
         "fetch_ulist",
         None,
-    )?;
+    )
+    .await?;
     Ok(resp
         .data
         .and_then(|d| d.diff)
@@ -607,8 +637,8 @@ pub(super) fn parse_klines(raw: &[String]) -> Vec<KlineBar> {
 }
 
 /// 拉取单个 secid 的日 K 线（近两年窗口由 `beg`（YYYYMMDD）控制，终点固定远期）。
-pub(super) fn fetch_kline(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_kline(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
     secid: &str,
     beg: &str,
@@ -632,7 +662,8 @@ pub(super) fn fetch_kline(
         pacer,
         &format!("fetch_kline:{secid}"),
         None,
-    )?;
+    )
+    .await?;
     let raw = resp.data.and_then(|d| d.klines).unwrap_or_default();
     Ok(parse_klines(&raw))
 }
@@ -661,14 +692,14 @@ pub(super) fn fx_secid_candidates(pair: &str) -> Vec<(String, bool)> {
 /// 拉取币种对（base→quote，pair 形如 "HKDCNY"）的汇率日 K 线。
 /// 按 [`fx_secid_candidates`] 顺序尝试，首个有数据的候选生效（反向取倒数）；
 /// 全部候选无数据（如东财不覆盖该币种对）返回空列表，不报错。
-pub(super) fn fetch_fx_kline(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_fx_kline(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
     pair: &str,
     beg: &str,
 ) -> Result<Vec<KlineBar>> {
     for (secid, invert) in fx_secid_candidates(pair) {
-        let bars = fetch_kline(client, pacer, &secid, beg)?;
+        let bars = fetch_kline(client, pacer, &secid, beg).await?;
         if bars.is_empty() {
             continue;
         }

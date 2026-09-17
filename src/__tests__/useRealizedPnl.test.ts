@@ -256,3 +256,49 @@ describe('useRealizedPnl 失败治愈（issue #325 Loadable 薄壳化）', () =>
     expect(sink.error).toHaveBeenCalledWith('首刷失败')
   })
 })
+
+describe('useRealizedPnl 标的远程搜索在途竞态（issue #1401）', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((res) => {
+      resolve = res
+    })
+    return { promise, resolve }
+  }
+
+  it('先发请求迟到不覆盖后发结果：候选呈现后发搜索的标的', async () => {
+    vi.useFakeTimers()
+    try {
+      const first = deferred<{ items: ReturnType<typeof makeInstrument>[]; total: number }>()
+      const second = deferred<{ items: ReturnType<typeof makeInstrument>[]; total: number }>()
+      let calls = 0
+      wireInvokeSeam({
+        defaults: BASE_DEFAULTS,
+        overrides: {
+          ...REFERENCE_OVERRIDES,
+          list_instruments: () => {
+            calls += 1
+            return calls === 1 ? first.promise : second.promise
+          },
+        },
+      })
+      const { searchInstruments, pnlInstrumentOptions } = withSetup(() => useRealizedPnl())
+      searchInstruments('AAA')
+      // 各自推进过防抖窗口：两次查询都实际发出，才构成乱序到达的竞态
+      await vi.advanceTimersByTimeAsync(300)
+      searchInstruments('BBB')
+      await vi.advanceTimersByTimeAsync(300)
+      expect(calls).toBe(2)
+
+      // 后发先到，先发迟到：呈现的应是后发搜索的结果（删掉纪元守卫本断言变红）
+      second.resolve({ items: [makeInstrument({ id: 'inst-b', symbol: 'BBB', name: '后发' })], total: 1 })
+      await flushPromises()
+      first.resolve({ items: [makeInstrument({ id: 'inst-a', symbol: 'AAA', name: '先发' })], total: 1 })
+      await flushPromises()
+
+      expect(pnlInstrumentOptions.value).toEqual([{ label: 'BBB · 后发', value: 'inst-b' }])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

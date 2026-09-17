@@ -21,7 +21,7 @@ use serde::Deserialize;
 
 use super::fund::deserialize_flexible_f64;
 use super::http::{
-    API_HOSTS, Pacer, RetryConfig, STOCK_GET_PATH, build_client, price_cents_from_raw,
+    API_HOSTS, Pacer, RetryConfig, STOCK_GET_PATH, block_on, build_client, price_cents_from_raw,
     request_json_from_hosts, secid_prefix,
 };
 use super::incremental::beijing_date;
@@ -129,8 +129,8 @@ pub(crate) fn pick_stock_quote(
 /// 按（市场，代码）拉取单点行情。市场须已过投资域候选解析（沪深港美，见
 /// `investment::stock::resolve_stock_quote_candidates`）；查无此码返回码化中文错误
 ///（Invalid → 400），网络失败 / 风控拦截由 HTTP 层重试后上抛（Io → 500）。
-pub(super) fn fetch_stock_quote(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_stock_quote(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
     market: &str,
     code: &str,
@@ -158,7 +158,8 @@ pub(super) fn fetch_stock_quote(
         pacer,
         &format!("fetch_stock_quote:{secid}"),
         None,
-    )?;
+    )
+    .await?;
     pick_stock_quote(resp, market, code).ok_or_else(|| {
         AppError::codedp(
             "sync.stock-not-found",
@@ -170,9 +171,13 @@ pub(super) fn fetch_stock_quote(
 
 /// 生产拉取入口：构建客户端与限流器后执行单次行情查询（不经数据库连接，
 /// 供 HTTP 壳在连接锁外完成网络往返，先例：`fetch_fund_quote_production`，
-/// 单请求叠加限流冷却重试最长可达分钟级）。
+/// 单请求叠加限流冷却重试最长可达分钟级）。过渡期同步桥（ADR-0125 决策 5/6）：
+/// 异步 HTTP 核心经全局运行时驱动；壳层接缝 async 化（issue #1413）后本入口改
+/// async、桥删除。
 pub fn fetch_stock_quote_production(market: &str, code: &str) -> Result<Quote> {
     let client = build_client()?;
-    let mut pacer = Pacer::default();
-    fetch_stock_quote(&client, &mut pacer, market, code)
+    block_on(async {
+        let mut pacer = Pacer::default();
+        fetch_stock_quote(&client, &mut pacer, market, code).await
+    })
 }

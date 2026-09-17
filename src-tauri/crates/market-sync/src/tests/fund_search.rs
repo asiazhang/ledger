@@ -258,16 +258,16 @@ fn spawn_channel_server(search_body: &'static str, archive_body: &'static str) -
 fn quote_falls_back_to_archive_channel_when_search_index_misses() {
     // 删除 fetch_fund_quote_from 里的档案回退调用 → 本用例变红（接线型负向判据）。
     let url = spawn_channel_server(SEARCH_INDEX_MISS, ARCHIVE_JS);
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
 
-    let quote = fetch_fund_quote_from(
+    let quote = crate::http::block_on(fetch_fund_quote_from(
         &client,
         &mut pacer,
         "002503",
         &[url.as_str()],
         &[url.as_str()],
-    )
+    ))
     .expect("搜索索引未命中应回退档案通道命中");
 
     assert_eq!(quote.code, "002503");
@@ -283,16 +283,16 @@ fn quote_falls_back_to_archive_channel_when_search_index_misses() {
 fn quote_reports_not_found_when_archive_channel_also_misses() {
     // 两段皆未命中（档案文件是错误页）才是查无此码。
     let url = spawn_channel_server(SEARCH_INDEX_MISS, NOT_FOUND_PAGE);
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
 
-    let error = fetch_fund_quote_from(
+    let error = crate::http::block_on(fetch_fund_quote_from(
         &client,
         &mut pacer,
         "002503",
         &[url.as_str()],
         &[url.as_str()],
-    )
+    ))
     .expect_err("档案通道也未命中应报查无此码");
 
     assert!(

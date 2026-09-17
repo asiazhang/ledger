@@ -4,12 +4,16 @@
 //! - [`migrate`]：迁移链与 `init_db`（schema 守卫尾部接线，ADR-0100）；
 //! - [`connection`]：建连 / 重置 / 完整性检查 / 内存库；
 //! - [`runtime`]：连接层统一写入口与提交点后置钩子（ADR-0032）、阻塞线程池
-//!   helper（ADR-0069 形状乙）与 [`DbState`]。
+//!   helper（ADR-0069 形状乙）与 [`DbState`]；
+//! - [`facade`]：异步 DB 门面（ADR-0125 决策 1–3）——写 / 读两条专用 DB 线程 +
+//!   作业通道 + oneshot 回传，取用独占与 panic 恢复收在门面内。
 //!
 //! 其余子模块（perf_trace / query / schema_guard / tx_scope）各承载单一主题。
 //! 既有消费方 `crate::db::…` 路径经再导出零改动。
 
 pub mod connection;
+pub mod facade;
+pub mod facade_handles;
 pub mod migrate;
 pub mod perf_trace;
 pub mod query;
@@ -23,11 +27,16 @@ pub use connection::{
     open_connection_readonly_with_passphrase, open_connection_with_passphrase, open_db_in,
     open_in_memory, reset_db_file, reset_db_in,
 };
+pub use facade::DbFacade;
+pub use facade_handles::{DbReadHandle, DbSlotPair, DbWriteHandle, install_facade};
+// 接线证明的观察点：仅测试构建可见（生产接线由源码扫描守门核对，issue #1410）。
+#[cfg(test)]
+pub(crate) use facade_handles::facade_installed;
 pub use migrate::{init_db, schema_version};
 pub use runtime::probe_lock_hold;
 pub use runtime::{
     AfterCommitHook, DbState, LOCK_HOLD_PROBE_THRESHOLD, register_after_commit_hook,
-    replace_read_conn_slot, run_db, write,
+    replace_read_conn_slot, run_db, write, write_locked,
 };
 
 // 迁移集合保持 crate 内可见面（tests 与 schema_guard 经此消费，非公开 API）。

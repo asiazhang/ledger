@@ -12,7 +12,7 @@
 
 use tauri::State;
 
-use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::read_entry::read_entry_on_write;
 use ledger_infra::db::DbState;
 use ledger_infra::error::Result;
 use ledger_transaction as transaction_domain;
@@ -36,8 +36,8 @@ pub async fn search_transactions(
 ) -> Result<TransactionSearchResult> {
     // 只读甄别收口（issue #1280 / ADR-0117 代价 3）：搜索入口含拼音惰性回填写
     // （存量行积压时 UPDATE transactions，域设计即搜索前自愈），必须走写连接。
-    let conn = db.conn.clone();
-    read_entry("search_transactions", conn, move |conn| {
+    let conn = db.write_handle();
+    read_entry_on_write("search_transactions", conn, move |conn| {
         transaction_domain::search_transactions_internal(
             conn,
             &query,
@@ -59,10 +59,10 @@ pub async fn search_transactions(
 pub async fn repair_note_pinyin(db: State<'_, DbState>) -> Result<NotePinyinRepairReport> {
     // 只读甄别收口（issue #1280 / ADR-0117 代价 3）：本命令本体就是回填写
     //（UPDATE transactions），必须走写连接。
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     // 写侧白名单身份保留（ADR-0104 决策 5）：仍是不经 write_entry 的声明写命令，
     // 闭包体与形状 A 同构，锁仪式归统一读入口。
-    read_entry("repair_note_pinyin", conn, move |conn| {
+    read_entry_on_write("repair_note_pinyin", conn, move |conn| {
         Ok(transaction_domain::repair_note_pinyin(conn))
     })
     .await

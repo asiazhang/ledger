@@ -36,6 +36,10 @@ axum = { version = "0.8", optional = true }
 sha2 = "0.11"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 tracing = "0.1"
+# 异步 DB 门面（ADR-0125 决策 1，issue #1408）：作业结果经 oneshot 回传。门面的
+# 线程与作业通道自建，不依赖 tokio 运行时——`tokio::sync` 的接收端可在任意执行器
+# 上 await（tauri 全局运行时即 tokio，依赖树中本已存在）。
+tokio = { version = "1", features = ["sync"] }
 # tracing-subscriber 仍被 test_utils（信号捕获 Layer，#1132 feature 门）与 db 单测
 # 消费，故留本 crate：test_utils 随 feature 编入 lib，对下游测试构建可见，
 # 依赖必须在常规 [dependencies]（dev-dependencies 不进下游闭包）。
@@ -56,6 +60,9 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+# 门面测试并发驱动读写两作业（`tokio::join!`，钉住「读侧独立于写侧」）：`macros`
+# 只在测试目标需要，生产面零命中（`sync` 边见上）。
+tokio = { version = "1", features = ["macros"] }
 # 测试专用边（spec #1086 明文裁决「数据库 ↔ 核心交易域的双向引用是测试专用边，
 # 用 dev-dependency 环解决（Cargo 允许）」）：迁入本 crate 的域单测用根包的统一
 # 测试数据库工厂与共享断言（test_support；测试器具 test_utils 已随类型身份约束

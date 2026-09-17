@@ -23,8 +23,8 @@ use crate::shell_support::logger;
 use crate::shell_support::read_entry::read_entry;
 use crate::shell_support::write_entry::{Outcome, write_entry};
 use ledger_currencies::current_base_currency;
-use ledger_infra::db::{DbState, run_db};
-use ledger_infra::error::{AppError, Result};
+use ledger_infra::db::DbState;
+use ledger_infra::error::Result;
 use ledger_infra::signals::WriteOp;
 
 /// 日志等级当前持久化档位（设置页「关于」Tab 下拉回显）。
@@ -41,7 +41,7 @@ pub struct LogLevelState {
 /// 默认 info；库内残留闭集外字符串时回默认 info 并告警（读路径不因坏值上抛）。
 #[tauri::command]
 pub async fn get_log_level(app: tauri::AppHandle) -> Result<LogLevelState> {
-    let conn = app.state::<DbState>().read_conn.clone();
+    let conn = app.state::<DbState>().read_handle();
     read_entry("get_log_level", conn, move |conn| {
         let level = logger::persisted_level(conn);
         Ok(LogLevelState {
@@ -56,10 +56,12 @@ pub async fn get_log_level(app: tauri::AppHandle) -> Result<LogLevelState> {
 /// 跨启动保留；文件与终端两条输出共用同一滤镜、一起变化。
 #[tauri::command]
 pub async fn set_log_level(app: tauri::AppHandle, level: String) -> Result<()> {
-    let conn = app.state::<DbState>().conn.clone();
-    run_db("set_log_level", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        logger::set_persisted_level(&conn, &level)
+    // 设置 KV 写入经 `settings` 单点收口（ADR-0032 置脏豁免）：门面写槽**裸作业**
+    // ——取用独占收在门面内（ADR-0125 决策 1/2，issue #1410），不经统一写入口的
+    // 置脏/到期检查（与迁移前逐字一致）。
+    let db = app.state::<DbState>().write_handle();
+    db.run_raw("set_log_level", move |conn| {
+        logger::set_persisted_level(conn, &level)
     })
     .await
 }
@@ -75,7 +77,7 @@ pub struct BaseCurrencyState {
 /// 回默认 CNY（读路径不因缺 key 上抛）。
 #[tauri::command]
 pub async fn get_base_currency(app: tauri::AppHandle) -> Result<BaseCurrencyState> {
-    let conn = app.state::<DbState>().read_conn.clone();
+    let conn = app.state::<DbState>().read_handle();
     read_entry("get_base_currency", conn, move |conn| {
         Ok(BaseCurrencyState {
             code: current_base_currency(conn)?,
@@ -90,7 +92,7 @@ pub async fn get_base_currency(app: tauri::AppHandle) -> Result<BaseCurrencyStat
 /// 设置页自读回显；写操作身份 `SetBaseCurrency` 经本调用点声明（写入口扫描核对）。
 #[tauri::command]
 pub async fn set_base_currency(app: tauri::AppHandle, code: String) -> Result<BaseCurrencyState> {
-    let conn = app.state::<DbState>().conn.clone();
+    let conn = app.state::<DbState>().write_handle();
     write_entry(
         "set_base_currency",
         conn,

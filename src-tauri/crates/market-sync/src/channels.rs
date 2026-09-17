@@ -22,11 +22,11 @@
 use ledger_infra::error::Result;
 
 use super::bulk::BulkFetchSurfaces;
-use super::fund::fetch_fund_quote_production;
+use super::fund::fetch_fund_quote;
 use super::fund_nav::{LsjzPage, NavPoint, NavQuery, fetch_nav_full_series, fetch_nav_page};
 use super::http::{
-    ForegroundGuard, KlineBar, StockItem, build_client, fetch_fx_kline, fetch_kline, fetch_ulist,
-    lock_pacer, shared_pacer, wait_foreground_idle,
+    ForegroundGuard, KlineBar, Pacer, StockItem, block_on, build_client, fetch_fx_kline,
+    fetch_kline, fetch_ulist, lock_pacer, shared_pacer, wait_foreground_idle,
 };
 use super::incremental::{do_incremental_sync_with, kline_beg};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
@@ -46,8 +46,9 @@ pub type FetchNavFull = Box<dyn FnMut(&str) -> Result<Vec<NavPoint>> + Send>;
 pub type FetchFundName = Box<dyn FnMut(&str) -> Result<String> + Send>;
 
 /// 六个逐标的抓取通道 + 两个批量取数面的打包束：闭包签名与编排注入点逐一同形。
-/// 生产实现共享一个 HTTP client 与限流 pacer（`Arc<Mutex<_>>` 内部可变，串行
-/// 使用下与既有局部 `RefCell` 共享语义一致，批量面同样经它限速）；测试实现为注入桩。
+/// 生产实现共享一个异步 HTTP client 与限流 pacer（`Arc<tokio::sync::Mutex<_>>`
+/// 内部可变、跨 `.await` 持有，串行语义与既有守卫一致，批量面同样经它限速）；
+/// 测试实现为注入桩。
 pub struct SyncFetchChannels {
     /// 批量报价（东财 ulist）：secid 逗号串 → 报价条目。
     pub fetch_ulist: FetchUlist,
@@ -91,9 +92,11 @@ impl SyncFetchChannels {
                 let client = client.clone();
                 let pacer = pacer.clone();
                 Box::new(move |secids: &str| {
-                    let _foreground = lane.before_request();
-                    let mut pacer = lock_pacer(&pacer)?;
-                    fetch_ulist(&client, &mut pacer, secids)
+                    block_on(async {
+                        let _foreground = lane.before_request().await;
+                        let mut pacer = lock_pacer(&pacer).await;
+                        fetch_ulist(&client, &mut pacer, secids).await
+                    })
                 })
             },
             fetch_kline: {
@@ -101,9 +104,11 @@ impl SyncFetchChannels {
                 let pacer = pacer.clone();
                 let beg = beg.clone();
                 Box::new(move |secid: &str| {
-                    let _foreground = lane.before_request();
-                    let mut pacer = lock_pacer(&pacer)?;
-                    fetch_kline(&client, &mut pacer, secid, &beg)
+                    block_on(async {
+                        let _foreground = lane.before_request().await;
+                        let mut pacer = lock_pacer(&pacer).await;
+                        fetch_kline(&client, &mut pacer, secid, &beg).await
+                    })
                 })
             },
             fetch_fx: {
@@ -111,32 +116,47 @@ impl SyncFetchChannels {
                 let pacer = pacer.clone();
                 let beg = beg.clone();
                 Box::new(move |pair: &str| {
-                    let _foreground = lane.before_request();
-                    let mut pacer = lock_pacer(&pacer)?;
-                    fetch_fx_kline(&client, &mut pacer, pair, &beg)
+                    block_on(async {
+                        let _foreground = lane.before_request().await;
+                        let mut pacer = lock_pacer(&pacer).await;
+                        fetch_fx_kline(&client, &mut pacer, pair, &beg).await
+                    })
                 })
             },
             fetch_nav: {
                 let client = client.clone();
                 let pacer = pacer.clone();
                 Box::new(move |query: &NavQuery| {
-                    let _foreground = lane.before_request();
-                    let mut pacer = lock_pacer(&pacer)?;
-                    fetch_nav_page(&client, &mut pacer, query)
+                    block_on(async {
+                        let _foreground = lane.before_request().await;
+                        let mut pacer = lock_pacer(&pacer).await;
+                        fetch_nav_page(&client, &mut pacer, query).await
+                    })
                 })
             },
             fetch_nav_full: {
                 let client = client.clone();
                 let pacer = pacer.clone();
                 Box::new(move |code: &str| {
-                    let _foreground = lane.before_request();
-                    let mut pacer = lock_pacer(&pacer)?;
-                    fetch_nav_full_series(&client, &mut pacer, code)
+                    block_on(async {
+                        let _foreground = lane.before_request().await;
+                        let mut pacer = lock_pacer(&pacer).await;
+                        fetch_nav_full_series(&client, &mut pacer, code).await
+                    })
                 })
             },
             fetch_fund_name: Box::new(move |code: &str| {
-                let _foreground = lane.before_request();
-                fetch_fund_quote_production(code).map(|quote| quote.name)
+                block_on(async {
+                    let _foreground = lane.before_request().await;
+                    // 基金详情通道自带客户端与独立限速器（与共享 pacer 无关），
+                    // 与既有 `fetch_fund_quote_production` 同形，但在同一异步块内
+                    // 完成以让前台在途守卫覆盖整次请求。
+                    let client = build_client()?;
+                    let mut pacer = Pacer::default();
+                    fetch_fund_quote(&client, &mut pacer, code)
+                        .await
+                        .map(|quote| quote.name)
+                })
             }),
             bulk: BulkFetchSurfaces::production(&client, pacer),
         })
@@ -153,13 +173,14 @@ enum Lane {
 }
 
 impl Lane {
-    /// 请求前置动作：前台 = 标记在途；后台 = 让行等待归零。返回的守卫必须
-    /// 以 `let _foreground = …` 绑定存活到请求结束（`let _ = …` 会立即丢弃）。
-    fn before_request(&self) -> Option<ForegroundGuard> {
+    /// 请求前置动作：前台 = 标记在途；后台 = 让行等待归零（异步睡眠，ADR-0125
+    /// 决策 6）。返回的守卫必须以 `let _foreground = …` 绑定存活到请求结束
+    ///（`let _ = …` 会立即丢弃）。
+    async fn before_request(&self) -> Option<ForegroundGuard> {
         match self {
             Lane::Foreground => Some(ForegroundGuard::enter()),
             Lane::Backfill => {
-                wait_foreground_idle();
+                wait_foreground_idle().await;
                 None
             }
         }

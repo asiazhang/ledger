@@ -89,16 +89,19 @@ pub async fn sync_instrument_info<R: Runtime>(
     db: State<'_, DbState>,
     app: AppHandle<R>,
 ) -> Result<SyncInstrumentInfoResult> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     // 进度发射器归进写闭包自有的一份句柄：`app` 同时被下方发射器参数借用，
     // 闭包（Send + 'static）捕获克隆件（issue #897）。
     let progress_app = app.clone();
     // 通道束换装（issue #1276）：测试注入桩优先（`SyncChannelsSlot` 管理态），
-    // 生产默认生产通道束（每次同步构造，与先前整段形态同口径）。
-    let channels = match app.try_state::<SyncChannelsSlot>() {
-        Some(slot) => slot.0.clone(),
-        None => Arc::new(Mutex::new(SyncFetchChannels::production()?)),
-    };
+    // 生产默认生产通道束。注入槽句柄（`Arc` 克隆）先取出，束体留在写闭包内构造
+    // （issue #1403）：命令体是 tauri 在 tokio worker 上轮询的 async fn，而束内
+    // 抓取闭包以同步桥（`http::block_on`，ADR-0125 决策 5 过渡态）驱动异步 HTTP
+    // ——同步桥不得在运行时 worker 线程上调用；构造点（及调用点）归写闭包所在
+    // 阻塞线程（`run_db`），与 #1403 之前整段形态的线程语义一致。
+    let injected_slot = app
+        .try_state::<SyncChannelsSlot>()
+        .map(|slot| slot.0.clone());
     write_entry_segmented(
         "sync_instrument_info",
         conn,
@@ -112,6 +115,12 @@ pub async fn sync_instrument_info<R: Runtime>(
             // 分段锁包成作用域会话交给编排——编排的读写只经会话短暂取锁，
             // 网络 I/O 在会话之外。
             let mut progress = progress_to_emitter(&progress_app);
+            // 生产通道束的构造点（issue #1403，每次同步一次）：本闭包经 `run_db`
+            // 在阻塞线程池执行，与 #1276 之前整段形态的构造线程语义一致。
+            let channels = match &injected_slot {
+                Some(slot) => slot.clone(),
+                None => Arc::new(Mutex::new(SyncFetchChannels::production()?)),
+            };
             let mut channels = channels
                 .lock()
                 .map_err(|e| AppError::Db(format!("同步通道束互斥体损坏: {e}")))?;
@@ -163,7 +172,13 @@ mod tests {
     fn command_shell_hands_write_entry_connection_to_orchestration_via_session() {
         let conn = crate::test_support::open();
         let shared = std::sync::Arc::new(std::sync::Mutex::new(conn));
-        let lock = SegmentLock::new(&shared);
+        // 分段锁经门面写句柄构造（issue #1410）：写槽由句柄交出，命令壳不再自取连接槽。
+        let handle = ledger_infra::db::DbSlotPair::new(
+            std::sync::Arc::clone(&shared),
+            std::sync::Arc::clone(&shared),
+        )
+        .write_handle();
+        let lock = SegmentLock::new(&handle);
         let session = SegmentSession { lock: &lock };
 
         session

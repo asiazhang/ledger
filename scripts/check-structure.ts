@@ -121,7 +121,7 @@ export const WHITELIST: readonly WhitelistEntry[] = [
 export const INFRA_MODULES: readonly WhitelistEntry[] = [
   { path: 'lib.rs', layer: '基础设施', note: 'crate 根声明文件（#1134 双向全等起入清单）：pub mod 声明与再导出面（含 test_utils cfg 门，ADR-0111 决策 5 / #1132）——模块清单与 crate 实形的双向全等含根声明文件'},
   { path: 'boot', layer: '基础设施', note: '引导层（#1131 自 db 升顶层目录：disposition 启动处置判定与失败门 / data_location 引导 / book_registry 账本注册表 / encryption 加密基座 / passphrase_cache 口令缓存；依赖方向 boot → db 单向，原 db 路径经再导出保持）'},
-  { path: 'db', layer: '基础设施', note: '数据库连接与 schema 守卫（#1127 起 mod.rs 只留声明与再导出，按职责分 migrate / connection / runtime 三文件；时间与身份工厂自 #1128 升顶层 ids、引导层五模块自 #1131 升顶层 boot，原 db 路径经再导出保持）' },
+  { path: 'db', layer: '基础设施', note: '数据库连接与 schema 守卫（#1127 起 mod.rs 只留声明与再导出，按职责分文件：migrate / connection / runtime / query / tx_scope / perf_trace / schema_guard；facade 为 #1408 新增的异步 DB 门面（写读两线程 + 作业通道 + panic 回滚），facade_handles 为 #1410 新增的门面句柄与按槽解析（类型化读 / 写句柄、连接槽对、进程级安装登记），ADR-0125；时间与身份工厂自 #1128 升顶层 ids、引导层五模块自 #1131 升顶层 boot，原 db 路径经再导出保持）' },
   { path: 'ids.rs', layer: '基础设施', note: '时间与身份工厂（当前时刻 / ISO 格式 / UUID v7 与 v5 确定性派生，#1128 自 db 升入——非数据库关切，文件工具等原语引用不穿透 db）' },
   { path: 'serde_util.rs', layer: '基础设施', note: 'wire 入参「键缺席 vs null」三态区分器 double_option（键缺席 = 不改 / null = 清空 / 给值 = 落定，#1330 自账户域信用卡档案字段与分类域 icon / parent_id 两份同源拷贝收敛；serde 对 Option<Option<T>> 默认把键缺席与 null 折叠成同一 None，须显式 deserialize_with）' },
   { path: 'signals', layer: '基础设施', note: '信号映射（ADR-0044；#1129 起为目录模块，mod.rs 只做声明与再导出，测试外挂 tests/ 与 db/ 同形）' },

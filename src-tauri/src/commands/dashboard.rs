@@ -12,7 +12,7 @@
 
 use tauri::State;
 
-use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::read_entry::read_entry_on_write;
 use ledger_dashboard as dashboard_domain;
 use ledger_dashboard::DashboardOverview;
 use ledger_infra::db::DbState;
@@ -24,8 +24,8 @@ pub async fn dashboard_overview(db: State<'_, DbState>) -> Result<DashboardOverv
     // 只读甄别收口（issue #1280 / ADR-0117 代价 3）：本命令闭包内含缓存自愈写
     // （缓存失效时实时重算并 UPSERT 净资产缓存，域设计即「读探针回填」），
     // 必须走写连接——走只读读连接会在只读约束上报错。锁仪式仍归统一读入口。
-    let conn = db.conn.clone();
-    read_entry("dashboard_overview", conn, move |conn| {
+    let conn = db.write_handle();
+    read_entry_on_write("dashboard_overview", conn, move |conn| {
         dashboard_domain::query_dashboard_overview(conn)
     })
     .await

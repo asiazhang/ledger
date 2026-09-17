@@ -74,11 +74,15 @@ fn nav_table_rejects_no_permission_payload() {
 #[test]
 fn name_dictionary_fetch_reads_the_static_data_file() {
     let (url, heads) = spawn_header_capture_server(NAME_DICTIONARY_PAYLOAD.to_string());
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
 
-    let dictionary = fetch_fund_name_dictionary_from(&client, &mut pacer, &[url.as_str()])
-        .expect("报文正常时应命中");
+    let dictionary = crate::http::block_on(fetch_fund_name_dictionary_from(
+        &client,
+        &mut pacer,
+        &[url.as_str()],
+    ))
+    .expect("报文正常时应命中");
 
     let head = &heads.lock().unwrap()[0];
     assert!(
@@ -94,11 +98,15 @@ fn name_dictionary_fetch_reads_the_static_data_file() {
 #[test]
 fn nav_table_fetch_sends_referer_and_pulls_the_whole_market_page() {
     let (url, heads) = spawn_header_capture_server(NAV_TABLE_PAYLOAD.to_string());
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
 
-    let table =
-        fetch_fund_nav_table_from(&client, &mut pacer, &[url.as_str()]).expect("报文正常时应命中");
+    let table = crate::http::block_on(fetch_fund_nav_table_from(
+        &client,
+        &mut pacer,
+        &[url.as_str()],
+    ))
+    .expect("报文正常时应命中");
 
     let head = &heads.lock().unwrap()[0];
     assert!(head.contains("GET /data/rankhandler.aspx?"), "{head}");
@@ -124,12 +132,17 @@ fn blocked_pages_fail_closed_instead_of_reporting_no_coverage() {
     // 标的本来就没有净值」。文本通道的解析恒成功，风控页在 HTTP 层看不见——
     // 降速信号由这一层补上（ADR-0121 决策 5），否则最容易被拦的面反而提速。
     let (url, _heads) = spawn_header_capture_server("<html>risk control</html>".to_string());
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let baseline = Duration::from_secs(1);
     let mut pacer = Pacer::new(baseline);
 
     assert!(
-        fetch_fund_name_dictionary_from(&client, &mut pacer, &[url.as_str()]).is_err(),
+        crate::http::block_on(fetch_fund_name_dictionary_from(
+            &client,
+            &mut pacer,
+            &[url.as_str()]
+        ))
+        .is_err(),
         "被拦截的名称字典不得当作可信结果"
     );
     assert!(
@@ -139,7 +152,12 @@ fn blocked_pages_fail_closed_instead_of_reporting_no_coverage() {
     );
     let after_blocks = pacer.interval();
     assert!(
-        fetch_fund_nav_table_from(&client, &mut pacer, &[url.as_str()]).is_err(),
+        crate::http::block_on(fetch_fund_nav_table_from(
+            &client,
+            &mut pacer,
+            &[url.as_str()]
+        ))
+        .is_err(),
         "被拦截的净值批量面不得当作可信结果"
     );
     assert!(

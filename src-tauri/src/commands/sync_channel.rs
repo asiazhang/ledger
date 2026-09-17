@@ -148,15 +148,17 @@ pub struct SyncStatusState {
 /// 缺 key 上抛，与设置域读命令同口径）。
 #[tauri::command]
 pub async fn get_sync_status<R: Runtime>(app: AppHandle<R>) -> Result<SyncStatusState> {
-    let conn = app.state::<DbState>().conn.clone();
+    // 取用形态经 ADR-0125 决策 1/2 更替为门面写槽**裸作业**（issue #1410）：原本
+    // 「持锁窗口刻意含文件 IO」的形状不变——作业整段持槽，`probe_file_kind` 仍在
+    // 锁内执行，只是取用独占收在门面内。
+    let db = app.state::<DbState>().write_handle();
     let db_path = active_db_path(&app)?;
-    run_db("get_sync_status", move || {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    db.run_raw("get_sync_status", move |conn| {
         Ok(SyncStatusState {
-            device_id: device_id(&conn)?,
-            channel_configured: configured_channel(&conn)?.is_some(),
-            last_sync_at: settings::get(&conn, SettingKey::SyncLastSyncAt, None)?,
-            parked_count: parked_ops(&conn)?.len(),
+            device_id: device_id(conn)?,
+            channel_configured: configured_channel(conn)?.is_some(),
+            last_sync_at: settings::get(conn, SettingKey::SyncLastSyncAt, None)?,
+            parked_count: parked_ops(conn)?.len(),
             library_encrypted: probe_file_kind(&db_path)? == DbFileKind::Encrypted,
         })
     })
@@ -185,15 +187,18 @@ pub async fn sync_now<R: Runtime>(
     app: AppHandle<R>,
     passphrase: Option<String>,
 ) -> Result<SyncRoundReport> {
+    // 轮次身份键需要写槽互斥体地址（与调度侧自动轮次同键，ADR-0120 决策 3）：
+    // 槽本身仍被取用，仅用于取键；分段取连接走门面（`SegmentLock`，issue #1410）。
     let conn = app.state::<DbState>().conn.clone();
     let db_path = active_db_path(&app)?;
     let book = active_book_id(&app);
     // 轮次身份键（同端同库判据，ADR-0120 决策 3）：写入口持有的同一连接互斥体，
     // 与调度侧自动轮次同键——三个触发入口在在途互斥下串行。
     let round_key = connection_round_key(&conn);
+    let db = app.state::<DbState>().write_handle();
     write_entry_segmented(
         "sync_now",
-        conn,
+        db,
         Some(&app),
         WriteOp::SyncRound,
         move |lock| {
@@ -223,6 +228,8 @@ pub async fn sync_now<R: Runtime>(
             let report = run_round_once(&locks, &channel, &mode)?;
             // 成功轮次记入本会话形态（打开即同步与低频轮询不再触钥匙串）；
             // 明文库记「明文形态」——同一单点同时承载两态（issue #863）。
+            // 保留原位（issue #1395 留痕时序理由）：记入时机归域侧——只有轮次
+            // 成功才可记，不属业务可用起点，不随 resume 签名表达。
             match &passphrase_holder {
                 Some(passphrase) => {
                     SessionEnvelope::remember(SessionEnvelope::Encrypted(passphrase.clone()))
@@ -266,7 +273,7 @@ impl RoundConn for SegmentRoundConn<'_> {
 /// 的 `parked_count` 回显，明细经本命令按需拉取。
 #[tauri::command]
 pub async fn get_parked_ops<R: Runtime>(app: AppHandle<R>) -> Result<Vec<ParkedOpState>> {
-    let conn = app.state::<DbState>().read_conn.clone();
+    let conn = app.state::<DbState>().read_handle();
     read_entry("get_parked_ops", conn, move |conn| {
         Ok(parked_ops(conn)?
             .into_iter()
@@ -318,7 +325,7 @@ impl From<ledger_sync_engine::ParkedOp> for ParkedOpState {
 pub async fn get_sync_channel_config<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<SyncChannelConfigState> {
-    let conn = app.state::<DbState>().read_conn.clone();
+    let conn = app.state::<DbState>().read_handle();
     read_entry("get_sync_channel_config", conn, move |conn| {
         Ok(match configured_channel(conn)? {
             Some(config) => SyncChannelConfigState {
@@ -357,7 +364,9 @@ pub async fn set_sync_channel_config<R: Runtime>(
     app: AppHandle<R>,
     config: SyncChannelConfigInput,
 ) -> Result<()> {
-    let conn = app.state::<DbState>().conn.clone();
+    // 凭据构库（`build_channel`）是同步阻塞构造，构造点留在阻塞线程池（#1403 纪律）；
+    // 设置落库一步经门面写槽**裸作业**（ADR-0032 置脏豁免路径，issue #1410）。
+    let db = app.state::<DbState>().write_handle();
     run_db("set_sync_channel_config", move || {
         let config = normalize_channel_config(config);
         // 用户输入门（#1217）：端点为非 https 即拒（配置类码化错误）；空值留给
@@ -366,8 +375,9 @@ pub async fn set_sync_channel_config<R: Runtime>(
         // 校验单点（域侧 `build_channel`）：不通过不落库——错误码为域的
         // sync-channel.*。
         build_channel(&config)?;
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        settings::set(&conn, SettingKey::SyncChannelConfig, &config)
+        db.run_raw_blocking("set_sync_channel_config", move |conn| {
+            settings::set(conn, SettingKey::SyncChannelConfig, &config)
+        })
     })
     .await
 }
@@ -494,7 +504,7 @@ pub struct SyncCheckpointInfoState {
 pub async fn get_sync_channel_checkpoint<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<Option<SyncCheckpointInfoState>> {
-    let read_conn = app.state::<DbState>().read_conn.clone();
+    let read_conn = app.state::<DbState>().read_handle();
     let config = read_entry("get_sync_channel_checkpoint", read_conn, move |conn| {
         configured_channel(conn)?.ok_or_else(not_configured_error)
     })
@@ -539,8 +549,10 @@ pub async fn publish_sync_checkpoint<R: Runtime>(
     app: AppHandle<R>,
     passphrase: Option<String>,
 ) -> Result<SyncCheckpointPublished> {
-    let read_conn = app.state::<DbState>().read_conn.clone();
-    let conn = app.state::<DbState>().conn.clone();
+    let read_conn = app.state::<DbState>().read_handle();
+    // 快照产出这一段经门面写槽**裸作业**（issue #1410）：锁跨度与迁移前逐字一致
+    // ——主连接锁只盖 `create_checkpoint` 一步，随作业返回立即释放。
+    let db = app.state::<DbState>().write_handle();
     let db_path = active_db_path(&app)?;
     let book = active_book_id(&app);
 
@@ -564,10 +576,7 @@ pub async fn publish_sync_checkpoint<R: Runtime>(
         };
         // 锁内段：快照产出——位点与快照同刻成对是唯一需要连接互斥的步骤，
         // 主连接锁只盖这一步，随语句块立即释放。
-        let checkpoint = {
-            let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-            create_checkpoint(&conn)?
-        };
+        let checkpoint = db.run_raw_blocking("publish_sync_checkpoint", create_checkpoint)?;
         // 锁外段：封包（KDF）与通道网络往返（检查点上传、manifest 换指针）。
         let pointer = channel.upload_checkpoint(&checkpoint, &mode)?;
         Ok(SyncCheckpointPublished {
@@ -609,12 +618,15 @@ pub async fn bootstrap_sync_from_channel<R: Runtime>(
     app: AppHandle<R>,
     passphrase: Option<String>,
 ) -> Result<SyncBootstrapOutcome> {
-    let read_conn = app.state::<DbState>().read_conn.clone();
+    let read_conn = app.state::<DbState>().read_handle();
     // 通道在位性前置（读入口短锁）：未配置即早退，不触网。
     let config = read_entry("bootstrap_sync_from_channel", read_conn, move |conn| {
         configured_channel(conn)?.ok_or_else(not_configured_error)
     })
     .await?;
+    // 引导的整库换入段需 `&mut Connection`（[`MainConnSegments`]），门面作业形态
+    // 给不出可变借用——本路径按 ADR-0125 决策 8 的豁免登记保留槽级短取锁（理由与
+    // 段接缝同源，见守门白名单）。
     let conn = app.state::<DbState>().conn.clone();
     let db_path = active_db_path(&app)?;
     run_db("bootstrap_sync_from_channel", move || {

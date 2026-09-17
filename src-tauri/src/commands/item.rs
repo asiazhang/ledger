@@ -29,7 +29,7 @@ use ledger_item::{ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, It
 
 #[tauri::command]
 pub async fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemWithDailyCost>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_items", conn, domain::list_items).await
 }
 
@@ -41,7 +41,7 @@ pub async fn calculate_item_cost(
     id: String,
     reference_date: Option<String>,
 ) -> Result<ItemDailyCost> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("calculate_item_cost", conn, move |conn| {
         domain::calculate_item_cost(conn, &id, reference_date.as_deref())
     })
@@ -52,7 +52,7 @@ pub async fn calculate_item_cost(
 /// 供 dashboard 汇总卡展示（默认币种）。
 #[tauri::command]
 pub async fn item_daily_total(db: State<'_, DbState>) -> Result<ItemDailyTotal> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("item_daily_total", conn, move |conn| {
         domain::item_daily_total(conn)
     })
@@ -65,7 +65,7 @@ pub async fn create_item(
     app: tauri::AppHandle,
     input: ItemInput,
 ) -> Result<String> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_item",
         conn,
@@ -85,7 +85,7 @@ pub async fn update_item(
     id: String,
     input: ItemInput,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "update_item",
         conn,
@@ -103,7 +103,7 @@ pub async fn dispose_item(
     id: String,
     input: ItemDisposeInput,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "dispose_item",
         conn,
@@ -116,7 +116,7 @@ pub async fn dispose_item(
 
 #[tauri::command]
 pub async fn delete_item(db: State<'_, DbState>, app: tauri::AppHandle, id: String) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "delete_item",
         conn,

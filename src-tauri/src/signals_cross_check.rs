@@ -818,7 +818,7 @@ fn http_derived_endpoint_keys_are_in_openapi_contract() {
 /// 壳层命令 / handler 函数体不应再手抄本行（确属不经读入口的命令进下方豁免
 /// 清单）。文本级扫描（掩码后匹配），换行拆写或别名改写不可达，靠评审兜底
 /// （与写侧扫描同款边界）。
-const STANDARD_LOCK_LINE: &str = ".lock().map_err(|e| AppError::Db(e.to_string()))";
+pub(crate) const STANDARD_LOCK_LINE: &str = ".lock().map_err(|e| AppError::Db(e.to_string()))";
 
 /// 读侧锁仪式豁免清单（ADR-0104 决策 6）：不经统一读/写入口、函数体保留手写
 /// 标准锁行的命令，逐个附动机。与写侧 [`IPC_WRITE_ENTRY_EXCEPTIONS`] **分立**——

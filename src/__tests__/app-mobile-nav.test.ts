@@ -34,6 +34,21 @@ async function mountApp() {
   return { wrapper, router }
 }
 
+/**
+ * 懒加载路由组件预热（issue #1337）：先 `await` 目标路由记录的动态 import，再触发
+ * 抽屉点击导航——导航确认只需等动态 import 完成，冷启动时其耗时（如 GroupMoreView
+ * 聚合页实测 ~1308ms）会越过 `vi.waitFor` 默认 1000ms 预算，预热后即回落到毫秒级。
+ * 只消费路由记录既有的懒加载器，不改路由的懒加载结构（#1162 同族：抬预算只抬余量，
+ * 不治本；这里不引入 retry）。
+ */
+async function preloadRouteView(name: string) {
+  const record = routes.find((r) => r.name === name)
+  if (!record || typeof record.component !== 'function') {
+    throw new Error(`路由表缺少懒加载路由 ${name}`)
+  }
+  await (record.component as () => Promise<unknown>)()
+}
+
 describe('App 壳窗口分级分支（issue #842，假 matchMedia 换档）', () => {
   afterEach(() => {
     useSidebarOrderStore().resetSidebarOrder()
@@ -120,6 +135,7 @@ describe('App 壳窗口分级分支（issue #842，假 matchMedia 换档）', ()
   it('抽屉菜单项导航：路由切换 + 抽屉关闭（注册表撤销上报）', async () => {
     setFakeMedia({ width: 839 })
     const { wrapper, router } = await mountApp()
+    await preloadRouteView('transactions')
     await openMobileDrawer(wrapper)
     findDrawerItem('交易').click()
     // 路由目标是懒加载视图：导航完成需等动态 import（waitFor 轮询而非固定等待）
@@ -134,6 +150,7 @@ describe('App 壳窗口分级分支（issue #842，假 matchMedia 换档）', ()
   it('抽屉「更多」链接：跳转该组聚合页 + 抽屉关闭（导航即关闭统一收口）', async () => {
     setFakeMedia({ width: 839 })
     const { wrapper, router } = await mountApp()
+    await preloadRouteView('bookkeeping-more')
     await openMobileDrawer(wrapper)
     ;(document.body.querySelector('.n-drawer .group-more-link') as HTMLElement).click()
     await vi.waitFor(() => {

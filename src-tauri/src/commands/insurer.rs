@@ -27,7 +27,7 @@ pub async fn list_insurers(
     db: State<'_, DbState>,
     include_deleted: Option<bool>,
 ) -> Result<Vec<Insurer>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_insurers", conn, move |conn| {
         policy_domain::list_insurers(conn, include_deleted.unwrap_or(false))
     })
@@ -40,7 +40,7 @@ pub async fn create_insurer(
     app: tauri::AppHandle,
     input: InsurerInput,
 ) -> Result<String> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_insurer",
         conn,
@@ -58,7 +58,7 @@ pub async fn update_insurer(
     id: String,
     input: InsurerUpdateInput,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "update_insurer",
         conn,
@@ -75,7 +75,7 @@ pub async fn delete_insurer(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "delete_insurer",
         conn,

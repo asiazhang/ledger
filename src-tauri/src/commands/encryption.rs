@@ -129,11 +129,14 @@ async fn do_unlock<R: Runtime>(app: &AppHandle<R>, passphrase: &str) -> Result<U
     })
     .await?;
     // 本会话密钥记忆（issue #863 / ADR-0098）：解锁成功即记入会话形态，自动
-    // 同步轮次（打开即同步 / 低频轮询）无需再触钥匙串即可封包。
-    ledger_sync_engine::SessionEnvelope::remember(ledger_sync_engine::SessionEnvelope::Encrypted(
-        passphrase.to_string(),
-    ));
-    resume_business_surface(app, conn, read_conn)?;
+    // 同步轮次（打开即同步 / 低频轮询）无需再触钥匙串即可封包。形态随 resume
+    // 签名声明（issue #1395），写入收在 resume 体内首行、先于后台服务拉起。
+    resume_business_surface(
+        app,
+        ledger_sync_engine::SessionEnvelope::Encrypted(passphrase.to_string()),
+        conn,
+        read_conn,
+    )?;
 
     // 等待中的搬迁（issue #570）：源库为密文库时启动期无法搬迁，解锁后
     // 以主口令补做。失败不阻断解锁：应用继续以当前位置运行，意图保持
@@ -254,11 +257,23 @@ pub async fn unlock_with_remembered_passphrase<R: Runtime>(
 /// 备份调度 + 同步触发，issue #961 唯一编排点）。锁定门翻转对未锁定路径
 ///（启动失败重置）是无操作。调用方保证读连接与写连接同刻就绪（读连接建连
 /// 失败在换连之前整体失败，fail-closed）。
+///
+/// `session` 把「业务可用起点 → 会话信封记忆」的形态声明进签名（issue #1395 /
+/// ADR-0098 决策 3 修订注记）：解锁记密文（口令已经校验）、忘记口令重置与
+/// 启动失败重置记明文（新库是明文空库、形态已知）。信封写入为函数体首行，
+/// **先于**尾部 `start_background_services`——sync_on_start 与写后触发即时
+/// 消费会话形态；resume 三调用方入口时后台服务必未拉起（setup 在锁定/失败
+/// 态不拉），首行写入即「先于一切自动轮次」的充分条件。位次由
+/// [`crate::sync_trigger_guard`] 文本守门钉住。
 pub(crate) fn resume_business_surface<R: Runtime>(
     app: &AppHandle<R>,
+    session: ledger_sync_engine::SessionEnvelope,
     conn: Connection,
     read_conn: Connection,
 ) -> Result<()> {
+    // 会话信封写入必须保持函数体首行、先于尾部后台服务拉起（位次守门：
+    // sync_trigger_guard，issue #1395）。
+    ledger_sync_engine::SessionEnvelope::remember(session);
     app.state::<DbState>().swap_pair(conn, read_conn)?;
     app.state::<EncryptionGate>().set_locked(false);
     // 日志等级接管（spec #608 / #611）：解锁后真实库就绪，按持久化档位接管滤镜；
@@ -312,7 +327,9 @@ pub async fn disable_encryption<R: Runtime>(app: AppHandle<R>, passphrase: Strin
     })
     .await;
     // 关闭加密后库为明文形态：记入明文形态（issue #863），后续自动轮次按明文
-    // 直通（否则会拿旧口令去封明文段，对端无法开封）。
+    // 直通（否则会拿旧口令去封明文段，对端无法开封）。保留原位不经 resume
+    //（issue #1395 留痕时序理由）：本命令完成后待重启（原位重引导），若等
+    // resume 再写，等待窗口内的写后触发会携旧口令错封明文段。
     ledger_sync_engine::SessionEnvelope::remember(ledger_sync_engine::SessionEnvelope::Plaintext);
     // 文件替换已成功：读连接立即换出（与恢复同款 inode 语义，issue #1280）。
     crate::commands::boot::detach_read_conn(&app);
@@ -370,14 +387,21 @@ pub async fn reset_after_forgotten_passphrase<R: Runtime>(app: AppHandle<R>) -> 
     // 不残留可自动解锁的旧口令（ADR-0075 决策 5）。只清当前账本的条目
     //（issue #836 按本分域）。
     let book = active_book_id(&app);
-    // 忘记口令重置：旧主口令不再适用，清会话密钥记忆（issue #863）与钥匙串
-    // 缓存（幂等，失败不阻断重置），不残留可自动解锁的旧口令。
-    ledger_sync_engine::SessionEnvelope::forget();
+    // 忘记口令重置：旧主口令不再适用，清钥匙串缓存（幂等，失败不阻断重置），
+    // 不残留可自动解锁的旧口令（ADR-0075 决策 5）。只清当前账本的条目
+    //（issue #836 按本分域）。会话记忆不再清空等待重新记入：新库是明文空库、
+    // 形态已知，随 resume 签名改记明文（issue #1395；行为同值——`current()`
+    // 对 None 与 Some(Plaintext) 回退一致）。
     let _ = run_db("clear_remember_after_reset", move || {
         passphrase_cache::delete(book.as_deref())
     })
     .await;
-    resume_business_surface(&app, conn, read_conn)?;
+    resume_business_surface(
+        &app,
+        ledger_sync_engine::SessionEnvelope::Plaintext,
+        conn,
+        read_conn,
+    )?;
     tracing::info!("忘记口令重置完成，应用以全新明文空库回到明文模式");
     Ok(())
 }
