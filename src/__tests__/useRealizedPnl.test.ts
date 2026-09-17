@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { deferred } from '@ledger/test-support/deferred'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { flushPromises, mount } from '@vue/test-utils'
 import { withSetup } from '@ledger/test-support/mount'
 import { defineComponent } from 'vue'
+import { SEARCH_DEBOUNCE_MS } from '@/composables/search-debounce'
 import { useReferenceStore } from '@/stores/reference'
 import { useRealizedPnl } from '@/investment/useRealizedPnl'
 import { registerToastSink } from '@ledger/loadable'
@@ -143,40 +143,55 @@ describe('useRealizedPnl 已实现盈亏数据层', () => {
   })
 })
 
-describe('useRealizedPnl 标的远程搜索（防抖 + 刻意吞错，不收编）', () => {
-  it('防抖后携带 search 参数远程搜索，仅最后一次触发生效', async () => {
+describe('useRealizedPnl 标的搜索候选投影（编排收口 useInstrumentSearch，机制断言在其模块单测）', () => {
+  it('搜索结果投影为下拉选项：「代码 · 名称」label、id 为 value', async () => {
     vi.useFakeTimers()
-    const { searchInstruments, pnlInstrumentOptions } = withSetup(() => useRealizedPnl())
-    searchInstruments('浦发')
-    searchInstruments('浦发银')
-    await vi.advanceTimersByTimeAsync(300)
-    await flushPromises()
-    vi.useRealTimers()
-    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments')
-    expect(calls.length).toBe(1)
-    expect(calls[0]![1]).toEqual({ filter: { search: '浦发银', page_size: 50 } })
-    expect(pnlInstrumentOptions.value).toEqual([{ label: '600000 · 浦发银行', value: 'inst-1' }])
+    try {
+      const { searchInstruments, pnlInstrumentOptions } = withSetup(() => useRealizedPnl())
+      searchInstruments('浦发')
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS)
+      await flushPromises()
+      expect(pnlInstrumentOptions.value).toEqual([{ label: '600000 · 浦发银行', value: 'inst-1' }])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('搜索失败刻意吞错：静默清空选项，不置 error、不弹 toast（词汇表「刻意静默不收编」合法形态）', async () => {
-    const sink = makeFakeSink()
-    registerToastSink(sink)
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: {
-        ...REFERENCE_OVERRIDES,
-        list_instruments: () => Promise.reject(new Error('搜索失败')),
-      },
-    })
+  it('选中标的不在新候选时合并不丢（下拉不丢已选筛选）', async () => {
     vi.useFakeTimers()
-    const { searchInstruments, error, searchingInstruments } = withSetup(() => useRealizedPnl())
-    searchInstruments('浦发')
-    await vi.advanceTimersByTimeAsync(300)
-    await flushPromises()
-    vi.useRealTimers()
-    expect(error.value).toBeNull()
-    expect(searchingInstruments.value).toBe(false)
-    expect(sink.error).not.toHaveBeenCalled()
+    try {
+      // 按次分支属动态行为：走 overrides 表（defaults 只收静态快照）
+      let calls = 0
+      wireInvokeSeam({
+        overrides: {
+          ...REFERENCE_OVERRIDES,
+          list_instruments: () => {
+            calls += 1
+            return calls === 1
+              ? Promise.resolve({ items: [makeInstrument({ id: 'inst-a', symbol: 'AAA', name: '先选' })], total: 1 })
+              : Promise.resolve({ items: [makeInstrument({ id: 'inst-b', symbol: 'BBB', name: '后搜' })], total: 1 })
+          },
+        },
+      })
+      const { searchInstruments, onSelectInstrument, pnlInstrumentOptions } = withSetup(() => useRealizedPnl())
+      searchInstruments('AAA')
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS)
+      await flushPromises()
+      onSelectInstrument('inst-a')
+      await flushPromises()
+
+      searchInstruments('BBB')
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS)
+      await flushPromises()
+
+      // 新候选只有 inst-b，已选 inst-a 仍合并在选项尾部不丢
+      expect(pnlInstrumentOptions.value).toEqual([
+        { label: 'BBB · 后搜', value: 'inst-b' },
+        { label: 'AAA · 先选', value: 'inst-a' },
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -255,43 +270,5 @@ describe('useRealizedPnl 失败治愈（issue #325 Loadable 薄壳化）', () =>
     expect(wrapper.vm.shell.error.value).toBe('首刷失败')
     expect(wrapper.vm.shell.summary.value).toBeNull()
     expect(sink.error).toHaveBeenCalledWith('首刷失败')
-  })
-})
-
-describe('useRealizedPnl 标的远程搜索在途竞态（issue #1401）', () => {
-  it('先发请求迟到不覆盖后发结果：候选呈现后发搜索的标的', async () => {
-    vi.useFakeTimers()
-    try {
-      const first = deferred<{ items: ReturnType<typeof makeInstrument>[]; total: number }>()
-      const second = deferred<{ items: ReturnType<typeof makeInstrument>[]; total: number }>()
-      let calls = 0
-      wireInvokeSeam({
-        defaults: BASE_DEFAULTS,
-        overrides: {
-          ...REFERENCE_OVERRIDES,
-          list_instruments: () => {
-            calls += 1
-            return calls === 1 ? first.promise : second.promise
-          },
-        },
-      })
-      const { searchInstruments, pnlInstrumentOptions } = withSetup(() => useRealizedPnl())
-      searchInstruments('AAA')
-      // 各自推进过防抖窗口：两次查询都实际发出，才构成乱序到达的竞态
-      await vi.advanceTimersByTimeAsync(300)
-      searchInstruments('BBB')
-      await vi.advanceTimersByTimeAsync(300)
-      expect(calls).toBe(2)
-
-      // 后发先到，先发迟到：呈现的应是后发搜索的结果（删掉纪元守卫本断言变红）
-      second.resolve({ items: [makeInstrument({ id: 'inst-b', symbol: 'BBB', name: '后发' })], total: 1 })
-      await flushPromises()
-      first.resolve({ items: [makeInstrument({ id: 'inst-a', symbol: 'AAA', name: '先发' })], total: 1 })
-      await flushPromises()
-
-      expect(pnlInstrumentOptions.value).toEqual([{ label: 'BBB · 后发', value: 'inst-b' }])
-    } finally {
-      vi.useRealTimers()
-    }
   })
 })

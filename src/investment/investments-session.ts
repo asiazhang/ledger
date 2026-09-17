@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, readonly, ref, watch } from 'vue'
+import { SEARCH_DEBOUNCE_MS } from '@/composables/search-debounce'
 import type { Instrument } from '@ledger/types'
 
 /** 持仓页签排序列闭集（与持仓明细表列 key 一致）：市值 / 持仓收益（未实现盈亏） */
@@ -17,9 +18,6 @@ export interface NaiveUiSorterState {
   columnKey: string | number
   order: 'ascend' | 'descend' | false
 }
-
-/** 搜索输入防抖时长（标的浏览器 300ms 先例） */
-export const HOLDINGS_SEARCH_DEBOUNCE_MS = 300
 
 /** 分页页大小：固定值不设选择器（全仓先例：交易页与搜索页同为 20，issue #912） */
 export const HOLDINGS_PAGE_SIZE = 20
@@ -105,7 +103,7 @@ export const useInvestmentsSessionStore = defineStore('investments-session', () 
     searchTimer = setTimeout(() => {
       searchTimer = undefined
       holdingsSearch.value = next
-    }, HOLDINGS_SEARCH_DEBOUNCE_MS)
+    }, SEARCH_DEBOUNCE_MS)
   }
 
   /**

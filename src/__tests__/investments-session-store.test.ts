@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
+import { SEARCH_DEBOUNCE_MS } from '@/composables/search-debounce'
 import {
-  HOLDINGS_SEARCH_DEBOUNCE_MS,
   TREND_MODE_DEFAULT,
   TREND_PRESET_DEFAULT,
   useInvestmentsSessionStore,
@@ -59,7 +59,7 @@ describe('useInvestmentsSessionStore（issue #1192 投资页会话状态）', ()
     // 防抖窗口内应用值未变、页码不归零
     expect(store.holdingsSearch).toBe('')
     expect(store.holdingsPage).toBe(2)
-    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS)
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
     expect(store.holdingsSearch).toBe('600')
     expect(store.holdingsPage).toBe(1)
   })
@@ -125,7 +125,7 @@ describe('resetToDefault（issue #1192 ESC 复位出口）', () => {
     store.setSearch('600')
     store.resetToDefault()
     // 防抖窗口推进后应用值仍为空：复位已撤销在途定时器
-    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS * 2)
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2)
     expect(store.holdingsSearch).toBe('')
     expect(store.holdingsSearchInput).toBe('')
   })
@@ -135,7 +135,7 @@ describe('resetToDefault（issue #1192 ESC 复位出口）', () => {
     const store = useInvestmentsSessionStore()
     // 先应用一个搜索（回显 = 应用值 = '600'）
     store.setSearch('600')
-    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS)
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
     expect(store.holdingsSearch).toBe('600')
     expect(store.holdingsSearchInput).toBe('600')
     store.resetToDefault()
@@ -145,7 +145,7 @@ describe('resetToDefault（issue #1192 ESC 复位出口）', () => {
     // 复位后再输入一个值但未到防抖窗口，再复位：旧输入不落地
     store.setSearch('000001')
     store.resetToDefault()
-    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS * 2)
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2)
     expect(store.holdingsSearch).toBe('')
     expect(store.holdingsSearchInput).toBe('')
   })
@@ -154,13 +154,13 @@ describe('resetToDefault（issue #1192 ESC 复位出口）', () => {
     vi.useFakeTimers()
     const store = useInvestmentsSessionStore()
     store.setSearch('600')
-    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS)
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
     expect(store.holdingsSearch).toBe('600')
     // 已应用后再输入但未到防抖窗口：离开视图
     store.setSearch('600000')
     expect(store.holdingsSearchInput).toBe('600000')
     store.cancelPendingSearch()
-    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS * 2)
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2)
     // 未应用的新输入被撤销，应用值与回显一致地停在最后应用值
     expect(store.holdingsSearch).toBe('600')
     expect(store.holdingsSearchInput).toBe('600')

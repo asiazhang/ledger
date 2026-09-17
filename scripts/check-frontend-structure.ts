@@ -616,6 +616,11 @@ export const DEEP_MODULE_BOUNDARIES: readonly DeepModuleBoundary[] = [
     allowedConsumers: ['src/views'],
     note: '交易列表过滤深模块（ADR-0030/0094）：依赖壳内 pinia store（交易页会话级 store）故不成包（ADR-0118 决策 4），消费面 = 交易页与报表页；#1159 起随交易域归位 src/transaction/',
   },
+  {
+    module: 'src/investment/useInstrumentSearch.ts',
+    allowedConsumers: ['src/investment'],
+    note: '标的远程搜索深模块（issue #1308）：防抖/在途纪元/吞错内化，消费面 = useInvestmentForm 与 useRealizedPnl 两处下拉；成包虽过 ADR-0118 决策 1 判据但消费面全在投资域、无边界收益，同 ADR-0123 createPushFirstList 先例留壳；域内件边界由域目录 + 本登记承担',
+  },
 ]
 
 /** 消费方 rel 路径是否命中白名单条目（目录为前缀闭集：`src/views` 放行 `src/views/` 整棵树） */

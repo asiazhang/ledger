@@ -29,8 +29,8 @@ import {
  * 维度闭集三：
  * - **搜索**：判定目标为「代码 · 名称」等价文本（与标的搜索同规格，无名称
  *   退化为裸代码），走全仓统一模糊搜索语义规格（词条 AND；原文连续子串 ∨
- *   拼音首字母子序列，大小写不敏感，ADR-0027）；输入 300ms 防抖（标的浏览器
- *   先例）。
+ *   拼音首字母子序列，大小写不敏感，ADR-0027）；输入防抖时长单源
+ *   SEARCH_DEBOUNCE_MS（跨域「搜索输入防抖」不变量，issue #1308）。
  * - **账户过滤**：单选（null = 全部默认态），选项与盈亏页账户下拉同源——
  *   投资账户谓词单点收口在参考 store（type = investment）。
  * - **排序**：市值 / 未实现盈亏两列列头升降序（naive-ui 受控 sorter 形态，
@@ -50,9 +50,10 @@ import {
  */
 
 /** 排序维度闭集与常量随状态迁入投资页会话 store（issue #1192）；此处再导出维持
- * 既有导入路径（消费方经本模块取用），不制造第二口径。 */
+ * 既有导入路径（消费方经本模块取用），不制造第二口径。搜索输入防抖时长不在此列：
+ * #1308 起单源为跨域常量 SEARCH_DEBOUNCE_MS（@/composables/search-debounce），
+ * 消费方直接引用单源。 */
 export {
-  HOLDINGS_SEARCH_DEBOUNCE_MS,
   HOLDINGS_PAGE_SIZE,
 } from '@/investment/investments-session'
 export type {

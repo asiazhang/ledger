@@ -7,8 +7,8 @@ import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { REFERENCE_DEFAULTS } from '@ledger/test-support/reference-stubs'
 import { useReferenceStore } from '@/stores/reference'
 import { useInvestmentsSessionStore } from '@/investment/investments-session'
+import { SEARCH_DEBOUNCE_MS } from '@/composables/search-debounce'
 import {
-  HOLDINGS_SEARCH_DEBOUNCE_MS,
   filterHoldings,
   holdingsSearchLabel,
   holdingMatchesSearch,
@@ -249,12 +249,12 @@ describe('useHoldingsFilter 工厂', () => {
     expect(hf.searchInput.value).toBe('txkg')
     // 防抖窗口内行集合未变
     expect(ids(hf.filteredRows.value)).toHaveLength(4)
-    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS)
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
     await flushPromises()
     expect(ids(hf.filteredRows.value)).toEqual(['h3'])
 
     hf.setSearch('')
-    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS)
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
     await flushPromises()
     expect(ids(hf.filteredRows.value)).toHaveLength(4)
   })
@@ -271,7 +271,7 @@ describe('useHoldingsFilter 工厂', () => {
     const hf = setup(FIXTURE_ROWS)
     hf.setAccount('acc-inv-2')
     hf.setSearch('txkg')
-    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS)
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
     await flushPromises()
     expect(hf.totalMarketValueGroups.value).toEqual([{ currencyCode: 'HKD', cents: 2000000 }])
 
@@ -372,7 +372,7 @@ describe('useHoldingsFilter 页码生命周期（issue #912）', () => {
     // 输入回显阶段应用值未变、行集未动，不翻页
     hf.setSearch('01')
     expect(hf.page.value).toBe(2)
-    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS)
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
     await flushPromises()
     // 应用搜索收窄行集，页码归零（与行集变化同步）
     expect(hf.page.value).toBe(1)
@@ -458,7 +458,7 @@ describe('useHoldingsFilter 页码钳制与搜索防抖撤销（issue #1192）',
     scope!.stop()
     scope = undefined
     // 防抖窗口推进后应用值仍为空、回显回到应用值——输入未落地
-    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS * 2)
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2)
     const store = useInvestmentsSessionStore()
     expect(store.holdingsSearch).toBe('')
     expect(store.holdingsSearchInput).toBe('')
