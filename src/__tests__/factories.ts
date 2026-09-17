@@ -10,9 +10,13 @@ import type {
   ItemDailyTotal,
   PhysicalAsset,
   PhysicalAssetList,
+  ParkedOpInfo,
   Policy,
   PolicyStats,
   RealizedPnlSummary,
+  SyncChannelConfig,
+  SyncRoundReport,
+  SyncStatus,
   Transaction,
 } from '@ledger/types'
 
@@ -311,6 +315,69 @@ export function makePhysicalAssetList(
     assets: [],
     holding_total_native_cents: 0,
     native_currency: 'CNY',
+    ...partial,
+  }
+}
+
+/** 多端同步状态夹具（issue #862）：明文库 + 已配置通道 + 从未挂起。 */
+export function makeSyncStatus(partial: Partial<SyncStatus> = {}): SyncStatus {
+  return {
+    device_id: 'device-abcdef',
+    channel_configured: true,
+    last_sync_at: '2026-01-15T08:30:00Z',
+    parked_count: 0,
+    library_encrypted: false,
+    ...partial,
+  }
+}
+
+/** 同步通道配置回显夹具（issue #1218）：已配置形态。 */
+export function makeSyncChannelConfig(
+  partial: Partial<SyncChannelConfig> = {},
+): SyncChannelConfig {
+  return {
+    space_id: 'family',
+    endpoint: 'https://s3.example.com',
+    region: 'us-east-1',
+    bucket: 'ledger-bucket',
+    prefix: 'sync',
+    access_key: 'AKIAEXAMPLE',
+    secret_key: 'secret-value',
+    path_style: true,
+    configured: true,
+    ...partial,
+  }
+}
+
+/** 挂起操作明细夹具（issue #863）：带码化原因（schema-ahead）。 */
+export function makeParkedOp(partial: Partial<ParkedOpInfo> = {}): ParkedOpInfo {
+  return {
+    op_id: 'op-1',
+    device_id: 'device-abcdef',
+    entity: 'transaction',
+    entity_id: 'txn-1',
+    code: 'sync-engine.schema-ahead',
+    params: [],
+    message: '该操作来自更新版本的应用，升级本端后将自动重试',
+    parked_at: '2026-01-15T09:00:00Z',
+    ...partial,
+  }
+}
+
+/** 同步轮次报告夹具（issue #862）：上传 1 段 2 条、全部应用、无挂起。 */
+export function makeSyncRoundReport(
+  partial: Partial<SyncRoundReport> = {},
+): SyncRoundReport {
+  return {
+    uploaded_segments: 1,
+    uploaded_ops: 2,
+    downloaded_segments: 0,
+    applied: 0,
+    deduped: 0,
+    superseded: 0,
+    skipped: 0,
+    parked: 0,
+    plaintext_mode: true,
     ...partial,
   }
 }

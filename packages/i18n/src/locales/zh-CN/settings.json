@@ -264,8 +264,6 @@
       "parkedHint": "存在无法在本机执行、待后续重投递的同步操作；升级或补齐数据后将自动重试。",
       "syncNow": "立即同步",
       "syncOk": "同步完成：上传 {uploaded} 条，应用 {applied} 条，挂起 {parked} 条。",
-      "syncFailed": "同步失败：{msg}",
-      "loadFailed": "同步状态读取失败：{msg}",
       "plaintextWarning": "当前账本未开启加密：同步数据将以明文存放于对象存储。如需加密同步，请先在「加密」页开启加密模式。",
       "encryptedHint": "本账库为密文形态：同步数据将以主口令加密后上通道。",
       "passphrasePlaceholder": "主口令（留空使用已记住的口令）",
@@ -290,7 +288,6 @@
       "saveChannel": "保存配置",
       "testConnection": "测试连接",
       "saveOk": "通道配置已保存",
-      "saveFailed": "通道配置保存失败：{msg}",
       "testOk": "连接成功：通道可读，这份配置可以同步",
       "testFailed": "连接失败：{msg}",
       "colon": "：",
@@ -302,7 +299,6 @@
       "publishCheckpoint": "发布检查点到通道",
       "publishOk": "检查点已发布：第 {generation} 代，{size}",
       "publishPlaintextToast": "本次发布未开启加密：检查点快照将明文存放于对象存储。",
-      "publishFailed": "发布检查点失败：{msg}",
       "bootstrapTitle": "从通道引导本端…",
       "bootstrapModalTitle": "从通道引导本端",
       "bootstrapWarning": "引导将以通道快照整库替换本机账本数据，本机现有数据将丢失；完成后应用将自动重启。仅在本机是全新空账本时使用。",
@@ -314,8 +310,7 @@
       "bootstrapCancel": "取消",
       "bootstrapConfirm": "引导并重启",
       "bootstrapOk": "引导完成：已采纳第 {generation} 代快照（{size}）{reencrypted}，应用即将重启。",
-      "bootstrapReencrypted": "，本机已转为密文库（重启后需输入主口令解锁）",
-      "bootstrapFailed": "引导失败：{msg}"
+      "bootstrapReencrypted": "，本机已转为密文库（重启后需输入主口令解锁）"
     },
     "source": {
       "auto": "自动",
