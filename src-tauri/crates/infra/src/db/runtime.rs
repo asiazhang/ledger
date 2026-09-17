@@ -364,6 +364,24 @@ impl DbState {
     pub fn write<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         write(&self.conn, f)
     }
+
+    /// 连接槽对（ADR-0125 决策 1/4，issue #1410）：句柄与门面解析的唯一构造输入。
+    /// 连接槽与成对构造点保持原形（本访问器不改变状态形状），线程化收在门面一侧。
+    pub fn slots(&self) -> super::facade_handles::DbSlotPair {
+        super::facade_handles::DbSlotPair::new(Arc::clone(&self.conn), Arc::clone(&self.read_conn))
+    }
+
+    /// 写侧门面句柄：命令层与壳层统一写入口的取用形态——调用方不再取连接槽，
+    /// 只把作业交给句柄。
+    pub fn write_handle(&self) -> super::facade_handles::DbWriteHandle {
+        self.slots().write_handle()
+    }
+
+    /// 读侧门面句柄：读入口的取用形态。读句柄只投读作业，读路径不进写者闸门
+    ///（ADR-0117）。
+    pub fn read_handle(&self) -> super::facade_handles::DbReadHandle {
+        self.slots().read_handle()
+    }
 }
 
 /// 读连接槽的原位替换（共享句柄 + 互斥体内槽替换，ADR-0080 / ADR-0117 决策 3）：

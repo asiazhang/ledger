@@ -24,7 +24,7 @@ use ledger_infra::signals::WriteOp;
 
 #[tauri::command]
 pub async fn list_budgets(db: State<'_, DbState>) -> Result<Vec<Budget>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_budgets", conn, move |conn| {
         budget_domain::list_budgets(conn)
     })
@@ -37,7 +37,7 @@ pub async fn create_budget(
     app: tauri::AppHandle,
     input: BudgetInput,
 ) -> Result<String> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "create_budget",
         conn,
@@ -55,7 +55,7 @@ pub async fn update_budget(
     id: String,
     input: BudgetUpdateInput,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "update_budget",
         conn,
@@ -74,7 +74,7 @@ pub async fn delete_budget(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<()> {
-    let conn = db.conn.clone();
+    let conn = db.write_handle();
     write_entry(
         "delete_budget",
         conn,
@@ -87,7 +87,7 @@ pub async fn delete_budget(
 
 #[tauri::command]
 pub async fn budget_progress(db: State<'_, DbState>) -> Result<Vec<BudgetProgress>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("budget_progress", conn, move |conn| {
         budget_domain::budget_progress_rows(conn, Local::now().date_naive())
     })

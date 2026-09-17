@@ -13,6 +13,7 @@
 
 pub mod connection;
 pub mod facade;
+pub mod facade_handles;
 pub mod migrate;
 pub mod perf_trace;
 pub mod query;
@@ -27,6 +28,10 @@ pub use connection::{
     open_in_memory, reset_db_file, reset_db_in,
 };
 pub use facade::DbFacade;
+pub use facade_handles::{DbReadHandle, DbSlotPair, DbWriteHandle, install_facade};
+// 接线证明的观察点：仅测试构建可见（生产接线由源码扫描守门核对，issue #1410）。
+#[cfg(test)]
+pub(crate) use facade_handles::facade_installed;
 pub use migrate::{init_db, schema_version};
 pub use runtime::probe_lock_hold;
 pub use runtime::{

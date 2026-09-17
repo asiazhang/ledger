@@ -21,7 +21,7 @@ use ledger_infra::error::Result;
 /// 币种清单：全部种子币种按 `code` 排序。
 #[tauri::command]
 pub async fn list_currencies(db: State<'_, DbState>) -> Result<Vec<Currency>> {
-    let conn = db.read_conn.clone();
+    let conn = db.read_handle();
     read_entry("list_currencies", conn, move |conn| {
         currency_domain::list_currencies(conn)
     })

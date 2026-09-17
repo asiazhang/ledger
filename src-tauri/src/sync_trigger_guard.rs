@@ -13,29 +13,33 @@ use std::path::Path;
 
 /// `src/**` 下全部 .rs 的（仓库相对路径, 源文本），按路径排序（输出确定）。
 fn all_rust_sources() -> Vec<(String, String)> {
-    fn walk(dir: &Path, out: &mut Vec<(String, String)>) {
-        let mut entries: Vec<_> = std::fs::read_dir(dir)
-            .unwrap_or_else(|e| panic!("扫描目录不可读 {dir:?}: {e}"))
-            .flatten()
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
-        for entry in entries {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                let rel = path
-                    .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-                    .expect("源码在 manifest 内")
-                    .to_string_lossy()
-                    .into_owned();
-                out.push((rel, std::fs::read_to_string(&path).expect("源码应可读")));
-            }
+    let mut out = Vec::new();
+    walk_rust_sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut out);
+    out
+}
+
+/// 遍历一个目录下的全部 `.rs`，产出（相对 `src-tauri` 路径, 源文本），按路径排序
+/// （输出确定）。扫描器单点：同步触发守门与连接槽独占守门（`db_slot_guard`）共用，
+/// 扫描面差异只在根清单，不在遍历实现。
+pub(crate) fn walk_rust_sources(dir: &Path, out: &mut Vec<(String, String)>) {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("扫描目录不可读 {dir:?}: {e}"))
+        .flatten()
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_rust_sources(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            let rel = path
+                .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                .expect("源码在 manifest 内")
+                .to_string_lossy()
+                .into_owned();
+            out.push((rel, std::fs::read_to_string(&path).expect("源码应可读")));
         }
     }
-    let mut out = Vec::new();
-    walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut out);
-    out
 }
 
 /// 生产文本：掩码注释与字符串后，逐个剔除 `#[cfg(test)]` 附属的模块/函数体
@@ -43,7 +47,8 @@ fn all_rust_sources() -> Vec<(String, String)> {
 /// 配对（字符串与注释已空白化，配对可靠；lib.rs 的 cfg(test) 模块声明在文件
 /// 前部，不能按「首个锚点截到文件尾」——会误伤其后的 setup 段，issue #959
 /// 守门首版踩过）。掩码与剔除全程保长，切片下标同位。
-fn production_text(src: &str) -> String {
+// 生产文本抽取在守门间复用（连接槽独占守门 `db_slot_guard` 与本守门同款扫描面）。
+pub(crate) fn production_text(src: &str) -> String {
     let mut masked = mask_non_code(src);
     while let Some(anchor) = masked.find("#[cfg(test)]") {
         let rest = &masked[anchor..];

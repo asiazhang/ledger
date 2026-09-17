@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use axum::extract::FromRef;
 use ledger_infra::db::boot::BootFailureGate;
 use ledger_infra::db::encryption::EncryptionGate;
+use ledger_infra::db::{DbReadHandle, DbSlotPair, DbWriteHandle};
 use ledger_infra::error::AppError;
 use ledger_infra::events::SignalEmitter;
 use ledger_investment::Quote;
@@ -72,27 +73,46 @@ pub struct ApiState {
     pub boot_gate: BootFailureGate,
 }
 
-/// 读端点的连接提取器（issue #1280 / ADR-0117）：提取只读读连接句柄。
-/// `FromRef<ApiState> for Arc<Mutex<Connection>>` 保持返回写连接（写端点
-/// 既有提取零改动），读侧以新类型区分——读端点写法只多一层新类型解包，
-/// 连接句柄类型与读入口签名不变（ADR-0104）。
+/// 读端点的门面句柄提取器（issue #1280 / ADR-0117；取用形态经 ADR-0125 决策 1/4
+/// 更替为门面读句柄，issue #1410）：提取只读读句柄。
+/// `FromRef<ApiState> for DbWriteHandle` 保持返回写句柄（写端点既有提取零改动，
+/// 只换类型），读侧以新类型区分——读端点写法只多一层新类型解包，
+/// 读入口签名与读路径语义不变（ADR-0104）。
 #[derive(Clone)]
-pub struct ReadConn(pub Arc<Mutex<Connection>>);
+pub struct ReadConn(pub DbReadHandle);
 
 impl FromRef<ApiState> for ReadConn {
     fn from_ref(state: &ApiState) -> Self {
-        Self(state.read_conn.clone())
+        Self(state.read_handle())
     }
 }
 
-impl FromRef<ApiState> for Arc<Mutex<Connection>> {
+impl FromRef<ApiState> for DbWriteHandle {
     fn from_ref(state: &ApiState) -> Self {
-        state.conn.clone()
+        state.write_handle()
     }
 }
 
 impl FromRef<ApiState> for EmitterSlot {
     fn from_ref(state: &ApiState) -> Self {
         state.emitter.clone()
+    }
+}
+
+impl ApiState {
+    /// 连接槽对（issue #1410）：HTTP 壳的连接面经槽对取句柄——槽保持原形
+    /// （两槽共享句柄 + 互斥体内槽替换，ADR-0080），句柄按槽对解析门面。
+    pub fn slots(&self) -> DbSlotPair {
+        DbSlotPair::new(self.conn.clone(), self.read_conn.clone())
+    }
+
+    /// 写侧门面句柄（写端点的提取形态，issue #1410）。
+    pub fn write_handle(&self) -> DbWriteHandle {
+        self.slots().write_handle()
+    }
+
+    /// 读侧门面句柄（读端点的提取形态，issue #1410）。
+    pub fn read_handle(&self) -> DbReadHandle {
+        self.slots().read_handle()
     }
 }

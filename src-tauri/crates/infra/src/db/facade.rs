@@ -31,8 +31,8 @@
 
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Mutex;
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
@@ -180,37 +180,41 @@ impl DbWorker {
         F: FnOnce(&Connection) -> Result<T> + Send + 'static,
     {
         let (reply_tx, reply_rx) = oneshot::channel::<Result<T>>();
-        let job = Job {
-            command,
-            dispatch: tracing::dispatcher::get_default(Dispatch::clone),
-            caller_span: Span::current(),
-            run: Box::new(move |conn| {
-                let value = execute(conn)?;
-                Ok(Box::new(value) as Box<dyn Any + Send>)
-            }),
-            reply: Box::new(move |outcome| {
-                let result = match outcome {
-                    // 装箱 / 拆箱在同一泛型上下文内成对，类型不符即门面内部缺陷。
-                    Ok(payload) => payload
-                        .downcast::<T>()
-                        .map(|value| *value)
-                        .map_err(|_| AppError::Io("数据库门面作业回传载荷类型不匹配".into())),
-                    Err(error) => Err(error),
-                };
-                // 调用方已放弃等待（future 被 drop）时静默丢弃——不是失败。
-                let _ = reply_tx.send(result);
-            }),
-        };
-        // 锁内只有一次入队、没有可毒化的不变量：中毒（理论上不可达）按原样取用，
-        // 失败判定只看通道本身是否已关闭。
+        self.enqueue(job_of(command, execute, move |result| {
+            // 调用方已放弃等待（future 被 drop）时静默丢弃——不是失败。
+            let _ = reply_tx.send(result);
+        }))?;
+        Ok(reply_rx)
+    }
+
+    /// 投递作业并**阻塞等待**结果（分段写入口的每一段取连接，issue #1410）：
+    /// 调用方在阻塞线程上（分段编排体），std 通道等待不引入第二套异步形态，
+    /// 也不要求调用点在 tokio 运行时内。
+    fn submit_blocking<T, F>(&self, command: &'static str, execute: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Connection) -> Result<T> + Send + 'static,
+    {
+        let (reply_tx, reply_rx) = mpsc::channel::<Result<T>>();
+        self.enqueue(job_of(command, execute, move |result| {
+            // 接收端已放弃等待时静默丢弃——不是失败。
+            let _ = reply_tx.send(result);
+        }))?;
+        reply_rx.recv().map_err(|_| {
+            AppError::Io(format!("数据库门面线程 {} 已退出，作业结果丢失", self.name))
+        })?
+    }
+
+    /// 入队一条作业（锁内只有一次入队、没有可毒化的不变量：中毒——理论上不可达
+    /// ——按原样取用，失败判定只看通道本身是否已关闭）。
+    fn enqueue(&self, job: Job) -> Result<()> {
         let sender = self
             .sender
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         sender
             .send(WorkerMsg::Job(job))
-            .map_err(|_| AppError::Io(format!("数据库门面线程 {} 已关闭", self.name)))?;
-        Ok(reply_rx)
+            .map_err(|_| AppError::Io(format!("数据库门面线程 {} 已关闭", self.name)))
     }
 
     /// 停机并等线程退出（幂等）：投停机消息后 join——在途作业跑完才返回，不打断。
@@ -246,12 +250,47 @@ impl Drop for DbWorker {
     }
 }
 
+/// 组装一条作业（issue #1410 抽为单点：异步 oneshot 回传与阻塞 std 通道回传
+/// 只在「回传通道」上分叉，作业体与上下文携带逐字同源）。
+fn job_of<T, F, R>(command: &'static str, execute: F, reply: R) -> Job
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> Result<T> + Send + 'static,
+    R: FnOnce(Result<T>) + Send + 'static,
+{
+    Job {
+        command,
+        dispatch: tracing::dispatcher::get_default(Dispatch::clone),
+        caller_span: Span::current(),
+        run: Box::new(move |conn| {
+            let value = execute(conn)?;
+            Ok(Box::new(value) as Box<dyn Any + Send>)
+        }),
+        reply: Box::new(move |outcome| {
+            let result = match outcome {
+                // 装箱 / 拆箱在同一泛型上下文内成对，类型不符即门面内部缺陷。
+                Ok(payload) => payload
+                    .downcast::<T>()
+                    .map(|value| *value)
+                    .map_err(|_| AppError::Io("数据库门面作业回传载荷类型不匹配".into())),
+                Err(error) => Err(error),
+            };
+            reply(result);
+        }),
+    }
+}
+
 /// 异步 DB 门面（ADR-0125 决策 1）：写作业与读作业各走一条专用 DB 线程。
 ///
-/// 消费方（壳层统一读写入口、命令层直锁改道点，#1410）拿 `&DbFacade` 投作业即可
-/// ——`DbFacade::start` 只在启动装配处调一次，句柄生命周期内线程常驻；句柄
-/// `Send + Sync`，可住进壳层应用状态或被 `Arc` 共享（测试 `facade_handle_is_send_and_sync`
-/// 钉住该性质）。门面句柄释放即两条线程收尾（字段析构走 `DbWorker` 的 `Drop`）。
+/// 消费面（issue #1410）：三处统一入口与命令层 / 壳层直锁改道点拿**类型化句柄**
+/// （`facade_handles` 的读 / 写句柄，由 `DbState` / HTTP 壳状态的具名访问器产出）
+/// 投作业——句柄按写槽解析到本类型，生产面由引导期安装的进程级单例
+/// （`facade_handles::install_facade`）常驻，测试世界按槽惰性拉起（`facade_for`）。
+/// 本类型自身也可直接消费（领域/基础设施内部装配与 `db/tests/facade.rs`）——
+/// `DbFacade::start` 只在装配处调一次，句柄生命周期内线程常驻；类型
+/// `Send + Sync`，可住进壳层应用状态或被 `Arc` 共享（测试
+/// `facade_handle_is_send_and_sync` 钉住该性质）。门面句柄释放即两条线程收尾
+/// （字段析构走 `DbWorker` 的 `Drop`）。
 pub struct DbFacade {
     /// 写 DB 线程（持写槽；提交点后置动作由它触发）。
     write: DbWorker,
@@ -266,9 +305,19 @@ impl DbFacade {
     /// 零改造（ADR-0125 决策 4）。线程启动失败如实上抛（fail loud，不静默退化为
     /// 调用线程内联执行）。
     pub fn start(state: &DbState) -> Result<DbFacade> {
+        Self::start_slots(&state.conn, &state.read_conn)
+    }
+
+    /// 按槽对启动门面（`DbFacade::start` 与按槽解析单点 `facade_for` 共用）：
+    /// 句柄形态（`super::facade_handles` 的读 / 写句柄）按槽对解析门面，故启动
+    /// 只认槽、不认状态的持有者。
+    pub(crate) fn start_slots(
+        write: &Arc<Mutex<Connection>>,
+        read: &Arc<Mutex<Connection>>,
+    ) -> Result<DbFacade> {
         Ok(DbFacade {
-            write: DbWorker::spawn(WRITE_THREAD_NAME, SlotWatch::new(&state.conn))?,
-            read: DbWorker::spawn(READ_THREAD_NAME, SlotWatch::new(&state.read_conn))?,
+            write: DbWorker::spawn(WRITE_THREAD_NAME, SlotWatch::new(write))?,
+            read: DbWorker::spawn(READ_THREAD_NAME, SlotWatch::new(read))?,
         })
     }
 
@@ -289,6 +338,18 @@ impl DbFacade {
         await_reply(receiver).await
     }
 
+    /// 写槽裸作业（issue #1410）：作业在写 DB 线程上执行，但**不经**连接层统一
+    /// 写入口——分段形态的每一段取连接即本形态（逐段 autocommit，置脏与信号由
+    /// 分段入口在收尾裁决点恰好一次触发，ADR-0073 / #1276/#1277 语义不变）。
+    pub async fn run_write_raw<T, F>(&self, command: &'static str, f: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Connection) -> Result<T> + Send + 'static,
+    {
+        let receiver = self.write.submit(command, f)?;
+        await_reply(receiver).await
+    }
+
     /// 读作业（ADR-0125 决策 1）：作业在读 DB 线程上执行，不触碰置脏维度（读路径
     /// 无写后置动作，ADR-0104）；读侧与写侧各持一线程，长写事务不把读排在后面
     /// （ADR-0117 语义原样）。
@@ -299,6 +360,27 @@ impl DbFacade {
     {
         let receiver = self.read.submit(command, f)?;
         await_reply(receiver).await
+    }
+
+    /// 写作业的**阻塞等待**形态（分段写入口的每一段取连接，issue #1410）：语义与
+    /// [`DbFacade::run_write`] 逐字一致，只是调用方在阻塞线程上按 std 通道等待。
+    pub fn run_write_blocking<T, F>(&self, command: &'static str, f: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Connection) -> Result<T> + Send + 'static,
+    {
+        self.write
+            .submit_blocking(command, move |conn| write_locked(conn, f))
+    }
+
+    /// 写槽裸作业的阻塞等待形态（分段形态的每一段取连接）：语义与
+    /// [`DbFacade::run_write_raw`] 逐字一致，只是调用方在阻塞线程上等待。
+    pub fn run_write_raw_blocking<T, F>(&self, command: &'static str, f: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Connection) -> Result<T> + Send + 'static,
+    {
+        self.write.submit_blocking(command, f)
     }
 
     /// 显式停机：投停机消息并等待两条 DB 线程退出（在途作业跑完为止）。未显式调用

@@ -230,7 +230,7 @@ pub async fn create_instrument_handler(
     // 证据随闭包返回必达（映射单点判定发不发价格信号，ADR-0044）。
     let instrument_id = write_entry(
         "POST /api/v1/instruments",
-        state.conn.clone(),
+        state.write_handle(),
         state.emitter.as_deref(),
         WriteOp::CreateInstrument,
         move |conn| {

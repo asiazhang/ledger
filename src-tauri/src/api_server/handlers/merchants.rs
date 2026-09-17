@@ -4,16 +4,14 @@
 //! 事务、置脏、信号内化单点（与 IPC `update_merchant` 共享 `WriteOp::UpdateMerchant`，
 //! 参考数据写入静态映射发参考失效信号）；读端点经 `run_db`（形状乙）。
 
-use std::sync::{Arc, Mutex};
-
 use axum::Json;
 use axum::extract::{Path, State};
-use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::{EmitterSlot, ReadConn};
 use crate::shell_support::read_entry::read_entry;
 use crate::shell_support::write_entry::{Outcome, write_entry};
+use ledger_infra::db::DbWriteHandle;
 use ledger_infra::error::AppError;
 use ledger_infra::signals::WriteOp;
 use ledger_merchants::{Merchant, MerchantUpdateInput};
@@ -71,7 +69,7 @@ pub async fn list_merchants_handler(
     )
 )]
 pub async fn update_merchant_handler(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(conn): State<DbWriteHandle>,
     State(emitter): State<EmitterSlot>,
     Path(id): Path<String>,
     Json(input): Json<MerchantUpdateInput>,
