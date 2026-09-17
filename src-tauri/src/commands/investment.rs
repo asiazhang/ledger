@@ -402,37 +402,30 @@ pub async fn record_manual_price(
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::scan::matching_brace_end;
+
+    /// 命令体提取（掩码文本）：签名锚点后首个 `{` 起经
+    /// [`matching_brace_end`] 配对到命令体结束（#1433 上收，手写同型的单一实现）。
+    fn command_body<'a>(masked: &'a str, signature: &str) -> &'a str {
+        let anchor = masked
+            .find(signature)
+            .unwrap_or_else(|| panic!("命令 {signature} 应在位"));
+        let open = anchor + masked[anchor..].find('{').expect("命令体应有大括号");
+        let end = matching_brace_end(masked, open).expect("命令体花括号应配对");
+        &masked[open..end]
+    }
+
     /// `add_fund_by_code` 的东财拉取必须发生在连接锁外（慢闭包纪律，ADR-0069
     /// 决策 4 / issue #1282）：生产拉取入口 [`ledger_market_sync::fetch_fund_quote_production`]
     /// 不经数据库连接，命令体把拉取放在 `write_entry` 之前即结构上不可能持锁；
     /// 拉取被移回统一写入口闭包（锁内）时本守门即红。IPC 命令路径无报价注入
     /// 接缝（生产入口直呼 `fetch_fund_quote_production`，行为测试无从注入慢
     /// 拉取观察锁竞争），与先例 #959/#961 同口径以源码扫描守门（系统化持锁
-    /// 守门衔接 #1276）；掩码器具复用 `signals_cross_check`，规则无第二份。
+    /// 守门衔接 #1276）；词法器具单点住 `test_support::scan`（#1433）。
     #[test]
     fn fund_fetch_happens_before_write_entry_in_add_fund_by_code() {
-        let text = crate::signals_cross_check::mask_non_code(include_str!("investment.rs"));
-        // 定位命令体：函数签名后首个花括号起，掩码文本上花括号配对到命令体结束。
-        let fn_anchor = text
-            .find("pub async fn add_fund_by_code(")
-            .expect("add_fund_by_code 命令应在位");
-        let body_start = fn_anchor + text[fn_anchor..].find('{').expect("命令体应有大括号");
-        let mut depth = 0usize;
-        let mut body_end = text.len();
-        for (idx, ch) in text[body_start..].char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        body_end = body_start + idx + 1;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let body = &text[body_start..body_end];
+        let text = crate::test_support::scan::mask_non_code(include_str!("investment.rs"));
+        let body = command_body(&text, "pub async fn add_fund_by_code(");
         let write_at = body
             .find("write_entry(")
             .expect("落库应经统一写入口 write_entry");
@@ -467,31 +460,12 @@ mod tests {
     /// 生产拉取闭包直接接 async 生产入口（`fetch_stock_quote_production`），查询
     /// 编排（`fetch_stock_quote_for_add`）在命令体 await——阻塞包装（同步闭包 +
     /// `spawn_blocking` + JoinError 归一化）回归即红。行为分支触真实网络、测试面
-    /// 不可达，以源码扫描守门（先例 #959/#961，ADR-0087）；掩码器具复用
-    /// `signals_cross_check`，规则无第二份。
+    /// 不可达，以源码扫描守门（先例 #959/#961，ADR-0087）；词法器具单点住
+    /// `test_support::scan`（#1433）。
     #[test]
     fn instrument_query_uses_async_production_entry_without_blocking_wrapper() {
-        let text = crate::signals_cross_check::mask_non_code(include_str!("investment.rs"));
-        let fn_anchor = text
-            .find("pub async fn add_instrument_by_code(")
-            .expect("add_instrument_by_code 命令应在位");
-        let body_start = fn_anchor + text[fn_anchor..].find('{').expect("命令体应有大括号");
-        let mut depth = 0usize;
-        let mut body_end = text.len();
-        for (idx, ch) in text[body_start..].char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        body_end = body_start + idx + 1;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let body = &text[body_start..body_end];
+        let text = crate::test_support::scan::mask_non_code(include_str!("investment.rs"));
+        let body = command_body(&text, "pub async fn add_instrument_by_code(");
         assert_eq!(
             body.matches("fetch_stock_quote_production(").count(),
             1,

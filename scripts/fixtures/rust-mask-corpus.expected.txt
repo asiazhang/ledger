@@ -1,0 +1,27 @@
+                                                     
+                                                                    
+                             
+                                 
+                             
+                                 let code_after_block = 1;
+let s =                                  ;
+let empty =   ;
+let raw0 =                     ;
+let raw1 =                                         ;
+let url =                                       ;
+let ident_like = 42;
+timer    ==                                 ;
+let chars = [   ,     ,     ,     , '\u{7FFF}',    ,    ];
+let lifetime_ref: &'a str =                      ;
+let static_lt: &'static str =             ;
+struct Point<'a> { label: &'a str }
+#[cfg(test)]
+mod corpus_tests {
+    use super::*;
+    #[test]
+    fn mixed() {
+        let sql =                                   ;
+        assert_eq!(sql,                                      );
+    }
+}
+                 

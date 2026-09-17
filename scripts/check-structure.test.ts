@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -45,6 +45,7 @@ import {
   TRANSACTION_ZONE_ALLOWED_EDGES,
   WHITELIST,
   LAYER,
+  maskNonCode,
 } from '../scripts/check-structure.ts'
 import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 
@@ -3033,5 +3034,24 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
     })
     const r = run(args)
     expect(r.status).toBe(0)
+  })
+})
+
+describe('maskNonCode 双源防漂移语料（issue #1433）', () => {
+  // 与 Rust 侧唯一实现（src-tauri/src/test_support/scan.rs 的 mask_non_code）
+  // 消费同一夹具：语料输入 + 期望输出双文件共享，任一侧单独改词法规则即
+  // 本测或 Rust 语料测试红。（vitest 下取进程 cwd = 仓库根定位夹具，同上款先例）
+  const corpusPath = join(process.cwd(), 'scripts', 'fixtures', 'rust-mask-corpus.rs')
+  const expectedPath = join(process.cwd(), 'scripts', 'fixtures', 'rust-mask-corpus.expected.txt')
+
+  it('掩码输出与共享语料期望全等（与 Rust 侧 mask_non_code 同规）', () => {
+    const corpus = readFileSync(corpusPath, 'utf8')
+    const expected = readFileSync(expectedPath, 'utf8')
+    expect(maskNonCode(corpus)).toBe(expected)
+  })
+
+  it('keepLiterals=true 只掩注释、保留字符串字面量（TS 侧扩展形态，语料外的直接断言）', () => {
+    const src = '// comment\nlet s = "keep";\n'
+    expect(maskNonCode(src, true)).toBe('          \nlet s = "keep";\n')
   })
 })

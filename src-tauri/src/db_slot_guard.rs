@@ -21,8 +21,9 @@
 //! **反向半边**：门面本体（`crates/infra/src/db/facade.rs`）必须仍持有取槽锁的
 //! 唯一实现——住址不可达或锁消失即红（守门不许「白名单吞掉全部命中」）。
 
-use crate::signals_cross_check::{STANDARD_LOCK_LINE, mask_non_code};
+use crate::signals_cross_check::STANDARD_LOCK_LINE;
 use crate::sync_trigger_guard::{production_text, walk_rust_sources};
+use crate::test_support::scan::mask_non_code;
 use std::path::Path;
 
 /// 门面取用独占住址（唯一合法持锁点，反向断言用）。
