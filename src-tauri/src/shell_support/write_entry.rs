@@ -160,10 +160,9 @@ impl From<AppError> for SegmentedFailure {
     }
 }
 
-/// 分段形态的共享收尾单点（两个入口共用，裁决口径不漂移）：
-/// [`segmented_normalize`]（结果归一）、[`segmented_needs_dirty_job`]（整体裁决
-/// 的置脏门）、[`segmented_emit_after_verdict`]（收尾裁决完成后的发射）。
-
+/// 分段形态的共享收尾单点（两个入口共用，裁决口径不漂移）：结果归一、整体
+/// 裁决的置脏门、收尾裁决完成后的发射三件。
+///
 /// 结果归一：成功带 Outcome 证据，失败带跨分段累积的证据（issue #1277）。
 fn segmented_normalize<T>(
     result: std::result::Result<Outcome<T>, SegmentedFailure>,
