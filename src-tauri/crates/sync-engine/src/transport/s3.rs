@@ -13,7 +13,10 @@
 //! 与 current-thread Tokio runtime，调用方经通道提交任务并阻塞等待结果——
 //! 不把 `block_on` 跑在调用方线程上，因此调用方即使已在 Tokio 上下文
 //! （runtime 线程或 `spawn_blocking`）中调用也不会嵌套 runtime 而 panic。
-//! 线程随传输句柄 Drop 退出。
+//! 线程随传输句柄 Drop 退出。runtime 的**构造与销毁都收在桥接线程内**、启动
+//! 失败经握手 fail loud 回传（issue #1405）：阻塞资源不在调用方线程出现，调用方
+//! 处于异步上下文（tokio worker / `block_on`）也合法——这是 #1403 的「阻塞资源
+//! 只在异步上下文之外构造、使用与销毁」纪律（ADR-0125）在本桥上的落点。
 
 use std::sync::mpsc;
 use std::thread;
@@ -345,34 +348,96 @@ fn classify_http_failure(status: u16, code: Option<&str>) -> AppError {
 /// 同步 → 异步桥接的任务类型：在专用 runtime 上执行并回传结果。
 type BridgeJob = Box<dyn FnOnce(&tokio::runtime::Runtime) + Send + 'static>;
 
+/// 桥接线程创建接缝：生产实现是 [`spawn_bridge_thread`]；测试注入创建失败，
+/// 观察「线程未创建时调用方线程上不存在任何阻塞资源」（issue #1405）。
+type ThreadSpawner = fn(Box<dyn FnOnce() + Send>) -> std::io::Result<thread::JoinHandle<()>>;
+
+/// 桥接线程启动握手：runtime 在桥接线程内构建的结果先回传调用方，线程再开始接活。
+type BridgeStartup = std::result::Result<(), AppError>;
+
+/// 桥接 runtime（current-thread + 全驱动）。**生产启动路径上的唯一构造点**，
+/// 且必须只在桥接线程闭包内执行（issue #1405）：runtime 是阻塞资源，构造与
+/// 销毁都不得落在调用方线程——调用方可能正处于异步上下文（tokio worker /
+/// `block_on`），在那里销毁 runtime 会撞 tokio 的「Cannot drop a runtime in a
+/// context where blocking is not allowed」（#1403 同根因）。
+pub(crate) fn transport_runtime() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| AppError::Invalid(format!("S3 传输运行时初始化失败: {e}")))
+}
+
+/// 桥接线程创建（生产实现，唯一调用点在 [`AsyncBridge::spawn_with`]）。
+pub(crate) fn spawn_bridge_thread(
+    body: Box<dyn FnOnce() + Send>,
+) -> std::io::Result<thread::JoinHandle<()>> {
+    thread::Builder::new()
+        .name("ledger-s3-transport".to_string())
+        .spawn(body)
+}
+
 /// 专用线程 + current-thread Tokio runtime。`call` 阻塞等待该线程执行任务；
 /// Drop 时关闭通道并加入线程，保证 runtime 生命周期不泄漏。
-struct AsyncBridge {
+pub(crate) struct AsyncBridge {
     tx: Option<mpsc::Sender<BridgeJob>>,
     join: Option<thread::JoinHandle<()>>,
 }
 
 impl AsyncBridge {
     fn spawn() -> Result<Self> {
-        // runtime 在专用线程启动前构建：构建失败必须在此处报错，不能留下一个
-        // 没有执行者的通道让后续调用永久阻塞（fail loud）。
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| AppError::Invalid(format!("S3 传输运行时初始化失败: {e}")))?;
+        Self::spawn_with(transport_runtime, spawn_bridge_thread)
+    }
+
+    /// 启动单点（生产与测试走同一条路径，只有注入件不同）：
+    ///
+    /// 1. **runtime 在桥接线程闭包内构建**——线程创建失败是启动路径上唯一在
+    ///    调用方线程可见的失败分支，此时闭包（连同从未构建的 runtime）就地丢弃，
+    ///    调用方线程上根本没有 runtime 可销毁；调用方即使在异步上下文
+    ///    （tokio worker / `block_on`）里启动桥，也不会撞 tokio 的
+    ///    「Cannot drop a runtime in a context where blocking is not allowed」；
+    /// 2. **构建结果经启动握手回传**——构建失败 fail loud 止在构造点，不留一个
+    ///    没有执行者的通道让后续调用永久阻塞（先例：reqwest
+    ///    `blocking/client.rs` 以通道回传运行时线程的启动结果）。
+    pub(crate) fn spawn_with(
+        build: impl FnOnce() -> Result<tokio::runtime::Runtime> + Send + 'static,
+        spawn: ThreadSpawner,
+    ) -> Result<Self> {
         let (tx, rx) = mpsc::channel::<BridgeJob>();
-        let join = thread::Builder::new()
-            .name("ledger-s3-transport".to_string())
-            .spawn(move || {
-                while let Ok(job) = rx.recv() {
-                    job(&runtime);
+        let (ready_tx, ready_rx) = mpsc::channel::<BridgeStartup>();
+        let join = spawn(Box::new(move || {
+            let runtime = match build() {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    let _ = ready_tx.send(Err(error));
+                    return;
                 }
-            })
-            .map_err(|e| network_failed_error(&e.to_string()))?;
-        Ok(Self {
-            tx: Some(tx),
-            join: Some(join),
-        })
+            };
+            // 握手送不出去 = 调用方已放弃本次启动（等待中 Drop）：直接退出，
+            // runtime 在本线程销毁。
+            if ready_tx.send(Ok(())).is_err() {
+                return;
+            }
+            while let Ok(job) = rx.recv() {
+                job(&runtime);
+            }
+        }))
+        .map_err(|e| network_failed_error(&e.to_string()))?;
+        match ready_rx.recv() {
+            Ok(Ok(())) => Ok(Self {
+                tx: Some(tx),
+                join: Some(join),
+            }),
+            Ok(Err(error)) => {
+                let _ = join.join();
+                Err(error)
+            }
+            // 握手未达成即线程退出（例如构建 panic）：同样 fail loud，不留
+            // 没有执行者的通道。
+            Err(_) => {
+                let _ = join.join();
+                Err(AppError::Invalid("S3 传输桥接线程启动失败".to_string()))
+            }
+        }
     }
 
     fn call<T, F>(&self, task: F) -> Result<T>
