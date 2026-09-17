@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use rusqlite::Connection;
 
@@ -23,8 +23,9 @@ pub const LOCK_HOLD_PROBE_THRESHOLD: Duration = Duration::from_secs(1);
 /// ——「网络往返不得进锁」的纪律从注释与评审升级为运行时可观察的越界信号。
 /// 探针只记日志、不改变行为：阈值取值远大于任何合法单事务（毫秒级）、远小于
 /// 分钟级网络同步；越界即「慢闭包进锁」的嫌疑现场，由人工按坐标追认。
-/// 取锁点全部接哨：连接层写入口 [`write()`]、壳层读入口（`read_entry`）与
-/// 分段写入口的 `SegmentLock`（壳层 `shell_support::write_entry`，#1108 迁出根包）。
+/// 取锁点全部接哨：门面写线程（作业占用 DB 线程时长，ADR-0125 决策 2）、壳层
+/// 读入口（`read_entry`）与分段写入口的 `SegmentLock`（壳层
+/// `shell_support::write_entry`，#1108 迁出根包）。
 ///
 /// **门面形态的语义承接**（ADR-0125 决策 2，issue #1408）：异步 DB 门面把取锁
 /// 收进 DB 线程后，同一探针的量纲由「持有互斥锁时长」变为「**作业占用 DB 线程
@@ -64,30 +65,16 @@ pub fn probe_lock_hold(hold: Duration) {
 /// [`crate::db::tx_scope`]）。耗时日志等其它连接级横切机制收口时并入本入口
 /// （单独开票）。
 ///
-/// 与取锁形态 [`write()`] 的关系：置脏语义只有本函数一处实现，`write` 是它
-/// 叠加「取锁 + 探针」的薄壳。门面作业经本形态执行（门面线程持锁，闭包内再取
-/// 同一槽即自死锁，由 ADR-0125 决策 1 的取用独占与结构守门挡住）。
+/// **唯一形态**（issue #1438）：取锁形态（`runtime::write` / `DbState::write`）
+/// 已退役——置脏语义只有本函数一处实现。生产面写路径一律经门面作业在本函数上
+/// 执行（门面线程持锁，闭包内再取同一槽即自死锁，由 ADR-0125 决策 1 的取用独占
+/// 与结构守门挡住）；取锁与持锁时长探针归取锁方（门面线程，或测试面自取槽锁后
+/// 直呼本函数）。
 pub fn write_locked<T>(conn: &Connection, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     let result = f(conn);
     if result.is_ok() && conn.is_autocommit() {
         after_commit(conn);
     }
-    result
-}
-
-/// 连接层统一写入口 · 取锁形态（ADR-0032）：锁住连接槽后执行 [`write_locked`]。
-///
-/// **过渡形态**（issue #1408）：门面落地后，调用方的取锁本应由 DB 线程承担
-/// （ADR-0125 决策 1「取用独占收在门面内」）——命令层与三处统一入口的改道随
-/// #1410 落地，届时生产面无本形态调用点。存量消费方（壳层统一写入口、`DbState::write`
-/// 与域侧零星调用）在改道前经本形态过渡，语义与迁移前逐字一致。
-pub fn write<T>(conn: &Mutex<Connection>, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-    // 持锁时长探针（issue #1276 守门③）：从取锁成功到还锁全程计时，整段形态
-    // 的长持锁（如误把网络等待写回闭包内）在此现形。
-    let hold_started = Instant::now();
-    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let result = write_locked(&conn, f);
-    probe_lock_hold(hold_started.elapsed());
     result
 }
 
@@ -115,10 +102,10 @@ pub fn register_after_commit_hook(hook: AfterCommitHook) {
 
 /// 提交点单点后置动作：委派给注册的实现（连接层内部实现细节，ADR-0032）。
 ///
-/// 仅由 [`write`] 在「闭包成功且 `is_autocommit()`」时调用；闭包 Err（回滚）或
-/// 未提交就返回（显式事务仍打开）不会到达本函数——「事务内推迟、提交后补上」
-/// 由 [`write`] 的 `is_autocommit()` 复核结构保证。实现缺失即接线缺失，记错误
-/// 日志使失败可见（不静默丢副作用）。
+/// 仅由 [`write_locked`] 在「闭包成功且 `is_autocommit()`」时调用；闭包 Err
+/// （回滚）或未提交就返回（显式事务仍打开）不会到达本函数——「事务内推迟、
+/// 提交后补上」由 [`write_locked`] 的 `is_autocommit()` 复核结构保证。实现缺失
+/// 即接线缺失，记错误日志使失败可见（不静默丢副作用）。
 fn after_commit(conn: &Connection) {
     match AFTER_COMMIT_HOOK.get() {
         Some(hook) => hook(conn),
@@ -137,8 +124,9 @@ fn after_commit(conn: &Connection) {
 /// 亦安全——返回的 JoinHandle 是跨运行时 future，生产先例
 /// `fetch_fund_quote_for_api`），事件循环线程与 tokio worker 不再被 DB 调用占用。
 ///
-/// - 闭包自带连接获取方式：读路径锁内执行（`conn.lock()`），写路径经连接层
-///   统一写入口 [`write()`]（ADR-0032 置脏语义零改动）；
+/// - 闭包自带连接获取方式：读路径与免置脏直写（设置 KV、检查点快照一类）在
+///   闭包内持锁执行；置脏语义的写路径不经本 helper——一律走异步 DB 门面的写
+///   作业（连接层统一写入口 [`write_locked`] 在门面线程内执行，ADR-0125）；
 /// - `command` 用于在闭包内重建命令 span：异步命令与 wrapper 不同线程，SQL 耗时
 ///   归因靠这里兜底（lib.rs 异步命令归因约定，先例 `sync_instrument_info`）；
 ///   调用点已有活动 span 时（HTTP handlers 在 tower_http 请求 span 内运行）改为
@@ -281,7 +269,8 @@ impl SlotWatch {
 
 /// 应用状态：写连接 + 只读读连接（读路径独立只读连接，issue #1280 / ADR-0117）。
 ///
-/// - `conn`（写连接）：维持单写者互斥——统一写入口 [`write()`] 与壳层统一写入口
+/// - `conn`（写连接）：维持单写者互斥——统一写入口 [`write_locked`]（经门面写
+///   作业执行，issue #1438 起本状态不再提供取锁便捷形态）与壳层统一写入口
 ///   `shell_support::write_entry`（#1108 迁出根包）等既有接缝原样（ADR-0104：
 ///   `read_entry` 消费的句柄类型不变，变的只是传入句柄指向读连接）；
 /// - `read_conn`（读连接）：只服务壳层统一读入口 `shell_support::read_entry`——只读
@@ -358,11 +347,6 @@ impl DbState {
     /// 占位化后读命令报错（占位无表，归一化 AppError::Db），不静默回落写连接。
     pub fn placeholderize_read_conn(&self) -> Result<()> {
         self.replace_read_conn(open_in_memory()?)
-    }
-
-    /// 写入口的命令层便捷形态（语义见 [`write()`]）：`state.write(|conn| ...)`。
-    pub fn write<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-        write(&self.conn, f)
     }
 
     /// 连接槽对（ADR-0125 决策 1/4，issue #1410）：句柄与门面解析的唯一构造输入。

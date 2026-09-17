@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use ledger_infra::error::Result;
 use rusqlite::{Connection, params};
+use tauri_app_lib::test_support::scan::{mask_non_code, matching_brace_end};
 use tauri_app_lib::test_support::{seed_account, seed_instrument};
 
 mod bulk_fetch;
@@ -137,87 +138,43 @@ pub(super) fn spawn_header_capture_server(body: String) -> (String, Arc<Mutex<Ve
 // 异步运行时形态守门（ADR-0125 决策 5/7 / issue #1413，删除即变红）
 // ---------------------------------------------------------------------------
 
-/// 生产面源码轻掩码：掐掉行注释与文档注释（`//` 起至行尾；字符串字面量内的
-/// `//` 不受影响——引号配对检测，转义引号不计）。块注释未处理（本 crate 生产面
-/// 无以块注释包裹受守令牌的形态），经别名改名的间接引用文本不可达——两者均靠
-/// 评审兜底，与守门家族同款取舍。
-fn mask_line_comments(source: &str) -> String {
-    let mut out = String::with_capacity(source.len());
-    let mut in_string = false;
-    let mut chars = source.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '"' {
-            in_string = !in_string;
-            out.push(c);
-        } else if !in_string && c == '/' && chars.peek() == Some(&'/') {
-            // 行注释：吞到行尾（换行保留，列位不保——本守门只做令牌判定）。
-            for c in chars.by_ref() {
-                if c == '\n' {
-                    out.push('\n');
-                    break;
-                }
-            }
-        } else if !in_string && c == '\'' {
-            // 生命周期与 char 字面量在本 crate 生产面无受守令牌冲突，原样透传。
-            out.push(c);
-        } else {
-            out.push(c);
+/// 抹掉内联 `#[cfg(test)] mod … { … }` 块：本守门只辖生产路径，内联测试模块里
+/// 的驱动代码（block_on 驱动 async 编排的同步测试、本地 HTTP 服务的线程）不是
+/// 生产执行环境；外挂测试面（tests.rs / tests/）本就不在扫描文件清单里。
+/// 输入须先经 [`mask_non_code`]（词法器具单点住 `test_support::scan`，#1433
+/// 上收——原轻量行注释掩码退役，块注释与字符串字面量同受掩码，与
+/// `scripts/check-structure.ts` 的 `maskNonCode` 双源同规）；花括号配对经
+/// [`matching_brace_end`] 单一实现。
+fn blank_inline_test_modules(source: &str) -> String {
+    let mut out = source.to_string();
+    let mut i = 0usize;
+    while let Some(rel) = out[i..].find("#[cfg(test)]") {
+        let anchor = i + rel;
+        let head = anchor + "#[cfg(test)]".len();
+        let after = &out[head..];
+        let trimmed = after.trim_start();
+        if !trimmed.starts_with("mod") {
+            // #1413 原语义保留：非 mod 附属的出现即终止。原式 `i = head + rel.len()`
+            // 中 rel 是锦点之后的余下全文，恒等/于文本末尾——即终止而非跳过锦点
+            // 续扫（经验测试钉住：非 mod 锦点后的 mod 块原实现同样不抹除；当前
+            // 生产面无非 mod 附属的 cfg(test)，两形态不可区分）。
+            break;
         }
+        // 找到模块体开括号（跳过 mod 名与修饰符）。
+        let Some(open) = after.find('{').map(|p| head + p) else {
+            break;
+        };
+        let Some(end) = matching_brace_end(&out, open) else {
+            break; // 不配对（不会发生），防御性退出
+        };
+        let blanked: String = out[anchor..end]
+            .chars()
+            .map(|c| if c == '\n' { '\n' } else { ' ' })
+            .collect();
+        out.replace_range(anchor..end, &blanked);
+        i = anchor + blanked.len();
     }
     out
-}
-
-/// 抹掉内联 `#[cfg(test)] mod … { … }` 块（花括号配对）：本守门只辖生产路径，
-/// 内联测试模块里的驱动代码（block_on 驱动 async 编排的同步测试、本地 HTTP
-/// 服务的线程）不是生产执行环境；外挂测试面（tests.rs / tests/）本就不在
-/// 扫描文件清单里。
-fn blank_inline_test_modules(source: &str) -> String {
-    let bytes: Vec<char> = source.chars().collect();
-    let mut out = bytes.clone();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        let rest: String = bytes[i..].iter().collect();
-        if let Some(rel) = rest.strip_prefix("#[cfg(test)]") {
-            let head = i + "#[cfg(test)]".len();
-            let after: String = bytes[head..].iter().collect();
-            let trimmed = after.trim_start();
-            if trimmed.starts_with("mod") {
-                // 找到模块体开括号（跳过 mod 名与修饰符）。
-                if let Some(open_off) = after.find('{') {
-                    let open_idx = head + open_off;
-                    let mut depth = 0usize;
-                    let mut j = open_idx;
-                    while j < bytes.len() {
-                        match bytes[j] {
-                            '{' => depth += 1,
-                            '}' => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    for k in out.iter_mut().take(j + 1).skip(i) {
-                                        if *k != '\n' {
-                                            *k = ' ';
-                                        }
-                                    }
-                                    i = j + 1;
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                        j += 1;
-                    }
-                    if depth != 0 {
-                        break; // 不配对（不会发生），防御性退出
-                    }
-                    continue;
-                }
-            }
-            i = head + rel.len();
-            continue;
-        }
-        i += 1;
-    }
-    out.into_iter().collect()
 }
 
 /// 列出本 crate 全部生产源文件（相对 `src/`，排除 tests.rs 与 tests/ 目录），
@@ -299,7 +256,7 @@ fn guard_source_list_matches_directory_exactly() {
 fn background_lanes_are_global_runtime_async_tasks() {
     let sources: Vec<(&'static str, String)> = production_source_files()
         .into_iter()
-        .map(|(name, src)| (name, blank_inline_test_modules(&mask_line_comments(&src))))
+        .map(|(name, src)| (name, blank_inline_test_modules(&mask_non_code(&src))))
         .collect();
 
     // 生产面零自建线程：车道线程是 ADR-0125 决策 7 显式去除的执行环境，回归
@@ -345,7 +302,7 @@ fn background_lanes_are_global_runtime_async_tasks() {
 fn production_face_has_no_blocking_bridge() {
     let sources: Vec<(&'static str, String)> = production_source_files()
         .into_iter()
-        .map(|(name, src)| (name, blank_inline_test_modules(&mask_line_comments(&src))))
+        .map(|(name, src)| (name, blank_inline_test_modules(&mask_non_code(&src))))
         .collect();
 
     let bridge_hits: Vec<&str> = sources

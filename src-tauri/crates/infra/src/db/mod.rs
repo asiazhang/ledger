@@ -36,7 +36,7 @@ pub use migrate::{init_db, schema_version};
 pub use runtime::probe_lock_hold;
 pub use runtime::{
     AfterCommitHook, DbState, LOCK_HOLD_PROBE_THRESHOLD, register_after_commit_hook,
-    replace_read_conn_slot, run_db, write, write_locked,
+    replace_read_conn_slot, run_db, write_locked,
 };
 
 // 迁移集合保持 crate 内可见面（tests 与 schema_guard 经此消费，非公开 API）。

@@ -108,7 +108,7 @@ export type Layer = (typeof LAYER)[keyof typeof LAYER]
  * CRATES（BACKUP_MODULES 承接模块级扫描）。
  */
 export const WHITELIST: readonly WhitelistEntry[] = [
-  { path: 'test_support', layer: '域目录', note: '测试支持域（统一测试数据库工厂与共享断言库，ADR-0084 / #751；依赖域与基础设施合法，对壳层零依赖）' },
+  { path: 'test_support', layer: '域目录', note: '测试支持域（统一测试数据库工厂与共享断言库 + 源码扫描掩码器具，ADR-0084 / #751 / #1433；依赖域与基础设施合法，对壳层零依赖）' },
 ]
 
 /**
@@ -1161,10 +1161,17 @@ function isTestFile(relPath: string): boolean {
  * 掩码 Rust 源文本中的注释与字符串/char 字面量：内容替换为等长空白
  * （保留换行与列位，行号不变），使依赖扫描只落在真实代码上。
  * 处理形态：行注释（//、///、//!）、块注释（/* .. *&#47;，可嵌套）、
- * 普通字符串（含转义）、原始字符串 r"…" / r#"…"#（多级 #）、
- * char 字面量（'a'、'\n'、'\u{…}'）；生命周期标注（'a）按非字面量处理。
+ * 普通字符串（含转义）、原始字符串 r"…" / r#"…"#（单级 #；多级 r##"…"##
+ * 与 '\u{…}' 转义不按字面量识别——与 Rust 侧一致，见下）、
+ * char 字面量（'a'、'\n'、'\\'、'\''）；生命周期标注（'a）按非字面量处理。
  * `keepLiterals=true` 时保留字符串/char 字面量内容、只掩码注释——用于靶形态
  * 落在字符串里的扫描（原生事务语句 `execute("BEGIN")`，issue #1014）。
+ *
+ * **双源登记**（issue #1433）：本函数与 Rust 侧唯一实现
+ * `src-tauri/src/test_support/scan.rs` 的 `mask_non_code` 是同一条词法掩码规则
+ * 的两个运行时载体，规则改动必须两侧同步；防漂移断言消费共享语料夹具
+ * `scripts/fixtures/rust-mask-corpus.rs`（check-structure.test.ts 与 Rust 测试
+ * 双侧消费，任一侧单独改规则即红）。
  */
 export function maskNonCode(text: string, keepLiterals = false): string {
   const out = text.split('')

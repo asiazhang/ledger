@@ -132,8 +132,8 @@ mod quote_seam_guard_tests {
 
     #[test]
     fn quote_fetch_seams_have_no_blocking_wrapper() {
-        let funds = crate::signals_cross_check::mask_non_code(include_str!("handlers/funds.rs"));
-        let stocks = crate::signals_cross_check::mask_non_code(include_str!("handlers/stocks.rs"));
+        let funds = crate::test_support::scan::mask_non_code(include_str!("handlers/funds.rs"));
+        let stocks = crate::test_support::scan::mask_non_code(include_str!("handlers/stocks.rs"));
 
         for (name, text) in [("funds.rs", &funds), ("stocks.rs", &stocks)] {
             assert!(
@@ -164,7 +164,7 @@ mod quote_seam_guard_tests {
 
     #[test]
     fn quote_fetcher_types_are_async_shaped() {
-        let state = crate::signals_cross_check::mask_non_code(include_str!("state.rs"));
+        let state = crate::test_support::scan::mask_non_code(include_str!("state.rs"));
         assert!(
             state.contains("pub type QuoteFuture = Pin<Box<dyn Future"),
             "行情获取接缝的 future 装箱类型应在位（QuoteFuture）——接缝闭包为 \

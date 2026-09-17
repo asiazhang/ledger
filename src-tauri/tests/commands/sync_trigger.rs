@@ -78,9 +78,9 @@ async fn seed_own_ops(app: &tauri::AppHandle<tauri::test::MockRuntime>) {
 /// 等待自动轮次的用户可观察结果并断言（限时轮询）：①「上次成功同步时刻」
 /// 落库；②通道 manifest 上出现本机设备的段（另一端可见的本机段）。
 ///
-/// 整段移出异步上下文（OS 线程执行）：reqwest 阻塞客户端（构库 + 传输读）在
-/// tokio 运行时内构造/析构会 panic——与产品侧把阻塞 IO 放进阻塞线程池同一
-/// 语义（ADR-0069 / [`crate::sync_channel`] 同款现场形态）。
+/// 整段移出异步上下文（OS 线程执行）：S3 传输桥的真 HTTP 往返与阻塞等待
+///（多端同步域异步化 #1405 另案前传输面同步形态）不得占用 tokio 运行时线程
+/// ——与产品侧把阻塞 IO 放进阻塞线程池同一语义（ADR-0069 / [`crate::sync_channel`] 同款现场形态）。
 fn wait_for_auto_round(conn: Arc<Mutex<Connection>>, space_id: &'static str) {
     let worker = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(10);

@@ -54,9 +54,7 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
         .collect();
     let inputs: Vec<TransactionInput> = rows.iter().map(|r| r.to_input(world)).collect();
     // 与 HTTP 批量导入端点同形态：经连接层统一写入口（ADR-0032，issue #245）。
-    let results = world
-        .db
-        .write(|conn| TransactionBatch::run(conn, inputs, true))
+    let results = world_write!(world, |conn| TransactionBatch::run(conn, inputs, true))
         .expect("批量导入失败")
         .results;
     world.txn.last_import_rows = rows;
@@ -74,9 +72,7 @@ fn reimport(world: &mut LedgerWorld) {
         .map(|r| r.to_input(world))
         .collect();
     // 与 HTTP 批量导入端点同形态：经连接层统一写入口（ADR-0032，issue #245）。
-    let results = world
-        .db
-        .write(|conn| TransactionBatch::run(conn, inputs, true))
+    let results = world_write!(world, |conn| TransactionBatch::run(conn, inputs, true))
         .expect("重跑批量导入失败")
         .results;
     world.txn.last_batch_results = results;

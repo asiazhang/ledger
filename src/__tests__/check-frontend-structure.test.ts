@@ -1,103 +1,33 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   FORBIDDEN_UPWARD_IMPORTS,
   PACKAGES,
   SCRIPT_INVOCATION,
 } from '../../scripts/check-frontend-structure.ts'
+import {
+  cleanupFixtureRepos,
+  fixtureRepo,
+  type FixtureEntry,
+} from '../../scripts/check-frontend-structure.fixture.ts'
+import { gateScript, runGateScript } from '../../scripts/run-gate-script.test-helper.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-frontend-structure.ts（前端 workspace 结构
-// 守门，issue #1149）。脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛
-// 调用同款，测的就是门槛路径。按测试决策只测外部可观察结果——进程退出码与输出；
-// 通过位置参数把校验目标指向临时夹具仓库根（[repo-root] [packages-manifest.json]），
-// 夹具登记表经 arg2 JSON 注入（生产路径不传，PACKAGES 单一事实源不变）。
-// （vitest 转换后 import.meta.url 非 file: scheme，取进程 cwd = 仓库根定位脚本）
-const script = join(process.cwd(), 'scripts', 'check-frontend-structure.ts')
+// 守门，issue #1149）。脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以
+// spawnSync('bun') 与门槛调用同款拉起，测的就是门槛路径。按测试决策只测外部可
+// 观察结果——进程退出码与输出；通过位置参数把校验目标指向临时夹具仓库根
+// （[repo-root] [packages-manifest.json]），夹具登记表经 arg2 JSON 注入（生产路径
+// 不传，PACKAGES 单一事实源不变）。
+// 夹具仓库根 builder 住共享辅助 scripts/check-frontend-structure.fixture.ts（issue
+// #1435：与 scripts 侧两份手写副本收敛为单份，规则⑥⑦登记项按生产登记表迭代创建，
+// 新增登记项夹具零编辑）。
+const script = gateScript('check-frontend-structure.ts')
+const run = (args: string[]) => runGateScript(script, args)
 
-interface RunResult {
-  status: number
-  output: string
-}
-
-function run(args: string[]): RunResult {
-  const r = spawnSync('bun', [script, ...args], { encoding: 'utf8' })
-  return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
-}
-
-const tempDirs: string[] = []
 afterAll(() => {
-  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
+  cleanupFixtureRepos()
 })
-
-/** 夹具登记表条目（与 PACKAGES 同形的最小条目） */
-interface FixtureEntry {
-  name: string
-  dir: string
-  deps: string[]
-  testSupport?: boolean
-  note: string
-}
-
-/** 建夹具仓库根：workspace yaml（glob 声明）+ 空成员目录 + 两个接线宿主 + 不可注入
- *  登记表的既有登记项（规则⑥目录 src/utils、规则⑦模块 useTransactionFilter.ts）。
- *  与真实仓库同构的最小绿基线；opts 覆盖缺口场景。 */
-function fixtureRepo(opts: {
-  /** 是否写 pnpm-workspace.yaml 的 packages/* 声明（缺省写；false = 缺声明场景） */
-  yamlGlob?: boolean
-  /** packages/ 下预创建的成员目录名（不写 package.json——规则①删除即变红②靶形） */
-  memberDirs?: string[]
-  /** 接线宿主缺位场景：跳过 check.sh / build.yml 的接线行 */
-  omitWiring?: ('check.sh' | 'build.yml')[]
-  /** 是否写夹具登记表 JSON（返回参数含 manifest 路径） */
-  manifest?: FixtureEntry[]
-}): string[] {
-  const root = mkdtempSync(join(tmpdir(), 'check-frontend-structure-'))
-  tempDirs.push(root)
-  const yamlLines = ['# 夹具', 'allowBuilds:', '  esbuild: true']
-  if (opts.yamlGlob !== false) {
-    yamlLines.unshift('packages:', '  # 夹具注释', '  - packages/*')
-  }
-  writeFileSync(join(root, 'pnpm-workspace.yaml'), yamlLines.join('\n') + '\n')
-  mkdirSync(join(root, 'packages'), { recursive: true })
-  // 规则⑦ 登记模块本体（默认创建两处：生产 DEEP_MODULE_BOUNDARIES 不可注入，夹具
-  // 绿基线须自足含全部登记项，否则「登记模块不存在」假红——同规则⑥夹具建 src/utils
-  // 的形制）：src/transaction/useTransactionFilter.ts（issue #1323，#1159 起随交易域
-  // 归位 src/transaction/）与 src/investment/useInstrumentSearch.ts（issue #1308）
-  mkdirSync(join(root, 'src', 'transaction'), { recursive: true })
-  writeFileSync(
-    join(root, 'src', 'transaction', 'useTransactionFilter.ts'),
-    'export const useTransactionFilter = () => ({})\n',
-  )
-  mkdirSync(join(root, 'src', 'investment'), { recursive: true })
-  writeFileSync(
-    join(root, 'src', 'investment', 'useInstrumentSearch.ts'),
-    'export const useInstrumentSearch = () => ({})\n',
-  )
-  for (const dir of opts.memberDirs ?? []) {
-    mkdirSync(join(root, 'packages', dir), { recursive: true })
-  }
-  if (!opts.omitWiring?.includes('check.sh')) {
-    mkdirSync(join(root, 'scripts'), { recursive: true })
-    writeFileSync(join(root, 'scripts', 'check.sh'), `#!/bin/sh\n${SCRIPT_INVOCATION}\n`)
-  }
-  if (!opts.omitWiring?.includes('build.yml')) {
-    mkdirSync(join(root, '.github', 'workflows'), { recursive: true })
-    writeFileSync(
-      join(root, '.github', 'workflows', 'build.yml'),
-      `jobs:\n  frontend:\n    steps:\n      - name: 前端结构守门检查\n        run: ${SCRIPT_INVOCATION}\n`,
-    )
-  }
-  const args = [root]
-  if (opts.manifest) {
-    const manifestPath = join(root, 'fixture-manifest.json')
-    writeFileSync(manifestPath, JSON.stringify(opts.manifest, null, 2))
-    args.push(manifestPath)
-  }
-  return args
-}
 
 /** 写成员包清单（name 字段与登记表全等，deps 按给定值） */
 function writePackageManifest(root: string, dir: string, pkg: Record<string, unknown>): void {

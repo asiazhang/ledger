@@ -99,7 +99,7 @@ fn try_change_currency(world: &mut LedgerWorld, name: String, currency: String) 
 fn adjust_balance(world: &mut LedgerWorld, name: String, target: i64, date: String) {
     let id = world.account_id(&name);
     // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032），提交点置脏/回滚不置脏。
-    match world.db.write(|conn| {
+    match world_write!(world, |conn| {
         adjust_account_balance(
             conn,
             &id,

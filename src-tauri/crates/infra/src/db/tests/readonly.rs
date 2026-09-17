@@ -113,12 +113,14 @@ fn readonly_connection_reads_while_writer_holds_transaction() {
 fn open_db_in_pairs_write_and_read_connections() {
     let dir = temp_dir("pair");
     let state = crate::db::open_db_in(&dir).unwrap();
-    state
-        .write(|conn| {
+    {
+        let guard = state.conn.lock().unwrap_or_else(|e| e.into_inner());
+        crate::db::write_locked(&guard, |conn| {
             tauri_app_lib::test_support::seed_account(conn, "acct-p", "成对", "cash", "CNY", 777);
             Ok(())
         })
         .unwrap();
+    }
     let balance: i64 = {
         let guard = state.read_conn.lock().unwrap();
         guard

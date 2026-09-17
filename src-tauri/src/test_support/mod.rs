@@ -45,6 +45,12 @@
 //! `test_support → sync_engine` 测试专用边（登记处：ADR-0084 迁移状态段），
 //! 该边由测试豁免路径消费、不进产品依赖图。
 //!
+//! **#1433 追加**（源码扫描掩码器具）：守门家族三处同型的词法掩码与四处手写
+//! 花括号配对上收 [`scan`] 单一维护点（`mask_non_code` + `matching_brace_end`），
+//! 壳层信号/连接槽/同步触发/行情接缝守门、命令面扫描测试与 market-sync 车道
+//! 守门共用；与 TS 侧 `check-structure.ts::maskNonCode` 双源登记，共享语料
+//! 夹具防漂移。登记处：ADR-0084 修订注记、CONTEXT-testing 词条。
+//!
 //! 说明：集成测试 `tests/api_server/` 链接的是非 `#[cfg(test)]` 构建的 lib，
 //! 因此本模块不能仅以 `#[cfg(test)]` 编译；对生产二进制的影响只是一些未使用的
 //! 测试辅助函数（可被编译器消除）。
@@ -63,6 +69,7 @@
 mod assert;
 pub mod channel;
 pub mod s3;
+pub mod scan;
 mod seed;
 #[cfg(test)]
 mod tests;

@@ -275,7 +275,7 @@ fn normalize_insert_update_roundtrip() {
 // ---------------------------------------------------------------------------
 
 /// Writer 落库本身对备份域零感知（ADR-0032）：insert_row / update_row 不再自带
-/// 置脏；同样的落库经连接层写入口 `db.write` 执行（命令层真实形态）时，
+/// 置脏；同样的落库经连接层写入口 `write_locked` 执行（命令层真实形态）时，
 /// 由提交点单点置脏。
 #[test]
 fn writer_rows_do_not_mark_dirty_entry_does() {
@@ -295,15 +295,13 @@ fn writer_rows_do_not_mark_dirty_entry_does() {
     );
 
     // 经写入口执行同样的落库（与 IPC 命令同形态）→ 提交点置脏，且置脏是幂等
-    // 标记、不做「已脏跳过」优化。共享锁形态由工厂打开的连接构造（建库两行序
-    // 的唯一入口是 test_support::open，ADR-0084 决策 8 规则 1）。
+    // 标记、不做「已脏跳过」优化。测试面自取槽锁后直呼已持锁形态（取锁便捷
+    // 形态已退役，issue #1438；门面作业在同一起点上执行）。共享锁形态由工厂
+    // 打开的连接构造（建库两行序的唯一入口是 test_support::open，ADR-0084 决策 8 规则 1）。
     let conn = std::sync::Arc::new(std::sync::Mutex::new(test_support::open()));
-    let state = ledger_infra::db::DbState {
-        read_conn: conn.clone(),
-        conn,
-    };
-    state
-        .write(|conn| {
+    {
+        let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
+        ledger_infra::db::write_locked(&guard, |conn| {
             test_support::seed_account(conn, "acc", "acc", "cash", "CNY", 0);
             let row = normalize(conn, &input(TransactionKind::Expense, 1500, "acc")).unwrap();
             let id = insert_row(conn, &row).unwrap();
@@ -314,7 +312,8 @@ fn writer_rows_do_not_mark_dirty_entry_does() {
             update_row(conn, &id, &row)
         })
         .unwrap();
-    let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
+    }
+    let conn = conn.lock().unwrap_or_else(|e| e.into_inner());
     assert!(
         ledger_backup::get_state(&conn).unwrap().dirty,
         "写入口提交点应置脏"

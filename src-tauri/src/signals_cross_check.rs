@@ -21,135 +21,25 @@
 //! 全部保留在 `signals::tests`，不在本文件。
 //!
 //! 扫描形态与既有守门先例同款（`scripts/check-structure.ts`）：测试期文本级扫描，
-//! 掩码注释与字符串/char 字面量后匹配；经别名改名的间接引用文本不可达，靠评审兜底。
+//! 掩码注释与字符串/char 字面量后匹配；词法器具单点住 `test_support::scan`
+//!（issue #1433，与 TS 侧 `maskNonCode` 双源同规）；经别名改名的间接引用文本
+//! 不可达，靠评审兜底。
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
 use crate::api_server::ApiDoc;
+use crate::test_support::scan::{mask_non_code, matching_brace_end};
 use ledger_infra::signals::{Signal, WriteEvidence, WriteOp, signals_for};
 use utoipa::OpenApi;
 
 include!(concat!(env!("OUT_DIR"), "/commands_manifest.rs"));
 
 // ---------------------------------------------------------------------------
-// 源码扫描器具：掩码、分块、令牌提取（测试期文本级扫描，ADR-0073 决策 5）
+// 源码扫描器具：分块、令牌提取（测试期文本级扫描，ADR-0073 决策 5）；
+// 词法掩码与花括号配对原语住 test_support::scan（issue #1433 单一维护点）
 // ---------------------------------------------------------------------------
-
-/// 掩码 Rust 源文本中的注释与字符串/char 字面量：内容替换为等长空白（保留换行
-/// 与列位），使令牌扫描只落在真实代码上。与 `check-structure.ts` 的 `maskNonCode`
-/// 同款规则（行注释、可嵌套块注释、字符串、原始字符串、char 字面量）。
-/// `pub(crate)`：触发接线守门同用本器具（`sync_trigger_guard`，issue #959 /
-/// #1107）——扫描器具单一维护点，规则漂移两处同红。
-pub(crate) fn mask_non_code(text: &str) -> String {
-    let bytes: Vec<char> = text.chars().collect();
-    let n = bytes.len();
-    let mut out = bytes.clone();
-    let blank = |out: &mut Vec<char>, from: usize, to: usize| {
-        for k in out.iter_mut().take(to.min(n)).skip(from) {
-            if *k != '\n' {
-                *k = ' ';
-            }
-        }
-    };
-    let mut i = 0;
-    while i < n {
-        let c = bytes[i];
-        if c == '/' && i + 1 < n && bytes[i + 1] == '/' {
-            // 行注释（含 /// 与 //!）到行尾
-            let end = bytes[i..]
-                .iter()
-                .position(|&b| b == '\n')
-                .map_or(n, |p| i + p);
-            blank(&mut out, i, end);
-            i = end;
-        } else if c == '/' && i + 1 < n && bytes[i + 1] == '*' {
-            // 块注释（Rust 可嵌套）
-            let mut depth = 1usize;
-            let mut j = i + 2;
-            while j < n && depth > 0 {
-                if j + 1 < n && bytes[j] == '/' && bytes[j + 1] == '*' {
-                    depth += 1;
-                    j += 2;
-                } else if j + 1 < n && bytes[j] == '*' && bytes[j + 1] == '/' {
-                    depth -= 1;
-                    j += 2;
-                } else {
-                    j += 1;
-                }
-            }
-            blank(&mut out, i, j);
-            i = j;
-        } else if c == '"' {
-            // 普通字符串：跳过转义对
-            let mut j = i + 1;
-            while j < n {
-                if bytes[j] == '\\' {
-                    j += 2;
-                } else if bytes[j] == '"' {
-                    j += 1;
-                    break;
-                } else {
-                    j += 1;
-                }
-            }
-            blank(&mut out, i, j);
-            i = j;
-        } else if c == 'r'
-            && i + 1 < n
-            && (bytes[i + 1] == '"' || (bytes[i + 1] == '#' && i + 2 < n && bytes[i + 2] == '"'))
-        {
-            // 原始字符串 r"…" / r#"…"#；前一字符为标识符成分时是普通名字，不误伤
-            let prev_is_ident = i > 0 && bytes[i - 1].is_alphanumeric() || bytes[i - 1] == '_';
-            if prev_is_ident && i > 0 {
-                i += 1;
-                continue;
-            }
-            let mut hashes = 0usize;
-            let mut j = i + 1;
-            while j < n && bytes[j] == '#' {
-                hashes += 1;
-                j += 1;
-            }
-            let close: Vec<char> = format!("\"{}", "#".repeat(hashes)).chars().collect();
-            let mut end = n;
-            let mut k = j + 1;
-            while k + close.len() <= n {
-                if bytes[k..k + close.len()] == close[..] {
-                    end = k + close.len();
-                    break;
-                }
-                k += 1;
-            }
-            blank(&mut out, i, end);
-            i = end;
-        } else if c == '\'' {
-            // char 字面量 vs 生命周期：有闭引号为字面量，否则是生命周期标注（'a）
-            let mut j = i + 1;
-            if j < n && bytes[j] == '\\' {
-                j += 1;
-                if j < n && bytes[j] == '{' {
-                    while j < n && bytes[j] != '}' {
-                        j += 1;
-                    }
-                }
-                j += 1;
-            } else {
-                j += 1;
-            }
-            if j < n && bytes[j] == '\'' {
-                blank(&mut out, i, j + 1);
-                i = j + 1;
-            } else {
-                i += 1;
-            }
-        } else {
-            i += 1;
-        }
-    }
-    out.into_iter().collect()
-}
 
 /// 一个命令 / handler 函数体的扫描单元：锚点属性（`#[tauri::command]` 或
 /// `#[utoipa::path(...)]`）起、下一锚点（或文件尾 / 测试模块）止。
@@ -227,36 +117,20 @@ fn split_chunks(source: &str, anchor: &str) -> Vec<Chunk> {
     chunks
 }
 
-/// 掩码文本切片内首个 `pub [async] fn` 函数体的花括号配对结束位置（切片末尾
-/// 相对偏移）：从函数名后首个 `{` 起计数，`{` + 1 / `}` - 1，归零即函数体结束。
-/// 注释与字符串已在掩码中空白化，花括号只来自真实代码，配对可靠。
 /// 块内首个 `pub [async] fn` 的标记对（[`fn_name`] 命名提取与
 /// [`fn_body_end`] 函数体定位共用，防两处漂移）。
 const FN_MARKERS: [&str; 2] = ["pub async fn ", "pub fn "];
 
 /// 掩码文本切片内首个 `pub [async] fn` 函数体的花括号配对结束位置（切片末尾
-/// 相对偏移）：从函数名后首个 `{` 起计数，`{` + 1 / `}` - 1，归零即函数体结束。
-/// 注释与字符串已在掩码中空白化，花括号只来自真实代码，配对可靠。
+/// 相对偏移）：从函数名后首个 `{` 起经 [`matching_brace_end`] 配对（#1433 上收
+/// 单一实现）。注释与字符串已在掩码中空白化，花括号只来自真实代码，配对可靠。
 fn fn_body_end(masked: &str) -> Option<usize> {
     let fn_pos = FN_MARKERS
         .iter()
         .filter_map(|marker| masked.find(marker))
         .min()?;
     let open = masked[fn_pos..].find('{')? + fn_pos;
-    let mut depth = 0usize;
-    for (i, c) in masked[open..].char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(open + i + 1);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
+    matching_brace_end(masked, open)
 }
 
 /// 块内首个 `pub [async] fn` 的标识符（命令 / handler 函数体的命名约定）。

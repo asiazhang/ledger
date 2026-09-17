@@ -5,10 +5,10 @@
 //! setup），只有扫描即红。
 //!
 //! 本守门置于根包侧（#1107 同步域拆出后仍如此）：它核对的是壳层启动接线与
-//! 根包源码形状，不随领域行为迁入 `ledger-sync-engine`。扫描器具复用
-//! [`crate::signals_cross_check::mask_non_code`]，规则无第二份。
+//! 根包源码形状，不随领域行为迁入 `ledger-sync-engine`。词法器具单点住
+//! [`crate::test_support::scan`]（issue #1433，与 `db_slot_guard` 等守门共用）。
 
-use crate::signals_cross_check::mask_non_code;
+use crate::test_support::scan::{mask_non_code, matching_brace_end};
 use std::path::Path;
 
 /// `src/**` 下全部 .rs 的（仓库相对路径, 源文本），按路径排序（输出确定）。
@@ -57,25 +57,9 @@ pub(crate) fn production_text(src: &str) -> String {
         let end = match (declaration_end, brace) {
             // 声明式模块（`#[cfg(test)] mod tests;`）：剔到分号。
             (Some(semi), None) => semi + 1,
-            // 内联体（`#[cfg(test)] mod tests { … }`）：花括号配对剔到闭括号。
-            (_, Some(brace)) => {
-                let mut depth = 0usize;
-                let mut end = masked.len();
-                for (idx, ch) in masked[brace..].char_indices() {
-                    match ch {
-                        '{' => depth += 1,
-                        '}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                end = brace + idx + 1;
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                end
-            }
+            // 内联体（`#[cfg(test)] mod tests { … }`）：花括号配对剔到闭括号
+            //（配对原语 test_support::scan::matching_brace_end，#1433）。
+            (_, Some(brace)) => matching_brace_end(&masked, brace).unwrap_or(masked.len()),
             // 分号与花括号都没有：异常源码形状，剔到行尾保守处理。
             (None, None) => rest.find('\n').map_or(masked.len(), |p| anchor + p),
         };

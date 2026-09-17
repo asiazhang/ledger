@@ -110,9 +110,7 @@ fn batch_import_trades(world: &mut LedgerWorld, #[step] step: &Step) {
     let count = inputs.len();
 
     // 与 HTTP 批量导入端点同形态：经连接层统一写入口（ADR-0032）。
-    let results = world
-        .db
-        .write(|conn| TransactionBatch::run(conn, inputs, true))
+    let results = world_write!(world, |conn| TransactionBatch::run(conn, inputs, true))
         .expect("批量导入投资交易失败")
         .results;
     assert_eq!(results.len(), count, "导入结果行数应与提交行数一致");

@@ -4,7 +4,7 @@
 //! [`insert_row`]（全列 INSERT + 生成 id 与审计字段）/ [`update_row`]（按 id UPDATE、
 //! 保留幂等身份、version 递增）；另承载 `NormalizedTransaction ⇄ NormalizedRow` 转换。
 //! 不变量：入参/归一化行均为模块自有类型（与模型层解耦）；退款继承原支出账户/币种/
-//! 分类；置脏归 `db::write` 提交点（ADR-0032）。ADR 指针：ADR-0067 / ADR-0113 决策 3.2。
+//! 分类；置脏归统一写入口提交点（`db::write_locked`，ADR-0032）。ADR 指针：ADR-0067 / ADR-0113 决策 3.2。
 //! 陷阱：余额重算经接缝 `crate::seams::balance` 委派，本模块对账户域零感知。
 
 use rusqlite::Connection;
