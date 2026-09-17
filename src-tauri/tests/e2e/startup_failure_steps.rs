@@ -14,7 +14,9 @@ use rusqlite::Connection;
 
 use ledger_backup::{expected_schema_version, restore_db_from};
 use ledger_infra::db::data_location::{self, DB_FILE_NAME, effective_db_dir};
-use ledger_infra::db::encryption::{SQLITE_HEADER_MAGIC, enable_encryption_for_file};
+use ledger_infra::db::encryption::{
+    SQLITE_HEADER_MAGIC, enable_encryption_for_file, normalize_plaintext_db_file,
+};
 use ledger_infra::db::{boot, init_db, new_uuid, open_connection, open_db_in};
 
 use crate::common::seed_account_with_expenses;
@@ -98,8 +100,8 @@ fn default_dir_with_drifted_db(world: &mut LedgerWorld) {
 // When
 // ---------------------------------------------------------------------------
 
-/// 启动处置接管（与 `lib.rs::init_database` 同序）：文件判定 → 按三态分派，
-/// 明文路径建连失败同样归入启动失败。
+/// 启动处置接管（与 `lib.rs::init_database` 同序）：文件判定 → 按四态分派，
+/// 明文路径的外来形态先归一化（issue #1453）、建连失败同样归入启动失败。
 fn takeover(world: &mut LedgerWorld) {
     let dir = world.boot.dl_default_dir.clone().unwrap();
     let db_path = dir.join(DB_FILE_NAME);
@@ -109,17 +111,29 @@ fn takeover(world: &mut LedgerWorld) {
     let outcome = match boot::classify_for_boot(&db_path) {
         Ok(boot::BootDisposition::AwaitUnlock) => StartupTakeover::AwaitUnlock,
         Ok(boot::BootDisposition::Unreadable) => StartupTakeover::Failed,
-        Ok(boot::BootDisposition::OpenPlaintext) => match open_db_in(&dir) {
-            Ok(state) => {
-                world.boot.dl_conn = Some(state);
-                StartupTakeover::Opened
+        // 明文路径：自有形态直接建连；外来形态（每页保留字节 ≠ 0）与
+        // `boot_sequence` 同序——建连前先整库归一化。
+        Ok(disposition) => {
+            let opened = if disposition == boot::BootDisposition::NormalizePlaintext {
+                match normalize_plaintext_db_file(&db_path) {
+                    Ok(()) => open_db_in(&dir),
+                    Err(e) => Err(e),
+                }
+            } else {
+                open_db_in(&dir)
+            };
+            match opened {
+                Ok(state) => {
+                    world.boot.dl_conn = Some(state);
+                    StartupTakeover::Opened
+                }
+                Err(e) => {
+                    // 建连/迁移/漂移守卫/归一化失败原样登记（码化错误码断言用）。
+                    world.last_app_error = Some(e);
+                    StartupTakeover::Failed
+                }
             }
-            Err(e) => {
-                // 建连/迁移/漂移守卫失败原样登记（码化错误码断言用）。
-                world.last_app_error = Some(e);
-                StartupTakeover::Failed
-            }
-        },
+        }
         Err(e) => {
             world.last_app_error = Some(e);
             StartupTakeover::Failed

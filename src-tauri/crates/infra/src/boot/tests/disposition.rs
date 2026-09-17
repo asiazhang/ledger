@@ -20,9 +20,11 @@ fn temp_file(name: &str, bytes: &[u8]) -> std::path::PathBuf {
 
 #[test]
 fn plaintext_header_opens_plaintext_even_with_garbage_body() {
-    // 头部魔数完好：一律按明文建连路径（建连是否失败由建连步骤判定，
-    // 判定层不预判内容完整性）。
+    // 头部魔数完好、每页保留字节（偏移 20）为 0：一律按明文建连路径（建连
+    // 是否失败由建连步骤判定，判定层不预判内容完整性）。偏移 20 非 0 的
+    // 头部另有去向（外来形态，见 foreign_reserved_bytes… 用例）。
     let mut bytes = crate::db::encryption::SQLITE_HEADER_MAGIC.to_vec();
+    bytes.extend_from_slice(&[0, 0, 0, 0, 0]);
     bytes.extend_from_slice(b"garbage body");
     let path = temp_file("plain-garbage", &bytes);
     assert_eq!(
@@ -65,6 +67,39 @@ fn page_aligned_non_magic_file_awaits_unlock() {
         classify_for_boot(&path).unwrap(),
         BootDisposition::AwaitUnlock
     );
+}
+
+#[test]
+fn foreign_reserved_bytes_plaintext_classifies_as_normalize_plaintext() {
+    // 外来形态明文库（每页保留字节 12，外部工具写的合法库，issue #1453）：
+    // 建连前先归一化——分类若漏了这一态，启动会带着畸形形态进入日常路径，
+    // 备份与同步检查点产出全灭（用户可观察回归）。
+    let dir = std::env::temp_dir().join(format!("ledger-unit-boot-foreign-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("ledger.db");
+    crate::test_utils::write_foreign_form_plaintext_db(&path, 1);
+    assert_eq!(
+        classify_for_boot(&path).unwrap(),
+        BootDisposition::NormalizePlaintext
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn app_owned_plaintext_db_classifies_as_open_plaintext() {
+    // 应用自有形态的明文库（保留字节 0）→ 既有建连路径零改动，不进归一化态。
+    let dir = std::env::temp_dir().join(format!("ledger-unit-boot-owned-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("ledger.db");
+    {
+        let mut conn = crate::db::open_connection(&path).unwrap();
+        crate::db::migrations().to_latest(&mut conn).unwrap();
+    }
+    assert_eq!(
+        classify_for_boot(&path).unwrap(),
+        BootDisposition::OpenPlaintext
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]

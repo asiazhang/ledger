@@ -66,7 +66,13 @@ fn replan_and_open(world: &mut LedgerWorld) {
     let disposition = plan.disposition.map_err(|e| e.to_string());
     world.boot.last_boot = Some(plan.boot);
     world.boot.dl_conn = None;
-    if disposition.as_ref() == Ok(&BootDisposition::OpenPlaintext) {
+    // 明文路径与壳层 `boot_sequence` 同序（issue #1453）：外来形态明文库先整库
+    // 归一化，再走既有建连；两者判定不同则本镜像的「切换后可用」结论失真。
+    let plaintext = matches!(
+        disposition.as_ref(),
+        Ok(&BootDisposition::OpenPlaintext) | Ok(&BootDisposition::NormalizePlaintext)
+    );
+    if plaintext {
         let db_dir = world
             .boot
             .last_boot
@@ -74,6 +80,10 @@ fn replan_and_open(world: &mut LedgerWorld) {
             .expect("引导结果未登记")
             .db_dir
             .clone();
+        if disposition.as_ref() == Ok(&BootDisposition::NormalizePlaintext) {
+            ledger_infra::db::encryption::normalize_plaintext_db_file(&db_dir.join(DB_FILE_NAME))
+                .expect("外来形态明文库归一化失败");
+        }
         let opened = open_db_in(&db_dir);
         assert!(
             opened.is_ok(),

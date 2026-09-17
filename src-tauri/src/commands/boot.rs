@@ -1,4 +1,6 @@
-//! 启动与重启命令壳层（issue #601 / #602 / #644 / ADR-0075 决策 5 修订 / ADR-0080）。
+//! 启动与重启命令壳层（issue #601 / #602 / #644 / #1453 / ADR-0075 决策 5 修订 / ADR-0080）。
+//! 外来形态明文库（每页保留字节 ≠ 0）在**建连之前**按处置先整库归一化
+//! （issue #1453），再走既有明文建连路径。
 //!
 //! 启动期数据库打不开（明文库损坏等）不再弹原生「重置/退出」对话框、不再退出：
 //! 启动状态经 [`get_boot_status`] 暴露给前端（前端启动首屏选择的唯一依据），
@@ -29,7 +31,9 @@ use tauri::{AppHandle, Manager, Runtime};
 use crate::commands::data_location::{default_data_dir, effective_db_dir_of};
 use crate::commands::encryption::resume_business_surface;
 use ledger_backup as backup;
-use ledger_infra::db::boot::{BOOT_DB_UNREADABLE, BootFailureGate, BootPlan};
+use ledger_infra::db::boot::{
+    BOOT_DB_NORMALIZE_FAILED, BOOT_DB_UNREADABLE, BootFailureGate, BootPlan,
+};
 use ledger_infra::db::data_location::Boot;
 use ledger_infra::db::encryption::EncryptionGate;
 use ledger_infra::db::{
@@ -157,7 +161,8 @@ pub(crate) fn boot_sequence<R: Runtime>(app: &AppHandle<R>) -> Result<BootPhase>
     register_boot(app, boot);
     let gate = app.state::<EncryptionGate>();
     let boot_gate = app.state::<BootFailureGate>();
-    match disposition? {
+    let disposition = disposition?;
+    match disposition {
         ledger_infra::db::boot::BootDisposition::AwaitUnlock => {
             // 占位连接只维持 DbState 形状（IPC/HTTP 壳在锁定期间被门禁拦截，
             // 不会触达）；解锁成功后原位换成凭主口令打开的真实连接。
@@ -166,7 +171,16 @@ pub(crate) fn boot_sequence<R: Runtime>(app: &AppHandle<R>) -> Result<BootPhase>
             tracing::info!(db_dir = %db_dir.display(), "检测到密文库，等待解锁");
             Ok(BootPhase::AwaitUnlock)
         }
-        ledger_infra::db::boot::BootDisposition::OpenPlaintext => {
+        ledger_infra::db::boot::BootDisposition::OpenPlaintext
+        | ledger_infra::db::boot::BootDisposition::NormalizePlaintext => {
+            // 外来形态明文库归一化（issue #1453）：每页保留字节 ≠ 0 的明文库在
+            // SQLCipher 的无 KEY ATTACH 推断路径上必然失败（备份与同步检查点
+            // 产出全灭），建连前先整库重写为应用自有形态——此刻尚无连接指向旧
+            // inode，重写不需要换连编排（运行期做同样的事要把锁从几十毫秒拉到
+            // 百毫秒级）。失败保留原库原样，按启动失败交既有失败恢复屏。
+            if disposition == ledger_infra::db::boot::BootDisposition::NormalizePlaintext {
+                normalize_plaintext_db_file(&db_dir)?;
+            }
             // 成对建连（issue #1280 / ADR-0117 决策 3）：写连接先行完成迁移，
             // 读连接以只读形态打开同一库文件；两连接同刻换入后再开门（fail-closed）。
             let conn = open_connection_in(&db_dir)?;
@@ -191,6 +205,20 @@ pub(crate) fn boot_sequence<R: Runtime>(app: &AppHandle<R>) -> Result<BootPhase>
             ))
         }
     }
+}
+
+/// 归一化外来形态明文库（issue #1453）：失败映射为码化错误
+/// `boot.db-normalize-failed`（原始失败原因进日志，用户可见文案经错误码模板），
+/// 原库保持原样、由调用方按启动失败登记，交既有失败恢复屏。
+fn normalize_plaintext_db_file(db_dir: &std::path::Path) -> Result<()> {
+    let db_path = db_dir.join(ledger_infra::db::data_location::DB_FILE_NAME);
+    ledger_infra::db::encryption::normalize_plaintext_db_file(&db_path).map_err(|e| {
+        tracing::error!(error = %e, "外来形态明文库归一化失败，原库保持原样");
+        AppError::coded(
+            BOOT_DB_NORMALIZE_FAILED,
+            "账本库文件形态异常，无法自动修复；请重启应用重试，或从备份文件恢复",
+        )
+    })
 }
 
 /// 引导失败登记（启动与重引导共用的失败路径，issue #601）：登记失败门、
