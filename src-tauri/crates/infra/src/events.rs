@@ -55,7 +55,7 @@ pub const BACKUPS_CHANGED: &str = "ledger:backups-changed";
 pub const PRICES_CHANGED: &str = "ledger:prices-changed";
 
 /// 进程级应用句柄镜像：自动备份的深路径执行点（连接层写入口
-/// [`crate::db::write`] 提交点的写时顺带检查，ADR-0032）只持有 `&Connection`，
+/// [`crate::db::write_locked`] 提交点的写时顺带检查，ADR-0032）只持有 `&Connection`，
 /// 拿不到 Tauri 的 `AppHandle`——启动时经 [`init_event_app`] 注入一次，深层执行点经
 /// [`emit_backups_changed_current`] 发射；未注入（单测环境）时静默跳过。
 static EVENT_APP: OnceLock<AppHandle> = OnceLock::new();

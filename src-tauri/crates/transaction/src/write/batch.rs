@@ -3,7 +3,7 @@
 //! 职责：批次事务、逐条 INSERT + 回写 `dedup_hash`/`idempotency_key`、批次汇总日志
 //! 与 `dedup` 注入的去重身份判定（幂等键优先 / 内容哈希兜底，ADR-0010 冻结契约）。
 //! 不变量：单笔落库不在此重演（`crate::write::protocol::create`）；逐条响应形状与
-//! 事务/去重语义不变；调用方须经 `db::write`（ADR-0032 置脏单点），本模块对备份域
+//! 事务/去重语义不变；调用方须经写入口（ADR-0032 置脏单点），本模块对备份域
 //! 零感知；命中去重的行不进创建入口，幂等重放不产生碎商户。ADR 指针：ADR-0009
 //! 决策 #5 / ADR-0010 / ADR-0032 / ADR-0044 决策 4；陷阱：`run` 同时服务 HTTP 批量导入（`dedup=true`）与 IPC 批量创建（`dedup=false`）。
 
@@ -41,7 +41,8 @@ impl TransactionBatch {
     /// `dedup=true` 时生效，`dedup=false` 直接落库；单条校验失败（Invalid 类：既有
     /// `AppError::Invalid` 与码化 `AppError::Coded`（class=Invalid））
     /// 返回 `success:false`+`error` 且不影响同批其他交易，提交失败则整批回滚并在回滚路径
-    /// 打批次汇总日志。置脏与写时到期检查不在本函数：调用方经写入口（[`ledger_infra::db::write`]）
+    /// 打批次汇总日志。置脏与写时到期检查不在本函数：调用方经写入口
+    /// （[`ledger_infra::db::write_locked`]，门面作业在其实施）
     /// 调用时在提交点单点承接，回滚不置脏同由写入口保证（issue #245）。
     pub fn run(
         conn: &Connection,

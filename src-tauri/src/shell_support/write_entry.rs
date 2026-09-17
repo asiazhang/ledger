@@ -26,7 +26,7 @@
 //! - **发射器参数归一**（ADR-0073 决策 3）：`Option<&dyn SignalEmitter>`——
 //!   [`tauri::AppHandle`] 即该接缝的生产实现（ADR-0054），IPC 壳透传 `Some(&app)`；
 //!   HTTP 壳从 `EmitterSlot` 解包（`slot.as_deref()`）；`None` 跳过发射正是两侧
-//!   共有的既有测试态语义。走 `db::write` 但映射为零信号的写命令仍统一传
+//!   共有的既有测试态语义。走统一写入口但映射为零信号的写命令仍统一传
 //!   `Some`——生产不借用测试态语义，未来给零信号身份补信号时天然生效；
 //! - **span 归因串**保留 `&'static str` 参数：IPC 传命令名字面量、HTTP 传
 //!   `"METHOD /path"` 端点键，SQL 日志逐字节不变（ADR-0009 / ADR-0068 零感知）；

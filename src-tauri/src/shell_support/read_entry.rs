@@ -146,7 +146,7 @@ mod tests {
     }
 
     /// 锁中毒：持锁线程 panic 使互斥体中毒，入口归一化为 AppError::Db
-    ///（与 db::write 同形，ADR-0104 决策 4）。
+    ///（与统一写入口同形，ADR-0104 决策 4）。
     #[test]
     fn poisoned_lock_maps_to_db_error() {
         let state = fixture();

@@ -13,7 +13,7 @@
 //!   一份运行时镜像 [`PrefsState`]（启动时经 IPC `set_auto_backup_dir` 推送），
 //!   目录未配置时一律静默跳过；
 //! - 置脏触发（issue #126 的「写时顺带检查」）已整体迁入连接层统一写入口
-//!   [`db::write`]（ADR-0032，#246 收口）：本模块不再暴露写路径挂钩，
+//!   （已持锁形态 [`db::write_locked`]，ADR-0032，#246 收口）：本模块不再暴露写路径挂钩，
 //!   只保留域原语 [`mark_dirty`]（私有）与触发入口 [`run_due_backup`]
 //!   （BackupTrigger 接口面，运行时仅调度线程与连接层提交点调用）供连接层
 //!   提交点组合；深度模块只持有 `&Connection`，不经 AppHandle 取偏好——
@@ -154,8 +154,8 @@ pub fn set_state(conn: &Connection, state: &AutoBackupState) -> error::Result<()
 }
 
 /// 置脏：业务写库成功后由连接层统一写入口在提交点调用（ADR-0032）。
-/// 私有表示它不是业务代码的调用点——业务写经 [`ledger_infra::db::write`]，置脏是其
-/// 结构性副作用；暴露面只有接线用钩子（[`after_commit_hook`] /
+/// 私有表示它不是业务代码的调用点——业务写经写入口（门面作业在 [`ledger_infra::db::write_locked`]
+/// 上执行），置脏是其结构性副作用；暴露面只有接线用钩子（[`after_commit_hook`] /
 /// [`occurrence_dirty_hook`]）。
 fn mark_dirty(conn: &Connection) -> error::Result<()> {
     settings::set(conn, SettingKey::AutoBackupDirty, &true)
