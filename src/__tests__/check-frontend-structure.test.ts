@@ -1,5 +1,4 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -12,27 +11,19 @@ import {
   fixtureRepo,
   type FixtureEntry,
 } from '../../scripts/check-frontend-structure.fixture.ts'
+import { gateScript, runGateScript } from '../../scripts/run-gate-script.test-helper.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-frontend-structure.ts（前端 workspace 结构
-// 守门，issue #1149）。脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛
-// 调用同款，测的就是门槛路径。按测试决策只测外部可观察结果——进程退出码与输出；
-// 通过位置参数把校验目标指向临时夹具仓库根（[repo-root] [packages-manifest.json]），
-// 夹具登记表经 arg2 JSON 注入（生产路径不传，PACKAGES 单一事实源不变）。
+// 守门，issue #1149）。脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以
+// spawnSync('bun') 与门槛调用同款拉起，测的就是门槛路径。按测试决策只测外部可
+// 观察结果——进程退出码与输出；通过位置参数把校验目标指向临时夹具仓库根
+// （[repo-root] [packages-manifest.json]），夹具登记表经 arg2 JSON 注入（生产路径
+// 不传，PACKAGES 单一事实源不变）。
 // 夹具仓库根 builder 住共享辅助 scripts/check-frontend-structure.fixture.ts（issue
 // #1435：与 scripts 侧两份手写副本收敛为单份，规则⑥⑦登记项按生产登记表迭代创建，
 // 新增登记项夹具零编辑）。
-// （vitest 转换后 import.meta.url 非 file: scheme，取进程 cwd = 仓库根定位脚本）
-const script = join(process.cwd(), 'scripts', 'check-frontend-structure.ts')
-
-interface RunResult {
-  status: number
-  output: string
-}
-
-function run(args: string[]): RunResult {
-  const r = spawnSync('bun', [script, ...args], { encoding: 'utf8' })
-  return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
-}
+const script = gateScript('check-frontend-structure.ts')
+const run = (args: string[]) => runGateScript(script, args)
 
 afterAll(() => {
   cleanupFixtureRepos()

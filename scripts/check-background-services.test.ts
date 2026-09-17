@@ -1,5 +1,4 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,25 +9,16 @@ import {
   ORCHESTRATOR_FILE,
   ORCHESTRATOR_FN,
 } from '../scripts/check-background-services.ts'
+import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-background-services.ts（后台服务成对
-// 拉起守门，issue #961）。脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun')
-// 与门槛调用同款，测的就是门槛路径。按测试决策只测外部可观察结果——进程
-// 退出码与输出，不测内部函数；通过位置参数把扫描目标指向临时夹具目录
-// （check-structure.test.ts 同款先例；vitest 转换后 import.meta.url 非 file:
-// scheme，取进程 cwd = 仓库根定位脚本）。
+// 拉起守门，issue #961）。脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以
+// spawnSync('bun') 与门槛调用同款拉起，测的就是门槛路径。按测试决策只测外部
+// 可观察结果——进程退出码与输出，不测内部函数；通过位置参数把扫描目标指向
+// 临时夹具目录（check-structure.test.ts 同款先例）。
 // 夹具白名单清单自脚本导出的 GUARDED_NAMES 派生（单一事实源，无双源漂移）。
-const script = join(process.cwd(), 'scripts', 'check-background-services.ts')
-
-interface RunResult {
-  status: number
-  output: string
-}
-
-function run(args: string[]): RunResult {
-  const r = spawnSync('bun', [script, ...args], { encoding: 'utf8' })
-  return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
-}
+const script = gateScript('check-background-services.ts')
+const run = (args: string[]) => runGateScript(script, args)
 
 const tempDirs: string[] = []
 afterAll(() => {
