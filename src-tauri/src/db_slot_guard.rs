@@ -46,6 +46,11 @@ const LOCKING_WRITE_ENTRY_TOKEN: &str = "db::write(";
 /// 豁免台账（ADR-0125 决策 8，issue #1410）：逐条技术原因 + 覆盖文件。
 ///
 /// 表内每一项必须在扫描面上至少命中一次（死条目断言）；表外零命中是规格。
+///
+/// **退役记录**：备份侧那条「自动备份首次兜底的取槽点」已随 issue #1415 退役
+/// （`run_raw_blocking_within` 门面限时等待写槽裸作业，`src/commands/backup.rs`
+/// 条目收窄为只剩恢复的分支锁）；误把已退役的取槽点写回该文件时，本表的死条目
+/// 断言与「白名单外零命中」两侧都会因命中丢失 / 新增而变红。
 const SLOT_LOCK_EXEMPTIONS: &[(&str, &str)] = &[
     (
         "src/shell_support/write_entry.rs",
@@ -57,9 +62,9 @@ const SLOT_LOCK_EXEMPTIONS: &[(&str, &str)] = &[
     ),
     (
         "src/commands/backup.rs",
-        "备份侧豁免（ADR-0125 决策 8 豁免台账同源）：恢复的**分支锁**——主连接可选（启动失败接管现场\
-         无连接不持锁，issue #601），锁形态超出门面单作业形状；同文件另有自动备份首次兜底的取槽点\
-         （backup::lock_conn_with_timeout，同款「取不到就放弃本轮」语义，随域侧超时放弃口径）。",
+        "备份侧豁免（ADR-0125 决策 8 豁免台账同源）：只剩恢复的**分支锁**——主连接可选（启动失败\
+         接管现场无连接不持锁，issue #601），锁形态超出门面单作业形状。首次兜底的取槽点已随 \
+         issue #1415 改走门面限时等待写槽裸作业（`run_raw_blocking_within`），台账条目随之退役。",
     ),
     (
         "src/commands/sync_channel.rs",
@@ -211,5 +216,45 @@ fn scan_surface_covers_shell_and_infra() {
         sources.len() > 50,
         "扫描面过小（{} 个文件）——扫描根或过滤写错即静默漏检",
         sources.len()
+    );
+}
+
+/// 备份侧取用点的退役核对（ADR-0125 决策 8 豁免台账退役，issue #1415）：
+/// `SLOT_LOCK_EXEMPTIONS` 里备份侧那条收窄为只剩恢复的**分支锁**后，「调度轮次 /
+/// 退出兜底 / 首次兜底不再自取槽锁」这件事只有把住址钉住才守得住——白名单外零
+/// 命中与死条目断言对「同一文件内换一处直锁」都无感（备份次数的调度住域 crate，
+/// 更不在本守门扫描面上）。取用的等价物是门面的限时等待写槽裸作业，故同时钉住
+/// 它的落地住址，并禁止调度域回到自取槽锁的等待入口
+/// （`lock_conn_with_timeout`——域侧直锁走 `try_lock` 轮询，不是壳层标准锁行形态，
+/// 拿 `STANDARD_LOCK_LINE` 判它会得到一条永真断言）。扫描面因此显式伸进备份域
+/// crate（ADR-0125 决策 8 原本把该域的守门留给域侧自身与评审，本票把这一条取用
+/// 纪律的住址钉死，只辖这一处）。
+#[test]
+fn backup_acquisition_points_go_through_facade_timed_job() {
+    let shell = std::fs::read_to_string(scan_root().join("src/commands/backup.rs"))
+        .expect("备份命令壳源码应可读");
+    assert!(
+        shell.contains("run_raw_blocking_within(\"backup.first-fallback\""),
+        "首次兜底的连接取用必须经门面的限时等待写槽裸作业（ADR-0125 决策 8 豁免台账 \
+         退役，issue #1415）——改回自取槽锁即回潮"
+    );
+    let scheduler = std::fs::read_to_string(scan_root().join("crates/backup/src/auto.rs"))
+        .expect("备份调度源码应可读");
+    for point in ["backup.scheduler-round", "backup.exit-fallback"] {
+        assert!(
+            scheduler.contains(&format!("run_raw_blocking_within(\"{point}\"")),
+            "备份调度 / 退出兜底的连接取用必须经门面的限时等待写槽裸作业（{point}，\
+             ADR-0125 决策 8 豁免台账退役，issue #1415）"
+        );
+    }
+    // 回潮哨兵：取用点若改回直锁助手，助手**调用**会重新出现在这份源码里。判据按
+    // 「定义之外不再出现」——定义本身（`pub fn lock_conn_with_timeout(`）由本票
+    // 保留给多端同步调度侧，若把它一并判红，守门会以「定义在即命中」的方式误红。
+    let masked = production_text(&scheduler);
+    let without_definition = masked.replacen("pub fn lock_conn_with_timeout(", "", 1);
+    assert!(
+        !without_definition.contains("lock_conn_with_timeout"),
+        "备份调度域内不得再回到自取槽锁的等待形态（取用独占收在门面内，issue #1415）：\
+         `lock_conn_with_timeout` 的余留消费面只有多端同步调度侧"
     );
 }

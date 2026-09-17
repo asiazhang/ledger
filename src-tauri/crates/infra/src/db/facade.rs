@@ -31,16 +31,17 @@
 
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 use tokio::sync::oneshot;
 use tracing::Span;
 use tracing::dispatcher::Dispatch;
 
+use super::job_gate::{JobGate, LockOutcome, StartDecision};
 use super::runtime::{DbState, SlotWatch, probe_lock_hold, with_caller_context, write_locked};
 use super::tx_scope::rollback_if_open;
 use crate::error::{AppError, Result};
@@ -50,6 +51,12 @@ const WRITE_THREAD_NAME: &str = "db-write";
 
 /// 读 DB 线程名（语义同 `WRITE_THREAD_NAME`）。
 const READ_THREAD_NAME: &str = "db-read";
+
+/// 作业结果丢失的错误载荷（issue #1415 收为单点）：回传通道先于结果断开，只可能是
+/// DB 线程已退出（停机或装配失败）——fail-loud，不静默当作成功。
+fn worker_gone_error(name: &str) -> AppError {
+    AppError::Io(format!("数据库门面线程 {name} 已退出，作业结果丢失"))
+}
 
 /// 作业结果（类型擦除）：Ok 侧是业务值装箱、Err 侧是原样传播的错误。
 type ErasedOutcome = Result<Box<dyn Any + Send>>;
@@ -70,6 +77,13 @@ struct Job {
     run: Box<dyn FnOnce(&Connection) -> ErasedOutcome + Send>,
     /// 结果回传（oneshot 发送端装箱，供门面侧在 panic 后仍能回传错误）。
     reply: Box<dyn FnOnce(ErasedOutcome) + Send>,
+    /// 状态门（限时等待与放弃原语，issue #1415）：DB 线程开始执行前在此认领，
+    /// 调用方弃权时在此放弃——两者共用同一把锁，裁决互斥且可判别。
+    gate: Arc<JobGate>,
+    /// 放弃时的回传载荷（issue #1415）：作业体未执行时门面回传
+    /// [`LockOutcome::Abandoned`]；载荷随作业泛型 T 就地构造（类型擦除后回传
+    /// 与作业结果的拆箱同一上下文）。
+    on_abandoned: Box<dyn FnOnce() -> ErasedOutcome + Send>,
 }
 
 /// 门面线程收到的消息。
@@ -180,7 +194,7 @@ impl DbWorker {
         F: FnOnce(&Connection) -> Result<T> + Send + 'static,
     {
         let (reply_tx, reply_rx) = oneshot::channel::<Result<T>>();
-        self.enqueue(job_of(command, execute, move |result| {
+        self.enqueue(job_of(command, JobGate::queued(), execute, move |result| {
             // 调用方已放弃等待（future 被 drop）时静默丢弃——不是失败。
             let _ = reply_tx.send(result);
         }))?;
@@ -196,13 +210,73 @@ impl DbWorker {
         F: FnOnce(&Connection) -> Result<T> + Send + 'static,
     {
         let (reply_tx, reply_rx) = mpsc::channel::<Result<T>>();
-        self.enqueue(job_of(command, execute, move |result| {
+        self.enqueue(job_of(command, JobGate::queued(), execute, move |result| {
             // 接收端已放弃等待时静默丢弃——不是失败。
             let _ = reply_tx.send(result);
         }))?;
-        reply_rx.recv().map_err(|_| {
-            AppError::Io(format!("数据库门面线程 {} 已退出，作业结果丢失", self.name))
-        })?
+        reply_rx.recv().map_err(|_| worker_gone_error(self.name))?
+    }
+
+    /// 限时等待的阻塞提交（ADR-0125 决策 8 豁免台账退役，issue #1415）：语义同
+    /// [`DbWorker::submit_blocking`]，但调用方最多等 `timeout`——超时即放弃本轮，
+    /// 返回 [`LockOutcome::Abandoned`]。
+    ///
+    /// **放弃的裁决点在队列侧**：超时时调用方在状态门上请求放弃（[`JobGate::abandon`]），
+    /// 作业体尚未开始（排队中或 DB 线程正等槽）就**不会执行**（零副作用，
+    /// `Abandoned`），已开始执行则跑到出结果（执行中不可撤销，ADR-0125 否决段）
+    /// ——两种结果互斥且可判别，「取不到就放弃本轮、下个周期重试」的语义因此有
+    /// 等价物。等槽之所以也落在弃权窗口内：调用方的时限本就是「等到连接可用」，
+    /// 把窗口截在开头会退化成没有时限的等待。
+    ///
+    /// 结果与放弃的竞速按接收通道裁决：时限到达时结果**已经就绪**（作业已完成）
+    /// 优先取结果——放弃只应对「还没做完」的等待生效。
+    fn submit_blocking_within<T, F>(
+        &self,
+        command: &'static str,
+        timeout: Duration,
+        execute: F,
+    ) -> LockOutcome<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Connection) -> Result<T> + Send + 'static,
+    {
+        let (reply_tx, reply_rx) = mpsc::channel::<Result<T>>();
+        let job_gate = JobGate::queued();
+        if let Err(error) = self.enqueue(job_of(
+            command,
+            Arc::clone(&job_gate),
+            execute,
+            move |result| {
+                // 接收端已放弃等待时静默丢弃——不是失败。
+                let _ = reply_tx.send(result);
+            },
+        )) {
+            return LockOutcome::Ran(Err(error));
+        }
+        match reply_rx.recv_timeout(timeout) {
+            Ok(result) => LockOutcome::Ran(result),
+            Err(RecvTimeoutError::Timeout) => {
+                // 结果已经就绪（作业已完成）优先取结果：放弃只对「还没做完」的等待
+                // 生效，否则时限恰好落在完成瞬间会误报「本轮没跑」。
+                if let Ok(result) = reply_rx.try_recv() {
+                    return LockOutcome::Ran(result);
+                }
+                // 作业体尚未开始（排队中，或 DB 线程正等槽）→ 弃权成立、本轮不执行；
+                // 已开始执行 → 弃权不生效（ADR-0125 否决段），等它出结果。
+                if job_gate.abandon() {
+                    LockOutcome::Abandoned
+                } else {
+                    LockOutcome::Ran(
+                        reply_rx
+                            .recv()
+                            .unwrap_or_else(|_| Err(worker_gone_error(self.name))),
+                    )
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                LockOutcome::Ran(Err(worker_gone_error(self.name)))
+            }
+        }
     }
 
     /// 入队一条作业（锁内只有一次入队、没有可毒化的不变量：中毒——理论上不可达
@@ -251,8 +325,10 @@ impl Drop for DbWorker {
 }
 
 /// 组装一条作业（issue #1410 抽为单点：异步 oneshot 回传与阻塞 std 通道回传
-/// 只在「回传通道」上分叉，作业体与上下文携带逐字同源）。
-fn job_of<T, F, R>(command: &'static str, execute: F, reply: R) -> Job
+/// 只在「回传通道」上分叉，作业体与上下文携带逐字同源）。状态门由调用方建
+/// （issue #1415：限时等待路径要拿它来弃权本轮），普通路径就地新建一枚——
+/// 无时限的调用方从不弃权，门恒走到 `Running`。
+fn job_of<T, F, R>(command: &'static str, gate: Arc<JobGate>, execute: F, reply: R) -> Job
 where
     T: Send + 'static,
     F: FnOnce(&Connection) -> Result<T> + Send + 'static,
@@ -260,6 +336,7 @@ where
 {
     Job {
         command,
+        gate,
         dispatch: tracing::dispatcher::get_default(Dispatch::clone),
         caller_span: Span::current(),
         run: Box::new(move |conn| {
@@ -277,6 +354,7 @@ where
             };
             reply(result);
         }),
+        on_abandoned: Box::new(|| Ok(Box::new(LockOutcome::<T>::Abandoned) as Box<dyn Any + Send>)),
     }
 }
 
@@ -383,6 +461,29 @@ impl DbFacade {
         self.write.submit_blocking(command, f)
     }
 
+    /// 写槽裸作业的**限时等待**形态（ADR-0125 决策 8 豁免台账退役，issue #1415）：
+    /// 语义与 [`DbFacade::run_write_raw_blocking`] 逐字一致，只是调用方最多等
+    /// `timeout`——等不到作业开始执行就放弃本轮（返回
+    /// [`LockOutcome::Abandoned`]，作业体零执行），已在途则等它出结果。
+    ///
+    /// 消费面：备份自动调度与追补、退出兜底与壳层首次兜底（「取不到连接就放弃
+    /// 本轮、下个周期重试」，ADR-0125 决策 8 豁免台账退役，issue #1415）。多端
+    /// 同步调度侧的轮次取连接**尚未**走本入口（`RoundConn` 接缝闭包借用轮次现场、
+    /// 不满足作业要求的 `Send + 'static`，仍走 `ledger_backup::lock_conn_with_timeout`
+    /// 的直锁形态），收编随多端同步域异步化另案（#1405）一并评估。
+    pub fn run_write_raw_blocking_within<T, F>(
+        &self,
+        command: &'static str,
+        timeout: Duration,
+        f: F,
+    ) -> LockOutcome<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Connection) -> Result<T> + Send + 'static,
+    {
+        self.write.submit_blocking_within(command, timeout, f)
+    }
+
     /// 显式停机：投停机消息并等待两条 DB 线程退出（在途作业跑完为止）。未显式调用
     /// 时由 `Drop` 承担同一语义；停机后投递作业 fail-loud 报错，不静默丢弃。
     pub fn shutdown(&mut self) {
@@ -425,11 +526,25 @@ fn run_worker(name: &'static str, watch: SlotWatch, receiver: &mpsc::Receiver<Wo
 fn run_job(name: &'static str, watch: &SlotWatch, trust: &mut ConnectionTrust, job: Job) {
     let Job {
         command,
+        gate,
         dispatch,
         caller_span,
         run,
         reply,
+        on_abandoned,
     } = job;
+    // 限时等待的两段裁决（issue #1415）：认领时调用方已弃权（排队中超时）→ 作业体
+    // 不执行、槽锁都不必取；认领成功则转「等槽」态——这一步之后调用方的弃权仍
+    // 成立（等槽同属调用方的限时窗口），故拿到槽后还要再裁决一次。
+    if !gate.claim_for_run() {
+        tracing::debug!(
+            thread = name,
+            command,
+            "作业已在排队时被调用方弃权，本轮不执行"
+        );
+        reply(on_abandoned());
+        return;
+    }
     // 作业占用 DB 线程时长探针（ADR-0125 决策 2）：阈值与告警口径与既有持锁探针同源。
     let started = Instant::now();
     let guard = match watch.slot().lock() {
@@ -443,6 +558,17 @@ fn run_job(name: &'static str, watch: &SlotWatch, trust: &mut ConnectionTrust, j
             return;
         }
     };
+    // 等槽结束的裁决：调用方在等槽期间弃权（时限已到）→ 作业体不执行，只把槽还
+    // 回去——「取不到就放弃本轮」的现场语义在门面形态下的落点。
+    if gate.try_start() == StartDecision::Cancelled {
+        tracing::debug!(
+            thread = name,
+            command,
+            "作业在等槽期间被调用方弃权，本轮不执行"
+        );
+        reply(on_abandoned());
+        return;
+    }
     // 换连承接下来到这里（issue #1409）：槽锁在手，代次读数与换连原语的抬高同序。
     if watch.observe_swap() {
         trust.reset_after_swap();

@@ -8,10 +8,12 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use rusqlite::Connection;
 
 use super::facade::DbFacade;
+use super::job_gate::LockOutcome;
 use crate::error::Result;
 
 /// 连接槽对（写槽 + 读槽）：句柄与门面解析的唯一构造输入（issue #1410）。
@@ -127,6 +129,30 @@ impl DbWriteHandle {
         F: FnOnce(&Connection) -> Result<T> + Send + 'static,
     {
         self.0.facade()?.run_write_raw_blocking(command, f)
+    }
+
+    /// 写槽裸作业的**限时等待**形态（ADR-0125 决策 8 豁免台账退役，issue #1415）：
+    /// 阻塞线程上的调用方最多等 `timeout`——等不到作业开始执行就放弃本轮
+    /// （[`LockOutcome::Abandoned`]，作业体零执行、零副作用），已在途则等它出结果
+    /// （执行中不可撤销，ADR-0125 否决段）。
+    ///
+    /// 消费面：备份自动调度与追补的「取不到连接就放弃本轮、下个周期重试」。
+    pub fn run_raw_blocking_within<T, F>(
+        &self,
+        command: &'static str,
+        timeout: Duration,
+        f: F,
+    ) -> LockOutcome<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Connection) -> Result<T> + Send + 'static,
+    {
+        match self.0.facade() {
+            Ok(facade) => facade.run_write_raw_blocking_within(command, timeout, f),
+            // 门面不可解析（按槽拉起失败）时按作业错误上抛——不静默当作「本轮被
+            // 放弃」，两类结果对调用方含义不同（失败需报错，放弃是正常的跳过）。
+            Err(error) => LockOutcome::Ran(Err(error)),
+        }
     }
 
     /// 写槽本体（分段写入口的过渡直锁半边，见 [`DbSlotPair::write_slot`]）。
