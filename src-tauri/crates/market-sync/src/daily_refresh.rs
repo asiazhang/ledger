@@ -13,6 +13,10 @@
 //!   同一进程级全局限速器、前台请求在途时让行（ADR-0122 决策 6「共享额度让路」）；
 //! - **失败面**：静默等下一窗口（无用户在场可报，先例：后台补全调度）。
 //!
+//! 单轮骨架（换装 / 会话 / 见证 / 裁决 / 发射 / 失败日志）与价格历史后台补全
+//! 共用 [`super::lane`] 单点（issue #1426）：本模块只留编排（[`DailyRefreshRound`]）
+//! 与统计日志。
+//!
 //! 调度与启动接线（[`start_daily_price_refresh`]）与价格历史后台补全调度
 //!（[`super::history::start_history_backfill`]）同构：进程级单次拉起守卫
 //!（原位重引导幂等，ADR-0080）、每轮门检（锁定/启动失败期间不触碰占位连接）、
@@ -30,19 +34,19 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager, Runtime};
 
-use ledger_infra::db::DbState;
-use ledger_infra::db::DbWriteHandle;
 use ledger_infra::db::boot::BootFailureGate;
 use ledger_infra::db::encryption::EncryptionGate;
-use ledger_infra::error::Result;
-use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
 
 use super::channels::SyncFetchChannels;
 use super::channels::do_incremental_sync_channels;
 use super::history::{STARTUP_DELAY, WINDOW_POLL_INTERVAL};
 use super::incremental::beijing_today;
-use super::model::WriteWitness;
-use super::progress::ProgressEmitter;
+use super::lane::{
+    LaneChannelsSlot, LaneId, LaneRound, LaneRoundFuture, progress_forwarder,
+    run_background_lane_round,
+};
+use super::model::{SyncInstrumentInfoResult, WriteWitness};
+use super::progress::SyncProgress;
 use super::session::FacadeWriteSession;
 
 /// 后台每日现价刷新的通道注入接缝（先例：命令壳 `SyncChannelsSlot` / 后台补全
@@ -50,6 +54,14 @@ use super::session::FacadeWriteSession;
 /// 集成测试 manage 本状态并装入门控桩束，使「每日刷新真实在途」可确定复现。
 /// 异步互斥体：通道束引用在 `.await` 之间存活（issue #1412 通道束闭包 async 化）。
 pub struct DailyPriceRefreshChannelsSlot(pub Arc<tokio::sync::Mutex<SyncFetchChannels>>);
+
+/// 槽接缝实现（骨架定义接缝、车道就地提供槽类型，issue #1426）：骨架按同一形状
+/// 解包本状态，不反向认识本车道。
+impl LaneChannelsSlot for DailyPriceRefreshChannelsSlot {
+    fn shared(&self) -> Arc<tokio::sync::Mutex<SyncFetchChannels>> {
+        self.0.clone()
+    }
+}
 
 /// 调度时机的显式参数（启动延迟与自然日窗口巡检周期）：生产走默认值（与价格
 /// 历史后台补全同一节奏），接线型集成测试注入短时机——断言只等窗口到达，不被
@@ -114,43 +126,41 @@ pub fn start_daily_price_refresh_with<R: Runtime>(
     });
 }
 
-/// 跑一轮每日现价刷新（与手动同步同形的单轮编排）：通道束换装（测试桩束优先
-///（[`DailyPriceRefreshChannelsSlot`] 管理态），生产建后台车道束——同一全局限
-/// 速器、前台在途时让行）+ 门面写槽裸作业会话 + 手动形态同款进度事件 + 写入
-/// 见证。失败静默等下一窗口（无用户可报）；实际写入的收尾裁决与手动同步同判
-/// ——置脏一次 + 发既有价格失效信号，零写入不置脏不广播。async 形态
-///（ADR-0125 决策 7 / issue #1413）：编排直接在车道 async 任务上 `await`，
-/// 不再经全局运行时跨线程驱动。
-async fn run_daily_refresh_round<R: Runtime>(app: &AppHandle<R>) {
-    let write = app.state::<DbState>().write_handle();
-    let slot = app
-        .try_state::<DailyPriceRefreshChannelsSlot>()
-        .map(|s| s.0.clone());
-    let (result, any_written) = match slot {
-        Some(arc) => run_round_with_channels(app, &write, &arc).await,
-        None => match SyncFetchChannels::production_backfill() {
-            Ok(channels) => {
-                let channels = tokio::sync::Mutex::new(channels);
-                run_round_with_channels(app, &write, &channels).await
-            }
-            Err(error) => (Err(error), false),
-        },
-    };
+/// 每日现价刷新的编排（骨架的编排输入，issue #1426）：与手动同步**同一编排入口**
+/// 与同一取数面——骨架负责换装、会话、见证、裁决、发射与失败日志，本 impl 只把
+/// 持束驱动编排。
+struct DailyRefreshRound;
 
-    // 收尾裁决（issue #1277 成败同判，与手动同步同形）：本轮实际写过价格或
-    // 名称 → 提交点置脏一次 + 发既有价格失效信号；零写入不置脏不广播。
-    // 置脏失败记日志不静默吞运行结果（脏标记待下次写入补上）。置脏经门面
-    // 异步作业投递（车道已是 async 任务，不再用阻塞等待形态）。
-    if any_written {
-        if let Err(error) = write.run("daily_price_refresh", |_| Ok(())).await {
-            tracing::warn!(%error, "每日现价刷新收尾置脏失败（脏标记待下次写入补上）");
-        }
-        emit_for(
-            app,
-            WriteOp::SyncInstrumentInfo,
-            WriteEvidence::PriceWritten(true),
-        );
+impl LaneRound for DailyRefreshRound {
+    type Stats = SyncInstrumentInfoResult;
+
+    fn run<'a>(
+        &'a self,
+        session: &'a FacadeWriteSession,
+        channels: &'a mut SyncFetchChannels,
+        progress: &'a mut (dyn FnMut(SyncProgress) + Send),
+        witness: &'a mut WriteWitness,
+    ) -> LaneRoundFuture<'a, Self::Stats> {
+        Box::pin(async move {
+            // 骨架交来进度接缝的 trait 对象，编排接缝要泛型 `FnMut`：经骨架的
+            // 转接单点（[`super::lane::progress_forwarder`]）交给编排。
+            let mut forward = progress_forwarder(progress);
+            do_incremental_sync_channels(session, channels, &mut forward, witness).await
+        })
     }
+}
+
+/// 跑一轮每日现价刷新（后台车道单轮骨架，issue #1426）：换装 / 会话 / 见证 /
+/// 裁决 / 发射 / 失败日志归 [`super::lane`] 单点（与价格历史后台补全共用），本
+/// 函数只留本车道的统计日志。async 形态（ADR-0125 决策 7 / issue #1413）：编排
+/// 直接在车道 async 任务上 `await`，不再经全局运行时跨线程驱动。
+async fn run_daily_refresh_round<R: Runtime>(app: &AppHandle<R>) {
+    let result = run_background_lane_round::<R, DailyPriceRefreshChannelsSlot, _>(
+        app,
+        LaneId::DailyPriceRefresh,
+        DailyRefreshRound,
+    )
+    .await;
     match result {
         Ok(stats) if stats.written == 0 && stats.renamed == 0 => {
             tracing::debug!("每日现价刷新完成：全部已是最新，零写入");
@@ -162,26 +172,7 @@ async fn run_daily_refresh_round<R: Runtime>(app: &AppHandle<R>) {
             skipped = stats.skipped,
             "后台每日现价刷新完成"
         ),
-        Err(error) => tracing::warn!(%error, "后台每日现价刷新失败（静默等下一窗口）"),
+        // 失败已由骨架按车道记日志（静默等下一窗口），此处不重复。
+        Err(_) => {}
     }
-}
-
-/// 持束跑一轮：会话（门面写槽裸作业会话）+ 手动形态同款进度事件 + 写入见证。
-/// 返回 (编排结果, 是否实际写过)——见证跨失败存活（成败同判的证据源）。
-async fn run_round_with_channels<R: Runtime>(
-    app: &AppHandle<R>,
-    write: &DbWriteHandle,
-    channels: &tokio::sync::Mutex<SyncFetchChannels>,
-) -> (Result<super::model::SyncInstrumentInfoResult>, bool) {
-    let mut witness = WriteWitness::default();
-    let session = FacadeWriteSession::new(write.clone(), "daily_price_refresh");
-    // 进度事件与手动同步同形（同一事件名）：前端接缝只在手动同步在途时消费
-    // 事件，后台推进不点亮进度条（见模块头注释）。
-    let emitter = app.clone();
-    let mut progress = move |progress| ProgressEmitter::emit_progress(&emitter, progress);
-    let mut channels = channels.lock().await;
-    let result =
-        do_incremental_sync_channels(&session, &mut channels, &mut progress, &mut witness).await;
-    let any_written = witness.any_written();
-    (result, any_written)
 }

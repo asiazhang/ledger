@@ -201,6 +201,7 @@ fn production_source_files() -> Vec<(&'static str, String)> {
         ("http.rs", include_str!("http.rs").to_string()),
         ("incremental.rs", include_str!("incremental.rs").to_string()),
         ("js.rs", include_str!("js.rs").to_string()),
+        ("lane.rs", include_str!("lane.rs").to_string()),
         ("lib.rs", include_str!("lib.rs").to_string()),
         ("model.rs", include_str!("model.rs").to_string()),
         ("persist.rs", include_str!("persist.rs").to_string()),
@@ -331,5 +332,51 @@ fn production_face_has_no_blocking_bridge() {
             "{name} 的生产拉取入口必须保持 async fn（{needle}）——壳层接缝在异步上下文 \
              直接 await，改回同步形状即重引阻塞驱动（ADR-0125 决策 5/7 / issue #1413）"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 后台车道单轮骨架单点（issue #1426，删除即变红）
+// ---------------------------------------------------------------------------
+
+/// 单轮骨架的机制不得回流到车道模块（issue #1426，删除即变红）：换装（生产束
+/// 构造）、门面会话构造、收尾裁决（见证读取与提交点置脏）与进度发射一旦出现在
+/// `daily_refresh.rs` / `history.rs`，即「下一次车道形态调整还要再改两处」的
+/// Shotgun Surgery 回归（骨架又裂成两份平行实现）。
+///
+/// 断言强度（CONTEXT-testing）：判据只取**负向**——车道模块出现骨架机制即红，
+/// 故对合法重命名（骨架 / trait / 转接单点改名）零误报；「两车道都经骨架」这一
+/// 正向事实无法由行为断言观察（两条路径行为等价），按 ADR-0125 决策 7 的车道接线
+/// 扫描先例由本结构守门承担，行为面归 `tests/` 下两条接线 IT 的端到端断言。
+#[test]
+fn background_lanes_share_single_round_skeleton() {
+    let sources: Vec<(&'static str, String)> = production_source_files()
+        .into_iter()
+        .map(|(name, src)| (name, mask_non_code(&src)))
+        .collect();
+
+    // 机制指纹：换装 / 会话 / 裁决（见证读取、提交点置脏、失效信号）/ 进度发射。
+    const SKELETON_MECHANICS: [&str; 7] = [
+        "production_backfill()",
+        "FacadeWriteSession::new",
+        "any_written()",
+        "write.run(",
+        "emit_for(",
+        "emit_backfill_progress",
+        "emit_progress",
+    ];
+    for name in ["daily_refresh.rs", "history.rs"] {
+        let src = sources
+            .iter()
+            .find(|(file, _)| *file == name)
+            .map(|(_, src)| src.as_str())
+            .unwrap_or_else(|| panic!("{name} 应在守门源文件清单内"));
+        for needle in SKELETON_MECHANICS {
+            assert!(
+                !src.contains(needle),
+                "{name} 出现骨架机制 {needle}——换装 / 会话 / 见证 / 裁决 / 发射归 \
+                 lane.rs 单点，回流到车道模块即平行骨架复活（issue #1426）"
+            );
+        }
     }
 }
