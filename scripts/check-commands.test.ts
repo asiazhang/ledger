@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// 被测对象是仓库工具脚本 scripts/check-commands.ts（命令注册一致性校验）。
+// 被测对象是仓库工具脚本 scripts/check-commands.ts（命令注册一致性校验：命令名腿 + 参数键名腿）。
 // 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。
 // 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
 // 通过位置参数把扫描目标指向临时夹具目录。
@@ -41,7 +41,8 @@ function makeFixture(commands: Record<string, string>, apiTs: string): string[] 
   return [cmdsDir, apiFile]
 }
 
-const cmd = (name: string) => `#[tauri::command]\npub fn ${name}(db: DbState) -> String {\n    todo!()\n}\n`
+// 注入参数用真实形态（State<'_, DbState>）：db 是 Tauri 注入参数，不进 invoke 键集（#1398）
+const cmd = (name: string) => `#[tauri::command]\npub fn ${name}(db: State<'_, DbState>) -> String {\n    todo!()\n}\n`
 
 describe('check-commands（命令注册一致性校验）', () => {
   it('真实仓库默认通过：Rust 注解命令集与 TS 调用面双向全等', () => {
@@ -125,5 +126,114 @@ describe('check-commands（命令注册一致性校验）', () => {
     expect(r.status).toBe(1)
     expect(r.output).toMatch(/未在命令目录扫描到任何/)
     expect(r.output).toMatch(/未在 TS 调用面扫描到任何/)
+  })
+
+  describe('参数键名腿（issue #1398，#588 类回归根治）', () => {
+    const topCmd =
+      "#[tauri::command]\npub fn top_report(db: State<'_, DbState>, top_n: Option<i64>) -> String {\n    todo!()\n}\n"
+
+    it('参数键名全等（含属性简写、多行对象、snake→camel 转换、注入参数不进键集）→ 通过', () => {
+      const args = makeFixture(
+        {
+          'items.rs':
+            "#[tauri::command]\npub fn calc_cost(db: State<'_, DbState>, id: String, reference_date: Option<String>) -> String {\n    todo!()\n}\n",
+        },
+        [
+          "import { invoke } from '@tauri-apps/api/core'",
+          'export const api = {',
+          '  calc: (id: string, referenceDate?: string | null) =>',
+          "    invoke<string>('calc_cost', {",
+          '      id,',
+          '      referenceDate: referenceDate ?? null,',
+          '    }),',
+          '}',
+          '',
+        ].join('\n'),
+      )
+      const r = run(args)
+      expect(r.status).toBe(0)
+      expect(r.output).toMatch(/参数键名/)
+    })
+
+    it('top_n 形态失配（Rust top_n ↔ TS 键 top_n）→ 失败且差异列出该键', () => {
+      const args = makeFixture(
+        { 'reports.rs': topCmd },
+        "invoke<string>('top_report', { top_n: 5 })\n",
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('topN') // 期望键（Rust 参数名转换后）
+      expect(r.output).toContain('top_n') // 失配的实际键
+    })
+
+    it('实参缺键（TS 漏传可选参数）→ 失败并列出缺失键', () => {
+      const args = makeFixture(
+        { 'reports.rs': topCmd },
+        "invoke<string>('top_report')\n",
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('topN')
+    })
+
+    it('同命令多调用点键集不一致 → 失败', () => {
+      const args = makeFixture(
+        {
+          'reports.rs':
+            "#[tauri::command]\npub fn ms(db: State<'_, DbState>, year: i64, from: Option<String>, to: Option<String>) -> String {\n    todo!()\n}\n",
+        },
+        [
+          "invoke<string>('ms', { year: 2026, from: null, to: null })",
+          "invoke<string>('ms', { year: 2026, from: null })",
+          '',
+        ].join('\n'),
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toMatch(/键集不同/)
+      expect(r.output).toContain('ms')
+    })
+
+    it('含数字段转换与 Tauri 绑定一致（s3_bucket → s3Bucket，数字不成词界）→ 通过', () => {
+      const args = makeFixture(
+        {
+          'sync.rs':
+            "#[tauri::command]\npub fn s3_report(db: State<'_, DbState>, s3_bucket: Option<String>) -> String {\n    todo!()\n}\n",
+        },
+        "invoke<string>('s3_report', { s3Bucket: 'demo' })\n",
+      )
+      const r = run(args)
+      expect(r.status).toBe(0)
+    })
+
+    it('实参展开语法（...）→ fail loud 拒绝', () => {
+      const args = makeFixture(
+        { 'reports.rs': topCmd },
+        "invoke<string>('top_report', { topN: 5, ...rest })\n",
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toMatch(/展开/)
+    })
+
+    it('实参计算键（[...]）→ fail loud 拒绝', () => {
+      const args = makeFixture(
+        { 'reports.rs': topCmd },
+        "invoke<string>('top_report', { ['topN']: 5 })\n",
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toMatch(/计算键/)
+    })
+
+    it('实参非对象字面量（变量透传）→ fail loud 拒绝', () => {
+      const args = makeFixture(
+        { 'reports.rs': topCmd },
+        "invoke<string>('top_report', someArgs)\n",
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toMatch(/不是对象字面量/)
+    })
   })
 })
