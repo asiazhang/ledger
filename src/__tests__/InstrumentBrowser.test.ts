@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { deferred } from '@ledger/test-support/deferred'
 import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
@@ -691,15 +692,6 @@ describe('InstrumentBrowser 空态（issue #1193）', () => {
 })
 
 describe('InstrumentBrowser 列表查询在途竞态（issue #1401）', () => {
-  /** 手动完结的 list_instruments 替身：测试按用例节奏 resolve，制造乱序到达 */
-  function deferred<T>() {
-    let resolve!: (value: T) => void
-    const promise = new Promise<T>((res) => {
-      resolve = res
-    })
-    return { promise, resolve }
-  }
-
   it('先发查询迟到不覆盖后发结果：列表呈现后发查询的行', async () => {
     const first = deferred<{ items: Instrument[]; total: number }>()
     const second = deferred<{ items: Instrument[]; total: number }>()

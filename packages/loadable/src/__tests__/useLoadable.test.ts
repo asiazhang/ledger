@@ -1,19 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useLoadable, registerToastSink } from '../useLoadable'
+import { deferred } from '@ledger/test-support/deferred'
 // toast sink 假件消费共享唯一定义点 @ledger/test-support/toast-sink（#1354 上收；
 // 原局部替身与壳侧 factories.ts 双源，随本票消除）
 import { makeFakeSink, resetToastSink } from '@ledger/test-support/toast-sink'
-
-/** 手动完结的延迟 Promise：控制任务完结时机以构造竞态 */
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (reason?: unknown) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
-}
 
 beforeEach(() => {
   // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
