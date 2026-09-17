@@ -18,12 +18,13 @@
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tracing::Level;
 
 use crate::db::DbState;
 use crate::db::facade::DbFacade;
+use crate::db::job_gate::LockOutcome;
 use crate::error::AppError;
 use crate::settings::SettingKey;
 use crate::test_utils::{CaptureLayer, GATED_TIMEOUT, capture_events, ensure_global_max_level};
@@ -78,6 +79,87 @@ fn assert_later_jobs_fail_loud(
         runs.load(Ordering::SeqCst),
         runs_expected,
         "连接不可信后作业体一律不得执行"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 限时等待与放弃（ADR-0125 决策 8 豁免台账退役，issue #1415）
+// ---------------------------------------------------------------------------
+
+/// 正向：槽空闲时限时等待作业照常执行并原样带回结果（时限不是「延迟」）。
+#[test]
+fn timed_job_runs_and_returns_value_when_slot_is_free() {
+    let state = write_test_state();
+    let facade = DbFacade::start(&state).expect("门面应启动");
+    let outcome =
+        facade.run_write_raw_blocking_within("test", Duration::from_secs(2), |_conn| Ok(41 + 1));
+    match outcome {
+        LockOutcome::Ran(Ok(value)) => assert_eq!(value, 42, "限时等待作业应原样带回结果"),
+        other => panic!("槽空闲时作业应执行，实际 {other:?}"),
+    }
+}
+
+/// 时限内拿不到槽 → 放弃本轮，且**作业体零执行**（ADR-0125 决策 8 豁免台账退役的
+/// 核心判据，issue #1415）：调用方拿到 [`LockOutcome::Abandoned`]。
+///
+/// 负向（ADR-0087，删除即变红）：取掉限时放弃语义（改回无界等待）→ 本测试的
+/// `run_raw_blocking_within` 会一直等到测试放锁才返回，`Ran` 分支断言红；
+/// 「排队中可放弃」被削弱成「等到底再执行」时，作业体执行次数断言同样红。
+#[test]
+fn timed_job_abandons_without_running_body_when_slot_is_busy() {
+    let (_dir, state) = file_state("timed-abandon");
+    let facade = DbFacade::start(&state).expect("门面应启动");
+    let hold = state.conn.lock().expect("测试应拿到写槽");
+    let runs = Arc::new(AtomicUsize::new(0));
+    let first_attempt = Arc::clone(&runs);
+    // 作业只能进队：投递线程在槽锁（测试持有）与作业通道（DB 线程 blocked 在等
+    // 槽锁）之间——调用方自己不得在持锁状态下等作业，故投递给独立线程。
+    let outcome = std::thread::scope(|scope| {
+        let call = scope.spawn(|| {
+            let started = Instant::now();
+            let outcome = facade.run_write_raw_blocking_within(
+                "test",
+                Duration::from_millis(50),
+                move |_conn| {
+                    first_attempt.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                },
+            );
+            (outcome, started.elapsed())
+        });
+        // 等过时限：调用方应在时限附近返回（而不是等槽释放）。
+        let (outcome, elapsed) = call.join().expect("投递线程应正常返回");
+        // 槽仍在测试手里：被放弃的作业不得在槽释放后就地补跑。
+        assert_eq!(
+            runs.load(Ordering::SeqCst),
+            0,
+            "排队中被放弃的作业不得执行作业体（零副作用）"
+        );
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "等槽期间到达时限就应弃权返回，不应等到槽释放（实际 {elapsed:?}）"
+        );
+        outcome
+    });
+    assert!(
+        matches!(outcome, LockOutcome::Abandoned),
+        "槽被占用超过时限应放弃本轮，实际 {outcome:?}"
+    );
+
+    // 放锁后重投同一形态：本轮正常执行（「下一轮重试」成立）。
+    drop(hold);
+    let retried = Arc::clone(&runs);
+    match facade.run_write_raw_blocking_within("test", Duration::from_secs(2), move |_conn| {
+        retried.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }) {
+        LockOutcome::Ran(Ok(())) => {}
+        other => panic!("放锁后的重试应正常执行，实际 {other:?}"),
+    }
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        1,
+        "重试作业应恰好执行一次（被放弃的那次不得补跑）"
     );
 }
 

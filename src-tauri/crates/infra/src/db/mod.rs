@@ -6,7 +6,8 @@
 //! - [`runtime`]：连接层统一写入口与提交点后置钩子（ADR-0032）、阻塞线程池
 //!   helper（ADR-0069 形状乙）与 [`DbState`]；
 //! - [`facade`]：异步 DB 门面（ADR-0125 决策 1–3）——写 / 读两条专用 DB 线程 +
-//!   作业通道 + oneshot 回传，取用独占与 panic 恢复收在门面内。
+//!   作业通道 + oneshot 回传，取用独占与 panic 恢复收在门面内；`job_gate` 是
+//!   限时等待与弃权原语（crate 内私有，决策 8 豁免台账退役，issue #1415）。
 //!
 //! 其余子模块（perf_trace / query / schema_guard / tx_scope）各承载单一主题。
 //! 既有消费方 `crate::db::…` 路径经再导出零改动。
@@ -14,6 +15,7 @@
 pub mod connection;
 pub mod facade;
 pub mod facade_handles;
+pub(crate) mod job_gate;
 pub mod migrate;
 pub mod perf_trace;
 pub mod query;
@@ -29,6 +31,7 @@ pub use connection::{
 };
 pub use facade::DbFacade;
 pub use facade_handles::{DbReadHandle, DbSlotPair, DbWriteHandle, install_facade};
+pub use job_gate::LockOutcome;
 // 接线证明的观察点：仅测试构建可见（生产接线由源码扫描守门核对，issue #1410）。
 #[cfg(test)]
 pub(crate) use facade_handles::facade_installed;

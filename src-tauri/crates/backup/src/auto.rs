@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Local, Offset, TimeZone, Utc};
 use rusqlite::Connection;
 
+use ledger_infra::db::LockOutcome;
 use ledger_infra::db::{self, DbState};
 use ledger_infra::error::{self, AppError};
 use ledger_infra::settings::{self, SettingKey};
@@ -575,9 +576,12 @@ pub fn seed_book_scope(registry: Option<&ledger_infra::db::book_registry::BookRe
 /// 等待连接锁至超时。锁被占用超过 [`LOCK_TIMEOUT`] 或已损坏（poisoned）返回 None，
 /// 由调用方跳过本轮并保留脏标记（下个周期重试即重试机制）。
 ///
-/// 消费面（原 mod.rs `pub(crate) use` 形态随 crate 拆分升 `pub`，issue #1091）：
-/// 壳层 `commands::backup::set_auto_backup_dir`（首次兜底）与同步触发调度线程
-/// （`sync_engine::trigger::scheduler`）共享同一超时语义。
+/// **余留消费面只剩多端同步调度侧**（ADR-0125 决策 8 豁免台账，issue #1415）：
+/// 备份自动调度与追补（`auto::run_scheduled_round`）、退出兜底与壳层首次兜底已改走
+/// 门面的限时等待写槽裸作业（`DbWriteHandle::run_raw_blocking_within`，语义等价物
+/// 见该方法的文档）；同步轮次的 `RoundConn` 接缝闭包借用轮次现场、不满足门面作业
+/// 的 `Send + 'static`，收编随多端同步域异步化（#1405 另案）一并评估——在此之前它
+/// 仍走本函数的直锁形态。
 pub fn lock_conn_with_timeout(conn: &Arc<Mutex<Connection>>) -> Option<MutexGuard<'_, Connection>> {
     let deadline = Instant::now() + LOCK_TIMEOUT;
     loop {
@@ -606,11 +610,35 @@ pub fn lock_conn_with_timeout(conn: &Arc<Mutex<Connection>>) -> Option<MutexGuar
 /// 重引导换连对它透明；锁定/失败期间由每轮门检空转，不重建线程。
 static SCHEDULER_SPAWNED: AtomicBool = AtomicBool::new(false);
 
+/// 单个调度轮次（issue #1415）：到期备份与定时计划追补在同一段连接取用内做完
+/// ——单一 tick 双判定（issue #307 / ADR-0042）的现场语义不变，只是连接由门面
+/// 的写槽裸作业递入，不再是调用点自己取的槽锁。
+///
+/// 决策仍全在纯函数到期判定与钩子实现内，本函数只做周期调用。
+fn run_scheduled_round(
+    conn: &Connection,
+    dir: Option<&str>,
+    version: &str,
+    scope: Option<&super::engine::BackupScope>,
+) {
+    run_due_backup(conn, dir, version, Utc::now(), scope);
+    // 追补判定（issue #307 / ADR-0042）：实现由定时计划域经追补触发钩子提供
+    // （[`register_catch_up_hook`] 接线，挂载点④），本域对定时计划域零依赖——
+    // 开关与「今天」的取数都在钩子实现内注入（与迁移前线程内联形态同口径：
+    // 镜像默认关，未推送即空转）。
+    run_catch_up_hook(conn);
+}
+
 /// 启动调度轮询线程（标准轮询线程模式：spawn + sleep）。
 ///
 /// 单一 tick 双判定（issue #307 / ADR-0042）：每轮先做自动备份到期判定，再做
 /// 定时计划追补判定（[`run_catch_up_hook`]，实现由定时计划域提供、壳层接线）；
 /// 线程只做周期调用——备份决策全在纯函数到期判定，追补决策全在钩子实现。
+///
+/// 每轮的连接取用走门面的**限时等待写槽裸作业**（ADR-0125 决策 8 豁免台账退役，
+/// issue #1415）：排队中超过 [`LOCK_TIMEOUT`] 未开始执行即放弃本轮（作业体零执行、
+/// 零副作用），保留脏标记待下个周期重试——与原「try_lock + 轮询 + 时限」的
+/// 「取不到就放弃本轮」语义等价，取用独占收进门面。
 ///
 /// 幂等（issue #644 / ADR-0080）：已在跑时本调用退化为无操作；每轮门检在
 /// 锁定/启动失败期间跳过备份与追补（占位连接不是业务库）——原位重引导把
@@ -620,7 +648,7 @@ pub fn start_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if SCHEDULER_SPAWNED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let conn = Arc::clone(&app.state::<DbState>().conn);
+    let conn = app.state::<DbState>().write_handle();
     let gate = ledger_infra::db::encryption::EncryptionGate::clone(
         &app.state::<ledger_infra::db::encryption::EncryptionGate>(),
     );
@@ -636,45 +664,53 @@ pub fn start_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             if gate.is_locked() || boot_gate.is_failed() {
                 continue;
             }
-            let Some(guard) = lock_conn_with_timeout(&conn) else {
-                continue; // 拿不到锁：跳过本轮、保留脏标记。
-            };
             let version = handle.package_info().version.to_string();
             // 备份作用域从偏好镜像快照（引导登记点播种，issue #836）：切换账本
             // 经原位重引导后镜像随之更新，调度线程无需重建。
             let scope = shared_prefs().snapshot_scope();
-            run_due_backup(
-                &guard,
-                dir_mirror
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .as_deref(),
-                &version,
-                Utc::now(),
-                scope.as_ref(),
-            );
-            // 追补判定（issue #307 / ADR-0042）：实现由定时计划域经追补触发钩子
-            // 提供（[`register_catch_up_hook`] 接线，挂载点④），本域对定时计划域
-            // 零依赖——开关与「今天」的取数都在钩子实现内注入（与迁移前线程内联
-            // 形态同口径：镜像默认关，未推送即空转）。
-            run_catch_up_hook(&guard);
+            let outcome = conn.run_raw_blocking_within("backup.scheduler-round", LOCK_TIMEOUT, {
+                let dir_mirror = Arc::clone(&dir_mirror);
+                move |conn| {
+                    let dir = dir_mirror.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    run_scheduled_round(conn, dir.as_deref(), &version, scope.as_ref());
+                    Ok(())
+                }
+            });
+            match outcome {
+                // 排队超时（`Abandoned`）时作业体零执行：跳过本轮、保留脏标记。
+                LockOutcome::Abandoned => continue,
+                LockOutcome::Ran(Ok(())) => {}
+                LockOutcome::Ran(Err(error)) => {
+                    tracing::warn!(error = %error, "本轮自动备份作业失败，跳过本轮");
+                }
+            }
         }
     });
 }
 
 /// 应用退出兜底入口：挂在 `RunEvent::Exit` 上，退出前若脏且当天尚未自动备份过
-/// 则补一次备份（与到期入口同受日界门约束，issue #386）。拿锁超时只能在日志里留痕
-/// ——退出后没有下一轮了。
+/// 则补一次备份（与到期入口同受日界门约束，issue #386）。连接取用走门面的限时
+/// 等待写槽裸作业（issue #1415）：排队等了 [`LOCK_TIMEOUT`] 仍拿不到就放弃——
+/// 只能在日志里留痕，退出后没有下一轮了。
 pub fn exit_fallback(app: &tauri::AppHandle) {
     use tauri::Manager;
-    let conn = Arc::clone(&app.state::<DbState>().conn);
-    let Some(guard) = lock_conn_with_timeout(&conn) else {
-        return;
-    };
+    let conn = app.state::<DbState>().write_handle();
     let dir = shared_prefs().snapshot_dir();
     let scope = shared_prefs().snapshot_scope();
     let version = app.package_info().version.to_string();
-    run_exit_backup(&guard, dir.as_deref(), &version, Utc::now(), scope.as_ref());
+    let outcome = conn.run_raw_blocking_within("backup.exit-fallback", LOCK_TIMEOUT, move |conn| {
+        run_exit_backup(conn, dir.as_deref(), &version, Utc::now(), scope.as_ref());
+        Ok(())
+    });
+    match outcome {
+        LockOutcome::Abandoned => {
+            tracing::warn!("退出兜底等待数据库连接超时，本轮放弃（退出后无下一轮）");
+        }
+        LockOutcome::Ran(Ok(())) => {}
+        LockOutcome::Ran(Err(error)) => {
+            tracing::warn!(error = %error, "退出兜底作业失败");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1286,6 +1322,90 @@ mod scheduler_tests {
         assert!(
             fs::read_dir(&dir).expect("列目录").count() == 1,
             "不应新增文件"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------------
+    // 连接取用的限时放弃（ADR-0125 决策 8 豁免台账退役，issue #1415）
+    // -----------------------------------------------------------------------
+
+    /// 门面写句柄 + 单条连接构成的调度现场（与 `start_scheduler` / `exit_fallback`
+    /// 的取用形态同源：`DbState` 的写句柄）。
+    fn scheduled_state(c: rusqlite::Connection) -> ledger_infra::db::DbState {
+        let conn = Arc::new(Mutex::new(c));
+        ledger_infra::db::DbState {
+            read_conn: Arc::clone(&conn),
+            conn,
+        }
+    }
+
+    /// 连接被占满超过时限 → 本轮放弃：作业体零执行（不产生产物、脏标记保留），
+    /// 与调度线程的「跳过本轮、下个周期重试」同口径。
+    ///
+    /// 负向（ADR-0087，删除即变红）：取掉限时放弃语义（改回无界等待）→ 调用方会
+    /// 等到测试放锁才返回，`LockOutcome::Abandoned` 断言红。
+    #[test]
+    fn timed_round_gives_up_while_connection_is_busy() {
+        let c = conn();
+        mark_dirty(&c).expect("置脏");
+        let dir = temp_dir("timed-round-busy");
+        let state = scheduled_state(c);
+        let handle = state.write_handle();
+        let hold = state.conn.lock().expect("测试应拿到写槽");
+        let outcome =
+            handle.run_raw_blocking_within("backup.scheduler-round", Duration::from_millis(50), {
+                let dir = dir.to_str().unwrap().to_string();
+                move |conn| {
+                    Ok(run_due_backup(
+                        conn,
+                        Some(dir.as_str()),
+                        "0.2.0",
+                        Utc::now(),
+                        None,
+                    ))
+                }
+            });
+        assert!(
+            matches!(outcome, LockOutcome::Abandoned),
+            "等连接超时本轮应放弃（零执行），实际 {outcome:?}"
+        );
+        drop(hold);
+        assert!(
+            get_state(&state.conn.lock().expect("取回写槽"))
+                .expect("读状态")
+                .dirty,
+            "放弃本轮不得复位脏标记（保留给下个周期重试）"
+        );
+        assert!(
+            fs::read_dir(&dir).expect("列目录").next().is_none(),
+            "放弃本轮不得产生备份产物"
+        );
+        // 下一轮（连接已空闲）：同一入口正常执行——「放弃本轮不取消重试」。
+        let out =
+            handle.run_raw_blocking_within("backup.scheduler-round", Duration::from_secs(5), {
+                let dir = dir.to_str().unwrap().to_string();
+                move |conn| {
+                    Ok(run_due_backup(
+                        conn,
+                        Some(dir.as_str()),
+                        "0.2.0",
+                        Utc::now(),
+                        None,
+                    ))
+                }
+            });
+        match out {
+            LockOutcome::Ran(Ok(AttemptOutcome::Performed { path })) => {
+                assert!(std::path::Path::new(&path).exists(), "重试应落下产物");
+            }
+            other => panic!("连接空闲后的下一轮应正常执行，实际 {other:?}"),
+        }
+        assert!(
+            !get_state(&state.conn.lock().expect("取回写槽"))
+                .expect("读状态")
+                .dirty,
+            "成功备份应复位脏标记"
         );
         let _ = fs::remove_dir_all(&dir);
     }

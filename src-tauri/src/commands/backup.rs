@@ -17,6 +17,7 @@
 #![allow(clippy::unreachable)]
 
 use std::path::Path;
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime};
@@ -32,9 +33,13 @@ use ledger_backup::{
     prune_managed_backups, restore_db_from,
 };
 use ledger_infra::db::data_location::DB_FILE_NAME;
-use ledger_infra::db::{self, DbState, run_db};
+use ledger_infra::db::{self, DbState, LockOutcome, run_db};
 use ledger_infra::error::{AppError, Result};
 use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
+
+/// 首次兜底等待写槽的时限（原 `backup::LOCK_TIMEOUT` 的同值承接，issue #1415）：
+/// 与调度线程 / 退出兜底同口径——排队等了这么久仍拿不到连接就放弃本轮兜底机会。
+const FIRST_FALLBACK_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 当前活动账本的备份作用域（列表/清理命令共用，issue #836）：从引导快照的
 /// 注册表登记信息构造；注册表不可用（极端时序/损坏回退）时 `None`——退化为
@@ -188,29 +193,46 @@ pub async fn prune_backups(app: AppHandle, dir: String, keep: i64) -> Result<Pru
 /// 「首次兜底」备份（issue #125；每会话至多一次，结果只记日志不上抛）。
 #[tauri::command]
 pub async fn set_auto_backup_dir(app: AppHandle, dir: String) -> Result<()> {
-    run_db("set_auto_backup_dir", move || {
-        let trimmed = dir.trim();
-        let normalized = (!trimmed.is_empty()).then(|| trimmed.to_string());
+    let trimmed = dir.trim();
+    let normalized = (!trimmed.is_empty()).then(|| trimmed.to_string());
+    let claim = {
         let prefs = backup::shared_prefs();
         prefs.set_dir(normalized.clone());
-        if normalized.is_none() || !prefs.claim_first_fallback() {
-            return Ok(());
-        }
-        let conn = app.state::<DbState>().conn.clone();
-        // 与调度线程/退出兜底一致：拿锁带 5s 超时，拿不到则放弃本轮兜底机会。
-        let Some(conn) = backup::lock_conn_with_timeout(&conn) else {
-            tracing::warn!("首次兜底等待数据库锁超时，放弃本轮兜底");
-            return Ok(());
-        };
+        prefs.claim_first_fallback()
+    };
+    if normalized.is_none() || !claim {
+        return Ok(());
+    }
+    // 首次兜底（issue #125，每会话至多一次）：连接取用走门面的限时等待写槽裸作业
+    // （ADR-0125 决策 8 豁免台账退役，issue #1415）——排队等了 5s 仍拿不到就放弃
+    // 本轮兜底机会，与调度线程 / 退出兜底同款「取不到就放弃本轮」口径；结果只记
+    // 日志不上抛。
+    run_db("set_auto_backup_dir", move || {
+        let conn = app.state::<DbState>().write_handle();
         let version = app.package_info().version.to_string();
         let scope = backup_scope_of(&app);
-        let _ = backup::run_first_backup(
-            &conn,
-            normalized.as_deref(),
-            &version,
-            chrono::Utc::now(),
-            scope.as_ref(),
-        );
+        let outcome =
+            conn.run_raw_blocking_within("backup.first-fallback", FIRST_FALLBACK_LOCK_TIMEOUT, {
+                move |conn| {
+                    let _ = backup::run_first_backup(
+                        conn,
+                        normalized.as_deref(),
+                        &version,
+                        chrono::Utc::now(),
+                        scope.as_ref(),
+                    );
+                    Ok(())
+                }
+            });
+        match outcome {
+            LockOutcome::Abandoned => {
+                tracing::warn!("首次兜底等待数据库连接超时，放弃本轮兜底");
+            }
+            LockOutcome::Ran(Ok(())) => {}
+            LockOutcome::Ran(Err(error)) => {
+                tracing::warn!(error = %error, "首次兜底作业失败");
+            }
+        }
         Ok(())
     })
     .await
