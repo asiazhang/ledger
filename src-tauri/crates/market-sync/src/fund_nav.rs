@@ -359,17 +359,17 @@ fn nav_referer(code: &str) -> String {
 }
 
 /// 拉取一只基金的一页历史净值（生产主机池）。窗口由 `query` 闭区间给定。
-pub(super) fn fetch_nav_page(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_nav_page(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
     query: &NavQuery,
 ) -> Result<LsjzPage> {
-    fetch_nav_page_from(client, pacer, query, LSJZ_HOSTS)
+    fetch_nav_page_from(client, pacer, query, LSJZ_HOSTS).await
 }
 
 /// 同 [`fetch_nav_page`]，主机池可注入（本地 HTTP 服务测试 Referer 传播）。
-pub(super) fn fetch_nav_page_from(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_nav_page_from(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
     query: &NavQuery,
     hosts: &[&str],
@@ -398,7 +398,8 @@ pub(super) fn fetch_nav_page_from(
         pacer,
         &format!("fetch_nav_page:{}", query.code),
         Some(referer.as_str()),
-    )?;
+    )
+    .await?;
     Ok(parse_lsjz(&resp))
 }
 
@@ -408,8 +409,8 @@ pub(super) fn fetch_nav_page_from(
 /// `Ok(None)` = 这份文件不是本基金的（含无效代码被重定向到错误页的形态），由调用方
 /// 按查无此码处置；`Err` 只留给传输类失败（网络 / 限流耗尽重试），与既有「网络失败
 /// 上抛」契约一致。
-pub(super) fn fetch_fund_archive_from(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_fund_archive_from(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
     code: &str,
     hosts: &[&str],
@@ -425,7 +426,8 @@ pub(super) fn fetch_fund_archive_from(
         pacer,
         &format!("fetch_fund_archive:{code}"),
         None,
-    )?;
+    )
+    .await?;
     Ok(parse_fund_archive(&body, code))
 }
 
@@ -436,17 +438,17 @@ pub(super) fn fetch_fund_archive_from(
 ///
 /// 失败语义是 fail-closed 的前半：网络失败、被拦截（HTML 而非数据文件）或解析不出
 /// 单位净值序列都返回 `Err`，调用方据此回退分页通道，不把不可信结果当「无净值」。
-pub(super) fn fetch_nav_full_series(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_nav_full_series(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
     code: &str,
 ) -> Result<Vec<NavPoint>> {
-    fetch_nav_full_series_from(client, pacer, code, PINGZHONG_HOSTS)
+    fetch_nav_full_series_from(client, pacer, code, PINGZHONG_HOSTS).await
 }
 
 /// 同 [`fetch_nav_full_series`]，主机池可注入（本地 HTTP 服务测试请求路径与解析）。
-pub(super) fn fetch_nav_full_series_from(
-    client: &reqwest::blocking::Client,
+pub(super) async fn fetch_nav_full_series_from(
+    client: &reqwest::Client,
     pacer: &mut Pacer,
     code: &str,
     hosts: &[&str],
@@ -462,7 +464,8 @@ pub(super) fn fetch_nav_full_series_from(
         pacer,
         &format!("fetch_nav_full_series:{code}"),
         None,
-    )?;
+    )
+    .await?;
     // 先按单位净值序列解析；货币基金没有该序列，按万份收益序列收录（日期 ×
     // 恒定单位净值 1.0000，issue #1342）。两段皆不可信才 Err——调用方据此
     // fail-closed 回退分页通道，不把不可信结果当「无净值」。

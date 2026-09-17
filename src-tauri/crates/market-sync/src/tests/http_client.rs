@@ -68,11 +68,11 @@ fn throttle_responses_slow_the_request_interval() {
             (200, r#"{"data":{"diff":[]}}"#.into())
         }
     });
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let baseline = Duration::from_secs(1);
     let mut pacer = Pacer::new(baseline);
     let params = [("fs", "test")];
-    let _ = request_json_with_retry::<UlistResponse>(
+    let _ = crate::http::block_on(request_json_with_retry::<UlistResponse>(
         &client,
         &url,
         &params,
@@ -80,7 +80,7 @@ fn throttle_responses_slow_the_request_interval() {
         "test",
         fast_cfg(3, 3),
         None,
-    )
+    ))
     .unwrap();
     assert!(
         pacer.interval() > baseline,
@@ -96,7 +96,7 @@ fn throttle_responses_slow_the_request_interval() {
         }
     });
     let mut pacer = Pacer::new(baseline);
-    let _ = request_json_with_retry::<UlistResponse>(
+    let _ = crate::http::block_on(request_json_with_retry::<UlistResponse>(
         &client,
         &url,
         &params,
@@ -104,7 +104,7 @@ fn throttle_responses_slow_the_request_interval() {
         "test",
         fast_cfg(3, 3),
         None,
-    )
+    ))
     .unwrap();
     assert!(
         pacer.interval() > baseline,
@@ -147,10 +147,10 @@ fn request_json_retries_429_then_succeeds() {
             (200, r#"{"data":{"diff":[]}}"#.into())
         }
     });
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test"), ("pn", "1")];
-    let json = request_json_with_retry::<UlistResponse>(
+    let json = crate::http::block_on(request_json_with_retry::<UlistResponse>(
         &client,
         &url,
         &params,
@@ -158,7 +158,7 @@ fn request_json_retries_429_then_succeeds() {
         "test",
         fast_cfg(3, 3),
         None,
-    )
+    ))
     .unwrap();
     assert_eq!(
         json.data.unwrap().diff.unwrap().into_items().len(),
@@ -176,10 +176,10 @@ fn request_json_retries_on_json_decode_failure() {
             (200, r#"{"data":{"diff":[]}}"#.into())
         }
     });
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let json = request_json_with_retry::<UlistResponse>(
+    let json = crate::http::block_on(request_json_with_retry::<UlistResponse>(
         &client,
         &url,
         &params,
@@ -187,7 +187,7 @@ fn request_json_retries_on_json_decode_failure() {
         "test",
         fast_cfg(3, 3),
         None,
-    )
+    ))
     .unwrap();
     assert_eq!(
         json.data.unwrap().diff.unwrap().into_items().len(),
@@ -199,10 +199,10 @@ fn request_json_retries_on_json_decode_failure() {
 #[test]
 fn request_json_returns_error_after_429_exhausted() {
     let url = spawn_http_server(|_| (429, "rate limited".into()));
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let err = request_json_with_retry::<UlistResponse>(
+    let err = crate::http::block_on(request_json_with_retry::<UlistResponse>(
         &client,
         &url,
         &params,
@@ -210,7 +210,7 @@ fn request_json_returns_error_after_429_exhausted() {
         "test",
         fast_cfg(2, 2),
         None,
-    )
+    ))
     .unwrap_err();
     assert!(err.to_string().contains("429"));
 }
@@ -220,14 +220,11 @@ fn request_json_returns_error_when_connection_refused() {
     // 显式禁用系统代理：默认 Client 会读取系统代理（如 Clash/Surge 监听 127.0.0.1），
     // 代理转发到无监听的端口时会返回空 body 响应，导致“连接被拒绝”语义失效。
     // 目标用保留端口 1，本机几乎不可能有服务监听，可稳定触发 ECONNREFUSED。
-    let client = reqwest::blocking::Client::builder()
-        .no_proxy()
-        .build()
-        .unwrap();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let url = "http://127.0.0.1:1/x".to_string();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let err = request_json_with_retry::<UlistResponse>(
+    let err = crate::http::block_on(request_json_with_retry::<UlistResponse>(
         &client,
         &url,
         &params,
@@ -235,7 +232,7 @@ fn request_json_returns_error_when_connection_refused() {
         "test",
         fast_cfg(2, 0),
         None,
-    )
+    ))
     .unwrap_err();
     assert!(err.to_string().contains("HTTP 请求失败"));
 }
@@ -258,10 +255,10 @@ fn request_json_falls_back_to_next_host() {
     });
 
     let hosts = [url1.as_str(), url2.as_str()];
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let resp = request_json_from_hosts::<UlistResponse>(
+    let resp = crate::http::block_on(request_json_from_hosts::<UlistResponse>(
         &client,
         &params,
         "/x",
@@ -270,7 +267,7 @@ fn request_json_falls_back_to_next_host() {
         &mut pacer,
         "test",
         None,
-    )
+    ))
     .unwrap();
     assert_eq!(
         resp.data.unwrap().diff.unwrap().into_items().len(),
@@ -284,10 +281,10 @@ fn request_json_falls_back_to_next_host() {
 fn request_json_returns_error_when_all_hosts_fail() {
     let url = spawn_http_server(|_| (500, "boom".into()));
     let hosts = [url.as_str()];
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let err = request_json_from_hosts::<UlistResponse>(
+    let err = crate::http::block_on(request_json_from_hosts::<UlistResponse>(
         &client,
         &params,
         "/x",
@@ -296,7 +293,94 @@ fn request_json_returns_error_when_all_hosts_fail() {
         &mut pacer,
         "test",
         None,
-    )
+    ))
     .unwrap_err();
     assert!(err.to_string().contains("全部行情主机请求失败"));
+}
+
+// ---------------------------------------------------------------------------
+// 强串行（ADR-0125 决策 6 / ADR-0087 负向判据）：异步化只换等待原语，相邻请求
+// 仍严格串行——共享 pacer 的异步互斥体从发请求前一直持有到响应处理完。绕过串行
+// （不取共享 pacer 锁即发请求）本用例即红。
+// ---------------------------------------------------------------------------
+
+/// 起一个多线程本地服务：每连接独立线程，记录服务端同时刻在途请求数与峰值。
+fn spawn_inflight_tracking_server(
+    inflight: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    max_inflight: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) -> String {
+    use std::io::{Read, Write};
+    use std::sync::atomic::Ordering;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let inflight = inflight.clone();
+            let max_inflight = max_inflight.clone();
+            std::thread::spawn(move || {
+                let current = inflight.fetch_add(1, Ordering::SeqCst) + 1;
+                max_inflight.fetch_max(current, Ordering::SeqCst);
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                // 拉长处理窗口，让「绕过串行」的并发在途能被观测到；先减计数再
+                // 回响应，保证串行下前一连接的计数已在下一连接到达前归零。
+                std::thread::sleep(Duration::from_millis(120));
+                inflight.fetch_sub(1, Ordering::SeqCst);
+                let body = r#"{"data":{"diff":[]}}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            });
+        }
+    });
+    url
+}
+
+/// 两个线程经同一把共享 pacer 锁并发发起请求：服务端侧峰值在途必须恒为 1。
+#[test]
+fn concurrent_requests_serialize_on_the_shared_pacer() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let inflight = Arc::new(AtomicUsize::new(0));
+    let max_inflight = Arc::new(AtomicUsize::new(0));
+    let url = spawn_inflight_tracking_server(inflight, max_inflight.clone());
+    let pacer = Arc::new(tokio::sync::Mutex::new(Pacer::new(Duration::ZERO)));
+
+    let mut handles = Vec::new();
+    for _ in 0..2 {
+        let pacer = pacer.clone();
+        let url = url.clone();
+        handles.push(std::thread::spawn(move || {
+            crate::http::block_on(async move {
+                let client = reqwest::Client::new();
+                // 共享 pacer 锁从发请求前持有到响应处理完——与生产通道束同形。
+                let mut pacer = crate::http::lock_pacer(&pacer).await;
+                crate::http::request_json_from_hosts::<UlistResponse>(
+                    &client,
+                    &[("fs", "test")],
+                    "/x",
+                    &[url.as_str()],
+                    fast_cfg(0, 0),
+                    &mut pacer,
+                    "test",
+                    None,
+                )
+                .await
+                .unwrap();
+            });
+        }));
+    }
+    for handle in handles {
+        handle.join().expect("请求线程不应 panic");
+    }
+    assert_eq!(
+        max_inflight.load(Ordering::SeqCst),
+        1,
+        "相邻请求必须严格串行，服务端侧不得出现重叠在途（绕过共享 pacer 锁即红）"
+    );
 }
