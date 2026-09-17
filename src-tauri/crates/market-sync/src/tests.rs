@@ -255,6 +255,40 @@ fn production_source_files() -> Vec<(&'static str, String)> {
     files
 }
 
+/// 守门清单对磁盘全等（fail loud，防漂移）：`production_source_files` 的硬编码
+/// 清单必须与 `src/` 目录的实际生产文件集（排除 tests.rs 与 tests/）严格相等——
+/// 新增生产文件不入清单即红，杜绝「新文件静默漏扫」。与
+/// `scripts/check-background-services.ts` 车道守门（同规则双面）的分工：TS 面管
+/// 全量生产文件的线程禁令与车道死条目，本测试面管车道接线与阻塞驱动点的域内
+/// 断言；两处规则同源 ADR-0125 决策 7，任一处红即堵住回归。
+#[test]
+fn guard_source_list_matches_directory_exactly() {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let src_dir = std::path::Path::new(manifest).join("src");
+    let mut on_disk: Vec<String> = std::fs::read_dir(&src_dir)
+        .expect("src 目录应可枚举")
+        .map(|entry| entry.expect("目录项应可读").path())
+        .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "rs"))
+        .map(|path| {
+            path.file_name()
+                .expect("文件名应存在")
+                .to_string_lossy()
+                .to_string()
+        })
+        .filter(|name| name != "tests.rs")
+        .collect();
+    on_disk.sort();
+    let mut in_list: Vec<&str> = production_source_files()
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+    in_list.sort();
+    assert_eq!(
+        in_list, on_disk,
+        "守门源文件清单与 src/ 目录漂移——新增/删除生产文件须同步 production_source_files"
+    );
+}
+
 /// 后台两条车道必须是挂全局运行时的 async 任务（ADR-0125 决策 7 / issue #1413，
 /// 删除即变红）：调度入口以 `tauri::async_runtime::spawn` 拉起 async 任务，启动
 /// 延迟与自然日窗口用 `tokio::time::sleep` 异步定时；生产面零自建线程。把车道

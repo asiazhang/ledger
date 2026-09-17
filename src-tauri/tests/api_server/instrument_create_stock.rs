@@ -292,7 +292,7 @@ fn toggle_stub(
             }
         };
         // async 接缝（ADR-0125 决策 7 / issue #1413）：应答值装箱为立即就绪的 future。
-        Box::pin(std::future::ready(result))
+        crate::common::ready_quote(result)
     })
 }
 

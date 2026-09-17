@@ -300,9 +300,9 @@ async fn test_lookup_us_ticker_traversal_stops_on_network_failure() {
     let (app, _conn) =
         setup_app_with_stock_fetch(Some(std::sync::Arc::new(|market: &str, _code: &str| {
             assert_eq!(market, "nasdaq", "网络故障后不应继续遍历");
-            Box::pin(std::future::ready(Err(ledger_infra::error::AppError::Io(
+            crate::common::ready_quote(Err(ledger_infra::error::AppError::Io(
                 "东财网络不可达".into(),
-            ))))
+            )))
         })));
 
     let (status, err) = get_json(&app, "/api/v1/stocks/AAPL").await;
@@ -433,9 +433,9 @@ async fn test_lookup_stock_network_failure_returns_500() {
     // 东财不可达桩：Io 错误上抛（与生产网络故障同形状），端点应 500。
     let (app, _conn) =
         setup_app_with_stock_fetch(Some(std::sync::Arc::new(|_market: &str, _code: &str| {
-            Box::pin(std::future::ready(Err(ledger_infra::error::AppError::Io(
+            crate::common::ready_quote(Err(ledger_infra::error::AppError::Io(
                 "东财网络不可达".into(),
-            ))))
+            )))
         })));
 
     let (status, err) = get_json(&app, "/api/v1/stocks/600519").await;

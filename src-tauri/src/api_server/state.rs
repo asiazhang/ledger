@@ -20,8 +20,8 @@ use rusqlite::Connection;
 /// 东财 FundSearchAPI（`fetch_fund_quote_production`，async 形态直接 await，
 /// ADR-0125 决策 7 / issue #1413）；HTTP 集成测试以注入桩离线驱动
 ///（`setup_app_with_fund_fetch`），全部基金端点集成测试不触真实网络。
-pub type FundQuoteFuture = Pin<Box<dyn Future<Output = Result<Quote, AppError>> + Send>>;
-pub type FundQuoteFetcher = Arc<dyn Fn(&str) -> FundQuoteFuture + Send + Sync>;
+pub type QuoteFuture = Pin<Box<dyn Future<Output = Result<Quote, AppError>> + Send>>;
+pub type FundQuoteFetcher = Arc<dyn Fn(&str) -> QuoteFuture + Send + Sync>;
 
 /// 东财股票行情获取函数接缝（issue #693 / ADR-0081）：`(市场, 代码) → future<Result<Quote>>`，
 /// 查无此码以码化中文错误上抛——注入桩形态与 [`FundQuoteFetcher`] 同构（统一报价
@@ -30,7 +30,7 @@ pub type FundQuoteFetcher = Arc<dyn Fn(&str) -> FundQuoteFuture + Send + Sync>;
 /// 美股 ticker 的候选遍历由壳层共享助手 `fetch_stock_quote_first_hit_for_api` 执行（issue #696）。
 /// 生产路径为东财单点行情（`fetch_stock_quote_production`，async 形态直接 await）；
 /// HTTP 集成测试以注入桩离线驱动，全部股票端点集成测试不触真实网络。
-pub type StockQuoteFetcher = Arc<dyn Fn(&str, &str) -> FundQuoteFuture + Send + Sync>;
+pub type StockQuoteFetcher = Arc<dyn Fn(&str, &str) -> QuoteFuture + Send + Sync>;
 
 /// 失效信号发射槽（壳层 handler 的提取形状，ADR-0054 #367 修订）：写事务提交
 /// 成功后经信号映射单点发射失效信号的机制槽位，收口于发射器接缝
@@ -166,8 +166,8 @@ mod quote_seam_guard_tests {
     fn quote_fetcher_types_are_async_shaped() {
         let state = crate::signals_cross_check::mask_non_code(include_str!("state.rs"));
         assert!(
-            state.contains("pub type FundQuoteFuture = Pin<Box<dyn Future"),
-            "行情获取接缝的 future 装箱类型应在位（FundQuoteFuture）——接缝闭包为 \
+            state.contains("pub type QuoteFuture = Pin<Box<dyn Future"),
+            "行情获取接缝的 future 装箱类型应在位（QuoteFuture）——接缝闭包为 \
              async 形态（ADR-0125 决策 7 / issue #1413），类型退回同步签名即编译期 \
              拒绝异步生产入口"
         );

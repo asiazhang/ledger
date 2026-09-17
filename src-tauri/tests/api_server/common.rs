@@ -13,12 +13,18 @@ use ledger_infra::events::SignalEmitter;
 use ledger_investment::prices::price_value_to_cents;
 use ledger_investment::{InstrumentType, Quote};
 use tauri_app_lib::api_server::{
-    ApiState, EmitterSlot, FundQuoteFetcher, StockQuoteFetcher, build_router,
+    ApiState, EmitterSlot, FundQuoteFetcher, QuoteFuture, StockQuoteFetcher, build_router,
 };
 use tauri_app_lib::test_support;
 
 pub(crate) async fn body_to_bytes(body: Body) -> Vec<u8> {
     body.collect().await.unwrap().to_bytes().to_vec()
+}
+
+/// 行情桩应答的装箱出口（issue #1413 async 接缝）：同步应答值 → 立即就绪的
+/// future——桩的应答逻辑保持同步表达式，离线驱动语义不变（唯一装箱点，桩不各写样板）。
+pub(crate) fn ready_quote(result: Result<Quote, AppError>) -> QuoteFuture {
+    Box::pin(std::future::ready(result))
 }
 
 pub(crate) fn setup_app() -> (Router, Arc<Mutex<rusqlite::Connection>>) {
@@ -144,7 +150,7 @@ pub(crate) fn fund_fetch_stub(
         };
         // async 接缝（ADR-0125 决策 7 / issue #1413）：同步应答值装箱为立即就绪
         // 的 future——桩的应答逻辑保持同步表达式，离线驱动语义不变。
-        Box::pin(std::future::ready(result))
+        ready_quote(result)
     })
 }
 
@@ -206,7 +212,7 @@ pub(crate) fn stock_fetch_stub(
         };
         // async 接缝（ADR-0125 决策 7 / issue #1413）：同步应答值装箱为立即就绪
         // 的 future——桩的应答逻辑保持同步表达式，离线驱动语义不变。
-        Box::pin(std::future::ready(result))
+        ready_quote(result)
     })
 }
 
