@@ -2,7 +2,11 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SEQ_SEAM_FILE, TOAST_BASELINE } from '../scripts/check-async-guards.ts'
+import {
+  SEQ_SEAM_FILE,
+  TOAST_BASELINE,
+  TOAST_WINDOW_LINES,
+} from '../scripts/check-async-guards.ts'
 import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-async-guards.ts（前端异步守门，issue #1039）。
@@ -138,7 +142,7 @@ describe('check-async-guards（前端异步守门）', () => {
       expect(r.output).toContain('5')
     })
 
-    it('基线收缩未同步（4 → 3）即红，提示下调基线', () => {
+    it('基线收缩未同步（4 → 3）即红，提示下调基线并附格式漂移排查提示', () => {
       const r = run(
         makeFixture({
           'src/views/ItemsView.vue': toastStub(3),
@@ -147,6 +151,9 @@ describe('check-async-guards（前端异步守门）', () => {
       expect(r.status).toBe(1)
       expect(r.output).toContain('基线待收缩')
       expect(r.output).toContain('src/views/ItemsView.vue')
+      // #1467：计数下降未必是收编——多行化/格式漂移使靶形态移出匹配窗口同样计数下降，
+      // 报错必须提示先排查漂移再下调，防止误读为可下调基线
+      expect(r.output).toContain('多行化')
     })
 
     it('基线条目清零即红，提示删除条目（基线只减不增、不挂陈目）', () => {
@@ -171,10 +178,61 @@ describe('check-async-guards（前端异步守门）', () => {
       expect(r.output).toContain('src/components/NewWidget.vue')
     })
 
-    it('注释行不误报：真实 4 处 + 注释 1 行仍与基线全等（绿）', () => {
+    it('多行直弹 toast（t( 与 errorMessage 折行）同样红——#1467 检测面扩宽', () => {
+      // 现役投资表单保存失败路径同款形态（t( 参数折行、errorMessage 独立成行）：
+      // 扩面前单行正则不可见，扩面后必须识别。ADR-0087 负向锚点：删除跨行窗口
+      // （回退单行形态）此用例红。
       const r = run(
         makeFixture({
-          'views/ItemsView.vue': `${toastStub(4)}// ${TOAST_LINE}\n`,
+          'src/components/CompactCatch.vue': [
+            '} catch (e) {',
+            '  message.error(',
+            "    t('app.msg.saveFailed', {",
+            '      message: errorMessage(e),',
+            '    }),',
+            '  )',
+            '}',
+            '',
+          ].join('\n'),
+        }),
+      )
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('回潮')
+      expect(r.output).toContain('src/components/CompactCatch.vue')
+      expect(r.output).toContain('行 2')
+    })
+
+    it('errorMessage 恰在窗口内最远一行即命中、出窗一格即不识别（钉死最大跨度边界）', () => {
+      // 贴边成对夹具钉死 off-by-one：t( 在第 2 行，窗口 N 行时 errorMessage 最远落在
+      // 第 N+2 行（filler N-1 行）——恰好贴边须命中（回潮红），再多一行 filler 即出窗（绿）
+      const make = (fillerCount: number) => {
+        const gap = Array.from({ length: fillerCount }, (_, i) => `const filler${i} = ${i}`)
+        return (
+          [
+            'message.error(',
+            "  t('app.msg.saved'),",
+          ].join('\n') +
+          '\n' +
+          gap.join('\n') +
+          '\nconst late = errorMessage(e)\n'
+        )
+      }
+      const inside = run(makeFixture({ 'src/components/EdgeInside.vue': make(TOAST_WINDOW_LINES - 1) }))
+      expect(inside.status).toBe(1)
+      expect(inside.output).toContain('回潮')
+      expect(inside.output).toContain('src/components/EdgeInside.vue')
+
+      const outside = run(makeFixture({ 'src/components/FarWidget.vue': make(TOAST_WINDOW_LINES) }))
+      expect(outside.status).toBe(0)
+    })
+
+    it('注释行不误报：真实 4 处 + 注释 1 行仍与基线全等（绿）', () => {
+      // 夹具落点必须在扫描根内（src/ 前缀，#1467 修正）：落在扫描根外时注释跳过
+      // 逻辑删除此用例也不红，保护是空的。ADR-0087 负向锚点：删除注释置空/跳过
+      // 逻辑 → 注释行计入命中（4+1 > 基线 4）→ 本用例红。
+      const r = run(
+        makeFixture({
+          'src/views/ItemsView.vue': `${toastStub(4)}// ${TOAST_LINE}\n`,
         }),
       )
       expect(r.status).toBe(0)
@@ -192,6 +250,20 @@ describe('check-async-guards（前端异步守门）', () => {
       const r = run([dir])
       expect(r.status).toBe(1)
       expect(r.output).toContain('src/views/PoliciesView.vue')
+    })
+  })
+
+  describe('扫描根自证：磁盘 packages 子包源码目录与 SCAN_ROOTS 一致（#1467）', () => {
+    it('未登记的子包 src 目录落盘即红（堵新包静默逃逸扫描）', () => {
+      // ADR-0087 负向锚点：删除磁盘自证逻辑（未登记子包收集与报红）→ 本用例红。
+      const r = run(
+        makeFixture({
+          'packages/newpkg/src/index.ts': 'export {}\n',
+        }),
+      )
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('未登记扫描根')
+      expect(r.output).toContain('packages/newpkg/src')
     })
   })
 })
