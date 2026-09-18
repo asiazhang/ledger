@@ -1400,12 +1400,27 @@ function isTestFile(relPath: string): boolean {
   return file === 'tests.rs' || segments.slice(0, -1).includes('tests')
 }
 
+/** 若 i 起是 Rust 原始字符串前缀，返回其后开引号下标；否则 null。
+ *  覆盖 r"…" / r#"…" 与字节变体 br"…" / br#"…"，# 数任意；前一字符为
+ *  标识符成分时是普通名字（如 for），不误伤。 */
+function rawStringOpenQuoteAt(text: string, i: number): number | null {
+  const prev = i > 0 ? text[i - 1] : ''
+  if (/[A-Za-z0-9_]/.test(prev)) return null
+  let j = i
+  if (text[j] === 'b' && text[j + 1] === 'r') j += 2
+  else if (text[j] === 'r') j += 1
+  else return null
+  while (text[j] === '#') j++
+  return text[j] === '"' ? j : null
+}
+
 /**
  * 掩码 Rust 源文本中的注释与字符串/char 字面量：内容替换为等长空白
  * （保留换行与列位，行号不变），使依赖扫描只落在真实代码上。
  * 处理形态：行注释（//、///、//!）、块注释（/* .. *&#47;，可嵌套）、
- * 普通字符串（含转义）、原始字符串 r"…" / r#"…"#（单级 #；多级 r##"…"##
- * 与 '\u{…}' 转义不按字面量识别——与 Rust 侧一致，见下）、
+ * 普通字符串（含转义）、原始字符串 r"…" / r#"…" / r##"…" 及其字节变体
+ * br"…" / br#"…" / br##"…"（# 数任意；'\u{…}' 转义不按字面量识别——与
+ * Rust 侧一致，见下）、
  * char 字面量（'a'、'\n'、'\\'、'\''）；生命周期标注（'a）按非字面量处理。
  * `keepLiterals=true` 时保留字符串/char 字面量内容、只掩码注释——用于靶形态
  * 落在字符串里的扫描（原生事务语句 `execute("BEGIN")`，issue #1014）。
@@ -1460,21 +1475,17 @@ export function maskNonCode(text: string, keepLiterals = false): string {
       }
       if (!keepLiterals) blank(i, j)
       i = j
-    } else if (c === 'r' && (text[i + 1] === '"' || (text[i + 1] === '#' && text[i + 2] === '"'))) {
-      // 原始字符串 r"…" / r#"…"# / r##"…"##；前一字 符为标识符成分时是普通名字（如 for），不误伤
-      const prev = i > 0 ? text[i - 1] : ''
-      if (/[A-Za-z0-9_]/.test(prev)) {
+    } else if (c === 'r' || c === 'b') {
+      // 原始字符串 r"…" / r#"…" / r##"…" 与字节变体 br"…" / br#"…" / br##"…"
+      const open = rawStringOpenQuoteAt(text, i)
+      if (open === null) {
         i++
         continue
       }
-      let hashes = 0
-      let j = i + 1
-      while (text[j] === '#') {
-        hashes++
-        j++
-      }
+      const prefixEnd = c === 'b' ? i + 2 : i + 1
+      const hashes = open - prefixEnd
       const close = '"' + '#'.repeat(hashes)
-      const end = text.indexOf(close, j + 1)
+      const end = text.indexOf(close, open + 1)
       const stop = end === -1 ? n : end + close.length
       if (!keepLiterals) blank(i, stop)
       i = stop
