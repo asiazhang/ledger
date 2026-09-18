@@ -829,6 +829,52 @@ describe('check-structure 原生事务语句禁令（issue #1014 / #1003 定案 
     expect(r.status).toBe(0)
   })
 
+  it('execute_batch 形态手写 BEGIN → 红（API 变体同入检测面，#1469）', () => {
+    const args = makeFixture({
+      'core.rs': 'pub fn f(conn: &Connection) {\n    conn.execute_batch("BEGIN");\n}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('原生事务语句')
+    expect(r.output).toContain('core.rs:2')
+    expect(r.output).toContain('db/tx_scope.rs')
+  })
+
+  it('execute_batch 形态 COMMIT / ROLLBACK 同样识别 → 红（#1469）', () => {
+    const args = makeFixture({
+      'transaction/batch.rs': 'pub fn g(conn: &Connection) {\n    conn.execute_batch("COMMIT");\n}\n',
+      'source.rs': 'pub fn h(conn: &Connection) {\n    conn.execute_batch("ROLLBACK");\n}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('transaction/batch.rs:2')
+    expect(r.output).toContain('source.rs:2')
+  })
+
+  it('事务原语本体豁免住址不变：db/tx_scope.rs 内 execute_batch → 绿（#1469）', () => {
+    const args = makeFixture({
+      'db/tx_scope.rs': 'pub fn hold(conn: &Connection) {\n    conn.execute_batch("BEGIN");\n}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('execute 与 execute_batch 混合形态 → 红（#1469）', () => {
+    const args = makeFixture({
+      'core.rs': [
+        'pub fn f(conn: &Connection) {',
+        '    conn.execute("BEGIN", []);',
+        '    conn.execute_batch("COMMIT");',
+        '}',
+        '',
+      ].join('\n'),
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('core.rs:2')
+    expect(r.output).toContain('core.rs:3')
+  })
+
   it('注释中的 execute("BEGIN") 不误报（只掩码注释、保留字符串）', () => {
     const args = makeFixture({
       'core.rs': [
@@ -2542,6 +2588,45 @@ describe('check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
     expect(r.status).toBe(0)
   })
 
+  it('rustfmt 拆行的多行 cfg 门 → 绿（属性链解析读到配对闭合为止，#1469）', () => {
+    const args = makeCrateFixture({
+      infraLibRs:
+        'pub fn stub() {}\n' +
+        '#[cfg(any(\n' +
+        '    test,\n' +
+        '    feature = "test-utils",\n' +
+        '))]\n' +
+        '#[doc(hidden)]\n' +
+        'pub mod test_utils;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('多行 cfg 门内注释提及 not( 不误判 → 绿（属性全文掩码注释后判定，#1469）', () => {
+    const args = makeCrateFixture({
+      infraLibRs:
+        'pub fn stub() {}\n' +
+        '#[cfg(any(\n' +
+        '    // 反向门 not(test) 形态已废弃，改为 feature 放行\n' +
+        '    feature = "test-utils",\n' +
+        '))]\n' +
+        'pub mod test_utils;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('多行反向门 #[cfg(not(…))] → 仍红（多行解析不弱化反向门判定，#1469）', () => {
+    const args = makeCrateFixture({
+      infraLibRs: 'pub fn stub() {}\n#[cfg(not(\n    test,\n))]\npub mod test_utils;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('test_utils 生产编译门')
+    expect(r.output).toContain('放行测试')
+  })
+
   it('根包生产依赖 ledger-infra 启用 test-utils → 红（生产会编入测试器具）', () => {
     const args = makeCrateFixture({
       rootInfraProdDep: 'ledger-infra = { path = "crates/infra", features = ["test-utils"] }',
@@ -2703,6 +2788,38 @@ describe('check-structure http 投影 feature 门（ADR-0111 决策 5 / issue #1
     const args = makeCrateFixture({
       infraErrorRs:
         'pub struct AppError;\n#[cfg(not(feature = "http"))]\nimpl axum::response::IntoResponse for AppError {\n    fn into_response(self) -> axum::response::Response {}\n}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('http 投影 feature 门')
+  })
+
+  it('rustfmt 拆行的多行 cfg 门 → 绿（属性链解析读到配对闭合为止，#1469）', () => {
+    const args = makeCrateFixture({
+      infraErrorRs:
+        'pub struct AppError;\n' +
+        '#[cfg(all(\n' +
+        '    feature = "http",\n' +
+        '    target_os = "macOS",\n' +
+        '))]\n' +
+        'impl axum::response::IntoResponse for AppError {\n' +
+        '    fn into_response(self) -> axum::response::Response {}\n' +
+        '}\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('多行反向门 #[cfg(not(…))] → 仍红（多行解析不弱化反向门判定，#1469）', () => {
+    const args = makeCrateFixture({
+      infraErrorRs:
+        'pub struct AppError;\n' +
+        '#[cfg(not(\n' +
+        '    feature = "http",\n' +
+        '))]\n' +
+        'impl axum::response::IntoResponse for AppError {\n' +
+        '    fn into_response(self) -> axum::response::Response {}\n' +
+        '}\n',
     })
     const r = run(args)
     expect(r.status).toBe(1)
