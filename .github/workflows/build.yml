@@ -83,6 +83,14 @@ jobs:
       - name: 测试执行覆盖守门
         run: bun scripts/test-exec.ts check
 
+      # e2e 步骤库覆盖守门（issue #1510 / spec #1494 裁决落地）：逐 e2e 目标核对
+      # 「feature 步骤行 ↔ 目标注册面」全等覆盖 + 每个 feature 至少被一个目标绑定
+      # （rstest-bdd 的 compile-time-validation 不出现在 `scenarios!` 路径，故以本
+      # 静态守门替代编译期校验）。纯静态文本核对，不需 Rust 工具链。删除该步骤即红：
+      # scripts/check-e2e-step-coverage.test.ts 的接线用例。
+      - name: e2e 步骤库覆盖守门
+        run: bun scripts/check-e2e-step-coverage.ts
+
       - name: 前端异步守门
         run: bun scripts/check-async-guards.ts
 
