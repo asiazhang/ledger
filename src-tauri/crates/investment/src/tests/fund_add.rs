@@ -263,3 +263,62 @@ fn re_add_reuses_instrument_row_and_overwrites_price() {
         .unwrap();
     assert_eq!(count, 1);
 }
+
+// ---------------------------------------------------------------------------
+// 恒定价格标的的建档（ADR-0126 决策 3/5 / issue #1450）：报价携带恒定信号即
+// 建档打标，建档常量价不依赖报价的有价性。
+// ---------------------------------------------------------------------------
+
+/// 报价带恒定信号且有价（搜索索引类型码确认的货基，现价按恒定净值落）：
+/// 建档即标记，现价缓存落常量价 1.0000、净值日期为空（水位语义退出）。
+#[test]
+fn adds_money_fund_marks_constant_and_lands_base_price_without_nav_date() {
+    let conn = open();
+    let mut q = quote(
+        "000198",
+        "天弘余额宝货币",
+        "货币型",
+        Some((1.0, "2026-09-17")),
+    );
+    q.constant_unit_price_cents = Some(10_000);
+    let result = add_fund_by_code_with(&conn, "000198", &mut stub_fetch_with(q)).unwrap();
+
+    let cents: Option<i64> = conn
+        .query_row(
+            "SELECT constant_unit_price FROM instruments WHERE id = ?1",
+            [&result.instrument_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(cents, Some(10_000), "建档即打标恒定单位价格");
+
+    let (price, _, _, nav_date, _) =
+        price_row(&conn, &result.instrument_id).expect("应落建档常量价");
+    assert_eq!(price, 10_000, "建档常量价 = 1.0000");
+    assert_eq!(nav_date, None, "净值日期列为空（水位语义对恒定标的不适用）");
+    assert!(result.price_written);
+}
+
+/// 报价带恒定信号但无价（档案通道收益序列解析为空等形态）：仍按恒定单位
+/// 价格本身兑底落建档一条——「建档一条 1.0000」不依赖报价的有价性。
+#[test]
+fn adds_money_fund_without_price_still_lands_constant_base_price() {
+    let conn = open();
+    let mut q = quote("000199", "已终止货基", "", None);
+    q.constant_unit_price_cents = Some(10_000);
+    let result = add_fund_by_code_with(&conn, "000199", &mut stub_fetch_with(q)).unwrap();
+
+    let cents: Option<i64> = conn
+        .query_row(
+            "SELECT constant_unit_price FROM instruments WHERE id = ?1",
+            [&result.instrument_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(cents, Some(10_000));
+    let (price, _, _, nav_date, _) =
+        price_row(&conn, &result.instrument_id).expect("无价报价也应兑底建档常量价");
+    assert_eq!(price, 10_000, "按恒定单位价格本身落建档一条");
+    assert_eq!(nav_date, None);
+    assert!(result.price_written, "常量价首落按价格写入计");
+}

@@ -144,16 +144,17 @@ pub fn adopt_quote(
     let mut price_written = false;
     if let Some(constant_unit_price_cents) = quote.constant_unit_price_cents {
         mark_constant_unit_price(conn, &instrument_id, constant_unit_price_cents)?;
-        if let Some(price_cents) = quote.price_cents {
-            price_written = ensure_constant_base_price(
-                conn,
-                &instrument_id,
-                price_cents,
-                adoption.currency_code,
-                adoption.priced_at,
-                EASTMONEY_PRICE_SOURCE,
-            )?;
-        }
+        // 建档常量价不依赖报价的有价性：报价未携带价格（如档案通道收益序列
+        // 为空）时按恒定单位价格本身落建档一条。
+        let price_cents = quote.price_cents.unwrap_or(constant_unit_price_cents);
+        price_written = ensure_constant_base_price(
+            conn,
+            &instrument_id,
+            price_cents,
+            adoption.currency_code,
+            adoption.priced_at,
+            EASTMONEY_PRICE_SOURCE,
+        )?;
         return Ok(QuoteAdoptionOutcome {
             instrument_id,
             price_written,

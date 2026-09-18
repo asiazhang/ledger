@@ -293,8 +293,9 @@ where
         .filter(|i| i.channel == PriceChannel::Quote)
         .collect();
     // 净值分区带恒定价格通道（ADR-0126）：恒定标的的逐只请求本票有意保留
-    // （打标收敛的确认通道，refresh_one_fund_price 内按通道分流——只确认
-    // 不落库），分母与缺口统计因此也不含它（收窄与统计排除在 #1451）。
+    // （打标收敛的确认通道，refresh_one_fund_price 内按通道分流——只确认、
+    // 不落采集价格数据），分母与缺口统计因此与改动前同面（暂计入；排除归
+    // #1451）。
     let funds: Vec<&SyncInstrument> = held
         .iter()
         .filter(|i| matches!(i.channel, PriceChannel::FundNav | PriceChannel::Constant))

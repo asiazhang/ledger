@@ -137,11 +137,13 @@ pub fn query_instrument_price_trend_on(
 /// 恒定标的的单标的走势合成：序列下界取建档锚点与区间起点的较晚者，上界夹
 /// 到区间终点与今天；每周一条常量点（价格与币种逐周不变）。区间为空即无点
 /// ——空态判定对恒定标的不给补全三态（无空态可言，见 backfill 模块判据）。
-fn synthesize_constant_points(
+/// 恒定标的的常量合成采样窗口（单标的与组合两消费面共用）：下界取建档锚点
+/// 与区间起点的较晚者，上界夹到区间终点与今天；区间界解析失败按无界处理。
+fn constant_sample_window(
     constant: &ConstantPriceValue,
     range: &TrendRange,
     today: chrono::NaiveDate,
-) -> Vec<PriceTrendPoint> {
+) -> (chrono::NaiveDate, chrono::NaiveDate) {
     let parse = |raw: &Option<String>| {
         raw.as_deref()
             .and_then(|s| chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
@@ -149,6 +151,15 @@ fn synthesize_constant_points(
     let start =
         parse(&range.start_date).map_or(constant.anchor_date, |s| s.max(constant.anchor_date));
     let end = parse(&range.end_date).unwrap_or(today);
+    (start, end)
+}
+
+fn synthesize_constant_points(
+    constant: &ConstantPriceValue,
+    range: &TrendRange,
+    today: chrono::NaiveDate,
+) -> Vec<PriceTrendPoint> {
+    let (start, end) = constant_sample_window(constant, range, today);
     weekly_samples(start, end, today)
         .into_iter()
         .map(|(_, trade_date)| PriceTrendPoint {
@@ -236,19 +247,13 @@ pub fn query_portfolio_value_trend_on(
     }
 
     // 1.5 恒定标的贡献（ADR-0126 决策 6）：市值 = 时点份额 × 常量，响应内
-    //     按区间周键合成——序列下界取建档锚点与区间起点的较晚者、上界夹到
-    //     区间终点与今天；合成行与真实价格行同路聚合（数量、汇率、周分组
-    //     全部共用同一段代码）。库里不落虚拟行。
+    //     按区间周键合成（窗口口径与单标的走势共用 [`constant_sample_window`]）；
+    //     合成行与真实价格行同路聚合（数量、汇率、周分组全部共用同一段代码）。
+    //     库里不落虚拟行。
     {
-        let parse = |raw: &Option<String>| {
-            raw.as_deref()
-                .and_then(|s| NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
-        };
-        let range_start = parse(&range.start_date);
-        let range_end = parse(&range.end_date).unwrap_or(today);
         for constant in load_constant_prices(conn)? {
-            let start = range_start.map_or(constant.anchor_date, |s| s.max(constant.anchor_date));
-            for (week_start, trade_date) in weekly_samples(start, range_end, today) {
+            let (start, end) = constant_sample_window(&constant, range, today);
+            for (week_start, trade_date) in weekly_samples(start, end, today) {
                 price_rows.push(PriceRow {
                     instrument_id: constant.instrument_id.clone(),
                     trade_date,

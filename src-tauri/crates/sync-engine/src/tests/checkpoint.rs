@@ -804,7 +804,10 @@ fn bootstrap_migrates_older_schema_snapshot() {
             .execute("ALTER TABLE security_transactions DROP COLUMN origin", [])
             .unwrap();
         stale
-            .execute("ALTER TABLE instruments DROP COLUMN constant_unit_price", [])
+            .execute(
+                "ALTER TABLE instruments DROP COLUMN constant_unit_price",
+                [],
+            )
             .unwrap();
         stale
             .execute_batch(
