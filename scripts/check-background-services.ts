@@ -7,7 +7,7 @@
 // 真实缺陷（分平台门漂移、`restart_app` 落 Ready 漏接同步触发），且「缺失一个
 // 调用」不会让任何断言变红。守门规则（「白名单即规格」，ADR-0056 决策 4 哲学）：
 //
-// ① 这些域入口的**生产调用**只允许出现在壳层唯一编排点 `lib.rs` 的
+// ① 这些域入口的**生产调用**只允许出现在壳层唯一编排点 `src/lib.rs` 的
 //    `start_background_services` 函数体内；其余位置命中即红——新加入口只调
 //    其中一个（或干脆各写各的）必然在此变红。
 // ② 编排点函数体内全部受守标识符必须**同时**出现（成组性在单点自证）；删掉
@@ -25,14 +25,19 @@
 //    而启动路径不被任何测试直接执行（「缺失一个调用」不会让断言变红），故以源码
 //    扫描守门（先例 #959 / #961 的接线在测试不可达处用扫描守门替代）。
 //
-// 扫描边界：文本级扫描，形态同 check-structure.ts 家族——复用其注释与
-// 字符串/char 字面量掩码（文档注释提到函数名不误报）；外挂测试模块/目录豁免
-// （ADR-0056 决策 5），内联 #[cfg(test)] 不豁免；裸标识符 \b 边界匹配，
-// `start_sync_scheduler` 等更长标识符不含更短名子串、天然不误伤；经别名改名
-// 的间接引用文本不可达，靠评审兜底。
+// 扫描边界（issue #1472）：受守标识符扫描面 = `src-tauri/` **全树**，仅排除
+// `target/`（构建产物不参与，防扫描面膨胀与生成代码假红）——此前只扫根包 src，
+// crates/ 内新增模块绕过分平台门直接拉起受守调度器（恰是 #863 的历史缺陷形态）
+// 守门看不见；lane 守门已示范扫 crates 子树，本票把受守名扫描跟进。文本级扫描，
+// 形态同 check-structure.ts 家族——复用其注释与字符串/char 字面量掩码（文档注释
+// 提到函数名不误报）；外挂测试模块/目录豁免（ADR-0056 决策 5），内联 #[cfg(test)]
+// 不豁免；裸标识符 \b 边界匹配，`start_sync_scheduler` 等更长标识符不含更短名
+// 子串、天然不误伤；经别名改名的间接引用文本不可达，靠评审兜底。扫描根提不出
+// 任何非测试 Rust 文件即红（零源文件拒绝假绿，与 check-async-guards 同款哨兵）。
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-background-services.ts`。
-// 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-background-services.ts [src-dir]
+// 默认校验本仓库；测试可传位置参数指向夹具（src-tauri 根等价目录）：
+// bun scripts/check-background-services.ts [src-tauri-dir]
 // 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job）。
 
 import { readdirSync, readFileSync } from 'node:fs'
@@ -40,8 +45,9 @@ import { join } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { maskNonCode } from './check-structure.ts'
 
-/** 唯一编排点：壳层文件（相对 src 根）与函数名（issue #961 单点） */
-export const ORCHESTRATOR_FILE = 'lib.rs'
+/** 唯一编排点：壳层文件（相对 src-tauri 根，#1472 起扫描面基准同址）与函数名
+ *  （issue #961 单点） */
+export const ORCHESTRATOR_FILE = 'src/lib.rs'
 export const ORCHESTRATOR_FN = 'start_background_services'
 
 /** 成组拉起名单（编排点函数体内必须同时出现的各域入口） */
@@ -54,7 +60,9 @@ const PAIRED_NAMES = [
 
 /**
  * 受守标识符及其合法住址（导出供测试夹具派生，check-structure.test.ts 消费
- * 导出常量的同款先例）。wholeFile = 整文件豁免（定义/再导出/域内调用）；
+ * 导出常量的同款先例）。路径一律相对 src-tauri 根（#1472 起扫描面基准即
+ * src-tauri 全树：根包文件带 `src/` 前缀，crate 文件带 `crates/` 前缀）；
+ * wholeFile = 整文件豁免（定义/再导出/域内调用）；
  * orchestratorBodyAllowed = 唯一编排点函数体内是否放行（start_sync_scheduler
  * 不放行：它是分平台门的域内实现细节，出域即绕门）。
  */
@@ -114,7 +122,8 @@ export const GUARDED_NAMES: readonly GuardedName[] = [
   },
 ]
 
-/** 启动接线单点（issue #1088）：标识符 + 唯一合法接线文件（相对 src 根）。 */
+/** 启动接线单点（issue #1088）：标识符 + 唯一合法接线文件（相对 src-tauri 根，
+ *  #1472 起扫描面基准同址）。 */
 export interface BootWiring {
   name: string
   file: string
@@ -134,16 +143,11 @@ export const MARKET_SYNC_SRC_REL = 'crates/market-sync/src'
 export const LANE_EXECUTOR_TOKEN = 'tauri::async_runtime::spawn'
 export const LANE_TIMER_TOKEN = 'tokio::time::sleep'
 export const LANE_BANNED_TOKENS = ['thread::spawn', 'std::thread::sleep'] as const
-/** 两条车道的住址（相对行情域 crate src；与 GUARDED_NAMES 的 wholeFile 同源路径） */
+/** 两条车道的住址（相对 src-tauri 根；与 GUARDED_NAMES 的 wholeFile 同源路径） */
 export const LANE_FILES = [
   'crates/market-sync/src/daily_refresh.rs',
   'crates/market-sync/src/history.rs',
 ] as const
-
-/** 整文件豁免路径解析：`crates/` 前缀相对 src-tauri 根（域 crate，#1091），其余相对根 src。 */
-function wholeFilePath(srcDir: string, relPath: string): string {
-  return relPath.startsWith('crates/') ? join(srcDir, '..', relPath) : join(srcDir, relPath)
-}
 
 /**
  * 壳层启动接线清单（issue #1088 提交点后置动作注册）：每条须在指定文件内出现
@@ -180,7 +184,8 @@ function isTestFile(relPath: string): boolean {
   return file === 'tests.rs' || segments.slice(0, -1).includes('tests')
 }
 
-/** 递归收集目录下全部非测试 .rs 文件，相对路径排序保证输出确定 */
+/** 递归收集目录下全部非测试 .rs 文件，相对路径排序保证输出确定；
+ *  `target/` 目录整体跳过（#1472：构建产物不参与扫描面，防膨胀与生成代码假红） */
 function collectRustFiles(dir: string, relBase: string): { abs: string; rel: string }[] {
   const out: { abs: string; rel: string }[] = []
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
@@ -189,7 +194,10 @@ function collectRustFiles(dir: string, relBase: string): { abs: string; rel: str
     const abs = join(dir, entry.name)
     const rel = relBase ? `${relBase}/${entry.name}` : entry.name
     if (isTestFile(rel)) continue
-    if (entry.isDirectory()) out.push(...collectRustFiles(abs, rel))
+    if (entry.isDirectory()) {
+      if (entry.name === 'target') continue
+      out.push(...collectRustFiles(abs, rel))
+    }
     else if (entry.name.endsWith('.rs')) out.push({ abs, rel })
   }
   return out
@@ -234,7 +242,9 @@ function scanGuardedNames(rawLines: string[], maskedLines: string[]): NameHit[] 
 
 function main(): void {
   const repoRoot = fileURLToPath(new URL('..', import.meta.url))
-  const srcDir = process.argv[2] ?? join(repoRoot, 'src-tauri', 'src')
+  // 扫描面基准 = src-tauri 根（#1472 前为根包 src）：受守名扫描覆盖全树，故
+  // 白名单路径与编排点坐标一律相对本根解析。
+  const scanRoot = process.argv[2] ?? join(repoRoot, 'src-tauri')
   const problems: string[] = []
 
   // 白名单存在性自证：每个整文件豁免条目必须存在且含其受守标识符（fail loud）
@@ -242,7 +252,7 @@ function main(): void {
     for (const relPath of guarded.wholeFile) {
       let source: string
       try {
-        source = readFileSync(wholeFilePath(srcDir, relPath), 'utf8')
+        source = readFileSync(join(scanRoot, relPath), 'utf8')
       } catch {
         problems.push(
           `✗ 白名单条目缺失：${relPath}（${guarded.name} 的 ${guarded.note}）——文件不存在，清单漂移 fail loud`,
@@ -262,7 +272,7 @@ function main(): void {
   // 唯一编排点自证：函数必须存在，成对名单在其函数体内同时出现
   let orchestratorSpan: [number, number] | null = null
   try {
-    const libSource = readFileSync(join(srcDir, ORCHESTRATOR_FILE), 'utf8')
+    const libSource = readFileSync(join(scanRoot, ORCHESTRATOR_FILE), 'utf8')
     const maskedLines = maskNonCode(libSource).split('\n')
     orchestratorSpan = orchestratorBodySpan(maskedLines)
     if (orchestratorSpan === null) {
@@ -284,15 +294,16 @@ function main(): void {
       }
     }
   } catch {
-    problems.push(`✗ 唯一编排点文件缺失：${ORCHESTRATOR_FILE}——src 目录指错或壳层文件漂移`)
+    problems.push(`✗ 唯一编排点文件缺失：${ORCHESTRATOR_FILE}——src-tauri 根指错或壳层文件漂移`)
   }
 
-  // 全树扫描：命中按名核对合法住址（整文件豁免 / 编排点函数体按名放行），其余一律红
+  // src-tauri 全树扫描（排除 target/，#1472）：命中按名核对合法住址
+  //（整文件豁免 / 编排点函数体按名放行），其余一律红
   // 启动接线自证（issue #1088）：注册必须在壳层启动接线处出现，缺失即红。
   for (const wiring of BOOT_WIRING) {
     let source: string
     try {
-      source = readFileSync(join(srcDir, wiring.file), 'utf8')
+      source = readFileSync(join(scanRoot, wiring.file), 'utf8')
     } catch {
       problems.push(
         `✗ 启动接线文件缺失：${wiring.file}（${wiring.note}）——壳层启动文件漂移，fail loud`,
@@ -311,7 +322,7 @@ function main(): void {
   // 后台车道执行器守门（issue #1413 / ADR-0125 决策 7）：两车道必须以全局运行时
   // async 任务拉起 + 异步定时，生产面零自建线程。目录缺失 fail loud（拒绝以
   // 空集假绿通过，与全树扫描同款取舍）。
-  const marketSyncSrcDir = join(srcDir, '..', MARKET_SYNC_SRC_REL)
+  const marketSyncSrcDir = join(scanRoot, MARKET_SYNC_SRC_REL)
   let laneFiles: { abs: string; rel: string }[] = []
   try {
     laneFiles = collectRustFiles(marketSyncSrcDir, MARKET_SYNC_SRC_REL)
@@ -347,11 +358,15 @@ function main(): void {
 
   let files: { abs: string; rel: string }[] = []
   try {
-    files = collectRustFiles(srcDir, '')
+    files = collectRustFiles(scanRoot, '')
   } catch {
-    if (problems.length === 0) {
-      problems.push(`✗ 扫描根不可达：${srcDir}——拒绝以空集假绿通过`)
-    }
+    problems.push(`✗ 扫描根不可达：${scanRoot}——拒绝以空集假绿通过`)
+  }
+  if (files.length === 0) {
+    problems.push(
+      `✗ 扫描面提不出任何非测试 Rust 文件：${scanRoot}——src-tauri 根指错或源码整体` +
+        `漂移，拒绝以空集假绿通过`,
+    )
   }
   for (const f of files) {
     const source = readFileSync(f.abs, 'utf8')
@@ -391,7 +406,7 @@ function main(): void {
       `（${GUARDED_NAMES.map((g) => g.name).join(' / ')}）· 白名单路径 ${pathCount} 个（定义与再导出）` +
       ` · 生产调用收敛于 \`${ORCHESTRATOR_FN}\` 单点 · 启动接线 ${BOOT_WIRING.length} 项已接线（#1088）` +
       ` · 车道执行器守门 ${laneFiles.length} 个生产文件零自建线程（#1413）` +
-      ` · 全树扫描 ${files.length} 个非测试文件零脱离`,
+      ` · src-tauri 全树（排除 target/）扫描 ${files.length} 个非测试文件零脱离`,
   )
 }
 
