@@ -155,8 +155,8 @@ describe('单标的走势放行（按后端价格通道判定，issue #1060）',
     expect(mockInvoke.mock.calls.some(([c]) => c === 'instrument_price_trend')).toBe(false)
   })
 
-  it('行情 / 净值 / 手动报价通道照常发起走势查询并出图', async () => {
-    for (const channel of ['quote', 'fund_nav', 'manual'] as const) {
+  it('行情 / 净值 / 恒定价格 / 手动报价通道照常发起走势查询并出图', async () => {
+    for (const channel of ['quote', 'fund_nav', 'constant', 'manual'] as const) {
       wireInstrumentTrend()
       mockInvoke.mockClear()
       const { refresh, chartSeries } = withSetup(() => usePortfolioTrend())

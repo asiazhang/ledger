@@ -86,6 +86,9 @@ pub(crate) fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../../../migrations/V027__security_transaction_origin.sql"
             )),
+            M::up(include_str!(
+                "../../../../migrations/V028__instrument_constant_unit_price.sql"
+            )),
         ])
     })
 }

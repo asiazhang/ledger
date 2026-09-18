@@ -598,12 +598,16 @@ impl FromRow for InstrumentPnl {
 
 impl FromRow for Instrument {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
-        // 派生事实先行（issue #1060）：价格通道由类型 × 市场 × 代码单点派生，
-        // 不进 SQL 投影——SQL 无法引用 Rust 判定，行映射处消费域单点。
+        // 派生事实先行（issue #1060）：价格通道由类型 × 市场 × 代码 + 恒定单位
+        // 价格单点派生（ADR-0126），不进 SQL 投影——SQL 无法引用 Rust 判定，
+        // 行映射处消费域单点。恒定单位价格是判定输入不随投影输出（用户可见
+        // 口径是价格来源列，见 `price_channel`）。
         let kind: InstrumentType = row.get(2)?;
         let market: String = row.get(5)?;
         let symbol: String = row.get(1)?;
-        let price_channel = super::channel::derive_price_channel(kind, &market, &symbol);
+        let constant_unit_price: Option<i64> = row.get(13)?;
+        let price_channel =
+            super::channel::derive_price_channel(kind, &market, &symbol, constant_unit_price);
         Ok(Instrument {
             id: row.get(0)?,
             symbol,

@@ -20,10 +20,11 @@
 //! ——不得声称「报表会按陈旧价格计算」，报表与净资产只吃持仓，那句话对已清仓
 //! 标的不成立（同口径见词汇表「价格过期提示」）。文案与计数面同进同退。
 //!
-//! **检查面**：只含有价格写入通道的行（行情 / 净值），手动报价与无来源通道
-//! 不在其列——「同步标的信息」修不了它们（手动通道的出路是录价，issue #1193；
-//! 手动通道的持仓缺价因此也不计入，不是漏算）。判定复用价格通道派生单点
-//! （[`derive_price_channel`]），不按类型与市场自行推断第二口径。
+//! **检查面**：只含有价格写入需求的行（行情 / 净值），手动报价、无来源与恒定
+//! 价格通道不在其列——「同步标的信息」修不了它们（手动通道的出路是录价，
+//! issue #1193；手动通道的持仓缺价因此也不计入，不是漏算；恒定价格没有水位
+//! 可言，提示的计数面整体豁免它，ADR-0126 决策 7）。判定复用价格通道派生单点
+//! ([`derive_price_channel`]），不按类型与市场自行推断第二口径。
 //!
 //! **已知边界（接受）**：长假 / 长期停牌 / 基金停止披露净值期间，数据源没有
 //! 新点、同步不落库，水位不会变新——提示在此期间持续存在，点同步也消不掉。
@@ -77,7 +78,7 @@ pub fn instrument_price_staleness_on(
     let rows = query_all::<PriceWatermarkRow, _>(
         conn,
         &format!(
-            "SELECT i.instrument_type,i.market,i.symbol,p.priced_at,p.nav_date, \
+            "SELECT i.instrument_type,i.market,i.symbol,i.constant_unit_price,p.priced_at,p.nav_date, \
              CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested \
              FROM instruments i \
              LEFT JOIN market_prices p ON p.instrument_id = i.id"
@@ -96,11 +97,14 @@ pub fn instrument_price_staleness_on(
     })
 }
 
-/// 一条标的的现价水位行（判定输入：通道判定所需三列 + 两条时点列 + 持仓标志）。
+/// 一条标的的现价水位行（判定输入：通道判定所需三列 + 恒定单位价格 + 两条
+/// 时点列 + 持仓标志）。
 struct PriceWatermarkRow {
     kind: InstrumentType,
     market: String,
     symbol: String,
+    /// 恒定单位价格（万分之一元，ADR-0126）：通道判定的持久化输入。
+    constant_unit_price: Option<i64>,
     /// 行情通道水位（同步写入时刻，`market_prices.priced_at`）。
     priced_at: Option<String>,
     /// 净值通道水位（净值日期，`market_prices.nav_date`）。
@@ -110,15 +114,22 @@ struct PriceWatermarkRow {
 }
 
 impl PriceWatermarkRow {
-    /// 本行是否计入过期：无价格写入通道的行一律不计（同步修不了）；
-    /// 有通道行按水位判定——水位缺失只有持仓行计入（持仓缺现价），
+    /// 本行是否计入过期：无价格写入需求的行一律不计（同步修不了）——手动
+    /// 报价与无来源没有可刷新的价格，恒定价格没有水位可言（价格不随时间
+    /// 变，同步既修不了也不需要修，ADR-0126 决策 7，「持仓缺现价」一档一并
+    /// 豁免）；有通道行按水位判定——水位缺失只有持仓行计入（持仓缺现价），
     /// 水位存在则看它距今是否超过阈值。
     fn is_stale(&self, today: NaiveDate, threshold_days: i64) -> bool {
-        let channel = derive_price_channel(self.kind, &self.market, &self.symbol);
+        let channel = derive_price_channel(
+            self.kind,
+            &self.market,
+            &self.symbol,
+            self.constant_unit_price,
+        );
         let watermark = match channel {
             PriceChannel::Quote => self.priced_at.as_deref().and_then(quote_watermark_date),
             PriceChannel::FundNav => self.nav_date.as_deref().and_then(iso_date),
-            PriceChannel::Manual | PriceChannel::None => return false,
+            PriceChannel::Constant | PriceChannel::Manual | PriceChannel::None => return false,
         };
         match watermark {
             Some(date) => today.signed_duration_since(date).num_days() > threshold_days,
@@ -133,9 +144,10 @@ impl FromRow for PriceWatermarkRow {
             kind: row.get(0)?,
             market: row.get(1)?,
             symbol: row.get(2)?,
-            priced_at: row.get(3)?,
-            nav_date: row.get(4)?,
-            invested: row.get::<_, i64>(5)? != 0,
+            constant_unit_price: row.get(3)?,
+            priced_at: row.get(4)?,
+            nav_date: row.get(5)?,
+            invested: row.get::<_, i64>(6)? != 0,
         })
     }
 }

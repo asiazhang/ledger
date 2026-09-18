@@ -1286,3 +1286,51 @@ fn mwr_degraded_collection_excludes_unvalued_pairs_from_aggregate() {
     assert_eq!(total_basis(&summary, "CNY"), Some(MwrBasis::Cumulative));
     assert_close(total_rate(&summary, "CNY"), 2000.0 / 15000.0);
 }
+
+// ---------------------------------------------------------------------------
+// 恒定价格标的的边界市值（ADR-0126 决策 6 / issue #1450）：收益率边界市值与
+// 组合走势共用「≤ 截止日最新周线」的取价纪律，恒定标的在响应内按常量取值——
+// 「删除即变红」：删掉 AsOfValues 的常量覆盖，下方用例吃到存量平坦行的错值。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mwr_boundary_value_uses_constant_price_not_flat_history_rows() {
+    let conn = open();
+    seed_account(&conn, "acc-const", "货基户", "investment", "CNY", 0);
+    insert_fund_instrument(&conn, "inst-const", "000198", "天弘余额宝");
+    conn.execute(
+        "UPDATE instruments SET constant_unit_price = 10000 WHERE id = 'inst-const'",
+        [],
+    )
+    .unwrap();
+    // 确认单金额权威：100 份 × 1.0000 = 100 元（单价由金额与份额反算，不可携带）。
+    let mut buy = buy_on("acc-const", "inst-const", 100.0, 0, 0, "2026-01-01");
+    buy.amount_cents = 10_000;
+    buy.price_cents = None;
+    create_transaction_internal(&conn, buy).unwrap();
+    // 起始日分红 +10 元（期初折算不含它，起始日分红入集）。
+    create_transaction_internal(
+        &conn,
+        dividend_on("acc-const", "inst-const", 1_000, "2026-07-01"),
+    )
+    .unwrap();
+    // 存量平坦序列（值刻意偏离常量）：读侧消费它即红。
+    seed_price_history(&conn, "ph-flat", "inst-const", "2026-07-01", 20_000, "CNY");
+
+    let range = MwrRange {
+        start_date: Some("2026-07-01".into()),
+        end_date: Some(TODAY.into()),
+    };
+    let summary = mwr_on(&conn, &range);
+    // 边界市值 = 100 份 × 1.0000 = 10000 分（平坦行 20000 分不被消费）：
+    // −10000(07-01 期初) / +1000(当日分红，t=0 折入分母) / +10000(期末，184d)
+    // → r = (10000/9000)^(365/184) − 1。
+    assert_close(
+        account_rate(&summary, "acc-const"),
+        0.232_448_938_442_890_44,
+    );
+    assert_close(
+        instrument_rate(&summary, "acc-const", "inst-const"),
+        0.232_448_938_442_890_44,
+    );
+}

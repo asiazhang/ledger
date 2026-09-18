@@ -61,15 +61,16 @@ export interface Instrument extends Syncable {
 }
 
 /** 价格写入通道（后端派生事实，issue #1060）：quote 行情 / fund_nav 净值 /
- * manual 手动报价 / none 无来源；判定单点在后端（`derive_price_channel`），
- * 与标的信息同步的通道分区同源。 */
-export type InstrumentPriceChannel = 'quote' | 'fund_nav' | 'manual' | 'none'
+ * constant 恒定价格（ADR-0126）/ manual 手动报价 / none 无来源；判定单点在
+ * 后端（`derive_price_channel`），与标的信息同步的通道分区同源。 */
+export type InstrumentPriceChannel = 'quote' | 'fund_nav' | 'constant' | 'manual' | 'none'
 
 /** 价格通道闭集镜像（判定单点在后端，此处仅供前端按序渲染 i18n 标签）；
  * 显示标签在文案资源 investments.priceChannel.*（i18n，ADR-0049）。 */
 export const INSTRUMENT_PRICE_CHANNELS: InstrumentPriceChannel[] = [
   'quote',
   'fund_nav',
+  'constant',
   'manual',
   'none',
 ]

@@ -123,6 +123,8 @@ pub(crate) fn pick_stock_quote(
         kind_hint: Some(detect_kind_hint(data.kind_feature)),
         fund_class: None,
         nav_date: None,
+        // 场内通道无恒定价格信号（恒定是数据源自报的基金口径，ADR-0126）。
+        constant_unit_price_cents: None,
     })
 }
 

@@ -39,6 +39,7 @@
 //!   （ADR-0106 / issue #1049 + #1050 + #1051）
 
 mod common;
+mod constant_price;
 mod convert;
 mod cumulative_pnl;
 mod dividend;

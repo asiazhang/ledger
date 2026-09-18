@@ -231,3 +231,51 @@ fn beijing_date_shifts_utc_by_plus_8h() {
         NaiveDate::from_ymd_opt(2026, 3, 10).expect("日期合法")
     );
 }
+
+// ---------------------------------------------------------------------------
+// 恒定价格标的的整体豁免（ADR-0126 决策 7 / issue #1450）：恒定标的价格不随
+// 时间变，水位语义对它不适用——计数面（含「持仓缺现价」一档）一并排除。
+// 「删除即变红」：豁免臂撤掉（并入净值通道臂）后，下方两用例即被计入。
+// ---------------------------------------------------------------------------
+
+fn mark_constant(conn: &Connection, instrument_id: &str) {
+    conn.execute(
+        "UPDATE instruments SET constant_unit_price = 10000 WHERE id = ?1",
+        [instrument_id],
+    )
+    .unwrap();
+}
+
+/// 给恒定标的建仓（基金申赎以确认单金额为权威：金额必填、单价反算不可携带）。
+fn hold_fund(conn: &Connection, account_id: &str, instrument_id: &str) {
+    seed_account(conn, account_id, "货基户", "investment", "CNY", 0);
+    let mut buy = make_buy_input(account_id, instrument_id, 100.0, 0, 0);
+    buy.amount_cents = 10_000;
+    buy.price_cents = None;
+    create_transaction_internal(conn, buy).expect("建仓应成功");
+}
+
+#[test]
+fn constant_price_instrument_is_exempt_even_when_invested_without_price() {
+    let conn = open();
+    insert_fund_instrument(&conn, "f-const", "000198", "天弘余额宝");
+    mark_constant(&conn, "f-const");
+    // 持仓 + 现价缓存整行缺失：「持仓缺现价」档对恒定标的不成立（它的价格
+    // 就是常量，无需水位），不计入。
+    hold_fund(&conn, "acc-const", "f-const");
+
+    let result = instrument_price_staleness_on(&conn, today()).expect("检查应成功");
+    assert_eq!(result.stale_count, 0, "恒定标的整体豁免过期计数");
+}
+
+#[test]
+fn constant_price_instrument_is_exempt_even_with_stale_nav_date() {
+    let conn = open();
+    insert_fund_instrument(&conn, "f-const", "000198", "天弘余额宝");
+    mark_constant(&conn, "f-const");
+    // 打标前残留的旧净值日期水位：恒定标的没有水位语义，陈旧也不计入。
+    seed_watermark(&conn, "f-const", "2026-01-30T02:00:00Z", Some("2026-01-30"));
+
+    let result = instrument_price_staleness_on(&conn, today()).expect("检查应成功");
+    assert_eq!(result.stale_count, 0, "陈旧残留水位对恒定标的不构成过期");
+}

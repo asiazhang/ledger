@@ -16,12 +16,12 @@ use tauri_app_lib::test_support::open;
 fn stock_and_listed_etf_with_known_market_sit_in_quote_channel() {
     for market in ["sh", "sz", "hk", "nasdaq", "nyse", "amex"] {
         assert_eq!(
-            derive_price_channel(InstrumentType::Stock, market, "600000"),
+            derive_price_channel(InstrumentType::Stock, market, "600000", None),
             PriceChannel::Quote,
             "stock/{market} 应属行情通道"
         );
         assert_eq!(
-            derive_price_channel(InstrumentType::Etf, market, "510300"),
+            derive_price_channel(InstrumentType::Etf, market, "510300", None),
             PriceChannel::Quote,
             "etf/{market} 应属行情通道"
         );
@@ -33,7 +33,7 @@ fn stock_and_listed_etf_with_known_market_sit_in_quote_channel() {
 #[test]
 fn stock_with_unknown_market_has_no_price_source() {
     assert_eq!(
-        derive_price_channel(InstrumentType::Stock, "unknown", "600000"),
+        derive_price_channel(InstrumentType::Stock, "unknown", "600000", None),
         PriceChannel::None
     );
 }
@@ -43,7 +43,7 @@ fn stock_with_unknown_market_has_no_price_source() {
 #[test]
 fn etf_with_unknown_market_falls_into_manual_channel() {
     assert_eq!(
-        derive_price_channel(InstrumentType::Etf, "unknown", "稳稳地幸福"),
+        derive_price_channel(InstrumentType::Etf, "unknown", "稳稳地幸福", None),
         PriceChannel::Manual
     );
 }
@@ -53,11 +53,11 @@ fn etf_with_unknown_market_falls_into_manual_channel() {
 #[test]
 fn fund_channel_splits_by_six_digit_code() {
     assert_eq!(
-        derive_price_channel(InstrumentType::Fund, "unknown", "000198"),
+        derive_price_channel(InstrumentType::Fund, "unknown", "000198", None),
         PriceChannel::FundNav
     );
     assert_eq!(
-        derive_price_channel(InstrumentType::Fund, "unknown", "稳稳地幸福"),
+        derive_price_channel(InstrumentType::Fund, "unknown", "稳稳地幸福", None),
         PriceChannel::Manual
     );
 }
@@ -67,12 +67,12 @@ fn fund_channel_splits_by_six_digit_code() {
 fn bond_and_other_types_sit_in_manual_channel() {
     for kind in [InstrumentType::Bond, InstrumentType::Other] {
         assert_eq!(
-            derive_price_channel(kind, "unknown", "019547"),
+            derive_price_channel(kind, "unknown", "019547", None),
             PriceChannel::Manual,
             "{kind} 应属手动报价通道"
         );
         assert_eq!(
-            derive_price_channel(kind, "sh", "019547"),
+            derive_price_channel(kind, "sh", "019547", None),
             PriceChannel::Manual,
             "{kind}/sh 仍属手动报价通道"
         );

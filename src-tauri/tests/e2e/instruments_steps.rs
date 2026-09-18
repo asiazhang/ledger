@@ -382,6 +382,7 @@ fn add_fund_with_stub_detail(
         kind_hint: None,
         fund_class: Some(fund_class),
         nav_date: Some(nav_date),
+        constant_unit_price_cents: None,
     };
     run_add_fund(world, code, move |requested: &str, _market: &str| {
         assert_eq!(requested, quote.code, "获取函数应收到请求代码");
@@ -405,6 +406,7 @@ fn add_fund_with_stub_no_nav(
         kind_hint: None,
         fund_class: Some(fund_class),
         nav_date: None,
+        constant_unit_price_cents: None,
     };
     run_add_fund(world, code, move |requested: &str, _market: &str| {
         assert_eq!(requested, quote.code, "获取函数应收到请求代码");
@@ -492,6 +494,7 @@ async fn add_instrument_with_stub_quote(
                     kind_hint: Some(kind),
                     fund_class: None,
                     nav_date: None,
+                    constant_unit_price_cents: None,
                 })
             } else {
                 Err(ledger_infra::error::AppError::codedp(

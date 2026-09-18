@@ -104,6 +104,7 @@
 pub mod backfill;
 pub mod channel;
 pub mod command;
+pub mod constant_price;
 pub mod crud;
 pub mod financial_freedom;
 pub mod fund;
@@ -147,6 +148,9 @@ pub use model::{
 pub use backfill::{TrendBackfillState, TrendBackfillStatus};
 pub use channel::{PriceChannel, derive_price_channel};
 pub use command::{ExchangeRateCommand, InstrumentCommand, PriceCommand};
+pub use constant_price::{
+    ConstantPriceValue, ensure_constant_base_price, mark_constant_unit_price,
+};
 pub use crud::{
     create_exchange_rate, create_instrument, create_instrument_manual, create_market_price,
     delete_instrument, get_instrument, list_exchange_rates, list_holdings, list_instruments,

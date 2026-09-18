@@ -227,8 +227,9 @@ const instrumentBrowseColumns = computed<DataTableColumn<Instrument>[]>(() => [
   { title: t('investments.browser.columns.symbol'), key: 'symbol', width: 100 },
   { title: t('investments.browser.columns.name'), key: 'name', width: 200 },
   {
-    // 价格来源列（issue #1189 / 词汇表「价格通道」）：展示后端派生的价格通道四值
-    // （行情 / 净值 / 手动报价 / 无来源），回答「价格能否自动更新、要不要手动录价」；
+    // 价格来源列（issue #1189 / 词汇表「价格通道」）：展示后端派生的价格通道五值
+    // （行情 / 净值 / 恒定价格 / 手动报价 / 无来源），回答「价格能否自动更新、
+    // 要不要手动录价、还是根本不用更新」；
     // 字典来源（同步 / 手动）只作删除准入，不进用户可见列表。
     title: t('investments.browser.columns.priceSource'),
     key: 'price_channel',

@@ -46,6 +46,12 @@ const priceChannel = computed(() =>
   trend.mode.value === 'instrument' ? trend.instrument.value?.price_channel ?? null : null,
 )
 
+/** 恒定价格标的（后端判通道 = constant，ADR-0126 决策 8）：常量线配一句解释
+ * （单位净值恒 1.0000、收益以份额结转体现），不新增万份收益 / 七日年化曲线。 */
+const isConstantPrice = computed(
+  () => trend.mode.value === 'instrument' && priceChannel.value === 'constant',
+)
+
 /** 有通道无数据的引导文案：手动报价通道引导去「录价」；其余通道按补全状态
  * 三态（ADR-0122 决策 5 / issue #1377）——不再有指向「同步标的信息」的回填
  * 文案（同步只刷现价，历史由后台补全，按了也不会立即有曲线）。 */
@@ -194,6 +200,12 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
         {{ currencyCaption }}
       </NText>
     </NSpace>
+
+    <!-- 恒定价格标的（通道 = constant，ADR-0126 决策 8）：常量线随图直出，
+         此处一句解释口径（收益在份额不在价），不新增万份收益曲线。 -->
+    <NText v-if="isConstantPrice" depth="3" data-testid="trend-constant-note">
+      {{ t('investments.trend.constantNote') }}
+    </NText>
 
     <NSpin :show="trend.loading.value">
       <!-- 无价格来源标的（通道 = none，issue #1060）：说明「没有价格来源」而非空白报错 -->

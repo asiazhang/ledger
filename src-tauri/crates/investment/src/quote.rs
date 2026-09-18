@@ -38,6 +38,7 @@
 
 use rusqlite::Connection;
 
+use super::constant_price::{ensure_constant_base_price, mark_constant_unit_price};
 use super::crud;
 use super::model::{InstrumentInput, InstrumentType};
 use super::prices::{EASTMONEY_PRICE_SOURCE, MarketPriceWrite, upsert_market_price};
@@ -71,6 +72,11 @@ pub struct Quote {
     /// 净值日期（ISO 日期，兼任净值同步水位，ADR-0038）：场外基金携带；
     /// 场内现价无净值日期语义，为 None。
     pub nav_date: Option<String>,
+    /// 恒定单位价格信号（万分之一元，ADR-0126 决策 3）：数据源自报口径确认
+    /// 该标的价格恒定时携带（搜索索引的类型码 / 档案数据文件的形态）；落库
+    /// 半边据此在建档时回填标的行的恒定单位价格（打标单向，建档一次确认）。
+    /// 信号缺席为 None，不得反推「不是恒定标的」。
+    pub constant_unit_price_cents: Option<i64>,
 }
 
 impl Quote {
@@ -133,6 +139,26 @@ pub fn adopt_quote(
             market: Some(adoption.market.to_string()),
         },
     )?;
+    // 恒定价格标的（ADR-0126 决策 3/5）：建档即打标（单向，幂等）——现价缓存
+    // 保留建档一条常量价、净值日期为空（水位语义不适用），不再随同步更新。
+    let mut price_written = false;
+    if let Some(constant_unit_price_cents) = quote.constant_unit_price_cents {
+        mark_constant_unit_price(conn, &instrument_id, constant_unit_price_cents)?;
+        if let Some(price_cents) = quote.price_cents {
+            price_written = ensure_constant_base_price(
+                conn,
+                &instrument_id,
+                price_cents,
+                adoption.currency_code,
+                adoption.priced_at,
+                EASTMONEY_PRICE_SOURCE,
+            )?;
+        }
+        return Ok(QuoteAdoptionOutcome {
+            instrument_id,
+            price_written,
+        });
+    }
     if let Some(price_cents) = quote.price_cents {
         upsert_market_price(
             conn,
@@ -145,10 +171,11 @@ pub fn adopt_quote(
                 source: Some(EASTMONEY_PRICE_SOURCE),
             },
         )?;
+        price_written = true;
     }
     Ok(QuoteAdoptionOutcome {
         instrument_id,
         // 现价行整行覆盖（同值重复也 version+1），零写入仅在无价路径出现。
-        price_written: quote.price_cents.is_some(),
+        price_written,
     })
 }

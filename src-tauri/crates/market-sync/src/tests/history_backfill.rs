@@ -17,7 +17,7 @@ use std::sync::Mutex;
 use crate::SyncProgress;
 use crate::channels::FetchFuture;
 use crate::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
-use crate::fund_nav::{LsjzPage, NavPoint, NavQuery};
+use crate::fund_nav::{FullSeries, LsjzPage, NavPoint, NavQuery};
 use crate::history::{HistoryBackfillStats, run_history_backfill_round};
 use crate::http::KlineBar;
 use crate::incremental::{SyncInstrument, beijing_today, week_monday};
@@ -42,6 +42,7 @@ fn nav_page(total: u64, points: &[(&str, f64)]) -> LsjzPage {
     LsjzPage {
         total,
         blocked: false,
+        money_fund: false,
         points: points
             .iter()
             .map(|(d, n)| NavPoint {
@@ -208,10 +209,11 @@ impl Harness {
                 points: vec![],
                 total: 0,
                 blocked: false,
+                money_fund: false,
             }))
     }
 
-    fn fetch_nav_full(&self, code: &str) -> Result<Vec<NavPoint>> {
+    fn fetch_nav_full(&self, code: &str) -> Result<FullSeries> {
         self.log.lock().unwrap().push(format!("full:{code}"));
         // 单请求全量通道统一失败：让首刷走分页通道，页级明细由此可观察（与
         // 既有首刷用例同路——fail-closed 回退分页）。
@@ -665,7 +667,7 @@ fn fund_instrument(id: &str, code: &str) -> SyncInstrument {
         symbol: code.to_string(),
         market: "unknown".to_string(),
         currency: "CNY".to_string(),
-        channel: derive_price_channel(InstrumentType::Fund, "unknown", code),
+        channel: derive_price_channel(InstrumentType::Fund, "unknown", code, None),
     }
 }
 
@@ -679,7 +681,7 @@ async fn run_fund_backfill<N, S>(
 ) -> Result<BackfillOutcome>
 where
     N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
-    S: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
+    S: FnMut(&str) -> FetchFuture<FullSeries> + Send,
 {
     backfill_one_fund_history(
         conn,
@@ -698,6 +700,7 @@ fn empty_nav(_: &NavQuery) -> FetchFuture<LsjzPage> {
         points: vec![],
         total: 0,
         blocked: false,
+        money_fund: false,
     }))
 }
 
@@ -718,34 +721,41 @@ fn mock_nav<'a>(
                 points: vec![],
                 total: 0,
                 blocked: false,
+                money_fund: false,
             })))
     }
 }
 
-/// 日序列（日期升序的 (日期, 单位净值)）→ 单请求全量通道的净值点序列。
-fn full_series(series: &[(String, f64)]) -> Vec<NavPoint> {
-    series
-        .iter()
-        .map(|(date, nav)| NavPoint {
-            date: date.clone(),
-            nav: *nav,
-        })
-        .collect()
+/// 日序列（日期升序的 (日期, 单位净值)）→ 单请求全量通道的解析产物（非货基）。
+fn full_series(series: &[(String, f64)]) -> FullSeries {
+    FullSeries {
+        points: series
+            .iter()
+            .map(|(date, nav)| NavPoint {
+                date: date.clone(),
+                nav: *nav,
+            })
+            .collect(),
+        money_fund: false,
+    }
 }
 
 /// 模拟单请求全量净值通道：按代码返回整只基金的**全部历史**单位净值，并记录
 /// 请求的代码（断言首刷一次请求、增量不触碰本通道）。
 fn mock_full_nav<'a>(
-    series_by_code: &'a [(&'a str, Vec<NavPoint>)],
+    series_by_code: &'a [(&'a str, FullSeries)],
     requested: &'a Mutex<Vec<String>>,
-) -> impl FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send + 'a {
+) -> impl FnMut(&str) -> FetchFuture<FullSeries> + Send + 'a {
     move |code: &str| {
         requested.lock().unwrap().push(code.to_string());
         super::ready(Ok(series_by_code
             .iter()
             .find(|(c, _)| *c == code)
-            .map(|(_, points)| points.clone())
-            .unwrap_or_default()))
+            .map(|(_, series)| series.clone())
+            .unwrap_or(FullSeries {
+                points: vec![],
+                money_fund: false,
+            })))
     }
 }
 
@@ -798,6 +808,7 @@ fn mock_nav_series<'a>(
             points,
             total,
             blocked: false,
+            money_fund: false,
         }))
     }
 }
@@ -1043,7 +1054,12 @@ fn fund_first_sync_full_series_empty_falls_back_to_pages() {
     insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
     let fund = fund_instrument("inst-fund", "110022");
 
-    let mut full = |_: &str| super::ready(Ok(vec![]));
+    let mut full = |_: &str| {
+        super::ready(Ok(FullSeries {
+            points: vec![],
+            money_fund: false,
+        }))
+    };
     let requested = Mutex::new(Vec::new());
     let pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.348)])])];
     let mut nav = mock_nav(&pages, &requested);
@@ -1069,10 +1085,13 @@ fn fund_first_sync_full_series_without_window_points_falls_back_to_pages() {
     insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
     let fund = fund_instrument("inst-fund", "110022");
 
-    let stale = vec![NavPoint {
-        date: "2010-08-20".into(),
-        nav: 1.0,
-    }];
+    let stale = FullSeries {
+        points: vec![NavPoint {
+            date: "2010-08-20".into(),
+            nav: 1.0,
+        }],
+        money_fund: false,
+    };
     let full_by_code = [("110022", stale)];
     let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&full_by_code, &full_requested);
@@ -1109,10 +1128,13 @@ fn fund_incremental_does_not_touch_single_request_full_series() {
 
     let full_by_code = [(
         "110022",
-        vec![NavPoint {
-            date: "2026-01-30".into(),
-            nav: 9.99,
-        }],
+        FullSeries {
+            points: vec![NavPoint {
+                date: "2026-01-30".into(),
+                nav: 9.99,
+            }],
+            money_fund: false,
+        },
     )];
     let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&full_by_code, &full_requested);
@@ -1320,6 +1342,7 @@ fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
             points: vec![],
             total: 0,
             blocked: true,
+            money_fund: false,
         }))
     };
     let full_requested = Mutex::new(Vec::new());
@@ -1432,6 +1455,7 @@ fn fund_partial_blocked_page_skips_whole_instrument() {
                 points: vec![],
                 total: 45,
                 blocked: true,
+                money_fund: false,
             },
         ],
     )];
@@ -1485,6 +1509,7 @@ fn fund_incremental_partial_blocked_page_keeps_existing_history_and_watermark() 
                 points: vec![],
                 total: 45,
                 blocked: true,
+                money_fund: false,
             },
         ],
     )];
@@ -1554,5 +1579,81 @@ fn fund_page_cap_truncation_skips_whole_instrument() {
         fund_price_of(&conn, "inst-fund"),
         None,
         "整只不落库时不写现价"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 恒定价格标的（ADR-0126 / issue #1450）：队列不收恒定通道标的——它的走势由
+// 读侧按常量合成，历史行不带来任何信息；打标后净值水位已清空，仍按净值通道
+// 收集会让它每窗口整根重采。首刷撞上货基形态（详情页数据文件缺单位净值序列
+// 而有万份收益序列）即打标 + 兜底建档常量价，不落平坦历史。
+// ---------------------------------------------------------------------------
+
+/// 队列豁免：恒定标的即使「无历史（首刷判据必中）」也不进队、零请求
+/// （删除豁免 → 货基重新入队，本用例变红）。
+#[test]
+fn queue_excludes_constant_price_instruments() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-const", "000198", "fund", "CNY", "unknown");
+    conn.execute(
+        "UPDATE instruments SET constant_unit_price = 10000 WHERE id = 'inst-const'",
+        [],
+    )
+    .unwrap();
+
+    let harness = Harness::new();
+    let (result, progress, written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+    assert_eq!(stats.queued, 0, "恒定标的不进补全队列");
+    assert!(progress.is_empty(), "队列空零动作：不发进度、零网络请求");
+    assert!(!written);
+}
+
+/// 首刷撞上货基形态：单请求全量通道带回万份收益序列（money_fund 信号）即
+/// 打标 + 兜底建档常量价（净值日期空），不落平坦历史行（读侧按常量取值）。
+#[test]
+fn fund_first_sync_money_shape_marks_and_lands_no_flat_rows() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-money", "000905", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-money", "000905");
+
+    let series = daily_nav_series(
+        NaiveDate::from_ymd_opt(2026, 1, 5).unwrap(),
+        beijing_today(),
+    );
+    let full_by_code = [(
+        "000905",
+        FullSeries {
+            points: full_series(&series).points,
+            money_fund: true,
+        },
+    )];
+    let full_requested = Mutex::new(Vec::new());
+    let mut full = mock_full_nav(&full_by_code, &full_requested);
+    let mut nav = empty_nav;
+
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
+            .unwrap();
+
+    // 建档常价是实际价格写入（现价缓存首落按价格写入广播）。
+    assert!(outcome.written);
+    assert!(!outcome.inconclusive);
+    let cents: Option<i64> = conn
+        .query_row(
+            "SELECT constant_unit_price FROM instruments WHERE id = 'inst-money'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(cents, Some(10_000), "数据文件形态确认即打标");
+    assert_eq!(
+        fund_price_of(&conn, "inst-money"),
+        Some((10_000, None)),
+        "建档常量价 1.0000 落现价缓存、净值日期为空"
+    );
+    assert!(
+        price_history_rows(&conn, "inst-money").is_empty(),
+        "确认即收尾：平坦历史行不再生长（读侧按常量取值）"
     );
 }

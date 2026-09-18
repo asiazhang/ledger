@@ -417,7 +417,7 @@ fn nav_full_series_fetch_reads_single_file() {
     let (url, heads) = spawn_header_capture_server(REAL_PINGZHONG_SNIPPET.to_string());
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let points = tauri::async_runtime::block_on(fetch_nav_full_series_from(
+    let series = tauri::async_runtime::block_on(fetch_nav_full_series_from(
         &client,
         &mut pacer,
         "110022",
@@ -430,8 +430,9 @@ fn nav_full_series_fetch_reads_single_file() {
         head.contains("GET /pingzhongdata/110022.js"),
         "请求路径应为基金详情页数据文件: {head}"
     );
+    assert!(!series.money_fund, "单位净值序列在场：非货基形态信号");
     assert_eq!(
-        points,
+        series.points,
         vec![
             NavPoint {
                 date: "2010-08-20".into(),
@@ -474,15 +475,19 @@ fn nav_full_series_serves_money_fund_from_income_series() {
     let (url, _) = spawn_header_capture_server(MONEY_FUND_ARCHIVE_JS.to_string());
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let points = tauri::async_runtime::block_on(fetch_nav_full_series_from(
+    let series = tauri::async_runtime::block_on(fetch_nav_full_series_from(
         &client,
         &mut pacer,
         "000905",
         &[url.as_str()],
     ))
     .unwrap();
+    assert!(
+        series.money_fund,
+        "缺单位净值序列而有万份收益序列：货基形态信号"
+    );
     assert_eq!(
-        points,
+        series.points,
         vec![
             NavPoint {
                 date: "2023-09-12".into(),
@@ -511,15 +516,19 @@ fn nav_full_series_prefers_net_worth_trend_when_both_series_exist() {
     let (url, _) = spawn_header_capture_server(both);
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let points = tauri::async_runtime::block_on(fetch_nav_full_series_from(
+    let series = tauri::async_runtime::block_on(fetch_nav_full_series_from(
         &client,
         &mut pacer,
         "110022",
         &[url.as_str()],
     ))
     .unwrap();
-    assert_eq!(points.len(), 3);
-    assert_eq!(points[2].nav, 1.006, "取单位净值序列原值，不是 1.0 归一化");
+    assert!(!series.money_fund, "单位净值序列在场：非货基形态信号");
+    assert_eq!(series.points.len(), 3);
+    assert_eq!(
+        series.points[2].nav, 1.006,
+        "取单位净值序列原值，不是 1.0 归一化"
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -1,13 +1,21 @@
 //! 价格通道（PriceChannel，issue #1060）：「这个标的价格从哪里来」的后端派生
-//! 事实——按标的类型、市场与代码把库内标的分进价格写入通道的判定单点。
+//! 事实——按标的类型、市场、代码与恒定单位价格把库内标的分进价格写入通道的
+//! 判定单点。
 //!
 //! 分区口径即标的信息同步（InstrumentInfoSync）的通道能力分区（ADR-0036 /
 //! ADR-0038 / issue #695）：行情通道（stock|etf 且市场已知）、净值通道（fund 且
-//! 6 位真实代码）、手动报价通道（其余开放录价的行）、无来源（市场未知的股票类
-//! ——行情不可达且录价入口不开放，ADR-0036 决策 1）。同步编排、标的读投影
-//! （`Instrument::price_channel`）与走势放行、录价入口共用本单点：此前前端
-//! 各自镜像推断（走势场内白名单 `hasMarketSource`、录价入口 `canManualPrice`），
-//! 场外基金一等标的定案后漂移成第二口径（issue #1060），自本派生收口。
+//! 6 位真实代码）、恒定价格通道（标的行携带恒定单位价格，ADR-0126）、手动报价
+//! 通道（其余开放录价的行）、无来源（市场未知的股票类——行情不可达且录价入口
+//! 不开放，ADR-0036 决策 1）。同步编排、标的读投影
+//! （`Instrument::price_channel`）与走势放行、录价入口、过期检查面共用本单点：
+//! 此前端端各自镜像推断（走势场内白名单 `hasMarketSource`、录价入口
+//! `canManualPrice`），场外基金一等标的定案后漂移成第二口径（issue #1060），
+//! 自本派生收口。
+//!
+//! 恒定价格是分区成员，不是通道上的正交标记（ADR-0126 决策 1）：不存在「既是
+//! 行情 / 净值通道、又是恒定价格」的标的——恒定改变的是「谁给它写价」的答案
+//! （答案：没有人），因此判定顺序上恒定单位价格在场即归恒定价格通道，其余
+//! 三输入（类型 × 市场 × 代码）不再参与。
 
 use super::fund::is_six_digit_code;
 use super::model::InstrumentType;
@@ -15,8 +23,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::openapi::{ObjectBuilder, RefOr, Schema, Type};
 use utoipa::{PartialSchema, ToSchema};
 
-/// 价格写入通道（派生事实，不落库）：随标的行投影输出，前端据此放行走势与
-/// 开放录价入口。
+/// 价格写入通道（派生事实；除恒定价格外不落库）：随标的行投影输出，前端据此
+/// 放行走势与开放录价入口。恒定价格是本闭集唯一需要持久化输入的成员——判定
+/// 输入里的恒定单位价格落在标的行上（ADR-0126 决策 2）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PriceChannel {
@@ -26,6 +35,10 @@ pub enum PriceChannel {
     /// 净值通道：6 位真实代码的场外基金，净值经标的信息同步逐只写入
     /// （ADR-0038）。
     FundNav,
+    /// 恒定价格通道：单位价格是定义性常量的标的（货基恒 1.0000，收益以份额
+    /// 结转体现，ADR-0126）——没人给它写价，取值由读侧按标的行的恒定单位
+    /// 价格在响应内合成，历史表不为它落行。
+    Constant,
     /// 手动报价通道：同步覆盖不到但录价入口开放的行——自建标的（债券/ETF/其他）
     /// 与名称充代码的基金行（ADR-0036 决策 1）。
     Manual,
@@ -36,9 +49,10 @@ pub enum PriceChannel {
 
 impl PriceChannel {
     /// 闭集全量清单（OpenAPI 枚举等消费；先例：`InstrumentType::ALL`）。
-    pub const ALL: [PriceChannel; 4] = [
+    pub const ALL: [PriceChannel; 5] = [
         PriceChannel::Quote,
         PriceChannel::FundNav,
+        PriceChannel::Constant,
         PriceChannel::Manual,
         PriceChannel::None,
     ];
@@ -49,6 +63,7 @@ impl std::fmt::Display for PriceChannel {
         let s = match self {
             PriceChannel::Quote => "quote",
             PriceChannel::FundNav => "fund_nav",
+            PriceChannel::Constant => "constant",
             PriceChannel::Manual => "manual",
             PriceChannel::None => "none",
         };
@@ -66,7 +81,7 @@ impl PartialSchema for PriceChannel {
                 .schema_type(Type::String)
                 .enum_values(Some(PriceChannel::ALL.map(|c| c.to_string())))
                 .description(Some(
-                    "价格写入通道（派生事实：quote 行情 / fund_nav 净值 / manual 手动报价 / none 无来源）",
+                    "价格写入通道（派生事实：quote 行情 / fund_nav 净值 / constant 恒定价格 / manual 手动报价 / none 无来源）",
                 ))
                 .build(),
         ))
@@ -83,9 +98,19 @@ pub fn quote_market(market: &str) -> bool {
     matches!(market, "sh" | "sz" | "hk" | "nasdaq" | "nyse" | "amex")
 }
 
-/// 价格通道派生单点：类型 × 市场 × 代码 → 通道。同步分区、标的读投影共用；
-/// 判定顺序即语义——市场未知的股票先于手动报价兜底拦截（它连录价入口也不开放）。
-pub fn derive_price_channel(kind: InstrumentType, market: &str, symbol: &str) -> PriceChannel {
+/// 价格通道派生单点：类型 × 市场 × 代码 + 恒定单位价格 → 通道。同步分区、
+/// 标的读投影与过期检查面共用；判定顺序即语义——恒定单位价格在场即归恒定
+/// 价格通道（当且仅当该列有值，ADR-0126 决策 2），其余按类型 × 市场 × 代码
+/// 分派：市场未知的股票先于手动报价兜底拦截（它连录价入口也不开放）。
+pub fn derive_price_channel(
+    kind: InstrumentType,
+    market: &str,
+    symbol: &str,
+    constant_unit_price: Option<i64>,
+) -> PriceChannel {
+    if constant_unit_price.is_some() {
+        return PriceChannel::Constant;
+    }
     match kind {
         InstrumentType::Stock | InstrumentType::Etf if quote_market(market) => PriceChannel::Quote,
         // 股票现价归同步通道（ADR-0036 决策 1）：市场未知即无任何价格来源。

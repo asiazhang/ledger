@@ -649,3 +649,204 @@ fn portfolio_trend_backfill_aggregates_pending_instruments() {
     let trend = trend::query_portfolio_value_trend(&conn, &TrendRange::default()).unwrap();
     assert_eq!(trend.backfill, None, "没有待补全标的不携带聚合状态");
 }
+
+// ---------------------------------------------------------------------------
+// 恒定价格标的的读侧取值（ADR-0126 决策 6 / issue #1450）：响应内按常量合成，
+// 历史表无行也出数；存量平坦序列不再被消费。「删除即变红」——删掉常量合成，
+// 下方用例分别退化为空序列或吃到平坦行的错值。
+// ---------------------------------------------------------------------------
+
+/// 打上恒定标记（恒定 1.0000）。
+fn mark_constant(conn: &Connection, instrument_id: &str) {
+    conn.execute(
+        "UPDATE instruments SET constant_unit_price = 10000 WHERE id = ?1",
+        [instrument_id],
+    )
+    .unwrap();
+}
+
+/// 固定「今天」：常量合成的序列右界夹点（周一）。
+fn fixed_today() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2026, 3, 9).unwrap()
+}
+
+#[test]
+fn instrument_trend_for_constant_price_synthesizes_weekly_constant_line() {
+    let conn = open();
+    // 建档时刻 = FIXED_NOW（2026-01-01）→ 序列锚点 2026-01-01，首周周一 2025-12-29。
+    insert_fund_instrument(&conn, "inst-const", "000198", "天弘余额宝");
+    mark_constant(&conn, "inst-const");
+    // 存量平坦序列（历史采集的遗留行）：值刻意偏离常量，读侧消费它即红。
+    seed_price_history(&conn, "ph-flat", "inst-const", "2026-02-02", 20_000, "CNY");
+
+    let trend = trend::query_instrument_price_trend_on(
+        &conn,
+        "inst-const",
+        &TrendRange::default(),
+        fixed_today(),
+    )
+    .unwrap();
+    assert!(trend.backfill.is_none(), "恒定标的没有补全空态可言");
+    // 周键序列：锚点周（2025-12-29）到今天（2026-03-09）共 11 周，价格恒 1.0000。
+    let points: Vec<(String, i64)> = trend
+        .points
+        .iter()
+        .map(|p| (p.date.clone(), p.price_cents))
+        .collect();
+    assert_eq!(points.len(), 11, "每周一条常量点");
+    assert!(
+        points.iter().all(|(_, v)| *v == 10_000),
+        "价格恒 1.0000，存量平坦行（20000）不被消费"
+    );
+    assert_eq!(
+        points[0].0, "2026-01-04",
+        "序列从建档锚点所在周开始（采样日为该周周日）"
+    );
+    assert_eq!(
+        points.last().unwrap().0,
+        "2026-03-09",
+        "末点采样日不越过今天"
+    );
+    assert_eq!(trend.points[0].currency_code, "CNY");
+}
+
+#[test]
+fn instrument_trend_constant_without_any_history_rows_is_not_empty() {
+    let conn = open();
+    insert_fund_instrument(&conn, "inst-const", "000198", "天弘余额宝");
+    mark_constant(&conn, "inst-const");
+    // 无任何价格历史行（新货基建档即打标，不再有采集面为它落行）。
+
+    let trend = trend::query_instrument_price_trend_on(
+        &conn,
+        "inst-const",
+        &TrendRange::default(),
+        fixed_today(),
+    )
+    .unwrap();
+    assert!(
+        !trend.points.is_empty(),
+        "货基走势由读侧常量合成，不因无历史行为空"
+    );
+    assert!(trend.backfill.is_none());
+}
+
+#[test]
+fn instrument_trend_constant_respects_range_clipping() {
+    let conn = open();
+    insert_fund_instrument(&conn, "inst-const", "000198", "天弘余额宝");
+    mark_constant(&conn, "inst-const");
+
+    let trend = trend::query_instrument_price_trend_on(
+        &conn,
+        "inst-const",
+        &TrendRange {
+            start_date: Some("2026-02-04".into()),
+            end_date: Some("2026-02-20".into()),
+        },
+        fixed_today(),
+    )
+    .unwrap();
+    let dates: Vec<&str> = trend.points.iter().map(|p| p.date.as_str()).collect();
+    // 含端点的周裁剪：起点周的采样日（02-08）落在区间内；终点周（02-16 起）
+    // 的采样日被区间终点（02-20）夹住，不越过终点。
+    assert_eq!(dates, ["2026-02-08", "2026-02-15", "2026-02-20"]);
+}
+
+#[test]
+fn portfolio_trend_includes_constant_fund_contribution_without_price_rows() {
+    let conn = open();
+    seed_account(&conn, "acc-const", "货基户", "investment", "CNY", 0);
+    insert_fund_instrument(&conn, "inst-const", "000198", "天弘余额宝");
+    mark_constant(&conn, "inst-const");
+    // 02-05（周三）申购 1000 份：组合市值 = 时点份额 × 常量 1.0000。
+    let mut buy = make_trade_input(
+        TransactionKind::Buy,
+        "acc-const",
+        "inst-const",
+        1000.0,
+        10_000,
+        "2026-02-05",
+    );
+    // 基金申赎以确认单金额为权威（金额必填、单价反算不可携带）：
+    // 1000 份 × 1.0000 = 1000 元。
+    buy.amount_cents = 100_000;
+    buy.price_cents = None;
+    create_transaction_internal(&conn, buy).unwrap();
+    // 无任何价格历史行——组合走势不因「只有恒定标的」而空。
+
+    let trend = trend::query_portfolio_value_trend_on(&conn, &TrendRange::default(), fixed_today())
+        .unwrap();
+    let values: Vec<(String, i64)> = trend
+        .points
+        .iter()
+        .map(|p| (p.date.clone(), p.market_value_cents))
+        .collect();
+    // 建档锚点周起每周一条：买入生效（02-08 采样日 ≥ 02-05）前为 0，之后
+    // 1000 份 × 1.0000 = 1000 元 = 100000 分。
+    assert_eq!(
+        values,
+        [
+            ("2025-12-29".to_string(), 0),
+            ("2026-01-05".to_string(), 0),
+            ("2026-01-12".to_string(), 0),
+            ("2026-01-19".to_string(), 0),
+            ("2026-01-26".to_string(), 0),
+            ("2026-02-02".to_string(), 100_000),
+            ("2026-02-09".to_string(), 100_000),
+            ("2026-02-16".to_string(), 100_000),
+            ("2026-02-23".to_string(), 100_000),
+            ("2026-03-02".to_string(), 100_000),
+            ("2026-03-09".to_string(), 100_000),
+        ]
+    );
+}
+
+#[test]
+fn portfolio_trend_constant_fund_ignores_flat_history_rows() {
+    let conn = open();
+    seed_account(&conn, "acc-const", "货基户", "investment", "CNY", 0);
+    insert_fund_instrument(&conn, "inst-const", "000198", "天弘余额宝");
+    mark_constant(&conn, "inst-const");
+    let mut buy = make_trade_input(
+        TransactionKind::Buy,
+        "acc-const",
+        "inst-const",
+        1000.0,
+        10_000,
+        "2026-02-05",
+    );
+    // 基金申赎以确认单金额为权威（金额必填、单价反算不可携带）：
+    // 1000 份 × 1.0000 = 1000 元。
+    buy.amount_cents = 100_000;
+    buy.price_cents = None;
+    create_transaction_internal(&conn, buy).unwrap();
+    // 存量平坦序列（值偏离常量）：既不能被消费（错值），也不能与常量合成行
+    // 叠加（双重计入）。
+    seed_price_history(&conn, "ph-flat", "inst-const", "2026-02-16", 20_000, "CNY");
+
+    let trend = trend::query_portfolio_value_trend_on(&conn, &TrendRange::default(), fixed_today())
+        .unwrap();
+    let values: Vec<(String, i64)> = trend
+        .points
+        .iter()
+        .map(|p| (p.date.clone(), p.market_value_cents))
+        .collect();
+    assert_eq!(
+        values,
+        [
+            ("2025-12-29".to_string(), 0),
+            ("2026-01-05".to_string(), 0),
+            ("2026-01-12".to_string(), 0),
+            ("2026-01-19".to_string(), 0),
+            ("2026-01-26".to_string(), 0),
+            ("2026-02-02".to_string(), 100_000),
+            ("2026-02-09".to_string(), 100_000),
+            ("2026-02-16".to_string(), 100_000,),
+            ("2026-02-23".to_string(), 100_000),
+            ("2026-03-02".to_string(), 100_000),
+            ("2026-03-09".to_string(), 100_000),
+        ],
+        "平坦行（20000）既不被消费也不叠加，恒定标的按常量 1.0000 出数"
+    );
+}

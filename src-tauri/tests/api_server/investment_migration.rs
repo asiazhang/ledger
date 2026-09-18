@@ -214,6 +214,7 @@ async fn test_fund_migration_chain_lookup_create_batch_import_wired() {
             name: "华夏成长混合",
             fund_class: "混合型-灵活",
             nav: Some((1.65, "2026-06-30")),
+            money_fund: false,
         },
     )]);
     let (app, conn, calls) = setup_app_with_fund_stub(hits);

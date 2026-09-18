@@ -931,6 +931,20 @@ impl AsOfValues {
                 );
             }
         }
+        // 恒定标的覆盖（ADR-0126 决策 6）：常量价对任意截止日成立，周键取截止
+        // 日所在自然周；写覆盖保证存量平坦序列（若有）不再被消费——边界市值
+        // 三处（区间首日 / 区间末日 / 起算日折入）共用本装载器，取值口径单点。
+        for constant in crate::constant_price::load_constant_prices(conn)? {
+            latest_price.insert(
+                constant.instrument_id,
+                (
+                    as_of.to_string(),
+                    crate::constant_price::week_monday(as_of).to_string(),
+                    constant.price_cents,
+                    constant.currency_code,
+                ),
+            );
+        }
         let mut fx: HashMap<(String, String), HashMap<String, f64>> = HashMap::new();
         {
             let mut stmt = conn

@@ -27,6 +27,7 @@ fn quote(code: &str, name: &str, fund_class: &str, nav: Option<(f64, &str)>) -> 
         kind_hint: None,
         fund_class: Some(fund_class.to_string()),
         nav_date: nav.map(|(_, date)| date),
+        constant_unit_price_cents: None,
     }
 }
 

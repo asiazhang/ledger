@@ -52,7 +52,7 @@ use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 
 use super::channels::{FetchFuture, SyncFetchChannels};
 use super::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
-use super::fund_nav::{LsjzPage, NavPoint, NavQuery};
+use super::fund_nav::{FullSeries, LsjzPage, NavQuery};
 use super::http::{KlineBar, secid_prefix};
 use super::incremental::{
     SyncInstrument, backfill_fx_pairs, beijing_today, downsample_weekly, quote_code, week_monday,
@@ -115,7 +115,7 @@ struct BackfillItem {
 fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
     let today = beijing_today();
     let sql = format!(
-        "SELECT i.id, i.symbol, i.market, i.currency_code, i.instrument_type, \
+        "SELECT i.id, i.symbol, i.market, i.currency_code, i.instrument_type, i.constant_unit_price, \
                 MAX(ph.trade_date) AS latest_history, \
                 MAX(mp.nav_date) AS watermark, \
                 CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested \
@@ -133,18 +133,28 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
             row.get::<_, String>(2)?,
             row.get::<_, String>(3)?,
             row.get::<_, InstrumentType>(4)?,
-            row.get::<_, Option<String>>(5)?,
+            row.get::<_, Option<i64>>(5)?,
             row.get::<_, Option<String>>(6)?,
-            row.get::<_, i64>(7)? != 0,
+            row.get::<_, Option<String>>(7)?,
+            row.get::<_, i64>(8)? != 0,
         ))
     })?;
     let mut queue = Vec::new();
     for row in rows {
-        let (instrument_id, symbol, market, currency, kind, latest_history, watermark, _invested) =
-            row?;
+        let (
+            instrument_id,
+            symbol,
+            market,
+            currency,
+            kind,
+            constant_unit_price,
+            latest_history,
+            watermark,
+            _invested,
+        ) = row?;
         // 价格通道判定消费投资域单点（issue #1060），与标的读投影同源；
         // _invested 已在 SQL 层的 ORDER BY 完成消费（持仓优先），不再取用。
-        let channel = derive_price_channel(kind, &market, &symbol);
+        let channel = derive_price_channel(kind, &market, &symbol, constant_unit_price);
         let target = match channel {
             PriceChannel::Quote => {
                 let Some(prefix) = secid_prefix(&market) else {
@@ -175,6 +185,12 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
                 }
                 BackfillTarget::FundNav
             }
+            // 恒定价格通道不进队列（ADR-0126 决策 4/6）：它的走势由读侧按常量
+            // 合成，历史行不带来任何信息；且打标后净值水位已清空（水位语义
+            // 不适用），仍按净值通道收集会让它每窗口整根重采。逐只刷新路径的
+            // 请求本票有意保留（打标收敛，见 refresh_one_fund_price）；队列与
+            // 逐只刷新的完整收窄在 #1451。
+            PriceChannel::Constant => continue,
             // 手动报价与无来源通道没有可采集的历史序列，不进队列。
             PriceChannel::Manual | PriceChannel::None => continue,
         };
@@ -343,7 +359,7 @@ where
     K: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
     X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
     N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
-    S: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
+    S: FnMut(&str) -> FetchFuture<FullSeries> + Send,
     P: FnMut(SyncProgress) + Send,
 {
     let queue = session.with_connection(collect_backfill_queue).await?;

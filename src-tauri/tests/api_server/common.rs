@@ -111,11 +111,14 @@ pub(crate) fn setup_app_with_emitter(
     build_test_app(None, None, Some(emitter))
 }
 
-/// 东财基金详情桩的返回形态（命中）：名称 / 东财分类 / 可选（净值，净值日期）。
+/// 东财基金详情桩的返回形态（命中）：名称 / 东财分类 / 可选（净值，净值日期）/
+/// 可选货基信号（恒定价格标的的建档确认源，ADR-0126）。
 pub(crate) struct FundStubHit {
     pub name: &'static str,
     pub fund_class: &'static str,
     pub nav: Option<(f64, &'static str)>,
+    /// 货基信号（搜索索引类型码确认的恒定价格标的）：桩命中时随 Quote 带回。
+    pub money_fund: bool,
 }
 
 /// 构造可注入的东财基金详情桩：命中表驱动（`hits` 内的代码按表返回；表外代码
@@ -141,6 +144,7 @@ pub(crate) fn fund_fetch_stub(
                 kind_hint: None,
                 fund_class: Some(hit.fund_class.to_string()),
                 nav_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
+                constant_unit_price_cents: hit.money_fund.then(|| price_value_to_cents(1.0)),
             }),
             None => Err(AppError::codedp(
                 "sync.fund-not-found",
@@ -203,6 +207,8 @@ pub(crate) fn stock_fetch_stub(
                 kind_hint: Some(hit.kind_hint),
                 fund_class: None,
                 nav_date: None,
+                // 场内通道无恒定价格信号（ADR-0126）。
+                constant_unit_price_cents: None,
             }),
             None => Err(AppError::codedp(
                 "sync.stock-not-found",

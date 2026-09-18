@@ -131,7 +131,8 @@
     "emptyBackfillRunning": "Backfilling price history; the trend will appear once it finishes.",
     "emptyBackfillProgress": "Backfilling price history ({done}/{total}); the trend will appear once it finishes.",
     "emptyBackfillRetryPending": "Backfill has not succeeded yet; it will retry automatically later.",
-    "emptyBackfillNoData": "No collectable price history (unknown code, no NAV published yet, or delisted)."
+    "emptyBackfillNoData": "No collectable price history (unknown code, no NAV published yet, or delisted).",
+    "constantNote": "This instrument has a constant unit NAV (always 1.0000): the price never changes, and returns accrue as share conversions (shares grow, NAV stays flat)."
   },
   "form": {
     "amount": "Amount",
@@ -206,6 +207,7 @@
   "priceChannel": {
     "quote": "Quote",
     "fund_nav": "NAV",
+    "constant": "Constant Price",
     "manual": "Manual Price",
     "none": "No Source"
   },

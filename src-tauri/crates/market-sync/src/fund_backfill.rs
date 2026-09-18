@@ -8,13 +8,16 @@
 
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
+use ledger_investment::PriceChannel;
+use ledger_investment::constant_price::{ensure_constant_base_price, mark_constant_unit_price};
 use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
 };
 
 use super::channels::FetchFuture;
 use super::fund_nav::{
-    LsjzPage, NavPages, NavPoint, NavQuery, fetch_nav_pages, nav_window, read_fund_watermark,
+    FullSeries, LsjzPage, MONEY_FUND_UNIT_NAV, NavPages, NavQuery, fetch_nav_pages, nav_window,
+    read_fund_watermark,
 };
 use super::http::KlineBar;
 use super::session::ScopedSession;
@@ -66,7 +69,7 @@ where
     // 作用域会话接缝（issue #1275）：本函数读写库的唯一通道，签名层面取不到连接。
     Q: ScopedSession,
     N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
-    S: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
+    S: FnMut(&str) -> FetchFuture<FullSeries> + Send,
     P: FnMut(u64, u64) + Send,
 {
     let today = super::incremental::beijing_today();
@@ -89,10 +92,11 @@ where
     // 整只基金的历史单位净值，本地裁剪到与分页通道相同的近两年窗口后再用。抓取
     // 失败 / 解析不出序列 / 窗口内无点都 fail-closed 回退分页通道，不静默丢数据；
     // 已有历史序列的增量不触碰本通道（日常增量仍走 lsjz）。
-    let full_points = if first_fill {
+    let full = if first_fill {
         match fetch_nav_full_series(&fund.symbol).await {
-            Ok(points) => {
-                let clipped: Vec<NavPoint> = points
+            Ok(series) => {
+                let clipped: Vec<super::fund_nav::NavPoint> = series
+                    .points
                     .into_iter()
                     .filter(|p| {
                         p.date.as_str() >= start.as_str() && p.date.as_str() <= end.as_str()
@@ -105,7 +109,10 @@ where
                     );
                     None
                 } else {
-                    Some(clipped)
+                    Some(FullSeries {
+                        points: clipped,
+                        money_fund: series.money_fund,
+                    })
                 }
             }
             Err(error) => {
@@ -121,11 +128,12 @@ where
     };
 
     // 单请求通道命中即免去分页；否则回退既有分页通道（首刷近两年 / 增量水位次日）。
-    let collected = match full_points {
-        Some(points) => NavPages {
-            points,
+    let collected = match full {
+        Some(series) => NavPages {
+            points: series.points,
             blocked: false,
             truncated: false,
+            money_fund: series.money_fund,
         },
         None => {
             fetch_nav_pages(
@@ -139,6 +147,41 @@ where
             .await?
         }
     };
+
+    // 恒定价格标的（ADR-0126 决策 3/5/6）：数据源自报货基口径（可信页自报或
+    // 数据文件形态）即回填恒定单位价格标记（单向，幂等；响应缺信号不走此路、
+    // 不清空既有标记）。确认即收尾——现价缓存保留建档一条（行缺失时落一条
+    // 1.0000、净值日期空），不落历史周点、不更新现价：读侧自此按常量取值，
+    // 平坦序列不再生长。队列判据已在收集侧排除恒定标的，能到这里的恒定通道
+    // 行只剩「排队后才被并行刷新打标」的竞态窗，同一处置。
+    if collected.money_fund || fund.channel == PriceChannel::Constant {
+        let instrument_id = fund.instrument_id.clone();
+        let currency = fund.currency.clone();
+        let cents = price_value_to_cents(MONEY_FUND_UNIT_NAV);
+        let priced_at = collected
+            .points
+            .iter()
+            .map(|p| p.date.clone())
+            .max()
+            .unwrap_or_else(|| today.format("%Y-%m-%d").to_string());
+        let written = session
+            .with_connection(move |conn| {
+                mark_constant_unit_price(conn, &instrument_id, cents)?;
+                ensure_constant_base_price(
+                    conn,
+                    &instrument_id,
+                    cents,
+                    &currency,
+                    &priced_at,
+                    EASTMONEY_PRICE_SOURCE,
+                )
+            })
+            .await?;
+        return Ok(BackfillOutcome {
+            written,
+            inconclusive: false,
+        });
+    }
 
     if collected.points.is_empty() {
         if collected.blocked {

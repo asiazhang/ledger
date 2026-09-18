@@ -12,8 +12,10 @@ use std::collections::{BTreeMap, HashMap};
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
+use super::constant_price::{
+    ConstantPriceValue, constant_for_instrument, load_constant_prices, weekly_samples,
+};
 use super::holdings::holdings_as_of;
-
 use super::model::{
     InstrumentPriceTrend, PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, TrendRange,
 };
@@ -50,12 +52,41 @@ fn validate_range(range: &TrendRange) -> Result<()> {
 }
 
 /// 单标的走势：PriceHistory 直出，区间裁剪（含端点），按采样日升序。
+/// 恒定价格标的例外：读侧按常量在响应内合成（ADR-0126 决策 6），不读价格
+/// 历史——历史表不为它落行，存量平坦序列也不再被消费。
 pub fn query_instrument_price_trend(
     conn: &Connection,
     instrument_id: &str,
     range: &TrendRange,
 ) -> Result<InstrumentPriceTrend> {
+    query_instrument_price_trend_on(
+        conn,
+        instrument_id,
+        range,
+        super::staleness::beijing_today(),
+    )
+}
+
+/// [`query_instrument_price_trend`] 的可注入形态（时钟是测试的行为输入，先例：
+/// `instrument_price_staleness_on`）：常量合成的序列右界由「今天」夹出。
+pub fn query_instrument_price_trend_on(
+    conn: &Connection,
+    instrument_id: &str,
+    range: &TrendRange,
+    today: chrono::NaiveDate,
+) -> Result<InstrumentPriceTrend> {
     validate_range(range)?;
+
+    // 恒定价格标的：按区间周键在响应内合成常量序列（ADR-0126 决策 6）——
+    // 序列下界取建档锚点与区间起点的较晚者，上界夹到区间终点与今天。
+    if let Some(constant) = constant_for_instrument(conn, instrument_id)? {
+        let points = synthesize_constant_points(&constant, range, today);
+        return Ok(InstrumentPriceTrend {
+            instrument_id: instrument_id.to_string(),
+            points,
+            backfill: None,
+        });
+    }
 
     let mut conditions = vec!["instrument_id=?1".to_string()];
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(instrument_id.to_string())];
@@ -103,6 +134,31 @@ pub fn query_instrument_price_trend(
     })
 }
 
+/// 恒定标的的单标的走势合成：序列下界取建档锚点与区间起点的较晚者，上界夹
+/// 到区间终点与今天；每周一条常量点（价格与币种逐周不变）。区间为空即无点
+/// ——空态判定对恒定标的不给补全三态（无空态可言，见 backfill 模块判据）。
+fn synthesize_constant_points(
+    constant: &ConstantPriceValue,
+    range: &TrendRange,
+    today: chrono::NaiveDate,
+) -> Vec<PriceTrendPoint> {
+    let parse = |raw: &Option<String>| {
+        raw.as_deref()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
+    };
+    let start =
+        parse(&range.start_date).map_or(constant.anchor_date, |s| s.max(constant.anchor_date));
+    let end = parse(&range.end_date).unwrap_or(today);
+    weekly_samples(start, end, today)
+        .into_iter()
+        .map(|(_, trade_date)| PriceTrendPoint {
+            date: trade_date,
+            price_cents: constant.price_cents,
+            currency_code: constant.currency_code.clone(),
+        })
+        .collect()
+}
+
 /// 区间内的一条价格历史周点行。
 struct PriceRow {
     instrument_id: String,
@@ -118,15 +174,35 @@ struct PriceRow {
 /// 委托时点持仓接缝 [`holdings_as_of`]——buy/sell 口径单点在推算模块，本函数
 /// 只负责取数、折算与组装（数量按交易日取、汇率按周键取，双时间键契约
 /// 显式分界）；缺价格或缺同期汇率的标的该周跳过，全周无有效贡献则该周无点。
+/// 恒定价格标的（ADR-0126 决策 6）：历史表无行，市值 = 时点份额 × 常量在
+/// 响应内按区间周键合成，与真实价格行同路聚合——库里不落虚拟行，存量平坦
+/// 序列不再参与。
 pub fn query_portfolio_value_trend(
     conn: &Connection,
     range: &TrendRange,
+) -> Result<PortfolioValueTrend> {
+    query_portfolio_value_trend_on(conn, range, super::staleness::beijing_today())
+}
+
+/// [`query_portfolio_value_trend`] 的可注入形态（时钟是测试的行为输入，先例：
+/// `instrument_price_staleness_on`）：常量合成的序列右界由「今天」夹出。
+pub fn query_portfolio_value_trend_on(
+    conn: &Connection,
+    range: &TrendRange,
+    today: chrono::NaiveDate,
 ) -> Result<PortfolioValueTrend> {
     validate_range(range)?;
     let native = default_currency_code(conn)?;
 
     // 1. 区间内价格历史周点（week_start 为 STORED 生成列，直读即为周键）。
-    let mut conditions: Vec<String> = vec!["1=1".to_string()];
+    //    恒定价格标的排除（ADR-0126 决策 6）：它的取值由下方常量合成承担，
+    //    存量平坦序列不再参与聚合（否则与常量行双重计入）。
+    let mut conditions: Vec<String> = vec![
+        "1=1".to_string(),
+        "instrument_id NOT IN \
+         (SELECT id FROM instruments WHERE constant_unit_price IS NOT NULL)"
+            .to_string(),
+    ];
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(start) = &range.start_date {
         params.push(Box::new(start.clone()));
@@ -156,6 +232,31 @@ pub fn query_portfolio_value_trend(
         })?;
         for row in rows {
             price_rows.push(row?);
+        }
+    }
+
+    // 1.5 恒定标的贡献（ADR-0126 决策 6）：市值 = 时点份额 × 常量，响应内
+    //     按区间周键合成——序列下界取建档锚点与区间起点的较晚者、上界夹到
+    //     区间终点与今天；合成行与真实价格行同路聚合（数量、汇率、周分组
+    //     全部共用同一段代码）。库里不落虚拟行。
+    {
+        let parse = |raw: &Option<String>| {
+            raw.as_deref()
+                .and_then(|s| NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
+        };
+        let range_start = parse(&range.start_date);
+        let range_end = parse(&range.end_date).unwrap_or(today);
+        for constant in load_constant_prices(conn)? {
+            let start = range_start.map_or(constant.anchor_date, |s| s.max(constant.anchor_date));
+            for (week_start, trade_date) in weekly_samples(start, range_end, today) {
+                price_rows.push(PriceRow {
+                    instrument_id: constant.instrument_id.clone(),
+                    trade_date,
+                    week_start,
+                    price_cents: constant.price_cents,
+                    currency_code: constant.currency_code.clone(),
+                });
+            }
         }
     }
 
