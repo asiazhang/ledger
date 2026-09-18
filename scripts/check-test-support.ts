@@ -36,11 +36,14 @@
 // 业务表（transactions/categories/budgets 等）的 INSERT 不在本守门范围——那是
 // 公开写入口纪律（测试层显式例外逐个登记）的辖域，不是建库/种子工厂的。
 //
-// 规则 3（禁默认时刻字面量）：`2026-01-01T00:00:00Z`（FIXED_NOW 现值）出现在
-// test_support 之外的测试代码即红——夹具簿记戳由工厂种子内部发放，调用点零字面量。
-// 域时刻字面量合法（时间推进是测试的行为输入，ADR-0084 决策 5），不在扫描范围；
-// 文本级无法分辨意图，恰为该值的字面量一律计入（如实际作域时刻用，迁移票缩减
-// 白名单时改写为其他值或引用常量）；tests/e2e 的例外见下方已登记例外表。
+// 规则 3（禁默认时刻字面量）：固定时刻登记处（FIXED_NOW 住址，ADR-0084 决策 5）
+// 提取的现值出现在 test_support 之外的测试代码即红——夹具簿记戳由工厂种子内部发
+// 放，调用点零字面量。时刻值单一来源 = 登记处现值提取（先例：同脚本规则 2 的禁
+// 用种子表清单自 seed.rs 提取，#1468 归一双份事实源）：登记处改值禁令自动跟随，
+// 脚本内不留硬编码时刻快照；登记处缺失或提不出任何现值即 fail loud，禁令不静默
+// 失效。域时刻字面量合法（时间推进是测试的行为输入，ADR-0084 决策 5），不在扫描
+// 范围；文本级无法分辨意图，恰为现值的字面量一律计入（如实际作域时刻用，改写为
+// 其他值或引用常量）；tests/e2e 的例外见下方已登记例外表。
 //
 // 规则 4（禁自建通道线格式，issue #956）：测试代码不得手工构造通道段/清单
 //（`SegmentEntry {` / `ChannelManifest {` 字面构造），也不得在**引用了通道面**
@@ -97,7 +100,11 @@ import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
 
-const DEFAULT_SRC_TAURI = join(fileURLToPath(import.meta.url), '..', '..', 'src-tauri')
+/** 规则 3 的固定时刻登记处住址（相对 src-tauri 根，单一来源）：main 从该住址提取
+ *  固定时刻常量现值作禁令清单（先例：同脚本规则 2 禁用种子表清单自 seed.rs 登记处
+ *  提取），登记处改值禁令自动跟随；配套测试夹具自此导出常量派生登记处文件位置，
+ *  无双源漂移（#1468）。 */
+export const FIXED_NOW_REGISTRY_REL = 'src/test_support/mod.rs'
 
 function fail(message: string): never {
   console.error(`✗ Rust 测试守门：${message}`)
@@ -216,8 +223,8 @@ function extractCfgTestRegions(masked: string): Region[] {
 // 规则 1：裸标识符匹配（任意限定路径、裸调用与 use 引入、测试侧平行建库入口
 // 如 DbState::open_in_memory 与方法形态全部命中；\b 边界排除更长标识符的子串）。
 const RULE1_IDENTIFIERS = /\b(open_in_memory|init_db)\b/g
-// 规则 3：FIXED_NOW 现值（字面量形态，含于字符串内）。
-const RULE3_LITERAL = '2026-01-01T00:00:00Z'
+// 规则 3：固定时刻登记处 pub &str 常量声明（现值提取用；禁令值不在脚本内快照）。
+const RULE3_DECLARATION = /pub\s+const\s+\w+\s*:\s*&str\s*=\s*"([^"]+)"/g
 // 规则 4：手工构造通道段/清单（字面构造形态），与自建摘要实现（裸标识符）。
 // 段/清单构造按 `Type {`（结构体字面量）匹配：类型名单独出现（如 `use ...SegmentEntry`）
 // 不命中——仅当文件里真的在拼字面量时才红。
@@ -263,7 +270,12 @@ interface Hit { rule: Rule; line: number }
 const RULES = [1, 2, 3, 4] as const
 type Rule = (typeof RULES)[number]
 
-function findHits(masked: string, lineOf: (offset: number) => number, bannedTables: string[]): Hit[] {
+function findHits(
+  masked: string,
+  lineOf: (offset: number) => number,
+  bannedTables: string[],
+  fixedNowValues: string[],
+): Hit[] {
   const hits: Hit[] = []
   RULE1_IDENTIFIERS.lastIndex = 0
   let m: RegExpExecArray | null
@@ -273,10 +285,12 @@ function findHits(masked: string, lineOf: (offset: number) => number, bannedTabl
     let m2: RegExpExecArray | null
     while ((m2 = re2.exec(masked))) hits.push({ rule: 2, line: lineOf(m2.index) })
   }
-  let at = masked.indexOf(RULE3_LITERAL)
-  while (at !== -1) {
-    hits.push({ rule: 3, line: lineOf(at) })
-    at = masked.indexOf(RULE3_LITERAL, at + RULE3_LITERAL.length)
+  for (const value of fixedNowValues) {
+    let at = masked.indexOf(value)
+    while (at !== -1) {
+      hits.push({ rule: 3, line: lineOf(at) })
+      at = masked.indexOf(value, at + value.length)
+    }
   }
   for (const re of RULE4_LITERAL_CONSTRUCTIONS) {
     re.lastIndex = 0
@@ -349,26 +363,49 @@ function extractSeedTables(seedRsPath: string): string[] {
   return tables
 }
 
+/** 规则 3 禁令清单单一来源：固定时刻登记处的 pub &str 常量现值提取（#1468）——
+ *  登记处文件即固定时刻登记面（FIXED_NOW 唯一住址，ADR-0084 决策 5），其 pub 字符
+ *  串常量闭集就是禁令值；脚本内不留硬编码时刻快照，登记处改值禁令自动跟随。
+ *  在注释掩码后的文本上提取（doc 注释里的声明形状不成禁令值）；登记处缺失或提
+ *  不出任何现值即 fail loud，禁令不静默失效（先例：上方禁用种子表清单提取）。 */
+function extractFixedNowValues(registryPath: string): string[] {
+  if (!existsSync(registryPath)) {
+    fail(`固定时刻登记处缺失：${registryPath}（FIXED_NOW 唯一住址，ADR-0084 决策 5）`)
+  }
+  const masked = maskComments(readFileSync(registryPath, 'utf8'))
+  const values = [...new Set([...masked.matchAll(RULE3_DECLARATION)].map((m) => m[1]))]
+  if (values.length === 0) {
+    fail(`固定时刻登记处 ${registryPath} 提不出任何 pub const &str 现值（登记处漂移？）`)
+  }
+  return values
+}
+
 function main(): void {
-  const srcTauri = process.argv[2] ? resolve(process.argv[2]) : DEFAULT_SRC_TAURI
+  // 默认住址在 main 内求值而非模块加载期：vitest 转换下 import.meta.url 非 file:
+  // scheme（run-gate-script.test-helper.ts 头注同款观察），加载期求值会使包装测试
+  // 无法 import 本模块的导出常量（#1468 夹具派生接缝）。
+  const srcTauri = process.argv[2]
+    ? resolve(process.argv[2])
+    : join(fileURLToPath(import.meta.url), '..', '..', 'src-tauri')
   const srcDir = join(srcTauri, 'src')
   const testsDir = join(srcTauri, 'tests')
   if (!existsSync(srcDir)) fail(`src-tauri 目录不存在：${srcTauri}`)
 
   const bannedTables = extractSeedTables(join(srcDir, 'test_support', 'seed.rs'))
+  const fixedNowValues = extractFixedNowValues(join(srcTauri, FIXED_NOW_REGISTRY_REL))
 
   const files = [
     ...walkRustFiles(srcDir),
     ...(existsSync(testsDir) ? walkRustFiles(testsDir) : []),
     ...memberCrateRustRoots(srcTauri).flatMap((dir) => walkRustFiles(dir)),
   ]
-  const { countByFile, hits } = scanFiles(files, srcTauri, bannedTables)
+  const { countByFile, hits } = scanFiles(files, srcTauri, bannedTables, fixedNowValues)
   const scanned = new Set(files.map((f) => relative(srcTauri, f).split('\\').join('/')))
   const problems = violations(countByFile, hits, scanned)
   if (problems.length > 0) {
     console.error(
       `✗ Rust 测试守门：发现 ${problems.length} 处违规（纯禁令，无白名单；` +
-        `禁用种子表：${bannedTables.join(' ')}）\n` +
+        `禁用种子表：${bannedTables.join(' ')}；禁用时刻值：${fixedNowValues.join(' ')}）\n` +
         problems.join('\n') +
         `\n建库/种子/断言唯一入口：src-tauri/src/test_support/（spec #728 / issue #751，ADR-0084）`,
     )
@@ -378,6 +415,7 @@ function main(): void {
   console.log(
     `✅ Rust 测试守门通过（纯禁令：白名单机制已随 #758 收口移除；` +
       `禁用种子表 ${bannedTables.length} 张：${bannedTables.join(' ')}；` +
+      `禁用时刻值 ${fixedNowValues.length} 个：${fixedNowValues.join(' ')}；` +
       `tests/e2e 已登记例外 ${E2E_REGISTERED_EXCEPTIONS.length} 条，严格相等校验）`,
   )
 }
@@ -387,6 +425,7 @@ function scanFiles(
   files: string[],
   srcTauri: string,
   bannedTables: string[],
+  fixedNowValues: string[],
 ): { countByFile: Map<string, Map<Rule, number>>; hits: Array<{ rel: string } & Hit> } {
   const countByFile = new Map<string, Map<Rule, number>>()
   const hits: Array<{ rel: string } & Hit> = []
@@ -415,7 +454,7 @@ function scanFiles(
     for (const region of regions) {
       const text = masked.slice(region.start, region.end)
       // 行号按原文计算：masked 与原文等长等换行，region 起点即原文偏移
-      for (const hit of findHits(text, (o) => lineOf(region.start + o), bannedTables)) {
+      for (const hit of findHits(text, (o) => lineOf(region.start + o), bannedTables, fixedNowValues)) {
         // 规则豁免：test_support 是工厂本体，四条规则全部合法
         if (underTestSupport) continue
         if (inE2e && hit.rule === 1) continue // 规则 1 不辖 e2e（分层形态，文件头范围边界）

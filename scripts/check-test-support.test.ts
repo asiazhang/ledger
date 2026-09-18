@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { FIXED_NOW_REGISTRY_REL } from './check-test-support.ts'
 import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 
 // 被测对象是仓库工具脚本 scripts/check-test-support.ts（Rust 测试守门，issue #752 落地 /
@@ -11,7 +12,9 @@ import { gateScript, runGateScript } from './run-gate-script.test-helper.ts'
 // 按测试决策只测外部可观察结果——进程退出码与输出，通过位置参数把扫描目标指向
 // 临时夹具目录（形状同构 src-tauri：src/ + tests/）。纯禁令下无白名单常量可注入，
 // 全部判定均可经进程接缝覆盖，无需静态导入例外（check-structure.test.ts 先例随
-// 白名单机制一并移除，#758 收口）。
+// 白名单机制一并移除，#758 收口）。规则 3 的固定时刻登记处夹具自脚本导出的
+// FIXED_NOW_REGISTRY_REL 派生登记处位置（#1468：夹具与守门共亢单一来源，无双源
+// 漂移；先例 check-test-stubs「命令清单以登记处为单一来源」用例）。
 const script = gateScript('check-test-support.ts')
 const run = (args: string[] = []) => runGateScript(script, args)
 
@@ -20,20 +23,38 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
 })
 
+// 规则 3 夹具登记处现值：刻意取远离任何真实/历史快照的任意值——夹具登记处是
+// 禁令的唯一事实源，值本身不重要；若提取逻辑被删改回硬编码快照，本值不再被
+// 命中，规则 3 断言即红（ADR-0087 删除即变红）。
+const FIXTURE_NOW = '2031-03-04T05:06:07Z'
+// 「登记处改值」用例的新值：与现值不同，锚定禁令跟随登记处而非脚本内快照。
+const FIXTURE_NOW_REVISED = '2032-08-09T10:11:12Z'
+
+/** 登记处夹具行：声明形状与真实 src/test_support/mod.rs 的 FIXED_NOW 同构。 */
+const fixedNowDecl = (value: string) => `pub const FIXED_NOW: &str = "${value}";`
+
 /** 工厂种子登记处夹具：禁用表集合自 INSERT INTO 提取（单一事实源的形状同构）。 */
 const SEED_RS = [
   '// 测试夹具：统一测试数据库工厂种子登记处（形状同构 src/test_support/seed.rs）',
-  'pub const FIXED_NOW: &str = "2026-01-01T00:00:00Z";',
   'pub fn open() { let _ = "INSERT INTO accounts"; }',
   'pub fn seed_instrument() { let _ = "INSERT INTO instruments"; }',
 ].join('\n')
 
-/** 建夹具目录（形状同构 src-tauri：src/test_support/seed.rs 必在）。返回目录路径。 */
-function makeFixture(files: Record<string, string>): string {
+/** 建夹具目录（形状同构 src-tauri：src/test_support/{mod.rs,seed.rs} 必在，登记处
+ *  住址自脚本导出常量派生）。registry 缺省写现值登记处；传字符串模拟登记处改值；
+ *  传 null 模拟登记处缺失（fail loud 用例）。返回目录路径。 */
+function makeFixture(
+  files: Record<string, string>,
+  registry: string | null = fixedNowDecl(FIXTURE_NOW),
+): string {
   const dir = mkdtempSync(join(tmpdir(), 'check-test-support-'))
   tempDirs.push(dir)
   mkdirSync(join(dir, 'src', 'test_support'), { recursive: true })
   writeFileSync(join(dir, 'src', 'test_support', 'seed.rs'), SEED_RS)
+  if (registry !== null) {
+    mkdirSync(dirname(join(dir, FIXED_NOW_REGISTRY_REL)), { recursive: true })
+    writeFileSync(join(dir, FIXED_NOW_REGISTRY_REL), registry)
+  }
   for (const [name, content] of Object.entries(files)) {
     mkdirSync(dirname(join(dir, name)), { recursive: true })
     writeFileSync(join(dir, name), content)
@@ -58,7 +79,7 @@ describe('check-test-support（Rust 测试守门，纯禁令）', () => {
         '  let mut c = open_in_memory().unwrap();',
         '  init_db(&mut c).unwrap();',
         '  let sql = "INSERT INTO accounts (id) VALUES (1)";',
-        '  let stamp = "2026-01-01T00:00:00Z";',
+        `  let stamp = "${FIXTURE_NOW}";`,
         '}',
       ].join('\n'),
       // 平行建库入口：DbState::open_in_memory 内部即两行序，同样命中（裸标识符匹配）
@@ -98,9 +119,10 @@ describe('check-test-support（Rust 测试守门，纯禁令）', () => {
 
   it('合法形态不误报：工厂本体、域薄皮种子 SQL、域时刻字面量、db 产品代码', () => {
     const dir = makeFixture({
-      // 工厂本体：建库 + 种子 SQL + FIXED_NOW 全部合法（四条规则豁免）
+      // 工厂本体：建库 + 种子 SQL 全部合法（四条规则豁免；登记处 FIXED_NOW 由
+      // makeFixture 默认提供，豁免同证）
       'src/test_support/mod.rs': [
-        'pub const FIXED_NOW: &str = "2026-01-01T00:00:00Z";',
+        fixedNowDecl(FIXTURE_NOW),
         'fn t() { db::open_in_memory(); db::init_db(); }',
         'fn seed() { let _ = "INSERT INTO accounts (id) VALUES (1)"; }',
       ].join('\n'),
@@ -123,7 +145,7 @@ describe('check-test-support（Rust 测试守门，纯禁令）', () => {
       'src/ledger/core.rs': [
         'fn open_db() { crate::db::open_in_memory(); crate::db::init_db(); }',
         'fn seed() { let _ = "INSERT INTO instruments (id) VALUES (1)"; }',
-        'const T0: &str = "2026-01-01T00:00:00Z";',
+        `const T0: &str = "${FIXTURE_NOW}";`,
         '',
         '#[cfg(test)]',
         'mod tests {',
@@ -132,7 +154,7 @@ describe('check-test-support（Rust 测试守门，纯禁令）', () => {
         '    let mut c = crate::db::open_in_memory();',
         '    crate::db::init_db(&mut c);',
         '    let _ = r#"INSERT INTO instruments"#;',
-        '    let stamp = "2026-01-01T00:00:00Z";',
+        `    let stamp = "${FIXTURE_NOW}";`,
         '  }',
         '}',
       ].join('\n'),
@@ -176,7 +198,7 @@ describe('check-test-support（Rust 测试守门，纯禁令）', () => {
       '  let mut c = crate::db::open_in_memory();',
       '  crate::db::init_db(&mut c);',
       '  let _ = "INSERT INTO instruments (id) VALUES (1)";',
-      '  let _ = "2026-01-01T00:00:00Z";',
+      `  let _ = "${FIXTURE_NOW}";`,
       '}',
     ].join('\n')
     // 夹具路径与例外表条目同形，触发「实际命中数 ≠ 登记数」与「登记条目零命中」两侧
@@ -190,5 +212,38 @@ describe('check-test-support（Rust 测试守门，纯禁令）', () => {
     expect(r.output).toContain('实际命中 1 处 ≠ 登记的 3 处')
     expect(r.output).toContain('规则 3（默认时刻字面量）命中 1 处——未登记例外')
     expect(r.output).toContain('已登记例外 1 处实际命中 0 处——例外已收敛')
+  })
+
+  it('规则 3 时刻值以登记处为单一来源（#1468）：登记处改值禁令自动跟随', () => {
+    // 登记处换上新值后：新值字面量即红——禁令跟住登记处现值，而非脚本内快照
+    const revised = makeFixture(
+      { 'src/ledger/tests.rs': `fn t() { let stamp = "${FIXTURE_NOW_REVISED}"; }` },
+      fixedNowDecl(FIXTURE_NOW_REVISED),
+    )
+    const red = run([revised])
+    expect(red.status).toBe(1)
+    expect(red.output).toContain(`禁用时刻值：${FIXTURE_NOW_REVISED}`)
+    expect(red.output).toContain('规则 3（默认时刻字面量）命中 1 处')
+    // 旧现值字面量不再被禁：禁令清单与登记处严格全等，不超集化保留历史值
+    // （「改值后把历史值一并禁掉」的放大式改法在此变红；删除提取退回快照由
+    // 上侧红用例兜住）
+    const stale = makeFixture(
+      { 'src/ledger/tests.rs': `fn t() { let stamp = "${FIXTURE_NOW}"; }` },
+      fixedNowDecl(FIXTURE_NOW_REVISED),
+    )
+    const green = run([stale])
+    expect(green.status).toBe(0)
+    expect(green.output).toContain('Rust 测试守门通过')
+  })
+
+  it('固定时刻登记处缺失或提不出现值即 fail loud（#1468）：禁令不静默失效', () => {
+    const missing = makeFixture({}, null)
+    const r1 = run([missing])
+    expect(r1.status).toBe(1)
+    expect(r1.output).toContain('固定时刻登记处缺失')
+    const drained = makeFixture({}, '// 登记处已搬空：没有任何 pub const 声明可提取')
+    const r2 = run([drained])
+    expect(r2.status).toBe(1)
+    expect(r2.output).toContain('提不出任何')
   })
 })
