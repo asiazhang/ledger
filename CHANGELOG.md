@@ -391,5 +391,6 @@
 [#1345]: https://github.com/asiazhang/ledger/issues/1345
 [#1346]: https://github.com/asiazhang/ledger/issues/1346
 [#1381]: https://github.com/asiazhang/ledger/issues/1381
+[#1450]: https://github.com/asiazhang/ledger/issues/1450
 [#1451]: https://github.com/asiazhang/ledger/issues/1451
 [#1456]: https://github.com/asiazhang/ledger/issues/1456
