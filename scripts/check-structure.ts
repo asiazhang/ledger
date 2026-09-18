@@ -2088,6 +2088,39 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
 }
 
 /**
+ * 登记面全等（#1448）：CRATES 成员与 CRATE_MODULE_LISTS 双向全等——每个
+ * workspace 成员 crate（根包除外，壳层模块面不整册登记）必有模块清单登记，
+ * 登记面每条 srcRel 必可回指 CRATES 成员（srcRel = dir + '/src'）。缺口形态
+ * 即本票之洞的上层复现：新 crate 入 CRATES（否则成员登记红）而漏入
+ * CRATE_MODULE_LISTS，其模块面完全脱离模块级扫描与清单↔磁盘双向全等，
+ * 新增生产模块静默漏过结构守门。
+ */
+function checkModuleListRegistry(): string[] {
+  const problems: string[] = []
+  const registered = new Map(CRATE_MODULE_LISTS.map((spec) => [spec.srcRel, spec.label]))
+  for (const crate of CRATES) {
+    if (crate.dir === '.') continue // 根包是壳层，模块面不整册登记（与 WHITELIST 同注）
+    const srcRel = `${crate.dir}/src`
+    if (!registered.delete(srcRel)) {
+      problems.push(
+        `✗ ${crate.name} 未登记模块清单：CRATE_MODULE_LISTS 缺 srcRel ${srcRel}\n` +
+          '    登记面全等（#1448）：每个成员 crate 须在 CRATE_MODULE_LISTS 追加一行 ' +
+          '（label / modules / srcRel / 报文字段），否则其模块面静默脱离模块级扫描与 ' +
+          '清单↔磁盘双向全等——新增生产模块漏过结构守门',
+      )
+    }
+  }
+  for (const [srcRel, label] of registered) {
+    problems.push(
+      `✗ ${label} 的 srcRel 无对应 CRATES 成员：${srcRel}\n` +
+        '    登记面全等（#1448）：CRATE_MODULE_LISTS 条目须回指 CRATES 成员 ' +
+        "（srcRel = dir + '/src'），清单漂移 fail loud（ADR-0056 决策 4）",
+    )
+  }
+  return problems
+}
+
+/**
  * 模块清单与磁盘模块双向全等的通用核对（#1448 自 infra #1134 / transaction
  * #1181 / sync-engine #1107 三处专用实现合流，并经 CRATE_MODULE_LISTS 推广到
  * 全部 crate 模块清单）：磁盘侧枚举 crate src 顶层的实际模块——非测试豁免形态
@@ -2459,6 +2492,7 @@ function main(): void {
   // crate 边界核对（spec #1086 / issue #1087）：成员登记、门禁继承、依赖方向、
   // 静态检查/测试命令的 workspace 覆盖——与模块路径白名单并列，同为删除即变红。
   problems.push(...checkCrateBoundaries(srcTauriDir))
+  problems.push(...checkModuleListRegistry())
 
   // 模块清单↔磁盘双向全等（#1448 自 #1134/#1181/#1107 三处专用接线合流并推广
   // 到全部 crate 清单）：磁盘侧反向核对（磁盘模块未登记即红）；登记路径消失 /
@@ -2493,11 +2527,9 @@ function main(): void {
       `· 模型域化禁令全树扫描 ${allFiles.length} 个文件零残留（ADR-0059）` +
       `· 原生事务语句全树扫描 ${allFiles.length} 个文件仅 ${NATIVE_TX_STMT_ALLOWED} 一处（#1014）` +
       `· crate 边界 ${CRATES.length} 个（成员登记 / 门禁继承 / 依赖方向 / workspace 命令覆盖，#1087）` +
-      `· INFRA_MODULES 双向全等（磁盘模块全部登记，ADR-0111 决策 5 / #1134）` +
+      `· 登记面全等：CRATES 成员 ↔ CRATE_MODULE_LISTS 双向全等（#1448）` +
       `· crate 内块间反向依赖零未认许引用（认许边 ${INFRA_BLOCK_ALLOWED_EDGES.length} 条，ADR-0111 决策 4 / #1134）` +
-      `· TRANSACTION_MODULES 双向全等（磁盘模块全部登记，ADR-0113 决策 7 / #1181）` +
-      `· SYNC_ENGINE_MODULES 双向全等（磁盘模块全部登记，#1107）` +
-      `· 模块清单双向全等推广至全部 ${CRATE_MODULE_LISTS.length} 份 crate 清单（磁盘模块全部登记，#1448）` +
+      `· 模块清单双向全等推广至全部 ${CRATE_MODULE_LISTS.length} 份 crate 清单（磁盘模块全部登记，#1134/#1181/#1107 起三面、#1448 推广）` +
       `· 交易域区级层序零未认许反向引用（写读 → 接缝 → 共享语义，认许边 ${TRANSACTION_ZONE_ALLOWED_EDGES.length} 条，ADR-0113 决策 3 / #1181）` +
       `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）` +
       `· 投资五节锚点生产编译门（cfg 门，#1185）` +

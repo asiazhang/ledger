@@ -11,6 +11,7 @@ import {
   BUDGET_SRC_REL,
   CATEGORIES_MODULES,
   CATEGORIES_SRC_REL,
+  CRATE_MODULE_LISTS,
   CRATES,
   CURRENCIES_MODULES,
   CURRENCIES_SRC_REL,
@@ -38,7 +39,6 @@ import {
   REPORTS_SRC_REL,
   SCHEDULED_MODULES,
   SCHEDULED_SRC_REL,
-  CRATE_MODULE_LISTS,
   SYNC_ENGINE_MODULES,
   SYNC_ENGINE_SRC_REL,
   TRANSACTION_MODULES,
@@ -2867,7 +2867,8 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
   it('真实仓库默认通过：磁盘模块全部登记 + 区级层序零未认许反向引用（#1182 消除三处反边后认许边归空）', () => {
     const r = run([])
     expect(r.status).toBe(0)
-    expect(r.output).toContain('TRANSACTION_MODULES 双向全等')
+    // 双向全等接线入摘要由「#1448 推广」describe 的推广 bullet 断言承担；
+    // 此处只保区级层序与认许边条数。
     expect(r.output).toContain('区级层序零未认许反向引用')
     // 认许边条数自脚本导出清单派生（单一事实源，无双源漂移）
     expect(r.output).toContain(`认许边 ${TRANSACTION_ZONE_ALLOWED_EDGES.length} 条`)
@@ -3100,6 +3101,14 @@ describe('check-structure 模块清单双向全等推广到全部 crate 清单�
     const r = run([])
     expect(r.status).toBe(0)
     expect(r.output).toContain(`模块清单双向全等推广至全部 ${CRATE_MODULE_LISTS.length} 份 crate 清单`)
+    expect(r.output).toContain('CRATES 成员 ↔ CRATE_MODULE_LISTS 双向全等')
+  })
+
+  it('登记面全等：CRATES 成员（除根包）与 CRATE_MODULE_LISTS 一一对应（#1448，新 crate 漏扩表即红）', () => {
+    // 纯常量表核对无法经夹具红，用长度锚替代负向夹具：新 crate 入 CRATES
+    // （否则成员登记红）而漏扩 CRATE_MODULE_LISTS → 本断言红 + 守门脚本
+    // checkModuleListRegistry 红，两面同锁（ADR-0087 删除即变红）。
+    expect(CRATE_MODULE_LISTS.length).toBe(CRATES.length - 1) // -1 根包（壳层，无清单）
   })
 })
 
