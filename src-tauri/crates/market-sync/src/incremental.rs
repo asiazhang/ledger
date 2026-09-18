@@ -303,7 +303,9 @@ where
         .iter()
         .filter(|i| i.channel == PriceChannel::FundNav)
         .collect();
-    let no_quote_source = held.len() - quote_channel.len() - funds.len();
+    // 不参与采集的行数（恒定价格行 + 手动报价通道与无来源行）：跳过统计的
+    // 第一桶，与下方 skipped 汇总同源。
+    let uncollected = held.len() - quote_channel.len() - funds.len();
     // 库内无任何标的：明确提示，不报错。
     if held.is_empty() {
         return Ok(SyncInstrumentInfoResult {
@@ -556,7 +558,7 @@ where
     // 无通道行（手动报价通道与无来源：债券/其他、市场未知自建行、名称充代码基金行）
     // 与恒定价格行（不进收集面，ADR-0126 决策 4）、停牌/查询无果/首刷查无净值等
     // 一并计入跳过。
-    let skipped = no_quote_source + skipped_unqueryable + invalid + fund_stats.skipped;
+    let skipped = uncollected + skipped_unqueryable + invalid + fund_stats.skipped;
     // 实际写入 = 股票有效价 + 基金实际落库净值（基金「已是最新」不算写入）。
     let written = synced_codes.len() + fund_stats.written;
     // 取数面统计收尾（ADR-0121 决策 3）：缺口与失败在统计上分开——缺口（批量面

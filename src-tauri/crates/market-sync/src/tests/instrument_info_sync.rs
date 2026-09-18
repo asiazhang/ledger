@@ -2723,6 +2723,29 @@ fn bulk_surfaces(
     }
 }
 
+/// 计数型批量面桩：两面恒定返回给定覆盖（名称字典 / 净值排行），各面调用次数
+/// 记到注入的计数器上——「批量面零请求」「批量面照试一次」两类断言的可观察面。
+fn counting_bulk_surfaces(
+    names_calls: Arc<AtomicUsize>,
+    dictionary: FundNameDictionary,
+    nav_calls: Arc<AtomicUsize>,
+    table: FundNavTable,
+) -> BulkFetchSurfaces {
+    bulk_surfaces(
+        Box::new(move || {
+            names_calls.fetch_add(1, Ordering::SeqCst);
+            let dictionary = dictionary.clone();
+            Box::pin(async move { Ok(dictionary) })
+        }),
+        Box::new(move || {
+            nav_calls.fetch_add(1, Ordering::SeqCst);
+            let table = table.clone();
+            Box::pin(async move { Ok(table) })
+        }),
+        Arc::new(Mutex::new(BulkFetchCircuit::new())),
+    )
+}
+
 /// 逐标的净值页桩：固定返回同一页（给定日期单点），并累加调用次数。
 fn counting_nav(calls: Arc<AtomicUsize>, date: String, nav: f64) -> FetchNavPage {
     Box::new(move |_: &NavQuery| {
@@ -3755,22 +3778,11 @@ fn constant_price_fund_gets_no_requests_and_is_excluded_from_denominator_and_gap
             })
         }),
         counting_name(per_fund_name_calls.clone()),
-        bulk_surfaces(
-            {
-                let calls = bulk_names_calls.clone();
-                Box::new(move || {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    Box::pin(async { Ok(FundNameDictionary::new()) })
-                })
-            },
-            {
-                let calls = bulk_nav_calls.clone();
-                Box::new(move || {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    Box::pin(async { Ok(FundNavTable::new()) })
-                })
-            },
-            Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        counting_bulk_surfaces(
+            bulk_names_calls.clone(),
+            FundNameDictionary::new(),
+            bulk_nav_calls.clone(),
+            FundNavTable::new(),
         ),
     );
 
@@ -3959,26 +3971,11 @@ fn mixed_ledger_keeps_constant_fund_out_of_requests_denominator_and_gaps() {
             Box::pin(async { unreachable!("现价刷新不触达全量通道") })
         }),
         fetch_fund_name: counting_name(per_fund_name_calls.clone()),
-        bulk: bulk_surfaces(
-            {
-                let calls = bulk_names_calls.clone();
-                let dictionary = bulletin_names.clone();
-                Box::new(move || {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    let dictionary = dictionary.clone();
-                    Box::pin(async move { Ok(dictionary) })
-                })
-            },
-            {
-                let calls = bulk_nav_calls.clone();
-                let table = bulletin_nav.clone();
-                Box::new(move || {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    let table = table.clone();
-                    Box::pin(async move { Ok(table) })
-                })
-            },
-            Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        bulk: counting_bulk_surfaces(
+            bulk_names_calls.clone(),
+            bulletin_names,
+            bulk_nav_calls.clone(),
+            bulletin_nav,
         ),
     };
 
