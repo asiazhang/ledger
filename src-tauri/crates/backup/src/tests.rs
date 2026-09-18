@@ -414,7 +414,10 @@ fn assert_no_temp_residue(dir: &Path) {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|name| name.starts_with('.'))
         .collect();
-    assert!(leftovers.is_empty(), "目录内不得留下临时残留: {leftovers:?}");
+    assert!(
+        leftovers.is_empty(),
+        "目录内不得留下临时残留: {leftovers:?}"
+    );
 }
 
 /// 失败路径临时文件卫生（#1454 验收判据负向①，既有缺陷的范围外修复）：
@@ -445,6 +448,105 @@ fn backup_failure_leaves_no_temp_residue() {
     std::fs::create_dir(&occupied).unwrap();
     backup_db_to(&conn, &occupied, "0.6.0", BackupKind::Manual).unwrap_err();
     assert_no_temp_residue(&dir);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// -------------------------------------------------------------------------
+// 源库形态门禁（issue #1454）：外来形态明文库（每页保留字节 ≠ 0，外部工具
+// 写入，见 #1453）的 `VACUUM INTO` 必然失败（SQLCipher 无 KEY ATTACH 推断
+// 路径），备份前先拦下并给可读的码化错误，不再发起注定失败的语句。
+// -------------------------------------------------------------------------
+
+/// 外来形态明文库的备份被码化错误拦下（issue #1454 正向 + 负向②）：稳定
+/// 错误码 `backup.foreign-form`（用户读不到 SQLite 原文），目标目录无产物、
+/// 无临时残留。去掉前置形态检查本用例即变红：错误退回 SQLite 原文
+/// `unable to open database`，且留下 0 字节临时库残留。
+#[test]
+fn backup_rejects_foreign_form_db_with_coded_error() {
+    let dir = std::env::temp_dir().join(format!(
+        "ledger-backup-foreign-{}-{}",
+        std::process::id(),
+        db::new_uuid()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("ledger.db");
+    ledger_infra::test_utils::write_foreign_form_plaintext_db(&src, 3);
+    let conn = open_connection(&src).unwrap();
+
+    let target = dir.join("ledger-auto-20260918-120000-book-a.db.zip");
+    let err = backup_db_to(&conn, &target, "0.6.0", BackupKind::Auto).unwrap_err();
+
+    assert_eq!(err.code(), Some("backup.foreign-form"));
+    let shown = err.to_string();
+    assert!(
+        !shown.contains("unable to open database"),
+        "用户可见错误不得是 SQLite 原文: {shown}"
+    );
+    assert!(shown.contains("重启应用"), "文案应指向修复动作: {shown}");
+    assert!(!target.exists(), "不应产生备份产物");
+    assert_no_temp_residue(&dir);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 正常库备份行为与产物形态不变（issue #1454 回归判据）：应用自有形态的
+/// 明文库照常备份，产物内数据库偏移 20 = 0（自有形态，不因门禁引入变化）。
+#[test]
+fn backup_of_app_owned_db_succeeds_with_clean_form() {
+    let conn = tauri_app_lib::test_support::open();
+    seed(&conn);
+
+    let target = temp_file("form");
+    backup_db_to(&conn, &target, "0.6.0", BackupKind::Manual).unwrap();
+
+    let mut header = [0u8; 21];
+    let file = File::open(&target).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    let mut entry = archive.by_name("ledger.db").unwrap();
+    std::io::Read::read_exact(&mut entry, &mut header).unwrap();
+    assert_eq!(header[20], 0, "产物库偏移 20 应为 0（应用自有形态）");
+    ledger_infra::fs_util::cleanup(&target);
+}
+
+/// 加密库快照不受形态门禁影响（issue #1454 回归判据）：密文库的保留字节
+/// 无意义（`VACUUM INTO` 继承真实密钥，ADR-0075 决策 7），照常备份，产物
+/// 仍为密文。
+#[test]
+fn backup_of_encrypted_db_bypasses_form_guard_and_stays_encrypted() {
+    let dir = std::env::temp_dir().join(format!(
+        "ledger-backup-enc-{}-{}",
+        std::process::id(),
+        db::new_uuid()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("ledger.db");
+    // 文件库不入测试工厂（ADR-0084 决策 3，同本文件上方先例）：迁移后的库经
+    // VACUUM INTO 落盘，再整库转密文。
+    {
+        let conn = tauri_app_lib::test_support::open();
+        conn.execute("VACUUM INTO ?1", params![src.to_string_lossy()])
+            .unwrap();
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(&src, "pass-phrase-123").unwrap();
+    let conn = ledger_infra::db::open_connection_with_passphrase(&src, "pass-phrase-123").unwrap();
+
+    let target = dir.join("ledger-backup-20260918-120000.db.zip");
+    backup_db_to(&conn, &target, "0.6.0", BackupKind::Manual).unwrap();
+
+    // 产物内数据库仍是密文（继承源库加密与密钥，既有设计依赖）。
+    let extracted = dir.join("extracted.db");
+    let file = File::open(&target).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    let mut entry = archive.by_name("ledger.db").unwrap();
+    let mut out = File::create(&extracted).unwrap();
+    std::io::copy(&mut entry, &mut out).unwrap();
+    drop(out);
+    assert_eq!(
+        ledger_infra::db::encryption::probe_file_kind(&extracted).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Encrypted,
+        "备份产物应为密文库（继承密钥）"
+    );
 
     std::fs::remove_dir_all(&dir).ok();
 }

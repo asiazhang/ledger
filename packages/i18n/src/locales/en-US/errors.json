@@ -53,6 +53,7 @@
   "backup": {
     "keep-invalid": "invalid backup retention limit: {0}",
     "invalid-archive": "not a valid ledger backup archive: {0}",
+    "foreign-form": "The database file was modified by an external tool and cannot be backed up; restart the app to repair it automatically",
     "meta-missing": "backup.json metadata not found in the archive",
     "meta-parse-failed": "failed to parse backup metadata: {0}",
     "target-dir-missing": "backup target directory does not exist: {0}",
