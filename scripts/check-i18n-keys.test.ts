@@ -56,6 +56,17 @@ afterAll(() => {
 })
 
 describe('i18n key 全等校验（check.sh 质量门槛）', () => {
+  it('真实仓库默认通过：两语言 key 全等且码化错误模板全覆盖（现行仓库绿）', () => {
+    // 无位置参数 = 真实仓库默认路径（locales 随 @ledger/i18n 包走 + src-tauri 扫描根）。
+    // 随 vitest scripts 测试分片进 CI（issue #1473）：真实仓违规即红，不再只靠本地
+    // 自觉跑 check.sh。两条成功行都携带动态计数/规则名——对应规则被删除时该行
+    // 消失、本用例随之变红，绿基线不是空转（「删除规则 → 真实仓用例红」的实证载体）。
+    const r = runGateScript(script)
+    expect(r.status).toBe(0)
+    expect(r.output).toContain('i18n key 全等')
+    expect(r.output).toMatch(/码化错误模板覆盖：[1-9]\d* 个码化错误码/)
+  })
+
   it('两语言 key 集合全等时通过', () => {
     const dir = makeFixture(
       { 'common.json': { save: '保存', nested: { ok: '确定' } }, 'tx.json': { title: '交易' } },

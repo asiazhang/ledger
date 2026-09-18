@@ -264,6 +264,14 @@ jobs:
       - name: Clippy 检查
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      # gate-off 编译门（issue #1133 / #1473）：clippy 走 --all-features（http 门恒开、
+      # axum 恒在），门内 cfg 恒被编译——infra 默认 feature 不含 axum 的 gate-off
+      # 形态只有 `cargo check -p ledger-infra` 核到：error.rs 在无 axum 依赖图下
+      # 必须独立成立。与本地 check.sh 同门槛（删步骤即红：
+      # scripts/check-sh-gate-off.test.ts，先例 check-sh-rustdoc-gate.test.ts）。
+      - name: gate-off 编译门（ledger-infra 默认 feature）
+        run: cargo check -p ledger-infra
+
       # 基础设施 rustdoc 门禁（issue #1139）：intra-doc link 漂移等 rustdoc 告警
       # 不被 clippy/fmt 拦截，单独用 cargo doc -D warnings 清零。范围锁定
       # ledger-infra（首装归零的 crate，--no-deps 只 rustdoc 本 crate，增量成本低）；

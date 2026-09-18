@@ -55,6 +55,15 @@ const BARE_ITEM = `<template>
 `
 
 describe('弹窗表单行距节奏守门（check.sh 质量门槛）', () => {
+  it('真实仓库默认通过：本仓库全部 .vue 无节奏违例（现行仓库绿）', () => {
+    // 无位置参数 = 默认扫描本仓库 src。随 vitest scripts 测试分片进 CI（issue #1473）：
+    // 真实仓违例即红，不再只靠本地自觉跑 check.sh。文件计数行证明扫描面真实
+    // 覆盖（非零 .vue），守门空转（扫描根失效等）即红。
+    const r = runGateScript(script)
+    expect(r.status).toBe(0)
+    expect(r.output).toMatch(/弹窗表单节奏：[1-9]\d* 个 \.vue 文件检查通过/)
+  })
+
   it('表单项与按钮行同包节奏容器 → 通过', () => {
     const dir = makeFixture({ 'Good.vue': COMPLIANT })
     const { status, output } = run(dir)
