@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { repoRoot } from './has-command-line.test-helper.ts'
 import { maskComments } from './ts-comment-mask.ts'
 
 // 被测对象是 TS 侧注释掩码共享模块 scripts/ts-comment-mask.ts（issue #1481）：
 // check-frontend-structure.ts（import 说明符扫描）与 check-commands.ts（TS 调用面
 // 识别）曾各自消费同一实现却把实现住在结构守门脚本内，本票上收共享模块。
-// （vitest 转换后 import.meta.url 非 file: scheme，取进程 cwd = 仓库根定位文件）
-const repoRoot = process.cwd()
-const read = (rel: string): string => readFileSync(join(repoRoot, ...rel.split('/')), 'utf8')
+// （仓库根定位消费 scripts/has-command-line.test-helper.ts，#1487 上收唯一定义点）
+const read = (rel: string): string => readFileSync(join(repoRoot(), ...rel.split('/')), 'utf8')
 
 describe('maskComments（TS/Vue 注释掩码单源模块语义）', () => {
   it('行注释与块注释掩为等长空白：保留换行与列位（行号稳定）', () => {
