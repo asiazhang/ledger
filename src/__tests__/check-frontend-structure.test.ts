@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   FORBIDDEN_UPWARD_IMPORTS,
   PACKAGES,
@@ -109,6 +109,13 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
       return args
     }
 
+    /** 写包内源文件（路径相对夹具根，posix 分隔）——规则②消费面靶形 */
+    function writeSource(root: string, rel: string, source: string): void {
+      const abs = join(root, ...rel.split('/'))
+      mkdirSync(dirname(abs), { recursive: true })
+      writeFileSync(abs, source)
+    }
+
     it('依赖未登记包即红', () => {
       // 登记表只含 a（ghost 缺席），单独核「依赖未登记包」靶形
       const manifest: FixtureEntry[] = [
@@ -132,7 +139,11 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
     })
 
     it('方向表放行该边即绿', () => {
-      const r = run(twoPackages(['@ledger/b'], { '@ledger/b': 'workspace:*' }))
+      // #1470 起「绿」须双向全等：清单声明 + 源码实际消费同时具备（仅声明不消费
+      // 触发「反向核对」用例的红）
+      const args = twoPackages(['@ledger/b'], { '@ledger/b': 'workspace:*' })
+      writeSource(args[0] as string, 'packages/a/src/x.ts', "import { y } from '@ledger/b'\nexport { y }\n")
+      const r = run(args)
       expect(r.status).toBe(0)
     })
 
@@ -146,6 +157,50 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
       const r = run(args)
       expect(r.status).toBe(1)
       expect(r.output).toContain('不在其方向表内')
+    })
+
+    // 规则②消费面（issue #1470）：声明边核对「方向表 ⊆ 实际 import」，反向核对
+    // 「实际 import ⊆ 方向表」，二者合起来才是包登记 note 承诺的「全等」。两条
+    // 核对各自有专属红夹具（下面前两个用例）——删除任一条核对即至少一条变红。
+    it('消费方声明边：包内源码 import 兄弟包而四类依赖均未声明即红（幽灵 import，issue #1470）', () => {
+      // 方向表登记该边、包清单却零声明：源码 import 借 workspace 根 node_modules
+      // 符号链接即可解析，方向表被静默绕过——现状两个方向都拦不住
+      const args = twoPackages(['@ledger/b'], {})
+      const root = args[0] as string
+      writeSource(root, 'packages/a/src/x.ts', "import { y } from '@ledger/b'\nexport { y }\n")
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('消费方声明边')
+      expect(r.output).toContain('packages/a/src/x.ts:1')
+      expect(r.output).toContain('@ledger/b')
+      expect(r.output).toContain('dependencies')
+    })
+
+    it('反向核对：方向表登记的边无实际消费即红（全等须双向可证伪，issue #1470）', () => {
+      // 包清单声明与方向表一致、源码却不消费该边：登记边可能是打字漂移或搬迁
+      // 残留，仅核「声明 ⊆ 方向表」时该边静默存活
+      const args = twoPackages(['@ledger/b'], { '@ledger/b': 'workspace:*' })
+      writeSource(args[0] as string, 'packages/a/src/x.ts', "import { local } from './local'\nexport { local }\n")
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('未实际消费')
+      expect(r.output).toContain('@ledger/b')
+    })
+
+    it('测试边经 devDependencies 声明同样算已声明（dev 边仍受规则⑤约束，issue #1470）', () => {
+      const args = twoPackages(['@ledger/b'], {})
+      const root = args[0] as string
+      writePackageManifest(root, 'packages/a', {
+        name: '@ledger/a',
+        devDependencies: { '@ledger/b': 'workspace:*' },
+      })
+      writeSource(
+        root,
+        'packages/a/src/__tests__/x.test.ts',
+        "import { y } from '@ledger/b'\nexport { y }\n",
+      )
+      const r = run(args)
+      expect(r.status).toBe(0)
     })
   })
 

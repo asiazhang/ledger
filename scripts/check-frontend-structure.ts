@@ -10,6 +10,11 @@
 //    依赖不在自身 deps 方向表内的包即红。方向表随包抽取逐票补充；dependencies /
 //    devDependencies / optionalDependencies / peerDependencies 四类一并核对（包间
 //    测试边也是真实边界，方向表显式放行）。
+//    消费面补齐（issue #1470）：包内源码命中跨包 import 时，消费方 package.json
+//    四类依赖须含目标包——未在自身清单声明的幽灵 import（借 workspace 根
+//    node_modules 符号链接即可解析）在此显形；反向，方向表登记的依赖边须被实际
+//    消费，使包登记 note 承诺的「方向表与实际 import 全等」两向都可证伪
+//    （dev 边仍归规则⑤；未登记目标与深导入形态归规则③④）。
 // ③ 跨包引用形态：包内源码跨包引用只能走包名 `@ledger/*`；禁止 `@/` 别名（指向根
 //    src，从包内使用必然穿越包边界）与相对路径穿越包边界（解析后落点在包目录外）。
 // ④ 深导入禁令：`@ledger/x/sub` 形态必须命中目标包 package.json `exports` 的对应
@@ -257,6 +262,15 @@ export function scanImportSpecifiers(text: string): ImportHit[] {
   return hits
 }
 
+/** 解析 `@ledger/x[/sub]` 说明符形态（规则②消费面与规则③④共用的唯一定义点）：
+ *  返回包名与子路径；非包形态（含 `@ledger/` 残缺形态）返回 null，深导入判定
+ *  归规则④。 */
+function parseLedgerSpecifier(specifier: string): { name: string; subpath?: string } | null {
+  const m = /^@ledger\/([^/]+)(?:\/(.*))?$/.exec(specifier)
+  if (!m) return null
+  return { name: `${PACKAGE_NAME_PREFIX}${m[1]}`, subpath: m[2] }
+}
+
 /** 递归收集目录下全部源文件（相对路径排序保证输出确定） */
 function collectSourceFiles(dir: string, relBase: string): { abs: string; rel: string }[] {
   const out: { abs: string; rel: string }[] = []
@@ -404,6 +418,68 @@ function checkDependencyDirection(
   }
 }
 
+/** 规则②消费面（issue #1470）：包内源码的跨包 import 与「消费方声明 + 方向表」
+ *  双向核对。正向——命中跨包 import 时消费方 package.json 四类依赖须含目标包
+ *  （四类任一命中即算已声明；dev 边仍归规则⑤），堵幽灵 import 借 workspace 根
+ *  node_modules 符号链接绕过方向表；反向——方向表登记的依赖边须被实际消费，
+ *  使「方向表与实际 import 全等」两向可证伪。消费证明取实际 import（非清单
+ *  声明），核对面与规则③同源（包内 .ts / .tsx / .vue 源码）。自引用（包名指向
+ *  自身）不属跨包边；未登记目标归规则③、深导入形态归规则④、包目录与清单缺口
+ *  归规则①②，均不在此重复。 */
+function checkDependencyConsumption(
+  repoRoot: string,
+  registry: readonly PackageEntry[],
+  problems: string[],
+): void {
+  const registeredNames = new Set(registry.map((p) => p.name))
+  for (const pkg of registry) {
+    const pkgRoot = join(repoRoot, pkg.dir)
+    if (!existsSync(pkgRoot)) continue
+    const manifest = tryReadManifest(join(pkgRoot, 'package.json'))
+    if (!manifest) continue
+    const declared = new Set<string>()
+    for (const kind of DEP_KINDS) {
+      const deps = manifest[kind]
+      if (deps === null || typeof deps !== 'object') continue
+      for (const depName of Object.keys(deps as Record<string, unknown>)) {
+        if (depName.startsWith(PACKAGE_NAME_PREFIX)) declared.add(depName)
+      }
+    }
+    // 每条边只留首个命中：文件 + 行号足够可操作定位，重复行只增噪音
+    const consumed = new Map<string, { rel: string; line: number; text: string }>()
+    for (const f of collectSourceFiles(pkgRoot, pkg.dir)) {
+      for (const hit of scanImportSpecifiers(readFileSync(f.abs, 'utf8'))) {
+        const name = parseLedgerSpecifier(hit.specifier)?.name
+        if (!name || name === pkg.name || !registeredNames.has(name)) continue
+        if (!consumed.has(name)) {
+          consumed.set(name, { rel: f.rel, line: hit.line, text: hit.text })
+        }
+      }
+    }
+    for (const [name, hit] of consumed) {
+      if (declared.has(name)) continue
+      problems.push(
+        `✗ 包依赖方向（消费方声明边）：${pkg.name}（${pkg.dir}）包内源码 import ${name}，` +
+          `但 package.json 四类依赖均未声明\n` +
+          `    ${hit.rel}:${hit.line} ${hit.text}\n` +
+          `    幽灵 import 可借 workspace 根 node_modules 符号链接解析，方向表被静默绕过；` +
+          `生产代码消费补 dependencies，仅测试代码消费补 devDependencies（issue #1470 规则②）`,
+      )
+    }
+    for (const depName of pkg.deps) {
+      if (consumed.has(depName)) continue
+      problems.push(
+        `✗ 包依赖方向（反向核对）：${pkg.name}（${pkg.dir}）方向表登记 ${depName}，` +
+          `包内源码未实际消费该边\n` +
+          `    方向表（PACKAGES[${pkg.name}].deps）与实际 import 全等，两向都可证伪（issue #1470 规则②）：` +
+          (registeredNames.has(depName)
+            ? `该边确已废弃时从方向表删除，消费被误删时补回源码 import`
+            : `${depName} 还不是已登记包，核对登记名拼写或先在 PACKAGES 登记该包`),
+      )
+    }
+  }
+}
+
 /** 规则③④：包内源码的跨包引用形态（@/ 别名、相对穿越、深导入 exports 入口） */
 function checkImportShapes(
   repoRoot: string,
@@ -439,15 +515,15 @@ function checkImportShapes(
           continue
         }
         if (spec.startsWith(PACKAGE_NAME_PREFIX)) {
-          const m = /^@ledger\/([^/]+)(?:\/(.*))?$/.exec(spec)
-          if (!m) {
+          const parsed = parseLedgerSpecifier(spec)
+          if (!parsed) {
             problems.push(
               `✗ 跨包引用形态：${f.rel}:${hit.line} 非法包名形态（${spec}）（issue #1149 规则③）`,
             )
             continue
           }
-          const [, targetName, subpath] = m
-          const target = registry.find((p) => p.name === `@ledger/${targetName}`)
+          const { name, subpath } = parsed
+          const target = registry.find((p) => p.name === name)
           if (!target) {
             problems.push(
               `✗ 跨包引用形态：${f.rel}:${hit.line} 引用未登记包 ${spec}\n` +
@@ -732,6 +808,7 @@ function main(): void {
 
   checkMemberRegistration(repoRoot, registry, problems)
   checkDependencyDirection(repoRoot, registry, problems)
+  checkDependencyConsumption(repoRoot, registry, problems)
   checkImportShapes(repoRoot, registry, problems)
   checkTestSupportPurity(repoRoot, registry, problems)
   checkUpwardImports(repoRoot, problems)
@@ -746,7 +823,7 @@ function main(): void {
   console.log(
     `✓ 前端结构守门：pnpm-workspace.yaml 声明 ${MEMBER_DIR_GLOB}` +
       `· 成员登记 ${registry.length} 个（磁盘 ↔ PACKAGES 双向全等）` +
-      `· 包依赖方向 ${registry.length} 包（方向表逐票补充）` +
+      `· 包依赖方向 ${registry.length} 包（方向表逐票补充 + 消费面声明边/反向全等核对）` +
       `· 跨包引用形态与深导入禁令扫描 ${collectSourceFiles(join(repoRoot, 'packages'), 'packages').length} 个文件` +
       `· 测试支持纯净性（${registry.filter((p) => p.testSupport).map((p) => p.name).join(' ') || '无'} 仅 devDependency 消费）` +
       `· 上行引用禁令 ${FORBIDDEN_UPWARD_IMPORTS.length} 条（${FORBIDDEN_UPWARD_IMPORTS.map((r) => r.dir).join(' ') || '无'}）` +
