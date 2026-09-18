@@ -1007,6 +1007,15 @@ const ALL_SCOPE_PATTERN = /(?:^|\s)--all(?:\s|$)/
  */
 const CARGO_SUBCOMMANDS = ['clippy', 'test', 'fmt', 'nextest run'] as const
 
+/**
+ * shell 扫描用的命令词交替组（由 `CARGO_SUBCOMMANDS` 派生，单一事实源）：两词命令
+ * 在源码里是空白分隔的两段，`nextest run` → `nextest\s+run`。数组形态与逐行形态
+ * 共用同一份词表，新增命令只需改一处。
+ */
+const CARGO_SUBCOMMAND_ALTERNATION = CARGO_SUBCOMMANDS.map((command) =>
+  command.split(' ').join('\\s+'),
+).join('|')
+
 /** 数组形态 cargo 命令词（`['clippy', …]` 或 `['nextest', 'run', …]`），非命令面返回 null。 */
 function arrayCargoCommand(elements: string[]): string | null {
   const [first, second] = elements
@@ -1940,7 +1949,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
       if (trimmed === '' || trimmed.startsWith('#') || isTsCommentLine(trimmed)) return
       // 逐条命令核对（一行可有 `cargo fmt … && cargo clippy …` 多条：只看首个
       // 匹配会把未覆盖的 clippy 放过去）；命令段截到下一个 shell 控制符为止。
-      const re = /\bcargo\s+(nextest\s+run|clippy|test|fmt)\b/g
+      const re = new RegExp(`\\bcargo\\s+(${CARGO_SUBCOMMAND_ALTERNATION})\\b`, 'g')
       let m: RegExpExecArray | null
       while ((m = re.exec(line))) {
         hits += 1

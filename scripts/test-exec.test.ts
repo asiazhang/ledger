@@ -23,6 +23,8 @@ interface FixtureOverrides {
   alphaManifest?: string
   /** test.sh 内容；缺省 = 合规双入口形态。 */
   testSh?: string
+  /** e2e.sh 内容；缺省 = 合规 e2e 两目标形态（nextest 新目标 + cucumber 旧目标）。 */
+  e2eSh?: string
   /** check.sh 内容；缺省 = 含覆盖守门步骤（守门规则④的接线宿主）。 */
   checkSh?: string
   /** build.yml 内容；缺省 = frontend job 含覆盖守门步骤（守门规则④的接线宿主）。 */
@@ -39,6 +41,9 @@ interface FixtureOverrides {
 const NEXTEST_ENTRY_LINE =
   '( cd src-tauri && cargo nextest run --workspace --test e2e_rstest )'
 
+/** 旧 cucumber 目标的 cargo 入口行（harness = false 自定义 runner）。 */
+const CUCUMBER_ENTRY_LINE = '( cd src-tauri && cargo test --workspace --test e2e )'
+
 /** nextest 仓库配置的合规形态：default-filter 排除名单 = harness=false 目标清单。 */
 const DEFAULT_NEXTEST_CONFIG = [
   '[profile.default]',
@@ -48,14 +53,22 @@ const DEFAULT_NEXTEST_CONFIG = [
   '',
 ].join('\n')
 
+/** e2e 入口脚本的合规形态（scripts/e2e.sh，ticket #1496）。 */
+const DEFAULT_E2E_SH = [
+  '#!/bin/sh',
+  'set -eu',
+  NEXTEST_ENTRY_LINE,
+  CUCUMBER_ENTRY_LINE,
+  '',
+].join('\n')
+
 const DEFAULT_TEST_SH = [
   '#!/bin/sh',
   'set -eu',
   '# 入口自检先行（真实 scripts/test.sh 同址接线）',
   'bun scripts/test-exec.ts check',
   'bun scripts/test-exec.ts',
-  NEXTEST_ENTRY_LINE,
-  '( cd src-tauri && cargo test --workspace --test e2e )',
+  './scripts/e2e.sh',
   '( cd src-tauri && cargo test --workspace --doc )',
   '',
 ].join('\n')
@@ -67,6 +80,10 @@ const DEFAULT_WORKFLOW = [
   '  frontend:',
   '    steps:',
   '      - run: bun scripts/test-exec.ts check',
+  '  backend:',
+  '    steps:',
+  "      - run: cargo nextest run --workspace --lib --test '*'",
+  '      - run: cargo test --workspace --test e2e',
   '',
 ].join('\n')
 
@@ -113,6 +130,7 @@ function makeFixture(overrides: FixtureOverrides = {}): string {
   writeFileSync(join(alpha, 'tests', 'e2e_rstest.rs'), '#[test]\nfn scenario() {}\n')
   writeFileSync(join(alpha, 'tests', 'api.rs'), '#[test]\nfn api() {}\n')
   writeFileSync(join(root, 'scripts', 'test.sh'), overrides.testSh ?? DEFAULT_TEST_SH)
+  writeFileSync(join(root, 'scripts', 'e2e.sh'), overrides.e2eSh ?? DEFAULT_E2E_SH)
   writeFileSync(join(root, 'scripts', 'check.sh'), overrides.checkSh ?? DEFAULT_CHECK_SH)
   mkdirSync(join(srcTauri, '.config'), { recursive: true })
   writeFileSync(
@@ -189,13 +207,11 @@ describe('测试执行器两入口覆盖守门（issue #1112）', () => {
     expect(r.output).toContain('静默漏跑')
   })
 
-  it('非并发入口未登记 e2e（删 --test e2e）→ 红', () => {
+  it('e2e 入口未登记 cucumber 目标（删 --test e2e）→ 红', () => {
     const r = run([
       'check',
       '--root',
-      makeFixture({
-        testSh: ['#!/bin/sh', 'set -eu', 'bun scripts/test-exec.ts', '( cd src-tauri && cargo test --workspace --doc )', ''].join('\n'),
-      }),
+      makeFixture({ e2eSh: ['#!/bin/sh', 'set -eu', NEXTEST_ENTRY_LINE, ''].join('\n') }),
     ])
     expect(r.status).toBe(1)
     expect(r.output).toContain('alpha::e2e')
@@ -210,14 +226,7 @@ describe('测试执行器两入口覆盖守门（issue #1112）', () => {
       'check',
       '--root',
       makeFixture({
-        testSh: [
-          '#!/bin/sh',
-          'set -eu',
-          'bun scripts/test-exec.ts',
-          '( cd src-tauri && cargo test --workspace --test e2e )',
-          '( cd src-tauri && cargo test --workspace --doc )',
-          '',
-        ].join('\n'),
+        e2eSh: ['#!/bin/sh', 'set -eu', CUCUMBER_ENTRY_LINE, ''].join('\n'),
       }),
     ])
     expect(r.status).toBe(1)
@@ -230,13 +239,11 @@ describe('测试执行器两入口覆盖守门（issue #1112）', () => {
       'check',
       '--root',
       makeFixture({
-        testSh: [
+        e2eSh: [
           '#!/bin/sh',
           'set -eu',
-          'bun scripts/test-exec.ts',
           '( cd src-tauri && cargo nextest run --workspace --test e2e_rstst )',
-          '( cd src-tauri && cargo test --workspace --test e2e )',
-          '( cd src-tauri && cargo test --workspace --doc )',
+          CUCUMBER_ENTRY_LINE,
           '',
         ].join('\n'),
       }),
@@ -260,8 +267,8 @@ describe('测试执行器两入口覆盖守门（issue #1112）', () => {
     ])
     expect(r.status).toBe(1)
     expect(r.output).toContain('default-filter 排除了 api')
-    expect(r.output).toContain('不是 `harness = false` 目标')
-    expect(r.output).toContain('静默漏跑')
+    expect(r.output).toContain('alpha::api 不是 `harness = false`')
+    expect(r.output).toContain('静默移出 nextest 调度面')
   })
 
   it('nextest 配置 default-filter 出现未取反的 binary(...) → 红（其余目标全被移出）', () => {
@@ -302,18 +309,64 @@ describe('测试执行器两入口覆盖守门（issue #1112）', () => {
     expect(r.output).toContain('排除名单须与 `harness = false` 目标清单全等')
   })
 
+  it('nextest 配置 default-filter 含未识别子句（`not test(...)`）→ 红（静默排除面）', () => {
+    // 只挑 `binary(...)` 子句解析会漏掉别的过滤面：`not test(...)` 同样能把 libtest
+    // 测试静默移出 nextest 调度面，故整表达式只允许 `not binary(<name>)` + `and`。
+    const r = run([
+      'check',
+      '--root',
+      makeFixture({
+        nextestConfig: [
+          '[profile.default]',
+          'default-filter = "not binary(e2e) and not test(accounts)"',
+          '',
+        ].join('\n'),
+      }),
+    ])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('含未识别子句')
+  })
+
+  it('nextest 配置排除的名字同时命中 harness=true 目标 → 红（同名 libtest 被一并排除）', () => {
+    // nextest 的 binary() 按二进制名匹配、与包无关：同名目标（含 lib/bin 单测的
+    // crate 名）必须逐名回查，命中项非自定义 harness 即静默漏跑。
+    const r = run([
+      'check',
+      '--root',
+      makeFixture({
+        rootManifest: [
+          '[package]',
+          'name = "root-app"',
+          'version = "0.0.0"',
+          'edition = "2021"',
+          '',
+          '[workspace]',
+          'members = ["crates/*"]',
+          '',
+          '[[test]]',
+          'name = "e2e"',
+          'path = "tests/e2e.rs"',
+          '',
+        ].join('\n'),
+        files: { 'src-tauri/tests/e2e.rs': '#[test]\nfn root_e2e() {}\n' },
+      }),
+    ])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('root-app::e2e')
+    expect(r.output).toContain('静默移出 nextest 调度面')
+  })
+
   it('非并发入口登记了非自定义 harness 目标（--test api 漂移）→ 红', () => {
     const r = run([
       'check',
       '--root',
       makeFixture({
-        testSh: [
+        e2eSh: [
           '#!/bin/sh',
           'set -eu',
-          'bun scripts/test-exec.ts',
-          '( cd src-tauri && cargo test --workspace --test e2e )',
+          NEXTEST_ENTRY_LINE,
+          CUCUMBER_ENTRY_LINE,
           '( cd src-tauri && cargo test --workspace --test api )',
-          '( cd src-tauri && cargo test --workspace --doc )',
           '',
         ].join('\n'),
       }),
@@ -328,7 +381,7 @@ describe('测试执行器两入口覆盖守门（issue #1112）', () => {
       'check',
       '--root',
       makeFixture({
-        testSh: ['#!/bin/sh', 'set -eu', 'bun scripts/test-exec.ts', '( cd src-tauri && cargo test --workspace --test e2e )', ''].join('\n'),
+        testSh: ['#!/bin/sh', 'set -eu', 'bun scripts/test-exec.ts', './scripts/e2e.sh', ''].join('\n'),
       }),
     ])
     expect(r.status).toBe(1)
@@ -346,7 +399,7 @@ describe('测试执行器两入口覆盖守门（issue #1112）', () => {
           '#!/bin/sh',
           'set -eu',
           'bun scripts/test-exec.ts',
-          '( cd src-tauri && cargo test --workspace --test e2e )',
+          './scripts/e2e.sh',
           '( cd src-tauri && cargo test --doc )',
           '',
         ].join('\n'),
@@ -476,11 +529,71 @@ describe('测试执行器两入口覆盖守门（issue #1112）', () => {
       'check',
       '--root',
       makeFixture({
-        testSh: ['#!/bin/sh', 'set -eu', '( cd src-tauri && cargo test --workspace --test e2e )', '( cd src-tauri && cargo test --workspace --doc )', ''].join('\n'),
+        testSh: ['#!/bin/sh', 'set -eu', './scripts/e2e.sh', '( cd src-tauri && cargo test --workspace --doc )', ''].join('\n'),
       }),
     ])
     expect(r.status).toBe(1)
     expect(r.output).toContain('未调用并发入口')
+  })
+
+  it('scripts/test.sh 未调用 e2e 入口脚本 → 红（全部 e2e 未接入本地入口）', () => {
+    const r = run([
+      'check',
+      '--root',
+      makeFixture({
+        testSh: [
+          '#!/bin/sh',
+          'set -eu',
+          'bun scripts/test-exec.ts',
+          '( cd src-tauri && cargo test --workspace --doc )',
+          '',
+        ].join('\n'),
+      }),
+    ])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('未调用 e2e 入口脚本')
+  })
+
+  it('CI 测试执行面：缺 `cargo nextest run` → 红（测试执行未切 nextest）', () => {
+    const r = run([
+      'check',
+      '--root',
+      makeFixture({
+        workflow: [
+          'jobs:',
+          '  frontend:',
+          '    steps:',
+          '      - run: bun scripts/test-exec.ts check',
+          '  backend:',
+          '    steps:',
+          CUCUMBER_ENTRY_LINE,
+          '',
+        ].join('\n'),
+      }),
+    ])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('未切到 nextest')
+  })
+
+  it('CI 测试执行面：缺旧 cucumber 目标步骤 → 红（CI 侧静默减面）', () => {
+    const r = run([
+      'check',
+      '--root',
+      makeFixture({
+        workflow: [
+          'jobs:',
+          '  frontend:',
+          '    steps:',
+          '      - run: bun scripts/test-exec.ts check',
+          '  backend:',
+          '    steps:',
+          "      - run: cargo nextest run --workspace --lib --test '*'",
+          '',
+        ].join('\n'),
+      }),
+    ])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('CI 侧漏跑即静默减面')
   })
 
   it('scripts/test.sh 三条入口全被 echo 包成说明文字 → 红（说明文字不算命令位置）', () => {
@@ -520,7 +633,7 @@ describe('测试执行器两入口覆盖守门（issue #1112）', () => {
           'set -eu',
           'bun scripts/test-exec.ts check',
           'echo "bun scripts/test-exec.ts"',
-          '( cd src-tauri && cargo test --workspace --test e2e )',
+          './scripts/e2e.sh',
           '( cd src-tauri && cargo test --workspace --doc )',
           '',
         ].join('\n'),
@@ -544,8 +657,7 @@ describe('测试执行器两入口覆盖守门（issue #1112）', () => {
             '#!/bin/sh',
             'set -eu',
             parallelLine,
-            NEXTEST_ENTRY_LINE,
-            '( cd src-tauri && cargo test --workspace --test e2e )',
+            './scripts/e2e.sh',
             '( cd src-tauri && cargo test --workspace --doc )',
             '',
           ].join('\n'),
@@ -564,8 +676,7 @@ describe('测试执行器两入口覆盖守门（issue #1112）', () => {
           '#!/bin/sh',
           'set -eu',
           'bun scripts/test-exec.ts',
-          NEXTEST_ENTRY_LINE,
-          '( cd src-tauri && cargo test --workspace --test e2e )',
+          './scripts/e2e.sh',
           '( cd src-tauri && cargo test --all --doc )',
           '',
         ].join('\n'),
