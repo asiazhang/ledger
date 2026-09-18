@@ -1,0 +1,30 @@
+# cargo-nextest 仓库配置（ticket #1496 / spec #1494）。
+#
+# e2e 新目标（`tests/e2e_rstest.rs`）经 nextest **进程级 per-test** 调度：每个
+# Scenario 一个进程，并行度按 CPU 收敛——进程内 libtest 线程并行对「世界构造
+# （内存库 + 迁移）」是负收益，进程级隔离才拿到真并行（实测与结论见 spec #1494
+# 与 `docs/verification/1496-e2e-nextest.md`）。
+#
+# 旧 cucumber 目标（`tests/e2e.rs`）声明 `harness = false`（自定义 runner），不支持
+# nextest 依赖的 `--list --format terse` 协议，故由 `default-filter` 排除、仍走
+# cargo 自有入口执行；收口票 #1508 删除 cucumber 后本地与 CI 统一为 nextest 单入口，
+# `default-filter` 随之下线。
+#
+# 覆盖守门（`scripts/test-exec.ts`）核对本文件的排除名单与 `harness = false` 目标
+# 清单**双向全等**：多排一个 libtest 目标即红（静默漏跑），少排一个自定义目标会让
+# nextest 列举失败（fail loud）。
+
+[profile.default]
+# 并行度 = CPU 数（nextest 默认值，显式写出作为口径单点）。
+test-threads = "num-cpus"
+# 失败不早停：一轮跑完拿到全部失败，与 scripts/test-exec.ts 的聚合报告同口径。
+fail-fast = false
+# 不重试：红灯必须可直接复现，重试只会把 flaky 藏起来（spec #1494 的失败置红目标）。
+retries = 0
+# 单场景超时：世界构造卡死/死锁不得拖死本地与 CI（旧 cucumber 单进程无此保护）——
+# 60s 视为慢，连续两个周期（120s）未结束即终止并判红。
+slow-timeout = { period = "60s", terminate-after = 2 }
+# 整轮兜底：超过 15 分钟整体终止（CI 上防病态挂起）。
+global-timeout = "15m"
+# 自定义 harness 目标不进 nextest（不支持 --list 协议），唯一去向是 cargo 自有入口。
+default-filter = "not binary(e2e)"

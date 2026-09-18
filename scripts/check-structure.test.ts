@@ -1582,6 +1582,27 @@ describe('check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
     expect(r.output).toContain('test.sh')
   })
 
+  it('cargo nextest run 缺 --workspace → 红（#1496 起两词命令词同待遇）', () => {
+    const args = makeCrateFixture({
+      testSh: '( cd src-tauri && cargo nextest run --test e2e_rstest )\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('cargo nextest run 缺 --workspace')
+    expect(r.output).toContain('test.sh')
+  })
+
+  it('cargo nextest run 带 --workspace → 不假红；`cargo nextest --version` 不算命令面', () => {
+    const args = makeCrateFixture({
+      testSh:
+        'cargo nextest --version\n' +
+        '( cd src-tauri && cargo nextest run --workspace --test e2e_rstest )\n' +
+        '( cd src-tauri && cargo test --workspace --doc )\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
   it('test-exec.ts（新 cargo 命令宿主，.ts 形态）缺 --workspace → 红（#1112 登记）', () => {
     const args = makeCrateFixture({ testExecTs: 'const BUILD = "cargo test --no-run"\n' })
     const r = run(args)
