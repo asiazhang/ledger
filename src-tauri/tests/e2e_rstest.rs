@@ -76,3 +76,56 @@ mod scenarios {
         fixtures = [world: crate::world::LedgerWorld]
     );
 }
+
+/// 运行时注册表断言（ticket #1497 AC1/AC3）：`transactions_write_steps.rs` 整文件
+/// 22 条步骤（Given 1 + When 12 + Then 9）都已进入新目标的 rstest-bdd 注册表，
+/// 且改写后的占位符能按真实语义匹配真实场景文本（`{<名>:string}` 剥引号、
+/// `{<名>:i64}` 解析整数）。「只留 cucumber 注册」（删掉任一新注册）即红。
+///
+/// 逐条模式的全等覆盖（feature 步骤行 ↔ 注册模式、无漏改 / 无歧义）由静态覆盖
+/// 守门兜底（`bun scripts/check-e2e-step-coverage.ts`，ticket #1510 / AC2）；
+/// 本断言只担运行时那半：宏确实把注册发进了目标注册表、且查找能命中。
+#[test]
+fn transactions_write_steps_are_registered_in_rstest_bdd() {
+    use rstest_bdd::{Step, StepKeyword, StepText, find_step_with_metadata, iter};
+
+    let registered: Vec<_> = iter::<Step>
+        .into_iter()
+        .filter(|step| step.file.ends_with("transactions_write_steps.rs"))
+        .collect();
+    assert_eq!(
+        registered.len(),
+        22,
+        "本文件在新目标的注册条数不符（缺注册或多注册）：{:#?}",
+        registered
+            .iter()
+            .map(|step| step.pattern.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    // 占位符语义抽样：string 剥引号、i64 解析整数、可选后缀（备注）与无占位符。
+    let samples = [
+        (
+            StepKeyword::When,
+            "创建交易 类型 \"income\" 金额 5000 到账户 \"现金\" 日期 \"2026-02-02\"",
+        ),
+        (
+            StepKeyword::When,
+            "创建交易 类型 \"expense\" 金额 1500 到账户 \"现金\" 日期 \"2026-02-01\" 备注 \"午餐\"",
+        ),
+        (
+            StepKeyword::Then,
+            "该转账 to_account_id 应匹配账户 \"B账户\"",
+        ),
+        (StepKeyword::When, "注入软删失败触发器"),
+    ];
+    for (keyword, text) in samples {
+        let found = find_step_with_metadata(keyword, StepText::from(text))
+            .unwrap_or_else(|| panic!("新目标未匹配到步骤文本：{text}"));
+        assert!(
+            found.file.ends_with("transactions_write_steps.rs"),
+            "步骤文本 {text} 未命中本文件的注册：{}",
+            found.file
+        );
+    }
+}
