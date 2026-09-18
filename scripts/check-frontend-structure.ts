@@ -55,6 +55,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { maskComments } from './ts-comment-mask.ts'
 
 /** 成员包登记条目（单一事实源，issue #1149）：dir 相对仓库根。 */
 export interface PackageEntry {
@@ -208,61 +209,6 @@ const SIDE_EFFECT_IMPORT_PATTERN = /\bimport\s+['"]([^'"]+)['"]/
 
 /** 扫描的源文件扩展名（Vue SFC 的 script 块与 TS 源码） */
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.vue']
-
-/** 若 text[start] 起是字符串/模板字面量，返回结束引号后的下标；未闭合则返回文末。
- *  否则返回 -1。只用于跳过字面量内容以识别注释起点，字面量本身不掩码。 */
-function stringLiteralEnd(text: string, start: number): number {
-  const quote = text[start]
-  if (quote !== "'" && quote !== '"' && quote !== '`') return -1
-  let i = start + 1
-  while (i < text.length) {
-    if (text[i] === '\\') {
-      i += 2
-      continue
-    }
-    if (text[i] === quote) return i + 1
-    i++
-  }
-  return text.length
-}
-
-/** 掩码 TS/Vue 源文本中的注释（行注释与块注释）：内容替换为等长空白（保留换行与
- *  列位），使 import 扫描只落在真实代码上。字面量内容不掩码——import 说明符本身是
- *  字符串，掩码会连靶一起抹掉；但识别注释起点前先跳过字符串/模板字面量，否则字面量
- *  里的 // 或 /* 会被误当注释、吞掉同行与前后的真实代码（把真实 import 或 invoke 藏
- *  出检测面，issue #1471）。正则字面量体内未转义的 / 会终止字面量，故体内 / 必为
- *  \/，紧邻的反斜杠即「正则内斜杠」信号——带转义的 / 不作注释起点，正则字面量的
- *  \/\/ 形态同样不吞其后的真实代码。正则字面量整体词法不做（残余：字符类内相邻
- *  斜杠如 /[//]/、模板 ${} 插值——本仓零现役命中，评审兜底，#1481 收口）；
- *  字符串内的伪 import 仍靠关键词上下文排除。
- *  另一消费方 = check-commands.ts 的 TS 调用面识别（issue #1471，注释掉的 invoke
- *  不算真实调用）：两条口径共用本掩码，改动须两侧一并核对（掩码上收共享模块见
- *  issue #1481，尚未收敛）。 */
-export function maskComments(text: string): string {
-  const out = text.split('')
-  const n = text.length
-  const blank = (from: number, to: number): void => {
-    for (let k = from; k < to && k < n; k++) if (out[k] !== '\n') out[k] = ' '
-  }
-  let i = 0
-  while (i < n) {
-    // text[i - 1] === '\\'：正则字面量体内的转义斜杠，不是注释起点（issue #1471）。
-    if (text[i] === '/' && text[i - 1] !== '\\' && text[i + 1] === '/') {
-      const stop = text.indexOf('\n', i) === -1 ? n : text.indexOf('\n', i)
-      blank(i, stop)
-      i = stop
-    } else if (text[i] === '/' && text[i - 1] !== '\\' && text[i + 1] === '*') {
-      const end = text.indexOf('*/', i + 2)
-      const stop = end === -1 ? n : end + 2
-      blank(i, stop)
-      i = stop
-    } else {
-      const literalEnd = stringLiteralEnd(text, i)
-      i = literalEnd === -1 ? i + 1 : literalEnd
-    }
-  }
-  return out.join('')
-}
 
 /** 单条 import 说明符命中：行号（1 起算）、原文行、说明符 */
 export interface ImportHit {
