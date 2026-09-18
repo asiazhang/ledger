@@ -77,9 +77,10 @@ pub(super) struct SyncInstrument {
     pub(super) market: String,
     pub(super) currency: String,
     /// 价格写入通道（issue #1060）：投资域派生单点 [`derive_price_channel`] 的
-    /// 判定结果——行情（Quote）/ 净值（FundNav）两分区参与同步，手动报价与
-    /// 无来源行计入跳过。分区口径与标的读投影（`Instrument::price_channel`）
-    /// 同源单点，不再各自镜像类型与市场判定。
+    /// 判定结果——行情（Quote）/ 净值（FundNav）两分区参与同步，恒定价格
+    ///（ADR-0126 决策 4：采集链路全豁免）与手动报价、无来源行计入跳过。分区
+    /// 口径与标的读投影（`Instrument::price_channel`）同源单点，不再各自镜像
+    /// 类型与市场判定。
     pub(super) channel: PriceChannel,
 }
 
@@ -239,8 +240,8 @@ async fn take_bulk_surface<T: BulkCoverage>(
 ///
 /// 进度回调（issue #897 / ADR-0095；页级明细 issue #1061）：载荷 `done`/`total`
 /// 的分母 `total` 为**有通道标的数**（可构造查询的行情标的 + 有真实代码的基金；
-/// 无通道行不计），收集与分区完成后立即发 `{ done: 0, total }`；此后每完成一个
-/// 有通道标的推进一格（现价+名称合并为各通道标的的一格；
+/// 恒定价格行与无通道行不计，ADR-0126 决策 4），收集与分区完成后立即发
+/// `{ done: 0, total }`；此后每完成一个有通道标的推进一格（现价+名称合并为各通道标的的一格；
 /// 停牌/查询无果/「已是最新」照常推进——有通道标的不以成败计格）。`total` 为 0
 ///（全部无通道）不发任何进度事件，空转不伪装成推进。逐只短窗翻页的基金在页抓取
 /// 返回后额外带出 `fund` 页级明细（不改 `done`/`total`；单页不发）。
@@ -286,22 +287,25 @@ where
     // 单次收集库内全部标的（一条 SQL，无持仓前置，issue #827），按投资域派生的
     // 价格通道分区（issue #1060，判定单点 `derive_price_channel`）：行情分区
     // 构造 secid 查报价与日 K；净值分区（fund 且 6 位真实代码，ADR-0038 决策 6）
-    // 走历史净值通道；其余（手动报价通道与无来源行：债券/其他、市场未知自建行、
-    // 名称充代码基金行等）计入跳过统计——三类统计天然同源。
+    // 走历史净值通道；其余（恒定价格通道行：ADR-0126 决策 4 采集链路全豁免、
+    // 批量面结构上也不覆盖它，#1451；手动报价通道与无来源行：债券/其他、市场
+    // 未知自建行、名称充代码基金行等）计入跳过统计——各类统计天然同源。
     let quote_channel: Vec<&SyncInstrument> = held
         .iter()
         .filter(|i| i.channel == PriceChannel::Quote)
         .collect();
-    // 净值分区带恒定价格通道（ADR-0126）：恒定标的的逐只请求本票有意保留
-    // （打标收敛的确认通道，refresh_one_fund_price 内按通道分流——只确认、
-    // 不落采集价格数据），分母与缺口统计因此与改动前同面（暂计入；排除归
-    // #1451）。
+    // 净值分区不含恒定价格通道（ADR-0126 决策 4 / #1451）：恒定标的不进逐只
+    // 刷新（批量面未覆盖不再对它回退）、不进进度分母、不计批量面缺口——为一
+    // 个已知常量发请求收益为零。未打标的货基仍留在净值通道内，由逐只刷新的
+    // 数据源自报口径确认即打标（见 [`refresh_one_fund_price`]），自下一轮同步
+    // 起豁免。
     let funds: Vec<&SyncInstrument> = held
         .iter()
-        .filter(|i| matches!(i.channel, PriceChannel::FundNav | PriceChannel::Constant))
+        .filter(|i| i.channel == PriceChannel::FundNav)
         .collect();
-    let no_quote_source = held.len() - quote_channel.len() - funds.len();
-
+    // 不参与采集的行数（恒定价格行 + 手动报价通道与无来源行）：跳过统计的
+    // 第一桶，与下方 skipped 汇总同源。
+    let uncollected = held.len() - quote_channel.len() - funds.len();
     // 库内无任何标的：明确提示，不报错。
     if held.is_empty() {
         return Ok(SyncInstrumentInfoResult {
@@ -334,7 +338,8 @@ where
 
     // 进度分母（issue #897 / ADR-0095）：有通道标的数 = 行情分区标的 + 净值分区
     // 基金（价格通道派生单点已保证行情分区市场可查、净值分区代码为 6 位真实代码；
-    // 无通道行不进分母）。收集与分区完成后立即发 total；total 为 0 不发任何进度事件。
+    // 恒定价格行与无通道行不进分母，ADR-0126 决策 4）。收集与分区完成后立即发
+    // total；total 为 0 不发任何进度事件。
     let total = queryable.len() + funds.len();
     if total > 0 {
         progress(SyncProgress::instrument(0, total));
@@ -551,8 +556,9 @@ where
     // 已查询但未取到有效价的（停牌/无效价/查询无果）计入跳过。
     let invalid = queryable.len() - synced_codes.len();
     // 无通道行（手动报价通道与无来源：债券/其他、市场未知自建行、名称充代码基金行）
-    // 与停牌/查询无果/首刷查无净值等一并计入跳过。
-    let skipped = no_quote_source + skipped_unqueryable + invalid + fund_stats.skipped;
+    // 与恒定价格行（不进收集面，ADR-0126 决策 4）、停牌/查询无果/首刷查无净值等
+    // 一并计入跳过。
+    let skipped = uncollected + skipped_unqueryable + invalid + fund_stats.skipped;
     // 实际写入 = 股票有效价 + 基金实际落库净值（基金「已是最新」不算写入）。
     let written = synced_codes.len() + fund_stats.written;
     // 取数面统计收尾（ADR-0121 决策 3）：缺口与失败在统计上分开——缺口（批量面

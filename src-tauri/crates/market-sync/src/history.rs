@@ -187,9 +187,8 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
             }
             // 恒定价格通道不进队列（ADR-0126 决策 4/6）：它的走势由读侧按常量
             // 合成，历史行不带来任何信息；且打标后净值水位已清空（水位语义
-            // 不适用），仍按净值通道收集会让它每窗口整根重采。逐只刷新路径的
-            // 请求本票有意保留（打标收敛，见 refresh_one_fund_price）；队列与
-            // 逐只刷新的完整收窄在 #1451。
+            // 不适用），仍按净值通道收集会让它每窗口整根重采。采集链路三入口
+            //（首刷队列、逐只刷新、周采样点）对恒定标的全部豁免（#1451）。
             PriceChannel::Constant => continue,
             // 手动报价与无来源通道没有可采集的历史序列，不进队列。
             PriceChannel::Manual | PriceChannel::None => continue,
