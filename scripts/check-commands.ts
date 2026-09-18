@@ -2,7 +2,11 @@
 // 命令注册一致性校验（issue #315 / ADR-0047 命令名腿；issue #1398 参数键名腿）：
 // 命令单一来源 = `#[tauri::command]` 注解本身。命令名腿：左集 = Rust 注解命令名
 // （与 src-tauri/build.rs 扫描器同源同界）；右集 = packages/api/src/index.ts 的
-// invoke('命令名') 字符串，双向全等。参数键名腿（#1398，#588 类回归根治）：Rust
+// invoke('命令名') / invoke("命令名") 字符串（单双引号均识别；模板字面量维持不
+// 支持，既有文档化取舍，评审兜底），双向全等。TS 调用面先经注释掩码再匹配（复用
+// TS 侧掩码器具 check-frontend-structure.ts 的 maskComments，#1471）：注释掉的
+// invoke 形态不算真实调用面，不再报「Rust 无此命令」假红。参数键名腿（#1398，
+// #588 类回归根治）：Rust
 // 数据参数名经 lowerCamelCase 转换（转换规则与 tauri-macros 的 heck
 // ToLowerCamelCase 参数绑定一致）后，与 invoke 实参对象的字面量键每命令每调用点
 // 双向全等，多处调用点键集须互相一致；State/AppHandle/Window/WebviewWindow 注入
@@ -15,6 +19,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { maskComments } from './check-frontend-structure.ts'
 
 /** 单条扫描边界违规：行号 1 起算 + 违规行原文 */
 export interface ScanError {
@@ -214,11 +219,23 @@ export function scanRustSource(text: string): ScanResult {
 }
 
 /**
- * 扫描 TS 调用面文本中的 invoke('命令名')（含 invoke<T>('命令名') 泛型形态）。
- * 只认单引号字符串字面量（packages/api/src/index.ts 统一风格）。
+ * invoke 调用形态（命令名 = 第 2 捕获组）：invoke('命令名') / invoke("命令名")，
+ * 含 invoke<T>('命令名') 泛型形态；单双引号须配对（反引用回指）。模板字面量维持
+ * 不支持（既有文档化取舍，评审兜底）。
+ */
+const TS_INVOKE_PATTERN = /\binvoke(?:<[^>]*>)?\(\s*(['"])([^'"]+)\1/g
+
+/** 在（已掩码注释的）文本上匹配全部 invoke 调用点，命令行号/实参由调用方按列位取原文 */
+function matchInvokeCalls(masked: string): RegExpExecArray[] {
+  return [...masked.matchAll(TS_INVOKE_PATTERN)]
+}
+
+/**
+ * 扫描 TS 调用面文本中的 invoke 命令名。识别前先掩码注释（复用 TS 侧掩码器具，
+ * 与参数键名腿同口径，#1471）——注释掉的调用不计入真实调用面。
  */
 export function scanTsSource(text: string): string[] {
-  return [...text.matchAll(/\binvoke(?:<[^>]*>)?\(\s*'([^']+)'/g)].map((m) => m[1])
+  return matchInvokeCalls(maskComments(text)).map((m) => m[2])
 }
 
 /** 单个 invoke 调用点：命令名 + 实参对象字面量键 + 起始行（1 起算）+ 解析失败原因 */
@@ -366,13 +383,17 @@ function finishEntries(entries: string[], problems: string[]): string[] {
   return keys
 }
 
-/** 扫描全部 invoke 调用点（与 scanTsSource 同一匹配边界） */
+/**
+ * 扫描全部 invoke 调用点（与 scanTsSource 同一匹配边界）：命令形态在掩码文本上
+ * 匹配（注释里的调用不算真实调用点，#1471），实参解析读原文——掩码等长保位，对象
+ * 里的字符串/注释各由既有解析器跳过。
+ */
 export function scanTsInvokeCalls(text: string): TsInvokeCall[] {
   const calls: TsInvokeCall[] = []
-  for (const m of text.matchAll(/\binvoke(?:<[^>]*>)?\(\s*'([^']+)'/g)) {
+  for (const m of matchInvokeCalls(maskComments(text))) {
     const line = text.slice(0, m.index).split('\n').length
     const { keys, problems } = parseArgsObject(text, m.index + m[0].length)
-    calls.push({ command: m[1], line, keys, problems })
+    calls.push({ command: m[2], line, keys, problems })
   }
   return calls
 }

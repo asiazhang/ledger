@@ -245,6 +245,16 @@ describe('check-frontend-structure（前端 workspace 结构守门）', () => {
       const r = run(packageWithSource("// import { helper } from '@/lib/format'\nexport {}\n"))
       expect(r.status).toBe(0)
     })
+
+    it('字符串里的 // 不吞掉同行其后的 import（掩码须识别字面量，#1471）', () => {
+      const r = run(
+        packageWithSource(
+          "export const url = 'http://example.com'; import { helper } from '@/lib/format'\nexport { helper }\n",
+        ),
+      )
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('@/ 别名')
+    })
   })
 
   describe('规则④：深导入禁令（跨包引用必须命中 exports 入口）', () => {
