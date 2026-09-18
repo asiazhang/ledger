@@ -177,8 +177,8 @@ function maxAmountInput(wrapper: VueWrapper) {
   return el!
 }
 
-async function applyFilters(delay = SEARCH_DEBOUNCE_MS) {
-  await vi.advanceTimersByTimeAsync(delay)
+async function applyFilters() {
+  await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS)
   await nextTick()
   await nextTick()
 }
