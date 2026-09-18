@@ -11,6 +11,7 @@ import {
   BUDGET_SRC_REL,
   CATEGORIES_MODULES,
   CATEGORIES_SRC_REL,
+  CRATE_MODULE_LISTS,
   CRATES,
   CURRENCIES_MODULES,
   CURRENCIES_SRC_REL,
@@ -2866,7 +2867,8 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
   it('真实仓库默认通过：磁盘模块全部登记 + 区级层序零未认许反向引用（#1182 消除三处反边后认许边归空）', () => {
     const r = run([])
     expect(r.status).toBe(0)
-    expect(r.output).toContain('TRANSACTION_MODULES 双向全等')
+    // 双向全等接线入摘要由「#1448 推广」describe 的推广 bullet 断言承担；
+    // 此处只保区级层序与认许边条数。
     expect(r.output).toContain('区级层序零未认许反向引用')
     // 认许边条数自脚本导出清单派生（单一事实源，无双源漂移）
     expect(r.output).toContain(`认许边 ${TRANSACTION_ZONE_ALLOWED_EDGES.length} 条`)
@@ -3034,6 +3036,79 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
     })
     const r = run(args)
     expect(r.status).toBe(0)
+  })
+})
+
+describe('check-structure 模块清单双向全等推广到全部 crate 清单（#1448）', () => {
+  // ADR-0087 断言强度：每份 crate 模块清单一枚负向夹具，一次投放一次运行——
+  // 断言对准每份清单的「未登记模块」报文（退出码与输出）；任一清单的双向全等
+  // 接线被删除，其标签从报文消失 → 本测红。
+  it('任一 crate 清单磁盘新增未登记模块 → 红（全清单一次投放，删除即变红）', () => {
+    const args = makeCrateFixture()
+    for (const spec of CRATE_MODULE_LISTS) {
+      writeFileSync(join(args[1], spec.srcRel, 'orphan.rs'), STUB)
+    }
+    const r = run(args)
+    expect(r.status).toBe(1)
+    for (const spec of CRATE_MODULE_LISTS) {
+      expect(r.output).toContain(`${spec.label} 未登记模块`)
+    }
+    // 报文带定位：抽验孤儿文件名与模块根出现（不逐条膨胀）
+    expect(r.output).toContain('orphan.rs')
+    expect(r.output).toContain(ACCOUNTS_SRC_REL)
+  })
+
+  it('目录型孤儿（扫得到非测试文件的目录）同样红（目录型条目覆盖其全部子目录）', () => {
+    const args = makeCrateFixture()
+    for (const spec of CRATE_MODULE_LISTS) {
+      mkdirSync(join(args[1], spec.srcRel, 'orphan_dir'), { recursive: true })
+      writeFileSync(join(args[1], spec.srcRel, 'orphan_dir', 'helper.rs'), STUB)
+    }
+    const r = run(args)
+    expect(r.status).toBe(1)
+    for (const spec of CRATE_MODULE_LISTS) {
+      expect(r.output).toContain(`${spec.label} 未登记模块`)
+    }
+    expect(r.output).toContain('orphan_dir')
+  })
+
+  it('测试豁免形态不触发未登记：顶层 tests.rs 与仅含 tests.rs 的目录（ADR-0056 决策 5）', () => {
+    const args = makeCrateFixture()
+    for (const spec of CRATE_MODULE_LISTS) {
+      writeFileSync(join(args[1], spec.srcRel, 'tests.rs'), STUB)
+      mkdirSync(join(args[1], spec.srcRel, 'extra'), { recursive: true })
+      writeFileSync(join(args[1], spec.srcRel, 'extra', 'tests.rs'), STUB)
+    }
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('crate 根 lib.rs 免登清单（infra 除外）：声明与再导出面不触发未登记', () => {
+    const args = makeCrateFixture()
+    for (const spec of CRATE_MODULE_LISTS) {
+      if (spec.excludeCrateRoot) {
+        writeFileSync(
+          join(args[1], spec.srcRel, 'lib.rs'),
+          'pub mod declared_module_not_on_disk;\npub fn stub() {}\n',
+        )
+      }
+    }
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('真实仓库默认通过：全部 crate 清单双向全等入摘要（#1448 推广）', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`模块清单双向全等推广至全部 ${CRATE_MODULE_LISTS.length} 份 crate 清单`)
+    expect(r.output).toContain('CRATES 成员 ↔ CRATE_MODULE_LISTS 双向全等')
+  })
+
+  it('登记面全等：CRATES 成员（除根包）与 CRATE_MODULE_LISTS 一一对应（#1448，新 crate 漏扩表即红）', () => {
+    // 纯常量表核对无法经夹具红，用长度锚替代负向夹具：新 crate 入 CRATES
+    // （否则成员登记红）而漏扩 CRATE_MODULE_LISTS → 本断言红 + 守门脚本
+    // checkModuleListRegistry 红，两面同锁（ADR-0087 删除即变红）。
+    expect(CRATE_MODULE_LISTS.length).toBe(CRATES.length - 1) // -1 根包（壳层，无清单）
   })
 })
 
