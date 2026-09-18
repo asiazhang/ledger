@@ -226,6 +226,11 @@ fn is_round_lock_give_up(error: &AppError) -> bool {
 /// #1276 守门③）。
 pub(crate) struct AutoRoundConn {
     conn: Arc<Mutex<Connection>>,
+    /// 每段取连接锁的等待上限。产品路径取 [`ledger_backup::LOCK_TIMEOUT`]（经
+    /// [`AutoRoundConn::new`]），与备份调度同值同口径；测试可经
+    /// [`AutoRoundConn::with_lock_timeout`] 注入短超时——「拿不到锁即放弃本轮」
+    /// 是瞬时可判定的语义，按产品默认值实等只贡献墙钟（spec #1086 / issue #1514）。
+    lock_timeout: Duration,
 }
 
 impl AutoRoundConn {
@@ -233,7 +238,15 @@ impl AutoRoundConn {
     pub(crate) fn new(conn: &Arc<Mutex<Connection>>) -> Self {
         Self {
             conn: Arc::clone(conn),
+            lock_timeout: ledger_backup::LOCK_TIMEOUT,
         }
+    }
+
+    /// 覆盖每段取锁的等待上限（仅供测试注入短超时；产品路径不得调用）。
+    #[cfg(test)]
+    pub(crate) fn with_lock_timeout(mut self, timeout: Duration) -> Self {
+        self.lock_timeout = timeout;
+        self
     }
 }
 
@@ -243,7 +256,7 @@ impl RoundConn for AutoRoundConn {
         F: FnOnce(&Connection) -> Result<R>,
     {
         let hold_started = Instant::now();
-        let Some(guard) = ledger_backup::lock_conn_with_timeout(&self.conn) else {
+        let Some(guard) = ledger_backup::lock_conn_within(&self.conn, self.lock_timeout) else {
             return Err(round_lock_give_up_error());
         };
         let result = use_connection(&guard);

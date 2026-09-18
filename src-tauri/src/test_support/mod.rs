@@ -109,6 +109,11 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
 /// 零配置打开已初始化的内存测试库：`db::open_in_memory()`（外键 + perf hook）+
 /// `db::init_db()`（迁移 + 默认种子）两行序的唯一承载（ADR-0084 决策 3：建库的
 /// 全部现状就是内存库 + 迁移，无配置项）。文件库/加密是 BDD 场景，不入本工厂。
+///
+/// 建库经 [`ledger_infra::db::open_in_memory_initialized`]：工厂仍是唯一的建库入口，
+/// 但迁移链不再逐用例重放，改由进程内固定的模板产物还原（spec #1086 / issue #1514，
+/// 口径与独立性不变，见该函数文档）。接口形态（零配置 `open() -> Connection`）与
+/// 全部既有调用点不变。
 pub fn open() -> Connection {
     // 提交点后置动作接线（spec #1086 / issue #1088）：测试库与生产同形——连接层
     // 写入口的副作用实现由域侧提供，建库单点负责注册（幂等）。
@@ -131,7 +136,5 @@ pub fn open() -> Connection {
     // 交易域接缝接线（issue #1092 / #1180）：测试库与生产同形——六向实现经组合
     // 入口一次装入（幂等，先装者优先）。
     crate::transaction_wiring::install_all();
-    let mut conn = ledger_infra::db::open_in_memory().expect("打开内存测试库");
-    ledger_infra::db::init_db(&mut conn).expect("初始化内存测试库");
-    conn
+    ledger_infra::db::open_in_memory_initialized().expect("打开并初始化内存测试库")
 }

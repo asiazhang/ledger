@@ -21,7 +21,7 @@ http = ["dep:axum"]
 # ——本 crate 承接数据库、错误、设置、文件工具、事件、信号与闭集，是全部业务域
 # 的共同底座（日志与壳层统一读写入口自 #1108 起迁回壳层根包）；对外只经
 # 根包再导出面消费。
-rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace", "serialize"] }
 rusqlite_migration = "2.6"
 chrono = { version = "0.4.45", features = ["serde"] }
 uuid = { version = "1.23", features = ["v7", "v5", "serde"] }

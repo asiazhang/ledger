@@ -27,7 +27,7 @@ pub use connection::{
     CONCURRENT_BUSY_TIMEOUT, check_integrity, open_connection, open_connection_in,
     open_connection_readonly, open_connection_readonly_in,
     open_connection_readonly_with_passphrase, open_connection_with_passphrase, open_db_in,
-    open_in_memory, reset_db_file, reset_db_in,
+    open_in_memory, open_in_memory_initialized, reset_db_file, reset_db_in,
 };
 pub use facade::DbFacade;
 pub use facade_handles::{DbReadHandle, DbSlotPair, DbWriteHandle, install_facade};

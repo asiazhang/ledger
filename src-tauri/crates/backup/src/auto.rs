@@ -678,7 +678,21 @@ pub fn seed_book_scope(registry: Option<&ledger_infra::db::book_registry::BookRe
 /// 的 `Send + 'static`，收编随多端同步域异步化（#1405 另案）一并评估——在此之前它
 /// 仍走本函数的直锁形态。
 pub fn lock_conn_with_timeout(conn: &Arc<Mutex<Connection>>) -> Option<MutexGuard<'_, Connection>> {
-    let deadline = Instant::now() + LOCK_TIMEOUT;
+    lock_conn_within(conn, LOCK_TIMEOUT)
+}
+
+/// 等待连接锁的上限可注入形态（spec #1086 / issue #1514）：语义与
+/// [`lock_conn_with_timeout`] 逐字相同，只是把等待上限开放为参数。
+///
+/// 存在的理由是**让「拿不到锁即放弃」这一瞬时可判定的语义可被快速验证**：调用方
+/// （如多端同步调度侧的轮次连接源）以本函数注入短超时，测试断言放弃行为时不再
+/// 需要按产品默认的 5s 实等——等待时长不含信息量，只贡献墙钟。产品路径一律用
+/// [`LOCK_TIMEOUT`]（即 [`lock_conn_with_timeout`]），本参数不改变任何产品默认值。
+pub fn lock_conn_within(
+    conn: &Arc<Mutex<Connection>>,
+    timeout: Duration,
+) -> Option<MutexGuard<'_, Connection>> {
+    let deadline = Instant::now() + timeout;
     loop {
         match conn.try_lock() {
             Ok(guard) => return Some(guard),
@@ -689,7 +703,7 @@ pub fn lock_conn_with_timeout(conn: &Arc<Mutex<Connection>>) -> Option<MutexGuar
             Err(TryLockError::WouldBlock) => {
                 if Instant::now() >= deadline {
                     tracing::warn!(
-                        timeout_ms = LOCK_TIMEOUT.as_millis() as u64,
+                        timeout_ms = timeout.as_millis() as u64,
                         "等待数据库锁超时，跳过本轮自动备份"
                     );
                     return None;

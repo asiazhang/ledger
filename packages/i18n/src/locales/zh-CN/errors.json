@@ -310,7 +310,8 @@
     "not-found": "实物资产不存在: {0}"
   },
   "db": {
-    "integrity-check-failed": "数据库完整性检查失败: {0}"
+    "integrity-check-failed": "数据库完整性检查失败: {0}",
+    "template-init-failed": "内存模板库构建失败，无法还原测试库：{0}"
   },
   "boot": {
     "db-unreadable": "启动失败，数据库不可用，请先在失败恢复屏重置或恢复",
