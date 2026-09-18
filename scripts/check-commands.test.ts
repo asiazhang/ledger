@@ -227,4 +227,126 @@ describe('check-commands（命令注册一致性校验）', () => {
       expect(r.output).toMatch(/不是对象字面量/)
     })
   })
+
+  describe('TS 调用面口径（issue #1471：注释掩码 + 双引号识别）', () => {
+    it('注释掉的 invoke 形态不报「Rust 无此命令」假红，注释外真实调用仍参与核对', () => {
+      const args = makeFixture(
+        { 'alpha.rs': cmd('alpha_one') },
+        [
+          "invoke<void>('alpha_one')",
+          "// 临时注释掉的调用 // invoke<void>('ghost_commented')",
+          "invoke<void>('ghost_real')",
+          '',
+        ].join('\n'),
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('Rust 无此命令')
+      expect(r.output).toContain('ghost_real') // 注释外的真实调用照旧核对（未因掩码放过）
+      expect(r.output).not.toContain('ghost_commented') // 注释里的调用不进调用面（删除掩码即红）
+    })
+
+    it('注释掉的调用不参与参数键名核对（参数键名腿同口径）', () => {
+      const args = makeFixture(
+        {
+          'reports.rs':
+            "#[tauri::command]\npub fn top_report(db: State<'_, DbState>, top_n: Option<i64>) -> String {\n    todo!()\n}\n",
+        },
+        [
+          "invoke<string>('top_report', { topN: 5 })",
+          "// invoke<string>('top_report', { top_n: 5 })",
+          '',
+        ].join('\n'),
+      )
+      const r = run(args)
+      expect(r.status).toBe(0)
+    })
+
+    it('调用面只剩被注释掉的 invoke → 视作空集，拒绝假绿', () => {
+      const args = makeFixture(
+        { 'alpha.rs': cmd('alpha_one') },
+        "// invoke<void>('alpha_one')\n",
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toMatch(/未在 TS 调用面扫描到任何/)
+    })
+
+    it('块注释里的 invoke 形态不误报（与行注释同口径）', () => {
+      const args = makeFixture(
+        { 'alpha.rs': cmd('alpha_one') },
+        ["invoke<void>('alpha_one')", "/* invoke<void>('ghost_block') */", ''].join('\n'),
+      )
+      const r = run(args)
+      expect(r.status).toBe(0)
+    })
+
+    it('双引号幽灵命令 → 失败并列出（旧识别面只认单引号会静默漏检）', () => {
+      const args = makeFixture(
+        { 'alpha.rs': cmd('alpha_one') },
+        ["invoke<void>('alpha_one')", 'invoke<void>("ghost_dq")', ''].join('\n'),
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('Rust 无此命令')
+      expect(r.output).toContain('ghost_dq')
+    })
+
+    it('双引号合法调用与 Rust 注解对齐 → 通过（含泛型与参数键名腿）', () => {
+      const args = makeFixture(
+        {
+          'reports.rs':
+            "#[tauri::command]\npub fn top_report(db: State<'_, DbState>, top_n: Option<i64>) -> String {\n    todo!()\n}\n",
+        },
+        'invoke<string>("top_report", { topN: 5 })\n',
+      )
+      const r = run(args)
+      expect(r.status).toBe(0)
+      expect(r.output).toMatch(/双向全等/)
+    })
+
+    it('双引号调用仍参与参数键名核对（键错 → 失败）', () => {
+      const args = makeFixture(
+        {
+          'reports.rs':
+            "#[tauri::command]\npub fn top_report(db: State<'_, DbState>, top_n: Option<i64>) -> String {\n    todo!()\n}\n",
+        },
+        'invoke<string>("top_report", { top_n: 5 })\n',
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('topN')
+      expect(r.output).toContain('top_n')
+    })
+
+    it('字符串里的 // 不吞掉其后的真实调用（掩码须识别字面量，不把 URL 当注释）', () => {
+      const args = makeFixture(
+        { 'alpha.rs': cmd('alpha_one') },
+        'const url = "http://example.com"; invoke<void>("ghost_after_url")\n',
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('ghost_after_url')
+    })
+
+    it('字符串里的 /* 不吞掉其后的真实调用（掩码须识别字面量，不把未闭合 /* 当块注释）', () => {
+      const args = makeFixture(
+        { 'alpha.rs': cmd('alpha_one') },
+        ['const glob = "src/*.ts"', 'invoke<void>("ghost_after_glob")', ''].join('\n'),
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('ghost_after_glob')
+    })
+
+    it('正则字面量里的 \\/\\/ 不吞掉其后的真实调用（正则体内斜杠带转义）', () => {
+      const args = makeFixture(
+        { 'alpha.rs': cmd('alpha_one') },
+        'const re = /^https:\\/\\//; invoke<void>("ghost_after_regex")\n',
+      )
+      const r = run(args)
+      expect(r.status).toBe(1)
+      expect(r.output).toContain('ghost_after_regex')
+    })
+  })
 })
