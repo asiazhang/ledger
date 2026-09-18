@@ -462,26 +462,29 @@ pub fn backup_db_to(
     let tmp_db = temp_sibling(target, "db");
     let tmp_zip = temp_sibling(target, "zip");
 
-    // 1. VACUUM INTO 生成一致的临时库文件（要求目标不存在，故用唯一临时名）。
-    conn.execute(
-        "VACUUM INTO ?1",
-        rusqlite::params![tmp_db.to_string_lossy()],
-    )?;
+    // 全部步骤收进一个闭包：任一步失败（`VACUUM INTO`、打包、替换启用）都在
+    // 收尾统一清理两个临时文件——失败早退绕过 cleanup 曾每次在备份目录留下
+    // 临时残留（0 字节文件累积，既有缺陷的范围外修复，issue #1454）。
+    let result = (|| -> Result<BackupResult> {
+        // 1. VACUUM INTO 生成一致的临时库文件（要求目标不存在，故用唯一临时名）。
+        conn.execute(
+            "VACUUM INTO ?1",
+            rusqlite::params![tmp_db.to_string_lossy()],
+        )?;
 
-    // 2. 探测产物密文（VACUUM INTO 继承源库加密与密钥，ADR-0075 决策 7：
-    //    文件即真相，探测的是实际落盘的快照而非源连接），随元数据落盘。
-    let encrypted = matches!(
-        db::encryption::probe_file_kind(&tmp_db)?,
-        DbFileKind::Encrypted
-    );
-    let meta = BackupMeta {
-        created_at: db::now_iso(),
-        app_version: app_version.to_string(),
-        schema_version: schema_version(conn)?,
-        kind,
-        encrypted,
-    };
-    let zip_result = (|| -> Result<()> {
+        // 2. 探测产物密文（VACUUM INTO 继承源库加密与密钥，ADR-0075 决策 7：
+        //    文件即真相，探测的是实际落盘的快照而非源连接），随元数据落盘。
+        let encrypted = matches!(
+            db::encryption::probe_file_kind(&tmp_db)?,
+            DbFileKind::Encrypted
+        );
+        let meta = BackupMeta {
+            created_at: db::now_iso(),
+            app_version: app_version.to_string(),
+            schema_version: schema_version(conn)?,
+            kind,
+            encrypted,
+        };
         let file = File::create(&tmp_zip)?;
         let mut zip = zip::ZipWriter::new(file);
         let options = zip::write::SimpleFileOptions::default();
@@ -491,23 +494,22 @@ pub fn backup_db_to(
         zip.start_file(ZIP_META_ENTRY, options)?;
         zip.write_all(serde_json::to_string_pretty(&meta)?.as_bytes())?;
         zip.finish()?;
-        Ok(())
+
+        // 3. 原子替换目标（成功时 tmp_zip 已 rename 走，收尾 cleanup 容忍不存在）。
+        replace_file(&tmp_zip, target)?;
+
+        let size_bytes = std::fs::metadata(target)?.len();
+        tracing::info!(target = %target.display(), size = %size_bytes, schema = %meta.schema_version, "备份完成");
+        Ok(BackupResult {
+            path: target.to_string_lossy().into_owned(),
+            size_bytes,
+            schema_version: meta.schema_version,
+            created_at: meta.created_at,
+        })
     })();
     cleanup(&tmp_db);
-    zip_result?;
-
-    // 3. 原子替换目标。
-    replace_file(&tmp_zip, target)?;
     cleanup(&tmp_zip);
-
-    let size_bytes = std::fs::metadata(target)?.len();
-    tracing::info!(target = %target.display(), size = %size_bytes, schema = %meta.schema_version, "备份完成");
-    Ok(BackupResult {
-        path: target.to_string_lossy().into_owned(),
-        size_bytes,
-        schema_version: meta.schema_version,
-        created_at: meta.created_at,
-    })
+    result
 }
 
 /// 从备份恢复：提取数据库 → 完整性 + 版本校验（必要时迁移升级）→ 安全备份当前库 → 替换。

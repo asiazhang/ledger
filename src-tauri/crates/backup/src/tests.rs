@@ -405,6 +405,50 @@ fn backup_fails_when_target_dir_missing() {
     assert!(err.contains("备份目标目录不存在"));
 }
 
+/// 断言目录内没有 `.` 前缀的临时残留（`temp_sibling` 产名恒以 `.` 开头，
+/// 备份失败的任一退出路径漏清理都会在此显形）。
+fn assert_no_temp_residue(dir: &Path) {
+    let leftovers: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with('.'))
+        .collect();
+    assert!(leftovers.is_empty(), "目录内不得留下临时残留: {leftovers:?}");
+}
+
+/// 失败路径临时文件卫生（#1454 验收判据负向①，既有缺陷的范围外修复）：
+/// 备份在 `VACUUM INTO`、替换启用任一步失败，目标目录都不得留下临时残留——
+/// 失败早退绕过 cleanup 曾每次在备份目录留下 0 字节文件（现场累积 162 个）。
+/// 恢复「失败早退不清理」本用例即变红。
+#[test]
+fn backup_failure_leaves_no_temp_residue() {
+    let dir = std::env::temp_dir().join(format!(
+        "ledger-backup-residue-{}-{}",
+        std::process::id(),
+        db::new_uuid()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // 注入点一：源连接处于事务内，`VACUUM INTO` 报错（现场失败形态：
+    // 0 字节临时库文件残留）。
+    let conn = tauri_app_lib::test_support::open();
+    conn.execute_batch("BEGIN").unwrap();
+    let target = dir.join("ledger-backup-20260918-120000.db.zip");
+    backup_db_to(&conn, &target, "0.6.0", BackupKind::Manual).unwrap_err();
+    assert_no_temp_residue(&dir);
+    conn.execute_batch("ROLLBACK").unwrap();
+
+    // 注入点二：目标路径被目录占用，替换启用失败（tmp_db 与 tmp_zip
+    // 两个临时文件都已生成，双双必须收走）。
+    let occupied = dir.join("occupied.zip");
+    std::fs::create_dir(&occupied).unwrap();
+    backup_db_to(&conn, &occupied, "0.6.0", BackupKind::Manual).unwrap_err();
+    assert_no_temp_residue(&dir);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 // -------------------------------------------------------------------------
 // 备份按账本分域（issue #836 / ADR-0089 决策 5）：命名携带账本标识、列表与
 // 滚动清理按本作用域、无标识历史产物归登记序首本。
