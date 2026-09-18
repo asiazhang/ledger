@@ -28,6 +28,9 @@ pub enum SettingKey {
     AutoBackupDirty,
     /// 上次成功备份时间（`Option<String>`，UTC ISO）。
     AutoBackupLastBackupAt,
+    /// 自动备份连续失败计数（issue #1456，`u32`，默认 0）：执行失败累加（饱和）、
+    /// 成功清零；达阈值后设置页呈现提示。调度状态，读写经备份域 auto 模块。
+    AutoBackupConsecutiveFailures,
     /// 下次备份到期时间（`Option<String>`，UTC ISO）。
     AutoBackupNextDueAt,
     /// 后端日志等级（闭集五档 error/warn/info/debug/trace 的档位字符串，默认 info，
@@ -56,6 +59,7 @@ impl SettingKey {
             Self::AutoBackupEnabled => "auto_backup.enabled",
             Self::AutoBackupDirty => "auto_backup.dirty",
             Self::AutoBackupLastBackupAt => "auto_backup.last_backup_at",
+            Self::AutoBackupConsecutiveFailures => "auto_backup.consecutive_failures",
             Self::AutoBackupNextDueAt => "auto_backup.next_due_at",
             Self::LogLevel => "logging.level",
             Self::LedgerBaseCurrency => "ledger.base_currency",

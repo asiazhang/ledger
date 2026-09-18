@@ -234,11 +234,17 @@ pub async fn set_auto_backup_dir(app: AppHandle, dir: String) -> Result<()> {
 }
 
 /// 自动备份设置页状态（issue #128）：开关与上次自动备份时间。
-/// 设置页仅需这两项；脏标记为后端调度内部状态，不上 IPC 面。
+/// 设置页仅需这两项；脏标记为后端调度内部状态，不上 IPC 面。连续失败
+/// 计数与提示态经 `consecutive_failures`/`failure_alerting` 透出（issue #1456）。
 #[derive(Debug, Serialize)]
 pub struct AutoBackupSettingsState {
     pub enabled: bool,
     pub last_backup_at: Option<String>,
+    /// 自动备份连续失败次数（issue #1456）：提示文案消费。
+    pub consecutive_failures: u32,
+    /// 连续失败达提示阈值（判定后端单点 [`backup::failure_alerting`]，
+    /// 前端不复刻阈值）：true 时设置页自动备份卡片呈现失败提示。
+    pub failure_alerting: bool,
 }
 
 /// 读取自动备份调度状态（issue #128，设置页展示）：key 缺失或恢复了旧版本备份
@@ -252,6 +258,8 @@ pub async fn get_auto_backup_state(app: AppHandle) -> Result<AutoBackupSettingsS
         Ok(AutoBackupSettingsState {
             enabled: s.enabled,
             last_backup_at: s.last_backup_at,
+            consecutive_failures: s.consecutive_failures,
+            failure_alerting: backup::failure_alerting(s.consecutive_failures),
         })
     })
     .await

@@ -143,6 +143,7 @@
       "autoLast": "Last auto backup: ",
       "autoLastNever": "Never",
       "autoNeedDir": "Auto backup takes effect once a backup directory is set",
+      "autoFailures": "Auto backup has failed {n} times in a row and the data safety net may not be working. Check that the backup directory is available and has enough disk space. This notice clears automatically after a successful backup.",
       "backupTitle": "Backup",
       "backupHint": "Packs the entire ledger (accounts, transactions, budgets, investment holdings, scheduled transactions and all other data) into a single backup file. UI preferences such as theme and default currency are not included.",
       "backupOnce": "One-click Backup",

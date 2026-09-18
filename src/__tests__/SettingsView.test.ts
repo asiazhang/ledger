@@ -55,7 +55,7 @@ const SCENE_DEFAULTS = {
   restore_backup: { schema_version: 4, restored_at: '2026-01-01T00:00:00Z' },
   restart_app: null,
   prune_backups: { kept: 0, deleted: [], failed: [] },
-  get_auto_backup_state: { enabled: true, last_backup_at: null },
+  get_auto_backup_state: { enabled: true, last_backup_at: null, consecutive_failures: 0, failure_alerting: false },
   set_auto_backup_enabled: null,
 }
 
@@ -416,7 +416,7 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
       defaults: SCENE_DEFAULTS,
       overrides: {
         ...SCENE_OVERRIDES,
-        get_auto_backup_state: () => ({ enabled: false, last_backup_at: '2026-02-17T09:30:00Z' }),
+        get_auto_backup_state: () => ({ enabled: false, last_backup_at: '2026-02-17T09:30:00Z', consecutive_failures: 0, failure_alerting: false }),
       },
     })
     const wrapper = mount(SettingsView)
@@ -436,7 +436,7 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
       defaults: SCENE_DEFAULTS,
       overrides: {
         ...SCENE_OVERRIDES,
-        get_auto_backup_state: () => ({ enabled: enabledState, last_backup_at: null }),
+        get_auto_backup_state: () => ({ enabled: enabledState, last_backup_at: null, consecutive_failures: 0, failure_alerting: false }),
         set_auto_backup_enabled: (args?: Record<string, unknown>) => {
           enabledState = args?.enabled === true
           return Promise.resolve()
@@ -541,7 +541,7 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
       overrides: {
         ...SCENE_OVERRIDES,
         list_backups: () => Promise.resolve(backupList),
-        get_auto_backup_state: () => ({ enabled: true, last_backup_at: null }),
+        get_auto_backup_state: () => ({ enabled: true, last_backup_at: null, consecutive_failures: 0, failure_alerting: false }),
       },
     })
 

@@ -17,10 +17,12 @@ import {
 
 // 备份文件列表与滚动清理。命名规则与后端受管备份规则保持一致
 // （前缀集合与受管判定收口在 `@ledger/utils/backup-name`，issue #127）。
-// 后端在自动备份完成 / 备份清理成功后发出 `ledger:backups-changed`
+// 后端在自动备份完成 / 备份清理成功 / 自动备份连续失败达提示阈值
+// （issue #1456，阈值判定后端单点）后发出 `ledger:backups-changed`
 // 无 payload 信号（issue #129，与 `ledger:changed` 平行），本模块订阅后
-// 自动刷新备份列表与自动备份状态；列表卡头部另有手动刷新按钮（issue #651），
-// 供用户在文件管理器手动增删文件后显式同步列表与磁盘。
+// 自动刷新备份列表与自动备份状态（含连续失败提示）；列表卡头部另有
+// 手动刷新按钮（issue #651），供用户在文件管理器手动增删文件后显式同步
+// 列表与磁盘。
 const BACKUPS_CHANGED_EVENT = "ledger:backups-changed";
 
 function formatSize(bytes: number): string {
@@ -101,6 +103,10 @@ export function useBackup() {
   // 自动备份设置（issue #128）：开关与上次自动备份时间存 ledger.db，经 IPC 读写。
   const autoBackupEnabled = ref(true);
   const autoBackupLastAt = ref<string | null>(null);
+  // 自动备份连续失败提示（issue #1456）：是否达阈值由后端单点判定
+  // （failure_alerting，前端不复刻阈值），失败次数仅供提示文案展示。
+  const autoBackupFailing = ref(false);
+  const autoBackupFailures = ref(0);
 
   // 当前活动账本标识（issue #836 / ADR-0089 决策 5）：手动备份默认名携带它，
   // 两本账的产物在共享备份目录内可区分、互不覆盖。清单不可用（注册表损坏的
@@ -128,6 +134,8 @@ export function useBackup() {
       const s: AutoBackupState = await api.getAutoBackupState();
       autoBackupEnabled.value = s.enabled;
       autoBackupLastAt.value = s.last_backup_at;
+      autoBackupFailing.value = s.failure_alerting;
+      autoBackupFailures.value = s.consecutive_failures;
     } catch (e: any) {
       // 状态读取失败不阻断手动备份功能：维持默认开关开启、无时间展示。
       message.error(t("settings.data.msg.autoStateFailed", { msg: errorMessage(e) }));
@@ -380,6 +388,8 @@ export function useBackup() {
     copyLastBackupPath,
     autoBackupEnabled,
     autoBackupLastText,
+    autoBackupFailing,
+    autoBackupFailures,
     toggleAutoBackup,
     refreshing,
     refreshList,

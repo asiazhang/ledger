@@ -47,6 +47,8 @@ const {
   copyLastBackupPath,
   autoBackupEnabled,
   autoBackupLastText,
+  autoBackupFailing,
+  autoBackupFailures,
   toggleAutoBackup,
   refreshing,
   refreshList,
@@ -183,6 +185,16 @@ const backupColumns = [
             <NText>{{ t('settings.data.backup.autoSwitchLabel') }}</NText>
           </NSpace>
           <NText depth="3">{{ t('settings.data.backup.autoLast') }}{{ autoBackupLastText }}</NText>
+          <!-- 连续失败提示（issue #1456）：安全网静默停摆必须可见；是否提示由
+               后端阈值判定，成功备份后随信号刷新自动消失，不升级为阻塞弹窗。 -->
+          <NAlert
+            v-if="autoBackupFailing"
+            type="error"
+            :show-icon="true"
+            data-testid="auto-backup-failure-alert"
+          >
+            {{ t('settings.data.backup.autoFailures', { n: autoBackupFailures }) }}
+          </NAlert>
           <NText v-if="!store.backupDir" type="warning">
             {{ t('settings.data.backup.autoNeedDir') }}
           </NText>

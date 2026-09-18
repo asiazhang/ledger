@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
 import { messageApi } from '@ledger/test-support/message-mock'
+import { captureLastListener } from '@ledger/test-support/listen-mock'
 import { findButton, findButtonByTestId, findBodyButtonByTestId } from '@ledger/test-support/dom'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
@@ -36,8 +37,13 @@ const plaintextBackup: BackupFileInfo = {
   encrypted: false,
 }
 
-/** 自动备份状态命令契约快照（本场景恒为已启用、从未执行）。 */
-const AUTO_BACKUP_ON = { enabled: true, last_backup_at: null }
+/** 自动备份状态命令契约快照（本场景恒为已启用、从未执行、无连续失败）。 */
+const AUTO_BACKUP_ON = {
+  enabled: true,
+  last_backup_at: null,
+  consecutive_failures: 0,
+  failure_alerting: false,
+}
 
 beforeEach(() => {
   writeText.mockClear()
@@ -398,5 +404,53 @@ describe('BackupSettings 备份列表客户端切片分页（issue #1383）', ()
     // 回落到有效范围：不落空页、不留陈旧页码；单页分页条收起
     expect(wrapper.findAll('tbody tr')).toHaveLength(5)
     expect(wrapper.find('.n-pagination').exists()).toBe(false)
+  })
+})
+
+describe('BackupSettings 自动备份连续失败提示（issue #1456）', () => {
+  /** 连续失败达阈值的自动备份状态（提示态）。 */
+  const AUTO_STATE_FAILING = {
+    enabled: true,
+    last_backup_at: null,
+    consecutive_failures: 3,
+    failure_alerting: true,
+  }
+
+  it('连续失败达阈值：自动备份卡片呈现失败提示（含失败次数），可观察', async () => {
+    wireInvokeSeam({ defaults: { list_backups: [], get_auto_backup_state: AUTO_STATE_FAILING } })
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+
+    const alert = wrapper.find('[data-testid="auto-backup-failure-alert"]')
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toContain('3')
+  })
+
+  it('未达阈值：不呈现失败提示', async () => {
+    wireInvokeSeam({ defaults: { list_backups: [], get_auto_backup_state: AUTO_BACKUP_ON } })
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="auto-backup-failure-alert"]').exists()).toBe(false)
+  })
+
+  it('信号刷新到已清零状态：提示消失（成功后清零的前端消费面）', async () => {
+    let state = AUTO_STATE_FAILING
+    wireInvokeSeam({
+      defaults: { list_backups: [] },
+      overrides: { get_auto_backup_state: () => state },
+    })
+    const readFire = captureLastListener()
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="auto-backup-failure-alert"]').exists()).toBe(true)
+
+    // 后端一次成功备份：计数清零、提示态解除 → 信号到达刷新后提示消失。
+    state = AUTO_BACKUP_ON
+    readFire()?.()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="auto-backup-failure-alert"]').exists()).toBe(false)
+    wrapper.unmount()
   })
 })
