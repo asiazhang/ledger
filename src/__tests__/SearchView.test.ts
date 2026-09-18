@@ -4,6 +4,7 @@ import { nextTick } from 'vue'
 import { NButton, NDataTable, NDatePicker, NModal } from 'naive-ui'
 import { setFakeMedia } from '@ledger/test-support/media-mock'
 import { useReferenceStore } from '@/stores/reference'
+import { SEARCH_DEBOUNCE_MS } from '@/composables/search-debounce'
 import SearchView from '@/views/SearchView.vue'
 import AccountLink from '@/accounts/AccountLink.vue'
 import { applyLocale } from '@ledger/i18n'
@@ -150,8 +151,9 @@ function lastSearchArgs() {
   }
 }
 
-/** 输入关键字并等待防抖与异步搜索完成（fake timers 下微任务由 advance 驱动）。 */
-async function typeAndSearch(wrapper: VueWrapper, text: string, delay = 300) {
+/** 输入关键字并等待防抖与异步搜索完成（fake timers 下微任务由 advance 驱动；
+ *  时长由跨域常量驱动，issue #1402）。 */
+async function typeAndSearch(wrapper: VueWrapper, text: string, delay = SEARCH_DEBOUNCE_MS) {
   await wrapper.find('input').setValue(text)
   await nextTick()
   await vi.advanceTimersByTimeAsync(delay)
@@ -175,7 +177,7 @@ function maxAmountInput(wrapper: VueWrapper) {
   return el!
 }
 
-async function applyFilters(delay = 300) {
+async function applyFilters(delay = SEARCH_DEBOUNCE_MS) {
   await vi.advanceTimersByTimeAsync(delay)
   await nextTick()
   await nextTick()
@@ -310,16 +312,18 @@ describe('SearchView.vue', () => {
     expect(placeholders).not.toContain('结束日期')
   })
 
-  it('输入后防抖 300ms 才触发一次搜索', async () => {
+  it('输入后未达 SEARCH_DEBOUNCE_MS 不搜索，到点恰好触发一次', async () => {
     vi.useFakeTimers()
     const wrapper = mount(SearchView)
     await nextTick()
-    await typeAndSearch(wrapper, '午餐', 299)
+    await typeAndSearch(wrapper, '午餐', SEARCH_DEBOUNCE_MS - 1)
     expect(searchCalls().length).toBe(0)
     await vi.advanceTimersByTimeAsync(1)
     await nextTick()
     await nextTick()
     expect(searchCalls().length).toBe(1)
+    // 双断言：调用事实之外，结果确已落位
+    expect(wrapper.text()).toContain('命中 23 条')
   })
 
   it('连续输入只触发一次搜索（防抖合并）', async () => {
@@ -328,10 +332,10 @@ describe('SearchView.vue', () => {
     await nextTick()
     await wrapper.find('input').setValue('午')
     await nextTick()
-    await vi.advanceTimersByTimeAsync(100)
+    await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS - 100)
     await wrapper.find('input').setValue('午餐')
     await nextTick()
-    await vi.advanceTimersByTimeAsync(300)
+    await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS)
     await nextTick()
     await nextTick()
     expect(searchCalls().length).toBe(1)
@@ -483,15 +487,15 @@ describe('SearchView.vue', () => {
       expect(lastSearchArgs()).toMatchObject({ query: '', amountMinCents: 3000 })
     })
 
-    it('筛选变化同样防抖 ~300ms 触发查询', async () => {
+    it('筛选变化同样按 SEARCH_DEBOUNCE_MS 防抖触发查询', async () => {
       vi.useFakeTimers()
       const wrapper = mount(SearchView)
       await nextTick()
       await minAmountInput(wrapper).setValue('10')
-      await vi.advanceTimersByTimeAsync(299)
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS - 1)
       expect(searchCalls().length).toBe(0)
       await minAmountInput(wrapper).setValue('15')
-      await vi.advanceTimersByTimeAsync(200)
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS - 100)
       expect(searchCalls().length).toBe(0)
       await vi.advanceTimersByTimeAsync(100)
       await nextTick()
@@ -542,9 +546,9 @@ describe('SearchView.vue', () => {
       const wrapper = mount(SearchView)
       await nextTick()
       await clickChip(wrapper, '当月')
-      // 沿用既有防抖：300ms 到点才触发
+      // 沿用既有防抖：SEARCH_DEBOUNCE_MS 到点才触发
       expect(searchCalls().length).toBe(0)
-      await vi.advanceTimersByTimeAsync(299)
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS - 1)
       expect(searchCalls().length).toBe(0)
       await vi.advanceTimersByTimeAsync(1)
       await nextTick()

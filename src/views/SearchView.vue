@@ -24,6 +24,7 @@ import { sumFixedColumnWidths } from '@ledger/utils/table'
 import { type Transaction, type TransactionSearchFilter } from '@ledger/types'
 import type { NullableDateRange } from '@ledger/utils/time-period'
 import { yuanToCents, formatAmount } from '@ledger/money'
+import { SEARCH_DEBOUNCE_MS } from '@/composables/search-debounce'
 
 const store = useAppStore()
 const reference = useReferenceStore()
@@ -130,10 +131,11 @@ async function runSearch() {
 
 function scheduleSearch() {
   clearTimeout(debounceTimer)
+  // 防抖时长单源跨域常量（issue #1402）：与投资域搜索面同一「搜索输入防抖」不变量
   debounceTimer = setTimeout(() => {
     page.value = 1
     runSearch()
-  }, 300)
+  }, SEARCH_DEBOUNCE_MS)
 }
 
 function resetResults() {
