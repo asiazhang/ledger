@@ -3690,9 +3690,10 @@ fn fund_bulk_hit_without_history_writes_price_but_no_weekly_point() {
 }
 
 // ---------------------------------------------------------------------------
-// 恒定价格标的（ADR-0126 / issue #1450）：逐只请求是打标收敛的有意中间态
-// （收窄在 #1451）——确认即打标、建档常量价兜底；恒定标的的现价缓存不再随
-// 同步更新、不再落周采样点（读侧自此按常量取值，落平坦行零信息）。
+// 恒定价格标的（ADR-0126 / issue #1450、#1451）：退出采集链路——不进逐只
+// 刷新、不进分母与缺口统计、零请求；未打标货基仍留在净值通道内、由逐只刷
+// 新的数据源自报口径确认即打标（单向）、建档常量价兜底；恒定标的的现价缓
+// 存不再随同步更新、不落周采样点（读侧按常量取值，落平坦行零信息）。
 // ---------------------------------------------------------------------------
 
 fn mark_constant(conn: &Connection, instrument_id: &str) {
@@ -3712,16 +3713,18 @@ fn constant_unit_price_of(conn: &Connection, instrument_id: &str) -> Option<i64>
     .unwrap()
 }
 
-/// 恒定价格标的仍被逐只请求（有意保留的中间态），但同步零落库：现价缓存
-/// （价格、净值日期、版本）与价格历史全部保持原样，零写入不发价格失效信号。
+/// 恒定价格标的退出采集链路（ADR-0126 决策 4 / issue #1451）：不进逐只刷新、
+/// 不进进度分母、不计批量面缺口——全库皆为恒定标的时零请求（两个批量面也
+/// 不试）、不发进度事件，现价缓存（价格、净值日期、版本）与价格历史全部
+/// 保持原样。删除豁免（把恒定通道放回净值分区）即重新发起逐只请求并计入
+/// 分母与缺口，本用例变红（ADR-0126 投递纪律的守门判据）。
 #[test]
-fn constant_price_fund_is_still_requested_but_nothing_lands() {
+fn constant_price_fund_gets_no_requests_and_is_excluded_from_denominator_and_gaps() {
     let today = beijing_today();
     let yesterday = (today - chrono::Duration::days(1))
         .format("%Y-%m-%d")
         .to_string();
     let conn = tauri_app_lib::test_support::open();
-    // 名称与名称桩返回值一致：本用例只观察价格写入见证，名称随行刷新不干扰。
     seed_fund(&conn, "inst-const", "000198", "权威名称-000198");
     mark_constant(&conn, "inst-const");
     // 存量历史与现价缓存（打标前的采集遗留）：同步不得触碰。
@@ -3735,6 +3738,9 @@ fn constant_price_fund_is_still_requested_but_nothing_lands() {
         .unwrap();
 
     let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+    let per_fund_name_calls = Arc::new(AtomicUsize::new(0));
+    let bulk_nav_calls = Arc::new(AtomicUsize::new(0));
+    let bulk_names_calls = Arc::new(AtomicUsize::new(0));
     let mut witness = WriteWitness::default();
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
@@ -3748,28 +3754,66 @@ fn constant_price_fund_is_still_requested_but_nothing_lands() {
                 unreachable!("恒定标的的历史归读侧常量，后台补全不触达全量通道")
             })
         }),
-        counting_name(Arc::new(AtomicUsize::new(0))),
+        counting_name(per_fund_name_calls.clone()),
         bulk_surfaces(
-            Box::new(|| Box::pin(async { Ok(FundNameDictionary::new()) })),
-            Box::new(|| Box::pin(async { Err(AppError::Io("批量面未覆盖".into())) })),
+            {
+                let calls = bulk_names_calls.clone();
+                Box::new(move || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Box::pin(async { Ok(FundNameDictionary::new()) })
+                })
+            },
+            {
+                let calls = bulk_nav_calls.clone();
+                Box::new(move || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Box::pin(async { Ok(FundNavTable::new()) })
+                })
+            },
             Arc::new(Mutex::new(BulkFetchCircuit::new())),
         ),
     );
 
+    let log = Mutex::new(Vec::new());
     let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
         &conn,
         &mut channels,
-        &mut |_| {},
+        &mut progress_recorder(&log),
         &mut witness,
     ))
     .unwrap();
 
     assert_eq!(
         per_fund_nav_calls.load(Ordering::SeqCst),
-        1,
-        "逐只请求保留（打标收敛通道，#1451 收窄）"
+        0,
+        "删除逐只豁免 → 恒定标的重新发起逐只请求，本断言变红"
     );
-    assert_eq!(result.synced, 1, "确认请求处理成功");
+    assert_eq!(
+        per_fund_name_calls.load(Ordering::SeqCst),
+        0,
+        "名称随行刷新挂在基金分区循环里：恒定标的不触发逐只名称请求"
+    );
+    assert_eq!(
+        bulk_nav_calls.load(Ordering::SeqCst),
+        0,
+        "净值分区为空：净值批量面零请求（无标的可刷，不白撞数据源）"
+    );
+    assert_eq!(
+        bulk_names_calls.load(Ordering::SeqCst),
+        0,
+        "净值分区为空：名称字典零请求"
+    );
+    assert!(log.lock().unwrap().is_empty(), "分母为 0：不发任何进度事件");
+    assert_eq!(
+        result.bulk_gaps, 0,
+        "删除缺口排除 → 恒定标的被计为批量面缺口，本断言变红"
+    );
+    assert!(!result.bulk_degraded, "零请求不是降级");
+    assert_eq!(result.synced, 0);
+    assert_eq!(
+        result.skipped, 1,
+        "恒定标的计入跳过统计（同步不为它取价，与无通道行同桶）"
+    );
     assert_eq!(result.written, 0, "恒定标的不落任何价格行");
     assert!(!witness.any_written(), "零写入不置脏不发价格失效信号");
     assert_eq!(constant_unit_price_of(&conn, "inst-const"), Some(10_000));
@@ -3856,4 +3900,168 @@ fn money_fund_signal_marks_instrument_and_lands_nothing() {
     assert_eq!(result.synced, 1);
     assert_eq!(result.written, 1, "建档常量价是实际价格写入");
     assert!(witness.any_written(), "常量价首落按价格写入广播");
+}
+
+/// 混合账本（场内行情 / 普通场外基金 / 恒定标的并存，ADR-0126 决策 4 / issue
+/// #1451）：前三者的行为与请求数不变——行情批量报价照走、普通基金批量面直落
+///（零逐只请求），恒定标的不进分母、不计缺口、零逐只请求（批量面结构上不
+/// 覆盖它，也不为它退回逐只通道）。删除任一豁免即变红：恒定通道放回净值分区
+/// → 分母 +1、缺口 +1、逐只请求 +1。
+#[test]
+fn mixed_ledger_keeps_constant_fund_out_of_requests_denominator_and_gaps() {
+    let today = beijing_today();
+    let today_s = today.format("%Y-%m-%d").to_string();
+    let yesterday = (today - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-stock",
+        "inst-stock",
+        "600519",
+        "stock",
+        "CNY",
+        "sh",
+    );
+    // 普通场外基金：水位昨天，批量面报今天 → 新净值直落（零逐只请求）。
+    seed_fund(&conn, "inst-fund", "100001", "陈旧名称-基金");
+    seed_fund_history(&conn, "inst-fund", &yesterday);
+    // 恒定标的：排行面无货币型桶（ADR-0126 背景），不出现在两个批量面里。
+    seed_fund(&conn, "inst-const", "000198", "余额宝");
+    mark_constant(&conn, "inst-const");
+
+    let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+    let per_fund_name_calls = Arc::new(AtomicUsize::new(0));
+    let bulk_nav_calls = Arc::new(AtomicUsize::new(0));
+    let bulk_names_calls = Arc::new(AtomicUsize::new(0));
+    let bulletin_names: FundNameDictionary =
+        [("100001".to_string(), "权威名称-100001".to_string())]
+            .into_iter()
+            .collect();
+    let bulletin_nav: FundNavTable = [(
+        "100001".to_string(),
+        BulkNavPoint {
+            date: today_s.clone(),
+            nav: 3.0,
+        },
+    )]
+    .into_iter()
+    .collect();
+    let mut channels = SyncFetchChannels {
+        fetch_ulist: Box::new(mock_fetch(&[("600519", Some(1000.0))])),
+        fetch_kline: Box::new(|_| {
+            Box::pin(async { unreachable!("历史日 K 已移出现价刷新编排") })
+        }),
+        fetch_fx: Box::new(|_| Box::pin(async { unreachable!("全仓 CNY，零汇率抓取") })),
+        fetch_nav: counting_nav(per_fund_nav_calls.clone(), today_s.clone(), 3.0),
+        fetch_nav_full: Box::new(|_| {
+            Box::pin(async { unreachable!("现价刷新不触达全量通道") })
+        }),
+        fetch_fund_name: counting_name(per_fund_name_calls.clone()),
+        bulk: bulk_surfaces(
+            {
+                let calls = bulk_names_calls.clone();
+                let dictionary = bulletin_names.clone();
+                Box::new(move || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let dictionary = dictionary.clone();
+                    Box::pin(async move { Ok(dictionary) })
+                })
+            },
+            {
+                let calls = bulk_nav_calls.clone();
+                let table = bulletin_nav.clone();
+                Box::new(move || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let table = table.clone();
+                    Box::pin(async move { Ok(table) })
+                })
+            },
+            Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        ),
+    };
+
+    let log = Mutex::new(Vec::new());
+    let mut witness = WriteWitness::default();
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut progress_recorder(&log),
+        &mut witness,
+    ))
+    .unwrap();
+
+    assert_eq!(
+        *log.lock().unwrap(),
+        vec![(0, 2), (1, 2), (2, 2)],
+        "删除分母排除 → 恒定标的进分母（3 格），本断言变红；行情 + 基金照常推进"
+    );
+    assert_eq!(
+        per_fund_nav_calls.load(Ordering::SeqCst),
+        0,
+        "删除逐只豁免 → 恒定标的（批量面未覆盖）退逐只请求，本断言变红；普通基金由批量面直落零逐只请求"
+    );
+    assert_eq!(
+        per_fund_name_calls.load(Ordering::SeqCst),
+        0,
+        "名称字典覆盖普通基金、恒定标的不进基金循环：零逐只名称请求"
+    );
+    assert_eq!(
+        bulk_nav_calls.load(Ordering::SeqCst),
+        1,
+        "净值批量面照试一次"
+    );
+    assert_eq!(
+        bulk_names_calls.load(Ordering::SeqCst),
+        1,
+        "名称字典照试一次"
+    );
+    assert_eq!(
+        result.bulk_gaps, 0,
+        "删除缺口排除 → 批量面未覆盖的恒定标的被计为缺口，本断言变红"
+    );
+    assert!(!result.bulk_degraded);
+    assert_eq!(result.synced, 2, "行情 + 普通基金照常计入处理成功");
+    assert_eq!(result.written, 2, "行情报价 + 基金批量面净值照常落库");
+    assert_eq!(
+        result.skipped, 1,
+        "恒定标的计入跳过统计（同步不为它取价，与无通道行同桶）"
+    );
+    // 前三者的落库行为不变：基金批量面直落现价与当周采样点；恒定标的零触碰。
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((30_000, Some(today_s.clone()))),
+        "普通基金的批量面直落照旧"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![(today_s.clone(), 30_000, "CNY".into())],
+        "普通基金的当周采样点照旧"
+    );
+    assert_eq!(
+        instrument_name(&conn, "inst-fund"),
+        "权威名称-100001",
+        "普通基金的名称随行刷新照旧"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-const"),
+        None,
+        "恒定标的零触碰（建档前无现价行，也不被兜底）"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-const"),
+        vec![],
+        "恒定标的不落周采样点"
+    );
+    assert_eq!(
+        instrument_name(&conn, "inst-const"),
+        "余额宝",
+        "恒定标的不进名称随行刷新"
+    );
+    assert_eq!(
+        constant_unit_price_of(&conn, "inst-const"),
+        Some(10_000),
+        "恒定标记原样（单向，不因批量面未覆盖而改写）"
+    );
 }
