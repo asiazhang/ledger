@@ -1222,8 +1222,10 @@ const MODEL_FILE_GLOB_PATTERN = /\bpub\s+use\s+[\w:]*\*/
 /** 规则③形态：产品代码原生事务语句（issue #1014 / #1003 grilling 定案 7）——
  *  事务壳（无条件自持 `hold_transaction` / 嵌套感知 `ensure_transaction`）归
  *  基础设施 `db::tx_scope`，其余位置手写 `BEGIN` / `COMMIT` / `ROLLBACK` 即红。
- *  靶形态落在字符串字面量里，扫描须 `keepLiterals=true`（只掩码注释）。 */
-const NATIVE_TX_STMT_PATTERN = /\bexecute\s*\(\s*"(?:BEGIN|COMMIT|ROLLBACK)\b/
+ *  靶形态落在字符串字面量里，扫描须 `keepLiterals=true`（只掩码注释）。
+ *  #1469：API 形态覆盖 `execute` 与 `execute_batch` 两变体（仓内多处在用）——
+ *  手写事务边界不得借 API 变体漏检。 */
+const NATIVE_TX_STMT_PATTERN = /\bexecute(?:_batch)?\s*\(\s*"(?:BEGIN|COMMIT|ROLLBACK)\b/
 
 /** 原生事务语句唯一合法住址（事务原语本体，issue #1014；#1088 起住基础设施 crate） */
 const NATIVE_TX_STMT_ALLOWED = `${INFRA_SRC_REL}/db/tx_scope.rs`
@@ -1612,20 +1614,66 @@ function inheritsWorkspaceLints(manifest: string): boolean {
   return section !== null && /(?:^|\n)\s*workspace\s*=\s*true\b/.test(section)
 }
 
+/** 行内括号净计数（`(` 减 `)`）——属性全文跨行闭合判定用（文本级扫描，
+ *  字符串与注释内的括号不豁免；属性谓词不含带括号字符串的常态下可靠，
+ *  残余场景靠评审兜底）。 */
+function parenDelta(line: string): number {
+  let delta = 0
+  for (const ch of line) {
+    if (ch === '(') delta++
+    else if (ch === ')') delta--
+  }
+  return delta
+}
+
 /**
- * 声明（declIndex）前属性链中的首条单行 `#[cfg(...)]` 原文行：跳过空行与注释、
+ * 声明（declIndex）前属性链中的首条 `#[cfg(...)]` 属性全文：跳过空行与注释、
  * 透明放行其它属性（如 `#[doc(hidden)]`），停在首个非属性行——无 cfg 即 null。
+ * 属性自起点行向下读到配对闭合括号为止（#1469）：rustfmt 拆行的多行属性同样
+ * 识别——声明前命中续行（如 `))]`）时向上找最近 `#[` 行作起点，途中被普通
+ * 代码行隔开即属性链终止（属性与被饰声明必须相邻）；起点与续行不相干
+ * （闭合行未覆盖续行，如更上层无关属性的闭合在代码行之前）按无门处理，
+ * 不吞更上层的无关属性（防借无关 cfg 门假绿）。属性判定在掩码注释后进行
+ * （keepLiterals=true，保留字符串字面量），属性内注释不参与门匹配。
  * 供生产编译 feature 门的各判定共用（test_utils / http 投影，ADR-0111 决策 5）。
  */
-function firstCfgLineBefore(lines: readonly string[], declIndex: number): string | null {
-  for (let i = declIndex - 1; i >= 0; i--) {
+function firstCfgTextBefore(lines: readonly string[], declIndex: number): string | null {
+  let i = declIndex - 1
+  while (i >= 0) {
     const line = lines[i].trim()
-    if (line === '' || line.startsWith('//')) continue
-    if (line.startsWith('#[')) {
-      if (line.startsWith('#[cfg(')) return line
+    if (line === '' || line.startsWith('//')) {
+      i--
       continue
     }
-    return null
+    // 定位本条属性的起点行：首个相关行为 `#[` 时即其自身；为续行（如 `))]`）时
+    // 向上找最近 `#[` 行作候选起点（途中代码行不拦截，交由下方闭合连续性校验拒绝）
+    let start = -1
+    if (line.startsWith('#[')) {
+      start = i
+    } else {
+      for (let j = i - 1; j >= 0; j--) {
+        if (lines[j].trim().startsWith('#[')) {
+          start = j
+          break
+        }
+      }
+      if (start === -1) return null
+    }
+    // 自起点向下读属性全文，到配对闭合（累计括号归零）为止
+    let balance = 0
+    let end = -1
+    for (let k = start; k < declIndex; k++) {
+      balance += parenDelta(lines[k])
+      if (balance <= 0) {
+        end = k
+        break
+      }
+    }
+    if (end === -1) return null // 到声明仍未闭合——残缺属性，按无门处理
+    if (end < i) return null // 闭合行未覆盖声明前相关行——属性与续行/代码不相干，属性链终止
+    const attr = maskNonCode(lines.slice(start, end + 1).join('\n'), true)
+    if (attr.startsWith('#[cfg(')) return attr
+    i = start - 1 // 其它属性（如 `#[doc(hidden)]`）：透明放行，继续向上
   }
   return null
 }
@@ -1633,24 +1681,25 @@ function firstCfgLineBefore(lines: readonly string[], declIndex: number): string
 /**
  * 测试器具生产编译门的「放行测试」判定（ADR-0111 决策 5 / issue #1132）：声明
  * （`pub mod test_utils;` 等）前的属性链中须有
- * 一条单行 `#[cfg(...)]`，且该 cfg 在 `test` 或 `test-utils` feature 下放行——无门、
+ * 一条 `#[cfg(...)]`（单行或 rustfmt 拆行的多行属性，#1469），且该 cfg 在
+ * `test` 或 `test-utils` feature 下放行——无门、
  * `#[cfg(not(test))]` 等反向门、与测试无关的 cfg 一律不合格（判为生产会编译）。
  * 声明前允许注释与其它属性（如 `#[doc(hidden)]`），属性顺序不敏感。
  */
 function hasTestAllowingCfgGate(lines: readonly string[], declIndex: number): boolean {
-  const cfg = firstCfgLineBefore(lines, declIndex)
+  const cfg = firstCfgTextBefore(lines, declIndex)
   return cfg !== null && /\btest\b/.test(cfg) && !cfg.includes('not(')
 }
 
 /**
  * HTTP 投影 impl 的 feature cfg 门判定（ADR-0111 决策 5 / issue #1133）：声明
- * （`impl axum::response::IntoResponse for AppError`）前的属性链中须有一条单行
- * `#[cfg(...)]` 含 `feature = "http"`；无门、`#[cfg(not(feature = "http"))]` 等
+ * （`impl axum::response::IntoResponse for AppError`）前的属性链中须有一条
+ * `#[cfg(...)]`（单行或多行，#1469）含 `feature = "http"`；无门、`#[cfg(not(feature = "http"))]` 等
  * 反向门一律不合格（feature 开启实现反而消失，等价于无门）。同 hasTestAllowingCfgGate，
  * 声明前允许注释与其它属性，属性顺序不敏感。
  */
 function hasHttpFeatureCfgGate(lines: readonly string[], declIndex: number): boolean {
-  const cfg = firstCfgLineBefore(lines, declIndex)
+  const cfg = firstCfgTextBefore(lines, declIndex)
   return cfg !== null && /feature\s*=\s*"http"/.test(cfg) && !cfg.includes('not(')
 }
 
@@ -1949,7 +1998,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
       problems.push(
         `✗ ${gate}：${rel} \`${label}\` 未加「放行测试」cfg 门\n` +
           `    ${lines[declIndex].trim()}\n` +
-          '    门须为 `#[cfg(any(test, feature = "test-utils"))]`（或等价单行 cfg）；' +
+          '    门须为 `#[cfg(any(test, feature = "test-utils"))]`（或等价 cfg，支持 rustfmt 拆行的多行属性）；' +
           `无门 / \`#[cfg(not(test))]\` / 与测试无关的 cfg 都会让生产编译${productionArtifact}` +
           `（${src}），删除或写反 cfg 门即变红`,
       )
