@@ -53,6 +53,7 @@
   "backup": {
     "keep-invalid": "备份保留上限非法: {0}",
     "invalid-archive": "不是有效的开源记账备份包: {0}",
+    "foreign-form": "库文件被外部工具改写，无法创建备份，重启应用可自动修复",
     "meta-missing": "备份包内未找到 backup.json 元数据",
     "meta-parse-failed": "备份元数据解析失败: {0}",
     "target-dir-missing": "备份目标目录不存在: {0}",

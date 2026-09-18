@@ -437,6 +437,33 @@ fn schema_version(conn: &Connection) -> Result<i64> {
         .map_err(AppError::from)
 }
 
+/// 源库形态门禁（issue #1454）：快照（`VACUUM INTO`）发起前检查源库文件头，
+/// 命中**外来形态明文库**（每页保留字节 ≠ 0，外部工具写入，issue #1453）时
+/// 返回码化错误，不再发起注定失败的语句——SQLCipher 给 `ATTACH` 加的补丁
+/// 在「主库请求的保留字节 > 0」时推断主库是加密库、让附加库继承同一密钥，
+/// 明文库没有密钥，`VACUUM INTO` 内部那条不带 KEY 的 ATTACH 必然失败（报
+/// SQLite 原文）。启动归一化（#1453）覆盖启动时已存在的偏差；本门禁覆盖
+/// 「运行期间库文件被外部工具改写」的窗口，文案指向重启（重启即经启动
+/// 归一化修复）。
+///
+/// 路径取自连接（`main` 库文件名）；内存库（测试工厂）无路径可探测、密文库
+/// 的保留字节无意义（`VACUUM INTO` 继承真实密钥，既有设计依赖，ADR-0075
+/// 决策 7）——一律放行，只拦「明文库 + 保留字节 ≠ 0」。
+fn ensure_source_snapshotable(conn: &Connection) -> Result<()> {
+    let path = match conn.path() {
+        Some(p) if !p.is_empty() => p,
+        _ => return Ok(()),
+    };
+    let probe = db::encryption::probe_file(Path::new(path))?;
+    if probe.kind == DbFileKind::Plaintext && probe.reserved_bytes.is_some_and(|v| v != 0) {
+        return Err(AppError::coded(
+            "backup.foreign-form",
+            "库文件被外部工具改写，无法创建备份，重启应用可自动修复",
+        ));
+    }
+    Ok(())
+}
+
 /// 将当前数据库备份为 zip 包（`ledger.db` + `backup.json`）写入 `target`。
 ///
 /// `kind` 标记产物来源（自动 / 手动），随元数据落盘供后续识别。
@@ -459,29 +486,36 @@ pub fn backup_db_to(
         ));
     }
 
+    // 源库形态门禁：外来形态明文库的快照必然失败，先拦下给可读错误
+    //（issue #1454），不创建任何临时文件。
+    ensure_source_snapshotable(conn)?;
+
     let tmp_db = temp_sibling(target, "db");
     let tmp_zip = temp_sibling(target, "zip");
 
-    // 1. VACUUM INTO 生成一致的临时库文件（要求目标不存在，故用唯一临时名）。
-    conn.execute(
-        "VACUUM INTO ?1",
-        rusqlite::params![tmp_db.to_string_lossy()],
-    )?;
+    // 全部步骤收进一个闭包：任一步失败（`VACUUM INTO`、打包、替换启用）都在
+    // 收尾统一清理两个临时文件——失败早退绕过 cleanup 曾每次在备份目录留下
+    // 临时残留（0 字节文件累积，既有缺陷的范围外修复，issue #1454）。
+    let result = (|| -> Result<BackupResult> {
+        // 1. VACUUM INTO 生成一致的临时库文件（要求目标不存在，故用唯一临时名）。
+        conn.execute(
+            "VACUUM INTO ?1",
+            rusqlite::params![tmp_db.to_string_lossy()],
+        )?;
 
-    // 2. 探测产物密文（VACUUM INTO 继承源库加密与密钥，ADR-0075 决策 7：
-    //    文件即真相，探测的是实际落盘的快照而非源连接），随元数据落盘。
-    let encrypted = matches!(
-        db::encryption::probe_file_kind(&tmp_db)?,
-        DbFileKind::Encrypted
-    );
-    let meta = BackupMeta {
-        created_at: db::now_iso(),
-        app_version: app_version.to_string(),
-        schema_version: schema_version(conn)?,
-        kind,
-        encrypted,
-    };
-    let zip_result = (|| -> Result<()> {
+        // 2. 探测产物密文（VACUUM INTO 继承源库加密与密钥，ADR-0075 决策 7：
+        //    文件即真相，探测的是实际落盘的快照而非源连接），随元数据落盘。
+        let encrypted = matches!(
+            db::encryption::probe_file_kind(&tmp_db)?,
+            DbFileKind::Encrypted
+        );
+        let meta = BackupMeta {
+            created_at: db::now_iso(),
+            app_version: app_version.to_string(),
+            schema_version: schema_version(conn)?,
+            kind,
+            encrypted,
+        };
         let file = File::create(&tmp_zip)?;
         let mut zip = zip::ZipWriter::new(file);
         let options = zip::write::SimpleFileOptions::default();
@@ -491,23 +525,22 @@ pub fn backup_db_to(
         zip.start_file(ZIP_META_ENTRY, options)?;
         zip.write_all(serde_json::to_string_pretty(&meta)?.as_bytes())?;
         zip.finish()?;
-        Ok(())
+
+        // 3. 原子替换目标（成功时 tmp_zip 已 rename 走，收尾 cleanup 容忍不存在）。
+        replace_file(&tmp_zip, target)?;
+
+        let size_bytes = std::fs::metadata(target)?.len();
+        tracing::info!(target = %target.display(), size = %size_bytes, schema = %meta.schema_version, "备份完成");
+        Ok(BackupResult {
+            path: target.to_string_lossy().into_owned(),
+            size_bytes,
+            schema_version: meta.schema_version,
+            created_at: meta.created_at,
+        })
     })();
     cleanup(&tmp_db);
-    zip_result?;
-
-    // 3. 原子替换目标。
-    replace_file(&tmp_zip, target)?;
     cleanup(&tmp_zip);
-
-    let size_bytes = std::fs::metadata(target)?.len();
-    tracing::info!(target = %target.display(), size = %size_bytes, schema = %meta.schema_version, "备份完成");
-    Ok(BackupResult {
-        path: target.to_string_lossy().into_owned(),
-        size_bytes,
-        schema_version: meta.schema_version,
-        created_at: meta.created_at,
-    })
+    result
 }
 
 /// 从备份恢复：提取数据库 → 完整性 + 版本校验（必要时迁移升级）→ 安全备份当前库 → 替换。

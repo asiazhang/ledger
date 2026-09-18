@@ -37,6 +37,9 @@ tauri-app = { path = "../.." }
 # 账户域余额口径（恢复往返对拍）：#1108 起根包别名再导出清除，跨域引用以
 # crate 本名直呼（单实例，直呼与经根包再导出同一实例）。
 ledger-accounts = { path = "../accounts" }
+# 域单测经 test-utils feature 消费基础设施测试器具（外来形态明文库夹具，
+# issue #1453/#1454；cfg 门与消费先例见 transaction / accounts crate）。
+ledger-infra = { path = "../infra", features = ["test-utils"] }
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
