@@ -38,6 +38,7 @@ import {
   REPORTS_SRC_REL,
   SCHEDULED_MODULES,
   SCHEDULED_SRC_REL,
+  CRATE_MODULE_LISTS,
   SYNC_ENGINE_MODULES,
   SYNC_ENGINE_SRC_REL,
   TRANSACTION_MODULES,
@@ -3034,6 +3035,71 @@ describe('check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
     })
     const r = run(args)
     expect(r.status).toBe(0)
+  })
+})
+
+describe('check-structure 模块清单双向全等推广到全部 crate 清单（#1448）', () => {
+  // ADR-0087 断言强度：每份 crate 模块清单一枚负向夹具，一次投放一次运行——
+  // 断言对准每份清单的「未登记模块」报文（退出码与输出）；任一清单的双向全等
+  // 接线被删除，其标签从报文消失 → 本测红。
+  it('任一 crate 清单磁盘新增未登记模块 → 红（全清单一次投放，删除即变红）', () => {
+    const args = makeCrateFixture()
+    for (const spec of CRATE_MODULE_LISTS) {
+      writeFileSync(join(args[1], spec.srcRel, 'orphan.rs'), STUB)
+    }
+    const r = run(args)
+    expect(r.status).toBe(1)
+    for (const spec of CRATE_MODULE_LISTS) {
+      expect(r.output).toContain(`${spec.label} 未登记模块`)
+    }
+    // 报文带定位：抽验孤儿文件名与模块根出现（不逐条膨胀）
+    expect(r.output).toContain('orphan.rs')
+    expect(r.output).toContain(ACCOUNTS_SRC_REL)
+  })
+
+  it('目录型孤儿（扫得到非测试文件的目录）同样红（目录型条目覆盖其全部子目录）', () => {
+    const args = makeCrateFixture()
+    for (const spec of CRATE_MODULE_LISTS) {
+      mkdirSync(join(args[1], spec.srcRel, 'orphan_dir'), { recursive: true })
+      writeFileSync(join(args[1], spec.srcRel, 'orphan_dir', 'helper.rs'), STUB)
+    }
+    const r = run(args)
+    expect(r.status).toBe(1)
+    for (const spec of CRATE_MODULE_LISTS) {
+      expect(r.output).toContain(`${spec.label} 未登记模块`)
+    }
+    expect(r.output).toContain('orphan_dir')
+  })
+
+  it('测试豁免形态不触发未登记：顶层 tests.rs 与仅含 tests.rs 的目录（ADR-0056 决策 5）', () => {
+    const args = makeCrateFixture()
+    for (const spec of CRATE_MODULE_LISTS) {
+      writeFileSync(join(args[1], spec.srcRel, 'tests.rs'), STUB)
+      mkdirSync(join(args[1], spec.srcRel, 'extra'), { recursive: true })
+      writeFileSync(join(args[1], spec.srcRel, 'extra', 'tests.rs'), STUB)
+    }
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('crate 根 lib.rs 免登清单（infra 除外）：声明与再导出面不触发未登记', () => {
+    const args = makeCrateFixture()
+    for (const spec of CRATE_MODULE_LISTS) {
+      if (spec.excludeCrateRoot) {
+        writeFileSync(
+          join(args[1], spec.srcRel, 'lib.rs'),
+          'pub mod declared_module_not_on_disk;\npub fn stub() {}\n',
+        )
+      }
+    }
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('真实仓库默认通过：全部 crate 清单双向全等入摘要（#1448 推广）', () => {
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain(`模块清单双向全等推广至全部 ${CRATE_MODULE_LISTS.length} 份 crate 清单`)
   })
 })
 

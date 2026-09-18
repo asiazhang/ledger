@@ -63,6 +63,11 @@
 // 重排（#1182）消除后同步删除。引用形态：掩码后匹配 `super::`/`crate::` 前缀
 // + 目标模块名（含花括号列举逐条展开），flat 布局与重排后区目录两种形状同扫
 // 判向不变；表达式位裸路径与别名改写文本不可达，靠评审兜底。
+// 模块清单双向全等推广（#1448）：全部 crate 模块清单与磁盘模块双向全等——
+// 新增生产模块未登记即红，不再只辖 infra（#1134）/ transaction（#1181）/
+// sync-engine（#1107）三面（其余清单磁盘上多出的生产模块曾静默漏过结构守门）；
+// 三处专用核对由此合流为通用核对函数，登记面收敛 CRATE_MODULE_LISTS 单表——
+// 模块级扫描与双向全等两面共用，新 crate 不可能只接一半。
 // crate 边界核对（spec #1086 / issue #1087 门禁前置）：模块路径白名单之上再加
 // crate 级核对——CRATES 是 workspace 成员、分层与允许依赖方向的唯一事实源；
 // 成员目录（crates/*）与 CRATES 双向全等（新 crate 未登记即红）；每个成员须写
@@ -483,6 +488,7 @@ export const DASHBOARD_SRC_REL = 'crates/dashboard/src'
  * 清单；tests.rs 与 tests/ 为测试豁免形态不入清单。
  */
 export const INVESTMENT_MODULES: readonly WhitelistEntry[] = [
+  { path: 'backfill.rs', layer: '域目录', note: '价格历史后台补全的运行态快照与走势空态三态判定（ADR-0122 决策 5 / issue #1377）：补全中（带计数）/ 补全失败待重试 / 无数据——消费派生事实（有价格通道而无历史序列，与补全队列同源）与行情同步域发布的进程内运行态快照（不落库，重启即回补全中）；#1448 补登清单（引入时漏登记）' },
   { path: 'channel.rs', layer: '域目录', note: '价格通道派生（PriceChannel，issue #1060）——类型 × 市场 × 代码 → 行情/净值/手动报价/无来源的判定单点' },
   { path: 'command.rs', layer: '域目录', note: '投资同步命令（op 载荷形态、产出单点与重放分派，issue #861）：标的字典/汇率/用户侧价格全域进 OpLog，东财行情外拉数据不进 op' },
   { path: 'crud.rs', layer: '域目录', note: '标的字典/汇率/现价列表与写入、标的搜索（统一模糊搜索语义）、手动创建守卫与自建标的删除守卫' },
@@ -499,6 +505,7 @@ export const INVESTMENT_MODULES: readonly WhitelistEntry[] = [
   { path: 'reports.rs', layer: '域目录', note: '已实现盈亏汇总与按币种累计收益查询（issue #1077）' },
   { path: 'source.rs', layer: '域目录', note: '交易列表标的来源反查（spec #704 / issue #709）' },
   { path: 'split.rs', layer: '域目录', note: '份额调整（split）批次成本重述单点——按比例重述在用批次与审计落库（ADR-0106 决策 2/3，issue #1049）' },
+  { path: 'staleness.rs', layer: '域目录', note: '价格过期检查（issue #1190）：打开投资页时的本地水位检查单点——零网络请求，消费现价缓存既有两条水位（行情 priced_at / 净值 nav_date），水位日超阈值自然日或持仓缺现价计入过期；#1448 补登清单（引入时漏登记）' },
   { path: 'stock.rs', layer: '域目录', note: '股票按（市场，代码）查询的领域规则——代码形态 → 市场单点推断、报价币种推导（issue #693 / ADR-0081）' },
   { path: 'trade.rs', layer: '域目录', note: 'buy/sell/convert/split/dividend 协议分派与买卖/转换/份额调整明细投影（TransactionTrade / TransactionConvert）' },
   { path: 'transaction_seam.rs', layer: '域目录', note: '交易域接缝实现（spec #1086 / issue #1092）——投资 kind 写路径装配/副作用与读路径投影的实现注册面，install_transaction_hooks 一次性装入（壳层启动接线）' },
@@ -573,6 +580,237 @@ export const SYNC_ENGINE_MODULES: readonly WhitelistEntry[] = [
 
 /** 多端同步域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-sync-engine.dir 同源。 */
 export const SYNC_ENGINE_SRC_REL = 'crates/sync-engine/src'
+
+/**
+ * crate 模块清单登记面（#1448 自 #1134/#1181/#1107 三处专用接线合流）：模块级
+ * 扫描（scanModuleEntries）与清单↔磁盘双向全等（checkModuleListEquality）共用
+ * 的单一事实源——新域 crate 落地在此追加一行，两面不可能只接一半（此前清单级
+ * 双向全等只辖 infra/transaction/sync-engine 三面，其余清单磁盘上多出的生产
+ * 模块静默漏过结构守门，#1448 现场发现）。WHITELIST（根 src 的 test_support）
+ * 不入本表：根包 src 是壳层，模块面不整册登记。
+ */
+export interface CrateModuleListSpec {
+  /** 清单常量名（核对报文用，如 'INFRA_MODULES'） */
+  label: string
+  /** 模块清单本体（上方导出常量，条目级事实源） */
+  modules: readonly WhitelistEntry[]
+  /** 模块根（相对 src-tauri），与 CRATES 的 dir 同源 */
+  srcRel: string
+  /** 摘要行展示名（如 '基础设施'、'账户域'） */
+  summaryName: string
+  /** 摘要行 crate 出处括注；无括注的清单（基础设施/协议先行于逐域拆分登记）留空 */
+  summaryIssue?: string
+  /** 漏登记报文的出处括注（双向全等对该清单生效的来源） */
+  provenance: string
+  /** 漏登记报文的登记面提示尾巴（transaction 清单条目带区归属） */
+  registerNote: string
+  /** 漏登记的失靶面尾注 */
+  why: string
+  /** crate 根 lib.rs 免登清单：磁盘枚举恒排除 lib.rs（infra 例外——lib.rs 已入清单） */
+  excludeCrateRoot: boolean
+  /** 业务域→同步域零容忍扫描关闭（仅同步域自身，#1107） */
+  scanBusinessSyncRefs?: boolean
+}
+
+export const CRATE_MODULE_LISTS: readonly CrateModuleListSpec[] = [
+  {
+    label: 'INFRA_MODULES',
+    modules: INFRA_MODULES,
+    srcRel: INFRA_SRC_REL,
+    summaryName: '基础设施',
+    provenance: 'ADR-0111 决策 5 / #1134',
+    registerNote: '（附注释）',
+    why: '块间分层与认许边核对静默漏检',
+    excludeCrateRoot: false,
+  },
+  {
+    label: 'PROTOCOL_MODULES',
+    modules: PROTOCOL_MODULES,
+    srcRel: PROTOCOL_SRC_REL,
+    summaryName: '协议',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '协议 crate 对壳层与域目录零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'BACKUP_MODULES',
+    modules: BACKUP_MODULES,
+    srcRel: BACKUP_SRC_REL,
+    summaryName: '备份域',
+    summaryIssue: '#1091',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'TRANSACTION_MODULES',
+    modules: TRANSACTION_MODULES,
+    srcRel: TRANSACTION_SRC_REL,
+    summaryName: '核心交易域',
+    summaryIssue: '#1092',
+    provenance: 'ADR-0113 决策 7 / #1181',
+    registerNote: '（区归属 + 注释）',
+    why: '区级层序与认许边核对静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'ACCOUNTS_MODULES',
+    modules: ACCOUNTS_MODULES,
+    srcRel: ACCOUNTS_SRC_REL,
+    summaryName: '账户域',
+    summaryIssue: '#1093',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'CATEGORIES_MODULES',
+    modules: CATEGORIES_MODULES,
+    srcRel: CATEGORIES_SRC_REL,
+    summaryName: '分类域',
+    summaryIssue: '#1094',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'MERCHANTS_MODULES',
+    modules: MERCHANTS_MODULES,
+    srcRel: MERCHANTS_SRC_REL,
+    summaryName: '商户域',
+    summaryIssue: '#1096',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'CURRENCIES_MODULES',
+    modules: CURRENCIES_MODULES,
+    srcRel: CURRENCIES_SRC_REL,
+    summaryName: '币种域',
+    summaryIssue: '#1095',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'POLICY_MODULES',
+    modules: POLICY_MODULES,
+    srcRel: POLICY_SRC_REL,
+    summaryName: '保单域',
+    summaryIssue: '#1100',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'SCHEDULED_MODULES',
+    modules: SCHEDULED_MODULES,
+    srcRel: SCHEDULED_SRC_REL,
+    summaryName: '定时计划域',
+    summaryIssue: '#1098',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'BUDGET_MODULES',
+    modules: BUDGET_MODULES,
+    srcRel: BUDGET_SRC_REL,
+    summaryName: '预算域',
+    summaryIssue: '#1101',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'PHYSICAL_ASSET_MODULES',
+    modules: PHYSICAL_ASSET_MODULES,
+    srcRel: PHYSICAL_ASSET_SRC_REL,
+    summaryName: '实物资产域',
+    summaryIssue: '#1102',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'REPORTS_MODULES',
+    modules: REPORTS_MODULES,
+    srcRel: REPORTS_SRC_REL,
+    summaryName: '报表域',
+    summaryIssue: '#1103',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'ITEM_MODULES',
+    modules: ITEM_MODULES,
+    srcRel: ITEM_SRC_REL,
+    summaryName: '物品域',
+    summaryIssue: '#1099',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'DASHBOARD_MODULES',
+    modules: DASHBOARD_MODULES,
+    srcRel: DASHBOARD_SRC_REL,
+    summaryName: '仪表盘域',
+    summaryIssue: '#1104',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'INVESTMENT_MODULES',
+    modules: INVESTMENT_MODULES,
+    srcRel: INVESTMENT_SRC_REL,
+    summaryName: '投资域',
+    summaryIssue: '#1097',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'MARKET_SYNC_MODULES',
+    modules: MARKET_SYNC_MODULES,
+    srcRel: MARKET_SYNC_SRC_REL,
+    summaryName: '行情同步域',
+    summaryIssue: '#1106',
+    provenance: '#1448',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+  },
+  {
+    label: 'SYNC_ENGINE_MODULES',
+    modules: SYNC_ENGINE_MODULES,
+    srcRel: SYNC_ENGINE_SRC_REL,
+    summaryName: '多端同步域',
+    summaryIssue: '#1107',
+    provenance: '#1107',
+    registerNote: '（附注释）',
+    why: '域 crate 对壳层零依赖扫描静默漏检',
+    excludeCrateRoot: true,
+    scanBusinessSyncRefs: false,
+  },
+]
 
 /**
  * crate 分层词汇（crate 边界核对用）：壳 → 域 → 基础设施单向。
@@ -1850,64 +2088,28 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
 }
 
 /**
- * INFRA_MODULES 与实际模块双向全等（ADR-0111 决策 5 / #1134）：磁盘侧枚举
- * `crates/infra/src` 顶层的实际模块——非测试豁免形态的 .rs 文件，与扫得到
- * 非测试 .rs 文件的目录（目录型条目覆盖其全部子目录，子文件不再逐行登记）——
- * 磁盘上存在而清单未登记即红（清单漂移不再只单向 fail loud）。
- * 反方向（登记路径消失 / 条目扫不到非测试文件）由 scanModuleEntries 的
- * 既有路径存在性与非测试文件数核对承担，本核对不重复报文。
+ * 模块清单与磁盘模块双向全等的通用核对（#1448 自 infra #1134 / transaction
+ * #1181 / sync-engine #1107 三处专用实现合流，并经 CRATE_MODULE_LISTS 推广到
+ * 全部 crate 模块清单）：磁盘侧枚举 crate src 顶层的实际模块——非测试豁免形态
+ * 的 .rs 文件，与扫得到非测试 .rs 文件的目录（目录型条目覆盖其全部子目录，子
+ * 文件不再逐行登记）——磁盘上存在而清单未登记即红（清单漂移不再只单向 fail
+ * loud）。crate 根 lib.rs 是声明与再导出面，免登清单（excludeCrateRoot）的
+ * 磁盘枚举恒排除：crate 根文件名恒定，新增模块经 lib.rs 声明后落磁盘即被本
+ * 核对捕获，不因 lib.rs 免登产生漏检；infra 例外——lib.rs 已入清单，一并参与
+ * 枚举。反方向（登记路径消失 / 条目扫不到非测试文件）由 scanModuleEntries 的
+ * 既有核对承担，本核对不重复报文。
  */
-function checkInfraModuleEquality(srcTauriDir: string): string[] {
+function checkModuleListEquality(spec: CrateModuleListSpec, srcTauriDir: string): string[] {
   const problems: string[] = []
-  const srcDir = join(srcTauriDir, INFRA_SRC_REL)
+  const srcDir = join(srcTauriDir, spec.srcRel)
   if (!existsSync(srcDir)) return problems // 清单循环逐条报「路径不存在」
   const onDisk: string[] = []
   for (const entry of readdirSync(srcDir, { withFileTypes: true }).sort((a, b) =>
     a.name.localeCompare(b.name),
   )) {
-    if (entry.isFile() && entry.name.endsWith('.rs') && !isTestFile(entry.name)) {
-      onDisk.push(entry.name)
-    } else if (entry.isDirectory() && collectRustFiles(join(srcDir, entry.name), entry.name).length > 0) {
-      onDisk.push(entry.name)
-    }
-  }
-  for (const mod of onDisk) {
-    if (!INFRA_MODULES.some((m) => m.path === mod)) {
-      problems.push(
-        `✗ INFRA_MODULES 未登记模块：${mod}（${INFRA_SRC_REL}）\n` +
-          '    清单与实际模块双向全等（ADR-0111 决策 5 / #1134）：新增模块后须在 ' +
-          'scripts/check-structure.ts 的 INFRA_MODULES 追加一行（附注释），' +
-          '否则清单漏登记、块间分层与认许边核对静默漏检',
-      )
-    }
-  }
-  return problems
-}
-
-/**
- * TRANSACTION_MODULES 与实际模块双向全等（ADR-0113 决策 7 / #1181，沿用 infra
- * 侧 #1134 形态）：磁盘侧枚举 `crates/transaction/src` 顶层的实际模块——非测试
- * 豁免形态的 .rs 文件，与扫得到非测试 .rs 文件的目录（目录型条目覆盖其全部子
- * 目录，子文件不再逐行登记）——磁盘上存在而清单未登记即红（清单漂移不再只单
- * 向 fail loud）。crate 根 lib.rs 是声明与再导出面（#1092 同款不入清单），磁盘
- * 枚举同步排除：crate 根文件名恒定，新增模块经 lib.rs 声明后落磁盘即被本核对
- * 捕获，不因 lib.rs 免登产生漏检。反方向（登记路径消失 / 条目扫不到非测试文
- * 件）由 scanModuleEntries 的既有核对承担，本核对不重复报文。
- */
-function checkTransactionModuleEquality(srcTauriDir: string): string[] {
-  const problems: string[] = []
-  const srcDir = join(srcTauriDir, TRANSACTION_SRC_REL)
-  if (!existsSync(srcDir)) return problems // 清单循环逐条报「路径不存在」
-  const onDisk: string[] = []
-  for (const entry of readdirSync(srcDir, { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  )) {
-    if (
-      entry.isFile() &&
-      entry.name.endsWith('.rs') &&
-      entry.name !== 'lib.rs' &&
-      !isTestFile(entry.name)
-    ) {
+    const isRustModuleFile = entry.isFile() && entry.name.endsWith('.rs') && !isTestFile(entry.name)
+    const rootDeclarationExcluded = spec.excludeCrateRoot && entry.name === 'lib.rs'
+    if (isRustModuleFile && !rootDeclarationExcluded) {
       onDisk.push(entry.name)
     } else if (
       entry.isDirectory() &&
@@ -1917,55 +2119,12 @@ function checkTransactionModuleEquality(srcTauriDir: string): string[] {
     }
   }
   for (const mod of onDisk) {
-    if (!TRANSACTION_MODULES.some((m) => m.path === mod)) {
+    if (!spec.modules.some((m) => m.path === mod)) {
       problems.push(
-        `✗ TRANSACTION_MODULES 未登记模块：${mod}（${TRANSACTION_SRC_REL}）\n` +
-          '    清单与实际模块双向全等（ADR-0113 决策 7 / #1181）：新增模块后须在 ' +
-          'scripts/check-structure.ts 的 TRANSACTION_MODULES 追加一行（区归属 + 注释），' +
-          '否则清单漏登记、区级层序与认许边核对静默漏检',
-      )
-    }
-  }
-  return problems
-}
-
-/**
- * SYNC_ENGINE_MODULES 与实际模块双向全等（#1107，沿用 infra/transaction 形态）：
- * 磁盘侧枚举 `crates/sync-engine/src` 顶层的实际模块——非测试豁免形态的 .rs
- * 文件（crate 根 lib.rs 是声明与再导出面，恒排除），与扫得到非测试 .rs 文件的
- * 目录（目录型条目覆盖其全部子目录）。磁盘上存在而清单未登记即红；登记路径
- * 消失 / 扫不到非测试文件由 scanModuleEntries 的既有核对承担。双向全等保证
- * 新增模块不会绕过「域 crate 对壳层零依赖」模块级扫描（#1107 检视补强）。
- */
-function checkSyncEngineModuleEquality(srcTauriDir: string): string[] {
-  const problems: string[] = []
-  const srcDir = join(srcTauriDir, SYNC_ENGINE_SRC_REL)
-  if (!existsSync(srcDir)) return problems // 清单循环逐条报「路径不存在」
-  const onDisk: string[] = []
-  for (const entry of readdirSync(srcDir, { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  )) {
-    if (
-      entry.isFile() &&
-      entry.name.endsWith('.rs') &&
-      entry.name !== 'lib.rs' &&
-      !isTestFile(entry.name)
-    ) {
-      onDisk.push(entry.name)
-    } else if (
-      entry.isDirectory() &&
-      collectRustFiles(join(srcDir, entry.name), entry.name).length > 0
-    ) {
-      onDisk.push(entry.name)
-    }
-  }
-  for (const mod of onDisk) {
-    if (!SYNC_ENGINE_MODULES.some((m) => m.path === mod)) {
-      problems.push(
-        `✗ SYNC_ENGINE_MODULES 未登记模块：${mod}（${SYNC_ENGINE_SRC_REL}）\n` +
-          '    清单与实际模块双向全等（#1107）：新增模块后须在 ' +
-          'scripts/check-structure.ts 的 SYNC_ENGINE_MODULES 追加一行（附注释），' +
-          '否则清单漏登记、域 crate 对壳层零依赖扫描静默漏检',
+        `✗ ${spec.label} 未登记模块：${mod}（${spec.srcRel}）\n` +
+          `    清单与实际模块双向全等（${spec.provenance}）：新增模块后须在 ` +
+          `scripts/check-structure.ts 的 ${spec.label} 追加一行${spec.registerNote}，` +
+          `否则清单漏登记、${spec.why}`,
       )
     }
   }
@@ -2235,24 +2394,7 @@ function main(): void {
   try {
     allFiles = [
       ...collectRustFiles(srcDir, ''),
-      ...collectRustFiles(join(srcTauriDir, INFRA_SRC_REL), INFRA_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, PROTOCOL_SRC_REL), PROTOCOL_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, BACKUP_SRC_REL), BACKUP_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, TRANSACTION_SRC_REL), TRANSACTION_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, ACCOUNTS_SRC_REL), ACCOUNTS_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, CATEGORIES_SRC_REL), CATEGORIES_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, MERCHANTS_SRC_REL), MERCHANTS_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, CURRENCIES_SRC_REL), CURRENCIES_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, POLICY_SRC_REL), POLICY_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, SCHEDULED_SRC_REL), SCHEDULED_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, BUDGET_SRC_REL), BUDGET_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, PHYSICAL_ASSET_SRC_REL), PHYSICAL_ASSET_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, REPORTS_SRC_REL), REPORTS_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, ITEM_SRC_REL), ITEM_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, DASHBOARD_SRC_REL), DASHBOARD_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, INVESTMENT_SRC_REL), INVESTMENT_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, MARKET_SYNC_SRC_REL), MARKET_SYNC_SRC_REL),
-      ...collectRustFiles(join(srcTauriDir, SYNC_ENGINE_SRC_REL), SYNC_ENGINE_SRC_REL),
+      ...CRATE_MODULE_LISTS.flatMap((spec) => collectRustFiles(join(srcTauriDir, spec.srcRel), spec.srcRel)),
     ]
   } catch {
     // 目录缺失：白名单循环会逐条报错并 fail loud
@@ -2298,34 +2440,17 @@ function main(): void {
     }
   }
 
-  // 模块清单核对：域目录相对根 src 扫描（壳层反向依赖 + 业务域→同步域严形态），
-  // 基础设施模块相对 `crates/infra/src` 扫描（壳层反向依赖 + 基础设施→域认许边）——
-  // 自 #1088 全量归位起基础设施不再住根 src，路径基准随归位改一次、事实源仍只有
-  // 本脚本一份（ADR-0056「白名单即规格」不变）。
+  // 模块清单核对（登记面 CRATE_MODULE_LISTS，#1448）：WHITELIST 域目录相对根
+  // src 扫描（壳层反向依赖）；crate 清单相对各自模块根扫描（壳层反向依赖 +
+  // 业务域→同步域严形态，同步域自身关扫 #1107）——基础设施模块自 #1088 全量
+  // 归位起不再住根 src，路径基准随归位改一次、事实源仍只有本脚本一份（ADR-0056
+  // 「白名单即规格」不变）。
   scannedFiles += scanModuleEntries(WHITELIST, srcDir, problems)
-  scannedFiles += scanModuleEntries(INFRA_MODULES, join(srcTauriDir, INFRA_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(PROTOCOL_MODULES, join(srcTauriDir, PROTOCOL_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(BACKUP_MODULES, join(srcTauriDir, BACKUP_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(TRANSACTION_MODULES, join(srcTauriDir, TRANSACTION_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(ACCOUNTS_MODULES, join(srcTauriDir, ACCOUNTS_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(CATEGORIES_MODULES, join(srcTauriDir, CATEGORIES_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(MERCHANTS_MODULES, join(srcTauriDir, MERCHANTS_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(CURRENCIES_MODULES, join(srcTauriDir, CURRENCIES_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(POLICY_MODULES, join(srcTauriDir, POLICY_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(SCHEDULED_MODULES, join(srcTauriDir, SCHEDULED_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(BUDGET_MODULES, join(srcTauriDir, BUDGET_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(PHYSICAL_ASSET_MODULES, join(srcTauriDir, PHYSICAL_ASSET_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(REPORTS_MODULES, join(srcTauriDir, REPORTS_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(ITEM_MODULES, join(srcTauriDir, ITEM_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(DASHBOARD_MODULES, join(srcTauriDir, DASHBOARD_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(INVESTMENT_MODULES, join(srcTauriDir, INVESTMENT_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(MARKET_SYNC_MODULES, join(srcTauriDir, MARKET_SYNC_SRC_REL), problems)
-  scannedFiles += scanModuleEntries(
-    SYNC_ENGINE_MODULES,
-    join(srcTauriDir, SYNC_ENGINE_SRC_REL),
-    problems,
-    { scanBusinessSyncRefs: false },
-  )
+  for (const spec of CRATE_MODULE_LISTS) {
+    scannedFiles += scanModuleEntries(spec.modules, join(srcTauriDir, spec.srcRel), problems, {
+      scanBusinessSyncRefs: spec.scanBusinessSyncRefs ?? true,
+    })
+  }
 
   if (scannedFiles === 0) {
     problems.push('✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过')
@@ -2335,16 +2460,15 @@ function main(): void {
   // 静态检查/测试命令的 workspace 覆盖——与模块路径白名单并列，同为删除即变红。
   problems.push(...checkCrateBoundaries(srcTauriDir))
 
-  // INFRA_MODULES 与实际模块双向全等（ADR-0111 决策 5 / #1134）：磁盘侧反向
-  // 核对（磁盘模块未登记即红）；登记路径消失 / 扫不到非测试文件已由清单循环红。
-  problems.push(...checkInfraModuleEquality(srcTauriDir))
-
-  // TRANSACTION_MODULES 与实际模块双向全等 + 区级层序（ADR-0113 决策 7 / #1181）：
-  // 磁盘侧反向核对（磁盘模块未登记即红）；区归属据清单条目 zone 字段判向，
-  // 认许边（ADR-0113 决策 3 原形状反边）之外即红。
-  problems.push(...checkTransactionModuleEquality(srcTauriDir))
+  // 模块清单↔磁盘双向全等（#1448 自 #1134/#1181/#1107 三处专用接线合流并推广
+  // 到全部 crate 清单）：磁盘侧反向核对（磁盘模块未登记即红）；登记路径消失 /
+  // 扫不到非测试文件已由清单循环红。交易域区级层序（ADR-0113 决策 7 / #1181）
+  // 另行核对：区归属据清单条目 zone 字段判向，认许边（ADR-0113 决策 3 原形状
+  // 反边）之外即红。
+  for (const spec of CRATE_MODULE_LISTS) {
+    problems.push(...checkModuleListEquality(spec, srcTauriDir))
+  }
   problems.push(...checkTransactionZoneDirection(srcTauriDir))
-  problems.push(...checkSyncEngineModuleEquality(srcTauriDir))
 
   if (problems.length > 0) {
     for (const p of problems) console.error(p)
@@ -2356,24 +2480,11 @@ function main(): void {
   }
   console.log(
     `✓ 结构守门：白名单 ${WHITELIST.length} 项（域目录 ${domainCount}）` +
-      `+ 基础设施模块 ${INFRA_MODULES.length} 项（crate ${INFRA_SRC_REL}）` +
-      `+ 协议模块 ${PROTOCOL_MODULES.length} 项（crate ${PROTOCOL_SRC_REL}）` +
-      `+ 备份域模块 ${BACKUP_MODULES.length} 项（crate ${BACKUP_SRC_REL}，#1091）` +
-      `+ 核心交易域模块 ${TRANSACTION_MODULES.length} 项（crate ${TRANSACTION_SRC_REL}，#1092）` +
-      `+ 账户域模块 ${ACCOUNTS_MODULES.length} 项（crate ${ACCOUNTS_SRC_REL}，#1093）` +
-      `+ 分类域模块 ${CATEGORIES_MODULES.length} 项（crate ${CATEGORIES_SRC_REL}，#1094）` +
-      `+ 商户域模块 ${MERCHANTS_MODULES.length} 项（crate ${MERCHANTS_SRC_REL}，#1096）` +
-      `+ 币种域模块 ${CURRENCIES_MODULES.length} 项（crate ${CURRENCIES_SRC_REL}，#1095）` +
-      `+ 保单域模块 ${POLICY_MODULES.length} 项（crate ${POLICY_SRC_REL}，#1100）` +
-      `+ 定时计划域模块 ${SCHEDULED_MODULES.length} 项（crate ${SCHEDULED_SRC_REL}，#1098）` +
-      `+ 预算域模块 ${BUDGET_MODULES.length} 项（crate ${BUDGET_SRC_REL}，#1101）` +
-      `+ 实物资产域模块 ${PHYSICAL_ASSET_MODULES.length} 项（crate ${PHYSICAL_ASSET_SRC_REL}，#1102）` +
-      `+ 报表域模块 ${REPORTS_MODULES.length} 项（crate ${REPORTS_SRC_REL}，#1103）` +
-      `+ 物品域模块 ${ITEM_MODULES.length} 项（crate ${ITEM_SRC_REL}，#1099）` +
-      `+ 仪表盘域模块 ${DASHBOARD_MODULES.length} 项（crate ${DASHBOARD_SRC_REL}，#1104）` +
-      `+ 投资域模块 ${INVESTMENT_MODULES.length} 项（crate ${INVESTMENT_SRC_REL}，#1097）` +
-      `+ 行情同步域模块 ${MARKET_SYNC_MODULES.length} 项（crate ${MARKET_SYNC_SRC_REL}，#1106）` +
-      `+ 多端同步域模块 ${SYNC_ENGINE_MODULES.length} 项（crate ${SYNC_ENGINE_SRC_REL}，#1107）` +
+      CRATE_MODULE_LISTS.map(
+        (spec) =>
+          `+ ${spec.summaryName}模块 ${spec.modules.length} 项（crate ${spec.srcRel}` +
+          `${spec.summaryIssue ? `，${spec.summaryIssue}` : ''}）`,
+      ).join('') +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 协议 crate→壳层/域目录零引用（共享底座，#1089）` +
@@ -2386,6 +2497,7 @@ function main(): void {
       `· crate 内块间反向依赖零未认许引用（认许边 ${INFRA_BLOCK_ALLOWED_EDGES.length} 条，ADR-0111 决策 4 / #1134）` +
       `· TRANSACTION_MODULES 双向全等（磁盘模块全部登记，ADR-0113 决策 7 / #1181）` +
       `· SYNC_ENGINE_MODULES 双向全等（磁盘模块全部登记，#1107）` +
+      `· 模块清单双向全等推广至全部 ${CRATE_MODULE_LISTS.length} 份 crate 清单（磁盘模块全部登记，#1448）` +
       `· 交易域区级层序零未认许反向引用（写读 → 接缝 → 共享语义，认许边 ${TRANSACTION_ZONE_ALLOWED_EDGES.length} 条，ADR-0113 决策 3 / #1181）` +
       `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）` +
       `· 投资五节锚点生产编译门（cfg 门，#1185）` +
