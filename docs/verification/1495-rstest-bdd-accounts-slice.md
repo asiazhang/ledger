@@ -48,11 +48,15 @@
      原始中文场景名，补偿测试名被 ASCII 清洗后的筛选体验：
      `Step not found at index 1: Then 账户列表应包含 1 条记录 (feature:
      tests/e2e/features/accounts.feature, scenario: 创建账户并查看余额)`。
-5. **门禁**：`./scripts/check.sh` 全绿（含 `cargo fmt --all -- --check`、
+5. **门禁与全量测试**：`./scripts/check.sh` 全绿（含 `cargo fmt --all -- --check`、
    `cargo clippy --workspace --all-targets --all-features -- -D warnings`、结构/文档/
    i18n/测试支撑各守门与 `bun scripts/test-exec.ts check`）；`./scripts/check-docs.sh`
    绿。覆盖守门目标 53 个 = 并发入口 33（集成测试 12，含本票新目标）⊎ 非并发入口
    20，新目标自动落入并发入口，非并发入口名单不变。
+   `./scripts/test.sh`（全量）绿：并发入口 33/33 二进制通过（1799 passed / 0 failed /
+   4 ignored）+ 旧 e2e 40 features / 453 scenarios / 3139 steps + doc-test 19 包
+   全绿（本机首次运行因磁盘满而失败，清理已合并 worktree 后复跑通过——环境问题，
+   非代码问题）。
 
 ### 双注册接线核对清单（`rg` 枚举全部调用点）
 
