@@ -14,17 +14,44 @@
 //!
 //! 已知双源边界（语料不含，#1433 交付报告登记）：非 ASCII 标识符紧邻原始串、
 //! 非 BMP 字符入 char 字面量两形态，TS 侧按 ASCII/UTF-16 近似，两侧结果可能
-//! 不同；`r##"…"##`（多级 #）与 `'\u{…}'` 转义两实现**一致地**不按字面量识别
-//!（两侧旧注释声称支持，与实现不符——本票改为如实描述），扩展属规则改动，
-//! 须两侧同步 + 语料更新；TS 侧另有 `keepLiterals` 扩展形态（保留字面量只掩
-//! 注释，#1014），Rust 侧消费面无此需求未实现，属登记在案的不对称。
+//! 不同；`'\u{…}'` 转义两实现**一致地**不按字面量识别（两侧旧注释声称支持，
+//! 与实现不符——#1433 改为如实描述），扩展属规则改动，须两侧同步 + 语料更新；
+//! TS 侧另有 `keepLiterals` 扩展形态（保留字面量只掩注释，#1014），Rust 侧
+//! 消费面无此需求未实现，属登记在案的不对称。
+
+/// 若 `chars` 中 `i` 起是 Rust 原始字符串前缀，返回其后开引号下标；否则返回
+/// `None`。覆盖 `r"…"` / `r#"…"` 与字节变体 `br"…"` / `br#"…"`，# 数任意；
+/// 前一字符为标识符成分时是普通名字，不误伤。
+fn raw_string_open_quote(chars: &[char], i: usize) -> Option<usize> {
+    let n = chars.len();
+    if i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
+        return None;
+    }
+    let mut j = i;
+    if j + 1 < n && chars[j] == 'b' && chars[j + 1] == 'r' {
+        j += 2;
+    } else if j < n && chars[j] == 'r' {
+        j += 1;
+    } else {
+        return None;
+    }
+    while j < n && chars[j] == '#' {
+        j += 1;
+    }
+    if j < n && chars[j] == '"' {
+        Some(j)
+    } else {
+        None
+    }
+}
 
 /// 掩码 Rust 源文本中的注释与字符串/char 字面量：内容替换为等长空白（保留换行
 /// 与列位），使令牌扫描只落在真实代码上。处理形态：行注释（`//`、`///`、`//!`）、
-/// 可嵌套块注释、普通字符串（含转义）、原始字符串 `r"…"` / `r#"…"#`（单级 `#`；
-/// 前一字符为标识符成分时是普通名字，不误伤）、char 字面量（`'a'`、`'\n'`、
-/// `'\\'`、`'\''`、`'"'`）；生命周期标注（`'a`）按非字面量处理。`r##"…"##` 与
-/// `'\u{…}'` 不按字面量识别（见模块文档「双源登记」）。与 `maskNonCode`
+/// 可嵌套块注释、普通字符串（含转义）、原始字符串 `r"…"` / `r#"…"` / `r##"…"`
+/// 及其字节变体 `br"…"` / `br#"…"` / `br##"…"`（# 数任意；前一字符为标识符
+/// 成分时是普通名字，不误伤）、char 字面量（`'a'`、`'\n'`、`'\\'`、`'\''`、
+/// `'"'`）；生命周期标注（`'a`）按非字面量处理。`'\u{…}'` 不按字面量识别
+///（见模块文档「双源登记」）。与 `maskNonCode`
 ///（`scripts/check-structure.ts`）双源同规，防漂移见模块文档。
 pub fn mask_non_code(text: &str) -> String {
     let bytes: Vec<char> = text.chars().collect();
@@ -80,25 +107,17 @@ pub fn mask_non_code(text: &str) -> String {
             }
             blank(&mut out, i, j);
             i = j;
-        } else if c == 'r'
-            && i + 1 < n
-            && (bytes[i + 1] == '"' || (bytes[i + 1] == '#' && i + 2 < n && bytes[i + 2] == '"'))
-        {
-            // 原始字符串 r"…" / r#"…"#；前一字符为标识符成分时是普通名字，不误伤
-            let prev_is_ident = i > 0 && (bytes[i - 1].is_alphanumeric() || bytes[i - 1] == '_');
-            if prev_is_ident {
+        } else if c == 'r' || c == 'b' {
+            // 原始字符串 r"…" / r#"…" / r##"…" 与字节变体 br"…" / br#"…" / br##"…"
+            let Some(open) = raw_string_open_quote(&bytes, i) else {
                 i += 1;
                 continue;
-            }
-            let mut hashes = 0usize;
-            let mut j = i + 1;
-            while j < n && bytes[j] == '#' {
-                hashes += 1;
-                j += 1;
-            }
+            };
+            let prefix_end = if c == 'b' { i + 2 } else { i + 1 };
+            let hashes = open - prefix_end;
             let close: Vec<char> = format!("\"{}", "#".repeat(hashes)).chars().collect();
             let mut end = n;
-            let mut k = j + 1;
+            let mut k = open + 1;
             while k + close.len() <= n {
                 if bytes[k..k + close.len()] == close[..] {
                     end = k + close.len();
