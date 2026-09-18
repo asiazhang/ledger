@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-// 测试执行器（issue #1112 / 父 spec #1086）：workspace 拆成多 crate 之后，
+// 测试执行器（issue #1112 / 父 spec #1086；e2e 执行器切 cargo-nextest：ticket
+// #1496 / spec #1494）：workspace 拆成多 crate 之后，
 // `cargo test --workspace` 把全部测试二进制**顺序**启动（当前清单与数量以
 // `bun scripts/test-exec.ts plan` 的输出为唯一权威，本文件不复述），每个二进制
 // 各自按 CPU 数开满 libtest 线程——进程启动开销与「最后一个二进制独占整机」的
@@ -12,33 +13,46 @@
 //    `RUST_TEST_THREADS=1`（只约束 libtest 线程），libtest 线程数 = 并行度，
 //    不出现「各二进制各自开满 libtest 线程」的 CPU 超订（测试自起的 tokio 等
 //    运行时不在控制面，属经验证据）；失败聚合报告，跑完全部才退出。
-// ② 非并发入口（scripts/test.sh 第二、三条命令）：e2e（cucumber，
-//    `harness = false`，自有 runner 与 CLI）与 doc-test（测试二进制由 rustdoc
-//    生成、不进 cargo 的 test artifact 报告）仍走 cargo 自有入口，不纳入并发
-//    调度——e2e 的既有入口形态本票不动。
+// ② nextest 入口（scripts/test.sh 第二条命令，ticket #1496 / spec #1494）：e2e
+//    新目标（rstest-bdd，`harness = true`）改由 `cargo nextest run` 承载——进程级
+//    per-test 调度，每个 Scenario 一个进程、并行度按 CPU 收敛（进程内 libtest 线程
+//    并行对世界构造是负收益）。承接的目标以本文件 NEXTEST_TARGETS 登记为唯一声明，
+//    不留在并发入口队列里重复跑；登记 ⇔ scripts/test.sh 的 nextest 命令双向全等。
+// ③ 非并发入口（scripts/test.sh 第三、四条命令）：e2e 旧目标（cucumber，
+//    `harness = false` 自定义 runner，不支持 nextest 的 `--list` 协议）与 doc-test
+//    （测试二进制由 rustdoc 生成、不进 cargo 的 test artifact 报告）仍走 cargo 自有
+//    入口。收口票 #1508 删除 cucumber 后 ② 与 ③ 的 e2e 线合流为 nextest 单入口。
 //
 // 覆盖守门（check 命令；scripts/test.sh 与 scripts/check.sh 同址执行，CI 亦挂）：
 // 目标清单口径与 `cargo test` 默认执行面全等——lib 单测 + bin 单测 + 集成测试 +
 // doc-test；example / bench 不在默认执行面（cargo 只构建 example、不跑 bench），
-// 故不入清单，但发现声明即提示，防口径漂移。守门五条（任一处漂移即红，fail loud）：
-//   ① 工作区全部测试目标 = 并发入口承接集合 ⊎ 非并发入口承接集合（互斥且无遗漏；
-//      目标清单自 manifest + 目录自动发现派生，新增 target / 新成员 crate 自动入列）；
+// 故不入清单，但发现声明即提示，防口径漂移。守门六条（任一处漂移即红，fail loud）：
+//   ① 工作区全部测试目标 = 并发入口承接集合 ⊎ nextest 承接集合 ⊎ 非并发入口承接
+//      集合（互斥且无遗漏；目标清单自 manifest + 目录自动发现派生，新增 target /
+//      新成员 crate 自动入列）；
 //   ② `[[test]] harness = false` 的声明集合 ⇔ scripts/test.sh 非并发入口的
 //      `--test <name>` 名单（双向全等——新增自定义 harness 目标未登记即红，登记
 //      失效或拼写漂移同样红）；
-//   ③ 存在 doc-test 目标 ⇔ scripts/test.sh 有 `cargo test --workspace --doc`
+//   ③ nextest 承接登记 ⇔ scripts/test.sh 的 `cargo nextest run … --test <name>`
+//      名单（双向全等，ticket #1496）：NEXTEST_TARGETS 是「必须经 nextest 进程级
+//      per-test 调度」的唯一声明，删掉 nextest 运行行即红——不静默降级回并发入口
+//      （那样会退回进程内串行，正是本票要消灭的形态）；登记目标必须是 harness = true
+//      的集成测试。另核对 `src-tauri/.config/nextest.toml` 的 default-filter 排除
+//      名单与 `harness = false` 目标清单双向全等：多排一个 libtest 目标即红（静默
+//      漏跑），少排一个自定义目标会让 nextest 列举失败（fail loud）。
+//   ④ 存在 doc-test 目标 ⇔ scripts/test.sh 有 `cargo test --workspace --doc`
 //      （doc 命令必须带 workspace 范围——退化成 `cargo test --doc` 会让成员 crate
 //      的 doctest 静默漏跑而守门仍绿）；且 scripts/test.sh 必须调用并发入口
 //      的**运行**命令 `bun scripts/test-exec.ts [run]`（删除即红；`… check` 自检行
 //      不算运行接线）；
-//     ②③ 与④同口径：只认**命令位置**的命令——非注释行里的说明文字（引号内的
-//      `echo "…bun scripts/test-exec.ts…"`）不算接线，否则把三条真命令全包成
-//      echo 字符串就能让两个入口一起假绿（#1112 第三轮审查实测）。
-//   ④ 门禁自身接线：scripts/check.sh 与 CI frontend job 必须调用 `check`——接线
+//     ②③④ 与⑤同口径：只认**命令位置**的命令——非注释行里的说明文字（引号内的
+//      `echo "…bun scripts/test-exec.ts…"`）不算接线，否则把真命令全包成
+//      echo 字符串就能让入口一起假绿（#1112 第三轮审查实测）。
+//   ⑤ 门禁自身接线：scripts/check.sh 与 CI frontend job 必须调用 `check`——接线
 //      在管线里、不由单元测试构建，按先例 #959/#961 以源码扫描守门（删除接线即红）；
-//   ⑤ 执行器等价性：测试运行期不得依赖 cargo 注入的环境变量（现状零命中，见
+//   ⑥ 执行器等价性：测试运行期不得依赖 cargo 注入的环境变量（现状零命中，见
 //      cargoRuntimeEnvProblems 注）。
-// run 命令另有第六道交叉核对：`cargo test --no-run` 实际构建出的测试二进制集合
+// run 命令另有第七道交叉核对：`cargo test --no-run` 实际构建出的测试二进制集合
 // 必须与①的目标清单全等——发现逻辑与 cargo 真实行为漂移即红，不给「清单看着对、
 // 实际漏跑」留口子。unsupported manifest 形态（auto* 开关、lib harness=false、
 // 非尾随 `*` 的成员 glob）一律拒绝而非猜测。
@@ -47,7 +61,8 @@
 // 门槛检查；调用方式 `bun scripts/test-exec.ts [run|check|plan] [--jobs N]`，
 // 默认 run；测试可传 `--root <夹具根>` 指向夹具（夹具只需 manifest + 目录形态，
 // 不调用 cargo）。挂载于 scripts/test.sh（本地测试入口）与 scripts/check.sh
-// 质量门槛序列 + CI frontend job（覆盖守门部分；CI 的测试执行面本票不动）。
+// 质量门槛序列 + CI frontend job（覆盖守门部分）；CI 的测试执行面自 #1496 起
+// 与本地同口径（cargo-nextest + 旧 cucumber 目标各一条，见 build.yml backend job）。
 
 import { spawn } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -69,6 +84,23 @@ export const PARALLEL_ENTRY_MARKER = 'scripts/test-exec.ts'
 /** 非并发入口逐目标参数与 doc-test 开关（scripts/test.sh 命令行判据）。 */
 export const DELEGATED_TARGET_FLAG = '--test'
 export const DOC_FLAG = '--doc'
+
+/**
+ * nextest 入口（scripts/test.sh 的 `cargo nextest run …` 命令）承载的目标登记
+ * （ticket #1496 / spec #1494）：迁移期「必须经 nextest 进程级 per-test 调度」的
+ * 集成测试目标唯一声明处。删掉 scripts/test.sh 的 nextest 运行行（或把登记目标挪回
+ * 并发入口）即红——并发入口固定 `RUST_TEST_THREADS=1` 会把 Scenario 重新串成进程内
+ * 单线程，正是本票要消灭的形态。逐域迁移把场景并入同一目标，故本清单不随票增长；
+ * 收口票 #1508 删除 cucumber、本地与 CI 统一 nextest 单入口后本登记退役。
+ */
+export const NEXTEST_TARGETS: readonly string[] = ['e2e_rstest']
+
+/** nextest 仓库配置（相对仓库根）：default-filter 排除名单的核对对象。 */
+export const NEXTEST_CONFIG_REL = join(SRC_TAURI_DIR_NAME, '.config', 'nextest.toml')
+
+/** nextest 运行命令词（scripts/test.sh 命令行判据）：`cargo nextest run …`。 */
+export const NEXTEST_SUBCOMMAND = 'nextest'
+export const NEXTEST_RUN_SUBCOMMAND = 'run'
 
 /** workspace 范围参数：`--workspace` 或 `--all`（精确 token 匹配，`--all-targets`
  * / `--all-features` 不算；与 check-structure.ts 的 WORKSPACE_COMMAND_FILES 同口径）。 */
@@ -629,10 +661,12 @@ function shellCommands(content: string): string[][] {
   return commands
 }
 
-/** scripts/test.sh 命令行里的非并发入口判据。 */
+/** scripts/test.sh 命令行里的三入口判据。 */
 export interface EntryWiring {
   /** `cargo test … --test <name>` 的 name 名单。 */
   tests: Set<string>
+  /** `cargo nextest run … --test <name>` 的 name 名单（nextest 入口承接目标）。 */
+  nextest: Set<string>
   /** 是否有 `cargo test … --doc`（doc 入口存在性）。 */
   doc: boolean
   /**
@@ -651,10 +685,12 @@ export interface EntryWiring {
 /**
  * 解析 scripts/test.sh：只看**命令位置**的命令——注释、说明文字（引号里的命令字样）
  * 与 echo 参数都不算接线。每条命令按命令词匹配：`cargo test …` 才贡献
- * `--test <name>` / `--doc` 判据，`bun … scripts/test-exec.ts` 才贡献并发入口判据。
+ * `--test <name>` / `--doc` 判据，`cargo nextest run …` 才贡献 nextest 承接名单，
+ * `bun … scripts/test-exec.ts` 才贡献并发入口判据。
  */
 export function parseEntryWiring(content: string): EntryWiring {
   const tests = new Set<string>()
+  const nextest = new Set<string>()
   let doc = false
   let docWorkspace = false
   let parallel = false
@@ -666,6 +702,20 @@ export function parseEntryWiring(content: string): EntryWiring {
       if (marker !== -1) {
         const subcommand = argv.slice(marker + 1).find((t) => !t.startsWith('-'))
         if (subcommand === undefined || subcommand === 'run') parallel = true
+      }
+      continue
+    }
+    if (
+      argv[0] === 'cargo' &&
+      argv[1] === NEXTEST_SUBCOMMAND &&
+      argv[2] === NEXTEST_RUN_SUBCOMMAND
+    ) {
+      const args = argv.slice(3)
+      for (let i = 0; i < args.length; i += 1) {
+        if (args[i] === DELEGATED_TARGET_FLAG) {
+          const name = args[i + 1] ?? ''
+          if (name !== '') nextest.add(name)
+        }
       }
       continue
     }
@@ -684,7 +734,7 @@ export function parseEntryWiring(content: string): EntryWiring {
       }
     }
   }
-  return { tests, doc, docWorkspace, parallel }
+  return { tests, nextest, doc, docWorkspace, parallel }
 }
 
 export interface CoverageResult {
@@ -692,6 +742,8 @@ export interface CoverageResult {
   targets: DiscoveredTarget[]
   /** 并发入口承接（lib 单测 + bin 单测 + harness=true 集成测试）。 */
   parallel: DiscoveredTarget[]
+  /** nextest 入口承接的集成测试（NEXTEST_TARGETS 登记，进程级 per-test 调度）。 */
+  nextest: DiscoveredTarget[]
   /** 非并发入口承接的自定义 harness 集成测试（`--test <name>`）。 */
   delegated: DiscoveredTarget[]
   /** cargo 自有入口承接的 doc-test。 */
@@ -791,29 +843,136 @@ function cargoRuntimeEnvProblems(rootDir: string): string[] {
   return problems
 }
 
-/** 覆盖守门：目标清单 ⇔ 两个入口的并集（互斥且无遗漏）。 */
+/** nextest 仓库配置里 `binary(<name>)` 排除项的捕获式（组 1 = 是否带 `not`）。 */
+const NEXTEST_BINARY_RE = /(not\s+)?binary\(\s*([A-Za-z0-9_-]+)\s*\)/g
+
+/**
+ * 覆盖守门规则③后半（ticket #1496）：`src-tauri/.config/nextest.toml` 的
+ * default-filter 排除名单必须与 `harness = false` 目标清单**双向全等**——
+ * 多排一个 libtest 目标 = 该目标被静默移出 nextest 调度面（新目标/共享目标漏跑即红）；
+ * 少排一个自定义 harness 目标 = nextest 列举它时 fail loud，同样按红处置：
+ * 「排除名单即自定义 harness 清单」是单一事实源，两处漂移都不许。
+ */
+function nextestConfigProblems(rootDir: string, customHarnessNames: string[]): string[] {
+  const problems: string[] = []
+  const path = join(rootDir, NEXTEST_CONFIG_REL)
+  if (!existsSync(path)) {
+    problems.push(
+      `✗ 覆盖守门：nextest 仓库配置不存在：${NEXTEST_CONFIG_REL}——e2e 新目标经 nextest` +
+        ` 调度（登记：${NEXTEST_TARGETS.join(' / ')}），配置缺失无法核对排除名单`,
+    )
+    return problems
+  }
+  const filterLine = readFileSync(path, 'utf8')
+    .split('\n')
+    .find((line) => /^\s*default-filter\s*=/.test(line))
+  if (filterLine === undefined) {
+    problems.push(
+      `✗ 覆盖守门：${NEXTEST_CONFIG_REL} 缺 \`default-filter\`——自定义 harness 目标` +
+        `（${customHarnessNames.join(' / ') || '（无）'}）会被 nextest 纳入列举并失败；` +
+        `排除名单须与 \`harness = false\` 目标清单全等`,
+    )
+    return problems
+  }
+  const excluded = new Set<string>()
+  for (const match of filterLine.matchAll(NEXTEST_BINARY_RE)) {
+    const name = match[2] ?? ''
+    if (match[1] === undefined) {
+      problems.push(
+        `✗ 覆盖守门：${NEXTEST_CONFIG_REL} 的 default-filter 含未取反的 \`binary(${name})\`` +
+          `——除它以外的目标会被静默移出 nextest 调度面（默认过滤器只允许 \`not binary(<自定义 harness>)\` 形态）`,
+      )
+      continue
+    }
+    excluded.add(name)
+  }
+  for (const name of customHarnessNames) {
+    if (!excluded.has(name)) {
+      problems.push(
+        `✗ 覆盖守门：自定义 harness 目标 ${name} 不在 ${NEXTEST_CONFIG_REL} 的 default-filter` +
+          ` 排除名单——nextest 列举自定义 harness 会失败；排除名单须与 \`harness = false\` 目标清单全等`,
+      )
+    }
+  }
+  for (const name of excluded) {
+    if (!customHarnessNames.includes(name)) {
+      problems.push(
+        `✗ 覆盖守门：${NEXTEST_CONFIG_REL} 的 default-filter 排除了 ${name}，但它不是` +
+          ` \`harness = false\` 目标——该目标会被 nextest 静默漏跑`,
+      )
+    }
+  }
+  return problems
+}
+
+/** 覆盖守门：目标清单 ⇔ 三个入口的并集（互斥且无遗漏）。 */
 export function checkCoverage(rootDir: string): CoverageResult {
   const discovery = discoverTargets(rootDir)
   const problems = [...discovery.problems]
   const delegated = discovery.targets.filter((t) => t.kind === 'test' && t.harnessFalse)
+  const delegatedNames = new Set(delegated.map((t) => t.target))
   const doc = discovery.targets.filter((t) => t.kind === 'doc')
-  const parallel = discovery.targets.filter((t) => t.kind !== 'doc' && !(t.kind === 'test' && t.harnessFalse))
 
   if (discovery.targets.length === 0 && problems.length === 0) {
     problems.push('✗ 覆盖守门：工作区测试目标清单为空——拒绝以空集假绿通过')
   }
 
+  // nextest 承接登记（规则③前半）：登记名必须是真实存在的 harness = true 集成测试目标。
+  const nextest: DiscoveredTarget[] = []
+  for (const name of NEXTEST_TARGETS) {
+    const target = discovery.targets.find((t) => t.kind === 'test' && t.target === name)
+    if (target === undefined) {
+      problems.push(
+        `✗ 覆盖守门：登记为 nextest 承接的目标 \`${name}\` 不在工作区测试目标清单里` +
+          `（目标被删或登记漂移）——nextest 调度面与登记不一致`,
+      )
+      continue
+    }
+    if (target.harnessFalse) {
+      problems.push(
+        `✗ 覆盖守门：登记为 nextest 承接的 ${targetKey(target)} 是 \`harness = false\`` +
+          ` 自定义 runner——nextest 不能列举它（列举即 fail loud），应归非并发入口`,
+      )
+      continue
+    }
+    nextest.push(target)
+  }
+  const nextestKeys = new Set(nextest.map((t) => runKey(t)))
+  const parallel = discovery.targets.filter(
+    (t) => t.kind !== 'doc' && !(t.kind === 'test' && t.harnessFalse) && !nextestKeys.has(runKey(t)),
+  )
+
   const wiring = parseEntryWiring(readFileSync(join(rootDir, TEST_SH_REL), 'utf8'))
+  // 规则③前半：登记 ⇔ scripts/test.sh 的 nextest 运行命令名单（双向全等）。
+  for (const target of nextest) {
+    if (!wiring.nextest.has(target.target)) {
+      problems.push(
+        `✗ 覆盖守门：${targetKey(target)} 登记为 nextest 承接，但 ${TEST_SH_REL} 无` +
+          ` \`cargo ${NEXTEST_SUBCOMMAND} ${NEXTEST_RUN_SUBCOMMAND} … ${DELEGATED_TARGET_FLAG} ${target.target}\`` +
+          `——nextest 入口被删/改写即红（不静默降级回并发入口：那会退回进程内单线程串行）`,
+      )
+    }
+  }
+  const nextestNames = new Set(nextest.map((t) => t.target))
+  for (const name of wiring.nextest) {
+    if (!nextestNames.has(name)) {
+      problems.push(
+        `✗ 覆盖守门：${TEST_SH_REL} 的 \`cargo ${NEXTEST_SUBCOMMAND} ${NEXTEST_RUN_SUBCOMMAND} …` +
+          ` ${DELEGATED_TARGET_FLAG} ${name}\` 不对应任何登记为 nextest 承接的目标（登记失效或拼写漂移）`,
+      )
+    }
+  }
+  problems.push(...nextestConfigProblems(rootDir, [...delegatedNames]))
+
   for (const target of delegated) {
     if (!wiring.tests.has(target.target)) {
       problems.push(
         `✗ 覆盖守门：${targetKey(target)} 声明 harness = false（自定义 runner），` +
           `但 ${TEST_SH_REL} 的非并发入口没有 \`${DELEGATED_TARGET_FLAG} ${target.target}\`——` +
-          `两个入口的覆盖范围都不含它，新增自定义 harness 目标被静默漏跑`,
+          `三个入口的覆盖范围都不含它，新增自定义 harness 目标被静默漏跑`,
       )
     }
   }
-  const delegatedNames = new Set(delegated.map((t) => t.target))
   for (const name of wiring.tests) {
     if (!delegatedNames.has(name)) {
       problems.push(
@@ -847,7 +1006,15 @@ export function checkCoverage(rootDir: string): CoverageResult {
   problems.push(...gateWiringProblems(rootDir))
   problems.push(...cargoRuntimeEnvProblems(rootDir))
 
-  return { problems, targets: discovery.targets, parallel, delegated, doc, outOfFace: discovery.outOfFace }
+  return {
+    problems,
+    targets: discovery.targets,
+    parallel,
+    nextest,
+    delegated,
+    doc,
+    outOfFace: discovery.outOfFace,
+  }
 }
 
 function summarizeCoverage(result: CoverageResult): string {
@@ -856,6 +1023,7 @@ function summarizeCoverage(result: CoverageResult): string {
   return (
     `✓ 测试执行覆盖守门：目标 ${result.targets.length} 个 = ` +
     `并发入口 ${result.parallel.length}（lib 单测 ${count('lib')} + bin 单测 ${count('bin')} + 集成测试 ${count('test')}）` +
+    ` ⊎ nextest 入口 ${result.nextest.length}（${result.nextest.map((t) => t.target).join(' / ') || '（无）'}，进程级 per-test）` +
     ` ⊎ 非并发入口 ${result.delegated.length + result.doc.length}` +
     `（cargo 自有 runner：${result.delegated.map((t) => t.target).join(' / ') || '（无）'}` +
     ` + doc-test ${result.doc.length} 个，覆盖 ${docPkgs} 个包）` +
@@ -1061,7 +1229,10 @@ async function runAll(options: RunOptions): Promise<number> {
   }
 
   const delegatedKeys = new Set(coverage.delegated.map((t) => runKey(t)))
-  const queue = [...expected.keys()].filter((key) => !delegatedKeys.has(key)).sort()
+  const nextestKeys = new Set(coverage.nextest.map((t) => runKey(t)))
+  const queue = [...expected.keys()]
+    .filter((key) => !delegatedKeys.has(key) && !nextestKeys.has(key))
+    .sort()
   const cpuCount = cpus().length
   const width = Math.max(1, Math.min(jobs, queue.length))
   console.log(
@@ -1079,6 +1250,12 @@ async function runAll(options: RunOptions): Promise<number> {
     console.log(
       `  · 非并发入口承接 ${coverage.delegated.length} 个（${coverage.delegated.map((t) => t.target).join(' / ')}）+ ` +
         `doc-test ${coverage.doc.length} 个，由 ${TEST_SH_REL} 的 cargo 自有入口执行`,
+    )
+  }
+  if (coverage.nextest.length > 0) {
+    console.log(
+      `  · nextest 入口承接 ${coverage.nextest.length} 个（${coverage.nextest.map((t) => t.target).join(' / ')}），` +
+        `由 ${TEST_SH_REL} 的 \`cargo ${NEXTEST_SUBCOMMAND} ${NEXTEST_RUN_SUBCOMMAND}\` 进程级 per-test 调度（不在本入口队列，避免重复跑）`,
     )
   }
 
@@ -1194,7 +1371,15 @@ async function main(): Promise<void> {
     const discovery = discoverTargets(options.rootDir)
     if (discovery.problems.length > 0) printProblems(discovery.problems, '❌ 目标发现失败')
     for (const target of discovery.targets) {
-      console.log(`${target.kind.padEnd(5)} ${targetKey(target)}${target.harnessFalse ? '  harness=false（非并发入口）' : ''}`)
+      const surface =
+        target.kind === 'doc'
+          ? '  doc-test（非并发入口）'
+          : target.harnessFalse
+            ? '  harness=false（非并发入口）'
+            : NEXTEST_TARGETS.includes(target.target)
+              ? '  nextest 入口（进程级 per-test）'
+              : ''
+      console.log(`${target.kind.padEnd(5)} ${targetKey(target)}${surface}`)
     }
     return
   }

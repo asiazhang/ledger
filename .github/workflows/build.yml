@@ -224,6 +224,24 @@ jobs:
           # restore-key 回退拿到 base 分支的缓存，merge 后新 key 自然固化进缓存。
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # cargo-nextest（ticket #1496 / spec #1494）：e2e 新目标经**进程级 per-test**
+      # 调度（每个 Scenario 一个进程），并行度/超时/重试配置住
+      # src-tauri/.config/nextest.toml。预编译二进制固定版本 + sha256 校验（musl
+      # 静态链接，容器内无 glibc 版本耦合）。
+      # 刻意不烘进 CI 镜像（#1109 镜像路径）：镜像只在 merge 后按 paths 触发重建，
+      # PR CI 挂的仍是旧镜像，烘入会让本 PR 的 backend job 直接 `no such command`；
+      # 与前端 job 的 bun（setup-bun）同属「in-job 测试工具」，不是 apt 系统依赖。
+      - name: 安装 cargo-nextest（固定版本）
+        run: |
+          NEXTEST_VERSION=0.9.145
+          NEXTEST_SHA256=cd3c85194e8b28ad26676d287f41f0d6b4d456cef5bd94700def5dea8e328883
+          curl -sSL -o /tmp/cargo-nextest.tar.gz \
+            "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${NEXTEST_VERSION}/cargo-nextest-${NEXTEST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${NEXTEST_SHA256}  /tmp/cargo-nextest.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/cargo-nextest.tar.gz -C "${CARGO_HOME}/bin"
+          rm /tmp/cargo-nextest.tar.gz
+          cargo nextest --version
+
       # 范围显式 `--workspace`（spec #1086 / issue #1087）：非虚拟 workspace 下 cargo
       # 默认只作用于根包，缺范围参数会静默漏跑成员 crate；cargo 对没有对应 target
       # 的成员自动跳过，故 `--lib --test '*'` 的组合对成员 crate 安全。
@@ -236,8 +254,18 @@ jobs:
       # 域，随每日常规基准一起运行）拖回 PR CI。副作用：显式 target 选择不跑 doc-tests
       # （issue #1112 起的口径：本仓 doc-test 目标 17 个、当前有 4 条实际执行；CI 这里
       # 仍不跑，本地 scripts/test.sh 已补 `cargo test --workspace --doc`）。
-      - name: Rust 单元测试 + BDD/e2e 测试（cucumber）
-        run: cargo test --workspace --lib --test '*'
+      # cargo-nextest 承接范围与改前 cargo 口径逐项对齐（lib + 全部集成 target；
+      # 不跑 bin 单测与 doc-test）：e2e 新目标（rstest-bdd）是普通集成 target，自动
+      # 落入 `--test '*'` 并由 nextest 进程级 per-test 调度。
+      - name: Rust 单元测试 + 集成测试（cargo-nextest 进程级 per-test）
+        run: cargo nextest run --workspace --lib --test '*'
+
+      # 旧 cucumber e2e 目标：`harness = false` 自定义 runner，不支持 nextest 依赖的
+      # `--list --format terse` 协议，由 nextest.toml 的 default-filter 排除（排除名单
+      # 与 harness=false 目标清单全等由 scripts/test-exec.ts 覆盖守门核对），仍走
+      # cargo 自有 runner；收口票 #1508 删除 cucumber 后本步骤随之下线。
+      - name: 旧 cucumber e2e 目标（harness = false，nextest 不能列举）
+        run: cargo test --workspace --test e2e
 
   # 后端静态检查：与 backend job 同挂预构建镜像（issue #1109），fmt/clippy 组件
   # 已烘进镜像，job 内零安装步骤（改前 apt 阶段缓存命中也有 22s）。
