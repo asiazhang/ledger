@@ -115,24 +115,26 @@ nextest + cargo 启动（约 0.5s 固定开销，故命令级比值被摊薄）�
 - **并行度**：CI runner 4 vCPU ⇒ `test-threads = "num-cpus"` = **4**（本机 12）。
 - **超时/重试**：`retries = 0`（红必须可复现）、`slow-timeout = 60s × 2`、
   `global-timeout = 15m`、`fail-fast = false`（一次看全部失败）。
-- **CI 实测（本 PR 的 backend job，run 35363456259 / 4 vCPU 容器，job 105660097579）**：
-  见下节「CI 运行回填（本 PR 实测）」。
+- **CI 实测（本 PR 的 backend job，4 vCPU 容器）**：见下节「CI 运行回填（本 PR 实测）」。
 
 ## CI 运行回填（本 PR 实测）
 
-run `35363456259`（backend job 105660097579，ubuntu-latest 4 vCPU + 后端 CI 镜像；
-nextest 0.9.145，2026-09-18 15:36:32Z → 15:42:52Z，job 380s）：
+最终修订 commit `fcfd4603` 的 run `35364262985`（backend job 105662747226，
+ubuntu-latest 4 vCPU + 后端 CI 镜像；nextest 0.9.145，15:44:34Z → 15:50:51Z，
+job **377s**）：整条 workflow **success**。
 
 | 步骤 | 时间窗 | 结论 |
 | --- | --- | --- |
-| 安装 cargo-nextest（固定版本） | 15:37:52（可见工作 ≈0.6s：curl → `sha256sum -c` OK → 解压 → 版本打印） | `cargo-nextest 0.9.145 (00af4550e 2026-09-16)`——**容器内可用性已实测** |
-| Rust 单元测试 + 集成测试（cargo-nextest） | 15:37:52 → 15:40:50（178s，含缓存恢复后的编译；测试执行窗口 `Summary 79.397s`） | `1763 tests run: 1763 passed, 4 skipped`；`Starting 1763 tests across 31 binaries (… 1 binary skipped via profile.default.default-filter)`——**default-filter 在 CI 上确实把 cucumber 二进制排除在列举之外** |
-| ↳ e2e 新目标（迁移子集） | 12 个 `tauri-app::e2e_rstest` PASS 落在 15:40:45.4–15:40:46.6（**1.2s**，单个 0.19–0.21s） | 进程级 per-test、并行度 = 4（runner vCPU 数） |
-| 旧 cucumber e2e 目标 | 15:40:50 → 15:42:47（117s） | `451 scenarios (451 passed) / 3122 steps (3122 passed)`（CI 口径 451，与本机 453 的既有差异一致；本票不改旧目标） |
+| 安装 cargo-nextest（固定版本） | 15:45:55（可见工作 ≈0.6s：curl → `sha256sum -c` OK → 解压 → 版本打印） | `cargo-nextest 0.9.145 (00af4550e 2026-09-16)`——**容器内可用性已实测**（首个 run `35363456259` 同结论） |
+| Rust 单元测试 + 集成测试（cargo-nextest） | 15:45:55 → 15:48:52（177s，含缓存恢复后的编译；测试执行窗口 `Summary 77.976s`） | `1763 tests run: 1763 passed, 4 skipped`；`Starting 1763 tests across 31 binaries (… 1 binary skipped via profile.default.default-filter)`——**default-filter 在 CI 上确实把 cucumber 二进制排除在列举之外** |
+| ↳ e2e 新目标（迁移子集） | 12 个 `tauri-app::e2e_rstest` PASS 落在 ≈1.2s 内（首 run 实测 15:40:45.4–15:40:46.6，单个 0.19–0.21s） | 进程级 per-test、并行度 = 4（runner vCPU 数） |
+| 旧 cucumber e2e 目标 | 15:48:52 → 15:50:46（114s） | `451 scenarios (451 passed) / 3122 steps (3122 passed)`（CI 口径 451，与本机 453 的既有差异一致；本票不改旧目标） |
 
-**缓存策略**：rust-cache 恢复 15:37:04 → 15:37:52（48s），`prefix-key: ci-image` 与
-`save-if: main` 未动；nextest 复用同一 `target/`，安装步骤独立于缓存（每次 job 约
-0.6s 可见工作）。**CI 侧无「nextest 装不上 / 列举失败 / 缓存失效」问题**。
+**缓存策略**：rust-cache 恢复沿用 `prefix-key: ci-image` / `save-if: main`（首 run 实测
+恢复 48s，15:37:04 → 15:37:52），nextest 复用同一 `target/`，安装步骤独立于缓存
+（每次 job ≈0.6s 可见工作）。**CI 侧无「nextest 装不上 / 列举失败 / 缓存失效」问题**。
+两个 run（`35363456259` / `35364262985`）的 nextest 段与 cucumber 段数字一致
+（1763 passed / 4 skipped；451 scenarios / 3122 steps）。
 
 ## 负向验收（删除即变红）
 
