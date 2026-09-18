@@ -79,6 +79,19 @@ mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) 
 `
 
 describe('check-test-stubs', () => {
+  it('真实仓库默认通过：三区间扫真实仓全绿（现行仓库绿）', () => {
+    // 无参数 = 真实仓库默认扫描根（src/__tests__ + packages/test-support/src +
+    // 包内测试）。随 vitest scripts 测试分片进 CI（issue #1473）：真实仓违例即红，
+    // 不再只靠本地自觉跑 check.sh。成功行的登记处计数从 REFERENCE_DEFAULTS 派生
+    //（单一事实源），扫描根字段证明默认根解析到真实仓而非空转。
+    const r = run([])
+    expect(r.status).toBe(0)
+    expect(r.output).toContain('测试桩守门通过')
+    expect(r.output).toContain(`登记处 ${Object.keys(REFERENCE_DEFAULTS).length} 条命令`)
+    expect(r.output).toContain('testsDir=src/__tests__')
+    expect(r.output).toContain('seamHome=packages/test-support/src')
+  })
+
   it('全仓测试走唯一接缝与钦定一次性委托时通过（退出码 0）', () => {
     const dirs = makeFixture({ 'SomeView.test.ts': CLEAN_TEST })
     const r = runFixture(dirs)
