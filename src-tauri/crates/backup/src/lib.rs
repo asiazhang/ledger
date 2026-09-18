@@ -51,11 +51,11 @@ mod auto;
 mod engine;
 
 pub use auto::{
-    AUTO_BACKUP_PREFIX, AttemptOutcome, AutoBackupState, BackupDecision, LOCK_TIMEOUT, PrefsState,
-    SkipReason, after_commit_hook, auto_backup_file_name, due_decision, exit_fallback, get_state,
-    install_after_commit_hook, lock_conn_with_timeout, occurrence_dirty_hook,
-    register_catch_up_hook, reset, run_due_backup, run_exit_backup, run_first_backup,
-    seed_book_scope, set_state, shared_prefs, start_scheduler,
+    AUTO_BACKUP_PREFIX, AttemptOutcome, AutoBackupState, BackupDecision, FAILURE_ALERT_THRESHOLD,
+    LOCK_TIMEOUT, PrefsState, SkipReason, after_commit_hook, auto_backup_file_name, due_decision,
+    exit_fallback, failure_alerting, get_state, install_after_commit_hook, lock_conn_with_timeout,
+    occurrence_dirty_hook, register_catch_up_hook, reset, run_due_backup, run_exit_backup,
+    run_first_backup, seed_book_scope, set_state, shared_prefs, start_scheduler,
 };
 pub use engine::{
     BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, BackupScope, PruneResult,

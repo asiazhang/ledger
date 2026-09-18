@@ -47,7 +47,7 @@ pub enum BackupDecision {
     AlreadyBackedUpToday,
 }
 
-/// 自动备份调度状态快照（对应 `auto_backup.*` 三个 KV key）。
+/// 自动备份调度状态快照（对应 `auto_backup.*` 四个 KV key）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoBackupState {
     /// 自动备份开关（默认开启）。
@@ -56,6 +56,9 @@ pub struct AutoBackupState {
     pub dirty: bool,
     /// 上次成功备份时间（UTC ISO）；None 表示从未备份过。
     pub last_backup_at: Option<String>,
+    /// 连续失败计数（issue #1456）：执行失败累加（饱和）、成功清零；
+    /// 达 [`FAILURE_ALERT_THRESHOLD`] 后设置页呈现用户可见提示。
+    pub consecutive_failures: u32,
 }
 
 impl Default for AutoBackupState {
@@ -64,6 +67,7 @@ impl Default for AutoBackupState {
             enabled: true,
             dirty: false,
             last_backup_at: None,
+            consecutive_failures: 0,
         }
     }
 }
@@ -127,6 +131,18 @@ fn to_local(now: DateTime<Utc>) -> DateTime<Local> {
     now.with_timezone(&Local)
 }
 
+/// 连续失败提示阈值（issue #1456）：自动备份连续失败达到该次数后，设置页
+/// 自动备份卡片呈现用户可见提示（10 分钟轮询下约 30 分钟连续失败）——
+/// 「失败保留脏标记、下个周期重试」在结构性不可能成功时不再无限静默。
+/// 阈值判定收后端单点（[`failure_alerting`]），IPC 面以布尔透出，前端不复刻数值。
+pub const FAILURE_ALERT_THRESHOLD: u32 = 3;
+
+/// 连续失败是否达到提示阈值（纯函数）：达阈值即提示态，持续到一次成功清零；
+/// IPC 面（`get_auto_backup_state.failure_alerting`）与域内共用同一判定。
+pub fn failure_alerting(consecutive_failures: u32) -> bool {
+    consecutive_failures >= FAILURE_ALERT_THRESHOLD
+}
+
 /// 读取自动备份调度状态。key 缺失、甚至 `app_settings` 表缺失
 /// （恢复了旧版本备份）时返回约定默认值，行为免费正确。
 pub fn get_state(conn: &Connection) -> error::Result<AutoBackupState> {
@@ -139,10 +155,15 @@ pub fn get_state(conn: &Connection) -> error::Result<AutoBackupState> {
             SettingKey::AutoBackupLastBackupAt,
             def.last_backup_at,
         )?,
+        consecutive_failures: settings::get(
+            conn,
+            SettingKey::AutoBackupConsecutiveFailures,
+            def.consecutive_failures,
+        )?,
     })
 }
 
-/// 整体写入调度状态（三个 key 原子性无要求，逐个 upsert 即可）。
+/// 整体写入调度状态（四个 key 原子性无要求，逐个 upsert 即可）。
 pub fn set_state(conn: &Connection, state: &AutoBackupState) -> error::Result<()> {
     settings::set(conn, SettingKey::AutoBackupEnabled, &state.enabled)?;
     settings::set(conn, SettingKey::AutoBackupDirty, &state.dirty)?;
@@ -150,6 +171,11 @@ pub fn set_state(conn: &Connection, state: &AutoBackupState) -> error::Result<()
         conn,
         SettingKey::AutoBackupLastBackupAt,
         &state.last_backup_at,
+    )?;
+    settings::set(
+        conn,
+        SettingKey::AutoBackupConsecutiveFailures,
+        &state.consecutive_failures,
     )?;
     Ok(())
 }
@@ -255,14 +281,17 @@ fn run_catch_up_hook(conn: &Connection) {
     }
 }
 
-/// 脏复位并把备份成功时刻记为新的上次备份锚点：
+/// 脏复位、连续失败计数清零，并把备份成功时刻记为新的上次备份锚点：
 /// - [`mark_clean`]：自动备份成功后调用；失败时不得调用——保留脏标记即重试机制；
-/// - [`reset`]：恢复成功后调用——不置真、重新计时，避免「恢复后立即备份」的重复，
-///   开关保持恢复库中带来的值不动。
+///   连续失败计数同点清零（issue #1456「成功后清零」接线的唯一落点，删除即红：
+///   提示态将滞留不消失）；
+/// - [`reset`]：恢复成功后调用——不置真、重新计时、失败计数清零（恢复后全新
+///   起点，避免恢复库中带来的旧计数落地即提示），开关保持恢复库中带来的值不动。
 ///
 /// 两者行为一致（同一语义动作的两个领域别名），`now` 为 UTC ISO 字符串。
 pub fn mark_clean(conn: &Connection, now: &str) -> error::Result<()> {
     settings::set(conn, SettingKey::AutoBackupDirty, &false)?;
+    settings::set(conn, SettingKey::AutoBackupConsecutiveFailures, &0_u32)?;
     settings::set(
         conn,
         SettingKey::AutoBackupLastBackupAt,
@@ -324,7 +353,9 @@ pub enum AttemptOutcome {
     Performed { path: String },
     /// 静默跳过：不执行、不报错（含原因）。
     Skipped(SkipReason),
-    /// 尝试了但失败：脏标记保留，下个周期重试（保留即重试机制，ADR-0016）。
+    /// 尝试了但失败：脏标记保留，下个周期重试（保留即重试机制，ADR-0016）；
+    /// 连续失败计数仅在此路径累加（issue #1456）——Skipped（含拿锁超时放弃本轮，
+    /// 作业体零执行）不算失败、不计数：没有执行备份动作即无所谓「连续失败」。
     Failed { reason: String },
 }
 
@@ -393,10 +424,58 @@ fn gate(conn: &Connection, dir: Option<&str>) -> Result<(AutoBackupState, String
     Ok((state, dir.to_string()))
 }
 
+/// 失败计数累加（issue #1456）：读旧值 → 饱和加一 → 写回。计数写入走
+/// [`settings::set`]（ADR-0032 调度状态置脏豁免单点），不置脏、不自激备份。
+/// 读写失败仅记日志不上抛——原始失败已归入 [`AttemptOutcome::Failed`]，
+/// 不因计数失败掩盖或改写失败本体。跨越阈值（旧值低于阈值、新值达阈值）时
+/// 发出 `ledger:backups-changed`（同款深路径发射，登记见
+/// `WriteOp::AutoBackupDeepPath`），前端设置页刷新自动备份状态并呈现提示；
+/// 其后的连续失败不再重复发射，提示由成功清零后的既有信号撤下。
+fn record_failure(conn: &Connection) {
+    let prev: u32 = match settings::get(conn, SettingKey::AutoBackupConsecutiveFailures, 0) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "读取连续失败计数失败，本次不累加");
+            return;
+        }
+    };
+    let next = prev.saturating_add(1);
+    if let Err(e) = settings::set(conn, SettingKey::AutoBackupConsecutiveFailures, &next) {
+        tracing::warn!(error = %e, "写入连续失败计数失败（忽略）");
+        return;
+    }
+    if prev < FAILURE_ALERT_THRESHOLD && failure_alerting(next) {
+        tracing::warn!(count = next, "自动备份连续失败达提示阈值，通知前端呈现");
+        notify_threshold_crossing();
+    }
+}
+
+/// 阈值跨越通知（issue #1456）：发出 `ledger:backups-changed`（同款深路径发射，
+/// 登记见 `WriteOp::AutoBackupDeepPath`），前端设置页刷新自动备份状态并呈现提示。
+/// 深路径发射经 EVENT_APP 镜像句柄、单测环境不可注入观察，域内以测试计数器
+/// 承接「删除即红」：删掉本调用（或改为不再在跨越时调用）→ 域单测
+/// [`scheduler_tests::threshold_crossing_emits_notification_once`] 红。
+fn notify_threshold_crossing() {
+    ledger_infra::events::emit_backups_changed_current();
+    #[cfg(test)]
+    THRESHOLD_ALERT_EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// [`notify_threshold_crossing`] 的测试观察计数器（仅测试编译，生产零成本）。
+#[cfg(test)]
+static THRESHOLD_ALERT_EMISSIONS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
 /// 把执行结果归一化为 [`AttemptOutcome`] 并打日志（失败 warn，成功 info）。成功
-/// 产物改变备份列表，一并发出 `ledger:backups-changed` 信号（issue #129），
-/// 前端设置页据此自动刷新列表；发射失败静默忽略。
-fn classify_result(trigger: &str, performed: error::Result<String>) -> AttemptOutcome {
+/// 产物改变备份列表并经 [`mark_clean`] 清零失败计数，一并发出 `ledger:backups-changed`
+/// 信号（issue #129），前端设置页据此自动刷新列表与自动备份状态（提示随之撤下）；
+/// 失败累加连续失败计数（issue #1456），达阈值跨越时发出同一信号通知前端呈现提示；
+/// 发射失败静默忽略。
+fn classify_result(
+    conn: &Connection,
+    trigger: &str,
+    performed: error::Result<String>,
+) -> AttemptOutcome {
     match performed {
         Ok(path) => {
             tracing::info!(trigger, path = %path, "自动备份完成");
@@ -405,6 +484,7 @@ fn classify_result(trigger: &str, performed: error::Result<String>) -> AttemptOu
         }
         Err(e) => {
             tracing::warn!(trigger, error = %e, "自动备份失败，保留脏标记待下周期重试");
+            record_failure(conn);
             AttemptOutcome::Failed {
                 reason: e.to_string(),
             }
@@ -438,7 +518,11 @@ pub fn run_due_backup(
             return AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday);
         }
     }
-    classify_result("due", perform_backup(conn, &dir, app_version, now, scope))
+    classify_result(
+        conn,
+        "due",
+        perform_backup(conn, &dir, app_version, now, scope),
+    )
 }
 
 /// 触发入口二：退出兜底——脏且当天尚未自动备份过才补一次，与到期入口同受
@@ -464,7 +548,11 @@ pub fn run_exit_backup(
             return AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday);
         }
     }
-    classify_result("exit", perform_backup(conn, &dir, app_version, now, scope))
+    classify_result(
+        conn,
+        "exit",
+        perform_backup(conn, &dir, app_version, now, scope),
+    )
 }
 
 /// 触发入口三：首次兜底——启动会话首次拿到目录时，若受管备份列表为空
@@ -496,7 +584,11 @@ pub fn run_first_backup(
         tracing::debug!(trigger = "first", "今天已自动备份，日界门静默跳过首次兜底");
         return AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday);
     }
-    classify_result("first", perform_backup(conn, &dir, app_version, now, scope))
+    classify_result(
+        conn,
+        "first",
+        perform_backup(conn, &dir, app_version, now, scope),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -839,6 +931,7 @@ mod tests {
             enabled: false,
             dirty: true,
             last_backup_at: Some(String::from("2026-02-17T08:00:00Z")),
+            consecutive_failures: 5,
         };
         set_state(&c, &want).expect("写状态");
         assert_eq!(get_state(&c).expect("读回状态"), want);
@@ -867,7 +960,22 @@ mod tests {
         );
     }
 
-    /// reset（恢复后重置）：清脏并重新计时，enabled 保持不变。
+    /// 阈值边界（issue #1456）：连续失败 0–2 次不提示，达 3 次起提示。
+    #[test]
+    fn failure_alerting_threshold_boundary() {
+        for n in [0_u32, 1, 2] {
+            assert!(!failure_alerting(n), "{n} 次连续失败不应提示");
+        }
+        for n in [
+            FAILURE_ALERT_THRESHOLD,
+            FAILURE_ALERT_THRESHOLD + 1,
+            u32::MAX,
+        ] {
+            assert!(failure_alerting(n), "{n} 次连续失败应提示");
+        }
+    }
+
+    /// reset（恢复后重置）：清脏、清失败计数并重新计时，enabled 保持不变。
     #[test]
     fn reset_clears_dirty_and_reanchors() {
         let c = conn();
@@ -877,6 +985,7 @@ mod tests {
                 enabled: false,
                 dirty: true,
                 last_backup_at: Some(String::from("2026-02-10T00:00:00Z")),
+                consecutive_failures: 2,
             },
         )
         .expect("写脏状态");
@@ -884,6 +993,10 @@ mod tests {
         let state = get_state(&c).expect("读状态");
         assert!(!state.dirty);
         assert!(!state.enabled);
+        assert_eq!(
+            state.consecutive_failures, 0,
+            "恢复后失败计数清零（全新起点）"
+        );
         assert_eq!(
             state.last_backup_at,
             Some(String::from("2026-02-17T10:00:00Z"))
@@ -916,6 +1029,11 @@ mod scheduler_tests {
         fs::create_dir_all(&dir).expect("创建临时目录");
         dir
     }
+
+    /// 阈值跨越观察计数器是进程级静态：本模块内会跨越阈值的三个测试
+    /// （累加 / 成功清零 / 跨越发通知）共用本锁串行，保证计数断言精确
+    /// （其余测试不触发跨越，不碰计数器）。
+    static CROSSING_TESTS: Mutex<()> = Mutex::new(());
 
     fn now_at(s: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(s)
@@ -1027,6 +1145,7 @@ mod scheduler_tests {
                 enabled: true,
                 dirty: true,
                 last_backup_at: Some(db::iso_at(local_utc(2026, 2, 17, 8, 0))),
+                consecutive_failures: 0,
             },
         )
         .expect("写状态");
@@ -1066,6 +1185,7 @@ mod scheduler_tests {
                 enabled: true,
                 dirty: true,
                 last_backup_at: Some(db::iso_at(local_noon_days_ago_utc(1))),
+                consecutive_failures: 0,
             },
         )
         .expect("写状态");
@@ -1202,6 +1322,120 @@ mod scheduler_tests {
         assert_eq!(state.last_backup_at, None);
     }
 
+    /// 连续失败计数累加（issue #1456）：每次执行失败累加一，达阈值即进入提示态；
+    /// 计数写入不扰动其他调度状态（脏标记保留、锚点不记、开关不动）——
+    /// 调度状态写经 `settings::set`（ADR-0032 置脏豁免单点），不置脏、不自激备份。
+    #[test]
+    fn consecutive_failures_accumulate_to_threshold() {
+        let _serial = CROSSING_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let c = conn();
+        let missing = std::env::temp_dir()
+            .join(format!("ledger-auto-fail-count-{}", db::new_uuid()))
+            .join("nested");
+        mark_dirty(&c).expect("置脏");
+        for n in 1..=FAILURE_ALERT_THRESHOLD {
+            let outcome = run_due_backup(
+                &c,
+                Some(missing.to_str().unwrap()),
+                "0.2.0",
+                now_at("2026-02-17T12:00:00Z"),
+                None,
+            );
+            assert!(
+                matches!(outcome, AttemptOutcome::Failed { .. }),
+                "第 {n} 次应失败，实际 {outcome:?}"
+            );
+            let state = get_state(&c).expect("读状态");
+            assert_eq!(state.consecutive_failures, n, "失败一次累加一");
+            assert_eq!(
+                failure_alerting(state.consecutive_failures),
+                n >= FAILURE_ALERT_THRESHOLD,
+                "达阈值起为提示态"
+            );
+            assert!(state.dirty, "计数写入不得清脏或置脏");
+            assert_eq!(state.last_backup_at, None, "计数写入不记锚点");
+            assert!(state.enabled, "计数写入不动开关");
+        }
+    }
+
+    /// 成功后清零（issue #1456 验收）：提示态后一次成功 → 计数归零、提示态解除
+    /// （前端经既有 backups-changed 信号刷新后提示消失）。清零接线在 [`mark_clean`]
+    /// 唯一成功落点：删除该接线本测试即红（提示态滞留不消失）。
+    #[test]
+    fn success_resets_failure_counter() {
+        let _serial = CROSSING_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let c = conn();
+        // 造提示态：连续失败达阈值。
+        let missing = std::env::temp_dir()
+            .join(format!("ledger-auto-fail-reset-{}", db::new_uuid()))
+            .join("nested");
+        mark_dirty(&c).expect("置脏");
+        for _ in 0..FAILURE_ALERT_THRESHOLD {
+            run_due_backup(
+                &c,
+                Some(missing.to_str().unwrap()),
+                "0.2.0",
+                now_at("2026-02-17T12:00:00Z"),
+                None,
+            );
+        }
+        assert!(
+            failure_alerting(get_state(&c).expect("读状态").consecutive_failures),
+            "前置：已达提示态"
+        );
+        // 换有效目录重试成功 → 清零。
+        let dir = temp_dir("failure-reset");
+        let outcome = run_due_backup(
+            &c,
+            Some(dir.to_str().unwrap()),
+            "0.2.0",
+            now_at("2026-02-17T13:00:00Z"),
+            None,
+        );
+        assert!(
+            matches!(outcome, AttemptOutcome::Performed { .. }),
+            "实际 {outcome:?}"
+        );
+        let state = get_state(&c).expect("读状态");
+        assert_eq!(state.consecutive_failures, 0, "成功后计数清零");
+        assert!(!failure_alerting(state.consecutive_failures), "提示态解除");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 阈值跨越才发通知，且只发一次（issue #1456 接线负向，删除即红）：跨越前
+    /// 不发、恰跨越发一次、其后连续失败不重复发。通知接线在 [`record_failure`]
+    /// → [`notify_threshold_crossing`]：删掉该调用本测试即红——已打开的设置页
+    /// 提示不再实时出现（提示实时出现的唯一时机）。
+    #[test]
+    fn threshold_crossing_emits_notification_once() {
+        let _serial = CROSSING_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let c = conn();
+        let missing = std::env::temp_dir()
+            .join(format!("ledger-auto-cross-emit-{}", db::new_uuid()))
+            .join("nested");
+        mark_dirty(&c).expect("置脏");
+        THRESHOLD_ALERT_EMISSIONS.store(0, std::sync::atomic::Ordering::Relaxed);
+        for n in 1..=(FAILURE_ALERT_THRESHOLD + 1) {
+            let outcome = run_due_backup(
+                &c,
+                Some(missing.to_str().unwrap()),
+                "0.2.0",
+                now_at("2026-02-17T12:00:00Z"),
+                None,
+            );
+            assert!(
+                matches!(outcome, AttemptOutcome::Failed { .. }),
+                "第 {n} 次应失败，实际 {outcome:?}"
+            );
+            let expected = u32::from(n >= FAILURE_ALERT_THRESHOLD);
+            assert_eq!(
+                THRESHOLD_ALERT_EMISSIONS.load(std::sync::atomic::Ordering::Relaxed),
+                expected,
+                "第 {n} 次失败后应累计通知 {expected} 次（恰跨越时一次，不重复发）"
+            );
+        }
+    }
+
     /// 退出兜底同受日界门（issue #386，原「不受每日约束」豁免取消）：
     /// 当天已自动备份过，退出时即使脏也静默跳过。
     #[test]
@@ -1214,6 +1448,7 @@ mod scheduler_tests {
                 enabled: true,
                 dirty: true,
                 last_backup_at: Some(db::iso_at(local_utc(2026, 2, 17, 8, 0))),
+                consecutive_failures: 0,
             },
         )
         .expect("写状态");
@@ -1243,6 +1478,7 @@ mod scheduler_tests {
                 enabled: true,
                 dirty: true,
                 last_backup_at: Some(db::iso_at(local_noon_days_ago_utc(1))),
+                consecutive_failures: 0,
             },
         )
         .expect("写状态");
@@ -1297,6 +1533,7 @@ mod scheduler_tests {
                 enabled: true,
                 dirty: false,
                 last_backup_at: Some(db::iso_at(local_utc(2026, 2, 17, 8, 0))),
+                consecutive_failures: 0,
             },
         )
         .expect("写状态");

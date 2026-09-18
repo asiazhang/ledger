@@ -40,9 +40,17 @@ const manualBackupFile: BackupFileInfo = {
   encrypted: false,
 };
 
+// 命令契约快照：正常态（开关开、从未失败）。issue #1456 起状态含连续失败字段。
+const AUTO_STATE_OK: AutoBackupState = {
+  enabled: true,
+  last_backup_at: null,
+  consecutive_failures: 0,
+  failure_alerting: false,
+};
+
 function makeStub(initialList: BackupFileInfo[]) {
   let list: BackupFileInfo[] = initialList;
-  let autoState: AutoBackupState = { enabled: true, last_backup_at: null };
+  let autoState: AutoBackupState = AUTO_STATE_OK;
   const listCalls = () =>
     mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_backups").length;
 
@@ -148,11 +156,66 @@ describe("useBackup 备份产物变更信号（issue #129）", () => {
     await flushPromises();
     expect(backup.autoBackupLastText.value).toBe("从未");
 
-    stub.setAutoState({ enabled: true, last_backup_at: "2026-02-17T09:30:00Z" });
+    stub.setAutoState({ enabled: true, last_backup_at: "2026-02-17T09:30:00Z", consecutive_failures: 0, failure_alerting: false });
     readFire()?.();
     await flushPromises();
 
     expect(backup.autoBackupLastText.value).toBe("2026-02-17 09:30");
+  });
+});
+
+describe("useBackup 自动备份连续失败提示（issue #1456）", () => {
+  it("连续失败达阈值：提示态与失败次数随状态刷新暴露", async () => {
+    const stub = makeStub([]);
+    const readFire = captureLastListener();
+
+    const { backup } = mountHost();
+    await flushPromises();
+    expect(backup.autoBackupFailing.value).toBe(false);
+
+    stub.setAutoState({
+      enabled: true,
+      last_backup_at: null,
+      consecutive_failures: 3,
+      failure_alerting: true,
+    });
+    readFire()?.();
+    await flushPromises();
+
+    expect(backup.autoBackupFailing.value).toBe(true);
+    expect(backup.autoBackupFailures.value).toBe(3);
+  });
+
+  it("成功后清零：信号刷新到已清零状态时提示态解除（提示消失的数据源；清零接线在后端域层另有负向钉住）", async () => {
+    const stub = makeStub([]);
+    const readFire = captureLastListener();
+
+    const { backup } = mountHost();
+    await flushPromises();
+
+    // 后端连续失败达阈值 → 提示态。
+    stub.setAutoState({
+      enabled: true,
+      last_backup_at: null,
+      consecutive_failures: 3,
+      failure_alerting: true,
+    });
+    readFire()?.();
+    await flushPromises();
+    expect(backup.autoBackupFailing.value).toBe(true);
+
+    // 后端一次成功：计数清零、提示态解除 → 信号刷新后提示数据源归零。
+    stub.setAutoState({
+      enabled: true,
+      last_backup_at: "2026-02-17T10:00:00Z",
+      consecutive_failures: 0,
+      failure_alerting: false,
+    });
+    readFire()?.();
+    await flushPromises();
+
+    expect(backup.autoBackupFailing.value).toBe(false);
+    expect(backup.autoBackupFailures.value).toBe(0);
   });
 });
 
@@ -207,7 +270,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
     wireInvokeSeam({
       overrides: {
         list_backups: [],
-        get_auto_backup_state: { enabled: true, last_backup_at: null },
+        get_auto_backup_state: AUTO_STATE_OK,
         get_backup_meta: { kind: "manual", encrypted: true },
         get_encryption_status: { locked: false, file_encrypted: true },
       },
@@ -234,7 +297,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
     wireInvokeSeam({
       overrides: {
         list_backups: [],
-        get_auto_backup_state: { enabled: true, last_backup_at: null },
+        get_auto_backup_state: AUTO_STATE_OK,
         get_backup_meta: () => Promise.reject(new Error("bad zip")),
       },
     });
@@ -253,7 +316,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
     wireInvokeSeam({
       overrides: {
         list_backups: [],
-        get_auto_backup_state: { enabled: true, last_backup_at: null },
+        get_auto_backup_state: AUTO_STATE_OK,
         get_backup_meta: { kind: "manual", encrypted: false },
         get_encryption_status: () => Promise.reject(new Error("status unavailable")),
       },
@@ -274,7 +337,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
     wireInvokeSeam({
       overrides: {
         list_backups: [],
-        get_auto_backup_state: { enabled: true, last_backup_at: null },
+        get_auto_backup_state: AUTO_STATE_OK,
         get_backup_meta: { kind: "manual", encrypted: true },
         get_encryption_status: { locked: false, file_encrypted: false },
         restore_backup: { schema_version: 12, restored_at: "2026-02-17T00:00:00Z" },
@@ -304,7 +367,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
     wireInvokeSeam({
       overrides: {
         list_backups: [],
-        get_auto_backup_state: { enabled: true, last_backup_at: null },
+        get_auto_backup_state: AUTO_STATE_OK,
         get_backup_meta: { kind: "manual", encrypted: false },
         get_encryption_status: { locked: false, file_encrypted: false },
         restore_backup: { schema_version: 12, restored_at: "2026-02-17T00:00:00Z" },
@@ -333,7 +396,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
     wireInvokeSeam({
       overrides: {
         list_backups: [],
-        get_auto_backup_state: { enabled: true, last_backup_at: null },
+        get_auto_backup_state: AUTO_STATE_OK,
         get_backup_meta: { kind: "manual", encrypted: false },
         get_encryption_status: { locked: false, file_encrypted: false },
         restore_backup: { schema_version: 12, restored_at: "2026-02-17T00:00:00Z" },
@@ -360,7 +423,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
     wireInvokeSeam({
       overrides: {
         list_backups: [],
-        get_auto_backup_state: { enabled: true, last_backup_at: null },
+        get_auto_backup_state: AUTO_STATE_OK,
         get_backup_meta: { kind: "manual", encrypted: true },
         get_encryption_status: { locked: false, file_encrypted: false },
         restore_backup: () =>
@@ -392,7 +455,7 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
           manualBackupFile,
           { ...manualBackupFile, file_name: "ledger-backup-20260102-010101.db.zip", path: "/Users/me/backups/ledger-backup-20260102-010101.db.zip" },
         ],
-        get_auto_backup_state: { enabled: true, last_backup_at: null },
+        get_auto_backup_state: AUTO_STATE_OK,
         prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
       },
     });
@@ -446,7 +509,7 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
     wireInvokeSeam({
       overrides: {
         list_backups: [manualBackupFile],
-        get_auto_backup_state: { enabled: true, last_backup_at: null },
+        get_auto_backup_state: AUTO_STATE_OK,
       },
     });
     const { backup } = mountHost();
@@ -508,7 +571,7 @@ describe("useBackup 手动备份按账本分域（issue #836）", () => {
       overrides: {
         list_backups: () => Promise.resolve([]),
         get_auto_backup_state: () =>
-          Promise.resolve({ enabled: true, last_backup_at: null }),
+          Promise.resolve(AUTO_STATE_OK),
         // 注册表不可用现场：清单读取失败 → active_id 为 null。
         list_books: () => Promise.reject(new Error("registry corrupt")),
         create_backup: {

@@ -43,4 +43,9 @@ export interface AutoBackupState {
   enabled: boolean
   /** 上次成功自动备份时间（UTC ISO）；null 表示从未自动备份过。 */
   last_backup_at: string | null
+  /** 自动备份连续失败次数（issue #1456）：执行失败累加、成功清零；提示文案消费。 */
+  consecutive_failures: number
+  /** 连续失败达提示阈值（后端单点判定，前端不复刻阈值）：
+   *  true 时设置页自动备份卡片呈现失败提示。 */
+  failure_alerting: boolean
 }
