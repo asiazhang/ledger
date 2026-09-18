@@ -1,3 +1,11 @@
+// 账户域步骤**双注册**（spec #1494 / ticket #1495）：同一函数同时挂 cucumber 与
+// rstest-bdd 两个属性宏——旧目标（`tests/e2e.rs`，cucumber）行为零变化，新目标
+// （`tests/e2e_rstest.rs`，rstest-bdd）能匹配同一批步骤，函数体与断言唯一不复制。
+// rstest-bdd 占位符按参数名对齐（`{string}` → `{<参数名>:string}`、`{int}` →
+// `{<参数名>:i64}`、`{float}` → `{<参数名>:f64}`），引号剥离与数值解析语义与
+// cucumber 一致；切换只改属性形态，不改断言语义（CONTEXT-testing「行为等价判据」）。
+// 新注册一律写全路径 `rstest_bdd_macros::…`，与既有 cucumber 平铺导入（步骤函数体
+// 未动）并存；收口票删旧注册时随之简化。
 use cucumber::{given, then, when};
 
 use ledger_accounts::balance::compute_balance;
@@ -40,6 +48,9 @@ fn hidden_account_names(world: &LedgerWorld) -> Vec<String> {
 /// 名称→id（#763 旁路归零；仅为「创建账户…初始余额」的 Given 语义别名——
 /// cucumber 不跨 given/when 匹配，缺失本步骤时场景整体被静默跳过）。
 #[given(expr = "存在账户 {string} 类型 {string} 币种 {string} 初始余额 {int}")]
+#[rstest_bdd_macros::given(
+    "存在账户 {name:string} 类型 {kind:string} 币种 {currency:string} 初始余额 {initial_balance:i64}"
+)]
 fn create_account_with_initial_balance(
     world: &mut LedgerWorld,
     name: String,
@@ -54,11 +65,13 @@ fn create_account_with_initial_balance(
 /// 经汇率夹具动词走投资域公开创建入口（#764 旁路收敛）；`priced_at` 值无断言
 /// 语义（折算查询不消费），取非 FIXED_NOW 值避免守门规则 3 误伤。
 #[given(expr = "存在汇率 {string} 兑本位币 {float}")]
+#[rstest_bdd_macros::given("存在汇率 {code:string} 兑本位币 {rate:f64}")]
 fn ensure_exchange_rate(world: &mut LedgerWorld, code: String, rate: f64) {
     create_exchange_rate_verb(world, &code, "CNY", rate, "2025-06-01T00:00:00Z");
 }
 
 #[when(expr = "修改账户 {string} 名称为 {string}")]
+#[rstest_bdd_macros::when("修改账户 {name:string} 名称为 {new_name:string}")]
 fn rename_account(world: &mut LedgerWorld, name: String, new_name: String) {
     let id = world.account_id(&name);
     world.last_error = update_account(
@@ -78,6 +91,7 @@ fn rename_account(world: &mut LedgerWorld, name: String, new_name: String) {
 
 /// 币种修改失败场景用：错误记入 `world.last_error`（应返回错误步骤断言）。
 #[when(expr = "尝试修改账户 {string} 币种为 {string}")]
+#[rstest_bdd_macros::when("尝试修改账户 {name:string} 币种为 {currency:string}")]
 fn try_change_currency(world: &mut LedgerWorld, name: String, currency: String) {
     let id = world.account_id(&name);
     world.last_error = update_account(
@@ -96,6 +110,7 @@ fn try_change_currency(world: &mut LedgerWorld, name: String, currency: String) 
 }
 
 #[when(expr = "调整账户 {string} 余额至 {int} 日期 {string}")]
+#[rstest_bdd_macros::when("调整账户 {name:string} 余额至 {target:i64} 日期 {date:string}")]
 fn adjust_balance(world: &mut LedgerWorld, name: String, target: i64, date: String) {
     let id = world.account_id(&name);
     // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032），提交点置脏/回滚不置脏。
@@ -120,6 +135,7 @@ fn adjust_balance(world: &mut LedgerWorld, name: String, target: i64, date: Stri
 
 /// 调整产生的转账就是普通 transfer：删除即撤销调整（ADR-0026 可逆性）。
 #[when(expr = "删除上一笔交易")]
+#[rstest_bdd_macros::when("删除上一笔交易")]
 fn delete_last_transaction(world: &mut LedgerWorld) {
     let tx_id = world
         .txn
@@ -134,6 +150,7 @@ fn delete_last_transaction(world: &mut LedgerWorld) {
 /// 纯测试侧注入（spec #169 / #310 定案同款），检验外层事务壳持有回滚、
 /// 同事务即建的黑洞账户不残留（issue #310）。
 #[when(expr = "注入余额调整交易写入失败触发器")]
+#[rstest_bdd_macros::when("注入余额调整交易写入失败触发器")]
 fn inject_adjust_tx_failure_trigger(world: &mut LedgerWorld) {
     world_conn!(world)
         .execute(
@@ -149,6 +166,7 @@ fn inject_adjust_tx_failure_trigger(world: &mut LedgerWorld) {
 // ---------------------------------------------------------------------------
 
 #[then(expr = "账户列表应包含黑洞账户 {string}")]
+#[rstest_bdd_macros::then("账户列表应包含黑洞账户 {name:string}")]
 fn check_black_hole_exists(world: &mut LedgerWorld, name: String) {
     let names = hidden_account_names(world);
     assert!(
@@ -162,6 +180,7 @@ fn check_black_hole_exists(world: &mut LedgerWorld, name: String) {
 /// 黑洞账户不残留断言（issue #310 回滚场景用）：按币种指名的黑洞账户不应存在——
 /// 调整失败整体回滚后，同事务即建的黑洞账户不得残留（种子预置的 CNY/HKD 不受影响）。
 #[then(expr = "账户列表不应包含黑洞账户 {string}")]
+#[rstest_bdd_macros::then("账户列表不应包含黑洞账户 {name:string}")]
 fn check_black_hole_absent(world: &mut LedgerWorld, name: String) {
     let names = hidden_account_names(world);
     assert!(
@@ -173,6 +192,9 @@ fn check_black_hole_absent(world: &mut LedgerWorld, name: String) {
 }
 
 #[when(expr = "创建账户 {string} 类型 {string} 币种 {string} 初始余额 {int}")]
+#[rstest_bdd_macros::when(
+    "创建账户 {name:string} 类型 {kind:string} 币种 {currency:string} 初始余额 {initial_balance:i64}"
+)]
 fn create_account(
     world: &mut LedgerWorld,
     name: String,
@@ -184,6 +206,7 @@ fn create_account(
 }
 
 #[when(expr = "删除账户 {string}")]
+#[rstest_bdd_macros::when("删除账户 {name:string}")]
 fn delete_account(world: &mut LedgerWorld, name: String) {
     let id = world.account_id(&name);
     // 软删除走真实领域路径（IPC/HTTP 共用 accounts::delete_account，含存在性守卫）。
@@ -195,6 +218,7 @@ fn delete_account(world: &mut LedgerWorld, name: String) {
 // ---------------------------------------------------------------------------
 
 #[then(expr = "账户列表应包含 {int} 条记录")]
+#[rstest_bdd_macros::then("账户列表应包含 {expected:i64} 条记录")]
 fn check_account_count(world: &mut LedgerWorld, expected: i64) {
     let count: i64 = world_conn!(world)
         .query_row(
@@ -207,6 +231,7 @@ fn check_account_count(world: &mut LedgerWorld, expected: i64) {
 }
 
 #[then(expr = "{string} 账户余额应为 {int}")]
+#[rstest_bdd_macros::then("{name:string} 账户余额应为 {expected:i64}")]
 fn check_balance(world: &mut LedgerWorld, name: String, expected: i64) {
     let id = world.account_id(&name);
     let balance = compute_balance(&world_conn!(world), &id).unwrap();
@@ -214,6 +239,7 @@ fn check_balance(world: &mut LedgerWorld, name: String, expected: i64) {
 }
 
 #[then(expr = "账户列表应包含 {string}")]
+#[rstest_bdd_macros::then("账户列表应包含 {name:string}")]
 fn check_account_exists(world: &mut LedgerWorld, name: String) {
     let accounts = query_accounts_by_name(&world_conn!(world));
     assert!(
@@ -225,6 +251,7 @@ fn check_account_exists(world: &mut LedgerWorld, name: String) {
 }
 
 #[then(expr = "账户列表不应包含 {string}")]
+#[rstest_bdd_macros::then("账户列表不应包含 {name:string}")]
 fn check_account_not_exists(world: &mut LedgerWorld, name: String) {
     let accounts = query_accounts_by_name(&world_conn!(world));
     assert!(

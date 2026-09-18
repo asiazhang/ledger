@@ -3,6 +3,11 @@
 //! 步骤函数薄化为文本解析 + 快照刷新；错误断言路径改走动词 try 形态（构造 +
 //! 显式写入捕获），断言语义不变。「存在账户」前置经账户域公开创建入口动词
 //! （#763 旁路归零）；注入触发器两步骤为纯测试侧注入（spec #169 定案），留直连例外。
+//!
+//! 双注册（spec #1494 / ticket #1495）：本文件被多域 feature 共享，账户域消费的
+//! 五个步骤（存在账户前置、创建交易、创建转账、创建退款、「应返回错误」断言）先
+//! 加 rstest-bdd 注册——账户域垂直切片在新目标 `tests/e2e_rstest.rs` 里可独立全绿；
+//! 其余步骤的双注册由交易写入主干票（#1497）按同一形态补齐。
 
 use cucumber::{given, then, when};
 
@@ -23,6 +28,7 @@ use crate::world::LedgerWorld;
 // ---------------------------------------------------------------------------
 
 #[given(expr = "存在账户 {string} 类型 {string} 币种 {string}")]
+#[rstest_bdd_macros::given("存在账户 {name:string} 类型 {kind:string} 币种 {currency:string}")]
 fn create_account(world: &mut LedgerWorld, name: String, kind: String, currency: String) {
     create_account_verb(world, &name, &kind, &currency, None);
 }
@@ -32,6 +38,9 @@ fn create_account(world: &mut LedgerWorld, name: String, kind: String, currency:
 // ---------------------------------------------------------------------------
 
 #[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string}")]
+#[rstest_bdd_macros::when(
+    "创建交易 类型 {kind:string} 金额 {amount:i64} 到账户 {account_name:string} 日期 {date:string}"
+)]
 fn create_txn(
     world: &mut LedgerWorld,
     kind: String,
@@ -228,6 +237,9 @@ fn try_delete_last_txn(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "创建转账 金额 {int} 从 {string} 到 {string} 日期 {string}")]
+#[rstest_bdd_macros::when(
+    "创建转账 金额 {amount:i64} 从 {from_name:string} 到 {to_name:string} 日期 {date:string}"
+)]
 fn create_transfer(
     world: &mut LedgerWorld,
     amount: i64,
@@ -240,6 +252,7 @@ fn create_transfer(
 }
 
 #[when(expr = "关联上一笔交易创建退款 金额 {int} 日期 {string}")]
+#[rstest_bdd_macros::when("关联上一笔交易创建退款 金额 {amount:i64} 日期 {date:string}")]
 fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
     refund_last_transaction(world, amount, &date);
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
@@ -302,6 +315,7 @@ fn check_txn_kind_amount_note(
 }
 
 #[then(expr = "应返回错误 {string}")]
+#[rstest_bdd_macros::then("应返回错误 {expected_msg:string}")]
 fn check_error(world: &mut LedgerWorld, expected_msg: String) {
     crate::common::assert_last_error_contains(world, &expected_msg);
 }
