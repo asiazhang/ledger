@@ -418,6 +418,7 @@ fn fund_add_by_code_syncs_dictionary_not_quote() {
         kind_hint: None,
         fund_class: Some("混合型-灵活".into()),
         nav_date: Some("2026-01-09".into()),
+        constant_unit_price_cents: None,
     };
     let mut fetch = |_: &str, _: &str| Ok(quote.clone());
     let result = add_fund_by_code_with(&conn_a, "000001", &mut fetch).unwrap();

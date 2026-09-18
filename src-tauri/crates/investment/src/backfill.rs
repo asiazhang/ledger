@@ -203,7 +203,7 @@ pub fn instrument_trend_backfill_status(
 /// 待补全标的（历史齐全而曲线仍空：区间裁剪 / 持仓与价格周错开等）返回 `None`。
 pub fn portfolio_trend_backfill_status(conn: &Connection) -> Result<Option<TrendBackfillStatus>> {
     let mut stmt = conn.prepare(
-        "SELECT i.id, i.symbol, i.market, i.instrument_type FROM instruments i \
+        "SELECT i.id, i.symbol, i.market, i.instrument_type, i.constant_unit_price FROM instruments i \
          WHERE NOT EXISTS (SELECT 1 FROM price_history ph WHERE ph.instrument_id = i.id)",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -212,13 +212,14 @@ pub fn portfolio_trend_backfill_status(conn: &Connection) -> Result<Option<Trend
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, InstrumentType>(3)?,
+            row.get::<_, Option<i64>>(4)?,
         ))
     })?;
     let mut pending: Vec<String> = Vec::new();
     for row in rows {
-        let (id, symbol, market, kind) = row?;
+        let (id, symbol, market, kind, constant_unit_price) = row?;
         if matches!(
-            derive_price_channel(kind, &market, &symbol),
+            derive_price_channel(kind, &market, &symbol, constant_unit_price),
             PriceChannel::Quote | PriceChannel::FundNav
         ) {
             pending.push(id);
@@ -249,17 +250,19 @@ pub fn portfolio_trend_backfill_status(conn: &Connection) -> Result<Option<Trend
 }
 
 /// 标的是否有价格写入通道（行情 / 净值）——与后台补全队列的通道分区同源
-/// （[`derive_price_channel`] 判定单点，issue #1060）。
+/// ([`derive_price_channel`] 判定单点，issue #1060）。恒定价格通道不在其列：
+/// 它的走势由读侧按常量合成（ADR-0126 决策 6），无空态可言。
 fn is_collectable_instrument(conn: &Connection, instrument_id: &str) -> Result<bool> {
     conn.query_row(
-        "SELECT symbol, market, instrument_type FROM instruments WHERE id = ?1",
+        "SELECT symbol, market, instrument_type, constant_unit_price FROM instruments WHERE id = ?1",
         [instrument_id],
         |row| {
             let symbol: String = row.get(0)?;
             let market: String = row.get(1)?;
             let kind: InstrumentType = row.get(2)?;
+            let constant_unit_price: Option<i64> = row.get(3)?;
             Ok(matches!(
-                derive_price_channel(kind, &market, &symbol),
+                derive_price_channel(kind, &market, &symbol, constant_unit_price),
                 PriceChannel::Quote | PriceChannel::FundNav
             ))
         },

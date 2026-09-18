@@ -131,7 +131,8 @@
     "emptyBackfillRunning": "历史数据补全中，完成后即可查看走势。",
     "emptyBackfillProgress": "历史数据补全中（{done}/{total}），完成后即可查看走势。",
     "emptyBackfillRetryPending": "历史补全暂未成功，后台稍后会自动重试。",
-    "emptyBackfillNoData": "没有可采集的历史数据（如查无此码、新基金未披露净值或已退市）。"
+    "emptyBackfillNoData": "没有可采集的历史数据（如查无此码、新基金未披露净值或已退市）。",
+    "constantNote": "该标的为单位净值恒定标的（恒 1.0000）：价格不随时间变化，收益以份额结转体现（份额增加、净值不变）。"
   },
   "form": {
     "amount": "金额",
@@ -206,6 +207,7 @@
   "priceChannel": {
     "quote": "行情",
     "fund_nav": "净值",
+    "constant": "恒定价格",
     "manual": "手动报价",
     "none": "无来源"
   },

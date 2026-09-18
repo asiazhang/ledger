@@ -92,19 +92,21 @@ pub(super) struct SyncInstrument {
 /// `investment::predicates`，不在此复述处数）。按 symbol 升序；
 /// 通道分区在 Rust 侧完成（见 [`do_incremental_sync_with`]）。
 fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
-    let sql = "SELECT i.id, i.symbol, i.market, i.currency_code, i.instrument_type \
+    let sql = "SELECT i.id, i.symbol, i.market, i.currency_code, i.instrument_type, i.constant_unit_price \
                FROM instruments i \
                ORDER BY i.symbol";
     let mut stmt = conn.prepare(sql)?;
-    // 价格通道收集时单点派生（issue #1060）：分区判定不再留在同步域镜像
-    // （原 is_quote_channel / is_fund + 6 位代码过滤），与标的读投影同源。
+    // 价格通道收集时单点派生（issue #1060；恒定单位价格判定输入见 ADR-0126）：
+    // 分区判定不再留在同步域镜像（原 is_quote_channel / is_fund + 6 位代码
+    // 过滤），与标的读投影同源。
     let rows = stmt.query_map([], |r| {
         let symbol: String = r.get(1)?;
         let market: String = r.get(2)?;
         let kind: InstrumentType = r.get(4)?;
+        let constant_unit_price: Option<i64> = r.get(5)?;
         Ok(SyncInstrument {
             instrument_id: r.get(0)?,
-            channel: derive_price_channel(kind, &market, &symbol),
+            channel: derive_price_channel(kind, &market, &symbol, constant_unit_price),
             symbol,
             market,
             currency: r.get(3)?,
@@ -290,9 +292,13 @@ where
         .iter()
         .filter(|i| i.channel == PriceChannel::Quote)
         .collect();
+    // 净值分区带恒定价格通道（ADR-0126）：恒定标的的逐只请求本票有意保留
+    // （打标收敛的确认通道，refresh_one_fund_price 内按通道分流——只确认、
+    // 不落采集价格数据），分母与缺口统计因此与改动前同面（暂计入；排除归
+    // #1451）。
     let funds: Vec<&SyncInstrument> = held
         .iter()
-        .filter(|i| i.channel == PriceChannel::FundNav)
+        .filter(|i| matches!(i.channel, PriceChannel::FundNav | PriceChannel::Constant))
         .collect();
     let no_quote_source = held.len() - quote_channel.len() - funds.len();
 

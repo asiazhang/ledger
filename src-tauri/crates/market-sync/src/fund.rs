@@ -17,14 +17,15 @@
 
 use serde::Deserialize;
 
-use super::fund_nav::{
-    FundArchive, MONEY_FUND_UNIT_NAV, PINGZHONG_HOSTS, fetch_fund_archive_from,
-    is_money_fund_type_code,
-};
 use super::http::{Pacer, RetryConfig, build_client, request_json_from_hosts};
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::Quote;
 use ledger_investment::prices::price_value_to_cents;
+
+use super::fund_nav::{
+    FundArchive, MONEY_FUND_UNIT_NAV, PINGZHONG_HOSTS, fetch_fund_archive_from,
+    is_money_fund_type_code,
+};
 
 // 基金搜索建议接口：单主机（无公开镜像池），复用行情层的重试与限流泛型层。
 const FUND_SEARCH_HOSTS: &[&str] = &["https://fundsuggest.eastmoney.com"];
@@ -129,32 +130,33 @@ pub(crate) fn pick_fund_quote(resp: &FundSearchResponse, code: &str) -> Option<Q
         .clone()
         .filter(|n| !n.trim().is_empty())
         .or_else(|| item.name.clone())?;
-    // 货币基金（issue #1342）：`DWJZ` 列是万份收益而非单位净值，现价按恒定
-    // 单位净值 1.0000 落，净值日期仍取收益日期 `FSRQ`；收益值（含 0 / 缺省）
-    // 不参与现价有效性，否则货基偶发无价。非货基维持原口径：净值对（值 + 日期）
-    // 齐备才有效，任一缺省按「未取到净值」处理（不落现价）。
+    // 货币基金（issue #1342 / ADR-0126）：`DWJZ` 列是万份收益而非单位净值，
+    // 现价按恒定单位净值 1.0000 落；类型码自报货币型即恒定价格信号（建档
+    // 确认三处之一），随报价载荷带回落库半边打标。非货基维持原口径：净值对
+    //（值 + 日期）齐备才有效，任一缺省按「未取到净值」处理（不落现价）。
     let fsrq = base
         .fsrq
         .as_deref()
         .map(str::trim)
         .filter(|d| !d.is_empty());
-    let (price_cents, nav_date) = if base
+    let (price_cents, nav_date, constant_unit_price_cents) = if base
         .fund_type
         .as_deref()
         .is_some_and(is_money_fund_type_code)
     {
         let date = fsrq.map(str::to_string);
-        (
-            date.as_ref()
-                .map(|_| price_value_to_cents(MONEY_FUND_UNIT_NAV)),
-            date,
-        )
+        let cents = date
+            .as_ref()
+            .map(|_| price_value_to_cents(MONEY_FUND_UNIT_NAV));
+        (cents, date, Some(price_value_to_cents(MONEY_FUND_UNIT_NAV)))
     } else {
         match (base.dwjz, fsrq) {
-            (Some(nav), Some(date)) if nav > 0.0 => {
-                (Some(price_value_to_cents(nav)), Some(date.to_string()))
-            }
-            _ => (None, None),
+            (Some(nav), Some(date)) if nav > 0.0 => (
+                Some(price_value_to_cents(nav)),
+                Some(date.to_string()),
+                None,
+            ),
+            _ => (None, None, None),
         }
     };
     Some(Quote {
@@ -167,6 +169,7 @@ pub(crate) fn pick_fund_quote(resp: &FundSearchResponse, code: &str) -> Option<Q
         kind_hint: None,
         fund_class: Some(base.ftype.trim().to_string()),
         nav_date,
+        constant_unit_price_cents,
     })
 }
 
@@ -230,6 +233,10 @@ fn quote_from_archive(archive: FundArchive, code: &str) -> Quote {
         kind_hint: None,
         fund_class: None,
         nav_date: last_nav.map(|point| point.date),
+        // 货基形态信号 → 恒定单位价格（建档打标，ADR-0126 决策 3）。
+        constant_unit_price_cents: archive
+            .is_constant_price
+            .then(|| price_value_to_cents(MONEY_FUND_UNIT_NAV)),
     }
 }
 

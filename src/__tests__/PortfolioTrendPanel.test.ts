@@ -73,6 +73,16 @@ const noSourceInstrument = makeInstrument({
   price_channel: 'none',
 })
 
+/** 货币基金（恒定价格通道，ADR-0126）：单位净值恒 1.0000，走势由读侧常量合成 */
+const constantInstrument = makeInstrument({
+  id: 'inst-const',
+  symbol: '000198',
+  name: '天弘余额宝',
+  type: 'fund',
+  market: 'unknown',
+  price_channel: 'constant',
+})
+
 /** 面板挂载即拉的领域命令契约快照：持仓空集 + 两标的字典。 */
 const PANEL_DEFAULTS = {
   list_holdings: [],
@@ -207,6 +217,34 @@ describe('PortfolioTrendPanel 走势面板', () => {
     expect(wrapper.text()).not.toContain('仅股票 / ETF 支持')
     expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
     expect(mockInvoke.mock.calls.some(([c]) => c === 'instrument_price_trend')).toBe(false)
+  })
+
+  it('恒定价格标的（通道 = constant）→ 常量曲线照常出图 + 一句口径解释（ADR-0126）', async () => {
+    wireInvokeSeam({
+      defaults: PANEL_DEFAULTS,
+      overrides: {
+        portfolio_value_trend: portfolioTrendResponse,
+        // 后端在响应内按常量合成（本测试以替身应答表达同一契约）：平坦常量点。
+        instrument_price_trend: {
+          instrument_id: 'inst-const',
+          points: [
+            { date: '2026-06-05', price_cents: 10000, currency_code: 'CNY' },
+            { date: '2026-06-12', price_cents: 10000, currency_code: 'CNY' },
+          ],
+        },
+      },
+    })
+    const wrapper = mountWithEntry(constantInstrument)
+    await flushPromises()
+    // 放行发查询（不是 none 的边界说明），常量线出图
+    const call = mockInvoke.mock.calls.filter(([c]) => c === 'instrument_price_trend').at(-1)!
+    expect((call[1] as { instrumentId: string }).instrumentId).toBe('inst-const')
+    const payload = chartPayload(wrapper)
+    expect(payload.datasets[0].data).toEqual([10000, 10000])
+    // 一句解释在场（收益以份额结转体现），无万份收益曲线话术
+    expect(wrapper.find('[data-testid="trend-constant-note"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('份额结转')
+    expect(wrapper.text()).not.toContain('万份收益')
   })
 
   it('选中场外基金（净值通道）→ 净值曲线出图（#303 验收在界面上成立）', async () => {

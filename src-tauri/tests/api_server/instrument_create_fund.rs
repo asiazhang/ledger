@@ -75,6 +75,7 @@ fn stub_hit() -> HashMap<String, FundStubHit> {
             name: "华夏成长混合",
             fund_class: "混合型-灵活",
             nav: Some((1.318, "2026-08-28")),
+            money_fund: false,
         },
     )])
 }
@@ -123,6 +124,7 @@ async fn test_create_terminated_fund_from_archive_channel_succeeds() {
             name: "中银腾利混合C",
             fund_class: "",
             nav: Some((1.144, "2023-09-18")),
+            money_fund: false,
         },
     )]);
     let (app, conn, calls) = setup_app_with_fund_stub(hits);
@@ -153,6 +155,7 @@ async fn test_create_fund_with_known_code_but_no_nav_creates_without_price() {
             name: "新发基金",
             fund_class: "混合型",
             nav: None,
+            money_fund: false,
         },
     )]);
     let (app, conn, calls) = setup_app_with_fund_stub(hits);
@@ -235,6 +238,9 @@ fn toggle_stub(
                     kind_hint: None,
                     fund_class: Some(hit.fund_class.to_string()),
                     nav_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
+                    constant_unit_price_cents: hit
+                        .money_fund
+                        .then(|| ledger_investment::prices::price_value_to_cents(1.0)),
                 }),
                 // 未命中形状与生产同源（码化 sync.fund-not-found，#1186），不回退裸 Invalid。
                 None => Err(AppError::codedp(
@@ -530,4 +536,53 @@ async fn test_openapi_create_endpoint_documents_fund_enhancement() {
             "创建端点自述应说明 fund 增强: {expected}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// 货币基金：建档即打标（恒定价格标的，ADR-0126）——现价 1.0000、净值日期为空
+// ---------------------------------------------------------------------------
+
+/// 搜索索引类型码自报货币型（建档打标三处确认源之一）：建档即标记恒定单位
+/// 价格，现价缓存落 1.0000 且净值日期为空（水位语义对恒定标的不适用）。
+#[tokio::test]
+async fn test_create_money_fund_marks_constant_price_with_empty_nav_date() {
+    let hits = HashMap::from([(
+        "000198".to_string(),
+        FundStubHit {
+            name: "天弘余额宝货币",
+            fund_class: "货币型",
+            // 货基报价按恒定单位净值 1.0000 落（现价列不是万份收益）。
+            nav: Some((1.0, "2026-09-17")),
+            money_fund: true,
+        },
+    )]);
+    let (app, conn, _calls) = setup_app_with_fund_stub(hits);
+
+    let body = r#"{"symbol":"000198","type":"fund","name":"余额宝"}"#;
+    let (status, bytes) = post_instrument(&app, body).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let id: String = serde_json::from_slice(&bytes).expect("201 应为裸 id 字符串");
+
+    // 打标单向的第一笔：建档即回填恒定单位价格（万分之一元刻度 10000）。
+    let (constant_cents, channel_count): (Option<i64>, i64) = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT constant_unit_price, \
+             (SELECT COUNT(*) FROM instruments WHERE constant_unit_price IS NOT NULL) \
+             FROM instruments WHERE id = ?1",
+            [&id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(constant_cents, Some(10_000), "建档即打标恒定单位价格");
+    assert_eq!(channel_count, 1);
+
+    // 现价缓存：建档一条 1.0000，净值日期为空（水位语义退出，净值日期列显示为空）。
+    let (price_cents, nav_date, price_source) = fund_row(&conn, "000198")
+        .price
+        .expect("货基建档应落常量现价");
+    assert_eq!(price_cents, 10_000, "恒定单位净值 1.0000");
+    assert_eq!(nav_date, None, "净值日期列为空");
+    assert_eq!(price_source, "eastmoney");
 }

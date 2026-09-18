@@ -804,6 +804,12 @@ fn bootstrap_migrates_older_schema_snapshot() {
             .execute("ALTER TABLE security_transactions DROP COLUMN origin", [])
             .unwrap();
         stale
+            .execute(
+                "ALTER TABLE instruments DROP COLUMN constant_unit_price",
+                [],
+            )
+            .unwrap();
+        stale
             .execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_refund ON transactions(refund_of_transaction_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_sync ON transactions(updated_at, device_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_deleted ON transactions(is_deleted, updated_at);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_amount ON transactions(amount_cents);",
             )

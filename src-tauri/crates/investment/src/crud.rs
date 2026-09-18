@@ -264,11 +264,12 @@ pub fn list_instruments(
 /// 标的行 SELECT 投影单点（列表行与按 id 精确取同一形状，issue #709）：基础列
 /// 现价缓存（LEFT JOIN）与持仓标志派生列；别名契约 i = instruments、
 /// p = market_prices（持仓谓词 `INVESTED_EXISTS` 的别名契约同此），投影变更
-/// 只改这里，两个读路径不漂移。
+/// 只改这里，两个读路径不漂移。末列恒定单位价格是价格通道派生的判定输入
+/// （ADR-0126），消费在行映射处（`FromRow for Instrument`），不随序列化输出。
 fn instrument_row_projection() -> String {
     format!(
         "i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,i.source,p.price_cents, \
-         CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested"
+         CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested, i.constant_unit_price"
     )
 }
 

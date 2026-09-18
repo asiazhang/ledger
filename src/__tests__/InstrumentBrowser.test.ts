@@ -511,11 +511,12 @@ describe('InstrumentBrowser 自建标的删除（issue #292 / ADR-0036）', () =
 })
 
 describe('InstrumentBrowser 价格来源列（issue #1189 / 词汇表「价格通道」）', () => {
-  /** 四行分别落在价格通道四值：行情 / 净值 / 手动报价 / 无来源 */
+  /** 五行分别落在价格通道五值：行情 / 净值 / 恒定价格 / 手动报价 / 无来源 */
   function rowsForPriceChannel() {
     return [
       makeInstrument({ id: 'inst-quote', symbol: '600000', type: 'stock', source: 'eastmoney', price_channel: 'quote' }),
       makeInstrument({ id: 'inst-nav', symbol: '000001', type: 'fund', market: 'unknown', source: 'manual', price_channel: 'fund_nav' }),
+      makeInstrument({ id: 'inst-constant', symbol: '000198', type: 'fund', market: 'unknown', source: 'manual', price_channel: 'constant' }),
       makeInstrument({ id: 'inst-manual', symbol: '稳稳地幸福', type: 'other', market: 'unknown', source: 'manual', price_channel: 'manual' }),
       makeInstrument({ id: 'inst-none', symbol: 'ghost1', type: 'stock', market: 'unknown', source: 'eastmoney', price_channel: 'none' }),
     ]
@@ -530,7 +531,7 @@ describe('InstrumentBrowser 价格来源列（issue #1189 / 词汇表「价格�
     })
   }
 
-  it('列头为「价格来源」，四通道各渲染对应标签（字典来源不再出现在列表）', async () => {
+  it('列头为「价格来源」，五通道各渲染对应标签（字典来源不再出现在列表）', async () => {
     listWith(...rowsForPriceChannel())
     const wrapper = mountBrowser()
     await flushPromises()
@@ -539,7 +540,7 @@ describe('InstrumentBrowser 价格来源列（issue #1189 / 词汇表「价格�
     // 旧「来源」列（字典来源同步 / 手动）已从列表移除
     expect(headers).not.toContain('来源')
     const cells = wrapper.findAll('td[data-col-key="price_channel"]').map((c) => c.text())
-    expect(cells).toEqual(['行情', '净值', '手动报价', '无来源'])
+    expect(cells).toEqual(['行情', '净值', '恒定价格', '手动报价', '无来源'])
   })
 
   it('删除准入只认字典来源（价格通道无关）：手动字典行可删，同步字典行不可删', async () => {

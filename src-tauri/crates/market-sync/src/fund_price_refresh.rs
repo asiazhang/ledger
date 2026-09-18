@@ -10,6 +10,8 @@ use chrono::NaiveDate;
 
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
+use ledger_investment::PriceChannel;
+use ledger_investment::constant_price::{ensure_constant_base_price, mark_constant_unit_price};
 use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
     upsert_price_history,
@@ -17,7 +19,9 @@ use ledger_investment::prices::{
 
 use super::bulk::BulkNavPoint;
 use super::channels::FetchFuture;
-use super::fund_nav::{LsjzPage, NavQuery, fetch_nav_pages, nav_window, read_fund_watermark};
+use super::fund_nav::{
+    LsjzPage, MONEY_FUND_UNIT_NAV, NavQuery, fetch_nav_pages, nav_window, read_fund_watermark,
+};
 use super::http::KlineBar;
 use super::session::ScopedSession;
 
@@ -78,6 +82,53 @@ where
     P: FnMut(u64, u64) + Send,
 {
     let today = super::incremental::beijing_today();
+    // 恒定价格标的（ADR-0126 决策 5/6）：价格是已知常量，现价缓存保留建档一条
+    // 不再随同步更新、周采样点也不再为它落（读侧按常量取值，落平坦行零信息）。
+    // 本票保留逐只请求作为打标收敛通道（有意保留的中间态，收窄见 #1451）：
+    // 短窗请求只作确认——不判水位、不取数面（批量面结构上不覆盖恒定标的），
+    // 落库只有两件幂等事：标记已回填（重复调用零写入）与建档常量价行缺失
+    // 兕底；零新写入不计入价格失效信号。
+    if fund.channel == PriceChannel::Constant {
+        let start = today
+            .checked_sub_months(REFRESH_RECENT_WINDOW_MONTHS)
+            .unwrap_or(today);
+        let collected = fetch_nav_pages(
+            fetch_nav,
+            &fund.symbol,
+            &start.format("%Y-%m-%d").to_string(),
+            &today.format("%Y-%m-%d").to_string(),
+            REFRESH_MAX_NAV_PAGES,
+            on_page,
+        )
+        .await?;
+        let instrument_id = fund.instrument_id.clone();
+        let currency = fund.currency.clone();
+        let cents = price_value_to_cents(MONEY_FUND_UNIT_NAV);
+        let priced_at = collected
+            .points
+            .iter()
+            .map(|p| p.date.clone())
+            .max()
+            .unwrap_or_else(|| today.format("%Y-%m-%d").to_string());
+        let written = session
+            .with_connection(move |conn| {
+                mark_constant_unit_price(conn, &instrument_id, cents)?;
+                ensure_constant_base_price(
+                    conn,
+                    &instrument_id,
+                    cents,
+                    &currency,
+                    &priced_at,
+                    EASTMONEY_PRICE_SOURCE,
+                )
+            })
+            .await?;
+        if written {
+            stats.written += 1;
+        }
+        stats.synced += 1;
+        return Ok(());
+    }
     let (watermark, has_history) = read_fund_watermark(session, fund).await?;
     // 取数面命中时整只零请求（ADR-0121 取数面把「要不要发逐只请求」的判断从
     // 「每标的一次请求」降为「整市场一次请求」）——逐只通道只在缺周点补齐与
@@ -124,6 +175,40 @@ where
         on_page,
     )
     .await?;
+
+    // 打标确认（ADR-0126 决策 3；建档/日常刷新任一次确认即回填）：可信页自报
+    // 货基口径即回填恒定单位价格标记（单向，幂等）。确认即收尾——不再落采集
+    // 价格（现价覆盖与周点停落，读侧自此按常量取值，平坦序列不再生长；建档
+    // 常量价行缺失时由兜底补一行）；响应缺信号不走此路，不清空既有标记。
+    if collected.money_fund {
+        let instrument_id = fund.instrument_id.clone();
+        let currency = fund.currency.clone();
+        let cents = price_value_to_cents(MONEY_FUND_UNIT_NAV);
+        let priced_at = collected
+            .points
+            .iter()
+            .map(|p| p.date.clone())
+            .max()
+            .unwrap_or_else(|| today.format("%Y-%m-%d").to_string());
+        let written = session
+            .with_connection(move |conn| {
+                mark_constant_unit_price(conn, &instrument_id, cents)?;
+                ensure_constant_base_price(
+                    conn,
+                    &instrument_id,
+                    cents,
+                    &currency,
+                    &priced_at,
+                    EASTMONEY_PRICE_SOURCE,
+                )
+            })
+            .await?;
+        if written {
+            stats.written += 1;
+        }
+        stats.synced += 1;
+        return Ok(());
+    }
 
     if collected.points.is_empty() {
         if collected.blocked {

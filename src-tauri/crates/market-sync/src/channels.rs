@@ -30,7 +30,7 @@ use ledger_infra::error::Result;
 
 use super::bulk::BulkFetchSurfaces;
 use super::fund::fetch_fund_quote;
-use super::fund_nav::{LsjzPage, NavPoint, NavQuery, fetch_nav_full_series, fetch_nav_page};
+use super::fund_nav::{FullSeries, LsjzPage, NavQuery, fetch_nav_full_series, fetch_nav_page};
 use super::http::{
     ForegroundGuard, KlineBar, Pacer, StockItem, build_client, fetch_fx_kline, fetch_kline,
     fetch_ulist, lock_pacer, shared_pacer, wait_foreground_idle,
@@ -50,7 +50,7 @@ pub type FetchKline = Box<dyn FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send>;
 /// 历史净值页抓取通道闭包形态。
 pub type FetchNavPage = Box<dyn FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send>;
 /// 单请求全量净值抓取通道闭包形态（issue #1062 首刷深回填通道）。
-pub type FetchNavFull = Box<dyn FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send>;
+pub type FetchNavFull = Box<dyn FnMut(&str) -> FetchFuture<FullSeries> + Send>;
 /// 基金详情名称抓取通道闭包形态（issue #827）。
 pub type FetchFundName = Box<dyn FnMut(&str) -> FetchFuture<String> + Send>;
 
@@ -261,10 +261,18 @@ mod tests {
                         points: vec![],
                         total: 0,
                         blocked: false,
+                        money_fund: false,
                     })
                 })
             }),
-            fetch_nav_full: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+            fetch_nav_full: Box::new(|_| {
+                Box::pin(async {
+                    Ok(FullSeries {
+                        points: vec![],
+                        money_fund: false,
+                    })
+                })
+            }),
             fetch_fund_name: Box::new(|_| Box::pin(async { Ok(String::new()) })),
             bulk: BulkFetchSurfaces::absent(),
         }

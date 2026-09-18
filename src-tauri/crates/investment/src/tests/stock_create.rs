@@ -21,6 +21,7 @@ fn quote(code: &str, name: &str, market: &str, price: Option<i64>) -> Quote {
         kind_hint: Some(InstrumentType::Stock),
         fund_class: None,
         nav_date: None,
+        constant_unit_price_cents: None,
     }
 }
 

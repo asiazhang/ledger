@@ -25,6 +25,7 @@ fn hit_quote(market: &str, code: &str, kind: InstrumentType) -> Quote {
         kind_hint: Some(kind),
         fund_class: None,
         nav_date: None,
+        constant_unit_price_cents: None,
     }
 }
 

@@ -171,6 +171,7 @@ async fn test_split_real_migration_data_unblocks_blocked_sell_end_to_end() {
             name: "易方达中证全指证券公司指数(LOF)A",
             fund_class: "指数型-股票",
             nav: Some((1.3281, "2026-06-26")),
+            money_fund: false,
         },
     )]);
     let (app, conn, _calls) = setup_app_with_fund_stub(hits);

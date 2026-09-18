@@ -18,6 +18,7 @@ fn stub_hit() -> HashMap<String, FundStubHit> {
             name: "华夏成长混合",
             fund_class: "混合型-灵活",
             nav: Some((1.2345, "2026-08-28")),
+            money_fund: false,
         },
     )])
 }
@@ -50,6 +51,7 @@ async fn test_lookup_fund_with_unpublished_nav_returns_null_nav_fields() {
             name: "新发基金",
             fund_class: "混合型",
             nav: None,
+            money_fund: false,
         },
     )]);
     let (app, _conn, _calls) = setup_app_with_fund_stub(hits);
@@ -73,6 +75,7 @@ async fn test_lookup_terminated_fund_from_archive_channel_returns_empty_class() 
             name: "中银腾利混合C",
             fund_class: "",
             nav: Some((1.144, "2023-09-18")),
+            money_fund: false,
         },
     )]);
     let (app, _conn, _calls) = setup_app_with_fund_stub(hits);

@@ -283,6 +283,8 @@ fn toggle_stub(
                     kind_hint: Some(hit.kind_hint),
                     fund_class: None,
                     nav_date: None,
+                    // 场内通道无恒定价格信号（ADR-0126）。
+                    constant_unit_price_cents: None,
                 }),
                 None => Err(AppError::codedp(
                     "sync.stock-not-found",

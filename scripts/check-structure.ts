@@ -489,7 +489,8 @@ export const DASHBOARD_SRC_REL = 'crates/dashboard/src'
  */
 export const INVESTMENT_MODULES: readonly WhitelistEntry[] = [
   { path: 'backfill.rs', layer: '域目录', note: '价格历史后台补全的运行态快照与走势空态三态判定（ADR-0122 决策 5 / issue #1377）：补全中（带计数）/ 补全失败待重试 / 无数据——消费派生事实（有价格通道而无历史序列，与补全队列同源）与行情同步域发布的进程内运行态快照（不落库，重启即回补全中）；#1448 补登清单（引入时漏登记）' },
-  { path: 'channel.rs', layer: '域目录', note: '价格通道派生（PriceChannel，issue #1060）——类型 × 市场 × 代码 → 行情/净值/手动报价/无来源的判定单点' },
+  { path: 'channel.rs', layer: '域目录', note: '价格通道派生（PriceChannel，issue #1060）——类型 × 市场 × 代码 + 恒定单位价格（ADR-0126）→ 行情/净值/恒定价格/手动报价/无来源的判定单点' },
+  { path: 'constant_price.rs', layer: '域目录', note: '价格恒定标的（ADR-0126 / issue #1450）：打标单点单向（恒定单位价格列写入 + 净值日期清空）、建档常量价保障与读侧常量取值接缝（装载器 + 周键合成，三消费面共用）' },
   { path: 'command.rs', layer: '域目录', note: '投资同步命令（op 载荷形态、产出单点与重放分派，issue #861）：标的字典/汇率/用户侧价格全域进 OpLog，东财行情外拉数据不进 op' },
   { path: 'crud.rs', layer: '域目录', note: '标的字典/汇率/现价列表与写入、标的搜索（统一模糊搜索语义）、手动创建守卫与自建标的删除守卫' },
   { path: 'financial_freedom.rs', layer: '域目录', note: '财务自由度口径——可投资资产 × 3% 安全提取率对年度预算总额的覆盖比例（只读，ADR-0048）' },

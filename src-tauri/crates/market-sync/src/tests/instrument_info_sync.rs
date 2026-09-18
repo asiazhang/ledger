@@ -17,7 +17,7 @@ use crate::bulk::{
     FetchFundNameDictionary, FetchFundNavTable, FundNameDictionary, FundNavTable,
 };
 use crate::channels::{FetchFuture, SyncFetchChannels, do_incremental_sync_channels};
-use crate::fund_nav::{LsjzPage, NavPoint, NavQuery};
+use crate::fund_nav::{FullSeries, LsjzPage, NavPoint, NavQuery};
 use crate::http::{
     KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
     fx_secid_candidates, parse_klines, price_cents_from_raw, secid_prefix,
@@ -210,7 +210,8 @@ fn quote_channel_derivation_matches_secid_construction() {
     use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
     for market in ["sh", "sz", "hk", "nasdaq", "nyse", "amex", "unknown"] {
         assert_eq!(
-            derive_price_channel(InstrumentType::Stock, market, "600000") == PriceChannel::Quote,
+            derive_price_channel(InstrumentType::Stock, market, "600000", None)
+                == PriceChannel::Quote,
             secid_prefix(market).is_some(),
             "行情通道判定与 secid 构造能力漂移：{market}"
         );
@@ -968,6 +969,7 @@ fn no_nav(_: &NavQuery) -> FetchFuture<LsjzPage> {
         points: vec![],
         total: 0,
         blocked: false,
+        money_fund: false,
     }))
 }
 
@@ -1226,6 +1228,7 @@ fn nav_page(total: u64, points: &[(&str, f64)]) -> LsjzPage {
     LsjzPage {
         total,
         blocked: false,
+        money_fund: false,
         points: points
             .iter()
             .map(|(d, n)| NavPoint {
@@ -1253,6 +1256,7 @@ fn mock_nav<'a>(
                 points: vec![],
                 total: 0,
                 blocked: false,
+                money_fund: false,
             })))
     }
 }
@@ -2741,6 +2745,7 @@ fn empty_nav(calls: Arc<AtomicUsize>) -> FetchNavPage {
                 points: vec![],
                 total: 0,
                 blocked: false,
+                money_fund: false,
             })
         })
     })
@@ -2844,7 +2849,10 @@ fn bulk_surfaces_pin_daily_sync_request_count_to_a_constant() {
                     let calls = calls.clone();
                     Box::pin(async move {
                         calls.fetch_add(1, Ordering::SeqCst);
-                        Ok(vec![])
+                        Ok(FullSeries {
+                            points: vec![],
+                            money_fund: false,
+                        })
                     })
                 })
             },
@@ -2975,7 +2983,12 @@ fn bulk_nav_failure_falls_back_per_instrument_and_trips_the_in_sync_breaker() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         counting_nav(per_fund_nav_calls.clone(), today.clone(), 5.0),
-        Box::new(|_| super::ready(Ok(vec![]))),
+        Box::new(|_| {
+            super::ready(Ok(FullSeries {
+                points: vec![],
+                money_fund: false,
+            }))
+        }),
         counting_name(per_fund_name_calls.clone()),
         bulk_surfaces(
             {
@@ -3086,7 +3099,12 @@ fn bulk_name_dictionary_failure_falls_back_to_per_instrument_names() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| super::ready(Ok(vec![]))),
+        Box::new(|_| {
+            super::ready(Ok(FullSeries {
+                points: vec![],
+                money_fund: false,
+            }))
+        }),
         counting_name(per_fund_name_calls.clone()),
         bulk_surfaces(
             {
@@ -3187,7 +3205,12 @@ fn bulk_coverage_gaps_fall_back_per_item_without_tripping_the_circuit() {
         let mut channels = fund_channels(
             QuoteChannelCalls::default(),
             counting_nav(per_fund_nav_calls.clone(), today.clone(), 3.0),
-            Box::new(|_| super::ready(Ok(vec![]))),
+            Box::new(|_| {
+                super::ready(Ok(FullSeries {
+                    points: vec![],
+                    money_fund: false,
+                }))
+            }),
             counting_name(per_fund_name_calls.clone()),
             bulk_surfaces(
                 {
@@ -3295,7 +3318,12 @@ fn bulk_surfaces_stay_disabled_after_threshold_failures_and_half_open_after_the_
         let mut channels = fund_channels(
             QuoteChannelCalls::default(),
             empty_nav(per_fund_nav_calls.clone()),
-            Box::new(|_| super::ready(Ok(vec![]))),
+            Box::new(|_| {
+                super::ready(Ok(FullSeries {
+                    points: vec![],
+                    money_fund: false,
+                }))
+            }),
             Box::new(|_: &str| super::ready(Ok(String::new()))),
             bulk_surfaces(
                 {
@@ -3428,7 +3456,12 @@ fn bulk_nav_point_of_the_current_week_lands_price_and_weekly_sample_without_per_
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| super::ready(Ok(vec![]))),
+        Box::new(|_| {
+            super::ready(Ok(FullSeries {
+                points: vec![],
+                money_fund: false,
+            }))
+        }),
         counting_name(Arc::new(AtomicUsize::new(0))),
         bulk_surfaces(
             Box::new(|| super::ready(Ok(FundNameDictionary::new()))),
@@ -3508,7 +3541,12 @@ fn bulk_week_gap_beyond_one_week_falls_back_per_instrument_to_fill_missing_weeks
             requested_clone.lock().unwrap().push(query.clone());
             super::ready(Ok(nav_page(1, &[(page_date.as_str(), 3.5)])))
         }),
-        Box::new(|_| super::ready(Ok(vec![]))),
+        Box::new(|_| {
+            super::ready(Ok(FullSeries {
+                points: vec![],
+                money_fund: false,
+            }))
+        }),
         counting_name(Arc::new(AtomicUsize::new(0))),
         bulk_surfaces(
             Box::new(|| super::ready(Ok(FundNameDictionary::new()))),
@@ -3599,7 +3637,12 @@ fn fund_bulk_hit_without_history_writes_price_but_no_weekly_point() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| super::ready(Ok(vec![]))),
+        Box::new(|_| {
+            super::ready(Ok(FullSeries {
+                points: vec![],
+                money_fund: false,
+            }))
+        }),
         counting_name(Arc::new(AtomicUsize::new(0))),
         bulk_surfaces(
             Box::new(|| super::ready(Ok(FundNameDictionary::new()))),
@@ -3644,4 +3687,173 @@ fn fund_bulk_hit_without_history_writes_price_but_no_weekly_point() {
         vec![],
         "无历史序列不落采样点：单点会冒充历史完整、永久破坏首刷判据",
     );
+}
+
+// ---------------------------------------------------------------------------
+// 恒定价格标的（ADR-0126 / issue #1450）：逐只请求是打标收敛的有意中间态
+// （收窄在 #1451）——确认即打标、建档常量价兜底；恒定标的的现价缓存不再随
+// 同步更新、不再落周采样点（读侧自此按常量取值，落平坦行零信息）。
+// ---------------------------------------------------------------------------
+
+fn mark_constant(conn: &Connection, instrument_id: &str) {
+    conn.execute(
+        "UPDATE instruments SET constant_unit_price = 10000 WHERE id = ?1",
+        params![instrument_id],
+    )
+    .unwrap();
+}
+
+fn constant_unit_price_of(conn: &Connection, instrument_id: &str) -> Option<i64> {
+    conn.query_row(
+        "SELECT constant_unit_price FROM instruments WHERE id = ?1",
+        params![instrument_id],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+/// 恒定价格标的仍被逐只请求（有意保留的中间态），但同步零落库：现价缓存
+/// （价格、净值日期、版本）与价格历史全部保持原样，零写入不发价格失效信号。
+#[test]
+fn constant_price_fund_is_still_requested_but_nothing_lands() {
+    let today = beijing_today();
+    let yesterday = (today - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+    let conn = tauri_app_lib::test_support::open();
+    // 名称与名称桩返回值一致：本用例只观察价格写入见证，名称随行刷新不干扰。
+    seed_fund(&conn, "inst-const", "000198", "权威名称-000198");
+    mark_constant(&conn, "inst-const");
+    // 存量历史与现价缓存（打标前的采集遗留）：同步不得触碰。
+    seed_fund_history(&conn, "inst-const", &yesterday);
+    let version_before: i64 = conn
+        .query_row(
+            "SELECT version FROM market_prices WHERE instrument_id = 'inst-const'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+
+    let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+    let mut witness = WriteWitness::default();
+    let mut channels = fund_channels(
+        QuoteChannelCalls::default(),
+        counting_nav(
+            per_fund_nav_calls.clone(),
+            today.format("%Y-%m-%d").to_string(),
+            1.0,
+        ),
+        Box::new(|_| {
+            Box::pin(async {
+                unreachable!("恒定标的的历史归读侧常量，后台补全不触达全量通道")
+            })
+        }),
+        counting_name(Arc::new(AtomicUsize::new(0))),
+        bulk_surfaces(
+            Box::new(|| Box::pin(async { Ok(FundNameDictionary::new()) })),
+            Box::new(|| Box::pin(async { Err(AppError::Io("批量面未覆盖".into())) })),
+            Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        ),
+    );
+
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut witness,
+    ))
+    .unwrap();
+
+    assert_eq!(
+        per_fund_nav_calls.load(Ordering::SeqCst),
+        1,
+        "逐只请求保留（打标收敛通道，#1451 收窄）"
+    );
+    assert_eq!(result.synced, 1, "确认请求处理成功");
+    assert_eq!(result.written, 0, "恒定标的不落任何价格行");
+    assert!(!witness.any_written(), "零写入不置脏不发价格失效信号");
+    assert_eq!(constant_unit_price_of(&conn, "inst-const"), Some(10_000));
+    // 现价缓存逐位原样（价格 / 净值日期 / 版本）。
+    assert_eq!(
+        fund_price_of(&conn, "inst-const"),
+        Some((30_000, Some(yesterday))),
+        "现价缓存保留建档一条、不再随同步更新"
+    );
+    let version_after: i64 = conn
+        .query_row(
+            "SELECT version FROM market_prices WHERE instrument_id = 'inst-const'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(version_after, version_before, "现价缓存行零触碰");
+    assert_eq!(
+        price_history_rows(&conn, "inst-const").len(),
+        1,
+        "不再为恒定标的落周采样点（存量行不删也不新增）"
+    );
+}
+
+/// 未标记货基的逐只刷新：可信页自报货基口径（收益披露声明 / 类型码）即回填
+/// 恒定标记并兜底建档常量价（1.0000、净值日期空），本轮不落现价与周点。
+#[test]
+fn money_fund_signal_marks_instrument_and_lands_nothing() {
+    let today = beijing_today().format("%Y-%m-%d").to_string();
+    let conn = tauri_app_lib::test_support::open();
+    seed_fund(&conn, "inst-money", "000198", "余额宝");
+
+    let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+    let date = today.clone();
+    let nav: FetchNavPage = Box::new(move |_: &NavQuery| {
+        let date = date.clone();
+        let calls = per_fund_nav_calls.clone();
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(LsjzPage {
+                points: vec![NavPoint { date, nav: 1.0 }],
+                total: 1,
+                blocked: false,
+                money_fund: true,
+            })
+        })
+    });
+    let mut witness = WriteWitness::default();
+    let mut channels = fund_channels(
+        QuoteChannelCalls::default(),
+        nav,
+        Box::new(|_| Box::pin(async { unreachable!("现价刷新不触达全量通道") })),
+        counting_name(Arc::new(AtomicUsize::new(0))),
+        bulk_surfaces(
+            Box::new(|| Box::pin(async { Ok(FundNameDictionary::new()) })),
+            Box::new(|| Box::pin(async { Err(AppError::Io("批量面未覆盖".into())) })),
+            Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        ),
+    );
+
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut witness,
+    ))
+    .unwrap();
+
+    assert_eq!(
+        constant_unit_price_of(&conn, "inst-money"),
+        Some(10_000),
+        "数据源自报口径确认即打标（单向）"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-money"),
+        Some((10_000, None)),
+        "建档常量价 1.0000 落现价缓存、净值日期为空（水位语义退出）"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-money"),
+        vec![],
+        "确认即收尾：平坦周点不再生长"
+    );
+    assert_eq!(result.synced, 1);
+    assert_eq!(result.written, 1, "建档常量价是实际价格写入");
+    assert!(witness.any_written(), "常量价首落按价格写入广播");
 }

@@ -183,12 +183,16 @@ pub(super) fn parse_net_worth_trend(js: &str) -> Option<Vec<NavPoint>> {
     )
 }
 
-/// 档案通道（基金详情页数据文件）的基金档案：权威名称 + 最后一期单位净值。搜索
-/// 索引只收在用基金，已终止（清盘）基金被东财摘出该索引（ADR-0039 修订，issue
-/// #1212），这两项由档案通道承接。
+/// 档案通道（基金详情页数据文件）的基金档案：权威名称 + 最后一期单位净值 +
+/// 货基形态信号。搜索索引只收在用基金，已终止（清盘）基金被东财摘出该索引
+/// （ADR-0039 修订，issue #1212），这两项由档案通道承接；恒定价格信号亦然
+/// ——终止货基的类型码已不可达，数据文件形态是它的建档确认面（ADR-0126）。
 pub(super) struct FundArchive {
     pub(super) name: String,
     pub(super) last_nav: Option<NavPoint>,
+    /// 详情页数据文件缺单位净值序列而有万份收益序列（货基形态，ADR-0126
+    /// 决策 3）：建档打标的三处确认源之一。
+    pub(super) is_constant_price: bool,
 }
 
 /// 序列里的最新净值点（按净值日期；水位与「最后一期净值」同此判）。
@@ -209,14 +213,20 @@ pub(super) fn parse_fund_archive(js: &str, code: &str) -> Option<FundArchive> {
     if name.is_empty() {
         return None;
     }
-    let last_nav = latest_point(parse_net_worth_trend(js)).or_else(|| {
+    let net_worth = parse_net_worth_trend(js);
+    let last_nav = latest_point(net_worth.clone()).or_else(|| {
         // 货基没有单位净值序列：最后一期净值 = 最新收益日 × 恒定单位净值
         // 1.0000（issue #1342）——档案回退报价据此落 1.0000 而非无价。
         latest_point(parse_money_fund_income_series(js))
     });
+    // 货基形态信号（ADR-0126 决策 3）：缺单位净值序列（无可用行）而有万份
+    // 收益序列——与 last_nav 的回退分支同判，两处消费同一份解析结果。
+    let is_constant_price = net_worth.map(|points| points.is_empty()).unwrap_or(true)
+        && parse_money_fund_income_series(js).is_some();
     Some(FundArchive {
         name: name.to_string(),
         last_nav,
+        is_constant_price,
     })
 }
 
@@ -260,7 +270,7 @@ pub(super) fn parse_money_fund_income_series(js: &str) -> Option<Vec<NavPoint>> 
 
 /// 一页净值的解析结果：有效净值点 + 窗口内总条数（服务端按起止日期过滤后的
 /// 总数，供分页循环定界）+ 报文形态（`blocked` = 空响应/被拦截，见
-/// [`parse_lsjz`]）。
+/// [`parse_lsjz`]）+ 货基信号（ADR-0126 打标确认源之一）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct LsjzPage {
     pub(super) points: Vec<NavPoint>,
@@ -268,6 +278,10 @@ pub struct LsjzPage {
     /// 空响应/异常形态（`Data` 缺省或非对象，如缺 Referer 被拦截 / 风控）：
     /// 空结果不可信，不得按「窗口内确实无新净值」计成功（issue #1059）。
     pub(super) blocked: bool,
+    /// 接口自报货基口径（收益披露声明 / 类型码任一命中，可信报文才判定——
+    /// 被拦截形态恒 false）：恒定价格标的的打标信号（ADR-0126 决策 3），
+    /// 消费在逐只刷新与历史回填两单元，解析层不落库。
+    pub(super) money_fund: bool,
 }
 
 /// 一只基金的单页查询（注入接缝的请求形状）：日期闭区间、页码 1 起。
@@ -297,6 +311,7 @@ pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzPage {
                 points: Vec::new(),
                 total: resp.total_count,
                 blocked: true,
+                money_fund: false,
             };
         }
     };
@@ -326,6 +341,7 @@ pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzPage {
         points,
         total: resp.total_count,
         blocked: false,
+        money_fund,
     }
 }
 
@@ -404,6 +420,15 @@ pub(super) async fn fetch_nav_page_from(
     Ok(parse_lsjz(&resp))
 }
 
+/// 单请求全量净值通道的解析产物：净值点 + 货基形态信号（详情页数据文件
+/// 缺单位净值序列而有万份收益序列，ADR-0126 决策 3——首刷确认源之一）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FullSeries {
+    pub(super) points: Vec<NavPoint>,
+    /// 货基形态信号：可信解析下单位净值序列无行而万份收益序列在场。
+    pub(super) money_fund: bool,
+}
+
 /// 单请求全量净值通道（issue #1062）：一次 GET 基金详情页数据文件，解析
 /// 档案通道取数（issue #1212 / ADR-0039 修订）：一次 GET 基金详情页数据文件，解析
 /// 出权威名称与最后一期单位净值；主机池可注入（本地 HTTP 服务测试请求路径与解析）。
@@ -443,7 +468,7 @@ pub(super) async fn fetch_nav_full_series(
     client: &reqwest::Client,
     pacer: &mut Pacer,
     code: &str,
-) -> Result<Vec<NavPoint>> {
+) -> Result<FullSeries> {
     fetch_nav_full_series_from(client, pacer, code, PINGZHONG_HOSTS).await
 }
 
@@ -453,7 +478,7 @@ pub(super) async fn fetch_nav_full_series_from(
     pacer: &mut Pacer,
     code: &str,
     hosts: &[&str],
-) -> Result<Vec<NavPoint>> {
+) -> Result<FullSeries> {
     tracing::debug!(code, "单请求全量净值查询");
     let path = format!("{PINGZHONG_PATH_PREFIX}{code}.js");
     let body = request_text_from_hosts(
@@ -468,16 +493,27 @@ pub(super) async fn fetch_nav_full_series_from(
     )
     .await?;
     // 先按单位净值序列解析；货币基金没有该序列，按万份收益序列收录（日期 ×
-    // 恒定单位净值 1.0000，issue #1342）。两段皆不可信才 Err——调用方据此
+    // 恒定单位净值 1.0000，issue #1342）并携带货基形态信号（建档/首刷打标
+    // 确认源之一，ADR-0126 决策 3）。两段皆不可信才 Err——调用方据此
     // fail-closed 回退分页通道，不把不可信结果当「无净值」。
-    parse_net_worth_trend(&body)
-        .or_else(|| parse_money_fund_income_series(&body))
-        .ok_or_else(|| {
-            // 文本通道的解析恒成功，疑似风控页（HTML 而非数据文件）在 HTTP 层看不见
-            // ——降速信号由做可信度判定的这一层补上（ADR-0121 决策 5）。
-            pacer.record_throttled();
-            AppError::Parse(format!("基金 {code} 详情页数据文件缺少可信的净值序列"))
-        })
+    if let Some(points) = parse_net_worth_trend(&body) {
+        return Ok(FullSeries {
+            points,
+            money_fund: false,
+        });
+    }
+    if let Some(points) = parse_money_fund_income_series(&body) {
+        return Ok(FullSeries {
+            points,
+            money_fund: true,
+        });
+    }
+    // 文本通道的解析恒成功，疑似风控页（HTML 而非数据文件）在 HTTP 层看不见
+    // ——降速信号由做可信度判定的这一层补上（ADR-0121 决策 5）。
+    pacer.record_throttled();
+    Err(AppError::Parse(format!(
+        "基金 {code} 详情页数据文件缺少可信的净值序列"
+    )))
 }
 
 /// 基金分区水位与首刷判据的共享读（issue #1377 自两单元抽出）：水位 = 现价缓存
@@ -504,13 +540,16 @@ pub(super) async fn read_fund_watermark<Q: ScopedSession>(
 }
 
 /// 分页通道的采集结果（ADR-0122 决策 8 / issue #1373）：净值点 + 两个「本轮窗口
-/// 不可信」标记——任一为真都让整只不落库、宁可整只留空重试，不留半根历史。
+/// 不可信」标记 + 货基信号——任一不可信标记为真都让整只不落库、宁可整只留空
+/// 重试，不留半根历史；货基信号（任一可信页自报）供打标（ADR-0126 决策 3）。
 pub(super) struct NavPages {
     pub(super) points: Vec<NavPoint>,
     /// 任意一页空响应（报文 `Data` 缺省 / 非对象：疑似被拦截 / 风控）。
     pub(super) blocked: bool,
     /// 页数触顶（服务端 `TotalCount` 异常，窗口已知未采全，见 `MAX_NAV_PAGES`）。
     pub(super) truncated: bool,
+    /// 任一可信页自报货基口径（收益披露声明 / 类型码，ADR-0126 决策 3）。
+    pub(super) money_fund: bool,
 }
 
 impl NavPages {
@@ -547,6 +586,7 @@ where
     };
     let first = fetch_nav(&query(1)).await?;
     let mut blocked = first.blocked;
+    let mut money_fund = first.money_fund;
     let mut points = first.points;
     let raw_pages = first
         .total
@@ -571,6 +611,7 @@ where
         // 已采净值点照常落库、窗口可能缺尾），统一由调用方按形态分流。
         let blocked_page = next.blocked;
         blocked |= blocked_page;
+        money_fund |= next.money_fund;
         points.extend(next.points);
         if page_level && !blocked_page {
             on_page(page, pages);
@@ -580,5 +621,6 @@ where
         points,
         blocked,
         truncated,
+        money_fund,
     })
 }
