@@ -95,7 +95,6 @@ fn resolve_date_token(token: &str, today: NaiveDate) -> String {
 
 /// 某相对年份（前年/去年/今年/明年）固定年中日期（06-15）的一笔支出夹具。
 #[given(expr = "{word}有一笔支出 {int} 到账户 {string}")]
-#[rstest_bdd_macros::given("{year_token:word}有一笔支出 {amount:i64} 到账户 {account_name:string}")]
 fn create_expense_in_relative_year(
     world: &mut LedgerWorld,
     year_token: String,
@@ -127,9 +126,6 @@ fn create_expense_in_relative_year(
 #[when(
     expr = "创建交易 类型 {string} 金额 {int} 币种 {string} 到账户 {string} 日期 {string} 商户 {string}"
 )]
-#[rstest_bdd_macros::when(
-    "创建交易 类型 {kind:string} 金额 {amount:i64} 币种 {currency:string} 到账户 {account_name:string} 日期 {date:string} 商户 {merchant_name:string}"
-)]
 fn create_txn_with_merchant_currency(
     world: &mut LedgerWorld,
     kind: String,
@@ -157,7 +153,6 @@ fn create_txn_with_merchant_currency(
 
 /// 查询指定年份的商户消费排行（命令层同款核心函数注入，遗留年份口径）。
 #[when(expr = "查询 {int} 年商户排行")]
-#[rstest_bdd_macros::when("查询 {year:i64} 年商户排行")]
 fn query_merchant_shares(world: &mut LedgerWorld, year: i64) {
     world.report.last_merchant_shares =
         merchant_shares_report(&world_conn!(world), year, None, None, None)
@@ -168,7 +163,6 @@ fn query_merchant_shares(world: &mut LedgerWorld, year: i64) {
 /// 查询指定期间（YYYY-MM-DD 含边界）的商户消费排行（命令层同款核心函数注入，
 /// issue #411 期间口径）。遗留 `year` 在期间口径下不参与，传 0 占位（下同）。
 #[when(expr = "查询商户排行 期间 {string} 到 {string}")]
-#[rstest_bdd_macros::when("查询商户排行 期间 {from:string} 到 {to:string}")]
 fn query_merchant_shares_period(world: &mut LedgerWorld, from: String, to: String) {
     world.report.last_merchant_shares =
         merchant_shares_report(&world_conn!(world), 0, Some(&from), Some(&to), None)
@@ -182,7 +176,6 @@ fn query_merchant_shares_period(world: &mut LedgerWorld, from: String, to: Strin
 
 /// 排行行数断言。
 #[then(expr = "商户排行应为 {int} 行")]
-#[rstest_bdd_macros::then("商户排行应为 {n:usize} 行")]
 fn check_merchant_ranking_len(world: &mut LedgerWorld, n: usize) {
     assert_eq!(
         world.report.last_merchant_shares.len(),
@@ -200,7 +193,6 @@ fn check_merchant_ranking_len(world: &mut LedgerWorld, n: usize) {
 /// 排行第 {index} 名断言：商户名（现名，改名即时生效）+ 本位币净支出，
 /// 顺序即排行顺序（净额降序）。
 #[then(expr = "商户排行第 {int} 名应为 {string} 金额 {int}")]
-#[rstest_bdd_macros::then("商户排行第 {index:usize} 名应为 {name:string} 金额 {amount:i64}")]
 fn check_merchant_ranking_row(world: &mut LedgerWorld, index: usize, name: String, amount: i64) {
     let share = world
         .report
@@ -214,7 +206,6 @@ fn check_merchant_ranking_row(world: &mut LedgerWorld, index: usize, name: Strin
 /// 商户契约回归「名字字典」（issue #223）：排行响应序列化后不应再含指定字段
 /// （icon/color 已退役；排行行只含名称与金额）。
 #[then(expr = "商户排行响应 JSON 不含字段 {string}")]
-#[rstest_bdd_macros::then("商户排行响应 JSON 不含字段 {field:string}")]
 fn check_merchant_shares_json_not_contain_field(world: &mut LedgerWorld, field: String) {
     assert!(
         !world.report.last_merchant_shares.is_empty(),
@@ -235,7 +226,6 @@ fn check_merchant_shares_json_not_contain_field(world: &mut LedgerWorld, field: 
 
 /// 查询报表日期筛选范围（命令层同款核心函数注入）。
 #[when(expr = "查询报表日期范围")]
-#[rstest_bdd_macros::when("查询报表日期范围")]
 fn query_date_range_step(world: &mut LedgerWorld) {
     world.report.last_date_range =
         Some(query_report_date_range(&world_conn!(world)).expect("查询报表日期范围失败"));
@@ -244,7 +234,6 @@ fn query_date_range_step(world: &mut LedgerWorld) {
 /// 日期范围断言：两端以相对记号（前年/去年/今年/明年）或实际日期表述，
 /// 由冻结今日推算实际日期后比对。
 #[then(expr = "报表日期范围应为 {string} 到 {string}")]
-#[rstest_bdd_macros::then("报表日期范围应为 {min_token:string} 到 {max_token:string}")]
 fn check_report_date_range(world: &mut LedgerWorld, min_token: String, max_token: String) {
     let today = scenario_today(world);
     let range = world
@@ -264,7 +253,6 @@ fn check_report_date_range(world: &mut LedgerWorld, min_token: String, max_token
 
 /// 空库或软删后无交易时的日期范围断言（双 None / null）。
 #[then(expr = "报表日期范围应为空")]
-#[rstest_bdd_macros::then("报表日期范围应为空")]
 fn check_report_date_range_empty(world: &mut LedgerWorld) {
     let range = world
         .report
@@ -294,9 +282,6 @@ fn expense_category_id(conn: &rusqlite::Connection, name: &str) -> String {
 
 /// 创建带分类的交易（行为层落库，与真实写路径一致；退款继承原分类由 Writer 保证）。
 #[when(expr = "创建交易 类型 {string} 金额 {int} 分类 {string} 到账户 {string} 日期 {string}")]
-#[rstest_bdd_macros::when(
-    "创建交易 类型 {kind:string} 金额 {amount:i64} 分类 {category_name:string} 到账户 {account_name:string} 日期 {date:string}"
-)]
 fn create_txn_with_category(
     world: &mut LedgerWorld,
     kind: String,
@@ -322,7 +307,6 @@ fn create_txn_with_category(
 
 /// 查询指定年份的支出分类份额（命令层同款核心函数注入，年份联动口径）。
 #[when(expr = "查询 {int} 年分类份额")]
-#[rstest_bdd_macros::when("查询 {year:i64} 年分类份额")]
 fn query_category_shares(world: &mut LedgerWorld, year: i64) {
     world.report.last_category_shares =
         category_shares_rows(&world_conn!(world), "expense", None, Some(year), None, None)
@@ -331,7 +315,6 @@ fn query_category_shares(world: &mut LedgerWorld, year: i64) {
 
 /// 缺省年份查询（全时段口径）：既有调用方不回归的回归锁定。
 #[when(expr = "查询分类份额 全时段")]
-#[rstest_bdd_macros::when("查询分类份额 全时段")]
 fn query_category_shares_all_time(world: &mut LedgerWorld) {
     world.report.last_category_shares =
         category_shares_rows(&world_conn!(world), "expense", None, None, None, None)
@@ -340,7 +323,6 @@ fn query_category_shares_all_time(world: &mut LedgerWorld) {
 
 /// 查询指定期间（YYYY-MM-DD 含边界）的支出分类份额（issue #411 期间口径）。
 #[when(expr = "查询分类份额 期间 {string} 到 {string}")]
-#[rstest_bdd_macros::when("查询分类份额 期间 {from:string} 到 {to:string}")]
 fn query_category_shares_period(world: &mut LedgerWorld, from: String, to: String) {
     world.report.last_category_shares = category_shares_rows(
         &world_conn!(world),
@@ -359,7 +341,6 @@ fn query_category_shares_period(world: &mut LedgerWorld, from: String, to: Strin
 
 /// 查询指定期间（YYYY-MM-DD 含边界）的月度汇总（命令层同款核心函数注入）。
 #[when(expr = "查询月度汇总 期间 {string} 到 {string}")]
-#[rstest_bdd_macros::when("查询月度汇总 期间 {from:string} 到 {to:string}")]
 fn query_monthly_summary_period(world: &mut LedgerWorld, from: String, to: String) {
     world.report.last_monthly_summary =
         monthly_summary_rows(&world_conn!(world), 0, Some(&from), Some(&to))
@@ -368,7 +349,6 @@ fn query_monthly_summary_period(world: &mut LedgerWorld, from: String, to: Strin
 
 /// 查询指定年份的月度汇总（遗留年份口径）：缺省期间回退旧口径的回归锁定。
 #[when(expr = "查询 {int} 年月度汇总")]
-#[rstest_bdd_macros::when("查询 {year:i64} 年月度汇总")]
 fn query_monthly_summary_year(world: &mut LedgerWorld, year: i64) {
     world.report.last_monthly_summary =
         monthly_summary_rows(&world_conn!(world), year, None, None).expect("查询月度汇总失败");
@@ -376,7 +356,6 @@ fn query_monthly_summary_year(world: &mut LedgerWorld, year: i64) {
 
 /// 月度汇总行数断言（仅期间内有流水的月份成行）。
 #[then(expr = "月度汇总应为 {int} 行")]
-#[rstest_bdd_macros::then("月度汇总应为 {n:usize} 行")]
 fn check_monthly_summary_len(world: &mut LedgerWorld, n: usize) {
     assert_eq!(
         world.report.last_monthly_summary.len(),
@@ -388,9 +367,6 @@ fn check_monthly_summary_len(world: &mut LedgerWorld, n: usize) {
 
 /// 月度汇总第 {index} 行断言：月份（YYYY-MM）+ 毛值三列（收入/支出/退款）。
 #[then(expr = "月度汇总第 {int} 行应为月份 {string} 收入 {int} 支出 {int} 退款 {int}")]
-#[rstest_bdd_macros::then(
-    "月度汇总第 {index:usize} 行应为月份 {month:string} 收入 {income:i64} 支出 {expense:i64} 退款 {refund:i64}"
-)]
 fn check_monthly_summary_row(
     world: &mut LedgerWorld,
     index: usize,
@@ -414,7 +390,6 @@ fn check_monthly_summary_row(
 
 /// 分类份额行数断言。
 #[then(expr = "分类份额应为 {int} 行")]
-#[rstest_bdd_macros::then("分类份额应为 {n:usize} 行")]
 fn check_category_shares_len(world: &mut LedgerWorld, n: usize) {
     assert_eq!(
         world.report.last_category_shares.len(),
@@ -432,7 +407,6 @@ fn check_category_shares_len(world: &mut LedgerWorld, n: usize) {
 /// 分类份额第 {index} 名断言：分类名（现名，未分类行为「未分类」）+ 本位币净额，
 /// 顺序即净额降序。
 #[then(expr = "分类份额第 {int} 名应为 {string} 金额 {int}")]
-#[rstest_bdd_macros::then("分类份额第 {index:usize} 名应为 {name:string} 金额 {amount:i64}")]
 fn check_category_shares_row(world: &mut LedgerWorld, index: usize, name: String, amount: i64) {
     let share = world
         .report

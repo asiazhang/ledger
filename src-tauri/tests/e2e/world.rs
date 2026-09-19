@@ -352,10 +352,7 @@ impl fmt::Debug for LedgerWorld {
 }
 
 impl LedgerWorld {
-    /// 测试世界构造（`pub(crate)`：旧目标经 cucumber `#[world(init = Self::new)]`
-    /// 消费，新目标 `tests/e2e_rstest.rs` 的 `world` fixture 同点消费——
-    /// spec #1494 / ticket #1495）。
-    pub(crate) fn new() -> Self {
+    fn new() -> Self {
         // 提交点后置动作接线（spec #1086 / issue #1088）：BDD world 自建库，与
         // 生产启动/测试工厂同形先注册备份域的提交点实现，置脏语义才成立（幂等）。
         ledger_backup::install_after_commit_hook();

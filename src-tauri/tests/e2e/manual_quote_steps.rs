@@ -2,9 +2,6 @@
 //! `investment::record_manual_price`（与 IPC 命令同一实现，#401 域目录化后直调域入口），
 //! 断言读现价缓存 / 价格历史 / `v_holdings` 视图。组合走势、净资产总览与买卖
 //! 流水复用既有步骤（investment_trend_steps / dashboard_steps / instruments_steps）。
-//!
-//! 整文件 6 条步骤**双注册**（spec #1494 / ticket #1502）：改写只涉及属性语法与
-//! 占位符形态，函数体与断言不变。
 
 use cucumber::{then, when};
 use rusqlite::params;
@@ -29,9 +26,6 @@ fn instrument_id(conn: &rusqlite::Connection, symbol: &str) -> String {
 // ---------------------------------------------------------------------------
 
 #[when(expr = "给标的 {string} 录价 日期 {string} 价格 {int} 万分之一元")]
-#[rstest_bdd_macros::when(
-    "给标的 {symbol:string} 录价 日期 {date:string} 价格 {price_cents:i64} 万分之一元"
-)]
 fn record_manual_quote(world: &mut LedgerWorld, symbol: String, date: String, price_cents: i64) {
     let input = ManualPriceInput {
         instrument_id: instrument_id(&world_conn!(world), &symbol),
@@ -52,9 +46,6 @@ fn record_manual_quote(world: &mut LedgerWorld, symbol: String, date: String, pr
 /// 现价缓存断言（不限标的类型）：手动报价落点一——来源 manual、
 /// priced_at = 报价日、无净值日期语义。
 #[then(expr = "标的 {string} 现价为 {int} 万分之一元 priced_at {string} 来源 {string}")]
-#[rstest_bdd_macros::then(
-    "标的 {symbol:string} 现价为 {price_cents:i64} 万分之一元 priced_at {priced_at:string} 来源 {source:string}"
-)]
 fn assert_market_price(
     world: &mut LedgerWorld,
     symbol: String,
@@ -89,7 +80,6 @@ fn assert_market_price(
 }
 
 #[then(expr = "标的 {string} 价格历史应有 {int} 条")]
-#[rstest_bdd_macros::then("标的 {symbol:string} 价格历史应有 {count:i64} 条")]
 fn assert_price_history_count(world: &mut LedgerWorld, symbol: String, count: i64) {
     let instrument_id = instrument_id(&world_conn!(world), &symbol);
     let actual: i64 = world_conn!(world)
@@ -105,9 +95,6 @@ fn assert_price_history_count(world: &mut LedgerWorld, symbol: String, count: i6
 /// 周点断言按周键（week_start 生成列）定位：该报价日所在 ISO 周至多一条，
 /// 整周覆盖后 trade_date 为该周最后写入的报价日。
 #[then(expr = "标的 {string} 价格历史 {string} 周点价格为 {int} 万分之一元 来源 {string}")]
-#[rstest_bdd_macros::then(
-    "标的 {symbol:string} 价格历史 {any_day_in_week:string} 周点价格为 {price_cents:i64} 万分之一元 来源 {source:string}"
-)]
 fn assert_price_history_week_point(
     world: &mut LedgerWorld,
     symbol: String,
@@ -134,7 +121,6 @@ fn assert_price_history_week_point(
 }
 
 #[then(expr = "标的 {string} 持仓视图市值应为 {int}")]
-#[rstest_bdd_macros::then("标的 {symbol:string} 持仓视图市值应为 {expected:i64}")]
 fn assert_holding_market_value(world: &mut LedgerWorld, symbol: String, expected: i64) {
     let actual: Option<i64> = world_conn!(world)
         .query_row(
@@ -149,7 +135,6 @@ fn assert_holding_market_value(world: &mut LedgerWorld, symbol: String, expected
 }
 
 #[then(expr = "标的 {string} 持仓视图未实现盈亏应为 {int}")]
-#[rstest_bdd_macros::then("标的 {symbol:string} 持仓视图未实现盈亏应为 {expected:i64}")]
 fn assert_holding_unrealized_pnl(world: &mut LedgerWorld, symbol: String, expected: i64) {
     let actual: Option<i64> = world_conn!(world)
         .query_row(

@@ -3,12 +3,6 @@
 //! 与在用物品每天成本合计（本位币，缺汇率上抛）。
 
 use cucumber::{then, when};
-
-// 物品成本主题步骤**双注册**（spec #1494 / ticket #1500）：同一函数同时挂 cucumber
-// 与 rstest-bdd 两个属性宏——旧目标行为零变化，新目标能匹配同一批步骤，函数体与断言
-// 唯一不复制。占位符按参数名与类型对齐（`{string}` → `{<参数名>:string}`、`{int}` →
-// 有符号/无符号整数 hint、`{float}` → `{<参数名>:f64}`），引号剥离与数值解析语义与
-// cucumber 一致；切换只改属性形态，不改断言语义（CONTEXT-testing「行为等价判据」）。
 use rusqlite::params;
 
 use ledger_infra::error::AppError;
@@ -34,7 +28,6 @@ fn calc_item_cost(
 
 /// 缺省参考日（不传）：在用 → 今天；已处置 → 处置日（口径与列表一致）。
 #[when(expr = "按最近创建的物品计算每天成本 不带参考日")]
-#[rstest_bdd_macros::when("按最近创建的物品计算每天成本 不带参考日")]
 fn calc_item_cost_default(world: &mut LedgerWorld) {
     let id = world
         .item
@@ -46,7 +39,6 @@ fn calc_item_cost_default(world: &mut LedgerWorld) {
 
 /// 自选参考日 = 今天前 N 天（相对日期，保证天数可静态断言）。
 #[when(expr = "按最近创建的物品计算每天成本 今天前 {int} 天为参考日")]
-#[rstest_bdd_macros::when("按最近创建的物品计算每天成本 今天前 {days_ago:i64} 天为参考日")]
 fn calc_item_cost_days_ago(world: &mut LedgerWorld, days_ago: i64) {
     let id = world
         .item
@@ -62,7 +54,6 @@ fn calc_item_cost_days_ago(world: &mut LedgerWorld, days_ago: i64) {
 
 /// 自选参考日 = 今天后 N 天（预览「用满 N 天」的摊薄）。
 #[when(expr = "按最近创建的物品计算每天成本 今天后 {int} 天为参考日")]
-#[rstest_bdd_macros::when("按最近创建的物品计算每天成本 今天后 {days_later:i64} 天为参考日")]
 fn calc_item_cost_days_later(world: &mut LedgerWorld, days_later: i64) {
     let id = world
         .item
@@ -78,7 +69,6 @@ fn calc_item_cost_days_later(world: &mut LedgerWorld, days_later: i64) {
 
 /// 自选固定参考日（YYYY-MM-DD）。
 #[when(expr = "按最近创建的物品计算每天成本 参考日 {string}")]
-#[rstest_bdd_macros::when("按最近创建的物品计算每天成本 参考日 {date:string}")]
 fn calc_item_cost_fixed_ref(world: &mut LedgerWorld, date: String) {
     let id = world
         .item
@@ -91,7 +81,6 @@ fn calc_item_cost_fixed_ref(world: &mut LedgerWorld, date: String) {
 
 /// 尝试按指定参考日计算并捕获错误（供「应返回错误」断言）。
 #[when(expr = "尝试按最近创建的物品计算每天成本 参考日 {string}")]
-#[rstest_bdd_macros::when("尝试按最近创建的物品计算每天成本 参考日 {date:string}")]
 fn try_calc_item_cost(world: &mut LedgerWorld, date: String) {
     // 不存在场景传固定假 id，真实走到 query_one 落空的 NotFound 路径（同其它步骤惯例）
     let id = world
@@ -107,7 +96,6 @@ fn try_calc_item_cost(world: &mut LedgerWorld, date: String) {
 
 /// 尝试计算不存在的物品 id（固定假 id 走 NotFound 报错路径）。
 #[when(expr = "尝试按不存在的物品计算每天成本")]
-#[rstest_bdd_macros::when("尝试按不存在的物品计算每天成本")]
 fn try_calc_item_cost_missing(world: &mut LedgerWorld) {
     world.last_error = match calc_item_cost(world, "no-such-item-id", None) {
         Err(e) => Some(e.to_string()),
@@ -117,9 +105,6 @@ fn try_calc_item_cost_missing(world: &mut LedgerWorld) {
 
 /// 断言重算结果三元组：分子 ÷ 天数 = 每天成本（与详情视图展示口径一致）。
 #[then(expr = "计算结果已用天数应为 {int} 分子应为 {int} 每天成本应为 {float}")]
-#[rstest_bdd_macros::then(
-    "计算结果已用天数应为 {days:i64} 分子应为 {numerator:i64} 每天成本应为 {per_day:f64}"
-)]
 fn check_calc_item_cost(world: &mut LedgerWorld, days: i64, numerator: i64, per_day: f64) {
     let result = world
         .item
@@ -136,7 +121,6 @@ fn check_calc_item_cost(world: &mut LedgerWorld, days: i64, numerator: i64, per_
 }
 
 #[then(expr = "计算每天成本应返回错误 {string}")]
-#[rstest_bdd_macros::then("计算每天成本应返回错误 {expected:string}")]
 fn check_calc_item_cost_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
 }
@@ -147,7 +131,6 @@ fn check_calc_item_cost_error(world: &mut LedgerWorld, expected: String) {
 
 /// 查询全部在用物品每天成本合计（错误路径记入 last_error，供「应返回错误」断言）。
 #[when(expr = "查询在用物品每天成本合计")]
-#[rstest_bdd_macros::when("查询在用物品每天成本合计")]
 fn query_item_daily_total(world: &mut LedgerWorld) {
     match item_daily_total(&world_conn!(world)) {
         Ok(total) => {
@@ -163,9 +146,6 @@ fn query_item_daily_total(world: &mut LedgerWorld) {
 
 /// 断言合计三元组：每天成本合计（本位币分/天）+ 默认币种代码 + 计入件数。
 #[then(expr = "在用物品每天成本合计应为 {float} 本位币应为 {string} 件数应为 {int}")]
-#[rstest_bdd_macros::then(
-    "在用物品每天成本合计应为 {per_day:f64} 本位币应为 {currency:string} 件数应为 {count:usize}"
-)]
 fn check_item_daily_total(world: &mut LedgerWorld, per_day: f64, currency: String, count: usize) {
     let total = world
         .item
@@ -186,7 +166,6 @@ fn check_item_daily_total(world: &mut LedgerWorld, per_day: f64, currency: Strin
 /// 库内状态直置（#764 已登记例外）：汇率仅 upsert（写入通道收口），
 /// 无公开删除入口，「缺汇率」这一被测前提只能直置构造。
 #[when(expr = "移除汇率 {string} 兑 {string}")]
-#[rstest_bdd_macros::when("移除汇率 {base:string} 兑 {quote:string}")]
 fn remove_exchange_rate(world: &mut LedgerWorld, base: String, quote: String) {
     world_conn!(world)
         .execute(

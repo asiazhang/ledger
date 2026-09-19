@@ -5,9 +5,6 @@
 //! created_at DESC, id DESC），搜索断言读 `search_steps.rs` 的
 //! `world.txn.last_search` 快照。保单/商户/账户 Given 复用 `policies_steps.rs` /
 //! `merchants_steps.rs` / `accounts_steps.rs` 已注册步骤。
-//!
-//! 整文件 16 条步骤**双注册**（spec #1494 / ticket #1503）：改写只涉及属性
-//! 语法与占位符形态，函数体与断言不变。
 
 use cucumber::then;
 use rusqlite::params;
@@ -75,9 +72,6 @@ fn assert_list_nth_policy_source(
 }
 
 #[then(expr = "交易列表第 {int} 条来源应为保单 {string} 险种 {string}")]
-#[rstest_bdd_macros::then(
-    "交易列表第 {index:usize} 条来源应为保单 {policy_number:string} 险种 {product_name:string}"
-)]
 fn list_nth_source_policy(
     world: &mut LedgerWorld,
     index: usize,
@@ -88,9 +82,6 @@ fn list_nth_source_policy(
 }
 
 #[then(expr = "交易列表第 {int} 条来源应为已删除保单 {string} 险种 {string}")]
-#[rstest_bdd_macros::then(
-    "交易列表第 {index:usize} 条来源应为已删除保单 {policy_number:string} 险种 {product_name:string}"
-)]
 fn list_nth_source_deleted_policy(
     world: &mut LedgerWorld,
     index: usize,
@@ -181,7 +172,6 @@ fn assert_nth_plan_source(
 
 /// 断言目标行来源所属行（列表或搜索快照）。
 #[then(expr = "交易列表第 {int} 条来源应为分期计划 备注 {string}")]
-#[rstest_bdd_macros::then("交易列表第 {index:usize} 条来源应为分期计划 备注 {note:string}")]
 fn list_nth_source_installment(world: &mut LedgerWorld, index: usize, note: String) {
     assert_nth_plan_source(
         world,
@@ -194,7 +184,6 @@ fn list_nth_source_installment(world: &mut LedgerWorld, index: usize, note: Stri
 }
 
 #[then(expr = "交易列表第 {int} 条来源应为订阅计划 备注 {string}")]
-#[rstest_bdd_macros::then("交易列表第 {index:usize} 条来源应为订阅计划 备注 {note:string}")]
 fn list_nth_source_subscription(world: &mut LedgerWorld, index: usize, note: String) {
     assert_nth_plan_source(
         world,
@@ -207,7 +196,6 @@ fn list_nth_source_subscription(world: &mut LedgerWorld, index: usize, note: Str
 }
 
 #[then(expr = "交易列表第 {int} 条来源应为定时转账计划 备注 {string}")]
-#[rstest_bdd_macros::then("交易列表第 {index:usize} 条来源应为定时转账计划 备注 {note:string}")]
 fn list_nth_source_transfer(world: &mut LedgerWorld, index: usize, note: String) {
     assert_nth_plan_source(
         world,
@@ -220,7 +208,6 @@ fn list_nth_source_transfer(world: &mut LedgerWorld, index: usize, note: String)
 }
 
 #[then(expr = "交易列表第 {int} 条来源应为已取消订阅计划 备注 {string}")]
-#[rstest_bdd_macros::then("交易列表第 {index:usize} 条来源应为已取消订阅计划 备注 {note:string}")]
 fn list_nth_source_cancelled_subscription(world: &mut LedgerWorld, index: usize, note: String) {
     assert_nth_plan_source(
         world,
@@ -234,7 +221,6 @@ fn list_nth_source_cancelled_subscription(world: &mut LedgerWorld, index: usize,
 
 /// 无备注计划：来源仍在（类型/实体 id 在场），展示名为空串（前端按类型名兜底）。
 #[then(expr = "交易列表第 {int} 条来源应为无备注订阅计划 展示名为空")]
-#[rstest_bdd_macros::then("交易列表第 {index:usize} 条来源应为无备注订阅计划 展示名为空")]
 fn list_nth_source_subscription_without_note(world: &mut LedgerWorld, index: usize) {
     let result = list_transactions_internal(&world_conn!(world), &TransactionListFilter::default())
         .expect("交易列表查询失败");
@@ -264,7 +250,6 @@ fn list_nth_source_subscription_without_note(world: &mut LedgerWorld, index: usi
 }
 
 #[then(expr = "搜索结果第 {int} 条来源应为订阅计划 备注 {string}")]
-#[rstest_bdd_macros::then("搜索结果第 {index:usize} 条来源应为订阅计划 备注 {note:string}")]
 fn search_nth_source_subscription(world: &mut LedgerWorld, index: usize, note: String) {
     assert_nth_plan_source(
         world,
@@ -277,7 +262,6 @@ fn search_nth_source_subscription(world: &mut LedgerWorld, index: usize, note: S
 }
 
 #[then(expr = "交易列表第 {int} 条应无来源")]
-#[rstest_bdd_macros::then("交易列表第 {index:usize} 条应无来源")]
 fn list_nth_no_source(world: &mut LedgerWorld, index: usize) {
     let result = list_transactions_internal(&world_conn!(world), &TransactionListFilter::default())
         .expect("交易列表查询失败");
@@ -293,9 +277,6 @@ fn list_nth_no_source(world: &mut LedgerWorld, index: usize) {
 }
 
 #[then(expr = "搜索结果第 {int} 条来源应为保单 {string} 险种 {string}")]
-#[rstest_bdd_macros::then(
-    "搜索结果第 {index:usize} 条来源应为保单 {policy_number:string} 险种 {product_name:string}"
-)]
 fn search_nth_source_policy(
     world: &mut LedgerWorld,
     index: usize,
@@ -319,7 +300,6 @@ fn search_nth_source_policy(
 }
 
 #[then(expr = "搜索结果第 {int} 条应无来源")]
-#[rstest_bdd_macros::then("搜索结果第 {index:usize} 条应无来源")]
 fn search_nth_no_source(world: &mut LedgerWorld, index: usize) {
     let snapshot = world
         .txn
@@ -369,14 +349,12 @@ fn assert_item_source(
 }
 
 #[then(expr = "交易列表第 {int} 条来源应为物品 {string}")]
-#[rstest_bdd_macros::then("交易列表第 {index:usize} 条来源应为物品 {name:string}")]
 fn list_nth_source_item(world: &mut LedgerWorld, index: usize, name: String) {
     let source = nth_source(world, NthList::List, index);
     assert_item_source(world, &source, &name, None);
 }
 
 #[then(expr = "交易列表第 {int} 条来源应为已处置物品 {string}")]
-#[rstest_bdd_macros::then("交易列表第 {index:usize} 条来源应为已处置物品 {name:string}")]
 fn list_nth_source_disposed_item(world: &mut LedgerWorld, index: usize, name: String) {
     let source = nth_source(world, NthList::List, index);
     assert_item_source(
@@ -388,7 +366,6 @@ fn list_nth_source_disposed_item(world: &mut LedgerWorld, index: usize, name: St
 }
 
 #[then(expr = "搜索结果第 {int} 条来源应为物品 {string}")]
-#[rstest_bdd_macros::then("搜索结果第 {index:usize} 条来源应为物品 {name:string}")]
 fn search_nth_source_item(world: &mut LedgerWorld, index: usize, name: String) {
     let source = nth_source(world, NthList::Search, index);
     assert_item_source(world, &source, &name, None);
@@ -431,18 +408,12 @@ fn assert_instrument_source(
 }
 
 #[then(expr = "交易列表第 {int} 条来源应为标的 {string} 名称 {string}")]
-#[rstest_bdd_macros::then(
-    "交易列表第 {index:usize} 条来源应为标的 {symbol:string} 名称 {name:string}"
-)]
 fn list_nth_source_instrument(world: &mut LedgerWorld, index: usize, symbol: String, name: String) {
     let source = nth_source(world, NthList::List, index);
     assert_instrument_source(world, &source, &symbol, &name);
 }
 
 #[then(expr = "搜索结果第 {int} 条来源应为标的 {string} 名称 {string}")]
-#[rstest_bdd_macros::then(
-    "搜索结果第 {index:usize} 条来源应为标的 {symbol:string} 名称 {name:string}"
-)]
 fn search_nth_source_instrument(
     world: &mut LedgerWorld,
     index: usize,

@@ -8,12 +8,6 @@
 
 use cucumber::{given, then, when};
 
-// 实物资产建档与读回步骤**双注册**（spec #1494 / ticket #1500）：同一函数同时挂
-// cucumber 与 rstest-bdd 两个属性宏——旧目标行为零变化，新目标能匹配同一批步骤，
-// 函数体与断言唯一不复制。占位符按参数名与类型对齐（`{string}` → `{<参数名>:string}`、
-// `{int}` → 有符号/无符号整数 hint、`{float}` → `{<参数名>:f64}`），引号剥离与数值
-// 解析语义与 cucumber 一致；切换只改属性形态，不改断言语义（CONTEXT-testing「行为等价判据」）。
-
 use ledger_physical_asset::{
     PhysicalAssetInput, create_physical_asset as create_physical_asset_domain,
     list_physical_assets as list_physical_assets_domain,
@@ -59,14 +53,8 @@ fn build_input(
 #[given(
     expr = "创建实物资产 名称 {string} 购买日期 {string} 购买价 {string} 币种 {string} 估值 {string} 估值币种 {string} 估值日期 {string}"
 )]
-#[rstest_bdd_macros::given(
-    "创建实物资产 名称 {name:string} 购买日期 {purchase_date:string} 购买价 {purchase_price:string} 币种 {purchase_currency:string} 估值 {valuation:string} 估值币种 {valuation_currency:string} 估值日期 {valuation_date:string}"
-)]
 #[when(
     expr = "创建实物资产 名称 {string} 购买日期 {string} 购买价 {string} 币种 {string} 估值 {string} 估值币种 {string} 估值日期 {string}"
-)]
-#[rstest_bdd_macros::when(
-    "创建实物资产 名称 {name:string} 购买日期 {purchase_date:string} 购买价 {purchase_price:string} 币种 {purchase_currency:string} 估值 {valuation:string} 估值币种 {valuation_currency:string} 估值日期 {valuation_date:string}"
 )]
 #[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
 fn create_physical_asset(
@@ -102,9 +90,6 @@ fn create_physical_asset(
 #[when(
     expr = "尝试创建实物资产 名称 {string} 购买日期 {string} 购买价 {string} 币种 {string} 估值 {string} 估值币种 {string} 估值日期 {string}"
 )]
-#[rstest_bdd_macros::when(
-    "尝试创建实物资产 名称 {name:string} 购买日期 {purchase_date:string} 购买价 {purchase_price:string} 币种 {purchase_currency:string} 估值 {valuation:string} 估值币种 {valuation_currency:string} 估值日期 {valuation_date:string}"
-)]
 #[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
 fn try_create_physical_asset(
     world: &mut LedgerWorld,
@@ -137,7 +122,6 @@ fn try_create_physical_asset(
 
 /// 读取最近创建资产的详情（详情读路径场景：与列表同一读口径）。
 #[when(expr = "读取实物资产详情")]
-#[rstest_bdd_macros::when("读取实物资产详情")]
 fn get_physical_asset_detail(world: &mut LedgerWorld) {
     let id = world
         .asset
@@ -152,7 +136,6 @@ fn get_physical_asset_detail(world: &mut LedgerWorld) {
 
 /// 拉取列表快照（默认口径 = 在持；合计口径恒为在持，与筛选无关）。
 #[then(expr = "实物资产列表应包含 {int} 件资产")]
-#[rstest_bdd_macros::then("实物资产列表应包含 {expected:usize} 件资产")]
 fn list_physical_assets(world: &mut LedgerWorld, expected: usize) {
     let list = list_physical_assets_domain(&world_conn!(world), None).expect("列表实物资产应成功");
     assert_eq!(
@@ -165,7 +148,6 @@ fn list_physical_assets(world: &mut LedgerWorld, expected: usize) {
 }
 
 #[then(expr = "第 {int} 件资产名称应为 {string} 状态应为 {string}")]
-#[rstest_bdd_macros::then("第 {index:usize} 件资产名称应为 {name:string} 状态应为 {status:string}")]
 fn assert_asset_name_status(world: &mut LedgerWorld, index: usize, name: String, status: String) {
     let asset = &world
         .asset
@@ -178,7 +160,6 @@ fn assert_asset_name_status(world: &mut LedgerWorld, index: usize, name: String,
 }
 
 #[then(expr = "第 {int} 件资产当前估值应为 {int} 币种 {string}")]
-#[rstest_bdd_macros::then("第 {index:usize} 件资产当前估值应为 {cents:i64} 币种 {currency:string}")]
 fn assert_asset_valuation(world: &mut LedgerWorld, index: usize, cents: i64, currency: String) {
     let asset = &world
         .asset
@@ -195,7 +176,6 @@ fn assert_asset_valuation(world: &mut LedgerWorld, index: usize, cents: i64, cur
 
 /// 估值日期缺省 = 建档当天的本地今天（域内取当前日期，先例物品使用成本）。
 #[then(expr = "第 {int} 件资产估值日期应为今天")]
-#[rstest_bdd_macros::then("第 {index:usize} 件资产估值日期应为今天")]
 fn assert_asset_valuation_today(world: &mut LedgerWorld, index: usize) {
     let today = chrono::Local::now().date_naive().to_string();
     let asset = &world
@@ -208,7 +188,6 @@ fn assert_asset_valuation_today(world: &mut LedgerWorld, index: usize) {
 }
 
 #[then(expr = "第 {int} 件资产当前估值日期应为 {string}")]
-#[rstest_bdd_macros::then("第 {index:usize} 件资产当前估值日期应为 {date:string}")]
 fn assert_asset_valuation_date(world: &mut LedgerWorld, index: usize, date: String) {
     let asset = &world
         .asset
@@ -220,7 +199,6 @@ fn assert_asset_valuation_date(world: &mut LedgerWorld, index: usize, date: Stri
 }
 
 #[then(expr = "第 {int} 件资产购买信息应为空")]
-#[rstest_bdd_macros::then("第 {index:usize} 件资产购买信息应为空")]
 fn assert_asset_purchase_empty(world: &mut LedgerWorld, index: usize) {
     let asset = &world
         .asset
@@ -237,9 +215,6 @@ fn assert_asset_purchase_empty(world: &mut LedgerWorld, index: usize) {
 }
 
 #[then(expr = "第 {int} 件资产购买日期应为 {string} 购买价应为 {int} 币种 {string}")]
-#[rstest_bdd_macros::then(
-    "第 {index:usize} 件资产购买日期应为 {date:string} 购买价应为 {cents:i64} 币种 {currency:string}"
-)]
 fn assert_asset_purchase(
     world: &mut LedgerWorld,
     index: usize,
@@ -262,9 +237,6 @@ fn assert_asset_purchase(
 }
 
 #[then(expr = "第 {int} 件资产当前估值折本位币应为 {int} 币种 {string}")]
-#[rstest_bdd_macros::then(
-    "第 {index:usize} 件资产当前估值折本位币应为 {cents:i64} 币种 {currency:string}"
-)]
 fn assert_asset_valuation_native(
     world: &mut LedgerWorld,
     index: usize,
@@ -286,7 +258,6 @@ fn assert_asset_valuation_native(
 }
 
 #[then(expr = "在持估值合计应为 {int} 币种 {string}")]
-#[rstest_bdd_macros::then("在持估值合计应为 {cents:i64} 币种 {currency:string}")]
 fn assert_holding_total(world: &mut LedgerWorld, cents: i64, currency: String) {
     let list = world
         .asset
@@ -299,7 +270,6 @@ fn assert_holding_total(world: &mut LedgerWorld, cents: i64, currency: String) {
 
 /// 唯一 ID + 审计字段（UUID v7 + 软删标志复位 + 版本起点）。
 #[then(expr = "第 {int} 件资产应有唯一 ID 与审计字段")]
-#[rstest_bdd_macros::then("第 {index:usize} 件资产应有唯一 ID 与审计字段")]
 fn assert_asset_audit(world: &mut LedgerWorld, index: usize) {
     let asset = &world
         .asset
@@ -316,7 +286,6 @@ fn assert_asset_audit(world: &mut LedgerWorld, index: usize) {
 }
 
 #[then(expr = "实物资产写入后应发出 {int} 次失效信号")]
-#[rstest_bdd_macros::then("实物资产写入后应发出 {expected:usize} 次失效信号")]
 fn check_signals(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
         world.asset.physical_asset_signal_count, expected,
@@ -325,7 +294,6 @@ fn check_signals(world: &mut LedgerWorld, expected: usize) {
 }
 
 #[then(expr = "实物资产未发出失效信号")]
-#[rstest_bdd_macros::then("实物资产未发出失效信号")]
 fn check_no_signal(world: &mut LedgerWorld) {
     assert_eq!(
         world.asset.physical_asset_signal_count, 0,
@@ -334,15 +302,11 @@ fn check_no_signal(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "实物资产创建应返回错误 {string}")]
-#[rstest_bdd_macros::then("实物资产创建应返回错误 {expected:string}")]
 fn check_create_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
 }
 
 #[then(expr = "实物资产详情当前估值应为 {int} 币种 {string} 折本位币应为 {int}")]
-#[rstest_bdd_macros::then(
-    "实物资产详情当前估值应为 {cents:i64} 币种 {currency:string} 折本位币应为 {native_cents:i64}"
-)]
 fn assert_detail_valuation(
     world: &mut LedgerWorld,
     cents: i64,
