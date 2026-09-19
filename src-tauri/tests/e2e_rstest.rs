@@ -8,13 +8,12 @@
 //!   transactions_edit.feature / transactions_query.feature，#1498；
 //!   transactions_policy.feature，#1499；items_* / physical_asset* 共 8 个 feature，
 //!   #1500；policies.feature / policy_agreement.feature / policy_stats.feature，
-//!   #1501；instruments.feature / manual_quote.feature，#1502）在本目标运行，
-//!   reports.feature / reports_category.feature / reports_date_range.feature /
-//!   reports_period.feature / dashboard.feature / financial_freedom.feature，
-//!   #1504）在本目标运行，旧目标行为零变化。账户 / 交易 / 保单、物品、投资与
-//!   报表 / 仪表盘域场景全绿；
-//!   实物资产域 3 个场景受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，
-//!   间歇性红，按 #1500 约定不修（见
+//!   #1501；instruments.feature / manual_quote.feature，#1502；reports.feature /
+//!   reports_category.feature / reports_date_range.feature / reports_period.feature /
+//!   dashboard.feature / financial_freedom.feature，#1504）在本目标运行，旧目标
+//!   行为零变化。账户 / 交易 / 保单、物品、投资与报表 / 仪表盘域场景全绿；
+//!   实物资产域若干场景（估值更新 / 在持合计）受 #1489 既有缺陷（同毫秒 UUID v7
+//!   排序不确定）影响，间歇性红，按 #1500 约定不修（见
 //!   `docs/verification/1500-items-physical-assets-migration.md`）；
 //! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
 //!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，

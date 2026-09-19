@@ -38,7 +38,9 @@
    `grep -c '^  Scenario:' …/<feature>` 逐一相等；本票迁入的 36 个场景 + 1 条注册表
    断言在新目标全绿（`cargo nextest run --test e2e_rstest -E
    'test(reports)|test(dashboard)|test(financial_freedom)'` → `37 tests run: 37
-   passed`）。新目标总数 239 = 202（基线 26773e17）+ 36 个场景 + 1 条注册表断言。
+   passed`；这 37 个测试在本票 10 次整跑中次次通过——整跑偶发的红见下节「既有间歇
+   失败」，与票面 6 个 feature 无关）。新目标总数 239 = 202（基线 26773e17）+
+   36 个场景 + 1 条注册表断言。
 2. **AC2 旧 e2e 目标全绿**：`./scripts/e2e.sh` 旧目标段 →
    40 features / **453 scenarios（453 passed）** / 3139 steps（3139 passed），
    场景数与步数与迁移前同口径（双注册不改旧注册面与函数体）。
@@ -65,13 +67,25 @@
 
 ### 既有间歇失败（非本票引入，显式报告）
 
-新目标经 nextest 进程级调度整跑时，`physical_assets` / `physical_asset_updates` 的
-个别场景会间歇失败——这是 #1489（同毫秒 UUID v7 排序不确定）的既有缺陷，按 #1500
-约定**不修**（见 `docs/verification/1500-items-physical-assets-migration.md`）。
-本票实测：一次整跑 `239 tests run: 235 passed, 4 failed`（4 红全部落在实物资产域），
-紧接着复跑 `239 tests run: 239 passed`；单独复跑实物资产域 `13 passed`。本票迁入的
-36 个报表 / 仪表盘场景与既有物理资产步骤零耦合（覆盖守门「歧义 0」佐证无步骤抢占），
-失败与本次改动无关。
+新目标经 nextest 进程级调度整跑时，实物资产域个别场景会间歇失败。本票整跑新目标
+共 10 次（含 `scripts/test.sh` 与 `scripts/e2e.sh` 入口）：4 次全绿
+（`239 tests run: 239 passed`），6 次出现 1–4 个红点，且红点每次都只落在下列
+4 个实物资产场景——报表 / 仪表盘 / 自由度 37 个测试次次通过：
+
+- `physical_asset_updates.feature`「更新估值后当前估值变为最新一条（缺省日期 =
+  今天）」「同日更新估值按插入序取最新一条（追加不改写的同日口径）」「详情读回更新
+  后的当前估值（与列表同口径）」（对应 #1489 的 `physical_asset_updates.feature:20`
+  一族）；
+- `physical_assets.feature`「外币估值经当期汇率折算进在持合计」，断言
+  `当前估值折本位币不符 left: Some(30000) right: Some(72000)`
+  （panic 于 `physical_assets_steps.rs:280`；独立复跑该 feature 13/13 通过）。
+
+这三处正是 #1500「根因发现」登记的 #1489 同根因实例（更新估值读旧值 / 多资产列表
+取错行）：同毫秒 UUID v7 排序不确定（`crates/physical-asset/src/crud.rs` 的
+`ORDER BY created_at, id` 与 `valuation_date DESC, id DESC`，而 `now_iso` 只到秒、
+UUID v7 同毫秒低位随机）。按 #1500 约定**不修**，见
+`docs/verification/1500-items-physical-assets-migration.md`。本票迁入的 36 个场景与
+实物资产步骤零耦合（覆盖守门「歧义 0」佐证无步骤抢占），失败与本次改动无关。
 
 ### 双注册接线核对清单（`rg` 枚举全部消费点）
 

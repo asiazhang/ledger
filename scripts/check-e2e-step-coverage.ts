@@ -16,7 +16,7 @@
 //      rstest-bdd `#[rstest_bdd_macros::given/when/then("…")]`；
 //   ③ 判定：被绑 feature 的每条步骤行在同目标的注册面内**恰好一次**匹配；占位符
 //      按语义转匹配式（cucumber `{string}`/`{int}`/`{float}`/`{word}`；rstest-bdd
-//      `{<名>:string|整数|浮点}`），`And`/`But` 继承前一关键字（与 Gherkin 同义）；
+//      `{<名>:string|单字|整数|浮点}`），`And`/`But` 继承前一关键字（与 Gherkin 同义）；
 //   ④ 全覆盖：`tests/e2e/features/**` 每个 feature 至少被一个 e2e 目标绑定——
 //      删掉绑定（如 `scenarios!`）即红，补上 #1495 AC4 的「0 场景且退出码 0」缺口。
 //
