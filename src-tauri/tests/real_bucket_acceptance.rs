@@ -3,22 +3,82 @@
 //!
 //! **全部用例默认忽略**（`#[ignore]`）：真桶验收需要用户自己的云账号凭据，仓库
 //! 不持有、也绝不允许出现凭据（父 spec #1214 边界），CI 更不该把验收对象写进
-//! 任何人的桶。跑法、逐家结论与「已实测 / 未实测」清单见
-//! `docs/verification/1222-s3-vendor-acceptance.md`；那份清单是人读结论，界面
-//! 档位（「已实测 / 未实测」）的唯一翻转点是 `packages/utils/src/s3-vendors.ts` 的
-//! `verified` 字段，两者由前端守门测试逐行对齐。
+//! 任何人的桶。本文件即跑法、前置与结论回写的**单一说明处**；界面档位（「已实测 /
+//! 未实测」）的唯一来源与翻转点是 `packages/utils/src/s3-vendors.ts` 的 `verified`
+//! 字段，这里只讲怎么把某一家跑成「已实测」。
+//!
+//! # 诚实边界（未跑过的一律「未实测」）
+//!
+//! - 本仓库不持有任何云账号凭据，验收对象是**用户自己的桶**。用户按下面跑完之前，
+//!   厂商档位一律「未实测」——不凭官方文档的兼容性声明、也不凭第三方经验推断。
+//! - 「已实测」的唯一含义：在**同一家**厂商上跑完全部四类用例且全部通过，并把预设
+//!   表里该家的 `verified` 改成 `true`。
+//! - 官方文档给出「S3 兼容端点」≠ 实测通过。尤其**是否接受 AWS SigV4 签名**，spec
+//!   #1214 已明示尚待事实核查（阿里云 OSS 是其中之一），未实测前不得写成结论。
+//! - 预设默认的寻址方式来自各家公开文档（#1220 落地时核对），仍属未实测：真桶上
+//!   两种寻址都允许试，跑完把实际可用的那种记下来。
+//!
+//! # 跑法
+//!
+//! ## 前置
+//!
+//! - 该厂商的一个桶。建议**专用桶**，或至少给验收一个专用顶层前缀
+//!   （`LEDGER_S3_TEST_PREFIX`）。
+//! - 一份**最小权限**凭据：`GetObject`、`PutObject`、`CreateMultipartUpload`、
+//!   `UploadPart`、`CompleteMultipartUpload`、`AbortMultipartUpload`（后两项为分片
+//!   用例所需）。**不需要** `ListBucket`——「测试连接」探针只读单个保留键、不列桶。
+//! - 该桶的端点、区域与寻址方式（可先用设置页的「测试连接」验证一遍再填变量）。
 //!
 //! 凭据只经环境变量进入进程：不落文件、不进仓库、不进断言消息（失败信息只含桶名
-//! 与对象键，不含密钥）。对象键一律在一次运行独有的前缀下，故用例可重复执行、
-//! 可任意顺序执行、可并行；`Transport` 没有删除面，验收留下的对象由用户按该前缀
-//! 清理（见文档第 2 节）。
+//! 与对象键，不含密钥）。填变量时别把凭据写进 shell 历史（`export VAR=值` 会落
+//! 历史），逐项静默输入即可：
 //!
-//! 断言强度：每条用例对准用户可观察结果——往返逐字节一致、缺对象归一为 `None`
-//! （同步增量拉取的常态输入）、超阈值载荷经分片路径后仍逐字节一致、保存前探针
-//! 连通且不在用户的桶里留对象。不为「让它绿」弱化任何一条。
+//! ```sh
+//! read -rsp 'Secret Access Key: ' LEDGER_S3_TEST_SECRET_KEY
+//! export LEDGER_S3_TEST_SECRET_KEY
+//! ```
 //!
-//! 四类用例各自独立成一条 `#[test]`（不做矩阵收敛）：真桶验收要按厂商**逐类**
-//! 记录通过与否（见文档第 6 节记录表），收敛成一条共用断言体会丢掉逐类信号。
+//! | 变量 | 必填 | 说明 |
+//! | --- | --- | --- |
+//! | `LEDGER_S3_TEST_ENDPOINT` | 是 | S3 兼容端点，含 scheme |
+//! | `LEDGER_S3_TEST_REGION` | 是 | SigV4 签名区域 |
+//! | `LEDGER_S3_TEST_BUCKET` | 是 | 桶名 |
+//! | `LEDGER_S3_TEST_ACCESS_KEY` | 是 | Access Key ID（用户自己的） |
+//! | `LEDGER_S3_TEST_SECRET_KEY` | 是 | Secret Access Key（用户自己的） |
+//! | `LEDGER_S3_TEST_PATH_STYLE` | 是 | `false` = 虚拟托管，`true` = path-style |
+//! | `LEDGER_S3_TEST_PREFIX` | 否 | 固定顶层前缀，验收对象都落在它下面；缺省 = 桶根 |
+//!
+//! ## 跑
+//!
+//! ```sh
+//! cd src-tauri
+//! cargo test -p tauri-app --test real_bucket_acceptance -- --ignored --nocapture
+//! ```
+//!
+//! 四类用例一次跑完。`--ignored` 是必需的——用例默认忽略，常规 `cargo test` 与 CI
+//! 都不跑它们，缺变量时会一次列全缺项。**换一家厂商**换一组环境变量重跑；**同一家
+//! 建议两种寻址各跑一次**，把真桶上实际可用的那种记下来。
+//!
+//! ## 清理
+//!
+//! 验收对象不自动删除（`Transport` 没有删除操作面）。它们全在
+//! `[LEDGER_S3_TEST_PREFIX/]ledger-acceptance-<每次运行的随机串>/` 这一根前缀之下，
+//! 故用例可重复执行、可任意顺序执行、可并行；由用户按该前缀批量删除即可，用专用桶
+//! 的话直接清桶也行。
+//!
+//! ## 结论回写
+//!
+//! 跑通某一家后，把 `packages/utils/src/s3-vendors.ts` 里该家的 `verified` 改成
+//! `true`——那是界面「已实测 / 未实测」档位的唯一来源。
+//!
+//! # 断言强度
+//!
+//! 每条用例对准用户可观察结果——往返逐字节一致、缺对象归一为 `None`（同步增量拉取
+//! 的常态输入）、超阈值载荷经分片路径后仍逐字节一致、保存前探针连通且不在用户的桶里
+//! 留对象。不为「让它绿」弱化任何一条。
+//!
+//! 四类用例各自独立成一条 `#[test]`（不做矩阵收敛）：真桶验收要按厂商**逐类**记录
+//! 通过与否，收敛成一条共用断言体会丢掉逐类信号。
 
 // 测试整体豁免（ADR-0060）：集成测试 crate 经 cfg(test) 放行六件套，生产构建零放宽。
 #![cfg_attr(
@@ -38,7 +98,7 @@ use ledger_sync_engine::{
     ChannelLayout, S3Config, S3Transport, SyncChannelConfig, Transport, probe_channel,
 };
 
-/// 真桶验收的凭据与目标（全部由用户在自己的 shell 里填写，见文档第 2 节）。
+/// 真桶验收的凭据与目标（全部由用户在自己的 shell 里填写，见本文件模块文档「跑法」）。
 const ENV_ENDPOINT: &str = "LEDGER_S3_TEST_ENDPOINT";
 const ENV_REGION: &str = "LEDGER_S3_TEST_REGION";
 const ENV_BUCKET: &str = "LEDGER_S3_TEST_BUCKET";
@@ -48,8 +108,8 @@ const ENV_PATH_STYLE: &str = "LEDGER_S3_TEST_PATH_STYLE";
 /// 可选的固定顶层前缀：给了它，验收对象就都落在它下面，跑完照它清理。
 const ENV_PREFIX: &str = "LEDGER_S3_TEST_PREFIX";
 
-/// 缺变量与填法都指向这份文档（单一说明处）。
-const ACCEPTANCE_DOC: &str = "docs/verification/1222-s3-vendor-acceptance.md";
+/// 缺变量与填法都指向本文件的模块文档（单一说明处）。
+const RUNBOOK: &str = "本文件模块文档「跑法」";
 
 /// 用例失败时的定位信息只到桶名与对象键这一层，不含任何凭据。
 struct AcceptanceTarget {
@@ -62,7 +122,7 @@ impl AcceptanceTarget {
     fn new() -> Self {
         let config = config_from_env();
         let transport = S3Transport::new(config)
-            .expect("S3 通道构库失败：请核对端点 / 区域 / 桶名 / 前缀（见验收文档第 2 节）");
+            .expect("S3 通道构库失败：请核对端点 / 区域 / 桶名 / 前缀（见本文件模块文档「跑法」）");
         Self {
             transport,
             root: run_root(),
@@ -75,7 +135,7 @@ impl AcceptanceTarget {
     }
 }
 
-/// 从环境变量组装被测配置；缺项 fail loud，一次列全并指向文档。
+/// 从环境变量组装被测配置；缺项 fail loud，一次列全并指向模块文档。
 fn config_from_env() -> S3Config {
     let mut missing: Vec<&str> = Vec::new();
     let endpoint = required_env(ENV_ENDPOINT, &mut missing);
@@ -86,7 +146,7 @@ fn config_from_env() -> S3Config {
     let path_style = required_env(ENV_PATH_STYLE, &mut missing);
     if !missing.is_empty() {
         panic!(
-            "真桶验收缺少环境变量：{}\n填写说明与跑法见 {ACCEPTANCE_DOC} 第 2 节",
+            "真桶验收缺少环境变量：{}\n填写说明与跑法见 {RUNBOOK}",
             missing.join(" / ")
         );
     }
@@ -112,7 +172,7 @@ fn required_env(name: &'static str, missing: &mut Vec<&'static str>) -> String {
     }
 }
 
-/// 寻址方式是验收要记录的结论之一（见清单第 3 节），故要求显式给出、不设默认。
+/// 寻址方式是验收要记录的结论之一（两种都允许试），故要求显式给出、不设默认。
 fn parse_path_style(raw: &str) -> bool {
     match raw.trim().to_ascii_lowercase().as_str() {
         "true" | "1" => true,
@@ -150,7 +210,7 @@ fn payload(len: usize, seed: u64) -> Vec<u8> {
 
 /// 上传 → 下载：往返逐字节一致（最小验收面）。
 #[test]
-#[ignore = "需要用户自己的真桶与凭据：见 docs/verification/1222-s3-vendor-acceptance.md"]
+#[ignore = "需要用户自己的真桶与凭据：见本文件模块文档「跑法」"]
 fn upload_then_download_roundtrips_byte_identical() {
     let target = AcceptanceTarget::new();
     let key = target.key("roundtrip.bin");
@@ -169,7 +229,7 @@ fn upload_then_download_roundtrips_byte_identical() {
 
 /// 缺对象：读不存在的对象回 `None`（不是错误）——同步增量拉取以 404 为常态输入。
 #[test]
-#[ignore = "需要用户自己的真桶与凭据：见 docs/verification/1222-s3-vendor-acceptance.md"]
+#[ignore = "需要用户自己的真桶与凭据：见本文件模块文档「跑法」"]
 fn missing_object_reads_as_none() {
     let target = AcceptanceTarget::new();
     let key = target.key("missing-object.bin");
@@ -192,7 +252,7 @@ fn missing_object_reads_as_none() {
 /// 本用例只能断言用户可观察结果（往返一致）——阈值跨越由载荷长度保证，具体
 /// 分片请求数不在断言面内（本脚手架没有中间代理可观测线上形态）。
 #[test]
-#[ignore = "需要用户自己的真桶与凭据：见 docs/verification/1222-s3-vendor-acceptance.md"]
+#[ignore = "需要用户自己的真桶与凭据：见本文件模块文档「跑法」"]
 fn large_object_roundtrips_through_multipart_path() {
     let target = AcceptanceTarget::new();
     let key = target.key("multipart.bin");
@@ -219,7 +279,7 @@ fn large_object_roundtrips_through_multipart_path() {
 /// 保存前「测试连接」探针：在真桶上连通，且跑完通道上仍没有探针对象——
 /// 探针是只读的，不在用户的桶里留垃圾（探针键是同步轮次永不写的保留键）。
 #[test]
-#[ignore = "需要用户自己的真桶与凭据：见 docs/verification/1222-s3-vendor-acceptance.md"]
+#[ignore = "需要用户自己的真桶与凭据：见本文件模块文档「跑法」"]
 fn connectivity_probe_passes_and_leaves_the_channel_untouched() {
     let config = config_from_env();
     // 探针路径按同步空间派生（`book-<space>/probe/...`）：给本次运行一个独有
