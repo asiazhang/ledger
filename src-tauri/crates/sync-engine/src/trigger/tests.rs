@@ -459,12 +459,15 @@ fn auto_round_source_probes_lock_hold_past_threshold() {
     use tracing::Level;
 
     let conn = Arc::new(Mutex::new(test_support::open()));
-    let locks = super::scheduler::AutoRoundConn::new(&conn);
+    // 探针阈值注入 20ms（spec #1086 / issue #1514）：断言的是「持锁超阈值即记
+    // warn」这一**瞬时可判定**语义，实等 1.1s 只为越过产品阈值（1s），不含信息量。
+    let locks = super::scheduler::AutoRoundConn::new(&conn)
+        .with_probe_threshold(std::time::Duration::from_millis(20));
 
     let events = capture_events(|| {
         locks
             .with_connection(crate::channel::ConnSegment::Read, |_| {
-                std::thread::sleep(std::time::Duration::from_millis(1100));
+                std::thread::sleep(std::time::Duration::from_millis(30));
                 Ok(())
             })
             .unwrap();

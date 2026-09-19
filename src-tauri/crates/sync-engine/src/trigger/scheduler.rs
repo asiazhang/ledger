@@ -40,9 +40,9 @@ use crate::channel::{
     ChannelOptions, ConnSegment, RoundConn, SyncRoundReport, connection_round_key,
 };
 use crate::envelope::EnvelopeMode;
+use ledger_infra::db::LOCK_HOLD_PROBE_THRESHOLD;
 use ledger_infra::db::boot::BootFailureGate;
 use ledger_infra::db::encryption::EncryptionGate;
-use ledger_infra::db::probe_lock_hold;
 use ledger_infra::db::{DbState, now_iso};
 use ledger_infra::error::{AppError, Result};
 use ledger_infra::settings::{self, SettingKey};
@@ -231,6 +231,10 @@ pub(crate) struct AutoRoundConn {
     /// [`AutoRoundConn::with_lock_timeout`] 注入短超时——「拿不到锁即放弃本轮」
     /// 是瞬时可判定的语义，按产品默认值实等只贡献墙钟（spec #1086 / issue #1514）。
     lock_timeout: Duration,
+    /// 持锁时长探针阈值。产品路径取 [`ledger_infra::db::LOCK_HOLD_PROBE_THRESHOLD`]；
+    /// 测试可经 [`AutoRoundConn::with_probe_threshold`] 注入短阈值——「超阈值即记
+    /// warn」同样是瞬时可判定语义，实等 1.1s 只为越过产品阈值（spec #1086 / #1514）。
+    probe_threshold: Duration,
 }
 
 impl AutoRoundConn {
@@ -239,6 +243,7 @@ impl AutoRoundConn {
         Self {
             conn: Arc::clone(conn),
             lock_timeout: ledger_backup::LOCK_TIMEOUT,
+            probe_threshold: LOCK_HOLD_PROBE_THRESHOLD,
         }
     }
 
@@ -246,6 +251,13 @@ impl AutoRoundConn {
     #[cfg(test)]
     pub(crate) fn with_lock_timeout(mut self, timeout: Duration) -> Self {
         self.lock_timeout = timeout;
+        self
+    }
+
+    /// 覆盖持锁时长探针阈值（仅供测试注入短阈值；产品路径不得调用）。
+    #[cfg(test)]
+    pub(crate) fn with_probe_threshold(mut self, threshold: Duration) -> Self {
+        self.probe_threshold = threshold;
         self
     }
 }
@@ -262,7 +274,7 @@ impl RoundConn for AutoRoundConn {
         let result = use_connection(&guard);
         // 持锁时长探针（#1276 守门③）：轮次的每一段各自接哨，整段形态的长持锁
         // （如误把网络等待写回段内）在此现形。
-        probe_lock_hold(hold_started.elapsed());
+        ledger_infra::db::probe_lock_hold_within(hold_started.elapsed(), self.probe_threshold);
         result
     }
 

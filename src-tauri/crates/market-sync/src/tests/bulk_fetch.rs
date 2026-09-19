@@ -133,7 +133,10 @@ fn blocked_pages_fail_closed_instead_of_reporting_no_coverage() {
     // 降速信号由这一层补上（ADR-0121 决策 5），否则最容易被拦的面反而提速。
     let (url, _heads) = spawn_header_capture_server("<html>risk control</html>".to_string());
     let client = reqwest::Client::new();
-    let baseline = Duration::from_secs(1);
+    // 同 http_client 的限速用例：基线只作相对降速的锚（断言是 `interval() > baseline`），
+    // 绝对值不承载语义——压到 20ms 避免 pacer 的整数倍等待贡献秒级墙钟
+    // （spec #1086 / issue #1514 同款手法）。
+    let baseline = Duration::from_millis(20);
     let mut pacer = Pacer::new(baseline);
 
     assert!(

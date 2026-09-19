@@ -69,7 +69,10 @@ fn throttle_responses_slow_the_request_interval() {
         }
     });
     let client = reqwest::Client::new();
-    let baseline = Duration::from_secs(1);
+    // 基线只作「相对降速」的锚（断言都是 `interval() > baseline` 这类比较），
+    // 绝对值不承载语义——压到 20ms 让 pacer 的整数倍等待不再贡献秒级墙钟
+    // （spec #1086 / issue #1514 同款手法）。
+    let baseline = Duration::from_millis(20);
     let mut pacer = Pacer::new(baseline);
     let params = [("fs", "test")];
     let _ = tauri::async_runtime::block_on(request_json_with_retry::<UlistResponse>(
