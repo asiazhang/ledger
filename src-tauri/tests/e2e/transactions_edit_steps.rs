@@ -132,6 +132,9 @@ fn insert_trade_for_edit(
 }
 
 #[when(expr = "买入标的 {string} 数量 {int} 单价 {int} 到投资账户 {string}")]
+#[rstest_bdd_macros::when(
+    "买入标的 {symbol:string} 数量 {quantity:i64} 单价 {price_cents:i64} 到投资账户 {account_name:string}"
+)]
 fn buy_for_edit(
     world: &mut LedgerWorld,
     symbol: String,
@@ -289,6 +292,7 @@ fn check_txn_version(world: &mut LedgerWorld, index: i64, expected_version: i64)
 }
 
 #[then(expr = "标的 {string} 持仓数量应为 {int}")]
+#[rstest_bdd_macros::then("标的 {symbol:string} 持仓数量应为 {expected:i64}")]
 fn assert_holding_quantity(world: &mut LedgerWorld, symbol: String, expected: i64) {
     // 按标的定位持仓批次（场景内单账户，标的唯一确定批次）
     let quantity: f64 = world_conn!(world)
