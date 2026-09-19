@@ -125,6 +125,7 @@ fn expense_input(
 // ---------------------------------------------------------------------------
 
 #[given(expr = "存在支出分类 {string}")]
+#[rstest_bdd_macros::given("存在支出分类 {name:string}")]
 fn create_expense_category(world: &mut LedgerWorld, name: String) {
     create_category_via_entry(&world_conn!(world), &name, None);
 }

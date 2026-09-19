@@ -78,6 +78,7 @@ fn batch_import_rstest(world: &mut LedgerWorld, #[datatable] datatable: Vec<Vec<
 
 /// 重跑刚才的批量导入：与首次导入相同的行、相同的 dedup 语义。
 #[when(expr = "重跑刚才的批量导入")]
+#[rstest_bdd_macros::when("重跑刚才的批量导入")]
 fn reimport(world: &mut LedgerWorld) {
     let inputs: Vec<TransactionInput> = world
         .txn
@@ -116,6 +117,7 @@ fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: Stri
 
 /// 删除备注为指定值的交易（软删除，与 HTTP DELETE 端点共用 `delete_transaction_internal`）。
 #[when(expr = "删除备注为 {string} 的交易")]
+#[rstest_bdd_macros::when("删除备注为 {note:string} 的交易")]
 fn delete_txn_by_note(world: &mut LedgerWorld, note: String) {
     let id: String = world_conn!(world)
         .query_row(
@@ -314,6 +316,7 @@ fn check_not_hidden(world: &mut LedgerWorld, name: String) {
 }
 
 #[then(expr = "最近一次导入应有 {int} 条去重跳过 {int} 条新写入")]
+#[rstest_bdd_macros::then("最近一次导入应有 {duplicates:i64} 条去重跳过 {new:i64} 条新写入")]
 fn check_batch_results(world: &mut LedgerWorld, duplicates: i64, new: i64) {
     let dup_count = world
         .txn
