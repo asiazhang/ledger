@@ -2,6 +2,11 @@
 //! 生成交易的类型 / 金额 / 状态断言。
 
 use cucumber::{given, then, when};
+
+// 汇率夹具步骤**按需双注册**（spec #1494 / ticket #1500）：`存在汇率 X 兑 Y 为 R` 是
+// 跨域共享步骤，被 items_* / physical_asset* 及 dashboard / financial_freedom /
+// scheduled 等 feature 消费；本票只为它补 rstest-bdd 注册（其余 occurrence 步骤归
+// ticket #1506 的定时计划域迁移）。同一函数同时挂两族属性，函数体与断言唯一不复制。
 use rusqlite::params;
 
 use crate::common::assert_last_error_contains;
@@ -18,6 +23,7 @@ use super::common::execute_occurrence_step;
 /// 旁路收敛；source 落 'manual'，场景不断言来源）；币种须存在于种子 currencies
 /// （FK 约束）。报价时刻无断言语义（折算查询不消费），取非 FIXED_NOW 值。
 #[given(expr = "存在汇率 {string} 兑 {string} 为 {float}")]
+#[rstest_bdd_macros::given("存在汇率 {base:string} 兑 {quote:string} 为 {rate:f64}")]
 fn add_exchange_rate(world: &mut LedgerWorld, base: String, quote: String, rate: f64) {
     create_exchange_rate_verb(world, &base, &quote, rate, "2026-02-01T00:00:00Z");
 }

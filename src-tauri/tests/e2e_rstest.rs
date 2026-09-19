@@ -6,9 +6,12 @@
 //! `harness = false`）并存：
 //! - 已迁入的 feature（accounts.feature，#1495；transactions_write.feature，#1497；
 //!   transactions_edit.feature / transactions_query.feature，#1498；
-//!   transactions_policy.feature，#1499；policies.feature /
-//!   policy_agreement.feature / policy_stats.feature，#1501）在本目标全绿，
-//!   旧目标行为零变化；
+//!   transactions_policy.feature，#1499；items_* / physical_asset* 共 8 个 feature，
+//!   #1500；policies.feature / policy_agreement.feature / policy_stats.feature，
+//!   #1501）在本目标运行，旧目标行为零变化。账户 / 交易 / 保单与物品域场景全绿；
+//!   实物资产域 3 个场景受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，
+//!   间歇性红，按 #1500 约定不修（见
+//!   `docs/verification/1500-items-physical-assets-migration.md`）；
 //! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
 //!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，
 //!   抽共享实现 + 两侧注册适配器（`migration_steps::批量导入交易`、
@@ -43,9 +46,10 @@ use rstest_bdd::StepKeyword;
 // 才对其后的步骤模块可见（与旧目标同形）。
 //
 // `allow(dead_code)` 是**迁移期形态**（spec #1494 / ticket #1495）：共享支撑模块
-// （world / common / step_inputs / step_verbs）按整文件并入，消费者却是已迁移的
-// 步骤域子集——未并入的域在本目标里暂时无人调用。逐域迁移完成后本目标即全量目标，
-// 该 allow 随最后一个域并入一并删除（届时 `-D warnings` 重新覆盖这些模块）。
+// （world / common / step_inputs / step_verbs）与整模块并入的共享步骤库
+// （scheduled_steps，为跨域汇率夹具而并入，ticket #1500）按整文件并入，消费者却是
+// 已迁移的步骤域子集——未迁移的步骤在本目标里暂时无人调用。逐域迁移完成后本目标即
+// 全量目标，该 allow 随最后一个域并入一并删除（届时 `-D warnings` 重新覆盖这些模块）。
 #[allow(dead_code)]
 #[macro_use]
 #[path = "e2e/world.rs"]
@@ -63,6 +67,33 @@ mod instruments_steps;
 #[allow(dead_code)]
 #[path = "e2e/insurers_steps.rs"]
 mod insurers_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_common.rs"]
+mod items_common;
+#[allow(dead_code)]
+#[path = "e2e/items_cost_steps.rs"]
+mod items_cost_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_create_steps.rs"]
+mod items_create_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_dispose_steps.rs"]
+mod items_dispose_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_provenance_steps.rs"]
+mod items_provenance_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_update_steps.rs"]
+mod items_update_steps;
+#[allow(dead_code)]
+#[path = "e2e/physical_asset_disposal_steps.rs"]
+mod physical_asset_disposal_steps;
+#[allow(dead_code)]
+#[path = "e2e/physical_asset_updates_steps.rs"]
+mod physical_asset_updates_steps;
+#[allow(dead_code)]
+#[path = "e2e/physical_assets_steps.rs"]
+mod physical_assets_steps;
 #[allow(dead_code)]
 #[path = "e2e/policies_steps.rs"]
 mod policies_steps;
@@ -87,6 +118,13 @@ mod transactions_policy_steps;
 #[allow(dead_code)]
 #[path = "e2e/transactions_write_steps.rs"]
 mod transactions_write_steps;
+// 物品与实物资产域（#1500）与保单域（#1501）消费的共享步骤文件：汇率夹具
+// `存在汇率 X 兑 Y 为 R` 与保单协议期次步骤（执行该计划第一期等）均住
+// `scheduled_steps/`，故按整模块并入其父模块——两票只为各自被消费的步骤补
+// rstest-bdd 注册，其余定时计划步骤归 ticket #1506。
+#[allow(dead_code)]
+#[path = "e2e/scheduled_steps.rs"]
+mod scheduled_steps;
 
 #[allow(dead_code)]
 #[path = "e2e/categories_steps.rs"]
@@ -103,9 +141,6 @@ mod merchants_steps;
 #[allow(dead_code)]
 #[path = "e2e/migration_steps.rs"]
 mod migration_steps;
-#[allow(dead_code)]
-#[path = "e2e/scheduled_steps.rs"]
-mod scheduled_steps;
 #[allow(dead_code)]
 #[path = "e2e/transactions_query_steps.rs"]
 mod transactions_query_steps;
@@ -126,6 +161,39 @@ mod scenarios {
 
     scenarios!(
         "tests/e2e/features/accounts.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/items_cost.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_create.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_dispose.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_provenance.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_update.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/physical_assets.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/physical_asset_updates.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/physical_asset_disposal.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
 
