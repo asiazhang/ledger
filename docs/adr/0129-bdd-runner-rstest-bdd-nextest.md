@@ -36,11 +36,18 @@
 
 收口票 #1508 的观测面 = e2e 段墙钟与 CPU/墙钟比（对照基线 = 旧 cucumber）。
 
-- **迁移前（cucumber，本机 12 核）**：`32.08 real / 27.33 user / 1.38 sys`，CPU/墙钟 ≈ **0.9**（spec #1494 探针）。
-- **收口后（本机 12 核）**：`cargo nextest run --workspace --test e2e_rstest` 共 462 个测试（453 场景 + 9 条运行时注册表断言），nextest Summary 34.7s，整命令 `35.28 real / 386.22 user / 9.40 sys`，CPU/墙钟 ≈ **11.2**——并行真实生效。
-- **收口前 CI（main run 35437019880，ubuntu-latest 4 vCPU）**：全量 nextest 2214 tests / Summary 209.9s；旧 cucumber 段 451 场景 / 110s。
-- **场景数口径**：场景测试数 = feature `Scenario:` 行数 = **453**（本机跑全 453）；CI 容器以 root 运行、`0o555` 目录不可写，2 个 `@non-root-only` 场景经场景内守卫 `skip!` 跳过（451 通过 + 2 跳过）。
-- **已知成本（后续优化项）**：rstest-bdd 步骤注册表（当前 725 条模式）在每个测试进程首次匹配时构建，空注册断言测试与场景测试同价（本机 ≈ 0.5s/进程），是 per-test 固定开销的主要来源。
+| 观测面 | 旧（cucumber 单进程） | 新（nextest `--test e2e_rstest`） |
+|---|---|---|
+| 本机 12 核 real / user / sys | 32.08 / 27.33 / 1.38（spec #1494 探针） | 35.28 / 386.22 / 9.40 |
+| **CPU/墙钟比** | **≈ 0.9** | **≈ 11.2** |
+| CI 4 vCPU e2e 段 real | 110s（main run 35437019880） | **266.9s**（PR #1529 run 35439087993） |
+| CI e2e 段 user / sys | 26.99 / 1.08（本机比值口径） | 899.0 / 43.5（CPU/墙钟 ≈ **3.53**） |
+
+CI 数字来自收口 PR 的 backend job：e2e 步 = `scripts/e2e.sh`（`TIMEFORMAT` + bash `time`），nextest Summary 225.9s / 462 tests 全绿；同 job 的非 e2e nextest 步 1752 tests / Summary 68.6s。
+
+**结论（摘要）**：进程级并行真实生效（CPU/墙钟 0.9 → 3.5~11），**但 e2e 墙钟是退化的**——CI 上 110s → 267s，本机 30.5s → 35s。主因是每测试进程的固定开销：rstest-bdd 把 725 条步骤模式的注册表在进程内首次匹配时构建，空注册断言测试与场景测试同价（本机 ≈ 0.5s/进程，CI 更高）。spec #1494 探针假设的「单进程启动 15–32ms」只在小目标成立，全量目标高约 20 倍。另有一次「非 e2e 后置」的额外成本：CI e2e 步里 `cargo nextest list` + 增量构建约 41s。
+
+**场景数口径**：场景测试数 = feature `Scenario:` 行数 = **453**（e2e 入口先过场景数全等守门）。CI 容器以 root 运行，2 个 `@non-root-only` 场景由场景内守卫步骤 `skip!` 跳过——但**跳过在 nextest 汇总里不可见**：报告为 `462 passed / 0 skipped`（libtest 无运行期 skip 概念，rstest-bdd 的 skip 以正常返回收尾）。旁证：这 2 个场景是 `encryption.feature` 16 个场景里最快的两个（1.70s / 1.84s，其余 ≥ 1.90s）。旧目标由启动器按 tag 过滤，CI 报告 451 场景；新目标下「451 CI 口径」不再体现在报告里。
 
 ## 后果
 
@@ -48,6 +55,8 @@
 - 失败文本含 feature 路径与原始中文场景名（补偿场景名被 ASCII 清洗后的筛选体验下降）。
 - CI 侧 e2e 成为独立一条 nextest 命令并单独计时（build.yml backend job），本地与 CI 口径一致、不出现「本地绿 CI 红」。
 - 依赖收窄：根包 dev-deps 移除 cucumber、加入 rstest/rstest-bdd 系。
+- **墙钟成本**：e2e 段从「单进程串行」换成「N 进程各付一次注册表构建」，CI 4 vCPU 上 110s → 267s。这条要在「并行 + 失败置红 + 进程隔离」与「墙钟」之间做取舍，或先解决每进程注册表构建。
+- **跳过不可见**：平台条件跳过经 `skip!` 在场景内发生，nextest 汇总计为 passed、不计 skipped，CI 上不复现「451 场景」的报告口径。
 
 ## 修订记录
 
