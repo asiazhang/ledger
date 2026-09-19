@@ -8,12 +8,16 @@
 //!   transactions_edit.feature / transactions_query.feature，#1498；
 //!   transactions_policy.feature，#1499；items_* / physical_asset* 共 8 个 feature，
 //!   #1500；policies.feature / policy_agreement.feature / policy_stats.feature，
-//!   #1501；instruments.feature / manual_quote.feature，#1502；reports.feature /
-//!   reports_category.feature / reports_date_range.feature / reports_period.feature /
-//!   dashboard.feature / financial_freedom.feature，#1504）在本目标运行，旧目标
-//!   行为零变化。账户 / 交易 / 保单、物品、投资与报表 / 仪表盘域场景全绿；
-//!   实物资产域若干场景（估值更新 / 在持合计）受 #1489 既有缺陷（同毫秒 UUID v7
-//!   排序不确定）影响，间歇性红，按 #1500 约定不修（见
+//!   #1501；instruments.feature / manual_quote.feature，#1502；
+//!   transactions_convert.feature / transactions_funding.feature /
+//!   transactions_source.feature，#1503；reports.feature /
+//!   reports_date_range.feature / reports_period.feature / dashboard.feature /
+//!   financial_freedom.feature，#1504；merchants.feature / insurers.feature /
+//!   search.feature，#1505；reports_category.feature 由 #1504 / #1505 两票共同覆盖）
+//!   在本目标运行，旧目标行为零变化。账户 / 交易 / 保单、物品、投资与报表 /
+//!   仪表盘、参考数据与检索域场景全绿；实物资产域若干场景（估值更新 / 在持合计）
+//!   受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，间歇性红，按 #1500 约定
+//!   不修（见
 //!   `docs/verification/1500-items-physical-assets-migration.md`）；
 //! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
 //!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，
@@ -125,11 +129,17 @@ mod step_inputs;
 #[path = "e2e/step_verbs.rs"]
 mod step_verbs;
 #[allow(dead_code)]
+#[path = "e2e/transactions_convert_steps.rs"]
+mod transactions_convert_steps;
+#[allow(dead_code)]
 #[path = "e2e/transactions_edit_steps.rs"]
 mod transactions_edit_steps;
 #[allow(dead_code)]
 #[path = "e2e/transactions_policy_steps.rs"]
 mod transactions_policy_steps;
+#[allow(dead_code)]
+#[path = "e2e/transactions_source_steps.rs"]
+mod transactions_source_steps;
 #[allow(dead_code)]
 #[path = "e2e/transactions_write_steps.rs"]
 mod transactions_write_steps;
@@ -140,6 +150,9 @@ mod transactions_write_steps;
 #[allow(dead_code)]
 #[path = "e2e/scheduled_steps.rs"]
 mod scheduled_steps;
+#[allow(dead_code)]
+#[path = "e2e/search_steps.rs"]
+mod search_steps;
 
 #[allow(dead_code)]
 #[path = "e2e/budget_steps.rs"]
@@ -273,6 +286,45 @@ mod scenarios {
         fixtures = [world: crate::world::LedgerWorld]
     );
 
+    // 交易转换 / 出资 / 来源溯源场景（ticket #1503）：4 + 1 + 21 个场景进入
+    // 新目标，与既有域同用一份 `world` fixture（各自独立内存库）。
+    scenarios!(
+        "tests/e2e/features/transactions_convert.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/transactions_funding.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/transactions_source.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    // 参考数据与检索域场景（ticket #1505）：分类份额 3 个、商户 11 个、保司 5 个、
+    // 搜索 25 个场景，与既有域同用一份 `world` fixture（各自独立内存库）。
+    scenarios!(
+        "tests/e2e/features/reports_category.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/merchants.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/insurers.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/search.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
     // 报表与仪表盘域场景（ticket #1504）：报表四份 feature（商户排行 / 分类份额 /
     // 日期范围 / 期间过滤）17 个场景 + 首页净资产 10 个场景 + 财务自由度 9 个场景，
     // 与既有域同用一份 `world` fixture（各自独立内存库）。
@@ -280,22 +332,22 @@ mod scenarios {
         "tests/e2e/features/reports.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
-    scenarios!(
-        "tests/e2e/features/reports_category.feature",
-        fixtures = [world: crate::world::LedgerWorld]
-    );
+
     scenarios!(
         "tests/e2e/features/reports_date_range.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
+
     scenarios!(
         "tests/e2e/features/reports_period.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
+
     scenarios!(
         "tests/e2e/features/dashboard.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
+
     scenarios!(
         "tests/e2e/features/financial_freedom.feature",
         fixtures = [world: crate::world::LedgerWorld]
@@ -391,6 +443,85 @@ fn transactions_policy_steps_are_registered_in_rstest_bdd() {
                 "第 1 条交易挂单引用应保留（软删保单不置空）",
             ),
             (StepKeyword::When, "批量导入挂单交易"),
+        ],
+    );
+}
+
+/// 交易转换 / 来源溯源与相关共享步骤的运行时注册（ticket #1503）：
+/// `transactions_convert_steps.rs` 12 条、`transactions_source_steps.rs` 16 条
+/// 整文件注册；`scheduled_steps/create.rs` 按需 4 条计划创建步骤与
+/// `search_steps.rs` 的 `搜索` 步骤（该文件整文件 16 条注册的计数断言归
+/// ticket #1505）。占位符语义覆盖 string / i64 / usize、f64 小数与无占位符直命中；
+/// 删掉任一新注册即红。
+#[test]
+fn transaction_convert_and_source_steps_are_registered_in_rstest_bdd() {
+    assert_steps_registered_in_rstest_bdd(
+        "transactions_convert_steps.rs",
+        12,
+        &[
+            (
+                StepKeyword::When,
+                "按确认单于 \"2020-05-11\" 转换 \"006793\" 份额 684.77 为 \"519700\" 份额 588.67 转出金额 71229 转入金额 71229 手续费 0 到投资账户 \"基金户\"",
+            ),
+            (
+                StepKeyword::When,
+                "修改转换（转入 \"519700\"）为 转出份额 350 转入份额 344 转出金额 40000 转入金额 40000 手续费 200",
+            ),
+            (
+                StepKeyword::Then,
+                "转换转入 \"519772\" 的明细应为 转出 \"006793\" 份额 2791.11 转入份额 2805.14 转出金额 290332 转入金额 290332 手续费 500",
+            ),
+            (
+                StepKeyword::Then,
+                "全库 Σ 已实现盈亏应等于 Σ 卖出金额 − Σ 买入金额",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "transactions_source_steps.rs",
+        16,
+        &[
+            (
+                StepKeyword::Then,
+                "交易列表第 1 条来源应为保单 \"P2026-201\" 险种 \"重疾险\"",
+            ),
+            (
+                StepKeyword::Then,
+                "交易列表第 1 条来源应为已删除保单 \"P2026-202\" 险种 \"医疗险\"",
+            ),
+            (
+                StepKeyword::Then,
+                "交易列表第 1 条来源应为订阅计划 备注 \"视频会员\"",
+            ),
+            (
+                StepKeyword::Then,
+                "交易列表第 1 条来源应为标的 \"600519\" 名称 \"招商银行\"",
+            ),
+            (StepKeyword::Then, "交易列表第 1 条应无来源"),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "scheduled_steps/create.rs",
+        4,
+        &[
+            (
+                StepKeyword::When,
+                "创建订阅计划 金额 800 币种 \"CNY\" 账户 \"现金\" 起始日期 \"2026-02-01\"",
+            ),
+            (
+                StepKeyword::When,
+                "创建订阅计划 金额 3000 币种 \"CNY\" 账户 \"现金\" 起始日期 \"2026-02-01\" 备注 \"视频会员\"",
+            ),
+            (
+                StepKeyword::When,
+                "创建分期计划 总额 12000 期数 6 账户 \"现金\" 起始日期 \"2026-02-01\" 备注 \"笔记本分期\"",
+            ),
+            (
+                StepKeyword::When,
+                "创建定时转账计划 金额 2000 从 \"工资户\" 到 \"储蓄户\" 期数 12 起始日期 \"2026-02-01\" 备注 \"月度储蓄\"",
+            ),
         ],
     );
 }
@@ -682,6 +813,91 @@ fn reports_and_dashboard_steps_are_registered_in_rstest_bdd() {
                 StepKeyword::Given,
                 "分类 \"餐饮\" 本月有一笔支出 5000 到账户 \"现金\"",
             ),
+        ],
+    );
+}
+
+/// 参考数据与检索域三个步骤文件的整文件运行时注册（ticket #1505）：
+/// `merchants_steps.rs` 18 条、`insurers_steps.rs` 15 条、`search_steps.rs` 16 条。
+/// 占位符语义抽样覆盖 string / i64 / usize / f64 与无占位符断言。删掉任一新注册即红。
+///
+/// 检索消费的迁移与存量数据步骤（`migration_steps.rs` 的重跑批量导入、删除备注交易、
+/// 批次结果断言）按需双注册，逐条模式的全等覆盖由静态覆盖守门兜底（ticket #1510）；
+/// 本断言只担本票整文件转换的三个步骤文件的运行时那半。
+#[test]
+fn reference_data_and_search_steps_are_registered_in_rstest_bdd() {
+    assert_steps_registered_in_rstest_bdd(
+        "merchants_steps.rs",
+        18,
+        &[
+            (StepKeyword::Given, "存在商户 \"京东\""),
+            (StepKeyword::When, "创建商户 \"京东\""),
+            (StepKeyword::When, "修改商户 \"京东\" 名称为 \"京东商城\""),
+            (
+                StepKeyword::When,
+                "尝试创建交易 类型 \"buy\" 金额 10000 到账户 \"证券账户\" 日期 \"2026-01-04\" 商户 \"京东\"",
+            ),
+            (
+                StepKeyword::When,
+                "创建转账 金额 3000 从账户 \"现金\" 到账户 \"银行\" 日期 \"2026-01-03\" 商户 \"京东\"",
+            ),
+            (StepKeyword::Then, "商户列表应包含 2 条记录"),
+            (StepKeyword::Then, "商户 \"京东\" 关联交易条数应为 3"),
+            (StepKeyword::Then, "第 1 条交易商户应为 \"京东\""),
+            (StepKeyword::Then, "商户列表响应 JSON 不含字段 \"icon\""),
+            (StepKeyword::Then, "商户表应存在且交易表含 merchant_id 列"),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "insurers_steps.rs",
+        15,
+        &[
+            (StepKeyword::Given, "存在保司 \"同方全球人寿\""),
+            (StepKeyword::When, "创建保司 \"海峡金桥财产保险\""),
+            (StepKeyword::When, "按名创建保司 \"  平安人寿  \""),
+            (
+                StepKeyword::When,
+                "尝试修改保司 \"海峡金桥\" 名称为 \"中国人寿\"",
+            ),
+            (StepKeyword::When, "软删保司 \"同方全球人寿\""),
+            (StepKeyword::Then, "保司表应存在"),
+            (StepKeyword::Then, "在用保司总数应为 30"),
+            (StepKeyword::Then, "保司列表应包含 \"中国人寿\""),
+            (StepKeyword::Then, "保司含已删列表应包含 32 条记录"),
+            (StepKeyword::Then, "按名创建保司 \"平安人寿\" 应复用已有行"),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "search_steps.rs",
+        16,
+        &[
+            (
+                StepKeyword::Given,
+                "存量交易 备注 \"午餐\" 金额 1000 账户 \"现金\" 日期 \"2026-02-05\"",
+            ),
+            (
+                StepKeyword::Given,
+                "存量外币交易 备注 \"美元订阅\" 金额 10000 币种 \"USD\" 本位币 72000 账户 \"美元账户\" 日期 \"2026-02-01\"",
+            ),
+            (StepKeyword::When, "搜索 \"午餐\""),
+            (StepKeyword::When, "搜索 \"午餐\" 第 1 页 每页 20 条"),
+            (StepKeyword::When, "搜索 \"午餐\" 金额区间 100 至 2000 分"),
+            (
+                StepKeyword::When,
+                "搜索 \"午餐\" 日期区间 \"2026-02-01\" 至 \"2026-02-28\"",
+            ),
+            (StepKeyword::When, "搜索金额区间 15.5 至 20.5 元"),
+            (
+                StepKeyword::When,
+                "搜索日期区间 \"2026-02-01\" 至 \"2026-02-28\"",
+            ),
+            (StepKeyword::Then, "搜索命中 1 条"),
+            (StepKeyword::Then, "搜索命中 1 条 总数 5"),
+            (StepKeyword::Then, "搜索结果第 1 条备注应为 \"午餐\""),
+            (StepKeyword::Then, "搜索结果第 1 条金额应为 1500"),
+            (StepKeyword::Then, "搜索结果第 1 条商户应为 \"京东\""),
         ],
     );
 }
