@@ -69,6 +69,12 @@ pub fn query_holdings_summary_by_currency(conn: &Connection) -> Result<Vec<Curre
     query_all(conn, sql, [])
 }
 
+/// 盈亏页读投影（ADR-0107 / ADR-0129）：按年与按账户两张表各带两条腿——已实现盈亏
+/// （卖出匹配）与现金分红（dividend 行），并给出域内相加的合计（词汇表「已实现收益
+/// （RealizedGain）」）。按币种分组、不跨币种折算（ADR-0107 决策 6）；分红腿与已实现腿
+/// 同源同过滤（ADR-0129 决策 3）：账户 / 标的筛选对两腿各用一次、软删账户与软删流水
+/// 排除、隐藏账户照常计入。按币种总数（`total`）与按标的行维持已实现盈亏专义，不扩分红
+/// （ADR-0129 决策 4）。
 pub fn query_realized_pnl_summary(
     conn: &Connection,
     filter: &PnlFilter,
@@ -82,24 +88,36 @@ pub fn query_realized_pnl_summary(
                      JOIN security_transactions st ON st.transaction_id = sls.sell_transaction_id \
                      JOIN instruments i ON i.id = st.instrument_id \
                      JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0";
+    // 分红腿的取数面（ADR-0109：kind 与扩展行双条件同 [`query_cumulative_pnl_summary`]）；
+    // 不 JOIN instruments——标的过滤直接落在扩展行的 instrument_id 上，与已实现腿同列同义。
+    let dividend_from = "FROM transactions t \
+                         JOIN security_transactions st ON st.transaction_id = t.id AND st.action='dividend' \
+                         JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0";
 
     let mut conditions: Vec<String> = vec!["t.is_deleted=0".to_string()];
+    // 分红腿的过滤与已实现腿同源（ADR-0129 决策 3）：只多一条 kind 守卫，其余条件逐字复用。
+    let mut dividend_conditions: Vec<String> = vec![
+        "t.is_deleted=0".to_string(),
+        "t.kind='dividend'".to_string(),
+    ];
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
     if let Some(acct_id) = &filter.account_id {
         params.push(Box::new(acct_id.clone()));
-        conditions.push(format!("t.account_id=?{}", params.len()));
+        let condition = format!("t.account_id=?{}", params.len());
+        conditions.push(condition.clone());
+        dividend_conditions.push(condition);
     }
     if let Some(inst_id) = &filter.instrument_id {
         params.push(Box::new(inst_id.clone()));
-        conditions.push(format!("st.instrument_id=?{}", params.len()));
+        let condition = format!("st.instrument_id=?{}", params.len());
+        conditions.push(condition.clone());
+        dividend_conditions.push(condition);
     }
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!(" WHERE {}", conditions.join(" AND "))
-    };
+    // 同一份位置参数（`?N`）在单条语句内可重复引用，故两腿共用一份取数参数。
+    let where_clause = format!(" WHERE {}", conditions.join(" AND "));
+    let dividend_where_clause = format!(" WHERE {}", dividend_conditions.join(" AND "));
 
     // 汇总按匹配行币种分组（ADR-0107 决策 6）：不做跨币种折算，各币种小计独立成立——
     // 原「各币种裸数字直接 SUM」的混算口径废止（多币种账户下合计是错的）。
@@ -108,13 +126,36 @@ pub fn query_realized_pnl_summary(
         "SELECT sls.currency_code, COALESCE(SUM(sls.realized_pnl_cents), 0) \
          {base_from}{where_clause} GROUP BY sls.currency_code ORDER BY sls.currency_code"
     );
+    // 按年 / 按账户两表 = 两腿各自聚合后 UNION ALL，再按 (行键, 币种) 二次聚合
+    // （ADR-0129 决策 1/3）：两腿先各自 GROUP BY 再合并，故「只有分红、没有卖出」的
+    // 年份 / 账户同样成行——原口径下这类行整行不存在；合计在同一段 SQL 内相加。
     let year_sql = format!(
-        "SELECT substr(t.date, 1, 4) AS year, sls.currency_code, SUM(sls.realized_pnl_cents) \
-         {base_from}{where_clause} GROUP BY year, sls.currency_code ORDER BY year, sls.currency_code"
+        "SELECT year, currency_code, \
+                SUM(realized_pnl_cents), SUM(dividend_cents), \
+                SUM(realized_pnl_cents + dividend_cents) \
+         FROM ( \
+             SELECT substr(t.date, 1, 4) AS year, sls.currency_code AS currency_code, \
+                    SUM(sls.realized_pnl_cents) AS realized_pnl_cents, 0 AS dividend_cents \
+             {base_from}{where_clause} GROUP BY year, sls.currency_code \
+             UNION ALL \
+             SELECT substr(t.date, 1, 4) AS year, t.currency_code AS currency_code, \
+                    0 AS realized_pnl_cents, SUM(t.amount_cents) AS dividend_cents \
+             {dividend_from}{dividend_where_clause} GROUP BY year, t.currency_code \
+         ) GROUP BY year, currency_code ORDER BY year, currency_code"
     );
     let account_sql = format!(
-        "SELECT a.id, a.name, sls.currency_code, COALESCE(SUM(sls.realized_pnl_cents), 0) \
-         {base_from}{where_clause} GROUP BY a.id, sls.currency_code ORDER BY a.name, sls.currency_code"
+        "SELECT account_id, account_name, currency_code, \
+                SUM(realized_pnl_cents), SUM(dividend_cents), \
+                SUM(realized_pnl_cents + dividend_cents) \
+         FROM ( \
+             SELECT a.id AS account_id, a.name AS account_name, sls.currency_code AS currency_code, \
+                    SUM(sls.realized_pnl_cents) AS realized_pnl_cents, 0 AS dividend_cents \
+             {base_from}{where_clause} GROUP BY a.id, a.name, sls.currency_code \
+             UNION ALL \
+             SELECT a.id AS account_id, a.name AS account_name, t.currency_code AS currency_code, \
+                    0 AS realized_pnl_cents, SUM(t.amount_cents) AS dividend_cents \
+             {dividend_from}{dividend_where_clause} GROUP BY a.id, a.name, t.currency_code \
+         ) GROUP BY account_id, account_name, currency_code ORDER BY account_name, currency_code"
     );
     let instrument_sql = format!(
         "SELECT i.id, i.symbol, i.name, sls.currency_code, COALESCE(SUM(sls.realized_pnl_cents), 0) \

@@ -7,10 +7,11 @@ import { t } from "@ledger/i18n";
 import { useAppStore } from "@/stores/app";
 import { useReferenceStore } from "@/stores/reference";
 import { useWindowTier } from "@ledger/window-tier";
-import { pnlSemanticColor } from "@ledger/theme/semantic-colors";
+import { kindSemanticColor, pnlSemanticColor } from "@ledger/theme/semantic-colors";
 import { formatAmount } from "@ledger/money";
 import { useRealizedPnl } from "@/investment/useRealizedPnl";
 import ConceptLabel from "@/investment/ConceptLabel.vue";
+import { subLine } from "@/investment/pnl-cell.css.ts";
 import { renderMwrRateCell, useMoneyWeightedReturn } from "@/investment/useMoneyWeightedReturn";
 import type { MwrBasis } from "@ledger/types";
 
@@ -31,42 +32,60 @@ const {
   onSelectInstrument,
 } = useRealizedPnl();
 
-// 汇总表通用「已实现盈亏」列：金额按行币种格式化展示（ADR-0107 决策 6：汇总行随
-// 匹配行币种，与持仓页签行同款口径）；数值列右对齐 + 等宽数字（词汇表「表格列形态」
-// 约定，两张汇总表同一单点收口）；数字着盈亏涨跌色（红涨绿跌，与持仓页签
-// 「持仓收益」列、合计三卡同一 semantic-colors 接缝），随主题取亮/暗变体。
-function realizedPnlColumn(title: string | (() => VNodeChild)): DataTableColumn {
+// 汇总表通用「已实现收益」列（ADR-0129 决策 1）：主值 = 域内算好的合计
+// （已实现盈亏 + 现金分红），副行拆出两腿。金额按行币种格式化（ADR-0107 决策 6：
+// 汇总行随交易行币种），数值列右对齐 + 等宽数字（词汇表「表格列形态」，两表同一
+// 单点收口）；主值与已实现腿着盈亏涨跌色（红涨绿跌，与持仓页签「持仓收益」列同源），
+// 分红腿着分红 kind 色（与交易列表的分红金额同源）——拆解项与结果一眼可分。
+function realizedGainColumn(title: string | (() => VNodeChild)): DataTableColumn {
   return {
     title,
-    key: "realized_pnl_cents",
+    key: "realized_gain_cents",
     align: "right",
     className: "tabular-nums",
     render(row: any) {
-      return h(
-        "span",
-        { style: { color: pnlSemanticColor(row.realized_pnl_cents, appStore.theme) } },
-        formatAmount(row.realized_pnl_cents, reference.currencyMap.get(row.currency_code)),
-      );
+      const currency = reference.currencyMap.get(row.currency_code);
+      return h("div", [
+        h(
+          "span",
+          { style: { color: pnlSemanticColor(row.realized_gain_cents, appStore.theme) } },
+          formatAmount(row.realized_gain_cents, currency),
+        ),
+        h("div", { class: subLine }, [
+          `${t("investments.pnl.columns.realizedPnl")} `,
+          h(
+            "span",
+            { style: { color: pnlSemanticColor(row.realized_pnl_cents, appStore.theme) } },
+            formatAmount(row.realized_pnl_cents, currency),
+          ),
+          ` · ${t("investments.pnl.columns.dividend")} `,
+          h(
+            "span",
+            { style: { color: kindSemanticColor("dividend", appStore.theme) } },
+            formatAmount(row.dividend_cents, currency),
+          ),
+        ]),
+      ]);
     },
   };
 }
 
-// 已实现盈亏口径（issue #1369）：FIFO 卖出匹配、已扣卖出手续费、不含未实现与分红
-const realizedPnlTitle = () =>
+// 已实现收益口径（ADR-0129 / issue #1533）：已实现盈亏 + 现金分红，不含浮动盈亏
+const realizedGainTitle = () =>
   h(ConceptLabel, {
-    label: t("investments.pnl.columns.realizedPnl"),
-    concept: "realizedPnl",
-    testId: "pnl-realized",
+    label: t("investments.pnl.columns.realizedGain"),
+    concept: "realizedGain",
+    testId: "pnl-realized-gain",
   });
 
 const yearColumns: DataTableColumn[] = [
   { title: t("investments.pnl.columns.year"), key: "year" },
-  realizedPnlColumn(realizedPnlTitle),
+  realizedGainColumn(realizedGainTitle),
 ];
 
 const accountCols: DataTableColumn[] = [
   { title: t("investments.pnl.columns.account"), key: "account_name" },
-  realizedPnlColumn(realizedPnlTitle),
+  realizedGainColumn(realizedGainTitle),
 ];
 
 // 资金加权收益率（issue #1195 / ADR-0115）：账户级与全账级两个粒度与金额口径

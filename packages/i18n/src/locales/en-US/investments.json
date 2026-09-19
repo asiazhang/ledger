@@ -6,7 +6,7 @@
     "trend": "Trend"
   },
   "pnl": {
-    "empty": "No realized P&L data yet",
+    "empty": "No P&L data yet",
     "emptyTable": "No data",
     "filterAccount": "All accounts",
     "filterInstrument": "Search instruments (symbol / name / pinyin)",
@@ -15,6 +15,8 @@
     "columns": {
       "account": "Account",
       "realizedPnl": "Realized P&L",
+      "dividend": "Cash Dividends",
+      "realizedGain": "Realized Gain",
       "year": "Year",
       "currency": "Currency",
       "mwr": "Money-Weighted Return"
@@ -64,6 +66,7 @@
     "mwrTip": "Annualized internal rate of return solved from your actual cash flows and the current market value; holdings with an unknown inception date fall back to “not annualized”, meaning cumulative P&L divided by cumulative investment, and the two are not interchangeable; it does not narrow with the search or instrument filter; missing prices or unsolvable flows show “-”.",
     "mwrCumulativeTip": "Not annualized: cumulative P&L divided by cumulative investment (contains holdings with unknown inception date)",
     "realizedPnlTip": "P&L from sells, matched against FIFO buy cost and net of sell fees; it excludes unrealized holding P&L and cash dividends.",
+    "realizedGainTip": "Realized P&L + cash dividends — the gains and cash income already banked this year (for this account). It excludes the unrealized P&L still in your holdings: a full-year return would need point-in-time market values, and price history only goes back about two years, so earlier years cannot be computed. Dividends are grouped by the year they were paid and by currency, and include the dividend leg of dividend reinvestment (the same-day buy raises cost basis, which this table does not show) and money-market earnings that migration records as cash dividends.",
     "portfolioTrendTip": "Historical market value at each sample point (shares held then × that week's price), converted to the base currency using same-period historical rates; weekly sampling, and holdings without a price or FX rate are skipped at that point; cash accounts are not included.",
     "instrumentTrendTip": "The instrument's own price series (unit NAV for funds) — not your holding value and not a return rate; only instruments with a price source have a curve.",
     "investableAssetsTip": "Cash in investment accounts + holding market value; hidden accounts and liabilities are excluded, holdings without a price are skipped; it is the numerator of financial freedom."

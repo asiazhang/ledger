@@ -243,17 +243,24 @@ export interface MarketPriceInput {
   source?: string | null;
 }
 
+/** 按年分组的已实现收益行（ADR-0129）：两腿（已实现盈亏 / 现金分红）并列，
+ * realized_gain_cents = 两腿之和（词汇表「已实现收益（RealizedGain）」） */
 export interface YearPnl {
   year: string;
   currency_code: string;
   realized_pnl_cents: number;
+  dividend_cents: number;
+  realized_gain_cents: number;
 }
 
+/** 按账户分组的已实现收益行（ADR-0129）：列口径同 YearPnl，按账户聚合 */
 export interface AccountPnl {
   account_id: string;
   account_name: string;
   currency_code: string;
   realized_pnl_cents: number;
+  dividend_cents: number;
+  realized_gain_cents: number;
 }
 
 export interface InstrumentPnl {

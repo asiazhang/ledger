@@ -266,7 +266,7 @@ describe("资金加权收益率前端接线（issue #1195 / ADR-0115）", () => 
     wrapper.unmount();
   });
 
-  it("口径说明接线：已实现盈亏两表列头与收益率卡各带说明触发器（issue #1369）", async () => {
+  it("口径说明接线：已实现收益两表列头与收益率卡各带说明触发器（ADR-0129 / issue #1369）", async () => {
     // 断言对准用户可观察结果：删掉任一挂点的 ConceptLabel 接线即找不到触发器、本用例变红
     wireInvokeSeam({
       defaults: {
@@ -276,13 +276,13 @@ describe("资金加权收益率前端接线（issue #1195 / ADR-0115）", () => 
     });
     const wrapper = mountWithDialog(RealizedPnlPanel);
     await flushPromises();
-    for (const id of ["pnl-realized-info", "pnl-mwr-info", "pnl-mwr-card-info"]) {
+    for (const id of ["pnl-realized-gain-info", "pnl-mwr-info", "pnl-mwr-card-info"]) {
       expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true);
     }
-    // 已实现盈亏口径：不含未实现与分红（与持仓收益、累计收益三者的边界）
-    expect(await hoverTipText(wrapper.find('[data-testid="pnl-realized-info"]'))).toContain(
-      "不含现金分红",
-    );
+    // 已实现收益口径：两腿相加、不含浮动盈亏（与持仓收益、累计收益三者的边界）
+    const tip = await hoverTipText(wrapper.find('[data-testid="pnl-realized-gain-info"]'));
+    expect(tip).toContain("已实现盈亏 + 现金分红");
+    expect(tip).toContain("不含仍在持仓里的浮动盈亏");
     wrapper.unmount();
   });
 

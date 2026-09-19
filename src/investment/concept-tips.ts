@@ -17,6 +17,7 @@ export const CONCEPT_KEYS = [
   "mwr",
   "mwrCumulative",
   "realizedPnl",
+  "realizedGain",
   "portfolioTrend",
   "instrumentTrend",
   "investableAssets",
