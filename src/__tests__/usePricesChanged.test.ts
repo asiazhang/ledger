@@ -4,11 +4,7 @@ import { defineComponent } from "vue";
 import { captureLastListener, mockListen } from "@ledger/test-support/listen-mock";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
-import {
-  PRICES_CHANGED_EVENT,
-  usePricesChanged,
-} from "@/investment/usePricesChanged";
-
+import { PRICES_CHANGED_EVENT, usePricesChanged } from "@/investment/usePricesChanged";
 
 /** 承载 composable 生命周期的宿主组件。 */
 function mountHost(callback: () => void) {
@@ -31,10 +27,7 @@ describe("usePricesChanged 价格失效信号订阅基座（issue #237 / ADR-003
     mountHost(() => {});
 
     expect(mockListen).toHaveBeenCalledTimes(1);
-    expect(mockListen).toHaveBeenCalledWith(
-      PRICES_CHANGED_EVENT,
-      expect.any(Function),
-    );
+    expect(mockListen).toHaveBeenCalledWith(PRICES_CHANGED_EVENT, expect.any(Function));
     // 常量单点定义：事件名即 ADR-0031 的 ledger:prices-changed
     expect(PRICES_CHANGED_EVENT).toBe("ledger:prices-changed");
     expect(readRegistered()).toBeTypeOf("function");

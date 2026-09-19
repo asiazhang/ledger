@@ -1,7 +1,7 @@
-import { onMounted, ref } from 'vue'
-import { api } from '@ledger/api'
-import { useLoadable } from '@ledger/loadable'
-import type { FinancialFreedomOverview } from '@ledger/types'
+import { onMounted, ref } from "vue";
+import { api } from "@ledger/api";
+import { useLoadable } from "@ledger/loadable";
+import type { FinancialFreedomOverview } from "@ledger/types";
 
 /**
  * dashboard「财务自由度」卡数据层（issue #344；口径见 ADR-0048）：消费后端
@@ -18,17 +18,17 @@ import type { FinancialFreedomOverview } from '@ledger/types'
  * 卡内警告并可重试（重试即再次 refresh）。
  */
 export function useFinancialFreedom() {
-  const data = ref<FinancialFreedomOverview | null>(null)
+  const data = ref<FinancialFreedomOverview | null>(null);
 
-  const { loading, error, run } = useLoadable(() => api.financialFreedom())
+  const { loading, error, run } = useLoadable(() => api.financialFreedom());
 
   async function refresh() {
-    data.value = await run()
+    data.value = await run();
   }
 
   onMounted(() => {
-    void refresh()
-  })
+    void refresh();
+  });
 
-  return { data, loading, error, refresh }
+  return { data, loading, error, refresh };
 }

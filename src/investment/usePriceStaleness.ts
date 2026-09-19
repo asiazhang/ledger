@@ -1,7 +1,7 @@
-import { onMounted, ref } from 'vue'
-import { api } from '@ledger/api'
-import { useLoadable } from '@ledger/loadable'
-import { usePricesChanged } from '@/investment/usePricesChanged'
+import { onMounted, ref } from "vue";
+import { api } from "@ledger/api";
+import { useLoadable } from "@ledger/loadable";
+import { usePricesChanged } from "@/investment/usePricesChanged";
 
 /**
  * 价格过期检查（issue #1190）：打开投资页时的**本地水位检查**接缝——调用后端
@@ -23,25 +23,25 @@ import { usePricesChanged } from '@/investment/usePricesChanged'
  */
 export function usePriceStaleness() {
   /** 需要同步的标的数（0 = 不提示；失败降级亦为 0） */
-  const staleCount = ref(0)
+  const staleCount = ref(0);
   /** 后端判定阈值（自然日），供提示文案引用——前端不另抄一份天数常量 */
-  const thresholdDays = ref(0)
+  const thresholdDays = ref(0);
 
-  const { run } = useLoadable(() => api.instrumentPriceStaleness(), { silent: true })
+  const { run } = useLoadable(() => api.instrumentPriceStaleness(), { silent: true });
 
   async function refresh(): Promise<void> {
-    const result = await run()
+    const result = await run();
     // 失败（result 为 null）按「无过期」处置：宁可不提示，也不误报
-    staleCount.value = result?.stale_count ?? 0
-    thresholdDays.value = result?.threshold_days ?? 0
+    staleCount.value = result?.stale_count ?? 0;
+    thresholdDays.value = result?.threshold_days ?? 0;
   }
 
   onMounted(() => {
-    void refresh()
-  })
+    void refresh();
+  });
   usePricesChanged(() => {
-    void refresh()
-  })
+    void refresh();
+  });
 
-  return { staleCount, thresholdDays, refresh }
+  return { staleCount, thresholdDays, refresh };
 }

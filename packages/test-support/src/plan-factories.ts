@@ -2,7 +2,7 @@ import type {
   ScheduledTransaction,
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
-} from '@ledger/types'
+} from "@ledger/types";
 
 /**
  * 计划实体工厂三形态 + 期次工厂（issue #822 收敛；#1322 起住址上收共享测试支持包）：
@@ -23,24 +23,24 @@ export function makeSubscriptionPlan(
   merchant_id: string | null = null,
 ): ScheduledTransactionWithExt {
   const core: ScheduledTransaction = {
-    kind: 'subscription',
-    status: 'active',
-    account_id: 'acc-1',
-    category_id: 'cat-1',
+    kind: "subscription",
+    status: "active",
+    account_id: "acc-1",
+    category_id: "cat-1",
     amount_cents: 1500,
-    currency_code: 'CNY',
-    recurrence_type: 'monthly',
+    currency_code: "CNY",
+    recurrence_type: "monthly",
     recurrence_interval: 1,
     recurrence_day: null,
-    start_date: '2026-01-01',
-    note: '视频会员',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    start_date: "2026-01-01",
+    note: "视频会员",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     version: 1,
-    device_id: 'test',
+    device_id: "test",
     is_deleted: false,
     ...partial,
-  }
+  };
   return {
     core,
     merchant_id,
@@ -48,7 +48,7 @@ export function makeSubscriptionPlan(
     total_amount_cents: null,
     total_occurrences: null,
     to_account_id: null,
-  }
+  };
 }
 
 /** 分期计划工厂：core.kind 固定 installment；总额与期数必传，每期金额厂内派生保证不变量。 */
@@ -59,24 +59,24 @@ export function makeInstallmentPlan(
   merchant_id: string | null = null,
 ): ScheduledTransactionWithExt {
   const core: ScheduledTransaction = {
-    kind: 'installment',
-    status: 'active',
-    account_id: 'acc-1',
-    category_id: 'cat-1',
+    kind: "installment",
+    status: "active",
+    account_id: "acc-1",
+    category_id: "cat-1",
     amount_cents: Math.floor(total_amount_cents / total_occurrences),
-    currency_code: 'CNY',
-    recurrence_type: 'monthly',
+    currency_code: "CNY",
+    recurrence_type: "monthly",
     recurrence_interval: 1,
     recurrence_day: null,
-    start_date: '2026-01-01',
-    note: '手机分期',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    start_date: "2026-01-01",
+    note: "手机分期",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     version: 1,
-    device_id: 'test',
+    device_id: "test",
     is_deleted: false,
     ...partial,
-  }
+  };
   return {
     core,
     merchant_id,
@@ -84,7 +84,7 @@ export function makeInstallmentPlan(
     total_amount_cents,
     total_occurrences,
     to_account_id: null,
-  }
+  };
 }
 
 /** 定时转账计划工厂：core.kind 固定 scheduled_transfer；对方账户必传，期数可选（一次性为 null）。 */
@@ -94,24 +94,24 @@ export function makeTransferPlan(
   total_occurrences: number | null = null,
 ): ScheduledTransactionWithExt {
   const core: ScheduledTransaction = {
-    kind: 'scheduled_transfer',
-    status: 'active',
-    account_id: 'acc-cny1',
+    kind: "scheduled_transfer",
+    status: "active",
+    account_id: "acc-cny1",
     category_id: null,
     amount_cents: 50000,
-    currency_code: 'CNY',
-    recurrence_type: 'monthly',
+    currency_code: "CNY",
+    recurrence_type: "monthly",
     recurrence_interval: 1,
     recurrence_day: null,
-    start_date: '2026-01-01',
+    start_date: "2026-01-01",
     note: null,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     version: 1,
-    device_id: 'test',
+    device_id: "test",
     is_deleted: false,
     ...partial,
-  }
+  };
   return {
     core,
     merchant_id: null,
@@ -119,7 +119,7 @@ export function makeTransferPlan(
     total_amount_cents: null,
     total_occurrences,
     to_account_id,
-  }
+  };
 }
 
 /** 期次工厂：默认挂在 plan-1（与各厂默认用例 id 惯例衔接）、pending、1500 分。 */
@@ -127,16 +127,16 @@ export function makeOccurrence(
   partial: Partial<ScheduledTransactionOccurrence> & { id: string },
 ): ScheduledTransactionOccurrence {
   return {
-    scheduled_transaction_id: 'plan-1',
-    scheduled_date: '2026-03-01',
-    status: 'pending',
+    scheduled_transaction_id: "plan-1",
+    scheduled_date: "2026-03-01",
+    status: "pending",
     transaction_id: null,
     amount_cents: 1500,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     version: 1,
-    device_id: 'test',
+    device_id: "test",
     is_deleted: false,
     ...partial,
-  }
+  };
 }

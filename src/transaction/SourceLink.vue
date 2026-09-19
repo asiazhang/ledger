@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, type Component } from 'vue'
-import { useRouter } from 'vue-router'
-import { NIcon, NTag } from 'naive-ui'
+import { computed, type Component } from "vue";
+import { useRouter } from "vue-router";
+import { NIcon, NTag } from "naive-ui";
 import {
   CalendarClearOutline,
   CubeOutline,
@@ -9,15 +9,15 @@ import {
   ShieldCheckmarkOutline,
   SwapHorizontalOutline,
   TrendingUpOutline,
-} from '@vicons/ionicons5'
-import { resolveSourceJumpTarget, type TransactionSourceKind } from '@/components/source-jump'
-import { useAppStore } from '@/stores/app'
-import { useSidebarOrderStore } from '@/stores/sidebar-order'
-import { useFeatureToggleStore } from '@/settings/feature-toggles'
-import { useInputMode } from '@/composables/useInputMode'
-import { accentColor } from '@ledger/theme/overrides'
-import { t } from '@ledger/i18n'
-import type { TransactionSource } from '@ledger/types'
+} from "@vicons/ionicons5";
+import { resolveSourceJumpTarget, type TransactionSourceKind } from "@/components/source-jump";
+import { useAppStore } from "@/stores/app";
+import { useSidebarOrderStore } from "@/stores/sidebar-order";
+import { useFeatureToggleStore } from "@/settings/feature-toggles";
+import { useInputMode } from "@/composables/useInputMode";
+import { accentColor } from "@ledger/theme/overrides";
+import { t } from "@ledger/i18n";
+import type { TransactionSource } from "@ledger/types";
 
 /**
  * 来源列单元格（spec #704 / issue #706，词汇表「来源列」「实体定位参数（focus 参数）」）：
@@ -44,44 +44,44 @@ const KIND_ICONS = {
   policy: ShieldCheckmarkOutline,
   item: CubeOutline,
   instrument: TrendingUpOutline,
-} satisfies Record<TransactionSourceKind, Component>
+} satisfies Record<TransactionSourceKind, Component>;
 
 const props = defineProps<{
   /** 行来源对象（列表/搜索命令填充，无来源行不渲染本组件） */
-  source: TransactionSource
-}>()
+  source: TransactionSource;
+}>();
 
-const router = useRouter()
-const app = useAppStore()
-const sidebarOrder = useSidebarOrderStore()
-const featureToggles = useFeatureToggleStore()
+const router = useRouter();
+const app = useAppStore();
+const sidebarOrder = useSidebarOrderStore();
+const featureToggles = useFeatureToggleStore();
 
 // 输入轴（ADR-0088 决策 6 / issue #843）：来源类型全称悬停收进 title tooltip；
 // 触控轴下 title 不可达，改常驻小字展示（悬停一击可达原则「空间够则常驻」——
 // 列宽内一行可容，无需点按）；指针轴零变化。
-const inputMode = useInputMode()
-const isTouch = computed(() => inputMode.value === 'touch')
+const inputMode = useInputMode();
+const isTouch = computed(() => inputMode.value === "touch");
 
 /** 状态标注文案（status 为空则无标注）。 */
 const statusLabel = computed(() =>
   props.source.status ? t(`transactions.source.status.${props.source.status}`) : null,
-)
+);
 
 /** 展示名：计划来源无备注时后端回空串，按来源类型名兜底（图标旁仍有可读名称，
  *  文案随界面语言；spec #704 / issue #707，计划名口径：备注即名）。 */
 const displayName = computed(
   () => props.source.display_name || t(`transactions.source.kind.${props.source.kind}`),
-)
+);
 
 /** 软删保单不可点击（不提供落空的跳转）；其余来源可点击。 */
-const clickable = computed(() => props.source.status !== 'deleted')
+const clickable = computed(() => props.source.status !== "deleted");
 
 // 强调色与 MerchantLink/AccountLink 同源：@ledger/theme accentColor 选择器按主题解析
 // （值源：overrides common 单一来源）。
-const accent = computed(() => accentColor(app.theme))
+const accent = computed(() => accentColor(app.theme));
 
 function go() {
-  if (!clickable.value) return
+  if (!clickable.value) return;
   // 收纳与关闭两轴谓词注入（深模块约定）：只问本次跳转的目标视图；关闭态跳过
   // 收纳分流（ADR-0116 决策 4：关闭的功能不进组「更多」页签，改落自有路由）。
   router.push(
@@ -91,7 +91,7 @@ function go() {
       (v) => sidebarOrder.isViewContained(v),
       (v) => featureToggles.isFeatureClosed(v),
     ),
-  )
+  );
 }
 </script>
 
@@ -108,10 +108,9 @@ function go() {
       {{ displayName }}
     </button>
     <span v-else class="source-name">{{ displayName }}</span>
-    <span
-      v-if="isTouch && source.display_name"
-      class="source-type-label"
-    >{{ t(`transactions.source.kind.${source.kind}`) }}</span>
+    <span v-if="isTouch && source.display_name" class="source-type-label">{{
+      t(`transactions.source.kind.${source.kind}`)
+    }}</span>
     <NTag v-if="statusLabel" size="small" :bordered="false">{{ statusLabel }}</NTag>
   </span>
 </template>

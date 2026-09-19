@@ -1,5 +1,5 @@
-import { h, type Component } from 'vue'
-import { NIcon } from 'naive-ui'
+import { h, type Component } from "vue";
+import { NIcon } from "naive-ui";
 
 /**
  * 行内操作菜单公共件：交易行菜单（transaction-row-menu）与账户行菜单
@@ -13,7 +13,7 @@ import { NIcon } from 'naive-ui'
  * 行菜单靠全局菜单样式定尺寸，不传 size。命名加 Row 前缀以区分。
  */
 export function renderRowMenuIcon(icon: Component): () => ReturnType<typeof h> {
-  return () => h(NIcon, null, { default: () => h(icon) })
+  return () => h(NIcon, null, { default: () => h(icon) });
 }
 
 /**
@@ -30,10 +30,10 @@ export function errorOptionProps(errorColor?: string): Record<string, unknown> {
         props: {
           style: {
             color: errorColor,
-            '--n-prefix-color': errorColor,
-            '--n-option-text-color-hover': errorColor,
-            '--n-option-text-color-active': errorColor,
+            "--n-prefix-color": errorColor,
+            "--n-option-text-color-hover": errorColor,
+            "--n-option-text-color-active": errorColor,
           },
         },
-      }
+      };
 }

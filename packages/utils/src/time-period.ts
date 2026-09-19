@@ -16,83 +16,83 @@
  * 唯一例外是标签文案：经 i18n 单例按当前界面语言现取（ADR-0049 模块级 t()
  * 模式，响应式上下文中调用随语言切换即时重渲染），非入参可注入。
  */
-import { formatLocalDateISO } from './date'
-import { t } from '@ledger/i18n'
+import { formatLocalDateISO } from "./date";
+import { t } from "@ledger/i18n";
 
 /** 带日期区间的预设闭集（「全部」无区间，单独作默认态哨兵）。 */
-export type DatedTimePeriodPreset = 'month' | 'quarter' | 'year' | 'lastYear'
+export type DatedTimePeriodPreset = "month" | "quarter" | "year" | "lastYear";
 
 /** 时间维度预设闭集（芯片渲染顺序即数组顺序）：
  * 全部（无日期过滤 = 默认态）| 当月 | 当季 | 当年 | 去年。 */
-export type TimePeriodPreset = 'all' | DatedTimePeriodPreset
+export type TimePeriodPreset = "all" | DatedTimePeriodPreset;
 
 /** 带日期区间的预设全序（matchPreset 的匹配域）。 */
 export const DATED_TIME_PERIOD_PRESETS: readonly DatedTimePeriodPreset[] = [
-  'month',
-  'quarter',
-  'year',
-  'lastYear',
-]
+  "month",
+  "quarter",
+  "year",
+  "lastYear",
+];
 
 /** 预设全序（视图按此渲染芯片）。 */
 export const TIME_PERIOD_PRESETS: readonly TimePeriodPreset[] = [
-  'all',
+  "all",
   ...DATED_TIME_PERIOD_PRESETS,
-]
+];
 
 /** 含边界日期区间（YYYY-MM-DD，双端包含）。 */
 export interface DateRange {
-  from: string
-  to: string
+  from: string;
+  to: string;
 }
 
 /** 可空双端日期区间（共享受控组件的受控契约形状，issue #410）：
  * 双端皆 null = 无日期过滤「全部」默认态；单端 null 是 URL 下钻可达的过渡态
  *（无芯片点亮、无可步进游标）。 */
 export interface NullableDateRange {
-  from: string | null
-  to: string | null
+  from: string | null;
+  to: string | null;
 }
 
 /** YYYY-MM-DD 格式化复用本地日历日语义单点。 */
-const iso = formatLocalDateISO
+const iso = formatLocalDateISO;
 
 /** 本地「第 m0 月（0 起）」的月末日后：经「次月 0 日」滚动得出（自动处理闰年）。 */
 function lastDayOf(y: number, m0: number): number {
-  return new Date(y, m0 + 1, 0).getDate()
+  return new Date(y, m0 + 1, 0).getDate();
 }
 
 /** 本地自然月区间：m0 为 0 起月份。 */
 function monthRange(y: number, m0: number): DateRange {
-  return { from: iso(y, m0, 1), to: iso(y, m0, lastDayOf(y, m0)) }
+  return { from: iso(y, m0, 1), to: iso(y, m0, lastDayOf(y, m0)) };
 }
 
 /** 本地自然季度区间：q 为 0 起季度（1–3、4–6、7–9、10–12）。 */
 function quarterRange(y: number, q: number): DateRange {
-  const startMonth = q * 3
-  return { from: iso(y, startMonth, 1), to: iso(y, startMonth + 2, lastDayOf(y, startMonth + 2)) }
+  const startMonth = q * 3;
+  return { from: iso(y, startMonth, 1), to: iso(y, startMonth + 2, lastDayOf(y, startMonth + 2)) };
 }
 
 /** 本地自然年区间（issue #380 导出）：自然年边界派生的单点，报表跳转载荷的
  * 「所选年份首尾日期」同源复用，不在视图手搓第二份年界数学。 */
 export function yearRange(y: number): DateRange {
-  return { from: iso(y, 0, 1), to: iso(y, 11, 31) }
+  return { from: iso(y, 0, 1), to: iso(y, 11, 31) };
 }
 
 /** 预设 → 相对 today 的含边界日期区间（本地自然周期；「去年」= 当前年减一的完整自然年）。
  * 时间戳与 Date 双输入。 */
 export function presetRange(preset: DatedTimePeriodPreset, today: number | Date): DateRange {
-  const d = typeof today === 'number' ? new Date(today) : today
-  const y = d.getFullYear()
+  const d = typeof today === "number" ? new Date(today) : today;
+  const y = d.getFullYear();
   switch (preset) {
-    case 'month':
-      return monthRange(y, d.getMonth())
-    case 'quarter':
-      return quarterRange(y, Math.floor(d.getMonth() / 3))
-    case 'year':
-      return yearRange(y)
-    case 'lastYear':
-      return yearRange(y - 1)
+    case "month":
+      return monthRange(y, d.getMonth());
+    case "quarter":
+      return quarterRange(y, Math.floor(d.getMonth() / 3));
+    case "year":
+      return yearRange(y);
+    case "lastYear":
+      return yearRange(y - 1);
   }
 }
 
@@ -101,32 +101,32 @@ export function presetRange(preset: DatedTimePeriodPreset, today: number | Date)
 // ---------------------------------------------------------------------------
 
 /** 期间单位闭集（与带日期区间的预设单位一一对应）。 */
-export type PeriodUnit = 'month' | 'quarter' | 'year'
+export type PeriodUnit = "month" | "quarter" | "year";
 
 /** 自然周期（期间步进的游标中间态，不落过滤模块状态）：
  * month → index 为 0 起月份；quarter → index 为 0 起季度；year → index 恒 0。 */
 export interface NaturalPeriod {
-  unit: PeriodUnit
-  year: number
-  index: number
+  unit: PeriodUnit;
+  year: number;
+  index: number;
 }
 
 /** 数据期间边界（issue #390 / #388）：某粒度下的闭区间 [最早期间, 最晚期间]。 */
 export interface PeriodBoundary {
-  earliest: NaturalPeriod
-  latest: NaturalPeriod
+  earliest: NaturalPeriod;
+  latest: NaturalPeriod;
 }
 
 /** 期间在时间轴上的单调整数序（用于跨年/年内大小比较与边界判定）。 */
 function periodValue(p: NaturalPeriod): number {
-  const perYear = p.unit === 'month' ? 12 : p.unit === 'quarter' ? 4 : 1
-  return p.year * perYear + p.index
+  const perYear = p.unit === "month" ? 12 : p.unit === "quarter" ? 4 : 1;
+  return p.year * perYear + p.index;
 }
 
 /** 期间大小比较：返回负数表示 a 早于 b，0 表示相同期间，正数表示 a 晚于 b。
  * 前提：a 与 b 为相同单位。 */
 export function comparePeriods(a: NaturalPeriod, b: NaturalPeriod): number {
-  return periodValue(a) - periodValue(b)
+  return periodValue(a) - periodValue(b);
 }
 
 /** 数据期间边界派生单点（issue #390 / #388）：
@@ -138,34 +138,38 @@ export function derivePeriodBoundary(
   dateRange: { min_date: string | null; max_date: string | null } | null | undefined,
   today: number | Date,
 ): PeriodBoundary {
-  const d = typeof today === 'number' ? new Date(today) : today
-  const currentYear = d.getFullYear()
-  const currentMonth = d.getMonth()
-  const currentIndex = unit === 'month' ? currentMonth : unit === 'quarter' ? Math.floor(currentMonth / 3) : 0
-  const current: NaturalPeriod = { unit, year: currentYear, index: currentIndex }
+  const d = typeof today === "number" ? new Date(today) : today;
+  const currentYear = d.getFullYear();
+  const currentMonth = d.getMonth();
+  const currentIndex =
+    unit === "month" ? currentMonth : unit === "quarter" ? Math.floor(currentMonth / 3) : 0;
+  const current: NaturalPeriod = { unit, year: currentYear, index: currentIndex };
 
   if (!dateRange || !dateRange.min_date || !dateRange.max_date) {
-    return { earliest: current, latest: current }
+    return { earliest: current, latest: current };
   }
 
-  const minParsed = parseISODate(dateRange.min_date)
-  const maxParsed = parseISODate(dateRange.max_date)
+  const minParsed = parseISODate(dateRange.min_date);
+  const maxParsed = parseISODate(dateRange.max_date);
   if (!minParsed || !maxParsed) {
-    return { earliest: current, latest: current }
+    return { earliest: current, latest: current };
   }
 
-  const minIndex = unit === 'month' ? minParsed.m0 : unit === 'quarter' ? Math.floor(minParsed.m0 / 3) : 0
-  const earliestFromData: NaturalPeriod = { unit, year: minParsed.y, index: minIndex }
+  const minIndex =
+    unit === "month" ? minParsed.m0 : unit === "quarter" ? Math.floor(minParsed.m0 / 3) : 0;
+  const earliestFromData: NaturalPeriod = { unit, year: minParsed.y, index: minIndex };
   // 当前期间必须始终可选；当所有交易都在未来时，从当前期间而不是未来的
   // 最早交易期间开始，保持边界为连续且包含当前期间的闭区间。
-  const earliest = periodValue(earliestFromData) < periodValue(current) ? earliestFromData : current
+  const earliest =
+    periodValue(earliestFromData) < periodValue(current) ? earliestFromData : current;
 
-  const maxIndex = unit === 'month' ? maxParsed.m0 : unit === 'quarter' ? Math.floor(maxParsed.m0 / 3) : 0
-  const maxTxPeriod: NaturalPeriod = { unit, year: maxParsed.y, index: maxIndex }
+  const maxIndex =
+    unit === "month" ? maxParsed.m0 : unit === "quarter" ? Math.floor(maxParsed.m0 / 3) : 0;
+  const maxTxPeriod: NaturalPeriod = { unit, year: maxParsed.y, index: maxIndex };
 
-  const latest = periodValue(maxTxPeriod) > periodValue(current) ? maxTxPeriod : current
+  const latest = periodValue(maxTxPeriod) > periodValue(current) ? maxTxPeriod : current;
 
-  return { earliest, latest }
+  return { earliest, latest };
 }
 
 /** 一并派生月/季/年三档数据期间边界（issue #390）。 */
@@ -174,30 +178,30 @@ export function deriveAllPeriodBoundaries(
   today: number | Date,
 ): Record<PeriodUnit, PeriodBoundary> {
   return {
-    month: derivePeriodBoundary('month', dateRange, today),
-    quarter: derivePeriodBoundary('quarter', dateRange, today),
-    year: derivePeriodBoundary('year', dateRange, today),
-  }
+    month: derivePeriodBoundary("month", dateRange, today),
+    quarter: derivePeriodBoundary("quarter", dateRange, today),
+    year: derivePeriodBoundary("year", dateRange, today),
+  };
 }
 
 /** 判定期间是否落在数据期间边界内（双端包含；异单位防御）。 */
 export function isPeriodWithinBoundary(p: NaturalPeriod, boundary: PeriodBoundary): boolean {
   if (p.unit !== boundary.earliest.unit || p.unit !== boundary.latest.unit) {
-    return false
+    return false;
   }
-  const val = periodValue(p)
-  return val >= periodValue(boundary.earliest) && val <= periodValue(boundary.latest)
+  const val = periodValue(p);
+  return val >= periodValue(boundary.earliest) && val <= periodValue(boundary.latest);
 }
 
 /** 将期间钳制在数据期间边界内：低于下界取 earliest，高于上界取 latest，界内原样返回。 */
 export function clampPeriod(p: NaturalPeriod, boundary: PeriodBoundary): NaturalPeriod {
   if (periodValue(p) < periodValue(boundary.earliest)) {
-    return boundary.earliest
+    return boundary.earliest;
   }
   if (periodValue(p) > periodValue(boundary.latest)) {
-    return boundary.latest
+    return boundary.latest;
   }
-  return p
+  return p;
 }
 
 /** 钳制步进辅助（issue #390 / #391）：判定期间 ±delta 步进后是否仍在数据边界内。
@@ -207,37 +211,37 @@ export function canStepPeriod(
   delta: number,
   boundary?: PeriodBoundary | null,
 ): boolean {
-  if (!boundary) return true
-  const next = stepPeriod(p, delta)
-  return isPeriodWithinBoundary(next, boundary)
+  if (!boundary) return true;
+  const next = stepPeriod(p, delta);
+  return isPeriodWithinBoundary(next, boundary);
 }
 
 /** YYYY-MM-DD 解析：非法格式、越界月份与不存在日期（如 2 月 30 日）返回 null。 */
 function parseISODate(s: string): { y: number; m0: number; day: number } | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
-  if (!m) return null
-  const y = Number(m[1])
-  const m0 = Number(m[2]) - 1
-  const day = Number(m[3])
-  if (m0 < 0 || m0 > 11) return null
-  if (day < 1 || day > lastDayOf(y, m0)) return null
-  return { y, m0, day }
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const m0 = Number(m[2]) - 1;
+  const day = Number(m[3]);
+  if (m0 < 0 || m0 > 11) return null;
+  if (day < 1 || day > lastDayOf(y, m0)) return null;
+  return { y, m0, day };
 }
 
 /** 含边界日期区间 → 唯一（单位，期间）：区间恰为某自然月/季/年时返回对应期间。
  * 双端任一为空（「全部」= 默认态）、单端过滤、任意区间与非法日期一律 null
  * （无可步进游标）。自然月/季/年跨度互不相同，反推唯一（单测全枚举覆盖）。 */
 export function rangeToPeriod(from: string | null, to: string | null): NaturalPeriod | null {
-  if (from === null || to === null) return null
-  const f = parseISODate(from)
-  const end = parseISODate(to)
-  if (!f || !end) return null
+  if (from === null || to === null) return null;
+  const f = parseISODate(from);
+  const end = parseISODate(to);
+  if (!f || !end) return null;
   // 年：1 月 1 日 → 同年 12 月 31 日
   if (f.m0 === 0 && f.day === 1 && end.y === f.y && end.m0 === 11 && end.day === 31) {
-    return { unit: 'year', year: f.y, index: 0 }
+    return { unit: "year", year: f.y, index: 0 };
   }
   // 季：同年同季度，且起于季度首月 1 日、止于季度末月最后一日（跨季度区间不命中）
-  const fq = Math.floor(f.m0 / 3)
+  const fq = Math.floor(f.m0 / 3);
   if (
     end.y === f.y &&
     f.m0 === fq * 3 &&
@@ -245,40 +249,40 @@ export function rangeToPeriod(from: string | null, to: string | null): NaturalPe
     f.day === 1 &&
     end.day === lastDayOf(end.y, end.m0)
   ) {
-    return { unit: 'quarter', year: f.y, index: fq }
+    return { unit: "quarter", year: f.y, index: fq };
   }
   // 月：同年同月，起于 1 日、止于月末（自动兼容闰年 2 月）
   if (f.y === end.y && f.m0 === end.m0 && f.day === 1 && end.day === lastDayOf(end.y, end.m0)) {
-    return { unit: 'month', year: f.y, index: f.m0 }
+    return { unit: "month", year: f.y, index: f.m0 };
   }
-  return null
+  return null;
 }
 
 /** 时间戳按本地日历反推自然期间（期间面板与步进器共用）。 */
 export function periodFromTimestamp(unit: PeriodUnit, timestamp: number): NaturalPeriod {
-  const d = new Date(timestamp)
+  const d = new Date(timestamp);
   return {
     unit,
     year: d.getFullYear(),
-    index: unit === 'month' ? d.getMonth() : unit === 'quarter' ? Math.floor(d.getMonth() / 3) : 0,
-  }
+    index: unit === "month" ? d.getMonth() : unit === "quarter" ? Math.floor(d.getMonth() / 3) : 0,
+  };
 }
 
 /** 自然期间起点的本地时间戳（供期间面板的受控值使用）。 */
 export function periodStartTimestamp(p: NaturalPeriod): number {
-  const month = p.unit === 'month' ? p.index : p.unit === 'quarter' ? p.index * 3 : 0
-  return new Date(p.year, month, 1, 12).getTime()
+  const month = p.unit === "month" ? p.index : p.unit === "quarter" ? p.index * 3 : 0;
+  return new Date(p.year, month, 1, 12).getTime();
 }
 
 /** 期间 → 含边界日期区间（与 presetRange 共用同一自然周期换算单点，写回快照用）。 */
 export function periodRange(p: NaturalPeriod): DateRange {
   switch (p.unit) {
-    case 'month':
-      return monthRange(p.year, p.index)
-    case 'quarter':
-      return quarterRange(p.year, p.index)
-    case 'year':
-      return yearRange(p.year)
+    case "month":
+      return monthRange(p.year, p.index);
+    case "quarter":
+      return quarterRange(p.year, p.index);
+    case "year":
+      return yearRange(p.year);
   }
 }
 
@@ -286,13 +290,13 @@ export function periodRange(p: NaturalPeriod): DateRange {
  * 四季度 → 次年一季度），年直接 ±1；本函数不做边界判定，钳制由 canStepPeriod
  * 在调用方承担（issue #391 修订 #383「不钳制未来」）。 */
 export function stepPeriod(p: NaturalPeriod, delta: number): NaturalPeriod {
-  if (p.unit === 'year') {
-    return { unit: 'year', year: p.year + delta, index: 0 }
+  if (p.unit === "year") {
+    return { unit: "year", year: p.year + delta, index: 0 };
   }
-  const perYear = p.unit === 'month' ? 12 : 4
-  const total = p.year * perYear + p.index + delta
-  const year = Math.floor(total / perYear)
-  return { unit: p.unit, year, index: total - year * perYear }
+  const perYear = p.unit === "month" ? 12 : 4;
+  const total = p.year * perYear + p.index + delta;
+  const year = Math.floor(total / perYear);
+  return { unit: p.unit, year, index: total - year * perYear };
 }
 
 /** 期间标签本地化格式化：zh-CN「2026年2月」「2026年一季度」「2025年」；
@@ -300,14 +304,14 @@ export function stepPeriod(p: NaturalPeriod, delta: number): NaturalPeriod {
  * quickTimeRange（ADR-0049，无硬编码文案），经 t() 按当前界面语言现取
  * （响应式上下文中调用随语言切换即时重渲染）。 */
 export function formatPeriodLabel(p: NaturalPeriod): string {
-  const year = String(p.year)
-  if (p.unit === 'year') {
-    return t('quickTimeRange.periodLabel.year', { year })
+  const year = String(p.year);
+  if (p.unit === "year") {
+    return t("quickTimeRange.periodLabel.year", { year });
   }
-  const namesKey = p.unit === 'month' ? 'monthNames' : 'quarterNames'
-  const name = t(`quickTimeRange.periodLabel.${namesKey}.${p.index + 1}`)
-  const key = p.unit === 'month' ? 'month' : 'quarter'
-  return t(`quickTimeRange.periodLabel.${key}`, { year, name })
+  const namesKey = p.unit === "month" ? "monthNames" : "quarterNames";
+  const name = t(`quickTimeRange.periodLabel.${namesKey}.${p.index + 1}`);
+  const key = p.unit === "month" ? "month" : "quarter";
+  return t(`quickTimeRange.periodLabel.${key}`, { year, name });
 }
 
 /** 高亮派生：当前日期区间恰等于某预设定义（相对 today 的自然周期）时返回该预设；
@@ -318,12 +322,12 @@ export function matchPreset(
   to: string | null,
   today: number | Date,
 ): TimePeriodPreset | null {
-  if (from === null && to === null) return 'all'
-  if (from === null || to === null) return null
-  const d = typeof today === 'number' ? new Date(today) : today
+  if (from === null && to === null) return "all";
+  if (from === null || to === null) return null;
+  const d = typeof today === "number" ? new Date(today) : today;
   const hit = DATED_TIME_PERIOD_PRESETS.find((p) => {
-    const r = presetRange(p, d)
-    return r.from === from && r.to === to
-  })
-  return hit ?? null
+    const r = presetRange(p, d);
+    return r.from === from && r.to === to;
+  });
+  return hit ?? null;
 }

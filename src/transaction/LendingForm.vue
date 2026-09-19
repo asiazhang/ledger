@@ -1,19 +1,12 @@
 <script setup lang="ts">
-import {
-  NForm,
-  NFormItem,
-  NInput,
-  NButton,
-  NButtonGroup,
-  NSpace,
-} from 'naive-ui'
-import { t } from '@ledger/i18n'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import { useLendingForm } from '@/transaction/useLendingForm'
-import { LENDING_FORM_DIRECTIONS, type LendingFormDirection } from '@/transaction/lending'
-import type { Transaction } from '@ledger/types'
+import { NForm, NFormItem, NInput, NButton, NButtonGroup, NSpace } from "naive-ui";
+import { t } from "@ledger/i18n";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import { useLendingForm } from "@/transaction/useLendingForm";
+import { LENDING_FORM_DIRECTIONS, type LendingFormDirection } from "@/transaction/lending";
+import type { Transaction } from "@ledger/types";
 
 // 借贷录入 = 转账表单的借贷变体（issue #374 / ADR-0053）：不新增交易 kind，提交产物与
 // 转账同构（useLendingForm 复用 useTransferForm 的装配与提交路由）。创建模式由入口预置
@@ -21,19 +14,19 @@ import type { Transaction } from '@ledger/types'
 // 为既有交易的 transfer，方向由两端账户类型派生回填（分派方 TransactionForm 已识别）。
 const props = defineProps<{
   /** 创建模式预置方向；编辑模式忽略（按既有交易派生，派生失败时兜底） */
-  initialDirection?: LendingFormDirection
+  initialDirection?: LendingFormDirection;
   /** 编辑模式：借贷形态的既有转账交易 */
-  editing?: Transaction | null
-}>()
+  editing?: Transaction | null;
+}>();
 
-const emit = defineEmits<{ created: []; saved: [] }>()
+const emit = defineEmits<{ created: []; saved: [] }>();
 
 const ctx = useLendingForm({
   initialDirection: props.initialDirection,
-  onCreated: () => emit('created'),
-  onUpdated: () => emit('saved'),
+  onCreated: () => emit("created"),
+  onUpdated: () => emit("saved"),
   editing: () => props.editing ?? null,
-})
+});
 </script>
 
 <template>
@@ -116,8 +109,8 @@ const ctx = useLendingForm({
       <NButton type="primary" :disabled="ctx.hasFieldError.value" @click="ctx.submit">
         {{
           editing
-            ? t('transactions.form.saveChanges')
-            : t('transactions.lending.submit', {
+            ? t("transactions.form.saveChanges")
+            : t("transactions.lending.submit", {
                 dir: t(`transactions.lending.${ctx.direction.value}`),
               })
         }}

@@ -1,36 +1,36 @@
-import { computed, onMounted, ref, watch } from 'vue'
-import { api } from '@ledger/api'
-import { usePricesChanged } from '@/investment/usePricesChanged'
+import { computed, onMounted, ref, watch } from "vue";
+import { api } from "@ledger/api";
+import { usePricesChanged } from "@/investment/usePricesChanged";
 import {
   useInvestmentsSessionStore,
   type TrendRangePreset,
   type TrendViewMode,
-} from '@/investment/investments-session'
+} from "@/investment/investments-session";
 import type {
   Instrument,
   InstrumentPriceTrend,
   PortfolioValueTrend,
   TrendRange,
-} from '@ledger/types'
+} from "@ledger/types";
 
 /** 走势预设区间与视图模式闭集随状态迁入投资页会话 store（issue #1192）；
  * 此处再导出维持既有导入路径（消费方经本模块取用），不制造第二口径。 */
-export type { TrendRangePreset, TrendViewMode } from '@/investment/investments-session'
+export type { TrendRangePreset, TrendViewMode } from "@/investment/investments-session";
 
 export const TREND_RANGE_PRESETS: { value: TrendRangePreset; labelKey: string }[] = [
-  { value: '1m', labelKey: 'investments.trend.range1m' },
-  { value: '3m', labelKey: 'investments.trend.range3m' },
-  { value: '1y', labelKey: 'investments.trend.range1y' },
-  { value: 'all', labelKey: 'investments.trend.rangeAll' },
-]
+  { value: "1m", labelKey: "investments.trend.range1m" },
+  { value: "3m", labelKey: "investments.trend.range3m" },
+  { value: "1y", labelKey: "investments.trend.range1y" },
+  { value: "all", labelKey: "investments.trend.rangeAll" },
+];
 
 /** 某月天数（month 1-12） */
 function daysInMonth(year: number, month: number): number {
-  return new Date(year, month, 0).getDate()
+  return new Date(year, month, 0).getDate();
 }
 
 function pad2(n: number): string {
-  return String(n).padStart(2, '0')
+  return String(n).padStart(2, "0");
 }
 
 /**
@@ -38,31 +38,31 @@ function pad2(n: number): string {
  * 目标月最后一日），终点不设界（后端裁剪到今天为止）。「全部」不设起止。
  */
 export function toTrendRange(preset: TrendRangePreset, today: Date): TrendRange {
-  if (preset === 'all') return {}
-  const months = preset === '1m' ? 1 : preset === '3m' ? 3 : 12
-  const total = today.getFullYear() * 12 + today.getMonth() - months
-  const year = Math.floor(total / 12)
-  const month = (total % 12) + 1
-  const day = Math.min(today.getDate(), daysInMonth(year, month))
-  return { start_date: `${year}-${pad2(month)}-${pad2(day)}`, end_date: null }
+  if (preset === "all") return {};
+  const months = preset === "1m" ? 1 : preset === "3m" ? 3 : 12;
+  const total = today.getFullYear() * 12 + today.getMonth() - months;
+  const year = Math.floor(total / 12);
+  const month = (total % 12) + 1;
+  const day = Math.min(today.getDate(), daysInMonth(year, month));
+  return { start_date: `${year}-${pad2(month)}-${pad2(day)}`, end_date: null };
 }
 
 /** 图表序列：x 轴按周连续的日期槽位 + y 轴数值（分；缺周为 null，由 spanGaps 跨越） */
 export interface TrendChartSeries {
-  labels: string[]
-  values: (number | null)[]
+  labels: string[];
+  values: (number | null)[];
 }
 
 /** 取 ISO 日期（YYYY-MM-DD）所在周的周一（本地正午构造，避开 DST 漂移） */
 function mondayOf(isoDate: string): Date {
-  const [year, month, day] = isoDate.split('-').map(Number)
-  const date = new Date(year, month - 1, day, 12)
-  date.setDate(date.getDate() - ((date.getDay() + 6) % 7))
-  return date
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const date = new Date(year, month - 1, day, 12);
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+  return date;
 }
 
 function isoOf(date: Date): string {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
 /**
@@ -70,30 +70,30 @@ function isoOf(date: Date): string {
  * 采样点按所在周归位（label 用真实采样日），缺周填 null 由图表 spanGaps 连点跨越。
  */
 export function toTrendChartSeries(points: { date: string; value: number }[]): TrendChartSeries {
-  if (points.length === 0) return { labels: [], values: [] }
+  if (points.length === 0) return { labels: [], values: [] };
 
-  const slots: string[] = []
-  const cursor = mondayOf(points[0].date)
-  const end = mondayOf(points[points.length - 1].date)
+  const slots: string[] = [];
+  const cursor = mondayOf(points[0].date);
+  const end = mondayOf(points[points.length - 1].date);
   while (cursor <= end) {
-    slots.push(isoOf(cursor))
-    cursor.setDate(cursor.getDate() + 7)
+    slots.push(isoOf(cursor));
+    cursor.setDate(cursor.getDate() + 7);
   }
 
-  const pointByWeek = new Map(points.map((p) => [mondayOf(p.date).getTime(), p]))
+  const pointByWeek = new Map(points.map((p) => [mondayOf(p.date).getTime(), p]));
   return {
     labels: slots.map((slot) => pointByWeek.get(mondayOf(slot).getTime())?.date ?? slot),
     values: slots.map((slot) => pointByWeek.get(mondayOf(slot).getTime())?.value ?? null),
-  }
+  };
 }
 
 /** 空态判定：无任何采样点即无历史数据 */
 export function isTrendEmpty(points: { date: string; value: number }[]): boolean {
-  return points.length === 0
+  return points.length === 0;
 }
 
 /** 单标的字典每页条数上限（list_instruments 单页上限，用于走势面板标的下拉） */
-const INSTRUMENT_FETCH_LIMIT = 500
+const INSTRUMENT_FETCH_LIMIT = 500;
 
 /**
  * 投资资产走势数据层（issue #139 / ADR-0019）：收口组合 / 单标的两种走势的
@@ -107,146 +107,143 @@ const INSTRUMENT_FETCH_LIMIT = 500
  * 竞态治愈与价格失效信号重拉仍在实例内（每趟进入现拉，保留的是选择不是快照）。
  */
 export function usePortfolioTrend() {
-  const session = useInvestmentsSessionStore()
+  const session = useInvestmentsSessionStore();
   // 状态投影只读、写回只经意图入口（ADR-0094「store 是唯一读写方」）：
   // 面板用 :value + @update:value，不再持可写 ref；模式切换与标的选中各走
   // store 内带守卫的入口（单标的模式必须有选中标的），不新开旁路。
   /** 当前预设区间（只读投影；写入经 setPreset） */
-  const preset = computed<TrendRangePreset>(() => session.trendPreset)
+  const preset = computed<TrendRangePreset>(() => session.trendPreset);
   /** 当前视图模式（只读投影；写入经 setMode） */
-  const mode = computed<TrendViewMode>(() => session.trendMode)
+  const mode = computed<TrendViewMode>(() => session.trendMode);
   /** 当前选中标的（会话 store 是唯一事实源；null = 尚未选择） */
-  const instrument = computed<Instrument | null>(() => session.trendInstrument)
+  const instrument = computed<Instrument | null>(() => session.trendInstrument);
 
-  const loading = ref(false)
-  const portfolioTrend = ref<PortfolioValueTrend | null>(null)
-  const instrumentTrend = ref<InstrumentPriceTrend | null>(null)
+  const loading = ref(false);
+  const portfolioTrend = ref<PortfolioValueTrend | null>(null);
+  const instrumentTrend = ref<InstrumentPriceTrend | null>(null);
   /** 走势面板标的下拉的标的字典（一次拉全） */
-  const instruments = ref<Instrument[]>([])
+  const instruments = ref<Instrument[]>([]);
 
-  const range = computed(() => toTrendRange(preset.value, new Date()))
+  const range = computed(() => toTrendRange(preset.value, new Date()));
 
   /** 上次已取数的请求键（模式 + 标的 + 区间起始）：同一键不重复请求，收敛双触发通道 */
-  let lastFetchedKey: string | null = null
+  let lastFetchedKey: string | null = null;
 
   async function fetchTrend() {
-    if (mode.value === 'instrument') {
+    if (mode.value === "instrument") {
       // 未选标的，或后端判「无价格来源」的标的（price_channel=none，issue #1060）：
       // 不发起查询，由面板给边界说明。放行判定消费后端派生事实，前端不再按
       // 类型与市场自行推断（原场内行情白名单已随场外基金定案漂移成第二口径）。
-      if (!instrument.value || instrument.value.price_channel === 'none') return
+      if (!instrument.value || instrument.value.price_channel === "none") return;
     }
     const key =
-      mode.value === 'portfolio'
-        ? `portfolio|${range.value.start_date ?? 'all'}`
-        : `instrument|${instrument.value!.id}|${range.value.start_date ?? 'all'}`
-    if (key === lastFetchedKey) return
-    lastFetchedKey = key
-    loading.value = true
+      mode.value === "portfolio"
+        ? `portfolio|${range.value.start_date ?? "all"}`
+        : `instrument|${instrument.value!.id}|${range.value.start_date ?? "all"}`;
+    if (key === lastFetchedKey) return;
+    lastFetchedKey = key;
+    loading.value = true;
     try {
-      if (mode.value === 'portfolio') {
-        portfolioTrend.value = await api.portfolioValueTrend(range.value)
+      if (mode.value === "portfolio") {
+        portfolioTrend.value = await api.portfolioValueTrend(range.value);
       } else {
-        instrumentTrend.value = await api.instrumentPriceTrend(
-          instrument.value!.id,
-          range.value,
-        )
+        instrumentTrend.value = await api.instrumentPriceTrend(instrument.value!.id, range.value);
       }
     } catch (e) {
       // 失败允许同键重试
-      lastFetchedKey = null
-      throw e
+      lastFetchedKey = null;
+      throw e;
     } finally {
-      loading.value = false
+      loading.value = false;
     }
   }
 
   async function fetchInstruments() {
-    const res = await api.listInstruments({ page_size: INSTRUMENT_FETCH_LIMIT })
-    instruments.value = res.items
+    const res = await api.listInstruments({ page_size: INSTRUMENT_FETCH_LIMIT });
+    instruments.value = res.items;
     // 标的字典即「会话内已知标的」：登记进会话 store，使面板下拉改选（仅给 id）
     // 能经 selectTrendInstrument 的守卫生效（id 必须在已知集合内）。
-    res.items.forEach((inst) => session.registerTrendInstrument(inst))
+    res.items.forEach((inst) => session.registerTrendInstrument(inst));
   }
 
   /** 刷新走势数据（预设区间 / 模式 / 标的变化后由 watch 自动触发） */
   async function refresh() {
-    await Promise.all([fetchTrend(), instruments.value.length === 0 ? fetchInstruments() : null])
+    await Promise.all([fetchTrend(), instruments.value.length === 0 ? fetchInstruments() : null]);
   }
 
   /** 强制重拉：重置同键去重短路后刷新（价格失效信号：键未变但数据已变） */
   async function forceRefresh() {
-    lastFetchedKey = null
-    await refresh()
+    lastFetchedKey = null;
+    await refresh();
   }
 
   /** 视图模式切换意图（面板 NRadioGroup 回传）：单标的模式由 store 守卫
    * （无选中标的即无操作），回组合模式保留选中标的。 */
   function setMode(next: TrendViewMode) {
-    session.setTrendMode(next)
+    session.setTrendMode(next);
   }
 
   /** 预设区间切换意图（面板 NRadioGroup 回传）；区间是闭集字面量，无守卫语义。 */
   function setPreset(next: TrendRangePreset) {
-    session.setTrendPreset(next)
+    session.setTrendPreset(next);
   }
 
   /** 面板标的选中意图（id 进；null = 清除选中回组合模式）；守卫在 store 内
    * （仅接受已在会话中标明的标的 id）——面板下拉与入口带入共用同一选中事实源。 */
   function selectInstrument(id: string | null) {
-    session.selectTrendInstrument(id)
+    session.selectTrendInstrument(id);
   }
 
   // 内部自动刷新（watch / 挂载首刷 / 价格失效信号）治愈失败：不再产生未处理
   // rejection（spec 治愈清单①同款语义）；返回的 refresh 仍向外抛，由调用方处置。
   watch([preset, mode, () => instrument.value?.id], () => {
-    void refresh().catch(() => {})
-  })
+    void refresh().catch(() => {});
+  });
 
   // 价格失效信号（ADR-0031）：同步实际写价后走势采样点（market_prices）
   // 已陈旧，强制重拉——不重置去重短路则重拉被吞、留下陈旧点（issue #238）。
   usePricesChanged(() => {
-    void forceRefresh().catch(() => {})
-  })
+    void forceRefresh().catch(() => {});
+  });
 
   onMounted(() => {
-    void refresh().catch(() => {})
-  })
+    void refresh().catch(() => {});
+  });
 
   /** 当前模式的采样点序列（统一形态，供图表与空态消费） */
   const trendPoints = computed(() => {
-    if (mode.value === 'portfolio') {
+    if (mode.value === "portfolio") {
       return (portfolioTrend.value?.points ?? []).map((p) => ({
         date: p.date,
         value: p.market_value_cents,
-      }))
+      }));
     }
     return (instrumentTrend.value?.points ?? []).map((p) => ({
       date: p.date,
       value: p.price_cents,
-    }))
-  })
+    }));
+  });
 
-  const chartSeries = computed(() => toTrendChartSeries(trendPoints.value))
-  const isEmpty = computed(() => isTrendEmpty(trendPoints.value))
+  const chartSeries = computed(() => toTrendChartSeries(trendPoints.value));
+  const isEmpty = computed(() => isTrendEmpty(trendPoints.value));
 
   /** 走势空态的补全状态（ADR-0122 决策 5 / issue #1377 三态判据）：当前模式读
    * 投影的 `backfill` 字段直出（后端只增字段，仅空采样点且有通道无历史序列时
    * 携带）；有采样点时恒为 null，空态渲染按三态分派。 */
   const backfill = computed(() =>
-    mode.value === 'portfolio'
-      ? portfolioTrend.value?.backfill ?? null
-      : instrumentTrend.value?.backfill ?? null,
-  )
+    mode.value === "portfolio"
+      ? (portfolioTrend.value?.backfill ?? null)
+      : (instrumentTrend.value?.backfill ?? null),
+  );
 
   /**
    * 曲线金额币种：组合走势为后端折算的本位币；单标的走势取采样点的报价币种
    * （同一标的价格序列币种恒定，任取一点）。
    */
   const currencyCode = computed(() => {
-    if (mode.value === 'portfolio') return portfolioTrend.value?.currency_code ?? null
-    return instrumentTrend.value?.points[0]?.currency_code ?? null
-  })
+    if (mode.value === "portfolio") return portfolioTrend.value?.currency_code ?? null;
+    return instrumentTrend.value?.points[0]?.currency_code ?? null;
+  });
 
   return {
     preset,
@@ -262,5 +259,5 @@ export function usePortfolioTrend() {
     setMode,
     setPreset,
     selectInstrument,
-  }
+  };
 }

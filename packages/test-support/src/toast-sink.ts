@@ -1,8 +1,8 @@
-import { vi, type Mock } from 'vitest'
+import { vi, type Mock } from "vitest";
 
 /** 测试支持包只依赖被测包提供的最小注册接口，避免反向依赖造成 workspace 环。 */
 export interface ToastSink {
-  error: (content: string) => void
+  error: (content: string) => void;
 }
 
 /**
@@ -17,10 +17,10 @@ export interface ToastSink {
 
 /** 假 toast sink：记录 error toast 调用（Loadable 默认策略经 sink 弹出，断言只看 sink 面） */
 export function makeFakeSink(): ToastSink & { error: Mock<(content: string) => void> } {
-  return { error: vi.fn<(content: string) => void>() }
+  return { error: vi.fn<(content: string) => void>() };
 }
 
 /** 每用例复位 sink 为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰。 */
 export function resetToastSink(register: (sink: ToastSink) => void): void {
-  register({ error: () => {} })
+  register({ error: () => {} });
 }

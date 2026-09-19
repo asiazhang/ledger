@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { errorMessage } from '@ledger/utils/errors'
-import { h, computed, nextTick, onMounted, ref } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { errorMessage } from "@ledger/utils/errors";
+import { h, computed, nextTick, onMounted, ref } from "vue";
+import { useRouter, useRoute } from "vue-router";
 import {
   NCard,
   NButton,
@@ -15,76 +15,76 @@ import {
   NDescriptionsItem,
   useMessage,
   type DataTableColumns,
-} from 'naive-ui'
-import { formatAmount, yuanToCents, centsToYuan } from '@ledger/money'
-import { todayStr } from '@ledger/utils/date'
+} from "naive-ui";
+import { formatAmount, yuanToCents, centsToYuan } from "@ledger/money";
+import { todayStr } from "@ledger/utils/date";
 import type {
   ItemDailyCost,
   ItemDisposeInput,
   ItemInput,
   ItemWithDailyCost,
   Transaction,
-} from '@ledger/types'
-import { api } from '@ledger/api'
-import AppModal from '@ledger/ui-kit/AppModal.vue'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import { useModalIntent } from '@ledger/modal-intent'
-import { useFocusParam } from '@/composables/useFocusParam'
-import { useWindowTier } from '@ledger/window-tier'
-import { sumFixedColumnWidths } from '@ledger/utils/table'
-import { useReferenceStore } from '@/stores/reference'
-import { useAppStore } from '@/stores/app'
-import { useItemsStore } from '@/item/items'
-import { t } from '@ledger/i18n'
+} from "@ledger/types";
+import { api } from "@ledger/api";
+import AppModal from "@ledger/ui-kit/AppModal.vue";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import AppPopconfirm from "@ledger/ui-kit/AppPopconfirm.vue";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import { useModalIntent } from "@ledger/modal-intent";
+import { useFocusParam } from "@/composables/useFocusParam";
+import { useWindowTier } from "@ledger/window-tier";
+import { sumFixedColumnWidths } from "@ledger/utils/table";
+import { useReferenceStore } from "@/stores/reference";
+import { useAppStore } from "@/stores/app";
+import { useItemsStore } from "@/item/items";
+import { t } from "@ledger/i18n";
 
-const reference = useReferenceStore()
+const reference = useReferenceStore();
 
 // 移动档（issue #849 / ADR-0088 决策 11 票⑨，收纳页布局核对级适配）：低频管理表
 // 窄屏不重排列结构，挂 scroll-x = 固定列宽总和由横向滚动吸收（触屏滑动可达全部
 // 列与行内操作）；桌面档不挂（既有压缩行为一字不变）。
-const windowTier = useWindowTier()
-const isMobileTier = computed(() => windowTier.value === 'mobile')
-const app = useAppStore()
-const itemsStore = useItemsStore()
-const message = useMessage()
-const router = useRouter()
-const route = useRoute()
+const windowTier = useWindowTier();
+const isMobileTier = computed(() => windowTier.value === "mobile");
+const app = useAppStore();
+const itemsStore = useItemsStore();
+const message = useMessage();
+const router = useRouter();
+const route = useRoute();
 
 // —— 创建唯一入口提示（issue #207，ADR-0025）：物品只能经交易右键「加入物品」创建，
 // 本页不提供手动新增表单；提示条常驻顶部并一键跳转交易页。——
 function goTransactions() {
-  router.push({ name: 'transactions' })
+  router.push({ name: "transactions" });
 }
 
 // —— 关联购买交易候选（issue #119）：编辑弹窗换关仍需候选列表（交易右键创建入口不经此页）——
 // 后端校验交易存在且为 expense 并以交易值覆盖落库；物品侧仅存溯源指针，无「交易→物品」反向引用。
-const expenseTxs = ref<Transaction[]>([])
-const editLinkTxId = ref<string | null>(null)
+const expenseTxs = ref<Transaction[]>([]);
+const editLinkTxId = ref<string | null>(null);
 /** 编辑弹窗打开时物品的既有关联：维持原关联 → 手动编辑照常生效；换关 → 后端重新带出覆盖。 */
-const editOrigLink = ref<string | null>(null)
+const editOrigLink = ref<string | null>(null);
 
 const linkTxOptions = () =>
   expenseTxs.value.map((t) => ({
-    label: `${t.date} · ${formatAmount(t.amount_cents, reference.getCurrency(t.currency_code))}${t.note ? ` · ${t.note}` : ''}`,
+    label: `${t.date} · ${formatAmount(t.amount_cents, reference.getCurrency(t.currency_code))}${t.note ? ` · ${t.note}` : ""}`,
     value: t.id,
-  }))
+  }));
 
 function findLinkedTx(txId: string | null): Transaction | undefined {
-  return expenseTxs.value.find((t) => t.id === txId)
+  return expenseTxs.value.find((t) => t.id === txId);
 }
 
 /** 编辑弹窗：换关时自动带出日期/成本；与后端约定一致，换关即重新带出覆盖。 */
 function applyLinkedTxToEdit(txId: string | null) {
-  const tx = findLinkedTx(txId)
-  if (!tx) return
-  editPurchaseDate.value = tx.date
-  editCostYuan.value = String(centsToYuan(tx.amount_cents))
+  const tx = findLinkedTx(txId);
+  if (!tx) return;
+  editPurchaseDate.value = tx.date;
+  editCostYuan.value = String(centsToYuan(tx.amount_cents));
 }
 
 /** 换关中（选中了与原关联不同的交易）：日期/成本将被后端带出覆盖，禁用手改。 */
-const editRelinking = computed(() => editLinkTxId.value !== editOrigLink.value)
+const editRelinking = computed(() => editLinkTxId.value !== editOrigLink.value);
 
 // —— 编辑（issue #117）：按 id 修改 名称 / 购买日期 / 总成本 / 备注；币种不可改 ——
 // 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072）：意图闭集单成员
@@ -95,7 +95,7 @@ const editRelinking = computed(() => editLinkTxId.value !== editOrigLink.value)
 
 /** 编辑物品弹窗意图（单成员闭集）：携带目标物品行。 */
 interface ItemEditIntent {
-  row: ItemWithDailyCost
+  row: ItemWithDailyCost;
 }
 
 const {
@@ -103,37 +103,37 @@ const {
   seq: editSeq,
   open: openEditIntent,
   close: closeEdit,
-} = useModalIntent<ItemEditIntent>()
+} = useModalIntent<ItemEditIntent>();
 
-const editName = ref('')
-const editPurchaseDate = ref('')
-const editCostYuan = ref('')
-const editNote = ref('')
+const editName = ref("");
+const editPurchaseDate = ref("");
+const editCostYuan = ref("");
+const editNote = ref("");
 
 function openEdit(row: ItemWithDailyCost) {
-  editName.value = row.name
-  editPurchaseDate.value = row.purchase_date
-  editCostYuan.value = String(centsToYuan(row.total_cost_cents))
-  editNote.value = row.note ?? ''
-  editLinkTxId.value = row.purchase_transaction_id
-  editOrigLink.value = row.purchase_transaction_id
-  openEditIntent({ row })
+  editName.value = row.name;
+  editPurchaseDate.value = row.purchase_date;
+  editCostYuan.value = String(centsToYuan(row.total_cost_cents));
+  editNote.value = row.note ?? "";
+  editLinkTxId.value = row.purchase_transaction_id;
+  editOrigLink.value = row.purchase_transaction_id;
+  openEditIntent({ row });
 }
 
 async function saveEdit() {
-  if (!editIntent.value) return
+  if (!editIntent.value) return;
   if (!editName.value.trim()) {
-    message.warning(t('items.msg.nameRequired'))
-    return
+    message.warning(t("items.msg.nameRequired"));
+    return;
   }
   if (!editPurchaseDate.value) {
-    message.warning(t('items.msg.dateRequired'))
-    return
+    message.warning(t("items.msg.dateRequired"));
+    return;
   }
-  const costCents = yuanToCents(editCostYuan.value)
+  const costCents = yuanToCents(editCostYuan.value);
   if (costCents === null || costCents <= 0) {
-    message.warning(t('items.msg.costInvalid'))
-    return
+    message.warning(t("items.msg.costInvalid"));
+    return;
   }
   const input: ItemInput = {
     name: editName.value.trim(),
@@ -142,110 +142,106 @@ async function saveEdit() {
     currency_code: editIntent.value.row.currency_code,
     note: editNote.value.trim() || null,
     purchase_transaction_id: editLinkTxId.value,
-  }
+  };
   try {
-    await itemsStore.update(editIntent.value.row.id, input)
-    message.success(t('items.msg.saved'))
-    closeEdit()
+    await itemsStore.update(editIntent.value.row.id, input);
+    message.success(t("items.msg.saved"));
+    closeEdit();
   } catch (e) {
-    message.error(t('items.msg.saveFailed', { msg: errorMessage(e) }))
+    message.error(t("items.msg.saveFailed", { msg: errorMessage(e) }));
   }
 }
 
 // —— 详情（issue #117）：成本分解 = 分子（总成本 − 残值） ÷ 已用天数 = 每天成本 ——
-const detail = ref<ItemWithDailyCost | null>(null)
+const detail = ref<ItemWithDailyCost | null>(null);
 
 // —— 详情自选参考日重算（issue #121）：选择参考日 → 后端重算三元组覆盖展示；
 // 清空 → 回缺省目标日（在用今天/已处置处置日）。null = 未重算（展示列表快照）。 ——
-const detailRefDate = ref<string | null>(null)
-const detailCost = ref<ItemDailyCost | null>(null)
+const detailRefDate = ref<string | null>(null);
+const detailCost = ref<ItemDailyCost | null>(null);
 
 /** 详情成本三元组展示值：重算结果优先，未重算/重算失败回落列表快照。 */
 const detailCostView = computed(() => ({
   days: detailCost.value?.used_days ?? detail.value?.used_days ?? 0,
   numeratorCents: detailCost.value?.numerator_cents ?? detail.value?.numerator_cents ?? 0,
   perDayCents: detailCost.value?.per_day_cents ?? detail.value?.per_day_cents ?? 0,
-}))
+}));
 
 async function recalcDetail(date: string | null) {
-  if (!detail.value) return
-  detailRefDate.value = date
+  if (!detail.value) return;
+  detailRefDate.value = date;
   try {
-    detailCost.value = await api.calculateItemCost(detail.value.id, date)
+    detailCost.value = await api.calculateItemCost(detail.value.id, date);
   } catch (e) {
-    message.error(t('items.msg.recalcFailed', { msg: errorMessage(e) }))
+    message.error(t("items.msg.recalcFailed", { msg: errorMessage(e) }));
   }
 }
 
 function openDetail(row: ItemWithDailyCost) {
-  detail.value = row
+  detail.value = row;
   // 换行重置：参考日与重算结果不跨物品残留
-  detailRefDate.value = null
-  detailCost.value = null
+  detailRefDate.value = null;
+  detailCost.value = null;
 }
 
 function detailAmount(cents: number): string {
-  return detail.value
-    ? formatAmount(cents, reference.getCurrency(detail.value.currency_code))
-    : ''
+  return detail.value ? formatAmount(cents, reference.getCurrency(detail.value.currency_code)) : "";
 }
 
 // —— 处置（issue #120）：置 disposed 并记录处置日期（必填）与可选残值；
 // 已处置物品再次处置 = 修正处置信息 ——
-const disposing = ref<ItemWithDailyCost | null>(null)
-const disposeDate = ref('')
-const disposeResidualYuan = ref('')
+const disposing = ref<ItemWithDailyCost | null>(null);
+const disposeDate = ref("");
+const disposeResidualYuan = ref("");
 
 function openDispose(row: ItemWithDailyCost) {
-  disposing.value = row
-  disposeDate.value = row.disposal_date ?? todayStr()
+  disposing.value = row;
+  disposeDate.value = row.disposal_date ?? todayStr();
   disposeResidualYuan.value =
-    row.residual_value_cents != null ? String(centsToYuan(row.residual_value_cents)) : ''
+    row.residual_value_cents != null ? String(centsToYuan(row.residual_value_cents)) : "";
 }
 
 function closeDispose() {
-  disposing.value = null
+  disposing.value = null;
 }
 
 async function confirmDispose() {
-  if (!disposing.value) return
+  if (!disposing.value) return;
   if (!disposeDate.value) {
-    message.warning(t('items.msg.disposeDateRequired'))
-    return
+    message.warning(t("items.msg.disposeDateRequired"));
+    return;
   }
-  let residualCents: number | null = null
+  let residualCents: number | null = null;
   if (disposeResidualYuan.value.trim()) {
-    const cents = yuanToCents(disposeResidualYuan.value)
+    const cents = yuanToCents(disposeResidualYuan.value);
     if (cents === null || cents < 0) {
-      message.warning(t('items.msg.residualInvalid'))
-      return
+      message.warning(t("items.msg.residualInvalid"));
+      return;
     }
-    residualCents = cents
+    residualCents = cents;
   }
   const input: ItemDisposeInput = {
     disposal_date: disposeDate.value,
     residual_value_cents: residualCents,
-  }
+  };
   try {
-    await itemsStore.dispose(disposing.value.id, input)
+    await itemsStore.dispose(disposing.value.id, input);
     message.success(
-      disposing.value.status === 'in_use'
-        ? t('items.msg.disposed')
-        : t('items.msg.disposeUpdated'),
-    )
-    closeDispose()
+      disposing.value.status === "in_use" ? t("items.msg.disposed") : t("items.msg.disposeUpdated"),
+    );
+    closeDispose();
   } catch (e) {
-    message.error(t('items.msg.disposeFailed', { msg: errorMessage(e) }))
+    message.error(t("items.msg.disposeFailed", { msg: errorMessage(e) }));
   }
 }
 
 // —— 软删除（issue #118）：二次确认后 is_deleted=1，列表自动过滤 ——
 async function removeItem(id: string) {
   try {
-    await itemsStore.remove(id)
-    message.success(t('items.msg.deleted'))
+    await itemsStore.remove(id);
+    message.success(t("items.msg.deleted"));
   } catch (e) {
-    message.error(t('items.msg.deleteFailed', { msg: errorMessage(e) }))
+    message.error(t("items.msg.deleteFailed", { msg: errorMessage(e) }));
   }
 }
 
@@ -257,131 +253,130 @@ async function removeItem(id: string) {
 // 对其不反查（后端同口径），无落空态。高亮保持到实例消亡：刷新/重进 = 新实例
 // 重定位，URL 在场即复现、可分享。独立路由与收纳态（组「更多」物品页签，
 // 同一组件整体装载）共用本消费点。——
-const highlightedItemId = ref<string | null>(null)
+const highlightedItemId = ref<string | null>(null);
 
 /** 表格组件引用：滚动定位在其自身子树内查行锚点。 */
-const tableRef = ref<{ $el?: HTMLElement } | null>(null)
+const tableRef = ref<{ $el?: HTMLElement } | null>(null);
 
 const focusParam = useFocusParam({
   query: () => route.query,
   onFocus: (itemId) => {
-    highlightedItemId.value = itemId
+    highlightedItemId.value = itemId;
   },
-})
+});
 
 /** 行锚点 + 高亮类：滚动定位的 data 属性与高亮样式同源一处。 */
 function rowProps(row: ItemWithDailyCost): Record<string, unknown> {
   return {
-    'data-item-id': row.id,
-    class: row.id === highlightedItemId.value ? 'item-row-focus' : undefined,
-  }
+    "data-item-id": row.id,
+    class: row.id === highlightedItemId.value ? "item-row-focus" : undefined,
+  };
 }
 
 /** 渲染完成后滚动到高亮行（列表数据到位后调用；无 focus 空转）。 */
 async function scrollToHighlighted(): Promise<void> {
-  if (!highlightedItemId.value) return
+  if (!highlightedItemId.value) return;
   // 行挂载链多跳（数据到位 → 表格行渲染），有界重试至锚点出现；在本表格子树内
   // 按 dataset 比对定位（不经属性选择器拼接实体 id，无注入面；组件自身子树查询，
   // 独立路由与「更多」页签装载同效）。
   for (let hop = 0; hop < 5; hop += 1) {
-    await nextTick()
-    const root = tableRef.value?.$el as HTMLElement | undefined
+    await nextTick();
+    const root = tableRef.value?.$el as HTMLElement | undefined;
     const anchor = root
-      ? Array.from(root.querySelectorAll<HTMLElement>('[data-item-id]')).find(
+      ? Array.from(root.querySelectorAll<HTMLElement>("[data-item-id]")).find(
           (el) => el.dataset.itemId === highlightedItemId.value,
         )
-      : undefined
+      : undefined;
     if (anchor) {
-      anchor.scrollIntoView({ block: 'center' })
-      return
+      anchor.scrollIntoView({ block: "center" });
+      return;
     }
   }
 }
 
 const columns: DataTableColumns<ItemWithDailyCost> = [
-  { title: () => t('items.columns.name'), key: 'name' },
-  { title: () => t('items.columns.purchaseDate'), key: 'purchase_date' },
+  { title: () => t("items.columns.name"), key: "name" },
+  { title: () => t("items.columns.purchaseDate"), key: "purchase_date" },
   {
-    title: () => t('items.columns.status'),
-    key: 'status',
+    title: () => t("items.columns.status"),
+    key: "status",
     render: (row) =>
-      row.status === 'in_use'
-        ? t('items.status.inUse')
-        : t('items.status.disposedOn', { date: row.disposal_date ?? '' }),
+      row.status === "in_use"
+        ? t("items.status.inUse")
+        : t("items.status.disposedOn", { date: row.disposal_date ?? "" }),
   },
   {
-    title: () => t('items.columns.totalCost'),
-    key: 'total_cost_cents',
-    render: (row) =>
-      formatAmount(row.total_cost_cents, reference.getCurrency(row.currency_code)),
+    title: () => t("items.columns.totalCost"),
+    key: "total_cost_cents",
+    render: (row) => formatAmount(row.total_cost_cents, reference.getCurrency(row.currency_code)),
   },
-  { title: () => t('items.columns.usedDays'), key: 'used_days' },
+  { title: () => t("items.columns.usedDays"), key: "used_days" },
   {
-    title: () => t('items.columns.perDayCost'),
-    key: 'per_day_cents',
-    render: (row) =>
-      formatAmount(row.per_day_cents, reference.getCurrency(row.currency_code)),
+    title: () => t("items.columns.perDayCost"),
+    key: "per_day_cents",
+    render: (row) => formatAmount(row.per_day_cents, reference.getCurrency(row.currency_code)),
   },
   {
-    title: () => t('items.columns.actions'),
-    key: 'actions',
+    title: () => t("items.columns.actions"),
+    key: "actions",
     width: 200,
     render: (row) =>
       h(NSpace, { size: 4 }, () => [
-        h(NButton, { size: 'tiny', onClick: () => openDetail(row) }, () => t('items.rowActions.detail')),
-        h(NButton, { size: 'tiny', onClick: () => openEdit(row) }, () => t('items.rowActions.edit')),
-        h(
-          NButton,
-          { size: 'tiny', onClick: () => openDispose(row) },
-          () =>
-            row.status === 'in_use'
-              ? t('items.rowActions.dispose')
-              : t('items.rowActions.disposeInfo'),
+        h(NButton, { size: "tiny", onClick: () => openDetail(row) }, () =>
+          t("items.rowActions.detail"),
+        ),
+        h(NButton, { size: "tiny", onClick: () => openEdit(row) }, () =>
+          t("items.rowActions.edit"),
+        ),
+        h(NButton, { size: "tiny", onClick: () => openDispose(row) }, () =>
+          row.status === "in_use"
+            ? t("items.rowActions.dispose")
+            : t("items.rowActions.disposeInfo"),
         ),
         h(
           AppPopconfirm,
           { onPositiveClick: () => removeItem(row.id) },
           {
-            default: () => t('items.deleteConfirm'),
+            default: () => t("items.deleteConfirm"),
             trigger: () =>
-              h(NButton, { size: 'tiny', type: 'error', quaternary: true }, () =>
-                t('items.rowActions.delete'),
+              h(NButton, { size: "tiny", type: "error", quaternary: true }, () =>
+                t("items.rowActions.delete"),
               ),
           },
         ),
       ]),
   },
-]
+];
 
 /** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
-const tableScrollX = sumFixedColumnWidths(columns)
+const tableScrollX = sumFixedColumnWidths(columns);
 
 onMounted(() => {
   // focus 读一次：先拿 id（消费闸门内化），列表到位后生效
-  focusParam.consume()
+  focusParam.consume();
   // 物品 store self-init + ledger:changed 信号兜底；mounted 重拉覆盖错误重试
   void itemsStore
     .refresh()
     .catch(() => {
       /* 失败信号已由 status 承载 */
     })
-    .then(scrollToHighlighted)
+    .then(scrollToHighlighted);
   // 关联购买交易候选：支出交易，倒序取最近 100 笔（MVP 取舍：更早的交易不在
   // 候选内；加载失败不阻塞编辑弹窗换关）
   api
-    .listTransactions({ kinds: ['expense'], limit: 100 })
+    .listTransactions({ kinds: ["expense"], limit: 100 })
     .then((r) => (expenseTxs.value = r.items))
     .catch(() => {
       /* 候选为空，创建退化为手填 */
-    })
-})
+    });
+});
 </script>
 
 <template>
   <NSpace vertical :size="16">
     <!-- 创建唯一入口提示（issue #207）：本页不提供手动新增，物品只能经交易右键「加入物品」创建 -->
     <NAlert type="info" :show-icon="true" data-testid="item-create-hint">
-      {{ t('items.createHint') }}
+      {{ t("items.createHint") }}
       <NButton
         size="tiny"
         type="primary"
@@ -390,7 +385,7 @@ onMounted(() => {
         data-testid="item-go-transactions"
         @click="goTransactions"
       >
-        {{ t('items.goTransactions') }}
+        {{ t("items.goTransactions") }}
       </NButton>
     </NAlert>
 
@@ -406,7 +401,7 @@ onMounted(() => {
       >
         <template #empty>
           <span data-testid="item-empty-guide">
-            {{ t('items.emptyGuide') }}
+            {{ t("items.emptyGuide") }}
           </span>
         </template>
       </NDataTable>
@@ -461,14 +456,14 @@ onMounted(() => {
             />
           </NFormItem>
           <NFormItem :label="t('items.edit.label.currency')">
-            <span>{{ editIntent.row.currency_code }}{{ t('items.edit.currencyFixed') }}</span>
+            <span>{{ editIntent.row.currency_code }}{{ t("items.edit.currencyFixed") }}</span>
           </NFormItem>
           <NFormItem :label="t('items.edit.label.note')">
             <NInput v-model:value="editNote" :placeholder="t('items.edit.placeholder.note')" />
           </NFormItem>
           <NSpace justify="end">
-            <NButton @click="closeEdit">{{ t('items.rowActions.cancel') }}</NButton>
-            <NButton type="primary" @click="saveEdit">{{ t('items.rowActions.save') }}</NButton>
+            <NButton @click="closeEdit">{{ t("items.rowActions.cancel") }}</NButton>
+            <NButton type="primary" @click="saveEdit">{{ t("items.rowActions.save") }}</NButton>
           </NSpace>
         </NSpace>
       </NForm>
@@ -478,7 +473,11 @@ onMounted(() => {
     <AppModal
       :show="disposing !== null"
       preset="card"
-      :title="disposing?.status === 'in_use' ? t('items.dispose.titleInUse') : t('items.dispose.titleInfo')"
+      :title="
+        disposing?.status === 'in_use'
+          ? t('items.dispose.titleInUse')
+          : t('items.dispose.titleInfo')
+      "
       card-size="sm"
       data-testid="item-dispose-modal"
       @update:show="(v: boolean) => (v ? undefined : closeDispose())"
@@ -505,13 +504,13 @@ onMounted(() => {
             />
           </NFormItem>
           <NSpace justify="end">
-            <NButton @click="closeDispose">{{ t('items.rowActions.cancel') }}</NButton>
-            <NButton
-              type="primary"
-              data-testid="item-dispose-confirm"
-              @click="confirmDispose"
-            >
-              {{ disposing.status === 'in_use' ? t('items.dispose.confirm') : t('items.rowActions.save') }}
+            <NButton @click="closeDispose">{{ t("items.rowActions.cancel") }}</NButton>
+            <NButton type="primary" data-testid="item-dispose-confirm" @click="confirmDispose">
+              {{
+                disposing.status === "in_use"
+                  ? t("items.dispose.confirm")
+                  : t("items.rowActions.save")
+              }}
             </NButton>
           </NSpace>
         </NSpace>
@@ -528,30 +527,42 @@ onMounted(() => {
       @update:show="(v: boolean) => (v ? undefined : (detail = null))"
     >
       <NDescriptions v-if="detail" :column="1" size="small" label-placement="left" bordered>
-        <NDescriptionsItem :label="t('items.detail.label.name')">{{ detail.name }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('items.detail.label.name')">{{
+          detail.name
+        }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('items.detail.label.status')">
-          {{ detail.status === 'in_use' ? t('items.status.inUse') : t('items.status.disposed') }}
+          {{ detail.status === "in_use" ? t("items.status.inUse") : t("items.status.disposed") }}
         </NDescriptionsItem>
-        <NDescriptionsItem :label="t('items.detail.label.purchaseDate')">{{ detail.purchase_date }}</NDescriptionsItem>
-        <NDescriptionsItem v-if="detail.status === 'disposed'" :label="t('items.detail.label.disposalDate')">
+        <NDescriptionsItem :label="t('items.detail.label.purchaseDate')">{{
+          detail.purchase_date
+        }}</NDescriptionsItem>
+        <NDescriptionsItem
+          v-if="detail.status === 'disposed'"
+          :label="t('items.detail.label.disposalDate')"
+        >
           {{ detail.disposal_date }}
         </NDescriptionsItem>
-        <NDescriptionsItem v-if="detail.status === 'disposed'" :label="t('items.detail.label.residual')">
+        <NDescriptionsItem
+          v-if="detail.status === 'disposed'"
+          :label="t('items.detail.label.residual')"
+        >
           {{
-            detail.residual_value_cents != null
-              ? detailAmount(detail.residual_value_cents)
-              : '—'
+            detail.residual_value_cents != null ? detailAmount(detail.residual_value_cents) : "—"
           }}
         </NDescriptionsItem>
         <NDescriptionsItem :label="t('items.detail.label.totalCost')">
-          {{ detailAmount(detail.total_cost_cents) }}{{ t('items.currencySuffix', { code: detail.currency_code }) }}
+          {{ detailAmount(detail.total_cost_cents)
+          }}{{ t("items.currencySuffix", { code: detail.currency_code }) }}
         </NDescriptionsItem>
         <NDescriptionsItem :label="t('items.detail.label.native')">
-          {{ formatAmount(detail.cost_native_cents, reference.getCurrency(app.defaultCurrency)) }}{{ t('items.currencySuffix', { code: app.defaultCurrency }) }}
+          {{ formatAmount(detail.cost_native_cents, reference.getCurrency(app.defaultCurrency))
+          }}{{ t("items.currencySuffix", { code: app.defaultCurrency }) }}
         </NDescriptionsItem>
-        <NDescriptionsItem :label="t('items.detail.label.note')">{{ detail.note ?? '—' }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('items.detail.label.note')">{{
+          detail.note ?? "—"
+        }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('items.detail.label.linkedTx')">
-          {{ detail.purchase_transaction_id ? t('items.detail.linkedYes') : '—' }}
+          {{ detail.purchase_transaction_id ? t("items.detail.linkedYes") : "—" }}
         </NDescriptionsItem>
         <NDescriptionsItem :label="t('items.detail.label.refDate')">
           <AppDatePicker
@@ -565,11 +576,11 @@ onMounted(() => {
           />
         </NDescriptionsItem>
         <NDescriptionsItem :label="t('items.detail.label.usedDays')">
-          {{ t('items.detail.usedDays', { n: detailCostView.days }) }}
+          {{ t("items.detail.usedDays", { n: detailCostView.days }) }}
         </NDescriptionsItem>
         <NDescriptionsItem :label="t('items.detail.label.perDayBreakdown')">
           {{
-            t('items.detail.breakdown', {
+            t("items.detail.breakdown", {
               cost: detailAmount(detailCostView.numeratorCents),
               days: detailCostView.days,
               perDay: detailAmount(detailCostView.perDayCents),

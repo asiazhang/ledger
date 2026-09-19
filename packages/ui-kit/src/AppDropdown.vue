@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NDropdown } from 'naive-ui'
-import { useOverlayReporting } from './useOverlayReporting'
+import { NDropdown } from "naive-ui";
+import { useOverlayReporting } from "./useOverlayReporting";
 
 // 薄封装 NDropdown，接入弹层注册表（ADR-0035）：应用内的 NDropdown 一律经本
 // 组件使用，菜单开/关状态实时上报，驱动快捷键抑制。其余 props/attrs/slots
@@ -12,7 +12,7 @@ import { useOverlayReporting } from './useOverlayReporting'
 // 上的 update:show 监听上报，trigger="manual" 下调用方直接改 :show prop 的开合
 // 由 attrs watch 兜底。非受控用法经影子态绑定 :show，关闭请求受控中继调用方监
 // 听器、非受控落影子态。
-const { onUpdateShow, resolvedShow } = useOverlayReporting('dropdown')
+const { onUpdateShow, resolvedShow } = useOverlayReporting("dropdown");
 </script>
 
 <template>

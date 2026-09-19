@@ -1,6 +1,10 @@
-import { computed, ref } from 'vue'
-import { defineStore } from 'pinia'
-import { clearClosedFeatures, getSavedClosedFeatures, saveClosedFeatures } from '@ledger/utils/view-state'
+import { computed, ref } from "vue";
+import { defineStore } from "pinia";
+import {
+  clearClosedFeatures,
+  getSavedClosedFeatures,
+  saveClosedFeatures,
+} from "@ledger/utils/view-state";
 
 /**
  * 功能开关状态基座（issue #1241 / ADR-0116 决策 2/6）：设备级「已关闭功能」闭集清单的
@@ -16,16 +20,16 @@ import { clearClosedFeatures, getSavedClosedFeatures, saveClosedFeatures } from 
  * 路由守卫 / 设置面）都按同一份视图名词表过滤，不另造映射层。改清单 = 修订 ADR。
  */
 export const CLOSABLE_FEATURES = [
-  'budget',
-  'reports',
-  'scheduled',
-  'merchants',
-  'investments',
-  'items',
-  'policies',
-  'physicalAssets',
-  'insurers',
-] as const
+  "budget",
+  "reports",
+  "scheduled",
+  "merchants",
+  "investments",
+  "items",
+  "policies",
+  "physicalAssets",
+  "insurers",
+] as const;
 
 /**
  * 不可关六项（ADR-0116 决策 2）：机制必需（交易 / 账户是记账动线基本依赖，设置承载
@@ -33,20 +37,20 @@ export const CLOSABLE_FEATURES = [
  * 随时回头可用的检索与导入面）。写路径与解析防御一律拒绝之，闭集外能力面永不进入关闭集合。
  */
 export const NON_CLOSABLE_FEATURES = [
-  'dashboard',
-  'transactions',
-  'accounts',
-  'search',
-  'ai',
-  'settings',
-] as const
+  "dashboard",
+  "transactions",
+  "accounts",
+  "search",
+  "ai",
+  "settings",
+] as const;
 
-export type ClosableFeatureId = (typeof CLOSABLE_FEATURES)[number]
-export type NonClosableFeatureId = (typeof NON_CLOSABLE_FEATURES)[number]
+export type ClosableFeatureId = (typeof CLOSABLE_FEATURES)[number];
+export type NonClosableFeatureId = (typeof NON_CLOSABLE_FEATURES)[number];
 
 /** 闭集判定：仅可关九项为真（不可关六项、未知 id、非字符串一律为假）。 */
 export function isClosableFeature(v: unknown): v is ClosableFeatureId {
-  return typeof v === 'string' && (CLOSABLE_FEATURES as readonly string[]).includes(v)
+  return typeof v === "string" && (CLOSABLE_FEATURES as readonly string[]).includes(v);
 }
 
 /**
@@ -57,12 +61,12 @@ export function isClosableFeature(v: unknown): v is ClosableFeatureId {
  * 集合语义：关闭集合无序，输出归一为 CLOSABLE_FEATURES 清单序，解析结果稳定可复现。
  */
 export function parseClosedFeatures(raw: unknown): ClosableFeatureId[] {
-  if (!Array.isArray(raw)) return []
-  const present = new Set<string>()
+  if (!Array.isArray(raw)) return [];
+  const present = new Set<string>();
   for (const item of raw) {
-    if (isClosableFeature(item)) present.add(item)
+    if (isClosableFeature(item)) present.add(item);
   }
-  return CLOSABLE_FEATURES.filter((id) => present.has(id))
+  return CLOSABLE_FEATURES.filter((id) => present.has(id));
 }
 
 /**
@@ -70,35 +74,35 @@ export function parseClosedFeatures(raw: unknown): ClosableFeatureId[] {
  * 已消费方：#1242 侧栏菜单构建、GroupMoreView 页签、useViewShortcuts 键位带；
  * 后续消费方：路由守卫、设置页「功能」Tab 与「定时」Tab 联动。
  */
-export const useFeatureToggleStore = defineStore('feature-toggles', () => {
+export const useFeatureToggleStore = defineStore("feature-toggles", () => {
   // 启动读路径：原始值经解析防御——脏数据整体回退全开、非法项过滤、去重（issue #1241）。
-  const closed = ref<ClosableFeatureId[]>(parseClosedFeatures(getSavedClosedFeatures()))
+  const closed = ref<ClosableFeatureId[]>(parseClosedFeatures(getSavedClosedFeatures()));
 
   /** 已关闭功能集合（只读派生，清单序）：全部消费面的唯一读路径；写路径不经它。 */
-  const closedFeatures = computed<readonly ClosableFeatureId[]>(() => closed.value)
+  const closedFeatures = computed<readonly ClosableFeatureId[]>(() => closed.value);
 
   /** 关闭态查询（运行时）：不可关六项与未知 id 恒为 false（闭集外永不关闭）。 */
   function isFeatureClosed(id: unknown): boolean {
-    return typeof id === 'string' && (closed.value as readonly string[]).includes(id)
+    return typeof id === "string" && (closed.value as readonly string[]).includes(id);
   }
 
   /** 写路径（点选即写）：关闭 / 打开某项后立即持久化；集合清空即删除记录（默认态 = 无记录）。
    *  边界 no-op 不写存储：不可关项 / 未知 id、以及目标态与当前态相同时一律原样返回。 */
   function setFeatureClosed(id: unknown, shouldClose: boolean) {
-    if (!isClosableFeature(id)) return
-    if (shouldClose === closed.value.includes(id)) return
-    const present = new Set<ClosableFeatureId>(closed.value)
-    if (shouldClose) present.add(id)
-    else present.delete(id)
-    const next = CLOSABLE_FEATURES.filter((f) => present.has(f))
-    closed.value = next
-    if (next.length === 0) clearClosedFeatures()
-    else saveClosedFeatures(next)
+    if (!isClosableFeature(id)) return;
+    if (shouldClose === closed.value.includes(id)) return;
+    const present = new Set<ClosableFeatureId>(closed.value);
+    if (shouldClose) present.add(id);
+    else present.delete(id);
+    const next = CLOSABLE_FEATURES.filter((f) => present.has(f));
+    closed.value = next;
+    if (next.length === 0) clearClosedFeatures();
+    else saveClosedFeatures(next);
   }
 
   return {
     closedFeatures,
     isFeatureClosed,
     setFeatureClosed,
-  }
-})
+  };
+});

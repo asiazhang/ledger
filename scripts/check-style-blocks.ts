@@ -15,10 +15,10 @@
 // 挂载于 scripts/check.sh 质量门槛序列；CI 无独立 workflow 步骤，经 vitest 测试
 // 分片的真实仓绿基线用例可见（scripts/check-style-blocks.test.ts，issue #1473）。
 
-import { readdirSync, readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
-import { pathToFileURL, fileURLToPath } from 'node:url'
-import { parse } from 'vue/compiler-sfc'
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { parse } from "vue/compiler-sfc";
 
 /** 存量 <style> 块白名单（issue #888 交付时点快照，按路径排序；#1159 起源码按域
  *  归位，域文件路径同步为域目录坐标 src/<域>/）：
@@ -27,111 +27,111 @@ import { parse } from 'vue/compiler-sfc'
  *  路径以仓库根为基准、正斜杠分隔。导出供包装测试夹具派生（单一事实源，
  *  TOAST_BASELINE 同款纪律）。 */
 export const STYLE_BLOCK_WHITELIST: readonly string[] = [
-  'src/App.vue',
-  'src/accounts/AccountLink.vue',
-  'src/backup/StartupFailureScreen.vue',
-  'src/backup/UnlockScreen.vue',
-  'src/components/GlobalBusyBar.vue',
-  'src/components/MobileNavShell.vue',
-  'src/components/QuickTimeRange.vue',
-  'src/investment/PortfolioTrendPanel.vue',
-  'src/merchants/MerchantLink.vue',
-  'src/physical-asset/PhysicalAssetDisposeModal.vue',
-  'src/physical-asset/PhysicalAssetValuationModal.vue',
-  'src/policy/PolicyFormModal.vue',
-  'src/reports/MerchantRankingPanel.vue',
-  'src/scheduled/PlanDetailModal.vue',
-  'src/scheduled/SubscriptionSpendPanel.vue',
-  'src/settings/BookSidebarEntry.vue',
-  'src/settings/EncryptionSettings.vue',
-  'src/settings/PassphraseStrengthMeter.vue',
-  'src/transaction/AmountCell.vue',
-  'src/transaction/SourceLink.vue',
-  'src/views/GroupMoreView.vue',
-  'src/views/InvestmentsView.vue',
-  'src/views/ItemsView.vue',
-  'src/views/PoliciesView.vue',
-  'src/views/ReportsView.vue',
-  'src/views/ScheduledView.vue',
-  'src/views/SettingsView.vue',
-]
+  "src/App.vue",
+  "src/accounts/AccountLink.vue",
+  "src/backup/StartupFailureScreen.vue",
+  "src/backup/UnlockScreen.vue",
+  "src/components/GlobalBusyBar.vue",
+  "src/components/MobileNavShell.vue",
+  "src/components/QuickTimeRange.vue",
+  "src/investment/PortfolioTrendPanel.vue",
+  "src/merchants/MerchantLink.vue",
+  "src/physical-asset/PhysicalAssetDisposeModal.vue",
+  "src/physical-asset/PhysicalAssetValuationModal.vue",
+  "src/policy/PolicyFormModal.vue",
+  "src/reports/MerchantRankingPanel.vue",
+  "src/scheduled/PlanDetailModal.vue",
+  "src/scheduled/SubscriptionSpendPanel.vue",
+  "src/settings/BookSidebarEntry.vue",
+  "src/settings/EncryptionSettings.vue",
+  "src/settings/PassphraseStrengthMeter.vue",
+  "src/transaction/AmountCell.vue",
+  "src/transaction/SourceLink.vue",
+  "src/views/GroupMoreView.vue",
+  "src/views/InvestmentsView.vue",
+  "src/views/ItemsView.vue",
+  "src/views/PoliciesView.vue",
+  "src/views/ReportsView.vue",
+  "src/views/ScheduledView.vue",
+  "src/views/SettingsView.vue",
+];
 
 /** 白名单归一化：统一为仓库根相对、正斜杠分隔的路径。 */
 function normalizePath(file: string): string {
-  return relative(process.cwd(), file).split('\\').join('/')
+  return relative(process.cwd(), file).split("\\").join("/");
 }
 
 /** 递归收集扫描根下全部 .vue 文件（按名排序保证输出稳定）。 */
 export function collectVueFiles(root: string): string[] {
-  const out: string[] = []
+  const out: string[] = [];
   const visit = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
       a.name.localeCompare(b.name),
     )) {
-      const full = join(dir, entry.name)
-      if (entry.isDirectory()) visit(full)
-      else if (entry.name.endsWith('.vue')) out.push(full)
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) visit(full);
+      else if (entry.name.endsWith(".vue")) out.push(full);
     }
-  }
-  visit(root)
-  return out
+  };
+  visit(root);
+  return out;
 }
 
 /** 检查单个 .vue 文件：返回是否携带 <style> 块与解析失败信息（如有）。
  *  经 vue/compiler-sfc 解析（注释里的 "<style>" 字样不误报）。 */
 export function checkVueFile(file: string): { hasStyleBlock: boolean; failure?: string } {
-  const source = readFileSync(file, 'utf-8')
-  const { descriptor, errors } = parse(source, { filename: file })
+  const source = readFileSync(file, "utf-8");
+  const { descriptor, errors } = parse(source, { filename: file });
   if (errors.length > 0) {
-    return { hasStyleBlock: false, failure: errors.map((e) => e.message).join('; ') }
+    return { hasStyleBlock: false, failure: errors.map((e) => e.message).join("; ") };
   }
-  return { hasStyleBlock: descriptor.styles.length > 0 }
+  return { hasStyleBlock: descriptor.styles.length > 0 };
 }
 
 function main(): void {
-  const scanRoot = process.argv[2] ?? fileURLToPath(new URL('../src', import.meta.url))
-  const files = collectVueFiles(scanRoot)
-  const violations: string[] = []
-  const failures: string[] = []
+  const scanRoot = process.argv[2] ?? fileURLToPath(new URL("../src", import.meta.url));
+  const files = collectVueFiles(scanRoot);
+  const violations: string[] = [];
+  const failures: string[] = [];
   for (const file of files) {
-    const r = checkVueFile(file)
+    const r = checkVueFile(file);
     if (r.failure) {
-      failures.push(`✗ SFC 解析失败：${normalizePath(file) || file} — ${r.failure}`)
-      continue
+      failures.push(`✗ SFC 解析失败：${normalizePath(file) || file} — ${r.failure}`);
+      continue;
     }
     if (r.hasStyleBlock && !STYLE_BLOCK_WHITELIST.includes(normalizePath(file))) {
-      violations.push(normalizePath(file))
+      violations.push(normalizePath(file));
     }
   }
   // 反向存在性断言（#1360）：白名单条目必须在扫描面内可达，陈目即红
-  const scannedRels = new Set(files.map((file) => normalizePath(file)))
-  const unreachable = STYLE_BLOCK_WHITELIST.filter((rel) => !scannedRels.has(rel))
+  const scannedRels = new Set(files.map((file) => normalizePath(file)));
+  const unreachable = STYLE_BLOCK_WHITELIST.filter((rel) => !scannedRels.has(rel));
   if (violations.length === 0 && failures.length === 0 && unreachable.length === 0) {
     console.log(
       `✅ 样式块守门：${files.length} 个 .vue 文件检查通过——白名单（${STYLE_BLOCK_WHITELIST.length} 个存量文件）外零 <style> 块且全条目可达（ADR-0093 / #1360）`,
-    )
-    return
+    );
+    return;
   }
-  for (const f of failures) console.error(f)
+  for (const f of failures) console.error(f);
   for (const rel of unreachable) {
     console.error(
       `✗ 白名单条目不可达：${rel}——文件删除/改名/搬迁后未同步 STYLE_BLOCK_WHITELIST` +
         `（清单漂移 fail loud，#1360；请同步删除或改写该条目，陈目不静默存留）`,
-    )
+    );
   }
   for (const v of violations) {
     console.error(
       `✗ 新增 <style> 块：${v}\n  样式方案守门（ADR-0093 / issue #888）：白名单外禁止 <style> 块，` +
         `新样式一律写组件旁路 vanilla-extract 样式文件（*.css.ts，与组件同目录共置）。` +
         `若属存量文件迁移回退或清单漂移，请同步 scripts/check-style-blocks.ts 的 STYLE_BLOCK_WHITELIST。`,
-    )
+    );
   }
-  process.exit(1)
+  process.exit(1);
 }
 
 // 仅直接运行时执行 main；导出的检查函数与白名单清单供包装测试/后续工具复用。
 // 包装测试随 #1360 补齐（scripts/check-style-blocks.test.ts，spawnSync 进程级
 // 断言退出码与输出，同 check-async-guards.test.ts 形制），挂 check.sh 随 CI 执行。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main()
+  main();
 }

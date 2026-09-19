@@ -1,5 +1,5 @@
-import { computed, reactive, ref, type ComputedRef, type Ref } from 'vue'
-import { fieldErrorKind, type FieldErrorKind } from '@ledger/utils/field-error'
+import { computed, reactive, ref, type ComputedRef, type Ref } from "vue";
+import { fieldErrorKind, type FieldErrorKind } from "@ledger/utils/field-error";
 
 /**
  * useFieldErrors：字段错误态装配工厂（表单级，ADR-0058 决策 4 补完 / issue #1007）。
@@ -19,82 +19,82 @@ import { fieldErrorKind, type FieldErrorKind } from '@ledger/utils/field-error'
 
 /** 判定对象最小结构面：ok / 错误 kind，加可选取值载荷（金额/价格为 yuan、数量为 value） */
 export interface FieldJudgment {
-  kind: 'ok' | FieldErrorKind
-  yuan?: number
-  value?: number
+  kind: "ok" | FieldErrorKind;
+  yuan?: number;
+  value?: number;
 }
 
 /** 单字段声明 */
 export interface FieldSpec {
   /** 原始文本 ref（工厂只读）；表单直接赋值承载回填/清空 */
-  text: Ref<string>
+  text: Ref<string>;
   /** 判定纯函数（消费 field-error 单点，不在此复制口径） */
-  judge: (text: string) => FieldJudgment
+  judge: (text: string) => FieldJudgment;
   /** 启用条件 getter：返回 false 时该字段错误态恒 null 且不参与聚合（如基金形态单价无输入面） */
-  enabled?: () => boolean
+  enabled?: () => boolean;
 }
 
 /** 单字段视图 */
 export interface FieldView {
   /** 当前错误类别（null = 无错误态） */
-  error: ComputedRef<FieldErrorKind | null>
+  error: ComputedRef<FieldErrorKind | null>;
   /** ok 判定归一后的数值（金额/价格为元、数量为数值；非 ok 为 null） */
-  value: ComputedRef<number | null>
+  value: ComputedRef<number | null>;
   /** 失焦上报：空值红时机输入（touched） */
-  markBlurred: () => void
+  markBlurred: () => void;
 }
 
 export interface FieldErrors<K extends string> {
   /** 每字段视图，按声明表键名取用 */
-  fields: Record<K, FieldView>
+  fields: Record<K, FieldView>;
   /** 任一启用字段处于错误态（提交禁用依据） */
-  hasError: ComputedRef<boolean>
+  hasError: ComputedRef<boolean>;
   /** 保存尝试上报：空值兜底红时机输入（saveAttempted，表单级共享） */
-  markSaveAttempted: () => void
+  markSaveAttempted: () => void;
   /** 清零全部时机标志（重置或提交成功后调用） */
-  reset: () => void
+  reset: () => void;
 }
 
 /** ok 判定载荷归一为数值：金额/价格取 yuan、数量取 value，其余（含无载荷 ok）→ null */
 function resolveValue(judgment: FieldJudgment): number | null {
-  if (judgment.kind !== 'ok') return null
-  return judgment.yuan ?? judgment.value ?? null
+  if (judgment.kind !== "ok") return null;
+  return judgment.yuan ?? judgment.value ?? null;
 }
 
 export function useFieldErrors<K extends string>(specs: Record<K, FieldSpec>): FieldErrors<K> {
-  const keys = Object.keys(specs) as K[]
-  const saveAttempted = ref(false)
-  const touched = reactive<Record<string, boolean>>({})
-  for (const key of keys) touched[key] = false
+  const keys = Object.keys(specs) as K[];
+  const saveAttempted = ref(false);
+  const touched = reactive<Record<string, boolean>>({});
+  for (const key of keys) touched[key] = false;
 
-  const fields = {} as Record<K, FieldView>
+  const fields = {} as Record<K, FieldView>;
   for (const key of keys) {
-    const spec = specs[key]
-    const judgment = computed(() => spec.judge(spec.text.value))
+    const spec = specs[key];
+    const judgment = computed(() => spec.judge(spec.text.value));
     fields[key] = {
       error: computed<FieldErrorKind | null>(() => {
-        if (spec.enabled && !spec.enabled()) return null
+        if (spec.enabled && !spec.enabled()) return null;
         return fieldErrorKind(judgment.value, {
           touched: touched[key],
           saveAttempted: saveAttempted.value,
-        })
+        });
       }),
       value: computed(() => resolveValue(judgment.value)),
       markBlurred: () => {
-        touched[key] = true
+        touched[key] = true;
       },
-    }
+    };
   }
 
   return {
     fields,
     hasError: computed(() => keys.some((key) => fields[key].error.value != null)),
     markSaveAttempted: () => {
-      saveAttempted.value = true
+      saveAttempted.value = true;
     },
     reset: () => {
-      saveAttempted.value = false
-      for (const key of keys) touched[key] = false
+      saveAttempted.value = false;
+      for (const key of keys) touched[key] = false;
     },
-  }
+  };
 }

@@ -1,5 +1,5 @@
-import { globalStyle } from '@vanilla-extract/css'
-import { appVars } from '@ledger/theme/app-theme.css.ts'
+import { globalStyle } from "@vanilla-extract/css";
+import { appVars } from "@ledger/theme/app-theme.css.ts";
 
 /**
  * 移动档交易卡片列表旁路样式（issue #846 / ADR-0088 决策 9，ADR-0093 样式方案）：
@@ -11,84 +11,84 @@ import { appVars } from '@ledger/theme/app-theme.css.ts'
  */
 
 /** 列表容器钩子类。 */
-export const TRANSACTION_CARD_LIST_CLASS = 'transaction-card-list'
+export const TRANSACTION_CARD_LIST_CLASS = "transaction-card-list";
 
 /** 卡片根元素钩子类。 */
-export const TRANSACTION_CARD_CLASS = 'transaction-card'
+export const TRANSACTION_CARD_CLASS = "transaction-card";
 
 /** 卡片「⋯」按钮钩子类（与桌面表格操作列共用 row-actions-btn/touch-hit-area 全局类）。 */
-export const CARD_MENU_CLASS = 'transaction-card-menu'
+export const CARD_MENU_CLASS = "transaction-card-menu";
 
 /** 列表容器：卡片纵向堆叠。 */
 globalStyle(`.${TRANSACTION_CARD_LIST_CLASS}`, {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '8px',
-})
+  display: "flex",
+  flexDirection: "column",
+  gap: "8px",
+});
 
 /** 卡片根：卡片底色 + 中性边框 + 圆角，内部 flex 列布局。 */
 globalStyle(`.${TRANSACTION_CARD_CLASS}`, {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '6px',
-  padding: '12px',
+  display: "flex",
+  flexDirection: "column",
+  gap: "6px",
+  padding: "12px",
   borderRadius: appVars.radius.base,
   background: appVars.background.card,
   border: `1px solid ${appVars.border.border}`,
-})
+});
 
 /** 头部行：日期 + 类型标签靠左、「⋯」靠右。 */
 globalStyle(`.${TRANSACTION_CARD_CLASS} .transaction-card-head`, {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-})
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+});
 
 globalStyle(`.${TRANSACTION_CARD_CLASS} .transaction-card-date`, {
-  fontSize: '12px',
+  fontSize: "12px",
   color: appVars.text.secondary,
-  fontVariantNumeric: 'tabular-nums',
-  flex: 'none',
-})
+  fontVariantNumeric: "tabular-nums",
+  flex: "none",
+});
 
 /** 「⋯」推到头部行右缘；热区外扩由全局 touch-hit-area 类承担。 */
 globalStyle(`.${TRANSACTION_CARD_CLASS} .${CARD_MENU_CLASS}`, {
-  marginLeft: 'auto',
-})
+  marginLeft: "auto",
+});
 
 /** 信息行（分类/商户、账户、来源）：单行省略，长内容不撑破卡片。 */
 globalStyle(`.${TRANSACTION_CARD_CLASS} .transaction-card-row`, {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '6px',
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
   minWidth: 0,
-  fontSize: '13px',
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-})
+  fontSize: "13px",
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+});
 
 globalStyle(`.${TRANSACTION_CARD_CLASS} .transaction-card-row > *`, {
   flexShrink: 1,
   minWidth: 0,
-})
+});
 
 /** 分类/商户缺省的「-」与来源行的弱化呈现。 */
 globalStyle(`.${TRANSACTION_CARD_CLASS} .transaction-card-empty`, {
   color: appVars.text.tertiary,
-})
+});
 
 /** 分类与商户之间的间隔点。 */
 globalStyle(`.${TRANSACTION_CARD_CLASS} .transaction-card-join`, {
   color: appVars.text.tertiary,
-  flex: 'none',
-})
+  flex: "none",
+});
 
 /** 金额行：右对齐、加大字号——扫一眼即读金额与方向（语义色由内联 style 承担）。 */
 globalStyle(`.${TRANSACTION_CARD_CLASS} .transaction-card-amount`, {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  fontSize: '16px',
+  display: "flex",
+  justifyContent: "flex-end",
+  fontSize: "16px",
   fontWeight: 600,
-  fontVariantNumeric: 'tabular-nums',
-  paddingTop: '2px',
-})
+  fontVariantNumeric: "tabular-nums",
+  paddingTop: "2px",
+});

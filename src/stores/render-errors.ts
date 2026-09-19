@@ -1,5 +1,5 @@
-import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { defineStore } from "pinia";
+import { ref } from "vue";
 
 /**
  * 渲染错误提示条状态（issue #926）：全局渲染层错误（app.config.errorHandler
@@ -10,17 +10,17 @@ import { ref } from 'vue'
  * message 是「当前提示条内容」唯一事实源：null = 不渲染；重复报错覆盖为
  * 最新文案；用户关闭（dismiss）即清除，后续同类错误重新出现（不跨关闭记忆）。
  */
-export const useRenderErrorsStore = defineStore('render-errors', () => {
+export const useRenderErrorsStore = defineStore("render-errors", () => {
   /** 当前展示的渲染错误摘要文案；null = 无错误提示 */
-  const message = ref<string | null>(null)
+  const message = ref<string | null>(null);
 
   function report(text: string): void {
-    message.value = text
+    message.value = text;
   }
 
   function dismiss(): void {
-    message.value = null
+    message.value = null;
   }
 
-  return { message, report, dismiss }
-})
+  return { message, report, dismiss };
+});

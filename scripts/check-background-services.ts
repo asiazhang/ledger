@@ -40,23 +40,23 @@
 // bun scripts/check-background-services.ts [src-tauri-dir]
 // 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job）。
 
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { pathToFileURL, fileURLToPath } from 'node:url'
-import { maskNonCode } from './check-structure.ts'
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { maskNonCode } from "./check-structure.ts";
 
 /** 唯一编排点：壳层文件（相对 src-tauri 根，#1472 起扫描面基准同址）与函数名
  *  （issue #961 单点） */
-export const ORCHESTRATOR_FILE = 'src/lib.rs'
-export const ORCHESTRATOR_FN = 'start_background_services'
+export const ORCHESTRATOR_FILE = "src/lib.rs";
+export const ORCHESTRATOR_FN = "start_background_services";
 
 /** 成组拉起名单（编排点函数体内必须同时出现的各域入口） */
 const PAIRED_NAMES = [
-  'start_scheduler',
-  'start_triggers',
-  'start_history_backfill',
-  'start_daily_price_refresh',
-] as const
+  "start_scheduler",
+  "start_triggers",
+  "start_history_backfill",
+  "start_daily_price_refresh",
+] as const;
 
 /**
  * 受守标识符及其合法住址（导出供测试夹具派生，check-structure.test.ts 消费
@@ -67,67 +67,61 @@ const PAIRED_NAMES = [
  * 不放行：它是分平台门的域内实现细节，出域即绕门）。
  */
 export interface GuardedName {
-  name: string
-  wholeFile: readonly string[]
-  orchestratorBodyAllowed: boolean
-  note: string
+  name: string;
+  wholeFile: readonly string[];
+  orchestratorBodyAllowed: boolean;
+  note: string;
 }
 
 export const GUARDED_NAMES: readonly GuardedName[] = [
   {
-    name: 'start_scheduler',
+    name: "start_scheduler",
     // #1091 起备份域拆独立 crate：定义住 crate 的 auto.rs、接缝再导出住 crate 根
     // lib.rs（根包 `pub use ledger_backup as backup;` 不含标识符原文，不入列）。
-    wholeFile: ['crates/backup/src/auto.rs', 'crates/backup/src/lib.rs'],
+    wholeFile: ["crates/backup/src/auto.rs", "crates/backup/src/lib.rs"],
     orchestratorBodyAllowed: true,
-    note: '自动备份调度入口（ledger-backup crate 定义 + crate 根再导出，#1091）',
+    note: "自动备份调度入口（ledger-backup crate 定义 + crate 根再导出，#1091）",
   },
   {
-    name: 'start_triggers',
+    name: "start_triggers",
     wholeFile: [
-      'crates/sync-engine/src/trigger/scheduler.rs',
-      'crates/sync-engine/src/trigger/mod.rs',
-      'crates/sync-engine/src/lib.rs',
+      "crates/sync-engine/src/trigger/scheduler.rs",
+      "crates/sync-engine/src/trigger/mod.rs",
+      "crates/sync-engine/src/lib.rs",
     ],
     orchestratorBodyAllowed: true,
-    note: '同步触发编排单一入口（分平台门住址，ADR-0098 决策 4；issue #1107 拆 crate 后定义住 crates/sync-engine/src/trigger/scheduler.rs，crate 根再导出）',
+    note: "同步触发编排单一入口（分平台门住址，ADR-0098 决策 4；issue #1107 拆 crate 后定义住 crates/sync-engine/src/trigger/scheduler.rs，crate 根再导出）",
   },
   {
-    name: 'start_sync_scheduler',
+    name: "start_sync_scheduler",
     wholeFile: [
-      'crates/sync-engine/src/trigger/scheduler.rs',
-      'crates/sync-engine/src/trigger/mod.rs',
-      'crates/sync-engine/src/lib.rs',
+      "crates/sync-engine/src/trigger/scheduler.rs",
+      "crates/sync-engine/src/trigger/mod.rs",
+      "crates/sync-engine/src/lib.rs",
     ],
     orchestratorBodyAllowed: false,
-    note: '桌面轮询线程拉起（仅 start_triggers 域内消费；直接调用即绕过分平台门，#863 缺陷 1 形态）',
+    note: "桌面轮询线程拉起（仅 start_triggers 域内消费；直接调用即绕过分平台门，#863 缺陷 1 形态）",
   },
   {
-    name: 'start_history_backfill',
-    wholeFile: [
-      'crates/market-sync/src/history.rs',
-      'crates/market-sync/src/lib.rs',
-    ],
+    name: "start_history_backfill",
+    wholeFile: ["crates/market-sync/src/history.rs", "crates/market-sync/src/lib.rs"],
     orchestratorBodyAllowed: true,
-    note: '价格历史后台补全调度入口（ADR-0122 / issue #1375；定义住 ledger-market-sync crate 的 history.rs，crate 根再导出）',
+    note: "价格历史后台补全调度入口（ADR-0122 / issue #1375；定义住 ledger-market-sync crate 的 history.rs，crate 根再导出）",
   },
   {
-    name: 'start_daily_price_refresh',
-    wholeFile: [
-      'crates/market-sync/src/daily_refresh.rs',
-      'crates/market-sync/src/lib.rs',
-    ],
+    name: "start_daily_price_refresh",
+    wholeFile: ["crates/market-sync/src/daily_refresh.rs", "crates/market-sync/src/lib.rs"],
     orchestratorBodyAllowed: true,
-    note: '后台每日现价刷新调度入口（ADR-0122 决策 3 / issue #1377；定义住 ledger-market-sync crate 的 daily_refresh.rs，crate 根再导出）',
+    note: "后台每日现价刷新调度入口（ADR-0122 决策 3 / issue #1377；定义住 ledger-market-sync crate 的 daily_refresh.rs，crate 根再导出）",
   },
-]
+];
 
 /** 启动接线单点（issue #1088）：标识符 + 唯一合法接线文件（相对 src-tauri 根，
  *  #1472 起扫描面基准同址）。 */
 export interface BootWiring {
-  name: string
-  file: string
-  note: string
+  name: string;
+  file: string;
+  note: string;
 }
 
 /**
@@ -139,15 +133,15 @@ export interface BootWiring {
  * tests/ 目录为测试豁免形态，与家族一致）；文本级扫描，掩码注释与字面量
  *（复用 maskNonCode），别名盲区靠评审兜底。
  */
-export const MARKET_SYNC_SRC_REL = 'crates/market-sync/src'
-export const LANE_EXECUTOR_TOKEN = 'tauri::async_runtime::spawn'
-export const LANE_TIMER_TOKEN = 'tokio::time::sleep'
-export const LANE_BANNED_TOKENS = ['thread::spawn', 'std::thread::sleep'] as const
+export const MARKET_SYNC_SRC_REL = "crates/market-sync/src";
+export const LANE_EXECUTOR_TOKEN = "tauri::async_runtime::spawn";
+export const LANE_TIMER_TOKEN = "tokio::time::sleep";
+export const LANE_BANNED_TOKENS = ["thread::spawn", "std::thread::sleep"] as const;
 /** 两条车道的住址（相对 src-tauri 根；与 GUARDED_NAMES 的 wholeFile 同源路径） */
 export const LANE_FILES = [
-  'crates/market-sync/src/daily_refresh.rs',
-  'crates/market-sync/src/history.rs',
-] as const
+  "crates/market-sync/src/daily_refresh.rs",
+  "crates/market-sync/src/history.rs",
+] as const;
 
 /**
  * 壳层启动接线清单（issue #1088 提交点后置动作注册）：每条须在指定文件内出现
@@ -156,261 +150,263 @@ export const LANE_FILES = [
  */
 export const BOOT_WIRING: readonly BootWiring[] = [
   {
-    name: 'install_after_commit_hook',
+    name: "install_after_commit_hook",
     file: ORCHESTRATOR_FILE,
-    note: '提交点后置动作注册：备份域实现接到基础设施注册点（spec #1086 / issue #1088，挂载点①）',
+    note: "提交点后置动作注册：备份域实现接到基础设施注册点（spec #1086 / issue #1088，挂载点①）",
   },
   {
-    name: 'register_after_occurrence_hook',
+    name: "register_after_occurrence_hook",
     file: ORCHESTRATOR_FILE,
-    note: '期次落账置脏注册：备份域实现（#1091 起 ledger-backup crate 的 occurrence_dirty_hook）接到定时计划域注册点（issue #1090；#1091 起实现住 crate）',
+    note: "期次落账置脏注册：备份域实现（#1091 起 ledger-backup crate 的 occurrence_dirty_hook）接到定时计划域注册点（issue #1090；#1091 起实现住 crate）",
   },
   {
-    name: 'register_catch_up_hook',
+    name: "register_catch_up_hook",
     file: ORCHESTRATOR_FILE,
-    note: '追补触发注册：定时计划域实现（auto_run::catch_up_hook）接到备份域注册点（issue #1091 挂载点④，ADR-0112 决策 5）',
+    note: "追补触发注册：定时计划域实现（auto_run::catch_up_hook）接到备份域注册点（issue #1091 挂载点④，ADR-0112 决策 5）",
   },
-]
+];
 
 /** 受守标识符的裸名匹配形态（\b 边界；global 供 matchAll 逐行报出全部命中；
  *  任意限定路径与 use 引入均命中） */
-const GUARDED_NAME_PATTERN = new RegExp(`\\b(?:${GUARDED_NAMES.map((g) => g.name).join('|')})\\b`, 'g')
+const GUARDED_NAME_PATTERN = new RegExp(
+  `\\b(?:${GUARDED_NAMES.map((g) => g.name).join("|")})\\b`,
+  "g",
+);
 
 /** 测试豁免形态（ADR-0056 决策 5，与 check-structure.ts 同款）：tests.rs 文件与
  *  tests/ 目录；内联 #[cfg(test)] 模块不豁免（更严，与家族一致）。 */
 function isTestFile(relPath: string): boolean {
-  const segments = relPath.split('/')
-  const file = segments[segments.length - 1]
-  return file === 'tests.rs' || segments.slice(0, -1).includes('tests')
+  const segments = relPath.split("/");
+  const file = segments[segments.length - 1];
+  return file === "tests.rs" || segments.slice(0, -1).includes("tests");
 }
 
 /** 递归收集目录下全部非测试 .rs 文件，相对路径排序保证输出确定；
  *  `target/` 目录整体跳过（#1472：构建产物不参与扫描面，防膨胀与生成代码假红） */
 function collectRustFiles(dir: string, relBase: string): { abs: string; rel: string }[] {
-  const out: { abs: string; rel: string }[] = []
+  const out: { abs: string; rel: string }[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
     a.name.localeCompare(b.name),
   )) {
-    const abs = join(dir, entry.name)
-    const rel = relBase ? `${relBase}/${entry.name}` : entry.name
-    if (isTestFile(rel)) continue
+    const abs = join(dir, entry.name);
+    const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
+    if (isTestFile(rel)) continue;
     if (entry.isDirectory()) {
-      if (entry.name === 'target') continue
-      out.push(...collectRustFiles(abs, rel))
-    }
-    else if (entry.name.endsWith('.rs')) out.push({ abs, rel })
+      if (entry.name === "target") continue;
+      out.push(...collectRustFiles(abs, rel));
+    } else if (entry.name.endsWith(".rs")) out.push({ abs, rel });
   }
-  return out
+  return out;
 }
 
 /** 编排点函数体在掩码文本中的行区间 [fnLine, closeLine]（1 起算，含端点）。
  *  起点为 `fn <name>` 所在行，终点为其后首个列 0 的 `}`（rustfmt 由 check.sh
  *  的 cargo fmt --check 保证，列 0 闭括号可靠）。 */
 function orchestratorBodySpan(maskedLines: string[]): [number, number] | null {
-  const fnLine = maskedLines.findIndex((l) => l.match(new RegExp(`fn\\s+${ORCHESTRATOR_FN}\\b`)))
-  if (fnLine === -1) return null
+  const fnLine = maskedLines.findIndex((l) => l.match(new RegExp(`fn\\s+${ORCHESTRATOR_FN}\\b`)));
+  if (fnLine === -1) return null;
   for (let i = fnLine + 1; i < maskedLines.length; i++) {
-    if (maskedLines[i].trim() === '}') return [fnLine + 1, i + 1]
+    if (maskedLines[i].trim() === "}") return [fnLine + 1, i + 1];
   }
-  return null
+  return null;
 }
 
 /** 单条扫描命中：行号（1 起算）、原文行、命中标识符。
  *  与 check-structure.ts 的 scanRustSource（每行首个命中）不同：本守门按名
  *  核对合法住址，同一行（如 mod.rs 再导出行）可携带多个受守名，须全部报出。 */
 interface NameHit {
-  line: number
-  text: string
-  match: string
+  line: number;
+  text: string;
+  match: string;
 }
 
 /** 扫描单个 Rust 文本（掩码注释与字符串/char 字面量）：返回全部受守名命中。
  *  同行同名多次出现只报一次（行号定位足够，不重复计数）。 */
 function scanGuardedNames(rawLines: string[], maskedLines: string[]): NameHit[] {
-  const hits: NameHit[] = []
-  const seen = new Set<string>()
+  const hits: NameHit[] = [];
+  const seen = new Set<string>();
   for (let i = 0; i < maskedLines.length; i++) {
     for (const m of maskedLines[i].matchAll(GUARDED_NAME_PATTERN)) {
-      const key = `${i + 1}:${m[0]}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      hits.push({ line: i + 1, text: rawLines[i].trim(), match: m[0] })
+      const key = `${i + 1}:${m[0]}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      hits.push({ line: i + 1, text: rawLines[i].trim(), match: m[0] });
     }
   }
-  return hits
+  return hits;
 }
 
 function main(): void {
-  const repoRoot = fileURLToPath(new URL('..', import.meta.url))
+  const repoRoot = fileURLToPath(new URL("..", import.meta.url));
   // 扫描面基准 = src-tauri 根（#1472 前为根包 src）：受守名扫描覆盖全树，故
   // 白名单路径与编排点坐标一律相对本根解析。
-  const scanRoot = process.argv[2] ?? join(repoRoot, 'src-tauri')
-  const problems: string[] = []
+  const scanRoot = process.argv[2] ?? join(repoRoot, "src-tauri");
+  const problems: string[] = [];
 
   // 白名单存在性自证：每个整文件豁免条目必须存在且含其受守标识符（fail loud）
   for (const guarded of GUARDED_NAMES) {
     for (const relPath of guarded.wholeFile) {
-      let source: string
+      let source: string;
       try {
-        source = readFileSync(join(scanRoot, relPath), 'utf8')
+        source = readFileSync(join(scanRoot, relPath), "utf8");
       } catch {
         problems.push(
           `✗ 白名单条目缺失：${relPath}（${guarded.name} 的 ${guarded.note}）——文件不存在，清单漂移 fail loud`,
-        )
-        continue
+        );
+        continue;
       }
-      const hits = scanGuardedNames(source.split('\n'), maskNonCode(source).split('\n'))
+      const hits = scanGuardedNames(source.split("\n"), maskNonCode(source).split("\n"));
       if (!hits.some((h) => h.match === guarded.name)) {
         problems.push(
           `✗ 白名单条目漂移：${relPath}（${guarded.note}）不再含标识符 \`${guarded.name}\`` +
             `——确认域入口改名/搬迁后同步更新本脚本白名单`,
-        )
+        );
       }
     }
   }
 
   // 唯一编排点自证：函数必须存在，成对名单在其函数体内同时出现
-  let orchestratorSpan: [number, number] | null = null
+  let orchestratorSpan: [number, number] | null = null;
   try {
-    const libSource = readFileSync(join(scanRoot, ORCHESTRATOR_FILE), 'utf8')
-    const maskedLines = maskNonCode(libSource).split('\n')
-    orchestratorSpan = orchestratorBodySpan(maskedLines)
+    const libSource = readFileSync(join(scanRoot, ORCHESTRATOR_FILE), "utf8");
+    const maskedLines = maskNonCode(libSource).split("\n");
+    orchestratorSpan = orchestratorBodySpan(maskedLines);
     if (orchestratorSpan === null) {
       problems.push(
         `✗ 唯一编排点缺失：${ORCHESTRATOR_FILE} 内找不到 \`fn ${ORCHESTRATOR_FN}\`` +
           `——成对拉起的单点被删或改名，业务可用起点将退回「各写各的」（issue #961 根因复现）`,
-      )
+      );
     } else {
-      const bodyRaw = libSource.split('\n').slice(orchestratorSpan[0] - 1, orchestratorSpan[1])
-      const bodyMasked = maskedLines.slice(orchestratorSpan[0] - 1, orchestratorSpan[1])
-      const bodyHits = new Set(scanGuardedNames(bodyRaw, bodyMasked).map((h) => h.match))
+      const bodyRaw = libSource.split("\n").slice(orchestratorSpan[0] - 1, orchestratorSpan[1]);
+      const bodyMasked = maskedLines.slice(orchestratorSpan[0] - 1, orchestratorSpan[1]);
+      const bodyHits = new Set(scanGuardedNames(bodyRaw, bodyMasked).map((h) => h.match));
       for (const name of PAIRED_NAMES) {
         if (!bodyHits.has(name)) {
           problems.push(
             `✗ 成组性破坏：${ORCHESTRATOR_FILE} 的 \`${ORCHESTRATOR_FN}\` 函数体内缺少 \`${name}\`` +
               `——后台服务只拉一半，缺失一侧的业务在本会话静默失效（#863 两次缺陷的形态）`,
-          )
+          );
         }
       }
     }
   } catch {
-    problems.push(`✗ 唯一编排点文件缺失：${ORCHESTRATOR_FILE}——src-tauri 根指错或壳层文件漂移`)
+    problems.push(`✗ 唯一编排点文件缺失：${ORCHESTRATOR_FILE}——src-tauri 根指错或壳层文件漂移`);
   }
 
   // src-tauri 全树扫描（排除 target/，#1472）：命中按名核对合法住址
   //（整文件豁免 / 编排点函数体按名放行），其余一律红
   // 启动接线自证（issue #1088）：注册必须在壳层启动接线处出现，缺失即红。
   for (const wiring of BOOT_WIRING) {
-    let source: string
+    let source: string;
     try {
-      source = readFileSync(join(scanRoot, wiring.file), 'utf8')
+      source = readFileSync(join(scanRoot, wiring.file), "utf8");
     } catch {
       problems.push(
         `✗ 启动接线文件缺失：${wiring.file}（${wiring.note}）——壳层启动文件漂移，fail loud`,
-      )
-      continue
+      );
+      continue;
     }
     if (!new RegExp(`\\b${wiring.name}\\b`).test(maskNonCode(source))) {
       problems.push(
         `✗ 启动接线缺失：${wiring.file} 内未接线 \`${wiring.name}\`（${wiring.note}）\n` +
           `    启动路径不被测试直接执行，删掉这行不会让任何断言变红——生产将静默丢` +
           `置脏/到期检查；请在壳层启动接线处恢复调用`,
-      )
+      );
     }
   }
 
   // 后台车道执行器守门（issue #1413 / ADR-0125 决策 7）：两车道必须以全局运行时
   // async 任务拉起 + 异步定时，生产面零自建线程。目录缺失 fail loud（拒绝以
   // 空集假绿通过，与全树扫描同款取舍）。
-  const marketSyncSrcDir = join(scanRoot, MARKET_SYNC_SRC_REL)
-  let laneFiles: { abs: string; rel: string }[] = []
+  const marketSyncSrcDir = join(scanRoot, MARKET_SYNC_SRC_REL);
+  let laneFiles: { abs: string; rel: string }[] = [];
   try {
-    laneFiles = collectRustFiles(marketSyncSrcDir, MARKET_SYNC_SRC_REL)
+    laneFiles = collectRustFiles(marketSyncSrcDir, MARKET_SYNC_SRC_REL);
   } catch {
     problems.push(
       `✗ 车道执行器扫描面不可达：${MARKET_SYNC_SRC_REL}——行情域 crate 目录漂移，拒绝以空集假绿通过`,
-    )
+    );
   }
   for (const f of laneFiles) {
-    const masked = maskNonCode(readFileSync(f.abs, 'utf8'))
-    const isLaneFile = (LANE_FILES as readonly string[]).includes(f.rel)
+    const masked = maskNonCode(readFileSync(f.abs, "utf8"));
+    const isLaneFile = (LANE_FILES as readonly string[]).includes(f.rel);
     if (isLaneFile) {
       for (const token of [LANE_EXECUTOR_TOKEN, LANE_TIMER_TOKEN]) {
-        if (!new RegExp(`\\b${token.replace(/::/g, '\\s*::\\s*')}\\b`).test(masked)) {
+        if (!new RegExp(`\\b${token.replace(/::/g, "\\s*::\\s*")}\\b`).test(masked)) {
           problems.push(
-            `✗ 车道执行器接线缺失：${f.rel} 未以 \`${token}\` 表达${token === LANE_TIMER_TOKEN ? '异步定时（启动延迟/自然日窗口）' : 'async 任务拉起'}\n` +
+            `✗ 车道执行器接线缺失：${f.rel} 未以 \`${token}\` 表达${token === LANE_TIMER_TOKEN ? "异步定时（启动延迟/自然日窗口）" : "async 任务拉起"}\n` +
               `    车道必须是挂全局运行时的 async 任务（ADR-0125 决策 7 / issue #1413）；删掉接线不会让\n` +
               `    行为测试直接变红，故以源码扫描守门（#959 / #961 先例）`,
-          )
+          );
         }
       }
     }
     for (const token of LANE_BANNED_TOKENS) {
-      if (new RegExp(`\\b${token.replace(/::/g, '\\s*::\\s*')}\\b`).test(masked)) {
+      if (new RegExp(`\\b${token.replace(/::/g, "\\s*::\\s*")}\\b`).test(masked)) {
         problems.push(
           `✗ 车道回归自建线程：${f.rel} 出现 \`${token}\`\n` +
             `    后台两条车道（价格历史补全 / 每日现价刷新）必须是挂全局运行时的 async 任务\n` +
             `   （tauri::async_runtime::spawn + tokio::time::sleep，ADR-0125 决策 7 / issue #1413）`,
-        )
+        );
       }
     }
   }
 
-  let files: { abs: string; rel: string }[] = []
+  let files: { abs: string; rel: string }[] = [];
   try {
-    files = collectRustFiles(scanRoot, '')
+    files = collectRustFiles(scanRoot, "");
   } catch {
-    problems.push(`✗ 扫描根不可达：${scanRoot}——拒绝以空集假绿通过`)
+    problems.push(`✗ 扫描根不可达：${scanRoot}——拒绝以空集假绿通过`);
   }
   if (files.length === 0) {
     problems.push(
       `✗ 扫描面提不出任何非测试 Rust 文件：${scanRoot}——src-tauri 根指错或源码整体` +
         `漂移，拒绝以空集假绿通过`,
-    )
+    );
   }
   for (const f of files) {
-    const source = readFileSync(f.abs, 'utf8')
-    const rawLines = source.split('\n')
-    const maskedLines = maskNonCode(source).split('\n')
+    const source = readFileSync(f.abs, "utf8");
+    const rawLines = source.split("\n");
+    const maskedLines = maskNonCode(source).split("\n");
     for (const hit of scanGuardedNames(rawLines, maskedLines)) {
-      const guarded = GUARDED_NAMES.find((g) => g.name === hit.match)
-      if (guarded === undefined) continue // 形态自 GUARDED_NAMES 派生，不可达；防御性跳过
-      if (guarded.wholeFile.includes(f.rel)) continue
+      const guarded = GUARDED_NAMES.find((g) => g.name === hit.match);
+      if (guarded === undefined) continue; // 形态自 GUARDED_NAMES 派生，不可达；防御性跳过
+      if (guarded.wholeFile.includes(f.rel)) continue;
       const inOrchestratorBody =
         f.rel === ORCHESTRATOR_FILE &&
         orchestratorSpan !== null &&
         hit.line >= orchestratorSpan[0] &&
-        hit.line <= orchestratorSpan[1]
-      if (inOrchestratorBody && guarded.orchestratorBodyAllowed) continue
+        hit.line <= orchestratorSpan[1];
+      if (inOrchestratorBody && guarded.orchestratorBodyAllowed) continue;
       problems.push(
         `✗ 后台服务入口的生产调用脱离唯一编排点：${f.rel}:${hit.line}（${hit.match}）\n` +
           `    ${hit.text}\n` +
           `    规则：\`${guarded.name}\`——${guarded.note}；\n` +
           `    自动备份与同步触发必须经 \`${ORCHESTRATOR_FN}\`（${ORCHESTRATOR_FILE}）成对拉起` +
           `（issue #961），新增业务可用起点请调用该编排点，不要单独调用任一域入口`,
-      )
+      );
     }
   }
 
   if (problems.length > 0) {
-    for (const p of problems) console.error(p)
+    for (const p of problems) console.error(p);
     console.error(
       `❌ 后台服务成组拉起守门失败：${problems.length} 处问题` +
         `（单点编排 + 白名单即规格，见 issue #961 / ADR-0056 决策 4 哲学）`,
-    )
-    process.exit(1)
+    );
+    process.exit(1);
   }
-  const pathCount = new Set(GUARDED_NAMES.flatMap((g) => [...g.wholeFile])).size
+  const pathCount = new Set(GUARDED_NAMES.flatMap((g) => [...g.wholeFile])).size;
   console.log(
     `✓ 后台服务成组拉起守门：受守入口 ${GUARDED_NAMES.length} 个` +
-      `（${GUARDED_NAMES.map((g) => g.name).join(' / ')}）· 白名单路径 ${pathCount} 个（定义与再导出）` +
+      `（${GUARDED_NAMES.map((g) => g.name).join(" / ")}）· 白名单路径 ${pathCount} 个（定义与再导出）` +
       ` · 生产调用收敛于 \`${ORCHESTRATOR_FN}\` 单点 · 启动接线 ${BOOT_WIRING.length} 项已接线（#1088）` +
       ` · 车道执行器守门 ${laneFiles.length} 个生产文件零自建线程（#1413）` +
       ` · src-tauri 全树（排除 target/）扫描 ${files.length} 个非测试文件零脱离`,
-  )
+  );
 }
 
 // 仅直接运行时执行 main；被其他工具 import 时只取导出的扫描逻辑。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main()
+  main();
 }

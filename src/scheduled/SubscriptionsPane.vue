@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { errorMessage } from '@ledger/utils/errors'
-import { computed, h, onMounted, ref } from 'vue'
-import { t } from '@ledger/i18n'
+import { errorMessage } from "@ledger/utils/errors";
+import { computed, h, onMounted, ref } from "vue";
+import { t } from "@ledger/i18n";
 import {
   NCard,
   NButton,
@@ -14,17 +14,17 @@ import {
   NSpace,
   useMessage,
   type DataTableColumns,
-} from 'naive-ui'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import AppTreeSelect from '@ledger/ui-kit/AppTreeSelect.vue'
-import { formatAmount, yuanToCents } from '@ledger/money'
-import type { ScheduledTransactionOccurrence } from '@ledger/types'
-import { api } from '@ledger/api'
-import { useReferenceStore } from '@/stores/reference'
-import { useModalIntent } from '@ledger/modal-intent'
-import { useWindowTier } from '@ledger/window-tier'
-import { useScheduledPlanForm } from '@/scheduled/useScheduledPlanForm'
+} from "naive-ui";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import AppTreeSelect from "@ledger/ui-kit/AppTreeSelect.vue";
+import { formatAmount, yuanToCents } from "@ledger/money";
+import type { ScheduledTransactionOccurrence } from "@ledger/types";
+import { api } from "@ledger/api";
+import { useReferenceStore } from "@/stores/reference";
+import { useModalIntent } from "@ledger/modal-intent";
+import { useWindowTier } from "@ledger/window-tier";
+import { useScheduledPlanForm } from "@/scheduled/useScheduledPlanForm";
 import {
   earliestPendingOccurrence,
   scheduledRecurrenceLabel,
@@ -32,15 +32,15 @@ import {
   useScheduledPlanList,
   type ScheduledPlanRow,
   type ScheduledPlanRowAction,
-} from '@ledger/scheduled-plan-list'
-import AppModal from '@ledger/ui-kit/AppModal.vue'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import PlanRowActions from '@/scheduled/PlanRowActions.vue'
-import SubscriptionSpendPanel from '@/scheduled/SubscriptionSpendPanel.vue'
-import PlanDetailModal from '@/scheduled/PlanDetailModal.vue'
-import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from '@/components/mobile-cells'
-import { usePlanFocusLanding } from '@/scheduled/usePlanFocusLanding'
-import { scheduledStatusLabel } from '@ledger/utils/scheduled'
+} from "@ledger/scheduled-plan-list";
+import AppModal from "@ledger/ui-kit/AppModal.vue";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import PlanRowActions from "@/scheduled/PlanRowActions.vue";
+import SubscriptionSpendPanel from "@/scheduled/SubscriptionSpendPanel.vue";
+import PlanDetailModal from "@/scheduled/PlanDetailModal.vue";
+import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from "@/components/mobile-cells";
+import { usePlanFocusLanding } from "@/scheduled/usePlanFocusLanding";
+import { scheduledStatusLabel } from "@ledger/utils/scheduled";
 
 /**
  * 订阅页签 = ScheduledPlanList 计划清单模块（ADR-0041 迁移步 2）的薄适配器：
@@ -54,14 +54,14 @@ import { scheduledStatusLabel } from '@ledger/utils/scheduled'
  * 本页签无 #309 显式可见变化项：列、操作、表单、提示、排序零变化。
  */
 
-const reference = useReferenceStore()
-const message = useMessage()
+const reference = useReferenceStore();
+const message = useMessage();
 
 // 移动档适配（issue #848 / ADR-0088 决策 11 票⑧）：清单列结构三分（备注/金额/
 // 操作），信息并入副行不丢失；生命周期操作经 PlanRowActions 移动档变体一击可达。
 // 断点口径接窗口分级 composable 唯一事实源；桌面档十列一字不动（回归红线）。
-const windowTier = useWindowTier()
-const isMobileTier = computed(() => windowTier.value === 'mobile')
+const windowTier = useWindowTier();
+const isMobileTier = computed(() => windowTier.value === "mobile");
 
 // ---------------------------------------------------------------------------
 // 表单接缝（ADR-0041）：新建与编辑弹窗各持一份草稿实例——公共草稿字段、商户
@@ -69,19 +69,19 @@ const isMobileTier = computed(() => windowTier.value === 'mobile')
 // 沉入接缝 submitCreate（见下方「新建订阅表单接缝与提交」段，spec #520）。
 // ---------------------------------------------------------------------------
 
-const editForm = useScheduledPlanForm()
+const editForm = useScheduledPlanForm();
 const {
   note: editNote,
   accountId: editAccountId,
   categoryId: editCategoryId,
   merchantRef: editMerchantRef,
-} = editForm
+} = editForm;
 
 // 实际花费分析区（issue #160）：创建/编辑/生命周期变更/期次变更后同步刷新；
 // 生命周期变更的刷新经清单模块 onStatusChanged 钩子进入此函数（订阅真差异）
-const spendPanelRef = ref<InstanceType<typeof SubscriptionSpendPanel> | null>(null)
+const spendPanelRef = ref<InstanceType<typeof SubscriptionSpendPanel> | null>(null);
 function refreshSpend() {
-  void spendPanelRef.value?.reload()
+  void spendPanelRef.value?.reload();
 }
 
 // ---------------------------------------------------------------------------
@@ -92,22 +92,22 @@ function refreshSpend() {
 
 /** 下期扣款扩展：最早 pending 期次（无则 null，占位「—」）。 */
 interface SubscriptionExt {
-  next: ScheduledTransactionOccurrence | null
+  next: ScheduledTransactionOccurrence | null;
 }
-type SubscriptionRow = ScheduledPlanRow<SubscriptionExt>
+type SubscriptionRow = ScheduledPlanRow<SubscriptionExt>;
 
-const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null)
+const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null);
 
 const list = useScheduledPlanList<SubscriptionExt>({
-  kind: 'subscription',
+  kind: "subscription",
   expandDetail: (_plan, detail) => ({
     next: detail ? earliestPendingOccurrence(detail) : null,
   }),
-  cancelConfirmText: () => t('scheduled.pane.subscriptionCancelConfirm'),
+  cancelConfirmText: () => t("scheduled.pane.subscriptionCancelConfirm"),
   onStatusChanged: refreshSpend,
   onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),
-})
-const { loading, statusFilter, statusFilterOptions, filteredRows } = list
+});
+const { loading, statusFilter, statusFilterOptions, filteredRows } = list;
 
 // ---------------------------------------------------------------------------
 // 新建订阅 = 模态对话框（issue #158）：不引入独立路由页面，
@@ -120,16 +120,16 @@ const { loading, statusFilter, statusFilterOptions, filteredRows } = list
 
 /** 新建订阅弹窗意图（单成员闭集）：纯新建，无目标载荷。 */
 interface SubscriptionCreateIntent {
-  type: 'create'
+  type: "create";
 }
 
 const {
   intent: createIntent,
   open: openCreateIntent,
   close: closeCreateIntent,
-} = useModalIntent<SubscriptionCreateIntent>()
+} = useModalIntent<SubscriptionCreateIntent>();
 
-const amountYuan = ref('')
+const amountYuan = ref("");
 
 // ---------------------------------------------------------------------------
 // 新建订阅表单接缝与提交（spec #520）：提交流程编排沉入接缝 submitCreate——
@@ -142,12 +142,12 @@ const amountYuan = ref('')
 const createForm = useScheduledPlanForm({
   onSubmitted: async () => {
     // 提交成功后原子动作（公共草稿已由接缝重置）
-    closeCreateIntent()
-    amountYuan.value = ''
-    await list.load()
-    refreshSpend()
+    closeCreateIntent();
+    amountYuan.value = "";
+    await list.load();
+    refreshSpend();
   },
-})
+});
 const {
   note,
   accountId,
@@ -161,20 +161,20 @@ const {
   currencyOptions,
   categoryTreeOptions,
   merchantOptions,
-} = createForm
+} = createForm;
 
 /** 新建提交：金额校验留页签，提交流程编排由接缝 submitCreate 持有（spec #520）。 */
 async function create() {
   if (!accountId.value) {
-    message.warning(t('scheduled.form.selectAccount'))
-    return
+    message.warning(t("scheduled.form.selectAccount"));
+    return;
   }
-  const amountCents = yuanToCents(amountYuan.value)
+  const amountCents = yuanToCents(amountYuan.value);
   if (amountCents === null || amountCents <= 0) {
-    message.warning(t('scheduled.form.amountPositive'))
-    return
+    message.warning(t("scheduled.form.amountPositive"));
+    return;
   }
-  await createForm.submitCreate({ kind: 'subscription', amountCents })
+  await createForm.submitCreate({ kind: "subscription", amountCents });
 }
 
 // ---------------------------------------------------------------------------
@@ -192,7 +192,7 @@ async function create() {
 
 /** 编辑订阅弹窗意图（单成员闭集）：携带目标计划行。 */
 interface SubscriptionEditIntent {
-  row: SubscriptionRow
+  row: SubscriptionRow;
 }
 
 const {
@@ -200,38 +200,38 @@ const {
   seq: editSeq,
   open: openEditIntent,
   close: closeEdit,
-} = useModalIntent<SubscriptionEditIntent>()
+} = useModalIntent<SubscriptionEditIntent>();
 
 /** 被编辑计划的当前商户 id（供表单接缝 resolveMerchant 的软删兜底分支判定）；
  * 表单伴随状态属表单接缝/视图侧，不进意图工厂（ADR-0072 决策 4）。 */
-const editCurrentMerchantId = ref<string | null>(null)
+const editCurrentMerchantId = ref<string | null>(null);
 
 // 编辑商户下拉（issue #190）：在用商户 + 原商户软删且超出会话缓存时追加兜底选项
 // 承载原 id——裸 uuid 不可读，提交时按「未改动」语义原样保留。
 const editMerchantOptions = computed<{ label: string; value: string }[]>(() => {
-  const base = reference.merchants.map((m) => ({ label: m.name, value: m.id }))
-  const current = editCurrentMerchantId.value
+  const base = reference.merchants.map((m) => ({ label: m.name, value: m.id }));
+  const current = editCurrentMerchantId.value;
   if (current && !reference.merchantMap.has(current)) {
-    base.unshift({ label: t('scheduled.form.deletedMerchant'), value: current })
+    base.unshift({ label: t("scheduled.form.deletedMerchant"), value: current });
   }
-  return base
-})
+  return base;
+});
 
 function openEdit(row: SubscriptionRow) {
-  editNote.value = row.plan.core.note ?? ''
-  editAccountId.value = row.plan.core.account_id
-  editCategoryId.value = row.plan.core.category_id
-  editCurrentMerchantId.value = row.plan.merchant_id
-  editMerchantRef.value = row.plan.merchant_id
-  openEditIntent({ row })
+  editNote.value = row.plan.core.note ?? "";
+  editAccountId.value = row.plan.core.account_id;
+  editCategoryId.value = row.plan.core.category_id;
+  editCurrentMerchantId.value = row.plan.merchant_id;
+  editMerchantRef.value = row.plan.merchant_id;
+  openEditIntent({ row });
 }
 
 async function saveEdit() {
-  const target = editIntent.value
-  if (!target) return
+  const target = editIntent.value;
+  if (!target) return;
   if (!editAccountId.value) {
-    message.warning(t('scheduled.form.selectAccount'))
-    return
+    message.warning(t("scheduled.form.selectAccount"));
+    return;
   }
   try {
     await api.updateScheduledSubscription({
@@ -240,13 +240,13 @@ async function saveEdit() {
       category_id: editCategoryId.value,
       merchant_id: await editForm.resolveMerchant(editCurrentMerchantId.value),
       note: editNote.value.trim() || null,
-    })
-    message.success(t('scheduled.toast.saved'))
-    closeEdit()
-    await list.load()
-    refreshSpend()
+    });
+    message.success(t("scheduled.toast.saved"));
+    closeEdit();
+    await list.load();
+    refreshSpend();
   } catch (e) {
-    message.error(t('scheduled.toast.saveFailed', { message: errorMessage(e) }))
+    message.error(t("scheduled.toast.saveFailed", { message: errorMessage(e) }));
   }
 }
 
@@ -256,8 +256,8 @@ async function saveEdit() {
 // ---------------------------------------------------------------------------
 
 async function onDetailChanged() {
-  await list.load()
-  refreshSpend()
+  await list.load();
+  refreshSpend();
 }
 
 // ---------------------------------------------------------------------------
@@ -265,53 +265,53 @@ async function onDetailChanged() {
 // ---------------------------------------------------------------------------
 
 function statusLabel(status: string): string {
-  return scheduledStatusLabel(status)
+  return scheduledStatusLabel(status);
 }
 
 /** 商户名单元格解析（桌面/移动两分支共用；改名即时生效，merchantMap 含软删会话缓存）。 */
 function merchantName(row: SubscriptionRow): string {
-  const m = row.plan.merchant_id ? reference.merchantMap.get(row.plan.merchant_id) : undefined
-  return m?.name ?? '—'
+  const m = row.plan.merchant_id ? reference.merchantMap.get(row.plan.merchant_id) : undefined;
+  return m?.name ?? "—";
 }
 
 /** 扣款账户名解析（两分支共用；未知 id 回退 id，与桌面列同口径）。 */
 function accountName(row: SubscriptionRow): string {
-  return reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id
+  return reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id;
 }
 
 /** 行操作描述符组装（桌面/移动两分支共用）：模块产出在详情动作后插入自建编辑
  * 描述符（订阅真差异，ADR-0023 决策三；同形状、无确认文案，spec #520）。 */
 function subscriptionActions(row: SubscriptionRow): ScheduledPlanRowAction[] {
-  const status = row.plan.core.status
-  const actions: ScheduledPlanRowAction[] = []
+  const status = row.plan.core.status;
+  const actions: ScheduledPlanRowAction[] = [];
   for (const action of list.rowActions(row)) {
-    if (action.key === 'detail') {
+    if (action.key === "detail") {
       actions.push(action, {
-        key: 'edit',
-        label: t('scheduled.action.edit'),
-        available: status === 'active' || status === 'paused',
+        key: "edit",
+        label: t("scheduled.action.edit"),
+        available: status === "active" || status === "paused",
         confirm: null,
         run: () => openEdit(row),
-      })
+      });
     } else {
-      actions.push(action)
+      actions.push(action);
     }
   }
-  return actions
+  return actions;
 }
 
 /** 下期扣款单元格（两分支共用）：无 pending 占位「—」，详情失败示「加载失败」
  * 不混淆；测试锚点两档同 testid。 */
 function nextChargeText(row: SubscriptionRow): string {
-  const currency = reference.getCurrency(row.plan.core.currency_code)
+  const currency = reference.getCurrency(row.plan.core.currency_code);
   if (row.ext.next) {
-    return `${row.ext.next.scheduled_date} · ${formatAmount(row.ext.next.amount_cents, currency)}`
+    return `${row.ext.next.scheduled_date} · ${formatAmount(row.ext.next.amount_cents, currency)}`;
   }
-  return row.detailFailed ? t('scheduled.list.loadFailed') : '—'
+  return row.detailFailed ? t("scheduled.list.loadFailed") : "—";
 }
 
 /** 周期下拉选项（computed 现取标签，切语言即时生效） */
-const recurrenceOptions = computed(scheduledRecurrenceOptions)
+const recurrenceOptions = computed(scheduledRecurrenceOptions);
 
 const columns = computed<DataTableColumns<SubscriptionRow>>(() => {
   // 移动档三分列（issue #848）：备注标题行 + 状态/周期/开始日与商户/分类/账户两
@@ -319,22 +319,25 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => {
   if (isMobileTier.value) {
     return [
       {
-        title: t('scheduled.column.note'),
-        key: 'note',
+        title: t("scheduled.column.note"),
+        key: "note",
         render: (row) =>
-          h('div', { style: MOBILE_CELL_STYLE }, [
-            h('span', null, row.plan.core.note ?? '—'),
+          h("div", { style: MOBILE_CELL_STYLE }, [
+            h("span", null, row.plan.core.note ?? "—"),
             h(
-              'span',
+              "span",
               { style: MOBILE_SUB_STYLE },
               mobileSubLine(
                 statusLabel(row.plan.core.status),
-                scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
+                scheduledRecurrenceLabel(
+                  row.plan.core.recurrence_type,
+                  row.plan.core.recurrence_interval,
+                ),
                 row.plan.core.start_date,
               ),
             ),
             h(
-              'span',
+              "span",
               { style: MOBILE_SUB_STYLE },
               mobileSubLine(
                 merchantName(row),
@@ -345,101 +348,120 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => {
           ]),
       },
       {
-        title: t('scheduled.column.amount'),
-        key: 'amount',
+        title: t("scheduled.column.amount"),
+        key: "amount",
         render: (row) =>
-          h('div', { style: MOBILE_CELL_STYLE }, [
-            h('span', null, formatAmount(row.plan.core.amount_cents, reference.getCurrency(row.plan.core.currency_code))),
+          h("div", { style: MOBILE_CELL_STYLE }, [
             h(
-              'span',
-              { style: MOBILE_SUB_STYLE, 'data-testid': `next-charge-${row.plan.core.id}` },
+              "span",
+              null,
+              formatAmount(
+                row.plan.core.amount_cents,
+                reference.getCurrency(row.plan.core.currency_code),
+              ),
+            ),
+            h(
+              "span",
+              { style: MOBILE_SUB_STYLE, "data-testid": `next-charge-${row.plan.core.id}` },
               nextChargeText(row),
             ),
           ]),
       },
       {
-        title: t('scheduled.column.actions'),
-        key: 'actions',
+        title: t("scheduled.column.actions"),
+        key: "actions",
         render: (row) =>
-          h(PlanRowActions, { actions: subscriptionActions(row), rowId: row.plan.core.id, mobile: true }),
+          h(PlanRowActions, {
+            actions: subscriptionActions(row),
+            rowId: row.plan.core.id,
+            mobile: true,
+          }),
       },
-    ]
+    ];
   }
   return [
-  {
-    title: t('scheduled.column.note'),
-    key: 'note',
-    render: (row) => row.plan.core.note ?? '—',
-  },
-  {
-    title: t('scheduled.column.merchant'),
-    key: 'merchant',
-    // 改名即时生效（引用指向 id）：merchantMap 含软删商户会话缓存，历史计划照常显示
-    render: (row) => merchantName(row),
-  },
-  {
-    title: t('scheduled.column.category'),
-    key: 'category',
-    render: (row) => reference.categoryPath(row.plan.core.category_id) || '—',
-  },
-  {
-    title: t('scheduled.column.account'),
-    key: 'account',
-    render: (row) => accountName(row),
-  },
-  {
-    title: t('scheduled.column.amount'),
-    key: 'amount',
-    render: (row) => formatAmount(row.plan.core.amount_cents, reference.getCurrency(row.plan.core.currency_code)),
-  },
-  {
-    title: t('scheduled.column.recurrence'),
-    key: 'recurrence',
-    render: (row) =>
-      scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
-  },
-  { title: t('scheduled.column.startDate'), key: 'start_date', render: (row) => row.plan.core.start_date },
-  { title: t('scheduled.column.status'), key: 'status', render: (row) => statusLabel(row.plan.core.status) },
-  {
-    title: t('scheduled.column.nextCharge'),
-    key: 'next',
-    // 测试锚点：无 pending 期次（预生成窗口之外）时断言占位，不现场推算日期
-    render: (row) =>
-      h(
-        'span',
-        { 'data-testid': `next-charge-${row.plan.core.id}` },
-        nextChargeText(row),
-      ),
-  },
-  {
-    title: t('scheduled.column.actions'),
-    key: 'actions',
-    // 行操作描述符由模块构建，本页签自组数组透传共享渲染组件（确认弹层/测试锚点/
-    // 空占位只此一份，ADR-0041 决策 7 注）：订阅真差异「编辑」（仅非金额字段，
-    // ADR-0023 决策三）以同形状描述符紧随详情动作之后——active/paused 可编辑、
-    // 已取消不提供、无确认文案；渲染组件不识形态，编辑弹窗开启逻辑留本页签。
-    render: (row) =>
-      h(PlanRowActions, { actions: subscriptionActions(row), rowId: row.plan.core.id }),
-  },
-]
-})
+    {
+      title: t("scheduled.column.note"),
+      key: "note",
+      render: (row) => row.plan.core.note ?? "—",
+    },
+    {
+      title: t("scheduled.column.merchant"),
+      key: "merchant",
+      // 改名即时生效（引用指向 id）：merchantMap 含软删商户会话缓存，历史计划照常显示
+      render: (row) => merchantName(row),
+    },
+    {
+      title: t("scheduled.column.category"),
+      key: "category",
+      render: (row) => reference.categoryPath(row.plan.core.category_id) || "—",
+    },
+    {
+      title: t("scheduled.column.account"),
+      key: "account",
+      render: (row) => accountName(row),
+    },
+    {
+      title: t("scheduled.column.amount"),
+      key: "amount",
+      render: (row) =>
+        formatAmount(
+          row.plan.core.amount_cents,
+          reference.getCurrency(row.plan.core.currency_code),
+        ),
+    },
+    {
+      title: t("scheduled.column.recurrence"),
+      key: "recurrence",
+      render: (row) =>
+        scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
+    },
+    {
+      title: t("scheduled.column.startDate"),
+      key: "start_date",
+      render: (row) => row.plan.core.start_date,
+    },
+    {
+      title: t("scheduled.column.status"),
+      key: "status",
+      render: (row) => statusLabel(row.plan.core.status),
+    },
+    {
+      title: t("scheduled.column.nextCharge"),
+      key: "next",
+      // 测试锚点：无 pending 期次（预生成窗口之外）时断言占位，不现场推算日期
+      render: (row) =>
+        h("span", { "data-testid": `next-charge-${row.plan.core.id}` }, nextChargeText(row)),
+    },
+    {
+      title: t("scheduled.column.actions"),
+      key: "actions",
+      // 行操作描述符由模块构建，本页签自组数组透传共享渲染组件（确认弹层/测试锚点/
+      // 空占位只此一份，ADR-0041 决策 7 注）：订阅真差异「编辑」（仅非金额字段，
+      // ADR-0023 决策三）以同形状描述符紧随详情动作之后——active/paused 可编辑、
+      // 已取消不提供、无确认文案；渲染组件不识形态，编辑弹窗开启逻辑留本页签。
+      render: (row) =>
+        h(PlanRowActions, { actions: subscriptionActions(row), rowId: row.plan.core.id }),
+    },
+  ];
+});
 
 /** 来源跳转落点入参（spec #704 / issue #707）：待开的计划 id（视图侧 focus
  * 读一次后的暂存；空则无落点）。 */
-const props = defineProps<{ focusPlanId?: string | null }>()
+const props = defineProps<{ focusPlanId?: string | null }>();
 
-const emit = defineEmits<{ (e: 'focusConsumed'): void }>()
+const emit = defineEmits<{ (e: "focusConsumed"): void }>();
 
 // 计划来源落点时序（读 id → 开窗 → 回报）收口共享工厂，三页签零手搓：
 usePlanFocusLanding({
   focusPlanId: () => props.focusPlanId,
   openDetail: (id) => void planDetailRef.value?.open(id),
-  onConsumed: () => emit('focusConsumed'),
-})
+  onConsumed: () => emit("focusConsumed"),
+});
 
 onMounted(() => {
-  void list.load()
-})
+  void list.load();
+});
 </script>
 
 <template>
@@ -464,7 +486,7 @@ onMounted(() => {
             data-testid="sub-create-open"
             @click="openCreateIntent({ type: 'create' })"
           >
-            {{ t('scheduled.pane.createSubscription') }}
+            {{ t("scheduled.pane.createSubscription") }}
           </NButton>
         </NSpace>
       </template>
@@ -545,7 +567,7 @@ onMounted(() => {
           </NFormItem>
           <NFormItem :label="t('scheduled.form.recurrence')">
             <NSpace :size="8" align="center" :wrap="false">
-              <span>{{ t('scheduled.form.every') }}</span>
+              <span>{{ t("scheduled.form.every") }}</span>
               <NInputNumber
                 v-model:value="recurrenceInterval"
                 :min="1"
@@ -568,8 +590,12 @@ onMounted(() => {
             />
           </NFormItem>
           <NSpace justify="end">
-            <NButton data-testid="sub-create-cancel" @click="closeCreateIntent">{{ t('scheduled.form.cancel') }}</NButton>
-            <NButton type="primary" data-testid="sub-create" @click="create">{{ t('scheduled.pane.createSubscriptionSubmit') }}</NButton>
+            <NButton data-testid="sub-create-cancel" @click="closeCreateIntent">{{
+              t("scheduled.form.cancel")
+            }}</NButton>
+            <NButton type="primary" data-testid="sub-create" @click="create">{{
+              t("scheduled.pane.createSubscriptionSubmit")
+            }}</NButton>
           </NSpace>
         </NSpace>
       </NForm>
@@ -635,8 +661,12 @@ onMounted(() => {
             />
           </NFormItem>
           <NSpace justify="end">
-            <NButton data-testid="sub-edit-cancel" @click="closeEdit">{{ t('scheduled.form.cancel') }}</NButton>
-            <NButton type="primary" data-testid="sub-edit-save" @click="saveEdit">{{ t('scheduled.form.save') }}</NButton>
+            <NButton data-testid="sub-edit-cancel" @click="closeEdit">{{
+              t("scheduled.form.cancel")
+            }}</NButton>
+            <NButton type="primary" data-testid="sub-edit-save" @click="saveEdit">{{
+              t("scheduled.form.save")
+            }}</NButton>
           </NSpace>
         </NSpace>
       </NForm>

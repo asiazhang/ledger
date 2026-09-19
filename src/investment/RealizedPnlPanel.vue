@@ -1,26 +1,23 @@
 <script setup lang="ts">
-import { computed, h, type VNodeChild } from 'vue'
-import { NCard, NDataTable, NEmpty, NGi, NGrid, NSpace, NSpin } from 'naive-ui'
-import type { DataTableColumn } from 'naive-ui'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import { t } from '@ledger/i18n'
-import { useAppStore } from '@/stores/app'
-import { useReferenceStore } from '@/stores/reference'
-import { useWindowTier } from '@ledger/window-tier'
-import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
-import { formatAmount } from '@ledger/money'
-import { useRealizedPnl } from '@/investment/useRealizedPnl'
-import ConceptLabel from '@/investment/ConceptLabel.vue'
-import {
-  renderMwrRateCell,
-  useMoneyWeightedReturn,
-} from '@/investment/useMoneyWeightedReturn'
-import type { MwrBasis } from '@ledger/types'
+import { computed, h, type VNodeChild } from "vue";
+import { NCard, NDataTable, NEmpty, NGi, NGrid, NSpace, NSpin } from "naive-ui";
+import type { DataTableColumn } from "naive-ui";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import { t } from "@ledger/i18n";
+import { useAppStore } from "@/stores/app";
+import { useReferenceStore } from "@/stores/reference";
+import { useWindowTier } from "@ledger/window-tier";
+import { pnlSemanticColor } from "@ledger/theme/semantic-colors";
+import { formatAmount } from "@ledger/money";
+import { useRealizedPnl } from "@/investment/useRealizedPnl";
+import ConceptLabel from "@/investment/ConceptLabel.vue";
+import { renderMwrRateCell, useMoneyWeightedReturn } from "@/investment/useMoneyWeightedReturn";
+import type { MwrBasis } from "@ledger/types";
 
-const reference = useReferenceStore()
-const appStore = useAppStore()
-const windowTier = useWindowTier()
-const isMobileTier = computed(() => windowTier.value === 'mobile')
+const reference = useReferenceStore();
+const appStore = useAppStore();
+const windowTier = useWindowTier();
+const isMobileTier = computed(() => windowTier.value === "mobile");
 const {
   loading,
   summary,
@@ -32,7 +29,7 @@ const {
   refresh,
   searchInstruments,
   onSelectInstrument,
-} = useRealizedPnl()
+} = useRealizedPnl();
 
 // 汇总表通用「已实现盈亏」列：金额按行币种格式化展示（ADR-0107 决策 6：汇总行随
 // 匹配行币种，与持仓页签行同款口径）；数值列右对齐 + 等宽数字（词汇表「表格列形态」
@@ -41,54 +38,54 @@ const {
 function realizedPnlColumn(title: string | (() => VNodeChild)): DataTableColumn {
   return {
     title,
-    key: 'realized_pnl_cents',
-    align: 'right',
-    className: 'tabular-nums',
+    key: "realized_pnl_cents",
+    align: "right",
+    className: "tabular-nums",
     render(row: any) {
       return h(
-        'span',
+        "span",
         { style: { color: pnlSemanticColor(row.realized_pnl_cents, appStore.theme) } },
         formatAmount(row.realized_pnl_cents, reference.currencyMap.get(row.currency_code)),
-      )
+      );
     },
-  }
+  };
 }
 
 // 已实现盈亏口径（issue #1369）：FIFO 卖出匹配、已扣卖出手续费、不含未实现与分红
 const realizedPnlTitle = () =>
   h(ConceptLabel, {
-    label: t('investments.pnl.columns.realizedPnl'),
-    concept: 'realizedPnl',
-    testId: 'pnl-realized',
-  })
+    label: t("investments.pnl.columns.realizedPnl"),
+    concept: "realizedPnl",
+    testId: "pnl-realized",
+  });
 
 const yearColumns: DataTableColumn[] = [
-  { title: t('investments.pnl.columns.year'), key: 'year' },
+  { title: t("investments.pnl.columns.year"), key: "year" },
   realizedPnlColumn(realizedPnlTitle),
-]
+];
 
 const accountCols: DataTableColumn[] = [
-  { title: t('investments.pnl.columns.account'), key: 'account_name' },
+  { title: t("investments.pnl.columns.account"), key: "account_name" },
   realizedPnlColumn(realizedPnlTitle),
-]
+];
 
 // 资金加权收益率（issue #1195 / ADR-0115）：账户级与全账级两个粒度与金额口径
 // 并列、互不换算。账户行随账户筛选收窄（客户端过滤，行集本就全量返回）；
 // 全账行恒为全账本口径、不随筛选收窄（与持仓页签累计收益合计同一先例）；
 // 价格失效信号驱动的重拉内化在接缝，无需调用方手动刷新。
-const { summary: mwr } = useMoneyWeightedReturn()
+const { summary: mwr } = useMoneyWeightedReturn();
 
 interface MwrRow {
-  scope: string
-  currency_code: string
+  scope: string;
+  currency_code: string;
   /** 本行口径（issue #1346）：合集含期初存量的行由后端标为未年化 */
-  basis: MwrBasis
-  rate: number | null
-  testid: string
+  basis: MwrBasis;
+  rate: number | null;
+  testid: string;
 }
 
 const mwrRows = computed<MwrRow[]>(() => {
-  if (!mwr.value) return []
+  if (!mwr.value) return [];
   const accountRows: MwrRow[] = mwr.value.by_account
     .filter((a) => !selectedAccountId.value || a.account_id === selectedAccountId.value)
     .map((a) => ({
@@ -97,20 +94,20 @@ const mwrRows = computed<MwrRow[]>(() => {
       basis: a.basis,
       rate: a.rate,
       testid: `mwr-account-${a.account_id}`,
-    }))
+    }));
   const totalRows: MwrRow[] = mwr.value.total.map((g) => ({
-    scope: t('investments.pnl.total'),
+    scope: t("investments.pnl.total"),
     currency_code: g.currency_code,
     basis: g.basis,
     rate: g.rate,
     testid: `mwr-total-${g.currency_code}`,
-  }))
-  return [...accountRows, ...totalRows]
-})
+  }));
+  return [...accountRows, ...totalRows];
+});
 
 const mwrColumns: DataTableColumn<MwrRow>[] = [
-  { title: t('investments.pnl.columns.account'), key: 'scope' },
-  { title: t('investments.pnl.columns.currency'), key: 'currency_code', width: 100 },
+  { title: t("investments.pnl.columns.account"), key: "scope" },
+  { title: t("investments.pnl.columns.currency"), key: "currency_code", width: 100 },
   {
     // 三态与口径标注都收口在 renderMwrRateCell 单点（与持仓页收益率列同款形态；
     // issue #1346：合集含期初存量的行按 basis 标未年化角标）。
@@ -119,17 +116,16 @@ const mwrColumns: DataTableColumn<MwrRow>[] = [
     // 故不挂作用域变体——变体只承担随页面语境变化的作用域差异
     title: () =>
       h(ConceptLabel, {
-        label: t('investments.pnl.columns.mwr'),
-        concept: 'mwr',
-        testId: 'pnl-mwr',
+        label: t("investments.pnl.columns.mwr"),
+        concept: "mwr",
+        testId: "pnl-mwr",
       }),
-    key: 'rate',
-    align: 'right',
-    className: 'tabular-nums',
+    key: "rate",
+    align: "right",
+    className: "tabular-nums",
     render: (row) => renderMwrRateCell(row.rate, appStore.theme, row.basis),
   },
-]
-
+];
 </script>
 
 <template>
@@ -171,7 +167,10 @@ const mwrColumns: DataTableColumn<MwrRow>[] = [
         <NGrid :x-gap="16" :y-gap="16" :cols="isMobileTier ? 1 : 2">
           <NGi>
             <NCard :title="t('investments.pnl.byYear')" size="small">
-              <NEmpty v-if="summary.by_year.length === 0" :description="t('investments.pnl.emptyTable')" />
+              <NEmpty
+                v-if="summary.by_year.length === 0"
+                :description="t('investments.pnl.emptyTable')"
+              />
               <NDataTable
                 v-else
                 :columns="yearColumns"
@@ -183,7 +182,10 @@ const mwrColumns: DataTableColumn<MwrRow>[] = [
           </NGi>
           <NGi>
             <NCard :title="t('investments.pnl.byAccount')" size="small">
-              <NEmpty v-if="summary.by_account.length === 0" :description="t('investments.pnl.emptyTable')" />
+              <NEmpty
+                v-if="summary.by_account.length === 0"
+                :description="t('investments.pnl.emptyTable')"
+              />
               <NDataTable
                 v-else
                 :columns="accountCols"

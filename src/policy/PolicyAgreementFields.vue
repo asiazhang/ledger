@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { NFormItem, NInput, NInputNumber, NSpace } from 'naive-ui'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import { t } from '@ledger/i18n'
-import { todayStr } from '@ledger/utils/date'
-import { yuanToCents } from '@ledger/money'
-import { useAppStore } from '@/stores/app'
-import { useFormShared } from '@/composables/useFormShared'
-import { scheduledRecurrenceOptions } from '@ledger/scheduled-plan-list'
-import type { CreateScheduledInput, RecurrenceType } from '@ledger/types'
+import { ref } from "vue";
+import { NFormItem, NInput, NInputNumber, NSpace } from "naive-ui";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import { t } from "@ledger/i18n";
+import { todayStr } from "@ledger/utils/date";
+import { yuanToCents } from "@ledger/money";
+import { useAppStore } from "@/stores/app";
+import { useFormShared } from "@/composables/useFormShared";
+import { scheduledRecurrenceOptions } from "@ledger/scheduled-plan-list";
+import type { CreateScheduledInput, RecurrenceType } from "@ledger/types";
 
 /**
  * 保单缴费协议字段组（issue #362 / ADR-0051 决策 2）：频率/每期金额（+币种）/
@@ -23,50 +23,50 @@ import type { CreateScheduledInput, RecurrenceType } from '@ledger/types'
  * 不挂商户，保费归属唯一事实是保单引用（policy_id），付款对象语义由保单的保司
  * 承担；备注带险种名称（协议与保单分离，订阅清单靠备注可读）。
  */
-const app = useAppStore()
-const { accountOptions, currencyOptions } = useFormShared()
+const app = useAppStore();
+const { accountOptions, currencyOptions } = useFormShared();
 
-const amountYuan = ref('')
-const currencyCode = ref<string | null>(app.defaultCurrency)
-const recurrenceType = ref<RecurrenceType>('yearly')
-const recurrenceInterval = ref(1)
-const accountId = ref<string | null>(null)
-const startDate = ref<string | null>(todayStr())
+const amountYuan = ref("");
+const currencyCode = ref<string | null>(app.defaultCurrency);
+const recurrenceType = ref<RecurrenceType>("yearly");
+const recurrenceInterval = ref(1);
+const accountId = ref<string | null>(null);
+const startDate = ref<string | null>(todayStr());
 
-const recurrenceOptions = scheduledRecurrenceOptions()
+const recurrenceOptions = scheduledRecurrenceOptions();
 
 /** 预填项（改价场景由调用方传旧段值；缺省字段回落默认态）。 */
 interface AgreementPrefill {
-  currencyCode?: string | null
-  recurrenceType?: RecurrenceType
-  recurrenceInterval?: number
-  accountId?: string | null
-  startDate?: string | null
+  currencyCode?: string | null;
+  recurrenceType?: RecurrenceType;
+  recurrenceInterval?: number;
+  accountId?: string | null;
+  startDate?: string | null;
 }
 
 /** 复位/预填草稿（金额恒清空：新建与改价都要求显式输入金额）。 */
 function reset(prefill: AgreementPrefill = {}) {
-  amountYuan.value = ''
-  currencyCode.value = prefill.currencyCode ?? app.defaultCurrency
-  recurrenceType.value = prefill.recurrenceType ?? 'yearly'
-  recurrenceInterval.value = prefill.recurrenceInterval ?? 1
-  accountId.value = prefill.accountId ?? null
-  startDate.value = prefill.startDate ?? todayStr()
+  amountYuan.value = "";
+  currencyCode.value = prefill.currencyCode ?? app.defaultCurrency;
+  recurrenceType.value = prefill.recurrenceType ?? "yearly";
+  recurrenceInterval.value = prefill.recurrenceInterval ?? 1;
+  accountId.value = prefill.accountId ?? null;
+  startDate.value = prefill.startDate ?? todayStr();
 }
 
 /** 校验草稿；返回首个错误的用户文案，通过返回 null。 */
 function validate(): string | null {
-  if (!accountId.value) return t('policies.agreement.msg.accountRequired')
-  const cents = yuanToCents(amountYuan.value)
-  if (cents === null || cents <= 0) return t('policies.agreement.msg.amountInvalid')
-  if (!startDate.value) return t('policies.agreement.msg.startRequired')
-  return null
+  if (!accountId.value) return t("policies.agreement.msg.accountRequired");
+  const cents = yuanToCents(amountYuan.value);
+  if (cents === null || cents <= 0) return t("policies.agreement.msg.amountInvalid");
+  if (!startDate.value) return t("policies.agreement.msg.startRequired");
+  return null;
 }
 
 /** 组装创建入参（订阅形态 + 保单引用 + 不挂商户；校验通过后调用）。 */
 function build(policyId: string, productName: string): CreateScheduledInput {
   return {
-    kind: 'subscription',
+    kind: "subscription",
     account_id: accountId.value!,
     category_id: null,
     amount_cents: yuanToCents(amountYuan.value)!,
@@ -78,10 +78,10 @@ function build(policyId: string, productName: string): CreateScheduledInput {
     note: productName || null,
     merchant_id: null,
     policy_id: policyId,
-  }
+  };
 }
 
-defineExpose({ reset, validate, build })
+defineExpose({ reset, validate, build });
 </script>
 
 <template>
@@ -103,7 +103,7 @@ defineExpose({ reset, validate, build })
     </NFormItem>
     <NFormItem :label="t('policies.agreement.recurrence')">
       <NSpace :size="8" align="center" :wrap="false">
-        <span>{{ t('scheduled.form.every') }}</span>
+        <span>{{ t("scheduled.form.every") }}</span>
         <NInputNumber
           v-model:value="recurrenceInterval"
           :min="1"

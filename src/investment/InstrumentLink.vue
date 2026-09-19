@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAppStore } from '@/stores/app'
-import { accentColor } from '@ledger/theme/overrides'
-import { t } from '@ledger/i18n'
+import { computed } from "vue";
+import { useRouter } from "vue-router";
+import { useAppStore } from "@/stores/app";
+import { accentColor } from "@ledger/theme/overrides";
+import { t } from "@ledger/i18n";
 import {
   INSTRUMENT_LINK_CLASS,
   INSTRUMENT_PLACEHOLDER_CLASS,
-} from '@/investment/instrument-link.css'
+} from "@/investment/instrument-link.css";
 
 /**
  * 可点击标的代码（标的前提下钻，ADR-0107 决策 4/5）：点击跳转交易页按标的过滤——
@@ -23,27 +23,27 @@ import {
  */
 const props = defineProps<{
   /** 目标标的 id（跳转载荷核心） */
-  instrumentId: string
+  instrumentId: string;
   /** 展示文本（标的代码）；空值渲染纯文本「-」，不可点击 */
-  label: string | null
+  label: string | null;
   /** 可选同游账户 id：在场时跳转载荷带 ?account=（现仅持仓页签行场景） */
-  accountId?: string | null
-}>()
+  accountId?: string | null;
+}>();
 
-const router = useRouter()
-const app = useAppStore()
+const router = useRouter();
+const app = useAppStore();
 
 // 强调色与 AccountLink / MerchantLink 同源：@ledger/theme accentColor 选择器按主题解析
 // （值源：overrides common 单一来源）。
-const accent = computed(() => accentColor(app.theme))
+const accent = computed(() => accentColor(app.theme));
 
 function go() {
   router.push({
-    name: 'transactions',
+    name: "transactions",
     query: props.accountId
       ? { account: props.accountId, instrument: props.instrumentId }
       : { instrument: props.instrumentId },
-  })
+  });
 }
 </script>
 

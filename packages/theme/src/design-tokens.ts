@@ -1,5 +1,5 @@
-import { lightTheme } from 'naive-ui'
-import type { Theme } from './theme'
+import { lightTheme } from "naive-ui";
+import type { Theme } from "./theme";
 
 /**
  * 中性 Design Tokens 单一来源（issue #887 / ADR-0093）——圆角阶梯、背景分层、
@@ -18,29 +18,29 @@ import type { Theme } from './theme'
  */
 export interface NeutralTokens {
   /** 圆角阶梯：small 细小组件 / base 基础组件 / large 卡片、弹窗级 */
-  radius: { small: string; base: string; large: string }
+  radius: { small: string; base: string; large: string };
   /** 背景分层：近黑 body → 略浅卡片 → 弹窗/浮层 */
-  background: { body: string; card: string; popover: string; modal: string }
+  background: { body: string; card: string; popover: string; modal: string };
   /** 细边框代替重阴影 */
-  border: { border: string; divider: string }
+  border: { border: string; divider: string };
   /** 文字灰阶（克制的中灰，三级层级） */
-  text: { primary: string; secondary: string; tertiary: string }
+  text: { primary: string; secondary: string; tertiary: string };
 }
 
 export const NEUTRAL_TOKENS: Record<Theme, NeutralTokens> = {
   dark: {
-    radius: { small: '6px', base: '8px', large: '12px' },
+    radius: { small: "6px", base: "8px", large: "12px" },
     background: {
-      body: '#0E0E10',
-      card: '#161618',
-      popover: '#1C1C1E',
-      modal: '#1C1C1E',
+      body: "#0E0E10",
+      card: "#161618",
+      popover: "#1C1C1E",
+      modal: "#1C1C1E",
     },
     border: {
-      border: 'rgba(255, 255, 255, 0.08)',
-      divider: 'rgba(255, 255, 255, 0.06)',
+      border: "rgba(255, 255, 255, 0.08)",
+      divider: "rgba(255, 255, 255, 0.06)",
     },
-    text: { primary: '#ECECEC', secondary: '#A0A0A0', tertiary: '#6E6E6E' },
+    text: { primary: "#ECECEC", secondary: "#A0A0A0", tertiary: "#6E6E6E" },
   },
   light: {
     radius: {
@@ -64,7 +64,7 @@ export const NEUTRAL_TOKENS: Record<Theme, NeutralTokens> = {
       tertiary: lightTheme.common.textColor3,
     },
   },
-}
+};
 
 /**
  * 暗色浮层语言（Raycast 式「浮层比底层更亮」）：下拉菜单底色抬到比卡片更亮一阶，
@@ -75,19 +75,18 @@ export const NEUTRAL_TOKENS: Record<Theme, NeutralTokens> = {
  */
 export interface FloatLayerTokens {
   /** 浮层（下拉菜单）底色 */
-  color: string
+  color: string;
   /** 菜单/下拉激活项中性底色 */
-  activeOverlay: string
+  activeOverlay: string;
   /** 菜单/下拉激活项悬停中性底色 */
-  activeHoverOverlay: string
+  activeHoverOverlay: string;
   /** 浮层「细边框 ring + 柔和投影」复合 box-shadow */
-  ringShadow: string
+  ringShadow: string;
 }
 
 export const DARK_FLOAT_LAYER: FloatLayerTokens = {
-  color: '#343438',
-  activeOverlay: 'rgba(255, 255, 255, 0.06)',
-  activeHoverOverlay: 'rgba(255, 255, 255, 0.08)',
-  ringShadow:
-    '0 0 0 1px rgba(255, 255, 255, 0.12), 0 8px 24px rgba(0, 0, 0, 0.5)',
-}
+  color: "#343438",
+  activeOverlay: "rgba(255, 255, 255, 0.06)",
+  activeHoverOverlay: "rgba(255, 255, 255, 0.08)",
+  ringShadow: "0 0 0 1px rgba(255, 255, 255, 0.12), 0 8px 24px rgba(0, 0, 0, 0.5)",
+};

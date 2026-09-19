@@ -1,36 +1,49 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { mount, flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
-import { defineComponent } from 'vue'
-import { NSelect } from 'naive-ui'
-import { useReferenceStore } from '@/stores/reference'
-import CategoryForm from '@/categories/CategoryForm.vue'
-import AppModal from '@ledger/ui-kit/AppModal.vue'
-import { MOBILE_CARD_CLASS } from '@ledger/ui-kit/app-modal.css.ts'
-import { setFakeMedia } from '@ledger/test-support/media-mock'
-import type { Account, Category, Transaction } from '@ledger/types'
-
+import { describe, it, expect, beforeEach } from "vitest";
+import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { mount, flushPromises } from "@vue/test-utils";
+import { setActivePinia, createPinia } from "pinia";
+import { defineComponent } from "vue";
+import { NSelect } from "naive-ui";
+import { useReferenceStore } from "@/stores/reference";
+import CategoryForm from "@/categories/CategoryForm.vue";
+import AppModal from "@ledger/ui-kit/AppModal.vue";
+import { MOBILE_CARD_CLASS } from "@ledger/ui-kit/app-modal.css.ts";
+import { setFakeMedia } from "@ledger/test-support/media-mock";
+import type { Account, Category, Transaction } from "@ledger/types";
 
 const mockAccounts: Account[] = [
   {
-    id: 'acc-1', name: '现金', type: 'cash', currency_code: 'CNY',
-    initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', is_hidden: false,
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
+    id: "acc-1",
+    name: "现金",
+    type: "cash",
+    currency_code: "CNY",
+    initial_balance_cents: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    is_hidden: false,
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
     is_deleted: false,
   },
-]
+];
 
 const mockCategories: Category[] = [
   {
-    id: 'cat-1', name: '餐饮', kind: 'expense', parent_id: null,
-    icon: null, sort_order: 0, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
+    id: "cat-1",
+    name: "餐饮",
+    kind: "expense",
+    parent_id: null,
+    icon: null,
+    sort_order: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
     is_deleted: false,
   },
-]
+];
 
-describe('CategoryForm.vue', () => {
+describe("CategoryForm.vue", () => {
   beforeEach(async () => {
     // 参考命令本场景需自定义值（overrides 优先于参考兑底）；保单选项经 list_policies 自定义空表
     wireInvokeSeam({
@@ -39,102 +52,102 @@ describe('CategoryForm.vue', () => {
         list_categories: mockCategories,
         list_policies: [],
       },
-    })
+    });
     // Pre-load store so components have data
-    const store = useReferenceStore()
-    await store.refresh()
-  })
+    const store = useReferenceStore();
+    await store.refresh();
+  });
 
-  it('挂载并显示提交按钮文本', () => {
+  it("挂载并显示提交按钮文本", () => {
     const wrapper = mount(CategoryForm, {
-      props: { kind: 'expense', submitLabel: '记支出' },
-    })
-    expect(wrapper.text()).toContain('记支出')
-  })
+      props: { kind: "expense", submitLabel: "记支出" },
+    });
+    expect(wrapper.text()).toContain("记支出");
+  });
 
-  it('挂载并显示收入表单文本', () => {
+  it("挂载并显示收入表单文本", () => {
     const wrapper = mount(CategoryForm, {
-      props: { kind: 'income', submitLabel: '记收入' },
-    })
-    expect(wrapper.text()).toContain('记收入')
-  })
+      props: { kind: "income", submitLabel: "记收入" },
+    });
+    expect(wrapper.text()).toContain("记收入");
+  });
 
-  it('点击提交按钮触发 submit（无账户时只提示不调用后端）', async () => {
-    mockInvoke.mockClear()
+  it("点击提交按钮触发 submit（无账户时只提示不调用后端）", async () => {
+    mockInvoke.mockClear();
     const wrapper = mount(CategoryForm, {
-      props: { kind: 'expense', submitLabel: '记支出' },
-    })
-    const btn = wrapper.find('button')
-    expect(btn.exists()).toBe(true)
-    await btn.trigger('click')
+      props: { kind: "expense", submitLabel: "记支出" },
+    });
+    const btn = wrapper.find("button");
+    expect(btn.exists()).toBe(true);
+    await btn.trigger("click");
     // 无账户时只提示不调用后端（mockInvoke 已清除，此处不应再出现 create_transaction 调用）
-    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction')
-    expect(calls).toHaveLength(0)
-  })
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "create_transaction");
+    expect(calls).toHaveLength(0);
+  });
 
-  it('在 store 加载前挂载不应崩溃', () => {
-    setActivePinia(createPinia())
+  it("在 store 加载前挂载不应崩溃", () => {
+    setActivePinia(createPinia());
     // 不预加载参考数据 — 验证挂载不依赖已加载状态
     const wrapper = mount(CategoryForm, {
-      props: { kind: 'expense', submitLabel: '记支出' },
-    })
-    expect(wrapper.exists()).toBe(true)
-  })
+      props: { kind: "expense", submitLabel: "记支出" },
+    });
+    expect(wrapper.exists()).toBe(true);
+  });
 
-  it('正确渲染选择器（账户、币种等至少存在一个元素）', () => {
+  it("正确渲染选择器（账户、币种等至少存在一个元素）", () => {
     const wrapper = mount(CategoryForm, {
-      props: { kind: 'expense', submitLabel: '记支出' },
-    })
+      props: { kind: "expense", submitLabel: "记支出" },
+    });
     // 检查表单项标签
-    expect(wrapper.text()).toContain('金额')
-    expect(wrapper.text()).toContain('账户')
-    expect(wrapper.text()).toContain('分类')
-    expect(wrapper.text()).toContain('日期')
-    expect(wrapper.text()).toContain('备注')
-  })
+    expect(wrapper.text()).toContain("金额");
+    expect(wrapper.text()).toContain("账户");
+    expect(wrapper.text()).toContain("分类");
+    expect(wrapper.text()).toContain("日期");
+    expect(wrapper.text()).toContain("备注");
+  });
 
-  it('设置 valid 表单数据后提交会调用 create_transaction', async () => {
-    mockInvoke.mockClear()
-    wireInvokeSeam({ defaults: { list_policies: [], list_policy_stats: [] } })
+  it("设置 valid 表单数据后提交会调用 create_transaction", async () => {
+    mockInvoke.mockClear();
+    wireInvokeSeam({ defaults: { list_policies: [], list_policy_stats: [] } });
     const wrapper = mount(CategoryForm, {
-      props: { kind: 'expense', submitLabel: '记支出' },
-    })
+      props: { kind: "expense", submitLabel: "记支出" },
+    });
     // 扫描是否存在金额输入框
-    const inputs = wrapper.findAll('input')
-    expect(inputs.length).toBeGreaterThan(0)
-  })
+    const inputs = wrapper.findAll("input");
+    expect(inputs.length).toBeGreaterThan(0);
+  });
 
   // ---- 字段错误态（ADR-0058 / issue #414，行为接缝）：断言用户可见状态——
   // 输入的错误态呈现（n-input--error-status）与保存按钮可用性，不断言内部状态变量。
   /** 金额输入框（表单首项，placeholder「金额」） */
   function amountInput(wrapper: ReturnType<typeof mount>) {
-    return wrapper.find('input[placeholder="金额"]')
+    return wrapper.find('input[placeholder="金额"]');
   }
 
   /** 金额输入的 NInput 根元素（错误态 class 挂载处） */
   function amountInputRoot(wrapper: ReturnType<typeof mount>) {
-    const el = amountInput(wrapper).element.closest('.n-input')
-    expect(el).not.toBeNull()
-    return el as Element
+    const el = amountInput(wrapper).element.closest(".n-input");
+    expect(el).not.toBeNull();
+    return el as Element;
   }
 
   function hasErrorStatus(wrapper: ReturnType<typeof mount>) {
-    return amountInputRoot(wrapper).classList.contains('n-input--error-status')
+    return amountInputRoot(wrapper).classList.contains("n-input--error-status");
   }
 
   /** 保存按钮（表单内唯一按钮） */
   function submitButton(wrapper: ReturnType<typeof mount>) {
-    return wrapper.find('button')
+    return wrapper.find("button");
   }
 
-  describe('字段错误态（ADR-0058 / #414）', () => {
+  describe("字段错误态（ADR-0058 / #414）", () => {
     const editingTx: Transaction = {
-      id: 'txn-1',
-      kind: 'expense',
+      id: "txn-1",
+      kind: "expense",
       amount_cents: 5000,
-      currency_code: 'CNY',
+      currency_code: "CNY",
       amount_native_cents: 5000,
-      account_id: 'acc-1',
+      account_id: "acc-1",
       to_account_id: null,
       funding_account_id: null,
       category_id: null,
@@ -144,141 +157,141 @@ describe('CategoryForm.vue', () => {
       convert: null,
       refund_of_transaction_id: null,
       note: null,
-      date: '2026-02-01',
-      created_at: '2026-02-01T00:00:00Z',
-      updated_at: '2026-02-01T00:00:00Z',
+      date: "2026-02-01",
+      created_at: "2026-02-01T00:00:00Z",
+      updated_at: "2026-02-01T00:00:00Z",
       version: 1,
-      device_id: 'test',
+      device_id: "test",
       is_deleted: false,
-    }
+    };
 
     function createCalls() {
-      return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction')
+      return mockInvoke.mock.calls.filter(([cmd]) => cmd === "create_transaction");
     }
 
-    it('初始为空不红，保存按钮可点', () => {
+    it("初始为空不红，保存按钮可点", () => {
       const wrapper = mount(CategoryForm, {
-        props: { kind: 'expense', submitLabel: '记支出' },
-      })
-      expect(hasErrorStatus(wrapper)).toBe(false)
-      expect(submitButton(wrapper).attributes('disabled')).toBeUndefined()
-    })
+        props: { kind: "expense", submitLabel: "记支出" },
+      });
+      expect(hasErrorStatus(wrapper)).toBe(false);
+      expect(submitButton(wrapper).attributes("disabled")).toBeUndefined();
+    });
 
-    it('输入解析失败文本（4.30发）即时红显、保存禁用、非法文本原样保留', async () => {
+    it("输入解析失败文本（4.30发）即时红显、保存禁用、非法文本原样保留", async () => {
       const wrapper = mount(CategoryForm, {
-        props: { kind: 'expense', submitLabel: '记支出' },
-      })
-      await amountInput(wrapper).setValue('4.30发')
-      expect(hasErrorStatus(wrapper)).toBe(true)
-      expect(submitButton(wrapper).attributes('disabled')).toBeDefined()
-      expect((amountInput(wrapper).element as HTMLInputElement).value).toBe('4.30发')
-    })
+        props: { kind: "expense", submitLabel: "记支出" },
+      });
+      await amountInput(wrapper).setValue("4.30发");
+      expect(hasErrorStatus(wrapper)).toBe(true);
+      expect(submitButton(wrapper).attributes("disabled")).toBeDefined();
+      expect((amountInput(wrapper).element as HTMLInputElement).value).toBe("4.30发");
+    });
 
-    it('多个小数点（4.3.0）与超两位小数（4.305）同样即时红显', async () => {
+    it("多个小数点（4.3.0）与超两位小数（4.305）同样即时红显", async () => {
       const wrapper = mount(CategoryForm, {
-        props: { kind: 'expense', submitLabel: '记支出' },
-      })
-      await amountInput(wrapper).setValue('4.3.0')
-      expect(hasErrorStatus(wrapper)).toBe(true)
-      await amountInput(wrapper).setValue('4.305')
-      expect(hasErrorStatus(wrapper)).toBe(true)
-    })
+        props: { kind: "expense", submitLabel: "记支出" },
+      });
+      await amountInput(wrapper).setValue("4.3.0");
+      expect(hasErrorStatus(wrapper)).toBe(true);
+      await amountInput(wrapper).setValue("4.305");
+      expect(hasErrorStatus(wrapper)).toBe(true);
+    });
 
-    it('非法文本失焦不清空、红态持续；修正后红态解除、保存恢复可点', async () => {
+    it("非法文本失焦不清空、红态持续；修正后红态解除、保存恢复可点", async () => {
       const wrapper = mount(CategoryForm, {
-        props: { kind: 'expense', submitLabel: '记支出' },
-      })
-      await amountInput(wrapper).setValue('4.30发')
-      await amountInput(wrapper).trigger('blur')
+        props: { kind: "expense", submitLabel: "记支出" },
+      });
+      await amountInput(wrapper).setValue("4.30发");
+      await amountInput(wrapper).trigger("blur");
       // 失焦不再被静默清空
-      expect((amountInput(wrapper).element as HTMLInputElement).value).toBe('4.30发')
-      expect(hasErrorStatus(wrapper)).toBe(true)
-      expect(submitButton(wrapper).attributes('disabled')).toBeDefined()
+      expect((amountInput(wrapper).element as HTMLInputElement).value).toBe("4.30发");
+      expect(hasErrorStatus(wrapper)).toBe(true);
+      expect(submitButton(wrapper).attributes("disabled")).toBeDefined();
       // 修正：红态立即解除（可走出的闭环）
-      await amountInput(wrapper).setValue('4.30')
-      expect(hasErrorStatus(wrapper)).toBe(false)
-      expect(submitButton(wrapper).attributes('disabled')).toBeUndefined()
-    })
+      await amountInput(wrapper).setValue("4.30");
+      expect(hasErrorStatus(wrapper)).toBe(false);
+      expect(submitButton(wrapper).attributes("disabled")).toBeUndefined();
+    });
 
-    it('清空后未失焦不红；失焦红；重新输入合法解除', async () => {
+    it("清空后未失焦不红；失焦红；重新输入合法解除", async () => {
       const wrapper = mount(CategoryForm, {
-        props: { kind: 'expense', submitLabel: '记支出' },
-      })
-      await amountInput(wrapper).setValue('12')
-      await amountInput(wrapper).setValue('')
-      expect(hasErrorStatus(wrapper)).toBe(false)
-      await amountInput(wrapper).trigger('blur')
-      expect(hasErrorStatus(wrapper)).toBe(true)
-      await amountInput(wrapper).setValue('12')
-      expect(hasErrorStatus(wrapper)).toBe(false)
-    })
+        props: { kind: "expense", submitLabel: "记支出" },
+      });
+      await amountInput(wrapper).setValue("12");
+      await amountInput(wrapper).setValue("");
+      expect(hasErrorStatus(wrapper)).toBe(false);
+      await amountInput(wrapper).trigger("blur");
+      expect(hasErrorStatus(wrapper)).toBe(true);
+      await amountInput(wrapper).setValue("12");
+      expect(hasErrorStatus(wrapper)).toBe(false);
+    });
 
-    it('保存尝试时空值红显兜底，不发起提交（格式类 toast 被红态取代）', async () => {
-      mockInvoke.mockClear()
+    it("保存尝试时空值红显兜底，不发起提交（格式类 toast 被红态取代）", async () => {
+      mockInvoke.mockClear();
       const wrapper = mount(CategoryForm, {
-        props: { kind: 'expense', submitLabel: '记支出' },
-      })
-      await submitButton(wrapper).trigger('click')
-      expect(hasErrorStatus(wrapper)).toBe(true)
-      expect(createCalls()).toHaveLength(0)
-    })
+        props: { kind: "expense", submitLabel: "记支出" },
+      });
+      await submitButton(wrapper).trigger("click");
+      expect(hasErrorStatus(wrapper)).toBe(true);
+      expect(createCalls()).toHaveLength(0);
+    });
 
-    it('编辑弹窗合法回填（50 元）不显示红态、保存可点', () => {
+    it("编辑弹窗合法回填（50 元）不显示红态、保存可点", () => {
       const wrapper = mount(CategoryForm, {
-        props: { kind: 'expense', submitLabel: '记支出', editing: editingTx },
-      })
-      expect((amountInput(wrapper).element as HTMLInputElement).value).toBe('50')
-      expect(hasErrorStatus(wrapper)).toBe(false)
-      expect(submitButton(wrapper).attributes('disabled')).toBeUndefined()
-    })
+        props: { kind: "expense", submitLabel: "记支出", editing: editingTx },
+      });
+      expect((amountInput(wrapper).element as HTMLInputElement).value).toBe("50");
+      expect(hasErrorStatus(wrapper)).toBe(false);
+      expect(submitButton(wrapper).attributes("disabled")).toBeUndefined();
+    });
 
-    it('纯零/负数不红、保存可点、提交走业务类校验通道（不发起 create_transaction）', async () => {
-      mockInvoke.mockClear()
+    it("纯零/负数不红、保存可点、提交走业务类校验通道（不发起 create_transaction）", async () => {
+      mockInvoke.mockClear();
       const wrapper = mount(CategoryForm, {
-        props: { kind: 'expense', submitLabel: '记支出' },
-      })
-      await amountInput(wrapper).setValue('0')
-      expect(hasErrorStatus(wrapper)).toBe(false)
-      expect(submitButton(wrapper).attributes('disabled')).toBeUndefined()
-      await submitButton(wrapper).trigger('click')
-      expect(createCalls()).toHaveLength(0)
+        props: { kind: "expense", submitLabel: "记支出" },
+      });
+      await amountInput(wrapper).setValue("0");
+      expect(hasErrorStatus(wrapper)).toBe(false);
+      expect(submitButton(wrapper).attributes("disabled")).toBeUndefined();
+      await submitButton(wrapper).trigger("click");
+      expect(createCalls()).toHaveLength(0);
       // 负数可解析（非格式错误闭集），同走提交通道
-      await amountInput(wrapper).setValue('-5')
-      expect(hasErrorStatus(wrapper)).toBe(false)
-      await submitButton(wrapper).trigger('click')
-      expect(createCalls()).toHaveLength(0)
-    })
+      await amountInput(wrapper).setValue("-5");
+      expect(hasErrorStatus(wrapper)).toBe(false);
+      await submitButton(wrapper).trigger("click");
+      expect(createCalls()).toHaveLength(0);
+    });
 
-    it('创建成功后表单不留潜伏红态（清空金额但初始为空不红，ADR-0058 决策 2）', async () => {
-      mockInvoke.mockClear()
+    it("创建成功后表单不留潜伏红态（清空金额但初始为空不红，ADR-0058 决策 2）", async () => {
+      mockInvoke.mockClear();
       wireInvokeSeam({
-        defaults: { list_policies: [], list_policy_stats: [], create_transaction: 'new-id' },
-      })
+        defaults: { list_policies: [], list_policy_stats: [], create_transaction: "new-id" },
+      });
       const wrapper = mount(CategoryForm, {
-        props: { kind: 'expense', submitLabel: '记支出' },
-      })
+        props: { kind: "expense", submitLabel: "记支出" },
+      });
       // 先制造一次保存尝试与失焦（时机标志置位），再填合法值提交
-      await submitButton(wrapper).trigger('click')
-      await amountInput(wrapper).setValue('12')
-      await amountInput(wrapper).trigger('blur')
+      await submitButton(wrapper).trigger("click");
+      await amountInput(wrapper).setValue("12");
+      await amountInput(wrapper).trigger("blur");
       // 账户下拉经内部 NSelect 注入（第 1 个是币种 AppSelect，第 2 个是账户 PinyinSelect，
       // 同 add-record.test 的定位方式）
-      wrapper.findAllComponents(NSelect)[1].vm.$emit('update:value', 'acc-1')
-      await submitButton(wrapper).trigger('click')
-      await flushPromises()
-      expect(createCalls()).toHaveLength(1)
+      wrapper.findAllComponents(NSelect)[1].vm.$emit("update:value", "acc-1");
+      await submitButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(createCalls()).toHaveLength(1);
       // 成功后金额清空且时机标志重置：不显红态
-      expect((amountInput(wrapper).element as HTMLInputElement).value).toBe('')
-      expect(hasErrorStatus(wrapper)).toBe(false)
-    })
-  })
+      expect((amountInput(wrapper).element as HTMLInputElement).value).toBe("");
+      expect(hasErrorStatus(wrapper)).toBe(false);
+    });
+  });
 
   // issue #844 代表挂载：记一笔/编辑表单弹窗经薄封装在移动档自动全屏化。
   // 分支与钩子收口在 AppModal（卡片钩子类 + 近全屏内联尺寸）及其旁路样式文件
   // （标签上置/按钮行推底为纯 CSS，选择器产出物由 app-modal-mobile-css.test
   // 捕获断言）；此处证明真实表单弹窗的 DOM 恰好命中这些钩子与选择器——
   // 左置标签表单项（被翻转对象）在场、按钮行是节奏容器末块（被推底对象）。
-  describe('记一笔表单 × AppModal 移动档（issue #844）', () => {
+  describe("记一笔表单 × AppModal 移动档（issue #844）", () => {
     function mountFormModal() {
       const Harness = defineComponent({
         components: { AppModal, CategoryForm },
@@ -287,25 +300,25 @@ describe('CategoryForm.vue', () => {
             <CategoryForm kind="expense" submit-label="记支出" />
           </AppModal>
         `,
-      })
-      return mount(Harness)
+      });
+      return mount(Harness);
     }
 
-    it('移动档呈全屏化结构：近全屏卡片 + 左置标签表单项 + 按钮行居节奏容器末块', async () => {
-      setFakeMedia({ width: 390 })
-      mountFormModal()
-      await flushPromises()
+    it("移动档呈全屏化结构：近全屏卡片 + 左置标签表单项 + 按钮行居节奏容器末块", async () => {
+      setFakeMedia({ width: 390 });
+      mountFormModal();
+      await flushPromises();
 
-      const card = document.body.querySelector('.n-card')
-      expect(card, '卡片应存在').not.toBeNull()
-      expect(card!.classList.contains(MOBILE_CARD_CLASS)).toBe(true)
-      expect((card as HTMLElement).style.width).toBe('calc(100vw - 32px)')
+      const card = document.body.querySelector(".n-card");
+      expect(card, "卡片应存在").not.toBeNull();
+      expect(card!.classList.contains(MOBILE_CARD_CLASS)).toBe(true);
+      expect((card as HTMLElement).style.width).toBe("calc(100vw - 32px)");
       // 标签上置的选择器命中面：左置标签表单项在真实表单中在场
-      expect(document.body.querySelector('.n-form-item.n-form-item--left-labelled')).not.toBeNull()
+      expect(document.body.querySelector(".n-form-item.n-form-item--left-labelled")).not.toBeNull();
       // 按钮行推底的选择器命中面：节奏容器末块即按钮行（含提交按钮）
-      const last = document.body.querySelector('.n-form > .n-space > :last-child')
-      expect(last, '节奏容器末块应存在').not.toBeNull()
-      expect(last!.querySelector('button')).not.toBeNull()
-    })
-  })
-})
+      const last = document.body.querySelector(".n-form > .n-space > :last-child");
+      expect(last, "节奏容器末块应存在").not.toBeNull();
+      expect(last!.querySelector("button")).not.toBeNull();
+    });
+  });
+});

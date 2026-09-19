@@ -9,15 +9,12 @@
 /** 定位仓库根：vitest 转换后 import.meta.url 非 file: scheme，取进程 cwd = 仓库根
  *  （run-gate-script.test-helper.ts gateScript 同款观察；函数形态规避加载期求值）。 */
 export function repoRoot(): string {
-  return process.cwd()
+  return process.cwd();
 }
 
 /** 非注释行里是否含全部给定片段（注释行不算命令，与 check-structure.ts 同口径）。 */
 export function hasCommandLine(content: string, ...needles: string[]): boolean {
   return content
-    .split('\n')
-    .some(
-      (line) =>
-        !line.trim().startsWith('#') && needles.every((n) => line.includes(n)),
-    )
+    .split("\n")
+    .some((line) => !line.trim().startsWith("#") && needles.every((n) => line.includes(n)));
 }

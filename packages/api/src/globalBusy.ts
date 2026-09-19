@@ -10,25 +10,25 @@
 //   错误契约不变，仍按原样上抛调用方（成败语义归 Loadable，本模块不承载）。
 // - 非模态环境指示：不注册 Overlay Suppression（ADR-0035），忙碌期间快捷键照常工作。
 
-import { readonly, ref } from 'vue'
+import { readonly, ref } from "vue";
 
 /** 显示阈值：聚合计数持续非零越过该时长才显示（毫秒） */
-export const BUSY_SHOW_DELAY_MS = 300
+export const BUSY_SHOW_DELAY_MS = 300;
 
-const pendingCount = ref(0)
-const visible = ref(false)
+const pendingCount = ref(0);
+const visible = ref(false);
 
-let showTimer: ReturnType<typeof setTimeout> | null = null
+let showTimer: ReturnType<typeof setTimeout> | null = null;
 
 function clearShowTimer(): void {
   if (showTimer !== null) {
-    clearTimeout(showTimer)
-    showTimer = null
+    clearTimeout(showTimer);
+    showTimer = null;
   }
 }
 
 /** 忙碌条可见状态：顶部条组件唯一消费的状态出口（只读） */
-export const busyVisible = readonly(visible)
+export const busyVisible = readonly(visible);
 
 /**
  * 把一次在途 IO 的完整生命周期纳入忙碌聚合计数：调用即计数 +1 并武装显示定时器
@@ -37,32 +37,32 @@ export const busyVisible = readonly(visible)
  * 新 IO 走 api 层即自动贡献计数，零额外接线。
  */
 export function trackBusy<T>(task: Promise<T>): Promise<T> {
-  pendingCount.value++
+  pendingCount.value++;
   if (showTimer === null) {
     showTimer = setTimeout(() => {
-      showTimer = null
-      if (pendingCount.value > 0) visible.value = true
-    }, BUSY_SHOW_DELAY_MS)
+      showTimer = null;
+      if (pendingCount.value > 0) visible.value = true;
+    }, BUSY_SHOW_DELAY_MS);
   }
   // 收尾闭包：then 两回调恰只执行其一，每次纳入恰好递减一次，无需幂等守卫
   const end = () => {
-    pendingCount.value--
+    pendingCount.value--;
     if (pendingCount.value === 0) {
-      clearShowTimer()
-      visible.value = false
+      clearShowTimer();
+      visible.value = false;
     }
-  }
+  };
   // Promise.resolve 对原生 promise 恒等返回（生产路径零失真），仅对非 thenable
   // 兑底包装（测试替身的 invoke 可能返回裸值，裸值契约有测试钉住）；递减挂在
   // 收尾通道，不改变值与错误的传递契约，原样返回调用方
-  const p = Promise.resolve(task)
-  p.then(end, end)
-  return p
+  const p = Promise.resolve(task);
+  p.then(end, end);
+  return p;
 }
 
 /** 测试隔离用：清零聚合计数、撤下可见状态与在途定时器（先例：resetToastSink） */
 export function resetGlobalBusy(): void {
-  clearShowTimer()
-  pendingCount.value = 0
-  visible.value = false
+  clearShowTimer();
+  pendingCount.value = 0;
+  visible.value = false;
 }

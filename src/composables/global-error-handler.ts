@@ -1,7 +1,7 @@
-import type { App } from 'vue'
-import type { Pinia } from 'pinia'
-import { useRenderErrorsStore } from '@/stores/render-errors'
-import { api } from '@ledger/api'
+import type { App } from "vue";
+import type { Pinia } from "pinia";
+import { useRenderErrorsStore } from "@/stores/render-errors";
+import { api } from "@ledger/api";
 
 /**
  * 全局渲染错误兜底（issue #926）：`app.config.errorHandler` 单点安装。
@@ -21,42 +21,40 @@ import { api } from '@ledger/api'
  */
 
 /** 每会话回传上限：超过后只亮提示条、不再发 IPC（错误风暴护栏） */
-const MAX_FORWARDS = 50
+const MAX_FORWARDS = 50;
 
 /** 同文案去重窗口（毫秒）：错误循环里同一条错误不重复回传 */
-const DEDUPE_WINDOW_MS = 3000
+const DEDUPE_WINDOW_MS = 3000;
 
 /** 单条回传载荷的长度上限（message / stack 各自截断） */
-const MESSAGE_LIMIT = 200
-const STACK_LIMIT = 600
+const MESSAGE_LIMIT = 200;
+const STACK_LIMIT = 600;
 
 export function installGlobalErrorHandler(app: App, pinia: Pinia): void {
-  const store = useRenderErrorsStore(pinia)
+  const store = useRenderErrorsStore(pinia);
 
-  let lastForwardedMessage: string | null = null
-  let lastForwardedAt = 0
-  let forwardedCount = 0
+  let lastForwardedMessage: string | null = null;
+  let lastForwardedAt = 0;
+  let forwardedCount = 0;
 
   function forwardToBackend(summary: string, error: unknown): void {
-    if (forwardedCount >= MAX_FORWARDS) return
-    const now = Date.now()
-    if (summary === lastForwardedMessage && now - lastForwardedAt < DEDUPE_WINDOW_MS) return
-    lastForwardedMessage = summary
-    lastForwardedAt = now
-    forwardedCount += 1
-    const err = error as { stack?: string } | null
-    const stack = typeof err?.stack === 'string' ? err.stack.slice(0, STACK_LIMIT) : ''
+    if (forwardedCount >= MAX_FORWARDS) return;
+    const now = Date.now();
+    if (summary === lastForwardedMessage && now - lastForwardedAt < DEDUPE_WINDOW_MS) return;
+    lastForwardedMessage = summary;
+    lastForwardedAt = now;
+    forwardedCount += 1;
+    const err = error as { stack?: string } | null;
+    const stack = typeof err?.stack === "string" ? err.stack.slice(0, STACK_LIMIT) : "";
     // 回传失败静默：诊断通道自身绝不成为第二错误源（rejection 就地消化）
-    api
-      .logFrontendError(stack ? `${summary}\n${stack}` : summary)
-      .catch(() => {})
+    api.logFrontendError(stack ? `${summary}\n${stack}` : summary).catch(() => {});
   }
 
   app.config.errorHandler = (err, _instance, info) => {
-    const raw = err instanceof Error ? err.message : String(err)
+    const raw = err instanceof Error ? err.message : String(err);
     // 提示条文案：摘要 + 场景信息，帮助用户反馈时说清「哪一步炸的」
-    const summary = `${raw}（${info}）`.slice(0, MESSAGE_LIMIT)
-    store.report(summary)
-    forwardToBackend(summary, err)
-  }
+    const summary = `${raw}（${info}）`.slice(0, MESSAGE_LIMIT);
+    store.report(summary);
+    forwardToBackend(summary, err);
+  };
 }

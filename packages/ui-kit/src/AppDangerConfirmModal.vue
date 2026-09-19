@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NAlert, NButton, NSpace, NText } from 'naive-ui'
-import AppModal from './AppModal.vue'
+import { NAlert, NButton, NSpace, NText } from "naive-ui";
+import AppModal from "./AppModal.vue";
 
 /**
  * 危险确认弹窗共享封装（issue #650 / ADR-0078）：模态危险操作确认的两级形态收口——
@@ -22,50 +22,44 @@ import AppModal from './AppModal.vue'
 withDefaults(
   defineProps<{
     /** 分级（ADR-0078 决策 2）：判据是「错误执行的代价与可回退性」。 */
-    level: 'error' | 'warning'
+    level: "error" | "warning";
     /** 是否显示（受控）；false 卸载态不渲染内容。 */
-    show: boolean
+    show: boolean;
     /** 弹窗标题。 */
-    title: string
+    title: string;
     /** 说明段（顶部灰字，如状态变化的直接后果）。 */
-    lead?: string
+    lead?: string;
     /** 警示块标题（error 级常用）。 */
-    alertTitle?: string
+    alertTitle?: string;
     /** 加粗警示句：error 级为后果说明（后果说明必选，类型系统不强制，调用方保证）；
      *  warning 级为后果与兜底说明。 */
-    strongWarning?: string
+    strongWarning?: string;
     /** 补充说明段（警示块下灰字，如转换流程与自动重启说明）。 */
-    detail?: string
+    detail?: string;
     /** 确认按钮文案。 */
-    confirmText: string
+    confirmText: string;
     /** 取消按钮文案。 */
-    cancelText: string
+    cancelText: string;
     /** 是否提交中（危险动作执行期间），期间禁用按钮。 */
-    submitting?: boolean
+    submitting?: boolean;
     /** 确认：父组件执行实际动作。 */
-    onConfirm: () => void
+    onConfirm: () => void;
     /** 取消：父组件关闭弹窗。 */
-    onCancel: () => void
+    onCancel: () => void;
   }>(),
   { submitting: false },
-)
+);
 
-const emit = defineEmits<{ 'update:show': [value: boolean] }>()
+const emit = defineEmits<{ "update:show": [value: boolean] }>();
 
 /** 点 ✕ / ESC（NModal 关闭意图）时上报 update:show(false)，由父组件判断是否可关。 */
 function onUpdateShow(value: boolean) {
-  if (!value) emit('update:show', false)
+  if (!value) emit("update:show", false);
 }
 </script>
 
 <template>
-  <AppModal
-    :show="show"
-    preset="card"
-    :title="title"
-    card-size="md"
-    @update:show="onUpdateShow"
-  >
+  <AppModal :show="show" preset="card" :title="title" card-size="md" @update:show="onUpdateShow">
     <NSpace vertical :size="12">
       <NText v-if="lead" depth="3">{{ lead }}</NText>
 

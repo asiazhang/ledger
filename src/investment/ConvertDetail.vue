@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NDescriptions, NDescriptionsItem } from 'naive-ui'
-import { t } from '@ledger/i18n'
-import { useReferenceStore } from '@/stores/reference'
-import { formatAmount, formatQuantity } from '@ledger/money'
-import type { Transaction, TransactionConvert } from '@ledger/types'
+import { computed } from "vue";
+import { NDescriptions, NDescriptionsItem } from "naive-ui";
+import { t } from "@ledger/i18n";
+import { useReferenceStore } from "@/stores/reference";
+import { formatAmount, formatQuantity } from "@ledger/money";
+import type { Transaction, TransactionConvert } from "@ledger/types";
 
 /**
  * 基金转换只读详情（ADR-0106 决策 10 / #1048）：convert 是「无现金腿」kind，界面不体现
@@ -16,29 +16,29 @@ import type { Transaction, TransactionConvert } from '@ledger/types'
  */
 const props = defineProps<{
   /** 转换交易行（提供日期 / 账户 / 备注） */
-  transaction: Transaction
+  transaction: Transaction;
   /** 转换两腿明细（`get_transaction_convert` 读投影） */
-  convert: TransactionConvert
-}>()
+  convert: TransactionConvert;
+}>();
 
-const reference = useReferenceStore()
+const reference = useReferenceStore();
 
 /** 账户名经参考数据解析，未知账户回退占位（与列表账户列同口径，不抛错）。 */
 const accountName = computed(
-  () => reference.accountMap.get(props.transaction.account_id)?.name ?? '—',
-)
+  () => reference.accountMap.get(props.transaction.account_id)?.name ?? "—",
+);
 
 function amountText(cents: number): string {
-  return formatAmount(cents, reference.getCurrency(props.convert.currency_code))
+  return formatAmount(cents, reference.getCurrency(props.convert.currency_code));
 }
 
 function quantityText(quantity: number): string {
-  return formatQuantity(quantity)
+  return formatQuantity(quantity);
 }
 
 /** 标的展示：代码 + 名称（名称缺失时仅代码）。 */
 function instrumentText(symbol: string, name: string | null): string {
-  return name ? `${symbol} ${name}` : symbol
+  return name ? `${symbol} ${name}` : symbol;
 }
 </script>
 
@@ -47,7 +47,9 @@ function instrumentText(symbol: string, name: string | null): string {
     <NDescriptionsItem :label="t('transactions.kind.convert')">
       {{ convert.out_symbol }} → {{ convert.in_symbol }}
     </NDescriptionsItem>
-    <NDescriptionsItem :label="t('transactions.form.date')">{{ transaction.date }}</NDescriptionsItem>
+    <NDescriptionsItem :label="t('transactions.form.date')">{{
+      transaction.date
+    }}</NDescriptionsItem>
     <NDescriptionsItem :label="t('investments.form.account')">{{ accountName }}</NDescriptionsItem>
     <NDescriptionsItem :label="t('investments.form.convertOutInstrument')">
       {{ instrumentText(convert.out_symbol, convert.out_instrument_name) }}
@@ -74,7 +76,7 @@ function instrumentText(symbol: string, name: string | null): string {
       {{ amountText(convert.carried_cost_cents) }}
     </NDescriptionsItem>
     <NDescriptionsItem :label="t('transactions.form.note')">
-      {{ transaction.note ?? '—' }}
+      {{ transaction.note ?? "—" }}
     </NDescriptionsItem>
   </NDescriptions>
 </template>

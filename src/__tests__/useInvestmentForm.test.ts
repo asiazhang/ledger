@@ -1,51 +1,86 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { useReferenceStore } from '@/stores/reference'
-import { useInvestmentForm } from '@/investment/useInvestmentForm'
-import { makeAccount } from './factories'
-import type { Account, Instrument, Transaction, TransactionTrade } from '@ledger/types'
-
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { useReferenceStore } from "@/stores/reference";
+import { useInvestmentForm } from "@/investment/useInvestmentForm";
+import { makeAccount } from "./factories";
+import type { Account, Instrument, Transaction, TransactionTrade } from "@ledger/types";
 
 const mockAccounts: Account[] = [
   {
-    id: 'acc-inv', name: '证券户', type: 'investment', currency_code: 'CNY',
-    initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
-    is_deleted: false, is_hidden: false,
+    id: "acc-inv",
+    name: "证券户",
+    type: "investment",
+    currency_code: "CNY",
+    initial_balance_cents: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
+    is_deleted: false,
+    is_hidden: false,
   },
   {
-    id: 'acc-cash', name: '现金', type: 'cash', currency_code: 'CNY',
-    initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
-    is_deleted: false, is_hidden: false,
+    id: "acc-cash",
+    name: "现金",
+    type: "cash",
+    currency_code: "CNY",
+    initial_balance_cents: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
+    is_deleted: false,
+    is_hidden: false,
   },
-]
+];
 
 const mockInstruments: Instrument[] = [
   {
-    id: 'ins-1', symbol: 'NVDA', name: '英伟达', type: 'stock', currency_code: 'CNY',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
-    version: 1, device_id: 'test', is_deleted: false, market: 'unknown', invested: false,
-    source: 'eastmoney', price_cents: null, price_channel: 'none',
+    id: "ins-1",
+    symbol: "NVDA",
+    name: "英伟达",
+    type: "stock",
+    currency_code: "CNY",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
+    is_deleted: false,
+    market: "unknown",
+    invested: false,
+    source: "eastmoney",
+    price_cents: null,
+    price_channel: "none",
   },
-]
+];
 
 const mockFundInstruments: Instrument[] = [
   {
-    id: 'ins-fund', symbol: '000123', name: '某混合基金', type: 'fund', currency_code: 'CNY',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
-    version: 1, device_id: 'test', is_deleted: false, market: 'unknown', invested: false,
-    source: 'eastmoney', price_cents: null, price_channel: 'fund_nav',
+    id: "ins-fund",
+    symbol: "000123",
+    name: "某混合基金",
+    type: "fund",
+    currency_code: "CNY",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
+    is_deleted: false,
+    market: "unknown",
+    invested: false,
+    source: "eastmoney",
+    price_cents: null,
+    price_channel: "fund_nav",
   },
-]
+];
 
 const editingTx: Transaction = {
-  id: 'txn-buy-1',
-  kind: 'buy',
+  id: "txn-buy-1",
+  kind: "buy",
   amount_cents: 15500,
-  currency_code: 'CNY',
+  currency_code: "CNY",
   amount_native_cents: 15500,
-  account_id: 'acc-inv',
+  account_id: "acc-inv",
   to_account_id: null,
   funding_account_id: null,
   category_id: null,
@@ -54,469 +89,589 @@ const editingTx: Transaction = {
   source: null,
   convert: null,
   refund_of_transaction_id: null,
-  note: '建仓买入',
-  date: '2026-01-10',
-  created_at: '2026-01-10T01:00:00Z',
-  updated_at: '2026-01-10T01:00:00Z',
+  note: "建仓买入",
+  date: "2026-01-10",
+  created_at: "2026-01-10T01:00:00Z",
+  updated_at: "2026-01-10T01:00:00Z",
   version: 1,
-  device_id: 'test',
+  device_id: "test",
   is_deleted: false,
-}
+};
 
 const editingTrade: TransactionTrade = {
-  instrument_id: 'ins-1',
-  symbol: 'NVDA',
-  instrument_name: '英伟达',
-  instrument_type: 'stock',
+  instrument_id: "ins-1",
+  symbol: "NVDA",
+  instrument_name: "英伟达",
+  instrument_type: "stock",
   quantity: 100,
   price_cents: 1500000, // 150 元（万分之一元刻度）
   fee_cents: 500,
-}
+};
 
 const editingFundTx: Transaction = {
   ...editingTx,
-  id: 'txn-fund-1',
+  id: "txn-fund-1",
   amount_cents: 100000, // 确认单整分金额 1000 元（权威）
-}
+};
 
 const editingFundTrade: TransactionTrade = {
-  instrument_id: 'ins-fund',
-  symbol: '000123',
-  instrument_name: '某混合基金',
-  instrument_type: 'fund',
+  instrument_id: "ins-fund",
+  symbol: "000123",
+  instrument_name: "某混合基金",
+  instrument_type: "fund",
   quantity: 987.6543,
   price_cents: 10110, // 反算净值 1.0110 元（万分之一元刻度）
   fee_cents: 150,
-}
+};
 
 /** 表单布线：list_accounts 参考命令本场景需自定义值（acc-inv「证券户」，overrides 优先于参考兜底）。 */
-const BASE_OVERRIDES = { list_accounts: mockAccounts }
+const BASE_OVERRIDES = { list_accounts: mockAccounts };
 
-describe('useInvestmentForm', () => {
+describe("useInvestmentForm", () => {
   beforeEach(() => {
-    wireInvokeSeam({ overrides: BASE_OVERRIDES })
-  })
+    wireInvokeSeam({ overrides: BASE_OVERRIDES });
+  });
 
-  it('初始化状态：账户/标的/数量/价格为空（数量/价格为原始文本，#416）', () => {
-    const form = useInvestmentForm('buy')
-    expect(form.accountId.value).toBeNull()
-    expect(form.instrumentId.value).toBeNull()
-    expect(form.quantityText.value).toBe('')
-    expect(form.priceText.value).toBe('')
-  })
+  it("初始化状态：账户/标的/数量/价格为空（数量/价格为原始文本，#416）", () => {
+    const form = useInvestmentForm("buy");
+    expect(form.accountId.value).toBeNull();
+    expect(form.instrumentId.value).toBeNull();
+    expect(form.quantityText.value).toBe("");
+    expect(form.priceText.value).toBe("");
+  });
 
-  it('submit 校验：无账户/标的/数量/单价时警告且不写入', async () => {
-    const form = useInvestmentForm('buy')
-    await form.submit()
-    form.accountId.value = 'acc-inv'
-    await form.submit()
-    form.instrumentId.value = 'ins-1'
-    await form.submit()
+  it("submit 校验：无账户/标的/数量/单价时警告且不写入", async () => {
+    const form = useInvestmentForm("buy");
+    await form.submit();
+    form.accountId.value = "acc-inv";
+    await form.submit();
+    form.instrumentId.value = "ins-1";
+    await form.submit();
     // 格式类错误（数量为空）由红态＋禁用接住，静默中止（ADR-0058）
-    await form.submit()
-    form.quantityText.value = '10'
-    await form.submit()
-    expect(
-      mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction'),
-    ).toHaveLength(0)
-  })
+    await form.submit();
+    form.quantityText.value = "10";
+    await form.submit();
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "create_transaction")).toHaveLength(0);
+  });
 
-  it('submit 创建：调用 create_transaction，成功后重置表单', async () => {
-    wireInvokeSeam({ overrides: { ...BASE_OVERRIDES, create_transaction: Promise.resolve('new-txn') } })
-    const onCreated = vi.fn()
-    const form = useInvestmentForm('buy', { onCreated })
-    form.accountId.value = 'acc-inv'
-    form.instrumentId.value = 'ins-1'
-    form.quantityText.value = '10'
-    form.priceText.value = '15'
-    form.fee.value = 5
-    form.note.value = '测试'
-    form.date.value = new Date('2026-07-11').getTime()
+  it("submit 创建：调用 create_transaction，成功后重置表单", async () => {
+    wireInvokeSeam({
+      overrides: { ...BASE_OVERRIDES, create_transaction: Promise.resolve("new-txn") },
+    });
+    const onCreated = vi.fn();
+    const form = useInvestmentForm("buy", { onCreated });
+    form.accountId.value = "acc-inv";
+    form.instrumentId.value = "ins-1";
+    form.quantityText.value = "10";
+    form.priceText.value = "15";
+    form.fee.value = 5;
+    form.note.value = "测试";
+    form.date.value = new Date("2026-07-11").getTime();
 
-    await form.submit()
+    await form.submit();
 
     // 提交路由：创建命令 + 正确 kind；wire 字段形状（含 buy 占位语义）由装配器
     // 测试承担（issue #216）
-    expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
-      input: expect.objectContaining({ kind: 'buy' }),
-    })
+    expect(mockInvoke).toHaveBeenCalledWith("create_transaction", {
+      input: expect.objectContaining({ kind: "buy" }),
+    });
     // 创建成功后重置业务字段（数量/价格文本同清、时机标志同清不留潜伏红态，#416）
-    expect(form.instrumentId.value).toBeNull()
-    expect(form.quantityText.value).toBe('')
-    expect(form.priceText.value).toBe('')
-    expect(form.quantityError.value).toBeNull()
-    expect(onCreated).toHaveBeenCalledTimes(1)
-  })
+    expect(form.instrumentId.value).toBeNull();
+    expect(form.quantityText.value).toBe("");
+    expect(form.priceText.value).toBe("");
+    expect(form.quantityError.value).toBeNull();
+    expect(onCreated).toHaveBeenCalledTimes(1);
+  });
 
-  describe('基金申赎形态（issue #302）：金额权威、单价反算', () => {
+  describe("基金申赎形态（issue #302）：金额权威、单价反算", () => {
     /** 远程搜索填充基金候选（防抖 300ms，仿本文件 fake-timer 惯例） */
-    async function searchFundCandidates(kind: 'buy' | 'sell') {
-      vi.useFakeTimers()
+    async function searchFundCandidates(kind: "buy" | "sell") {
+      vi.useFakeTimers();
       try {
         wireInvokeSeam({
           overrides: {
             ...BASE_OVERRIDES,
             list_instruments: Promise.resolve({ items: mockFundInstruments, total: 1 }),
           },
-        })
-        const form = useInvestmentForm(kind)
-        form.searchInstruments('某混合')
-        await vi.advanceTimersByTimeAsync(300)
-        return form
+        });
+        const form = useInvestmentForm(kind);
+        form.searchInstruments("某混合");
+        await vi.advanceTimersByTimeAsync(300);
+        return form;
       } finally {
-        vi.useRealTimers()
+        vi.useRealTimers();
       }
     }
 
-    it('选基金标的：isFundInstrument 打开，derivedPrice 按（金额 − 费用）× 100 ÷ 份额反算', async () => {
-      const emptyForm = useInvestmentForm('buy')
-      expect(emptyForm.isFundInstrument.value).toBe(false)
-      expect(emptyForm.derivedPrice.value).toBeNull()
-      const form = await searchFundCandidates('buy')
-      form.instrumentId.value = 'ins-fund'
-      expect(form.isFundInstrument.value).toBe(true)
+    it("选基金标的：isFundInstrument 打开，derivedPrice 按（金额 − 费用）× 100 ÷ 份额反算", async () => {
+      const emptyForm = useInvestmentForm("buy");
+      expect(emptyForm.isFundInstrument.value).toBe(false);
+      expect(emptyForm.derivedPrice.value).toBeNull();
+      const form = await searchFundCandidates("buy");
+      form.instrumentId.value = "ins-fund";
+      expect(form.isFundInstrument.value).toBe(true);
       // (100000 − 150) × 100 ÷ 987.6543 = 10109.81… → 10110 → 1.0110 元
-      form.amount.value = 1000
-      form.quantityText.value = '987.6543'
-      form.fee.value = 1.5
-      expect(form.derivedPrice.value).toBeCloseTo(1.011, 6)
-    })
+      form.amount.value = 1000;
+      form.quantityText.value = "987.6543";
+      form.fee.value = 1.5;
+      expect(form.derivedPrice.value).toBeCloseTo(1.011, 6);
+    });
 
-    it('缺确认金额：警告且不写入（份额/单价校验不误伤）', async () => {
-      const form = await searchFundCandidates('buy')
-      form.instrumentId.value = 'ins-fund'
-      form.accountId.value = 'acc-inv'
-      form.quantityText.value = '987.6543'
-      await form.submit()
-      expect(
-        mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction'),
-      ).toHaveLength(0)
-    })
+    it("缺确认金额：警告且不写入（份额/单价校验不误伤）", async () => {
+      const form = await searchFundCandidates("buy");
+      form.instrumentId.value = "ins-fund";
+      form.accountId.value = "acc-inv";
+      form.quantityText.value = "987.6543";
+      await form.submit();
+      expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "create_transaction")).toHaveLength(0);
+    });
 
-    it('submit 创建：确认单金额落 amount_cents、单价不落 wire（price_cents null）', async () => {
-      const form = await searchFundCandidates('buy')
-      wireInvokeSeam({ overrides: { ...BASE_OVERRIDES, create_transaction: Promise.resolve('fund-txn') } })
-      form.instrumentId.value = 'ins-fund'
-      form.accountId.value = 'acc-inv'
-      form.amount.value = 1000
-      form.quantityText.value = '987.6543'
-      form.fee.value = 1.5
-      await form.submit()
-      expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
+    it("submit 创建：确认单金额落 amount_cents、单价不落 wire（price_cents null）", async () => {
+      const form = await searchFundCandidates("buy");
+      wireInvokeSeam({
+        overrides: { ...BASE_OVERRIDES, create_transaction: Promise.resolve("fund-txn") },
+      });
+      form.instrumentId.value = "ins-fund";
+      form.accountId.value = "acc-inv";
+      form.amount.value = 1000;
+      form.quantityText.value = "987.6543";
+      form.fee.value = 1.5;
+      await form.submit();
+      expect(mockInvoke).toHaveBeenCalledWith("create_transaction", {
         input: expect.objectContaining({
-          kind: 'buy',
+          kind: "buy",
           amount_cents: 100000,
           quantity: 987.6543,
           price_cents: null,
           fee_cents: 150,
         }),
-      })
-    })
+      });
+    });
 
-    it('sell 反算口径：毛收入 = 金额 + 费用，derivedPrice 随之抬高', async () => {
-      const form = await searchFundCandidates('sell')
-      form.instrumentId.value = 'ins-fund'
-      form.amount.value = 520
-      form.quantityText.value = '500'
-      form.fee.value = 0.52
+    it("sell 反算口径：毛收入 = 金额 + 费用，derivedPrice 随之抬高", async () => {
+      const form = await searchFundCandidates("sell");
+      form.instrumentId.value = "ins-fund";
+      form.amount.value = 520;
+      form.quantityText.value = "500";
+      form.fee.value = 0.52;
       // (52000 + 52) × 100 ÷ 500 = 10410.4 → 10410 → 1.0410 元
-      expect(form.derivedPrice.value).toBeCloseTo(1.041, 6)
-    })
+      expect(form.derivedPrice.value).toBeCloseTo(1.041, 6);
+    });
 
-    it('编辑回填：确认单金额回填 amount，单价不回填（由反算展示）', () => {
-      const form = useInvestmentForm('buy', {
+    it("编辑回填：确认单金额回填 amount，单价不回填（由反算展示）", () => {
+      const form = useInvestmentForm("buy", {
         editing: () => editingFundTx,
         trade: () => editingFundTrade,
-      })
-      expect(form.isFundInstrument.value).toBe(true)
-      expect(form.amount.value).toBe(1000)
-      expect(form.quantityText.value).toBe('987.6543')
-      expect(form.fee.value).toBe(1.5)
-      expect(form.priceText.value).toBe('')
+      });
+      expect(form.isFundInstrument.value).toBe(true);
+      expect(form.amount.value).toBe(1000);
+      expect(form.quantityText.value).toBe("987.6543");
+      expect(form.fee.value).toBe(1.5);
+      expect(form.priceText.value).toBe("");
       // 基金形态无单价输入面，单价错误态不装配（#416）
-      expect(form.priceError.value).toBeNull()
+      expect(form.priceError.value).toBeNull();
       // 反算展示与存储净值同一公式：(100000 − 150) × 100 ÷ 987.6543 → 1.0110 元
-      expect(form.derivedPrice.value).toBeCloseTo(1.011, 6)
-    })
-  })
+      expect(form.derivedPrice.value).toBeCloseTo(1.011, 6);
+    });
+  });
 
-  describe('编辑模式（issue #180）', () => {
-    it('创建即回填：账户/标的/数量/价格/费用/备注/日期/币种，标的候选项含回填标的（显示 symbol · name）', async () => {
-      const store = useReferenceStore()
-      await store.refresh()
-      const form = useInvestmentForm('buy', {
+  describe("编辑模式（issue #180）", () => {
+    it("创建即回填：账户/标的/数量/价格/费用/备注/日期/币种，标的候选项含回填标的（显示 symbol · name）", async () => {
+      const store = useReferenceStore();
+      await store.refresh();
+      const form = useInvestmentForm("buy", {
         editing: () => editingTx,
         trade: () => editingTrade,
-      })
-      expect(form.accountId.value).toBe('acc-inv')
-      expect(form.instrumentId.value).toBe('ins-1')
-      expect(form.quantityText.value).toBe('100')
-      expect(form.priceText.value).toBe('150')
+      });
+      expect(form.accountId.value).toBe("acc-inv");
+      expect(form.instrumentId.value).toBe("ins-1");
+      expect(form.quantityText.value).toBe("100");
+      expect(form.priceText.value).toBe("150");
       // 合法回填不显红态（#416）
-      expect(form.quantityError.value).toBeNull()
-      expect(form.priceError.value).toBeNull()
-      expect(form.fee.value).toBe(5)
-      expect(form.note.value).toBe('建仓买入')
-      expect(form.date.value).toBe(new Date('2026-01-10T00:00:00Z').getTime())
-      expect(form.currencyCode.value).toBe('CNY')
+      expect(form.quantityError.value).toBeNull();
+      expect(form.priceError.value).toBeNull();
+      expect(form.fee.value).toBe(5);
+      expect(form.note.value).toBe("建仓买入");
+      expect(form.date.value).toBe(new Date("2026-01-10T00:00:00Z").getTime());
+      expect(form.currencyCode.value).toBe("CNY");
       // 远程搜索未执行（无候选）时，回填标的仍可显示
-      expect(form.instrumentOptions.value).toEqual([
-        { label: 'NVDA · 英伟达', value: 'ins-1' },
-      ])
-    })
+      expect(form.instrumentOptions.value).toEqual([{ label: "NVDA · 英伟达", value: "ins-1" }]);
+    });
 
-    it('回填标的名称为空时候选 label 仅显示 symbol；用户搜索不冲掉回填标的选项', async () => {
-      const store = useReferenceStore()
-      await store.refresh()
-      const form = useInvestmentForm('buy', {
+    it("回填标的名称为空时候选 label 仅显示 symbol；用户搜索不冲掉回填标的选项", async () => {
+      const store = useReferenceStore();
+      await store.refresh();
+      const form = useInvestmentForm("buy", {
         editing: () => editingTx,
         trade: () => ({ ...editingTrade, instrument_name: null }),
-      })
-      expect(form.instrumentOptions.value).toEqual([{ label: 'NVDA', value: 'ins-1' }])
+      });
+      expect(form.instrumentOptions.value).toEqual([{ label: "NVDA", value: "ins-1" }]);
       wireInvokeSeam({
         overrides: {
           ...BASE_OVERRIDES,
           list_instruments: Promise.resolve({ items: mockInstruments, total: 1 }),
         },
-      })
-      form.searchInstruments('NVDA')
+      });
+      form.searchInstruments("NVDA");
       await vi.waitFor(() => {
-        expect(form.searchingInstruments.value).toBe(false)
-      })
+        expect(form.searchingInstruments.value).toBe(false);
+      });
       // 搜索结果在前、回填标的（已含于结果则不重复）合并展示
-      expect(form.instrumentOptions.value.map((o) => o.value)).toEqual(['ins-1'])
-    })
+      expect(form.instrumentOptions.value.map((o) => o.value)).toEqual(["ins-1"]);
+    });
 
-    it('submit 编辑：分派 update_transaction（同一入参形状），onUpdated 触发、onCreated 不触发、不重置表单', async () => {
-      const store = useReferenceStore()
-      await store.refresh()
-      wireInvokeSeam({ overrides: { ...BASE_OVERRIDES, update_transaction: Promise.resolve(null) } })
-      const onCreated = vi.fn()
-      const onUpdated = vi.fn()
-      const form = useInvestmentForm('buy', {
+    it("submit 编辑：分派 update_transaction（同一入参形状），onUpdated 触发、onCreated 不触发、不重置表单", async () => {
+      const store = useReferenceStore();
+      await store.refresh();
+      wireInvokeSeam({
+        overrides: { ...BASE_OVERRIDES, update_transaction: Promise.resolve(null) },
+      });
+      const onCreated = vi.fn();
+      const onUpdated = vi.fn();
+      const form = useInvestmentForm("buy", {
         onCreated,
         onUpdated,
         editing: () => editingTx,
         trade: () => editingTrade,
-      })
+      });
 
-      await form.submit()
+      await form.submit();
 
       // 提交路由：更新命令携带交易 id + 回填业务字段交接装配结果；
       // 金额/日期转换与占位字段由装配器测试承担（issue #216）
-      expect(mockInvoke).toHaveBeenCalledWith('update_transaction', {
-        id: 'txn-buy-1',
+      expect(mockInvoke).toHaveBeenCalledWith("update_transaction", {
+        id: "txn-buy-1",
         input: expect.objectContaining({
-          kind: 'buy',
-          instrument_id: 'ins-1',
+          kind: "buy",
+          instrument_id: "ins-1",
           quantity: 100,
-          note: '建仓买入',
+          note: "建仓买入",
         }),
-      })
-      expect(onUpdated).toHaveBeenCalledTimes(1)
-      expect(onCreated).not.toHaveBeenCalled()
+      });
+      expect(onUpdated).toHaveBeenCalledTimes(1);
+      expect(onCreated).not.toHaveBeenCalled();
       // 编辑路径不重置表单：成功即关窗（onUpdated），实例整体销毁
-      expect(form.instrumentId.value).toBe('ins-1')
-      expect(form.quantityText.value).toBe('100')
-    })
+      expect(form.instrumentId.value).toBe("ins-1");
+      expect(form.quantityText.value).toBe("100");
+    });
 
-    it('submit 编辑失败：错误不抛出、onUpdated 不触发、已填内容不丢', async () => {
-      const store = useReferenceStore()
-      await store.refresh()
-      const onUpdated = vi.fn()
-      const form = useInvestmentForm('buy', {
+    it("submit 编辑失败：错误不抛出、onUpdated 不触发、已填内容不丢", async () => {
+      const store = useReferenceStore();
+      await store.refresh();
+      const onUpdated = vi.fn();
+      const form = useInvestmentForm("buy", {
         onUpdated,
         editing: () => editingTx,
         trade: () => editingTrade,
-      })
+      });
       wireInvokeSeam({
         overrides: {
           ...BASE_OVERRIDES,
-          update_transaction: Promise.reject(new Error('该买入交易已有部分卖出，无法修改')),
+          update_transaction: Promise.reject(new Error("该买入交易已有部分卖出，无法修改")),
         },
-      })
+      });
 
-      await expect(form.submit()).resolves.toBeUndefined()
-      expect(onUpdated).not.toHaveBeenCalled()
-      expect(form.instrumentId.value).toBe('ins-1')
-      expect(form.quantityText.value).toBe('100')
-      expect(form.priceText.value).toBe('150')
-    })
-  })
-})
+      await expect(form.submit()).resolves.toBeUndefined();
+      expect(onUpdated).not.toHaveBeenCalled();
+      expect(form.instrumentId.value).toBe("ins-1");
+      expect(form.quantityText.value).toBe("100");
+      expect(form.priceText.value).toBe("150");
+    });
+  });
+});
 
-describe('useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/sell 对称）', () => {
+describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/sell 对称）", () => {
   /** 准入闭集与币种过滤的候选全集：现金类五型 + 排除型三型 + 异币种 */
   const fundingAccounts: Account[] = [
-    { id: 'acc-cash', name: '现金钱包', type: 'cash', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
-    { id: 'acc-bank', name: '招商银行卡', type: 'bank', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
-    { id: 'acc-credit', name: '信用卡', type: 'credit', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
-    { id: 'acc-ewallet', name: '零钱通', type: 'ewallet', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
-    { id: 'acc-other', name: '其他现金', type: 'other', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
-    { id: 'acc-inv', name: '证券户', type: 'investment', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
-    makeAccount({ id: 'acc-inv-usd', name: '美股证券户', currency_code: 'USD' }),
-    { id: 'acc-recv', name: '借出·张三', type: 'receivable', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
-    { id: 'acc-debt', name: '借入·李四', type: 'debt', currency_code: 'CNY', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
-    { id: 'acc-bank-usd', name: '美元卡', type: 'bank', currency_code: 'USD', initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test', is_deleted: false, is_hidden: false },
-  ]
+    {
+      id: "acc-cash",
+      name: "现金钱包",
+      type: "cash",
+      currency_code: "CNY",
+      initial_balance_cents: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      version: 1,
+      device_id: "test",
+      is_deleted: false,
+      is_hidden: false,
+    },
+    {
+      id: "acc-bank",
+      name: "招商银行卡",
+      type: "bank",
+      currency_code: "CNY",
+      initial_balance_cents: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      version: 1,
+      device_id: "test",
+      is_deleted: false,
+      is_hidden: false,
+    },
+    {
+      id: "acc-credit",
+      name: "信用卡",
+      type: "credit",
+      currency_code: "CNY",
+      initial_balance_cents: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      version: 1,
+      device_id: "test",
+      is_deleted: false,
+      is_hidden: false,
+    },
+    {
+      id: "acc-ewallet",
+      name: "零钱通",
+      type: "ewallet",
+      currency_code: "CNY",
+      initial_balance_cents: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      version: 1,
+      device_id: "test",
+      is_deleted: false,
+      is_hidden: false,
+    },
+    {
+      id: "acc-other",
+      name: "其他现金",
+      type: "other",
+      currency_code: "CNY",
+      initial_balance_cents: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      version: 1,
+      device_id: "test",
+      is_deleted: false,
+      is_hidden: false,
+    },
+    {
+      id: "acc-inv",
+      name: "证券户",
+      type: "investment",
+      currency_code: "CNY",
+      initial_balance_cents: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      version: 1,
+      device_id: "test",
+      is_deleted: false,
+      is_hidden: false,
+    },
+    makeAccount({ id: "acc-inv-usd", name: "美股证券户", currency_code: "USD" }),
+    {
+      id: "acc-recv",
+      name: "借出·张三",
+      type: "receivable",
+      currency_code: "CNY",
+      initial_balance_cents: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      version: 1,
+      device_id: "test",
+      is_deleted: false,
+      is_hidden: false,
+    },
+    {
+      id: "acc-debt",
+      name: "借入·李四",
+      type: "debt",
+      currency_code: "CNY",
+      initial_balance_cents: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      version: 1,
+      device_id: "test",
+      is_deleted: false,
+      is_hidden: false,
+    },
+    {
+      id: "acc-bank-usd",
+      name: "美元卡",
+      type: "bank",
+      currency_code: "USD",
+      initial_balance_cents: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      version: 1,
+      device_id: "test",
+      is_deleted: false,
+      is_hidden: false,
+    },
+  ];
 
   /** 出资账户候选场景的表单布线：候选全集上参考 store，编辑回填场景可注入 editing/trade；
-    * kind 参数供 sell 对称用例复用同套候选与编辑夹具（#938） */
+   * kind 参数供 sell 对称用例复用同套候选与编辑夹具（#938） */
   async function fundingForm(
     options?: Parameters<typeof useInvestmentForm>[1],
-    kind: 'buy' | 'sell' = 'buy',
+    kind: "buy" | "sell" = "buy",
   ) {
-    wireInvokeSeam({ overrides: { list_accounts: fundingAccounts } })
-    const store = useReferenceStore()
-    await store.refresh()
-    return useInvestmentForm(kind, options)
+    wireInvokeSeam({ overrides: { list_accounts: fundingAccounts } });
+    const store = useReferenceStore();
+    await store.refresh();
+    return useInvestmentForm(kind, options);
   }
 
-  it('候选过滤：只含现金类账户且币种与交易币种一致；默认空', async () => {
-    const form = await fundingForm()
-    expect(form.fundingAccountId.value).toBeNull()
+  it("候选过滤：只含现金类账户且币种与交易币种一致；默认空", async () => {
+    const form = await fundingForm();
+    expect(form.fundingAccountId.value).toBeNull();
     expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual([
-      'acc-cash', 'acc-bank', 'acc-credit', 'acc-ewallet', 'acc-other',
-    ])
-  })
+      "acc-cash",
+      "acc-bank",
+      "acc-credit",
+      "acc-ewallet",
+      "acc-other",
+    ]);
+  });
 
-  it('币种随投资账户联动：选美元投资账户后交易币种为 USD，候选只剩同币种现金类（issue #1191）', async () => {
-    const form = await fundingForm()
+  it("币种随投资账户联动：选美元投资账户后交易币种为 USD，候选只剩同币种现金类（issue #1191）", async () => {
+    const form = await fundingForm();
     // 未选账户：退「新表单预选币种」（展示币种偏好）
-    expect(form.currencyCode.value).toBe('CNY')
-    form.accountId.value = 'acc-inv-usd'
-    expect(form.currencyCode.value).toBe('USD')
-    expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual(['acc-bank-usd'])
-  })
+    expect(form.currencyCode.value).toBe("CNY");
+    form.accountId.value = "acc-inv-usd";
+    expect(form.currencyCode.value).toBe("USD");
+    expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual(["acc-bank-usd"]);
+  });
 
-  it('编辑回填：带出资账户的买入带出当前值，历史买入不带（保持空）', async () => {
+  it("编辑回填：带出资账户的买入带出当前值，历史买入不带（保持空）", async () => {
     const withFunding = await fundingForm({
-      editing: () => ({ ...editingTx, funding_account_id: 'acc-bank' }),
+      editing: () => ({ ...editingTx, funding_account_id: "acc-bank" }),
       trade: () => editingTrade,
-    })
-    expect(withFunding.fundingAccountId.value).toBe('acc-bank')
+    });
+    expect(withFunding.fundingAccountId.value).toBe("acc-bank");
     const withoutFunding = await fundingForm({
       editing: () => editingTx,
       trade: () => editingTrade,
-    })
-    expect(withoutFunding.fundingAccountId.value).toBeNull()
-  })
+    });
+    expect(withoutFunding.fundingAccountId.value).toBeNull();
+  });
 
-  it('submit 创建：出资账户随装配落 funding_account_id；重置表单后回空', async () => {
+  it("submit 创建：出资账户随装配落 funding_account_id；重置表单后回空", async () => {
     wireInvokeSeam({
-      overrides: { list_accounts: fundingAccounts, create_transaction: Promise.resolve('new-txn') },
-    })
-    const store = useReferenceStore()
-    await store.refresh()
-    const onCreated = vi.fn()
-    const form = useInvestmentForm('buy', { onCreated })
-    form.accountId.value = 'acc-inv'
-    form.instrumentId.value = 'ins-1'
-    form.quantityText.value = '10'
-    form.priceText.value = '15'
-    form.fundingAccountId.value = 'acc-bank'
-    await form.submit()
-    expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
-      input: expect.objectContaining({ kind: 'buy', funding_account_id: 'acc-bank' }),
-    })
-    expect(onCreated).toHaveBeenCalledTimes(1)
-  })
+      overrides: { list_accounts: fundingAccounts, create_transaction: Promise.resolve("new-txn") },
+    });
+    const store = useReferenceStore();
+    await store.refresh();
+    const onCreated = vi.fn();
+    const form = useInvestmentForm("buy", { onCreated });
+    form.accountId.value = "acc-inv";
+    form.instrumentId.value = "ins-1";
+    form.quantityText.value = "10";
+    form.priceText.value = "15";
+    form.fundingAccountId.value = "acc-bank";
+    await form.submit();
+    expect(mockInvoke).toHaveBeenCalledWith("create_transaction", {
+      input: expect.objectContaining({ kind: "buy", funding_account_id: "acc-bank" }),
+    });
+    expect(onCreated).toHaveBeenCalledTimes(1);
+  });
 
-  it('submit 编辑不改出资账户：回填值随全字段替换原样提交（字段不被静默丢失）', async () => {
+  it("submit 编辑不改出资账户：回填值随全字段替换原样提交（字段不被静默丢失）", async () => {
     const form = await fundingForm({
       onUpdated: vi.fn(),
-      editing: () => ({ ...editingTx, funding_account_id: 'acc-bank' }),
+      editing: () => ({ ...editingTx, funding_account_id: "acc-bank" }),
       trade: () => editingTrade,
-    })
+    });
     wireInvokeSeam({
       overrides: { list_accounts: fundingAccounts, update_transaction: Promise.resolve(null) },
-    })
-    await form.submit()
-    expect(mockInvoke).toHaveBeenCalledWith('update_transaction', {
-      id: 'txn-buy-1',
-      input: expect.objectContaining({ funding_account_id: 'acc-bank' }),
-    })
-  })
+    });
+    await form.submit();
+    expect(mockInvoke).toHaveBeenCalledWith("update_transaction", {
+      id: "txn-buy-1",
+      input: expect.objectContaining({ funding_account_id: "acc-bank" }),
+    });
+  });
 
-  it('submit 编辑清空出资账户：提交显式 null（改/清语义正确，非缺字段）', async () => {
+  it("submit 编辑清空出资账户：提交显式 null（改/清语义正确，非缺字段）", async () => {
     const form = await fundingForm({
       onUpdated: vi.fn(),
-      editing: () => ({ ...editingTx, funding_account_id: 'acc-bank' }),
+      editing: () => ({ ...editingTx, funding_account_id: "acc-bank" }),
       trade: () => editingTrade,
-    })
+    });
     wireInvokeSeam({
       overrides: { list_accounts: fundingAccounts, update_transaction: Promise.resolve(null) },
-    })
-    form.fundingAccountId.value = null
-    await form.submit()
-    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'update_transaction')!
-    expect((call[1] as { input: { funding_account_id: string | null } }).input.funding_account_id).toBeNull()
-  })
+    });
+    form.fundingAccountId.value = null;
+    await form.submit();
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "update_transaction")!;
+    expect(
+      (call[1] as { input: { funding_account_id: string | null } }).input.funding_account_id,
+    ).toBeNull();
+  });
 
   // --- sell 对称（issue #938）：卖出表单与编辑回填复用买入同款模式 ---
 
-  it('sell 候选过滤同款：只含同币种现金类账户，默认空', async () => {
-    const form = await fundingForm(undefined, 'sell')
-    expect(form.fundingAccountId.value).toBeNull()
+  it("sell 候选过滤同款：只含同币种现金类账户，默认空", async () => {
+    const form = await fundingForm(undefined, "sell");
+    expect(form.fundingAccountId.value).toBeNull();
     expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual([
-      'acc-cash', 'acc-bank', 'acc-credit', 'acc-ewallet', 'acc-other',
-    ])
-    form.accountId.value = 'acc-inv-usd'
-    expect(form.currencyCode.value).toBe('USD')
-    expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual(['acc-bank-usd'])
-  })
+      "acc-cash",
+      "acc-bank",
+      "acc-credit",
+      "acc-ewallet",
+      "acc-other",
+    ]);
+    form.accountId.value = "acc-inv-usd";
+    expect(form.currencyCode.value).toBe("USD");
+    expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual(["acc-bank-usd"]);
+  });
 
-  it('sell submit 创建：出资账户随装配落 funding_account_id（kind sell）', async () => {
+  it("sell submit 创建：出资账户随装配落 funding_account_id（kind sell）", async () => {
     wireInvokeSeam({
-      overrides: { list_accounts: fundingAccounts, create_transaction: Promise.resolve('new-txn') },
-    })
-    const store = useReferenceStore()
-    await store.refresh()
-    const form = useInvestmentForm('sell')
-    form.accountId.value = 'acc-inv'
-    form.instrumentId.value = 'ins-1'
-    form.quantityText.value = '10'
-    form.priceText.value = '15'
-    form.fundingAccountId.value = 'acc-bank'
-    await form.submit()
-    expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
-      input: expect.objectContaining({ kind: 'sell', funding_account_id: 'acc-bank' }),
-    })
-  })
+      overrides: { list_accounts: fundingAccounts, create_transaction: Promise.resolve("new-txn") },
+    });
+    const store = useReferenceStore();
+    await store.refresh();
+    const form = useInvestmentForm("sell");
+    form.accountId.value = "acc-inv";
+    form.instrumentId.value = "ins-1";
+    form.quantityText.value = "10";
+    form.priceText.value = "15";
+    form.fundingAccountId.value = "acc-bank";
+    await form.submit();
+    expect(mockInvoke).toHaveBeenCalledWith("create_transaction", {
+      input: expect.objectContaining({ kind: "sell", funding_account_id: "acc-bank" }),
+    });
+  });
 
-  it('sell 编辑回填同款：带出资账户带出当前值，不带保持空', async () => {
-    const editingSellTx = { ...editingTx, kind: 'sell' as const, id: 'txn-sell-1' }
+  it("sell 编辑回填同款：带出资账户带出当前值，不带保持空", async () => {
+    const editingSellTx = { ...editingTx, kind: "sell" as const, id: "txn-sell-1" };
     const withFunding = await fundingForm(
       {
-        editing: () => ({ ...editingSellTx, funding_account_id: 'acc-bank' }),
+        editing: () => ({ ...editingSellTx, funding_account_id: "acc-bank" }),
         trade: () => editingTrade,
       },
-      'sell',
-    )
-    expect(withFunding.fundingAccountId.value).toBe('acc-bank')
+      "sell",
+    );
+    expect(withFunding.fundingAccountId.value).toBe("acc-bank");
     const withoutFunding = await fundingForm(
       { editing: () => editingSellTx, trade: () => editingTrade },
-      'sell',
-    )
-    expect(withoutFunding.fundingAccountId.value).toBeNull()
-  })
+      "sell",
+    );
+    expect(withoutFunding.fundingAccountId.value).toBeNull();
+  });
 
-  it('sell submit 编辑清空出资账户：提交显式 null（回卡改余额卖出）', async () => {
-    const editingSellTx = { ...editingTx, kind: 'sell' as const, id: 'txn-sell-1' }
+  it("sell submit 编辑清空出资账户：提交显式 null（回卡改余额卖出）", async () => {
+    const editingSellTx = { ...editingTx, kind: "sell" as const, id: "txn-sell-1" };
     const form = await fundingForm(
       {
         onUpdated: vi.fn(),
-        editing: () => ({ ...editingSellTx, funding_account_id: 'acc-bank' }),
+        editing: () => ({ ...editingSellTx, funding_account_id: "acc-bank" }),
         trade: () => editingTrade,
       },
-      'sell',
-    )
+      "sell",
+    );
     wireInvokeSeam({
       overrides: { list_accounts: fundingAccounts, update_transaction: Promise.resolve(null) },
-    })
-    form.fundingAccountId.value = null
-    await form.submit()
-    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'update_transaction')!
-    expect((call[1] as { input: { funding_account_id: string | null } }).input.funding_account_id).toBeNull()
-  })
-})
+    });
+    form.fundingAccountId.value = null;
+    await form.submit();
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "update_transaction")!;
+    expect(
+      (call[1] as { input: { funding_account_id: string | null } }).input.funding_account_id,
+    ).toBeNull();
+  });
+});

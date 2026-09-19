@@ -1,12 +1,18 @@
-import type { DropdownOption } from 'naive-ui'
-import { AddCircleOutline, CashOutline, CreateOutline, EyeOutline, TrashOutline } from '@vicons/ionicons5'
-import { errorOptionProps, renderRowMenuIcon } from '@/components/row-menu-common'
-import { t } from '@ledger/i18n'
-import { transactionKindActivation, type Transaction } from '@ledger/types'
+import type { DropdownOption } from "naive-ui";
+import {
+  AddCircleOutline,
+  CashOutline,
+  CreateOutline,
+  EyeOutline,
+  TrashOutline,
+} from "@vicons/ionicons5";
+import { errorOptionProps, renderRowMenuIcon } from "@/components/row-menu-common";
+import { t } from "@ledger/i18n";
+import { transactionKindActivation, type Transaction } from "@ledger/types";
 
 // 公共件（row-menu-common）原生于本模块：renderRowMenuIcon / errorOptionProps
 // 的完整注释见该文件，此处重导出保持既有 import 路径不变。
-export { renderRowMenuIcon, errorOptionProps }
+export { renderRowMenuIcon, errorOptionProps };
 
 /**
  * 交易行右键菜单选项组装（issue #151 退款/删除 + issue #119 加入物品 + #177 图标化）：
@@ -35,51 +41,59 @@ export { renderRowMenuIcon, errorOptionProps }
  * kind 均不开放，ADR-0106 决策 10 / ADR-0109）。单一来源：交易类型行激活闭集
  * （transactionKindActivation），
  * 菜单组装与移动档卡片行激活共用（issue #846 / #1048）。 */
-export function supportsRowEdit(row: Pick<Transaction, 'kind'>): boolean {
-  return transactionKindActivation(row.kind) === 'edit'
+export function supportsRowEdit(row: Pick<Transaction, "kind">): boolean {
+  return transactionKindActivation(row.kind) === "edit";
 }
 
 /** 「只读详情」开放判定：界面只读 kind（convert / split 无现金腿；dividend 现金分红，
  * ADR-0106 决策 10 / ADR-0109）不体现写操作入口，只保留列表 / 筛选 / 只读详情。
  * 单一来源同上（交易类型行激活闭集），菜单组装与移动档卡片「整卡点击 = 详情」共用。 */
-export function supportsRowDetail(row: Pick<Transaction, 'kind'>): boolean {
-  return transactionKindActivation(row.kind) === 'detail'
+export function supportsRowDetail(row: Pick<Transaction, "kind">): boolean {
+  return transactionKindActivation(row.kind) === "detail";
 }
 
 export function buildRowMenuOptions(
-  row: Pick<Transaction, 'kind'>,
+  row: Pick<Transaction, "kind">,
   opts: { hasItem?: boolean; errorColor?: string } = {},
 ): DropdownOption[] {
   // 无现金腿 kind：界面只读——仅只读「详情」，无编辑/软删入口（ADR-0106 决策 10 / #1048）。
   if (supportsRowDetail(row)) {
     return [
-      { label: t('transactions.menu.detail'), key: 'detail', icon: renderRowMenuIcon(EyeOutline) },
-    ]
+      { label: t("transactions.menu.detail"), key: "detail", icon: renderRowMenuIcon(EyeOutline) },
+    ];
   }
-  const options: DropdownOption[] = []
+  const options: DropdownOption[] = [];
   // 「编辑」显式白名单（refund 破坏关联语义不开放，开放判定见 supportsRowEdit 单源）：
   if (supportsRowEdit(row)) {
-    options.push({ label: t('transactions.menu.edit'), key: 'edit', icon: renderRowMenuIcon(CreateOutline) })
-  }
-  if (row.kind === 'expense') {
-    options.push({ label: t('transactions.menu.refund'), key: 'refund', icon: renderRowMenuIcon(CashOutline) })
     options.push({
-      label: t('transactions.menu.addItem'),
-      key: 'add-item',
+      label: t("transactions.menu.edit"),
+      key: "edit",
+      icon: renderRowMenuIcon(CreateOutline),
+    });
+  }
+  if (row.kind === "expense") {
+    options.push({
+      label: t("transactions.menu.refund"),
+      key: "refund",
+      icon: renderRowMenuIcon(CashOutline),
+    });
+    options.push({
+      label: t("transactions.menu.addItem"),
+      key: "add-item",
       disabled: opts.hasItem === true,
       icon: renderRowMenuIcon(AddCircleOutline),
-    })
+    });
   }
   if (options.length > 0) {
-    options.push({ type: 'divider', key: 'menu-divider' })
+    options.push({ type: "divider", key: "menu-divider" });
   }
   // 删除项着主题 error 色（公共件 errorOptionProps，注释见 row-menu-common.ts）。
-  const errorProps = errorOptionProps(opts.errorColor)
+  const errorProps = errorOptionProps(opts.errorColor);
   options.push({
-    label: t('transactions.menu.delete'),
-    key: 'delete',
+    label: t("transactions.menu.delete"),
+    key: "delete",
     icon: renderRowMenuIcon(TrashOutline),
     ...errorProps,
-  })
-  return options
+  });
+  return options;
 }

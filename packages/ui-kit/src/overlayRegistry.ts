@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { reactive } from "vue";
 
 /**
  * 弹层注册表（ADR-0035）：「弹层是否打开」是显式声明的应用状态，不做 DOM 推断。
@@ -22,46 +22,49 @@ import { reactive } from 'vue'
 
 interface OverlayToken {
   /** 弹层族名（modal/select/date-picker/dropdown/popconfirm/dialog），调试用 */
-  readonly name: string
-  open: boolean
+  readonly name: string;
+  open: boolean;
   /** 关闭请求回调：尝试以与显式关闭通道等价的方式关掉本弹层；返回是否成功受理 */
-  readonly requestClose: (() => boolean) | null
+  readonly requestClose: (() => boolean) | null;
 }
 
 /** 打开中的弹层栈（打开序 = z 序，后开者在栈顶） */
-const openOverlays = reactive<OverlayToken[]>([])
+const openOverlays = reactive<OverlayToken[]>([]);
 
 /** 关闭请求回调的签名：封装组件提供，注册表只调用不解释 */
-export type OverlayCloseRequest = () => boolean
+export type OverlayCloseRequest = () => boolean;
 
 export interface OverlayTokenHandle {
-  readonly name: string
+  readonly name: string;
   /** 上报打开/关闭（幂等：与当前状态相同的重复上报不重复计数） */
-  set(open: boolean): void
+  set(open: boolean): void;
 }
 
 /** 创建弹层 token：必须在组件实例作用域调用（每个弹层实例一个，禁止模块级共享） */
-export function createOverlayToken(name: string, requestClose?: OverlayCloseRequest): OverlayTokenHandle {
-  const token: OverlayToken = { name, open: false, requestClose: requestClose ?? null }
+export function createOverlayToken(
+  name: string,
+  requestClose?: OverlayCloseRequest,
+): OverlayTokenHandle {
+  const token: OverlayToken = { name, open: false, requestClose: requestClose ?? null };
   return {
     name,
     set(next: boolean) {
-      if (token.open === next) return
-      token.open = next
-      if (next) openOverlays.push(token)
-      else openOverlays.splice(openOverlays.indexOf(token), 1)
+      if (token.open === next) return;
+      token.open = next;
+      if (next) openOverlays.push(token);
+      else openOverlays.splice(openOverlays.indexOf(token), 1);
     },
-  }
+  };
 }
 
 /** 任一弹层打开时为 true——两套快捷键（裸键记一笔、Cmd+数字切视图）的公共闸门 */
 export function hasOpenOverlay(): boolean {
-  return openOverlays.length > 0
+  return openOverlays.length > 0;
 }
 
 /** 当前打开的弹层名，按打开序（栈底 → 栈顶；调试/测试辅助） */
 export function openOverlayNames(): string[] {
-  return openOverlays.map((t) => t.name)
+  return openOverlays.map((t) => t.name);
 }
 
 /**
@@ -72,12 +75,12 @@ export function openOverlayNames(): string[] {
  * 弹层下，属数据丢失面），本函数返回值只表达「关闭是否受理」。
  */
 export function closeTopOverlay(): boolean {
-  const top = openOverlays[openOverlays.length - 1]
-  if (!top || !top.requestClose) return false
-  return top.requestClose()
+  const top = openOverlays[openOverlays.length - 1];
+  if (!top || !top.requestClose) return false;
+  return top.requestClose();
 }
 
 /** 测试专用：清空注册表（模拟组件整体卸载后的干净状态） */
 export function resetOverlays(): void {
-  openOverlays.length = 0
+  openOverlays.length = 0;
 }

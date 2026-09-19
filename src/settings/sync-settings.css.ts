@@ -1,4 +1,4 @@
-import { globalStyle } from '@vanilla-extract/css'
+import { globalStyle } from "@vanilla-extract/css";
 
 /**
  * 同步卡片旁路样式（ADR-0093 样式方案）：与组件同目录共置。
@@ -9,8 +9,8 @@ import { globalStyle } from '@vanilla-extract/css'
  */
 
 /** 弱化提示小字钩子类（厂商预设说明、常用地域标签）。 */
-export const SYNC_HINT_CLASS = 'sync-hint'
+export const SYNC_HINT_CLASS = "sync-hint";
 
 globalStyle(`.${SYNC_HINT_CLASS}`, {
-  fontSize: '12px',
-})
+  fontSize: "12px",
+});

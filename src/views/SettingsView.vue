@@ -28,7 +28,7 @@
  * （搜索修复卡片标题以「拼音搜索数据」开头，若需在模板内注释，避免使用组件会渲染的
  * 文案字样——dev 编译保留模板注释，会被测试的 html 断言读到。）
  */
-import { NTabs, NTabPane, NIcon } from 'naive-ui'
+import { NTabs, NTabPane, NIcon } from "naive-ui";
 import {
   OptionsOutline,
   GridOutline,
@@ -36,25 +36,28 @@ import {
   RepeatOutline,
   ToggleOutline,
   InformationCircleOutline,
-} from '@vicons/ionicons5'
-import GeneralSettings from '@/settings/GeneralSettings.vue'
-import CategoryManager from '@/categories/CategoryManager.vue'
-import BaseCurrencySettings from '@/settings/BaseCurrencySettings.vue'
-import BackupSettings from '@/settings/BackupSettings.vue'
-import DataLocationSettings from '@/settings/DataLocationSettings.vue'
-import EncryptionSettings from '@/settings/EncryptionSettings.vue'
-import SyncSettings from '@/settings/SyncSettings.vue'
-import SearchDataSettings from '@/settings/SearchDataSettings.vue'
-import BalanceCacheSettings from '@/settings/BalanceCacheSettings.vue'
-import ScheduledSettings from '@/settings/ScheduledSettings.vue'
-import FeatureToggleSettings from '@/settings/FeatureToggleSettings.vue'
-import AboutSettings from '@/settings/AboutSettings.vue'
-import { useFeatureToggleStore } from '@/settings/feature-toggles'
-import { SETTINGS_CARD_STACK_CLASS, SETTINGS_COLUMN_CLASS } from '@/settings/settings-layout.css.ts'
-import { t } from '@ledger/i18n'
+} from "@vicons/ionicons5";
+import GeneralSettings from "@/settings/GeneralSettings.vue";
+import CategoryManager from "@/categories/CategoryManager.vue";
+import BaseCurrencySettings from "@/settings/BaseCurrencySettings.vue";
+import BackupSettings from "@/settings/BackupSettings.vue";
+import DataLocationSettings from "@/settings/DataLocationSettings.vue";
+import EncryptionSettings from "@/settings/EncryptionSettings.vue";
+import SyncSettings from "@/settings/SyncSettings.vue";
+import SearchDataSettings from "@/settings/SearchDataSettings.vue";
+import BalanceCacheSettings from "@/settings/BalanceCacheSettings.vue";
+import ScheduledSettings from "@/settings/ScheduledSettings.vue";
+import FeatureToggleSettings from "@/settings/FeatureToggleSettings.vue";
+import AboutSettings from "@/settings/AboutSettings.vue";
+import { useFeatureToggleStore } from "@/settings/feature-toggles";
+import {
+  SETTINGS_CARD_STACK_CLASS,
+  SETTINGS_COLUMN_CLASS,
+} from "@/settings/settings-layout.css.ts";
+import { t } from "@ledger/i18n";
 
 // 「功能」Tab 的关闭集合读路径：设置面联动（「定时」Tab 隐藏）由本页消费。
-const featureToggles = useFeatureToggleStore()
+const featureToggles = useFeatureToggleStore();
 </script>
 
 <template>
@@ -63,12 +66,20 @@ const featureToggles = useFeatureToggleStore()
   <div data-testid="settings-column" :class="SETTINGS_COLUMN_CLASS">
     <NTabs type="line">
       <NTabPane name="general" key="general">
-        <template #tab><span class="pane-tab"><NIcon :component="OptionsOutline" />{{ t('settings.tabs.general') }}</span></template>
+        <template #tab
+          ><span class="pane-tab"
+            ><NIcon :component="OptionsOutline" />{{ t("settings.tabs.general") }}</span
+          ></template
+        >
         <GeneralSettings />
       </NTabPane>
 
       <NTabPane name="categories" key="categories">
-        <template #tab><span class="pane-tab"><NIcon :component="GridOutline" />{{ t('settings.tabs.categories') }}</span></template>
+        <template #tab
+          ><span class="pane-tab"
+            ><NIcon :component="GridOutline" />{{ t("settings.tabs.categories") }}</span
+          ></template
+        >
         <!-- 本位币基准（issue #858，账本级设置）随币种域落本页签（ADR-0022
              归属领域定 Tab；与分类管理器同属参考数据域维护面）。 -->
         <div :class="SETTINGS_CARD_STACK_CLASS">
@@ -78,24 +89,53 @@ const featureToggles = useFeatureToggleStore()
       </NTabPane>
 
       <NTabPane name="data" key="data" display-directive="show:lazy">
-        <template #tab><span class="pane-tab"><NIcon :component="ServerOutline" />{{ t('settings.tabs.data') }}</span></template>
+        <template #tab
+          ><span class="pane-tab"
+            ><NIcon :component="ServerOutline" />{{ t("settings.tabs.data") }}</span
+          ></template
+        >
         <NTabs type="line">
-          <NTabPane name="backup" key="backup" :tab="t('settings.data.tabs.backup')" display-directive="show:lazy">
+          <NTabPane
+            name="backup"
+            key="backup"
+            :tab="t('settings.data.tabs.backup')"
+            display-directive="show:lazy"
+          >
             <BackupSettings />
           </NTabPane>
-          <NTabPane name="location" key="location" :tab="t('settings.data.tabs.location')" display-directive="show:lazy">
+          <NTabPane
+            name="location"
+            key="location"
+            :tab="t('settings.data.tabs.location')"
+            display-directive="show:lazy"
+          >
             <DataLocationSettings />
           </NTabPane>
-          <NTabPane name="encryption" key="encryption" :tab="t('settings.data.tabs.encryption')" display-directive="show:lazy">
+          <NTabPane
+            name="encryption"
+            key="encryption"
+            :tab="t('settings.data.tabs.encryption')"
+            display-directive="show:lazy"
+          >
             <EncryptionSettings />
           </NTabPane>
           <!-- 多端同步（issue #862）：与备份/加密同属数据安全与多端世界，随加密子页签之后。 -->
-          <NTabPane name="sync" key="sync" :tab="t('settings.data.tabs.sync')" display-directive="show:lazy">
+          <NTabPane
+            name="sync"
+            key="sync"
+            :tab="t('settings.data.tabs.sync')"
+            display-directive="show:lazy"
+          >
             <SyncSettings />
           </NTabPane>
           <!-- 数据修复（伞形标签）：两张卡片各自独立，无相互依赖——搜索派生数据与
                余额缓存的修复语义互不相干，触发顺序任意。 -->
-          <NTabPane name="repair" key="repair" :tab="t('settings.data.tabs.repair')" display-directive="show:lazy">
+          <NTabPane
+            name="repair"
+            key="repair"
+            :tab="t('settings.data.tabs.repair')"
+            display-directive="show:lazy"
+          >
             <div :class="SETTINGS_CARD_STACK_CLASS">
               <SearchDataSettings />
               <BalanceCacheSettings />
@@ -104,19 +144,35 @@ const featureToggles = useFeatureToggleStore()
         </NTabs>
       </NTabPane>
 
-      <NTabPane v-if="!featureToggles.isFeatureClosed('scheduled')" name="scheduled" key="scheduled">
-        <template #tab><span class="pane-tab"><NIcon :component="RepeatOutline" />{{ t('settings.tabs.scheduled') }}</span></template>
+      <NTabPane
+        v-if="!featureToggles.isFeatureClosed('scheduled')"
+        name="scheduled"
+        key="scheduled"
+      >
+        <template #tab
+          ><span class="pane-tab"
+            ><NIcon :component="RepeatOutline" />{{ t("settings.tabs.scheduled") }}</span
+          ></template
+        >
         <ScheduledSettings />
       </NTabPane>
 
       <!-- 功能可见性开关（issue #1243 / ADR-0116 决策 7）：体量独立成页，插在「关于」之前。 -->
       <NTabPane name="features" key="features">
-        <template #tab><span class="pane-tab"><NIcon :component="ToggleOutline" />{{ t('settings.tabs.features') }}</span></template>
+        <template #tab
+          ><span class="pane-tab"
+            ><NIcon :component="ToggleOutline" />{{ t("settings.tabs.features") }}</span
+          ></template
+        >
         <FeatureToggleSettings />
       </NTabPane>
 
       <NTabPane name="about" key="about">
-        <template #tab><span class="pane-tab"><NIcon :component="InformationCircleOutline" />{{ t('settings.tabs.about') }}</span></template>
+        <template #tab
+          ><span class="pane-tab"
+            ><NIcon :component="InformationCircleOutline" />{{ t("settings.tabs.about") }}</span
+          ></template
+        >
         <AboutSettings />
       </NTabPane>
     </NTabs>

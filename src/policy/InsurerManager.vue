@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, ref, computed } from 'vue'
+import { h, ref, computed } from "vue";
 import {
   NButton,
   NCard,
@@ -12,15 +12,15 @@ import {
   NTag,
   useMessage,
   type DataTableColumn,
-} from 'naive-ui'
-import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
-import InsurerEditModal from '@/policy/InsurerEditModal.vue'
-import { api } from '@ledger/api'
-import { useReferenceStore } from '@/stores/reference'
-import { useModalIntent } from '@ledger/modal-intent'
-import { matchLabel } from '@ledger/utils/pinyin-filter'
-import { t } from '@ledger/i18n'
-import type { Insurer, InsurerInput } from '@ledger/types'
+} from "naive-ui";
+import AppPopconfirm from "@ledger/ui-kit/AppPopconfirm.vue";
+import InsurerEditModal from "@/policy/InsurerEditModal.vue";
+import { api } from "@ledger/api";
+import { useReferenceStore } from "@/stores/reference";
+import { useModalIntent } from "@ledger/modal-intent";
+import { matchLabel } from "@ledger/utils/pinyin-filter";
+import { t } from "@ledger/i18n";
+import type { Insurer, InsurerInput } from "@ledger/types";
 
 // 保司管理（issue #714 / ADR-0082 决策 3）：保险域自有字典的管理视图，进侧栏
 // 资产组「更多」（组内收纳出厂成员，ADR-0063）。交互照商户管理页形态
@@ -34,50 +34,50 @@ import type { Insurer, InsurerInput } from '@ledger/types'
 // 种子量级约 30 家 + 少量即建行，无前端分页（商户管理分页 issue #457 系其
 // 字典无界增长所需，保司字典闭集性远高，不做过度设计）。
 
-const reference = useReferenceStore()
-const message = useMessage()
+const reference = useReferenceStore();
+const message = useMessage();
 
 /** 列表行：参考数据单一来源的在用保司。 */
-const rows = computed<Insurer[]>(() => reference.insurers)
+const rows = computed<Insurer[]>(() => reference.insurers);
 
 // —— 显示已删（照商户管理先例 issue #447）：默认只显示在用保司；切换后已软删
 // 保司以只读行追加在尾部展示（无编辑/删除操作），照常计入条数。已删保司消费
 // 参考 store 既有软删缓存（与在用列表同一份含已删全量拉取拆分），无新增拉取。
-const showDeleted = ref(false)
+const showDeleted = ref(false);
 
 /** 已删行：默认（名称序）展示在在用行之后。 */
-const deletedRows = computed<Insurer[]>(() => [...reference.deletedInsurers.values()])
+const deletedRows = computed<Insurer[]>(() => [...reference.deletedInsurers.values()]);
 
 // —— 搜索（照商户管理先例 issue #447）：统一模糊搜索语义（全库唯一定义点为
 // 核心交易域 TransactionSearch，ADR-0027），复用拼音过滤工具的前端同规格纯函数；
 // 保司字典前端全量驻留，属本地过滤形态（拼音可搜下拉同款）。searchTerm
 // 过滤只隐藏未命中项、剩余项顺序不变，清空恢复完整列表。
-const searchTerm = ref('')
+const searchTerm = ref("");
 
 /** 展示行：（显示已删？在用 + 已删：仅在用）→ 搜索词过滤
  * （matchLabel 空输入恒命中，清空即完整列表；filter 保序不重排）。 */
 const displayRows = computed<Insurer[]>(() => {
-  const base = showDeleted.value ? [...rows.value, ...deletedRows.value] : rows.value
-  return base.filter((i) => matchLabel(searchTerm.value, i.name))
-})
+  const base = showDeleted.value ? [...rows.value, ...deletedRows.value] : rows.value;
+  return base.filter((i) => matchLabel(searchTerm.value, i.name));
+});
 
 // —— 新增 ——
-const name = ref('')
+const name = ref("");
 
 async function addInsurer() {
-  const trimmed = name.value.trim()
+  const trimmed = name.value.trim();
   if (!trimmed) {
-    message.warning(t('policies.insurers.msg.nameRequired'))
-    return
+    message.warning(t("policies.insurers.msg.nameRequired"));
+    return;
   }
-  const input: InsurerInput = { name: trimmed }
+  const input: InsurerInput = { name: trimmed };
   try {
-    await api.createInsurer(input)
-    message.success(t('policies.insurers.msg.added'))
-    name.value = ''
+    await api.createInsurer(input);
+    message.success(t("policies.insurers.msg.added"));
+    name.value = "";
   } catch (e) {
     // 重名错误（「保司已存在: X」）原样上抛展示，表单不清空、用户可直接修正
-    message.error(t('policies.insurers.msg.addFailed', { msg: e }))
+    message.error(t("policies.insurers.msg.addFailed", { msg: e }));
   }
 }
 
@@ -88,7 +88,7 @@ async function addInsurer() {
 
 /** 保司编辑弹窗意图（单成员闭集）：携带目标保司行。 */
 interface InsurerEditIntent {
-  insurer: Insurer
+  insurer: Insurer;
 }
 
 const {
@@ -96,19 +96,19 @@ const {
   seq: editSeq,
   open: openEditIntent,
   close: closeEdit,
-} = useModalIntent<InsurerEditIntent>()
+} = useModalIntent<InsurerEditIntent>();
 
 function openEdit(insurer: Insurer) {
-  openEditIntent({ insurer })
+  openEditIntent({ insurer });
 }
 
 // —— 删除（软删：存量保单引用照常显示，不再进新建选择列表） ——
 async function removeInsurer(id: string) {
   try {
-    await api.deleteInsurer(id)
-    message.success(t('policies.insurers.msg.deleted'))
+    await api.deleteInsurer(id);
+    message.success(t("policies.insurers.msg.deleted"));
   } catch (e) {
-    message.error(t('policies.insurers.msg.deleteFailed', { msg: e }))
+    message.error(t("policies.insurers.msg.deleteFailed", { msg: e }));
   }
 }
 
@@ -116,47 +116,45 @@ async function removeInsurer(id: string) {
 const columns: DataTableColumn<Insurer>[] = [
   {
     // 已删行带「已删除」标记（照商户管理先例 issue #447）：与在用行可区分。
-    title: () => t('policies.insurers.columns.name'),
-    key: 'name',
+    title: () => t("policies.insurers.columns.name"),
+    key: "name",
     ellipsis: { tooltip: true },
     render: (i) =>
       i.is_deleted
-        ? h(NSpace, { size: 'small', align: 'center', wrap: false }, () => [
-            h('span', i.name),
-            h(NTag, { size: 'small', bordered: false }, () => t('policies.insurers.deletedTag')),
+        ? h(NSpace, { size: "small", align: "center", wrap: false }, () => [
+            h("span", i.name),
+            h(NTag, { size: "small", bordered: false }, () => t("policies.insurers.deletedTag")),
           ])
         : i.name,
   },
   {
-    title: () => t('policies.insurers.columns.actions'),
-    key: 'actions',
+    title: () => t("policies.insurers.columns.actions"),
+    key: "actions",
     width: 140,
     // 已删行只读：无编辑/删除操作。
     render: (i) =>
       i.is_deleted
         ? null
-        : h(NSpace, { size: 'small' }, () => [
+        : h(NSpace, { size: "small" }, () => [
             h(
               NButton,
-              { size: 'tiny', quaternary: true, type: 'primary', onClick: () => openEdit(i) },
-              () => t('policies.insurers.rowActions.edit'),
+              { size: "tiny", quaternary: true, type: "primary", onClick: () => openEdit(i) },
+              () => t("policies.insurers.rowActions.edit"),
             ),
             h(
               AppPopconfirm,
               { onPositiveClick: () => removeInsurer(i.id) },
               {
-                default: () => t('policies.insurers.deleteConfirm'),
+                default: () => t("policies.insurers.deleteConfirm"),
                 trigger: () =>
-                  h(
-                    NButton,
-                    { size: 'tiny', type: 'error', quaternary: true },
-                    () => t('policies.insurers.rowActions.delete'),
+                  h(NButton, { size: "tiny", type: "error", quaternary: true }, () =>
+                    t("policies.insurers.rowActions.delete"),
                   ),
               },
             ),
           ]),
   },
-]
+];
 </script>
 
 <template>
@@ -164,9 +162,13 @@ const columns: DataTableColumn<Insurer>[] = [
     <NCard :title="t('policies.insurers.addTitle')" size="small">
       <NForm label-placement="left" :show-feedback="false" inline size="small">
         <NFormItem :label="t('policies.insurers.form.name')">
-          <NInput v-model:value="name" :placeholder="t('policies.insurers.form.namePlaceholder')" style="width: 160px" />
+          <NInput
+            v-model:value="name"
+            :placeholder="t('policies.insurers.form.namePlaceholder')"
+            style="width: 160px"
+          />
         </NFormItem>
-        <NButton type="primary" @click="addInsurer">{{ t('policies.insurers.form.add') }}</NButton>
+        <NButton type="primary" @click="addInsurer">{{ t("policies.insurers.form.add") }}</NButton>
       </NForm>
     </NCard>
 
@@ -180,7 +182,7 @@ const columns: DataTableColumn<Insurer>[] = [
             style="width: 240px"
           />
           <NCheckbox v-model:checked="showDeleted">
-            {{ t('policies.insurers.showDeleted') }}
+            {{ t("policies.insurers.showDeleted") }}
           </NCheckbox>
         </NSpace>
         <NDataTable

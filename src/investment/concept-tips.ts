@@ -9,20 +9,20 @@
 
 /** 有口径说明文案的概念闭集（键即 `investments.concepts.<key>Tip` 的 `<key>`） */
 export const CONCEPT_KEYS = [
-  'marketValue',
-  'unrealizedPnl',
-  'cumulativePnl',
-  'cost',
-  'price',
-  'mwr',
-  'mwrCumulative',
-  'realizedPnl',
-  'portfolioTrend',
-  'instrumentTrend',
-  'investableAssets',
-] as const
+  "marketValue",
+  "unrealizedPnl",
+  "cumulativePnl",
+  "cost",
+  "price",
+  "mwr",
+  "mwrCumulative",
+  "realizedPnl",
+  "portfolioTrend",
+  "instrumentTrend",
+  "investableAssets",
+] as const;
 
-export type ConceptKey = (typeof CONCEPT_KEYS)[number]
+export type ConceptKey = (typeof CONCEPT_KEYS)[number];
 
 /**
  * 作用域变体闭集（键即 `investments.concepts.scope<X>` 的 `<X>`）：
@@ -33,13 +33,13 @@ export type ConceptKey = (typeof CONCEPT_KEYS)[number]
  * 只覆盖**语境相关**的挂点：单行值不随筛选变化、或口径本身自带「不随筛选收窄」
  * 属性时（如资金加权收益率按完整历史计算）不挂变体，故本 prop 可选。
  */
-export const CONCEPT_SCOPES = ['filtered', 'wholeLedger', 'crossBook'] as const
+export const CONCEPT_SCOPES = ["filtered", "wholeLedger", "crossBook"] as const;
 
-export type ConceptScope = (typeof CONCEPT_SCOPES)[number]
+export type ConceptScope = (typeof CONCEPT_SCOPES)[number];
 
 /** 变体 → i18n 键名后缀（闭集映射，调用方不拼字符串） */
 export const CONCEPT_SCOPE_KEY_SUFFIX: Record<ConceptScope, string> = {
-  filtered: 'Filtered',
-  wholeLedger: 'WholeLedger',
-  crossBook: 'CrossBook',
-}
+  filtered: "Filtered",
+  wholeLedger: "WholeLedger",
+  crossBook: "CrossBook",
+};

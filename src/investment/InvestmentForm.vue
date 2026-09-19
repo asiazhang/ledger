@@ -1,34 +1,27 @@
 <script setup lang="ts">
-import {
-  NForm,
-  NFormItem,
-  NInput,
-  NInputNumber,
-  NButton,
-  NSpace,
-} from 'naive-ui'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import { t } from '@ledger/i18n'
-import { useInvestmentForm } from '@/investment/useInvestmentForm'
-import type { Transaction, TransactionTrade } from '@ledger/types'
+import { NForm, NFormItem, NInput, NInputNumber, NButton, NSpace } from "naive-ui";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import { t } from "@ledger/i18n";
+import { useInvestmentForm } from "@/investment/useInvestmentForm";
+import type { Transaction, TransactionTrade } from "@ledger/types";
 
 const props = defineProps<{
-  kind: 'buy' | 'sell'
-  submitLabel: string
+  kind: "buy" | "sell";
+  submitLabel: string;
   /** 编辑模式（issue #180）：待编辑交易与买卖明细，创建路径不传 */
-  editing?: Transaction | null
-  trade?: TransactionTrade | null
-}>()
-const emit = defineEmits<{ created: []; saved: [] }>()
+  editing?: Transaction | null;
+  trade?: TransactionTrade | null;
+}>();
+const emit = defineEmits<{ created: []; saved: [] }>();
 
 const ctx = useInvestmentForm(props.kind, {
-  onCreated: () => emit('created'),
-  onUpdated: () => emit('saved'),
+  onCreated: () => emit("created"),
+  onUpdated: () => emit("saved"),
   editing: () => props.editing ?? null,
   trade: () => props.trade ?? null,
-})
+});
 </script>
 
 <template>
@@ -102,24 +95,38 @@ const ctx = useInvestmentForm(props.kind, {
           style="width: 240px"
           @search="ctx.searchInstruments"
         >
-          <template #empty>{{ t('investments.form.instrumentEmpty') }}</template>
+          <template #empty>{{ t("investments.form.instrumentEmpty") }}</template>
         </PinyinSelect>
       </NFormItem>
 
-      <NFormItem :label="ctx.isFundInstrument.value ? t('investments.form.shares') : t('investments.form.quantity')">
+      <NFormItem
+        :label="
+          ctx.isFundInstrument.value ? t('investments.form.shares') : t('investments.form.quantity')
+        "
+      >
         <!-- 字段错误态（ADR-0058 / #416）：数量/份额自由文本承载输入，不拦截不静默丢弃
              （取代 NInputNumber precision 钳制的旧行为）；格式错误（含超四位小数）即时
              红显（内置 status 错误色），红态持续到修正 -->
         <NInput
           v-model:value="ctx.quantityText.value"
           :status="ctx.quantityError.value ? 'error' : undefined"
-          :placeholder="ctx.isFundInstrument.value ? t('investments.form.sharesPlaceholder') : t('investments.form.quantityPlaceholder')"
+          :placeholder="
+            ctx.isFundInstrument.value
+              ? t('investments.form.sharesPlaceholder')
+              : t('investments.form.quantityPlaceholder')
+          "
           style="width: 160px"
           @blur="ctx.markQuantityBlurred"
         />
       </NFormItem>
 
-      <NFormItem :label="ctx.isFundInstrument.value ? t('investments.form.unitPriceNav') : t('investments.form.unitPrice')">
+      <NFormItem
+        :label="
+          ctx.isFundInstrument.value
+            ? t('investments.form.unitPriceNav')
+            : t('investments.form.unitPrice')
+        "
+      >
         <!-- 基金：单价由（金额 ∓ 手续费）÷ 份额反算，只读展示 4 位小数净值（净值
              以万分之一元刻度无损保真，ADR-0038）；其余类型单价为权威输入 -->
         <NInputNumber
@@ -158,12 +165,16 @@ const ctx = useInvestmentForm(props.kind, {
       </NFormItem>
 
       <NFormItem :label="t('investments.form.note')">
-        <NInput v-model:value="ctx.note.value" :placeholder="t('investments.form.notePlaceholder')" style="width: 280px" />
+        <NInput
+          v-model:value="ctx.note.value"
+          :placeholder="t('investments.form.notePlaceholder')"
+          style="width: 280px"
+        />
       </NFormItem>
 
       <!-- 任一字段错误态下禁用（红框＋提交禁用两件同发，ADR-0058 决策 1） -->
       <NButton type="primary" :disabled="ctx.hasFieldError.value" @click="ctx.submit">
-        {{ editing ? t('investments.form.saveEdit') : submitLabel }}
+        {{ editing ? t("investments.form.saveEdit") : submitLabel }}
       </NButton>
     </NSpace>
   </NForm>

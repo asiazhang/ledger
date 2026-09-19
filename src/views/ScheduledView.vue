@@ -1,18 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { t } from '@ledger/i18n'
-import { NTabs, NTabPane, NIcon } from 'naive-ui'
-import {
-  CalendarOutline,
-  PulseOutline,
-  SyncOutline,
-} from '@vicons/ionicons5'
-import SubscriptionsPane from '@/scheduled/SubscriptionsPane.vue'
-import InstallmentsPane from '@/scheduled/InstallmentsPane.vue'
-import TransfersPane from '@/scheduled/TransfersPane.vue'
-import { useFocusParam } from '@/composables/useFocusParam'
-import type { ScheduledFormTab } from '@/components/source-jump'
+import { computed, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { t } from "@ledger/i18n";
+import { NTabs, NTabPane, NIcon } from "naive-ui";
+import { CalendarOutline, PulseOutline, SyncOutline } from "@vicons/ionicons5";
+import SubscriptionsPane from "@/scheduled/SubscriptionsPane.vue";
+import InstallmentsPane from "@/scheduled/InstallmentsPane.vue";
+import TransfersPane from "@/scheduled/TransfersPane.vue";
+import { useFocusParam } from "@/composables/useFocusParam";
+import type { ScheduledFormTab } from "@/components/source-jump";
 
 /**
  * 「定时」统一视图（issue #202）：三页签壳——订阅 / 分期 / 定时转账。
@@ -26,33 +22,33 @@ import type { ScheduledFormTab } from '@/components/source-jump'
 
 /** 页签词表与来源跳转深模块同源（source-jump ScheduledFormTab，spec #704/#707
  *  收口：深模块产出 scheduledTab 通道、本视图消费同一形态页签闭集）。 */
-const TABS: readonly ScheduledFormTab[] = ['subscriptions', 'installments', 'transfers']
-type ScheduledTab = ScheduledFormTab
+const TABS: readonly ScheduledFormTab[] = ["subscriptions", "installments", "transfers"];
+type ScheduledTab = ScheduledFormTab;
 
 /**
  * embedded：组内「更多」容器内嵌态（issue #473）。容器页签同样占用 query.tab，
  * 本视图内嵌时退为内存态页签（切页签不读写 query），避免同一路由参数双写互踩；
  * 独立路由态（默认）行为不变。
  */
-const props = defineProps<{ embedded?: boolean }>()
+const props = defineProps<{ embedded?: boolean }>();
 
-const route = useRoute()
-const router = useRouter()
+const route = useRoute();
+const router = useRouter();
 
 /** 页签合法性收窄：TS 无法从 includes 推窄，用类型守卫一处收口。 */
 function isScheduledTab(v: unknown): v is ScheduledTab {
-  return typeof v === 'string' && (TABS as readonly string[]).includes(v)
+  return typeof v === "string" && (TABS as readonly string[]).includes(v);
 }
 
 /** 内嵌态页签（内存态，容器内不落 URL）。 */
-const localTab = ref<ScheduledTab>('subscriptions')
+const localTab = ref<ScheduledTab>("subscriptions");
 
 // 内嵌态落点页签（spec #704 / issue #707）：来源跳转以 scheduledTab 叠加形态
 // 页签（容器 query.tab 归容器，issue #473 双写互踩约定）。装配时读一次落定
 // 内存页签——独立路由态形态页签由 query.tab 承载（activeTab 直读），不经此处。
 if (props.embedded) {
-  const landingTab = route.query.scheduledTab
-  if (isScheduledTab(landingTab)) localTab.value = landingTab
+  const landingTab = route.query.scheduledTab;
+  if (isScheduledTab(landingTab)) localTab.value = landingTab;
 }
 
 // —— 计划来源落点（spec #704 / issue #707，词汇表「实体定位参数（focus 参数）」）：
@@ -61,50 +57,65 @@ if (props.embedded) {
 // 过滤影响——已取消计划照常可开）。setup 期消费：先于子页签装配，待开 id 在
 // 页签挂载前就位。消费后由页签回报清闸，页签切换不复弹；刷新/重进 = 新实例
 // 重定位（URL 在场即复现，深链可分享）。
-const pendingFocusPlanId = ref<string | null>(null)
+const pendingFocusPlanId = ref<string | null>(null);
 const focusParam = useFocusParam({
   query: () => route.query,
   onFocus: (planId) => {
-    pendingFocusPlanId.value = planId
+    pendingFocusPlanId.value = planId;
   },
-})
-focusParam.consume()
+});
+focusParam.consume();
 
 /** 页签已消费待开计划（回报清闸：prop 置空，切换页签不复开）。 */
 function onPlanFocusConsumed() {
-  pendingFocusPlanId.value = null
+  pendingFocusPlanId.value = null;
 }
 
 const activeTab = computed<ScheduledTab>(() => {
-  if (props.embedded) return localTab.value
-  return isScheduledTab(route.query.tab) ? route.query.tab : 'subscriptions'
-})
+  if (props.embedded) return localTab.value;
+  return isScheduledTab(route.query.tab) ? route.query.tab : "subscriptions";
+});
 
 /** 页签切换：独立态走 replace（不产生多余历史记录，深链语义，每页签一条 URL，
  *  展开既有 query——保留路由上未来可能出现的其他参数）；内嵌态仅写内存态。 */
 function onTabChange(key: string | number) {
-  const tab = String(key)
-  if (!isScheduledTab(tab) || tab === activeTab.value) return
+  const tab = String(key);
+  if (!isScheduledTab(tab) || tab === activeTab.value) return;
   if (props.embedded) {
-    localTab.value = tab
-    return
+    localTab.value = tab;
+    return;
   }
-  void router.replace({ query: { ...route.query, tab } })
+  void router.replace({ query: { ...route.query, tab } });
 }
 </script>
 
 <template>
   <NTabs type="line" :value="activeTab" @update:value="onTabChange">
     <NTabPane name="subscriptions">
-      <template #tab><span class="pane-tab"><NIcon :component="CalendarOutline" />{{ t('scheduled.tab.subscriptions') }}</span></template>
-      <SubscriptionsPane :focus-plan-id="pendingFocusPlanId" @focus-consumed="onPlanFocusConsumed" />
+      <template #tab
+        ><span class="pane-tab"
+          ><NIcon :component="CalendarOutline" />{{ t("scheduled.tab.subscriptions") }}</span
+        ></template
+      >
+      <SubscriptionsPane
+        :focus-plan-id="pendingFocusPlanId"
+        @focus-consumed="onPlanFocusConsumed"
+      />
     </NTabPane>
     <NTabPane name="installments">
-      <template #tab><span class="pane-tab"><NIcon :component="PulseOutline" />{{ t('scheduled.tab.installments') }}</span></template>
+      <template #tab
+        ><span class="pane-tab"
+          ><NIcon :component="PulseOutline" />{{ t("scheduled.tab.installments") }}</span
+        ></template
+      >
       <InstallmentsPane :focus-plan-id="pendingFocusPlanId" @focus-consumed="onPlanFocusConsumed" />
     </NTabPane>
     <NTabPane name="transfers">
-      <template #tab><span class="pane-tab"><NIcon :component="SyncOutline" />{{ t('scheduled.tab.transfers') }}</span></template>
+      <template #tab
+        ><span class="pane-tab"
+          ><NIcon :component="SyncOutline" />{{ t("scheduled.tab.transfers") }}</span
+        ></template
+      >
       <TransfersPane :focus-plan-id="pendingFocusPlanId" @focus-consumed="onPlanFocusConsumed" />
     </NTabPane>
   </NTabs>

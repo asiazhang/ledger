@@ -8,7 +8,10 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use ledger_infra::db::{new_uuid, now_iso};
-use ledger_infra::error::Result;
+// 不得把 `Result` 拉进本模块作用域：rstest-bdd 生成的 wrapper 依赖未限定的
+// `Result<StepExecution, StepError>`，单参 `Result` 影子名会让双注册无法编译
+//（ticket #1499）。领域侧别名保持函数体语义不变。
+use ledger_infra::error::Result as AppResult;
 use ledger_investment::{
     InstrumentInput, InstrumentListFilter, InstrumentType, Quote, add_fund_by_code_with,
     add_stock_instrument_with_quote, create_instrument_manual,
@@ -27,6 +30,7 @@ use crate::world::LedgerWorld;
 /// 'eastmoney'），公开创建入口只产 'manual' 行（来源随行终身不变，ADR-0036），
 /// 「同步来源拒删」「upsert 来源不改写」等被测前提依赖直置。
 #[given(expr = "存在标的 {string} 名称 {string} 币种 {string}")]
+#[rstest_bdd_macros::given("存在标的 {symbol:string} 名称 {name:string} 币种 {currency:string}")]
 fn create_instrument_named(
     world: &mut LedgerWorld,
     symbol: String,
@@ -351,7 +355,7 @@ fn assert_get_instrument_error(world: &mut LedgerWorld, fragment: String) {
 /// 不承载网络等待；连接不跨任何 `await`）。
 fn run_add_fund<F>(world: &mut LedgerWorld, code: String, fetch: F)
 where
-    F: FnMut(&str, &str) -> Result<Quote>,
+    F: FnMut(&str, &str) -> AppResult<Quote>,
 {
     let mut fetch = fetch;
     let outcome = add_fund_by_code_with(&world_conn!(world), &code, &mut fetch);
@@ -416,7 +420,7 @@ fn add_fund_with_stub_no_nav(
 
 #[when(expr = "按代码添加基金 {string} 东财查无此码")]
 fn add_fund_with_stub_not_found(world: &mut LedgerWorld, code: String) {
-    let mut fetch = |requested: &str, _market: &str| -> Result<Quote> {
+    let mut fetch = |requested: &str, _market: &str| -> AppResult<Quote> {
         Err(ledger_infra::error::AppError::Invalid(format!(
             "查无基金代码 {requested}，请核对后重试",
         )))
@@ -446,7 +450,7 @@ async fn run_add_instrument<F, Fut>(
     fetch: &mut F,
 ) where
     F: FnMut(&str, &str) -> Fut,
-    Fut: std::future::Future<Output = Result<Quote>>,
+    Fut: std::future::Future<Output = AppResult<Quote>>,
 {
     // 查询阶段（生产在连接锁外）：通道解析 → 候选遍历。
     let quote = match fetch_stock_quote_for_add(&channel, &code, fetch).await {

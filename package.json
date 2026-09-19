@@ -12,6 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint --deny-warnings",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -24,8 +26,8 @@
     "@ledger/row-context-menu": "workspace:*",
     "@ledger/scheduled-plan-list": "workspace:*",
     "@ledger/storage": "workspace:*",
-    "@ledger/transaction-modal-state": "workspace:*",
     "@ledger/theme": "workspace:*",
+    "@ledger/transaction-modal-state": "workspace:*",
     "@ledger/types": "workspace:*",
     "@ledger/ui-kit": "workspace:*",
     "@ledger/utils": "workspace:*",
@@ -56,6 +58,7 @@
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.5.0",
     "jsdom": "^30.0.1",
+    "oxfmt": "^0.68.0",
     "oxlint": "^1.82.0",
     "typescript": "^6.0.3",
     "vite": "^8.2.2",

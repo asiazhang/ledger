@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NPopover } from 'naive-ui'
-import { useOverlayReporting } from './useOverlayReporting'
+import { NPopover } from "naive-ui";
+import { useOverlayReporting } from "./useOverlayReporting";
 
 // 薄封装 NPopover，接入弹层注册表（ADR-0035）：应用内的 NPopover 一律经本
 // 组件使用，弹层开/关状态实时上报，驱动快捷键抑制。default（内容）/trigger
@@ -13,7 +13,7 @@ import { useOverlayReporting } from './useOverlayReporting'
 // prop 的开合由 attrs watch 兜底。非受控用法经影子态绑定 :show，关闭请求受控
 // 中继调用方监听器、非受控落影子态。先例：账本入口弹层（issue #834）、交易表
 // 金额全文点按查看（ADR-0088 决策 6 悬停一击可达）。
-const { onUpdateShow, resolvedShow } = useOverlayReporting('popover')
+const { onUpdateShow, resolvedShow } = useOverlayReporting("popover");
 </script>
 
 <template>

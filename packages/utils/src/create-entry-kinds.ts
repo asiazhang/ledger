@@ -1,4 +1,4 @@
-import { CREATE_KINDS, type CreateTransactionKind } from '@ledger/types'
+import { CREATE_KINDS, type CreateTransactionKind } from "@ledger/types";
 
 /**
  * 「记一笔」新建入口的类型可用性（issue #1245 / ADR-0116 决策 4「入口侧」）：
@@ -10,14 +10,20 @@ import { CREATE_KINDS, type CreateTransactionKind } from '@ledger/types'
  */
 
 /** 投资功能关闭后从全部新建入口消失的 kind（入口侧闭集，改清单须同步 ADR-0116 的口径）。 */
-export const INVESTMENT_CREATE_KINDS = ['buy', 'sell'] as const satisfies readonly CreateTransactionKind[]
+export const INVESTMENT_CREATE_KINDS = [
+  "buy",
+  "sell",
+] as const satisfies readonly CreateTransactionKind[];
 
 /** 单类型可用性判定：投资关闭 → 买入/卖出不可用；其余 kind 不受影响。 */
-export function isCreateKindAvailable(kind: CreateTransactionKind, investmentsClosed: boolean): boolean {
-  return !(investmentsClosed && (INVESTMENT_CREATE_KINDS as readonly string[]).includes(kind))
+export function isCreateKindAvailable(
+  kind: CreateTransactionKind,
+  investmentsClosed: boolean,
+): boolean {
+  return !(investmentsClosed && (INVESTMENT_CREATE_KINDS as readonly string[]).includes(kind));
 }
 
 /** 可用新建类型（清单序保留）：桌面下拉与移动悬浮按钮渲染同一份结果，一处生效两处。 */
 export function availableCreateKinds(investmentsClosed: boolean): CreateTransactionKind[] {
-  return CREATE_KINDS.filter((kind) => isCreateKindAvailable(kind, investmentsClosed))
+  return CREATE_KINDS.filter((kind) => isCreateKindAvailable(kind, investmentsClosed));
 }

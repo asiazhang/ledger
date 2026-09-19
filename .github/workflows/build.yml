@@ -32,7 +32,8 @@ jobs:
   # GHCR），job 内零 apt 安装；镜像内容与重建路径见 .github/docker/backend-ci.Dockerfile 头注。
 
   # 前端构建与一致性检查：vue-tsc 类型检查（前端 + 守门脚本与测试两个工程）+ oxlint lint
-  # （--deny-warnings，与本地 check.sh 同门槛）+ vite build + 守门脚本（Bun 运行时，ADR-0083）；
+  # （--deny-warnings，与本地 check.sh 同门槛）+ oxfmt 格式检查（--check，与本地 check.sh
+  # 同门槛，issue #1519 / ADR-0128）+ vite build + 守门脚本（Bun 运行时，ADR-0083）；
   # 2026-09-13 基线（7 次 PR 运行，run 34747049405–34749024124）39–87s，典型 ~50s。
   # 测试拆至 frontend-test 分片 job，二者并行。
   frontend:
@@ -60,6 +61,9 @@ jobs:
 
       - name: 前端 lint
         run: pnpm exec oxlint --deny-warnings
+
+      - name: 前端格式检查
+        run: pnpm exec oxfmt --check .
 
       - name: 命令注册一致性检查
         run: bun scripts/check-commands.ts

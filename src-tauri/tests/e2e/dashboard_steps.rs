@@ -18,6 +18,7 @@ use crate::world::LedgerWorld;
 /// 经投资域核心创建入口建标的字典行（聚合测试只需要 id/symbol/币种；
 /// #763 旁路归零；市场缺省 unknown，与原直插同值）。
 #[given(expr = "存在标的 {string} 币种 {string}")]
+#[rstest_bdd_macros::given("存在标的 {symbol:string} 币种 {currency:string}")]
 fn create_instrument_fixture(world: &mut LedgerWorld, symbol: String, currency: String) {
     let input = InstrumentInput {
         symbol: symbol.clone(),

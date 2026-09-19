@@ -1,4 +1,4 @@
-import type { Component } from 'vue'
+import type { Component } from "vue";
 import {
   BriefcaseOutline,
   BusOutline,
@@ -17,7 +17,7 @@ import {
   TrendingUpOutline,
   TrophyOutline,
   WalletOutline,
-} from '@vicons/ionicons5'
+} from "@vicons/ionicons5";
 
 /**
  * 分类图标注册表：运行时按名查找（分类 icon 字段存的是图标名字符串）。
@@ -50,9 +50,9 @@ const iconRegistry: Record<string, Component> = {
   TrendingUpOutline,
   TrophyOutline,
   WalletOutline,
-}
+};
 
 export function getIconComponent(name: string | null): Component | null {
-  if (!name) return null
-  return iconRegistry[name] ?? null
+  if (!name) return null;
+  return iconRegistry[name] ?? null;
 }

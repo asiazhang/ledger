@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, ref, watch } from 'vue'
+import { computed, h, ref, watch } from "vue";
 import {
   NAlert,
   NButton,
@@ -10,16 +10,16 @@ import {
   NSpace,
   NSwitch,
   NText,
-} from 'naive-ui'
-import { LockClosedOutline } from '@vicons/ionicons5'
-import { useAppStore } from '@/stores/app'
-import { useBackup } from '@/backup/useBackup'
-import { t } from '@ledger/i18n'
-import AppDangerConfirmModal from '@ledger/ui-kit/AppDangerConfirmModal.vue'
-import RestoreConfirmModal from '@/backup/RestoreConfirmModal.vue'
-import { SETTINGS_CARD_STACK_CLASS } from '@/settings/settings-layout.css.ts'
+} from "naive-ui";
+import { LockClosedOutline } from "@vicons/ionicons5";
+import { useAppStore } from "@/stores/app";
+import { useBackup } from "@/backup/useBackup";
+import { t } from "@ledger/i18n";
+import AppDangerConfirmModal from "@ledger/ui-kit/AppDangerConfirmModal.vue";
+import RestoreConfirmModal from "@/backup/RestoreConfirmModal.vue";
+import { SETTINGS_CARD_STACK_CLASS } from "@/settings/settings-layout.css.ts";
 
-const store = useAppStore()
+const store = useAppStore();
 
 const {
   backingUp,
@@ -52,7 +52,7 @@ const {
   toggleAutoBackup,
   refreshing,
   refreshList,
-} = useBackup()
+} = useBackup();
 
 // 客户端切片分页（issue #1383）：备份列表是有界快照列表（受管产物受保留上限封顶，
 // ADR-0008 分界的有界侧），行集一次全量拉取、翻页只是展示切片，不发数据请求。
@@ -60,62 +60,60 @@ const {
 // 持仓页签先例）。页码组件内持有、每次进入回第一页（商户管理表先例，对 ADR-0094
 // 默认粒度的显式豁免）；数据重拉（新备份/清理/手动刷新）保持当前页——页码越界时
 // 回落到有效范围，不落空页、不留陈旧页码（词条「回退不归零」等价形态）。
-const BACKUP_PAGE_SIZE = 10
-const currentPage = ref(1)
+const BACKUP_PAGE_SIZE = 10;
+const currentPage = ref(1);
 
-const maxPage = computed(() =>
-  Math.max(1, Math.ceil(backups.value.length / BACKUP_PAGE_SIZE)),
-)
+const maxPage = computed(() => Math.max(1, Math.ceil(backups.value.length / BACKUP_PAGE_SIZE)));
 watch(maxPage, (max) => {
-  if (currentPage.value > max) currentPage.value = max
-})
+  if (currentPage.value > max) currentPage.value = max;
+});
 
 const pagination = computed(() => ({
   page: currentPage.value,
   pageSize: BACKUP_PAGE_SIZE,
   onChange: (next: number) => {
-    currentPage.value = next
+    currentPage.value = next;
   },
-}))
+}));
 
 const backupColumns = [
-  { title: () => t('settings.data.backup.columns.fileName'), key: 'file_name' },
-  { title: () => t('settings.data.backup.columns.source'), key: 'source_text', width: 70 },
+  { title: () => t("settings.data.backup.columns.fileName"), key: "file_name" },
+  { title: () => t("settings.data.backup.columns.source"), key: "source_text", width: 70 },
   // 加密列（issue #572）：密文备份显示锁形标记，明文/旧备份缺标记不显。
   {
-    title: () => t('settings.data.backup.columns.encrypted'),
-    key: 'encrypted',
+    title: () => t("settings.data.backup.columns.encrypted"),
+    key: "encrypted",
     width: 56,
     render: (row: { encrypted: boolean }) =>
       row.encrypted
         ? h(
             NIcon,
-            { title: t('settings.data.backup.encryptedLabel') },
+            { title: t("settings.data.backup.encryptedLabel") },
             { default: () => h(LockClosedOutline) },
           )
         : null,
   },
-  { title: () => t('settings.data.backup.columns.size'), key: 'size_text', width: 100 },
-  { title: () => t('settings.data.backup.columns.time'), key: 'created_at', width: 160 },
+  { title: () => t("settings.data.backup.columns.size"), key: "size_text", width: 100 },
+  { title: () => t("settings.data.backup.columns.time"), key: "created_at", width: 160 },
   // 操作列（issue #653）：行级「在访达中显示」——系统文件管理器定位到该备份文件，
   // 免在目录里人工比对长文件名（界面文本不可选，显式通道；路径与文件名不给
   // 复制入口，分配见父 spec #649）。
   {
-    title: () => t('settings.data.backup.columns.actions'),
-    key: 'actions',
+    title: () => t("settings.data.backup.columns.actions"),
+    key: "actions",
     width: 120,
     render: (row: { file_name: string; path: string }) =>
       h(
         NButton,
         {
-          size: 'tiny',
-          'data-testid': `backup-reveal-${row.file_name}`,
+          size: "tiny",
+          "data-testid": `backup-reveal-${row.file_name}`,
           onClick: () => revealInFinder(row.path),
         },
-        { default: () => t('settings.data.backup.revealInFinder') },
+        { default: () => t("settings.data.backup.revealInFinder") },
       ),
   },
-]
+];
 </script>
 
 <template>
@@ -126,19 +124,23 @@ const backupColumns = [
       <NCard :title="t('settings.data.backup.backupTitle')" size="small">
         <NSpace vertical :size="12">
           <NText depth="3">
-            {{ t('settings.data.backup.backupHint') }}
+            {{ t("settings.data.backup.backupHint") }}
           </NText>
           <NSpace align="center" :size="12">
-            <NButton type="primary" :loading="backingUp" @click="backupOnce">{{ t('settings.data.backup.backupOnce') }}</NButton>
-            <NButton :loading="backingUp" @click="backupAs">{{ t('settings.data.backup.backupAs') }}</NButton>
+            <NButton type="primary" :loading="backingUp" @click="backupOnce">{{
+              t("settings.data.backup.backupOnce")
+            }}</NButton>
+            <NButton :loading="backingUp" @click="backupAs">{{
+              t("settings.data.backup.backupAs")
+            }}</NButton>
           </NSpace>
           <NSpace v-if="lastBackup" align="center" :size="8">
             <NText type="success" style="word-break: break-all">
-              {{ t('settings.data.backup.lastBackup') }}{{ lastBackup }}
+              {{ t("settings.data.backup.lastBackup") }}{{ lastBackup }}
             </NText>
             <!-- 复制完整路径（issue #653）：展示文案含大小括注，复制的是原始完整路径 -->
             <NButton size="small" data-testid="copy-last-backup-path" @click="copyLastBackupPath">
-              {{ t('settings.data.backup.copyPath') }}
+              {{ t("settings.data.backup.copyPath") }}
             </NButton>
           </NSpace>
         </NSpace>
@@ -147,21 +149,31 @@ const backupColumns = [
       <NCard :title="t('settings.data.backup.dirTitle')" size="small">
         <NSpace vertical :size="12">
           <NText depth="3">
-            {{ t('settings.data.backup.dirHint') }}
+            {{ t("settings.data.backup.dirHint") }}
           </NText>
           <NSpace align="center" :size="12">
             <NText style="word-break: break-all">
-              {{ store.backupDir || t('settings.data.backup.dirUnset') }}
+              {{ store.backupDir || t("settings.data.backup.dirUnset") }}
             </NText>
             <NButton size="small" @click="pickBackupDir">
-              {{ store.backupDir ? t('settings.data.backup.changeDir') : t('settings.data.backup.chooseDir') }}
+              {{
+                store.backupDir
+                  ? t("settings.data.backup.changeDir")
+                  : t("settings.data.backup.chooseDir")
+              }}
             </NButton>
-            <NButton v-if="store.backupDir" size="small" quaternary type="error" @click="clearBackupDir">
-              {{ t('settings.data.backup.clear') }}
+            <NButton
+              v-if="store.backupDir"
+              size="small"
+              quaternary
+              type="error"
+              @click="clearBackupDir"
+            >
+              {{ t("settings.data.backup.clear") }}
             </NButton>
           </NSpace>
           <NSpace align="center" :size="12">
-            <NText>{{ t('settings.data.backup.keepLimitLabel') }}</NText>
+            <NText>{{ t("settings.data.backup.keepLimitLabel") }}</NText>
             <NInputNumber
               :value="store.backupMaxCount"
               :min="1"
@@ -170,7 +182,7 @@ const backupColumns = [
               style="max-width: 120px"
               @update:value="onBackupMaxCountChange"
             />
-            <NText depth="3">{{ t('settings.data.backup.keepLimitSuffix') }}</NText>
+            <NText depth="3">{{ t("settings.data.backup.keepLimitSuffix") }}</NText>
           </NSpace>
         </NSpace>
       </NCard>
@@ -178,13 +190,10 @@ const backupColumns = [
       <NCard :title="t('settings.data.backup.autoTitle')" size="small">
         <NSpace vertical :size="12">
           <NSpace align="center" :size="12">
-            <NSwitch
-              :value="autoBackupEnabled"
-              @update:value="toggleAutoBackup"
-            />
-            <NText>{{ t('settings.data.backup.autoSwitchLabel') }}</NText>
+            <NSwitch :value="autoBackupEnabled" @update:value="toggleAutoBackup" />
+            <NText>{{ t("settings.data.backup.autoSwitchLabel") }}</NText>
           </NSpace>
-          <NText depth="3">{{ t('settings.data.backup.autoLast') }}{{ autoBackupLastText }}</NText>
+          <NText depth="3">{{ t("settings.data.backup.autoLast") }}{{ autoBackupLastText }}</NText>
           <!-- 连续失败提示（issue #1456）：安全网静默停摆必须可见；是否提示由
                后端阈值判定，成功备份后随信号刷新自动消失，不升级为阻塞弹窗。 -->
           <NAlert
@@ -193,10 +202,10 @@ const backupColumns = [
             :show-icon="true"
             data-testid="auto-backup-failure-alert"
           >
-            {{ t('settings.data.backup.autoFailures', { n: autoBackupFailures }) }}
+            {{ t("settings.data.backup.autoFailures", { n: autoBackupFailures }) }}
           </NAlert>
           <NText v-if="!store.backupDir" type="warning">
-            {{ t('settings.data.backup.autoNeedDir') }}
+            {{ t("settings.data.backup.autoNeedDir") }}
           </NText>
         </NSpace>
       </NCard>
@@ -210,14 +219,16 @@ const backupColumns = [
             data-testid="backup-list-refresh"
             @click="refreshList"
           >
-            {{ t('settings.data.backup.refresh') }}
+            {{ t("settings.data.backup.refresh") }}
           </NButton>
         </template>
         <NSpace vertical :size="12">
           <!-- 备份按账本分域（issue #836）：列表只呈现当前账本的产物。 -->
           <NText depth="3">{{ t("settings.data.backup.listHint") }}</NText>
           <NSpace align="center" justify="space-between" style="width: 100%">
-            <NText depth="3">{{ t('settings.data.backup.count', { n: backups.length, max: store.backupMaxCount }) }}</NText>
+            <NText depth="3">{{
+              t("settings.data.backup.count", { n: backups.length, max: store.backupMaxCount })
+            }}</NText>
             <NButton
               size="small"
               type="warning"
@@ -226,7 +237,7 @@ const backupColumns = [
               :loading="pruning"
               @click="manualPrune"
             >
-              {{ t('settings.data.backup.pruneNow') }}
+              {{ t("settings.data.backup.pruneNow") }}
             </NButton>
           </NSpace>
           <NDataTable
@@ -236,7 +247,11 @@ const backupColumns = [
             size="small"
             :pagination="pagination"
             :paginate-single-page="false"
-            :empty="store.backupDir ? t('settings.data.backup.emptyWithDir') : t('settings.data.backup.emptyNoDir')"
+            :empty="
+              store.backupDir
+                ? t('settings.data.backup.emptyWithDir')
+                : t('settings.data.backup.emptyNoDir')
+            "
           />
         </NSpace>
       </NCard>
@@ -247,12 +262,15 @@ const backupColumns = [
              确认弹窗双闸不变。 -->
         <NSpace vertical :size="12">
           <NAlert type="error" :show-icon="true">
-            {{ t('settings.data.backup.restoreHintBefore') }}<strong>{{ t('settings.data.backup.restoreHintStrong') }}</strong>{{ t('settings.data.backup.restoreHintAfter') }}
+            {{ t("settings.data.backup.restoreHintBefore")
+            }}<strong>{{ t("settings.data.backup.restoreHintStrong") }}</strong
+            >{{ t("settings.data.backup.restoreHintAfter") }}
           </NAlert>
-          <NButton :loading="restoring" @click="pickRestore">{{ t('settings.data.backup.restoreButton') }}</NButton>
+          <NButton :loading="restoring" @click="pickRestore">{{
+            t("settings.data.backup.restoreButton")
+          }}</NButton>
         </NSpace>
       </NCard>
-
     </div>
 
     <!-- 恢复确认弹窗（issue #572）：跨模式警告 + 密文备份主口令，失败可就地重试 -->

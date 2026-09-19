@@ -1,35 +1,35 @@
-import { configDefaults, defineConfig } from 'vitest/config'
-import vue from '@vitejs/plugin-vue'
-import { fileURLToPath, URL } from 'node:url'
+import { configDefaults, defineConfig } from "vitest/config";
+import vue from "@vitejs/plugin-vue";
+import { fileURLToPath, URL } from "node:url";
 
 // DOM 依存包内测试的登记处（packages-dom project 消费，node project 排除同源）：
 // 逐包登记避免双跑（node include 全量 + exclude 同表）与静默漏跑（新包默认 node）。
 const DOM_PACKAGE_TEST_GLOBS = [
-  'packages/i18n/**/*.test.ts',
-  'packages/storage/**/*.test.ts',
+  "packages/i18n/**/*.test.ts",
+  "packages/storage/**/*.test.ts",
   // theme 包（issue #1154）：theme-contract 测试断言根元素主题类换装（document.body）
   // 与主题合同产出物捕获（@vanilla-extract/css/adapter 接缝），需 DOM 环境；同包
   // 同目录的 design-tokens / semantic-colors 测试随同一登记整包落 jsdom。
-  'packages/theme/**/*.test.ts',
+  "packages/theme/**/*.test.ts",
   // utils 包（issue #1314）：view-state 测试直读 localStorage（Storage.prototype
   // 平台语义）、time-period 测试经 window.navigator.language 触发 fresh-module
   // 语言重初始化，需 DOM 环境；同包纯逻辑测试随同一登记整包落 jsdom（先例
   // theme）——与搬迁前 app project 环境逐字同构，行为零变化。
-  'packages/utils/**/*.test.ts',
+  "packages/utils/**/*.test.ts",
   // window-tier 包（issue #1315）：useWindowTier 断言走 window.matchMedia 换档接缝
   // （@ledger/test-support/media-mock），需 DOM 环境；断点构建期契约测试（消费
   // vite.config 提取与占位符替换）留壳侧 app project（src/__tests__），不落本登记。
-  'packages/window-tier/**/*.test.ts',
+  "packages/window-tier/**/*.test.ts",
   // scheduled-plan-list 包（issue #1322）：useScheduledPlanList 测试以最小挂载壳直打
   // 工厂实例（@vue/test-utils mount，naive-ui useMessage 经 setup 全局替身发放），需
   // DOM 环境；同包无其他测试文件，整包落 jsdom。
-  'packages/scheduled-plan-list/**/*.test.ts',
+  "packages/scheduled-plan-list/**/*.test.ts",
   // ui-kit 包（issue #1320）：App* 封装族与 overlayRegistry 组件测试挂载组件、
   // 断言 teleport DOM 与 naive-ui 交互，需 DOM 环境；app-modal-mobile-css 测试
   // 经 vanilla-extract adapter 接缝捕获产出物（theme-contract 同款）随整包登记
   // 落 jsdom（先例 theme）——与搬迁前 app project 环境逐字同构，行为零变化。
-  'packages/ui-kit/**/*.test.ts',
-]
+  "packages/ui-kit/**/*.test.ts",
+];
 
 export default defineConfig({
   // 测试不挂 vanilla-extract 插件（issue #888）：*.css.ts 在 vitest 下走纯运行时
@@ -40,7 +40,7 @@ export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
   test: {
@@ -78,29 +78,29 @@ export default defineConfig({
     projects: [
       {
         test: {
-          name: 'app',
-          environment: 'jsdom',
-          setupFiles: ['./packages/test-support/src/setup.ts', './src/__tests__/app-setup.ts'],
-          include: ['src/__tests__/**/*.test.ts', 'scripts/**/*.test.ts'],
+          name: "app",
+          environment: "jsdom",
+          setupFiles: ["./packages/test-support/src/setup.ts", "./src/__tests__/app-setup.ts"],
+          include: ["src/__tests__/**/*.test.ts", "scripts/**/*.test.ts"],
         },
       },
       {
         test: {
-          name: 'packages',
-          environment: 'node',
-          setupFiles: ['./packages/test-support/src/setup.ts'],
-          include: ['packages/**/*.test.ts'],
+          name: "packages",
+          environment: "node",
+          setupFiles: ["./packages/test-support/src/setup.ts"],
+          include: ["packages/**/*.test.ts"],
           exclude: [...configDefaults.exclude, ...DOM_PACKAGE_TEST_GLOBS],
         },
       },
       {
         test: {
-          name: 'packages-dom',
-          environment: 'jsdom',
-          setupFiles: ['./packages/test-support/src/setup.ts'],
+          name: "packages-dom",
+          environment: "jsdom",
+          setupFiles: ["./packages/test-support/src/setup.ts"],
           include: [...DOM_PACKAGE_TEST_GLOBS],
         },
       },
     ],
   },
-})
+});

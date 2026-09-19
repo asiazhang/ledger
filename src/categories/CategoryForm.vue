@@ -1,33 +1,27 @@
 <script setup lang="ts">
-import {
-  NForm,
-  NFormItem,
-  NInput,
-  NButton,
-  NSpace,
-} from 'naive-ui'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import AppTreeSelect from '@ledger/ui-kit/AppTreeSelect.vue'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import { useCategoryForm } from '@/categories/useCategoryForm'
-import { t } from '@ledger/i18n'
-import type { Transaction } from '@ledger/types'
+import { NForm, NFormItem, NInput, NButton, NSpace } from "naive-ui";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import AppTreeSelect from "@ledger/ui-kit/AppTreeSelect.vue";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import { useCategoryForm } from "@/categories/useCategoryForm";
+import { t } from "@ledger/i18n";
+import type { Transaction } from "@ledger/types";
 
 // 编辑模式（issue #178）：传入 editing 时回填既有交易并走更新命令，
 // kind 由父层按 editing.kind 锁死传入，本组件内不可切换。
 const props = defineProps<{
-  kind: 'expense' | 'income'
-  submitLabel: string
-  editing?: Transaction | null
-}>()
-const emit = defineEmits<{ created: []; saved: [] }>()
+  kind: "expense" | "income";
+  submitLabel: string;
+  editing?: Transaction | null;
+}>();
+const emit = defineEmits<{ created: []; saved: [] }>();
 
 const ctx = useCategoryForm(props.kind, {
-  onCreated: () => emit('created'),
-  onUpdated: () => emit('saved'),
+  onCreated: () => emit("created"),
+  onUpdated: () => emit("saved"),
   editing: () => props.editing ?? null,
-})
+});
 </script>
 
 <template>
@@ -100,12 +94,16 @@ const ctx = useCategoryForm(props.kind, {
       </NFormItem>
 
       <NFormItem :label="t('settings.categories.txForm.note')">
-        <NInput v-model:value="ctx.note.value" :placeholder="t('settings.categories.txForm.notePlaceholder')" style="width: 280px" />
+        <NInput
+          v-model:value="ctx.note.value"
+          :placeholder="t('settings.categories.txForm.notePlaceholder')"
+          style="width: 280px"
+        />
       </NFormItem>
 
       <!-- 任一字段错误态下禁用（红框＋提交禁用两件同发，ADR-0058 决策 1） -->
       <NButton type="primary" :disabled="ctx.hasFieldError.value" @click="ctx.submit">
-        {{ editing ? t('settings.categories.txForm.saveEdits') : submitLabel }}
+        {{ editing ? t("settings.categories.txForm.saveEdits") : submitLabel }}
       </NButton>
     </NSpace>
   </NForm>

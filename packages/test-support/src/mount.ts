@@ -1,6 +1,6 @@
-import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { defineComponent, h, type Component } from 'vue'
-import { NDialogProvider } from 'naive-ui'
+import { mount, flushPromises, type VueWrapper } from "@vue/test-utils";
+import { defineComponent, h, type Component } from "vue";
+import { NDialogProvider } from "naive-ui";
 
 /**
  * 测试侧挂载助手的单一出口（issue #748，ADR-0085 决策 7「通用能力上收」）。
@@ -19,16 +19,16 @@ export async function mountFlushed(
   component: Component,
   options?: Parameters<typeof mount>[1],
 ): Promise<VueWrapper> {
-  const wrapper = mount(component, options)
-  await flushPromises()
-  return wrapper as VueWrapper
+  const wrapper = mount(component, options);
+  await flushPromises();
+  return wrapper as VueWrapper;
 }
 
 /** 以 NDialogProvider 包裹挂载（组件顶层 useDialog 所需的 Provider 上下文）。 */
 export function mountWithDialog(component: Component): VueWrapper {
   return mount(NDialogProvider, {
     slots: { default: () => h(component) },
-  }) as VueWrapper
+  }) as VueWrapper;
 }
 
 /**
@@ -41,14 +41,14 @@ export function mountWithDialog(component: Component): VueWrapper {
  * onUnmounted 清理随之自动执行，无需调用方手工卸载。
  */
 export function withSetup<T>(composable: () => T): T {
-  let shell!: T
+  let shell!: T;
   mount(
     defineComponent({
       setup() {
-        shell = composable()
-        return () => h('div')
+        shell = composable();
+        return () => h("div");
       },
     }),
-  )
-  return shell as T
+  );
+  return shell as T;
 }

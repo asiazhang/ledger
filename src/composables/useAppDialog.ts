@@ -1,7 +1,7 @@
-import { useDialog } from 'naive-ui'
-import type { DialogOptions, DialogReactive } from 'naive-ui'
-import { createOverlayToken } from '@ledger/ui-kit/overlayRegistry'
-import type { OverlayCloseRequest } from '@ledger/ui-kit/overlayRegistry'
+import { useDialog } from "naive-ui";
+import type { DialogOptions, DialogReactive } from "naive-ui";
+import { createOverlayToken } from "@ledger/ui-kit/overlayRegistry";
+import type { OverlayCloseRequest } from "@ledger/ui-kit/overlayRegistry";
 
 /**
  * useAppDialog（ADR-0035）：useDialog 的接线封装，删除确认等命令式对话框
@@ -14,35 +14,38 @@ import type { OverlayCloseRequest } from '@ledger/ui-kit/overlayRegistry'
  * （幂等双保险：离场动画期间注册表已归零，系统返回判定不被动画拖住）。
  */
 export function useAppDialog() {
-  const dialog = useDialog()
+  const dialog = useDialog();
 
-  function open(method: 'info' | 'success' | 'warning' | 'error', options: DialogOptions): DialogReactive {
+  function open(
+    method: "info" | "success" | "warning" | "error",
+    options: DialogOptions,
+  ): DialogReactive {
     // DialogReactive 在 dialog[method] 返回后才存在，requestClose 经闭包迟到绑定
-    let instance: DialogReactive | null = null
+    let instance: DialogReactive | null = null;
     const requestClose: OverlayCloseRequest = () => {
-      instance?.destroy()
-      overlay.set(false)
-      return true
-    }
-    const overlay = createOverlayToken('dialog', requestClose)
-    overlay.set(true)
-    const { onAfterLeave } = options
+      instance?.destroy();
+      overlay.set(false);
+      return true;
+    };
+    const overlay = createOverlayToken("dialog", requestClose);
+    overlay.set(true);
+    const { onAfterLeave } = options;
     instance = dialog[method]({
       ...options,
       onAfterLeave: () => {
-        overlay.set(false)
-        instance = null
-        onAfterLeave?.()
+        overlay.set(false);
+        instance = null;
+        onAfterLeave?.();
       },
-    })
-    return instance
+    });
+    return instance;
   }
 
   return {
-    info: (options: DialogOptions) => open('info', options),
-    success: (options: DialogOptions) => open('success', options),
-    warning: (options: DialogOptions) => open('warning', options),
-    error: (options: DialogOptions) => open('error', options),
+    info: (options: DialogOptions) => open("info", options),
+    success: (options: DialogOptions) => open("success", options),
+    warning: (options: DialogOptions) => open("warning", options),
+    error: (options: DialogOptions) => open("error", options),
     destroyAll: () => dialog.destroyAll(),
-  }
+  };
 }

@@ -1,26 +1,26 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from 'vue'
-import { NButton, NForm, NFormItem, NInput, NSpace, NSwitch, NText, useMessage } from 'naive-ui'
-import AppModal from '@ledger/ui-kit/AppModal.vue'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import PolicyAgreementFields from '@/policy/PolicyAgreementFields.vue'
+import { computed, ref, watch, nextTick } from "vue";
+import { NButton, NForm, NFormItem, NInput, NSpace, NSwitch, NText, useMessage } from "naive-ui";
+import AppModal from "@ledger/ui-kit/AppModal.vue";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import PolicyAgreementFields from "@/policy/PolicyAgreementFields.vue";
 // 编辑模式的协议历史区（v-if=editing）：模板曾未 import、渲染为未知元素，
 // 编辑弹窗协议历史实际不显示——本票顺手修复（issue #713 改动本文件时发现）。
-import PolicyAgreementSection from '@/policy/PolicyAgreementSection.vue'
-import { t } from '@ledger/i18n'
-import { errorMessage } from '@ledger/utils/errors'
-import { todayStr } from '@ledger/utils/date'
-import { policyStatAmountText } from '@/policy/policy-stats'
-import { yuanToCents, centsToYuan } from '@ledger/money'
-import { useFormShared } from '@/composables/useFormShared'
-import { resolveInsurerRef } from '@/policy/resolve-insurer'
-import { useAppStore } from '@/stores/app'
-import { useReferenceStore } from '@/stores/reference'
-import { usePoliciesStore } from '@/policy/policies'
-import { api } from '@ledger/api'
-import type { Policy, PolicyInput } from '@ledger/types'
+import PolicyAgreementSection from "@/policy/PolicyAgreementSection.vue";
+import { t } from "@ledger/i18n";
+import { errorMessage } from "@ledger/utils/errors";
+import { todayStr } from "@ledger/utils/date";
+import { policyStatAmountText } from "@/policy/policy-stats";
+import { yuanToCents, centsToYuan } from "@ledger/money";
+import { useFormShared } from "@/composables/useFormShared";
+import { resolveInsurerRef } from "@/policy/resolve-insurer";
+import { useAppStore } from "@/stores/app";
+import { useReferenceStore } from "@/stores/reference";
+import { usePoliciesStore } from "@/policy/policies";
+import { api } from "@ledger/api";
+import type { Policy, PolicyInput } from "@ledger/types";
 
 /**
  * 保单新建/编辑弹窗（issue #360 / ADR-0051）：静态合同要素录入。
@@ -38,94 +38,94 @@ import type { Policy, PolicyInput } from '@ledger/types'
  * PolicyAgreementSection。
  */
 const props = defineProps<{
-  show: boolean
+  show: boolean;
   /** 待编辑保单；null = 新建模式 */
-  editing: Policy | null
-}>()
-const emit = defineEmits<{ 'update:show': [value: boolean] }>()
+  editing: Policy | null;
+}>();
+const emit = defineEmits<{ "update:show": [value: boolean] }>();
 
-const message = useMessage()
-const reference = useReferenceStore()
-const app = useAppStore()
-const policiesStore = usePoliciesStore()
-const { currencyOptions } = useFormShared()
+const message = useMessage();
+const reference = useReferenceStore();
+const app = useAppStore();
+const policiesStore = usePoliciesStore();
+const { currencyOptions } = useFormShared();
 
 // —— 表单状态 ——
-const insurerRef = ref<string | null>(null)
-const policyNumber = ref('')
-const productName = ref('')
-const startDate = ref<string | null>(null)
-const endDate = ref<string | null>(null)
-const coverageYuan = ref('')
-const coverageCurrency = ref<string | null>(null)
-const note = ref('')
+const insurerRef = ref<string | null>(null);
+const policyNumber = ref("");
+const productName = ref("");
+const startDate = ref<string | null>(null);
+const endDate = ref<string | null>(null);
+const coverageYuan = ref("");
+const coverageCurrency = ref<string | null>(null);
+const note = ref("");
 
 // —— 缴费协议区（新建模式，issue #362）：可折叠可选，默认关 = 趸交/缴清纯档案 ——
-const withAgreement = ref(false)
-const agreementFields = ref<InstanceType<typeof PolicyAgreementFields> | null>(null)
+const withAgreement = ref(false);
+const agreementFields = ref<InstanceType<typeof PolicyAgreementFields> | null>(null);
 
 const insurerOptions = computed(() =>
   reference.insurers.map((i) => ({ label: i.name, value: i.id })),
-)
+);
 
 /** 保额录入中：币种选择仅在填了保额时有意义（与后端「成对」校验同形）。 */
-const coverageFilled = computed(() => coverageYuan.value.trim() !== '')
+const coverageFilled = computed(() => coverageYuan.value.trim() !== "");
 
 // —— 保单视角统计（issue #363，编辑模式 = 详情）：消费 store 同源快照，
 // 实时推导不落库；列表与弹窗共用同一份数据，合计展示经共享辅助同口径 ——
 const statsSummary = computed(() => {
-  if (!props.editing) return null
-  return policiesStore.statsById.get(props.editing.id) ?? null
-})
+  if (!props.editing) return null;
+  return policiesStore.statsById.get(props.editing.id) ?? null;
+});
 
 const paidText = computed(() =>
   policyStatAmountText(statsSummary.value, (s) => s.total_paid_native_cents),
-)
+);
 
 const inflowText = computed(() =>
   policyStatAmountText(statsSummary.value, (s) => s.total_inflow_native_cents),
-)
+);
 
 // 到期态摘要（与列表徽标同一推导口径）：止日空 = 长期/终身（永不判到期）；
 // 止日非空时消费统计同源 is_expired，统计行未加载时回落本地推导。
 const expiryText = computed(() => {
-  const p = props.editing
-  if (!p) return '—'
-  if (p.end_date === null) return t('policies.expiry.lifetime')
-  const expired = statsSummary.value?.is_expired ?? p.end_date < todayStr()
-  return expired ? t('policies.expiry.expired') : t('policies.expiry.active')
-})
+  const p = props.editing;
+  if (!p) return "—";
+  if (p.end_date === null) return t("policies.expiry.lifetime");
+  const expired = statsSummary.value?.is_expired ?? p.end_date < todayStr();
+  return expired ? t("policies.expiry.expired") : t("policies.expiry.active");
+});
 
 // 清空保额即清币种（成对原子，不产生只有币种的半挂状态）
 watch(coverageFilled, (filled) => {
-  if (!filled) coverageCurrency.value = null
-})
+  if (!filled) coverageCurrency.value = null;
+});
 
 /** 打开时回填/复位（弹窗内容关闭后仍在 DOM，打开瞬间同步；immediate 兼容初始 show）。 */
 watch(
   () => [props.show, props.editing] as const,
   () => {
-    if (!props.show) return
-    const p = props.editing
-    insurerRef.value = p?.insurer_id ?? null
-    policyNumber.value = p?.policy_number ?? ''
-    productName.value = p?.product_name ?? ''
-    startDate.value = p?.start_date ?? todayStr()
-    endDate.value = p?.end_date ?? null
+    if (!props.show) return;
+    const p = props.editing;
+    insurerRef.value = p?.insurer_id ?? null;
+    policyNumber.value = p?.policy_number ?? "";
+    productName.value = p?.product_name ?? "";
+    startDate.value = p?.start_date ?? todayStr();
+    endDate.value = p?.end_date ?? null;
     coverageYuan.value =
-      p?.coverage_amount_cents != null ? String(centsToYuan(p.coverage_amount_cents)) : ''
-    coverageCurrency.value = p?.coverage_currency_code ?? app.defaultCurrency
-    note.value = p?.note ?? ''
+      p?.coverage_amount_cents != null ? String(centsToYuan(p.coverage_amount_cents)) : "";
+    coverageCurrency.value = p?.coverage_currency_code ?? app.defaultCurrency;
+    note.value = p?.note ?? "";
     // 协议区随弹窗复位：开关默认关；字段组复位（起始日预填保障期间起日），
     // nextTick 等字段组随弹窗内容挂载/更新后可取 ref。
-    withAgreement.value = false
-    void nextTick(() => agreementFields.value?.reset({ startDate: startDate.value }))
+    withAgreement.value = false;
+    void nextTick(() => agreementFields.value?.reset({ startDate: startDate.value }));
   },
   { immediate: true },
-)
+);
 
 function close() {
-  emit('update:show', false)
+  emit("update:show", false);
 }
 
 /**
@@ -134,63 +134,63 @@ function close() {
  * 在用保司复用、未命中即建保司（ADR-0082：即建目标不再是商户）。
  */
 async function resolveInsurer(): Promise<string> {
-  return (await resolveInsurerRef(insurerRef.value)) ?? ''
+  return (await resolveInsurerRef(insurerRef.value)) ?? "";
 }
 
 async function save() {
   // 客户端必填校验（消息与后端错误码文案同源，双保险防呆）
   if (!insurerRef.value?.trim()) {
-    message.warning(t('policies.form.msg.insurerRequired'))
-    return
+    message.warning(t("policies.form.msg.insurerRequired"));
+    return;
   }
   if (!policyNumber.value.trim()) {
-    message.warning(t('policies.form.msg.numberRequired'))
-    return
+    message.warning(t("policies.form.msg.numberRequired"));
+    return;
   }
   if (!productName.value.trim()) {
-    message.warning(t('policies.form.msg.productRequired'))
-    return
+    message.warning(t("policies.form.msg.productRequired"));
+    return;
   }
   if (!startDate.value) {
-    message.warning(t('policies.form.msg.startRequired'))
-    return
+    message.warning(t("policies.form.msg.startRequired"));
+    return;
   }
   if (endDate.value && endDate.value < startDate.value) {
-    message.warning(t('policies.form.msg.endBeforeStart'))
-    return
+    message.warning(t("policies.form.msg.endBeforeStart"));
+    return;
   }
-  let coverageCents: number | null = null
+  let coverageCents: number | null = null;
   if (coverageFilled.value) {
-    const cents = yuanToCents(coverageYuan.value)
+    const cents = yuanToCents(coverageYuan.value);
     if (cents === null || cents <= 0) {
-      message.warning(t('policies.form.msg.amountInvalid'))
-      return
+      message.warning(t("policies.form.msg.amountInvalid"));
+      return;
     }
     if (!coverageCurrency.value) {
-      message.warning(t('policies.form.msg.currencyRequired'))
-      return
+      message.warning(t("policies.form.msg.currencyRequired"));
+      return;
     }
-    coverageCents = cents
+    coverageCents = cents;
   }
 
-  let insurerId: string
+  let insurerId: string;
   try {
-    insurerId = await resolveInsurer()
+    insurerId = await resolveInsurer();
   } catch (e) {
-    message.error(t('policies.form.msg.insurerFailed', { msg: errorMessage(e) }))
-    return
+    message.error(t("policies.form.msg.insurerFailed", { msg: errorMessage(e) }));
+    return;
   }
   if (!insurerId) {
-    message.warning(t('policies.form.msg.insurerRequired'))
-    return
+    message.warning(t("policies.form.msg.insurerRequired"));
+    return;
   }
 
   // 协议区字段校验前置（先于建档，避免半建档状态）：校验失败不提交任何请求。
   if (withAgreement.value) {
-    const agreementErr = agreementFields.value?.validate()
+    const agreementErr = agreementFields.value?.validate();
     if (agreementErr) {
-      message.warning(agreementErr)
-      return
+      message.warning(agreementErr);
+      return;
     }
   }
 
@@ -204,31 +204,31 @@ async function save() {
     coverage_amount_cents: coverageCents,
     coverage_currency_code: coverageCents !== null ? coverageCurrency.value : null,
     note: note.value.trim() || null,
-  }
+  };
   try {
     if (props.editing) {
-      await policiesStore.update(props.editing.id, input)
-      message.success(t('policies.msg.saved'))
+      await policiesStore.update(props.editing.id, input);
+      message.success(t("policies.msg.saved"));
     } else {
-      const policyId = await policiesStore.create(input)
+      const policyId = await policiesStore.create(input);
       // 同时创建缴费协议（issue #362 / ADR-0051 决策 2）：订阅形态 + 保单引用；
       // 不挂商户（issue #713 / ADR-0082 决策 2：保费归属走保单引用），
       // 备注带险种可读。
       if (withAgreement.value && agreementFields.value) {
         await api.createScheduledTransaction(
           agreementFields.value.build(policyId, input.product_name),
-        )
+        );
       }
-      message.success(t('policies.msg.created'))
+      message.success(t("policies.msg.created"));
     }
-    close()
+    close();
   } catch (e) {
     // 后端校验错误原样展示（如「保单号不能为空」），弹窗不关、内容不丢
-    message.error(t('policies.msg.saveFailed', { msg: errorMessage(e) }))
+    message.error(t("policies.msg.saveFailed", { msg: errorMessage(e) }));
   }
 }
 
-defineExpose({ save })
+defineExpose({ save });
 </script>
 
 <template>
@@ -320,7 +320,7 @@ defineExpose({ save })
         </NFormItem>
         <!-- 辅助说明统一段落式（spec #630 / #636）：不再内联 opacity 挤在开关旁 -->
         <NText v-if="!editing" depth="3" class="form-hint">
-          {{ t('policies.agreement.toggleHint') }}
+          {{ t("policies.agreement.toggleHint") }}
         </NText>
         <div v-if="!editing" v-show="withAgreement" data-testid="policy-agreement-fields">
           <PolicyAgreementFields ref="agreementFields" />
@@ -332,14 +332,20 @@ defineExpose({ save })
           data-testid="policy-stats-summary"
           style="display: flex; gap: 16px; font-size: 13px"
         >
-          <span>{{ t('policies.stats.paid') }}：<strong>{{ paidText }}</strong></span>
-          <span>{{ t('policies.stats.inflow') }}：<strong>{{ inflowText }}</strong></span>
+          <span
+            >{{ t("policies.stats.paid") }}：<strong>{{ paidText }}</strong></span
+          >
+          <span
+            >{{ t("policies.stats.inflow") }}：<strong>{{ inflowText }}</strong></span
+          >
           <span>
-            {{ t('policies.stats.nextCharge') }}：<strong>{{
-              statsSummary?.next_charge_date ?? '—'
+            {{ t("policies.stats.nextCharge") }}：<strong>{{
+              statsSummary?.next_charge_date ?? "—"
             }}</strong>
           </span>
-          <span>{{ t('policies.stats.expiry') }}：<strong>{{ expiryText }}</strong></span>
+          <span
+            >{{ t("policies.stats.expiry") }}：<strong>{{ expiryText }}</strong></span
+          >
         </div>
         <NFormItem
           v-if="editing"
@@ -354,9 +360,9 @@ defineExpose({ save })
         </NFormItem>
 
         <NSpace justify="end">
-          <NButton @click="close">{{ t('policies.form.cancel') }}</NButton>
+          <NButton @click="close">{{ t("policies.form.cancel") }}</NButton>
           <NButton type="primary" data-testid="policy-save" @click="save">
-            {{ t('policies.form.save') }}
+            {{ t("policies.form.save") }}
           </NButton>
         </NSpace>
       </NSpace>

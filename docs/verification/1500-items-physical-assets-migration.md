@@ -35,7 +35,9 @@
    items_cost 11 · items_create 6 · items_dispose 12 · items_provenance 12 ·
    items_update 6 · physical_assets 13 · physical_asset_updates 12 ·
    physical_asset_disposal 9（与 `grep -c '^  Scenario:' …/<feature>` 逐一相等）；
-   新目标测试总数 94 = 93 个场景（含 #1495 账户域 12）+ 1 条 #1497 注册表断言。
+   本票基线（d2867e88）新目标测试总数 94 = 93 个场景（含 #1495 账户域 12）+
+   1 条 #1497 注册表断言；合入 main 的 #1498 / #1499 后，本分支新目标总数为
+   132 = 130 个场景 + 2 条运行时注册表断言（#1497 / #1499），绑定 feature 13 个。
 2. **AC2 旧 e2e 目标全绿、场景数不减**：`cargo test --test e2e` →
    40 features / **453 scenarios（453 passed）** / 3139 steps（3139 passed），
    与迁移前同口径（场景数、步数均不减）。双注册对新目标之外零影响
@@ -43,8 +45,9 @@
 3. **AC3 issue #1489 的既有失败不并入本票**：见下「根因发现」——本票**未修**该缺陷，
    仅顺带定位根因并说明另一个同根因实例（ticket 正文的「如顺带消除需说明根因」）。
 4. **静态覆盖守门**：`bun scripts/check-e2e-step-coverage.ts` → 目标 2 个 · 绑定
-   feature 40 个 · 步骤行 3601 条 · 注册 849 条（rstest-bdd 125 / cucumber 724）·
-   未覆盖 0 · 歧义 0 · 无绑定 0；其中新目标绑定 feature 9 个 · 注册 125 · 步骤 462。
+   feature 40 个 · 步骤行 3874 条 · 注册 921 条（rstest 目标 197 / 旧 e2e 目标
+   724）· 未覆盖 0 · 歧义 0 · 无绑定 0；其中新目标绑定 feature 13 个 · 注册 197 ·
+   步骤 735（含合入 main 的 #1498 / #1499 注册面）。
    即被绑 8 个 feature 的每条步骤行在新目标注册面**恰好一次**命中，删任一注册即红。
 5. **负向证据（删除即变红，实测）**：临时删去 `items_create_steps.rs` 的
    `创建物品 {name:string} 购买日期 {date:string} 总成本 {cost_cents:i64} 币种 {currency:string}`

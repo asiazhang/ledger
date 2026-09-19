@@ -4,25 +4,25 @@
 /** 加密状态（设置页加密卡片与启动解锁屏消费）。 */
 export interface EncryptionStatus {
   /** 进程是否处于锁定（等待解锁）状态：密文库已探测、业务读写不可用。 */
-  locked: boolean
+  locked: boolean;
   /** 库文件当前是否为密文库（文件即真相）。 */
-  file_encrypted: boolean
+  file_encrypted: boolean;
 }
 
 /** 解锁结果：relocated 表示解锁后补做了等待中的搬迁（前端据此触发重启）。 */
 export interface UnlockOutcome {
-  relocated: boolean
+  relocated: boolean;
 }
 
 /** 本机记住主口令的运行形态（issue #662 / #866）：读取是否先过生物认证门。 */
-export type RememberPassphraseMode = 'biometry' | 'dev-fallback'
+export type RememberPassphraseMode = "biometry" | "dev-fallback";
 
 /** 本机记住主口令的平台能力与运行形态（issue #574 / #662 / ADR-0075 决策 3）。 */
 export interface RememberPassphraseSupport {
   /** 平台是否支持本机缓存主口令（v1 仅 macOS；不支持时前端隐藏选项、回退手输）。 */
-  supported: boolean
+  supported: boolean;
   /** 运行形态：biometry = 发布构建，读取前先过 LocalAuthentication 应用层门
    *  （弹 Touch ID，条目本身无 ACL，issue #866）；
    *  dev-fallback = 开发/未签名构建的无门缓存回退（读取不弹生物认证）。 */
-  mode: RememberPassphraseMode
+  mode: RememberPassphraseMode;
 }

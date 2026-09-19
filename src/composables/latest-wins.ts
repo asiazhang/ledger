@@ -19,20 +19,20 @@
 
 export interface LatestWinsGuard {
   /** 开启新纪元并返回纪元号：此前发起的在途请求随即过期。 */
-  start(): number
+  start(): number;
   /** 该纪元是否仍是最新——已被后续 `start` 取代（过期）时返回 false，结果不得落位。 */
-  isCurrent(epoch: number): boolean
+  isCurrent(epoch: number): boolean;
 }
 
 export function createLatestWinsGuard(): LatestWinsGuard {
-  let epoch = 0
+  let epoch = 0;
   return {
     start(): number {
-      epoch += 1
-      return epoch
+      epoch += 1;
+      return epoch;
     },
     isCurrent(candidate: number): boolean {
-      return candidate === epoch
+      return candidate === epoch;
     },
-  }
+  };
 }

@@ -1,4 +1,4 @@
-import { api } from '@ledger/api'
+import { api } from "@ledger/api";
 
 /**
  * 成功提示后延迟重启（Restore 同型语义，先例 useBackup.pickRestore）：
@@ -19,10 +19,10 @@ export function restartAppShortly(): void {
     api
       .restartApp()
       .then(() => {
-        window.location.reload()
+        window.location.reload();
       })
       .catch((e) => {
-        console.warn('应用重启（原位重引导）失败，已保留当前界面', e)
-      })
-  }, 800)
+        console.warn("应用重启（原位重引导）失败，已保留当前界面", e);
+      });
+  }, 800);
 }

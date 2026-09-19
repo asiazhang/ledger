@@ -3,32 +3,32 @@
 // 约定：key 统一加 'view_state:' 前缀，与偏好（'appearance' 等）及业务数据（SQLite）分域。
 // 边界：不做"过度记忆"（筛选、滚动位置、列宽等一律不持久化）。
 
-import { loadLocal, saveLocal, removeLocal } from '@ledger/storage'
+import { loadLocal, saveLocal, removeLocal } from "@ledger/storage";
 
 export const VIEW_STATE_KEYS = {
-  route: 'view_state:route',
-  sidebarCollapsed: 'view_state:sidebar_collapsed',
-  sidebarOrder: 'view_state:sidebar_order',
-  sidebarContainment: 'view_state:sidebar_containment',
-  closedFeatures: 'view_state:closed_features',
-} as const
+  route: "view_state:route",
+  sidebarCollapsed: "view_state:sidebar_collapsed",
+  sidebarOrder: "view_state:sidebar_order",
+  sidebarContainment: "view_state:sidebar_containment",
+  closedFeatures: "view_state:closed_features",
+} as const;
 
 /** 上次所在视图的路由 name；无记录或数据损坏时返回 null（由调用方回退默认路由）。 */
 export function getSavedRouteName(): string | null {
-  const v = loadLocal<unknown>(VIEW_STATE_KEYS.route, null)
-  return typeof v === 'string' ? v : null
+  const v = loadLocal<unknown>(VIEW_STATE_KEYS.route, null);
+  return typeof v === "string" ? v : null;
 }
 
 export function saveRouteName(name: string) {
-  saveLocal(VIEW_STATE_KEYS.route, name)
+  saveLocal(VIEW_STATE_KEYS.route, name);
 }
 
 export function loadSidebarCollapsed(): boolean {
-  return loadLocal<boolean>(VIEW_STATE_KEYS.sidebarCollapsed, false)
+  return loadLocal<boolean>(VIEW_STATE_KEYS.sidebarCollapsed, false);
 }
 
 export function saveSidebarCollapsed(collapsed: boolean) {
-  saveLocal(VIEW_STATE_KEYS.sidebarCollapsed, collapsed)
+  saveLocal(VIEW_STATE_KEYS.sidebarCollapsed, collapsed);
 }
 
 /**
@@ -37,18 +37,18 @@ export function saveSidebarCollapsed(collapsed: boolean) {
  * 解析防御归 sidebar-order store parseGroupOrders，此处不解析。
  */
 export function getSavedSidebarOrder(): unknown {
-  return loadLocal<unknown>(VIEW_STATE_KEYS.sidebarOrder, null)
+  return loadLocal<unknown>(VIEW_STATE_KEYS.sidebarOrder, null);
 }
 
 /** 持久化组内序（点选即写，写路径唯一出处，issue #270/#359）：对象形状「组 id → 视图名数组」。
  *  参数透传 unknown：类型耦合经透传消解（issue #549），词表与形状守卫归 sidebar-order store。 */
 export function saveSidebarOrders(orders: unknown) {
-  saveLocal(VIEW_STATE_KEYS.sidebarOrder, orders)
+  saveLocal(VIEW_STATE_KEYS.sidebarOrder, orders);
 }
 
 /** 清除自定义顺序（恢复默认排序），回退无记录态。 */
 export function clearSidebarOrder() {
-  removeLocal(VIEW_STATE_KEYS.sidebarOrder)
+  removeLocal(VIEW_STATE_KEYS.sidebarOrder);
 }
 
 /**
@@ -57,18 +57,18 @@ export function clearSidebarOrder() {
  * 归 sidebar-order store parseContainmentLists，此处不解析。
  */
 export function getSavedContainment(): unknown {
-  return loadLocal<unknown>(VIEW_STATE_KEYS.sidebarContainment, null)
+  return loadLocal<unknown>(VIEW_STATE_KEYS.sidebarContainment, null);
 }
 
 /** 持久化每组收纳清单（写路径唯一出处）：对象形状「组 id → 收纳视图名数组」，清单序 = 页签序。
  *  参数透传 unknown：类型耦合经透传消解（issue #549），词表与形状守卫归 sidebar-order store。 */
 export function saveContainmentLists(lists: unknown) {
-  saveLocal(VIEW_STATE_KEYS.sidebarContainment, lists)
+  saveLocal(VIEW_STATE_KEYS.sidebarContainment, lists);
 }
 
 /** 清除收纳清单存储（恢复默认排序连收纳一起复位），回退无记录态。 */
 export function clearContainment() {
-  removeLocal(VIEW_STATE_KEYS.sidebarContainment)
+  removeLocal(VIEW_STATE_KEYS.sidebarContainment);
 }
 
 /**
@@ -77,15 +77,15 @@ export function clearContainment() {
  * 归 feature-toggles store parseClosedFeatures，此处不解析。
  */
 export function getSavedClosedFeatures(): unknown {
-  return loadLocal<unknown>(VIEW_STATE_KEYS.closedFeatures, null)
+  return loadLocal<unknown>(VIEW_STATE_KEYS.closedFeatures, null);
 }
 
 /** 持久化「已关闭功能」清单（点选即写，写路径唯一出处）：数组形状。空集合不写、改走 clear。 */
 export function saveClosedFeatures(list: unknown) {
-  saveLocal(VIEW_STATE_KEYS.closedFeatures, list)
+  saveLocal(VIEW_STATE_KEYS.closedFeatures, list);
 }
 
 /** 清除「已关闭功能」存储（关闭集合清空即回默认全开），回退无记录态。 */
 export function clearClosedFeatures() {
-  removeLocal(VIEW_STATE_KEYS.closedFeatures)
+  removeLocal(VIEW_STATE_KEYS.closedFeatures);
 }

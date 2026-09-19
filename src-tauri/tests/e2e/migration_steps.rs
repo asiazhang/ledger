@@ -22,16 +22,22 @@ use crate::world::{ImportedRow, LedgerWorld};
 #[when(expr = "批量导入交易")]
 fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
     let table = step.table.as_ref().expect("批量导入步骤缺少数据表");
+    run_batch_import(world, table.rows.clone());
+}
+
+/// 批量导入的 row 级实现：cucumber 与 rstest-bdd 的数据表入参形态不同
+///（`gherkin::Step` 的 `table.rows` / `Vec<Vec<String>>`），两侧注册适配器各取
+/// 所需，写入与断言逻辑单点复用。
+fn run_batch_import(world: &mut LedgerWorld, table_rows: Vec<Vec<String>>) {
     // 表头行是 rows[0]，据此建立列名 → 列号映射，未出现的列缺省为空。
-    let headers = &table.rows[0];
+    let headers = &table_rows[0];
     let col = |name: &str| headers.iter().position(|h| h == name);
     let get = |row: &[String], name: &str| {
         col(name)
             .and_then(|i| row.get(i).cloned())
             .unwrap_or_default()
     };
-    let rows: Vec<ImportedRow> = table
-        .rows
+    let rows: Vec<ImportedRow> = table_rows
         .iter()
         .skip(1)
         .map(|row| {
@@ -60,6 +66,14 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
     world.txn.last_import_rows = rows;
     world.txn.last_batch_results = results;
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
+}
+
+/// rstest-bdd 侧的数据表注册适配器（spec #1494 / ticket #1498）：rstest-bdd 以
+/// `#[datatable]` 参数发放原始行，与 cucumber 的 `#[step] &Step` 不可同签名共存，
+/// 故与 [`batch_import`] 各留注册适配器、共用 [`run_batch_import`]。
+#[rstest_bdd_macros::when("批量导入交易")]
+fn batch_import_rstest(world: &mut LedgerWorld, #[datatable] datatable: Vec<Vec<String>>) {
+    run_batch_import(world, datatable);
 }
 
 /// 重跑刚才的批量导入：与首次导入相同的行、相同的 dedup 语义。

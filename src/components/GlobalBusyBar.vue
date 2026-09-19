@@ -6,16 +6,16 @@
 // 移动档位置适配（issue #842）：顶部应用栏占据窗口顶部且自身避让安全区，忙碌条
 // 随之下移到安全区下沿（与顶栏顶缘重合），避免落在刘海/状态栏下不可见；桌面档
 // env 恒 0，位置不变（≥840 零变化）。
-import { useThemeVars } from 'naive-ui'
-import { busyVisible } from '@ledger/api'
-import { useWindowTier } from '@ledger/window-tier'
-import { t } from '@ledger/i18n'
+import { useThemeVars } from "naive-ui";
+import { busyVisible } from "@ledger/api";
+import { useWindowTier } from "@ledger/window-tier";
+import { t } from "@ledger/i18n";
 
 // 强调色取自应用主题（useThemeVars 需在 NConfigProvider 子树内），亮暗主题即时换色
-const themeVars = useThemeVars()
+const themeVars = useThemeVars();
 
 // 窗口分级：仅决定定位类名（移动档安全区下沿），不改变忙碌条语义
-const tier = useWindowTier()
+const tier = useWindowTier();
 </script>
 
 <template>

@@ -1,22 +1,12 @@
 <script setup lang="ts">
-import {
-  NAlert,
-  NButton,
-  NCard,
-  NInput,
-  NSpace,
-  NSpin,
-  NSwitch,
-  NTag,
-  NText,
-} from 'naive-ui'
-import { t } from '@ledger/i18n'
-import { errorMessage } from '@ledger/utils/errors'
-import { vendorTierKey } from '@ledger/utils/s3-vendors'
-import AppModal from '@ledger/ui-kit/AppModal.vue'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import { SYNC_HINT_CLASS } from '@/settings/sync-settings.css'
-import { useSyncCard } from '@/settings/useSyncCard'
+import { NAlert, NButton, NCard, NInput, NSpace, NSpin, NSwitch, NTag, NText } from "naive-ui";
+import { t } from "@ledger/i18n";
+import { errorMessage } from "@ledger/utils/errors";
+import { vendorTierKey } from "@ledger/utils/s3-vendors";
+import AppModal from "@ledger/ui-kit/AppModal.vue";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import { SYNC_HINT_CLASS } from "@/settings/sync-settings.css";
+import { useSyncCard } from "@/settings/useSyncCard";
 
 // 多端同步卡片（issue #862 / #863 / #864 / #1218 / ADR-0091）：设置页「数据」
 // Tab 的同步可见面——上次同步时间、挂起数量、「立即同步」动作、挂起通知明细、
@@ -62,12 +52,12 @@ const {
   bootstrapping,
   openBootstrap,
   confirmBootstrap,
-} = useSyncCard()
+} = useSyncCard();
 
 /** 快照体大小展示文本（字节 → MB，一位小数；向导回显渲染用——toast 插值助手的
  *  同名实现 module 私有，文案与模板留组件故此处保留渲染侧一份，口径一致）。 */
 function formatSizeMb(bytes: number): string {
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 </script>
 
@@ -76,19 +66,21 @@ function formatSizeMb(bytes: number): string {
     <NSpace vertical :size="16">
       <!-- 明文模式显著提示（ADR-0091 决策 8）：密文库不显示。 -->
       <NAlert v-if="status && !status.library_encrypted" type="warning" :show-icon="true">
-        {{ t('settings.data.sync.plaintextWarning') }}
+        {{ t("settings.data.sync.plaintextWarning") }}
       </NAlert>
       <NAlert v-else-if="status && status.library_encrypted" type="info" :show-icon="true">
-        {{ t('settings.data.sync.encryptedHint') }}
+        {{ t("settings.data.sync.encryptedHint") }}
       </NAlert>
 
       <!-- 状态区：上次同步时间 + 挂起数量 + 立即同步。 -->
       <NSpace vertical :size="4">
         <NText data-testid="sync-last-time">
-          {{ t('settings.data.sync.lastSyncAt') }}{{ t('settings.data.sync.colon') }}{{ lastSyncText }}
+          {{ t("settings.data.sync.lastSyncAt") }}{{ t("settings.data.sync.colon")
+          }}{{ lastSyncText }}
         </NText>
         <NText data-testid="sync-parked-count">
-          {{ t('settings.data.sync.parkedCount') }}{{ t('settings.data.sync.colon') }}{{ status?.parked_count ?? 0 }}
+          {{ t("settings.data.sync.parkedCount") }}{{ t("settings.data.sync.colon")
+          }}{{ status?.parked_count ?? 0 }}
         </NText>
         <NText
           v-if="status && status.parked_count > 0"
@@ -96,18 +88,13 @@ function formatSizeMb(bytes: number): string {
           style="font-size: 12px"
           data-testid="sync-parked-hint"
         >
-          {{ t('settings.data.sync.parkedHint') }}
+          {{ t("settings.data.sync.parkedHint") }}
         </NText>
       </NSpace>
 
       <!-- 挂起通知明细（issue #863 验收项）：逐条按码化原因本地化呈现。 -->
-      <NSpace
-        v-if="parkedOps.length > 0"
-        vertical
-        :size="4"
-        data-testid="sync-parked-list"
-      >
-        <NText strong>{{ t('settings.data.sync.parkedListTitle') }}</NText>
+      <NSpace v-if="parkedOps.length > 0" vertical :size="4" data-testid="sync-parked-list">
+        <NText strong>{{ t("settings.data.sync.parkedListTitle") }}</NText>
         <NText
           v-for="op in parkedOps"
           :key="op.op_id"
@@ -115,7 +102,7 @@ function formatSizeMb(bytes: number): string {
           style="font-size: 12px"
           data-testid="sync-parked-item"
         >
-          {{ t('settings.data.sync.parkedItem', { reason: errorMessage(op) }) }}
+          {{ t("settings.data.sync.parkedItem", { reason: errorMessage(op) }) }}
         </NText>
       </NSpace>
       <NSpace>
@@ -126,7 +113,7 @@ function formatSizeMb(bytes: number): string {
           data-testid="sync-now"
           @click="syncNow"
         >
-          {{ t('settings.data.sync.syncNow') }}
+          {{ t("settings.data.sync.syncNow") }}
         </NButton>
       </NSpace>
       <NInput
@@ -142,7 +129,7 @@ function formatSizeMb(bytes: number): string {
       <!-- 通道配置表单（S3 七字段 + 同步空间，issue #1218 / #1219 / #1220）：
            配置面没有后端判别字段（WebDAV 已随 #1221 退役）；厂商预设下拉只预填、
            不落库（issue #1220），「测试连接」按钮在此（issue #1219）。 -->
-      <NText strong>{{ t('settings.data.sync.channelTitle') }}</NText>
+      <NText strong>{{ t("settings.data.sync.channelTitle") }}</NText>
       <NSpace vertical :size="8">
         <!-- 厂商预设（issue #1220）：末尾固定「其他（自定义）」；选中只预填，字段
              全部保持可编辑；档位标注与官方文档外链随所选厂商展示。选项是 6 项静态
@@ -155,7 +142,7 @@ function formatSizeMb(bytes: number): string {
           @update:value="onVendorChange"
         />
         <NText depth="3" :class="SYNC_HINT_CLASS" data-testid="sync-vendor-hint">
-          {{ t('settings.data.sync.vendorHint') }}
+          {{ t("settings.data.sync.vendorHint") }}
         </NText>
         <template v-if="selectedVendorPreset">
           <NSpace align="center" :size="8" data-testid="sync-vendor-meta">
@@ -170,12 +157,12 @@ function formatSizeMb(bytes: number): string {
               rel="noreferrer"
               data-testid="sync-vendor-docs"
             >
-              {{ t('settings.data.sync.vendorDocs') }}
+              {{ t("settings.data.sync.vendorDocs") }}
             </NButton>
           </NSpace>
           <NSpace align="center" :size="8" data-testid="sync-vendor-regions">
             <NText depth="3" :class="SYNC_HINT_CLASS">
-              {{ t('settings.data.sync.vendorRegionLabel') }}
+              {{ t("settings.data.sync.vendorRegionLabel") }}
             </NText>
             <NButton
               v-for="region in selectedVendorPreset.regions"
@@ -222,37 +209,31 @@ function formatSizeMb(bytes: number): string {
         />
         <NSpace align="center" :size="8">
           <NSwitch v-model:value="form.path_style" data-testid="sync-path-style" />
-          <NText depth="3" style="font-size: 12px">{{ t('settings.data.sync.pathStyleLabel') }}</NText>
+          <NText depth="3" style="font-size: 12px">{{
+            t("settings.data.sync.pathStyleLabel")
+          }}</NText>
         </NSpace>
         <NInput
           v-model:value="form.space_id"
           :placeholder="t('settings.data.sync.spacePlaceholder')"
           data-testid="sync-space"
         />
-        <NText depth="3" style="font-size: 12px">{{ t('settings.data.sync.spaceHint') }}</NText>
+        <NText depth="3" style="font-size: 12px">{{ t("settings.data.sync.spaceHint") }}</NText>
         <NSpace>
           <!-- 保存前「测试连接」（issue #1219）：探测用的是当前表单而非落库配置，
                 用户可以先把厂商预设/地域/手改填好，再确认这份凭据、桶与网络可用。 -->
-          <NButton
-            :loading="testing"
-            data-testid="sync-test-connection"
-            @click="testConnection"
-          >
-            {{ t('settings.data.sync.testConnection') }}
+          <NButton :loading="testing" data-testid="sync-test-connection" @click="testConnection">
+            {{ t("settings.data.sync.testConnection") }}
           </NButton>
-          <NButton
-            :loading="saving"
-            data-testid="sync-save-channel"
-            @click="saveChannel"
-          >
-            {{ t('settings.data.sync.saveChannel') }}
+          <NButton :loading="saving" data-testid="sync-save-channel" @click="saveChannel">
+            {{ t("settings.data.sync.saveChannel") }}
           </NButton>
         </NSpace>
       </NSpace>
 
       <!-- 检查点与新端加入（issue #864）：存量数据设备发布快照，全新设备引导加入。 -->
-      <NText strong>{{ t('settings.data.sync.checkpointTitle') }}</NText>
-      <NText depth="3" style="font-size: 12px">{{ t('settings.data.sync.checkpointHint') }}</NText>
+      <NText strong>{{ t("settings.data.sync.checkpointTitle") }}</NText>
+      <NText depth="3" style="font-size: 12px">{{ t("settings.data.sync.checkpointHint") }}</NText>
       <NSpace>
         <NButton
           :loading="publishing"
@@ -260,14 +241,14 @@ function formatSizeMb(bytes: number): string {
           data-testid="sync-publish-checkpoint"
           @click="publishCheckpoint"
         >
-          {{ t('settings.data.sync.publishCheckpoint') }}
+          {{ t("settings.data.sync.publishCheckpoint") }}
         </NButton>
         <NButton
           :disabled="!status?.channel_configured"
           data-testid="sync-bootstrap"
           @click="openBootstrap"
         >
-          {{ t('settings.data.sync.bootstrapTitle') }}
+          {{ t("settings.data.sync.bootstrapTitle") }}
         </NButton>
       </NSpace>
     </NSpace>
@@ -283,22 +264,22 @@ function formatSizeMb(bytes: number): string {
     >
       <NSpace vertical :size="12" data-testid="sync-bootstrap-modal">
         <NAlert type="warning" :show-icon="true" data-testid="sync-bootstrap-warning">
-          {{ t('settings.data.sync.bootstrapWarning') }}
+          {{ t("settings.data.sync.bootstrapWarning") }}
         </NAlert>
         <NSpace v-if="prechecking" vertical :size="8">
           <NSpin size="small" />
-          <NText depth="3">{{ t('settings.data.sync.bootstrapPrechecking') }}</NText>
+          <NText depth="3">{{ t("settings.data.sync.bootstrapPrechecking") }}</NText>
         </NSpace>
         <template v-else>
           <NAlert v-if="precheckError" type="error" :show-icon="true">
-            {{ t('settings.data.sync.bootstrapPrecheckFailed', { msg: precheckError }) }}
+            {{ t("settings.data.sync.bootstrapPrecheckFailed", { msg: precheckError }) }}
           </NAlert>
           <NAlert v-else-if="!checkpointInfo" type="info" :show-icon="true">
-            {{ t('settings.data.sync.bootstrapNotFound') }}
+            {{ t("settings.data.sync.bootstrapNotFound") }}
           </NAlert>
           <NText v-else data-testid="sync-bootstrap-found">
             {{
-              t('settings.data.sync.bootstrapFound', {
+              t("settings.data.sync.bootstrapFound", {
                 generation: checkpointInfo.generation,
                 size: formatSizeMb(checkpointInfo.size),
               })
@@ -320,7 +301,7 @@ function formatSizeMb(bytes: number): string {
             data-testid="sync-bootstrap-cancel"
             @click="bootstrapShow = false"
           >
-            {{ t('settings.data.sync.bootstrapCancel') }}
+            {{ t("settings.data.sync.bootstrapCancel") }}
           </NButton>
           <NButton
             type="warning"
@@ -329,7 +310,7 @@ function formatSizeMb(bytes: number): string {
             data-testid="sync-bootstrap-confirm"
             @click="confirmBootstrap"
           >
-            {{ t('settings.data.sync.bootstrapConfirm') }}
+            {{ t("settings.data.sync.bootstrapConfirm") }}
           </NButton>
         </NSpace>
       </NSpace>

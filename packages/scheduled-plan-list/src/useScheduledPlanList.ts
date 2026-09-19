@@ -1,11 +1,11 @@
-import { computed, readonly, ref } from 'vue'
-import type { ComputedRef, Ref } from 'vue'
-import { useMessage } from 'naive-ui'
-import { api } from '@ledger/api'
-import { useLoadable } from '@ledger/loadable'
-import { errorMessage } from '@ledger/utils/errors'
-import { t } from '@ledger/i18n'
-import { scheduledStatusLabel } from '@ledger/utils/scheduled'
+import { computed, readonly, ref } from "vue";
+import type { ComputedRef, Ref } from "vue";
+import { useMessage } from "naive-ui";
+import { api } from "@ledger/api";
+import { useLoadable } from "@ledger/loadable";
+import { errorMessage } from "@ledger/utils/errors";
+import { t } from "@ledger/i18n";
+import { scheduledStatusLabel } from "@ledger/utils/scheduled";
 import type {
   RecurrenceType,
   ScheduledKind,
@@ -13,7 +13,7 @@ import type {
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
-} from '@ledger/types'
+} from "@ledger/types";
 
 /**
  * ScheduledPlanList 计划清单深模块（ADR-0041，词汇表「ScheduledPlanList（计划清单）」）：
@@ -37,8 +37,8 @@ import type {
 
 /** 周期选项（标签现取）：三个页签新建表单下拉共用。 */
 export interface ScheduledRecurrenceOption {
-  label: string
-  value: RecurrenceType
+  label: string;
+  value: RecurrenceType;
 }
 
 /**
@@ -49,23 +49,23 @@ export interface ScheduledRecurrenceOption {
  */
 export function scheduledRecurrenceOptions(): ScheduledRecurrenceOption[] {
   const labelKeys: Record<RecurrenceType, string> = {
-    daily: 'scheduled.recurrence.daily',
-    weekly: 'scheduled.recurrence.weekly',
-    monthly: 'scheduled.recurrence.monthly',
-    yearly: 'scheduled.recurrence.yearly',
-  }
+    daily: "scheduled.recurrence.daily",
+    weekly: "scheduled.recurrence.weekly",
+    monthly: "scheduled.recurrence.monthly",
+    yearly: "scheduled.recurrence.yearly",
+  };
   return (Object.keys(labelKeys) as RecurrenceType[]).map((value) => ({
     value,
     label: t(labelKeys[value]),
-  }))
+  }));
 }
 
 const RECURRENCE_UNIT_KEY: Record<RecurrenceType, string> = {
-  daily: 'scheduled.recurrence.unitDaily',
-  weekly: 'scheduled.recurrence.unitWeekly',
-  monthly: 'scheduled.recurrence.unitMonthly',
-  yearly: 'scheduled.recurrence.unitYearly',
-}
+  daily: "scheduled.recurrence.unitDaily",
+  weekly: "scheduled.recurrence.unitWeekly",
+  monthly: "scheduled.recurrence.unitMonthly",
+  yearly: "scheduled.recurrence.unitYearly",
+};
 
 /**
  * 周期标签单源（清单「周期」列）：`interval = 1` →「每X」，否则「每N X」；
@@ -75,11 +75,11 @@ export function scheduledRecurrenceLabel(
   recurrenceType: RecurrenceType | string,
   interval: number,
 ): string {
-  const unitKey = RECURRENCE_UNIT_KEY[recurrenceType as RecurrenceType]
-  const unit = unitKey ? t(unitKey) : recurrenceType
+  const unitKey = RECURRENCE_UNIT_KEY[recurrenceType as RecurrenceType];
+  const unit = unitKey ? t(unitKey) : recurrenceType;
   return interval > 1
-    ? t('scheduled.recurrence.everyN', { n: interval, unit })
-    : t('scheduled.recurrence.every', { unit })
+    ? t("scheduled.recurrence.everyN", { n: interval, unit })
+    : t("scheduled.recurrence.every", { unit });
 }
 
 // ---------------------------------------------------------------------------
@@ -88,30 +88,30 @@ export function scheduledRecurrenceLabel(
 
 /** 一行 = 计划 + 形态扩展器产出的详情扩展。 */
 export interface ScheduledPlanRow<E> {
-  plan: ScheduledTransactionWithExt
+  plan: ScheduledTransactionWithExt;
   /** 详情命令失败：与「无数据」区分，不静默；渲染方式（下期「加载失败」/进度「加载失败」）由适配器决定。 */
-  detailFailed: boolean
+  detailFailed: boolean;
   /** 形态扩展：转账/订阅取最早 pending 期次，分期取完成期数/金额（由适配器扩展器定义）。 */
-  ext: E
+  ext: E;
 }
 
 /** 行操作描述符：适配器据此渲染操作列（纯数据，无组件引用）。 */
 export interface ScheduledPlanRowAction {
   /** 稳定键（适配器可作测试锚点前缀：op-detail / op-pause / op-resume / op-cancel；
    * op-edit 由订阅适配器自建描述符，spec #520）。 */
-  key: 'detail' | 'edit' | 'pause' | 'resume' | 'cancel'
-  label: string
+  key: "detail" | "edit" | "pause" | "resume" | "cancel";
+  label: string;
   /** 按 Plan Lifecycle 状态的可用性（后端语义见 ADR-0024，模块只消费不重定义）。 */
-  available: boolean
+  available: boolean;
   /** 非空 = 该动作需二次确认，此文案交适配器渲染确认弹层（各形态文案不同）。 */
-  confirm: string | null
-  run(): void
+  confirm: string | null;
+  run(): void;
 }
 
 /** 状态过滤选项（标签经全仓单源的 scheduledStatusLabel 词汇，不另造第二处映射）。 */
 export interface ScheduledPlanStatusOption {
-  key: ScheduledStatus
-  label: string
+  key: ScheduledStatus;
+  label: string;
 }
 
 /**
@@ -123,18 +123,18 @@ export interface ScheduledPlanStatusOption {
  * 键集以共享常量表达能力有无：转账/分期同含「已完成」，订阅不含——同集共用同一
  * 常量，避免复制漂移（与 #309 所治的「修一处漏一处」同源）。
  */
-const WITH_COMPLETED: readonly ScheduledStatus[] = ['active', 'paused', 'cancelled', 'completed']
-const WITHOUT_COMPLETED: readonly ScheduledStatus[] = ['active', 'paused', 'cancelled']
+const WITH_COMPLETED: readonly ScheduledStatus[] = ["active", "paused", "cancelled", "completed"];
+const WITHOUT_COMPLETED: readonly ScheduledStatus[] = ["active", "paused", "cancelled"];
 
 /** 键集只存状态 key，标签由 buildStatusFilterOptions 调用时现取（ADR-0049），切语言即时生效。 */
 const STATUS_FILTER_KEYS: Record<ScheduledKind, ReadonlyArray<ScheduledStatus>> = {
   scheduled_transfer: WITH_COMPLETED,
   subscription: WITHOUT_COMPLETED,
   installment: WITH_COMPLETED,
-}
+};
 
 function buildStatusFilterOptions(kind: ScheduledKind): ScheduledPlanStatusOption[] {
-  return STATUS_FILTER_KEYS[kind].map((key) => ({ key, label: scheduledStatusLabel(key) }))
+  return STATUS_FILTER_KEYS[kind].map((key) => ({ key, label: scheduledStatusLabel(key) }));
 }
 
 // ---------------------------------------------------------------------------
@@ -143,44 +143,41 @@ function buildStatusFilterOptions(kind: ScheduledKind): ScheduledPlanStatusOptio
 
 export interface UseScheduledPlanListOptions<E> {
   /** 计划形态（闭集：installment | subscription | scheduled_transfer）。 */
-  kind: ScheduledKind
+  kind: ScheduledKind;
   /**
    * 详情 → 行模型的形态扩展器：`detail = null` 表示详情命令失败，扩展器须返回
    * 该形态的「空值」扩展（转账/订阅：next = null；分期：计数与金额归 0）。
    */
-  expandDetail(
-    plan: ScheduledTransactionWithExt,
-    detail: ScheduledTransactionDetail | null,
-  ): E
+  expandDetail(plan: ScheduledTransactionWithExt, detail: ScheduledTransactionDetail | null): E;
   /** 取消确认文案 getter（三形态措辞各异，注入而非写死；确认弹层由适配器渲染）。 */
-  cancelConfirmText(): string
+  cancelConfirmText(): string;
   /** 生命周期变更（暂停/恢复/取消）成功并重拉后的回调（订阅注入花费面板刷新）。 */
-  onStatusChanged?(): void
+  onStatusChanged?(): void;
   /** 行详情动作（打开计划详情弹窗；弹窗组件留适配器）。 */
-  onOpenDetail(row: ScheduledPlanRow<E>): void
+  onOpenDetail(row: ScheduledPlanRow<E>): void;
 }
 
 export interface UseScheduledPlanListReturn<E> {
   /** 行列表（只读）：仅模块内 load 写入。 */
-  readonly rows: Readonly<Ref<readonly ScheduledPlanRow<E>[]>>
+  readonly rows: Readonly<Ref<readonly ScheduledPlanRow<E>[]>>;
   /** 清单加载中（只读）：归 NDataTable loading 消费。 */
-  readonly loading: Readonly<Ref<boolean>>
+  readonly loading: Readonly<Ref<boolean>>;
   /** 清单加载失败归一文案（只读）：error 是唯一成败判据，toast 之外的观察面。 */
-  readonly error: Readonly<Ref<string | null>>
+  readonly error: Readonly<Ref<string | null>>;
   /** 清单状态过滤值（只读），默认「进行中」；改动经 setStatusFilter。 */
-  readonly statusFilter: Readonly<Ref<ScheduledStatus>>
+  readonly statusFilter: Readonly<Ref<ScheduledStatus>>;
   /** 状态过滤后的行（纯前端过滤，不产生请求）。 */
-  readonly filteredRows: ComputedRef<ScheduledPlanRow<E>[]>
+  readonly filteredRows: ComputedRef<ScheduledPlanRow<E>[]>;
   /** 按形态的状态过滤选项集（computed：标签随界面语言即时切换）。 */
-  readonly statusFilterOptions: ComputedRef<ReadonlyArray<ScheduledPlanStatusOption>>
+  readonly statusFilterOptions: ComputedRef<ReadonlyArray<ScheduledPlanStatusOption>>;
   /** 清单加载/刷新：按形态拉取计划 + 逐行详情扩展；失败留旧行、error 置位。 */
-  load(): Promise<void>
+  load(): Promise<void>;
   /** 状态过滤意图入口。 */
-  setStatusFilter(status: ScheduledStatus): void
+  setStatusFilter(status: ScheduledStatus): void;
   /** Plan Lifecycle 变更：走既有状态命令，成功提示 + 重拉 + 回调；失败提示不重拉。 */
-  changeStatus(id: string, newStatus: ScheduledStatus): Promise<void>
+  changeStatus(id: string, newStatus: ScheduledStatus): Promise<void>;
   /** 行操作描述符构建：标签、按状态的可用性、确认文案与 run 动作。 */
-  rowActions(row: ScheduledPlanRow<E>): ScheduledPlanRowAction[]
+  rowActions(row: ScheduledPlanRow<E>): ScheduledPlanRowAction[];
 }
 
 /**
@@ -191,17 +188,17 @@ export interface UseScheduledPlanListReturn<E> {
 export function useScheduledPlanList<E>(
   options: UseScheduledPlanListOptions<E>,
 ): UseScheduledPlanListReturn<E> {
-  const { kind, expandDetail, cancelConfirmText, onStatusChanged, onOpenDetail } = options
-  const message = useMessage()
+  const { kind, expandDetail, cancelConfirmText, onStatusChanged, onOpenDetail } = options;
+  const message = useMessage();
 
-  const rows = ref([]) as Ref<ScheduledPlanRow<E>[]>
-  const statusFilter = ref<ScheduledStatus>('active')
+  const rows = ref([]) as Ref<ScheduledPlanRow<E>[]>;
+  const statusFilter = ref<ScheduledStatus>("active");
 
   const filteredRows = computed(() =>
     rows.value.filter((r) => r.plan.core.status === statusFilter.value),
-  )
+  );
 
-  const statusFilterOptions = computed(() => buildStatusFilterOptions(kind))
+  const statusFilterOptions = computed(() => buildStatusFilterOptions(kind));
 
   /**
    * 清单加载收编 Loadable（issue #1008 / ADR-0040）：loading 置收、竞态裁决与
@@ -210,42 +207,42 @@ export function useScheduledPlanList<E>(
    * 单行详情失败标记 detailFailed 不拖垮整单。
    */
   const { loading, error, run } = useLoadable(async (): Promise<ScheduledPlanRow<E>[]> => {
-    const plans = (await api.listScheduledTransactions()).filter((p) => p.core.kind === kind)
+    const plans = (await api.listScheduledTransactions()).filter((p) => p.core.kind === kind);
     return Promise.all(
       plans.map(async (p): Promise<ScheduledPlanRow<E>> => {
         try {
-          const detail = await api.getScheduledTransactionDetail(p.core.id)
-          return { plan: p, detailFailed: false, ext: expandDetail(p, detail) }
+          const detail = await api.getScheduledTransactionDetail(p.core.id);
+          return { plan: p, detailFailed: false, ext: expandDetail(p, detail) };
         } catch {
-          return { plan: p, detailFailed: true, ext: expandDetail(p, null) }
+          return { plan: p, detailFailed: true, ext: expandDetail(p, null) };
         }
       }),
-    )
-  })
+    );
+  });
 
   async function load() {
-    const loaded = await run()
-    if (loaded !== null) rows.value = loaded
+    const loaded = await run();
+    if (loaded !== null) rows.value = loaded;
   }
 
   function setStatusFilter(status: ScheduledStatus) {
-    statusFilter.value = status
+    statusFilter.value = status;
   }
 
   async function changeStatus(id: string, newStatus: ScheduledStatus) {
     try {
-      await api.updateScheduledTransactionStatus({ id, new_status: newStatus })
+      await api.updateScheduledTransactionStatus({ id, new_status: newStatus });
       message.success(
-        newStatus === 'paused'
-          ? t('scheduled.status.paused')
-          : newStatus === 'active'
-            ? t('scheduled.toast.resumed')
-            : t('scheduled.status.cancelled'),
-      )
-      await load()
-      onStatusChanged?.()
+        newStatus === "paused"
+          ? t("scheduled.status.paused")
+          : newStatus === "active"
+            ? t("scheduled.toast.resumed")
+            : t("scheduled.status.cancelled"),
+      );
+      await load();
+      onStatusChanged?.();
     } catch (e) {
-      message.error(t('scheduled.toast.operationFailed', { message: errorMessage(e) }))
+      message.error(t("scheduled.toast.operationFailed", { message: errorMessage(e) }));
     }
   }
 
@@ -256,38 +253,38 @@ export function useScheduledPlanList<E>(
    * 标签与确认文案调用时经 t() 现取（适配器在渲染中调用本函数，切语言即时生效）。
    */
   function rowActions(row: ScheduledPlanRow<E>): ScheduledPlanRowAction[] {
-    const id = row.plan.core.id
-    const status = row.plan.core.status
+    const id = row.plan.core.id;
+    const status = row.plan.core.status;
     return [
       {
-        key: 'detail',
-        label: t('scheduled.action.detail'),
+        key: "detail",
+        label: t("scheduled.action.detail"),
         available: true,
         confirm: null,
         run: () => onOpenDetail(row),
       },
       {
-        key: 'pause',
-        label: t('scheduled.action.pause'),
-        available: status === 'active',
+        key: "pause",
+        label: t("scheduled.action.pause"),
+        available: status === "active",
         confirm: null,
-        run: () => void changeStatus(id, 'paused'),
+        run: () => void changeStatus(id, "paused"),
       },
       {
-        key: 'resume',
-        label: t('scheduled.action.resume'),
-        available: status === 'paused',
+        key: "resume",
+        label: t("scheduled.action.resume"),
+        available: status === "paused",
         confirm: null,
-        run: () => void changeStatus(id, 'active'),
+        run: () => void changeStatus(id, "active"),
       },
       {
-        key: 'cancel',
-        label: t('scheduled.action.cancel'),
-        available: status === 'active' || status === 'paused',
+        key: "cancel",
+        label: t("scheduled.action.cancel"),
+        available: status === "active" || status === "paused",
         confirm: cancelConfirmText(),
-        run: () => void changeStatus(id, 'cancelled'),
+        run: () => void changeStatus(id, "cancelled"),
       },
-    ]
+    ];
   }
 
   return {
@@ -301,7 +298,7 @@ export function useScheduledPlanList<E>(
     setStatusFilter,
     changeStatus,
     rowActions,
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -316,7 +313,8 @@ export function earliestPendingOccurrence(
   detail: ScheduledTransactionDetail,
 ): ScheduledTransactionOccurrence | null {
   return (
-    [...detail.pending_occurrences].sort((a, b) => a.scheduled_date.localeCompare(b.scheduled_date))[0] ??
-    null
-  )
+    [...detail.pending_occurrences].sort((a, b) =>
+      a.scheduled_date.localeCompare(b.scheduled_date),
+    )[0] ?? null
+  );
 }

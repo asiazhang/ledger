@@ -42,46 +42,46 @@
 // （夹具按 SCAN_ROOTS 布局摆放）：bun scripts/check-async-guards.ts [repo-root]
 // 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job）。
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
-import { pathToFileURL, fileURLToPath } from 'node:url'
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 /** 规则 1 形态：手搓竞态序号（`\w*` 含裸名 seq；`\b` 防吞后缀，seqNum 不在检测面） */
-const HAND_ROLLED_SEQ_PATTERN = /\blet\s+\w*[Ss]eq\s*=\s*0\b/
+const HAND_ROLLED_SEQ_PATTERN = /\blet\s+\w*[Ss]eq\s*=\s*0\b/;
 
 /** 规则 1 唯一合法住址（相对仓库根路径）：useLoadable 接缝本体（#1008 收编后的
  *  竞态守卫单点，其内部 `let seq = 0` 是实现细节而非手搓守卫；#1318 随包搬迁，
  *  坐标同步为包内路径）。导出供包装测试同源引用（TOAST_BASELINE 同款纪律，
  *  单一事实源无双源漂移）。 */
-export const SEQ_SEAM_FILE = 'packages/loadable/src/useLoadable.ts'
+export const SEQ_SEAM_FILE = "packages/loadable/src/useLoadable.ts";
 
 /** 扫描根清单（相对仓库根）：src 应用壳 + 全部 packages 子包 src 树——登记面即
  *  扫描面，清单完整性由磁盘自证兜底（见 collectUnregisteredPackageSrcRoots）：
  *  有 src 的子包未登记即红，新包漏登不再静默逃逸（#1467）。 */
 const SCAN_ROOTS: readonly string[] = [
-  'src',
-  'packages/api/src',
-  'packages/field-errors/src',
-  'packages/i18n/src',
-  'packages/loadable/src',
-  'packages/modal-intent/src',
-  'packages/money/src',
-  'packages/row-context-menu/src',
-  'packages/scheduled-plan-list/src',
-  'packages/storage/src',
-  'packages/test-support/src',
-  'packages/theme/src',
-  'packages/transaction-modal-state/src',
-  'packages/types/src',
-  'packages/ui-kit/src',
-  'packages/utils/src',
-  'packages/window-tier/src',
-]
+  "src",
+  "packages/api/src",
+  "packages/field-errors/src",
+  "packages/i18n/src",
+  "packages/loadable/src",
+  "packages/modal-intent/src",
+  "packages/money/src",
+  "packages/row-context-menu/src",
+  "packages/scheduled-plan-list/src",
+  "packages/storage/src",
+  "packages/test-support/src",
+  "packages/theme/src",
+  "packages/transaction-modal-state/src",
+  "packages/types/src",
+  "packages/ui-kit/src",
+  "packages/utils/src",
+  "packages/window-tier/src",
+];
 
 /** 规则 2 匹配窗口上限（行，t( 起算）：errorMessage 须落在窗口内——折行/格式化
  *  不藏违规，无界贪婪匹配则把邻近无关 errorMessage 误收入窗（#1467 限定最大跨度）。
  *  导出供包装测试同源引用（SEQ_SEAM_FILE 同款纪律）。 */
-export const TOAST_WINDOW_LINES = 5
+export const TOAST_WINDOW_LINES = 5;
 
 /** 规则 2 形态：catch 内直弹 toast 模板（跨行窗口；errorMessage 为 utils/errors
  *  统一错误提取）。`\s*` 容忍 ( 与 t( 之间的空白（含换行，无界——既有语义，格式
@@ -92,8 +92,8 @@ export const TOAST_WINDOW_LINES = 5
  *  逐处计数不互吞；g 位供 matchAll 逐处计数。 */
 const CATCH_TOAST_PATTERN = new RegExp(
   `message\\.error\\(\\s*t\\((?:[^\\n]*\\n){0,${TOAST_WINDOW_LINES}}?[^\\n]*errorMessage`,
-  'g',
-)
+  "g",
+);
 
 /**
  * 规则 2 存量基线（#1039 交付时点实测快照：61 处 / 31 文件；键相对扫描根、posix
@@ -106,50 +106,50 @@ const CATCH_TOAST_PATTERN = new RegExp(
  */
 export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   // #1159 起源码按域归位，域文件键为域目录坐标 src/<域>/
-  'src/item/AddItemForm.vue': 1,
-  'src/physical-asset/PhysicalAssetDisposeModal.vue': 1,
-  'src/physical-asset/PhysicalAssetFormModal.vue': 1,
-  'src/physical-asset/PhysicalAssetValuationModal.vue': 1,
-  'src/policy/PolicyAgreementSection.vue': 2,
-  'src/policy/PolicyFormModal.vue': 2,
-  'src/categories/CategoryAddForm.vue': 1,
-  'src/categories/CategoryEditModal.vue': 1,
-  'src/categories/CategoryTree.vue': 2,
-  'src/scheduled/PlanDetailModal.vue': 2,
-  'src/scheduled/SubscriptionSpendPanel.vue': 1,
-  'src/scheduled/SubscriptionsPane.vue': 1,
-  'src/settings/AboutSettings.vue': 1,
-  'src/settings/BaseCurrencySettings.vue': 2,
-  'src/settings/DataLocationSettings.vue': 3,
-  'src/settings/LogSettings.vue': 2,
-  'src/settings/SearchDataSettings.vue': 1,
-  'src/backup/useBackup.ts': 6,
-  'src/transaction/useRefundForm.ts': 1,
-  'src/backup/useRestoreFromFile.ts': 2,
-  'src/scheduled/useScheduledPlanForm.ts': 1,
-  'packages/transaction-modal-state/src/useTransactionModalState.ts': 2,
-  'src/views/AccountsView.vue': 4,
-  'src/views/AiPromptView.vue': 2,
-  'src/views/BudgetView.vue': 3,
-  'src/views/ItemsView.vue': 4,
-  'src/views/PoliciesView.vue': 1,
-  'src/views/TransactionsView.vue': 2,
+  "src/item/AddItemForm.vue": 1,
+  "src/physical-asset/PhysicalAssetDisposeModal.vue": 1,
+  "src/physical-asset/PhysicalAssetFormModal.vue": 1,
+  "src/physical-asset/PhysicalAssetValuationModal.vue": 1,
+  "src/policy/PolicyAgreementSection.vue": 2,
+  "src/policy/PolicyFormModal.vue": 2,
+  "src/categories/CategoryAddForm.vue": 1,
+  "src/categories/CategoryEditModal.vue": 1,
+  "src/categories/CategoryTree.vue": 2,
+  "src/scheduled/PlanDetailModal.vue": 2,
+  "src/scheduled/SubscriptionSpendPanel.vue": 1,
+  "src/scheduled/SubscriptionsPane.vue": 1,
+  "src/settings/AboutSettings.vue": 1,
+  "src/settings/BaseCurrencySettings.vue": 2,
+  "src/settings/DataLocationSettings.vue": 3,
+  "src/settings/LogSettings.vue": 2,
+  "src/settings/SearchDataSettings.vue": 1,
+  "src/backup/useBackup.ts": 6,
+  "src/transaction/useRefundForm.ts": 1,
+  "src/backup/useRestoreFromFile.ts": 2,
+  "src/scheduled/useScheduledPlanForm.ts": 1,
+  "packages/transaction-modal-state/src/useTransactionModalState.ts": 2,
+  "src/views/AccountsView.vue": 4,
+  "src/views/AiPromptView.vue": 2,
+  "src/views/BudgetView.vue": 3,
+  "src/views/ItemsView.vue": 4,
+  "src/views/PoliciesView.vue": 1,
+  "src/views/TransactionsView.vue": 2,
   // #1467 跨行窗口扩面使现役投资表单保存失败路径（多行形态）显形：按基线纪律
   // 入册（存量收编仍属 #1039 专项，本条只是新检测面下的全等配套）
-  'src/investment/useInvestmentForm.ts': 1,
+  "src/investment/useInvestmentForm.ts": 1,
   // #1322 起计划清单接缝随包出壳，基线键改挂仓库根包内路径（值不变）
-  'packages/scheduled-plan-list/src/useScheduledPlanList.ts': 1,
-  'packages/ui-kit/src/NoteCopyButton.vue': 1,
-}
+  "packages/scheduled-plan-list/src/useScheduledPlanList.ts": 1,
+  "packages/ui-kit/src/NoteCopyButton.vue": 1,
+};
 
 /** 行首注释形态：整行跳过/置空（行内尾注与多行块注释内部行不可达，靠评审兜底） */
 function isCommentLine(trimmed: string): boolean {
   return (
-    trimmed.startsWith('//') ||
-    trimmed.startsWith('/*') ||
-    trimmed.startsWith('*') ||
-    trimmed.startsWith('<!--')
-  )
+    trimmed.startsWith("//") ||
+    trimmed.startsWith("/*") ||
+    trimmed.startsWith("*") ||
+    trimmed.startsWith("<!--")
+  );
 }
 
 /** 注释行置空（保留换行结构）：行首注释行不作为靶形态素材——注释提及靶形态不误报；
@@ -157,88 +157,84 @@ function isCommentLine(trimmed: string): boolean {
  *  仍占窗口行数（不隔断窗口、也不作素材） */
 function blankCommentLines(source: string): string {
   return source
-    .split('\n')
-    .map((raw) => (isCommentLine(raw.trim()) ? '' : raw))
-    .join('\n')
+    .split("\n")
+    .map((raw) => (isCommentLine(raw.trim()) ? "" : raw))
+    .join("\n");
 }
 
 interface SourceFileRef {
-  abs: string
-  rel: string
+  abs: string;
+  rel: string;
 }
 
 /** 递归收集扫描根下全部 .ts/.vue 文件（rel 相对仓库根，按相对路径排序保证输出确定；
  *  目录不存在时返回空集——缺口由住址可达检查兜底） */
 function collectSourceFiles(root: string, repoRoot: string): SourceFileRef[] {
-  const out: SourceFileRef[] = []
+  const out: SourceFileRef[] = [];
   const visit = (dir: string): void => {
-    if (!existsSync(dir)) return
+    if (!existsSync(dir)) return;
     for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
       a.name.localeCompare(b.name),
     )) {
-      const abs = join(dir, entry.name)
-      if (entry.isDirectory()) visit(abs)
-      else if (entry.name.endsWith('.ts') || entry.name.endsWith('.vue')) {
-        const rel = relative(repoRoot, abs).split('\\').join('/')
-        out.push({ abs, rel })
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) visit(abs);
+      else if (entry.name.endsWith(".ts") || entry.name.endsWith(".vue")) {
+        const rel = relative(repoRoot, abs).split("\\").join("/");
+        out.push({ abs, rel });
       }
     }
-  }
-  visit(root)
-  return out
+  };
+  visit(root);
+  return out;
 }
 
 interface LineHit {
-  line: number
-  text: string
+  line: number;
+  text: string;
 }
 
 /** 行级扫描单文件：返回命中靶形态的行号（1 起算）与原文行；行首注释行跳过 */
 function scanLines(source: string, pattern: RegExp): LineHit[] {
-  const hits: LineHit[] = []
-  source.split('\n').forEach((raw, i) => {
-    const trimmed = raw.trim()
-    if (isCommentLine(trimmed)) return
-    if (pattern.test(raw)) hits.push({ line: i + 1, text: trimmed })
-  })
-  return hits
+  const hits: LineHit[] = [];
+  source.split("\n").forEach((raw, i) => {
+    const trimmed = raw.trim();
+    if (isCommentLine(trimmed)) return;
+    if (pattern.test(raw)) hits.push({ line: i + 1, text: trimmed });
+  });
+  return hits;
 }
 
 /** 跨行窗口扫描单文件（规则 2）：注释行置空后整窗匹配，返回命中处起始行号
  *  （1 起算；matchAll 非重叠逐处计数，一处跨行调用计 1） */
 function scanCrossLine(source: string, pattern: RegExp): number[] {
-  const blanked = blankCommentLines(source)
-  const lines: number[] = []
+  const blanked = blankCommentLines(source);
+  const lines: number[] = [];
   for (const m of blanked.matchAll(pattern)) {
-    const start = m.index ?? 0
-    lines.push(blanked.slice(0, start).split('\n').length)
+    const start = m.index ?? 0;
+    lines.push(blanked.slice(0, start).split("\n").length);
   }
-  return lines
+  return lines;
 }
 
 /** 扫描根磁盘自证（#1467）：packages 子包源码目录（packages/<name>/src 存在）
  *  必须全部登记进 SCAN_ROOTS——新包静默逃逸扫描即红（登记清单漂移 fail loud） */
 function collectUnregisteredPackageSrcRoots(repoRoot: string): string[] {
-  const packagesDir = join(repoRoot, 'packages')
-  if (!existsSync(packagesDir)) return []
+  const packagesDir = join(repoRoot, "packages");
+  if (!existsSync(packagesDir)) return [];
   return readdirSync(packagesDir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
     .map((e) => `packages/${e.name}/src`)
     .filter((rel) => existsSync(join(repoRoot, rel)))
-    .filter((rel) => !SCAN_ROOTS.includes(rel))
+    .filter((rel) => !SCAN_ROOTS.includes(rel));
 }
 
 function main(): void {
-  const repoRoot = process.argv[2] ?? fileURLToPath(new URL('..', import.meta.url))
-  const files = SCAN_ROOTS.flatMap((root) =>
-    collectSourceFiles(join(repoRoot, root), repoRoot),
-  )
+  const repoRoot = process.argv[2] ?? fileURLToPath(new URL("..", import.meta.url));
+  const files = SCAN_ROOTS.flatMap((root) => collectSourceFiles(join(repoRoot, root), repoRoot));
 
-  const problems: string[] = []
+  const problems: string[] = [];
   if (files.length === 0) {
-    problems.push(
-      '✗ 扫描根提不出任何 .ts/.vue 源文件——目录指错或源码整体漂移，拒绝以空集假绿通过',
-    )
+    problems.push("✗ 扫描根提不出任何 .ts/.vue 源文件——目录指错或源码整体漂移，拒绝以空集假绿通过");
   }
 
   // 规则 1 前置：唯一合法住址必须可达——接缝文件删除/搬迁后未同步 SEQ_SEAM_FILE
@@ -247,7 +243,7 @@ function main(): void {
     problems.push(
       `✗ 竞态守卫唯一合法住址不可达：${SEQ_SEAM_FILE}——useLoadable 接缝文件删除/搬迁` +
         `后未同步 SEQ_SEAM_FILE 与 SCAN_ROOTS（清单漂移 fail loud，#1039 规则 1 / #1318 随包搬迁）`,
-    )
+    );
   }
 
   // 扫描根磁盘自证：子包源码目录未登记进 SCAN_ROOTS 即红（#1467，堵新包静默
@@ -256,84 +252,84 @@ function main(): void {
     problems.push(
       `✗ packages 子包源码目录未登记扫描根：${rel}——异步守门扫描面按 SCAN_ROOTS ` +
         `清单收口，新包源码目录落盘即须同步登记（磁盘一致性自证，#1467）`,
-    )
+    );
   }
 
   // 规则 1：手搓竞态序号，硬零容忍（唯一合法住址豁免）
-  let seqHits = 0
+  let seqHits = 0;
   // 规则 2：按文件计数，与基线全等校验
-  const toastCounts = new Map<string, number>()
-  const toastLinesByFile = new Map<string, string[]>()
+  const toastCounts = new Map<string, number>();
+  const toastLinesByFile = new Map<string, string[]>();
   for (const f of files) {
-    const source = readFileSync(f.abs, 'utf8')
+    const source = readFileSync(f.abs, "utf8");
     if (f.rel !== SEQ_SEAM_FILE) {
       for (const hit of scanLines(source, HAND_ROLLED_SEQ_PATTERN)) {
-        seqHits++
+        seqHits++;
         problems.push(
           `✗ 手搓竞态序号：${f.rel}:${hit.line}（${hit.text}）\n` +
             `    竞态守卫一律走 useLoadable 接缝（#1008：后发覆盖先发、迟到结果作废与\n` +
             `    loading/错误收尾一体化）；手搓序号已归零，此处为回潮——唯一合法住址 ` +
             `${SEQ_SEAM_FILE}（接缝本体，#1039 规则 1）`,
-        )
+        );
       }
     }
-    const toastHitLines = scanCrossLine(source, CATCH_TOAST_PATTERN)
+    const toastHitLines = scanCrossLine(source, CATCH_TOAST_PATTERN);
     if (toastHitLines.length > 0) {
-      toastCounts.set(f.rel, toastHitLines.length)
-      toastLinesByFile.set(f.rel, toastHitLines.map(String))
+      toastCounts.set(f.rel, toastHitLines.length);
+      toastLinesByFile.set(f.rel, toastHitLines.map(String));
     }
   }
 
   // 规则 2：现计数 vs 基线，全等校验（新增红 / 收缩未同步红 / 条目不可达红）
-  let toastMismatches = 0
-  const scannedToastTotal = [...toastCounts.values()].reduce((a, b) => a + b, 0)
+  let toastMismatches = 0;
+  const scannedToastTotal = [...toastCounts.values()].reduce((a, b) => a + b, 0);
   for (const f of files) {
-    const current = toastCounts.get(f.rel) ?? 0
-    const baseline = TOAST_BASELINE[f.rel] ?? 0
+    const current = toastCounts.get(f.rel) ?? 0;
+    const baseline = TOAST_BASELINE[f.rel] ?? 0;
     if (current > baseline) {
-      toastMismatches++
+      toastMismatches++;
       problems.push(
         `✗ 直弹 toast 回潮/新增：${f.rel} 现 ${current} 处 > 基线 ${baseline} 处（行 ` +
-          `${(toastLinesByFile.get(f.rel) ?? []).join('、')}）——错误反馈走 useLoadable ` +
+          `${(toastLinesByFile.get(f.rel) ?? []).join("、")}）——错误反馈走 useLoadable ` +
           `error 通道（showErrorToast 单点，#1008）；存量收编属专项范围（#1039 Out of Scope）`,
-      )
+      );
     } else if (current < baseline) {
-      toastMismatches++
+      toastMismatches++;
       problems.push(
         `✗ 直弹 toast 基线待收缩：${f.rel} 现 ${current} 处 < 基线 ${baseline} 处——` +
           `存量已收编，请同步下调/删除 scripts/check-async-guards.ts 的 TOAST_BASELINE 条目` +
           `（基线即规格、只减不增、不留陈目，#1039 规则 2）；若未做收编，先排查是否` +
           `多行化/格式漂移使靶形态移出匹配窗口（不可见 ≠ 已收编，#1467），确认非漂移再下调`,
-      )
+      );
     }
   }
-  const scannedRels = new Set(files.map((f) => f.rel))
+  const scannedRels = new Set(files.map((f) => f.rel));
   for (const rel of Object.keys(TOAST_BASELINE)) {
     if (!scannedRels.has(rel)) {
-      toastMismatches++
+      toastMismatches++;
       problems.push(
         `✗ toast 基线条目不可达：${rel}——文件删除/改名后未同步 TOAST_BASELINE` +
           `（清单漂移 fail loud，#1039 规则 2）`,
-      )
+      );
     }
   }
 
   if (problems.length > 0) {
-    for (const p of problems) console.error(p)
+    for (const p of problems) console.error(p);
     console.error(
       `❌ 异步守门失败：手搓竞态序号 ${seqHits} 处（唯一合法住址 ${SEQ_SEAM_FILE}）· ` +
         `toast 基线失配 ${toastMismatches} 处（基线 ${Object.keys(TOAST_BASELINE).length} 文件）` +
         `——手搓异步守卫一律走 Loadable（#1008 / #1039，ADR-0040 当点一处 → 走查三处的教训）`,
-    )
-    process.exit(1)
+    );
+    process.exit(1);
   }
   console.log(
     `✅ 异步守门：${files.length} 个前端源文件 · 手搓竞态序号 0（唯一合法住址 ${SEQ_SEAM_FILE}）· ` +
       `catch 直弹 toast 基线全等（${toastCounts.size} 文件 ${scannedToastTotal} 处，只减不增，#1039）`,
-  )
+  );
 }
 
 // 仅直接运行时执行 main；被测试 import 时只取导出的基线清单（夹具派生单一事实源）。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main()
+  main();
 }
