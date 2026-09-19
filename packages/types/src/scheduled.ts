@@ -1,106 +1,106 @@
-export type ScheduledKind = 'installment' | 'subscription' | 'scheduled_transfer'
-export type ScheduledStatus = 'active' | 'paused' | 'cancelled' | 'completed'
-export type RecurrenceType = 'daily' | 'weekly' | 'monthly' | 'yearly'
+export type ScheduledKind = "installment" | "subscription" | "scheduled_transfer";
+export type ScheduledStatus = "active" | "paused" | "cancelled" | "completed";
+export type RecurrenceType = "daily" | "weekly" | "monthly" | "yearly";
 
 export interface ScheduledTransaction {
-  id: string
-  kind: ScheduledKind
-  status: ScheduledStatus
-  account_id: string
-  category_id: string | null
-  amount_cents: number
-  currency_code: string
-  recurrence_type: RecurrenceType
-  recurrence_interval: number
-  recurrence_day: number | null
-  start_date: string
-  note: string | null
-  created_at: string
-  updated_at: string
-  version: number
-  device_id: string
-  is_deleted: boolean
+  id: string;
+  kind: ScheduledKind;
+  status: ScheduledStatus;
+  account_id: string;
+  category_id: string | null;
+  amount_cents: number;
+  currency_code: string;
+  recurrence_type: RecurrenceType;
+  recurrence_interval: number;
+  recurrence_day: number | null;
+  start_date: string;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  device_id: string;
+  is_deleted: boolean;
 }
 
 export interface ScheduledTransactionOccurrence {
-  id: string
-  scheduled_transaction_id: string
-  scheduled_date: string
-  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
-  transaction_id: string | null
-  amount_cents: number
-  created_at: string
-  updated_at: string
-  version: number
-  device_id: string
-  is_deleted: boolean
+  id: string;
+  scheduled_transaction_id: string;
+  scheduled_date: string;
+  status: "pending" | "processing" | "completed" | "failed" | "cancelled";
+  transaction_id: string | null;
+  amount_cents: number;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  device_id: string;
+  is_deleted: boolean;
 }
 
 export interface ScheduledTransactionWithExt {
-  core: ScheduledTransaction
+  core: ScheduledTransaction;
   /** 商户 id（installment/subscription 可携带；scheduled_transfer 恒为 null） */
-  merchant_id: string | null
+  merchant_id: string | null;
   /** 保单 id（仅订阅形态可携带，issue #362 保费协议；其余形态恒为 null） */
-  policy_id: string | null
-  total_amount_cents: number | null
-  total_occurrences: number | null
-  to_account_id: string | null
+  policy_id: string | null;
+  total_amount_cents: number | null;
+  total_occurrences: number | null;
+  to_account_id: string | null;
 }
 
 export interface ScheduledTransactionDetail {
-  core: ScheduledTransaction
-  extension: InstallmentPlan | SubscriptionPlan | ScheduledTransferPlan
-  pending_occurrences: ScheduledTransactionOccurrence[]
-  completed_occurrences: number
+  core: ScheduledTransaction;
+  extension: InstallmentPlan | SubscriptionPlan | ScheduledTransferPlan;
+  pending_occurrences: ScheduledTransactionOccurrence[];
+  completed_occurrences: number;
   /** 已完成期次金额合计（issue #204）：分期「已还金额」实时汇总，不持久化 */
-  completed_amount_cents: number
+  completed_amount_cents: number;
   /** 全量期次（issue #205）：含全部状态，按日期升序——期次详情弹窗唯一数据源；计数字段为既有契约保留 */
-  occurrences: ScheduledTransactionOccurrence[]
+  occurrences: ScheduledTransactionOccurrence[];
 }
 
 export interface InstallmentPlan {
-  scheduled_transaction_id: string
-  merchant_id: string | null
-  total_amount_cents: number
-  total_occurrences: number
+  scheduled_transaction_id: string;
+  merchant_id: string | null;
+  total_amount_cents: number;
+  total_occurrences: number;
 }
 
 export interface SubscriptionPlan {
-  scheduled_transaction_id: string
-  merchant_id: string | null
+  scheduled_transaction_id: string;
+  merchant_id: string | null;
   /** 保单引用（issue #362）：保费协议持保单引用，1 张保单可对应历史多段协议；普通订阅恒 null */
-  policy_id: string | null
+  policy_id: string | null;
 }
 
 export interface ScheduledTransferPlan {
-  scheduled_transaction_id: string
-  to_account_id: string
-  total_occurrences: number | null
+  scheduled_transaction_id: string;
+  to_account_id: string;
+  total_occurrences: number | null;
 }
 
 export interface CreateScheduledInput {
-  kind: ScheduledKind
-  account_id: string
-  category_id?: string | null
-  amount_cents: number
-  currency_code: string
-  recurrence_type: RecurrenceType
-  recurrence_interval: number
-  recurrence_day?: number | null
-  start_date: string
-  note?: string | null
+  kind: ScheduledKind;
+  account_id: string;
+  category_id?: string | null;
+  amount_cents: number;
+  currency_code: string;
+  recurrence_type: RecurrenceType;
+  recurrence_interval: number;
+  recurrence_day?: number | null;
+  start_date: string;
+  note?: string | null;
   /** 商户 id（installment/subscription 可携带；scheduled_transfer 后端拒绝携带） */
-  merchant_id?: string | null
+  merchant_id?: string | null;
   /** 保单 id（仅订阅可携带，issue #362；分期/定时转账后端拒绝携带；软删保单不可被新协议选择） */
-  policy_id?: string | null
-  total_amount_cents?: number | null
-  total_occurrences?: number | null
-  to_account_id?: string | null
+  policy_id?: string | null;
+  total_amount_cents?: number | null;
+  total_occurrences?: number | null;
+  to_account_id?: string | null;
 }
 
 export interface UpdateStatusInput {
-  id: string
-  new_status: ScheduledStatus
+  id: string;
+  new_status: ScheduledStatus;
 }
 
 /**
@@ -109,18 +109,18 @@ export interface UpdateStatusInput {
  * 请求一旦携带即被后端显式拒绝——改价 = 取消旧计划 + 新建。
  */
 export interface UpdateSubscriptionInput {
-  id: string
-  account_id: string
-  category_id?: string | null
-  note?: string | null
+  id: string;
+  account_id: string;
+  category_id?: string | null;
+  note?: string | null;
   /** 商户 id（issue #190）：可改商户，编辑只影响未来期次 */
-  merchant_id?: string | null
-  amount_cents?: number
-  total_amount_cents?: number
+  merchant_id?: string | null;
+  amount_cents?: number;
+  total_amount_cents?: number;
 }
 
 export interface ExecuteOccurrenceInput {
-  occurrence_id: string
+  occurrence_id: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,42 +129,42 @@ export interface ExecuteOccurrenceInput {
 
 /** 逐订阅行：计划基础信息 + 该订阅本月/本年实际花费（本位币）。 */
 export interface SubscriptionSpendRow {
-  plan_id: string
-  note: string | null
+  plan_id: string;
+  note: string | null;
   /** 商户名（后端左联 merchants 现名）：改名即时生效，软删后历史计划照常显示 */
-  merchant_name: string | null
+  merchant_name: string | null;
   /** 计划状态；取消/暂停不影响其历史实际花费 */
-  status: ScheduledStatus
+  status: ScheduledStatus;
   /** 每期金额（计划币种，原始口径） */
-  amount_cents: number
-  currency_code: string
+  amount_cents: number;
+  currency_code: string;
   /** 该订阅本月实际花费（本位币，分） */
-  this_month_native_cents: number
+  this_month_native_cents: number;
   /** 该订阅本年实际花费（本位币，分） */
-  this_year_native_cents: number
+  this_year_native_cents: number;
 }
 
 /** 单个日历月的订阅实际花费（本位币，分）。 */
 export interface SubscriptionMonthSpend {
   /** 日历月，`YYYY-MM` */
-  month: string
-  native_cents: number
+  month: string;
+  native_cents: number;
 }
 
 /** `subscription_spend_overview` 命令返回的订阅花费总览（本位币口径，单位：分）。 */
 export interface SubscriptionSpendOverview {
   /** 折算基准币种（全局默认币种） */
-  native_currency: string
+  native_currency: string;
   /** 本月实际花费合计（分） */
-  this_month_native_cents: number
+  this_month_native_cents: number;
   /** 本年实际花费合计（分） */
-  this_year_native_cents: number
+  this_year_native_cents: number;
   /** 过去 12 个日历月逐月实际花费（含当月，旧→新，无扣款月补 0） */
-  months: SubscriptionMonthSpend[]
+  months: SubscriptionMonthSpend[];
   /** 逐订阅行（含已取消/暂停计划） */
-  rows: SubscriptionSpendRow[]
+  rows: SubscriptionSpendRow[];
   /** 折算月成本合计（分）：只统计 active 计划，系数收口在后端（issue #161，ADR-0023） */
-  projected_month_native_cents: number
+  projected_month_native_cents: number;
   /** 折算年成本合计（分）= 折算月成本 × 12；纯展示，不落库、不进流水与预算 */
-  projected_year_native_cents: number
+  projected_year_native_cents: number;
 }

@@ -1,5 +1,5 @@
-import { computed, onScopeDispose, ref } from 'vue'
-import type { ComputedRef } from 'vue'
+import { computed, onScopeDispose, ref } from "vue";
+import type { ComputedRef } from "vue";
 
 /**
  * 窗口分级（Window Tier，ADR-0088 决策 2 / 词汇表「窗口分级」）：宽度轴唯一事实源。
@@ -13,13 +13,13 @@ import type { ComputedRef } from 'vue'
  * `__WINDOW_TIER_BREAKPOINT_PX__` 占位符，由 vite.config.ts 替换为本值，
  * 杜绝第二处魔法数字。
  */
-export const WINDOW_TIER_BREAKPOINT_PX = 840
+export const WINDOW_TIER_BREAKPOINT_PX = 840;
 
 /** 桌面档媒体查询：由唯一断点常量派生（≥ 断点命中），移动档即其否定。 */
-const DESKTOP_TIER_QUERY = `(min-width: ${WINDOW_TIER_BREAKPOINT_PX}px)`
+const DESKTOP_TIER_QUERY = `(min-width: ${WINDOW_TIER_BREAKPOINT_PX}px)`;
 
 /** 窗口档位闭集：桌面档 / 移动档。 */
-export type WindowTier = 'desktop' | 'mobile'
+export type WindowTier = "desktop" | "mobile";
 
 /**
  * 窗口分级 composable：视口宽度媒体查询 → 档位。
@@ -27,12 +27,12 @@ export type WindowTier = 'desktop' | 'mobile'
  * 断点数值与查询构造全仓唯一收口于本文件。
  */
 export function useWindowTier(): ComputedRef<WindowTier> {
-  const mql = window.matchMedia(DESKTOP_TIER_QUERY)
-  const isDesktop = ref(mql.matches)
+  const mql = window.matchMedia(DESKTOP_TIER_QUERY);
+  const isDesktop = ref(mql.matches);
   const onChange = (event: MediaQueryListEvent): void => {
-    isDesktop.value = event.matches
-  }
-  mql.addEventListener('change', onChange)
-  onScopeDispose(() => mql.removeEventListener('change', onChange))
-  return computed<WindowTier>(() => (isDesktop.value ? 'desktop' : 'mobile'))
+    isDesktop.value = event.matches;
+  };
+  mql.addEventListener("change", onChange);
+  onScopeDispose(() => mql.removeEventListener("change", onChange));
+  return computed<WindowTier>(() => (isDesktop.value ? "desktop" : "mobile"));
 }

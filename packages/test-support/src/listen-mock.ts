@@ -1,5 +1,5 @@
-import { listen } from '@tauri-apps/api/event'
-import { vi, type Mock } from 'vitest'
+import { listen } from "@tauri-apps/api/event";
+import { vi, type Mock } from "vitest";
 
 /**
  * 测试侧 tauri 事件 listen mock 的统一入口（单一事实源，与 invoke-mock 同纪律）。
@@ -17,12 +17,12 @@ import { vi, type Mock } from 'vitest'
  * 单监听器（最后注册者胜）用 `captureLastListener()`；不重装实现、只断言注册
  * 形态（mockResolvedValue 等）的场景可直用 `mockListen`。
  */
-export type CapturedListener = (evt?: { event?: string; payload?: unknown }) => void
+export type CapturedListener = (evt?: { event?: string; payload?: unknown }) => void;
 
 /** 本应用 listen mock 的实现签名（event 一律字符串事件名）。 */
-export type AppListenHandler = (event: string, handler: CapturedListener) => Promise<() => void>
+export type AppListenHandler = (event: string, handler: CapturedListener) => Promise<() => void>;
 
-export const mockListen = vi.mocked(listen) as unknown as Mock<AppListenHandler>
+export const mockListen = vi.mocked(listen) as unknown as Mock<AppListenHandler>;
 
 /**
  * 安装统一捕获实现：所有 listen 注册的监听器进同一数组（多个 store 各自订阅同一
@@ -30,12 +30,12 @@ export const mockListen = vi.mocked(listen) as unknown as Mock<AppListenHandler>
  * `mockListen.mockReset()` 之后调用一次。
  */
 export function captureListenHandlers(): CapturedListener[] {
-  const handlers: CapturedListener[] = []
+  const handlers: CapturedListener[] = [];
   mockListen.mockImplementation((_event, handler) => {
-    handlers.push(handler)
-    return Promise.resolve(() => {})
-  })
-  return handlers
+    handlers.push(handler);
+    return Promise.resolve(() => {});
+  });
+  return handlers;
 }
 
 /**
@@ -43,10 +43,10 @@ export function captureListenHandlers(): CapturedListener[] {
  * beforeEeach 内 `mockListen.mockReset()` 之后调用一次。
  */
 export function captureLastListener(): () => CapturedListener | null {
-  let handler: CapturedListener | null = null
+  let handler: CapturedListener | null = null;
   mockListen.mockImplementation((_event, h) => {
-    handler = h
-    return Promise.resolve(() => {})
-  })
-  return () => handler
+    handler = h;
+    return Promise.resolve(() => {});
+  });
+  return () => handler;
 }

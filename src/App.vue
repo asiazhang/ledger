@@ -1,6 +1,15 @@
 <script setup lang="ts">
-import { computed, h, nextTick, ref, watch, watchEffect, type Component, type HTMLAttributes } from 'vue'
-import { RouterView, useRouter, useRoute } from 'vue-router'
+import {
+  computed,
+  h,
+  nextTick,
+  ref,
+  watch,
+  watchEffect,
+  type Component,
+  type HTMLAttributes,
+} from "vue";
+import { RouterView, useRouter, useRoute } from "vue-router";
 import {
   NConfigProvider,
   NMessageProvider,
@@ -19,9 +28,9 @@ import {
   zhCN,
   dateZhCN,
   type MenuOption,
-} from 'naive-ui'
-import AppDropdown from '@ledger/ui-kit/AppDropdown.vue'
-import MobileNavShell from '@/components/MobileNavShell.vue'
+} from "naive-ui";
+import AppDropdown from "@ledger/ui-kit/AppDropdown.vue";
+import MobileNavShell from "@/components/MobileNavShell.vue";
 import {
   HomeOutline,
   SwapHorizontalOutline,
@@ -41,22 +50,22 @@ import {
   UmbrellaOutline,
   EyeOutline,
   EyeOffOutline,
-} from '@vicons/ionicons5'
-import { useAppStore } from '@/stores/app'
-import { currentLocale, t } from '@ledger/i18n'
-import { viewLabel } from '@ledger/i18n/view-label'
-import { bindRootThemeClass, resolveAppTheme } from '@ledger/theme/theme-contract'
-import { useEncryptionGate } from '@/backup/useEncryptionGate'
-import UnlockScreen from '@/backup/UnlockScreen.vue'
-import StartupFailureScreen from '@/backup/StartupFailureScreen.vue'
-import DevicePreferenceSyncHost from '@/components/DevicePreferenceSyncHost.vue'
-import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
-import GlobalBusyBar from '@/components/GlobalBusyBar.vue'
-import GlobalErrorBanner from '@/components/GlobalErrorBanner.vue'
-import BookSidebarEntry from '@/settings/BookSidebarEntry.vue'
-import { loadSidebarCollapsed, saveSidebarCollapsed } from '@ledger/utils/view-state'
-import { shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
-import { useInputMode } from '@/composables/useInputMode'
+} from "@vicons/ionicons5";
+import { useAppStore } from "@/stores/app";
+import { currentLocale, t } from "@ledger/i18n";
+import { viewLabel } from "@ledger/i18n/view-label";
+import { bindRootThemeClass, resolveAppTheme } from "@ledger/theme/theme-contract";
+import { useEncryptionGate } from "@/backup/useEncryptionGate";
+import UnlockScreen from "@/backup/UnlockScreen.vue";
+import StartupFailureScreen from "@/backup/StartupFailureScreen.vue";
+import DevicePreferenceSyncHost from "@/components/DevicePreferenceSyncHost.vue";
+import MessageSinkBridge from "@/components/MessageSinkBridge.vue";
+import GlobalBusyBar from "@/components/GlobalBusyBar.vue";
+import GlobalErrorBanner from "@/components/GlobalErrorBanner.vue";
+import BookSidebarEntry from "@/settings/BookSidebarEntry.vue";
+import { loadSidebarCollapsed, saveSidebarCollapsed } from "@ledger/utils/view-state";
+import { shortcutHint, useViewShortcuts } from "@/composables/useViewShortcuts";
+import { useInputMode } from "@/composables/useInputMode";
 import {
   useSidebarOrderStore,
   isSidebarSortAction,
@@ -67,57 +76,57 @@ import {
   LAST_VIEW,
   type ViewName,
   type ContainableViewName,
-} from '@/stores/sidebar-order'
-import { useFeatureToggleStore } from '@/settings/feature-toggles'
-import { useWindowGuard } from '@/composables/useWindowGuard'
-import { useSystemBack } from '@/composables/useSystemBack'
-import { useWindowTier } from '@ledger/window-tier'
+} from "@/stores/sidebar-order";
+import { useFeatureToggleStore } from "@/settings/feature-toggles";
+import { useWindowGuard } from "@/composables/useWindowGuard";
+import { useSystemBack } from "@/composables/useSystemBack";
+import { useWindowTier } from "@ledger/window-tier";
 
-const router = useRouter()
-const route = useRoute()
+const router = useRouter();
+const route = useRoute();
 
 // 侧栏顺序状态（组内序 + 收纳清单）：sidebar-order store 单一归宿（issue #549），
 // 此处消费状态/写路径/谓词；键位面（viewShortcuts/shortcutHint）仍归 useViewShortcuts。
-const sidebarOrder = useSidebarOrderStore()
-const { applySidebarSort, applyMoveIntoMore, resetSidebarOrder, isSidebarMember } = sidebarOrder
+const sidebarOrder = useSidebarOrderStore();
+const { applySidebarSort, applyMoveIntoMore, resetSidebarOrder, isSidebarMember } = sidebarOrder;
 // 功能开关的存在层过滤（issue #1242 / ADR-0116 决策 3）：只筛入口，不改写侧栏顺序与收纳清单。
-const featureToggles = useFeatureToggleStore()
+const featureToggles = useFeatureToggleStore();
 // 视图快捷键：窗口内 Cmd/Ctrl+1..0 与 Cmd/Ctrl+, 切换视图（弹窗/确认框打开时自动抑制）
-const { viewShortcuts } = useViewShortcuts(router)
+const { viewShortcuts } = useViewShortcuts(router);
 
 // 窗口行为守卫（issue #154）：ESC 不作用于窗口层 + 禁用原生右键菜单（可编辑元素例外），
 // 根组件挂载一次，详见 composables/useWindowGuard.ts。
-useWindowGuard()
+useWindowGuard();
 
 // 系统返回桥接（issue #845 / ADR-0088 决策 7）：Android 返回键语义三段（关最上层
 // 弹层 → 路由回退 → 交还系统），仅移动档挂载，根组件挂载一次，详见
 // composables/useSystemBack.ts。
-useSystemBack()
+useSystemBack();
 
 // 窗口分级（ADR-0088 决策 2 / 词汇表「窗口分级」）：单一断点两档。桌面档渲染既有
 // 侧栏布局（一字不动）；<840 移动档渲染导航壳（顶栏 + 导航抽屉，词汇表「导航抽屉」），
 // 抽屉消费同一份导航状态（menuOptions / handleSelect），ViewState 语义与存储零改动。
-const tier = useWindowTier()
+const tier = useWindowTier();
 
 // 侧栏展开宽度随界面语言（英文更长：160px 下组标题行「更多」链接被右缘裁切、
 // 菜单项行偏挤）：zh-CN 维持 160 不变，en-US 200；切换语言走 NLayoutSider
 // 原生宽度过渡。宽度不持久化（ViewState 只覆盖折叠态，不做过度记忆）。
-const siderWidth = computed(() => (currentLocale.value === 'en-US' ? 200 : 160))
+const siderWidth = computed(() => (currentLocale.value === "en-US" ? 200 : 160));
 
 // ViewState：侧边栏折叠状态跨启动保持。
-const sidebarCollapsed = ref(loadSidebarCollapsed())
+const sidebarCollapsed = ref(loadSidebarCollapsed());
 function updateSidebarCollapsed(collapsed: boolean) {
-  sidebarCollapsed.value = collapsed
-  saveSidebarCollapsed(collapsed)
+  sidebarCollapsed.value = collapsed;
+  saveSidebarCollapsed(collapsed);
 }
-const store = useAppStore()
+const store = useAppStore();
 
 // 主题合同（issue #888 / ADR-0093）：亮/暗模式一次解析出根元素主题类与组件库
 // 覆盖。主题类经 bindRootThemeClass 绑定 document.body（新方案 vanilla-extract
 // 样式的变量宿主，teleport 弹层同域继承），由 Appearance 设备偏好驱动，与组件
 // 库主题切换并行不互扰，不出现第二主题状态源。
-const appTheme = computed(() => resolveAppTheme(store.theme))
-watchEffect(() => bindRootThemeClass(appTheme.value.rootClass))
+const appTheme = computed(() => resolveAppTheme(store.theme));
+watchEffect(() => bindRootThemeClass(appTheme.value.rootClass));
 
 // UI 组件库内置文案（日期选择器、分页、空态等）随应用界面语言切换（ADR-0049）：
 // 经 NConfigProvider 的 locale / date-locale 注入，语言切换即时生效。
@@ -126,25 +135,25 @@ watch(
   currentLocale,
   async () => {
     try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window')
-      void getCurrentWindow().setTitle(t('common.app.name'))
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      void getCurrentWindow().setTitle(t("common.app.name"));
     } catch {
       /* 非 Tauri 环境 */
     }
   },
   { immediate: true },
-)
+);
 
-const naiveLocale = computed(() => (currentLocale.value === 'en-US' ? enUS : zhCN))
-const naiveDateLocale = computed(() => (currentLocale.value === 'en-US' ? dateEnUS : dateZhCN))
+const naiveLocale = computed(() => (currentLocale.value === "en-US" ? enUS : zhCN));
+const naiveDateLocale = computed(() => (currentLocale.value === "en-US" ? dateEnUS : dateZhCN));
 
 // 启动门（issue #570 / #601 / ADR-0075 决策 5 修订）：启动先探测启动状态。
 // 锁定期间解锁屏、启动失败期间失败恢复屏各自整体替代主界面——主界面与全部
 // 业务 IPC 消费方（含设备偏好推送，已迁入 DevicePreferenceSyncHost 随主界面
 // 挂载）都不渲染，门禁放行前业务读写零发出；探测中（null）同样不渲染主界面，
 // 避免带半就绪状态闪屏。明文库/已解锁正常挂载。
-const { locked, bootFailed, probe } = useEncryptionGate()
-void probe()
+const { locked, bootFailed, probe } = useEncryptionGate();
+void probe();
 
 // 视图名称走文案资源（issue #342）：侧栏菜单与内容区标题同源，随界面语言即时切换；
 // key 构造收口在 i18n/view-label（key 契约有单测，漏域名前缀会原样渲染 key 代号）。
@@ -167,10 +176,10 @@ const viewIcons: Record<string, Component> = {
   policies: ShieldCheckmarkOutline,
   physicalAssets: CubeOutline,
   insurers: UmbrellaOutline,
-}
+};
 
 function renderMenuIcon(name: string) {
-  return () => h(NIcon, { size: 18 }, { default: () => h(viewIcons[name]) })
+  return () => h(NIcon, { size: 18 }, { default: () => h(viewIcons[name]) });
 }
 
 // 菜单项形态（issue #359 侧栏分组；#473 终态，ADR-0063 决策 1）：概览（固定）+
@@ -190,82 +199,104 @@ function renderItem(name: ViewName | ContainableViewName, key: string | null): M
     key: name,
     icon: renderMenuIcon(name),
     label: () =>
-      h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;padding-right:2px' }, [
-        h('span', viewLabel(name)),
-        key === null ? null : h('span', { style: 'font-size:12px;opacity:.55' }, shortcutHint(key)),
-      ]),
-  }
+      h(
+        "div",
+        {
+          style:
+            "display:flex;justify-content:space-between;align-items:center;gap:12px;padding-right:2px",
+        },
+        [
+          h("span", viewLabel(name)),
+          key === null
+            ? null
+            : h("span", { style: "font-size:12px;opacity:.55" }, shortcutHint(key)),
+        ],
+      ),
+  };
 }
 
-const inputMode = useInputMode()
+const inputMode = useInputMode();
 
 /** 菜单选项构建（桌面侧栏与移动抽屉两壳层共享的单一来源，消费同一份导航状态）：
  *  keyOf 为视图键位表，键位缺失即不出提示。 */
 function buildMenuOptions(keyOf: Map<string, string | null>): MenuOption[] {
   // 入参含移回的种子成员（#475）：侧栏菜单项词表 = 主项 ∪ 出厂种子
-  const item = (name: ViewName | ContainableViewName) => renderItem(name, keyOf.get(name) ?? null)
-  const closed = (name: ContainableViewName) => featureToggles.isFeatureClosed(name)
+  const item = (name: ViewName | ContainableViewName) => renderItem(name, keyOf.get(name) ?? null);
+  const closed = (name: ContainableViewName) => featureToggles.isFeatureClosed(name);
   return [
     item(FIRST_VIEW),
     ...sidebarOrder.sidebarGroups.map((g): MenuOption => {
-      const visibleContainment = sidebarOrder.sidebarContainment[g.id].filter((name) => !closed(name))
+      const visibleContainment = sidebarOrder.sidebarContainment[g.id].filter(
+        (name) => !closed(name),
+      );
       return {
-        type: 'group',
+        type: "group",
         key: `sidebar-group:${g.id}`,
         // 组标题行：组名 + 按需「更多」链接（issue #472/#473 / ADR-0063 决策 1）——
         // 链接仅当组内存在未关闭收纳成员时渲染；折叠态不渲染组标题，链接随之不渲染。
         label: () =>
-          h('div', { class: 'sidebar-group-title' }, [
-            h('span', t(`common.sidebarGroup.${g.id}`)),
+          h("div", { class: "sidebar-group-title" }, [
+            h("span", t(`common.sidebarGroup.${g.id}`)),
             visibleContainment.length > 0
-              ? h('a',
+              ? h(
+                  "a",
                   {
-                    class: ['group-more-link', { 'is-active': route.name === `${g.id}-more` }],
+                    class: ["group-more-link", { "is-active": route.name === `${g.id}-more` }],
                     // 原生 tooltip 只说明可见去向，不泄露已关闭功能。
                     title: visibleContainment
                       .map((n) => viewLabel(n))
-                      .join(currentLocale.value === 'en-US' ? ', ' : '、'),
-                    onClick: () => { void router.push({ name: `${g.id}-more` }) },
+                      .join(currentLocale.value === "en-US" ? ", " : "、"),
+                    onClick: () => {
+                      void router.push({ name: `${g.id}-more` });
+                    },
                   },
                   [
-                    h(NIcon, { size: 14, class: 'group-more-icon' }, { default: () => h(LayersOutline) }),
-                    t('common.nav.more'),
-                    h(NIcon, { size: 12, class: 'group-more-caret' }, { default: () => h(ChevronForwardOutline) }),
+                    h(
+                      NIcon,
+                      { size: 14, class: "group-more-icon" },
+                      { default: () => h(LayersOutline) },
+                    ),
+                    t("common.nav.more"),
+                    h(
+                      NIcon,
+                      { size: 12, class: "group-more-caret" },
+                      { default: () => h(ChevronForwardOutline) },
+                    ),
                   ],
                 )
               : null,
           ]),
         children: g.views.filter((name) => !closed(name)).map((name) => item(name)),
-      }
+      };
     }),
     item(PENULTIMATE_VIEW),
     item(LAST_VIEW),
-  ]
+  ];
 }
 
 /** 桌面侧栏菜单：指针轴渲染键位提示（⌘1–9/⌘0/⌘,/⌘`，ADR-0065）；触控轴
  *  退役渲染（ADR-0088 决策 6 / issue #843）——传空表剥离提示，监听不受影响。 */
 const menuOptions = computed<MenuOption[]>(() =>
   buildMenuOptions(
-    inputMode.value === 'pointer'
+    inputMode.value === "pointer"
       ? new Map(viewShortcuts.value.map((s) => [s.name, s.key]))
       : new Map(),
   ),
-)
+);
 
 /** 移动抽屉菜单：同一导航状态、剥离键位带（移动档不渲染键位提示，ADR-0088 决策 4 关联 ADR-0065）。 */
-const drawerMenuOptions = computed<MenuOption[]>(() => buildMenuOptions(new Map()))
+const drawerMenuOptions = computed<MenuOption[]>(() => buildMenuOptions(new Map()));
 
 /** 菜单级 nodeProps：仅当前在册成员附右键事件（issue #475 改用 isSidebarMember：
  *  主项与移回的种子可排序/移入；固定项与仍在清单的收纳成员无任何右键菜单）。
  *  naive-ui 的 nodeProps 返回类型把索引签名限成 string|number，事件函数过不去
  *  （类型仅对 data-* 友好），运行时照常铺到节点上，故此处断言放宽。 */
 function nodeProps(option: MenuOption) {
-  const name = option.key as string
-  if (!isSidebarMember(name)) return {}
+  const name = option.key as string;
+  if (!isSidebarMember(name)) return {};
   return {
     onContextmenu: (e: MouseEvent) => showSortMenu(e, name),
-  } as unknown as HTMLAttributes & Record<string, string | number | undefined>
+  } as unknown as HTMLAttributes & Record<string, string | number | undefined>;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,50 +305,50 @@ function nodeProps(option: MenuOption) {
 // 同一模式；点选即重排或移入并立即持久化，菜单打开期间视图快捷键由既有弹层抑制机制压制。
 // ---------------------------------------------------------------------------
 
-const sortMenuShow = ref(false)
-const sortMenuX = ref(0)
-const sortMenuY = ref(0)
-const sortTarget = ref<ContainableViewName | null>(null)
+const sortMenuShow = ref(false);
+const sortMenuX = ref(0);
+const sortMenuY = ref(0);
+const sortTarget = ref<ContainableViewName | null>(null);
 
 const sortMenuOptions = computed(() => {
-  const target = sortTarget.value
-  const gid = target ? groupOfView(target) : null
-  if (!target || !gid) return []
-  return buildSidebarSortMenuOptions(target, sidebarOrder.sidebarGroupOrders[gid])
-})
+  const target = sortTarget.value;
+  const gid = target ? groupOfView(target) : null;
+  if (!target || !gid) return [];
+  return buildSidebarSortMenuOptions(target, sidebarOrder.sidebarGroupOrders[gid]);
+});
 
 /** 右键在册成员弹出排序菜单：先收起再 nextTick 展开，保证连续弹出时位置刷新。 */
 function showSortMenu(e: MouseEvent, name: ContainableViewName) {
-  sortTarget.value = name
-  sortMenuX.value = e.clientX
-  sortMenuY.value = e.clientY
-  sortMenuShow.value = false
+  sortTarget.value = name;
+  sortMenuX.value = e.clientX;
+  sortMenuY.value = e.clientY;
+  sortMenuShow.value = false;
   void nextTick(() => {
-    sortMenuShow.value = true
-  })
+    sortMenuShow.value = true;
+  });
 }
 
 function onSortMenuSelect(key: string) {
-  sortMenuShow.value = false
-  const target = sortTarget.value
-  if (!target) return
-  if (key === 'reset') {
-    resetSidebarOrder()
-    return
+  sortMenuShow.value = false;
+  const target = sortTarget.value;
+  if (!target) return;
+  if (key === "reset") {
+    resetSidebarOrder();
+    return;
   }
   // 「移入更多」（issue #474）：主项退出组内序、追加本组收纳清单尾，点选即持久化
-  if (key === 'intoMore') {
-    applyMoveIntoMore(target)
-    return
+  if (key === "intoMore") {
+    applyMoveIntoMore(target);
+    return;
   }
   // 菜单 key 与移动动作同一词表（key 即 action），守卫收窄后零断言
   if (isSidebarSortAction(key)) {
-    applySidebarSort(target, key)
+    applySidebarSort(target, key);
   }
 }
 
 function handleSelect(key: string) {
-  router.push({ name: key })
+  router.push({ name: key });
 }
 
 // 侧栏标题行（issue #566）：应用显示名 + 金额隐私模式眼睛按钮——标题文本消费 i18n
@@ -333,33 +364,42 @@ function handleSelect(key: string) {
 const brandRow = () => {
   // 无障碍标签/tooltip 反映当前状态（文案随界面语言）：关→「隐藏金额」、开→「显示金额」，
   // aria-pressed 携带开关态（WAI-ARIA toggle button 模式）
-  const privacyLabel = store.amountPrivacyEnabled ? t('common.amountPrivacy.show') : t('common.amountPrivacy.hide')
+  const privacyLabel = store.amountPrivacyEnabled
+    ? t("common.amountPrivacy.show")
+    : t("common.amountPrivacy.hide");
   return h(
-    'div',
-    { style: 'display:flex;align-items:center;justify-content:space-between;gap:4px;min-width:0;padding:12px 8px 12px 16px;font-size:18px;font-weight:600' },
+    "div",
+    {
+      style:
+        "display:flex;align-items:center;justify-content:space-between;gap:4px;min-width:0;padding:12px 8px 12px 16px;font-size:18px;font-weight:600",
+    },
     [
-      h('span', `📒 ${t('common.app.name')}`),
+      h("span", `📒 ${t("common.app.name")}`),
       h(
         NButton,
         {
-          size: 'tiny',
+          size: "tiny",
           quaternary: true,
           circle: true,
-          'aria-pressed': store.amountPrivacyEnabled,
+          "aria-pressed": store.amountPrivacyEnabled,
           title: privacyLabel,
-          'aria-label': privacyLabel,
+          "aria-label": privacyLabel,
           onClick: () => store.setAmountPrivacyEnabled(!store.amountPrivacyEnabled),
         },
         {
           icon: () =>
-            h(NIcon, { size: 16 }, { default: () => h(store.amountPrivacyEnabled ? EyeOffOutline : EyeOutline) }),
+            h(
+              NIcon,
+              { size: 16 },
+              { default: () => h(store.amountPrivacyEnabled ? EyeOffOutline : EyeOutline) },
+            ),
         },
       ),
     ],
-  )
-}
+  );
+};
 
-const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(route.name) : ''))
+const pageTitle = computed(() => (typeof route.name === "string" ? viewLabel(route.name) : ""));
 </script>
 
 <template>
@@ -390,55 +430,55 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
                menuOptions / handleSelect 导航状态；右键排序菜单仅桌面档（桌面专属管理动作
                不上抽屉，ADR-0088 决策 10）。 -->
           <template v-if="tier === 'desktop'">
-          <NLayout has-sider style="height: 100vh">
-          <NLayoutSider
-            bordered
-            :width="siderWidth"
-            :collapsed="sidebarCollapsed"
-            :collapsed-width="0"
-            show-trigger="arrow-circle"
-            collapse-mode="width"
-            @update:collapsed="updateSidebarCollapsed"
-          >
-            <div class="sider-column">
-              <component :is="brandRow" />
-              <div class="sider-menu-area">
-                <NMenu
-                  :options="menuOptions"
-                  :value="route.name as string"
-                  :indent="16"
-                  :node-props="nodeProps"
-                  @update:value="handleSelect"
-                />
-              </div>
-              <!-- 侧栏左下角账本入口（issue #834 / ADR-0089）：当前账本名按钮 →
+            <NLayout has-sider style="height: 100vh">
+              <NLayoutSider
+                bordered
+                :width="siderWidth"
+                :collapsed="sidebarCollapsed"
+                :collapsed-width="0"
+                show-trigger="arrow-circle"
+                collapse-mode="width"
+                @update:collapsed="updateSidebarCollapsed"
+              >
+                <div class="sider-column">
+                  <component :is="brandRow" />
+                  <div class="sider-menu-area">
+                    <NMenu
+                      :options="menuOptions"
+                      :value="route.name as string"
+                      :indent="16"
+                      :node-props="nodeProps"
+                      @update:value="handleSelect"
+                    />
+                  </div>
+                  <!-- 侧栏左下角账本入口（issue #834 / ADR-0089）：当前账本名按钮 →
                    清单弹层（切换/新建/改名/移除）；折叠时入口以浮标图标形态可达 -->
-              <BookSidebarEntry :collapsed="sidebarCollapsed" />
-            </div>
-            <!-- 可排区右键组内排序菜单（issue #270/#359）：手动定位弹出 -->
-            <AppDropdown
-              trigger="manual"
-              placement="bottom-start"
-              :show="sortMenuShow"
-              :x="sortMenuX"
-              :y="sortMenuY"
-              :options="sortMenuOptions"
-              style="max-width: 140px"
-              @select="onSortMenuSelect"
-              @clickoutside="sortMenuShow = false"
-            />
-          </NLayoutSider>
-          <NLayout>
-            <NLayoutContent content-style="padding: 20px;" :native-scrollbar="false">
-              <NSpace vertical :size="16">
-                <NText strong style="font-size: 20px">
-                  {{ pageTitle }}
-                </NText>
-                <RouterView />
-              </NSpace>
-            </NLayoutContent>
-          </NLayout>
-          </NLayout>
+                  <BookSidebarEntry :collapsed="sidebarCollapsed" />
+                </div>
+                <!-- 可排区右键组内排序菜单（issue #270/#359）：手动定位弹出 -->
+                <AppDropdown
+                  trigger="manual"
+                  placement="bottom-start"
+                  :show="sortMenuShow"
+                  :x="sortMenuX"
+                  :y="sortMenuY"
+                  :options="sortMenuOptions"
+                  style="max-width: 140px"
+                  @select="onSortMenuSelect"
+                  @clickoutside="sortMenuShow = false"
+                />
+              </NLayoutSider>
+              <NLayout>
+                <NLayoutContent content-style="padding: 20px;" :native-scrollbar="false">
+                  <NSpace vertical :size="16">
+                    <NText strong style="font-size: 20px">
+                      {{ pageTitle }}
+                    </NText>
+                    <RouterView />
+                  </NSpace>
+                </NLayoutContent>
+              </NLayout>
+            </NLayout>
           </template>
           <template v-else>
             <MobileNavShell

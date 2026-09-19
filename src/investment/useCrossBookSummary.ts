@@ -1,7 +1,7 @@
-import { onMounted, ref } from 'vue'
-import { api } from '@ledger/api'
-import { useLoadable } from '@ledger/loadable'
-import type { CrossBookInvestmentSummary } from '@ledger/types'
+import { onMounted, ref } from "vue";
+import { api } from "@ledger/api";
+import { useLoadable } from "@ledger/loadable";
+import type { CrossBookInvestmentSummary } from "@ledger/types";
 
 /**
  * 跨账本投资汇总数据层（issue #1196 / ADR-0114）：消费后端
@@ -10,17 +10,17 @@ import type { CrossBookInvestmentSummary } from '@ledger/types'
  * error 兜底状态（带后端本地化错误信息），由视图显示提示而非空数字。
  */
 export function useCrossBookSummary() {
-  const summary = ref<CrossBookInvestmentSummary | null>(null)
+  const summary = ref<CrossBookInvestmentSummary | null>(null);
 
-  const { loading, error, run } = useLoadable(() => api.crossBookInvestmentSummary())
+  const { loading, error, run } = useLoadable(() => api.crossBookInvestmentSummary());
 
   async function refresh() {
-    summary.value = await run()
+    summary.value = await run();
   }
 
   onMounted(() => {
-    void refresh()
-  })
+    void refresh();
+  });
 
-  return { summary, loading, error, refresh }
+  return { summary, loading, error, refresh };
 }

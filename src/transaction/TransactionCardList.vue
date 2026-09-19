@@ -1,19 +1,24 @@
 <script setup lang="ts">
-import { NButton, NTag } from 'naive-ui'
-import type { Transaction } from '@ledger/types'
-import { useReferenceStore } from '@/stores/reference'
-import { useAppStore } from '@/stores/app'
-import { kindSemanticColor } from '@ledger/theme/semantic-colors'
-import { t } from '@ledger/i18n'
-import MerchantLink from '@/merchants/MerchantLink.vue'
-import SourceLink from '@/transaction/SourceLink.vue'
-import AmountCell from '@/transaction/AmountCell.vue'
-import { kindLabel, KIND_TAG_TYPE, displayAmountText, renderAccountCell } from '@/transaction/transaction-columns'
+import { NButton, NTag } from "naive-ui";
+import type { Transaction } from "@ledger/types";
+import { useReferenceStore } from "@/stores/reference";
+import { useAppStore } from "@/stores/app";
+import { kindSemanticColor } from "@ledger/theme/semantic-colors";
+import { t } from "@ledger/i18n";
+import MerchantLink from "@/merchants/MerchantLink.vue";
+import SourceLink from "@/transaction/SourceLink.vue";
+import AmountCell from "@/transaction/AmountCell.vue";
+import {
+  kindLabel,
+  KIND_TAG_TYPE,
+  displayAmountText,
+  renderAccountCell,
+} from "@/transaction/transaction-columns";
 import {
   TRANSACTION_CARD_LIST_CLASS,
   TRANSACTION_CARD_CLASS,
   CARD_MENU_CLASS,
-} from './transaction-card-list.css.ts'
+} from "./transaction-card-list.css.ts";
 
 /**
  * 移动档交易卡片列表（issue #846 / ADR-0088 决策 9 断点双渲染）：
@@ -39,42 +44,42 @@ import {
 
 const props = defineProps<{
   /** 当前页行集（调用方视图持有） */
-  rows: Transaction[]
+  rows: Transaction[];
   /** 卡片「⋯」打开回调（与行右键同一 RowContextMenu open 入口）；缺省不渲染「⋯」（搜索结果只读） */
-  openRowMenu?: (event: MouseEvent, row: Transaction) => void
+  openRowMenu?: (event: MouseEvent, row: Transaction) => void;
   /** 整卡点击回调（交易页 = 编辑或只读详情，判定归调用方）；缺省整卡点击无动作 */
-  activateRow?: (row: Transaction) => void
-}>()
+  activateRow?: (row: Transaction) => void;
+}>();
 
-const reference = useReferenceStore()
-const app = useAppStore()
+const reference = useReferenceStore();
+const app = useAppStore();
 
 /** 账户单元格（转账双向 / 单账户）与表格列同一渲染函数；经功能组件进模板。 */
-const AccountCell = (cellProps: { row: Transaction }) => renderAccountCell(cellProps.row)
-AccountCell.props = { row: { type: Object, required: true } }
+const AccountCell = (cellProps: { row: Transaction }) => renderAccountCell(cellProps.row);
+AccountCell.props = { row: { type: Object, required: true } };
 
 /** 分类路径：与表格分类列同一单源解析（未知 id 回退 '-'）。 */
 function categoryText(row: Transaction): string {
-  return row.category_id ? reference.categoryPath(row.category_id) || '-' : '-'
+  return row.category_id ? reference.categoryPath(row.category_id) || "-" : "-";
 }
 
 /** 分类/商户合并行是否渲染缺省「-」（两者皆空，与表格两列各自 '-' 的口径一致）。 */
 function hasMeta(row: Transaction): boolean {
-  return row.category_id !== null || row.merchant_id !== null
+  return row.category_id !== null || row.merchant_id !== null;
 }
 
 /** 金额文案与语义色（formatAmount / kindSemanticColor 口径不变，归其单点）；
  * 金额文案读展示口径单点（转换行转出金额、份额调整行空值 '-'，与表格金额列同源）。 */
 function amountText(row: Transaction): string {
-  return displayAmountText(reference, row)
+  return displayAmountText(reference, row);
 }
 function amountColor(row: Transaction): string {
-  return kindSemanticColor(row.kind, app.theme)
+  return kindSemanticColor(row.kind, app.theme);
 }
 
 /** 整卡点击 = 行激活：交互元素（链接/按钮/金额触发器）冒泡已在各行阻断，这里只收空地点击。 */
 function onCardClick(row: Transaction): void {
-  props.activateRow?.(row)
+  props.activateRow?.(row);
 }
 </script>
 
@@ -118,11 +123,7 @@ function onCardClick(row: Transaction): void {
            经来源列同一 SourceLink 渲染（security_transactions.instrument_id 反查），
            B 显示转入标的代码；无来源（防御）时退化为转入标的单腿。
            转换行不重复渲染下方来源行（同一转出标的） -->
-      <div
-        v-if="row.kind === 'convert' && row.convert"
-        class="transaction-card-row"
-        @click.stop
-      >
+      <div v-if="row.kind === 'convert' && row.convert" class="transaction-card-row" @click.stop>
         <SourceLink v-if="row.source" :source="row.source" />
         <span v-if="row.source" class="transaction-card-join">→</span>
         <span>{{ row.convert.to_symbol }}</span>

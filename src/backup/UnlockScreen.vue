@@ -39,16 +39,26 @@
  * 不存在，无被抑制对象；ESC 守卫由 useWindowGuard 的全局 preventDefault
  * 覆盖，不存在「ESC 关掉解锁屏」的通路。
  */
-import { NButton, NCard, NCheckbox, NInput, NSpace, NSpin, NText, useMessage, useThemeVars } from 'naive-ui'
-import { onMounted, ref } from 'vue'
-import RestoreConfirmModal from '@/backup/RestoreConfirmModal.vue'
-import { t } from '@ledger/i18n'
-import { useEncryptionGate } from '@/backup/useEncryptionGate'
-import { useRestoreFromFile } from '@/backup/useRestoreFromFile'
-import { useAppStore } from '@/stores/app'
-import { errorMessage } from '@ledger/utils/errors'
-import { restartAppShortly } from '@/backup/restart'
-import AppDangerConfirmModal from '@ledger/ui-kit/AppDangerConfirmModal.vue'
+import {
+  NButton,
+  NCard,
+  NCheckbox,
+  NInput,
+  NSpace,
+  NSpin,
+  NText,
+  useMessage,
+  useThemeVars,
+} from "naive-ui";
+import { onMounted, ref } from "vue";
+import RestoreConfirmModal from "@/backup/RestoreConfirmModal.vue";
+import { t } from "@ledger/i18n";
+import { useEncryptionGate } from "@/backup/useEncryptionGate";
+import { useRestoreFromFile } from "@/backup/useRestoreFromFile";
+import { useAppStore } from "@/stores/app";
+import { errorMessage } from "@ledger/utils/errors";
+import { restartAppShortly } from "@/backup/restart";
+import AppDangerConfirmModal from "@ledger/ui-kit/AppDangerConfirmModal.vue";
 
 const {
   unlock,
@@ -57,121 +67,117 @@ const {
   unlockWithRemembered,
   loadRememberSupport,
   syncRememberCache,
-} = useEncryptionGate()
-const store = useAppStore()
-const message = useMessage()
+} = useEncryptionGate();
+const store = useAppStore();
+const message = useMessage();
 
 // 全屏底色随主题（bodyColor 单源）：暗色 #0E0E10 / 亮色 naive 出厂白，
 // 消除「解锁屏覆盖层透明 → 露出 body 白底」的启动白屏感。
-const themeVars = useThemeVars()
+const themeVars = useThemeVars();
 
-const passphrase = ref('')
-const submitting = ref(false)
-const resetting = ref(false)
-const errorText = ref('')
+const passphrase = ref("");
+const submitting = ref(false);
+const resetting = ref(false);
+const errorText = ref("");
 
 // 从备份文件恢复（issue #603）：共享恢复流第三处复用（设置页备份卡/失败恢复
 // 屏同源零拷贝）；上下文口令取当前手输框的值——选定备份那一刻非空即随意图
 // 携带，密文备份确认时先自动试开。
-const {
-  restoreIntent,
-  restoreSeq,
-  closeRestore,
-  confirmRestore,
-  pickRestore,
-} = useRestoreFromFile({
-  pickTitleKey: 'unlock.restorePickTitle',
-  defaultPath: () => store.backupDir || undefined,
-  contextPassphrase: () => passphrase.value,
-})
+const { restoreIntent, restoreSeq, closeRestore, confirmRestore, pickRestore } = useRestoreFromFile(
+  {
+    pickTitleKey: "unlock.restorePickTitle",
+    defaultPath: () => store.backupDir || undefined,
+    contextPassphrase: () => passphrase.value,
+  },
+);
 
 // 本机记住主口令（issue #574）：`autoUnlocking` 初始即反映偏好——「记住」开启时
 // 启动即显示自动解锁加载态；关闭时直接进手输表单。`rememberChecked` 是手动解锁
 // 时是否缓存口令的复选框（反映当前偏好，可在解锁时即时开/关）。
-const autoUnlocking = ref(store.rememberPassphrase)
-const autoUnlockFallback = ref('')
-const rememberChecked = ref(store.rememberPassphrase)
+const autoUnlocking = ref(store.rememberPassphrase);
+const autoUnlockFallback = ref("");
+const rememberChecked = ref(store.rememberPassphrase);
 
 // 忘记口令重置确认弹窗（issue #652 / ADR-0078）：error 级应用内弹窗替代原生
 // confirm——不可逆（重置为全新空库），后果说明（无后门、密文副本保留）必选。
-const resetConfirmShow = ref(false)
+const resetConfirmShow = ref(false);
 
 onMounted(async () => {
   // 平台能力恒加载（关闭「记住」时也要让复选框可按「平台支持」显隐）；开启时再尝试自动解锁。
-  await loadRememberSupport()
-  if (!autoUnlocking.value) return
+  await loadRememberSupport();
+  if (!autoUnlocking.value) return;
   if (!rememberSupport.value?.supported) {
     // 平台不支持：回退手输（「记住」已开但本机不缓存，等价于未开启）。
-    autoUnlocking.value = false
-    return
+    autoUnlocking.value = false;
+    return;
   }
   try {
     // 等待有界（issue #644）：钥匙串阻塞/认证滞留不再无限停在加载态，
     // 到期回退手输并提示——手输与逃生门双入口随之重新可达。
-    const wait = await unlockWithRemembered()
-    if (wait.status === 'timeout') {
-      autoUnlocking.value = false
-      autoUnlockFallback.value = t('unlock.autoUnlockTimeout')
-      return
+    const wait = await unlockWithRemembered();
+    if (wait.status === "timeout") {
+      autoUnlocking.value = false;
+      autoUnlockFallback.value = t("unlock.autoUnlockTimeout");
+      return;
     }
     if (wait.relocated) {
       // 自动解锁时补做了等待中的搬迁：提示后立即重启（Restore 同型语义）。
-      message.success(t('unlock.relocated'))
-      restartAppShortly()
+      message.success(t("unlock.relocated"));
+      restartAppShortly();
     }
   } catch (e) {
     // 无缓存 / 生物认证取消 / 缓存口令已过期：回退手输，提示按码本地化。
-    autoUnlocking.value = false
-    autoUnlockFallback.value = errorMessage(e)
+    autoUnlocking.value = false;
+    autoUnlockFallback.value = errorMessage(e);
   }
-})
+});
 
 async function submit() {
-  if (submitting.value) return
-  errorText.value = ''
-  submitting.value = true
+  if (submitting.value) return;
+  errorText.value = "";
+  submitting.value = true;
   try {
-    const relocated = await unlock(passphrase.value)
-    const cached = await syncRememberCache(passphrase.value, rememberChecked.value)
-    if (!cached) message.warning(t('unlock.rememberFailed'))
+    const relocated = await unlock(passphrase.value);
+    const cached = await syncRememberCache(passphrase.value, rememberChecked.value);
+    if (!cached) message.warning(t("unlock.rememberFailed"));
     if (relocated) {
       // 解锁时补做了等待中的搬迁：提示后立即重启，由启动引导接管目标位置
       // （与 Restore「恢复成功后自动重启」同型；不让用户在旧位置继续写入）。
-      message.success(t('unlock.relocated'))
-      restartAppShortly()
+      message.success(t("unlock.relocated"));
+      restartAppShortly();
     }
-    passphrase.value = ''
+    passphrase.value = "";
   } catch (e) {
     // 口令错误 → 可重试文案；文件损坏等其它错误 → 透传区分文案（按码本地化）。
-    errorText.value = errorMessage(e)
+    errorText.value = errorMessage(e);
   } finally {
-    submitting.value = false
+    submitting.value = false;
   }
 }
 
 /** 忘记口令第一步：弹 error 级确认弹窗（后果说明：无后门、不可恢复，ADR-0078）。 */
 function forgotPassphrase() {
-  if (resetting.value) return
-  errorText.value = ''
-  resetConfirmShow.value = true
+  if (resetting.value) return;
+  errorText.value = "";
+  resetConfirmShow.value = true;
 }
 
 /** 重置确认：重置为全新明文空库。取消或失败都留在解锁屏，可继续尝试口令或
  *  再次进入。重置后旧主口令不再适用，后端已清钥匙串缓存（ADR-0075 决策 5），
  *  此处同步清「记住」偏好为关。 */
 async function confirmReset() {
-  resetConfirmShow.value = false
-  if (resetting.value) return
-  resetting.value = true
+  resetConfirmShow.value = false;
+  if (resetting.value) return;
+  resetting.value = true;
   try {
-    await reset()
+    await reset();
     // 后端已清钥匙串缓存；此处仅清前端「记住」偏好（全新明文空库无主口令可记住）。
-    store.setRememberPassphrase(false)
-    message.success(t('unlock.resetOk'))
+    store.setRememberPassphrase(false);
+    message.success(t("unlock.resetOk"));
   } catch (e) {
-    errorText.value = errorMessage(e)
+    errorText.value = errorMessage(e);
   } finally {
-    resetting.value = false
+    resetting.value = false;
   }
 }
 </script>
@@ -185,8 +191,8 @@ async function confirmReset() {
 
     <NCard v-else class="unlock-card" :bordered="false">
       <NSpace vertical :size="16" align="center" :style="{ width: '100%' }">
-        <NText class="unlock-title">{{ t('unlock.title') }}</NText>
-        <NText depth="3">{{ t('unlock.hint') }}</NText>
+        <NText class="unlock-title">{{ t("unlock.title") }}</NText>
+        <NText depth="3">{{ t("unlock.hint") }}</NText>
         <NInput
           v-model:value="passphrase"
           type="password"
@@ -202,7 +208,7 @@ async function confirmReset() {
           {{ autoUnlockFallback }}
         </NText>
         <NButton type="primary" block :loading="submitting" :disabled="!passphrase" @click="submit">
-          {{ t('unlock.button') }}
+          {{ t("unlock.button") }}
         </NButton>
         <!-- 本机记住主口令（issue #574）：平台不支持（v1 非 macOS）时隐藏该选项 -->
         <NCheckbox
@@ -210,14 +216,14 @@ async function confirmReset() {
           v-model:checked="rememberChecked"
           :disabled="submitting"
         >
-          <NText depth="3">{{ t('unlock.remember') }}</NText>
+          <NText depth="3">{{ t("unlock.remember") }}</NText>
         </NCheckbox>
         <!-- 提示按运行形态区分（issue #687）：dev 回退形态不宣称 Touch ID。 -->
         <NText v-if="rememberSupport?.supported" depth="3" class="unlock-remember-hint">
           {{
-            rememberSupport?.mode === 'dev-fallback'
-              ? t('unlock.rememberDevFallbackHint')
-              : t('unlock.rememberHint')
+            rememberSupport?.mode === "dev-fallback"
+              ? t("unlock.rememberDevFallbackHint")
+              : t("unlock.rememberHint")
           }}
         </NText>
         <!-- 逃生门双入口（issue #573 / #603）：忘记口令重置与从备份文件恢复并列常驻 -->
@@ -229,10 +235,10 @@ async function confirmReset() {
             :disabled="resetting"
             @click="pickRestore"
           >
-            {{ t('unlock.restore') }}
+            {{ t("unlock.restore") }}
           </NButton>
           <NButton quaternary size="small" :disabled="resetting" @click="forgotPassphrase">
-            {{ t('unlock.forgot') }}
+            {{ t("unlock.forgot") }}
           </NButton>
         </NSpace>
       </NSpace>

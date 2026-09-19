@@ -1,4 +1,4 @@
-import type { AccountType, CreateFormKind, Transaction, TransactionKind } from '@ledger/types'
+import type { AccountType, CreateFormKind, Transaction, TransactionKind } from "@ledger/types";
 
 /**
  * 借贷方向派生（issue #374 / ADR-0053）：借贷是 transfer + receivable/debt 账户的
@@ -10,18 +10,18 @@ import type { AccountType, CreateFormKind, Transaction, TransactionKind } from '
  */
 
 /** 借贷方向五态：借出 / 收回 / 借入 / 还款 / 普通转账（none） */
-export type LendingDirection = 'lend' | 'collect' | 'borrow' | 'repay' | 'none'
+export type LendingDirection = "lend" | "collect" | "borrow" | "repay" | "none";
 
 /** 借贷表单可处的方向（'none' 只在派生/识别时出现，不是表单状态） */
-export type LendingFormDirection = Exclude<LendingDirection, 'none'>
+export type LendingFormDirection = Exclude<LendingDirection, "none">;
 
 /** 账户在借贷语境下的侧别：资金账户 / 借出款（receivable）/ 负债（debt）/ 未知 */
-export type LendingAccountSide = 'fund' | 'receivable' | 'debt' | 'unknown'
+export type LendingAccountSide = "fund" | "receivable" | "debt" | "unknown";
 
 /** 账户类型 → 借贷侧别：receivable/debt 之外的类型（cash/bank/credit/ewallet/investment/other）都是资金账户 */
 export function lendingAccountSide(type: AccountType | null | undefined): LendingAccountSide {
-  if (type === 'receivable' || type === 'debt') return type
-  return type == null ? 'unknown' : 'fund'
+  if (type === "receivable" || type === "debt") return type;
+  return type == null ? "unknown" : "fund";
 }
 
 /** 账户类型是否属于某侧别（账户类型未知即不属于任何侧） */
@@ -29,7 +29,7 @@ export function accountMatchesSide(
   type: AccountType | null | undefined,
   side: LendingAccountSide,
 ): boolean {
-  return lendingAccountSide(type) === side
+  return lendingAccountSide(type) === side;
 }
 
 /**
@@ -40,14 +40,16 @@ export const LENDING_DIRECTION_SIDES: Record<
   LendingFormDirection,
   { from: LendingAccountSide; to: LendingAccountSide }
 > = {
-  lend: { from: 'fund', to: 'receivable' },
-  collect: { from: 'receivable', to: 'fund' },
-  borrow: { from: 'debt', to: 'fund' },
-  repay: { from: 'fund', to: 'debt' },
-}
+  lend: { from: "fund", to: "receivable" },
+  collect: { from: "receivable", to: "fund" },
+  borrow: { from: "debt", to: "fund" },
+  repay: { from: "fund", to: "debt" },
+};
 
 /** 表单方向闭集（键序即方向切换器的展示序） */
-export const LENDING_FORM_DIRECTIONS = Object.keys(LENDING_DIRECTION_SIDES) as LendingFormDirection[]
+export const LENDING_FORM_DIRECTIONS = Object.keys(
+  LENDING_DIRECTION_SIDES,
+) as LendingFormDirection[];
 
 /**
  * 方向派生矩阵：由 LENDING_DIRECTION_SIDES 镜像生成——「过滤哪侧账户」与「识别什么方向」
@@ -56,12 +58,12 @@ export const LENDING_FORM_DIRECTIONS = Object.keys(LENDING_DIRECTION_SIDES) as L
 const DIRECTION_BY_SIDE_PAIR: Record<
   LendingAccountSide,
   Partial<Record<LendingAccountSide, LendingDirection>>
-> = { fund: {}, receivable: {}, debt: {}, unknown: {} }
+> = { fund: {}, receivable: {}, debt: {}, unknown: {} };
 for (const [direction, sides] of Object.entries(LENDING_DIRECTION_SIDES) as [
   LendingFormDirection,
   { from: LendingAccountSide; to: LendingAccountSide },
 ][]) {
-  DIRECTION_BY_SIDE_PAIR[sides.from][sides.to] = direction
+  DIRECTION_BY_SIDE_PAIR[sides.from][sides.to] = direction;
 }
 
 /** 方向派生的侧别归一（issue #374 修订）：借贷语义由借贷侧（debt/receivable）唯一决定，
@@ -70,8 +72,8 @@ for (const [direction, sides] of Object.entries(LENDING_DIRECTION_SIDES) as [
  * [`accountMatchesSide`] 的表单过滤语义保持原样（unknown 不命中任何侧）。
  * 两端均非借贷侧时缺失依旧无借贷语义（资金互转、两端缺失 → none）。 */
 function directionalSide(type: AccountType | null | undefined): LendingAccountSide {
-  const side = lendingAccountSide(type)
-  return side === 'unknown' ? 'fund' : side
+  const side = lendingAccountSide(type);
+  return side === "unknown" ? "fund" : side;
 }
 
 /**
@@ -84,15 +86,13 @@ export function deriveLendingDirection(
   fromType: AccountType | null | undefined,
   toType: AccountType | null | undefined,
 ): LendingDirection {
-  if (kind !== 'transfer') return 'none'
-  return (
-    DIRECTION_BY_SIDE_PAIR[directionalSide(fromType)][directionalSide(toType)] ?? 'none'
-  )
+  if (kind !== "transfer") return "none";
+  return DIRECTION_BY_SIDE_PAIR[directionalSide(fromType)][directionalSide(toType)] ?? "none";
 }
 
 /** 方向 → 文案 key：四方向取借贷文案，普通转账回退转账标签；消费方经 t() 取当前语言 */
 export function lendingLabelKey(direction: LendingDirection): string {
-  return direction === 'none' ? 'transactions.kind.transfer' : `transactions.lending.${direction}`
+  return direction === "none" ? "transactions.kind.transfer" : `transactions.lending.${direction}`;
 }
 
 /**
@@ -102,18 +102,18 @@ export function lendingLabelKey(direction: LendingDirection): string {
  * 呈现，不把未知账户误判成借贷）。
  */
 export function resolveLendingDirection(
-  tx: Pick<Transaction, 'kind' | 'account_id' | 'to_account_id'>,
+  tx: Pick<Transaction, "kind" | "account_id" | "to_account_id">,
   accountType: (id: string) => AccountType | undefined,
 ): LendingFormDirection | null {
   const direction = deriveLendingDirection(
     tx.kind,
     accountType(tx.account_id),
     tx.to_account_id == null ? undefined : accountType(tx.to_account_id),
-  )
-  return direction === 'none' ? null : direction
+  );
+  return direction === "none" ? null : direction;
 }
 
 /** 「记一笔」表单形态是否为借贷变体入口（lend/borrow，区别于交易 kind） */
-export function isLendingEntryKind(kind: CreateFormKind): kind is 'lend' | 'borrow' {
-  return kind === 'lend' || kind === 'borrow'
+export function isLendingEntryKind(kind: CreateFormKind): kind is "lend" | "borrow" {
+  return kind === "lend" || kind === "borrow";
 }

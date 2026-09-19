@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { NButton, NButtonGroup, NIcon, NSpace } from 'naive-ui'
-import { ChevronBack, ChevronDown, ChevronForward } from '@vicons/ionicons5'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import { useInputMode } from '@/composables/useInputMode'
-import { useLoadable } from '@ledger/loadable'
-import { api } from '@ledger/api'
-import { t } from '@ledger/i18n'
-import type { ReportDateRange } from '@ledger/types'
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { NButton, NButtonGroup, NIcon, NSpace } from "naive-ui";
+import { ChevronBack, ChevronDown, ChevronForward } from "@vicons/ionicons5";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import { useInputMode } from "@/composables/useInputMode";
+import { useLoadable } from "@ledger/loadable";
+import { api } from "@ledger/api";
+import { t } from "@ledger/i18n";
+import type { ReportDateRange } from "@ledger/types";
 import {
   TIME_PERIOD_PRESETS,
   canStepPeriod,
@@ -25,7 +25,7 @@ import {
   type NullableDateRange,
   type PeriodUnit,
   type TimePeriodPreset,
-} from '@ledger/utils/time-period'
+} from "@ledger/utils/time-period";
 
 /**
  * 时间范围快捷选择共享受控组件（issue #410 / ADR-0057 决策 5，#409 接缝 2 唯一新缝）：
@@ -48,39 +48,39 @@ const props = withDefaults(
   defineProps<{
     /** 受控快照区间（唯一事实源在调用方，组件不持状态源；形状语义见
      * NullableDateRange）。 */
-    modelValue: NullableDateRange
+    modelValue: NullableDateRange;
     /** 预设芯片闭集（渲染顺序即数组序）：缺省为交易页全闭集（含「全部」五枚）；
      * 报表页「日期闭集」消费形态传入不含「全部」的子集（ADR-0057，期间必有界）。 */
-    presets?: readonly TimePeriodPreset[]
+    presets?: readonly TimePeriodPreset[];
   }>(),
   { presets: () => TIME_PERIOD_PRESETS },
-)
+);
 
 const emit = defineEmits<{
-  'update:modelValue': [NullableDateRange]
-}>()
+  "update:modelValue": [NullableDateRange];
+}>();
 
 // 今天以分钟级 tick 保持响应式（长驻跨期场景下预设定义随之翻转）；组件内私有时钟，
 // 不属于选择状态源——快照区间的唯一事实源恒在调用方。
-const nowTick = ref(Date.now())
-let nowTicker: ReturnType<typeof setInterval> | undefined
+const nowTick = ref(Date.now());
+let nowTicker: ReturnType<typeof setInterval> | undefined;
 
 // 触控轴触控目标基线（issue #849 / ADR-0088 决策 6，全局验收基线 ≥48px）：
 // 芯片、步进箭头与期间标签按钮本体 min-height 48px。本体增高而不用伪元素外扩
 //（touch-hit-area）：芯片/箭头在按钮组内紧邻，外扩热区会横向互侵，本体增高
 // 无重叠面；按输入轴判定（平板横屏 = 桌面档 + 触控轴同样达标），指针轴不挂零变化。
 // 交互语义零变化：选择产出仍只经 update:modelValue 回流调用方。
-const inputMode = useInputMode()
-const isTouch = computed(() => inputMode.value === 'touch')
-const TOUCH_TARGET_STYLE = { minHeight: '48px' }
+const inputMode = useInputMode();
+const isTouch = computed(() => inputMode.value === "touch");
+const TOUCH_TARGET_STYLE = { minHeight: "48px" };
 
 /** 当前点亮芯片：当前区间恰为某预设定义（相对今天）时返回该预设，跨期自动熄灭。 */
 const activePreset = computed(() =>
   matchPreset(props.modelValue.from, props.modelValue.to, nowTick.value),
-)
+);
 
 /** 当前可步进游标：从日期区间唯一反推的自然周期；「全部」/任意区间为 null（置灰）。 */
-const currentPeriod = computed(() => rangeToPeriod(props.modelValue.from, props.modelValue.to))
+const currentPeriod = computed(() => rangeToPeriod(props.modelValue.from, props.modelValue.to));
 
 // 数据期间边界原始日期对（issue #391）：挂载拉取 + ledger:changed 失效重拉
 //（AI 导入外扩历史、删除收窄边界即时跟随）。null = 在途或失败 → 钳制退化为
@@ -90,151 +90,153 @@ const currentPeriod = computed(() => rangeToPeriod(props.modelValue.from, props.
 // 收编 Loadable（issue #1008 / ADR-0040）：silent 实例关掉 toast 一路（辅助钳制
 // 状态失败不打扰用户），竞态后发覆盖先发内化；任务只产结果——成功替换、失败
 // （error 置位）置空退化、被作废的迟到结果不落位。
-const dateRange = ref<ReportDateRange | null>(null)
-let unlistenLedgerChanged: UnlistenFn | null = null
-let ledgerListenerDisposed = false
+const dateRange = ref<ReportDateRange | null>(null);
+let unlistenLedgerChanged: UnlistenFn | null = null;
+let ledgerListenerDisposed = false;
 
 const { error: dateRangeError, run: runLoadDateRange } = useLoadable(() => api.reportDateRange(), {
   silent: true,
-})
+});
 
 async function loadDateRange() {
-  const range = await runLoadDateRange()
-  if (range !== null) dateRange.value = range
-  else if (dateRangeError.value !== null) dateRange.value = null
+  const range = await runLoadDateRange();
+  if (range !== null) dateRange.value = range;
+  else if (dateRangeError.value !== null) dateRange.value = null;
 }
 
 /** 当前游标单位下的数据期间边界；「全部」无游标或边界未知（在途/失败）时为 null。 */
 const periodBoundary = computed(() => {
-  const p = currentPeriod.value
-  if (!p || !dateRange.value) return null
-  return derivePeriodBoundary(p.unit, dateRange.value, nowTick.value)
-})
+  const p = currentPeriod.value;
+  if (!p || !dateRange.value) return null;
+  return derivePeriodBoundary(p.unit, dateRange.value, nowTick.value);
+});
 
 /** 步进可达性（#391）：边界末端对应箭头置灰；边界未知时 canStepPeriod
  * 退化为不钳制（恒 true）。公式 [最早交易期间, max(当前期间, 最新交易期间)]
  * 由期间数学单点派生，「与今天更晚者」的抬升随分钟级 nowTick 推移。 */
 const canStepPrev = computed(() => {
-  const p = currentPeriod.value
-  return p !== null && canStepPeriod(p, -1, periodBoundary.value)
-})
+  const p = currentPeriod.value;
+  return p !== null && canStepPeriod(p, -1, periodBoundary.value);
+});
 const canStepNext = computed(() => {
-  const p = currentPeriod.value
-  return p !== null && canStepPeriod(p, 1, periodBoundary.value)
-})
+  const p = currentPeriod.value;
+  return p !== null && canStepPeriod(p, 1, periodBoundary.value);
+});
 
 /** 期间直达面板的单位：选中期间随当前游标单位，全部态约定从月面板开始。 */
-const periodPanelUnit = computed<PeriodUnit>(() => currentPeriod.value?.unit ?? 'month')
+const periodPanelUnit = computed<PeriodUnit>(() => currentPeriod.value?.unit ?? "month");
 const periodPanelValue = computed(() => {
-  const p = currentPeriod.value
-  if (p) return periodStartTimestamp(p)
-  return periodStartTimestamp(periodFromTimestamp('month', nowTick.value))
-})
-const periodPanelFormat = computed(() => t(`quickTimeRange.periodPicker.format.${periodPanelUnit.value}`))
+  const p = currentPeriod.value;
+  if (p) return periodStartTimestamp(p);
+  return periodStartTimestamp(periodFromTimestamp("month", nowTick.value));
+});
+const periodPanelFormat = computed(() =>
+  t(`quickTimeRange.periodPicker.format.${periodPanelUnit.value}`),
+);
 const periodPanelBoundary = computed(() => {
-  if (!dateRange.value) return null
-  return derivePeriodBoundary(periodPanelUnit.value, dateRange.value, nowTick.value)
-})
+  if (!dateRange.value) return null;
+  return derivePeriodBoundary(periodPanelUnit.value, dateRange.value, nowTick.value);
+});
 const periodPanelYearRange = computed<[number, number]>(() => {
-  const boundary = periodPanelBoundary.value
-  if (boundary) return [boundary.earliest.year, boundary.latest.year]
-  const year = new Date(nowTick.value).getFullYear()
-  return [year - 100, year + 100]
-})
+  const boundary = periodPanelBoundary.value;
+  if (boundary) return [boundary.earliest.year, boundary.latest.year];
+  const year = new Date(nowTick.value).getFullYear();
+  return [year - 100, year + 100];
+});
 
 /** 面板只允许选择数据期间边界内的月/季/年；边界在途或失败时按步进器约定不钳制。 */
 type PeriodDatePickerDetail =
-  | { type: 'date'; year: number; month: number; date: number }
-  | { type: 'month'; year: number; month: number }
-  | { type: 'quarter'; year: number; quarter: number }
-  | { type: 'year'; year: number }
-  | { type: 'input' }
+  | { type: "date"; year: number; month: number; date: number }
+  | { type: "month"; year: number; month: number }
+  | { type: "quarter"; year: number; quarter: number }
+  | { type: "year"; year: number }
+  | { type: "input" };
 
 const isPeriodDateDisabled = (_timestamp: number, detail: PeriodDatePickerDetail): boolean => {
-  const boundary = periodPanelBoundary.value
-  if (!boundary || detail.type === 'input') return false
-  let period
-  if (periodPanelUnit.value === 'month' && detail.type === 'month') {
+  const boundary = periodPanelBoundary.value;
+  if (!boundary || detail.type === "input") return false;
+  let period;
+  if (periodPanelUnit.value === "month" && detail.type === "month") {
     // Naive UI 的月份 detail.month 是 0 起月份。
-    period = { unit: 'month' as const, year: detail.year, index: detail.month }
-  } else if (periodPanelUnit.value === 'quarter' && detail.type === 'quarter') {
+    period = { unit: "month" as const, year: detail.year, index: detail.month };
+  } else if (periodPanelUnit.value === "quarter" && detail.type === "quarter") {
     // Naive UI 的季度 detail.quarter 是 1 起季度号。
-    period = { unit: 'quarter' as const, year: detail.year, index: detail.quarter - 1 }
-  } else if (periodPanelUnit.value === 'year' && detail.type === 'year') {
-    period = { unit: 'year' as const, year: detail.year, index: 0 }
+    period = { unit: "quarter" as const, year: detail.year, index: detail.quarter - 1 };
+  } else if (periodPanelUnit.value === "year" && detail.type === "year") {
+    period = { unit: "year" as const, year: detail.year, index: 0 };
   } else {
-    return false
+    return false;
   }
-  return !isPeriodWithinBoundary(period, boundary)
-}
+  return !isPeriodWithinBoundary(period, boundary);
+};
 
-const periodPanelOpen = ref(false)
+const periodPanelOpen = ref(false);
 const periodLabelText = computed(() =>
   currentPeriod.value
     ? formatPeriodLabel(currentPeriod.value)
-    : t('quickTimeRange.periodLabel.none'),
-)
+    : t("quickTimeRange.periodLabel.none"),
+);
 
 /** 面板点选写精确自然周期快照并关闭面板；全部态仅在确认选定后才离开无过滤默认态。 */
 function onPeriodPanelSelect(timestamp: number | null) {
-  if (timestamp === null) return
-  const period = periodFromTimestamp(periodPanelUnit.value, timestamp)
-  emit('update:modelValue', periodRange(period))
-  periodPanelOpen.value = false
+  if (timestamp === null) return;
+  const period = periodFromTimestamp(periodPanelUnit.value, timestamp);
+  emit("update:modelValue", periodRange(period));
+  periodPanelOpen.value = false;
 }
 
 /** 步进：< / > 按当前区间单位步进到上一个/下一个自然周期并经 v-model 写回快照。
  * 钳制守卫双保险：按钮置灰为主，边界在点击派发间隙到达时在此拦下。 */
 function onStepPeriod(delta: 1 | -1) {
-  const p = currentPeriod.value
-  if (!p || !canStepPeriod(p, delta, periodBoundary.value)) return
-  emit('update:modelValue', periodRange(stepPeriod(p, delta)))
+  const p = currentPeriod.value;
+  if (!p || !canStepPeriod(p, delta, periodBoundary.value)) return;
+  emit("update:modelValue", periodRange(stepPeriod(p, delta)));
 }
 
 /** 点芯片：换算含边界日期快照经 v-model 回流调用方（「全部」= 双空区间）。 */
 function onPresetSelect(preset: TimePeriodPreset) {
-  if (preset === 'all') {
-    emit('update:modelValue', { from: null, to: null })
-    return
+  if (preset === "all") {
+    emit("update:modelValue", { from: null, to: null });
+    return;
   }
-  emit('update:modelValue', presetRange(preset, nowTick.value))
+  emit("update:modelValue", presetRange(preset, nowTick.value));
 }
 
 /** 芯片文案 key：闭集枚举 → i18n（quickTimeRange.period.*，随组件收口）。 */
 function presetLabel(preset: TimePeriodPreset): string {
-  return t(`quickTimeRange.period.${preset}`)
+  return t(`quickTimeRange.period.${preset}`);
 }
 
 onMounted(() => {
   // 数据期间边界首拉（issue #391）
-  void loadDateRange()
+  void loadDateRange();
   // 订阅 ledger:changed：数据写入/删除后边界重拉，即时外扩/收窄。注册为异步，
   // 注册完成前到达的信号会丢失（窗口极窄，与参考 store 订阅同形）。
-  void listen('ledger:changed', () => {
-    void loadDateRange()
+  void listen("ledger:changed", () => {
+    void loadDateRange();
   })
     .then((fn) => {
       if (ledgerListenerDisposed) {
-        fn()
-        return
+        fn();
+        return;
       }
-      unlistenLedgerChanged = fn
+      unlistenLedgerChanged = fn;
     })
     .catch(() => {
       /* 监听注册失败不阻塞视图（本地事件，极少发生） */
-    })
+    });
   // 今天 tick：分钟级刷新响应式「今天」，驱动预设定义、高亮派生与边界抬升跨期翻转
   nowTicker = setInterval(() => {
-    nowTick.value = Date.now()
-  }, 60_000)
-})
+    nowTick.value = Date.now();
+  }, 60_000);
+});
 
 onBeforeUnmount(() => {
-  if (nowTicker !== undefined) clearInterval(nowTicker)
-  ledgerListenerDisposed = true
-  unlistenLedgerChanged?.()
-  unlistenLedgerChanged = null
-})
+  if (nowTicker !== undefined) clearInterval(nowTicker);
+  ledgerListenerDisposed = true;
+  unlistenLedgerChanged?.();
+  unlistenLedgerChanged = null;
+});
 </script>
 
 <template>

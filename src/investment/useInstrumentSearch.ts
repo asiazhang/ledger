@@ -1,8 +1,8 @@
-import { ref, type Ref } from 'vue'
-import { api } from '@ledger/api'
-import { createLatestWinsGuard } from '@/composables/latest-wins'
-import { SEARCH_DEBOUNCE_MS } from '@/composables/search-debounce'
-import type { Instrument } from '@ledger/types'
+import { ref, type Ref } from "vue";
+import { api } from "@ledger/api";
+import { createLatestWinsGuard } from "@/composables/latest-wins";
+import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
+import type { Instrument } from "@ledger/types";
 
 /**
  * 标的远程搜索（issue #1308）：「查询进、候选出」的域件——防抖 + 空查询清空不发
@@ -21,43 +21,43 @@ import type { Instrument } from '@ledger/types'
  */
 export interface UseInstrumentSearchReturn {
   /** 最近一次查询的候选（原始标的）；初始、清空输入与失败后为空集 */
-  items: Ref<Instrument[]>
+  items: Ref<Instrument[]>;
   /** 查询在途标志：请求发出前置位，终态（结果落位 / 失败 / 空查询）置收 */
-  searching: Ref<boolean>
+  searching: Ref<boolean>;
   /** 搜索意图入口：与 naive-ui `@search` 回传同形 */
-  search(query: string): void
+  search(query: string): void;
 }
 
 export function useInstrumentSearch(): UseInstrumentSearchReturn {
-  const items = ref<Instrument[]>([])
-  const searching = ref(false)
-  let timer: ReturnType<typeof setTimeout> | undefined
+  const items = ref<Instrument[]>([]);
+  const searching = ref(false);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   /** 搜索在途竞态纪元（issue #1401）：每次输入开启新纪元，迟到旧纪元结果不落位 */
-  const epoch = createLatestWinsGuard()
+  const epoch = createLatestWinsGuard();
 
   function search(query: string) {
-    const myEpoch = epoch.start()
-    clearTimeout(timer)
+    const myEpoch = epoch.start();
+    clearTimeout(timer);
     timer = setTimeout(async () => {
-      if (!epoch.isCurrent(myEpoch)) return
+      if (!epoch.isCurrent(myEpoch)) return;
       if (!query.trim()) {
-        items.value = []
-        searching.value = false
-        return
+        items.value = [];
+        searching.value = false;
+        return;
       }
-      searching.value = true
+      searching.value = true;
       try {
-        const res = await api.listInstruments({ search: query.trim(), page_size: 50 })
-        if (!epoch.isCurrent(myEpoch)) return
-        items.value = res.items
+        const res = await api.listInstruments({ search: query.trim(), page_size: 50 });
+        if (!epoch.isCurrent(myEpoch)) return;
+        items.value = res.items;
       } catch {
-        if (!epoch.isCurrent(myEpoch)) return
-        items.value = []
+        if (!epoch.isCurrent(myEpoch)) return;
+        items.value = [];
       } finally {
-        if (epoch.isCurrent(myEpoch)) searching.value = false
+        if (epoch.isCurrent(myEpoch)) searching.value = false;
       }
-    }, SEARCH_DEBOUNCE_MS)
+    }, SEARCH_DEBOUNCE_MS);
   }
 
-  return { items, searching, search }
+  return { items, searching, search };
 }

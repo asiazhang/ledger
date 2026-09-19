@@ -1,19 +1,19 @@
 <script setup lang="ts">
-import { NGi, NGrid, NStatistic } from 'naive-ui'
-import { computed } from 'vue'
-import { t } from '@ledger/i18n'
-import { useAppStore } from '@/stores/app'
-import { useReferenceStore } from '@/stores/reference'
-import { useWindowTier } from '@ledger/window-tier'
-import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
-import ConceptLabel from '@/investment/ConceptLabel.vue'
-import type { ConceptKey, ConceptScope } from '@/investment/concept-tips'
+import { NGi, NGrid, NStatistic } from "naive-ui";
+import { computed } from "vue";
+import { t } from "@ledger/i18n";
+import { useAppStore } from "@/stores/app";
+import { useReferenceStore } from "@/stores/reference";
+import { useWindowTier } from "@ledger/window-tier";
+import { pnlSemanticColor } from "@ledger/theme/semantic-colors";
+import ConceptLabel from "@/investment/ConceptLabel.vue";
+import type { ConceptKey, ConceptScope } from "@/investment/concept-tips";
 import {
   currencyAmountSegments,
   type CurrencyAmountGroup,
   type CurrencyAmountSegment,
-} from '@/investment/usePortfolioOverview'
-import { statsCard, statsLabel, statsSeparator, statsValue } from './portfolio-stats.css.ts'
+} from "@/investment/usePortfolioOverview";
+import { statsCard, statsLabel, statsSeparator, statsValue } from "./portfolio-stats.css.ts";
 
 /**
  * 投资合计三卡（总市值 / 持仓收益 / 累计收益，issue #902 / #1077）：持仓页签
@@ -30,69 +30,69 @@ import { statsCard, statsLabel, statsSeparator, statsValue } from './portfolio-s
  */
 const props = defineProps<{
   /** 按币种分组的总市值合计 */
-  marketValueGroups: CurrencyAmountGroup[]
+  marketValueGroups: CurrencyAmountGroup[];
   /** 按币种分组的持仓收益（未实现盈亏）合计 */
-  unrealizedPnlGroups: CurrencyAmountGroup[]
+  unrealizedPnlGroups: CurrencyAmountGroup[];
   /** 按币种分组的累计收益合计（全账本口径） */
-  cumulativePnlGroups: CurrencyAmountGroup[]
+  cumulativePnlGroups: CurrencyAmountGroup[];
   /** 卡片 data-testid 前缀（含结尾连字符）：持仓页 `total-`、首页 `dashboard-total-` */
-  testIdPrefix: string
+  testIdPrefix: string;
   /**
    * 页面作用域：持仓页合计随过滤子集更新（`filtered`）、首页恒为全部持仓
    * （`wholeLedger`）。累计收益不受此影响，逐卡覆写为 `wholeLedger`。
    */
-  scope: ConceptScope
-}>()
+  scope: ConceptScope;
+}>();
 
-const reference = useReferenceStore()
-const appStore = useAppStore()
-const windowTier = useWindowTier()
-const isMobileTier = computed(() => windowTier.value === 'mobile')
+const reference = useReferenceStore();
+const appStore = useAppStore();
+const windowTier = useWindowTier();
+const isMobileTier = computed(() => windowTier.value === "mobile");
 
 // 三卡一次算好：标签取自 investments.concepts（投资域概念的唯一文案源）、口径说明
 // 由 ConceptLabel 按 concept 键现取（同源，调用方给不出第二份措辞），
 // 分组段走 currencyAmountSegments（与 formatCurrencyGroups 同一分组展示单点）。
 interface StatCard {
-  testId: string
-  label: string
+  testId: string;
+  label: string;
   /** 概念闭集成员（concept-tips.ts）：拼错即编译期报错，不进 i18n 缺 key 路径 */
-  concept: ConceptKey
-  scope: ConceptScope
-  pnl: boolean
-  segments: CurrencyAmountSegment[]
+  concept: ConceptKey;
+  scope: ConceptScope;
+  pnl: boolean;
+  segments: CurrencyAmountSegment[];
 }
 
 const stats = computed<StatCard[]>(() => [
   {
     testId: `${props.testIdPrefix}market-value`,
-    label: t('investments.concepts.marketValue'),
-    concept: 'marketValue',
+    label: t("investments.concepts.marketValue"),
+    concept: "marketValue",
     scope: props.scope,
     pnl: false,
     segments: currencyAmountSegments(props.marketValueGroups, reference.currencyMap),
   },
   {
     testId: `${props.testIdPrefix}unrealized-pnl`,
-    label: t('investments.concepts.unrealizedPnl'),
-    concept: 'unrealizedPnl',
+    label: t("investments.concepts.unrealizedPnl"),
+    concept: "unrealizedPnl",
     scope: props.scope,
     pnl: true,
     segments: currencyAmountSegments(props.unrealizedPnlGroups, reference.currencyMap),
   },
   {
     testId: `${props.testIdPrefix}cumulative-pnl`,
-    label: t('investments.concepts.cumulativePnl'),
-    concept: 'cumulativePnl',
+    label: t("investments.concepts.cumulativePnl"),
+    concept: "cumulativePnl",
     // 累计收益两处都是全账本口径：不随持仓页的搜索/账户过滤收窄
-    scope: 'wholeLedger',
+    scope: "wholeLedger",
     pnl: true,
     segments: currencyAmountSegments(props.cumulativePnlGroups, reference.currencyMap),
   },
-])
+]);
 
 /** 分组段的内联色：盈亏卡走盈亏涨跌色（红涨绿跌、随主题换变体），市值卡返回空 */
 function statValueStyle(pnl: boolean, cents: number) {
-  return pnl ? { color: pnlSemanticColor(cents, appStore.theme) } : undefined
+  return pnl ? { color: pnlSemanticColor(cents, appStore.theme) } : undefined;
 }
 </script>
 

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NDescriptions, NDescriptionsItem } from 'naive-ui'
-import { t } from '@ledger/i18n'
-import { useReferenceStore } from '@/stores/reference'
-import { formatQuantity } from '@ledger/money'
-import type { Transaction, TransactionSplit } from '@ledger/types'
+import { computed } from "vue";
+import { NDescriptions, NDescriptionsItem } from "naive-ui";
+import { t } from "@ledger/i18n";
+import { useReferenceStore } from "@/stores/reference";
+import { formatQuantity } from "@ledger/money";
+import type { Transaction, TransactionSplit } from "@ledger/types";
 
 /**
  * 份额调整只读详情（ADR-0106 决策 10 / issue #1052）：split 是「无现金腿」kind，
@@ -17,30 +17,30 @@ import type { Transaction, TransactionSplit } from '@ledger/types'
  */
 const props = defineProps<{
   /** 份额调整交易行（提供日期 / 账户 / 备注） */
-  transaction: Transaction
+  transaction: Transaction;
   /** 份额调整明细（`get_transaction_split` 读投影） */
-  split: TransactionSplit
-}>()
+  split: TransactionSplit;
+}>();
 
-const reference = useReferenceStore()
+const reference = useReferenceStore();
 
 /** 账户名经参考数据解析，未知账户回退占位（与列表账户列同口径，不抛错）。 */
 const accountName = computed(
-  () => reference.accountMap.get(props.transaction.account_id)?.name ?? '—',
-)
+  () => reference.accountMap.get(props.transaction.account_id)?.name ?? "—",
+);
 
 /** 标的展示：代码 + 名称（名称缺失时仅代码）。 */
 const instrumentText = computed(() =>
   props.split.instrument_name
     ? `${props.split.symbol} ${props.split.instrument_name}`
     : props.split.symbol,
-)
+);
 
 /** 带符号份额变动：正向显式 `+`，负向沿用 `formatQuantity` 的 `-`；隐藏量级不隐藏方向。 */
 const signedQuantityText = computed(() => {
-  const magnitude = formatQuantity(Math.abs(props.split.quantity))
-  return props.split.quantity < 0 ? `-${magnitude}` : `+${magnitude}`
-})
+  const magnitude = formatQuantity(Math.abs(props.split.quantity));
+  return props.split.quantity < 0 ? `-${magnitude}` : `+${magnitude}`;
+});
 </script>
 
 <template>
@@ -56,7 +56,7 @@ const signedQuantityText = computed(() => {
     </NDescriptionsItem>
     <NDescriptionsItem :label="t('investments.form.account')">{{ accountName }}</NDescriptionsItem>
     <NDescriptionsItem :label="t('transactions.form.note')">
-      {{ transaction.note ?? '—' }}
+      {{ transaction.note ?? "—" }}
     </NDescriptionsItem>
   </NDescriptions>
 </template>

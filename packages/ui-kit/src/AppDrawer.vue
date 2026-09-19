@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NDrawer } from 'naive-ui'
-import { useOverlayReporting } from './useOverlayReporting'
+import { NDrawer } from "naive-ui";
+import { useOverlayReporting } from "./useOverlayReporting";
 
 // AppDrawer（issue #842 / ADR-0088 决策 4）：薄封装 NDrawer——导航抽屉（移动档壳层，
 // 词汇表「导航抽屉」）的唯一使用形态，接入弹层注册表（ADR-0035）：开/关状态实时上报，
@@ -14,7 +14,7 @@ import { useOverlayReporting } from './useOverlayReporting'
 // 幂等）也在该机制点内：跨断点换档（窗口分级，ADR-0088 决策 2）时移动壳整体卸载，
 // 抽屉可能仍开着——NDrawer 是受控组件，卸载不产生 update:show(false)，注册表会
 // 滞留开放态导致快捷键永久抑制。
-const { onUpdateShow, resolvedShow } = useOverlayReporting('drawer')
+const { onUpdateShow, resolvedShow } = useOverlayReporting("drawer");
 </script>
 
 <template>

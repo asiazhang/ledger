@@ -1,24 +1,24 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { captureListenHandlers, type CapturedListener } from '@ledger/test-support/listen-mock'
-import { mount, flushPromises } from '@vue/test-utils'
-import { NDialogProvider, NSelect, NTreeSelect } from 'naive-ui'
-import { h, reactive } from 'vue'
-import { useReferenceStore } from '@/stores/reference'
-import { makeTransaction } from './factories'
-import CategoryManager from '@/categories/CategoryManager.vue'
-import CategoryForm from '@/categories/CategoryForm.vue'
-import TransactionsView from '@/views/TransactionsView.vue'
-import type { Account, Category, Transaction } from '@ledger/types'
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { captureListenHandlers, type CapturedListener } from "@ledger/test-support/listen-mock";
+import { mount, flushPromises } from "@vue/test-utils";
+import { NDialogProvider, NSelect, NTreeSelect } from "naive-ui";
+import { h, reactive } from "vue";
+import { useReferenceStore } from "@/stores/reference";
+import { makeTransaction } from "./factories";
+import CategoryManager from "@/categories/CategoryManager.vue";
+import CategoryForm from "@/categories/CategoryForm.vue";
+import TransactionsView from "@/views/TransactionsView.vue";
+import type { Account, Category, Transaction } from "@ledger/types";
 
 // TransactionsView 经 useRoute 读取 URL query（?account=<id> 只读入口，issue #97）；
 // 本文件挂载该视图但无路由上下文，mock 为空 query（无账户过滤，不影响既有断言）。
 // AccountLink（账户列渲染）经 useRouter 跳转（issue #99），同样 mock 为 no-op。
-const routeMock = reactive<{ query: Record<string, string | string[] | null> }>({ query: {} })
-vi.mock('vue-router', () => ({
+const routeMock = reactive<{ query: Record<string, string | string[] | null> }>({ query: {} });
+vi.mock("vue-router", () => ({
   useRoute: () => routeMock,
   useRouter: () => ({ push: () => {} }),
-}))
+}));
 
 // issue #86：端到端整合验证 + 组件层反应性测试。
 // 场景骨架：外部 AI 经本地 HTTP API 写入参考数据（账户/分类）→ 后端成功 emit `ledger:changed`
@@ -26,87 +26,134 @@ vi.mock('vue-router', () => ({
 // 重拉三表（stale-while-revalidate）→ 已挂载的视图/表单经响应式状态自动呈现新数据。
 // 测试主缝与 spec #76 一致：`invoke`（数据访问）与 `listen`（事件订阅），无需真实 Tauri/HTTP。
 
-let changedHandlers: CapturedListener[] = []
+let changedHandlers: CapturedListener[] = [];
 
 /**
  * 下拉/树选项桩值读取：NSelect/NTreeSelect 的 options prop 经 props 泛型链为
  * naive-ui 联合（含 undefined），本文件只消费「取某字段为字符串数组」这一种形态——
  * 经断言守卫单点窄化，不在用例内散布 as/非空断言。
  */
-function optionValues(select: { props(key: string): unknown }, pick: 'value' | 'key' | 'label'): string[] {
-  const opts = select.props('options')
-  expect(Array.isArray(opts), 'options 应为数组').toBe(true)
-  return (opts as Array<Record<string, unknown>>).map((o) => o[pick] as string)
+function optionValues(
+  select: { props(key: string): unknown },
+  pick: "value" | "key" | "label",
+): string[] {
+  const opts = select.props("options");
+  expect(Array.isArray(opts), "options 应为数组").toBe(true);
+  return (opts as Array<Record<string, unknown>>).map((o) => o[pick] as string);
 }
 
 const mockAccounts: Account[] = [
   {
-    id: 'acc-1', name: '现金', type: 'cash', currency_code: 'CNY',
-    initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
-    is_deleted: false, is_hidden: false,
+    id: "acc-1",
+    name: "现金",
+    type: "cash",
+    currency_code: "CNY",
+    initial_balance_cents: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
+    is_deleted: false,
+    is_hidden: false,
   },
   {
-    id: 'acc-2', name: '招商银行', type: 'bank', currency_code: 'CNY',
-    initial_balance_cents: 100000, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
-    is_deleted: false, is_hidden: false,
+    id: "acc-2",
+    name: "招商银行",
+    type: "bank",
+    currency_code: "CNY",
+    initial_balance_cents: 100000,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
+    is_deleted: false,
+    is_hidden: false,
   },
-]
+];
 
 const mockCategories: Category[] = [
   {
-    id: 'cat-food', name: '餐饮', kind: 'expense', parent_id: null,
-    icon: null, sort_order: 0, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
+    id: "cat-food",
+    name: "餐饮",
+    kind: "expense",
+    parent_id: null,
+    icon: null,
+    sort_order: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
     is_deleted: false,
   },
   {
-    id: 'cat-salary', name: '工资', kind: 'income', parent_id: null,
-    icon: null, sort_order: 0, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
+    id: "cat-salary",
+    name: "工资",
+    kind: "income",
+    parent_id: null,
+    icon: null,
+    sort_order: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
     is_deleted: false,
   },
-]
+];
 
 /** 外部 AI 导入后新增的参考数据 fixture（与基准数据同型，模拟写后数据库状态）。 */
 const importedAccount: Account = {
-  id: 'acc-ai', name: 'AI 导入账户', type: 'bank', currency_code: 'USD',
-  initial_balance_cents: 0, created_at: '2026-02-01T00:00:00Z',
-  updated_at: '2026-02-01T00:00:00Z', version: 1, device_id: 'test',
-  is_deleted: false, is_hidden: false,
-}
-const importedCategory: Category = {
-  id: 'cat-ai', name: 'AI 导入分类', kind: 'expense', parent_id: null,
-  icon: null, sort_order: 1, created_at: '2026-02-01T00:00:00Z',
-  updated_at: '2026-02-01T00:00:00Z', version: 1, device_id: 'test',
+  id: "acc-ai",
+  name: "AI 导入账户",
+  type: "bank",
+  currency_code: "USD",
+  initial_balance_cents: 0,
+  created_at: "2026-02-01T00:00:00Z",
+  updated_at: "2026-02-01T00:00:00Z",
+  version: 1,
+  device_id: "test",
   is_deleted: false,
-}
+  is_hidden: false,
+};
+const importedCategory: Category = {
+  id: "cat-ai",
+  name: "AI 导入分类",
+  kind: "expense",
+  parent_id: null,
+  icon: null,
+  sort_order: 1,
+  created_at: "2026-02-01T00:00:00Z",
+  updated_at: "2026-02-01T00:00:00Z",
+  version: 1,
+  device_id: "test",
+  is_deleted: false,
+};
 
 /** 参考数据命令覆写集；overrides 可替换为写后数据库状态（币种/商户/保司走共享助手规范夹具）。 */
-function listOverrides(overrides: {
-  accounts?: Account[]
-  categories?: Category[]
-} = {}) {
+function listOverrides(
+  overrides: {
+    accounts?: Account[];
+    categories?: Category[];
+  } = {},
+) {
   return {
     list_accounts: overrides.accounts ?? mockAccounts,
     list_categories: overrides.categories ?? mockCategories,
     list_policies: [] as unknown[],
-  }
+  };
 }
 
 beforeEach(async () => {
-  wireInvokeSeam({ overrides: listOverrides() })
+  wireInvokeSeam({ overrides: listOverrides() });
   // 多个 store（reference / items 等）各自订阅同一信号，全部捕获、全部触发
-  changedHandlers = captureListenHandlers()
+  changedHandlers = captureListenHandlers();
   // 先访问 store 以捕获 listen 回调（组件复用同一 store 单例），再确保数据就绪
-  const store = useReferenceStore()
-  await store.refresh()
-})
+  const store = useReferenceStore();
+  await store.refresh();
+});
 
 afterEach(() => {
-  changedHandlers = []
-})
+  changedHandlers = [];
+});
 
 /**
  * 模拟「外部 AI 经 HTTP API 写入参考数据」完成后，后端 emit `ledger:changed` 的完整链路：
@@ -114,149 +161,144 @@ afterEach(() => {
  * 2. 触发捕获到的 `ledger:changed` 回调（无 payload，与后端发射一致）；
  * 3. 等待 store 重拉完成（三表整体替换）。
  */
-async function simulateExternalWrite(patch: {
-  accounts?: Account[]
-  categories?: Category[]
-}) {
-  wireInvokeSeam({ overrides: listOverrides(patch) })
-  changedHandlers.forEach((h) => h({ payload: undefined }))
-  await flushPromises()
+async function simulateExternalWrite(patch: { accounts?: Account[]; categories?: Category[] }) {
+  wireInvokeSeam({ overrides: listOverrides(patch) });
+  changedHandlers.forEach((h) => h({ payload: undefined }));
+  await flushPromises();
 }
 
-describe('组件层反应性：mock ledger:changed 使界面/选项原地更新（issue #86 AC2）', () => {
-  it('分类管理树：外部 AI 导入新分类后，已打开的分类树原地出现新分类', async () => {
-    const wrapper = mount(CategoryManager)
-    expect(wrapper.text()).toContain('餐饮')
-    expect(wrapper.text()).not.toContain('AI 导入分类')
+describe("组件层反应性：mock ledger:changed 使界面/选项原地更新（issue #86 AC2）", () => {
+  it("分类管理树：外部 AI 导入新分类后，已打开的分类树原地出现新分类", async () => {
+    const wrapper = mount(CategoryManager);
+    expect(wrapper.text()).toContain("餐饮");
+    expect(wrapper.text()).not.toContain("AI 导入分类");
 
     // 同一 wrapper 不重挂载：仅触发 push
-    await simulateExternalWrite({ categories: [...mockCategories, importedCategory] })
+    await simulateExternalWrite({ categories: [...mockCategories, importedCategory] });
 
-    expect(wrapper.text()).toContain('AI 导入分类')
-    expect(wrapper.text()).toContain('餐饮') // 旧数据仍在（增量而非清空）
-  })
+    expect(wrapper.text()).toContain("AI 导入分类");
+    expect(wrapper.text()).toContain("餐饮"); // 旧数据仍在（增量而非清空）
+  });
 
-  it('表单选项：外部 AI 导入新账户后，已打开的交易表单账户下拉原地出现新选项', async () => {
-    const wrapper = mount(CategoryForm, { props: { kind: 'expense', submitLabel: '记支出' } })
-    const accountSelect = wrapper.findAllComponents(NSelect)[1] // 账户下拉（第 1 个为币种）
-    expect(optionValues(accountSelect, 'value')).toEqual(['acc-1', 'acc-2'])
+  it("表单选项：外部 AI 导入新账户后，已打开的交易表单账户下拉原地出现新选项", async () => {
+    const wrapper = mount(CategoryForm, { props: { kind: "expense", submitLabel: "记支出" } });
+    const accountSelect = wrapper.findAllComponents(NSelect)[1]; // 账户下拉（第 1 个为币种）
+    expect(optionValues(accountSelect, "value")).toEqual(["acc-1", "acc-2"]);
 
-    await simulateExternalWrite({ accounts: [...mockAccounts, importedAccount] })
+    await simulateExternalWrite({ accounts: [...mockAccounts, importedAccount] });
 
-    expect(optionValues(accountSelect, 'value')).toEqual(['acc-1', 'acc-2', 'acc-ai'])
-    expect(optionValues(accountSelect, 'label')).toContain('AI 导入账户')
-  })
+    expect(optionValues(accountSelect, "value")).toEqual(["acc-1", "acc-2", "acc-ai"]);
+    expect(optionValues(accountSelect, "label")).toContain("AI 导入账户");
+  });
 
-  it('表单选项：外部 AI 导入新分类后，分类树选择器原地出现新分类', async () => {
-    const wrapper = mount(CategoryForm, { props: { kind: 'expense', submitLabel: '记支出' } })
-    const treeSelect = wrapper.findAllComponents(NTreeSelect)[0]
-    expect(optionValues(treeSelect, 'key')).toEqual(['cat-food'])
+  it("表单选项：外部 AI 导入新分类后，分类树选择器原地出现新分类", async () => {
+    const wrapper = mount(CategoryForm, { props: { kind: "expense", submitLabel: "记支出" } });
+    const treeSelect = wrapper.findAllComponents(NTreeSelect)[0];
+    expect(optionValues(treeSelect, "key")).toEqual(["cat-food"]);
 
-    await simulateExternalWrite({ categories: [...mockCategories, importedCategory] })
+    await simulateExternalWrite({ categories: [...mockCategories, importedCategory] });
 
-    expect(optionValues(treeSelect, 'key')).toEqual(['cat-food', 'cat-ai'])
-  })
+    expect(optionValues(treeSelect, "key")).toEqual(["cat-food", "cat-ai"]);
+  });
 
-  it('交易列表映射渲染：外部 AI 更新分类名后，已打开的交易列表分类列原地显示新名称', async () => {
+  it("交易列表映射渲染：外部 AI 更新分类名后，已打开的交易列表分类列原地显示新名称", async () => {
     // 交易行走共享 makeTransaction（factories.ts）：id/金额/备注逐行显式，账户与日期取共享默认
     const txnDb: Transaction[] = [
       makeTransaction({
-        id: 'txn-001',
+        id: "txn-001",
         amount_cents: 100,
         amount_native_cents: 100,
-        note: '备注 1',
-        category_id: 'cat-food',
+        note: "备注 1",
+        category_id: "cat-food",
       }),
       makeTransaction({
-        id: 'txn-002',
+        id: "txn-002",
         amount_cents: 200,
         amount_native_cents: 200,
-        note: '备注 2',
-        category_id: 'cat-food',
+        note: "备注 2",
+        category_id: "cat-food",
       }),
-    ]
+    ];
     wireInvokeSeam({
       overrides: {
         ...listOverrides(),
         list_transactions: () => Promise.resolve({ items: txnDb, total: txnDb.length }),
       },
-    })
+    });
 
     // TransactionsView 顶层调用 useDialog（issue #151），需 NDialogProvider 包裹（同 App.vue）
     const wrapper = mount(NDialogProvider, {
       slots: { default: () => h(TransactionsView) },
-    })
-    await flushPromises()
-    expect(wrapper.text()).toContain('餐饮')
+    });
+    await flushPromises();
+    expect(wrapper.text()).toContain("餐饮");
 
     // 外部 AI 将分类「餐饮」改名为「夜宵」（update_category 成功 emit ledger:changed）
-    const renamed = mockCategories.map((c) =>
-      c.id === 'cat-food' ? { ...c, name: '夜宵' } : c,
-    )
-    await simulateExternalWrite({ categories: renamed })
+    const renamed = mockCategories.map((c) => (c.id === "cat-food" ? { ...c, name: "夜宵" } : c));
+    await simulateExternalWrite({ categories: renamed });
 
     // 分类列渲染闭包读取 categoryPath（响应式），同一 wrapper 原地显示新名称（无用户操作、无重挂载）
-    expect(wrapper.text()).toContain('夜宵')
-    expect(wrapper.text()).not.toContain('餐饮')
-  })
+    expect(wrapper.text()).toContain("夜宵");
+    expect(wrapper.text()).not.toContain("餐饮");
+  });
 
-  it('stale-while-revalidate：重拉期间界面保留旧数据，完成后整体替换', async () => {
-    const wrapper = mount(CategoryManager)
-    expect(wrapper.text()).toContain('餐饮')
+  it("stale-while-revalidate：重拉期间界面保留旧数据，完成后整体替换", async () => {
+    const wrapper = mount(CategoryManager);
+    expect(wrapper.text()).toContain("餐饮");
 
-    let resolveCats!: (v: Category[]) => void
+    let resolveCats!: (v: Category[]) => void;
     wireInvokeSeam({
       overrides: {
         ...listOverrides(),
         list_categories: () =>
           new Promise((res) => {
-            resolveCats = res
+            resolveCats = res;
           }),
       },
-    })
+    });
 
     // 触发 push：重拉挂起期间，已打开的分类树不闪空（旧数据原样保留）
-    changedHandlers.forEach((h) => h({ payload: undefined }))
-    await flushPromises()
-    expect(wrapper.text()).toContain('餐饮')
-    expect(wrapper.text()).not.toContain('AI 导入分类')
+    changedHandlers.forEach((h) => h({ payload: undefined }));
+    await flushPromises();
+    expect(wrapper.text()).toContain("餐饮");
+    expect(wrapper.text()).not.toContain("AI 导入分类");
 
-    resolveCats([...mockCategories, importedCategory])
-    await flushPromises()
+    resolveCats([...mockCategories, importedCategory]);
+    await flushPromises();
 
-    expect(wrapper.text()).toContain('AI 导入分类')
-    expect(wrapper.text()).toContain('餐饮')
-  })
-})
+    expect(wrapper.text()).toContain("AI 导入分类");
+    expect(wrapper.text()).toContain("餐饮");
+  });
+});
 
-describe('端到端整合验证：外部 AI 导入账户/分类 → 已打开界面自动呈现新数据（issue #86 AC1）', () => {
-  it('批量导入新账户+新分类：已打开的分类树与账户下拉同步原地更新，失效信号可观测', async () => {
+describe("端到端整合验证：外部 AI 导入账户/分类 → 已打开界面自动呈现新数据（issue #86 AC1）", () => {
+  it("批量导入新账户+新分类：已打开的分类树与账户下拉同步原地更新，失效信号可观测", async () => {
     // 用户已打开两个界面：分类管理树 + 交易录入表单（账户下拉）
-    const treeWrapper = mount(CategoryManager)
-    const formWrapper = mount(CategoryForm, { props: { kind: 'expense', submitLabel: '记支出' } })
-    expect(treeWrapper.text()).toContain('餐饮')
-    expect(treeWrapper.text()).not.toContain('AI 导入')
-    const accountSelect = formWrapper.findAllComponents(NSelect)[1]
-    expect(optionValues(accountSelect, 'value')).toEqual(['acc-1', 'acc-2'])
-    const store = useReferenceStore()
-    expect(store.version).toBe(1)
+    const treeWrapper = mount(CategoryManager);
+    const formWrapper = mount(CategoryForm, { props: { kind: "expense", submitLabel: "记支出" } });
+    expect(treeWrapper.text()).toContain("餐饮");
+    expect(treeWrapper.text()).not.toContain("AI 导入");
+    const accountSelect = formWrapper.findAllComponents(NSelect)[1];
+    expect(optionValues(accountSelect, "value")).toEqual(["acc-1", "acc-2"]);
+    const store = useReferenceStore();
+    expect(store.version).toBe(1);
 
     // 外部 AI 一次性导入账户 + 分类（POST /api/v1/accounts、POST /api/v1/categories）
     // 后端在写成功后 emit `ledger:changed` → store 重拉 → 界面原地更新
     await simulateExternalWrite({
       accounts: [...mockAccounts, importedAccount],
       categories: [...mockCategories, importedCategory],
-    })
+    });
 
     // 两个已打开界面无需重挂载即呈现新数据
-    expect(treeWrapper.text()).toContain('AI 导入分类')
-    expect(optionValues(accountSelect, 'value')).toContain('acc-ai')
-    expect(optionValues(accountSelect, 'label')).toContain('AI 导入账户')
+    expect(treeWrapper.text()).toContain("AI 导入分类");
+    expect(optionValues(accountSelect, "value")).toContain("acc-ai");
+    expect(optionValues(accountSelect, "label")).toContain("AI 导入账户");
     // 失效信号可观测：成功重拉 version 自增、status 回到 ready
-    expect(store.version).toBe(2)
-    expect(store.status).toBe('ready')
+    expect(store.version).toBe(2);
+    expect(store.status).toBe("ready");
     // 派生映射随参考数据更新（表单选项的数据来源）
-    expect(store.accountMap.get('acc-ai')?.name).toBe('AI 导入账户')
-    expect(store.categoryMap.get('cat-ai')?.name).toBe('AI 导入分类')
-  })
-})
+    expect(store.accountMap.get("acc-ai")?.name).toBe("AI 导入账户");
+    expect(store.categoryMap.get("cat-ai")?.name).toBe("AI 导入分类");
+  });
+});

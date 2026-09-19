@@ -56,7 +56,7 @@ export interface RestoreIntent {
 
 /** 后端码化错误（issue #572）：密文备份缺主口令——元数据谎报明文而实库为密文
  *  时，确认弹窗据它按需显出口令框（与后端 engine 单源码字面对应）。 */
-export const BACKUP_PASSPHRASE_REQUIRED = 'backup.passphrase-required';
+export const BACKUP_PASSPHRASE_REQUIRED = "backup.passphrase-required";
 
 /**
  * 跨模式恢复警告文案 key（issue #572 / ADR-0075 决策 7）：当前模式与备份模式
@@ -146,9 +146,7 @@ export function useBackup() {
     try {
       await api.setAutoBackupEnabled(enabled);
       autoBackupEnabled.value = enabled;
-      message.success(
-        enabled ? t("settings.data.msg.autoOn") : t("settings.data.msg.autoOff"),
-      );
+      message.success(enabled ? t("settings.data.msg.autoOn") : t("settings.data.msg.autoOff"));
     } catch (e: any) {
       message.error(t("settings.data.msg.autoToggleFailed", { msg: errorMessage(e) }));
     }

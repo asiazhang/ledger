@@ -1,6 +1,6 @@
-import { watch } from 'vue'
-import { useAppStore } from '@/stores/app'
-import { api } from '@ledger/api'
+import { watch } from "vue";
+import { useAppStore } from "@/stores/app";
+import { api } from "@ledger/api";
 
 /**
  * 设备偏好镜像推送：前端 localStorage 设备偏好（应用设置 store）的唯一推送出口，
@@ -13,21 +13,21 @@ import { api } from '@ledger/api'
  *   调度读取；未推送（新机器/恢复备份后）即保持默认关——自动化不随账本迁移。
  */
 export function useDevicePreferenceSync() {
-  const store = useAppStore()
+  const store = useAppStore();
 
   watch(
     () => store.backupDir,
     (dir) => {
-      void api.setAutoBackupDir(dir)
+      void api.setAutoBackupDir(dir);
     },
     { immediate: true },
-  )
+  );
 
   watch(
     () => store.autoExecutionEnabled,
     (enabled) => {
-      void api.setAutoExecutionEnabled(enabled)
+      void api.setAutoExecutionEnabled(enabled);
     },
     { immediate: true },
-  )
+  );
 }

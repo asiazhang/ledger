@@ -1,5 +1,5 @@
-import { createTheme, createThemeContract } from '@vanilla-extract/css'
-import { NEUTRAL_TOKENS, type NeutralTokens } from './design-tokens'
+import { createTheme, createThemeContract } from "@vanilla-extract/css";
+import { NEUTRAL_TOKENS, type NeutralTokens } from "./design-tokens";
 
 /**
  * 新方案主题（vanilla-extract 主题合同，issue #888 / ADR-0093）：
@@ -19,16 +19,16 @@ import { NEUTRAL_TOKENS, type NeutralTokens } from './design-tokens'
  */
 
 /** 合同形状 = NeutralTokens 的深 null 投影：token 增删字段时此处编译报错。 */
-type ContractOf<T> = { [K in keyof T]: T[K] extends string ? null : ContractOf<T[K]> }
+type ContractOf<T> = { [K in keyof T]: T[K] extends string ? null : ContractOf<T[K]> };
 
 const contract: ContractOf<NeutralTokens> = {
   radius: { small: null, base: null, large: null },
   background: { body: null, card: null, popover: null, modal: null },
   border: { border: null, divider: null },
   text: { primary: null, secondary: null, tertiary: null },
-}
+};
 
-export const appVars = createThemeContract(contract)
+export const appVars = createThemeContract(contract);
 
-export const darkThemeClass = createTheme(appVars, NEUTRAL_TOKENS.dark)
-export const lightThemeClass = createTheme(appVars, NEUTRAL_TOKENS.light)
+export const darkThemeClass = createTheme(appVars, NEUTRAL_TOKENS.dark);
+export const lightThemeClass = createTheme(appVars, NEUTRAL_TOKENS.light);

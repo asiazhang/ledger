@@ -1,94 +1,93 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { mount, flushPromises } from '@vue/test-utils'
-import AccountLink from '@/accounts/AccountLink.vue'
-import { useAppStore } from '@/stores/app'
-
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { mount, flushPromises } from "@vue/test-utils";
+import AccountLink from "@/accounts/AccountLink.vue";
+import { useAppStore } from "@/stores/app";
 
 // AccountLink 经 useRouter 跳转（pushMock 断言导航目标，issue #97/#99）
-const pushMock = vi.fn()
-vi.mock('vue-router', () => ({
+const pushMock = vi.fn();
+vi.mock("vue-router", () => ({
   useRouter: () => ({ push: pushMock }),
-}))
+}));
 
 beforeEach(async () => {
-  pushMock.mockReset()
+  pushMock.mockReset();
   // 参考 store 预载走接缝 opt-in 参数（list_accounts 由桩层规范夹具兜底，
   // 含断言消费的 acc-1「现金」行，不在本文件重复枚举）。
-  await wireInvokeSeam({ refreshReferenceStores: true }).ready
-})
+  await wireInvokeSeam({ refreshReferenceStores: true }).ready;
+});
 
-describe('AccountLink 账户名下钻（issue #97/#99）', () => {
-  it('渲染为真实 button（键盘可达）并带 title 提示', async () => {
-    const wrapper = mount(AccountLink, { props: { accountId: 'acc-1' } })
-    await flushPromises()
-    const btn = wrapper.find('button.account-link')
-    expect(btn.exists()).toBe(true)
-    expect(btn.attributes('title')).toBe('查看该账户的交易')
-    expect(btn.text()).toBe('现金')
-  })
+describe("AccountLink 账户名下钻（issue #97/#99）", () => {
+  it("渲染为真实 button（键盘可达）并带 title 提示", async () => {
+    const wrapper = mount(AccountLink, { props: { accountId: "acc-1" } });
+    await flushPromises();
+    const btn = wrapper.find("button.account-link");
+    expect(btn.exists()).toBe(true);
+    expect(btn.attributes("title")).toBe("查看该账户的交易");
+    expect(btn.text()).toBe("现金");
+  });
 
-  it('默认态使用主题强调色（琥珀）', async () => {
-    const wrapper = mount(AccountLink, { props: { accountId: 'acc-1' } })
-    await flushPromises()
-    const btn = wrapper.find('button')
+  it("默认态使用主题强调色（琥珀）", async () => {
+    const wrapper = mount(AccountLink, { props: { accountId: "acc-1" } });
+    await flushPromises();
+    const btn = wrapper.find("button");
     // 强调色注入到 style（暗色主题琥珀 #F59E0B，jsdom 归一化为 rgb）。
     // hover 亮琥珀 + 下划线 + 背景微亮、focus-visible 焦点环为组件静态 CSS
     // （jsdom 不注入 scoped 样式，无法在此断言；见 AccountLink.vue 样式块）。
-    expect(btn.attributes('style')).toContain('rgb(245, 158, 11)')
-  })
+    expect(btn.attributes("style")).toContain("rgb(245, 158, 11)");
+  });
 
-  it('暗色 hover 变量注入亮琥珀（#FBBF24；自定义属性不经 jsdom 颜色归一化）', async () => {
-    useAppStore().setTheme('dark')
-    const wrapper = mount(AccountLink, { props: { accountId: 'acc-1' } })
-    await flushPromises()
-    expect(wrapper.find('button').attributes('style')).toContain('--accent-hover: #FBBF24')
-  })
+  it("暗色 hover 变量注入亮琥珀（#FBBF24；自定义属性不经 jsdom 颜色归一化）", async () => {
+    useAppStore().setTheme("dark");
+    const wrapper = mount(AccountLink, { props: { accountId: "acc-1" } });
+    await flushPromises();
+    expect(wrapper.find("button").attributes("style")).toContain("--accent-hover: #FBBF24");
+  });
 
-  it('亮色主题：强调色切同色相加深版（#B45309 / hover #92400E）', async () => {
-    useAppStore().setTheme('light')
-    const wrapper = mount(AccountLink, { props: { accountId: 'acc-1' } })
-    await flushPromises()
-    const style = wrapper.find('button').attributes('style')
-    expect(style).toContain('rgb(180, 83, 9)')
-    expect(style).toContain('--accent-hover: #92400E')
-  })
+  it("亮色主题：强调色切同色相加深版（#B45309 / hover #92400E）", async () => {
+    useAppStore().setTheme("light");
+    const wrapper = mount(AccountLink, { props: { accountId: "acc-1" } });
+    await flushPromises();
+    const style = wrapper.find("button").attributes("style");
+    expect(style).toContain("rgb(180, 83, 9)");
+    expect(style).toContain("--accent-hover: #92400E");
+  });
 
-  it('点击跳转 /transactions?account=<id>', async () => {
-    const wrapper = mount(AccountLink, { props: { accountId: 'acc-1' } })
-    await flushPromises()
-    await wrapper.find('button').trigger('click')
-    expect(pushMock).toHaveBeenCalledWith({ name: 'transactions', query: { account: 'acc-1' } })
-  })
+  it("点击跳转 /transactions?account=<id>", async () => {
+    const wrapper = mount(AccountLink, { props: { accountId: "acc-1" } });
+    await flushPromises();
+    await wrapper.find("button").trigger("click");
+    expect(pushMock).toHaveBeenCalledWith({ name: "transactions", query: { account: "acc-1" } });
+  });
 
-  it('账户不在参考数据中（黑洞/隐藏账户）渲染纯文本「-」，不可点击、无跳转', async () => {
-    const wrapper = mount(AccountLink, { props: { accountId: 'ghost-acc' } })
-    await flushPromises()
+  it("账户不在参考数据中（黑洞/隐藏账户）渲染纯文本「-」，不可点击、无跳转", async () => {
+    const wrapper = mount(AccountLink, { props: { accountId: "ghost-acc" } });
+    await flushPromises();
     // 黑洞/隐藏账户渲染为 span（非 button）：无下钻、无强调色
-    expect(wrapper.find('button').exists()).toBe(false)
-    const ph = wrapper.find('span.account-placeholder')
-    expect(ph.exists()).toBe(true)
-    expect(ph.text()).toBe('-')
-    expect(ph.attributes('title')).toBeUndefined()
+    expect(wrapper.find("button").exists()).toBe(false);
+    const ph = wrapper.find("span.account-placeholder");
+    expect(ph.exists()).toBe(true);
+    expect(ph.text()).toBe("-");
+    expect(ph.attributes("title")).toBeUndefined();
     // 纯文本点击不触发跳转
-    await ph.trigger('click')
-    expect(pushMock).not.toHaveBeenCalled()
-  })
+    await ph.trigger("click");
+    expect(pushMock).not.toHaveBeenCalled();
+  });
 
-  it('外部传入的布局样式透传到根按钮（转账行内容宽度/左对齐依赖，issue #99）', async () => {
+  it("外部传入的布局样式透传到根按钮（转账行内容宽度/左对齐依赖，issue #99）", async () => {
     const wrapper = mount(AccountLink, {
-      props: { accountId: 'acc-1' },
-      attrs: { style: 'flex: 0 1 auto; min-width: 0; text-align: left;' },
-    })
-    await flushPromises()
-    const btn = wrapper.find('button')
-    const style = (btn.element as HTMLElement).style
+      props: { accountId: "acc-1" },
+      attrs: { style: "flex: 0 1 auto; min-width: 0; text-align: left;" },
+    });
+    await flushPromises();
+    const btn = wrapper.find("button");
+    const style = (btn.element as HTMLElement).style;
     // 内容宽度不增长（flex-grow:0），可收缩省略（flex-shrink:1），文本左对齐顶列左缘
-    expect(style.flexGrow).toBe('0')
-    expect(style.flexShrink).toBe('1')
-    expect(style.minWidth).toBe('0px')
-    expect(style.textAlign).toBe('left')
+    expect(style.flexGrow).toBe("0");
+    expect(style.flexShrink).toBe("1");
+    expect(style.minWidth).toBe("0px");
+    expect(style.textAlign).toBe("left");
     // 组件内部强调色与外部布局样式合并，互不覆盖（暗色琥珀归一化为 rgb）
-    expect(btn.attributes('style')).toContain('rgb(245, 158, 11)')
-  })
-})
+    expect(btn.attributes("style")).toContain("rgb(245, 158, 11)");
+  });
+});

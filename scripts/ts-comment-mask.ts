@@ -15,18 +15,18 @@
 /** 若 text[start] 起是字符串/模板字面量，返回结束引号后的下标；未闭合则返回文末。
  *  否则返回 -1。只用于跳过字面量内容以识别注释起点，字面量本身不掩码。 */
 function stringLiteralEnd(text: string, start: number): number {
-  const quote = text[start]
-  if (quote !== "'" && quote !== '"' && quote !== '`') return -1
-  let i = start + 1
+  const quote = text[start];
+  if (quote !== "'" && quote !== '"' && quote !== "`") return -1;
+  let i = start + 1;
   while (i < text.length) {
-    if (text[i] === '\\') {
-      i += 2
-      continue
+    if (text[i] === "\\") {
+      i += 2;
+      continue;
     }
-    if (text[i] === quote) return i + 1
-    i++
+    if (text[i] === quote) return i + 1;
+    i++;
   }
-  return text.length
+  return text.length;
 }
 
 /** 掩码 TS/Vue 源文本中的注释（行注释与块注释）：内容替换为等长空白（保留换行与
@@ -41,27 +41,27 @@ function stringLiteralEnd(text: string, start: number): number {
  *  单一维护点（issue #1481）：check-frontend-structure.ts 与 check-commands.ts 消费
  *  本出口，掩码规则改动只动本文件。 */
 export function maskComments(text: string): string {
-  const out = text.split('')
-  const n = text.length
+  const out = text.split("");
+  const n = text.length;
   const blank = (from: number, to: number): void => {
-    for (let k = from; k < to && k < n; k++) if (out[k] !== '\n') out[k] = ' '
-  }
-  let i = 0
+    for (let k = from; k < to && k < n; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  let i = 0;
   while (i < n) {
     // text[i - 1] === '\\'：正则字面量体内的转义斜杠，不是注释起点（issue #1471）。
-    if (text[i] === '/' && text[i - 1] !== '\\' && text[i + 1] === '/') {
-      const stop = text.indexOf('\n', i) === -1 ? n : text.indexOf('\n', i)
-      blank(i, stop)
-      i = stop
-    } else if (text[i] === '/' && text[i - 1] !== '\\' && text[i + 1] === '*') {
-      const end = text.indexOf('*/', i + 2)
-      const stop = end === -1 ? n : end + 2
-      blank(i, stop)
-      i = stop
+    if (text[i] === "/" && text[i - 1] !== "\\" && text[i + 1] === "/") {
+      const stop = text.indexOf("\n", i) === -1 ? n : text.indexOf("\n", i);
+      blank(i, stop);
+      i = stop;
+    } else if (text[i] === "/" && text[i - 1] !== "\\" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      const stop = end === -1 ? n : end + 2;
+      blank(i, stop);
+      i = stop;
     } else {
-      const literalEnd = stringLiteralEnd(text, i)
-      i = literalEnd === -1 ? i + 1 : literalEnd
+      const literalEnd = stringLiteralEnd(text, i);
+      i = literalEnd === -1 ? i + 1 : literalEnd;
     }
   }
-  return out.join('')
+  return out.join("");
 }

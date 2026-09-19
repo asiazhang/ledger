@@ -1,4 +1,4 @@
-import { globalStyle } from '@vanilla-extract/css'
+import { globalStyle } from "@vanilla-extract/css";
 
 /**
  * 标的代码链接旁路样式（ADR-0107 / ADR-0093 样式方案）：与组件同目录共置。
@@ -8,39 +8,39 @@ import { globalStyle } from '@vanilla-extract/css'
  */
 
 /** 链接态钩子类：文本按钮，继承单元格字号。 */
-export const INSTRUMENT_LINK_CLASS = 'instrument-link'
+export const INSTRUMENT_LINK_CLASS = "instrument-link";
 
 globalStyle(`.${INSTRUMENT_LINK_CLASS}`, {
-  border: 'none',
+  border: "none",
   padding: 0,
-  background: 'none',
-  font: 'inherit',
-  cursor: 'pointer',
-  borderRadius: '4px',
-  maxWidth: '100%',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-})
+  background: "none",
+  font: "inherit",
+  cursor: "pointer",
+  borderRadius: "4px",
+  maxWidth: "100%",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+});
 
 globalStyle(`.${INSTRUMENT_LINK_CLASS}:hover`, {
-  color: 'var(--accent-hover)',
-  background: 'rgba(255, 255, 255, 0.06)',
-  textDecoration: 'underline',
-})
+  color: "var(--accent-hover)",
+  background: "rgba(255, 255, 255, 0.06)",
+  textDecoration: "underline",
+});
 
 globalStyle(`.${INSTRUMENT_LINK_CLASS}:focus-visible`, {
-  outline: '2px solid var(--accent-hover)',
-  outlineOffset: '2px',
-})
+  outline: "2px solid var(--accent-hover)",
+  outlineOffset: "2px",
+});
 
 /** 占位钩子类（无代码标的的纯文本「-」）：无强调色、不可点击。 */
-export const INSTRUMENT_PLACEHOLDER_CLASS = 'instrument-placeholder'
+export const INSTRUMENT_PLACEHOLDER_CLASS = "instrument-placeholder";
 
 globalStyle(`.${INSTRUMENT_PLACEHOLDER_CLASS}`, {
-  color: 'inherit',
-  maxWidth: '100%',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-})
+  color: "inherit",
+  maxWidth: "100%",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+});

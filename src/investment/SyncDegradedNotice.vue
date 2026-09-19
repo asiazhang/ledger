@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NText } from 'naive-ui'
-import { t } from '@ledger/i18n'
+import { NText } from "naive-ui";
+import { t } from "@ledger/i18n";
 
 // 同步降级标注组件（issue #1376 / ADR-0121 决策 4）：本次同步回退到逐标的通道
 // （批量取数面失败或跨同步停用期）时明示「已降级、本次较慢」——偶发的「这次
@@ -12,11 +12,11 @@ import { t } from '@ledger/i18n'
 // 抑制快捷键，与 SyncProgressBar 同一豁免口径）；着色用警示色（warning）与
 // 成功/失败消息的 info/error 同族，不新造样式（无独立样式文件）。
 
-defineProps<{ degraded: boolean }>()
+defineProps<{ degraded: boolean }>();
 </script>
 
 <template>
   <NText v-if="degraded" type="warning" data-testid="instrument-sync-degraded">
-    {{ t('investments.sync.degraded') }}
+    {{ t("investments.sync.degraded") }}
   </NText>
 </template>

@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NAlert, NButton, NCard, NTag, NText } from 'naive-ui'
-import { CheckmarkCircleOutline, LockClosedOutline } from '@vicons/ionicons5'
-import { NIcon } from 'naive-ui'
-import { t } from '@ledger/i18n'
-import { formatAmount } from '@ledger/money'
-import { errorMessage } from '@ledger/utils/errors'
-import { useCrossBookSummary } from '@/investment/useCrossBookSummary'
-import ConceptLabel from '@/investment/ConceptLabel.vue'
-import type { ConceptKey } from '@/investment/concept-tips'
-import { useReferenceStore } from '@/stores/reference'
-import type { CrossBookBookStatus } from '@ledger/types'
+import { computed } from "vue";
+import { NAlert, NButton, NCard, NTag, NText } from "naive-ui";
+import { CheckmarkCircleOutline, LockClosedOutline } from "@vicons/ionicons5";
+import { NIcon } from "naive-ui";
+import { t } from "@ledger/i18n";
+import { formatAmount } from "@ledger/money";
+import { errorMessage } from "@ledger/utils/errors";
+import { useCrossBookSummary } from "@/investment/useCrossBookSummary";
+import ConceptLabel from "@/investment/ConceptLabel.vue";
+import type { ConceptKey } from "@/investment/concept-tips";
+import { useReferenceStore } from "@/stores/reference";
+import type { CrossBookBookStatus } from "@ledger/types";
 import {
   bookName,
   bookRow,
@@ -19,36 +19,36 @@ import {
   cardsGrid,
   statusIcon,
   summaryRoot,
-} from './CrossBookSummaryView.css.ts'
+} from "./CrossBookSummaryView.css.ts";
 
 // 跨账本投资汇总页（issue #1196 / ADR-0114）：只读合计视图——折算、逐本状态与
 // 口径标注全部由后端 `cross_book_investment_summary` 产出，本组件只做装配渲染；
 // 无任何编辑入口（ADR-0114 决策 6，一切写入回到单账本语境）。
-const reference = useReferenceStore()
-const { summary, error, refresh } = useCrossBookSummary()
+const reference = useReferenceStore();
+const { summary, error, refresh } = useCrossBookSummary();
 
 // 币种标注（ADR-0114 决策 3 的界面义务）：发生过折算须显式说明口径。
 const currencyNote = computed(() => {
-  if (!summary.value) return ''
+  if (!summary.value) return "";
   return summary.value.converted
-    ? t('crossBook.convertedNote', { currency: summary.value.target_currency })
-    : t('crossBook.sameCurrencyNote', { currency: summary.value.target_currency })
-})
+    ? t("crossBook.convertedNote", { currency: summary.value.target_currency })
+    : t("crossBook.sameCurrencyNote", { currency: summary.value.target_currency });
+});
 
 // 部分合计警示（ADR-0114 决策 5）：存在未计入本时合计是部分合计，须显式说明。
 const hasExcluded = computed(() =>
-  (summary.value?.books ?? []).some((b) => b.status !== 'included'),
-)
+  (summary.value?.books ?? []).some((b) => b.status !== "included"),
+);
 
 const cards = computed(() => {
-  const s = summary.value
-  if (!s) return []
+  const s = summary.value;
+  if (!s) return [];
   const totals: { key: ConceptKey; cents: number }[] = [
-    { key: 'marketValue', cents: s.market_value_cents },
-    { key: 'unrealizedPnl', cents: s.unrealized_pnl_cents },
-    { key: 'cumulativePnl', cents: s.cumulative_pnl_cents },
-    { key: 'investableAssets', cents: s.investable_assets_cents },
-  ]
+    { key: "marketValue", cents: s.market_value_cents },
+    { key: "unrealizedPnl", cents: s.unrealized_pnl_cents },
+    { key: "cumulativePnl", cents: s.cumulative_pnl_cents },
+    { key: "investableAssets", cents: s.investable_assets_cents },
+  ];
   return totals.map(({ key, cents }) => ({
     key,
     label: t(`crossBook.totals.${key}`),
@@ -56,24 +56,24 @@ const cards = computed(() => {
     // 跨本语境差异（逐本折算、未解锁/未建库不计入）由 crossBook 作用域句承担
     concept: key,
     amount: formatAmount(cents, reference.currencyMap.get(s.target_currency)),
-  }))
-})
+  }));
+});
 
 function statusText(status: CrossBookBookStatus): string {
-  return t(`crossBook.status.${status}`)
+  return t(`crossBook.status.${status}`);
 }
 </script>
 
 <template>
   <div :class="summaryRoot" data-testid="cross-book-summary">
     <NAlert v-if="error" type="error" :show-icon="true" class="summary-alert">
-      <NText strong>{{ t('crossBook.loadFailed') }}</NText>
+      <NText strong>{{ t("crossBook.loadFailed") }}</NText>
       <div>{{ errorMessage(error) }}</div>
     </NAlert>
 
     <template v-if="summary">
       <NAlert v-if="hasExcluded" type="warning" :show-icon="true">
-        {{ t('crossBook.partialNote') }}
+        {{ t("crossBook.partialNote") }}
       </NAlert>
       <NAlert v-else type="default" :show-icon="false">
         {{ currencyNote }}
@@ -114,7 +114,7 @@ function statusText(status: CrossBookBookStatus): string {
               :bordered="false"
               type="primary"
             >
-              {{ t('crossBook.activeTag') }}
+              {{ t("crossBook.activeTag") }}
             </NTag>
           </span>
           <NTag
@@ -139,7 +139,7 @@ function statusText(status: CrossBookBookStatus): string {
     </template>
 
     <NButton v-if="error" size="small" type="primary" @click="() => void refresh()">
-      {{ t('crossBook.retry') }}
+      {{ t("crossBook.retry") }}
     </NButton>
   </div>
 </template>

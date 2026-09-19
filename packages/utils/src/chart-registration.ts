@@ -21,7 +21,7 @@ import {
   Tooltip,
   Legend,
   Title,
-} from 'chart.js'
+} from "chart.js";
 
 ChartJS.register(
   // 图表类型（controller）
@@ -38,4 +38,4 @@ ChartJS.register(
   Tooltip,
   Legend,
   Title,
-)
+);

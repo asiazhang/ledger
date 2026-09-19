@@ -1,5 +1,5 @@
-import { ref } from 'vue'
-import { errorMessage } from '@ledger/utils/errors'
+import { ref } from "vue";
+import { errorMessage } from "@ledger/utils/errors";
 
 /**
  * Loadable：前端异步任务统一生命周期模块（工厂形态 composable，ADR-0040 / issue #320）。
@@ -21,63 +21,63 @@ import { errorMessage } from '@ledger/utils/errors'
 /** toast sink 最小结构面：模块默认策略只用 error 一路；
  * naive-ui 的 MessageApi 结构相容，可在消息提供器内直接注册。 */
 export interface ToastSink {
-  error: (content: string) => void
+  error: (content: string) => void;
 }
 
 /** 模块级单点 sink：应用入口在消息提供器内注册（useMessage 只在该上下文可用），
  * 注册前为 no-op，测试注入假 sink。sink 与策略正交。 */
-let toastSink: ToastSink = { error: () => {} }
+let toastSink: ToastSink = { error: () => {} };
 
 /** 应用入口注册 toast sink（须在 NMessageProvider 的组件上下文内调用）；重复注册即覆盖。 */
 export function registerToastSink(sink: ToastSink): void {
-  toastSink = sink
+  toastSink = sink;
 }
 
 /** 错误展示策略：默认统一 toast——策略收口此一处，全局换策略只碰这里（不设注入机制）。 */
 function showErrorToast(message: string): void {
-  toastSink.error(message)
+  toastSink.error(message);
 }
 
 /** 实例级配置：`silent` 为每实例静默 opt-out（默认策略仍全局单点，不是策略注入）。 */
 export interface UseLoadableOptions {
   /** 静默实例：error 照常置位、toast 不弹——失败走优雅降级而非弹窗打扰。 */
-  silent?: boolean
+  silent?: boolean;
 }
 
 export function useLoadable<T>(task: () => Promise<T>, options: UseLoadableOptions = {}) {
-  const silent = options.silent ?? false
-  const loading = ref(false)
-  const error = ref<string | null>(null)
+  const silent = options.silent ?? false;
+  const loading = ref(false);
+  const error = ref<string | null>(null);
 
   // 请求序号守卫：竞态后发覆盖先发，终态 = 最后一次发起的结果；
   // 迟到的前发结果连同其 loading 收尾（及错误 toast）一并作废。
-  let seq = 0
+  let seq = 0;
 
   /** 发起（「刷新」即再次发起）：永不 reject——成功回结果、失败回空且 error 置位。 */
   async function run(): Promise<T | null> {
-    const mySeq = ++seq
-    loading.value = true
+    const mySeq = ++seq;
+    loading.value = true;
     try {
-      const result = await task()
-      if (mySeq !== seq) return null
-      error.value = null
-      return result
+      const result = await task();
+      if (mySeq !== seq) return null;
+      error.value = null;
+      return result;
     } catch (e) {
-      if (mySeq !== seq) return null
-      error.value = errorMessage(e)
-      if (!silent) showErrorToast(error.value)
-      return null
+      if (mySeq !== seq) return null;
+      error.value = errorMessage(e);
+      if (!silent) showErrorToast(error.value);
+      return null;
     } finally {
-      if (mySeq === seq) loading.value = false
+      if (mySeq === seq) loading.value = false;
     }
   }
 
   /** 作废在途：序号推进 + loading 收尾置 false（error 不动），不发起新任务；
    * 此后迟到的在途结果按既有竞态语义作废（不落位、不收 loading、不弹 toast）。 */
   function invalidate(): void {
-    seq += 1
-    loading.value = false
+    seq += 1;
+    loading.value = false;
   }
 
-  return { loading, error, run, invalidate }
+  return { loading, error, run, invalidate };
 }

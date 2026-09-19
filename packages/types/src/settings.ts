@@ -7,7 +7,7 @@
  */
 export interface LogLevelState {
   /** 闭集五档指令字符串之一：error / warn / info / debug / trace。 */
-  level: string
+  level: string;
 }
 
 /**
@@ -16,5 +16,5 @@ export interface LogLevelState {
  */
 export interface BaseCurrencyState {
   /** 当前基准币种代码（缺 key 回默认 CNY）。 */
-  code: string
+  code: string;
 }

@@ -9,19 +9,19 @@
  * （ADR-0116 决策 8）。开关点选即写 feature-toggles store：设备级 localStorage、
  * 跨账本共享、零后端调用（ADR-0116 决策 6）。
  */
-import { NCard, NSpace, NSwitch, NText } from 'naive-ui'
-import { CLOSABLE_FEATURES, useFeatureToggleStore } from '@/settings/feature-toggles'
-import { t } from '@ledger/i18n'
-import { viewLabel } from '@ledger/i18n/view-label'
+import { NCard, NSpace, NSwitch, NText } from "naive-ui";
+import { CLOSABLE_FEATURES, useFeatureToggleStore } from "@/settings/feature-toggles";
+import { t } from "@ledger/i18n";
+import { viewLabel } from "@ledger/i18n/view-label";
 
-const store = useFeatureToggleStore()
+const store = useFeatureToggleStore();
 </script>
 
 <template>
   <NCard :title="t('settings.features.title')" size="small">
     <NSpace vertical :size="12">
       <NText depth="3" style="font-size: 12px">
-        {{ t('settings.features.intro') }}
+        {{ t("settings.features.intro") }}
       </NText>
       <NSpace
         v-for="id in CLOSABLE_FEATURES"

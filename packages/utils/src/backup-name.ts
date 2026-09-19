@@ -19,10 +19,7 @@ function timestamp(d: Date): string {
 }
 
 /** 手动备份默认文件名：`ledger-backup-YYYYMMDD-HHMMSS[-<账本标识>].db.zip`。 */
-export function defaultBackupFileName(
-  now: Date = new Date(),
-  bookId?: string | null,
-): string {
+export function defaultBackupFileName(now: Date = new Date(), bookId?: string | null): string {
   const base = `${MANUAL_BACKUP_PREFIX}${timestamp(now)}`;
   return bookId ? `${base}-${bookId}.db.zip` : `${base}.db.zip`;
 }
@@ -30,9 +27,8 @@ export function defaultBackupFileName(
 /** 文件名是否为受管备份：命中任一受管前缀且带标准后缀。 */
 export function isManagedBackupFileName(name: string): boolean {
   return (
-    [MANUAL_BACKUP_PREFIX, AUTO_BACKUP_PREFIX].some((prefix) =>
-      name.startsWith(prefix),
-    ) && name.endsWith(MANAGED_BACKUP_SUFFIX)
+    [MANUAL_BACKUP_PREFIX, AUTO_BACKUP_PREFIX].some((prefix) => name.startsWith(prefix)) &&
+    name.endsWith(MANAGED_BACKUP_SUFFIX)
   );
 }
 
@@ -47,10 +43,7 @@ export function normalizeBackupDir(raw: string): {
 }
 
 /** 目标路径是否为受管备份：位于配置的备份目录内且文件名匹配受管命名规则。 */
-export function isManagedBackupPath(
-  target: string,
-  backupDir: string,
-): boolean {
+export function isManagedBackupPath(target: string, backupDir: string): boolean {
   if (!backupDir) return false;
   const { dir, sep } = normalizeBackupDir(backupDir);
   const base = target.split(/[\\/]/).pop() ?? "";

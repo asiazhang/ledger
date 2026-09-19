@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, ref, computed, watch } from 'vue'
+import { h, ref, computed, watch } from "vue";
 import {
   NButton,
   NCard,
@@ -13,19 +13,19 @@ import {
   useMessage,
   type DataTableColumn,
   type PaginationProps,
-} from 'naive-ui'
-import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
-import MerchantEditModal from '@/merchants/MerchantEditModal.vue'
-import { api } from '@ledger/api'
-import { useRouter } from 'vue-router'
-import { useReferenceStore } from '@/stores/reference'
-import { useModalIntent } from '@ledger/modal-intent'
-import { useWindowTier } from '@ledger/window-tier'
-import { matchLabel } from '@ledger/utils/pinyin-filter'
-import { t } from '@ledger/i18n'
-import { formatQuantity } from '@ledger/money'
-import { sumFixedColumnWidths } from '@ledger/utils/table'
-import type { Merchant, MerchantInput } from '@ledger/types'
+} from "naive-ui";
+import AppPopconfirm from "@ledger/ui-kit/AppPopconfirm.vue";
+import MerchantEditModal from "@/merchants/MerchantEditModal.vue";
+import { api } from "@ledger/api";
+import { useRouter } from "vue-router";
+import { useReferenceStore } from "@/stores/reference";
+import { useModalIntent } from "@ledger/modal-intent";
+import { useWindowTier } from "@ledger/window-tier";
+import { matchLabel } from "@ledger/utils/pinyin-filter";
+import { t } from "@ledger/i18n";
+import { formatQuantity } from "@ledger/money";
+import { sumFixedColumnWidths } from "@ledger/utils/table";
+import type { Merchant, MerchantInput } from "@ledger/types";
 
 // 商户管理（issue #189 / ADR-0028）：字典为扁平表（无层级、无 sort_order，按名称排序），
 // 交互沿用分类管理先例——新增表单卡片 + 列表卡片 + 编辑弹窗；写入成功后参考数据
@@ -51,32 +51,32 @@ import type { Merchant, MerchantInput } from '@ledger/types'
 
 interface MerchantRow extends Merchant {
   /** 关联交易条数（毛笔数）：无引用商户为 0 */
-  transactionCount: number
+  transactionCount: number;
 }
 
-const reference = useReferenceStore()
-const message = useMessage()
-const router = useRouter()
+const reference = useReferenceStore();
+const message = useMessage();
+const router = useRouter();
 
 // 移动档（issue #849 / ADR-0088 决策 11 票⑨，收纳页布局核对级适配）：低频管理表
 // 窄屏不重排列结构，挂 scroll-x = 固定列宽总和由横向滚动吸收；桌面档不挂
 //（既有压缩行为一字不变）。
-const windowTier = useWindowTier()
-const isMobileTier = computed(() => windowTier.value === 'mobile')
+const windowTier = useWindowTier();
+const isMobileTier = computed(() => windowTier.value === "mobile");
 
 /** 条数下钻（issue #446）：按行 id 产生跳转，不对条数/商户状态设门——
  * 条数为 0 点击只见空列表（诚实行为）；软删商户行（#447 引入展示后）同样可下钻。 */
 function goMerchantTransactions(m: MerchantRow) {
-  router.push({ name: 'transactions', query: { merchant: m.id } })
+  router.push({ name: "transactions", query: { merchant: m.id } });
 }
 
 // —— 关联交易条数（独立读模型，非关键路径：失败保留旧值不阻塞字典管理）——
-const transactionCounts = ref(new Map<string, number>())
+const transactionCounts = ref(new Map<string, number>());
 
 async function loadTransactionCounts() {
   try {
-    const rows = await api.listMerchantTransactionCounts()
-    transactionCounts.value = new Map(rows.map((r) => [r.merchant_id, r.transaction_count]))
+    const rows = await api.listMerchantTransactionCounts();
+    transactionCounts.value = new Map(rows.map((r) => [r.merchant_id, r.transaction_count]));
   } catch {
     /* 条数加载失败静默保留旧值（展示 0 优于阻塞字典管理） */
   }
@@ -87,76 +87,76 @@ async function loadTransactionCounts() {
 watch(
   () => reference.version,
   () => {
-    void loadTransactionCounts()
+    void loadTransactionCounts();
   },
   { immediate: true },
-)
+);
 
 /** 行视图模型：商户行 + 客户端拼接的条数（缺失补 0）；在用与已删同构。 */
 function toRow(m: Merchant): MerchantRow {
-  return { ...m, transactionCount: transactionCounts.value.get(m.id) ?? 0 }
+  return { ...m, transactionCount: transactionCounts.value.get(m.id) ?? 0 };
 }
 
 /** 列表行视图模型：参考数据单一来源的在用商户行。 */
-const rows = computed<MerchantRow[]>(() => reference.merchants.map(toRow))
+const rows = computed<MerchantRow[]>(() => reference.merchants.map(toRow));
 
 // —— 显示已删（issue #447）：默认只显示在用商户；切换后已软删商户以只读行
 // 追加在尾部展示（无编辑/删除操作），条数照常显示、照常可下钻。已删字典
 // 消费参考 store 既有软删缓存（历史交易口径同一数据源），无新增拉取。
-const showDeleted = ref(false)
+const showDeleted = ref(false);
 
 /** 已删行：软删商户同样拼接条数（照常计数、可下钻）。默认（名称序）展示在
  * 在用行之后；条数列排序激活后由表格排序接管，不另行隔离已删行。 */
 const deletedRows = computed<MerchantRow[]>(() =>
   [...reference.deletedMerchants.values()].map(toRow),
-)
+);
 
 // —— 搜索（issue #447）：统一模糊搜索语义（全库唯一定义点为核心交易域
 // TransactionSearch，ADR-0027），复用拼音过滤工具的前端同规格纯函数；
 // 商户字典前端全量驻留，属本地过滤形态（拼音可搜下拉同款）。searchTerm
 // 过滤只隐藏未命中项、剩余项顺序不变（保护位置记忆），清空恢复完整列表。
-const searchTerm = ref('')
+const searchTerm = ref("");
 
 /** 展示行：（显示已删？在用 + 已删：仅在用）→ 搜索词过滤
  *（matchLabel 空输入恒命中，清空即完整列表；filter 保序不重排）。
  * 表格以此全量集合作 data，排序与分页切片由表格客户端模式自行完成。 */
 const displayRows = computed<MerchantRow[]>(() => {
-  const base = showDeleted.value ? [...rows.value, ...deletedRows.value] : rows.value
-  return base.filter((m) => matchLabel(searchTerm.value, m.name))
-})
+  const base = showDeleted.value ? [...rows.value, ...deletedRows.value] : rows.value;
+  return base.filter((m) => matchLabel(searchTerm.value, m.name));
+});
 
 // —— 前端分页（issue #457）：组件内受控状态，不持久化；页签卸载重挂即回第一页 ——
-const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
-const currentPage = ref(1)
-const pageSize = ref(50)
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+const currentPage = ref(1);
+const pageSize = ref(50);
 
 /** 「本页删后剩 N 条」（ADR-0045 删尾回退判定，就地声明）：按展示集合事实——
  * 显示已删关闭时软删行离开展示集合，删前本页仅 1 条 ⇔ 剩 0；开启时行仍在
  * （转已删行），集合不减。页码有效时本页条数 = 当前页起点到过滤后列表末尾的
  * 行数（≤ pageSize，排序不影响行数）。 */
 function remainingOnPageAfterDelete(): number {
-  const start = (currentPage.value - 1) * pageSize.value
-  const rowsOnPage = Math.max(0, displayRows.value.length - start)
-  return showDeleted.value ? rowsOnPage : rowsOnPage - 1
+  const start = (currentPage.value - 1) * pageSize.value;
+  const rowsOnPage = Math.max(0, displayRows.value.length - start);
+  return showDeleted.value ? rowsOnPage : rowsOnPage - 1;
 }
 
 /** 页码回退入口（ADR-0045 同形）：N 为 0 且当前页非第一页时减一页；
  * 只回退不归零，与「过滤意图归零」是两类语义。 */
 function afterRowDelete(remainingOnPage: number) {
   if (remainingOnPage === 0 && currentPage.value > 1) {
-    currentPage.value -= 1
+    currentPage.value -= 1;
   }
 }
 
 // 过滤意图变化 → 页码归零：搜索输入/清空、切换「显示已删」；排序变化经
 // update:sorter 就地归零。新增/改名等参考数据重拉不是过滤意图，保持当前页。
 watch([searchTerm, showDeleted], () => {
-  currentPage.value = 1
-})
+  currentPage.value = 1;
+});
 
 /** 排序切换（表格内部非受控排序作用于过滤后全量行，先排序后切片）→ 页码归零。 */
 function resetPageOnSort() {
-  currentPage.value = 1
+  currentPage.value = 1;
 }
 
 /** 分页条（与交易页同形态：过滤后总数 + 页大小选择 + 快捷跳页）；非 remote
@@ -168,34 +168,34 @@ const pagination = computed<PaginationProps>(() => ({
   showQuickJumper: true,
   pageSizes: PAGE_SIZE_OPTIONS,
   prefix: ({ itemCount }) =>
-    h('span', null, () => t('settings.merchants.total', { n: itemCount ?? 0 })),
+    h("span", null, () => t("settings.merchants.total", { n: itemCount ?? 0 })),
   onChange: (p: number) => {
-    currentPage.value = p
+    currentPage.value = p;
   },
   onUpdatePageSize: (size: number) => {
     // 页大小切换与交易页同语义：写入后回第一页
-    pageSize.value = size
-    currentPage.value = 1
+    pageSize.value = size;
+    currentPage.value = 1;
   },
-}))
+}));
 
 // —— 新增 ——
-const name = ref('')
+const name = ref("");
 
 async function addMerchant() {
-  const trimmed = name.value.trim()
+  const trimmed = name.value.trim();
   if (!trimmed) {
-    message.warning(t('settings.merchants.msg.nameRequired'))
-    return
+    message.warning(t("settings.merchants.msg.nameRequired"));
+    return;
   }
-  const input: MerchantInput = { name: trimmed }
+  const input: MerchantInput = { name: trimmed };
   try {
-    await api.createMerchant(input)
-    message.success(t('settings.merchants.msg.added'))
-    name.value = ''
+    await api.createMerchant(input);
+    message.success(t("settings.merchants.msg.added"));
+    name.value = "";
   } catch (e) {
     // 重名错误（「商户已存在: X」）原样上抛展示，表单不清空、用户可直接修正
-    message.error(t('settings.merchants.msg.addFailed', { msg: e }))
+    message.error(t("settings.merchants.msg.addFailed", { msg: e }));
   }
 }
 
@@ -209,7 +209,7 @@ async function addMerchant() {
 
 /** 商户编辑弹窗意图（单成员闭集）：携带目标商户行。 */
 interface MerchantEditIntent {
-  merchant: Merchant
+  merchant: Merchant;
 }
 
 const {
@@ -217,21 +217,21 @@ const {
   seq: editSeq,
   open: openEditIntent,
   close: closeEdit,
-} = useModalIntent<MerchantEditIntent>()
+} = useModalIntent<MerchantEditIntent>();
 
 function openEdit(m: Merchant) {
-  openEditIntent({ merchant: m })
+  openEditIntent({ merchant: m });
 }
 
 // —— 删除（软删：历史引用照常显示，不可再被新交易选择） ——
 async function removeMerchant(id: string) {
   try {
-    await api.deleteMerchant(id)
+    await api.deleteMerchant(id);
     // 删尾页码回退（issue #457，ADR-0045 先例）：判定用删除前状态，重拉未到。
-    afterRowDelete(remainingOnPageAfterDelete())
-    message.success(t('settings.merchants.msg.deleted'))
+    afterRowDelete(remainingOnPageAfterDelete());
+    message.success(t("settings.merchants.msg.deleted"));
   } catch (e) {
-    message.error(t('settings.merchants.msg.deleteFailed', { msg: e }))
+    message.error(t("settings.merchants.msg.deleteFailed", { msg: e }));
   }
 }
 
@@ -239,15 +239,15 @@ async function removeMerchant(id: string) {
 const columns: DataTableColumn<MerchantRow>[] = [
   {
     // 已删行带「已删除」标记（issue #447）：与在用行可区分。
-    title: () => t('settings.merchants.columns.name'),
-    key: 'name',
+    title: () => t("settings.merchants.columns.name"),
+    key: "name",
     width: 200,
     ellipsis: { tooltip: true },
     render: (m) =>
       m.is_deleted
-        ? h(NSpace, { size: 'small', align: 'center', wrap: false }, () => [
-            h('span', m.name),
-            h(NTag, { size: 'small', bordered: false }, () => t('settings.merchants.deletedTag')),
+        ? h(NSpace, { size: "small", align: "center", wrap: false }, () => [
+            h("span", m.name),
+            h(NTag, { size: "small", bordered: false }, () => t("settings.merchants.deletedTag")),
           ])
         : m.name,
   },
@@ -255,8 +255,8 @@ const columns: DataTableColumn<MerchantRow>[] = [
     // 关联交易条数（issue #445）：毛笔数、可排序；展示走数字分组口径（数量列）。
     // 点击条数下钻（issue #446）：文字按钮跳转交易列表并携带商户过滤参数，
     // title 与 MerchantLink 同源（common.link.viewMerchant）。
-    title: () => t('settings.merchants.columns.transactionCount'),
-    key: 'transactionCount',
+    title: () => t("settings.merchants.columns.transactionCount"),
+    key: "transactionCount",
     width: 110,
     sorter: (a, b) => a.transactionCount - b.transactionCount,
     render: (m) =>
@@ -264,46 +264,44 @@ const columns: DataTableColumn<MerchantRow>[] = [
         NButton,
         {
           text: true,
-          type: 'primary',
-          title: t('common.link.viewMerchant'),
+          type: "primary",
+          title: t("common.link.viewMerchant"),
           onClick: () => goMerchantTransactions(m),
         },
         () => formatQuantity(m.transactionCount),
       ),
   },
   {
-    title: () => t('settings.merchants.columns.actions'),
-    key: 'actions',
+    title: () => t("settings.merchants.columns.actions"),
+    key: "actions",
     width: 140,
     // 已删行只读（issue #447）：无编辑/删除操作。
     render: (m) =>
       m.is_deleted
         ? null
-        : h(NSpace, { size: 'small' }, () => [
+        : h(NSpace, { size: "small" }, () => [
             h(
               NButton,
-              { size: 'tiny', quaternary: true, type: 'primary', onClick: () => openEdit(m) },
-              () => t('settings.merchants.rowActions.edit'),
+              { size: "tiny", quaternary: true, type: "primary", onClick: () => openEdit(m) },
+              () => t("settings.merchants.rowActions.edit"),
             ),
             h(
               AppPopconfirm,
               { onPositiveClick: () => removeMerchant(m.id) },
               {
-                default: () => t('settings.merchants.deleteConfirm'),
+                default: () => t("settings.merchants.deleteConfirm"),
                 trigger: () =>
-                  h(
-                    NButton,
-                    { size: 'tiny', type: 'error', quaternary: true },
-                    () => t('settings.merchants.rowActions.delete'),
+                  h(NButton, { size: "tiny", type: "error", quaternary: true }, () =>
+                    t("settings.merchants.rowActions.delete"),
                   ),
               },
             ),
           ]),
   },
-]
+];
 
 /** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
-const tableScrollX = sumFixedColumnWidths(columns)
+const tableScrollX = sumFixedColumnWidths(columns);
 </script>
 
 <template>
@@ -311,9 +309,15 @@ const tableScrollX = sumFixedColumnWidths(columns)
     <NCard :title="t('settings.merchants.addTitle')" size="small">
       <NForm label-placement="left" :show-feedback="false" inline size="small">
         <NFormItem :label="t('settings.merchants.form.name')">
-          <NInput v-model:value="name" :placeholder="t('settings.merchants.form.namePlaceholder')" style="width: 160px" />
+          <NInput
+            v-model:value="name"
+            :placeholder="t('settings.merchants.form.namePlaceholder')"
+            style="width: 160px"
+          />
         </NFormItem>
-        <NButton type="primary" @click="addMerchant">{{ t('settings.merchants.form.add') }}</NButton>
+        <NButton type="primary" @click="addMerchant">{{
+          t("settings.merchants.form.add")
+        }}</NButton>
       </NForm>
     </NCard>
 
@@ -327,7 +331,7 @@ const tableScrollX = sumFixedColumnWidths(columns)
             style="width: 240px"
           />
           <NCheckbox v-model:checked="showDeleted">
-            {{ t('settings.merchants.showDeleted') }}
+            {{ t("settings.merchants.showDeleted") }}
           </NCheckbox>
         </NSpace>
         <NDataTable

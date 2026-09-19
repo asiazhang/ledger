@@ -1,69 +1,77 @@
 <script setup lang="ts">
-import { errorMessage } from '@ledger/utils/errors'
-import { computed, onMounted, ref } from 'vue'
-import { NCard, NDataTable, NEmpty, NSpace, NSpin, useMessage, type DataTableColumns } from 'naive-ui'
-import { Bar } from 'vue-chartjs'
-import type { ChartOptions, TooltipItem } from 'chart.js'
+import { errorMessage } from "@ledger/utils/errors";
+import { computed, onMounted, ref } from "vue";
+import {
+  NCard,
+  NDataTable,
+  NEmpty,
+  NSpace,
+  NSpin,
+  useMessage,
+  type DataTableColumns,
+} from "naive-ui";
+import { Bar } from "vue-chartjs";
+import type { ChartOptions, TooltipItem } from "chart.js";
 // Chart.js 统一注册模块（issue #926）：柱状图所需 controller/element/scale 一处
 // 注册，不再组件自持子集；导入即完成注册。
-import '@ledger/utils/chart-registration'
-import { api } from '@ledger/api'
-import { formatAmount, amountPrivacyEnabled } from '@ledger/money'
-import { t } from '@ledger/i18n'
-import { useReferenceStore } from '@/stores/reference'
-import { scheduledStatusLabel } from '@ledger/utils/scheduled'
-import type { SubscriptionSpendOverview, SubscriptionSpendRow } from '@ledger/types'
+import "@ledger/utils/chart-registration";
+import { api } from "@ledger/api";
+import { formatAmount, amountPrivacyEnabled } from "@ledger/money";
+import { t } from "@ledger/i18n";
+import { useReferenceStore } from "@/stores/reference";
+import { scheduledStatusLabel } from "@ledger/utils/scheduled";
+import type { SubscriptionSpendOverview, SubscriptionSpendRow } from "@ledger/types";
 
 // 订阅花费双口径分析区（issue #160/#161，ADR-0023 决策二）：
 // 实际花费——本月/本年 + 过去 12 个月逐月趋势（不摊销，忠实统计期次生成的流水）；
 // 推算成本——折算月/年成本两个数（只统计进行中订阅，系数收口在后端，纯展示）。
 // 数据全部来自只读聚合命令 subscription_spend_overview，前端零口径逻辑只渲染。
 
-const reference = useReferenceStore()
-const message = useMessage()
+const reference = useReferenceStore();
+const message = useMessage();
 
-const overview = ref<SubscriptionSpendOverview | null>(null)
-const loading = ref(false)
-const loadFailed = ref(false)
+const overview = ref<SubscriptionSpendOverview | null>(null);
+const loading = ref(false);
+const loadFailed = ref(false);
 
 async function reload() {
-  loading.value = true
-  loadFailed.value = false
+  loading.value = true;
+  loadFailed.value = false;
   try {
-    overview.value = await api.subscriptionSpendOverview()
+    overview.value = await api.subscriptionSpendOverview();
   } catch (e) {
     // 后端缺汇率等中文错误直接上抛展示，不静默混算（ADR-0023）
-    loadFailed.value = true
-    message.error(t('scheduled.spend.loadError', { message: errorMessage(e) }))
+    loadFailed.value = true;
+    message.error(t("scheduled.spend.loadError", { message: errorMessage(e) }));
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
-defineExpose({ reload })
-onMounted(reload)
+defineExpose({ reload });
+onMounted(reload);
 
 const currency = computed(() =>
   overview.value ? reference.getCurrency(overview.value.native_currency) : undefined,
-)
+);
 
 /** 趋势图数据：x 轴 12 个日历月（YYYY-MM），y 轴本位币金额（分） */
 const chartData = computed(() => ({
   labels: overview.value?.months.map((m) => m.month) ?? [],
   datasets: [
     {
-      label: t('scheduled.spend.title'),
+      label: t("scheduled.spend.title"),
       data: overview.value?.months.map((m) => m.native_cents) ?? [],
-      backgroundColor: 'rgba(32, 128, 240, 0.55)',
+      backgroundColor: "rgba(32, 128, 240, 0.55)",
       borderRadius: 4,
     },
   ],
-}))
+}));
 
 // options computed 并读取隐私开关建立响应式依赖（issue #566）：tooltip 与轴刻度
 // formatter 已同源走 formatAmount，但只在重绘时执行——切换时靠 options 变更驱动
 // vue-chartjs 重绘，满足「切换即时生效于所有已打开页面」（spec #564 user story 14）。
-const chartOptions = computed<ChartOptions<'bar'>>(() => {
-  void amountPrivacyEnabled.value
+const chartOptions = computed<ChartOptions<"bar">>(() => {
+  void amountPrivacyEnabled.value;
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -71,7 +79,7 @@ const chartOptions = computed<ChartOptions<'bar'>>(() => {
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: (context: TooltipItem<'bar'>) =>
+          label: (context: TooltipItem<"bar">) =>
             formatAmount(context.raw as number, currency.value),
         },
       },
@@ -84,44 +92,46 @@ const chartOptions = computed<ChartOptions<'bar'>>(() => {
         },
       },
     },
-  }
-})
+  };
+});
 
 /** 逐订阅行（含已取消/暂停计划，历史花费如实保留） */
-const rows = computed(() => overview.value?.rows ?? [])
+const rows = computed(() => overview.value?.rows ?? []);
 
 const rowColumns = computed<DataTableColumns<SubscriptionSpendRow>>(() => [
   {
-    title: t('scheduled.column.subscription'),
-    key: 'note',
+    title: t("scheduled.column.subscription"),
+    key: "note",
     // 商户名为后端左联 merchants 现名（改名即时生效，软删后历史计划照常显示）
-    render: (row) => row.note ?? row.merchant_name ?? '—',
+    render: (row) => row.note ?? row.merchant_name ?? "—",
   },
   {
-    title: t('scheduled.column.status'),
-    key: 'status',
+    title: t("scheduled.column.status"),
+    key: "status",
     render: (row) => scheduledStatusLabel(row.status),
   },
   {
-    title: t('scheduled.spend.thisMonth'),
-    key: 'this_month',
-    align: 'right',
+    title: t("scheduled.spend.thisMonth"),
+    key: "this_month",
+    align: "right",
     render: (row) => formatAmount(row.this_month_native_cents, currency.value),
   },
   {
-    title: t('scheduled.spend.thisYear'),
-    key: 'this_year',
-    align: 'right',
+    title: t("scheduled.spend.thisYear"),
+    key: "this_year",
+    align: "right",
     render: (row) => formatAmount(row.this_year_native_cents, currency.value),
   },
-])
+]);
 </script>
 
 <template>
   <NCard :title="t('scheduled.spend.title')" size="small">
     <template #header-extra>
       <span class="spend-caption">
-        {{ overview ? t('scheduled.spend.unitCaption', { currency: overview.native_currency }) : '' }}
+        {{
+          overview ? t("scheduled.spend.unitCaption", { currency: overview.native_currency }) : ""
+        }}
       </span>
     </template>
     <NSpin :show="loading">
@@ -133,13 +143,13 @@ const rowColumns = computed<DataTableColumns<SubscriptionSpendRow>>(() => [
       <NSpace v-else-if="overview" vertical :size="12">
         <NSpace :size="48" align="center">
           <div class="spend-stat">
-            <div class="spend-stat-label">{{ t('scheduled.spend.thisMonth') }}</div>
+            <div class="spend-stat-label">{{ t("scheduled.spend.thisMonth") }}</div>
             <div class="spend-stat-value" data-testid="spend-this-month">
               {{ formatAmount(overview.this_month_native_cents, currency) }}
             </div>
           </div>
           <div class="spend-stat">
-            <div class="spend-stat-label">{{ t('scheduled.spend.thisYear') }}</div>
+            <div class="spend-stat-label">{{ t("scheduled.spend.thisYear") }}</div>
             <div class="spend-stat-value" data-testid="spend-this-year">
               {{ formatAmount(overview.this_year_native_cents, currency) }}
             </div>
@@ -147,18 +157,18 @@ const rowColumns = computed<DataTableColumns<SubscriptionSpendRow>>(() => [
         </NSpace>
         <NSpace :size="48" align="center">
           <div class="spend-stat">
-            <div class="spend-stat-label">{{ t('scheduled.spend.projectedMonth') }}</div>
+            <div class="spend-stat-label">{{ t("scheduled.spend.projectedMonth") }}</div>
             <div class="spend-stat-value" data-testid="spend-projected-month">
               {{ formatAmount(overview.projected_month_native_cents, currency) }}
             </div>
           </div>
           <div class="spend-stat">
-            <div class="spend-stat-label">{{ t('scheduled.spend.projectedYear') }}</div>
+            <div class="spend-stat-label">{{ t("scheduled.spend.projectedYear") }}</div>
             <div class="spend-stat-value" data-testid="spend-projected-year">
               {{ formatAmount(overview.projected_year_native_cents, currency) }}
             </div>
           </div>
-          <span class="spend-caption">{{ t('scheduled.spend.projectedNote') }}</span>
+          <span class="spend-caption">{{ t("scheduled.spend.projectedNote") }}</span>
         </NSpace>
         <!-- 测试锚点：趋势图数据经桩组件序列化断言（jsdom 无 canvas），桩根节点 data-testid="bar-chart" -->
         <div class="spend-chart-box">

@@ -94,86 +94,86 @@
 // 用法：bun scripts/check-test-stubs.ts [testsDir] [seamHomeDir]
 //   seamHomeDir 默认 packages/test-support/src；packages 根由其上溯两级派生。
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { join, relative, resolve, sep } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
-const testsDir = resolve(process.argv[2] ?? join('src', '__tests__'))
+const testsDir = resolve(process.argv[2] ?? join("src", "__tests__"));
 // seam 宿主目录（issue #1152）：共享测试支持包源码住址，登记处（reference-stubs.ts）
 // 与接缝出口（invoke-mock.ts）的唯一宿主；arg2 可指夹具路径。
-const seamHomeDir = resolve(process.argv[3] ?? join('packages', 'test-support', 'src'))
-const helperPath = join(seamHomeDir, 'reference-stubs.ts')
+const seamHomeDir = resolve(process.argv[3] ?? join("packages", "test-support", "src"));
+const helperPath = join(seamHomeDir, "reference-stubs.ts");
 // packages 根由 seam 宿主上溯两级派生（生产形态 packages/test-support/src →
 // packages），供包内测试扫描；夹具同构（<tmp>/packages/test-support/src）。
-const packagesDir = resolve(seamHomeDir, '..', '..')
+const packagesDir = resolve(seamHomeDir, "..", "..");
 
 function fail(message: string): never {
-  console.error(`✗ 测试桩守门：${message}`)
-  process.exit(1)
+  console.error(`✗ 测试桩守门：${message}`);
+  process.exit(1);
 }
 
 // —— 从助手登记处提取命令清单（单一来源） ——
 function extractCommands(): string[] {
   if (!existsSync(helperPath)) {
-    fail(`参考数据桩助手缺失：${helperPath}（issue #725 治理的桩单一来源）`)
+    fail(`参考数据桩助手缺失：${helperPath}（issue #725 治理的桩单一来源）`);
   }
-  const helperSource = readFileSync(helperPath, 'utf8')
-  const registryMatch = helperSource.match(/REFERENCE_DEFAULTS[^=]*=\s*\{([\s\S]*?)\n\}/)
+  const helperSource = readFileSync(helperPath, "utf8");
+  const registryMatch = helperSource.match(/REFERENCE_DEFAULTS[^=]*=\s*\{([\s\S]*?)\n\}/);
   if (!registryMatch) {
-    fail(`助手 ${helperPath} 中找不到 REFERENCE_DEFAULTS 登记处，守门清单无从提取`)
+    fail(`助手 ${helperPath} 中找不到 REFERENCE_DEFAULTS 登记处，守门清单无从提取`);
   }
-  return [...registryMatch[1].matchAll(/^\s*(list_[a-z_]+):/gm)].map((m) => m[1])
+  return [...registryMatch[1].matchAll(/^\s*(list_[a-z_]+):/gm)].map((m) => m[1]);
 }
 
 // —— 递归收集 .ts 文件（目录缺失返回空：夹具可无 packages 子树；接缝自测豁免） ——
 function walk(dir: string, keepName: (name: string) => boolean): string[] {
-  const out: string[] = []
-  if (!existsSync(dir)) return out
+  const out: string[] = [];
+  if (!existsSync(dir)) return out;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, entry.name)
+    const p = join(dir, entry.name);
     if (entry.isDirectory()) {
-      out.push(...walk(p, keepName))
+      out.push(...walk(p, keepName));
     } else if (
-      entry.name.endsWith('.ts') &&
-      entry.name !== 'invoke-seam.test.ts' &&
+      entry.name.endsWith(".ts") &&
+      entry.name !== "invoke-seam.test.ts" &&
       keepName(entry.name)
     ) {
-      out.push(p)
+      out.push(p);
     }
   }
-  return out
+  return out;
 }
 
 // 扫描目标三区间（互斥；rel 基准各归其主，白名单按 posix 相对路径比对）：
 // app = 包外测试（testsDir 全量 .ts）；seam-home = 接缝宿主全量 .ts（规则 1/3 豁免）；
 // pkg-tests = 包内 *.test.ts（排除 seam 宿主子树，规则全量）。
 interface ScanTarget {
-  abs: string
-  rel: string
-  zone: 'app' | 'pkg-tests' | 'seam-home'
+  abs: string;
+  rel: string;
+  zone: "app" | "pkg-tests" | "seam-home";
 }
 
 function collectScanTargets(): ScanTarget[] {
-  const out: ScanTarget[] = []
+  const out: ScanTarget[] = [];
   for (const abs of walk(testsDir, () => true)) {
-    out.push({ abs, rel: relative(testsDir, abs), zone: 'app' })
+    out.push({ abs, rel: relative(testsDir, abs), zone: "app" });
   }
   if (seamHomeDir !== testsDir) {
     for (const abs of walk(seamHomeDir, () => true)) {
-      out.push({ abs, rel: relative(seamHomeDir, abs), zone: 'seam-home' })
+      out.push({ abs, rel: relative(seamHomeDir, abs), zone: "seam-home" });
     }
   }
-  for (const abs of walk(packagesDir, (name) => name.endsWith('.test.ts'))) {
-    if (resolve(abs).startsWith(seamHomeDir + sep)) continue
-    out.push({ abs, rel: relative(packagesDir, abs), zone: 'pkg-tests' })
+  for (const abs of walk(packagesDir, (name) => name.endsWith(".test.ts"))) {
+    if (resolve(abs).startsWith(seamHomeDir + sep)) continue;
+    out.push({ abs, rel: relative(packagesDir, abs), zone: "pkg-tests" });
   }
-  return out
+  return out;
 }
 
 // —— 规则 1：参考数据手搓桩接线（行级扫描；接线正则每个命令只编译一次） ——
 function findHandWiredReferenceStubs(rel: string, source: string, commands: string[]): string[] {
   const wirings = commands.map((cmd) => {
-    const q = `['"\`]${cmd}['"\`]`
+    const q = `['"\`]${cmd}['"\`]`;
     return {
       cmd,
       re: new RegExp(
@@ -181,184 +181,190 @@ function findHandWiredReferenceStubs(rel: string, source: string, commands: stri
           `|cmd\\s*===\\s*${q}\\s*\\?` +
           `|case\\s+${q}\\s*:`,
       ),
-    }
-  })
-  const hits: string[] = []
-  source.split('\n').forEach((line, i) => {
+    };
+  });
+  const hits: string[] = [];
+  source.split("\n").forEach((line, i) => {
     for (const { cmd, re } of wirings) {
       if (re.test(line)) {
-        hits.push(`  ${rel}:${i + 1}  手搓参考数据桩（${cmd}）——改走唯一接缝 wireInvokeSeam（@ledger/test-support/invoke-mock.ts）`)
+        hits.push(
+          `  ${rel}:${i + 1}  手搓参考数据桩（${cmd}）——改走唯一接缝 wireInvokeSeam（@ledger/test-support/invoke-mock.ts）`,
+        );
       }
     }
-  })
-  return hits
+  });
+  return hits;
 }
 
 // —— 规则 2：括号配对取出每个 mockImplementation 回调体范围（词法跳过字符串与注释，
 //    并记录它们在单元内的范围供后续挖空） ——
 interface CallbackUnit {
-  start: number
-  end: number
-  masks: Array<[number, number]>
+  start: number;
+  end: number;
+  masks: Array<[number, number]>;
 }
 
 function extractCallbackUnits(source: string): CallbackUnit[] {
-  const units: CallbackUnit[] = []
-  const re = /\.mockImplementation\s*\(/g // 不匹配 mockImplementationOnce（队列语义，无静默短路）
-  let m: RegExpExecArray | null
+  const units: CallbackUnit[] = [];
+  const re = /\.mockImplementation\s*\(/g; // 不匹配 mockImplementationOnce（队列语义，无静默短路）
+  let m: RegExpExecArray | null;
   while ((m = re.exec(source))) {
-    const start = m.index + m[0].length
-    let i = start
-    let depth = 1
-    const masks: Array<[number, number]> = []
+    const start = m.index + m[0].length;
+    let i = start;
+    let depth = 1;
+    const masks: Array<[number, number]> = [];
     while (i < source.length && depth > 0) {
-      const c = source[i]
-      if (c === '/' && source[i + 1] === '/') {
-        const s = i
-        while (i < source.length && source[i] !== '\n') i++
-        masks.push([s, i])
-      } else if (c === '/' && source[i + 1] === '*') {
-        const s = i
-        i += 2
-        while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i++
-        i = Math.min(i + 2, source.length)
-        masks.push([s, i])
-      } else if (c === '"' || c === "'" || c === '`') {
-        const s = i
-        const quote = c
-        i++
+      const c = source[i];
+      if (c === "/" && source[i + 1] === "/") {
+        const s = i;
+        while (i < source.length && source[i] !== "\n") i++;
+        masks.push([s, i]);
+      } else if (c === "/" && source[i + 1] === "*") {
+        const s = i;
+        i += 2;
+        while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) i++;
+        i = Math.min(i + 2, source.length);
+        masks.push([s, i]);
+      } else if (c === '"' || c === "'" || c === "`") {
+        const s = i;
+        const quote = c;
+        i++;
         while (i < source.length && source[i] !== quote) {
-          if (source[i] === '\\') i++
-          i++
+          if (source[i] === "\\") i++;
+          i++;
         }
-        i = Math.min(i + 1, source.length)
-        masks.push([s, i])
+        i = Math.min(i + 1, source.length);
+        masks.push([s, i]);
       } else {
-        if (c === '(') depth++
-        else if (c === ')') depth--
-        i++
+        if (c === "(") depth++;
+        else if (c === ")") depth--;
+        i++;
       }
     }
-    if (depth !== 0) continue // 配对失衡（字面量错位、非完整片段）：跳过该单元，宁漏不误
-    units.push({ start, end: i - 1, masks })
+    if (depth !== 0) continue; // 配对失衡（字面量错位、非完整片段）：跳过该单元，宁漏不误
+    units.push({ start, end: i - 1, masks });
   }
-  return units
+  return units;
 }
 
 function lineOf(source: string, offset: number): number {
-  let line = 1
-  for (let i = 0; i < offset; i++) if (source[i] === '\n') line++
-  return line
+  let line = 1;
+  for (let i = 0; i < offset; i++) if (source[i] === "\n") line++;
+  return line;
 }
 
 // —— 规则 2：同回调内同名命令 if 接线去重 ——
 // 仅统计活代码：接线匹配若落在注释/字符串内（与某个注释/字符串范围重叠且伸出其外），
 // 不计数；匹配自身携带的命令字符串完全包含于匹配内，不影响判定。
 function findDuplicateWiring(rel: string, source: string, units: CallbackUnit[]): string[] {
-  const hits: string[] = []
-  const IF_WIRING = /\bif\s*\(\s*cmd\s*===\s*(['"`])([^'"`]+)\1\s*\)/g
+  const hits: string[] = [];
+  const IF_WIRING = /\bif\s*\(\s*cmd\s*===\s*(['"`])([^'"`]+)\1\s*\)/g;
   const isLive = (at: number, len: number, masks: Array<[number, number]>): boolean =>
-    !masks.some(([ms, me]) => ms < at + len && me > at && (ms < at || me > at + len))
+    !masks.some(([ms, me]) => ms < at + len && me > at && (ms < at || me > at + len));
   for (const unit of units) {
     const localMasks = unit.masks.map(
       ([s, e]) => [s - unit.start, Math.min(e, unit.end) - unit.start] as [number, number],
-    )
-    let text = source.slice(unit.start, unit.end)
+    );
+    let text = source.slice(unit.start, unit.end);
     for (const nested of units) {
-      if (nested === unit) continue
+      if (nested === unit) continue;
       if (nested.start >= unit.start && nested.end <= unit.end) {
-        const s = nested.start - unit.start
-        const e = nested.end - unit.start
-        text = text.slice(0, s) + text.slice(s, e).replace(/[^\n]/g, ' ') + text.slice(e) // 同长挖空，稳住行号
+        const s = nested.start - unit.start;
+        const e = nested.end - unit.start;
+        text = text.slice(0, s) + text.slice(s, e).replace(/[^\n]/g, " ") + text.slice(e); // 同长挖空，稳住行号
       }
     }
-    const byCmd = new Map<string, number[]>()
-    let m: RegExpExecArray | null
-    IF_WIRING.lastIndex = 0
+    const byCmd = new Map<string, number[]>();
+    let m: RegExpExecArray | null;
+    IF_WIRING.lastIndex = 0;
     while ((m = IF_WIRING.exec(text))) {
-      if (!isLive(m.index, m[0].length, localMasks)) continue
-      if (!byCmd.has(m[2])) byCmd.set(m[2], [])
-      byCmd.get(m[2])!.push(lineOf(source, unit.start + m.index))
+      if (!isLive(m.index, m[0].length, localMasks)) continue;
+      if (!byCmd.has(m[2])) byCmd.set(m[2], []);
+      byCmd.get(m[2])!.push(lineOf(source, unit.start + m.index));
     }
     for (const [cmd, lines] of byCmd) {
       if (lines.length > 1) {
-        hits.push(`  ${rel}:${lines[0]}  同回调重复桩（${cmd} ×${lines.length}，行 ${lines.join('、')}）——if 链先命中短路，后一条永不生效`)
+        hits.push(
+          `  ${rel}:${lines[0]}  同回调重复桩（${cmd} ×${lines.length}，行 ${lines.join("、")}）——if 链先命中短路，后一条永不生效`,
+        );
       }
     }
   }
-  return hits
+  return hits;
 }
 
 // —— 规则 3a：手写 invoke 分发桩（全量替换 mockImplementation 回调 + cmd 首参 +
 //    活代码命令分发特征）。Once 一次性委托（队列语义）与无 cmd 形参的契约桩不拦。
 const DISPATCH_FEATURE = new RegExp(
   [
-    '\\bif\\s*\\(\\s*cmd\\s*===', // if (cmd === '…')
-    '\\bcmd\\s*===\\s*[\'"`][^\'"`\\n]*[\'"`]\\s*\\?', // cmd === '…' ?
-    '\\bswitch\\s*\\(\\s*cmd\\s*\\)', // switch (cmd)
-  ].join('|'),
-  'g',
-)
+    "\\bif\\s*\\(\\s*cmd\\s*===", // if (cmd === '…')
+    "\\bcmd\\s*===\\s*['\"`][^'\"`\\n]*['\"`]\\s*\\?", // cmd === '…' ?
+    "\\bswitch\\s*\\(\\s*cmd\\s*\\)", // switch (cmd)
+  ].join("|"),
+  "g",
+);
 
 function findHandWrittenDispatchStub(rel: string, source: string, units: CallbackUnit[]): string[] {
-  const hits: string[] = []
+  const hits: string[] = [];
   for (const unit of units) {
-    const raw = source.slice(unit.start, unit.end)
+    const raw = source.slice(unit.start, unit.end);
     // 首参名限定 cmd（形参改名即逃逸匹配，已知文本不可达处）；cmd2 等不误伤
-    if (!/^\s*\(?\s*cmd\b/.test(raw)) continue
+    if (!/^\s*\(?\s*cmd\b/.test(raw)) continue;
     // 挖空嵌套回调单元与字符串/注释（与规则 2 同款词法掩码），只看本单元活代码
-    let text = raw
+    let text = raw;
     for (const nested of units) {
-      if (nested === unit) continue
+      if (nested === unit) continue;
       if (nested.start >= unit.start && nested.end <= unit.end) {
-        const st = nested.start - unit.start
-        const en = nested.end - unit.start
-        text = text.slice(0, st) + text.slice(st, en).replace(/[^\n]/g, ' ') + text.slice(en)
+        const st = nested.start - unit.start;
+        const en = nested.end - unit.start;
+        text = text.slice(0, st) + text.slice(st, en).replace(/[^\n]/g, " ") + text.slice(en);
       }
     }
     const masks = unit.masks.map(
       ([ms, me]) => [ms - unit.start, Math.min(me, unit.end) - unit.start] as [number, number],
-    )
-    DISPATCH_FEATURE.lastIndex = 0
-    let m: RegExpExecArray | null
-    let dispatched = false
+    );
+    DISPATCH_FEATURE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    let dispatched = false;
     while ((m = DISPATCH_FEATURE.exec(text))) {
-      const at = m.index
-      const len = m[0].length
+      const at = m.index;
+      const len = m[0].length;
       // 存在性检测：匹配整体落在字符串/注释掩码内才算死（三元特征必然内含命令名
       // 字符串字面量，部分重叠不算死——与规则 2 的计数口径有意不同）
-      const dead = masks.some(([ms, me]) => ms <= at && at + len <= me)
+      const dead = masks.some(([ms, me]) => ms <= at && at + len <= me);
       if (!dead) {
-        dispatched = true
-        break
+        dispatched = true;
+        break;
       }
     }
     if (dispatched) {
       hits.push(
         `  ${rel}:${lineOf(source, unit.start)}  手写 invoke 分发桩（mockImplementation 全量替换 + cmd 分发）——改走唯一接缝 wireInvokeSeam 两表布线，一次性覆盖用 mockImplementationOnce 委托`,
-      )
+      );
     }
   }
-  return hits
+  return hits;
 }
 
 // —— 规则 3b：本地布线包装定义（迁移期已清零的历史布线包装名，声明形出现即红；
 //    注释/字符串中提及不拦——注释行整行跳过，字符串内无声明关键字前缀不匹配） ——
 const WRAPPER_DECL =
-  /\b(?:function\s+|(?:const|let|var)\s+)(baseInvoke|stubInvoke|mockBaseCommands|invokeHandler)\b/g
+  /\b(?:function\s+|(?:const|let|var)\s+)(baseInvoke|stubInvoke|mockBaseCommands|invokeHandler)\b/g;
 
 function findLocalWiringWrapper(rel: string, source: string): string[] {
-  const hits: string[] = []
-  source.split('\n').forEach((line, i) => {
-    const t = line.trim()
-    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return
-    WRAPPER_DECL.lastIndex = 0
-    let m: RegExpExecArray | null
+  const hits: string[] = [];
+  source.split("\n").forEach((line, i) => {
+    const t = line.trim();
+    if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return;
+    WRAPPER_DECL.lastIndex = 0;
+    let m: RegExpExecArray | null;
     while ((m = WRAPPER_DECL.exec(line))) {
-      hits.push(`  ${rel}:${i + 1}  本地布线包装定义（${m[1]}）——布线一律走唯一接缝 wireInvokeSeam`)
+      hits.push(
+        `  ${rel}:${i + 1}  本地布线包装定义（${m[1]}）——布线一律走唯一接缝 wireInvokeSeam`,
+      );
     }
-  })
-  return hits
+  });
+  return hits;
 }
 
 // —— 规则 4：共享测试替身 / 领域数据工厂本地定义（声明形出现即红；注释行整行跳过，
@@ -366,20 +372,20 @@ function findLocalWiringWrapper(rel: string, source: string): string[] {
 // 名单与各唯一定义点出口人工同步（双源代价，见头注释）：新增共享工厂或共享测试替身
 // 必须同步此清单；交易侧 makeTxn/makeTransaction 待 #821 收敛落地后补入。
 const FACTORY_NAMES = [
-  'makePlan',
-  'makeSubscriptionPlan',
-  'makeInstallmentPlan',
-  'makeTransferPlan',
-  'makeOccurrence',
+  "makePlan",
+  "makeSubscriptionPlan",
+  "makeInstallmentPlan",
+  "makeTransferPlan",
+  "makeOccurrence",
   // 共享测试替身（#1364）：toast sink 假件（#1354 上收）唯一定义点
   // @ledger/test-support/toast-sink，测试文件本地复制声明即红。
-  'makeFakeSink',
-  'resetToastSink',
-]
+  "makeFakeSink",
+  "resetToastSink",
+];
 const FACTORY_DECL = new RegExp(
-  `\\b(?:function\\s+|(?:const|let|var)\\s+)(${FACTORY_NAMES.join('|')})\\b`,
-  'g',
-)
+  `\\b(?:function\\s+|(?:const|let|var)\\s+)(${FACTORY_NAMES.join("|")})\\b`,
+  "g",
+);
 // 白名单按 `<扫描区间>:<相对该区间的 posix 路径>` 登记：唯一定义点 + 交易薄壳一行
 // 包装（#821）。键必须带区间——各区间 rel 基准不同（app = testsDir、seam-home =
 // seam 宿主、pkg-tests = packages 根），只按相对路径放行会让别的区间里的同名文件
@@ -392,72 +398,74 @@ const FACTORY_DECL = new RegExp(
 // #1364 同款：toast sink 假件（makeFakeSink/resetToastSink，#1354 上收）唯一定义点
 // 住 seam 宿主，按区间 + 精确路径放行，不做整区豁免。
 const FACTORY_WHITELIST = new Set([
-  'app:factories.ts',
-  'seam-home:plan-factories.ts',
-  `app:${join('TransactionsView', 'common.ts')}`,
-  'seam-home:toast-sink.ts',
-])
+  "app:factories.ts",
+  "seam-home:plan-factories.ts",
+  `app:${join("TransactionsView", "common.ts")}`,
+  "seam-home:toast-sink.ts",
+]);
 
 function findFactoryDefinition(rel: string, source: string): string[] {
-  const hits: string[] = []
-  source.split('\n').forEach((line, i) => {
-    const t = line.trim()
-    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return
-    FACTORY_DECL.lastIndex = 0
-    let m: RegExpExecArray | null
+  const hits: string[] = [];
+  source.split("\n").forEach((line, i) => {
+    const t = line.trim();
+    if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return;
+    FACTORY_DECL.lastIndex = 0;
+    let m: RegExpExecArray | null;
     while ((m = FACTORY_DECL.exec(line))) {
       hits.push(
         `  ${rel}:${i + 1}  共享测试替身/领域数据工厂本地定义（${m[1]}）——唯一定义点在共享工厂层或共享测试支持包，消费共享出口而非本地定义`,
-      )
+      );
     }
-  })
-  return hits
+  });
+  return hits;
 }
 
 function main(): void {
-  const commands = extractCommands()
+  const commands = extractCommands();
   if (commands.length === 0) {
-    fail(`助手 ${helperPath} 的 REFERENCE_DEFAULTS 登记处提不出任何 list_* 命令（清单漂移？）`)
+    fail(`助手 ${helperPath} 的 REFERENCE_DEFAULTS 登记处提不出任何 list_* 命令（清单漂移？）`);
   }
 
-  let handWired = 0
-  let duplicated = 0
-  let dispatchStubs = 0
-  let wiringWrappers = 0
-  let factoryDefs = 0
-  const violations: string[] = []
+  let handWired = 0;
+  let duplicated = 0;
+  let dispatchStubs = 0;
+  let wiringWrappers = 0;
+  let factoryDefs = 0;
+  const violations: string[] = [];
   for (const target of collectScanTargets()) {
-    const source = readFileSync(target.abs, 'utf8')
-    const inSeamHome = target.zone === 'seam-home'
-    const units = extractCallbackUnits(source)
-    const rule1 = inSeamHome ? [] : findHandWiredReferenceStubs(target.rel, source, commands)
-    const rule2 = findDuplicateWiring(target.rel, source, units)
-    const rule3a = inSeamHome ? [] : findHandWrittenDispatchStub(target.rel, source, units)
-    const rule3b = inSeamHome ? [] : findLocalWiringWrapper(target.rel, source)
-    const rule4 = FACTORY_WHITELIST.has(`${target.zone}:${target.rel.split(sep).join('/')}`)
+    const source = readFileSync(target.abs, "utf8");
+    const inSeamHome = target.zone === "seam-home";
+    const units = extractCallbackUnits(source);
+    const rule1 = inSeamHome ? [] : findHandWiredReferenceStubs(target.rel, source, commands);
+    const rule2 = findDuplicateWiring(target.rel, source, units);
+    const rule3a = inSeamHome ? [] : findHandWrittenDispatchStub(target.rel, source, units);
+    const rule3b = inSeamHome ? [] : findLocalWiringWrapper(target.rel, source);
+    const rule4 = FACTORY_WHITELIST.has(`${target.zone}:${target.rel.split(sep).join("/")}`)
       ? []
-      : findFactoryDefinition(target.rel, source)
-    handWired += rule1.length
-    duplicated += rule2.length
-    dispatchStubs += rule3a.length
-    wiringWrappers += rule3b.length
-    factoryDefs += rule4.length
-    violations.push(...rule1, ...rule2, ...rule3a, ...rule3b, ...rule4)
+      : findFactoryDefinition(target.rel, source);
+    handWired += rule1.length;
+    duplicated += rule2.length;
+    dispatchStubs += rule3a.length;
+    wiringWrappers += rule3b.length;
+    factoryDefs += rule4.length;
+    violations.push(...rule1, ...rule2, ...rule3a, ...rule3b, ...rule4);
   }
 
   if (violations.length > 0) {
     console.error(
-      `✗ 测试桩守门：发现 ${handWired} 处手搓参考数据桩、${duplicated} 处同回调重复桩、${dispatchStubs} 处手写 invoke 分发桩、${wiringWrappers} 处本地布线包装、${factoryDefs} 处共享测试替身/领域数据工厂本地定义（登记处命令：${commands.join(' ')}）\n` +
-        violations.join('\n') +
-        `\ninvoke 布线唯一接缝：wireInvokeSeam（${relative(process.cwd(), join(seamHomeDir, 'invoke-mock.ts'))}，issue #746/#750/#1152，ADR-0085）`,
-    )
-    process.exit(1)
+      `✗ 测试桩守门：发现 ${handWired} 处手搓参考数据桩、${duplicated} 处同回调重复桩、${dispatchStubs} 处手写 invoke 分发桩、${wiringWrappers} 处本地布线包装、${factoryDefs} 处共享测试替身/领域数据工厂本地定义（登记处命令：${commands.join(" ")}）\n` +
+        violations.join("\n") +
+        `\ninvoke 布线唯一接缝：wireInvokeSeam（${relative(process.cwd(), join(seamHomeDir, "invoke-mock.ts"))}，issue #746/#750/#1152，ADR-0085）`,
+    );
+    process.exit(1);
   }
 
-  console.log(`✅ 测试桩守门通过（登记处 ${commands.length} 条命令；同回调重复 0、手写分发桩 0、本地布线包装 0、共享测试替身/领域数据工厂本地定义 0；testsDir=${relative(process.cwd(), testsDir)}、seamHome=${relative(process.cwd(), seamHomeDir)}、包内测试纳管）`)
+  console.log(
+    `✅ 测试桩守门通过（登记处 ${commands.length} 条命令；同回调重复 0、手写分发桩 0、本地布线包装 0、共享测试替身/领域数据工厂本地定义 0；testsDir=${relative(process.cwd(), testsDir)}、seamHome=${relative(process.cwd(), seamHomeDir)}、包内测试纳管）`,
+  );
 }
 
 // 仅直接运行时执行 main；被测试/其他工具 import 时只取导出的扫描函数。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main()
+  main();
 }

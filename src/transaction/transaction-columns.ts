@@ -2,40 +2,40 @@
 // 交易列表与搜索视图复用同一列配置（日期/类型/分类/账户/备注/金额）。
 // 渲染函数在运行时读取 store 的响应式数据，构建一次即可，无需 computed 包裹。
 
-import { h, type VNode } from 'vue'
-import { NEllipsis, NButton, NTag, type DataTableColumn } from 'naive-ui'
-import { formatAmount } from '@ledger/money'
-import type { Transaction, TransactionKind } from '@ledger/types'
-import type { useReferenceStore } from '@/stores/reference'
-import { useAppStore } from '@/stores/app'
-import { kindSemanticColor } from '@ledger/theme/semantic-colors'
-import { t } from '@ledger/i18n'
-import AccountLink from '@/accounts/AccountLink.vue'
-import MerchantLink from '@/merchants/MerchantLink.vue'
-import SourceLink from '@/transaction/SourceLink.vue'
-import NoteCopyButton from '@ledger/ui-kit/NoteCopyButton.vue'
-import AmountCell from '@/transaction/AmountCell.vue'
-import { lendingLabelKey, resolveLendingDirection } from '@/transaction/lending'
+import { h, type VNode } from "vue";
+import { NEllipsis, NButton, NTag, type DataTableColumn } from "naive-ui";
+import { formatAmount } from "@ledger/money";
+import type { Transaction, TransactionKind } from "@ledger/types";
+import type { useReferenceStore } from "@/stores/reference";
+import { useAppStore } from "@/stores/app";
+import { kindSemanticColor } from "@ledger/theme/semantic-colors";
+import { t } from "@ledger/i18n";
+import AccountLink from "@/accounts/AccountLink.vue";
+import MerchantLink from "@/merchants/MerchantLink.vue";
+import SourceLink from "@/transaction/SourceLink.vue";
+import NoteCopyButton from "@ledger/ui-kit/NoteCopyButton.vue";
+import AmountCell from "@/transaction/AmountCell.vue";
+import { lendingLabelKey, resolveLendingDirection } from "@/transaction/lending";
 
-export type ReferenceStore = ReturnType<typeof useReferenceStore>
+export type ReferenceStore = ReturnType<typeof useReferenceStore>;
 
-export const KIND_TAG_TYPE: Record<TransactionKind, 'success' | 'warning' | 'info' | 'default'> = {
-  income: 'success',
-  expense: 'warning',
-  refund: 'info',
-  transfer: 'default',
-  buy: 'default',
-  sell: 'default',
+export const KIND_TAG_TYPE: Record<TransactionKind, "success" | "warning" | "info" | "default"> = {
+  income: "success",
+  expense: "warning",
+  refund: "info",
+  transfer: "default",
+  buy: "default",
+  sell: "default",
   // 基金转换（ADR-0099）取 info 蓝色标注：与退款同色型但标签文案不同，
   // 一眼区分于买入/卖出的中性标签（投资类默认色）。
-  convert: 'info',
+  convert: "info",
   // 份额调整（ADR-0106 / #1049）：与转换同为「无现金腿」kind，同取 info 蓝色标注，
   // 标签文案区分二者。
-  split: 'info',
+  split: "info",
   // 现金分红（ADR-0109 / #1078）：投资现金流入（income 语义），取 success 绿色标注，
   // 与买入/卖出的中性标签区分。
-  dividend: 'success',
-}
+  dividend: "success",
+};
 
 /**
  * 列表/卡片金额展示口径单点：基金转换行展示**转出金额**（确认单权威，ADR-0099），
@@ -47,18 +47,18 @@ export const KIND_TAG_TYPE: Record<TransactionKind, 'success' | 'warning' | 'inf
  * 表格金额列与移动卡片共用 `displayAmountText`，两处各自分支即口径漂移。
  */
 export function displayAmountCents(row: Transaction): number | null {
-  if (row.kind === 'convert' && row.convert) return row.convert.out_amount_cents
+  if (row.kind === "convert" && row.convert) return row.convert.out_amount_cents;
   // 份额调整（ADR-0106 决策 1）：无现金腿、无金额——按空值语义返回 null，
   // 不以 0 伪装「已知为零」（同持仓缺价行的 '-' 口径）。
-  if (row.kind === 'split') return null
-  return row.amount_native_cents
+  if (row.kind === "split") return null;
+  return row.amount_native_cents;
 }
 
 /** 金额展示文案单点（表格金额列与移动卡片共用）：空值口径（无现金腿的 split 无金额）
  * 渲染 '-'，其余经 `formatAmount`（含金额隐私模式与数字分组）。 */
 export function displayAmountText(reference: ReferenceStore, row: Transaction): string {
-  const cents = displayAmountCents(row)
-  return cents === null ? '-' : formatAmount(cents, reference.getCurrency(row.currency_code))
+  const cents = displayAmountCents(row);
+  return cents === null ? "-" : formatAmount(cents, reference.getCurrency(row.currency_code));
 }
 
 /** 交易基础列：日期/类型/分类/账户/备注/金额（搜索结果与交易列表共用，只读）。
@@ -86,14 +86,14 @@ export function displayAmountText(reference: ReferenceStore, row: Transaction): 
  * 标签随账户映射响应式更新（同 categoryPath 的响应式纪律）。
  * 导出面（issue #846）：移动档卡片列表消费同一派生，与表格类型列单源同文案。 */
 export function kindLabel(reference: ReferenceStore, row: Transaction): string {
-  if (row.kind !== 'transfer') return t(`transactions.kind.${row.kind}`)
-  const direction = resolveLendingDirection(row, (id) => reference.accountMap.get(id)?.type)
-  return t(lendingLabelKey(direction ?? 'none'))
+  if (row.kind !== "transfer") return t(`transactions.kind.${row.kind}`);
+  const direction = resolveLendingDirection(row, (id) => reference.accountMap.get(id)?.type);
+  return t(lendingLabelKey(direction ?? "none"));
 }
 
 /** 备注单元格布局：文本占满剩余宽度（自省略），复制按钮固定宽度靠右。 */
 const NOTE_CELL_STYLE =
-  'display: flex; align-items: center; gap: 2px; width: 100%; max-width: 100%;'
+  "display: flex; align-items: center; gap: 2px; width: 100%; max-width: 100%;";
 
 /** 备注单元格渲染（显式复制通道，见 CONTEXT-ui-interaction「界面文本不可选」）：
  * - 无备注渲染 '-'，不渲染复制按钮（空备注无可复制）；
@@ -101,12 +101,12 @@ const NOTE_CELL_STYLE =
  *   单元格内省略模式），NoteCopyButton 复制完整备注（clipboard API + toast），
  *   按钮悬停行显现（显隐样式收口 global.css）。 */
 function renderNoteCell(row: Transaction): VNode | string {
-  const { note } = row
-  if (!note) return '-'
-  return h('div', { style: NOTE_CELL_STYLE }, [
-    h(NEllipsis, { style: 'flex: 1 1 auto; min-width: 0;' }, { default: () => note }),
-    h(NoteCopyButton, { note, style: 'flex: none;' }),
-  ])
+  const { note } = row;
+  if (!note) return "-";
+  return h("div", { style: NOTE_CELL_STYLE }, [
+    h(NEllipsis, { style: "flex: 1 1 auto; min-width: 0;" }, { default: () => note }),
+    h(NoteCopyButton, { note, style: "flex: none;" }),
+  ]);
 }
 
 /** buildTransactionColumns 可选装配面：调用方按需声明，缺省即纯只读列（搜索结果同款）。 */
@@ -114,7 +114,7 @@ export interface BuildTransactionColumnsOptions {
   /** 交易行「⋯」常显按钮的打开回调（ADR-0088 决策 6，issue #843）：传入即
    * 追加常显操作列，与行右键共用 RowContextMenu 同一 open 入口（账户行先例）；
    * 不传则不渲染该列（搜索结果无行菜单，保持只读）。 */
-  onRowMenuOpen?: (event: MouseEvent, row: Transaction) => void
+  onRowMenuOpen?: (event: MouseEvent, row: Transaction) => void;
 }
 
 export function buildTransactionColumns(
@@ -122,57 +122,55 @@ export function buildTransactionColumns(
   options: BuildTransactionColumnsOptions = {},
 ): DataTableColumn<Transaction>[] {
   const columns: DataTableColumn<Transaction>[] = [
-    { title: t('transactions.columns.date'), key: 'date', width: 105 },
+    { title: t("transactions.columns.date"), key: "date", width: 105 },
     {
-      title: t('transactions.columns.kind'),
-      key: 'kind',
+      title: t("transactions.columns.kind"),
+      key: "kind",
       width: 65,
-      render: (row) =>
-        h(NTag, { type: KIND_TAG_TYPE[row.kind] }, () => kindLabel(reference, row)),
+      render: (row) => h(NTag, { type: KIND_TAG_TYPE[row.kind] }, () => kindLabel(reference, row)),
     },
     {
-      title: t('transactions.columns.category'),
-      key: 'category_id',
+      title: t("transactions.columns.category"),
+      key: "category_id",
       width: 150,
       ellipsis: { tooltip: true },
-      render: (row) => (row.category_id ? reference.categoryPath(row.category_id) || '-' : '-'),
+      render: (row) => (row.category_id ? reference.categoryPath(row.category_id) || "-" : "-"),
     },
     {
-      title: t('transactions.columns.merchant'),
-      key: 'merchant_id',
+      title: t("transactions.columns.merchant"),
+      key: "merchant_id",
       width: 120,
       ellipsis: { tooltip: true },
       // 商户名经 merchantMap（含软删）解析并可点击下钻（issue #191）；未知/无商户回退 '-'
-      render: (row) =>
-        row.merchant_id ? h(MerchantLink, { merchantId: row.merchant_id }) : '-',
+      render: (row) => (row.merchant_id ? h(MerchantLink, { merchantId: row.merchant_id }) : "-"),
     },
     {
-      title: t('transactions.columns.account'),
-      key: 'account_id',
+      title: t("transactions.columns.account"),
+      key: "account_id",
       width: 180,
       render: (row) => renderAccountCell(row),
     },
     {
-      title: t('transactions.columns.source'),
-      key: 'source',
+      title: t("transactions.columns.source"),
+      key: "source",
       width: 140,
       // 来源列（spec #704 / issue #706）：图标 + 实体名 + 状态标注，点击经来源
       // 跳转深模块落地（SourceLink 内部收口）；无来源留空（手动/AI 导入口径）。
       // 不设列级 ellipsis（账户列同款理由：NEllipsis 会把图标/名称/标注包装成
       // 整体省略，破坏链接自身省略与标注并排语义），超长由链接自身省略号兜底。
-      render: (row) => (row.source ? h(SourceLink, { source: row.source }) : '-'),
+      render: (row) => (row.source ? h(SourceLink, { source: row.source }) : "-"),
     },
     {
-      title: t('transactions.columns.note'),
-      key: 'note',
+      title: t("transactions.columns.note"),
+      key: "note",
       // 弹性列：不设 width，由 fixed 布局均分剩余空间（超长时省略号 + 悬停显示全文）；
       // 不设列级 ellipsis（账户/来源列同款理由：会把复制按钮一起包进省略容器），
       // 省略与悬停全文由单元格内 NEllipsis 承担（fixed 布局由分类/商户列维持）
       render: renderNoteCell,
     },
     {
-      title: t('transactions.columns.amount'),
-      key: 'amount_native_cents',
+      title: t("transactions.columns.amount"),
+      key: "amount_native_cents",
       width: 125,
       // 金额按交易类型语义色着色（issue #435）：色值单一来源在
       // @ledger/theme/semantic-colors（六类型亮/暗两套）。主题在渲染时读取 app store
@@ -186,30 +184,30 @@ export function buildTransactionColumns(
           color: kindSemanticColor(row.kind, useAppStore().theme),
         }),
     },
-  ]
+  ];
   // 交易行「⋯」常显列（ADR-0088 决策 6，issue #843）：与右键共用同一行菜单编排
   // open 入口、以点击坐标弹出，全平台常显（账户行先例，桌面可见变化已裁决）；
   // 仅声明了回调的调用方（交易列表）渲染，搜索结果不追加。
   if (options.onRowMenuOpen) {
     columns.push({
-      title: t('transactions.columns.actions'),
-      key: 'actions',
+      title: t("transactions.columns.actions"),
+      key: "actions",
       width: 64,
       render: (row) =>
         h(
           NButton,
           {
-            size: 'tiny',
+            size: "tiny",
             quaternary: true,
-            class: 'row-actions-btn touch-hit-area',
-            'aria-label': t('transactions.menu.actions'),
+            class: "row-actions-btn touch-hit-area",
+            "aria-label": t("transactions.menu.actions"),
             onClick: (e: MouseEvent) => options.onRowMenuOpen!(e, row),
           },
-          () => '⋯',
+          () => "⋯",
         ),
-    })
+    });
   }
-  return columns
+  return columns;
 }
 
 /** 转账/出资账户行单元格内账户链接的布局样式：内容宽度 + 允许收缩省略 + 文本左对齐。
@@ -218,7 +216,7 @@ export function buildTransactionColumns(
  * 双账户行首账户名若也均分半宽会因 <button> 默认 text-align:center 被水平居中、顶不到列左缘
  * （与上方单账户行错位）。内容宽度让首名紧贴列左缘、与单账户行对齐；
  * 收缩项仍由 min-width:0 允许收缩（长名省略号兜底、不溢出）。 */
-const ACCOUNT_CELL_LINK_STYLE = 'flex: 0 1 auto; min-width: 0; text-align: left;'
+const ACCOUNT_CELL_LINK_STYLE = "flex: 0 1 auto; min-width: 0; text-align: left;";
 
 /** 双账户单元格（转账「转出 → 转入」、出资 buy/sell「出资账户 → 投资账户」）公共渲染：
  * inline-flex 容器，两个链接内容宽度、箭头固定宽度，整组 justify-content:flex-start
@@ -228,17 +226,17 @@ const ACCOUNT_CELL_LINK_STYLE = 'flex: 0 1 auto; min-width: 0; text-align: left;
  * 导出面（issue #846）：移动档卡片列表消费同一渲染，账户呈现两形态单源。 */
 function renderTwoAccountCell(fromAccountId: string, toAccountId: string): VNode {
   return h(
-    'div',
+    "div",
     {
       style:
-        'display: inline-flex; align-items: center; justify-content: flex-start; gap: 4px; width: 100%; max-width: 100%;',
+        "display: inline-flex; align-items: center; justify-content: flex-start; gap: 4px; width: 100%; max-width: 100%;",
     },
     [
       h(AccountLink, { accountId: fromAccountId, style: ACCOUNT_CELL_LINK_STYLE }),
-      h('span', { style: 'flex: none; opacity: 0.5;' }, '→'),
+      h("span", { style: "flex: none; opacity: 0.5;" }, "→"),
       h(AccountLink, { accountId: toAccountId, style: ACCOUNT_CELL_LINK_STYLE }),
     ],
-  )
+  );
 }
 
 /** 账户单元格渲染（issue #99 / #937，方向修正 issue #1030）：
@@ -252,14 +250,14 @@ function renderTwoAccountCell(fromAccountId: string, toAccountId: string): VNode
  * 出资账户为空投资账户照常；出资账户命中时资金实际流出方在前（buy：出资账户，
  * sell：投资账户），与转账「资金流出方在前」的阅读顺序一致（issue #1030）。 */
 export function renderAccountCell(row: Transaction): VNode {
-  if (row.kind === 'transfer' && row.to_account_id) {
-    return renderTwoAccountCell(row.account_id, row.to_account_id)
+  if (row.kind === "transfer" && row.to_account_id) {
+    return renderTwoAccountCell(row.account_id, row.to_account_id);
   }
-  if (row.kind === 'buy' && row.funding_account_id) {
-    return renderTwoAccountCell(row.funding_account_id, row.account_id)
+  if (row.kind === "buy" && row.funding_account_id) {
+    return renderTwoAccountCell(row.funding_account_id, row.account_id);
   }
-  if (row.kind === 'sell' && row.funding_account_id) {
-    return renderTwoAccountCell(row.account_id, row.funding_account_id)
+  if (row.kind === "sell" && row.funding_account_id) {
+    return renderTwoAccountCell(row.account_id, row.funding_account_id);
   }
-  return h(AccountLink, { accountId: row.account_id })
+  return h(AccountLink, { accountId: row.account_id });
 }

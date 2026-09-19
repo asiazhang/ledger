@@ -1,6 +1,6 @@
-import { computed, onScopeDispose, ref, useAttrs, watch } from 'vue'
-import type { Ref } from 'vue'
-import { createOverlayToken } from './overlayRegistry'
+import { computed, onScopeDispose, ref, useAttrs, watch } from "vue";
+import type { Ref } from "vue";
+import { createOverlayToken } from "./overlayRegistry";
 
 /**
  * 弹层封装统一上报与关闭通道（issue #845 / ADR-0035 / ADR-0088 决策 7）。
@@ -29,54 +29,54 @@ import { createOverlayToken } from './overlayRegistry'
  */
 export function useOverlayReporting(name: string): {
   /** 根组件 update:show 统一监听：回写影子态 + 上报注册表 */
-  onUpdateShow: (value: boolean) => void
+  onUpdateShow: (value: boolean) => void;
   /** 根组件 :show 绑定值：受控跟随调用方，非受控跟随影子态 */
-  resolvedShow: Ref<boolean>
+  resolvedShow: Ref<boolean>;
 } {
-  const attrs = useAttrs()
-  const overlay = createOverlayToken(name, requestClose)
-  const shadowShow = ref(false)
+  const attrs = useAttrs();
+  const overlay = createOverlayToken(name, requestClose);
+  const shadowShow = ref(false);
 
   // 受控调用方直接改 :show prop 的开合由 attrs watch 兜底上报
   watch(
     () => attrs.show,
     (value) => {
       if (value !== undefined) {
-        shadowShow.value = Boolean(value)
-        overlay.set(Boolean(value))
+        shadowShow.value = Boolean(value);
+        overlay.set(Boolean(value));
       }
     },
     { immediate: true },
-  )
+  );
 
   const onUpdateShow = (value: boolean) => {
-    shadowShow.value = value
-    overlay.set(value)
-  }
+    shadowShow.value = value;
+    overlay.set(value);
+  };
 
   const resolvedShow = computed(() =>
     attrs.show !== undefined ? Boolean(attrs.show) : shadowShow.value,
-  )
+  );
 
   function requestClose(): boolean {
-    const handler = attrs['onUpdate:show'] as ((value: boolean) => void) | undefined
-    if (typeof handler === 'function') {
+    const handler = attrs["onUpdate:show"] as ((value: boolean) => void) | undefined;
+    if (typeof handler === "function") {
       // 受控：中继给调用方（v-model / :show + @update:show 均覆盖），调用方改
       // :show 后由上方 attrs watch 上报注册表，不在本处抢报
-      handler(false)
-      return true
+      handler(false);
+      return true;
     }
     if (attrs.show !== undefined) {
       // 受控但无监听器：调用方状态不可达，无法关闭（退化用法，全仓无此调用形态）
-      return false
+      return false;
     }
     // 非受控：落影子态并自报——prop 驱动的关闭不产生 update:show，无 emit 可等
-    shadowShow.value = false
-    overlay.set(false)
-    return true
+    shadowShow.value = false;
+    overlay.set(false);
+    return true;
   }
 
-  onScopeDispose(() => overlay.set(false))
+  onScopeDispose(() => overlay.set(false));
 
-  return { onUpdateShow, resolvedShow }
+  return { onUpdateShow, resolvedShow };
 }

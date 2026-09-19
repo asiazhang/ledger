@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NModal } from 'naive-ui'
-import { useOverlayReporting } from './useOverlayReporting'
-import { useWindowTier } from '@ledger/window-tier'
-import { MOBILE_CARD_CLASS } from './app-modal.css.ts'
+import { computed } from "vue";
+import { NModal } from "naive-ui";
+import { useOverlayReporting } from "./useOverlayReporting";
+import { useWindowTier } from "@ledger/window-tier";
+import { MOBILE_CARD_CLASS } from "./app-modal.css.ts";
 
 // AppModal（issue #251）：薄封装 NModal，收口弹层关闭语义——
 // 默认 maskClosable=false，全部弹窗点遮罩不再关闭；点 ✕ / ESC 照常关闭。
@@ -36,30 +36,30 @@ import { MOBILE_CARD_CLASS } from './app-modal.css.ts'
 // 安全区（viewport-fit=cover 下 env 生效，桌面档恒 0）避开状态栏/手势条。
 
 /** 卡牌弹窗宽度分档：sm 编辑类 / md 表单类 / lg 详情类（spec #630）。 */
-type CardSize = 'sm' | 'md' | 'lg'
+type CardSize = "sm" | "md" | "lg";
 
-const CARD_WIDTH_PX: Record<CardSize, number> = { sm: 420, md: 480, lg: 560 }
+const CARD_WIDTH_PX: Record<CardSize, number> = { sm: 420, md: 480, lg: 560 };
 
 /** 移动档近全屏卡片尺寸（宽 32px 边距；高度另扣上下安全区）。 */
 const MOBILE_CARD_STYLE = {
-  width: 'calc(100vw - 32px)',
-  height: 'calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
-}
+  width: "calc(100vw - 32px)",
+  height: "calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))",
+};
 
 const props = withDefaults(
   defineProps<{ maskClosable?: boolean; cardSize?: CardSize; bordered?: boolean }>(),
   { maskClosable: false, bordered: false },
-)
+);
 
-const tier = useWindowTier()
-const isMobileTier = computed(() => tier.value === 'mobile')
+const tier = useWindowTier();
+const isMobileTier = computed(() => tier.value === "mobile");
 
 const cardStyle = computed(() => {
-  if (isMobileTier.value) return MOBILE_CARD_STYLE
-  return props.cardSize === undefined ? undefined : { width: `${CARD_WIDTH_PX[props.cardSize]}px` }
-})
+  if (isMobileTier.value) return MOBILE_CARD_STYLE;
+  return props.cardSize === undefined ? undefined : { width: `${CARD_WIDTH_PX[props.cardSize]}px` };
+});
 
-const { onUpdateShow, resolvedShow } = useOverlayReporting('modal')
+const { onUpdateShow, resolvedShow } = useOverlayReporting("modal");
 </script>
 
 <template>

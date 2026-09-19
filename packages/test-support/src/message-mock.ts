@@ -1,4 +1,4 @@
-import { vi } from 'vitest'
+import { vi } from "vitest";
 
 /**
  * naive-ui 消息接口的稳定替身实例（issue #746，ADR-0085 决策 4）。
@@ -15,21 +15,21 @@ export const messageApi = {
   info: vi.fn(),
   loading: vi.fn(),
   destroyAll: vi.fn(),
-}
+};
 
 /** 消息接口清零（清理四件套之一，由全局壳层每测执行）。 */
 export function resetMessageApi(): void {
-  messageApi.success.mockReset()
-  messageApi.warning.mockReset()
-  messageApi.error.mockReset()
-  messageApi.info.mockReset()
-  messageApi.loading.mockReset()
-  messageApi.destroyAll.mockReset()
+  messageApi.success.mockReset();
+  messageApi.warning.mockReset();
+  messageApi.error.mockReset();
+  messageApi.info.mockReset();
+  messageApi.loading.mockReset();
+  messageApi.destroyAll.mockReset();
 }
 
 /** 消息断言面：按方法汇总稳定实例的全部调用记录（全局每测自动清零）。 */
 export function messageCalls(): Array<{ method: string; text: string }> {
-  return (['success', 'warning', 'error', 'info', 'loading'] as const).flatMap((method) =>
+  return (["success", "warning", "error", "info", "loading"] as const).flatMap((method) =>
     messageApi[method].mock.calls.map((c) => ({ method, text: String(c[0]) })),
-  )
+  );
 }

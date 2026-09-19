@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAppStore } from '@/stores/app'
-import { useReferenceStore } from '@/stores/reference'
-import { accentColor } from '@ledger/theme/overrides'
-import { t } from '@ledger/i18n'
+import { computed } from "vue";
+import { useRouter } from "vue-router";
+import { useAppStore } from "@/stores/app";
+import { useReferenceStore } from "@/stores/reference";
+import { accentColor } from "@ledger/theme/overrides";
+import { t } from "@ledger/i18n";
 
 /**
  * 可点击商户名（商户下钻，issue #191）。视觉与交互同 AccountLink（账户下钻）：
@@ -19,32 +19,32 @@ import { t } from '@ledger/i18n'
  */
 const props = defineProps<{
   /** 目标商户 id（在参考数据 merchantMap 中查找名称；查不到视为未知，渲染纯文本「-」） */
-  merchantId: string
+  merchantId: string;
   /** 受控下钻意图模式：点击只 emit('drill')，不自行跳转（默认 false 保持既有跳转） */
-  drillIntent?: boolean
-}>()
+  drillIntent?: boolean;
+}>();
 
-const emit = defineEmits<{ (e: 'drill', merchantId: string): void }>()
+const emit = defineEmits<{ (e: "drill", merchantId: string): void }>();
 
-const reference = useReferenceStore()
-const router = useRouter()
-const app = useAppStore()
+const reference = useReferenceStore();
+const router = useRouter();
+const app = useAppStore();
 
-const merchant = computed(() => reference.merchantMap.get(props.merchantId))
-const name = computed(() => merchant.value?.name ?? '-')
+const merchant = computed(() => reference.merchantMap.get(props.merchantId));
+const name = computed(() => merchant.value?.name ?? "-");
 // 仅参考数据可解析的商户可点击下钻；未知 id 渲染为纯文本「-」。
-const isLink = computed(() => !!merchant.value)
+const isLink = computed(() => !!merchant.value);
 
 // 强调色与 AccountLink 同源：@ledger/theme accentColor 选择器按主题解析
 // （值源：overrides common 单一来源）。
-const accent = computed(() => accentColor(app.theme))
+const accent = computed(() => accentColor(app.theme));
 
 function go() {
   if (props.drillIntent) {
-    emit('drill', props.merchantId)
-    return
+    emit("drill", props.merchantId);
+    return;
   }
-  router.push({ name: 'transactions', query: { merchant: props.merchantId } })
+  router.push({ name: "transactions", query: { merchant: props.merchantId } });
 }
 </script>
 

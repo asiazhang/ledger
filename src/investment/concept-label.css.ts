@@ -1,5 +1,5 @@
-import { style } from '@vanilla-extract/css'
-import { sprinkles } from '@ledger/theme/sprinkles.css.ts'
+import { style } from "@vanilla-extract/css";
+import { sprinkles } from "@ledger/theme/sprinkles.css.ts";
 
 /**
  * 口径说明标签形态（ADR-0093 样式方案，组件旁路样式文件与组件共置）：
@@ -8,6 +8,6 @@ import { sprinkles } from '@ledger/theme/sprinkles.css.ts'
  * 本文件只定版式、不持语义色。
  */
 export const conceptLabel = style([
-  sprinkles({ display: 'inline-flex', alignItems: 'center' }),
-  { gap: '4px' },
-])
+  sprinkles({ display: "inline-flex", alignItems: "center" }),
+  { gap: "4px" },
+]);

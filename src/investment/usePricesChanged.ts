@@ -1,5 +1,5 @@
-import { onUnmounted } from 'vue'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { onUnmounted } from "vue";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 /**
  * 价格失效信号（issue #237 / ADR-0031）：后端价格写入路径（增量同步
@@ -10,7 +10,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
  * 价格消费方订阅后重拉自身数据，替代「同步后记得手动刷新」的调用方自觉；
  * 事件名常量在此单点定义，消费方一律经本 composable 订阅。
  */
-export const PRICES_CHANGED_EVENT = 'ledger:prices-changed'
+export const PRICES_CHANGED_EVENT = "ledger:prices-changed";
 
 /**
  * 订阅价格失效信号：组件卸载时自动注销（卸载早于注册落定时，落定后立即
@@ -20,22 +20,22 @@ export const PRICES_CHANGED_EVENT = 'ledger:prices-changed'
  * 与参考 store 的 ledger:changed 订阅同形）。
  */
 export function usePricesChanged(callback: () => void): void {
-  let unlisten: UnlistenFn | null = null
-  let disposed = false
+  let unlisten: UnlistenFn | null = null;
+  let disposed = false;
   void listen(PRICES_CHANGED_EVENT, callback)
     .then((fn) => {
       if (disposed) {
-        fn()
-        return
+        fn();
+        return;
       }
-      unlisten = fn
+      unlisten = fn;
     })
     .catch((e) => {
-      console.warn(`订阅 ${PRICES_CHANGED_EVENT} 失败`, e)
-    })
+      console.warn(`订阅 ${PRICES_CHANGED_EVENT} 失败`, e);
+    });
   onUnmounted(() => {
-    disposed = true
-    unlisten?.()
-    unlisten = null
-  })
+    disposed = true;
+    unlisten?.();
+    unlisten = null;
+  });
 }

@@ -1,105 +1,100 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NEmpty, NRadio, NRadioGroup, NSpace, NSpin, NText } from 'naive-ui'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import { Line } from 'vue-chartjs'
-import type { ChartOptions, TooltipItem } from 'chart.js'
+import { computed } from "vue";
+import { NEmpty, NRadio, NRadioGroup, NSpace, NSpin, NText } from "naive-ui";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import { Line } from "vue-chartjs";
+import type { ChartOptions, TooltipItem } from "chart.js";
 // Chart.js 统一注册模块（issue #926）：折线图所需 controller/element/scale 一处
 // 注册，不再组件自持子集（缺项曾致渲染错误循环冻结界面）；导入即完成注册。
-import '@ledger/utils/chart-registration'
-import { useReferenceStore } from '@/stores/reference'
-import ConceptLabel from '@/investment/ConceptLabel.vue'
-import { formatAmount, formatPrice, amountPrivacyEnabled } from '@ledger/money'
-import { t } from '@ledger/i18n'
-import {
-  TREND_RANGE_PRESETS,
-  usePortfolioTrend,
-} from '@/investment/usePortfolioTrend'
+import "@ledger/utils/chart-registration";
+import { useReferenceStore } from "@/stores/reference";
+import ConceptLabel from "@/investment/ConceptLabel.vue";
+import { formatAmount, formatPrice, amountPrivacyEnabled } from "@ledger/money";
+import { t } from "@ledger/i18n";
+import { TREND_RANGE_PRESETS, usePortfolioTrend } from "@/investment/usePortfolioTrend";
 
-const reference = useReferenceStore()
+const reference = useReferenceStore();
 // 走势的选择（模式 / 选中标的 / 预设区间）住投资页会话状态 store（issue #1192，
 // ADR-0094 会话内保留）：标的列表「走势」入口与 focus 落点写 store，面板读同一
 // 事实源——页签重挂后仍是离开时的那个标的，组件不再持入口 props。
-const trend = usePortfolioTrend()
+const trend = usePortfolioTrend();
 
 const instrumentOptions = computed(() =>
   trend.instruments.value.map((i) => ({
-    label: `${i.symbol} ${i.name ?? ''}`.trim(),
+    label: `${i.symbol} ${i.name ?? ""}`.trim(),
     value: i.id,
   })),
-)
+);
 
 // 受控下拉：选中 id 只读投影自会话 store，写回经 selectInstrument 单一入口
 // （未在标的字典分页内的 id 不在选项面，写入天然不发生）。
-const selectedInstrumentId = computed(() => trend.instrument.value?.id ?? null)
+const selectedInstrumentId = computed(() => trend.instrument.value?.id ?? null);
 
 /** 无价格来源标的（后端判通道 = none，issue #1060）：边界说明而非空图。
  * 放行判定消费后端派生事实，前端不再按类型与市场自行推断。 */
 const noPriceSource = computed(
-  () =>
-    trend.mode.value === 'instrument' &&
-    trend.instrument.value?.price_channel === 'none',
-)
+  () => trend.mode.value === "instrument" && trend.instrument.value?.price_channel === "none",
+);
 
 /** 当前单标的的价格通道（组合模式为 null）；有通道无数据时按通道选引导文案 */
 const priceChannel = computed(() =>
-  trend.mode.value === 'instrument' ? trend.instrument.value?.price_channel ?? null : null,
-)
+  trend.mode.value === "instrument" ? (trend.instrument.value?.price_channel ?? null) : null,
+);
 
 /** 恒定价格标的（后端判通道 = constant，ADR-0126 决策 8）：常量线配一句解释
  * （单位净值恒 1.0000、收益以份额结转体现），不新增万份收益 / 七日年化曲线。 */
 const isConstantPrice = computed(
-  () => trend.mode.value === 'instrument' && priceChannel.value === 'constant',
-)
+  () => trend.mode.value === "instrument" && priceChannel.value === "constant",
+);
 
 /** 有通道无数据的引导文案：手动报价通道引导去「录价」；其余通道按补全状态
  * 三态（ADR-0122 决策 5 / issue #1377）——不再有指向「同步标的信息」的回填
  * 文案（同步只刷现价，历史由后台补全，按了也不会立即有曲线）。 */
 const emptyExtra = computed(() => {
-  if (priceChannel.value === 'manual') {
-    return t('investments.trend.emptyExtraManual')
+  if (priceChannel.value === "manual") {
+    return t("investments.trend.emptyExtraManual");
   }
-  const state = trend.backfill.value?.state
-  if (state === 'running') {
-    const { done, total } = trend.backfill.value!
+  const state = trend.backfill.value?.state;
+  if (state === "running") {
+    const { done, total } = trend.backfill.value!;
     return total != null
-      ? t('investments.trend.emptyBackfillProgress', { done: done ?? 0, total })
-      : t('investments.trend.emptyBackfillRunning')
+      ? t("investments.trend.emptyBackfillProgress", { done: done ?? 0, total })
+      : t("investments.trend.emptyBackfillRunning");
   }
-  if (state === 'retry_pending') return t('investments.trend.emptyBackfillRetryPending')
-  if (state === 'no_data') return t('investments.trend.emptyBackfillNoData')
+  if (state === "retry_pending") return t("investments.trend.emptyBackfillRetryPending");
+  if (state === "no_data") return t("investments.trend.emptyBackfillNoData");
   // 无补全字段（区间裁剪 / 持仓与价格周错开等）：既有空态文案的中性改写。
-  return t('investments.trend.emptyNoPointsInRange')
-})
+  return t("investments.trend.emptyNoPointsInRange");
+});
 
 const currency = computed(() =>
   trend.currencyCode.value ? reference.currencyMap.get(trend.currencyCode.value) : undefined,
-)
+);
 
 /** 币种口径标注：组合 = 本位币；单标的 = 报价币种 */
 const currencyCaption = computed(() => {
-  if (!trend.currencyCode.value) return ''
-  return trend.mode.value === 'portfolio'
-    ? t('investments.trend.captionPortfolio', { currency: trend.currencyCode.value })
-    : t('investments.trend.captionInstrument', { currency: trend.currencyCode.value })
-})
+  if (!trend.currencyCode.value) return "";
+  return trend.mode.value === "portfolio"
+    ? t("investments.trend.captionPortfolio", { currency: trend.currencyCode.value })
+    : t("investments.trend.captionInstrument", { currency: trend.currencyCode.value });
+});
 
 /**
  * 曲线值格式化（双刻度）：组合走势值为金额（分）走 formatAmount；单标的走势值为
  * 价格（万分之一元，ADR-0038 价格刻度）走 formatPrice。
  */
 function formatTrendValue(value: number): string {
-  const ccy = currency.value
-  return trend.mode.value === 'portfolio'
-    ? formatAmount(value, ccy)
-    : formatPrice(value, ccy)
+  const ccy = currency.value;
+  return trend.mode.value === "portfolio" ? formatAmount(value, ccy) : formatPrice(value, ccy);
 }
 
 const datasetLabel = computed(() => {
-  if (trend.mode.value === 'portfolio') return t('investments.trend.modePortfolio')
-  const inst = trend.instrument.value
-  return inst ? `${inst.symbol} ${inst.name ?? ''}`.trim() : t('investments.trend.instrumentFallback')
-})
+  if (trend.mode.value === "portfolio") return t("investments.trend.modePortfolio");
+  const inst = trend.instrument.value;
+  return inst
+    ? `${inst.symbol} ${inst.name ?? ""}`.trim()
+    : t("investments.trend.instrumentFallback");
+});
 
 const chartData = computed(() => ({
   labels: trend.chartSeries.value.labels,
@@ -107,30 +102,30 @@ const chartData = computed(() => ({
     {
       label: datasetLabel.value,
       data: trend.chartSeries.value.values,
-      borderColor: '#2080f0',
-      backgroundColor: 'rgba(32, 128, 240, 0.15)',
+      borderColor: "#2080f0",
+      backgroundColor: "rgba(32, 128, 240, 0.15)",
       tension: 0.25,
       pointRadius: 2,
       // 停牌/缺价周：x 轴按日期连续、缺口连点跨越（ADR-0019）
       spanGaps: true,
     },
   ],
-}))
+}));
 
 // options computed 并读取隐私开关建立响应式依赖（issue #566）：tooltip 与轴刻度 formatter
 // 已同源走 formatAmount/formatPrice，但只在重绘时执行——切换时靠 options 变更驱动
 // vue-chartjs 重绘，满足「切换即时生效于所有已打开页面」（spec #564 user story 14）。
-const chartOptions = computed<ChartOptions<'line'>>(() => {
-  void amountPrivacyEnabled.value
+const chartOptions = computed<ChartOptions<"line">>(() => {
+  void amountPrivacyEnabled.value;
   return {
     responsive: true,
     maintainAspectRatio: false,
-    interaction: { mode: 'nearest', intersect: false },
+    interaction: { mode: "nearest", intersect: false },
     plugins: {
-      legend: { position: 'top' },
+      legend: { position: "top" },
       tooltip: {
         callbacks: {
-          label: (context: TooltipItem<'line'>) =>
+          label: (context: TooltipItem<"line">) =>
             `${context.dataset.label}: ${formatTrendValue(context.raw as number)}`,
         },
       },
@@ -145,9 +140,8 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
         },
       },
     },
-  }
-})
-
+  };
+});
 </script>
 
 <template>
@@ -159,8 +153,8 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
         data-testid="trend-mode"
         @update:value="trend.setMode"
       >
-        <NRadio value="portfolio">{{ t('investments.trend.modePortfolio') }}</NRadio>
-        <NRadio value="instrument">{{ t('investments.trend.modeInstrument') }}</NRadio>
+        <NRadio value="portfolio">{{ t("investments.trend.modePortfolio") }}</NRadio>
+        <NRadio value="instrument">{{ t("investments.trend.modeInstrument") }}</NRadio>
       </NRadioGroup>
       <PinyinSelect
         v-if="trend.mode.value === 'instrument'"
@@ -204,7 +198,7 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
     <!-- 恒定价格标的（通道 = constant，ADR-0126 决策 8）：常量线随图直出，
          此处一句解释口径（收益在份额不在价），不新增万份收益曲线。 -->
     <NText v-if="isConstantPrice" depth="3" data-testid="trend-constant-note">
-      {{ t('investments.trend.constantNote') }}
+      {{ t("investments.trend.constantNote") }}
     </NText>
 
     <NSpin :show="trend.loading.value">
@@ -217,7 +211,7 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
       >
         <template #extra>
           <NText depth="3">
-            {{ t('investments.trend.noSourceExtra') }}
+            {{ t("investments.trend.noSourceExtra") }}
           </NText>
         </template>
       </NEmpty>
@@ -233,9 +227,7 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
         <template #extra>
           <NText
             depth="3"
-            :data-testid="
-              trend.backfill.value ? 'trend-empty-backfill' : 'trend-empty-neutral'
-            "
+            :data-testid="trend.backfill.value ? 'trend-empty-backfill' : 'trend-empty-neutral'"
           >
             {{ emptyExtra }}
           </NText>

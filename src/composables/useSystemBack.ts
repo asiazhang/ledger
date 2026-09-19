@@ -1,9 +1,9 @@
-import { onScopeDispose, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { onBackButtonPress } from '@tauri-apps/api/app'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import { closeTopOverlay, hasOpenOverlay } from '@ledger/ui-kit/overlayRegistry'
-import { useWindowTier } from '@ledger/window-tier'
+import { onScopeDispose, watch } from "vue";
+import { useRouter } from "vue-router";
+import { onBackButtonPress } from "@tauri-apps/api/app";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { closeTopOverlay, hasOpenOverlay } from "@ledger/ui-kit/overlayRegistry";
+import { useWindowTier } from "@ledger/window-tier";
 
 /**
  * 系统返回桥接（issue #845 / ADR-0088 决策 7，词汇表「系统返回语义」）：
@@ -32,55 +32,57 @@ import { useWindowTier } from '@ledger/window-tier'
  * 开着时路由回退会把状态埋进弹层下，属数据丢失面）、不交还系统。
  */
 export function useSystemBack(): void {
-  const tier = useWindowTier()
-  const router = useRouter()
+  const tier = useWindowTier();
+  const router = useRouter();
 
   // 当前档位的注册撤销句柄（注册是异步的，完成前换档由代际判定自撤）
-  let activeUnlisten: (() => void) | null = null
-  let generation = 0
+  let activeUnlisten: (() => void) | null = null;
+  let generation = 0;
 
   function handleBackPress(payload: { canGoBack: boolean }): void {
     // 有弹层：本次返回键由弹层层消费——关最上层；栈顶不可关的退化用法则吞掉，
     // 不把返回透给路由层（弹层开着时路由回退会把状态埋进弹层下）
     if (hasOpenOverlay()) {
-      closeTopOverlay()
-      return
+      closeTopOverlay();
+      return;
     }
     if (payload.canGoBack) {
-      router.back()
-      return
+      router.back();
+      return;
     }
     // 栈底交还系统；非 Tauri 环境（测试/浏览器）拒绝时静默（先例 App.vue 标题）
-    getCurrentWindow().destroy().catch(() => {})
+    getCurrentWindow()
+      .destroy()
+      .catch(() => {});
   }
 
   watch(
     tier,
     (value) => {
-      generation += 1
-      activeUnlisten?.()
-      activeUnlisten = null
-      if (value !== 'mobile') return
-      const gen = generation
+      generation += 1;
+      activeUnlisten?.();
+      activeUnlisten = null;
+      if (value !== "mobile") return;
+      const gen = generation;
       onBackButtonPress(handleBackPress)
         .then((listener) => {
           if (gen !== generation) {
             // 注册完成前已换档/卸载：撤销迟到注册
-            void listener.unregister()
-            return
+            void listener.unregister();
+            return;
           }
-          activeUnlisten = () => void listener.unregister()
+          activeUnlisten = () => void listener.unregister();
         })
         .catch(() => {
           // 注册失败：返回通道惰性禁用（原生默认分支接管），不崩溃
-        })
+        });
     },
     { immediate: true },
-  )
+  );
 
   onScopeDispose(() => {
-    generation += 1
-    activeUnlisten?.()
-    activeUnlisten = null
-  })
+    generation += 1;
+    activeUnlisten?.();
+    activeUnlisten = null;
+  });
 }

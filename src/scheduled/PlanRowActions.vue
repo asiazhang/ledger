@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NButton, NSpace } from 'naive-ui'
-import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
-import { MOBILE_TOUCH_TARGET_STYLE } from '@/components/mobile-cells'
-import type { ScheduledPlanRowAction } from '@ledger/scheduled-plan-list'
+import { computed } from "vue";
+import { NButton, NSpace } from "naive-ui";
+import AppPopconfirm from "@ledger/ui-kit/AppPopconfirm.vue";
+import { MOBILE_TOUCH_TARGET_STYLE } from "@/components/mobile-cells";
+import type { ScheduledPlanRowAction } from "@ledger/scheduled-plan-list";
 
 /**
  * 行操作渲染组件（ADR-0041 决策 7 / spec #520）：无状态展示组件——
@@ -19,17 +19,17 @@ import type { ScheduledPlanRowAction } from '@ledger/scheduled-plan-list'
  */
 const props = defineProps<{
   /** 行操作描述符数组（清单模块 rowActions 或适配器按形态组装）。 */
-  actions: ScheduledPlanRowAction[]
+  actions: ScheduledPlanRowAction[];
   /** 行主键：测试锚点 `op-${key}-${rowId}` 的来源。 */
-  rowId: string
+  rowId: string;
   /** 移动档变体（issue #848 / ADR-0088 决策 11 票⑧）：动作纵排堆叠 + ≥48px
    *  触控目标（生命周期操作一击可达）；描述符闭集、确认分支、测试锚点两档
    *  共用。缺省桌面档渲染一字不动（回归红线）。 */
-  mobile?: boolean
-}>()
+  mobile?: boolean;
+}>();
 
 /** 仅渲染可用动作；全不可用时空占位「—」。 */
-const visibleActions = computed(() => props.actions.filter((a) => a.available))
+const visibleActions = computed(() => props.actions.filter((a) => a.available));
 </script>
 
 <template>

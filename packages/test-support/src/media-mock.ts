@@ -15,74 +15,74 @@
 /** 假 matchMedia 的可编程状态。 */
 export interface FakeMediaState {
   /** 视口宽度（px）：窗口分级断点判定（宽度轴信号）。 */
-  width: number
+  width: number;
   /** hover 能力：'hover' 可悬停 / 'none' 不可（输入轴信号一）。 */
-  hover: 'hover' | 'none'
+  hover: "hover" | "none";
   /** 主指针精度：'fine' 精细 / 'coarse' 粗糙（输入轴信号二）。 */
-  pointer: 'fine' | 'coarse'
+  pointer: "fine" | "coarse";
 }
 
 /** 默认状态：桌面指针环境（宽视口 + 可悬停 + 精细主指针），既有桌面档测试语义零迁移。 */
 export const DEFAULT_MEDIA_STATE: FakeMediaState = {
   width: 1280,
-  hover: 'hover',
-  pointer: 'fine',
-}
+  hover: "hover",
+  pointer: "fine",
+};
 
-type MediaListener = (event: MediaQueryListEvent) => void
+type MediaListener = (event: MediaQueryListEvent) => void;
 
 /** 注册表项：发放时记录查询与可变命中态，复位时随注册表整体清空。 */
 interface RegisteredMql {
-  media: string
-  matches: boolean
-  onchange: MediaListener | null
-  listeners: Set<MediaListener>
+  media: string;
+  matches: boolean;
+  onchange: MediaListener | null;
+  listeners: Set<MediaListener>;
 }
 
-let state: FakeMediaState = { ...DEFAULT_MEDIA_STATE }
-let registry: RegisteredMql[] = []
+let state: FakeMediaState = { ...DEFAULT_MEDIA_STATE };
+let registry: RegisteredMql[] = [];
 
 /** 单特征求值：true / false / undefined（本接缝不认识的特征）。 */
 function evaluateFeature(feature: string, s: FakeMediaState): boolean | undefined {
-  const m = /^\(\s*([\w-]+)\s*:\s*([^)]+?)\s*\)$/.exec(feature)
-  if (!m) return undefined
-  const name = m[1]
-  const value = m[2]
+  const m = /^\(\s*([\w-]+)\s*:\s*([^)]+?)\s*\)$/.exec(feature);
+  if (!m) return undefined;
+  const name = m[1];
+  const value = m[2];
   switch (name) {
-    case 'min-width':
-      return s.width >= Number.parseFloat(value)
-    case 'max-width':
-      return s.width <= Number.parseFloat(value)
-    case 'hover':
-      return value === s.hover
-    case 'pointer':
-      return value === s.pointer
+    case "min-width":
+      return s.width >= Number.parseFloat(value);
+    case "max-width":
+      return s.width <= Number.parseFloat(value);
+    case "hover":
+      return value === s.hover;
+    case "pointer":
+      return value === s.pointer;
     default:
-      return undefined
+      return undefined;
   }
 }
 
 /** 查询求值：not 前缀取反（内层未知仍为未知），and 组合一假即假、全真才真。 */
 function evaluateQuery(query: string, s: FakeMediaState): boolean | undefined {
-  const q = query.trim()
-  if (q.startsWith('not ')) {
-    const inner = evaluateQuery(q.slice(4), s)
-    return inner === undefined ? undefined : !inner
+  const q = query.trim();
+  if (q.startsWith("not ")) {
+    const inner = evaluateQuery(q.slice(4), s);
+    return inner === undefined ? undefined : !inner;
   }
-  let known = false
+  let known = false;
   for (const part of q.split(/\s+and\s+/)) {
-    const result = evaluateFeature(part.trim(), s)
-    if (result === false) return false
-    if (result === true) known = true
+    const result = evaluateFeature(part.trim(), s);
+    if (result === false) return false;
+    if (result === true) known = true;
   }
-  return known
+  return known;
 }
 
 /** DOM 回调形态（函数或 { handleEvent }）归一为函数监听。 */
 function toListener(listener: EventListenerOrEventListenerObject | null): MediaListener | null {
-  if (!listener) return null
-  if (typeof listener === 'function') return listener
-  return (e: MediaQueryListEvent) => listener.handleEvent(e)
+  if (!listener) return null;
+  if (typeof listener === "function") return listener;
+  return (e: MediaQueryListEvent) => listener.handleEvent(e);
 }
 
 /**
@@ -91,42 +91,42 @@ function toListener(listener: EventListenerOrEventListenerObject | null): MediaL
  * 此后由 setFakeMedia 重编程并派发 change。
  */
 export function fakeMatchMedia(query: string): MediaQueryList {
-  const listeners = new Set<MediaListener>()
+  const listeners = new Set<MediaListener>();
   const entry: RegisteredMql = {
     media: query,
     matches: evaluateQuery(query, state) === true,
     onchange: null,
     listeners,
-  }
+  };
   const mql = {
     get matches() {
-      return entry.matches
+      return entry.matches;
     },
     media: query,
     get onchange() {
-      return entry.onchange
+      return entry.onchange;
     },
     set onchange(fn: MediaListener | null) {
-      entry.onchange = fn
+      entry.onchange = fn;
     },
     addEventListener: (_type: string, listener: EventListenerOrEventListenerObject | null) => {
-      const fn = toListener(listener)
-      if (fn) listeners.add(fn)
+      const fn = toListener(listener);
+      if (fn) listeners.add(fn);
     },
     removeEventListener: (_type: string, listener: EventListenerOrEventListenerObject | null) => {
-      const fn = toListener(listener)
-      if (fn) listeners.delete(fn)
+      const fn = toListener(listener);
+      if (fn) listeners.delete(fn);
     },
     addListener: (listener: MediaListener) => {
-      listeners.add(listener)
+      listeners.add(listener);
     },
     removeListener: (listener: MediaListener) => {
-      listeners.delete(listener)
+      listeners.delete(listener);
     },
     dispatchEvent: () => false,
-  }
-  registry.push(entry)
-  return mql as unknown as MediaQueryList
+  };
+  registry.push(entry);
+  return mql as unknown as MediaQueryList;
 }
 
 /**
@@ -134,19 +134,19 @@ export function fakeMatchMedia(query: string): MediaQueryList {
  * 同步翻转并派发 change（未翻转不派发，浏览器同款语义）。
  */
 export function setFakeMedia(patch: Partial<FakeMediaState>): void {
-  state = { ...state, ...patch }
+  state = { ...state, ...patch };
   for (const entry of registry) {
-    const next = evaluateQuery(entry.media, state) === true
-    if (next === entry.matches) continue
-    entry.matches = next
-    const event = { matches: next, media: entry.media } as MediaQueryListEvent
-    if (entry.onchange) entry.onchange(event)
-    for (const listener of entry.listeners) listener(event)
+    const next = evaluateQuery(entry.media, state) === true;
+    if (next === entry.matches) continue;
+    entry.matches = next;
+    const event = { matches: next, media: entry.media } as MediaQueryListEvent;
+    if (entry.onchange) entry.onchange(event);
+    for (const listener of entry.listeners) listener(event);
   }
 }
 
 /** 复位：状态回默认、注册表与监听清空（全局壳层每测调用，语义同清理四件套）。 */
 export function resetFakeMedia(): void {
-  state = { ...DEFAULT_MEDIA_STATE }
-  registry = []
+  state = { ...DEFAULT_MEDIA_STATE };
+  registry = [];
 }

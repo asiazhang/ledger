@@ -1,7 +1,7 @@
-import { computed, ref } from 'vue'
-import { useReferenceStore } from '@/stores/reference'
-import { resolveMerchantRef } from '@/merchants/resolve-merchant'
-import { t } from '@ledger/i18n'
+import { computed, ref } from "vue";
+import { useReferenceStore } from "@/stores/reference";
+import { resolveMerchantRef } from "@/merchants/resolve-merchant";
+import { t } from "@ledger/i18n";
 
 /**
  * 商户输入字段（issue #189 原生于 useCategoryForm，issue #875 / ADR-0092 提取为共享接缝）：
@@ -19,24 +19,24 @@ import { t } from '@ledger/i18n'
  *    软删商户的历史交易仍可修改其他字段。
  */
 export function useMerchantField(editingMerchantId: string | null = null) {
-  const reference = useReferenceStore()
+  const reference = useReferenceStore();
 
   /** 商户选择器值：已选/已填的商户 id 或自由文本名字（保存时经 resolveMerchantId 解析） */
-  const merchantRef = ref<string | null>(null)
+  const merchantRef = ref<string | null>(null);
 
   /** 商户下拉选项（在用商户；编辑时原商户已不在字典则追加兜底选项承载原 id） */
   const merchantOptions = computed<{ label: string; value: string }[]>(() => {
-    const base = reference.merchants.map((m) => ({ label: m.name, value: m.id }))
+    const base = reference.merchants.map((m) => ({ label: m.name, value: m.id }));
     if (editingMerchantId && !reference.merchantMap.has(editingMerchantId)) {
-      base.unshift({ label: t('transactions.form.merchantDeleted'), value: editingMerchantId })
+      base.unshift({ label: t("transactions.form.merchantDeleted"), value: editingMerchantId });
     }
-    return base
-  })
+    return base;
+  });
 
   /** 保存时解析选择器值（空/id/名字 → 商户 id）：细则见 [`resolveMerchantRef`] */
   async function resolveMerchantId(): Promise<string | null> {
-    return resolveMerchantRef(merchantRef.value, editingMerchantId)
+    return resolveMerchantRef(merchantRef.value, editingMerchantId);
   }
 
-  return { merchantRef, merchantOptions, resolveMerchantId }
+  return { merchantRef, merchantOptions, resolveMerchantId };
 }

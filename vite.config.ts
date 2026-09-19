@@ -42,10 +42,7 @@ function gitSha(): string {
 
 function gitDirty(): boolean {
   try {
-    return (
-      execSync("git status --porcelain", { encoding: "utf-8" }).trim().length >
-      0
-    );
+    return execSync("git status --porcelain", { encoding: "utf-8" }).trim().length > 0;
   } catch {
     return false;
   }

@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { NCard, NSpace } from 'naive-ui'
-import CategoryAddForm from './CategoryAddForm.vue'
-import CategoryTree from './CategoryTree.vue'
-import { t } from '@ledger/i18n'
-import type { Category, CategoryKind } from '@ledger/types'
+import { NCard, NSpace } from "naive-ui";
+import CategoryAddForm from "./CategoryAddForm.vue";
+import CategoryTree from "./CategoryTree.vue";
+import { t } from "@ledger/i18n";
+import type { Category, CategoryKind } from "@ledger/types";
 
-defineProps<{ kind: CategoryKind }>()
-const emit = defineEmits<{ edit: [cat: Category] }>()
+defineProps<{ kind: CategoryKind }>();
+const emit = defineEmits<{ edit: [cat: Category] }>();
 </script>
 
 <template>

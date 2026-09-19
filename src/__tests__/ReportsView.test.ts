@@ -1,62 +1,65 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { mount, flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
-import { defineComponent, h } from 'vue'
-import { NButton, NEmpty, NSelect } from 'naive-ui'
-import QuickTimeRange from '@/components/QuickTimeRange.vue'
-import ReportsView from '@/views/ReportsView.vue'
-import { categoryColor } from '@ledger/utils/category-chart'
-import { useWindowGuard } from '@/composables/useWindowGuard'
-import { createOverlayToken, resetOverlays } from '@ledger/ui-kit/overlayRegistry'
-import { fireViewReset, clearViewResets } from '@/composables/viewResetRegistry'
-import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/transaction/useTransactionFilter'
-import { makeCategory, makeFakeSink, resetToastSink } from './factories'
-import { registerToastSink } from '@ledger/loadable'
-import { formatAmount } from '@ledger/money'
-import type { NullableDateRange } from '@ledger/utils/time-period'
-import type { ReportDateRange } from '@ledger/types'
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { mount, flushPromises } from "@vue/test-utils";
+import { setActivePinia, createPinia } from "pinia";
+import { defineComponent, h } from "vue";
+import { NButton, NEmpty, NSelect } from "naive-ui";
+import QuickTimeRange from "@/components/QuickTimeRange.vue";
+import ReportsView from "@/views/ReportsView.vue";
+import { categoryColor } from "@ledger/utils/category-chart";
+import { useWindowGuard } from "@/composables/useWindowGuard";
+import { createOverlayToken, resetOverlays } from "@ledger/ui-kit/overlayRegistry";
+import { fireViewReset, clearViewResets } from "@/composables/viewResetRegistry";
+import {
+  UNCATEGORIZED_ONLY,
+  CATEGORY_DRILLDOWN_KINDS,
+  MERCHANT_DRILLDOWN_KINDS,
+} from "@/transaction/useTransactionFilter";
+import { makeCategory, makeFakeSink, resetToastSink } from "./factories";
+import { registerToastSink } from "@ledger/loadable";
+import { formatAmount } from "@ledger/money";
+import type { NullableDateRange } from "@ledger/utils/time-period";
+import type { ReportDateRange } from "@ledger/types";
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现（无币种形态），
 // 格式规则唯一归属其专测
 
 // jsdom 无 canvas：图表组件用共享桩承接（line-chart-stub，先例 #160），
 // 把 data/options 序列化进 DOM 供断言图数据形态与横向 options。
-vi.mock('vue-chartjs', async () => {
-  const { BarChartStubWithOptions } = await import('./line-chart-stub')
-  return { Bar: BarChartStubWithOptions }
-})
+vi.mock("vue-chartjs", async () => {
+  const { BarChartStubWithOptions } = await import("./line-chart-stub");
+  return { Bar: BarChartStubWithOptions };
+});
 
 // 跳转下钻（issue #380）：视图经 router.push 跳交易列表，mock 后断言跳转载荷
-const pushMock = vi.fn()
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }) }))
-
+const pushMock = vi.fn();
+vi.mock("vue-router", () => ({ useRouter: () => ({ push: pushMock }) }));
 
 // 固定「今天」= 2026-01-15（本地）：默认「当年」快照与芯片换算随之确定
 // （TransactionsView 时间维度行测试同款前提），期望年份一律用字面量 2026。
-const Y = 2026
+const Y = 2026;
 
 /** 范围夹具：QuickTimeRange 钳制输入（视图不再自拉范围），界内界外年份皆覆盖 */
 const mockRange: ReportDateRange = {
-  min_date: '2020-03-01',
-  max_date: '2027-11-30',
-}
+  min_date: "2020-03-01",
+  max_date: "2027-11-30",
+};
 
 /** 分类夹具：food 下挂二级 snack（归并断言依赖父子关系） */
 const mockCategories = [
-  makeCategory({ id: 'food', name: '餐饮', sort_order: 0 }),
-  makeCategory({ id: 'food-snack', name: '零食', parent_id: 'food', sort_order: 1 }),
-  makeCategory({ id: 'transport', name: '交通', sort_order: 2 }),
-]
+  makeCategory({ id: "food", name: "餐饮", sort_order: 0 }),
+  makeCategory({ id: "food-snack", name: "零食", parent_id: "food", sort_order: 1 }),
+  makeCategory({ id: "transport", name: "交通", sort_order: 2 }),
+];
 
 /** 分类份额夹具：后端叶子级行（ORDER BY net DESC），未分类 category_id 为空串 */
 const mockShares = [
-  { category_id: 'food', category_name: '餐饮', amount_cents: 5000 },
-  { category_id: 'transport', category_name: '交通', amount_cents: 3000 },
-  { category_id: 'food-snack', category_name: '零食', amount_cents: 1000 },
-  { category_id: '', category_name: '未分类', amount_cents: 800 },
-  { category_id: 'zero', category_name: '零净额', amount_cents: 0 },
-]
+  { category_id: "food", category_name: "餐饮", amount_cents: 5000 },
+  { category_id: "transport", category_name: "交通", amount_cents: 3000 },
+  { category_id: "food-snack", category_name: "零食", amount_cents: 1000 },
+  { category_id: "", category_name: "未分类", amount_cents: 800 },
+  { category_id: "zero", category_name: "零净额", amount_cents: 0 },
+];
 
 /** 默认布线 defaults 表：期间边界（组件钳制输入）+ 三报表查询空集
  *（参考五命令走接缝规范兜底，reference store 自拉） */
@@ -65,122 +68,126 @@ const BASE_DEFAULTS = {
   monthly_summary: [],
   category_shares: [],
   merchant_shares: { rows: [], total_cents: 0 },
-}
+};
 
 beforeEach(() => {
-  resetToastSink()
-  wireInvokeSeam({ defaults: BASE_DEFAULTS })
-  pushMock.mockReset()
-  vi.useFakeTimers()
-  vi.setSystemTime(new Date(2026, 0, 15, 12, 0, 0))
-})
+  resetToastSink();
+  wireInvokeSeam({ defaults: BASE_DEFAULTS });
+  pushMock.mockReset();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(2026, 0, 15, 12, 0, 0));
+});
 
 afterEach(() => {
-  vi.useRealTimers()
-  resetToastSink()
-})
+  vi.useRealTimers();
+  resetToastSink();
+});
 
 async function mountReports() {
-  const wrapper = mount(ReportsView)
-  await flushPromises()
-  return wrapper
+  const wrapper = mount(ReportsView);
+  await flushPromises();
+  return wrapper;
 }
 
 /** 芯片按钮按文案定位（报表闭集文案唯一：当月/当季/当年/去年） */
 const chip = (wrapper: ReturnType<typeof mount>, label: string) =>
-  wrapper.findAllComponents(NButton).find((b) => b.text().trim() === label)!
+  wrapper.findAllComponents(NButton).find((b) => b.text().trim() === label)!;
 
 async function clickChip(wrapper: ReturnType<typeof mount>, label: string) {
-  await chip(wrapper, label).trigger('click')
-  await flushPromises()
+  await chip(wrapper, label).trigger("click");
+  await flushPromises();
 }
 
 /** 点第 i 根分类柱（经图桩按钮按 chart.js onClick 契约回调；#379 与 #427 两块共用） */
 async function clickBar(wrapper: ReturnType<typeof mount>, index: number) {
-  await wrapper.findAll('[data-testid="bar-click"]')[index].trigger('click')
-  await flushPromises()
+  await wrapper.findAll('[data-testid="bar-click"]')[index].trigger("click");
+  await flushPromises();
 }
 
 /** 图内下钻面包屑（存在 = 下钻态；#379 与 #427 两块共用） */
 function breadcrumbOf(wrapper: ReturnType<typeof mount>) {
-  return wrapper.find('[data-testid="category-breadcrumb"]')
+  return wrapper.find('[data-testid="category-breadcrumb"]');
 }
 
 /** 经共享受控组件 emit 期间快照（v-model 回流视图），模拟步进/面板产出的任意期间 */
 async function emitPeriod(wrapper: ReturnType<typeof mount>, range: NullableDateRange) {
-  wrapper.findComponent(QuickTimeRange).vm.$emit('update:modelValue', range)
-  await flushPromises()
+  wrapper.findComponent(QuickTimeRange).vm.$emit("update:modelValue", range);
+  await flushPromises();
 }
 
 /** 月度收支卡（DOM 中第一张 Bar 图桩）的 data/options */
-function monthlyChartProp(prop: 'data' | 'options', wrapper: ReturnType<typeof mount>) {
-  const node = wrapper.findAll(`[data-testid="bar-${prop}"]`)[0]
-  return JSON.parse(node.text())
+function monthlyChartProp(prop: "data" | "options", wrapper: ReturnType<typeof mount>) {
+  const node = wrapper.findAll(`[data-testid="bar-${prop}"]`)[0];
+  return JSON.parse(node.text());
 }
 
 /** 支出分类构成图（class 定位）的 data/options */
-function categoryChartProp(prop: 'data' | 'options', wrapper: ReturnType<typeof mount>) {
-  const node = wrapper.find(`.category-chart [data-testid="bar-${prop}"]`)
-  return JSON.parse(node.text())
+function categoryChartProp(prop: "data" | "options", wrapper: ReturnType<typeof mount>) {
+  const node = wrapper.find(`.category-chart [data-testid="bar-${prop}"]`);
+  return JSON.parse(node.text());
 }
 
-describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
-  it('进入默认「当年」快照：三卡以当年期间查询，期间边界由组件内化拉取一次', async () => {
+describe("ReportsView 期间筛选（issue #411 / ADR-0057）", () => {
+  it("进入默认「当年」快照：三卡以当年期间查询，期间边界由组件内化拉取一次", async () => {
     // 双断言（issue #778）：替身返回可区分载荷，断言调用事实后继续断言三卡渲染了对应值
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
-        monthly_summary: [{ month: `${Y}-01`, income_cents: 1100, expense_cents: 700, refund_cents: 90 }],
-        category_shares: [{ category_id: 'food', category_name: '餐饮', amount_cents: 700 }],
+        monthly_summary: [
+          { month: `${Y}-01`, income_cents: 1100, expense_cents: 700, refund_cents: 90 },
+        ],
+        category_shares: [{ category_id: "food", category_name: "餐饮", amount_cents: 700 }],
         merchant_shares: {
-          rows: [{ merchant_id: 'm-1', merchant_name: '超市', amount_cents: 500, transaction_count: 2 }],
+          rows: [
+            { merchant_id: "m-1", merchant_name: "超市", amount_cents: 500, transaction_count: 2 },
+          ],
           total_cents: 500,
         },
       },
-    })
-    const wrapper = await mountReports()
-    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+    });
+    const wrapper = await mountReports();
+    expect(mockInvoke).toHaveBeenCalledWith("monthly_summary", {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
-    })
-    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("merchant_shares", {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
       topN: 5,
-    })
-    expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
-      kind: 'expense',
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("category_shares", {
+      kind: "expense",
       month: null,
       year: null,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
-    })
-    const rangeCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'report_date_range')
-    expect(rangeCalls).toHaveLength(1)
+    });
+    const rangeCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "report_date_range");
+    expect(rangeCalls).toHaveLength(1);
     // 三卡渲染了对应载荷（「调用产生了效果」）
-    const data = monthlyChartProp('data', wrapper)
-    expect(data.labels).toEqual([`${Y}-01`])
-    expect(data.datasets.map((d: { data: number[] }) => d.data)).toEqual([[1100], [700], [90]])
-    expect(categoryChartProp('data', wrapper).datasets[0].data).toEqual([700])
-    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
-    expect(trs).toHaveLength(1)
-    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(500))
-  })
+    const data = monthlyChartProp("data", wrapper);
+    expect(data.labels).toEqual([`${Y}-01`]);
+    expect(data.datasets.map((d: { data: number[] }) => d.data)).toEqual([[1100], [700], [90]]);
+    expect(categoryChartProp("data", wrapper).datasets[0].data).toEqual([700]);
+    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr');
+    expect(trs).toHaveLength(1);
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(500));
+  });
 
-  it('年份下拉退役：无年份选择下拉，快捷选择行为唯一时间控件（四枚芯片、无「全部」）', async () => {
-    const wrapper = await mountReports()
-    expect(wrapper.findComponent(NSelect).exists()).toBe(false)
-    expect(wrapper.findComponent(QuickTimeRange).exists()).toBe(true)
+  it("年份下拉退役：无年份选择下拉，快捷选择行为唯一时间控件（四枚芯片、无「全部」）", async () => {
+    const wrapper = await mountReports();
+    expect(wrapper.findComponent(NSelect).exists()).toBe(false);
+    expect(wrapper.findComponent(QuickTimeRange).exists()).toBe(true);
     // 报表页日期闭集：仅当月/当季/当年/去年，无「全部」（期间必有界）
-    for (const label of ['当月', '当季', '当年', '去年']) {
-      expect(chip(wrapper, label).exists()).toBe(true)
+    for (const label of ["当月", "当季", "当年", "去年"]) {
+      expect(chip(wrapper, label).exists()).toBe(true);
     }
-    expect(chip(wrapper, '全部')).toBeUndefined()
-  })
+    expect(chip(wrapper, "全部")).toBeUndefined();
+  });
 
-  it('点「去年」芯片：三卡以去年期间重算，边界不重复拉取', async () => {
+  it("点「去年」芯片：三卡以去年期间重算，边界不重复拉取", async () => {
     // 双断言（issue #778）：替身按期间参数分支返回可区分载荷——当年空集为对照，
     // 去年载荷可辨识，渲染差异只能来自「去年」调用的效果
     wireInvokeSeam({
@@ -192,372 +199,381 @@ describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
             : [],
         category_shares: (args) =>
           args?.from === `${Y - 1}-01-01`
-            ? [{ category_id: 'food', category_name: '餐饮', amount_cents: 1700 }]
+            ? [{ category_id: "food", category_name: "餐饮", amount_cents: 1700 }]
             : [],
         merchant_shares: (args) =>
           args?.year === Y - 1
             ? {
-                rows: [{ merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 1700, transaction_count: 1 }],
+                rows: [
+                  {
+                    merchant_id: "m-2",
+                    merchant_name: "咖啡",
+                    amount_cents: 1700,
+                    transaction_count: 1,
+                  },
+                ],
                 total_cents: 1700,
               }
             : { rows: [], total_cents: 0 },
       },
-    })
-    const wrapper = await mountReports()
-    expect(wrapper.text()).toContain('本期暂无数据')
-    mockInvoke.mockClear()
-    await clickChip(wrapper, '去年')
-    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+    });
+    const wrapper = await mountReports();
+    expect(wrapper.text()).toContain("本期暂无数据");
+    mockInvoke.mockClear();
+    await clickChip(wrapper, "去年");
+    expect(mockInvoke).toHaveBeenCalledWith("monthly_summary", {
       year: Y - 1,
       from: `${Y - 1}-01-01`,
       to: `${Y - 1}-12-31`,
-    })
-    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("merchant_shares", {
       year: Y - 1,
       from: `${Y - 1}-01-01`,
       to: `${Y - 1}-12-31`,
       topN: 5,
-    })
-    expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
-      kind: 'expense',
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("category_shares", {
+      kind: "expense",
       month: null,
       year: null,
       from: `${Y - 1}-01-01`,
       to: `${Y - 1}-12-31`,
-    })
-    const rangeCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'report_date_range')
-    expect(rangeCalls).toHaveLength(0)
+    });
+    const rangeCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "report_date_range");
+    expect(rangeCalls).toHaveLength(0);
     // 三卡以去年载荷重渲染（「调用产生了效果」）
-    const data = monthlyChartProp('data', wrapper)
-    expect(data.labels).toEqual([`${Y - 1}-06`])
-    expect(data.datasets.map((d: { data: number[] }) => d.data)).toEqual([[2100], [1700], [190]])
-    expect(categoryChartProp('data', wrapper).datasets[0].data).toEqual([1700])
-    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
-    expect(trs).toHaveLength(1)
-    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(1700))
-  })
+    const data = monthlyChartProp("data", wrapper);
+    expect(data.labels).toEqual([`${Y - 1}-06`]);
+    expect(data.datasets.map((d: { data: number[] }) => d.data)).toEqual([[2100], [1700], [190]]);
+    expect(categoryChartProp("data", wrapper).datasets[0].data).toEqual([1700]);
+    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr');
+    expect(trs).toHaveLength(1);
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(1700));
+  });
 
-  it('重复点同一段期间的芯片不重复刷新（同值守卫）', async () => {
-    const wrapper = await mountReports()
-    mockInvoke.mockClear()
-    await clickChip(wrapper, '当年')
+  it("重复点同一段期间的芯片不重复刷新（同值守卫）", async () => {
+    const wrapper = await mountReports();
+    mockInvoke.mockClear();
+    await clickChip(wrapper, "当年");
     const reportCalls = mockInvoke.mock.calls.filter(([cmd]) =>
-      ['monthly_summary', 'category_shares', 'merchant_shares'].includes(cmd),
-    )
-    expect(reportCalls).toHaveLength(0)
-  })
+      ["monthly_summary", "category_shares", "merchant_shares"].includes(cmd),
+    );
+    expect(reportCalls).toHaveLength(0);
+  });
 
-  it('点「当月」芯片：月度收支卡单组柱如实展示（月期间不切日粒度）', async () => {
+  it("点「当月」芯片：月度收支卡单组柱如实展示（月期间不切日粒度）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
-        monthly_summary: [{ month: `${Y}-01`, income_cents: 1000, expense_cents: 500, refund_cents: 100 }],
+        monthly_summary: [
+          { month: `${Y}-01`, income_cents: 1000, expense_cents: 500, refund_cents: 100 },
+        ],
       },
-    })
-    const wrapper = await mountReports()
-    mockInvoke.mockClear()
-    await clickChip(wrapper, '当月')
-    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+    });
+    const wrapper = await mountReports();
+    mockInvoke.mockClear();
+    await clickChip(wrapper, "当月");
+    expect(mockInvoke).toHaveBeenCalledWith("monthly_summary", {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-01-31`,
-    })
-    const data = monthlyChartProp('data', wrapper)
-    expect(data.labels).toEqual([`${Y}-01`])
-    expect(data.datasets.map((d: { data: number[] }) => d.data)).toEqual([[1000], [500], [100]])
-  })
+    });
+    const data = monthlyChartProp("data", wrapper);
+    expect(data.labels).toEqual([`${Y}-01`]);
+    expect(data.datasets.map((d: { data: number[] }) => d.data)).toEqual([[1000], [500], [100]]);
+  });
 
-  it('所选期间无流水：三卡显示空态而非旧数据残留', async () => {
-    const wrapper = await mountReports()
-    const empties = wrapper.findAllComponents(NEmpty)
-    expect(empties.length).toBeGreaterThanOrEqual(3)
-    expect(wrapper.text()).toContain('本期暂无数据')
-    expect(wrapper.text()).toContain('暂无支出数据')
-    expect(wrapper.text()).toContain('本期暂无商户消费')
-  })
+  it("所选期间无流水：三卡显示空态而非旧数据残留", async () => {
+    const wrapper = await mountReports();
+    const empties = wrapper.findAllComponents(NEmpty);
+    expect(empties.length).toBeGreaterThanOrEqual(3);
+    expect(wrapper.text()).toContain("本期暂无数据");
+    expect(wrapper.text()).toContain("暂无支出数据");
+    expect(wrapper.text()).toContain("本期暂无商户消费");
+  });
 
-  it('期间选择不持久化：切换期间 localStorage 零写入', async () => {
-    const wrapper = await mountReports()
-    const keysBefore = Object.keys(localStorage)
-    await clickChip(wrapper, '去年')
-    expect(Object.keys(localStorage)).toEqual(keysBefore)
-  })
-})
+  it("期间选择不持久化：切换期间 localStorage 零写入", async () => {
+    const wrapper = await mountReports();
+    const keysBefore = Object.keys(localStorage);
+    await clickChip(wrapper, "去年");
+    expect(Object.keys(localStorage)).toEqual(keysBefore);
+  });
+});
 
-describe('ReportsView 支出分类构成横向柱状图（issue #378）', () => {
-  it('横向柱状图：indexAxis 为 y，图卡正常挂载', async () => {
+describe("ReportsView 支出分类构成横向柱状图（issue #378）", () => {
+  it("横向柱状图：indexAxis 为 y，图卡正常挂载", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    const options = categoryChartProp('options', wrapper)
-    expect(options.indexAxis).toBe('y')
-    expect(options.plugins.legend.display).toBe(false)
-    expect(wrapper.find('.category-chart [data-testid="bar-data"]').exists()).toBe(true)
-  })
+    });
+    const wrapper = await mountReports();
+    const options = categoryChartProp("options", wrapper);
+    expect(options.indexAxis).toBe("y");
+    expect(options.plugins.legend.display).toBe(false);
+    expect(wrapper.find('.category-chart [data-testid="bar-data"]').exists()).toBe(true);
+  });
 
-  it('图数据形态：一级归并（二级并入根）+ 未分类柱，净额降序，净额 0 不进图', async () => {
+  it("图数据形态：一级归并（二级并入根）+ 未分类柱，净额降序，净额 0 不进图", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    const data = categoryChartProp('data', wrapper)
+    });
+    const wrapper = await mountReports();
+    const data = categoryChartProp("data", wrapper);
     // 餐饮 = 根 5000 + 二级零食 1000；降序：餐饮 6000 > 交通 3000 > 未分类 800
-    expect(data.labels).toEqual(['餐饮', '交通', '未分类'])
-    expect(data.datasets[0].data).toEqual([6000, 3000, 800])
-  })
+    expect(data.labels).toEqual(["餐饮", "交通", "未分类"]);
+    expect(data.datasets[0].data).toEqual([6000, 3000, 800]);
+  });
 
-  it('配色：与柱同序按 id 稳定取色，未分类固定灰', async () => {
+  it("配色：与柱同序按 id 稳定取色，未分类固定灰", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    const data = categoryChartProp('data', wrapper)
-    const colors: string[] = data.datasets[0].backgroundColor
-    expect(colors).toHaveLength(3)
+    });
+    const wrapper = await mountReports();
+    const data = categoryChartProp("data", wrapper);
+    const colors: string[] = data.datasets[0].backgroundColor;
+    expect(colors).toHaveLength(3);
     // 未分类（第三根柱）固定灰
-    expect(colors[2]).toBe('#909399')
+    expect(colors[2]).toBe("#909399");
     // 两个真实分类各自稳定取色且不同柱序不改变颜色
-    expect(colors[0]).not.toBe('#909399')
-    expect(colors[1]).not.toBe(colors[0])
-  })
+    expect(colors[0]).not.toBe("#909399");
+    expect(colors[1]).not.toBe(colors[0]);
+  });
 
-  it('同分类跨期间颜色稳定：切期间后同 id 的柱颜色不变', async () => {
+  it("同分类跨期间颜色稳定：切期间后同 id 的柱颜色不变", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    const before = categoryChartProp('data', wrapper).datasets[0].backgroundColor
-    await clickChip(wrapper, '去年')
-    const after = categoryChartProp('data', wrapper).datasets[0].backgroundColor
-    expect(after).toEqual(before)
-  })
+    });
+    const wrapper = await mountReports();
+    const before = categoryChartProp("data", wrapper).datasets[0].backgroundColor;
+    await clickChip(wrapper, "去年");
+    const after = categoryChartProp("data", wrapper).datasets[0].backgroundColor;
+    expect(after).toEqual(before);
+  });
 
-  it('全部平铺、卡片内滚动：容器限高滚动、图高随行数增长不截断', async () => {
+  it("全部平铺、卡片内滚动：容器限高滚动、图高随行数增长不截断", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    const scroll = wrapper.find('[data-testid="category-chart-scroll"]')
-    expect(scroll.exists()).toBe(true)
-    expect(scroll.attributes('style')).toContain('overflow-y: auto')
+    });
+    const wrapper = await mountReports();
+    const scroll = wrapper.find('[data-testid="category-chart-scroll"]');
+    expect(scroll.exists()).toBe(true);
+    expect(scroll.attributes("style")).toContain("overflow-y: auto");
     // 3 根柱 × 行高 32px，图高随行数平铺而非固定视口
-    const inner = wrapper.find('[data-testid="category-chart-canvas"]')
-    expect(inner.attributes('style')).toContain('height: 192px')
-  })
+    const inner = wrapper.find('[data-testid="category-chart-canvas"]');
+    expect(inner.attributes("style")).toContain("height: 192px");
+  });
 
-  it('汇总层级切换器已退役：不再渲染 NRadioGroup', async () => {
+  it("汇总层级切换器已退役：不再渲染 NRadioGroup", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    expect(wrapper.findComponent({ name: 'NRadioGroup' }).exists()).toBe(false)
-  })
+    });
+    const wrapper = await mountReports();
+    expect(wrapper.findComponent({ name: "NRadioGroup" }).exists()).toBe(false);
+  });
 
-  it('localStorage 残留汇总层级键无副作用：原样保留、渲染正常、不写回', async () => {
-    localStorage.setItem('view_state:reports_group_level', '"level1"')
+  it("localStorage 残留汇总层级键无副作用：原样保留、渲染正常、不写回", async () => {
+    localStorage.setItem("view_state:reports_group_level", '"level1"');
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
+    });
+    const wrapper = await mountReports();
     // 残留键不读、不写、不清：视图不感知该键
-    expect(localStorage.getItem('view_state:reports_group_level')).toBe('"level1"')
+    expect(localStorage.getItem("view_state:reports_group_level")).toBe('"level1"');
     // 渲染不受残留键影响：图数据与配色照常
-    expect(categoryChartProp('data', wrapper).datasets[0].data).toEqual([6000, 3000, 800])
-    localStorage.removeItem('view_state:reports_group_level')
-  })
-})
+    expect(categoryChartProp("data", wrapper).datasets[0].data).toEqual([6000, 3000, 800]);
+    localStorage.removeItem("view_state:reports_group_level");
+  });
+});
 
-describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
-  it('点一级柱图内下钻：行集合 = 直挂行 + 二级子分类行，合计 = 父柱金额（不触发跳转）', async () => {
+describe("ReportsView 分类图内下钻 + 面包屑（issue #379）", () => {
+  it("点一级柱图内下钻：行集合 = 直挂行 + 二级子分类行，合计 = 父柱金额（不触发跳转）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    await clickBar(wrapper, 0) // 餐饮柱（6000 = 直挂 5000 + 零食 1000）
-    const data = categoryChartProp('data', wrapper)
-    expect(data.labels).toEqual(['餐饮（直挂）', '零食'])
-    expect(data.datasets[0].data).toEqual([5000, 1000])
-    expect(data.datasets[0].data.reduce((a: number, b: number) => a + b, 0)).toBe(6000)
+    });
+    const wrapper = await mountReports();
+    await clickBar(wrapper, 0); // 餐饮柱（6000 = 直挂 5000 + 零食 1000）
+    const data = categoryChartProp("data", wrapper);
+    expect(data.labels).toEqual(["餐饮（直挂）", "零食"]);
+    expect(data.datasets[0].data).toEqual([5000, 1000]);
+    expect(data.datasets[0].data.reduce((a: number, b: number) => a + b, 0)).toBe(6000);
     // 一级柱是图内下钻不是跳转下钻（issue #380 两段式的第一段）
-    expect(pushMock).not.toHaveBeenCalled()
-  })
+    expect(pushMock).not.toHaveBeenCalled();
+  });
 
-  it('下钻态配色沿用同一稳定映射：直挂行同父柱色，二级行同分类色', async () => {
+  it("下钻态配色沿用同一稳定映射：直挂行同父柱色，二级行同分类色", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    const baseColors: string[] = categoryChartProp('data', wrapper).datasets[0].backgroundColor
-    await clickBar(wrapper, 0)
-    const colors: string[] = categoryChartProp('data', wrapper).datasets[0].backgroundColor
+    });
+    const wrapper = await mountReports();
+    const baseColors: string[] = categoryChartProp("data", wrapper).datasets[0].backgroundColor;
+    await clickBar(wrapper, 0);
+    const colors: string[] = categoryChartProp("data", wrapper).datasets[0].backgroundColor;
     // 直挂行（第一根）= 基础态餐饮柱色；零级行 = 同 id 稳定取色
-    expect(colors[0]).toBe(baseColors[0])
-    expect(colors[1]).toBe(categoryColor('food-snack'))
-  })
+    expect(colors[0]).toBe(baseColors[0]);
+    expect(colors[1]).toBe(categoryColor("food-snack"));
+  });
 
-  it('面包屑显示当前位置（全部分类 › 分类名），点根返回基础态', async () => {
+  it("面包屑显示当前位置（全部分类 › 分类名），点根返回基础态", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    expect(breadcrumbOf(wrapper).exists()).toBe(false)
-    await clickBar(wrapper, 0)
-    expect(breadcrumbOf(wrapper).exists()).toBe(true)
-    expect(breadcrumbOf(wrapper).text()).toContain('全部分类')
-    expect(breadcrumbOf(wrapper).text()).toContain('餐饮')
-    await wrapper.find('[data-testid="breadcrumb-root"]').trigger('click')
-    await flushPromises()
-    expect(breadcrumbOf(wrapper).exists()).toBe(false)
-    expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮', '交通', '未分类'])
-  })
+    });
+    const wrapper = await mountReports();
+    expect(breadcrumbOf(wrapper).exists()).toBe(false);
+    await clickBar(wrapper, 0);
+    expect(breadcrumbOf(wrapper).exists()).toBe(true);
+    expect(breadcrumbOf(wrapper).text()).toContain("全部分类");
+    expect(breadcrumbOf(wrapper).text()).toContain("餐饮");
+    await wrapper.find('[data-testid="breadcrumb-root"]').trigger("click");
+    await flushPromises();
+    expect(breadcrumbOf(wrapper).exists()).toBe(false);
+    expect(categoryChartProp("data", wrapper).labels).toEqual(["餐饮", "交通", "未分类"]);
+  });
 
-  it('未分类柱不进图内下钻，直达「仅无分类」列表：载荷 = 保留值 + 当年首尾日期 + 收支类型集合（issue #581）', async () => {
+  it("未分类柱不进图内下钻，直达「仅无分类」列表：载荷 = 保留值 + 当年首尾日期 + 收支类型集合（issue #581）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    await clickBar(wrapper, 2) // 未分类柱
-    expect(pushMock).toHaveBeenCalledTimes(1)
+    });
+    const wrapper = await mountReports();
+    await clickBar(wrapper, 2); // 未分类柱
+    expect(pushMock).toHaveBeenCalledTimes(1);
     expect(pushMock).toHaveBeenCalledWith({
-      name: 'transactions',
+      name: "transactions",
       query: {
         category: UNCATEGORIZED_ONLY,
         dateFrom: `${Y}-01-01`,
         dateTo: `${Y}-12-31`,
         kinds: CATEGORY_DRILLDOWN_KINDS,
       },
-    })
+    });
     // 未分类是柱不是层级：图仍在基础态（面包屑不出现）
-    expect(breadcrumbOf(wrapper).exists()).toBe(false)
-    expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮', '交通', '未分类'])
-  })
+    expect(breadcrumbOf(wrapper).exists()).toBe(false);
+    expect(categoryChartProp("data", wrapper).labels).toEqual(["餐饮", "交通", "未分类"]);
+  });
 
-  it('下钻态点二级子分类行：跳转该分类精确过滤，载荷带当年首尾日期', async () => {
+  it("下钻态点二级子分类行：跳转该分类精确过滤，载荷带当年首尾日期", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    await clickBar(wrapper, 0) // 下钻餐饮
-    pushMock.mockClear()
-    await clickBar(wrapper, 1) // 零食（二级）行
+    });
+    const wrapper = await mountReports();
+    await clickBar(wrapper, 0); // 下钻餐饮
+    pushMock.mockClear();
+    await clickBar(wrapper, 1); // 零食（二级）行
     expect(pushMock).toHaveBeenCalledWith({
-      name: 'transactions',
+      name: "transactions",
       query: {
-        category: 'food-snack',
+        category: "food-snack",
         dateFrom: `${Y}-01-01`,
         dateTo: `${Y}-12-31`,
         kinds: CATEGORY_DRILLDOWN_KINDS,
       },
-    })
-  })
+    });
+  });
 
-  it('下钻态点父直挂行：按父分类精确过滤（载荷 category = 父分类 id）', async () => {
+  it("下钻态点父直挂行：按父分类精确过滤（载荷 category = 父分类 id）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    await clickBar(wrapper, 0) // 下钻餐饮
-    pushMock.mockClear()
-    await clickBar(wrapper, 0) // 餐饮（直挂）行
+    });
+    const wrapper = await mountReports();
+    await clickBar(wrapper, 0); // 下钻餐饮
+    pushMock.mockClear();
+    await clickBar(wrapper, 0); // 餐饮（直挂）行
     expect(pushMock).toHaveBeenCalledWith({
-      name: 'transactions',
+      name: "transactions",
       query: {
-        category: 'food',
+        category: "food",
         dateFrom: `${Y}-01-01`,
         dateTo: `${Y}-12-31`,
         kinds: CATEGORY_DRILLDOWN_KINDS,
       },
-    })
-  })
+    });
+  });
 
-  it('跳转载荷 = 所选期间首尾日期（#412 期间化）：「去年」芯片后未分类柱带去年年界', async () => {
+  it("跳转载荷 = 所选期间首尾日期（#412 期间化）：「去年」芯片后未分类柱带去年年界", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    await clickChip(wrapper, '去年')
-    await clickBar(wrapper, 2) // 未分类柱
+    });
+    const wrapper = await mountReports();
+    await clickChip(wrapper, "去年");
+    await clickBar(wrapper, 2); // 未分类柱
     expect(pushMock).toHaveBeenCalledWith({
-      name: 'transactions',
+      name: "transactions",
       query: {
         category: UNCATEGORIZED_ONLY,
         dateFrom: `${Y - 1}-01-01`,
         dateTo: `${Y - 1}-12-31`,
         kinds: CATEGORY_DRILLDOWN_KINDS,
       },
-    })
-  })
+    });
+  });
 
-  it('跳转载荷随月期间（#412）：「当月」芯片后未分类柱带当月月界', async () => {
+  it("跳转载荷随月期间（#412）：「当月」芯片后未分类柱带当月月界", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    await clickChip(wrapper, '当月')
-    await clickBar(wrapper, 2) // 未分类柱
+    });
+    const wrapper = await mountReports();
+    await clickChip(wrapper, "当月");
+    await clickBar(wrapper, 2); // 未分类柱
     expect(pushMock).toHaveBeenCalledWith({
-      name: 'transactions',
+      name: "transactions",
       query: {
         category: UNCATEGORIZED_ONLY,
         dateFrom: `${Y}-01-01`,
         dateTo: `${Y}-01-31`,
         kinds: CATEGORY_DRILLDOWN_KINDS,
       },
-    })
-  })
+    });
+  });
 
-  it('跳转载荷随季期间（#412）：「当季」芯片后下钻二级行带当季季界', async () => {
+  it("跳转载荷随季期间（#412）：「当季」芯片后下钻二级行带当季季界", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    await clickChip(wrapper, '当季')
-    await clickBar(wrapper, 0) // 图内下钻餐饮
-    pushMock.mockClear()
-    await clickBar(wrapper, 1) // 零食（二级）行
+    });
+    const wrapper = await mountReports();
+    await clickChip(wrapper, "当季");
+    await clickBar(wrapper, 0); // 图内下钻餐饮
+    pushMock.mockClear();
+    await clickBar(wrapper, 1); // 零食（二级）行
     expect(pushMock).toHaveBeenCalledWith({
-      name: 'transactions',
+      name: "transactions",
       query: {
-        category: 'food-snack',
+        category: "food-snack",
         dateFrom: `${Y}-01-01`,
         dateTo: `${Y}-03-31`,
         kinds: CATEGORY_DRILLDOWN_KINDS,
       },
-    })
-  })
+    });
+  });
 
-  it('切换期间复位基础态；下钻态不持久化（localStorage 零写入）', async () => {
+  it("切换期间复位基础态；下钻态不持久化（localStorage 零写入）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const wrapper = await mountReports()
-    const keysBefore = Object.keys(localStorage)
-    await clickBar(wrapper, 0)
-    expect(Object.keys(localStorage)).toEqual(keysBefore)
-    await clickChip(wrapper, '去年')
-    expect(breadcrumbOf(wrapper).exists()).toBe(false)
-    expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮', '交通', '未分类'])
-  })
+    });
+    const wrapper = await mountReports();
+    const keysBefore = Object.keys(localStorage);
+    await clickBar(wrapper, 0);
+    expect(Object.keys(localStorage)).toEqual(keysBefore);
+    await clickChip(wrapper, "去年");
+    expect(breadcrumbOf(wrapper).exists()).toBe(false);
+    expect(categoryChartProp("data", wrapper).labels).toEqual(["餐饮", "交通", "未分类"]);
+  });
 
-  it('步进器/面板产出的任意月期间同样驱动三卡重算（受控 v-model 桥接）', async () => {
+  it("步进器/面板产出的任意月期间同样驱动三卡重算（受控 v-model 桥接）", async () => {
     // 双断言（issue #778）：替身按期间参数分支返回可区分载荷——初始期间走原夹具
     //（分类图 6000/3000/800、两卡空态），12 月载荷可辨识
     wireInvokeSeam({
@@ -565,550 +581,561 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
       overrides: {
         list_categories: mockCategories,
         monthly_summary: (args) =>
-          args?.from === '2025-12-01'
-            ? [{ month: '2025-12', income_cents: 3000, expense_cents: 2200, refund_cents: 200 }]
+          args?.from === "2025-12-01"
+            ? [{ month: "2025-12", income_cents: 3000, expense_cents: 2200, refund_cents: 200 }]
             : [],
         category_shares: (args) =>
-          args?.from === '2025-12-01'
-            ? [{ category_id: 'food', category_name: '餐饮', amount_cents: 2200 }]
+          args?.from === "2025-12-01"
+            ? [{ category_id: "food", category_name: "餐饮", amount_cents: 2200 }]
             : mockShares,
         merchant_shares: (args) =>
-          args?.from === '2025-12-01'
+          args?.from === "2025-12-01"
             ? {
-                rows: [{ merchant_id: 'm-3', merchant_name: '书店', amount_cents: 2200, transaction_count: 3 }],
+                rows: [
+                  {
+                    merchant_id: "m-3",
+                    merchant_name: "书店",
+                    amount_cents: 2200,
+                    transaction_count: 3,
+                  },
+                ],
                 total_cents: 2200,
               }
             : { rows: [], total_cents: 0 },
       },
-    })
-    const wrapper = await mountReports()
-    mockInvoke.mockClear()
+    });
+    const wrapper = await mountReports();
+    mockInvoke.mockClear();
     // 任意历史月（面板可达）：视图按快照区间查询
-    await emitPeriod(wrapper, { from: '2025-12-01', to: '2025-12-31' })
-    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+    await emitPeriod(wrapper, { from: "2025-12-01", to: "2025-12-31" });
+    expect(mockInvoke).toHaveBeenCalledWith("monthly_summary", {
       year: 2025,
-      from: '2025-12-01',
-      to: '2025-12-31',
-    })
-    expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
-      kind: 'expense',
+      from: "2025-12-01",
+      to: "2025-12-31",
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("category_shares", {
+      kind: "expense",
       month: null,
       year: null,
-      from: '2025-12-01',
-      to: '2025-12-31',
-    })
-    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+      from: "2025-12-01",
+      to: "2025-12-31",
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("merchant_shares", {
       year: 2025,
-      from: '2025-12-01',
-      to: '2025-12-31',
+      from: "2025-12-01",
+      to: "2025-12-31",
       topN: 5,
-    })
+    });
     // 三卡以该期间载荷重渲染（「调用产生了效果」）
-    const data = monthlyChartProp('data', wrapper)
-    expect(data.labels).toEqual(['2025-12'])
-    expect(data.datasets.map((d: { data: number[] }) => d.data)).toEqual([[3000], [2200], [200]])
-    expect(categoryChartProp('data', wrapper).datasets[0].data).toEqual([2200])
-    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
-    expect(trs).toHaveLength(1)
-    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(2200))
-  })
-})
+    const data = monthlyChartProp("data", wrapper);
+    expect(data.labels).toEqual(["2025-12"]);
+    expect(data.datasets.map((d: { data: number[] }) => d.data)).toEqual([[3000], [2200], [200]]);
+    expect(categoryChartProp("data", wrapper).datasets[0].data).toEqual([2200]);
+    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr');
+    expect(trs).toHaveLength(1);
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(2200));
+  });
+});
 
-describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重挂恢复，新 pinia 冷启动', () => {
-  it('选期间 + 图内下钻后卸载重挂（同一会话）：期间与下钻面包屑恢复，三卡以恢复期间重拉非缓存数据', async () => {
+describe("ReportsView 会话内保留（issue #427）：同一 pinia 卸载重挂恢复，新 pinia 冷启动", () => {
+  it("选期间 + 图内下钻后卸载重挂（同一会话）：期间与下钻面包屑恢复，三卡以恢复期间重拉非缓存数据", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const first = await mountReports()
-    await clickChip(first, '去年')
-    await clickBar(first, 0) // 图内下钻餐饮
-    expect(breadcrumbOf(first).exists()).toBe(true)
-    first.unmount()
+    });
+    const first = await mountReports();
+    await clickChip(first, "去年");
+    await clickBar(first, 0); // 图内下钻餐饮
+    expect(breadcrumbOf(first).exists()).toBe(true);
+    first.unmount();
 
     // 离开期间新记的账：重挂后三卡以恢复期间重新拉取，渲染新返回值（餐饮 9000 ≠ 离开前 6000）
-    const freshShares = [{ category_id: 'food', category_name: '餐饮', amount_cents: 9000 }]
+    const freshShares = [{ category_id: "food", category_name: "餐饮", amount_cents: 9000 }];
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: freshShares },
-    })
-    mockInvoke.mockClear()
-    const second = await mountReports()
+    });
+    mockInvoke.mockClear();
+    const second = await mountReports();
 
     // 三张卡按恢复的「去年」期间重新查询（非缓存数据）
-    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+    expect(mockInvoke).toHaveBeenCalledWith("monthly_summary", {
       year: Y - 1,
       from: `${Y - 1}-01-01`,
       to: `${Y - 1}-12-31`,
-    })
-    expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
-      kind: 'expense',
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("category_shares", {
+      kind: "expense",
       month: null,
       year: null,
       from: `${Y - 1}-01-01`,
       to: `${Y - 1}-12-31`,
-    })
-    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("merchant_shares", {
       year: Y - 1,
       from: `${Y - 1}-01-01`,
       to: `${Y - 1}-12-31`,
       topN: 5,
-    })
+    });
 
     // 图内下钻位置恢复：面包屑仍在（全部分类 › 餐饮），图为下钻态行集合
-    expect(breadcrumbOf(second).exists()).toBe(true)
-    expect(breadcrumbOf(second).text()).toContain('餐饮')
-    const data = categoryChartProp('data', second)
-    expect(data.labels).toEqual(['餐饮（直挂）'])
-    expect(data.datasets[0].data).toEqual([9000])
+    expect(breadcrumbOf(second).exists()).toBe(true);
+    expect(breadcrumbOf(second).text()).toContain("餐饮");
+    const data = categoryChartProp("data", second);
+    expect(data.labels).toEqual(["餐饮（直挂）"]);
+    expect(data.datasets[0].data).toEqual([9000]);
 
     // 路由 URL 不变：重挂本身不产生任何跳转
-    expect(pushMock).not.toHaveBeenCalled()
-  })
+    expect(pushMock).not.toHaveBeenCalled();
+  });
 
-  it('恢复期间点亮对应芯片：去年快照恢复后「去年」芯片高亮（primary）', async () => {
-    wireInvokeSeam({ defaults: BASE_DEFAULTS })
-    const first = await mountReports()
-    await clickChip(first, '去年')
-    first.unmount()
+  it("恢复期间点亮对应芯片：去年快照恢复后「去年」芯片高亮（primary）", async () => {
+    wireInvokeSeam({ defaults: BASE_DEFAULTS });
+    const first = await mountReports();
+    await clickChip(first, "去年");
+    first.unmount();
 
-    const second = await mountReports()
-    const lastYearChip = chip(second, '去年')
-    expect(lastYearChip.props('type')).toBe('primary')
-    expect(chip(second, '当年').props('type')).toBe('default')
-  })
+    const second = await mountReports();
+    const lastYearChip = chip(second, "去年");
+    expect(lastYearChip.props("type")).toBe("primary");
+    expect(chip(second, "当年").props("type")).toBe("default");
+  });
 
-  it('多次往返（报表 → 交易 → 报表 → 更多 → 报表）：恢复最近一次离开时的样子', async () => {
+  it("多次往返（报表 → 交易 → 报表 → 更多 → 报表）：恢复最近一次离开时的样子", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
+    });
     // 第一次进入：切「当月」后离开
-    const first = await mountReports()
-    await clickChip(first, '当月')
-    first.unmount()
+    const first = await mountReports();
+    await clickChip(first, "当月");
+    first.unmount();
     // 第二次进入（第一次「回来」）：恢复当月，再切「去年」+ 下钻后离开
-    const second = await mountReports()
-    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+    const second = await mountReports();
+    expect(mockInvoke).toHaveBeenCalledWith("monthly_summary", {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-01-31`,
-    })
-    await clickChip(second, '去年')
-    await clickBar(second, 0) // 图内下钻餐饮
-    second.unmount()
+    });
+    await clickChip(second, "去年");
+    await clickBar(second, 0); // 图内下钻餐饮
+    second.unmount();
 
     // 第三次进入：恢复最近一次离开（去年 + 餐饮下钻），而非更早的当月
-    mockInvoke.mockClear()
-    const third = await mountReports()
-    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+    mockInvoke.mockClear();
+    const third = await mountReports();
+    expect(mockInvoke).toHaveBeenCalledWith("monthly_summary", {
       year: Y - 1,
       from: `${Y - 1}-01-01`,
       to: `${Y - 1}-12-31`,
-    })
-    expect(breadcrumbOf(third).exists()).toBe(true)
-    expect(breadcrumbOf(third).text()).toContain('餐饮')
-  })
+    });
+    expect(breadcrumbOf(third).exists()).toBe(true);
+    expect(breadcrumbOf(third).text()).toContain("餐饮");
+  });
 
-  it('新 pinia + 重挂表达冷启动：回默认「当年」，下钻回基础态，面包屑不出现', async () => {
+  it("新 pinia + 重挂表达冷启动：回默认「当年」，下钻回基础态，面包屑不出现", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const first = await mountReports()
-    await clickChip(first, '去年')
-    await clickBar(first, 0)
-    first.unmount()
+    });
+    const first = await mountReports();
+    await clickChip(first, "去年");
+    await clickBar(first, 0);
+    first.unmount();
 
     // 新 pinia = 新会话（应用重启）：默认当年、无面包屑、图为基础态
-    setActivePinia(createPinia())
-    mockInvoke.mockClear()
-    const second = await mountReports()
-    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+    setActivePinia(createPinia());
+    mockInvoke.mockClear();
+    const second = await mountReports();
+    expect(mockInvoke).toHaveBeenCalledWith("monthly_summary", {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
-    })
-    expect(breadcrumbOf(second).exists()).toBe(false)
-    expect(categoryChartProp('data', second).labels).toEqual(['餐饮', '交通', '未分类'])
-  })
+    });
+    expect(breadcrumbOf(second).exists()).toBe(false);
+    expect(categoryChartProp("data", second).labels).toEqual(["餐饮", "交通", "未分类"]);
+  });
 
-  it('会话内保留零持久化：选择期间与下钻全程 localStorage 零写入', async () => {
+  it("会话内保留零持久化：选择期间与下钻全程 localStorage 零写入", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const first = await mountReports()
-    const keysBefore = Object.keys(localStorage)
-    await clickChip(first, '去年')
-    await clickBar(first, 0)
-    first.unmount()
-    const second = await mountReports()
-    expect(Object.keys(localStorage)).toEqual(keysBefore)
-    second.unmount()
-  })
-})
+    });
+    const first = await mountReports();
+    const keysBefore = Object.keys(localStorage);
+    await clickChip(first, "去年");
+    await clickBar(first, 0);
+    first.unmount();
+    const second = await mountReports();
+    expect(Object.keys(localStorage)).toEqual(keysBefore);
+    second.unmount();
+  });
+});
 
-
-describe('ReportsView 加载失败治愈（issue #1008）', () => {
-  it('整页主实例失败：默认策略弹裸 errorMessage（治愈原 try/finally 无 catch 的静默失败）', async () => {
-    const sink = makeFakeSink()
-    registerToastSink(sink)
+describe("ReportsView 加载失败治愈（issue #1008）", () => {
+  it("整页主实例失败：默认策略弹裸 errorMessage（治愈原 try/finally 无 catch 的静默失败）", async () => {
+    const sink = makeFakeSink();
+    registerToastSink(sink);
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
-      overrides: { monthly_summary: () => Promise.reject(new Error('数据库不可用')) },
-    })
-    await mountReports()
-    expect(sink.error).toHaveBeenCalledWith('数据库不可用')
-  })
-})
+      overrides: { monthly_summary: () => Promise.reject(new Error("数据库不可用")) },
+    });
+    await mountReports();
+    expect(sink.error).toHaveBeenCalledWith("数据库不可用");
+  });
+});
 
-describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', () => {
+describe("ReportsView 商户排行表格化 + TopN（issue #588 → #618）", () => {
   const mockMerchants = [
-    { merchant_id: 'm-1', merchant_name: '超市', amount_cents: 5000, transaction_count: 3 },
-    { merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 3000, transaction_count: 2 },
-    { merchant_id: 'm-3', merchant_name: '书店', amount_cents: 1000, transaction_count: 1 },
-  ]
+    { merchant_id: "m-1", merchant_name: "超市", amount_cents: 5000, transaction_count: 3 },
+    { merchant_id: "m-2", merchant_name: "咖啡", amount_cents: 3000, transaction_count: 2 },
+    { merchant_id: "m-3", merchant_name: "书店", amount_cents: 1000, transaction_count: 1 },
+  ];
 
   /** 商户载荷：total_cents 刻意 ≠ rows 合计（9000），供占比分母断言识别真源 */
-  const merchantPayload = (rows = mockMerchants) => ({ rows, total_cents: 15000 })
+  const merchantPayload = (rows = mockMerchants) => ({ rows, total_cents: 15000 });
 
   /** 商户参考数据：MerchantLink 经 merchantMap 解析名称（软删历史名照常可下钻） */
   const merchantRefs = mockMerchants.map((m) => ({
     id: m.merchant_id,
     name: m.merchant_name,
     is_deleted: false,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     version: 1,
-    device_id: 'test',
-  }))
+    device_id: "test",
+  }));
 
   /** 点第 i 行商户名（MerchantLink 受控下钻模式，#618 表格化后的下钻入口） */
   async function clickMerchantName(wrapper: ReturnType<typeof mount>, index = 0) {
-    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
-    await trs[index].find('[data-testid="merchant-name"]').trigger('click')
-    await flushPromises()
+    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr');
+    await trs[index].find('[data-testid="merchant-name"]').trigger("click");
+    await flushPromises();
   }
 
   /** TopN 档位选择（面板头部 NRadioButton 按档位定位；naive-ui 交互走 input setValue，
    * PortfolioTrendPanel.test.ts 同款） */
   async function clickTopN(wrapper: ReturnType<typeof mount>, n: number) {
-    await wrapper
-      .find(`[data-testid="merchant-topn-${n}"] input`)
-      .setValue(true)
-    await flushPromises()
+    await wrapper.find(`[data-testid="merchant-topn-${n}"] input`).setValue(true);
+    await flushPromises();
   }
 
-  it('表格行序 = 后端返回序：商户名、金额、占比、笔数逐行渲染（口径归纯函数，此处锁视图接线）', async () => {
+  it("表格行序 = 后端返回序：商户名、金额、占比、笔数逐行渲染（口径归纯函数，此处锁视图接线）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_merchants: merchantRefs, merchant_shares: merchantPayload() },
-    })
-    const wrapper = await mountReports()
-    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
-    expect(trs).toHaveLength(3)
-    expect(trs[0].find('[data-testid="merchant-name"]').text()).toBe('超市')
+    });
+    const wrapper = await mountReports();
+    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr');
+    expect(trs).toHaveLength(3);
+    expect(trs[0].find('[data-testid="merchant-name"]').text()).toBe("超市");
     // 金额走 formatAmount（分 → 元，无币种形态）：5000；占比分母 = 载荷全量合计 15000 → 33%
-    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(5000))
-    expect(trs[0].find('[data-testid="merchant-share"]').text()).toBe('33%')
-    expect(trs[0].find('[data-testid="merchant-count"]').text()).toBe('3')
-  })
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(5000));
+    expect(trs[0].find('[data-testid="merchant-share"]').text()).toBe("33%");
+    expect(trs[0].find('[data-testid="merchant-count"]').text()).toBe("3");
+  });
 
-  it('默认 Top 5：进入即以 top_n=5 查询', async () => {
+  it("默认 Top 5：进入即以 top_n=5 查询", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { merchant_shares: merchantPayload() },
-    })
-    await mountReports()
-    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+    });
+    await mountReports();
+    expect(mockInvoke).toHaveBeenCalledWith("merchant_shares", {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
       topN: 5,
-    })
-  })
+    });
+  });
 
-  it('切 Top 10：仅商户卡以 top_n=10 重拉，其余两卡不受牵连', async () => {
+  it("切 Top 10：仅商户卡以 top_n=10 重拉，其余两卡不受牵连", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { merchant_shares: merchantPayload() },
-    })
-    const wrapper = await mountReports()
-    mockInvoke.mockClear()
-    await clickTopN(wrapper, 10)
-    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+    });
+    const wrapper = await mountReports();
+    mockInvoke.mockClear();
+    await clickTopN(wrapper, 10);
+    expect(mockInvoke).toHaveBeenCalledWith("merchant_shares", {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
       topN: 10,
-    })
-    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'monthly_summary')).toHaveLength(0)
-    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'category_shares')).toHaveLength(0)
-  })
+    });
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "monthly_summary")).toHaveLength(0);
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "category_shares")).toHaveLength(0);
+  });
 
-  it('TopN 会话内保留：同 pinia 卸载重挂以 Top 10 重拉；冷启动（新 pinia）回默认 5', async () => {
+  it("TopN 会话内保留：同 pinia 卸载重挂以 Top 10 重拉；冷启动（新 pinia）回默认 5", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { merchant_shares: merchantPayload() },
-    })
-    const first = await mountReports()
-    await clickTopN(first, 10)
-    first.unmount()
+    });
+    const first = await mountReports();
+    await clickTopN(first, 10);
+    first.unmount();
 
-    mockInvoke.mockClear()
-    const second = await mountReports()
-    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+    mockInvoke.mockClear();
+    const second = await mountReports();
+    expect(mockInvoke).toHaveBeenCalledWith("merchant_shares", {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
       topN: 10,
-    })
-    second.unmount()
+    });
+    second.unmount();
 
-    setActivePinia(createPinia())
-    mockInvoke.mockClear()
-    await mountReports()
-    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+    setActivePinia(createPinia());
+    mockInvoke.mockClear();
+    await mountReports();
+    expect(mockInvoke).toHaveBeenCalledWith("merchant_shares", {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
       topN: 5,
-    })
-  })
+    });
+  });
 
-  it('TopN 切换零持久化：localStorage 零写入', async () => {
+  it("TopN 切换零持久化：localStorage 零写入", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { merchant_shares: merchantPayload() },
-    })
-    const wrapper = await mountReports()
-    const keysBefore = Object.keys(localStorage)
-    await clickTopN(wrapper, 10)
-    expect(Object.keys(localStorage)).toEqual(keysBefore)
-  })
+    });
+    const wrapper = await mountReports();
+    const keysBefore = Object.keys(localStorage);
+    await clickTopN(wrapper, 10);
+    expect(Object.keys(localStorage)).toEqual(keysBefore);
+  });
 
-  it('TopN 快速连点竞态：最后一次发起胜出，迟到的前发响应丢弃（merchant Loadable 实例）', async () => {
+  it("TopN 快速连点竞态：最后一次发起胜出，迟到的前发响应丢弃（merchant Loadable 实例）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { merchant_shares: merchantPayload() },
-    })
-    const wrapper = await mountReports()
+    });
+    const wrapper = await mountReports();
     // 第 2 次发起（top_n=10）挂起；第 3 次发起（top_n=5）立即返回新数据
-    let releaseTop10!: (v: unknown) => void
+    let releaseTop10!: (v: unknown) => void;
     const pendingTop10 = new Promise((resolve) => {
-      releaseTop10 = resolve
-    })
+      releaseTop10 = resolve;
+    });
     const top5Payload = {
-      rows: [{ merchant_id: 'm-9', merchant_name: '快餐', amount_cents: 500, transaction_count: 2 }],
+      rows: [
+        { merchant_id: "m-9", merchant_name: "快餐", amount_cents: 500, transaction_count: 2 },
+      ],
       total_cents: 15000,
-    }
+    };
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         merchant_shares: (args) =>
           args?.topN === 10 ? pendingTop10 : Promise.resolve(top5Payload),
       },
-    })
-    await clickTopN(wrapper, 10) // 发起 #2：挂起
-    await clickTopN(wrapper, 5) // 发起 #3：立即落位
+    });
+    await clickTopN(wrapper, 10); // 发起 #2：挂起
+    await clickTopN(wrapper, 5); // 发起 #3：立即落位
     // 迟到的 #2（top 10 旧响应）后到：必须被丢弃，不得覆盖 top 5 结果
-    releaseTop10({ rows: [{ merchant_id: 'm-x', merchant_name: '迟到户', amount_cents: 9, transaction_count: 1 }], total_cents: 9 })
-    await flushPromises()
-    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
-    expect(trs).toHaveLength(1)
-    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(500))
-  })
+    releaseTop10({
+      rows: [
+        { merchant_id: "m-x", merchant_name: "迟到户", amount_cents: 9, transaction_count: 1 },
+      ],
+      total_cents: 9,
+    });
+    await flushPromises();
+    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr');
+    expect(trs).toHaveLength(1);
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(500));
+  });
 
-  it('点商户名跳传交易列表（#589 → #618）：载荷 = 商户 id + 所选期间首尾日期 + 收支类型集合（支出+退款）', async () => {
+  it("点商户名跳传交易列表（#589 → #618）：载荷 = 商户 id + 所选期间首尾日期 + 收支类型集合（支出+退款）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_merchants: merchantRefs, merchant_shares: merchantPayload() },
-    })
-    const wrapper = await mountReports()
-    pushMock.mockClear()
+    });
+    const wrapper = await mountReports();
+    pushMock.mockClear();
     // 点第 1 行商户名（超市 5000，商户 id m-1）：直达该商户本期支出+退款明细
-    await clickMerchantName(wrapper)
-    expect(pushMock).toHaveBeenCalledTimes(1)
+    await clickMerchantName(wrapper);
+    expect(pushMock).toHaveBeenCalledTimes(1);
     expect(pushMock).toHaveBeenCalledWith({
-      name: 'transactions',
+      name: "transactions",
       query: {
-        merchant: 'm-1',
+        merchant: "m-1",
         dateFrom: `${Y}-01-01`,
         dateTo: `${Y}-12-31`,
         kinds: MERCHANT_DRILLDOWN_KINDS,
       },
-    })
-  })
+    });
+  });
 
-  it('商户下钻载荷随期间（#589 边界）：选「去年」后点商户名带去年年界', async () => {
+  it("商户下钻载荷随期间（#589 边界）：选「去年」后点商户名带去年年界", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_merchants: merchantRefs, merchant_shares: merchantPayload() },
-    })
-    const wrapper = await mountReports()
-    await clickChip(wrapper, '去年')
-    pushMock.mockClear()
-    await clickMerchantName(wrapper)
+    });
+    const wrapper = await mountReports();
+    await clickChip(wrapper, "去年");
+    pushMock.mockClear();
+    await clickMerchantName(wrapper);
     expect(pushMock).toHaveBeenCalledWith({
-      name: 'transactions',
+      name: "transactions",
       query: {
-        merchant: 'm-1',
+        merchant: "m-1",
         dateFrom: `${Y - 1}-01-01`,
         dateTo: `${Y - 1}-12-31`,
         kinds: MERCHANT_DRILLDOWN_KINDS,
       },
-    })
-  })
-})
+    });
+  });
+});
 
-describe('ReportsView ESC 复位接线（issue #894 / spec #892）：注册 → 守卫消费 → 清除保留态本身', () => {
+describe("ReportsView ESC 复位接线（issue #894 / spec #892）：注册 → 守卫消费 → 清除保留态本身", () => {
   beforeEach(() => {
-    resetOverlays()
-    clearViewResets()
-  })
+    resetOverlays();
+    clearViewResets();
+  });
 
   afterEach(() => {
-    clearViewResets()
-  })
+    clearViewResets();
+  });
 
   /** 窗口行为守卫宿主（App.vue 同构：守卫全局唯一）。 */
   function mountGuardHost() {
     const Host = defineComponent({
       setup() {
-        useWindowGuard()
-        return () => h('div')
+        useWindowGuard();
+        return () => h("div");
       },
-    })
-    return mount(Host)
+    });
+    return mount(Host);
   }
 
   function fireEscape() {
     document.body.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
-    )
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
   }
 
-  it('无弹层 ESC 触发复位出口：期间回默认「当年」、下钻回基础态、TopN 回默认档，重拉照常；复位后卸载重挂 = 默认', async () => {
+  it("无弹层 ESC 触发复位出口：期间回默认「当年」、下钻回基础态、TopN 回默认档，重拉照常；复位后卸载重挂 = 默认", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const guard = mountGuardHost()
-    const first = await mountReports()
-    await clickChip(first, '去年')
-    await clickBar(first, 0) // 图内下钻餐饮
-    await first.find('[data-testid="merchant-topn-10"] input').setValue(true)
-    await flushPromises()
-    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+    });
+    const guard = mountGuardHost();
+    const first = await mountReports();
+    await clickChip(first, "去年");
+    await clickBar(first, 0); // 图内下钻餐饮
+    await first.find('[data-testid="merchant-topn-10"] input').setValue(true);
+    await flushPromises();
+    expect(mockInvoke).toHaveBeenCalledWith("merchant_shares", {
       year: Y - 1,
       from: `${Y - 1}-01-01`,
       to: `${Y - 1}-12-31`,
       topN: 10,
-    })
+    });
 
-    mockInvoke.mockClear()
-    fireEscape()
-    await flushPromises()
+    mockInvoke.mockClear();
+    fireEscape();
+    await flushPromises();
     // 三卡以默认「当年」重拉、商户卡回默认档
-    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+    expect(mockInvoke).toHaveBeenCalledWith("monthly_summary", {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
-    })
-    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("merchant_shares", {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
       topN: 5,
-    })
-    expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
-      kind: 'expense',
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("category_shares", {
+      kind: "expense",
       month: null,
       year: null,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
-    })
+    });
     // 下钻回基础态（面包屑消失）、期间芯片回「当年」高亮
-    expect(breadcrumbOf(first).exists()).toBe(false)
-    expect(categoryChartProp('data', first).labels).toEqual(['餐饮', '交通', '未分类'])
-    expect(chip(first, '当年').props('type')).toBe('primary')
-    first.unmount()
+    expect(breadcrumbOf(first).exists()).toBe(false);
+    expect(categoryChartProp("data", first).labels).toEqual(["餐饮", "交通", "未分类"]);
+    expect(chip(first, "当年").props("type")).toBe("primary");
+    first.unmount();
 
     // 复位即清除保留态本身：复位后卸载重挂 = 默认（不再回到去年的选择）
-    const second = await mountReports()
-    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+    const second = await mountReports();
+    expect(mockInvoke).toHaveBeenCalledWith("merchant_shares", {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
       topN: 5,
-    })
-    expect(breadcrumbOf(second).exists()).toBe(false)
-    second.unmount()
-    guard.unmount()
-  })
+    });
+    expect(breadcrumbOf(second).exists()).toBe(false);
+    second.unmount();
+    guard.unmount();
+  });
 
-  it('仅下钻偏离（期间/TopN 已默认）：ESC 回基础态且不重拉（下钻是纯视图投影，同源数据）', async () => {
+  it("仅下钻偏离（期间/TopN 已默认）：ESC 回基础态且不重拉（下钻是纯视图投影，同源数据）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const guard = mountGuardHost()
-    const wrapper = await mountReports()
-    await clickBar(wrapper, 0)
-    expect(breadcrumbOf(wrapper).exists()).toBe(true)
-    mockInvoke.mockClear()
-    fireEscape()
-    await flushPromises()
-    expect(breadcrumbOf(wrapper).exists()).toBe(false)
-    expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮', '交通', '未分类'])
+    });
+    const guard = mountGuardHost();
+    const wrapper = await mountReports();
+    await clickBar(wrapper, 0);
+    expect(breadcrumbOf(wrapper).exists()).toBe(true);
+    mockInvoke.mockClear();
+    fireEscape();
+    await flushPromises();
+    expect(breadcrumbOf(wrapper).exists()).toBe(false);
+    expect(categoryChartProp("data", wrapper).labels).toEqual(["餐饮", "交通", "未分类"]);
     const reportCalls = mockInvoke.mock.calls.filter(([cmd]) =>
-      ['monthly_summary', 'category_shares', 'merchant_shares'].includes(cmd as string),
-    )
-    expect(reportCalls).toHaveLength(0)
-    wrapper.unmount()
-    guard.unmount()
-  })
+      ["monthly_summary", "category_shares", "merchant_shares"].includes(cmd as string),
+    );
+    expect(reportCalls).toHaveLength(0);
+    wrapper.unmount();
+    guard.unmount();
+  });
 
-  it('无保留状态（全默认）ESC 幂等：不产生任何重拉', async () => {
-    const guard = mountGuardHost()
-    const wrapper = await mountReports()
-    mockInvoke.mockClear()
-    fireEscape()
-    await flushPromises()
-    expect(mockInvoke).not.toHaveBeenCalled()
-    wrapper.unmount()
-    guard.unmount()
-  })
+  it("无保留状态（全默认）ESC 幂等：不产生任何重拉", async () => {
+    const guard = mountGuardHost();
+    const wrapper = await mountReports();
+    mockInvoke.mockClear();
+    fireEscape();
+    await flushPromises();
+    expect(mockInvoke).not.toHaveBeenCalled();
+    wrapper.unmount();
+    guard.unmount();
+  });
 
-  it('有弹层时 ESC 不复位：弹层库默认关闭行为接管，保留态不动（一次按键只做一件事）', async () => {
+  it("有弹层时 ESC 不复位：弹层库默认关闭行为接管，保留态不动（一次按键只做一件事）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { list_categories: mockCategories, category_shares: mockShares },
-    })
-    const guard = mountGuardHost()
-    const wrapper = await mountReports()
-    await clickChip(wrapper, '去年')
-    await clickBar(wrapper, 0)
+    });
+    const guard = mountGuardHost();
+    const wrapper = await mountReports();
+    await clickChip(wrapper, "去年");
+    await clickBar(wrapper, 0);
     // 弹层注册表登记打开的弹层（AppModal/AppSelect 等封装组件的上报形态）
-    const token = createOverlayToken('modal')
-    token.set(true)
-    fireEscape()
-    await flushPromises()
+    const token = createOverlayToken("modal");
+    token.set(true);
+    fireEscape();
+    await flushPromises();
     // 期间与下钻保留态原样：仍以去年期间、下钻态呈现
-    expect(breadcrumbOf(wrapper).exists()).toBe(true)
-    expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮（直挂）', '零食'])
-    token.set(false)
-    wrapper.unmount()
-    guard.unmount()
-  })
+    expect(breadcrumbOf(wrapper).exists()).toBe(true);
+    expect(categoryChartProp("data", wrapper).labels).toEqual(["餐饮（直挂）", "零食"]);
+    token.set(false);
+    wrapper.unmount();
+    guard.unmount();
+  });
 
-  it('视图卸载后复位注册自动撤销：守卫消费不再触达本视图（导航离开不滞留注册态）', async () => {
-    const guard = mountGuardHost()
-    const wrapper = await mountReports()
-    expect(fireViewReset()).toBe(true) // 挂载中：注册在场（默认态复位幂等不动作）
-    wrapper.unmount()
-    expect(fireViewReset()).toBe(false)
-    guard.unmount()
-  })
-})
+  it("视图卸载后复位注册自动撤销：守卫消费不再触达本视图（导航离开不滞留注册态）", async () => {
+    const guard = mountGuardHost();
+    const wrapper = await mountReports();
+    expect(fireViewReset()).toBe(true); // 挂载中：注册在场（默认态复位幂等不动作）
+    wrapper.unmount();
+    expect(fireViewReset()).toBe(false);
+    guard.unmount();
+  });
+});

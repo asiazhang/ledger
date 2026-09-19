@@ -1,22 +1,22 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { NButton, NCard, NSpace, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem } from 'naive-ui'
-import QuickTimeRange from '@/components/QuickTimeRange.vue'
-import { useInputMode } from '@/composables/useInputMode'
-import { useLoadable } from '@ledger/loadable'
-import { Bar } from 'vue-chartjs'
-import type { ActiveElement, ChartOptions, TooltipItem } from 'chart.js'
+import { computed, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
+import { NButton, NCard, NSpace, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem } from "naive-ui";
+import QuickTimeRange from "@/components/QuickTimeRange.vue";
+import { useInputMode } from "@/composables/useInputMode";
+import { useLoadable } from "@ledger/loadable";
+import { Bar } from "vue-chartjs";
+import type { ActiveElement, ChartOptions, TooltipItem } from "chart.js";
 // Chart.js 统一注册模块（issue #926）：柱状图所需 controller/element/scale 一处
 // 注册，不再组件自持子集；导入即完成注册。
-import '@ledger/utils/chart-registration'
-import { api } from '@ledger/api'
-import { t } from '@ledger/i18n'
-import { useReferenceStore } from '@/stores/reference'
-import { useAppStore } from '@/stores/app'
-import { useReportsSessionStore } from '@/reports/reports-session'
-import { registerViewReset } from '@/composables/viewResetRegistry'
-import { kindSemanticColor } from '@ledger/theme/semantic-colors'
+import "@ledger/utils/chart-registration";
+import { api } from "@ledger/api";
+import { t } from "@ledger/i18n";
+import { useReferenceStore } from "@/stores/reference";
+import { useAppStore } from "@/stores/app";
+import { useReportsSessionStore } from "@/reports/reports-session";
+import { registerViewReset } from "@/composables/viewResetRegistry";
+import { kindSemanticColor } from "@ledger/theme/semantic-colors";
 import {
   SOFT_BAR_PERCENTAGE,
   SOFT_BAR_RADIUS,
@@ -26,30 +26,31 @@ import {
   barEndAmountPlugin,
   softBarFillPlugin,
   softChartColors,
-} from '@ledger/theme/chart-style'
-import { formatAmount, amountPrivacyEnabled } from '@ledger/money'
-import type { CategoryShare, MerchantSharesReport, MonthlySummary } from '@ledger/types'
+} from "@ledger/theme/chart-style";
+import { formatAmount, amountPrivacyEnabled } from "@ledger/money";
+import type { CategoryShare, MerchantSharesReport, MonthlySummary } from "@ledger/types";
 import {
   barTooltipLabel,
   categoryBarTotal,
   categoryBars,
   categoryDrilldownBars,
-} from '@ledger/utils/category-chart'
-import { categoryRoot } from '@ledger/utils/category-tree'
-import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/transaction/useTransactionFilter'
+} from "@ledger/utils/category-chart";
+import { categoryRoot } from "@ledger/utils/category-tree";
 import {
-  DATED_TIME_PERIOD_PRESETS,
-  type NullableDateRange,
-} from '@ledger/utils/time-period'
-import MerchantRankingPanel from '@/reports/MerchantRankingPanel.vue'
+  UNCATEGORIZED_ONLY,
+  CATEGORY_DRILLDOWN_KINDS,
+  MERCHANT_DRILLDOWN_KINDS,
+} from "@/transaction/useTransactionFilter";
+import { DATED_TIME_PERIOD_PRESETS, type NullableDateRange } from "@ledger/utils/time-period";
+import MerchantRankingPanel from "@/reports/MerchantRankingPanel.vue";
 
-const reference = useReferenceStore()
-const router = useRouter()
+const reference = useReferenceStore();
+const router = useRouter();
 // 报表页会话状态（issue #427）：期间快照与图内下钻提升为会话级 store——
 // 同一会话内离开报表页再回来（Cmd+左回退、侧栏切换）= 回到离开时的样子；
 // 冷启动回默认「当年」；不写 localStorage、不写回路由 URL。
 // 同值守卫与期间切换复位下钻两条规则内化在 store，视图只接线。
-const session = useReportsSessionStore()
+const session = useReportsSessionStore();
 
 // ESC 复位接线（spec #892 / ADR-0094，issue #894）：本视图持有保留态，setup 期向
 // 复位回调注册表声明复位回调、作用域销毁时自动撤销（导航离开/跨断点换档卸载均不
@@ -57,14 +58,14 @@ const session = useReportsSessionStore()
 // 会话 store 的既有复位出口 resetToDefault（期间回默认「当年」、下钻回基础态、
 // TopN 回默认档），重拉由视图既有 watch 按实际变化照常驱动；无保留状态（全默认）
 // 时同值守卫幂等无操作。
-registerViewReset(session.resetToDefault)
+registerViewReset(session.resetToDefault);
 // 月度收支图三根语义色柱随主题响应式换色（issue #435）：色值单一来源在
 // @ledger/theme/semantic-colors，与交易列表/搜索金额列同源；barChartData 读
 // app store 主题，切换外观即时重算，无需重建图表。
-const app = useAppStore()
+const app = useAppStore();
 
 // 报表页日期闭集（ADR-0057）：仅四枚日期芯片、无「全部」——期间必有界。
-const REPORT_PRESETS = DATED_TIME_PERIOD_PRESETS
+const REPORT_PRESETS = DATED_TIME_PERIOD_PRESETS;
 
 // 共享受控组件受控桥接（issue #410）：快照区间进出，组件不持状态源，
 // 唯一事实源是会话状态 store（issue #427）。四枚芯片与步进/面板只产出双端
@@ -74,15 +75,15 @@ const quickRange = computed<NullableDateRange>({
   get: () => ({ from: session.period.from, to: session.period.to }),
   set: (range) => {
     if (range.from !== null && range.to !== null) {
-      session.setPeriod({ from: range.from, to: range.to })
+      session.setPeriod({ from: range.from, to: range.to });
     }
   },
-})
+});
 
-const monthly = ref<MonthlySummary[]>([])
-const shares = ref<CategoryShare[]>([])
+const monthly = ref<MonthlySummary[]>([]);
+const shares = ref<CategoryShare[]>([]);
 // 商户排行载荷（issue #588）：rows + 全量合计（占比分母），截断收口后端
-const merchantReport = ref<MerchantSharesReport>({ rows: [], total_cents: 0 })
+const merchantReport = ref<MerchantSharesReport>({ rows: [], total_cents: 0 });
 
 /** 整页数据（月度 + 构成）收编 Loadable 主实例（issue #1008 / ADR-0040）：loading
  *  承整页 NSpin 的既有 UI 契约，竞态后发覆盖先发与错误 toast（默认策略 = 裸
@@ -92,16 +93,16 @@ const { loading, run: runMainRefresh } = useLoadable(async () => {
     // 三张卡随所选期间重算（issue #411）：期间口径一致，聚合在后端收口；
     // 期间读自会话状态 store（issue #427），恢复/改选同规。
     api.monthlySummary({ from: session.period.from, to: session.period.to }),
-    api.categoryShares('expense', { from: session.period.from, to: session.period.to }),
-  ])
-  return { monthlySummary, categoryShares }
-})
+    api.categoryShares("expense", { from: session.period.from, to: session.period.to }),
+  ]);
+  return { monthlySummary, categoryShares };
+});
 
 async function refresh() {
-  const result = await runMainRefresh()
-  if (result === null) return
-  monthly.value = result.monthlySummary
-  shares.value = result.categoryShares
+  const result = await runMainRefresh();
+  if (result === null) return;
+  monthly.value = result.monthlySummary;
+  shares.value = result.categoryShares;
 }
 
 /** 商户排行取数（issue #588）：期间 + 当前 TopN 档位进载荷，排序与截断后端收口。
@@ -109,11 +110,11 @@ async function refresh() {
  *  快速连点或与期间切换并发时，旧档位/旧期间的迟到响应一律不落位。 */
 const { run: runMerchantRefresh } = useLoadable(() =>
   api.merchantShares({ from: session.period.from, to: session.period.to }, session.merchantTopN),
-)
+);
 
 async function fetchMerchantReport() {
-  const report = await runMerchantRefresh()
-  if (report !== null) merchantReport.value = report
+  const report = await runMerchantRefresh();
+  if (report !== null) merchantReport.value = report;
 }
 
 // TopN 档位切换（issue #588）：仅商户卡以新 top_n 重拉，其余两卡不受牵连
@@ -121,9 +122,9 @@ async function fetchMerchantReport() {
 watch(
   () => session.merchantTopN,
   () => {
-    void fetchMerchantReport()
+    void fetchMerchantReport();
   },
-)
+);
 
 watch(
   // 监听原始值元组而非对象引用：只要期间双端任一变化就重拉，
@@ -132,10 +133,10 @@ watch(
   () => {
     // 期间切换复位下钻已内化在 store.setPeriod（issue #427）；视图只负责
     // 照常重拉：三卡按当前期间重算，离开期间新记的账进入即反映
-    void refresh()
-    void fetchMerchantReport()
+    void refresh();
+    void fetchMerchantReport();
   },
-)
+);
 
 const barChartData = computed(() => ({
   labels: monthly.value.map((m) => m.month),
@@ -145,63 +146,63 @@ const barChartData = computed(() => ({
   // 柱体渐隐是绘制期呈现（softBarFillPlugin 同色相淡出），此处仍传实色。
   datasets: [
     {
-      label: t('reports.monthly.income'),
+      label: t("reports.monthly.income"),
       data: monthly.value.map((m) => m.income_cents),
-      backgroundColor: kindSemanticColor('income', app.theme),
+      backgroundColor: kindSemanticColor("income", app.theme),
       borderRadius: SOFT_BAR_RADIUS,
       barPercentage: SOFT_BAR_PERCENTAGE,
       categoryPercentage: SOFT_CATEGORY_PERCENTAGE,
     },
     {
-      label: t('reports.monthly.expense'),
+      label: t("reports.monthly.expense"),
       data: monthly.value.map((m) => m.expense_cents),
-      backgroundColor: kindSemanticColor('expense', app.theme),
+      backgroundColor: kindSemanticColor("expense", app.theme),
       borderRadius: SOFT_BAR_RADIUS,
       barPercentage: SOFT_BAR_PERCENTAGE,
       categoryPercentage: SOFT_CATEGORY_PERCENTAGE,
     },
     {
-      label: t('reports.monthly.refund'),
+      label: t("reports.monthly.refund"),
       data: monthly.value.map((m) => m.refund_cents),
-      backgroundColor: kindSemanticColor('refund', app.theme),
+      backgroundColor: kindSemanticColor("refund", app.theme),
       borderRadius: SOFT_BAR_RADIUS,
       barPercentage: SOFT_BAR_PERCENTAGE,
       categoryPercentage: SOFT_CATEGORY_PERCENTAGE,
     },
   ],
-}))
+}));
 
 // 视觉柔化（chart-style 单一来源）：网格淡化只留值轴横向线、去轴线、刻度与图例
 // 文字中性灰、tooltip 圆角加大内边距、图例小圆点；颜色随主题响应式取值——
 // options 改 computed，vue-chartjs 对 options 深度监听，切外观即时重算。
-const barChartOptions = computed<ChartOptions<'bar'>>(() => {
+const barChartOptions = computed<ChartOptions<"bar">>(() => {
   // 读取隐私开关建立响应式依赖（issue #566）：坐标轴刻度/tooltip 的 formatter 虽已同源
   // 走 formatAmount，但只在重绘时执行——切换时靠 options 变更驱动 vue-chartjs 重绘，
   // 满足「切换即时生效于所有已打开页面」（spec #564 user story 14）。
-  void amountPrivacyEnabled.value
-  const soft = softChartColors(app.theme)
+  void amountPrivacyEnabled.value;
+  const soft = softChartColors(app.theme);
   return {
     color: soft.ticks,
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
-      legend: { position: 'top', labels: { ...SOFT_LEGEND_LABELS } },
+      legend: { position: "top", labels: { ...SOFT_LEGEND_LABELS } },
       tooltip: {
         ...SOFT_TOOLTIP,
         callbacks: {
-          label: (context: TooltipItem<'bar'>) =>
+          label: (context: TooltipItem<"bar">) =>
             `${context.dataset.label}: ${formatAmount(context.raw as number)}`,
-          afterBody: (items: TooltipItem<'bar'>[]) => {
-            let income = 0
-            let expense = 0
-            let refund = 0
+          afterBody: (items: TooltipItem<"bar">[]) => {
+            let income = 0;
+            let expense = 0;
+            let refund = 0;
             for (const item of items) {
-              if (item.datasetIndex === 0) income = item.raw as number
-              if (item.datasetIndex === 1) expense = item.raw as number
-              if (item.datasetIndex === 2) refund = item.raw as number
+              if (item.datasetIndex === 0) income = item.raw as number;
+              if (item.datasetIndex === 1) expense = item.raw as number;
+              if (item.datasetIndex === 2) refund = item.raw as number;
             }
-            const net = income - expense + refund
-            return t('reports.monthly.net', { amount: formatAmount(net) })
+            const net = income - expense + refund;
+            return t("reports.monthly.net", { amount: formatAmount(net) });
           },
         },
       },
@@ -221,8 +222,8 @@ const barChartOptions = computed<ChartOptions<'bar'>>(() => {
         },
       },
     },
-  }
-})
+  };
+});
 
 // 支出分类构成（issue #378）：横向柱状图。一级归并 + 未分类柱、净额降序、
 // 按 id 稳定配色、未分类灰——数据形态收口在 category-chart 纯函数，此处只消费。
@@ -232,20 +233,20 @@ const drilledRoot = computed(() =>
   session.drilledRootId
     ? (reference.categories.find((c) => c.id === session.drilledRootId) ?? null)
     : null,
-)
+);
 
 const categoryBarsData = computed(() => {
-  const root = drilledRoot.value
+  const root = drilledRoot.value;
   if (root) {
     return categoryDrilldownBars(
       shares.value,
       reference.categories,
       root.id,
-      t('reports.category.direct', { name: root.name }),
-    )
+      t("reports.category.direct", { name: root.name }),
+    );
   }
-  return categoryBars(shares.value, reference.categories)
-})
+  return categoryBars(shares.value, reference.categories);
+});
 
 /** 跳转下钻（issue #380，载荷期间化 issue #412，类型集合 issue #581）：直达按该分类
  * 过滤的交易列表。载荷 = 分类（保留值 none = 仅无分类）+ 所选期间首尾日期 + 收支类型
@@ -255,14 +256,14 @@ const categoryBarsData = computed(() => {
  * 净值与柱值一致由载荷显式保证（分类下钻词条「跳转载荷与图所见同口径」）。 */
 function goCategoryTransactions(categoryId: string) {
   router.push({
-    name: 'transactions',
+    name: "transactions",
     query: {
       category: categoryId,
       dateFrom: session.period.from,
       dateTo: session.period.to,
       kinds: CATEGORY_DRILLDOWN_KINDS,
     },
-  })
+  });
 }
 
 /** 点柱分派（issue #379 图内下钻 + #380 跳转下钻）：两段式的完整接线。
@@ -271,20 +272,20 @@ function goCategoryTransactions(categoryId: string) {
  * 下钻态：二级子分类行与父直挂行都直达该分类列表——直挂行 id 即父分类 id，
  * 同一载荷构造天然覆盖「按父分类精确过滤」。 */
 function handleCategoryBarClick(_event: unknown, elements: ActiveElement[]) {
-  const bar = categoryBarsData.value[elements[0]?.index ?? -1]
-  if (!bar) return
+  const bar = categoryBarsData.value[elements[0]?.index ?? -1];
+  if (!bar) return;
   if (!drilledRoot.value) {
     if (!bar.id) {
-      goCategoryTransactions(UNCATEGORIZED_ONLY)
-      return
+      goCategoryTransactions(UNCATEGORIZED_ONLY);
+      return;
     }
-    if (!categoryRoot(reference.categories, bar.id)) return
-    session.setDrilldown(bar.id)
-    return
+    if (!categoryRoot(reference.categories, bar.id)) return;
+    session.setDrilldown(bar.id);
+    return;
   }
   // 下钻行 id 非空由下钻纯函数保证（CategoryBar.id 类型联合故此处收窄）
-  if (!bar.id) return
-  goCategoryTransactions(bar.id)
+  if (!bar.id) return;
+  goCategoryTransactions(bar.id);
 }
 
 /** 商户排行下钻（issue #589）：点商户柱 → 直达按该商户过滤的交易列表。载荷 =
@@ -295,14 +296,14 @@ function handleCategoryBarClick(_event: unknown, elements: ActiveElement[]) {
  *  （TransactionFilter 既有口径），软删商户的历史名照常可下钻（user story 5）。 */
 function goMerchantTransactions(merchantId: string) {
   router.push({
-    name: 'transactions',
+    name: "transactions",
     query: {
       merchant: merchantId,
       dateFrom: session.period.from,
       dateTo: session.period.to,
       kinds: MERCHANT_DRILLDOWN_KINDS,
     },
-  })
+  });
 }
 
 const categoryChartData = computed(() => ({
@@ -315,24 +316,24 @@ const categoryChartData = computed(() => ({
       borderRadius: SOFT_BAR_RADIUS,
     },
   ],
-}))
+}));
 
 // 平铺滚动：图高随行数增长（全部分类不截断），卡片内限高滚动。
-const CATEGORY_ROW_HEIGHT = 32
-const CATEGORY_MIN_ROWS = 6
+const CATEGORY_ROW_HEIGHT = 32;
+const CATEGORY_MIN_ROWS = 6;
 const categoryChartHeight = computed(() => {
-  const rows = Math.max(CATEGORY_MIN_ROWS, categoryBarsData.value.length)
-  return rows * CATEGORY_ROW_HEIGHT
-})
+  const rows = Math.max(CATEGORY_MIN_ROWS, categoryBarsData.value.length);
+  return rows * CATEGORY_ROW_HEIGHT;
+});
 
 // 输入轴（ADR-0088 决策 6 / issue #843）：分类构成占比指针轴收进悬停 tooltip
 // （分母随层级，词汇表「分类下钻」）；触控轴 canvas 悬停不可达且点柱即下钻，
 // 改经头部「占比」切换按钮点按显示——开启后柱尾标注升级为「金额 · 占比%」
 //（口径同 tooltip 单点 barTooltipLabel，分母随层级），再点收回；仅退役标注面，
 // 图数据、下钻与隐私掩码（口径内 formatAmount）零改动；指针轴无此按钮。
-const inputMode = useInputMode()
-const isTouch = computed(() => inputMode.value === 'touch')
-const showPercent = ref(false)
+const inputMode = useInputMode();
+const isTouch = computed(() => inputMode.value === "touch");
+const showPercent = ref(false);
 // 占比覆盖双门条件：显式开启且处于触控轴——换轴即失效（指针轴永远走悬停
 // tooltip 的既有形态，不带任何切换残留；触控轴切回后重新点按即可恢复）
 const categoryBarEndLabels = computed(() =>
@@ -341,19 +342,19 @@ const categoryBarEndLabels = computed(() =>
         barTooltipLabel(b.value, categoryBarTotal(categoryBarsData.value)),
       )
     : undefined,
-)
+);
 
 // 柱尾只标金额；占比收进 tooltip（悬停可见，分母随层级）。
 // 柱尾标注插件自 #588 起收口 chart-style 单点（分类图与商户图共用）。
 
 // 视觉柔化与月度图同源（chart-style）：值轴（x）留淡化网格，类目轴去网格与
 // 轴线，刻度文字中性灰；颜色随主题响应式取值（options computed）。
-const categoryChartOptions = computed<ChartOptions<'bar'>>(() => {
+const categoryChartOptions = computed<ChartOptions<"bar">>(() => {
   // 同 barChartOptions：追踪隐私开关，切换即时重绘轴刻度与柱尾标注（issue #566）
-  void amountPrivacyEnabled.value
-  const soft = softChartColors(app.theme)
+  void amountPrivacyEnabled.value;
+  const soft = softChartColors(app.theme);
   return {
-    indexAxis: 'y',
+    indexAxis: "y",
     color: soft.ticks,
     responsive: true,
     maintainAspectRatio: false,
@@ -368,15 +369,15 @@ const categoryChartOptions = computed<ChartOptions<'bar'>>(() => {
         ...SOFT_TOOLTIP,
         callbacks: {
           // 占比收进 tooltip（柱尾只标金额），分母随层级
-          label: (context: TooltipItem<'bar'>) =>
+          label: (context: TooltipItem<"bar">) =>
             barTooltipLabel(context.raw as number, categoryBarTotal(categoryBarsData.value)),
         },
       },
     },
     scales: {
       x: {
-        type: 'linear',
-        grace: '30%',
+        type: "linear",
+        grace: "30%",
         grid: { color: soft.grid },
         border: { display: false },
         ticks: {
@@ -391,15 +392,15 @@ const categoryChartOptions = computed<ChartOptions<'bar'>>(() => {
         ticks: { autoSkip: false, color: soft.ticks },
       },
     },
-  }
-})
+  };
+});
 
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll；
   // 数据期间边界由 QuickTimeRange 组件内化（issue #410），视图不再自拉
-  void refresh()
-  void fetchMerchantReport()
-})
+  void refresh();
+  void fetchMerchantReport();
+});
 </script>
 
 <template>
@@ -411,21 +412,17 @@ onMounted(() => {
       <NCard :title="t('reports.monthly.title')" size="small">
         <NEmpty v-if="monthly.length === 0" :description="t('reports.monthly.empty')" />
         <div v-else style="height: 320px">
-          <Bar
-            :data="barChartData"
-            :options="barChartOptions"
-            :plugins="[softBarFillPlugin]"
-          />
+          <Bar :data="barChartData" :options="barChartOptions" :plugins="[softBarFillPlugin]" />
         </div>
       </NCard>
       <NCard size="small">
         <template #header>
           <div class="category-card-header">
-            <span>{{ t('reports.category.title') }}</span>
+            <span>{{ t("reports.category.title") }}</span>
             <!-- 面包屑（issue #379）：下钻态显示当前位置，点根返回基础态 -->
             <NBreadcrumb v-if="drilledRoot" data-testid="category-breadcrumb" separator="›">
               <NBreadcrumbItem @click="session.setDrilldown(null)">
-                <span data-testid="breadcrumb-root">{{ t('reports.category.all') }}</span>
+                <span data-testid="breadcrumb-root">{{ t("reports.category.all") }}</span>
               </NBreadcrumbItem>
               <NBreadcrumbItem>
                 <span data-testid="breadcrumb-current">{{ drilledRoot.name }}</span>
@@ -442,16 +439,12 @@ onMounted(() => {
               class="touch-hit-area"
               @click="showPercent = !showPercent"
             >
-              {{ t('reports.category.showPercent') }}
+              {{ t("reports.category.showPercent") }}
             </NButton>
           </div>
         </template>
         <NEmpty v-if="categoryBarsData.length === 0" :description="t('reports.category.empty')" />
-        <div
-          v-else
-          data-testid="category-chart-scroll"
-          style="max-height: 320px; overflow-y: auto"
-        >
+        <div v-else data-testid="category-chart-scroll" style="max-height: 320px; overflow-y: auto">
           <div
             data-testid="category-chart-canvas"
             :style="{ height: `${categoryChartHeight}px`, position: 'relative' }"

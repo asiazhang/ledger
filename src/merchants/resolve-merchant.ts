@@ -1,5 +1,5 @@
-import { api } from '@ledger/api'
-import { useReferenceStore } from '@/stores/reference'
+import { api } from "@ledger/api";
+import { useReferenceStore } from "@/stores/reference";
 
 /**
  * 商户解析（「输入即建 + 重名兜底」的单一权威，ADR-0051 决策 7 复用商户字典）：
@@ -20,25 +20,25 @@ export async function resolveMerchantRef(
   selected: string | null,
   editingMerchantId: string | null = null,
 ): Promise<string | null> {
-  if (!selected) return null
-  const reference = useReferenceStore()
-  if (reference.merchantMap.has(selected)) return selected
-  if (editingMerchantId && selected === editingMerchantId) return selected
-  const name = selected.trim()
-  if (!name) return null
-  const existing = reference.merchantByName.get(name)
-  if (existing) return existing.id
+  if (!selected) return null;
+  const reference = useReferenceStore();
+  if (reference.merchantMap.has(selected)) return selected;
+  if (editingMerchantId && selected === editingMerchantId) return selected;
+  const name = selected.trim();
+  if (!name) return null;
+  const existing = reference.merchantByName.get(name);
+  if (existing) return existing.id;
   try {
-    return await api.createMerchant({ name })
+    return await api.createMerchant({ name });
   } catch (e) {
     // 重名兜底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
     try {
-      await reference.refresh()
+      await reference.refresh();
     } catch {
       /* 保留原 create 错误 */
     }
-    const retry = reference.merchantByName.get(name)
-    if (retry) return retry.id
-    throw e
+    const retry = reference.merchantByName.get(name);
+    if (retry) return retry.id;
+    throw e;
   }
 }

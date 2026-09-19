@@ -1,4 +1,4 @@
-import { onMounted } from 'vue'
+import { onMounted } from "vue";
 
 /**
  * 计划来源落点的页签侧消费（spec #704 / issue #707，词汇表「实体定位参数
@@ -14,16 +14,16 @@ import { onMounted } from 'vue'
  */
 export function usePlanFocusLanding(options: {
   /** 待开计划 id（视图 focus 读一次后的暂存 prop；空则无落点）。 */
-  focusPlanId: () => string | null | undefined
+  focusPlanId: () => string | null | undefined;
   /** 开窗动作：页签自己的详情弹窗 open（按 id 独立取数）。 */
-  openDetail: (planId: string) => void
+  openDetail: (planId: string) => void;
   /** 消费回报：视图据此清闸（prop 置空）。 */
-  onConsumed: () => void
+  onConsumed: () => void;
 }): void {
   onMounted(() => {
-    const planId = options.focusPlanId()
-    if (!planId) return
-    options.openDetail(planId)
-    options.onConsumed()
-  })
+    const planId = options.focusPlanId();
+    if (!planId) return;
+    options.openDetail(planId);
+    options.onConsumed();
+  });
 }

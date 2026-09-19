@@ -1,5 +1,5 @@
-import { api } from '@ledger/api'
-import { useReferenceStore } from '@/stores/reference'
+import { api } from "@ledger/api";
+import { useReferenceStore } from "@/stores/reference";
 
 /**
  * 保司解析（「输入即建 + 重名兜底」，issue #713 / ADR-0082）：保单表单选择器的
@@ -16,24 +16,24 @@ import { useReferenceStore } from '@/stores/reference'
  * ——商户/保司是两套字典，合并会让类型面与错误文案在调用点失去领域信息。
  */
 export async function resolveInsurerRef(selected: string | null): Promise<string | null> {
-  if (!selected) return null
-  const reference = useReferenceStore()
-  if (reference.insurerMap.has(selected)) return selected
-  const name = selected.trim()
-  if (!name) return null
-  const existing = reference.insurerByName.get(name)
-  if (existing) return existing.id
+  if (!selected) return null;
+  const reference = useReferenceStore();
+  if (reference.insurerMap.has(selected)) return selected;
+  const name = selected.trim();
+  if (!name) return null;
+  const existing = reference.insurerByName.get(name);
+  if (existing) return existing.id;
   try {
-    return await api.createInsurer({ name })
+    return await api.createInsurer({ name });
   } catch (e) {
     // 重名兜底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
     try {
-      await reference.refresh()
+      await reference.refresh();
     } catch {
       /* 保留原 create 错误 */
     }
-    const retry = reference.insurerByName.get(name)
-    if (retry) return retry.id
-    throw e
+    const retry = reference.insurerByName.get(name);
+    if (retry) return retry.id;
+    throw e;
   }
 }

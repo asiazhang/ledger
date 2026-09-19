@@ -1,5 +1,5 @@
-import { style } from '@vanilla-extract/css'
-import { sprinkles } from '@ledger/theme/sprinkles.css.ts'
+import { style } from "@vanilla-extract/css";
+import { sprinkles } from "@ledger/theme/sprinkles.css.ts";
 
 /**
  * 同步进度条旁路样式（issue #897 / ADR-0095，ADR-0093 样式方案）：scoped 样式
@@ -13,42 +13,42 @@ import { sprinkles } from '@ledger/theme/sprinkles.css.ts'
  */
 export const root = style([
   sprinkles({
-    display: 'flex',
-    alignItems: 'center',
+    display: "flex",
+    alignItems: "center",
   }),
   {
-    gap: '8px',
+    gap: "8px",
     minWidth: 0,
-    pointerEvents: 'none',
+    pointerEvents: "none",
   },
-])
+]);
 
 export const track = style({
   flex: 1,
-  height: '2px',
-  borderRadius: '999px',
-  background: 'rgba(127, 127, 127, 0.2)',
-  overflow: 'hidden',
-})
+  height: "2px",
+  borderRadius: "999px",
+  background: "rgba(127, 127, 127, 0.2)",
+  overflow: "hidden",
+});
 
 export const bar = style({
-  height: '100%',
-  borderRadius: '999px',
-  background: '#2080f0',
-  transition: 'width 0.2s ease',
-  '@media': {
-    '(prefers-reduced-motion: reduce)': {
-      transition: 'none',
+  height: "100%",
+  borderRadius: "999px",
+  background: "#2080f0",
+  transition: "width 0.2s ease",
+  "@media": {
+    "(prefers-reduced-motion: reduce)": {
+      transition: "none",
     },
   },
-})
+});
 
 export const text = style({
-  fontSize: '12px',
+  fontSize: "12px",
   lineHeight: 1.4,
   opacity: 0.75,
-  whiteSpace: 'nowrap',
-})
+  whiteSpace: "nowrap",
+});
 
 /**
  * 计数文案与基金页级明细（issue #1061）的纵向栈：进度条右侧两行——主行是
@@ -58,12 +58,12 @@ export const text = style({
  */
 export const textStack = style([
   sprinkles({
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-end',
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
   }),
   {
-    gap: '2px',
+    gap: "2px",
     minWidth: 0,
   },
-])
+]);

@@ -1,5 +1,5 @@
-import { globalStyle } from '@vanilla-extract/css'
-import { appVars } from '@ledger/theme/app-theme.css.ts'
+import { globalStyle } from "@vanilla-extract/css";
+import { appVars } from "@ledger/theme/app-theme.css.ts";
 
 /**
  * 记一笔悬浮按钮旁路样式（issue #846 / ADR-0088 决策 5，ADR-0093 样式方案）：
@@ -11,34 +11,34 @@ import { appVars } from '@ledger/theme/app-theme.css.ts'
  */
 
 /** FAB 触发按钮钩子类：右下常驻，避开手势条安全区。 */
-export const CREATE_FAB_CLASS = 'create-fab'
+export const CREATE_FAB_CLASS = "create-fab";
 
 globalStyle(`.${CREATE_FAB_CLASS}.n-button`, {
-  position: 'fixed',
-  right: '16px',
-  bottom: 'calc(16px + env(safe-area-inset-bottom))',
-  width: '56px',
-  height: '56px',
-  fontSize: '28px',
-  borderRadius: '50%',
-})
+  position: "fixed",
+  right: "16px",
+  bottom: "calc(16px + env(safe-area-inset-bottom))",
+  width: "56px",
+  height: "56px",
+  fontSize: "28px",
+  borderRadius: "50%",
+});
 
 /** 类型选择轻弹层内容容器：大号选项纵向排布（数量随可用类型，默认全开五枚）。 */
-export const CREATE_FAB_SHEET_CLASS = 'create-fab-sheet'
+export const CREATE_FAB_SHEET_CLASS = "create-fab-sheet";
 
 globalStyle(`.${CREATE_FAB_SHEET_CLASS}`, {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '8px',
-  minWidth: '180px',
-})
+  display: "flex",
+  flexDirection: "column",
+  gap: "8px",
+  minWidth: "180px",
+});
 
 /** 类型选项钩子类：大号触控目标（≥48px），随主题合同换装。 */
-export const CREATE_FAB_OPTION_CLASS = 'create-fab-option'
+export const CREATE_FAB_OPTION_CLASS = "create-fab-option";
 
 globalStyle(`.${CREATE_FAB_OPTION_CLASS}.n-button`, {
-  width: '100%',
-  minHeight: '48px',
-  justifyContent: 'center',
+  width: "100%",
+  minHeight: "48px",
+  justifyContent: "center",
   background: appVars.background.card,
-})
+});

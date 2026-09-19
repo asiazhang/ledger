@@ -1,7 +1,7 @@
-import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import { api } from '@ledger/api'
-import { createPushFirstList } from '@/composables/push-first-list'
+import { defineStore } from "pinia";
+import { ref, computed } from "vue";
+import { api } from "@ledger/api";
+import { createPushFirstList } from "@/composables/push-first-list";
 import {
   isFundingCandidateAccount,
   type Account,
@@ -10,14 +10,14 @@ import {
   type Insurer,
   type Merchant,
   type Syncable,
-} from '@ledger/types'
+} from "@ledger/types";
 import {
   rootCategories as pureRootCategories,
   categoryChildren as pureCategoryChildren,
   categoryPath as pureCategoryPath,
   buildCategoryTree as pureBuildCategoryTree,
   type CategoryTreeNode,
-} from '@ledger/utils/category-tree'
+} from "@ledger/utils/category-tree";
 
 /**
  * 参考数据（Reference Data）单一来源 store。
@@ -38,19 +38,21 @@ import {
  * 含删全量字典行的统一拆分（apply 落位内分类/商户/保司三处同构）：
  * 在用行进字典，软删行进显示/管理视图缓存 Map（历史引用与「显示已删」共用）。
  */
-function splitDeleted<T extends Syncable & { id: string }>(all: T[]): { active: T[]; deleted: Map<string, T> } {
+function splitDeleted<T extends Syncable & { id: string }>(
+  all: T[],
+): { active: T[]; deleted: Map<string, T> } {
   return {
     active: all.filter((r) => !r.is_deleted),
     deleted: new Map(all.filter((r) => r.is_deleted).map((r) => [r.id, r])),
-  }
+  };
 }
 
-export const useReferenceStore = defineStore('reference', () => {
-  const currencies = ref<Currency[]>([])
-  const accounts = ref<Account[]>([])
-  const categories = ref<Category[]>([])
-  const merchants = ref<Merchant[]>([])
-  const insurers = ref<Insurer[]>([])
+export const useReferenceStore = defineStore("reference", () => {
+  const currencies = ref<Currency[]>([]);
+  const accounts = ref<Account[]>([]);
+  const categories = ref<Category[]>([]);
+  const merchants = ref<Merchant[]>([]);
+  const insurers = ref<Insurer[]>([]);
 
   /**
    * 软删商户（issue #189 / ADR-0028）：软删后不可再被选择，但历史交易引用照常显示。
@@ -58,13 +60,13 @@ export const useReferenceStore = defineStore('reference', () => {
    * 按 `is_deleted` 拆分而来：跨会话可用，无需 diff 缓存。
    * 商户管理列表「显示已删」（issue #447）消费同一份缓存，无新增拉取。
    */
-  const deletedMerchants = ref(new Map<string, Merchant>())
+  const deletedMerchants = ref(new Map<string, Merchant>());
 
   /**
    * 软删分类（issue #377）：软删后不可再被选择，但历史交易引用照常存在。
    * 数据源与拆分方式同商户先例（issue #191）：含软删全量列表按 `is_deleted` 拆分。
    */
-  const deletedCategories = ref(new Map<string, Category>())
+  const deletedCategories = ref(new Map<string, Category>());
 
   /**
    * 保司字典（issue #714 / ADR-0082）：保险域自有独立字典，虽不归参考数据域，
@@ -72,7 +74,7 @@ export const useReferenceStore = defineStore('reference', () => {
    * （与 #713 的保单换轨同源消费；管理视图「显示已删」切换消费软删缓存）。
    * 数据源与拆分方式同商户先例（issue #191）：含已删全量列表按 `is_deleted` 拆分。
    */
-  const deletedInsurers = ref(new Map<string, Insurer>())
+  const deletedInsurers = ref(new Map<string, Insurer>());
 
   // —— 失效信号（工厂产出，观测加载状态与重拉次数） ——
   const { status, version, refresh } = createPushFirstList(
@@ -89,87 +91,81 @@ export const useReferenceStore = defineStore('reference', () => {
         api.listInsurers({ includeDeleted: true }),
       ]),
     ([cs, as, catsAll, msAll, insAll]) => {
-      currencies.value = cs
-      accounts.value = as
-      const cats = splitDeleted(catsAll)
-      categories.value = cats.active
-      deletedCategories.value = cats.deleted
-      const ms = splitDeleted(msAll)
-      merchants.value = ms.active
-      deletedMerchants.value = ms.deleted
-      const ins = splitDeleted(insAll)
-      insurers.value = ins.active
-      deletedInsurers.value = ins.deleted
+      currencies.value = cs;
+      accounts.value = as;
+      const cats = splitDeleted(catsAll);
+      categories.value = cats.active;
+      deletedCategories.value = cats.deleted;
+      const ms = splitDeleted(msAll);
+      merchants.value = ms.active;
+      deletedMerchants.value = ms.deleted;
+      const ins = splitDeleted(insAll);
+      insurers.value = ins.active;
+      deletedInsurers.value = ins.deleted;
     },
-  )
+  );
 
   const currencyMap = computed(() => {
-    const m = new Map<string, Currency>()
-    currencies.value.forEach((c) => m.set(c.code, c))
-    return m
-  })
+    const m = new Map<string, Currency>();
+    currencies.value.forEach((c) => m.set(c.code, c));
+    return m;
+  });
 
   /** 分类显示/下钻校验映射：在用 + 软删（历史交易口径，URL 下钻校验共用，issue #377；先例商户）。 */
   const categoryMap = computed(() => {
-    const m = new Map<string, Category>()
-    deletedCategories.value.forEach((d) => m.set(d.id, d))
-    categories.value.forEach((c) => m.set(c.id, c))
-    return m
-  })
+    const m = new Map<string, Category>();
+    deletedCategories.value.forEach((d) => m.set(d.id, d));
+    categories.value.forEach((c) => m.set(c.id, c));
+    return m;
+  });
 
   const accountMap = computed(() => {
-    const m = new Map<string, Account>()
-    accounts.value.forEach((a) => m.set(a.id, a))
-    return m
-  })
+    const m = new Map<string, Account>();
+    accounts.value.forEach((a) => m.set(a.id, a));
+    return m;
+  });
 
   /** 商户显示映射：在用商户 + 软删商户（历史交易显示与筛选下拉共用，issue #191）。 */
   const merchantMap = computed(() => {
-    const m = new Map<string, Merchant>()
-    deletedMerchants.value.forEach((d) => m.set(d.id, d))
-    merchants.value.forEach((m2) => m.set(m2.id, m2))
-    return m
-  })
+    const m = new Map<string, Merchant>();
+    deletedMerchants.value.forEach((d) => m.set(d.id, d));
+    merchants.value.forEach((m2) => m.set(m2.id, m2));
+    return m;
+  });
 
   /** 按名字查找：仅含在用商户（软删商户不可再选/不可按名复用，重名即建由后端校验）。 */
   const merchantByName = computed(() => {
-    const m = new Map<string, Merchant>()
-    merchants.value.forEach((m2) => m.set(m2.name, m2))
-    return m
-  })
+    const m = new Map<string, Merchant>();
+    merchants.value.forEach((m2) => m.set(m2.name, m2));
+    return m;
+  });
 
   /** 保司显示映射：在用 + 软删（存量保单的保司列显示用，issue #713）。 */
   const insurerMap = computed(() => {
-    const m = new Map<string, Insurer>()
-    deletedInsurers.value.forEach((d) => m.set(d.id, d))
-    insurers.value.forEach((i) => m.set(i.id, i))
-    return m
-  })
+    const m = new Map<string, Insurer>();
+    deletedInsurers.value.forEach((d) => m.set(d.id, d));
+    insurers.value.forEach((i) => m.set(i.id, i));
+    return m;
+  });
 
   /** 按名字查找：仅含在用保司（软删保司不可再选/不可按名复用，重名即建由后端校验）。 */
   const insurerByName = computed(() => {
-    const m = new Map<string, Insurer>()
-    insurers.value.forEach((i) => m.set(i.name, i))
-    return m
-  })
+    const m = new Map<string, Insurer>();
+    insurers.value.forEach((i) => m.set(i.name, i));
+    return m;
+  });
 
-  const rootCategories = computed(() => pureRootCategories(categories.value))
+  const rootCategories = computed(() => pureRootCategories(categories.value));
 
-  const expenseCategories = computed(() =>
-    categories.value.filter((c) => c.kind === 'expense'),
-  )
-  const incomeCategories = computed(() =>
-    categories.value.filter((c) => c.kind === 'income'),
-  )
+  const expenseCategories = computed(() => categories.value.filter((c) => c.kind === "expense"));
+  const incomeCategories = computed(() => categories.value.filter((c) => c.kind === "income"));
 
   /**
    * 投资账户单一谓词：type = investment 的账户。盈亏页账户下拉与投资录入表单
    * 共用本派生（「投资账户下拉」语义单点收口），不排隐藏——隐藏 ≠ 软删，
    * 与 v_holdings / 时点持仓口径一致（issue #217 定案 Q2）。
    */
-  const investmentAccounts = computed(() =>
-    accounts.value.filter((a) => a.type === 'investment'),
-  )
+  const investmentAccounts = computed(() => accounts.value.filter((a) => a.type === "investment"));
 
   /**
    * 出资账户候选单一谓词派生（issue #936 / ADR-0096 决策 4）：在用账户中类型落在
@@ -178,25 +174,25 @@ export const useReferenceStore = defineStore('reference', () => {
    */
   const fundingCandidateAccounts = computed(() =>
     accounts.value.filter((a) => isFundingCandidateAccount(a.type)),
-  )
+  );
 
   function categoryChildren(parentId: string): Category[] {
-    return pureCategoryChildren(categories.value, parentId)
+    return pureCategoryChildren(categories.value, parentId);
   }
 
   function categoryPath(id: string | null | undefined): string {
-    return pureCategoryPath(categories.value, id)
+    return pureCategoryPath(categories.value, id);
   }
 
   /** 分类显示名（issue #356）：顶级为自身名，子分类为「父 > 子」路径名；
    * id 解析不到（孤儿引用，如守卫生效前的历史预算）时回退调用方提供的
    * 后端兜底名（「未分类」），不抛错。 */
   function categoryDisplayName(id: string | null | undefined, fallback: string): string {
-    return categoryPath(id) || fallback
+    return categoryPath(id) || fallback;
   }
 
-  function treeCategoryOptions(kind: Category['kind']): CategoryTreeNode[] {
-    return pureBuildCategoryTree(categories.value, { kind })
+  function treeCategoryOptions(kind: Category["kind"]): CategoryTreeNode[] {
+    return pureBuildCategoryTree(categories.value, { kind });
   }
 
   /**
@@ -206,7 +202,7 @@ export const useReferenceStore = defineStore('reference', () => {
    */
 
   function getCurrency(code: string): Currency | undefined {
-    return currencyMap.value.get(code)
+    return currencyMap.value.get(code);
   }
 
   return {
@@ -237,5 +233,5 @@ export const useReferenceStore = defineStore('reference', () => {
     treeCategoryOptions,
     refresh,
     getCurrency,
-  }
-})
+  };
+});

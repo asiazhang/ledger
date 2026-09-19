@@ -1,44 +1,32 @@
 <script setup lang="ts">
-import {
-  NButton,
-  NCard,
-  NDataTable,
-  NEmpty,
-  NInput,
-  NSpace,
-  NSpin,
-  NText,
-} from 'naive-ui'
-import type { DataTableColumn } from 'naive-ui'
-import { computed, h, ref } from 'vue'
-import { useAppStore } from '@/stores/app'
-import { useReferenceStore } from '@/stores/reference'
-import { t } from '@ledger/i18n'
-import { formatAmount, formatPrice, formatQuantity } from '@ledger/money'
-import { useInstrumentInfoSync } from '@/investment/useInstrumentInfoSync'
-import { usePricesChanged } from '@/investment/usePricesChanged'
-import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
-import SyncProgressBar from '@/investment/SyncProgressBar.vue'
-import SyncDegradedNotice from '@/investment/SyncDegradedNotice.vue'
-import InstrumentLink from '@/investment/InstrumentLink.vue'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import ManualPriceModal from '@/investment/ManualPriceModal.vue'
-import PortfolioStatsCards from '@/investment/PortfolioStatsCards.vue'
-import ConceptLabel from '@/investment/ConceptLabel.vue'
-import { usePortfolioOverview, type PortfolioRow } from '@/investment/usePortfolioOverview'
-import {
-  renderMwrRateCell,
-  useMoneyWeightedReturn,
-} from '@/investment/useMoneyWeightedReturn'
+import { NButton, NCard, NDataTable, NEmpty, NInput, NSpace, NSpin, NText } from "naive-ui";
+import type { DataTableColumn } from "naive-ui";
+import { computed, h, ref } from "vue";
+import { useAppStore } from "@/stores/app";
+import { useReferenceStore } from "@/stores/reference";
+import { t } from "@ledger/i18n";
+import { formatAmount, formatPrice, formatQuantity } from "@ledger/money";
+import { useInstrumentInfoSync } from "@/investment/useInstrumentInfoSync";
+import { usePricesChanged } from "@/investment/usePricesChanged";
+import { pnlSemanticColor } from "@ledger/theme/semantic-colors";
+import SyncProgressBar from "@/investment/SyncProgressBar.vue";
+import SyncDegradedNotice from "@/investment/SyncDegradedNotice.vue";
+import InstrumentLink from "@/investment/InstrumentLink.vue";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import ManualPriceModal from "@/investment/ManualPriceModal.vue";
+import PortfolioStatsCards from "@/investment/PortfolioStatsCards.vue";
+import ConceptLabel from "@/investment/ConceptLabel.vue";
+import { usePortfolioOverview, type PortfolioRow } from "@/investment/usePortfolioOverview";
+import { renderMwrRateCell, useMoneyWeightedReturn } from "@/investment/useMoneyWeightedReturn";
 import {
   useHoldingsFilter,
   HOLDINGS_PAGE_SIZE,
   type HoldingsSortColumn,
-} from '@/investment/useHoldingsFilter'
-import { sumFixedColumnWidths } from '@ledger/utils/table'
+} from "@/investment/useHoldingsFilter";
+import { sumFixedColumnWidths } from "@ledger/utils/table";
 
-const reference = useReferenceStore()
-const appStore = useAppStore()
+const reference = useReferenceStore();
+const appStore = useAppStore();
 
 // 数据拉取（list_holdings + 持仓标的字典拼装）归 usePortfolioOverview——与首页
 // 投资概览卡共享同一拼装接缝（issue #901/#902 契约不动）；过滤/排序/合计派生
@@ -47,11 +35,11 @@ const appStore = useAppStore()
 // 冷启动回默认，零写盘。
 // 累计收益是全账本口径、不随三维过滤收窄（已实现腿无法归到某行可见持仓），
 // 故直接来自 usePortfolioOverview 而非 useHoldingsFilter。
-const { rows, loading, refresh, totalCumulativePnlGroups } = usePortfolioOverview()
+const { rows, loading, refresh, totalCumulativePnlGroups } = usePortfolioOverview();
 // 资金加权收益率（issue #1195 / ADR-0115）：与金额口径并列的比例列，同一请求
 // 内自取（三消费面共用一次 money_weighted_return_summary）；期末市值随行情，
 // 价格失效信号重拉内化在本接缝（与上方 usePricesChanged 各自订阅，消费方自选）。
-const { instrumentMwr } = useMoneyWeightedReturn()
+const { instrumentMwr } = useMoneyWeightedReturn();
 const {
   searchInput,
   setSearch,
@@ -64,18 +52,18 @@ const {
   totalMarketValueGroups,
   totalUnrealizedPnlGroups,
   accountOptions,
-} = useHoldingsFilter(rows)
+} = useHoldingsFilter(rows);
 
 // 同步按钮复用 T4 的同步接缝（useInstrumentInfoSync），两处行为一致：
 // 按钮 loading + 轻量消息反馈 + 确定进度条（issue #897，与标的页同一份
 // SyncProgressBar 展示组件、同一份共享进度状态）。同步后重拉不绑在调用方自觉里：后端实际
 // 写价后 emit 价格失效信号（ADR-0031），此处订阅重拉现价/市值（含本卡
 // 所在隐藏 tab 常驻挂载的场景）；失败/零更新后端不 emit，无谓重拉也不发生。
-const { syncing, resultMessage, status, progress, degraded, sync } = useInstrumentInfoSync()
+const { syncing, resultMessage, status, progress, degraded, sync } = useInstrumentInfoSync();
 
 usePricesChanged(() => {
-  void refresh()
-})
+  void refresh();
+});
 
 // ---------------------------------------------------------------------------
 // 缺价行可执行引导（issue #1193）：缺价行（市值/收益/合计一并缺）此前只显示
@@ -87,58 +75,58 @@ usePricesChanged(() => {
 // 命令）；无来源 / 通道未知 → 不给引导（没有可落地的既有入口）。
 // 两个落点都是既有入口本身，不新增第二套触发机制。
 // ---------------------------------------------------------------------------
-const quoteTarget = ref<{ id: string; symbol: string } | null>(null)
-const quoteOpen = ref(false)
-const quoteMessage = ref<string | null>(null)
+const quoteTarget = ref<{ id: string; symbol: string } | null>(null);
+const quoteOpen = ref(false);
+const quoteMessage = ref<string | null>(null);
 
 function openQuote(row: PortfolioRow) {
-  quoteTarget.value = { id: row.instrumentId, symbol: row.symbol ?? row.instrumentName ?? '' }
-  quoteOpen.value = true
+  quoteTarget.value = { id: row.instrumentId, symbol: row.symbol ?? row.instrumentName ?? "" };
+  quoteOpen.value = true;
 }
 
 function onQuoted(message: string) {
   // 只记页面级回执：行内现价/市值刷新由价格失效信号驱动（ADR-0031），不手动重拉
-  quoteMessage.value = message
+  quoteMessage.value = message;
 }
 
 /** 缺价行引导 testid 的行身份键：账户 + 标的（v_holdings 一行 = 一个账户一只标的），
  * 同一标的跨账户持仓时各行互不撞车（symbol 会重复，不能作行身份）。 */
 function priceGuideRowKey(row: PortfolioRow) {
-  return `${row.accountId}-${row.instrumentId}`
+  return `${row.accountId}-${row.instrumentId}`;
 }
 
 /** 缺价行的引导动作（无引导时返回 null）：判定单点是 row.priceChannel（后端派生事实） */
 function missingPriceAction(row: PortfolioRow) {
-  const testidBase = priceGuideRowKey(row)
-  if (row.priceChannel === 'manual') {
+  const testidBase = priceGuideRowKey(row);
+  if (row.priceChannel === "manual") {
     return h(
       NButton,
       {
         text: true,
-        type: 'primary',
-        size: 'tiny',
-        'data-testid': `missing-price-quote-${testidBase}`,
+        type: "primary",
+        size: "tiny",
+        "data-testid": `missing-price-quote-${testidBase}`,
         onClick: () => openQuote(row),
       },
-      { default: () => t('investments.holdings.missingPrice.quote') },
-    )
+      { default: () => t("investments.holdings.missingPrice.quote") },
+    );
   }
-  if (row.priceChannel === 'quote' || row.priceChannel === 'fund_nav') {
+  if (row.priceChannel === "quote" || row.priceChannel === "fund_nav") {
     return h(
       NButton,
       {
         text: true,
-        type: 'primary',
-        size: 'tiny',
-        'data-testid': `missing-price-sync-${testidBase}`,
+        type: "primary",
+        size: "tiny",
+        "data-testid": `missing-price-sync-${testidBase}`,
         onClick: () => {
-          void sync()
+          void sync();
         },
       },
-      { default: () => t('investments.holdings.missingPrice.sync') },
-    )
+      { default: () => t("investments.holdings.missingPrice.sync") },
+    );
   }
-  return null
+  return null;
 }
 
 // 盈亏数字着色：红涨绿跌（A股/基金语境，词汇表「盈亏涨跌色」），随主题取亮/暗变体
@@ -146,7 +134,7 @@ function missingPriceAction(row: PortfolioRow) {
 // 市值/未实现盈亏两列列头排序为受控形态（sorter: true + 受控 sortOrder）：
 // 排序状态与行集合产出都归 useHoldingsFilter，表头只回传点击意图。
 function columnSortOrder(key: HoldingsSortColumn) {
-  return sorter.value?.columnKey === key ? sorter.value.order : false
+  return sorter.value?.columnKey === key ? sorter.value.order : false;
 }
 
 // 分页（issue #912；页码随会话保留见 issue #1192）：页码状态归 useHoldingsFilter
@@ -160,142 +148,149 @@ const pagination = computed(() => ({
   page: page.value,
   pageSize: HOLDINGS_PAGE_SIZE,
   onChange: (next: number) => {
-    page.value = next
+    page.value = next;
   },
-}))
+}));
 
 // 横向滚动下限 = 各固定列宽总和（全仓单一收口）：名称列是唯一弹性列（minWidth
 // 不计入），窄窗口由横向滚动吸收（本表不设窗口分级分支，#898 边界维持；
 // 标的页签表格的移动档 scroll-x 分支见 InstrumentBrowser，issue #849）。
-const scrollX = computed(() => sumFixedColumnWidths(overviewColumns.value))
+const scrollX = computed(() => sumFixedColumnWidths(overviewColumns.value));
 
 // 列形态遵循词汇表「表格列形态」约定：数值列右对齐 + 等宽数字（className 单点
 // 挂全局工具类），长名称列弹性 + 单行 ellipsis 悬停全名，短内容列按内容定宽。
 const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
   {
-    title: t('investments.holdings.columns.symbol'),
-    key: 'symbol',
+    title: t("investments.holdings.columns.symbol"),
+    key: "symbol",
     width: 100,
     // 标的代码列下钻（ADR-0107 决策 4）：跳交易页 ?account=&instrument=（不带 kinds，
     // 「该标的的交易历史」语义完整，sell 筛选交易页一键可得）；无代码渲染纯文本「-」。
-    render: (r) => h(InstrumentLink, { instrumentId: r.instrumentId, accountId: r.accountId, label: r.symbol ?? null }),
+    render: (r) =>
+      h(InstrumentLink, {
+        instrumentId: r.instrumentId,
+        accountId: r.accountId,
+        label: r.symbol ?? null,
+      }),
   },
   {
-    title: t('investments.holdings.columns.name'),
-    key: 'instrumentName',
+    title: t("investments.holdings.columns.name"),
+    key: "instrumentName",
     // 唯一弹性列：不设固定宽，独吃窗口剩余宽度；minWidth 保窄窗口下限
     minWidth: 160,
     ellipsis: { tooltip: true },
-    render: (r) => r.instrumentName ?? '-',
+    render: (r) => r.instrumentName ?? "-",
   },
   {
-    title: t('investments.holdings.columns.account'),
-    key: 'accountName',
+    title: t("investments.holdings.columns.account"),
+    key: "accountName",
     width: 80,
     ellipsis: { tooltip: true },
-    render: (r) => r.accountName ?? '-',
+    render: (r) => r.accountName ?? "-",
   },
   {
-    title: t('investments.holdings.columns.quantity'),
-    key: 'quantity',
+    title: t("investments.holdings.columns.quantity"),
+    key: "quantity",
     width: 110,
-    align: 'right',
-    className: 'tabular-nums',
+    align: "right",
+    className: "tabular-nums",
     render: (r) => formatQuantity(r.quantity),
   },
   {
     // 成本口径（issue #1369）：FIFO 剩余批次成本，易被读成「累计投入」
     title: () =>
       h(ConceptLabel, {
-        label: t('investments.holdings.columns.cost'),
-        concept: 'cost',
-        testId: 'holdings-cost',
+        label: t("investments.holdings.columns.cost"),
+        concept: "cost",
+        testId: "holdings-cost",
       }),
-    key: 'cost_basis',
+    key: "cost_basis",
     width: 120,
-    align: 'right',
-    className: 'tabular-nums',
+    align: "right",
+    className: "tabular-nums",
     render: (r) => formatAmount(r.costBasisCents, reference.currencyMap.get(r.costCurrencyCode)),
   },
   {
     // 现价口径（issue #1369）：基金行显示的是最新**单位净值**，列名不随类型改名
     title: () =>
       h(ConceptLabel, {
-        label: t('investments.holdings.columns.price'),
-        concept: 'price',
-        testId: 'holdings-price',
+        label: t("investments.holdings.columns.price"),
+        concept: "price",
+        testId: "holdings-price",
       }),
-    key: 'latest_price',
+    key: "latest_price",
     width: 110,
-    align: 'right',
-    className: 'tabular-nums',
+    align: "right",
+    className: "tabular-nums",
     // 现价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示；
     // 净值日期已独立成列（issue #912），本列恢复单行渲染。
     // 缺价行（issue #1193）：空值语义仍是「-」，其后就地给下一步引导
     // （行情/净值通道 → 同步标的信息，手动报价通道 → 录价；见 missingPriceAction）。
     render: (r) => {
       if (r.latestPriceCents !== null) {
-        return formatPrice(r.latestPriceCents, reference.currencyMap.get(r.latestPriceCurrencyCode ?? ''))
+        return formatPrice(
+          r.latestPriceCents,
+          reference.currencyMap.get(r.latestPriceCurrencyCode ?? ""),
+        );
       }
-      const action = missingPriceAction(r)
-      if (action === null) return '-'
-      return h(
-        'span',
-        { style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } },
-        ['-', action],
-      )
+      const action = missingPriceAction(r);
+      if (action === null) return "-";
+      return h("span", { style: { display: "inline-flex", alignItems: "center", gap: "4px" } }, [
+        "-",
+        action,
+      ]);
     },
   },
   {
-    title: t('investments.holdings.columns.navDate'),
-    key: 'nav_date',
+    title: t("investments.holdings.columns.navDate"),
+    key: "nav_date",
     width: 100,
-    align: 'right',
-    className: 'tabular-nums',
+    align: "right",
+    className: "tabular-nums",
     // 净值日期独立成列（#303 形态修订，issue #912）：仅基金行携带（现价 =
     // 最新公布单位净值），其余行显示「-」；不可排序。
-    render: (r) => r.latestNavDate ?? '-',
+    render: (r) => r.latestNavDate ?? "-",
   },
   {
     // 市值口径（issue #1369）：与合计三卡同一概念、不同标签（市值 vs 总市值）
     title: () =>
       h(ConceptLabel, {
-        label: t('investments.holdings.columns.marketValue'),
-        concept: 'marketValue',
-        testId: 'holdings-market-value',
+        label: t("investments.holdings.columns.marketValue"),
+        concept: "marketValue",
+        testId: "holdings-market-value",
       }),
-    key: 'market_value',
+    key: "market_value",
     width: 120,
-    align: 'right',
-    className: 'tabular-nums',
+    align: "right",
+    className: "tabular-nums",
     sorter: true,
-    sortOrder: columnSortOrder('market_value'),
+    sortOrder: columnSortOrder("market_value"),
     render: (r) =>
       r.marketValueCents === null
-        ? '-'
+        ? "-"
         : formatAmount(r.marketValueCents, reference.currencyMap.get(r.valueCurrencyCode)),
   },
   {
     // 持仓收益口径（issue #1369）：与合计三卡同一概念（展示词 = 未实现盈亏）
     title: () =>
       h(ConceptLabel, {
-        label: t('investments.holdings.columns.unrealizedPnl'),
-        concept: 'unrealizedPnl',
-        testId: 'holdings-unrealized-pnl',
+        label: t("investments.holdings.columns.unrealizedPnl"),
+        concept: "unrealizedPnl",
+        testId: "holdings-unrealized-pnl",
       }),
-    key: 'unrealized_pnl',
+    key: "unrealized_pnl",
     width: 130,
-    align: 'right',
-    className: 'tabular-nums',
+    align: "right",
+    className: "tabular-nums",
     sorter: true,
-    sortOrder: columnSortOrder('unrealized_pnl'),
+    sortOrder: columnSortOrder("unrealized_pnl"),
     render: (r) => {
-      if (r.unrealizedPnlCents === null) return '-'
+      if (r.unrealizedPnlCents === null) return "-";
       return h(
-        'span',
+        "span",
         { style: { color: pnlSemanticColor(r.unrealizedPnlCents, appStore.theme) } },
         formatAmount(r.unrealizedPnlCents, reference.currencyMap.get(r.valueCurrencyCode)),
-      )
+      );
     },
   },
   {
@@ -306,20 +301,20 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     // mwrTip 正文里——它不随页面语境变化，故不挂作用域变体）
     title: () =>
       h(ConceptLabel, {
-        label: t('investments.holdings.columns.mwr'),
-        concept: 'mwr',
-        testId: 'holdings-mwr',
+        label: t("investments.holdings.columns.mwr"),
+        concept: "mwr",
+        testId: "holdings-mwr",
       }),
-    key: 'mwr',
+    key: "mwr",
     width: 150,
-    align: 'right',
-    className: 'tabular-nums',
+    align: "right",
+    className: "tabular-nums",
     render: (r) => {
-      const mwr = instrumentMwr(r.accountId, r.instrumentId)
-      return renderMwrRateCell(mwr?.rate, appStore.theme, mwr?.basis)
+      const mwr = instrumentMwr(r.accountId, r.instrumentId);
+      return renderMwrRateCell(mwr?.rate, appStore.theme, mwr?.basis);
     },
   },
-])
+]);
 </script>
 
 <template>
@@ -332,7 +327,7 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
         data-testid="sync-instrument-info"
         @click="sync"
       >
-        {{ t('investments.holdings.sync') }}
+        {{ t("investments.holdings.sync") }}
       </NButton>
     </template>
 
@@ -354,7 +349,10 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
           {{ quoteMessage }}
         </NText>
 
-        <NEmpty v-if="rows.length === 0 && !loading" :description="t('investments.holdings.empty')" />
+        <NEmpty
+          v-if="rows.length === 0 && !loading"
+          :description="t('investments.holdings.empty')"
+        />
         <template v-else-if="rows.length > 0">
           <!-- 三维过滤（issue #902）：搜索（300ms 防抖在 composable 内）+ 账户单选
                （与盈亏页账户下拉同源，clearable 即「全部」默认态）；无持仓时不渲染 -->
@@ -413,10 +411,6 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
 
     <!-- 缺价行「录价」引导打开既有录价弹窗（issue #1193）：与标的页行内「录价」
          同一弹窗、同一命令，不新增第二套入口；提交回执转页面级展示 -->
-    <ManualPriceModal
-      v-model:show="quoteOpen"
-      :instrument="quoteTarget"
-      @quoted="onQuoted"
-    />
+    <ManualPriceModal v-model:show="quoteOpen" :instrument="quoteTarget" @quoted="onQuoted" />
   </NCard>
 </template>

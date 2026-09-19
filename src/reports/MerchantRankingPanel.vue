@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { computed, h } from 'vue'
-import { NCard, NDataTable, NEmpty, NRadioButton, NRadioGroup } from 'naive-ui'
-import type { DataTableColumns } from 'naive-ui'
-import { t } from '@ledger/i18n'
-import { useInputMode } from '@/composables/useInputMode'
-import { useWindowTier } from '@ledger/window-tier'
-import { MERCHANT_TOP_N_OPTIONS } from '@/reports/reports-session'
-import { formatAmount } from '@ledger/money'
-import { merchantTableRows } from '@ledger/utils/merchant-chart'
-import type { MerchantTableRow } from '@ledger/utils/merchant-chart'
-import MerchantLink from '@/merchants/MerchantLink.vue'
-import type { MerchantSharesReport } from '@ledger/types'
+import { computed, h } from "vue";
+import { NCard, NDataTable, NEmpty, NRadioButton, NRadioGroup } from "naive-ui";
+import type { DataTableColumns } from "naive-ui";
+import { t } from "@ledger/i18n";
+import { useInputMode } from "@/composables/useInputMode";
+import { useWindowTier } from "@ledger/window-tier";
+import { MERCHANT_TOP_N_OPTIONS } from "@/reports/reports-session";
+import { formatAmount } from "@ledger/money";
+import { merchantTableRows } from "@ledger/utils/merchant-chart";
+import type { MerchantTableRow } from "@ledger/utils/merchant-chart";
+import MerchantLink from "@/merchants/MerchantLink.vue";
+import type { MerchantSharesReport } from "@ledger/types";
 
 // 商户消费排行面板（issue #192 → #588 柱图化 → #618 表格化）：支出与商户的
 // 「列表化度量」以表格呈现——列为 商户名 | 金额分布（内嵌降序条）| 金额数字 |
@@ -32,30 +32,28 @@ import type { MerchantSharesReport } from '@ledger/types'
 // TopN 控件：卡片头部 Top 5 / Top 10 两枚选项（档位闭集二，默认 5），选择归
 // 报表页会话 store（会话内保留、冷启动回默认，ADR-0061 同粒度）；本组件受控
 // 不持状态源，v-model:topN 进出。
-const props = defineProps<{ report: MerchantSharesReport; topN: number }>()
+const props = defineProps<{ report: MerchantSharesReport; topN: number }>();
 const emit = defineEmits<{
-  (e: 'update:topN', value: number): void
-  (e: 'drilldown', merchantId: string): void
-}>()
+  (e: "update:topN", value: number): void;
+  (e: "drilldown", merchantId: string): void;
+}>();
 
 // 移动档（issue #849 / ADR-0088 决策 11 票⑨）：商户排行窄屏自裁量**改堆叠**——
 // 排行是逐行对账的阅读面，堆叠两列（商户名＋金额分布条 / 金额＋占比·笔数）让
 // 五列信息一屏并读，不引入横向滚动；下钻入口、testid 与口径两档同源。
 // 桌面档五列一字不动（回归红线）；TopN 控件另按输入轴达标触控目标 ≥48px。
-const windowTier = useWindowTier()
-const isMobileTier = computed(() => windowTier.value === 'mobile')
-const inputMode = useInputMode()
-const isTouch = computed(() => inputMode.value === 'touch')
-const TOUCH_TARGET_STYLE = { minHeight: '48px' }
+const windowTier = useWindowTier();
+const isMobileTier = computed(() => windowTier.value === "mobile");
+const inputMode = useInputMode();
+const isTouch = computed(() => inputMode.value === "touch");
+const TOUCH_TARGET_STYLE = { minHeight: "48px" };
 
-const tableRows = computed(() =>
-  merchantTableRows(props.report.rows, props.report.total_cents),
-)
+const tableRows = computed(() => merchantTableRows(props.report.rows, props.report.total_cents));
 
 // 行内下钻接线：MerchantLink 受控模式只上报意图，面板转发为 drilldown 事件，
 // 跳转载荷（期间边界 + 类型集合）由报表视图显式构造。
 function onDrill(merchantId: string) {
-  emit('drilldown', merchantId)
+  emit("drilldown", merchantId);
 }
 
 // —— 单元格渲染单点：两档列结构复用同一套渲染函数，testid 与口径零漂移 ——
@@ -63,41 +61,41 @@ const renderNameCell = (row: MerchantTableRow) =>
   h(MerchantLink, {
     merchantId: row.merchant_id,
     drillIntent: true,
-    'data-testid': 'merchant-name',
+    "data-testid": "merchant-name",
     onDrill,
-  })
+  });
 
 const renderBarCell = (row: MerchantTableRow) =>
-  h('div', { class: 'merchant-bar-track', 'data-testid': 'merchant-bar-track' }, [
-    h('div', {
-      class: 'merchant-bar-fill',
-      'data-testid': 'merchant-bar',
+  h("div", { class: "merchant-bar-track", "data-testid": "merchant-bar-track" }, [
+    h("div", {
+      class: "merchant-bar-fill",
+      "data-testid": "merchant-bar",
       style: {
         width: `${row.barPct}%`,
         // 名次色「淡入渐变 → 实色」：与柱图 softBarFillPlugin 视觉同源
         background: `linear-gradient(90deg, ${row.color}66, ${row.color})`,
       },
     }),
-  ])
+  ]);
 
 const renderAmountCell = (row: MerchantTableRow) =>
   h(
-    'span',
-    { class: 'merchant-amount', 'data-testid': 'merchant-amount' },
+    "span",
+    { class: "merchant-amount", "data-testid": "merchant-amount" },
     formatAmount(row.amount_cents),
-  )
+  );
 
 const renderShareCell = (row: MerchantTableRow) =>
-  h('span', { 'data-testid': 'merchant-share' }, `${row.sharePct}%`)
+  h("span", { "data-testid": "merchant-share" }, `${row.sharePct}%`);
 
 const renderCountCell = (row: MerchantTableRow) =>
-  h('span', { 'data-testid': 'merchant-count' }, String(row.transactionCount))
+  h("span", { "data-testid": "merchant-count" }, String(row.transactionCount));
 
 /** 移动档堆叠单元格：主行 + 弱化副行纵排（accounts / 预算移动档同款先例）。 */
-const MOBILE_STACK_STYLE = 'display: flex; flex-direction: column; gap: 2px; min-width: 0;'
+const MOBILE_STACK_STYLE = "display: flex; flex-direction: column; gap: 2px; min-width: 0;";
 const MOBILE_AMOUNT_STACK_STYLE =
-  'display: flex; flex-direction: column; gap: 2px; align-items: flex-end;'
-const MOBILE_SUB_STYLE = 'font-size: 12px; opacity: 0.65;'
+  "display: flex; flex-direction: column; gap: 2px; align-items: flex-end;";
+const MOBILE_SUB_STYLE = "font-size: 12px; opacity: 0.65;";
 
 const columns = computed<DataTableColumns<MerchantTableRow>>(() => {
   // 移动档两列：商户名（副行金额分布条）+ 金额（副行占比 · 笔数）——
@@ -105,65 +103,65 @@ const columns = computed<DataTableColumns<MerchantTableRow>>(() => {
   if (isMobileTier.value) {
     return [
       {
-        title: t('reports.merchant.columns.name'),
-        key: 'name',
+        title: t("reports.merchant.columns.name"),
+        key: "name",
         render: (row) =>
-          h('div', { style: MOBILE_STACK_STYLE }, [renderNameCell(row), renderBarCell(row)]),
+          h("div", { style: MOBILE_STACK_STYLE }, [renderNameCell(row), renderBarCell(row)]),
       },
       {
-        title: t('reports.merchant.columns.amount'),
-        key: 'amount',
-        align: 'right' as const,
+        title: t("reports.merchant.columns.amount"),
+        key: "amount",
+        align: "right" as const,
         render: (row) =>
-          h('div', { style: MOBILE_AMOUNT_STACK_STYLE }, [
+          h("div", { style: MOBILE_AMOUNT_STACK_STYLE }, [
             renderAmountCell(row),
-            h('div', { style: MOBILE_SUB_STYLE }, [
+            h("div", { style: MOBILE_SUB_STYLE }, [
               renderShareCell(row),
-              ' · ',
+              " · ",
               renderCountCell(row),
             ]),
           ]),
       },
-    ]
+    ];
   }
   return [
     {
-      title: t('reports.merchant.columns.name'),
-      key: 'name',
+      title: t("reports.merchant.columns.name"),
+      key: "name",
       render: renderNameCell,
     },
     {
-      title: t('reports.merchant.columns.bar'),
-      key: 'bar',
+      title: t("reports.merchant.columns.bar"),
+      key: "bar",
       render: renderBarCell,
     },
     {
-      title: t('reports.merchant.columns.amount'),
-      key: 'amount',
-      align: 'right',
+      title: t("reports.merchant.columns.amount"),
+      key: "amount",
+      align: "right",
       render: renderAmountCell,
     },
     {
-      title: t('reports.merchant.columns.share'),
-      key: 'share',
-      align: 'right',
+      title: t("reports.merchant.columns.share"),
+      key: "share",
+      align: "right",
       render: renderShareCell,
     },
     {
-      title: t('reports.merchant.columns.count'),
-      key: 'count',
-      align: 'right',
+      title: t("reports.merchant.columns.count"),
+      key: "count",
+      align: "right",
       render: renderCountCell,
     },
-  ]
-})
+  ];
+});
 </script>
 
 <template>
   <NCard size="small">
     <template #header>
       <div class="merchant-card-header">
-        <span>{{ t('reports.merchant.title') }}</span>
+        <span>{{ t("reports.merchant.title") }}</span>
         <!-- TopN 档位（issue #588）：Top 5 / Top 10 两枚选项，受控进出会话 store -->
         <NRadioGroup
           :value="topN"
@@ -178,7 +176,7 @@ const columns = computed<DataTableColumns<MerchantTableRow>>(() => {
             :style="isTouch ? TOUCH_TARGET_STYLE : undefined"
             :data-testid="`merchant-topn-${n}`"
           >
-            {{ t('reports.merchant.topOption', { n }) }}
+            {{ t("reports.merchant.topOption", { n }) }}
           </NRadioButton>
         </NRadioGroup>
       </div>
@@ -188,11 +186,7 @@ const columns = computed<DataTableColumns<MerchantTableRow>>(() => {
       :description="t('reports.merchant.empty')"
       data-testid="merchant-empty"
     />
-    <div
-      v-else
-      data-testid="merchant-table-scroll"
-      style="max-height: 320px; overflow-y: auto"
-    >
+    <div v-else data-testid="merchant-table-scroll" style="max-height: 320px; overflow-y: auto">
       <NDataTable
         data-testid="merchant-table"
         :columns="columns"

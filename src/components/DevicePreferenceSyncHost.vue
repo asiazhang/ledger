@@ -6,9 +6,9 @@
  * 就不会在解锁前发出（解锁先于一切业务读写）；解锁成功后随主界面一起挂载，
  * immediate watch 立即补推一次，推送语义与搬迁前完全一致。
  */
-import { useDevicePreferenceSync } from '@/composables/useDevicePreferenceSync'
+import { useDevicePreferenceSync } from "@/composables/useDevicePreferenceSync";
 
-useDevicePreferenceSync()
+useDevicePreferenceSync();
 </script>
 
 <template>

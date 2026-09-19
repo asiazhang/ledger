@@ -1,19 +1,19 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { mount, flushPromises } from '@vue/test-utils'
-import { findButton, probeColor } from '@ledger/test-support/dom'
-import { setFakeMedia } from '@ledger/test-support/media-mock'
-import { hoverTipText } from '@ledger/test-support/tooltip'
-import { nextTick } from 'vue'
-import { applyLocale } from '@ledger/i18n'
-import DashboardView from '@/views/DashboardView.vue'
-import TransactionForm from '@/transaction/TransactionForm.vue'
-import { amountPrivacyEnabled, formatAmount } from '@ledger/money'
-import { useReferenceStore } from '@/stores/reference'
-import { useItemsStore } from '@/item/items'
-import { useAppStore } from '@/stores/app'
-import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
-import { NGrid, NProgress } from 'naive-ui'
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { mount, flushPromises } from "@vue/test-utils";
+import { findButton, probeColor } from "@ledger/test-support/dom";
+import { setFakeMedia } from "@ledger/test-support/media-mock";
+import { hoverTipText } from "@ledger/test-support/tooltip";
+import { nextTick } from "vue";
+import { applyLocale } from "@ledger/i18n";
+import DashboardView from "@/views/DashboardView.vue";
+import TransactionForm from "@/transaction/TransactionForm.vue";
+import { amountPrivacyEnabled, formatAmount } from "@ledger/money";
+import { useReferenceStore } from "@/stores/reference";
+import { useItemsStore } from "@/item/items";
+import { useAppStore } from "@/stores/app";
+import { pnlSemanticColor } from "@ledger/theme/semantic-colors";
+import { NGrid, NProgress } from "naive-ui";
 import {
   makeAccount,
   makeFinancialFreedom,
@@ -21,69 +21,68 @@ import {
   makeOverview,
   mockHoldings,
   mockInstruments,
-} from './factories'
+} from "./factories";
 
 // 财务自由度卡（issue #344）零分母占位引导跳转预算页：捕获 router.push
-const pushMock = vi.fn()
-vi.mock('vue-router', () => ({
+const pushMock = vi.fn();
+vi.mock("vue-router", () => ({
   useRouter: () => ({ push: pushMock }),
-}))
-import type { Account, BudgetProgress, Category, Currency, MonthlySummary } from '@ledger/types'
-
+}));
+import type { Account, BudgetProgress, Category, Currency, MonthlySummary } from "@ledger/types";
 
 const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-  { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
-]
+  { code: "CNY", name: "人民币", symbol: "¥", decimal_places: 2 },
+  { code: "USD", name: "美元", symbol: "$", decimal_places: 2 },
+];
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
-const [cny, usd] = mockCurrencies
+const [cny, usd] = mockCurrencies;
 
 const mockAccounts: Account[] = [
   {
-    id: 'acc-1',
-    name: '现金',
-    type: 'cash',
-    currency_code: 'CNY',
+    id: "acc-1",
+    name: "现金",
+    type: "cash",
+    currency_code: "CNY",
     initial_balance_cents: 10000,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     version: 1,
-    device_id: 'test',
+    device_id: "test",
     is_deleted: false,
     is_hidden: false,
   },
-]
+];
 
 // 净资产总览卡（issue #143）用例可按需覆写
-const mockOverview = makeOverview()
+const mockOverview = makeOverview();
 
 // 首页新卡片用例可按需覆写；默认空集（无预算 → 预算卡隐藏、无当月行 → 三格为 0）
-let mockMonthlySummary: MonthlySummary[] = []
-let mockBudgetProgress: BudgetProgress[] = []
+let mockMonthlySummary: MonthlySummary[] = [];
+let mockBudgetProgress: BudgetProgress[] = [];
 
-function setCurrentMonthSummary(summary: Omit<MonthlySummary, 'month'>) {
-  const now = new Date()
-  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  mockMonthlySummary = [{ month: monthKey, ...summary }]
+function setCurrentMonthSummary(summary: Omit<MonthlySummary, "month">) {
+  const now = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  mockMonthlySummary = [{ month: monthKey, ...summary }];
 }
 
 /** 在用物品每天成本合计（issue #122）用例可按需覆写 */
-const mockItemDailyTotal = { native_currency: 'CNY', per_day_cents: 12345, item_count: 3 }
+const mockItemDailyTotal = { native_currency: "CNY", per_day_cents: 12345, item_count: 3 };
 
 /** 默认布线 defaults 表：持仓 + 持仓标的字典 + 总览 + 物品/自由度（参考五命令走接缝规范兜底） */
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
   // 累计收益（issue #1077 / #1078）：全账本按币种聚合（未实现 + 已实现 + 累计分红 三腿相加）
-  cumulative_pnl_summary: [{ currency_code: 'CNY', cumulative_pnl_cents: 48000 }],
+  cumulative_pnl_summary: [{ currency_code: "CNY", cumulative_pnl_cents: 48000 }],
   dashboard_overview: mockOverview,
   // 物品使用成本卡（issue #122）挂载时会创建物品 store（self-init 拉列表）
   list_items: [],
   item_daily_total: mockItemDailyTotal,
   // 财务自由度卡（issue #344）默认自由度 7.5%，用例可覆写
   financial_freedom: makeFinancialFreedom(),
-}
+};
 
 /** 每测基线 overrides 表：函数型 handler 实时读取可变变量（#144 用例挂载前改写生效）；
  * list_currencies 参考命令本场景需自定义值（CNY+USD，overrides 优先于参考兜底）；
@@ -93,162 +92,162 @@ const BASE_OVERRIDES = {
   list_categories: [],
   monthly_summary: () => mockMonthlySummary,
   budget_progress: () => mockBudgetProgress,
-}
+};
 
 beforeEach(async () => {
-  pushMock.mockClear()
-  mockMonthlySummary = []
-  mockBudgetProgress = []
-  wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: BASE_OVERRIDES })
-  const store = useReferenceStore()
-  await store.refresh()
-})
+  pushMock.mockClear();
+  mockMonthlySummary = [];
+  mockBudgetProgress = [];
+  wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: BASE_OVERRIDES });
+  const store = useReferenceStore();
+  await store.refresh();
+});
 
 async function mountView() {
-  const wrapper = mount(DashboardView)
-  await flushPromises()
-  return wrapper
+  const wrapper = mount(DashboardView);
+  await flushPromises();
+  return wrapper;
 }
 
-describe('DashboardView 界面语言切换（issue #342 / #351）', () => {
-  it('en-US 下卡片标题与标签渲染英文文案，切回 zh-CN 恢复中文', async () => {
+describe("DashboardView 界面语言切换（issue #342 / #351）", () => {
+  it("en-US 下卡片标题与标签渲染英文文案，切回 zh-CN 恢复中文", async () => {
     try {
-      await applyLocale('en-US')
-      await nextTick()
-      const wrapper = await mountView()
-      const text = wrapper.text()
-      expect(text).toContain('Net Worth')
-      expect(text).toContain('This Month')
-      expect(text).toContain('Income')
-      expect(text).toContain('Net Expense')
-      expect(text).toContain('Budget Progress')
-      expect(
-        wrapper.find('[data-testid="investment-overview-card"]').text(),
-      ).toContain('Total Market Value')
+      await applyLocale("en-US");
+      await nextTick();
+      const wrapper = await mountView();
+      const text = wrapper.text();
+      expect(text).toContain("Net Worth");
+      expect(text).toContain("This Month");
+      expect(text).toContain("Income");
+      expect(text).toContain("Net Expense");
+      expect(text).toContain("Budget Progress");
+      expect(wrapper.find('[data-testid="investment-overview-card"]').text()).toContain(
+        "Total Market Value",
+      );
       // 展示词归一 + 累计收益卡的英文文案（issue #1077）
-      expect(
-        wrapper.find('[data-testid="investment-overview-card"]').text(),
-      ).toContain('Holding P&L')
-      expect(
-        wrapper.find('[data-testid="dashboard-total-cumulative-pnl"]').text(),
-      ).toContain('Cumulative P&L')
+      expect(wrapper.find('[data-testid="investment-overview-card"]').text()).toContain(
+        "Holding P&L",
+      );
+      expect(wrapper.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toContain(
+        "Cumulative P&L",
+      );
       // 财务自由度卡（issue #344）同样双语：标题与阶段标签随语言切换
-      expect(
-        wrapper.find('[data-testid="financial-freedom-card"]').text(),
-      ).toContain('Financial Freedom')
-      expect(
-        wrapper.find('[data-testid="financial-freedom-stage"]').text(),
-      ).toContain('Accumulating')
-      expect(
-        wrapper.find('[data-testid="financial-freedom-card"]').text(),
-      ).not.toContain('积累期')
+      expect(wrapper.find('[data-testid="financial-freedom-card"]').text()).toContain(
+        "Financial Freedom",
+      );
+      expect(wrapper.find('[data-testid="financial-freedom-stage"]').text()).toContain(
+        "Accumulating",
+      );
+      expect(wrapper.find('[data-testid="financial-freedom-card"]').text()).not.toContain("积累期");
     } finally {
       // 还原默认语言，避免污染同文件后续用例（模块级单例状态）
-      await applyLocale('zh-CN')
-      await nextTick()
+      await applyLocale("zh-CN");
+      await nextTick();
     }
-  })
-})
+  });
+});
 
-describe('DashboardView 净资产总览卡（issue #143）', () => {
-  it('首页顶部呈现净资产总览卡：本位币单一主数字', async () => {
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="net-worth-card"]')
-    expect(card.exists()).toBe(true)
-    expect(card.text()).toContain('净资产')
+describe("DashboardView 净资产总览卡（issue #143）", () => {
+  it("首页顶部呈现净资产总览卡：本位币单一主数字", async () => {
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="net-worth-card"]');
+    expect(card.exists()).toBe(true);
+    expect(card.text()).toContain("净资产");
     // 123456 分（本位币主数字，无各币种分项）
-    expect(card.text()).toContain(formatAmount(123456, cny))
-  })
+    expect(card.text()).toContain(formatAmount(123456, cny));
+  });
 
-  it('命令报错（如缺汇率）时卡片显示提示文案而非空数字或崩溃', async () => {
+  it("命令报错（如缺汇率）时卡片显示提示文案而非空数字或崩溃", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         ...BASE_OVERRIDES,
-        dashboard_overview: () => Promise.reject(new Error('缺少 USD→CNY 汇率，无法折算')),
+        dashboard_overview: () => Promise.reject(new Error("缺少 USD→CNY 汇率，无法折算")),
       },
-    })
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="net-worth-card"]')
-    expect(card.text()).toContain('净资产')
-    expect(card.text()).toContain('缺少 USD→CNY 汇率，无法折算')
+    });
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="net-worth-card"]');
+    expect(card.text()).toContain("净资产");
+    expect(card.text()).toContain("缺少 USD→CNY 汇率，无法折算");
     // 不渲染空数字
-    expect(card.text()).not.toContain(formatAmount(0, cny))
-  })
-})
+    expect(card.text()).not.toContain(formatAmount(0, cny));
+  });
+});
 
-describe('DashboardView 投资概览卡（issue #145）', () => {
-  it('有持仓时展示总市值、持仓收益与累计收益，无行情行不以零计入', async () => {
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="investment-overview-card"]')
-    expect(card.exists()).toBe(true)
+describe("DashboardView 投资概览卡（issue #145）", () => {
+  it("有持仓时展示总市值、持仓收益与累计收益，无行情行不以零计入", async () => {
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="investment-overview-card"]');
+    expect(card.exists()).toBe(true);
     // h-1 有行情计入：150000 分、30000 分（4 位整数不触发万分位分组）
     // h-2 无行情（NULL）不计入：合计中不出现零金额
-    expect(card.text()).toContain('总市值')
-    expect(card.text()).toContain(formatAmount(150000, cny))
+    expect(card.text()).toContain("总市值");
+    expect(card.text()).toContain(formatAmount(150000, cny));
     // 展示词逐字归一（issue #1077）：标签即「持仓收益」
     expect(card.find('[data-testid="dashboard-total-unrealized-pnl"]').text()).toBe(
       `持仓收益${formatAmount(30000, cny)}`,
-    )
+    );
     // 累计收益卡（issue #1077 / #1078）：后端按币种聚合（三腿相加）
     expect(card.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toBe(
       `累计收益${formatAmount(48000, cny)}`,
-    )
-    expect(card.text()).not.toContain(formatAmount(0, cny))
+    );
+    expect(card.text()).not.toContain(formatAmount(0, cny));
     // 展示词归一（issue #1077）：首页投资卡不再残留「未实现盈亏」文案
-    expect(card.text()).not.toContain('未实现盈亏')
-  })
+    expect(card.text()).not.toContain("未实现盈亏");
+  });
 
-  it('投资概览三卡：盈亏两卡按符号着盈亏涨跌色、市值卡不着色，三卡各带口径说明', async () => {
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="investment-overview-card"]')
-    const theme = useAppStore().theme
+  it("投资概览三卡：盈亏两卡按符号着盈亏涨跌色、市值卡不着色，三卡各带口径说明", async () => {
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="investment-overview-card"]');
+    const theme = useAppStore().theme;
     const inlineColors = (testId: string) =>
       card
         .findAll(`[data-testid="${testId}-value"] span[style]`)
-        .map((s) => (s.element as HTMLElement).style.color)
+        .map((s) => (s.element as HTMLElement).style.color);
     // 市值卡中性（涨跌色不外溢到市值）；盈亏两卡走同一盈亏涨跌色接缝
-    expect(inlineColors('dashboard-total-market-value')).toEqual([])
-    expect(inlineColors('dashboard-total-unrealized-pnl')).toEqual([
+    expect(inlineColors("dashboard-total-market-value")).toEqual([]);
+    expect(inlineColors("dashboard-total-unrealized-pnl")).toEqual([
       probeColor(pnlSemanticColor(30000, theme)),
-    ])
-    expect(inlineColors('dashboard-total-cumulative-pnl')).toEqual([
+    ]);
+    expect(inlineColors("dashboard-total-cumulative-pnl")).toEqual([
       probeColor(pnlSemanticColor(48000, theme)),
-    ])
+    ]);
     // 与持仓页签同一组件：三卡同排（桌面档三列）+ 三个概念说明触发器
-    expect(card.findAll('.n-statistic-value')).toHaveLength(3)
+    expect(card.findAll(".n-statistic-value")).toHaveLength(3);
     for (const id of [
-      'dashboard-total-market-value',
-      'dashboard-total-unrealized-pnl',
-      'dashboard-total-cumulative-pnl',
+      "dashboard-total-market-value",
+      "dashboard-total-unrealized-pnl",
+      "dashboard-total-cumulative-pnl",
     ]) {
-      expect(card.find(`[data-testid="${id}-info"]`).exists(), id).toBe(true)
+      expect(card.find(`[data-testid="${id}-info"]`).exists(), id).toBe(true);
     }
     // 说明文案与持仓页同一份（investments.concepts），不复制第二份措辞
-    const tip = await hoverTipText(card.find('[data-testid="dashboard-total-cumulative-pnl-info"]'))
-    expect(tip).toContain('累计分红')
-  })
+    const tip = await hoverTipText(
+      card.find('[data-testid="dashboard-total-cumulative-pnl-info"]'),
+    );
+    expect(tip).toContain("累计分红");
+  });
 
-  it('投资概览卡口径说明挂 wholeLedger 作用域句（与持仓页 filtered 变体分家，issue #1369）', async () => {
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="investment-overview-card"]')
+  it("投资概览卡口径说明挂 wholeLedger 作用域句（与持仓页 filtered 变体分家，issue #1369）", async () => {
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="investment-overview-card"]');
     // 首页三卡取全部持仓、不随任何筛选收窄——与持仓页同一组件、不同作用域变体
-    const tip = await hoverTipText(card.find('[data-testid="dashboard-total-market-value-info"]'))
-    expect(tip).toContain('覆盖全账本的持仓')
-    expect(tip).not.toContain('随当前搜索与账户过滤收窄')
-    wrapper.unmount()
-  })
+    const tip = await hoverTipText(card.find('[data-testid="dashboard-total-market-value-info"]'));
+    expect(tip).toContain("覆盖全账本的持仓");
+    expect(tip).not.toContain("随当前搜索与账户过滤收窄");
+    wrapper.unmount();
+  });
 
-  it('多币种持仓按币种分组展示，组间以「 / 」连接', async () => {
-    const usdAccount = makeAccount({ id: 'acc-2', name: '美股账户', currency_code: 'USD' })
+  it("多币种持仓按币种分组展示，组间以「 / 」连接", async () => {
+    const usdAccount = makeAccount({ id: "acc-2", name: "美股账户", currency_code: "USD" });
     const usdHolding = makeHolding({
-      id: 'h-3',
-      instrument_id: 'inst-2',
-      account_id: 'acc-2',
-      cost_currency_code: 'USD',
+      id: "h-3",
+      instrument_id: "inst-2",
+      account_id: "acc-2",
+      cost_currency_code: "USD",
       market_value_cents: 3000,
       unrealized_pnl_cents: -500,
-    })
+    });
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
@@ -256,36 +255,40 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
         list_holdings: [mockHoldings[0], usdHolding],
         list_accounts: [mockAccounts[0], usdAccount],
         cumulative_pnl_summary: [
-          { currency_code: 'CNY', cumulative_pnl_cents: 48000 },
-          { currency_code: 'USD', cumulative_pnl_cents: -900 },
+          { currency_code: "CNY", cumulative_pnl_cents: 48000 },
+          { currency_code: "USD", cumulative_pnl_cents: -900 },
         ],
       },
-    })
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="investment-overview-card"]')
+    });
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="investment-overview-card"]');
     // 币种代码排序：CNY 在前、USD 在后
-    expect(card.text()).toContain(`${formatAmount(150000, cny)} / ${formatAmount(3000, usd)}`)
-    expect(card.text()).toContain(`${formatAmount(30000, cny)} / ${formatAmount(-500, usd)}`)
+    expect(card.text()).toContain(`${formatAmount(150000, cny)} / ${formatAmount(3000, usd)}`);
+    expect(card.text()).toContain(`${formatAmount(30000, cny)} / ${formatAmount(-500, usd)}`);
     // 累计收益同按币种独立成组（后端聚合），不跨币种求和
     expect(card.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toBe(
       `累计收益${formatAmount(48000, cny)} / ${formatAmount(-900, usd)}`,
-    )
-  })
+    );
+  });
 
-  it('无任何持仓时卡片保留，空态占位而非统计数字', async () => {
+  it("无任何持仓时卡片保留，空态占位而非统计数字", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
-      overrides: { ...BASE_OVERRIDES, list_holdings: [], list_instruments: { items: [], total: 0 } },
-    })
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="investment-overview-card"]')
-    expect(card.exists()).toBe(true)
-    expect(card.text()).toContain('暂无持仓')
+      overrides: {
+        ...BASE_OVERRIDES,
+        list_holdings: [],
+        list_instruments: { items: [], total: 0 },
+      },
+    });
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="investment-overview-card"]');
+    expect(card.exists()).toBe(true);
+    expect(card.text()).toContain("暂无持仓");
     // 空态不渲染分组统计
-    expect(card.text()).not.toContain('总市值')
-  })
+    expect(card.text()).not.toContain("总市值");
+  });
 
-  it('有持仓但全部无行情时空值分支：合计统计精确降级为「总市值-」', async () => {
+  it("有持仓但全部无行情时空值分支：合计统计精确降级为「总市值-」", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
@@ -294,77 +297,73 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
         list_instruments: { items: [mockInstruments[1]], total: 1 },
         cumulative_pnl_summary: [],
       },
-    })
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="investment-overview-card"]')
-    expect(card.exists()).toBe(true)
-    expect(card.text()).toContain('总市值')
+    });
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="investment-overview-card"]');
+    expect(card.exists()).toBe(true);
+    expect(card.text()).toContain("总市值");
     // 精确锁定降级文本：NStatistic 渲染 label + value 连排
-    expect(card.find('[data-testid="dashboard-total-market-value"]').text()).toBe('总市值-')
-    expect(card.find('[data-testid="dashboard-total-unrealized-pnl"]').text()).toBe(
-      '持仓收益-',
-    )
-    expect(card.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toBe('累计收益-')
-  })
-})
+    expect(card.find('[data-testid="dashboard-total-market-value"]').text()).toBe("总市值-");
+    expect(card.find('[data-testid="dashboard-total-unrealized-pnl"]').text()).toBe("持仓收益-");
+    expect(card.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toBe("累计收益-");
+  });
+});
 
-describe('DashboardView 财务自由度卡（issue #344）', () => {
-  it('卡片位于投资概览卡之后、物品使用成本卡之前', async () => {
-    const wrapper = await mountView()
-    const ids = wrapper
-      .findAll('[data-testid$="-card"]')
-      .map((w) => w.attributes('data-testid'))
-    const freedomIdx = ids.indexOf('financial-freedom-card')
-    expect(freedomIdx).toBeGreaterThan(ids.indexOf('investment-overview-card'))
-    expect(freedomIdx).toBeLessThan(ids.indexOf('item-daily-cost-card'))
-  })
+describe("DashboardView 财务自由度卡（issue #344）", () => {
+  it("卡片位于投资概览卡之后、物品使用成本卡之前", async () => {
+    const wrapper = await mountView();
+    const ids = wrapper.findAll('[data-testid$="-card"]').map((w) => w.attributes("data-testid"));
+    const freedomIdx = ids.indexOf("financial-freedom-card");
+    expect(freedomIdx).toBeGreaterThan(ids.indexOf("investment-overview-card"));
+    expect(freedomIdx).toBeLessThan(ids.indexOf("item-daily-cost-card"));
+  });
 
-  it('展示大字百分比、进度条、分子/分母金额、覆盖年数与阶段标签', async () => {
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="financial-freedom-card"]')
+  it("展示大字百分比、进度条、分子/分母金额、覆盖年数与阶段标签", async () => {
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="financial-freedom-card"]');
     // 7.5% 大字 + 阶段标签（<30% 积累期）
-    expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe('7.5%')
-    expect(card.find('[data-testid="financial-freedom-stage"]').text()).toBe('积累期')
+    expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe("7.5%");
+    expect(card.find('[data-testid="financial-freedom-stage"]').text()).toBe("积累期");
     // 分子/分母（formatAmount 本位币）：500000 分与 2000000 分（后者触发万分位分组）
-    expect(card.text()).toContain(`可投资资产 ${formatAmount(500000, cny)}`)
-    expect(card.text()).toContain(`年度预算总额 ${formatAmount(2000000, cny)}`)
+    expect(card.text()).toContain(`可投资资产 ${formatAmount(500000, cny)}`);
+    expect(card.text()).toContain(`年度预算总额 ${formatAmount(2000000, cny)}`);
     // 覆盖年数副文案
-    expect(card.text()).toContain('可覆盖 0.3 年')
+    expect(card.text()).toContain("可覆盖 0.3 年");
     // 进度条随百分比；未达 100% 非成功状态
-    const bar = card.findComponent(NProgress)
-    expect(bar.props('percentage')).toBe(7.5)
-    expect(bar.props('status')).not.toBe('success')
-  })
+    const bar = card.findComponent(NProgress);
+    expect(bar.props("percentage")).toBe(7.5);
+    expect(bar.props("status")).not.toBe("success");
+  });
 
-  it('阶段标签三档边界：<30% 积累期 / 30–100% 接近自由 / ≥100% 财务自由', async () => {
+  it("阶段标签三档边界：<30% 积累期 / 30–100% 接近自由 / ≥100% 财务自由", async () => {
     const stageOf = async (ratio: number) => {
       wireInvokeSeam({
         defaults: BASE_DEFAULTS,
         overrides: { ...BASE_OVERRIDES, financial_freedom: makeFinancialFreedom({ ratio }) },
-      })
-      const wrapper = await mountView()
-      return wrapper.find('[data-testid="financial-freedom-stage"]').text()
-    }
-    expect(await stageOf(29.9)).toBe('积累期')
-    expect(await stageOf(30)).toBe('接近自由')
-    expect(await stageOf(99.9)).toBe('接近自由')
-    expect(await stageOf(100)).toBe('财务自由')
-  })
+      });
+      const wrapper = await mountView();
+      return wrapper.find('[data-testid="financial-freedom-stage"]').text();
+    };
+    expect(await stageOf(29.9)).toBe("积累期");
+    expect(await stageOf(30)).toBe("接近自由");
+    expect(await stageOf(99.9)).toBe("接近自由");
+    expect(await stageOf(100)).toBe("财务自由");
+  });
 
-  it('≥100% 进度条转成功状态；>100% 百分比原文呈现、进度条封顶 100', async () => {
+  it("≥100% 进度条转成功状态；>100% 百分比原文呈现、进度条封顶 100", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { ...BASE_OVERRIDES, financial_freedom: makeFinancialFreedom({ ratio: 150 }) },
-    })
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="financial-freedom-card"]')
-    expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe('150%')
-    const bar = card.findComponent(NProgress)
-    expect(bar.props('status')).toBe('success')
-    expect(bar.props('percentage')).toBe(100)
-  })
+    });
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="financial-freedom-card"]');
+    expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe("150%");
+    const bar = card.findComponent(NProgress);
+    expect(bar.props("status")).toBe("success");
+    expect(bar.props("percentage")).toBe(100);
+  });
 
-  it('零分母（未设预算）显示占位引导，点击跳转预算页；不回退实际支出', async () => {
+  it("零分母（未设预算）显示占位引导，点击跳转预算页；不回退实际支出", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
@@ -375,169 +374,171 @@ describe('DashboardView 财务自由度卡（issue #344）', () => {
           coverage_years: 0,
         }),
       },
-    })
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="financial-freedom-card"]')
-    expect(card.text()).toContain('设置预算后解锁财务自由度')
+    });
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="financial-freedom-card"]');
+    expect(card.text()).toContain("设置预算后解锁财务自由度");
     // 不渲染自由度数字、金额与进度条（口径不回退实际支出）
-    expect(card.text()).not.toContain('%')
-    expect(card.text()).not.toContain(cny.symbol)
-    expect(card.findComponent(NProgress).exists()).toBe(false)
-    const btn = findButton(card, '去设置预算', { exact: true })
-    expect(btn).toBeTruthy()
-    await btn!.trigger('click')
-    expect(pushMock).toHaveBeenCalledWith({ name: 'budget' })
-  })
+    expect(card.text()).not.toContain("%");
+    expect(card.text()).not.toContain(cny.symbol);
+    expect(card.findComponent(NProgress).exists()).toBe(false);
+    const btn = findButton(card, "去设置预算", { exact: true });
+    expect(btn).toBeTruthy();
+    await btn!.trigger("click");
+    expect(pushMock).toHaveBeenCalledWith({ name: "budget" });
+  });
 
-  it('零资产显示 0%（起点清晰可见而非功能消失）', async () => {
+  it("零资产显示 0%（起点清晰可见而非功能消失）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         ...BASE_OVERRIDES,
         financial_freedom: makeFinancialFreedom({ ratio: 0, numerator_cents: 0 }),
       },
-    })
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="financial-freedom-card"]')
-    expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe('0%')
-    expect(card.find('[data-testid="financial-freedom-stage"]').text()).toBe('积累期')
-  })
+    });
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="financial-freedom-card"]');
+    expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe("0%");
+    expect(card.find('[data-testid="financial-freedom-stage"]').text()).toBe("积累期");
+  });
 
-  it('缺汇率时卡内警告提示，可重试恢复', async () => {
+  it("缺汇率时卡内警告提示，可重试恢复", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         ...BASE_OVERRIDES,
-        financial_freedom: () => Promise.reject(new Error('缺少 USD→CNY 汇率，无法折算')),
+        financial_freedom: () => Promise.reject(new Error("缺少 USD→CNY 汇率，无法折算")),
       },
-    })
-    const wrapper = await mountView()
-    let card = wrapper.find('[data-testid="financial-freedom-card"]')
-    expect(card.text()).toContain('缺少 USD→CNY 汇率，无法折算')
-    expect(card.text()).not.toContain('%')
+    });
+    const wrapper = await mountView();
+    let card = wrapper.find('[data-testid="financial-freedom-card"]');
+    expect(card.text()).toContain("缺少 USD→CNY 汇率，无法折算");
+    expect(card.text()).not.toContain("%");
 
-    wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: BASE_OVERRIDES })
-    const retry = findButton(card, '重试', { exact: true })
-    expect(retry).toBeTruthy()
-    await retry!.trigger('click')
-    await flushPromises()
-    card = wrapper.find('[data-testid="financial-freedom-card"]')
-    expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe('7.5%')
-  })
-})
+    wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: BASE_OVERRIDES });
+    const retry = findButton(card, "重试", { exact: true });
+    expect(retry).toBeTruthy();
+    await retry!.trigger("click");
+    await flushPromises();
+    card = wrapper.find('[data-testid="financial-freedom-card"]');
+    expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe("7.5%");
+  });
+});
 
-describe('DashboardView 财务自由度卡计算口径提示（tooltip）', () => {
-  it('标题旁信息图标悬停展示计算口径：公式、分子/分母构成与 3% 提取率', async () => {
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="financial-freedom-card"]')
-    const trigger = card.find('[data-testid="financial-freedom-info"]')
-    expect(trigger.exists()).toBe(true)
+describe("DashboardView 财务自由度卡计算口径提示（tooltip）", () => {
+  it("标题旁信息图标悬停展示计算口径：公式、分子/分母构成与 3% 提取率", async () => {
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="financial-freedom-card"]');
+    const trigger = card.find('[data-testid="financial-freedom-info"]');
+    expect(trigger.exists()).toBe(true);
     // 悬停前口径说明不在页面上
-    expect(document.body.textContent).not.toContain('安全提取率')
+    expect(document.body.textContent).not.toContain("安全提取率");
 
-    const text = await hoverTipText(trigger)
+    const text = await hoverTipText(trigger);
     // 公式：3% 乘数是百分比无法从分子/分母直接推出的原因，必须写明
-    expect(text).toContain('可投资资产 × 3% ÷ 年度预算总额')
+    expect(text).toContain("可投资资产 × 3% ÷ 年度预算总额");
     // 分子构成与不口径：不含生活现金与负债
-    expect(text).toContain('持仓市值 + 投资账户余额')
+    expect(text).toContain("持仓市值 + 投资账户余额");
     // 分母构成与年化节奏
-    expect(text).toContain('月度预算 × 12 + 年度预算')
-    expect(text).toContain('安全提取率')
-  })
-})
+    expect(text).toContain("月度预算 × 12 + 年度预算");
+    expect(text).toContain("安全提取率");
+  });
+});
 
-describe('DashboardView 快速记账与最近交易移除（issue #141）', () => {
-  it('不再渲染快速记账表单（TransactionForm）', async () => {
-    const wrapper = await mountView()
-    expect(wrapper.findComponent(TransactionForm).exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('快速记账')
-  })
+describe("DashboardView 快速记账与最近交易移除（issue #141）", () => {
+  it("不再渲染快速记账表单（TransactionForm）", async () => {
+    const wrapper = await mountView();
+    expect(wrapper.findComponent(TransactionForm).exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("快速记账");
+  });
 
-  it('不再渲染最近交易列表', async () => {
-    const wrapper = await mountView()
-    expect(wrapper.text()).not.toContain('最近交易')
+  it("不再渲染最近交易列表", async () => {
+    const wrapper = await mountView();
+    expect(wrapper.text()).not.toContain("最近交易");
     // 不再查询交易列表
-    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_transactions')).toBe(false)
-  })
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "list_transactions")).toBe(false);
+  });
 
-  it('不再渲染逐账户余额卡片（逐账户明细归账户页，首页只呈现聚合全貌）', async () => {
-    const wrapper = await mountView()
-    expect(wrapper.text()).not.toContain('现金')
+  it("不再渲染逐账户余额卡片（逐账户明细归账户页，首页只呈现聚合全貌）", async () => {
+    const wrapper = await mountView();
+    expect(wrapper.text()).not.toContain("现金");
     // 不再查询账户余额
-    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_account_balances')).toBe(false)
-  })
-})
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "list_account_balances")).toBe(false);
+  });
+});
 
-describe('DashboardView 本月收支卡（issue #144）', () => {
-  it('三格口径：收入=净收入、净支出=毛支出−退款、结余=收入−净支出', async () => {
+describe("DashboardView 本月收支卡（issue #144）", () => {
+  it("三格口径：收入=净收入、净支出=毛支出−退款、结余=收入−净支出", async () => {
     // income_net=100000、expense_gross=80000、refund=5000 → 净支出 75000、结余 25000
-    setCurrentMonthSummary({ income_cents: 100000, expense_cents: 80000, refund_cents: 5000 })
-    const wrapper = await mountView()
-    const text = wrapper.text()
-    expect(text).toContain('本月收支')
-    expect(text).toContain(`收入${formatAmount(100000)}`) // 净收入
-    expect(text).toContain(`净支出${formatAmount(75000)}`) // 净支出（毛 800 − 退款 50）
-    expect(text).toContain(`结余${formatAmount(25000)}`) // 结余
-  })
+    setCurrentMonthSummary({ income_cents: 100000, expense_cents: 80000, refund_cents: 5000 });
+    const wrapper = await mountView();
+    const text = wrapper.text();
+    expect(text).toContain("本月收支");
+    expect(text).toContain(`收入${formatAmount(100000)}`); // 净收入
+    expect(text).toContain(`净支出${formatAmount(75000)}`); // 净支出（毛 800 − 退款 50）
+    expect(text).toContain(`结余${formatAmount(25000)}`); // 结余
+  });
 
-  it('净支出与预算消耗、分类占比口径一致（退款冲减而非单列）', async () => {
-    setCurrentMonthSummary({ income_cents: 0, expense_cents: 12345, refund_cents: 2345 })
-    const wrapper = await mountView()
+  it("净支出与预算消耗、分类占比口径一致（退款冲减而非单列）", async () => {
+    setCurrentMonthSummary({ income_cents: 0, expense_cents: 12345, refund_cents: 2345 });
+    const wrapper = await mountView();
     // 净支出 10000 分 = expense_net 口径
-    expect(wrapper.text()).toContain(`净支出${formatAmount(10000)}`)
-  })
+    expect(wrapper.text()).toContain(`净支出${formatAmount(10000)}`);
+  });
 
-  it('当月无交易行时三格显示 0', async () => {
-    mockMonthlySummary = [{ month: '1999-01', income_cents: 999, expense_cents: 888, refund_cents: 7 }]
-    const wrapper = await mountView()
+  it("当月无交易行时三格显示 0", async () => {
+    mockMonthlySummary = [
+      { month: "1999-01", income_cents: 999, expense_cents: 888, refund_cents: 7 },
+    ];
+    const wrapper = await mountView();
     expect(wrapper.text()).toContain(
       `本月收支收入${formatAmount(0)}净支出${formatAmount(0)}结余${formatAmount(0)}`,
-    )
-  })
-})
+    );
+  });
+});
 
-describe('DashboardView 物品使用成本卡（issue #122）', () => {
-  it('展示全部在用物品每天成本合计（默认币种）与在用件数', async () => {
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="item-daily-cost-card"]')
-    expect(card.exists()).toBe(true)
-    expect(card.text()).toContain('全部在用物品每天成本合计')
+describe("DashboardView 物品使用成本卡（issue #122）", () => {
+  it("展示全部在用物品每天成本合计（默认币种）与在用件数", async () => {
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="item-daily-cost-card"]');
+    expect(card.exists()).toBe(true);
+    expect(card.text()).toContain("全部在用物品每天成本合计");
     // 12345 分（默认币种，后端聚合结果直接展示）
-    expect(card.text()).toContain(`${formatAmount(12345, cny)}/天`)
-    expect(card.text()).toContain('共 3 件在用物品')
-  })
+    expect(card.text()).toContain(`${formatAmount(12345, cny)}/天`);
+    expect(card.text()).toContain("共 3 件在用物品");
+  });
 
-  it('无在用物品时空态占位而非 0 数字', async () => {
+  it("无在用物品时空态占位而非 0 数字", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         ...BASE_OVERRIDES,
-        item_daily_total: { native_currency: 'CNY', per_day_cents: 0, item_count: 0 },
+        item_daily_total: { native_currency: "CNY", per_day_cents: 0, item_count: 0 },
       },
-    })
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="item-daily-cost-card"]')
-    expect(card.text()).toContain('暂无在用物品')
-    expect(card.text()).not.toContain('/天')
-  })
+    });
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="item-daily-cost-card"]');
+    expect(card.text()).toContain("暂无在用物品");
+    expect(card.text()).not.toContain("/天");
+  });
 
-  it('聚合命令报错（如缺汇率）时显示提示文案而非空数字', async () => {
+  it("聚合命令报错（如缺汇率）时显示提示文案而非空数字", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         ...BASE_OVERRIDES,
-        item_daily_total: () => Promise.reject(new Error('缺少 JPY→CNY 汇率，无法折算')),
+        item_daily_total: () => Promise.reject(new Error("缺少 JPY→CNY 汇率，无法折算")),
       },
-    })
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="item-daily-cost-card"]')
-    expect(card.text()).toContain('缺少 JPY→CNY 汇率，无法折算')
+    });
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="item-daily-cost-card"]');
+    expect(card.text()).toContain("缺少 JPY→CNY 汇率，无法折算");
     // 不渲染空数字或合计
-    expect(card.text()).not.toContain(cny.symbol)
-  })
+    expect(card.text()).not.toContain(cny.symbol);
+  });
 
-  it('物品写入失效（store version 变化）后自动重拉合计', async () => {
-    let total = { native_currency: 'CNY', per_day_cents: 10000, item_count: 1 }
+  it("物品写入失效（store version 变化）后自动重拉合计", async () => {
+    let total = { native_currency: "CNY", per_day_cents: 10000, item_count: 1 };
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
@@ -545,256 +546,259 @@ describe('DashboardView 物品使用成本卡（issue #122）', () => {
         item_daily_total: () => Promise.resolve(total),
         list_items: [],
       },
-    })
-    const wrapper = await mountView()
+    });
+    const wrapper = await mountView();
     expect(wrapper.find('[data-testid="item-daily-cost-card"]').text()).toContain(
       `${formatAmount(10000, cny)}/天`,
-    )
+    );
     // 物品写入 → 物品 store 重拉（模拟 ledger:changed 路径）→ version 自增 → 合计跟随重拉
-    total = { native_currency: 'CNY', per_day_cents: 30000, item_count: 2 }
-    await useItemsStore().refresh()
-    await flushPromises()
-    const card = wrapper.find('[data-testid="item-daily-cost-card"]')
-    expect(card.text()).toContain(`${formatAmount(30000, cny)}/天`)
-    expect(card.text()).toContain('共 2 件在用物品')
-  })
-})
+    total = { native_currency: "CNY", per_day_cents: 30000, item_count: 2 };
+    await useItemsStore().refresh();
+    await flushPromises();
+    const card = wrapper.find('[data-testid="item-daily-cost-card"]');
+    expect(card.text()).toContain(`${formatAmount(30000, cny)}/天`);
+    expect(card.text()).toContain("共 2 件在用物品");
+  });
+});
 
-describe('DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词汇表「窗口分级」）', () => {
+describe("DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词汇表「窗口分级」）", () => {
   afterEach(() => {
-    amountPrivacyEnabled.value = false
-  })
+    amountPrivacyEnabled.value = false;
+  });
 
-  it('移动档栅格单列化：本月收支三格与投资概览三格均单列（断点口径接窗口分级常量，不自立断点）', async () => {
-    setFakeMedia({ width: 600 })
-    const wrapper = await mountView()
-    const grids = wrapper.findAllComponents(NGrid)
-    expect(grids.length).toBe(2)
-    expect(grids[0].props('cols')).toBe(1) // 本月收支
-    expect(grids[1].props('cols')).toBe(1) // 投资概览
-  })
+  it("移动档栅格单列化：本月收支三格与投资概览三格均单列（断点口径接窗口分级常量，不自立断点）", async () => {
+    setFakeMedia({ width: 600 });
+    const wrapper = await mountView();
+    const grids = wrapper.findAllComponents(NGrid);
+    expect(grids.length).toBe(2);
+    expect(grids[0].props("cols")).toBe(1); // 本月收支
+    expect(grids[1].props("cols")).toBe(1); // 投资概览
+  });
 
   it('桌面档栅格：本月收支三列、投资概览三列（列数纯数字——具名断点写法在 responsive="self" 下会静默退成 1 列）', async () => {
-    const wrapper = await mountView()
-    const grids = wrapper.findAllComponents(NGrid)
-    expect(grids.length).toBe(2)
-    expect(grids[0].props('cols')).toBe(3)
-    expect(grids[1].props('cols')).toBe(3)
-  })
+    const wrapper = await mountView();
+    const grids = wrapper.findAllComponents(NGrid);
+    expect(grids.length).toBe(2);
+    expect(grids[0].props("cols")).toBe(3);
+    expect(grids[1].props("cols")).toBe(3);
+  });
 
-  it('跨断点缩窗实时切列（单列 ⇄ 三列）', async () => {
-    const wrapper = await mountView()
-    expect(wrapper.findAllComponents(NGrid)[0].props('cols')).toBe(3)
-    setFakeMedia({ width: 600 })
-    await flushPromises()
-    expect(wrapper.findAllComponents(NGrid)[0].props('cols')).toBe(1)
-    setFakeMedia({ width: 1280 })
-    await flushPromises()
-    expect(wrapper.findAllComponents(NGrid)[0].props('cols')).toBe(3)
-  })
+  it("跨断点缩窗实时切列（单列 ⇄ 三列）", async () => {
+    const wrapper = await mountView();
+    expect(wrapper.findAllComponents(NGrid)[0].props("cols")).toBe(3);
+    setFakeMedia({ width: 600 });
+    await flushPromises();
+    expect(wrapper.findAllComponents(NGrid)[0].props("cols")).toBe(1);
+    setFakeMedia({ width: 1280 });
+    await flushPromises();
+    expect(wrapper.findAllComponents(NGrid)[0].props("cols")).toBe(3);
+  });
 
-  it('移动档触控轴：自由度口径说明点按可达（气泡全文）；指针轴点击无气泡（行为不变）', async () => {
-    setFakeMedia({ width: 600, hover: 'none', pointer: 'coarse' })
-    const touch = await mountView()
-    const trigger = touch.find('[data-testid="financial-freedom-info"]')
-    expect(trigger.exists()).toBe(true)
+  it("移动档触控轴：自由度口径说明点按可达（气泡全文）；指针轴点击无气泡（行为不变）", async () => {
+    setFakeMedia({ width: 600, hover: "none", pointer: "coarse" });
+    const touch = await mountView();
+    const trigger = touch.find('[data-testid="financial-freedom-info"]');
+    expect(trigger.exists()).toBe(true);
     // 触控轴热区 ≥48px：text 中号按钮 34px 高，外扩量须经 inset 覆写补足（默认 ±6px 仅 46px）
-    expect((trigger.element as HTMLElement).style.getPropertyValue('--touch-hit-inset')).toBe(
-      '-8px -14px',
-    )
-    expect(document.body.querySelector('.n-popover')).toBeNull()
-    await trigger.trigger('click')
-    await flushPromises()
-    const popover = document.body.querySelector('.n-popover')
-    expect(popover).not.toBeNull()
-    expect(popover!.textContent).toContain('可投资资产 × 3% ÷ 年度预算总额')
-    expect(popover!.textContent).toContain('安全提取率')
+    expect((trigger.element as HTMLElement).style.getPropertyValue("--touch-hit-inset")).toBe(
+      "-8px -14px",
+    );
+    expect(document.body.querySelector(".n-popover")).toBeNull();
+    await trigger.trigger("click");
+    await flushPromises();
+    const popover = document.body.querySelector(".n-popover");
+    expect(popover).not.toBeNull();
+    expect(popover!.textContent).toContain("可投资资产 × 3% ÷ 年度预算总额");
+    expect(popover!.textContent).toContain("安全提取率");
     // 卸载触控挂载，避免其已开启的气泡泄入指针轴断言
-    touch.unmount()
+    touch.unmount();
 
-    setFakeMedia({ hover: 'hover', pointer: 'fine' })
-    const pointer = await mountView()
-    await pointer.find('[data-testid="financial-freedom-info"]').trigger('click')
-    await flushPromises()
-    expect(document.body.querySelector('.n-popover')).toBeNull()
-  })
+    setFakeMedia({ hover: "hover", pointer: "fine" });
+    const pointer = await mountView();
+    await pointer.find('[data-testid="financial-freedom-info"]').trigger("click");
+    await flushPromises();
+    expect(document.body.querySelector(".n-popover")).toBeNull();
+  });
 
-  it('移动档：金额隐私模式生效（掩码替换各金额，栅格单列不回归）', async () => {
-    setFakeMedia({ width: 600 })
-    setCurrentMonthSummary({ income_cents: 100000, expense_cents: 80000, refund_cents: 5000 })
-    const wrapper = await mountView()
-    expect(wrapper.findAllComponents(NGrid)[0].props('cols')).toBe(1)
-    const netWorthText = formatAmount(123456, cny)
-    expect(wrapper.text()).toContain(netWorthText)
-    amountPrivacyEnabled.value = true
-    await nextTick()
-    const text = wrapper.text()
-    expect(text).toContain('••••')
-    expect(text).not.toContain(cny.symbol)
-    expect(text).not.toContain(netWorthText)
-    amountPrivacyEnabled.value = false
-    await nextTick()
-    expect(wrapper.text()).toContain(netWorthText)
-  })
-})
+  it("移动档：金额隐私模式生效（掩码替换各金额，栅格单列不回归）", async () => {
+    setFakeMedia({ width: 600 });
+    setCurrentMonthSummary({ income_cents: 100000, expense_cents: 80000, refund_cents: 5000 });
+    const wrapper = await mountView();
+    expect(wrapper.findAllComponents(NGrid)[0].props("cols")).toBe(1);
+    const netWorthText = formatAmount(123456, cny);
+    expect(wrapper.text()).toContain(netWorthText);
+    amountPrivacyEnabled.value = true;
+    await nextTick();
+    const text = wrapper.text();
+    expect(text).toContain("••••");
+    expect(text).not.toContain(cny.symbol);
+    expect(text).not.toContain(netWorthText);
+    amountPrivacyEnabled.value = false;
+    await nextTick();
+    expect(wrapper.text()).toContain(netWorthText);
+  });
+});
 
-describe('DashboardView 金额隐私模式（issue #567 仪表盘面核查：无 canvas 图表，数字卡全走格式化接缝）', () => {
+describe("DashboardView 金额隐私模式（issue #567 仪表盘面核查：无 canvas 图表，数字卡全走格式化接缝）", () => {
   afterEach(() => {
-    amountPrivacyEnabled.value = false
-  })
+    amountPrivacyEnabled.value = false;
+  });
 
-  it('开启后各金额卡显示掩码、币种符号一同隐藏，百分比与件数保留', async () => {
-    setCurrentMonthSummary({ income_cents: 100000, expense_cents: 80000, refund_cents: 5000 })
+  it("开启后各金额卡显示掩码、币种符号一同隐藏，百分比与件数保留", async () => {
+    setCurrentMonthSummary({ income_cents: 100000, expense_cents: 80000, refund_cents: 5000 });
     mockBudgetProgress = [
       {
         budget: {
-          id: 'b-ok',
-          category_id: 'cat-1',
-          period: 'monthly',
+          id: "b-ok",
+          category_id: "cat-1",
+          period: "monthly",
           amount_cents: 50000,
-          start_date: '2026-07-01',
-          created_at: '2026-07-01T00:00:00Z',
-          updated_at: '2026-07-01T00:00:00Z',
+          start_date: "2026-07-01",
+          created_at: "2026-07-01T00:00:00Z",
+          updated_at: "2026-07-01T00:00:00Z",
           version: 1,
-          device_id: 'test',
+          device_id: "test",
           is_deleted: false,
         },
-        category_name: '餐饮',
+        category_name: "餐饮",
         spent_cents: 4000,
         over_budget: false,
       },
-    ]
-    const wrapper = await mountView()
+    ];
+    const wrapper = await mountView();
     // 关闭态先确认现状金额在位（回归基准）；预言在掩码开启前取（开启后 formatAmount 返回掩码）
-    const netWorthText = formatAmount(123456, cny)
-    expect(wrapper.text()).toContain(netWorthText)
+    const netWorthText = formatAmount(123456, cny);
+    expect(wrapper.text()).toContain(netWorthText);
 
-    amountPrivacyEnabled.value = true
-    await nextTick()
+    amountPrivacyEnabled.value = true;
+    await nextTick();
 
-    const text = wrapper.text()
+    const text = wrapper.text();
     // 净资产 / 本月收支 / 投资概览 / 自由度分子分母 / 物品成本 / 预算行全部掩码；掩码无币种符号
-    expect(text).toContain('••••')
-    expect(text).not.toContain(cny.symbol)
-    expect(text).not.toContain(netWorthText)
-    expect(wrapper.find('[data-testid="budget-progress-card"]').text()).toContain('•••• / ••••')
+    expect(text).toContain("••••");
+    expect(text).not.toContain(cny.symbol);
+    expect(text).not.toContain(netWorthText);
+    expect(wrapper.find('[data-testid="budget-progress-card"]').text()).toContain("•••• / ••••");
     // 百分比与件数保留（spec #564：隐藏的是数字不是形状与方向）
-    expect(wrapper.find('[data-testid="financial-freedom-ratio"]').text()).toBe('7.5%')
-    expect(text).toContain('共 3 件在用物品')
+    expect(wrapper.find('[data-testid="financial-freedom-ratio"]').text()).toBe("7.5%");
+    expect(text).toContain("共 3 件在用物品");
 
     // 关闭后立即恢复原样（回归保障）
-    amountPrivacyEnabled.value = false
-    await nextTick()
-    expect(wrapper.text()).toContain(netWorthText)
-  })
-})
+    amountPrivacyEnabled.value = false;
+    await nextTick();
+    expect(wrapper.text()).toContain(netWorthText);
+  });
+});
 
-describe('DashboardView 预算进度卡（issue #144）', () => {
+describe("DashboardView 预算进度卡（issue #144）", () => {
   const progress = (
     over: boolean,
     spent: number,
     amount: number,
     name?: string,
-    categoryId = 'cat-1',
+    categoryId = "cat-1",
   ): BudgetProgress => ({
     budget: {
-      id: `b-${over ? 'over' : 'ok'}`,
+      id: `b-${over ? "over" : "ok"}`,
       category_id: categoryId,
-      period: 'monthly',
+      period: "monthly",
       amount_cents: amount,
-      start_date: '2026-07-01',
-      created_at: '2026-07-01T00:00:00Z',
-      updated_at: '2026-07-01T00:00:00Z',
+      start_date: "2026-07-01",
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
       version: 1,
-      device_id: 'test',
+      device_id: "test",
       is_deleted: false,
     },
-    category_name: name ?? (over ? '餐饮' : '交通'),
+    category_name: name ?? (over ? "餐饮" : "交通"),
     spent_cents: spent,
     over_budget: over,
-  })
+  });
 
-  it('逐行渲染：分类名 + 进度条 + 已花/额度', async () => {
-    mockBudgetProgress = [progress(false, 4000, 50000, '餐饮'), progress(false, 0, 10000, '交通')]
-    const wrapper = await mountView()
-    const text = wrapper.text()
-    expect(text).toContain('预算进度')
-    expect(text).toContain('餐饮')
-    expect(text).toContain('交通')
-    expect(text).toContain(`${formatAmount(4000)} / ${formatAmount(50000)}`)
-    expect(text).toContain(`${formatAmount(0)} / ${formatAmount(10000)}`)
-    expect(wrapper.findComponent(NProgress).exists()).toBe(true)
-  })
+  it("逐行渲染：分类名 + 进度条 + 已花/额度", async () => {
+    mockBudgetProgress = [progress(false, 4000, 50000, "餐饮"), progress(false, 0, 10000, "交通")];
+    const wrapper = await mountView();
+    const text = wrapper.text();
+    expect(text).toContain("预算进度");
+    expect(text).toContain("餐饮");
+    expect(text).toContain("交通");
+    expect(text).toContain(`${formatAmount(4000)} / ${formatAmount(50000)}`);
+    expect(text).toContain(`${formatAmount(0)} / ${formatAmount(10000)}`);
+    expect(wrapper.findComponent(NProgress).exists()).toBe(true);
+  });
 
-  it('超支行红色高亮：进度条 error 状态 + 超支标记', async () => {
-    mockBudgetProgress = [progress(false, 4000, 50000, '交通'), progress(true, 60000, 50000, '餐饮')]
-    const wrapper = await mountView()
+  it("超支行红色高亮：进度条 error 状态 + 超支标记", async () => {
+    mockBudgetProgress = [
+      progress(false, 4000, 50000, "交通"),
+      progress(true, 60000, 50000, "餐饮"),
+    ];
+    const wrapper = await mountView();
     // 财务自由度卡（issue #344）也有进度条：断言收窄到预算进度卡内
-    const card = wrapper.find('[data-testid="budget-progress-card"]')
-    const bars = card.findAllComponents(NProgress)
-    expect(bars).toHaveLength(2)
-    expect(bars[0].props('status')).toBe('success')
-    expect(bars[1].props('status')).toBe('error')
-    expect(wrapper.text()).toContain('超支')
+    const card = wrapper.find('[data-testid="budget-progress-card"]');
+    const bars = card.findAllComponents(NProgress);
+    expect(bars).toHaveLength(2);
+    expect(bars[0].props("status")).toBe("success");
+    expect(bars[1].props("status")).toBe("error");
+    expect(wrapper.text()).toContain("超支");
     // 超支行金额红色高亮（NText type=error）
-    expect(wrapper.text()).toContain(`${formatAmount(60000)} / ${formatAmount(50000)}`)
-  })
+    expect(wrapper.text()).toContain(`${formatAmount(60000)} / ${formatAmount(50000)}`);
+  });
 
-  it('无任何预算时卡片保留，空态占位而非逐行进度条', async () => {
-    mockBudgetProgress = []
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="budget-progress-card"]')
-    expect(card.exists()).toBe(true)
-    expect(card.text()).toContain('未设置预算')
+  it("无任何预算时卡片保留，空态占位而非逐行进度条", async () => {
+    mockBudgetProgress = [];
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="budget-progress-card"]');
+    expect(card.exists()).toBe(true);
+    expect(card.text()).toContain("未设置预算");
     // 财务自由度卡（issue #344）也有进度条：断言收窄到预算进度卡内
-    expect(card.findComponent(NProgress).exists()).toBe(false)
-  })
+    expect(card.findComponent(NProgress).exists()).toBe(false);
+  });
 
-  it('子分类预算显示「父 > 子」路径名；孤儿预算回退「未分类」（issue #356）', async () => {
+  it("子分类预算显示「父 > 子」路径名；孤儿预算回退「未分类」（issue #356）", async () => {
     // 参考数据注入父+子分类；孤儿预算的 category_id 不在任何参考表中
     const dashCategories: Category[] = [
       {
-        id: 'cat-1',
-        name: '餐饮',
-        kind: 'expense',
+        id: "cat-1",
+        name: "餐饮",
+        kind: "expense",
         parent_id: null,
         icon: null,
         sort_order: 0,
-        created_at: '2026-01-01T00:00:00Z',
-        updated_at: '2026-01-01T00:00:00Z',
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
         version: 1,
-        device_id: 'test',
+        device_id: "test",
         is_deleted: false,
       },
       {
-        id: 'cat-1-sub',
-        name: '早餐',
-        kind: 'expense',
-        parent_id: 'cat-1',
+        id: "cat-1-sub",
+        name: "早餐",
+        kind: "expense",
+        parent_id: "cat-1",
         icon: null,
         sort_order: 0,
-        created_at: '2026-01-01T00:00:00Z',
-        updated_at: '2026-01-01T00:00:00Z',
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
         version: 1,
-        device_id: 'test',
+        device_id: "test",
         is_deleted: false,
       },
-    ]
+    ];
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         ...BASE_OVERRIDES,
         list_categories: dashCategories,
         budget_progress: () => [
-          progress(false, 4000, 50000, '早餐', 'cat-1-sub'),
-          progress(false, 1000, 20000, '未分类', 'cat-gone'),
+          progress(false, 4000, 50000, "早餐", "cat-1-sub"),
+          progress(false, 1000, 20000, "未分类", "cat-gone"),
         ],
       },
-    })
-    await useReferenceStore().refresh()
-    const wrapper = await mountView()
-    const card = wrapper.find('[data-testid="budget-progress-card"]')
-    expect(card.text()).toContain('餐饮 > 早餐')
-    expect(card.text()).toContain('未分类')
-  })
-})
+    });
+    await useReferenceStore().refresh();
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="budget-progress-card"]');
+    expect(card.text()).toContain("餐饮 > 早餐");
+    expect(card.text()).toContain("未分类");
+  });
+});

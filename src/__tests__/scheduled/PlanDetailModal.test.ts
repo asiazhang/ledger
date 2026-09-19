@@ -1,13 +1,13 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { mount, flushPromises } from '@vue/test-utils'
-import PlanDetailModal from '@/scheduled/PlanDetailModal.vue'
-import { mountFlushed } from '@ledger/test-support/mount'
-import { makeOccurrence } from '../factories'
-import { formatAmount } from '@ledger/money'
-import { refCurrencies } from '@ledger/test-support/reference-stubs'
-import { MOBILE_CARD_CLASS } from '@ledger/ui-kit/app-modal.css.ts'
-import { setFakeMedia } from '@ledger/test-support/media-mock'
+import { describe, it, expect, beforeEach } from "vitest";
+import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { mount, flushPromises } from "@vue/test-utils";
+import PlanDetailModal from "@/scheduled/PlanDetailModal.vue";
+import { mountFlushed } from "@ledger/test-support/mount";
+import { makeOccurrence } from "../factories";
+import { formatAmount } from "@ledger/money";
+import { refCurrencies } from "@ledger/test-support/reference-stubs";
+import { MOBILE_CARD_CLASS } from "@ledger/ui-kit/app-modal.css.ts";
+import { setFakeMedia } from "@ledger/test-support/media-mock";
 import type {
   Account,
   Category,
@@ -15,133 +15,131 @@ import type {
   ScheduledTransaction,
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
-} from '@ledger/types'
+} from "@ledger/types";
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
-const cny = refCurrencies[0]
-
+const cny = refCurrencies[0];
 
 const mockAccounts: Account[] = [
   {
-    id: 'acc-1',
-    name: '招商银行',
-    type: 'cash',
-    currency_code: 'CNY',
+    id: "acc-1",
+    name: "招商银行",
+    type: "cash",
+    currency_code: "CNY",
     initial_balance_cents: 0,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     version: 1,
-    device_id: 'test',
+    device_id: "test",
     is_deleted: false,
     is_hidden: false,
   },
-]
+];
 
 const mockCategories: Category[] = [
   {
-    id: 'cat-1',
-    name: '订阅服务',
-    kind: 'expense',
+    id: "cat-1",
+    name: "订阅服务",
+    kind: "expense",
     parent_id: null,
     icon: null,
     sort_order: 0,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     version: 1,
-    device_id: 'test',
+    device_id: "test",
     is_deleted: false,
   },
-]
+];
 
-const mockMerchants: Merchant[] = []
+const mockMerchants: Merchant[] = [];
 
 function makeCore(partial: Partial<ScheduledTransaction> & { id: string }): ScheduledTransaction {
   return {
-    kind: 'subscription',
-    status: 'active',
-    account_id: 'acc-1',
-    category_id: 'cat-1',
+    kind: "subscription",
+    status: "active",
+    account_id: "acc-1",
+    category_id: "cat-1",
     amount_cents: 1500,
-    currency_code: 'CNY',
-    recurrence_type: 'monthly',
+    currency_code: "CNY",
+    recurrence_type: "monthly",
     recurrence_interval: 1,
     recurrence_day: null,
-    start_date: '2026-01-01',
-    note: '视频会员',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    start_date: "2026-01-01",
+    note: "视频会员",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     version: 1,
-    device_id: 'test',
+    device_id: "test",
     is_deleted: false,
     ...partial,
-  }
+  };
 }
 
 interface DetailParts {
-  pending?: ScheduledTransactionOccurrence[]
-  failed?: ScheduledTransactionOccurrence[]
-  completed?: ScheduledTransactionOccurrence[]
-  cancelled?: ScheduledTransactionOccurrence[]
-  extension?: ScheduledTransactionDetail['extension']
+  pending?: ScheduledTransactionOccurrence[];
+  failed?: ScheduledTransactionOccurrence[];
+  completed?: ScheduledTransactionOccurrence[];
+  cancelled?: ScheduledTransactionOccurrence[];
+  extension?: ScheduledTransactionDetail["extension"];
 }
 
 function makeDetail(
   core: ScheduledTransaction,
   parts: DetailParts = {},
 ): ScheduledTransactionDetail {
-  const pending = parts.pending ?? []
-  const failed = parts.failed ?? []
-  const completed = parts.completed ?? []
-  const cancelled = parts.cancelled ?? []
+  const pending = parts.pending ?? [];
+  const failed = parts.failed ?? [];
+  const completed = parts.completed ?? [];
+  const cancelled = parts.cancelled ?? [];
   return {
     core,
     // 默认扩展按 SubscriptionPlan 全字段装配（makeCore 默认 kind = 'subscription'；
     // 其余形态用例显式传 parts.extension，见分期用例）
-    extension:
-      parts.extension ?? {
-        scheduled_transaction_id: core.id,
-        merchant_id: null,
-        policy_id: null,
-      },
+    extension: parts.extension ?? {
+      scheduled_transaction_id: core.id,
+      merchant_id: null,
+      policy_id: null,
+    },
     pending_occurrences: pending,
     completed_occurrences: completed.length,
     // 已完成期次金额合计（issue #204 实时汇总口径）：由已完成期次金额求和
     completed_amount_cents: completed.reduce((sum, o) => sum + o.amount_cents, 0),
     occurrences: [...pending, ...failed, ...completed, ...cancelled],
-  }
+  };
 }
 
 // —— invoke mock：可变数据源，重试/展开后重载读得到最新值 ——
-let mockDetails = new Map<string, ScheduledTransactionDetail>()
+let mockDetails = new Map<string, ScheduledTransactionDetail>();
 
 // NModal 内容 teleport 到 body：内容断言与交互直接走 document.body
 function q(sel: string): HTMLElement | null {
-  return document.body.querySelector(sel)
+  return document.body.querySelector(sel);
 }
 
 function exists(sel: string): boolean {
-  return q(sel) !== null
+  return q(sel) !== null;
 }
 
 async function click(sel: string) {
-  const el = q(sel)
-  expect(el, `元素 ${sel} 应存在`).not.toBeNull()
-  ;(el as HTMLElement).click()
-  await flushPromises()
+  const el = q(sel);
+  expect(el, `元素 ${sel} 应存在`).not.toBeNull();
+  (el as HTMLElement).click();
+  await flushPromises();
 }
 
 async function mountModal() {
-  return mountFlushed(PlanDetailModal)
+  return mountFlushed(PlanDetailModal);
 }
 
-async function openModal(wrapper: ReturnType<typeof mount>, id = 'plan-1') {
-  const vm = wrapper.vm as unknown as { open: (id: string) => Promise<void> }
-  await vm.open(id)
-  await flushPromises()
+async function openModal(wrapper: ReturnType<typeof mount>, id = "plan-1") {
+  const vm = wrapper.vm as unknown as { open: (id: string) => Promise<void> };
+  await vm.open(id);
+  await flushPromises();
 }
 
 beforeEach(async () => {
-  mockDetails = new Map()
+  mockDetails = new Map();
   // 唯一接缝布线（ADR-0085）：账户/分类/商户以本套夹具覆写（值与规范夹具
   // 不同，属场景契约而非重复枚举），进 defaults 表；可变详情库与重试/展开
   // 编排为函数型 overrides。其余参考命令由规范夹具兑底；store 层预热
@@ -154,204 +152,204 @@ beforeEach(async () => {
     },
     overrides: {
       get_scheduled_transaction_detail: (args) => {
-        const detail = mockDetails.get(String(args?.id))
-        return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
+        const detail = mockDetails.get(String(args?.id));
+        return detail ? Promise.resolve(detail) : Promise.reject(new Error("无此计划详情"));
       },
       execute_scheduled_occurrence: (args) => {
-        const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string }
+        const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string };
         // 重试语义：failed 期次 → completed
         for (const [id, d] of mockDetails) {
-          if (!d.occurrences.some((o) => o.id === occurrence_id && o.status === 'failed')) continue
+          if (!d.occurrences.some((o) => o.id === occurrence_id && o.status === "failed")) continue;
           mockDetails.set(id, {
             ...d,
             occurrences: d.occurrences.map((o) =>
-              o.id === occurrence_id ? { ...o, status: 'completed' as const } : o,
+              o.id === occurrence_id ? { ...o, status: "completed" as const } : o,
             ),
-          })
+          });
         }
-        return 'txn-new'
+        return "txn-new";
       },
       expand_scheduled_occurrences: (args) => {
-        const planId = String(args?.id)
-        const d = mockDetails.get(planId)
-        if (!d) return Promise.reject(new Error('无此计划详情'))
+        const planId = String(args?.id);
+        const d = mockDetails.get(planId);
+        if (!d) return Promise.reject(new Error("无此计划详情"));
         const last = [...d.occurrences].sort((a, b) =>
           b.scheduled_date.localeCompare(a.scheduled_date),
-        )[0]
-        const newDate = `${Number(last?.scheduled_date.slice(0, 4) ?? '2026') + 1}-01-01`
+        )[0];
+        const newDate = `${Number(last?.scheduled_date.slice(0, 4) ?? "2026") + 1}-01-01`;
         const occ = makeOccurrence({
-          id: 'occ-expanded',
+          id: "occ-expanded",
           scheduled_transaction_id: planId,
           scheduled_date: newDate,
-        })
+        });
         mockDetails.set(planId, {
           ...d,
           occurrences: [...d.occurrences, occ],
-        })
-        return Promise.resolve([occ.id])
+        });
+        return Promise.resolve([occ.id]);
       },
     },
     refreshReferenceStores: true,
-  })
-  await seam.ready
-})
+  });
+  await seam.ready;
+});
 
-describe('PlanDetailModal 期次列表（issue #205）', () => {
-  it('展示日期、金额、状态，待执行/失败/已完成按日期升序合并', async () => {
+describe("PlanDetailModal 期次列表（issue #205）", () => {
+  it("展示日期、金额、状态，待执行/失败/已完成按日期升序合并", async () => {
     mockDetails.set(
-      'plan-1',
-      makeDetail(makeCore({ id: 'plan-1' }), {
-        pending: [makeOccurrence({ id: 'o2', scheduled_date: '2026-04-01' })],
-        failed: [makeOccurrence({ id: 'f1', scheduled_date: '2026-02-01', status: 'failed' })],
+      "plan-1",
+      makeDetail(makeCore({ id: "plan-1" }), {
+        pending: [makeOccurrence({ id: "o2", scheduled_date: "2026-04-01" })],
+        failed: [makeOccurrence({ id: "f1", scheduled_date: "2026-02-01", status: "failed" })],
         completed: [
           makeOccurrence({
-            id: 'c1',
-            scheduled_date: '2026-01-01',
-            status: 'completed',
-            transaction_id: 'txn-1',
+            id: "c1",
+            scheduled_date: "2026-01-01",
+            status: "completed",
+            transaction_id: "txn-1",
           }),
         ],
       }),
-    )
-    const wrapper = await mountModal()
-    await openModal(wrapper)
-    const text = document.body.textContent ?? ''
+    );
+    const wrapper = await mountModal();
+    await openModal(wrapper);
+    const text = document.body.textContent ?? "";
     // 三种状态的期次都在列表中，按日期升序
-    expect(text.indexOf('2026-01-01')).toBeLessThan(text.indexOf('2026-02-01'))
-    expect(text.indexOf('2026-02-01')).toBeLessThan(text.indexOf('2026-04-01'))
-    expect(q('[data-testid="occ-status-c1"]')!.textContent).toBe('已完成')
-    expect(q('[data-testid="occ-status-f1"]')!.textContent).toBe('失败')
-    expect(q('[data-testid="occ-status-o2"]')!.textContent).toBe('待执行')
+    expect(text.indexOf("2026-01-01")).toBeLessThan(text.indexOf("2026-02-01"));
+    expect(text.indexOf("2026-02-01")).toBeLessThan(text.indexOf("2026-04-01"));
+    expect(q('[data-testid="occ-status-c1"]')!.textContent).toBe("已完成");
+    expect(q('[data-testid="occ-status-f1"]')!.textContent).toBe("失败");
+    expect(q('[data-testid="occ-status-o2"]')!.textContent).toBe("待执行");
     // 金额按计划币种展示（1500 分）
-    expect(text).toContain(formatAmount(1500, cny))
-  })
+    expect(text).toContain(formatAmount(1500, cny));
+  });
 
-  it('重试按钮状态门控：仅 failed 期次有重试入口', async () => {
+  it("重试按钮状态门控：仅 failed 期次有重试入口", async () => {
     mockDetails.set(
-      'plan-1',
-      makeDetail(makeCore({ id: 'plan-1' }), {
-        pending: [makeOccurrence({ id: 'o1' })],
-        failed: [makeOccurrence({ id: 'f1', scheduled_date: '2026-02-01', status: 'failed' })],
-        completed: [makeOccurrence({ id: 'c1', status: 'completed' })],
+      "plan-1",
+      makeDetail(makeCore({ id: "plan-1" }), {
+        pending: [makeOccurrence({ id: "o1" })],
+        failed: [makeOccurrence({ id: "f1", scheduled_date: "2026-02-01", status: "failed" })],
+        completed: [makeOccurrence({ id: "c1", status: "completed" })],
       }),
-    )
-    const wrapper = await mountModal()
-    await openModal(wrapper)
-    expect(exists('[data-testid="occ-retry-f1"]')).toBe(true)
-    expect(exists('[data-testid="occ-retry-o1"]')).toBe(false)
-    expect(exists('[data-testid="occ-retry-c1"]')).toBe(false)
-  })
+    );
+    const wrapper = await mountModal();
+    await openModal(wrapper);
+    expect(exists('[data-testid="occ-retry-f1"]')).toBe(true);
+    expect(exists('[data-testid="occ-retry-o1"]')).toBe(false);
+    expect(exists('[data-testid="occ-retry-c1"]')).toBe(false);
+  });
 
-  it('点击重试走既有单期执行命令，成功后期次状态更新', async () => {
+  it("点击重试走既有单期执行命令，成功后期次状态更新", async () => {
     mockDetails.set(
-      'plan-1',
-      makeDetail(makeCore({ id: 'plan-1' }), {
-        failed: [makeOccurrence({ id: 'f1', scheduled_date: '2026-02-01', status: 'failed' })],
+      "plan-1",
+      makeDetail(makeCore({ id: "plan-1" }), {
+        failed: [makeOccurrence({ id: "f1", scheduled_date: "2026-02-01", status: "failed" })],
       }),
-    )
-    const wrapper = await mountModal()
-    await openModal(wrapper)
-    await click('[data-testid="occ-retry-f1"]')
-    expect(
-      mockInvoke.mock.calls.some(([cmd]) => cmd === 'execute_scheduled_occurrence'),
-    ).toBe(true)
+    );
+    const wrapper = await mountModal();
+    await openModal(wrapper);
+    await click('[data-testid="occ-retry-f1"]');
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "execute_scheduled_occurrence")).toBe(
+      true,
+    );
     // 重试成功后重拉详情：期次已转为已完成，重试入口消失
-    expect(q('[data-testid="occ-status-f1"]')!.textContent).toBe('已完成')
-    expect(exists('[data-testid="occ-retry-f1"]')).toBe(false)
-  })
+    expect(q('[data-testid="occ-status-f1"]')!.textContent).toBe("已完成");
+    expect(exists('[data-testid="occ-retry-f1"]')).toBe(false);
+  });
 
-  it('已取消期次可见且无重试入口（取消计划的历史期次不丢失）', async () => {
+  it("已取消期次可见且无重试入口（取消计划的历史期次不丢失）", async () => {
     mockDetails.set(
-      'plan-1',
-      makeDetail(makeCore({ id: 'plan-1' }), {
-        cancelled: [makeOccurrence({ id: 'x1', status: 'cancelled' })],
+      "plan-1",
+      makeDetail(makeCore({ id: "plan-1" }), {
+        cancelled: [makeOccurrence({ id: "x1", status: "cancelled" })],
       }),
-    )
-    const wrapper = await mountModal()
-    await openModal(wrapper)
-    expect(q('[data-testid="occ-status-x1"]')!.textContent).toBe('已取消')
-    expect(exists('[data-testid="occ-retry-x1"]')).toBe(false)
-  })
+    );
+    const wrapper = await mountModal();
+    await openModal(wrapper);
+    expect(q('[data-testid="occ-status-x1"]')!.textContent).toBe("已取消");
+    expect(exists('[data-testid="occ-retry-x1"]')).toBe(false);
+  });
 
-  it('详情加载失败时显示加载失败占位', async () => {
-    const wrapper = await mountModal()
-    await openModal(wrapper, 'missing')
-    expect(exists('[data-testid="occ-load-failed"]')).toBe(true)
-  })
-})
+  it("详情加载失败时显示加载失败占位", async () => {
+    const wrapper = await mountModal();
+    await openModal(wrapper, "missing");
+    expect(exists('[data-testid="occ-load-failed"]')).toBe(true);
+  });
+});
 
-describe('PlanDetailModal 展开更多期次（issue #205）', () => {
-  it('active 计划点击展开走既有期次展开命令并刷新，窗口外期次可见', async () => {
+describe("PlanDetailModal 展开更多期次（issue #205）", () => {
+  it("active 计划点击展开走既有期次展开命令并刷新，窗口外期次可见", async () => {
     mockDetails.set(
-      'plan-1',
-      makeDetail(makeCore({ id: 'plan-1' }), {
-        pending: [makeOccurrence({ id: 'o1', scheduled_date: '2026-12-01' })],
+      "plan-1",
+      makeDetail(makeCore({ id: "plan-1" }), {
+        pending: [makeOccurrence({ id: "o1", scheduled_date: "2026-12-01" })],
       }),
-    )
-    const wrapper = await mountModal()
-    await openModal(wrapper)
-    await click('[data-testid="occ-expand"]')
-    expect(
-      mockInvoke.mock.calls.some(([cmd]) => cmd === 'expand_scheduled_occurrences'),
-    ).toBe(true)
+    );
+    const wrapper = await mountModal();
+    await openModal(wrapper);
+    await click('[data-testid="occ-expand"]');
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "expand_scheduled_occurrences")).toBe(
+      true,
+    );
     // 展开后重拉详情：窗口外新期次出现在列表
-    expect(exists('[data-testid="occ-date-occ-expanded"]')).toBe(true)
-  })
+    expect(exists('[data-testid="occ-date-occ-expanded"]')).toBe(true);
+  });
 
-  it('非 active 计划不显示展开按钮（后端同口径）', async () => {
+  it("非 active 计划不显示展开按钮（后端同口径）", async () => {
     mockDetails.set(
-      'plan-1',
-      makeDetail(makeCore({ id: 'plan-1', status: 'cancelled' }), {
+      "plan-1",
+      makeDetail(makeCore({ id: "plan-1", status: "cancelled" }), {
         pending: [],
       }),
-    )
-    const wrapper = await mountModal()
-    await openModal(wrapper)
-    expect(exists('[data-testid="occ-expand"]')).toBe(false)
-  })
+    );
+    const wrapper = await mountModal();
+    await openModal(wrapper);
+    expect(exists('[data-testid="occ-expand"]')).toBe(false);
+  });
 
-  it('有限期数计划期次已全部生成后不显示展开按钮', async () => {
+  it("有限期数计划期次已全部生成后不显示展开按钮", async () => {
     mockDetails.set(
-      'plan-1',
-      makeDetail(makeCore({ id: 'plan-1', kind: 'installment' }), {
-        pending: [makeOccurrence({ id: 'o1' })],
-        failed: [makeOccurrence({ id: 'f1', scheduled_date: '2026-02-01', status: 'failed' })],
+      "plan-1",
+      makeDetail(makeCore({ id: "plan-1", kind: "installment" }), {
+        pending: [makeOccurrence({ id: "o1" })],
+        failed: [makeOccurrence({ id: "f1", scheduled_date: "2026-02-01", status: "failed" })],
         completed: [
-          makeOccurrence({ id: 'c1', scheduled_date: '2026-01-01', status: 'completed' }),
+          makeOccurrence({ id: "c1", scheduled_date: "2026-01-01", status: "completed" }),
         ],
         extension: {
-          scheduled_transaction_id: 'plan-1',
+          scheduled_transaction_id: "plan-1",
           merchant_id: null,
           total_amount_cents: 4500,
           total_occurrences: 3,
         },
       }),
-    )
-    const wrapper = await mountModal()
-    await openModal(wrapper)
-    expect(exists('[data-testid="occ-expand"]')).toBe(false)
-  })
-})
+    );
+    const wrapper = await mountModal();
+    await openModal(wrapper);
+    expect(exists('[data-testid="occ-expand"]')).toBe(false);
+  });
+});
 
 // issue #844 代表挂载：lg 档（表格详情类）弹窗在移动档自动全屏化，期次表格
 // 作为滚动方案（内容区纵向滚动）的真实作用面在场。
-describe('PlanDetailModal 移动档全屏化（issue #844）', () => {
-  it('lg 表格详情弹窗移动档呈全屏化结构：卡片钩子类 + 近全屏尺寸 + 期次表在场', async () => {
-    setFakeMedia({ width: 390 })
+describe("PlanDetailModal 移动档全屏化（issue #844）", () => {
+  it("lg 表格详情弹窗移动档呈全屏化结构：卡片钩子类 + 近全屏尺寸 + 期次表在场", async () => {
+    setFakeMedia({ width: 390 });
     mockDetails.set(
-      'plan-1',
-      makeDetail(makeCore({ id: 'plan-1' }), {
-        pending: [makeOccurrence({ id: 'o1', scheduled_date: '2026-04-01' })],
+      "plan-1",
+      makeDetail(makeCore({ id: "plan-1" }), {
+        pending: [makeOccurrence({ id: "o1", scheduled_date: "2026-04-01" })],
       }),
-    )
-    const wrapper = await mountModal()
-    await openModal(wrapper)
+    );
+    const wrapper = await mountModal();
+    await openModal(wrapper);
 
-    const card = document.body.querySelector('.n-card')
-    expect(card, '卡片应存在').not.toBeNull()
-    expect(card!.classList.contains(MOBILE_CARD_CLASS)).toBe(true)
-    expect((card as HTMLElement).style.width).toBe('calc(100vw - 32px)')
+    const card = document.body.querySelector(".n-card");
+    expect(card, "卡片应存在").not.toBeNull();
+    expect(card!.classList.contains(MOBILE_CARD_CLASS)).toBe(true);
+    expect((card as HTMLElement).style.width).toBe("calc(100vw - 32px)");
     // 滚动方案的作用面：期次表格真实渲染于卡片内容区
-    expect(document.body.querySelector('.n-card-content .n-data-table')).not.toBeNull()
-  })
-})
+    expect(document.body.querySelector(".n-card-content .n-data-table")).not.toBeNull();
+  });
+});

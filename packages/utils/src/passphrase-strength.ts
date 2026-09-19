@@ -16,42 +16,43 @@
  */
 
 /** 口令强度档位闭集（zxcvbn score 0–1 弱 / 2 中 / 3 强 / 4 极强） */
-export type PassphraseStrengthTier = 'weak' | 'medium' | 'strong' | 'very-strong'
+export type PassphraseStrengthTier = "weak" | "medium" | "strong" | "very-strong";
 
 /** 单次评估结果：zxcvbn 原始 score + 档位 + 色条填充百分比（纯展示刻度） */
 export interface PassphraseStrengthAssessment {
-  score: 0 | 1 | 2 | 3 | 4
-  tier: PassphraseStrengthTier
+  score: 0 | 1 | 2 | 3 | 4;
+  tier: PassphraseStrengthTier;
   /** 色条填充百分比（(score+1)×20%），同档内保留刻度差，仅展示用 */
-  percent: number
+  percent: number;
 }
 
-type ZxcvbnScore = PassphraseStrengthAssessment['score']
+type ZxcvbnScore = PassphraseStrengthAssessment["score"];
 
 /**
  * score→档位闭集映射（同步纯函数）：0–1 归弱、2/3/4 各自成档。
  * 映射口径全仓唯此一处，改档位边界只碰本函数。
  */
 export function strengthForScore(score: ZxcvbnScore): PassphraseStrengthAssessment {
-  const tier: PassphraseStrengthTier = score <= 1 ? 'weak' : score === 2 ? 'medium' : score === 3 ? 'strong' : 'very-strong'
-  return { score, tier, percent: (score + 1) * 20 }
+  const tier: PassphraseStrengthTier =
+    score <= 1 ? "weak" : score === 2 ? "medium" : score === 3 ? "strong" : "very-strong";
+  return { score, tier, percent: (score + 1) * 20 };
 }
 
 /** 惰性加载的 zxcvbn 打分器（首次评估时加载字典包并缓存实例） */
-let checkerPromise: Promise<(password: string) => ZxcvbnScore> | null = null
+let checkerPromise: Promise<(password: string) => ZxcvbnScore> | null = null;
 
 function loadChecker(): Promise<(password: string) => ZxcvbnScore> {
   checkerPromise ??= Promise.all([
-    import('@zxcvbn-ts/core'),
-    import('@zxcvbn-ts/language-common'),
+    import("@zxcvbn-ts/core"),
+    import("@zxcvbn-ts/language-common"),
   ]).then(([{ ZxcvbnFactory }, { dictionary, adjacencyGraphs }]) => {
     const factory = new ZxcvbnFactory({
       dictionary: { ...dictionary },
       graphs: adjacencyGraphs,
-    })
-    return (password: string) => factory.check(password).score
-  })
-  return checkerPromise
+    });
+    return (password: string) => factory.check(password).score;
+  });
+  return checkerPromise;
 }
 
 /**
@@ -59,8 +60,10 @@ function loadChecker(): Promise<(password: string) => ZxcvbnScore> {
  * 返回 Promise 只承载首次字典包加载，评分本身同步毫秒级；调用方以「最后一次
  * 胜出」守卫消费即可保证逐键刷新不串档。
  */
-export async function assessPassphraseStrength(input: string): Promise<PassphraseStrengthAssessment | null> {
-  if (!input) return null
-  const checker = await loadChecker()
-  return strengthForScore(checker(input))
+export async function assessPassphraseStrength(
+  input: string,
+): Promise<PassphraseStrengthAssessment | null> {
+  if (!input) return null;
+  const checker = await loadChecker();
+  return strengthForScore(checker(input));
 }

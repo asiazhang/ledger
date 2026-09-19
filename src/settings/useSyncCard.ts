@@ -1,10 +1,10 @@
-import { computed, onMounted, ref } from 'vue'
-import { useMessage } from 'naive-ui'
-import { api } from '@ledger/api'
-import { t } from '@ledger/i18n'
-import { formatIsoMinute } from '@ledger/utils/datetime'
-import { restartAppShortly } from '@/backup/restart'
-import { useLoadable } from '@ledger/loadable'
+import { computed, onMounted, ref } from "vue";
+import { useMessage } from "naive-ui";
+import { api } from "@ledger/api";
+import { t } from "@ledger/i18n";
+import { formatIsoMinute } from "@ledger/utils/datetime";
+import { restartAppShortly } from "@/backup/restart";
+import { useLoadable } from "@ledger/loadable";
 import {
   CUSTOM_VENDOR_ID,
   findVendorPreset,
@@ -13,14 +13,14 @@ import {
   vendorPrefill,
   vendorTierKey,
   type S3VendorPrefill,
-} from '@ledger/utils/s3-vendors'
+} from "@ledger/utils/s3-vendors";
 import type {
   ParkedOpInfo,
   SyncChannelConfig,
   SyncChannelConfigInput,
   SyncCheckpointInfo,
   SyncStatus,
-} from '@ledger/types'
+} from "@ledger/types";
 
 /**
  * useSyncCard——多端同步卡片的加载与动作编排深模块（issue #1397 / #1306 结论实施）：
@@ -58,30 +58,30 @@ import type {
  * 保持打开可就地重试，bootstrapping 兼作重入守卫（enter 键路径）。
  */
 export function useSyncCard() {
-  const message = useMessage()
+  const message = useMessage();
 
   // ---------------------------------------------------------------------------
   // 状态区：同步状态回显 + 挂起明细（issue #862 / #863）
   // ---------------------------------------------------------------------------
 
-  const status = ref<SyncStatus | null>(null)
+  const status = ref<SyncStatus | null>(null);
   // 口令输入：仅密文库需要（留空则后端回退本机已记住口令）；立即同步与发布检查点
   // 共用同一输入框；不落任何本地存储。
-  const passphrase = ref('')
+  const passphrase = ref("");
   // 挂起操作明细（issue #863 挂起通知）：数量 > 0 时按需拉取，展示码化原因。
-  const parkedOps = ref<ParkedOpInfo[]>([])
+  const parkedOps = ref<ParkedOpInfo[]>([]);
 
   /** 状态读取收编 Loadable（ADR-0040）：失败 toast = 裸码化错误（收口例外，见头注）。 */
   const statusLoad = useLoadable(async () => {
-    const next = await api.getSyncStatus()
-    status.value = next
-    await refreshParkedOps()
-    return true
-  })
-  const statusLoading = statusLoad.loading
+    const next = await api.getSyncStatus();
+    status.value = next;
+    await refreshParkedOps();
+    return true;
+  });
+  const statusLoading = statusLoad.loading;
 
   async function refreshStatus(): Promise<void> {
-    await statusLoad.run()
+    await statusLoad.run();
   }
 
   /**
@@ -91,14 +91,14 @@ export function useSyncCard() {
    */
   async function refreshParkedOps(): Promise<void> {
     if (!status.value || status.value.parked_count === 0) {
-      parkedOps.value = []
-      return
+      parkedOps.value = [];
+      return;
     }
     try {
-      parkedOps.value = await api.getParkedOps()
+      parkedOps.value = await api.getParkedOps();
     } catch (e) {
-      console.warn('挂起明细拉取失败', e)
-      parkedOps.value = []
+      console.warn("挂起明细拉取失败", e);
+      parkedOps.value = [];
     }
   }
 
@@ -106,32 +106,32 @@ export function useSyncCard() {
   const lastSyncText = computed(() =>
     status.value?.last_sync_at
       ? formatIsoMinute(status.value.last_sync_at)
-      : t('settings.data.sync.neverSynced'),
-  )
+      : t("settings.data.sync.neverSynced"),
+  );
 
   // ---------------------------------------------------------------------------
   // 立即同步（issue #862）：手动触发一轮同步，成功轻量提示轮次报告并刷新状态。
   // ---------------------------------------------------------------------------
 
   const syncLoad = useLoadable(async () => {
-    const report = await api.syncNow(passphrase.value || undefined)
+    const report = await api.syncNow(passphrase.value || undefined);
     message.success(
-      t('settings.data.sync.syncOk', {
+      t("settings.data.sync.syncOk", {
         uploaded: report.uploaded_ops,
         applied: report.applied,
         parked: report.parked,
       }),
-    )
-    await refreshStatus()
+    );
+    await refreshStatus();
     if (report.parked > 0) {
-      message.warning(t('settings.data.sync.parkedToast', { count: report.parked }))
+      message.warning(t("settings.data.sync.parkedToast", { count: report.parked }));
     }
-    return true
-  })
-  const syncing = syncLoad.loading
+    return true;
+  });
+  const syncing = syncLoad.loading;
 
   async function syncNow(): Promise<void> {
-    await syncLoad.run()
+    await syncLoad.run();
   }
 
   // ---------------------------------------------------------------------------
@@ -144,45 +144,45 @@ export function useSyncCard() {
   // 一一对应，回显时投影一次以隔开「契约对象」与「草稿对象」两类状态。
   type ChannelForm = Pick<
     SyncChannelConfig,
-    | 'space_id'
-    | 'endpoint'
-    | 'region'
-    | 'bucket'
-    | 'prefix'
-    | 'access_key'
-    | 'secret_key'
-    | 'path_style'
-  >
+    | "space_id"
+    | "endpoint"
+    | "region"
+    | "bucket"
+    | "prefix"
+    | "access_key"
+    | "secret_key"
+    | "path_style"
+  >;
 
   const form = ref<ChannelForm>({
-    space_id: 'default',
-    endpoint: '',
-    region: '',
-    bucket: '',
-    prefix: '',
-    access_key: '',
-    secret_key: '',
+    space_id: "default",
+    endpoint: "",
+    region: "",
+    bucket: "",
+    prefix: "",
+    access_key: "",
+    secret_key: "",
     path_style: false,
-  })
+  });
 
   // 密钥输入缓冲（#1218 验收「加载时不回显完整密钥」）：输入框只绑本 ref，加载与
   // 保存成功后一律清回空串——已保存密钥只活在 form.secret_key（内存），不上屏。
-  const secretKeyInput = ref('')
+  const secretKeyInput = ref("");
 
   /** 密钥输入框占位：已保存过密钥时提示「留空则保持不变」，否则是普通字段名。 */
   const secretKeyPlaceholder = computed(() =>
     form.value.secret_key
-      ? t('settings.data.sync.secretKeySavedPlaceholder')
-      : t('settings.data.sync.secretKeyPlaceholder'),
-  )
+      ? t("settings.data.sync.secretKeySavedPlaceholder")
+      : t("settings.data.sync.secretKeyPlaceholder"),
+  );
 
   // 厂商预设（issue #1220）：用户选中的厂商判别键。它只是界面态——不随表单保存，
   // 命令面 `SyncChannelConfig` 也没有厂商字段；「是谁」由端点反查决定（再次打开
   // 或保存回显时按端点重算），所以这条状态不可能是落库数据的第二事实源。
-  const selectedVendor = ref<string>(CUSTOM_VENDOR_ID)
+  const selectedVendor = ref<string>(CUSTOM_VENDOR_ID);
 
   /** 当前选中厂商的预设（「其他（自定义）」或未知 id 为 null）。 */
-  const selectedVendorPreset = computed(() => findVendorPreset(selectedVendor.value))
+  const selectedVendorPreset = computed(() => findVendorPreset(selectedVendor.value));
 
   /**
    * 下拉项：预设按声明序 + 末尾固定「其他（自定义）」（issue #1220 验收判据）。
@@ -192,44 +192,44 @@ export function useSyncCard() {
     vendorOptions().map((option) => ({
       value: option.id,
       label: option.custom
-        ? t('settings.data.sync.vendorCustom')
-        : t('settings.data.sync.vendorOption', {
+        ? t("settings.data.sync.vendorCustom")
+        : t("settings.data.sync.vendorOption", {
             name: option.name,
             tier: t(vendorTierKey(option.verified)),
           }),
     })),
-  )
+  );
 
   /**
    * 选中厂商：预填端点模板、默认地域与寻址方式（纯函数产出的值，只落表单）。
    * 「其他（自定义）」不预填——字段保持用户已填内容，等待用户自己写端点。
    */
   function onVendorChange(vendorId: string): void {
-    selectedVendor.value = vendorId
-    const prefill = vendorPrefill(vendorId)
-    if (prefill) applyPrefill(prefill)
+    selectedVendor.value = vendorId;
+    const prefill = vendorPrefill(vendorId);
+    if (prefill) applyPrefill(prefill);
   }
 
   /** 常用地域快捷项：换地域即按当前厂商模板重写端点（字段随后仍可手改）。 */
   function applyVendorRegion(region: string): void {
-    const prefill = vendorPrefill(selectedVendor.value, region)
-    if (prefill) applyPrefill(prefill)
+    const prefill = vendorPrefill(selectedVendor.value, region);
+    if (prefill) applyPrefill(prefill);
   }
 
   /** 预填值落进表单的单一落点（选中预填与地域快捷项共用，避免两处各写一遍字段）。 */
   function applyPrefill(prefill: S3VendorPrefill): void {
-    form.value.endpoint = prefill.endpoint
-    form.value.region = prefill.region
-    form.value.path_style = prefill.pathStyle
+    form.value.endpoint = prefill.endpoint;
+    form.value.region = prefill.region;
+    form.value.path_style = prefill.pathStyle;
   }
 
   /** 通道配置读取收编 Loadable（ADR-0040）：失败 toast = 裸码化错误（收口例外）。 */
   const channelLoad = useLoadable(async () => {
-    const config = await api.getSyncChannelConfig()
+    const config = await api.getSyncChannelConfig();
     // 投影进表单（不持有回显对象本体）：表单的 v-model 会就地改写所绑对象，
     // 直接拿 IPC 契约快照当草稿纸用，等于把响应体当可变状态。
     form.value = {
-      space_id: config.configured ? config.space_id : 'default',
+      space_id: config.configured ? config.space_id : "default",
       endpoint: config.endpoint,
       region: config.region,
       bucket: config.bucket,
@@ -237,17 +237,17 @@ export function useSyncCard() {
       access_key: config.access_key,
       secret_key: config.secret_key,
       path_style: config.path_style,
-    }
+    };
     // 密钥输入恒从空白起（不回显完整密钥）；已保存值留在 form 内供「留空沿用」。
-    secretKeyInput.value = ''
+    secretKeyInput.value = "";
     // 厂商回显按端点反查（issue #1220 验收判据）：命中厂商即回显该厂商，未命中
     //（自建服务、空表单、改过的端点）回「其他（自定义）」——不额外落库厂商字段。
-    selectedVendor.value = matchVendorByEndpoint(form.value.endpoint)
-    return true
-  })
+    selectedVendor.value = matchVendorByEndpoint(form.value.endpoint);
+    return true;
+  });
 
   async function refreshChannelConfig(): Promise<void> {
-    await channelLoad.run()
+    await channelLoad.run();
   }
 
   /**
@@ -266,9 +266,9 @@ export function useSyncCard() {
       bucket: form.value.bucket,
       prefix: form.value.prefix,
       access_key: form.value.access_key,
-      secret_key: secretKeyInput.value !== '' ? secretKeyInput.value : form.value.secret_key,
+      secret_key: secretKeyInput.value !== "" ? secretKeyInput.value : form.value.secret_key,
       path_style: form.value.path_style,
-    }
+    };
   }
 
   /**
@@ -276,15 +276,15 @@ export function useSyncCard() {
    * 回显，把落库结果（含后端归一化后的字段）呈现在表单上。
    */
   const saveLoad = useLoadable(async () => {
-    await api.setSyncChannelConfig(channelPayload())
-    message.success(t('settings.data.sync.saveOk'))
-    await Promise.all([refreshStatus(), refreshChannelConfig()])
-    return true
-  })
-  const saving = saveLoad.loading
+    await api.setSyncChannelConfig(channelPayload());
+    message.success(t("settings.data.sync.saveOk"));
+    await Promise.all([refreshStatus(), refreshChannelConfig()]);
+    return true;
+  });
+  const saving = saveLoad.loading;
 
   async function saveChannel(): Promise<void> {
-    await saveLoad.run()
+    await saveLoad.run();
   }
 
   // ---------------------------------------------------------------------------
@@ -302,14 +302,14 @@ export function useSyncCard() {
   // ---------------------------------------------------------------------------
 
   const probe = useLoadable(async () => {
-    await api.testSyncChannelConnection(channelPayload())
-    return true
-  })
-  const testing = probe.loading
+    await api.testSyncChannelConnection(channelPayload());
+    return true;
+  });
+  const testing = probe.loading;
 
   async function testConnection(): Promise<void> {
     if (await probe.run()) {
-      message.success(t('settings.data.sync.testOk'))
+      message.success(t("settings.data.sync.testOk"));
     }
   }
 
@@ -321,77 +321,77 @@ export function useSyncCard() {
 
   /** 快照体大小展示文本（字节 → MB，一位小数；toast 插值用，module 私有）。 */
   function formatSizeMb(bytes: number): string {
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   }
 
   /** 发布检查点到通道：存量数据的设备把「新端可引导的来源」放上通道。 */
   const publishLoad = useLoadable(async () => {
-    const result = await api.publishSyncCheckpoint(passphrase.value || undefined)
+    const result = await api.publishSyncCheckpoint(passphrase.value || undefined);
     message.success(
-      t('settings.data.sync.publishOk', {
+      t("settings.data.sync.publishOk", {
         generation: result.generation,
         size: formatSizeMb(result.size),
       }),
-    )
+    );
     if (result.plaintext_mode) {
       // 明文显著提示（ADR-0091 决策 8）：快照整库明文上通道，与常驻卡片警示同义。
-      message.warning(t('settings.data.sync.publishPlaintextToast'))
+      message.warning(t("settings.data.sync.publishPlaintextToast"));
     }
-    return true
-  })
-  const publishing = publishLoad.loading
+    return true;
+  });
+  const publishing = publishLoad.loading;
 
   async function publishCheckpoint(): Promise<void> {
-    await publishLoad.run()
+    await publishLoad.run();
   }
 
   // 引导向导状态：弹窗开合、口令与检查点（module 自持——Loadable 不持任务结果，
   // ADR-0040 决策 1，precheck run() 返回后存入）。
-  const bootstrapShow = ref(false)
-  const bootstrapPassphrase = ref('')
-  const checkpointInfo = ref<SyncCheckpointInfo | null>(null)
+  const bootstrapShow = ref(false);
+  const bootstrapPassphrase = ref("");
+  const checkpointInfo = ref<SyncCheckpointInfo | null>(null);
 
   // 引导预检：silent 实例（ADR-0040 决策 3 修订注）——error 照常置位、toast 不弹，
   // 弹窗错误位渲染 precheckError（原 precheckFailed = 裸 errorMessage，逐字等价）。
-  const precheck = useLoadable(() => api.getSyncChannelCheckpoint(), { silent: true })
-  const prechecking = precheck.loading
-  const precheckError = precheck.error
+  const precheck = useLoadable(() => api.getSyncChannelCheckpoint(), { silent: true });
+  const prechecking = precheck.loading;
+  const precheckError = precheck.error;
 
   /** 打开引导向导并预检通道（只读 manifest，不下载快照体）。 */
   async function openBootstrap(): Promise<void> {
-    bootstrapShow.value = true
-    bootstrapPassphrase.value = ''
-    checkpointInfo.value = null
-    checkpointInfo.value = await precheck.run()
+    bootstrapShow.value = true;
+    bootstrapPassphrase.value = "";
+    checkpointInfo.value = null;
+    checkpointInfo.value = await precheck.run();
   }
 
   // 引导确认收编 Loadable（ADR-0040）：失败 toast = 裸码化错误（收口例外）；loading
   // 兼作重入守卫（enter 键路径保留），bootstrapping 归零后弹窗仍开、可就地重试。
   const bootstrapLoad = useLoadable(
     async () => await api.bootstrapSyncFromChannel(bootstrapPassphrase.value || undefined),
-  )
-  const bootstrapping = bootstrapLoad.loading
+  );
+  const bootstrapping = bootstrapLoad.loading;
 
   /** 确认引导：整库换入通道快照，成功后原位重引导（Restart 同型，重启载入数据）。 */
   async function confirmBootstrap(): Promise<void> {
-    if (!checkpointInfo.value || bootstrapping.value) return
-    const outcome = await bootstrapLoad.run()
-    if (outcome === null) return
-    bootstrapShow.value = false
+    if (!checkpointInfo.value || bootstrapping.value) return;
+    const outcome = await bootstrapLoad.run();
+    if (outcome === null) return;
+    bootstrapShow.value = false;
     message.success(
-      t('settings.data.sync.bootstrapOk', {
+      t("settings.data.sync.bootstrapOk", {
         generation: outcome.generation,
         size: formatSizeMb(outcome.size),
-        reencrypted: outcome.reencrypted ? t('settings.data.sync.bootstrapReencrypted') : '',
+        reencrypted: outcome.reencrypted ? t("settings.data.sync.bootstrapReencrypted") : "",
       }),
-    )
-    restartAppShortly()
+    );
+    restartAppShortly();
   }
 
   // 挂载首刷：状态与通道配置并行拉取（时序内化，adapter 零生命周期义务）。
   onMounted(async () => {
-    await Promise.all([refreshStatus(), refreshChannelConfig()])
-  })
+    await Promise.all([refreshStatus(), refreshChannelConfig()]);
+  });
 
   return {
     // 状态区
@@ -431,7 +431,7 @@ export function useSyncCard() {
     bootstrapping,
     openBootstrap,
     confirmBootstrap,
-  }
+  };
 }
 
-export type SyncCard = ReturnType<typeof useSyncCard>
+export type SyncCard = ReturnType<typeof useSyncCard>;

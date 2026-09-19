@@ -1,5 +1,5 @@
-import type { ComponentPublicInstance } from 'vue'
-import type { VueWrapper } from '@vue/test-utils'
+import type { ComponentPublicInstance } from "vue";
+import type { VueWrapper } from "@vue/test-utils";
 
 /**
  * 触发组件的动态 emit 装配缝（如 NDropdown 的 onSelect）：props 泛型链不识别
@@ -9,8 +9,8 @@ import type { VueWrapper } from '@vue/test-utils'
 export function fireProp(w: unknown, prop: string, ...args: unknown[]): void {
   const fn = (w as { props(key: string): unknown }).props(prop) as
     | ((...a: unknown[]) => void)
-    | undefined
-  fn?.(...args)
+    | undefined;
+  fn?.(...args);
 }
 
 /**
@@ -21,5 +21,5 @@ export function fireProp(w: unknown, prop: string, ...args: unknown[]): void {
  * 运行时行为与 `.vm` 完全一致（VueWrapper 实例确有 vm）；窄化只发生在类型层。
  */
 export function componentVm(w: unknown): ComponentPublicInstance {
-  return (w as VueWrapper).vm
+  return (w as VueWrapper).vm;
 }
