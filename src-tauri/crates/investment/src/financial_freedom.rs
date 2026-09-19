@@ -47,6 +47,13 @@ impl FromRow for HoldingValue {
     }
 }
 
+/// 持仓腿取数面（软删与隐藏账户一律排除）：可投资资产·持仓市值腿与其
+/// 「未计入持仓数」（投资概览，[`super::overview`]）共用同一 FROM/WHERE 片段
+/// ——计数面与合计面同源不漂移（ADR-0130 决策 4：口径表达式不复制）。
+pub(crate) const HOLDINGS_VISIBLE_FACET: &str = "FROM v_holdings h \
+     JOIN accounts a ON a.id = h.account_id \
+     WHERE a.is_deleted=0 AND a.is_hidden=0";
+
 /// conn 级聚合：可投资资产分子·**投资账户现金腿**（折全局默认币种，分）。
 ///
 /// 余额口径与账户列表一致（account_flow，排除隐藏/黑洞），仅取投资账户——未投入
@@ -71,13 +78,8 @@ pub fn query_investable_assets_cash_leg_cents(conn: &Connection) -> Result<i64> 
 /// 与净资产管线共用的视图口径在此由本口径收紧）；缺折算到本位币的汇率时错误上抛
 /// （码化 `fx.rate-missing`），不静默混币种。
 pub fn query_investable_assets_holdings_leg_cents(conn: &Connection) -> Result<i64> {
-    let holdings: Vec<HoldingValue> = query_all(
-        conn,
-        "SELECT h.market_value_cents, a.currency_code \
-         FROM v_holdings h JOIN accounts a ON a.id = h.account_id \
-         WHERE a.is_deleted=0 AND a.is_hidden=0",
-        [],
-    )?;
+    let sql = format!("SELECT h.market_value_cents, a.currency_code {HOLDINGS_VISIBLE_FACET}");
+    let holdings: Vec<HoldingValue> = query_all(conn, &sql, [])?;
     let mut holdings_sum = 0i64;
     for h in holdings {
         if let Some(market_value_cents) = h.market_value_cents {

@@ -17,11 +17,14 @@
 
 use rusqlite::Connection;
 
+use ledger_accounts::AccountType;
+use ledger_accounts::balance::list_accounts_with_visibility;
 use ledger_infra::error::Result;
 use ledger_transaction::amount;
 
 use super::financial_freedom::{
-    query_investable_assets_cash_leg_cents, query_investable_assets_holdings_leg_cents,
+    HOLDINGS_VISIBLE_FACET, query_investable_assets_cash_leg_cents,
+    query_investable_assets_holdings_leg_cents,
 };
 use super::model::InvestmentOverview;
 
@@ -42,24 +45,19 @@ pub fn query_investment_overview(conn: &Connection) -> Result<InvestmentOverview
 }
 
 /// 未计入的持仓数（`v_holdings` 市值为 NULL 的行）：缺现价或缺价格币→账户币汇率
-/// 的持仓——与持仓市值腿同一过滤面（软删与隐藏账户排除），故计数与合计同口径。
+/// 的持仓——与持仓市值腿共用同一取数面（[`HOLDINGS_VISIBLE_FACET`]），故计数与
+/// 合计不会漂移。
 fn count_unpriced_holdings(conn: &Connection) -> Result<i64> {
-    let count = conn.query_row(
-        "SELECT COUNT(*) FROM v_holdings h JOIN accounts a ON a.id = h.account_id \
-         WHERE a.is_deleted=0 AND a.is_hidden=0 AND h.market_value_cents IS NULL",
-        [],
-        |row| row.get(0),
-    )?;
+    let sql = format!("SELECT COUNT(*) {HOLDINGS_VISIBLE_FACET} AND h.market_value_cents IS NULL");
+    let count = conn.query_row(&sql, [], |row| row.get(0))?;
     Ok(count)
 }
 
 /// 账本内是否存在未删除的投资账户（含隐藏）：判定「还没有投资账户」的引导句，
-/// 不参与任何金额口径——只回答「用户建过投资账户没有」。
+/// 不参与任何金额口径——只回答「用户建过投资账户没有」。走账户域读投影
+/// （软删排除）与 [`AccountType`] 闭集，本域不另写账户表的 kind 字面量。
 fn has_investment_account(conn: &Connection) -> Result<bool> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM accounts WHERE type='investment' AND is_deleted=0",
-        [],
-        |row| row.get(0),
-    )?;
-    Ok(count > 0)
+    Ok(list_accounts_with_visibility(conn, true)?
+        .iter()
+        .any(|account| account.kind == AccountType::Investment))
 }

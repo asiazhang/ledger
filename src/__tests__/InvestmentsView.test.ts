@@ -15,7 +15,7 @@ import { useWindowGuard } from "@/composables/useWindowGuard";
 import { createOverlayToken, resetOverlays } from "@ledger/ui-kit/overlayRegistry";
 import { clearViewResets, fireViewReset } from "@/composables/viewResetRegistry";
 import { kindSemanticColor, pnlSemanticColor } from "@ledger/theme/semantic-colors";
-import { makeMwrSummary, makePnlSummary, mockHoldings } from "./factories";
+import { makeInvestmentOverview, makeMwrSummary, makePnlSummary, mockHoldings } from "./factories";
 import { firePricesChanged, resetPricesChangedHandler } from "./prices-changed-mock";
 import type { Instrument } from "@ledger/types";
 
@@ -105,14 +105,7 @@ const mockInstruments: Instrument[] = [
 /** 投资域命令契约快照（标的列表/持仓/走势/盈亏汇总，均为静态空数据或固定行）。 */
 const INVESTMENT_DEFAULTS = {
   // 投资概览（spec #1532 / issue #1536）：默认页签落点的只读取数命令
-  investment_overview: {
-    native_currency: "CNY",
-    investable_assets_cents: 0,
-    investment_cash_cents: 0,
-    holdings_market_value_cents: 0,
-    missing_price_holding_count: 0,
-    has_investment_account: true,
-  },
+  investment_overview: makeInvestmentOverview(),
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
   // 持仓概览（issue #110）：盈亏 tab 顶部会拉取当前持仓
   list_holdings: [],

@@ -6,6 +6,7 @@ import type {
   FinancialFreedomOverview,
   Holding,
   Instrument,
+  InvestmentOverview,
   MoneyWeightedReturnSummary,
   ItemDailyTotal,
   PhysicalAsset,
@@ -405,6 +406,23 @@ export function makeSyncRoundReport(partial: Partial<SyncRoundReport> = {}): Syn
     skipped: 0,
     parked: 0,
     plaintext_mode: true,
+    ...partial,
+  };
+}
+
+/** `investment_overview` 返回值工厂（spec #1532 / issue #1536）：默认无投资资产
+ *（两腿与合计为 0、无缺料说明、已建投资账户）；缺价计数、无投资账户与两腿数值
+ * 由用例经 partial 表达。 */
+export function makeInvestmentOverview(
+  partial: Partial<InvestmentOverview> = {},
+): InvestmentOverview {
+  return {
+    native_currency: "CNY",
+    investable_assets_cents: 0,
+    investment_cash_cents: 0,
+    holdings_market_value_cents: 0,
+    missing_price_holding_count: 0,
+    has_investment_account: true,
     ...partial,
   };
 }

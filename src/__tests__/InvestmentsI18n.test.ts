@@ -7,7 +7,7 @@ import { clickTab } from "@ledger/test-support/dom";
 import { mountWithDialog } from "@ledger/test-support/mount";
 import InvestmentsView from "@/views/InvestmentsView.vue";
 import InvestmentForm from "@/investment/InvestmentForm.vue";
-import { makeInstrument } from "./factories";
+import { makeInstrument, makeInvestmentOverview } from "./factories";
 
 // 走势图用共享桩组件替代（同 InvestmentsView.test.ts）
 vi.mock("vue-chartjs", async () => {
@@ -25,14 +25,7 @@ vi.mock("vue-router", () => ({
 /** 投资域三命令的空数据契约快照（英文渲染不消费具体数据）。 */
 const EMPTY_INVESTMENT_DEFAULTS = {
   // 投资概览（spec #1532 / issue #1536）：默认页签落点的只读取数命令
-  investment_overview: {
-    native_currency: "CNY",
-    investable_assets_cents: 0,
-    investment_cash_cents: 0,
-    holdings_market_value_cents: 0,
-    missing_price_holding_count: 0,
-    has_investment_account: true,
-  },
+  investment_overview: makeInvestmentOverview(),
   list_instruments: { items: [], total: 0 },
   list_holdings: [],
   // 价格过期检查（issue #1190）：打开投资页的本地水位检查，默认无过期

@@ -7,7 +7,7 @@ import { refCurrencies } from "@ledger/test-support/reference-stubs";
 import { resetOverlays } from "@ledger/ui-kit/overlayRegistry";
 import InvestmentOverviewPanel from "@/investment/InvestmentOverviewPanel.vue";
 import { firePricesChanged, resetPricesChangedHandler } from "./prices-changed-mock";
-import type { InvestmentOverview } from "@ledger/types";
+import { makeInvestmentOverview } from "./factories";
 
 // 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
 // 测试手动触发模拟后端 emit（与持仓概览、价格过期提示同款共享辅助）。
@@ -22,14 +22,11 @@ vi.mock("@/investment/usePricesChanged", async () => {
 const cny = refCurrencies[0];
 
 /** 投资概览契约快照：可投资资产 2200 元 = 现金 1000 元 + 持仓市值 1200 元。 */
-const OVERVIEW: InvestmentOverview = {
-  native_currency: "CNY",
+const OVERVIEW = makeInvestmentOverview({
   investable_assets_cents: 220_000,
   investment_cash_cents: 100_000,
   holdings_market_value_cents: 120_000,
-  missing_price_holding_count: 0,
-  has_investment_account: true,
-};
+});
 
 beforeEach(async () => {
   resetOverlays();
@@ -70,7 +67,7 @@ describe("InvestmentOverviewPanel 投资概览（spec #1532 / issue #1536）", (
     const wrapper = await mountPanel();
 
     expect(wrapper.get('[data-testid="overview-missing-price"]').text()).toBe(
-      "另有 2 只持仓因缺现价未计入。",
+      "另有 2 只持仓因缺现价或折算汇率未计入。",
     );
     // 合计与两腿照常是「已计入」的部分（缺价持仓不以零虚增）
     expect(wrapper.get('[data-testid="overview-investable-assets-value"]').text()).toBe(
@@ -81,13 +78,7 @@ describe("InvestmentOverviewPanel 投资概览（spec #1532 / issue #1536）", (
   it("没有投资账户：显示 0 并给一句引导", async () => {
     wireInvokeSeam({
       defaults: {
-        investment_overview: {
-          ...OVERVIEW,
-          investable_assets_cents: 0,
-          investment_cash_cents: 0,
-          holdings_market_value_cents: 0,
-          has_investment_account: false,
-        },
+        investment_overview: makeInvestmentOverview({ has_investment_account: false }),
       },
     });
     const wrapper = await mountPanel();

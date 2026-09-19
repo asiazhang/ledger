@@ -12,7 +12,7 @@
     "currencyLabel": "本位币 {currency}",
     "cashLeg": "投资账户现金",
     "holdingsLeg": "持仓市值",
-    "missingPrice": "另有 {count} 只持仓因缺现价未计入。",
+    "missingPrice": "另有 {count} 只持仓因缺现价或折算汇率未计入。",
     "noAccount": "还没有投资账户；在「账户」页新建投资账户后，这里会显示你的可投资资产。",
     "retry": "重试"
   },
