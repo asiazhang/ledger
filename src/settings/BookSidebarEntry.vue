@@ -1,25 +1,21 @@
 <script setup lang="ts">
-import { watch } from 'vue'
+import { watch } from "vue";
+import { NAlert, NButton, NForm, NFormItem, NIcon, NInput, NSpace, NTag, NText } from "naive-ui";
 import {
-  NAlert,
-  NButton,
-  NForm,
-  NFormItem,
-  NIcon,
-  NInput,
-  NSpace,
-  NTag,
-  NText,
-} from 'naive-ui'
-import { BookOutline, ChevronForwardOutline, ChevronUpOutline, CreateOutline, TrashOutline } from '@vicons/ionicons5'
-import AppModal from '@ledger/ui-kit/AppModal.vue'
-import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
-import AppPopover from '@ledger/ui-kit/AppPopover.vue'
-import { useBookSwitcher } from '@/settings/useBookSwitcher'
-import { t } from '@ledger/i18n'
-import { useRouter } from 'vue-router'
-import { useFeatureToggleStore } from '@/settings/feature-toggles'
-import { computed } from 'vue'
+  BookOutline,
+  ChevronForwardOutline,
+  ChevronUpOutline,
+  CreateOutline,
+  TrashOutline,
+} from "@vicons/ionicons5";
+import AppModal from "@ledger/ui-kit/AppModal.vue";
+import AppPopconfirm from "@ledger/ui-kit/AppPopconfirm.vue";
+import AppPopover from "@ledger/ui-kit/AppPopover.vue";
+import { useBookSwitcher } from "@/settings/useBookSwitcher";
+import { t } from "@ledger/i18n";
+import { useRouter } from "vue-router";
+import { useFeatureToggleStore } from "@/settings/feature-toggles";
+import { computed } from "vue";
 
 // 侧栏左下角账本入口与弹层（issue #834 / ADR-0089）：入口（当前账本名按钮 +
 // 折叠态浮标）是 useBookSwitcher 深模块的薄适配器——清单渲染、切换确认、
@@ -31,23 +27,23 @@ import { computed } from 'vue'
 
 const props = defineProps<{
   /** 侧栏折叠态：折叠时入口切换为固定左下角的浮标图标形态（随时可达）。 */
-  collapsed: boolean
-}>()
+  collapsed: boolean;
+}>();
 
-const router = useRouter()
-const featureToggles = useFeatureToggleStore()
+const router = useRouter();
+const featureToggles = useFeatureToggleStore();
 
 // 跨账本投资汇总入口（issue #1196 / ADR-0114 决策 6）：非账本条目、仅导航——
 // 不动活动指针、不触发原位重引导；注册表损坏回退（清单不可信）时不可用；
 // 投资功能关闭时入口消失（纯投资口径页随投资开关，ADR-0116 决策 4）。
 const summaryAvailable = computed(
-  () => mutable.value && !loadFailed.value && !featureToggles.isFeatureClosed('investments'),
-)
+  () => mutable.value && !loadFailed.value && !featureToggles.isFeatureClosed("investments"),
+);
 
 function openSummary(): void {
-  if (!summaryAvailable.value) return
-  closePanel()
-  void router.push({ name: 'cross-book-summary' })
+  if (!summaryAvailable.value) return;
+  closePanel();
+  void router.push({ name: "cross-book-summary" });
 }
 
 const {
@@ -71,13 +67,13 @@ const {
   openRename,
   submitName,
   removeBook,
-} = useBookSwitcher()
+} = useBookSwitcher();
 
 // 侧栏折叠/展开切换时收起弹层：锚点按钮随形态互换，避免弹层悬空
 watch(
   () => props.collapsed,
   () => closePanel(),
-)
+);
 </script>
 
 <template>
@@ -105,7 +101,7 @@ watch(
         >
           <span class="book-entry-inner">
             <NIcon :size="16" class="book-entry-icon"><BookOutline /></NIcon>
-            <span class="book-entry-name">{{ activeBook?.name ?? t('books.entry.label') }}</span>
+            <span class="book-entry-name">{{ activeBook?.name ?? t("books.entry.label") }}</span>
             <NIcon :size="12" class="book-entry-caret"><ChevronUpOutline /></NIcon>
           </span>
         </NButton>
@@ -128,15 +124,15 @@ watch(
       <div class="book-panel">
         <!-- 注册表回退警示（fallback_reason 通道，损坏时显著提示） -->
         <NAlert v-if="fallbackReason" type="warning" :show-icon="true" class="book-panel-alert">
-          <NText strong>{{ t('books.fallback.title') }}</NText>
+          <NText strong>{{ t("books.fallback.title") }}</NText>
           <div class="book-panel-alert-detail">{{ fallbackReason }}</div>
         </NAlert>
 
         <!-- 读取失败诚实呈现：错误行 + 重试（不用空态假装一切正常） -->
         <div v-if="loadFailed" class="book-panel-status">
-          <NText depth="3">{{ t('books.panel.loadFailed') }}</NText>
+          <NText depth="3">{{ t("books.panel.loadFailed") }}</NText>
           <NButton size="tiny" quaternary type="primary" @click="() => void refresh()">
-            {{ t('books.panel.retry') }}
+            {{ t("books.panel.retry") }}
           </NButton>
         </div>
 
@@ -151,7 +147,7 @@ watch(
           :aria-label="t('books.entry.summary')"
           @click="openSummary"
         >
-          <span class="book-row-name">{{ t('books.entry.summary') }}</span>
+          <span class="book-row-name">{{ t("books.entry.summary") }}</span>
           <NIcon :size="14" class="book-summary-entry-caret"><ChevronForwardOutline /></NIcon>
         </button>
 
@@ -166,7 +162,7 @@ watch(
             <span class="book-row-name" :title="book.dir">{{ book.name }}</span>
             <span class="book-row-actions" @click.stop>
               <NTag v-if="book.id === activeId" size="small" round :bordered="false" type="primary">
-                {{ t('books.panel.current') }}
+                {{ t("books.panel.current") }}
               </NTag>
               <button
                 type="button"
@@ -196,14 +192,14 @@ watch(
                     <NIcon :size="14"><TrashOutline /></NIcon>
                   </button>
                 </template>
-                {{ t('books.panel.removeConfirm', { name: book.name }) }}
+                {{ t("books.panel.removeConfirm", { name: book.name }) }}
               </AppPopconfirm>
             </span>
           </div>
         </div>
 
         <div v-if="!loading && books.length === 0 && !loadFailed" class="book-panel-status">
-          <NText depth="3">{{ t('books.panel.empty') }}</NText>
+          <NText depth="3">{{ t("books.panel.empty") }}</NText>
         </div>
 
         <NButton
@@ -214,7 +210,7 @@ watch(
           :disabled="!mutable"
           @click="openCreate"
         >
-          {{ t('books.panel.new') }}
+          {{ t("books.panel.new") }}
         </NButton>
       </div>
     </AppPopover>
@@ -225,7 +221,11 @@ watch(
       preset="card"
       :title="nameModalTitle"
       card-size="sm"
-      @update:show="(value: boolean) => { if (!value) nameIntent.close() }"
+      @update:show="
+        (value: boolean) => {
+          if (!value) nameIntent.close();
+        }
+      "
     >
       <NForm
         label-placement="left"
@@ -244,7 +244,7 @@ watch(
           </NFormItem>
           <NSpace justify="end">
             <NButton :disabled="nameBusy" @click="nameIntent.close()">
-              {{ t('books.createModal.cancel') }}
+              {{ t("books.createModal.cancel") }}
             </NButton>
             <NButton
               type="primary"

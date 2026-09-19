@@ -1,7 +1,7 @@
-import { ref } from 'vue'
-import { api } from '@ledger/api'
-import { useAppStore } from '@/stores/app'
-import type { RememberPassphraseSupport } from '@ledger/types'
+import { ref } from "vue";
+import { api } from "@ledger/api";
+import { useAppStore } from "@/stores/app";
+import type { RememberPassphraseSupport } from "@ledger/types";
 
 /**
  * 启动门（issue #570 / #601 / ADR-0075 决策 5 修订）：前端启动首屏的状态接缝。
@@ -21,15 +21,15 @@ import type { RememberPassphraseSupport } from '@ledger/types'
  * 忘记口令重置（issue #573）与启动失败重置（issue #601）同样翻转状态：
  * 主界面随全新明文空库挂载。
  */
-const locked = ref<boolean | null>(null)
+const locked = ref<boolean | null>(null);
 
 /** 启动失败状态（issue #601）：后端启动失败门的前端镜像，失败恢复屏由它驱动。 */
-const bootFailed = ref(false)
+const bootFailed = ref(false);
 
 /** 启动失败错误码（issue #994 / ADR-0100）：失败时后端原样上报的稳定码，失败
  *  恢复屏按码区分「结构异常」（漂移，从备份恢复优先）与「库不可读」（重置优先）
  *  的文案与动作排序；非 failed 为 null。 */
-const bootErrorCode = ref<string | null>(null)
+const bootErrorCode = ref<string | null>(null);
 
 /**
  * 自动解锁有界等待上限（issue #644）：钥匙串读取/生物认证在受限形态或系统
@@ -39,17 +39,16 @@ const bootErrorCode = ref<string | null>(null)
  * 生物认证门下用户完成 Touch ID 需要时间，30s 内未完成视为受阻。后端调用
  * 不取消：迟到成功照常进入应用，迟到失败由回退手输路径消化。
  */
-export const AUTO_UNLOCK_TIMEOUT_MS = 30_000
+export const AUTO_UNLOCK_TIMEOUT_MS = 30_000;
 
 /** 凭缓存解锁的等待结果（issue #644）：`timeout` 表示有界等待到期——后端调用
  *  仍在进行，其迟到结局仍有归属（成功照常翻门进入、失败不再上抛），只是
  *  解锁屏不再替它等待。 */
-export type AutoUnlockWait = { status: 'unlocked'; relocated: boolean } | { status: 'timeout' }
-
+export type AutoUnlockWait = { status: "unlocked"; relocated: boolean } | { status: "timeout" };
 
 /** 本机记住主口令的平台能力与运行形态（issue #574 / #662）：模块级单例，解锁屏
  *  与设置页共享（懒加载只查一次）。`null` = 尚未查询（调用 [`loadRememberSupport`] 填充）。 */
-const rememberSupport = ref<RememberPassphraseSupport | null>(null)
+const rememberSupport = ref<RememberPassphraseSupport | null>(null);
 
 export function useEncryptionGate() {
   /**
@@ -60,37 +59,37 @@ export function useEncryptionGate() {
    */
   async function probe(): Promise<void> {
     try {
-      const status = await api.getBootStatus()
-      if (status.phase === 'failed') {
-        bootFailed.value = true
-        bootErrorCode.value = status.error_code
+      const status = await api.getBootStatus();
+      if (status.phase === "failed") {
+        bootFailed.value = true;
+        bootErrorCode.value = status.error_code;
       } else {
-        bootErrorCode.value = null
-        locked.value = status.phase === 'locked'
+        bootErrorCode.value = null;
+        locked.value = status.phase === "locked";
       }
     } catch (e) {
-      console.warn('启动状态探测失败，按锁定处理（fail-closed）', e)
-      locked.value = true
+      console.warn("启动状态探测失败，按锁定处理（fail-closed）", e);
+      locked.value = true;
     }
   }
 
   /** 解锁：成功即翻转状态，主界面随之挂载；返回是否补做了搬迁。 */
   async function unlock(passphrase: string): Promise<boolean> {
-    const outcome = await api.unlockEncryption(passphrase)
-    locked.value = false
-    return outcome.relocated
+    const outcome = await api.unlockEncryption(passphrase);
+    locked.value = false;
+    return outcome.relocated;
   }
 
   /** 懒加载「本机记住主口令」的平台能力（issue #574）：成功填充，失败按不支持处理
    *  （fail-closed：不支持平台隐藏选项、回退手输，与加密安全姿态一致）。 */
   async function loadRememberSupport(): Promise<void> {
-    if (rememberSupport.value) return
+    if (rememberSupport.value) return;
     try {
-      rememberSupport.value = await api.getRememberPassphraseSupport()
+      rememberSupport.value = await api.getRememberPassphraseSupport();
     } catch (e) {
-      console.warn('读取本机记住主口令能力失败，按不支持处理', e)
+      console.warn("读取本机记住主口令能力失败，按不支持处理", e);
       // mode 为占位：supported=false 时前端只读 supported 隐藏全部选项，mode 不被消费。
-      rememberSupport.value = { supported: false, mode: 'biometry' }
+      rememberSupport.value = { supported: false, mode: "biometry" };
     }
   }
 
@@ -102,45 +101,45 @@ export function useEncryptionGate() {
    *  拒绝。口令在后端钥匙串读出，不回流前端。失败（无缓存 / 生物认证取消 /
    *  缓存口令已过期）在到期前发生则原样上抛，由调用方回退手输。 */
   async function unlockWithRemembered(): Promise<AutoUnlockWait> {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let expired = false
-    const core = api.unlockWithRememberedPassphrase().then(
-      async (outcome): Promise<AutoUnlockWait> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let expired = false;
+    const core = api
+      .unlockWithRememberedPassphrase()
+      .then(async (outcome): Promise<AutoUnlockWait> => {
         if (expired) {
           // 迟到结局守卫（issue #644 审查）：正常路径不付这次探测，仅迟到时复核。
-          const status = await api.getBootStatus()
-          if (status.phase !== 'ready') {
-            return { status: 'unlocked', relocated: outcome.relocated }
+          const status = await api.getBootStatus();
+          if (status.phase !== "ready") {
+            return { status: "unlocked", relocated: outcome.relocated };
           }
         }
-        locked.value = false
-        return { status: 'unlocked', relocated: outcome.relocated }
-      },
-    )
+        locked.value = false;
+        return { status: "unlocked", relocated: outcome.relocated };
+      });
     // 迟到结局的归属：成功照常翻转锁定门（见上）；失败不再上抛——等待已
     // 到期、回退提示已出，迟到的失败由手输路径与下次启动消化。
-    core.catch(() => {})
+    core.catch(() => {});
     try {
       return await Promise.race([
         core,
         new Promise<AutoUnlockWait>((resolve) => {
           timer = setTimeout(() => {
-            expired = true
-            resolve({ status: 'timeout' })
-          }, AUTO_UNLOCK_TIMEOUT_MS)
+            expired = true;
+            resolve({ status: "timeout" });
+          }, AUTO_UNLOCK_TIMEOUT_MS);
         }),
-      ])
+      ]);
     } finally {
       // 竞速早胜后清定时器（审查）：不悬挂 30s 计时器。
-      if (timer !== undefined) clearTimeout(timer)
+      if (timer !== undefined) clearTimeout(timer);
     }
   }
 
   /** 清空「记住」的钥匙串缓存与偏好（关闭加密 / 忘记口令重置 / 关闭开关共用）。 */
   async function clearRememberCache(): Promise<void> {
-    useAppStore().setRememberPassphrase(false)
+    useAppStore().setRememberPassphrase(false);
     try {
-      await api.clearRememberPassphrase()
+      await api.clearRememberPassphrase();
     } catch {
       /* 清除失败幂等容忍（无缓存即成功；异常不阻断主流程） */
     }
@@ -151,17 +150,17 @@ export function useEncryptionGate() {
    *  偏好写入是应用启动时的落盘轻量设置，故在调用点读取 store，不做工厂期持有。 */
   async function syncRememberCache(passphrase: string, checked: boolean): Promise<boolean> {
     if (!checked) {
-      await clearRememberCache()
-      return true
+      await clearRememberCache();
+      return true;
     }
-    const store = useAppStore()
-    store.setRememberPassphrase(true)
+    const store = useAppStore();
+    store.setRememberPassphrase(true);
     try {
-      await api.setRememberPassphrase(passphrase)
-      return true
+      await api.setRememberPassphrase(passphrase);
+      return true;
     } catch {
-      store.setRememberPassphrase(false)
-      return false
+      store.setRememberPassphrase(false);
+      return false;
     }
   }
 
@@ -171,8 +170,8 @@ export function useEncryptionGate() {
    * 主界面随全新空库挂载，无需重启；失败保持锁定，可重试。
    */
   async function reset(): Promise<void> {
-    await api.resetAfterForgottenPassphrase()
-    locked.value = false
+    await api.resetAfterForgottenPassphrase();
+    locked.value = false;
   }
 
   /**
@@ -182,10 +181,10 @@ export function useEncryptionGate() {
    * 失败保持失败屏，可重试。
    */
   async function resetFromFailure(): Promise<void> {
-    await api.resetAfterStartupFailure()
-    bootFailed.value = false
-    bootErrorCode.value = null
-    locked.value = false
+    await api.resetAfterStartupFailure();
+    bootFailed.value = false;
+    bootErrorCode.value = null;
+    locked.value = false;
   }
 
   return {
@@ -201,5 +200,5 @@ export function useEncryptionGate() {
     clearRememberCache,
     reset,
     resetFromFailure,
-  }
+  };
 }

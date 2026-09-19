@@ -1,6 +1,6 @@
-import { ref } from 'vue'
-import { listen } from '@tauri-apps/api/event'
-import type { InstrumentSyncProgress } from '@ledger/types'
+import { ref } from "vue";
+import { listen } from "@tauri-apps/api/event";
+import type { InstrumentSyncProgress } from "@ledger/types";
 
 /**
  * 价格历史后台补全接缝（issue #1375 / ADR-0122）：订阅后端后台补全任务的
@@ -22,49 +22,53 @@ import type { InstrumentSyncProgress } from '@ledger/types'
 
 /** 价格历史后台补全进度事件名（后端常量单点在行情同步域 progress 模块；
  *  与手动同步事件同 payload 形状、不同事件名）。 */
-export const HISTORY_BACKFILL_PROGRESS_EVENT = 'ledger:history-backfill-progress'
+export const HISTORY_BACKFILL_PROGRESS_EVENT = "ledger:history-backfill-progress";
 
 /** 静默完成计数：null = 无在途轮次（队列空或终态已收起）。 */
-const progress = ref<InstrumentSyncProgress | null>(null)
+const progress = ref<InstrumentSyncProgress | null>(null);
 
 /** 订阅登记：模块生命周期内只订阅一次（测试经 reset 重置后随新 mock 重订）。 */
-let subscribed = false
+let subscribed = false;
 
 function ensureProgressSubscription(): void {
-  if (subscribed) return
-  subscribed = true
+  if (subscribed) return;
+  subscribed = true;
   // 模块级订阅与应用同生命周期：不随组件卸载注销（先例：useInstrumentInfoSync）；
   // 注册失败静默（本地事件，极少发生）。
   void listen<InstrumentSyncProgress>(HISTORY_BACKFILL_PROGRESS_EVENT, (event) => {
     // 载荷形状异常（脏数据/NaN）一并忽略；形状校验口径与手动同步接缝一致。
-    const payload = event.payload as Partial<InstrumentSyncProgress> | undefined
+    const payload = event.payload as Partial<InstrumentSyncProgress> | undefined;
     if (
       !payload ||
-      typeof payload.done !== 'number' || Number.isFinite(payload.done) === false ||
-      typeof payload.total !== 'number' || Number.isFinite(payload.total) === false
+      typeof payload.done !== "number" ||
+      Number.isFinite(payload.done) === false ||
+      typeof payload.total !== "number" ||
+      Number.isFinite(payload.total) === false
     ) {
-      return
+      return;
     }
     // 页级明细为可选字段：形状不合法即丢弃明细、保留标的级进度。
-    const fund = payload.fund
-    const validFund = (
+    const fund = payload.fund;
+    const validFund =
       fund &&
-      typeof fund.code === 'string' &&
-      typeof fund.page === 'number' && Number.isFinite(fund.page) &&
-      typeof fund.pages === 'number' && Number.isFinite(fund.pages) && fund.pages > 0
-    )
-      ? { code: fund.code, page: fund.page, pages: fund.pages }
-      : null
+      typeof fund.code === "string" &&
+      typeof fund.page === "number" &&
+      Number.isFinite(fund.page) &&
+      typeof fund.pages === "number" &&
+      Number.isFinite(fund.pages) &&
+      fund.pages > 0
+        ? { code: fund.code, page: fund.page, pages: fund.pages }
+        : null;
     // 终态静默收起：本轮队列排空即收起计数（不残留 228/228 的完成态）。
     progress.value =
       payload.done >= payload.total
         ? null
         : validFund
           ? { done: payload.done, total: payload.total, fund: validFund }
-          : { done: payload.done, total: payload.total }
+          : { done: payload.done, total: payload.total };
   }).catch((e) => {
-    console.warn(`订阅 ${HISTORY_BACKFILL_PROGRESS_EVENT} 失败`, e)
-  })
+    console.warn(`订阅 ${HISTORY_BACKFILL_PROGRESS_EVENT} 失败`, e);
+  });
 }
 
 /**
@@ -72,14 +76,14 @@ function ensureProgressSubscription(): void {
  * 生产代码不得调用。
  */
 export function resetHistoryBackfillForTest(): void {
-  progress.value = null
-  subscribed = false
+  progress.value = null;
+  subscribed = false;
 }
 
 /**
  * 价格历史后台补全接缝（投资页消费）：返回静默完成计数的只读投影。
  */
 export function useHistoryBackfill() {
-  ensureProgressSubscription()
-  return { progress }
+  ensureProgressSubscription();
+  return { progress };
 }

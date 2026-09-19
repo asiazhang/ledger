@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { errorMessage } from '@ledger/utils/errors'
-import { centsToYuan, formatAmount, yuanToCents } from '@ledger/money'
-import { computed, h, onMounted, ref } from 'vue'
+import { errorMessage } from "@ledger/utils/errors";
+import { centsToYuan, formatAmount, yuanToCents } from "@ledger/money";
+import { computed, h, onMounted, ref } from "vue";
 import {
   NCard,
   NButton,
@@ -15,50 +15,54 @@ import {
   useMessage,
   useThemeVars,
   type DataTableColumns,
-} from 'naive-ui'
-import { api } from '@ledger/api'
-import { t } from '@ledger/i18n'
-import { useReferenceStore } from '@/stores/reference'
-import AppModal from '@ledger/ui-kit/AppModal.vue'
-import AppDropdown from '@ledger/ui-kit/AppDropdown.vue'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import { useAppDialog } from '@/composables/useAppDialog'
-import { useModalIntent } from '@ledger/modal-intent'
-import { useRowContextMenu } from '@ledger/row-context-menu'
-import { useWindowTier } from '@ledger/window-tier'
-import AccountLink from '@/accounts/AccountLink.vue'
-import { buildAccountRowMenuOptions } from '@/accounts/account-row-menu'
-import { CREDIT_UTILIZATION_WARNING_PERCENT, creditProfile, listUtilizationPercent } from '@/accounts/credit-card'
-import { ACCOUNT_TYPES } from '@ledger/types'
-import type { AccountBalance, AccountInput, AccountType, AccountUpdateInput } from '@ledger/types'
+} from "naive-ui";
+import { api } from "@ledger/api";
+import { t } from "@ledger/i18n";
+import { useReferenceStore } from "@/stores/reference";
+import AppModal from "@ledger/ui-kit/AppModal.vue";
+import AppDropdown from "@ledger/ui-kit/AppDropdown.vue";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import { useAppDialog } from "@/composables/useAppDialog";
+import { useModalIntent } from "@ledger/modal-intent";
+import { useRowContextMenu } from "@ledger/row-context-menu";
+import { useWindowTier } from "@ledger/window-tier";
+import AccountLink from "@/accounts/AccountLink.vue";
+import { buildAccountRowMenuOptions } from "@/accounts/account-row-menu";
+import {
+  CREDIT_UTILIZATION_WARNING_PERCENT,
+  creditProfile,
+  listUtilizationPercent,
+} from "@/accounts/credit-card";
+import { ACCOUNT_TYPES } from "@ledger/types";
+import type { AccountBalance, AccountInput, AccountType, AccountUpdateInput } from "@ledger/types";
 
-const reference = useReferenceStore()
-const message = useMessage()
-const dialog = useAppDialog()
-const themeVars = useThemeVars()
-const balances = ref<AccountBalance[]>([])
+const reference = useReferenceStore();
+const message = useMessage();
+const dialog = useAppDialog();
+const themeVars = useThemeVars();
+const balances = ref<AccountBalance[]>([]);
 
 // 移动档适配（issue #847 / ADR-0088 决策 11 票⑦）：账户列表三分列 + 新增表单
 // 纵向堆叠 + 「⋯」48px 触控目标。断点口径接窗口分级 composable 唯一事实源，
 // 不自立断点；桌面档列结构与表单布局一字不动（回归红线）。
 // composable 在 setup 顶层调用一次（监听注册与 onScopeDispose 注销归其内聚），
 // 档位派生只读返回值。
-const windowTier = useWindowTier()
-const isMobileTier = computed(() => windowTier.value === 'mobile')
+const windowTier = useWindowTier();
+const isMobileTier = computed(() => windowTier.value === "mobile");
 
-const name = ref('')
-const type = ref<AccountType>('cash')
-const currencyCode = ref('CNY')
-const initial = ref<number | null>(0)
+const name = ref("");
+const type = ref<AccountType>("cash");
+const currencyCode = ref("CNY");
+const initial = ref<number | null>(0);
 
 // 信用卡档案字段（spec #1327 / ADR-0119）：仅类型选「信用卡」时出现在新增表单。
 // 额度以元录入、经统一换算接缝转整数分（与期初余额同款，消浮点误差口径）；
 // 账单日 / 还款日 是 1–31 的**声明值**。越界不在此拦截——后端以码化错误显式拒绝。
-const creditLimit = ref<number | null>(null)
-const statementDay = ref<number | null>(null)
-const dueDay = ref<number | null>(null)
-const isCreditType = computed(() => type.value === 'credit')
+const creditLimit = ref<number | null>(null);
+const statementDay = ref<number | null>(null);
+const dueDay = ref<number | null>(null);
+const isCreditType = computed(() => type.value === "credit");
 
 // computed：标签经 t() 随界面语言即时切换（ADR-0049）
 const typeOptions = computed(() =>
@@ -66,18 +70,18 @@ const typeOptions = computed(() =>
     label: t(`accounts.type.${k}`),
     value: k,
   })),
-)
+);
 const currencyOptions = () =>
-  reference.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code }))
+  reference.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code }));
 
 async function refresh() {
-  balances.value = await api.listAccountBalances()
+  balances.value = await api.listAccountBalances();
 }
 
 async function create() {
   if (!name.value.trim()) {
-    message.warning(t('accounts.message.nameRequired'))
-    return
+    message.warning(t("accounts.message.nameRequired"));
+    return;
   }
   const input: AccountInput = {
     name: name.value,
@@ -85,37 +89,38 @@ async function create() {
     currency_code: currencyCode.value,
     initial_balance_cents: yuanToCents(initial.value ?? 0) ?? 0,
     // 档案字段仅信用卡携带；未填即不携带（缺省 = 未设置，后端不写空值）。
-    ...(type.value === 'credit'
+    ...(type.value === "credit"
       ? {
-          credit_limit_cents: creditLimit.value === null ? undefined : yuanToCents(creditLimit.value) ?? undefined,
+          credit_limit_cents:
+            creditLimit.value === null ? undefined : (yuanToCents(creditLimit.value) ?? undefined),
           statement_day: statementDay.value ?? undefined,
           due_day: dueDay.value ?? undefined,
         }
       : {}),
-  }
+  };
   try {
-    await api.createAccount(input)
-    message.success(t('accounts.message.created'))
-    name.value = ''
-    initial.value = 0
-    creditLimit.value = null
-    statementDay.value = null
-    dueDay.value = null
+    await api.createAccount(input);
+    message.success(t("accounts.message.created"));
+    name.value = "";
+    initial.value = 0;
+    creditLimit.value = null;
+    statementDay.value = null;
+    dueDay.value = null;
     // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新交易派生余额
-    await refresh()
+    await refresh();
   } catch (e) {
-    message.error(t('accounts.message.createFailed', { message: errorMessage(e) }))
+    message.error(t("accounts.message.createFailed", { message: errorMessage(e) }));
   }
 }
 
 async function remove(id: string) {
   try {
-    await api.deleteAccount(id)
-    message.success(t('accounts.message.deleted'))
+    await api.deleteAccount(id);
+    message.success(t("accounts.message.deleted"));
     // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新交易派生余额
-    await refresh()
+    await refresh();
   } catch (e) {
-    message.error(t('accounts.message.deleteFailed', { message: errorMessage(e) }))
+    message.error(t("accounts.message.deleteFailed", { message: errorMessage(e) }));
   }
 }
 
@@ -123,13 +128,13 @@ async function remove(id: string) {
  * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
 function confirmDelete(row: AccountBalance) {
   dialog.warning({
-    title: t('accounts.deleteDialog.title'),
-    content: t('accounts.deleteDialog.content', { name: row.account.name }),
-    positiveText: t('accounts.deleteDialog.positive'),
-    negativeText: t('accounts.deleteDialog.negative'),
+    title: t("accounts.deleteDialog.title"),
+    content: t("accounts.deleteDialog.content", { name: row.account.name }),
+    positiveText: t("accounts.deleteDialog.positive"),
+    negativeText: t("accounts.deleteDialog.negative"),
     maskClosable: false,
     onPositiveClick: () => remove(row.account.id),
-  })
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +148,7 @@ function confirmDelete(row: AccountBalance) {
 
 /** 编辑账户弹窗意图（单成员闭集）：携带目标账户行。 */
 interface AccountEditIntent {
-  row: AccountBalance
+  row: AccountBalance;
 }
 
 const {
@@ -151,20 +156,20 @@ const {
   seq: editSeq,
   open: openEditIntent,
   close: closeEdit,
-} = useModalIntent<AccountEditIntent>()
+} = useModalIntent<AccountEditIntent>();
 
-const editName = ref('')
-const editCurrency = ref('')
+const editName = ref("");
+const editCurrency = ref("");
 // 信用卡档案输入（仅信用卡账户可编辑；空 = 未设置，提交时以 `null` 明示清空）。
-const editCreditLimit = ref<number | null>(null)
-const editStatementDay = ref<number | null>(null)
-const editDueDay = ref<number | null>(null)
+const editCreditLimit = ref<number | null>(null);
+const editStatementDay = ref<number | null>(null);
+const editDueDay = ref<number | null>(null);
 /** 编辑中的账户是否为信用卡（决定三个档案输入与只读摘要是否出现）。 */
-const isCreditEdit = computed(() => editIntent.value?.row.account.type === 'credit')
+const isCreditEdit = computed(() => editIntent.value?.row.account.type === "credit");
 
 function openEdit(row: AccountBalance) {
-  editName.value = row.account.name
-  editCurrency.value = row.account.currency_code
+  editName.value = row.account.name;
+  editCurrency.value = row.account.currency_code;
   // 档案字段回填：额度从分转元展示（统一换算接缝），日子为声明值原样。
   editCreditLimit.value =
     row.account.credit_limit_cents == null
@@ -172,17 +177,17 @@ function openEdit(row: AccountBalance) {
       : centsToYuan(
           row.account.credit_limit_cents,
           reference.getCurrency(row.account.currency_code),
-        )
-  editStatementDay.value = row.account.statement_day ?? null
-  editDueDay.value = row.account.due_day ?? null
-  openEditIntent({ row })
+        );
+  editStatementDay.value = row.account.statement_day ?? null;
+  editDueDay.value = row.account.due_day ?? null;
+  openEditIntent({ row });
 }
 
 async function submitEdit() {
-  if (!editIntent.value) return
+  if (!editIntent.value) return;
   if (!editName.value.trim()) {
-    message.warning(t('accounts.message.nameRequired'))
-    return
+    message.warning(t("accounts.message.nameRequired"));
+    return;
   }
   try {
     // 信用卡档案字段三态：给值 = 落定、`null` = 清空（未填即空）；非信用卡账户
@@ -190,20 +195,20 @@ async function submitEdit() {
     const payload: AccountUpdateInput = {
       name: editName.value,
       currency_code: editCurrency.value,
-    }
-    if (editIntent.value.row.account.type === 'credit') {
+    };
+    if (editIntent.value.row.account.type === "credit") {
       payload.credit_limit_cents =
-        editCreditLimit.value === null ? null : yuanToCents(editCreditLimit.value)
-      payload.statement_day = editStatementDay.value
-      payload.due_day = editDueDay.value
+        editCreditLimit.value === null ? null : yuanToCents(editCreditLimit.value);
+      payload.statement_day = editStatementDay.value;
+      payload.due_day = editDueDay.value;
     }
-    await api.updateAccount(editIntent.value.row.account.id, payload)
-    message.success(t('accounts.message.saved'))
-    closeEdit()
+    await api.updateAccount(editIntent.value.row.account.id, payload);
+    message.success(t("accounts.message.saved"));
+    closeEdit();
     // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新余额
-    await refresh()
+    await refresh();
   } catch (e) {
-    message.error(t('accounts.message.saveFailed', { message: errorMessage(e) }))
+    message.error(t("accounts.message.saveFailed", { message: errorMessage(e) }));
   }
 }
 
@@ -213,41 +218,41 @@ const editCredit = computed(() =>
   editIntent.value === null
     ? null
     : creditProfile(editIntent.value.row.account, editIntent.value.row.balance_cents),
-)
+);
 
 const editCurrencyObj = computed(() =>
   editIntent.value === null
     ? undefined
     : reference.getCurrency(editIntent.value.row.account.currency_code),
-)
+);
 
 /** 额度用量摘要：额度未设置时给引导文案，不显示占位数字（避免被读成 0 额度）。 */
 const editUsageText = computed(() => {
-  const profile = editCredit.value
-  if (profile === null) return ''
-  const { usedCents, availableCents, utilizationPercent } = profile
+  const profile = editCredit.value;
+  if (profile === null) return "";
+  const { usedCents, availableCents, utilizationPercent } = profile;
   if (availableCents === null || utilizationPercent === null) {
-    return t('accounts.credit.usageUnset')
+    return t("accounts.credit.usageUnset");
   }
-  return t('accounts.credit.usageSummary', {
+  return t("accounts.credit.usageSummary", {
     used: formatAmount(usedCents, editCurrencyObj.value),
     available: formatAmount(availableCents, editCurrencyObj.value),
     percent: utilizationPercent,
-  })
-})
+  });
+});
 
 /** 下次账单节点摘要：两个具体日期（ISO 短格式；绝对日期不随界面语言变化）。 */
 const editNextNodesText = computed(() => {
-  const profile = editCredit.value
-  if (profile === null) return ''
+  const profile = editCredit.value;
+  if (profile === null) return "";
   if (profile.nextStatementDate === null || profile.nextDueDate === null) {
-    return t('accounts.credit.nextNodesUnset')
+    return t("accounts.credit.nextNodesUnset");
   }
-  return t('accounts.credit.nextNodes', {
+  return t("accounts.credit.nextNodes", {
     statement: profile.nextStatementDate,
     due: profile.nextDueDate,
-  })
-})
+  });
+});
 
 // ---------------------------------------------------------------------------
 // 调整余额弹窗（ADR-0026）：校准到目标值，后端生成一笔与黑洞账户的转账
@@ -260,7 +265,7 @@ const editNextNodesText = computed(() => {
 
 /** 调整余额弹窗意图（单成员闭集）：携带目标账户行。 */
 interface AccountAdjustIntent {
-  row: AccountBalance
+  row: AccountBalance;
 }
 
 const {
@@ -268,67 +273,67 @@ const {
   seq: adjustSeq,
   open: openAdjustIntent,
   close: closeAdjust,
-} = useModalIntent<AccountAdjustIntent>()
+} = useModalIntent<AccountAdjustIntent>();
 
-const adjustTarget = ref<number | null>(null)
-const adjustDate = ref<number | null>(Date.now())
+const adjustTarget = ref<number | null>(null);
+const adjustDate = ref<number | null>(Date.now());
 
 function openAdjust(row: AccountBalance) {
-  adjustTarget.value = null
-  adjustDate.value = Date.now()
-  openAdjustIntent({ row })
+  adjustTarget.value = null;
+  adjustDate.value = Date.now();
+  openAdjustIntent({ row });
 }
 
 function todayIso(): string {
-  return formatLocalDate(new Date())
+  return formatLocalDate(new Date());
 }
 
 /** 本地时区日期 → YYYY-MM-DD（不用 toISOString：避免时区偏移使日期漂移一天）。 */
 function formatLocalDate(d: Date): string {
-  const m = `${d.getMonth() + 1}`.padStart(2, '0')
-  const day = `${d.getDate()}`.padStart(2, '0')
-  return `${d.getFullYear()}-${m}-${day}`
+  const m = `${d.getMonth() + 1}`.padStart(2, "0");
+  const day = `${d.getDate()}`.padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
 }
 
 /** 目标余额（分）：输入以元为单位，经 yuanToCents 统一口径转整数分（非法输入 → null，禁用提交）。 */
 const adjustTargetCents = computed(() =>
   adjustTarget.value === null ? null : yuanToCents(adjustTarget.value),
-)
+);
 
 /** 差额 Δ = 目标 − 当前：>0 从黑洞转入，<0 转出至黑洞，=0 无需调整。 */
 const adjustDelta = computed(() => {
-  if (adjustIntent.value === null || adjustTargetCents.value === null) return null
-  return adjustTargetCents.value - adjustIntent.value.row.balance_cents
-})
+  if (adjustIntent.value === null || adjustTargetCents.value === null) return null;
+  return adjustTargetCents.value - adjustIntent.value.row.balance_cents;
+});
 
 const adjustCurrency = computed(() =>
   adjustIntent.value
     ? reference.getCurrency(adjustIntent.value.row.account.currency_code)
     : undefined,
-)
+);
 
 const adjustDeltaText = computed(() => {
-  if (adjustDelta.value === null || adjustDelta.value === 0) return ''
-  const abs = formatAmount(Math.abs(adjustDelta.value), adjustCurrency.value)
+  if (adjustDelta.value === null || adjustDelta.value === 0) return "";
+  const abs = formatAmount(Math.abs(adjustDelta.value), adjustCurrency.value);
   return adjustDelta.value > 0
-    ? t('accounts.adjust.deltaIn', { amount: abs })
-    : t('accounts.adjust.deltaOut', { amount: abs })
-})
+    ? t("accounts.adjust.deltaIn", { amount: abs })
+    : t("accounts.adjust.deltaOut", { amount: abs });
+});
 
 async function submitAdjust() {
-  if (!adjustIntent.value) return
-  if (adjustTargetCents.value === null || adjustDelta.value === 0) return
+  if (!adjustIntent.value) return;
+  if (adjustTargetCents.value === null || adjustDelta.value === 0) return;
   try {
     await api.adjustAccountBalance(adjustIntent.value.row.account.id, {
       target_balance_cents: adjustTargetCents.value,
       date: adjustDate.value ? formatLocalDate(new Date(adjustDate.value)) : todayIso(),
-    })
-    message.success(t('accounts.message.adjusted'))
-    closeAdjust()
+    });
+    message.success(t("accounts.message.adjusted"));
+    closeAdjust();
     // 参考数据由 ledger:changed 信号自动重拉（若按需新建了黑洞账户）；此处仅刷新余额
-    await refresh()
+    await refresh();
   } catch (e) {
-    message.error(t('accounts.message.adjustFailed', { message: errorMessage(e) }))
+    message.error(t("accounts.message.adjustFailed", { message: errorMessage(e) }));
   }
 }
 
@@ -342,145 +347,142 @@ async function submitAdjust() {
 
 const menuOptions = computed(() =>
   buildAccountRowMenuOptions({ errorColor: themeVars.value.errorColor }),
-)
+);
 
 const rowMenu = useRowContextMenu<AccountBalance>((key, row) => {
-  if (key === 'edit') openEdit(row)
-  else if (key === 'adjust-balance') openAdjust(row)
-  else if (key === 'delete') confirmDelete(row)
-})
+  if (key === "edit") openEdit(row);
+  else if (key === "adjust-balance") openAdjust(row);
+  else if (key === "delete") confirmDelete(row);
+});
 
 // 可见性由单判别状态派生（非空即显示）；定位坐标取工厂保留值（open 同步更新、
 // close 不清零）：naive-ui 离场动画期间仍按 x/y 重定位弹层，视图侧清零会让
 // 淡出中的菜单跳到视口左上角闪现一次（issue #798）。
-const menuShow = computed(() => rowMenu.state.value !== null)
-const menuX = computed(() => rowMenu.position.value.x)
-const menuY = computed(() => rowMenu.position.value.y)
+const menuShow = computed(() => rowMenu.state.value !== null);
+const menuX = computed(() => rowMenu.position.value.x);
+const menuY = computed(() => rowMenu.position.value.y);
 
 /** 表格行属性：绑定行右键菜单（open 内化「收起 → 下一帧重开」重定位舞步；
  * 原生菜单拦截单点归窗口行为守卫，视图不再 preventDefault）。 */
 const rowProps = (row: AccountBalance) => ({
   onContextmenu: (e: MouseEvent) => rowMenu.open(e, row),
-})
+});
 
 /** 余额单元格渲染（移动/桌面两分支共用，格式化接缝 formatAmount 单点含隐私掩码）。
  * 信用卡行追加一行 12px 使用率小字（仅已用 > 0 且额度已设置；≥90% 用警示色）——
  * 不新增列、不动行结构，只在既有余额单元格内多一行（spec #1327 / ADR-0119）。
  * 百分比不随金额隐私模式掩码：比例不是金额，泄露不到账户规模。 */
 const renderBalanceCell = (row: AccountBalance) => {
-  const text = formatAmount(
-    row.balance_cents,
-    reference.getCurrency(row.account.currency_code),
-  )
-  const percent = listUtilizationPercent(row.account, row.balance_cents)
-  if (percent === null) return text
-  const warning = percent >= CREDIT_UTILIZATION_WARNING_PERCENT
-  return h('div', { style: CREDIT_CELL_STYLE }, [
-    h('div', {}, text),
+  const text = formatAmount(row.balance_cents, reference.getCurrency(row.account.currency_code));
+  const percent = listUtilizationPercent(row.account, row.balance_cents);
+  if (percent === null) return text;
+  const warning = percent >= CREDIT_UTILIZATION_WARNING_PERCENT;
+  return h("div", { style: CREDIT_CELL_STYLE }, [
+    h("div", {}, text),
     h(
-      'div',
+      "div",
       {
         style: warning
           ? `${CREDIT_SUB_STYLE}; color: ${themeVars.value.warningColor}`
           : CREDIT_SUB_STYLE,
       },
-      t('accounts.credit.usedPercent', { percent }),
+      t("accounts.credit.usedPercent", { percent }),
     ),
-  ])
-}
+  ]);
+};
 
 /** 移动档名称单元格布局：名称与「类型 · 币种」副行纵排；副行弱化小字（内联样式收口
  * 在列配置单点，同 transaction-columns 渲染函数先例）。 */
-const MOBILE_NAME_CELL_STYLE = 'display: flex; flex-direction: column; gap: 2px; min-width: 0;'
-const MOBILE_NAME_SUB_STYLE = 'font-size: 12px; opacity: 0.65;'
+const MOBILE_NAME_CELL_STYLE = "display: flex; flex-direction: column; gap: 2px; min-width: 0;";
+const MOBILE_NAME_SUB_STYLE = "font-size: 12px; opacity: 0.65;";
 /** 信用卡行余额单元格内的使用率小字：金额与百分比纵排，小字同移动档副行弱化口径。 */
-const CREDIT_CELL_STYLE = 'display: flex; flex-direction: column; gap: 2px;'
-const CREDIT_SUB_STYLE = 'font-size: 12px; opacity: 0.65;'
+const CREDIT_CELL_STYLE = "display: flex; flex-direction: column; gap: 2px;";
+const CREDIT_SUB_STYLE = "font-size: 12px; opacity: 0.65;";
 /** 移动档名称链接：换行不截断（悬停替代原则「空间够则常驻」，触屏无悬停全文）、
  * 文本左对齐（button 拉满单元格宽后默认居中会与桌面行错位，交易列先例）。 */
-const MOBILE_NAME_LINK_STYLE = 'white-space: normal; text-align: left;'
+const MOBILE_NAME_LINK_STYLE = "white-space: normal; text-align: left;";
 /** 移动档「⋯」按钮：显式 48×48 触控目标（ADR-0088 全局验收基线；按钮自身达标，
  * 不用伪元素外扩——操作列内相邻行的热区互不侵入）。桌面档不挂，尺寸零变化。 */
-const MOBILE_MORE_BUTTON_STYLE = { width: '48px', height: '48px', fontSize: '18px' }
+const MOBILE_MORE_BUTTON_STYLE = { width: "48px", height: "48px", fontSize: "18px" };
 
 const columns = computed<DataTableColumns<AccountBalance>>(() => {
   /** 操作列：「⋯」与行右键共用同一工厂 open 入口（以点击坐标弹出）；两轴同一
    * 列配置（入口全平台常显），仅移动档加大触控目标。 */
   const actionsColumn: DataTableColumns<AccountBalance>[number] = {
-    title: t('accounts.list.colActions'),
-    key: 'actions',
+    title: t("accounts.list.colActions"),
+    key: "actions",
     width: 64,
     render: (row) =>
       h(
         NButton,
         {
-          size: 'tiny',
+          size: "tiny",
           quaternary: true,
-          'aria-label': t('accounts.list.moreActions'),
+          "aria-label": t("accounts.list.moreActions"),
           style: isMobileTier.value ? MOBILE_MORE_BUTTON_STYLE : undefined,
           onClick: (e: MouseEvent) => rowMenu.open(e, row),
         },
-        () => '⋯',
+        () => "⋯",
       ),
-  }
+  };
 
   // 移动档三分列（issue #847）：名称（类型/币种并入副行）、余额、操作——328px
   // 内容宽内无横向滚动、逐行可读；桌面档五列一字不动（回归红线）。
   if (isMobileTier.value) {
     return [
       {
-        title: t('accounts.list.colName'),
-        key: 'account.name',
+        title: t("accounts.list.colName"),
+        key: "account.name",
         // 名称下钻：点击跳转交易页并按涉及账户过滤（issue #97）；副行携带类型与币种
         render: (row) =>
-          h('div', { style: MOBILE_NAME_CELL_STYLE }, [
+          h("div", { style: MOBILE_NAME_CELL_STYLE }, [
             h(AccountLink, {
               accountId: row.account.id,
               style: MOBILE_NAME_LINK_STYLE,
             }),
             h(
-              'div',
+              "div",
               { style: MOBILE_NAME_SUB_STYLE },
               `${t(`accounts.type.${row.account.type}`)} · ${row.account.currency_code}`,
             ),
           ]),
       },
       {
-        title: t('accounts.list.colBalance'),
-        key: 'balance_cents',
+        title: t("accounts.list.colBalance"),
+        key: "balance_cents",
         width: 110,
         render: renderBalanceCell,
       },
       actionsColumn,
-    ]
+    ];
   }
 
   return [
     {
-      title: t('accounts.list.colName'),
-      key: 'account.name',
+      title: t("accounts.list.colName"),
+      key: "account.name",
       // 账户名下钻：点击跳转交易页并按涉及账户过滤（issue #97）
       render: (row) => h(AccountLink, { accountId: row.account.id }),
     },
     {
-      title: t('accounts.list.colType'),
-      key: 'account.type',
+      title: t("accounts.list.colType"),
+      key: "account.type",
       render: (row) => t(`accounts.type.${row.account.type}`),
     },
-    { title: t('accounts.list.colCurrency'), key: 'account.currency_code' },
+    { title: t("accounts.list.colCurrency"), key: "account.currency_code" },
     {
-      title: t('accounts.list.colBalance'),
-      key: 'balance_cents',
+      title: t("accounts.list.colBalance"),
+      key: "balance_cents",
       render: renderBalanceCell,
     },
     actionsColumn,
-  ]
-})
+  ];
+});
 
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
-  void refresh()
-})
+  void refresh();
+});
 </script>
 
 <template>
@@ -567,7 +569,7 @@ onMounted(() => {
           :style="isMobileTier ? { '--touch-hit-inset': '-10px -14px' } : undefined"
           @click="create"
         >
-          {{ t('accounts.create.add') }}
+          {{ t("accounts.create.add") }}
         </NButton>
       </NForm>
     </NCard>
@@ -591,7 +593,11 @@ onMounted(() => {
       preset="card"
       display-directive="if"
       card-size="sm"
-      @update:show="(show: boolean) => { if (!show) closeEdit() }"
+      @update:show="
+        (show: boolean) => {
+          if (!show) closeEdit();
+        }
+      "
     >
       <NForm
         v-if="editIntent"
@@ -603,16 +609,17 @@ onMounted(() => {
         <!-- 行距节奏容器：NFormItem 默认零行距，表单项与按钮行同包（ADR-0079 决策 4 / issue #804） -->
         <NSpace vertical :size="12">
           <NFormItem :label="t('accounts.create.name')">
-            <NInput
-              v-model:value="editName"
-              :placeholder="t('accounts.create.namePlaceholder')"
-            />
+            <NInput v-model:value="editName" :placeholder="t('accounts.create.namePlaceholder')" />
           </NFormItem>
           <NFormItem :label="t('accounts.create.type')">
             <NInput :value="t(`accounts.type.${editIntent.row.account.type}`)" disabled />
           </NFormItem>
           <NFormItem :label="t('accounts.create.currency')">
-            <AppSelect v-model:value="editCurrency" :options="currencyOptions()" style="width: 100%" />
+            <AppSelect
+              v-model:value="editCurrency"
+              :options="currencyOptions()"
+              style="width: 100%"
+            />
           </NFormItem>
           <!-- 信用卡档案字段与只读摘要（spec #1327 / ADR-0119）：仅信用卡账户出现。
                摘要是**已保存**的额度用量与下次账单节点，不随上方未提交的输入实时变化。 -->
@@ -647,8 +654,8 @@ onMounted(() => {
             <NText>{{ editNextNodesText }}</NText>
           </NFormItem>
           <NSpace justify="end" :size="8">
-            <NButton @click="closeEdit">{{ t('accounts.edit.cancel') }}</NButton>
-            <NButton type="primary" @click="submitEdit">{{ t('accounts.edit.save') }}</NButton>
+            <NButton @click="closeEdit">{{ t("accounts.edit.cancel") }}</NButton>
+            <NButton type="primary" @click="submitEdit">{{ t("accounts.edit.save") }}</NButton>
           </NSpace>
         </NSpace>
       </NForm>
@@ -663,7 +670,11 @@ onMounted(() => {
       preset="card"
       display-directive="if"
       card-size="sm"
-      @update:show="(show: boolean) => { if (!show) closeAdjust() }"
+      @update:show="
+        (show: boolean) => {
+          if (!show) closeAdjust();
+        }
+      "
     >
       <NForm
         v-if="adjustIntent"
@@ -675,9 +686,7 @@ onMounted(() => {
         <!-- 行距节奏容器：NFormItem 默认零行距，表单项与按钮行同包（ADR-0079 决策 4 / issue #804） -->
         <NSpace vertical :size="12">
           <NFormItem :label="t('accounts.adjust.currentBalance')">
-            <NText>{{
-              formatAmount(adjustIntent.row.balance_cents, adjustCurrency)
-            }}</NText>
+            <NText>{{ formatAmount(adjustIntent.row.balance_cents, adjustCurrency) }}</NText>
           </NFormItem>
           <NFormItem :label="t('accounts.adjust.targetBalance')">
             <NInputNumber
@@ -691,19 +700,19 @@ onMounted(() => {
             <AppDatePicker v-model:value="adjustDate" type="date" style="width: 100%" />
           </NFormItem>
           <NFormItem :label="t('accounts.adjust.delta')" :show-label="adjustDeltaText === ''">
-            <NText v-if="adjustDelta === 0">{{ t('accounts.adjust.deltaZero') }}</NText>
+            <NText v-if="adjustDelta === 0">{{ t("accounts.adjust.deltaZero") }}</NText>
             <NText v-else-if="adjustDeltaText" :type="adjustDelta! > 0 ? 'success' : 'warning'">
-              {{ adjustDeltaText }}{{ t('accounts.adjust.hint') }}
+              {{ adjustDeltaText }}{{ t("accounts.adjust.hint") }}
             </NText>
           </NFormItem>
           <NSpace justify="end" :size="8">
-            <NButton @click="closeAdjust">{{ t('accounts.edit.cancel') }}</NButton>
+            <NButton @click="closeAdjust">{{ t("accounts.edit.cancel") }}</NButton>
             <NButton
               type="primary"
               :disabled="adjustTargetCents === null || adjustDelta === 0"
               @click="submitAdjust"
             >
-              {{ t('accounts.adjust.confirm') }}
+              {{ t("accounts.adjust.confirm") }}
             </NButton>
           </NSpace>
         </NSpace>

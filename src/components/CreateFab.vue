@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { NButton, NIcon } from 'naive-ui'
-import { AddOutline } from '@vicons/ionicons5'
-import type { CreateTransactionKind } from '@ledger/types'
-import { t } from '@ledger/i18n'
-import AppPopover from '@ledger/ui-kit/AppPopover.vue'
+import { ref } from "vue";
+import { NButton, NIcon } from "naive-ui";
+import { AddOutline } from "@vicons/ionicons5";
+import type { CreateTransactionKind } from "@ledger/types";
+import { t } from "@ledger/i18n";
+import AppPopover from "@ledger/ui-kit/AppPopover.vue";
 import {
   CREATE_FAB_CLASS,
   CREATE_FAB_SHEET_CLASS,
   CREATE_FAB_OPTION_CLASS,
-} from './create-fab.css.ts'
+} from "./create-fab.css.ts";
 
 /**
  * 记一笔悬浮按钮（Create FAB，issue #846 / ADR-0088 决策 5 / 词汇表「记一笔悬浮按钮」）：
@@ -31,20 +31,20 @@ import {
 
 const props = defineProps<{
   /** 可选新建类型（清单序即渲染序）：调用方按功能开关过滤后的唯一来源。 */
-  kinds: readonly CreateTransactionKind[]
-}>()
+  kinds: readonly CreateTransactionKind[];
+}>();
 
 const emit = defineEmits<{
   /** 选中一个可创建类型（清单见 kinds prop，已按功能开关过滤） */
-  select: [kind: CreateTransactionKind]
-}>()
+  select: [kind: CreateTransactionKind];
+}>();
 
-const show = ref(false)
+const show = ref(false);
 
 /** 选中即关闭并上报（表单由调用方经既有意图编排开启）。 */
 function pick(kind: CreateTransactionKind): void {
-  show.value = false
-  emit('select', kind)
+  show.value = false;
+  emit("select", kind);
 }
 </script>
 

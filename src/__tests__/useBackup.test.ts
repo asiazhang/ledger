@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { mount, flushPromises } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { type UnlistenFn } from "@tauri-apps/api/event";
@@ -14,10 +14,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 vi.mock("@/backup/restart", () => ({ restartAppShortly: vi.fn() }));
 
 import { useAppStore } from "@/stores/app";
-import {
-  restoreCrossModeWarningKey,
-  useBackup,
-} from "@/backup/useBackup";
+import { restoreCrossModeWarningKey, useBackup } from "@/backup/useBackup";
 import { restartAppShortly } from "@/backup/restart";
 import { captureLastListener, mockListen } from "@ledger/test-support/listen-mock";
 import type { BackupFileInfo } from "@ledger/types";
@@ -51,8 +48,7 @@ const AUTO_STATE_OK: AutoBackupState = {
 function makeStub(initialList: BackupFileInfo[]) {
   let list: BackupFileInfo[] = initialList;
   let autoState: AutoBackupState = AUTO_STATE_OK;
-  const listCalls = () =>
-    mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_backups").length;
+  const listCalls = () => mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_backups").length;
 
   wireInvokeSeam({
     overrides: {
@@ -109,10 +105,7 @@ describe("useBackup 备份产物变更信号（issue #129）", () => {
     await flushPromises();
 
     expect(mockListen).toHaveBeenCalledTimes(1);
-    expect(mockListen).toHaveBeenCalledWith(
-      "ledger:backups-changed",
-      expect.any(Function),
-    );
+    expect(mockListen).toHaveBeenCalledWith("ledger:backups-changed", expect.any(Function));
     wrapper.unmount();
   });
 
@@ -156,7 +149,12 @@ describe("useBackup 备份产物变更信号（issue #129）", () => {
     await flushPromises();
     expect(backup.autoBackupLastText.value).toBe("从未");
 
-    stub.setAutoState({ enabled: true, last_backup_at: "2026-02-17T09:30:00Z", consecutive_failures: 0, failure_alerting: false });
+    stub.setAutoState({
+      enabled: true,
+      last_backup_at: "2026-02-17T09:30:00Z",
+      consecutive_failures: 0,
+      failure_alerting: false,
+    });
     readFire()?.();
     await flushPromises();
 
@@ -225,10 +223,7 @@ describe("useBackup 来源列映射（issue #129）", () => {
     const { backup } = mountHost();
     await flushPromises();
 
-    expect(backup.backupRows.value.map((r) => r.source_text)).toEqual([
-      "自动",
-      "手动",
-    ]);
+    expect(backup.backupRows.value.map((r) => r.source_text)).toEqual(["自动", "手动"]);
   });
 
   it("旧数据缺 kind 字段按手动回落（与后端兼容语义一致）", async () => {
@@ -283,9 +278,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
     await backup.pickRestore();
     await flushPromises();
 
-    expect(
-      mockInvoke.mock.calls.filter(([c]) => c === "get_backup_meta"),
-    ).toHaveLength(1);
+    expect(mockInvoke.mock.calls.filter(([c]) => c === "get_backup_meta")).toHaveLength(1);
     expect(backup.restoreIntent.value).toEqual({
       path: "/Users/me/backups/enc.db.zip",
       backupEncrypted: true,
@@ -427,7 +420,11 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         get_backup_meta: { kind: "manual", encrypted: true },
         get_encryption_status: { locked: false, file_encrypted: false },
         restore_backup: () =>
-          Promise.reject({ kind: "Coded", code: "encryption.passphrase-incorrect", message: "口令错误或文件损坏，请重试" }),
+          Promise.reject({
+            kind: "Coded",
+            code: "encryption.passphrase-incorrect",
+            message: "口令错误或文件损坏，请重试",
+          }),
       },
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -453,7 +450,11 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
         list_backups: [
           autoBackupFile,
           manualBackupFile,
-          { ...manualBackupFile, file_name: "ledger-backup-20260102-010101.db.zip", path: "/Users/me/backups/ledger-backup-20260102-010101.db.zip" },
+          {
+            ...manualBackupFile,
+            file_name: "ledger-backup-20260102-010101.db.zip",
+            path: "/Users/me/backups/ledger-backup-20260102-010101.db.zip",
+          },
         ],
         get_auto_backup_state: AUTO_STATE_OK,
         prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
@@ -469,9 +470,7 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
     await backup.manualPrune();
     expect(backup.pruneConfirmShow.value).toBe(true);
     expect(backup.pruneExcess.value).toBe(2);
-    expect(
-      mockInvoke.mock.calls.some(([cmd]) => cmd === "prune_backups"),
-    ).toBe(false);
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "prune_backups")).toBe(false);
   });
 
   it("confirmPrune：执行清理并关闭弹窗（pruning 期间加载态收口在封装 submitting）", async () => {
@@ -500,9 +499,7 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
     backup.cancelPrune();
     await flushPromises();
     expect(backup.pruneConfirmShow.value).toBe(false);
-    expect(
-      mockInvoke.mock.calls.some(([cmd]) => cmd === "prune_backups"),
-    ).toBe(false);
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "prune_backups")).toBe(false);
   });
 
   it("未超上限：info 提示不开弹窗", async () => {
@@ -570,8 +567,7 @@ describe("useBackup 手动备份按账本分域（issue #836）", () => {
     wireInvokeSeam({
       overrides: {
         list_backups: () => Promise.resolve([]),
-        get_auto_backup_state: () =>
-          Promise.resolve(AUTO_STATE_OK),
+        get_auto_backup_state: () => Promise.resolve(AUTO_STATE_OK),
         // 注册表不可用现场：清单读取失败 → active_id 为 null。
         list_books: () => Promise.reject(new Error("registry corrupt")),
         create_backup: {
@@ -583,9 +579,7 @@ describe("useBackup 手动备份按账本分域（issue #836）", () => {
       },
     });
     const { save } = await import("@tauri-apps/plugin-dialog");
-    vi.mocked(save).mockResolvedValue(
-      "/Users/me/backups/ledger-backup-20260217-093005.db.zip",
-    );
+    vi.mocked(save).mockResolvedValue("/Users/me/backups/ledger-backup-20260217-093005.db.zip");
 
     const { backup } = mountHost();
     await flushPromises();

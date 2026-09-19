@@ -5,4 +5,4 @@
  * 落壳内跨域件：src/composables 不依赖任何域，消费方向单一（域 → 跨域件，
  * latest-wins / push-first-list 同向先例）。
  */
-export const SEARCH_DEBOUNCE_MS = 300
+export const SEARCH_DEBOUNCE_MS = 300;

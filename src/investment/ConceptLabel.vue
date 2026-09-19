@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NButton, NIcon } from 'naive-ui'
-import { InformationCircleOutline } from '@vicons/ionicons5'
-import { t } from '@ledger/i18n'
-import ConceptTipHost from '@/investment/ConceptTipHost.vue'
+import { computed } from "vue";
+import { NButton, NIcon } from "naive-ui";
+import { InformationCircleOutline } from "@vicons/ionicons5";
+import { t } from "@ledger/i18n";
+import ConceptTipHost from "@/investment/ConceptTipHost.vue";
 import {
   CONCEPT_SCOPE_KEY_SUFFIX,
   type ConceptKey,
   type ConceptScope,
-} from '@/investment/concept-tips'
-import { conceptLabel } from './concept-label.css.ts'
+} from "@/investment/concept-tips";
+import { conceptLabel } from "./concept-label.css.ts";
 
 /**
  * 投资域口径说明标签（issue #1369）：标签 + 常驻 `ⓘ`，指针轴悬停即现
@@ -41,26 +41,26 @@ import { conceptLabel } from './concept-label.css.ts'
 
 const props = defineProps<{
   /** 展示标签（取自本表位命名空间的现有键，如 holdings.columns.cost） */
-  label: string
+  label: string;
   /** 概念键：tip 取 `investments.concepts.<concept>Tip`（闭集，见 concept-tips.ts） */
-  concept: ConceptKey
+  concept: ConceptKey;
   /** 作用域变体句；口径不随页面语境变化时省略 */
-  scope?: ConceptScope
+  scope?: ConceptScope;
   /** `ⓘ` 触发器的 data-testid（省略即不挂测试钩子） */
-  testId?: string
-}>()
+  testId?: string;
+}>();
 
-const ariaLabel = computed(() => t('investments.concepts.tipAria', { concept: props.label }))
+const ariaLabel = computed(() => t("investments.concepts.tipAria", { concept: props.label }));
 
 const tip = computed(() => {
-  const body = t(`investments.concepts.${props.concept}Tip`)
-  if (!props.scope) return body
-  const suffix = CONCEPT_SCOPE_KEY_SUFFIX[props.scope]
-  return t('investments.concepts.tipTemplate', {
+  const body = t(`investments.concepts.${props.concept}Tip`);
+  if (!props.scope) return body;
+  const suffix = CONCEPT_SCOPE_KEY_SUFFIX[props.scope];
+  return t("investments.concepts.tipTemplate", {
     body,
     scope: t(`investments.concepts.scope${suffix}`),
-  })
-})
+  });
+});
 </script>
 
 <template>

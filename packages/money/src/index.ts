@@ -1,26 +1,26 @@
-import { ref } from 'vue'
-import type { Currency } from '@ledger/types'
-import { currentLocale, type Locale } from '@ledger/i18n'
+import { ref } from "vue";
+import type { Currency } from "@ledger/types";
+import { currentLocale, type Locale } from "@ledger/i18n";
 
 /** 金额隐私模式的 localStorage key（轻量设置项，水合与持久化收口在应用设置 store） */
-export const AMOUNT_PRIVACY_STORAGE_KEY = 'amount_privacy_enabled'
+export const AMOUNT_PRIVACY_STORAGE_KEY = "amount_privacy_enabled";
 
 /**
  * 金额隐私模式开关（issue #566，轻量设置项 ADR-0017 口径）：模块级响应式单点，
  * 三个展示格式化函数消费此开关（同界面语言 currentLocale 注入先例），全应用金额展示
  * 收口隐藏、调用点零判断；应用设置 store 负责启动水合与变更持久化，测试可直接置位。
  */
-export const amountPrivacyEnabled = ref(false)
+export const amountPrivacyEnabled = ref(false);
 
 /** 掩码恒为固定长度，无负号、无币种符号、不随语言与数量级变化（spec #564 掩码恒等性） */
-const AMOUNT_PRIVACY_MASK = '••••'
+const AMOUNT_PRIVACY_MASK = "••••";
 
 /**
  * 分组位数由界面语言隐含（词汇表「数字分组」）：中文每 4 位一组，英文每 3 位一组。
  * 其余口径（小数尾零、负号位置、小数部分不分组）不随语言变。
  */
 function groupSizeFor(locale: Locale): number {
-  return locale === 'en-US' ? 3 : 4
+  return locale === "en-US" ? 3 : 4;
 }
 
 /**
@@ -28,9 +28,10 @@ function groupSizeFor(locale: Locale): number {
  * 输入为不含符号与小数点的纯数字串。
  */
 function joinGroups(digits: string, size: number): string {
-  const groups: string[] = []
-  for (let i = digits.length; i > 0; i -= size) groups.unshift(digits.slice(Math.max(0, i - size), i))
-  return groups.join(',')
+  const groups: string[] = [];
+  for (let i = digits.length; i > 0; i -= size)
+    groups.unshift(digits.slice(Math.max(0, i - size), i));
+  return groups.join(",");
 }
 
 /**
@@ -39,11 +40,11 @@ function joinGroups(digits: string, size: number): string {
  * formatAmount 与 formatQuantity 共享同一口径（见 CONTEXT.md「数字分组」）。
  */
 function groupNumberString(numStr: string, size: number): string {
-  const sign = numStr.startsWith('-') ? '-' : ''
-  const body = sign ? numStr.slice(1) : numStr
-  const dot = body.indexOf('.')
-  if (dot === -1) return `${sign}${joinGroups(body, size)}`
-  return `${sign}${joinGroups(body.slice(0, dot), size)}${body.slice(dot)}`
+  const sign = numStr.startsWith("-") ? "-" : "";
+  const body = sign ? numStr.slice(1) : numStr;
+  const dot = body.indexOf(".");
+  if (dot === -1) return `${sign}${joinGroups(body, size)}`;
+  return `${sign}${joinGroups(body.slice(0, dot), size)}${body.slice(dot)}`;
 }
 
 /**
@@ -52,7 +53,7 @@ function groupNumberString(numStr: string, size: number): string {
  * 必然抹平，不把位噪声原文抛给用户。与后端 `investment::lots::format_quantity_for_message`
  * 同一展示合同。
  */
-const QUANTITY_DECIMALS = 4
+const QUANTITY_DECIMALS = 4;
 
 /**
  * 数量格式化（股数/份额列）：至多 4 位小数、去尾零（份额为 f64，可能带小数），
@@ -61,28 +62,32 @@ const QUANTITY_DECIMALS = 4
  * 测试可显式传入以回归两种语言口径。
  */
 export function formatQuantity(quantity: number, locale: Locale = currentLocale.value): string {
-  if (amountPrivacyEnabled.value) return AMOUNT_PRIVACY_MASK
-  const fixed = quantity.toFixed(QUANTITY_DECIMALS)
+  if (amountPrivacyEnabled.value) return AMOUNT_PRIVACY_MASK;
+  const fixed = quantity.toFixed(QUANTITY_DECIMALS);
   // 只去零、不再舍入（刻度已定标）；小数位全空时连小数点一起去掉
-  const trimmed = fixed.replace(/0+$/, '').replace(/\.$/, '')
+  const trimmed = fixed.replace(/0+$/, "").replace(/\.$/, "");
   // 舍入到刻度后归零的微小负值（如 -1e-13 的位噪声）不显示成 -0
-  const normalized = trimmed === '-0' ? '0' : trimmed
-  return groupNumberString(normalized, groupSizeFor(locale))
+  const normalized = trimmed === "-0" ? "0" : trimmed;
+  return groupNumberString(normalized, groupSizeFor(locale));
 }
 
 /** 分 -> 元字符串，按币种小数位换算后裁剪小数尾零（98.00→98、98.50→98.5，无损去零不涉舍入）；
  *  整数部分走界面语言分组（展示层全局口径，见词汇表「数字分组」）；locale 缺省取应用当前语言 */
-export function formatAmount(cents: number, currency?: Currency, locale: Locale = currentLocale.value): string {
-  if (amountPrivacyEnabled.value) return AMOUNT_PRIVACY_MASK
-  const dp = currency?.decimal_places ?? 2
-  const sign = cents < 0 ? '-' : ''
-  const abs = Math.abs(cents)
-  const value = abs / Math.pow(10, dp)
-  const fixed = value.toFixed(dp)
+export function formatAmount(
+  cents: number,
+  currency?: Currency,
+  locale: Locale = currentLocale.value,
+): string {
+  if (amountPrivacyEnabled.value) return AMOUNT_PRIVACY_MASK;
+  const dp = currency?.decimal_places ?? 2;
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  const value = abs / Math.pow(10, dp);
+  const fixed = value.toFixed(dp);
   // 整数分转字符串只去零、不做舍入；小数部分全空时连小数点一起去掉
-  const trimmed = dp > 0 ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed
-  const symbol = currency?.symbol ?? ''
-  return `${sign}${symbol}${groupNumberString(trimmed, groupSizeFor(locale))}`
+  const trimmed = dp > 0 ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
+  const symbol = currency?.symbol ?? "";
+  return `${sign}${symbol}${groupNumberString(trimmed, groupSizeFor(locale))}`;
 }
 
 /** 收益率展示口径单点（issue #1195 / ADR-0115 资金加权收益率）：小数 → 百分数，
@@ -90,11 +95,11 @@ export function formatAmount(cents: number, currency?: Currency, locale: Locale 
  *  的降级归调用方（「-」或「无法计算」，两处消费面各自语义），本函数只收数值。 */
 export function formatRate(rate: number, locale: Locale = currentLocale.value): string {
   return new Intl.NumberFormat(locale, {
-    style: 'percent',
+    style: "percent",
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-    signDisplay: 'exceptZero',
-  }).format(rate)
+    signDisplay: "exceptZero",
+  }).format(rate);
 }
 
 /**
@@ -102,8 +107,8 @@ export function formatRate(rate: number, locale: Locale = currentLocale.value): 
  * 与 formatAmount 共享同一换算口径（按币种小数位 10^dp），不要手写 /100。
  */
 export function centsToYuan(cents: number, currency?: Currency): number {
-  const dp = currency?.decimal_places ?? 2
-  return cents / Math.pow(10, dp)
+  const dp = currency?.decimal_places ?? 2;
+  return cents / Math.pow(10, dp);
 }
 
 /**
@@ -111,23 +116,27 @@ export function centsToYuan(cents: number, currency?: Currency): number {
  * 金额（分）→ 价格（万分之一元）乘 `PRICE_UNITS_PER_FEN`；价格（万分之一元）→ 元展示值
  * 除 `PRICE_UNITS_PER_YUAN`。表单反算单价等消费方经本处单一来源取用，不各写 100/10000。
  */
-export const PRICE_UNITS_PER_FEN = 100
-export const PRICE_UNITS_PER_YUAN = 10000
+export const PRICE_UNITS_PER_FEN = 100;
+export const PRICE_UNITS_PER_YUAN = 10000;
 
 /**
  * 万分之一元 → 元字符串（价格列展示专用，ADR-0038 价格刻度）：固定 4 位小数后裁剪尾零
  * （1.2345 → 1.2345、15.00 → 15、475.2000 → 475.2，无损去零不涉舍入）；
  * 股票两位价、港股三位价、基金四位净值同一直口。整数部分走界面语言分组；locale 缺省取应用当前语言。
  */
-export function formatPrice(price: number, currency?: Currency, locale: Locale = currentLocale.value): string {
-  if (amountPrivacyEnabled.value) return AMOUNT_PRIVACY_MASK
-  const sign = price < 0 ? '-' : ''
-  const abs = Math.abs(price)
-  const fixed = (abs / 10000).toFixed(4)
+export function formatPrice(
+  price: number,
+  currency?: Currency,
+  locale: Locale = currentLocale.value,
+): string {
+  if (amountPrivacyEnabled.value) return AMOUNT_PRIVACY_MASK;
+  const sign = price < 0 ? "-" : "";
+  const abs = Math.abs(price);
+  const fixed = (abs / 10000).toFixed(4);
   // 万分之一元整转字符串只去零、不做舍入；小数部分全空时连小数点一起去掉
-  const trimmed = fixed.replace(/0+$/, '').replace(/\.$/, '')
-  const symbol = currency?.symbol ?? ''
-  return `${sign}${symbol}${groupNumberString(trimmed, groupSizeFor(locale))}`
+  const trimmed = fixed.replace(/0+$/, "").replace(/\.$/, "");
+  const symbol = currency?.symbol ?? "";
+  return `${sign}${symbol}${groupNumberString(trimmed, groupSizeFor(locale))}`;
 }
 
 /**
@@ -136,13 +145,13 @@ export function formatPrice(price: number, currency?: Currency, locale: Locale =
  * （12.34505 元 → 123451）；超出安全整数范围返回 null。
  */
 export function yuanToPrice(yuan: string | number): number | null {
-  const trimmed = typeof yuan === 'number' ? String(yuan) : yuan.trim()
-  if (!trimmed) return null
-  if (!/^-?\d*\.?\d+$/.test(trimmed)) return null
-  const num = Number(trimmed)
-  if (!Number.isFinite(num)) return null
-  const price = Math.round(Number((num * 10000).toFixed(8)))
-  return Number.isSafeInteger(price) ? price : null
+  const trimmed = typeof yuan === "number" ? String(yuan) : yuan.trim();
+  if (!trimmed) return null;
+  if (!/^-?\d*\.?\d+$/.test(trimmed)) return null;
+  const num = Number(trimmed);
+  if (!Number.isFinite(num)) return null;
+  const price = Math.round(Number((num * 10000).toFixed(8)));
+  return Number.isSafeInteger(price) ? price : null;
 }
 
 /**
@@ -150,7 +159,7 @@ export function yuanToPrice(yuan: string | number): number | null {
  * 与 formatPrice 共享同一换算口径（固定 ÷ 10000，不按币种小数位）。
  */
 export function priceToYuan(price: number): number {
-  return price / 10000
+  return price / 10000;
 }
 
 /**
@@ -165,12 +174,12 @@ export function priceToYuan(price: number): number {
  * （如 15.505 * 100 实际为 1550.4999999999998）：number 先 String() 化走同一管道，不另写算法。
  */
 export function yuanToCents(yuan: string | number): number | null {
-  const trimmed = typeof yuan === 'number' ? String(yuan) : yuan.trim()
-  if (!trimmed) return null
+  const trimmed = typeof yuan === "number" ? String(yuan) : yuan.trim();
+  if (!trimmed) return null;
   // 允许 .5 这类省略整数部分的写法（'15'、'.5'、'15.5' 均可；'15.'、'abc'、'1e3' 拒绝）
-  if (!/^-?\d*\.?\d+$/.test(trimmed)) return null
-  const num = Number(trimmed)
-  if (!Number.isFinite(num)) return null
-  const cents = Math.round(Number((num * 100).toFixed(8)))
-  return Number.isSafeInteger(cents) ? cents : null
+  if (!/^-?\d*\.?\d+$/.test(trimmed)) return null;
+  const num = Number(trimmed);
+  if (!Number.isFinite(num)) return null;
+  const cents = Math.round(Number((num * 100).toFixed(8)));
+  return Number.isSafeInteger(cents) ? cents : null;
 }

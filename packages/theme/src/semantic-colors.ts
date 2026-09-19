@@ -1,5 +1,5 @@
-import type { Theme } from './theme'
-import type { TransactionKind } from '@ledger/types'
+import type { Theme } from "./theme";
+import type { TransactionKind } from "@ledger/types";
 
 /**
  * 交易类型语义色（issue #435）——金额业务色的**单一来源**。
@@ -25,30 +25,30 @@ import type { TransactionKind } from '@ledger/types'
  *   任意配色不属于语义色，不归本模块）。
  */
 export interface SemanticColor {
-  light: string
-  dark: string
+  light: string;
+  dark: string;
 }
 
 export const KIND_SEMANTIC_COLORS: Record<TransactionKind, SemanticColor> = {
-  expense: { light: '#d03050', dark: '#e88080' },
-  income: { light: '#18a058', dark: '#63e2b7' },
-  refund: { light: '#2080f0', dark: '#63a8f2' },
-  transfer: { light: '#722ed1', dark: '#b37feb' },
-  buy: { light: '#eb2f96', dark: '#ff85c0' },
-  sell: { light: '#13c2c2', dark: '#5cdbd3' },
-  convert: { light: '#d48806', dark: '#f0c060' },
+  expense: { light: "#d03050", dark: "#e88080" },
+  income: { light: "#18a058", dark: "#63e2b7" },
+  refund: { light: "#2080f0", dark: "#63a8f2" },
+  transfer: { light: "#722ed1", dark: "#b37feb" },
+  buy: { light: "#eb2f96", dark: "#ff85c0" },
+  sell: { light: "#13c2c2", dark: "#5cdbd3" },
+  convert: { light: "#d48806", dark: "#f0c060" },
   // 份额调整：靛蓝——与转换（琥珀）区分、不与买卖收支色相混淆的非现金资本变动色。
-  split: { light: '#2f54eb', dark: '#85a5ff' },
+  split: { light: "#2f54eb", dark: "#85a5ff" },
   // 现金分红：青绿——投资现金流入口径（income 语义），与 buy/sell 资本变动色区分。
-  dividend: { light: '#0d9488', dark: '#5eead4' },
-}
+  dividend: { light: "#0d9488", dark: "#5eead4" },
+};
 
 /** 语义色覆盖的交易类型闭集（与交易类型闭集同源，运行时校验锚点）。 */
-export const SEMANTIC_COLOR_KINDS = Object.keys(KIND_SEMANTIC_COLORS) as TransactionKind[]
+export const SEMANTIC_COLOR_KINDS = Object.keys(KIND_SEMANTIC_COLORS) as TransactionKind[];
 
 /** 按交易类型与当前主题取语义色（纯选择器，随主题响应式消费）。 */
 export function kindSemanticColor(kind: TransactionKind, theme: Theme): string {
-  return KIND_SEMANTIC_COLORS[kind][theme]
+  return KIND_SEMANTIC_COLORS[kind][theme];
 }
 
 /**
@@ -58,11 +58,11 @@ export function kindSemanticColor(kind: TransactionKind, theme: Theme): string {
  * 色值当前同相属巧合，不互相引用。
  */
 export const PNL_COLORS = {
-  gain: { light: '#d03050', dark: '#e88080' },
-  loss: { light: '#18a058', dark: '#63e2b7' },
-} as const
+  gain: { light: "#d03050", dark: "#e88080" },
+  loss: { light: "#18a058", dark: "#63e2b7" },
+} as const;
 
 /** 按盈亏符号与当前主题取涨跌色（纯选择器，随主题响应式消费；0 归涨色）。 */
 export function pnlSemanticColor(cents: number, theme: Theme): string {
-  return cents >= 0 ? PNL_COLORS.gain[theme] : PNL_COLORS.loss[theme]
+  return cents >= 0 ? PNL_COLORS.gain[theme] : PNL_COLORS.loss[theme];
 }

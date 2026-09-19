@@ -1,12 +1,12 @@
-import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { presetRange, type DateRange } from '@ledger/utils/time-period'
+import { defineStore } from "pinia";
+import { ref } from "vue";
+import { presetRange, type DateRange } from "@ledger/utils/time-period";
 
 /** 商户排行 TopN 档位闭集（issue #588）：仅 Top 5 / Top 10 两档，不设「全部」。 */
-export const MERCHANT_TOP_N_OPTIONS = [5, 10] as const
+export const MERCHANT_TOP_N_OPTIONS = [5, 10] as const;
 
 /** 商户排行 TopN 默认档：头部不被长尾稀释的最小档位；冷启动回此默认。 */
-export const MERCHANT_TOP_N_DEFAULT: number = 5
+export const MERCHANT_TOP_N_DEFAULT: number = 5;
 
 /**
  * 报表页会话状态 store（issue #427）：会话级、不持久化的界面状态——
@@ -28,35 +28,35 @@ export const MERCHANT_TOP_N_DEFAULT: number = 5
  * 报表视图退为接线：QuickTimeRange 受控 v-model 进出，三卡数据拉取与 loading
  * 仍归视图，进入与期间变化照常重拉。
  */
-export const useReportsSessionStore = defineStore('reports-session', () => {
+export const useReportsSessionStore = defineStore("reports-session", () => {
   /** 报表期间快照（YYYY-MM-DD 含边界，ADR-0057 快照语义）：默认 = 会话内首次
    * 使用时按「当年」自然周期派生的快照；跨月/季/年后区间不漂移。 */
-  const period = ref<DateRange>(presetRange('year', new Date()))
+  const period = ref<DateRange>(presetRange("year", new Date()));
 
   /** 图内下钻的一级分类 id：null = 基础态（分类下钻第一段，瞬时视图状态不持久化）。 */
-  const drilledRootId = ref<string | null>(null)
+  const drilledRootId = ref<string | null>(null);
 
   /** 商户排行 TopN 档位（issue #588）：会话内保留、冷启动回默认（ADR-0061 同粒度，
    * 不写盘）；档位闭集二（5/10），默认 5。 */
-  const merchantTopN = ref<number>(MERCHANT_TOP_N_DEFAULT)
+  const merchantTopN = ref<number>(MERCHANT_TOP_N_DEFAULT);
 
   /** 期间意图入口：同值守卫与期间切换复位下钻的唯一实现点。
    * 双端有界的精确自然周期快照进；同段期间不动作，不同期间写入快照并复位下钻。 */
   function setPeriod(range: DateRange) {
-    if (range.from === period.value.from && range.to === period.value.to) return
-    period.value = { from: range.from, to: range.to }
-    drilledRootId.value = null
+    if (range.from === period.value.from && range.to === period.value.to) return;
+    period.value = { from: range.from, to: range.to };
+    drilledRootId.value = null;
   }
 
   /** 图内下钻意图入口：一级分类 id 进（null = 点面包屑根回基础态），期间不受牵连。 */
   function setDrilldown(categoryId: string | null) {
-    drilledRootId.value = categoryId
+    drilledRootId.value = categoryId;
   }
 
   /** 商户排行 TopN 档位意图入口（issue #588）：同档重复写入无副作用
    * （ref 同值不触发订阅，视图 watch 不会重拉）。 */
   function setMerchantTopN(n: number) {
-    merchantTopN.value = n
+    merchantTopN.value = n;
   }
 
   /** ESC 复位出口（issue #894，spec #892 / ADR-0094）：期间回默认「当年」、下钻回
@@ -68,9 +68,9 @@ export const useReportsSessionStore = defineStore('reports-session', () => {
    * 既有 watch 按实际变化照常驱动（期间变化三卡重拉、TopN 变化商户卡重拉、
    * 仅下钻变化是纯视图投影不重拉），全默认时复位天然幂等无操作。 */
   function resetToDefault() {
-    setPeriod(presetRange('year', new Date()))
-    setDrilldown(null)
-    setMerchantTopN(MERCHANT_TOP_N_DEFAULT)
+    setPeriod(presetRange("year", new Date()));
+    setDrilldown(null);
+    setMerchantTopN(MERCHANT_TOP_N_DEFAULT);
   }
 
   return {
@@ -81,5 +81,5 @@ export const useReportsSessionStore = defineStore('reports-session', () => {
     setDrilldown,
     setMerchantTopN,
     resetToDefault,
-  }
-})
+  };
+});

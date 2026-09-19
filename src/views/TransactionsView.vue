@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { t } from '@ledger/i18n'
-import { errorMessage } from '@ledger/utils/errors'
-import { computed, h, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { t } from "@ledger/i18n";
+import { errorMessage } from "@ledger/utils/errors";
+import { computed, h, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import {
   NDataTable,
   NButton,
@@ -17,39 +17,43 @@ import {
   type DataTableColumn,
   type DropdownOption,
   type PaginationProps,
-} from 'naive-ui'
-import { ChevronDown } from '@vicons/ionicons5'
-import AppModal from '@ledger/ui-kit/AppModal.vue'
-import AppDropdown from '@ledger/ui-kit/AppDropdown.vue'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import TransactionCardList from '@/transaction/TransactionCardList.vue'
-import CreateFab from '@/components/CreateFab.vue'
-import { useAppDialog } from '@/composables/useAppDialog'
-import { useWindowTier } from '@ledger/window-tier'
-import TransactionForm from '@/transaction/TransactionForm.vue'
-import QuickTimeRange from '@/components/QuickTimeRange.vue'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import RefundForm from '@/transaction/RefundForm.vue'
-import AddItemForm from '@/item/AddItemForm.vue'
-import ConvertDetail from '@/investment/ConvertDetail.vue'
-import SplitDetail from '@/investment/SplitDetail.vue'
-import DividendDetail from '@/investment/DividendDetail.vue'
-import { buildRowMenuOptions, supportsRowDetail, supportsRowEdit } from '@/transaction/transaction-row-menu'
-import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
-import { useInputMode } from '@/composables/useInputMode'
-import { useRowContextMenu } from '@ledger/row-context-menu'
-import { useTransactionFilter, UNCATEGORIZED_ONLY } from '@/transaction/useTransactionFilter'
-import { registerViewReset } from '@/composables/viewResetRegistry'
-import { useTransactionModalState } from '@ledger/transaction-modal-state'
-import { api } from '@ledger/api'
-import { useReferenceStore } from '@/stores/reference'
-import { useItemsStore } from '@/item/items'
-import { useFeatureToggleStore } from '@/settings/feature-toggles'
-import { buildTransactionColumns } from '@/transaction/transaction-columns'
-import { sumFixedColumnWidths } from '@ledger/utils/table'
-import { availableCreateKinds, isCreateKindAvailable } from '@ledger/utils/create-entry-kinds'
-import { isLendingEntryKind } from '@/transaction/lending'
-import { type NullableDateRange } from '@ledger/utils/time-period'
+} from "naive-ui";
+import { ChevronDown } from "@vicons/ionicons5";
+import AppModal from "@ledger/ui-kit/AppModal.vue";
+import AppDropdown from "@ledger/ui-kit/AppDropdown.vue";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import TransactionCardList from "@/transaction/TransactionCardList.vue";
+import CreateFab from "@/components/CreateFab.vue";
+import { useAppDialog } from "@/composables/useAppDialog";
+import { useWindowTier } from "@ledger/window-tier";
+import TransactionForm from "@/transaction/TransactionForm.vue";
+import QuickTimeRange from "@/components/QuickTimeRange.vue";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import RefundForm from "@/transaction/RefundForm.vue";
+import AddItemForm from "@/item/AddItemForm.vue";
+import ConvertDetail from "@/investment/ConvertDetail.vue";
+import SplitDetail from "@/investment/SplitDetail.vue";
+import DividendDetail from "@/investment/DividendDetail.vue";
+import {
+  buildRowMenuOptions,
+  supportsRowDetail,
+  supportsRowEdit,
+} from "@/transaction/transaction-row-menu";
+import { useCreateShortcuts, CREATE_KIND_KEYS } from "@/composables/useCreateShortcuts";
+import { useInputMode } from "@/composables/useInputMode";
+import { useRowContextMenu } from "@ledger/row-context-menu";
+import { useTransactionFilter, UNCATEGORIZED_ONLY } from "@/transaction/useTransactionFilter";
+import { registerViewReset } from "@/composables/viewResetRegistry";
+import { useTransactionModalState } from "@ledger/transaction-modal-state";
+import { api } from "@ledger/api";
+import { useReferenceStore } from "@/stores/reference";
+import { useItemsStore } from "@/item/items";
+import { useFeatureToggleStore } from "@/settings/feature-toggles";
+import { buildTransactionColumns } from "@/transaction/transaction-columns";
+import { sumFixedColumnWidths } from "@ledger/utils/table";
+import { availableCreateKinds, isCreateKindAvailable } from "@ledger/utils/create-entry-kinds";
+import { isLendingEntryKind } from "@/transaction/lending";
+import { type NullableDateRange } from "@ledger/utils/time-period";
 import {
   LENDING_CREATE_DIRECTIONS,
   TRANSACTION_KINDS,
@@ -57,23 +61,23 @@ import {
   type Transaction,
   type TransactionKind,
   type TransactionListFilter,
-} from '@ledger/types'
+} from "@ledger/types";
 
-const reference = useReferenceStore()
+const reference = useReferenceStore();
 // 窗口分级（ADR-0088 决策 2 / 词汇表「窗口分级」）：断点双渲染判定——同一列表
 // 状态，桌面档表格（一字不动）/移动档卡片列表二选一；记一笔入口分档（FAB 仅
 // 移动档）。换档实时响应（媒体查询 change 驱动）。
-const tier = useWindowTier()
-const isMobile = computed(() => tier.value === 'mobile')
+const tier = useWindowTier();
+const isMobile = computed(() => tier.value === "mobile");
 // 物品 store（issue #119）：仅用于右键菜单「加入物品」的置灰态判断；
 // self-init + ledger:changed 自动重拉，创建成功后菜单下次打开即为置灰态。
-const itemsStore = useItemsStore()
-const message = useMessage()
-const dialog = useAppDialog()
-const route = useRoute()
-const data = ref<Transaction[]>([])
-const total = ref(0)
-const loading = ref(false)
+const itemsStore = useItemsStore();
+const message = useMessage();
+const dialog = useAppDialog();
+const route = useRoute();
+const data = ref<Transaction[]>([]);
+const total = ref(0);
+const loading = ref(false);
 
 // 过滤状态机（ADR-0030）：「用户意图进、列表状态出」。filters / page / pageSize / 重拉版本号
 // 归 TransactionFilter 模块所有；手动筛选变更走 setFilter、清除筛选走 resetFilters、
@@ -90,25 +94,25 @@ const {
   refresh,
   afterRowDelete,
   syncUrlQuery,
-} = useTransactionFilter()
+} = useTransactionFilter();
 
 // ESC 复位接线（spec #892 / ADR-0094）：本视图持有保留态，setup 期向复位回调注册表
 // 声明复位回调、作用域销毁时自动撤销（注册表内化，导航离开/跨断点换档卸载均不滞留）；
 // 窗口行为守卫在无弹层 ESC 时消费。复位即清除保留态本身：走模块既有复位出口
 // resetFilters（清全部过滤 + 翻页归零 + 页大小回默认 + 版本 bump 照常重拉），
 // 复位后离开再回来 = 默认；无保留状态时幂等无操作（与按钮禁用态判定不同源，见 store）。
-registerViewReset(resetFilters)
+registerViewReset(resetFilters);
 
 // 行操作弹窗编排（ADR-0045）：意图闭集为唯一事实源，显示开关由「意图非空」派生，
 // 回调序号随 open 递增内化（作表单 key 强制重建实例）。四个行操作弹窗——记一笔（#338）、
 // 退款/加入物品（#339）、编辑（#340）——同经本模块实例开启。
-const { intent, seq, open: openModal, close: closeModal } = useTransactionModalState()
+const { intent, seq, open: openModal, close: closeModal } = useTransactionModalState();
 
 /** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
-const filtersActive = computed(() => Object.values(filters).some((v) => v !== null))
+const filtersActive = computed(() => Object.values(filters).some((v) => v !== null));
 
 /** 只读详情意图（窄化）：非 detail 意图为 null；模板按 detail.kind 分派只读组件。 */
-const detailIntent = computed(() => (intent.value?.type === 'detail' ? intent.value : null))
+const detailIntent = computed(() => (intent.value?.type === "detail" ? intent.value : null));
 
 // 时间维度行（issue #381/#382/#383，#410 起由共享受控组件承载）：预设芯片
 // 「全部 | 当月 | 当季 | 当年 | 去年」＋期间步进器＋期间直达面板整行由
@@ -119,20 +123,20 @@ const detailIntent = computed(() => (intent.value?.type === 'detail' ? intent.va
 const quickRange = computed<NullableDateRange>({
   get: () => ({ from: filters.dateFrom, to: filters.dateTo }),
   set: (range) => setFilter({ dateFrom: range.from, dateTo: range.to }),
-})
+});
 
 /** 账户下拉选项：来自参考数据账户映射（list_accounts 不含 is_hidden 黑洞账户，沿用既有边界）。 */
 const accountOptions = computed(() =>
   reference.accounts.map((a) => ({ label: a.name, value: a.id })),
-)
+);
 
 /** 商户下拉选项：来自 merchantMap（在用 + 软删，issue #191）——
  * 软删商户仍有历史交易，需可被选中过滤；按名称排序保证稳定。 */
 const merchantOptions = computed(() =>
   [...reference.merchantMap.values()]
-    .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+    .sort((a, b) => a.name.localeCompare(b.name, "zh"))
     .map((m) => ({ label: m.name, value: m.id })),
-)
+);
 
 /** 类型下拉选项：前端 TransactionKind 全量闭集（spec #1025 起多选，按闭集顺序渲染，
  * 含只读 kind convert / split / dividend）。标签经 t() 随语言切换。 */
@@ -141,52 +145,52 @@ const kindOptions = computed<Array<{ label: string; value: TransactionKind }>>((
     label: t(`transactions.kind.${value}`),
     value,
   })),
-)
+);
 
 /** 类型多选值（spec #1025）：脱只读投影（readonly 数组不直接喚组件）、标签按闭集顺序
  * 渲染（决议 6——手动选择序与 URL 载荷序都不作为展示序）；空集合归一为 null
  * （空集合 ≡ 不过滤 ≡ 默认态）。 */
 const kindValue = computed<TransactionKind[] | null>(() => {
-  if (!filters.kinds?.length) return null
-  const rank = new Map(TRANSACTION_KINDS.map((k, i) => [k, i]))
-  return [...filters.kinds].sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0))
-})
+  if (!filters.kinds?.length) return null;
+  const rank = new Map(TRANSACTION_KINDS.map((k, i) => [k, i]));
+  return [...filters.kinds].sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0));
+});
 
 /** 列表请求（ADR-0030 决策 6：请求发起、loading、行数据归视图）：以模块当前状态装配
  * 请求参数并发起查询。 */
 async function load() {
-  loading.value = true
+  loading.value = true;
   try {
     const filter: TransactionListFilter = {
       page: page.value,
       page_size: pageSize.value,
-    }
+    };
     // 过滤参数按需携带（空值省略，与后端可选字段语义一致）；分类维度三态装配（issue #377）
-    if (filters.dateFrom) filter.from = filters.dateFrom
-    if (filters.dateTo) filter.to = filters.dateTo
-    if (filters.involvingAccountId) filter.involving_account_id = filters.involvingAccountId
-    if (filters.merchantId) filter.merchant_id = filters.merchantId
-    if (filters.categoryId === UNCATEGORIZED_ONLY) filter.uncategorized_only = true
-    else if (filters.categoryId) filter.category_id = filters.categoryId
+    if (filters.dateFrom) filter.from = filters.dateFrom;
+    if (filters.dateTo) filter.to = filters.dateTo;
+    if (filters.involvingAccountId) filter.involving_account_id = filters.involvingAccountId;
+    if (filters.merchantId) filter.merchant_id = filters.merchantId;
+    if (filters.categoryId === UNCATEGORIZED_ONLY) filter.uncategorized_only = true;
+    else if (filters.categoryId) filter.category_id = filters.categoryId;
     // 标的维度（ADR-0107，URL-only 下钻）：无手动控件，挂起补判/让位/复位同规
-    if (filters.instrumentId) filter.instrument_id = filters.instrumentId
+    if (filters.instrumentId) filter.instrument_id = filters.instrumentId;
     // 类型维度（spec #1025，手动多选 + 下钻共用）：非空集合 → 后端 kinds 数组（浅拷贝脱只读）
-    if (filters.kinds?.length) filter.kinds = [...filters.kinds]
-    const res = await api.listTransactions(filter)
+    if (filters.kinds?.length) filter.kinds = [...filters.kinds];
+    const res = await api.listTransactions(filter);
     // 页码钳制（issue #893）：页码超出当前数据有效范围时自愈——空页 + 尚有数据
     // + 非第一页 → 走 ADR-0045 页码回退入口回退一页重拉（既有出口，不新增第二出口、
     // 视图不直写页码），本响应不落数据（不渲染空页）。恢复访次是其主场景，
     // 数据缩页的并发漂移同规自愈。
     if (res.items.length === 0 && res.total > 0 && page.value > 1) {
-      afterRowDelete(0)
-      return
+      afterRowDelete(0);
+      return;
     }
-    data.value = res.items
-    total.value = res.total
+    data.value = res.items;
+    total.value = res.total;
   } catch (e) {
-    message.error(t('transactions.list.loadFailed', { msg: errorMessage(e) }))
+    message.error(t("transactions.list.loadFailed", { msg: errorMessage(e) }));
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 
@@ -197,19 +201,27 @@ async function load() {
 // URL 只读不写回（会话级 store 是唯一事实源，issue #893）。
 // 注册顺序在首拉 watch 之前（issue #893）：setup 期 immediate 同步登记本趟 query，
 // 首拉读到的即 URL 应用后的最终状态。
-watch(() => route.query, (query) => syncUrlQuery(query), { immediate: true })
+watch(
+  () => route.query,
+  (query) => syncUrlQuery(query),
+  { immediate: true },
+);
 
 // 首拉与重拉唯一触发点：模块 bump 版本号 = 需以当前模块状态重拉；首拉由 immediate
 // 承担（issue #893 会话内保留）：默认态（含冷启动）以默认态拉取，恢复访次以保留态
 // （恢复的页码与筛选）拉取，不经 refresh 出口的翻回第一页语义——离开期间新账回来
 // 即见，保留的是选择不是数据快照。同一同步批次内的多次 bump（如 URL 多维度同时
 // 声明意图）由 watcher 去重为一次请求，双刷被出口唯一性消灭。
-watch(refreshVersion, () => {
-  void load()
-}, { immediate: true })
+watch(
+  refreshVersion,
+  () => {
+    void load();
+  },
+  { immediate: true },
+);
 
 /** 页大小选项（不持久化，遵守 ViewState 决策） */
-const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 /** 记一笔（create）经共享模块实例开启（意图/序号见上方编排声明）：
  * 类型由入口单点表达，弹窗内不提供切换，中途换类型 = 关闭重开。 */
@@ -218,7 +230,7 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 function createKindLabel(kind: CreateFormKind): string {
   return isLendingEntryKind(kind)
     ? t(`transactions.lending.${kind}`)
-    : t(`transactions.kind.${kind}`)
+    : t(`transactions.kind.${kind}`);
 }
 
 /** 下拉选项：5 种可创建类型（refund 不在入口：退款已移出表单域，入口由交易条目
@@ -228,84 +240,81 @@ function createKindLabel(kind: CreateFormKind): string {
  * 键位来自 CREATE_KIND_KEYS 单一来源，与 keydown 匹配共用。
  * 触控轴下裸键监听不绑定（ADR-0088 决策 6 / issue #843），键位标注同步退役
  * （提示不存在的键位是误导）；指针轴行为不变。 */
-const inputMode = useInputMode()
+const inputMode = useInputMode();
 
 // 投资功能开关（issue #1245 / ADR-0116 决策 4「入口侧」）：关闭投资后买入/卖出
 // 从全部新建入口消失（桌面下拉与移动悬浮按钮共用 createKinds 一份清单）；既有
 // buy/sell 交易与引用侧（列表、来源列、按 kind 筛选）不受影响。
-const featureToggles = useFeatureToggleStore()
-const investmentsClosed = computed(() => featureToggles.isFeatureClosed('investments'))
-const createKinds = computed(() => availableCreateKinds(investmentsClosed.value))
+const featureToggles = useFeatureToggleStore();
+const investmentsClosed = computed(() => featureToggles.isFeatureClosed("investments"));
+const createKinds = computed(() => availableCreateKinds(investmentsClosed.value));
 
 const createKindOptions = computed<DropdownOption[]>(() => [
   ...createKinds.value.map((k) => ({
     label:
-      inputMode.value === 'pointer'
-        ? t('transactions.create.kindWithKey', {
+      inputMode.value === "pointer"
+        ? t("transactions.create.kindWithKey", {
             kind: t(`transactions.kind.${k}`),
             key: CREATE_KIND_KEYS[k],
           })
         : t(`transactions.kind.${k}`),
     key: k,
   })),
-  { type: 'divider', key: 'create-lending-divider' },
+  { type: "divider", key: "create-lending-divider" },
   ...LENDING_CREATE_DIRECTIONS.map((d) => ({
     label: t(`transactions.lending.${d}`),
     key: d,
   })),
-])
+]);
 
 const createTitle = computed(() => {
-  const current = intent.value
-  return current?.type === 'create'
-    ? t('transactions.create.titleWithKind', { kind: createKindLabel(current.kind) })
-    : t('transactions.create.title')
-})
+  const current = intent.value;
+  return current?.type === "create"
+    ? t("transactions.create.titleWithKind", { kind: createKindLabel(current.kind) })
+    : t("transactions.create.title");
+});
 
 /** 记一笔各入口（顶栏主体 / 子类型下拉 / 裸键快捷键）统一经模块开启。 */
 function openCreate(k: CreateFormKind) {
-  void openModal({ type: 'create', kind: k })
+  void openModal({ type: "create", kind: k });
 }
 
 // 裸键快捷键（issue #153）：a/z/i/b/s 直达对应类型弹窗，与点下拉对应项同一入口；
 // 焦点在可编辑元素或弹层打开时抑制；随视图装卸，仅交易页生效。
 // 可用性闸门（issue #1245）：关闭投资后 b/s 属入口侧、不触发（与列表过滤同一判定）。
-useCreateShortcuts(
-  openCreate,
-  (kind) => isCreateKindAvailable(kind, investmentsClosed.value),
-)
+useCreateShortcuts(openCreate, (kind) => isCreateKindAvailable(kind, investmentsClosed.value));
 
 /** 提交成功：关窗（模块意图清回终态），回填意图 refresh（重拉 + 翻回第 1 页，
  * 新记录按日期/时间排序最可能落在第 1 页），保留筛选条件（与手动过滤同等语义，不重置）。 */
 function onFormCreated() {
-  closeModal()
-  refresh()
+  closeModal();
+  refresh();
 }
 
 /** 手动过滤处理器：声明意图即生效（翻页归零 + 重拉，同值守卫在模块 setFilter 内：
  * 条件实际变化才动作），不同步回 URL（组件状态是唯一事实源）。 */
 function onAccountFilterChange(id: string | null) {
-  setFilter({ involvingAccountId: id })
+  setFilter({ involvingAccountId: id });
 }
 
 function onMerchantFilterChange(id: string | null) {
-  setFilter({ merchantId: id })
+  setFilter({ merchantId: id });
 }
 
 /** 类型多选处理器（spec #1025）：空数组归一为 null（空集合 ≡ 不过滤 ≡ 默认态）。 */
 function onKindFilterChange(values: TransactionKind[] | null) {
-  setFilter({ kinds: values?.length ? values : null })
+  setFilter({ kinds: values?.length ? values : null });
 }
 
 async function remove(id: string) {
   try {
-    await api.deleteTransaction(id)
-    message.success(t('transactions.list.deleted'))
+    await api.deleteTransaction(id);
+    message.success(t("transactions.list.deleted"));
     // 删除成功 → 页码回退入口（ADR-0045）：声明本页删后剩 N 条，回退与重拉由模块内化，
     // 视图不再直写页码、不再自行发起请求（删前本页 1 条 ⇔ 删后超页，ADR-0008）
-    afterRowDelete(data.value.length - 1)
+    afterRowDelete(data.value.length - 1);
   } catch (e) {
-    message.error(t('transactions.list.deleteFailed', { msg: errorMessage(e) }))
+    message.error(t("transactions.list.deleteFailed", { msg: errorMessage(e) }));
   }
 }
 
@@ -313,13 +322,13 @@ async function remove(id: string) {
  * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
 function confirmDelete(row: Transaction) {
   dialog.warning({
-    title: t('transactions.deleteDialog.title'),
-    content: t('transactions.deleteDialog.content'),
-    positiveText: t('transactions.deleteDialog.confirm'),
-    negativeText: t('transactions.deleteDialog.cancel'),
+    title: t("transactions.deleteDialog.title"),
+    content: t("transactions.deleteDialog.content"),
+    positiveText: t("transactions.deleteDialog.confirm"),
+    negativeText: t("transactions.deleteDialog.cancel"),
     maskClosable: false,
     onPositiveClick: () => remove(row.id),
-  })
+  });
 }
 
 /** 行内退款弹窗（issue #151）：目标交易行由右键所在行固定（fixed-target），
@@ -327,14 +336,14 @@ function confirmDelete(row: Transaction) {
  * 重新初始化，不依赖弹窗内容卸载）。开启/关闭编排经 TransactionModalState
  * （ADR-0045）；同一支出可多次发起退款（部分退款语义，不阻断）。 */
 function openRefundFromRow(row: Transaction) {
-  void openModal({ type: 'refund', row })
+  void openModal({ type: "refund", row });
 }
 
 /** 退款提交成功：关窗（编排内化关闭意图）并回填意图 refresh（重拉 + 翻回第 1 页，
  * 新退款按日期排序最可能落在第 1 页，保留筛选条件）。 */
 function onRefundCreated() {
-  closeModal()
-  refresh()
+  closeModal();
+  refresh();
 }
 
 /** 编辑弹窗（issue #178，issue #180 扩到 buy/sell）：行右键「编辑」，回填该笔交易
@@ -346,7 +355,7 @@ function onRefundCreated() {
  * 取数不经视图。提交失败弹窗不关、已填内容不丢（错误提示与不重置均在表单 composable 内）。
  * convert / split / dividend 不进本入口（界面只读 kind，见 openDetailFromRow）。 */
 function openEditFromRow(row: Transaction) {
-  void openModal({ type: 'edit', row })
+  void openModal({ type: "edit", row });
 }
 
 /** 只读详情弹窗（ADR-0106 决策 10 / #1048、#1052；ADR-0109 / #1078）：界面只读
@@ -354,14 +363,14 @@ function openEditFromRow(row: Transaction) {
  * 入口；扩展明细的「先取数再开窗、失败不开窗」时序与慢取竞态守卫内化在
  * TransactionModalState，取数不经视图。 */
 function openDetailFromRow(row: Transaction) {
-  void openModal({ type: 'detail', row })
+  void openModal({ type: "detail", row });
 }
 
 /** 编辑成功：关窗（编排内化关闭意图）并以当前页码重拉列表（保持当前页与筛选，
  * 不重置 page → 视图侧 load，不经模块出口 refresh 的翻回第 1 页语义）。 */
 function onEditSaved() {
-  closeModal()
-  void load()
+  closeModal();
+  void load();
 }
 
 /** 「加入物品」确认弹窗（issue #119 / ADR-0025 创建唯一入口）：目标交易行由右键所在行
@@ -370,17 +379,17 @@ function onEditSaved() {
  * 只是关窗（物品写入与交易列表无关，物品 store 经 ledger:changed 自动重拉，菜单
  * 下次打开即为置灰态）。 */
 function openAddItemFromRow(row: Transaction) {
-  void openModal({ type: 'add-item', row })
+  void openModal({ type: "add-item", row });
 }
 
 /** 成功与取消都只关窗（经编排内化关闭意图；物品列表经 ledger:changed 自动重拉）。 */
 function closeAddItem() {
-  closeModal()
+  closeModal();
 }
 
 /** 退款/加入物品弹窗经 ✕ / ESC 显式关闭：走编排内化关闭（意图清回空终态）。 */
 function onModalShowUpdate(show: boolean) {
-  if (!show) closeModal()
+  if (!show) closeModal();
 }
 
 /** 行右键菜单（issue #151 / #119 / #177 / #178 / #180）：除 refund 外行首项「编辑」，
@@ -390,59 +399,61 @@ function onModalShowUpdate(show: boolean) {
  * 菜单项图标与删除项 error 色也由该函数统一注入；业务动作分派留视图
  * （工厂入参回调，选中即收起并交付收起瞬间的目标行）。 */
 const rowMenu = useRowContextMenu<Transaction>((key, row) => {
-  if (key === 'detail') openDetailFromRow(row)
-  else if (key === 'edit') openEditFromRow(row)
-  else if (key === 'refund') openRefundFromRow(row)
-  else if (key === 'add-item') openAddItemFromRow(row)
-  else if (key === 'delete') confirmDelete(row)
-})
+  if (key === "detail") openDetailFromRow(row);
+  else if (key === "edit") openEditFromRow(row);
+  else if (key === "refund") openRefundFromRow(row);
+  else if (key === "add-item") openAddItemFromRow(row);
+  else if (key === "delete") confirmDelete(row);
+});
 
 // 可见性由单判别状态派生（非空即显示）；定位坐标取工厂保留值（open 同步更新、
 // close 不清零）：naive-ui 离场动画期间仍按 x/y 重定位弹层，视图侧清零会让
 // 淡出中的菜单跳到视口左上角闪现一次（issue #798）。
-const menuShow = computed(() => rowMenu.state.value !== null)
-const menuX = computed(() => rowMenu.position.value.x)
-const menuY = computed(() => rowMenu.position.value.y)
+const menuShow = computed(() => rowMenu.state.value !== null);
+const menuX = computed(() => rowMenu.position.value.x);
+const menuY = computed(() => rowMenu.position.value.y);
 
 /** 已建物品的交易 id 集合（按物品溯源指针比对，不新增查询、不建反向引用）。 */
 const linkedTxIds = computed(
   () =>
     new Set(
-      itemsStore.items.map((i) => i.purchase_transaction_id).filter((id): id is string => id !== null),
+      itemsStore.items
+        .map((i) => i.purchase_transaction_id)
+        .filter((id): id is string => id !== null),
     ),
-)
+);
 
 // 主题 error 色（issue #177）：删除项经 DropdownOption props 着色，不硬编码色值，
 // 暗色模式自动适配（useThemeVars 随当前主题响应式取值）。
-const themeVars = useThemeVars()
+const themeVars = useThemeVars();
 
 const menuOptions = computed(() => {
-  const row = rowMenu.state.value?.row
+  const row = rowMenu.state.value?.row;
   return row
     ? buildRowMenuOptions(row, {
         hasItem: linkedTxIds.value.has(row.id),
         errorColor: themeVars.value.errorColor,
       })
-    : []
-})
+    : [];
+});
 
 /** 表格行属性：绑定行右键菜单（open 内化「收起 → 下一帧重开」重定位舞步；
  * 原生菜单拦截单点归窗口行为守卫，视图不再 preventDefault）。 */
 const rowProps = (row: Transaction) => ({
   onContextmenu: (e: MouseEvent) => rowMenu.open(e, row),
-})
+});
 
 /** 翻页（两档同一出口）：写入页码 + 以当前状态重拉。桌面表格 pagination 与
  * 移动档 NPagination 共用，语义零分叉。 */
 function onPageChange(p: number): void {
-  page.value = p
-  void load()
+  page.value = p;
+  void load();
 }
 
 /** 页大小切换（两档同一出口）：写入后经统一出口重拉（翻回第 1 页）。 */
 function onPageSizeChange(size: number): void {
-  pageSize.value = size
-  refresh()
+  pageSize.value = size;
+  refresh();
 }
 
 const pagination = computed<PaginationProps>(() => ({
@@ -453,10 +464,10 @@ const pagination = computed<PaginationProps>(() => ({
   showQuickJumper: true,
   pageSizes: PAGE_SIZE_OPTIONS,
   prefix: ({ itemCount }) =>
-    h('span', null, () => t('transactions.list.total', { n: itemCount ?? 0 })),
+    h("span", null, () => t("transactions.list.total", { n: itemCount ?? 0 })),
   onChange: onPageChange,
   onUpdatePageSize: onPageSizeChange,
-}))
+}));
 
 // 列经 computed 构造：列名（t()）随语言切换即时重建（列宽总和随之联动）。
 // 传入 onRowMenuOpen 即追加常显「⋯」操作列（ADR-0088 决策 6 / issue #843）：
@@ -465,26 +476,23 @@ const columns = computed<DataTableColumn<Transaction>[]>(() => [
   ...buildTransactionColumns(reference, {
     onRowMenuOpen: (e, row) => rowMenu.open(e, row),
   }),
-])
+]);
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
-const scrollX = computed(() => sumFixedColumnWidths(columns.value))
+const scrollX = computed(() => sumFixedColumnWidths(columns.value));
 
 /** 空态文案（两档同源）：过滤无结果提示 / 默认暂无数据，归一计算属性供
  * 移动档空态与桌面表格 #empty 槽共用同一字符串口径。 */
 const emptyDescription = computed(() =>
-  filtersActive.value
-    ? t('transactions.list.emptyFiltered')
-    : t('transactions.list.empty'),
-)
+  filtersActive.value ? t("transactions.list.emptyFiltered") : t("transactions.list.empty"),
+);
 
 /** 整卡点击 = 行激活（移动档卡片）：无现金腿 kind 进只读详情（supportsRowDetail 单源），
  * 其余可编辑行进编辑表单（supportsRowEdit 单源）——refund 两类都不开放，点击无动作。 */
 function activateCard(row: Transaction): void {
-  if (supportsRowDetail(row)) openDetailFromRow(row)
-  else if (supportsRowEdit(row)) openEditFromRow(row)
+  if (supportsRowDetail(row)) openDetailFromRow(row);
+  else if (supportsRowEdit(row)) openEditFromRow(row);
 }
-
 </script>
 
 <template>
@@ -527,12 +535,14 @@ function activateCard(row: Transaction): void {
         :disabled="!filtersActive"
         @click="resetFilters"
       >
-        {{ t('transactions.filter.clear') }}
+        {{ t("transactions.filter.clear") }}
       </NButton>
       <!-- 分裂按钮（桌面档）：主体直开支出弹窗，箭头展开 5 项类型菜单（issue #150）。
            移动档不渲染：记一笔入口分档，FAB 是移动档唯一记一笔入口（ADR-0088 决策 5）。 -->
       <NButtonGroup v-if="!isMobile">
-        <NButton type="primary" @click="openCreate('expense')">{{ t('transactions.create.button') }}</NButton>
+        <NButton type="primary" @click="openCreate('expense')">{{
+          t("transactions.create.button")
+        }}</NButton>
         <AppDropdown
           trigger="click"
           :options="createKindOptions"
@@ -557,7 +567,11 @@ function activateCard(row: Transaction): void {
       preset="card"
       display-directive="if"
       card-size="md"
-      @update:show="(show: boolean) => { if (!show) closeModal() }"
+      @update:show="
+        (show: boolean) => {
+          if (!show) closeModal();
+        }
+      "
     >
       <TransactionForm
         v-if="intent?.type === 'create'"
@@ -678,14 +692,10 @@ function activateCard(row: Transaction): void {
         />
         <!-- 空态：与桌面表格空槽同文案同动作（过滤无结果提示 + 清除按钮）；
              加载期间不渲染空态节点（桌面 loading 时空态隐藏同规） -->
-        <NEmpty
-          v-else-if="!loading"
-          :description="emptyDescription"
-          size="small"
-        >
+        <NEmpty v-else-if="!loading" :description="emptyDescription" size="small">
           <template v-if="filtersActive" #extra>
             <NButton size="tiny" quaternary type="primary" @click="resetFilters">
-              {{ t('transactions.filter.clear') }}
+              {{ t("transactions.filter.clear") }}
             </NButton>
           </template>
         </NEmpty>
@@ -701,7 +711,7 @@ function activateCard(row: Transaction): void {
         @update:page-size="onPageSizeChange"
       >
         <template #prefix>
-          <span>{{ t('transactions.list.total', { n: total }) }}</span>
+          <span>{{ t("transactions.list.total", { n: total }) }}</span>
         </template>
       </NPagination>
     </template>
@@ -722,13 +732,10 @@ function activateCard(row: Transaction): void {
       <!-- 空态：过滤无结果时展示明确提示（与加载态区分：loading 时空态节点隐藏）；
            无过滤时为默认「暂无数据」文案 -->
       <template #empty>
-        <NEmpty
-          :description="emptyDescription"
-          size="small"
-        >
+        <NEmpty :description="emptyDescription" size="small">
           <template v-if="filtersActive" #extra>
             <NButton size="tiny" quaternary type="primary" @click="resetFilters">
-              {{ t('transactions.filter.clear') }}
+              {{ t("transactions.filter.clear") }}
             </NButton>
           </template>
         </NEmpty>

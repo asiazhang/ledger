@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { NIcon, NMenu, useThemeVars } from 'naive-ui'
-import type { MenuOption } from 'naive-ui'
-import { MenuOutline } from '@vicons/ionicons5'
-import { t } from '@ledger/i18n'
-import AppDrawer from '@ledger/ui-kit/AppDrawer.vue'
+import { ref, watch } from "vue";
+import { useRoute } from "vue-router";
+import { NIcon, NMenu, useThemeVars } from "naive-ui";
+import type { MenuOption } from "naive-ui";
+import { MenuOutline } from "@vicons/ionicons5";
+import { t } from "@ledger/i18n";
+import AppDrawer from "@ledger/ui-kit/AppDrawer.vue";
 
 /**
  * 移动档导航壳（issue #842 / ADR-0088 决策 4，词汇表「导航抽屉」）：
@@ -27,31 +27,31 @@ import AppDrawer from '@ledger/ui-kit/AppDrawer.vue'
  */
 const props = defineProps<{
   /** 抽屉菜单选项：与桌面侧栏同一份派生（消费同一份导航状态） */
-  menuOptions: MenuOption[]
+  menuOptions: MenuOption[];
   /** 当前视图名（顶栏标题；视图文案由调用方经 viewLabel 解析） */
-  title: string
-}>()
+  title: string;
+}>();
 
-const emit = defineEmits<{ select: [key: string] }>()
+const emit = defineEmits<{ select: [key: string] }>();
 
-const route = useRoute()
-const drawerShow = ref(false)
+const route = useRoute();
+const drawerShow = ref(false);
 
 // 导航即关闭：菜单项点击（select 内先关）与「更多」链接（路由跳转）统一收口
 watch(
   () => route.fullPath,
   () => {
-    drawerShow.value = false
+    drawerShow.value = false;
   },
-)
+);
 
 function onSelect(key: string) {
-  drawerShow.value = false
-  emit('select', key)
+  drawerShow.value = false;
+  emit("select", key);
 }
 
 // 顶栏配色取自应用主题（亮暗即时换色）；触控目标 ≥48px（ADR-0088 全局验收基线）
-const themeVars = useThemeVars()
+const themeVars = useThemeVars();
 </script>
 
 <template>
@@ -179,7 +179,7 @@ const themeVars = useThemeVars()
 
 .mobile-drawer-body :deep(.group-more-link)::after,
 .mobile-drawer-body :deep(.n-button)::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: -16px -14px;
 }

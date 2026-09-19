@@ -1,8 +1,8 @@
-import { onMounted, ref, watch } from 'vue'
-import { api } from '@ledger/api'
-import { useLoadable } from '@ledger/loadable'
-import type { ItemDailyTotal } from '@ledger/types'
-import { useItemsStore } from '@/item/items'
+import { onMounted, ref, watch } from "vue";
+import { api } from "@ledger/api";
+import { useLoadable } from "@ledger/loadable";
+import type { ItemDailyTotal } from "@ledger/types";
+import { useItemsStore } from "@/item/items";
 
 /**
  * dashboard「物品使用成本」汇总卡数据层（issue #122；issue #323 起为 Loadable 之上的薄壳，
@@ -20,24 +20,24 @@ import { useItemsStore } from '@/item/items'
  * （与 `useDashboardOverview` 同款取舍）。
  */
 export function useItemDailyTotal() {
-  const itemsStore = useItemsStore()
-  const total = ref<ItemDailyTotal | null>(null)
+  const itemsStore = useItemsStore();
+  const total = ref<ItemDailyTotal | null>(null);
 
-  const { loading, error, run } = useLoadable(() => api.itemDailyTotal())
+  const { loading, error, run } = useLoadable(() => api.itemDailyTotal());
 
   async function refresh() {
-    total.value = await run()
+    total.value = await run();
   }
 
   onMounted(() => {
-    void refresh()
-  })
+    void refresh();
+  });
   watch(
     () => itemsStore.version,
     () => {
-      void refresh()
+      void refresh();
     },
-  )
+  );
 
-  return { total, loading, error, refresh }
+  return { total, loading, error, refresh };
 }

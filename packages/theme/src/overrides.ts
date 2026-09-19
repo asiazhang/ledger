@@ -1,6 +1,6 @@
-import type { GlobalThemeOverrides } from 'naive-ui'
-import type { Theme } from './theme'
-import { DARK_FLOAT_LAYER, NEUTRAL_TOKENS } from './design-tokens'
+import type { GlobalThemeOverrides } from "naive-ui";
+import type { Theme } from "./theme";
+import { DARK_FLOAT_LAYER, NEUTRAL_TOKENS } from "./design-tokens";
 
 /**
  * 主题定制（组件库主题覆盖）——Raycast 精致工具感：近黑底、微分层、细边框、
@@ -29,16 +29,16 @@ import { DARK_FLOAT_LAYER, NEUTRAL_TOKENS } from './design-tokens'
 // 暗色（默认主题，主战场）——中性常量取自 token。声明用 satisfies 而非类型
 // 注解：保住 common 字面量对象的完整推断（键恒在场、值为字面量类型），
 // accentColor 选择器据此无兜底取色（issue #1268）。
-const token = NEUTRAL_TOKENS.dark
-const floatLayer = DARK_FLOAT_LAYER
+const token = NEUTRAL_TOKENS.dark;
+const floatLayer = DARK_FLOAT_LAYER;
 
 export const darkOverrides = {
   common: {
     // 强调色：琥珀暖橙
-    primaryColor: '#F59E0B',
-    primaryColorHover: '#FBBF24',
-    primaryColorPressed: '#D97706',
-    primaryColorSuppl: '#F59E0B',
+    primaryColor: "#F59E0B",
+    primaryColorHover: "#FBBF24",
+    primaryColorPressed: "#D97706",
+    primaryColorSuppl: "#F59E0B",
     // 圆角阶梯：基础 8（组件级：卡片 12、菜单 6）。按钮/输入/下拉等基础组件
     // 的圆角经 common.borderRadius 传播，无需组件级重复声明（naive 的 Button
     // 主题变量是按尺寸的 borderRadius*，Select/DatePicker 自身无 borderRadius
@@ -81,29 +81,29 @@ export const darkOverrides = {
     borderRadius: token.radius.small,
     itemColorActive: floatLayer.activeOverlay,
     itemColorActiveHover: floatLayer.activeHoverOverlay,
-    itemTextColorActive: '#F59E0B',
-    itemTextColorActiveHover: '#F59E0B',
-    itemIconColorActive: '#F59E0B',
-    itemIconColorActiveHover: '#F59E0B',
+    itemTextColorActive: "#F59E0B",
+    itemTextColorActiveHover: "#F59E0B",
+    itemIconColorActive: "#F59E0B",
+    itemIconColorActiveHover: "#F59E0B",
   },
-} satisfies GlobalThemeOverrides
+} satisfies GlobalThemeOverrides;
 
 // 亮色（次要主题）：仅共享强调色（同色相加深版），其余保持 Naive 出厂默认（能用即可）
 export const lightOverrides = {
   common: {
-    primaryColor: '#B45309',
-    primaryColorHover: '#92400E',
-    primaryColorPressed: '#78350F',
-    primaryColorSuppl: '#B45309',
+    primaryColor: "#B45309",
+    primaryColorHover: "#92400E",
+    primaryColorPressed: "#78350F",
+    primaryColorSuppl: "#B45309",
   },
-} satisfies GlobalThemeOverrides
+} satisfies GlobalThemeOverrides;
 
 /** 强调色解析产物：默认态与悬停态两个色值。 */
 export interface AccentColor {
   /** 默认态强调色（链接文字色） */
-  base: string
+  base: string;
   /** 悬停/焦点态强调色（hover 文字色与焦点环） */
-  hover: string
+  hover: string;
 }
 
 /**
@@ -114,6 +114,6 @@ export interface AccentColor {
  * 此取色（原 AccountLink 先例的四处内联解析收编于此）。
  */
 export function accentColor(theme: Theme): AccentColor {
-  const common = theme === 'dark' ? darkOverrides.common : lightOverrides.common
-  return { base: common.primaryColor, hover: common.primaryColorHover }
+  const common = theme === "dark" ? darkOverrides.common : lightOverrides.common;
+  return { base: common.primaryColor, hover: common.primaryColorHover };
 }

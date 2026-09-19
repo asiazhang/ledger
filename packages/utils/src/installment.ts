@@ -7,14 +7,14 @@
  */
 export interface InstallmentSchedule {
   /** 每期金额（floor 均分，单位：分） */
-  perPeriodCents: number
+  perPeriodCents: number;
   /** 最后一期金额 = 每期金额 + 尾差（单位：分）；整除时与 perPeriodCents 相等 */
-  lastPeriodCents: number
+  lastPeriodCents: number;
 }
 
 /** 校验正整数（金额分 / 期数共用）。 */
 function isPositiveInt(v: number): boolean {
-  return Number.isInteger(v) && v > 0
+  return Number.isInteger(v) && v > 0;
 }
 
 /**
@@ -28,12 +28,12 @@ export function installmentSchedule(
   totalOccurrences: number,
 ): InstallmentSchedule {
   if (!isPositiveInt(totalCents)) {
-    throw new Error(`分期总金额必须是正整数（分），收到：${totalCents}`)
+    throw new Error(`分期总金额必须是正整数（分），收到：${totalCents}`);
   }
   if (!isPositiveInt(totalOccurrences)) {
-    throw new Error(`分期期数必须是正整数，收到：${totalOccurrences}`)
+    throw new Error(`分期期数必须是正整数，收到：${totalOccurrences}`);
   }
-  const perPeriodCents = Math.floor(totalCents / totalOccurrences)
-  const lastPeriodCents = totalCents - perPeriodCents * (totalOccurrences - 1)
-  return { perPeriodCents, lastPeriodCents }
+  const perPeriodCents = Math.floor(totalCents / totalOccurrences);
+  const lastPeriodCents = totalCents - perPeriodCents * (totalOccurrences - 1);
+  return { perPeriodCents, lastPeriodCents };
 }

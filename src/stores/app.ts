@@ -1,9 +1,9 @@
-import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { loadLocal, saveLocal } from '@ledger/storage'
-import { getLocaleSetting, setLocaleSetting, type LocaleSetting } from '@ledger/i18n'
-import { amountPrivacyEnabled, AMOUNT_PRIVACY_STORAGE_KEY } from '@ledger/money'
-import type { Theme } from '@ledger/theme'
+import { defineStore } from "pinia";
+import { ref } from "vue";
+import { loadLocal, saveLocal } from "@ledger/storage";
+import { getLocaleSetting, setLocaleSetting, type LocaleSetting } from "@ledger/i18n";
+import { amountPrivacyEnabled, AMOUNT_PRIVACY_STORAGE_KEY } from "@ledger/money";
+import type { Theme } from "@ledger/theme";
 
 /**
  * UI 设置（UI Settings）store：主题 / 默认币种 / 备份设置 / 设备级「自动执行」开关，本地持久化。
@@ -17,68 +17,68 @@ import type { Theme } from '@ledger/theme'
  * 暴露任何参考数据接口，仅保留设备偏好。后端消费的镜像推送（备份目录、
  * 自动执行开关）收口在 `useDevicePreferenceSync`，由应用根组件挂载一次。
  */
-export const useAppStore = defineStore('app', () => {
-  const theme = ref<Theme>(loadLocal<Theme>('appearance', 'dark'))
-  const defaultCurrency = ref<string>(loadLocal<string>('default_currency', 'CNY'))
-  const backupDir = ref<string>(loadLocal<string>('backup_dir', ''))
-  const backupMaxCount = ref<number>(loadLocal<number>('backup_max_count', 30))
+export const useAppStore = defineStore("app", () => {
+  const theme = ref<Theme>(loadLocal<Theme>("appearance", "dark"));
+  const defaultCurrency = ref<string>(loadLocal<string>("default_currency", "CNY"));
+  const backupDir = ref<string>(loadLocal<string>("backup_dir", ""));
+  const backupMaxCount = ref<number>(loadLocal<number>("backup_max_count", 30));
   // 设备级「自动执行」开关（issue #308 / ADR-0042）：默认关，真源在本机
   // localStorage，不随 Backup/Restore 迁移——换新机器或恢复备份后保持默认关；
   // 后端只持运行时镜像，由 useDevicePreferenceSync 启动/变更时推送。
-  const autoExecutionEnabled = ref<boolean>(loadLocal<boolean>('auto_execution_enabled', false))
+  const autoExecutionEnabled = ref<boolean>(loadLocal<boolean>("auto_execution_enabled", false));
   // 界面语言偏好（issue #342 / ADR-0049）：轻量设置项，'system' = 跟随系统；
   // 存储与生效逻辑收口在 @ledger/i18n，此处只持状态供设置页读写。
-  const localeSetting = ref<LocaleSetting>(getLocaleSetting())
+  const localeSetting = ref<LocaleSetting>(getLocaleSetting());
 
   // 「本机记住主口令」（issue #574 / ADR-0075 决策 3）：轻量设置项，真源在本机
   // localStorage（不落库、不随 Backup/Restore 迁移——钥匙串缓存内容为主口令本身，
   // 种子/其他设备保持默认关）。只决定是否在下次解锁/设置口令时把主口令缓入系统
   // 钥匙串；钥匙串的读写由后端 `passphrase_cache` 承担。
-  const rememberPassphrase = ref<boolean>(loadLocal<boolean>('remember_passphrase', false))
+  const rememberPassphrase = ref<boolean>(loadLocal<boolean>("remember_passphrase", false));
 
   // 金额隐私模式（issue #566）：轻量设置项，真源 ref 在展示格式化层（@ledger/money，
   // 三个格式化函数消费，同界面语言 currentLocale 注入先例）；本 store 负责启动水合
   // 与变更持久化，不随 Backup/Restore 迁移。
-  amountPrivacyEnabled.value = loadLocal<boolean>(AMOUNT_PRIVACY_STORAGE_KEY, false)
+  amountPrivacyEnabled.value = loadLocal<boolean>(AMOUNT_PRIVACY_STORAGE_KEY, false);
 
   function setTheme(t: Theme) {
-    theme.value = t
-    saveLocal('appearance', t)
+    theme.value = t;
+    saveLocal("appearance", t);
   }
 
   function setDefaultCurrency(code: string) {
-    defaultCurrency.value = code
-    saveLocal('default_currency', code)
+    defaultCurrency.value = code;
+    saveLocal("default_currency", code);
   }
 
   function setBackupDir(dir: string) {
-    backupDir.value = dir
-    saveLocal('backup_dir', dir)
+    backupDir.value = dir;
+    saveLocal("backup_dir", dir);
   }
 
   function setBackupMaxCount(n: number) {
-    backupMaxCount.value = n
-    saveLocal('backup_max_count', n)
+    backupMaxCount.value = n;
+    saveLocal("backup_max_count", n);
   }
 
   function setAutoExecutionEnabled(enabled: boolean) {
-    autoExecutionEnabled.value = enabled
-    saveLocal('auto_execution_enabled', enabled)
+    autoExecutionEnabled.value = enabled;
+    saveLocal("auto_execution_enabled", enabled);
   }
 
   async function setLocale(value: LocaleSetting) {
-    localeSetting.value = value
-    await setLocaleSetting(value)
+    localeSetting.value = value;
+    await setLocaleSetting(value);
   }
 
   function setAmountPrivacyEnabled(enabled: boolean) {
-    amountPrivacyEnabled.value = enabled
-    saveLocal(AMOUNT_PRIVACY_STORAGE_KEY, enabled)
+    amountPrivacyEnabled.value = enabled;
+    saveLocal(AMOUNT_PRIVACY_STORAGE_KEY, enabled);
   }
 
   function setRememberPassphrase(enabled: boolean) {
-    rememberPassphrase.value = enabled
-    saveLocal('remember_passphrase', enabled)
+    rememberPassphrase.value = enabled;
+    saveLocal("remember_passphrase", enabled);
   }
 
   return {
@@ -98,5 +98,5 @@ export const useAppStore = defineStore('app', () => {
     setLocale,
     setAmountPrivacyEnabled,
     setRememberPassphrase,
-  }
-})
+  };
+});

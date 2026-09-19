@@ -1,19 +1,19 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { NButton, NForm, NFormItem, NInput, NSpace, NText } from 'naive-ui'
-import AppModal from '@ledger/ui-kit/AppModal.vue'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import { api } from '@ledger/api'
-import { t } from '@ledger/i18n'
-import { useReferenceStore } from '@/stores/reference'
-import { errorCodeOf, errorMessage as extractErrorMessage } from '@ledger/utils/errors'
-import { formatPrice } from '@ledger/money'
+import { computed, ref, watch } from "vue";
+import { NButton, NForm, NFormItem, NInput, NSpace, NText } from "naive-ui";
+import AppModal from "@ledger/ui-kit/AppModal.vue";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import { api } from "@ledger/api";
+import { t } from "@ledger/i18n";
+import { useReferenceStore } from "@/stores/reference";
+import { errorCodeOf, errorMessage as extractErrorMessage } from "@ledger/utils/errors";
+import { formatPrice } from "@ledger/money";
 import type {
   AddInstrumentChannel,
   AddStockInstrumentResult,
   AddFundResult,
   InstrumentType,
-} from '@ledger/types'
+} from "@ledger/types";
 
 // 「添加投资标的」对话框（issue #697 / spec #690；六通道修订 issue #826）：标的
 // 创建的唯一入口——市场必选录入通道（沪/深/港/美股/场外基金/自定义标的）。
@@ -25,167 +25,168 @@ import type {
 // 建档（全对话框仅一份建档表单）；场外基金通道复用既有 add_fund_by_code 命令
 // （fund 类型唯一创建入口仍为按代码即拉，语义不变）。既有「新建标的」独立弹
 // 窗与「添加基金」独立入口已收编退役。
-const props = defineProps<{ show: boolean }>()
+const props = defineProps<{ show: boolean }>();
 const emit = defineEmits<{
-  'update:show': [value: boolean]
+  "update:show": [value: boolean];
   /** 添加成功回执文案（页面级展示），列表重拉由父组件负责 */
-  added: [message: string]
-}>()
+  added: [message: string];
+}>();
 
-const reference = useReferenceStore()
+const reference = useReferenceStore();
 
 // 市场必选的录入通道闭集（通道标签，非存储市场）：沪/深/港复用市场标签，
 // 美股/场外基金/自定义标的是通道语义（美股折叠三交易所、场外基金落 unknown
 // 市场、自定义标的零查询直接建档）。
 const CHANNEL_OPTIONS = computed(() => [
-  { label: t('investments.market.sh'), value: 'sh' as AddInstrumentChannel },
-  { label: t('investments.market.sz'), value: 'sz' as AddInstrumentChannel },
-  { label: t('investments.market.hk'), value: 'hk' as AddInstrumentChannel },
-  { label: t('investments.addInstrument.channelUs'), value: 'us' as AddInstrumentChannel },
-  { label: t('investments.addInstrument.channelFund'), value: 'fund' as AddInstrumentChannel },
-  { label: t('investments.addInstrument.channelCustom'), value: 'custom' as AddInstrumentChannel },
-])
+  { label: t("investments.market.sh"), value: "sh" as AddInstrumentChannel },
+  { label: t("investments.market.sz"), value: "sz" as AddInstrumentChannel },
+  { label: t("investments.market.hk"), value: "hk" as AddInstrumentChannel },
+  { label: t("investments.addInstrument.channelUs"), value: "us" as AddInstrumentChannel },
+  { label: t("investments.addInstrument.channelFund"), value: "fund" as AddInstrumentChannel },
+  { label: t("investments.addInstrument.channelCustom"), value: "custom" as AddInstrumentChannel },
+]);
 
 // 自定义标的通道的类型白名单（与后端 IPC 入口守卫同源，ADR-0036）：股票类标
 // 的不手动建（按代码查询承担），基金唯一创建入口归按代码即拉。
 const TYPE_OPTIONS = computed(() => [
-  { label: t('investments.type.bond'), value: 'bond' as InstrumentType },
-  { label: t('investments.type.etf'), value: 'etf' as InstrumentType },
-  { label: t('investments.type.other'), value: 'other' as InstrumentType },
-])
+  { label: t("investments.type.bond"), value: "bond" as InstrumentType },
+  { label: t("investments.type.etf"), value: "etf" as InstrumentType },
+  { label: t("investments.type.other"), value: "other" as InstrumentType },
+]);
 
-const market = ref<AddInstrumentChannel | null>(null)
-const code = ref('')
-const querying = ref(false)
+const market = ref<AddInstrumentChannel | null>(null);
+const code = ref("");
+const querying = ref(false);
 // 自定义标的通道建档表单（选中通道即展开，零网络请求）
-const customName = ref('')
-const customType = ref<InstrumentType | null>(null)
-const customCurrency = ref('CNY')
-const creating = ref(false)
+const customName = ref("");
+const customType = ref<InstrumentType | null>(null);
+const customCurrency = ref("CNY");
+const creating = ref(false);
 /** 弹窗内错误提示（未命中/临时故障/建档校验失败）：保持弹窗打开供改码重试 */
-const error = ref<string | null>(null)
+const error = ref<string | null>(null);
 /** 股票通道查无此码的引导标记：报错文案旁指向自定义标的通道 */
-const notFoundGuidance = ref(false)
+const notFoundGuidance = ref(false);
 
 /** 自定义标的通道：建档表单直开、提交走创建（零网络请求直至提交） */
-const isCustom = computed(() => market.value === 'custom')
+const isCustom = computed(() => market.value === "custom");
 
 const currencyOptions = computed(() =>
   reference.currencies.map((c) => ({ label: `${c.code} · ${c.name}`, value: c.code })),
-)
+);
 
 const codePlaceholder = computed(() => {
-  if (isCustom.value) return t('investments.addInstrument.codePlaceholderCustom')
-  return market.value === 'fund'
-    ? t('investments.addInstrument.codePlaceholderFund')
-    : t('investments.addInstrument.codePlaceholderStock')
-})
+  if (isCustom.value) return t("investments.addInstrument.codePlaceholderCustom");
+  return market.value === "fund"
+    ? t("investments.addInstrument.codePlaceholderFund")
+    : t("investments.addInstrument.codePlaceholderStock");
+});
 
 // 基金通道 6 位纯数字才可提交（后端同样校验，前端仅提前拦截不发起无效请求）；
 // 股票通道代码形态由后端按通道解析（矛盾/不支持显式报错），前端只拦空白；
 // 自定义标的代码是自由文本幂等键，只拦空白（后端 instrument.symbol-required 同规）。
 const codeValid = computed(() => {
-  const trimmed = code.value.trim()
-  if (trimmed === '') return false
-  if (market.value === 'fund') return /^\d{6}$/.test(trimmed)
-  return true
-})
+  const trimmed = code.value.trim();
+  if (trimmed === "") return false;
+  if (market.value === "fund") return /^\d{6}$/.test(trimmed);
+  return true;
+});
 
-const canQuery = computed(() => market.value !== null && codeValid.value && !querying.value)
+const canQuery = computed(() => market.value !== null && codeValid.value && !querying.value);
 const canCreate = computed(
   () =>
     isCustom.value &&
     codeValid.value &&
-    customName.value.trim() !== '' &&
+    customName.value.trim() !== "" &&
     customType.value !== null &&
     !creating.value,
-)
+);
 
 // 打开时重置表单（币种默认人民币），immediate 兼容 show 初始即为 true 的挂载
 //（先例：MerchantEditModal）
 watch(
   () => props.show,
   (show) => {
-    if (!show) return
-    market.value = null
-    code.value = ''
-    customName.value = ''
-    customType.value = null
-    customCurrency.value = 'CNY'
-    querying.value = false
-    creating.value = false
-    error.value = null
-    notFoundGuidance.value = false
+    if (!show) return;
+    market.value = null;
+    code.value = "";
+    customName.value = "";
+    customType.value = null;
+    customCurrency.value = "CNY";
+    querying.value = false;
+    creating.value = false;
+    error.value = null;
+    notFoundGuidance.value = false;
   },
   { immediate: true },
-)
+);
 
 // 切换通道清报错与引导标记：报错归属查询通道，建档表单以干净态展开
 watch(market, () => {
-  error.value = null
-  notFoundGuidance.value = false
-})
+  error.value = null;
+  notFoundGuidance.value = false;
+});
 
 function close() {
-  emit('update:show', false)
+  emit("update:show", false);
 }
 
 /** 命中回执（识别回显）：股票通道带类型标签与最新价；停牌无价显式说明 */
 function stockHitMessage(result: AddStockInstrumentResult): string {
-  const price = result.price_cents !== null
-    ? t('investments.addInstrument.price', { price: formatPrice(result.price_cents) })
-    : t('investments.addInstrument.priceMissing')
-  return t('investments.addInstrument.successStock', {
+  const price =
+    result.price_cents !== null
+      ? t("investments.addInstrument.price", { price: formatPrice(result.price_cents) })
+      : t("investments.addInstrument.priceMissing");
+  return t("investments.addInstrument.successStock", {
     name: result.name,
     symbol: result.symbol,
     typeLabel: t(`investments.type.${result.type}`),
     price,
-  })
+  });
 }
 
 /** 命中回执（场外基金通道，语义不变）：权威名称 + 分类 + 最新净值 */
 function fundHitMessage(result: AddFundResult): string {
-  const nav = result.nav_cents !== null && result.nav_date !== null
-    ? t('investments.addInstrument.nav', {
-        price: formatPrice(result.nav_cents),
-        date: result.nav_date,
-      })
-    : t('investments.addInstrument.navMissing')
-  return t('investments.addInstrument.successFund', {
+  const nav =
+    result.nav_cents !== null && result.nav_date !== null
+      ? t("investments.addInstrument.nav", {
+          price: formatPrice(result.nav_cents),
+          date: result.nav_date,
+        })
+      : t("investments.addInstrument.navMissing");
+  return t("investments.addInstrument.successFund", {
     name: result.name,
     symbol: result.symbol,
     fundClass: result.fund_class,
     nav,
-  })
+  });
 }
 
 async function submitQuery() {
-  if (!canQuery.value) return
-  querying.value = true
-  error.value = null
+  if (!canQuery.value) return;
+  querying.value = true;
+  error.value = null;
   try {
     const message =
-      market.value === 'fund'
+      market.value === "fund"
         ? fundHitMessage(await api.addFundByCode(code.value.trim()))
-        : stockHitMessage(await api.addInstrumentByCode(market.value!, code.value.trim()))
-    emit('added', message)
-    close()
+        : stockHitMessage(await api.addInstrumentByCode(market.value!, code.value.trim()));
+    emit("added", message);
+    close();
   } catch (e) {
     // 查询未命中/临时故障只显式报错（#826：查询未命中兜底建档分支删除）；
     // 股票通道查无此码追加引导文案指向自定义标的通道。基金未命中不引导：
     // fund 类型唯一创建入口仍为按代码即拉。
-    notFoundGuidance.value =
-      market.value !== 'fund' && errorCodeOf(e) === 'sync.stock-not-found'
-    error.value = extractErrorMessage(e)
+    notFoundGuidance.value = market.value !== "fund" && errorCodeOf(e) === "sync.stock-not-found";
+    error.value = extractErrorMessage(e);
   } finally {
-    querying.value = false
+    querying.value = false;
   }
 }
 
 async function submitCustom() {
-  if (!canCreate.value) return
-  creating.value = true
-  error.value = null
+  if (!canCreate.value) return;
+  creating.value = true;
+  error.value = null;
   try {
     const input = {
       symbol: code.value.trim(),
@@ -194,31 +195,31 @@ async function submitCustom() {
       currency_code: customCurrency.value,
       // 市场恒未知（ADR-0081 口径）：自定义标的无真实市场，不透传
       market: null,
-    }
-    await api.createInstrument(input)
+    };
+    await api.createInstrument(input);
     emit(
-      'added',
-      t('investments.addInstrument.customSuccess', { name: input.name, symbol: input.symbol }),
-    )
-    close()
+      "added",
+      t("investments.addInstrument.customSuccess", { name: input.name, symbol: input.symbol }),
+    );
+    close();
   } catch (e) {
-    error.value = extractErrorMessage(e)
+    error.value = extractErrorMessage(e);
   } finally {
-    creating.value = false
+    creating.value = false;
   }
 }
 
 /** 主按钮形态随通道分派：自定义标的通道为建档创建，其余通道为按代码查询 */
 const primaryLabel = computed(() =>
-  isCustom.value ? t('investments.addInstrument.create') : t('investments.addInstrument.query'),
-)
-const primaryLoading = computed(() => (isCustom.value ? creating.value : querying.value))
-const primaryDisabled = computed(() => (isCustom.value ? !canCreate.value : !canQuery.value))
+  isCustom.value ? t("investments.addInstrument.create") : t("investments.addInstrument.query"),
+);
+const primaryLoading = computed(() => (isCustom.value ? creating.value : querying.value));
+const primaryDisabled = computed(() => (isCustom.value ? !canCreate.value : !canQuery.value));
 
 /** 主按钮分派：自定义标的通道提交建档，其余通道提交查询 */
 function submitPrimary() {
-  if (isCustom.value) void submitCustom()
-  else void submitQuery()
+  if (isCustom.value) void submitCustom();
+  else void submitQuery();
 }
 </script>
 
@@ -232,7 +233,7 @@ function submitPrimary() {
   >
     <NSpace vertical :size="12">
       <NText depth="3">
-        {{ t('investments.addInstrument.intro') }}
+        {{ t("investments.addInstrument.intro") }}
       </NText>
       <NForm label-placement="left" :show-feedback="false" size="small">
         <!-- 行距节奏容器：NFormItem 默认零行距，不得裸排（ADR-0079 决策 4 / issue #804） -->
@@ -291,17 +292,21 @@ function submitPrimary() {
         </NSpace>
       </NForm>
       <NText v-if="isCustom" depth="3" data-testid="add-instrument-custom-hint">
-        {{ t('investments.addInstrument.customHint') }}
+        {{ t("investments.addInstrument.customHint") }}
       </NText>
       <NText v-if="error" type="error" data-testid="add-instrument-error">
         {{ error }}
       </NText>
       <NText v-if="notFoundGuidance" depth="3" data-testid="add-instrument-not-found-hint">
-        {{ t('investments.addInstrument.notFoundHint') }}
+        {{ t("investments.addInstrument.notFoundHint") }}
       </NText>
       <NSpace justify="end" :size="12">
-        <NButton data-testid="cancel-add-instrument" :disabled="querying || creating" @click="close">
-          {{ t('investments.addInstrument.cancel') }}
+        <NButton
+          data-testid="cancel-add-instrument"
+          :disabled="querying || creating"
+          @click="close"
+        >
+          {{ t("investments.addInstrument.cancel") }}
         </NButton>
         <NButton
           type="primary"

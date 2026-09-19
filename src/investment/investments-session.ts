@@ -1,41 +1,41 @@
-import { defineStore } from 'pinia'
-import { computed, readonly, ref, watch } from 'vue'
-import { SEARCH_DEBOUNCE_MS } from '@/composables/search-debounce'
-import type { Instrument } from '@ledger/types'
+import { defineStore } from "pinia";
+import { computed, readonly, ref, watch } from "vue";
+import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
+import type { Instrument } from "@ledger/types";
 
 /** 持仓页签排序列闭集（与持仓明细表列 key 一致）：市值 / 持仓收益（未实现盈亏） */
-export type HoldingsSortColumn = 'market_value' | 'unrealized_pnl'
-export type HoldingsSortOrder = 'ascend' | 'descend'
+export type HoldingsSortColumn = "market_value" | "unrealized_pnl";
+export type HoldingsSortOrder = "ascend" | "descend";
 
 /** 排序状态：null = 默认标的代码字母序 */
 export interface HoldingsSorter {
-  columnKey: HoldingsSortColumn
-  order: HoldingsSortOrder
+  columnKey: HoldingsSortColumn;
+  order: HoldingsSortOrder;
 }
 
 /** naive-ui `update:sorter` 的单列 sorter 形态（受控排序回传） */
 export interface NaiveUiSorterState {
-  columnKey: string | number
-  order: 'ascend' | 'descend' | false
+  columnKey: string | number;
+  order: "ascend" | "descend" | false;
 }
 
 /** 分页页大小：固定值不设选择器（全仓先例：交易页与搜索页同为 20，issue #912） */
-export const HOLDINGS_PAGE_SIZE = 20
+export const HOLDINGS_PAGE_SIZE = 20;
 
 /** 投资页默认页签（冷启动与 ESC 复位共用同一默认态来源）。 */
-export const INVESTMENTS_DEFAULT_TAB = 'pnl'
+export const INVESTMENTS_DEFAULT_TAB = "pnl";
 
 /** 走势视图模式：组合市值曲线 ↔ 单标的曲线同视图切换 */
-export type TrendViewMode = 'portfolio' | 'instrument'
+export type TrendViewMode = "portfolio" | "instrument";
 
 /** 走势预设区间闭集：1 月 / 3 月 / 1 年 / 全部（ADR-0019） */
-export type TrendRangePreset = '1m' | '3m' | '1y' | 'all'
+export type TrendRangePreset = "1m" | "3m" | "1y" | "all";
 
 /** 走势默认预设区间：近一年（两年回填的中间视角，其余区间一键切换） */
-export const TREND_PRESET_DEFAULT: TrendRangePreset = '1y'
+export const TREND_PRESET_DEFAULT: TrendRangePreset = "1y";
 
 /** 走势默认视图模式：组合市值曲线 */
-export const TREND_MODE_DEFAULT: TrendViewMode = 'portfolio'
+export const TREND_MODE_DEFAULT: TrendViewMode = "portfolio";
 
 /**
  * 投资页会话状态 store（issue #1192）：投资页四页签瞬态选择的唯一读写方——
@@ -63,47 +63,47 @@ export const TREND_MODE_DEFAULT: TrendViewMode = 'portfolio'
  * 对外投影一律只读、写路径只有意图入口一条（ADR-0094「store 是唯一读写方」）：
  * 视图/面板不持可写 ref，受控组件回传经 `:value` + `@update:value` 调用入口动作。
  */
-export const useInvestmentsSessionStore = defineStore('investments-session', () => {
+export const useInvestmentsSessionStore = defineStore("investments-session", () => {
   /** 当前页签（会话内保留、冷启动回默认「盈亏」；原为视图内实例级瞬态）。 */
-  const activeTab = ref<string>(INVESTMENTS_DEFAULT_TAB)
+  const activeTab = ref<string>(INVESTMENTS_DEFAULT_TAB);
 
   /** 持仓搜索输入回显值（即时，未经防抖；写路径唯一为 setSearch） */
-  const holdingsSearchInput = ref('')
+  const holdingsSearchInput = ref("");
   /** 持仓搜索应用值（防抖后参与过滤） */
-  const holdingsSearch = ref('')
+  const holdingsSearch = ref("");
   /** 持仓账户过滤（null = 全部默认态） */
-  const holdingsAccountId = ref<string | null>(null)
+  const holdingsAccountId = ref<string | null>(null);
   /** 持仓排序（null = 默认标的代码字母序） */
-  const holdingsSorter = ref<HoldingsSorter | null>(null)
+  const holdingsSorter = ref<HoldingsSorter | null>(null);
   /** 持仓页码（1 起）：过滤排序之后派生行集的展示切片 */
-  const holdingsPage = ref(1)
+  const holdingsPage = ref(1);
 
   /** 走势视图模式与预设区间（会话内保留、冷启动回默认） */
-  const trendMode = ref<TrendViewMode>(TREND_MODE_DEFAULT)
-  const trendPreset = ref<TrendRangePreset>(TREND_PRESET_DEFAULT)
+  const trendMode = ref<TrendViewMode>(TREND_MODE_DEFAULT);
+  const trendPreset = ref<TrendRangePreset>(TREND_PRESET_DEFAULT);
   /** 走势页签选中标的（null = 未选，会话内保留、冷启动回默认） */
-  const trendInstrumentId = ref<string | null>(null)
+  const trendInstrumentId = ref<string | null>(null);
 
   /** 最近一次选中的标的投影：id → 标的本体（标的不在标的字典分页内时仍可供
    * 走势面板取数出图，与入口形态一致）。 */
-  const trendInstrumentCache = new Map<string, Instrument>()
+  const trendInstrumentCache = new Map<string, Instrument>();
 
   /** 搜索防抖定时器：闭包内单个，store 实例唯一。 */
-  let searchTimer: ReturnType<typeof setTimeout> | undefined
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
   function setSearch(input: string) {
-    holdingsSearchInput.value = input
-    clearTimeout(searchTimer)
-    const next = input.trim()
+    holdingsSearchInput.value = input;
+    clearTimeout(searchTimer);
+    const next = input.trim();
     // 同值不重排定时器：重复输入同一有效值时应用值本就不变
     if (next === holdingsSearch.value) {
-      searchTimer = undefined
-      return
+      searchTimer = undefined;
+      return;
     }
     searchTimer = setTimeout(() => {
-      searchTimer = undefined
-      holdingsSearch.value = next
-    }, SEARCH_DEBOUNCE_MS)
+      searchTimer = undefined;
+      holdingsSearch.value = next;
+    }, SEARCH_DEBOUNCE_MS);
   }
 
   /**
@@ -114,98 +114,102 @@ export const useInvestmentsSessionStore = defineStore('investments-session', () 
    * 生效）也不属「冷启动回默认」任一保留态。已应用值不在此撤销范围内。
    */
   function cancelPendingSearch() {
-    clearTimeout(searchTimer)
-    searchTimer = undefined
-    holdingsSearchInput.value = holdingsSearch.value
+    clearTimeout(searchTimer);
+    searchTimer = undefined;
+    holdingsSearchInput.value = holdingsSearch.value;
   }
 
   function setAccount(id: string | null) {
-    holdingsAccountId.value = id
+    holdingsAccountId.value = id;
   }
 
   /** naive-ui `update:sorter` 回传入口：order=false（第三态）或非本表列即清除排序回默认 */
   function setSorter(next: NaiveUiSorterState | NaiveUiSorterState[]) {
     // naive-ui 单列排序闭集：数组形态（多列回传）不属本模块维度，视作清除
-    const single = Array.isArray(next) ? next[0] : next
-    let resolved: HoldingsSorter | null = null
+    const single = Array.isArray(next) ? next[0] : next;
+    let resolved: HoldingsSorter | null = null;
     if (
       single &&
       single.order !== false &&
-      (single.columnKey === 'market_value' || single.columnKey === 'unrealized_pnl')
+      (single.columnKey === "market_value" || single.columnKey === "unrealized_pnl")
     ) {
-      resolved = { columnKey: single.columnKey, order: single.order }
+      resolved = { columnKey: single.columnKey, order: single.order };
     }
     // 同值重设不产生新状态（翻页归零只对实际变化响应）
     if (
       holdingsSorter.value?.columnKey === resolved?.columnKey &&
       holdingsSorter.value?.order === resolved?.order
     ) {
-      return
+      return;
     }
-    holdingsSorter.value = resolved
+    holdingsSorter.value = resolved;
   }
 
   function setPage(next: number) {
-    holdingsPage.value = next
+    holdingsPage.value = next;
   }
 
   /** 翻页归零：三维任一应用值实际变化即回第一页（排序清除亦属实际变化）。
    * 同步 flush 使归零与意图应用原子生效，不留「维度已变、页码未归」的中间态；
    * 防抖中的搜索不归零（输入回显不是应用值）。 */
-  watch([holdingsSearch, holdingsAccountId, holdingsSorter], () => {
-    holdingsPage.value = 1
-  }, { flush: 'sync' })
+  watch(
+    [holdingsSearch, holdingsAccountId, holdingsSorter],
+    () => {
+      holdingsPage.value = 1;
+    },
+    { flush: "sync" },
+  );
 
   /** 页签写入意图入口（NTabs 受控回传与 focus 落点共用；测试经本入口换档） */
   function setActiveTab(tab: string) {
-    activeTab.value = tab
+    activeTab.value = tab;
   }
 
   /** 走势入口（标的列表「走势」按钮与 focus 落点共用）：带入标的并切到走势页签 */
   function showTrendInstrument(instrument: Instrument) {
-    registerTrendInstrument(instrument)
-    trendInstrumentId.value = instrument.id
-    trendMode.value = 'instrument'
+    registerTrendInstrument(instrument);
+    trendInstrumentId.value = instrument.id;
+    trendMode.value = "instrument";
   }
 
   /** 声明会话内已知标的（走势面板标的字典投影）：只登记不选中——面板下拉改选
    * 仅给 id，经 selectTrendInstrument 时须能解析回标的本体。 */
   function registerTrendInstrument(instrument: Instrument) {
-    trendInstrumentCache.set(instrument.id, instrument)
+    trendInstrumentCache.set(instrument.id, instrument);
   }
 
   /** 走势面板标的选中意图（id 进；null = 清除选中回组合模式） */
   function selectTrendInstrument(id: string | null) {
     if (id === null) {
-      trendInstrumentId.value = null
-      trendMode.value = TREND_MODE_DEFAULT
-      return
+      trendInstrumentId.value = null;
+      trendMode.value = TREND_MODE_DEFAULT;
+      return;
     }
-    if (!trendInstrumentCache.has(id)) return
-    trendInstrumentId.value = id
-    trendMode.value = 'instrument'
+    if (!trendInstrumentCache.has(id)) return;
+    trendInstrumentId.value = id;
+    trendMode.value = "instrument";
   }
 
   /** 走势模式写入意图（面板 NRadioGroup 回传）：进入单标的模式要求已有选中
    * 标的（与 selectTrendInstrument 同一不变量，无标的的单标的模式是空态）；
    * 回组合模式不动选中标的（再切回单标的仍见上次那只）。 */
   function setTrendMode(mode: TrendViewMode) {
-    if (mode === 'instrument' && trendInstrumentId.value === null) return
-    trendMode.value = mode
+    if (mode === "instrument" && trendInstrumentId.value === null) return;
+    trendMode.value = mode;
   }
 
   /** 走势预设区间写入意图（面板 NRadioGroup 回传）；区间是闭集字面量，
    * 无守卫语义（任意档位均可直接生效）。 */
   function setTrendPreset(preset: TrendRangePreset) {
-    trendPreset.value = preset
+    trendPreset.value = preset;
   }
 
   /** 当前选中标的投影（未选中的 id 回 null；投影随会话保留） */
   const trendInstrument = computed<Instrument | null>(() =>
     trendInstrumentId.value === null
       ? null
-      : trendInstrumentCache.get(trendInstrumentId.value) ?? null,
-  )
+      : (trendInstrumentCache.get(trendInstrumentId.value) ?? null),
+  );
 
   /**
    * ESC 复位出口（ADR-0094 决策 4）：页签回默认「盈亏」、持仓筛选三维清零、
@@ -218,18 +222,18 @@ export const useInvestmentsSessionStore = defineStore('investments-session', () 
    * 默认」直接冲突）。定时器撤销保证复位后不会有意外的旧输入落地。
    */
   function resetToDefault() {
-    clearTimeout(searchTimer)
-    searchTimer = undefined
-    activeTab.value = INVESTMENTS_DEFAULT_TAB
-    holdingsSearchInput.value = ''
-    holdingsSearch.value = ''
-    holdingsAccountId.value = null
-    holdingsSorter.value = null
-    holdingsPage.value = 1
-    trendInstrumentId.value = null
-    trendInstrumentCache.clear()
-    trendMode.value = TREND_MODE_DEFAULT
-    trendPreset.value = TREND_PRESET_DEFAULT
+    clearTimeout(searchTimer);
+    searchTimer = undefined;
+    activeTab.value = INVESTMENTS_DEFAULT_TAB;
+    holdingsSearchInput.value = "";
+    holdingsSearch.value = "";
+    holdingsAccountId.value = null;
+    holdingsSorter.value = null;
+    holdingsPage.value = 1;
+    trendInstrumentId.value = null;
+    trendInstrumentCache.clear();
+    trendMode.value = TREND_MODE_DEFAULT;
+    trendPreset.value = TREND_PRESET_DEFAULT;
   }
 
   return {
@@ -257,5 +261,5 @@ export const useInvestmentsSessionStore = defineStore('investments-session', () 
     setTrendMode,
     setTrendPreset,
     resetToDefault,
-  }
-})
+  };
+});

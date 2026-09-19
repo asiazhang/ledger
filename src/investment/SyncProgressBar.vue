@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { t } from '@ledger/i18n'
-import type { InstrumentSyncProgress } from '@ledger/types'
-import { bar, root, text, textStack, track } from './sync-progress-bar.css.ts'
+import { computed } from "vue";
+import { t } from "@ledger/i18n";
+import type { InstrumentSyncProgress } from "@ledger/types";
+import { bar, root, text, textStack, track } from "./sync-progress-bar.css.ts";
 
 // 同步进度条展示组件（issue #897 / ADR-0095）：标的信息同步的确定进度——
 // 形态与 GlobalBusyBar 同款细条（2px），蓝色区分（品牌强调色为琥珀，蓝色是
@@ -16,13 +16,13 @@ import { bar, root, text, textStack, track } from './sync-progress-bar.css.ts'
 // 第 3/25 页」——单只基金首刷要翻约 25 页，明细让这段接近一分钟的窗口可见；
 // 进度条宽度仍按标的级 done/total，页推进不虚报整体百分比。
 
-const props = defineProps<{ progress: InstrumentSyncProgress | null }>()
+const props = defineProps<{ progress: InstrumentSyncProgress | null }>();
 
 /** 确定百分比：done/total；total 异常（≤0）时按 0 处理（不渲染态之外的双保险）。 */
 const percent = computed(() => {
-  if (!props.progress || props.progress.total <= 0) return 0
-  return Math.min(100, Math.round((props.progress.done / props.progress.total) * 100))
-})
+  if (!props.progress || props.progress.total <= 0) return 0;
+  return Math.min(100, Math.round((props.progress.done / props.progress.total) * 100));
+});
 </script>
 
 <template>
@@ -37,18 +37,24 @@ const percent = computed(() => {
     :aria-label="t('investments.sync.progressAriaLabel')"
   >
     <div :class="track">
-      <div :class="bar" data-testid="instrument-sync-progress-bar" :style="{ width: percent + '%' }" />
+      <div
+        :class="bar"
+        data-testid="instrument-sync-progress-bar"
+        :style="{ width: percent + '%' }"
+      />
     </div>
     <div :class="textStack">
       <span :class="text">
-        {{ t('investments.sync.progress', { done: progress.done, total: progress.total }) }}
+        {{ t("investments.sync.progress", { done: progress.done, total: progress.total }) }}
       </span>
       <span v-if="progress.fund" :class="text" data-testid="instrument-sync-progress-fund">
-        {{ t('investments.sync.progressFundPages', {
-          code: progress.fund.code,
-          page: progress.fund.page,
-          pages: progress.fund.pages,
-        }) }}
+        {{
+          t("investments.sync.progressFundPages", {
+            code: progress.fund.code,
+            page: progress.fund.page,
+            pages: progress.fund.pages,
+          })
+        }}
       </span>
     </div>
   </div>

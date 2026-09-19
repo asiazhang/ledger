@@ -1,5 +1,5 @@
-import { nextTick, readonly, ref } from 'vue'
-import type { Ref } from 'vue'
+import { nextTick, readonly, ref } from "vue";
+import type { Ref } from "vue";
 
 /**
  * useRowContextMenu 行右键菜单编排工厂（spec #522 / issue #550，词汇表
@@ -39,22 +39,22 @@ import type { Ref } from 'vue'
 
 /** 行右键菜单单判别状态：非空即菜单打开（x/y 为弹出坐标、row 为目标行）。 */
 export interface RowContextMenuState<TRow> {
-  x: number
-  y: number
-  row: TRow
+  x: number;
+  y: number;
+  row: TRow;
 }
 
 export interface UseRowContextMenuReturn<TRow> {
   /** 当前状态（只读）：null = 关闭终态（菜单不显示）；非空即「菜单显示」。 */
-  readonly state: Readonly<Ref<RowContextMenuState<TRow> | null>>
+  readonly state: Readonly<Ref<RowContextMenuState<TRow> | null>>;
   /** 定位坐标（只读）：最近一次 open 的捕获点；不随 close 清零（离场动画仍消费）。 */
-  readonly position: Readonly<Ref<{ x: number; y: number }>>
+  readonly position: Readonly<Ref<{ x: number; y: number }>>;
   /** 打开（未开即开、已开即重定位）：收起 → 下一帧以事件坐标与目标行重开。 */
-  open(event: MouseEvent, row: TRow): void
+  open(event: MouseEvent, row: TRow): void;
   /** 关闭：清回全空终态（无滞留目标行）。 */
-  close(): void
+  close(): void;
   /** 选中：收起菜单并把收起瞬间的 (key, row) 交给工厂入参回调 onSelect。 */
-  select(key: string | number): void
+  select(key: string | number): void;
 }
 
 /**
@@ -64,35 +64,35 @@ export interface UseRowContextMenuReturn<TRow> {
 export function useRowContextMenu<TRow>(
   onSelect: (key: string | number, row: TRow) => void,
 ): UseRowContextMenuReturn<TRow> {
-  const state = ref(null) as Ref<RowContextMenuState<TRow> | null>
+  const state = ref(null) as Ref<RowContextMenuState<TRow> | null>;
   // 定位坐标与显示状态分离持有：close 只清显示终态（无滞留行），坐标保留——
   // naive-ui animated 下拉离场动画期间仍按 x/y props 重定位弹层（vueuc Follower
   // watch x/y → syncPosition），清零会让淡出中的菜单跳到视口左上角闪现一次
   // （issue #798）。初始 (0,0) 无消费方：菜单未开过时 show 恒 false。
-  const position = ref({ x: 0, y: 0 })
+  const position = ref({ x: 0, y: 0 });
 
   function open(event: MouseEvent, row: TRow) {
     // 坐标在调用瞬间捕获（事件对象随传播结束失效）；先收起再下一帧重开，
     // 已开重定位与关闭态打开同一路径（单路径，无快路径）。定位坐标同步更新
     // （与侧栏排序菜单、页签菜单手写拷贝同款舞步），不下一帧。
-    const x = event.clientX
-    const y = event.clientY
-    position.value = { x, y }
-    state.value = null
+    const x = event.clientX;
+    const y = event.clientY;
+    position.value = { x, y };
+    state.value = null;
     void nextTick(() => {
-      state.value = { x, y, row }
-    })
+      state.value = { x, y, row };
+    });
   }
 
   function close() {
-    state.value = null
+    state.value = null;
   }
 
   function select(key: string | number) {
     // 捕获先于收起：交付「收起瞬间」的目标行；未开时无可交付，只收起。
-    const current = state.value
-    close()
-    if (current) onSelect(key, current.row)
+    const current = state.value;
+    close();
+    if (current) onSelect(key, current.row);
   }
 
   return {
@@ -103,5 +103,5 @@ export function useRowContextMenu<TRow>(
     open,
     close,
     select,
-  }
+  };
 }

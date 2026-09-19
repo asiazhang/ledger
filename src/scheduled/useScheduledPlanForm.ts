@@ -1,52 +1,52 @@
-import { computed, ref } from 'vue'
-import type { TreeSelectOption } from 'naive-ui'
-import { useMessage } from 'naive-ui'
-import { useReferenceStore } from '@/stores/reference'
-import { useAppStore } from '@/stores/app'
-import { useFormShared } from '@/composables/useFormShared'
-import { resolveMerchantRef } from '@/merchants/resolve-merchant'
-import { api } from '@ledger/api'
-import { errorMessage } from '@ledger/utils/errors'
-import { t } from '@ledger/i18n'
-import { todayStr } from '@ledger/utils/date'
-import type { CreateScheduledInput, RecurrenceType, ScheduledKind } from '@ledger/types'
+import { computed, ref } from "vue";
+import type { TreeSelectOption } from "naive-ui";
+import { useMessage } from "naive-ui";
+import { useReferenceStore } from "@/stores/reference";
+import { useAppStore } from "@/stores/app";
+import { useFormShared } from "@/composables/useFormShared";
+import { resolveMerchantRef } from "@/merchants/resolve-merchant";
+import { api } from "@ledger/api";
+import { errorMessage } from "@ledger/utils/errors";
+import { t } from "@ledger/i18n";
+import { todayStr } from "@ledger/utils/date";
+import type { CreateScheduledInput, RecurrenceType, ScheduledKind } from "@ledger/types";
 
 /** 形态特化字段（ADR-0041：分期总额/期数、转账转入账户与总期数留页签）：
  * 仅携带该形态真实发送的键——组装结果键集与既有三表单逐字一致，不补空键。 */
 export interface ScheduledPlanSpecificFields {
-  total_amount_cents?: number | null
-  total_occurrences?: number | null
-  to_account_id?: string | null
+  total_amount_cents?: number | null;
+  total_occurrences?: number | null;
+  to_account_id?: string | null;
 }
 
 /** 公共 payload 组装入参：商户 id 须先经 resolveMerchant 解析（无商户面的形态传 null）。 */
 export interface ScheduledPlanCreateSpec {
-  kind: ScheduledKind
+  kind: ScheduledKind;
   /** 每期金额（分）：分期为 floor 均分口径，订阅/转账为每期金额 */
-  amountCents: number
-  merchantId: string | null
+  amountCents: number;
+  merchantId: string | null;
   /** 形态特化字段（页签组装） */
-  specific?: ScheduledPlanSpecificFields
+  specific?: ScheduledPlanSpecificFields;
 }
 
 /** submitCreate 提交编排入参（spec #520）：表单校验与形态特化字段组装留页签，
  * 页签传入形态与已校验的金额/特化字段；商户解析由接缝按形态显式决定（无商户面形态跳过）。 */
 export interface ScheduledPlanSubmitSpec {
-  kind: ScheduledKind
+  kind: ScheduledKind;
   /** 每期金额（分）：页签已校验（>0、元转分），分期为 floor 均分口径 */
-  amountCents: number
+  amountCents: number;
   /** 形态特化字段（页签组装，如分期总额/期数、转账转入账户） */
-  specific?: ScheduledPlanSpecificFields
+  specific?: ScheduledPlanSpecificFields;
 }
 
 /** 提交成功后回调（工厂入参）：适配器注入各自原子动作——转账/分期：关窗 +
  * 特化字段重置 + 清单刷新；订阅追加订阅花费刷新。回调时公共草稿已由接缝重置。 */
-export type SubmitSuccessCallback = () => void | Promise<void>
+export type SubmitSuccessCallback = () => void | Promise<void>;
 
 /** useScheduledPlanForm 工厂入参。 */
 export interface UseScheduledPlanFormOptions {
   /** 提交成功后回调（提交时序编排的最后一步，spec #520） */
-  onSubmitted?: SubmitSuccessCallback
+  onSubmitted?: SubmitSuccessCallback;
 }
 
 /**
@@ -64,11 +64,11 @@ export interface UseScheduledPlanFormOptions {
  * 跨域表单共享接缝 useFormShared 在此内部消费，计划页签不再直连（消费面自然收缩）。
  */
 export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) {
-  const { onSubmitted } = options
-  const reference = useReferenceStore()
-  const appStore = useAppStore()
-  const { accountOptions, currencyOptions } = useFormShared()
-  const message = useMessage()
+  const { onSubmitted } = options;
+  const reference = useReferenceStore();
+  const appStore = useAppStore();
+  const { accountOptions, currencyOptions } = useFormShared();
+  const message = useMessage();
 
   // ---------------------------------------------------------------------------
   // 公共草稿字段：初始态与 reset() 复位终态共用同一来源语义（模态语义下每次
@@ -76,27 +76,27 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
   // 暴露 UI，恒为 null）——新增公共字段先落此处，三种形态一次生效。
   // ---------------------------------------------------------------------------
 
-  const note = ref('')
-  const accountId = ref<string | null>(null)
-  const categoryId = ref<string | null>(null)
-  const merchantRef = ref<string | null>(null)
-  const currencyCode = ref(appStore.defaultCurrency)
-  const recurrenceType = ref<RecurrenceType>('monthly')
-  const recurrenceInterval = ref(1)
-  const recurrenceDay = ref<number | null>(null)
-  const startDate = ref(todayStr())
+  const note = ref("");
+  const accountId = ref<string | null>(null);
+  const categoryId = ref<string | null>(null);
+  const merchantRef = ref<string | null>(null);
+  const currencyCode = ref(appStore.defaultCurrency);
+  const recurrenceType = ref<RecurrenceType>("monthly");
+  const recurrenceInterval = ref(1);
+  const recurrenceDay = ref<number | null>(null);
+  const startDate = ref(todayStr());
 
   /** 重置草稿到初始态。形态特化字段（金额/期数/转入账户等）由页签自行复位。 */
   function reset() {
-    note.value = ''
-    accountId.value = null
-    categoryId.value = null
-    merchantRef.value = null
-    currencyCode.value = appStore.defaultCurrency
-    recurrenceType.value = 'monthly'
-    recurrenceInterval.value = 1
-    recurrenceDay.value = null
-    startDate.value = todayStr()
+    note.value = "";
+    accountId.value = null;
+    categoryId.value = null;
+    merchantRef.value = null;
+    currencyCode.value = appStore.defaultCurrency;
+    recurrenceType.value = "monthly";
+    recurrenceInterval.value = 1;
+    recurrenceDay.value = null;
+    startDate.value = todayStr();
   }
 
   // ---------------------------------------------------------------------------
@@ -105,12 +105,12 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
   // ---------------------------------------------------------------------------
 
   const categoryTreeOptions = computed(
-    () => reference.treeCategoryOptions('expense') as unknown as TreeSelectOption[],
-  )
+    () => reference.treeCategoryOptions("expense") as unknown as TreeSelectOption[],
+  );
 
   const merchantOptions = computed<{ label: string; value: string }[]>(() =>
     reference.merchants.map((m) => ({ label: m.name, value: m.id })),
-  )
+  );
 
   /**
    * 商户解析（保存时单点收口，issue #190/#206）：「输入即建 + 重名兜底」交互
@@ -118,7 +118,7 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
    * 本地仅读草稿字段，解析细则见该接缝注释。
    */
   async function resolveMerchant(editingMerchantId: string | null = null): Promise<string | null> {
-    return resolveMerchantRef(merchantRef.value, editingMerchantId)
+    return resolveMerchantRef(merchantRef.value, editingMerchantId);
   }
 
   /**
@@ -140,7 +140,7 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
       start_date: startDate.value,
       note: note.value.trim() || null,
       ...spec.specific,
-    }
+    };
   }
 
   /**
@@ -148,10 +148,10 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
    * 只作专名出现，不复述文案值（文案见 i18n scheduled.json toasts）。
    */
   const CREATE_SUCCESS_KEY: Record<ScheduledKind, string> = {
-    subscription: 'scheduled.toast.subscriptionCreated',
-    installment: 'scheduled.toast.installmentCreated',
-    scheduled_transfer: 'scheduled.toast.transferCreated',
-  }
+    subscription: "scheduled.toast.subscriptionCreated",
+    installment: "scheduled.toast.installmentCreated",
+    scheduled_transfer: "scheduled.toast.transferCreated",
+  };
 
   /**
    * 新建提交流程编排（spec #520）：
@@ -163,8 +163,7 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
    */
   async function submitCreate(spec: ScheduledPlanSubmitSpec): Promise<void> {
     try {
-      const merchantId =
-        spec.kind === 'scheduled_transfer' ? null : await resolveMerchant()
+      const merchantId = spec.kind === "scheduled_transfer" ? null : await resolveMerchant();
       await api.createScheduledTransaction(
         buildCreateInput({
           kind: spec.kind,
@@ -172,12 +171,12 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
           merchantId,
           specific: spec.specific,
         }),
-      )
-      message.success(t(CREATE_SUCCESS_KEY[spec.kind]))
-      reset()
-      await onSubmitted?.()
+      );
+      message.success(t(CREATE_SUCCESS_KEY[spec.kind]));
+      reset();
+      await onSubmitted?.();
     } catch (e) {
-      message.error(t('scheduled.toast.createFailed', { message: errorMessage(e) }))
+      message.error(t("scheduled.toast.createFailed", { message: errorMessage(e) }));
     }
   }
 
@@ -202,5 +201,5 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
     resolveMerchant,
     buildCreateInput,
     submitCreate,
-  }
+  };
 }

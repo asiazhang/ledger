@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
-import { t } from '@ledger/i18n'
+import { computed, h, onMounted, ref } from "vue";
+import { t } from "@ledger/i18n";
 import {
   NCard,
   NButton,
@@ -14,29 +14,29 @@ import {
   NProgress,
   useMessage,
   type DataTableColumns,
-} from 'naive-ui'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import AppTreeSelect from '@ledger/ui-kit/AppTreeSelect.vue'
-import { formatAmount, yuanToCents } from '@ledger/money'
-import { installmentSchedule } from '@ledger/utils/installment'
-import { useReferenceStore } from '@/stores/reference'
-import { useModalIntent } from '@ledger/modal-intent'
-import { useWindowTier } from '@ledger/window-tier'
-import { useScheduledPlanForm } from '@/scheduled/useScheduledPlanForm'
+} from "naive-ui";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import AppTreeSelect from "@ledger/ui-kit/AppTreeSelect.vue";
+import { formatAmount, yuanToCents } from "@ledger/money";
+import { installmentSchedule } from "@ledger/utils/installment";
+import { useReferenceStore } from "@/stores/reference";
+import { useModalIntent } from "@ledger/modal-intent";
+import { useWindowTier } from "@ledger/window-tier";
+import { useScheduledPlanForm } from "@/scheduled/useScheduledPlanForm";
 import {
   scheduledRecurrenceLabel,
   scheduledRecurrenceOptions,
   useScheduledPlanList,
   type ScheduledPlanRow,
-} from '@ledger/scheduled-plan-list'
-import AppModal from '@ledger/ui-kit/AppModal.vue'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import PlanRowActions from '@/scheduled/PlanRowActions.vue'
-import PlanDetailModal from '@/scheduled/PlanDetailModal.vue'
-import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from '@/components/mobile-cells'
-import { usePlanFocusLanding } from '@/scheduled/usePlanFocusLanding'
-import { scheduledStatusLabel } from '@ledger/utils/scheduled'
+} from "@ledger/scheduled-plan-list";
+import AppModal from "@ledger/ui-kit/AppModal.vue";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import PlanRowActions from "@/scheduled/PlanRowActions.vue";
+import PlanDetailModal from "@/scheduled/PlanDetailModal.vue";
+import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from "@/components/mobile-cells";
+import { usePlanFocusLanding } from "@/scheduled/usePlanFocusLanding";
+import { scheduledStatusLabel } from "@ledger/utils/scheduled";
 
 /**
  * 分期页签 = ScheduledPlanList 计划清单模块（ADR-0041 迁移步 3）的薄适配器：
@@ -50,14 +50,14 @@ import { scheduledStatusLabel } from '@ledger/utils/scheduled'
  * 校验、每期 floor 口径与总额/期数特化组装留本页签。
  */
 
-const reference = useReferenceStore()
-const message = useMessage()
+const reference = useReferenceStore();
+const message = useMessage();
 
 // 移动档适配（issue #848 / ADR-0088 决策 11 票⑧）：清单列结构三分（备注/总额/
 // 操作），进度与关联对象并入副行不丢失；生命周期操作经 PlanRowActions 移动档
 // 变体一击可达。断点口径接窗口分级 composable；桌面档十列一字不动（回归红线）。
-const windowTier = useWindowTier()
-const isMobileTier = computed(() => windowTier.value === 'mobile')
+const windowTier = useWindowTier();
+const isMobileTier = computed(() => windowTier.value === "mobile");
 
 // ---------------------------------------------------------------------------
 // 清单编排（ADR-0041）：全部经 ScheduledPlanList 模块；行操作经共享渲染组件
@@ -67,27 +67,27 @@ const isMobileTier = computed(() => windowTier.value === 'mobile')
 
 /** 一行 = 计划 + 形态扩展器产出的已完成期次汇总（期数与金额）。 */
 interface InstallmentExt {
-  completedCount: number
-  completedAmountCents: number
+  completedCount: number;
+  completedAmountCents: number;
 }
-type InstallmentRow = ScheduledPlanRow<InstallmentExt>
+type InstallmentRow = ScheduledPlanRow<InstallmentExt>;
 
-const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null)
+const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null);
 
 const list = useScheduledPlanList<InstallmentExt>({
-  kind: 'installment',
+  kind: "installment",
   expandDetail: (_plan, detail) => ({
     completedCount: detail?.completed_occurrences ?? 0,
     completedAmountCents: detail?.completed_amount_cents ?? 0,
   }),
-  cancelConfirmText: () => t('scheduled.pane.installmentCancelConfirm'),
+  cancelConfirmText: () => t("scheduled.pane.installmentCancelConfirm"),
   onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),
-})
-const { loading, statusFilter, statusFilterOptions, filteredRows } = list
+});
+const { loading, statusFilter, statusFilterOptions, filteredRows } = list;
 
 /** 期次详情弹窗内重试成功会发 changed，清单随之刷新（进度由详情实时汇总，重拉即可）。 */
 async function onDetailChanged() {
-  await list.load()
+  await list.load();
 }
 
 // ---------------------------------------------------------------------------
@@ -99,17 +99,17 @@ async function onDetailChanged() {
 
 /** 新建分期弹窗意图（单成员闭集）：纯新建，无目标载荷。 */
 interface InstallmentCreateIntent {
-  type: 'create'
+  type: "create";
 }
 
 const {
   intent: createIntent,
   open: openCreateIntent,
   close: closeCreateIntent,
-} = useModalIntent<InstallmentCreateIntent>()
+} = useModalIntent<InstallmentCreateIntent>();
 
-const totalYuan = ref('')
-const periods = ref<number | null>(null)
+const totalYuan = ref("");
+const periods = ref<number | null>(null);
 
 // ---------------------------------------------------------------------------
 // 表单接缝（ADR-0041）：公共草稿字段、商户解析（含重名兜底竞态）与公共 payload
@@ -123,12 +123,12 @@ const periods = ref<number | null>(null)
 const form = useScheduledPlanForm({
   onSubmitted: () => {
     // 提交成功后原子动作：关窗 + 特化字段重置 + 清单刷新（公共草稿已由接缝重置）
-    closeCreateIntent()
-    totalYuan.value = ''
-    periods.value = null
-    void list.load()
+    closeCreateIntent();
+    totalYuan.value = "";
+    periods.value = null;
+    void list.load();
   },
-})
+});
 const {
   note,
   accountId,
@@ -142,66 +142,67 @@ const {
   currencyOptions,
   categoryTreeOptions,
   merchantOptions,
-} = form
+} = form;
 
 // ---------------------------------------------------------------------------
 // 每期金额预览与新建提交（分期形态真差异）
 // ---------------------------------------------------------------------------
 
 /** 周期下拉选项（与另两页签同单源；computed 现取标签，切语言即时生效） */
-const recurrenceOptions = computed(scheduledRecurrenceOptions)
+const recurrenceOptions = computed(scheduledRecurrenceOptions);
 
 /** 每期金额预览：总额与期数均合法时给出每期与末期（含尾差），否则为空。 */
 const schedule = computed(() => {
-  const totalCents = yuanToCents(totalYuan.value)
-  if (totalCents === null || periods.value === null || periods.value < 1) return null
+  const totalCents = yuanToCents(totalYuan.value);
+  if (totalCents === null || periods.value === null || periods.value < 1) return null;
   try {
-    return installmentSchedule(totalCents, periods.value)
+    return installmentSchedule(totalCents, periods.value);
   } catch {
-    return null
+    return null;
   }
-})
+});
 
 /** 预览文案：整除时末期与每期一致，不提尾差；不整除时明确标注末期含尾差。 */
 const previewText = computed(() => {
-  const s = schedule.value
-  if (!s) return ''
-  const currency = reference.getCurrency(currencyCode.value)
-  const per = formatAmount(s.perPeriodCents, currency)
-  if (s.lastPeriodCents === s.perPeriodCents) return t('scheduled.preview.perPeriod', { amount: per })
-  return t('scheduled.preview.withLast', {
+  const s = schedule.value;
+  if (!s) return "";
+  const currency = reference.getCurrency(currencyCode.value);
+  const per = formatAmount(s.perPeriodCents, currency);
+  if (s.lastPeriodCents === s.perPeriodCents)
+    return t("scheduled.preview.perPeriod", { amount: per });
+  return t("scheduled.preview.withLast", {
     per,
     last: formatAmount(s.lastPeriodCents, currency),
-  })
-})
+  });
+});
 
 /** 新建提交：校验与每期 floor 口径留页签，提交流程编排由接缝 submitCreate 持有（spec #520）。 */
 async function create() {
   if (!accountId.value) {
-    message.warning(t('scheduled.form.selectAccount'))
-    return
+    message.warning(t("scheduled.form.selectAccount"));
+    return;
   }
-  const totalCents = yuanToCents(totalYuan.value)
+  const totalCents = yuanToCents(totalYuan.value);
   if (totalCents === null || totalCents <= 0) {
-    message.warning(t('scheduled.form.totalPositive'))
-    return
+    message.warning(t("scheduled.form.totalPositive"));
+    return;
   }
-  const totalOccurrences = periods.value
+  const totalOccurrences = periods.value;
   if (totalOccurrences === null || totalOccurrences < 1) {
-    message.warning(t('scheduled.form.periodsMin'))
-    return
+    message.warning(t("scheduled.form.periodsMin"));
+    return;
   }
   if (totalCents < totalOccurrences) {
-    message.warning(t('scheduled.form.totalBelowPeriods'))
-    return
+    message.warning(t("scheduled.form.totalBelowPeriods"));
+    return;
   }
   // amount_cents 存每期金额（floor 口径），与期次生成一致（见 e2e 先例）
-  const s = installmentSchedule(totalCents, totalOccurrences)
+  const s = installmentSchedule(totalCents, totalOccurrences);
   await form.submitCreate({
-    kind: 'installment',
+    kind: "installment",
     amountCents: s.perPeriodCents,
     specific: { total_amount_cents: totalCents, total_occurrences: totalOccurrences },
-  })
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -209,38 +210,38 @@ async function create() {
 // ---------------------------------------------------------------------------
 
 function statusLabel(status: string): string {
-  return scheduledStatusLabel(status)
+  return scheduledStatusLabel(status);
 }
 
 /** 商户名解析（桌面/移动两分支共用；merchantMap 含软删商户会话缓存，改名即时生效）。 */
 function merchantName(row: InstallmentRow): string {
-  const m = row.plan.merchant_id ? reference.merchantMap.get(row.plan.merchant_id) : undefined
-  return m?.name ?? '—'
+  const m = row.plan.merchant_id ? reference.merchantMap.get(row.plan.merchant_id) : undefined;
+  return m?.name ?? "—";
 }
 
 /** 扣款账户名解析（两分支共用；未知 id 回退 id，与桌面列同口径）。 */
 function accountName(row: InstallmentRow): string {
-  return reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id
+  return reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id;
 }
 
 /** 进度文案（两分支共用）：详情失败示「加载失败」不与无数据混淆，否则已还汇总。 */
 function progressText(row: InstallmentRow): string {
-  const currency = reference.getCurrency(row.plan.core.currency_code)
+  const currency = reference.getCurrency(row.plan.core.currency_code);
   return row.detailFailed
-    ? t('scheduled.list.loadFailed')
-    : t('scheduled.progress.repaid', {
+    ? t("scheduled.list.loadFailed")
+    : t("scheduled.progress.repaid", {
         paid: formatAmount(row.ext.completedAmountCents, currency),
         total: formatAmount(row.plan.total_amount_cents ?? 0, currency),
         count: row.ext.completedCount,
         occurrences: row.plan.total_occurrences ?? 0,
-      })
+      });
 }
 
 /** 进度百分比：期数维度（已完成期数 / 总期数），总额异常时兜底 0。 */
 function progressPercentage(row: InstallmentRow): number {
-  const total = row.plan.total_occurrences ?? 0
-  if (total <= 0) return 0
-  return Math.min(100, (row.ext.completedCount / total) * 100)
+  const total = row.plan.total_occurrences ?? 0;
+  if (total <= 0) return 0;
+  return Math.min(100, (row.ext.completedCount / total) * 100);
 }
 
 const columns = computed<DataTableColumns<InstallmentRow>>(() => {
@@ -249,22 +250,25 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => {
   if (isMobileTier.value) {
     return [
       {
-        title: t('scheduled.column.note'),
-        key: 'note',
+        title: t("scheduled.column.note"),
+        key: "note",
         render: (row) =>
-          h('div', { style: MOBILE_CELL_STYLE }, [
-            h('span', null, row.plan.core.note ?? '—'),
+          h("div", { style: MOBILE_CELL_STYLE }, [
+            h("span", null, row.plan.core.note ?? "—"),
             h(
-              'span',
+              "span",
               { style: MOBILE_SUB_STYLE },
               mobileSubLine(
                 statusLabel(row.plan.core.status),
-                scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
+                scheduledRecurrenceLabel(
+                  row.plan.core.recurrence_type,
+                  row.plan.core.recurrence_interval,
+                ),
                 row.plan.core.start_date,
               ),
             ),
             h(
-              'span',
+              "span",
               { style: MOBILE_SUB_STYLE },
               mobileSubLine(
                 merchantName(row),
@@ -275,117 +279,140 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => {
           ]),
       },
       {
-        title: t('scheduled.column.totalAmount'),
-        key: 'total',
+        title: t("scheduled.column.totalAmount"),
+        key: "total",
         render: (row) =>
-          h('div', { style: MOBILE_CELL_STYLE }, [
-            h('span', null, formatAmount(row.plan.total_amount_cents ?? 0, reference.getCurrency(row.plan.core.currency_code))),
+          h("div", { style: MOBILE_CELL_STYLE }, [
             h(
-              'div',
-              { style: MOBILE_SUB_STYLE, 'data-testid': `inst-progress-${row.plan.core.id}` },
+              "span",
+              null,
+              formatAmount(
+                row.plan.total_amount_cents ?? 0,
+                reference.getCurrency(row.plan.core.currency_code),
+              ),
+            ),
+            h(
+              "div",
+              { style: MOBILE_SUB_STYLE, "data-testid": `inst-progress-${row.plan.core.id}` },
               [
                 row.detailFailed
                   ? null
                   : h(NProgress, {
-                      type: 'line',
+                      type: "line",
                       percentage: progressPercentage(row),
                       showIndicator: false,
                     }),
-                h('span', progressText(row)),
+                h("span", progressText(row)),
               ],
             ),
           ]),
       },
       {
-        title: t('scheduled.column.actions'),
-        key: 'actions',
-        render: (row) => h(PlanRowActions, { actions: list.rowActions(row), rowId: row.plan.core.id, mobile: true }),
+        title: t("scheduled.column.actions"),
+        key: "actions",
+        render: (row) =>
+          h(PlanRowActions, {
+            actions: list.rowActions(row),
+            rowId: row.plan.core.id,
+            mobile: true,
+          }),
       },
-    ]
+    ];
   }
   return [
-  {
-    title: t('scheduled.column.note'),
-    key: 'note',
-    render: (row) => row.plan.core.note ?? '—',
-  },
-  {
-    title: t('scheduled.column.merchant'),
-    key: 'merchant',
-    // 改名即时生效（引用指向 id）：merchantMap 含软删商户会话缓存，历史计划照常显示
-    render: (row) => merchantName(row),
-  },
-  {
-    title: t('scheduled.column.category'),
-    key: 'category',
-    render: (row) => reference.categoryPath(row.plan.core.category_id) || '—',
-  },
-  {
-    title: t('scheduled.column.account'),
-    key: 'account',
-    render: (row) => accountName(row),
-  },
-  {
-    title: t('scheduled.column.totalAmount'),
-    key: 'total',
-    render: (row) =>
-      formatAmount(row.plan.total_amount_cents ?? 0, reference.getCurrency(row.plan.core.currency_code)),
-  },
-  {
-    title: t('scheduled.column.progress'),
-    key: 'progress',
-    render: (row) =>
-      h('div', { 'data-testid': `inst-progress-${row.plan.core.id}` }, [
-        row.detailFailed
-          ? null
-          : h(NProgress, {
-              type: 'line',
-              percentage: progressPercentage(row),
-              showIndicator: false,
-              style: 'max-width: 160px',
-            }),
-        h('span', progressText(row)),
-      ]),
-  },
+    {
+      title: t("scheduled.column.note"),
+      key: "note",
+      render: (row) => row.plan.core.note ?? "—",
+    },
+    {
+      title: t("scheduled.column.merchant"),
+      key: "merchant",
+      // 改名即时生效（引用指向 id）：merchantMap 含软删商户会话缓存，历史计划照常显示
+      render: (row) => merchantName(row),
+    },
+    {
+      title: t("scheduled.column.category"),
+      key: "category",
+      render: (row) => reference.categoryPath(row.plan.core.category_id) || "—",
+    },
+    {
+      title: t("scheduled.column.account"),
+      key: "account",
+      render: (row) => accountName(row),
+    },
+    {
+      title: t("scheduled.column.totalAmount"),
+      key: "total",
+      render: (row) =>
+        formatAmount(
+          row.plan.total_amount_cents ?? 0,
+          reference.getCurrency(row.plan.core.currency_code),
+        ),
+    },
+    {
+      title: t("scheduled.column.progress"),
+      key: "progress",
+      render: (row) =>
+        h("div", { "data-testid": `inst-progress-${row.plan.core.id}` }, [
+          row.detailFailed
+            ? null
+            : h(NProgress, {
+                type: "line",
+                percentage: progressPercentage(row),
+                showIndicator: false,
+                style: "max-width: 160px",
+              }),
+          h("span", progressText(row)),
+        ]),
+    },
 
-  {
-    title: t('scheduled.column.recurrence'),
-    key: 'recurrence',
-    render: (row) =>
-      scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
-  },
-  { title: t('scheduled.column.startDate'), key: 'start_date', render: (row) => row.plan.core.start_date },
-  { title: t('scheduled.column.status'), key: 'status', render: (row) => statusLabel(row.plan.core.status) },
-  {
-    title: t('scheduled.column.actions'),
-    key: 'actions',
-    // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处透传共享渲染组件，
-    // 确认弹层/测试锚点/空占位只此一份（ADR-0041 决策 7，spec #520）
-    render: (row) =>
-      h(PlanRowActions, {
-        actions: list.rowActions(row),
-        rowId: row.plan.core.id,
-      }),
-  },
-]
-})
+    {
+      title: t("scheduled.column.recurrence"),
+      key: "recurrence",
+      render: (row) =>
+        scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
+    },
+    {
+      title: t("scheduled.column.startDate"),
+      key: "start_date",
+      render: (row) => row.plan.core.start_date,
+    },
+    {
+      title: t("scheduled.column.status"),
+      key: "status",
+      render: (row) => statusLabel(row.plan.core.status),
+    },
+    {
+      title: t("scheduled.column.actions"),
+      key: "actions",
+      // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处透传共享渲染组件，
+      // 确认弹层/测试锚点/空占位只此一份（ADR-0041 决策 7，spec #520）
+      render: (row) =>
+        h(PlanRowActions, {
+          actions: list.rowActions(row),
+          rowId: row.plan.core.id,
+        }),
+    },
+  ];
+});
 
 /** 来源跳转落点入参（spec #704 / issue #707）：待开的计划 id（视图侧 focus
  * 读一次后的暂存；空则无落点）。 */
-const props = defineProps<{ focusPlanId?: string | null }>()
+const props = defineProps<{ focusPlanId?: string | null }>();
 
-const emit = defineEmits<{ (e: 'focusConsumed'): void }>()
+const emit = defineEmits<{ (e: "focusConsumed"): void }>();
 
 // 计划来源落点时序（读 id → 开窗 → 回报）收口共享工厂，三页签零手搓：
 usePlanFocusLanding({
   focusPlanId: () => props.focusPlanId,
   openDetail: (id) => void planDetailRef.value?.open(id),
-  onConsumed: () => emit('focusConsumed'),
-})
+  onConsumed: () => emit("focusConsumed"),
+});
 
 onMounted(() => {
-  void list.load()
-})
+  void list.load();
+});
 </script>
 
 <template>
@@ -410,7 +437,7 @@ onMounted(() => {
             data-testid="inst-create-open"
             @click="openCreateIntent({ type: 'create' })"
           >
-            {{ t('scheduled.pane.createInstallment') }}
+            {{ t("scheduled.pane.createInstallment") }}
           </NButton>
         </NSpace>
       </template>
@@ -503,7 +530,7 @@ onMounted(() => {
           </NFormItem>
           <NFormItem :label="t('scheduled.form.recurrence')">
             <NSpace :size="8" align="center" :wrap="false">
-              <span>{{ t('scheduled.form.every') }}</span>
+              <span>{{ t("scheduled.form.every") }}</span>
               <NInputNumber
                 v-model:value="recurrenceInterval"
                 :min="1"
@@ -526,8 +553,12 @@ onMounted(() => {
             />
           </NFormItem>
           <NSpace justify="end">
-            <NButton data-testid="inst-create-cancel" @click="closeCreateIntent">{{ t('scheduled.form.cancel') }}</NButton>
-            <NButton type="primary" data-testid="inst-create" @click="create">{{ t('scheduled.pane.createInstallmentSubmit') }}</NButton>
+            <NButton data-testid="inst-create-cancel" @click="closeCreateIntent">{{
+              t("scheduled.form.cancel")
+            }}</NButton>
+            <NButton type="primary" data-testid="inst-create" @click="create">{{
+              t("scheduled.pane.createInstallmentSubmit")
+            }}</NButton>
           </NSpace>
         </NSpace>
       </NForm>

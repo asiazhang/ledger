@@ -1,32 +1,25 @@
 <script setup lang="ts">
-import {
-  NForm,
-  NFormItem,
-  NInput,
-  NButton,
-  NText,
-  NSpace,
-} from 'naive-ui'
-import { t } from '@ledger/i18n'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import { useRefundForm } from '@/transaction/useRefundForm'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import { formatAmount } from '@ledger/money'
-import { useReferenceStore } from '@/stores/reference'
-import type { Transaction } from '@ledger/types'
+import { NForm, NFormItem, NInput, NButton, NText, NSpace } from "naive-ui";
+import { t } from "@ledger/i18n";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import { useRefundForm } from "@/transaction/useRefundForm";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import { formatAmount } from "@ledger/money";
+import { useReferenceStore } from "@/stores/reference";
+import type { Transaction } from "@ledger/types";
 
-const emit = defineEmits<{ created: [] }>()
+const emit = defineEmits<{ created: [] }>();
 
 /** 行内退款（issue #151）：传入时原交易由所在行固定，隐藏搜索下拉、
  * 展示原交易只读信息；不传则保留搜索选择模式（记一笔弹窗）。 */
-const props = defineProps<{ fixedTarget?: Transaction | null }>()
+const props = defineProps<{ fixedTarget?: Transaction | null }>();
 
 const ctx = useRefundForm({
-  onCreated: () => emit('created'),
+  onCreated: () => emit("created"),
   fixedTarget: () => props.fixedTarget ?? null,
-})
-const reference = useReferenceStore()
+});
+const reference = useReferenceStore();
 </script>
 
 <template>
@@ -44,9 +37,14 @@ const reference = useReferenceStore()
       <NFormItem v-if="ctx.refundTarget.value" :label="t('transactions.refund.original')">
         <NText depth="3" style="font-size: 12px">
           {{ ctx.refundTarget.value.date }} ·
-          {{ formatAmount(ctx.refundTarget.value.amount_cents, reference.getCurrency(ctx.refundTarget.value.currency_code)) }}
-          · {{ reference.categoryPath(ctx.refundTarget.value.category_id) || '-' }}
-          · {{ reference.accountMap.get(ctx.refundTarget.value.account_id)?.name ?? '-' }}
+          {{
+            formatAmount(
+              ctx.refundTarget.value.amount_cents,
+              reference.getCurrency(ctx.refundTarget.value.currency_code),
+            )
+          }}
+          · {{ reference.categoryPath(ctx.refundTarget.value.category_id) || "-" }} ·
+          {{ reference.accountMap.get(ctx.refundTarget.value.account_id)?.name ?? "-" }}
         </NText>
       </NFormItem>
 
@@ -93,7 +91,7 @@ const reference = useReferenceStore()
 
       <!-- 任一字段错误态下禁用（红框＋提交禁用两件同发，ADR-0058 决策 1） -->
       <NButton type="primary" :disabled="ctx.hasFieldError.value" @click="ctx.submit">
-        {{ t('transactions.refund.submit') }}
+        {{ t("transactions.refund.submit") }}
       </NButton>
     </NSpace>
   </NForm>

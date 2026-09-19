@@ -1,7 +1,7 @@
-import { onMounted, onUnmounted } from 'vue'
-import { isEditableTarget } from '@/composables/useCreateShortcuts'
-import { hasOpenOverlay } from '@ledger/ui-kit/overlayRegistry'
-import { fireViewReset } from '@/composables/viewResetRegistry'
+import { onMounted, onUnmounted } from "vue";
+import { isEditableTarget } from "@/composables/useCreateShortcuts";
+import { hasOpenOverlay } from "@ledger/ui-kit/overlayRegistry";
+import { fireViewReset } from "@/composables/viewResetRegistry";
 
 /**
  * 窗口行为守卫（issue #154）：窗口层职责从应用层收回的唯一出处。
@@ -23,25 +23,25 @@ import { fireViewReset } from '@/composables/viewResetRegistry'
  */
 export function useWindowGuard() {
   const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key !== 'Escape') return
-    e.preventDefault()
+    if (e.key !== "Escape") return;
+    e.preventDefault();
     // 两级语义（spec #892）：有弹层 → 弹层库默认行为关最上层弹层，不叠加动作；
     // 无弹层 → 消费当前视图注册的复位回调（无注册即无操作；无保留状态的视图
     // 不注册，天然无操作）。只 preventDefault 不阻断传播：弹层库的 ESC 关闭
     // 依赖事件继续传播，复位回调在拦截之后同步执行，不抢弹层行为。
-    if (hasOpenOverlay()) return
-    fireViewReset()
-  }
+    if (hasOpenOverlay()) return;
+    fireViewReset();
+  };
   const onContextMenu = (e: MouseEvent) => {
-    if (isEditableTarget(e)) return
-    e.preventDefault()
-  }
+    if (isEditableTarget(e)) return;
+    e.preventDefault();
+  };
   onMounted(() => {
-    document.addEventListener('keydown', onKeyDown, true)
-    document.addEventListener('contextmenu', onContextMenu, true)
-  })
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("contextmenu", onContextMenu, true);
+  });
   onUnmounted(() => {
-    document.removeEventListener('keydown', onKeyDown, true)
-    document.removeEventListener('contextmenu', onContextMenu, true)
-  })
+    document.removeEventListener("keydown", onKeyDown, true);
+    document.removeEventListener("contextmenu", onContextMenu, true);
+  });
 }

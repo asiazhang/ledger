@@ -1,6 +1,6 @@
-import { invoke } from '@tauri-apps/api/core'
-import { expect, vi, type Mock } from 'vitest'
-import { REFERENCE_DEFAULTS } from './reference-stubs'
+import { invoke } from "@tauri-apps/api/core";
+import { expect, vi, type Mock } from "vitest";
+import { REFERENCE_DEFAULTS } from "./reference-stubs";
 
 /**
  * 测试侧 invoke mock 的统一入口（单一事实源）。
@@ -11,9 +11,9 @@ import { REFERENCE_DEFAULTS } from './reference-stubs'
  * 断言散布到全部测试）；经本助手在单点收窄为对象形态，测试体直接按 `Record` 访问、
  * 零断言。若未来真的出现非对象 args 的命令，只放宽这一处——失败面收敛在单点。
  */
-export type AppInvokeHandler = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+export type AppInvokeHandler = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
-export const mockInvoke = vi.mocked(invoke) as unknown as Mock<AppInvokeHandler>
+export const mockInvoke = vi.mocked(invoke) as unknown as Mock<AppInvokeHandler>;
 
 /**
  * 最近一次指定命令调用的 args（单一事实源：`.mock.calls` 元组的 args 位可选，
@@ -21,10 +21,10 @@ export const mockInvoke = vi.mocked(invoke) as unknown as Mock<AppInvokeHandler>
  * 缺失即用例缺陷——经 expect 守卫前置暴露，不在测试体散布非空断言。
  */
 export function lastInvokeArgs(cmd: string): Record<string, unknown> {
-  const call = mockInvoke.mock.calls.filter(([c]) => c === cmd).at(-1)
-  expect(call, `应已调用 ${cmd}`).toBeTruthy()
-  expect(call![1], `调用 ${cmd} 应携带对象 args`).toBeDefined()
-  return call![1] as Record<string, unknown>
+  const call = mockInvoke.mock.calls.filter(([c]) => c === cmd).at(-1);
+  expect(call, `应已调用 ${cmd}`).toBeTruthy();
+  expect(call![1], `调用 ${cmd} 应携带对象 args`).toBeDefined();
+  return call![1] as Record<string, unknown>;
 }
 
 // —— invoke 测试接缝（issue #746，ADR-0085 决策 1；术语见测试基础设施域词汇表） ——
@@ -34,11 +34,11 @@ export function lastInvokeArgs(cmd: string): Record<string, unknown> {
 // refreshReferenceStores 的 store 层预热改为注册注入：应用壳测试工程由
 // src/__tests__/app-setup.ts 每测试文件装配（setupFiles 先于用例求值），包内
 // node 测试未注册而误用该 opt-in 时显式报错，不静默跳过。
-let referenceRefresher: (() => Promise<unknown>) | null = null
+let referenceRefresher: (() => Promise<unknown>) | null = null;
 
 /** 注册参考 store 预载刷新器（应用壳测试工程专属装配点；包测试工程不注册）。 */
 export function registerReferenceRefresher(refresh: () => Promise<unknown>): void {
-  referenceRefresher = refresh
+  referenceRefresher = refresh;
 }
 
 /**
@@ -47,7 +47,7 @@ export function registerReferenceRefresher(refresh: () => Promise<unknown>): voi
  * 产品代码 TypeError）；走接缝的测试以自己的应答表覆盖之。
  */
 export function unexpectedInvoke(cmd: string): Promise<never> {
-  return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
 }
 
 /**
@@ -60,9 +60,9 @@ function resolveSeamFallback(
   cmd: string,
   defaults: Record<string, unknown> = {},
 ): Promise<unknown> {
-  if (cmd in defaults) return Promise.resolve(defaults[cmd])
-  if (cmd in REFERENCE_DEFAULTS) return Promise.resolve(REFERENCE_DEFAULTS[cmd])
-  return unexpectedInvoke(cmd)
+  if (cmd in defaults) return Promise.resolve(defaults[cmd]);
+  if (cmd in REFERENCE_DEFAULTS) return Promise.resolve(REFERENCE_DEFAULTS[cmd]);
+  return unexpectedInvoke(cmd);
 }
 
 /**
@@ -70,30 +70,24 @@ function resolveSeamFallback(
  * 约束以文档约定与评审守门（TS 无法从 `object` 分支排除函数形态）：把函数
  * 写进 defaults 属用例缺陷——会被 `Promise.resolve` 当静态值兑底而非调用。
  */
-export type InvokeSeamStaticValue =
-  | string
-  | number
-  | boolean
-  | null
-  | undefined
-  | object
+export type InvokeSeamStaticValue = string | number | boolean | null | undefined | object;
 
 /** overrides 表成员：函数（计数、按参分支、一次性失败）或静态值，优先级高于 defaults。 */
 export type InvokeSeamOverride =
   | ((args?: Record<string, unknown>) => unknown)
-  | InvokeSeamStaticValue
+  | InvokeSeamStaticValue;
 
 export interface InvokeSeamOptions {
   /** defaults 表：本场景下命令契约的静态快照；参考字典命令不得在此重复枚举。 */
-  defaults?: Record<string, InvokeSeamStaticValue>
+  defaults?: Record<string, InvokeSeamStaticValue>;
   /** overrides 表：用例级覆盖，可含函数；求值时函数以 args 调用，非 thenable 返回值包装为 resolved promise。 */
-  overrides?: Record<string, InvokeSeamOverride>
+  overrides?: Record<string, InvokeSeamOverride>;
   /**
    * store 层参考数据预热（opt-in，默认关）：接线后代做参考 store 的预载刷新，
    * 就绪信号经分发器的 `ready` 发放。刷新时序与断言耦合，默认开启会破坏
    * 「迁移纯机械替换」判据，故仅需要参考 store 预载的用例显式开启。
    */
-  refreshReferenceStores?: boolean
+  refreshReferenceStores?: boolean;
 }
 
 /**
@@ -105,11 +99,11 @@ export type InvokeSeamDispatcher = ((
   cmd: string,
   args?: Record<string, unknown>,
 ) => Promise<unknown>) & {
-  ready?: Promise<void>
-}
+  ready?: Promise<void>;
+};
 
 function isThenable(value: unknown): value is Promise<unknown> {
-  return typeof (value as Promise<unknown> | undefined)?.then === 'function'
+  return typeof (value as Promise<unknown> | undefined)?.then === "function";
 }
 
 /**
@@ -133,27 +127,27 @@ function isThenable(value: unknown): value is Promise<unknown> {
  * ```
  */
 export function wireInvokeSeam(options: InvokeSeamOptions = {}): InvokeSeamDispatcher {
-  const defaults = options.defaults ?? {}
-  const overrides = options.overrides ?? {}
+  const defaults = options.defaults ?? {};
+  const overrides = options.overrides ?? {};
   const dispatch = ((cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
     if (cmd in overrides) {
-      const handler = overrides[cmd]
-      if (typeof handler === 'function') {
-        const out = (handler as (a?: Record<string, unknown>) => unknown)(args)
-        return isThenable(out) ? out : Promise.resolve(out)
+      const handler = overrides[cmd];
+      if (typeof handler === "function") {
+        const out = (handler as (a?: Record<string, unknown>) => unknown)(args);
+        return isThenable(out) ? out : Promise.resolve(out);
       }
-      return Promise.resolve(handler)
+      return Promise.resolve(handler);
     }
-    return resolveSeamFallback(cmd, defaults)
-  }) as InvokeSeamDispatcher
-  mockInvoke.mockImplementation(dispatch as typeof invoke)
+    return resolveSeamFallback(cmd, defaults);
+  }) as InvokeSeamDispatcher;
+  mockInvoke.mockImplementation(dispatch as typeof invoke);
   if (options.refreshReferenceStores) {
     if (!referenceRefresher) {
       throw new Error(
-        'refreshReferenceStores 需要参考 store 刷新器：应用壳测试工程由 app-setup 注册（registerReferenceRefresher）',
-      )
+        "refreshReferenceStores 需要参考 store 刷新器：应用壳测试工程由 app-setup 注册（registerReferenceRefresher）",
+      );
     }
-    dispatch.ready = referenceRefresher().then(() => undefined)
+    dispatch.ready = referenceRefresher().then(() => undefined);
   }
-  return dispatch
+  return dispatch;
 }

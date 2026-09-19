@@ -12,47 +12,47 @@
 // 无编译期约束。模板声明的占位符数（`{0}`..`{n}`）多于 `params` 长度时，插值会
 // 渲染出空悬占位符（如「账户不存在: 」），比透传原文更难读——此时回退透传
 // `message`（后端保证为已渲染完整句，ADR-0050 决策 4）。
-import { currentLocale, i18n } from '@ledger/i18n'
+import { currentLocale, i18n } from "@ledger/i18n";
 
 /** 从错误对象中提取码化字段（code 必须为非空字符串；params 过滤保留字符串项） */
 function extractCode(e: unknown): { code: string; params: string[] } | null {
-  if (typeof e !== 'object' || e === null) return null
-  const code = (e as { code?: unknown }).code
-  if (typeof code !== 'string' || !code) return null
-  const raw = (e as { params?: unknown }).params
-  const params = Array.isArray(raw) ? raw.filter((p): p is string => typeof p === 'string') : []
-  return { code, params }
+  if (typeof e !== "object" || e === null) return null;
+  const code = (e as { code?: unknown }).code;
+  if (typeof code !== "string" || !code) return null;
+  const raw = (e as { params?: unknown }).params;
+  const params = Array.isArray(raw) ? raw.filter((p): p is string => typeof p === "string") : [];
+  return { code, params };
 }
 
 /** 提取码化错误的稳定错误码；非码化错误返回 null（弹层按需显出口令输入等分支用）。 */
 export function errorCodeOf(e: unknown): string | null {
-  return extractCode(e)?.code ?? null
+  return extractCode(e)?.code ?? null;
 }
 
 /** 模板声明的插值参数个数（`{0}`..`{n}` 取最大下标 + 1；无占位符为 0）。
  *  用 `tm()` 取**原始模板**（未插值），缺失 key 返回非字符串时按 0 处理。 */
 function placeholderArity(key: string): number {
-  const raw = i18n.global.tm(key)
-  if (typeof raw !== 'string') return 0
-  const indices = [...raw.matchAll(/\{(\d+)\}/g)].map((m) => Number(m[1]))
-  return indices.length > 0 ? Math.max(...indices) + 1 : 0
+  const raw = i18n.global.tm(key);
+  if (typeof raw !== "string") return 0;
+  const indices = [...raw.matchAll(/\{(\d+)\}/g)].map((m) => Number(m[1]));
+  return indices.length > 0 ? Math.max(...indices) + 1 : 0;
 }
 
 export function errorMessage(e: unknown): string {
   // 码化错误优先：按码查当前语言文案并插值（如缺汇率错误插出 USD→CNY）
-  const coded = extractCode(e)
+  const coded = extractCode(e);
   if (coded) {
-    const key = `errors.${coded.code}`
+    const key = `errors.${coded.code}`;
     if (i18n.global.te(key, currentLocale.value) && coded.params.length >= placeholderArity(key)) {
-      return coded.params.length > 0 ? i18n.global.t(key, coded.params) : i18n.global.t(key)
+      return coded.params.length > 0 ? i18n.global.t(key, coded.params) : i18n.global.t(key);
     }
     // 无码、未知码、params 不足：降级透传原文（message 恒为已渲染完整句，永远可读）
   }
-  if (typeof e === 'string') return e
-  if (e instanceof Error) return e.message
-  if (typeof e === 'object' && e !== null && 'message' in e) {
-    const message = (e as { message: unknown }).message
-    if (typeof message === 'string' && message) return message
+  if (typeof e === "string") return e;
+  if (e instanceof Error) return e.message;
+  if (typeof e === "object" && e !== null && "message" in e) {
+    const message = (e as { message: unknown }).message;
+    if (typeof message === "string" && message) return message;
   }
-  return String(e)
+  return String(e);
 }

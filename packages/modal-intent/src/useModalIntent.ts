@@ -1,5 +1,5 @@
-import { readonly, ref } from 'vue'
-import type { Ref } from 'vue'
+import { readonly, ref } from "vue";
+import type { Ref } from "vue";
 
 /**
  * useModalIntent 弹窗意图编排通用工厂（ADR-0072，词汇表「ModalIntent（弹窗意图编排）」）：
@@ -26,13 +26,13 @@ import type { Ref } from 'vue'
 
 export interface UseModalIntentReturn<TIntent> {
   /** 当前意图（只读）：null = 关闭终态（弹窗不显示）；非空即「弹窗显示」。 */
-  readonly intent: Readonly<Ref<TIntent | null>>
+  readonly intent: Readonly<Ref<TIntent | null>>;
   /** 序号：随每次意图落位递增、关闭不重置。 */
-  readonly seq: Readonly<Ref<number>>
+  readonly seq: Readonly<Ref<number>>;
   /** 开启意图（纯同步）：落位传入的全新意图对象并递增序号。 */
-  open(intent: TIntent): void
+  open(intent: TIntent): void;
   /** 关闭：意图清回 null 终态（关闭后副作用仍归视图）。 */
-  close(): void
+  close(): void;
 }
 
 /**
@@ -40,18 +40,18 @@ export interface UseModalIntentReturn<TIntent> {
  * TIntent 由调用方声明为意图闭集（判别联合）。
  */
 export function useModalIntent<TIntent>(): UseModalIntentReturn<TIntent> {
-  const intent = ref(null) as Ref<TIntent | null>
-  const seq = ref(0)
+  const intent = ref(null) as Ref<TIntent | null>;
+  const seq = ref(0);
 
   function open(next: TIntent) {
     // 浅克隆快照：意图落位的对象恒为工厂产出的全新对象（ADR-0072 决策 1），
     // 同载荷重开（同一引用）也因引用变化重触发 watch 消费。
-    intent.value = { ...next }
-    seq.value += 1
+    intent.value = { ...next };
+    seq.value += 1;
   }
 
   function close() {
-    intent.value = null
+    intent.value = null;
   }
 
   return {
@@ -61,5 +61,5 @@ export function useModalIntent<TIntent>(): UseModalIntentReturn<TIntent> {
     seq: readonly(seq),
     open,
     close,
-  }
+  };
 }

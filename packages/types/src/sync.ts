@@ -3,24 +3,24 @@
 /// ADR-0081 决策 3 退役删除（issue #698）。
 export interface SyncInstrumentInfoResult {
   /// 处理成功的标的数（行情分区有效价 + 基金处理成功，含基金「已是最新」）
-  synced: number
+  synced: number;
   /// 跳过数：无通道行（无行情类型/市场未知/名称充代码）+ 停牌/无效价/查询无果
   /// + 首刷查无净值的基金
-  skipped: number
+  skipped: number;
   /// 结果提示文案（空库时为「暂无标的可同步」），供轻量消息直接展示
-  message: string
+  message: string;
   /// 降级事实位（issue #1376 / ADR-0121 决策 4）：本次同步回退到逐标的通道
   /// （批量取数面失败或跨同步停用期）时为真，界面据此明示「已降级、本次较慢」；
   /// 正常（批量面命中）路径为假。缺口（批量面未覆盖的逐条回退）不是降级。
-  bulk_degraded: boolean
+  bulk_degraded: boolean;
 }
 
 /// 场外基金深回填的页级明细（issue #1061）：正在回填的基金代码与
 /// 「已完成页 / 总页数」；只在真正翻页的首刷/深回填期间出现。
 export interface InstrumentSyncFundProgress {
-  code: string
-  page: number
-  pages: number
+  code: string;
+  page: number;
+  pages: number;
 }
 
 /// 标的信息同步确定进度载荷（issue #897 / ADR-0095；页级明细 issue #1061）：
@@ -28,8 +28,8 @@ export interface InstrumentSyncFundProgress {
 /// 标的数，total = 有通道标的总数（跳过行不计入分母）；fund 缺省表示标的级推进
 /// （页级明细不改 done/total 的标的级口径）。
 export interface InstrumentSyncProgress {
-  done: number
-  total: number
+  done: number;
+  total: number;
   /// 基金深回填页级明细（issue #1061）；标的级推进与单页基金缺省。
-  fund?: InstrumentSyncFundProgress | null
+  fund?: InstrumentSyncFundProgress | null;
 }

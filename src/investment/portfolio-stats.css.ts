@@ -1,6 +1,6 @@
-import { style } from '@vanilla-extract/css'
-import { sprinkles } from '@ledger/theme/sprinkles.css.ts'
-import { appVars } from '@ledger/theme/app-theme.css.ts'
+import { style } from "@vanilla-extract/css";
+import { sprinkles } from "@ledger/theme/sprinkles.css.ts";
+import { appVars } from "@ledger/theme/app-theme.css.ts";
 
 /**
  * 投资合计三卡（总市值 / 持仓收益 / 累计收益）的形态样式（ADR-0093 样式方案，
@@ -14,29 +14,29 @@ import { appVars } from '@ledger/theme/app-theme.css.ts'
  * 到市值，故本文件不持任何业务语义色）。
  */
 export const statsCard = style([
-  sprinkles({ borderRadius: 'base', display: 'flex', flexDirection: 'column' }),
+  sprinkles({ borderRadius: "base", display: "flex", flexDirection: "column" }),
   {
     // 三卡同排等宽等高：卡片吃满网格行高，多币种换行的卡不把同排其余卡拉矮
-    height: '100%',
-    boxSizing: 'border-box',
+    height: "100%",
+    boxSizing: "border-box",
     border: `1px solid ${appVars.border.divider}`,
     background: appVars.background.body,
-    padding: '12px 16px',
+    padding: "12px 16px",
   },
-])
+]);
 
 /** 卡头标签行：概念名与口径说明触发器同排居中（触发器不换行、不撑高标签行） */
 export const statsLabel = style([
-  sprinkles({ display: 'inline-flex', alignItems: 'center' }),
-  { gap: '4px' },
-])
+  sprinkles({ display: "inline-flex", alignItems: "center" }),
+  { gap: "4px" },
+]);
 
 /** 数值的中性兜底色；等宽数字由 NStatistic 的 tabular-nums 属性承担 */
 export const statsValue = style({
   color: appVars.text.primary,
-})
+});
 
 /** 多币种分组间的「 / 」连接符：降到三级灰，不与数值争视觉 */
 export const statsSeparator = style({
   color: appVars.text.tertiary,
-})
+});

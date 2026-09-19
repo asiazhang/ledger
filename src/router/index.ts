@@ -5,15 +5,15 @@ import {
   type NavigationGuard,
   type RouteRecordRaw,
   type Router,
-} from 'vue-router'
-import { getSavedRouteName, saveRouteName } from '@ledger/utils/view-state'
-import { useSidebarOrderStore } from '@/stores/sidebar-order'
+} from "vue-router";
+import { getSavedRouteName, saveRouteName } from "@ledger/utils/view-state";
+import { useSidebarOrderStore } from "@/stores/sidebar-order";
 import {
   isClosableFeature,
   useFeatureToggleStore,
   type ClosableFeatureId,
-} from '@/settings/feature-toggles'
-import { hasFocusParam } from '@/composables/useFocusParam'
+} from "@/settings/feature-toggles";
+import { hasFocusParam } from "@/composables/useFocusParam";
 
 /**
  * 关闭功能的路由守卫（issue #1244 / ADR-0116 决策 4/5，复用保单/保司 beforeEnter 先例）：
@@ -26,17 +26,17 @@ import { hasFocusParam } from '@/composables/useFocusParam'
  */
 function featureRouteGuard(
   view: ClosableFeatureId,
-  containment?: { target: 'assets-more' | 'bookkeeping-more' | 'insights-more'; tab: string },
+  containment?: { target: "assets-more" | "bookkeeping-more" | "insights-more"; tab: string },
 ): NavigationGuard {
   return (to) => {
     if (useFeatureToggleStore().isFeatureClosed(view)) {
-      return hasFocusParam(to.query) ? true : { name: 'dashboard' }
+      return hasFocusParam(to.query) ? true : { name: "dashboard" };
     }
     if (containment && useSidebarOrderStore().isViewContained(view)) {
-      return { name: containment.target, query: { ...to.query, tab: containment.tab } }
+      return { name: containment.target, query: { ...to.query, tab: containment.tab } };
     }
-    return true
-  }
+    return true;
+  };
 }
 
 /**
@@ -49,82 +49,82 @@ function featureRouteGuard(
  * #473 约定）：改道独立路由时归位到定时视图自己的 query.tab，形态不丢。
  */
 const groupMoreTabGuard: NavigationGuard = (to) => {
-  const tab = to.query.tab
-  if (typeof tab !== 'string' || !isClosableFeature(tab)) return true
-  if (!useFeatureToggleStore().isFeatureClosed(tab)) return true
-  const query: LocationQuery = { ...to.query }
-  delete query.tab
-  if (tab === 'scheduled' && typeof to.query.scheduledTab === 'string') {
-    query.tab = to.query.scheduledTab
+  const tab = to.query.tab;
+  if (typeof tab !== "string" || !isClosableFeature(tab)) return true;
+  if (!useFeatureToggleStore().isFeatureClosed(tab)) return true;
+  const query: LocationQuery = { ...to.query };
+  delete query.tab;
+  if (tab === "scheduled" && typeof to.query.scheduledTab === "string") {
+    query.tab = to.query.scheduledTab;
   }
-  return { name: tab, query }
-}
+  return { name: tab, query };
+};
 
 // 导出供测试用同构 memory router 复用，避免路由表双份漂移
 export const routes: RouteRecordRaw[] = [
-  { path: '/', redirect: '/dashboard' },
+  { path: "/", redirect: "/dashboard" },
   {
-    path: '/dashboard',
-    name: 'dashboard',
-    component: () => import('@/views/DashboardView.vue'),
+    path: "/dashboard",
+    name: "dashboard",
+    component: () => import("@/views/DashboardView.vue"),
   },
   {
-    path: '/transactions',
-    name: 'transactions',
-    component: () => import('@/views/TransactionsView.vue'),
+    path: "/transactions",
+    name: "transactions",
+    component: () => import("@/views/TransactionsView.vue"),
   },
   {
-    path: '/search',
-    name: 'search',
-    component: () => import('@/views/SearchView.vue'),
+    path: "/search",
+    name: "search",
+    component: () => import("@/views/SearchView.vue"),
   },
   {
-    path: '/accounts',
-    name: 'accounts',
-    component: () => import('@/views/AccountsView.vue'),
+    path: "/accounts",
+    name: "accounts",
+    component: () => import("@/views/AccountsView.vue"),
   },
   {
-    path: '/reports',
-    name: 'reports',
-    component: () => import('@/views/ReportsView.vue'),
-    beforeEnter: featureRouteGuard('reports'),
+    path: "/reports",
+    name: "reports",
+    component: () => import("@/views/ReportsView.vue"),
+    beforeEnter: featureRouteGuard("reports"),
   },
   {
-    path: '/investments',
-    name: 'investments',
-    component: () => import('@/views/InvestmentsView.vue'),
-    beforeEnter: featureRouteGuard('investments'),
+    path: "/investments",
+    name: "investments",
+    component: () => import("@/views/InvestmentsView.vue"),
+    beforeEnter: featureRouteGuard("investments"),
   },
   {
     // 跨账本投资汇总（issue #1196 / ADR-0114 决策 6）：独立只读路由，本内口径零改动；
     // 入口＝账本切换弹层置顶项（不动活动指针、不触发重引导），不入侧栏分组。
-    path: '/cross-book-summary',
-    name: 'cross-book-summary',
-    component: () => import('@/views/CrossBookSummaryView.vue'),
+    path: "/cross-book-summary",
+    name: "cross-book-summary",
+    component: () => import("@/views/CrossBookSummaryView.vue"),
     // 投资功能关闭时汇总随行关闭（纯投资口径页，与投资路由同一开关）。
-    beforeEnter: featureRouteGuard('investments'),
+    beforeEnter: featureRouteGuard("investments"),
   },
   {
     // 定时（issue #202）：自 #473 起不再是侧栏主项——主入口为记账组「更多」定时页签
     // （issue #473 / ADR-0063 决策 3）。独立路由保留供 ViewState 存量名解析与旧深链
     // （/subscriptions 重定向先例，issue #202）；侧栏不渲染、无键位。
-    path: '/scheduled',
-    name: 'scheduled',
-    component: () => import('@/views/ScheduledView.vue'),
-    beforeEnter: featureRouteGuard('scheduled'),
+    path: "/scheduled",
+    name: "scheduled",
+    component: () => import("@/views/ScheduledView.vue"),
+    beforeEnter: featureRouteGuard("scheduled"),
   },
   {
     // 旧订阅入口（issue #202）：重定向到定时视图订阅页签，用户无感知；
     // 保留 name 供 ViewState 兼容——旧记录 'subscriptions' 仍可解析并落到订阅页签
-    path: '/subscriptions',
-    name: 'subscriptions',
-    redirect: { name: 'scheduled', query: { tab: 'subscriptions' } },
+    path: "/subscriptions",
+    name: "subscriptions",
+    redirect: { name: "scheduled", query: { tab: "subscriptions" } },
   },
   {
-    path: '/items',
-    name: 'items',
-    component: () => import('@/views/ItemsView.vue'),
-    beforeEnter: featureRouteGuard('items'),
+    path: "/items",
+    name: "items",
+    component: () => import("@/views/ItemsView.vue"),
+    beforeEnter: featureRouteGuard("items"),
   },
   {
     // 保单（issue #360 / ADR-0051）：消费型保险合同的静态档案，已迁入「更多」页保单页签
@@ -134,99 +134,99 @@ export const routes: RouteRecordRaw[] = [
     // 侧栏主项导航（点击/键位）按 name 路由——独立路由渲染保单页。
     // 重定向透传既有 query（spec #704 / issue #706）：来源列深链 /policies?focus=<id>
     // 在收纳态经此落「更多」页签，focus 不丢、高亮不丢（词汇表 focus 参数「落点尊重组内收纳」）。
-    path: '/policies',
-    name: 'policies',
-    component: () => import('@/views/PoliciesView.vue'),
-    beforeEnter: featureRouteGuard('policies', { target: 'assets-more', tab: 'policies' }),
+    path: "/policies",
+    name: "policies",
+    component: () => import("@/views/PoliciesView.vue"),
+    beforeEnter: featureRouteGuard("policies", { target: "assets-more", tab: "policies" }),
   },
   {
     // 商户/实物资产独立路由（issue #475 / ADR-0063 决策 4）：两者出厂为收纳成员
     // （记账·商户、资产·实物资产页签），主入口在各组「更多」页；用户右键「移回侧栏」
     // 后以主项身份入侧栏，侧栏/键位导航按 name 路由——独立路由自本票起必须存在。
-    path: '/merchants',
-    name: 'merchants',
-    component: () => import('@/merchants/MerchantManager.vue'),
-    beforeEnter: featureRouteGuard('merchants'),
+    path: "/merchants",
+    name: "merchants",
+    component: () => import("@/merchants/MerchantManager.vue"),
+    beforeEnter: featureRouteGuard("merchants"),
   },
   {
-    path: '/physical-assets',
-    name: 'physicalAssets',
-    component: () => import('@/views/PhysicalAssetsView.vue'),
-    beforeEnter: featureRouteGuard('physicalAssets'),
+    path: "/physical-assets",
+    name: "physicalAssets",
+    component: () => import("@/views/PhysicalAssetsView.vue"),
+    beforeEnter: featureRouteGuard("physicalAssets"),
   },
   {
     // 保司管理（issue #714 / ADR-0082 决策 3）：保险域自有字典管理视图，出厂为收纳成员
     // （资产·更多保司页签，组内收纳 ADR-0063）；#475 起按收纳状态分流（/policies 守卫先例）：
     // 仍在收纳清单时重定向到资产·更多保司页签；用户右键「移回侧栏」后以主项身份入侧栏，
     // 侧栏导航按 name 路由——独立路由渲染保司管理页。
-    path: '/insurers',
-    name: 'insurers',
-    component: () => import('@/policy/InsurerManager.vue'),
-    beforeEnter: featureRouteGuard('insurers', { target: 'assets-more', tab: 'insurers' }),
+    path: "/insurers",
+    name: "insurers",
+    component: () => import("@/policy/InsurerManager.vue"),
+    beforeEnter: featureRouteGuard("insurers", { target: "assets-more", tab: "insurers" }),
   },
   {
     // 全局「更多」聚合视图已退役（issue #473 / ADR-0063 决策 1/5）：仅留重定向记录，
     // 承接旧视图名（ViewState 存量 'more' 启动恢复落记账·更多，不回退概览）与旧深链。
     // 迁移链：/more → 记账·更多；/more?tab=merchants → 记账·更多商户页签；
     // /more?tab=policies → 资产·更多保单页签（/policies 重定向先例的延伸）。
-    path: '/more',
-    name: 'more',
+    path: "/more",
+    name: "more",
     redirect: (to) =>
-      to.query.tab === 'policies'
-        ? { name: 'assets-more', query: to.query }
-        : { name: 'bookkeeping-more', query: to.query },
+      to.query.tab === "policies"
+        ? { name: "assets-more", query: to.query }
+        : { name: "bookkeeping-more", query: to.query },
   },
   {
     // 组内「更多」聚合页（issue #472 / ADR-0063 决策 1/5：路由镜像侧栏层级），
     // 页签 = 该组收纳清单序（顺序源模块出厂种子），页签态在 query.tab；
     // 本票仅资产组有收纳成员（保单），记账/洞察路由预建、出厂无成员不渲染链接。
-    path: '/bookkeeping/more',
-    name: 'bookkeeping-more',
-    component: () => import('@/views/GroupMoreView.vue'),
-    props: { group: 'bookkeeping' },
+    path: "/bookkeeping/more",
+    name: "bookkeeping-more",
+    component: () => import("@/views/GroupMoreView.vue"),
+    props: { group: "bookkeeping" },
     beforeEnter: groupMoreTabGuard,
   },
   {
-    path: '/assets/more',
-    name: 'assets-more',
-    component: () => import('@/views/GroupMoreView.vue'),
-    props: { group: 'assets' },
+    path: "/assets/more",
+    name: "assets-more",
+    component: () => import("@/views/GroupMoreView.vue"),
+    props: { group: "assets" },
     beforeEnter: groupMoreTabGuard,
   },
   {
-    path: '/insights/more',
-    name: 'insights-more',
-    component: () => import('@/views/GroupMoreView.vue'),
-    props: { group: 'insights' },
+    path: "/insights/more",
+    name: "insights-more",
+    component: () => import("@/views/GroupMoreView.vue"),
+    props: { group: "insights" },
     beforeEnter: groupMoreTabGuard,
   },
   {
-    path: '/budget',
-    name: 'budget',
-    component: () => import('@/views/BudgetView.vue'),
-    beforeEnter: featureRouteGuard('budget'),
+    path: "/budget",
+    name: "budget",
+    component: () => import("@/views/BudgetView.vue"),
+    beforeEnter: featureRouteGuard("budget"),
   },
   {
-    path: '/ai',
-    name: 'ai',
-    component: () => import('@/views/AiPromptView.vue'),
+    path: "/ai",
+    name: "ai",
+    component: () => import("@/views/AiPromptView.vue"),
   },
   {
-    path: '/settings',
-    name: 'settings',
-    component: () => import('@/views/SettingsView.vue'),
+    path: "/settings",
+    name: "settings",
+    component: () => import("@/views/SettingsView.vue"),
   },
-]
+];
 
 export const router = createRouter({
   history: createWebHashHistory(),
   routes,
-})
+});
 
 // 记住当前所在视图，供下次启动恢复（ViewState）。
 router.afterEach((to) => {
-  if (typeof to.name === 'string') saveRouteName(to.name)
-})
+  if (typeof to.name === "string") saveRouteName(to.name);
+});
 
 /**
  * 启动恢复落点（issue #1244 / ADR-0116 决策 5）：上次视图恰为已关闭功能时回退概览——
@@ -234,8 +234,8 @@ router.afterEach((to) => {
  * 调用方 hasRoute 判定。
  */
 export function resolveRestoredViewName(saved: string | null): string | null {
-  if (saved !== null && useFeatureToggleStore().isFeatureClosed(saved)) return 'dashboard'
-  return saved
+  if (saved !== null && useFeatureToggleStore().isFeatureClosed(saved)) return "dashboard";
+  return saved;
 }
 
 /**
@@ -244,8 +244,8 @@ export function resolveRestoredViewName(saved: string | null): string | null {
  * 直接访问走守卫，启动恢复走本函数，两条路径都不让用户落进已关闭功能的空壳。
  */
 export async function restoreLastView(router: Router): Promise<void> {
-  const saved = resolveRestoredViewName(getSavedRouteName())
+  const saved = resolveRestoredViewName(getSavedRouteName());
   if (saved && router.hasRoute(saved)) {
-    await router.replace({ name: saved })
+    await router.replace({ name: saved });
   }
 }

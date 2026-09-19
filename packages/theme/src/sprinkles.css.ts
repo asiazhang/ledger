@@ -1,5 +1,5 @@
-import { createSprinkles, defineProperties } from '@vanilla-extract/sprinkles'
-import { appVars } from './app-theme.css.ts'
+import { createSprinkles, defineProperties } from "@vanilla-extract/sprinkles";
+import { appVars } from "./app-theme.css.ts";
 
 /**
  * Sprinkles 原子化层（issue #888 / ADR-0093）：theme 驱动的原子类工具面。
@@ -18,10 +18,10 @@ import { appVars } from './app-theme.css.ts'
  */
 const properties = defineProperties({
   properties: {
-    display: ['block', 'inline-block', 'flex', 'inline-flex', 'none'],
-    flexDirection: ['row', 'column'],
-    alignItems: ['stretch', 'flex-start', 'center', 'flex-end', 'baseline'],
-    justifyContent: ['flex-start', 'center', 'flex-end', 'space-between', 'space-around'],
+    display: ["block", "inline-block", "flex", "inline-flex", "none"],
+    flexDirection: ["row", "column"],
+    alignItems: ["stretch", "flex-start", "center", "flex-end", "baseline"],
+    justifyContent: ["flex-start", "center", "flex-end", "space-between", "space-around"],
     borderRadius: {
       small: appVars.radius.small,
       base: appVars.radius.base,
@@ -43,6 +43,6 @@ const properties = defineProperties({
       textTertiary: appVars.text.tertiary,
     },
   },
-})
+});
 
-export const sprinkles = createSprinkles(properties)
+export const sprinkles = createSprinkles(properties);

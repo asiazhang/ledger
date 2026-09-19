@@ -1,4 +1,4 @@
-import { globalStyle } from '@vanilla-extract/css'
+import { globalStyle } from "@vanilla-extract/css";
 
 /**
  * AppModal 移动档全屏化分支的旁路样式（issue #844 / ADR-0088 决策 8，ADR-0093
@@ -19,12 +19,12 @@ import { globalStyle } from '@vanilla-extract/css'
  */
 
 /** 移动档卡片钩子类：AppModal 按窗口分级挂到卡片根元素（.n-card 同元素）。 */
-export const MOBILE_CARD_CLASS = 'app-modal-mobile-card'
+export const MOBILE_CARD_CLASS = "app-modal-mobile-card";
 
 /** 卡片本体：圆角裁切内部滚动内容（✕ 标题栏与卡片边缘不露内容）。 */
 globalStyle(`.${MOBILE_CARD_CLASS}`, {
-  overflow: 'hidden',
-})
+  overflow: "hidden",
+});
 
 /**
  * 内容区滚动方案（lg 表格详情类全屏化后的可读性，issue #844 范围项）：内容区
@@ -32,15 +32,15 @@ globalStyle(`.${MOBILE_CARD_CLASS}`, {
  * naive 已声明的 flex: 1（内容区在卡片 flex 列中撑满 ✕ 头部以下空间）不动。
  */
 globalStyle(`.${MOBILE_CARD_CLASS} .n-card-content`, {
-  display: 'flex',
-  flexDirection: 'column',
+  display: "flex",
+  flexDirection: "column",
   minHeight: 0,
-  overflowY: 'auto',
-})
+  overflowY: "auto",
+});
 
 globalStyle(`.${MOBILE_CARD_CLASS} .n-card-content > *`, {
   flexShrink: 0,
-})
+});
 
 /**
  * 标签上置：左置标签表单（ADR-0079 表单约定 label-placement="left"）在移动档
@@ -49,19 +49,16 @@ globalStyle(`.${MOBILE_CARD_CLASS} .n-card-content > *`, {
  * 右对齐）；align-items 复位 stretch（left-labelled 的 flex-start 会让堆叠后
  * 的标签/控件行收缩不铺满）。top-labelled 表单天然满足，无需处理。
  */
-globalStyle(
-  `.${MOBILE_CARD_CLASS} .n-form-item.n-form-item--left-labelled`,
-  {
-    gridTemplateAreas: '"label" "blank" "feedback"',
-    gridTemplateColumns: 'minmax(0, 100%)',
-    gridTemplateRows: 'minmax(var(--n-label-height), auto) 1fr',
-    alignItems: 'stretch',
-  },
-)
+globalStyle(`.${MOBILE_CARD_CLASS} .n-form-item.n-form-item--left-labelled`, {
+  gridTemplateAreas: '"label" "blank" "feedback"',
+  gridTemplateColumns: "minmax(0, 100%)",
+  gridTemplateRows: "minmax(var(--n-label-height), auto) 1fr",
+  alignItems: "stretch",
+});
 
 globalStyle(`.${MOBILE_CARD_CLASS} .n-form-item--left-labelled .n-form-item-label`, {
-  textAlign: 'left',
-})
+  textAlign: "left",
+});
 
 /**
  * 左置标签详情表（NDescriptions `label-placement="left"` + bordered，交易只读
@@ -73,8 +70,8 @@ globalStyle(`.${MOBILE_CARD_CLASS} .n-form-item--left-labelled .n-form-item-labe
  */
 globalStyle(
   `.${MOBILE_CARD_CLASS} .n-descriptions--left-label-placement .n-descriptions-table-header`,
-  { whiteSpace: 'nowrap' },
-)
+  { whiteSpace: "nowrap" },
+);
 
 /**
  * 按钮行底部固定：节奏容器（ADR-0079 决策 4 的 12px NSpace vertical）撑满
@@ -86,21 +83,21 @@ globalStyle(
  * 级筛选形态）不是弹窗表单约定对象，豁免。
  */
 globalStyle(`.${MOBILE_CARD_CLASS} form.n-form:not(.n-form--inline)`, {
-  display: 'flex',
-  flexDirection: 'column',
+  display: "flex",
+  flexDirection: "column",
   flexGrow: 1,
-})
+});
 
 globalStyle(
   `.${MOBILE_CARD_CLASS} form.n-form:not(.n-form--inline) > .n-space, .${MOBILE_CARD_CLASS} .n-card-content > .n-space`,
   {
     flexGrow: 1,
   },
-)
+);
 
 globalStyle(
   `.${MOBILE_CARD_CLASS} form.n-form:not(.n-form--inline) > .n-space > :last-child, .${MOBILE_CARD_CLASS} .n-card-content > .n-space > :last-child`,
   {
-    marginTop: 'auto',
+    marginTop: "auto",
   },
-)
+);

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, computed, onMounted } from 'vue'
+import { h, computed, onMounted } from "vue";
 import {
   NCard,
   NButton,
@@ -9,19 +9,19 @@ import {
   NSpace,
   NTag,
   type DataTableColumns,
-} from 'naive-ui'
-import { formatAmount } from '@ledger/money'
-import { t } from '@ledger/i18n'
-import PhysicalAssetFormModal from '@/physical-asset/PhysicalAssetFormModal.vue'
-import PhysicalAssetValuationModal from '@/physical-asset/PhysicalAssetValuationModal.vue'
-import PhysicalAssetDisposeModal from '@/physical-asset/PhysicalAssetDisposeModal.vue'
-import AppPopconfirm from '@ledger/ui-kit/AppPopconfirm.vue'
-import { useModalIntent } from '@ledger/modal-intent'
-import { useWindowTier } from '@ledger/window-tier'
-import { usePhysicalAssetsStore } from '@/physical-asset/physicalAssets'
-import { useReferenceStore } from '@/stores/reference'
-import { sumFixedColumnWidths } from '@ledger/utils/table'
-import type { PhysicalAsset } from '@ledger/types'
+} from "naive-ui";
+import { formatAmount } from "@ledger/money";
+import { t } from "@ledger/i18n";
+import PhysicalAssetFormModal from "@/physical-asset/PhysicalAssetFormModal.vue";
+import PhysicalAssetValuationModal from "@/physical-asset/PhysicalAssetValuationModal.vue";
+import PhysicalAssetDisposeModal from "@/physical-asset/PhysicalAssetDisposeModal.vue";
+import AppPopconfirm from "@ledger/ui-kit/AppPopconfirm.vue";
+import { useModalIntent } from "@ledger/modal-intent";
+import { useWindowTier } from "@ledger/window-tier";
+import { usePhysicalAssetsStore } from "@/physical-asset/physicalAssets";
+import { useReferenceStore } from "@/stores/reference";
+import { sumFixedColumnWidths } from "@ledger/utils/table";
+import type { PhysicalAsset } from "@ledger/types";
 
 /**
  * 实物资产视图（issue #466 建档列表 / issue #467 T2 更新估值与编辑 / spec #465 /
@@ -33,14 +33,14 @@ import type { PhysicalAsset } from '@ledger/types'
  * 软删不进默认口径，处置与筛选由 T3 承接）；当前估值折本位币展示消费
  * 后端同源折算（Amount 接缝当期汇率，缺汇率后端整体报错上抛）。
  */
-const physicalAssetsStore = usePhysicalAssetsStore()
-const reference = useReferenceStore()
+const physicalAssetsStore = usePhysicalAssetsStore();
+const reference = useReferenceStore();
 
 // 移动档（issue #849 / ADR-0088 决策 11 票⑨，收纳页布局核对级适配）：低频管理表
 // 窄屏不重排列结构，挂 scroll-x = 固定列宽总和由横向滚动吸收（触屏滑动可达全部
 // 列与行内操作）；桌面档不挂（既有压缩行为一字不变）。
-const windowTier = useWindowTier()
-const isMobileTier = computed(() => windowTier.value === 'mobile')
+const windowTier = useWindowTier();
+const isMobileTier = computed(() => windowTier.value === "mobile");
 
 // —— 建档弹窗（新建/编辑双模式，T2）——
 // 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
@@ -52,14 +52,14 @@ const isMobileTier = computed(() => windowTier.value === 'mobile')
 // 此外等价。
 
 /** 建档弹窗意图（新建/编辑双模式闭集）：编辑携带目标资产行。 */
-type PhysicalAssetFormIntent = { mode: 'create' } | { mode: 'edit'; asset: PhysicalAsset }
+type PhysicalAssetFormIntent = { mode: "create" } | { mode: "edit"; asset: PhysicalAsset };
 
 const {
   intent: formIntent,
   seq: formSeq,
   open: openFormIntent,
   close: closeForm,
-} = useModalIntent<PhysicalAssetFormIntent>()
+} = useModalIntent<PhysicalAssetFormIntent>();
 
 // —— 更新估值弹窗（T2：追加历史行入口）——
 // 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
@@ -71,7 +71,7 @@ const {
 
 /** 更新估值弹窗意图（单成员闭集）：携带目标资产行。 */
 interface PhysicalAssetValuationIntent {
-  asset: PhysicalAsset
+  asset: PhysicalAsset;
 }
 
 const {
@@ -79,7 +79,7 @@ const {
   seq: valuationSeq,
   open: openValuationIntent,
   close: closeValuation,
-} = useModalIntent<PhysicalAssetValuationIntent>()
+} = useModalIntent<PhysicalAssetValuationIntent>();
 
 // —— 处置弹窗（T3：状态标记入口，处置 = 状态标记；删除是分离的软删动作）——
 // 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
@@ -91,7 +91,7 @@ const {
 
 /** 处置弹窗意图（单成员闭集）：携带目标资产行。 */
 interface PhysicalAssetDisposeIntent {
-  asset: PhysicalAsset
+  asset: PhysicalAsset;
 }
 
 const {
@@ -99,29 +99,29 @@ const {
   seq: disposeSeq,
   open: openDisposeIntent,
   close: closeDispose,
-} = useModalIntent<PhysicalAssetDisposeIntent>()
+} = useModalIntent<PhysicalAssetDisposeIntent>();
 
 function openCreate() {
-  openFormIntent({ mode: 'create' })
+  openFormIntent({ mode: "create" });
 }
 
 function openEdit(asset: PhysicalAsset) {
-  openFormIntent({ mode: 'edit', asset })
+  openFormIntent({ mode: "edit", asset });
 }
 
 function openUpdateValuation(asset: PhysicalAsset) {
-  openValuationIntent({ asset })
+  openValuationIntent({ asset });
 }
 
 function openDispose(asset: PhysicalAsset) {
-  openDisposeIntent({ asset })
+  openDisposeIntent({ asset });
 }
 
 /** 软删除（T3）：二次确认后 is_deleted=1，数据与估值历史保留；
  *  列表与合计由 store 重拉刷新。 */
 async function removeAsset(id: string) {
   try {
-    await physicalAssetsStore.remove(id)
+    await physicalAssetsStore.remove(id);
   } catch {
     /* 失败信号已由 status 承载；重拉失败由 ledger:changed 兑底 */
   }
@@ -133,139 +133,142 @@ const holdingTotalText = computed(() =>
     physicalAssetsStore.holdingTotalNativeCents,
     reference.getCurrency(physicalAssetsStore.nativeCurrency),
   ),
-)
+);
 
 const columns: DataTableColumns<PhysicalAsset> = [
-  { title: () => t('physicalAssets.columns.name'), key: 'name' },
+  { title: () => t("physicalAssets.columns.name"), key: "name" },
   {
     // 当前估值（折本位币）：在持行显示折算值；估值金额以原币种为权威数字，
     // 展示统一走本位币口径（与合计卡同口径，跨币种可比）
-    title: () => t('physicalAssets.columns.valuation'),
-    key: 'current_valuation_native_cents',
+    title: () => t("physicalAssets.columns.valuation"),
+    key: "current_valuation_native_cents",
     render: (row) =>
       row.current_valuation_native_cents !== null
-        ? formatAmount(row.current_valuation_native_cents, reference.getCurrency(row.native_currency))
-        : '—',
+        ? formatAmount(
+            row.current_valuation_native_cents,
+            reference.getCurrency(row.native_currency),
+          )
+        : "—",
   },
   {
-    title: () => t('physicalAssets.columns.valuationDate'),
-    key: 'current_valuation_date',
+    title: () => t("physicalAssets.columns.valuationDate"),
+    key: "current_valuation_date",
     width: 120,
     render: (row) => row.current_valuation_date,
   },
   {
-    title: () => t('physicalAssets.columns.status'),
-    key: 'status',
+    title: () => t("physicalAssets.columns.status"),
+    key: "status",
     width: 90,
     render: (row) =>
       h(
         NTag,
-        { size: 'small', type: row.status === 'holding' ? 'success' : 'default', bordered: false },
+        { size: "small", type: row.status === "holding" ? "success" : "default", bordered: false },
         () =>
-          row.status === 'holding'
-            ? t('physicalAssets.status.holding')
-            : t('physicalAssets.status.disposed'),
+          row.status === "holding"
+            ? t("physicalAssets.status.holding")
+            : t("physicalAssets.status.disposed"),
       ),
   },
   {
     // 处置信息（T3）：已处置行回看处置日期与处置价（纯记录）；在持行恒为空。
     // 已处置筛选下是回看完整档案的关键列（含处置日期 / 处置价）。
-    title: () => t('physicalAssets.columns.disposal'),
-    key: 'disposal_date',
+    title: () => t("physicalAssets.columns.disposal"),
+    key: "disposal_date",
     width: 200,
     render: (row) => {
-      if (row.status !== 'disposed') return '—'
-      if (row.disposal_price_cents === null) return row.disposal_date ?? '—'
+      if (row.status !== "disposed") return "—";
+      if (row.disposal_price_cents === null) return row.disposal_date ?? "—";
       const amount = formatAmount(
         row.disposal_price_cents,
         reference.getCurrency(row.disposal_currency_code ?? row.native_currency),
-      )
-      return `${row.disposal_date ?? '—'} / ${amount}`
+      );
+      return `${row.disposal_date ?? "—"} / ${amount}`;
     },
   },
   {
     // 行操作（T2/T3）：编辑档案、更新估值、处置（状态标记，仅限在持行）、
     // 删除（软删确认）——处置与删除是界面上分离的两个动作
-    title: () => t('physicalAssets.columns.actions'),
-    key: 'actions',
+    title: () => t("physicalAssets.columns.actions"),
+    key: "actions",
     width: 240,
     render: (row) =>
       h(NSpace, { size: 4, wrap: false }, () => [
         h(
           NButton,
           {
-            size: 'tiny',
+            size: "tiny",
             quaternary: true,
-            type: 'primary',
-            'data-testid': 'physical-asset-update-valuation',
+            type: "primary",
+            "data-testid": "physical-asset-update-valuation",
             onClick: () => openUpdateValuation(row),
           },
-          () => t('physicalAssets.actions.updateValuation'),
+          () => t("physicalAssets.actions.updateValuation"),
         ),
         h(
           NButton,
           {
-            size: 'tiny',
+            size: "tiny",
             quaternary: true,
-            'data-testid': 'physical-asset-edit',
+            "data-testid": "physical-asset-edit",
             onClick: () => openEdit(row),
           },
-          () => t('physicalAssets.actions.edit'),
+          () => t("physicalAssets.actions.edit"),
         ),
-        row.status === 'holding'
+        row.status === "holding"
           ? h(
               NButton,
               {
-                size: 'tiny',
+                size: "tiny",
                 quaternary: true,
-                type: 'warning',
-                'data-testid': 'physical-asset-dispose',
+                type: "warning",
+                "data-testid": "physical-asset-dispose",
                 onClick: () => openDispose(row),
               },
-              () => t('physicalAssets.actions.dispose'),
+              () => t("physicalAssets.actions.dispose"),
             )
           : null,
         h(
           AppPopconfirm,
           { onPositiveClick: () => removeAsset(row.id) },
           {
-            default: () => t('physicalAssets.deleteConfirm'),
+            default: () => t("physicalAssets.deleteConfirm"),
             trigger: () =>
               h(
                 NButton,
                 {
-                  size: 'tiny',
+                  size: "tiny",
                   quaternary: true,
-                  type: 'error',
-                  'data-testid': 'physical-asset-delete',
+                  type: "error",
+                  "data-testid": "physical-asset-delete",
                 },
-                () => t('physicalAssets.actions.delete'),
+                () => t("physicalAssets.actions.delete"),
               ),
           },
         ),
       ]),
   },
-]
+];
 
 /** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
-const tableScrollX = sumFixedColumnWidths(columns)
+const tableScrollX = sumFixedColumnWidths(columns);
 
-const listTitle = computed(() => t('physicalAssets.listTitle'))
-const totalLabel = computed(() => t('physicalAssets.holdingTotal'))
+const listTitle = computed(() => t("physicalAssets.listTitle"));
+const totalLabel = computed(() => t("physicalAssets.holdingTotal"));
 
 /** 状态筛选（T3）：默认只看在持；「已处置」筛选回看完整档案。 */
 function onFilterChange(value: string) {
-  void physicalAssetsStore.setStatusFilter(value as 'holding' | 'disposed').catch(() => {
+  void physicalAssetsStore.setStatusFilter(value as "holding" | "disposed").catch(() => {
     /* 失败信号已由 status 承载 */
-  })
+  });
 }
 
 onMounted(() => {
   // store self-init + ledger:changed 信号兜底；mounted 重拉覆盖错误重试
   void physicalAssetsStore.refresh().catch(() => {
     /* 失败信号已由 status 承载 */
-  })
-})
+  });
+});
 </script>
 
 <template>
@@ -273,10 +276,12 @@ onMounted(() => {
     <NCard size="small">
       <NSpace justify="space-between" align="center">
         <span>
-          {{ totalLabel }}：<strong data-testid="physical-asset-holding-total">{{ holdingTotalText }}</strong>
+          {{ totalLabel }}：<strong data-testid="physical-asset-holding-total">{{
+            holdingTotalText
+          }}</strong>
         </span>
         <NButton type="primary" data-testid="physical-asset-new" @click="openCreate">
-          {{ t('physicalAssets.newButton') }}
+          {{ t("physicalAssets.newButton") }}
         </NButton>
       </NSpace>
     </NCard>
@@ -290,10 +295,10 @@ onMounted(() => {
           @update:value="onFilterChange"
         >
           <NRadioButton value="holding">
-            {{ t('physicalAssets.status.holding') }}
+            {{ t("physicalAssets.status.holding") }}
           </NRadioButton>
           <NRadioButton value="disposed">
-            {{ t('physicalAssets.status.disposed') }}
+            {{ t("physicalAssets.status.disposed") }}
           </NRadioButton>
         </NRadioGroup>
       </template>
@@ -305,7 +310,7 @@ onMounted(() => {
         :scroll-x="isMobileTier ? tableScrollX : undefined"
       >
         <template #empty>
-          <span data-testid="physical-asset-empty-guide">{{ t('physicalAssets.emptyGuide') }}</span>
+          <span data-testid="physical-asset-empty-guide">{{ t("physicalAssets.emptyGuide") }}</span>
         </template>
       </NDataTable>
     </NCard>

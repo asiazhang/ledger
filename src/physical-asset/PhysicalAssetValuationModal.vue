@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { NButton, NForm, NFormItem, NInput, NSpace, NText, useMessage } from 'naive-ui'
-import AppModal from '@ledger/ui-kit/AppModal.vue'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import { t } from '@ledger/i18n'
-import { errorMessage } from '@ledger/utils/errors'
-import { yuanToCents } from '@ledger/money'
-import { useFormShared } from '@/composables/useFormShared'
-import { useAppStore } from '@/stores/app'
-import { usePhysicalAssetsStore } from '@/physical-asset/physicalAssets'
-import type { PhysicalAsset, PhysicalAssetValuationInput } from '@ledger/types'
+import { ref, watch } from "vue";
+import { NButton, NForm, NFormItem, NInput, NSpace, NText, useMessage } from "naive-ui";
+import AppModal from "@ledger/ui-kit/AppModal.vue";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import { t } from "@ledger/i18n";
+import { errorMessage } from "@ledger/utils/errors";
+import { yuanToCents } from "@ledger/money";
+import { useFormShared } from "@/composables/useFormShared";
+import { useAppStore } from "@/stores/app";
+import { usePhysicalAssetsStore } from "@/physical-asset/physicalAssets";
+import type { PhysicalAsset, PhysicalAssetValuationInput } from "@ledger/types";
 
 /**
  * 更新估值弹窗（issue #467 T2 / ADR-0064）：「更新估值」的唯一入口——
@@ -20,73 +20,73 @@ import type { PhysicalAsset, PhysicalAssetValuationInput } from '@ledger/types'
  * 保存成功后关弹窗，列表经 store 重拉刷新；后端校验错误原样展示。
  */
 const props = defineProps<{
-  show: boolean
+  show: boolean;
   /** 目标资产（当前估值为币种预选依据） */
-  asset: PhysicalAsset | null
-}>()
-const emit = defineEmits<{ 'update:show': [value: boolean] }>()
+  asset: PhysicalAsset | null;
+}>();
+const emit = defineEmits<{ "update:show": [value: boolean] }>();
 
-const message = useMessage()
-const app = useAppStore()
-const physicalAssetsStore = usePhysicalAssetsStore()
-const { currencyOptions } = useFormShared()
+const message = useMessage();
+const app = useAppStore();
+const physicalAssetsStore = usePhysicalAssetsStore();
+const { currencyOptions } = useFormShared();
 
 // —— 表单状态 ——
-const amountYuan = ref('')
-const currency = ref<string | null>(null)
-const valuationDate = ref<string | null>(null)
+const amountYuan = ref("");
+const currency = ref<string | null>(null);
+const valuationDate = ref<string | null>(null);
 
 /** 打开时复位（immediate 兼容初始 show）：金额清空、币种预选当前估值币种、
  *  日期留空 = 今天（后端同语义缺省）。 */
 watch(
   () => [props.show, props.asset] as const,
   () => {
-    if (!props.show) return
-    amountYuan.value = ''
-    currency.value = props.asset?.current_valuation_currency_code ?? app.defaultCurrency
-    valuationDate.value = null
+    if (!props.show) return;
+    amountYuan.value = "";
+    currency.value = props.asset?.current_valuation_currency_code ?? app.defaultCurrency;
+    valuationDate.value = null;
   },
   { immediate: true },
-)
+);
 
 function close() {
-  emit('update:show', false)
+  emit("update:show", false);
 }
 
 async function save() {
-  const asset = props.asset
-  if (!asset) return
+  const asset = props.asset;
+  if (!asset) return;
   // 客户端必填校验（消息与后端错误码文案同源，双保险防呆）
-  const cents = yuanToCents(amountYuan.value)
-  if (amountYuan.value.trim() === '' || cents === null) {
-    message.warning(t('physicalAssets.valuation.msg.amountRequired'))
-    return
+  const cents = yuanToCents(amountYuan.value);
+  if (amountYuan.value.trim() === "" || cents === null) {
+    message.warning(t("physicalAssets.valuation.msg.amountRequired"));
+    return;
   }
   if (cents <= 0) {
-    message.warning(t('physicalAssets.valuation.msg.amountInvalid'))
-    return
+    message.warning(t("physicalAssets.valuation.msg.amountInvalid"));
+    return;
   }
   if (!currency.value) {
-    message.warning(t('physicalAssets.valuation.msg.currencyRequired'))
-    return
+    message.warning(t("physicalAssets.valuation.msg.currencyRequired"));
+    return;
   }
   const input: PhysicalAssetValuationInput = {
     amount_cents: cents,
     currency_code: currency.value,
     // 日期留空 = 今天（后端缺省同语义）；可补录过去，未来由后端拒绝
     valuation_date: valuationDate.value || null,
-  }
+  };
   try {
-    await physicalAssetsStore.updateValuation(asset.id, input)
-    message.success(t('physicalAssets.msg.valuationUpdated'))
-    close()
+    await physicalAssetsStore.updateValuation(asset.id, input);
+    message.success(t("physicalAssets.msg.valuationUpdated"));
+    close();
   } catch (e) {
     // 后端校验错误原样展示（如「估值日期 … 不能是未来」），弹窗不关、内容不丢
-    message.error(t('physicalAssets.msg.saveFailed', { msg: errorMessage(e) }))
+    message.error(t("physicalAssets.msg.saveFailed", { msg: errorMessage(e) }));
   }
 }
 
-defineExpose({ save })
+defineExpose({ save });
 </script>
 
 <template>
@@ -129,13 +129,13 @@ defineExpose({ save })
         </NFormItem>
         <!-- 辅助说明统一段落式（spec #630 / #635）：不再内联挤在日期表单项旁 -->
         <NText depth="3" class="form-hint">
-          {{ t('physicalAssets.valuation.dateHint') }}
+          {{ t("physicalAssets.valuation.dateHint") }}
         </NText>
 
         <NSpace justify="end">
-          <NButton @click="close">{{ t('physicalAssets.form.cancel') }}</NButton>
+          <NButton @click="close">{{ t("physicalAssets.form.cancel") }}</NButton>
           <NButton type="primary" data-testid="physical-asset-valuation-save" @click="save">
-            {{ t('physicalAssets.form.save') }}
+            {{ t("physicalAssets.form.save") }}
           </NButton>
         </NSpace>
       </NSpace>

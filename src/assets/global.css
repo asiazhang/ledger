@@ -82,7 +82,7 @@ textarea,
 }
 
 .touch-hit-area::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: var(--touch-hit-inset, -6px -14px);
 }
@@ -121,8 +121,8 @@ textarea,
   cursor: pointer;
   text-decoration: none;
   transition:
-    color .2s var(--n-bezier),
-    background-color .2s var(--n-bezier);
+    color 0.2s var(--n-bezier),
+    background-color 0.2s var(--n-bezier);
 }
 
 .group-more-link:hover {

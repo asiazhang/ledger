@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAppStore } from '@/stores/app'
-import { useReferenceStore } from '@/stores/reference'
-import { accentColor } from '@ledger/theme/overrides'
-import { t } from '@ledger/i18n'
+import { computed } from "vue";
+import { useRouter } from "vue-router";
+import { useAppStore } from "@/stores/app";
+import { useReferenceStore } from "@/stores/reference";
+import { accentColor } from "@ledger/theme/overrides";
+import { t } from "@ledger/i18n";
 
 /**
  * 可点击账户名（账户名下钻，issue #96/#97）。
@@ -22,25 +22,25 @@ import { t } from '@ledger/i18n'
  */
 const props = defineProps<{
   /** 目标账户 id（在参考数据中查找名称；查不到视为黑洞/隐藏账户，渲染纯文本「-」） */
-  accountId: string
-}>()
+  accountId: string;
+}>();
 
-const reference = useReferenceStore()
-const router = useRouter()
-const app = useAppStore()
+const reference = useReferenceStore();
+const router = useRouter();
+const app = useAppStore();
 
-const account = computed(() => reference.accountMap.get(props.accountId))
-const name = computed(() => account.value?.name ?? '-')
+const account = computed(() => reference.accountMap.get(props.accountId));
+const name = computed(() => account.value?.name ?? "-");
 // 仅真实可见账户可点击下钻；黑洞/隐藏账户渲染为纯文本「-」。
-const isLink = computed(() => !!account.value)
+const isLink = computed(() => !!account.value);
 
 // 强调色经 @ledger/theme accentColor 选择器按主题解析（值源：overrides common
 // 单一来源；Naive 不暴露全局 --primary-color CSS 变量，组件内显式取值注入：
 // 暗色琥珀 / 亮色同色相加深版）。
-const accent = computed(() => accentColor(app.theme))
+const accent = computed(() => accentColor(app.theme));
 
 function go() {
-  router.push({ name: 'transactions', query: { account: props.accountId } })
+  router.push({ name: "transactions", query: { account: props.accountId } });
 }
 </script>
 

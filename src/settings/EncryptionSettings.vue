@@ -13,12 +13,12 @@ import {
   NSpin,
   NText,
   NTooltip,
-} from 'naive-ui'
-import { t } from '@ledger/i18n'
-import AppDangerConfirmModal from '@ledger/ui-kit/AppDangerConfirmModal.vue'
-import AppModal from '@ledger/ui-kit/AppModal.vue'
-import PassphraseStrengthMeter from '@/settings/PassphraseStrengthMeter.vue'
-import { PASSPHRASE_MIN_LENGTH, useEncryptionTransitions } from '@/backup/useEncryptionTransitions'
+} from "naive-ui";
+import { t } from "@ledger/i18n";
+import AppDangerConfirmModal from "@ledger/ui-kit/AppDangerConfirmModal.vue";
+import AppModal from "@ledger/ui-kit/AppModal.vue";
+import PassphraseStrengthMeter from "@/settings/PassphraseStrengthMeter.vue";
+import { PASSPHRASE_MIN_LENGTH, useEncryptionTransitions } from "@/backup/useEncryptionTransitions";
 
 // 加密卡片（issue #570/#571 / #574 / ADR-0075；#654 重排）：数据文件管理域的加密模式开关。
 // 三条形态转换流（开启 / 修改主口令 / 关闭）与自动解锁启用的编排住
@@ -75,23 +75,27 @@ const {
   openAutoUnlockModal,
   confirmAutoUnlock,
   disableAutoUnlock,
-} = useEncryptionTransitions()
+} = useEncryptionTransitions();
 </script>
 
 <template>
   <NCard :title="t('settings.data.encryption.title')" size="small">
     <NSpace vertical :size="12">
-      <NText depth="3">{{ t('settings.data.encryption.hint') }}</NText>
+      <NText depth="3">{{ t("settings.data.encryption.hint") }}</NText>
 
       <NSpin :show="statusLoading">
         <NSpace v-if="statusError" align="center" :size="12">
           <NText type="error">{{ statusError }}</NText>
-          <NButton size="small" @click="refresh">{{ t('settings.data.encryption.retry') }}</NButton>
+          <NButton size="small" @click="refresh">{{ t("settings.data.encryption.retry") }}</NButton>
         </NSpace>
 
         <NSpace v-else-if="status?.file_encrypted" vertical :size="16">
-          <NAlert type="success" :show-icon="true" :title="t('settings.data.encryption.enabledTitle')">
-            {{ t('settings.data.encryption.enabledBody') }}
+          <NAlert
+            type="success"
+            :show-icon="true"
+            :title="t('settings.data.encryption.enabledTitle')"
+          >
+            {{ t("settings.data.encryption.enabledBody") }}
           </NAlert>
 
           <!-- 自动解锁（issue #654 重做）：日常视图常驻；未启用 = 「启用自动解锁…」单按钮
@@ -99,34 +103,39 @@ const {
                手输。平台不支持（v1 非 macOS）时整块隐藏。
                开发回退形态（issue #662）：提示当前为无门缓存，区别于发布生物门。 -->
           <NSpace v-if="rememberSupport?.supported" vertical :size="8">
-            <NText depth="3">{{ t('settings.data.encryption.rememberSectionLabel') }}</NText>
+            <NText depth="3">{{ t("settings.data.encryption.rememberSectionLabel") }}</NText>
             <NText depth="3" class="remember-hint">
               {{
                 autoUnlockOn
-                  ? t('settings.data.encryption.rememberStatusOn')
-                  : t('settings.data.encryption.rememberStatusOff')
+                  ? t("settings.data.encryption.rememberStatusOn")
+                  : t("settings.data.encryption.rememberStatusOff")
               }}
             </NText>
             <NButton v-if="!autoUnlockOn" size="small" @click="openAutoUnlockModal">
-              {{ t('settings.data.encryption.rememberEnableButton') }}
+              {{ t("settings.data.encryption.rememberEnableButton") }}
             </NButton>
-            <NButton v-else size="small" :disabled="autoUnlockSubmitting" @click="disableAutoUnlock">
-              {{ t('settings.data.encryption.rememberDisableButton') }}
+            <NButton
+              v-else
+              size="small"
+              :disabled="autoUnlockSubmitting"
+              @click="disableAutoUnlock"
+            >
+              {{ t("settings.data.encryption.rememberDisableButton") }}
             </NButton>
             <NText
               v-if="rememberSupport?.mode === 'dev-fallback'"
               type="warning"
               class="remember-hint"
             >
-              {{ t('settings.data.encryption.rememberDevFallbackHint') }}
+              {{ t("settings.data.encryption.rememberDevFallbackHint") }}
             </NText>
             <!-- 提示按运行形态区分（issue #687）：dev 回退形态不宣称 Touch ID，
                  免与上方 warning 提示同屏矛盾；发布形态保留生物门表述。 -->
             <NText depth="3" class="remember-hint">
               {{
-                rememberSupport?.mode === 'dev-fallback'
-                  ? t('settings.data.encryption.rememberToggleDevFallbackHint')
-                  : t('settings.data.encryption.rememberToggleHint')
+                rememberSupport?.mode === "dev-fallback"
+                  ? t("settings.data.encryption.rememberToggleDevFallbackHint")
+                  : t("settings.data.encryption.rememberToggleHint")
               }}
             </NText>
           </NSpace>
@@ -137,7 +146,7 @@ const {
             <NCollapseItem :title="t('settings.data.encryption.change')" name="change">
               <NForm label-placement="top">
                 <NSpace vertical :size="12">
-                  <NText depth="3">{{ t('settings.data.encryption.changeHint') }}</NText>
+                  <NText depth="3">{{ t("settings.data.encryption.changeHint") }}</NText>
                   <NFormItem :label="t('settings.data.encryption.oldPassphraseLabel')">
                     <NInput
                       v-model:value="changeOld"
@@ -166,11 +175,16 @@ const {
                       />
                     </NFormItem>
                     <!-- 口令强度（issue #685）：同开启表单，仅新设口令框显示 -->
-                    <PassphraseStrengthMeter v-if="changeNewStrength" :assessment="changeNewStrength" />
+                    <PassphraseStrengthMeter
+                      v-if="changeNewStrength"
+                      :assessment="changeNewStrength"
+                    />
                   </div>
                   <NFormItem
                     :label="t('settings.data.encryption.confirmNewLabel')"
-                    :validation-status="changeMismatch ? 'error' : changeUnchanged ? 'warning' : undefined"
+                    :validation-status="
+                      changeMismatch ? 'error' : changeUnchanged ? 'warning' : undefined
+                    "
                     :feedback="
                       changeMismatch
                         ? t('settings.data.encryption.mismatch')
@@ -193,7 +207,7 @@ const {
                     v-model:checked="changeRemember"
                     :disabled="submittingChange"
                   >
-                    <NText depth="3">{{ t('settings.data.encryption.rememberCheckbox') }}</NText>
+                    <NText depth="3">{{ t("settings.data.encryption.rememberCheckbox") }}</NText>
                   </NCheckbox>
                   <NSpace>
                     <NButton
@@ -202,7 +216,7 @@ const {
                       :disabled="!changeReady"
                       @click="requestChange"
                     >
-                      {{ t('settings.data.encryption.change') }}
+                      {{ t("settings.data.encryption.change") }}
                     </NButton>
                   </NSpace>
                 </NSpace>
@@ -211,8 +225,12 @@ const {
             <NCollapseItem :title="t('settings.data.encryption.disable')" name="disable">
               <NForm label-placement="top">
                 <NSpace vertical :size="12">
-                  <NAlert type="warning" :show-icon="true" :title="t('settings.data.encryption.disableWarnTitle')">
-                    {{ t('settings.data.encryption.disableWarnBody') }}
+                  <NAlert
+                    type="warning"
+                    :show-icon="true"
+                    :title="t('settings.data.encryption.disableWarnTitle')"
+                  >
+                    {{ t("settings.data.encryption.disableWarnBody") }}
                   </NAlert>
                   <NFormItem :label="t('settings.data.encryption.disablePassphraseLabel')">
                     <NInput
@@ -230,7 +248,7 @@ const {
                       :disabled="!disablePassphrase"
                       @click="requestDisable"
                     >
-                      {{ t('settings.data.encryption.disable') }}
+                      {{ t("settings.data.encryption.disable") }}
                     </NButton>
                   </NSpace>
                 </NSpace>
@@ -241,8 +259,12 @@ const {
 
         <NForm v-else label-placement="top">
           <NSpace vertical :size="12">
-            <NAlert type="warning" :show-icon="true" :title="t('settings.data.encryption.warnTitle')">
-              {{ t('settings.data.encryption.warnBody') }}
+            <NAlert
+              type="warning"
+              :show-icon="true"
+              :title="t('settings.data.encryption.warnTitle')"
+            >
+              {{ t("settings.data.encryption.warnBody") }}
             </NAlert>
             <div>
               <NFormItem
@@ -286,13 +308,13 @@ const {
             >
               <NTooltip placement="top" :style="{ maxWidth: '320px' }">
                 <template #trigger>
-                  <NText depth="3">{{ t('settings.data.encryption.rememberCheckbox') }}</NText>
+                  <NText depth="3">{{ t("settings.data.encryption.rememberCheckbox") }}</NText>
                 </template>
                 <!-- 同 issue #687：tooltip 按运行形态区分，dev 回退不宣称 Touch ID。 -->
                 {{
-                  rememberSupport?.mode === 'dev-fallback'
-                    ? t('settings.data.encryption.rememberCheckboxDevFallbackHint')
-                    : t('settings.data.encryption.rememberCheckboxHint')
+                  rememberSupport?.mode === "dev-fallback"
+                    ? t("settings.data.encryption.rememberCheckboxDevFallbackHint")
+                    : t("settings.data.encryption.rememberCheckboxHint")
                 }}
               </NTooltip>
             </NCheckbox>
@@ -303,7 +325,7 @@ const {
                 :disabled="!passphrase || mismatch || passphraseTooShort"
                 @click="requestEnable"
               >
-                {{ t('settings.data.encryption.enable') }}
+                {{ t("settings.data.encryption.enable") }}
               </NButton>
             </NSpace>
           </NSpace>
@@ -372,7 +394,7 @@ const {
       :title="t('settings.data.encryption.rememberEnableModalTitle')"
     >
       <NSpace vertical :size="12">
-        <NText depth="3">{{ t('settings.data.encryption.rememberEnableModalLead') }}</NText>
+        <NText depth="3">{{ t("settings.data.encryption.rememberEnableModalLead") }}</NText>
         <NInput
           v-model:value="autoUnlockPass"
           type="password"
@@ -388,7 +410,7 @@ const {
             data-testid="auto-unlock-cancel"
             @click="autoUnlockModalShow = false"
           >
-            {{ t('settings.data.encryption.rememberEnableModalCancel') }}
+            {{ t("settings.data.encryption.rememberEnableModalCancel") }}
           </NButton>
           <NButton
             type="primary"
@@ -397,7 +419,7 @@ const {
             data-testid="auto-unlock-confirm"
             @click="confirmAutoUnlock"
           >
-            {{ t('settings.data.encryption.rememberEnableModalOk') }}
+            {{ t("settings.data.encryption.rememberEnableModalOk") }}
           </NButton>
         </NSpace>
       </NSpace>

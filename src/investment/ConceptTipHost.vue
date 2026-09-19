@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NTooltip } from 'naive-ui'
-import AppPopover from '@ledger/ui-kit/AppPopover.vue'
-import { useInputMode } from '@/composables/useInputMode'
+import { computed } from "vue";
+import { NTooltip } from "naive-ui";
+import AppPopover from "@ledger/ui-kit/AppPopover.vue";
+import { useInputMode } from "@/composables/useInputMode";
 
 /**
  * 口径说明气泡宿主（issue #1369）：双轴形态的唯一实现——指针轴悬挂停即现的裸
@@ -17,11 +17,11 @@ import { useInputMode } from '@/composables/useInputMode'
  */
 defineProps<{
   /** 气泡正文：指针轴与触控轴同源 */
-  text: string
-}>()
+  text: string;
+}>();
 
-const inputMode = useInputMode()
-const isTouch = computed(() => inputMode.value === 'touch')
+const inputMode = useInputMode();
+const isTouch = computed(() => inputMode.value === "touch");
 </script>
 
 <template>

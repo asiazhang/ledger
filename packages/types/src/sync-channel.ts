@@ -6,64 +6,64 @@
 /// 同步状态（设置页同步卡片回显）。
 export interface SyncStatus {
   /// 本机设备标识（首用生成并持久化，参与全序 tiebreak）
-  device_id: string
+  device_id: string;
   /// 通道是否已配置（当前后端的凭据已保存）
-  channel_configured: boolean
+  channel_configured: boolean;
   /// 上次成功同步时刻（UTC ISO；从未同步为 null）
-  last_sync_at: string | null
+  last_sync_at: string | null;
   /// 挂起 op 数量（不可重放、待用户裁决的操作）
-  parked_count: number
+  parked_count: number;
   /// 本库是否为密文形态（密文库凭主口令封包；明文库明文上通道需显著提示）
-  library_encrypted: boolean
+  library_encrypted: boolean;
 }
 
 /// 通道配置回显（未配置时各字段为空串/假值、configured 为 false）。
 export interface SyncChannelConfig {
   /// 同步空间（跨端共识的世界身份，`book-<space>` 目录）
-  space_id: string
+  space_id: string;
   /// S3 兼容端点（MVP 只接受 https）
-  endpoint: string
+  endpoint: string;
   /// S3 签名区域
-  region: string
+  region: string;
   /// S3 桶名
-  bucket: string
+  bucket: string;
   /// S3 对象键前缀（空串 = 桶根）
-  prefix: string
+  prefix: string;
   /// S3 Access Key ID（公开标识，非密钥）
-  access_key: string
+  access_key: string;
   /// S3 Secret Access Key（后端与主口令同级脱敏，不落日志）
-  secret_key: string
+  secret_key: string;
   /// 寻址方式：true = path-style
-  path_style: boolean
-  configured: boolean
+  path_style: boolean;
+  configured: boolean;
 }
 
 /// 通道配置写入参数（表单提交形态）。
 /// 各字段在 Rust 侧带 serde 缺省（`space_id` 缺省回 default）；退役后端留下的
 /// 多余键由 serde 默认忽略，不影响解析。
 export interface SyncChannelConfigInput {
-  space_id?: string
-  endpoint?: string
-  region?: string
-  bucket?: string
-  prefix?: string
-  access_key?: string
-  secret_key?: string
-  path_style?: boolean
+  space_id?: string;
+  endpoint?: string;
+  region?: string;
+  bucket?: string;
+  prefix?: string;
+  access_key?: string;
+  secret_key?: string;
+  path_style?: boolean;
 }
 
 /// 一次同步轮次的报告（后端 SyncRoundReport）：发布/拉取/重放的逐项计数。
 export interface SyncRoundReport {
-  uploaded_segments: number
-  uploaded_ops: number
-  downloaded_segments: number
-  applied: number
-  deduped: number
-  superseded: number
-  skipped: number
-  parked: number
+  uploaded_segments: number;
+  uploaded_ops: number;
+  downloaded_segments: number;
+  applied: number;
+  deduped: number;
+  superseded: number;
+  skipped: number;
+  parked: number;
   /// 明文模式标记（界面显著提示依据）
-  plaintext_mode: boolean
+  plaintext_mode: boolean;
 }
 
 /// 挂起操作（issue #863 挂起通知数据面）：不可重放 op 的身份与码化原因。
@@ -71,49 +71,49 @@ export interface SyncRoundReport {
 /// 明细经 get_parked_ops 按需拉取。
 export interface ParkedOpInfo {
   /// op 标识（信封不可读时为合成 id）
-  op_id: string
+  op_id: string;
   /// 来源设备标识（信封不可读时为空串）
-  device_id: string
+  device_id: string;
   /// 实体判别键（载荷不可解时为空串）
-  entity: string
+  entity: string;
   /// 实体 id（不可知时为空串）
-  entity_id: string
+  entity_id: string;
   /// 码化挂起原因（前端按 errors.<code> 模板本地化）
-  code: string
+  code: string;
   /// 码化挂起原因的插值参数（按消息中动态值出现顺序；ADR-0050 / issue #957）
-  params: string[]
+  params: string[];
   /// 挂起原因详情（已渲染完整句；码未命中模板或 params 不足时降级透传）
-  message: string
+  message: string;
   /// 挂起时刻（本机簿记事实）
-  parked_at: string
+  parked_at: string;
 }
 
 /// 通道上的检查点指针（预检回显，issue #864；不含快照体）。
 export interface SyncCheckpointInfo {
   /// 检查点代数（每次发布单调递增）
-  generation: number
+  generation: number;
   /// 密文字节数（快照体大小）
-  size: number
+  size: number;
   /// 产出时刻（产出端本地事实，供展示）
-  created_at: string
+  created_at: string;
 }
 
 /// 检查点发布结果（issue #864）。
 export interface SyncCheckpointPublished {
   /// 本次发布的代数
-  generation: number
+  generation: number;
   /// 密文字节数
-  size: number
+  size: number;
   /// 明文模式标记（快照明文上通道，界面显著提示依据）
-  plaintext_mode: boolean
+  plaintext_mode: boolean;
 }
 
 /// 新端从通道检查点引导的结果（issue #864）。
 export interface SyncBootstrapOutcome {
   /// 采纳的检查点代数
-  generation: number
+  generation: number;
   /// 快照密文字节数
-  size: number
+  size: number;
   /// 引导后本库已从明文转换为本机密文库（重启后需凭主口令解锁）
-  reencrypted: boolean
+  reencrypted: boolean;
 }

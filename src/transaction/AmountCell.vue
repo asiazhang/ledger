@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import AppPopover from '@ledger/ui-kit/AppPopover.vue'
-import { useInputMode } from '@/composables/useInputMode'
+import { computed } from "vue";
+import AppPopover from "@ledger/ui-kit/AppPopover.vue";
+import { useInputMode } from "@/composables/useInputMode";
 
 /**
  * 金额单元格（ADR-0088 决策 6 悬停一击可达 · 交易表金额全文，issue #843）：
@@ -17,20 +17,26 @@ import { useInputMode } from '@/composables/useInputMode'
  */
 const props = defineProps<{
   /** 展示文案（已按金额口径格式化，含隐私掩码态） */
-  text: string
+  text: string;
   /** 语义色（kindSemanticColor 取值，随调用方主题响应式重建） */
-  color: string
-}>()
+  color: string;
+}>();
 
-const inputMode = useInputMode()
-const isTouch = computed(() => inputMode.value === 'touch')
-const cellStyle = computed(() => ({ color: props.color }))
+const inputMode = useInputMode();
+const isTouch = computed(() => inputMode.value === "touch");
+const cellStyle = computed(() => ({ color: props.color }));
 </script>
 
 <template>
   <AppPopover v-if="isTouch" trigger="click" placement="top">
     <template #trigger>
-      <span class="amount-cell touch-hit-area" :style="cellStyle" role="button" :aria-label="text">{{ text }}</span>
+      <span
+        class="amount-cell touch-hit-area"
+        :style="cellStyle"
+        role="button"
+        :aria-label="text"
+        >{{ text }}</span
+      >
     </template>
     <span class="amount-cell-full">{{ text }}</span>
   </AppPopover>

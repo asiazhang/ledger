@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { formatRate } from '@ledger/money'
-import { t } from '@ledger/i18n'
-import ConceptTipHost from '@/investment/ConceptTipHost.vue'
-import { marker, trigger } from './mwr-rate-cell.css.ts'
+import { computed } from "vue";
+import { formatRate } from "@ledger/money";
+import { t } from "@ledger/i18n";
+import ConceptTipHost from "@/investment/ConceptTipHost.vue";
+import { marker, trigger } from "./mwr-rate-cell.css.ts";
 
 /**
  * 收益率单元格（ADR-0088 决策 6 悬停一击可达 / issue #1343 口径标注）：只承载
@@ -21,19 +21,19 @@ import { marker, trigger } from './mwr-rate-cell.css.ts'
  */
 const props = defineProps<{
   /** 可计算利率（小数，formatRate 展示） */
-  rate: number
+  rate: number;
   /** 盈亏涨跌色（调用方按主题取的 pnlSemanticColor 产物） */
-  color: string
+  color: string;
   /** 是否年化口径（false = 未年化，带角标与解释） */
-  annualized?: boolean
-}>()
+  annualized?: boolean;
+}>();
 
-const text = computed(() => formatRate(props.rate))
-const tip = computed(() => t('investments.concepts.mwrCumulativeTip'))
-const marked = computed(() => props.annualized === false)
+const text = computed(() => formatRate(props.rate));
+const tip = computed(() => t("investments.concepts.mwrCumulativeTip"));
+const marked = computed(() => props.annualized === false);
 
 /** 触控触发器的读屏替代：数值 + 口径解释一并可达（指针轴不挂 role，零变化） */
-const ariaLabel = computed(() => (marked.value ? `${text.value}，${tip.value}` : text.value))
+const ariaLabel = computed(() => (marked.value ? `${text.value}，${tip.value}` : text.value));
 </script>
 
 <template>

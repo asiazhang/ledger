@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NDescriptions, NDescriptionsItem } from 'naive-ui'
-import { t } from '@ledger/i18n'
-import { useReferenceStore } from '@/stores/reference'
-import { displayAmountText } from '@/transaction/transaction-columns'
-import type { Transaction } from '@ledger/types'
+import { computed } from "vue";
+import { NDescriptions, NDescriptionsItem } from "naive-ui";
+import { t } from "@ledger/i18n";
+import { useReferenceStore } from "@/stores/reference";
+import { displayAmountText } from "@/transaction/transaction-columns";
+import type { Transaction } from "@ledger/types";
 
 /**
  * 现金分红只读详情（ADR-0109 / issue #1078）：dividend 是界面只读 kind（比照
@@ -17,22 +17,22 @@ import type { Transaction } from '@ledger/types'
  */
 const props = defineProps<{
   /** 分红交易行（提供金额 / 币种 / 日期 / 账户 / 备注与来源列） */
-  transaction: Transaction
-}>()
+  transaction: Transaction;
+}>();
 
-const reference = useReferenceStore()
+const reference = useReferenceStore();
 
 /** 账户名经参考数据解析，未知账户回退占位（与列表账户列同口径，不抛错）。 */
 const accountName = computed(
-  () => reference.accountMap.get(props.transaction.account_id)?.name ?? '—',
-)
+  () => reference.accountMap.get(props.transaction.account_id)?.name ?? "—",
+);
 
 /** 归属标的：来源列标的反查的展示名（代码 + 名称），缺失回退占位。 */
 const instrumentText = computed(() =>
-  props.transaction.source?.kind === 'instrument' ? props.transaction.source.display_name : '—',
-)
+  props.transaction.source?.kind === "instrument" ? props.transaction.source.display_name : "—",
+);
 
-const amountText = computed(() => displayAmountText(reference, props.transaction))
+const amountText = computed(() => displayAmountText(reference, props.transaction));
 </script>
 
 <template>
@@ -41,10 +41,14 @@ const amountText = computed(() => displayAmountText(reference, props.transaction
       {{ instrumentText }}
     </NDescriptionsItem>
     <NDescriptionsItem :label="t('transactions.field.amount')">{{ amountText }}</NDescriptionsItem>
-    <NDescriptionsItem :label="t('transactions.form.date')">{{ transaction.date }}</NDescriptionsItem>
-    <NDescriptionsItem :label="t('transactions.field.account')">{{ accountName }}</NDescriptionsItem>
+    <NDescriptionsItem :label="t('transactions.form.date')">{{
+      transaction.date
+    }}</NDescriptionsItem>
+    <NDescriptionsItem :label="t('transactions.field.account')">{{
+      accountName
+    }}</NDescriptionsItem>
     <NDescriptionsItem :label="t('transactions.form.note')">
-      {{ transaction.note ?? '—' }}
+      {{ transaction.note ?? "—" }}
     </NDescriptionsItem>
   </NDescriptions>
 </template>

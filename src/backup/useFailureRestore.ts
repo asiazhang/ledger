@@ -1,4 +1,4 @@
-import { useRestoreFromFile } from '@/backup/useRestoreFromFile'
+import { useRestoreFromFile } from "@/backup/useRestoreFromFile";
 
 /**
  * 启动失败恢复屏的「从备份文件恢复…」通道（issue #602 / ADR-0075 决策 5 修订）。
@@ -15,10 +15,10 @@ import { useRestoreFromFile } from '@/backup/useRestoreFromFile'
  */
 export function useFailureRestore() {
   const flow = useRestoreFromFile({
-    pickTitleKey: 'startupFailure.restorePickTitle',
-  })
+    pickTitleKey: "startupFailure.restorePickTitle",
+  });
 
-  const { restoring, restoreIntent, restoreSeq, closeRestore, confirmRestore } = flow
+  const { restoring, restoreIntent, restoreSeq, closeRestore, confirmRestore } = flow;
 
   return {
     restoring,
@@ -27,5 +27,5 @@ export function useFailureRestore() {
     closeRestore,
     confirmRestore,
     pickRestoreFromFailure: flow.pickRestore,
-  }
+  };
 }

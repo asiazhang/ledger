@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { t } from '@ledger/i18n'
-import { useReferenceStore } from '@/stores/reference'
-import type { CreateFormKind, Transaction, TransactionTrade } from '@ledger/types'
-import CategoryForm from '@/categories/CategoryForm.vue'
-import TransferForm from '@/transaction/TransferForm.vue'
-import LendingForm from '@/transaction/LendingForm.vue'
-import InvestmentForm from '@/investment/InvestmentForm.vue'
-import { isLendingEntryKind, resolveLendingDirection } from '@/transaction/lending'
+import { computed } from "vue";
+import { t } from "@ledger/i18n";
+import { useReferenceStore } from "@/stores/reference";
+import type { CreateFormKind, Transaction, TransactionTrade } from "@ledger/types";
+import CategoryForm from "@/categories/CategoryForm.vue";
+import TransferForm from "@/transaction/TransferForm.vue";
+import LendingForm from "@/transaction/LendingForm.vue";
+import InvestmentForm from "@/investment/InvestmentForm.vue";
+import { isLendingEntryKind, resolveLendingDirection } from "@/transaction/lending";
 
 // 类型选择由「记一笔」分裂按钮入口单点表达，弹窗内不再提供切换（issue #150）。
 // 编辑模式（issue #178/#180）：传入 editing 时 kind 由既有交易锁死（按 editing.kind
@@ -19,18 +19,18 @@ import { isLendingEntryKind, resolveLendingDirection } from '@/transaction/lendi
 // 呈现；编辑形态识别同理——既有转账两端账户类型构成借贷（receivable/debt）时以借贷
 // 变体回填（方向由账户类型派生），普通转账仍走转账表单。
 const props = defineProps<{
-  kind?: CreateFormKind
-  editing?: Transaction | null
-  trade?: TransactionTrade | null
-}>()
+  kind?: CreateFormKind;
+  editing?: Transaction | null;
+  trade?: TransactionTrade | null;
+}>();
 
-const emit = defineEmits<{ created: []; saved: [] }>()
+const emit = defineEmits<{ created: []; saved: [] }>();
 
-const reference = useReferenceStore()
+const reference = useReferenceStore();
 
 const effectiveKind = computed<CreateFormKind | null>(() =>
   props.editing ? (props.editing.kind as CreateFormKind) : (props.kind ?? null),
-)
+);
 
 // 编辑形态识别（issue #374）：与借贷表单的方向回填消费同一派生函数；
 // 非 transfer / 普通转账 / 账户类型缺失 → null（按普通转账呈现）。
@@ -38,11 +38,11 @@ const editingLendingDirection = computed(() =>
   props.editing
     ? resolveLendingDirection(props.editing, (id) => reference.accountMap.get(id)?.type)
     : null,
-)
+);
 
 /** 模板用：当前形态是否借贷变体入口（lend/borrow，非交易 kind；类型谓词供分支内收窄） */
-function isLendingEntry(kind: CreateFormKind | null): kind is 'lend' | 'borrow' {
-  return kind != null && isLendingEntryKind(kind)
+function isLendingEntry(kind: CreateFormKind | null): kind is "lend" | "borrow" {
+  return kind != null && isLendingEntryKind(kind);
 }
 </script>
 

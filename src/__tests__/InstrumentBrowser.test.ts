@@ -1,221 +1,222 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { deferred } from '@ledger/test-support/deferred'
-import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { mount, flushPromises } from '@vue/test-utils'
-import { h, nextTick } from 'vue'
-import { NDialogProvider } from 'naive-ui'
-import { assertMobileTierScrollX } from '@ledger/test-support/mobile-scroll-x'
-import { useReferenceStore } from '@/stores/reference'
-import InstrumentBrowser from '@/investment/InstrumentBrowser.vue'
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { deferred } from "@ledger/test-support/deferred";
+import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { mount, flushPromises } from "@vue/test-utils";
+import { h, nextTick } from "vue";
+import { NDialogProvider } from "naive-ui";
+import { assertMobileTierScrollX } from "@ledger/test-support/mobile-scroll-x";
+import { useReferenceStore } from "@/stores/reference";
+import InstrumentBrowser from "@/investment/InstrumentBrowser.vue";
 import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
   resetInstrumentInfoSyncForTest,
-} from '@/investment/useInstrumentInfoSync'
-import { captureListenHandlers } from '@ledger/test-support/listen-mock'
-import { hoverTipText } from '@ledger/test-support/tooltip'
-import { makeInstrument } from './factories'
-import {
-  firePricesChanged,
-  resetPricesChangedHandler,
-} from './prices-changed-mock'
-import type { Instrument } from '@ledger/types'
+} from "@/investment/useInstrumentInfoSync";
+import { captureListenHandlers } from "@ledger/test-support/listen-mock";
+import { hoverTipText } from "@ledger/test-support/tooltip";
+import { makeInstrument } from "./factories";
+import { firePricesChanged, resetPricesChangedHandler } from "./prices-changed-mock";
+import type { Instrument } from "@ledger/types";
 
 // 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
 // 测试中手动触发模拟后端 emit；捕获/触发辅助收在 prices-changed-mock 共享。
-vi.mock('@/investment/usePricesChanged', async () => {
-  const { capturePricesChangedHandler } = await import('./prices-changed-mock')
+vi.mock("@/investment/usePricesChanged", async () => {
+  const { capturePricesChangedHandler } = await import("./prices-changed-mock");
   return {
     usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),
-  }
-})
+  };
+});
 
 /** 组件顶层调用 useAppDialog（删除二次确认，issue #292），与 App.vue 同构需
  * NDialogProvider 包裹（先例：AccountsView.test.ts 的 mountView）。 */
 function mountBrowser() {
   return mount(NDialogProvider, {
     slots: { default: () => h(InstrumentBrowser) },
-  })
+  });
 }
 
 // 捕获全量同步进度事件回调的基建已随全量同步退役删除（issue #698）。
 
 const mockInstruments: Instrument[] = [
   {
-    id: 'inst-1',
-    symbol: '600000',
-    type: 'stock',
-    name: '浦发银行',
-    currency_code: 'CNY',
-    market: 'sh',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    id: "inst-1",
+    symbol: "600000",
+    type: "stock",
+    name: "浦发银行",
+    currency_code: "CNY",
+    market: "sh",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     version: 1,
-    device_id: 'test',
+    device_id: "test",
     is_deleted: false,
-    source: 'eastmoney',
+    source: "eastmoney",
     price_cents: 1000,
     invested: true,
-    price_channel: 'quote',
+    price_channel: "quote",
   },
   {
-    id: 'inst-2',
-    symbol: '000001',
-    type: 'stock',
-    name: '平安银行',
-    currency_code: 'CNY',
-    market: 'sz',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    id: "inst-2",
+    symbol: "000001",
+    type: "stock",
+    name: "平安银行",
+    currency_code: "CNY",
+    market: "sz",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     version: 1,
-    device_id: 'test',
+    device_id: "test",
     is_deleted: false,
-    source: 'eastmoney',
+    source: "eastmoney",
     price_cents: 1200,
     invested: false,
-    price_channel: 'quote',
+    price_channel: "quote",
   },
-]
+];
 
 /** 基础布线：beforeEach 安装；用例中途换桩时以模块级表为底再覆写。 */
 const BASE_DEFAULTS = {
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
-}
+};
 
 beforeEach(async () => {
-  resetPricesChangedHandler()
-  wireInvokeSeam({ defaults: BASE_DEFAULTS })
-  const store = useReferenceStore()
-  await store.refresh()
-})
+  resetPricesChangedHandler();
+  wireInvokeSeam({ defaults: BASE_DEFAULTS });
+  const store = useReferenceStore();
+  await store.refresh();
+});
 
 // NModal 内容默认 teleport 到 document.body，测试需在 body 中查询（wrapper.find 只能查组件根 DOM）。
 function bodyQuery(selector: string): HTMLElement | null {
-  return document.body.querySelector(selector)
+  return document.body.querySelector(selector);
 }
 
-describe('InstrumentBrowser 标的页工具栏', () => {
-  it('工具栏包含「同步标的信息」按钮', async () => {
-    const wrapper = mountBrowser()
-    await flushPromises()
-    expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('同步标的信息')
-  })
+describe("InstrumentBrowser 标的页工具栏", () => {
+  it("工具栏包含「同步标的信息」按钮", async () => {
+    const wrapper = mountBrowser();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("同步标的信息");
+  });
 
-  it('工具栏包含「只看持仓」开关', async () => {
-    const wrapper = mountBrowser()
-    await flushPromises()
-    expect(wrapper.find('[data-testid="only-invested-switch"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('只看持仓')
-  })
+  it("工具栏包含「只看持仓」开关", async () => {
+    const wrapper = mountBrowser();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="only-invested-switch"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("只看持仓");
+  });
 
-  it('现价列头带口径说明触发器：基金行显示的是单位净值（issue #1369）', async () => {
-    const wrapper = mountBrowser()
-    await flushPromises()
+  it("现价列头带口径说明触发器：基金行显示的是单位净值（issue #1369）", async () => {
+    const wrapper = mountBrowser();
+    await flushPromises();
     // 断言对准用户可观察结果：删掉列头 ConceptLabel 接线即找不到触发器、本用例变红
-    const trigger = wrapper.find('[data-testid="browser-price-info"]')
-    expect(trigger.exists()).toBe(true)
-    expect(trigger.attributes('aria-label')).toBe('现价说明')
+    const trigger = wrapper.find('[data-testid="browser-price-info"]');
+    expect(trigger.exists()).toBe(true);
+    expect(trigger.attributes("aria-label")).toBe("现价说明");
     // 名实边界：列名叫「现价」，基金行装的却是最新单位净值（与价格来源列「净值」不矛盾）
-    expect(await hoverTipText(trigger)).toContain('单位净值')
-    wrapper.unmount()
-  })
+    expect(await hoverTipText(trigger)).toContain("单位净值");
+    wrapper.unmount();
+  });
 
-  it('勾选「只看持仓」后标的查询携带 only_invested=true', async () => {
-    const wrapper = mountBrowser()
-    await flushPromises()
-    const sw = wrapper.find('[data-testid="only-invested-switch"]')
-    await sw.trigger('click')
-    await flushPromises()
-    expect(lastInvokeArgs('list_instruments').filter).toMatchObject({ only_invested: true })
-  })
+  it("勾选「只看持仓」后标的查询携带 only_invested=true", async () => {
+    const wrapper = mountBrowser();
+    await flushPromises();
+    const sw = wrapper.find('[data-testid="only-invested-switch"]');
+    await sw.trigger("click");
+    await flushPromises();
+    expect(lastInvokeArgs("list_instruments").filter).toMatchObject({ only_invested: true });
+  });
 
-  it('未勾选「只看持仓」时标的查询 only_invested 为 null', async () => {
-    mountBrowser()
-    await flushPromises()
-    expect(lastInvokeArgs('list_instruments').filter).toMatchObject({ only_invested: null })
-  })
-})
+  it("未勾选「只看持仓」时标的查询 only_invested 为 null", async () => {
+    mountBrowser();
+    await flushPromises();
+    expect(lastInvokeArgs("list_instruments").filter).toMatchObject({ only_invested: null });
+  });
+});
 
-describe('InstrumentBrowser 持仓标记列', () => {
-  it('持仓标的显示「持仓」标记，未持仓显示 -', async () => {
-    const wrapper = mountBrowser()
-    await flushPromises()
+describe("InstrumentBrowser 持仓标记列", () => {
+  it("持仓标的显示「持仓」标记，未持仓显示 -", async () => {
+    const wrapper = mountBrowser();
+    await flushPromises();
     // 持仓标记列：持仓标的渲染「持仓」tag，未持仓标的该单元格为「-」
-    const investedCells = wrapper.findAll('td[data-col-key="invested"]')
-    expect(investedCells.length).toBe(2)
-    const texts = investedCells.map((c) => c.text())
-    expect(texts).toContain('持仓')
-    expect(texts).toContain('-')
-  })
-})
+    const investedCells = wrapper.findAll('td[data-col-key="invested"]');
+    expect(investedCells.length).toBe(2);
+    const texts = investedCells.map((c) => c.text());
+    expect(texts).toContain("持仓");
+    expect(texts).toContain("-");
+  });
+});
 
-describe('InstrumentBrowser 同步标的信息按钮', () => {
-  it('点击按钮触发 sync_instrument_info，进行中按钮 loading', async () => {
-    let resolveSync!: (v: unknown) => void
+describe("InstrumentBrowser 同步标的信息按钮", () => {
+  it("点击按钮触发 sync_instrument_info，进行中按钮 loading", async () => {
+    let resolveSync!: (v: unknown) => void;
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         sync_instrument_info: () =>
           new Promise((res) => {
-            resolveSync = res
-          }),      },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
-    const btn = wrapper.find('[data-testid="sync-instrument-info"]')
-    await btn.trigger('click')
-    await nextTick()
-    expect(resolveSync).toBeDefined()
-    expect(wrapper.find('.n-button--loading').exists()).toBe(true)
-    resolveSync({ synced: 2, skipped: 1, message: '已同步 2 只，跳过 1 只' })
-    await flushPromises()
-    expect(wrapper.find('.n-button--loading').exists()).toBe(false)
-  })
+            resolveSync = res;
+          }),
+      },
+    });
+    const wrapper = mountBrowser();
+    await flushPromises();
+    const btn = wrapper.find('[data-testid="sync-instrument-info"]');
+    await btn.trigger("click");
+    await nextTick();
+    expect(resolveSync).toBeDefined();
+    expect(wrapper.find(".n-button--loading").exists()).toBe(true);
+    resolveSync({ synced: 2, skipped: 1, message: "已同步 2 只，跳过 1 只" });
+    await flushPromises();
+    expect(wrapper.find(".n-button--loading").exists()).toBe(false);
+  });
 
-  it('同步成功显示结果消息', async () => {
+  it("同步成功显示结果消息", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         sync_instrument_info: () =>
-          Promise.resolve({ synced: 2, skipped: 1, message: '已同步 2 只，跳过 1 只' }),      },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
-    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.text()).toContain('已同步 2 只，跳过 1 只')
-  })
+          Promise.resolve({ synced: 2, skipped: 1, message: "已同步 2 只，跳过 1 只" }),
+      },
+    });
+    const wrapper = mountBrowser();
+    await flushPromises();
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("已同步 2 只，跳过 1 只");
+  });
 
-  it('空库时同步不报错并提示「暂无标的可同步」', async () => {
+  it("空库时同步不报错并提示「暂无标的可同步」", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         list_instruments: () => Promise.resolve({ items: [], total: 0 }),
         sync_instrument_info: () =>
-          Promise.resolve({ synced: 0, skipped: 0, message: '暂无标的可同步' }),      },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
-    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.text()).toContain('暂无标的可同步')
-  })
+          Promise.resolve({ synced: 0, skipped: 0, message: "暂无标的可同步" }),
+      },
+    });
+    const wrapper = mountBrowser();
+    await flushPromises();
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("暂无标的可同步");
+  });
 
-  it('同步失败显示错误消息', async () => {
+  it("同步失败显示错误消息", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
-        sync_instrument_info: () => Promise.reject(new Error('网络错误')),      },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
-    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
-    await flushPromises()
+        sync_instrument_info: () => Promise.reject(new Error("网络错误")),
+      },
+    });
+    const wrapper = mountBrowser();
+    await flushPromises();
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger("click");
+    await flushPromises();
     // 失败消息应包含具体原因，而非字符串化的 [object Object]
-    expect(wrapper.text()).toContain('同步失败：网络错误')
-  })
+    expect(wrapper.text()).toContain("同步失败：网络错误");
+  });
 
-  it('同步降级时明示「已降级、本次较慢」（issue #1376 存在性断言，ADR-0087）', async () => {
+  it("同步降级时明示「已降级、本次较慢」（issue #1376 存在性断言，ADR-0087）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
@@ -223,26 +224,26 @@ describe('InstrumentBrowser 同步标的信息按钮', () => {
           Promise.resolve({
             synced: 3,
             skipped: 0,
-            message: '已同步 3 只，跳过 0 只',
+            message: "已同步 3 只，跳过 0 只",
             bulk_degraded: true,
           }),
       },
-    })
-    resetInstrumentInfoSyncForTest()
-    const wrapper = mountBrowser()
-    await flushPromises()
+    });
+    resetInstrumentInfoSyncForTest();
+    const wrapper = mountBrowser();
+    await flushPromises();
     // 同步前无降级标注
-    expect(wrapper.find('[data-testid="instrument-sync-degraded"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="instrument-sync-degraded"]').exists()).toBe(false);
 
-    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
-    await flushPromises()
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger("click");
+    await flushPromises();
     // 删除降级标注的渲染，本断言即红（接线型负向判据）
-    const notice = wrapper.find('[data-testid="instrument-sync-degraded"]')
-    expect(notice.exists()).toBe(true)
-    expect(notice.text()).toBe('已降级、本次较慢')
-  })
+    const notice = wrapper.find('[data-testid="instrument-sync-degraded"]');
+    expect(notice.exists()).toBe(true);
+    expect(notice.text()).toBe("已降级、本次较慢");
+  });
 
-  it('正常路径（批量面命中，bulk_degraded:false）不渲染降级标注（issue #1376）', async () => {
+  it("正常路径（批量面命中，bulk_degraded:false）不渲染降级标注（issue #1376）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
@@ -250,276 +251,172 @@ describe('InstrumentBrowser 同步标的信息按钮', () => {
           Promise.resolve({
             synced: 3,
             skipped: 0,
-            message: '已同步 3 只，跳过 0 只',
+            message: "已同步 3 只，跳过 0 只",
             bulk_degraded: false,
           }),
       },
-    })
-    resetInstrumentInfoSyncForTest()
-    const wrapper = mountBrowser()
-    await flushPromises()
-    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-testid="instrument-sync-degraded"]').exists()).toBe(false)
-  })
-})
+    });
+    resetInstrumentInfoSyncForTest();
+    const wrapper = mountBrowser();
+    await flushPromises();
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="instrument-sync-degraded"]').exists()).toBe(false);
+  });
+});
 
-describe('InstrumentBrowser 同步确定进度条（issue #897 / ADR-0095）', () => {
-  it('同步进行中在列表顶部展示确定进度条，完成后收起、结果消息接棒', async () => {
-    let resolveSync!: (v: unknown) => void
+describe("InstrumentBrowser 同步确定进度条（issue #897 / ADR-0095）", () => {
+  it("同步进行中在列表顶部展示确定进度条，完成后收起、结果消息接棒", async () => {
+    let resolveSync!: (v: unknown) => void;
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         sync_instrument_info: () =>
           new Promise((res) => {
-            resolveSync = res
+            resolveSync = res;
           }),
       },
-    })
-    resetInstrumentInfoSyncForTest()
-    const handlers = captureListenHandlers()
-    const wrapper = mountBrowser()
-    await flushPromises()
-    expect(wrapper.find('[data-testid="instrument-sync-progress"]').exists()).toBe(false)
+    });
+    resetInstrumentInfoSyncForTest();
+    const handlers = captureListenHandlers();
+    const wrapper = mountBrowser();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="instrument-sync-progress"]').exists()).toBe(false);
 
-    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
-    await nextTick()
-    handlers.at(-1)!({ event: INSTRUMENT_SYNC_PROGRESS_EVENT, payload: { done: 37, total: 100 } })
-    await flushPromises()
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger("click");
+    await nextTick();
+    handlers.at(-1)!({ event: INSTRUMENT_SYNC_PROGRESS_EVENT, payload: { done: 37, total: 100 } });
+    await flushPromises();
 
-    const bar = wrapper.find('[data-testid="instrument-sync-progress"]')
-    expect(bar.exists()).toBe(true)
-    expect(bar.text()).toContain('同步标的信息 37/100')
+    const bar = wrapper.find('[data-testid="instrument-sync-progress"]');
+    expect(bar.exists()).toBe(true);
+    expect(bar.text()).toContain("同步标的信息 37/100");
 
-    resolveSync({ synced: 100, skipped: 0, message: '已同步 100 只，跳过 0 只' })
-    await flushPromises()
-    expect(wrapper.find('[data-testid="instrument-sync-progress"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('已同步 100 只，跳过 0 只')
-  })
-})
+    resolveSync({ synced: 100, skipped: 0, message: "已同步 100 只，跳过 0 只" });
+    await flushPromises();
+    expect(wrapper.find('[data-testid="instrument-sync-progress"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain("已同步 100 只，跳过 0 只");
+  });
+});
 
-describe('InstrumentBrowser 价格失效信号（issue #238 / ADR-0031）', () => {
-  it('信号触发后恰好重拉一次当前页查询', async () => {
-    mountBrowser()
-    await flushPromises()
-    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    firePricesChanged()
-    await flushPromises()
-    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments')
-    expect(calls.length).toBe(before + 1)
+describe("InstrumentBrowser 价格失效信号（issue #238 / ADR-0031）", () => {
+  it("信号触发后恰好重拉一次当前页查询", async () => {
+    mountBrowser();
+    await flushPromises();
+    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments").length;
+    firePricesChanged();
+    await flushPromises();
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments");
+    expect(calls.length).toBe(before + 1);
     // 查询参数与初始加载同形：原地刷新，不改变搜索/筛选状态
-    const [, args] = calls.at(-1)!
+    const [, args] = calls.at(-1)!;
     expect(args).toMatchObject({
       filter: { search: null, market: null, only_invested: null, page: 1 },
-    })
-  })
+    });
+  });
 
-  it('信号触发后原地重拉，保留分页状态（不重置到第 1 页抽走视线下的行）', async () => {
+  it("信号触发后原地重拉，保留分页状态（不重置到第 1 页抽走视线下的行）", async () => {
     // 60 只标的 → 两页（pageSize 50），按页切片返回不同内容
     const pool = Array.from({ length: 60 }, (_, i) =>
       makeInstrument({ id: `inst-${i + 1}`, symbol: String(600000 + i) }),
-    )
+    );
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         list_instruments: (args?: Record<string, unknown>) => {
-          const page = (args?.filter as { page?: number } | undefined)?.page ?? 1
+          const page = (args?.filter as { page?: number } | undefined)?.page ?? 1;
           return Promise.resolve({
             items: pool.slice((page - 1) * 50, page * 50),
             total: pool.length,
-          })
-        },      },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
-    const pageSymbols = () =>
-      wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text())
-    expect(pageSymbols()).toEqual(pool.slice(0, 50).map((i) => i.symbol))
+          });
+        },
+      },
+    });
+    const wrapper = mountBrowser();
+    await flushPromises();
+    const pageSymbols = () => wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text());
+    expect(pageSymbols()).toEqual(pool.slice(0, 50).map((i) => i.symbol));
 
     // 翻到第 2 页（分页项为可点击 div，无内层 button）
-    const page2 = wrapper.findAll('.n-pagination-item').find((el) => el.text() === '2')
-    expect(page2).toBeTruthy()
-    await page2!.trigger('click')
-    await flushPromises()
-    expect(pageSymbols()).toEqual(pool.slice(50).map((i) => i.symbol))
+    const page2 = wrapper.findAll(".n-pagination-item").find((el) => el.text() === "2");
+    expect(page2).toBeTruthy();
+    await page2!.trigger("click");
+    await flushPromises();
+    expect(pageSymbols()).toEqual(pool.slice(50).map((i) => i.symbol));
 
     // 信号触发：原地重拉第 2 页，而非 reload() 重置回第 1 页
-    firePricesChanged()
-    await flushPromises()
-    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments')
-    const [, args] = calls.at(-1)!
-    expect((args as { filter: { page: number } }).filter.page).toBe(2)
-    expect(pageSymbols()).toEqual(pool.slice(50).map((i) => i.symbol))
-  })
-})
+    firePricesChanged();
+    await flushPromises();
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments");
+    const [, args] = calls.at(-1)!;
+    expect((args as { filter: { page: number } }).filter.page).toBe(2);
+    expect(pageSymbols()).toEqual(pool.slice(50).map((i) => i.symbol));
+  });
+});
 
-describe('InstrumentBrowser 全量同步退役（issue #698 / ADR-0081 决策 3）', () => {
-  it('工具栏不再提供全量同步入口：命令、进度/取消事件与前端组装整体退役', async () => {
-    const wrapper = mountBrowser()
-    await flushPromises()
-    expect(wrapper.find('[data-testid="full-sync"]').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('全量同步')
+describe("InstrumentBrowser 全量同步退役（issue #698 / ADR-0081 决策 3）", () => {
+  it("工具栏不再提供全量同步入口：命令、进度/取消事件与前端组装整体退役", async () => {
+    const wrapper = mountBrowser();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="full-sync"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("全量同步");
     // 标的信息同步按钮不受退役影响
-    expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(true)
-  })
-})
+    expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(true);
+  });
+});
 
-describe('InstrumentBrowser 添加投资标的入口（issue #697 / spec #690）', () => {
-  it('工具栏包含「添加投资标的」按钮，点击打开统一对话框；旧「添加基金」「新建标的」入口已退役', async () => {
-    const wrapper = mountBrowser()
-    await flushPromises()
-    expect(wrapper.find('[data-testid="add-instrument"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('添加投资标的')
-    expect(wrapper.find('[data-testid="add-fund"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="create-instrument"]').exists()).toBe(false)
-    await wrapper.find('[data-testid="add-instrument"]').trigger('click')
-    await nextTick()
-    await flushPromises()
+describe("InstrumentBrowser 添加投资标的入口（issue #697 / spec #690）", () => {
+  it("工具栏包含「添加投资标的」按钮，点击打开统一对话框；旧「添加基金」「新建标的」入口已退役", async () => {
+    const wrapper = mountBrowser();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="add-instrument"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("添加投资标的");
+    expect(wrapper.find('[data-testid="add-fund"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="create-instrument"]').exists()).toBe(false);
+    await wrapper.find('[data-testid="add-instrument"]').trigger("click");
+    await nextTick();
+    await flushPromises();
     // 统一对话框打开（市场必选下拉在场）；弹窗内交互由 AddInstrumentModal.test.ts 覆盖
-    expect(bodyQuery('[data-testid="add-instrument-market"]')).not.toBeNull()
-  })
+    expect(bodyQuery('[data-testid="add-instrument-market"]')).not.toBeNull();
+  });
 
-  it('添加成功：页面级回执 + 列表重拉（回到第 1 页）', async () => {
+  it("添加成功：页面级回执 + 列表重拉（回到第 1 页）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
-    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    });
+    const wrapper = mountBrowser();
+    await flushPromises();
+    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments").length;
     // 经组件 emit 驱动（对话框内查询/识别/兜底流程由 AddInstrumentModal.test.ts 覆盖）
-    wrapper.findComponent({ name: 'AddInstrumentModal' }).vm.$emit(
-      'added',
-      '已添加投资标的：贵州茅台（600519 · 股票）最新价 123.45',
-    )
-    await flushPromises()
-    const msg = wrapper.find('[data-testid="add-instrument-result"]')
-    expect(msg.exists()).toBe(true)
-    expect(msg.text()).toContain('已添加投资标的：贵州茅台')
-    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    expect(after).toBe(before + 1)
-  })
-})
+    wrapper
+      .findComponent({ name: "AddInstrumentModal" })
+      .vm.$emit("added", "已添加投资标的：贵州茅台（600519 · 股票）最新价 123.45");
+    await flushPromises();
+    const msg = wrapper.find('[data-testid="add-instrument-result"]');
+    expect(msg.exists()).toBe(true);
+    expect(msg.text()).toContain("已添加投资标的：贵州茅台");
+    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments").length;
+    expect(after).toBe(before + 1);
+  });
+});
 
-describe('InstrumentBrowser 移动档横向滚动下限（issue #849 / ADR-0088 决策 11 票⑨）', () => {
-  it('窄屏表格挂 scroll-x = 固定列宽总和（横向滚动吸收窄屏，列不压碎）；桌面档不挂零变化', async () => {
-    await assertMobileTierScrollX(() => mountBrowser())
-  })
-})
+describe("InstrumentBrowser 移动档横向滚动下限（issue #849 / ADR-0088 决策 11 票⑨）", () => {
+  it("窄屏表格挂 scroll-x = 固定列宽总和（横向滚动吸收窄屏，列不压碎）；桌面档不挂零变化", async () => {
+    await assertMobileTierScrollX(() => mountBrowser());
+  });
+});
 
-describe('InstrumentBrowser 自建标的删除（issue #292 / ADR-0036）', () => {
+describe("InstrumentBrowser 自建标的删除（issue #292 / ADR-0036）", () => {
   function manualRow() {
     return makeInstrument({
-      id: 'inst-manual',
-      symbol: '稳稳地幸福',
-      type: 'other',
-      name: '稳稳地幸福',
-      market: 'unknown',
-      source: 'manual',
+      id: "inst-manual",
+      symbol: "稳稳地幸福",
+      type: "other",
+      name: "稳稳地幸福",
+      market: "unknown",
+      source: "manual",
       invested: false,
-    })
-  }
-
-  function listWith(...items: Instrument[]) {
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: {
-        list_instruments: () => Promise.resolve({ items, total: items.length }),      },
-    })
-  }
-
-  /** NDialog 渲染到 document.body，按文本定位确认/取消按钮并原生触发点击。 */
-  async function clickDialogButton(text: string) {
-    const btn = Array.from(document.body.querySelectorAll('.n-dialog button')).find(
-      (b) => b.textContent?.trim() === text,
-    )
-    if (!btn) throw new Error(`dialog 中未找到按钮: ${text}`)
-    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    await nextTick()
-    await flushPromises()
-    await new Promise((r) => setTimeout(r, 30))
-  }
-
-  it('删除按钮仅手动标的行渲染，同步行无删除动作', async () => {
-    listWith(mockInstruments[0]!, manualRow())
-    const wrapper = mountBrowser()
-    await flushPromises()
-    expect(wrapper.find('[data-testid="delete-instrument-稳稳地幸福"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="delete-instrument-600000"]').exists()).toBe(false)
-  })
-
-  it('点击删除弹确认框（含标的名称）；取消不调用 delete_instrument', async () => {
-    listWith(manualRow())
-    const wrapper = mountBrowser()
-    await flushPromises()
-    await wrapper.find('[data-testid="delete-instrument-稳稳地幸福"]').trigger('click')
-    await nextTick()
-    // 确认框出现，含标的名称
-    expect(document.body.querySelector('.n-dialog')).not.toBeNull()
-    expect(document.body.querySelector('.n-dialog')!.textContent).toContain('稳稳地幸福')
-    // 未确认：不调用删除命令
-    expect(mockInvoke).not.toHaveBeenCalledWith('delete_instrument', { id: 'inst-manual' })
-    await clickDialogButton('取消')
-    expect(mockInvoke).not.toHaveBeenCalledWith('delete_instrument', { id: 'inst-manual' })
-  })
-
-  it('确认后调用 delete_instrument，列表原地重拉并显示成功回执', async () => {
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: {
-        list_instruments: () => Promise.resolve({ items: [manualRow()], total: 1 }),
-        delete_instrument: () => Promise.resolve(),      },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
-    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    await wrapper.find('[data-testid="delete-instrument-稳稳地幸福"]').trigger('click')
-    await nextTick()
-    await clickDialogButton('删除')
-    expect(mockInvoke).toHaveBeenCalledWith('delete_instrument', { id: 'inst-manual' })
-    const msg = wrapper.find('[data-testid="delete-instrument-result"]')
-    expect(msg.exists()).toBe(true)
-    expect(msg.text()).toContain('已删除标的：稳稳地幸福')
-    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    expect(after).toBe(before + 1)
-  })
-
-  it('删除失败（如已产生买卖流水）：显示后端中文错误，不重拉列表', async () => {
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: {
-        list_instruments: () => Promise.resolve({ items: [manualRow()], total: 1 }),
-        delete_instrument: () =>
-          Promise.reject({
-            kind: 'Invalid',
-            message: '该标的已有买卖流水，无法删除：可先删除相关交易后再试',
-          }),      },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
-    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    await wrapper.find('[data-testid="delete-instrument-稳稳地幸福"]').trigger('click')
-    await nextTick()
-    await clickDialogButton('删除')
-    const msg = wrapper.find('[data-testid="delete-instrument-result"]')
-    expect(msg.exists()).toBe(true)
-    expect(msg.text()).toContain('已有买卖流水')
-    expect(msg.text()).not.toContain('[object Object]')
-    // 失败不重拉列表
-    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    expect(after).toBe(before)
-  })
-})
-
-describe('InstrumentBrowser 价格来源列（issue #1189 / 词汇表「价格通道」）', () => {
-  /** 五行分别落在价格通道五值：行情 / 净值 / 恒定价格 / 手动报价 / 无来源 */
-  function rowsForPriceChannel() {
-    return [
-      makeInstrument({ id: 'inst-quote', symbol: '600000', type: 'stock', source: 'eastmoney', price_channel: 'quote' }),
-      makeInstrument({ id: 'inst-nav', symbol: '000001', type: 'fund', market: 'unknown', source: 'manual', price_channel: 'fund_nav' }),
-      makeInstrument({ id: 'inst-constant', symbol: '000198', type: 'fund', market: 'unknown', source: 'manual', price_channel: 'constant' }),
-      makeInstrument({ id: 'inst-manual', symbol: '稳稳地幸福', type: 'other', market: 'unknown', source: 'manual', price_channel: 'manual' }),
-      makeInstrument({ id: 'inst-none', symbol: 'ghost1', type: 'stock', market: 'unknown', source: 'eastmoney', price_channel: 'none' }),
-    ]
+    });
   }
 
   function listWith(...items: Instrument[]) {
@@ -528,203 +425,406 @@ describe('InstrumentBrowser 价格来源列（issue #1189 / 词汇表「价格�
       overrides: {
         list_instruments: () => Promise.resolve({ items, total: items.length }),
       },
-    })
+    });
   }
 
-  it('列头为「价格来源」，五通道各渲染对应标签（字典来源不再出现在列表）', async () => {
-    listWith(...rowsForPriceChannel())
-    const wrapper = mountBrowser()
-    await flushPromises()
-    const headers = wrapper.findAll('th').map((th) => th.text())
-    expect(headers).toContain('价格来源')
-    // 旧「来源」列（字典来源同步 / 手动）已从列表移除
-    expect(headers).not.toContain('来源')
-    const cells = wrapper.findAll('td[data-col-key="price_channel"]').map((c) => c.text())
-    expect(cells).toEqual(['行情', '净值', '恒定价格', '手动报价', '无来源'])
-  })
+  /** NDialog 渲染到 document.body，按文本定位确认/取消按钮并原生触发点击。 */
+  async function clickDialogButton(text: string) {
+    const btn = Array.from(document.body.querySelectorAll(".n-dialog button")).find(
+      (b) => b.textContent?.trim() === text,
+    );
+    if (!btn) throw new Error(`dialog 中未找到按钮: ${text}`);
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await nextTick();
+    await flushPromises();
+    await new Promise((r) => setTimeout(r, 30));
+  }
 
-  it('删除准入只认字典来源（价格通道无关）：手动字典行可删，同步字典行不可删', async () => {
+  it("删除按钮仅手动标的行渲染，同步行无删除动作", async () => {
+    listWith(mockInstruments[0]!, manualRow());
+    const wrapper = mountBrowser();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="delete-instrument-稳稳地幸福"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="delete-instrument-600000"]').exists()).toBe(false);
+  });
+
+  it("点击删除弹确认框（含标的名称）；取消不调用 delete_instrument", async () => {
+    listWith(manualRow());
+    const wrapper = mountBrowser();
+    await flushPromises();
+    await wrapper.find('[data-testid="delete-instrument-稳稳地幸福"]').trigger("click");
+    await nextTick();
+    // 确认框出现，含标的名称
+    expect(document.body.querySelector(".n-dialog")).not.toBeNull();
+    expect(document.body.querySelector(".n-dialog")!.textContent).toContain("稳稳地幸福");
+    // 未确认：不调用删除命令
+    expect(mockInvoke).not.toHaveBeenCalledWith("delete_instrument", { id: "inst-manual" });
+    await clickDialogButton("取消");
+    expect(mockInvoke).not.toHaveBeenCalledWith("delete_instrument", { id: "inst-manual" });
+  });
+
+  it("确认后调用 delete_instrument，列表原地重拉并显示成功回执", async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_instruments: () => Promise.resolve({ items: [manualRow()], total: 1 }),
+        delete_instrument: () => Promise.resolve(),
+      },
+    });
+    const wrapper = mountBrowser();
+    await flushPromises();
+    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments").length;
+    await wrapper.find('[data-testid="delete-instrument-稳稳地幸福"]').trigger("click");
+    await nextTick();
+    await clickDialogButton("删除");
+    expect(mockInvoke).toHaveBeenCalledWith("delete_instrument", { id: "inst-manual" });
+    const msg = wrapper.find('[data-testid="delete-instrument-result"]');
+    expect(msg.exists()).toBe(true);
+    expect(msg.text()).toContain("已删除标的：稳稳地幸福");
+    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments").length;
+    expect(after).toBe(before + 1);
+  });
+
+  it("删除失败（如已产生买卖流水）：显示后端中文错误，不重拉列表", async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_instruments: () => Promise.resolve({ items: [manualRow()], total: 1 }),
+        delete_instrument: () =>
+          Promise.reject({
+            kind: "Invalid",
+            message: "该标的已有买卖流水，无法删除：可先删除相关交易后再试",
+          }),
+      },
+    });
+    const wrapper = mountBrowser();
+    await flushPromises();
+    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments").length;
+    await wrapper.find('[data-testid="delete-instrument-稳稳地幸福"]').trigger("click");
+    await nextTick();
+    await clickDialogButton("删除");
+    const msg = wrapper.find('[data-testid="delete-instrument-result"]');
+    expect(msg.exists()).toBe(true);
+    expect(msg.text()).toContain("已有买卖流水");
+    expect(msg.text()).not.toContain("[object Object]");
+    // 失败不重拉列表
+    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments").length;
+    expect(after).toBe(before);
+  });
+});
+
+describe("InstrumentBrowser 价格来源列（issue #1189 / 词汇表「价格通道」）", () => {
+  /** 五行分别落在价格通道五值：行情 / 净值 / 恒定价格 / 手动报价 / 无来源 */
+  function rowsForPriceChannel() {
+    return [
+      makeInstrument({
+        id: "inst-quote",
+        symbol: "600000",
+        type: "stock",
+        source: "eastmoney",
+        price_channel: "quote",
+      }),
+      makeInstrument({
+        id: "inst-nav",
+        symbol: "000001",
+        type: "fund",
+        market: "unknown",
+        source: "manual",
+        price_channel: "fund_nav",
+      }),
+      makeInstrument({
+        id: "inst-constant",
+        symbol: "000198",
+        type: "fund",
+        market: "unknown",
+        source: "manual",
+        price_channel: "constant",
+      }),
+      makeInstrument({
+        id: "inst-manual",
+        symbol: "稳稳地幸福",
+        type: "other",
+        market: "unknown",
+        source: "manual",
+        price_channel: "manual",
+      }),
+      makeInstrument({
+        id: "inst-none",
+        symbol: "ghost1",
+        type: "stock",
+        market: "unknown",
+        source: "eastmoney",
+        price_channel: "none",
+      }),
+    ];
+  }
+
+  function listWith(...items: Instrument[]) {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_instruments: () => Promise.resolve({ items, total: items.length }),
+      },
+    });
+  }
+
+  it("列头为「价格来源」，五通道各渲染对应标签（字典来源不再出现在列表）", async () => {
+    listWith(...rowsForPriceChannel());
+    const wrapper = mountBrowser();
+    await flushPromises();
+    const headers = wrapper.findAll("th").map((th) => th.text());
+    expect(headers).toContain("价格来源");
+    // 旧「来源」列（字典来源同步 / 手动）已从列表移除
+    expect(headers).not.toContain("来源");
+    const cells = wrapper.findAll('td[data-col-key="price_channel"]').map((c) => c.text());
+    expect(cells).toEqual(["行情", "净值", "恒定价格", "手动报价", "无来源"]);
+  });
+
+  it("删除准入只认字典来源（价格通道无关）：手动字典行可删，同步字典行不可删", async () => {
     listWith(
       // 字典来源 = 同步，价格通道 = 手动报价 → 不可删
-      makeInstrument({ id: 'inst-east-manualch', symbol: '600001', type: 'stock', market: 'unknown', source: 'eastmoney', price_channel: 'manual' }),
+      makeInstrument({
+        id: "inst-east-manualch",
+        symbol: "600001",
+        type: "stock",
+        market: "unknown",
+        source: "eastmoney",
+        price_channel: "manual",
+      }),
       // 字典来源 = 手动，价格通道 = 净值 → 可删
-      makeInstrument({ id: 'inst-manual-nav', symbol: '000002', type: 'fund', market: 'unknown', source: 'manual', price_channel: 'fund_nav' }),
-    )
-    const wrapper = mountBrowser()
-    await flushPromises()
-    expect(wrapper.find('[data-testid="delete-instrument-600001"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="delete-instrument-000002"]').exists()).toBe(true)
-  })
-})
+      makeInstrument({
+        id: "inst-manual-nav",
+        symbol: "000002",
+        type: "fund",
+        market: "unknown",
+        source: "manual",
+        price_channel: "fund_nav",
+      }),
+    );
+    const wrapper = mountBrowser();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="delete-instrument-600001"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="delete-instrument-000002"]').exists()).toBe(true);
+  });
+});
 
-describe('InstrumentBrowser 行内录价入口（issue #291 / ADR-0036；通道判定收口 issue #1060）', () => {
+describe("InstrumentBrowser 行内录价入口（issue #291 / ADR-0036；通道判定收口 issue #1060）", () => {
   /** 六类行覆盖价格通道分区：行情 / 净值通道与无来源行无入口；手动报价通道有入口 */
   function rowsForQuoteGating() {
     return [
-      makeInstrument({ id: 'inst-st', symbol: '600000', type: 'stock', source: 'eastmoney', price_channel: 'quote' }),
-      makeInstrument({ id: 'inst-fund6', symbol: '000001', type: 'fund', source: 'manual', market: 'unknown', price_channel: 'fund_nav' }),
-      makeInstrument({ id: 'inst-none', symbol: 'ghost1', type: 'stock', source: 'eastmoney', market: 'unknown', price_channel: 'none' }),
-      makeInstrument({ id: 'inst-other', symbol: '稳稳地幸福', type: 'other', source: 'manual', market: 'unknown', price_channel: 'manual' }),
-      makeInstrument({ id: 'inst-bond', symbol: '019547', type: 'bond', source: 'manual', market: 'unknown', price_channel: 'manual' }),
-      makeInstrument({ id: 'inst-fund-name', symbol: '稳稳地幸福2', type: 'fund', source: 'manual', market: 'unknown', price_channel: 'manual' }),
-    ]
+      makeInstrument({
+        id: "inst-st",
+        symbol: "600000",
+        type: "stock",
+        source: "eastmoney",
+        price_channel: "quote",
+      }),
+      makeInstrument({
+        id: "inst-fund6",
+        symbol: "000001",
+        type: "fund",
+        source: "manual",
+        market: "unknown",
+        price_channel: "fund_nav",
+      }),
+      makeInstrument({
+        id: "inst-none",
+        symbol: "ghost1",
+        type: "stock",
+        source: "eastmoney",
+        market: "unknown",
+        price_channel: "none",
+      }),
+      makeInstrument({
+        id: "inst-other",
+        symbol: "稳稳地幸福",
+        type: "other",
+        source: "manual",
+        market: "unknown",
+        price_channel: "manual",
+      }),
+      makeInstrument({
+        id: "inst-bond",
+        symbol: "019547",
+        type: "bond",
+        source: "manual",
+        market: "unknown",
+        price_channel: "manual",
+      }),
+      makeInstrument({
+        id: "inst-fund-name",
+        symbol: "稳稳地幸福2",
+        type: "fund",
+        source: "manual",
+        market: "unknown",
+        price_channel: "manual",
+      }),
+    ];
   }
 
-  it('录价入口只对手动报价通道开放：行情 / 净值通道与无来源行无入口', async () => {
-    const rows = rowsForQuoteGating()
+  it("录价入口只对手动报价通道开放：行情 / 净值通道与无来源行无入口", async () => {
+    const rows = rowsForQuoteGating();
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
-        list_instruments: () => Promise.resolve({ items: rows, total: rows.length }),      },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
-    const cells = wrapper.findAll('td[data-col-key="quote"]').map((c) => c.text())
-    expect(cells).toEqual(['-', '-', '-', '录价', '录价', '录价'])
+        list_instruments: () => Promise.resolve({ items: rows, total: rows.length }),
+      },
+    });
+    const wrapper = mountBrowser();
+    await flushPromises();
+    const cells = wrapper.findAll('td[data-col-key="quote"]').map((c) => c.text());
+    expect(cells).toEqual(["-", "-", "-", "录价", "录价", "录价"]);
     // 入口按钮带标的定位 testid（有入口的三行）
-    expect(wrapper.find('[data-testid="quote-600000"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="quote-000001"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="quote-ghost1"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="quote-稳稳地幸福"]').exists()).toBe(true)
-  })
+    expect(wrapper.find('[data-testid="quote-600000"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="quote-000001"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="quote-ghost1"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="quote-稳稳地幸福"]').exists()).toBe(true);
+  });
 
-  it('点击行内「录价」打开报价弹窗，弹窗内展示标的代码', async () => {
-    const rows = [rowsForQuoteGating()[3]]
+  it("点击行内「录价」打开报价弹窗，弹窗内展示标的代码", async () => {
+    const rows = [rowsForQuoteGating()[3]];
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
-        list_instruments: () => Promise.resolve({ items: rows, total: rows.length }),      },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
-    await wrapper.find('[data-testid="quote-稳稳地幸福"]').trigger('click')
-    await nextTick()
-    expect(document.body.textContent).toContain('录价 — 稳稳地幸福')
-  })
+        list_instruments: () => Promise.resolve({ items: rows, total: rows.length }),
+      },
+    });
+    const wrapper = mountBrowser();
+    await flushPromises();
+    await wrapper.find('[data-testid="quote-稳稳地幸福"]').trigger("click");
+    await nextTick();
+    expect(document.body.textContent).toContain("录价 — 稳稳地幸福");
+  });
 
-  it('录价成功：页面级回执 + 列表零手动重拉（刷新由价格失效信号驱动）', async () => {
+  it("录价成功：页面级回执 + 列表零手动重拉（刷新由价格失效信号驱动）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         record_manual_price: () =>
-          Promise.resolve({ history_written: true, current_price_written: true }),      },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
+          Promise.resolve({ history_written: true, current_price_written: true }),
+      },
+    });
+    const wrapper = mountBrowser();
+    await flushPromises();
     // 弹窗内校验与提交流由 ManualPriceModal.test.ts 覆盖，此处经组件 emit 驱动
-    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    wrapper.findComponent({ name: 'ManualPriceModal' }).vm.$emit(
-      'quoted',
-      '已录价：稳稳地幸福 现价更新为 1.318',
-    )
-    await flushPromises()
+    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments").length;
+    wrapper
+      .findComponent({ name: "ManualPriceModal" })
+      .vm.$emit("quoted", "已录价：稳稳地幸福 现价更新为 1.318");
+    await flushPromises();
     // 页面级回执展示
-    const msg = wrapper.find('[data-testid="manual-quote-result"]')
-    expect(msg.exists()).toBe(true)
-    expect(msg.text()).toContain('已录价：稳稳地幸福 现价更新为 1.318')
+    const msg = wrapper.find('[data-testid="manual-quote-result"]');
+    expect(msg.exists()).toBe(true);
+    expect(msg.text()).toContain("已录价：稳稳地幸福 现价更新为 1.318");
     // 调用方零手动重拉：录价回执不触发列表查询
-    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    expect(after).toBe(before)
+    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments").length;
+    expect(after).toBe(before);
     // 列表刷新由价格失效信号驱动（后端实际写入后广播）：信号触发后恰好重拉一次
-    firePricesChanged()
-    await flushPromises()
-    const refreshed = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    expect(refreshed).toBe(before + 1)
-  })
-})
+    firePricesChanged();
+    await flushPromises();
+    const refreshed = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments").length;
+    expect(refreshed).toBe(before + 1);
+  });
+});
 
-describe('InstrumentBrowser 空态（issue #1193）', () => {
+describe("InstrumentBrowser 空态（issue #1193）", () => {
   function listEmpty() {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         list_instruments: () => Promise.resolve({ items: [], total: 0 }),
       },
-    })
+    });
   }
 
-  it('库内无标的且无筛选：空态为「暂无标的」', async () => {
-    listEmpty()
-    const wrapper = mountBrowser()
-    await flushPromises()
-    const empty = wrapper.find('[data-testid="instruments-empty"]')
-    expect(empty.exists()).toBe(true)
-    expect(empty.text()).toBe('暂无标的')
+  it("库内无标的且无筛选：空态为「暂无标的」", async () => {
+    listEmpty();
+    const wrapper = mountBrowser();
+    await flushPromises();
+    const empty = wrapper.find('[data-testid="instruments-empty"]');
+    expect(empty.exists()).toBe(true);
+    expect(empty.text()).toBe("暂无标的");
     // 两态互斥：无筛选时不得显示「筛选无匹配」
-    expect(wrapper.find('[data-testid="instruments-no-match"]').exists()).toBe(false)
-  })
+    expect(wrapper.find('[data-testid="instruments-no-match"]').exists()).toBe(false);
+  });
 
-  it('筛选未命中：空态为「筛选条件下无匹配标的」，与「暂无标的」可区分', async () => {
-    listEmpty()
-    const wrapper = mountBrowser()
-    await flushPromises()
-    expect(wrapper.find('[data-testid="instruments-empty"]').exists()).toBe(true)
+  it("筛选未命中：空态为「筛选条件下无匹配标的」，与「暂无标的」可区分", async () => {
+    listEmpty();
+    const wrapper = mountBrowser();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="instruments-empty"]').exists()).toBe(true);
     // 「只看持仓」是生效中的筛选（无防抖，切换即重拉）
-    await wrapper.find('[data-testid="only-invested-switch"]').trigger('click')
-    await flushPromises()
-    const noMatch = wrapper.find('[data-testid="instruments-no-match"]')
-    expect(noMatch.exists()).toBe(true)
-    expect(noMatch.text()).toBe('筛选条件下无匹配标的')
-    expect(wrapper.find('[data-testid="instruments-empty"]').exists()).toBe(false)
-  })
+    await wrapper.find('[data-testid="only-invested-switch"]').trigger("click");
+    await flushPromises();
+    const noMatch = wrapper.find('[data-testid="instruments-no-match"]');
+    expect(noMatch.exists()).toBe(true);
+    expect(noMatch.text()).toBe("筛选条件下无匹配标的");
+    expect(wrapper.find('[data-testid="instruments-empty"]').exists()).toBe(false);
+  });
 
-  it('加载门：首载在途不渲染空态，加载完成后空态才出现（空库不闪现「暂无标的」）', async () => {
-    let resolveList!: (v: unknown) => void
+  it("加载门：首载在途不渲染空态，加载完成后空态才出现（空库不闪现「暂无标的」）", async () => {
+    let resolveList!: (v: unknown) => void;
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         list_instruments: () =>
           new Promise((res) => {
-            resolveList = res
+            resolveList = res;
           }),
       },
-    })
-    const wrapper = mountBrowser()
-    await nextTick()
+    });
+    const wrapper = mountBrowser();
+    await nextTick();
     // 首载在途：空态不渲染（否则空库会先闪「暂无标的」再出列表）
-    expect(wrapper.find('[data-testid="instruments-empty"]').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('暂无标的')
-    resolveList({ items: [], total: 0 })
-    await flushPromises()
-    const empty = wrapper.find('[data-testid="instruments-empty"]')
-    expect(empty.exists()).toBe(true)
-    expect(empty.text()).toBe('暂无标的')
-  })
-})
+    expect(wrapper.find('[data-testid="instruments-empty"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("暂无标的");
+    resolveList({ items: [], total: 0 });
+    await flushPromises();
+    const empty = wrapper.find('[data-testid="instruments-empty"]');
+    expect(empty.exists()).toBe(true);
+    expect(empty.text()).toBe("暂无标的");
+  });
+});
 
-describe('InstrumentBrowser 列表查询在途竞态（issue #1401）', () => {
-  it('先发查询迟到不覆盖后发结果：列表呈现后发查询的行', async () => {
-    const first = deferred<{ items: Instrument[]; total: number }>()
-    const second = deferred<{ items: Instrument[]; total: number }>()
-    let calls = 0
+describe("InstrumentBrowser 列表查询在途竞态（issue #1401）", () => {
+  it("先发查询迟到不覆盖后发结果：列表呈现后发查询的行", async () => {
+    const first = deferred<{ items: Instrument[]; total: number }>();
+    const second = deferred<{ items: Instrument[]; total: number }>();
+    let calls = 0;
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         list_instruments: () => {
-          calls += 1
+          calls += 1;
           if (calls === 1) {
-            return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })
+            return Promise.resolve({ items: mockInstruments, total: mockInstruments.length });
           }
-          return calls === 2 ? first.promise : second.promise
+          return calls === 2 ? first.promise : second.promise;
         },
       },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
+    });
+    const wrapper = mountBrowser();
+    await flushPromises();
     // 两次无防抖查询（勾选 / 取消「只看持仓」），两次都实际发出才构成乱序到达
-    const sw = wrapper.find('[data-testid="only-invested-switch"]')
-    await sw.trigger('click')
-    await sw.trigger('click')
-    expect(calls).toBe(3)
+    const sw = wrapper.find('[data-testid="only-invested-switch"]');
+    await sw.trigger("click");
+    await sw.trigger("click");
+    expect(calls).toBe(3);
 
     // 后发 B 先到达
-    second.resolve({ items: [makeInstrument({ id: 'inst-b', symbol: 'BBB', name: '后发' })], total: 1 })
-    await flushPromises()
+    second.resolve({
+      items: [makeInstrument({ id: "inst-b", symbol: "BBB", name: "后发" })],
+      total: 1,
+    });
+    await flushPromises();
     // 先发 A 迟到：不得覆盖后发结果（删掉纪元守卫本断言变红）
-    first.resolve({ items: [makeInstrument({ id: 'inst-a', symbol: 'AAA', name: '先发' })], total: 1 })
-    await flushPromises()
+    first.resolve({
+      items: [makeInstrument({ id: "inst-a", symbol: "AAA", name: "先发" })],
+      total: 1,
+    });
+    await flushPromises();
 
-    const symbols = wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text())
-    expect(symbols).toEqual(['BBB'])
-  })
-})
+    const symbols = wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text());
+    expect(symbols).toEqual(["BBB"]);
+  });
+});

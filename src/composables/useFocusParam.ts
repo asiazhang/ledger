@@ -1,4 +1,4 @@
-import type { LocationQuery } from 'vue-router'
+import type { LocationQuery } from "vue-router";
 
 /**
  * focus 消费助手（spec #704 / issue #705，词汇表「实体定位参数（focus 参数）」）：
@@ -27,18 +27,18 @@ import type { LocationQuery } from 'vue-router'
  */
 
 /** focus 参数词表：一名一义（不按页语义命名，避免与下钻过滤参数混淆）。 */
-export const FOCUS_QUERY_KEY = 'focus'
+export const FOCUS_QUERY_KEY = "focus";
 
 export interface UseFocusParamOptions {
   /** focus 读取源：目标视图的路由 query（getter 注入，工厂不依赖 router）。 */
-  query: () => LocationQuery
+  query: () => LocationQuery;
   /** 消费回调：focus 在场时触发一次，携带实体 id；回调体 100% 是视图业务代码。 */
-  onFocus: (entityId: string) => void
+  onFocus: (entityId: string) => void;
 }
 
 export interface UseFocusParamReturn {
   /** 消费：本实例仅首次调用生效（在场则回调、空转则封闸），此后一律丢弃。 */
-  consume(): void
+  consume(): void;
 }
 
 /**
@@ -46,16 +46,16 @@ export interface UseFocusParamReturn {
  * 多实例各自消费一次，是「刷新 / 重进视图重定位」的机制基础）。
  */
 export function useFocusParam(options: UseFocusParamOptions): UseFocusParamReturn {
-  let spent = false
+  let spent = false;
 
   return {
     consume() {
-      if (spent) return
-      spent = true
-      const entityId = readFocusId(options.query())
-      if (entityId !== null) options.onFocus(entityId)
+      if (spent) return;
+      spent = true;
+      const entityId = readFocusId(options.query());
+      if (entityId !== null) options.onFocus(entityId);
     },
-  }
+  };
 }
 
 /**
@@ -63,9 +63,9 @@ export function useFocusParam(options: UseFocusParamOptions): UseFocusParamRetur
  * null 按缺席）；无可用值返回 null（空转）。
  */
 function readFocusId(query: LocationQuery): string | null {
-  const raw = query[FOCUS_QUERY_KEY]
-  const value = Array.isArray(raw) ? raw[0] : raw
-  return typeof value === 'string' && value !== '' ? value : null
+  const raw = query[FOCUS_QUERY_KEY];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return typeof value === "string" && value !== "" ? value : null;
 }
 
 /**
@@ -75,5 +75,5 @@ function readFocusId(query: LocationQuery): string | null {
  * 语义两侧一致，不在守卫里另写一遍读值规则。
  */
 export function hasFocusParam(query: LocationQuery): boolean {
-  return readFocusId(query) !== null
+  return readFocusId(query) !== null;
 }

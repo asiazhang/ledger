@@ -9,17 +9,17 @@
  * `vi.stubGlobal('__GIT_SHA__', ...)` 等价注入固定值。
  */
 export function gitShaFull(): string {
-  if (typeof __GIT_SHA__ === 'string') return __GIT_SHA__
-  return ''
+  if (typeof __GIT_SHA__ === "string") return __GIT_SHA__;
+  return "";
 }
 
 function isGitDirty(): boolean {
-  return typeof __GIT_DIRTY__ === 'boolean' && __GIT_DIRTY__
+  return typeof __GIT_DIRTY__ === "boolean" && __GIT_DIRTY__;
 }
 
 /** 短 sha（前 7 位），脏树追加 `-dirty`；无法读取 Git 信息时返回空串。 */
 export function gitVersionLabel(): string {
-  const sha = gitShaFull()
-  if (!sha) return ''
-  return sha.slice(0, 7) + (isGitDirty() ? '-dirty' : '')
+  const sha = gitShaFull();
+  if (!sha) return "";
+  return sha.slice(0, 7) + (isGitDirty() ? "-dirty" : "");
 }

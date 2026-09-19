@@ -1,41 +1,41 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { messageApi } from '@ledger/test-support/message-mock'
-import { captureLastListener } from '@ledger/test-support/listen-mock'
-import { findButton, findButtonByTestId, findBodyButtonByTestId } from '@ledger/test-support/dom'
-import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { messageApi } from "@ledger/test-support/message-mock";
+import { captureLastListener } from "@ledger/test-support/listen-mock";
+import { findButton, findButtonByTestId, findBodyButtonByTestId } from "@ledger/test-support/dom";
+import { mount, flushPromises } from "@vue/test-utils";
+import { nextTick } from "vue";
 
-import BackupSettings from '@/settings/BackupSettings.vue'
-import { useAppStore } from '@/stores/app'
-import type { BackupFileInfo } from '@ledger/types'
+import BackupSettings from "@/settings/BackupSettings.vue";
+import { useAppStore } from "@/stores/app";
+import type { BackupFileInfo } from "@ledger/types";
 
 /** 按出现顺序取全部卡片标题（卡片顺序即页签内信息架构）。 */
 function cardTitles(wrapper: ReturnType<typeof mount>) {
-  return wrapper.findAll('.n-card-header__main').map((c) => c.text())
+  return wrapper.findAll(".n-card-header__main").map((c) => c.text());
 }
 
 // 剧本剪贴板（issue #653）：断言复制内容与成功/失败提示分支（父 spec 测试决策：
 // 组件测试中 mock 剪贴板对象，断言写入内容与成功提示）。
-const writeText = vi.fn().mockResolvedValue(undefined)
+const writeText = vi.fn().mockResolvedValue(undefined);
 
 const encryptedBackup: BackupFileInfo = {
-  file_name: 'ledger-auto-20260217-093000.db.zip',
-  path: '/Users/me/backups/ledger-auto-20260217-093000.db.zip',
+  file_name: "ledger-auto-20260217-093000.db.zip",
+  path: "/Users/me/backups/ledger-auto-20260217-093000.db.zip",
   size_bytes: 4096,
-  created_at: '2026-02-17T09:30:00Z',
-  kind: 'auto',
+  created_at: "2026-02-17T09:30:00Z",
+  kind: "auto",
   encrypted: true,
-}
+};
 
 const plaintextBackup: BackupFileInfo = {
-  file_name: 'ledger-backup-20260101-010101.db.zip',
-  path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
+  file_name: "ledger-backup-20260101-010101.db.zip",
+  path: "/Users/me/backups/ledger-backup-20260101-010101.db.zip",
   size_bytes: 1024,
-  created_at: '2026-01-01T01:01:01Z',
-  kind: 'manual',
+  created_at: "2026-01-01T01:01:01Z",
+  kind: "manual",
   encrypted: false,
-}
+};
 
 /** 自动备份状态命令契约快照（本场景恒为已启用、从未执行、无连续失败）。 */
 const AUTO_BACKUP_ON = {
@@ -43,234 +43,243 @@ const AUTO_BACKUP_ON = {
   last_backup_at: null,
   consecutive_failures: 0,
   failure_alerting: false,
-}
+};
 
 beforeEach(() => {
-  writeText.mockClear()
-  Object.assign(navigator, { clipboard: { writeText } })
+  writeText.mockClear();
+  Object.assign(navigator, { clipboard: { writeText } });
   // 备份列表以配置目录为前提（未配置时列表恒空、不发 IPC）。
-  useAppStore().setBackupDir('/Users/me/backups')
-})
+  useAppStore().setBackupDir("/Users/me/backups");
+});
 
-describe('BackupSettings 备份列表加密列（issue #572 / ADR-0075 决策 7）', () => {
-  it('密文备份行渲染锁形标记，明文行不渲染', async () => {
-    wireInvokeSeam({ defaults: { list_backups: [encryptedBackup, plaintextBackup], get_auto_backup_state: AUTO_BACKUP_ON } })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+describe("BackupSettings 备份列表加密列（issue #572 / ADR-0075 决策 7）", () => {
+  it("密文备份行渲染锁形标记，明文行不渲染", async () => {
+    wireInvokeSeam({
+      defaults: {
+        list_backups: [encryptedBackup, plaintextBackup],
+        get_auto_backup_state: AUTO_BACKUP_ON,
+      },
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    const html = wrapper.html()
+    const html = wrapper.html();
     // 列头存在（用户可见的「加密」列）。
-    expect(html).toContain('加密')
+    expect(html).toContain("加密");
     // 锁形标记随标记显隐：密文行有图标（svg），明文行无。
-    const icons = wrapper.findAll('.n-data-table-tr svg')
-    expect(icons.length).toBe(1)
+    const icons = wrapper.findAll(".n-data-table-tr svg");
+    expect(icons.length).toBe(1);
     // 标记带可读名（title 提示「密文备份」）。
-    expect(wrapper.html()).toContain('密文备份')
-  })
+    expect(wrapper.html()).toContain("密文备份");
+  });
 
-  it('全部为明文备份（含旧备份缺标记）时不渲染任何锁形标记', async () => {
-    wireInvokeSeam({ defaults: { list_backups: [plaintextBackup], get_auto_backup_state: AUTO_BACKUP_ON } })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+  it("全部为明文备份（含旧备份缺标记）时不渲染任何锁形标记", async () => {
+    wireInvokeSeam({
+      defaults: { list_backups: [plaintextBackup], get_auto_backup_state: AUTO_BACKUP_ON },
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    expect(wrapper.findAll('.n-data-table-tr svg')).toHaveLength(0)
-  })
-})
+    expect(wrapper.findAll(".n-data-table-tr svg")).toHaveLength(0);
+  });
+});
 
-describe('BackupSettings 备份页签重排与危险视觉修正（issue #651 / ADR-0078 决策 4）', () => {
-  it('卡片顺序为 备份（动作）→ 备份目录 → 自动备份 → 备份文件列表 → 恢复（最常用一键备份免滚动直达）', async () => {
-    wireInvokeSeam({ defaults: { list_backups: [], get_auto_backup_state: AUTO_BACKUP_ON } })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+describe("BackupSettings 备份页签重排与危险视觉修正（issue #651 / ADR-0078 决策 4）", () => {
+  it("卡片顺序为 备份（动作）→ 备份目录 → 自动备份 → 备份文件列表 → 恢复（最常用一键备份免滚动直达）", async () => {
+    wireInvokeSeam({ defaults: { list_backups: [], get_auto_backup_state: AUTO_BACKUP_ON } });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    expect(cardTitles(wrapper)).toEqual([
-      '备份',
-      '备份目录',
-      '自动备份',
-      '备份文件列表',
-      '恢复',
-    ])
-  })
+    expect(cardTitles(wrapper)).toEqual(["备份", "备份目录", "自动备份", "备份文件列表", "恢复"]);
+  });
 
-  it('恢复入口按钮降为 default 形态：红色警示由确认弹窗承载，双闸不变（ADR-0078 决策 4）', async () => {
-    wireInvokeSeam({ defaults: { list_backups: [], get_auto_backup_state: AUTO_BACKUP_ON } })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+  it("恢复入口按钮降为 default 形态：红色警示由确认弹窗承载，双闸不变（ADR-0078 决策 4）", async () => {
+    wireInvokeSeam({ defaults: { list_backups: [], get_auto_backup_state: AUTO_BACKUP_ON } });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    const restoreBtn = findButton(wrapper, '从备份恢复')!
-    expect(restoreBtn).toBeTruthy()
-    expect(restoreBtn.classes()).not.toContain('n-button--error-type')
-  })
+    const restoreBtn = findButton(wrapper, "从备份恢复")!;
+    expect(restoreBtn).toBeTruthy();
+    expect(restoreBtn.classes()).not.toContain("n-button--error-type");
+  });
 
-  it('恢复卡破坏性警示升为显著警示块（NAlert）：不再是最低对比度灰字', async () => {
-    wireInvokeSeam({ defaults: { list_backups: [], get_auto_backup_state: AUTO_BACKUP_ON } })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+  it("恢复卡破坏性警示升为显著警示块（NAlert）：不再是最低对比度灰字", async () => {
+    wireInvokeSeam({ defaults: { list_backups: [], get_auto_backup_state: AUTO_BACKUP_ON } });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    const alert = wrapper.find('.n-alert')
-    expect(alert.exists()).toBe(true)
+    const alert = wrapper.find(".n-alert");
+    expect(alert.exists()).toBe(true);
     // 显著形态：带图标；内容保留「替换当前全部数据」加粗后果句。
-    expect(alert.classes()).toContain('n-alert--show-icon')
-    expect(alert.text()).toContain('替换当前全部数据')
-    expect(alert.find('strong').exists()).toBe(true)
-  })
+    expect(alert.classes()).toContain("n-alert--show-icon");
+    expect(alert.text()).toContain("替换当前全部数据");
+    expect(alert.find("strong").exists()).toBe(true);
+  });
 
-  it('清理按钮升为 warning 次要形态（不可恢复的删除带警示色，ADR-0078 决策 4）', async () => {
-    wireInvokeSeam({ defaults: { list_backups: [plaintextBackup], get_auto_backup_state: AUTO_BACKUP_ON } })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+  it("清理按钮升为 warning 次要形态（不可恢复的删除带警示色，ADR-0078 决策 4）", async () => {
+    wireInvokeSeam({
+      defaults: { list_backups: [plaintextBackup], get_auto_backup_state: AUTO_BACKUP_ON },
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    const pruneBtn = findButton(wrapper, '立即清理')!
-    expect(pruneBtn).toBeTruthy()
-    expect(pruneBtn.classes()).toContain('n-button--warning-type')
-    expect(pruneBtn.classes()).toContain('n-button--secondary')
-  })
+    const pruneBtn = findButton(wrapper, "立即清理")!;
+    expect(pruneBtn).toBeTruthy();
+    expect(pruneBtn.classes()).toContain("n-button--warning-type");
+    expect(pruneBtn.classes()).toContain("n-button--secondary");
+  });
 
-  it('手动刷新按钮重拉备份列表：文件管理器手动增删后可使列表与磁盘一致（issue #651）', async () => {
-    let disk: BackupFileInfo[] = [plaintextBackup]
-    let listCalls = 0
-    let resolveList: (() => void) | null = null
+  it("手动刷新按钮重拉备份列表：文件管理器手动增删后可使列表与磁盘一致（issue #651）", async () => {
+    let disk: BackupFileInfo[] = [plaintextBackup];
+    let listCalls = 0;
+    let resolveList: (() => void) | null = null;
     wireInvokeSeam({
       defaults: { get_auto_backup_state: AUTO_BACKUP_ON },
       overrides: {
         list_backups: () => {
-          listCalls++
+          listCalls++;
           return new Promise((resolve) => {
-            resolveList = () => resolve(disk)
-          })
+            resolveList = () => resolve(disk);
+          });
         },
       },
-    })
-    const wrapper = mount(BackupSettings)
+    });
+    const wrapper = mount(BackupSettings);
     // 首刷在途：按钮在场，先放行首次拉取。
-    const refreshBtn = findButtonByTestId(wrapper, 'backup-list-refresh')
-    expect(refreshBtn.exists()).toBe(true)
-    resolveList!()
-    await flushPromises()
-    expect(listCalls).toBe(1)
-    expect(wrapper.html()).toContain('当前共 1 个备份')
+    const refreshBtn = findButtonByTestId(wrapper, "backup-list-refresh");
+    expect(refreshBtn.exists()).toBe(true);
+    resolveList!();
+    await flushPromises();
+    expect(listCalls).toBe(1);
+    expect(wrapper.html()).toContain("当前共 1 个备份");
 
     // 用户在文件管理器手动放入另一个备份 → 点刷新 → 列表与磁盘一致。
-    disk = [encryptedBackup, plaintextBackup]
-    await findButtonByTestId(wrapper, 'backup-list-refresh').trigger('click')
-    resolveList!()
-    await flushPromises()
-    expect(listCalls).toBe(2)
-    expect(wrapper.html()).toContain('当前共 2 个备份')
-    const cellTexts = wrapper.findAll('tbody td').map((td) => td.text())
-    expect(cellTexts).toContain('ledger-auto-20260217-093000.db.zip')
-  })
-})
+    disk = [encryptedBackup, plaintextBackup];
+    await findButtonByTestId(wrapper, "backup-list-refresh").trigger("click");
+    resolveList!();
+    await flushPromises();
+    expect(listCalls).toBe(2);
+    expect(wrapper.html()).toContain("当前共 2 个备份");
+    const cellTexts = wrapper.findAll("tbody td").map((td) => td.text());
+    expect(cellTexts).toContain("ledger-auto-20260217-093000.db.zip");
+  });
+});
 
-describe('BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）', () => {
-  it('超上限点「立即清理」：弹 warning 级应用内弹窗，待删数量与不可恢复后果在场，不立即删除', async () => {
+describe("BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）", () => {
+  it("超上限点「立即清理」：弹 warning 级应用内弹窗，待删数量与不可恢复后果在场，不立即删除", async () => {
     wireInvokeSeam({
       defaults: {
         list_backups: [encryptedBackup, plaintextBackup],
         get_auto_backup_state: AUTO_BACKUP_ON,
-        prune_backups: { kept: 1, deleted: ['/a', '/b'], failed: [] },
+        prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
       },
-    })
-    useAppStore().setBackupMaxCount(1)
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+    });
+    useAppStore().setBackupMaxCount(1);
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    await findButton(wrapper, '立即清理')!.trigger('click')
-    await flushPromises()
+    await findButton(wrapper, "立即清理")!.trigger("click");
+    await flushPromises();
 
     // warning 级形态（ADR-0078 决策 2）：琥珀警示块承载待删数量与不可恢复后果
-    const alert = document.body.querySelector('.n-modal .n-alert')
-    expect(alert, '警示块应存在').toBeTruthy()
-    expect(document.body.textContent).toContain('将删除最旧的 1 个备份')
-    expect(document.body.textContent).toContain('删除后不可恢复')
-    expect(findBodyButtonByTestId('danger-confirm')!.classes()).toContain('n-button--warning-type')
+    const alert = document.body.querySelector(".n-modal .n-alert");
+    expect(alert, "警示块应存在").toBeTruthy();
+    expect(document.body.textContent).toContain("将删除最旧的 1 个备份");
+    expect(document.body.textContent).toContain("删除后不可恢复");
+    expect(findBodyButtonByTestId("danger-confirm")!.classes()).toContain("n-button--warning-type");
     // 未确认前零删除副作用
-    expect(mockInvoke).not.toHaveBeenCalledWith('prune_backups', expect.anything())
-  })
+    expect(mockInvoke).not.toHaveBeenCalledWith("prune_backups", expect.anything());
+  });
 
-  it('确认清理：执行 prune_backups 后弹窗关闭并刷新列表', async () => {
+  it("确认清理：执行 prune_backups 后弹窗关闭并刷新列表", async () => {
     wireInvokeSeam({
       defaults: {
         list_backups: [encryptedBackup, plaintextBackup],
         get_auto_backup_state: AUTO_BACKUP_ON,
-        prune_backups: { kept: 1, deleted: ['/a', '/b'], failed: [] },
+        prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
       },
-    })
-    useAppStore().setBackupMaxCount(1)
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+    });
+    useAppStore().setBackupMaxCount(1);
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    await findButton(wrapper, '立即清理')!.trigger('click')
-    await flushPromises()
-    await findBodyButtonByTestId('danger-confirm')!.trigger('click')
-    await flushPromises()
+    await findButton(wrapper, "立即清理")!.trigger("click");
+    await flushPromises();
+    await findBodyButtonByTestId("danger-confirm")!.trigger("click");
+    await flushPromises();
 
-    expect(mockInvoke).toHaveBeenCalledWith('prune_backups', { dir: '/Users/me/backups', keep: 1 })
-  })
+    expect(mockInvoke).toHaveBeenCalledWith("prune_backups", { dir: "/Users/me/backups", keep: 1 });
+  });
 
-  it('取消清理：弹窗关闭，不发任何删除调用（零副作用）', async () => {
+  it("取消清理：弹窗关闭，不发任何删除调用（零副作用）", async () => {
     wireInvokeSeam({
       defaults: {
         list_backups: [encryptedBackup, plaintextBackup],
         get_auto_backup_state: AUTO_BACKUP_ON,
-        prune_backups: { kept: 1, deleted: ['/a', '/b'], failed: [] },
+        prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
       },
-    })
-    useAppStore().setBackupMaxCount(1)
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+    });
+    useAppStore().setBackupMaxCount(1);
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    await findButton(wrapper, '立即清理')!.trigger('click')
-    await flushPromises()
-    await findBodyButtonByTestId('danger-cancel')!.trigger('click')
-    await flushPromises()
+    await findButton(wrapper, "立即清理")!.trigger("click");
+    await flushPromises();
+    await findBodyButtonByTestId("danger-cancel")!.trigger("click");
+    await flushPromises();
 
-    expect(mockInvoke).not.toHaveBeenCalledWith('prune_backups', expect.anything())
-    void wrapper
-  })
-})
+    expect(mockInvoke).not.toHaveBeenCalledWith("prune_backups", expect.anything());
+    void wrapper;
+  });
+});
 
-describe('BackupSettings 复制与访达定位通道（issue #653）', () => {
-  it('备份列表行「在访达中显示」：以该行完整路径调用 reveal_in_file_manager，成功无错误提示', async () => {
+describe("BackupSettings 复制与访达定位通道（issue #653）", () => {
+  it("备份列表行「在访达中显示」：以该行完整路径调用 reveal_in_file_manager，成功无错误提示", async () => {
     wireInvokeSeam({
       defaults: {
         list_backups: [encryptedBackup, plaintextBackup],
         get_auto_backup_state: AUTO_BACKUP_ON,
       },
       overrides: { reveal_in_file_manager: () => Promise.resolve(undefined) },
-    })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    await findButtonByTestId(wrapper, `backup-reveal-${encryptedBackup.file_name}`).trigger('click')
-    await flushPromises()
-    expect(mockInvoke).toHaveBeenCalledWith('reveal_in_file_manager', {
+    await findButtonByTestId(wrapper, `backup-reveal-${encryptedBackup.file_name}`).trigger(
+      "click",
+    );
+    await flushPromises();
+    expect(mockInvoke).toHaveBeenCalledWith("reveal_in_file_manager", {
       path: encryptedBackup.path,
-    })
-    expect(messageApi.error).not.toHaveBeenCalled()
-  })
+    });
+    expect(messageApi.error).not.toHaveBeenCalled();
+  });
 
-  it('访达定位失败：后端中文错误原样透传为错误提示', async () => {
+  it("访达定位失败：后端中文错误原样透传为错误提示", async () => {
     wireInvokeSeam({
       defaults: {
         list_backups: [plaintextBackup],
         get_auto_backup_state: AUTO_BACKUP_ON,
       },
-      overrides: { reveal_in_file_manager: () => Promise.reject(new Error('在访达中显示失败：boom')) },
-    })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+      overrides: {
+        reveal_in_file_manager: () => Promise.reject(new Error("在访达中显示失败：boom")),
+      },
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    await findButtonByTestId(wrapper, `backup-reveal-${plaintextBackup.file_name}`).trigger('click')
-    await flushPromises()
-    expect(mockInvoke).toHaveBeenCalledWith('reveal_in_file_manager', {
+    await findButtonByTestId(wrapper, `backup-reveal-${plaintextBackup.file_name}`).trigger(
+      "click",
+    );
+    await flushPromises();
+    expect(mockInvoke).toHaveBeenCalledWith("reveal_in_file_manager", {
       path: plaintextBackup.path,
-    })
-    expect(messageApi.error).toHaveBeenCalledWith('在访达中显示失败：boom')
-  })
+    });
+    expect(messageApi.error).toHaveBeenCalledWith("在访达中显示失败：boom");
+  });
 
-  it('最近备份路径「复制路径」：写入完整原始路径（不含大小括注）并成功提示', async () => {
-    const backupPath = '/Users/me/backups/ledger-backup-20260217-120000.db.zip'
+  it("最近备份路径「复制路径」：写入完整原始路径（不含大小括注）并成功提示", async () => {
+    const backupPath = "/Users/me/backups/ledger-backup-20260217-120000.db.zip";
     wireInvokeSeam({
       defaults: {
         create_backup: { path: backupPath, size_bytes: 2048 },
@@ -278,23 +287,23 @@ describe('BackupSettings 复制与访达定位通道（issue #653）', () => {
         list_backups: [],
         get_auto_backup_state: AUTO_BACKUP_ON,
       },
-    })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
     // 未备份前无复制入口（无路径可复制）。
-    expect(findButtonByTestId(wrapper, 'copy-last-backup-path').exists()).toBe(false)
+    expect(findButtonByTestId(wrapper, "copy-last-backup-path").exists()).toBe(false);
 
-    await findButton(wrapper, '一键备份')!.trigger('click')
-    await flushPromises()
-    await findButtonByTestId(wrapper, 'copy-last-backup-path').trigger('click')
-    await flushPromises()
-    expect(writeText).toHaveBeenCalledTimes(1)
-    expect(writeText).toHaveBeenCalledWith(backupPath)
-    expect(messageApi.success).toHaveBeenCalledWith(expect.stringContaining('已复制完整路径'))
-  })
+    await findButton(wrapper, "一键备份")!.trigger("click");
+    await flushPromises();
+    await findButtonByTestId(wrapper, "copy-last-backup-path").trigger("click");
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith(backupPath);
+    expect(messageApi.success).toHaveBeenCalledWith(expect.stringContaining("已复制完整路径"));
+  });
 
-  it('复制失败：错误提示，不静默', async () => {
-    const backupPath = '/Users/me/backups/ledger-backup-20260217-120000.db.zip'
+  it("复制失败：错误提示，不静默", async () => {
+    const backupPath = "/Users/me/backups/ledger-backup-20260217-120000.db.zip";
     wireInvokeSeam({
       defaults: {
         create_backup: { path: backupPath, size_bytes: 2048 },
@@ -302,155 +311,165 @@ describe('BackupSettings 复制与访达定位通道（issue #653）', () => {
         list_backups: [],
         get_auto_backup_state: AUTO_BACKUP_ON,
       },
-    })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
-    await findButton(wrapper, '一键备份')!.trigger('click')
-    await flushPromises()
-    writeText.mockRejectedValueOnce(new Error('剪贴板不可用'))
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
+    await findButton(wrapper, "一键备份")!.trigger("click");
+    await flushPromises();
+    writeText.mockRejectedValueOnce(new Error("剪贴板不可用"));
     // 备份流程本身已有一次成功提示；复制失败后不应再增成功提示。
-    const successBefore = messageApi.success.mock.calls.length
-    await findButtonByTestId(wrapper, 'copy-last-backup-path').trigger('click')
-    await flushPromises()
-    expect(messageApi.error).toHaveBeenCalledWith(expect.stringContaining('复制路径失败'))
-    expect(messageApi.success.mock.calls.length).toBe(successBefore)
-    void wrapper
-  })
-})
+    const successBefore = messageApi.success.mock.calls.length;
+    await findButtonByTestId(wrapper, "copy-last-backup-path").trigger("click");
+    await flushPromises();
+    expect(messageApi.error).toHaveBeenCalledWith(expect.stringContaining("复制路径失败"));
+    expect(messageApi.success.mock.calls.length).toBe(successBefore);
+    void wrapper;
+  });
+});
 
-describe('BackupSettings 备份列表客户端切片分页（issue #1383）', () => {
+describe("BackupSettings 备份列表客户端切片分页（issue #1383）", () => {
   /** 12 份受管备份：页大小 10 下两页（第二页余量 2 行），文件名内序号可辨识 */
   const PAGE_BACKUPS: BackupFileInfo[] = Array.from({ length: 12 }, (_, i): BackupFileInfo => {
-    const seq = String(i).padStart(2, '0')
-    const name = `ledger-auto-20260201-09${seq}00.db.zip`
+    const seq = String(i).padStart(2, "0");
+    const name = `ledger-auto-20260201-09${seq}00.db.zip`;
     return {
       file_name: name,
       path: `/Users/me/backups/${name}`,
       size_bytes: 1024 + i,
       created_at: `2026-02-01T09:${seq}:00Z`,
-      kind: 'auto',
+      kind: "auto",
       encrypted: false,
-    }
-  })
+    };
+  });
 
   /** 点分页条页码项（.n-pagination-item 文本即页码；前后键无文本不参与匹配） */
   async function goToPage(wrapper: ReturnType<typeof mount>, page: number) {
-    await wrapper.findAll('.n-pagination-item').find((el) => el.text() === String(page))!.trigger('click')
-    await nextTick()
+    await wrapper
+      .findAll(".n-pagination-item")
+      .find((el) => el.text() === String(page))!
+      .trigger("click");
+    await nextTick();
   }
 
-  it('超一页时分页条出现：首页 10 行、第二页余量 2 行、翻回恢复；计数文案为切片前全量口径', async () => {
-    wireInvokeSeam({ defaults: { list_backups: PAGE_BACKUPS, get_auto_backup_state: AUTO_BACKUP_ON } })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+  it("超一页时分页条出现：首页 10 行、第二页余量 2 行、翻回恢复；计数文案为切片前全量口径", async () => {
+    wireInvokeSeam({
+      defaults: { list_backups: PAGE_BACKUPS, get_auto_backup_state: AUTO_BACKUP_ON },
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    expect(wrapper.find('.n-pagination').exists()).toBe(true)
+    expect(wrapper.find(".n-pagination").exists()).toBe(true);
     // 计数在切片前判定：显示全量 12，与可见页无关
-    expect(wrapper.html()).toContain('当前共 12 个备份')
-    expect(wrapper.findAll('tbody tr')).toHaveLength(10)
-    expect(wrapper.findAll('tbody tr')[0].text()).toContain(PAGE_BACKUPS[0].file_name)
+    expect(wrapper.html()).toContain("当前共 12 个备份");
+    expect(wrapper.findAll("tbody tr")).toHaveLength(10);
+    expect(wrapper.findAll("tbody tr")[0].text()).toContain(PAGE_BACKUPS[0].file_name);
 
-    await goToPage(wrapper, 2)
-    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
-    expect(wrapper.findAll('tbody tr')[0].text()).toContain(PAGE_BACKUPS[10].file_name)
+    await goToPage(wrapper, 2);
+    expect(wrapper.findAll("tbody tr")).toHaveLength(2);
+    expect(wrapper.findAll("tbody tr")[0].text()).toContain(PAGE_BACKUPS[10].file_name);
 
-    await goToPage(wrapper, 1)
-    expect(wrapper.findAll('tbody tr')).toHaveLength(10)
-    expect(wrapper.findAll('tbody tr')[0].text()).toContain(PAGE_BACKUPS[0].file_name)
-  })
+    await goToPage(wrapper, 1);
+    expect(wrapper.findAll("tbody tr")).toHaveLength(10);
+    expect(wrapper.findAll("tbody tr")[0].text()).toContain(PAGE_BACKUPS[0].file_name);
+  });
 
-  it('单页行集不出现分页条：全量直显不出翻页噪声', async () => {
-    wireInvokeSeam({ defaults: { list_backups: [encryptedBackup, plaintextBackup], get_auto_backup_state: AUTO_BACKUP_ON } })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+  it("单页行集不出现分页条：全量直显不出翻页噪声", async () => {
+    wireInvokeSeam({
+      defaults: {
+        list_backups: [encryptedBackup, plaintextBackup],
+        get_auto_backup_state: AUTO_BACKUP_ON,
+      },
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    expect(wrapper.find('.n-pagination').exists()).toBe(false)
-    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
-  })
+    expect(wrapper.find(".n-pagination").exists()).toBe(false);
+    expect(wrapper.findAll("tbody tr")).toHaveLength(2);
+  });
 
-  it('数据重拉保持当前页：第二页时手动刷新，仍留第二页', async () => {
-    let disk: BackupFileInfo[] = PAGE_BACKUPS
+  it("数据重拉保持当前页：第二页时手动刷新，仍留第二页", async () => {
+    let disk: BackupFileInfo[] = PAGE_BACKUPS;
     wireInvokeSeam({
       defaults: { get_auto_backup_state: AUTO_BACKUP_ON },
       overrides: { list_backups: () => Promise.resolve(disk) },
-    })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
-    await goToPage(wrapper, 2)
-    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
+    await goToPage(wrapper, 2);
+    expect(wrapper.findAll("tbody tr")).toHaveLength(2);
 
-    await findButtonByTestId(wrapper, 'backup-list-refresh').trigger('click')
-    await flushPromises()
+    await findButtonByTestId(wrapper, "backup-list-refresh").trigger("click");
+    await flushPromises();
     // 数据重拉不是过滤意图：保持当前页（新备份的可见反馈由「最近备份」行承担）
-    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
-    expect(wrapper.findAll('.n-pagination-item--active').map((el) => el.text())).toEqual(['2'])
-  })
+    expect(wrapper.findAll("tbody tr")).toHaveLength(2);
+    expect(wrapper.findAll(".n-pagination-item--active").map((el) => el.text())).toEqual(["2"]);
+  });
 
-  it('行集收缩页码越界时回落：第二页时磁盘缩到单页，刷新后钳回第一页、分页条收起', async () => {
-    let disk: BackupFileInfo[] = PAGE_BACKUPS
+  it("行集收缩页码越界时回落：第二页时磁盘缩到单页，刷新后钳回第一页、分页条收起", async () => {
+    let disk: BackupFileInfo[] = PAGE_BACKUPS;
     wireInvokeSeam({
       defaults: { get_auto_backup_state: AUTO_BACKUP_ON },
       overrides: { list_backups: () => Promise.resolve(disk) },
-    })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
-    await goToPage(wrapper, 2)
-    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
+    await goToPage(wrapper, 2);
+    expect(wrapper.findAll("tbody tr")).toHaveLength(2);
 
     // 文件管理器手动删文件后刷新：行集缩到 5（单页），原页码 2 已越界
-    disk = PAGE_BACKUPS.slice(0, 5)
-    await findButtonByTestId(wrapper, 'backup-list-refresh').trigger('click')
-    await flushPromises()
+    disk = PAGE_BACKUPS.slice(0, 5);
+    await findButtonByTestId(wrapper, "backup-list-refresh").trigger("click");
+    await flushPromises();
     // 回落到有效范围：不落空页、不留陈旧页码；单页分页条收起
-    expect(wrapper.findAll('tbody tr')).toHaveLength(5)
-    expect(wrapper.find('.n-pagination').exists()).toBe(false)
-  })
-})
+    expect(wrapper.findAll("tbody tr")).toHaveLength(5);
+    expect(wrapper.find(".n-pagination").exists()).toBe(false);
+  });
+});
 
-describe('BackupSettings 自动备份连续失败提示（issue #1456）', () => {
+describe("BackupSettings 自动备份连续失败提示（issue #1456）", () => {
   /** 连续失败达阈值的自动备份状态（提示态）。 */
   const AUTO_STATE_FAILING = {
     enabled: true,
     last_backup_at: null,
     consecutive_failures: 3,
     failure_alerting: true,
-  }
+  };
 
-  it('连续失败达阈值：自动备份卡片呈现失败提示（含失败次数），可观察', async () => {
-    wireInvokeSeam({ defaults: { list_backups: [], get_auto_backup_state: AUTO_STATE_FAILING } })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+  it("连续失败达阈值：自动备份卡片呈现失败提示（含失败次数），可观察", async () => {
+    wireInvokeSeam({ defaults: { list_backups: [], get_auto_backup_state: AUTO_STATE_FAILING } });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    const alert = wrapper.find('[data-testid="auto-backup-failure-alert"]')
-    expect(alert.exists()).toBe(true)
-    expect(alert.text()).toContain('3')
-  })
+    const alert = wrapper.find('[data-testid="auto-backup-failure-alert"]');
+    expect(alert.exists()).toBe(true);
+    expect(alert.text()).toContain("3");
+  });
 
-  it('未达阈值：不呈现失败提示', async () => {
-    wireInvokeSeam({ defaults: { list_backups: [], get_auto_backup_state: AUTO_BACKUP_ON } })
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
+  it("未达阈值：不呈现失败提示", async () => {
+    wireInvokeSeam({ defaults: { list_backups: [], get_auto_backup_state: AUTO_BACKUP_ON } });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
 
-    expect(wrapper.find('[data-testid="auto-backup-failure-alert"]').exists()).toBe(false)
-  })
+    expect(wrapper.find('[data-testid="auto-backup-failure-alert"]').exists()).toBe(false);
+  });
 
-  it('信号刷新到已清零状态：提示消失（成功后清零的前端消费面）', async () => {
-    let state = AUTO_STATE_FAILING
+  it("信号刷新到已清零状态：提示消失（成功后清零的前端消费面）", async () => {
+    let state = AUTO_STATE_FAILING;
     wireInvokeSeam({
       defaults: { list_backups: [] },
       overrides: { get_auto_backup_state: () => state },
-    })
-    const readFire = captureLastListener()
-    const wrapper = mount(BackupSettings)
-    await flushPromises()
-    expect(wrapper.find('[data-testid="auto-backup-failure-alert"]').exists()).toBe(true)
+    });
+    const readFire = captureLastListener();
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
+    expect(wrapper.find('[data-testid="auto-backup-failure-alert"]').exists()).toBe(true);
 
     // 后端一次成功备份：计数清零、提示态解除 → 信号到达刷新后提示消失。
-    state = AUTO_BACKUP_ON
-    readFire()?.()
-    await flushPromises()
+    state = AUTO_BACKUP_ON;
+    readFire()?.();
+    await flushPromises();
 
-    expect(wrapper.find('[data-testid="auto-backup-failure-alert"]').exists()).toBe(false)
-    wrapper.unmount()
-  })
-})
+    expect(wrapper.find('[data-testid="auto-backup-failure-alert"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});

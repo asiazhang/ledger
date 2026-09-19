@@ -1,16 +1,16 @@
-import { useMessage } from 'naive-ui'
-import type { Ref } from 'vue'
-import { useModalIntent } from '@ledger/modal-intent'
-import { api } from '@ledger/api'
-import { errorMessage } from '@ledger/utils/errors'
-import { t } from '@ledger/i18n'
+import { useMessage } from "naive-ui";
+import type { Ref } from "vue";
+import { useModalIntent } from "@ledger/modal-intent";
+import { api } from "@ledger/api";
+import { errorMessage } from "@ledger/utils/errors";
+import { t } from "@ledger/i18n";
 import type {
   CreateFormKind,
   Transaction,
   TransactionConvert,
   TransactionSplit,
   TransactionTrade,
-} from '@ledger/types'
+} from "@ledger/types";
 
 /**
  * TransactionModalState 交易弹窗编排深模块（ADR-0045，词汇表「TransactionModalState（交易弹窗编排）」）：
@@ -43,9 +43,9 @@ import type {
  * 界面只读 kind 的只读详情形态共用同一 `detail` 意图，渲染面按 `kind` 收窄。
  */
 export type TransactionDetailPayload =
-  | { kind: 'convert'; convert: TransactionConvert }
-  | { kind: 'split'; split: TransactionSplit }
-  | { kind: 'dividend' }
+  | { kind: "convert"; convert: TransactionConvert }
+  | { kind: "split"; split: TransactionSplit }
+  | { kind: "dividend" };
 
 /**
  * 意图状态（单一判别联合，弹窗编排的唯一事实源）：
@@ -60,22 +60,22 @@ export type TransactionDetailPayload =
  * 视图以 `intent?.type` 判别渲染，payload 在各分支内被类型系统收窄。
  */
 export type TransactionModalIntent =
-  | { type: 'create'; kind: CreateFormKind }
-  | { type: 'refund'; row: Transaction }
-  | { type: 'detail'; row: Transaction; detail: TransactionDetailPayload }
-  | { type: 'edit'; row: Transaction; trade: TransactionTrade | null }
-  | { type: 'add-item'; row: Transaction }
+  | { type: "create"; kind: CreateFormKind }
+  | { type: "refund"; row: Transaction }
+  | { type: "detail"; row: Transaction; detail: TransactionDetailPayload }
+  | { type: "edit"; row: Transaction; trade: TransactionTrade | null }
+  | { type: "add-item"; row: Transaction };
 
 /**
  * open 入参（开启请求）：与意图状态同构，唯 detail / edit 只携目标行——明细由模块内化取数，
  * 不出现在调用方面上。convert 走 detail（只读），edit 不再承接 convert。
  */
 export type TransactionModalOpenRequest =
-  | { type: 'create'; kind: CreateFormKind }
-  | { type: 'refund'; row: Transaction }
-  | { type: 'detail'; row: Transaction }
-  | { type: 'edit'; row: Transaction }
-  | { type: 'add-item'; row: Transaction }
+  | { type: "create"; kind: CreateFormKind }
+  | { type: "refund"; row: Transaction }
+  | { type: "detail"; row: Transaction }
+  | { type: "edit"; row: Transaction }
+  | { type: "add-item"; row: Transaction };
 
 // ---------------------------------------------------------------------------
 // 工厂
@@ -83,13 +83,13 @@ export type TransactionModalOpenRequest =
 
 export interface UseTransactionModalStateReturn {
   /** 当前意图（只读）：null = 关闭终态（弹窗不显示）；非空即「弹窗显示」。 */
-  readonly intent: Readonly<Ref<TransactionModalIntent | null>>
+  readonly intent: Readonly<Ref<TransactionModalIntent | null>>;
   /** 回调序号：随每次成功 open 递增（作表单 key 强制重建实例）；被竞态丢弃的 open 不递增。 */
-  readonly seq: Readonly<Ref<number>>
+  readonly seq: Readonly<Ref<number>>;
   /** 开启意图：统一异步签名（仅 edit 真正 await——先取明细再开窗，失败报错不开窗）。 */
-  open(request: TransactionModalOpenRequest): Promise<void>
+  open(request: TransactionModalOpenRequest): Promise<void>;
   /** 关闭：意图清回 null 终态（列表刷新等关闭后副作用仍归视图）。 */
-  close(): void
+  close(): void;
 }
 
 /**
@@ -97,11 +97,16 @@ export interface UseTransactionModalStateReturn {
  * 须在组件 setup 内调用（错误提示经 useMessage，与仓库既有 composable 形态一致）。
  */
 export function useTransactionModalState(): UseTransactionModalStateReturn {
-  const message = useMessage()
+  const message = useMessage();
 
   // 意图与序号归 ModalIntent 工厂所有（ADR-0072）：意图非空即显示、落位即递增序号、
   // 关闭清回 null 终态；本适配器经工厂 open/close 驱动，不再直写这两面状态。
-  const { intent, seq, open: landIntent, close: clearIntent } = useModalIntent<TransactionModalIntent>()
+  const {
+    intent,
+    seq,
+    open: landIntent,
+    close: clearIntent,
+  } = useModalIntent<TransactionModalIntent>();
 
   /**
    * 代数守卫（last-open-wins）：每次 open 递增一代；异步取数返回后，代数已过期
@@ -112,63 +117,63 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
    * 代数与工厂序号是两个计数器（ADR-0072）：代数随每次开启尝试递增（含取数失败，
    * 失败路径只推进代数、序号不动）；序号只在意图真正落位时经工厂递增。
    */
-  let generation = 0
+  let generation = 0;
 
   /** 结算一次开启：代数仍最新才经工厂落位意图并递增序号（同步意图即时结算，edit 待取数后结算）。 */
   function settle(gen: number, next: TransactionModalIntent) {
-    if (gen !== generation) return
-    landIntent(next)
+    if (gen !== generation) return;
+    landIntent(next);
   }
 
   async function open(request: TransactionModalOpenRequest): Promise<void> {
-    const gen = ++generation
-    if (request.type === 'create') {
-      settle(gen, { type: 'create', kind: request.kind })
-      return
+    const gen = ++generation;
+    if (request.type === "create") {
+      settle(gen, { type: "create", kind: request.kind });
+      return;
     }
-    if (request.type === 'refund' || request.type === 'add-item') {
-      settle(gen, { type: request.type, row: request.row })
-      return
+    if (request.type === "refund" || request.type === "add-item") {
+      settle(gen, { type: request.type, row: request.row });
+      return;
     }
-    const { row } = request
+    const { row } = request;
     // detail：只读详情——convert / split 两类「无现金腿」kind 各自先取扩展明细再开窗
     // （时序内化）、dividend（ADR-0109）无扩展读取同步开窗；其余 kind 无详情面，
     // 不落意图（「意图非空即显示」，落一个渲染不出的意图会破坏该不变式）。
-    if (request.type === 'detail') {
-      if (row.kind === 'dividend') {
-        settle(gen, { type: 'detail', row, detail: { kind: 'dividend' } })
-        return
+    if (request.type === "detail") {
+      if (row.kind === "dividend") {
+        settle(gen, { type: "detail", row, detail: { kind: "dividend" } });
+        return;
       }
-      if (row.kind !== 'convert' && row.kind !== 'split') return
+      if (row.kind !== "convert" && row.kind !== "split") return;
       try {
         const detail: TransactionDetailPayload =
-          row.kind === 'convert'
-            ? { kind: 'convert', convert: await api.getTransactionConvert(row.id) }
-            : { kind: 'split', split: await api.getTransactionSplit(row.id) }
-        settle(gen, { type: 'detail', row, detail })
+          row.kind === "convert"
+            ? { kind: "convert", convert: await api.getTransactionConvert(row.id) }
+            : { kind: "split", split: await api.getTransactionSplit(row.id) };
+        settle(gen, { type: "detail", row, detail });
       } catch (e) {
-        if (gen !== generation) return // 迟到的失败整体丢弃
-        message.error(t('transactions.detail.loadFailed', { msg: errorMessage(e) }))
+        if (gen !== generation) return; // 迟到的失败整体丢弃
+        message.error(t("transactions.detail.loadFailed", { msg: errorMessage(e) }));
       }
-      return
+      return;
     }
     // edit：先取买卖明细再开窗（时序内化）。非买卖行无明细面，开窗即开。
-    if (row.kind !== 'buy' && row.kind !== 'sell') {
-      settle(gen, { type: 'edit', row, trade: null })
-      return
+    if (row.kind !== "buy" && row.kind !== "sell") {
+      settle(gen, { type: "edit", row, trade: null });
+      return;
     }
     try {
-      const trade = await api.getTransactionTrade(row.id)
-      settle(gen, { type: 'edit', row, trade })
+      const trade = await api.getTransactionTrade(row.id);
+      settle(gen, { type: "edit", row, trade });
     } catch (e) {
-      if (gen !== generation) return // 迟到的失败整体丢弃
-      message.error(t('transactions.modal.editFailed', { msg: errorMessage(e) }))
+      if (gen !== generation) return; // 迟到的失败整体丢弃
+      message.error(t("transactions.modal.editFailed", { msg: errorMessage(e) }));
     }
   }
 
   function close() {
-    generation += 1 // 关闭推进代数：取数在途时关闭，迟到的成功不再重开弹窗
-    clearIntent()
+    generation += 1; // 关闭推进代数：取数在途时关闭，迟到的成功不再重开弹窗
+    clearIntent();
   }
 
   return {
@@ -176,5 +181,5 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
     seq,
     open,
     close,
-  }
+  };
 }

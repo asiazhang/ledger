@@ -1,8 +1,15 @@
-import { computed, h, ref } from 'vue'
-import type { DropdownOption } from 'naive-ui'
-import { defineStore } from 'pinia'
-import { getSavedSidebarOrder, saveSidebarOrders, clearSidebarOrder, getSavedContainment, saveContainmentLists, clearContainment } from '@ledger/utils/view-state'
-import { t } from '@ledger/i18n'
+import { computed, h, ref } from "vue";
+import type { DropdownOption } from "naive-ui";
+import { defineStore } from "pinia";
+import {
+  getSavedSidebarOrder,
+  saveSidebarOrders,
+  clearSidebarOrder,
+  getSavedContainment,
+  saveContainmentLists,
+  clearContainment,
+} from "@ledger/utils/view-state";
+import { t } from "@ledger/i18n";
 
 /**
  * 顺序源模块（issue #524 / #549：持久界面状态单一归宿）：侧边栏视图顺序唯一来源
@@ -23,27 +30,27 @@ import { t } from '@ledger/i18n'
  * 出厂主项七项占 ⌘1–⌘5、⌘7、⌘8，⌘6 与 ⌘9 带内空置，组内补足后自然回填。
  */
 export const SIDEBAR_GROUPS = [
-  { id: 'bookkeeping', views: ['transactions', 'accounts', 'budget'] },
-  { id: 'assets', views: ['investments', 'items'] },
-  { id: 'insights', views: ['reports', 'search'] },
-] as const
+  { id: "bookkeeping", views: ["transactions", "accounts", "budget"] },
+  { id: "assets", views: ["investments", "items"] },
+  { id: "insights", views: ["reports", "search"] },
+] as const;
 
 /**
  * 每组主项硬上限（issue #472/#475 / ADR-0063 决策 2，运行时不变量）：
  * 3 组 × 3 = ⌘1–⌘9 九键（ADR-0065），键位带封闭性的本体；组满时「移回侧栏」置灰（上限可见、可学习，不自动换出）。
  */
-export const GROUP_MAIN_LIMIT = 3
+export const GROUP_MAIN_LIMIT = 3;
 
-export type SidebarGroupId = (typeof SIDEBAR_GROUPS)[number]['id']
+export type SidebarGroupId = (typeof SIDEBAR_GROUPS)[number]["id"];
 
 /**
  * 固定项词表：概览首位（与启动落地页一致）、AI 倒数第二、设置末位。
  * 全局「更多」固定项已退役（issue #473 / ADR-0063 决策 1/5），不再入线性序——
  * 旧路由与旧视图名由路由表重定向记录承接（见 router 的 /more 记录）。
  */
-export const FIRST_VIEW = 'dashboard'
-export const PENULTIMATE_VIEW = 'ai'
-export const LAST_VIEW = 'settings'
+export const FIRST_VIEW = "dashboard";
+export const PENULTIMATE_VIEW = "ai";
+export const LAST_VIEW = "settings";
 
 /** 线性默认序（出厂快照）：概览 + 各组按组序展开 + AI + 设置 */
 export const DEFAULT_VIEW_ORDER = [
@@ -51,18 +58,18 @@ export const DEFAULT_VIEW_ORDER = [
   ...SIDEBAR_GROUPS.flatMap((g) => g.views),
   PENULTIMATE_VIEW,
   LAST_VIEW,
-] as const
+] as const;
 
-export type ViewName = (typeof DEFAULT_VIEW_ORDER)[number]
+export type ViewName = (typeof DEFAULT_VIEW_ORDER)[number];
 
 /** 主项词表（组内可排区）：各组成员按组序展开，相对顺序即默认相对顺序。
  *  每组 ≤3 硬上限保证键位带不溢出（ADR-0063 决策 2）；收纳成员不入本表、无键位。
  *  保留字面量元组类型（不加宽到 ViewName）：主项集合是 ContainableViewName 词表的组成部分。 */
-export const ARRANGEABLE_VIEWS = SIDEBAR_GROUPS.flatMap((g) => [...g.views])
+export const ARRANGEABLE_VIEWS = SIDEBAR_GROUPS.flatMap((g) => [...g.views]);
 
 /** 固定项例外判定：主项（可排区）为真，概览/AI/设置三固定项为假（右键无菜单）。 */
 export function isArrangeableView(v: unknown): v is ViewName {
-  return typeof v === 'string' && (ARRANGEABLE_VIEWS as readonly string[]).includes(v)
+  return typeof v === "string" && (ARRANGEABLE_VIEWS as readonly string[]).includes(v);
 }
 
 /**
@@ -73,20 +80,20 @@ export function isArrangeableView(v: unknown): v is ViewName {
  */
 export function groupOfView(name: AnyViewName): SidebarGroupId | null {
   for (const g of SIDEBAR_GROUPS) {
-    if ((g.views as readonly string[]).includes(name)) return g.id
+    if ((g.views as readonly string[]).includes(name)) return g.id;
   }
   for (const g of SIDEBAR_GROUPS) {
-    if ((GROUP_CONTAINMENT_SEEDS[g.id] as readonly string[]).includes(name)) return g.id
+    if ((GROUP_CONTAINMENT_SEEDS[g.id] as readonly string[]).includes(name)) return g.id;
   }
-  return null
+  return null;
 }
 
-export type SidebarGroupOrders = Readonly<Record<SidebarGroupId, readonly ContainableViewName[]>>
+export type SidebarGroupOrders = Readonly<Record<SidebarGroupId, readonly ContainableViewName[]>>;
 
 function defaultGroupOrders(): Record<SidebarGroupId, ContainableViewName[]> {
-  const result = {} as Record<SidebarGroupId, ContainableViewName[]>
-  for (const g of SIDEBAR_GROUPS) result[g.id] = [...g.views]
-  return result
+  const result = {} as Record<SidebarGroupId, ContainableViewName[]>;
+  for (const g of SIDEBAR_GROUPS) result[g.id] = [...g.views];
+  return result;
 }
 
 /**
@@ -102,30 +109,32 @@ export function parseGroupOrders(
   raw: unknown,
   contained: Readonly<Record<SidebarGroupId, readonly string[]>> = defaultContainmentLists(),
 ): Record<SidebarGroupId, ContainableViewName[]> {
-  const result = defaultGroupOrders()
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return result
-  const rec = raw as Record<string, unknown>
+  const result = defaultGroupOrders();
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return result;
+  const rec = raw as Record<string, unknown>;
   for (const g of SIDEBAR_GROUPS) {
-    const excluded = contained[g.id] ?? []
+    const excluded = contained[g.id] ?? [];
     // 合法主项池 = 出厂主项 ∪ 出厂种子（issue #475：移回的种子以主项身份在册）；
     // 仍在清单中的种子被 excluded 排除（清单是收纳成员资格的唯一事实源，#474 语义不变）。
-    const members = [...(g.views as readonly string[]), ...(GROUP_CONTAINMENT_SEEDS[g.id] as readonly string[])]
-      .filter((v) => !excluded.includes(v))
-    const kept: ContainableViewName[] = []
-    const seen = new Set<string>()
+    const members = [
+      ...(g.views as readonly string[]),
+      ...(GROUP_CONTAINMENT_SEEDS[g.id] as readonly string[]),
+    ].filter((v) => !excluded.includes(v));
+    const kept: ContainableViewName[] = [];
+    const seen = new Set<string>();
     if (Array.isArray(rec[g.id])) {
       for (const item of rec[g.id] as unknown[]) {
-        if (typeof item !== 'string' || !members.includes(item) || seen.has(item)) continue
-        seen.add(item)
-        kept.push(item as ContainableViewName)
+        if (typeof item !== "string" || !members.includes(item) || seen.has(item)) continue;
+        seen.add(item);
+        kept.push(item as ContainableViewName);
       }
     }
     for (const name of members) {
-      if (!seen.has(name)) kept.push(name as ContainableViewName)
+      if (!seen.has(name)) kept.push(name as ContainableViewName);
     }
-    result[g.id] = kept
+    result[g.id] = kept;
   }
-  return result
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,29 +154,31 @@ export function parseGroupOrders(
  * 资产 = [保单, 实物资产, 保司]（#472/#466/#714，追加在后，出厂清单见 ADR-0063 决策 3）；洞察 = 空。
  */
 export const GROUP_CONTAINMENT_SEEDS = {
-  bookkeeping: ['scheduled', 'merchants'],
-  assets: ['policies', 'physicalAssets', 'insurers'],
+  bookkeeping: ["scheduled", "merchants"],
+  assets: ["policies", "physicalAssets", "insurers"],
   insights: [],
-} as const satisfies Record<SidebarGroupId, readonly string[]>
+} as const satisfies Record<SidebarGroupId, readonly string[]>;
 
 /** 收纳视图名 = 出厂种子成员 + 任一本组主项（issue #474 移入自由，ADR-0063 决策 4）；固定项不可收纳，不在词表。 */
 export type ContainableViewName =
   | (typeof GROUP_CONTAINMENT_SEEDS)[SidebarGroupId][number]
-  | (typeof ARRANGEABLE_VIEWS)[number]
+  | (typeof ARRANGEABLE_VIEWS)[number];
 
 /** 每组收纳清单（只读形状）：与 SidebarGroupOrders 同族。 */
-export type SidebarContainmentLists = Readonly<Record<SidebarGroupId, readonly ContainableViewName[]>>
+export type SidebarContainmentLists = Readonly<
+  Record<SidebarGroupId, readonly ContainableViewName[]>
+>;
 
 /**
  * 全部已知名词表（issue #475）：固定项 ∪ 主项 ∪ 出厂种子。
  * 写路径以此入参、运行时在册守卫收窄（非成员 no-op），调用方（菜单/页签）天然只产合法名。
  */
-export type AnyViewName = ViewName | ContainableViewName
+export type AnyViewName = ViewName | ContainableViewName;
 
 function defaultContainmentLists(): Record<SidebarGroupId, ContainableViewName[]> {
-  const result = {} as Record<SidebarGroupId, ContainableViewName[]>
-  for (const g of SIDEBAR_GROUPS) result[g.id] = [...GROUP_CONTAINMENT_SEEDS[g.id]]
-  return result
+  const result = {} as Record<SidebarGroupId, ContainableViewName[]>;
+  for (const g of SIDEBAR_GROUPS) result[g.id] = [...GROUP_CONTAINMENT_SEEDS[g.id]];
+  return result;
 }
 
 /**
@@ -183,36 +194,40 @@ function defaultContainmentLists(): Record<SidebarGroupId, ContainableViewName[]
  * 不按「缺失补尾」复活回收纳清单。清单存储缺失（旧版/出厂）不豁免：#473 迁移语义
  * （存量组内序含种子判收纳）与出厂种子补尾不受影响。
  */
-export function parseContainmentLists(raw: unknown, rawOrders: unknown = null): Record<SidebarGroupId, ContainableViewName[]> {
-  const result = defaultContainmentLists()
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return result
-  const rec = raw as Record<string, unknown>
+export function parseContainmentLists(
+  raw: unknown,
+  rawOrders: unknown = null,
+): Record<SidebarGroupId, ContainableViewName[]> {
+  const result = defaultContainmentLists();
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return result;
+  const rec = raw as Record<string, unknown>;
   const orderRec =
-    typeof rawOrders === 'object' && rawOrders !== null && !Array.isArray(rawOrders)
+    typeof rawOrders === "object" && rawOrders !== null && !Array.isArray(rawOrders)
       ? (rawOrders as Record<string, unknown>)
-      : null
+      : null;
   for (const g of SIDEBAR_GROUPS) {
-    const legal = [...GROUP_CONTAINMENT_SEEDS[g.id], ...(g.views as readonly string[])]
-    const kept: ContainableViewName[] = []
-    const seen = new Set<string>()
-    const rawArr = Array.isArray(rec[g.id]) ? (rec[g.id] as unknown[]) : null
+    const legal = [...GROUP_CONTAINMENT_SEEDS[g.id], ...(g.views as readonly string[])];
+    const kept: ContainableViewName[] = [];
+    const seen = new Set<string>();
+    const rawArr = Array.isArray(rec[g.id]) ? (rec[g.id] as unknown[]) : null;
     if (rawArr) {
       for (const item of rawArr) {
-        if (typeof item !== 'string' || !legal.includes(item) || seen.has(item)) continue
-        seen.add(item)
-        kept.push(item as ContainableViewName)
+        if (typeof item !== "string" || !legal.includes(item) || seen.has(item)) continue;
+        seen.add(item);
+        kept.push(item as ContainableViewName);
       }
     }
-    const orderArr = orderRec && Array.isArray(orderRec[g.id]) ? (orderRec[g.id] as unknown[]) : null
+    const orderArr =
+      orderRec && Array.isArray(orderRec[g.id]) ? (orderRec[g.id] as unknown[]) : null;
     for (const name of GROUP_CONTAINMENT_SEEDS[g.id]) {
-      if (seen.has(name)) continue
+      if (seen.has(name)) continue;
       // 移回豁免（issue #475，判定面见函数注释）：清单在且未列、组内序在——已是主项
-      if (rawArr && orderArr?.includes(name)) continue
-      kept.push(name as ContainableViewName)
+      if (rawArr && orderArr?.includes(name)) continue;
+      kept.push(name as ContainableViewName);
     }
-    result[g.id] = kept
+    result[g.id] = kept;
   }
-  return result
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -230,9 +245,9 @@ export function moveIntoContainment(
   gid: SidebarGroupId,
   name: ContainableViewName,
 ): SidebarContainmentLists {
-  const list = lists[gid]
-  if (list.includes(name)) return lists
-  return { ...lists, [gid]: [...list, name] }
+  const list = lists[gid];
+  if (list.includes(name)) return lists;
+  return { ...lists, [gid]: [...list, name] };
 }
 
 /**
@@ -244,9 +259,9 @@ export function moveBackToSidebar(
   gid: SidebarGroupId,
   name: ContainableViewName,
 ): SidebarContainmentLists {
-  const list = lists[gid]
-  if (!list.includes(name)) return lists
-  return { ...lists, [gid]: list.filter((v) => v !== name) }
+  const list = lists[gid];
+  if (!list.includes(name)) return lists;
+  return { ...lists, [gid]: list.filter((v) => v !== name) };
 }
 
 /**
@@ -254,11 +269,11 @@ export function moveBackToSidebar(
  * （ADR-0063 决策 2：≤3 是运行时不变量，不是出厂布局建议）。
  */
 export function isGroupFull(order: readonly ContainableViewName[]): boolean {
-  return order.length >= GROUP_MAIN_LIMIT
+  return order.length >= GROUP_MAIN_LIMIT;
 }
 
 /** 排序动作：组内上移一位 / 下移一位 / 移到组内顶部 / 移到组内底部 */
-export type SidebarSortAction = 'up' | 'down' | 'top' | 'bottom'
+export type SidebarSortAction = "up" | "down" | "top" | "bottom";
 
 /**
  * 移动纯函数：在给定组内序中把 name 移动到目标位置，返回新数组（不改输入）。
@@ -270,19 +285,17 @@ export function moveArrangeable(
   name: AnyViewName,
   action: SidebarSortAction,
 ): ContainableViewName[] {
-  const index = (order as readonly string[]).indexOf(name)
-  if (index === -1) return [...order]
-  const last = order.length - 1
-  const target = action === 'up' ? index - 1
-    : action === 'down' ? index + 1
-    : action === 'top' ? 0
-    : last
-  if (target < 0 || target > last || target === index) return [...order]
-  const next = [...order]
-  next.splice(index, 1)
+  const index = (order as readonly string[]).indexOf(name);
+  if (index === -1) return [...order];
+  const last = order.length - 1;
+  const target =
+    action === "up" ? index - 1 : action === "down" ? index + 1 : action === "top" ? 0 : last;
+  if (target < 0 || target > last || target === index) return [...order];
+  const next = [...order];
+  next.splice(index, 1);
   // index 有效已证明 name ∈ order（元素类型 ContainableViewName）
-  next.splice(target, 0, name as ContainableViewName)
-  return next
+  next.splice(target, 0, name as ContainableViewName);
+  return next;
 }
 
 /**
@@ -291,7 +304,7 @@ export function moveArrangeable(
  * 「移入更多」（intoMore）不是排序动作，由调用方按菜单 key 分派（见 App.vue）。
  */
 export function isSidebarSortAction(v: string): v is SidebarSortAction {
-  return v === 'up' || v === 'down' || v === 'top' || v === 'bottom'
+  return v === "up" || v === "down" || v === "top" || v === "bottom";
 }
 
 // ---------------------------------------------------------------------------
@@ -311,19 +324,19 @@ export function buildSidebarSortMenuOptions(
   name: ContainableViewName,
   order: readonly ContainableViewName[],
 ): DropdownOption[] {
-  const index = order.indexOf(name)
-  const atTop = index <= 0
-  const atBottom = index === order.length - 1
+  const index = order.indexOf(name);
+  const atTop = index <= 0;
+  const atBottom = index === order.length - 1;
   return [
-    { label: t('common.sidebarSort.up'), key: 'up', disabled: atTop },
-    { label: t('common.sidebarSort.down'), key: 'down', disabled: atBottom },
-    { label: t('common.sidebarSort.top'), key: 'top', disabled: atTop },
-    { label: t('common.sidebarSort.bottom'), key: 'bottom', disabled: atBottom },
-    { type: 'divider', key: 'sort-divider' },
-    { label: t('common.sidebarContainment.intoMore'), key: 'intoMore', disabled: false },
-    { type: 'divider', key: 'reset-divider' },
-    { label: t('common.sidebarSort.reset'), key: 'reset', disabled: false },
-  ]
+    { label: t("common.sidebarSort.up"), key: "up", disabled: atTop },
+    { label: t("common.sidebarSort.down"), key: "down", disabled: atBottom },
+    { label: t("common.sidebarSort.top"), key: "top", disabled: atTop },
+    { label: t("common.sidebarSort.bottom"), key: "bottom", disabled: atBottom },
+    { type: "divider", key: "sort-divider" },
+    { label: t("common.sidebarContainment.intoMore"), key: "intoMore", disabled: false },
+    { type: "divider", key: "reset-divider" },
+    { label: t("common.sidebarSort.reset"), key: "reset", disabled: false },
+  ];
 }
 
 /**
@@ -333,16 +346,24 @@ export function buildSidebarSortMenuOptions(
  * render-option 放开 naive 固定行盒（GroupMoreView + global.css .tab-back-option），
  * 提示行自带 line-height 收紧行距，以 white-space:normal 覆写 label 元素的 nowrap 折行。
  */
-export function buildTabContextMenuOptions(order: readonly ContainableViewName[]): DropdownOption[] {
-  const full = isGroupFull(order)
-  const label: DropdownOption['label'] = full
+export function buildTabContextMenuOptions(
+  order: readonly ContainableViewName[],
+): DropdownOption[] {
+  const full = isGroupFull(order);
+  const label: DropdownOption["label"] = full
     ? () =>
-        h('div', null, [
-          h('div', null, t('common.sidebarContainment.backToSidebar')),
-          h('div', { style: 'font-size:12px;line-height:1.5;opacity:.6;white-space:normal;max-width:220px' }, t('common.sidebarContainment.backBlockedFull')),
+        h("div", null, [
+          h("div", null, t("common.sidebarContainment.backToSidebar")),
+          h(
+            "div",
+            {
+              style: "font-size:12px;line-height:1.5;opacity:.6;white-space:normal;max-width:220px",
+            },
+            t("common.sidebarContainment.backBlockedFull"),
+          ),
         ])
-    : t('common.sidebarContainment.backToSidebar')
-  return [{ key: 'backToSidebar', disabled: full, label }]
+    : t("common.sidebarContainment.backToSidebar");
+  return [{ key: "backToSidebar", disabled: full, label }];
 }
 
 // ---------------------------------------------------------------------------
@@ -356,11 +377,13 @@ export function buildTabContextMenuOptions(order: readonly ContainableViewName[]
  * 消费方：App.vue（侧栏菜单/排序菜单）、GroupMoreView.vue（页签/移回菜单）、
  * router policies 守卫（分流谓词）、useViewShortcuts（键位带推导，只读消费组内序）。
  */
-export const useSidebarOrderStore = defineStore('sidebar-order', () => {
+export const useSidebarOrderStore = defineStore("sidebar-order", () => {
   // 启动读路径：先解析收纳清单，组内序解析凭它排除收纳成员（issue #474：移入后
   // 主项退出组内序，重启解析不得因「缺失补尾」复活）；脏数据经解析防御回默认。
-  const savedSidebarOrderRaw = getSavedSidebarOrder()
-  const containmentLists = ref<SidebarContainmentLists>(parseContainmentLists(getSavedContainment(), savedSidebarOrderRaw))
+  const savedSidebarOrderRaw = getSavedSidebarOrder();
+  const containmentLists = ref<SidebarContainmentLists>(
+    parseContainmentLists(getSavedContainment(), savedSidebarOrderRaw),
+  );
 
   /**
    * 已存组内序（响应式状态）：写路径收口在 applySidebarSort（issue #270/#359 排序）/
@@ -369,30 +392,32 @@ export const useSidebarOrderStore = defineStore('sidebar-order', () => {
    */
   const groupOrders = ref<Record<SidebarGroupId, ContainableViewName[]>>(
     parseGroupOrders(savedSidebarOrderRaw, containmentLists.value),
-  )
+  );
 
   /** 当前组内序（只读派生）：侧栏排序菜单构建等消费；写路径不经它。 */
-  const sidebarGroupOrders = computed<SidebarGroupOrders>(() => groupOrders.value)
+  const sidebarGroupOrders = computed<SidebarGroupOrders>(() => groupOrders.value);
 
   /** 当前每组收纳清单（只读派生）：组内「更多」页页签与侧栏链接显隐消费。 */
-  const sidebarContainment = computed<SidebarContainmentLists>(() => containmentLists.value)
+  const sidebarContainment = computed<SidebarContainmentLists>(() => containmentLists.value);
 
   /** 渲染用分组（组序固定 + 组内当前序，含移回的种子成员）：侧栏菜单构建消费。 */
-  const sidebarGroups = computed<readonly { id: SidebarGroupId; views: readonly ContainableViewName[] }[]>(
-    () => SIDEBAR_GROUPS.map((g) => ({ id: g.id, views: groupOrders.value[g.id] })),
-  )
+  const sidebarGroups = computed<
+    readonly { id: SidebarGroupId; views: readonly ContainableViewName[] }[]
+  >(() => SIDEBAR_GROUPS.map((g) => ({ id: g.id, views: groupOrders.value[g.id] })));
 
   /** 侧栏在册判定（运行时）：名下在任一组当前组内序中（含移回的种子成员，#475）。
    *  侧栏右键菜单按此附事件——在册成员（含移回种子）可排序/移入，固定项与
    *  仍在清单的收纳成员不可（词法 isArrangeableView 不再看运行时移回态，改用本判定）。 */
   function isSidebarMember(v: unknown): v is ContainableViewName {
-    if (typeof v !== 'string') return false
-    return SIDEBAR_GROUPS.some((g) => (groupOrders.value[g.id] as readonly string[]).includes(v))
+    if (typeof v !== "string") return false;
+    return SIDEBAR_GROUPS.some((g) => (groupOrders.value[g.id] as readonly string[]).includes(v));
   }
 
   /** 收纳在册判定（运行时）：名在任一组当前收纳清单中（#475 路由守卫消费：/policies 分流）。 */
   function isViewContained(name: ContainableViewName): boolean {
-    return SIDEBAR_GROUPS.some((g) => (containmentLists.value[g.id] as readonly string[]).includes(name))
+    return SIDEBAR_GROUPS.some((g) =>
+      (containmentLists.value[g.id] as readonly string[]).includes(name),
+    );
   }
 
   /** 右键「移入更多」：主项退出组内序（键位随动重排）+ 追加本组收纳清单尾；
@@ -400,15 +425,19 @@ export const useSidebarOrderStore = defineStore('sidebar-order', () => {
    *  固定项/收纳成员/未知名 no-op 不写存储（保住「恢复默认 = 删 key」语义）。
    *  入参 AnyViewName（issue #475）：移回侧栏的种子以主项身份在册后，可再右键移入。 */
   function applyMoveIntoMore(name: AnyViewName) {
-    const gid = groupOfView(name)
-    if (!gid) return
-    const prev = groupOrders.value[gid]
-    if (!(prev as readonly string[]).includes(name)) return
-    groupOrders.value = { ...groupOrders.value, [gid]: prev.filter((v) => v !== name) }
+    const gid = groupOfView(name);
+    if (!gid) return;
+    const prev = groupOrders.value[gid];
+    if (!(prev as readonly string[]).includes(name)) return;
+    groupOrders.value = { ...groupOrders.value, [gid]: prev.filter((v) => v !== name) };
     // prev.includes 已证明 name 是本组在册主项（运行时守卫对应 ContainableViewName 词表）
-    containmentLists.value = moveIntoContainment(containmentLists.value, gid, name as ContainableViewName)
-    saveSidebarOrders(groupOrders.value)
-    saveContainmentLists(containmentLists.value)
+    containmentLists.value = moveIntoContainment(
+      containmentLists.value,
+      gid,
+      name as ContainableViewName,
+    );
+    saveSidebarOrders(groupOrders.value);
+    saveContainmentLists(containmentLists.value);
   }
 
   /** 右键「移回侧栏」：成员退出本组收纳清单 + 落本组主项末位（键位随动重排）；
@@ -419,39 +448,39 @@ export const useSidebarOrderStore = defineStore('sidebar-order', () => {
    *  不自动换出、不弹窗腾位；写路径同判定兑底拒写。移回组内最后一个收纳成员后
    *  清单为空，侧栏「更多」链接随之消失（渲染条件失效）。 */
   function applyMoveBackToSidebar(name: AnyViewName) {
-    const gid = groupOfView(name)
-    if (!gid) return
-    const list = containmentLists.value[gid]
-    if (!(list as readonly string[]).includes(name)) return
-    const order = groupOrders.value[gid]
-    if (isGroupFull(order)) return
+    const gid = groupOfView(name);
+    if (!gid) return;
+    const list = containmentLists.value[gid];
+    if (!(list as readonly string[]).includes(name)) return;
+    const order = groupOrders.value[gid];
+    if (isGroupFull(order)) return;
     // list.includes 已证明 name 是本组收纳成员（运行时守卫对应 ContainableViewName 词表）
-    const member = name as ContainableViewName
-    containmentLists.value = moveBackToSidebar(containmentLists.value, gid, member)
-    groupOrders.value = { ...groupOrders.value, [gid]: [...order, member] }
-    saveContainmentLists(containmentLists.value)
-    saveSidebarOrders(groupOrders.value)
+    const member = name as ContainableViewName;
+    containmentLists.value = moveBackToSidebar(containmentLists.value, gid, member);
+    groupOrders.value = { ...groupOrders.value, [gid]: [...order, member] };
+    saveContainmentLists(containmentLists.value);
+    saveSidebarOrders(groupOrders.value);
   }
 
   /** 点选即重排并立即持久化（写路径唯一出处；顺序变更经 viewShortcuts 自动随动）。
    *  只在 name 所属组内移动（组与组序固定，跨组移动不可达）；
    *  边界 no-op 不写存储：保住「恢复默认 = 删除 key」语义，出厂默认序将来调整时自动跟随。 */
   function applySidebarSort(name: AnyViewName, action: SidebarSortAction) {
-    const gid = groupOfView(name)
-    if (!gid) return
-    const prev = groupOrders.value[gid]
-    const next = moveArrangeable(prev, name, action)
-    if (prev.every((v, i) => v === next[i])) return
-    groupOrders.value = { ...groupOrders.value, [gid]: next }
-    saveSidebarOrders(groupOrders.value)
+    const gid = groupOfView(name);
+    if (!gid) return;
+    const prev = groupOrders.value[gid];
+    const next = moveArrangeable(prev, name, action);
+    if (prev.every((v, i) => v === next[i])) return;
+    groupOrders.value = { ...groupOrders.value, [gid]: next };
+    saveSidebarOrders(groupOrders.value);
   }
 
   /** 恢复默认排序：组内序与收纳清单一并清除回出厂（ADR-0063 决策 4，一键回出厂布局的唯一通道）。 */
   function resetSidebarOrder() {
-    clearSidebarOrder()
-    clearContainment()
-    groupOrders.value = defaultGroupOrders()
-    containmentLists.value = defaultContainmentLists()
+    clearSidebarOrder();
+    clearContainment();
+    groupOrders.value = defaultGroupOrders();
+    containmentLists.value = defaultContainmentLists();
   }
 
   return {
@@ -466,5 +495,5 @@ export const useSidebarOrderStore = defineStore('sidebar-order', () => {
     applyMoveBackToSidebar,
     applySidebarSort,
     resetSidebarOrder,
-  }
-})
+  };
+});

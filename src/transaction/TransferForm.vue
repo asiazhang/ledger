@@ -1,28 +1,22 @@
 <script setup lang="ts">
-import {
-  NForm,
-  NFormItem,
-  NInput,
-  NButton,
-  NSpace,
-} from 'naive-ui'
-import { t } from '@ledger/i18n'
-import AppSelect from '@ledger/ui-kit/AppSelect.vue'
-import AppDatePicker from '@ledger/ui-kit/AppDatePicker.vue'
-import PinyinSelect from '@ledger/ui-kit/PinyinSelect.vue'
-import { useTransferForm } from '@/transaction/useTransferForm'
-import type { Transaction } from '@ledger/types'
+import { NForm, NFormItem, NInput, NButton, NSpace } from "naive-ui";
+import { t } from "@ledger/i18n";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import { useTransferForm } from "@/transaction/useTransferForm";
+import type { Transaction } from "@ledger/types";
 
 // 编辑模式（issue #178）：传入 editing 时回填既有交易并走更新命令。
-const props = defineProps<{ editing?: Transaction | null }>()
+const props = defineProps<{ editing?: Transaction | null }>();
 
-const emit = defineEmits<{ created: []; saved: [] }>()
+const emit = defineEmits<{ created: []; saved: [] }>();
 
 const ctx = useTransferForm({
-  onCreated: () => emit('created'),
-  onUpdated: () => emit('saved'),
+  onCreated: () => emit("created"),
+  onUpdated: () => emit("saved"),
   editing: () => props.editing ?? null,
-})
+});
 </script>
 
 <template>
@@ -78,7 +72,7 @@ const ctx = useTransferForm({
 
       <!-- 任一字段错误态下禁用（红框＋提交禁用两件同发，ADR-0058 决策 1） -->
       <NButton type="primary" :disabled="ctx.hasFieldError.value" @click="ctx.submit">
-        {{ editing ? t('transactions.form.saveChanges') : t('transactions.form.submitTransfer') }}
+        {{ editing ? t("transactions.form.saveChanges") : t("transactions.form.submitTransfer") }}
       </NButton>
     </NSpace>
   </NForm>

@@ -1,7 +1,7 @@
-import { onUnmounted, watch } from 'vue'
-import { hasOpenOverlay } from '@ledger/ui-kit/overlayRegistry'
-import { useInputMode } from '@/composables/useInputMode'
-import type { CreateTransactionKind } from '@ledger/types'
+import { onUnmounted, watch } from "vue";
+import { hasOpenOverlay } from "@ledger/ui-kit/overlayRegistry";
+import { useInputMode } from "@/composables/useInputMode";
+import type { CreateTransactionKind } from "@ledger/types";
 
 /**
  * 「记一笔」裸键快捷键（issue #153）：交易页按 a/z/i/b/s 直达对应类型的记一笔弹窗。
@@ -10,12 +10,12 @@ import type { CreateTransactionKind } from '@ledger/types'
  * （无现金腿 kind 界面只读，ADR-0106 决策 10 / #1048），同样不占键位。
  */
 export const CREATE_KIND_KEYS: Record<CreateTransactionKind, string> = {
-  expense: 'a',
-  transfer: 'z',
-  income: 'i',
-  buy: 'b',
-  sell: 's',
-}
+  expense: "a",
+  transfer: "z",
+  income: "i",
+  buy: "b",
+  sell: "s",
+};
 
 /**
  * 纯函数：裸键命中则返回对应 CreateTransactionKind，否则 null。
@@ -23,11 +23,11 @@ export const CREATE_KIND_KEYS: Record<CreateTransactionKind, string> = {
  * 均不命中，把组合键让给系统与其他快捷键（如 Cmd+1..9 视图切换）。
  */
 export function matchCreateShortcut(e: KeyboardEvent): CreateTransactionKind | null {
-  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return null
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return null;
   const found = (Object.entries(CREATE_KIND_KEYS) as [CreateTransactionKind, string][]).find(
     ([, key]) => e.key === key,
-  )
-  return found?.[0] ?? null
+  );
+  return found?.[0] ?? null;
 }
 
 /**
@@ -36,14 +36,14 @@ export function matchCreateShortcut(e: KeyboardEvent): CreateTransactionKind | n
  * 同时是窗口行为守卫的右键放行判定（issue #154，保留系统编辑菜单）。
  */
 export function isEditableTarget(e: Event): boolean {
-  const el = e.target
-  if (!(el instanceof HTMLElement)) return false
-  if (el.isContentEditable) return true
+  const el = e.target;
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.isContentEditable) return true;
   // isContentEditable 兜底：jsdom 未实现该属性，按 contenteditable 属性判断
   //（'' 与 'true' 均为可编辑，'false' 为显式不可编辑）
-  const ce = el.getAttribute('contenteditable')
-  if (ce === '' || ce === 'true') return true
-  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
+  const ce = el.getAttribute("contenteditable");
+  if (ce === "" || ce === "true") return true;
+  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
 }
 
 /**
@@ -63,21 +63,21 @@ export function useCreateShortcuts(
   isKindAvailable: (kind: CreateTransactionKind) => boolean,
 ) {
   const onKeydown = (e: KeyboardEvent) => {
-    const kind = matchCreateShortcut(e)
-    if (!kind) return
-    if (!isKindAvailable(kind)) return
-    if (isEditableTarget(e) || hasOpenOverlay()) return
-    e.preventDefault()
-    open(kind)
-  }
-  const inputMode = useInputMode()
+    const kind = matchCreateShortcut(e);
+    if (!kind) return;
+    if (!isKindAvailable(kind)) return;
+    if (isEditableTarget(e) || hasOpenOverlay()) return;
+    e.preventDefault();
+    open(kind);
+  };
+  const inputMode = useInputMode();
   watch(
     inputMode,
     (mode) => {
-      if (mode === 'pointer') window.addEventListener('keydown', onKeydown)
-      else window.removeEventListener('keydown', onKeydown)
+      if (mode === "pointer") window.addEventListener("keydown", onKeydown);
+      else window.removeEventListener("keydown", onKeydown);
     },
     { immediate: true },
-  )
-  onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+  );
+  onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 }

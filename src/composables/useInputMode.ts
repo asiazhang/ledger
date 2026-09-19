@@ -1,5 +1,5 @@
-import { computed, onScopeDispose, ref } from 'vue'
-import type { ComputedRef } from 'vue'
+import { computed, onScopeDispose, ref } from "vue";
+import type { ComputedRef } from "vue";
 
 /**
  * 输入轴（Input Mode，ADR-0088 决策 6 / 词汇表「输入轴」）：交互形态轴唯一事实源，
@@ -9,12 +9,12 @@ import type { ComputedRef } from 'vue'
  */
 
 /** hover 能力查询：主指针环境可悬停（鼠标 / 触控板）。 */
-const HOVER_QUERY = '(hover: hover)'
+const HOVER_QUERY = "(hover: hover)";
 /** 主指针精度查询：精细主指针。 */
-const FINE_POINTER_QUERY = '(pointer: fine)'
+const FINE_POINTER_QUERY = "(pointer: fine)";
 
 /** 输入轴闭集：触控轴 / 指针轴。 */
-export type InputMode = 'touch' | 'pointer'
+export type InputMode = "touch" | "pointer";
 
 /**
  * 输入轴 composable：hover / pointer 媒体查询 → 触控轴 / 指针轴。
@@ -29,23 +29,21 @@ export type InputMode = 'touch' | 'pointer'
  * hover / pointer 查询收口于本文件，与断点常量并列为两根轴的唯一事实源。
  */
 export function useInputMode(): ComputedRef<InputMode> {
-  const hoverMql = window.matchMedia(HOVER_QUERY)
-  const finePointerMql = window.matchMedia(FINE_POINTER_QUERY)
-  const canHover = ref(hoverMql.matches)
-  const hasFinePointer = ref(finePointerMql.matches)
+  const hoverMql = window.matchMedia(HOVER_QUERY);
+  const finePointerMql = window.matchMedia(FINE_POINTER_QUERY);
+  const canHover = ref(hoverMql.matches);
+  const hasFinePointer = ref(finePointerMql.matches);
   const onHoverChange = (event: MediaQueryListEvent): void => {
-    canHover.value = event.matches
-  }
+    canHover.value = event.matches;
+  };
   const onPointerChange = (event: MediaQueryListEvent): void => {
-    hasFinePointer.value = event.matches
-  }
-  hoverMql.addEventListener('change', onHoverChange)
-  finePointerMql.addEventListener('change', onPointerChange)
+    hasFinePointer.value = event.matches;
+  };
+  hoverMql.addEventListener("change", onHoverChange);
+  finePointerMql.addEventListener("change", onPointerChange);
   onScopeDispose(() => {
-    hoverMql.removeEventListener('change', onHoverChange)
-    finePointerMql.removeEventListener('change', onPointerChange)
-  })
-  return computed<InputMode>(() =>
-    canHover.value && hasFinePointer.value ? 'pointer' : 'touch',
-  )
+    hoverMql.removeEventListener("change", onHoverChange);
+    finePointerMql.removeEventListener("change", onPointerChange);
+  });
+  return computed<InputMode>(() => (canHover.value && hasFinePointer.value ? "pointer" : "touch"));
 }

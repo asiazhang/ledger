@@ -1,42 +1,42 @@
-import { computed, onMounted, ref } from 'vue'
-import { api } from '@ledger/api'
-import { useLoadable } from '@ledger/loadable'
-import { useReferenceStore } from '@/stores/reference'
-import { formatAmount } from '@ledger/money'
-import type { Currency, Holding, InstrumentPriceChannel } from '@ledger/types'
+import { computed, onMounted, ref } from "vue";
+import { api } from "@ledger/api";
+import { useLoadable } from "@ledger/loadable";
+import { useReferenceStore } from "@/stores/reference";
+import { formatAmount } from "@ledger/money";
+import type { Currency, Holding, InstrumentPriceChannel } from "@ledger/types";
 
 /** 当前持仓概览的一行：Holding 行叠加标的字典与账户的展示信息。 */
 export interface PortfolioRow {
-  holdingId: string
-  accountId: string
+  holdingId: string;
+  accountId: string;
   /** 账户名称（参考数据缺失时为 null，展示降级为「-」） */
-  accountName: string | null
-  instrumentId: string
-  symbol: string | null
-  instrumentName: string | null
-  quantity: number
-  costBasisCents: number
-  costCurrencyCode: string
-  latestPriceCents: number | null
-  latestPriceCurrencyCode: string | null
+  accountName: string | null;
+  instrumentId: string;
+  symbol: string | null;
+  instrumentName: string | null;
+  quantity: number;
+  costBasisCents: number;
+  costCurrencyCode: string;
+  latestPriceCents: number | null;
+  latestPriceCurrencyCode: string | null;
   /** 净值日期：基金现价（= 最新公布单位净值）携带，持仓可见现价对应哪天的净值；股票恒 null */
-  latestNavDate: string | null
+  latestNavDate: string | null;
   /** 账户本位币市值（v_holdings 实时计算；无行情时为 null） */
-  marketValueCents: number | null
+  marketValueCents: number | null;
   /** 账户本位币未实现盈亏（v_holdings 实时计算；无行情/汇率缺失时为 null） */
-  unrealizedPnlCents: number | null
+  unrealizedPnlCents: number | null;
   /** 市值/未实现盈亏的折算币种 = 账户币（账户缺失时回退成本币种） */
-  valueCurrencyCode: string
+  valueCurrencyCode: string;
   /** 价格写入通道（标的字典透传的后端派生事实，issue #1060）：缺价行引导
    * （issue #1193）只读本事实，前端不再按类型与市场自行推断；标的字典缺行时
    * 为 null（无可读通道，不给引导） */
-  priceChannel: InstrumentPriceChannel | null
+  priceChannel: InstrumentPriceChannel | null;
 }
 
 /** 按币种分组的金额小计 */
 export interface CurrencyAmountGroup {
-  currencyCode: string
-  cents: number
+  currencyCode: string;
+  cents: number;
 }
 
 /**
@@ -47,19 +47,19 @@ export interface CurrencyAmountGroup {
 export function sumByCurrency(
   values: { currencyCode: string; cents: number | null }[],
 ): CurrencyAmountGroup[] {
-  const acc = new Map<string, number>()
+  const acc = new Map<string, number>();
   for (const { currencyCode, cents } of values) {
-    if (cents === null) continue
-    acc.set(currencyCode, (acc.get(currencyCode) ?? 0) + cents)
+    if (cents === null) continue;
+    acc.set(currencyCode, (acc.get(currencyCode) ?? 0) + cents);
   }
   return [...acc.entries()]
     .map(([code, cents]) => ({ currencyCode: code, cents }))
-    .sort((a, b) => a.currencyCode.localeCompare(b.currencyCode))
+    .sort((a, b) => a.currencyCode.localeCompare(b.currencyCode));
 }
 
 /** 分组合计中的一组展示段 = 分组本体（币种、分）叠加格式化文本 */
 export interface CurrencyAmountSegment extends CurrencyAmountGroup {
-  text: string
+  text: string;
 }
 
 /**
@@ -74,7 +74,7 @@ export function currencyAmountSegments(
   return groups.map((g) => ({
     ...g,
     text: formatAmount(g.cents, currencyMap.get(g.currencyCode)),
-  }))
+  }));
 }
 
 /**
@@ -85,13 +85,13 @@ export function formatCurrencyGroups(
   groups: CurrencyAmountGroup[],
   currencyMap: Map<string, Currency>,
 ): string {
-  const segments = currencyAmountSegments(groups, currencyMap)
-  if (segments.length === 0) return '-'
-  return segments.map((s) => s.text).join(' / ')
+  const segments = currencyAmountSegments(groups, currencyMap);
+  if (segments.length === 0) return "-";
+  return segments.map((s) => s.text).join(" / ");
 }
 
 /** 一次拉全「持仓标的」字典的每页条数上限（list_instruments 单页上限） */
-const INVESTED_INSTRUMENT_FETCH_LIMIT = 500
+const INVESTED_INSTRUMENT_FETCH_LIMIT = 500;
 
 /**
  * 盈亏页持仓概览数据层（issue #110 / T6；issue #324 起为 Loadable 之上的薄壳，ADR-0040）：
@@ -105,13 +105,13 @@ const INVESTED_INSTRUMENT_FETCH_LIMIT = 500
  * 原值不清空成空态。
  */
 export function usePortfolioOverview() {
-  const reference = useReferenceStore()
+  const reference = useReferenceStore();
 
-  const rows = ref<PortfolioRow[]>([])
+  const rows = ref<PortfolioRow[]>([]);
   // 累计收益（issue #1077 / #1078）：后端按币种分组聚合（未实现 + 已实现 + 累计分红 三腿相加），
   // 是**全账本**口径、不随持仓页签的搜索/账户过滤收窄——已实现腿来自平仓匹配、
   // 无法归到某一行可见持仓。持仓页签合计区与首页投资卡共用本结果。
-  const totalCumulativePnlGroups = ref<CurrencyAmountGroup[]>([])
+  const totalCumulativePnlGroups = ref<CurrencyAmountGroup[]>([]);
 
   const { loading, error, run } = useLoadable(async () => {
     const [holdings, invested, cumulative] = await Promise.all([
@@ -123,38 +123,42 @@ export function usePortfolioOverview() {
         page_size: INVESTED_INSTRUMENT_FETCH_LIMIT,
       }),
       api.cumulativePnlSummary(),
-    ])
+    ]);
     // 行数通常远小于标的数，直接按 id 建 map（O(n+m)）
-    const instrumentMap = new Map(invested.items.map((i) => [i.id, i]))
+    const instrumentMap = new Map(invested.items.map((i) => [i.id, i]));
     return {
       rows: holdings.map((h: Holding) => toRow(h, instrumentMap, reference.accountMap)),
       cumulativePnlGroups: cumulative.map((g) => ({
         currencyCode: g.currency_code,
         cents: g.cumulative_pnl_cents,
       })),
-    }
-  })
+    };
+  });
 
   async function refresh() {
-    const result = await run()
+    const result = await run();
     // 失败回空（error 已置位）：rows 保持原值不清空；迟到前发结果已被 Loadable
     // 竞态裁决作废为空，不会覆写终态
     if (result !== null) {
-      rows.value = result.rows
-      totalCumulativePnlGroups.value = result.cumulativePnlGroups
+      rows.value = result.rows;
+      totalCumulativePnlGroups.value = result.cumulativePnlGroups;
     }
   }
 
   const totalMarketValueGroups = computed(() =>
-    sumByCurrency(rows.value.map((r) => ({ currencyCode: r.valueCurrencyCode, cents: r.marketValueCents }))),
-  )
+    sumByCurrency(
+      rows.value.map((r) => ({ currencyCode: r.valueCurrencyCode, cents: r.marketValueCents })),
+    ),
+  );
   const totalUnrealizedPnlGroups = computed(() =>
-    sumByCurrency(rows.value.map((r) => ({ currencyCode: r.valueCurrencyCode, cents: r.unrealizedPnlCents }))),
-  )
+    sumByCurrency(
+      rows.value.map((r) => ({ currencyCode: r.valueCurrencyCode, cents: r.unrealizedPnlCents })),
+    ),
+  );
 
   onMounted(() => {
-    void refresh()
-  })
+    void refresh();
+  });
 
   return {
     rows,
@@ -164,18 +168,18 @@ export function usePortfolioOverview() {
     totalUnrealizedPnlGroups,
     totalCumulativePnlGroups,
     refresh,
-  }
+  };
 }
 
 interface InstrumentLike {
-  symbol: string
-  name: string | null
-  price_channel: InstrumentPriceChannel
+  symbol: string;
+  name: string | null;
+  price_channel: InstrumentPriceChannel;
 }
 
 interface AccountLike {
-  name: string
-  currency_code: string
+  name: string;
+  currency_code: string;
 }
 
 /** Holding 行 + 标的字典 + 账户参考数据 → 概览明细行 */
@@ -184,8 +188,8 @@ function toRow(
   instrumentMap: Map<string, InstrumentLike>,
   accountMap: Map<string, AccountLike>,
 ): PortfolioRow {
-  const inst = instrumentMap.get(h.instrument_id)
-  const acct = accountMap.get(h.account_id)
+  const inst = instrumentMap.get(h.instrument_id);
+  const acct = accountMap.get(h.account_id);
   return {
     holdingId: h.id,
     accountId: h.account_id,
@@ -205,5 +209,5 @@ function toRow(
     valueCurrencyCode: acct?.currency_code ?? h.cost_currency_code,
     // 价格通道随标的行透传（后端派生单点），缺价行引导据此分流
     priceChannel: inst?.price_channel ?? null,
-  }
+  };
 }

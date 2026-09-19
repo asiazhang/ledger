@@ -9,24 +9,26 @@
  */
 const state = {
   handlers: [] as (() => void)[],
-}
+};
 
 /** vi.mock 工厂体内调用：捕获订阅回调 */
 export function capturePricesChangedHandler(cb: () => void): void {
-  state.handlers.push(cb)
+  state.handlers.push(cb);
 }
 
 /** 模拟后端 emit：逐订阅者触发（未订阅时报错而非静默） */
 export function firePricesChanged(): void {
   if (state.handlers.length === 0) {
-    throw new Error('usePricesChanged 未被订阅：先在 vi.mock 工厂中接好 capturePricesChangedHandler')
+    throw new Error(
+      "usePricesChanged 未被订阅：先在 vi.mock 工厂中接好 capturePricesChangedHandler",
+    );
   }
   for (const handler of state.handlers) {
-    handler()
+    handler();
   }
 }
 
 /** 测试间重置捕获的回调 */
 export function resetPricesChangedHandler(): void {
-  state.handlers = []
+  state.handlers = [];
 }

@@ -1,13 +1,13 @@
-import { onMounted, ref } from 'vue'
-import { h, type VNode } from 'vue'
-import { api } from '@ledger/api'
-import { t } from '@ledger/i18n'
-import { pnlSemanticColor } from '@ledger/theme/semantic-colors'
-import type { Theme } from '@ledger/theme'
-import MwrRateCell from '@/investment/MwrRateCell.vue'
-import { useLoadable } from '@ledger/loadable'
-import { usePricesChanged } from '@/investment/usePricesChanged'
-import type { MoneyWeightedReturnSummary, MwrBasis } from '@ledger/types'
+import { onMounted, ref } from "vue";
+import { h, type VNode } from "vue";
+import { api } from "@ledger/api";
+import { t } from "@ledger/i18n";
+import { pnlSemanticColor } from "@ledger/theme/semantic-colors";
+import type { Theme } from "@ledger/theme";
+import MwrRateCell from "@/investment/MwrRateCell.vue";
+import { useLoadable } from "@ledger/loadable";
+import { usePricesChanged } from "@/investment/usePricesChanged";
+import type { MoneyWeightedReturnSummary, MwrBasis } from "@ledger/types";
 
 /**
  * 收益率单元格三态渲染单点（issue #1195 / ADR-0115）：行缺失（缺价跳过）→
@@ -24,15 +24,15 @@ import type { MoneyWeightedReturnSummary, MwrBasis } from '@ledger/types'
 export function renderMwrRateCell(
   rate: number | null | undefined,
   theme: Theme,
-  basis: MwrBasis = 'annualized',
+  basis: MwrBasis = "annualized",
 ): string | VNode {
-  if (rate === undefined) return '-'
-  if (rate === null) return t('investments.pnl.notComputable')
+  if (rate === undefined) return "-";
+  if (rate === null) return t("investments.pnl.notComputable");
   return h(MwrRateCell, {
     rate,
     color: pnlSemanticColor(rate, theme),
-    annualized: basis === 'annualized',
-  })
+    annualized: basis === "annualized",
+  });
 }
 
 /**
@@ -52,31 +52,31 @@ export function renderMwrRateCell(
  * 未年化（issue #1346），展示层经 renderMwrRateCell 标注。
  */
 export function useMoneyWeightedReturn() {
-  const summary = ref<MoneyWeightedReturnSummary | null>(null)
+  const summary = ref<MoneyWeightedReturnSummary | null>(null);
 
-  const { loading, error, run } = useLoadable(async () => api.moneyWeightedReturnSummary())
+  const { loading, error, run } = useLoadable(async () => api.moneyWeightedReturnSummary());
 
   async function refresh() {
-    const result = await run()
+    const result = await run();
     // 失败回空（error 已置位）：summary 保持原值不清空成空态；迟到前发结果已被
     // Loadable 竞态裁决作废为空，不会覆写终态
-    if (result !== null) summary.value = result
+    if (result !== null) summary.value = result;
   }
 
   usePricesChanged(() => {
-    void refresh()
-  })
+    void refresh();
+  });
 
   onMounted(() => {
-    void refresh()
-  })
+    void refresh();
+  });
 
   /** 单标的行收益率（账户 × 标的 定位）：行缺失（缺价跳过）为 undefined、
    * 无解为 null、可计算为数值——三态由展示层分流（「-」/「无法计算」/百分比）。 */
   function instrumentRate(accountId: string, instrumentId: string): number | null | undefined {
     return summary.value?.by_instrument.find(
       (r) => r.account_id === accountId && r.instrument_id === instrumentId,
-    )?.rate
+    )?.rate;
   }
 
   /** 单标的行（账户 × 标的 定位，含口径）：行缺失为 undefined——展示层据 `basis`
@@ -87,9 +87,9 @@ export function useMoneyWeightedReturn() {
   ): { basis: MwrBasis; rate: number | null } | undefined {
     const row = summary.value?.by_instrument.find(
       (r) => r.account_id === accountId && r.instrument_id === instrumentId,
-    )
-    return row === undefined ? undefined : { basis: row.basis, rate: row.rate }
+    );
+    return row === undefined ? undefined : { basis: row.basis, rate: row.rate };
   }
 
-  return { loading, error, summary, refresh, instrumentRate, instrumentMwr }
+  return { loading, error, summary, refresh, instrumentRate, instrumentMwr };
 }

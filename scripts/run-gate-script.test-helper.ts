@@ -10,19 +10,19 @@
 // dialog-forms 的领域参数构造留在绑定内）。测试与所测脚本同目录住（#1158）；
 // 跨目录消费（src/__tests__）沿既有先例直引 ../../scripts/（被测脚本同款）。
 
-import { spawnSync } from 'node:child_process'
-import { join } from 'node:path'
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 
 /** 一次守门脚本运行的外部可观察结果（ADR-0083：退出码与输出即测试接缝） */
 export interface RunResult {
-  status: number
-  output: string
+  status: number;
+  output: string;
 }
 
 /** 定位被测守门脚本：仓库根下 scripts/<name>.ts。
  *  （vitest 转换后 import.meta.url 非 file: scheme，取进程 cwd = 仓库根定位） */
 export function gateScript(name: string): string {
-  return join(process.cwd(), 'scripts', name)
+  return join(process.cwd(), "scripts", name);
 }
 
 /** 以 bun 运行被测守门脚本（spawnSync('bun') 与门槛调用同款，ADR-0083），
@@ -34,6 +34,6 @@ export function runGateScript(
   args: readonly string[] = [],
   opts: { cwd?: string } = {},
 ): RunResult {
-  const r = spawnSync('bun', [script, ...args], { encoding: 'utf8', cwd: opts.cwd })
-  return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
+  const r = spawnSync("bun", [script, ...args], { encoding: "utf8", cwd: opts.cwd });
+  return { status: r.status ?? -1, output: (r.stdout ?? "") + (r.stderr ?? "") };
 }

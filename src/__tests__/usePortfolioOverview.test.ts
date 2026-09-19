@@ -1,15 +1,15 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { mount, flushPromises } from '@vue/test-utils'
-import { withSetup } from '@ledger/test-support/mount'
-import { defineComponent } from 'vue'
-import { useReferenceStore } from '@/stores/reference'
-import { registerToastSink } from '@ledger/loadable'
+import { describe, it, expect, beforeEach } from "vitest";
+import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { mount, flushPromises } from "@vue/test-utils";
+import { withSetup } from "@ledger/test-support/mount";
+import { defineComponent } from "vue";
+import { useReferenceStore } from "@/stores/reference";
+import { registerToastSink } from "@ledger/loadable";
 import {
   formatCurrencyGroups,
   sumByCurrency,
   usePortfolioOverview,
-} from '@/investment/usePortfolioOverview'
+} from "@/investment/usePortfolioOverview";
 import {
   makeFakeSink,
   mockAccounts,
@@ -17,14 +17,14 @@ import {
   mockHoldings,
   mockInstruments,
   resetToastSink,
-} from './factories'
-import { formatAmount } from '@ledger/money'
-import type { Currency } from '@ledger/types'
+} from "./factories";
+import { formatAmount } from "@ledger/money";
+import type { Currency } from "@ledger/types";
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测；
 // formatCurrencyGroups 自身规则只剩「 / 」连接符，仍以字面量锁定
-const cny = mockCurrencies[0]
-const usd: Currency = { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 }
+const cny = mockCurrencies[0];
+const usd: Currency = { code: "USD", name: "美元", symbol: "$", decimal_places: 2 };
 
 /** 默认 invoke 布线：持仓 + 持仓标的字典契约快照（参考字典命令走接缝内建兑底） */
 const BASE_DEFAULTS = {
@@ -32,125 +32,124 @@ const BASE_DEFAULTS = {
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
   // 累计收益（issue #1077）：后端按币种分组聚合（未实现 + 已实现两腿相加）
   cumulative_pnl_summary: [
-    { currency_code: 'CNY', cumulative_pnl_cents: 30000 },
-    { currency_code: 'USD', cumulative_pnl_cents: -500 },
+    { currency_code: "CNY", cumulative_pnl_cents: 30000 },
+    { currency_code: "USD", cumulative_pnl_cents: -500 },
   ],
-}
+};
 
 /** 参考命令本场景需自定义值（overrides 优先于参考兑底）：行装配断言消费账户名「证券账户A」 */
-const REFERENCE_OVERRIDES = { list_accounts: mockAccounts }
+const REFERENCE_OVERRIDES = { list_accounts: mockAccounts };
 
 /** 宿主组件：模拟盈亏页/首页在 setup 内使用 composable（onMounted 自动首刷时序留在薄壳内） */
 const Host = defineComponent({
   setup() {
-    return { shell: usePortfolioOverview() }
+    return { shell: usePortfolioOverview() };
   },
-  template: '<div />',
-})
+  template: "<div />",
+});
 
 beforeEach(async () => {
-  wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: REFERENCE_OVERRIDES })
+  wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: REFERENCE_OVERRIDES });
   // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
-  resetToastSink()
-  const store = useReferenceStore()
-  await store.refresh()
-})
+  resetToastSink();
+  const store = useReferenceStore();
+  await store.refresh();
+});
 
-describe('sumByCurrency 按币种汇总金额', () => {
-  it('跳过空值并按币种累加、按币种代码排序', () => {
+describe("sumByCurrency 按币种汇总金额", () => {
+  it("跳过空值并按币种累加、按币种代码排序", () => {
     expect(
       sumByCurrency([
-        { currencyCode: 'CNY', cents: 100 },
-        { currencyCode: 'HKD', cents: 50 },
-        { currencyCode: 'CNY', cents: 200 },
-        { currencyCode: 'USD', cents: null },
+        { currencyCode: "CNY", cents: 100 },
+        { currencyCode: "HKD", cents: 50 },
+        { currencyCode: "CNY", cents: 200 },
+        { currencyCode: "USD", cents: null },
       ]),
     ).toEqual([
-      { currencyCode: 'CNY', cents: 300 },
-      { currencyCode: 'HKD', cents: 50 },
-    ])
-  })
+      { currencyCode: "CNY", cents: 300 },
+      { currencyCode: "HKD", cents: 50 },
+    ]);
+  });
 
-  it('全部为空值时返回空数组', () => {
-    expect(sumByCurrency([{ currencyCode: 'CNY', cents: null }])).toEqual([])
-  })
-})
+  it("全部为空值时返回空数组", () => {
+    expect(sumByCurrency([{ currencyCode: "CNY", cents: null }])).toEqual([]);
+  });
+});
 
-describe('formatCurrencyGroups 分组合计展示文本（issue #145 首页复用）', () => {
-  it('逐组格式化后以「 / 」连接', () => {
-    const currencyMap = new Map(
-      [...mockCurrencies, usd].map((c) => [c.code, c]),
-    )
+describe("formatCurrencyGroups 分组合计展示文本（issue #145 首页复用）", () => {
+  it("逐组格式化后以「 / 」连接", () => {
+    const currencyMap = new Map([...mockCurrencies, usd].map((c) => [c.code, c]));
     expect(
       formatCurrencyGroups(
         [
-          { currencyCode: 'CNY', cents: 300 },
-          { currencyCode: 'USD', cents: -500 },
+          { currencyCode: "CNY", cents: 300 },
+          { currencyCode: "USD", cents: -500 },
         ],
         currencyMap,
       ),
-    ).toBe(`${formatAmount(300, cny)} / ${formatAmount(-500, usd)}`)
-  })
+    ).toBe(`${formatAmount(300, cny)} / ${formatAmount(-500, usd)}`);
+  });
 
-  it('空分组降级为 -', () => {
-    expect(formatCurrencyGroups([], new Map())).toBe('-')
-  })
-})
+  it("空分组降级为 -", () => {
+    expect(formatCurrencyGroups([], new Map())).toBe("-");
+  });
+});
 
-describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', () => {
-  it('加载持仓并与持仓标的字典/账户信息拼装成行', async () => {
-    const { rows, loading, refresh } = withSetup(() => usePortfolioOverview())
-    await refresh()
-    expect(loading.value).toBe(false)
-    expect(rows.value.length).toBe(2)
-    const row1 = rows.value[0]
-    expect(row1.symbol).toBe('600000')
-    expect(row1.instrumentName).toBe('浦发银行')
-    expect(row1.accountName).toBe('证券账户A')
-    expect(row1.quantity).toBe(100)
-    expect(row1.costBasisCents).toBe(120000)
-    expect(row1.latestPriceCents).toBe(150000) // 现价为万分之一元刻度（ADR-0038）
-    expect(row1.marketValueCents).toBe(150000)
-    expect(row1.unrealizedPnlCents).toBe(30000)
+describe("usePortfolioOverview 盈亏页持仓概览数据层（issue #110）", () => {
+  it("加载持仓并与持仓标的字典/账户信息拼装成行", async () => {
+    const { rows, loading, refresh } = withSetup(() => usePortfolioOverview());
+    await refresh();
+    expect(loading.value).toBe(false);
+    expect(rows.value.length).toBe(2);
+    const row1 = rows.value[0];
+    expect(row1.symbol).toBe("600000");
+    expect(row1.instrumentName).toBe("浦发银行");
+    expect(row1.accountName).toBe("证券账户A");
+    expect(row1.quantity).toBe(100);
+    expect(row1.costBasisCents).toBe(120000);
+    expect(row1.latestPriceCents).toBe(150000); // 现价为万分之一元刻度（ADR-0038）
+    expect(row1.marketValueCents).toBe(150000);
+    expect(row1.unrealizedPnlCents).toBe(30000);
     // 市值/未实现盈亏折算币种 = 账户币
-    expect(row1.valueCurrencyCode).toBe('CNY')
-  })
+    expect(row1.valueCurrencyCode).toBe("CNY");
+  });
 
-  it('查询持仓标的字典时携带 only_invested=true（与增量同步同口径）', async () => {
-    const { refresh } = withSetup(() => usePortfolioOverview())
-    await refresh()
-    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'list_instruments')
-    expect(call![1]).toMatchObject({ filter: { only_invested: true } })
-  })
+  it("查询持仓标的字典时携带 only_invested=true（与增量同步同口径）", async () => {
+    const { refresh } = withSetup(() => usePortfolioOverview());
+    await refresh();
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "list_instruments");
+    expect(call![1]).toMatchObject({ filter: { only_invested: true } });
+  });
 
-  it('净值日期透传到行（基金现价对应哪天的净值，#303）', async () => {
-    const { rows, refresh } = withSetup(() => usePortfolioOverview())
-    await refresh()
+  it("净值日期透传到行（基金现价对应哪天的净值，#303）", async () => {
+    const { rows, refresh } = withSetup(() => usePortfolioOverview());
+    await refresh();
     // 默认夹具为股票行：latest_nav_date 为 null
-    expect(rows.value[0]!.latestNavDate).toBeNull()
-  })
+    expect(rows.value[0]!.latestNavDate).toBeNull();
+  });
 
-  it('总市值与未实现盈亏合计：排除无行情行，按账户币种汇总', async () => {
-    const { totalMarketValueGroups, totalUnrealizedPnlGroups, refresh } =
-      withSetup(() => usePortfolioOverview())
-    await refresh()
+  it("总市值与未实现盈亏合计：排除无行情行，按账户币种汇总", async () => {
+    const { totalMarketValueGroups, totalUnrealizedPnlGroups, refresh } = withSetup(() =>
+      usePortfolioOverview(),
+    );
+    await refresh();
     // h-2 无行情 NULL 不计入；只有 h-1 计入
-    expect(totalMarketValueGroups.value).toEqual([{ currencyCode: 'CNY', cents: 150000 }])
-    expect(totalUnrealizedPnlGroups.value).toEqual([{ currencyCode: 'CNY', cents: 30000 }])
-  })
+    expect(totalMarketValueGroups.value).toEqual([{ currencyCode: "CNY", cents: 150000 }]);
+    expect(totalUnrealizedPnlGroups.value).toEqual([{ currencyCode: "CNY", cents: 30000 }]);
+  });
 
-  it('累计收益按币种分组透传（issue #1077）：后端两腿相加结果直接成组，不从持仓行派生', async () => {
-    const { totalCumulativePnlGroups, refresh } = withSetup(() => usePortfolioOverview())
-    await refresh()
+  it("累计收益按币种分组透传（issue #1077）：后端两腿相加结果直接成组，不从持仓行派生", async () => {
+    const { totalCumulativePnlGroups, refresh } = withSetup(() => usePortfolioOverview());
+    await refresh();
     expect(totalCumulativePnlGroups.value).toEqual([
-      { currencyCode: 'CNY', cents: 30000 },
-      { currencyCode: 'USD', cents: -500 },
-    ])
+      { currencyCode: "CNY", cents: 30000 },
+      { currencyCode: "USD", cents: -500 },
+    ]);
     // USD 组只可能来自后端聚合（持仓行全为 CNY），排除前端从持仓行二次求和
-    expect(mockInvoke.mock.calls.some(([c]) => c === 'cumulative_pnl_summary')).toBe(true)
-  })
+    expect(mockInvoke.mock.calls.some(([c]) => c === "cumulative_pnl_summary")).toBe(true);
+  });
 
-  it('无持仓时行为明确：rows 为空、汇总为空数组，不报错', async () => {
+  it("无持仓时行为明确：rows 为空、汇总为空数组，不报错", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
@@ -159,7 +158,7 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
         list_instruments: { items: [], total: 0 },
         cumulative_pnl_summary: [],
       },
-    })
+    });
     const {
       rows,
       loading,
@@ -167,87 +166,87 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
       totalUnrealizedPnlGroups,
       totalCumulativePnlGroups,
       refresh,
-    } = withSetup(() => usePortfolioOverview())
-    await refresh()
-    expect(rows.value).toEqual([])
-    expect(totalMarketValueGroups.value).toEqual([])
-    expect(totalUnrealizedPnlGroups.value).toEqual([])
-    expect(totalCumulativePnlGroups.value).toEqual([])
-    expect(loading.value).toBe(false)
-  })
-})
+    } = withSetup(() => usePortfolioOverview());
+    await refresh();
+    expect(rows.value).toEqual([]);
+    expect(totalMarketValueGroups.value).toEqual([]);
+    expect(totalUnrealizedPnlGroups.value).toEqual([]);
+    expect(totalCumulativePnlGroups.value).toEqual([]);
+    expect(loading.value).toBe(false);
+  });
+});
 
-describe('usePortfolioOverview 失败治愈（issue #324 Loadable 薄壳化）', () => {
-  it('刷新失败不向调用方抛出：error 置位、loading 收尾、rows 保持原值不清空', async () => {
-    const { rows, loading, error, refresh } = withSetup(() => usePortfolioOverview())
-    await refresh()
-    expect(rows.value.length).toBe(2)
+describe("usePortfolioOverview 失败治愈（issue #324 Loadable 薄壳化）", () => {
+  it("刷新失败不向调用方抛出：error 置位、loading 收尾、rows 保持原值不清空", async () => {
+    const { rows, loading, error, refresh } = withSetup(() => usePortfolioOverview());
+    await refresh();
+    expect(rows.value.length).toBe(2);
 
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         ...REFERENCE_OVERRIDES,
-        list_holdings: () => Promise.reject(new Error('数据库文件已锁定')),
+        list_holdings: () => Promise.reject(new Error("数据库文件已锁定")),
       },
-    })
-    await expect(refresh()).resolves.not.toThrow()
-    expect(loading.value).toBe(false)
-    expect(error.value).toBe('数据库文件已锁定')
-    expect(rows.value.length).toBe(2)
-  })
+    });
+    await expect(refresh()).resolves.not.toThrow();
+    expect(loading.value).toBe(false);
+    expect(error.value).toBe("数据库文件已锁定");
+    expect(rows.value.length).toBe(2);
+  });
 
-  it('失败弹默认 toast（serde 对象错误归一取 message），成功不弹——error 状态与 toast 双通道共存', async () => {
-    const sink = makeFakeSink()
-    registerToastSink(sink)
+  it("失败弹默认 toast（serde 对象错误归一取 message），成功不弹——error 状态与 toast 双通道共存", async () => {
+    const sink = makeFakeSink();
+    registerToastSink(sink);
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         ...REFERENCE_OVERRIDES,
-        list_holdings: () => Promise.reject({ kind: 'db', message: '持仓查询失败' }),
+        list_holdings: () => Promise.reject({ kind: "db", message: "持仓查询失败" }),
       },
-    })
+    });
     // 挂载自动首刷已吃到拒绝布线并弹一次 toast，无需再显式首刷
-    const { error, refresh } = withSetup(() => usePortfolioOverview())
-    await flushPromises()
-    expect(error.value).toBe('持仓查询失败')
-    expect(sink.error).toHaveBeenCalledTimes(1)
-    expect(sink.error).toHaveBeenCalledWith('持仓查询失败')
+    const { error, refresh } = withSetup(() => usePortfolioOverview());
+    await flushPromises();
+    expect(error.value).toBe("持仓查询失败");
+    expect(sink.error).toHaveBeenCalledTimes(1);
+    expect(sink.error).toHaveBeenCalledWith("持仓查询失败");
 
-    wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: REFERENCE_OVERRIDES })
-    await refresh()
-    expect(sink.error).toHaveBeenCalledTimes(1)
-  })
+    wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: REFERENCE_OVERRIDES });
+    await refresh();
+    expect(sink.error).toHaveBeenCalledTimes(1);
+  });
 
-  it('失败后重试成功：error 清零、rows 重新装配（error 是唯一成败判据）', async () => {
+  it("失败后重试成功：error 清零、rows 重新装配（error 是唯一成败判据）", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
-      overrides: { ...REFERENCE_OVERRIDES, list_holdings: () => Promise.reject('首刷失败') },
-    })
-    const { rows, error, refresh } = withSetup(() => usePortfolioOverview())
-    await refresh()
-    expect(error.value).toBe('首刷失败')
-    expect(rows.value).toEqual([])
+      overrides: { ...REFERENCE_OVERRIDES, list_holdings: () => Promise.reject("首刷失败") },
+    });
+    const { rows, error, refresh } = withSetup(() => usePortfolioOverview());
+    await refresh();
+    expect(error.value).toBe("首刷失败");
+    expect(rows.value).toEqual([]);
 
-    wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: REFERENCE_OVERRIDES })
-    await refresh()
-    expect(error.value).toBeNull()
-    expect(rows.value.length).toBe(2)
-  })
+    wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: REFERENCE_OVERRIDES });
+    await refresh();
+    expect(error.value).toBeNull();
+    expect(rows.value.length).toBe(2);
+  });
 
-  it('挂载首刷失败（onMounted 自动首刷）：不再产生未处理 rejection，进入 error 终态并弹 toast', async () => {
+  it("挂载首刷失败（onMounted 自动首刷）：不再产生未处理 rejection，进入 error 终态并弹 toast", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         ...REFERENCE_OVERRIDES,
-        list_holdings: () => Promise.reject(new Error('首刷失败')),
+        list_holdings: () => Promise.reject(new Error("首刷失败")),
       },
-    })
-    const sink = makeFakeSink()
-    registerToastSink(sink)
-    const wrapper = mount(Host)
-    await flushPromises()
-    expect(wrapper.vm.shell.error.value).toBe('首刷失败')
-    expect(wrapper.vm.shell.rows.value).toEqual([])
-    expect(sink.error).toHaveBeenCalledWith('首刷失败')
-  })
-})
+    });
+    const sink = makeFakeSink();
+    registerToastSink(sink);
+    const wrapper = mount(Host);
+    await flushPromises();
+    expect(wrapper.vm.shell.error.value).toBe("首刷失败");
+    expect(wrapper.vm.shell.rows.value).toEqual([]);
+    expect(sink.error).toHaveBeenCalledWith("首刷失败");
+  });
+});

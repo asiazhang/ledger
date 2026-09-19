@@ -1,7 +1,7 @@
-import { onMounted, ref } from 'vue'
-import { api } from '@ledger/api'
-import { useLoadable } from '@ledger/loadable'
-import type { DashboardOverview } from '@ledger/types'
+import { onMounted, ref } from "vue";
+import { api } from "@ledger/api";
+import { useLoadable } from "@ledger/loadable";
+import type { DashboardOverview } from "@ledger/types";
 
 /**
  * 首页净资产总览数据层（issue #143；issue #323 起为 Loadable 之上的薄壳，ADR-0040）：
@@ -14,17 +14,17 @@ import type { DashboardOverview } from '@ledger/types'
  * 由视图显示提示文案而非空数字或崩溃。
  */
 export function useDashboardOverview() {
-  const overview = ref<DashboardOverview | null>(null)
+  const overview = ref<DashboardOverview | null>(null);
 
-  const { loading, error, run } = useLoadable(() => api.dashboardOverview())
+  const { loading, error, run } = useLoadable(() => api.dashboardOverview());
 
   async function refresh() {
-    overview.value = await run()
+    overview.value = await run();
   }
 
   onMounted(() => {
-    void refresh()
-  })
+    void refresh();
+  });
 
-  return { overview, loading, error, refresh }
+  return { overview, loading, error, refresh };
 }

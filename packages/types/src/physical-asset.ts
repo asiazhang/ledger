@@ -1,4 +1,4 @@
-import type { Syncable } from './common'
+import type { Syncable } from "./common";
 
 /**
  * 实物资产（PhysicalAsset）领域类型（issue #466 / ADR-0064）：大件实物的
@@ -8,96 +8,96 @@ import type { Syncable } from './common'
  */
 
 /** 实物资产生命周期状态：在持 / 已处置。 */
-export type PhysicalAssetStatus = 'holding' | 'disposed'
+export type PhysicalAssetStatus = "holding" | "disposed";
 
 /** 实物资产实体（读模型，全字段，对应后端 `physical_asset::PhysicalAsset`）。 */
 export interface PhysicalAsset extends Syncable {
-  id: string
+  id: string;
   /** 资产名称（建档必填）。 */
-  name: string
+  name: string;
   /** 购买日期（可空；YYYY-MM-DD）。 */
-  purchase_date: string | null
+  purchase_date: string | null;
   /** 购买价（可空，整数分；纯记录，不进任何金额口径）。 */
-  purchase_price_cents: number | null
+  purchase_price_cents: number | null;
   /** 购买价币种（与购买价成对：购买价存在时必填）。 */
-  purchase_currency_code: string | null
+  purchase_currency_code: string | null;
   /** 生命周期状态（在持/已处置）。 */
-  status: PhysicalAssetStatus
+  status: PhysicalAssetStatus;
   /** 处置日期（仅 disposed；YYYY-MM-DD；处置必填）。 */
-  disposal_date: string | null
+  disposal_date: string | null;
   /** 处置价（可空，整数分；纯记录）。 */
-  disposal_price_cents: number | null
+  disposal_price_cents: number | null;
   /** 处置价币种（与处置价成对）。 */
-  disposal_currency_code: string | null
-  created_at: string
+  disposal_currency_code: string | null;
+  created_at: string;
   /** 当前估值（整数分）= 最新一条估值历史行金额。 */
-  current_valuation_cents: number
+  current_valuation_cents: number;
   /** 当前估值币种。 */
-  current_valuation_currency_code: string
+  current_valuation_currency_code: string;
   /** 当前估值日期（YYYY-MM-DD）。 */
-  current_valuation_date: string
+  current_valuation_date: string;
   /** 当前估值折本位币（整数分，当期汇率）：仅**在持**行有值，已处置行为 null。 */
-  current_valuation_native_cents: number | null
+  current_valuation_native_cents: number | null;
   /** 本位币币种代码（折算基准）。 */
-  native_currency: string
+  native_currency: string;
 }
 
 /** 建档入参（对应后端 `physical_asset::PhysicalAssetInput`，issue #466 T1）。
  *  名称必填、当前估值必填（即第一条估值历史行）、购买信息可选。 */
 export interface PhysicalAssetInput {
-  name: string
+  name: string;
   /** 购买日期（可空；YYYY-MM-DD）。 */
-  purchase_date?: string | null
+  purchase_date?: string | null;
   /** 购买价（可空，整数分）。 */
-  purchase_price_cents?: number | null
+  purchase_price_cents?: number | null;
   /** 购买价币种（购买价存在时必填）。 */
-  purchase_currency_code?: string | null
+  purchase_currency_code?: string | null;
   /** 当前估值（整数分；必填——缺失后端显式报错）。 */
-  initial_valuation_cents?: number | null
+  initial_valuation_cents?: number | null;
   /** 当前估值币种（必填；前端预选默认币种）。 */
-  initial_valuation_currency_code?: string | null
+  initial_valuation_currency_code?: string | null;
   /** 当前估值日期（可空 = 今天；YYYY-MM-DD）。 */
-  initial_valuation_date?: string | null
+  initial_valuation_date?: string | null;
 }
 
 /** 编辑档案入参（对应后端 `physical_asset::PhysicalAssetUpdateInput`，issue #467 T2）：
  *  仅名称与购买信息——估值不出现在编辑表单，只能经「更新估值」变更。 */
 export interface PhysicalAssetUpdateInput {
-  name: string
+  name: string;
   /** 购买日期（可空；YYYY-MM-DD）。 */
-  purchase_date?: string | null
+  purchase_date?: string | null;
   /** 购买价（可空，整数分）。 */
-  purchase_price_cents?: number | null
+  purchase_price_cents?: number | null;
   /** 购买价币种（购买价存在时必填）。 */
-  purchase_currency_code?: string | null
+  purchase_currency_code?: string | null;
 }
 
 /** 更新估值入参（对应后端 `physical_asset::PhysicalAssetValuationInput`，
  *  issue #467 T2）：每次调用追加一条估值历史行，当前估值变为最新一条。 */
 export interface PhysicalAssetValuationInput {
   /** 估值金额（整数分；必填——缺失后端显式报错）。 */
-  amount_cents?: number | null
+  amount_cents?: number | null;
   /** 估值币种（必填；前端预选当前估值币种）。 */
-  currency_code?: string | null
+  currency_code?: string | null;
   /** 估值日期（可空 = 今天；YYYY-MM-DD；可补过去，拒绝未来）。 */
-  valuation_date?: string | null
+  valuation_date?: string | null;
 }
 
 /** 处置入参（对应后端 `physical_asset::PhysicalAssetDisposeInput`，issue #468 T3）：
  *  处置日期必填、处置价 + 币种可选纯记录（成对，后端守卫）。 */
 export interface PhysicalAssetDisposeInput {
   /** 处置日期（必填；YYYY-MM-DD）。 */
-  disposal_date?: string | null
+  disposal_date?: string | null;
   /** 处置价（可空，整数分；纯记录，不进任何金额口径）。 */
-  disposal_price_cents?: number | null
+  disposal_price_cents?: number | null;
   /** 处置价币种（处置价存在时必填）。 */
-  disposal_currency_code?: string | null
+  disposal_currency_code?: string | null;
 }
 
 /** 列表返回（对应后端 `physical_asset::PhysicalAssetList`）：
  *  资产行 + **在持**估值合计（口径与筛选无关——「家底合计」恒指在持资产）。 */
 export interface PhysicalAssetList {
-  assets: PhysicalAsset[]
-  holding_total_native_cents: number
-  native_currency: string
+  assets: PhysicalAsset[];
+  holding_total_native_cents: number;
+  native_currency: string;
 }

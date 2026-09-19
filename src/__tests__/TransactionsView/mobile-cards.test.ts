@@ -1,22 +1,33 @@
 // 路由替身经 common.ts 的 vi.mock 注册，必须先于任何直连组件导入（导入顺序即 mock 生效面）
 import {
-  mountView, mountMobile, mountPhone, cards, shownModal, closeShownModal,
-  makeTxn, setTxnDb, rowMenu, rowMenuKeys, openCreateFab, SHELL_DEFAULTS, SHELL_OVERRIDES,
-} from './common'
-import { describe, it, expect, afterEach, beforeEach } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
-import { NButton, NDataTable, NInput } from 'naive-ui'
-import { wireInvokeSeam } from '@ledger/test-support/invoke-mock'
-import { setFakeMedia } from '@ledger/test-support/media-mock'
-import { probeColor } from '@ledger/test-support/dom'
-import { formatAmount } from '@ledger/money'
-import { kindSemanticColor } from '@ledger/theme/semantic-colors'
-import { useAppStore } from '@/stores/app'
-import { useReferenceStore } from '@/stores/reference'
-import { refCurrencies } from '@ledger/test-support/reference-stubs'
-import AccountLink from '@/accounts/AccountLink.vue'
-import ConvertDetail from '@/investment/ConvertDetail.vue'
-import TransactionCardList from '@/transaction/TransactionCardList.vue'
+  mountView,
+  mountMobile,
+  mountPhone,
+  cards,
+  shownModal,
+  closeShownModal,
+  makeTxn,
+  setTxnDb,
+  rowMenu,
+  rowMenuKeys,
+  openCreateFab,
+  SHELL_DEFAULTS,
+  SHELL_OVERRIDES,
+} from "./common";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { flushPromises } from "@vue/test-utils";
+import { NButton, NDataTable, NInput } from "naive-ui";
+import { wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { setFakeMedia } from "@ledger/test-support/media-mock";
+import { probeColor } from "@ledger/test-support/dom";
+import { formatAmount } from "@ledger/money";
+import { kindSemanticColor } from "@ledger/theme/semantic-colors";
+import { useAppStore } from "@/stores/app";
+import { useReferenceStore } from "@/stores/reference";
+import { refCurrencies } from "@ledger/test-support/reference-stubs";
+import AccountLink from "@/accounts/AccountLink.vue";
+import ConvertDetail from "@/investment/ConvertDetail.vue";
+import TransactionCardList from "@/transaction/TransactionCardList.vue";
 
 /**
  * 交易页移动档（issue #846 / ADR-0088 决策 9 断点双渲染）：组件测试主接缝。
@@ -29,369 +40,384 @@ import TransactionCardList from '@/transaction/TransactionCardList.vue'
  * filtering.test.ts 上扩展（验收 2 的落点），不在本文件重复。
  */
 
-const cny = refCurrencies[0]
+const cny = refCurrencies[0];
 
 // 金额隐私模式是模块级单点 ref：开关经 store 真实路径写入，此处置回复默认，
 // 不向同文件后续用例泄漏。
 afterEach(() => {
-  useAppStore().setAmountPrivacyEnabled(false)
-})
+  useAppStore().setAmountPrivacyEnabled(false);
+});
 
-describe('TransactionsView 断点双渲染（issue #846）', () => {
-  it('桌面档：表格在、卡片列表与记一笔悬浮按钮不在（回归红线）', async () => {
-    const wrapper = await mountView()
-    expect(wrapper.findComponent(NDataTable).exists()).toBe(true)
-    expect(wrapper.findComponent(TransactionCardList).exists()).toBe(false)
-    expect(wrapper.find('.transaction-card').exists()).toBe(false)
-    expect(wrapper.find('.create-fab').exists()).toBe(false)
-  })
+describe("TransactionsView 断点双渲染（issue #846）", () => {
+  it("桌面档：表格在、卡片列表与记一笔悬浮按钮不在（回归红线）", async () => {
+    const wrapper = await mountView();
+    expect(wrapper.findComponent(NDataTable).exists()).toBe(true);
+    expect(wrapper.findComponent(TransactionCardList).exists()).toBe(false);
+    expect(wrapper.find(".transaction-card").exists()).toBe(false);
+    expect(wrapper.find(".create-fab").exists()).toBe(false);
+  });
 
-  it('移动档：卡片列表在、表格与工具栏记一笔按钮不在；过滤控件与快捷时间选择保留', async () => {
-    const wrapper = await mountMobile()
-    expect(wrapper.findComponent(NDataTable).exists()).toBe(false)
-    expect(wrapper.findComponent(TransactionCardList).exists()).toBe(true)
-    expect(cards(wrapper).length).toBe(20)
+  it("移动档：卡片列表在、表格与工具栏记一笔按钮不在；过滤控件与快捷时间选择保留", async () => {
+    const wrapper = await mountMobile();
+    expect(wrapper.findComponent(NDataTable).exists()).toBe(false);
+    expect(wrapper.findComponent(TransactionCardList).exists()).toBe(true);
+    expect(cards(wrapper).length).toBe(20);
     // 记一笔入口分档：工具栏分裂按钮（唯一文本「记一笔」）桌面档在、移动档不在；
     // 悬浮按钮只在移动档（触控轴移动档下快捷键不绑，它是唯一记一笔入口）
-    expect(wrapper.text()).not.toContain('记一笔')
-    expect(wrapper.find('.create-fab').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain("记一笔");
+    expect(wrapper.find(".create-fab").exists()).toBe(true);
     // 过滤语义零变化：筛选控件与时间范围快捷选择（五芯片）在移动档照常在
-    for (const chip of ['全部', '当月', '当季', '当年', '去年']) {
-      expect(wrapper.findAll('button').some((b) => b.text() === chip), chip).toBe(true)
+    for (const chip of ["全部", "当月", "当季", "当年", "去年"]) {
+      expect(
+        wrapper.findAll("button").some((b) => b.text() === chip),
+        chip,
+      ).toBe(true);
     }
-  })
+  });
 
-  it('跨断点实时换档：839 ↔ 1280 缩放时卡片与表格互斥切换', async () => {
-    setFakeMedia({ width: 1280 })
-    const wrapper = await mountView()
-    expect(wrapper.findComponent(NDataTable).exists()).toBe(true)
-    setFakeMedia({ width: 839 })
-    await flushPromises()
-    expect(wrapper.findComponent(NDataTable).exists()).toBe(false)
-    expect(cards(wrapper).length).toBe(20)
-    setFakeMedia({ width: 1280 })
-    await flushPromises()
-    expect(wrapper.findComponent(NDataTable).exists()).toBe(true)
-    expect(wrapper.find('.transaction-card').exists()).toBe(false)
-  })
-})
+  it("跨断点实时换档：839 ↔ 1280 缩放时卡片与表格互斥切换", async () => {
+    setFakeMedia({ width: 1280 });
+    const wrapper = await mountView();
+    expect(wrapper.findComponent(NDataTable).exists()).toBe(true);
+    setFakeMedia({ width: 839 });
+    await flushPromises();
+    expect(wrapper.findComponent(NDataTable).exists()).toBe(false);
+    expect(cards(wrapper).length).toBe(20);
+    setFakeMedia({ width: 1280 });
+    await flushPromises();
+    expect(wrapper.findComponent(NDataTable).exists()).toBe(true);
+    expect(wrapper.find(".transaction-card").exists()).toBe(false);
+  });
+});
 
-describe('移动档卡片字段（同一段列表状态）', () => {
-  it('卡片呈现日期/类型/分类/商户/账户/金额，金额着收支语义色', async () => {
+describe("移动档卡片字段（同一段列表状态）", () => {
+  it("卡片呈现日期/类型/分类/商户/账户/金额，金额着收支语义色", async () => {
     setTxnDb([
-      makeTxn(1, 'acc-1', {
-        kind: 'expense',
-        category_id: 'cat-1',
-        merchant_id: 'mch-1',
-        date: '2026-03-15',
+      makeTxn(1, "acc-1", {
+        kind: "expense",
+        category_id: "cat-1",
+        merchant_id: "mch-1",
+        date: "2026-03-15",
         amount_native_cents: 12345,
       }),
-      makeTxn(2, 'acc-2', { kind: 'income', date: '2026-03-16', amount_native_cents: -6789 }),
-    ])
-    const wrapper = await mountMobile()
-    const list = cards(wrapper)
-    expect(list.length).toBe(2)
-    const first = list[0]
-    expect(first.text()).toContain('2026-03-15')
-    expect(first.text()).toContain('支出')
+      makeTxn(2, "acc-2", { kind: "income", date: "2026-03-16", amount_native_cents: -6789 }),
+    ]);
+    const wrapper = await mountMobile();
+    const list = cards(wrapper);
+    expect(list.length).toBe(2);
+    const first = list[0];
+    expect(first.text()).toContain("2026-03-15");
+    expect(first.text()).toContain("支出");
     // 分类路径与商户名同表格列口径（reference 单源解析）
-    const reference = useReferenceStore()
-    expect(first.text()).toContain(reference.categoryPath('cat-1'))
-    expect(first.text()).toContain('京东')
+    const reference = useReferenceStore();
+    expect(first.text()).toContain(reference.categoryPath("cat-1"));
+    expect(first.text()).toContain("京东");
     // 账户名可点击（链接语义同表格）
-    expect(first.findComponent(AccountLink).exists()).toBe(true)
-    expect(first.text()).toContain('现金')
+    expect(first.findComponent(AccountLink).exists()).toBe(true);
+    expect(first.text()).toContain("现金");
     // 金额：文案走 formatAmount 单源（含隐私掩码位），色走 kindSemanticColor
-    const amountEl = first.find('.amount-cell').element as HTMLElement
-    expect(amountEl.textContent).toBe(formatAmount(12345, cny))
-    expect(amountEl.style.color).toBe(probeColor(kindSemanticColor('expense', useAppStore().theme)))
+    const amountEl = first.find(".amount-cell").element as HTMLElement;
+    expect(amountEl.textContent).toBe(formatAmount(12345, cny));
+    expect(amountEl.style.color).toBe(
+      probeColor(kindSemanticColor("expense", useAppStore().theme)),
+    );
     // 收入行语义色为收入绿（方向色不因卡片形态丢失）
-    const incomeEl = list[1].find('.amount-cell').element as HTMLElement
-    expect(incomeEl.style.color).toBe(probeColor(kindSemanticColor('income', useAppStore().theme)))
-  })
+    const incomeEl = list[1].find(".amount-cell").element as HTMLElement;
+    expect(incomeEl.style.color).toBe(probeColor(kindSemanticColor("income", useAppStore().theme)));
+  });
 
-  it('基金转换行卡片：类型标签「转换」、金额显示转出金额、「A → B」两腿标的（ADR-0099 / #979）', async () => {
+  it("基金转换行卡片：类型标签「转换」、金额显示转出金额、「A → B」两腿标的（ADR-0099 / #979）", async () => {
     setTxnDb([
-      makeTxn(1, 'acc-1', {
-        kind: 'convert',
+      makeTxn(1, "acc-1", {
+        kind: "convert",
         // 行金额锚点 = 结转成本；展示口径 = 转出金额（确认单）。
         amount_native_cents: 359062,
         // 转出标的经来源列反查（security_transactions.instrument_id）。
         source: {
-          kind: 'instrument',
-          entity_id: 'inst-out',
-          display_name: '006793 转出基金',
+          kind: "instrument",
+          entity_id: "inst-out",
+          display_name: "006793 转出基金",
           status: null,
         },
         convert: {
-          to_instrument_id: 'inst-in',
-          to_symbol: '519700',
+          to_instrument_id: "inst-in",
+          to_symbol: "519700",
           to_quantity: 10,
           out_amount_cents: 361561,
           in_amount_cents: 361561,
         },
       }),
-    ])
-    const wrapper = await mountMobile()
-    const first = cards(wrapper)[0]
-    expect(first.text()).toContain('转换')
+    ]);
+    const wrapper = await mountMobile();
+    const first = cards(wrapper)[0];
+    expect(first.text()).toContain("转换");
     // 「A → B」两腿标的（转出经来源链接、转入读列表投影 to_symbol）。
-    expect(first.text()).toContain('006793 转出基金')
-    expect(first.text()).toContain('→')
-    expect(first.text()).toContain('519700')
-    const amountEl = first.find('.amount-cell').element as HTMLElement
-    expect(amountEl.textContent).toBe(formatAmount(361561, cny))
-    expect(amountEl.style.color).toBe(probeColor(kindSemanticColor('convert', useAppStore().theme)))
-  })
+    expect(first.text()).toContain("006793 转出基金");
+    expect(first.text()).toContain("→");
+    expect(first.text()).toContain("519700");
+    const amountEl = first.find(".amount-cell").element as HTMLElement;
+    expect(amountEl.textContent).toBe(formatAmount(361561, cny));
+    expect(amountEl.style.color).toBe(
+      probeColor(kindSemanticColor("convert", useAppStore().theme)),
+    );
+  });
 
-  it('份额调整行卡片：类型标签「份额调整」、无现金腿金额按空值口径呈现「-」（ADR-0106 / #1052）', async () => {
+  it("份额调整行卡片：类型标签「份额调整」、无现金腿金额按空值口径呈现「-」（ADR-0106 / #1052）", async () => {
     setTxnDb([
-      makeTxn(1, 'acc-1', {
-        kind: 'split',
+      makeTxn(1, "acc-1", {
+        kind: "split",
         // 无现金腿：行金额恒 0，界面不以 0 伪装「已知为零」
         amount_native_cents: 0,
         source: {
-          kind: 'instrument',
-          entity_id: 'inst-sp',
-          display_name: '502010 证券基金',
+          kind: "instrument",
+          entity_id: "inst-sp",
+          display_name: "502010 证券基金",
           status: null,
         },
       }),
-    ])
-    const wrapper = await mountMobile()
-    const first = cards(wrapper)[0]
-    expect(first.text()).toContain('份额调整')
-    expect(first.text()).not.toContain('买入')
-    expect(first.text()).not.toContain('卖出')
-    const amountEl = first.find('.amount-cell').element as HTMLElement
-    expect(amountEl.textContent).toBe('-')
-  })
+    ]);
+    const wrapper = await mountMobile();
+    const first = cards(wrapper)[0];
+    expect(first.text()).toContain("份额调整");
+    expect(first.text()).not.toContain("买入");
+    expect(first.text()).not.toContain("卖出");
+    const amountEl = first.find(".amount-cell").element as HTMLElement;
+    expect(amountEl.textContent).toBe("-");
+  });
 
-  it('转账行账户呈现「转出 → 转入」双向链接（与表格同构）', async () => {
-    setTxnDb([makeTxn(1, 'acc-1', { kind: 'transfer', to_account_id: 'acc-2' })])
-    const wrapper = await mountMobile()
-    const first = cards(wrapper)[0]
-    const links = first.findAllComponents(AccountLink)
-    expect(links.map((l: { text(): string }) => l.text())).toEqual(['现金', '银行'])
-    expect(first.text()).toContain('→')
-  })
+  it("转账行账户呈现「转出 → 转入」双向链接（与表格同构）", async () => {
+    setTxnDb([makeTxn(1, "acc-1", { kind: "transfer", to_account_id: "acc-2" })]);
+    const wrapper = await mountMobile();
+    const first = cards(wrapper)[0];
+    const links = first.findAllComponents(AccountLink);
+    expect(links.map((l: { text(): string }) => l.text())).toEqual(["现金", "银行"]);
+    expect(first.text()).toContain("→");
+  });
 
-  it('带出资账户的买入行账户呈现「出资账户 → 投资账户」双向链接（与表格同构，issue #937）', async () => {
-    setTxnDb([makeTxn(1, 'acc-1', { kind: 'buy', funding_account_id: 'acc-2' })])
-    const wrapper = await mountMobile()
-    const first = cards(wrapper)[0]
-    const links = first.findAllComponents(AccountLink)
-    expect(links.map((l: { text(): string }) => l.text())).toEqual(['银行', '现金'])
-    expect(first.text()).toContain('→')
-  })
+  it("带出资账户的买入行账户呈现「出资账户 → 投资账户」双向链接（与表格同构，issue #937）", async () => {
+    setTxnDb([makeTxn(1, "acc-1", { kind: "buy", funding_account_id: "acc-2" })]);
+    const wrapper = await mountMobile();
+    const first = cards(wrapper)[0];
+    const links = first.findAllComponents(AccountLink);
+    expect(links.map((l: { text(): string }) => l.text())).toEqual(["银行", "现金"]);
+    expect(first.text()).toContain("→");
+  });
 
-  it('带出资账户的卖出行账户呈现「投资账户 → 出资账户」双向链接（资金流出方在前，issue #1030）', async () => {
-    setTxnDb([makeTxn(1, 'acc-1', { kind: 'sell', funding_account_id: 'acc-2' })])
-    const wrapper = await mountMobile()
-    const first = cards(wrapper)[0]
-    const links = first.findAllComponents(AccountLink)
-    expect(links.map((l: { text(): string }) => l.text())).toEqual(['现金', '银行'])
-    expect(first.text()).toContain('→')
-  })
+  it("带出资账户的卖出行账户呈现「投资账户 → 出资账户」双向链接（资金流出方在前，issue #1030）", async () => {
+    setTxnDb([makeTxn(1, "acc-1", { kind: "sell", funding_account_id: "acc-2" })]);
+    const wrapper = await mountMobile();
+    const first = cards(wrapper)[0];
+    const links = first.findAllComponents(AccountLink);
+    expect(links.map((l: { text(): string }) => l.text())).toEqual(["现金", "银行"]);
+    expect(first.text()).toContain("→");
+  });
 
-  it('金额隐私模式：隐藏数字不隐藏形状与方向——掩码恒形、语义色保留', async () => {
-    setTxnDb([makeTxn(1, 'acc-1', { kind: 'expense', amount_native_cents: 12345 })])
-    const wrapper = await mountMobile()
+  it("金额隐私模式：隐藏数字不隐藏形状与方向——掩码恒形、语义色保留", async () => {
+    setTxnDb([makeTxn(1, "acc-1", { kind: "expense", amount_native_cents: 12345 })]);
+    const wrapper = await mountMobile();
     // 经 store 开关开启（启动水合在 store 首次创建时读取本地存储，与真实使用同路径）
-    useAppStore().setAmountPrivacyEnabled(true)
-    await flushPromises()
-    const amountEl = cards(wrapper)[0].find('.amount-cell').element as HTMLElement
-    expect(amountEl.textContent).toBe('••••')
-    expect(amountEl.style.color).toBe(probeColor(kindSemanticColor('expense', useAppStore().theme)))
-  })
+    useAppStore().setAmountPrivacyEnabled(true);
+    await flushPromises();
+    const amountEl = cards(wrapper)[0].find(".amount-cell").element as HTMLElement;
+    expect(amountEl.textContent).toBe("••••");
+    expect(amountEl.style.color).toBe(
+      probeColor(kindSemanticColor("expense", useAppStore().theme)),
+    );
+  });
 
-  it('来源行保留链接语义：SourceLink 渲染于卡片', async () => {
+  it("来源行保留链接语义：SourceLink 渲染于卡片", async () => {
     setTxnDb([
-      makeTxn(1, 'acc-1', {
-        source: { kind: 'subscription', entity_id: 'sub-1', display_name: '视频会员', status: null },
+      makeTxn(1, "acc-1", {
+        source: {
+          kind: "subscription",
+          entity_id: "sub-1",
+          display_name: "视频会员",
+          status: null,
+        },
       }),
-    ])
-    const wrapper = await mountMobile()
-    expect(cards(wrapper)[0].text()).toContain('视频会员')
-  })
+    ]);
+    const wrapper = await mountMobile();
+    expect(cards(wrapper)[0].text()).toContain("视频会员");
+  });
 
-  it('金额触控轴点按查看全文（悬停一击可达在卡片上同规）', async () => {
-    setTxnDb([makeTxn(1, 'acc-1', { amount_native_cents: 1234567 })])
-    const wrapper = await mountPhone()
-    await cards(wrapper)[0].find('.amount-cell').trigger('click')
-    await flushPromises()
-    const popover = document.body.querySelector('.n-popover')
-    expect(popover).not.toBeNull()
-    expect(popover!.textContent).toContain(formatAmount(1234567, cny))
-  })
-})
+  it("金额触控轴点按查看全文（悬停一击可达在卡片上同规）", async () => {
+    setTxnDb([makeTxn(1, "acc-1", { amount_native_cents: 1234567 })]);
+    const wrapper = await mountPhone();
+    await cards(wrapper)[0].find(".amount-cell").trigger("click");
+    await flushPromises();
+    const popover = document.body.querySelector(".n-popover");
+    expect(popover).not.toBeNull();
+    expect(popover!.textContent).toContain(formatAmount(1234567, cny));
+  });
+});
 
-describe('卡片「⋯」与整卡编辑', () => {
-  it('卡片「⋯」点开与桌面右键同一菜单（集合一致）', async () => {
-    const wrapper = await mountMobile()
-    await cards(wrapper)[0].find('.row-actions-btn').trigger('click')
-    await flushPromises()
-    expect(rowMenu(wrapper).props('show')).toBe(true)
+describe("卡片「⋯」与整卡编辑", () => {
+  it("卡片「⋯」点开与桌面右键同一菜单（集合一致）", async () => {
+    const wrapper = await mountMobile();
+    await cards(wrapper)[0].find(".row-actions-btn").trigger("click");
+    await flushPromises();
+    expect(rowMenu(wrapper).props("show")).toBe(true);
     // 支出行集合与桌面右键逐项一致（edit/refund/add-item/divider/delete）
-    expect(rowMenuKeys(wrapper)).toEqual(['edit', 'refund', 'add-item', 'menu-divider', 'delete'])
+    expect(rowMenuKeys(wrapper)).toEqual(["edit", "refund", "add-item", "menu-divider", "delete"]);
     // ⋯ 自身不触发整卡编辑
-    expect(shownModal(wrapper)).toBeUndefined()
-  })
+    expect(shownModal(wrapper)).toBeUndefined();
+  });
 
-  it('非支出行「⋯」集合同桌面右键（refund 行仅删除）', async () => {
+  it("非支出行「⋯」集合同桌面右键（refund 行仅删除）", async () => {
     setTxnDb([
-      makeTxn(1, 'acc-1', { kind: 'transfer', to_account_id: 'acc-2' }),
-      makeTxn(2, 'acc-1', { kind: 'refund', refund_of_transaction_id: 'txn-x' }),
-    ])
-    const wrapper = await mountMobile()
-    const list = cards(wrapper)
-    await list[0].find('.row-actions-btn').trigger('click')
-    await flushPromises()
-    expect(rowMenuKeys(wrapper)).toEqual(['edit', 'menu-divider', 'delete'])
-    await list[1].find('.row-actions-btn').trigger('click')
-    await flushPromises()
-    expect(rowMenuKeys(wrapper)).toEqual(['delete'])
-  })
+      makeTxn(1, "acc-1", { kind: "transfer", to_account_id: "acc-2" }),
+      makeTxn(2, "acc-1", { kind: "refund", refund_of_transaction_id: "txn-x" }),
+    ]);
+    const wrapper = await mountMobile();
+    const list = cards(wrapper);
+    await list[0].find(".row-actions-btn").trigger("click");
+    await flushPromises();
+    expect(rowMenuKeys(wrapper)).toEqual(["edit", "menu-divider", "delete"]);
+    await list[1].find(".row-actions-btn").trigger("click");
+    await flushPromises();
+    expect(rowMenuKeys(wrapper)).toEqual(["delete"]);
+  });
 
-  it('整卡点击 = 编辑（refund 行不开放编辑、点击无动作）', async () => {
+  it("整卡点击 = 编辑（refund 行不开放编辑、点击无动作）", async () => {
     setTxnDb([
-      makeTxn(1, 'acc-1', { kind: 'expense' }),
-      makeTxn(2, 'acc-1', { kind: 'refund', refund_of_transaction_id: 'txn-x' }),
-    ])
-    const wrapper = await mountMobile()
-    const list = cards(wrapper)
-    await list[0].trigger('click')
-    await flushPromises()
-    expect(shownModal(wrapper)?.props('title')).toBe('编辑交易')
+      makeTxn(1, "acc-1", { kind: "expense" }),
+      makeTxn(2, "acc-1", { kind: "refund", refund_of_transaction_id: "txn-x" }),
+    ]);
+    const wrapper = await mountMobile();
+    const list = cards(wrapper);
+    await list[0].trigger("click");
+    await flushPromises();
+    expect(shownModal(wrapper)?.props("title")).toBe("编辑交易");
     // 关闭后验证 refund 行
-    await closeShownModal(wrapper)
-    await list[1].trigger('click')
-    await flushPromises()
-    expect(shownModal(wrapper)).toBeUndefined()
-  })
+    await closeShownModal(wrapper);
+    await list[1].trigger("click");
+    await flushPromises();
+    expect(shownModal(wrapper)).toBeUndefined();
+  });
 
-  it('卡内链接点击不触发整卡编辑（账户链接照常下钻）', async () => {
-    setTxnDb([makeTxn(1, 'acc-1', { kind: 'expense' })])
-    const wrapper = await mountMobile()
-    await cards(wrapper)[0].findComponent(AccountLink).find('button').trigger('click')
-    await flushPromises()
-    expect(shownModal(wrapper)).toBeUndefined()
-  })
-})
+  it("卡内链接点击不触发整卡编辑（账户链接照常下钻）", async () => {
+    setTxnDb([makeTxn(1, "acc-1", { kind: "expense" })]);
+    const wrapper = await mountMobile();
+    await cards(wrapper)[0].findComponent(AccountLink).find("button").trigger("click");
+    await flushPromises();
+    expect(shownModal(wrapper)).toBeUndefined();
+  });
+});
 
-describe('记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）', () => {
-  it('点开大号类型选择（默认全开 = 支出/收入/转账/买入/卖出，不含借贷、退款与转换）', async () => {
-    const wrapper = await mountPhone()
-    expect(await openCreateFab(wrapper)).toEqual(['支出', '收入', '转账', '买入', '卖出'])
-  })
+describe("记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）", () => {
+  it("点开大号类型选择（默认全开 = 支出/收入/转账/买入/卖出，不含借贷、退款与转换）", async () => {
+    const wrapper = await mountPhone();
+    expect(await openCreateFab(wrapper)).toEqual(["支出", "收入", "转账", "买入", "卖出"]);
+  });
 
-  it('五类型意图矩阵：类型选择 → 记一笔意图（携带类型）→ 对应表单（convert 无手工录入入口）', async () => {
+  it("五类型意图矩阵：类型选择 → 记一笔意图（携带类型）→ 对应表单（convert 无手工录入入口）", async () => {
     const cases = [
-      ['支出', '记一笔 · 支出'],
-      ['收入', '记一笔 · 收入'],
-      ['转账', '记一笔 · 转账'],
-      ['买入', '记一笔 · 买入'],
-      ['卖出', '记一笔 · 卖出'],
-    ] as const
-    const wrapper = await mountPhone()
+      ["支出", "记一笔 · 支出"],
+      ["收入", "记一笔 · 收入"],
+      ["转账", "记一笔 · 转账"],
+      ["买入", "记一笔 · 买入"],
+      ["卖出", "记一笔 · 卖出"],
+    ] as const;
+    const wrapper = await mountPhone();
     for (const [optionLabel, expectedTitle] of cases) {
-      await wrapper.find('.create-fab').trigger('click')
-      await flushPromises()
-      const option = [...document.body.querySelectorAll('.create-fab-option')]
-        .find((o) => o.textContent === optionLabel)
-      expect(option, optionLabel).toBeTruthy()
-      option!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await flushPromises()
-      const modal = shownModal(wrapper)
-      expect(modal, optionLabel).toBeTruthy()
-      expect(modal!.props('title'), optionLabel).toBe(expectedTitle)
+      await wrapper.find(".create-fab").trigger("click");
+      await flushPromises();
+      const option = [...document.body.querySelectorAll(".create-fab-option")].find(
+        (o) => o.textContent === optionLabel,
+      );
+      expect(option, optionLabel).toBeTruthy();
+      option!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushPromises();
+      const modal = shownModal(wrapper);
+      expect(modal, optionLabel).toBeTruthy();
+      expect(modal!.props("title"), optionLabel).toBe(expectedTitle);
       // 关窗后再选下一类型（意图替换，序号递增由编排内化）
-      await closeShownModal(wrapper)
+      await closeShownModal(wrapper);
     }
-  })
+  });
 
-  it('桌面档无记一笔悬浮按钮（顶栏分裂按钮是桌面档唯一入口）', async () => {
-    const wrapper = await mountView()
-    expect(wrapper.find('.create-fab').exists()).toBe(false)
-    expect(wrapper.text()).toContain('记一笔')
-  })
-})
+  it("桌面档无记一笔悬浮按钮（顶栏分裂按钮是桌面档唯一入口）", async () => {
+    const wrapper = await mountView();
+    expect(wrapper.find(".create-fab").exists()).toBe(false);
+    expect(wrapper.text()).toContain("记一笔");
+  });
+});
 
-describe('基金转换只读详情（ADR-0106 决策 10 / #1048）', () => {
+describe("基金转换只读详情（ADR-0106 决策 10 / #1048）", () => {
   /** 转换两腿读投影（`get_transaction_convert`）：只读详情的数据源。 */
   const convertDetail = {
-    out_instrument_id: 'inst-out',
-    out_symbol: '006793',
-    out_instrument_name: '转出基金',
+    out_instrument_id: "inst-out",
+    out_symbol: "006793",
+    out_instrument_name: "转出基金",
     out_quantity: 100.5,
     out_amount_cents: 110550,
-    in_instrument_id: 'inst-in',
-    in_symbol: '519700',
-    in_instrument_name: '转入基金',
+    in_instrument_id: "inst-in",
+    in_symbol: "519700",
+    in_instrument_name: "转入基金",
     in_quantity: 99.75,
     in_amount_cents: 109725,
     fee_cents: 150,
     carried_cost_cents: 100000,
-    currency_code: 'CNY',
-  }
+    currency_code: "CNY",
+  };
 
   /** 转换行：列表投影供卡片呈现「A → B」。 */
   function convertRow() {
-    return makeTxn(1, 'acc-1', {
-      kind: 'convert',
+    return makeTxn(1, "acc-1", {
+      kind: "convert",
       // 行金额锚点 = 结转成本；展示口径 = 转出金额（确认单）
       amount_native_cents: 100000,
       source: {
-        kind: 'instrument',
-        entity_id: 'inst-out',
-        display_name: '006793 转出基金',
+        kind: "instrument",
+        entity_id: "inst-out",
+        display_name: "006793 转出基金",
         status: null,
       },
       convert: {
-        to_instrument_id: 'inst-in',
-        to_symbol: '519700',
+        to_instrument_id: "inst-in",
+        to_symbol: "519700",
         to_quantity: 99.75,
         out_amount_cents: 110550,
         in_amount_cents: 109725,
       },
-    })
+    });
   }
 
   beforeEach(() => {
-    setTxnDb([makeTxn(1, 'acc-1', { kind: 'expense' }), convertRow()])
+    setTxnDb([makeTxn(1, "acc-1", { kind: "expense" }), convertRow()]);
     // 薄壳表展开合并本组特有覆写，重走唯一接缝（守门规则 3；issue #750）
     wireInvokeSeam({
       defaults: SHELL_DEFAULTS,
       overrides: { ...SHELL_OVERRIDES, get_transaction_convert: () => convertDetail },
-    })
-  })
+    });
+  });
 
-  it('转换行「⋯」菜单仅只读「详情」——无编辑、无软删入口', async () => {
-    const wrapper = await mountMobile()
-    await cards(wrapper)[1].find('.row-actions-btn').trigger('click')
-    await flushPromises()
-    expect(rowMenuKeys(wrapper)).toEqual(['detail'])
-    expect(shownModal(wrapper)).toBeUndefined()
-  })
+  it("转换行「⋯」菜单仅只读「详情」——无编辑、无软删入口", async () => {
+    const wrapper = await mountMobile();
+    await cards(wrapper)[1].find(".row-actions-btn").trigger("click");
+    await flushPromises();
+    expect(rowMenuKeys(wrapper)).toEqual(["detail"]);
+    expect(shownModal(wrapper)).toBeUndefined();
+  });
 
-  it('转换整卡点击 → 只读详情（无可编辑/可提交面，不再进可编辑表单）', async () => {
-    const wrapper = await mountMobile()
-    await cards(wrapper)[1].trigger('click')
-    await flushPromises()
-    const modal = shownModal(wrapper)
-    expect(modal?.props('title')).toBe('交易详情')
-    const detail = wrapper.findComponent(ConvertDetail)
-    expect(detail.exists()).toBe(true)
+  it("转换整卡点击 → 只读详情（无可编辑/可提交面，不再进可编辑表单）", async () => {
+    const wrapper = await mountMobile();
+    await cards(wrapper)[1].trigger("click");
+    await flushPromises();
+    const modal = shownModal(wrapper);
+    expect(modal?.props("title")).toBe("交易详情");
+    const detail = wrapper.findComponent(ConvertDetail);
+    expect(detail.exists()).toBe(true);
     // A → B 两腿标的与两侧金额、手续费、结转成本
-    expect(detail.text()).toContain('006793')
-    expect(detail.text()).toContain('519700')
-    expect(detail.text()).toContain(formatAmount(110550, cny))
-    expect(detail.text()).toContain(formatAmount(109725, cny))
-    expect(detail.text()).toContain(formatAmount(150, cny))
-    expect(detail.text()).toContain(formatAmount(100000, cny))
+    expect(detail.text()).toContain("006793");
+    expect(detail.text()).toContain("519700");
+    expect(detail.text()).toContain(formatAmount(110550, cny));
+    expect(detail.text()).toContain(formatAmount(109725, cny));
+    expect(detail.text()).toContain(formatAmount(150, cny));
+    expect(detail.text()).toContain(formatAmount(100000, cny));
     // 负向收口：无输入面、无提交/保存按钮
-    expect(detail.findAllComponents(NInput)).toHaveLength(0)
-    expect(detail.findAllComponents(NButton)).toHaveLength(0)
-    expect(detail.text()).not.toContain('保存修改')
-  })
-})
+    expect(detail.findAllComponents(NInput)).toHaveLength(0);
+    expect(detail.findAllComponents(NButton)).toHaveLength(0);
+    expect(detail.text()).not.toContain("保存修改");
+  });
+});

@@ -1,5 +1,5 @@
-import { style } from '@vanilla-extract/css'
-import { sprinkles } from '@ledger/theme/sprinkles.css.ts'
+import { style } from "@vanilla-extract/css";
+import { sprinkles } from "@ledger/theme/sprinkles.css.ts";
 
 /**
  * 价格历史后台补全静默计数样式（issue #1375 / ADR-0122，ADR-0093 样式方案）：
@@ -12,19 +12,19 @@ import { sprinkles } from '@ledger/theme/sprinkles.css.ts'
  */
 export const root = style([
   sprinkles({
-    display: 'flex',
-    flexDirection: 'column',
+    display: "flex",
+    flexDirection: "column",
   }),
   {
-    gap: '2px',
-    pointerEvents: 'none',
-    userSelect: 'none',
+    gap: "2px",
+    pointerEvents: "none",
+    userSelect: "none",
   },
-])
+]);
 
 export const text = style({
-  fontSize: '12px',
+  fontSize: "12px",
   lineHeight: 1.4,
   opacity: 0.6,
-  whiteSpace: 'nowrap',
-})
+  whiteSpace: "nowrap",
+});

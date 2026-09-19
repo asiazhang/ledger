@@ -1,64 +1,64 @@
 <script setup lang="ts">
-import { errorMessage } from '@ledger/utils/errors'
-import { NAlert, NButton, NCard, NSpace, NSpin, NText, useMessage } from 'naive-ui'
-import { onMounted, ref } from 'vue'
-import { open } from '@tauri-apps/plugin-dialog'
-import { api } from '@ledger/api'
-import { t } from '@ledger/i18n'
-import AppDangerConfirmModal from '@ledger/ui-kit/AppDangerConfirmModal.vue'
-import type { DataLocationChangeOutcome, DataLocationInfo } from '@ledger/types'
+import { errorMessage } from "@ledger/utils/errors";
+import { NAlert, NButton, NCard, NSpace, NSpin, NText, useMessage } from "naive-ui";
+import { onMounted, ref } from "vue";
+import { open } from "@tauri-apps/plugin-dialog";
+import { api } from "@ledger/api";
+import { t } from "@ledger/i18n";
+import AppDangerConfirmModal from "@ledger/ui-kit/AppDangerConfirmModal.vue";
+import type { DataLocationChangeOutcome, DataLocationInfo } from "@ledger/types";
 
 // 数据存储位置卡片（issue #134 / ADR-0018）：消费 #133 命令层契约。
 // 显示值一律来自命令返回（设备本地偏好，前端不做持久化、不走 localStorage）；
 // 卡片内不做任何文件系统操作——校验与意图落盘全部由命令层完成，
 // 真实搬迁只发生在下次启动（引导内核），故文案必须讲清「下次启动生效」。
 
-const message = useMessage()
+const message = useMessage();
 
-const info = ref<DataLocationInfo | null>(null)
-const loading = ref(false)
-const loadError = ref('')
-const submitting = ref(false)
+const info = ref<DataLocationInfo | null>(null);
+const loading = ref(false);
+const loadError = ref("");
+const submitting = ref(false);
 
 // 二选一确认弹窗（issue #652 / ADR-0078）：warning 级应用内弹窗替代原生 confirm，
 // 按钮语义显式（接管该库 / 取消换位）；目标已有同名库时挂起二次提交，确认后续接。
-const adoptConfirmShow = ref(false)
-let pendingAdopt: (() => Promise<DataLocationChangeOutcome>) | null = null
+const adoptConfirmShow = ref(false);
+let pendingAdopt: (() => Promise<DataLocationChangeOutcome>) | null = null;
 
 async function refresh() {
-  loading.value = true
-  loadError.value = ''
+  loading.value = true;
+  loadError.value = "";
   try {
-    info.value = await api.getDataLocationInfo()
+    info.value = await api.getDataLocationInfo();
   } catch (e: any) {
     // 读取失败诚实呈现，不用「读取中…」假装一切正常。
-    loadError.value = t('settings.data.msg.loadFailed', { msg: errorMessage(e) })
-    message.error(loadError.value)
+    loadError.value = t("settings.data.msg.loadFailed", { msg: errorMessage(e) });
+    message.error(loadError.value);
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 
-onMounted(refresh)
+onMounted(refresh);
 
 // 复制路径（issue #653）：界面文本全局不可选（界面状态与交互域「界面文本不可选」），
 // 复制需求走显式通道——复制按钮 + clipboard API（关于页复制版本号同款接缝）。
 // 当前生效位置与待生效新位置各一个入口，写入的是命令返回的完整路径。
 async function copyText(value: string) {
   try {
-    await navigator.clipboard.writeText(value)
-    message.success(t('settings.data.location.copyPathOk'))
+    await navigator.clipboard.writeText(value);
+    message.success(t("settings.data.location.copyPathOk"));
   } catch (e: any) {
-    message.error(t('settings.data.location.copyPathFailed', { msg: errorMessage(e) }))
+    message.error(t("settings.data.location.copyPathFailed", { msg: errorMessage(e) }));
   }
 }
 
 function copyActivePath() {
-  if (info.value?.active_dir) void copyText(info.value.active_dir)
+  if (info.value?.active_dir) void copyText(info.value.active_dir);
 }
 
 function copyPendingPath() {
-  if (info.value?.configured_dir) void copyText(info.value.configured_dir)
+  if (info.value?.configured_dir) void copyText(info.value.configured_dir);
 }
 
 /** 唤起系统目录选择对话框，选中后提交更改意图。取消选择则不动状态。 */
@@ -66,23 +66,23 @@ async function pickAndSubmit() {
   const dir = await open({
     directory: true,
     multiple: false,
-    title: t('settings.data.location.pickTitle'),
-  })
-  if (typeof dir !== 'string' || !dir) return
-  await submitWithChoice((adoptExisting) => api.submitDataLocationChange(dir, adoptExisting))
+    title: t("settings.data.location.pickTitle"),
+  });
+  if (typeof dir !== "string" || !dir) return;
+  await submitWithChoice((adoptExisting) => api.submitDataLocationChange(dir, adoptExisting));
 }
 
 /** 恢复默认位置：与更改完全同一确认与反馈形态，目标由命令层决定。 */
 async function restoreDefault() {
-  await submitWithChoice((adoptExisting) => api.restoreDefaultDataLocation(adoptExisting))
+  await submitWithChoice((adoptExisting) => api.restoreDefaultDataLocation(adoptExisting));
 }
 
 /** 意图落位呈现：成功提示＋刷新展示（首次提交与接管二次提交共用出口）。 */
 async function applyOutcome(outcome: DataLocationChangeOutcome) {
   if (outcome.committed) {
-    message.success(t('settings.data.location.committed'))
+    message.success(t("settings.data.location.committed"));
   }
-  await refresh()
+  await refresh();
 }
 
 /**
@@ -93,43 +93,43 @@ async function applyOutcome(outcome: DataLocationChangeOutcome) {
 async function submitWithChoice(
   submit: (adoptExisting: boolean) => Promise<DataLocationChangeOutcome>,
 ) {
-  submitting.value = true
+  submitting.value = true;
   try {
-    const outcome = await submit(false)
+    const outcome = await submit(false);
     if (outcome.requires_choice) {
-      pendingAdopt = () => submit(true)
-      adoptConfirmShow.value = true
-      return
+      pendingAdopt = () => submit(true);
+      adoptConfirmShow.value = true;
+      return;
     }
-    await applyOutcome(outcome)
+    await applyOutcome(outcome);
   } catch (e: any) {
-    message.error(t('settings.data.msg.changeFailed', { msg: errorMessage(e) }))
+    message.error(t("settings.data.msg.changeFailed", { msg: errorMessage(e) }));
   } finally {
-    submitting.value = false
+    submitting.value = false;
   }
 }
 
 /** 二选一确认「接管该库」：以 adopt_existing = true 二次提交（弹窗先关，与既有加载态衔接）。 */
 async function confirmAdopt() {
-  const submit = pendingAdopt
-  pendingAdopt = null
-  adoptConfirmShow.value = false
-  if (!submit) return
-  submitting.value = true
+  const submit = pendingAdopt;
+  pendingAdopt = null;
+  adoptConfirmShow.value = false;
+  if (!submit) return;
+  submitting.value = true;
   try {
-    await applyOutcome(await submit())
+    await applyOutcome(await submit());
   } catch (e: any) {
-    message.error(t('settings.data.msg.changeFailed', { msg: errorMessage(e) }))
+    message.error(t("settings.data.msg.changeFailed", { msg: errorMessage(e) }));
   } finally {
-    submitting.value = false
+    submitting.value = false;
   }
 }
 
 /** 二选一取消「取消换位」：放弃本次更改，数据存储位置状态不变。 */
 function cancelAdopt() {
-  pendingAdopt = null
-  adoptConfirmShow.value = false
-  message.info(t('settings.data.location.cancelled'))
+  pendingAdopt = null;
+  adoptConfirmShow.value = false;
+  message.info(t("settings.data.location.cancelled"));
 }
 </script>
 
@@ -137,11 +137,16 @@ function cancelAdopt() {
   <NCard :title="t('settings.data.location.title')" size="small">
     <NSpace vertical :size="12">
       <NText depth="3">
-        {{ t('settings.data.location.hint') }}
+        {{ t("settings.data.location.hint") }}
       </NText>
 
-      <NAlert v-if="info?.fallback_reason" type="error" :show-icon="true" :title="t('settings.data.location.fallbackTitle')">
-        {{ t('settings.data.location.fallbackBody', { reason: info.fallback_reason }) }}
+      <NAlert
+        v-if="info?.fallback_reason"
+        type="error"
+        :show-icon="true"
+        :title="t('settings.data.location.fallbackTitle')"
+      >
+        {{ t("settings.data.location.fallbackBody", { reason: info.fallback_reason }) }}
       </NAlert>
 
       <NAlert
@@ -150,34 +155,46 @@ function cancelAdopt() {
         :show-icon="true"
         :title="t('settings.data.location.pendingTitle')"
       >
-        {{ t('settings.data.location.pendingBody', { dir: info.configured_dir }) }}
-        <NButton size="tiny" style="margin-left: 8px" data-testid="copy-pending-path" @click="copyPendingPath">
-          {{ t('settings.data.location.copyPath') }}
+        {{ t("settings.data.location.pendingBody", { dir: info.configured_dir }) }}
+        <NButton
+          size="tiny"
+          style="margin-left: 8px"
+          data-testid="copy-pending-path"
+          @click="copyPendingPath"
+        >
+          {{ t("settings.data.location.copyPath") }}
         </NButton>
       </NAlert>
 
       <NSpin :show="loading">
         <NSpace v-if="loadError" align="center" :size="12">
           <NText type="error">{{ loadError }}</NText>
-          <NButton size="small" @click="refresh">{{ t('settings.data.location.retry') }}</NButton>
+          <NButton size="small" @click="refresh">{{ t("settings.data.location.retry") }}</NButton>
         </NSpace>
         <NSpace v-else align="center" :size="12">
-          <NText>{{ t('settings.data.location.activeLabel') }}</NText>
+          <NText>{{ t("settings.data.location.activeLabel") }}</NText>
           <NText style="word-break: break-all">
-            {{ info?.active_dir ?? t('settings.data.location.reading') }}
+            {{ info?.active_dir ?? t("settings.data.location.reading") }}
           </NText>
-          <NButton v-if="info?.active_dir" size="small" data-testid="copy-active-path" @click="copyActivePath">
-            {{ t('settings.data.location.copyPath') }}
+          <NButton
+            v-if="info?.active_dir"
+            size="small"
+            data-testid="copy-active-path"
+            @click="copyActivePath"
+          >
+            {{ t("settings.data.location.copyPath") }}
           </NButton>
         </NSpace>
       </NSpin>
 
       <NSpace align="center" :size="12">
-        <NButton type="primary" :loading="submitting" @click="pickAndSubmit">{{ t('settings.data.location.change') }}</NButton>
+        <NButton type="primary" :loading="submitting" @click="pickAndSubmit">{{
+          t("settings.data.location.change")
+        }}</NButton>
         <!-- 未配置任何意图目录即处于默认位置，「恢复默认」无意义故禁用
              （契约不变量：configured_dir 非空 ⇔ 存在自定义位置意图）。 -->
         <NButton :disabled="submitting || !info?.configured_dir" @click="restoreDefault">
-          {{ t('settings.data.location.restoreDefault') }}
+          {{ t("settings.data.location.restoreDefault") }}
         </NButton>
       </NSpace>
     </NSpace>

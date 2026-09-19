@@ -1,6 +1,6 @@
-import { expect } from 'vitest'
-import { DOMWrapper, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { expect } from "vitest";
+import { DOMWrapper, flushPromises, type VueWrapper } from "@vue/test-utils";
+import { nextTick } from "vue";
 
 /**
  * 测试侧 DOM 查找助手的单一出口（issue #746，ADR-0085 决策 6）。
@@ -24,13 +24,13 @@ import { nextTick } from 'vue'
 
 /** 文本匹配选项：`exact` 缺省为包含匹配，置 true 为 trim 后全等。 */
 export interface FindByTextOptions {
-  exact?: boolean
+  exact?: boolean;
 }
 
 /** 输入查找选项：placeholder / type 任选其一或组合。 */
 export interface FindInputOptions {
-  placeholder?: string
-  type?: string
+  placeholder?: string;
+  type?: string;
 }
 
 /** wrapper 范围内按文本找按钮（既有 `findAll('button')` + 过滤形态的收口；
@@ -40,15 +40,18 @@ export function findButton(
   text: string,
   options: FindByTextOptions = {},
 ): DOMWrapper<HTMLButtonElement> | undefined {
-  const hit = wrapper.findAll('button').find((b) =>
-    options.exact ? b.text() === text : b.text().includes(text),
-  )
-  return hit as DOMWrapper<HTMLButtonElement> | undefined
+  const hit = wrapper
+    .findAll("button")
+    .find((b) => (options.exact ? b.text() === text : b.text().includes(text)));
+  return hit as DOMWrapper<HTMLButtonElement> | undefined;
 }
 
 /** wrapper 范围内按 data-testid 找按钮（既有 `wrapper.find('[data-testid="…"]')` 形态的收口）。 */
-export function findButtonByTestId(wrapper: VueWrapper, testid: string): DOMWrapper<HTMLButtonElement> {
-  return wrapper.find(`[data-testid="${testid}"]`) as DOMWrapper<HTMLButtonElement>
+export function findButtonByTestId(
+  wrapper: VueWrapper,
+  testid: string,
+): DOMWrapper<HTMLButtonElement> {
+  return wrapper.find(`[data-testid="${testid}"]`) as DOMWrapper<HTMLButtonElement>;
 }
 
 /** wrapper 范围内按可见标签文字找页签（NTabs 渲染的 `.n-tabs-tab`）。按名定位：
@@ -58,21 +61,21 @@ export function findTab(
   label: string,
   options: FindByTextOptions = {},
 ): DOMWrapper<Element> | undefined {
-  const hit = wrapper.findAll('.n-tabs-tab').find((tab) =>
-    options.exact ? tab.text() === label : tab.text().includes(label),
-  )
-  return hit as DOMWrapper<Element> | undefined
+  const hit = wrapper
+    .findAll(".n-tabs-tab")
+    .find((tab) => (options.exact ? tab.text() === label : tab.text().includes(label)));
+  return hit as DOMWrapper<Element> | undefined;
 }
 
 /** 按可见标签文字点击页签并等稳定：flushPromises 兜 'if' 懒挂载的数据装载，
  * 两拍 nextTick 兜重渲染（ InvestmentsI18n.test.ts 原地 clickTab 语义的收口）。 */
 export async function clickTab(wrapper: VueWrapper, label: string): Promise<void> {
-  const tab = findTab(wrapper, label)
-  expect(tab, `页签「${label}」应存在`).toBeTruthy()
-  await tab!.trigger('click')
-  await flushPromises()
-  await nextTick()
-  await nextTick()
+  const tab = findTab(wrapper, label);
+  expect(tab, `页签「${label}」应存在`).toBeTruthy();
+  await tab!.trigger("click");
+  await flushPromises();
+  await nextTick();
+  await nextTick();
 }
 
 /** body 范围内按文本找按钮（弹窗经 NModal teleport 到 body 后的查找形态）。 */
@@ -80,17 +83,17 @@ export function findBodyButton(
   text: string,
   options: FindByTextOptions = {},
 ): DOMWrapper<HTMLButtonElement> | undefined {
-  const hit = Array.from(document.body.querySelectorAll('button')).find((b) => {
-    const t = b.textContent?.trim() ?? ''
-    return options.exact ? t === text : t.includes(text)
-  })
-  return hit ? new DOMWrapper(hit) : undefined
+  const hit = Array.from(document.body.querySelectorAll("button")).find((b) => {
+    const t = b.textContent?.trim() ?? "";
+    return options.exact ? t === text : t.includes(text);
+  });
+  return hit ? new DOMWrapper(hit) : undefined;
 }
 
 /** body 范围内按 data-testid 找按钮（弹窗内按钮的既有 testid 查找形态）。 */
 export function findBodyButtonByTestId(testid: string): DOMWrapper<HTMLButtonElement> | undefined {
-  const el = document.body.querySelector(`[data-testid="${testid}"]`)
-  return el ? new DOMWrapper(el as HTMLButtonElement) : undefined
+  const el = document.body.querySelector(`[data-testid="${testid}"]`);
+  return el ? new DOMWrapper(el as HTMLButtonElement) : undefined;
 }
 
 /** 输入查找家族：裸 `input` / `input[placeholder="…"]` / `input[type="…"]` 的公共形态。 */
@@ -98,10 +101,10 @@ export function findInput(
   wrapper: VueWrapper,
   options: FindInputOptions = {},
 ): DOMWrapper<HTMLInputElement> {
-  let selector = 'input'
-  if (options.placeholder !== undefined) selector += `[placeholder="${options.placeholder}"]`
-  if (options.type !== undefined) selector += `[type="${options.type}"]`
-  return wrapper.find(selector) as DOMWrapper<HTMLInputElement>
+  let selector = "input";
+  if (options.placeholder !== undefined) selector += `[placeholder="${options.placeholder}"]`;
+  if (options.type !== undefined) selector += `[type="${options.type}"]`;
+  return wrapper.find(selector) as DOMWrapper<HTMLInputElement>;
 }
 
 /**
@@ -115,10 +118,10 @@ export function findInputByTestId(
   wrapper: VueWrapper,
   testid: string,
 ): DOMWrapper<HTMLInputElement> {
-  const carrier = wrapper.findComponent(`[data-testid="${testid}"]`)
+  const carrier = wrapper.findComponent(`[data-testid="${testid}"]`);
   // 载体未命中时直接返回不存在 wrapper（exists() 为 false），与 findInput 家族
   // 「找不到即失败、期望文案归用例」的约定一致，不在查找层拖错。
-  return (carrier.exists() ? carrier.find('input') : carrier) as DOMWrapper<HTMLInputElement>
+  return (carrier.exists() ? carrier.find("input") : carrier) as DOMWrapper<HTMLInputElement>;
 }
 
 // —— 弹窗可见性助手（issue #748 上收：原 TransactionsView/common 目录级实现） ——
@@ -127,41 +130,41 @@ export function findInputByTestId(
 
 /** 过滤 v-show 隐藏容器（jsdom 中 leave 过渡不会结束会残留旧内容），只取可见节点。 */
 function hasHiddenAncestor(el: Element): boolean {
-  let node: Element | null = el
+  let node: Element | null = el;
   while (node && node !== document.body) {
-    if ((node as HTMLElement).style.display === 'none') return true
-    node = node.parentElement
+    if ((node as HTMLElement).style.display === "none") return true;
+    node = node.parentElement;
   }
-  return false
+  return false;
 }
 
 function visibleNodes(selector: string): Element[] {
-  return [...document.querySelectorAll(selector)].filter((el) => !hasHiddenAncestor(el))
+  return [...document.querySelectorAll(selector)].filter((el) => !hasHiddenAncestor(el));
 }
 
 function visibleDialogButtons() {
-  return visibleNodes('.n-dialog button')
+  return visibleNodes(".n-dialog button");
 }
 
 /** useDialog 确认框的可见文本（未打开为空串）。 */
 export function dialogText(): string {
-  return visibleNodes('.n-dialog')
-    .map((el) => el.textContent ?? '')
-    .join('')
+  return visibleNodes(".n-dialog")
+    .map((el) => el.textContent ?? "")
+    .join("");
 }
 
 /** NModal 卡片内容文本：NModal teleport 到 body 且组件根为占位符，需从 document 查卡片。 */
 export function visibleModalText(): string {
-  return visibleNodes('.n-card')
-    .map((el) => el.textContent ?? '')
-    .join('')
+  return visibleNodes(".n-card")
+    .map((el) => el.textContent ?? "")
+    .join("");
 }
 
 /** 点击确认/取消删除对话框中指定文案的按钮。 */
 export async function clickDialogButton(text: string) {
-  const btn = visibleDialogButtons().find((el) => el.textContent?.trim() === text)!
-  await new DOMWrapper(btn).trigger('click')
-  await flushPromises()
+  const btn = visibleDialogButtons().find((el) => el.textContent?.trim() === text)!;
+  await new DOMWrapper(btn).trigger("click");
+  await flushPromises();
 }
 
 /**
@@ -170,12 +173,12 @@ export async function clickDialogButton(text: string) {
  * 弹层族专用便捷形态见 pressReleaseOnDialogMask / 测试内按选择器直调。
  */
 export async function pressReleaseOn(selector: string) {
-  const mask = document.body.querySelector(selector)
-  expect(mask, `${selector} 应存在`).not.toBeNull()
-  mask!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-  mask!.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
-  mask!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-  await flushPromises()
+  const mask = document.body.querySelector(selector);
+  expect(mask, `${selector} 应存在`).not.toBeNull();
+  mask!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  mask!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  mask!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await flushPromises();
 }
 
 /**
@@ -185,9 +188,9 @@ export async function pressReleaseOn(selector: string) {
  * 内联样式断言先例，issue #846 审查上收）。
  */
 export function probeColor(color: string): string {
-  const probe = document.createElement('span')
-  probe.style.color = color
-  return probe.style.color
+  const probe = document.createElement("span");
+  probe.style.color = color;
+  return probe.style.color;
 }
 
 /**
@@ -196,5 +199,5 @@ export function probeColor(color: string): string {
  * （AppModal 契约测试同款先例）。
  */
 export async function pressReleaseOnDialogMask() {
-  await pressReleaseOn('.n-modal-mask')
+  await pressReleaseOn(".n-modal-mask");
 }
