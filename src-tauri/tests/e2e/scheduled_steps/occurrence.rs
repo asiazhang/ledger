@@ -1,12 +1,12 @@
 //! 执行期次与引擎落库断言：汇率夹具、期次执行（含 #230 事务自持注入）、
 //! 生成交易的类型 / 金额 / 状态断言。
+//!
+//! 定时计划域（spec #1494 / ticket #1506）：本文件整文件双注册——汇率夹具
+//! `存在汇率 X 兑 Y 为 R` 早在 #1500 为跨域消费者（items_* / physical_asset* /
+//! dashboard / financial_freedom）补过 rstest-bdd 注册，其余 occurrence 步骤由本票
+//! 补齐。同一函数同时挂两族属性，函数体与断言唯一不复制。
 
 use cucumber::{given, then, when};
-
-// 汇率夹具步骤**按需双注册**（spec #1494 / ticket #1500）：`存在汇率 X 兑 Y 为 R` 是
-// 跨域共享步骤，被 items_* / physical_asset* 及 dashboard / financial_freedom /
-// scheduled 等 feature 消费；本票只为它补 rstest-bdd 注册（其余 occurrence 步骤归
-// ticket #1506 的定时计划域迁移）。同一函数同时挂两族属性，函数体与断言唯一不复制。
 use rusqlite::params;
 
 use crate::common::assert_last_error_contains;
@@ -45,6 +45,7 @@ fn execute_first_occurrence(world: &mut LedgerWorld) {
 
 /// 依次执行最近计划的全部 pending 期次（按 scheduled_date 升序）。
 #[when(expr = "依次执行全部期次")]
+#[rstest_bdd_macros::when("依次执行全部期次")]
 fn execute_all_occurrences(world: &mut LedgerWorld) {
     for occ_id in pending_occurrence_ids(world, None) {
         execute_occurrence_step(world, &occ_id);
@@ -72,6 +73,7 @@ fn pending_occurrence_ids(world: &LedgerWorld, limit: Option<i64>) -> Vec<String
 
 /// 重新执行上一次尝试的期次（失败场景中补录汇率后重试）。
 #[when(expr = "重新执行该期次")]
+#[rstest_bdd_macros::when("重新执行该期次")]
 fn re_execute_occurrence(world: &mut LedgerWorld) {
     let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
     execute_occurrence_step(world, &occ_id);
@@ -84,6 +86,7 @@ fn re_execute_occurrence(world: &mut LedgerWorld) {
 /// 注入「期次落库中途失败」：期次已 CAS 置 processing 后，交易行 INSERT 被触发器
 /// RAISE(ABORT) 挡下——纯测试侧注入（spec #169 定案），产品代码零 hook。
 #[when(expr = "注入交易落库失败触发器")]
+#[rstest_bdd_macros::when("注入交易落库失败触发器")]
 fn inject_txn_insert_failure(world: &mut LedgerWorld) {
     world_conn!(world)
         .execute(
@@ -96,6 +99,7 @@ fn inject_txn_insert_failure(world: &mut LedgerWorld) {
 
 /// 移除注入触发器，让回滚后回原状态的期次可重试。
 #[when(expr = "移除交易落库失败触发器")]
+#[rstest_bdd_macros::when("移除交易落库失败触发器")]
 fn drop_txn_insert_failure_trigger(world: &mut LedgerWorld) {
     world_conn!(world)
         .execute("DROP TRIGGER block_txn_insert", [])
@@ -107,11 +111,13 @@ fn drop_txn_insert_failure_trigger(world: &mut LedgerWorld) {
 // ---------------------------------------------------------------------------
 
 #[then(expr = "执行应失败并提示 {string}")]
+#[rstest_bdd_macros::then("执行应失败并提示 {needle:string}")]
 fn assert_last_error(world: &mut LedgerWorld, needle: String) {
     assert_last_error_contains(world, &needle);
 }
 
 #[then(expr = "期次未回填交易")]
+#[rstest_bdd_macros::then("期次未回填交易")]
 fn assert_occurrence_not_backfilled(world: &mut LedgerWorld) {
     let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
     let txn_id: Option<String> = world_conn!(world)
@@ -125,6 +131,7 @@ fn assert_occurrence_not_backfilled(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "该期次状态应为 {string}")]
+#[rstest_bdd_macros::then("该期次状态应为 {expected:string}")]
 fn assert_occurrence_status(world: &mut LedgerWorld, expected: String) {
     let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
     let status: String = world_conn!(world)
@@ -152,6 +159,7 @@ fn assert_occurrence_txn_kind_amount(
 }
 
 #[then(expr = "该期次交易本位币金额应为 {int}")]
+#[rstest_bdd_macros::then("该期次交易本位币金额应为 {expected:i64}")]
 fn assert_occurrence_txn_native(world: &mut LedgerWorld, expected: i64) {
     let txn = occurrence_txn(world);
     assert_eq!(
@@ -161,6 +169,7 @@ fn assert_occurrence_txn_native(world: &mut LedgerWorld, expected: i64) {
 }
 
 #[then(expr = "该期次交易转入账户应为 {string}")]
+#[rstest_bdd_macros::then("该期次交易转入账户应为 {account_name:string}")]
 fn assert_occurrence_txn_to_account(world: &mut LedgerWorld, account_name: String) {
     let txn = occurrence_txn(world);
     let to_account_id = txn.to_account_id.expect("转账交易应有转入账户");
@@ -172,6 +181,9 @@ fn assert_occurrence_txn_to_account(world: &mut LedgerWorld, account_name: Strin
 }
 
 #[then(expr = "应生成 {int} 笔类型 {string} 的交易 金额依次为 {string}")]
+#[rstest_bdd_macros::then(
+    "应生成 {count:i64} 笔类型 {kind:string} 的交易 金额依次为 {amounts_csv:string}"
+)]
 fn assert_generated_txns(world: &mut LedgerWorld, count: i64, kind: String, amounts_csv: String) {
     let expected: Vec<i64> = amounts_csv
         .split(',')
@@ -200,6 +212,7 @@ fn assert_generated_txns(world: &mut LedgerWorld, count: i64, kind: String, amou
 }
 
 #[then(expr = "计划状态应为 {string}")]
+#[rstest_bdd_macros::then("计划状态应为 {expected:string}")]
 fn assert_plan_status(world: &mut LedgerWorld, expected: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let status: String = world_conn!(world)

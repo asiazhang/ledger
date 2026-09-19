@@ -16,7 +16,7 @@
 //      rstest-bdd `#[rstest_bdd_macros::given/when/then("…")]`；
 //   ③ 判定：被绑 feature 的每条步骤行在同目标的注册面内**恰好一次**匹配；占位符
 //      按语义转匹配式（cucumber `{string}`/`{int}`/`{float}`/`{word}`；rstest-bdd
-//      `{<名>:string|整数|浮点}`），`And`/`But` 继承前一关键字（与 Gherkin 同义）；
+//      `{<名>:string|单字|整数|浮点}`），`And`/`But` 继承前一关键字（与 Gherkin 同义）；
 //   ④ 全覆盖：`tests/e2e/features/**` 每个 feature 至少被一个 e2e 目标绑定——
 //      删掉绑定（如 `scenarios!`）即红，补上 #1495 AC4 的「0 场景且退出码 0」缺口。
 //
@@ -267,7 +267,7 @@ function placeholderMatcher(
   }
 }
 
-/** rstest-bdd 类型提示 → 匹配式（string / 整数族 / 浮点族）。 */
+/** rstest-bdd 类型提示 → 匹配式（string / 单字 / 整数族 / 浮点族）。 */
 function typedMatcher(
   token: string,
   typed: string,
@@ -278,6 +278,12 @@ function typedMatcher(
   switch (typed) {
     case "string":
       return '"[^"]*"';
+    // `word` 是迁移期为「无引号单字」引入的提示（cucumber `{word}` 的 rstest-bdd
+    // 对应形态，见 reports_steps.rs 的相对年份记号）：rstest-bdd 对该未知提示回退
+    // 为惰性任意（`.+?`），本门按 cucumber 的 `\S+` 语义核对——严于运行期形态，
+    // 不会把带空格的步骤文本误判为已覆盖。
+    case "word":
+      return "\\S+";
     case "f32":
     case "f64":
       return "-?\\d+(?:\\.\\d+)?";

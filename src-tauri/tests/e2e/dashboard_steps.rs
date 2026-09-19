@@ -35,6 +35,7 @@ fn create_instrument_fixture(world: &mut LedgerWorld, symbol: String, currency: 
 /// （域时刻，无断言语义，取非 FIXED_NOW 日期段）；source 落 NULL、股票无
 /// nav_date，与原直插形状一致。
 #[given(expr = "标的 {string} 现价 {int} 币种 {string}")]
+#[rstest_bdd_macros::given("标的 {symbol:string} 现价 {price:i64} 币种 {currency:string}")]
 fn set_market_price(world: &mut LedgerWorld, symbol: String, price: i64, currency: String) {
     let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
     upsert_market_price(
@@ -55,6 +56,12 @@ fn set_market_price(world: &mut LedgerWorld, symbol: String, price: i64, currenc
 /// 同时注册 Given/When：场景中可在创建账户（When）之前或之后使用。
 #[given(expr = "已买入 标的 {string} 数量 {int} 单价 {int} 到账户 {string}")]
 #[when(expr = "已买入 标的 {string} 数量 {int} 单价 {int} 到账户 {string}")]
+#[rstest_bdd_macros::given(
+    "已买入 标的 {symbol:string} 数量 {quantity:i64} 单价 {price_cents:i64} 到账户 {account_name:string}"
+)]
+#[rstest_bdd_macros::when(
+    "已买入 标的 {symbol:string} 数量 {quantity:i64} 单价 {price_cents:i64} 到账户 {account_name:string}"
+)]
 fn buy_instrument(
     world: &mut LedgerWorld,
     symbol: String,
@@ -113,6 +120,7 @@ fn assert_net_worth(world: &mut LedgerWorld, expected: i64) {
 }
 
 #[then(expr = "非投资账户余额合计应为 {int}")]
+#[rstest_bdd_macros::then("非投资账户余额合计应为 {expected:i64}")]
 fn assert_accounts_balance(world: &mut LedgerWorld, expected: i64) {
     let overview = world
         .report
@@ -126,6 +134,7 @@ fn assert_accounts_balance(world: &mut LedgerWorld, expected: i64) {
 }
 
 #[then(expr = "实物资产估值合计应为 {int}")]
+#[rstest_bdd_macros::then("实物资产估值合计应为 {expected:i64}")]
 fn assert_physical_assets_value(world: &mut LedgerWorld, expected: i64) {
     let overview = world
         .report
