@@ -468,19 +468,34 @@ pub struct CurrencyHoldingTotals {
     pub unrealized_pnl_cents: Option<i64>,
 }
 
+/// 按年分组的已实现收益行（ADR-0129）：已实现盈亏（卖出匹配）与现金分红
+/// （dividend 行）两腿并列，合计即词汇表「已实现收益（RealizedGain）」。
+/// 两腿各自口径逐位不变（ADR-0107 / ADR-0109 决策 2）；合计在域内相加，
+/// 前端不持算术（ADR-0129 决策 4）。
 #[derive(Debug, Serialize)]
 pub struct YearPnl {
     pub year: String,
     pub currency_code: String,
+    /// 已实现盈亏：FIFO 卖出匹配、已扣卖出手续费、不含分红。
     pub realized_pnl_cents: i64,
+    /// 现金分红：归属标的的现金收入，按交易行日期归年。
+    pub dividend_cents: i64,
+    /// 已实现收益 = 已实现盈亏 + 现金分红（不含浮动盈亏）。
+    pub realized_gain_cents: i64,
 }
 
+/// 按账户分组的已实现收益行（ADR-0129）：列口径同 [`YearPnl`]，按账户聚合。
 #[derive(Debug, Serialize)]
 pub struct AccountPnl {
     pub account_id: String,
     pub account_name: String,
     pub currency_code: String,
+    /// 已实现盈亏：FIFO 卖出匹配、已扣卖出手续费、不含分红。
     pub realized_pnl_cents: i64,
+    /// 现金分红：归属标的的现金收入。
+    pub dividend_cents: i64,
+    /// 已实现收益 = 已实现盈亏 + 现金分红（不含浮动盈亏）。
+    pub realized_gain_cents: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -569,6 +584,8 @@ impl FromRow for YearPnl {
             year: row.get(0)?,
             currency_code: row.get(1)?,
             realized_pnl_cents: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            dividend_cents: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+            realized_gain_cents: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
         })
     }
 }
@@ -580,6 +597,8 @@ impl FromRow for AccountPnl {
             account_name: row.get(1)?,
             currency_code: row.get(2)?,
             realized_pnl_cents: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+            dividend_cents: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
+            realized_gain_cents: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
         })
     }
 }

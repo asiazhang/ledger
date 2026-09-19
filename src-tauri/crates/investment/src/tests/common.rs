@@ -239,6 +239,24 @@ pub(super) fn make_dividend_input(
     amount_cents: i64,
     currency: &str,
 ) -> TransactionInput {
+    make_dividend_input_on(
+        account_id,
+        instrument_id,
+        amount_cents,
+        currency,
+        "2026-02-10",
+    )
+}
+
+/// 日期可指定的现金分红输入（按年归组 / 跨年断言需要把分红落在指定年份；
+/// 其余字段与 [`make_dividend_input`] 逐字一致）。
+pub(super) fn make_dividend_input_on(
+    account_id: &str,
+    instrument_id: &str,
+    amount_cents: i64,
+    currency: &str,
+    date: &str,
+) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
         policy_id: None,
@@ -252,7 +270,7 @@ pub(super) fn make_dividend_input(
         merchant_id: None,
         refund_of_transaction_id: None,
         note: None,
-        date: "2026-02-10".into(),
+        date: date.into(),
         instrument_id: Some(instrument_id.into()),
         quantity: None,
         price_cents: None,

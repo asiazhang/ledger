@@ -14,7 +14,7 @@ import { useInvestmentsSessionStore } from "@/investment/investments-session";
 import { useWindowGuard } from "@/composables/useWindowGuard";
 import { createOverlayToken, resetOverlays } from "@ledger/ui-kit/overlayRegistry";
 import { clearViewResets, fireViewReset } from "@/composables/viewResetRegistry";
-import { pnlSemanticColor } from "@ledger/theme/semantic-colors";
+import { kindSemanticColor, pnlSemanticColor } from "@ledger/theme/semantic-colors";
 import { makeMwrSummary, makePnlSummary, mockHoldings } from "./factories";
 import { firePricesChanged, resetPricesChangedHandler } from "./prices-changed-mock";
 import type { Instrument } from "@ledger/types";
@@ -266,14 +266,26 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
     expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(false);
   });
 
-  it("盈亏页两表的已实现盈亏数字着盈亏涨跌色（红涨绿跌，随主题取变体）", async () => {
+  it("盈亏页两表的已实现收益主值着盈亏涨跌色，副行拆出两腿（ADR-0129）", async () => {
     wireInvokeSeam({
       defaults: INVESTMENT_DEFAULTS,
       overrides: {
         realized_pnl_summary: makePnlSummary({
           by_year: [
-            { year: "2026", currency_code: "CNY", realized_pnl_cents: 30000 },
-            { year: "2025", currency_code: "CNY", realized_pnl_cents: -12345 },
+            {
+              year: "2026",
+              currency_code: "CNY",
+              realized_pnl_cents: 30000,
+              dividend_cents: 0,
+              realized_gain_cents: 30000,
+            },
+            {
+              year: "2025",
+              currency_code: "CNY",
+              realized_pnl_cents: -12345,
+              dividend_cents: 40000,
+              realized_gain_cents: 27655,
+            },
           ],
           by_account: [
             {
@@ -281,6 +293,8 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
               account_name: "证券账户A",
               currency_code: "CNY",
               realized_pnl_cents: -12345,
+              dividend_cents: 40000,
+              realized_gain_cents: 27655,
             },
           ],
         }),
@@ -289,20 +303,33 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
     const wrapper = mountView();
     await flushPromises();
     const theme = useAppStore().theme;
-    // 两表同一列口径：盈亏数字逐行按自身符号取色（与持仓页「持仓收益」列、合计三卡同源）
-    const colors = wrapper
-      .findAll('td[data-col-key="realized_pnl_cents"] span')
+    // 主值：逐行按合计符号取色（与持仓页「持仓收益」列同源）
+    const mainColors = wrapper
+      .findAll('td[data-col-key="realized_gain_cents"] > div > span')
       .map((s) => (s.element as HTMLElement).style.color);
-    expect(colors).toEqual([
+    expect(mainColors).toEqual([
       probeColor(pnlSemanticColor(30000, theme)),
-      probeColor(pnlSemanticColor(-12345, theme)),
-      probeColor(pnlSemanticColor(-12345, theme)),
+      probeColor(pnlSemanticColor(27655, theme)),
+      probeColor(pnlSemanticColor(27655, theme)),
     ]);
-    // 文本口径不变：仍按行币种走 formatAmount
-    expect(wrapper.findAll('td[data-col-key="realized_pnl_cents"]').map((c) => c.text())).toEqual([
-      formatAmount(30000, cny),
-      formatAmount(-12345, cny),
-      formatAmount(-12345, cny),
+    // 副行两腿各按自身口径取色（已实现盈亏随涨跌、现金分红走分红 kind 色）
+    const legColors = wrapper
+      .findAll('td[data-col-key="realized_gain_cents"] > div > div > span')
+      .map((s) => (s.element as HTMLElement).style.color);
+    expect(legColors).toEqual([
+      probeColor(pnlSemanticColor(30000, theme)),
+      probeColor(kindSemanticColor("dividend", theme)),
+      probeColor(pnlSemanticColor(-12345, theme)),
+      probeColor(kindSemanticColor("dividend", theme)),
+      probeColor(pnlSemanticColor(-12345, theme)),
+      probeColor(kindSemanticColor("dividend", theme)),
+    ]);
+    // 文本口径不变：仍按行币种走 formatAmount；副行两腿带标签、主值在上
+    const cells = wrapper.findAll('td[data-col-key="realized_gain_cents"]');
+    expect(cells.map((c) => c.text())).toEqual([
+      `${formatAmount(30000, cny)}已实现盈亏 ${formatAmount(30000, cny)} · 现金分红 ${formatAmount(0, cny)}`,
+      `${formatAmount(27655, cny)}已实现盈亏 ${formatAmount(-12345, cny)} · 现金分红 ${formatAmount(40000, cny)}`,
+      `${formatAmount(27655, cny)}已实现盈亏 ${formatAmount(-12345, cny)} · 现金分红 ${formatAmount(40000, cny)}`,
     ]);
   });
 

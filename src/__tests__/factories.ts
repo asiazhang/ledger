@@ -248,17 +248,28 @@ export function makeFinancialFreedom(
   };
 }
 
-/** realized_pnl_summary 返回值工厂（issue #325；ADR-0107 起按币种分组、无明细）：默认全表汇总 300 元（CNY） */
+/** realized_pnl_summary 返回值工厂（issue #325；ADR-0107 起按币种分组、无明细；
+ * ADR-0129 起按年/按账户行各带分红腿与合计）：默认全表汇总 300 元（CNY）、无分红 */
 export function makePnlSummary(partial: Partial<RealizedPnlSummary> = {}): RealizedPnlSummary {
   return {
     total: [{ currency_code: "CNY", realized_pnl_cents: 30000 }],
-    by_year: [{ year: "2026", currency_code: "CNY", realized_pnl_cents: 30000 }],
+    by_year: [
+      {
+        year: "2026",
+        currency_code: "CNY",
+        realized_pnl_cents: 30000,
+        dividend_cents: 0,
+        realized_gain_cents: 30000,
+      },
+    ],
     by_account: [
       {
         account_id: "acc-1",
         account_name: "证券账户A",
         currency_code: "CNY",
         realized_pnl_cents: 30000,
+        dividend_cents: 0,
+        realized_gain_cents: 30000,
       },
     ],
     by_instrument: [
