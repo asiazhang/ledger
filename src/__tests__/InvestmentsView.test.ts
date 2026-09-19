@@ -104,6 +104,15 @@ const mockInstruments: Instrument[] = [
 
 /** 投资域命令契约快照（标的列表/持仓/走势/盈亏汇总，均为静态空数据或固定行）。 */
 const INVESTMENT_DEFAULTS = {
+  // 投资概览（spec #1532 / issue #1536）：默认页签落点的只读取数命令
+  investment_overview: {
+    native_currency: "CNY",
+    investable_assets_cents: 0,
+    investment_cash_cents: 0,
+    holdings_market_value_cents: 0,
+    missing_price_holding_count: 0,
+    has_investment_account: true,
+  },
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
   // 持仓概览（issue #110）：盈亏 tab 顶部会拉取当前持仓
   list_holdings: [],
@@ -138,7 +147,7 @@ beforeEach(async () => {
 
 describe("InvestmentsView 标的 tab", () => {
   // issue #769：页签存在性收行——行 = 页签名，删页签即红（生杀线内，见 CONTEXT-testing「存在性断言」）。
-  it.each(["盈亏", "持仓", "标的", "走势"])("%s tab 存在", async (tab) => {
+  it.each(["概览", "盈亏", "持仓", "标的", "走势"])("%s tab 存在", async (tab) => {
     const wrapper = mountView();
     await nextTick();
     expect(findTab(wrapper, tab, { exact: true }), `页签「${tab}」应存在`).toBeTruthy();
@@ -210,22 +219,23 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
   it("页签点击经 store 意图入口落位（NTabs 受控回传，单一路径）", async () => {
     const wrapper = mountView();
     await flushPromises();
-    expect(useInvestmentsSessionStore().activeTab).toBe("pnl");
+    expect(useInvestmentsSessionStore().activeTab).toBe("overview");
     await clickTab(wrapper, "持仓");
     expect(useInvestmentsSessionStore().activeTab).toBe("holdings");
     expect(wrapper.findAll(".n-tabs-tab--active").map((el) => el.text())).toEqual(["持仓"]);
   });
 
-  it("页签顺序为盈亏/持仓/标的/走势，默认选中盈亏", async () => {
+  it("页签顺序为概览/盈亏/持仓/标的/走势，默认选中概览（spec #1532 / issue #1536）", async () => {
     const wrapper = mountView();
     await flushPromises();
     expect(wrapper.findAll(".n-tabs-tab").map((el) => el.text())).toEqual([
+      "概览",
       "盈亏",
       "持仓",
       "标的",
       "走势",
     ]);
-    expect(wrapper.findAll(".n-tabs-tab--active").map((el) => el.text())).toEqual(["盈亏"]);
+    expect(wrapper.findAll(".n-tabs-tab--active").map((el) => el.text())).toEqual(["概览"]);
   });
 
   it("持仓页签完整呈现：按币种合计统计（含累计收益）+ 持仓明细表 + 同步按钮在位", async () => {
@@ -502,11 +512,11 @@ describe("InvestmentsView 来源跳转落点（issue #709）", () => {
     expect(wrapper.get('[data-testid="line-chart"]').text()).toContain("600519 招商银行");
   });
 
-  it("无 focus：停留默认盈亏页签，不调按 id 取标的", async () => {
+  it("无 focus：停留默认概览页签，不调按 id 取标的", async () => {
     const wrapper = mountView();
     await flushPromises();
 
-    expect(activeTabText(wrapper)).toContain("盈亏");
+    expect(activeTabText(wrapper)).toContain("概览");
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "get_instrument")).toBe(false);
   });
 
@@ -630,17 +640,17 @@ describe("InvestmentsView 持仓页签会话内保留（issue #1192）", () => {
     const keysBefore = Object.keys(localStorage);
     wrapper.unmount();
 
-    // 新 pinia = 新会话（应用重启）：默认页签盈亏、持仓无筛选
+    // 新 pinia = 新会话（应用重启）：默认页签概览、持仓无筛选
     // （store 复位断言独立于视图渲染：同时钉住「恢复的选择不是快照」与冷启动口径）
     setActivePinia(createPinia());
     const coldStore = useInvestmentsSessionStore();
-    expect(coldStore.activeTab).toBe("pnl");
+    expect(coldStore.activeTab).toBe("overview");
     expect(coldStore.holdingsSorter).toBeNull();
     expect(coldStore.holdingsSearch).toBe("");
     expect(coldStore.holdingsPage).toBe(1);
     const second = mountView();
     await flushPromises();
-    expect(second.findAll(".n-tabs-tab--active").map((el) => el.text())).toEqual(["盈亏"]);
+    expect(second.findAll(".n-tabs-tab--active").map((el) => el.text())).toEqual(["概览"]);
     await clickTab(second, "持仓");
     await flushPromises();
     // 默认代码字母序（非离开时的市值降序）：'000001' < '600000'
@@ -763,7 +773,7 @@ describe("InvestmentsView ESC 复位（issue #1192）", () => {
       // 复位语义优先：搜索回显不得残留旧应用值（回归对账点；其余状态同规）
       expect(useInvestmentsSessionStore().holdingsSearchInput).toBe("");
       expect(useInvestmentsSessionStore().holdingsPage).toBe(1);
-      expect(wrapper.findAll(".n-tabs-tab--active").map((el) => el.text())).toEqual(["盈亏"]);
+      expect(wrapper.findAll(".n-tabs-tab--active").map((el) => el.text())).toEqual(["概览"]);
       await clickTab(wrapper, "持仓");
       await flushPromises();
       expect(symbols(wrapper)).toEqual(["000001", "600000"]);

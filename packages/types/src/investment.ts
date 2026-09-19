@@ -77,6 +77,27 @@ export interface PriceStaleness {
   threshold_days: number;
 }
 
+/**
+ * `investment_overview` 命令返回的投资概览读数（spec #1532 / issue #1536）：
+ * 投资页「概览」页签的唯一取数接缝——全页折全局默认币种单值，前端只装配数值，
+ * 不做任何折算或分组（口径与折算单点在后端投资域；与持仓视图「按账户币种分组、
+ * 不跨币种合并」的分工见 ADR-0130）。金额单位：分。
+ */
+export interface InvestmentOverview {
+  /** 折算基准币种（全局默认币种）——本页全部金额的币种标注来源 */
+  native_currency: string;
+  /** 可投资资产合计 = 投资账户现金腿 + 持仓市值腿 */
+  investable_assets_cents: number;
+  /** 可投资资产·投资账户现金腿（排除隐藏账户） */
+  investment_cash_cents: number;
+  /** 可投资资产·持仓市值腿（排除隐藏账户、缺价持仓跳过） */
+  holdings_market_value_cents: number;
+  /** 未计入合计的持仓数：缺现价（或缺价格币→账户币汇率）按空值语义跳过的行数 */
+  missing_price_holding_count: number;
+  /** 账本内是否存在未删除的投资账户：否时展示「还没有投资账户」引导句 */
+  has_investment_account: boolean;
+}
+
 export interface InstrumentInput {
   symbol: string;
   type: InstrumentType;

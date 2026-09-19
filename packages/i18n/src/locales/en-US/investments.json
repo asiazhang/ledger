@@ -1,9 +1,20 @@
 {
   "tabs": {
+    "overview": "Overview",
     "pnl": "P&L",
     "holdings": "Holdings",
     "instruments": "Instruments",
     "trend": "Trend"
+  },
+  "overview": {
+    "title": "Investment Overview",
+    "investableAssets": "Investable assets",
+    "currencyLabel": "Native currency {currency}",
+    "cashLeg": "Investment account cash",
+    "holdingsLeg": "Holdings market value",
+    "missingPrice": "{count} more holdings are excluded because they have no current price.",
+    "noAccount": "No investment account yet; create one on the Accounts page and your investable assets will show up here.",
+    "retry": "Retry"
   },
   "pnl": {
     "empty": "No P&L data yet",

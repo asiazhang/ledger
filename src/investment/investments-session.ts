@@ -22,8 +22,12 @@ export interface NaiveUiSorterState {
 /** 分页页大小：固定值不设选择器（全仓先例：交易页与搜索页同为 20，issue #912） */
 export const HOLDINGS_PAGE_SIZE = 20;
 
-/** 投资页默认页签（冷启动与 ESC 复位共用同一默认态来源）。 */
-export const INVESTMENTS_DEFAULT_TAB = "pnl";
+/**
+ * 投资页默认页签（冷启动与 ESC 复位共用同一默认态来源）：「概览」
+ * （spec #1532 / issue #1536，原默认「盈亏」）——一进投资页就看到可投资资产，
+ * 不设预算的用户也无需先建预算才能看到这笔资产。
+ */
+export const INVESTMENTS_DEFAULT_TAB = "overview";
 
 /** 走势视图模式：组合市值曲线 ↔ 单标的曲线同视图切换 */
 export type TrendViewMode = "portfolio" | "instrument";
@@ -64,7 +68,7 @@ export const TREND_MODE_DEFAULT: TrendViewMode = "portfolio";
  * 视图/面板不持可写 ref，受控组件回传经 `:value` + `@update:value` 调用入口动作。
  */
 export const useInvestmentsSessionStore = defineStore("investments-session", () => {
-  /** 当前页签（会话内保留、冷启动回默认「盈亏」；原为视图内实例级瞬态）。 */
+  /** 当前页签（会话内保留、冷启动回默认「概览」；原为视图内实例级瞬态）。 */
   const activeTab = ref<string>(INVESTMENTS_DEFAULT_TAB);
 
   /** 持仓搜索输入回显值（即时，未经防抖；写路径唯一为 setSearch） */
@@ -212,7 +216,7 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
   );
 
   /**
-   * ESC 复位出口（ADR-0094 决策 4）：页签回默认「盈亏」、持仓筛选三维清零、
+   * ESC 复位出口（ADR-0094 决策 4）：页签回默认「概览」、持仓筛选三维清零、
    * 翻页归零、走势回默认组合曲线（选中标的与单标的模式一并清除）——复位即清除
    * 保留态本身（复位后离开再回来 = 默认）。走各维既有写入出口，同值幂等无操作。
    *

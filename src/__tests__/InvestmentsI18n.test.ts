@@ -24,6 +24,15 @@ vi.mock("vue-router", () => ({
 
 /** 投资域三命令的空数据契约快照（英文渲染不消费具体数据）。 */
 const EMPTY_INVESTMENT_DEFAULTS = {
+  // 投资概览（spec #1532 / issue #1536）：默认页签落点的只读取数命令
+  investment_overview: {
+    native_currency: "CNY",
+    investable_assets_cents: 0,
+    investment_cash_cents: 0,
+    holdings_market_value_cents: 0,
+    missing_price_holding_count: 0,
+    has_investment_account: true,
+  },
   list_instruments: { items: [], total: 0 },
   list_holdings: [],
   // 价格过期检查（issue #1190）：打开投资页的本地水位检查，默认无过期
@@ -56,16 +65,29 @@ afterEach(async () => {
 const mountView = () => mountWithDialog(InvestmentsView);
 
 describe("InvestmentsView 英文渲染（issue #350 / ADR-0049）", () => {
-  it("页签渲染英文：P&L / Holdings / Instruments / Trend", async () => {
+  it("页签渲染英文：Overview / P&L / Holdings / Instruments / Trend", async () => {
     await applyLocale("en-US");
     await nextTick();
     const wrapper = mountView();
     await nextTick();
     const labels = wrapper.findAll(".n-tabs-tab").map((el) => el.text());
+    expect(labels).toContain("Overview");
     expect(labels).toContain("P&L");
     expect(labels).toContain("Holdings");
     expect(labels).toContain("Instruments");
     expect(labels).toContain("Trend");
+  });
+
+  it("概览页签渲染英文（Investable assets / 两腿拆分 / 本位币标注）", async () => {
+    await applyLocale("en-US");
+    const wrapper = mountView();
+    await flushPromises();
+    const text = wrapper.text();
+    expect(text).toContain("Investment Overview");
+    expect(text).toContain("Investable assets");
+    expect(text).toContain("Investment account cash");
+    expect(text).toContain("Holdings market value");
+    expect(text).toContain("Native currency CNY");
   });
 
   it("持仓页签渲染英文（Current Holdings / 空态，issue #901）", async () => {

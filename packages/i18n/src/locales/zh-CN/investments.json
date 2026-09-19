@@ -1,9 +1,20 @@
 {
   "tabs": {
+    "overview": "概览",
     "pnl": "盈亏",
     "holdings": "持仓",
     "instruments": "标的",
     "trend": "走势"
+  },
+  "overview": {
+    "title": "投资概览",
+    "investableAssets": "可投资资产",
+    "currencyLabel": "本位币 {currency}",
+    "cashLeg": "投资账户现金",
+    "holdingsLeg": "持仓市值",
+    "missingPrice": "另有 {count} 只持仓因缺现价未计入。",
+    "noAccount": "还没有投资账户；在「账户」页新建投资账户后，这里会显示你的可投资资产。",
+    "retry": "重试"
   },
   "pnl": {
     "empty": "暂无盈亏数据",

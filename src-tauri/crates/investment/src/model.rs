@@ -730,3 +730,28 @@ pub struct FinancialFreedomOverview {
     /// 折算基准币种（全局默认币种）
     pub native_currency: String,
 }
+
+// ---------------------------------------------------------------------------
+// 投资概览（spec #1532 / issue #1536）
+// ---------------------------------------------------------------------------
+
+/// `investment_overview` 命令返回的投资概览读数（全页折本位币单值，金额单位：分）。
+///
+/// 投资页「概览」页签的唯一取数接缝：前端只装配数值，不出现第二份口径表达式
+/// （折算、两腿相加与缺价计数全在本域单点，见 [`super::overview`]）。
+/// 口径与持仓视图「按账户币种分组、不跨币种合并」的分工见 ADR-0130。
+#[derive(Debug, Clone, Serialize)]
+pub struct InvestmentOverview {
+    /// 折算基准币种（全局默认币种）——本页全部金额的币种标注来源
+    pub native_currency: String,
+    /// 可投资资产合计（分）= 投资账户现金腿 + 持仓市值腿
+    pub investable_assets_cents: i64,
+    /// 可投资资产·投资账户现金腿（分）：投资账户余额折本位币（排除隐藏账户）
+    pub investment_cash_cents: i64,
+    /// 可投资资产·持仓市值腿（分）：Σ 折本位币持仓市值（排除隐藏账户）
+    pub holdings_market_value_cents: i64,
+    /// 未计入合计的持仓数：缺现价（或缺价格币→账户币汇率）按空值语义跳过的行数
+    pub missing_price_holding_count: i64,
+    /// 账本内是否存在未删除的投资账户：否时展示层给「还没有投资账户」引导句
+    pub has_investment_account: bool,
+}
