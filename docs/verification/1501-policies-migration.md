@@ -104,9 +104,11 @@ cucumber 一致（CONTEXT-testing「行为等价判据」）。
   `存在汇率 X 兑 Y 为 R` 与本票的 `执行该计划第一期` / `该期次交易类型应为 …
   金额应为 …` 并存（无冲突）。
 
-合并后复验：policy 三 feature 29/29 绿；新目标全量 162/162（#1489 本轮未触发）；
-旧目标 453 scenarios / 3139 steps 不变；覆盖守门未覆盖 0 / 歧义 0 / 无绑定 0；
-`./scripts/check.sh` 与 `./scripts/test.sh` 复跑全绿。
+合并后复验：policy 三 feature 29/29 绿；旧目标 453 scenarios / 3139 steps 不变；
+覆盖守门未覆盖 0 / 歧义 0 / 无绑定 0；`./scripts/check.sh` 全绿。新目标全量复跑两次：
+一次 162/162 全绿（`./scripts/test.sh` EXIT=0），一次 161/162——失败为 #1500 文档登记的
+#1489 既有间歇性红（`physical_assets.feature` 外币估值折算，`left: 30000` /
+`right: 72000`），与本次合并无关，按 spec #1494 Out of Scope 不修。
 
 ## 证据边界（不夸大）
 
