@@ -8,16 +8,21 @@
 //!   transactions_edit.feature / transactions_query.feature，#1498；
 //!   transactions_policy.feature，#1499；items_* / physical_asset* 共 8 个 feature，
 //!   #1500；policies.feature / policy_agreement.feature / policy_stats.feature，
-//!   #1501）在本目标运行，旧目标行为零变化。账户 / 交易 / 保单与物品域场景全绿；
+//!   #1501；instruments.feature / manual_quote.feature，#1502）在本目标运行，
+//!   旧目标行为零变化。账户 / 交易 / 保单、物品与投资域场景全绿；
 //!   实物资产域 3 个场景受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，
 //!   间歇性红，按 #1500 约定不修（见
 //!   `docs/verification/1500-items-physical-assets-migration.md`）；
 //! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
 //!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，
 //!   抽共享实现 + 两侧注册适配器（`migration_steps::批量导入交易`、
-//!   `transactions_policy_steps::批量导入挂单交易`），适配形态见
+//!   `transactions_policy_steps::批量导入挂单交易`、
+//!   `investment_migration_steps::批量导入投资交易`），适配形态见
 //!   `docs/verification/1499-transactions-policy-dual-registration.md` 与
 //!   `docs/verification/1498-transactions-edit-query-dual-registration.md`；
+//!   需要 `await` 的行情抓取桩步骤同理保留共享 async 实现 + 两侧适配器，新目标侧
+//!   经唯一接缝 `test_support::block_on` 驱动（见
+//!   `docs/verification/1502-investment-market-dual-registration.md`）；
 //! - 其余域按 spec #1494 的后续票逐域加注册，收口时删旧目标与 cucumber 依赖。
 //!
 //! 并行口径（spec #1494 决策）：进程内 libtest 线程并行对世界构造（内存库 + 迁移）
@@ -68,6 +73,11 @@ mod instruments_steps;
 #[path = "e2e/insurers_steps.rs"]
 mod insurers_steps;
 #[allow(dead_code)]
+#[path = "e2e/investment_migration_steps.rs"]
+mod investment_migration_steps;
+#[allow(dead_code)]
+#[path = "e2e/investment_trend_steps.rs"]
+mod investment_trend_steps;
 #[path = "e2e/items_common.rs"]
 mod items_common;
 #[allow(dead_code)]
@@ -85,6 +95,9 @@ mod items_provenance_steps;
 #[allow(dead_code)]
 #[path = "e2e/items_update_steps.rs"]
 mod items_update_steps;
+#[allow(dead_code)]
+#[path = "e2e/manual_quote_steps.rs"]
+mod manual_quote_steps;
 #[allow(dead_code)]
 #[path = "e2e/physical_asset_disposal_steps.rs"]
 mod physical_asset_disposal_steps;
@@ -235,6 +248,19 @@ mod scenarios {
         "tests/e2e/features/policy_stats.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
+
+    // 投资与行情域场景（ticket #1502）：标的 34 个场景（含组合走势、投资迁移
+    // 链路、按代码即拉建基金、股票通道行情桩）+ 手动报价 5 个场景，与既有域
+    // 同用一份 `world` fixture（各自独立内存库）。
+    scenarios!(
+        "tests/e2e/features/instruments.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/manual_quote.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
 }
 
 /// 运行时注册表断言（ticket #1497 / #1499 AC1/AC3）的共用形状：某步骤文件整文件
@@ -326,6 +352,154 @@ fn transactions_policy_steps_are_registered_in_rstest_bdd() {
                 "第 1 条交易挂单引用应保留（软删保单不置空）",
             ),
             (StepKeyword::When, "批量导入挂单交易"),
+        ],
+    );
+}
+
+/// 投资与行情域五个步骤文件整文件双注册的运行时注册（ticket #1502）：整文件注册
+/// 条数与占位符语义（string 剥引号、整数族解析、`f64` 小数、数据表步骤、无占位符
+/// 直命中）。「只留 cucumber 注册」（删掉任一新注册）即红。
+///
+/// 异步（行情抓取桩）三态：rstest 形态的注册是场景进入新目标的唯一入口，删掉即
+/// `Step not found` 红；其运行方式统一经 `instruments_steps::block_on`（既有接缝
+/// `test_support::block_on`）——删掉该调用点则桩不执行、场景断言行红（负向证据见
+/// `docs/verification/1502-investment-market-dual-registration.md`）。
+///
+/// 逐条模式的全等覆盖（feature 步骤行 ↔ 注册模式、无漏改 / 无歧义）由静态覆盖
+/// 守门兜底（`bun scripts/check-e2e-step-coverage.ts`）；本断言只担运行时那半。
+#[test]
+fn investment_domain_steps_are_registered_in_rstest_bdd() {
+    assert_steps_registered_in_rstest_bdd(
+        "instruments_steps.rs",
+        32,
+        &[
+            (
+                StepKeyword::When,
+                "手动创建标的 \"HW-VR\" 类型 \"other\" 名称 \"华为虚拟股\" 币种 \"CNY\"",
+            ),
+            (StepKeyword::When, "搜索类型 \"fund\" 的标的 \"000001\""),
+            (StepKeyword::Then, "标的搜索命中 2 条 总数 2"),
+            (
+                StepKeyword::Then,
+                "标的字典存在类型 \"stock\" 代码 \"600519\" 名称 \"贵州茅台\" 来源 \"manual\" 市场 \"sh\"",
+            ),
+            (
+                StepKeyword::When,
+                "按代码添加基金 \"000001\" 东财返回名称 \"华夏成长混合\" 分类 \"混合型-灵活\" 净值 1.318 净值日期 \"2026-08-28\"",
+            ),
+            // 异步三态（共享 async 实现 + 新目标侧 `block_on` 接线）。
+            (
+                StepKeyword::When,
+                "按代码添加投资标的 市场 \"sh\" 代码 \"600519\" 行情命中名称 \"贵州茅台\" 市场 \"sh\" 现价 1234.56 类型提示 \"stock\"",
+            ),
+            (
+                StepKeyword::When,
+                "按代码添加投资标的 市场 \"sh\" 代码 \"600999\" 行情查无此码",
+            ),
+            (
+                StepKeyword::When,
+                "按代码添加投资标的 市场 \"sh\" 代码 \"600519\" 行情临时不可达",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "manual_quote_steps.rs",
+        6,
+        &[
+            (
+                StepKeyword::When,
+                "给标的 \"稳稳地幸福\" 录价 日期 \"2026-08-28\" 价格 13180 万分之一元",
+            ),
+            (
+                StepKeyword::Then,
+                "标的 \"稳稳地幸福\" 现价为 13180 万分之一元 priced_at \"2026-08-28\" 来源 \"manual\"",
+            ),
+            (
+                StepKeyword::Then,
+                "标的 \"稳稳地幸福\" 价格历史 \"2026-08-28\" 周点价格为 13180 万分之一元 来源 \"manual\"",
+            ),
+            (
+                StepKeyword::Then,
+                "标的 \"稳稳地幸福\" 持仓视图市值应为 131800",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "investment_trend_steps.rs",
+        9,
+        &[
+            (
+                StepKeyword::Given,
+                "存在标的 \"110022\" 的价格历史 交易日 \"2026-02-02\" 价格 32930 万分之一元 币种 \"CNY\"",
+            ),
+            (
+                StepKeyword::Given,
+                "存在汇率历史 \"USD\" 兑 \"CNY\" 交易日 \"2026-01-05\" 汇率 7.2",
+            ),
+            (
+                StepKeyword::When,
+                "买入标的 \"600519\" 数量 2 单价 100000 到账户 \"投资户\" 日期 \"2026-01-30\"",
+            ),
+            (
+                StepKeyword::When,
+                "卖出标的 \"600036\" 数量 2 单价 110000 从账户 \"证券户\" 日期 \"2026-02-10\"",
+            ),
+            (StepKeyword::When, "查询组合走势"),
+            (StepKeyword::Then, "组合走势应有 2 个周点"),
+            (StepKeyword::When, "查询标的 \"110022\" 的走势"),
+            (StepKeyword::Then, "标的走势应有 2 个周点"),
+            (
+                StepKeyword::Then,
+                "组合走势 \"2026-02-02\" 周市值应为 331300",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "investment_migration_steps.rs",
+        4,
+        &[
+            (
+                StepKeyword::When,
+                "幂等创建标的 \"600519\" 类型 \"stock\" 名称 \"贵州茅台\" 市场 \"sh\" 币种 \"CNY\"",
+            ),
+            // 数据表步骤：rstest 适配注册必须能命中文本（数据表由 macro 注入）。
+            (StepKeyword::When, "批量导入投资交易"),
+            (StepKeyword::Then, "导入的投资交易应有 2 行全部成功"),
+            (StepKeyword::Then, "标的 \"600519\" 持仓应为 50"),
+        ],
+    );
+
+    // fund_trade_steps 整文件 12 条（#1498 已注册 7 条，本票补齐其余 5 条：
+    // 带日期申购/赎回、出资账户申购、买入双账户匹配）。
+    assert_steps_registered_in_rstest_bdd(
+        "fund_trade_steps.rs",
+        12,
+        &[
+            (
+                StepKeyword::Given,
+                "存在基金标的 \"006793\" 名称 \"某可转换基金\"",
+            ),
+            (
+                StepKeyword::When,
+                "按确认单于 \"2020-03-12\" 申购基金 \"006793\" 份额 3475.88 金额 359062 手续费 0 到投资账户 \"基金户\"",
+            ),
+            (
+                StepKeyword::When,
+                "按确认单出资账户申购基金 \"000123\" 份额 5000 金额 5000 手续费 0 到投资账户 \"基金户\" 出资账户 \"银行卡\"",
+            ),
+            (
+                StepKeyword::When,
+                "按确认单于 \"2020-06-18\" 赎回基金 \"519700\" 份额 588.67 金额 67697 手续费 0 从投资账户 \"基金户\"",
+            ),
+            (StepKeyword::Then, "该买入 account_id 应匹配账户 \"基金户\""),
+            (
+                StepKeyword::Then,
+                "该买入 funding_account_id 应匹配账户 \"银行卡\"",
+            ),
+            (StepKeyword::Then, "基金 \"000456\" 已实现盈亏合计应为 2000"),
         ],
     );
 }

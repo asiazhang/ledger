@@ -83,6 +83,7 @@ fn buy_instrument(
 // ---------------------------------------------------------------------------
 
 #[when(expr = "查询净资产总览")]
+#[rstest_bdd_macros::when("查询净资产总览")]
 fn query_net_worth(world: &mut LedgerWorld) {
     match query_dashboard_overview(&world_conn!(world)) {
         Ok(overview) => {
@@ -101,6 +102,7 @@ fn query_net_worth(world: &mut LedgerWorld) {
 // ---------------------------------------------------------------------------
 
 #[then(expr = "净资产应为 {int}")]
+#[rstest_bdd_macros::then("净资产应为 {expected:i64}")]
 fn assert_net_worth(world: &mut LedgerWorld, expected: i64) {
     let overview = world
         .report
@@ -137,6 +139,7 @@ fn assert_physical_assets_value(world: &mut LedgerWorld, expected: i64) {
 }
 
 #[then(expr = "持仓市值合计应为 {int}")]
+#[rstest_bdd_macros::then("持仓市值合计应为 {expected:i64}")]
 fn assert_holdings_value(world: &mut LedgerWorld, expected: i64) {
     let overview = world
         .report

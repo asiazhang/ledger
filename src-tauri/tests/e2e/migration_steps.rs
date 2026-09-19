@@ -130,6 +130,7 @@ fn delete_txn_by_note(world: &mut LedgerWorld, note: String) {
 
 /// 查询全部未删除账户的实时余额（含黑洞账户），快照到 world.txn.balances。
 #[when(expr = "查询全部账户余额")]
+#[rstest_bdd_macros::when("查询全部账户余额")]
 fn query_balances(world: &mut LedgerWorld) {
     let balances = list_account_balances_for_api(&world_conn!(world)).expect("查询账户余额失败");
     world.txn.balances = balances
@@ -273,6 +274,7 @@ fn balance_count(world: &mut LedgerWorld, expected: i64) {
 }
 
 #[then(expr = "账户 {string} 余额应为 {int}")]
+#[rstest_bdd_macros::then("账户 {name:string} 余额应为 {expected:i64}")]
 fn balance_of_name(world: &mut LedgerWorld, name: String, expected: i64) {
     let (actual, _) = world.txn.balances.get(&name).unwrap_or_else(|| {
         panic!(

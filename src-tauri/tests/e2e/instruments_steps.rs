@@ -3,6 +3,11 @@
 //! 另载按代码即拉添加基金的编排接缝（issue #301 / ADR-0103）：东财报价以注入桩离线驱动，
 //! 实现为 `investment::add_fund_by_code_with`（与 IPC 命令同一套
 //! 校验/拉取编排/落库实现，网络层经注入替换）。
+//!
+//! 整文件 32 条步骤**双注册**（spec #1494 / ticket #1502）：改写只涉及属性语法与
+//! 占位符形态，函数体与断言不变。股票通道三条行情抓取桩步骤需要 `await`，故保留
+//! 共享 async 实现 + 两侧适配器——cucumber 侧在共享 runner 的 tokio 运行时内直接
+//! await，新目标侧经唯一接缝 [`block_on`]（既有 `test_support::block_on`）驱动。
 
 use cucumber::{given, then, when};
 use rusqlite::params;
@@ -50,6 +55,9 @@ fn create_instrument_named(
 /// 直插指定类型的金融工具字典行（同码异类型消歧场景用，issue #294；
 /// 同步来源直置例外，动机同上）。
 #[given(expr = "存在类型 {string} 的标的 {string} 名称 {string} 币种 {string}")]
+#[rstest_bdd_macros::given(
+    "存在类型 {kind:string} 的标的 {symbol:string} 名称 {name:string} 币种 {currency:string}"
+)]
 fn create_instrument_of_type(
     world: &mut LedgerWorld,
     kind: String,
@@ -71,6 +79,9 @@ fn create_instrument_of_type(
 /// market 为闭集值如 nasdaq/nyse/amex，经 V002 检查约束验证落库；
 /// 同步来源直置例外，动机同上）。
 #[given(expr = "存在市场 {string} 的标的 {string} 名称 {string} 币种 {string}")]
+#[rstest_bdd_macros::given(
+    "存在市场 {market:string} 的标的 {symbol:string} 名称 {name:string} 币种 {currency:string}"
+)]
 fn create_instrument_with_market(
     world: &mut LedgerWorld,
     market: String,
@@ -98,6 +109,9 @@ fn create_instrument_with_market(
 /// 同此形状（issue #826：#697 兜底建档的市场透传随一级通道化退役）；
 /// 结果/错误记入 world 供 Then 断言。
 #[when(expr = "手动创建标的 {string} 类型 {string} 名称 {string} 币种 {string}")]
+#[rstest_bdd_macros::when(
+    "手动创建标的 {symbol:string} 类型 {kind:string} 名称 {name:string} 币种 {currency:string}"
+)]
 fn manual_create_instrument(
     world: &mut LedgerWorld,
     symbol: String,
@@ -123,6 +137,7 @@ fn manual_create_instrument(
 /// 场景内代码唯一，按（代码）取 id 驱动；结果/错误记入 world 供 Then 断言。
 /// 步骤前提是标的已存在（不存在标的的错误路径由域单测覆盖）。
 #[when(expr = "删除标的 {string}")]
+#[rstest_bdd_macros::when("删除标的 {symbol:string}")]
 fn delete_instrument(world: &mut LedgerWorld, symbol: String) {
     let id: String = world_conn!(world)
         .query_row(
@@ -139,6 +154,7 @@ fn delete_instrument(world: &mut LedgerWorld, symbol: String) {
 
 /// 列出全部标的（无过滤）：验证列表返回体来源字段的接缝（issue #290 验收项）。
 #[when(expr = "列出全部标的")]
+#[rstest_bdd_macros::when("列出全部标的")]
 fn list_all_instruments(world: &mut LedgerWorld) {
     world.asset.last_instrument_search = Some(
         list_instruments(&world_conn!(world), &InstrumentListFilter::default())
@@ -147,6 +163,7 @@ fn list_all_instruments(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "搜索标的 {string}")]
+#[rstest_bdd_macros::when("搜索标的 {query:string}")]
 fn search_instruments(world: &mut LedgerWorld, query: String) {
     let filter = InstrumentListFilter {
         search: Some(query),
@@ -158,6 +175,7 @@ fn search_instruments(world: &mut LedgerWorld, query: String) {
 
 /// 按类型过滤搜索（同码异类型消歧语义，issue #294；与 HTTP 端点的 type 参数同一接缝）。
 #[when(expr = "搜索类型 {string} 的标的 {string}")]
+#[rstest_bdd_macros::when("搜索类型 {kind:string} 的标的 {query:string}")]
 fn search_instruments_of_kind(world: &mut LedgerWorld, kind: String, query: String) {
     let filter = InstrumentListFilter {
         search: Some(query),
@@ -173,6 +191,7 @@ fn search_instruments_of_kind(world: &mut LedgerWorld, kind: String, query: Stri
 // ---------------------------------------------------------------------------
 
 #[then(expr = "标的搜索命中 {int} 条 总数 {int}")]
+#[rstest_bdd_macros::then("标的搜索命中 {items:usize} 条 总数 {total:i64}")]
 fn assert_instrument_search(world: &mut LedgerWorld, items: usize, total: i64) {
     let result = world
         .asset
@@ -184,6 +203,7 @@ fn assert_instrument_search(world: &mut LedgerWorld, items: usize, total: i64) {
 }
 
 #[then(expr = "标的搜索首个结果代码为 {string}")]
+#[rstest_bdd_macros::then("标的搜索首个结果代码为 {symbol:string}")]
 fn assert_instrument_first_symbol(world: &mut LedgerWorld, symbol: String) {
     let result = world
         .asset
@@ -201,6 +221,7 @@ fn assert_instrument_first_symbol(world: &mut LedgerWorld, symbol: String) {
 /// 手动新建行标 'manual'。该字段是删除准入的字典来源判定依据，不经标的列表
 /// 的「价格来源」列展示（列表列展示的是价格通道派生事实，issue #1189）。
 #[then(expr = "标的列表代码 {string} 来源应为 {string}")]
+#[rstest_bdd_macros::then("标的列表代码 {symbol:string} 来源应为 {source:string}")]
 fn assert_instrument_list_source(world: &mut LedgerWorld, symbol: String, source: String) {
     let result = world
         .asset
@@ -216,6 +237,7 @@ fn assert_instrument_list_source(world: &mut LedgerWorld, symbol: String, source
 }
 
 #[then(expr = "标的列表共 {int} 条")]
+#[rstest_bdd_macros::then("标的列表共 {total:usize} 条")]
 fn assert_instrument_list_total(world: &mut LedgerWorld, total: usize) {
     let result = world
         .asset
@@ -232,6 +254,7 @@ fn assert_instrument_list_total(world: &mut LedgerWorld, total: usize) {
 }
 
 #[then(expr = "手动创建标的应返回错误 {string}")]
+#[rstest_bdd_macros::then("手动创建标的应返回错误 {fragment:string}")]
 fn assert_manual_create_error(world: &mut LedgerWorld, fragment: String) {
     let error = world
         .last_error
@@ -245,6 +268,7 @@ fn assert_manual_create_error(world: &mut LedgerWorld, fragment: String) {
 
 /// 删除守卫中文错误（issue #292）：同 last_error 记录断言模式。
 #[then(expr = "删除标的应返回错误 {string}")]
+#[rstest_bdd_macros::then("删除标的应返回错误 {fragment:string}")]
 fn assert_delete_instrument_error(world: &mut LedgerWorld, fragment: String) {
     let error = world
         .last_error
@@ -263,6 +287,7 @@ fn assert_delete_instrument_error(world: &mut LedgerWorld, fragment: String) {
 /// 按代码定位标的并按 id 精确查询（场景内代码唯一）：域接缝直调，与 IPC 命令
 /// 同一实现（先例：列表搜索步骤直调 `investment::list_instruments`）。
 #[when(expr = "按 id 精确取标的 {string}")]
+#[rstest_bdd_macros::when("按 id 精确取标的 {symbol:string}")]
 fn get_instrument_by_id(world: &mut LedgerWorld, symbol: String) {
     let id: String = world_conn!(world)
         .query_row(
@@ -284,6 +309,7 @@ fn get_instrument_by_id(world: &mut LedgerWorld, symbol: String) {
 }
 
 #[when(expr = "按 id 精确取不存在的标的")]
+#[rstest_bdd_macros::when("按 id 精确取不存在的标的")]
 fn get_instrument_by_unknown_id(world: &mut LedgerWorld) {
     match get_instrument(&world_conn!(world), "inst-unknown-id") {
         Ok(_) => {
@@ -299,6 +325,9 @@ fn get_instrument_by_unknown_id(world: &mut LedgerWorld) {
 
 /// 完整对象读回：身份字段（代码/名称/类型/币种）与列表行同投影。
 #[then(expr = "应返回标的 代码 {string} 名称 {string} 类型 {string} 币种 {string}")]
+#[rstest_bdd_macros::then(
+    "应返回标的 代码 {symbol:string} 名称 {name:string} 类型 {kind:string} 币种 {currency:string}"
+)]
 fn assert_instrument_readback(
     world: &mut LedgerWorld,
     symbol: String,
@@ -319,6 +348,7 @@ fn assert_instrument_readback(
 
 /// 清仓标的照常返回且派生持仓标志为 false（走势不依赖持仓）。
 #[then(expr = "返回标的应无持仓（invested 为 false）")]
+#[rstest_bdd_macros::then("返回标的应无持仓（invested 为 false）")]
 fn assert_instrument_not_invested(world: &mut LedgerWorld) {
     let inst = world
         .asset
@@ -334,6 +364,7 @@ fn assert_instrument_not_invested(world: &mut LedgerWorld) {
 
 /// 未知 id 的码化错误（同 last_error 记录断言模式）。
 #[then(expr = "取标的应返回错误 {string}")]
+#[rstest_bdd_macros::then("取标的应返回错误 {fragment:string}")]
 fn assert_get_instrument_error(world: &mut LedgerWorld, fragment: String) {
     let error = world
         .last_error
@@ -368,6 +399,9 @@ where
 #[when(
     expr = "按代码添加基金 {string} 东财返回名称 {string} 分类 {string} 净值 {float} 净值日期 {string}"
 )]
+#[rstest_bdd_macros::when(
+    "按代码添加基金 {code:string} 东财返回名称 {name:string} 分类 {fund_class:string} 净值 {nav:f64} 净值日期 {nav_date:string}"
+)]
 fn add_fund_with_stub_detail(
     world: &mut LedgerWorld,
     code: String,
@@ -395,6 +429,9 @@ fn add_fund_with_stub_detail(
 }
 
 #[when(expr = "按代码添加基金 {string} 东财返回名称 {string} 分类 {string} 未取到净值")]
+#[rstest_bdd_macros::when(
+    "按代码添加基金 {code:string} 东财返回名称 {name:string} 分类 {fund_class:string} 未取到净值"
+)]
 fn add_fund_with_stub_no_nav(
     world: &mut LedgerWorld,
     code: String,
@@ -419,6 +456,7 @@ fn add_fund_with_stub_no_nav(
 }
 
 #[when(expr = "按代码添加基金 {string} 东财查无此码")]
+#[rstest_bdd_macros::when("按代码添加基金 {code:string} 东财查无此码")]
 fn add_fund_with_stub_not_found(world: &mut LedgerWorld, code: String) {
     let mut fetch = |requested: &str, _market: &str| -> AppResult<Quote> {
         Err(ledger_infra::error::AppError::Invalid(format!(
@@ -467,10 +505,59 @@ async fn run_add_instrument<F, Fut>(
     }
 }
 
+/// 新目标侧异步步骤的唯一接线点（spec #1494 决策 / ticket #1502）：rstest-bdd 的
+/// 步骤体是同步函数，需要 await 的行情抓取桩步骤统一经既有测试接缝
+/// [`tauri_app_lib::test_support::block_on`]（tauri 全局运行时）执行，不新增第二套
+/// 运行时接线。旧 cucumber 目标仍在共享 runner 的 tokio 运行时内直接 await
+/// （`*_cucumber` 适配器），故本接线只服务新目标。
+fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    tauri_app_lib::test_support::block_on(future)
+}
+
+/// cucumber 形态（旧目标）：步骤体在共享 runner 的 tokio 运行时内，直接 await。
 #[when(
     expr = "按代码添加投资标的 市场 {string} 代码 {string} 行情命中名称 {string} 市场 {string} 现价 {float} 类型提示 {string}"
 )]
-async fn add_instrument_with_stub_quote(
+async fn add_instrument_with_stub_quote_cucumber(
+    world: &mut LedgerWorld,
+    channel: String,
+    code: String,
+    name: String,
+    quote_market: String,
+    price: f64,
+    kind_hint: String,
+) {
+    add_instrument_with_stub_quote_impl(world, channel, code, name, quote_market, price, kind_hint)
+        .await;
+}
+
+/// rstest-bdd 形态（新目标）：与 cucumber 形态共用 async 实现，经唯一接缝 [`block_on`] 驱动。
+#[rstest_bdd_macros::when(
+    "按代码添加投资标的 市场 {channel:string} 代码 {code:string} 行情命中名称 {name:string} 市场 {quote_market:string} 现价 {price:f64} 类型提示 {kind_hint:string}"
+)]
+fn add_instrument_with_stub_quote_rstest(
+    world: &mut LedgerWorld,
+    channel: String,
+    code: String,
+    name: String,
+    quote_market: String,
+    price: f64,
+    kind_hint: String,
+) {
+    block_on(add_instrument_with_stub_quote_impl(
+        world,
+        channel,
+        code,
+        name,
+        quote_market,
+        price,
+        kind_hint,
+    ));
+}
+
+/// 共享 async 实现：桩只对请求市场等于命中市场时返回行情（否则按未命中继续遍历），
+/// 命中即经识别落库接缝建档；两侧适配器只差运行方式，函数体与断言唯一。
+async fn add_instrument_with_stub_quote_impl(
     world: &mut LedgerWorld,
     channel: String,
     code: String,
@@ -513,7 +600,30 @@ async fn add_instrument_with_stub_quote(
 }
 
 #[when(expr = "按代码添加投资标的 市场 {string} 代码 {string} 行情查无此码")]
-async fn add_instrument_with_stub_all_miss(world: &mut LedgerWorld, channel: String, code: String) {
+async fn add_instrument_with_stub_all_miss_cucumber(
+    world: &mut LedgerWorld,
+    channel: String,
+    code: String,
+) {
+    add_instrument_with_stub_all_miss_impl(world, channel, code).await;
+}
+
+#[rstest_bdd_macros::when(
+    "按代码添加投资标的 市场 {channel:string} 代码 {code:string} 行情查无此码"
+)]
+fn add_instrument_with_stub_all_miss_rstest(
+    world: &mut LedgerWorld,
+    channel: String,
+    code: String,
+) {
+    block_on(add_instrument_with_stub_all_miss_impl(world, channel, code));
+}
+
+async fn add_instrument_with_stub_all_miss_impl(
+    world: &mut LedgerWorld,
+    channel: String,
+    code: String,
+) {
     let mut fetch = |code: &str, market: &str| {
         let _ = market;
         let code = code.to_string();
@@ -529,7 +639,28 @@ async fn add_instrument_with_stub_all_miss(world: &mut LedgerWorld, channel: Str
 }
 
 #[when(expr = "按代码添加投资标的 市场 {string} 代码 {string} 行情临时不可达")]
-async fn add_instrument_with_stub_temporary_failure(
+async fn add_instrument_with_stub_temporary_failure_cucumber(
+    world: &mut LedgerWorld,
+    channel: String,
+    code: String,
+) {
+    add_instrument_with_stub_temporary_failure_impl(world, channel, code).await;
+}
+
+#[rstest_bdd_macros::when(
+    "按代码添加投资标的 市场 {channel:string} 代码 {code:string} 行情临时不可达"
+)]
+fn add_instrument_with_stub_temporary_failure_rstest(
+    world: &mut LedgerWorld,
+    channel: String,
+    code: String,
+) {
+    block_on(add_instrument_with_stub_temporary_failure_impl(
+        world, channel, code,
+    ));
+}
+
+async fn add_instrument_with_stub_temporary_failure_impl(
     world: &mut LedgerWorld,
     channel: String,
     code: String,
@@ -545,6 +676,9 @@ async fn add_instrument_with_stub_temporary_failure(
 // ---------------------------------------------------------------------------
 
 #[then(expr = "标的字典存在类型 {string} 代码 {string} 名称 {string} 来源 {string} 市场 {string}")]
+#[rstest_bdd_macros::then(
+    "标的字典存在类型 {kind:string} 代码 {symbol:string} 名称 {name:string} 来源 {source:string} 市场 {market:string}"
+)]
 fn assert_instrument_row(
     world: &mut LedgerWorld,
     kind: String,
@@ -569,6 +703,7 @@ fn assert_instrument_row(
 }
 
 #[then(expr = "标的字典中 {string} 类型标的共 {int} 条")]
+#[rstest_bdd_macros::then("标的字典中 {kind:string} 类型标的共 {count:i64} 条")]
 fn assert_instrument_kind_count(world: &mut LedgerWorld, kind: String, count: i64) {
     let actual: i64 = world_conn!(world)
         .query_row(
@@ -581,6 +716,9 @@ fn assert_instrument_kind_count(world: &mut LedgerWorld, kind: String, count: i6
 }
 
 #[then(expr = "标的 {string} 现价为 {int} 币种 {string} 净值日期 {string}")]
+#[rstest_bdd_macros::then(
+    "标的 {symbol:string} 现价为 {price_cents:i64} 币种 {currency:string} 净值日期 {nav_date:string}"
+)]
 fn assert_fund_market_price(
     world: &mut LedgerWorld,
     symbol: String,
@@ -605,6 +743,7 @@ fn assert_fund_market_price(
 }
 
 #[then(expr = "标的 {string} 无现价")]
+#[rstest_bdd_macros::then("标的 {symbol:string} 无现价")]
 fn assert_fund_no_market_price(world: &mut LedgerWorld, symbol: String) {
     let count: i64 = world_conn!(world)
         .query_row(
@@ -618,6 +757,7 @@ fn assert_fund_no_market_price(world: &mut LedgerWorld, symbol: String) {
 }
 
 #[then(expr = "添加基金应返回错误 {string}")]
+#[rstest_bdd_macros::then("添加基金应返回错误 {fragment:string}")]
 fn assert_add_fund_error(world: &mut LedgerWorld, fragment: String) {
     let error = world
         .last_error
@@ -630,6 +770,7 @@ fn assert_add_fund_error(world: &mut LedgerWorld, fragment: String) {
 }
 
 #[then(expr = "添加投资标的应返回错误 {string}")]
+#[rstest_bdd_macros::then("添加投资标的应返回错误 {fragment:string}")]
 fn assert_add_instrument_error(world: &mut LedgerWorld, fragment: String) {
     let error = world
         .last_error
@@ -645,6 +786,7 @@ fn assert_add_instrument_error(world: &mut LedgerWorld, fragment: String) {
 /// priced_at 为写入时刻、净值日期恒空（净值日期是场外基金语义，详断
 /// 在域单测 stock_add 钉住，此处不断言）。
 #[then(expr = "标的 {string} 现价为 {int} 币种 {string}")]
+#[rstest_bdd_macros::then("标的 {symbol:string} 现价为 {price_cents:i64} 币种 {currency:string}")]
 fn assert_stock_market_price(
     world: &mut LedgerWorld,
     symbol: String,
