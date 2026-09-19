@@ -12,9 +12,10 @@ import { hasCommandLine, repoRoot } from "./has-command-line.test-helper.ts";
 // 位置参数指向临时 src-tauri 目录（布局与生产同构：tests/<目标>.rs + tests/e2e/**），
 // 每条负向用例都是「制造变红」的一次真实运行。
 //
-// 覆盖七态：绿基线 / 删注册 / feature 新增步骤 / feature 无目标绑定（含删
+// 覆盖八态：绿基线 / 删注册 / feature 新增步骤 / feature 无目标绑定（含删
 // `scenarios!` 绑定——#1495 AC4 的「0 场景且退出码 0」缺口）/ 同族重复注册 /
-// 跨族双注册不误报 / 两种模式同命中（歧义）；另加两道接线锁（check.sh 与 CI）。
+// 跨族双注册不误报 / 两种模式同命中（歧义）/ rstest 单字提示（`{名:word}` 与
+// 带空格文本的不命中两侧，#1504）；另加两道接线锁（check.sh 与 CI）。
 const script = gateScript("check-e2e-step-coverage.ts");
 const run = (srcTauriDir: string) => runGateScript(script, [srcTauriDir]);
 
@@ -177,6 +178,62 @@ describe("e2e 步骤库覆盖守门（scripts/check-e2e-step-coverage.ts）", ()
     const result = run(fixture({ "tests/e2e/steps.rs": steps }));
     expect(result.status).toBe(1);
     expect(result.output).toContain("歧义");
+  });
+
+  it("rstest 单字提示 {名:word} 命中无引号单字（#1504 报表相对年份记号）", () => {
+    const steps = [
+      '#[rstest_bdd_macros::given("{token:word}有一笔支出 {amount:i64} 到账户 {account:string}")]',
+      "fn a(_: &mut World, _: String, _: i64, _: String) {}",
+      '#[rstest_bdd_macros::given("存在账户 {name:string}")]',
+      "fn b(_: &mut World, _: String) {}",
+      '#[rstest_bdd_macros::when("创建交易 金额 {amount:i64}")]',
+      "fn c(_: &mut World, _: i64) {}",
+      '#[rstest_bdd_macros::then("{name:string} 账户余额应为 {expected:i64}")]',
+      "fn d(_: &mut World, _: String, _: i64) {}",
+    ].join("\n");
+    const feature = [
+      "Feature: 夹具",
+      "  Scenario: 夹具场景",
+      '    Given 前年有一笔支出 100 到账户 "现金"',
+      '    And 存在账户 "现金"',
+      "    When 创建交易 金额 100",
+      '    Then "现金" 账户余额应为 100',
+    ].join("\n");
+    const result = run(
+      fixture({
+        "tests/e2e.rs": null,
+        "tests/e2e_rstest.rs": RSTEST_TARGET("tests/e2e/features/a.feature"),
+        "tests/e2e/rstest_steps.rs": steps,
+        "tests/e2e/features/a.feature": feature,
+      }),
+    );
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("未覆盖 0");
+  });
+
+  it("rstest 单字提示 {名:word} 不吞带空格的步骤文本（与 cucumber {word} 同为 \\S+）", () => {
+    const steps = [
+      '#[rstest_bdd_macros::given("{token:word}有一笔支出 {amount:i64} 到账户 {account:string}")]',
+      "fn a(_: &mut World, _: String, _: i64, _: String) {}",
+    ].join("\n");
+    // `前 年` 含空格：cucumber `{word}`（`\S+`）不命中，rstest-bdd 未知提示的 `.+?`
+    // 会命中——本门取 `\S+` 口径，故此处应报「未覆盖」，锁住与 cucumber 同义。
+    const feature = [
+      "Feature: 夹具",
+      "  Scenario: 夹具场景",
+      '    Given 前 年有一笔支出 100 到账户 "现金"',
+    ].join("\n");
+    const result = run(
+      fixture({
+        "tests/e2e.rs": null,
+        "tests/e2e_rstest.rs": RSTEST_TARGET("tests/e2e/features/a.feature"),
+        "tests/e2e/rstest_steps.rs": steps,
+        "tests/e2e/features/a.feature": feature,
+      }),
+    );
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("未覆盖");
+    expect(result.output).toContain('前 年有一笔支出 100 到账户 "现金"');
   });
 });
 

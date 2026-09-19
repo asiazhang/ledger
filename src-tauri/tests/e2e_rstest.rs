@@ -10,12 +10,14 @@
 //!   #1500；policies.feature / policy_agreement.feature / policy_stats.feature，
 //!   #1501；instruments.feature / manual_quote.feature，#1502；
 //!   transactions_convert.feature / transactions_funding.feature /
-//!   transactions_source.feature，#1503；
-//!   reports_category.feature（分类份额场景）/ merchants.feature / insurers.feature /
-//!   search.feature，#1505）在本目标运行，旧目标行为零变化。
-//!   账户 / 交易 / 保单、物品与投资域场景全绿；
-//!   实物资产域 3 个场景受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，
-//!   间歇性红，按 #1500 约定不修；
+//!   transactions_source.feature，#1503；reports.feature /
+//!   reports_date_range.feature / reports_period.feature / dashboard.feature /
+//!   financial_freedom.feature，#1504；merchants.feature / insurers.feature /
+//!   search.feature，#1505；reports_category.feature 由 #1504 / #1505 两票共同覆盖）
+//!   在本目标运行，旧目标行为零变化。账户 / 交易 / 保单、物品、投资与报表 /
+//!   仪表盘、参考数据与检索域场景全绿；实物资产域若干场景（估值更新 / 在持合计）
+//!   受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，间歇性红，按 #1500 约定
+//!   不修；
 //! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
 //!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，
 //!   抽共享实现 + 两侧注册适配器（`migration_steps::批量导入交易`、
@@ -157,6 +159,9 @@ mod categories_steps;
 #[allow(dead_code)]
 #[path = "e2e/dashboard_steps.rs"]
 mod dashboard_steps;
+#[allow(dead_code)]
+#[path = "e2e/financial_freedom_steps.rs"]
+mod financial_freedom_steps;
 #[allow(dead_code)]
 #[path = "e2e/fund_trade_steps.rs"]
 mod fund_trade_steps;
@@ -313,6 +318,34 @@ mod scenarios {
 
     scenarios!(
         "tests/e2e/features/search.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    // 报表与仪表盘域场景（ticket #1504）：报表四份 feature（商户排行 / 分类份额 /
+    // 日期范围 / 期间过滤）17 个场景 + 首页净资产 10 个场景 + 财务自由度 9 个场景，
+    // 与既有域同用一份 `world` fixture（各自独立内存库）。
+    scenarios!(
+        "tests/e2e/features/reports.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/reports_date_range.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/reports_period.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/dashboard.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/financial_freedom.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
 }
@@ -681,6 +714,99 @@ fn policy_steps_are_registered_in_rstest_bdd() {
             (
                 StepKeyword::Then,
                 "保单 \"P2026-309\" 到期态应为 \"已到期\"",
+            ),
+        ],
+    );
+}
+
+/// 报表与仪表盘域四个步骤文件的整文件 / 按需双注册运行时注册（ticket #1504）：
+/// `reports_steps.rs` 20 条、`dashboard_steps.rs` 9 条（本票补齐 5 条）、
+/// `financial_freedom_steps.rs` 7 条整文件，加 `budget_steps.rs` 按需 4 条。
+///
+/// 占位符语义抽样覆盖 string 剥引号、整数族解析、`f64` 小数，以及本票新引入的
+/// 单字提示 `{名:word}`（报表相对年份记号，rstest-bdd 无内置该提示，其未知提示
+/// 回退为惰性任意）。删掉任一新注册即红。
+#[test]
+fn reports_and_dashboard_steps_are_registered_in_rstest_bdd() {
+    assert_steps_registered_in_rstest_bdd(
+        "reports_steps.rs",
+        20,
+        &[
+            // 单字提示：无引号的相对年份记号 + 整数 + 剥引号字符串。
+            (StepKeyword::Given, "前年有一笔支出 100 到账户 \"现金\""),
+            (
+                StepKeyword::When,
+                "创建交易 类型 \"expense\" 金额 1000 币种 \"USD\" 到账户 \"美元卡\" 日期 \"2026-03-06\" 商户 \"亚马逊\"",
+            ),
+            (StepKeyword::When, "查询 2026 年商户排行"),
+            (
+                StepKeyword::When,
+                "查询分类份额 期间 \"2026-01-01\" 到 \"2026-12-31\"",
+            ),
+            (StepKeyword::When, "查询报表日期范围"),
+            (StepKeyword::Then, "商户排行第 1 名应为 \"京东\" 金额 1700"),
+            (
+                StepKeyword::Then,
+                "月度汇总第 1 行应为月份 \"2026-01\" 收入 1000 支出 0 退款 0",
+            ),
+            (StepKeyword::Then, "报表日期范围应为空"),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "dashboard_steps.rs",
+        9,
+        &[
+            (StepKeyword::Given, "存在标的 \"NVDA\" 币种 \"USD\""),
+            (
+                StepKeyword::Given,
+                "标的 \"NVDA\" 现价 1500000 币种 \"USD\"",
+            ),
+            (
+                StepKeyword::Given,
+                "已买入 标的 \"NVDA\" 数量 2 单价 1000000 到账户 \"美股券商\"",
+            ),
+            (
+                StepKeyword::When,
+                "已买入 标的 \"AAPL\" 数量 1 单价 500000 到账户 \"美股券商\"",
+            ),
+            (StepKeyword::When, "查询净资产总览"),
+            (StepKeyword::Then, "非投资账户余额合计应为 244000"),
+            (StepKeyword::Then, "持仓市值合计应为 216000"),
+            (StepKeyword::Then, "净资产应为 460000"),
+            (StepKeyword::Then, "实物资产估值合计应为 100000"),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "financial_freedom_steps.rs",
+        7,
+        &[
+            (
+                StepKeyword::Given,
+                "存在隐藏账户 \"秘密券商\" 类型 \"investment\" 币种 \"CNY\" 初始余额 888000",
+            ),
+            (StepKeyword::When, "查询财务自由度"),
+            (StepKeyword::Then, "自由度分子应为 20000"),
+            (StepKeyword::Then, "自由度分母应为 660000"),
+            (StepKeyword::Then, "自由度应为 4.3"),
+            (StepKeyword::Then, "覆盖年数应为 1.4"),
+            (StepKeyword::Then, "本位币应为 \"CNY\""),
+        ],
+    );
+
+    // budget_steps.rs 整文件 30 条中，报表 / 仪表盘 / 自由度场景消费的 4 条按需注册
+    // （其余预算域步骤归后续票；`rg` 核对清单见 verification 文档）。
+    assert_steps_registered_in_rstest_bdd(
+        "budget_steps.rs",
+        4,
+        &[
+            (StepKeyword::Given, "存在支出分类 \"餐饮\""),
+            (StepKeyword::Given, "为分类 \"餐饮\" 创建月预算 金额 50000"),
+            (StepKeyword::Given, "为分类 \"旅行\" 创建年预算 金额 60000"),
+            (
+                StepKeyword::Given,
+                "分类 \"餐饮\" 本月有一笔支出 5000 到账户 \"现金\"",
             ),
         ],
     );

@@ -150,6 +150,7 @@ fn create_income_category(world: &mut LedgerWorld, name: String) {
 }
 
 #[given(expr = "为分类 {string} 创建月预算 金额 {int}")]
+#[rstest_bdd_macros::given("为分类 {name:string} 创建月预算 金额 {amount:i64}")]
 fn create_monthly_budget(world: &mut LedgerWorld, name: String, amount: i64) {
     let today = scenario_today(world);
     let id = category_id(&world_conn!(world), &name);
@@ -157,6 +158,7 @@ fn create_monthly_budget(world: &mut LedgerWorld, name: String, amount: i64) {
 }
 
 #[given(expr = "为分类 {string} 创建年预算 金额 {int}")]
+#[rstest_bdd_macros::given("为分类 {name:string} 创建年预算 金额 {amount:i64}")]
 fn create_yearly_budget(world: &mut LedgerWorld, name: String, amount: i64) {
     let today = scenario_today(world);
     let id = category_id(&world_conn!(world), &name);
@@ -185,6 +187,9 @@ fn create_legacy_budget(
 // ---------------------------------------------------------------------------
 
 #[given(expr = "分类 {string} 本月有一笔支出 {int} 到账户 {string}")]
+#[rstest_bdd_macros::given(
+    "分类 {name:string} 本月有一笔支出 {amount:i64} 到账户 {account:string}"
+)]
 fn expense_this_month(world: &mut LedgerWorld, name: String, amount: i64, account: String) {
     let today = scenario_today(world);
     let input = expense_input(world, &account, &name, amount, ymd(today));
