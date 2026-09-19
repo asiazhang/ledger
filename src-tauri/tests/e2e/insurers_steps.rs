@@ -14,6 +14,7 @@ use crate::world::LedgerWorld;
 // ---------------------------------------------------------------------------
 
 #[given(expr = "存在保司 {string}")]
+#[rstest_bdd_macros::given("存在保司 {name:string}")]
 fn given_insurer(world: &mut LedgerWorld, name: String) {
     let id = create_insurer(&world_conn!(world), InsurerInput { name: name.clone() })
         .expect("创建保司失败");
