@@ -3,7 +3,7 @@
 #   ① 新目标（rstest-bdd，`tests/e2e_rstest.rs`）：cargo-nextest **进程级 per-test**
 #      调度，每个 Scenario 一个进程、并行度 = CPU 数；超时/重试/并行度配置住
 #      `src-tauri/.config/nextest.toml`（进程内 libtest 线程并行对世界构造是负收益，
-#      原因与实测见 spec #1494 与 docs/verification/1496-e2e-nextest.md）。
+#      原因与实测见 spec #1494）。
 #   ② 旧目标（cucumber，`tests/e2e.rs`，`harness = false` 自定义 runner）：不支持
 #      nextest 依赖的 `--list --format terse` 协议，由 nextest 配置的 default-filter
 #      排除后仍走 cargo 自有 runner；收口票 #1508 删除 cucumber 后本行随之下线。

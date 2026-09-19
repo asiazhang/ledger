@@ -82,8 +82,7 @@
 - 命令面零变化：`restart_app` 归口 `commands::boot`（启动域），前端调用与两张锁定/
   失败白名单不变；`commands::backup` 只余备份恢复命令。
 - dev 构建下加密/恢复/搬迁全流程不再依赖 tauri CLI 的 dev server 存活；签名构建
-  与开发构建机制一致，手动冒烟清单（`docs/verification/574-remember-master-passphrase-smoke.md`）
-  覆盖两形态。
+  与开发构建机制一致，手动冒烟覆盖两形态。
 - 窗口不再因重启销毁重建：窗口状态、聚焦、macOS 激活行为不经历「关-开」抖动；
   `tauri-plugin-window-state` 的存取节奏不受影响（真实退出时照常保存）。
 - 进程级单例（首兜底备份的每会话一次标记等）在重引导后不重置：会话语义延续，

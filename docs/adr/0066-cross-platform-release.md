@@ -43,4 +43,4 @@
 
 ## 修订注记（ADR-0124，2026-09-16）：缓行项「应用内自动更新」收回
 
-决策 5 缓行清单中的「应用内自动更新（Tauri updater）」由 ADR-0124 落地：桌面三平台自更新、GitHub Releases 静态清单、更新签名、全询问式流程与更新前备份接缝见该文。其余缓行项（macOS Intel 与各平台 arm64、MSI、Windows/Linux 平台代码签名）维持缓行。另留痕两处决策 4 的现状演进：Android 侧「全平台暂不签名」已由 ADR-0074 决策 3 取代；macOS 侧已另行完成 Developer ID 签名与公证（验证记录见 docs/verification/658-ci-signing-notarization.md，未立 ADR）。
+决策 5 缓行清单中的「应用内自动更新（Tauri updater）」由 ADR-0124 落地：桌面三平台自更新、GitHub Releases 静态清单、更新签名、全询问式流程与更新前备份接缝见该文。其余缓行项（macOS Intel 与各平台 arm64、MSI、Windows/Linux 平台代码签名）维持缓行。另留痕两处决策 4 的现状演进：Android 侧「全平台暂不签名」已由 ADR-0074 决策 3 取代；macOS 侧已另行完成 Developer ID 签名与公证（未立 ADR）。
