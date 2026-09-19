@@ -25,6 +25,9 @@ use crate::world::LedgerWorld;
 #[when(
     expr = "创建订阅计划 金额 {int} 币种 {string} 账户 {string} 起始日期 {string} 备注 {string} 商户 {string}"
 )]
+#[rstest_bdd_macros::when(
+    "创建订阅计划 金额 {amount:i64} 币种 {currency:string} 账户 {account:string} 起始日期 {start:string} 备注 {note:string} 商户 {merchant:string}"
+)]
 fn create_subscription_plan_with_merchant(
     world: &mut LedgerWorld,
     amount: i64,
@@ -47,6 +50,9 @@ fn create_subscription_plan_with_merchant(
 
 /// 创建带商户的分期计划。
 #[when(expr = "创建分期计划 总额 {int} 期数 {int} 账户 {string} 起始日期 {string} 商户 {string}")]
+#[rstest_bdd_macros::when(
+    "创建分期计划 总额 {total:i64} 期数 {occurrences:i64} 账户 {account:string} 起始日期 {start:string} 商户 {merchant:string}"
+)]
 fn create_installment_plan_with_merchant(
     world: &mut LedgerWorld,
     total: i64,
@@ -69,6 +75,9 @@ fn create_installment_plan_with_merchant(
 /// 尝试创建定时转账计划并捕获错误（行为层拒绝携带商户，issue #190）。
 #[when(
     expr = "尝试创建定时转账计划 金额 {int} 从 {string} 到 {string} 期数 {int} 起始日期 {string} 商户 {string}"
+)]
+#[rstest_bdd_macros::when(
+    "尝试创建定时转账计划 金额 {amount:i64} 从 {from:string} 到 {to:string} 期数 {occurrences:i64} 起始日期 {start:string} 商户 {merchant:string}"
 )]
 fn try_create_transfer_plan_with_merchant(
     world: &mut LedgerWorld,
@@ -94,6 +103,9 @@ fn try_create_transfer_plan_with_merchant(
 /// 尝试创建带商户的订阅计划并捕获错误（软删商户不可被新计划选择）。
 #[when(
     expr = "尝试创建订阅计划 金额 {int} 币种 {string} 账户 {string} 起始日期 {string} 商户 {string}"
+)]
+#[rstest_bdd_macros::when(
+    "尝试创建订阅计划 金额 {amount:i64} 币种 {currency:string} 账户 {account:string} 起始日期 {start:string} 商户 {merchant:string}"
 )]
 fn try_create_subscription_plan_with_merchant(
     world: &mut LedgerWorld,
@@ -128,6 +140,7 @@ fn occurrence_txn_merchant_name(world: &LedgerWorld) -> Option<String> {
 }
 
 #[then(expr = "该期次交易商户应为 {string}")]
+#[rstest_bdd_macros::then("该期次交易商户应为 {expected:string}")]
 fn assert_occurrence_txn_merchant(world: &mut LedgerWorld, expected: String) {
     assert_eq!(
         occurrence_txn_merchant_name(world).as_deref(),
@@ -139,6 +152,7 @@ fn assert_occurrence_txn_merchant(world: &mut LedgerWorld, expected: String) {
 /// 迁移后 schema 就位：installment/subscription 扩展表含 merchant_id 列、无 counterparty 列
 /// （issue #190 / ADR-0028：counterparty 文本列原地改为商户引用，不写前向迁移）。
 #[then(expr = "计划扩展表应含 merchant_id 列且无 counterparty 列")]
+#[rstest_bdd_macros::then("计划扩展表应含 merchant_id 列且无 counterparty 列")]
 fn assert_scheduled_ext_schema(world: &mut LedgerWorld) {
     for table in ["installment_plans", "subscription_plans"] {
         let merchant: i64 = world_conn!(world)
@@ -162,6 +176,7 @@ fn assert_scheduled_ext_schema(world: &mut LedgerWorld) {
 
 /// 最近计划生成的每笔交易商户名都应是指定商户（分期逐期断言）。
 #[then(expr = "最近计划生成的每笔交易商户应为 {string}")]
+#[rstest_bdd_macros::then("最近计划生成的每笔交易商户应为 {expected:string}")]
 fn assert_all_plan_txns_merchant(world: &mut LedgerWorld, expected: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let names: Vec<Option<String>> = {
@@ -188,6 +203,7 @@ fn assert_all_plan_txns_merchant(world: &mut LedgerWorld, expected: String) {
 
 /// 最近创建的计划商户名（左联 merchants 现名）。
 #[then(expr = "最近创建的计划商户应为 {string}")]
+#[rstest_bdd_macros::then("最近创建的计划商户应为 {expected:string}")]
 fn assert_plan_merchant(world: &mut LedgerWorld, expected: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let name: Option<String> = world_conn!(world)
@@ -210,6 +226,7 @@ fn assert_plan_merchant(world: &mut LedgerWorld, expected: String) {
 
 /// 最近计划生成的第 n 笔交易商户名（左联 merchants 现名）。
 #[then(expr = "第 {int} 笔计划交易商户应为 {string}")]
+#[rstest_bdd_macros::then("第 {nth:usize} 笔计划交易商户应为 {expected:string}")]
 fn assert_plan_txn_merchant(world: &mut LedgerWorld, nth: usize, expected: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let name: Option<String> = world_conn!(world)
