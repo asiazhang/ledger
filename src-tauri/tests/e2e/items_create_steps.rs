@@ -10,6 +10,13 @@
 
 use cucumber::{then, when};
 
+// 物品创建主题步骤**双注册**（spec #1494 / ticket #1500）：同一函数同时挂 cucumber
+// 与 rstest-bdd 两个属性宏——旧目标（`tests/e2e.rs`，cucumber）行为零变化，新目标
+// （`tests/e2e_rstest.rs`，rstest-bdd）能匹配同一批步骤，函数体与断言唯一不复制。
+// rstest-bdd 占位符按参数名与类型对齐（`{string}` → `{<参数名>:string}`、`{int}` →
+// 有符号/无符号整数 hint、`{float}` → `{<参数名>:f64}`），引号剥离与数值解析语义与
+// cucumber 一致；切换只改属性形态，不改断言语义（CONTEXT-testing「行为等价判据」）。
+
 use ledger_infra::error::AppError;
 use ledger_item::cost;
 use ledger_item::domain;
@@ -52,6 +59,9 @@ fn scaffold_purchase_tx(
 /// issue #207 起创建必关联购买交易（ADR-0025 唯一入口）：本步骤先脚手架一笔同额
 /// 支出交易作为溯源再关联创建，后端以交易值覆盖带出（与本步骤入参一致，既有断言不变）。
 #[when(expr = "创建物品 {string} 购买日期 {string} 总成本 {int} 币种 {string}")]
+#[rstest_bdd_macros::when(
+    "创建物品 {name:string} 购买日期 {date:string} 总成本 {cost_cents:i64} 币种 {currency:string}"
+)]
 fn create_item(
     world: &mut LedgerWorld,
     name: String,
@@ -78,6 +88,9 @@ fn create_item(
 
 /// 创建物品（购买日期 = 今天，本地时区日历日，同 `item::cost::today` 口径）。
 #[when(expr = "创建物品 {string} 今天购买 总成本 {int} 币种 {string}")]
+#[rstest_bdd_macros::when(
+    "创建物品 {name:string} 今天购买 总成本 {cost_cents:i64} 币种 {currency:string}"
+)]
 fn create_item_bought_today(
     world: &mut LedgerWorld,
     name: String,
@@ -90,6 +103,9 @@ fn create_item_bought_today(
 
 /// 创建物品（购买日期 = 今天前 N 天；N=9 → 含起止两端共 10 天）。
 #[when(expr = "创建物品 {string} 今天前 {int} 天购买 总成本 {int} 币种 {string}")]
+#[rstest_bdd_macros::when(
+    "创建物品 {name:string} 今天前 {days_ago:i64} 天购买 总成本 {cost_cents:i64} 币种 {currency:string}"
+)]
 fn create_item_bought_days_ago(
     world: &mut LedgerWorld,
     name: String,
@@ -106,6 +122,9 @@ fn create_item_bought_days_ago(
 /// 尝试创建物品并捕获错误（供「应返回错误」断言，与交易场景同一 seam）。
 /// 同 `create_item`：先脚手架购买交易再关联创建（issue #207）。
 #[when(expr = "尝试创建物品 {string} 购买日期 {string} 总成本 {int} 币种 {string}")]
+#[rstest_bdd_macros::when(
+    "尝试创建物品 {name:string} 购买日期 {date:string} 总成本 {cost_cents:i64} 币种 {currency:string}"
+)]
 fn try_create_item(
     world: &mut LedgerWorld,
     name: String,
@@ -130,6 +149,7 @@ fn try_create_item(
 
 /// 刷新物品列表快照并断言件数。
 #[then(expr = "物品列表应包含 {int} 件物品")]
+#[rstest_bdd_macros::then("物品列表应包含 {expected:usize} 件物品")]
 fn refresh_and_check_item_count(world: &mut LedgerWorld, expected: usize) {
     world.item.items_list = domain::list_items(&world_conn!(world)).expect("列出物品失败");
     assert_eq!(
@@ -146,11 +166,15 @@ fn refresh_and_check_item_count(world: &mut LedgerWorld, expected: usize) {
 }
 
 #[then(expr = "第 {int} 件物品名称应为 {string}")]
+#[rstest_bdd_macros::then("第 {n:usize} 件物品名称应为 {name:string}")]
 fn check_item_name(world: &mut LedgerWorld, n: usize, name: String) {
     assert_eq!(world.item.nth(n).item.name, name);
 }
 
 #[then(expr = "第 {int} 件物品总成本应为 {int} 币种应为 {string} 本位币成本应为 {int}")]
+#[rstest_bdd_macros::then(
+    "第 {n:usize} 件物品总成本应为 {cost_cents:i64} 币种应为 {currency:string} 本位币成本应为 {native_cents:i64}"
+)]
 fn check_item_amounts(
     world: &mut LedgerWorld,
     n: usize,
@@ -165,12 +189,14 @@ fn check_item_amounts(
 }
 
 #[then(expr = "第 {int} 件物品状态应为 {string}")]
+#[rstest_bdd_macros::then("第 {n:usize} 件物品状态应为 {status:string}")]
 fn check_item_status(world: &mut LedgerWorld, n: usize, status: String) {
     let parsed = ItemStatus::parse(&status).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(world.item.nth(n).item.status, parsed);
 }
 
 #[then(expr = "第 {int} 件物品已用天数应为 {int} 每天成本应为 {float}")]
+#[rstest_bdd_macros::then("第 {n:usize} 件物品已用天数应为 {days:i64} 每天成本应为 {per_day:f64}")]
 fn check_item_daily_cost(world: &mut LedgerWorld, n: usize, days: i64, per_day: f64) {
     let entry = world.item.nth(n);
     assert_eq!(entry.used_days, days);
@@ -182,6 +208,7 @@ fn check_item_daily_cost(world: &mut LedgerWorld, n: usize, days: i64, per_day: 
 }
 
 #[then(expr = "第 {int} 件物品应有唯一 ID 与审计字段")]
+#[rstest_bdd_macros::then("第 {n:usize} 件物品应有唯一 ID 与审计字段")]
 fn check_item_audit_fields(world: &mut LedgerWorld, n: usize) {
     let item = &world.item.nth(n).item;
     assert!(!item.id.is_empty(), "物品 id 不应为空");
@@ -193,6 +220,7 @@ fn check_item_audit_fields(world: &mut LedgerWorld, n: usize) {
 }
 
 #[then(expr = "写入后应发出 {int} 次失效信号")]
+#[rstest_bdd_macros::then("写入后应发出 {expected:usize} 次失效信号")]
 fn check_item_signals(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
         world.item.item_signal_count, expected,
@@ -201,12 +229,14 @@ fn check_item_signals(world: &mut LedgerWorld, expected: usize) {
 }
 
 #[then(expr = "未发出失效信号")]
+#[rstest_bdd_macros::then("未发出失效信号")]
 fn check_no_item_signals(world: &mut LedgerWorld) {
     assert_eq!(world.item.item_signal_count, 0, "不应发出失效信号");
 }
 
 /// 复用交易的「应返回错误」断言（同一 seam：world.last_error 包含片段）。
 #[then(expr = "物品创建应返回错误 {string}")]
+#[rstest_bdd_macros::then("物品创建应返回错误 {expected:string}")]
 fn check_item_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
 }

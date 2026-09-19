@@ -5,6 +5,12 @@
 
 use cucumber::{then, when};
 
+// 物品更新主题步骤**双注册**（spec #1494 / ticket #1500）：同一函数同时挂 cucumber
+// 与 rstest-bdd 两个属性宏——旧目标行为零变化，新目标能匹配同一批步骤，函数体与断言
+// 唯一不复制。占位符按参数名与类型对齐（`{string}` → `{<参数名>:string}`、`{int}` →
+// 有符号/无符号整数 hint、`{float}` → `{<参数名>:f64}`），引号剥离与数值解析语义与
+// cucumber 一致；切换只改属性形态，不改断言语义（CONTEXT-testing「行为等价判据」）。
+
 use ledger_infra::error::AppError;
 use ledger_item::ItemInput;
 use ledger_item::cost;
@@ -27,6 +33,9 @@ fn with_note(mut input: ItemInput, note: &str) -> ItemInput {
 /// 修改最近创建的物品（`world.item.last_item_id`）并要求成功；备注空字符串规为清除（None）。
 #[when(
     expr = "修改物品名称为 {string} 购买日期 {string} 总成本 {int} 币种 {string} 备注为 {string}"
+)]
+#[rstest_bdd_macros::when(
+    "修改物品名称为 {name:string} 购买日期 {date:string} 总成本 {cost_cents:i64} 币种 {currency:string} 备注为 {note:string}"
 )]
 fn update_item(
     world: &mut LedgerWorld,
@@ -58,6 +67,9 @@ fn update_item(
 #[when(
     expr = "修改物品名称为 {string} 今天前 {int} 天购买 总成本 {int} 币种 {string} 备注为 {string}"
 )]
+#[rstest_bdd_macros::when(
+    "修改物品名称为 {name:string} 今天前 {days_ago:i64} 天购买 总成本 {cost_cents:i64} 币种 {currency:string} 备注为 {note:string}"
+)]
 fn update_item_days_ago(
     world: &mut LedgerWorld,
     name: String,
@@ -75,6 +87,9 @@ fn update_item_days_ago(
 /// 尝试修改物品并捕获错误（供「应返回错误」断言，与创建场景同一 seam）。
 #[when(
     expr = "尝试修改物品名称为 {string} 购买日期 {string} 总成本 {int} 币种 {string} 备注为 {string}"
+)]
+#[rstest_bdd_macros::when(
+    "尝试修改物品名称为 {name:string} 购买日期 {date:string} 总成本 {cost_cents:i64} 币种 {currency:string} 备注为 {note:string}"
 )]
 fn try_update_item(
     world: &mut LedgerWorld,
@@ -106,27 +121,32 @@ fn try_update_item(
 }
 
 #[then(expr = "第 {int} 件物品版本应为 {int}")]
+#[rstest_bdd_macros::then("第 {n:usize} 件物品版本应为 {version:i64}")]
 fn check_item_version(world: &mut LedgerWorld, n: usize, version: i64) {
     assert_eq!(world.item.nth(n).item.version, version);
 }
 
 #[then(expr = "第 {int} 件物品备注应为 {string}")]
+#[rstest_bdd_macros::then("第 {n:usize} 件物品备注应为 {note:string}")]
 fn check_item_note(world: &mut LedgerWorld, n: usize, note: String) {
     assert_eq!(world.item.nth(n).item.note.as_deref(), Some(note.as_str()));
 }
 
 #[then(expr = "第 {int} 件物品备注应为空")]
+#[rstest_bdd_macros::then("第 {n:usize} 件物品备注应为空")]
 fn check_item_note_empty(world: &mut LedgerWorld, n: usize) {
     assert_eq!(world.item.nth(n).item.note, None);
 }
 
 #[when(expr = "记住第 {int} 件物品的创建时间")]
+#[rstest_bdd_macros::when("记住第 {n:usize} 件物品的创建时间")]
 fn remember_item_created_at(world: &mut LedgerWorld, n: usize) {
     world.item.items_list = domain::list_items(&world_conn!(world)).expect("列出物品失败");
     world.item.remembered_item_created_at = Some(world.item.nth(n).item.created_at.clone());
 }
 
 #[then(expr = "第 {int} 件物品创建时间应与记住的一致")]
+#[rstest_bdd_macros::then("第 {n:usize} 件物品创建时间应与记住的一致")]
 fn check_item_created_at_preserved(world: &mut LedgerWorld, n: usize) {
     let remembered = world
         .item
@@ -142,6 +162,9 @@ fn check_item_created_at_preserved(world: &mut LedgerWorld, n: usize) {
 
 /// 成本分解断言：分子 ÷ 天数 = 每天成本（详情视图展示的口径三元组）。
 #[then(expr = "第 {int} 件物品成本分解分子应为 {int} 分 ÷ {int} 天 = 每天成本 {float}")]
+#[rstest_bdd_macros::then(
+    "第 {n:usize} 件物品成本分解分子应为 {numerator:i64} 分 ÷ {days:i64} 天 = 每天成本 {per_day:f64}"
+)]
 fn check_item_cost_breakdown(
     world: &mut LedgerWorld,
     n: usize,
@@ -160,6 +183,7 @@ fn check_item_cost_breakdown(
 }
 
 #[then(expr = "物品修改应返回错误 {string}")]
+#[rstest_bdd_macros::then("物品修改应返回错误 {expected:string}")]
 fn check_item_update_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
 }

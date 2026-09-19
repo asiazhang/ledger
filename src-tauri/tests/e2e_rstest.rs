@@ -4,8 +4,9 @@
 //!
 //! 本目标是增量迁移的**新通道**，与旧 cucumber 目标（`tests/e2e.rs`，
 //! `harness = false`）并存：
-//! - 账户域全部场景（accounts.feature）在本目标全绿，旧目标行为零变化；
-//! - 账户域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
+//! - 已迁移域的全部场景在本目标全绿，旧目标行为零变化。当前已绑域：账户
+//!   （#1495）、物品与实物资产（#1500，items_* / physical_asset*）；
+//! - 已迁移域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
 //!   属性宏），函数体与断言唯一，不复制；
 //! - 其余域按 spec #1494 的后续票逐域加注册，收口时删旧目标与 cucumber 依赖。
 //!
@@ -33,9 +34,10 @@
 // 才对其后的步骤模块可见（与旧目标同形）。
 //
 // `allow(dead_code)` 是**迁移期形态**（spec #1494 / ticket #1495）：共享支撑模块
-// （world / common / step_inputs / step_verbs）按整文件并入，消费者却是已迁移的
-// 步骤域子集——未并入的域在本目标里暂时无人调用。逐域迁移完成后本目标即全量目标，
-// 该 allow 随最后一个域并入一并删除（届时 `-D warnings` 重新覆盖这些模块）。
+// （world / common / step_inputs / step_verbs）与整模块并入的共享步骤库
+// （scheduled_steps，为跨域汇率夹具而并入，ticket #1500）按整文件并入，消费者却是
+// 已迁移的步骤域子集——未迁移的步骤在本目标里暂时无人调用。逐域迁移完成后本目标即
+// 全量目标，该 allow 随最后一个域并入一并删除（届时 `-D warnings` 重新覆盖这些模块）。
 #[allow(dead_code)]
 #[macro_use]
 #[path = "e2e/world.rs"]
@@ -48,6 +50,33 @@ mod accounts_steps;
 #[path = "e2e/common.rs"]
 mod common;
 #[allow(dead_code)]
+#[path = "e2e/items_common.rs"]
+mod items_common;
+#[allow(dead_code)]
+#[path = "e2e/items_cost_steps.rs"]
+mod items_cost_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_create_steps.rs"]
+mod items_create_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_dispose_steps.rs"]
+mod items_dispose_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_provenance_steps.rs"]
+mod items_provenance_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_update_steps.rs"]
+mod items_update_steps;
+#[allow(dead_code)]
+#[path = "e2e/physical_asset_disposal_steps.rs"]
+mod physical_asset_disposal_steps;
+#[allow(dead_code)]
+#[path = "e2e/physical_asset_updates_steps.rs"]
+mod physical_asset_updates_steps;
+#[allow(dead_code)]
+#[path = "e2e/physical_assets_steps.rs"]
+mod physical_assets_steps;
+#[allow(dead_code)]
 #[path = "e2e/step_inputs.rs"]
 mod step_inputs;
 #[allow(dead_code)]
@@ -56,6 +85,12 @@ mod step_verbs;
 #[allow(dead_code)]
 #[path = "e2e/transactions_write_steps.rs"]
 mod transactions_write_steps;
+// 物品与实物资产域消费的共享步骤文件：汇率夹具 `存在汇率 X 兑 Y 为 R` 住
+// `scheduled_steps/occurrence.rs`（跨域共享），故按整模块并入其父模块——本票只
+// 为被消费的那一条步骤补 rstest-bdd 注册，其余定时计划步骤归 ticket #1506。
+#[allow(dead_code)]
+#[path = "e2e/scheduled_steps.rs"]
+mod scheduled_steps;
 
 /// 场景绑定与测试世界 fixture：住子模块，避开 rstest fixture 生成模块与顶层
 /// `mod world`（测试支撑模块）的同名冲突。
@@ -73,6 +108,38 @@ mod scenarios {
 
     scenarios!(
         "tests/e2e/features/accounts.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_cost.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_create.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_dispose.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_provenance.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_update.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/physical_assets.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/physical_asset_updates.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/physical_asset_disposal.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
 }
