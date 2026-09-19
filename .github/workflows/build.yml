@@ -273,7 +273,10 @@ jobs:
       # 脚本自身 cd 到仓库根再进 src-tauri。TIMEFORMAT + time 打印 real/user/sys，
       # 作为「e2e 段时长与 CPU/墙钟比」的 CI 观测面（对照基线：旧 cucumber
       # 65.6s / 比值 0.9，见 ADR-0129）。旧 cucumber 目标与其依赖已随 #1508 删除。
+      # 显式 `shell: bash`：容器 job 的 run 默认 shell 是 sh（dash），而 `time` 是
+      # bash 关键字——实测 `time: not found`（exit 127），故本步显式改用 bash。
       - name: e2e BDD（scripts/e2e.sh：nextest 进程级 per-test，含场景数守门）
+        shell: bash
         run: |
           TIMEFORMAT=$'real %3R user %3U sys %3S'
           time ../scripts/e2e.sh
