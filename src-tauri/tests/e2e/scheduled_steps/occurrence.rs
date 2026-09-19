@@ -34,6 +34,7 @@ fn add_exchange_rate(world: &mut LedgerWorld, base: String, quote: String, rate:
 
 /// 执行最近计划的第一个 pending 期次（按 scheduled_date 升序）。
 #[when(expr = "执行该计划第一期")]
+#[rstest_bdd_macros::when("执行该计划第一期")]
 fn execute_first_occurrence(world: &mut LedgerWorld) {
     let occ_id = pending_occurrence_ids(world, Some(1))
         .into_iter()
@@ -137,6 +138,9 @@ fn assert_occurrence_status(world: &mut LedgerWorld, expected: String) {
 }
 
 #[then(expr = "该期次交易类型应为 {string} 金额应为 {int}")]
+#[rstest_bdd_macros::then(
+    "该期次交易类型应为 {expected_kind:string} 金额应为 {expected_amount:i64}"
+)]
 fn assert_occurrence_txn_kind_amount(
     world: &mut LedgerWorld,
     expected_kind: String,

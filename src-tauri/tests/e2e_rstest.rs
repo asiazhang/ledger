@@ -7,9 +7,11 @@
 //! - 已迁入的 feature（accounts.feature，#1495；transactions_write.feature，#1497；
 //!   transactions_edit.feature / transactions_query.feature，#1498；
 //!   transactions_policy.feature，#1499；items_* / physical_asset* 共 8 个 feature，
-//!   #1500）在本目标运行，旧目标行为零变化。物品域场景全绿；实物资产域 3 个场景受
-//!   #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，间歇性红，按 #1500 约定不修
-//!   （见 `docs/verification/1500-items-physical-assets-migration.md`）；
+//!   #1500；policies.feature / policy_agreement.feature / policy_stats.feature，
+//!   #1501）在本目标运行，旧目标行为零变化。账户 / 交易 / 保单与物品域场景全绿；
+//!   实物资产域 3 个场景受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，
+//!   间歇性红，按 #1500 约定不修（见
+//!   `docs/verification/1500-items-physical-assets-migration.md`）；
 //! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
 //!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，
 //!   抽共享实现 + 两侧注册适配器（`migration_steps::批量导入交易`、
@@ -96,6 +98,12 @@ mod physical_assets_steps;
 #[path = "e2e/policies_steps.rs"]
 mod policies_steps;
 #[allow(dead_code)]
+#[path = "e2e/policy_agreement_steps.rs"]
+mod policy_agreement_steps;
+#[allow(dead_code)]
+#[path = "e2e/policy_stats_steps.rs"]
+mod policy_stats_steps;
+#[allow(dead_code)]
 #[path = "e2e/step_inputs.rs"]
 mod step_inputs;
 #[allow(dead_code)]
@@ -110,9 +118,10 @@ mod transactions_policy_steps;
 #[allow(dead_code)]
 #[path = "e2e/transactions_write_steps.rs"]
 mod transactions_write_steps;
-// 物品与实物资产域消费的共享步骤文件：汇率夹具 `存在汇率 X 兑 Y 为 R` 住
-// `scheduled_steps/occurrence.rs`（跨域共享），故按整模块并入其父模块——本票只
-// 为被消费的那一条步骤补 rstest-bdd 注册，其余定时计划步骤归 ticket #1506。
+// 物品与实物资产域（#1500）与保单域（#1501）消费的共享步骤文件：汇率夹具
+// `存在汇率 X 兑 Y 为 R` 与保单协议期次步骤（执行该计划第一期等）均住
+// `scheduled_steps/`，故按整模块并入其父模块——两票只为各自被消费的步骤补
+// rstest-bdd 注册，其余定时计划步骤归 ticket #1506。
 #[allow(dead_code)]
 #[path = "e2e/scheduled_steps.rs"]
 mod scheduled_steps;
@@ -209,6 +218,23 @@ mod scenarios {
         "tests/e2e/features/transactions_policy.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
+
+    scenarios!(
+        "tests/e2e/features/policies.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    // 保单域场景（ticket #1501）：静态档案 / 缴费协议 / 统计三份 feature 的
+    // 29 个场景进入新目标，与账户域同用一份 `world` fixture（各自独立内存库）。
+    scenarios!(
+        "tests/e2e/features/policy_agreement.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/policy_stats.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
 }
 
 /// 运行时注册表断言（ticket #1497 / #1499 AC1/AC3）的共用形状：某步骤文件整文件
@@ -300,6 +326,56 @@ fn transactions_policy_steps_are_registered_in_rstest_bdd() {
                 "第 1 条交易挂单引用应保留（软删保单不置空）",
             ),
             (StepKeyword::When, "批量导入挂单交易"),
+        ],
+    );
+}
+
+/// 保单域三个步骤文件的整文件运行时注册（ticket #1501）：`policies_steps.rs` 20 条、
+/// `policy_agreement_steps.rs` 11 条、`policy_stats_steps.rs` 7 条。占位符语义抽样
+/// 覆盖 string / i64 / usize 与无占位符断言。删掉任一新注册即红。
+#[test]
+fn policy_steps_are_registered_in_rstest_bdd() {
+    assert_steps_registered_in_rstest_bdd(
+        "policies_steps.rs",
+        20,
+        &[
+            (
+                StepKeyword::When,
+                "创建保单 保司 \"平安保险\" 保单号 \"P2026-001\" 险种 \"重疾险\" 起日 \"2026-01-01\" 止日 \"2036-01-01\" 保额 \"30000000\" 币种 \"CNY\"",
+            ),
+            (
+                StepKeyword::Then,
+                "第 1 张保单保额应为 30000000 币种应为 \"CNY\"",
+            ),
+            (StepKeyword::Then, "保单未发出失效信号"),
+        ],
+    );
+    assert_steps_registered_in_rstest_bdd(
+        "policy_agreement_steps.rs",
+        11,
+        &[
+            (
+                StepKeyword::When,
+                "为最近保单创建缴费协议 金额 300000 币种 \"CNY\" 账户 \"现金\" 周期 \"yearly\" 起始日期 \"2026-01-01\"",
+            ),
+            (
+                StepKeyword::Then,
+                "最近保单第 1 段协议状态应为 \"cancelled\" 每期金额应为 300000",
+            ),
+        ],
+    );
+    assert_steps_registered_in_rstest_bdd(
+        "policy_stats_steps.rs",
+        7,
+        &[
+            (
+                StepKeyword::Then,
+                "保单 \"P2026-301\" 累计已缴应为 600000 现金流入应为 50000",
+            ),
+            (
+                StepKeyword::Then,
+                "保单 \"P2026-309\" 到期态应为 \"已到期\"",
+            ),
         ],
     );
 }
