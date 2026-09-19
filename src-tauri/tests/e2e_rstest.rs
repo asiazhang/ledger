@@ -13,11 +13,12 @@
 //!   transactions_source.feature，#1503；reports.feature /
 //!   reports_date_range.feature / reports_period.feature / dashboard.feature /
 //!   financial_freedom.feature，#1504；merchants.feature / insurers.feature /
-//!   search.feature，#1505；reports_category.feature 由 #1504 / #1505 两票共同覆盖）
+//!   search.feature，#1505；scheduled.feature / budget.feature，#1506；
+//!   reports_category.feature 由 #1504 / #1505 两票共同覆盖）
 //!   在本目标运行，旧目标行为零变化。账户 / 交易 / 保单、物品、投资与报表 /
-//!   仪表盘、参考数据与检索域场景全绿；实物资产域若干场景（估值更新 / 在持合计）
-//!   受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，间歇性红，按 #1500 约定
-//!   不修；
+//!   仪表盘、参考数据与检索、定时计划与预算域场景全绿；实物资产域若干场景（估值
+//!   更新 / 在持合计）受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，间歇性红，
+//!   按 #1500 约定不修；
 //! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
 //!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，
 //!   抽共享实现 + 两侧注册适配器（`migration_steps::批量导入交易`、
@@ -54,9 +55,10 @@ use rstest_bdd::StepKeyword;
 //
 // `allow(dead_code)` 是**迁移期形态**（spec #1494 / ticket #1495）：共享支撑模块
 // （world / common / step_inputs / step_verbs）与整模块并入的共享步骤库
-// （scheduled_steps，为跨域汇率夹具而并入，ticket #1500）按整文件并入，消费者却是
-// 已迁移的步骤域子集——未迁移的步骤在本目标里暂时无人调用。逐域迁移完成后本目标即
-// 全量目标，该 allow 随最后一个域并入一并删除（届时 `-D warnings` 重新覆盖这些模块）。
+// （scheduled_steps 自 ticket #1500 起按整文件并入、各消费票按需补注册，ticket
+// #1506 补齐后其步骤已全部有消费者）按整文件并入，消费者却是已迁移的步骤域子集——
+// 尚未迁入的域在本目标里暂时无人调用。逐域迁移完成后本目标即全量目标，该 allow 随
+// 最后一个域并入一并删除（届时 `-D warnings` 重新覆盖这些模块）。
 #[allow(dead_code)]
 #[macro_use]
 #[path = "e2e/world.rs"]
@@ -139,10 +141,9 @@ mod transactions_source_steps;
 #[allow(dead_code)]
 #[path = "e2e/transactions_write_steps.rs"]
 mod transactions_write_steps;
-// 物品与实物资产域（#1500）与保单域（#1501）消费的共享步骤文件：汇率夹具
-// `存在汇率 X 兑 Y 为 R` 与保单协议期次步骤（执行该计划第一期等）均住
-// `scheduled_steps/`，故按整模块并入其父模块——两票只为各自被消费的步骤补
-// rstest-bdd 注册，其余定时计划步骤归 ticket #1506。
+// 定时计划域（#1506）步骤库按整模块并入其父模块：物品与实物资产域（#1500）与保单域
+// （#1501）早先为各自消费的步骤（汇率夹具、保单协议期次）补过注册，本票补齐其余
+// 定时计划步骤，`scheduled.feature` 32 场景与 `budget.feature` 17 场景随之进入本目标。
 #[allow(dead_code)]
 #[path = "e2e/scheduled_steps.rs"]
 mod scheduled_steps;
@@ -348,6 +349,19 @@ mod scenarios {
         "tests/e2e/features/financial_freedom.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
+
+    // 定时计划与预算域场景（ticket #1506）：定时交易引擎 32 个场景（native 折算、
+    // 事务自持回滚、多周期花费口径、订阅编辑、计划挂商户、期次详情与自动追补）+
+    // 预算滚动窗口 17 个场景，与既有域同用一份 `world` fixture（各自独立内存库）。
+    scenarios!(
+        "tests/e2e/features/scheduled.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/budget.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
 }
 
 /// 运行时注册表断言（ticket #1497 / #1499 AC1/AC3）的共用形状：某步骤文件整文件
@@ -445,10 +459,10 @@ fn transactions_policy_steps_are_registered_in_rstest_bdd() {
 
 /// 交易转换 / 来源溯源与相关共享步骤的运行时注册（ticket #1503）：
 /// `transactions_convert_steps.rs` 12 条、`transactions_source_steps.rs` 16 条
-/// 整文件注册；`scheduled_steps/create.rs` 按需 4 条计划创建步骤与
-/// `search_steps.rs` 的 `搜索` 步骤（该文件整文件 16 条注册的计数断言归
-/// ticket #1505）。占位符语义覆盖 string / i64 / usize、f64 小数与无占位符直命中；
-/// 删掉任一新注册即红。
+/// 整文件注册（本票消费的 `scheduled_steps/create.rs` 4 条计划创建步骤与
+/// `search_steps.rs` 的 `搜索` 步骤的整文件计数断言，已分别收敛到 ticket #1506
+/// 的 8 条与 ticket #1505 的 16 条）。占位符语义覆盖 string / i64 / usize、
+/// f64 小数与无占位符直命中；删掉任一新注册即红。
 #[test]
 fn transaction_convert_and_source_steps_are_registered_in_rstest_bdd() {
     assert_steps_registered_in_rstest_bdd(
@@ -495,29 +509,6 @@ fn transaction_convert_and_source_steps_are_registered_in_rstest_bdd() {
                 "交易列表第 1 条来源应为标的 \"600519\" 名称 \"招商银行\"",
             ),
             (StepKeyword::Then, "交易列表第 1 条应无来源"),
-        ],
-    );
-
-    assert_steps_registered_in_rstest_bdd(
-        "scheduled_steps/create.rs",
-        4,
-        &[
-            (
-                StepKeyword::When,
-                "创建订阅计划 金额 800 币种 \"CNY\" 账户 \"现金\" 起始日期 \"2026-02-01\"",
-            ),
-            (
-                StepKeyword::When,
-                "创建订阅计划 金额 3000 币种 \"CNY\" 账户 \"现金\" 起始日期 \"2026-02-01\" 备注 \"视频会员\"",
-            ),
-            (
-                StepKeyword::When,
-                "创建分期计划 总额 12000 期数 6 账户 \"现金\" 起始日期 \"2026-02-01\" 备注 \"笔记本分期\"",
-            ),
-            (
-                StepKeyword::When,
-                "创建定时转账计划 金额 2000 从 \"工资户\" 到 \"储蓄户\" 期数 12 起始日期 \"2026-02-01\" 备注 \"月度储蓄\"",
-            ),
         ],
     );
 }
@@ -721,7 +712,8 @@ fn policy_steps_are_registered_in_rstest_bdd() {
 
 /// 报表与仪表盘域四个步骤文件的整文件 / 按需双注册运行时注册（ticket #1504）：
 /// `reports_steps.rs` 20 条、`dashboard_steps.rs` 9 条（本票补齐 5 条）、
-/// `financial_freedom_steps.rs` 7 条整文件，加 `budget_steps.rs` 按需 4 条。
+/// `financial_freedom_steps.rs` 7 条整文件（本票消费的 `budget_steps.rs` 4 条预算
+/// 夹具步骤的整文件计数断言，已收敛到 ticket #1506 的 30 条）。
 ///
 /// 占位符语义抽样覆盖 string 剥引号、整数族解析、`f64` 小数，以及本票新引入的
 /// 单字提示 `{名:word}`（报表相对年份记号，rstest-bdd 无内置该提示，其未知提示
@@ -792,22 +784,6 @@ fn reports_and_dashboard_steps_are_registered_in_rstest_bdd() {
             (StepKeyword::Then, "自由度应为 4.3"),
             (StepKeyword::Then, "覆盖年数应为 1.4"),
             (StepKeyword::Then, "本位币应为 \"CNY\""),
-        ],
-    );
-
-    // budget_steps.rs 整文件 30 条中，报表 / 仪表盘 / 自由度场景消费的 4 条按需注册
-    // （其余预算域步骤归后续票；`rg` 核对清单见 verification 文档）。
-    assert_steps_registered_in_rstest_bdd(
-        "budget_steps.rs",
-        4,
-        &[
-            (StepKeyword::Given, "存在支出分类 \"餐饮\""),
-            (StepKeyword::Given, "为分类 \"餐饮\" 创建月预算 金额 50000"),
-            (StepKeyword::Given, "为分类 \"旅行\" 创建年预算 金额 60000"),
-            (
-                StepKeyword::Given,
-                "分类 \"餐饮\" 本月有一笔支出 5000 到账户 \"现金\"",
-            ),
         ],
     );
 }
@@ -893,6 +869,205 @@ fn reference_data_and_search_steps_are_registered_in_rstest_bdd() {
             (StepKeyword::Then, "搜索结果第 1 条备注应为 \"午餐\""),
             (StepKeyword::Then, "搜索结果第 1 条金额应为 1500"),
             (StepKeyword::Then, "搜索结果第 1 条商户应为 \"京东\""),
+        ],
+    );
+}
+
+/// 定时计划与预算域的整文件运行时注册（ticket #1506）：`scheduled_steps/` 七个
+/// 步骤文件（auto_run 5 / create 8 / merchant 9 / occurrence 14 / plan_detail 8 /
+/// plan_edit 10 / spend 13）与 `budget_steps.rs` 30 条。占位符语义抽样覆盖 string
+/// 剥引号、整数族、`usize`、`f64` 小数与无占位符直命中；「只留 cucumber 注册」
+/// （删掉任一新注册）即红。
+#[test]
+fn scheduled_and_budget_steps_are_registered_in_rstest_bdd() {
+    assert_steps_registered_in_rstest_bdd(
+        "scheduled_steps/auto_run.rs",
+        5,
+        &[
+            (StepKeyword::When, "以 \"2026-02-20\" 为今日执行自动追补"),
+            (
+                StepKeyword::When,
+                "自动执行关闭时以 \"2026-03-20\" 为今日执行追补",
+            ),
+            (StepKeyword::Then, "追补汇总应为 到期 2 成功 1 失败 1"),
+            (
+                StepKeyword::Then,
+                "最近计划生成的交易日期应依次为 \"2026-01-15,2026-02-15\"",
+            ),
+            (
+                StepKeyword::Then,
+                "备注为 \"缺汇率订阅\" 的计划状态为 \"failed\" 的期次应有 1 条",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "scheduled_steps/create.rs",
+        8,
+        &[
+            (
+                StepKeyword::When,
+                "创建订阅计划 金额 10000 币种 \"USD\" 账户 \"美股订阅\" 起始日期 \"2026-01-15\" 备注 \"国际订阅\"",
+            ),
+            (
+                StepKeyword::When,
+                "创建分期计划 总额 3100 期数 3 账户 \"分期账户\" 起始日期 \"2026-01-15\"",
+            ),
+            (
+                StepKeyword::When,
+                "创建定时转账计划 金额 50000 从 \"工资卡\" 到 \"活期储蓄\" 起始日期 \"2026-01-15\"",
+            ),
+            (
+                StepKeyword::When,
+                "尝试创建定时转账计划 金额 5000 从 \"人民币账户\" 到 \"美元账户\" 期数 1 起始日期 \"2026-01-15\"",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "scheduled_steps/merchant.rs",
+        9,
+        &[
+            (
+                StepKeyword::When,
+                "创建订阅计划 金额 3000 币种 \"CNY\" 账户 \"订阅账户\" 起始日期 \"2026-01-15\" 备注 \"会员\" 商户 \"视频平台\"",
+            ),
+            (
+                StepKeyword::When,
+                "尝试创建定时转账计划 金额 5000 从 \"账户A\" 到 \"账户B\" 期数 3 起始日期 \"2026-01-15\" 商户 \"京东\"",
+            ),
+            (StepKeyword::Then, "该期次交易商户应为 \"视频平台\""),
+            (
+                StepKeyword::Then,
+                "计划扩展表应含 merchant_id 列且无 counterparty 列",
+            ),
+            (StepKeyword::Then, "第 1 笔计划交易商户应为 \"商户A\""),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "scheduled_steps/occurrence.rs",
+        14,
+        &[
+            (StepKeyword::Given, "存在汇率 \"USD\" 兑 \"CNY\" 为 7.2"),
+            (StepKeyword::When, "依次执行全部期次"),
+            (StepKeyword::When, "注入交易落库失败触发器"),
+            (StepKeyword::Then, "执行应失败并提示 \"汇率\""),
+            (StepKeyword::Then, "期次未回填交易"),
+            (
+                StepKeyword::Then,
+                "该期次交易类型应为 \"expense\" 金额应为 10000",
+            ),
+            (StepKeyword::Then, "该期次交易本位币金额应为 72000"),
+            (
+                StepKeyword::Then,
+                "应生成 3 笔类型 \"expense\" 的交易 金额依次为 \"1033,1033,1034\"",
+            ),
+            (StepKeyword::Then, "计划状态应为 \"completed\""),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "scheduled_steps/plan_detail.rs",
+        8,
+        &[
+            (StepKeyword::When, "将最近计划最早的一条待执行期次置为失败"),
+            (StepKeyword::When, "查询该计划详情"),
+            (StepKeyword::Then, "详情应含 10 条待执行期次"),
+            (StepKeyword::Then, "详情期次总数应为 12"),
+            (StepKeyword::Then, "详情状态为 \"failed\" 的期次应有 1 条"),
+            (
+                StepKeyword::Then,
+                "详情状态为 \"failed\" 的期次日期应为 \"2026-02-15\"",
+            ),
+            (StepKeyword::When, "重试该失败期次"),
+            (StepKeyword::When, "展开该计划期次"),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "scheduled_steps/plan_edit.rs",
+        10,
+        &[
+            (
+                StepKeyword::When,
+                "编辑该订阅计划 备注 \"音乐会员\" 分类 \"软件服务\"",
+            ),
+            (StepKeyword::When, "编辑该订阅计划 商户 \"商户B\""),
+            (
+                StepKeyword::When,
+                "编辑该订阅计划 备注 \"换户订阅\" 分类 \"软件服务\" 账户 \"新账户\"",
+            ),
+            (StepKeyword::When, "携带金额 5000 编辑该订阅计划"),
+            (
+                StepKeyword::Then,
+                "编辑应失败并提示 \"改价 = 取消旧计划 + 新建\"",
+            ),
+            (StepKeyword::Then, "第 2 笔计划交易账户应为 \"新账户\""),
+            (StepKeyword::Then, "该计划扣款账户应为 \"新账户\""),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "scheduled_steps/spend.rs",
+        13,
+        &[
+            (
+                StepKeyword::When,
+                "创建订阅计划 金额 3000 币种 \"CNY\" 账户 \"订阅账户\" 周期 \"monthly\" 起始日期 \"2026-01-15\" 备注 \"视频会员\"",
+            ),
+            (StepKeyword::When, "执行该计划前 2 期"),
+            (StepKeyword::When, "以 \"2026-03-20\" 为今日查询订阅花费"),
+            (
+                StepKeyword::Then,
+                "近 12 个月中 \"2026-01\" 实际花费应为 3000",
+            ),
+            (StepKeyword::Then, "折算月成本应为 7000"),
+            (StepKeyword::Then, "订阅花费行数应为 1"),
+            (
+                StepKeyword::Then,
+                "订阅行 \"已退订服务\" 状态应为 \"cancelled\"",
+            ),
+            (
+                StepKeyword::Then,
+                "订阅行 \"视频会员\" 本年实际花费应为 6000",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "budget_steps.rs",
+        30,
+        &[
+            (StepKeyword::Given, "存在支出分类 \"午餐\""),
+            (StepKeyword::Given, "存在支出分类 \"奶茶\" 属于 \"餐饮总\""),
+            (StepKeyword::Given, "存在收入分类 \"工资\""),
+            (StepKeyword::Given, "为分类 \"午餐\" 创建月预算 金额 50000"),
+            (
+                StepKeyword::Given,
+                "为分类 \"年度订阅\" 创建年预算 金额 60000",
+            ),
+            (
+                StepKeyword::Given,
+                "存量预算 分类 \"旧账分类\" 周期 \"monthly\" 金额 50000 开始日期 \"2020-01-15\"",
+            ),
+            (
+                StepKeyword::Given,
+                "分类 \"午餐\" 本月有一笔支出 2000 到账户 \"现金\"",
+            ),
+            (
+                StepKeyword::When,
+                "通过预算命令为分类 \"文具\" 创建 \"monthly\" 预算 金额 0",
+            ),
+            (StepKeyword::When, "查询预算进度"),
+            (StepKeyword::When, "上一笔支出本月收到退款 300"),
+            (StepKeyword::Then, "分类 \"午餐\" 的预算进度应为 2000"),
+            (StepKeyword::Then, "分类 \"餐饮总\" 的预算应超支"),
+            (StepKeyword::Then, "分类 \"早餐\" 的预算不应超支"),
+            (StepKeyword::Then, "创建应失败并提示 \"预算金额必须为正数\""),
+            (StepKeyword::Then, "编辑预算应成功"),
+            (StepKeyword::Then, "分类 \"文具\" 的预算行数应为 0"),
+            (StepKeyword::Then, "分类 \"日用\" 的预算金额仍应为 30000"),
         ],
     );
 }

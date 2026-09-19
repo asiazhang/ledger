@@ -6,9 +6,10 @@
 //! 币种口径：订阅随步骤文本显式给出（计划行原样存储）；分期/转账取账户实际币种
 //! （与既有 CNY 硬编码在 CNY 账户场景等价，且不引入「币种与账户不符」的隐蔽数据）。
 //!
-//! 来源溯源 feature 消费的 4 条创建步骤**按需双注册**（spec #1494 / ticket #1503）：
-//! 无备注/带备注订阅、带备注分期、带备注定时转账；同一函数同时挂两族属性，函数体
-//! 与断言语义唯一。其余计划创建步骤归 ticket #1506。
+//! 创建步骤**整文件双注册**（spec #1494）：来源溯源 feature 消费的 4 条（无备注/
+//! 带备注订阅、带备注分期、带备注定时转账）由 ticket #1503 按需补注册，其余计划
+//! 创建步骤由 ticket #1506 的定时计划域迁移补齐。同一函数同时挂两族属性，函数体
+//! 与断言语义唯一不复制。
 
 use cucumber::when;
 
@@ -65,6 +66,9 @@ fn create_subscription_plan_with_note(
 }
 
 #[when(expr = "创建分期计划 总额 {int} 期数 {int} 账户 {string} 起始日期 {string}")]
+#[rstest_bdd_macros::when(
+    "创建分期计划 总额 {total:i64} 期数 {occurrences:i64} 账户 {account:string} 起始日期 {start:string}"
+)]
 fn create_installment_plan(
     world: &mut LedgerWorld,
     total: i64,
@@ -100,6 +104,9 @@ fn create_installment_plan_with_note(
 }
 
 #[when(expr = "创建定时转账计划 金额 {int} 从 {string} 到 {string} 期数 {int} 起始日期 {string}")]
+#[rstest_bdd_macros::when(
+    "创建定时转账计划 金额 {amount:i64} 从 {from:string} 到 {to:string} 期数 {occurrences:i64} 起始日期 {start:string}"
+)]
 fn create_scheduled_transfer_plan(
     world: &mut LedgerWorld,
     amount: i64,
@@ -149,6 +156,9 @@ fn create_scheduled_transfer_plan_with_note(
 
 /// 创建不带期数的定时转账（无限循环，total_occurrences=None）并记录 id（issue #203）。
 #[when(expr = "创建定时转账计划 金额 {int} 从 {string} 到 {string} 起始日期 {string}")]
+#[rstest_bdd_macros::when(
+    "创建定时转账计划 金额 {amount:i64} 从 {from:string} 到 {to:string} 起始日期 {start:string}"
+)]
 fn create_scheduled_transfer_plan_infinite(
     world: &mut LedgerWorld,
     amount: i64,
@@ -162,6 +172,9 @@ fn create_scheduled_transfer_plan_infinite(
 /// 尝试创建定时转账计划（不带商户）并捕获错误：两账户币种不一致被拒（issue #203）。
 #[when(
     expr = "尝试创建定时转账计划 金额 {int} 从 {string} 到 {string} 期数 {int} 起始日期 {string}"
+)]
+#[rstest_bdd_macros::when(
+    "尝试创建定时转账计划 金额 {amount:i64} 从 {from:string} 到 {to:string} 期数 {occurrences:i64} 起始日期 {start:string}"
 )]
 fn try_create_transfer_plan(
     world: &mut LedgerWorld,

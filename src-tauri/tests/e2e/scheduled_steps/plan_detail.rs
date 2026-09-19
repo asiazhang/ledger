@@ -20,6 +20,7 @@ use super::common::execute_occurrence_step;
 /// 库内状态直置（#764 已登记例外）：期次状态机无「置 failed」公开入口——
 /// 产品当前不产 failed 状态，为测试开产品后门被 ADR-0086 否决。
 #[when(expr = "将最近计划最早的一条待执行期次置为失败")]
+#[rstest_bdd_macros::when("将最近计划最早的一条待执行期次置为失败")]
 fn mark_first_pending_failed(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let occ_id: String = world_conn!(world)
@@ -43,6 +44,7 @@ fn mark_first_pending_failed(world: &mut LedgerWorld) {
 
 /// 查询最近计划的详情（走 get_plan_detail 命令体）。
 #[when(expr = "查询该计划详情")]
+#[rstest_bdd_macros::when("查询该计划详情")]
 fn query_plan_detail(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     world.plan.last_detail =
@@ -54,6 +56,7 @@ fn last_detail(world: &LedgerWorld) -> &ScheduledTransactionDetail {
 }
 
 #[then(expr = "详情应含 {int} 条待执行期次")]
+#[rstest_bdd_macros::then("详情应含 {expected:usize} 条待执行期次")]
 fn assert_detail_pending(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
         last_detail(world).pending_occurrences.len(),
@@ -63,6 +66,7 @@ fn assert_detail_pending(world: &mut LedgerWorld, expected: usize) {
 }
 
 #[then(expr = "详情期次总数应为 {int}")]
+#[rstest_bdd_macros::then("详情期次总数应为 {expected:usize}")]
 fn assert_detail_occurrence_total(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
         last_detail(world).occurrences.len(),
@@ -72,6 +76,7 @@ fn assert_detail_occurrence_total(world: &mut LedgerWorld, expected: usize) {
 }
 
 #[then(expr = "详情状态为 {string} 的期次应有 {int} 条")]
+#[rstest_bdd_macros::then("详情状态为 {status:string} 的期次应有 {expected:usize} 条")]
 fn assert_detail_status_count(world: &mut LedgerWorld, status: String, expected: usize) {
     let n = last_detail(world)
         .occurrences
@@ -82,6 +87,7 @@ fn assert_detail_status_count(world: &mut LedgerWorld, status: String, expected:
 }
 
 #[then(expr = "详情状态为 {string} 的期次日期应为 {string}")]
+#[rstest_bdd_macros::then("详情状态为 {status:string} 的期次日期应为 {expected:string}")]
 fn assert_detail_status_date(world: &mut LedgerWorld, status: String, expected: String) {
     let dates: Vec<String> = last_detail(world)
         .occurrences
@@ -94,6 +100,7 @@ fn assert_detail_status_date(world: &mut LedgerWorld, status: String, expected: 
 
 /// 重试最近计划的 failed 期次（走 execute_occurrence 命令体，与弹窗重试同一缝）。
 #[when(expr = "重试该失败期次")]
+#[rstest_bdd_macros::when("重试该失败期次")]
 fn retry_failed_occurrence(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let occ_id: String = world_conn!(world)
@@ -110,6 +117,7 @@ fn retry_failed_occurrence(world: &mut LedgerWorld) {
 
 /// 展开最近计划的期次（走 expand_occurrences 命令体）。
 #[when(expr = "展开该计划期次")]
+#[rstest_bdd_macros::when("展开该计划期次")]
 fn expand_plan_occurrences(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let ids = world_write!(world, |conn| expand_occurrences(conn, &plan_id)).expect("期次展开失败");

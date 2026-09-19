@@ -25,12 +25,14 @@ fn category_id_by_name(conn: &rusqlite::Connection, name: &str) -> Option<String
 
 /// 编辑最近订阅计划的备注/分类（走 update_subscription 命令体，账户不变）。
 #[when(expr = "编辑该订阅计划 备注 {string} 分类 {string}")]
+#[rstest_bdd_macros::when("编辑该订阅计划 备注 {note:string} 分类 {category:string}")]
 fn edit_subscription_plan(world: &mut LedgerWorld, note: String, category: String) {
     edit_subscription_plan_inner(world, note, Some(category), None);
 }
 
 /// 编辑最近订阅计划的商户（issue #190：改商户只影响未来期次；其余字段取当前值）。
 #[when(expr = "编辑该订阅计划 商户 {string}")]
+#[rstest_bdd_macros::when("编辑该订阅计划 商户 {merchant:string}")]
 fn edit_subscription_plan_merchant(world: &mut LedgerWorld, merchant: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let (account_id, category_id, note): (String, Option<String>, Option<String>) =
@@ -60,6 +62,9 @@ fn edit_subscription_plan_merchant(world: &mut LedgerWorld, merchant: String) {
 
 /// 编辑最近订阅计划的备注/分类/扣款账户（改户只影响未来期次，issue #162）。
 #[when(expr = "编辑该订阅计划 备注 {string} 分类 {string} 账户 {string}")]
+#[rstest_bdd_macros::when(
+    "编辑该订阅计划 备注 {note:string} 分类 {category:string} 账户 {account:string}"
+)]
 fn edit_subscription_plan_with_account(
     world: &mut LedgerWorld,
     note: String,
@@ -120,6 +125,7 @@ fn edit_subscription_plan_inner(
 
 /// 携带金额字段发出编辑请求：应被后端显式拒绝（ADR-0023 决策三）。
 #[when(expr = "携带金额 {int} 编辑该订阅计划")]
+#[rstest_bdd_macros::when("携带金额 {amount:i64} 编辑该订阅计划")]
 fn edit_subscription_plan_with_amount(world: &mut LedgerWorld, _amount: i64) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let (account_id, category_id, note): (String, Option<String>, Option<String>) =
@@ -158,11 +164,13 @@ fn edit_subscription_plan_with_amount(world: &mut LedgerWorld, _amount: i64) {
 }
 
 #[then(expr = "编辑应失败并提示 {string}")]
+#[rstest_bdd_macros::then("编辑应失败并提示 {needle:string}")]
 fn assert_edit_error(world: &mut LedgerWorld, needle: String) {
     assert_last_error_contains(world, &needle);
 }
 
 #[then(expr = "该计划备注应为 {string}")]
+#[rstest_bdd_macros::then("该计划备注应为 {expected:string}")]
 fn assert_plan_note(world: &mut LedgerWorld, expected: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let note: String = world_conn!(world)
@@ -177,6 +185,7 @@ fn assert_plan_note(world: &mut LedgerWorld, expected: String) {
 
 /// 最近计划生成的第 n 笔交易（1 起，按交易日期升序）的落库备注/分类。
 #[then(expr = "第 {int} 笔计划交易备注应为 {string}")]
+#[rstest_bdd_macros::then("第 {nth:usize} 笔计划交易备注应为 {expected:string}")]
 fn assert_plan_txn_note(world: &mut LedgerWorld, nth: usize, expected: String) {
     let txn = plan_generated_txn(world, nth);
     assert_eq!(
@@ -187,6 +196,9 @@ fn assert_plan_txn_note(world: &mut LedgerWorld, nth: usize, expected: String) {
 }
 
 #[then(expr = "第 {int} 笔计划交易备注应为 {string} 分类应为 {string}")]
+#[rstest_bdd_macros::then(
+    "第 {nth:usize} 笔计划交易备注应为 {expected_note:string} 分类应为 {expected_category:string}"
+)]
 fn assert_plan_txn_note_and_category(
     world: &mut LedgerWorld,
     nth: usize,
@@ -235,6 +247,7 @@ fn plan_generated_txn(world: &LedgerWorld, nth: usize) -> PlanTxnRow {
 }
 
 #[then(expr = "第 {int} 笔计划交易账户应为 {string}")]
+#[rstest_bdd_macros::then("第 {nth:usize} 笔计划交易账户应为 {expected:string}")]
 fn assert_plan_txn_account(world: &mut LedgerWorld, nth: usize, expected: String) {
     let txn = plan_generated_txn(world, nth);
     assert_eq!(
@@ -245,6 +258,7 @@ fn assert_plan_txn_account(world: &mut LedgerWorld, nth: usize, expected: String
 }
 
 #[then(expr = "该计划扣款账户应为 {string}")]
+#[rstest_bdd_macros::then("该计划扣款账户应为 {expected:string}")]
 fn assert_plan_account(world: &mut LedgerWorld, expected: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let account_id: String = world_conn!(world)
