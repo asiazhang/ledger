@@ -172,3 +172,53 @@ fn finish_open(conn: Connection, passphrase: Option<&str>) -> Result<Connection>
 pub fn open_in_memory() -> Result<Connection> {
     finish_open(Connection::open_in_memory()?, None)
 }
+
+/// 打开已完成 schema 迁移的内存库（统一测试数据库工厂的快速建库形态，
+/// spec #1086 / issue #1514）。
+///
+/// 与 [`open_in_memory`] + [`init_db`] 两行序的建库结果等价，但**不逐次重放迁移链**：
+/// 进程内首次调用以产物二进制（`serialize`）固化迁移后的 schema 与默认种子，其后
+/// 每次调用经 `deserialize` 还原一份全新的独立内存库。还原走 SQLite 自身的建库
+/// 路径（等价于重放结果），而重放 27 个迁移在本机实测约 32ms/次——统一工厂的
+/// 逐用例建库成本因此从毫秒级降到微秒级（spec #1086 的「测试执行提速」方向，
+/// 不改 CI 实际执行的测试范围）。
+///
+/// **独立性不变**：模板只是迁移产物的只读快照，每次还原得到的是互不干扰的独立
+/// 内存库（内存库本就按连接隔离，非共享缓存），用例间零交叉污染，与逐次
+/// [`init_db`] 的语义一致。
+///
+/// 连接级设置（外键、耗时 hook）按 `finish_open` 收尾单点重新施加——这些是
+/// 连接态而非库内容，不进序列化产物。
+///
+/// **契约**：调用方必须是测试或测试器具；生产建连路径一律走
+/// [`open_connection`] / [`open_db_in`] 等文件库入口。模板与还原是同一次构建的
+/// 产物，SQLite 二进制格式跨版本兼容性因此不构成约束。
+pub fn open_in_memory_initialized() -> Result<Connection> {
+    use std::sync::OnceLock;
+
+    // 模板产物按字节持有：`rusqlite::serialize::Data` 借连接（连接非 `Sync`），
+    // 而模板要在进程内跨测试线程共享，故取一次拷贝（实测产物约 0.6MB，一次性）。
+    // 缓存 `Result` 而非仅在成功时落值：本函数返回 `Result`，不得用 `expect` 把
+    // 失败升级为 panic（ADR-0060 门禁辖生产文件），失败面按 `Err` 原样回传。
+    static TEMPLATE: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
+    fn derive_template() -> std::result::Result<Vec<u8>, String> {
+        let mut conn = open_in_memory().map_err(|e| e.to_string())?;
+        init_db(&mut conn).map_err(|e| e.to_string())?;
+        let blob = conn.serialize("main").map_err(|e| e.to_string())?;
+        Ok(blob.to_vec())
+    }
+    let template = TEMPLATE.get_or_init(derive_template);
+    let Ok(template) = template.as_ref() else {
+        let reason = match template {
+            Err(reason) => reason.clone(),
+            Ok(_) => String::new(),
+        };
+        return Err(AppError::coded(
+            "db.template-init-failed",
+            format!("内存模板库构建失败，无法还原测试库：{reason}"),
+        ));
+    };
+    let mut conn = open_in_memory()?;
+    conn.deserialize_read_exact("main", template.as_slice(), template.len(), false)?;
+    Ok(conn)
+}

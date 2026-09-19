@@ -31,14 +31,24 @@ pub const LOCK_HOLD_PROBE_THRESHOLD: Duration = Duration::from_secs(1);
 /// 收进 DB 线程后，同一探针的量纲由「持有互斥锁时长」变为「**作业占用 DB 线程
 /// 时长**」——门面线程为整个作业持有槽锁，两者在门面形态下同区间；阈值与告警
 /// 口径（越界即 warn、不静默）不变，故共用本函数，不另立第二套阈值。
-pub fn probe_lock_hold(hold: Duration) {
-    if hold >= LOCK_HOLD_PROBE_THRESHOLD {
+///
+/// 产品路径经 [`probe_lock_hold`] 取 [`LOCK_HOLD_PROBE_THRESHOLD`]；本函数把阈值
+/// 开放为参数，供调用点自持阈值——多端同步调度侧的轮次连接源据此注入测试短阈值
+/// （「超阈值即记 warn」是瞬时可判定语义，实等 1.1s 只为越过产品阈值，不含信息量，
+/// spec #1086 / issue #1514）。
+pub fn probe_lock_hold_within(hold: Duration, threshold: Duration) {
+    if hold >= threshold {
         tracing::warn!(
             hold_ms = hold.as_millis() as u64,
-            threshold_ms = LOCK_HOLD_PROBE_THRESHOLD.as_millis() as u64,
+            threshold_ms = threshold.as_millis() as u64,
             "连接锁持有时长超过阈值（疑似慢闭包进锁，ADR-0069 决策 4：分钟级网络往返不得进锁）"
         );
     }
+}
+
+/// 产品阈值形态的持锁时长探针：阈值取 [`LOCK_HOLD_PROBE_THRESHOLD`]。
+pub fn probe_lock_hold(hold: Duration) {
+    probe_lock_hold_within(hold, LOCK_HOLD_PROBE_THRESHOLD);
 }
 
 // ---------------------------------------------------------------------------

@@ -423,7 +423,12 @@ fn in_flight_mutex_keys_by_connection_identity() {
 #[test]
 fn auto_round_gives_up_silently_when_connection_lock_is_busy() {
     let conn = Arc::new(Mutex::new(test_support::open()));
-    let locks = super::scheduler::AutoRoundConn::new(&conn);
+    // 锁等待上限注入为 10ms（spec #1086 / issue #1514）：本用例断言的是「拿不到锁
+    // 即放弃本轮」这一**瞬时可判定**的语义，等待时长不含信息量。按产品默认
+    // LOCK_TIMEOUT（5s）实等，`run_auto_round_inner` 的读段 + 簿记段两次取锁合计
+    // 10s 墙钟——改用注入短超时后同样的断言面仍在，耗时降到毫秒级。
+    let locks = super::scheduler::AutoRoundConn::new(&conn)
+        .with_lock_timeout(std::time::Duration::from_millis(10));
 
     // 锁被别人持有：连接源报放弃错误（稳定码），自动入口静默归一为 `None`。
     let held = conn.lock().unwrap();
@@ -454,12 +459,15 @@ fn auto_round_source_probes_lock_hold_past_threshold() {
     use tracing::Level;
 
     let conn = Arc::new(Mutex::new(test_support::open()));
-    let locks = super::scheduler::AutoRoundConn::new(&conn);
+    // 探针阈值注入 20ms（spec #1086 / issue #1514）：断言的是「持锁超阈值即记
+    // warn」这一**瞬时可判定**语义，实等 1.1s 只为越过产品阈值（1s），不含信息量。
+    let locks = super::scheduler::AutoRoundConn::new(&conn)
+        .with_probe_threshold(std::time::Duration::from_millis(20));
 
     let events = capture_events(|| {
         locks
             .with_connection(crate::channel::ConnSegment::Read, |_| {
-                std::thread::sleep(std::time::Duration::from_millis(1100));
+                std::thread::sleep(std::time::Duration::from_millis(30));
                 Ok(())
             })
             .unwrap();

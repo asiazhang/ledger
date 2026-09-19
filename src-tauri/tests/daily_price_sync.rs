@@ -41,6 +41,10 @@ use ledger_market_sync::{
 };
 use tauri_app_lib::commands::sync::{SyncChannelsSlot, sync_instrument_info};
 
+/// 每日刷新巡检周期（与下方注入的 `DailyPriceRefreshTimings::window_poll` 同源）：
+/// 同日窗口的观察窗按它取整周期推导，不另写时长字面量。
+const POLL_INTERVAL: Duration = Duration::from_millis(300);
+
 /// 门控桩的后台通道束：批量报价抓取点先通知「后台已在途」，再等测试放行并返回
 /// 一条报价（现价 1300.00 元）——market_prices 的新行只能来自后台每日刷新（前台
 /// 桩写的是另一个价，见下方前台桩）。抓取计数供「同日窗口不重跑」断言消费。
@@ -196,7 +200,8 @@ fn startup_wiring_refreshes_prices_and_frontend_sync_stays_unblocked() {
         DailyPriceRefreshTimings {
             startup_delay: Duration::from_millis(100),
             // 巡检周期取短：轮询在窗口内多次到期，同日不得重跑（下方断言）。
-            window_poll: Duration::from_millis(300),
+            // 观察窗按本常量取整周期推导，不另写时长字面量。
+            window_poll: POLL_INTERVAL,
         },
     );
 
@@ -284,10 +289,31 @@ fn startup_wiring_refreshes_prices_and_frontend_sync_stays_unblocked() {
 
     // 同日窗口不重跑（AC「每自然日窗口一次」）：巡检多次到期后，批量报价抓取
     // 仍只有首轮那一次。
-    std::thread::sleep(Duration::from_millis(1_000));
+    //
+    // 规则本身（同日不开、跨日开）的权威在 `ledger_market_sync` 的单测
+    // `daily_window_opens_only_once_per_beijing_calendar_day`；本断言守的是**接线**
+    // ——调度循环确实把判定接上了「标记已跑 + 跑一轮」的副作用。观察窗取「两次
+    // 巡检周期」而非固定睡眠：等待长度由此刻生效的注入周期决定，不靠猜；门被删
+    // 或写坏时第二轮会在这两个周期内起跑并在本轮计数（先例：注入周期 300ms 时
+    // 原 1s 观察窗内即可见，实测红）。
+    wait_poll_cycles(2, POLL_INTERVAL, || {
+        ulist_calls.load(std::sync::atomic::Ordering::SeqCst) == 1
+    });
     assert_eq!(
         ulist_calls.load(std::sync::atomic::Ordering::SeqCst),
         1,
         "同一自然日窗口内巡检到期不得重跑第二轮"
     );
+}
+
+/// 等到若干次巡检周期过去、或 `still_silent` 变假（出现第二次动作）即返回。
+fn wait_poll_cycles(cycles: u32, interval: Duration, still_silent: impl Fn() -> bool) {
+    let step = interval / 4;
+    let deadline = Instant::now() + interval * cycles;
+    while Instant::now() < deadline {
+        if !still_silent() {
+            return;
+        }
+        std::thread::sleep(step);
+    }
 }

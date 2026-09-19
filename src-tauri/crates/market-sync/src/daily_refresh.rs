@@ -40,7 +40,7 @@ use ledger_infra::db::encryption::EncryptionGate;
 use super::channels::SyncFetchChannels;
 use super::channels::do_incremental_sync_channels;
 use super::history::{STARTUP_DELAY, WINDOW_POLL_INTERVAL};
-use super::incremental::beijing_today;
+use super::incremental::{beijing_today, daily_window_opens};
 use super::lane::{
     LaneChannelsSlot, LaneId, LaneRound, LaneRoundFuture, progress_forwarder,
     run_background_lane_round,
@@ -116,7 +116,8 @@ pub fn start_daily_price_refresh_with<R: Runtime>(
             // ——启动轮即当天的窗口。
             if !gate.is_locked() && !boot_gate.is_failed() {
                 let today = beijing_today();
-                if last_round_date != Some(today) {
+                // 同日只开一次窗口（规则单点见 `incremental::daily_window_opens`）。
+                if daily_window_opens(last_round_date, today) {
                     last_round_date = Some(today);
                     run_daily_refresh_round(&handle).await;
                 }
