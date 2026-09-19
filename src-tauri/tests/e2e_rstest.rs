@@ -14,11 +14,14 @@
 //!   reports_date_range.feature / reports_period.feature / dashboard.feature /
 //!   financial_freedom.feature，#1504；merchants.feature / insurers.feature /
 //!   search.feature，#1505；scheduled.feature / budget.feature，#1506；
+//!   backup.feature / data_location.feature / encryption.feature /
+//!   startup_failure.feature / books.feature / migration.feature /
+//!   log_level.feature / sync.feature，#1507；
 //!   reports_category.feature 由 #1504 / #1505 两票共同覆盖）
-//!   在本目标运行，旧目标行为零变化。账户 / 交易 / 保单、物品、投资与报表 /
-//!   仪表盘、参考数据与检索、定时计划与预算域场景全绿；实物资产域若干场景（估值
-//!   更新 / 在持合计）受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，间歇性红，
-//!   按 #1500 约定不修；
+//!   在本目标运行，旧目标行为零变化。账户 / 交易 / 保单、物品、投资、报表 /
+//!   仪表盘、参考数据与检索、定时计划与预算域以及引导 / 备份 / 同步 / 迁移类场景
+//!   全绿；实物资产域若干场景（估值更新 / 在持合计）受 #1489 既有缺陷（同毫秒
+//!   UUID v7 排序不确定）影响，间歇性红，按 #1500 约定不修；
 //! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
 //!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，
 //!   抽共享实现 + 两侧注册适配器（`migration_steps::批量导入交易`、
@@ -68,8 +71,20 @@ mod world;
 #[path = "e2e/accounts_steps.rs"]
 mod accounts_steps;
 #[allow(dead_code)]
+#[path = "e2e/backup_steps.rs"]
+mod backup_steps;
+#[allow(dead_code)]
+#[path = "e2e/books_steps.rs"]
+mod books_steps;
+#[allow(dead_code)]
 #[path = "e2e/common.rs"]
 mod common;
+#[allow(dead_code)]
+#[path = "e2e/data_location_steps.rs"]
+mod data_location_steps;
+#[allow(dead_code)]
+#[path = "e2e/encryption_steps.rs"]
+mod encryption_steps;
 #[allow(dead_code)]
 #[path = "e2e/instruments_steps.rs"]
 mod instruments_steps;
@@ -99,6 +114,9 @@ mod items_provenance_steps;
 #[allow(dead_code)]
 #[path = "e2e/items_update_steps.rs"]
 mod items_update_steps;
+#[allow(dead_code)]
+#[path = "e2e/log_level_steps.rs"]
+mod log_level_steps;
 #[allow(dead_code)]
 #[path = "e2e/manual_quote_steps.rs"]
 mod manual_quote_steps;
@@ -150,6 +168,12 @@ mod scheduled_steps;
 #[allow(dead_code)]
 #[path = "e2e/search_steps.rs"]
 mod search_steps;
+#[allow(dead_code)]
+#[path = "e2e/startup_failure_steps.rs"]
+mod startup_failure_steps;
+#[allow(dead_code)]
+#[path = "e2e/sync_steps.rs"]
+mod sync_steps;
 
 #[allow(dead_code)]
 #[path = "e2e/budget_steps.rs"]
@@ -362,6 +386,51 @@ mod scenarios {
         "tests/e2e/features/budget.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
+
+    // 引导、同步与迁移类场景（ticket #1507）：备份 30 / 数据位置 22 /
+    // 加密 16 / 启动失败 12 / 多账本 3 / 迁移验证 9 / 日志等级 4 / 同步 7 个
+    // 场景进入新目标，与既有域同用一份 `world` fixture（各自独立内存库/目录）。
+    // encryption 的 2 个 @non-root-only 场景保留标签并加 @allow_skipped：旧目标
+    // 由启动器过滤，新目标由场景内守卫步骤 `目录只读触发可用` 调 `skip!` 跳过。
+    scenarios!(
+        "tests/e2e/features/backup.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/data_location.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/encryption.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/startup_failure.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/books.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/migration.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/log_level.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/sync.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
 }
 
 /// 运行时注册表断言（ticket #1497 / #1499 AC1/AC3）的共用形状：某步骤文件整文件
@@ -379,9 +448,18 @@ fn assert_steps_registered_in_rstest_bdd(
 ) {
     use rstest_bdd::{Step, StepText, find_step_with_metadata, iter};
 
+    /// 文件匹配：注册模式里的 `file`（`file!()` 展开）可能是绝对路径、测试根相对
+    /// 路径或裸文件名；按「整段相等或路径分量相等」判定，避免
+    /// `migration_steps.rs` 误配 `investment_migration_steps.rs` 这类后缀同名文件。
+    fn matches_file(actual: &str, expected: &str) -> bool {
+        actual == expected
+            || actual.ends_with(&format!("/{expected}"))
+            || actual.ends_with(&format!("\\{expected}"))
+    }
+
     let registered: Vec<_> = iter::<Step>
         .into_iter()
-        .filter(|step| step.file.ends_with(file))
+        .filter(|step| matches_file(step.file, file))
         .collect();
     assert_eq!(
         registered.len(),
@@ -397,7 +475,7 @@ fn assert_steps_registered_in_rstest_bdd(
         let found = find_step_with_metadata(*keyword, StepText::from(*text))
             .unwrap_or_else(|| panic!("新目标未匹配到步骤文本：{text}"));
         assert!(
-            found.file.ends_with(file),
+            matches_file(found.file, file),
             "步骤文本 {text} 未命中本文件的注册：{}",
             found.file
         );
@@ -869,6 +947,138 @@ fn reference_data_and_search_steps_are_registered_in_rstest_bdd() {
             (StepKeyword::Then, "搜索结果第 1 条备注应为 \"午餐\""),
             (StepKeyword::Then, "搜索结果第 1 条金额应为 1500"),
             (StepKeyword::Then, "搜索结果第 1 条商户应为 \"京东\""),
+        ],
+    );
+}
+
+/// 引导、同步与迁移类步骤文件的整文件运行时注册（ticket #1507）：
+/// `backup_steps.rs` 58 条、`data_location_steps.rs` 47 条、
+/// `encryption_steps.rs` 48 条（含 `@non-root-only` 守卫步骤）、
+/// `startup_failure_steps.rs` 26 条、`books_steps.rs` 15 条、
+/// `migration_steps.rs` 18 条、`log_level_steps.rs` 5 条、`sync_steps.rs` 20 条。
+/// 占位符语义抽样覆盖 string / 整数族 / f64、字面量花括号与无占位符直命中；
+/// 删掉任一新注册即红。
+///
+/// 本票消费的共享步骤（`budget_steps.rs`、`reports_steps.rs`）已由 #1506 / #1504
+/// 纳入整文件运行时断言；本断言只担本票整文件转换的八个步骤文件的运行时那半。
+/// 逐条模式的全等覆盖由静态覆盖守门兜底（ticket #1510）。
+#[test]
+fn bootstrap_sync_migration_steps_are_registered_in_rstest_bdd() {
+    assert_steps_registered_in_rstest_bdd(
+        "backup_steps.rs",
+        58,
+        &[
+            (StepKeyword::When, "备份数据库到临时文件"),
+            (
+                StepKeyword::Then,
+                "备份包应包含 \"ledger.db\" 与 \"backup.json\"",
+            ),
+            (StepKeyword::Then, "自动备份脏标记应为真"),
+            (StepKeyword::When, "写入汇率 \"USD\" 兑 \"CNY\" 为 7.2"),
+            (StepKeyword::When, "尝试从更高 schema 版本恢复"),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "data_location_steps.rs",
+        47,
+        &[
+            (StepKeyword::Given, "默认数据目录中已有一个含 2 条交易的库"),
+            (StepKeyword::When, "执行 DataLocation 引导并打开数据库"),
+            (StepKeyword::Then, "生效目录应为默认数据目录"),
+            (
+                StepKeyword::Given,
+                "指针文件内容为损坏文本 \"{not valid json\"",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "encryption_steps.rs",
+        48,
+        &[
+            (StepKeyword::Given, "目录只读触发可用"),
+            (StepKeyword::When, "用主口令 \"correct horse\" 开启加密"),
+            (StepKeyword::Then, "库文件应探测为密文库"),
+            (
+                StepKeyword::Then,
+                "凭主口令 \"correct horse\" 打开当前库应包含 3 条交易且内容完整",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "startup_failure_steps.rs",
+        26,
+        &[
+            (
+                StepKeyword::Given,
+                "默认数据目录中存在一个头部完好但内容损坏的明文库",
+            ),
+            (StepKeyword::Given, "目标目录中存在一个损坏的库文件"),
+            (StepKeyword::When, "按启动处置流程尝试接管库文件"),
+            (
+                StepKeyword::When,
+                "从备份恢复到启动失败的库位置（无已打开库连接参与）",
+            ),
+            (
+                StepKeyword::Then,
+                "启动失败错误码应为 \"boot.schema-drift\"",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "books_steps.rs",
+        15,
+        &[
+            (StepKeyword::When, "新建账本 \"副业账\""),
+            (StepKeyword::When, "切换到账本 \"副业账\" 并原位重引导"),
+            (StepKeyword::When, "执行引导并打开当前账本"),
+            (StepKeyword::When, "查询账本清单"),
+            (StepKeyword::Then, "清单应包含 2 个账本"),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "migration_steps.rs",
+        18,
+        &[
+            // 数据表步骤：rstest 适配注册必须能命中文本（数据表由 macro 注入）。
+            (StepKeyword::When, "批量导入交易"),
+            (StepKeyword::When, "重跑刚才的批量导入"),
+            (StepKeyword::Then, "读回交易 应包含 4 条记录"),
+            (
+                StepKeyword::Then,
+                "最近一次导入应有 1 条去重跳过 1 条新写入",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "log_level_steps.rs",
+        5,
+        &[
+            (StepKeyword::Then, "持久化日志档位应为 \"info\""),
+            (StepKeyword::When, "写入持久化日志档位 \"debug\""),
+            (
+                StepKeyword::Then,
+                "应返回错误码 \"settings.log-level-invalid\"",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "sync_steps.rs",
+        20,
+        &[
+            (
+                StepKeyword::Given,
+                "以当前账本配置同步通道 空间 \"default\"",
+            ),
+            (StepKeyword::When, "打开应用即同步一轮"),
+            (StepKeyword::Then, "通道上应有本机账本目录"),
+            (StepKeyword::Then, "本端应已应用对端操作"),
         ],
     );
 }

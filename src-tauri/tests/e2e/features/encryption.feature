@@ -24,9 +24,12 @@ Feature: 加密转换三形态与忘记口令逃生门——开启/关闭/修改
     And 凭主口令 "correct horse" 打开当前库应包含 3 条交易且内容完整
 
   # 触发手段为 Unix 权限位（0o555），root 架空权限位不可依赖（issue #793，
-  # 与 #791 db 单测守卫同策略）：root 环境由测试启动器按 @non-root-only 显式跳过。
+  # 与 #791 db 单测守卫同策略）：旧目标由启动器按 @non-root-only 过滤，新目标
+  # 由守卫步骤「目录只读触发可用」在场景内 skip!；@allow_skipped 允许该跳过。
   @non-root-only
+  @allow_skipped
   Scenario: 转换中途失败时原库原样保留，不存在半加密状态
+    Given 目录只读触发可用
     Given 默认数据目录中已有一个含 2 条交易的明文库
     And 记录当前库文件字节
     And 数据目录不可写
@@ -67,9 +70,12 @@ Feature: 加密转换三形态与忘记口令逃生门——开启/关闭/修改
     And 引导不应发生回退
 
   # 触发手段为 Unix 权限位（0o555），root 架空权限位不可依赖（issue #793，
-  # 与 #791 db 单测守卫同策略）：root 环境由测试启动器按 @non-root-only 显式跳过。
+  # 与 #791 db 单测守卫同策略）：旧目标由启动器按 @non-root-only 过滤，新目标
+  # 由守卫步骤「目录只读触发可用」在场景内 skip!；@allow_skipped 允许该跳过。
   @non-root-only
+  @allow_skipped
   Scenario: 关闭加密失败时原密文库原样保留，不存在半加密状态
+    Given 目录只读触发可用
     Given 默认数据目录中有一个凭主口令 "pw" 加密且含 2 条交易的密文库
     And 记录当前库文件字节
     And 数据目录不可写
