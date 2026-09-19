@@ -6,7 +6,9 @@
 //! `harness = false`）并存：
 //! - 已迁入的 feature（accounts.feature，#1495；transactions_write.feature，#1497；
 //!   transactions_edit.feature / transactions_query.feature，#1498；
-//!   transactions_policy.feature，#1499）在本目标全绿，旧目标行为零变化；
+//!   transactions_policy.feature，#1499；policies.feature /
+//!   policy_agreement.feature / policy_stats.feature，#1501）在本目标全绿，
+//!   旧目标行为零变化；
 //! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
 //!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，
 //!   抽共享实现 + 两侧注册适配器（`migration_steps::批量导入交易`、
@@ -65,6 +67,12 @@ mod insurers_steps;
 #[path = "e2e/policies_steps.rs"]
 mod policies_steps;
 #[allow(dead_code)]
+#[path = "e2e/policy_agreement_steps.rs"]
+mod policy_agreement_steps;
+#[allow(dead_code)]
+#[path = "e2e/policy_stats_steps.rs"]
+mod policy_stats_steps;
+#[allow(dead_code)]
 #[path = "e2e/step_inputs.rs"]
 mod step_inputs;
 #[allow(dead_code)]
@@ -95,6 +103,9 @@ mod merchants_steps;
 #[allow(dead_code)]
 #[path = "e2e/migration_steps.rs"]
 mod migration_steps;
+#[allow(dead_code)]
+#[path = "e2e/scheduled_steps.rs"]
+mod scheduled_steps;
 #[allow(dead_code)]
 #[path = "e2e/transactions_query_steps.rs"]
 mod transactions_query_steps;
@@ -137,6 +148,23 @@ mod scenarios {
     // 与账户域同用一份 `world` fixture（各自独立内存库）。
     scenarios!(
         "tests/e2e/features/transactions_policy.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/policies.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    // 保单域场景（ticket #1501）：静态档案 / 缴费协议 / 统计三份 feature 的
+    // 29 个场景进入新目标，与账户域同用一份 `world` fixture（各自独立内存库）。
+    scenarios!(
+        "tests/e2e/features/policy_agreement.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/policy_stats.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
 }
@@ -230,6 +258,56 @@ fn transactions_policy_steps_are_registered_in_rstest_bdd() {
                 "第 1 条交易挂单引用应保留（软删保单不置空）",
             ),
             (StepKeyword::When, "批量导入挂单交易"),
+        ],
+    );
+}
+
+/// 保单域三个步骤文件的整文件运行时注册（ticket #1501）：`policies_steps.rs` 20 条、
+/// `policy_agreement_steps.rs` 11 条、`policy_stats_steps.rs` 7 条。占位符语义抽样
+/// 覆盖 string / i64 / usize 与无占位符断言。删掉任一新注册即红。
+#[test]
+fn policy_steps_are_registered_in_rstest_bdd() {
+    assert_steps_registered_in_rstest_bdd(
+        "policies_steps.rs",
+        20,
+        &[
+            (
+                StepKeyword::When,
+                "创建保单 保司 \"平安保险\" 保单号 \"P2026-001\" 险种 \"重疾险\" 起日 \"2026-01-01\" 止日 \"2036-01-01\" 保额 \"30000000\" 币种 \"CNY\"",
+            ),
+            (
+                StepKeyword::Then,
+                "第 1 张保单保额应为 30000000 币种应为 \"CNY\"",
+            ),
+            (StepKeyword::Then, "保单未发出失效信号"),
+        ],
+    );
+    assert_steps_registered_in_rstest_bdd(
+        "policy_agreement_steps.rs",
+        11,
+        &[
+            (
+                StepKeyword::When,
+                "为最近保单创建缴费协议 金额 300000 币种 \"CNY\" 账户 \"现金\" 周期 \"yearly\" 起始日期 \"2026-01-01\"",
+            ),
+            (
+                StepKeyword::Then,
+                "最近保单第 1 段协议状态应为 \"cancelled\" 每期金额应为 300000",
+            ),
+        ],
+    );
+    assert_steps_registered_in_rstest_bdd(
+        "policy_stats_steps.rs",
+        7,
+        &[
+            (
+                StepKeyword::Then,
+                "保单 \"P2026-301\" 累计已缴应为 600000 现金流入应为 50000",
+            ),
+            (
+                StepKeyword::Then,
+                "保单 \"P2026-309\" 到期态应为 \"已到期\"",
+            ),
         ],
     );
 }

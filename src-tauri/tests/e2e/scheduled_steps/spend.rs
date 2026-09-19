@@ -51,6 +51,7 @@ fn create_subscription_plan_with_recurrence(
 
 /// 执行最近计划的前 N 条 pending 期次（scheduled_date 升序）。
 #[when(expr = "执行该计划前 {int} 期")]
+#[rstest_bdd_macros::when("执行该计划前 {n:usize} 期")]
 fn execute_first_n_occurrences(world: &mut LedgerWorld, n: usize) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let occ_ids: Vec<String> = {
@@ -74,6 +75,7 @@ fn execute_first_n_occurrences(world: &mut LedgerWorld, n: usize) {
 
 /// 取消最近的订阅计划（生命周期动词 → update_plan_status 命令体）。
 #[when(expr = "取消该订阅计划")]
+#[rstest_bdd_macros::when("取消该订阅计划")]
 fn cancel_subscription_plan(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     update_plan_status_verb(world, &plan_id, ScheduledStatus::Cancelled);
@@ -81,6 +83,7 @@ fn cancel_subscription_plan(world: &mut LedgerWorld) {
 
 /// 暂停最近的订阅计划（生命周期动词 → update_plan_status 命令体）。
 #[when(expr = "暂停该订阅计划")]
+#[rstest_bdd_macros::when("暂停该订阅计划")]
 fn pause_subscription_plan(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     update_plan_status_verb(world, &plan_id, ScheduledStatus::Paused);
