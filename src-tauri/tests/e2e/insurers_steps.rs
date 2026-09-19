@@ -113,6 +113,7 @@ fn try_rename_insurer(world: &mut LedgerWorld, old_name: String, new_name: Strin
 /// 软删保司（不进默认列表；含已删查询可见）。
 /// 名称→ID 映射刻意**保留**：软删后保司行仍在库中（历史引用语义）。
 #[when(expr = "软删保司 {string}")]
+#[rstest_bdd_macros::when("软删保司 {name:string}")]
 fn delete_insurer_step(world: &mut LedgerWorld, name: String) {
     let id = world.insurer_id(&name);
     delete_insurer_domain(&world_conn!(world), &id).expect("软删保司失败");

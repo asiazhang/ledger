@@ -6,8 +6,13 @@
 //! `harness = false`）并存：
 //! - 已迁入的 feature（accounts.feature，#1495；transactions_write.feature，#1497；
 //!   transactions_edit.feature / transactions_query.feature，#1498；
-//!   transactions_policy.feature，#1499；instruments.feature /
-//!   manual_quote.feature，#1502）在本目标全绿，旧目标行为零变化；
+//!   transactions_policy.feature，#1499；items_* / physical_asset* 共 8 个 feature，
+//!   #1500；policies.feature / policy_agreement.feature / policy_stats.feature，
+//!   #1501；instruments.feature / manual_quote.feature，#1502）在本目标运行，
+//!   旧目标行为零变化。账户 / 交易 / 保单、物品与投资域场景全绿；
+//!   实物资产域 3 个场景受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，
+//!   间歇性红，按 #1500 约定不修（见
+//!   `docs/verification/1500-items-physical-assets-migration.md`）；
 //! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
 //!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，
 //!   抽共享实现 + 两侧注册适配器（`migration_steps::批量导入交易`、
@@ -46,9 +51,10 @@ use rstest_bdd::StepKeyword;
 // 才对其后的步骤模块可见（与旧目标同形）。
 //
 // `allow(dead_code)` 是**迁移期形态**（spec #1494 / ticket #1495）：共享支撑模块
-// （world / common / step_inputs / step_verbs）按整文件并入，消费者却是已迁移的
-// 步骤域子集——未并入的域在本目标里暂时无人调用。逐域迁移完成后本目标即全量目标，
-// 该 allow 随最后一个域并入一并删除（届时 `-D warnings` 重新覆盖这些模块）。
+// （world / common / step_inputs / step_verbs）与整模块并入的共享步骤库
+// （scheduled_steps，为跨域汇率夹具而并入，ticket #1500）按整文件并入，消费者却是
+// 已迁移的步骤域子集——未迁移的步骤在本目标里暂时无人调用。逐域迁移完成后本目标即
+// 全量目标，该 allow 随最后一个域并入一并删除（届时 `-D warnings` 重新覆盖这些模块）。
 #[allow(dead_code)]
 #[macro_use]
 #[path = "e2e/world.rs"]
@@ -72,12 +78,44 @@ mod investment_migration_steps;
 #[allow(dead_code)]
 #[path = "e2e/investment_trend_steps.rs"]
 mod investment_trend_steps;
+#[path = "e2e/items_common.rs"]
+mod items_common;
+#[allow(dead_code)]
+#[path = "e2e/items_cost_steps.rs"]
+mod items_cost_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_create_steps.rs"]
+mod items_create_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_dispose_steps.rs"]
+mod items_dispose_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_provenance_steps.rs"]
+mod items_provenance_steps;
+#[allow(dead_code)]
+#[path = "e2e/items_update_steps.rs"]
+mod items_update_steps;
 #[allow(dead_code)]
 #[path = "e2e/manual_quote_steps.rs"]
 mod manual_quote_steps;
 #[allow(dead_code)]
+#[path = "e2e/physical_asset_disposal_steps.rs"]
+mod physical_asset_disposal_steps;
+#[allow(dead_code)]
+#[path = "e2e/physical_asset_updates_steps.rs"]
+mod physical_asset_updates_steps;
+#[allow(dead_code)]
+#[path = "e2e/physical_assets_steps.rs"]
+mod physical_assets_steps;
+#[allow(dead_code)]
 #[path = "e2e/policies_steps.rs"]
 mod policies_steps;
+#[allow(dead_code)]
+#[path = "e2e/policy_agreement_steps.rs"]
+mod policy_agreement_steps;
+#[allow(dead_code)]
+#[path = "e2e/policy_stats_steps.rs"]
+mod policy_stats_steps;
 #[allow(dead_code)]
 #[path = "e2e/step_inputs.rs"]
 mod step_inputs;
@@ -93,6 +131,13 @@ mod transactions_policy_steps;
 #[allow(dead_code)]
 #[path = "e2e/transactions_write_steps.rs"]
 mod transactions_write_steps;
+// 物品与实物资产域（#1500）与保单域（#1501）消费的共享步骤文件：汇率夹具
+// `存在汇率 X 兑 Y 为 R` 与保单协议期次步骤（执行该计划第一期等）均住
+// `scheduled_steps/`，故按整模块并入其父模块——两票只为各自被消费的步骤补
+// rstest-bdd 注册，其余定时计划步骤归 ticket #1506。
+#[allow(dead_code)]
+#[path = "e2e/scheduled_steps.rs"]
+mod scheduled_steps;
 
 #[allow(dead_code)]
 #[path = "e2e/categories_steps.rs"]
@@ -133,6 +178,39 @@ mod scenarios {
     );
 
     scenarios!(
+        "tests/e2e/features/items_cost.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_create.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_dispose.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_provenance.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/items_update.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/physical_assets.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/physical_asset_updates.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+    scenarios!(
+        "tests/e2e/features/physical_asset_disposal.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
         "tests/e2e/features/transactions_write.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
@@ -151,6 +229,23 @@ mod scenarios {
     // 与账户域同用一份 `world` fixture（各自独立内存库）。
     scenarios!(
         "tests/e2e/features/transactions_policy.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/policies.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    // 保单域场景（ticket #1501）：静态档案 / 缴费协议 / 统计三份 feature 的
+    // 29 个场景进入新目标，与账户域同用一份 `world` fixture（各自独立内存库）。
+    scenarios!(
+        "tests/e2e/features/policy_agreement.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/policy_stats.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
 
@@ -405,6 +500,56 @@ fn investment_domain_steps_are_registered_in_rstest_bdd() {
                 "该买入 funding_account_id 应匹配账户 \"银行卡\"",
             ),
             (StepKeyword::Then, "基金 \"000456\" 已实现盈亏合计应为 2000"),
+        ],
+    );
+}
+
+/// 保单域三个步骤文件的整文件运行时注册（ticket #1501）：`policies_steps.rs` 20 条、
+/// `policy_agreement_steps.rs` 11 条、`policy_stats_steps.rs` 7 条。占位符语义抽样
+/// 覆盖 string / i64 / usize 与无占位符断言。删掉任一新注册即红。
+#[test]
+fn policy_steps_are_registered_in_rstest_bdd() {
+    assert_steps_registered_in_rstest_bdd(
+        "policies_steps.rs",
+        20,
+        &[
+            (
+                StepKeyword::When,
+                "创建保单 保司 \"平安保险\" 保单号 \"P2026-001\" 险种 \"重疾险\" 起日 \"2026-01-01\" 止日 \"2036-01-01\" 保额 \"30000000\" 币种 \"CNY\"",
+            ),
+            (
+                StepKeyword::Then,
+                "第 1 张保单保额应为 30000000 币种应为 \"CNY\"",
+            ),
+            (StepKeyword::Then, "保单未发出失效信号"),
+        ],
+    );
+    assert_steps_registered_in_rstest_bdd(
+        "policy_agreement_steps.rs",
+        11,
+        &[
+            (
+                StepKeyword::When,
+                "为最近保单创建缴费协议 金额 300000 币种 \"CNY\" 账户 \"现金\" 周期 \"yearly\" 起始日期 \"2026-01-01\"",
+            ),
+            (
+                StepKeyword::Then,
+                "最近保单第 1 段协议状态应为 \"cancelled\" 每期金额应为 300000",
+            ),
+        ],
+    );
+    assert_steps_registered_in_rstest_bdd(
+        "policy_stats_steps.rs",
+        7,
+        &[
+            (
+                StepKeyword::Then,
+                "保单 \"P2026-301\" 累计已缴应为 600000 现金流入应为 50000",
+            ),
+            (
+                StepKeyword::Then,
+                "保单 \"P2026-309\" 到期态应为 \"已到期\"",
+            ),
         ],
     );
 }

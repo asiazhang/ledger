@@ -31,8 +31,10 @@
 
 1. **AC1 场景数 = feature 场景数且全绿**：`grep -c '^  Scenario:'` →
    instruments 34 / manual_quote 5；`cargo test --test e2e_rstest` → `91 passed;
-   0 failed`（12 账户域 + 11 交易写入 + 7 交易编辑 + 12 交易查询 + 7 交易×保单 +
-   34 标的 + 5 手动报价 + 3 条注册表断言；新增场景 39 个全部绿）。
+   0 failed`（本票合入 main 前：12 账户域 + 11 交易写入 + 7 交易编辑 + 12 交易查询 +
+   7 交易×保单 + 34 标的 + 5 手动报价 + 3 条注册表断言；新增场景 39 个全部绿）。
+   并入 #1500 / #1501（items_* / physical_asset* / policies 系）后的分支实测为
+   `202 passed; 0 failed`（nextest 进程级 per-test 9.18s）。
 2. **AC2 旧 e2e 目标全绿**：`cargo test --test e2e` → 40 features /
    453 scenarios (453 passed) / 3139 steps (3139 passed)，场景数与步数均与迁移前
    同口径（双注册不改旧注册面）。
@@ -61,15 +63,16 @@
      查询未命中与临时不可达均显式报错不建档（建档归自定义标的通道，issue #826）)`。
      恢复注册后复绿。
 5. **静态覆盖守门（#1510 口径）**：`bun scripts/check-e2e-step-coverage.ts` →
-   目标 2 个 · 绑定 feature 40 个 · 步骤行 3682 条 · 注册 893 条 · 未覆盖 0 ·
-   歧义 0 · 无绑定 0；新目标 `tests/e2e_rstest.rs`：绑定 feature 7 · 注册 169 ·
-   步骤 543（新增的 instruments + manual_quote 216 条步骤行全部命中）。
+   目标 2 个 · 绑定 feature 40 个 · 步骤行 4291 条 · 注册 1023 条 · 未覆盖 0 ·
+   歧义 0 · 无绑定 0；新目标 `tests/e2e_rstest.rs`：绑定 feature 18 · 注册 299 ·
+   步骤 1152（新增的 instruments + manual_quote 216 条步骤行全部命中；数字含
+   #1500 / #1501 并入面）。
 6. **门禁与全量测试**：`./scripts/check.sh` 全绿（含
    `cargo clippy --workspace --all-targets --all-features -- -D warnings`、结构/文档/
    i18n/测试支撑各守门与 e2e 步骤库覆盖守门）；`./scripts/test.sh` 退出码 0：
    并发入口 32/32 二进制（1788 passed / 0 failed / 4 ignored）+ e2e 入口（新目标
-   nextest `91 tests run: 91 passed, 0 skipped`（3.31s）、旧目标 453 scenarios）+
-   doc-test 各包通过。
+   nextest `202 tests run: 202 passed, 0 skipped`（9.18s）、旧目标 453 scenarios）+
+   doc-test 各包通过。以上数字为本票分支并入 #1500 / #1501 后的复测值。
 
 ## 双注册接线核对清单（`rg` 枚举全部调用点）
 
