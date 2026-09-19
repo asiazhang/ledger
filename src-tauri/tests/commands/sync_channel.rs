@@ -59,12 +59,11 @@ pub(crate) fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, Pat
     // 交易域接缝接线（issue #1092 / #1180）：与测试工厂同形——六向实现经组合入口
     // 一次装入（幂等，进程级）。
     tauri_app_lib::transaction_wiring::install_all();
-    // 写后即时同步接线（#1089 / ticket #1496）：与测试工厂（test_support::open）
-    // 同形——op 产出单点在协议 crate，响应闭包由同步域提供，本套件不入测试工厂
-    // 故须在此显式登记（幂等，进程级）。漏登记的后果是进程级状态依赖：全二进制
-    // 同跑时由别的测试（经测试工厂）装上、单测/单进程调度下永不装上，
-    // `write_entry_enqueues_upload_via_scheduler` 遂在隔离运行下假红（nextest
-    // 进程级 per-test 调度实测暴露）。
+    // 写后即时同步接线（#1089）：与测试工厂（test_support::open）同形——op 产出
+    // 单点在协议 crate，响应闭包由同步域提供，本套件不入测试工厂故须在此显式
+    // 登记（幂等，进程级）。漏登记的后果是进程级状态依赖：全二进制同跑时由别的
+    // 测试（经测试工厂）装上、单独跑本用例时永不装上，
+    // `write_entry_enqueues_upload_via_scheduler` 遂在隔离运行下假红。
     ledger_sync_engine::trigger::install_after_write_hook();
     let dir = std::env::temp_dir().join(format!(
         "ledger-syncchannel-it-{tag}-{}",

@@ -20,7 +20,6 @@ use crate::world::LedgerWorld;
 // ---------------------------------------------------------------------------
 
 #[given(expr = "存在商户 {string}")]
-#[rstest_bdd_macros::given("存在商户 {name:string}")]
 fn given_merchant(world: &mut LedgerWorld, name: String) {
     let id = create_merchant_domain(&world_conn!(world), MerchantInput { name: name.clone() })
         .expect("创建商户失败");
@@ -34,7 +33,6 @@ fn given_merchant(world: &mut LedgerWorld, name: String) {
 /// 创建商户并断言成功（注册名称→ID 映射，供后续步骤按名称引用）。
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032），成功即置脏。
 #[when(expr = "创建商户 {string}")]
-#[rstest_bdd_macros::when("创建商户 {name:string}")]
 fn create_merchant(world: &mut LedgerWorld, name: String) {
     let id = world_write!(world, |conn| create_merchant_domain(
         conn,
@@ -46,7 +44,6 @@ fn create_merchant(world: &mut LedgerWorld, name: String) {
 
 /// 尝试创建商户并捕获错误（供「应返回错误」断言）。
 #[when(expr = "尝试创建商户 {string}")]
-#[rstest_bdd_macros::when("尝试创建商户 {name:string}")]
 fn try_create_merchant(world: &mut LedgerWorld, name: String) {
     let result = create_merchant_domain(&world_conn!(world), MerchantInput { name });
     world.last_error = match result {
@@ -62,7 +59,6 @@ fn try_create_merchant(world: &mut LedgerWorld, name: String) {
 
 /// 修改商户名称（改名即时生效：引用指向 id，不回刷历史交易行）。
 #[when(expr = "修改商户 {string} 名称为 {string}")]
-#[rstest_bdd_macros::when("修改商户 {old_name:string} 名称为 {new_name:string}")]
 fn rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: String) {
     let id = world.merchant_id(&old_name);
     update_merchant_domain(
@@ -79,7 +75,6 @@ fn rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: String) 
 
 /// 尝试改名并捕获错误（供「应返回错误」断言：改名撞在用同名被拒）。
 #[when(expr = "尝试修改商户 {string} 名称为 {string}")]
-#[rstest_bdd_macros::when("尝试修改商户 {old_name:string} 名称为 {new_name:string}")]
 fn try_rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: String) {
     let id = world.merchant_id(&old_name);
     let result = update_merchant_domain(
@@ -104,7 +99,6 @@ fn try_rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: Stri
 /// 名称→ID 映射刻意**保留**：软删后商户行仍在库中（历史引用语义），
 /// 后续步骤可继续按名称引用其 id，由后端拒绝新交易携带（断言「商户不存在或已删除」）。
 #[when(expr = "软删商户 {string}")]
-#[rstest_bdd_macros::when("软删商户 {name:string}")]
 fn delete_merchant(world: &mut LedgerWorld, name: String) {
     let id = world.merchant_id(&name);
     delete_merchant_domain(&world_conn!(world), &id).expect("软删商户失败");
@@ -112,9 +106,6 @@ fn delete_merchant(world: &mut LedgerWorld, name: String) {
 
 /// 创建带商户的交易（expense/income/transfer/refund 可携带，ADR-0092）。
 #[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 商户 {string}")]
-#[rstest_bdd_macros::when(
-    "创建交易 类型 {kind:string} 金额 {amount:i64} 到账户 {account_name:string} 日期 {date:string} 商户 {merchant_name:string}"
-)]
 fn create_txn_with_merchant(
     world: &mut LedgerWorld,
     kind: String,
@@ -140,9 +131,6 @@ fn create_txn_with_merchant(
 
 /// 尝试创建带商户的交易并捕获错误（供「应返回错误」断言）。
 #[when(expr = "尝试创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 商户 {string}")]
-#[rstest_bdd_macros::when(
-    "尝试创建交易 类型 {kind:string} 金额 {amount:i64} 到账户 {account_name:string} 日期 {date:string} 商户 {merchant_name:string}"
-)]
 fn try_create_txn_with_merchant(
     world: &mut LedgerWorld,
     kind: String,
@@ -170,9 +158,6 @@ fn try_create_txn_with_merchant(
 /// 创建带商户的转账（issue #875 / ADR-0092）：transfer 准入已放开——普通转账与
 /// 借贷转账（receivable/debt 账户派生视角）共用同一收口，商户是检索与展示指针。
 #[when(expr = "创建转账 金额 {int} 从账户 {string} 到账户 {string} 日期 {string} 商户 {string}")]
-#[rstest_bdd_macros::when(
-    "创建转账 金额 {amount:i64} 从账户 {from_name:string} 到账户 {to_name:string} 日期 {date:string} 商户 {merchant_name:string}"
-)]
 fn create_transfer_with_merchant(
     world: &mut LedgerWorld,
     amount: i64,
@@ -202,7 +187,6 @@ fn create_transfer_with_merchant(
 // ---------------------------------------------------------------------------
 
 #[then(expr = "商户表应存在且交易表含 merchant_id 列")]
-#[rstest_bdd_macros::then("商户表应存在且交易表含 merchant_id 列")]
 fn check_schema_in_place(world: &mut LedgerWorld) {
     // merchants 表存在（迁移后 schema 就位，含 soft-delete 列）。
     let table: i64 = world_conn!(world)
@@ -226,7 +210,6 @@ fn check_schema_in_place(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "商户列表应包含 {int} 条记录")]
-#[rstest_bdd_macros::then("商户列表应包含 {expected:i64} 条记录")]
 fn check_merchant_count(world: &mut LedgerWorld, expected: i64) {
     let merchants = list_merchants_domain(&world_conn!(world), false).expect("查询商户失败");
     assert_eq!(
@@ -237,7 +220,6 @@ fn check_merchant_count(world: &mut LedgerWorld, expected: i64) {
 }
 
 #[then(expr = "商户列表应包含 {string}")]
-#[rstest_bdd_macros::then("商户列表应包含 {name:string}")]
 fn check_merchant_contains(world: &mut LedgerWorld, name: String) {
     let merchants = list_merchants_domain(&world_conn!(world), false).expect("查询商户失败");
     assert!(
@@ -251,7 +233,6 @@ fn check_merchant_contains(world: &mut LedgerWorld, name: String) {
 }
 
 #[then(expr = "商户列表应不包含 {string}")]
-#[rstest_bdd_macros::then("商户列表应不包含 {name:string}")]
 fn check_merchant_not_contains(world: &mut LedgerWorld, name: String) {
     let merchants = list_merchants_domain(&world_conn!(world), false).expect("查询商户失败");
     assert!(
@@ -263,7 +244,6 @@ fn check_merchant_not_contains(world: &mut LedgerWorld, name: String) {
 /// 商户契约回归「名字字典」（issue #223）：列表响应序列化后不应再含指定字段
 /// （icon/color 已退役；请求侧结构体无对应字段由编译期保证）。
 #[then(expr = "商户列表响应 JSON 不含字段 {string}")]
-#[rstest_bdd_macros::then("商户列表响应 JSON 不含字段 {field:string}")]
 fn check_merchant_json_not_contain_field(world: &mut LedgerWorld, field: String) {
     let merchants = list_merchants_domain(&world_conn!(world), false).expect("查询商户失败");
     assert!(!merchants.is_empty(), "商户列表为空，无法校验响应字段契约");
@@ -279,7 +259,6 @@ fn check_merchant_json_not_contain_field(world: &mut LedgerWorld, field: String)
 /// 含软删全量列表（交易列表筛选下拉的数据源）：软删商户仍在其列，
 /// 其历史交易照常可按商户过滤。
 #[then(expr = "商户含软删列表应包含 {int} 条记录")]
-#[rstest_bdd_macros::then("商户含软删列表应包含 {expected:i64} 条记录")]
 fn check_merchant_all_count(world: &mut LedgerWorld, expected: i64) {
     let merchants =
         list_merchants_domain(&world_conn!(world), true).expect("查询含软删商户列表失败");
@@ -287,7 +266,6 @@ fn check_merchant_all_count(world: &mut LedgerWorld, expected: i64) {
 }
 
 #[then(expr = "商户含软删列表应包含 {string}")]
-#[rstest_bdd_macros::then("商户含软删列表应包含 {name:string}")]
 fn check_merchant_all_contains(world: &mut LedgerWorld, name: String) {
     let merchants =
         list_merchants_domain(&world_conn!(world), true).expect("查询含软删商户列表失败");
@@ -300,7 +278,6 @@ fn check_merchant_all_contains(world: &mut LedgerWorld, name: String) {
 /// 商户关联交易条数断言（issue #445，毛笔数口径）：经商户域计数聚合按名字定位
 /// （含软删行，历史引用语义），断言引用该商户的未删流水毛笔数。
 #[then(expr = "商户 {string} 关联交易条数应为 {int}")]
-#[rstest_bdd_macros::then("商户 {name:string} 关联交易条数应为 {expected:i64}")]
 fn check_merchant_transaction_count(world: &mut LedgerWorld, name: String, expected: i64) {
     let merchant_id: String = world_conn!(world)
         .query_row(
@@ -321,7 +298,6 @@ fn check_merchant_transaction_count(world: &mut LedgerWorld, name: String, expec
 /// 断言第 N 条交易（date DESC 排序）的商户名：按 merchant_id 实时解析
 /// （历史引用保留 + 改名即时生效的读回语义，与前端经参考表解析同一口径）。
 #[then(expr = "第 {int} 条交易商户应为 {string}")]
-#[rstest_bdd_macros::then("第 {index:i64} 条交易商户应为 {merchant_name:string}")]
 fn check_txn_merchant(world: &mut LedgerWorld, index: i64, merchant_name: String) {
     let idx = (index - 1) as usize;
     assert!(

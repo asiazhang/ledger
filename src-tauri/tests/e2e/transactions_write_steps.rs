@@ -3,12 +3,6 @@
 //! 步骤函数薄化为文本解析 + 快照刷新；错误断言路径改走动词 try 形态（构造 +
 //! 显式写入捕获），断言语义不变。「存在账户」前置经账户域公开创建入口动词
 //! （#763 旁路归零）；注入触发器两步骤为纯测试侧注入（spec #169 定案），留直连例外。
-//!
-//! 双注册（spec #1494 / ticket #1495 / #1497）：本文件被多域 feature 共享，是整条
-//! 迁移链的关键路径——22 条步骤全部双注册（同一函数同时挂 cucumber 与 rstest-bdd
-//! 属性宏），改写只涉及属性语法与占位符形态（`{string}` → `{<参数名>:string}`、
-//! `{int}` → `{<参数名>:i64}`），函数体与断言不变。账户域消费的五个步骤先行
-//! （#1495），其余 17 条由交易写入主干票（#1497）补齐。
 
 use cucumber::{given, then, when};
 
@@ -29,7 +23,6 @@ use crate::world::LedgerWorld;
 // ---------------------------------------------------------------------------
 
 #[given(expr = "存在账户 {string} 类型 {string} 币种 {string}")]
-#[rstest_bdd_macros::given("存在账户 {name:string} 类型 {kind:string} 币种 {currency:string}")]
 fn create_account(world: &mut LedgerWorld, name: String, kind: String, currency: String) {
     create_account_verb(world, &name, &kind, &currency, None);
 }
@@ -39,9 +32,6 @@ fn create_account(world: &mut LedgerWorld, name: String, kind: String, currency:
 // ---------------------------------------------------------------------------
 
 #[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string}")]
-#[rstest_bdd_macros::when(
-    "创建交易 类型 {kind:string} 金额 {amount:i64} 到账户 {account_name:string} 日期 {date:string}"
-)]
 fn create_txn(
     world: &mut LedgerWorld,
     kind: String,
@@ -58,9 +48,6 @@ fn create_txn(
 }
 
 #[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 备注 {string}")]
-#[rstest_bdd_macros::when(
-    "创建交易 类型 {kind:string} 金额 {amount:i64} 到账户 {account_name:string} 日期 {date:string} 备注 {note:string}"
-)]
 fn create_txn_with_note(
     world: &mut LedgerWorld,
     kind: String,
@@ -81,9 +68,6 @@ fn create_txn_with_note(
 }
 
 #[when(expr = "尝试创建转账 金额 {int} 从账户 {string} 日期 {string}")]
-#[rstest_bdd_macros::when(
-    "尝试创建转账 金额 {amount:i64} 从账户 {account_name:string} 日期 {date:string}"
-)]
 fn try_transfer_without_target(
     world: &mut LedgerWorld,
     amount: i64,
@@ -101,9 +85,6 @@ fn try_transfer_without_target(
 /// 尝试创建一笔交易并捕获错误（供「应返回错误」断言）。
 /// 与 `create_txn` 的区别：不要求成功，失败信息记入 `world.last_error`。
 #[when(expr = "尝试创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string}")]
-#[rstest_bdd_macros::when(
-    "尝试创建交易 类型 {kind:string} 金额 {amount:i64} 到账户 {account_name:string} 日期 {date:string}"
-)]
 fn try_create_txn(
     world: &mut LedgerWorld,
     kind: String,
@@ -119,9 +100,6 @@ fn try_create_txn(
 
 /// 尝试创建一笔买入交易并捕获错误（供「应返回错误」断言，issue #228）。
 #[when(expr = "尝试买入标的 {string} 数量 {int} 单价 {int} 到投资账户 {string}")]
-#[rstest_bdd_macros::when(
-    "尝试买入标的 {symbol:string} 数量 {quantity:i64} 单价 {price_cents:i64} 到投资账户 {account_name:string}"
-)]
 fn try_create_buy(
     world: &mut LedgerWorld,
     symbol: String,
@@ -171,9 +149,6 @@ fn try_create_trade_with_raw_instrument_id(
 
 /// 尝试买入不存在的标的并捕获错误（裸 id 直提，供「应返回错误」断言，issue #295）。
 #[when(expr = "尝试买入不存在标的 {string} 数量 {int} 单价 {int} 到投资账户 {string}")]
-#[rstest_bdd_macros::when(
-    "尝试买入不存在标的 {instrument_id:string} 数量 {quantity:i64} 单价 {price_cents:i64} 到投资账户 {account_name:string}"
-)]
 fn try_create_buy_missing_instrument(
     world: &mut LedgerWorld,
     instrument_id: String,
@@ -193,9 +168,6 @@ fn try_create_buy_missing_instrument(
 
 /// 尝试卖出不存在的标的并捕获错误（裸 id 直提，供「应返回错误」断言，issue #295）。
 #[when(expr = "尝试卖出不存在标的 {string} 数量 {int} 单价 {int} 从投资账户 {string}")]
-#[rstest_bdd_macros::when(
-    "尝试卖出不存在标的 {instrument_id:string} 数量 {quantity:i64} 单价 {price_cents:i64} 从投资账户 {account_name:string}"
-)]
 fn try_create_sell_missing_instrument(
     world: &mut LedgerWorld,
     instrument_id: String,
@@ -217,7 +189,6 @@ fn try_create_sell_missing_instrument(
 /// 触发器在第二步 RAISE(ABORT)——纯测试侧注入（spec #169 定案），检验 create
 /// 编排入口把行落库与半套副作用整体回滚（issue #228）。
 #[when(expr = "注入买入建仓中途失败触发器")]
-#[rstest_bdd_macros::when("注入买入建仓中途失败触发器")]
 fn inject_buy_lot_failure_trigger(world: &mut LedgerWorld) {
     world_conn!(world)
         .execute(
@@ -232,7 +203,6 @@ fn inject_buy_lot_failure_trigger(world: &mut LedgerWorld) {
 /// 软删 UPDATE 被触发器 RAISE(ABORT) 挡下——纯测试侧注入（spec #169 定案），
 /// 检验 delete 编排入口把持仓清理与软删纳入同一事务、中途失败整体回滚（issue #229）。
 #[when(expr = "注入软删失败触发器")]
-#[rstest_bdd_macros::when("注入软删失败触发器")]
 fn inject_soft_delete_failure_trigger(world: &mut LedgerWorld) {
     world_conn!(world)
         .execute(
@@ -245,7 +215,6 @@ fn inject_soft_delete_failure_trigger(world: &mut LedgerWorld) {
 
 /// 尝试删除最近一笔交易并捕获错误（供「应返回错误」断言，issue #229）。
 #[when(expr = "尝试删除最近交易")]
-#[rstest_bdd_macros::when("尝试删除最近交易")]
 fn try_delete_last_txn(world: &mut LedgerWorld) {
     let id = world
         .txn
@@ -259,9 +228,6 @@ fn try_delete_last_txn(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "创建转账 金额 {int} 从 {string} 到 {string} 日期 {string}")]
-#[rstest_bdd_macros::when(
-    "创建转账 金额 {amount:i64} 从 {from_name:string} 到 {to_name:string} 日期 {date:string}"
-)]
 fn create_transfer(
     world: &mut LedgerWorld,
     amount: i64,
@@ -274,7 +240,6 @@ fn create_transfer(
 }
 
 #[when(expr = "关联上一笔交易创建退款 金额 {int} 日期 {string}")]
-#[rstest_bdd_macros::when("关联上一笔交易创建退款 金额 {amount:i64} 日期 {date:string}")]
 fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
     refund_last_transaction(world, amount, &date);
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
@@ -285,7 +250,6 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
 // ---------------------------------------------------------------------------
 
 #[then(expr = "交易列表应包含 {int} 条记录")]
-#[rstest_bdd_macros::then("交易列表应包含 {expected:i64} 条记录")]
 fn check_transaction_count(world: &mut LedgerWorld, expected: i64) {
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
     assert_eq!(
@@ -296,9 +260,6 @@ fn check_transaction_count(world: &mut LedgerWorld, expected: i64) {
 }
 
 #[then(expr = "第 {int} 条交易类型应为 {string} 金额应为 {int}")]
-#[rstest_bdd_macros::then(
-    "第 {index:i64} 条交易类型应为 {expected_kind:string} 金额应为 {expected_amount:i64}"
-)]
 fn check_txn_kind_amount(
     world: &mut LedgerWorld,
     index: i64,
@@ -317,9 +278,6 @@ fn check_txn_kind_amount(
 }
 
 #[then(expr = "第 {int} 条交易类型应为 {string} 金额应为 {int} 备注 {string}")]
-#[rstest_bdd_macros::then(
-    "第 {index:i64} 条交易类型应为 {expected_kind:string} 金额应为 {expected_amount:i64} 备注 {expected_note:string}"
-)]
 fn check_txn_kind_amount_note(
     world: &mut LedgerWorld,
     index: i64,
@@ -344,7 +302,6 @@ fn check_txn_kind_amount_note(
 }
 
 #[then(expr = "应返回错误 {string}")]
-#[rstest_bdd_macros::then("应返回错误 {expected_msg:string}")]
 fn check_error(world: &mut LedgerWorld, expected_msg: String) {
     crate::common::assert_last_error_contains(world, &expected_msg);
 }
@@ -352,7 +309,6 @@ fn check_error(world: &mut LedgerWorld, expected_msg: String) {
 /// 建仓中途失败整体回滚的终态断言：持仓批次与买卖明细均无残留
 /// （交易行无残留由「交易列表应包含 0 条记录」断言，issue #228）。
 #[then(expr = "无买入持仓与买卖明细残留")]
-#[rstest_bdd_macros::then("无买入持仓与买卖明细残留")]
 fn assert_no_lot_and_trade_residue(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     let (lots, stx): (i64, i64) = conn
@@ -368,14 +324,12 @@ fn assert_no_lot_and_trade_residue(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "该转账类型应为 {string}")]
-#[rstest_bdd_macros::then("该转账类型应为 {expected_kind:string}")]
 fn check_transfer_kind(world: &mut LedgerWorld, expected_kind: String) {
     let txn = world.txn.transactions_list.last().expect("交易列表为空");
     assert_eq!(txn.kind.as_str(), expected_kind);
 }
 
 #[then(expr = "该转账 account_id 应匹配账户 {string}")]
-#[rstest_bdd_macros::then("该转账 account_id 应匹配账户 {account_name:string}")]
 fn check_transfer_from(world: &mut LedgerWorld, account_name: String) {
     let txn = world.txn.transactions_list.last().expect("交易列表为空");
     let expected_id = world.account_id(&account_name);
@@ -383,7 +337,6 @@ fn check_transfer_from(world: &mut LedgerWorld, account_name: String) {
 }
 
 #[then(expr = "该转账 to_account_id 应匹配账户 {string}")]
-#[rstest_bdd_macros::then("该转账 to_account_id 应匹配账户 {account_name:string}")]
 fn check_transfer_to(world: &mut LedgerWorld, account_name: String) {
     let txn = world.txn.transactions_list.last().expect("交易列表为空");
     let expected_id = world.account_id(&account_name);
@@ -391,7 +344,6 @@ fn check_transfer_to(world: &mut LedgerWorld, account_name: String) {
 }
 
 #[then(expr = "退款交易的 refund_of 应指向原支出交易")]
-#[rstest_bdd_macros::then("退款交易的 refund_of 应指向原支出交易")]
 fn check_refund_linked(world: &mut LedgerWorld) {
     assert!(
         world.txn.transactions_list.len() >= 2,

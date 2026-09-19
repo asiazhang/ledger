@@ -26,9 +26,6 @@ use super::common::execute_occurrence_step;
 #[when(
     expr = "创建订阅计划 金额 {int} 币种 {string} 账户 {string} 周期 {string} 起始日期 {string} 备注 {string}"
 )]
-#[rstest_bdd_macros::when(
-    "创建订阅计划 金额 {amount:i64} 币种 {currency:string} 账户 {account:string} 周期 {recurrence:string} 起始日期 {start:string} 备注 {note:string}"
-)]
 fn create_subscription_plan_with_recurrence(
     world: &mut LedgerWorld,
     amount: i64,
@@ -54,7 +51,6 @@ fn create_subscription_plan_with_recurrence(
 
 /// 执行最近计划的前 N 条 pending 期次（scheduled_date 升序）。
 #[when(expr = "执行该计划前 {int} 期")]
-#[rstest_bdd_macros::when("执行该计划前 {n:usize} 期")]
 fn execute_first_n_occurrences(world: &mut LedgerWorld, n: usize) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let occ_ids: Vec<String> = {
@@ -78,7 +74,6 @@ fn execute_first_n_occurrences(world: &mut LedgerWorld, n: usize) {
 
 /// 取消最近的订阅计划（生命周期动词 → update_plan_status 命令体）。
 #[when(expr = "取消该订阅计划")]
-#[rstest_bdd_macros::when("取消该订阅计划")]
 fn cancel_subscription_plan(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     update_plan_status_verb(world, &plan_id, ScheduledStatus::Cancelled);
@@ -86,7 +81,6 @@ fn cancel_subscription_plan(world: &mut LedgerWorld) {
 
 /// 暂停最近的订阅计划（生命周期动词 → update_plan_status 命令体）。
 #[when(expr = "暂停该订阅计划")]
-#[rstest_bdd_macros::when("暂停该订阅计划")]
 fn pause_subscription_plan(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     update_plan_status_verb(world, &plan_id, ScheduledStatus::Paused);
@@ -94,7 +88,6 @@ fn pause_subscription_plan(world: &mut LedgerWorld) {
 
 /// 以注入的固定「今日」查询订阅实际花费总览（确定性口径，不依赖真实时钟）。
 #[when(expr = "以 {string} 为今日查询订阅花费")]
-#[rstest_bdd_macros::when("以 {today:string} 为今日查询订阅花费")]
 fn query_spend_with_today(world: &mut LedgerWorld, today: String) {
     let today =
         chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d").expect("今日日期应为 YYYY-MM-DD");
@@ -107,31 +100,26 @@ fn last_spend(world: &LedgerWorld) -> &SubscriptionSpendOverview {
 }
 
 #[then(expr = "本月实际花费应为 {int}")]
-#[rstest_bdd_macros::then("本月实际花费应为 {expected:i64}")]
 fn assert_spend_this_month(world: &mut LedgerWorld, expected: i64) {
     assert_eq!(last_spend(world).this_month_native_cents, expected);
 }
 
 #[then(expr = "本年实际花费应为 {int}")]
-#[rstest_bdd_macros::then("本年实际花费应为 {expected:i64}")]
 fn assert_spend_this_year(world: &mut LedgerWorld, expected: i64) {
     assert_eq!(last_spend(world).this_year_native_cents, expected);
 }
 
 #[then(expr = "折算月成本应为 {int}")]
-#[rstest_bdd_macros::then("折算月成本应为 {expected:i64}")]
 fn assert_projected_month(world: &mut LedgerWorld, expected: i64) {
     assert_eq!(last_spend(world).projected_month_native_cents, expected);
 }
 
 #[then(expr = "折算年成本应为 {int}")]
-#[rstest_bdd_macros::then("折算年成本应为 {expected:i64}")]
 fn assert_projected_year(world: &mut LedgerWorld, expected: i64) {
     assert_eq!(last_spend(world).projected_year_native_cents, expected);
 }
 
 #[then(expr = "近 12 个月中 {string} 实际花费应为 {int}")]
-#[rstest_bdd_macros::then("近 12 个月中 {month:string} 实际花费应为 {expected:i64}")]
 fn assert_spend_month(world: &mut LedgerWorld, month: String, expected: i64) {
     let overview = last_spend(world);
     let cents = overview
@@ -144,13 +132,11 @@ fn assert_spend_month(world: &mut LedgerWorld, month: String, expected: i64) {
 }
 
 #[then(expr = "订阅花费行数应为 {int}")]
-#[rstest_bdd_macros::then("订阅花费行数应为 {expected:usize}")]
 fn assert_spend_row_count(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(last_spend(world).rows.len(), expected);
 }
 
 #[then(expr = "订阅行 {string} 状态应为 {string}")]
-#[rstest_bdd_macros::then("订阅行 {note:string} 状态应为 {status:string}")]
 fn assert_spend_row_status(world: &mut LedgerWorld, note: String, status: String) {
     let row = last_spend(world)
         .rows
@@ -161,7 +147,6 @@ fn assert_spend_row_status(world: &mut LedgerWorld, note: String, status: String
 }
 
 #[then(expr = "订阅行 {string} 本年实际花费应为 {int}")]
-#[rstest_bdd_macros::then("订阅行 {note:string} 本年实际花费应为 {expected:i64}")]
 fn assert_spend_row_year(world: &mut LedgerWorld, note: String, expected: i64) {
     let row = last_spend(world)
         .rows

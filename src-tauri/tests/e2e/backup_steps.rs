@@ -94,7 +94,6 @@ fn record_restore_outcome(
 // ---------------------------------------------------------------------------
 
 #[when(expr = "备份数据库到临时文件")]
-#[rstest_bdd_macros::when("备份数据库到临时文件")]
 fn backup_to_temp(world: &mut LedgerWorld) {
     let target = temp_path("backup.zip");
     let result = backup_db_to(&world_conn!(world), &target, "0.2.0", BackupKind::Manual);
@@ -105,7 +104,6 @@ fn backup_to_temp(world: &mut LedgerWorld) {
 /// 真实走自动备份触发入口（前置业务写已置脏、开关默认开启），产物落到本场景
 /// 独立临时目录并复用（日界门场景据同目录产物计数区分「跳过/新增」）。
 #[when(expr = "自动备份数据库到临时目录")]
-#[rstest_bdd_macros::when("自动备份数据库到临时目录")]
 fn auto_backup_to_temp(world: &mut LedgerWorld) {
     auto_backup_with_world_scope(world);
 }
@@ -113,7 +111,6 @@ fn auto_backup_to_temp(world: &mut LedgerWorld) {
 /// 以当前活动账本作用域触发自动备份（issue #836）：作用域由注册表最新落盘态
 /// 构造（活动账本标识 + 登记序首本归属历史产物），与壳层构造规则同一语义。
 #[when(expr = "以当前账本作用域自动备份数据库到临时目录")]
-#[rstest_bdd_macros::when("以当前账本作用域自动备份数据库到临时目录")]
 fn auto_backup_with_active_book_scope(world: &mut LedgerWorld) {
     let default_dir = world
         .boot
@@ -130,7 +127,6 @@ fn auto_backup_with_active_book_scope(world: &mut LedgerWorld) {
 
 /// 备份产物文件名携带当前活动账本标识（命名按本分域，产物互不覆盖）。
 #[then(expr = "备份产物文件名应携带当前账本标识")]
-#[rstest_bdd_macros::then("备份产物文件名应携带当前账本标识")]
 fn backup_file_name_carries_book_id(world: &mut LedgerWorld) {
     let default_dir = world
         .boot
@@ -209,7 +205,6 @@ fn run_due_on_ref(
 /// UPDATE is_deleted；删除是公开入口存在的状态变更，行为层删除含存在性守卫
 /// 与余额缓存等派生数据维护，备份场景的被测语义「软删态随备份落盘」不变）。
 #[when(expr = "删除全部交易")]
-#[rstest_bdd_macros::when("删除全部交易")]
 fn delete_all_txns(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     let ids: Vec<String> = {
@@ -227,7 +222,6 @@ fn delete_all_txns(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "从备份恢复到临时数据库")]
-#[rstest_bdd_macros::when("从备份恢复到临时数据库")]
 fn restore_to_temp(world: &mut LedgerWorld) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
     let db_path = temp_path("restored.db");
@@ -240,7 +234,6 @@ fn restore_to_temp(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "以主口令 {string} 从备份恢复到临时数据库")]
-#[rstest_bdd_macros::when("以主口令 {passphrase:string} 从备份恢复到临时数据库")]
 fn restore_to_temp_with_passphrase(world: &mut LedgerWorld, passphrase: String) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
     let db_path = temp_path("restored-enc.db");
@@ -255,14 +248,12 @@ fn restore_to_temp_with_passphrase(world: &mut LedgerWorld, passphrase: String) 
 /// 记录当前加密文件库字节快照（When 形态注册：cucumber 关键字不跨类匹配，
 /// encryption_steps 同名步骤是 Given；字节不变断言复用其 Then 定义）。
 #[when(expr = "记录当前库文件字节")]
-#[rstest_bdd_macros::when("记录当前库文件字节")]
 fn when_record_db_bytes(world: &mut LedgerWorld) {
     world.boot.enc_db_bytes = Some(std::fs::read(enc_backup_db_path(world)).unwrap());
 }
 
 /// 密文备份缺主口令：恢复被拒绝（引擎契约 backup.passphrase-required）。
 #[when(expr = "尝试不带主口令从备份恢复到临时数据库")]
-#[rstest_bdd_macros::when("尝试不带主口令从备份恢复到临时数据库")]
 fn try_restore_without_passphrase(world: &mut LedgerWorld) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
     let db_path = temp_path("restored-no-pass.db");
@@ -278,7 +269,6 @@ fn try_restore_without_passphrase(world: &mut LedgerWorld) {
 
 /// 错误主口令恢复密文备份：被拒且不改动任何库文件（可重试语义）。
 #[when(expr = "尝试以主口令 {string} 从备份恢复到临时数据库")]
-#[rstest_bdd_macros::when("尝试以主口令 {passphrase:string} 从备份恢复到临时数据库")]
 fn try_restore_with_wrong_passphrase(world: &mut LedgerWorld, passphrase: String) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
     let db_path = temp_path("restored-wrong-pass.db");
@@ -294,7 +284,6 @@ fn try_restore_with_wrong_passphrase(world: &mut LedgerWorld, passphrase: String
 
 /// 恢复覆盖当前加密文件库（真实 db_path 替换路径）：触发恢复安全备份语义。
 #[when(expr = "以主口令 {string} 从备份恢复到当前加密库")]
-#[rstest_bdd_macros::when("以主口令 {passphrase:string} 从备份恢复到当前加密库")]
 fn restore_onto_encrypted_current(world: &mut LedgerWorld, passphrase: String) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
     let db_path = enc_backup_db_path(world);
@@ -306,7 +295,6 @@ fn restore_onto_encrypted_current(world: &mut LedgerWorld, passphrase: String) {
 }
 
 #[when(expr = "尝试从更高 schema 版本恢复")]
-#[rstest_bdd_macros::when("尝试从更高 schema 版本恢复")]
 fn try_newer_restore(world: &mut LedgerWorld) {
     // 构造一个 schema 版本更高的库文件作为"备份"。
     let newer = temp_path("newer.db");
@@ -331,14 +319,12 @@ fn try_newer_restore(world: &mut LedgerWorld) {
 // ---------------------------------------------------------------------------
 
 #[then(expr = "备份文件应存在")]
-#[rstest_bdd_macros::then("备份文件应存在")]
 fn backup_exists(world: &mut LedgerWorld) {
     let p = world.boot.last_backup_path.as_ref().expect("尚未备份");
     assert!(p.exists(), "备份文件不存在: {}", p.display());
 }
 
 #[then(expr = "备份包应包含 {string} 与 {string}")]
-#[rstest_bdd_macros::then("备份包应包含 {a:string} 与 {b:string}")]
 fn backup_contains(world: &mut LedgerWorld, a: String, b: String) {
     let p = world.boot.last_backup_path.as_ref().expect("尚未备份");
     let file = std::fs::File::open(p).unwrap();
@@ -351,7 +337,6 @@ fn backup_contains(world: &mut LedgerWorld, a: String, b: String) {
 }
 
 #[then(expr = "备份包内的数据库应包含 {int} 条交易")]
-#[rstest_bdd_macros::then("备份包内的数据库应包含 {expected:i64} 条交易")]
 fn backup_db_has_txns(world: &mut LedgerWorld, expected: i64) {
     let p = world.boot.last_backup_path.as_ref().expect("尚未备份");
     let file = std::fs::File::open(p).unwrap();
@@ -368,7 +353,6 @@ fn backup_db_has_txns(world: &mut LedgerWorld, expected: i64) {
 }
 
 #[then(expr = "恢复的数据库应包含 {int} 条交易")]
-#[rstest_bdd_macros::then("恢复的数据库应包含 {expected:i64} 条交易")]
 fn restored_has_txns(world: &mut LedgerWorld, expected: i64) {
     let p = world.boot.restored_db_path.as_ref().expect("尚未恢复");
     let count = count_transactions_in_file(p, None);
@@ -380,7 +364,6 @@ fn restored_has_txns(world: &mut LedgerWorld, expected: i64) {
 // ---------------------------------------------------------------------------
 
 #[then(expr = "备份元数据来源应为 {string}")]
-#[rstest_bdd_macros::then("备份元数据来源应为 {expected:string}")]
 fn backup_meta_kind_manual(world: &mut LedgerWorld, expected: String) {
     let p = world.boot.last_backup_path.as_ref().expect("尚未手动备份");
     assert_eq!(
@@ -391,7 +374,6 @@ fn backup_meta_kind_manual(world: &mut LedgerWorld, expected: String) {
 }
 
 #[then(expr = "自动备份元数据来源应为 {string}")]
-#[rstest_bdd_macros::then("自动备份元数据来源应为 {expected:string}")]
 fn backup_meta_kind_auto(world: &mut LedgerWorld, expected: String) {
     let p = world
         .boot
@@ -410,21 +392,18 @@ fn backup_meta_kind_auto(world: &mut LedgerWorld, expected: String) {
 // ---------------------------------------------------------------------------
 
 #[then(expr = "自动备份脏标记应为真")]
-#[rstest_bdd_macros::then("自动备份脏标记应为真")]
 fn auto_backup_dirty(world: &mut LedgerWorld) {
     let state = get_state(&world_conn!(world)).unwrap();
     assert!(state.dirty, "业务写库成功后脏标记应为真");
 }
 
 #[then(expr = "自动备份脏标记应为假")]
-#[rstest_bdd_macros::then("自动备份脏标记应为假")]
 fn auto_backup_clean(world: &mut LedgerWorld) {
     let state = get_state(&world_conn!(world)).unwrap();
     assert!(!state.dirty, "未发生业务写库时脏标记应为默认假");
 }
 
 #[when(expr = "删除最近创建的交易")]
-#[rstest_bdd_macros::when("删除最近创建的交易")]
 fn delete_last_transaction(world: &mut LedgerWorld) {
     let id = world
         .txn
@@ -439,7 +418,6 @@ fn delete_last_transaction(world: &mut LedgerWorld) {
 /// 正午换算 UTC 以避开时制切换窗口），使下一次「自动备份数据库到临时目录」必到期
 /// （既有链式场景逐段验证多次写入的置脏）。经模块 `set_state` 写回，锚点格式由模块保证。
 #[when(expr = "距离上次自动备份已过一天")]
-#[rstest_bdd_macros::when("距离上次自动备份已过一天")]
 fn fast_forward_backup_due(world: &mut LedgerWorld) {
     use chrono::TimeZone;
     let conn = world_conn!(world);
@@ -466,7 +444,6 @@ fn fast_forward_backup_due(world: &mut LedgerWorld) {
 
 /// 同日已自动备份后再次到期触发：断言静默跳过（原因可辨）且锚点不前移。
 #[when(expr = "再次到期触发自动备份因日界门静默跳过")]
-#[rstest_bdd_macros::when("再次到期触发自动备份因日界门静默跳过")]
 fn due_trigger_skipped_by_day_gate(world: &mut LedgerWorld) {
     let anchor_before = get_state(&world_conn!(world)).unwrap().last_backup_at;
     let outcome = ledger_backup::run_due_backup(
@@ -498,7 +475,6 @@ fn due_trigger_skipped_by_day_gate(world: &mut LedgerWorld) {
 
 /// 同日已自动备份后退出兜底：断言静默跳过且锚点不前移（原「不受每日约束」豁免取消）。
 #[when(expr = "退出兜底因日界门静默跳过")]
-#[rstest_bdd_macros::when("退出兜底因日界门静默跳过")]
 fn exit_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
     let anchor_before = get_state(&world_conn!(world)).unwrap().last_backup_at;
     let outcome = ledger_backup::run_exit_backup(
@@ -532,7 +508,6 @@ fn exit_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
 /// 注入时刻取「现在 + 1 天」——锚点仍是今天，判定为跨日恢复备份；产物文件名
 /// 时间戳随注入时刻自然不同，同目录产物计数可区分两次备份（避开秒级同妙覆盖）。
 #[when(expr = "跨日后触发自动备份数据库到临时目录")]
-#[rstest_bdd_macros::when("跨日后触发自动备份数据库到临时目录")]
 fn auto_backup_next_day_to_temp(world: &mut LedgerWorld) {
     let dir = world.boot.auto_backup_dir.clone().expect("尚未自动备份");
     let outcome = ledger_backup::run_due_backup(
@@ -553,7 +528,6 @@ fn auto_backup_next_day_to_temp(world: &mut LedgerWorld) {
 
 /// 同日已自动备份且列表为空（目录被清空）后首次兜底：断言静默跳过且锚点不前移。
 #[when(expr = "首次兜底因日界门静默跳过")]
-#[rstest_bdd_macros::when("首次兜底因日界门静默跳过")]
 fn first_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
     let anchor_before = get_state(&world_conn!(world)).unwrap().last_backup_at;
     let outcome = ledger_backup::run_first_backup(
@@ -585,7 +559,6 @@ fn first_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
 
 /// 清空自动备份目录内的产物（模拟用户删光备份），目录本身保留。
 #[when(expr = "清空自动备份目录")]
-#[rstest_bdd_macros::when("清空自动备份目录")]
 fn clear_auto_backup_dir(world: &mut LedgerWorld) {
     let dir = world.boot.auto_backup_dir.as_ref().expect("尚未自动备份");
     for entry in std::fs::read_dir(dir).expect("列目录") {
@@ -595,7 +568,6 @@ fn clear_auto_backup_dir(world: &mut LedgerWorld) {
 
 /// 统计本场景自动备份目录内的自动产物数量（受管前缀识别，混入手动文件不计数）。
 #[then(expr = "备份目录内自动备份产物数量应为 {int}")]
-#[rstest_bdd_macros::then("备份目录内自动备份产物数量应为 {expected:i64}")]
 fn auto_backup_product_count(world: &mut LedgerWorld, expected: i64) {
     let dir = world.boot.auto_backup_dir.as_ref().expect("尚未自动备份");
     let count = std::fs::read_dir(dir)
@@ -613,7 +585,6 @@ fn auto_backup_product_count(world: &mut LedgerWorld, expected: i64) {
 /// 设置写入（`app_settings`，经 settings 模块单点收口，普通锁不走出入口）——
 /// ADR-0032 的豁免路径：不置脏。
 #[when(expr = "写入一项设置")]
-#[rstest_bdd_macros::when("写入一项设置")]
 fn write_a_setting(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     settings::set(&conn, SettingKey::AutoBackupEnabled, &false).expect("写入设置");
@@ -625,7 +596,6 @@ fn write_a_setting(world: &mut LedgerWorld) {
 
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建账户，成功即置脏。
 #[when(expr = "创建账户 {string} 类型 {string} 币种 {string}")]
-#[rstest_bdd_macros::when("创建账户 {name:string} 类型 {kind:string} 币种 {currency:string}")]
 fn create_account_via_entry(world: &mut LedgerWorld, name: String, kind: String, currency: String) {
     let input = AccountInput {
         name,
@@ -641,7 +611,6 @@ fn create_account_via_entry(world: &mut LedgerWorld, name: String, kind: String,
 
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建分类，成功即置脏。
 #[when(expr = "创建分类 {string} 类型 {string}")]
-#[rstest_bdd_macros::when("创建分类 {name:string} 类型 {kind:string}")]
 fn create_category_via_entry(world: &mut LedgerWorld, name: String, kind: String) {
     let input = CategoryInput {
         name,
@@ -654,7 +623,6 @@ fn create_category_via_entry(world: &mut LedgerWorld, name: String, kind: String
 
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）软删分类，成功即置脏。
 #[when(expr = "删除分类 {string}")]
-#[rstest_bdd_macros::when("删除分类 {name:string}")]
 fn delete_category_via_entry(world: &mut LedgerWorld, name: String) {
     let id: String = {
         let conn = world_conn!(world);
@@ -671,7 +639,6 @@ fn delete_category_via_entry(world: &mut LedgerWorld, name: String) {
 /// 尝试把最近创建的交易改为非法金额（金额必须大于 0）：修改事务内失败回滚，
 /// 写入口闭包失败不置脏（ADR-0032）。错误记入 last_error 供「应返回错误」断言。
 #[when(expr = "尝试把最近创建的交易修改为非法金额")]
-#[rstest_bdd_macros::when("尝试把最近创建的交易修改为非法金额")]
 fn update_last_transaction_invalid_amount(world: &mut LedgerWorld) {
     let id = world
         .txn
@@ -694,7 +661,6 @@ fn update_last_transaction_invalid_amount(world: &mut LedgerWorld) {
 /// 批量导入（dedup=true，各行日期互异不撞去重身份），提交点置脏；步骤内断言整批
 /// 成功（逐条结果均 success）。
 #[when(expr = "批量导入 {int} 笔支出各 {int} 分到账户 {string}")]
-#[rstest_bdd_macros::when("批量导入 {count:usize} 笔支出各 {cents:i64} 分到账户 {account:string}")]
 fn batch_import_expenses_via_entry(
     world: &mut LedgerWorld,
     count: usize,
@@ -721,7 +687,6 @@ fn batch_import_expenses_via_entry(
 /// 非单行 `Invalid` 的硬错误（`AppError::NotFound`），整批回滚；写入口闭包失败
 /// 不置脏（ADR-0032）。错误记入 last_error 供「应返回错误」断言。
 #[when(expr = "批量导入两笔交易但退款行引用不存在的原支出交易")]
-#[rstest_bdd_macros::when("批量导入两笔交易但退款行引用不存在的原支出交易")]
 fn batch_import_rollback_via_entry(world: &mut LedgerWorld) {
     let account_id = world.account_id("现金");
     let expense = expense_input(1500, &account_id, "2026-02-01");
@@ -744,7 +709,6 @@ fn batch_import_rollback_via_entry(world: &mut LedgerWorld) {
 /// 购买交易（满足溯源守卫，后端以交易值带出日期/成本/币种，入参占位值被覆盖），
 /// 成功即置脏。
 #[when(expr = "创建物品 {string} 关联最近创建的购买交易")]
-#[rstest_bdd_macros::when("创建物品 {name:string} 关联最近创建的购买交易")]
 fn create_item_via_entry(world: &mut LedgerWorld, name: String) {
     let tx_id = world
         .txn
@@ -767,7 +731,6 @@ fn create_item_via_entry(world: &mut LedgerWorld, name: String) {
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）修改最近创建的物品的备注
 /// （其余字段读现值保持不变，溯源保持；空字符串规为清除），成功即置脏。
 #[when(expr = "修改最近创建的物品备注为 {string}")]
-#[rstest_bdd_macros::when("修改最近创建的物品备注为 {note:string}")]
 fn update_last_item_note_via_entry(world: &mut LedgerWorld, note: String) {
     let id = world.item.last_item_id.clone().expect("没有已创建的物品");
     // 读现值构造入参：本步骤只改备注，其余字段原样保留（不与创建场景数据耦合）。
@@ -795,7 +758,6 @@ fn update_last_item_note_via_entry(world: &mut LedgerWorld, note: String) {
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）以今天为处置日处置最近
 /// 创建的物品（不填残值），成功即置脏。
 #[when(expr = "今天处置最近创建的物品")]
-#[rstest_bdd_macros::when("今天处置最近创建的物品")]
 fn dispose_last_item_today_via_entry(world: &mut LedgerWorld) {
     let id = world.item.last_item_id.clone().expect("没有已创建的物品");
     let input = ItemDisposeInput {
@@ -808,7 +770,6 @@ fn dispose_last_item_today_via_entry(world: &mut LedgerWorld) {
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）软删除最近创建的物品，
 /// 成功即置脏。
 #[when(expr = "软删除最近创建的物品")]
-#[rstest_bdd_macros::when("软删除最近创建的物品")]
 fn delete_last_item_via_entry(world: &mut LedgerWorld) {
     let id = world.item.last_item_id.clone().expect("没有已创建的物品");
     world_write!(world, |conn| delete_item(conn, &id, &mut || {})).expect("软删除物品失败");
@@ -820,7 +781,6 @@ fn delete_last_item_via_entry(world: &mut LedgerWorld) {
 
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）写入一条汇率，成功即置脏。
 #[when(expr = "写入汇率 {string} 兑 {string} 为 {float}")]
-#[rstest_bdd_macros::when("写入汇率 {base:string} 兑 {quote:string} 为 {rate:f64}")]
 fn write_exchange_rate_via_entry(world: &mut LedgerWorld, base: String, quote: String, rate: f64) {
     let input = ExchangeRateInput {
         base_code: base,
@@ -851,7 +811,6 @@ fn create_instrument_entry(
 
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）新建标的，成功即置脏。
 #[when(expr = "新建标的 {string} 名称 {string} 币种 {string}")]
-#[rstest_bdd_macros::when("新建标的 {symbol:string} 名称 {name:string} 币种 {currency:string}")]
 fn create_instrument_via_entry(
     world: &mut LedgerWorld,
     symbol: String,
@@ -864,7 +823,6 @@ fn create_instrument_via_entry(
 /// 同名标的再建（名称有变 → 走 create_instrument 的信息更新分支），成功即置脏：
 /// 钉住「标的信息更新也算市场数据写入」。
 #[when(expr = "再次新建标的 {string} 名称 {string} 币种 {string}")]
-#[rstest_bdd_macros::when("再次新建标的 {symbol:string} 名称 {name:string} 币种 {currency:string}")]
 fn recreate_instrument_via_entry(
     world: &mut LedgerWorld,
     symbol: String,
@@ -876,7 +834,6 @@ fn recreate_instrument_via_entry(
 
 /// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）写入一条标的现价，成功即置脏。
 #[when(expr = "写入标的 {string} 现价 {int} 币种 {string}")]
-#[rstest_bdd_macros::when("写入标的 {symbol:string} 现价 {price:i64} 币种 {currency:string}")]
 fn write_market_price_via_entry(
     world: &mut LedgerWorld,
     symbol: String,
@@ -903,7 +860,6 @@ fn write_market_price_via_entry(
 }
 
 #[then(expr = "恢复的数据库自动备份状态应为「未脏且已重新计时」")]
-#[rstest_bdd_macros::then("恢复的数据库自动备份状态应为「未脏且已重新计时」")]
 fn restored_auto_backup_state_reset(world: &mut LedgerWorld) {
     let p = world.boot.restored_db_path.as_ref().expect("尚未恢复");
     let conn = open_connection(p).unwrap();
@@ -934,9 +890,6 @@ fn seed_account_and_transactions(
 /// world（后续「创建交易」步骤可按名引用），开启整库加密后把 `world.db` 换成
 /// 凭口令打开的文件库连接——既有备份/自动备份/置脏步骤原样复用。
 #[given(expr = "以主口令 {string} 加密的文件库中已有账户 {string} 与 {int} 条交易")]
-#[rstest_bdd_macros::given(
-    "以主口令 {passphrase:string} 加密的文件库中已有账户 {account:string} 与 {count:usize} 条交易"
-)]
 fn given_encrypted_file_lib(
     world: &mut LedgerWorld,
     passphrase: String,
@@ -967,7 +920,6 @@ fn given_encrypted_file_lib(
 
 /// 一份来自明文库的备份（独立明文临时库 + 手动备份产物，跨模式恢复场景用）。
 #[given(expr = "一份含 {int} 条交易的明文库备份")]
-#[rstest_bdd_macros::given("一份含 {count:usize} 条交易的明文库备份")]
 fn given_plaintext_backup(world: &mut LedgerWorld, count: usize) {
     let dir = std::env::temp_dir().join(format!("ledger-e2e-bak-plain-{}", new_uuid()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -991,7 +943,6 @@ fn given_plaintext_backup(world: &mut LedgerWorld, count: usize) {
 /// 旧版备份：backup.json 只有既有字段、无 encrypted 标记（向后兼容现场）。
 /// 写入自动备份目录并登记为当前备份（列表与恢复两断言共用同一文件）。
 #[when(expr = "备份目录中写入一份缺加密标记的旧版明文备份")]
-#[rstest_bdd_macros::when("备份目录中写入一份缺加密标记的旧版明文备份")]
 fn write_legacy_plaintext_backup(world: &mut LedgerWorld) {
     let dir = world
         .boot
@@ -1029,7 +980,6 @@ fn write_legacy_plaintext_backup(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "备份包内的数据库应探测为密文")]
-#[rstest_bdd_macros::then("备份包内的数据库应探测为密文")]
 fn backup_zip_db_is_encrypted(world: &mut LedgerWorld) {
     let p = world.boot.last_backup_path.as_ref().expect("尚未备份");
     let extracted = extract_zip_db(p);
@@ -1042,7 +992,6 @@ fn backup_zip_db_is_encrypted(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "自动备份产物应探测为密文")]
-#[rstest_bdd_macros::then("自动备份产物应探测为密文")]
 fn auto_backup_product_is_encrypted(world: &mut LedgerWorld) {
     let p = world
         .boot
@@ -1059,7 +1008,6 @@ fn auto_backup_product_is_encrypted(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "备份元数据应标记为已加密")]
-#[rstest_bdd_macros::then("备份元数据应标记为已加密")]
 fn backup_meta_encrypted(world: &mut LedgerWorld) {
     let p = world.boot.last_backup_path.as_ref().expect("尚未备份");
     assert!(
@@ -1069,7 +1017,6 @@ fn backup_meta_encrypted(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "自动备份元数据应标记为已加密")]
-#[rstest_bdd_macros::then("自动备份元数据应标记为已加密")]
 fn auto_backup_meta_encrypted(world: &mut LedgerWorld) {
     let p = world
         .boot
@@ -1083,9 +1030,6 @@ fn auto_backup_meta_encrypted(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "受管备份列表应显示 {int} 份密文备份与 {int} 份明文备份")]
-#[rstest_bdd_macros::then(
-    "受管备份列表应显示 {encrypted:usize} 份密文备份与 {plaintext:usize} 份明文备份"
-)]
 fn managed_list_encrypted_flags(world: &mut LedgerWorld, encrypted: usize, plaintext: usize) {
     let dir = world.boot.auto_backup_dir.as_ref().expect("无受管备份目录");
     let files = list_managed_backups(dir, None).expect("列受管备份失败");
@@ -1102,7 +1046,6 @@ fn managed_list_encrypted_flags(world: &mut LedgerWorld, encrypted: usize, plain
 }
 
 #[then(expr = "恢复的数据库应探测为密文库")]
-#[rstest_bdd_macros::then("恢复的数据库应探测为密文库")]
 fn restored_db_is_encrypted(world: &mut LedgerWorld) {
     let p = world.boot.restored_db_path.as_ref().expect("尚未恢复");
     assert_eq!(
@@ -1113,7 +1056,6 @@ fn restored_db_is_encrypted(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "恢复的数据库应探测为明文库")]
-#[rstest_bdd_macros::then("恢复的数据库应探测为明文库")]
 fn restored_db_is_plaintext(world: &mut LedgerWorld) {
     let p = world.boot.restored_db_path.as_ref().expect("尚未恢复");
     assert_eq!(
@@ -1124,7 +1066,6 @@ fn restored_db_is_plaintext(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "凭主口令 {string} 打开恢复的数据库应包含 {int} 条交易")]
-#[rstest_bdd_macros::then("凭主口令 {passphrase:string} 打开恢复的数据库应包含 {count:i64} 条交易")]
 fn restored_db_count_with_passphrase(world: &mut LedgerWorld, passphrase: String, count: i64) {
     let p = world.boot.restored_db_path.as_ref().expect("尚未恢复");
     let n = count_transactions_in_file(p, Some(&passphrase));
@@ -1132,7 +1073,6 @@ fn restored_db_count_with_passphrase(world: &mut LedgerWorld, passphrase: String
 }
 
 #[then(expr = "恢复应失败且错误码为 {string}")]
-#[rstest_bdd_macros::then("恢复应失败且错误码为 {code:string}")]
 fn restore_failed_with_code(world: &mut LedgerWorld, code: String) {
     let error = world.last_app_error.as_ref().expect("预期恢复失败");
     match error {
@@ -1144,7 +1084,6 @@ fn restore_failed_with_code(world: &mut LedgerWorld, code: String) {
 }
 
 #[then(expr = "恢复安全备份应探测为密文")]
-#[rstest_bdd_macros::then("恢复安全备份应探测为密文")]
 fn safety_backup_is_encrypted(world: &mut LedgerWorld) {
     let dir = world
         .boot
@@ -1160,9 +1099,6 @@ fn safety_backup_is_encrypted(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "用恢复安全备份回滚后凭主口令 {string} 打开应包含 {int} 条交易")]
-#[rstest_bdd_macros::then(
-    "用恢复安全备份回滚后凭主口令 {passphrase:string} 打开应包含 {count:i64} 条交易"
-)]
 fn rollback_from_safety_backup(world: &mut LedgerWorld, passphrase: String, count: i64) {
     let safety_dir = world
         .boot

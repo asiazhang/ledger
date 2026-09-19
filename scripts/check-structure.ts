@@ -73,8 +73,7 @@
 // 成员目录（crates/*）与 CRATES 双向全等（新 crate 未登记即红）；每个成员须写
 // `[lints] workspace = true` 继承六件套门禁（漏写即红——clippy 本身不会报）；
 // 依赖方向按 壳 → 域 → 基础设施 单向核对；scripts/check.sh、scripts/test.sh 与
-// scripts/lint-fix.sh、CI workflow 的 cargo clippy/test/fmt 与 cargo nextest run
-// （ticket #1496 起 e2e 新目标的测试执行入口）命令须显式 `--workspace`
+// scripts/lint-fix.sh、CI workflow 的 cargo clippy/test/fmt 命令须显式 `--workspace`
 // 或 `--all`（非虚拟 workspace 下默认只作用于根包，缺范围参数会静默漏检成员；
 // `--all-targets` 等 `--all*` 旗标不算范围——\b 匹配会在这里假绿，故按整词判定）；
 // 引号内的命令字样是说明文字不算命令面，且宿主里一条命令都核不到即红（空集假绿，
@@ -1443,29 +1442,8 @@ const WORKSPACE_COMMAND_FILES = [
 const WORKSPACE_SCOPE_PATTERN = /(?:^|\s)--workspace(?:\s|$)/;
 const ALL_SCOPE_PATTERN = /(?:^|\s)--all(?:\s|$)/;
 
-/**
- * cargo 命令词（workspace 范围核对的适用范围）。两词形态 `cargo nextest run`
- * （ticket #1496 起 e2e 新目标的测试执行入口）与单词命令同待遇——缺 `--workspace`
- * 同样会静默漏跑成员 crate；`cargo nextest --version` 这类非运行命令不在列。
- */
-const CARGO_SUBCOMMANDS = ["clippy", "test", "fmt", "nextest run"] as const;
-
-/**
- * shell 扫描用的命令词交替组（由 `CARGO_SUBCOMMANDS` 派生，单一事实源）：两词命令
- * 在源码里是空白分隔的两段，`nextest run` → `nextest\s+run`。数组形态与逐行形态
- * 共用同一份词表，新增命令只需改一处。
- */
-const CARGO_SUBCOMMAND_ALTERNATION = CARGO_SUBCOMMANDS.map((command) =>
-  command.split(" ").join("\\s+"),
-).join("|");
-
-/** 数组形态 cargo 命令词（`['clippy', …]` 或 `['nextest', 'run', …]`），非命令面返回 null。 */
-function arrayCargoCommand(elements: string[]): string | null {
-  const [first, second] = elements;
-  if (first === undefined) return null;
-  if (first === "nextest") return second === "run" ? "nextest run" : null;
-  return (CARGO_SUBCOMMANDS as readonly string[]).includes(first) ? first : null;
-}
+/** cargo 命令词（workspace 范围核对的适用范围）。 */
+const CARGO_SUBCOMMANDS = ["clippy", "test", "fmt"] as const;
 
 /**
  * shell / YAML 引号与注释掩码（逐行，不跨行）：把解释性文字换成空格、保留列位置。
@@ -1571,8 +1549,13 @@ function tsCargoArrays(source: string): TsCargoArray[] {
 function checkTsCargoArrays(rel: string, source: string, problems: string[]): number {
   let hits = 0;
   for (const { line, elements } of tsCargoArrays(source)) {
-    const subcommand = arrayCargoCommand(elements);
-    if (subcommand === null) continue;
+    const subcommand = elements[0];
+    if (
+      subcommand === undefined ||
+      !(CARGO_SUBCOMMANDS as readonly string[]).includes(subcommand)
+    ) {
+      continue;
+    }
     hits += 1;
     if (elements.includes("--workspace") || elements.includes("--all")) continue;
     problems.push(
@@ -2394,7 +2377,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
       if (trimmed === "" || trimmed.startsWith("#") || isTsCommentLine(trimmed)) return;
       // 逐条命令核对（一行可有 `cargo fmt … && cargo clippy …` 多条：只看首个
       // 匹配会把未覆盖的 clippy 放过去）；命令段截到下一个 shell 控制符为止。
-      const re = new RegExp(`\\bcargo\\s+(${CARGO_SUBCOMMAND_ALTERNATION})\\b`, "g");
+      const re = /\bcargo\s+(clippy|test|fmt)\b/g;
       let m: RegExpExecArray | null;
       while ((m = re.exec(line))) {
         hits += 1;
@@ -2404,9 +2387,8 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
         // `--all` 按整词才算 workspace 别名：`--all-targets` / `--all-features`
         // 的 `\b` 落在 `-` 前，用 \b 会假绿（本核对要拦的正是这一形态）。
         if (WORKSPACE_SCOPE_PATTERN.test(segment) || ALL_SCOPE_PATTERN.test(segment)) continue;
-        const command = (m[1] ?? "").replace(/\s+/g, " ");
         problems.push(
-          `✗ workspace 命令覆盖：${rel}:${i + 1} cargo ${command} 缺 --workspace` +
+          `✗ workspace 命令覆盖：${rel}:${i + 1} cargo ${m[1]} 缺 --workspace` +
             "（非虚拟 workspace 下默认只作用于根包，会静默漏检成员 crate）\n" +
             `    ${line.trim()}`,
         );

@@ -7,12 +7,6 @@
 
 use cucumber::{then, when};
 
-// 物品溯源关联主题步骤**双注册**（spec #1494 / ticket #1500）：同一函数同时挂 cucumber
-// 与 rstest-bdd 两个属性宏——旧目标行为零变化，新目标能匹配同一批步骤，函数体与断言
-// 唯一不复制。占位符按参数名与类型对齐（`{string}` → `{<参数名>:string}`、`{int}` →
-// 有符号/无符号整数 hint），引号剥离与数值解析语义与 cucumber 一致；切换只改属性形态，
-// 不改断言语义（CONTEXT-testing「行为等价判据」）。
-
 use ledger_infra::error::AppError;
 use ledger_item::ItemInput;
 use ledger_item::domain::{create_item, update_item};
@@ -39,7 +33,6 @@ fn build_linked_input(name: &str, tx_id: &str) -> ItemInput {
 /// 尝试不关联购买交易创建物品并捕获错误（issue #207 溯源守卫拒绝路径：
 /// 创建请求缺溯源直接拒绝，不发失效信号、不落库）。
 #[when(expr = "尝试创建物品 {string} 不关联购买交易")]
-#[rstest_bdd_macros::when("尝试创建物品 {name:string} 不关联购买交易")]
 fn try_create_item_unlinked(world: &mut LedgerWorld, name: String) {
     let mut signals = 0;
     let result = create_item(
@@ -56,7 +49,6 @@ fn try_create_item_unlinked(world: &mut LedgerWorld, name: String) {
 }
 
 #[then(expr = "第 {int} 件物品购买日期应为 {string}")]
-#[rstest_bdd_macros::then("第 {n:usize} 件物品购买日期应为 {date:string}")]
 fn check_item_purchase_date(world: &mut LedgerWorld, n: usize, date: String) {
     assert_eq!(world.item.nth(n).item.purchase_date, date);
 }
@@ -67,9 +59,6 @@ fn check_item_purchase_date(world: &mut LedgerWorld, n: usize, date: String) {
 
 /// 创建一笔外币支出交易（通用「创建交易」步骤固定 CNY，此处补币种参数）。
 #[when(expr = "创建支出交易 金额 {int} 币种 {string} 到账户 {string} 日期 {string}")]
-#[rstest_bdd_macros::when(
-    "创建支出交易 金额 {amount:i64} 币种 {currency:string} 到账户 {account_name:string} 日期 {date:string}"
-)]
 fn create_expense_txn_with_currency(
     world: &mut LedgerWorld,
     amount: i64,
@@ -88,7 +77,6 @@ fn create_expense_txn_with_currency(
 
 /// 记住最近创建的交易为关联购买交易（后续「关联该购买交易」步骤引用它）。
 #[when(expr = "记住该交易为关联购买交易")]
-#[rstest_bdd_macros::when("记住该交易为关联购买交易")]
 fn remember_purchase_transaction(world: &mut LedgerWorld) {
     world.item.remembered_purchase_transaction_id = world.txn.last_transaction_id.clone();
 }
@@ -96,7 +84,6 @@ fn remember_purchase_transaction(world: &mut LedgerWorld) {
 /// 创建物品并关联记住的购买交易：入参日期/成本为占位值，
 /// 后端必须用交易值覆盖（自动带出）。
 #[when(expr = "创建物品 {string} 关联该购买交易")]
-#[rstest_bdd_macros::when("创建物品 {name:string} 关联该购买交易")]
 fn create_item_linked(world: &mut LedgerWorld, name: String) {
     let tx_id = world
         .item
@@ -120,7 +107,6 @@ fn create_item_linked(world: &mut LedgerWorld, name: String) {
 
 /// 尝试创建关联记住交易的物品并捕获错误（非 expense 报错路径）。
 #[when(expr = "尝试创建物品 {string} 关联该购买交易")]
-#[rstest_bdd_macros::when("尝试创建物品 {name:string} 关联该购买交易")]
 fn try_create_item_linked(world: &mut LedgerWorld, name: String) {
     let tx_id = world
         .item
@@ -142,7 +128,6 @@ fn try_create_item_linked(world: &mut LedgerWorld, name: String) {
 
 /// 尝试创建关联不存在交易的物品并捕获错误（固定假 id 走不存在报错路径）。
 #[when(expr = "尝试创建物品 {string} 关联不存在的购买交易")]
-#[rstest_bdd_macros::when("尝试创建物品 {name:string} 关联不存在的购买交易")]
 fn try_create_item_linked_missing(world: &mut LedgerWorld, name: String) {
     let mut signals = 0;
     let result = create_item(
@@ -162,9 +147,6 @@ fn try_create_item_linked_missing(world: &mut LedgerWorld, name: String) {
 /// 两种语义由不同场景分别断言。
 #[when(
     expr = "修改物品名称为 {string} 购买日期 {string} 总成本 {int} 币种 {string} 关联该购买交易 备注为 {string}"
-)]
-#[rstest_bdd_macros::when(
-    "修改物品名称为 {name:string} 购买日期 {date:string} 总成本 {cost_cents:i64} 币种 {currency:string} 关联该购买交易 备注为 {note:string}"
 )]
 fn update_item_linked(
     world: &mut LedgerWorld,
@@ -201,9 +183,6 @@ fn update_item_linked(
 #[when(
     expr = "尝试修改物品名称为 {string} 购买日期 {string} 总成本 {int} 币种 {string} 关联该购买交易 备注为 {string}"
 )]
-#[rstest_bdd_macros::when(
-    "尝试修改物品名称为 {name:string} 购买日期 {date:string} 总成本 {cost_cents:i64} 币种 {currency:string} 关联该购买交易 备注为 {note:string}"
-)]
 fn try_update_item_linked(
     world: &mut LedgerWorld,
     name: String,
@@ -238,7 +217,6 @@ fn try_update_item_linked(
 
 /// 断言第 n 件物品的溯源指向记住的关联购买交易。
 #[then(expr = "第 {int} 件物品关联购买交易应为记住的交易")]
-#[rstest_bdd_macros::then("第 {n:usize} 件物品关联购买交易应为记住的交易")]
 fn check_item_linked_transaction(world: &mut LedgerWorld, n: usize) {
     let expected = world
         .item

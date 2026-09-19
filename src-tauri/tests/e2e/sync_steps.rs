@@ -90,7 +90,6 @@ fn device_id_of(conn: &Connection) -> String {
 // ---------------------------------------------------------------------------
 
 #[given(expr = "以当前账本配置同步通道 空间 {string}")]
-#[rstest_bdd_macros::given("以当前账本配置同步通道 空间 {space:string}")]
 fn configure_channel(world: &mut LedgerWorld, space: String) {
     configure_channel_impl(world, space);
 }
@@ -98,7 +97,6 @@ fn configure_channel(world: &mut LedgerWorld, space: String) {
 /// 同一段落在「用户动作」语境下也出现（旅程首步「配置通道」）：cucumber 按关键字
 /// 匹配步骤定义，故 When 形态另行注册、委托同一实现（语义零分叉）。
 #[when(expr = "以当前账本配置同步通道 空间 {string}")]
-#[rstest_bdd_macros::when("以当前账本配置同步通道 空间 {space:string}")]
 fn configure_channel_when(world: &mut LedgerWorld, space: String) {
     configure_channel_impl(world, space);
 }
@@ -116,9 +114,6 @@ fn configure_channel_impl(world: &mut LedgerWorld, space: String) {
 }
 
 #[given(expr = "写入一笔支出 {int} 到账户 {string} 日期 {string} 备注 {string}")]
-#[rstest_bdd_macros::given(
-    "写入一笔支出 {amount:i64} 到账户 {account:string} 日期 {date:string} 备注 {note:string}"
-)]
 fn write_expense(
     world: &mut LedgerWorld,
     amount: i64,
@@ -140,7 +135,6 @@ fn write_expense(
 /// 对端把同一笔数据推上同一通道：另起一个「对端设备」库（同构种子）跑一轮发布。
 /// 桩根目录按同步空间共享，故对端的段对本端可见——本端随后拉取即得真实数据。
 #[given(expr = "对端账本已把同一笔数据推上同一通道")]
-#[rstest_bdd_macros::given("对端账本已把同一笔数据推上同一通道")]
 fn peer_publishes(world: &mut LedgerWorld) {
     // 对端库：e2e 共享种子形态（`crate::common`，非测试工厂——ADR-0086 决策 9
     // 分层互斥）。账户 + 一笔支出都经域公开写入口，产出账户 op 与交易 op 随行：
@@ -169,7 +163,6 @@ fn peer_publishes(world: &mut LedgerWorld) {
 ///（「挂起通知可见」的被测前提）。此形态无公开入口可产出（域写入口有外键守卫），
 /// 故经共享的线格式替身成帧（issue #956），字节形态与产品消费的形状同源。
 #[given(expr = "对端投递一条引用不存在账户的操作")]
-#[rstest_bdd_macros::given("对端投递一条引用不存在账户的操作")]
 fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
     let layout = ChannelLayout::new("default").expect("布局应可构造");
     let config = {
@@ -225,7 +218,6 @@ fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
 }
 
 #[given(expr = "通道指向不可达的同步地址")]
-#[rstest_bdd_macros::given("通道指向不可达的同步地址")]
 fn point_to_unreachable_channel(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     settings::set(
@@ -250,7 +242,6 @@ fn point_to_unreachable_channel(world: &mut LedgerWorld) {
 // ---------------------------------------------------------------------------
 
 #[when(expr = "打开应用即同步一轮")]
-#[rstest_bdd_macros::when("打开应用即同步一轮")]
 fn auto_sync_once(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     world.boot.sync_last_auto_round = Some(blocking(|| {
@@ -259,7 +250,6 @@ fn auto_sync_once(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "手动触发一轮同步")]
-#[rstest_bdd_macros::when("手动触发一轮同步")]
 fn manual_sync_once(world: &mut LedgerWorld) {
     let channel = channel_of(world);
     let conn = world_conn!(world);
@@ -273,7 +263,6 @@ fn manual_sync_once(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "以密文库会话形态打开应用即同步一轮")]
-#[rstest_bdd_macros::when("以密文库会话形态打开应用即同步一轮")]
 fn auto_sync_encrypted_session(world: &mut LedgerWorld) {
     // 密文库会话形态：记入会话口令（自动轮次据此封包，不读钥匙串）。
     SessionEnvelope::remember(SessionEnvelope::Encrypted("master-pass".into()));
@@ -291,7 +280,6 @@ fn auto_sync_encrypted_session(world: &mut LedgerWorld) {
 // ---------------------------------------------------------------------------
 
 #[then(expr = "通道上应有本机账本目录")]
-#[rstest_bdd_macros::then("通道上应有本机账本目录")]
 fn channel_has_book_dir(world: &mut LedgerWorld) {
     let channel = channel_of(world);
     let conn = world_conn!(world);
@@ -312,7 +300,6 @@ fn channel_has_book_dir(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "本轮同步应上传 {int} 条操作")]
-#[rstest_bdd_macros::then("本轮同步应上传 {expected:usize} 条操作")]
 fn uploaded_ops_is(world: &mut LedgerWorld, expected: usize) {
     let round = world
         .boot
@@ -326,7 +313,6 @@ fn uploaded_ops_is(world: &mut LedgerWorld, expected: usize) {
 }
 
 #[then(expr = "本端应已应用对端操作")]
-#[rstest_bdd_macros::then("本端应已应用对端操作")]
 fn applied_foreign_ops(world: &mut LedgerWorld) {
     let report = world
         .boot
@@ -340,7 +326,6 @@ fn applied_foreign_ops(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "同步状态应显示已配置通道")]
-#[rstest_bdd_macros::then("同步状态应显示已配置通道")]
 fn status_channel_configured(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     assert!(
@@ -350,7 +335,6 @@ fn status_channel_configured(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "同步状态应显示未配置通道")]
-#[rstest_bdd_macros::then("同步状态应显示未配置通道")]
 fn status_channel_absent(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     assert!(
@@ -360,7 +344,6 @@ fn status_channel_absent(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "同步状态应带上次同步时刻")]
-#[rstest_bdd_macros::then("同步状态应带上次同步时刻")]
 fn status_has_last_sync_at(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     let stamp: Option<String> =
@@ -369,7 +352,6 @@ fn status_has_last_sync_at(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "同步轮次应零动作")]
-#[rstest_bdd_macros::then("同步轮次应零动作")]
 fn auto_sync_was_noop(world: &mut LedgerWorld) {
     let round = world
         .boot
@@ -383,7 +365,6 @@ fn auto_sync_was_noop(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "挂起队列应有 {int} 条不可重放操作")]
-#[rstest_bdd_macros::then("挂起队列应有 {expected:usize} 条不可重放操作")]
 fn parked_count_is(world: &mut LedgerWorld, expected: usize) {
     let conn = world_conn!(world);
     let parked = ledger_sync_engine::parked_ops(&conn).expect("读挂起队列应成功");
@@ -391,7 +372,6 @@ fn parked_count_is(world: &mut LedgerWorld, expected: usize) {
 }
 
 #[then(expr = "挂起通知应携带码化原因")]
-#[rstest_bdd_macros::then("挂起通知应携带码化原因")]
 fn parked_notice_has_code(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     let parked = ledger_sync_engine::parked_ops(&conn).expect("读挂起队列应成功");
@@ -405,7 +385,6 @@ fn parked_notice_has_code(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "会话信封形态应为密文")]
-#[rstest_bdd_macros::then("会话信封形态应为密文")]
 fn session_is_encrypted(world: &mut LedgerWorld) {
     assert!(
         world.boot.sync_session_encrypted,
@@ -414,7 +393,6 @@ fn session_is_encrypted(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "同步轮次应封包上传")]
-#[rstest_bdd_macros::then("同步轮次应封包上传")]
 fn auto_round_sealed(world: &mut LedgerWorld) {
     let round = world
         .boot
