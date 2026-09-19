@@ -13,18 +13,14 @@
 //!   transactions_source.feature，#1503）在本目标运行，旧目标行为零变化。
 //!   账户 / 交易 / 保单、物品与投资域场景全绿；
 //!   实物资产域 3 个场景受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，
-//!   间歇性红，按 #1500 约定不修（见
-//!   `docs/verification/1500-items-physical-assets-migration.md`）；
+//!   间歇性红，按 #1500 约定不修；
 //! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
 //!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，
 //!   抽共享实现 + 两侧注册适配器（`migration_steps::批量导入交易`、
 //!   `transactions_policy_steps::批量导入挂单交易`、
-//!   `investment_migration_steps::批量导入投资交易`），适配形态见
-//!   `docs/verification/1499-transactions-policy-dual-registration.md` 与
-//!   `docs/verification/1498-transactions-edit-query-dual-registration.md`；
+//!   `investment_migration_steps::批量导入投资交易`）；
 //!   需要 `await` 的行情抓取桩步骤同理保留共享 async 实现 + 两侧适配器，新目标侧
-//!   经唯一接缝 `test_support::block_on` 驱动（见
-//!   `docs/verification/1502-investment-market-dual-registration.md`）；
+//!   经唯一接缝 `test_support::block_on` 驱动；
 //! - 其余域按 spec #1494 的后续票逐域加注册，收口时删旧目标与 cucumber 依赖。
 //!
 //! 并行口径（spec #1494 决策）：进程内 libtest 线程并行对世界构造（内存库 + 迁移）
@@ -474,8 +470,7 @@ fn transaction_convert_and_source_steps_are_registered_in_rstest_bdd() {
 ///
 /// 异步（行情抓取桩）三态：rstest 形态的注册是场景进入新目标的唯一入口，删掉即
 /// `Step not found` 红；其运行方式统一经 `instruments_steps::block_on`（既有接缝
-/// `test_support::block_on`）——删掉该调用点则桩不执行、场景断言行红（负向证据见
-/// `docs/verification/1502-investment-market-dual-registration.md`）。
+/// `test_support::block_on`）——删掉该调用点则桩不执行、场景断言行红。
 ///
 /// 逐条模式的全等覆盖（feature 步骤行 ↔ 注册模式、无漏改 / 无歧义）由静态覆盖
 /// 守门兜底（`bun scripts/check-e2e-step-coverage.ts`）；本断言只担运行时那半。
