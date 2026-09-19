@@ -608,7 +608,7 @@ export const BUDGET_SRC_REL = "crates/budget/src";
  * 零接线（失效信号 notify 回调注入）；反向引用由 cargo 依赖图拒绝（生产依赖
  * 面无根包，dev-dependency 环只覆盖测试目标）。crate 根 lib.rs 是声明与再导
  * 出面（无守门靶向代码），与协议/备份/交易 crate 同款不入清单；域内内联
- * #[cfg(test)] 模块为测试豁免形态不入清单。
+ * #[cfg(test)] 模块与 tests.rs 为测试豁免形态不入清单。
  */
 export const PHYSICAL_ASSET_MODULES: readonly WhitelistEntry[] = [
   {

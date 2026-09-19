@@ -47,6 +47,9 @@ mod crud;
 mod model;
 mod validation;
 
+#[cfg(test)]
+mod tests;
+
 /// 同步重放接缝（跨 crate 消费：sync_engine::registry 经根包再导出面分派外来
 /// 实物资产命令，与本地写同协议。#1102 拆 crate 起 `pub(crate)`→`pub`，签名
 /// 与语义不变，#1092 replay_command 同款）。
