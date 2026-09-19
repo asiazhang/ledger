@@ -1,6 +1,9 @@
 //! 场外基金申赎记账 BDD 步骤（issue #302 / ADR-0038 金额权威）：确认单整分金额 +
 //! 确认份额为权威输入（wire 不携带单价，由后端行为层反算净值），持仓与已实现
 //! 盈亏读回断言（闭合不变式：全平仓 Σ 已实现盈亏 = Σ 卖出金额 − Σ 买入金额）。
+//!
+//! 整文件 12 条步骤**双注册**（spec #1494 / ticket #1502；#1498 先行注册 7 条）：
+//! 改写只涉及属性语法与占位符形态，函数体与断言不变。
 
 use cucumber::{given, then, when};
 use rusqlite::params;
@@ -115,6 +118,9 @@ fn fund_buy(
 #[when(
     expr = "按确认单于 {string} 申购基金 {string} 份额 {float} 金额 {int} 手续费 {int} 到投资账户 {string}"
 )]
+#[rstest_bdd_macros::when(
+    "按确认单于 {date:string} 申购基金 {symbol:string} 份额 {quantity:f64} 金额 {amount_cents:i64} 手续费 {fee_cents:i64} 到投资账户 {account_name:string}"
+)]
 fn fund_buy_on(
     world: &mut LedgerWorld,
     date: String,
@@ -170,6 +176,9 @@ fn fund_sell(
 #[when(
     expr = "按确认单于 {string} 赎回基金 {string} 份额 {float} 金额 {int} 手续费 {int} 从投资账户 {string}"
 )]
+#[rstest_bdd_macros::when(
+    "按确认单于 {date:string} 赎回基金 {symbol:string} 份额 {quantity:f64} 金额 {amount_cents:i64} 手续费 {fee_cents:i64} 从投资账户 {account_name:string}"
+)]
 fn fund_sell_on(
     world: &mut LedgerWorld,
     date: String,
@@ -198,6 +207,9 @@ fn fund_sell_on(
 /// 流出、投资账户现金腿为 0。经同一行为层公开创建入口写入（公开写入口，非裸 SQL）。
 #[when(
     expr = "按确认单出资账户申购基金 {string} 份额 {float} 金额 {int} 手续费 {int} 到投资账户 {string} 出资账户 {string}"
+)]
+#[rstest_bdd_macros::when(
+    "按确认单出资账户申购基金 {symbol:string} 份额 {quantity:f64} 金额 {amount_cents:i64} 手续费 {fee_cents:i64} 到投资账户 {account_name:string} 出资账户 {funding_name:string}"
 )]
 fn fund_buy_with_funding(
     world: &mut LedgerWorld,
@@ -325,6 +337,7 @@ fn assert_fund_realized_pnl_total(world: &mut LedgerWorld, symbol: String, expec
 /// 同时携带投资账户（account_id）与出资账户（funding_account_id）——列表双链接
 /// 与下钻的行级数据前提；「转出 → 转入」断言（transactions_write_steps）同形。
 #[then(expr = "该买入 account_id 应匹配账户 {string}")]
+#[rstest_bdd_macros::then("该买入 account_id 应匹配账户 {account_name:string}")]
 fn check_buy_investment_account(world: &mut LedgerWorld, account_name: String) {
     let txn = world.txn.transactions_list.last().expect("交易列表为空");
     let expected_id = world.account_id(&account_name);
@@ -332,6 +345,7 @@ fn check_buy_investment_account(world: &mut LedgerWorld, account_name: String) {
 }
 
 #[then(expr = "该买入 funding_account_id 应匹配账户 {string}")]
+#[rstest_bdd_macros::then("该买入 funding_account_id 应匹配账户 {account_name:string}")]
 fn check_buy_funding_account(world: &mut LedgerWorld, account_name: String) {
     let txn = world.txn.transactions_list.last().expect("交易列表为空");
     let expected_id = world.account_id(&account_name);
