@@ -49,6 +49,9 @@
 //! - [`model`]：域集中模型——全量投资类型与财务自由度总览（#422 模型域化随域
 //!   归位），经本入口逐类型再导出（禁止 glob）；行情 DTO 已随 ADR-0103 收口为
 //!   [`quote`] 模块的统一载荷；
+//! - [`overview`]：投资概览读数（InvestmentOverview，spec #1532 / issue #1536）——
+//!   投资页「概览」页签的全页折本位币单值：可投资资产合计 + 现金 / 持仓两腿 +
+//!   缺价持仓计数（只增读投影，口径归财务自由度两腿单点；ADR-0130）；
 //! - [`predicates`]：「持仓标的」判定谓词单点（`INVESTED_EXISTS`）；
 //! - [`prices`]：价格写入单点——现价缓存 upsert、价格历史周采样 upsert、
 //!   价格刻度换算（`PRICE_UNITS_PER_FEN` / `price_value_to_cents`）、东财来源标记；
@@ -112,6 +115,7 @@ pub mod holdings;
 pub mod lots;
 pub mod manual_price;
 pub mod mwr;
+pub mod overview;
 pub mod predicates;
 pub mod prices;
 pub mod quote;
@@ -135,10 +139,10 @@ pub use model::{
     AccountPnl, AddFundResult, AddStockInstrumentResult, CurrencyCumulativePnl,
     CurrencyHoldingTotals, CurrencyPnl, FinancialFreedomOverview, Holding, Instrument,
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPnl,
-    InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, ManualPriceInput,
-    ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter, PortfolioTrendPoint,
-    PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary, TransactionConvert, TransactionSplit,
-    TransactionTrade, TrendRange, YearPnl,
+    InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, InvestmentOverview,
+    ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter,
+    PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary,
+    TransactionConvert, TransactionSplit, TransactionTrade, TrendRange, YearPnl,
 };
 
 /// 域 API 再导出：调用面用域语言短名（`investment::list_instruments` 等），
@@ -166,6 +170,7 @@ pub use mwr::{
     AccountMwr, CurrencyMwr, InstrumentMwr, MoneyWeightedReturnSummary, MwrBasis, MwrRange,
     query_money_weighted_return_summary,
 };
+pub use overview::query_investment_overview;
 pub use quote::{Quote, QuoteAdoptionInput, QuoteAdoptionOutcome};
 pub use reports::{
     query_cumulative_pnl_summary, query_holdings_summary_by_currency, query_realized_pnl_summary,

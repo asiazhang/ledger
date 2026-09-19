@@ -767,7 +767,7 @@ export const INVESTMENT_MODULES: readonly WhitelistEntry[] = [
   {
     path: "financial_freedom.rs",
     layer: "域目录",
-    note: "财务自由度口径——可投资资产 × 3% 安全提取率对年度预算总额的覆盖比例（只读，ADR-0048）",
+    note: "财务自由度口径——可投资资产 × 3% 安全提取率对年度预算总额的覆盖比例（只读，ADR-0048）；可投资资产分子按两腿拆分（投资账户现金 / 持仓市值），合计 = 两腿之和（issue #1536）",
   },
   {
     path: "fund.rs",
@@ -794,6 +794,11 @@ export const INVESTMENT_MODULES: readonly WhitelistEntry[] = [
     path: "mwr.rs",
     layer: "域目录",
     note: "资金加权收益率（MoneyWeightedReturn，ADR-0115 / issue #1195）——XIRR 求解器（确定性二分）与三消费面读投影（单标的 / 账户级 / 全账级），现金流与区间期初市值口径见模块头注",
+  },
+  {
+    path: "overview.rs",
+    layer: "域目录",
+    note: "投资概览读数（InvestmentOverview，spec #1532 / issue #1536）——投资页「概览」页签的全页折本位币单值：可投资资产合计 + 现金 / 持仓两腿 + 未计入持仓计数 + 有无投资账户，只读无写入（ADR-0130）",
   },
   { path: "predicates.rs", layer: "域目录", note: "「持仓标的」判定谓词单点（INVESTED_EXISTS）" },
   {

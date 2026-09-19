@@ -47,15 +47,20 @@ impl FromRow for HoldingValue {
     }
 }
 
-/// conn 级聚合：可投资资产分子（折本位币，单点提取，issue #1196）。
+/// 持仓腿取数面（软删与隐藏账户一律排除）：可投资资产·持仓市值腿与其
+/// 「未计入持仓数」（投资概览，[`super::overview`]）共用同一 FROM/WHERE 片段
+/// ——计数面与合计面同源不漂移（ADR-0130 决策 4：口径表达式不复制）。
+pub(crate) const HOLDINGS_VISIBLE_FACET: &str = "FROM v_holdings h \
+     JOIN accounts a ON a.id = h.account_id \
+     WHERE a.is_deleted=0 AND a.is_hidden=0";
+
+/// conn 级聚合：可投资资产分子·**投资账户现金腿**（折全局默认币种，分）。
 ///
-/// 财务自由度的分子与跨账本汇总的「可投资资产」口径同源消费本函数：
-/// Σ 投资账户现金 + Σ 持仓市值，均折全局默认币种；排除隐藏账户（含黑洞——隐藏
-/// 投资账户的现金与持仓一并不进分子）；生活现金不计入；从未录价的持仓按空值
-/// 语义跳过，不以零计入；缺汇率错误上抛（码化 `fx.rate-missing`），不静默混币种。
-pub fn query_investable_assets_cents(conn: &Connection) -> Result<i64> {
-    // 分子·投资账户现金：余额口径与账户列表一致（account_flow，排除隐藏/黑洞），
-    // 仅取投资账户——未投入的现金不被持仓市值体现，漏算会低估可投资资产。
+/// 余额口径与账户列表一致（account_flow，排除隐藏/黑洞），仅取投资账户——未投入
+/// 的现金不被持仓市值体现，漏算会低估可投资资产；生活现金不计入。本腿与持仓市值腿
+/// 相加即 [`query_investable_assets_cents`]（投资概览页签按腿拆分展示，issue #1536，
+/// 口径表达式不复制）。
+pub fn query_investable_assets_cash_leg_cents(conn: &Connection) -> Result<i64> {
     let mut cash_sum = 0i64;
     for ab in list_account_balances_with_visibility(conn, false)? {
         if ab.account.kind == AccountType::Investment {
@@ -63,24 +68,36 @@ pub fn query_investable_assets_cents(conn: &Connection) -> Result<i64> {
                 amount::convert_to_native(conn, ab.balance_cents, &ab.account.currency_code)?;
         }
     }
+    Ok(cash_sum)
+}
 
-    // 分子·持仓市值：v_holdings 市值（账户本位币）→ 全局默认币种；NULL 市值跳过。
-    // 排除隐藏账户（v_holdings 本身不过滤可见性，与净资产管线共用的视图口径在此
-    // 由本口径的分子收紧）。
-    let holdings: Vec<HoldingValue> = query_all(
-        conn,
-        "SELECT h.market_value_cents, a.currency_code \
-         FROM v_holdings h JOIN accounts a ON a.id = h.account_id \
-         WHERE a.is_deleted=0 AND a.is_hidden=0",
-        [],
-    )?;
+/// conn 级聚合：可投资资产分子·**持仓市值腿**（折全局默认币种，分）。
+///
+/// v_holdings 市值（账户本位币）→ 全局默认币种；NULL 市值（缺现价或缺价格币→账户币
+/// 汇率）按空值语义跳过、不以零计入；排除隐藏账户（v_holdings 本身不过滤可见性，
+/// 与净资产管线共用的视图口径在此由本口径收紧）；缺折算到本位币的汇率时错误上抛
+/// （码化 `fx.rate-missing`），不静默混币种。
+pub fn query_investable_assets_holdings_leg_cents(conn: &Connection) -> Result<i64> {
+    let sql = format!("SELECT h.market_value_cents, a.currency_code {HOLDINGS_VISIBLE_FACET}");
+    let holdings: Vec<HoldingValue> = query_all(conn, &sql, [])?;
     let mut holdings_sum = 0i64;
     for h in holdings {
         if let Some(market_value_cents) = h.market_value_cents {
             holdings_sum += amount::convert_to_native(conn, market_value_cents, &h.currency_code)?;
         }
     }
-    Ok(cash_sum + holdings_sum)
+    Ok(holdings_sum)
+}
+
+/// conn 级聚合：可投资资产分子（折本位币，单点提取，issue #1196）。
+///
+/// 财务自由度的分子、跨账本汇总的「可投资资产」与投资概览页签的合计同源消费本
+/// 函数：Σ 投资账户现金 + Σ 持仓市值，均折全局默认币种。两条腿各有单点
+/// （[`query_investable_assets_cash_leg_cents`] / [`query_investable_assets_holdings_leg_cents`]），
+/// 本函数只做相加——口径表达式不复制，两腿拆分与合计不会各说各话。
+pub fn query_investable_assets_cents(conn: &Connection) -> Result<i64> {
+    Ok(query_investable_assets_cash_leg_cents(conn)?
+        + query_investable_assets_holdings_leg_cents(conn)?)
 }
 
 /// conn 级聚合：计算财务自由度总览（只读）。

@@ -29,9 +29,9 @@ use ledger_investment as investment_domain;
 use ledger_investment::{
     AddFundResult, AddStockInstrumentResult, CurrencyCumulativePnl, Holding, Instrument,
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPriceTrend,
-    ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, MoneyWeightedReturnSummary,
-    MwrRange, PnlFilter, PortfolioValueTrend, PriceStaleness, RealizedPnlSummary,
-    TransactionConvert, TransactionSplit, TransactionTrade, TrendRange,
+    InvestmentOverview, ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput,
+    MoneyWeightedReturnSummary, MwrRange, PnlFilter, PortfolioValueTrend, PriceStaleness,
+    RealizedPnlSummary, TransactionConvert, TransactionSplit, TransactionTrade, TrendRange,
 };
 
 #[tauri::command]
@@ -39,6 +39,19 @@ pub async fn list_holdings(db: State<'_, DbState>) -> Result<Vec<Holding>> {
     let conn = db.read_handle();
     read_entry("list_holdings", conn, move |conn| {
         investment_domain::list_holdings(conn)
+    })
+    .await
+}
+
+/// IPC 命令：投资概览（spec #1532 / issue #1536）——投资页「概览」页签的唯一取数
+/// 接口：可投资资产合计与「投资账户现金 / 持仓市值」两腿拆分，全页折全局默认币种
+/// 单值；缺价持仓跳过并给出未计入计数；缺折算汇率按码化错误上抛（卡内警告 + 重试
+/// 在展示层）。纯只读，无写入路径。
+#[tauri::command]
+pub async fn investment_overview(db: State<'_, DbState>) -> Result<InvestmentOverview> {
+    let conn = db.read_handle();
+    read_entry("investment_overview", conn, move |conn| {
+        investment_domain::query_investment_overview(conn)
     })
     .await
 }

@@ -47,6 +47,7 @@ import type {
   InstrumentListFilter,
   InstrumentListResult,
   InstrumentPriceTrend,
+  InvestmentOverview,
   ItemDailyCost,
   ItemDailyTotal,
   ItemDisposeInput,
@@ -286,6 +287,11 @@ export const api = {
 
   // 持仓
   listHoldings: () => invoke<Holding[]>("list_holdings"),
+
+  // 投资概览（spec #1532 / issue #1536）：投资页「概览」页签的唯一取数接口——
+  // 可投资资产合计与「投资账户现金 / 持仓市值」两腿，全页折全局默认币种单值；
+  // 缺汇率按码化错误上抛（展示层卡内警告 + 重试）。纯只读。
+  investmentOverview: () => invoke<InvestmentOverview>("investment_overview"),
 
   // 价格过期检查（issue #1190）：打开投资页时的本地水位检查（零网络请求）——
   // 有通道标的的现价水位超出阈值、或持仓标的缺现价时的计数；计数为 0 不提示，
