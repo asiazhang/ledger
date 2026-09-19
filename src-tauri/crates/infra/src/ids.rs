@@ -3,7 +3,12 @@
 //! 它不是数据库关切——文件工具等原语引用本模块，不穿透 `db/`。
 //!
 //! 既有调用点经 `db` 模块再导出保持可用（根包 `crate::db::…` 再导出面与
-//! 协议 crate 的 `ledger_infra::db::…` 路径零改动），行为与取值逐字节不变。
+//! 协议 crate 的 `ledger_infra::db::…` 路径零改动）。
+//!
+//! `new_uuid` 的取值契约（issue #1489）：v7 **进程内严格单调**——同一毫秒内
+//! 连续生成也严格递增。读路径普遍把「主键时间有序」当同日 / 同刻的插入序破平键
+//!（各域口径见对应词汇表），这条不变量是那些口径成立的前提，不得回退为同毫秒内
+//! 低位随机的形态。
 
 /// 当前 UTC 时间 ISO 字符串。
 pub fn now_iso() -> String {
@@ -16,9 +21,15 @@ pub fn iso_at(now: chrono::DateTime<chrono::Utc>) -> String {
     now.format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
-/// 生成新的 UUID v7（时间有序，适合主键与同步）。
+/// 生成新的 UUID v7（适合主键与同步）。
+///
+/// **进程内严格单调**（issue #1489）：经 uuid crate 的共享 `ContextV7` 计数器，
+/// 同一毫秒内连续生成也严格递增，故本进程内「id 升序 = 插入序」。`NoContext`
+/// 会让同毫秒内的低位随机、id 序与插入序脱钩——下游按 id 取最新 / 破平的读
+/// 口径会读到陈旧行（实物资产详情估值调度敏感缺陷的根因）。跨端落地的行不受
+/// 本进程约束：同步重放沿用来源端 id，同日跨端先后仍按来源端时间序。
 pub fn new_uuid() -> String {
-    uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string()
+    uuid::Uuid::now_v7().to_string()
 }
 
 /// 确定性 UUID v5 的本仓命名空间（跨端一致派生 id 的派生根；先例：V004 默认
@@ -70,5 +81,21 @@ mod tests {
         let b = new_uuid();
         assert_eq!(a.as_bytes()[14], b'7');
         assert_ne!(a, b);
+    }
+
+    /// v7 生成**进程内严格单调**（issue #1489）：同一毫秒内连续生成也不得回退。
+    /// 下游读路径以「id 升序 = 插入序」当同日破平键，回退即读到陈旧行——本单测
+    /// 是这条不变量的确定性守门（删修复即变红）。
+    #[test]
+    fn new_uuid_is_process_monotonic() {
+        let mut previous = new_uuid();
+        for _ in 0..1024 {
+            let next = new_uuid();
+            assert!(
+                next > previous,
+                "uuid v7 应进程内严格单调：{previous} 不应大于等于 {next}"
+            );
+            previous = next;
+        }
     }
 }
