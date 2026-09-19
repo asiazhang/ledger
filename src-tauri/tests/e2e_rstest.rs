@@ -8,8 +8,10 @@
 //!   transactions_edit.feature / transactions_query.feature，#1498；
 //!   transactions_policy.feature，#1499；items_* / physical_asset* 共 8 个 feature，
 //!   #1500；policies.feature / policy_agreement.feature / policy_stats.feature，
-//!   #1501；instruments.feature / manual_quote.feature，#1502）在本目标运行，
-//!   旧目标行为零变化。账户 / 交易 / 保单、物品与投资域场景全绿；
+//!   #1501；instruments.feature / manual_quote.feature，#1502；
+//!   transactions_convert.feature / transactions_funding.feature /
+//!   transactions_source.feature，#1503）在本目标运行，旧目标行为零变化。
+//!   账户 / 交易 / 保单、物品与投资域场景全绿；
 //!   实物资产域 3 个场景受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，
 //!   间歇性红，按 #1500 约定不修（见
 //!   `docs/verification/1500-items-physical-assets-migration.md`）；
@@ -123,11 +125,17 @@ mod step_inputs;
 #[path = "e2e/step_verbs.rs"]
 mod step_verbs;
 #[allow(dead_code)]
+#[path = "e2e/transactions_convert_steps.rs"]
+mod transactions_convert_steps;
+#[allow(dead_code)]
 #[path = "e2e/transactions_edit_steps.rs"]
 mod transactions_edit_steps;
 #[allow(dead_code)]
 #[path = "e2e/transactions_policy_steps.rs"]
 mod transactions_policy_steps;
+#[allow(dead_code)]
+#[path = "e2e/transactions_source_steps.rs"]
+mod transactions_source_steps;
 #[allow(dead_code)]
 #[path = "e2e/transactions_write_steps.rs"]
 mod transactions_write_steps;
@@ -138,6 +146,9 @@ mod transactions_write_steps;
 #[allow(dead_code)]
 #[path = "e2e/scheduled_steps.rs"]
 mod scheduled_steps;
+#[allow(dead_code)]
+#[path = "e2e/search_steps.rs"]
+mod search_steps;
 
 #[allow(dead_code)]
 #[path = "e2e/categories_steps.rs"]
@@ -261,6 +272,23 @@ mod scenarios {
         "tests/e2e/features/manual_quote.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
+
+    // 交易转换 / 出资 / 来源溯源场景（ticket #1503）：4 + 1 + 21 个场景进入
+    // 新目标，与既有域同用一份 `world` fixture（各自独立内存库）。
+    scenarios!(
+        "tests/e2e/features/transactions_convert.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/transactions_funding.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/transactions_source.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
 }
 
 /// 运行时注册表断言（ticket #1497 / #1499 AC1/AC3）的共用形状：某步骤文件整文件
@@ -353,6 +381,90 @@ fn transactions_policy_steps_are_registered_in_rstest_bdd() {
             ),
             (StepKeyword::When, "批量导入挂单交易"),
         ],
+    );
+}
+
+/// 交易转换 / 来源溯源与相关共享步骤的运行时注册（ticket #1503）：
+/// `transactions_convert_steps.rs` 12 条、`transactions_source_steps.rs` 16 条
+/// 整文件注册；`scheduled_steps/create.rs` 按需 4 条计划创建步骤与
+/// `search_steps.rs` 1 条搜索步骤。占位符语义覆盖 string / i64 / usize、f64 小数
+/// 与无占位符直命中；删掉任一新注册即红。
+#[test]
+fn transaction_convert_and_source_steps_are_registered_in_rstest_bdd() {
+    assert_steps_registered_in_rstest_bdd(
+        "transactions_convert_steps.rs",
+        12,
+        &[
+            (
+                StepKeyword::When,
+                "按确认单于 \"2020-05-11\" 转换 \"006793\" 份额 684.77 为 \"519700\" 份额 588.67 转出金额 71229 转入金额 71229 手续费 0 到投资账户 \"基金户\"",
+            ),
+            (
+                StepKeyword::When,
+                "修改转换（转入 \"519700\"）为 转出份额 350 转入份额 344 转出金额 40000 转入金额 40000 手续费 200",
+            ),
+            (
+                StepKeyword::Then,
+                "转换转入 \"519772\" 的明细应为 转出 \"006793\" 份额 2791.11 转入份额 2805.14 转出金额 290332 转入金额 290332 手续费 500",
+            ),
+            (
+                StepKeyword::Then,
+                "全库 Σ 已实现盈亏应等于 Σ 卖出金额 − Σ 买入金额",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "transactions_source_steps.rs",
+        16,
+        &[
+            (
+                StepKeyword::Then,
+                "交易列表第 1 条来源应为保单 \"P2026-201\" 险种 \"重疾险\"",
+            ),
+            (
+                StepKeyword::Then,
+                "交易列表第 1 条来源应为已删除保单 \"P2026-202\" 险种 \"医疗险\"",
+            ),
+            (
+                StepKeyword::Then,
+                "交易列表第 1 条来源应为订阅计划 备注 \"视频会员\"",
+            ),
+            (
+                StepKeyword::Then,
+                "交易列表第 1 条来源应为标的 \"600519\" 名称 \"招商银行\"",
+            ),
+            (StepKeyword::Then, "交易列表第 1 条应无来源"),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "scheduled_steps/create.rs",
+        4,
+        &[
+            (
+                StepKeyword::When,
+                "创建订阅计划 金额 800 币种 \"CNY\" 账户 \"现金\" 起始日期 \"2026-02-01\"",
+            ),
+            (
+                StepKeyword::When,
+                "创建订阅计划 金额 3000 币种 \"CNY\" 账户 \"现金\" 起始日期 \"2026-02-01\" 备注 \"视频会员\"",
+            ),
+            (
+                StepKeyword::When,
+                "创建分期计划 总额 12000 期数 6 账户 \"现金\" 起始日期 \"2026-02-01\" 备注 \"笔记本分期\"",
+            ),
+            (
+                StepKeyword::When,
+                "创建定时转账计划 金额 2000 从 \"工资户\" 到 \"储蓄户\" 期数 12 起始日期 \"2026-02-01\" 备注 \"月度储蓄\"",
+            ),
+        ],
+    );
+
+    assert_steps_registered_in_rstest_bdd(
+        "search_steps.rs",
+        1,
+        &[(StepKeyword::When, "搜索 \"缴费专户\"")],
     );
 }
 
