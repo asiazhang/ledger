@@ -4,11 +4,15 @@
 //!
 //! 本目标是增量迁移的**新通道**，与旧 cucumber 目标（`tests/e2e.rs`，
 //! `harness = false`）并存：
-//! - 已迁入的 feature（accounts.feature，#1495；transactions_policy.feature，
-//!   #1499）在本目标全绿，旧目标行为零变化；
+//! - 已迁入的 feature（accounts.feature，#1495；transactions_write.feature，#1497；
+//!   transactions_edit.feature / transactions_query.feature，#1498；
+//!   transactions_policy.feature，#1499）在本目标全绿，旧目标行为零变化；
 //! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
-//!   属性宏），函数体与断言唯一，不复制；数据表步骤的形态差异与适配形态见
-//!   `docs/verification/1499-transactions-policy-dual-registration.md`；
+//!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，
+//!   抽共享实现 + 两侧注册适配器（`migration_steps::批量导入交易`、
+//!   `transactions_policy_steps::批量导入挂单交易`），适配形态见
+//!   `docs/verification/1499-transactions-policy-dual-registration.md` 与
+//!   `docs/verification/1498-transactions-edit-query-dual-registration.md`；
 //! - 其余域按 spec #1494 的后续票逐域加注册，收口时删旧目标与 cucumber 依赖。
 //!
 //! 并行口径（spec #1494 决策）：进程内 libtest 线程并行对世界构造（内存库 + 迁移）
@@ -76,6 +80,25 @@ mod transactions_policy_steps;
 #[path = "e2e/transactions_write_steps.rs"]
 mod transactions_write_steps;
 
+#[allow(dead_code)]
+#[path = "e2e/categories_steps.rs"]
+mod categories_steps;
+#[allow(dead_code)]
+#[path = "e2e/dashboard_steps.rs"]
+mod dashboard_steps;
+#[allow(dead_code)]
+#[path = "e2e/fund_trade_steps.rs"]
+mod fund_trade_steps;
+#[allow(dead_code)]
+#[path = "e2e/merchants_steps.rs"]
+mod merchants_steps;
+#[allow(dead_code)]
+#[path = "e2e/migration_steps.rs"]
+mod migration_steps;
+#[allow(dead_code)]
+#[path = "e2e/transactions_query_steps.rs"]
+mod transactions_query_steps;
+
 /// 场景绑定与测试世界 fixture：住子模块，避开 rstest fixture 生成模块与顶层
 /// `mod world`（测试支撑模块）的同名冲突。
 mod scenarios {
@@ -92,6 +115,21 @@ mod scenarios {
 
     scenarios!(
         "tests/e2e/features/accounts.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/transactions_write.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/transactions_edit.feature",
+        fixtures = [world: crate::world::LedgerWorld]
+    );
+
+    scenarios!(
+        "tests/e2e/features/transactions_query.feature",
         fixtures = [world: crate::world::LedgerWorld]
     );
 

@@ -19,6 +19,9 @@ use crate::world::LedgerWorld;
 
 /// 分类下钻场景用（issue #377）：中性底座 + 分类覆盖，经创建动词写入。
 #[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 分类 {string}")]
+#[rstest_bdd_macros::when(
+    "创建交易 类型 {kind:string} 金额 {amount:i64} 到账户 {account_name:string} 日期 {date:string} 分类 {category_name:string}"
+)]
 fn create_txn_with_category(
     world: &mut LedgerWorld,
     kind: String,
@@ -46,6 +49,9 @@ fn create_txn_with_category(
 /// 逐行发放秒级时钟（writer 内 `now_iso()`），跨秒即失去平局、前提无法确定性
 /// 构造；写入路径无时刻注入接缝（为测试开口被 ADR-0086 否决）。
 #[when(expr = "批量导入 {int} 笔同日交易 日期 {string} 到账户 {string}")]
+#[rstest_bdd_macros::when(
+    "批量导入 {count:i64} 笔同日交易 日期 {date:string} 到账户 {account_name:string}"
+)]
 fn batch_import_same_day(world: &mut LedgerWorld, count: i64, date: String, account_name: String) {
     let account_id = world.account_id(&account_name);
     for i in 0..count {
@@ -84,6 +90,9 @@ fn assert_paged(
 }
 
 #[then(expr = "分页查询 page {int} page_size {int} 应返回 {int} 条 total {int}")]
+#[rstest_bdd_macros::then(
+    "分页查询 page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
+)]
 fn check_page(
     world: &mut LedgerWorld,
     page: i64,
@@ -105,6 +114,9 @@ fn check_page(
 }
 
 #[then(expr = "分页查询 账户 {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
+#[rstest_bdd_macros::then(
+    "分页查询 账户 {account_name:string} page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
+)]
 fn check_page_account(
     world: &mut LedgerWorld,
     account_name: String,
@@ -129,6 +141,9 @@ fn check_page_account(
 }
 
 #[then(expr = "分页查询 涉及账户 {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
+#[rstest_bdd_macros::then(
+    "分页查询 涉及账户 {account_name:string} page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
+)]
 fn check_page_involving_account(
     world: &mut LedgerWorld,
     account_name: String,
@@ -154,6 +169,9 @@ fn check_page_involving_account(
 
 /// 单值类型经集合参数（spec #1025：原单值 kind 参数已移除，BREAKING）。
 #[then(expr = "分页查询 kind {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
+#[rstest_bdd_macros::then(
+    "分页查询 kind {kind:string} page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
+)]
 fn check_page_kind(
     world: &mut LedgerWorld,
     kind: String,
@@ -182,6 +200,9 @@ fn check_page_kind(
 #[then(
     expr = "分页查询 日期 {string} 至 {string} page {int} page_size {int} 应返回 {int} 条 total {int}"
 )]
+#[rstest_bdd_macros::then(
+    "分页查询 日期 {from:string} 至 {to:string} page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
+)]
 fn check_page_date(
     world: &mut LedgerWorld,
     from: String,
@@ -207,6 +228,9 @@ fn check_page_date(
 }
 
 #[then(expr = "分页查询 商户 {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
+#[rstest_bdd_macros::then(
+    "分页查询 商户 {merchant_name:string} page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
+)]
 fn check_page_merchant(
     world: &mut LedgerWorld,
     merchant_name: String,
@@ -232,6 +256,9 @@ fn check_page_merchant(
 
 #[then(
     expr = "分页查询 商户 {string} 涉及账户 {string} page {int} page_size {int} 应返回 {int} 条 total {int}"
+)]
+#[rstest_bdd_macros::then(
+    "分页查询 商户 {merchant_name:string} 涉及账户 {account_name:string} page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
 )]
 #[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
 fn check_page_merchant_involving_account(
@@ -263,6 +290,9 @@ fn check_page_merchant_involving_account(
 #[then(
     expr = "分页查询 商户 {string} 日期 {string} 至 {string} page {int} page_size {int} 应返回 {int} 条 total {int}"
 )]
+#[rstest_bdd_macros::then(
+    "分页查询 商户 {merchant_name:string} 日期 {from:string} 至 {to:string} page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
+)]
 #[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
 fn check_page_merchant_date(
     world: &mut LedgerWorld,
@@ -292,6 +322,9 @@ fn check_page_merchant_date(
 }
 
 #[then(expr = "分页查询 分类 {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
+#[rstest_bdd_macros::then(
+    "分页查询 分类 {category_name:string} page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
+)]
 fn check_page_category(
     world: &mut LedgerWorld,
     category_name: String,
@@ -316,6 +349,9 @@ fn check_page_category(
 }
 
 #[then(expr = "分页查询 仅无分类 page {int} page_size {int} 应返回 {int} 条 total {int}")]
+#[rstest_bdd_macros::then(
+    "分页查询 仅无分类 page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
+)]
 fn check_page_uncategorized(
     world: &mut LedgerWorld,
     page: i64,
@@ -354,6 +390,9 @@ fn parse_kinds(raw: &str) -> Vec<TransactionKind> {
 /// 导入步骤同先例。库内状态直置（#764 已登记例外）：convert/split 需两标的与在用持仓、
 /// dividend 需标的、refund 需关联原支出——全 kind 统一覆盖无法经公开写入入口构造。
 #[when(expr = "播种 9 类交易各带分类与无分类 日期 {string} 到账户 {string} 分类 {string}")]
+#[rstest_bdd_macros::when(
+    "播种 9 类交易各带分类与无分类 日期 {date:string} 到账户 {account_name:string} 分类 {category_name:string}"
+)]
 fn seed_kinds_with_and_without_category(
     world: &mut LedgerWorld,
     date: String,
@@ -380,6 +419,9 @@ fn seed_kinds_with_and_without_category(
 }
 
 #[then(expr = "分页查询 类型集合 {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
+#[rstest_bdd_macros::then(
+    "分页查询 类型集合 {kinds_raw:string} page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
+)]
 fn check_page_kinds(
     world: &mut LedgerWorld,
     kinds_raw: String,
@@ -406,6 +448,9 @@ fn check_page_kinds(
 /// 下钻载荷组合形态（分类 + 类型集合，报表下钻落点查询）。spec #1025 旅程用。
 #[then(
     expr = "分页查询 分类 {string} 类型集合 {string} page {int} page_size {int} 应返回 {int} 条 total {int}"
+)]
+#[rstest_bdd_macros::then(
+    "分页查询 分类 {category_name:string} 类型集合 {kinds_raw:string} page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
 )]
 fn check_page_category_kinds(
     world: &mut LedgerWorld,
@@ -434,6 +479,7 @@ fn check_page_category_kinds(
 
 /// 列表快照行同时含两个类型（维度内取或，spec #1025 多选旅程）。
 #[then(expr = "列表行应同时含类型 {string} 与 {string}")]
+#[rstest_bdd_macros::then("列表行应同时含类型 {kind_a:string} 与 {kind_b:string}")]
 fn check_rows_contain_both_kinds(world: &mut LedgerWorld, kind_a: String, kind_b: String) {
     let parse =
         |k: &str| TransactionKind::parse(k).unwrap_or_else(|e| panic!("非法 kind: {k}（{e}）"));
@@ -450,6 +496,9 @@ fn check_rows_contain_both_kinds(world: &mut LedgerWorld, kind_a: String, kind_b
 
 #[then(
     expr = "分页查询 类型集合 {string} 仅无分类 page {int} page_size {int} 应返回 {int} 条 total {int}"
+)]
+#[rstest_bdd_macros::then(
+    "分页查询 类型集合 {kinds_raw:string} 仅无分类 page {page:i64} page_size {page_size:i64} 应返回 {expected_count:i64} 条 total {expected_total:i64}"
 )]
 fn check_page_kinds_uncategorized(
     world: &mut LedgerWorld,
@@ -476,6 +525,7 @@ fn check_page_kinds_uncategorized(
 }
 
 #[then(expr = "缺省查询 应返回 {int} 条 total {int}")]
+#[rstest_bdd_macros::then("缺省查询 应返回 {expected_count:i64} 条 total {expected_total:i64}")]
 fn check_default(world: &mut LedgerWorld, expected_count: i64, expected_total: i64) {
     let result = list_transactions_internal(&world_conn!(world), &TransactionListFilter::default())
         .expect("缺省查询失败");
@@ -489,6 +539,7 @@ fn check_default(world: &mut LedgerWorld, expected_count: i64, expected_total: i
 }
 
 #[then(expr = "读取 limit {int} 应返回 {int} 条")]
+#[rstest_bdd_macros::then("读取 limit {limit:i64} 应返回 {expected:i64} 条")]
 fn check_limit(world: &mut LedgerWorld, limit: i64, expected: i64) {
     let result = list_transactions_internal(
         &world_conn!(world),
@@ -506,6 +557,9 @@ fn check_limit(world: &mut LedgerWorld, limit: i64, expected: i64) {
 }
 
 #[then(expr = "翻页 page_size {int} 应覆盖全部 {int} 条无重复无遗漏")]
+#[rstest_bdd_macros::then(
+    "翻页 page_size {page_size:i64} 应覆盖全部 {expected_total:i64} 条无重复无遗漏"
+)]
 fn check_pages_cover_all(world: &mut LedgerWorld, page_size: i64, expected_total: i64) {
     let mut seen: HashSet<String> = HashSet::new();
     let mut page: usize = 1;
