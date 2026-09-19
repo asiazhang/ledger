@@ -27,6 +27,7 @@ fn given_insurer(world: &mut LedgerWorld, name: String) {
 
 /// 创建保司并断言成功（注册名称→ID 映射，供后续步骤按名称引用）。
 #[when(expr = "创建保司 {string}")]
+#[rstest_bdd_macros::when("创建保司 {name:string}")]
 fn create_insurer_step(world: &mut LedgerWorld, name: String) {
     let id = create_insurer(&world_conn!(world), InsurerInput { name: name.clone() })
         .expect("创建保司失败");
@@ -35,6 +36,7 @@ fn create_insurer_step(world: &mut LedgerWorld, name: String) {
 
 /// 尝试创建保司并捕获错误（供「应返回错误」断言：创建撞在用同名被拒）。
 #[when(expr = "尝试创建保司 {string}")]
+#[rstest_bdd_macros::when("尝试创建保司 {name:string}")]
 fn try_create_insurer(world: &mut LedgerWorld, name: String) {
     let result = create_insurer(&world_conn!(world), InsurerInput { name });
     world.last_error = match result {
@@ -51,6 +53,7 @@ fn try_create_insurer(world: &mut LedgerWorld, name: String) {
 /// 按名创建保司（find-or-create 即席创建语义，trim 归一）：未命中即建、精确命中复用。
 /// 返回 id 记入 `last_insurer_by_name_id`（复用断言用），并注册名称→ID 映射。
 #[when(expr = "按名创建保司 {string}")]
+#[rstest_bdd_macros::when("按名创建保司 {name:string}")]
 fn find_or_create_insurer(world: &mut LedgerWorld, name: String) {
     let id = create_insurer_by_name(&world_conn!(world), &name).expect("按名创建保司失败");
     world.policy.last_insurer_by_name_id = Some(id.clone());
@@ -59,6 +62,7 @@ fn find_or_create_insurer(world: &mut LedgerWorld, name: String) {
 
 /// 尝试按名创建保司并捕获错误（供「应返回错误」断言：trim 后空名被拒）。
 #[when(expr = "尝试按名创建保司 {string}")]
+#[rstest_bdd_macros::when("尝试按名创建保司 {name:string}")]
 fn try_find_or_create_insurer(world: &mut LedgerWorld, name: String) {
     let result = create_insurer_by_name(&world_conn!(world), &name);
     world.last_error = match result {
@@ -74,6 +78,7 @@ fn try_find_or_create_insurer(world: &mut LedgerWorld, name: String) {
 
 /// 修改保司名称（改名即时生效：引用指向 id，不回刷历史行）。
 #[when(expr = "修改保司 {string} 名称为 {string}")]
+#[rstest_bdd_macros::when("修改保司 {old_name:string} 名称为 {new_name:string}")]
 fn rename_insurer(world: &mut LedgerWorld, old_name: String, new_name: String) {
     let id = world.insurer_id(&old_name);
     update_insurer_domain(
@@ -90,6 +95,7 @@ fn rename_insurer(world: &mut LedgerWorld, old_name: String, new_name: String) {
 
 /// 尝试改名并捕获错误（供「应返回错误」断言：改名撞在用同名被拒）。
 #[when(expr = "尝试修改保司 {string} 名称为 {string}")]
+#[rstest_bdd_macros::when("尝试修改保司 {old_name:string} 名称为 {new_name:string}")]
 fn try_rename_insurer(world: &mut LedgerWorld, old_name: String, new_name: String) {
     let id = world.insurer_id(&old_name);
     let result = update_insurer_domain(
@@ -124,6 +130,7 @@ fn delete_insurer_step(world: &mut LedgerWorld, name: String) {
 // ---------------------------------------------------------------------------
 
 #[then(expr = "保司表应存在")]
+#[rstest_bdd_macros::then("保司表应存在")]
 fn check_insurer_table_exists(world: &mut LedgerWorld) {
     let table: i64 = world_conn!(world)
         .query_row(
@@ -136,6 +143,7 @@ fn check_insurer_table_exists(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "在用保司总数应为 {int}")]
+#[rstest_bdd_macros::then("在用保司总数应为 {expected:i64}")]
 fn check_insurer_count(world: &mut LedgerWorld, expected: i64) {
     let insurers = list_insurers_domain(&world_conn!(world), false).expect("查询保司失败");
     assert_eq!(
@@ -146,6 +154,7 @@ fn check_insurer_count(world: &mut LedgerWorld, expected: i64) {
 }
 
 #[then(expr = "保司列表应包含 {string}")]
+#[rstest_bdd_macros::then("保司列表应包含 {name:string}")]
 fn check_insurer_contains(world: &mut LedgerWorld, name: String) {
     let insurers = list_insurers_domain(&world_conn!(world), false).expect("查询保司失败");
     assert!(
@@ -156,6 +165,7 @@ fn check_insurer_contains(world: &mut LedgerWorld, name: String) {
 }
 
 #[then(expr = "保司列表应不包含 {string}")]
+#[rstest_bdd_macros::then("保司列表应不包含 {name:string}")]
 fn check_insurer_not_contains(world: &mut LedgerWorld, name: String) {
     let insurers = list_insurers_domain(&world_conn!(world), false).expect("查询保司失败");
     assert!(
@@ -166,12 +176,14 @@ fn check_insurer_not_contains(world: &mut LedgerWorld, name: String) {
 
 /// 含软删全量列表（保司管理「显示已删」切换的数据源）：软删保司仍在其列。
 #[then(expr = "保司含已删列表应包含 {int} 条记录")]
+#[rstest_bdd_macros::then("保司含已删列表应包含 {expected:i64} 条记录")]
 fn check_insurer_all_count(world: &mut LedgerWorld, expected: i64) {
     let insurers = list_insurers_domain(&world_conn!(world), true).expect("查询含已删保司列表失败");
     assert_eq!(insurers.len() as i64, expected, "含已删保司列表数量不匹配");
 }
 
 #[then(expr = "保司含已删列表应包含 {string}")]
+#[rstest_bdd_macros::then("保司含已删列表应包含 {name:string}")]
 fn check_insurer_all_contains(world: &mut LedgerWorld, name: String) {
     let insurers = list_insurers_domain(&world_conn!(world), true).expect("查询含已删保司列表失败");
     assert!(
@@ -183,6 +195,7 @@ fn check_insurer_all_contains(world: &mut LedgerWorld, name: String) {
 /// find-or-create 复用断言：再次按名创建同名保司，返回 id 与上次一致（命中复用，
 /// 不新建行——计数不变由调用场景的「在用保司总数应为 N」共同断言）。
 #[then(expr = "按名创建保司 {string} 应复用已有行")]
+#[rstest_bdd_macros::then("按名创建保司 {name:string} 应复用已有行")]
 fn check_find_or_create_reuses_existing(world: &mut LedgerWorld, name: String) {
     let previous = world
         .policy

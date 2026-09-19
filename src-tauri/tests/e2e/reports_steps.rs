@@ -282,6 +282,9 @@ fn expense_category_id(conn: &rusqlite::Connection, name: &str) -> String {
 
 /// 创建带分类的交易（行为层落库，与真实写路径一致；退款继承原分类由 Writer 保证）。
 #[when(expr = "创建交易 类型 {string} 金额 {int} 分类 {string} 到账户 {string} 日期 {string}")]
+#[rstest_bdd_macros::when(
+    "创建交易 类型 {kind:string} 金额 {amount:i64} 分类 {category_name:string} 到账户 {account_name:string} 日期 {date:string}"
+)]
 fn create_txn_with_category(
     world: &mut LedgerWorld,
     kind: String,
@@ -307,6 +310,7 @@ fn create_txn_with_category(
 
 /// 查询指定年份的支出分类份额（命令层同款核心函数注入，年份联动口径）。
 #[when(expr = "查询 {int} 年分类份额")]
+#[rstest_bdd_macros::when("查询 {year:i64} 年分类份额")]
 fn query_category_shares(world: &mut LedgerWorld, year: i64) {
     world.report.last_category_shares =
         category_shares_rows(&world_conn!(world), "expense", None, Some(year), None, None)
@@ -315,6 +319,7 @@ fn query_category_shares(world: &mut LedgerWorld, year: i64) {
 
 /// 缺省年份查询（全时段口径）：既有调用方不回归的回归锁定。
 #[when(expr = "查询分类份额 全时段")]
+#[rstest_bdd_macros::when("查询分类份额 全时段")]
 fn query_category_shares_all_time(world: &mut LedgerWorld) {
     world.report.last_category_shares =
         category_shares_rows(&world_conn!(world), "expense", None, None, None, None)
@@ -390,6 +395,7 @@ fn check_monthly_summary_row(
 
 /// 分类份额行数断言。
 #[then(expr = "分类份额应为 {int} 行")]
+#[rstest_bdd_macros::then("分类份额应为 {n:usize} 行")]
 fn check_category_shares_len(world: &mut LedgerWorld, n: usize) {
     assert_eq!(
         world.report.last_category_shares.len(),
@@ -407,6 +413,7 @@ fn check_category_shares_len(world: &mut LedgerWorld, n: usize) {
 /// 分类份额第 {index} 名断言：分类名（现名，未分类行为「未分类」）+ 本位币净额，
 /// 顺序即净额降序。
 #[then(expr = "分类份额第 {int} 名应为 {string} 金额 {int}")]
+#[rstest_bdd_macros::then("分类份额第 {index:usize} 名应为 {name:string} 金额 {amount:i64}")]
 fn check_category_shares_row(world: &mut LedgerWorld, index: usize, name: String, amount: i64) {
     let share = world
         .report
