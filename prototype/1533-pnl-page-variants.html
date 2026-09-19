@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>原型 #1533 · 盈亏页按年表并入现金分红</title>
+<!--
+  一次性原型（throwaway），不是生产代码：#1533 盈亏页两表新增「现金分红」「已实现收益合计」。
+  形态通过 ?variant= 切换（now / A / B / C），底部悬浮条与 ←/→ 方向键可翻。
+  配色取 packages/theme 的 Design Tokens 与语义色（涨跌色、分红 kind 色），数据取迁移侧快照中
+  「老婆的且慢」账户的真实按年读数；标注「示意」的数字为占位，不来自账本。
+-->
+<style>
+  :root{
+    --radius-s:6px; --radius-b:8px; --radius-l:12px;
+    --bg-body:#0E0E10; --bg-card:#161618; --bg-popover:#1C1C1E; --bg-hover:rgba(255,255,255,.04);
+    --border:rgba(255,255,255,.08); --divider:rgba(255,255,255,.06);
+    --text-1:#ECECEC; --text-2:#A0A0A0; --text-3:#6E6E6E;
+    --gain:#e88080; --loss:#63e2b7; --dividend:#5eead4; --primary:#F59E0B;
+    --soft:rgba(245,158,11,.10); --soft-2:rgba(245,158,11,.18);
+    --shadow:0 8px 28px rgba(0,0,0,.45);
+  }
+  html[data-theme="light"]{
+    --bg-body:#f0f2f5; --bg-card:#ffffff; --bg-popover:#ffffff; --bg-hover:rgba(0,0,0,.03);
+    --border:#e0e0e6; --divider:#efeff5;
+    --text-1:#1f2225; --text-2:#333639; --text-3:#767c82;
+    --gain:#d03050; --loss:#18a058; --dividend:#0d9488; --primary:#B45309;
+    --soft:rgba(180,83,9,.07); --soft-2:rgba(180,83,9,.14);
+    --shadow:0 8px 28px rgba(0,0,0,.14);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg-body); color:var(--text-1);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .proto-flag{
+    position:fixed; top:0; left:0; z-index:60; padding:4px 10px; border-bottom-right-radius:var(--radius-b);
+    background:var(--primary); color:#1a1a1a; font-size:11px; font-weight:600; letter-spacing:.4px;
+  }
+
+  /* ── 应用外壳 ───────────────────────────────────────────── */
+  .shell{display:flex; min-height:100vh}
+  .sidebar{
+    width:196px; flex:none; border-right:1px solid var(--border); padding:44px 12px 16px;
+    background:var(--bg-card);
+  }
+  html[data-theme="dark"] .sidebar{background:transparent}
+  .brand{font-size:13px; color:var(--text-3); padding:0 8px 14px}
+  .nav-item{
+    display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:var(--radius-b);
+    color:var(--text-2); font-size:13px; margin-bottom:2px;
+  }
+  .nav-item.active{background:var(--soft); color:var(--primary); font-weight:600}
+  .nav-item .dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.7}
+  main{flex:1; min-width:0; padding:44px 24px 96px}
+  .page-title{font-size:18px; font-weight:600; margin:0 0 2px}
+  .page-sub{color:var(--text-3); font-size:12px; margin-bottom:16px}
+  .tabs{display:flex; gap:4px; border-bottom:1px solid var(--divider); margin-bottom:18px}
+  .tab{padding:8px 14px; font-size:14px; color:var(--text-2); border-bottom:2px solid transparent; margin-bottom:-1px}
+  .tab.active{color:var(--primary); border-bottom-color:var(--primary); font-weight:600}
+
+  /* ── 筛选行 ─────────────────────────────────────────────── */
+  .filters{display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:16px}
+  .select{
+    display:inline-flex; align-items:center; justify-content:space-between; gap:10px;
+    min-width:168px; padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius-b);
+    background:var(--bg-card); color:var(--text-1); font-size:13px;
+  }
+  .select .caret{color:var(--text-3); font-size:10px}
+  .select.wide{min-width:250px}
+  .hint{
+    display:flex; gap:8px; align-items:flex-start; padding:10px 12px; margin-bottom:16px;
+    border:1px dashed var(--soft-2); border-radius:var(--radius-b); background:var(--soft);
+    color:var(--text-2); font-size:12.5px;
+  }
+  .hint b{color:var(--text-1)}
+
+  /* ── 卡片与表 ───────────────────────────────────────────── */
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start}
+  @media (max-width:900px){ .grid{grid-template-columns:1fr} .sidebar{display:none} main{padding:44px 14px 96px} }
+  .card{
+    border:1px solid var(--border); border-radius:var(--radius-l); background:var(--bg-card);
+    padding:0 14px 12px; margin-bottom:16px; overflow:hidden;
+  }
+  .card-head{display:flex; align-items:center; justify-content:space-between; padding:11px 0 9px}
+  .card-title{font-size:14px; font-weight:600}
+  .card-note{font-size:11.5px; color:var(--text-3)}
+  table{width:100%; border-collapse:collapse; font-size:13.5px}
+  th{
+    text-align:left; font-weight:500; color:var(--text-3); font-size:12px;
+    padding:6px 8px; border-bottom:1px solid var(--border); white-space:nowrap;
+  }
+  td{padding:7px 8px; border-bottom:1px solid var(--divider); white-space:nowrap}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:var(--bg-hover)}
+  .num{text-align:right; font-variant-numeric:tabular-nums; font-feature-settings:"tnum"}
+  .gain{color:var(--gain)} .loss{color:var(--loss)} .dividend-c{color:var(--dividend)}
+  .strong{font-weight:600}
+  tr.is-new td{background:var(--soft)}
+  tr.is-new td:first-child{box-shadow:inset 3px 0 0 var(--primary)}
+  #year-table,#account-table{overflow-x:auto}
+  .sub{display:block; font-size:11.5px; color:var(--text-3); margin-top:1px}
+  .chip{
+    display:inline-block; margin-left:6px; padding:0 5px; border-radius:99px; font-size:10.5px;
+    border:1px solid var(--border); color:var(--text-3); vertical-align:1px;
+  }
+  .chip.new{border-color:transparent; background:var(--primary); color:#1a1a1a; font-weight:600}
+  .muted{color:var(--text-3)}
+
+  /* ⓘ 与浮层 */
+  .i{
+    display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px;
+    margin-left:4px; border-radius:50%; border:1px solid var(--text-3); color:var(--text-3);
+    font-size:10px; cursor:help; vertical-align:1px; user-select:none;
+  }
+  .i:hover{color:var(--primary); border-color:var(--primary)}
+  #tip{
+    position:fixed; z-index:70; max-width:340px; padding:8px 10px; border-radius:var(--radius-b);
+    background:var(--bg-popover); border:1px solid var(--border); box-shadow:var(--shadow);
+    color:var(--text-2); font-size:12.5px; line-height:1.55; display:none;
+  }
+
+  /* ── 底部切换条 ─────────────────────────────────────────── */
+  .proto-bar{
+    position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:80;
+    display:flex; align-items:center; gap:6px; padding:6px 8px; border-radius:99px;
+    background:var(--bg-popover); border:1px solid var(--border); box-shadow:var(--shadow);
+  }
+  .proto-bar button{
+    font:inherit; font-size:12.5px; color:var(--text-1); background:transparent;
+    border:1px solid var(--border); border-radius:99px; padding:5px 11px; cursor:pointer;
+  }
+  .proto-bar button:hover{border-color:var(--primary); color:var(--primary)}
+  .proto-bar .arrow{width:30px; padding:5px 0; font-size:14px; line-height:1}
+  .proto-bar .vlabel{min-width:196px; text-align:center; font-size:12.5px; color:var(--text-2)}
+  .proto-bar .vlabel b{color:var(--text-1)}
+  .proto-bar .sep{width:1px; height:20px; background:var(--border); margin:0 3px}
+</style>
+</head>
+<body>
+<div class="proto-flag">原型 PROTOTYPE · 非生产代码</div>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">账本</div>
+    <div class="nav-item"><span class="dot"></span>仪表盘</div>
+    <div class="nav-item"><span class="dot"></span>交易</div>
+    <div class="nav-item active"><span class="dot"></span>投资</div>
+    <div class="nav-item"><span class="dot"></span>预算</div>
+    <div class="nav-item"><span class="dot"></span>报表</div>
+  </aside>
+
+  <main>
+    <h1 class="page-title">投资</h1>
+    <div class="page-sub">账本：老婆的且慢 · 数据截至 2026-09-19</div>
+    <nav class="tabs">
+      <div class="tab active">盈亏</div><div class="tab">持仓</div>
+      <div class="tab">标的</div><div class="tab">走势</div>
+    </nav>
+
+    <div class="filters">
+      <span class="select"><span>全部账户</span><span class="caret">▼</span></span>
+      <span class="select wide"><span class="muted">搜索标的（代码/名称/拼音）</span><span class="caret">▼</span></span>
+    </div>
+
+    <div class="hint" id="hint"></div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">按年度汇总</span>
+          <span class="card-note" id="year-note"></span>
+        </div>
+        <div id="year-table"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">按账户汇总</span>
+          <span class="card-note" id="account-note"></span>
+        </div>
+        <div id="account-table"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">资金加权收益率<span class="i" data-tip="mwr">i</span></span>
+        <span class="card-note">示意值 · 本票不动这张表</span>
+      </div>
+      <table>
+        <thead><tr><th>账户</th><th>币种</th><th class="num">资金加权收益率</th></tr></thead>
+        <tbody>
+          <tr><td>且慢</td><td class="muted">CNY</td><td class="num">11.42%</td></tr>
+          <tr><td>老婆的且慢</td><td class="muted">CNY</td><td class="num">9.86%</td></tr>
+          <tr><td>全账</td><td class="muted">CNY</td><td class="num">10.71%</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<div id="tip"></div>
+
+<div class="proto-bar">
+  <button class="arrow" id="prev" title="上一个形态（←）">‹</button>
+  <div class="vlabel"><b id="vkey">A</b> · <span id="vname"></span></div>
+  <button class="arrow" id="next" title="下一个形态（→）">›</button>
+  <div class="sep"></div>
+  <button id="colorbtn" title="分红列的着色口径">分红列：涨跌色</button>
+  <button id="themebtn">浅色</button>
+  <button id="langbtn">EN</button>
+</div>
+
+<script>
+// ── 数据：迁移侧快照中「老婆的且慢」的真实按年读数（单位：分） ──────────────
+const YEARS = [
+  { y: 2019, r: 0,        d: 836536,  realized: false },
+  { y: 2020, r: 0,        d: 126318,  realized: false },
+  { y: 2021, r: 622579,   d: 1468292, realized: true },
+  { y: 2022, r: -391377,  d: 2299620, realized: true },
+  { y: 2023, r: -1063256, d: 3251915, realized: true },
+  { y: 2024, r: -4880142, d: 9338589, realized: true },
+  { y: 2025, r: 9435497,  d: 2616732, realized: true },
+  { y: 2026, r: 4842751,  d: 2456124, realized: true },
+];
+// 未实现腿（Δ未实现盈亏）：仅演示「本票明确不做」的形态，数值为占位示意
+const UNREALIZED = { 2024: -1200000, 2025: 2600000, 2026: 900000 };
+
+const ACCOUNTS = [
+  { name: "且慢",                r: 28063346, d: 6948469 },
+  { name: "老婆的且慢",           r: 8566052,  d: 22394126 },
+  { name: "示例·只有分红的账户",   r: 0,        d: 3600000, demo: true },
+];
+
+const TIPS = {
+  realizedPnl: {
+    zh: "卖出时按 FIFO 匹配买入成本算出的盈亏，已扣卖出手续费；不含尚未卖出的持仓收益，也不含现金分红。",
+    en: "P&L from sells, matched against FIFO buy cost and net of sell fees; it excludes unrealized holding P&L and cash dividends.",
+  },
+  dividend: {
+    zh: "按分红到账日归年、按币种分组；含红利再投的分红腿（同日买入抬高的是持仓成本，不在本表）与迁移来源的货基按年收益。",
+    en: "Grouped by the year the dividend was paid and by currency; includes the dividend leg of dividend reinvestment (the same-day buy raises cost basis, which this table does not show) and money-market earnings that migration records as cash dividends.",
+  },
+  realizedGain: {
+    zh: "已实现盈亏 + 现金分红，即这一年（这个账户）已到手的得失与现金收入；不含仍在持仓里的浮动盈亏——完整年度收益需要年内时点市值，而价格历史只覆盖近两年，早期年份算不出来。",
+    en: "Realized P&L + cash dividends — the gains and cash income already banked this year (for this account). It excludes the unrealized P&L still in your holdings: a full-year return would need point-in-time market values, and price history only goes back about two years, so earlier years cannot be computed.",
+  },
+  mwr: {
+    zh: "按实际现金流与当前市值解出的年化内部收益率；不随搜索或标的筛选收窄。",
+    en: "Annualized internal rate of return solved from your actual cash flows and current market value; it does not narrow with the search or instrument filter.",
+  },
+};
+
+const L = {
+  zh: { year: "年度", account: "账户", realizedPnl: "已实现盈亏", dividend: "现金分红",
+        realizedGain: "已实现收益", full: "完整年度收益（含浮动）", dash: "—",
+        newChip: "本票后新增", demoChip: "示意", na: "无价格历史" },
+  en: { year: "Year", account: "Account", realizedPnl: "Realized P&L", dividend: "Cash Dividends",
+        realizedGain: "Realized Gain", full: "Full-year return (incl. unrealized)", dash: "—",
+        newChip: "new", demoChip: "demo", na: "no price history" },
+};
+
+const VARIANTS = {
+  now: {
+    name: "改动前：只有已实现盈亏一列",
+    hint: "现状：<b>2019、2020 整行不存在</b>（这两年只有分红、没有卖出）；「已实现盈亏」读起来像「这一年赚了多少」。按账户表同理——只有分红的账户整行不出现。",
+    yearNote: "本票之前",
+    accountNote: "本票之前",
+  },
+  A: {
+    name: "四列并列（原型否决）",
+    hint: "形态 A：在原表结构上<b>并排加两列</b>——「现金分红」与「已实现收益合计」；「已实现盈亏」口径逐位不变。左侧竖条标出本票后新增的行。",
+    yearNote: "含 2 行本票后新增",
+    accountNote: "含 1 行本票后新增（示意）",
+  },
+  B: {
+    name: "两列 + 单元格内副行（已选）",
+    hint: "形态 B：<b>不新增列</b>，「已实现收益」做主值，下面一行小字拆出「已实现盈亏 / 现金分红」。列少、窄屏友好；代价是不能按分红列排序或直读。",
+    yearNote: "合计主值 + 拆分副行",
+    accountNote: "合计主值 + 拆分副行",
+  },
+  C: {
+    name: "含浮动盈亏的完整年度收益（明确不做）",
+    hint: "形态 C：把未实现腿也算进来。<b>2019~2023 没有价格历史，直接算不出来</b>（显示「无价格历史」）——这就是本票明确不做它的原因；2024~2026 的数值是占位示意。",
+    yearNote: "早期年份无价格历史",
+    accountNote: "未实现腿不按账户归属，本形态下与 A 同形",
+  },
+};
+
+const ORDER = ["now", "A", "B", "C"];
+const state = {
+  variant: new URLSearchParams(location.search).get("variant") || "B",
+  lang: new URLSearchParams(location.search).get("lang") || "zh",
+  theme: new URLSearchParams(location.search).get("theme") || "dark",
+  dividendColor: new URLSearchParams(location.search).get("color") || "pnl", // pnl | kind
+};
+if (!ORDER.includes(state.variant)) state.variant = "B";
+
+const $ = (id) => document.getElementById(id);
+const fmt = (cents) => {
+  const v = Math.abs(cents) / 100;
+  const s = v.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (cents < 0 ? "-" : "") + s;
+};
+const pnlClass = (cents) => (cents >= 0 ? "gain" : "loss");
+const dcls = () => (state.dividendColor === "kind" ? "dividend-c" : "gain");
+const tipBtn = (key, label) => `<span class="i" data-tip="${key}" title="${label}">i</span>`;
+
+function thNum(text, tip) { return `<th class="num">${text}${tip ? tipBtn(tip, text) : ""}</th>`; }
+
+// ── 按年表 ──────────────────────────────────────────────────────────────────
+function yearRows(v) {
+  if (v === "now") return YEARS.filter((row) => row.realized);
+  return YEARS;
+}
+function renderYear(v) {
+  const t = L[state.lang];
+  const rows = yearRows(v);
+  let head = `<tr><th>${t.year}</th>`;
+  if (v === "now") {
+    head += thNum(t.realizedPnl, "realizedPnl") + "</tr>";
+  } else if (v === "B") {
+    head += thNum(t.realizedGain, "realizedGain") + "</tr>";
+  } else if (v === "C") {
+    head += thNum(t.realizedPnl) + thNum(t.dividend, "dividend") + thNum(t.full) + "</tr>";
+  } else {
+    head += thNum(t.realizedPnl, "realizedPnl") + thNum(t.dividend, "dividend") +
+            thNum(t.realizedGain, "realizedGain") + "</tr>";
+  }
+
+  const body = rows.map((row) => {
+    const gain = row.r + row.d;
+    const isNew = v !== "now" && !row.realized;
+    const chip = isNew ? `<span class="chip new">${t.newChip}</span>` : "";
+    if (v === "now") {
+      return `<tr><td>${row.y}</td><td class="num ${pnlClass(row.r)}">${fmt(row.r)}</td></tr>`;
+    }
+    if (v === "B") {
+      return `<tr class="${isNew ? "is-new" : ""}">
+        <td>${row.y}${chip}</td>
+        <td class="num"><span class="strong ${pnlClass(gain)}">${fmt(gain)}</span>
+          <span class="sub">${t.realizedPnl} <span class="${pnlClass(row.r)}">${fmt(row.r)}</span>
+          · ${t.dividend} <span class="${dcls()}">${fmt(row.d)}</span></span></td></tr>`;
+    }
+    if (v === "C") {
+      const u = UNREALIZED[row.y];
+      const full = u === undefined ? `<span class="muted">${t.dash} <span class="sub">${t.na}</span></span>`
+                                   : `<span class="strong ${pnlClass(gain + u)}">${fmt(gain + u)}</span>`;
+      return `<tr class="${isNew ? "is-new" : ""}">
+        <td>${row.y}${chip}</td>
+        <td class="num ${pnlClass(row.r)}">${fmt(row.r)}</td>
+        <td class="num ${dcls()}">${fmt(row.d)}</td>
+        <td class="num">${full}</td></tr>`;
+    }
+    return `<tr class="${isNew ? "is-new" : ""}">
+      <td>${row.y}${chip}</td>
+      <td class="num ${pnlClass(row.r)}">${fmt(row.r)}</td>
+      <td class="num ${dcls()}">${fmt(row.d)}</td>
+      <td class="num strong ${pnlClass(gain)}">${fmt(gain)}</td></tr>`;
+  }).join("");
+
+  $("year-table").innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+// ── 按账户表 ────────────────────────────────────────────────────────────────
+function accountRows(v) {
+  if (v === "now") return ACCOUNTS.filter((a) => a.r !== 0);
+  return ACCOUNTS;
+}
+function renderAccount(v) {
+  const t = L[state.lang];
+  const rows = accountRows(v);
+  let head = `<tr><th>${t.account}</th>`;
+  if (v === "now") {
+    head += thNum(t.realizedPnl, "realizedPnl") + "</tr>";
+  } else if (v === "B") {
+    head += thNum(t.realizedGain, "realizedGain") + "</tr>";
+  } else if (v === "C") {
+    head += thNum(t.realizedPnl) + thNum(t.dividend, "dividend") + thNum(t.realizedGain, "realizedGain") + "</tr>";
+  } else {
+    head += thNum(t.realizedPnl, "realizedPnl") + thNum(t.dividend, "dividend") +
+            thNum(t.realizedGain, "realizedGain") + "</tr>";
+  }
+  const body = rows.map((a) => {
+    const gain = a.r + a.d;
+    const isNew = v !== "now" && a.r === 0;
+    const chip = a.demo ? `<span class="chip">${t.demoChip}</span>` : "";
+    const nameCell = `<td>${a.name}${chip}${isNew ? `<span class="chip new">${t.newChip}</span>` : ""}</td>`;
+    if (v === "now") return `<tr>${nameCell}<td class="num ${pnlClass(a.r)}">${fmt(a.r)}</td></tr>`;
+    if (v === "B") {
+      return `<tr class="${isNew ? "is-new" : ""}">${nameCell}
+        <td class="num"><span class="strong ${pnlClass(gain)}">${fmt(gain)}</span>
+          <span class="sub">${t.realizedPnl} <span class="${pnlClass(a.r)}">${fmt(a.r)}</span>
+          · ${t.dividend} <span class="${dcls()}">${fmt(a.d)}</span></span></td></tr>`;
+    }
+    return `<tr class="${isNew ? "is-new" : ""}">${nameCell}
+      <td class="num ${pnlClass(a.r)}">${fmt(a.r)}</td>
+      <td class="num ${dcls()}">${fmt(a.d)}</td>
+      <td class="num strong ${pnlClass(gain)}">${fmt(gain)}</td></tr>`;
+  }).join("");
+  $("account-table").innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+// ── 状态渲染 ────────────────────────────────────────────────────────────────
+function render() {
+  const v = state.variant;
+  const meta = VARIANTS[v];
+  document.documentElement.dataset.theme = state.theme;
+  $("hint").innerHTML = meta.hint;
+  $("vkey").textContent = v === "now" ? "现状" : v;
+  $("vname").textContent = meta.name;
+  $("year-note").textContent = meta.yearNote;
+  $("account-note").textContent =
+    meta.accountNote + (v === "A" || v === "C" ? " · 窄卡片下横向滚动" : "");
+  $("themebtn").textContent = state.theme === "dark" ? "浅色" : "深色";
+  $("langbtn").textContent = state.lang === "zh" ? "EN" : "中文";
+  $("colorbtn").textContent = `分红列：${state.dividendColor === "pnl" ? "涨跌色" : "分红 kind 色"}`;
+  $("colorbtn").style.display = v === "A" || v === "C" ? "" : "none";
+  renderYear(v);
+  renderAccount(v);
+  // 便于分享某个口径说明的展开态：?tip=realizedGain / dividend / realizedPnl
+  const wantTip = new URLSearchParams(location.search).get("tip");
+  if (wantTip) {
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-tip="${wantTip}"]`);
+      if (el) showTip(el);
+    });
+  }
+}
+
+function setVariant(next) {
+  state.variant = next;
+  syncUrl();
+  render();
+}
+function syncUrl() {
+  const url = new URL(location.href);
+  url.searchParams.set("variant", state.variant);
+  url.searchParams.set("theme", state.theme);
+  url.searchParams.set("lang", state.lang);
+  url.searchParams.set("color", state.dividendColor);
+  history.replaceState(null, "", url);
+}
+const cycle = (step) => {
+  const i = ORDER.indexOf(state.variant);
+  setVariant(ORDER[(i + step + ORDER.length) % ORDER.length]);
+};
+
+// ── ⓘ 浮层（指针悬停 + 点击，同真实组件的双轴语义） ───────────────────────────
+const tip = $("tip");
+function showTip(el) {
+  const key = el.dataset.tip;
+  if (!key) return;
+  tip.textContent = TIPS[key][state.lang];
+  tip.style.display = "block";
+  const r = el.getBoundingClientRect();
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let left = Math.min(Math.max(8, r.left - w + r.width), window.innerWidth - w - 8);
+  let top = r.top - h - 8;
+  if (top < 8) top = r.bottom + 8;
+  tip.style.left = left + "px";
+  tip.style.top = top + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+document.addEventListener("mouseover", (e) => {
+  const el = e.target.closest("[data-tip]");
+  el ? showTip(el) : hideTip();
+});
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-tip]")) return;
+  hideTip();
+});
+document.addEventListener("keydown", (e) => {
+  const tag = (document.activeElement || {}).tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+  if (e.key === "ArrowLeft") cycle(-1);
+  if (e.key === "ArrowRight") cycle(1);
+});
+
+$("prev").onclick = () => cycle(-1);
+$("next").onclick = () => cycle(1);
+$("themebtn").onclick = () => { state.theme = state.theme === "dark" ? "light" : "dark"; hideTip(); syncUrl(); render(); };
+$("langbtn").onclick = () => { state.lang = state.lang === "zh" ? "en" : "zh"; hideTip(); syncUrl(); render(); };
+$("colorbtn").onclick = () => {
+  state.dividendColor = state.dividendColor === "pnl" ? "kind" : "pnl"; hideTip(); syncUrl(); render();
+};
+
+render();
+</script>
+</body>
+</html>
