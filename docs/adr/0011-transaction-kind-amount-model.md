@@ -23,7 +23,7 @@
    - **Amount 接缝**（transaction 域 `ledger-transaction` crate）：`TransactionKind` 枚举（8 种，唯一表示；DB/wire 边界的小写字符串映射经 `as_str`/`parse` 收口，serde 小写字符串序列化）+ kind→度量系数矩阵 + `convert_to_native` 本位币折算。
 2. **kind 真源为 8 种**，与 `transactions.kind` 的 CHECK 约束（V001）一一对应：
    `income` / `expense` / `transfer` / `refund` / `buy` / `sell` / `dividend` / `split`。
-3. **raw/native 分离语义唯一。** `amount_cents`（原始币种金额）与 `amount_native_cents`（本位币金额）在模块内语义唯一；`convert_to_native` 以**全局默认币种**（当前常量 `CNY`，未来读用户设置）为折算基准，**与账户币种无关**（避免跨账户漂移），正反向汇率兜底、缺汇率报错不静默混币种。MVP 阶段多币种汇率 1:1 保持不变。
+3. **raw/native 分离语义唯一。** `amount_cents`（原始币种金额）与 `amount_native_cents`（本位币金额）在模块内语义唯一；`convert_to_native` 以**全局默认币种**（账本级设置，缺省 `CNY`）为折算基准，**与账户币种无关**（避免跨账户漂移），正反向汇率兜底、缺汇率报错不静默混币种。**折算时点取交易日期**：按交易所属 ISO 周命中汇率历史序列取值；该周无数据时由写入方显式给出该笔汇率，仍无则报错。每笔的折算来源随行留痕，事后可审核、可与重算对齐。当期汇率表只服务读路径的当期折算（持仓市值、净资产、实物资产估值）。原文「MVP 阶段多币种汇率 1:1 保持不变」已由 2026-09-19 修订删除，见文末修订记录。
 4. **kind→度量矩阵为单一真源**，同时驱动「服务端聚合 SQL 片段」（`*_expr`）与「行级 Rust 助手」（`signed_amount`），两侧口径恒一致；修改任何口径只改矩阵一处。四个具名度量：
 
    | kind | account_flow | expense_net | income_net | refund_gross |
@@ -52,9 +52,10 @@
 
 ## 代价
 
-1. **行为保持重构，收益在"未来改动成本"而非当下功能。** 当前 MVP 多币种 1:1，矩阵与折算的差异暂不可见；真实收益在汇率生效、新增 kind 时兑现。
+1. **行为保持重构，收益在"未来改动成本"而非当下功能。** 矩阵与折算的差异在单币种账本下不可见；真实收益在汇率生效、新增 kind 时兑现。
 2. **命令层与领域模块之间存在接线转换。** `TransactionInput` ↔ `writer::Input`、`NormalizedTransaction` ↔ `writer::NormalizedRow` 需要字段映射（壳层交易写命令的 `to_writer_input`/`to_writer_row`），多一层薄转换。
 3. **buy/sell 的行归一化仍留在投资层**（`prepare_buy`/`prepare_sell` 产出 `NormalizedTransaction` 后经 `to_writer_row` 落库）；持仓/卖出副作用仍与交易写入耦合，属 spec #52 明确的"候选 2"（交易类型行为内聚）未处理项。
+4. **折算时点取交易日期带来一条写入期数据依赖。** 该 ISO 周的汇率序列须已采集，或由调用方显式给出该笔汇率；两者皆无即报错，不做静默降级。这是历史本位币金额真实性的代价——`amount_native_cents` 一经写入不再重算，口径必须在首次落库前定准。
 
 ## 替代方案
 
@@ -69,4 +70,13 @@
 - 消费方接线：余额（账户域余额计算走 `account_flow_expr`）、报表（报表域走毛值三列 + `expense_net`/`income_net`）、预算（预算域走 `expense_net`）、定时引擎（定时计划域改经 `writer::normalize` 落库）、批量导入（壳层批量导入编排 + writer 落库）、创建/修改/买入卖出行（交易与投资域写命令）。
 - 删除：命令层旧 `normalize_transaction`/`row_to_normalized`（#61）、旧 fx 折算助手（#60）、旧交易行更新助手（#60）。
 - 文档同步：`AGENTS.md` 修正 `transactions.kind` 为 8 种并指向模块接缝；`CONTEXT.md` 补充 Transaction Kind Mapping（8 种 + 度量矩阵）与 Amount Model（raw/native + 四度量）。
-- 无 schema 变更、无迁移（V001 的 CHECK 约束本就含 8 种 kind）。
+- 无 schema 变更、无迁移（V001 的 CHECK 约束本就含 8 种 kind）。（2026-09-19 修订另加折算溯源列，见修订记录）
+
+## 修订记录
+
+- **2026-09-19：折算时点由「写入时当期汇率」改为「交易日期汇率」（grilling 定稿，#1539）。**
+  触发事实：`convert_to_native` 只查 `exchange_rates`（每币种对一行当期值），而该表全应用**无自动生产者**——只有人工录入一条写入路径。历史投资数据（HKD 账户与标的）因此必然在记账时缺汇率被整批拒；若改为按当期值折算，2022 年的港币交易会被折成今日汇率（实测同一笔 525,081.60 HKD 相差约 4.9%）。
+
+  修订内容：决策 3 的取数改为按交易所属 ISO 周命中汇率历史序列（FxRateHistory），该周无数据时由调用方显式给出该笔汇率，仍无则报错；每笔的折算来源随行留痕（新增溯源列，加列只增、零 BREAKING；编辑交易时币种/金额/日期未变则沿用行内汇率，变了才重查）；当期汇率表退为读路径当期折算的承载，历史期与流水折算统一走汇率历史序列。原文「MVP 阶段多币种汇率 1:1 保持不变」与代价 1 的「当前 MVP 多币种 1:1」为已证伪的过期事实，一并删除。
+
+  **不动的边界**：折算基准仍是全局默认币种、与账户币种无关；折算仍单点收口于 Amount 接缝；正反向兜底；缺汇率报错不静默混币种；kind→度量矩阵及其两端口径（SQL 片段与行级助手）不变。
