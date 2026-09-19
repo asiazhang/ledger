@@ -12,6 +12,10 @@ import { hasCommandLine, repoRoot } from "./has-command-line.test-helper.ts";
 // 位置参数指向临时 src-tauri 目录（布局与生产同构：tests/<目标>.rs + tests/e2e/**），
 // 每条负向用例都是「制造变红」的一次真实运行。
 //
+// 夹具默认取**生产形态**（rstest-bdd 目标 + `scenarios!` 绑定）；cucumber 属性面
+// 的解析能力仍按族保留（收口 #1508 后生产零命中，历史的「跨族双注册」形态由
+// 专门用例覆盖）。
+//
 // 覆盖八态：绿基线 / 删注册 / feature 新增步骤 / feature 无目标绑定（含删
 // `scenarios!` 绑定——#1495 AC4 的「0 场景且退出码 0」缺口）/ 同族重复注册 /
 // 跨族双注册不误报 / 两种模式同命中（歧义）/ rstest 单字提示（`{名:word}` 与
@@ -77,8 +81,8 @@ function fixture(overrides: Record<string, string | null> = {}): string {
   tempDirs.push(dir);
   const srcTauriDir = join(dir, "src-tauri");
   const files: Record<string, string | null> = {
-    "tests/e2e.rs": CUCUMBER_TARGET,
-    "tests/e2e/steps.rs": CUCUMBER_STEPS,
+    "tests/e2e_rstest.rs": RSTEST_TARGET("tests/e2e/features/a.feature"),
+    "tests/e2e/rstest_steps.rs": RSTEST_STEPS,
     "tests/e2e/features/a.feature": FEATURE,
     ...overrides,
   };
@@ -100,10 +104,10 @@ describe("e2e 步骤库覆盖守门（scripts/check-e2e-step-coverage.ts）", ()
   });
 
   it("删除一条步骤注册 → 对应步骤行未覆盖即红", () => {
-    const steps = CUCUMBER_STEPS.split("\n")
+    const steps = RSTEST_STEPS.split("\n")
       .filter((line) => !line.includes("创建交易"))
       .join("\n");
-    const result = run(fixture({ "tests/e2e/steps.rs": steps }));
+    const result = run(fixture({ "tests/e2e/rstest_steps.rs": steps }));
     expect(result.status).toBe(1);
     expect(result.output).toContain("未覆盖");
     expect(result.output).toContain("创建交易 金额 100");
@@ -117,9 +121,16 @@ describe("e2e 步骤库覆盖守门（scripts/check-e2e-step-coverage.ts）", ()
     expect(result.output).toContain('删除账户 "现金"');
   });
 
-  it("feature 无任何目标绑定（删 filter_run）→ 红", () => {
+  it("cucumber 历史形态：删 filter_run 绑定 → feature 无目标绑定即红", () => {
     const target = CUCUMBER_TARGET.replace(/^.*filter_run.*$/m, "// 绑定被删除");
-    const result = run(fixture({ "tests/e2e.rs": target }));
+    const result = run(
+      fixture({
+        "tests/e2e_rstest.rs": null,
+        "tests/e2e/rstest_steps.rs": null,
+        "tests/e2e.rs": target,
+        "tests/e2e/steps.rs": CUCUMBER_STEPS,
+      }),
+    );
     expect(result.status).toBe(1);
     expect(result.output).toContain("无目标绑定");
   });
@@ -143,8 +154,8 @@ describe("e2e 步骤库覆盖守门（scripts/check-e2e-step-coverage.ts）", ()
   });
 
   it("同一运行器内重复注册 → 红", () => {
-    const steps = `${CUCUMBER_STEPS}\n#[when(expr = "创建交易 金额 {int}")]\nfn duplicate(_: &mut World, _: i64) {}\n`;
-    const result = run(fixture({ "tests/e2e/steps.rs": steps }));
+    const steps = `${RSTEST_STEPS}\n#[rstest_bdd_macros::when("创建交易 金额 {amount:i64}")]\nfn duplicate(_: &mut World, _: i64) {}\n`;
+    const result = run(fixture({ "tests/e2e/rstest_steps.rs": steps }));
     expect(result.status).toBe(1);
     expect(result.output).toContain("同一注册重复");
   });
@@ -163,6 +174,7 @@ describe("e2e 步骤库覆盖守门（scripts/check-e2e-step-coverage.ts）", ()
     ].join("\n");
     const result = run(
       fixture({
+        "tests/e2e.rs": CUCUMBER_TARGET,
         "tests/e2e/steps.rs": dualSteps,
         "tests/e2e_rstest.rs": RSTEST_TARGET("tests/e2e/features/a.feature")
           .replace("e2e/rstest_steps.rs", "e2e/steps.rs")
@@ -174,8 +186,8 @@ describe("e2e 步骤库覆盖守门（scripts/check-e2e-step-coverage.ts）", ()
   });
 
   it("同一步骤行被两条模式同时匹配 → 歧义红", () => {
-    const steps = `${CUCUMBER_STEPS}\n#[when(expr = "创建交易 金额 {float}")]\nfn ambiguous(_: &mut World, _: f64) {}\n`;
-    const result = run(fixture({ "tests/e2e/steps.rs": steps }));
+    const steps = `${RSTEST_STEPS}\n#[rstest_bdd_macros::when("创建交易 金额 {amount:f64}")]\nfn ambiguous(_: &mut World, _: f64) {}\n`;
+    const result = run(fixture({ "tests/e2e/rstest_steps.rs": steps }));
     expect(result.status).toBe(1);
     expect(result.output).toContain("歧义");
   });

@@ -1,35 +1,14 @@
-//! BDD e2e 目标（rstest-bdd 通道，spec #1494 / ticket #1495）：把 `.feature` 场景
-//! 绑成标准测试运行器里的**独立测试**——`scenarios!` 自动发现场景，测试世界以
+//! BDD e2e 唯一目标（rstest-bdd，spec #1494 / ticket #1508 收口）：把 `.feature`
+//! 场景绑成标准测试运行器里的**独立测试**——`scenarios!` 自动发现场景，测试世界以
 //! rstest fixture 单点提供，场景失败由测试运行器置红（不再依赖自建 runner）。
 //!
-//! 本目标是增量迁移的**新通道**，与旧 cucumber 目标（`tests/e2e.rs`，
-//! `harness = false`）并存：
-//! - 已迁入的 feature（accounts.feature，#1495；transactions_write.feature，#1497；
-//!   transactions_edit.feature / transactions_query.feature，#1498；
-//!   transactions_policy.feature，#1499；items_* / physical_asset* 共 8 个 feature，
-//!   #1500；policies.feature / policy_agreement.feature / policy_stats.feature，
-//!   #1501；instruments.feature / manual_quote.feature，#1502；
-//!   transactions_convert.feature / transactions_funding.feature /
-//!   transactions_source.feature，#1503；reports.feature /
-//!   reports_date_range.feature / reports_period.feature / dashboard.feature /
-//!   financial_freedom.feature，#1504；merchants.feature / insurers.feature /
-//!   search.feature，#1505；scheduled.feature / budget.feature，#1506；
-//!   backup.feature / data_location.feature / encryption.feature /
-//!   startup_failure.feature / books.feature / migration.feature /
-//!   log_level.feature / sync.feature，#1507；
-//!   reports_category.feature 由 #1504 / #1505 两票共同覆盖）
-//!   在本目标运行，旧目标行为零变化。账户 / 交易 / 保单、物品、投资、报表 /
-//!   仪表盘、参考数据与检索、定时计划与预算域以及引导 / 备份 / 同步 / 迁移类场景
-//!   全绿；实物资产域若干场景（估值更新 / 在持合计）受 #1489 既有缺陷（同毫秒
-//!   UUID v7 排序不确定）影响，间歇性红，按 #1500 约定不修；
-//! - 已迁入域消费的步骤函数改为**双注册**（同一函数同时挂 cucumber 与 rstest-bdd
-//!   属性宏），函数体与断言唯一，不复制；数据表步骤因两种 macro 的入参形态不同，
-//!   抽共享实现 + 两侧注册适配器（`migration_steps::批量导入交易`、
-//!   `transactions_policy_steps::批量导入挂单交易`、
-//!   `investment_migration_steps::批量导入投资交易`）；
-//!   需要 `await` 的行情抓取桩步骤同理保留共享 async 实现 + 两侧适配器，新目标侧
-//!   经唯一接缝 `test_support::block_on` 驱动；
-//! - 其余域按 spec #1494 的后续票逐域加注册，收口时删旧目标与 cucumber 依赖。
+//! 全部 40 个 feature 场景在本目标运行（收口前经 ticket #1495–#1507 逐域迁入，
+//! 旧 cucumber 目标与其依赖已随 #1508 删除）。实物资产域若干场景（估值更新 /
+//! 在持合计）受 #1489 既有缺陷（同毫秒 UUID v7 排序不确定）影响，间歇性红，按
+//! #1500 约定不修。
+//!
+//! 数据表步骤经 `#[datatable]` 参数发放原始行、需要 `await` 的行情抓取桩步骤经
+//! 唯一接缝 `test_support::block_on` 驱动，均与共享实现语义唯一。
 //!
 //! 并行口径（spec #1494 决策）：进程内 libtest 线程并行对世界构造（内存库 + 迁移）
 //! 是负收益，真实并行交进程级 per-test 调度（cargo-nextest，ticket #1496）——
@@ -54,152 +33,102 @@
 use rstest_bdd::StepKeyword;
 
 // 顺序有意义：`world` 以 `#[macro_use]` 先入，`world_conn!` / `world_write!`
-// 才对其后的步骤模块可见（与旧目标同形）。
-//
-// `allow(dead_code)` 是**迁移期形态**（spec #1494 / ticket #1495）：共享支撑模块
-// （world / common / step_inputs / step_verbs）与整模块并入的共享步骤库
-// （scheduled_steps 自 ticket #1500 起按整文件并入、各消费票按需补注册，ticket
-// #1506 补齐后其步骤已全部有消费者）按整文件并入，消费者却是已迁移的步骤域子集——
-// 尚未迁入的域在本目标里暂时无人调用。逐域迁移完成后本目标即全量目标，该 allow 随
-// 最后一个域并入一并删除（届时 `-D warnings` 重新覆盖这些模块）。
-#[allow(dead_code)]
+// 才对其后的步骤模块可见。收口票 #1508 后本目标是唯一步骤宿主，模块全量有消费者，
+// `-D warnings` 覆盖全部步骤模块。
 #[macro_use]
 #[path = "e2e/world.rs"]
 mod world;
 
-#[allow(dead_code)]
 #[path = "e2e/accounts_steps.rs"]
 mod accounts_steps;
-#[allow(dead_code)]
 #[path = "e2e/backup_steps.rs"]
 mod backup_steps;
-#[allow(dead_code)]
 #[path = "e2e/books_steps.rs"]
 mod books_steps;
-#[allow(dead_code)]
 #[path = "e2e/common.rs"]
 mod common;
-#[allow(dead_code)]
 #[path = "e2e/data_location_steps.rs"]
 mod data_location_steps;
-#[allow(dead_code)]
 #[path = "e2e/encryption_steps.rs"]
 mod encryption_steps;
-#[allow(dead_code)]
 #[path = "e2e/instruments_steps.rs"]
 mod instruments_steps;
-#[allow(dead_code)]
 #[path = "e2e/insurers_steps.rs"]
 mod insurers_steps;
-#[allow(dead_code)]
 #[path = "e2e/investment_migration_steps.rs"]
 mod investment_migration_steps;
-#[allow(dead_code)]
 #[path = "e2e/investment_trend_steps.rs"]
 mod investment_trend_steps;
 #[path = "e2e/items_common.rs"]
 mod items_common;
-#[allow(dead_code)]
 #[path = "e2e/items_cost_steps.rs"]
 mod items_cost_steps;
-#[allow(dead_code)]
 #[path = "e2e/items_create_steps.rs"]
 mod items_create_steps;
-#[allow(dead_code)]
 #[path = "e2e/items_dispose_steps.rs"]
 mod items_dispose_steps;
-#[allow(dead_code)]
 #[path = "e2e/items_provenance_steps.rs"]
 mod items_provenance_steps;
-#[allow(dead_code)]
 #[path = "e2e/items_update_steps.rs"]
 mod items_update_steps;
-#[allow(dead_code)]
 #[path = "e2e/log_level_steps.rs"]
 mod log_level_steps;
-#[allow(dead_code)]
 #[path = "e2e/manual_quote_steps.rs"]
 mod manual_quote_steps;
-#[allow(dead_code)]
 #[path = "e2e/physical_asset_disposal_steps.rs"]
 mod physical_asset_disposal_steps;
-#[allow(dead_code)]
 #[path = "e2e/physical_asset_updates_steps.rs"]
 mod physical_asset_updates_steps;
-#[allow(dead_code)]
 #[path = "e2e/physical_assets_steps.rs"]
 mod physical_assets_steps;
-#[allow(dead_code)]
 #[path = "e2e/policies_steps.rs"]
 mod policies_steps;
-#[allow(dead_code)]
 #[path = "e2e/policy_agreement_steps.rs"]
 mod policy_agreement_steps;
-#[allow(dead_code)]
 #[path = "e2e/policy_stats_steps.rs"]
 mod policy_stats_steps;
-#[allow(dead_code)]
 #[path = "e2e/step_inputs.rs"]
 mod step_inputs;
-#[allow(dead_code)]
 #[path = "e2e/step_verbs.rs"]
 mod step_verbs;
-#[allow(dead_code)]
 #[path = "e2e/transactions_convert_steps.rs"]
 mod transactions_convert_steps;
-#[allow(dead_code)]
 #[path = "e2e/transactions_edit_steps.rs"]
 mod transactions_edit_steps;
-#[allow(dead_code)]
 #[path = "e2e/transactions_policy_steps.rs"]
 mod transactions_policy_steps;
-#[allow(dead_code)]
 #[path = "e2e/transactions_source_steps.rs"]
 mod transactions_source_steps;
-#[allow(dead_code)]
 #[path = "e2e/transactions_write_steps.rs"]
 mod transactions_write_steps;
 // 定时计划域（#1506）步骤库按整模块并入其父模块：物品与实物资产域（#1500）与保单域
 // （#1501）早先为各自消费的步骤（汇率夹具、保单协议期次）补过注册，本票补齐其余
 // 定时计划步骤，`scheduled.feature` 32 场景与 `budget.feature` 17 场景随之进入本目标。
-#[allow(dead_code)]
 #[path = "e2e/scheduled_steps.rs"]
 mod scheduled_steps;
-#[allow(dead_code)]
 #[path = "e2e/search_steps.rs"]
 mod search_steps;
-#[allow(dead_code)]
 #[path = "e2e/startup_failure_steps.rs"]
 mod startup_failure_steps;
-#[allow(dead_code)]
 #[path = "e2e/sync_steps.rs"]
 mod sync_steps;
 
-#[allow(dead_code)]
 #[path = "e2e/budget_steps.rs"]
 mod budget_steps;
-#[allow(dead_code)]
 #[path = "e2e/categories_steps.rs"]
 mod categories_steps;
-#[allow(dead_code)]
 #[path = "e2e/dashboard_steps.rs"]
 mod dashboard_steps;
-#[allow(dead_code)]
 #[path = "e2e/financial_freedom_steps.rs"]
 mod financial_freedom_steps;
-#[allow(dead_code)]
 #[path = "e2e/fund_trade_steps.rs"]
 mod fund_trade_steps;
-#[allow(dead_code)]
 #[path = "e2e/merchants_steps.rs"]
 mod merchants_steps;
-#[allow(dead_code)]
 #[path = "e2e/migration_steps.rs"]
 mod migration_steps;
-#[allow(dead_code)]
 #[path = "e2e/reports_steps.rs"]
 mod reports_steps;
-#[allow(dead_code)]
 #[path = "e2e/transactions_query_steps.rs"]
 mod transactions_query_steps;
 
@@ -209,7 +138,7 @@ mod scenarios {
     use rstest::fixture;
     use rstest_bdd_macros::scenarios;
 
-    /// 场景级测试世界（旧目标 `#[world(init = Self::new)]` 的 fixture 形态）：
+    /// 场景级测试世界（[`LedgerWorld::new`] 的 fixture 形态）：
     /// 每场景一次 [`LedgerWorld::new`]，内含接缝接线与黑洞账户种子注册，
     /// 场景间零状态交叉（各自独立内存库）。
     #[fixture]
@@ -270,7 +199,7 @@ mod scenarios {
         fixtures = [world: crate::world::LedgerWorld]
     );
 
-    // 交易×保单场景（ticket #1499）：流水直挂保单的 7 个场景进入新目标，
+    // 交易×保单场景（ticket #1499）：流水直挂保单的 7 个场景，
     // 与账户域同用一份 `world` fixture（各自独立内存库）。
     scenarios!(
         "tests/e2e/features/transactions_policy.feature",
@@ -283,7 +212,7 @@ mod scenarios {
     );
 
     // 保单域场景（ticket #1501）：静态档案 / 缴费协议 / 统计三份 feature 的
-    // 29 个场景进入新目标，与账户域同用一份 `world` fixture（各自独立内存库）。
+    // 29 个场景，与账户域同用一份 `world` fixture（各自独立内存库）。
     scenarios!(
         "tests/e2e/features/policy_agreement.feature",
         fixtures = [world: crate::world::LedgerWorld]
@@ -307,8 +236,8 @@ mod scenarios {
         fixtures = [world: crate::world::LedgerWorld]
     );
 
-    // 交易转换 / 出资 / 来源溯源场景（ticket #1503）：4 + 1 + 21 个场景进入
-    // 新目标，与既有域同用一份 `world` fixture（各自独立内存库）。
+    // 交易转换 / 出资 / 来源溯源场景（ticket #1503）：4 + 1 + 21 个场景，
+    // 与既有域同用一份 `world` fixture（各自独立内存库）。
     scenarios!(
         "tests/e2e/features/transactions_convert.feature",
         fixtures = [world: crate::world::LedgerWorld]
@@ -389,9 +318,9 @@ mod scenarios {
 
     // 引导、同步与迁移类场景（ticket #1507）：备份 30 / 数据位置 22 /
     // 加密 16 / 启动失败 12 / 多账本 3 / 迁移验证 9 / 日志等级 4 / 同步 7 个
-    // 场景进入新目标，与既有域同用一份 `world` fixture（各自独立内存库/目录）。
-    // encryption 的 2 个 @non-root-only 场景保留标签并加 @allow_skipped：旧目标
-    // 由启动器过滤，新目标由场景内守卫步骤 `目录只读触发可用` 调 `skip!` 跳过。
+    // 场景，与既有域同用一份 `world` fixture（各自独立内存库/目录）。
+    // encryption 的 2 个 @non-root-only 场景保留 @allow_skipped 标签，由场景内
+    // 守卫步骤 `目录只读触发可用` 在 root/非 Unix 环境调 `skip!` 跳过。
     scenarios!(
         "tests/e2e/features/backup.feature",
         fixtures = [world: crate::world::LedgerWorld]
@@ -434,9 +363,8 @@ mod scenarios {
 }
 
 /// 运行时注册表断言（ticket #1497 / #1499 AC1/AC3）的共用形状：某步骤文件整文件
-/// 的 N 条步骤都已进入新目标的 rstest-bdd 注册表，且改写后的占位符能按真实语义
-/// 匹配真实场景文本（`{<名>:string}` 剥引号、整数族解析整数、无占位符直命中）。
-/// 「只留 cucumber 注册」（删掉任一新注册）即红。
+/// 的 N 条步骤都已进入 rstest-bdd 注册表，且占位符能按真实语义匹配真实场景文本
+///（`{<名>:string}` 剥引号、整数族解析整数、无占位符直命中）。删掉任一注册即红。
 ///
 /// 逐条模式的全等覆盖（feature 步骤行 ↔ 注册模式、无漏改 / 无歧义）由静态覆盖
 /// 守门兜底（`bun scripts/check-e2e-step-coverage.ts`，ticket #1510 / AC2）；
@@ -464,7 +392,7 @@ fn assert_steps_registered_in_rstest_bdd(
     assert_eq!(
         registered.len(),
         expected,
-        "本文件在新目标的注册条数不符（缺注册或多注册）：{:#?}",
+        "本文件在目标注册表的注册条数不符（缺注册或多注册）：{:#?}",
         registered
             .iter()
             .map(|step| step.pattern.as_str())
@@ -473,7 +401,7 @@ fn assert_steps_registered_in_rstest_bdd(
 
     for (keyword, text) in samples {
         let found = find_step_with_metadata(*keyword, StepText::from(*text))
-            .unwrap_or_else(|| panic!("新目标未匹配到步骤文本：{text}"));
+            .unwrap_or_else(|| panic!("未匹配到步骤文本：{text}"));
         assert!(
             matches_file(found.file, file),
             "步骤文本 {text} 未命中本文件的注册：{}",
@@ -591,11 +519,11 @@ fn transaction_convert_and_source_steps_are_registered_in_rstest_bdd() {
     );
 }
 
-/// 投资与行情域五个步骤文件整文件双注册的运行时注册（ticket #1502）：整文件注册
-/// 条数与占位符语义（string 剥引号、整数族解析、`f64` 小数、数据表步骤、无占位符
-/// 直命中）。「只留 cucumber 注册」（删掉任一新注册）即红。
+/// 投资与行情域五个步骤文件的整文件运行时注册（ticket #1502）：注册条数与占位符
+/// 语义（string 剥引号、整数族解析、`f64` 小数、数据表步骤、无占位符直命中）。
+/// 删掉任一注册即红。
 ///
-/// 异步（行情抓取桩）三态：rstest 形态的注册是场景进入新目标的唯一入口，删掉即
+/// 异步（行情抓取桩）三态：注册是场景进入运行器的唯一入口，删掉即
 /// `Step not found` 红；其运行方式统一经 `instruments_steps::block_on`（既有接缝
 /// `test_support::block_on`）——删掉该调用点则桩不执行、场景断言行红。
 ///
@@ -621,7 +549,7 @@ fn investment_domain_steps_are_registered_in_rstest_bdd() {
                 StepKeyword::When,
                 "按代码添加基金 \"000001\" 东财返回名称 \"华夏成长混合\" 分类 \"混合型-灵活\" 净值 1.318 净值日期 \"2026-08-28\"",
             ),
-            // 异步三态（共享 async 实现 + 新目标侧 `block_on` 接线）。
+            // 异步三态（共享 async 实现 + `instruments_steps::block_on` 接线）。
             (
                 StepKeyword::When,
                 "按代码添加投资标的 市场 \"sh\" 代码 \"600519\" 行情命中名称 \"贵州茅台\" 市场 \"sh\" 现价 1234.56 类型提示 \"stock\"",
@@ -788,7 +716,7 @@ fn policy_steps_are_registered_in_rstest_bdd() {
     );
 }
 
-/// 报表与仪表盘域四个步骤文件的整文件 / 按需双注册运行时注册（ticket #1504）：
+/// 报表与仪表盘域四个步骤文件的整文件 / 按需运行时注册（ticket #1504）：
 /// `reports_steps.rs` 20 条、`dashboard_steps.rs` 9 条（本票补齐 5 条）、
 /// `financial_freedom_steps.rs` 7 条整文件（本票消费的 `budget_steps.rs` 4 条预算
 /// 夹具步骤的整文件计数断言，已收敛到 ticket #1506 的 30 条）。
@@ -868,10 +796,10 @@ fn reports_and_dashboard_steps_are_registered_in_rstest_bdd() {
 
 /// 参考数据与检索域三个步骤文件的整文件运行时注册（ticket #1505）：
 /// `merchants_steps.rs` 18 条、`insurers_steps.rs` 15 条、`search_steps.rs` 16 条。
-/// 占位符语义抽样覆盖 string / i64 / usize / f64 与无占位符断言。删掉任一新注册即红。
+/// 占位符语义抽样覆盖 string / i64 / usize / f64 与无占位符断言。删掉任一注册即红。
 ///
 /// 检索消费的迁移与存量数据步骤（`migration_steps.rs` 的重跑批量导入、删除备注交易、
-/// 批次结果断言）按需双注册，逐条模式的全等覆盖由静态覆盖守门兜底（ticket #1510）；
+/// 批次结果断言）按需注册，逐条模式的全等覆盖由静态覆盖守门兜底（ticket #1510）；
 /// 本断言只担本票整文件转换的三个步骤文件的运行时那半。
 #[test]
 fn reference_data_and_search_steps_are_registered_in_rstest_bdd() {
@@ -1086,8 +1014,7 @@ fn bootstrap_sync_migration_steps_are_registered_in_rstest_bdd() {
 /// 定时计划与预算域的整文件运行时注册（ticket #1506）：`scheduled_steps/` 七个
 /// 步骤文件（auto_run 5 / create 8 / merchant 9 / occurrence 14 / plan_detail 8 /
 /// plan_edit 10 / spend 13）与 `budget_steps.rs` 30 条。占位符语义抽样覆盖 string
-/// 剥引号、整数族、`usize`、`f64` 小数与无占位符直命中；「只留 cucumber 注册」
-/// （删掉任一新注册）即红。
+/// 剥引号、整数族、`usize`、`f64` 小数与无占位符直命中；删掉任一注册即红。
 #[test]
 fn scheduled_and_budget_steps_are_registered_in_rstest_bdd() {
     assert_steps_registered_in_rstest_bdd(

@@ -16,7 +16,7 @@
 FROM ubuntu:24.04
 
 # RUSTUP_HOME/CARGO_HOME 放 /usr/local 供后续 docker build 层与容器内 root
-# 直用；LANG 显式置 UTF-8（rustc / cucumber 输出含非 ASCII）。
+# 直用；LANG 显式置 UTF-8（rustc / rstest-bdd 场景名输出含非 ASCII）。
 ENV LANG=C.UTF-8 \
     RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \

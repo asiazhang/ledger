@@ -1,5 +1,3 @@
-use cucumber::{given, then, when};
-
 use crate::step_inputs::expense_input;
 use crate::step_verbs::create_exchange_rate_verb;
 use crate::step_verbs::create_transaction_verb;
@@ -7,16 +5,12 @@ use crate::world::LedgerWorld;
 use ledger_transaction::search_transactions_internal;
 use ledger_transaction::{TransactionInput, TransactionSearchResult};
 
-// 来源溯源 feature 消费的 `搜索` 步骤**按需双注册**（spec #1494 / ticket #1503）：
-// 同一函数同时挂两族属性，函数体与断言语义唯一；搜索域其余步骤归 ticket #1505。
-
 // ---------------------------------------------------------------------------
 // Given
 // ---------------------------------------------------------------------------
 
 /// 存量交易：经行为层创建编排入口写入（#764 旁路收敛——原直插与正常写入语义
 /// 一致，搜索无索引、两种来源立即可搜，收敛后由产品代码保证落库形态）。
-#[given(expr = "存量交易 备注 {string} 金额 {int} 账户 {string} 日期 {string}")]
 #[rstest_bdd_macros::given(
     "存量交易 备注 {note:string} 金额 {amount:i64} 账户 {account_name:string} 日期 {date:string}"
 )]
@@ -39,9 +33,6 @@ fn legacy_txn(
 /// 本位币分由产品折算路径产生：先经汇率夹具动词按「本位币 ÷ 金额」综合汇率
 /// （原直插模拟「汇率折算后的落库形态」，收敛后改走真实折算，锁定金额区间
 /// 过滤的本位币分口径；折算四舍五入由产品承担）。
-#[given(
-    expr = "存量外币交易 备注 {string} 金额 {int} 币种 {string} 本位币 {int} 账户 {string} 日期 {string}"
-)]
 #[rstest_bdd_macros::given(
     "存量外币交易 备注 {note:string} 金额 {amount:i64} 币种 {currency:string} 本位币 {native_amount:i64} 账户 {account_name:string} 日期 {date:string}"
 )]
@@ -75,7 +66,6 @@ fn legacy_foreign_txn(
 // When
 // ---------------------------------------------------------------------------
 
-#[when(expr = "搜索 {string}")]
 #[rstest_bdd_macros::when("搜索 {query:string}")]
 fn search(world: &mut LedgerWorld, query: String) {
     world.txn.last_search = Some(
@@ -84,7 +74,6 @@ fn search(world: &mut LedgerWorld, query: String) {
     );
 }
 
-#[when(expr = "搜索 {string} 第 {int} 页 每页 {int} 条")]
 #[rstest_bdd_macros::when("搜索 {query:string} 第 {page:usize} 页 每页 {page_size:usize} 条")]
 fn search_paged(world: &mut LedgerWorld, query: String, page: usize, page_size: usize) {
     world.txn.last_search = Some(
@@ -103,7 +92,6 @@ fn search_paged(world: &mut LedgerWorld, query: String, page: usize, page_size: 
 }
 
 /// 关键字 + 金额区间（分）AND 组合。
-#[when(expr = "搜索 {string} 金额区间 {int} 至 {int} 分")]
 #[rstest_bdd_macros::when("搜索 {query:string} 金额区间 {min:i64} 至 {max:i64} 分")]
 fn search_keyword_amount_range(world: &mut LedgerWorld, query: String, min: i64, max: i64) {
     world.txn.last_search = Some(
@@ -122,7 +110,6 @@ fn search_keyword_amount_range(world: &mut LedgerWorld, query: String, min: i64,
 }
 
 /// 关键字 + 日期区间（含边界）AND 组合。
-#[when(expr = "搜索 {string} 日期区间 {string} 至 {string}")]
 #[rstest_bdd_macros::when("搜索 {query:string} 日期区间 {from:string} 至 {to:string}")]
 fn search_keyword_date_range(world: &mut LedgerWorld, query: String, from: String, to: String) {
     world.txn.last_search = Some(
@@ -141,7 +128,6 @@ fn search_keyword_date_range(world: &mut LedgerWorld, query: String, from: Strin
 }
 
 /// 仅金额筛选（无关键字）：金额区间（分，含边界）。
-#[when(expr = "搜索金额区间 {int} 至 {int} 分")]
 #[rstest_bdd_macros::when("搜索金额区间 {min:i64} 至 {max:i64} 分")]
 fn search_amount_range(world: &mut LedgerWorld, min: i64, max: i64) {
     world.txn.last_search = Some(
@@ -160,7 +146,6 @@ fn search_amount_range(world: &mut LedgerWorld, min: i64, max: i64) {
 }
 
 /// 仅金额筛选（无关键字）：金额区间（元，支持小数，元→分四舍五入）。
-#[when(expr = "搜索金额区间 {float} 至 {float} 元")]
 #[rstest_bdd_macros::when("搜索金额区间 {min:f64} 至 {max:f64} 元")]
 fn search_amount_range_yuan(world: &mut LedgerWorld, min: f64, max: f64) {
     let min_cents = (min * 100.0).round() as i64;
@@ -181,7 +166,6 @@ fn search_amount_range_yuan(world: &mut LedgerWorld, min: f64, max: f64) {
 }
 
 /// 仅金额筛选（无关键字）：单边下限（分，含边界）。
-#[when(expr = "搜索金额下限 {int} 分")]
 #[rstest_bdd_macros::when("搜索金额下限 {min:i64} 分")]
 fn search_amount_min(world: &mut LedgerWorld, min: i64) {
     world.txn.last_search = Some(
@@ -191,7 +175,6 @@ fn search_amount_min(world: &mut LedgerWorld, min: i64) {
 }
 
 /// 仅金额筛选（无关键字）：单边上限（分，含边界）。
-#[when(expr = "搜索金额上限 {int} 分")]
 #[rstest_bdd_macros::when("搜索金额上限 {max:i64} 分")]
 fn search_amount_max(world: &mut LedgerWorld, max: i64) {
     world.txn.last_search = Some(
@@ -201,7 +184,6 @@ fn search_amount_max(world: &mut LedgerWorld, max: i64) {
 }
 
 /// 仅日期筛选（无关键字）：日期区间（含边界）。
-#[when(expr = "搜索日期区间 {string} 至 {string}")]
 #[rstest_bdd_macros::when("搜索日期区间 {from:string} 至 {to:string}")]
 fn search_date_range(world: &mut LedgerWorld, from: String, to: String) {
     world.txn.last_search = Some(
@@ -227,7 +209,6 @@ fn search_snapshot(world: &LedgerWorld) -> &TransactionSearchResult {
     world.txn.last_search.as_ref().expect("尚未执行搜索")
 }
 
-#[then(expr = "搜索命中 {int} 条")]
 #[rstest_bdd_macros::then("搜索命中 {expected:usize} 条")]
 fn search_hits(world: &mut LedgerWorld, expected: usize) {
     let snapshot = search_snapshot(world);
@@ -239,7 +220,6 @@ fn search_hits(world: &mut LedgerWorld, expected: usize) {
     );
 }
 
-#[then(expr = "搜索命中 {int} 条 总数 {int}")]
 #[rstest_bdd_macros::then("搜索命中 {expected_items:usize} 条 总数 {expected_total:i64}")]
 fn search_hits_total(world: &mut LedgerWorld, expected_items: usize, expected_total: i64) {
     let snapshot = search_snapshot(world);
@@ -251,7 +231,6 @@ fn search_hits_total(world: &mut LedgerWorld, expected_items: usize, expected_to
     assert_eq!(snapshot.total, expected_total, "命中总数不匹配");
 }
 
-#[then(expr = "搜索结果第 {int} 条备注应为 {string}")]
 #[rstest_bdd_macros::then("搜索结果第 {index:i64} 条备注应为 {expected:string}")]
 fn search_nth_note(world: &mut LedgerWorld, index: i64, expected: String) {
     let snapshot = search_snapshot(world);
@@ -266,7 +245,6 @@ fn search_nth_note(world: &mut LedgerWorld, index: i64, expected: String) {
     );
 }
 
-#[then(expr = "搜索结果第 {int} 条金额应为 {int}")]
 #[rstest_bdd_macros::then("搜索结果第 {index:i64} 条金额应为 {expected:i64}")]
 fn search_nth_amount(world: &mut LedgerWorld, index: i64, expected: i64) {
     let snapshot = search_snapshot(world);
@@ -282,7 +260,6 @@ fn search_nth_amount(world: &mut LedgerWorld, index: i64, expected: i64) {
 
 /// 搜索结果展示商户：按名称解析为 id 与交易的 merchant_id 比对
 /// （展示名称本身由前端 merchantMap 负责交易列表信息口径，这里断言关联正确）。
-#[then(expr = "搜索结果第 {int} 条商户应为 {string}")]
 #[rstest_bdd_macros::then("搜索结果第 {index:i64} 条商户应为 {expected:string}")]
 fn search_nth_merchant(world: &mut LedgerWorld, index: i64, expected: String) {
     let snapshot = search_snapshot(world);

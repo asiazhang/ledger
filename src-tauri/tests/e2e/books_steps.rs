@@ -14,7 +14,6 @@
 
 use std::path::Path;
 
-use cucumber::{then, when};
 use rusqlite::params;
 
 use ledger_infra::db::book_registry::{self, Book, BookRegistry, RegistryRead};
@@ -137,7 +136,6 @@ fn current_book_account_names(world: &LedgerWorld) -> Vec<String> {
 // When：登记变更与原位重引导（旅程主干）
 // ---------------------------------------------------------------------------
 
-#[when(expr = "新建账本 {string}")]
 #[rstest_bdd_macros::when("新建账本 {name:string}")]
 fn when_create_book(world: &mut LedgerWorld, name: String) {
     let dir = default_dir(world);
@@ -149,7 +147,6 @@ fn when_create_book(world: &mut LedgerWorld, name: String) {
     );
 }
 
-#[when(expr = "切换到账本 {string} 并原位重引导")]
 #[rstest_bdd_macros::when("切换到账本 {name:string} 并原位重引导")]
 fn when_switch_book(world: &mut LedgerWorld, name: String) {
     let dir = default_dir(world);
@@ -163,13 +160,11 @@ fn when_switch_book(world: &mut LedgerWorld, name: String) {
     replan_and_open(world);
 }
 
-#[when(expr = "执行引导并打开当前账本")]
 #[rstest_bdd_macros::when("执行引导并打开当前账本")]
 fn when_boot_and_open(world: &mut LedgerWorld) {
     replan_and_open(world);
 }
 
-#[when(expr = "在当前账本记 {int} 条支出到账户 {string}")]
 #[rstest_bdd_macros::when("在当前账本记 {count:usize} 条支出到账户 {account:string}")]
 fn when_record_expenses(world: &mut LedgerWorld, count: usize, account: String) {
     let state = world
@@ -188,14 +183,12 @@ fn when_record_expenses(world: &mut LedgerWorld, count: usize, account: String) 
     .expect("记账失败");
 }
 
-#[when(expr = "关闭当前账本连接")]
 #[rstest_bdd_macros::when("关闭当前账本连接")]
 fn when_close_connection(world: &mut LedgerWorld) {
     // 密文转换前置：丢弃连接句柄，转换后不留指向旧明文文件的悬空连接。
     world.boot.dl_conn = None;
 }
 
-#[when(expr = "用主口令 {string} 开启当前账本加密")]
 #[rstest_bdd_macros::when("用主口令 {passphrase:string} 开启当前账本加密")]
 fn when_enable_encryption(world: &mut LedgerWorld, passphrase: String) {
     let db_dir = world
@@ -209,7 +202,6 @@ fn when_enable_encryption(world: &mut LedgerWorld, passphrase: String) {
         .expect("开启当前账本加密失败");
 }
 
-#[when(expr = "以主口令 {string} 解锁当前账本")]
 #[rstest_bdd_macros::when("以主口令 {passphrase:string} 解锁当前账本")]
 fn when_unlock_book(world: &mut LedgerWorld, passphrase: String) {
     let db_dir = world
@@ -237,7 +229,6 @@ fn when_unlock_book(world: &mut LedgerWorld, passphrase: String) {
 // When：清单与报表查询
 // ---------------------------------------------------------------------------
 
-#[when(expr = "查询账本清单")]
 #[rstest_bdd_macros::when("查询账本清单")]
 fn when_query_book_list(world: &mut LedgerWorld) {
     let dir = default_dir(world);
@@ -246,7 +237,6 @@ fn when_query_book_list(world: &mut LedgerWorld) {
     world.boot.book_last_list = Some(data_location::gather_book_list(&dir, boot.as_ref()));
 }
 
-#[when(expr = "查询当前账本月度汇总 期间 {string} 到 {string}")]
 #[rstest_bdd_macros::when("查询当前账本月度汇总 期间 {from:string} 到 {to:string}")]
 fn when_query_book_monthly_summary(world: &mut LedgerWorld, from: String, to: String) {
     let state = world.boot.dl_conn.as_ref().expect("当前账本无已打开连接");
@@ -261,7 +251,6 @@ fn when_query_book_monthly_summary(world: &mut LedgerWorld, from: String, to: St
 // Then：当前账本、处置、清单与账户可见性断言
 // ---------------------------------------------------------------------------
 
-#[then(expr = "当前账本应为 {string}")]
 #[rstest_bdd_macros::then("当前账本应为 {name:string}")]
 fn then_current_book_is(world: &mut LedgerWorld, name: String) {
     let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
@@ -274,7 +263,6 @@ fn then_current_book_is(world: &mut LedgerWorld, name: String) {
     assert_eq!(active.name, name, "当前账本不符");
 }
 
-#[then(expr = "引导处置应等待解锁（落解锁屏）")]
 #[rstest_bdd_macros::then("引导处置应等待解锁（落解锁屏）")]
 fn then_disposition_awaits_unlock(world: &mut LedgerWorld) {
     let disposition = world
@@ -289,7 +277,6 @@ fn then_disposition_awaits_unlock(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "清单应包含 {int} 个账本")]
 #[rstest_bdd_macros::then("清单应包含 {count:usize} 个账本")]
 fn then_list_contains(world: &mut LedgerWorld, count: usize) {
     let list = world
@@ -305,7 +292,6 @@ fn then_list_contains(world: &mut LedgerWorld, count: usize) {
     );
 }
 
-#[then(expr = "清单的活动账本应为 {string}")]
 #[rstest_bdd_macros::then("清单的活动账本应为 {name:string}")]
 fn then_list_active_is(world: &mut LedgerWorld, name: String) {
     let list = world
@@ -325,7 +311,6 @@ fn then_list_active_is(world: &mut LedgerWorld, name: String) {
     assert_eq!(active.name, name, "清单活动账本不符");
 }
 
-#[then(expr = "当前账本应有账户 {string}")]
 #[rstest_bdd_macros::then("当前账本应有账户 {name:string}")]
 fn then_book_has_account(world: &mut LedgerWorld, name: String) {
     let names = current_book_account_names(world);
@@ -335,7 +320,6 @@ fn then_book_has_account(world: &mut LedgerWorld, name: String) {
     );
 }
 
-#[then(expr = "当前账本不应有账户 {string}")]
 #[rstest_bdd_macros::then("当前账本不应有账户 {name:string}")]
 fn then_book_lacks_account(world: &mut LedgerWorld, name: String) {
     let names = current_book_account_names(world);

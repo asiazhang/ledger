@@ -77,9 +77,9 @@ jobs:
       - name: 后台服务成对拉起守门
         run: bun scripts/check-background-services.ts
 
-      # 测试执行覆盖守门（issue #1112）：并发入口（scripts/test-exec.ts）与非并发
-      # 入口（scripts/test.sh 的 e2e + doc-test）的覆盖范围必须与工作区测试目标
-      # 清单全等——新增测试目标不静默漏跑。纯静态发现（manifest + 目录形态），
+      # 测试执行覆盖守门（issue #1112）：并发入口（scripts/test-exec.ts）、e2e
+      # 入口（scripts/e2e.sh 的 nextest）与 doc-test 入口的覆盖范围必须与工作区
+      # 测试目标清单全等——新增测试目标不静默漏跑。纯静态发现（manifest + 目录形态），
       # 不需 Rust 工具链，故与本 job 的其余守门同址。守门另自带两条接线/等价性
       # 规则：本地 check.sh 与 CI 本步骤的接线缺失即红（源码扫描，先例 #959/#961），
       # 测试运行期读 cargo 注入环境变量即红。删除该步骤即红：
@@ -228,8 +228,8 @@ jobs:
           # restore-key 回退拿到 base 分支的缓存，merge 后新 key 自然固化进缓存。
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # cargo-nextest（ticket #1496 / spec #1494）：e2e 新目标经**进程级 per-test**
-      # 调度（每个 Scenario 一个进程），并行度/超时/重试配置住
+      # cargo-nextest（ticket #1496 / spec #1494）：全部测试经 **进程级 per-test**
+      # 调度（e2e 每个 Scenario 一个进程），并行度/超时/重试配置住
       # src-tauri/.config/nextest.toml。预编译二进制固定版本 + sha256 校验（musl
       # 静态链接，容器内无 glibc 版本耦合）。
       # 刻意不烘进 CI 镜像（#1109 镜像路径）：镜像只在 merge 后按 paths 触发重建，
@@ -250,26 +250,33 @@ jobs:
       # 默认只作用于根包，缺范围参数会静默漏跑成员 crate；cargo 对没有对应 target
       # 的成员自动跳过，故 `--lib --test '*'` 的组合对成员 crate 安全。
       # 显式 target 选择：lib + 全部集成 target（tests/ 下每个 *.rs 与 */main.rs 各一个
-      # crate，当前 api_server / e2e / commands / real_bucket_acceptance /
-      # sync_trigger_poll）。`--test` 的名称支持 Unix glob（cargo 文档明确要求单引号
+      # crate，当前 api_server / commands / e2e_rstest / real_bucket_acceptance /
+      # sync_trigger_poll 等）。`--test` 的名称支持 Unix glob（cargo 文档明确要求单引号
       # 防 shell 展开），`'*'` 命中全部集成 target 而不含 bin——新增集成 target 自动
       # 进 CI，无「手工清单漏项静默漏跑」的坑（issue #988）。刻意不用 `--tests`：它会
       # 连带 bin 测试，把 ledger-perf 的生成器正确性单测（属性能工具链，perf-bench.yml
       # 域，随每日常规基准一起运行）拖回 PR CI。副作用：显式 target 选择不跑 doc-tests
       # （issue #1112 起的口径：本仓 doc-test 目标 17 个、当前有 4 条实际执行；CI 这里
       # 仍不跑，本地 scripts/test.sh 已补 `cargo test --workspace --doc`）。
-      # cargo-nextest 承接范围与改前 cargo 口径逐项对齐（lib + 全部集成 target；
-      # 不跑 bin 单测与 doc-test）：e2e 新目标（rstest-bdd）是普通集成 target，自动
-      # 落入 `--test '*'` 并由 nextest 进程级 per-test 调度。
+      # cargo-nextest 承接范围：lib + 全部集成 target 除了 e2e（不跑 bin 单测与
+      # doc-test）。e2e BDD 目标（`e2e_rstest`）用 `-E 'not binary(e2e_rstest)'`
+      # 排除，改由下一条统一的 `scripts/e2e.sh` 步骤跑——本地与 CI 同一条 nextest
+      # 入口，且那条步骤单独计时（e2e 段时长 + CPU/墙钟比）。若 e2e 也落在这里会
+      # 与下条重复跑；`-E` 的目标名与 scripts/e2e.sh 不一致时，下条脚本的场景数
+      # 全等守门与覆盖守门会红（不静默减面）。
       - name: Rust 单元测试 + 集成测试（cargo-nextest 进程级 per-test）
-        run: cargo nextest run --workspace --lib --test '*'
+        run: cargo nextest run --workspace --lib --test '*' -E 'not binary(e2e_rstest)'
 
-      # 旧 cucumber e2e 目标：`harness = false` 自定义 runner，不支持 nextest 依赖的
-      # `--list --format terse` 协议，由 nextest.toml 的 default-filter 排除（排除名单
-      # 与 harness=false 目标清单全等由 scripts/test-exec.ts 覆盖守门核对），仍走
-      # cargo 自有 runner；收口票 #1508 删除 cucumber 后本步骤随之下线。
-      - name: 旧 cucumber e2e 目标（harness = false，nextest 不能列举）
-        run: cargo test --workspace --test e2e
+      # e2e BDD 测试段（收口 #1508）：本地与 CI 同一条 nextest 入口——调用
+      # scripts/e2e.sh（场景数全等守门 + `cargo nextest run --test e2e_rstest`
+      # 进程级 per-test 调度）。工作目录是 src-tauri，故经 `../scripts/e2e.sh`；
+      # 脚本自身 cd 到仓库根再进 src-tauri。TIMEFORMAT + time 打印 real/user/sys，
+      # 作为「e2e 段时长与 CPU/墙钟比」的 CI 观测面（对照基线：旧 cucumber
+      # 65.6s / 比值 0.9，见 ADR-0129）。旧 cucumber 目标与其依赖已随 #1508 删除。
+      - name: e2e BDD（scripts/e2e.sh：nextest 进程级 per-test，含场景数守门）
+        run: |
+          TIMEFORMAT=$'real %3R user %3U sys %3S'
+          time ../scripts/e2e.sh
 
   # 后端静态检查：与 backend job 同挂预构建镜像（issue #1109），fmt/clippy 组件
   # 已烘进镜像，job 内零安装步骤（改前 apt 阶段缓存命中也有 22s）。

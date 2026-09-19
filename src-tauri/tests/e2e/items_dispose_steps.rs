@@ -2,14 +2,6 @@
 //! 软删除只打标记不物理移除；处置带出处置日期/残值并重算摊薄（分子扣残值），
 //! 处置校验（日期晚于今天/早于购买/格式/负残值）与不存在路径。
 
-use cucumber::{then, when};
-
-// 物品处置主题步骤**双注册**（spec #1494 / ticket #1500）：同一函数同时挂 cucumber
-// 与 rstest-bdd 两个属性宏——旧目标行为零变化，新目标能匹配同一批步骤，函数体与断言
-// 唯一不复制。占位符按参数名与类型对齐（`{string}` → `{<参数名>:string}`、`{int}` →
-// 有符号/无符号整数 hint），引号剥离与数值解析语义与 cucumber 一致；切换只改属性形态，
-// 不改断言语义（CONTEXT-testing「行为等价判据」）。
-
 use ledger_item::ItemDisposeInput;
 use ledger_item::domain::{delete_item, dispose_item};
 
@@ -27,7 +19,6 @@ fn find_item_id_by_name(conn: &rusqlite::Connection, name: &str) -> String {
 }
 
 /// 软删除指定名称的物品（要求成功；记录失效信号次数）。
-#[when(expr = "软删除物品 {string}")]
 #[rstest_bdd_macros::when("软删除物品 {name:string}")]
 fn soft_delete_item(world: &mut LedgerWorld, name: String) {
     let id = find_item_id_by_name(&world_conn!(world), &name);
@@ -39,7 +30,6 @@ fn soft_delete_item(world: &mut LedgerWorld, name: String) {
     }
 }
 
-#[then(expr = "删除后应发出 {int} 次失效信号")]
 #[rstest_bdd_macros::then("删除后应发出 {expected:usize} 次失效信号")]
 fn check_item_delete_signals(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
@@ -49,7 +39,6 @@ fn check_item_delete_signals(world: &mut LedgerWorld, expected: usize) {
 }
 
 /// 直接查库断言软删除语义：行未被物理移除，仅打 `is_deleted=1` 标记。
-#[then(expr = "物品 {string} 行仍存在且 is_deleted=1")]
 #[rstest_bdd_macros::then("物品 {name:string} 行仍存在且 is_deleted=1")]
 fn check_item_row_soft_deleted(world: &mut LedgerWorld, name: String) {
     let (count, is_deleted): (i64, i64) = world_conn!(world)
@@ -64,7 +53,6 @@ fn check_item_row_soft_deleted(world: &mut LedgerWorld, name: String) {
 }
 
 /// 尝试删除不存在的物品 id（捕获错误供「应返回错误」断言）。
-#[when(expr = "尝试软删除不存在的物品")]
 #[rstest_bdd_macros::when("尝试软删除不存在的物品")]
 fn try_delete_missing_item(world: &mut LedgerWorld) {
     let mut signals = 0;
@@ -76,7 +64,6 @@ fn try_delete_missing_item(world: &mut LedgerWorld) {
     };
 }
 
-#[then(expr = "物品删除应返回错误 {string}")]
 #[rstest_bdd_macros::then("物品删除应返回错误 {expected:string}")]
 fn check_item_delete_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
@@ -95,7 +82,6 @@ fn dispose_by_id(
 }
 
 /// 处置最近创建的物品（`world.item.last_item_id`），要求成功。
-#[when(expr = "处置物品 处置日期 {string} 残值 {int}")]
 #[rstest_bdd_macros::when("处置物品 处置日期 {date:string} 残值 {residual:i64}")]
 fn dispose_item_with_residual(world: &mut LedgerWorld, date: String, residual: i64) {
     let id = world
@@ -107,7 +93,6 @@ fn dispose_item_with_residual(world: &mut LedgerWorld, date: String, residual: i
 }
 
 /// 处置最近创建的物品，不填残值（残值可选语义）。
-#[when(expr = "处置物品 处置日期 {string} 不填残值")]
 #[rstest_bdd_macros::when("处置物品 处置日期 {date:string} 不填残值")]
 fn dispose_item_without_residual(world: &mut LedgerWorld, date: String) {
     let id = world
@@ -132,7 +117,6 @@ fn assert_dispose_ok(world: &mut LedgerWorld, id: &str, date: String, residual: 
 }
 
 /// 尝试处置最近创建的物品并捕获错误（供「应返回错误」断言）。
-#[when(expr = "尝试处置物品 处置日期 {string} 残值 {int}")]
 #[rstest_bdd_macros::when("尝试处置物品 处置日期 {date:string} 残值 {residual:i64}")]
 fn try_dispose_item(world: &mut LedgerWorld, date: String, residual: i64) {
     let id = world
@@ -154,7 +138,6 @@ fn try_dispose_item(world: &mut LedgerWorld, date: String, residual: i64) {
 }
 
 /// 尝试处置不存在的物品 id（固定假 id 走 NotFound 报错路径）。
-#[when(expr = "尝试处置不存在的物品")]
 #[rstest_bdd_macros::when("尝试处置不存在的物品")]
 fn try_dispose_missing_item(world: &mut LedgerWorld) {
     world.last_error = match dispose_by_id(
@@ -171,7 +154,6 @@ fn try_dispose_missing_item(world: &mut LedgerWorld) {
 }
 
 /// 断言第 n 件物品的处置日期与残值读回。
-#[then(expr = "第 {int} 件物品处置日期应为 {string} 残值应为 {int}")]
 #[rstest_bdd_macros::then("第 {n:usize} 件物品处置日期应为 {date:string} 残值应为 {residual:i64}")]
 fn check_item_disposal(world: &mut LedgerWorld, n: usize, date: String, residual: i64) {
     let item = &world.item.nth(n).item;
@@ -180,7 +162,6 @@ fn check_item_disposal(world: &mut LedgerWorld, n: usize, date: String, residual
 }
 
 /// 断言第 n 件物品处置日期读回且残值为空（可选残值语义）。
-#[then(expr = "第 {int} 件物品处置日期应为 {string} 残值应为空")]
 #[rstest_bdd_macros::then("第 {n:usize} 件物品处置日期应为 {date:string} 残值应为空")]
 fn check_item_disposal_no_residual(world: &mut LedgerWorld, n: usize, date: String) {
     let item = &world.item.nth(n).item;
@@ -189,7 +170,6 @@ fn check_item_disposal_no_residual(world: &mut LedgerWorld, n: usize, date: Stri
 }
 
 /// 复用「应返回错误」断言（同一 seam：world.last_error 包含片段）。
-#[then(expr = "物品处置应返回错误 {string}")]
 #[rstest_bdd_macros::then("物品处置应返回错误 {expected:string}")]
 fn check_item_dispose_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);

@@ -23,7 +23,7 @@ interface FixtureOverrides {
   alphaManifest?: string;
   /** test.sh 内容；缺省 = 合规双入口形态。 */
   testSh?: string;
-  /** e2e.sh 内容；缺省 = 合规 e2e 两目标形态（nextest 新目标 + cucumber 旧目标）。 */
+  /** e2e.sh 内容；缺省 = 合规 e2e 形态（一条 `cargo nextest run --test e2e_rstest`）。 */
   e2eSh?: string;
   /** check.sh 内容；缺省 = 含覆盖守门步骤（守门规则④的接线宿主）。 */
   checkSh?: string;
@@ -31,31 +31,27 @@ interface FixtureOverrides {
   workflow?: string;
   /** 追加的成员文件（相对夹具根，含目录）。 */
   files?: Record<string, string>;
-  /** nextest 仓库配置；缺省 = 合规形态（default-filter 排除名单 = harness=false 清单）。 */
+  /** nextest 仓库配置；缺省 = 合规形态（无 default-filter 排除名单）。 */
   nextestConfig?: string;
+  /** 为 true 时不写 nextest 仓库配置（调度配置缺失夹具）。 */
+  withoutNextestConfig?: boolean;
   /** 为 true 时删除两个 lib 目标（用于 --doc 登记失效夹具）。 */
   withoutLib?: boolean;
 }
 
-/** e2e 新目标的 nextest 入口行（真实 scripts/test.sh 同址接线，ticket #1496）。 */
+/** e2e 目标的 nextest 入口行（真实 scripts/e2e.sh 同址接线，ticket #1496 / 收口 #1508）。 */
 const NEXTEST_ENTRY_LINE = "( cd src-tauri && cargo nextest run --workspace --test e2e_rstest )";
 
-/** 旧 cucumber 目标的 cargo 入口行（harness = false 自定义 runner）。 */
-const CUCUMBER_ENTRY_LINE = "( cd src-tauri && cargo test --workspace --test e2e )";
-
-/** nextest 仓库配置的合规形态：default-filter 排除名单 = harness=false 目标清单。 */
+/** nextest 仓库配置的合规形态（收口 #1508 后无 default-filter）。 */
 const DEFAULT_NEXTEST_CONFIG = [
   "[profile.default]",
   'test-threads = "num-cpus"',
   "retries = 0",
-  'default-filter = "not binary(e2e)"',
   "",
 ].join("\n");
 
-/** e2e 入口脚本的合规形态（scripts/e2e.sh，ticket #1496）。 */
-const DEFAULT_E2E_SH = ["#!/bin/sh", "set -eu", NEXTEST_ENTRY_LINE, CUCUMBER_ENTRY_LINE, ""].join(
-  "\n",
-);
+/** e2e 入口脚本的合规形态（scripts/e2e.sh，ticket #1496 / 收口 #1508）。 */
+const DEFAULT_E2E_SH = ["#!/bin/sh", "set -eu", NEXTEST_ENTRY_LINE, ""].join("\n");
 
 const DEFAULT_TEST_SH = [
   "#!/bin/sh",
@@ -78,7 +74,7 @@ const DEFAULT_WORKFLOW = [
   "  backend:",
   "    steps:",
   "      - run: cargo nextest run --workspace --lib --test '*'",
-  "      - run: cargo test --workspace --test e2e",
+  "      - run: time ../scripts/e2e.sh",
   "",
 ].join("\n");
 
@@ -120,27 +116,23 @@ function makeFixture(overrides: FixtureOverrides = {}): string {
         'edition = "2021"',
         "",
         "[[test]]",
-        'name = "e2e"',
-        'path = "tests/e2e.rs"',
-        "harness = false",
-        "",
-        "[[test]]",
         'name = "e2e_rstest"',
         'path = "tests/e2e_rstest.rs"',
         "",
       ].join("\n"),
   );
-  writeFileSync(join(alpha, "tests", "e2e.rs"), "fn main() {}\n");
   writeFileSync(join(alpha, "tests", "e2e_rstest.rs"), "#[test]\nfn scenario() {}\n");
   writeFileSync(join(alpha, "tests", "api.rs"), "#[test]\nfn api() {}\n");
   writeFileSync(join(root, "scripts", "test.sh"), overrides.testSh ?? DEFAULT_TEST_SH);
   writeFileSync(join(root, "scripts", "e2e.sh"), overrides.e2eSh ?? DEFAULT_E2E_SH);
   writeFileSync(join(root, "scripts", "check.sh"), overrides.checkSh ?? DEFAULT_CHECK_SH);
   mkdirSync(join(srcTauri, ".config"), { recursive: true });
-  writeFileSync(
-    join(srcTauri, ".config", "nextest.toml"),
-    overrides.nextestConfig ?? DEFAULT_NEXTEST_CONFIG,
-  );
+  if (overrides.withoutNextestConfig !== true) {
+    writeFileSync(
+      join(srcTauri, ".config", "nextest.toml"),
+      overrides.nextestConfig ?? DEFAULT_NEXTEST_CONFIG,
+    );
+  }
   mkdirSync(join(root, ".github", "workflows"), { recursive: true });
   writeFileSync(
     join(root, ".github", "workflows", "build.yml"),
@@ -158,12 +150,11 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
   it("合规夹具：目标清单与两入口并集全等 → 通过", () => {
     const r = run(["check", "--root", makeFixture()]);
     expect(r.status).toBe(0);
-    // 7 = 根包 lib + doc、alpha lib + doc、alpha 集成 api / e2e（非并发）/ e2e_rstest（nextest）。
-    expect(r.output).toContain("目标 7 个");
+    // 6 = 根包 lib + doc、alpha lib + doc、alpha 集成 api / e2e_rstest（e2e nextest）。
+    expect(r.output).toContain("目标 6 个");
     expect(r.output).toContain("并发入口 3");
     expect(r.output).toContain("集成测试 1");
-    expect(r.output).toContain("nextest 入口 1（e2e_rstest，进程级 per-test）");
-    expect(r.output).toContain("e2e");
+    expect(r.output).toContain("e2e(nextest) 入口 1（e2e_rstest，进程级 per-test）");
   });
 
   it("同包内 lib 与集成 target 同名不撞键（执行面核对键含 kind）", () => {
@@ -177,13 +168,13 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       }),
     ]);
     expect(r.status).toBe(0);
-    // 8 = 根包 lib + doc、alpha lib + doc、alpha 集成 api / alpha / e2e / e2e_rstest。
-    expect(r.output).toContain("目标 8 个");
+    // 7 = 根包 lib + doc、alpha lib + doc、alpha 集成 api / alpha / e2e_rstest。
+    expect(r.output).toContain("目标 7 个");
     expect(r.output).toContain("lib 单测 2");
     expect(r.output).toContain("集成测试 2");
   });
 
-  it("新增 harness=false 测试目标未登记非并发入口 → 红（目标静默漏跑即红）", () => {
+  it("任意 `[[test]] harness = false` → 红（自定义 harness 已随收口 #1508 退役）", () => {
     const r = run([
       "check",
       "--root",
@@ -195,11 +186,6 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           'edition = "2021"',
           "",
           "[[test]]",
-          'name = "e2e"',
-          'path = "tests/e2e.rs"',
-          "harness = false",
-          "",
-          "[[test]]",
           'name = "custom"',
           'path = "tests/custom.rs"',
           "harness = false",
@@ -209,38 +195,23 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       }),
     ]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("alpha::custom");
-    expect(r.output).toContain("静默漏跑");
+    expect(r.output).toContain("alpha 的 [[test]] custom 声明 harness = false");
+    expect(r.output).toContain("退役");
   });
 
-  it("e2e 入口未登记 cucumber 目标（删 --test e2e）→ 红", () => {
+  it("e2e 入口无 `cargo nextest run … --test <name>` 命令 → 红（不静默降级回并发入口）", () => {
+    // 收口 #1508 后 e2e 没有第二条轨道：e2e.sh 必须有一条 nextest 运行命令，删掉即红
+    //（不静默降级回并发入口——那会退回进程内单线程串行，正是 ticket #1496 要消灭的形态）。
     const r = run([
       "check",
       "--root",
-      makeFixture({ e2eSh: ["#!/bin/sh", "set -eu", NEXTEST_ENTRY_LINE, ""].join("\n") }),
+      makeFixture({ e2eSh: ["#!/bin/sh", "set -eu", ""].join("\n") }),
     ]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("alpha::e2e");
-    expect(r.output).toContain("--test e2e");
+    expect(r.output).toContain("e2e 未由 nextest 进程级 per-test 调度");
   });
 
-  it("删 nextest 入口运行行（登记悬空）→ 红（不静默降级回并发入口）", () => {
-    // 登记目标必须由 `cargo nextest run … --test <name>` 承载：删掉运行行即红，
-    // 不因为目标仍在并发入口队列里跑（固定 RUST_TEST_THREADS=1 的进程内串行）
-    // 而假绿——那正是 ticket #1496 要消灭的形态。
-    const r = run([
-      "check",
-      "--root",
-      makeFixture({
-        e2eSh: ["#!/bin/sh", "set -eu", CUCUMBER_ENTRY_LINE, ""].join("\n"),
-      }),
-    ]);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("alpha::e2e_rstest");
-    expect(r.output).toContain("登记为 nextest 承接");
-  });
-
-  it("nextest 入口登记了不在清单里的目标（拼写漂移）→ 红", () => {
+  it("e2e 入口 nextest 指向不存在的目标（拼写漂移）→ 红", () => {
     const r = run([
       "check",
       "--root",
@@ -249,60 +220,33 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "#!/bin/sh",
           "set -eu",
           "( cd src-tauri && cargo nextest run --workspace --test e2e_rstst )",
-          CUCUMBER_ENTRY_LINE,
           "",
         ].join("\n"),
       }),
     ]);
     expect(r.status).toBe(1);
     expect(r.output).toContain("e2e_rstst");
-    expect(r.output).toContain("不对应任何登记为 nextest 承接的目标");
+    expect(r.output).toContain("工作区没有该");
   });
 
-  it("nextest 配置 default-filter 多排了非自定义 harness 目标 → 红（静默漏跑）", () => {
+  it("e2e 入口退回 cargo 口径（`cargo test --test e2e_rstest`）→ 红", () => {
     const r = run([
       "check",
       "--root",
       makeFixture({
-        nextestConfig: [
-          "[profile.default]",
-          'default-filter = "not binary(e2e) and not binary(api)"',
+        e2eSh: [
+          "#!/bin/sh",
+          "set -eu",
+          "( cd src-tauri && cargo test --workspace --test e2e_rstest )",
           "",
         ].join("\n"),
       }),
     ]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("default-filter 排除了 api");
-    expect(r.output).toContain("alpha::api 不是 `harness = false`");
-    expect(r.output).toContain("静默移出 nextest 调度面");
+    expect(r.output).toContain("e2e 未由 nextest 进程级 per-test 调度");
   });
 
-  it("nextest 配置 default-filter 出现未取反的 binary(...) → 红（其余目标全被移出）", () => {
-    const r = run([
-      "check",
-      "--root",
-      makeFixture({
-        nextestConfig: ["[profile.default]", 'default-filter = "binary(api)"', ""].join("\n"),
-      }),
-    ]);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("未取反的 `binary(api)`");
-    expect(r.output).toContain("静默移出 nextest 调度面");
-  });
-
-  it("nextest 配置缺 default-filter → 红（自定义 harness 会被纳入列举）", () => {
-    const r = run([
-      "check",
-      "--root",
-      makeFixture({
-        nextestConfig: ["[profile.default]", "retries = 0", ""].join("\n"),
-      }),
-    ]);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("缺 `default-filter`");
-  });
-
-  it("nextest 配置漏排自定义 harness 目标 → 红（排除名单须与 harness=false 清单全等）", () => {
+  it("nextest 配置出现 default-filter → 红（排除名单会把标准目标静默移出）", () => {
     const r = run([
       "check",
       "--root",
@@ -311,75 +255,14 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       }),
     ]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("自定义 harness 目标 e2e");
-    expect(r.output).toContain("排除名单须与 `harness = false` 目标清单全等");
+    expect(r.output).toContain("出现 `default-filter`");
+    expect(r.output).toContain("nextest 调度面");
   });
 
-  it("nextest 配置 default-filter 含未识别子句（`not test(...)`）→ 红（静默排除面）", () => {
-    // 只挑 `binary(...)` 子句解析会漏掉别的过滤面：`not test(...)` 同样能把 libtest
-    // 测试静默移出 nextest 调度面，故整表达式只允许 `not binary(<name>)` + `and`。
-    const r = run([
-      "check",
-      "--root",
-      makeFixture({
-        nextestConfig: [
-          "[profile.default]",
-          'default-filter = "not binary(e2e) and not test(accounts)"',
-          "",
-        ].join("\n"),
-      }),
-    ]);
+  it("nextest 仓库配置缺失 → 红（调度配置单点不存在）", () => {
+    const r = run(["check", "--root", makeFixture({ withoutNextestConfig: true })]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("含未识别子句");
-  });
-
-  it("nextest 配置排除的名字同时命中 harness=true 目标 → 红（同名 libtest 被一并排除）", () => {
-    // nextest 的 binary() 按二进制名匹配、与包无关：同名目标（含 lib/bin 单测的
-    // crate 名）必须逐名回查，命中项非自定义 harness 即静默漏跑。
-    const r = run([
-      "check",
-      "--root",
-      makeFixture({
-        rootManifest: [
-          "[package]",
-          'name = "root-app"',
-          'version = "0.0.0"',
-          'edition = "2021"',
-          "",
-          "[workspace]",
-          'members = ["crates/*"]',
-          "",
-          "[[test]]",
-          'name = "e2e"',
-          'path = "tests/e2e.rs"',
-          "",
-        ].join("\n"),
-        files: { "src-tauri/tests/e2e.rs": "#[test]\nfn root_e2e() {}\n" },
-      }),
-    ]);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("root-app::e2e");
-    expect(r.output).toContain("静默移出 nextest 调度面");
-  });
-
-  it("非并发入口登记了非自定义 harness 目标（--test api 漂移）→ 红", () => {
-    const r = run([
-      "check",
-      "--root",
-      makeFixture({
-        e2eSh: [
-          "#!/bin/sh",
-          "set -eu",
-          NEXTEST_ENTRY_LINE,
-          CUCUMBER_ENTRY_LINE,
-          "( cd src-tauri && cargo test --workspace --test api )",
-          "",
-        ].join("\n"),
-      }),
-    ]);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("--test api");
-    expect(r.output).toContain("不对应任何 harness = false 目标");
+    expect(r.output).toContain("nextest 仓库配置不存在");
   });
 
   it("缺 cargo test --doc → 红（doc-test 静默漏跑即红）", () => {
@@ -512,26 +395,8 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
     expect(r.status).toBe(0);
   });
 
-  it("工作区无 doc-test 目标却在非并发入口登记 --doc → 红（登记失效）", () => {
-    const r = run([
-      "check",
-      "--root",
-      makeFixture({
-        withoutLib: true,
-        alphaManifest: [
-          "[package]",
-          'name = "alpha"',
-          'version = "0.0.0"',
-          'edition = "2021"',
-          "",
-          "[[test]]",
-          'name = "e2e"',
-          'path = "tests/e2e.rs"',
-          "harness = false",
-          "",
-        ].join("\n"),
-      }),
-    ]);
+  it("工作区无 doc-test 目标却在 doc 入口登记 --doc → 红（登记失效）", () => {
+    const r = run(["check", "--root", makeFixture({ withoutLib: true })]);
     expect(r.status).toBe(1);
     expect(r.output).toContain("无 doc-test 目标");
   });
@@ -584,7 +449,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "      - run: bun scripts/test-exec.ts check",
           "  backend:",
           "    steps:",
-          CUCUMBER_ENTRY_LINE,
+          "      - run: time ../scripts/e2e.sh",
           "",
         ].join("\n"),
       }),
@@ -593,7 +458,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
     expect(r.output).toContain("未切到 nextest");
   });
 
-  it("CI 测试执行面：缺旧 cucumber 目标步骤 → 红（CI 侧静默减面）", () => {
+  it("CI 测试执行面：未调用统一 e2e 入口（缺 `../scripts/e2e.sh`）→ 红（CI 侧 e2e 未接入）", () => {
     const r = run([
       "check",
       "--root",
@@ -611,7 +476,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       }),
     ]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("CI 侧漏跑即静默减面");
+    expect(r.output).toContain("未调用统一 e2e 入口脚本");
   });
 
   it("scripts/test.sh 三条入口全被 echo 包成说明文字 → 红（说明文字不算命令位置）", () => {
@@ -628,7 +493,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "set -eu",
           "bun scripts/test-exec.ts check",
           'echo "bun scripts/test-exec.ts"',
-          'echo "( cd src-tauri && cargo test --workspace --test e2e )"',
+          'echo "./scripts/e2e.sh"',
           'echo "( cd src-tauri && cargo test --workspace --doc )"',
           "",
         ].join("\n"),
@@ -716,9 +581,8 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "autotests = false",
           "",
           "[[test]]",
-          'name = "e2e"',
-          'path = "tests/e2e.rs"',
-          "harness = false",
+          'name = "e2e_rstest"',
+          'path = "tests/e2e_rstest.rs"',
           "",
         ].join("\n"),
       }),

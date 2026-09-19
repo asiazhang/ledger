@@ -8,7 +8,6 @@
 //! （`create_transaction_internal`），进度经核心函数 `budget_progress_rows`（命令层同款注入）查询。
 
 use chrono::{Datelike, Months, NaiveDate};
-use cucumber::{given, then, when};
 use rusqlite::params;
 
 use ledger_budget::BudgetInput;
@@ -124,19 +123,16 @@ fn expense_input(
 // Given：分类与预算夹具
 // ---------------------------------------------------------------------------
 
-#[given(expr = "存在支出分类 {string}")]
 #[rstest_bdd_macros::given("存在支出分类 {name:string}")]
 fn create_expense_category(world: &mut LedgerWorld, name: String) {
     create_category_via_entry(&world_conn!(world), &name, None);
 }
 
-#[given(expr = "存在支出分类 {string} 属于 {string}")]
 #[rstest_bdd_macros::given("存在支出分类 {name:string} 属于 {parent:string}")]
 fn create_subcategory(world: &mut LedgerWorld, name: String, parent: String) {
     create_category_via_entry(&world_conn!(world), &name, Some(&parent));
 }
 
-#[given(expr = "存在收入分类 {string}")]
 #[rstest_bdd_macros::given("存在收入分类 {name:string}")]
 fn create_income_category(world: &mut LedgerWorld, name: String) {
     create_category(
@@ -151,7 +147,6 @@ fn create_income_category(world: &mut LedgerWorld, name: String) {
     .unwrap();
 }
 
-#[given(expr = "为分类 {string} 创建月预算 金额 {int}")]
 #[rstest_bdd_macros::given("为分类 {name:string} 创建月预算 金额 {amount:i64}")]
 fn create_monthly_budget(world: &mut LedgerWorld, name: String, amount: i64) {
     let today = scenario_today(world);
@@ -159,7 +154,6 @@ fn create_monthly_budget(world: &mut LedgerWorld, name: String, amount: i64) {
     create_budget_via_entry(&world_conn!(world), &id, "monthly", amount, &ymd(today));
 }
 
-#[given(expr = "为分类 {string} 创建年预算 金额 {int}")]
 #[rstest_bdd_macros::given("为分类 {name:string} 创建年预算 金额 {amount:i64}")]
 fn create_yearly_budget(world: &mut LedgerWorld, name: String, amount: i64) {
     let today = scenario_today(world);
@@ -168,7 +162,6 @@ fn create_yearly_budget(world: &mut LedgerWorld, name: String, amount: i64) {
 }
 
 /// 模拟存量行：带历史开始日期的预算（旧数据零迁移，直接按新规则滚动生效）。
-#[given(expr = "存量预算 分类 {string} 周期 {string} 金额 {int} 开始日期 {string}")]
 #[rstest_bdd_macros::given(
     "存量预算 分类 {name:string} 周期 {period:string} 金额 {amount:i64} 开始日期 {start_date:string}"
 )]
@@ -191,7 +184,6 @@ fn create_legacy_budget(
 // Given：相对当前自然周期落交易
 // ---------------------------------------------------------------------------
 
-#[given(expr = "分类 {string} 本月有一笔支出 {int} 到账户 {string}")]
 #[rstest_bdd_macros::given(
     "分类 {name:string} 本月有一笔支出 {amount:i64} 到账户 {account:string}"
 )]
@@ -201,7 +193,6 @@ fn expense_this_month(world: &mut LedgerWorld, name: String, amount: i64, accoun
     create_transaction(world, input);
 }
 
-#[given(expr = "分类 {string} 上月有一笔支出 {int} 到账户 {string}")]
 #[rstest_bdd_macros::given(
     "分类 {name:string} 上月有一笔支出 {amount:i64} 到账户 {account:string}"
 )]
@@ -211,7 +202,6 @@ fn expense_last_month(world: &mut LedgerWorld, name: String, amount: i64, accoun
     create_transaction(world, input);
 }
 
-#[given(expr = "分类 {string} 今年一月有一笔支出 {int} 到账户 {string}")]
 #[rstest_bdd_macros::given(
     "分类 {name:string} 今年一月有一笔支出 {amount:i64} 到账户 {account:string}"
 )]
@@ -221,7 +211,6 @@ fn expense_january(world: &mut LedgerWorld, name: String, amount: i64, account: 
     create_transaction(world, input);
 }
 
-#[given(expr = "分类 {string} 去年有一笔支出 {int} 到账户 {string}")]
 #[rstest_bdd_macros::given(
     "分类 {name:string} 去年有一笔支出 {amount:i64} 到账户 {account:string}"
 )]
@@ -237,7 +226,6 @@ fn expense_last_year(world: &mut LedgerWorld, name: String, amount: i64, account
 
 /// 经预算命令同形态（连接层统一写入口，ADR-0032 / issue #245）创建预算：
 /// 成功清空 last_error，失败记入 last_error 供拒绝路径断言。
-#[when(expr = "通过预算命令为分类 {string} 创建 {string} 预算 金额 {int}")]
 #[rstest_bdd_macros::when(
     "通过预算命令为分类 {name:string} 创建 {period:string} 预算 金额 {amount:i64}"
 )]
@@ -265,7 +253,6 @@ fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: Stri
 
 /// 经预算命令同形态（连接层统一写入口，ADR-0032 / issue #245）编辑预算金额：
 /// 成功清空 last_error，失败记入 last_error 供拒绝路径断言。
-#[when(expr = "通过预算命令编辑分类 {string} 的预算金额为 {int}")]
 #[rstest_bdd_macros::when("通过预算命令编辑分类 {name:string} 的预算金额为 {amount:i64}")]
 fn update_budget_via_command(world: &mut LedgerWorld, name: String, amount: i64) {
     let cat_id = category_id_any(&world_conn!(world), &name);
@@ -284,7 +271,6 @@ fn update_budget_via_command(world: &mut LedgerWorld, name: String, amount: i64)
 
 /// 经预算命令同形态（连接层统一写入口，ADR-0032 / issue #245）软删除分类的预算：
 /// 成功清空 last_error，失败记入 last_error 供断言。
-#[when(expr = "删除分类 {string} 的预算")]
 #[rstest_bdd_macros::when("删除分类 {name:string} 的预算")]
 fn delete_budget_via_command(world: &mut LedgerWorld, name: String) {
     let cat_id = category_id_any(&world_conn!(world), &name);
@@ -307,7 +293,6 @@ fn delete_budget_via_command(world: &mut LedgerWorld, name: String) {
 
 /// 经分类命令同形态（连接层统一写入口，ADR-0032）删除分类：
 /// 成功清空 last_error，失败记入 last_error 供拒绝路径断言（守卫拒绝不 panic，走真实命令路径）。
-#[when(expr = "尝试删除分类 {string}")]
 #[rstest_bdd_macros::when("尝试删除分类 {name:string}")]
 fn delete_category_via_command(world: &mut LedgerWorld, name: String) {
     let id = category_id_any(&world_conn!(world), &name);
@@ -317,7 +302,6 @@ fn delete_category_via_command(world: &mut LedgerWorld, name: String) {
     };
 }
 
-#[then(expr = "删除应成功")]
 #[rstest_bdd_macros::then("删除应成功")]
 fn assert_delete_category_succeeded(world: &mut LedgerWorld) {
     assert!(
@@ -327,14 +311,12 @@ fn assert_delete_category_succeeded(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "删除应失败并提示 {string}")]
 #[rstest_bdd_macros::then("删除应失败并提示 {needle:string}")]
 fn assert_delete_category_failed(world: &mut LedgerWorld, needle: String) {
     assert_last_error_contains(world, &needle);
 }
 
 /// 命令层可见结果：分类在读回列表中（与真实读路径同款）。
-#[then(expr = "分类 {string} 仍应存在")]
 #[rstest_bdd_macros::then("分类 {name:string} 仍应存在")]
 fn assert_category_still_exists(world: &mut LedgerWorld, name: String) {
     let cats = list_categories_domain(&world_conn!(world), false).unwrap();
@@ -345,7 +327,6 @@ fn assert_category_still_exists(world: &mut LedgerWorld, name: String) {
     );
 }
 
-#[then(expr = "分类 {string} 不应存在")]
 #[rstest_bdd_macros::then("分类 {name:string} 不应存在")]
 fn assert_category_gone(world: &mut LedgerWorld, name: String) {
     let cats = list_categories_domain(&world_conn!(world), false).unwrap();
@@ -360,7 +341,6 @@ fn assert_category_gone(world: &mut LedgerWorld, name: String) {
 // When
 // ---------------------------------------------------------------------------
 
-#[when(expr = "查询预算进度")]
 #[rstest_bdd_macros::when("查询预算进度")]
 fn query_budget_progress(world: &mut LedgerWorld) {
     let today = scenario_today(world);
@@ -369,7 +349,6 @@ fn query_budget_progress(world: &mut LedgerWorld) {
 
 /// Writer 归一化会以原支出覆盖账户/币种/分类，此处传入的账户仅为满足入参形状，
 /// 实际不生效（L1 退款工厂的账户形参同款口径）。
-#[when(expr = "上一笔支出本月收到退款 {int}")]
 #[rstest_bdd_macros::when("上一笔支出本月收到退款 {amount:i64}")]
 fn refund_last_expense(world: &mut LedgerWorld, amount: i64) {
     let expense_id = world
@@ -390,7 +369,6 @@ fn refund_last_expense(world: &mut LedgerWorld, amount: i64) {
 // Then
 // ---------------------------------------------------------------------------
 
-#[then(expr = "分类 {string} 的预算进度应为 {int}")]
 #[rstest_bdd_macros::then("分类 {name:string} 的预算进度应为 {expected:i64}")]
 fn assert_budget_spent(world: &mut LedgerWorld, name: String, expected: i64) {
     let row = world
@@ -406,7 +384,6 @@ fn assert_budget_spent(world: &mut LedgerWorld, name: String, expected: i64) {
     );
 }
 
-#[then(expr = "分类 {string} 的预算应超支")]
 #[rstest_bdd_macros::then("分类 {name:string} 的预算应超支")]
 fn assert_over_budget(world: &mut LedgerWorld, name: String) {
     let row = world
@@ -418,7 +395,6 @@ fn assert_over_budget(world: &mut LedgerWorld, name: String) {
     assert!(row.over_budget, "分类 '{}' 应已超支", name);
 }
 
-#[then(expr = "分类 {string} 的预算不应超支")]
 #[rstest_bdd_macros::then("分类 {name:string} 的预算不应超支")]
 fn assert_not_over_budget(world: &mut LedgerWorld, name: String) {
     let row = world
@@ -430,13 +406,11 @@ fn assert_not_over_budget(world: &mut LedgerWorld, name: String) {
     assert!(!row.over_budget, "分类 '{}' 不应超支", name);
 }
 
-#[then(expr = "创建应失败并提示 {string}")]
 #[rstest_bdd_macros::then("创建应失败并提示 {needle:string}")]
 fn assert_create_budget_failed(world: &mut LedgerWorld, needle: String) {
     assert_last_error_contains(world, &needle);
 }
 
-#[then(expr = "创建应成功")]
 #[rstest_bdd_macros::then("创建应成功")]
 fn assert_create_budget_succeeded(world: &mut LedgerWorld) {
     assert!(
@@ -446,13 +420,11 @@ fn assert_create_budget_succeeded(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "编辑预算应失败并提示 {string}")]
 #[rstest_bdd_macros::then("编辑预算应失败并提示 {needle:string}")]
 fn assert_update_budget_failed(world: &mut LedgerWorld, needle: String) {
     assert_last_error_contains(world, &needle);
 }
 
-#[then(expr = "编辑预算应成功")]
 #[rstest_bdd_macros::then("编辑预算应成功")]
 fn assert_update_budget_succeeded(world: &mut LedgerWorld) {
     assert!(
@@ -463,7 +435,6 @@ fn assert_update_budget_succeeded(world: &mut LedgerWorld) {
 }
 
 /// 经进度读路径断言编辑后的金额（保存后列表/进度即时反映新金额）。
-#[then(expr = "分类 {string} 的预算金额应为 {int}")]
 #[rstest_bdd_macros::then("分类 {name:string} 的预算金额应为 {expected:i64}")]
 fn assert_budget_amount(world: &mut LedgerWorld, name: String, expected: i64) {
     let row = world
@@ -479,7 +450,6 @@ fn assert_budget_amount(world: &mut LedgerWorld, name: String, expected: i64) {
     );
 }
 
-#[then(expr = "分类 {string} 的预算行数应为 {int}")]
 #[rstest_bdd_macros::then("分类 {name:string} 的预算行数应为 {expected:i64}")]
 fn assert_budget_row_count(world: &mut LedgerWorld, name: String, expected: i64) {
     let id = category_id_any(&world_conn!(world), &name);
@@ -493,7 +463,6 @@ fn assert_budget_row_count(world: &mut LedgerWorld, name: String, expected: i64)
     assert_eq!(count, expected, "分类 '{}' 的预算行数不符", name);
 }
 
-#[then(expr = "分类 {string} 的预算金额仍应为 {int}")]
 #[rstest_bdd_macros::then("分类 {name:string} 的预算金额仍应为 {expected:i64}")]
 fn assert_budget_amount_unchanged(world: &mut LedgerWorld, name: String, expected: i64) {
     let id = category_id_any(&world_conn!(world), &name);

@@ -7,7 +7,6 @@
 //! 与 transactions_policy_steps 直调行为层 seam 的先例一致。
 //! 期次执行与计划状态变更复用 `scheduled_steps` 已注册步骤。
 
-use cucumber::{then, when};
 use rusqlite::params;
 
 use ledger_scheduled::{
@@ -34,9 +33,6 @@ fn parse_recurrence(s: &str) -> RecurrenceType {
 
 /// 为最近创建的保单创建缴费协议并记录计划 id（要求成功）。
 /// 携带的 `policy_id` 即「协议 → 保单」引用（V014 列），期次生成流水时复制。
-#[when(
-    expr = "为最近保单创建缴费协议 金额 {int} 币种 {string} 账户 {string} 周期 {string} 起始日期 {string}"
-)]
 #[rstest_bdd_macros::when(
     "为最近保单创建缴费协议 金额 {amount:i64} 币种 {currency:string} 账户 {account:string} 周期 {recurrence:string} 起始日期 {start:string}"
 )]
@@ -76,9 +72,6 @@ fn create_policy_agreement(
 }
 
 /// 尝试为最近创建的保单创建缴费协议并捕获错误（软删保单不可被新协议选择）。
-#[when(
-    expr = "尝试为最近保单创建缴费协议 金额 {int} 币种 {string} 账户 {string} 周期 {string} 起始日期 {string}"
-)]
 #[rstest_bdd_macros::when(
     "尝试为最近保单创建缴费协议 金额 {amount:i64} 币种 {currency:string} 账户 {account:string} 周期 {recurrence:string} 起始日期 {start:string}"
 )]
@@ -109,9 +102,6 @@ fn try_create_policy_agreement(
 
 /// 尝试为最近创建的保单创建携带商户的缴费协议并捕获错误
 /// （守卫：保单协议不挂商户，ADR-0082 决策 2）。
-#[when(
-    expr = "尝试为最近保单创建缴费协议 金额 {int} 币种 {string} 账户 {string} 周期 {string} 起始日期 {string} 带商户 {string}"
-)]
 #[rstest_bdd_macros::when(
     "尝试为最近保单创建缴费协议 金额 {amount:i64} 币种 {currency:string} 账户 {account:string} 周期 {recurrence:string} 起始日期 {start:string} 带商户 {merchant:string}"
 )]
@@ -181,7 +171,6 @@ fn create_policy_plan(
 
 /// 尝试编辑最近创建的保单缴费协议计划并提交商户（捕获错误：挂保单计划行
 /// 不回挂商户，ADR-0082 决策 2）。
-#[when(expr = "尝试编辑该订阅计划 商户 {string}")]
 #[rstest_bdd_macros::when("尝试编辑该订阅计划 商户 {merchant:string}")]
 fn try_edit_policy_plan_merchant(world: &mut LedgerWorld, merchant: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
@@ -215,9 +204,6 @@ fn try_edit_policy_plan_merchant(world: &mut LedgerWorld, merchant: String) {
 }
 
 /// 尝试创建携带保单的分期计划并捕获错误（准入守卫：只有订阅形态可挂保单）。
-#[when(
-    expr = "尝试创建分期计划 总额 {int} 期数 {int} 账户 {string} 起始日期 {string} 挂保单 {string}"
-)]
 #[rstest_bdd_macros::when(
     "尝试创建分期计划 总额 {total:i64} 期数 {occurrences:i64} 账户 {account:string} 起始日期 {start:string} 挂保单 {policy_number:string}"
 )]
@@ -260,9 +246,6 @@ fn try_create_installment_with_policy(
 }
 
 /// 尝试创建携带保单的定时转账计划并捕获错误（准入守卫：只有订阅形态可挂保单）。
-#[when(
-    expr = "尝试创建定时转账计划 金额 {int} 从账户 {string} 到账户 {string} 期数 {int} 起始日期 {string} 挂保单 {string}"
-)]
 #[rstest_bdd_macros::when(
     "尝试创建定时转账计划 金额 {amount:i64} 从账户 {from:string} 到账户 {to:string} 期数 {occurrences:i64} 起始日期 {start:string} 挂保单 {policy_number:string}"
 )]
@@ -323,7 +306,6 @@ fn policy_id_by_number(world: &LedgerWorld, policy_number: &str) -> String {
 
 /// 最近执行期次生成的交易不应携带商户引用（保费不挂商户，ADR-0082 决策 2：
 /// 计划行商户置空/不写，期次对空商户透传——归属唯一事实是 policy_id）。
-#[then(expr = "该期次交易不应携带商户")]
 #[rstest_bdd_macros::then("该期次交易不应携带商户")]
 fn assert_occurrence_txn_without_merchant(world: &mut LedgerWorld) {
     let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
@@ -340,7 +322,6 @@ fn assert_occurrence_txn_without_merchant(world: &mut LedgerWorld) {
 }
 
 /// 最近执行期次生成的交易挂单应为指定保单（按保单号定位）。
-#[then(expr = "该期次交易挂单应为保单号 {string}")]
 #[rstest_bdd_macros::then("该期次交易挂单应为保单号 {policy_number:string}")]
 fn assert_occurrence_txn_policy(world: &mut LedgerWorld, policy_number: String) {
     let policy_id = policy_id_by_number(world, &policy_number);
@@ -353,7 +334,6 @@ fn assert_occurrence_txn_policy(world: &mut LedgerWorld, policy_number: String) 
 }
 
 /// 最近计划已生成（期次回填）的全部交易均挂同一保单。
-#[then(expr = "最近计划生成的每笔交易挂单均应为保单号 {string}")]
 #[rstest_bdd_macros::then("最近计划生成的每笔交易挂单均应为保单号 {policy_number:string}")]
 fn assert_plan_txns_all_policy(world: &mut LedgerWorld, policy_number: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
@@ -384,7 +364,6 @@ fn assert_plan_txns_all_policy(world: &mut LedgerWorld, policy_number: String) {
 }
 
 /// 最近保单名下的协议段数（含已取消/暂停——多段历史 = 费率变更的分段真相）。
-#[then(expr = "最近保单的协议历史应有 {int} 段")]
 #[rstest_bdd_macros::then("最近保单的协议历史应有 {expected:i64} 段")]
 fn assert_policy_plan_segment_count(world: &mut LedgerWorld, expected: i64) {
     assert_eq!(
@@ -395,7 +374,6 @@ fn assert_policy_plan_segment_count(world: &mut LedgerWorld, expected: i64) {
 }
 
 /// 最近保单第 `n` 段协议（按创建先后）的状态与每期金额。
-#[then(expr = "最近保单第 {int} 段协议状态应为 {string} 每期金额应为 {int}")]
 #[rstest_bdd_macros::then(
     "最近保单第 {n:usize} 段协议状态应为 {expected_status:string} 每期金额应为 {expected_amount:i64}"
 )]

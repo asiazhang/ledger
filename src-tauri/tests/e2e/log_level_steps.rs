@@ -5,8 +5,6 @@
 //! （命令壳只做参数解包，没有 BDD 关注的额外行为）。「旧备份缺表」场景与
 //! `settings::get` 的表缺失自愈兑底（ADR-0017）同语义。
 
-use cucumber::{then, when};
-
 use ledger_infra::error::AppError;
 use tauri_app_lib::shell_support::logger;
 
@@ -20,14 +18,12 @@ fn code_of(err: &AppError) -> Option<&str> {
     }
 }
 
-#[when(expr = "写入持久化日志档位 {string}")]
 #[rstest_bdd_macros::when("写入持久化日志档位 {level:string}")]
 fn write_log_level(world: &mut LedgerWorld, level: String) {
     let conn = world_conn!(world);
     logger::set_persisted_level(&conn, &level).expect("写入合法档位应成功");
 }
 
-#[when(expr = "尝试写入非法日志档位 {string}")]
 #[rstest_bdd_macros::when("尝试写入非法日志档位 {level:string}")]
 fn try_write_invalid_log_level(world: &mut LedgerWorld, level: String) {
     let conn = world_conn!(world);
@@ -35,7 +31,6 @@ fn try_write_invalid_log_level(world: &mut LedgerWorld, level: String) {
     world.last_app_error = result.err();
 }
 
-#[when(expr = "移除 app_settings 表")]
 #[rstest_bdd_macros::when("移除 app_settings 表")]
 fn drop_app_settings_table(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
@@ -43,7 +38,6 @@ fn drop_app_settings_table(world: &mut LedgerWorld) {
         .expect("移除 app_settings 表失败");
 }
 
-#[then(expr = "持久化日志档位应为 {string}")]
 #[rstest_bdd_macros::then("持久化日志档位应为 {expected:string}")]
 fn assert_log_level(world: &mut LedgerWorld, expected: String) {
     let conn = world_conn!(world);
@@ -51,7 +45,6 @@ fn assert_log_level(world: &mut LedgerWorld, expected: String) {
     assert_eq!(actual, expected, "持久化日志档位不匹配");
 }
 
-#[then(expr = "应返回错误码 {string}")]
 #[rstest_bdd_macros::then("应返回错误码 {code:string}")]
 fn assert_error_code(world: &mut LedgerWorld, code: String) {
     let error = world.last_app_error.as_ref().expect("预期写入失败");

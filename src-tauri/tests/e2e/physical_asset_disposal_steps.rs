@@ -1,14 +1,6 @@
 //! 实物资产处置与软删 BDD 步骤（issue #468 T3 / spec #465 / ADR-0064）：
 //! 处置守卫、处置读回、软删不可见、信号计数递增。
 
-use cucumber::{then, when};
-
-// 实物资产处置与软删步骤**双注册**（spec #1494 / ticket #1500）：同一函数同时挂
-// cucumber 与 rstest-bdd 两个属性宏——旧目标行为零变化，新目标能匹配同一批步骤，
-// 函数体与断言唯一不复制。占位符按参数名与类型对齐（`{string}` → `{<参数名>:string}`、
-// `{int}` → 有符号/无符号整数 hint），引号剥离与数值解析语义与 cucumber 一致；切换只改
-// 属性形态，不改断言语义（CONTEXT-testing「行为等价判据」）。
-
 use ledger_physical_asset::{
     PhysicalAssetDisposeInput, delete_physical_asset as delete_physical_asset_domain,
     dispose_physical_asset as dispose_physical_asset_domain,
@@ -38,7 +30,6 @@ fn require_last_asset_id(world: &LedgerWorld) -> String {
         .expect("处置 / 软删前应先创建实物资产")
 }
 
-#[when(expr = "处置实物资产 处置日期 {string} 处置价 {string} 币种 {string}")]
 #[rstest_bdd_macros::when(
     "处置实物资产 处置日期 {date:string} 处置价 {price:string} 币种 {currency:string}"
 )]
@@ -52,7 +43,6 @@ fn dispose_asset(world: &mut LedgerWorld, date: String, price: String, currency:
     }
 }
 
-#[when(expr = "尝试处置实物资产 处置日期 {string} 处置价 {string} 币种 {string}")]
 #[rstest_bdd_macros::when(
     "尝试处置实物资产 处置日期 {date:string} 处置价 {price:string} 币种 {currency:string}"
 )]
@@ -69,7 +59,6 @@ fn try_dispose_asset(world: &mut LedgerWorld, date: String, price: String, curre
     }
 }
 
-#[when(expr = "软删除实物资产")]
 #[rstest_bdd_macros::when("软删除实物资产")]
 fn delete_asset(world: &mut LedgerWorld) {
     let id = require_last_asset_id(world);
@@ -80,7 +69,6 @@ fn delete_asset(world: &mut LedgerWorld) {
     }
 }
 
-#[then(expr = "已处置筛选下实物资产列表应包含 {int} 件资产")]
 #[rstest_bdd_macros::then("已处置筛选下实物资产列表应包含 {expected:usize} 件资产")]
 fn list_disposed_assets(world: &mut LedgerWorld, expected: usize) {
     let list = list_physical_assets_domain(&world_conn!(world), Some("disposed"))
@@ -94,7 +82,6 @@ fn list_disposed_assets(world: &mut LedgerWorld, expected: usize) {
     world.asset.physical_assets_list = Some(list);
 }
 
-#[then(expr = "第 {int} 件资产处置日期应为 {string} 处置价应为 {int} 币种 {string}")]
 #[rstest_bdd_macros::then(
     "第 {index:usize} 件资产处置日期应为 {date:string} 处置价应为 {cents:i64} 币种 {currency:string}"
 )]
@@ -124,7 +111,6 @@ fn assert_disposal_fields(
     );
 }
 
-#[then(expr = "第 {int} 件资产当前估值折本位币应为空")]
 #[rstest_bdd_macros::then("第 {index:usize} 件资产当前估值折本位币应为空")]
 fn assert_native_valuation_none(world: &mut LedgerWorld, index: usize) {
     let asset = &world
@@ -139,7 +125,6 @@ fn assert_native_valuation_none(world: &mut LedgerWorld, index: usize) {
     );
 }
 
-#[then(expr = "已软删资产数据与估值历史应保留")]
 #[rstest_bdd_macros::then("已软删资产数据与估值历史应保留")]
 fn assert_soft_deleted_data_preserved(world: &mut LedgerWorld) {
     let id = require_last_asset_id(world);

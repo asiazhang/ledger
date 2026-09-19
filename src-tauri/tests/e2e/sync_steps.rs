@@ -22,7 +22,6 @@
 //! 建库走产品开库入口（world 的 `DbState`）、种子走 `crate::common` 的 e2e 共享
 //! 助手、输入走 `step_inputs`、写入走 `step_verbs`，两层互不共享默认值。
 
-use cucumber::{given, then, when};
 use rusqlite::Connection;
 
 use ledger_infra::settings::{self, SettingKey};
@@ -43,11 +42,10 @@ use crate::world::LedgerWorld;
 use ledger_infra::db::DbState;
 use tauri_app_lib::test_support::{S3Addressing, S3StubConfig, publish_raw_segment, spawn_s3_stub};
 
-/// 把阻塞的通道工作（S3 传输桥的真 HTTP 往返）移出异步上下文：cucumber
-/// 场景跑在 tokio 运行时内，S3 传输桥自持专用线程与阻塞等待（多端同步域异步化
-/// #1405 另案前传输面同步形态），直接占用运行时线程会拖死调度。`block_in_place`
-/// 声明「本段要阻塞」——与产品侧把同步轮次放进阻塞线程池同一语义
-///（ADR-0069 / 壳层 `sync_now` 的接线形态）。
+/// 把阻塞的通道工作（S3 传输桥的真 HTTP 往返）移出异步上下文：步骤体由测试线程
+/// 直接驱动，S3 传输桥自持专用线程与阻塞等待（多端同步域异步化 #1405 另案前传输面
+/// 同步形态），直接占用线程会拖死调度。`block_in_place` 声明「本段要阻塞」——与
+/// 产品侧把同步轮次放进阻塞线程池同一语义（ADR-0069 / 壳层 `sync_now` 的接线形态）。
 fn blocking<T>(f: impl FnOnce() -> T) -> T {
     tokio::task::block_in_place(f)
 }
@@ -89,15 +87,13 @@ fn device_id_of(conn: &Connection) -> String {
 // Given
 // ---------------------------------------------------------------------------
 
-#[given(expr = "以当前账本配置同步通道 空间 {string}")]
 #[rstest_bdd_macros::given("以当前账本配置同步通道 空间 {space:string}")]
 fn configure_channel(world: &mut LedgerWorld, space: String) {
     configure_channel_impl(world, space);
 }
 
-/// 同一段落在「用户动作」语境下也出现（旅程首步「配置通道」）：cucumber 按关键字
-/// 匹配步骤定义，故 When 形态另行注册、委托同一实现（语义零分叉）。
-#[when(expr = "以当前账本配置同步通道 空间 {string}")]
+/// 同一段落在「用户动作」语境下也出现（旅程首步「配置通道」）：步骤按关键字
+/// 匹配，故 When 形态另行注册、委托同一实现（语义零分叉）。
 #[rstest_bdd_macros::when("以当前账本配置同步通道 空间 {space:string}")]
 fn configure_channel_when(world: &mut LedgerWorld, space: String) {
     configure_channel_impl(world, space);
@@ -115,7 +111,6 @@ fn configure_channel_impl(world: &mut LedgerWorld, space: String) {
     settings::set(&conn, SettingKey::SyncChannelConfig, &config).expect("通道配置应落库");
 }
 
-#[given(expr = "写入一笔支出 {int} 到账户 {string} 日期 {string} 备注 {string}")]
 #[rstest_bdd_macros::given(
     "写入一笔支出 {amount:i64} 到账户 {account:string} 日期 {date:string} 备注 {note:string}"
 )]
@@ -139,7 +134,6 @@ fn write_expense(
 
 /// 对端把同一笔数据推上同一通道：另起一个「对端设备」库（同构种子）跑一轮发布。
 /// 桩根目录按同步空间共享，故对端的段对本端可见——本端随后拉取即得真实数据。
-#[given(expr = "对端账本已把同一笔数据推上同一通道")]
 #[rstest_bdd_macros::given("对端账本已把同一笔数据推上同一通道")]
 fn peer_publishes(world: &mut LedgerWorld) {
     // 对端库：e2e 共享种子形态（`crate::common`，非测试工厂——ADR-0086 决策 9
@@ -168,7 +162,6 @@ fn peer_publishes(world: &mut LedgerWorld) {
 /// 该 op 外键指向不存在的账户，重放必然被账户存活守卫拒绝——挂起队列因此非空
 ///（「挂起通知可见」的被测前提）。此形态无公开入口可产出（域写入口有外键守卫），
 /// 故经共享的线格式替身成帧（issue #956），字节形态与产品消费的形状同源。
-#[given(expr = "对端投递一条引用不存在账户的操作")]
 #[rstest_bdd_macros::given("对端投递一条引用不存在账户的操作")]
 fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
     let layout = ChannelLayout::new("default").expect("布局应可构造");
@@ -224,7 +217,6 @@ fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
     });
 }
 
-#[given(expr = "通道指向不可达的同步地址")]
 #[rstest_bdd_macros::given("通道指向不可达的同步地址")]
 fn point_to_unreachable_channel(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
@@ -249,7 +241,6 @@ fn point_to_unreachable_channel(world: &mut LedgerWorld) {
 // When
 // ---------------------------------------------------------------------------
 
-#[when(expr = "打开应用即同步一轮")]
 #[rstest_bdd_macros::when("打开应用即同步一轮")]
 fn auto_sync_once(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
@@ -258,7 +249,6 @@ fn auto_sync_once(world: &mut LedgerWorld) {
     }));
 }
 
-#[when(expr = "手动触发一轮同步")]
 #[rstest_bdd_macros::when("手动触发一轮同步")]
 fn manual_sync_once(world: &mut LedgerWorld) {
     let channel = channel_of(world);
@@ -272,7 +262,6 @@ fn manual_sync_once(world: &mut LedgerWorld) {
     }
 }
 
-#[when(expr = "以密文库会话形态打开应用即同步一轮")]
 #[rstest_bdd_macros::when("以密文库会话形态打开应用即同步一轮")]
 fn auto_sync_encrypted_session(world: &mut LedgerWorld) {
     // 密文库会话形态：记入会话口令（自动轮次据此封包，不读钥匙串）。
@@ -290,7 +279,6 @@ fn auto_sync_encrypted_session(world: &mut LedgerWorld) {
 // Then
 // ---------------------------------------------------------------------------
 
-#[then(expr = "通道上应有本机账本目录")]
 #[rstest_bdd_macros::then("通道上应有本机账本目录")]
 fn channel_has_book_dir(world: &mut LedgerWorld) {
     let channel = channel_of(world);
@@ -311,7 +299,6 @@ fn channel_has_book_dir(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "本轮同步应上传 {int} 条操作")]
 #[rstest_bdd_macros::then("本轮同步应上传 {expected:usize} 条操作")]
 fn uploaded_ops_is(world: &mut LedgerWorld, expected: usize) {
     let round = world
@@ -325,7 +312,6 @@ fn uploaded_ops_is(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(report.uploaded_ops, expected, "上传 op 数不匹配");
 }
 
-#[then(expr = "本端应已应用对端操作")]
 #[rstest_bdd_macros::then("本端应已应用对端操作")]
 fn applied_foreign_ops(world: &mut LedgerWorld) {
     let report = world
@@ -339,7 +325,6 @@ fn applied_foreign_ops(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "同步状态应显示已配置通道")]
 #[rstest_bdd_macros::then("同步状态应显示已配置通道")]
 fn status_channel_configured(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
@@ -349,7 +334,6 @@ fn status_channel_configured(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "同步状态应显示未配置通道")]
 #[rstest_bdd_macros::then("同步状态应显示未配置通道")]
 fn status_channel_absent(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
@@ -359,7 +343,6 @@ fn status_channel_absent(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "同步状态应带上次同步时刻")]
 #[rstest_bdd_macros::then("同步状态应带上次同步时刻")]
 fn status_has_last_sync_at(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
@@ -368,7 +351,6 @@ fn status_has_last_sync_at(world: &mut LedgerWorld) {
     assert!(stamp.is_some(), "成功轮次后应有上次同步时刻");
 }
 
-#[then(expr = "同步轮次应零动作")]
 #[rstest_bdd_macros::then("同步轮次应零动作")]
 fn auto_sync_was_noop(world: &mut LedgerWorld) {
     let round = world
@@ -382,7 +364,6 @@ fn auto_sync_was_noop(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "挂起队列应有 {int} 条不可重放操作")]
 #[rstest_bdd_macros::then("挂起队列应有 {expected:usize} 条不可重放操作")]
 fn parked_count_is(world: &mut LedgerWorld, expected: usize) {
     let conn = world_conn!(world);
@@ -390,7 +371,6 @@ fn parked_count_is(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(parked.len(), expected, "挂起条数不匹配: {parked:?}");
 }
 
-#[then(expr = "挂起通知应携带码化原因")]
 #[rstest_bdd_macros::then("挂起通知应携带码化原因")]
 fn parked_notice_has_code(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
@@ -404,7 +384,6 @@ fn parked_notice_has_code(world: &mut LedgerWorld) {
     assert!(!first.message.is_empty(), "挂起通知应携带可读原因");
 }
 
-#[then(expr = "会话信封形态应为密文")]
 #[rstest_bdd_macros::then("会话信封形态应为密文")]
 fn session_is_encrypted(world: &mut LedgerWorld) {
     assert!(
@@ -413,7 +392,6 @@ fn session_is_encrypted(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "同步轮次应封包上传")]
 #[rstest_bdd_macros::then("同步轮次应封包上传")]
 fn auto_round_sealed(world: &mut LedgerWorld) {
     let round = world

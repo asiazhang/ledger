@@ -13,62 +13,61 @@
 //    `RUST_TEST_THREADS=1`（只约束 libtest 线程），libtest 线程数 = 并行度，
 //    不出现「各二进制各自开满 libtest 线程」的 CPU 超订（测试自起的 tokio 等
 //    运行时不在控制面，属经验证据）；失败聚合报告，跑完全部才退出。
-// ② e2e 入口（scripts/test.sh 调用 scripts/e2e.sh，ticket #1496 / spec #1494）：
-//    新目标（rstest-bdd，`harness = true`）改由 `cargo nextest run` 承载——进程级
-//    per-test 调度，每个 Scenario 一个进程、并行度按 CPU 收敛（进程内 libtest 线程
-//    并行对世界构造是负收益）；旧目标（cucumber，`harness = false` 自定义 runner，
-//    不支持 nextest 的 `--list` 协议）进 nextest 排除名单后仍走 cargo 自有 runner。
-//    承接的目标以本文件 NEXTEST_TARGETS 登记为唯一声明，不留在并发入口队列里重复跑；
-//    登记 ⇔ scripts/e2e.sh 的 nextest 命令双向全等。
+// ② e2e 入口（scripts/test.sh 调用 scripts/e2e.sh，ticket #1496 / spec #1494；收口
+//    票 #1508）：全部 `.feature` 场景由 `cargo nextest run --test e2e_rstest` 承载——
+//    进程级 per-test 调度，每个 Scenario 一个进程、并行度按 CPU 收敛（进程内 libtest
+//    线程并行对世界构造是负收益）。承接的目标以 scripts/e2e.sh 的 nextest 命令为唯一
+//    声明（迁移期登记清单 NEXTEST_TARGETS 已退役），不留在并发入口队列里重复跑；同
+//    脚本另设场景数全等守门（场景测试数 = feature 场景行数）。
 // ③ 非并发入口（scripts/test.sh 最后一条命令）：doc-test（测试二进制由 rustdoc 生成、
-//    不进 cargo 的 test artifact 报告）仍走 cargo 自有入口。收口票 #1508 删除 cucumber
-//    后 ② 只剩 nextest 一条命令。
+//    不进 cargo 的 test artifact 报告）仍走 cargo 自有入口。
 //
 // 覆盖守门（check 命令；scripts/test.sh 与 scripts/check.sh 同址执行，CI 亦挂）：
 // 目标清单口径与 `cargo test` 默认执行面全等——lib 单测 + bin 单测 + 集成测试 +
 // doc-test；example / bench 不在默认执行面（cargo 只构建 example、不跑 bench），
-// 故不入清单，但发现声明即提示，防口径漂移。守门七条（任一处漂移即红，fail loud）：
-//   ① 工作区全部测试目标 = 并发入口承接集合 ⊎ nextest 承接集合 ⊎ 非并发入口承接
+// 故不入清单，但发现声明即提示，防口径漂移。收口 #1508 后守门六条（任一处漂移即
+// 红，fail loud）：
+//   ① 工作区全部测试目标 = 并发入口承接集合 ⊎ e2e(nextest) 承接集合 ⊎ doc-test
 //      集合（互斥且无遗漏；目标清单自 manifest + 目录自动发现派生，新增 target /
 //      新成员 crate 自动入列）；
-//   ② `[[test]] harness = false` 的声明集合 ⇔ scripts/e2e.sh 非并发入口的
-//      `--test <name>` 名单（双向全等——新增自定义 harness 目标未登记即红，登记
-//      失效或拼写漂移同样红）；
-//   ③ nextest 承接登记 ⇔ scripts/e2e.sh 的 `cargo nextest run … --test <name>`
-//      名单（双向全等，ticket #1496）：NEXTEST_TARGETS 是「必须经 nextest 进程级
-//      per-test 调度」的唯一声明，删掉 nextest 运行行即红——不静默降级回并发入口
-//      （那样会退回进程内串行，正是本票要消灭的形态）；登记目标必须是 harness = true
-//      的集成测试。scripts/test.sh 必须调用 scripts/e2e.sh（e2e 未接入本地入口即红）。
-//      另核对 `src-tauri/.config/nextest.toml` 的 default-filter：只允许
-//      `not binary(<自定义 harness 目标名>)` + `and` 形态，排除名单与 `harness = false`
-//      目标清单双向全等（逐名回查同名目标，含 lib/bin 单测的 crate 名）——多排一个
-//      名字或写别的子句即红（静默移出调度面），少排一个会让 nextest 列举失败（fail loud）。
+//   ② 自定义 harness 已退役：`[[test]] harness = false` / `[[bin]] harness = false`
+//      / `[lib] harness = false` 一律拒绝——收口后全部测试目标走标准 libtest
+//      harness，nextest 可直接列举；
+//   ③ e2e 承接集合 = scripts/e2e.sh 的 `cargo nextest run … --test <name>` 名单
+//      （ticket #1496；收口 #1508 后不再有迁移期登记清单 NEXTEST_TARGETS）：
+//      非空即要求「一条 nextest 入口跑完 e2e」，删掉 nextest 运行行即红——不静默
+//      降级回并发入口（那样会退回进程内串行，正是本票要消灭的形态）；名单逐项必须
+//      对应 harness = true 的集成测试目标。scripts/test.sh 必须调用 scripts/e2e.sh
+//      （e2e 未接入本地入口即红），且 scripts/e2e.sh 的场景数全等守门与 nextest
+//      运行命令都由同名脚本头注登记。
 //   ④ 存在 doc-test 目标 ⇔ scripts/test.sh 有 `cargo test --workspace --doc`
 //      （doc 命令必须带 workspace 范围——退化成 `cargo test --doc` 会让成员 crate
 //      的 doctest 静默漏跑而守门仍绿）；且 scripts/test.sh 必须调用并发入口
 //      的**运行**命令 `bun scripts/test-exec.ts [run]`（删除即红；`… check` 自检行
 //      不算运行接线）；
-//     ②③④ 与⑤同口径：只认**命令位置**的命令——非注释行里的说明文字（引号内的
+//     ③④ 与⑤同口径：只认**命令位置**的命令——非注释行里的说明文字（引号内的
 //      `echo "…bun scripts/test-exec.ts…"`）不算接线，否则把真命令全包成
 //      echo 字符串就能让入口一起假绿（#1112 第三轮审查实测）。
 //   ⑤ 门禁自身接线：scripts/check.sh 与 CI frontend job 必须调用 `check`——接线
 //      在管线里、不由单元测试构建，按先例 #959/#961 以源码扫描守门（删除接线即红）；
-//   ⑥ CI 测试执行面：CI workflow 必须有 `cargo nextest run …`（测试执行切 nextest），
-//      且每个 `harness = false` 目标必须有一条 `cargo test … --test <name>`（被
-//      default-filter 排除、nextest 不能列举）——CI 侧删任一条即静默减面；
+//   ⑥ CI 测试执行面：CI workflow 必须有 `cargo nextest run …`（测试执行切 nextest）
+//      且必须调用统一的 e2e 入口 `scripts/e2e.sh`（本地与 CI 同一条 nextest 入口跑完
+//      e2e）——CI 侧删任一条即静默减面；
 //   ⑦ 执行器等价性：测试运行期不得依赖 cargo 注入的环境变量（现状零命中，见
 //      cargoRuntimeEnvProblems 注）。
 // run 命令另有第八道交叉核对：`cargo test --no-run` 实际构建出的测试二进制集合
 // 必须与①的目标清单全等——发现逻辑与 cargo 真实行为漂移即红，不给「清单看着对、
-// 实际漏跑」留口子。unsupported manifest 形态（auto* 开关、lib harness=false、
-// 非尾随 `*` 的成员 glob）一律拒绝而非猜测。
+// 实际漏跑」留口子。unsupported manifest 形态（auto* 开关、任意 harness=false、
+// `src-tauri/.config/nextest.toml` 出现 default-filter、非尾随 `*` 的成员 glob）
+// 一律拒绝而非猜测。
 //
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/test-exec.ts [run|check|plan] [--jobs N]`，
 // 默认 run；测试可传 `--root <夹具根>` 指向夹具（夹具只需 manifest + 目录形态，
 // 不调用 cargo）。挂载于 scripts/test.sh（本地测试入口）与 scripts/check.sh
-// 质量门槛序列 + CI frontend job（覆盖守门部分）；CI 的测试执行面自 #1496 起
-// 与本地同口径（cargo-nextest + 旧 cucumber 目标各一条，见 build.yml backend job）。
+// 质量门槛序列 + CI frontend job（覆盖守门部分）；CI 的测试执行面自 #1496 起走
+// cargo-nextest，收口 #1508 后 e2e 段与本地同为 `scripts/e2e.sh` 一条 nextest 命令
+// （见 build.yml backend job）。
 
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -85,8 +84,8 @@ const SRC_TAURI_DIR_NAME = "src-tauri";
 const TEST_SH_REL = join("scripts", "test.sh");
 
 /**
- * e2e 执行面宿主脚本（ticket #1496）：`harness = false` 目标与 nextest 承接目标的
- * 命令行都住这里；scripts/test.sh 复用本脚本，故两条 e2e 接线在单一宿主内核对。
+ * e2e 执行面宿主脚本（ticket #1496 / 收口 #1508）：nextest 承接目标的命令行住这里，
+ * scripts/test.sh 复用本脚本，故 e2e 接线在单一宿主内核对。
  */
 const E2E_SH_REL = join("scripts", "e2e.sh");
 
@@ -101,16 +100,9 @@ export const DELEGATED_TARGET_FLAG = "--test";
 export const DOC_FLAG = "--doc";
 
 /**
- * nextest 入口（scripts/test.sh 的 `cargo nextest run …` 命令）承载的目标登记
- * （ticket #1496 / spec #1494）：迁移期「必须经 nextest 进程级 per-test 调度」的
- * 集成测试目标唯一声明处。删掉 scripts/test.sh 的 nextest 运行行（或把登记目标挪回
- * 并发入口）即红——并发入口固定 `RUST_TEST_THREADS=1` 会把 Scenario 重新串成进程内
- * 单线程，正是本票要消灭的形态。逐域迁移把场景并入同一目标，故本清单不随票增长；
- * 收口票 #1508 删除 cucumber、本地与 CI 统一 nextest 单入口后本登记退役。
+ * nextest 仓库配置（相对仓库根）：核对「收口后不得再有 default-filter 排除名单」
+ *（ticket #1496 / 收口 #1508）。
  */
-export const NEXTEST_TARGETS: readonly string[] = ["e2e_rstest"];
-
-/** nextest 仓库配置（相对仓库根）：default-filter 排除名单的核对对象。 */
 export const NEXTEST_CONFIG_REL = join(SRC_TAURI_DIR_NAME, ".config", "nextest.toml");
 
 /** nextest 运行命令词（scripts/test.sh 命令行判据）：`cargo nextest run …`。 */
@@ -130,8 +122,6 @@ export interface DiscoveredTarget {
   package: string;
   target: string;
   kind: TargetKind;
-  /** 仅集成测试目标有意义：`[[test]] harness = false`（自定义 runner）。 */
-  harnessFalse: boolean;
   /** 目标所属包根（绝对路径）——测试进程的 cwd 与 cargo 口径一致（见 runKey 注）。 */
   cwd: string;
 }
@@ -436,22 +426,10 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
           `不属 libtest 面，需显式归入非并发入口（当前发现逻辑不支持）`,
       );
     } else if (tables.lib?.test !== false) {
-      targets.push({
-        package: packageName,
-        target: libName,
-        kind: "lib",
-        harnessFalse: false,
-        cwd: dir,
-      });
+      targets.push({ package: packageName, target: libName, kind: "lib", cwd: dir });
     }
     if (tables.lib?.doctest !== false) {
-      targets.push({
-        package: packageName,
-        target: libName,
-        kind: "doc",
-        harnessFalse: false,
-        cwd: dir,
-      });
+      targets.push({ package: packageName, target: libName, kind: "doc", cwd: dir });
     }
   }
 
@@ -481,13 +459,7 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
       continue;
     }
     if (decl.test !== false) {
-      targets.push({
-        package: packageName,
-        target: name,
-        kind: "bin",
-        harnessFalse: false,
-        cwd: dir,
-      });
+      targets.push({ package: packageName, target: name, kind: "bin", cwd: dir });
     }
   }
 
@@ -504,13 +476,14 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
   }
   for (const [name, decl] of testDecls) {
     if (decl.test === false) continue;
-    targets.push({
-      package: packageName,
-      target: name,
-      kind: "test",
-      harnessFalse: decl.harness === false,
-      cwd: dir,
-    });
+    if (decl.harness === false) {
+      problems.push(
+        `✗ 目标发现：${rel} 的 [[test]] ${name} 声明 harness = false——自定义 harness` +
+          ` 已随收口 #1508 退役（全部测试目标走标准 libtest harness，nextest 可列举）`,
+      );
+      continue;
+    }
+    targets.push({ package: packageName, target: name, kind: "test", cwd: dir });
   }
 
   // example / bench 不在 `cargo test` 默认执行面（只构建 example、不跑 bench），仅提示。
@@ -784,12 +757,10 @@ export function parseEntryWiring(content: string): EntryWiring {
 export interface CoverageResult {
   problems: string[];
   targets: DiscoveredTarget[];
-  /** 并发入口承接（lib 单测 + bin 单测 + harness=true 集成测试）。 */
+  /** 并发入口承接（lib 单测 + bin 单测 + 非 e2e 集成测试）。 */
   parallel: DiscoveredTarget[];
-  /** nextest 入口承接的集成测试（NEXTEST_TARGETS 登记，进程级 per-test 调度）。 */
+  /** e2e 入口（`scripts/e2e.sh` 的 nextest 命令）承接的集成测试，进程级 per-test 调度。 */
   nextest: DiscoveredTarget[];
-  /** 非并发入口承接的自定义 harness 集成测试（`--test <name>`）。 */
-  delegated: DiscoveredTarget[];
   /** cargo 自有入口承接的 doc-test。 */
   doc: DiscoveredTarget[];
   outOfFace: string[];
@@ -835,10 +806,12 @@ export function gateWiredIn(content: string): boolean {
  * 可带 `sh` 前缀）。只看命令词——`echo "scripts/e2e.sh"` 这类说明文字不算接线。
  */
 function invokesScript(content: string, rel: string): boolean {
-  const needles = new Set([rel, `./${rel}`]);
+  // 归一去掉 `./` / `../` 前缀：CI job 的 working-directory 是 src-tauri，写
+  // `../scripts/e2e.sh` 也算接线；相对仓库根的写法同样命中。
+  const normalize = (token: string): string => token.replace(/^(?:\.\.\/|\.\/)+/, "");
   for (const argv of shellCommands(content)) {
     const head = argv[0] === "sh" || argv[0] === "bash" || argv[0] === "dash" ? argv[1] : argv[0];
-    if (head !== undefined && needles.has(head)) return true;
+    if (head !== undefined && normalize(head) === rel) return true;
   }
   return false;
 }
@@ -914,120 +887,42 @@ function cargoRuntimeEnvProblems(rootDir: string): string[] {
   return problems;
 }
 
-/** nextest 仓库配置里 `binary(<name>)` 项的捕获式（组 1 = 是否带 `not`）。 */
-const NEXTEST_BINARY_RE = /(not\s+)?binary\(\s*([A-Za-z0-9_-]+)\s*\)/g;
-
-/** 合法子句形态：`not binary(<name>)`（整表达式校验时先剥掉它，余下必须只剩 `and`）。 */
-const NEXTEST_NOT_BINARY_RE = /not\s+binary\(\s*[A-Za-z0-9_-]+\s*\)/g;
-
 /**
- * 覆盖守门规则③后半（ticket #1496）：`src-tauri/.config/nextest.toml` 的
- * default-filter **只允许**「`not binary(<自定义 harness 目标名>)` 子句 + `and`」这一
- * 形态，且排除名单须与 `harness = false` 目标清单**双向全等**——
- * 多排一个名字或写出 `test(...)` 之类子句 = 目标被静默移出 nextest 调度面；
- * 少排一个自定义 harness 目标 = nextest 列举它时 fail loud，同样按红处置：
- * 「排除名单即自定义 harness 清单」是单一事实源，两处漂移都不许。
- *
- * 语义注：nextest 的 `binary()` 按**二进制名**（集成 target 名；单测取 crate 名）
- * glob 匹配、与包无关，故逐名回查清单里所有同名目标——命中项必须全是自定义
- * harness，否则同名 libtest 目标会被一并排除（静默漏跑）。
+ * 覆盖守门规则③后半（ticket #1496 / 收口 #1508）：`src-tauri/.config/nextest.toml`
+ * 是 e2e 目标 nextest 调度的仓库配置单点。收口后没有自定义 harness 目标，**不得**
+ * 再出现 `default-filter`——任何排除子句都会把标准 libtest 目标静默移出 nextest
+ * 调度面（少跑测试而门禁仍绿）；配置缺失同样按红处置（调度配置单点不存在）。
  */
-function nextestConfigProblems(
-  rootDir: string,
-  customHarness: DiscoveredTarget[],
-  allTargets: DiscoveredTarget[],
-): string[] {
+function nextestConfigProblems(rootDir: string): string[] {
   const problems: string[] = [];
-  const customHarnessNames = customHarness.map((t) => t.target);
   const path = join(rootDir, NEXTEST_CONFIG_REL);
   if (!existsSync(path)) {
     problems.push(
-      `✗ 覆盖守门：nextest 仓库配置不存在：${NEXTEST_CONFIG_REL}——e2e 新目标经 nextest` +
-        ` 调度（登记：${NEXTEST_TARGETS.join(" / ")}），配置缺失无法核对排除名单`,
+      `✗ 覆盖守门：nextest 仓库配置不存在：${NEXTEST_CONFIG_REL}——e2e 经 nextest 进程级` +
+        ` per-test 调度，配置单点缺失`,
     );
     return problems;
   }
   const filterLine = readFileSync(path, "utf8")
     .split("\n")
     .find((line) => /^\s*default-filter\s*=/.test(line));
-  if (filterLine === undefined) {
+  if (filterLine !== undefined) {
     problems.push(
-      `✗ 覆盖守门：${NEXTEST_CONFIG_REL} 缺 \`default-filter\`——自定义 harness 目标` +
-        `（${customHarnessNames.join(" / ") || "（无）"}）会被 nextest 纳入列举并失败；` +
-        `排除名单须与 \`harness = false\` 目标清单全等`,
+      `✗ 覆盖守门：${NEXTEST_CONFIG_REL} 出现 \`default-filter\`——收口 #1508 后自定义` +
+        ` harness 已退役，默认过滤只会把标准 libtest 目标静默移出 nextest 调度面`,
     );
-    return problems;
-  }
-  // TOML 字符串值：基本字符串（双引号）或字面字符串（单引号），脱壳后看表达式本体。
-  const expr = filterLine
-    .slice(filterLine.indexOf("=") + 1)
-    .trim()
-    .replace(/^"(.*)"$/, "$1")
-    .replace(/^'(.*)'$/, "$1");
-  // 整表达式形态：剥掉全部 `not binary(<name>)` 与 `and`、空白、括号后必须为空——
-  // 子句解析只挑 `binary(...)` 不够：`not test(accounts)` 之类会静默排除 libtest 目标。
-  const remainder = expr
-    .replace(NEXTEST_NOT_BINARY_RE, " ")
-    .replace(/\band\b/g, " ")
-    .replace(/[\s()]/g, "");
-  if (remainder !== "") {
-    problems.push(
-      `✗ 覆盖守门：${NEXTEST_CONFIG_REL} 的 default-filter 含未识别子句（余：\`${remainder}\`）` +
-        `——默认过滤器只允许 \`not binary(<自定义 harness 目标名>)\` 与 \`and\`，` +
-        `其余写法可能把 libtest 目标静默移出 nextest 调度面`,
-    );
-  }
-  const excluded = new Set<string>();
-  for (const match of expr.matchAll(NEXTEST_BINARY_RE)) {
-    const name = match[2] ?? "";
-    if (match[1] === undefined) {
-      problems.push(
-        `✗ 覆盖守门：${NEXTEST_CONFIG_REL} 的 default-filter 含未取反的 \`binary(${name})\`` +
-          `——除它以外的目标会被静默移出 nextest 调度面（默认过滤器只允许 \`not binary(<自定义 harness>)\` 形态）`,
-      );
-      continue;
-    }
-    excluded.add(name);
-  }
-  // 逐名回查：`binary()` 按二进制名匹配，同名目标（含 lib/bin 单测的 crate 名）必须逐一核对。
-  const nonDocTargets = allTargets.filter((t) => t.kind !== "doc");
-  for (const name of excluded) {
-    const matches = nonDocTargets.filter((t) => t.target === name);
-    if (matches.length === 0) {
-      problems.push(
-        `✗ 覆盖守门：${NEXTEST_CONFIG_REL} 的 default-filter 排除了 ${name}，但工作区没有` +
-          `名为 ${name} 的测试二进制（登记失效或拼写漂移）——该子句排掉的是空集`,
-      );
-      continue;
-    }
-    for (const match of matches) {
-      if (!match.harnessFalse) {
-        problems.push(
-          `✗ 覆盖守门：${NEXTEST_CONFIG_REL} 的 default-filter 排除了 ${name}：同名目标 ` +
-            `${targetKey(match)} 不是 \`harness = false\`——它的测试会被静默移出 nextest 调度面`,
-        );
-      }
-    }
-  }
-  for (const target of customHarness) {
-    if (!excluded.has(target.target)) {
-      problems.push(
-        `✗ 覆盖守门：自定义 harness 目标 ${target.target} 不在 ${NEXTEST_CONFIG_REL} 的` +
-          ` default-filter 排除名单——nextest 列举自定义 harness 会失败；` +
-          `排除名单须与 \`harness = false\` 目标清单全等`,
-      );
-    }
   }
   return problems;
 }
 
 /**
- * CI 测试执行面守门（ticket #1496）：backend job 的测试命令与本地同口径——
- * ① 必须有 `cargo nextest run …`（测试执行切 nextest，删除接线即静默退回 cargo 口径）；
- * ② 每个 `harness = false` 目标必须有一条 `cargo test … --test <name>`——它被 nextest 的
- * default-filter 排除（nextest 不能列举自定义 harness），CI 侧漏跑会静默减面。
+ * CI 测试执行面守门（ticket #1496 / 收口 #1508）：backend job 的测试命令与本地
+ * 同口径——① 必须有 `cargo nextest run …`（测试执行切 nextest，删除接线即静默退回
+ * cargo 口径）；② 必须调用统一的 e2e 入口 `scripts/e2e.sh`（本地与 CI 同一条
+ * nextest 入口跑完 e2e）；③ 不得再有 `cargo test … --test <name>`（收口后没有自定义
+ * harness 目标，旧目标接线残留即红）。
  */
-function ciWiringProblems(rootDir: string, customHarness: DiscoveredTarget[]): string[] {
+function ciWiringProblems(rootDir: string): string[] {
   const problems: string[] = [];
   const path = join(rootDir, CI_WORKFLOW_REL);
   if (!existsSync(path)) {
@@ -1041,15 +936,18 @@ function ciWiringProblems(rootDir: string, customHarness: DiscoveredTarget[]): s
         ` 命令——CI 测试执行面未切到 nextest（ticket #1496），删除接线即红`,
     );
   }
-  const wiring = parseEntryWiring(content);
-  for (const target of customHarness) {
-    if (!wiring.tests.has(target.target)) {
-      problems.push(
-        `✗ 覆盖守门：自定义 harness 目标 ${target.target} 在 ${CI_WORKFLOW_REL} 无` +
-          ` \`cargo test --workspace ${DELEGATED_TARGET_FLAG} ${target.target}\`——nextest 不能列举它` +
-          `（被 default-filter 排除），CI 侧漏跑即静默减面`,
-      );
-    }
+  if (!invokesScript(content, E2E_SH_REL)) {
+    problems.push(
+      `✗ 覆盖守门：${CI_WORKFLOW_REL} 未调用统一 e2e 入口脚本（\`${E2E_SH_REL}\`）——` +
+        `CI 侧 e2e 段未接入本地同款 nextest 入口（删除接线即红）`,
+    );
+  }
+  const legacy = parseEntryWiring(content).tests;
+  if (legacy.size > 0) {
+    problems.push(
+      `✗ 覆盖守门：${CI_WORKFLOW_REL} 仍有旧目标测试接线（\`${DELEGATED_TARGET_FLAG} ` +
+        `${[...legacy].join(" / ")}\`）——收口 #1508 后没有自定义 harness 目标，CI 侧应为 nextest 单入口`,
+    );
   }
   return problems;
 }
@@ -1058,48 +956,23 @@ function ciWiringProblems(rootDir: string, customHarness: DiscoveredTarget[]): s
 export function checkCoverage(rootDir: string): CoverageResult {
   const discovery = discoverTargets(rootDir);
   const problems = [...discovery.problems];
-  const delegated = discovery.targets.filter((t) => t.kind === "test" && t.harnessFalse);
-  const delegatedNames = new Set(delegated.map((t) => t.target));
   const doc = discovery.targets.filter((t) => t.kind === "doc");
 
   if (discovery.targets.length === 0 && problems.length === 0) {
     problems.push("✗ 覆盖守门：工作区测试目标清单为空——拒绝以空集假绿通过");
   }
 
-  // nextest 承接登记（规则③前半）：登记名必须是真实存在的 harness = true 集成测试目标。
-  const nextest: DiscoveredTarget[] = [];
-  for (const name of NEXTEST_TARGETS) {
-    const target = discovery.targets.find((t) => t.kind === "test" && t.target === name);
-    if (target === undefined) {
-      problems.push(
-        `✗ 覆盖守门：登记为 nextest 承接的目标 \`${name}\` 不在工作区测试目标清单里` +
-          `（目标被删或登记漂移）——nextest 调度面与登记不一致`,
-      );
-      continue;
-    }
-    if (target.harnessFalse) {
-      problems.push(
-        `✗ 覆盖守门：登记为 nextest 承接的 ${targetKey(target)} 是 \`harness = false\`` +
-          ` 自定义 runner——nextest 不能列举它（列举即 fail loud），应归非并发入口`,
-      );
-      continue;
-    }
-    nextest.push(target);
-  }
-  const nextestKeys = new Set(nextest.map((t) => runKey(t)));
-  const parallel = discovery.targets.filter(
-    (t) =>
-      t.kind !== "doc" && !(t.kind === "test" && t.harnessFalse) && !nextestKeys.has(runKey(t)),
-  );
-
-  // 三个入口分住两个宿主：并发/自检与 doc-test 判据看 scripts/test.sh，两条 e2e 接线
-  // （nextest 承接目标、自定义 harness）看 scripts/e2e.sh——test.sh 通过调用它接入。
+  // 三个入口分住两个宿主：并发/自检与 doc-test 判据看 scripts/test.sh，e2e(nextest)
+  // 承接集合看 scripts/e2e.sh——test.sh 通过调用它接入。
   const testShPath = join(rootDir, TEST_SH_REL);
   const e2eShPath = join(rootDir, E2E_SH_REL);
-  const testShText = readFileSync(testShPath, "utf8");
+  if (!existsSync(testShPath)) {
+    problems.push(`✗ 覆盖守门：本地测试入口不存在：${TEST_SH_REL}`);
+  }
+  const testShText = existsSync(testShPath) ? readFileSync(testShPath, "utf8") : "";
   const wiring = parseEntryWiring(testShText);
   if (!existsSync(e2eShPath)) {
-    problems.push(`✗ 覆盖守门：e2e 入口脚本不存在：${E2E_SH_REL}——两个 e2e 目标的调度面宿主缺失`);
+    problems.push(`✗ 覆盖守门：e2e 入口脚本不存在：${E2E_SH_REL}——e2e 目标的调度面宿主缺失`);
   }
   const e2eWiring = parseEntryWiring(existsSync(e2eShPath) ? readFileSync(e2eShPath, "utf8") : "");
   if (!invokesScript(testShText, E2E_SH_REL)) {
@@ -1108,44 +981,29 @@ export function checkCoverage(rootDir: string): CoverageResult {
         `全部 e2e 目标未接入本地测试入口（删除接线即红）`,
     );
   }
-  // 规则③前半：登记 ⇔ e2e 入口脚本的 nextest 运行命令名单（双向全等）。
-  for (const target of nextest) {
-    if (!e2eWiring.nextest.has(target.target)) {
-      problems.push(
-        `✗ 覆盖守门：${targetKey(target)} 登记为 nextest 承接，但 ${E2E_SH_REL} 无` +
-          ` \`cargo ${NEXTEST_SUBCOMMAND} ${NEXTEST_RUN_SUBCOMMAND} … ${DELEGATED_TARGET_FLAG} ${target.target}\`` +
-          `——nextest 入口被删/改写即红（不静默降级回并发入口：那会退回进程内单线程串行）`,
-      );
-    }
+  // 规则③：e2e 承接集合 = scripts/e2e.sh 的 nextest 运行命令名单（非空 + 逐项存在）。
+  if (e2eWiring.nextest.size === 0) {
+    problems.push(
+      `✗ 覆盖守门：${E2E_SH_REL} 无 \`cargo ${NEXTEST_SUBCOMMAND} ${NEXTEST_RUN_SUBCOMMAND} …` +
+        ` ${DELEGATED_TARGET_FLAG} <name>\` 命令——e2e 未由 nextest 进程级 per-test 调度` +
+        `（会退回并发入口的进程内单线程串行，正是本票要消灭的形态）`,
+    );
   }
-  const nextestNames = new Set(nextest.map((t) => t.target));
+  const nextest: DiscoveredTarget[] = [];
   for (const name of e2eWiring.nextest) {
-    if (!nextestNames.has(name)) {
+    const target = discovery.targets.find((t) => t.kind === "test" && t.target === name);
+    if (target === undefined) {
       problems.push(
-        `✗ 覆盖守门：${E2E_SH_REL} 的 \`cargo ${NEXTEST_SUBCOMMAND} ${NEXTEST_RUN_SUBCOMMAND} …` +
-          ` ${DELEGATED_TARGET_FLAG} ${name}\` 不对应任何登记为 nextest 承接的目标（登记失效或拼写漂移）`,
+        `✗ 覆盖守门：${E2E_SH_REL} 的 nextest 运行命令指向 \`${name}\`，但工作区没有该` +
+          ` 集成测试目标（目标被删或拼写漂移）——nextest 调度面与声明不一致`,
       );
+      continue;
     }
+    nextest.push(target);
   }
-  problems.push(...nextestConfigProblems(rootDir, delegated, discovery.targets));
-
-  for (const target of delegated) {
-    if (!e2eWiring.tests.has(target.target)) {
-      problems.push(
-        `✗ 覆盖守门：${targetKey(target)} 声明 harness = false（自定义 runner），` +
-          `但 ${E2E_SH_REL} 的非并发入口没有 \`${DELEGATED_TARGET_FLAG} ${target.target}\`——` +
-          `三个入口的覆盖范围都不含它，新增自定义 harness 目标被静默漏跑`,
-      );
-    }
-  }
-  for (const name of e2eWiring.tests) {
-    if (!delegatedNames.has(name)) {
-      problems.push(
-        `✗ 覆盖守门：${E2E_SH_REL} 的 \`${DELEGATED_TARGET_FLAG} ${name}\` 不对应任何` +
-          ` harness = false 目标（登记失效或拼写漂移：非并发入口的每一项都必须是自定义 harness 目标）`,
-      );
-    }
-  }
+  const nextestKeys = new Set(nextest.map((t) => runKey(t)));
+  const parallel = discovery.targets.filter((t) => t.kind !== "doc" && !nextestKeys.has(runKey(t)));
+  problems.push(...nextestConfigProblems(rootDir));
   if (doc.length > 0 && !wiring.doc) {
     problems.push(
       `✗ 覆盖守门：工作区有 ${doc.length} 个 doc-test 目标，但 ${TEST_SH_REL} 缺` +
@@ -1171,7 +1029,7 @@ export function checkCoverage(rootDir: string): CoverageResult {
     );
   }
   problems.push(...gateWiringProblems(rootDir));
-  problems.push(...ciWiringProblems(rootDir, delegated));
+  problems.push(...ciWiringProblems(rootDir));
   problems.push(...cargoRuntimeEnvProblems(rootDir));
 
   return {
@@ -1179,7 +1037,6 @@ export function checkCoverage(rootDir: string): CoverageResult {
     targets: discovery.targets,
     parallel,
     nextest,
-    delegated,
     doc,
     outOfFace: discovery.outOfFace,
   };
@@ -1191,10 +1048,8 @@ function summarizeCoverage(result: CoverageResult): string {
   return (
     `✓ 测试执行覆盖守门：目标 ${result.targets.length} 个 = ` +
     `并发入口 ${result.parallel.length}（lib 单测 ${count("lib")} + bin 单测 ${count("bin")} + 集成测试 ${count("test")}）` +
-    ` ⊎ nextest 入口 ${result.nextest.length}（${result.nextest.map((t) => t.target).join(" / ") || "（无）"}，进程级 per-test）` +
-    ` ⊎ 非并发入口 ${result.delegated.length + result.doc.length}` +
-    `（cargo 自有 runner：${result.delegated.map((t) => t.target).join(" / ") || "（无）"}` +
-    ` + doc-test ${result.doc.length} 个，覆盖 ${docPkgs} 个包）` +
+    ` ⊎ e2e(nextest) 入口 ${result.nextest.length}（${result.nextest.map((t) => t.target).join(" / ") || "（无）"}，进程级 per-test）` +
+    ` ⊎ doc-test 入口 ${result.doc.length} 个（cargo 自有入口，覆盖 ${docPkgs} 个包）` +
     (result.outOfFace.length > 0
       ? ` · 默认执行面外 ${result.outOfFace.length} 个（example/bench，不跑）`
       : "")
@@ -1403,11 +1258,8 @@ async function runAll(options: RunOptions): Promise<number> {
     printProblems(problems, "❌ 测试执行前检查失败");
   }
 
-  const delegatedKeys = new Set(coverage.delegated.map((t) => runKey(t)));
   const nextestKeys = new Set(coverage.nextest.map((t) => runKey(t)));
-  const queue = [...expected.keys()]
-    .filter((key) => !delegatedKeys.has(key) && !nextestKeys.has(key))
-    .sort();
+  const queue = [...expected.keys()].filter((key) => !nextestKeys.has(key)).sort();
   const cpuCount = cpus().length;
   const width = Math.max(1, Math.min(jobs, queue.length));
   console.log(
@@ -1421,16 +1273,11 @@ async function runAll(options: RunOptions): Promise<number> {
         `刻意压测/限流时才这样传`,
     );
   }
-  if (coverage.delegated.length > 0) {
-    console.log(
-      `  · 非并发入口承接 ${coverage.delegated.length} 个（${coverage.delegated.map((t) => t.target).join(" / ")}）+ ` +
-        `doc-test ${coverage.doc.length} 个，由 ${TEST_SH_REL} 的 cargo 自有入口执行`,
-    );
-  }
   if (coverage.nextest.length > 0) {
     console.log(
-      `  · nextest 入口承接 ${coverage.nextest.length} 个（${coverage.nextest.map((t) => t.target).join(" / ")}），` +
-        `由 ${TEST_SH_REL} 的 \`cargo ${NEXTEST_SUBCOMMAND} ${NEXTEST_RUN_SUBCOMMAND}\` 进程级 per-test 调度（不在本入口队列，避免重复跑）`,
+      `  · e2e(nextest) 入口承接 ${coverage.nextest.length} 个（${coverage.nextest.map((t) => t.target).join(" / ")}），` +
+        `由 ${E2E_SH_REL} 的 \`cargo ${NEXTEST_SUBCOMMAND} ${NEXTEST_RUN_SUBCOMMAND}\` 进程级 per-test 调度` +
+        `（不在本入口队列，避免重复跑）；doc-test ${coverage.doc.length} 个由 ${TEST_SH_REL} 的 cargo 自有入口执行`,
     );
   }
 
@@ -1549,17 +1396,16 @@ async function main(): Promise<void> {
   const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const options = parseArgs(process.argv.slice(2), defaultRoot);
   if (options.command === "plan") {
-    const discovery = discoverTargets(options.rootDir);
-    if (discovery.problems.length > 0) printProblems(discovery.problems, "❌ 目标发现失败");
-    for (const target of discovery.targets) {
+    const coverage = checkCoverage(options.rootDir);
+    if (coverage.problems.length > 0) printProblems(coverage.problems, "❌ 目标发现失败");
+    const nextestNames = new Set(coverage.nextest.map((t) => t.target));
+    for (const target of coverage.targets) {
       const surface =
         target.kind === "doc"
-          ? "  doc-test（非并发入口）"
-          : target.harnessFalse
-            ? "  harness=false（非并发入口）"
-            : NEXTEST_TARGETS.includes(target.target)
-              ? "  nextest 入口（进程级 per-test）"
-              : "";
+          ? "  doc-test（cargo 自有入口）"
+          : nextestNames.has(target.target)
+            ? "  e2e(nextest) 入口（进程级 per-test）"
+            : "";
       console.log(`${target.kind.padEnd(5)} ${targetKey(target)}${surface}`);
     }
     return;

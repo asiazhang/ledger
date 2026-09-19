@@ -1,5 +1,3 @@
-use cucumber::gherkin::Step;
-use cucumber::{then, when};
 use rusqlite::params;
 
 use ledger_accounts::{
@@ -19,15 +17,13 @@ use crate::world::{ImportedRow, LedgerWorld};
 /// 批量导入：模拟 AI 迁移，与 HTTP 批量导入同走 `batch::TransactionBatch::run`（dedup=true）。
 /// 表格列（按表头名解析，缺失可省略）：kind | 金额 | 币种 | 账户 | 转入账户 | 日期 [| 备注 [| 商户 [| 幂等键]]]。
 /// `商户` 为商户名字符串（issue #194 AI 导入契约）：后端精确匹配复用或未命中即建。
-#[when(expr = "批量导入交易")]
-fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
-    let table = step.table.as_ref().expect("批量导入步骤缺少数据表");
-    run_batch_import(world, table.rows.clone());
+/// 数据表经 rstest-bdd 的 `#[datatable]` 参数发放原始行（含表头）。
+#[rstest_bdd_macros::when("批量导入交易")]
+fn batch_import(world: &mut LedgerWorld, #[datatable] datatable: Vec<Vec<String>>) {
+    run_batch_import(world, datatable);
 }
 
-/// 批量导入的 row 级实现：cucumber 与 rstest-bdd 的数据表入参形态不同
-///（`gherkin::Step` 的 `table.rows` / `Vec<Vec<String>>`），两侧注册适配器各取
-/// 所需，写入与断言逻辑单点复用。
+/// 批量导入的 row 级实现：表头行（rows[0]）建立列名 → 列号映射，写入与断言单点复用。
 fn run_batch_import(world: &mut LedgerWorld, table_rows: Vec<Vec<String>>) {
     // 表头行是 rows[0]，据此建立列名 → 列号映射，未出现的列缺省为空。
     let headers = &table_rows[0];
@@ -68,16 +64,7 @@ fn run_batch_import(world: &mut LedgerWorld, table_rows: Vec<Vec<String>>) {
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// rstest-bdd 侧的数据表注册适配器（spec #1494 / ticket #1498）：rstest-bdd 以
-/// `#[datatable]` 参数发放原始行，与 cucumber 的 `#[step] &Step` 不可同签名共存，
-/// 故与 [`batch_import`] 各留注册适配器、共用 [`run_batch_import`]。
-#[rstest_bdd_macros::when("批量导入交易")]
-fn batch_import_rstest(world: &mut LedgerWorld, #[datatable] datatable: Vec<Vec<String>>) {
-    run_batch_import(world, datatable);
-}
-
 /// 重跑刚才的批量导入：与首次导入相同的行、相同的 dedup 语义。
-#[when(expr = "重跑刚才的批量导入")]
 #[rstest_bdd_macros::when("重跑刚才的批量导入")]
 fn reimport(world: &mut LedgerWorld) {
     let inputs: Vec<TransactionInput> = world
@@ -96,7 +83,6 @@ fn reimport(world: &mut LedgerWorld) {
 
 /// 按幂等键找到对应交易并全字段替换（模拟 AI 读回后用 PUT 修改的纠错路径）。
 /// 修改金额/日期/备注但幂等键保持不变——编辑不改变导入身份，修改后重跑同批导入不产生重复。
-#[when(expr = "修改幂等键 {string} 的交易 金额 {int} 日期 {string} 备注 {string}")]
 #[rstest_bdd_macros::when(
     "修改幂等键 {key:string} 的交易 金额 {amount:i64} 日期 {date:string} 备注 {note:string}"
 )]
@@ -119,7 +105,6 @@ fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: Stri
 }
 
 /// 删除备注为指定值的交易（软删除，与 HTTP DELETE 端点共用 `delete_transaction_internal`）。
-#[when(expr = "删除备注为 {string} 的交易")]
 #[rstest_bdd_macros::when("删除备注为 {note:string} 的交易")]
 fn delete_txn_by_note(world: &mut LedgerWorld, note: String) {
     let id: String = world_conn!(world)
@@ -134,7 +119,6 @@ fn delete_txn_by_note(world: &mut LedgerWorld, note: String) {
 }
 
 /// 查询全部未删除账户的实时余额（含黑洞账户），快照到 world.txn.balances。
-#[when(expr = "查询全部账户余额")]
 #[rstest_bdd_macros::when("查询全部账户余额")]
 fn query_balances(world: &mut LedgerWorld) {
     let balances = list_account_balances_for_api(&world_conn!(world)).expect("查询账户余额失败");
@@ -146,7 +130,6 @@ fn query_balances(world: &mut LedgerWorld) {
 
 /// 重跑导入创建账户：幂等创建（与 HTTP POST /api/v1/accounts 语义一致），
 /// 软删除后重导可重新建回。
-#[when(expr = "重跑导入创建账户 {string} 类型 {string} 币种 {string}")]
 #[rstest_bdd_macros::when(
     "重跑导入创建账户 {name:string} 类型 {kind:string} 币种 {currency:string}"
 )]
@@ -174,7 +157,6 @@ fn reimport_create_account(world: &mut LedgerWorld, name: String, kind: String, 
 // Then
 // ---------------------------------------------------------------------------
 
-#[then(expr = "读回交易 应包含 {int} 条记录")]
 #[rstest_bdd_macros::then("读回交易 应包含 {expected:i64} 条记录")]
 fn readback_count(world: &mut LedgerWorld, expected: i64) {
     let result = list_transactions_internal(&world_conn!(world), &TransactionListFilter::default())
@@ -183,7 +165,6 @@ fn readback_count(world: &mut LedgerWorld, expected: i64) {
     world.txn.transactions_list = result.items;
 }
 
-#[then(expr = "读回 {string} 至 {string} 交易 应包含 {int} 条记录")]
 #[rstest_bdd_macros::then("读回 {from:string} 至 {to:string} 交易 应包含 {expected:i64} 条记录")]
 fn readback_range(world: &mut LedgerWorld, from: String, to: String, expected: i64) {
     let result = list_transactions_internal(
@@ -202,7 +183,6 @@ fn readback_range(world: &mut LedgerWorld, from: String, to: String, expected: i
     );
 }
 
-#[then(expr = "读回 账户 {string} 的交易 应包含 {int} 条记录")]
 #[rstest_bdd_macros::then("读回 账户 {name:string} 的交易 应包含 {expected:i64} 条记录")]
 fn readback_account(world: &mut LedgerWorld, name: String, expected: i64) {
     let account_id = world.account_id(&name);
@@ -221,7 +201,6 @@ fn readback_account(world: &mut LedgerWorld, name: String, expected: i64) {
     );
 }
 
-#[then(expr = "读回 kind 为 {string} 的交易 应包含 {int} 条记录 金额合计 {int}")]
 #[rstest_bdd_macros::then(
     "读回 kind 为 {kind:string} 的交易 应包含 {expected_count:i64} 条记录 金额合计 {expected_sum:i64}"
 )]
@@ -252,7 +231,6 @@ fn readback_kind_amount(
     assert_eq!(sum, expected_sum, "kind={kind} 金额合计不匹配");
 }
 
-#[then(expr = "读回交易 应包含 金额 {int} 的记录")]
 #[rstest_bdd_macros::then("读回交易 应包含 金额 {amount:i64} 的记录")]
 fn readback_with_amount(world: &mut LedgerWorld, amount: i64) {
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
@@ -266,7 +244,6 @@ fn readback_with_amount(world: &mut LedgerWorld, amount: i64) {
     );
 }
 
-#[then(expr = "读回交易 应不包含 金额 {int} 的记录")]
 #[rstest_bdd_macros::then("读回交易 应不包含 金额 {amount:i64} 的记录")]
 fn readback_without_amount(world: &mut LedgerWorld, amount: i64) {
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
@@ -280,7 +257,6 @@ fn readback_without_amount(world: &mut LedgerWorld, amount: i64) {
     );
 }
 
-#[then(expr = "余额清单应包含 {int} 个账户")]
 #[rstest_bdd_macros::then("余额清单应包含 {expected:i64} 个账户")]
 fn balance_count(world: &mut LedgerWorld, expected: i64) {
     assert_eq!(
@@ -290,7 +266,6 @@ fn balance_count(world: &mut LedgerWorld, expected: i64) {
     );
 }
 
-#[then(expr = "账户 {string} 余额应为 {int}")]
 #[rstest_bdd_macros::then("账户 {name:string} 余额应为 {expected:i64}")]
 fn balance_of_name(world: &mut LedgerWorld, name: String, expected: i64) {
     let (actual, _) = world.txn.balances.get(&name).unwrap_or_else(|| {
@@ -303,7 +278,6 @@ fn balance_of_name(world: &mut LedgerWorld, name: String, expected: i64) {
     assert_eq!(*actual, expected, "账户 '{name}' 余额不匹配");
 }
 
-#[then(expr = "账户 {string} 应为黑洞账户")]
 #[rstest_bdd_macros::then("账户 {name:string} 应为黑洞账户")]
 fn check_is_hidden(world: &mut LedgerWorld, name: String) {
     let (_, is_hidden) = world.txn.balances.get(&name).unwrap_or_else(|| {
@@ -316,7 +290,6 @@ fn check_is_hidden(world: &mut LedgerWorld, name: String) {
     assert!(*is_hidden, "账户 '{name}' 应为黑洞账户（is_hidden=true）");
 }
 
-#[then(expr = "账户 {string} 不应为黑洞账户")]
 #[rstest_bdd_macros::then("账户 {name:string} 不应为黑洞账户")]
 fn check_not_hidden(world: &mut LedgerWorld, name: String) {
     let (_, is_hidden) = world.txn.balances.get(&name).unwrap_or_else(|| {
@@ -332,7 +305,6 @@ fn check_not_hidden(world: &mut LedgerWorld, name: String) {
     );
 }
 
-#[then(expr = "最近一次导入应有 {int} 条去重跳过 {int} 条新写入")]
 #[rstest_bdd_macros::then("最近一次导入应有 {duplicates:i64} 条去重跳过 {new:i64} 条新写入")]
 fn check_batch_results(world: &mut LedgerWorld, duplicates: i64, new: i64) {
     let dup_count = world
@@ -352,7 +324,6 @@ fn check_batch_results(world: &mut LedgerWorld, duplicates: i64, new: i64) {
 }
 
 /// 校验幂等键命中的去重结果携带该笔已有 id（并确证该 id 确为库中一笔未删除交易）。
-#[then(expr = "最近一次导入的去重结果应通过幂等键返回已有 id")]
 #[rstest_bdd_macros::then("最近一次导入的去重结果应通过幂等键返回已有 id")]
 fn check_dup_returns_existing_id(world: &mut LedgerWorld) {
     let dups: Vec<&ledger_transaction::CreateTransactionResult> = world

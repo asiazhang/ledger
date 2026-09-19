@@ -13,10 +13,7 @@
 //! - **组合走势查询**：走 `investment::query_portfolio_value_trend`——与 IPC 命令
 //!   `portfolio_value_trend` 同一实现（#401 域目录化后直调域入口）。
 //!
-//! 整文件 9 条步骤**双注册**（spec #1494 / ticket #1502）：改写只涉及属性语法与
-//! 占位符形态，函数体与断言不变。
 
-use cucumber::{given, then, when};
 use rusqlite::params;
 
 use ledger_infra::db::{new_uuid, now_iso};
@@ -36,7 +33,6 @@ use crate::world::LedgerWorld;
 /// 写入一条价格历史周点行：经投资域周采样写入单点 [`upsert_price_history`]（#764
 /// 旁路收敛；同标的同周重复写入按「整周覆盖」幂等，与库层 UNIQUE 约束一致）；
 /// source 落 'eastmoney' 与原直插同值（同步来源语义）。
-#[given(expr = "存在标的 {string} 的价格历史 交易日 {string} 价格 {int} 万分之一元 币种 {string}")]
 #[rstest_bdd_macros::given(
     "存在标的 {symbol:string} 的价格历史 交易日 {trade_date:string} 价格 {price_cents:i64} 万分之一元 币种 {currency:string}"
 )]
@@ -63,7 +59,6 @@ fn add_price_history(
 /// 库内状态直置（#764 已登记例外）：唯一落库点 `sync::persist::upsert_fx_rate_history`
 /// 为 `pub(super)` 模块私有接缝（采集通道需 HTTP），域层无公开写入入口，
 /// 公开入口表达不了，保留直置。
-#[given(expr = "存在汇率历史 {string} 兑 {string} 交易日 {string} 汇率 {float}")]
 #[rstest_bdd_macros::given(
     "存在汇率历史 {base:string} 兑 {quote:string} 交易日 {trade_date:string} 汇率 {rate:f64}"
 )]
@@ -89,7 +84,6 @@ fn add_fx_rate_history(
 // ---------------------------------------------------------------------------
 
 /// 经行为层创建一笔买入（plan → insert → apply，与 IPC 创建命令同一实现）。
-#[when(expr = "买入标的 {string} 数量 {float} 单价 {int} 到账户 {string} 日期 {string}")]
 #[rstest_bdd_macros::when(
     "买入标的 {symbol:string} 数量 {quantity:f64} 单价 {price_cents:i64} 到账户 {account_name:string} 日期 {date:string}"
 )]
@@ -113,7 +107,6 @@ fn buy_instrument_on(
 }
 
 /// 经行为层创建一笔卖出（卖出匹配走投资域 apply/revert 三件套）。
-#[when(expr = "卖出标的 {string} 数量 {float} 单价 {int} 从账户 {string} 日期 {string}")]
 #[rstest_bdd_macros::when(
     "卖出标的 {symbol:string} 数量 {quantity:f64} 单价 {price_cents:i64} 从账户 {account_name:string} 日期 {date:string}"
 )]
@@ -167,7 +160,6 @@ fn create_trade(
 // When / Then：组合走势查询与断言
 // ---------------------------------------------------------------------------
 
-#[when(expr = "查询组合走势")]
 #[rstest_bdd_macros::when("查询组合走势")]
 fn query_portfolio_trend(world: &mut LedgerWorld) {
     match query_portfolio_value_trend(&world_conn!(world), &TrendRange::default()) {
@@ -182,7 +174,6 @@ fn query_portfolio_trend(world: &mut LedgerWorld) {
     }
 }
 
-#[then(expr = "组合走势应有 {int} 个周点")]
 #[rstest_bdd_macros::then("组合走势应有 {expected:usize} 个周点")]
 fn assert_portfolio_trend_point_count(world: &mut LedgerWorld, expected: usize) {
     let trend = world
@@ -199,7 +190,6 @@ fn assert_portfolio_trend_point_count(world: &mut LedgerWorld, expected: usize) 
 
 /// 单标的走势：PriceHistory 直出（基金单位净值即价格，与股票同一承载线，
 /// 查询侧不感知标的类型——净值走势即此，issue #303）。
-#[when(expr = "查询标的 {string} 的走势")]
 #[rstest_bdd_macros::when("查询标的 {symbol:string} 的走势")]
 fn query_instrument_trend(world: &mut LedgerWorld, symbol: String) {
     let id = instrument_id_by_symbol(&world_conn!(world), &symbol);
@@ -215,7 +205,6 @@ fn query_instrument_trend(world: &mut LedgerWorld, symbol: String) {
     }
 }
 
-#[then(expr = "标的走势应有 {int} 个周点")]
 #[rstest_bdd_macros::then("标的走势应有 {expected:usize} 个周点")]
 fn assert_instrument_trend_point_count(world: &mut LedgerWorld, expected: usize) {
     let trend = world
@@ -230,7 +219,6 @@ fn assert_instrument_trend_point_count(world: &mut LedgerWorld, expected: usize)
     );
 }
 
-#[then(expr = "组合走势 {string} 周市值应为 {int}")]
 #[rstest_bdd_macros::then("组合走势 {week_start:string} 周市值应为 {expected:i64}")]
 fn assert_portfolio_trend_week_value(world: &mut LedgerWorld, week_start: String, expected: i64) {
     let trend = world

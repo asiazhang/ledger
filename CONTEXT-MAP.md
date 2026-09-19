@@ -27,7 +27,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 | 9 | 预算 | [`docs/contexts/CONTEXT-budget.md`](docs/contexts/CONTEXT-budget.md) | Budget（可挂任意层级支出分类、彼此独立，ADR-0052）、BudgetPeriod、BudgetProgress（永久滚动，ADR-0029；父含子、子只算自身）、AnnualBudgetTotal |
 | 10 | 保险 | [`docs/contexts/CONTEXT-insurance.md`](docs/contexts/CONTEXT-insurance.md) | Policy（保单）、Insurer（保险公司）、Premium（保费）、PolicyInflow（保单现金流入）、PolicyReference（保单引用）、保单视角统计（ADR-0051、ADR-0082） |
 | 11 | 实物资产 | [`docs/contexts/CONTEXT-physical-asset.md`](docs/contexts/CONTEXT-physical-asset.md) | PhysicalAsset（实物资产）、Valuation（估值）、ValuationHistory（估值历史）、Disposal（处置）（ADR-0064） |
-| 12 | 测试基础设施 | [`docs/contexts/CONTEXT-testing.md`](docs/contexts/CONTEXT-testing.md) | invoke 测试接缝、defaults 表、overrides 表、未命中报错、参考数据预热、清理四件套、消息替身稳定实例、目录级测试薄壳、行为等价判据（ADR-0085）；测试世界、步骤输入工厂、步骤动词、快照分组、公开写入口（测试侧）（ADR-0086）；测试三层与权威层、壳三件套、接线证明、错误码契约代表（ADR-0087）；断言强度、双断言、矩阵、存在性断言、组件测试数据工厂 |
+| 12 | 测试基础设施 | [`docs/contexts/CONTEXT-testing.md`](docs/contexts/CONTEXT-testing.md) | invoke 测试接缝、defaults 表、overrides 表、未命中报错、参考数据预热、清理四件套、消息替身稳定实例、目录级测试薄壳、行为等价判据（ADR-0085）；测试世界、步骤输入工厂、步骤动词、快照分组、公开写入口（测试侧）（ADR-0086）；测试三层与权威层、壳三件套、接线证明、错误码契约代表（ADR-0087）；场景绑定、e2e 运行器（rstest-bdd + cargo-nextest 进程级 per-test）（ADR-0129）；断言强度、双断言、矩阵、存在性断言、组件测试数据工厂 |
 | 13 | 多端同步 | [`docs/contexts/CONTEXT-sync.md`](docs/contexts/CONTEXT-sync.md) | Sync、Transport、OpLog、DomainCommand、Replay、DeviceId、TotalOrder、OccurrenceKey、ParkedOp、Checkpoint、SyncEnvelope、SyncBoundary（ADR-0091） |
 | 14 | 应用更新 | [`docs/contexts/CONTEXT-app-update.md`](docs/contexts/CONTEXT-app-update.md) | 自动更新（Auto Update）、更新检查、更新清单、更新工件、更新签名（ADR-0124） |
 
@@ -46,7 +46,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 - **物品（单列小域）→ 挂靠核心交易**：Item 是与参考数据、交易流水、投资标的并列的独立领域概念，自包含总成本、不进字典；唯一锚点是创建必挂一笔核心域 `expense` 交易（溯源指针、无反向引用），创建语义与唯一入口见物品域词条（ADR-0025）。
 - **预算（单列小域）→ 核心交易**：Budget 挂核心域支出分类（Category）设定支出上限，词条定义见预算域文件；跨域边一条——年度预算总额（AnnualBudgetTotal）供投资域财务自由度作分母（ADR-0048）。
 - **保险（单列小域）→ 核心交易 + 定时计划**：Policy 是消费型保险合同的静态档案；缴费复用定时计划域订阅形态（Subscription）生成核心域 `expense` 保费流水（不挂商户），理赔款记核心域 `income`；保司为本域自有独立字典（Insurer，不复用商户，ADR-0082）。范围与 MVP 边界见保险域词条。
-- **测试基础设施 → 替身与步骤层消费各域**：invoke 测试接缝布线各域 IPC 命令的替身应答（参考数据预热是参考设置域 Reference Data 的测试投影），BDD 步骤动词经各域公开写入口造数——命令与被测实体的业务语义归各业务分域，本域只定义布线、清理、构造与行为等价判据（ADR-0085、ADR-0086），不持业务语义。
+- **测试基础设施 → 替身与步骤层消费各域**：invoke 测试接缝布线各域 IPC 命令的替身应答（参考数据预热是参考设置域 Reference Data 的测试投影），BDD 步骤动词经各域公开写入口造数——命令与被测实体的业务语义归各业务分域，本域只定义布线、清理、构造与行为等价判据（ADR-0085、ADR-0086）、e2e 场景绑定与运行器（ADR-0129），不持业务语义。
 - **多端同步 → 经写入接缝重放各域语义命令**：同步域不定义业务语义，op 载荷就是各域既有写入命令，重放是行为编排之外的第 N 写入入口（ADR-0091）；与备份域相邻——SyncEnvelope 复用加密模式 / 主口令，但备份 ≠ 同步（快照还原 vs 增量合并）。期次去重与同步边界细节见同步域词条。
 - **实物资产（单列小域）→ 核心交易（只消费不产流水）**：PhysicalAsset 是大件实物的估值档案，与物品域 Item 按「要不要跟踪市值」互斥分家；金额折算走核心域 Amount 接缝、币种复用核心域字典。估值机制、净资产口径与 MVP 边界见实物资产域词条（ADR-0064）。
 - **应用更新（单列小域）→ 壳层机制，与备份域相邻**：自动更新不持账本语义，后端与前端面归壳层（不立业务域 crate 与壳内域目录，ADR-0111 归位判据；决策集合见 ADR-0124）；安装前经备份域更新前备份，自动检查开关与提醒记忆是设备偏好（见参考设置域轻量设置项），提醒弹层消费界面域弹层编排；与多端同步域无交叉——更新分发应用本体，不分发账本数据。

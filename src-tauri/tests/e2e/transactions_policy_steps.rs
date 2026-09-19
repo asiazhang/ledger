@@ -9,7 +9,6 @@
 //! `instruments_steps.rs` 已注册步骤；批量导入直走 `TransactionBatch::run`
 //! （与 HTTP 批量导入端点同一写接缝）。
 
-use cucumber::{then, when};
 use rusqlite::params;
 
 use ledger_infra::error::AppError;
@@ -64,7 +63,6 @@ fn last_error_of(result: Result<String, AppError>) -> Option<String> {
 // When：创建（挂单 / 拒绝路径）
 // ---------------------------------------------------------------------------
 
-#[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 挂保单 {string}")]
 #[rstest_bdd_macros::when(
     "创建交易 类型 {kind:string} 金额 {amount:i64} 到账户 {account_name:string} 日期 {date:string} 挂保单 {policy_number:string}"
 )]
@@ -90,9 +88,6 @@ fn create_txn_with_policy(
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-#[when(
-    expr = "尝试创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 挂保单 {string}"
-)]
 #[rstest_bdd_macros::when(
     "尝试创建交易 类型 {kind:string} 金额 {amount:i64} 到账户 {account_name:string} 日期 {date:string} 挂保单 {policy_id:string}"
 )]
@@ -116,9 +111,6 @@ fn try_create_txn_with_policy(
 }
 
 /// 修改路径同样收口在行为层：转账/买入等不可挂单 kind 携带保单，plan 阶段拒绝。
-#[when(
-    expr = "尝试创建转账 金额 {int} 从账户 {string} 到账户 {string} 日期 {string} 挂保单 {string}"
-)]
 #[rstest_bdd_macros::when(
     "尝试创建转账 金额 {amount:i64} 从账户 {from_account:string} 到账户 {to_account:string} 日期 {date:string} 挂保单 {policy_id:string}"
 )]
@@ -143,7 +135,6 @@ fn try_transfer_with_policy(
 }
 
 /// buy 携带保单：行为层 plan 在投资域 prepare 之前即拒绝（准入收口先于副作用）。
-#[when(expr = "尝试买入标的 {string} 数量 {int} 单价 {int} 到投资账户 {string} 挂保单 {string}")]
 #[rstest_bdd_macros::when(
     "尝试买入标的 {symbol:string} 数量 {quantity:i64} 单价 {price:i64} 到投资账户 {account_name:string} 挂保单 {policy_id:string}"
 )]
@@ -171,7 +162,6 @@ fn try_buy_with_policy(
 }
 
 /// sell 携带保单：买入铺垫后尝试卖出挂单，plan 阶段拒绝（不应产生卖出副作用）。
-#[when(expr = "尝试卖出标的 {string} 数量 {int} 单价 {int} 从投资账户 {string} 挂保单 {string}")]
 #[rstest_bdd_macros::when(
     "尝试卖出标的 {symbol:string} 数量 {quantity:i64} 单价 {price:i64} 从投资账户 {account_name:string} 挂保单 {policy_id:string}"
 )]
@@ -200,7 +190,6 @@ fn try_sell_with_policy(
 
 /// refund 携带保单：现金流入记 income 挂单而非 refund（ADR-0051 决策 4），
 /// refund 不在准入集——携带保单在 plan 阶段被拒。
-#[when(expr = "尝试创建退款 金额 {int} 关联最近支出 日期 {string} 挂保单 {string}")]
 #[rstest_bdd_macros::when(
     "尝试创建退款 金额 {amount:i64} 关联最近支出 日期 {date:string} 挂保单 {policy_id:string}"
 )]
@@ -253,18 +242,10 @@ fn batch_import_with_policy_rows(world: &mut LedgerWorld, rows: &[Vec<String>]) 
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// cucumber 形态（旧目标）：数据表经 `&gherkin::Step` 注入。
-#[when(expr = "批量导入挂单交易")]
-fn batch_import_with_policy_cucumber(world: &mut LedgerWorld, step: &cucumber::gherkin::Step) {
-    let table = step.table.as_ref().expect("批量导入挂单步骤缺少数据表");
-    batch_import_with_policy_rows(world, &table.rows);
-}
-
-/// rstest-bdd 形态（新目标）：数据表参数必须是名为 `datatable` 的
-/// `Vec<Vec<String>>`（或 `#[datatable]` 标记），与 cucumber 的 `&Step` 无法共用
-/// 同一签名，故本步保留「一个共用实现 + 两个薄适配」，函数体语义仍唯一。
+/// 数据表经 rstest-bdd 的 `#[datatable]` 参数发放原始行（含表头），
+/// 与共用实现 [`batch_import_with_policy_rows`] 语义唯一。
 #[rstest_bdd_macros::when("批量导入挂单交易")]
-fn batch_import_with_policy_rstest(world: &mut LedgerWorld, datatable: Vec<Vec<String>>) {
+fn batch_import_with_policy(world: &mut LedgerWorld, datatable: Vec<Vec<String>>) {
     batch_import_with_policy_rows(world, &datatable);
 }
 
@@ -272,7 +253,6 @@ fn batch_import_with_policy_rstest(world: &mut LedgerWorld, datatable: Vec<Vec<S
 // When：修改（改挂 / 清除 / 保持原挂单）
 // ---------------------------------------------------------------------------
 
-#[when(expr = "修改最近交易挂保单 {string}")]
 #[rstest_bdd_macros::when("修改最近交易挂保单 {policy_number:string}")]
 fn update_last_txn_policy(world: &mut LedgerWorld, policy_number: String) {
     let id = world
@@ -295,7 +275,6 @@ fn update_last_txn_policy(world: &mut LedgerWorld, policy_number: String) {
     update_and_refresh(world, &id, input);
 }
 
-#[when(expr = "修改最近交易清除挂单")]
 #[rstest_bdd_macros::when("修改最近交易清除挂单")]
 fn clear_last_txn_policy(world: &mut LedgerWorld) {
     let id = world
@@ -318,7 +297,6 @@ fn clear_last_txn_policy(world: &mut LedgerWorld) {
 
 /// 保持原挂单修改其他字段：提交 policy_id 与原值相同 → 行为层「保持历史引用」
 /// 跳过在用校验，已软删保单的历史交易仍可修改其他字段（issue #188 / ADR-0028 语义）。
-#[when(expr = "修改第 {int} 条交易备注 {string} 保持原挂单")]
 #[rstest_bdd_macros::when("修改第 {index:usize} 条交易备注 {note:string} 保持原挂单")]
 fn update_keep_policy(world: &mut LedgerWorld, index: usize, note: String) {
     let existing = world
@@ -344,7 +322,6 @@ fn update_and_refresh(world: &mut LedgerWorld, id: &str, input: TransactionInput
 // Then
 // ---------------------------------------------------------------------------
 
-#[then(expr = "第 {int} 条交易挂单应为保单号 {string}")]
 #[rstest_bdd_macros::then("第 {index:usize} 条交易挂单应为保单号 {policy_number:string}")]
 fn check_txn_policy(world: &mut LedgerWorld, index: usize, policy_number: String) {
     let txn = world
@@ -366,7 +343,6 @@ fn check_txn_policy(world: &mut LedgerWorld, index: usize, policy_number: String
     assert_eq!(number, policy_number, "挂单保单号不匹配");
 }
 
-#[then(expr = "第 {int} 条交易应无挂单")]
 #[rstest_bdd_macros::then("第 {index:usize} 条交易应无挂单")]
 fn check_txn_no_policy(world: &mut LedgerWorld, index: usize) {
     let txn = world
@@ -383,7 +359,6 @@ fn check_txn_no_policy(world: &mut LedgerWorld, index: usize) {
 
 /// 历史引用保留不置空（ADR-0051 决策 5）：直接查库内行（含软删保单的 id），
 /// 引用值非空即通过——保单是否软删不影响引用保留。
-#[then(expr = "第 {int} 条交易挂单引用应保留（软删保单不置空）")]
 #[rstest_bdd_macros::then("第 {index:usize} 条交易挂单引用应保留（软删保单不置空）")]
 fn check_txn_policy_kept(world: &mut LedgerWorld, index: usize) {
     let txn = world

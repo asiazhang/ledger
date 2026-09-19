@@ -12,8 +12,6 @@
 //! 行序 tie-break 是不可预期的 UUID，按序号定位有歧义——先例
 //! `policy_agreement_steps::policy_id_by_number`）。
 
-use cucumber::{then, when};
-
 use ledger_policy::PolicyStats;
 use ledger_policy::{delete_policy, policy_stats};
 
@@ -21,7 +19,6 @@ use crate::world::LedgerWorld;
 
 /// 按保单号软删（两保单并存的场景需精确定位；「第 N 张」步骤依赖列表快照
 /// 或最近创建指针，多保单场景有歧义）。
-#[when(expr = "软删保单号 {string}")]
 #[rstest_bdd_macros::when("软删保单号 {number:string}")]
 fn delete_policy_by_number(world: &mut LedgerWorld, number: String) {
     let id = policy_id_by_number(world, &number);
@@ -29,7 +26,6 @@ fn delete_policy_by_number(world: &mut LedgerWorld, number: String) {
 }
 
 /// 以注入的固定「今日」查询逐保单统计（确定性到期口径，不依赖真实时钟）。
-#[when(expr = "以 {string} 为今日查询保单统计")]
 #[rstest_bdd_macros::when("以 {today:string} 为今日查询保单统计")]
 fn query_policy_stats(world: &mut LedgerWorld, today: String) {
     let today =
@@ -68,7 +64,6 @@ fn stats_by_number<'a>(world: &'a LedgerWorld, number: &str) -> &'a PolicyStats 
 // Then 断言
 // ---------------------------------------------------------------------------
 
-#[then(expr = "保单统计应包含 {int} 张保单")]
 #[rstest_bdd_macros::then("保单统计应包含 {expected:usize} 张保单")]
 fn check_stats_count(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
@@ -78,7 +73,6 @@ fn check_stats_count(world: &mut LedgerWorld, expected: usize) {
     );
 }
 
-#[then(expr = "保单 {string} 累计已缴应为 {int} 现金流入应为 {int}")]
 #[rstest_bdd_macros::then("保单 {number:string} 累计已缴应为 {paid:i64} 现金流入应为 {inflow:i64}")]
 fn check_paid_and_inflow(world: &mut LedgerWorld, number: String, paid: i64, inflow: i64) {
     let stats = stats_by_number(world, &number);
@@ -86,7 +80,6 @@ fn check_paid_and_inflow(world: &mut LedgerWorld, number: String, paid: i64, inf
     assert_eq!(stats.total_inflow_native_cents, inflow, "累计现金流入不符");
 }
 
-#[then(expr = "保单 {string} 下期扣款日应为 {string}")]
 #[rstest_bdd_macros::then("保单 {number:string} 下期扣款日应为 {date:string}")]
 fn check_next_charge(world: &mut LedgerWorld, number: String, date: String) {
     assert_eq!(
@@ -96,7 +89,6 @@ fn check_next_charge(world: &mut LedgerWorld, number: String, date: String) {
     );
 }
 
-#[then(expr = "保单 {string} 不应显示下期扣款日")]
 #[rstest_bdd_macros::then("保单 {number:string} 不应显示下期扣款日")]
 fn check_no_next_charge(world: &mut LedgerWorld, number: String) {
     assert_eq!(
@@ -106,7 +98,6 @@ fn check_no_next_charge(world: &mut LedgerWorld, number: String) {
     );
 }
 
-#[then(expr = "保单 {string} 到期态应为 {string}")]
 #[rstest_bdd_macros::then("保单 {number:string} 到期态应为 {expected:string}")]
 fn check_expiry(world: &mut LedgerWorld, number: String, expected: String) {
     let expected_expired = match expected.as_str() {

@@ -2,7 +2,6 @@
 //! 开关与今天日期（与备份 feature 步骤直调备份入口的 seam 一致，S3 定案）。
 //! 断言只看外部可观察行为：执行汇总、期次状态、生成交易的日期。
 
-use cucumber::{then, when};
 use rusqlite::params;
 
 use ledger_scheduled::run_catch_up;
@@ -10,14 +9,12 @@ use ledger_scheduled::run_catch_up;
 use crate::world::LedgerWorld;
 
 /// 以注入的今日执行追补（开关开启）。
-#[when(expr = "以 {string} 为今日执行自动追补")]
 #[rstest_bdd_macros::when("以 {today:string} 为今日执行自动追补")]
 fn run_catchup_enabled(world: &mut LedgerWorld, today: String) {
     run_catchup(world, true, &today);
 }
 
 /// 以注入的今日执行追补（开关关闭——空转语义场景）。
-#[when(expr = "自动执行关闭时以 {string} 为今日执行追补")]
 #[rstest_bdd_macros::when("自动执行关闭时以 {today:string} 为今日执行追补")]
 fn run_catchup_disabled(world: &mut LedgerWorld, today: String) {
     run_catchup(world, false, &today);
@@ -28,7 +25,6 @@ fn run_catchup(world: &mut LedgerWorld, enabled: bool, today: &str) {
     world.plan.last_catch_up = Some(run_catch_up(&world_conn!(world), enabled, day));
 }
 
-#[then(expr = "追补汇总应为 到期 {int} 成功 {int} 失败 {int}")]
 #[rstest_bdd_macros::then(
     "追补汇总应为 到期 {due:usize} 成功 {executed:usize} 失败 {failed:usize}"
 )]
@@ -42,7 +38,6 @@ fn assert_catchup_summary(world: &mut LedgerWorld, due: usize, executed: usize, 
 }
 
 /// 最近计划生成的交易日期应依次为给定清单（按交易日期升序）。
-#[then(expr = "最近计划生成的交易日期应依次为 {string}")]
 #[rstest_bdd_macros::then("最近计划生成的交易日期应依次为 {dates_csv:string}")]
 fn assert_plan_txn_dates(world: &mut LedgerWorld, dates_csv: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
@@ -70,7 +65,6 @@ fn assert_plan_txn_dates(world: &mut LedgerWorld, dates_csv: String) {
 }
 
 /// 备注指定计划的指定状态期次条数（多计划同批追补时定位失败计划用）。
-#[then(expr = "备注为 {string} 的计划状态为 {string} 的期次应有 {int} 条")]
 #[rstest_bdd_macros::then(
     "备注为 {note:string} 的计划状态为 {status:string} 的期次应有 {expected:i64} 条"
 )]

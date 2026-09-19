@@ -202,12 +202,10 @@ test-utils = ["ledger-infra/test-utils"]
 # 启用 `test-utils`，使 `tauri_app_lib::test_utils` 再导出在测试构建中存在；
 # `cargo build` 生产构建不激活 dev-dependency，故不编译测试器具（resolver 3）。
 tauri-app = { path = ".", features = ["test-utils"] }
-cucumber = "0.23"
-# BDD 运行器迁移（spec #1494 / ticket #1495）：新增 e2e_rstest 目标以 rstest-bdd
-# 的 `scenarios!` 把每个 Scenario 绑成普通 `#[test]`（场景数 = 测试数，并行/过滤/
-# 置红交回标准测试运行器），旧 cucumber 目标 `e2e` 不动——两目标并存期为增量迁移
-# 通道，账户域步骤双注册（同一函数同时挂两个属性宏）先行。收口后 cucumber 依赖
-# 与旧目标一并删除（spec #1494 收尾票）。
+# BDD 运行器（spec #1494）：e2e 目标 `e2e_rstest` 以 rstest-bdd 的 `scenarios!`
+# 把每个 Scenario 绑成普通 `#[test]`（场景数 = 测试数，并行/过滤/置红交回标准测试
+# 运行器）；收口票 #1508 删除 cucumber 依赖与旧 `harness = false` 目标后，e2e
+# 只剩本目标一条通道。
 rstest = "0.26"
 rstest-bdd = "0.6"
 rstest-bdd-macros = "0.6"
@@ -216,10 +214,6 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 tauri = { version = "2", features = ["test"] }
-
-[[test]]
-name = "e2e"
-harness = false
 
 # 多 worktree 并行开发降载：依赖 crate 的 dev 构建只保留行表级调试信息，削减 codegen 与链接体积；
 # 本仓业务 crate 不受影响，断点调试行为不变。需要依赖完整符号时临时注释本段。

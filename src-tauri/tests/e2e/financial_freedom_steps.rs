@@ -6,8 +6,6 @@
 //! scheduled_steps 的汇率、budget_steps 的预算分类、manual_quote_steps 的录价），
 //! 查询经核心函数 `query_financial_freedom`（命令层同款，不经 IPC 壳）。
 
-use cucumber::{given, then, when};
-
 use ledger_accounts::{AccountInput, AccountType, create_account};
 use ledger_investment::query_financial_freedom;
 
@@ -21,7 +19,6 @@ use crate::world::LedgerWorld;
 /// 账户域公开入口（余额缓存行不变量由产品代码保证，#763 旁路归零）；
 /// `is_hidden` 无公开入口可表达（黑洞账户仅由种子预置），库内状态直置后仅在
 /// 该属性上留置（#764 已登记例外）。
-#[given(expr = "存在隐藏账户 {string} 类型 {string} 币种 {string} 初始余额 {int}")]
 #[rstest_bdd_macros::given(
     "存在隐藏账户 {name:string} 类型 {kind:string} 币种 {currency:string} 初始余额 {initial_balance:i64}"
 )]
@@ -55,7 +52,6 @@ fn create_hidden_account(
 // When
 // ---------------------------------------------------------------------------
 
-#[when(expr = "查询财务自由度")]
 #[rstest_bdd_macros::when("查询财务自由度")]
 fn query_financial_freedom_step(world: &mut LedgerWorld) {
     match query_financial_freedom(&world_conn!(world)) {
@@ -83,7 +79,6 @@ fn overview_of(world: &LedgerWorld) -> &ledger_investment::FinancialFreedomOverv
         .expect("未查询到财务自由度总览")
 }
 
-#[then(expr = "自由度分子应为 {int}")]
 #[rstest_bdd_macros::then("自由度分子应为 {expected:i64}")]
 fn assert_numerator(world: &mut LedgerWorld, expected: i64) {
     assert_eq!(
@@ -93,7 +88,6 @@ fn assert_numerator(world: &mut LedgerWorld, expected: i64) {
     );
 }
 
-#[then(expr = "自由度分母应为 {int}")]
 #[rstest_bdd_macros::then("自由度分母应为 {expected:i64}")]
 fn assert_denominator(world: &mut LedgerWorld, expected: i64) {
     assert_eq!(
@@ -103,7 +97,6 @@ fn assert_denominator(world: &mut LedgerWorld, expected: i64) {
     );
 }
 
-#[then(expr = "自由度应为 {float}")]
 #[rstest_bdd_macros::then("自由度应为 {expected:f64}")]
 fn assert_ratio(world: &mut LedgerWorld, expected: f64) {
     let actual = overview_of(world).ratio;
@@ -113,7 +106,6 @@ fn assert_ratio(world: &mut LedgerWorld, expected: f64) {
     );
 }
 
-#[then(expr = "覆盖年数应为 {float}")]
 #[rstest_bdd_macros::then("覆盖年数应为 {expected:f64}")]
 fn assert_coverage_years(world: &mut LedgerWorld, expected: f64) {
     let actual = overview_of(world).coverage_years;
@@ -123,7 +115,6 @@ fn assert_coverage_years(world: &mut LedgerWorld, expected: f64) {
     );
 }
 
-#[then(expr = "本位币应为 {string}")]
 #[rstest_bdd_macros::then("本位币应为 {expected:string}")]
 fn assert_native_currency(world: &mut LedgerWorld, expected: String) {
     assert_eq!(overview_of(world).native_currency, expected, "本位币不符");

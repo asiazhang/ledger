@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use cucumber::World;
-
 use ledger_dashboard::DashboardOverview;
 use ledger_infra::db::DbState;
 use ledger_infra::db::data_location::{DataLocationChangeOutcome, DataLocationInfo};
@@ -276,11 +274,9 @@ pub struct BootGroup {
     pub sync_session_encrypted: bool,
 }
 
-/// Cucumber World：每个 Scenario 独立持有一个 in-memory SQLite 数据库。
+/// 测试世界（World）：每个 Scenario 独立持有一个 in-memory SQLite 数据库。
 /// 本体只保留跨域共享的基础设施（连接、名称注册表、错误状态、冻结时钟），
 /// 域内快照一律入快照分组（ADR-0086 决策 6）。
-#[derive(World)]
-#[world(init = Self::new)]
 pub struct LedgerWorld {
     /// 数据库连接（写入口形态，ADR-0032）：断言/读路径经 [`LedgerWorld::conn`]
     /// 取守卫，置脏语义相关写路径经 `world_write!` 走连接层统一写入口。
@@ -352,9 +348,8 @@ impl fmt::Debug for LedgerWorld {
 }
 
 impl LedgerWorld {
-    /// 测试世界构造（`pub(crate)`：旧目标经 cucumber `#[world(init = Self::new)]`
-    /// 消费，新目标 `tests/e2e_rstest.rs` 的 `world` fixture 同点消费——
-    /// spec #1494 / ticket #1495）。
+    /// 测试世界构造（`pub(crate)`：`tests/e2e_rstest.rs` 的 `world` fixture 单点
+    /// 消费，每场景一次，含接缝接线与黑洞账户种子注册——spec #1494 / ticket #1495）。
     pub(crate) fn new() -> Self {
         // 提交点后置动作接线（spec #1086 / issue #1088）：BDD world 自建库，与
         // 生产启动/测试工厂同形先注册备份域的提交点实现，置脏语义才成立（幂等）。

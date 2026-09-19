@@ -15,12 +15,7 @@
 //! 域细节权威在域单测 trade.rs，此处不展开）；
 //! 余额读回复用迁移验证步骤的 `查询全部账户余额` / `账户 … 余额应为 …`。
 //!
-//! 整文件 4 条步骤**双注册**（spec #1494 / ticket #1502）：改写只涉及属性语法与
-//! 占位符形态，函数体与断言不变；数据表步骤（`批量导入投资交易`）因两种 macro
-//! 入参形态不同，保留共享实现 + 两侧注册适配器。
 
-use cucumber::gherkin::Step;
-use cucumber::{then, when};
 use rusqlite::params;
 
 use ledger_investment::{InstrumentInput, InstrumentType, create_instrument};
@@ -36,7 +31,6 @@ use crate::world::LedgerWorld;
 // When：幂等创建标的（创建端点同一核心接缝）
 // ---------------------------------------------------------------------------
 
-#[when(expr = "幂等创建标的 {string} 类型 {string} 名称 {string} 市场 {string} 币种 {string}")]
 #[rstest_bdd_macros::when(
     "幂等创建标的 {symbol:string} 类型 {kind:string} 名称 {name:string} 市场 {market:string} 币种 {currency:string}"
 )]
@@ -68,18 +62,9 @@ fn create_instrument_idempotently(
 
 /// 表格列（按表头名解析，缺失可省略）：kind | 标的 | 数量 | 单价 | 手续费 | 账户 | 日期。
 /// 行金额占位 0：交易行金额由行为层 prepare 按数量×单价±手续费重算（AI 无需自行计算）。
-#[when(expr = "批量导入投资交易")]
-fn batch_import_trades(world: &mut LedgerWorld, #[step] step: &Step) {
-    let table = step.table.as_ref().expect("批量导入投资交易步骤缺少数据表");
-    run_batch_import_trades(world, &table.rows);
-}
-
-/// rstest-bdd 侧的数据表注册适配器（spec #1494 / ticket #1502）：rstest-bdd 以
-/// `Vec<Vec<String>>` 数据表参数发放原始行（含表头），与 cucumber 的 `#[step] &Step`
-/// 不可同签名共存，故与 [`batch_import_trades`] 各留注册适配器、共用本实现
-///（先例 `migration_steps::批量导入交易`）。
+/// 数据表经 rstest-bdd 的 `#[datatable]` 参数发放原始行（含表头）。
 #[rstest_bdd_macros::when("批量导入投资交易")]
-fn batch_import_trades_rstest(world: &mut LedgerWorld, #[datatable] datatable: Vec<Vec<String>>) {
+fn batch_import_trades(world: &mut LedgerWorld, #[datatable] datatable: Vec<Vec<String>>) {
     run_batch_import_trades(world, &datatable);
 }
 
@@ -143,7 +128,6 @@ fn run_batch_import_trades(world: &mut LedgerWorld, table_rows: &[Vec<String>]) 
 // Then：导入结果与持仓读回
 // ---------------------------------------------------------------------------
 
-#[then(expr = "导入的投资交易应有 {int} 行全部成功")]
 #[rstest_bdd_macros::then("导入的投资交易应有 {expected:usize} 行全部成功")]
 fn assert_imported_trades_all_success(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
@@ -160,7 +144,6 @@ fn assert_imported_trades_all_success(world: &mut LedgerWorld, expected: usize) 
 
 /// 持仓读回（旅程终态，ADR-0087 决策 4）：剩余数量实时聚合。每份成本、
 /// 已实现盈亏等域细节权威在域单测（investment/tests/trade.rs、pnl.rs），不展开。
-#[then(expr = "标的 {string} 持仓应为 {float}")]
 #[rstest_bdd_macros::then("标的 {symbol:string} 持仓应为 {quantity:f64}")]
 fn assert_holding(world: &mut LedgerWorld, symbol: String, quantity: f64) {
     let qty: f64 = {

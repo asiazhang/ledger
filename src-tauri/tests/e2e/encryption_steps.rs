@@ -8,7 +8,6 @@
 //! `unlock_db_file` / `boot` / `relocate_with_key`），与真实 IPC 命令同一
 //! 实现（先例：BDD 直调命令层内部函数）。
 
-use cucumber::{given, then, when};
 use rusqlite::Connection;
 
 use ledger_infra::db::data_location::relocate_with_key;
@@ -102,7 +101,6 @@ fn transactions_fingerprint(conn: &Connection) -> String {
 /// （`allow_skipped=true`）且不假红；审计时置 `RSTEST_BDD_FAIL_ON_SKIPPED=true`
 /// 可让未标 `@allow_skipped` 的跳过显式置红。两侧共用
 /// [`crate::common::readonly_trigger_available`] 判定单一来源。
-#[given(expr = "目录只读触发可用")]
 #[rstest_bdd_macros::given("目录只读触发可用")]
 fn given_readonly_trigger_available(world: &mut LedgerWorld) {
     let _ = world;
@@ -111,7 +109,6 @@ fn given_readonly_trigger_available(world: &mut LedgerWorld) {
     }
 }
 
-#[given(expr = "默认数据目录中已有一个含 {int} 条交易的明文库")]
 #[rstest_bdd_macros::given("默认数据目录中已有一个含 {count:usize} 条交易的明文库")]
 fn given_plaintext_db(world: &mut LedgerWorld, count: usize) {
     ensure_dir(world);
@@ -120,7 +117,6 @@ fn given_plaintext_db(world: &mut LedgerWorld, count: usize) {
     seed_db(&conn, count);
 }
 
-#[given(expr = "默认数据目录中有一个凭主口令 {string} 加密且含 {int} 条交易的密文库")]
 #[rstest_bdd_macros::given(
     "默认数据目录中有一个凭主口令 {passphrase:string} 加密且含 {count:usize} 条交易的密文库"
 )]
@@ -137,13 +133,11 @@ fn given_encrypted_db(world: &mut LedgerWorld, passphrase: String, count: usize)
     std::fs::remove_file(path.with_extension("db.bak")).unwrap();
 }
 
-#[given(expr = "记录当前库文件字节")]
 #[rstest_bdd_macros::given("记录当前库文件字节")]
 fn given_record_bytes(world: &mut LedgerWorld) {
     world.boot.enc_db_bytes = Some(std::fs::read(db_path(world)).unwrap());
 }
 
-#[given(expr = "指针文件指向空的目标目录")]
 #[rstest_bdd_macros::given("指针文件指向空的目标目录")]
 fn given_pointer_to_empty_target(world: &mut LedgerWorld) {
     ensure_dir(world);
@@ -154,7 +148,6 @@ fn given_pointer_to_empty_target(world: &mut LedgerWorld) {
     world.boot.enc_target_dir = Some(target);
 }
 
-#[given(expr = "数据目录不可写")]
 #[rstest_bdd_macros::given("数据目录不可写")]
 fn given_dir_readonly(world: &mut LedgerWorld) {
     let dir = world.boot.enc_dir.clone().unwrap();
@@ -172,14 +165,12 @@ fn given_dir_readonly(world: &mut LedgerWorld) {
 // When
 // ---------------------------------------------------------------------------
 
-#[when(expr = "执行启动引导")]
 #[rstest_bdd_macros::when("执行启动引导")]
 fn when_boot(world: &mut LedgerWorld) {
     let default_dir = world.boot.enc_dir.clone().unwrap();
     world.boot.last_boot = Some(data_location::boot(&default_dir));
 }
 
-#[when(expr = "用主口令 {string} 开启加密")]
 #[rstest_bdd_macros::when("用主口令 {passphrase:string} 开启加密")]
 fn when_enable_encryption(world: &mut LedgerWorld, passphrase: String) {
     world.boot.enc_last_error = None;
@@ -188,7 +179,6 @@ fn when_enable_encryption(world: &mut LedgerWorld, passphrase: String) {
     }
 }
 
-#[when(expr = "用当前主口令 {string} 关闭加密")]
 #[rstest_bdd_macros::when("用当前主口令 {passphrase:string} 关闭加密")]
 fn when_disable_encryption(world: &mut LedgerWorld, passphrase: String) {
     world.boot.enc_last_error = None;
@@ -197,7 +187,6 @@ fn when_disable_encryption(world: &mut LedgerWorld, passphrase: String) {
     }
 }
 
-#[when(expr = "用旧口令 {string} 与新口令 {string} 修改主口令")]
 #[rstest_bdd_macros::when("用旧口令 {current:string} 与新口令 {new_pass:string} 修改主口令")]
 fn when_change_passphrase(world: &mut LedgerWorld, current: String, new_pass: String) {
     world.boot.enc_last_error = None;
@@ -206,7 +195,6 @@ fn when_change_passphrase(world: &mut LedgerWorld, current: String, new_pass: St
     }
 }
 
-#[when(expr = "以主口令 {string} 解锁")]
 #[rstest_bdd_macros::when("以主口令 {passphrase:string} 解锁")]
 fn when_unlock(world: &mut LedgerWorld, passphrase: String) {
     world.boot.enc_last_error = None;
@@ -216,13 +204,11 @@ fn when_unlock(world: &mut LedgerWorld, passphrase: String) {
     }
 }
 
-#[when(expr = "以主口令 {string} 再次解锁")]
 #[rstest_bdd_macros::when("以主口令 {passphrase:string} 再次解锁")]
 fn when_unlock_again(world: &mut LedgerWorld, passphrase: String) {
     when_unlock(world, passphrase);
 }
 
-#[when(expr = "以主口令 {string} 解锁并补做等待中的搬迁")]
 #[rstest_bdd_macros::when("以主口令 {passphrase:string} 解锁并补做等待中的搬迁")]
 fn when_unlock_and_relocate(world: &mut LedgerWorld, passphrase: String) {
     world.boot.enc_last_error = None;
@@ -244,7 +230,6 @@ fn when_unlock_and_relocate(world: &mut LedgerWorld, passphrase: String) {
     }
 }
 
-#[when(expr = "执行忘记口令重置")]
 #[rstest_bdd_macros::when("执行忘记口令重置")]
 fn when_reset_forgotten(world: &mut LedgerWorld) {
     world.boot.enc_last_error = None;
@@ -254,7 +239,6 @@ fn when_reset_forgotten(world: &mut LedgerWorld) {
     }
 }
 
-#[when(expr = "不带口令打开 .bak 密文副本")]
 #[rstest_bdd_macros::when("不带口令打开 .bak 密文副本")]
 fn when_open_bak_without_key(world: &mut LedgerWorld) {
     let bak = db_path(world).with_extension("db.bak");
@@ -273,7 +257,6 @@ fn when_open_bak_without_key(world: &mut LedgerWorld) {
 // Then
 // ---------------------------------------------------------------------------
 
-#[then(expr = "库文件应探测为明文库")]
 #[rstest_bdd_macros::then("库文件应探测为明文库")]
 fn then_probe_plaintext(world: &mut LedgerWorld) {
     assert_eq!(
@@ -283,7 +266,6 @@ fn then_probe_plaintext(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "库文件应探测为密文库")]
 #[rstest_bdd_macros::then("库文件应探测为密文库")]
 fn then_probe_encrypted(world: &mut LedgerWorld) {
     assert_eq!(
@@ -293,7 +275,6 @@ fn then_probe_encrypted(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "引导不应等待解锁")]
 #[rstest_bdd_macros::then("引导不应等待解锁")]
 fn then_no_deferred(world: &mut LedgerWorld) {
     let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
@@ -303,7 +284,6 @@ fn then_no_deferred(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "引导不应发生回退")]
 #[rstest_bdd_macros::then("引导不应发生回退")]
 fn then_no_fallback(world: &mut LedgerWorld) {
     let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
@@ -314,7 +294,6 @@ fn then_no_fallback(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "转换应成功")]
 #[rstest_bdd_macros::then("转换应成功")]
 fn then_convert_ok(world: &mut LedgerWorld) {
     assert!(
@@ -324,7 +303,6 @@ fn then_convert_ok(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "转换应失败")]
 #[rstest_bdd_macros::then("转换应失败")]
 fn then_convert_failed(world: &mut LedgerWorld) {
     assert!(
@@ -340,7 +318,6 @@ fn then_convert_failed(world: &mut LedgerWorld) {
     }
 }
 
-#[then(expr = "原库文件应保留为 .bak 明文副本")]
 #[rstest_bdd_macros::then("原库文件应保留为 .bak 明文副本")]
 fn then_bak_preserved(world: &mut LedgerWorld) {
     let bak = db_path(world).with_extension("db.bak");
@@ -352,7 +329,6 @@ fn then_bak_preserved(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "原库文件应保留为 .bak 密文副本")]
 #[rstest_bdd_macros::then("原库文件应保留为 .bak 密文副本")]
 fn then_bak_preserved_encrypted(world: &mut LedgerWorld) {
     let bak = db_path(world).with_extension("db.bak");
@@ -364,14 +340,12 @@ fn then_bak_preserved_encrypted(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "明文打开当前库应包含 {int} 条交易且内容完整")]
 #[rstest_bdd_macros::then("明文打开当前库应包含 {count:usize} 条交易且内容完整")]
 fn then_open_plaintext(world: &mut LedgerWorld, count: usize) {
     let conn = open_connection(db_path(world)).unwrap();
     assert_seed_rows(&conn, count);
 }
 
-#[then(expr = "凭主口令 {string} 打开 .bak 副本应包含 {int} 条交易且内容完整")]
 #[rstest_bdd_macros::then(
     "凭主口令 {passphrase:string} 打开 .bak 副本应包含 {count:usize} 条交易且内容完整"
 )]
@@ -381,7 +355,6 @@ fn then_open_bak_with_passphrase(world: &mut LedgerWorld, passphrase: String, co
     assert_seed_rows(&conn, count);
 }
 
-#[then(expr = "转换失败错误码应为 {string}")]
 #[rstest_bdd_macros::then("转换失败错误码应为 {code:string}")]
 fn then_convert_failed_with_code(world: &mut LedgerWorld, code: String) {
     let error = world.boot.enc_last_error.as_ref().expect("预期转换失败");
@@ -392,7 +365,6 @@ fn then_convert_failed_with_code(world: &mut LedgerWorld, code: String) {
     );
 }
 
-#[then(expr = "凭主口令 {string} 打开当前库应包含 {int} 条交易且内容完整")]
 #[rstest_bdd_macros::then(
     "凭主口令 {passphrase:string} 打开当前库应包含 {count:usize} 条交易且内容完整"
 )]
@@ -403,7 +375,6 @@ fn then_open_with_passphrase(world: &mut LedgerWorld, passphrase: String, count:
     assert_seed_rows(&conn, count);
 }
 
-#[then(expr = "当前库文件字节应保持不变且仍为明文库")]
 #[rstest_bdd_macros::then("当前库文件字节应保持不变且仍为明文库")]
 fn then_bytes_unchanged_and_plaintext(world: &mut LedgerWorld) {
     let current = std::fs::read(db_path(world)).unwrap();
@@ -419,7 +390,6 @@ fn then_bytes_unchanged_and_plaintext(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "当前库文件字节应保持不变")]
 #[rstest_bdd_macros::then("当前库文件字节应保持不变")]
 fn then_bytes_unchanged(world: &mut LedgerWorld) {
     let current = std::fs::read(db_path(world)).unwrap();
@@ -430,7 +400,6 @@ fn then_bytes_unchanged(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "原库仍能以明文打开且包含 {int} 条交易")]
 #[rstest_bdd_macros::then("原库仍能以明文打开且包含 {count:usize} 条交易")]
 fn then_still_plaintext_readable(world: &mut LedgerWorld, count: usize) {
     assert_eq!(
@@ -440,7 +409,6 @@ fn then_still_plaintext_readable(world: &mut LedgerWorld, count: usize) {
     );
 }
 
-#[then(expr = "目录中不应残留转换临时文件或 .bak 副本")]
 #[rstest_bdd_macros::then("目录中不应残留转换临时文件或 .bak 副本")]
 fn then_no_leftovers(world: &mut LedgerWorld) {
     let dir = world.boot.enc_dir.clone().unwrap();
@@ -459,7 +427,6 @@ fn then_no_leftovers(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "重置应成功")]
 #[rstest_bdd_macros::then("重置应成功")]
 fn then_reset_ok(world: &mut LedgerWorld) {
     assert!(
@@ -469,14 +436,12 @@ fn then_reset_ok(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "重置后的新库应为不含交易的明文空库")]
 #[rstest_bdd_macros::then("重置后的新库应为不含交易的明文空库")]
 fn then_reset_fresh_empty(world: &mut LedgerWorld) {
     let conn = world.boot.enc_conn.as_ref().expect("重置后应有新库连接");
     assert_eq!(count_transactions(conn), 0, "重置后的新库应为空库");
 }
 
-#[then(expr = "原密文库应保留为 .bak 密文副本")]
 #[rstest_bdd_macros::then("原密文库应保留为 .bak 密文副本")]
 fn then_bak_encrypted_preserved(world: &mut LedgerWorld) {
     let bak = db_path(world).with_extension("db.bak");
@@ -488,7 +453,6 @@ fn then_bak_encrypted_preserved(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = ".bak 密文副本凭原主口令 {string} 仍可打开且包含 {int} 条交易")]
 #[rstest_bdd_macros::then(
     ".bak 密文副本凭原主口令 {passphrase:string} 仍可打开且包含 {count:usize} 条交易"
 )]
@@ -502,7 +466,6 @@ fn then_bak_recoverable_with_passphrase(world: &mut LedgerWorld, passphrase: Str
     );
 }
 
-#[then(expr = "打开应失败且错误为文件不可读")]
 #[rstest_bdd_macros::then("打开应失败且错误为文件不可读")]
 fn then_bak_unreadable_without_key(world: &mut LedgerWorld) {
     let error = world
@@ -517,7 +480,6 @@ fn then_bak_unreadable_without_key(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "解锁应成功且打开的库应包含 {int} 条交易")]
 #[rstest_bdd_macros::then("解锁应成功且打开的库应包含 {count:usize} 条交易")]
 fn then_unlocked_with_count(world: &mut LedgerWorld, count: usize) {
     assert!(
@@ -529,7 +491,6 @@ fn then_unlocked_with_count(world: &mut LedgerWorld, count: usize) {
     assert_eq!(count_transactions(conn) as usize, count);
 }
 
-#[then(expr = "解锁应失败且错误码为 {string}")]
 #[rstest_bdd_macros::then("解锁应失败且错误码为 {code:string}")]
 fn then_unlock_failed_with_code(world: &mut LedgerWorld, code: String) {
     let error = world.boot.enc_last_error.as_ref().expect("预期解锁失败");
@@ -540,14 +501,12 @@ fn then_unlock_failed_with_code(world: &mut LedgerWorld, code: String) {
     );
 }
 
-#[then(expr = "凭主口令 {string} 可再次打开当前库")]
 #[rstest_bdd_macros::then("凭主口令 {passphrase:string} 可再次打开当前库")]
 fn then_reopen_with_passphrase(world: &mut LedgerWorld, passphrase: String) {
     let conn = open_connection_with_passphrase(db_path(world), &passphrase).unwrap();
     assert!(count_transactions(&conn) >= 0, "凭主口令可再次打开并读取");
 }
 
-#[then(expr = "引导应等待解锁后搬迁到目标目录")]
 #[rstest_bdd_macros::then("引导应等待解锁后搬迁到目标目录")]
 fn then_deferred_relocation(world: &mut LedgerWorld) {
     let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
@@ -563,7 +522,6 @@ fn then_deferred_relocation(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "搬迁应成功")]
 #[rstest_bdd_macros::then("搬迁应成功")]
 fn then_relocate_ok(world: &mut LedgerWorld) {
     assert!(
@@ -573,7 +531,6 @@ fn then_relocate_ok(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "目标目录的库应探测为密文库")]
 #[rstest_bdd_macros::then("目标目录的库应探测为密文库")]
 fn then_target_encrypted(world: &mut LedgerWorld) {
     let target = world.boot.enc_target_dir.as_ref().unwrap();
@@ -584,7 +541,6 @@ fn then_target_encrypted(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "凭主口令 {string} 打开目标目录的库应包含 {int} 条交易且内容完整")]
 #[rstest_bdd_macros::then(
     "凭主口令 {passphrase:string} 打开目标目录的库应包含 {count:usize} 条交易且内容完整"
 )]
@@ -601,7 +557,6 @@ fn then_target_content(world: &mut LedgerWorld, passphrase: String, count: usize
     );
 }
 
-#[then(expr = "源目录的密文库应原样保留")]
 #[rstest_bdd_macros::then("源目录的密文库应原样保留")]
 fn then_source_preserved(world: &mut LedgerWorld) {
     let path = db_path(world);
@@ -617,7 +572,6 @@ fn then_source_preserved(world: &mut LedgerWorld) {
 // 原位重引导计划（issue #644 / ADR-0080）：重启命令消费的引导序列内核
 // ---------------------------------------------------------------------------
 
-#[when(expr = "制定重引导计划")]
 #[rstest_bdd_macros::when("制定重引导计划")]
 fn when_plan_reboot(world: &mut LedgerWorld) {
     let default_dir = world.boot.enc_dir.clone().expect("尚未准备加密场景目录");
@@ -626,7 +580,6 @@ fn when_plan_reboot(world: &mut LedgerWorld) {
     world.boot.enc_last_plan = Some(plan.disposition.map_err(|e| e.to_string()));
 }
 
-#[then(expr = "重引导后生效目录应为目标目录")]
 #[rstest_bdd_macros::then("重引导后生效目录应为目标目录")]
 fn then_plan_dir_is_target(world: &mut LedgerWorld) {
     let boot = world.boot.last_boot.as_ref().expect("尚未制定重引导计划");
@@ -638,7 +591,6 @@ fn then_plan_dir_is_target(world: &mut LedgerWorld) {
     assert_eq!(&boot.db_dir, target, "重引导后生效目录应切换到搬迁目标目录");
 }
 
-#[then(expr = "重引导处置应等待解锁")]
 #[rstest_bdd_macros::then("重引导处置应等待解锁")]
 fn then_plan_awaits_unlock(world: &mut LedgerWorld) {
     let plan = world
@@ -653,7 +605,6 @@ fn then_plan_awaits_unlock(world: &mut LedgerWorld) {
     );
 }
 
-#[then(expr = "重引导处置应就绪建连")]
 #[rstest_bdd_macros::then("重引导处置应就绪建连")]
 fn then_plan_ready(world: &mut LedgerWorld) {
     let plan = world

@@ -5,15 +5,7 @@
 //! 经 `physical_asset` 域 API（`tauri_app_lib::physical_asset`）断言外部可观察
 //! 行为；定位「最近创建的资产」复用 world 的 `last_physical_asset_id`（T1 步骤
 //! 写入，跨步骤读写状态）；「应返回错误」「失效信号」断言语义与 T1 同源，
-//! 仅步骤措辞面向 T2 操作（cucumber 表达式全局唯一，不可与 T1 撞名）。
-
-use cucumber::{then, when};
-
-// 实物资产更新估值与编辑档案步骤**双注册**（spec #1494 / ticket #1500）：同一函数同时
-// 挂 cucumber 与 rstest-bdd 两个属性宏——旧目标行为零变化，新目标能匹配同一批步骤，
-// 函数体与断言唯一不复制。占位符按参数名与类型对齐（`{string}` → `{<参数名>:string}`、
-// `{int}` → 有符号/无符号整数 hint），引号剥离与数值解析语义与 cucumber 一致；切换只改
-// 属性形态，不改断言语义（CONTEXT-testing「行为等价判据」）。
+//! 仅步骤措辞面向 T2 操作（步骤模式全局唯一，不可与 T1 撞名）。
 
 use ledger_physical_asset::{
     PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
@@ -66,7 +58,6 @@ fn require_last_asset_id(world: &LedgerWorld) -> String {
 }
 
 /// 更新估值（要求成功）：追加一条估值历史行；记录失效信号次数。
-#[when(expr = "更新实物资产估值 金额 {string} 币种 {string} 估值日期 {string}")]
 #[rstest_bdd_macros::when(
     "更新实物资产估值 金额 {amount:string} 币种 {currency:string} 估值日期 {date:string}"
 )]
@@ -83,7 +74,6 @@ fn update_valuation(world: &mut LedgerWorld, amount: String, currency: String, d
 }
 
 /// 尝试更新估值并捕获错误（供「应返回错误」断言；失败不发信号）。
-#[when(expr = "尝试更新实物资产估值 金额 {string} 币种 {string} 估值日期 {string}")]
 #[rstest_bdd_macros::when(
     "尝试更新实物资产估值 金额 {amount:string} 币种 {currency:string} 估值日期 {date:string}"
 )]
@@ -103,7 +93,6 @@ fn try_update_valuation(world: &mut LedgerWorld, amount: String, currency: Strin
 }
 
 /// 编辑档案（要求成功）：只改名称与购买信息；记录失效信号次数。
-#[when(expr = "编辑实物资产 名称 {string} 购买日期 {string} 购买价 {string} 币种 {string}")]
 #[rstest_bdd_macros::when(
     "编辑实物资产 名称 {name:string} 购买日期 {purchase_date:string} 购买价 {purchase_price:string} 币种 {purchase_currency:string}"
 )]
@@ -124,7 +113,6 @@ fn update_asset(
 }
 
 /// 尝试编辑档案并捕获错误（供「应返回错误」断言；失败不发信号）。
-#[when(expr = "尝试编辑实物资产 名称 {string} 购买日期 {string} 购买价 {string} 币种 {string}")]
 #[rstest_bdd_macros::when(
     "尝试编辑实物资产 名称 {name:string} 购买日期 {purchase_date:string} 购买价 {purchase_price:string} 币种 {purchase_currency:string}"
 )]
@@ -148,14 +136,12 @@ fn try_update_asset(
 }
 
 /// T2 操作失败断言（语义同 T1 创建错误断言，措辞面向 T2 入口）。
-#[then(expr = "实物资产操作应返回错误 {string}")]
 #[rstest_bdd_macros::then("实物资产操作应返回错误 {expected:string}")]
 fn check_operation_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
 }
 
 /// 编辑成功后版本递增断言（读模型 version 直读）。
-#[then(expr = "第 {int} 件资产版本应为 {int}")]
 #[rstest_bdd_macros::then("第 {index:usize} 件资产版本应为 {expected:i64}")]
 fn assert_asset_version(world: &mut LedgerWorld, index: usize, expected: i64) {
     let asset = &world

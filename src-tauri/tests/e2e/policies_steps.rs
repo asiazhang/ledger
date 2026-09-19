@@ -7,8 +7,6 @@
 //! 保司侧 Given/When（存在保司 / 软删保司）复用 `insurers_steps.rs` 已注册步骤
 //! （issue #713 换轨：保司引用保险域自有字典，不再复用商户）。
 
-use cucumber::{then, when};
-
 use ledger_policy::PolicyInput;
 use ledger_policy::{
     create_policy as create_policy_domain, delete_policy as delete_policy_domain,
@@ -21,7 +19,7 @@ use crate::world::LedgerWorld;
 /// 哨兵值：「无」= 止日为空（长期/终身）/ 保额缺省 / 币种缺省。
 const NONE: &str = "无";
 
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)] // 步骤签名由占位符参数决定，无法缩减
 fn build_input(
     world: &LedgerWorld,
     insurer: &str,
@@ -51,13 +49,10 @@ fn build_input(
 }
 
 /// 创建保单并要求成功；记录失效信号次数（写后发 `ledger:changed` 的 seam 断言）。
-#[when(
-    expr = "创建保单 保司 {string} 保单号 {string} 险种 {string} 起日 {string} 止日 {string} 保额 {string} 币种 {string}"
-)]
 #[rstest_bdd_macros::when(
     "创建保单 保司 {insurer:string} 保单号 {policy_number:string} 险种 {product_name:string} 起日 {start_date:string} 止日 {end_date:string} 保额 {coverage:string} 币种 {currency:string}"
 )]
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)] // 步骤签名由占位符参数决定，无法缩减
 fn create_policy(
     world: &mut LedgerWorld,
     insurer: String,
@@ -89,13 +84,10 @@ fn create_policy(
 }
 
 /// 尝试创建保单并捕获错误（供「应返回错误」断言；失败不发信号）。
-#[when(
-    expr = "尝试创建保单 保司 {string} 保单号 {string} 险种 {string} 起日 {string} 止日 {string} 保额 {string} 币种 {string}"
-)]
 #[rstest_bdd_macros::when(
     "尝试创建保单 保司 {insurer:string} 保单号 {policy_number:string} 险种 {product_name:string} 起日 {start_date:string} 止日 {end_date:string} 保额 {coverage:string} 币种 {currency:string}"
 )]
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)] // 步骤签名由占位符参数决定，无法缩减
 fn try_create_policy(
     world: &mut LedgerWorld,
     insurer: String,
@@ -127,13 +119,10 @@ fn try_create_policy(
 }
 
 /// 编辑最近创建的保单（要求成功）。
-#[when(
-    expr = "编辑保单 保司 {string} 保单号 {string} 险种 {string} 起日 {string} 止日 {string} 保额 {string} 币种 {string}"
-)]
 #[rstest_bdd_macros::when(
     "编辑保单 保司 {insurer:string} 保单号 {policy_number:string} 险种 {product_name:string} 起日 {start_date:string} 止日 {end_date:string} 保额 {coverage:string} 币种 {currency:string}"
 )]
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)] // 步骤签名由占位符参数决定，无法缩减
 fn update_policy(
     world: &mut LedgerWorld,
     insurer: String,
@@ -167,13 +156,10 @@ fn update_policy(
 }
 
 /// 尝试编辑最近创建的保单并捕获错误。
-#[when(
-    expr = "尝试编辑保单 保司 {string} 保单号 {string} 险种 {string} 起日 {string} 止日 {string} 保额 {string} 币种 {string}"
-)]
 #[rstest_bdd_macros::when(
     "尝试编辑保单 保司 {insurer:string} 保单号 {policy_number:string} 险种 {product_name:string} 起日 {start_date:string} 止日 {end_date:string} 保额 {coverage:string} 币种 {currency:string}"
 )]
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)] // 步骤签名由占位符参数决定，无法缩减
 fn try_update_policy(
     world: &mut LedgerWorld,
     insurer: String,
@@ -210,7 +196,6 @@ fn try_update_policy(
 }
 
 /// 软删最近创建的保单（要求成功）。
-#[when(expr = "软删第 {int} 张保单")]
 #[rstest_bdd_macros::when("软删第 {n:usize} 张保单")]
 fn delete_policy(world: &mut LedgerWorld, n: usize) {
     let id = world
@@ -228,7 +213,6 @@ fn delete_policy(world: &mut LedgerWorld, n: usize) {
 }
 
 /// 尝试软删最近创建的保单并捕获错误（已删再删场景）。
-#[when(expr = "尝试软删第 {int} 张保单")]
 #[rstest_bdd_macros::when("尝试软删第 {n:usize} 张保单")]
 fn try_delete_policy(world: &mut LedgerWorld, _n: usize) {
     let id = world
@@ -247,7 +231,6 @@ fn try_delete_policy(world: &mut LedgerWorld, _n: usize) {
 }
 
 /// 刷新保单列表快照（Then 断言数据源）。
-#[when(expr = "记住第 {int} 张保单的创建时间")]
 #[rstest_bdd_macros::when("记住第 {n:usize} 张保单的创建时间")]
 fn remember_created_at(world: &mut LedgerWorld, n: usize) {
     world.policy.policies_list =
@@ -264,7 +247,6 @@ fn remember_created_at(world: &mut LedgerWorld, n: usize) {
 // Then 断言
 // ---------------------------------------------------------------------------
 
-#[then(expr = "保单列表应包含 {int} 张保单")]
 #[rstest_bdd_macros::then("保单列表应包含 {expected:usize} 张保单")]
 fn check_list_count(world: &mut LedgerWorld, expected: usize) {
     world.policy.policies_list =
@@ -285,7 +267,6 @@ fn nth(world: &LedgerWorld, n: usize) -> &ledger_policy::Policy {
         .unwrap_or_else(|| panic!("保单列表第 {n} 张不存在"))
 }
 
-#[then(expr = "第 {int} 张保单保司应为 {string} 保单号应为 {string} 险种应为 {string}")]
 #[rstest_bdd_macros::then(
     "第 {n:usize} 张保单保司应为 {insurer:string} 保单号应为 {number:string} 险种应为 {product:string}"
 )]
@@ -304,7 +285,6 @@ fn check_identity(
     assert_eq!(policy.product_name, product, "险种名称不匹配");
 }
 
-#[then(expr = "第 {int} 张保单保障期间应为 {string} 至 {string}")]
 #[rstest_bdd_macros::then("第 {n:usize} 张保单保障期间应为 {start:string} 至 {end:string}")]
 fn check_period(world: &mut LedgerWorld, n: usize, start: String, end: String) {
     let policy = nth(world, n);
@@ -316,7 +296,6 @@ fn check_period(world: &mut LedgerWorld, n: usize, start: String, end: String) {
     );
 }
 
-#[then(expr = "第 {int} 张保单保额应为 {int} 币种应为 {string}")]
 #[rstest_bdd_macros::then("第 {n:usize} 张保单保额应为 {cents:i64} 币种应为 {currency:string}")]
 fn check_coverage(world: &mut LedgerWorld, n: usize, cents: i64, currency: String) {
     let policy = nth(world, n);
@@ -328,7 +307,6 @@ fn check_coverage(world: &mut LedgerWorld, n: usize, cents: i64, currency: Strin
     );
 }
 
-#[then(expr = "第 {int} 张保单保额应为空")]
 #[rstest_bdd_macros::then("第 {n:usize} 张保单保额应为空")]
 fn check_coverage_empty(world: &mut LedgerWorld, n: usize) {
     let policy = nth(world, n);
@@ -336,7 +314,6 @@ fn check_coverage_empty(world: &mut LedgerWorld, n: usize) {
     assert_eq!(policy.coverage_currency_code, None, "保额币种应为空");
 }
 
-#[then(expr = "第 {int} 张保单应有唯一 ID 与审计字段")]
 #[rstest_bdd_macros::then("第 {n:usize} 张保单应有唯一 ID 与审计字段")]
 fn check_audit(world: &mut LedgerWorld, n: usize) {
     let policy = nth(world, n).clone();
@@ -348,7 +325,6 @@ fn check_audit(world: &mut LedgerWorld, n: usize) {
     assert!(!policy.is_deleted, "列表快照应为未删除");
 }
 
-#[then(expr = "第 {int} 张保单版本应为 {int} 创建时间保留")]
 #[rstest_bdd_macros::then("第 {n:usize} 张保单版本应为 {version:i64} 创建时间保留")]
 fn check_version_and_created_at(world: &mut LedgerWorld, n: usize, version: i64) {
     let policy = nth(world, n).clone();
@@ -360,7 +336,6 @@ fn check_version_and_created_at(world: &mut LedgerWorld, n: usize, version: i64)
     );
 }
 
-#[then(expr = "库内该保单行仍保留原保单号 {string} 与保司引用")]
 #[rstest_bdd_macros::then("库内该保单行仍保留原保单号 {number:string} 与保司引用")]
 fn check_soft_deleted_row_kept(world: &mut LedgerWorld, number: String) {
     let id = world
@@ -380,7 +355,6 @@ fn check_soft_deleted_row_kept(world: &mut LedgerWorld, number: String) {
     assert!(!kept_insurer.is_empty(), "保司引用应保留不置空");
 }
 
-#[then(expr = "保单写入后应发出 {int} 次失效信号")]
 #[rstest_bdd_macros::then("保单写入后应发出 {expected:usize} 次失效信号")]
 fn check_signals(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
@@ -389,25 +363,21 @@ fn check_signals(world: &mut LedgerWorld, expected: usize) {
     );
 }
 
-#[then(expr = "保单未发出失效信号")]
 #[rstest_bdd_macros::then("保单未发出失效信号")]
 fn check_no_signals(world: &mut LedgerWorld) {
     assert_eq!(world.policy.policy_signal_count, 0, "不应发出失效信号");
 }
 
-#[then(expr = "保单创建应返回错误 {string}")]
 #[rstest_bdd_macros::then("保单创建应返回错误 {expected:string}")]
 fn check_create_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
 }
 
-#[then(expr = "保单编辑应返回错误 {string}")]
 #[rstest_bdd_macros::then("保单编辑应返回错误 {expected:string}")]
 fn check_update_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
 }
 
-#[then(expr = "保单删除应返回错误 {string}")]
 #[rstest_bdd_macros::then("保单删除应返回错误 {expected:string}")]
 fn check_delete_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
