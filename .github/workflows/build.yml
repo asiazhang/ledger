@@ -380,6 +380,11 @@ jobs:
       # found），统一走 setup-android；NDK 版本显式固定，NDK_HOME 指向固定路径供
       # tauri CLI 与 gradle rust 插件交叉编译共用。不做 SDK 缓存（首次冷跑下载
       # 约 2GB，接受）。
+      #
+      # v3 默认安装已下架的 `tools` 包，v0.7.0 发布因此中断（run 35451246679：
+      # Failed to find package 'tools'）；v4.0.2 起默认不再装它（上游 #538）。
+      # 这里显式钉 command-line-tools 22.0 并只保留 platform-tools，避免 @v4
+      # 上游默认值再漂移；SDK/NDK 组件仍由下一步自装。
       - name: 安装 JDK 17（Android gradle 构建所需）
         if: matrix.platform == 'android'
         uses: actions/setup-java@v4
@@ -389,7 +394,10 @@ jobs:
 
       - name: 安装 Android SDK（commandline-tools + licenses）
         if: matrix.platform == 'android'
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: 15859902
+          packages: platform-tools
 
       - name: 安装 Android SDK 组件与 NDK
         if: matrix.platform == 'android'
