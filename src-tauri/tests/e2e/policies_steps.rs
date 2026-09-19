@@ -54,6 +54,9 @@ fn build_input(
 #[when(
     expr = "创建保单 保司 {string} 保单号 {string} 险种 {string} 起日 {string} 止日 {string} 保额 {string} 币种 {string}"
 )]
+#[rstest_bdd_macros::when(
+    "创建保单 保司 {insurer:string} 保单号 {policy_number:string} 险种 {product_name:string} 起日 {start_date:string} 止日 {end_date:string} 保额 {coverage:string} 币种 {currency:string}"
+)]
 #[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
 fn create_policy(
     world: &mut LedgerWorld,
@@ -199,6 +202,7 @@ fn try_update_policy(
 
 /// 软删最近创建的保单（要求成功）。
 #[when(expr = "软删第 {int} 张保单")]
+#[rstest_bdd_macros::when("软删第 {n:usize} 张保单")]
 fn delete_policy(world: &mut LedgerWorld, n: usize) {
     let id = world
         .policy
