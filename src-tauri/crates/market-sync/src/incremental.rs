@@ -596,6 +596,19 @@ pub(super) fn beijing_date(now: chrono::DateTime<chrono::Utc>) -> NaiveDate {
     (now + chrono::Duration::hours(8)).date_naive()
 }
 
+/// 自然日窗口的开启判定（ADR-0122 决策 3「启动后延迟一次 + 此后每自然日各一次」的
+/// 规则单点）：**同一北京日历日只开一次**，跨日（或从未跑过）即开。
+///
+/// 每日现价刷新与价格历史补全两条后台车道共用本判定——两条循环原先各自内联同一段
+/// `last_round_date != Some(today)`（两处同体），规则散落；抽成纯函数后规则可在单测
+/// 里直接钉住（同日不开、跨日开、首轮开），调度循环只负责把结果接上副作用。
+///
+/// 规则只回答「今天该不该开窗口」，不含任何副作用与时间读取——`today` 由调用方经
+/// [`beijing_today`] 传入，纯函数可确定性测试。
+pub(crate) fn daily_window_opens(last_run: Option<NaiveDate>, today: NaiveDate) -> bool {
+    last_run != Some(today)
+}
+
 /// 近两年回填窗口起点：北京时间今天 − 2 年。A 股/港股交易日历以北京时间为准，
 /// 起点精度只影响边界处至多多采一天的样本，周采样后无影响。股票日 K 与基金净值
 /// 首刷窗口同此（#303，唯一实现）。

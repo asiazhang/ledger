@@ -20,7 +20,7 @@ use crate::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
 use crate::fund_nav::{FullSeries, LsjzPage, NavPoint, NavQuery};
 use crate::history::{HistoryBackfillStats, run_history_backfill_round};
 use crate::http::KlineBar;
-use crate::incremental::{SyncInstrument, beijing_today, week_monday};
+use crate::incremental::{SyncInstrument, beijing_today, daily_window_opens, week_monday};
 use crate::model::WriteWitness;
 use crate::tests::insert_holding;
 use ledger_infra::error::{AppError, Result};
@@ -1655,5 +1655,31 @@ fn fund_first_sync_money_shape_marks_and_lands_no_flat_rows() {
     assert!(
         price_history_rows(&conn, "inst-money").is_empty(),
         "确认即收尾：平坦历史行不再生长（读侧按常量取值）"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 自然日窗口规则（ADR-0122 决策 3）：两条后台车道（每日现价刷新 / 价格历史补全）
+// 共用 `daily_window_opens`。规则在本层直接钉住——同日不开、跨日开、首轮开——
+// 集成侧不再靠「睡够一段时间看计数没变」来反推规则（那种写法既慢又把时间猜测
+// 带进判据：轮次变慢时第二轮的缺席会静默变成假绿）。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn daily_window_opens_only_once_per_beijing_calendar_day() {
+    let day1 = NaiveDate::from_ymd_opt(2026, 1, 30).unwrap();
+    let day2 = NaiveDate::from_ymd_opt(2026, 1, 31).unwrap();
+
+    assert!(
+        daily_window_opens(None, day1),
+        "从未跑过（启动补跑）：窗口应开"
+    );
+    assert!(
+        !daily_window_opens(Some(day1), day1),
+        "同一自然日已跑过：巡检再到期不得重开窗口（同日只跑一轮）"
+    );
+    assert!(
+        daily_window_opens(Some(day1), day2),
+        "跨到下一个北京日历日：窗口重新打开"
     );
 }

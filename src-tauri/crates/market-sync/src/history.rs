@@ -55,8 +55,8 @@ use super::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
 use super::fund_nav::{FullSeries, LsjzPage, NavQuery};
 use super::http::{KlineBar, secid_prefix};
 use super::incremental::{
-    SyncInstrument, backfill_fx_pairs, beijing_today, downsample_weekly, quote_code, week_monday,
-    write_weekly_price_history,
+    SyncInstrument, backfill_fx_pairs, beijing_today, daily_window_opens, downsample_weekly,
+    quote_code, week_monday, write_weekly_price_history,
 };
 use super::lane::{
     LaneChannelsSlot, LaneId, LaneRound, LaneRoundFuture, progress_forwarder,
@@ -533,7 +533,9 @@ pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: Back
             // ——启动轮即当天的窗口（「启动后延迟一次 + 此后每日各一次」）。
             if !gate.is_locked() && !boot_gate.is_failed() {
                 let today = beijing_today();
-                if last_round_date != Some(today) {
+                // 同日只开一次窗口（规则单点见 `incremental::daily_window_opens`）：
+                // 循环只负责把判定接上「标记已跑 + 跑一轮」的副作用。
+                if daily_window_opens(last_round_date, today) {
                     last_round_date = Some(today);
                     run_backfill_round_gated(&handle).await;
                 }
