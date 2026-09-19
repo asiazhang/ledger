@@ -19,6 +19,9 @@ use crate::world::LedgerWorld;
 
 /// 按 id 全字段替换最近一笔交易（修改场景），沿用原交易账户/币种等非编辑字段。
 #[when(expr = "修改最近交易 类型 {string} 金额 {int} 日期 {string} 备注 {string}")]
+#[rstest_bdd_macros::when(
+    "修改最近交易 类型 {kind:string} 金额 {amount:i64} 日期 {date:string} 备注 {note:string}"
+)]
 fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: String, note: String) {
     let id = world
         .txn
@@ -44,6 +47,7 @@ fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: Str
 
 /// 尝试把最近一笔交易改为转账（缺目标账户），应触发按 kind 校验并记录错误。
 #[when(expr = "尝试修改最近交易为转账 金额 {int} 日期 {string}")]
+#[rstest_bdd_macros::when("尝试修改最近交易为转账 金额 {amount:i64} 日期 {date:string}")]
 fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: String) {
     let id = world
         .txn
@@ -71,6 +75,7 @@ fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: Strin
 /// 删除最近一笔交易（软删除，与 IPC/HTTP 删除同一行为层权威），
 /// 供「编辑已删除交易」场景铺垫。
 #[when(expr = "删除最近交易")]
+#[rstest_bdd_macros::when("删除最近交易")]
 fn delete_last_txn(world: &mut LedgerWorld) {
     let id = world
         .txn
@@ -83,6 +88,7 @@ fn delete_last_txn(world: &mut LedgerWorld) {
 
 /// 删除买入交易（issue #940 级联场景）：按标的定位 buy 交易 id，经删除动词软删。
 #[when(expr = "删除买入交易 {string}")]
+#[rstest_bdd_macros::when("删除买入交易 {symbol:string}")]
 fn delete_buy_by_symbol(world: &mut LedgerWorld, symbol: String) {
     let id = trade_txn_id(world, &symbol, "buy");
     delete_transaction_verb(world, &id);
@@ -132,6 +138,9 @@ fn insert_trade_for_edit(
 }
 
 #[when(expr = "买入标的 {string} 数量 {int} 单价 {int} 到投资账户 {string}")]
+#[rstest_bdd_macros::when(
+    "买入标的 {symbol:string} 数量 {quantity:i64} 单价 {price_cents:i64} 到投资账户 {account_name:string}"
+)]
 fn buy_for_edit(
     world: &mut LedgerWorld,
     symbol: String,
@@ -151,6 +160,9 @@ fn buy_for_edit(
 }
 
 #[when(expr = "卖出标的 {string} 数量 {int} 单价 {int} 从投资账户 {string}")]
+#[rstest_bdd_macros::when(
+    "卖出标的 {symbol:string} 数量 {quantity:i64} 单价 {price_cents:i64} 从投资账户 {account_name:string}"
+)]
 fn sell_for_edit(
     world: &mut LedgerWorld,
     symbol: String,
@@ -205,6 +217,9 @@ fn trade_edit_input(
 
 /// 修改买入交易（issue #180）：全字段替换后重建持仓批次。
 #[when(expr = "修改买入交易 {string} 数量 {int} 单价 {int} 手续费 {int}")]
+#[rstest_bdd_macros::when(
+    "修改买入交易 {symbol:string} 数量 {quantity:i64} 单价 {price_cents:i64} 手续费 {fee_cents:i64}"
+)]
 fn update_buy(
     world: &mut LedgerWorld,
     symbol: String,
@@ -227,6 +242,9 @@ fn update_buy(
 
 /// 尝试修改买入交易，应触发部分卖出守卫并记录错误（issue #180）。
 #[when(expr = "尝试修改买入交易 {string} 数量 {int} 单价 {int}")]
+#[rstest_bdd_macros::when(
+    "尝试修改买入交易 {symbol:string} 数量 {quantity:i64} 单价 {price_cents:i64}"
+)]
 fn try_update_partially_sold_buy(
     world: &mut LedgerWorld,
     symbol: String,
@@ -241,6 +259,9 @@ fn try_update_partially_sold_buy(
 
 /// 修改卖出交易（issue #180）：回补持仓后按新输入重建卖出匹配。
 #[when(expr = "修改卖出交易 {string} 数量 {int} 单价 {int} 手续费 {int}")]
+#[rstest_bdd_macros::when(
+    "修改卖出交易 {symbol:string} 数量 {quantity:i64} 单价 {price_cents:i64} 手续费 {fee_cents:i64}"
+)]
 fn update_sell(
     world: &mut LedgerWorld,
     symbol: String,
@@ -263,6 +284,7 @@ fn update_sell(
 
 /// 尝试修改一笔已删除的交易，应返回明确错误（NotFound：已删除与不存在同口径）。
 #[when(expr = "尝试修改已删除的交易 金额 {int} 日期 {string}")]
+#[rstest_bdd_macros::when("尝试修改已删除的交易 金额 {amount:i64} 日期 {date:string}")]
 fn try_update_deleted_txn(world: &mut LedgerWorld, amount: i64, date: String) {
     let id = world
         .txn
@@ -275,6 +297,7 @@ fn try_update_deleted_txn(world: &mut LedgerWorld, amount: i64, date: String) {
 }
 
 #[then(expr = "第 {int} 条交易版本应为 {int}")]
+#[rstest_bdd_macros::then("第 {index:i64} 条交易版本应为 {expected_version:i64}")]
 fn check_txn_version(world: &mut LedgerWorld, index: i64, expected_version: i64) {
     let idx = (index - 1) as usize;
     assert!(
@@ -289,6 +312,7 @@ fn check_txn_version(world: &mut LedgerWorld, index: i64, expected_version: i64)
 }
 
 #[then(expr = "标的 {string} 持仓数量应为 {int}")]
+#[rstest_bdd_macros::then("标的 {symbol:string} 持仓数量应为 {expected:i64}")]
 fn assert_holding_quantity(world: &mut LedgerWorld, symbol: String, expected: i64) {
     // 按标的定位持仓批次（场景内单账户，标的唯一确定批次）
     let quantity: f64 = world_conn!(world)
@@ -307,6 +331,7 @@ fn assert_holding_quantity(world: &mut LedgerWorld, symbol: String, expected: i6
 
 /// 断言标的的持仓批次数（级联删除后批次应整批清理，issue #940）。
 #[then(expr = "标的 {string} 持仓批次应为 {int} 条")]
+#[rstest_bdd_macros::then("标的 {symbol:string} 持仓批次应为 {expected:i64} 条")]
 fn assert_lot_count(world: &mut LedgerWorld, symbol: String, expected: i64) {
     let count: i64 = world_conn!(world)
         .query_row(
@@ -352,6 +377,9 @@ fn assert_trade_detail_of(
 }
 
 #[then(expr = "该买入明细应为 标的 {string} 数量 {int} 单价 {int} 手续费 {int}")]
+#[rstest_bdd_macros::then(
+    "该买入明细应为 标的 {symbol:string} 数量 {quantity:i64} 单价 {price_cents:i64} 手续费 {fee_cents:i64}"
+)]
 fn assert_buy_detail(
     world: &mut LedgerWorld,
     symbol: String,
@@ -363,6 +391,9 @@ fn assert_buy_detail(
 }
 
 #[then(expr = "该卖出明细应为 标的 {string} 数量 {int} 单价 {int} 手续费 {int}")]
+#[rstest_bdd_macros::then(
+    "该卖出明细应为 标的 {symbol:string} 数量 {quantity:i64} 单价 {price_cents:i64} 手续费 {fee_cents:i64}"
+)]
 fn assert_sell_detail(
     world: &mut LedgerWorld,
     symbol: String,

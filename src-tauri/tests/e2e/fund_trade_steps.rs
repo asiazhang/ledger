@@ -17,6 +17,7 @@ use crate::world::LedgerWorld;
 /// 经投资域核心创建入口建基金标的字典行（#763 旁路归零；基金不设手动白名单，
 /// 核心入口与 AI HTTP 端点同款五类全开；场景无来源断言，来源标记不涉被测语义）。
 #[given(expr = "存在基金标的 {string} 名称 {string}")]
+#[rstest_bdd_macros::given("存在基金标的 {symbol:string} 名称 {name:string}")]
 fn create_fund_instrument(world: &mut LedgerWorld, symbol: String, name: String) {
     let input = InstrumentInput {
         symbol: symbol.clone(),
@@ -84,6 +85,9 @@ fn fund_trade(
 }
 
 #[when(expr = "按确认单申购基金 {string} 份额 {float} 金额 {int} 手续费 {int} 到投资账户 {string}")]
+#[rstest_bdd_macros::when(
+    "按确认单申购基金 {symbol:string} 份额 {quantity:f64} 金额 {amount_cents:i64} 手续费 {fee_cents:i64} 到投资账户 {account_name:string}"
+)]
 fn fund_buy(
     world: &mut LedgerWorld,
     symbol: String,
@@ -136,6 +140,9 @@ fn fund_buy_on(
 }
 
 #[when(expr = "按确认单赎回基金 {string} 份额 {float} 金额 {int} 手续费 {int} 从投资账户 {string}")]
+#[rstest_bdd_macros::when(
+    "按确认单赎回基金 {symbol:string} 份额 {quantity:f64} 金额 {amount_cents:i64} 手续费 {fee_cents:i64} 从投资账户 {account_name:string}"
+)]
 fn fund_sell(
     world: &mut LedgerWorld,
     symbol: String,
@@ -252,6 +259,9 @@ fn assert_fund_trade_detail(
 }
 
 #[then(expr = "该买入明细应为 标的 {string} 份额 {float} 净值 {int} 手续费 {int}")]
+#[rstest_bdd_macros::then(
+    "该买入明细应为 标的 {symbol:string} 份额 {quantity:f64} 净值 {nav_price_cents:i64} 手续费 {fee_cents:i64}"
+)]
 fn assert_fund_buy_detail(
     world: &mut LedgerWorld,
     symbol: String,
@@ -263,6 +273,9 @@ fn assert_fund_buy_detail(
 }
 
 #[then(expr = "该卖出明细应为 标的 {string} 份额 {float} 净值 {int} 手续费 {int}")]
+#[rstest_bdd_macros::then(
+    "该卖出明细应为 标的 {symbol:string} 份额 {quantity:f64} 净值 {nav_price_cents:i64} 手续费 {fee_cents:i64}"
+)]
 fn assert_fund_sell_detail(
     world: &mut LedgerWorld,
     symbol: String,
@@ -274,6 +287,7 @@ fn assert_fund_sell_detail(
 }
 
 #[then(expr = "标的 {string} 持仓份额应为 {float}")]
+#[rstest_bdd_macros::then("标的 {symbol:string} 持仓份额应为 {expected:f64}")]
 fn assert_fund_holding_quantity(world: &mut LedgerWorld, symbol: String, expected: f64) {
     let quantity: f64 = world_conn!(world)
         .query_row(
@@ -290,6 +304,7 @@ fn assert_fund_holding_quantity(world: &mut LedgerWorld, symbol: String, expecte
 }
 
 #[then(expr = "基金 {string} 已实现盈亏合计应为 {int}")]
+#[rstest_bdd_macros::then("基金 {symbol:string} 已实现盈亏合计应为 {expected:i64}")]
 fn assert_fund_realized_pnl_total(world: &mut LedgerWorld, symbol: String, expected: i64) {
     let total: i64 = world_conn!(world)
         .query_row(

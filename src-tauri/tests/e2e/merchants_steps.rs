@@ -20,6 +20,7 @@ use crate::world::LedgerWorld;
 // ---------------------------------------------------------------------------
 
 #[given(expr = "存在商户 {string}")]
+#[rstest_bdd_macros::given("存在商户 {name:string}")]
 fn given_merchant(world: &mut LedgerWorld, name: String) {
     let id = create_merchant_domain(&world_conn!(world), MerchantInput { name: name.clone() })
         .expect("创建商户失败");
@@ -99,6 +100,7 @@ fn try_rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: Stri
 /// 名称→ID 映射刻意**保留**：软删后商户行仍在库中（历史引用语义），
 /// 后续步骤可继续按名称引用其 id，由后端拒绝新交易携带（断言「商户不存在或已删除」）。
 #[when(expr = "软删商户 {string}")]
+#[rstest_bdd_macros::when("软删商户 {name:string}")]
 fn delete_merchant(world: &mut LedgerWorld, name: String) {
     let id = world.merchant_id(&name);
     delete_merchant_domain(&world_conn!(world), &id).expect("软删商户失败");
@@ -106,6 +108,9 @@ fn delete_merchant(world: &mut LedgerWorld, name: String) {
 
 /// 创建带商户的交易（expense/income/transfer/refund 可携带，ADR-0092）。
 #[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 商户 {string}")]
+#[rstest_bdd_macros::when(
+    "创建交易 类型 {kind:string} 金额 {amount:i64} 到账户 {account_name:string} 日期 {date:string} 商户 {merchant_name:string}"
+)]
 fn create_txn_with_merchant(
     world: &mut LedgerWorld,
     kind: String,
@@ -210,6 +215,7 @@ fn check_schema_in_place(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "商户列表应包含 {int} 条记录")]
+#[rstest_bdd_macros::then("商户列表应包含 {expected:i64} 条记录")]
 fn check_merchant_count(world: &mut LedgerWorld, expected: i64) {
     let merchants = list_merchants_domain(&world_conn!(world), false).expect("查询商户失败");
     assert_eq!(
@@ -259,6 +265,7 @@ fn check_merchant_json_not_contain_field(world: &mut LedgerWorld, field: String)
 /// 含软删全量列表（交易列表筛选下拉的数据源）：软删商户仍在其列，
 /// 其历史交易照常可按商户过滤。
 #[then(expr = "商户含软删列表应包含 {int} 条记录")]
+#[rstest_bdd_macros::then("商户含软删列表应包含 {expected:i64} 条记录")]
 fn check_merchant_all_count(world: &mut LedgerWorld, expected: i64) {
     let merchants =
         list_merchants_domain(&world_conn!(world), true).expect("查询含软删商户列表失败");
@@ -266,6 +273,7 @@ fn check_merchant_all_count(world: &mut LedgerWorld, expected: i64) {
 }
 
 #[then(expr = "商户含软删列表应包含 {string}")]
+#[rstest_bdd_macros::then("商户含软删列表应包含 {name:string}")]
 fn check_merchant_all_contains(world: &mut LedgerWorld, name: String) {
     let merchants =
         list_merchants_domain(&world_conn!(world), true).expect("查询含软删商户列表失败");
