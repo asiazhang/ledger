@@ -7,6 +7,9 @@ use crate::world::LedgerWorld;
 use ledger_transaction::search_transactions_internal;
 use ledger_transaction::{TransactionInput, TransactionSearchResult};
 
+// 来源溯源 feature 消费的 `搜索` 步骤**按需双注册**（spec #1494 / ticket #1503）：
+// 同一函数同时挂两族属性，函数体与断言语义唯一；搜索域其余步骤归 ticket #1505。
+
 // ---------------------------------------------------------------------------
 // Given
 // ---------------------------------------------------------------------------
@@ -67,6 +70,7 @@ fn legacy_foreign_txn(
 // ---------------------------------------------------------------------------
 
 #[when(expr = "搜索 {string}")]
+#[rstest_bdd_macros::when("搜索 {query:string}")]
 fn search(world: &mut LedgerWorld, query: String) {
     world.txn.last_search = Some(
         search_transactions_internal(&world_conn!(world), &query, 1, 20, None, None, None, None)
