@@ -74,6 +74,7 @@ fn key_table_fingerprint(db_path: &std::path::Path) -> String {
 // ---------------------------------------------------------------------------
 
 #[given(expr = "默认数据目录中已有一个含 {int} 条交易的库")]
+#[rstest_bdd_macros::given("默认数据目录中已有一个含 {count:usize} 条交易的库")]
 fn default_dir_with_db(world: &mut LedgerWorld, count: usize) {
     ensure_default_dir(world);
     let dir = world.boot.dl_default_dir.clone().unwrap();
@@ -83,11 +84,13 @@ fn default_dir_with_db(world: &mut LedgerWorld, count: usize) {
 }
 
 #[given(expr = "空的默认数据目录")]
+#[rstest_bdd_macros::given("空的默认数据目录")]
 fn empty_default_dir(world: &mut LedgerWorld) {
     ensure_default_dir(world);
 }
 
 #[given(expr = "指针文件指向目标目录")]
+#[rstest_bdd_macros::given("指针文件指向目标目录")]
 fn pointer_to_target(world: &mut LedgerWorld) {
     ensure_default_dir(world);
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
@@ -97,6 +100,7 @@ fn pointer_to_target(world: &mut LedgerWorld) {
 }
 
 #[given(expr = "指针文件指向已含 {int} 条交易库的目标目录")]
+#[rstest_bdd_macros::given("指针文件指向已含 {count:usize} 条交易库的目标目录")]
 fn pointer_to_target_with_db(world: &mut LedgerWorld, count: usize) {
     pointer_to_target(world);
     let target = world.boot.dl_target_dir.clone().unwrap();
@@ -108,12 +112,14 @@ fn pointer_to_target_with_db(world: &mut LedgerWorld, count: usize) {
 }
 
 #[given(expr = "指针文件内容为损坏文本 {string}")]
+#[rstest_bdd_macros::given("指针文件内容为损坏文本 {raw:string}")]
 fn pointer_corrupted(world: &mut LedgerWorld, raw: String) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     std::fs::write(default_dir.join(data_location::POINTER_FILE_NAME), raw).unwrap();
 }
 
 #[given(expr = "指针文件指向一个无法创建的目标目录")]
+#[rstest_bdd_macros::given("指针文件指向一个无法创建的目标目录")]
 fn pointer_to_unusable_target(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     // 目标父级是一个普通文件 → create_dir_all 必然失败（跨平台）。
@@ -125,6 +131,7 @@ fn pointer_to_unusable_target(world: &mut LedgerWorld) {
 }
 
 #[given(expr = "默认数据目录中存在一个损坏的库文件")]
+#[rstest_bdd_macros::given("默认数据目录中存在一个损坏的库文件")]
 fn default_dir_with_corrupt_db(world: &mut LedgerWorld) {
     let dir = std::env::temp_dir().join(format!("ledger-e2e-dl-reset-{}", new_uuid()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -137,6 +144,7 @@ fn default_dir_with_corrupt_db(world: &mut LedgerWorld) {
 }
 
 #[given(expr = "记录默认数据目录库文件的字节")]
+#[rstest_bdd_macros::given("记录默认数据目录库文件的字节")]
 fn record_default_db_bytes(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     let bytes = std::fs::read(default_dir.join(data_location::DB_FILE_NAME)).unwrap();
@@ -148,6 +156,7 @@ fn record_default_db_bytes(world: &mut LedgerWorld) {
 // ---------------------------------------------------------------------------
 
 #[when(expr = "执行 DataLocation 引导并打开数据库")]
+#[rstest_bdd_macros::when("执行 DataLocation 引导并打开数据库")]
 fn boot_and_open(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     let boot = data_location::boot(&default_dir);
@@ -158,6 +167,7 @@ fn boot_and_open(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "尝试执行 DataLocation 引导并打开数据库（预期打开失败）")]
+#[rstest_bdd_macros::when("尝试执行 DataLocation 引导并打开数据库（预期打开失败）")]
 fn boot_and_open_expect_failure(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     let boot = data_location::boot(&default_dir);
@@ -171,6 +181,7 @@ fn boot_and_open_expect_failure(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "在生效位置的库中记入 {int} 条标记交易")]
+#[rstest_bdd_macros::when("在生效位置的库中记入 {count:usize} 条标记交易")]
 fn append_marker_transactions(world: &mut LedgerWorld, count: usize) {
     let state = world.boot.dl_conn.as_ref().unwrap();
     let conn = state.conn.lock().unwrap();
@@ -178,6 +189,7 @@ fn append_marker_transactions(world: &mut LedgerWorld, count: usize) {
 }
 
 #[when(expr = "执行启动失败重置")]
+#[rstest_bdd_macros::when("执行启动失败重置")]
 fn run_reset(world: &mut LedgerWorld) {
     let dir = world.boot.dl_default_dir.clone().unwrap();
     let conn = reset_db_in(&dir);
@@ -190,6 +202,7 @@ fn run_reset(world: &mut LedgerWorld) {
 // ---------------------------------------------------------------------------
 
 #[then(expr = "生效目录应为默认数据目录")]
+#[rstest_bdd_macros::then("生效目录应为默认数据目录")]
 fn active_dir_is_default(world: &mut LedgerWorld) {
     let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
     let default_dir = world.boot.dl_default_dir.as_ref().unwrap();
@@ -197,6 +210,7 @@ fn active_dir_is_default(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "生效目录应为目标目录")]
+#[rstest_bdd_macros::then("生效目录应为目标目录")]
 fn active_dir_is_target(world: &mut LedgerWorld) {
     let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
     let target = world.boot.dl_target_dir.as_ref().unwrap();
@@ -204,6 +218,7 @@ fn active_dir_is_target(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "不应发生回退")]
+#[rstest_bdd_macros::then("不应发生回退")]
 fn no_fallback(world: &mut LedgerWorld) {
     let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
     assert!(
@@ -214,6 +229,7 @@ fn no_fallback(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "回退信号应包含 {string}")]
+#[rstest_bdd_macros::then("回退信号应包含 {needle:string}")]
 fn fallback_reason_contains(world: &mut LedgerWorld, needle: String) {
     let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
     let reason = boot
@@ -227,6 +243,7 @@ fn fallback_reason_contains(world: &mut LedgerWorld, needle: String) {
 }
 
 #[then(expr = "打开的库应包含 {int} 条交易")]
+#[rstest_bdd_macros::then("打开的库应包含 {count:usize} 条交易")]
 fn opened_db_contains(world: &mut LedgerWorld, count: usize) {
     let state = world.boot.dl_conn.as_ref().unwrap();
     let conn = state.conn.lock().unwrap();
@@ -235,12 +252,14 @@ fn opened_db_contains(world: &mut LedgerWorld, count: usize) {
 }
 
 #[then(expr = "打开的库应为空库（0 条交易）")]
+#[rstest_bdd_macros::then("打开的库应为空库（0 条交易）")]
 fn opened_db_is_empty(world: &mut LedgerWorld) {
     // 复用同一断言（显式 0），保持 feature 文案可读。
     opened_db_contains(world, 0);
 }
 
 #[then(expr = "目标目录的库应包含 {int} 条交易")]
+#[rstest_bdd_macros::then("目标目录的库应包含 {count:usize} 条交易")]
 fn target_db_contains(world: &mut LedgerWorld, count: usize) {
     let target = world.boot.dl_target_dir.as_ref().unwrap();
     assert_eq!(
@@ -251,6 +270,7 @@ fn target_db_contains(world: &mut LedgerWorld, count: usize) {
 }
 
 #[then(expr = "目标目录的库的关键表内容应与默认目录的库一致")]
+#[rstest_bdd_macros::then("目标目录的库的关键表内容应与默认目录的库一致")]
 fn relocated_db_matches_source(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.as_ref().unwrap();
     let target = world.boot.dl_target_dir.as_ref().unwrap();
@@ -263,6 +283,7 @@ fn relocated_db_matches_source(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "默认数据目录的库应原样保留且仍包含 {int} 条交易")]
+#[rstest_bdd_macros::then("默认数据目录的库应原样保留且仍包含 {count:usize} 条交易")]
 fn default_db_preserved(world: &mut LedgerWorld, count: usize) {
     let default_dir = world.boot.dl_default_dir.as_ref().unwrap();
     assert_eq!(
@@ -273,6 +294,7 @@ fn default_db_preserved(world: &mut LedgerWorld, count: usize) {
 }
 
 #[then(expr = "默认数据目录库文件的字节应保持不变")]
+#[rstest_bdd_macros::then("默认数据目录库文件的字节应保持不变")]
 fn default_db_bytes_unchanged(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.as_ref().unwrap();
     let bytes = std::fs::read(default_dir.join(data_location::DB_FILE_NAME)).unwrap();
@@ -288,11 +310,13 @@ fn default_db_bytes_unchanged(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "重置后的库应为空库（0 条交易）")]
+#[rstest_bdd_macros::then("重置后的库应为空库（0 条交易）")]
 fn reset_db_is_empty(world: &mut LedgerWorld) {
     opened_db_contains(world, 0);
 }
 
 #[then(expr = "原库文件应被重命名为 .bak 保留")]
+#[rstest_bdd_macros::then("原库文件应被重命名为 .bak 保留")]
 fn bak_file_preserved(world: &mut LedgerWorld) {
     let dir = world.boot.dl_default_dir.as_ref().unwrap();
     let bak = dir
@@ -319,6 +343,7 @@ fn submit(world: &mut LedgerWorld, target: &std::path::Path, adopt_existing: boo
 }
 
 #[when(expr = "向一个未占用的新目录提交更改意图")]
+#[rstest_bdd_macros::when("向一个未占用的新目录提交更改意图")]
 fn submit_to_fresh_dir(world: &mut LedgerWorld) {
     ensure_default_dir(world);
     let target = std::env::temp_dir().join(format!("ledger-e2e-dl-new-{}", new_uuid()));
@@ -327,6 +352,7 @@ fn submit_to_fresh_dir(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "向一个无法创建的目录提交更改意图")]
+#[rstest_bdd_macros::when("向一个无法创建的目录提交更改意图")]
 fn submit_to_uncreatable(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     // 目标父级是一个普通文件 → create_dir_all 必然失败（跨平台）。
@@ -338,6 +364,7 @@ fn submit_to_uncreatable(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "向一个只读目录提交更改意图")]
+#[rstest_bdd_macros::when("向一个只读目录提交更改意图")]
 fn submit_to_readonly_dir(world: &mut LedgerWorld) {
     let target = std::env::temp_dir().join(format!("ledger-e2e-dl-readonly-{}", new_uuid()));
     std::fs::create_dir_all(&target).unwrap();
@@ -364,6 +391,7 @@ fn submit_to_readonly_dir(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "向副业账的登记目录提交更改意图")]
+#[rstest_bdd_macros::when("向副业账的登记目录提交更改意图")]
 fn submit_to_other_book_dir(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     // 目标 = 指定账本的登记目录（清单来自注册表最新落盘态，与界面同一读入口）。
@@ -380,6 +408,7 @@ fn submit_to_other_book_dir(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "向当前生效目录提交更改意图（不接管既有库）")]
+#[rstest_bdd_macros::when("向当前生效目录提交更改意图（不接管既有库）")]
 fn submit_to_active_dir(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     let active = world
@@ -394,6 +423,7 @@ fn submit_to_active_dir(world: &mut LedgerWorld) {
 
 /// 尝试在搬迁意图未生效期间新建账本：应被拒绝（book.registry-busy）。
 #[when(expr = "尝试新建账本应被拒绝（搬迁未完成）")]
+#[rstest_bdd_macros::when("尝试新建账本应被拒绝（搬迁未完成）")]
 fn create_book_while_relocation_pending(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     let err = ledger_infra::db::book_registry::create_book_entry(&default_dir, "第三本")
@@ -405,30 +435,35 @@ fn create_book_while_relocation_pending(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "向该目标目录提交更改意图（不接管既有库）")]
+#[rstest_bdd_macros::when("向该目标目录提交更改意图（不接管既有库）")]
 fn submit_no_adopt(world: &mut LedgerWorld) {
     let target = world.boot.dl_target_dir.clone().unwrap();
     submit(world, &target, false);
 }
 
 #[when(expr = "选择接管既有库并再次提交")]
+#[rstest_bdd_macros::when("选择接管既有库并再次提交")]
 fn submit_adopt(world: &mut LedgerWorld) {
     let target = world.boot.dl_target_dir.clone().unwrap();
     submit(world, &target, true);
 }
 
 #[when(expr = "提交恢复默认位置（不接管既有库）")]
+#[rstest_bdd_macros::when("提交恢复默认位置（不接管既有库）")]
 fn restore_default_no_adopt(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     submit(world, &default_dir, false);
 }
 
 #[when(expr = "选择接管既有库并再次提交恢复默认")]
+#[rstest_bdd_macros::when("选择接管既有库并再次提交恢复默认")]
 fn restore_default_adopt(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     submit(world, &default_dir, true);
 }
 
 #[when(expr = "查询 DataLocation 信息")]
+#[rstest_bdd_macros::when("查询 DataLocation 信息")]
 fn query_info(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     // 与真实命令一致：active/fallback 来自启动期已登记的引导结果。
@@ -441,6 +476,7 @@ fn query_info(world: &mut LedgerWorld) {
 // ---------------------------------------------------------------------------
 
 #[then(expr = "提交结果应为意图已落盘")]
+#[rstest_bdd_macros::then("提交结果应为意图已落盘")]
 fn outcome_committed(world: &mut LedgerWorld) {
     let outcome = world.boot.dl_last_outcome.as_ref().expect("无提交结果");
     assert!(
@@ -451,6 +487,7 @@ fn outcome_committed(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "提交结果应为需要二选一")]
+#[rstest_bdd_macros::then("提交结果应为需要二选一")]
 fn outcome_requires_choice(world: &mut LedgerWorld) {
     let outcome = world.boot.dl_last_outcome.as_ref().expect("无提交结果");
     assert!(
@@ -460,6 +497,7 @@ fn outcome_requires_choice(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "提交应被拒绝且错误信息包含 {string}")]
+#[rstest_bdd_macros::then("提交应被拒绝且错误信息包含 {needle:string}")]
 fn submit_rejected_with(world: &mut LedgerWorld, needle: String) {
     assert!(
         world.boot.dl_last_outcome.is_none(),
@@ -473,6 +511,7 @@ fn submit_rejected_with(world: &mut LedgerWorld, needle: String) {
 }
 
 #[then(expr = "指针文件应指向目标目录")]
+#[rstest_bdd_macros::then("指针文件应指向目标目录")]
 fn pointer_points_to_target(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.as_ref().unwrap();
     let target = world.boot.dl_target_dir.as_ref().unwrap();
@@ -481,6 +520,7 @@ fn pointer_points_to_target(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "指针文件应指向默认数据目录")]
+#[rstest_bdd_macros::then("指针文件应指向默认数据目录")]
 fn pointer_points_to_default(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.as_ref().unwrap();
     let configured = data_location::configured_intent(default_dir).expect("指针文件应已配置");
@@ -488,6 +528,7 @@ fn pointer_points_to_default(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "指针文件应保持未配置")]
+#[rstest_bdd_macros::then("指针文件应保持未配置")]
 fn pointer_remains_unconfigured(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.as_ref().unwrap();
     assert!(
@@ -497,6 +538,7 @@ fn pointer_remains_unconfigured(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "信息中的生效目录应为默认数据目录")]
+#[rstest_bdd_macros::then("信息中的生效目录应为默认数据目录")]
 fn info_active_is_default(world: &mut LedgerWorld) {
     let info = world.boot.dl_last_info.as_ref().expect("无信息查询结果");
     let default_dir = world.boot.dl_default_dir.as_ref().unwrap();
@@ -508,6 +550,7 @@ fn info_active_is_default(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "信息应无待重启生效状态且无回退警示")]
+#[rstest_bdd_macros::then("信息应无待重启生效状态且无回退警示")]
 fn info_quiescent(world: &mut LedgerWorld) {
     let info = world.boot.dl_last_info.as_ref().expect("无信息查询结果");
     assert!(!info.pending_restart, "不应处于待重启生效状态");
@@ -519,6 +562,7 @@ fn info_quiescent(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "信息应显示已更改待重启生效，意图目录为目标目录")]
+#[rstest_bdd_macros::then("信息应显示已更改待重启生效，意图目录为目标目录")]
 fn info_pending(world: &mut LedgerWorld) {
     let info = world.boot.dl_last_info.as_ref().expect("无信息查询结果");
     let target = world.boot.dl_target_dir.as_ref().unwrap();
@@ -531,6 +575,7 @@ fn info_pending(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "信息应携带回退警示包含 {string}")]
+#[rstest_bdd_macros::then("信息应携带回退警示包含 {needle:string}")]
 fn info_fallback_contains(world: &mut LedgerWorld, needle: String) {
     let info = world.boot.dl_last_info.as_ref().expect("无信息查询结果");
     let reason = info.fallback_reason.as_ref().expect("应有回退警示但为空");
@@ -541,12 +586,14 @@ fn info_fallback_contains(world: &mut LedgerWorld, needle: String) {
 }
 
 #[then(expr = "信息应无待重启生效状态")]
+#[rstest_bdd_macros::then("信息应无待重启生效状态")]
 fn info_not_pending(world: &mut LedgerWorld) {
     let info = world.boot.dl_last_info.as_ref().expect("无信息查询结果");
     assert!(!info.pending_restart, "不应处于待重启生效状态");
 }
 
 #[given(expr = "一个已含 {int} 条交易库的目标目录")]
+#[rstest_bdd_macros::given("一个已含 {count:usize} 条交易库的目标目录")]
 fn target_dir_with_db_no_pointer(world: &mut LedgerWorld, count: usize) {
     ensure_default_dir(world);
     // 不写指针：仅准备目标现场，供「二选一」场景提交时使用。

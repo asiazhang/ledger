@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::OnceLock;
 
 use rusqlite::Connection;
 use rusqlite::params;
@@ -9,6 +10,47 @@ use ledger_transaction::{Transaction, TransactionInput};
 
 use crate::step_inputs::expense_input;
 use crate::world::LedgerWorld;
+
+/// 「目录置只读（0o555）触发转换失败」手段是否可用（issue #793 / ticket #1507）：
+/// 以**行为探针**判定，不假设平台——建一个 0o555 目录再尝试写入：写入被拒
+/// 即权限位真实生效（非 root Unix，可用）；写入成功即 root 可绕过权限位
+///（Linux CAP_DAC_OVERRIDE、macOS root）或平台无权限位（非 Unix），不可用。
+/// 旧目标由启动器按 `@non-root-only` tag 过滤；新目标由场景内守卫步骤调用并
+/// `skip!`；两侧共用本判定（进程内一次），语义单一来源（与 #791 db 单测守卫
+/// 同根源同策略）。
+pub fn readonly_trigger_available() -> bool {
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let probe =
+            std::env::temp_dir().join(format!("ledger-e2e-readonly-probe-{}", std::process::id()));
+        if std::fs::create_dir_all(&probe).is_err() {
+            return false;
+        }
+        let available = {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o555)).is_err()
+                {
+                    false
+                } else {
+                    std::fs::File::create(probe.join("probe")).is_err()
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                false
+            }
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755));
+        }
+        let _ = std::fs::remove_dir_all(&probe);
+        available
+    })
+}
 
 /// 断言最近一次操作记录的错误信息包含指定片段（多个 `*_steps` 模块共用的 seam 断言）。
 pub fn assert_last_error_contains(world: &LedgerWorld, needle: &str) {

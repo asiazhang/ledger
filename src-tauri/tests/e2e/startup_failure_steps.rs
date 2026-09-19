@@ -27,6 +27,7 @@ use crate::world::{LedgerWorld, StartupTakeover};
 // ---------------------------------------------------------------------------
 
 #[given(expr = "默认数据目录中存在一个头部完好但内容损坏的明文库")]
+#[rstest_bdd_macros::given("默认数据目录中存在一个头部完好但内容损坏的明文库")]
 fn default_dir_with_corrupt_plaintext_db(world: &mut LedgerWorld) {
     let dir = std::env::temp_dir().join(format!("ledger-e2e-sf-plain-{}", new_uuid()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -39,6 +40,7 @@ fn default_dir_with_corrupt_plaintext_db(world: &mut LedgerWorld) {
 }
 
 #[given(expr = "目标目录中存在一个损坏的库文件")]
+#[rstest_bdd_macros::given("目标目录中存在一个损坏的库文件")]
 fn target_dir_with_corrupt_db(world: &mut LedgerWorld) {
     let target = world.boot.dl_target_dir.clone().unwrap();
     std::fs::create_dir_all(&target).unwrap();
@@ -64,6 +66,9 @@ fn seed_vault_db(conn: &Connection, count: usize) {
 /// 解锁屏恢复入口场景的 Given——与 encryption_steps 的密文库 Given 独立声明
 /// （落点不同：本步骤落在启动失败恢复场景的 dl_default_dir，供接管步骤消费）。
 #[given(expr = "默认数据目录中有一个凭主口令 {string} 加密且含 {int} 条交易的真密文库")]
+#[rstest_bdd_macros::given(
+    "默认数据目录中有一个凭主口令 {passphrase:string} 加密且含 {count:usize} 条交易的真密文库"
+)]
 fn default_dir_with_encrypted_vault(world: &mut LedgerWorld, passphrase: String, count: usize) {
     let dir = std::env::temp_dir().join(format!("ledger-e2e-sf-vault-{}", new_uuid()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -83,6 +88,7 @@ fn default_dir_with_encrypted_vault(world: &mut LedgerWorld, passphrase: String,
 /// 迁出健康库，再注入漂移——删列后 user_version 不变，rusqlite_migration
 /// 的迁移裁决（只比 user_version）不再触发，漂移守卫是唯一防线。
 #[given(expr = "默认数据目录中存在一个缺列漂移的明文库")]
+#[rstest_bdd_macros::given("默认数据目录中存在一个缺列漂移的明文库")]
 fn default_dir_with_drifted_db(world: &mut LedgerWorld) {
     let dir = std::env::temp_dir().join(format!("ledger-e2e-sf-drift-{}", new_uuid()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -143,11 +149,13 @@ fn takeover(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "按启动处置流程尝试接管库文件")]
+#[rstest_bdd_macros::when("按启动处置流程尝试接管库文件")]
 fn takeover_step(world: &mut LedgerWorld) {
     takeover(world);
 }
 
 #[when(expr = "执行 DataLocation 引导（不建连）")]
+#[rstest_bdd_macros::when("执行 DataLocation 引导（不建连）")]
 fn boot_only(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     let boot = data_location::boot(&default_dir);
@@ -155,12 +163,14 @@ fn boot_only(world: &mut LedgerWorld) {
 }
 
 #[when(expr = "以未登记引导解析生效库目录")]
+#[rstest_bdd_macros::when("以未登记引导解析生效库目录")]
 fn resolve_without_boot(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     world.boot.sf_resolved_dir = Some(effective_db_dir(None, &default_dir));
 }
 
 #[when(expr = "从备份恢复到生效目录的库位置（无已打开库连接参与）")]
+#[rstest_bdd_macros::when("从备份恢复到生效目录的库位置（无已打开库连接参与）")]
 fn restore_into_boot_dir(world: &mut LedgerWorld) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
     let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
@@ -205,17 +215,20 @@ fn restore_into_failed_location(world: &mut LedgerWorld, passphrase: Option<&str
 }
 
 #[when(expr = "从备份恢复到启动失败的库位置（无已打开库连接参与）")]
+#[rstest_bdd_macros::when("从备份恢复到启动失败的库位置（无已打开库连接参与）")]
 fn restore_into_failed_location_plaintext(world: &mut LedgerWorld) {
     restore_into_failed_location(world, None);
 }
 
 #[when(expr = "以主口令 {string} 从备份恢复到启动失败的库位置")]
+#[rstest_bdd_macros::when("以主口令 {passphrase:string} 从备份恢复到启动失败的库位置")]
 fn restore_into_failed_location_with_passphrase(world: &mut LedgerWorld, passphrase: String) {
     restore_into_failed_location(world, Some(&passphrase));
 }
 
 /// 错误口令恢复尝试：被拒上抛（错误码断言），不改动失败库位置任何字节。
 #[when(expr = "尝试以主口令 {string} 从备份恢复到启动失败的库位置")]
+#[rstest_bdd_macros::when("尝试以主口令 {passphrase:string} 从备份恢复到启动失败的库位置")]
 fn try_restore_into_failed_location(world: &mut LedgerWorld, passphrase: String) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
     let db_path = takeover_db_path(world);
@@ -236,11 +249,13 @@ fn try_restore_into_failed_location(world: &mut LedgerWorld, passphrase: String)
 // ---------------------------------------------------------------------------
 
 #[when(expr = "从备份恢复到等待解锁的库位置（解锁屏恢复入口）")]
+#[rstest_bdd_macros::when("从备份恢复到等待解锁的库位置（解锁屏恢复入口）")]
 fn restore_into_awaiting_unlock_location(world: &mut LedgerWorld) {
     restore_into_failed_location(world, None);
 }
 
 #[when(expr = "以主口令 {string} 从备份恢复到等待解锁的库位置")]
+#[rstest_bdd_macros::when("以主口令 {passphrase:string} 从备份恢复到等待解锁的库位置")]
 fn restore_into_awaiting_unlock_location_with_passphrase(
     world: &mut LedgerWorld,
     passphrase: String,
@@ -250,6 +265,7 @@ fn restore_into_awaiting_unlock_location_with_passphrase(
 
 /// 错误口令恢复尝试（等待解锁现场）：被拒上抛（错误码断言），不改库字节。
 #[when(expr = "尝试以主口令 {string} 从备份恢复到等待解锁的库位置")]
+#[rstest_bdd_macros::when("尝试以主口令 {passphrase:string} 从备份恢复到等待解锁的库位置")]
 fn try_restore_into_awaiting_unlock_location(world: &mut LedgerWorld, passphrase: String) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
     let db_path = takeover_db_path(world);
@@ -269,6 +285,7 @@ fn try_restore_into_awaiting_unlock_location(world: &mut LedgerWorld, passphrase
 // ---------------------------------------------------------------------------
 
 #[then(expr = "启动应进入失败状态")]
+#[rstest_bdd_macros::then("启动应进入失败状态")]
 fn startup_failed(world: &mut LedgerWorld) {
     assert_eq!(
         world.boot.sf_last_takeover,
@@ -280,6 +297,7 @@ fn startup_failed(world: &mut LedgerWorld) {
 /// 启动失败的错误码断言（issue #992 / ADR-0100）：漂移守卫失败经
 /// open_db_in → init_db 尾部守卫原样上抛，码化错误在接管现场可观察。
 #[then(expr = "启动失败错误码应为 {string}")]
+#[rstest_bdd_macros::then("启动失败错误码应为 {code:string}")]
 fn startup_failed_with_code(world: &mut LedgerWorld, code: String) {
     let error = world.last_app_error.as_ref().expect("预期启动失败错误");
     assert_eq!(
@@ -290,6 +308,7 @@ fn startup_failed_with_code(world: &mut LedgerWorld, code: String) {
 }
 
 #[then(expr = "启动应进入等待解锁")]
+#[rstest_bdd_macros::then("启动应进入等待解锁")]
 fn startup_awaits_unlock(world: &mut LedgerWorld) {
     assert_eq!(
         world.boot.sf_last_takeover,
@@ -299,6 +318,7 @@ fn startup_awaits_unlock(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "启动应正常打开")]
+#[rstest_bdd_macros::then("启动应正常打开")]
 fn startup_opened(world: &mut LedgerWorld) {
     assert_eq!(
         world.boot.sf_last_takeover,
@@ -308,6 +328,7 @@ fn startup_opened(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "引导登记的生效库目录应为目标目录")]
+#[rstest_bdd_macros::then("引导登记的生效库目录应为目标目录")]
 fn effective_dir_from_boot_is_target(world: &mut LedgerWorld) {
     let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
     let default_dir = world.boot.dl_default_dir.as_ref().unwrap();
@@ -320,6 +341,7 @@ fn effective_dir_from_boot_is_target(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "解析出的生效库目录应为默认数据目录")]
+#[rstest_bdd_macros::then("解析出的生效库目录应为默认数据目录")]
 fn resolved_dir_is_default(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.as_ref().unwrap();
     assert_eq!(
@@ -330,6 +352,7 @@ fn resolved_dir_is_default(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "重置保留的 .bak 副本应与原库字节一致")]
+#[rstest_bdd_macros::then("重置保留的 .bak 副本应与原库字节一致")]
 fn bak_bytes_match_original(world: &mut LedgerWorld) {
     let dir = world.boot.dl_default_dir.as_ref().unwrap();
     let bak = dir.join(DB_FILE_NAME).with_extension("db.bak");
@@ -346,6 +369,7 @@ fn bak_bytes_match_original(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "默认数据目录中不存在库文件")]
+#[rstest_bdd_macros::then("默认数据目录中不存在库文件")]
 fn default_dir_has_no_db(world: &mut LedgerWorld) {
     let dir = world.boot.dl_default_dir.as_ref().unwrap();
     assert!(
@@ -366,6 +390,7 @@ fn safety_backup_file(safety_dir: &std::path::Path) -> PathBuf {
 }
 
 #[then(expr = "恢复安全备份应与失败前库字节一致")]
+#[rstest_bdd_macros::then("恢复安全备份应与失败前库字节一致")]
 fn safety_backup_bytes_match_original(world: &mut LedgerWorld) {
     let safety_dir = world
         .boot
@@ -386,6 +411,7 @@ fn safety_backup_bytes_match_original(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "启动失败库位置的文件字节应保持不变")]
+#[rstest_bdd_macros::then("启动失败库位置的文件字节应保持不变")]
 fn failed_db_bytes_unchanged(world: &mut LedgerWorld) {
     let bytes = std::fs::read(takeover_db_path(world)).unwrap();
     assert_eq!(
@@ -400,6 +426,7 @@ fn failed_db_bytes_unchanged(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "等待解锁库位置的文件字节应保持不变")]
+#[rstest_bdd_macros::then("等待解锁库位置的文件字节应保持不变")]
 fn awaiting_unlock_db_bytes_unchanged(world: &mut LedgerWorld) {
     let bytes = std::fs::read(takeover_db_path(world)).unwrap();
     assert_eq!(
@@ -414,6 +441,7 @@ fn awaiting_unlock_db_bytes_unchanged(world: &mut LedgerWorld) {
 }
 
 #[then(expr = "拒绝场景不应生成恢复安全备份")]
+#[rstest_bdd_macros::then("拒绝场景不应生成恢复安全备份")]
 fn rejected_restore_creates_no_safety_backup(world: &mut LedgerWorld) {
     let safety_dir = world
         .boot

@@ -361,6 +361,7 @@ fn query_monthly_summary_year(world: &mut LedgerWorld, year: i64) {
 
 /// 月度汇总行数断言（仅期间内有流水的月份成行）。
 #[then(expr = "月度汇总应为 {int} 行")]
+#[rstest_bdd_macros::then("月度汇总应为 {n:usize} 行")]
 fn check_monthly_summary_len(world: &mut LedgerWorld, n: usize) {
     assert_eq!(
         world.report.last_monthly_summary.len(),
@@ -372,6 +373,9 @@ fn check_monthly_summary_len(world: &mut LedgerWorld, n: usize) {
 
 /// 月度汇总第 {index} 行断言：月份（YYYY-MM）+ 毛值三列（收入/支出/退款）。
 #[then(expr = "月度汇总第 {int} 行应为月份 {string} 收入 {int} 支出 {int} 退款 {int}")]
+#[rstest_bdd_macros::then(
+    "月度汇总第 {index:usize} 行应为月份 {month:string} 收入 {income:i64} 支出 {expense:i64} 退款 {refund:i64}"
+)]
 fn check_monthly_summary_row(
     world: &mut LedgerWorld,
     index: usize,

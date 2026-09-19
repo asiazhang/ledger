@@ -219,6 +219,9 @@ fn expense_last_year(world: &mut LedgerWorld, name: String, amount: i64, account
 /// 经预算命令同形态（连接层统一写入口，ADR-0032 / issue #245）创建预算：
 /// 成功清空 last_error，失败记入 last_error 供拒绝路径断言。
 #[when(expr = "通过预算命令为分类 {string} 创建 {string} 预算 金额 {int}")]
+#[rstest_bdd_macros::when(
+    "通过预算命令为分类 {name:string} 创建 {period:string} 预算 金额 {amount:i64}"
+)]
 fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: String, amount: i64) {
     let category = category_id_any(&world_conn!(world), &name);
     let input = BudgetInput {
@@ -244,6 +247,7 @@ fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: Stri
 /// 经预算命令同形态（连接层统一写入口，ADR-0032 / issue #245）编辑预算金额：
 /// 成功清空 last_error，失败记入 last_error 供拒绝路径断言。
 #[when(expr = "通过预算命令编辑分类 {string} 的预算金额为 {int}")]
+#[rstest_bdd_macros::when("通过预算命令编辑分类 {name:string} 的预算金额为 {amount:i64}")]
 fn update_budget_via_command(world: &mut LedgerWorld, name: String, amount: i64) {
     let cat_id = category_id_any(&world_conn!(world), &name);
     let budget_id: String = world_conn!(world)
@@ -262,6 +266,7 @@ fn update_budget_via_command(world: &mut LedgerWorld, name: String, amount: i64)
 /// 经预算命令同形态（连接层统一写入口，ADR-0032 / issue #245）软删除分类的预算：
 /// 成功清空 last_error，失败记入 last_error 供断言。
 #[when(expr = "删除分类 {string} 的预算")]
+#[rstest_bdd_macros::when("删除分类 {name:string} 的预算")]
 fn delete_budget_via_command(world: &mut LedgerWorld, name: String) {
     let cat_id = category_id_any(&world_conn!(world), &name);
     let budget_id: String = world_conn!(world)
