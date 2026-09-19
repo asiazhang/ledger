@@ -46,7 +46,15 @@
    feature 40 个 · 步骤行 3601 条 · 注册 849 条（rstest-bdd 125 / cucumber 724）·
    未覆盖 0 · 歧义 0 · 无绑定 0；其中新目标绑定 feature 9 个 · 注册 125 · 步骤 462。
    即被绑 8 个 feature 的每条步骤行在新目标注册面**恰好一次**命中，删任一注册即红。
-5. **门禁**：`./scripts/check.sh` 全绿（含 `cargo fmt --all -- --check`、
+5. **负向证据（删除即变红，实测）**：临时删去 `items_create_steps.rs` 的
+   `创建物品 {name:string} 购买日期 {date:string} 总成本 {cost_cents:i64} 币种 {currency:string}`
+   新注册（只留 cucumber）→
+   - 静态覆盖守门红：22 处「未覆盖」（如 `items_cost.feature:22`、`items_create.feature:5`）；
+   - 新目标已绑场景运行时红：`Step not found at index 0: When 创建物品 "耳机" 购买日期
+     "2026-03-01" 总成本 20000 币种 "CNY"`（feature: `items_create.feature`,
+     scenario: 创建成功后发出失效信号）。
+   恢复该注册后门禁与场景复绿（即上述 4/5 两条口径）。
+6. **门禁**：`./scripts/check.sh` 全绿（含 `cargo fmt --all -- --check`、
    `cargo clippy --workspace --all-targets --all-features -- -D warnings`、结构 / 文档 /
    i18n / 测试支撑 / 测试执行覆盖 / e2e 步骤库覆盖各守门）。
 
@@ -108,6 +116,10 @@ id 单调性或排序口径的设计面，不属本票迁移范围）。本票�
   注册会多出「步骤未找到」类红，与上述根因无关。
 - rstest-bdd 0.6.0 的 `scenarios!` 形态不做严格编译期步骤校验（#1495 已报告、#1494
   裁决改为静态覆盖守门 #1510）；本票的逐条语义全等由该守门与逐 feature 场景计数背书。
+- 双注册的同一函数承载两份步骤文本（cucumber `{string}` 与 rstest-bdd
+  `{<名>:type}`）：静态守门对两族各自与 feature 步骤行比对，故**跨族文本漂移**
+  （如 rstest 侧 hint 写成合法但语义不同的整数族）不会被守门直接拦住——已由逐
+  feature 场景运行（消费侧）覆盖；改写时以函数形参类型为准。
 - `scheduled_steps.rs` 按整模块并入新目标（其子模块被编译器要求成组解析），本票只
   为其被消费的 1 条步骤补注册；其余定时计划步骤的迁移归 #1506。
 - 迁移期的 `allow(dead_code)`（`tests/e2e_rstest.rs` 顶部）随最后一个域并入删除，
