@@ -178,6 +178,37 @@ describe("e2e 步骤库覆盖守门（scripts/check-e2e-step-coverage.ts）", ()
     expect(result.status).toBe(1);
     expect(result.output).toContain("歧义");
   });
+
+  it("rstest 单字提示 {名:word} 命中无引号单字（#1504 报表相对年份记号）", () => {
+    const steps = [
+      '#[rstest_bdd_macros::given("{token:word}有一笔支出 {amount:i64} 到账户 {account:string}")]',
+      "fn a(_: &mut World, _: String, _: i64, _: String) {}",
+      '#[rstest_bdd_macros::given("存在账户 {name:string}")]',
+      "fn b(_: &mut World, _: String) {}",
+      '#[rstest_bdd_macros::when("创建交易 金额 {amount:i64}")]',
+      "fn c(_: &mut World, _: i64) {}",
+      '#[rstest_bdd_macros::then("{name:string} 账户余额应为 {expected:i64}")]',
+      "fn d(_: &mut World, _: String, _: i64) {}",
+    ].join("\n");
+    const feature = [
+      "Feature: 夹具",
+      "  Scenario: 夹具场景",
+      '    Given 前年有一笔支出 100 到账户 "现金"',
+      '    And 存在账户 "现金"',
+      "    When 创建交易 金额 100",
+      '    Then "现金" 账户余额应为 100',
+    ].join("\n");
+    const result = run(
+      fixture({
+        "tests/e2e.rs": null,
+        "tests/e2e_rstest.rs": RSTEST_TARGET("tests/e2e/features/a.feature"),
+        "tests/e2e/rstest_steps.rs": steps,
+        "tests/e2e/features/a.feature": feature,
+      }),
+    );
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("未覆盖 0");
+  });
 });
 
 // 接线锁（删除即变红）：门本体在 check.sh 与 CI frontend job 的接线由源码扫描守住
