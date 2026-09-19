@@ -1,6 +1,6 @@
 [package]
 name = "ledger-sync-protocol"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 同步协议 crate：设备标识、领域命令契约、op 本地记录与读取、位点"
 edition = "2024"
 publish = false

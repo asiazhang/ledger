@@ -1,6 +1,6 @@
 [package]
 name = "ledger-investment"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 投资域 crate：标的字典、市场数据、持仓与买卖协议、盈亏与走势（Instrument / Holding / TransactionTrade）"
 edition = "2024"
 publish = false

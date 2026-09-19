@@ -1,6 +1,6 @@
 [package]
 name = "ledger-transaction"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 核心交易域 crate：交易写入协议、金额口径、读取与搜索（Transaction / Amount Model）"
 edition = "2024"
 publish = false

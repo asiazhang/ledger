@@ -1,6 +1,6 @@
 [package]
 name = "ledger-infra"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 后端基础设施 crate：无域语义、被所有层消费"
 edition = "2024"
 publish = false

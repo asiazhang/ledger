@@ -1,6 +1,6 @@
 [package]
 name = "ledger-policy"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 保单域 crate：保单静态档案 CRUD、保司字典与保单视角统计（Policy / Insurer）"
 edition = "2024"
 publish = false

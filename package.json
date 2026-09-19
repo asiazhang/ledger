@@ -1,7 +1,7 @@
 {
   "name": "ledger",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
   "packageManager": "pnpm@12.1.0",
   "//": "typescript 刻意留在 6.x：typescript@7.0.2 是 Go 端口，exports map 不再暴露 ./lib/tsc 与 ./lib/typescript.js，vue-tsc@3.3.11 直接硬崩溃（ERR_PACKAGE_PATH_NOT_EXPORTED，非静默跳过），build 类型检查不可用。上游 vuejs/language-tools #5381（TypeScript 7/tsgo 支持追踪，已关闭）与 #6156 均指向 typescript-native-bridge，维护者明确需等 TypeScript 7.1 的官方插件接口。待 vue-tsc 支持后升级。",

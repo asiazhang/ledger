@@ -1,6 +1,6 @@
 [package]
 name = "ledger-categories"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 分类域 crate：分类 CRUD、自然键幂等创建、两级分类校验、预算删除守卫与排序重排（Category）"
 edition = "2024"
 publish = false

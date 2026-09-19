@@ -1,6 +1,6 @@
 [package]
 name = "ledger-sync-engine"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 多端同步域 crate：OpLog 基座、双端合并、Checkpoint 与同步触发编排"
 edition = "2024"
 publish = false

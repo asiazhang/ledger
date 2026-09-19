@@ -1,6 +1,6 @@
 [package]
 name = "ledger-currencies"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 币种域 crate：币种字典、汇率与本位币基准（Currency / DefaultCurrency）"
 edition = "2024"
 publish = false

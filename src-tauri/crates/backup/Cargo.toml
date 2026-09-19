@@ -1,6 +1,6 @@
 [package]
 name = "ledger-backup"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 备份域 crate：备份/恢复引擎与自动备份调度（Backup / Restore / AutoBackup）"
 edition = "2024"
 publish = false

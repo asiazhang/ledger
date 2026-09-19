@@ -1,6 +1,6 @@
 [package]
 name = "ledger-market-sync"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 行情同步域 crate：东财行情抓取（批量报价 / 单点行情 / 日 K / 历史净值）与增量同步编排"
 edition = "2024"
 publish = false

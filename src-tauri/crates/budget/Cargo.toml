@@ -1,6 +1,6 @@
 [package]
 name = "ledger-budget"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 预算域 crate：预算 CRUD、周期口径与当前周期进度（Budget）"
 edition = "2024"
 publish = false

@@ -2,8 +2,25 @@
   "versionFiles": [
     "package.json",
     "src-tauri/Cargo.toml",
+    "src-tauri/tauri.conf.json",
     "src-tauri/crates/infra/Cargo.toml",
-    "src-tauri/tauri.conf.json"
+    "src-tauri/crates/sync-protocol/Cargo.toml",
+    "src-tauri/crates/accounts/Cargo.toml",
+    "src-tauri/crates/backup/Cargo.toml",
+    "src-tauri/crates/budget/Cargo.toml",
+    "src-tauri/crates/categories/Cargo.toml",
+    "src-tauri/crates/currencies/Cargo.toml",
+    "src-tauri/crates/dashboard/Cargo.toml",
+    "src-tauri/crates/investment/Cargo.toml",
+    "src-tauri/crates/item/Cargo.toml",
+    "src-tauri/crates/market-sync/Cargo.toml",
+    "src-tauri/crates/merchants/Cargo.toml",
+    "src-tauri/crates/physical-asset/Cargo.toml",
+    "src-tauri/crates/policy/Cargo.toml",
+    "src-tauri/crates/reports/Cargo.toml",
+    "src-tauri/crates/scheduled/Cargo.toml",
+    "src-tauri/crates/sync-engine/Cargo.toml",
+    "src-tauri/crates/transaction/Cargo.toml"
   ],
   "changelog": "CHANGELOG.md",
   "postUpdateCommand": "cd src-tauri && cargo generate-lockfile"

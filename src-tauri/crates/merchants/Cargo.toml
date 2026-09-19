@@ -1,6 +1,6 @@
 [package]
 name = "ledger-merchants"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 商户域 crate：商户字典 CRUD 与按名查找/即建（Merchant）"
 edition = "2024"
 publish = false

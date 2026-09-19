@@ -1,6 +1,6 @@
 [package]
 name = "ledger-physical-asset"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 实物资产域 crate：大件实物估值档案的建档/编辑/估值追加/处置（PhysicalAsset）"
 edition = "2024"
 publish = false

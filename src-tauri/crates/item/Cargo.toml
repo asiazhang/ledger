@@ -1,6 +1,6 @@
 [package]
 name = "ledger-item"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 物品域 crate：耐用实物物品 CRUD、处置与每天使用成本（Item）"
 edition = "2024"
 publish = false

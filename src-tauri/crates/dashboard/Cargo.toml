@@ -1,6 +1,6 @@
 [package]
 name = "ledger-dashboard"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 仪表盘域 crate：首页净资产跨币种折算合计与读探针缓存（Dashboard）"
 edition = "2024"
 publish = false

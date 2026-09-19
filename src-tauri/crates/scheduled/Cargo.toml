@@ -1,6 +1,6 @@
 [package]
 name = "ledger-scheduled"
-version = "0.6.0"
+version = "0.7.0"
 description = "Ledger 定时计划域 crate：定时交易计划/期次引擎/自动执行追补/订阅花费（Scheduled）"
 edition = "2024"
 publish = false
