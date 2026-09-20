@@ -113,6 +113,45 @@ pub(crate) fn write_exchange_rate(
     Ok(id)
 }
 
+/// 自动采集通道的当期汇率写入（issue #1543 / ADR-0019 修订记录）：ECB 等自动
+/// 通道把最新汇率填进当期表走本入口——与手动录入、同步重放共用写入协议
+/// （[`write_exchange_rate`]，每对一行 upsert），外加**人工行保护**：既有行
+/// `source='manual'` 时整行跳过，自动写入不覆盖人工录入。返回是否实际写入
+/// （跳过计 false，供调用方统计）。
+///
+/// 自动采集按可重建缓存对待、不进同步日志（不产 op），由调用方通道保证；
+/// 手动录入仍走 [`create_exchange_rate`]（产 op）。
+pub fn upsert_auto_exchange_rate(
+    conn: &Connection,
+    base_code: &str,
+    quote_code: &str,
+    rate: f64,
+    priced_at: &str,
+    source: &str,
+) -> Result<bool> {
+    let existing_source: Option<String> = conn
+        .query_row(
+            "SELECT source FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
+            rusqlite::params![base_code, quote_code],
+            |r| r.get(0),
+        )
+        .ok()
+        .flatten();
+    if existing_source.as_deref() == Some("manual") {
+        return Ok(false);
+    }
+    write_exchange_rate(
+        conn,
+        &new_uuid(),
+        base_code,
+        quote_code,
+        rate,
+        priced_at,
+        Some(source),
+    )?;
+    Ok(true)
+}
+
 pub fn list_market_prices(conn: &Connection) -> Result<Vec<MarketPrice>> {
     query_all(
         conn,
