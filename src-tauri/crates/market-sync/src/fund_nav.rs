@@ -1,6 +1,11 @@
-//! 东财历史净值通道（issue #303 / ADR-0038 决策 6）：lsjz 历史净值接口访问、
-//! 报文解析、净值同步水位语义与基金分区编排；首刷深回填另走单请求全量通道
-//!（基金详情页数据文件，issue #1062）。
+//! 东财历史净值通道（lsjz 分页，issue #303 / ADR-0038 决策 6）：报文访问、
+//! 解析、净值同步水位语义与基金分区共享件。
+//!
+//! **历史回填已换源**（issue #1566 / ADR-0130 决策 2）：首刷深回填与缺周点补齐
+//! 改走新浪单只全历史面（[`super::sina_fund`]），本模块的 lsjz 分页通道只剩
+//! 现价刷新的逐只短窗一个消费者（issue #1377）；原首刷专用的单请求全量通道
+//!（基金详情页数据文件，issue #1062）随换源退役删除。通道/解析与档案通道
+//!（建档确认点，#1568 接线前仍走东财）的共享件留守本模块。
 //!
 //! 货币基金口径（issue #1342 / ADR-0126 决策 3 换源，issue #1563 接线）：货基的
 //! 万份收益列不是单位净值（货基单位净值恒 [`MONEY_FUND_UNIT_NAV`]，收益以份额
@@ -15,15 +20,12 @@
 //!   单测见 `tests/fund_nav.rs`（真实报文形状，不依赖真实网络）；
 //! - 页抓取（[`fetch_nav_page`]）复用行情 HTTP 层的主机池 / 重试 / 限流泛型层；
 //!   lsjz 为单主机接口且必须携带 Referer 头（缺省被以 ErrCode=-999 拦截）；
-//! - 单请求全量通道（[`fetch_nav_full_series`]）一次 GET 基金详情页数据文件、解析
-//!   `Data_netWorthTrend` 得整只基金历史单位净值（口径与 lsjz `DWJZ` 逐值一致，
-//!   ADR-0038 修订记录有样本验证），仅首刷深回填用——抓取 / 解析失败或窗口内无点
-//!   fail-closed 回退 lsjz 分页，不静默丢数据；
 //! - 编排按消费职责分两单元（issue #1377 现价与历史解耦收口，issue #1388 拆分
 //!   归位）：现价刷新 [`super::fund_price_refresh::refresh_one_fund_price`]（服务
 //!   标的信息同步，只刷现价——取数面命中整只零请求，未命中退逐只短窗、页数
 //!   封顶）；历史回填 [`super::fund_backfill::backfill_one_fund_history`]（服务
-//!   价格历史后台补全）。两单元共用本模块的通道 / 解析 / 水位共享件。
+//!   价格历史后台补全，取数走新浪全历史面）。现价刷新共用本模块的通道 / 解析 /
+//!   水位共享件。
 
 use chrono::NaiveDate;
 use rusqlite::params;
@@ -32,7 +34,7 @@ use serde::Deserialize;
 use ledger_investment::constant_price::{ensure_constant_base_price, mark_constant_unit_price};
 use ledger_investment::prices::{EASTMONEY_PRICE_SOURCE, price_value_to_cents};
 
-use ledger_infra::error::{AppError, Result};
+use ledger_infra::error::Result;
 
 use super::channels::FetchFuture;
 use super::fund::deserialize_flexible_f64;
@@ -45,8 +47,9 @@ const LSJZ_PATH: &str = "/f10/lsjz";
 /// 每页条数：服务端硬上限（请求更大值实测仍按 20 生效，2026-08），分页循环按此定界。
 const LSJZ_PAGE_SIZE: u64 = 20;
 
-// 基金详情页数据文件（pingzhongdata）：单主机（无公开镜像池），一次请求返回整只
-// 基金的全部历史净值（issue #1062）。仅服务首刷深回填，增量仍走 lsjz。
+// 基金详情页数据文件（pingzhongdata）：单主机（无公开镜像池）。档案通道
+//（建档确认点）用，issue #1212 / ADR-0039 修订；历史回填的全量半边已随 #1566
+// 换源新浪退役。
 pub(super) const PINGZHONG_HOSTS: &[&str] = &["https://fund.eastmoney.com"];
 const PINGZHONG_PATH_PREFIX: &str = "/pingzhongdata/";
 
@@ -139,13 +142,15 @@ struct NetWorthTrendPoint {
     y: Option<f64>,
 }
 
-/// 解析基金详情页数据文件（`.js`）里的**单位净值序列**（issue #1062）：取出
-/// `Data_netWorthTrend` 数组并投影为 [`NavPoint`]（毫秒时间戳 + 8h 取北京日历日
-/// 即净值日期），无效行（缺净值 / 净值 ≤ 0 / 时间戳越界）静默过滤，与 lsjz 同姿态。
+/// 解析基金详情页数据文件（`.js`）里的**单位净值序列**（issue #1062，消费者为
+/// 档案通道）：取出 `Data_netWorthTrend` 数组并投影为 [`NavPoint`]（毫秒时间戳
+/// 加 8h 取北京日历日即净值日期），无效行（缺净值 / 净值 ≤ 0 / 时间戳越界）
+/// 静默过滤，与 lsjz 同姿态。
 ///
 /// 返回值区分两种语义：`None` = 变量缺省 / 数组截断 / 字段形态不符——数据不可信，
-/// 调用方 fail-closed 回退分页通道；`Some(vec![])` = 结构完好但序列为空（新基金
-/// 未公布净值），是可信空结果。累计净值数组 `Data_ACWorthTrend` 不被消费。
+/// 档案通道按「未取到净值」降级（名称仍可用）；`Some(vec![])` = 结构完好但序列
+/// 为空（新基金未公布净值），是可信空结果。累计净值数组 `Data_ACWorthTrend` 不被
+/// 消费。
 pub(super) fn parse_net_worth_trend(js: &str) -> Option<Vec<NavPoint>> {
     let array = super::js::declared_array(js, NET_WORTH_TREND_VAR)?;
     let raw: Vec<NetWorthTrendPoint> = serde_json::from_str(array).ok()?;
@@ -401,15 +406,6 @@ pub(super) async fn fetch_nav_page_from(
     Ok(parse_lsjz(&resp))
 }
 
-/// 单请求全量净值通道的解析产物：净值点（口径与 lsjz `DWJZ` 一致）。类型名为
-/// 数据源中立命名（issue #1557）。货基无单位净值序列，在判定门确认前不会走到
-/// 本通道（历史首刷先经官方披露判定，确认即收尾不抓取）。
-#[derive(Debug, Clone, PartialEq)]
-pub struct FullSeries {
-    pub(super) points: Vec<NavPoint>,
-}
-
-/// 单请求全量净值通道（issue #1062）：一次 GET 基金详情页数据文件，解析
 /// 档案通道取数（issue #1212 / ADR-0039 修订）：一次 GET 基金详情页数据文件，解析
 /// 出权威名称与最后一期单位净值；主机池可注入（本地 HTTP 服务测试请求路径与解析）。
 /// `Ok(None)` = 这份文件不是本基金的（含无效代码被重定向到错误页的形态），由调用方
@@ -435,57 +431,6 @@ pub(super) async fn fetch_fund_archive_from(
     )
     .await?;
     Ok(parse_fund_archive(&body, code))
-}
-
-/// 单请求全量净值通道（issue #1062）：一次 GET 基金详情页数据文件，解析
-/// `Data_netWorthTrend` 得整只基金的**全部历史单位净值**——口径与 lsjz 的 `DWJZ`
-/// 逐值一致、同落在万分位价格刻度上（spike 四类型样本验证见 ADR-0038 修订记录）。
-/// 仅服务首刷深回填，替代约 25 次分页请求；日常增量仍走 lsjz。
-///
-/// 失败语义是 fail-closed 的前半：网络失败、被拦截（HTML 而非数据文件）或解析不出
-/// 单位净值序列都返回 `Err`，调用方据此回退分页通道，不把不可信结果当「无净值」。
-/// 货基没有单位净值序列：判定门（官方披露确认）已在抓取前收尾，能走到这里的
-/// 都是非货基——万份收益序列的存量投影随东财判定口径退役（issue #1563），
-/// 不再为本通道承接货基。
-pub(super) async fn fetch_nav_full_series(
-    client: &reqwest::Client,
-    pacer: &mut Pacer,
-    code: &str,
-) -> Result<FullSeries> {
-    fetch_nav_full_series_from(client, pacer, code, PINGZHONG_HOSTS).await
-}
-
-/// 同 [`fetch_nav_full_series`]，主机池可注入（本地 HTTP 服务测试请求路径与解析）。
-pub(super) async fn fetch_nav_full_series_from(
-    client: &reqwest::Client,
-    pacer: &mut Pacer,
-    code: &str,
-    hosts: &[&str],
-) -> Result<FullSeries> {
-    tracing::debug!(code, "单请求全量净值查询");
-    let path = format!("{PINGZHONG_PATH_PREFIX}{code}.js");
-    let body = request_text_from_hosts(
-        client,
-        &[],
-        &path,
-        hosts,
-        RetryConfig::production(),
-        pacer,
-        &format!("fetch_nav_full_series:{code}"),
-        None,
-    )
-    .await?;
-    // 先按单位净值序列解析；解析不出单位净值序列即不可信（货基无该序列，
-    // 但判定门已在抓取前收尾，走到这里的非货基缺序列 = 形态漂移或风控页）。
-    // 文本通道的解析恒成功，疑似风控页（HTML 而非数据文件）在 HTTP 层看不见
-    // ——降速信号由做可信度判定的这一层补上（ADR-0121 决策 5）。
-    if let Some(points) = parse_net_worth_trend(&body) {
-        return Ok(FullSeries { points });
-    }
-    pacer.record_throttled();
-    Err(AppError::Parse(format!(
-        "基金 {code} 详情页数据文件缺少可信的净值序列"
-    )))
 }
 
 /// 恒定价格标的的打标收尾单点（ADR-0126 决策 3/5；issue #1563 判定门两确认点
@@ -547,7 +492,8 @@ pub(super) struct NavPages {
     pub(super) points: Vec<NavPoint>,
     /// 任意一页空响应（报文 `Data` 缺省 / 非对象：疑似被拦截 / 风控）。
     pub(super) blocked: bool,
-    /// 页数触顶（服务端 `TotalCount` 异常，窗口已知未采全，见 `MAX_NAV_PAGES`）。
+    /// 页数触顶（服务端 `TotalCount` 异常，窗口已知未采全，见消费方各自的
+    /// `max_pages` 实参）。
     pub(super) truncated: bool,
 }
 
@@ -558,13 +504,14 @@ impl NavPages {
     }
 }
 
-/// 分页通道取净值点（首刷回退与增量共用）：按服务端总数翻页（页大小为服务端硬
+/// 分页通道取净值点（现价刷新逐只短窗专用，issue #1377；历史回填已换源新浪
+/// 全历史面、不再消费本通道，issue #1566）：按服务端总数翻页（页大小为服务端硬
 /// 上限），先攒齐全部净值点再一次性降采样——跨页同周的采样必须取最后一个净值日，
 /// 逐页落库会用后页的更早日期覆盖前页采样。返回净值点与「本轮窗口不可信」标记
 ///（空响应 / 页数触顶，见 [`NavPages`]）；页级推进经 `on_page` 透传（issue #1061）：
 /// 只在本页抓取返回之后发出（抓取内部的退避/重试等待不产生推进），单页
-///（pages ≤ 1）不发。`max_pages` 是页数触顶上限（历史回填取 `MAX_NAV_PAGES`，
-/// 现价刷新短窗取 `REFRESH_MAX_NAV_PAGES`，issue #1377）。
+///（pages ≤ 1）不发。`max_pages` 是页数触顶上限（现价刷新短窗取
+/// `REFRESH_MAX_NAV_PAGES`，issue #1377）。
 pub(super) async fn fetch_nav_pages<N, P>(
     fetch_nav: &mut N,
     code: &str,

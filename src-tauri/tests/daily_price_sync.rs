@@ -82,7 +82,7 @@ fn gated_daily_refresh_channels(
                 unreachable!("测试现场无基金标的，净值通道不应被触达")
             })
         }),
-        fetch_nav_full: Box::new(|_| {
+        fetch_nav_history: Box::new(|_| {
             Box::pin(async {
                 unreachable!("测试现场无基金标的，全量净值通道不应被触达")
             })
@@ -123,7 +123,7 @@ fn frontend_sync_channels() -> SyncChannelsSlot {
                 unreachable!("测试现场无基金标的，净值通道不应被触达")
             })
         }),
-        fetch_nav_full: Box::new(|_| {
+        fetch_nav_history: Box::new(|_| {
             Box::pin(async {
                 unreachable!("测试现场无基金标的，全量净值通道不应被触达")
             })

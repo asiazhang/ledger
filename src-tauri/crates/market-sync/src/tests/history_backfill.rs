@@ -1,13 +1,15 @@
 //! 价格历史后台补全测试（ADR-0122 / issue #1375）：派生事实队列（有价格通道但
-//! 历史不完整，持仓优先）、一轮排空（进度序列、基金首刷页级明细、单只失败继续
-//! 排空、零写入不置见证）、队列随补全自然排空。编排经注入 mock 闭包驱动，不
-//! 依赖真实网络；断言对准用户可观察结果（抓取了谁、落了什么、进度怎么推进），
-//! 不内省私有队列结构。
+//! 历史不完整，持仓优先）、一轮排空（进度序列、单只失败继续排空、零写入不置
+//! 见证）、队列随补全自然排空。编排经注入 mock 闭包驱动，不依赖真实网络；
+//! 断言对准用户可观察结果（抓取了谁、落了什么、进度怎么推进），不内省私有
+//! 队列结构。
 //!
 //! 基金历史回填单元（`backfill_one_fund_history`）的用例自
 //! `instrument_info_sync.rs` 迁入（issue #1377 现价与历史解耦）：历史回填不再经
-//! 手动同步编排，改为直接驱动逐只回填入口断言（首刷近两年、单请求全量通道优先
-//! 与回退、水位增量、空响应/触顶整只不落库、单只一事务原子）。
+//! 手动同步编排，改为直接驱动逐只回填入口断言（首刷近两年、新浪单只全历史面
+//! 取数与本地窗口裁剪（issue #1566 换源）、水位次日增量、可信空不落库、单只
+//! 一事务原子）。首刷翻页的页级明细随 #1566 换源退场（全历史面单请求取整只，
+//! 无翻页长等待）。
 
 use chrono::{Datelike, Days, Duration as ChronoDuration, Months, NaiveDate};
 use rusqlite::{Connection, params};
@@ -17,7 +19,7 @@ use std::sync::Mutex;
 use crate::SyncProgress;
 use crate::channels::{FetchFuture, QuoteQuery};
 use crate::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
-use crate::fund_nav::{FullSeries, NavPage, NavPoint, NavQuery};
+use crate::fund_nav::NavPoint;
 use crate::history::{HistoryBackfillStats, run_history_backfill_round};
 use crate::http::KlineBar;
 use crate::incremental::{SyncInstrument, beijing_today, daily_window_opens, week_monday};
@@ -25,8 +27,8 @@ use crate::model::WriteWitness;
 use crate::tests::insert_holding;
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::{
-    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, TENCENT_PRICE_SOURCE, price_value_to_cents,
-    upsert_market_price, upsert_price_history,
+    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, SINA_PRICE_SOURCE, TENCENT_PRICE_SOURCE,
+    price_value_to_cents, upsert_market_price, upsert_price_history,
 };
 use ledger_investment::{InstrumentType, derive_price_channel};
 use tauri_app_lib::test_support::seed_instrument;
@@ -38,17 +40,10 @@ fn bar(date: &str, close: f64) -> KlineBar {
     }
 }
 
-fn nav_page(total: u64, points: &[(&str, f64)]) -> NavPage {
-    NavPage {
-        total,
-        blocked: false,
-        points: points
-            .iter()
-            .map(|(d, n)| NavPoint {
-                date: d.to_string(),
-                nav: *n,
-            })
-            .collect(),
+fn nav_point(date: &str, nav: f64) -> NavPoint {
+    NavPoint {
+        date: date.to_string(),
+        nav,
     }
 }
 
@@ -127,23 +122,22 @@ fn history_rows(conn: &Connection, instrument_id: &str) -> i64 {
     .unwrap()
 }
 
-/// 进度事件的断言投影：标的级 done/total + 可缺省页级明细三元组（消除
-/// 断言处的复杂类型表达式）。
-type ObservedProgress = (usize, usize, Option<(String, u64, u64)>);
-
 /// 一轮补全的注入桩集合：按 secid / 基金代码应答并记录「谁被抓取了」——队列
 /// 成员与排队顺序都经这份可观察日志断言。
 struct Harness {
     /// 处理序日志：行情标的记 `kline:<市场>:<代码>`（不观数据源查询键形态，
-    /// issue #1556），基金页记 `nav:<code>`，基金单请求全量通道记 `full:<code>`，
-    /// 汇率记 `fx:<pair>`。
+    /// issue #1556），基金全历史记 `history:<code>`（issue #1566 起单一全历史
+    /// 通道），汇率记 `fx:<pair>`。
     log: Mutex<Vec<String>>,
     /// 「市场:代码」→ 日线样本；未命中 = 空表（零有效周点）。
     klines: Vec<(&'static str, Vec<KlineBar>)>,
     /// 注入单只失败：命中该「市场:代码」键的日 K 请求返回 Err。
     fail_kline: Option<&'static str>,
-    /// 基金代码 → (服务端总条数, 按页的净值页序列)；未收录 = 空页。
-    nav_pages: Vec<(&'static str, u64, Vec<NavPage>)>,
+    /// 基金代码 → 整只历史单位净值（新浪全历史面，wire 序任意：消费端
+    /// 降采样按日排序）；未收录 = 空序列（可信空）。
+    nav_history: Vec<(&'static str, Vec<NavPoint>)>,
+    /// 注入单只失败：命中该代码的全历史请求返回 Err（取数层不可信 / 网络失败）。
+    fail_nav_history: Option<&'static str>,
     /// 币种对 → 汇率日线。
     fx: Vec<(&'static str, Vec<KlineBar>)>,
 }
@@ -154,7 +148,8 @@ impl Harness {
             log: Mutex::new(vec![]),
             klines: vec![],
             fail_kline: None,
-            nav_pages: vec![],
+            nav_history: vec![],
+            fail_nav_history: None,
             fx: vec![],
         }
     }
@@ -169,8 +164,13 @@ impl Harness {
         self
     }
 
-    fn with_nav_pages(mut self, pages: Vec<(&'static str, u64, Vec<NavPage>)>) -> Self {
-        self.nav_pages = pages;
+    fn with_nav_history(mut self, history: Vec<(&'static str, Vec<NavPoint>)>) -> Self {
+        self.nav_history = history;
+        self
+    }
+
+    fn with_failing_nav_history(mut self, code: &'static str) -> Self {
+        self.fail_nav_history = Some(code);
         self
     }
 
@@ -183,10 +183,10 @@ impl Harness {
         self.log.lock().unwrap().clone()
     }
 
-    fn nav_page_hits(&self, code: &str) -> usize {
+    fn nav_history_hits(&self, code: &str) -> usize {
         self.requested()
             .iter()
-            .filter(|entry| entry.as_str() == format!("nav:{code}").as_str())
+            .filter(|entry| entry.as_str() == format!("history:{code}").as_str())
             .count()
     }
 
@@ -206,26 +206,17 @@ impl Harness {
             .unwrap_or_default())
     }
 
-    fn fetch_nav(&self, query: &NavQuery) -> Result<NavPage> {
-        self.log.lock().unwrap().push(format!("nav:{}", query.code));
-        let page_index = (query.page - 1) as usize;
+    fn fetch_nav_history(&self, code: &str) -> Result<Vec<NavPoint>> {
+        self.log.lock().unwrap().push(format!("history:{code}"));
+        if self.fail_nav_history.map(|f| f == code).unwrap_or(false) {
+            return Err(AppError::Parse("新浪基金历史净值响应不可解析".into()));
+        }
         Ok(self
-            .nav_pages
+            .nav_history
             .iter()
-            .find(|(code, _, _)| *code == query.code)
-            .and_then(|(_, _, pages)| pages.get(page_index).cloned())
-            .unwrap_or(NavPage {
-                points: vec![],
-                total: 0,
-                blocked: false,
-            }))
-    }
-
-    fn fetch_nav_full(&self, code: &str) -> Result<FullSeries> {
-        self.log.lock().unwrap().push(format!("full:{code}"));
-        // 单请求全量通道统一失败：让首刷走分页通道，页级明细由此可观察（与
-        // 既有首刷用例同路——fail-closed 回退分页）。
-        Err(AppError::Io("全量通道不可用".into()))
+            .find(|(stored, _)| *stored == code)
+            .map(|(_, points)| points.clone())
+            .unwrap_or_default())
     }
 
     fn fetch_fx(&self, pair: &str) -> Result<Vec<KlineBar>> {
@@ -248,15 +239,13 @@ fn run_round(
     let mut witness = WriteWitness::default();
     let mut fetch_kline = |query: &QuoteQuery| super::ready(harness.fetch_kline(query));
     let mut fetch_fx = |pair: &str| super::ready(harness.fetch_fx(pair));
-    let mut fetch_nav = |query: &NavQuery| super::ready(harness.fetch_nav(query));
-    let mut fetch_nav_full = |code: &str| super::ready(harness.fetch_nav_full(code));
+    let mut fetch_nav_history = |code: &str| super::ready(harness.fetch_nav_history(code));
     let mut progress = |p: SyncProgress| progress_log.lock().unwrap().push(p);
     let result = tauri::async_runtime::block_on(run_history_backfill_round(
         conn,
         &mut fetch_kline,
         &mut fetch_fx,
-        &mut fetch_nav,
-        &mut fetch_nav_full,
+        &mut fetch_nav_history,
         &mut no_confirm,
         &mut progress,
         &mut witness,
@@ -306,9 +295,9 @@ fn queue_keeps_only_incomplete_and_holding_comes_first() {
             ("sh:600519", vec![bar(&date_offset(1), 13.0)]),
             ("sz:000003", vec![bar(&date_offset(1), 7.0)]),
         ])
-        .with_nav_pages(vec![
-            ("000001", 1, vec![nav_page(1, &[(&date_offset(1), 1.5)])]),
-            ("000005", 1, vec![nav_page(1, &[(&date_offset(1), 2.5)])]),
+        .with_nav_history(vec![
+            ("000001", vec![nav_point(&date_offset(1), 1.5)]),
+            ("000005", vec![nav_point(&date_offset(1), 2.5)]),
         ]);
 
     let (result, _progress, _written) = run_round(&conn, &harness);
@@ -318,17 +307,15 @@ fn queue_keeps_only_incomplete_and_holding_comes_first() {
     assert_eq!(stats.queued, 4, "只有历史不完整的通道内标的进队");
     assert_eq!(stats.failed, 0);
     // 排队顺序持仓优先：600519（持仓）先于全部非持仓标的（其中 000001 的
-    // symbol 最小也不插队），非持仓同级按 symbol 升序。基金首刷先试单请求
-    // 全量通道、失败 fail-closed 回退分页（000001 是 full: → nav: 相邻）；
-    // 已有历史者直接走水位增量分页（000005 无 full: 条目）。
+    // symbol 最小也不插队），非持仓同级按 symbol 升序。基金首刷与缺周点补齐
+    // 同走新浪全历史通道（issue #1566：000001 与 000005 均为相邻单条 history:）。
     assert_eq!(
         harness.requested(),
         vec![
             "kline:sh:600519".to_string(),
-            "full:000001".to_string(),
-            "nav:000001".to_string(),
+            "history:000001".to_string(),
             "kline:sz:000003".to_string(),
-            "nav:000005".to_string(),
+            "history:000005".to_string(),
         ],
         "抓取序 = 持仓优先 + symbol 升序"
     );
@@ -362,8 +349,8 @@ fn fund_with_no_new_nav_completes_without_writing() {
     insert_plain_instrument(&conn, "inst-fund", "000001", "fund", "CNY", "unknown");
     seed_history_point(&conn, "inst-fund", "CNY", &stale);
 
-    // 增量窗口（水位次日 → 今天）空页且非 blocked：「窗口内确实无新净值」。
-    let harness = Harness::new().with_nav_pages(vec![("000001", 0, vec![nav_page(0, &[])])]);
+    // 增量窗口（水位次日 → 今天）内无新净值（可信空序列）：「窗口内确实无新净值」。
+    let harness = Harness::new().with_nav_history(vec![("000001", vec![])]);
     let (result, progress, written) = run_round(&conn, &harness);
     let stats = result.unwrap();
     assert_eq!(stats.queued, 1);
@@ -440,48 +427,6 @@ fn round_emits_instrument_level_progress_sequence() {
     );
 }
 
-/// 基金首刷的页级明细（issue #1061 明细随首刷深回填迁入本任务）：分页通道
-/// 翻页期间进度事件带出「基金代码 + 已完成页/总页数」，标的级 done/total 不因
-/// 页推进而变。
-#[test]
-fn fund_first_fill_carries_page_detail_progress() {
-    let conn = tauri_app_lib::test_support::open();
-    insert_plain_instrument(&conn, "inst-fund", "000001", "fund", "CNY", "unknown");
-    // 总条数 40 → 2 页（服务端页大小 20）：页 1 抓取返回后报告 1/2，页 2 返回
-    // 后报告 2/2；两页净值点攒齐后一只一事务落库。
-    let harness = Harness::new().with_nav_pages(vec![(
-        "000001",
-        40,
-        vec![
-            nav_page(40, &[(&date_offset(20), 1.0)]),
-            nav_page(40, &[(&date_offset(2), 1.2)]),
-        ],
-    )]);
-    let (result, progress, _written) = run_round(&conn, &harness);
-    result.unwrap();
-    let with_fund: Vec<ObservedProgress> = progress
-        .iter()
-        .map(|p| {
-            (
-                p.done,
-                p.total,
-                p.fund.as_ref().map(|f| (f.code.clone(), f.page, f.pages)),
-            )
-        })
-        .collect();
-    assert_eq!(
-        with_fund,
-        vec![
-            (0, 1, None),
-            (0, 1, Some(("000001".into(), 1, 2))),
-            (0, 1, Some(("000001".into(), 2, 2))),
-            (1, 1, None),
-        ],
-        "页级明细只在页抓取返回后发出，done/total 保持标的级口径"
-    );
-    assert_eq!(harness.nav_page_hits("000001"), 2, "按服务端总数翻两页");
-}
-
 /// 单只失败不中断本轮：第一只的日 K 抓取失败，第二只照常补齐、进度照常推进、
 /// 实际写过照常入见证（成败同判的证据源）。
 #[test]
@@ -502,6 +447,26 @@ fn round_continues_after_single_instrument_failure() {
     assert_eq!(
         progress.last(),
         Some(&SyncProgress::instrument(2, 2)),
+        "进度推进到队列排空"
+    );
+}
+
+/// 基金历史取数失败的单只容错（round 级）：全历史通道 Err 计入 failed、进度
+/// 照常推进、失败者零落库（与股票臂同口径，issue #1377 / #1566）。
+#[test]
+fn round_continues_after_fund_history_failure() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "000001", "fund", "CNY", "unknown");
+    let harness = Harness::new().with_failing_nav_history("000001");
+    let (result, progress, written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+    assert_eq!((stats.queued, stats.failed), (1, 1), "失败单只记入统计");
+    assert_eq!(harness.nav_history_hits("000001"), 1, "一次全历史请求");
+    assert_eq!(history_rows(&conn, "inst-fund"), 0, "失败者零落库");
+    assert!(!written, "零写入不置见证");
+    assert_eq!(
+        progress.last(),
+        Some(&SyncProgress::instrument(1, 1)),
         "进度推进到队列排空"
     );
 }
@@ -607,16 +572,14 @@ fn swapping_kline_channel_keeps_history_landing_without_source_key_in_orchestrat
         super::ready(Ok(bars))
     };
     let mut fetch_fx = |_: &str| super::ready(Ok(vec![]));
-    let mut fetch_nav = |_: &NavQuery| super::ready(Ok(nav_page(0, &[])));
-    let mut fetch_nav_full = |_: &str| super::ready(Ok(FullSeries { points: vec![] }));
+    let mut fetch_nav_history = |_: &str| super::ready(Ok(vec![]));
     let mut progress = |_: SyncProgress| {};
     let mut witness = WriteWitness::default();
     let stats = tauri::async_runtime::block_on(run_history_backfill_round(
         &conn,
         &mut fetch_kline,
         &mut fetch_fx,
-        &mut fetch_nav,
-        &mut fetch_nav_full,
+        &mut fetch_nav_history,
         &mut no_confirm,
         &mut progress,
         &mut witness,
@@ -678,13 +641,13 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
             quote: vec![],
             kline: vec![url],
             fund_batch: vec![],
+            fund_history: vec![],
         },
     )
     .expect("生产后台车道束应可构造");
     let mut fetch_kline = channels.fetch_kline;
     let mut fetch_fx = |_: &str| super::ready(Ok(vec![]));
-    let mut fetch_nav = |_: &NavQuery| super::ready(Ok(nav_page(0, &[])));
-    let mut fetch_nav_full = |_: &str| super::ready(Ok(FullSeries { points: vec![] }));
+    let mut fetch_nav_history = |_: &str| super::ready(Ok(vec![]));
     let mut confirm = no_confirm;
     let mut progress = |_: SyncProgress| {};
     let mut witness = WriteWitness::default();
@@ -692,8 +655,7 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
         &conn,
         &mut fetch_kline,
         &mut fetch_fx,
-        &mut fetch_nav,
-        &mut fetch_nav_full,
+        &mut fetch_nav_history,
         &mut confirm,
         &mut progress,
         &mut witness,
@@ -735,6 +697,93 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
             "日 K 请求须为腾讯 fqkline/get 且带腾讯查询键与近两年窗口，缺 {expected}，实际：{heads:?}"
         );
     }
+}
+
+/// 生产补全通道的基金历史接线证明（issue #1566）：驱动**生产后台车道束的新浪
+/// 单只全历史闭包**跑一轮补全——基金的历史净值真的打到新浪
+/// `CaihuiFundInfoService.getNav`（单请求取整只、含已终止基金，这条接线是基金
+/// 走势能补到近两年、已终止基金也能补齐历史的根据），周点照常落库且来源标记
+/// 为新浪。本地 HTTP 服务替换新浪主机应答真实形态报文，断言先对准可观察结果
+///（队列取到净值、库里有周点），再钉住请求形态（全历史端点 + 基金代码 +
+/// `num=10000` 单请求取全）。删除 / 换回这条接线（回到东财取数路径）后，注入
+/// 的本地主机不再被使用——请求落到已退役的东财端点上，队列取不到净值、
+/// `price_history` 零行（实测：单只计入失败）。
+#[test]
+fn production_backfill_channel_lands_fund_history_via_sina() {
+    use crate::channels::{Lane, SyncFetchChannels, SyncFetchHosts};
+
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+
+    // 新浪全历史报文（形状与 `tests/sina_fund.rs` 真实 fixture 同：`fbrq` 带
+    // ` 00:00:00` 后缀、`jjjz` 数字字符串、`total_num` 自洽），近端净值日使周点
+    // 落在当前周；更早的历史点验证窗口内多点整根回填。
+    let day = date_offset(1);
+    let body = format!(
+        r#"{{"result":{{"status":{{"code":0}},"data":{{"data":[
+            {{"fbrq":"{day} 00:00:00","jjjz":"3.348","ljjz":"3.906"}},
+            {{"fbrq":"2026-01-28 00:00:00","jjjz":"3.293","ljjz":"3.871"}}
+        ],"total_num":"2"}}}}}}"#
+    );
+    let (url, heads) = super::spawn_header_capture_server(body);
+
+    // 只取生产束的全历史闭包（接线本体）；日 K / 汇率通道用空桩，避免本用例
+    // 触发与接线无关的真实网络。
+    let channels = SyncFetchChannels::production_lane(
+        Lane::Backfill,
+        SyncFetchHosts {
+            quote: vec![],
+            kline: vec![],
+            fund_batch: vec![],
+            fund_history: vec![url],
+        },
+    )
+    .expect("生产后台车道束应可构造");
+    let mut fetch_kline = |_: &QuoteQuery| super::ready(Ok(vec![]));
+    let mut fetch_fx = |_: &str| super::ready(Ok(vec![]));
+    let mut fetch_nav_history = channels.fetch_nav_history;
+    let mut confirm = no_confirm;
+    let mut progress = |_: SyncProgress| {};
+    let mut witness = WriteWitness::default();
+    let stats = tauri::async_runtime::block_on(run_history_backfill_round(
+        &conn,
+        &mut fetch_kline,
+        &mut fetch_fx,
+        &mut fetch_nav_history,
+        &mut confirm,
+        &mut progress,
+        &mut witness,
+    ))
+    .unwrap();
+
+    assert_eq!((stats.queued, stats.failed), (1, 0));
+    assert_eq!(
+        history_rows(&conn, "inst-fund"),
+        2,
+        "基金历史打到新浪端点后周点照常落库"
+    );
+    // 基金历史补全的来源标记与实际取数源一致（ADR-0130 决策 7 / issue #1566）：
+    // 历史净值改走新浪后不再写存量的 `eastmoney`。
+    let source: String = conn
+        .query_row(
+            "SELECT source FROM price_history WHERE instrument_id='inst-fund'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(source, SINA_PRICE_SOURCE, "历史补全来源标记为新来源值");
+
+    // 请求形态：新浪全历史端点 + 基金代码 + 单请求取全（num=10000；窗口参数
+    // 不传——首刷近两年 / 水位次日增量的窗口语义由消费方本地裁剪）。换回东财
+    // 端点或改动取数语义即红。
+    let heads = heads.lock().unwrap().clone();
+    let expected = "/fundInfo/api/openapi.php/CaihuiFundInfoService.getNav?";
+    assert!(
+        heads.iter().any(|head| head.contains(expected)
+            && head.contains("symbol=110022")
+            && head.contains("num=10000")),
+        "历史净值请求须为新浪全历史端点且带基金代码与单请求取全参数，实际：{heads:?}"
+    );
 }
 
 /// 缺周点判据的边界自证：6 天前的周点按 ISO 周差至多落后一周（≤ 7 天），
@@ -814,9 +863,9 @@ fn shared_pacer_is_process_wide_singleton() {
 
 // ---------------------------------------------------------------------------
 // 基金历史回填单元（backfill_one_fund_history，issue #1377 自
-// instrument_info_sync.rs 迁入）：首刷近两年、单请求全量通道优先与 fail-closed
-// 回退、水位次日增量、同周整周覆盖幂等、空响应/页数触顶整只不落库、单只一
-// 事务原子。原经手动同步编排的 synced/skipped 统计断言改为直接断言
+// instrument_info_sync.rs 迁入）：首刷近两年、新浪单只全历史面取数与本地窗口
+// 裁剪（issue #1566 换源）、水位次日增量、同周整周覆盖幂等、取数失败零落库、
+// 单只一事务原子。原经手动同步编排的 synced/skipped 统计断言改为直接断言
 // BackfillOutcome 与库内行（price_history / market_prices）。
 // ---------------------------------------------------------------------------
 
@@ -832,89 +881,38 @@ fn fund_instrument(id: &str, code: &str) -> SyncInstrument {
     }
 }
 
-/// 直驱逐只回填：页级推进回调置空（页级明细断言归上方 run_history_backfill_round
-/// 的用例，此处不重复），判定确认默认缺信号（不打标、照常回填；货基用例注入
-/// 确认桩），返回结局。
-async fn run_fund_backfill<N, S, C>(
+/// 直驱逐只回填（页级推进回调已随 #1566 换源退场——全历史面单请求取整只，
+/// 无翻页推进），判定确认默认缺信号（不打标、照常回填；货基用例注入确认桩），
+/// 返回结局。
+async fn run_fund_backfill<H, C>(
     conn: &Connection,
     fund: &SyncInstrument,
-    fetch_nav: &mut N,
-    fetch_full: &mut S,
+    fetch_nav_history: &mut H,
     confirm_money_fund: &mut C,
 ) -> Result<BackfillOutcome>
 where
-    N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
-    S: FnMut(&str) -> FetchFuture<FullSeries> + Send,
+    H: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
     C: FnMut(&str) -> FetchFuture<bool> + Send,
 {
-    backfill_one_fund_history(
-        conn,
-        fund,
-        fetch_nav,
-        fetch_full,
-        confirm_money_fund,
-        &mut |_done: u64, _total: u64| {},
-    )
-    .await
+    backfill_one_fund_history(conn, fund, fetch_nav_history, confirm_money_fund).await
 }
 
-/// 空实现：既有用例只关心单请求全量通道时注入（分页通道最小桩，形态 = 窗口
-/// 内确实无净值、非拦截）。
-fn empty_nav(_: &NavQuery) -> FetchFuture<NavPage> {
-    super::ready(Ok(NavPage {
-        points: vec![],
-        total: 0,
-        blocked: false,
-    }))
-}
-
-/// 模拟历史净值页抓取：按代码返回页序列（下标 = 页码 − 1，越界页返回空），
-/// 并记录全部查询（断言水位窗口、翻页与「非可拉取行零请求」）。
-fn mock_nav<'a>(
-    pages_by_code: &'a [(&'a str, Vec<NavPage>)],
-    requested: &'a Mutex<Vec<NavQuery>>,
-) -> impl FnMut(&NavQuery) -> FetchFuture<NavPage> + Send + 'a {
-    move |query: &NavQuery| {
-        requested.lock().unwrap().push(query.clone());
-        super::ready(Ok(pages_by_code
-            .iter()
-            .find(|(c, _)| *c == query.code)
-            .and_then(|(_, pages)| pages.get((query.page - 1) as usize))
-            .cloned()
-            .unwrap_or(NavPage {
-                points: vec![],
-                total: 0,
-                blocked: false,
-            })))
-    }
-}
-
-/// 日序列（日期升序的 (日期, 单位净值)）→ 单请求全量通道的解析产物（非货基）。
-fn full_series(series: &[(String, f64)]) -> FullSeries {
-    FullSeries {
-        points: series
-            .iter()
-            .map(|(date, nav)| NavPoint {
-                date: date.clone(),
-                nav: *nav,
-            })
-            .collect(),
-    }
-}
-
-/// 模拟单请求全量净值通道：按代码返回整只基金的**全部历史**单位净值，并记录
-/// 请求的代码（断言首刷一次请求、增量不触碰本通道）。
-fn mock_full_nav<'a>(
-    series_by_code: &'a [(&'a str, FullSeries)],
+/// 模拟新浪单只全历史通道：按代码返回整只基金的**全部历史**单位净值（wire 序
+/// 按真实报文形态：净值日期降序、先新后旧——消费端降采样按日排序，序无关），
+/// 并记录请求的代码（断言每只一次请求）。
+fn mock_nav_history<'a>(
+    history_by_code: &'a [(&'a str, Vec<NavPoint>)],
     requested: &'a Mutex<Vec<String>>,
-) -> impl FnMut(&str) -> FetchFuture<FullSeries> + Send + 'a {
+) -> impl FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send + 'a {
     move |code: &str| {
         requested.lock().unwrap().push(code.to_string());
-        super::ready(Ok(series_by_code
+        let mut points = history_by_code
             .iter()
             .find(|(c, _)| *c == code)
-            .map(|(_, series)| series.clone())
-            .unwrap_or(FullSeries { points: vec![] })))
+            .map(|(_, points)| points.clone())
+            .unwrap_or_default();
+        points.reverse();
+        super::ready(Ok(points))
     }
 }
 
@@ -932,43 +930,6 @@ fn daily_nav_series(start: NaiveDate, end: NaiveDate) -> Vec<(String, f64)> {
         day = day.succ_opt().unwrap();
     }
     series
-}
-
-/// 窗口敏感的历史净值页 mock（页大小 = 服务端硬上限 20，返回前按日期降序）：
-/// 按 `[start_date, end_date]` 闭区间从固定序列里过滤，`total` = 窗口内条数。
-/// 窗口起点错（如把「添加时写入的净值日期」当增量水位）会直接少采或不采净值点，
-/// 于是「首刷回填补齐两年」的断言对准同步后可查询到的周点覆盖深度，而不是函数
-/// 或调用形状（issue #1059 负向条目）。
-fn mock_nav_series<'a>(
-    series: &'a [(String, f64)],
-    requested: &'a Mutex<Vec<NavQuery>>,
-) -> impl FnMut(&NavQuery) -> FetchFuture<NavPage> + Send + 'a {
-    move |query: &NavQuery| {
-        requested.lock().unwrap().push(query.clone());
-        let mut in_window: Vec<&(String, f64)> = series
-            .iter()
-            .filter(|(date, _)| {
-                date.as_str() >= query.start_date.as_str()
-                    && date.as_str() <= query.end_date.as_str()
-            })
-            .collect();
-        in_window.sort_by(|a, b| b.0.cmp(&a.0));
-        let total = in_window.len() as u64;
-        let points = in_window
-            .into_iter()
-            .skip(((query.page - 1) * 20) as usize)
-            .take(20)
-            .map(|(date, nav)| NavPoint {
-                date: date.clone(),
-                nav: *nav,
-            })
-            .collect();
-        super::ready(Ok(NavPage {
-            points,
-            total,
-            blocked: false,
-        }))
-    }
 }
 
 /// 近两年首刷窗口起点（与 nav_window 同式，测试侧独立重算）。
@@ -1057,70 +1018,11 @@ fn seed_fund_price(
     }
 }
 
+/// 首刷（无任何历史序列）：新浪全历史面一次请求取整只历史，本地裁剪到近两年
+/// 窗口——窗口外更早的点被裁剪掉，覆盖深度 = 近两年周线。返回序列按真实 wire
+/// 形态降序注入，落库仍按日升序采样（序无关）。
 #[test]
-fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
-    let conn = tauri_app_lib::test_support::open();
-    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
-    let fund = fund_instrument("inst-fund", "110022");
-
-    // 首刷（无水位）：窗口 = 近两年。total=45 → 3 页；净值页按日期降序返回，
-    // 第 1/2 页跨页同属 ISO 周（2026-01-26 起）——攒齐后一次降采样必须取该周
-    // 最后一个净值日（01-30 周五），逐页落库会被后页的更早日期覆盖。
-    let pages = [(
-        "110022",
-        vec![
-            nav_page(45, &[("2026-01-30", 3.348), ("2026-01-28", 3.293)]),
-            nav_page(45, &[("2026-01-26", 3.25), ("2025-12-31", 3.1)]),
-            nav_page(45, &[]),
-        ],
-    )];
-    let requested = Mutex::new(Vec::new());
-    let full_requested = Mutex::new(Vec::new());
-    let mut nav = mock_nav(&pages, &requested);
-    let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
-
-    assert!(outcome.written, "首刷跨页回填应落库");
-    assert!(!outcome.inconclusive);
-
-    // 翻页：首页起点 = 近两年窗口起点，共 3 页、全部同窗口。
-    let requested = requested.lock().unwrap();
-    assert_eq!(requested.len(), 3);
-    for q in requested.iter() {
-        assert_eq!(q.code, "110022");
-        assert_eq!(q.start_date, expected_first_sync_start());
-    }
-    assert_eq!(requested[0].page, 1);
-    assert_eq!(requested[1].page, 2);
-    assert_eq!(requested[2].page, 3);
-
-    // 周采样：跨页同周取最后净值日；单位净值 ×10000 得万分之一元（ADR-0038）。
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![
-            ("2025-12-31".into(), 31000, "CNY".into()),
-            ("2026-01-30".into(), 33480, "CNY".into()),
-        ],
-    );
-
-    // 现价 = 窗口内最新公布单位净值，priced_at = nav_date = 净值日期（下次水位）。
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((33480, Some("2026-01-30".into()))),
-    );
-}
-
-#[test]
-fn fund_first_sync_prefers_single_request_full_series() {
-    // issue #1062：首刷一次请求拿整只基金历史净值并裁剪到近两年窗口，替代约 25
-    // 次分页请求；窗口外更早的点被裁剪掉（回填深度语义不变）。
+fn fund_first_sync_backfills_two_years_from_full_history() {
     let conn = tauri_app_lib::test_support::open();
     insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
     let fund = fund_instrument("inst-fund", "110022");
@@ -1128,32 +1030,24 @@ fn fund_first_sync_prefers_single_request_full_series() {
     let window_start = beijing_today().checked_sub_months(Months::new(24)).unwrap();
     let five_years_ago = beijing_today().checked_sub_months(Months::new(60)).unwrap();
     let series = daily_nav_series(five_years_ago, beijing_today());
-    let full_by_code = [("110022", full_series(&series))];
-    let full_requested = Mutex::new(Vec::new());
-    let mut full = mock_full_nav(&full_by_code, &full_requested);
-    let page_requested = Mutex::new(Vec::new());
-    let mut nav = mock_nav(&[], &page_requested);
+    let full_by_code = [(
+        "110022",
+        series
+            .iter()
+            .map(|(d, n)| nav_point(d, *n))
+            .collect::<Vec<_>>(),
+    )];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&full_by_code, &requested);
 
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
 
     assert!(outcome.written);
     assert!(!outcome.inconclusive);
-    {
-        let requested = full_requested.lock().unwrap();
-        assert_eq!(requested.len(), 1, "首刷每次一条请求");
-        assert_eq!(requested[0], "110022", "按基金代码取全量");
-    }
-    assert!(
-        page_requested.lock().unwrap().is_empty(),
-        "单请求通道命中后不得再分页（一次请求取代约 25 次）"
-    );
+    assert_eq!(requested.lock().unwrap().len(), 1, "首刷每次一条请求取整只");
+    assert_eq!(requested.lock().unwrap()[0], "110022", "按基金代码取全量");
 
     // 落库覆盖深度 = 近两年周线；窗口外更早的点被裁剪掉。
     let rows = price_history_rows(&conn, "inst-fund");
@@ -1170,294 +1064,29 @@ fn fund_first_sync_prefers_single_request_full_series() {
         "最早周点应落在两年窗口首周内（窗口外点被裁剪）：{earliest} ∉ [{expected_start}, {first_week_end}]"
     );
 
+    // 现价 = 窗口内最新公布单位净值，priced_at = nav_date = 净值日期（下次水位）；
+    // 来源标记 = 实际取数源（ADR-0130 决策 7 / issue #1566：新浪）。
     let latest = series.last().unwrap();
     assert_eq!(
         fund_price_of(&conn, "inst-fund"),
         Some((price_value_to_cents(latest.1), Some(latest.0.clone()))),
     );
+    let source: String = conn
+        .query_row(
+            "SELECT source FROM market_prices WHERE instrument_id='inst-fund'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(source, SINA_PRICE_SOURCE, "历史补全来源标记为新来源值");
 }
 
-#[test]
-fn fund_first_sync_full_series_failure_falls_back_to_pages() {
-    // 单请求通道不可信（解析失败——生产就是「数据文件缺少可信单位净值序列」这条
-    // 错误）：fail-closed 回退既有分页通道，分页结果照常落库——不静默丢数据。
-    let conn = tauri_app_lib::test_support::open();
-    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
-    let fund = fund_instrument("inst-fund", "110022");
-
-    let mut full = |_: &str| {
-        super::ready(Err(AppError::Parse(
-            "基金 110022 详情页数据文件缺少可信的单位净值序列".into(),
-        )))
-    };
-    let requested = Mutex::new(Vec::new());
-    let pages = [(
-        "110022",
-        vec![nav_page(2, &[("2026-01-30", 3.348), ("2026-01-29", 3.42)])],
-    )];
-    let mut nav = mock_nav(&pages, &requested);
-
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
-
-    assert!(outcome.written);
-    assert!(!outcome.inconclusive);
-    assert_eq!(requested.lock().unwrap().len(), 1, "回退分页通道");
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![("2026-01-30".into(), 33480, "CNY".into())],
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((33480, Some("2026-01-30".into()))),
-    );
-}
-
-#[test]
-fn fund_first_sync_full_series_empty_falls_back_to_pages() {
-    // 单请求通道结构完好但为空（新基金未公布净值 / 裁剪后无窗口内点）：同样回退
-    // 分页通道，不让一条不确定的空结果直接决定「无净值」。
-    let conn = tauri_app_lib::test_support::open();
-    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
-    let fund = fund_instrument("inst-fund", "110022");
-
-    let mut full = |_: &str| super::ready(Ok(FullSeries { points: vec![] }));
-    let requested = Mutex::new(Vec::new());
-    let pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.348)])])];
-    let mut nav = mock_nav(&pages, &requested);
-
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
-
-    assert!(outcome.written);
-    assert!(!outcome.inconclusive);
-    assert_eq!(requested.lock().unwrap().len(), 1, "空结果回退分页通道");
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((33480, Some("2026-01-30".into()))),
-    );
-}
-
-#[test]
-fn fund_first_sync_full_series_without_window_points_falls_back_to_pages() {
-    // 退市 / 清仓多年的基金：单请求通道返回的点全在近两年窗口外——裁剪为空后
-    // 回退分页通道，不在窗口内凭空造点。
-    let conn = tauri_app_lib::test_support::open();
-    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
-    let fund = fund_instrument("inst-fund", "110022");
-
-    let stale = FullSeries {
-        points: vec![NavPoint {
-            date: "2010-08-20".into(),
-            nav: 1.0,
-        }],
-    };
-    let full_by_code = [("110022", stale)];
-    let full_requested = Mutex::new(Vec::new());
-    let mut full = mock_full_nav(&full_by_code, &full_requested);
-    let requested = Mutex::new(Vec::new());
-    let pages = [("110022", vec![nav_page(0, &[])])];
-    let mut nav = mock_nav(&pages, &requested);
-
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
-
-    assert_eq!(requested.lock().unwrap().len(), 1, "窗口外点回退分页通道");
-    assert_eq!(
-        full_requested.lock().unwrap().len(),
-        1,
-        "首刷先查单请求通道"
-    );
-    assert_eq!(price_history_rows(&conn, "inst-fund"), vec![]);
-    assert!(!outcome.written, "查无窗口内净值不落库（原断言：计入跳过）");
-    assert!(
-        !outcome.inconclusive,
-        "查无窗口内净值结局确定（非「窗口不完整」，原断言：计跳过而非失败）"
-    );
-}
-
-#[test]
-fn fund_incremental_does_not_touch_single_request_full_series() {
-    // 日常增量仍走既有历史净值接口：有历史序列的基金不发起单请求全量查询，
-    // 即使单请求通道返回别值也不被消费（水位语义与 #1059 一致）。
-    let conn = tauri_app_lib::test_support::open();
-    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
-    let fund = fund_instrument("inst-fund", "110022");
-    seed_fund_price(&conn, "inst-fund", 30000, "2026-01-28", true);
-
-    let full_by_code = [(
-        "110022",
-        FullSeries {
-            points: vec![NavPoint {
-                date: "2026-01-30".into(),
-                nav: 9.99,
-            }],
-        },
-    )];
-    let full_requested = Mutex::new(Vec::new());
-    let mut full = mock_full_nav(&full_by_code, &full_requested);
-    let requested = Mutex::new(Vec::new());
-    let pages = [(
-        "110022",
-        vec![nav_page(2, &[("2026-01-30", 3.348), ("2026-01-29", 3.42)])],
-    )];
-    let mut nav = mock_nav(&pages, &requested);
-
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
-
-    assert!(outcome.written);
-    assert_eq!(requested.lock().unwrap().len(), 1, "增量走分页通道");
-    assert!(
-        full_requested.lock().unwrap().is_empty(),
-        "有历史序列的增量不触碰单请求全量通道"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((33480, Some("2026-01-30".into()))),
-        "取分页通道的净值，不采信单请求通道的另一值"
-    );
-}
-
-#[test]
-fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
-    let conn = tauri_app_lib::test_support::open();
-    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
-    let fund = fund_instrument("inst-fund", "110022");
-
-    // 水位 = 现价缓存的净值日期 01-28（周三），上一轮已把该周采样写到周三。
-    seed_fund_price(&conn, "inst-fund", 30000, "2026-01-28", true);
-    // 更早一周的历史点应原样保留（增量不回看）。
-    upsert_price_history(
-        &conn,
-        "inst-fund",
-        "2026-01-23",
-        31000,
-        "CNY",
-        EASTMONEY_PRICE_SOURCE,
-    )
-    .unwrap();
-
-    // 窗口 = 水位次日起，单页两行（total=2 → 1 页）：周四、周五新净值；
-    // 周五与水位同周——该周采样整周覆盖为周五。
-    let pages = [(
-        "110022",
-        vec![nav_page(2, &[("2026-01-30", 3.348), ("2026-01-29", 3.42)])],
-    )];
-    let requested = Mutex::new(Vec::new());
-    let mut nav = mock_nav(&pages, &requested);
-    let full_requested = Mutex::new(Vec::new());
-    let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
-
-    assert!(outcome.written);
-    assert!(!outcome.inconclusive);
-
-    let requested = requested.lock().unwrap();
-    assert_eq!(requested.len(), 1, "常态增量每只一页");
-    assert_eq!(requested[0].start_date, "2026-01-29", "从水位次日起");
-
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![
-            ("2026-01-23".into(), 31000, "CNY".into()),
-            ("2026-01-30".into(), 33480, "CNY".into()),
-        ],
-        "水位当日不重拉；同周新净值整周覆盖采样日"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((33480, Some("2026-01-30".into()))),
-    );
-}
-
-#[test]
-fn fund_incremental_up_to_date_counts_synced_without_write() {
-    let conn = tauri_app_lib::test_support::open();
-    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
-    let fund = fund_instrument("inst-fund", "110022");
-
-    // 水位较新（一周内），窗口内无新净值（mock 返回空页）；已有历史序列：
-    // 水位只在「已回填过」的基金上作增量起点（issue #1059）。
-    let watermark = date_offset(7);
-    seed_fund_price(&conn, "inst-fund", 30000, &watermark, true);
-
-    let requested = Mutex::new(Vec::new());
-    let mut nav = mock_nav(&[], &requested);
-    let full_requested = Mutex::new(Vec::new());
-    let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
-
-    // 「已是最新」= 结局确定但不落库：written 为 false、非「窗口不完整」
-    //（原断言：synced 计入、written 为 0、零变化不广播）。
-    assert_eq!(
-        outcome,
-        BackfillOutcome {
-            written: false,
-            inconclusive: false
-        },
-        "已是最新：结局确定且零写入"
-    );
-    assert!(
-        full_requested.lock().unwrap().is_empty(),
-        "有历史序列不碰全量通道"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((30000, Some(watermark))),
-        "无新净值不动现价"
-    );
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund").len(),
-        1,
-        "无新净值零落库：既有历史点原样保留（水位增量语义，issue #1059）"
-    );
-}
-
+/// 首刷判据 = 磁盘上没有任何历史序列，不是「现价缓存无净值日期」（issue
+/// #1059）：添加基金 / AI 导入已把最新净值日期写进现价缓存（水位有值）而
+/// PriceHistory 为空，首刷仍回填近两年——若以水位作增量起点，窗口只剩
+/// 「水位次日」、近两年回填静默落空。
 #[test]
 fn fund_with_nav_date_but_no_history_backfills_two_years() {
-    // issue #1059：添加基金 / AI 导入在「按代码即拉」时已把最新净值日期写进
-    // 现价缓存（水位有值），但这只基金没有任何历史序列——首刷判据必须是
-    // 「磁盘上有无历史序列」，不是「水位是否存在」。#303 的首刷回填验收在真实
-    // 账本上未成立，根因即在此。
     let conn = tauri_app_lib::test_support::open();
     insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
     let fund = fund_instrument("inst-fund", "110022");
@@ -1471,29 +1100,29 @@ fn fund_with_nav_date_but_no_history_backfills_two_years() {
         "前置：无任何历史序列（水位冒充已回填的现场）"
     );
 
-    // 近两年逐交易日净值序列 + 窗口敏感 mock：起点若按水位增量取，窗口会被压成
-    // 一天、几乎采不到净值点（现价也就不再更新）。
+    // 近两年逐交易日净值序列：起点若按水位增量取，窗口会被压成一天、几乎采
+    // 不到净值点（现价也就不再更新）。
     let start = beijing_today().checked_sub_months(Months::new(24)).unwrap();
     let series = daily_nav_series(start, beijing_today());
+    let full_by_code = [(
+        "110022",
+        series
+            .iter()
+            .map(|(d, n)| nav_point(d, *n))
+            .collect::<Vec<_>>(),
+    )];
     let requested = Mutex::new(Vec::new());
-    let mut nav = mock_nav_series(&series, &requested);
-    let full_requested = Mutex::new(Vec::new());
-    let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
+    let mut nav = mock_nav_history(&full_by_code, &requested);
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
 
     assert!(outcome.written);
     assert!(!outcome.inconclusive);
     assert_eq!(
-        full_requested.lock().unwrap().len(),
+        requested.lock().unwrap().len(),
         1,
-        "首刷先试单请求全量通道"
+        "首刷判据按历史序列判定：走全历史通道"
     );
 
     // 回填后可查询到的净值周点覆盖深度 = 近两年（约 104 周），而不是「水位之后
@@ -1520,12 +1149,104 @@ fn fund_with_nav_date_but_no_history_backfills_two_years() {
     );
 }
 
+/// 首刷查无窗口内净值（全历史为空 / 已终止基金的末点在近两年窗口外）：结局
+/// 确定（无数据）、零落库不报错——已终止基金的历史能取回（新浪全历史面含
+/// 已终止基金），末点落在窗口内的照常整根回填（AC：已终止基金也能补齐历史）。
 #[test]
-fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
-    // issue #1059：有水位、有历史序列，但历史净值接口返回空响应（Data 缺省 /
-    // 非对象，如缺 Referer 被拦截 / 风控）——不得按「已是最新」静默计成功。
-    // 与 fund_incremental_up_to_date_counts_synced_without_write（同样是空窗口，
-    // 但报文形态正常、空表可信）在结局上区分开。
+fn fund_first_sync_without_window_points_lands_nothing() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    insert_plain_instrument(&conn, "inst-old", "002503", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+    let terminated = fund_instrument("inst-old", "002503");
+
+    // ① 全历史为空（查无此码 / 新基金未公布首期）：可信空。
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&[], &requested);
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+    assert_eq!(
+        outcome,
+        BackfillOutcome {
+            written: false,
+            inconclusive: false
+        },
+        "可信空：结局确定（无数据），非「窗口不完整」"
+    );
+    assert_eq!(price_history_rows(&conn, "inst-fund"), vec![]);
+    assert_eq!(fund_price_of(&conn, "inst-fund"), None, "查无净值不写现价");
+
+    // ② 已终止基金、末点在窗口外（多年前的历史照常取回）：窗口裁剪后为空，
+    // 同样结局确定；窗口内有点的已终止基金由首刷全量用例同路覆盖。
+    let stale = vec![nav_point("2010-08-20", 1.0)];
+    let full_by_code = [("002503", stale)];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&full_by_code, &requested);
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &terminated,
+        &mut nav,
+        &mut no_confirm,
+    ))
+    .unwrap();
+    assert_eq!(
+        requested.lock().unwrap().len(),
+        1,
+        "已终止基金同样发起全历史请求"
+    );
+    assert_eq!(
+        outcome,
+        BackfillOutcome {
+            written: false,
+            inconclusive: false
+        },
+        "窗口外点：结局确定（无数据），不在窗口内凭空造点"
+    );
+    assert_eq!(price_history_rows(&conn, "inst-old"), vec![]);
+    assert_eq!(fund_price_of(&conn, "inst-old"), None);
+}
+
+/// 已终止基金、末点在窗口内（近期清盘）：全历史照常取回、整根落库到末点——
+/// AC「已终止基金也能补齐历史」的直接钉（新浪全历史面含已终止基金，末点与
+/// 官方披露一致，调研 13.4 节实测）。
+#[test]
+fn fund_first_sync_terminated_fund_within_window_backfills_to_last_point() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-term", "019852", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-term", "019852");
+
+    // 近期清盘：末点 = 30 天前（近两年窗口内），此后无新净值。
+    let last = date_offset(30);
+    let history = [(
+        "019852",
+        vec![nav_point(&date_offset(40), 1.1), nav_point(&last, 1.08)],
+    )];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&history, &requested);
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert!(outcome.written);
+    assert!(!outcome.inconclusive);
+    assert_eq!(
+        price_history_rows(&conn, "inst-term").len(),
+        2,
+        "末点在窗口内的已终止基金整根回填"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-term"),
+        Some((price_value_to_cents(1.08), Some(last))),
+        "现价 = 末点净值（清盘前最后公布）"
+    );
+}
+
+/// 取数失败（网络失败 / 报文不可信——新浪层的截断、自报失败、非 JSON 一律
+/// Err）fail-closed：单只上抛、零落库、不把不可信结果当「无净值」——下一窗口
+/// 按派生事实自然重试（被拦截 ≠ 数据源没有可采序列，issue #1059 语义保留）。
+#[test]
+fn fund_history_fetch_failure_propagates_without_writing() {
     let conn = tauri_app_lib::test_support::open();
     insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
     let fund = fund_instrument("inst-fund", "110022");
@@ -1533,42 +1254,160 @@ fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
     let watermark = date_offset(7);
     seed_fund_price(&conn, "inst-fund", 30000, &watermark, true);
 
-    let mut nav = |_: &NavQuery| {
-        super::ready(Ok(NavPage {
-            points: vec![],
-            total: 0,
-            blocked: true,
-        }))
-    };
-    let full_requested = Mutex::new(Vec::new());
-    let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
-
-    // 空响应不可信：结局 = 窗口不完整待重试（原断言：不计 synced、计跳过）。
-    assert_eq!(
-        outcome,
-        BackfillOutcome {
-            written: false,
-            inconclusive: true
-        },
-        "空响应不得按成功/无数据计，结局按待重试"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((30000, Some(watermark.clone()))),
-        "空响应不动现价、水位不前进"
+    let mut nav =
+        |_: &str| super::ready(Err(AppError::Parse("新浪基金历史净值响应不可解析".into())));
+    let err =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .expect_err("不可信响应应上抛，不按「无净值」计成功");
+    assert!(
+        err.to_string().contains("不可解析"),
+        "取数层错误原样上抛：{err}"
     );
     assert_eq!(
         price_history_rows(&conn, "inst-fund").len(),
         1,
-        "空响应零落库（原有历史点原样保留）"
+        "零落库：既有历史点原样保留"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((30000, Some(watermark.clone()))),
+        "失败不动现价、水位不前进"
+    );
+}
+
+/// 增量窗口从**水位次日**起（水位当日不重拉）：全历史序列里水位日及其之前的
+/// 点按事实在场，裁剪把窗口外的点全部排除——水位日若被重拉（裁剪缺失），
+/// 其另一报价会经整周覆盖重写该周采样与现价，本用例变红。
+#[test]
+fn fund_incremental_never_repulls_watermark_day() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    // 水位 = 2026-01-30（周五，当周采样日已落）。窗口起点 = 水位次日 01-31。
+    seed_fund_price(&conn, "inst-fund", 30000, "2026-01-30", true);
+
+    // 全历史桩把水位日携带**另一报价**（3.348 ≠ 库内 3.0）：裁剪缺失即被采信。
+    let history = [("110022", vec![nav_point("2026-01-30", 3.348)])];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&history, &requested);
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert_eq!(
+        outcome,
+        BackfillOutcome {
+            written: false,
+            inconclusive: false
+        },
+        "窗口内（水位次日之后）无新净值：结局确定且零写入"
+    );
+    assert_eq!(requested.lock().unwrap().len(), 1, "常态增量每只一次请求");
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![("2026-01-30".into(), 30000, "CNY".into())],
+        "水位当日不重拉：既有周点与取值原样保留"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((30000, Some("2026-01-30".into()))),
+        "无新净值不动现价"
+    );
+}
+
+/// 增量补齐：有历史序列的基金以现价缓存的净值日期为水位，水位次日之后的新
+/// 净值照常落库；新点与水位同周时该周采样整周覆盖为最新净值日；窗口外的
+/// 既有点（含更早周与水位日）不受影响。
+#[test]
+fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    // 水位 = 现价缓存的净值日期 01-28（周三），上一轮已把该周采样写到周三；
+    // 更早一周的历史点应原样保留（增量不回看）。
+    seed_fund_price(&conn, "inst-fund", 30000, "2026-01-28", true);
+    upsert_price_history(
+        &conn,
+        "inst-fund",
+        "2026-01-23",
+        31000,
+        "CNY",
+        EASTMONEY_PRICE_SOURCE,
+    )
+    .unwrap();
+
+    // 全历史序列（wire 形态：含水位于内的已消费点 + 水位次日起的新点）。
+    let history = [(
+        "110022",
+        vec![
+            nav_point("2026-01-23", 3.1),
+            nav_point("2026-01-28", 3.0),
+            nav_point("2026-01-29", 3.42),
+            nav_point("2026-01-30", 3.348),
+        ],
+    )];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&history, &requested);
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert!(outcome.written);
+    assert!(!outcome.inconclusive);
+    assert_eq!(requested.lock().unwrap().len(), 1, "常态增量每只一次请求");
+
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![
+            ("2026-01-23".into(), 31000, "CNY".into()),
+            ("2026-01-30".into(), 33480, "CNY".into()),
+        ],
+        "水位当日不重拉；同周新净值整周覆盖采样日；更早周原样保留"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((33480, Some("2026-01-30".into()))),
+        "现价 = 窗口内最新公布净值，nav_date 兼任下次水位"
+    );
+}
+
+/// 增量「已是最新」：水位缺周点触发进队，但增量窗口内无新净值时整只零落库、
+/// 不计失败（处理完成照常推进，与手动同步同口径）。
+#[test]
+fn fund_incremental_up_to_date_counts_synced_without_write() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    // 水位较新（一周内）；全历史序列末点 = 水位日，窗口内无新净值。
+    let watermark = date_offset(7);
+    seed_fund_price(&conn, "inst-fund", 30000, &watermark, true);
+    let history = [("110022", vec![nav_point(&watermark, 3.0)])];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&history, &requested);
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert_eq!(
+        outcome,
+        BackfillOutcome {
+            written: false,
+            inconclusive: false
+        },
+        "已是最新：结局确定且零写入"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((30000, Some(watermark))),
+        "无新净值不动现价"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund").len(),
+        1,
+        "无新净值零落库：既有历史点原样保留（水位增量语义，issue #1059）"
     );
 }
 
@@ -1582,25 +1421,19 @@ fn fund_backfill_write_failure_leaves_no_history() {
     let fund = fund_instrument("inst-fund", "110022");
     inject_week_write_failure(&conn);
 
-    // 单请求全量通道返回跨四周的单位净值序列（升序）：第 3 周写入触发注入失败。
-    let series = [
-        ("2026-01-05".to_string(), 1.000),
-        ("2026-01-12".to_string(), 1.100),
-        ("2026-01-19".to_string(), 1.200),
-        ("2026-01-30".to_string(), 1.300),
+    // 全历史通道返回跨四周的单位净值序列（升序）：第 3 周写入触发注入失败。
+    let series = vec![
+        nav_point("2026-01-05", 1.000),
+        nav_point("2026-01-12", 1.100),
+        nav_point("2026-01-19", 1.200),
+        nav_point("2026-01-30", 1.300),
     ];
-    let full = [("110022", full_series(&series))];
-    let full_requested = Mutex::new(Vec::new());
-    let mut full_nav = mock_full_nav(&full, &full_requested);
-    let mut nav = empty_nav;
-    let err = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full_nav,
-        &mut no_confirm,
-    ))
-    .unwrap_err();
+    let full = [("110022", series)];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&full, &requested);
+    let err =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap_err();
 
     assert!(
         err.to_string().contains("注入周点写入失败"),
@@ -1621,13 +1454,20 @@ fn fund_backfill_write_failure_leaves_no_history() {
     // 把整只历史补回——零行 → 首刷判据为真，正是原子性要保住的等价。
     conn.execute_batch("DROP TRIGGER inject_week_write_failure;")
         .unwrap();
-    let mut full_nav_retry = mock_full_nav(&full, &full_requested);
-    let mut nav_retry = empty_nav;
+    let full_retry = [(
+        "110022",
+        vec![
+            nav_point("2026-01-05", 1.000),
+            nav_point("2026-01-12", 1.100),
+            nav_point("2026-01-19", 1.200),
+            nav_point("2026-01-30", 1.300),
+        ],
+    )];
+    let mut nav_retry = mock_nav_history(&full_retry, &requested);
     let retry = tauri::async_runtime::block_on(run_fund_backfill(
         &conn,
         &fund,
         &mut nav_retry,
-        &mut full_nav_retry,
         &mut no_confirm,
     ))
     .unwrap();
@@ -1640,164 +1480,6 @@ fn fund_backfill_write_failure_leaves_no_history() {
         price_history_rows(&conn, "inst-fund").len(),
         4,
         "下次运行补回整只历史（4 个周点）"
-    );
-}
-
-#[test]
-fn fund_partial_blocked_page_skips_whole_instrument() {
-    // ADR-0122 决策 8（issue #1373）：部分页被拦截（空响应）时本轮窗口不完整，
-    // 整只不落库并在日志标注——不再沿用「记警告后继续落已采点」的旧行为
-    //（半根历史会让「有历史序列」冒充「历史完整」）。
-    let conn = tauri_app_lib::test_support::open();
-    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
-    let fund = fund_instrument("inst-fund", "110022");
-
-    // 首页有净值点、次页被拦截（空响应、非零 TotalCount）：total=45 → 3 页。
-    let pages = [(
-        "110022",
-        vec![
-            nav_page(45, &[("2026-01-30", 3.348), ("2026-01-28", 3.293)]),
-            NavPage {
-                points: vec![],
-                total: 45,
-                blocked: true,
-            },
-        ],
-    )];
-    let requested = Mutex::new(Vec::new());
-    let mut nav = mock_nav(&pages, &requested);
-    let full_requested = Mutex::new(Vec::new());
-    let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
-
-    // 部分页被拦截不得计成功：结局 = 窗口不完整待重试（原断言：计跳过）。
-    assert_eq!(
-        outcome,
-        BackfillOutcome {
-            written: false,
-            inconclusive: true
-        },
-        "部分页被拦截：本轮窗口不完整，结局按待重试"
-    );
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![],
-        "整只不落库：被拦截的部分页宁可整只留空重试，不留半根历史"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        None,
-        "整只不落库时不写现价"
-    );
-}
-
-#[test]
-fn fund_incremental_partial_blocked_page_keeps_existing_history_and_watermark() {
-    // ADR-0122 决策 8（issue #1373）的日间常态分支：已有历史序列的基金在增量窗口
-    // 内被部分拦截时同样整只不落库——本轮已采净值点丢弃、既有历史点原样保留、
-    // 水位不前进（下次从同一水位重取），不留下半根新历史。
-    let conn = tauri_app_lib::test_support::open();
-    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
-    let fund = fund_instrument("inst-fund", "110022");
-
-    let watermark = "2026-01-20".to_string();
-    seed_fund_price(&conn, "inst-fund", 30000, &watermark, true);
-
-    // 增量窗口（水位次日 2026-01-21 起）：首页有净值点、次页被拦截（total=45 → 3 页）。
-    let pages = [(
-        "110022",
-        vec![
-            nav_page(45, &[("2026-01-30", 3.348)]),
-            NavPage {
-                points: vec![],
-                total: 45,
-                blocked: true,
-            },
-        ],
-    )];
-    let requested = Mutex::new(Vec::new());
-    let mut nav = mock_nav(&pages, &requested);
-    let full_requested = Mutex::new(Vec::new());
-    let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
-
-    // 部分页被拦截不得计成功：结局 = 窗口不完整待重试（原断言：计跳过）。
-    assert_eq!(
-        outcome,
-        BackfillOutcome {
-            written: false,
-            inconclusive: true
-        },
-    );
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![(watermark.clone(), 30000, "CNY".to_string())],
-        "本轮已采点不落库，既有历史点原样保留"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((30000, Some(watermark.clone()))),
-        "整只不落库则水位不前进（下次从同一水位重取）"
-    );
-    assert_eq!(requested.lock().unwrap()[0].start_date, "2026-01-21");
-}
-
-#[test]
-fn fund_page_cap_truncation_skips_whole_instrument() {
-    // ADR-0122 决策 8（issue #1373）：页数触顶（服务端 TotalCount 异常，窗口已知
-    // 未采全）与部分页被拦截同待遇——整只不落库；不再沿用「记警告后
-    // 继续落已采点」。触顶若照旧落库，缺失段会因「有历史序列」为真而永久化。
-    let conn = tauri_app_lib::test_support::open();
-    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
-    let fund = fund_instrument("inst-fund", "110022");
-
-    // total=1000 → raw_pages=50 > MAX_NAV_PAGES(40)：触顶，首页已采净值点也不落库。
-    let pages = [("110022", vec![nav_page(1000, &[("2026-01-30", 3.348)])])];
-    let requested = Mutex::new(Vec::new());
-    let mut nav = mock_nav(&pages, &requested);
-    let full_requested = Mutex::new(Vec::new());
-    let mut full = mock_full_nav(&[], &full_requested);
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut no_confirm,
-    ))
-    .unwrap();
-
-    // 页数触顶不得计成功：结局 = 窗口已知未采全，按待重试（原断言：计跳过）。
-    assert_eq!(
-        outcome,
-        BackfillOutcome {
-            written: false,
-            inconclusive: true
-        },
-        "页数触顶：窗口已知未采全，结局按待重试"
-    );
-    assert_eq!(
-        price_history_rows(&conn, "inst-fund"),
-        vec![],
-        "整只不落库：触顶的窗口宁可整只留空重试，不留半根历史"
-    );
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        None,
-        "整只不落库时不写现价"
     );
 }
 
@@ -1843,20 +1525,13 @@ fn fund_first_sync_money_shape_marks_and_lands_no_flat_rows() {
     // 取数面的事实透传形态（判定口径退役后）：取值位是万份收益——判定门必须
     // 拦在落库前。
     let nav_calls = Mutex::new(0usize);
-    let full_calls = Mutex::new(0usize);
-    let mut nav = empty_nav_counting(&nav_calls);
-    let mut full = income_value_full_nav(&full_calls);
+    let mut nav = income_value_nav_history(&nav_calls);
 
     let confirm_calls = Mutex::new(0usize);
     let mut confirm = confirm_true_counting(&confirm_calls);
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut confirm,
-    ))
-    .unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut confirm))
+            .unwrap();
 
     // 建档常价是实际价格写入（现价缓存首落按价格写入广播）。
     assert!(outcome.written);
@@ -1879,8 +1554,7 @@ fn fund_first_sync_money_shape_marks_and_lands_no_flat_rows() {
         "确认即收尾：平坦历史行不再生长（读侧按常量取值）"
     );
     assert_eq!(*confirm_calls.lock().unwrap(), 1, "一次确认请求");
-    assert_eq!(*full_calls.lock().unwrap(), 0, "确认即收尾：零全量净值抓取");
-    assert_eq!(*nav_calls.lock().unwrap(), 0, "确认即收尾：零分页净值抓取");
+    assert_eq!(*nav_calls.lock().unwrap(), 0, "确认即收尾：零净值抓取请求");
 }
 
 /// 首刷时官方披露源不可信（响应异常）：本轮整只不落、按不可信结局待重试——
@@ -1891,24 +1565,17 @@ fn fund_first_sync_disclosure_unavailable_is_inconclusive_and_lands_nothing() {
     insert_plain_instrument(&conn, "inst-money", "000905", "fund", "CNY", "unknown");
     let fund = fund_instrument("inst-money", "000905");
 
-    let calls = Mutex::new(0usize);
-    let mut nav = empty_nav_counting(&calls);
-    let full_requested = Mutex::new(Vec::new());
-    let mut full = mock_full_nav(&[], &full_requested);
+    let nav_calls = Mutex::new(0usize);
+    let mut nav = empty_nav_history_counting(&nav_calls);
     let mut confirm: fn(&str) -> FetchFuture<bool> = |_| {
         Box::pin(std::future::ready(Err(AppError::coded(
             "sync.disclosure-source-malformed",
             "基金官方披露数据源返回了无法解析的内容，请稍后重试同步",
         ))))
     };
-    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
-        &conn,
-        &fund,
-        &mut nav,
-        &mut full,
-        &mut confirm,
-    ))
-    .unwrap();
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut confirm))
+            .unwrap();
 
     assert!(!outcome.written);
     assert!(outcome.inconclusive, "披露源不可信 = 待重试，不是无数据");
@@ -1926,7 +1593,7 @@ fn fund_first_sync_disclosure_unavailable_is_inconclusive_and_lands_nothing() {
         )
         .unwrap();
     assert_eq!(cents, None, "披露源不可信不打标");
-    assert_eq!(*calls.lock().unwrap(), 0, "判定门在抓取前收尾");
+    assert_eq!(*nav_calls.lock().unwrap(), 0, "判定门在抓取前收尾");
 }
 
 /// 确认桩（Ok(true) 计数）：首刷货基判定用例注入。
@@ -1937,29 +1604,27 @@ fn confirm_true_counting(calls: &Mutex<usize>) -> impl FnMut(&str) -> FetchFutur
     }
 }
 
-/// 空分页净值页桩（计数）：判定门在抓取前的断言面。
-fn empty_nav_counting(calls: &Mutex<usize>) -> impl FnMut(&NavQuery) -> FetchFuture<NavPage> + '_ {
-    move |_: &NavQuery| {
+/// 空全历史桩（计数）：判定门在抓取前的断言面。
+fn empty_nav_history_counting(
+    calls: &Mutex<usize>,
+) -> impl FnMut(&str) -> FetchFuture<Vec<NavPoint>> + '_ {
+    move |_: &str| {
         *calls.lock().unwrap() += 1;
-        super::ready(Ok(NavPage {
-            points: vec![],
-            total: 0,
-            blocked: false,
-        }))
+        super::ready(Ok(vec![]))
     }
 }
 
-/// 单请求全量通道桩（计数，取值位携带万份收益 0.2229）：删除判定门即红——
+/// 全历史通道桩（计数，取值位携带万份收益 0.2229）：删除判定门即红——
 /// 货基按普通基金回填时历史行与现价被写成万份收益。
-fn income_value_full_nav(calls: &Mutex<usize>) -> impl FnMut(&str) -> FetchFuture<FullSeries> + '_ {
+fn income_value_nav_history(
+    calls: &Mutex<usize>,
+) -> impl FnMut(&str) -> FetchFuture<Vec<NavPoint>> + '_ {
     move |_: &str| {
         *calls.lock().unwrap() += 1;
-        super::ready(Ok(FullSeries {
-            points: vec![NavPoint {
-                date: "2026-09-17".into(),
-                nav: 0.2229,
-            }],
-        }))
+        super::ready(Ok(vec![NavPoint {
+            date: "2026-09-17".into(),
+            nav: 0.2229,
+        }]))
     }
 }
 
