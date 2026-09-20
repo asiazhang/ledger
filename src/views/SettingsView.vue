@@ -40,6 +40,7 @@ import {
 import GeneralSettings from "@/settings/GeneralSettings.vue";
 import CategoryManager from "@/categories/CategoryManager.vue";
 import BaseCurrencySettings from "@/settings/BaseCurrencySettings.vue";
+import ExchangeRateSyncSettings from "@/settings/ExchangeRateSyncSettings.vue";
 import BackupSettings from "@/settings/BackupSettings.vue";
 import DataLocationSettings from "@/settings/DataLocationSettings.vue";
 import EncryptionSettings from "@/settings/EncryptionSettings.vue";
@@ -84,6 +85,9 @@ const featureToggles = useFeatureToggleStore();
              归属领域定 Tab；与分类管理器同属参考数据域维护面）。 -->
         <div :class="SETTINGS_CARD_STACK_CLASS">
           <BaseCurrencySettings />
+          <!-- 汇率同步手动入口（issue #1545）：ExchangeRate 实体随币种参考数据
+               归属（ADR-0059），与本位币基准卡同页签；同步语义全在后端命令。 -->
+          <ExchangeRateSyncSettings />
           <CategoryManager />
         </div>
       </NTabPane>

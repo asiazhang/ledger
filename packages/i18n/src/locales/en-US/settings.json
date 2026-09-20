@@ -449,5 +449,11 @@
     "displayCurrencyHint": "Per-device amount formatting and new-entry preselect; not synced.",
     "baseCurrencyLoadFailed": "Failed to load base currency: {msg}",
     "baseCurrencySaveFailed": "Failed to save base currency: {msg}"
+  },
+  "fxSync": {
+    "title": "Sync exchange rates",
+    "hint": "Syncs current and historical rates from the ECB reference rates; besides the daily automatic sync, trigger one manually here.",
+    "action": "Sync now",
+    "ok": "Synced {points} rate samples (covering {earliest} to {latest})"
   }
 }

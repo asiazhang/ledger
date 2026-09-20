@@ -43,14 +43,24 @@
 //!   ADR-0103）：新浪批量面为主源、官方披露判定确认与已终止兜底，三臂编排
 //!   收口本模块；
 //! - [`fund_backfill`]：基金历史回填单元（issue #1062 / #1377 / #1388）——服务
-//!   价格历史后台补全的逐只编排：首刷近两年（单请求全量通道优先、fail-closed
-//!   回退分页）、增量按水位；
+//!   价格历史后台补全的逐只编排：首刷近两年、增量按水位，取数走新浪单只全历史面
+//!   并由本地裁剪窗口（issue #1566）；
 //! - [`fund_nav`]：东财历史净值共享件（issue #303 / ADR-0038 决策 6；issue #1388
-//!   自通道拆出编排后留守）——lsjz / 详情页数据文件访问与报文解析、净值水位窗口、
-//!   分页器与水位读；首刷深回填另走详情页数据文件的单请求全量通道、失败
-//!   fail-closed 回退 lsjz 分页（issue #1062）；
+//!   自通道拆出编排后留守）——lsjz 报文访问与解析、净值水位窗口、分页器与水位读；
+//!   详情页数据文件的单请求全量通道（issue #1062）与档案通道（issue #1212）随
+//!   换源退役删除（issue #1566 / #1568）；
 //! - [`fund_price_refresh`]：基金现价刷新单元（issue #1377 / #1388）——服务标的
 //!   信息同步的逐只编排：批量面命中零请求、未命中退逐只短窗封顶；
+//! - [`fx`]：ECB 汇率同步编排（issue #1544 / ADR-0019 修订记录）——汇率序列
+//!   「要拉多深」的窗口判据单点：深度 = 账本中最早的非本位币痕迹日期（非本位币
+//!   账户创建日 / 非本位币交易日取 MIN，软删排除）所属 ISO 周的周一再前推一周，
+//!   与标的 K 线的「近两年」窗口和首刷 / 缺周队列彻底无关；按判据分派全量回填
+//!   （按窗口起点裁剪）或 90 天增量，经通道束接 [`ecb`] 取数、[`persist`] 落库
+//!   （单一事务、整周覆盖幂等、不产同步 op）。失败原因三态互不吞并（spec #1540
+//!   「数据源不可达 vs 该来源无数据要能分辨」，issue #1545）：取数网络失败 →
+//!   `fx.source-unreachable`，取数成功但推导零点 → `fx.source-no-data`，
+//!   `fx.source-malformed` 原样透传。手动入口 / 每日调度的触发面归
+//!   #1545 / #1546，本单元即其共同消费的唯一编排（#1545 手动入口已接线）；
 //! - [`history`]：价格历史后台补全（ADR-0122 / issue #1375）——派生事实队列
 //!   （有价格通道但历史不完整，持仓优先）+ 一轮排空（后台补全专用的单只
 //!   回填单元，issue #1377 起不再与现价刷新共用）+ 启动延迟与自然日窗口调度 +
@@ -90,7 +100,7 @@
 //!   单位净值位）按「前一日单位净值位为空」单点判别并显式分类，错位行不产出
 //!   价格点（ADR-0130 决策 6）；全历史空序列不等于「查无此码」，非预期形状
 //!   fail-closed。批量面的 crate 内消费点：现价刷新（issue #1565）与基金按代码
-//!   查询（issue #1568）；单只全历史面接线随 #1566；
+//!   查询（issue #1568）；单只全历史面随价格历史后台补全（issue #1566）；
 //! - [`stock`]：东财股票单点行情访问——按（市场，代码）实时查询（issue #693 /
 //!   ADR-0081），类型特征探测单点隔离，同接缝查询半边的场内实例；
 //! - [`tencent`]：腾讯行情批量报价取数单元（ADR-0130 决策 2/3 / issue #1558）
@@ -122,8 +132,9 @@
 //! 兼容面（ADR-0112 决策 3「调用点零改动」）：根包以
 //! `pub use ledger_market_sync as sync;` 再导出保留原引用路径——壳层
 //! `commands::sync`（只做参数解包与信号发射，对外暴露 `sync_instrument_info`
-//! 标的信息同步一个 IPC 命令，只刷现价 + 名称随行刷新，issue #827 改名、
-//! ADR-0122 / issue #1377 起 history 采集移出）、
+//! 标的信息同步与 `sync_exchange_rates` 手动汇率同步（issue #1545）两个 IPC
+//! 命令，前者只刷现价 + 名称随行刷新，issue #827 改名、ADR-0122 / issue #1377
+//! 起 history 采集移出）、
 //! `commands::investment` 与 `api_server` 的行情查询注入点、e2e 与汇总文档的
 //! `crate::sync::…` / `tauri_app_lib::ledger_market_sync::…` 引用零改动。
 //!
@@ -137,26 +148,28 @@ mod channels;
 mod csrc;
 mod daily_refresh;
 /// ECB 参考汇率取数单元（issue #1542）：单元本体与测试已就位，序列类型已由落库
-/// 单元（persist，#1543）消费；两个取数入口与交叉推导的接线随回填 / 每日增量票
-///（#1544 / #1546）接装通道束时落地，接装时撤去 dead_code 豁免并按消费面补再导出。
-#[allow(dead_code)]
+/// 单元（persist，#1543）消费；两个取数入口与交叉推导已由汇率同步编排
+///（[`fx`]，issue #1544）经通道束消费。
 mod ecb;
 mod fund;
 mod fund_backfill;
 mod fund_nav;
 mod fund_price_refresh;
+/// ECB 汇率同步编排（issue #1544，#1545 手动入口已接线）：窗口判据与全量 / 增量
+/// 两腿的分派、失败三态分类（fx.source-unreachable / fx.source-no-data /
+/// fx.source-malformed 透传）已就位；每日自动调度触发面随 #1546 消费再导出面。
+mod fx;
 mod history;
 mod http;
 mod incremental;
-mod js;
 mod lane;
 mod model;
 mod persist;
 mod progress;
 mod session;
-/// 新浪场外基金取数单元（issue #1564）：批量最新净值面的 crate 内消费点已随
-/// 现价刷新接线落地（issue #1565，通道束的批量面闭包），全历史面接线随 #1566
-/// 落地——全历史半边暂以条目级 dead_code 豁免，接装时撤去。
+/// 新浪场外基金取数单元（issue #1564）：批量最新净值面随现价刷新（issue #1565，
+/// 通道束的批量面闭包）与基金按代码查询（issue #1568）接线，单只全历史面随价格
+/// 历史后台补全（issue #1566，通道束的全历史闭包）接线。
 mod sina_fund;
 mod stock;
 /// 腾讯行情批量报价取数单元（issue #1558）：现价刷新接线见 [`channels`]
@@ -174,7 +187,7 @@ pub use bulk::{
     FundBatch, FundNameDictionary, FundNavTable,
 };
 pub use channels::{
-    FetchFundName, FetchFxKline, FetchKline, FetchMoneyFundForm, FetchNavFull, FetchNavPage,
+    FetchFundName, FetchFxKline, FetchKline, FetchMoneyFundForm, FetchNavHistory, FetchNavPage,
     FetchQuotes, QuoteItem, QuoteQuery, SyncFetchChannels, do_incremental_sync_channels,
 };
 pub use daily_refresh::{
@@ -185,11 +198,13 @@ pub use daily_refresh::{
 // 能命名与构造应答形状（QuoteItem 可构造；Kline/Nav 形状测试回空表即可命名）。
 pub use fund::fetch_fund_quote_production;
 pub use fund_nav::{NavPage, NavPoint, NavQuery};
+pub use fx::{FxSyncChannels, FxSyncReport, sync_fx_rates};
 pub use history::{
     BackfillChannelsSlot, BackfillTimings, start_history_backfill, start_history_backfill_with,
 };
 pub use http::KlineBar;
 pub use model::{SyncInstrumentInfoResult, WriteWitness};
+pub use persist::FxPersistReport;
 pub use progress::{
     BackfillProgressEmitter, FundNavProgress, HISTORY_BACKFILL_PROGRESS, INSTRUMENT_SYNC_PROGRESS,
     ProgressEmitter, SyncProgress,

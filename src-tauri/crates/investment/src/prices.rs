@@ -32,9 +32,10 @@ pub const EASTMONEY_PRICE_SOURCE: &str = "eastmoney";
 /// 价格侧无 CHECK，闭集由写入通道收口。
 pub const TENCENT_PRICE_SOURCE: &str = "tencent";
 
-/// 场外基金净值来源标记（ADR-0130 决策 7 / issue #1565）：行情同步的基金净值
-/// 通道改走新浪后写入——批量面直落的现价与当周采样点（issue #1565 起），单只面
-/// 补数随 #1566 接入。价格侧无 CHECK，闭集由写入通道收口。
+/// 场外基金净值来源标记（ADR-0130 决策 7 / issue #1565 / #1566）：行情同步的基金
+/// 净值通道改走新浪后写入——批量面直落的现价与当周采样点（issue #1565）、单只
+/// 全历史面的历史补全（现价与周采样点，issue #1566）共用。价格侧无 CHECK，
+/// 闭集由写入通道收口。
 pub const SINA_PRICE_SOURCE: &str = "sina";
 
 /// 证监会基金电子披露来源标记（ADR-0130 决策 7 / issue #1568）：基金按代码

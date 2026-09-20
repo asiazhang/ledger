@@ -8,6 +8,9 @@
 //! - `fund_nav`：历史净值报文解析、水位窗口与 Referer 传播（issue #303，fixture 驱动）；
 //! - `fund_quote`：基金按代码查询的三臂取数编排（新浪批量面 + 官方披露判定/兜底，
 //!   issue #1568，本地 HTTP 服务驱动生产取数函数）；
+//! - `fx_sync`：ECB 汇率同步编排（issue #1544）——窗口判据（最早非本位币痕迹
+//!   所属周前推一周、零痕迹跳过、深度达成后只走增量的幂等）与两文件接线证明；
+//!   失败三态互不吞并与人工行保护经编排回归（issue #1545）；
 //! - `http_client`：HTTP 重试、多主机切换与各来源取数入口的请求形态 / 上限行为（ECB 参考汇率、腾讯日线 K 线）；
 //! - `instrument_info_sync`：标的信息同步与日 K 报文解析；
 //! - `sina_fund`：新浪场外基金取数（issue #1564，fixture 驱动）——批量面普通行 /
@@ -32,6 +35,7 @@ mod csrc;
 mod fund_nav;
 mod fund_quote;
 mod fx_persist;
+mod fx_sync;
 mod history_backfill;
 mod http_client;
 mod instrument_info_sync;
@@ -232,10 +236,10 @@ fn production_source_files() -> Vec<(&'static str, String)> {
             "fund_price_refresh.rs",
             include_str!("fund_price_refresh.rs").to_string(),
         ),
+        ("fx.rs", include_str!("fx.rs").to_string()),
         ("history.rs", include_str!("history.rs").to_string()),
         ("http.rs", include_str!("http.rs").to_string()),
         ("incremental.rs", include_str!("incremental.rs").to_string()),
-        ("js.rs", include_str!("js.rs").to_string()),
         ("lane.rs", include_str!("lane.rs").to_string()),
         ("lib.rs", include_str!("lib.rs").to_string()),
         ("model.rs", include_str!("model.rs").to_string()),
