@@ -436,6 +436,17 @@ pub(super) async fn request_bytes_from_hosts(
     )))
 }
 
+/// GBK 字节 → 文本：GBK 通道的解码原语，收口在本层单点（腾讯行情报价与新浪
+/// 场外基金批量面共用，issue #1558 / #1564）。解码出错（截断 / 非法字节序列）
+/// 即 fail-closed；合法但非 GBK 的内容（如被拦截页）留给调用方的形状判据处理。
+pub(super) fn decode_gbk(bytes: &[u8]) -> Result<String> {
+    let (text, _, had_errors) = encoding_rs::GBK.decode(bytes);
+    if had_errors {
+        return Err(AppError::Parse("GBK 解码出错（响应可能被截断）".into()));
+    }
+    Ok(text.into_owned())
+}
+
 pub(super) async fn request_json_with_retry<T>(
     client: &reqwest::Client,
     url: &str,

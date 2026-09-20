@@ -11,6 +11,9 @@
 //! - `stock_quote`：股票单点行情报文解析、类型特征探测与命中挑选（issue #693，fixture 驱动）；
 //! - `tencent`：腾讯行情批量报价取数（issue #1558，fixture 驱动）——三套字段布局的类型码 / 币种 /
 //!   交易所后缀、请求形态与批量承载量、被拦截响应 fail-closed。
+//! - `sina_fund`：新浪场外基金取数（issue #1564，fixture 驱动）——批量面普通行 /
+//!   货基错位行 / 已终止基金行的形态判别与 fail-closed，全历史面末点 / 可信空 /
+//!   非可信形状，请求形态与批量承载量。
 //!
 //! 全量同步（clist 报文解析、分页编排、取消与重入守卫）已随 ADR-0081 决策 3
 //! 退役删除（issue #698）。
@@ -29,6 +32,7 @@ mod fund_search;
 mod history_backfill;
 mod http_client;
 mod instrument_info_sync;
+mod sina_fund;
 mod stock_quote;
 mod tencent;
 
@@ -235,6 +239,7 @@ fn production_source_files() -> Vec<(&'static str, String)> {
         ("persist.rs", include_str!("persist.rs").to_string()),
         ("progress.rs", include_str!("progress.rs").to_string()),
         ("session.rs", include_str!("session.rs").to_string()),
+        ("sina_fund.rs", include_str!("sina_fund.rs").to_string()),
         ("stock.rs", include_str!("stock.rs").to_string()),
         ("tencent.rs", include_str!("tencent.rs").to_string()),
         (
