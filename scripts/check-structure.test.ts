@@ -44,6 +44,7 @@ import {
   TRANSACTION_MODULES,
   TRANSACTION_SRC_REL,
   TRANSACTION_ZONE_ALLOWED_EDGES,
+  TRANSACTION_ZONE_BY_DIR,
   WHITELIST,
   LAYER,
   maskNonCode,
@@ -3053,7 +3054,7 @@ describe("check-structure INFRA_MODULES 双向全等 + crate 内分层断言（A
   });
 });
 
-describe("check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-0113 决策 7 / #1181）", () => {
+describe("check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-0113 决策 7 / #1181 / #1597）", () => {
   // 四条新断言各由负向夹具锚定（ADR-0087 断言强度，断言对准退出码与输出）：
   // ① 双向全等、② 区级层序、③ 模型目录判据各有一枚夹具；删任一条断言须动
   // 脚本（清单外无豁免面），对应夹具转绿 → 该夹具测试失败（CI 红）。
@@ -3118,8 +3119,10 @@ describe("check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
   });
 
   it("② 共享语义引用接缝（认许边之外）→ 红", () => {
+    // 区归属按目录约定投影（#1597）：共享语义靶文件落区目录 shared/（原根级单文件
+    // search_text.rs 已迁入，根级单文件另由 fail loud 规则红）。
     const args = makeFixture({
-      "search_text.rs": "use crate::seams::merchant::ensure_merchant;\npub fn x() {}\n",
+      "shared/search_text.rs": "use crate::seams::merchant::ensure_merchant;\npub fn x() {}\n",
     });
     const r = run(args);
     expect(r.status).toBe(1);
@@ -3164,7 +3167,7 @@ describe("check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
 
   it("注释与字符串中的跨区路径不误报（掩码边界）", () => {
     const args = makeFixture({
-      "search_text.rs": [
+      "shared/search_text.rs": [
         "/// 消费方见 `crate::write::writer` 与 `crate::read`（文档注释不算依赖）",
         "// crate::write::protocol::create",
         'let s = "crate::write::batch::run";',
@@ -3178,7 +3181,7 @@ describe("check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
 
   it("花括号列举逐条展开：非首段跨区条目同样命中", () => {
     const args = makeFixture({
-      "search_text.rs": "use crate::{model::Transaction, read::list_view};\npub fn x() {}\n",
+      "shared/search_text.rs": "use crate::{model::Transaction, read::list_view};\npub fn x() {}\n",
     });
     const r = run(args);
     expect(r.status).toBe(1);
@@ -3188,7 +3191,7 @@ describe("check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
 
   it("花括号列举闭括号后文本不吞入：后续枚举变体同名不误报（off-by-one 回归锚，缺它则闭括号扫描失效假绿）", () => {
     const args = makeFixture({
-      "search_text.rs":
+      "shared/search_text.rs":
         "use crate::{model::Transaction};\npub enum E { A, write }\npub fn x() {}\n",
     });
     const r = run(args);
@@ -3232,6 +3235,38 @@ describe("check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
     });
     const r = run(args);
     expect(r.status).toBe(0);
+  });
+
+  it("④ 根级单文件必须进区目录（fail loud）→ 红（#1597，删除检查即变红）", () => {
+    const args = makeCrateFixture();
+    writeFileSync(join(args[1], TRANSACTION_SRC_REL, "search_semantics.rs"), STUB);
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("根级单文件必须进区目录");
+    // 未登记文件同时被双向全等捕获（两层防御；删除任一断言，另一面仍在）
+    expect(r.output).toContain("TRANSACTION_MODULES 未登记模块");
+  });
+
+  it("④ 未登记区归属的顶层目录 → 红（判向不静默失靶，#1597）", () => {
+    const args = makeCrateFixture();
+    mkdirSync(join(args[1], TRANSACTION_SRC_REL, "rogue_zone"), { recursive: true });
+    writeFileSync(join(args[1], TRANSACTION_SRC_REL, "rogue_zone", "helper.rs"), STUB);
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("区目录未登记区归属");
+  });
+
+  it("④ 区目录表与模块清单双向全等（#1597）：zone 表无悬空行、清单顶层目录全有区归属", () => {
+    // 纯常量表核对无法经夹具红，用双向全等锚替代（同登记面长度锚先例）：
+    // 清单新增/删除区目录而 zone 表不同步 → 本断言红；zone 表悬空行同理。
+    // 目录约定（#1597）后清单条目全部为顶层区目录——条目出现文件形态即本断言红。
+    const dirs = new Set(TRANSACTION_MODULES.map((m) => m.path));
+    for (const dir of Object.keys(TRANSACTION_ZONE_BY_DIR)) {
+      expect(dirs.has(dir)).toBe(true);
+    }
+    for (const dir of dirs) {
+      expect(TRANSACTION_ZONE_BY_DIR[dir]).toBeDefined();
+    }
   });
 });
 
@@ -3313,6 +3348,30 @@ describe("check-structure 模块清单双向全等推广到全部 crate 清单�
     // （否则成员登记红）而漏扩 CRATE_MODULE_LISTS → 本断言红 + 守门脚本
     // checkModuleListRegistry 红，两面同锁（ADR-0087 删除即变红）。
     expect(CRATE_MODULE_LISTS.length).toBe(CRATES.length - 1); // -1 根包（壳层，无清单）
+  });
+});
+
+describe("check-structure zone/layer 登记面收口（#1597）", () => {
+  it("crate 清单条目只持 path + note：layer/zone 不得在条目上复活（登记面唯一）", () => {
+    // 收口前的登记面形态锚：条目恢复 layer/zone 字段即本断言红；
+    // zone 靠路径投影（TRANSACTION_ZONE_BY_DIR），layer 靠 CRATES 政策声明。
+    for (const spec of CRATE_MODULE_LISTS) {
+      for (const m of spec.modules) {
+        expect(Object.keys(m).sort()).toEqual(["note", "path"]);
+      }
+    }
+  });
+
+  it("WHITELIST 特例原样：根 src 壳层路径条目自持 layer（#1597 收口不波及）", () => {
+    for (const w of WHITELIST) {
+      expect(Object.keys(w).sort()).toEqual(["layer", "note", "path"]);
+    }
+  });
+
+  it("layer 政策声明仍在 CRATES（每 crate 一条，收口后唯一声明处）", () => {
+    for (const c of CRATES) {
+      expect(c.layer).toBeDefined();
+    }
   });
 });
 

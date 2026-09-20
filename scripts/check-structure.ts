@@ -54,16 +54,19 @@
 // ③ 原生事务语句禁令（issue #1014 / #1003 grilling 定案 7）——产品代码手写
 //    `BEGIN`/`COMMIT`/`ROLLBACK` 即红，唯一合法住址 `db/tx_scope.rs`（事务原语
 //    本体）；靶形态落在字符串里，扫描保留字符串、只掩码注释；外挂测试豁免不变。
-// 交易域模块清单与区级层序（ADR-0113 决策 7 / #1181）：TRANSACTION_MODULES 与
+// 交易域模块清单与区级层序（ADR-0113 决策 2/7 / #1181 / #1597）：TRANSACTION_MODULES 与
 // `crates/transaction/src` 磁盘模块双向全等（新增未登记非测试模块即红；crate
 // 根 lib.rs 是声明与再导出面，不入清单也不参与磁盘枚举）；区归属（共享语义 /
-// 跨域接缝 / 写路径 / 读路径）在清单条目 zone 字段同址单点声明，据此核对区级
-// 层序唯一——写路径/读路径 → 跨域接缝 → 共享语义，共享语义不得依赖接缝与路
-// 径区，接缝不得依赖路径区，写读两径互不依赖；同区互依合法。设计意图边
+// 跨域接缝 / 写路径 / 读路径）按目录约定投影——zone = crate 顶层区目录
+//（TRANSACTION_ZONE_BY_DIR 一表单点声明，#1597 起 per-module zone 字段退役）；
+// crate 根顶层单文件必须进区目录、未登记区归属的顶层目录即红（fail loud，不允
+// 许「根级单文件默认为共享语义」——那会给写路径模块留静默错分类的洞）。据此核
+// 对区级层序唯一——写路径/读路径 → 跨域接缝 → 共享语义，共享语义不得依赖接缝
+// 与路径区，接缝不得依赖路径区，写读两径互不依赖；同区互依合法。设计意图边
 // （ADR-0113 决策 3 登记的原形状反边）逐条留痕 TRANSACTION_ZONE_ALLOWED_EDGES，
 // 重排（#1182）消除后同步删除。引用形态：掩码后匹配 `super::`/`crate::` 前缀
-// + 目标模块名（含花括号列举逐条展开），flat 布局与重排后区目录两种形状同扫
-// 判向不变；表达式位裸路径与别名改写文本不可达，靠评审兜底。
+// + 目标首段（含花括号列举逐条展开）；表达式位裸路径与别名改写文本不可达，
+// 靠评审兜底。
 // 模块清单双向全等推广（#1448）：全部 crate 模块清单与磁盘模块双向全等——
 // 新增生产模块未登记即红，不再只辖 infra（#1134）/ transaction（#1181）/
 // sync-engine（#1107）三面（其余清单磁盘上多出的生产模块曾静默漏过结构守门）；
@@ -81,6 +84,12 @@
 // `cfg_attr` 夹带 path）/ `include!` / 内联模块块 `mod x { … }` / 上述之外认不出的
 // 属性链 fail loud（报文给如何登记的指引），不静默跳过。crate 根 lib.rs 自身
 // 不是 mod 声明，不入 expected（infra 的 lib.rs 清单条目由磁盘枚举面单独核对）。
+// 清单条目 layer 收口（#1597）：18 份 crate 清单条目不再重复 layer——分层是
+// crate 级政策，唯一声明处收口 CRATES 政策核（每 crate 一条，ADR-0112 决策 4），
+// 模块清单经 srcRel = dir + '/src' 回指成员投影 crate 层级（scanLayerForSrcRel）；
+// WHITELIST（根 src 的 test_support）保持特例原样，条目 layer 为壳层路径扫描面
+// 自留。zone/layer 登记面自此唯一：zone 靠路径投影（区目录表），layer 靠 CRATES
+// 政策声明；双向全等断言不降（磁盘枚举 + lib.rs 声明投影两向照扫）。
 // crate 边界核对（spec #1086 / issue #1087 门禁前置）：模块路径白名单之上再加
 // crate 级核对——CRATES 是 workspace 成员、分层与允许依赖方向的唯一事实源；
 // 成员目录（crates/*）与 CRATES 双向全等（新 crate 未登记即红）；每个成员须写
@@ -112,11 +121,21 @@ import { existsSync, readdirSync, readFileSync, statSync, type Stats } from "nod
 import { dirname, join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
-/** 白名单条目（ADR-0056 决策 4） */
-export interface WhitelistEntry {
+/**
+ * 模块清单条目公共形态（#1597 layer 收口后）：路径 + 注记。layer 不在条目上逐条
+ * 重复——分层是 crate 级政策，唯一声明处收口 CRATES（ADR-0112 决策 4），清单经
+ * srcRel = dir + '/src' 回指成员投影层级（scanLayerForSrcRel）；同已核事实：
+ * 收口前条目 layer 与其 crate 的 layer 逐清单恒等，投影不改变任何扫描面。
+ */
+export interface ModuleEntry {
   path: string;
-  layer: Layer;
   note: string;
+}
+
+/** 白名单条目（ADR-0056 决策 4）：根 src 壳层路径的扫描面登记，条目自持 layer——
+ *  WHITELIST 保持特例原样（#1597：crate 清单条目不持 layer，见 ModuleEntry）。 */
+export interface WhitelistEntry extends ModuleEntry {
+  layer: Layer;
 }
 
 /** 分层词汇（白名单 layer 字段取值）：比较侧单一来源，防字面量漂移 */
@@ -150,57 +169,47 @@ export const WHITELIST: readonly WhitelistEntry[] = [
  * crate 根下扫描；壳层统一读写入口与载荷脱敏（shell_support）已随 #1108
  * 迁出至根包 `src/shell_support`，不再入本清单。
  */
-export const INFRA_MODULES: readonly WhitelistEntry[] = [
+export const INFRA_MODULES: readonly ModuleEntry[] = [
   {
     path: "boot",
-    layer: "基础设施",
     note: "引导层（#1131 自 db 升顶层目录：disposition 启动处置判定与失败门 / data_location 引导 / book_registry 账本注册表 / encryption 加密基座 / passphrase_cache 口令缓存；依赖方向 boot → db 单向，原 db 路径经再导出保持）",
   },
   {
     path: "closed_set.rs",
-    layer: "基础设施",
     note: "闭集字符串枚举宏（ADR-0108；模式先例 signals/write_op.rs write_op_set!，ADR-0102）",
   },
   {
     path: "db",
-    layer: "基础设施",
     note: "数据库连接与 schema 守卫（#1127 起 mod.rs 只留声明与再导出，按职责分文件：migrate / connection / runtime / query / tx_scope / perf_trace / schema_guard；facade 为 #1408 新增的异步 DB 门面（写读两线程 + 作业通道 + panic 回滚），facade_handles 为 #1410 新增的门面句柄与按槽解析（类型化读 / 写句柄、连接槽对、进程级安装登记），job_gate 为 #1415 新增的限时等待与弃权状态门（决策 8 豁免台账退役），ADR-0125；时间与身份工厂自 #1128 升顶层 ids、引导层五模块自 #1131 升顶层 boot，原 db 路径经再导出保持）",
   },
-  { path: "error.rs", layer: "基础设施", note: "错误" },
+  { path: "error.rs", note: "错误" },
   {
     path: "events.rs",
-    layer: "基础设施",
     note: "事件发射机制（ADR-0054，#408 纳入守门；消费方跨出壳层——备份域、同步域，不随壳机制分组，ADR-0111 决策 2）",
   },
   {
     path: "fs_util.rs",
-    layer: "基础设施",
     note: "文件级原子操作工具（备份与 DataLocation 搬迁共用，#408 纳入守门）",
   },
   {
     path: "ids.rs",
-    layer: "基础设施",
     note: "时间与身份工厂（当前时刻 / ISO 格式 / UUID v7 与 v5 确定性派生，#1128 自 db 升入——非数据库关切，文件工具等原语引用不穿透 db）",
   },
   {
     path: "lib.rs",
-    layer: "基础设施",
     note: "crate 根声明文件（#1134 双向全等起入清单）：pub mod 声明与再导出面（含 test_utils cfg 门，ADR-0111 决策 5 / #1132）——模块清单与 crate 实形的双向全等含根声明文件",
   },
   {
     path: "serde_util.rs",
-    layer: "基础设施",
     note: "wire 入参「键缺席 vs null」三态区分器 double_option（键缺席 = 不改 / null = 清空 / 给值 = 落定，#1330 自账户域信用卡档案字段与分类域 icon / parent_id 两份同源拷贝收敛；serde 对 Option<Option<T>> 默认把键缺席与 null 折叠成同一 None，须显式 deserialize_with）",
   },
-  { path: "settings.rs", layer: "基础设施", note: "设置" },
+  { path: "settings.rs", note: "设置" },
   {
     path: "signals",
-    layer: "基础设施",
     note: "信号映射（ADR-0044；#1129 起为目录模块，mod.rs 只做声明与再导出，测试外挂 tests/ 与 db/ 同形）",
   },
   {
     path: "test_utils.rs",
-    layer: "基础设施",
     note: '测试器具（捕获 tracing 事件的 Layer / 闸门式假发射器，#1088 随类型身份约束归位；`#[cfg(any(test, feature = "test-utils"))]` + `#[doc(hidden)]`，默认不进生产编译，#1132）',
   },
 ];
@@ -214,25 +223,21 @@ export const INFRA_SRC_REL = "crates/infra/src";
  * 领域命令契约、op 本地记录与读取、流位点；业务域与 sync_engine 的共同底座，
  * 对壳层与全部域目录零依赖（反向引用由 cargo 依赖图拒绝 + 本扫描固化）。
  */
-export const PROTOCOL_MODULES: readonly WhitelistEntry[] = [
+export const PROTOCOL_MODULES: readonly ModuleEntry[] = [
   {
     path: "command.rs",
-    layer: "协议",
     note: "同步命令契约（SyncCommand 实体标签/实体键）与重放效果（ReplayEffect，ADR-0101）",
   },
   {
     path: "device.rs",
-    layer: "协议",
     note: "设备标识与逻辑时钟（`sync_device` 单行唯一 SQL 收口，ADR-0091）",
   },
   {
     path: "op.rs",
-    layer: "协议",
     note: "op 行落库与读取（`sync_ops` 唯一 SQL 收口）+ 写后钩子登记点（ADR-0091 决策 9）",
   },
   {
     path: "position.rs",
-    layer: "协议",
     note: "流位点（`sync_stream_positions` 唯一 SQL 收口，issue #857）",
   },
 ];
@@ -249,15 +254,13 @@ export const PROTOCOL_SRC_REL = "crates/sync-protocol/src";
  * dev-dependency 环只覆盖测试目标）。crate 根 lib.rs 是声明与再导出面
  * （无守门靶向代码），与协议 crate 同款不入清单。
  */
-export const BACKUP_MODULES: readonly WhitelistEntry[] = [
+export const BACKUP_MODULES: readonly ModuleEntry[] = [
   {
     path: "auto.rs",
-    layer: "域目录",
     note: "自动备份调度（状态 / 到期判定纯函数 / 三触发入口 / 轮询线程 / 追补触发注册点，挂载点④，issue #1091）",
   },
   {
     path: "engine.rs",
-    layer: "域目录",
     note: "备份引擎（zip 打包 / 恢复 / 受管列表与滚动清理，ADR-0007 / ADR-0016）",
   },
 ];
@@ -275,14 +278,28 @@ export const TRANSACTION_ZONE = {
 
 export type TransactionZone = (typeof TRANSACTION_ZONE)[keyof typeof TRANSACTION_ZONE];
 
-/** 交易域模块清单条目：白名单条目 + 区归属（ADR-0113 决策 2——区归属与清单同址单点声明，据此判向）。 */
-export interface TransactionModuleEntry extends WhitelistEntry {
-  zone: TransactionZone;
-}
+/**
+ * 交易域区目录 → 区归属（ADR-0113 决策 2 目录约定 / #1597）：zone 靠路径投影——
+ * 文件的区归属 = 其所在 crate 顶层区目录的归属，#1181 期随清单条目同址登记的
+ * per-module zone 字段退役；区归属改变即目录移动 + 本表一行改注，移动本身是
+ * 评审可见的改动。crate 根 lib.rs 与测试豁免形态（tests.rs / tests/）不投影；
+ * 顶层单文件不在本表（fail loud：根级单文件必须进区目录，不允许「默认为共享
+ * 语义」——那会给写路径模块留静默错分类的洞）；未登记区归属的顶层目录同样
+ * fail loud。
+ */
+export const TRANSACTION_ZONE_BY_DIR: Record<string, TransactionZone> = {
+  amount: TRANSACTION_ZONE.SHARED,
+  command: TRANSACTION_ZONE.SHARED,
+  model: TRANSACTION_ZONE.SHARED,
+  read: TRANSACTION_ZONE.READ,
+  seams: TRANSACTION_ZONE.SEAM,
+  shared: TRANSACTION_ZONE.SHARED,
+  write: TRANSACTION_ZONE.WRITE,
+};
 
 /**
  * 核心交易域 crate 的模块清单（spec #1086 / issue #1092；区归属 ADR-0113 决策
- * 2/7 / #1181）：路径相对 `src-tauri/crates/transaction/src`。P2 首个拆出的底层
+ * 2/7 / #1181 / #1597）：路径相对 `src-tauri/crates/transaction/src`。P2 首个拆出的底层
  * 业务域 crate——全部业务域可依赖的最底层域。对根包与任何业务域零依赖：对投资/
  * 商户/币种/物品/保单/账户六向的残留边已按挂载点反转收敛（#1092 前置提交），
  * 反向引用由 cargo 依赖图拒绝（生产依赖面无根包，dev-dependency 环只覆盖测试
@@ -290,54 +307,40 @@ export interface TransactionModuleEntry extends WhitelistEntry {
  * 同款不入清单，也不参与双向全等的磁盘枚举；`<模块>/tests.rs` 与 `<模块>/tests/`
  * 均为测试豁免形态不入清单。
  *
- * zone 字段按 ADR-0113 决策 2 的消费面判据登记（#1182 重排后的目标形状）：
- * 写读两径可依赖接缝与共享语义，接缝只可依赖共享语义，共享语义是底，写读两径
- * 互不依赖。重排（#1182）已消除三处反边，故 `TRANSACTION_ZONE_ALLOWED_EDGES`
- * 归空：本位币接缝契约随消费概念归共享语义区（`amount/base_currency`）、
- * `model → writer` 转换 impl 搬进写路径、同步命令载荷归共享语义区（op 产出点
- * 留写路径 `write/op.rs`）。
+ * 区归属不逐条登记：zone = crate 顶层区目录（ADR-0113 决策 2 目录约定 /
+ * #1597，投影表 TRANSACTION_ZONE_BY_DIR）——写读两径可依赖接缝与共享语义，
+ * 接缝只可依赖共享语义，共享语义是底，写读两径互不依赖。重排（#1182）已消除
+ * 三处反边，故 `TRANSACTION_ZONE_ALLOWED_EDGES` 归空：本位币接缝契约随消费概
+ * 念归共享语义区（`amount/base_currency`）、`model → writer` 转换 impl 搬进
+ * 写路径、同步命令载荷归共享语义区（op 产出点留写路径 `write/op.rs`）。
  */
-export const TRANSACTION_MODULES: readonly TransactionModuleEntry[] = [
+export const TRANSACTION_MODULES: readonly ModuleEntry[] = [
   {
     path: "amount",
-    zone: TRANSACTION_ZONE.SHARED,
-    layer: "域目录",
     note: "共享语义：金额口径权威（kind 枚举真源 + kind→度量矩阵 + 本位币折算）；子模块 base_currency 承载本位币基准读取接缝契约（ADR-0113 决策 3.1）",
   },
   {
     path: "command",
-    zone: TRANSACTION_ZONE.SHARED,
-    layer: "域目录",
     note: "共享语义：同步命令载荷契约（payload 载荷 + fields 语义字段，issue #855）；被接缝与写路径共同消费，op 产出点归写路径 write/op.rs（ADR-0113 决策 3.3）",
   },
   {
     path: "model",
-    zone: TRANSACTION_ZONE.SHARED,
-    layer: "域目录",
     note: "共享语义：域集中模型（transaction / input / normalized / filter / repair，#423 随域归位）；到 writer::NormalizedRow 的转换 impl 归写路径（ADR-0113 决策 3.2）",
   },
   {
     path: "read",
-    zone: TRANSACTION_ZONE.READ,
-    layer: "域目录",
     note: "读路径：列表与单笔（list.rs）/ 来源列与转换投影（source.rs）/ 搜索与拼音修复（search.rs）",
   },
   {
     path: "seams",
-    zone: TRANSACTION_ZONE.SEAM,
-    layer: "域目录",
     note: "跨域接缝：商户 / 投资 / 余额刷新 / 出资账户视图 / 来源列反查（计划/保单/物品）；只持契约与注册点",
   },
   {
-    path: "search_text.rs",
-    zone: TRANSACTION_ZONE.SHARED,
-    layer: "域目录",
-    note: "共享语义：统一模糊搜索语义纯函数（拼音首字母/子序列/词条匹配，ADR-0027）；被投资域下拉共同消费（ADR-0113 决策 2 先例）",
+    path: "shared",
+    note: "共享语义区目录（#1597 自根级单文件 search_text.rs 迁入）：统一模糊搜索语义纯函数（拼音首字母/子序列/词条匹配，ADR-0027）住 shared/search_text；被投资域下拉共同消费（ADR-0113 决策 2 先例）",
   },
   {
     path: "write",
-    zone: TRANSACTION_ZONE.WRITE,
-    layer: "域目录",
     note: "写路径：写入协议（protocol，Local/Replay 同址 ADR-0105）/ 行写入（writer）/ 批量（batch）/ 出资准入（funding）/ op 产出（op）",
   },
 ];
@@ -356,25 +359,21 @@ export const TRANSACTION_SRC_REL = "crates/transaction/src";
  * 靶向代码），与协议/备份/交易 crate 同款不入清单；tests.rs 与 balance/tests.rs
  * 均为测试豁免形态不入清单。
  */
-export const ACCOUNTS_MODULES: readonly WhitelistEntry[] = [
+export const ACCOUNTS_MODULES: readonly ModuleEntry[] = [
   {
     path: "balance.rs",
-    layer: "域目录",
     note: "余额口径权威（实时计算 + V017 余额缓存整体重算刷新与读取 + 余额清单，ADR-0067/ADR-0071；余额刷新接缝实现注册点）",
   },
   {
     path: "command.rs",
-    layer: "域目录",
     note: "同步命令（op 载荷形态、产出单点与重放分派，issue #860）",
   },
   {
     path: "core.rs",
-    layer: "域目录",
     note: "CRUD / 幂等创建 / 软删除 / 黑洞账户 / 余额调整编排 + 出资账户视图接缝实现（issue #1092）",
   },
   {
     path: "model.rs",
-    layer: "域目录",
     note: "域集中模型（账户类型枚举、实体、入参与余额读模型 DTO，#419 随域归位）",
   },
 ];
@@ -391,18 +390,16 @@ export const ACCOUNTS_SRC_REL = "crates/accounts/src";
  * 目标）。crate 根 lib.rs 是声明与再导出面（无守门靶向代码），与协议/备份/
  * 交易 crate 同款不入清单；tests.rs 为测试豁免形态不入清单。
  */
-export const CATEGORIES_MODULES: readonly WhitelistEntry[] = [
+export const CATEGORIES_MODULES: readonly ModuleEntry[] = [
   {
     path: "command.rs",
-    layer: "域目录",
     note: "同步命令（issue #860 / ADR-0091）：op 载荷的分类域形态、产出单点与重放执行",
   },
   {
     path: "core.rs",
-    layer: "域目录",
     note: "CRUD / 幂等创建 / 软删除 / 两级分类校验 / 预算删除守卫 / 排序重排（issue #91 域内收口）",
   },
-  { path: "model.rs", layer: "域目录", note: "分类实体与入参、排序项（#419 随域归位）" },
+  { path: "model.rs", note: "分类实体与入参、排序项（#419 随域归位）" },
 ];
 
 /** 分类域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-categories.dir 同源。 */
@@ -417,23 +414,20 @@ export const CATEGORIES_SRC_REL = "crates/categories/src";
  * lib.rs 是声明与再导出面（无守门靶向代码），与协议/备份/交易 crate 同款不入
  * 清单，也不参与双向全等的磁盘枚举；tests.rs 为测试豁免形态不入清单。
  */
-export const CURRENCIES_MODULES: readonly WhitelistEntry[] = [
+export const CURRENCIES_MODULES: readonly ModuleEntry[] = [
   {
     path: "base_currency.rs",
-    layer: "域目录",
     note: "本位币基准（LedgerLevelSetting 首个成员，issue #858 / ADR-0091 决策 3）+ 交易×币种接缝实现注册（#1092）",
   },
   {
     path: "command.rs",
-    layer: "域目录",
     note: "账本级设置同步命令（op 载荷形态 LedgerSettingCommand / 产出单点 / 重放分派，issue #858）",
   },
   {
     path: "list.rs",
-    layer: "域目录",
     note: "币种清单查询（#404 自命令壳层迁入，IPC 与 HTTP 共用）",
   },
-  { path: "model.rs", layer: "域目录", note: "域模型（#418 随域归位）：币种实体 + 汇率实体" },
+  { path: "model.rs", note: "域模型（#418 随域归位）：币种实体 + 汇率实体" },
 ];
 
 /** 币种域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-currencies.dir 同源。 */
@@ -451,9 +445,9 @@ const TRANSACTION_ZONE_RANK: Record<TransactionZone, number> = {
   [TRANSACTION_ZONE.READ]: 2,
 };
 
-/** 交易域区级认许边条目：拥有模块的清单条目路径 + 目标模块键 + 成因留痕 */
+/** 交易域区级认许边条目：拥有文件的区目录名 + 目标区目录名 + 成因留痕 */
 interface TransactionZoneEdge {
-  file: string;
+  dir: string;
   target: string;
   reason: string;
 }
@@ -461,9 +455,10 @@ interface TransactionZoneEdge {
 /**
  * 交易域区级认许边（ADR-0113 决策 3 / #1181）：原形状上与区级层序冲突的既有
  * 设计意图边逐条留痕于本脚本（与 INFRA_DOMAIN_ALLOWED_EDGES 同款纪律），精确到
- * 清单条目路径 + 目标模块键，附 ADR 指针；清单之外的区级反向引用一律红。两条
- * 原反边已由重排票（#1182）消除（本位币接缝归共享语义区、model→writer 转换归
- * 写路径），故本清单归空——再出现区级反向引用即红，不设认许。
+ * 区目录名 + 目标区目录名（目录约定 / #1597 后的判向单位），附 ADR 指针；清单
+ * 之外的区级反向引用一律红。两条原反边已由重排票（#1182）消除（本位币接缝归
+ * 共享语义区、model→writer 转换归写路径），故本清单归空——再出现区级反向引用
+ * 即红，不设认许。
  */
 export const TRANSACTION_ZONE_ALLOWED_EDGES: readonly TransactionZoneEdge[] = [];
 
@@ -471,23 +466,21 @@ export const TRANSACTION_ZONE_ALLOWED_EDGES: readonly TransactionZoneEdge[] = []
  * 商户域 crate 的模块清单（spec #1086 / issue #1096）：路径相对
  * `src-tauri/crates/merchants/src`。参考数据三域各自独立 crate、不合并（spec
  * #1086 裁决）——商户字典的 CRUD 与按名查找/即建。对壳层与同步域零容忍照扫
- *（与备份/交易 crate 同款，清单条目 layer 为域目录即入业务域扫描面）；对核心
+ *（与备份/交易 crate 同款，crate 分层为域〔CRATES 政策核〕即入业务域扫描面）；对核心
  * 交易域的引用是合法域→域上层依赖（交易×商户接缝的实现注册侧，#1092），由
  * cargo 依赖图与 CRATES 分层核对承担，文本扫描不再辖。crate 根 lib.rs 是声明
  * 与再导出面（无守门靶向代码），与协议/备份/交易 crate 同款不入清单。
  */
-export const MERCHANTS_MODULES: readonly WhitelistEntry[] = [
+export const MERCHANTS_MODULES: readonly ModuleEntry[] = [
   {
     path: "command.rs",
-    layer: "域目录",
     note: "商户同步命令（op 载荷形态、产出单点与重放分派，issue #860）",
   },
   {
     path: "crud.rs",
-    layer: "域目录",
     note: "商户字典域行为（列表/创建/改名/软删 + 按名查找/即建 + 交易×商户接缝实现注册，#1092）",
   },
-  { path: "model.rs", layer: "域目录", note: "商户域模型（#419 随域归位）" },
+  { path: "model.rs", note: "商户域模型（#419 随域归位）" },
 ];
 
 /** 商户域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-merchants.dir 同源。 */
@@ -499,41 +492,35 @@ export const MERCHANTS_SRC_REL = "crates/merchants/src";
  * 保司字典（Insurer，保险域自有独立字典）与保单视角统计。依赖面只有基础设施、
  * 同步协议与核心交易域——统计读路径消费 kind→度量矩阵与本位币折算口径，交易
  * ×保单接缝（#1092）的实现注册侧是域→域合法上层依赖（保单 → 核心交易单向），
- * 对根包与同步域零容忍照扫（与备份/交易 crate 同款，清单条目 layer 为域目录
+ * 对根包与同步域零容忍照扫（与备份/交易 crate 同款，crate 分层为域〔CRATES 政策核〕
  * 即入业务域扫描面）；反向引用由 cargo 依赖图拒绝（生产依赖面无根包，
  * dev-dependency 环只覆盖测试目标）。crate 根 lib.rs 是声明与再导出面（无守门
  * 靶向代码），与协议/备份/交易 crate 同款不入清单；tests.rs 为测试豁免形态
  * 不入清单。
  */
-export const POLICY_MODULES: readonly WhitelistEntry[] = [
+export const POLICY_MODULES: readonly ModuleEntry[] = [
   {
     path: "command.rs",
-    layer: "域目录",
     note: "保险域同步命令（issue #860 / ADR-0091）：保单与保司字典的 op 载荷形态、产出单点与重放分派",
   },
   {
     path: "crud.rs",
-    layer: "域目录",
     note: "保单档案 CRUD / 软删历史保留（ADR-0051 决策 5）+ 交易×保单接缝实现注册（#1092）",
   },
   {
     path: "insurer.rs",
-    layer: "域目录",
     note: "保司字典（issue #712 / ADR-0082）：CRUD / 在用名唯一 / 按名查找与即建",
   },
   {
     path: "model.rs",
-    layer: "域目录",
     note: "保单域模型（#420 随域归位）：保单实体 / 建档入参 / 来源列投影 / 统计行",
   },
   {
     path: "stats.rs",
-    layer: "域目录",
     note: "保单视角统计（issue #363）：实时推导不落库，度量经交易域 kind→度量矩阵驱动",
   },
   {
     path: "validation.rs",
-    layer: "域目录",
     note: "建档/编辑入参校验与归一化（保司在用 / 日期成对 / 保额币种成对）",
   },
 ];
@@ -551,33 +538,28 @@ export const POLICY_SRC_REL = "crates/policy/src";
  * 备份/交易 crate 同款不入清单，也不参与双向全等的磁盘枚举；tests.rs 与 tests/
  * 均为测试豁免形态不入清单。
  */
-export const SCHEDULED_MODULES: readonly WhitelistEntry[] = [
+export const SCHEDULED_MODULES: readonly ModuleEntry[] = [
   {
     path: "auto_run.rs",
-    layer: "域目录",
     note: "自动执行追补（唯一新增接缝，ADR-0042）：运行时镜像、追补入口、期次落账后置钩子注册点（挂载点③实现侧）与追补触发钩子实现（挂载点④，issue #1090/#1091）",
   },
   {
     path: "command.rs",
-    layer: "域目录",
     note: "定时计划同步命令（op 载荷形态、产出单点与重放分派，issue #856 / #860）",
   },
   {
     path: "engine.rs",
-    layer: "域目录",
     note: "计划/期次引擎（建档、状态机、期次展开与执行，issue #59/#230/#856）",
   },
   {
     path: "models.rs",
-    layer: "域目录",
     note: "域集中模型（#419 随域归位）：计划/期次/扩展实体与入参、闭集枚举",
   },
   {
     path: "source.rs",
-    layer: "域目录",
     note: "计划来源反查（spec #704/#1090 接缝反转实现侧）：模块私有，反查行不公开再导出，经 install_plan_source_hook 注册进核心交易域接缝",
   },
-  { path: "spend.rs", layer: "域目录", note: "订阅花费双口径（ADR-0023，issue #160/#161/#395）" },
+  { path: "spend.rs", note: "订阅花费双口径（ADR-0023，issue #160/#161/#395）" },
 ];
 
 /** 定时计划域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-scheduled.dir 同源。 */
@@ -589,30 +571,26 @@ export const SCHEDULED_SRC_REL = "crates/scheduled/src";
  * 当前周期进度（实时推导不落库）。依赖面只有基础设施、同步协议与核心交易域
  * ——进度 spent 口径消费 kind→度量矩阵（ExpenseNet），对根包与同级业务域零
  * 依赖，无接缝无注册点、壳层启动零接线；对壳层与同步域零容忍照扫（与备份/
- * 交易 crate 同款，清单条目 layer 为域目录即入业务域扫描面）；反向引用由
+ * 交易 crate 同款，crate 分层为域〔CRATES 政策核〕即入业务域扫描面）；反向引用由
  * cargo 依赖图拒绝（生产依赖面无根包，dev-dependency 环只覆盖测试目标）。
  * crate 根 lib.rs 是声明与再导出面（无守门靶向代码），与协议/备份/交易 crate
  * 同款不入清单；tests.rs 为测试豁免形态不入清单。
  */
-export const BUDGET_MODULES: readonly WhitelistEntry[] = [
+export const BUDGET_MODULES: readonly ModuleEntry[] = [
   {
     path: "command.rs",
-    layer: "域目录",
     note: "预算同步命令（issue #860 / ADR-0091）：op 载荷形态、产出单点与重放分派",
   },
   {
     path: "crud.rs",
-    layer: "域目录",
     note: "预算 CRUD 域行为（issue #91/#183/#184）：写入校验（金额为正/支出分类/「分类+周期」唯一）与软删除",
   },
   {
     path: "model.rs",
-    layer: "域目录",
     note: "预算域模型（#420 随域归位）：周期枚举、实体、入参与进度",
   },
   {
     path: "progress.rs",
-    layer: "域目录",
     note: "当前周期进度（issue #182）：spent = expense_net 口径，参与 kind 由交易域度量矩阵导出",
   },
 ];
@@ -627,31 +605,27 @@ export const BUDGET_SRC_REL = "crates/budget/src";
  * 只有基础设施、同步协议与核心交易域——当前估值折本位币消费交易域 Amount
  * 口径（域间横向依赖，ADR-0056 决策 2 允许）是域→域合法上层依赖
  *（实物资产 → 核心交易单向），对根包与同步域零容忍照扫（与备份/交易 crate
- * 同款，清单条目 layer 为域目录即入业务域扫描面）；无接缝无注册点、壳层启动
+ * 同款，crate 分层为域〔CRATES 政策核〕即入业务域扫描面）；无接缝无注册点、壳层启动
  * 零接线（失效信号 notify 回调注入）；反向引用由 cargo 依赖图拒绝（生产依赖
  * 面无根包，dev-dependency 环只覆盖测试目标）。crate 根 lib.rs 是声明与再导
  * 出面（无守门靶向代码），与协议/备份/交易 crate 同款不入清单；域内内联
  * #[cfg(test)] 模块与 tests.rs 为测试豁免形态不入清单。
  */
-export const PHYSICAL_ASSET_MODULES: readonly WhitelistEntry[] = [
+export const PHYSICAL_ASSET_MODULES: readonly ModuleEntry[] = [
   {
     path: "command.rs",
-    layer: "域目录",
     note: "实物资产同步命令（issue #860 / ADR-0091）：op 载荷形态（建档携带首条估值行、估值追加无实体指向）、产出单点与重放分派",
   },
   {
     path: "crud.rs",
-    layer: "域目录",
     note: "域行为（issue #466–#468 / ADR-0064）：建档两表同事务 / 列表与详情（当前估值 = 最新一条 + 在持合计）/ 编辑 / 估值追加 / 处置 / 软删除",
   },
   {
     path: "model.rs",
-    layer: "域目录",
     note: "域模型（#419 随域归位）：资产实体 / 入参 / 列表返回（含在持合计）",
   },
   {
     path: "validation.rs",
-    layer: "域目录",
     note: "入参校验与归一化（名称 / 金额 / 币种成对 / 日期守卫，issue #467 T2 拆出共享助手）",
   },
 ];
@@ -671,10 +645,9 @@ export const PHYSICAL_ASSET_SRC_REL = "crates/physical-asset/src";
  * 覆盖测试目标）。crate 根 lib.rs 是声明与再导出面（无守门靶向代码），与
  * 协议/备份/交易 crate 同款不入清单；tests.rs 为测试豁免形态不入清单。
  */
-export const REPORTS_MODULES: readonly WhitelistEntry[] = [
+export const REPORTS_MODULES: readonly ModuleEntry[] = [
   {
     path: "model.rs",
-    layer: "域目录",
     note: "报表读模型（#421 随域归位）：月度汇总行 / 分类份额 / 商户排行行与载荷 / 日期极值对",
   },
 ];
@@ -686,34 +659,30 @@ export const REPORTS_SRC_REL = "crates/reports/src";
  * 物品域 crate 的模块清单（spec #1086 / issue #1099）：路径相对
  * `src-tauri/crates/item/src`。P3 叶子域——耐用实物物品的 CRUD / 处置与
  * 「每天使用成本」聚合。对壳层与同步域零容忍照扫（与备份/交易 crate 同款，
- * 清单条目 layer 为域目录即入业务域扫描面）；对核心交易域的引用是合法域→域
+ * crate 分层为域〔CRATES 政策核〕即入业务域扫描面）；对核心交易域的引用是合法域→域
  * 上层依赖（交易×物品来源列反查接缝的实现注册侧，#1092），由 cargo 依赖图
  * 与 CRATES 分层核对承担，文本扫描不再辖。crate 根 lib.rs 是声明与再导出面
  *（无守门靶向代码），与协议/备份/交易 crate 同款不入清单；tests.rs 与
  * tests/ 均为测试豁免形态不入清单。
  */
-export const ITEM_MODULES: readonly WhitelistEntry[] = [
+export const ITEM_MODULES: readonly ModuleEntry[] = [
   {
     path: "command.rs",
-    layer: "域目录",
     note: "物品同步命令（op 载荷形态、产出单点与重放分派，issue #860）",
   },
   {
     path: "cost.rs",
-    layer: "域目录",
     note: "DailyUsageCost 接缝：「每天使用成本」纯计算单一权威（issue #114）",
   },
   {
     path: "domain.rs",
-    layer: "域目录",
     note: "域 API 单一权威（创建/修改/处置/删除/列表/成本聚合 + 交易×物品来源列反查接缝实现注册，#1092）",
   },
   {
     path: "guard.rs",
-    layer: "域目录",
     note: "溯源守卫（ADR-0025 创建唯一入口的准入接缝，issue #207/#119）",
   },
-  { path: "model.rs", layer: "域目录", note: "物品域模型（#420 随域归位）" },
+  { path: "model.rs", note: "物品域模型（#420 随域归位）" },
 ];
 
 /** 物品域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-item.dir 同源。 */
@@ -728,20 +697,18 @@ export const ITEM_SRC_REL = "crates/item/src";
  * 在持合计单一读口径，ADR-0064 决策 6；账户域与实物资产域两项系维护者修订
  * 票面 AC 后授权，修订评论留痕），纯读模型无同步命令，对同步协议 crate 亦
  * 零生产依赖；无接缝无注册点、壳层启动零接线；对壳层与同步域零容忍照扫
- *（与备份/交易 crate 同款，清单条目 layer 为域目录即入业务域扫描面）；反向
+ *（与备份/交易 crate 同款，crate 分层为域〔CRATES 政策核〕即入业务域扫描面）；反向
  * 引用由 cargo 依赖图拒绝（生产依赖面无根包）。crate 根 lib.rs 是声明与再导
  * 出面（无守门靶向代码），与协议/备份/交易 crate 同款不入清单；域内无测试
  * 目标（三层测试全在根包侧），无测试豁免形态条目。
  */
-export const DASHBOARD_MODULES: readonly WhitelistEntry[] = [
+export const DASHBOARD_MODULES: readonly ModuleEntry[] = [
   {
     path: "model.rs",
-    layer: "域目录",
     note: "仪表盘读模型（#421 随域归位）：净资产总览五字段（净额/余额腿/持仓腿/实物腿/基准币种）",
   },
   {
     path: "net_worth.rs",
-    layer: "域目录",
     note: "净资产缓存与读探针（issue #491 / ADR-0067，ADR-0071 决策 3 自 db/net_worth.rs 迁入）：输入指纹推导 / 失效判定 / 缓存回写",
   },
 ];
@@ -753,7 +720,7 @@ export const DASHBOARD_SRC_REL = "crates/dashboard/src";
  * 投资域 crate 的模块清单（spec #1086 / issue #1097）：路径相对
  * `src-tauri/crates/investment/src`。P3 业务域 crate——可被行情同步域与多端同步
  * 域依赖的独立编译单元。对壳层与同步域零容忍照扫（与备份/交易 crate 同款，
- * 清单条目 layer 为域目录即入业务域扫描面）；对核心交易域（接缝实现注册侧，
+ * crate 分层为域〔CRATES 政策核〕即入业务域扫描面）；对核心交易域（接缝实现注册侧，
  * #1092）、账户域（余额口径与 AccountType）与币种域（ExchangeRate /
  * ExchangeRateInput，#418 / ADR-0059，#1097 裁决显性化承认）的引用是合法域→域
  * 上层依赖，由 cargo 依赖图与 CRATES 分层核对承担，文本扫描不再辖；行情同步域
@@ -761,114 +728,93 @@ export const DASHBOARD_SRC_REL = "crates/dashboard/src";
  * lib.rs 是声明与再导出面（无守门靶向代码），与协议/备份/交易 crate 同款不入
  * 清单；tests.rs 与 tests/ 为测试豁免形态不入清单。
  */
-export const INVESTMENT_MODULES: readonly WhitelistEntry[] = [
+export const INVESTMENT_MODULES: readonly ModuleEntry[] = [
   {
     path: "backfill.rs",
-    layer: "域目录",
     note: "价格历史后台补全的运行态快照与走势空态三态判定（ADR-0122 决策 5 / issue #1377）：补全中（带计数）/ 补全失败待重试 / 无数据——消费派生事实（有价格通道而无历史序列，与补全队列同源）与行情同步域发布的进程内运行态快照（不落库，重启即回补全中）；#1448 补登清单（引入时漏登记）",
   },
   {
     path: "channel.rs",
-    layer: "域目录",
     note: "价格通道派生（PriceChannel，issue #1060）——类型 × 市场 × 代码 + 恒定单位价格（ADR-0126）→ 行情/净值/恒定价格/手动报价/无来源的判定单点",
   },
   {
     path: "command.rs",
-    layer: "域目录",
     note: "投资同步命令（op 载荷形态、产出单点与重放分派，issue #861）：标的字典/汇率/用户侧价格全域进 OpLog，东财行情外拉数据不进 op",
   },
   {
     path: "constant_price.rs",
-    layer: "域目录",
     note: "价格恒定标的（ADR-0126 / issue #1450）：打标单点单向（恒定单位价格列写入 + 净值日期清空）、建档常量价保障与读侧常量取值接缝（装载器 + 周键合成，三消费面共用）",
   },
   {
     path: "crud.rs",
-    layer: "域目录",
     note: "标的字典/汇率/现价列表与写入、标的搜索（统一模糊搜索语义）、手动创建守卫与自建标的删除守卫",
   },
   {
     path: "financial_freedom.rs",
-    layer: "域目录",
     note: "财务自由度口径——可投资资产 × 3% 安全提取率对年度预算总额的覆盖比例（只读，ADR-0048）；可投资资产分子按两腿拆分（投资账户现金 / 持仓市值），合计 = 两腿之和（issue #1536）",
   },
   {
     path: "fund.rs",
-    layer: "域目录",
     note: "场外基金接入——6 位代码校验、行情接入落库半边、AI 降级建行、按代码即拉注入接缝",
   },
-  { path: "holdings.rs", layer: "域目录", note: "时点持仓（AsOfHolding）推算单点" },
+  { path: "holdings.rs", note: "时点持仓（AsOfHolding）推算单点" },
   {
     path: "lots.rs",
-    layer: "域目录",
     note: "持仓批次（security_lots）单点——取批次、逐批次 FIFO 分摊与耗尽批次成本闭合、修改/删除路径的两个精确回补原语（issue #1018）",
   },
   {
     path: "manual_price.rs",
-    layer: "域目录",
     note: "手动报价两落点（价格历史周采样 + 现价缓存映像规则）",
   },
   {
     path: "model.rs",
-    layer: "域目录",
     note: "域集中模型——全量投资类型与财务自由度总览（#422 随域归位，经 crate 根逐类型再导出禁止 glob）",
   },
   {
     path: "mwr.rs",
-    layer: "域目录",
     note: "资金加权收益率（MoneyWeightedReturn，ADR-0115 / issue #1195）——XIRR 求解器（确定性二分）与三消费面读投影（单标的 / 账户级 / 全账级），现金流与区间期初市值口径见模块头注",
   },
   {
     path: "overview.rs",
-    layer: "域目录",
     note: "投资概览读数（InvestmentOverview，spec #1532 / issue #1536）——投资页「概览」页签的全页折本位币单值：可投资资产合计 + 现金 / 持仓两腿 + 未计入持仓计数 + 有无投资账户，只读无写入（ADR-0131）",
   },
-  { path: "predicates.rs", layer: "域目录", note: "「持仓标的」判定谓词单点（INVESTED_EXISTS）" },
+  { path: "predicates.rs", note: "「持仓标的」判定谓词单点（INVESTED_EXISTS）" },
   {
     path: "prices.rs",
-    layer: "域目录",
     note: "价格写入单点——现价缓存 upsert、价格历史周采样 upsert、价格刻度换算、价格来源标记（存量 eastmoney / 新写入按实际取数源，ADR-0130 决策 7）（#401 自 sync/persist 迁入）",
   },
   {
     path: "quote.rs",
-    layer: "域目录",
     note: "行情接入接缝（QuoteAdoption，ADR-0103）——统一报价载荷 Quote 与落库半边 adopt_quote；查询半边实现在行情同步域网络层、经注入签名供给",
   },
   {
     path: "reports.rs",
-    layer: "域目录",
     note: "已实现盈亏汇总与按币种累计收益查询（issue #1077）",
   },
-  { path: "source.rs", layer: "域目录", note: "交易列表标的来源反查（spec #704 / issue #709）" },
+  { path: "source.rs", note: "交易列表标的来源反查（spec #704 / issue #709）" },
   {
     path: "split.rs",
-    layer: "域目录",
     note: "份额调整（split）批次成本重述单点——按比例重述在用批次与审计落库（ADR-0106 决策 2/3，issue #1049）",
   },
   {
     path: "staleness.rs",
-    layer: "域目录",
     note: "价格过期检查（issue #1190）：打开投资页时的本地水位检查单点——零网络请求，消费现价缓存既有两条水位（行情 priced_at / 净值 nav_date），水位日超阈值自然日或持仓缺现价计入过期；#1448 补登清单（引入时漏登记）",
   },
   {
     path: "stock.rs",
-    layer: "域目录",
     note: "股票按（市场，代码）查询的领域规则——代码形态 → 市场单点推断、报价币种推导（issue #693 / ADR-0081）",
   },
   {
     path: "trade.rs",
-    layer: "域目录",
     note: "buy/sell/convert/split/dividend 协议分派与买卖/转换/份额调整明细投影（TransactionTrade / TransactionConvert）",
   },
   {
     path: "transaction_seam.rs",
-    layer: "域目录",
     note: "交易域接缝实现（spec #1086 / issue #1092）——投资 kind 写路径装配/副作用与读路径投影的实现注册面，install_transaction_hooks 一次性装入（壳层启动接线）",
   },
-  { path: "trend.rs", layer: "域目录", note: "单标的 / 组合走势查询" },
+  { path: "trend.rs", note: "单标的 / 组合走势查询" },
   {
     path: "unwind.rs",
-    layer: "域目录",
     note: "持仓副作用撤销（Unwind）——修改/删除路径的守卫 → 级联/回补 → 清理模板单点（issue #1020，父 spec #1005 决策 D2/D3）",
   },
 ];
@@ -884,14 +830,13 @@ export const INVESTMENT_SRC_REL = "crates/investment/src";
  *（op 落库行的 device_id）、核心交易域（币种缺省推导）与投资域（价格写入单点 /
  * 名称随行刷新 / 通道派生 / 统一报价载荷，ADR-0103），均为上层域消费下层域的合法
  * 直呼（ADR-0112 决策 2）；对壳层与多端同步域零容忍照扫（与备份/交易/投资 crate
- * 同款，清单条目 layer 为域目录即入业务域扫描面）；反向引用由 cargo 依赖图拒绝
+ * 同款，crate 分层为域〔CRATES 政策核〕即入业务域扫描面）；反向引用由 cargo 依赖图拒绝
  *（生产依赖面无根包）。crate 根 lib.rs 是声明与再导出面（无守门靶向代码），与
  * 协议/备份/交易 crate 同款不入清单；tests.rs 与 tests/ 为测试豁免形态不入清单。
  */
-export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
+export const MARKET_SYNC_MODULES: readonly ModuleEntry[] = [
   {
     path: "bulk.rs",
-    layer: "域目录",
     note:
       "行情批量取数面（ADR-0121 / issue #1374 / ADR-0130 决策 2）：新浪 f_ 场外基金批量面（按本次同步现场的基金代码一次请求取回名称与最新净值）、fail-closed 降级、跨同步记忆（BulkFetchCircuit）与覆盖缺口容忍；" +
       "取数方式与价格来源正交；" +
@@ -899,14 +844,12 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   },
   {
     path: "channels.rs",
-    layer: "域目录",
     note:
       "同步网络通道束（issue #1276）：六个抓取闭包的打包形态与生产/测试换装接缝——生产接 HTTP 层（主机池/限流 pacer 单点，报价闭包经腾讯批量报价 issue #1560、日 K 闭包经腾讯 K 线 issue #1561、场外基金批量面闭包经新浪 f_ 面 issue #1565），测试注入桩经命令壳 SyncChannelsSlot 换装使「同步真实在途」可确定复现；" +
       "编排本体经 do_incremental_sync_channels 单点拆交",
   },
   {
     path: "csrc.rs",
-    layer: "域目录",
     note:
       "证监会基金电子披露取数单元（issue #1562 / ADR-0130）：官方场外基金净值披露的单只基金区间查询与解析——名称、单位净值、累计净值、净值日期与货基自报形态信号（ADR-0126 决策 3 换源后的确认源，#1563 接线）；" +
       "DataTables 参数全集请求构造单点（缺参数即 500 系统异常的参数门槛）、汇总行与份额行混排过滤、已终止基金可取；" +
@@ -915,7 +858,6 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   },
   {
     path: "daily_refresh.rs",
-    layer: "域目录",
     note:
       "现价刷新的后台每日形态（ADR-0122 决策 3 / issue #1377）：启动后延迟补跑一次 + 每自然日窗口一次（自然日窗口巡检与进程级单次拉起守卫）；" +
       "与手动形态同编排、同进度事件、同收尾裁决，差异只有触发方式、后台车道与静默失败面；" +
@@ -923,7 +865,6 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   },
   {
     path: "ecb.rs",
-    layer: "域目录",
     note:
       "ECB 参考汇率取数单元（ADR-0019 修订记录 / issue #1542）：全量历史与 90 天增量两个取数入口、Cube 报文解析、同日两腿交叉推导（EUR 作基准腿，缺腿日跳过不猜值）与周采样序列产出（可落库形态）；" +
       "非预期形状（空 / 非 XML / 截断）报 fx.source-malformed 码化错误，不静默产出空序列；" +
@@ -931,71 +872,60 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   },
   {
     path: "fund.rs",
-    layer: "域目录",
     note: "东财基金报价访问（按 6 位代码即拉，issue #301 / ADR-0038；搜索建议未命中回退档案通道改判存在，issue #1212）——行情接入接缝查询半边的场外实例，统一载荷 investment::Quote（ADR-0103）",
   },
   {
     path: "fund_backfill.rs",
-    layer: "域目录",
     note:
       "基金历史回填单元（issue #1062 / #1377 / #1388 自 fund_nav 拆出）：服务价格历史后台补全的逐只编排——首刷判据 = 磁盘无历史序列、首刷近两年（单请求全量通道优先、fail-closed 回退分页、页数上限 40）、增量按水位；" +
       "一只一事务不留半根历史",
   },
   {
     path: "fund_nav.rs",
-    layer: "域目录",
     note:
       "东财历史净值共享件（issue #303 / ADR-0038 决策 6；issue #1388 拆出编排单元后留守）：lsjz / 详情页数据文件访问与报文解析、货基口径、净值水位窗口、分页器与水位读；" +
       "单请求全量通道 fail-closed 回退分页（issue #1062）",
   },
   {
     path: "fund_price_refresh.rs",
-    layer: "域目录",
     note:
       "基金现价刷新单元（issue #1377 / #1388 自 fund_nav 拆出）：服务标的信息同步的逐只编排——批量面命中零请求（判定 + 直落库）、未命中退逐只短窗封顶 2 页、无历史序列者一个月短窗；" +
       "FundSyncStats 统计",
   },
   {
     path: "history.rs",
-    layer: "域目录",
     note:
       "价格历史后台补全（ADR-0122 / issue #1375）：派生事实队列（有价格通道但历史不完整，持仓优先）+ 一轮排空（与手动同步共用的单只回填单元，单只失败不中断、幂等无冲突）+ 启动延迟与自然日窗口调度（后台服务编排单点接线，issue #961 名单）+ 收尾裁决（置脏 + 价格失效信号，成败同判）；" +
       "后台车道生产束（全局限速器让行前台）经 BackfillChannelsSlot 注入接缝换装",
   },
   {
     path: "http.rs",
-    layer: "域目录",
     note:
       "行情 HTTP 网络层（issue #89）：多主机切换 / 重试 / 限流冷却 / Referer 与日 K、汇率 K 报文解析；" +
       "价格换算按精度位单点（单点行情用，#695）",
   },
   {
     path: "incremental.rs",
-    layer: "域目录",
     note:
       "标的信息同步编排（issue #103 / #137 / #303 / #695 / #827 / #1560）：腾讯批量报价 upsert 现价（行情日期取交易所当地交易日，来源标记 tencent）+ 汇率 K 线 + 基金净值按水位增量 + 数据源权威名称随行刷新；" +
       "抓取通道全部经闭包注入，编排不碰网络（近两年日 K 周采样已随 ADR-0122 / #1377 移出编排，归价格历史后台补全）",
   },
   {
     path: "js.rs",
-    layer: "域目录",
     note: "JS 文本字面量提取原语（fund_nav）：从 `.js` 数据文件的 `var x = […]` 与对象字段 `datas:[…]` 两种赋值形态取出数组 / 字符串字面量，被拦截形态天然缺声明即返回 None",
   },
   {
     path: "lane.rs",
-    layer: "域目录",
     note:
       "后台车道单轮骨架（issue #1426）：价格历史补全与每日现价刷新两条后台车道共用的单轮单点——通道束换装（管理态桩槽优先、生产后台车道束兜底）、门面写槽裸作业会话、进度发射接线（事件名按车道选）、写入见证、收尾裁决（置脏 + 价格失效信号，成败同判）与失败日志；" +
       "车道侧只留编排（LaneRound 实现）与统计日志（ADR-0122 决策 3「同形调度」的代码单点）",
   },
   {
     path: "model.rs",
-    layer: "域目录",
     note: "域模型（#407 随域归位）：标的信息同步结果类型 SyncInstrumentInfoResult",
   },
   {
     path: "persist.rs",
-    layer: "域目录",
     note:
       "行情同步持久化（issue #137）：ECB 汇率落库单元（issue #1543）——周采样序列 → fx_rate_history（币种对 × 周键整周覆盖幂等）+ 当期汇率表（每对最新一条，经投资域 upsert_auto_exchange_rate 人工行保护），单一事务、不产同步 op；" +
       "东财 FX 通道的周采样 upsert 同住（#1551 退役前）；" +
@@ -1003,19 +933,16 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   },
   {
     path: "progress.rs",
-    layer: "域目录",
     note: "同步进度事件（issue #897 / ADR-0095；页级明细 issue #1061）：事件名常量、payload 与 ProgressEmitter 发射器接缝收口（用后即弃的非失效信号，经 events 机制投递）",
   },
   {
     path: "session.rs",
-    layer: "域目录",
     note:
       "作用域会话接缝（issue #1275 / ADR-0112 决策 5 挂载点⑥）：编排获取数据库连接的唯一通道——域定义 ScopedSession trait，壳层实现并在命令壳接线；" +
       "编排抓取路径在类型上取不到连接",
   },
   {
     path: "sina_fund.rs",
-    layer: "域目录",
     note:
       "新浪场外基金取数单元（ADR-0130 决策 2 / issue #1564）：批量最新净值面（f_ 前缀一次请求多只，GBK、必须带 Referer）与单只全历史面（一次请求取整只历史，含已终止基金末点）；" +
       "货基行的字段错位（万份收益放在单位净值位）按「前一日单位净值位为空」单点判别并显式分类，错位行不产出价格点（ADR-0130 决策 6，判定打标信号归官方披露面 #1563）；" +
@@ -1024,12 +951,10 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   },
   {
     path: "stock.rs",
-    layer: "域目录",
     note: "东财股票单点行情访问（issue #693 / ADR-0081）：按（市场，代码）实时查询，类型特征探测与更新时间戳投影单点隔离——接缝查询半边的场内实例",
   },
   {
     path: "tencent.rs",
-    layer: "域目录",
     note:
       "腾讯行情批量报价取数单元（ADR-0130 决策 2/3 / issue #1558）：一次请求携带多只沪深港美股票与场内基金（GBK、无需 Referer），解出代码 / 名称 / 价格 / 价格日期 / 证券类型码 / 币种 / 交易所后缀；" +
       "三套字段布局与类型探测收口单点，非预期响应 fail-closed；" +
@@ -1037,7 +962,6 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   },
   {
     path: "tencent_kline.rs",
-    layer: "域目录",
     note:
       "腾讯日线 K 线取数单元（ADR-0130 决策 2 / issue #1559，接线 issue #1561）：市场 + 代码 → 腾讯查询键（沪深港前缀 + 美股三市场交易所后缀）、区间 / 根数参数与日线报文解析（收盘价在下标 2、港美行可带多余元素）；" +
       "无效代码返回空序列而非错误，非预期形状 fail-closed；" +
@@ -1060,61 +984,50 @@ export const MARKET_SYNC_SRC_REL = "crates/market-sync/src";
  * （无守门靶向代码），与协议/备份/交易 crate 同款不入清单；tests.rs 与 tests/
  * 均为测试豁免形态不入清单。
  */
-export const SYNC_ENGINE_MODULES: readonly WhitelistEntry[] = [
+export const SYNC_ENGINE_MODULES: readonly ModuleEntry[] = [
   {
     path: "channel.rs",
-    layer: "域目录",
     note: "通道层（ADR-0091 决策 1/8/9）：目录布局与 manifest、发布/拉取同步轮次、Checkpoint 通道传递、通道条目摘要与损坏码化错误单点",
   },
   {
     path: "checkpoint.rs",
-    layer: "域目录",
     note: "Checkpoint 产出（全量快照 + 位点）、新端引导与截断机制（issue #857，v1 永不截断、机制默认不启用）",
   },
   {
     path: "command.rs",
-    layer: "域目录",
     note: "跨端语义命令信封与重放契约（DomainCommand / ReplayBinding，只增不改）——同步域对业务域暴露的契约面（ADR-0101 决策 4b）；ReplayEffect/SyncCommand 已下放协议 crate",
   },
   {
     path: "engine.rs",
-    layer: "域目录",
     note: "同步引擎公开接口：幂等重放 / wire 接入 / 日志读取全序 / 位点后增量 / 挂起队列清单——本域行为唯一断言权威层",
   },
   {
     path: "envelope.rs",
-    layer: "域目录",
     note: "SyncEnvelope 信封加密（ADR-0091 决策 8）：AES-256-GCM 与 PBKDF2-HMAC-SHA512，明文直通/密文自描述双形态",
   },
-  { path: "model.rs", layer: "域目录", note: "op 信封 wire 模型（SyncOp）：全序字段 + 载荷 JSON" },
+  { path: "model.rs", note: "op 信封 wire 模型（SyncOp）：全序字段 + 载荷 JSON" },
   {
     path: "ops.rs",
-    layer: "域目录",
     note: "op 行落库与读取的适配层（域信封 ↔ JSON；SQL 收口在协议 crate，ADR-0091/#1089）",
   },
   {
     path: "parked.rs",
-    layer: "域目录",
     note: "ParkedOp 挂起队列（不可重放 op 的统一归宿与码化错误，ADR-0091）",
   },
   {
     path: "registry.rs",
-    layer: "域目录",
     note: "重放注册表（ADR-0101）：14 个语义命令类型的适配绑定与 DomainCommand::subject 组装臂",
   },
   {
     path: "transport",
-    layer: "域目录",
     note: "S3 兼容对象存储通道后端（s3.rs：SigV4 客户端、path-style/virtual-host 寻址、同步桥接线程）",
   },
   {
     path: "transport.rs",
-    layer: "域目录",
     note: "Transport 哑字节通道抽象（v1 唯一后端是 S3 兼容对象存储；WebDAV 已随 #1221 退役）与错误归类单点",
   },
   {
     path: "trigger",
-    layer: "域目录",
     note: "同步触发编排（ADR-0098）：通道配置与构库单点、轮次编排、打开即同步与桌面低频轮询、写后去抖合流、会话密钥形态判定的信封模式",
   },
 ];
@@ -1133,8 +1046,8 @@ export const SYNC_ENGINE_SRC_REL = "crates/sync-engine/src";
 export interface CrateModuleListSpec {
   /** 清单常量名（核对报文用，如 'INFRA_MODULES'） */
   label: string;
-  /** 模块清单本体（上方导出常量，条目级事实源） */
-  modules: readonly WhitelistEntry[];
+  /** 模块清单本体（上方导出常量，条目级事实源；条目不持 layer——CRATES 投影，#1597） */
+  modules: readonly ModuleEntry[];
   /** 模块根（相对 src-tauri），与 CRATES 的 dir 同源 */
   srcRel: string;
   /** 摘要行展示名（如 '基础设施'、'账户域'） */
@@ -1143,7 +1056,7 @@ export interface CrateModuleListSpec {
   summaryIssue?: string;
   /** 漏登记报文的出处括注（双向全等对该清单生效的来源） */
   provenance: string;
-  /** 漏登记报文的登记面提示尾巴（transaction 清单条目带区归属） */
+  /** 漏登记报文的登记面提示尾巴 */
   registerNote: string;
   /** 漏登记的失靶面尾注 */
   why: string;
@@ -1192,7 +1105,7 @@ export const CRATE_MODULE_LISTS: readonly CrateModuleListSpec[] = [
     summaryName: "核心交易域",
     summaryIssue: "#1092",
     provenance: "ADR-0113 决策 7 / #1181",
-    registerNote: "（区归属 + 注释）",
+    registerNote: "（附注释）",
     why: "区级层序与认许边核对静默漏检",
     excludeCrateRoot: true,
   },
@@ -2787,6 +2700,32 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
 }
 
 /**
+ * crate 分层 → 模块扫描分层词汇投影表（#1597 layer 收口）：两套词汇刻意分开
+ * （见 CRATE_LAYER 注），本表是唯一投影点——域 crate 的模块面按「域目录」层
+ * 扫描（与收口前条目 layer 恒等），基础设施 / 协议同名直投；壳层模块面不整册
+ * 登记（checkModuleListRegistry 同注），无投影即登记面漂移，调用方跳过。
+ */
+const CRATE_LAYER_TO_SCAN_LAYER: Record<Exclude<CrateLayer, typeof CRATE_LAYER.SHELL>, Layer> = {
+  [CRATE_LAYER.DOMAIN]: LAYER.DOMAIN,
+  [CRATE_LAYER.INFRA]: LAYER.INFRA,
+  [CRATE_LAYER.PROTOCOL]: LAYER.PROTOCOL,
+};
+
+/**
+ * crate 模块清单的扫描分层投影（#1597 layer 收口）：分层是 crate 级政策，唯一
+ * 声明处收口 CRATES（ADR-0112 决策 4）——srcRel = dir + '/src' 回指成员后取其
+ * layer 投影到扫描词汇，模块清单条目不再逐条重复（收口前已核：条目 layer 与其
+ * crate 的 layer 逐清单恒等，投影不改变任何扫描面）。回指不上或壳层无扫描面
+ * 返回 undefined：登记面全等核对（checkModuleListRegistry）对配置漂移独立报红，
+ * 调用方跳过该清单的扫描，本轮必以非零退出，不静默绿。
+ */
+function scanLayerForSrcRel(srcRel: string): Layer | undefined {
+  const crate = CRATES.find((c) => `${c.dir}/src` === srcRel);
+  if (!crate || crate.layer === CRATE_LAYER.SHELL) return undefined;
+  return CRATE_LAYER_TO_SCAN_LAYER[crate.layer];
+}
+
+/**
  * 登记面全等（#1448）：CRATES 成员与 CRATE_MODULE_LISTS 双向全等——每个
  * workspace 成员 crate（根包除外，壳层模块面不整册登记）必有模块清单登记，
  * 登记面每条 srcRel 必可回指 CRATES 成员（srcRel = dir + '/src'）。缺口形态
@@ -2815,6 +2754,19 @@ function checkModuleListRegistry(): string[] {
         "    登记面全等（#1448）：CRATE_MODULE_LISTS 条目须回指 CRATES 成员 " +
         "（srcRel = dir + '/src'），清单漂移 fail loud（ADR-0056 决策 4）",
     );
+  }
+  // 壳层 crate 的模块面不整册登记（根包同注；#1597 layer 收口的投影边界）：
+  // 分层投影（scanLayerForSrcRel）对壳层无扫描词汇，模块级扫描会静默跳过——
+  // 清单回指壳层成员即登记面漂移，fail loud。
+  for (const spec of CRATE_MODULE_LISTS) {
+    const owner = CRATES.find((c) => `${c.dir}/src` === spec.srcRel);
+    if (owner !== undefined && owner.layer === CRATE_LAYER.SHELL) {
+      problems.push(
+        `✗ ${spec.label} 回指壳层 crate：${spec.srcRel}（${owner.name}）\n` +
+          "    壳层 crate 的模块面不整册登记（与根包同注）——模块级扫描按分层投影，" +
+          "对壳层无词汇即静默跳过；清单须回指域 / 基础设施 / 协议成员",
+      );
+    }
   }
   return problems;
 }
@@ -3037,20 +2989,14 @@ function checkModuleListProjection(spec: CrateModuleListSpec, srcTauriDir: strin
   return problems;
 }
 
-/** 文件所属模块条目：精确匹配优先，其次目录前缀（目录型条目覆盖其全部子目录）。 */
-function transactionOwningEntry(rel: string): TransactionModuleEntry | undefined {
-  return [...TRANSACTION_MODULES]
-    .sort((a, b) => b.path.length - a.path.length)
-    .find((e) => rel === e.path || rel.startsWith(`${e.path}/`));
-}
-
 /**
  * 交易域 crate 内区级依赖引用扫描（ADR-0113 决策 7 / #1181）：掩码注释与字面量
- * 后匹配 `super::` / `crate::` 前缀 + 目标模块名（flat 布局的模块名与重排后的
- * 区目录名同形，两种形状同扫，判向不变）；`::{…}` 花括号列举跨行取匹配闭括号
- * 后逐条目切分取首段标识符。捕获 = 目标模块名（区归属查表用）。表达式位裸路径
- * （`writer::x` 无前缀形态，依赖边已由 use 语句承载）与别名改写文本不可达，
- * 靠评审兜底（与壳层/基础设施扫描同款边界）。
+ * 后匹配 `super::` / `crate::` 前缀 + 目标首段标识符（目录约定 / #1597 后顶层
+ * 只有区目录，`crate::` 首段即区目录；深层 `super::` 指向同区子模块，不命中
+ * 区目录表即被调用方跳过）；`::{…}` 花括号列举跨行取匹配闭括号后逐条目切分取
+ * 首段标识符。捕获 = 目标首段（区归属查表用）。表达式位裸路径（`writer::x`
+ * 无前缀形态，依赖边已由 use 语句承载）与别名改写文本不可达，靠评审兜底
+ * （与壳层/基础设施扫描同款边界）。
  */
 function scanTransactionZoneRefs(text: string): ScanHit[] {
   const masked = maskNonCode(text);
@@ -3094,11 +3040,14 @@ function scanTransactionZoneRefs(text: string): ScanHit[] {
 }
 
 /**
- * 交易域 crate 内区级层序核对（ADR-0113 决策 3/7 / #1181）：对 crate 内全部非
- * 测试 Rust 文件，按其所属模块条目的 zone 判向——同区互依合法；跨区时秩大者
- * 方可依赖秩小者（写读 → 接缝 → 共享语义，写读两径互不依赖）；认许边之外即红。
- * crate 根 lib.rs（声明与再导出面，无所属条目）与未登记孤儿文件（双向全等已
- * 红）不参与判向。测试豁免形态由 collectRustFiles 过滤（ADR-0056 决策 5）。
+ * 交易域 crate 内区级层序核对（ADR-0113 决策 2/3/7 / #1181 / #1597）：区归属按
+ * 目录约定投影——文件的区 = 其所在 crate 顶层区目录的区（TRANSACTION_ZONE_BY_DIR），
+ * 同区互依合法；跨区时秩大者方可依赖秩小者（写读 → 接缝 → 共享语义，写读两径
+ * 互不依赖）；认许边之外即红。fail loud 两类区登记面违例：① crate 根顶层单
+ * 文件（无区目录可投影，不允许「根级单文件默认为共享语义」——那会给写路径模块
+ * 留静默错分类的洞）；② 未登记区归属的顶层目录（新区目录漏登区表，判向静默
+ * 失靶）。crate 根 lib.rs（声明与再导出面）豁免判向。测试豁免形态由
+ * collectRustFiles 过滤（ADR-0056 决策 5）。
  */
 function checkTransactionZoneDirection(srcTauriDir: string): string[] {
   const problems: string[] = [];
@@ -3106,24 +3055,44 @@ function checkTransactionZoneDirection(srcTauriDir: string): string[] {
   if (!existsSync(srcDir)) return problems; // 清单循环逐条报「路径不存在」
   for (const f of collectRustFiles(srcDir, TRANSACTION_SRC_REL)) {
     const rel = f.rel.slice(TRANSACTION_SRC_REL.length + 1);
-    const owner = transactionOwningEntry(rel);
-    if (!owner) continue;
+    if (rel === "lib.rs") continue; // crate 根声明与再导出面，免判向（#1181 同规）
+    const isRootFile = !rel.includes("/");
+    const zoneDir = isRootFile ? rel : (rel.split("/")[0] as string);
+    const zone = TRANSACTION_ZONE_BY_DIR[zoneDir];
+    if (zone === undefined) {
+      problems.push(
+        isRootFile
+          ? `✗ 根级单文件必须进区目录：${f.rel}\n` +
+              `    区归属的登记面是目录约定（ADR-0113 决策 2 / #1597）：zone = crate 顶层区目录，` +
+              `根级单文件无区目录可投影，不允许「默认为共享语义」——那会给写路径模块留静默错分类的洞；` +
+              `把文件移入区目录、同步 lib.rs 声明与 TRANSACTION_MODULES 条目`
+          : `✗ 区目录未登记区归属：${zoneDir}/（${f.rel}）\n` +
+              `    zone 靠路径投影（ADR-0113 决策 2 / #1597）：crate 顶层目录须在 ` +
+              `TRANSACTION_ZONE_BY_DIR 登记区归属，未登记即无法判向、区级层序静默失靶；` +
+              `登记区归属，或把模块并入既有区目录`,
+      );
+      continue;
+    }
     const source = readFileSync(f.abs, "utf8");
     for (const hit of scanTransactionZoneRefs(source)) {
-      const target = TRANSACTION_MODULES.find((m) => moduleKey(m.path) === hit.captured);
-      if (!target || target.zone === owner.zone) continue;
-      if (TRANSACTION_ZONE_RANK[owner.zone] > TRANSACTION_ZONE_RANK[target.zone]) continue;
+      const captured = hit.captured;
+      // 目标首段非区目录（同区子模块 / 未登记孤儿）不判向：同区子模块随 owner
+      // 同区，孤儿文件由双向全等另行报红。
+      if (captured === undefined) continue;
+      const targetZone = TRANSACTION_ZONE_BY_DIR[captured];
+      if (targetZone === undefined || targetZone === zone) continue;
+      if (TRANSACTION_ZONE_RANK[zone] > TRANSACTION_ZONE_RANK[targetZone]) continue;
       const allowed = TRANSACTION_ZONE_ALLOWED_EDGES.some(
-        (e) => e.file === owner.path && e.target === moduleKey(target.path),
+        (e) => e.dir === zoneDir && e.target === captured,
       );
       if (allowed) continue;
       problems.push(
-        `✗ 区级反向依赖：${owner.zone}「${owner.path}」引用 ${target.zone}「${target.path}」 → ` +
+        `✗ 区级反向依赖：${zone}「${zoneDir}/」引用 ${targetZone}「${captured}/」 → ` +
           `${f.rel}:${hit.line}（${hit.match}）\n` +
           `    ${hit.text}\n` +
           `    区级层序唯一：写路径/读路径 → 跨域接缝 → 共享语义（ADR-0113 决策 3）——` +
           `共享语义不得依赖接缝与路径区，接缝不得依赖路径区，写读两径互不依赖；` +
-          `区归属与清单同址单点声明（TRANSACTION_MODULES 条目的 zone 字段）；` +
+          `区归属按目录约定投影（TRANSACTION_ZONE_BY_DIR，ADR-0113 决策 2 / #1597）；` +
           `设计意图边须逐条留痕于本脚本 TRANSACTION_ZONE_ALLOWED_EDGES（附 ADR 指针），` +
           `或把依赖下沉到层序更低的区`,
       );
@@ -3137,18 +3106,21 @@ function checkTransactionZoneDirection(srcTauriDir: string): string[] {
  * （清单漂移 fail loud），条目内对壳层零依赖；基础设施条目另核
  * 基础设施→域认许边（ADR-0071 决策 6 / #538）与 crate 内块间反向依赖
  * （ADR-0111 决策 4 / #1134），业务域条目另核业务域→同步域
- * 严形态（ADR-0101 决策 4b）。返回扫到的非测试文件数；返回 0 由调用方统一拒绝
+ * 严形态（ADR-0101 决策 4b）。分层自调用方注入（layerOf）：WHITELIST 条目自持
+ * layer（特例原样），crate 清单经 CRATES 政策核投影（#1597 layer 收口，条目
+ * 不再逐条重复）。返回扫到的非测试文件数；返回 0 由调用方统一拒绝
  * （拒绝以空集假绿通过）。清单与路径基准分离，使域目录（根 src）与基础设施
  * crate（`crates/infra/src`）共用同一份核对逻辑与同一份认许边清单。
  */
-function scanModuleEntries(
-  entries: readonly WhitelistEntry[],
+function scanModuleEntries<T extends ModuleEntry>(
+  entries: readonly T[],
   baseDir: string,
   problems: string[],
-  options: { scanBusinessSyncRefs?: boolean } = {},
+  options: { layerOf: (entry: T) => Layer; scanBusinessSyncRefs?: boolean },
 ): number {
   let scanned = 0;
   for (const w of entries) {
+    const layer = options.layerOf(w);
     const abs = join(baseDir, w.path);
     let stat: Stats | undefined;
     try {
@@ -3158,7 +3130,7 @@ function scanModuleEntries(
     }
     if (!stat) {
       problems.push(
-        `✗ 白名单路径不存在：${w.path}（${w.layer}：${w.note}）——目录改名/迁移后未同步守门清单`,
+        `✗ 白名单路径不存在：${w.path}（${layer}：${w.note}）——目录改名/迁移后未同步守门清单`,
       );
       continue;
     }
@@ -3167,21 +3139,19 @@ function scanModuleEntries(
       : [{ abs, rel: w.path }];
     if (files.length === 0) {
       problems.push(
-        `✗ 白名单条目扫不到非测试 Rust 文件：${w.path}（${w.layer}：${w.note}）——` +
+        `✗ 白名单条目扫不到非测试 Rust 文件：${w.path}（${layer}：${w.note}）——` +
           `全部是测试豁免形态或已空，清单与目录形状漂移`,
       );
       continue;
     }
     scanned += files.length;
-    const isInfra = w.layer === LAYER.INFRA;
-    const isProtocol = w.layer === LAYER.PROTOCOL;
+    const isInfra = layer === LAYER.INFRA;
+    const isProtocol = layer === LAYER.PROTOCOL;
     // 业务域→同步域零容忍作用域：域目录，除同步域自身（SYNC_ENGINE_MODULES
     // 显式关扫，#1107 crate 化后其源码住 workspace 成员）与测试支持域
     //（test_support→sync_engine 为测试专用边，登记处 ADR-0084 迁移状态段）。
     const isBusinessDomain =
-      (options.scanBusinessSyncRefs ?? true) &&
-      w.layer === LAYER.DOMAIN &&
-      w.path !== "test_support";
+      (options.scanBusinessSyncRefs ?? true) && layer === LAYER.DOMAIN && w.path !== "test_support";
     for (const f of files) {
       const source = readFileSync(f.abs, "utf8");
       for (const hit of scanRustSource(source)) {
@@ -3220,7 +3190,7 @@ function scanModuleEntries(
           );
           if (allowed) continue;
           problems.push(
-            `✗ 反向依赖：${w.path}（${w.layer}：${w.note}）引用域目录 ${hit.captured} → ` +
+            `✗ 反向依赖：${w.path}（${layer}：${w.note}）引用域目录 ${hit.captured} → ` +
               `${f.rel}:${hit.line}（${hit.match}）\n` +
               `    ${hit.text}\n` +
               `    分层规则：壳 → 域 → 基础设施；基础设施→域业务边归零且可机械守门` +
@@ -3350,9 +3320,17 @@ function main(): void {
   // 业务域→同步域严形态，同步域自身关扫 #1107）——基础设施模块自 #1088 全量
   // 归位起不再住根 src，路径基准随归位改一次、事实源仍只有本脚本一份（ADR-0056
   // 「白名单即规格」不变）。
-  scannedFiles += scanModuleEntries(WHITELIST, srcDir, problems);
+  scannedFiles += scanModuleEntries(WHITELIST, srcDir, problems, {
+    layerOf: (w) => w.layer, // 根 src 壳层路径条目自持 layer（WHITELIST 特例原样）
+  });
   for (const spec of CRATE_MODULE_LISTS) {
+    // layer 靠 CRATES 政策声明（#1597 收口）：srcRel 回指成员后投影到扫描词汇。
+    // 回指不上（配置漂移）时跳过本清单的扫描——登记面全等核对（
+    // checkModuleListRegistry）对同一缺口独立报红，本轮必以非零退出，不静默绿。
+    const layer = scanLayerForSrcRel(spec.srcRel);
+    if (layer === undefined) continue;
     scannedFiles += scanModuleEntries(spec.modules, join(srcTauriDir, spec.srcRel), problems, {
+      layerOf: () => layer,
       scanBusinessSyncRefs: spec.scanBusinessSyncRefs ?? true,
     });
   }

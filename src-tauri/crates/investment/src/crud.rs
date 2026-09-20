@@ -21,7 +21,7 @@ use ledger_infra::db::query::{query_all, query_one};
 use ledger_infra::db::{new_uuid, now_iso};
 use ledger_infra::error::{AppError, Result};
 use ledger_sync_protocol::device::device_id;
-use ledger_transaction::search_text::{split_terms, term_matches_text};
+use ledger_transaction::shared::search_text::{split_terms, term_matches_text};
 
 pub fn list_holdings(conn: &Connection) -> Result<Vec<Holding>> {
     query_all(

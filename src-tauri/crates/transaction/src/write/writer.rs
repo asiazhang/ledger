@@ -18,7 +18,7 @@ use ledger_sync_protocol::device::device_id;
 use crate::amount::{self, TransactionKind};
 use crate::model::NormalizedTransaction;
 use crate::seams::balance;
-use crate::search_text::pinyin_initials;
+use crate::shared::search_text::pinyin_initials;
 
 /// 备注拼音首字母冗余列的取值（issue #492 / ADR-0027 修订）：与 note 同写同换，
 /// 供搜索流式匹配免逐行重算拼音。NULL note → NULL（派生列恒随 note）。

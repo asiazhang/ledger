@@ -19,7 +19,7 @@ use crate::model::{
 use ledger_infra::db::query::FromRow;
 use ledger_infra::error::Result;
 
-use crate::search_text::{is_subsequence, pinyin_initials, split_terms};
+use crate::shared::search_text::{is_subsequence, pinyin_initials, split_terms};
 
 pub use search_transactions_internal as search_transactions;
 
@@ -145,7 +145,7 @@ fn is_subsequence_lower(pattern_lower: &str, target: &str) -> bool {
 }
 
 /// 已小写词条对字典条目（账户/商户名）判定：原文子串 ∨ 拼音首字母子序列。
-/// 语义与 [`term_matches_text`](crate::search_text::term_matches_text) 一致
+/// 语义与 [`term_matches_text`](crate::shared::search_text::term_matches_text) 一致
 /// （两侧均已小写化；名字体量小且字典每次搜索新建，改名即刻生效）。
 fn term_matches_dict(term_lower: &str, entry: &DictEntry) -> bool {
     entry.name_lower.contains(term_lower) || is_subsequence_lower(term_lower, &entry.pinyin)
