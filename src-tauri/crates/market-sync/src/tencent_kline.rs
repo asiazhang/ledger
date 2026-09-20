@@ -7,15 +7,18 @@
 //!
 //! 三块来源侧事实收口在本模块（ADR-0130 决策 2「各来源自己的代码形态」）：
 //! - **查询键**（[`kline_symbol`]）：沪深 `sh`/`sz` 前缀、港 `hk` 前缀、美股三
-//!   市场交易所后缀 `.OQ`/`.N`/`.AM`。后缀是取整段序列的必要条件——实测裸
-//!   `usAAPL` 只回两条残缺行（一条 2011 年遗留 + 最新一日），带后缀的
-//!   `usAAPL.OQ` 才回 800 根；后缀与既有市场闭集三值一一对应（ADR-0130 决策 4）。
+//!   市场交易所后缀 `.OQ`/`.N`/`.AM`。后缀是取整段序列的必要条件——实测带区间时
+//!   裸 `usAAPL` 取不回日线（`day: []`；空区间形态只回两条残缺行：一条 2011 年
+//!   遗留 + 最新一日），带后缀的 `usAAPL.OQ` 才回整段；后缀与既有市场闭集三值
+//!   一一对应（ADR-0130 决策 4）。
 //! - **请求形态**（[`kline_param`]）：`{查询键},day,{起始},{结束},{根数},`——末段
 //!   留空即**不复权**（响应键 `day`；复权时为 `qfqday`/`hfqday`）。历史库存真实
 //!   成交价，前复权会随后续除权整体重算（与既有口径一致）。
 //! - **报文布局**：`data[查询键].day` 每行 `[日期, 开, 收, 高, 低, 量, …]`——**收盘
-//!   价在下标 2 而非 1**（1 是开盘价）；沪深行恒 6 字段，港美行在分红 / 回购日多带
-//!   第 7 个对象元素（实测 `hk00700` 39 行中 11 行 7 字段），解析只取前 6 个下标。
+//!   价在下标 2 而非 1**（1 是开盘价）。行尾在**分红 / 回购日多带一个对象元素**
+//!   （实测沪深港美都有：`sh600519` 800 行中 7 行、`sz000001` 800 行中 6 行、
+//!   `hk00700` 492 行中 252 行、`usAAPL.OQ` 501 行中 8 行）——沪深与港美的行都可
+//!   能是 6 或 7 字段，**不按市场分支**，解析统一只取前 6 个下标。
 //!
 //! 预期外的形状分两类处置：
 //! - **无效代码**（`sh999999` / `usZZZZ.OQ`）返回 `data[键].day: []`（`code` 仍为 0）
@@ -24,8 +27,10 @@
 //!   冷却重试（ADR-0121 决策 5），最终报错；合法 JSON 但 `data` 缺失或非对象同样
 //!   是解析失败（[`TencentKlineResponse`] 要求 `data` 为对象），不退化为「无数据」。
 //!
-//! 根数与区间都是**上限**：服务端会按区间裁剪、也可能把超额根数压缩返回（实测
-//! 1000 / 2000 曾被压回 640）。本单元不做补偿也不报错，按返回行照常解析——周采样
+//! 根数与区间都是**上限**，本单元不依赖「收到恰好 `count` 行」：服务端按区间裁剪，
+//! 也可能把超额根数压缩返回（研究文档 §4.2 记复权形态 1000 / 2000 被压回 640；
+//! 本次复核不复权 `day` 形态 1200 可回全量——服务端行为随形态与时间变化，正是不
+//! 假设精确条数的理由）。返回比请求少不报错、不补偿，按返回行照常解析——周采样
 //! 只是点数变少，缺的那一段靠派生队列在下一窗口自然重进。
 
 use std::collections::HashMap;
@@ -34,6 +39,7 @@ use serde::Deserialize;
 
 use ledger_infra::error::Result;
 
+use super::channels::QuoteQuery;
 use super::http::{KlineBar, Pacer, RetryConfig, request_json_from_hosts};
 
 /// 生产主机（腾讯行情 K 线站；ADR-0130 决策 2）。入口按参数收主机，测试经本地
@@ -46,24 +52,25 @@ pub(super) const TENCENT_KLINE_PATH: &str = "/appstock/app/fqkline/get";
 /// 周期参数：只取日线（周线由本地降采样得到，分钟线不在本链路）。
 const PERIOD_DAY: &str = "day";
 
-/// 一次请求的根数上限（腾讯服务端能力约 800，ADR-0130 背景节实测；近两年约
-/// 490 个交易日，够用）。区间与根数都是上限，超出时服务端可能压缩返回更少，
-/// 本单元按返回照常解析（不做补偿）。
+/// 一次请求的根数上限（近两年约 490 个交易日，取 800 留余量；ADR-0130 背景节
+/// 实测该量级可用）。区间与根数都是上限，服务端可能返回更少，本单元按返回照常
+/// 解析（不做补偿）。
 pub(super) const KLINE_COUNT: u32 = 800;
 
-/// 市场 + 代码 → 腾讯 K 线查询键（来源侧代码形态的唯一构造点，ADR-0130 决策 2）。
-/// `market` 取既有市场闭集（`sh`/`sz`/`hk`/`nasdaq`/`nyse`/`amex`），`code` 为
-/// 响应回显形态的裸代码（如 `600519` / `00700`，已去市场后缀）。市场闭集之外的
-/// 取值返回 None（防御兼底，与批量报价通道同型：构造不出键就不发请求）。
-pub(super) fn kline_symbol(market: &str, code: &str) -> Option<String> {
-    match market {
+/// 「市场 + 代码」查询单元 → 腾讯 K 线查询键（来源侧代码形态的唯一构造点，
+/// ADR-0130 决策 2）。`query.market` 取既有市场闭集（`sh`/`sz`/`hk`/`nasdaq`/
+/// `nyse`/`amex`），`query.code` 为响应回显形态的裸代码（如 `600519` / `00700`，
+/// 已去市场后缀）。市场闭集之外的取值返回 None（防御兼底，与批量报价通道同型：
+/// 构造不出键就不发请求）。
+pub(super) fn kline_symbol(query: &QuoteQuery) -> Option<String> {
+    match query.market.as_str() {
         // 沪深港同一个形态：市场前缀 + 裸代码（`sh600519` / `sz000001` / `hk00700`）。
-        "sh" | "sz" | "hk" => Some(format!("{market}{code}")),
-        // 美股三市场必须带交易所后缀才能取到整段序列：裸 `usAAPL` 只回两条残缺行。
+        "sh" | "sz" | "hk" => Some(format!("{}{}", query.market, query.code)),
+        // 美股三市场必须带交易所后缀才能取到整段序列：裸 `usAAPL` 取不回日线。
         // 后缀与市场闭集一一对应（ADR-0130 决策 4），由本单点承担。
-        "nasdaq" => Some(format!("us{code}.OQ")),
-        "nyse" => Some(format!("us{code}.N")),
-        "amex" => Some(format!("us{code}.AM")),
+        "nasdaq" => Some(format!("us{}.OQ", query.code)),
+        "nyse" => Some(format!("us{}.N", query.code)),
+        "amex" => Some(format!("us{}.AM", query.code)),
         _ => None,
     }
 }
@@ -164,7 +171,7 @@ mod tests {
     use super::*;
 
     // -----------------------------------------------------------------------
-    // 真实报文 fixture：2026-09-19 实测原样（各 trim 到 3 根日线，其余字段如
+    // 真实报文 fixture：2026-09-19/20 实测原样（各 trim 到 3 根日线，其余字段如
     // `qt` / `version` 原样保留——旁路字段的存在本身就是「未知字段被忽略」的
     // 覆盖）。请求形态：`param={查询键},day,2026-09-01,2026-09-19,3,`。
     // -----------------------------------------------------------------------
@@ -174,12 +181,23 @@ mod tests {
     const NQ: &str = r#"{"code":0,"msg":"","data":{"usAAPL.OQ":{"day":[["2026-09-16","332.530","332.410","335.480","330.700","35981000.000"],["2026-09-17","334.770","337.000","338.340","330.180","36700225.000"],["2026-09-18","337.910","336.130","338.490","332.530","86588203.000"]],"qt":{"usAAPL.OQ":["delay","\u82f9\u679c","AAPL.OQ","336.13","337.00","337.91","86588203","0","0","334.75","440","0","0","0","0","0","0","0","0","334.88","40","0","0","0","0","0","0","0","0","","2026-09-18 16:00:02","-0.87","-0.26","338.49","332.53","USD","86588203","29101577281","0.59","38.55","","45.06","","1.77","49024.92647","49055.41723","Apple Inc.","8.72","344.26","239.32","400","45.62","0.32","49055.41723","23.98","1.16","GP","148.75","36.08","2.41","7.98","14.79","14594180000","14585108878","2.23","36.64","1.06","336.09","","","","",""],"market":["2026-09-20 12:43:40|HK_close_\u5df2\u4f11\u5e02|SH_close_\u5df2\u4f11\u5e02|SZ_close_\u5df2\u4f11\u5e02|US_close_\u5df2\u4f11\u5e02|SQ_close_\u5df2\u4f11\u5e02|DS_close_\u5df2\u4f11\u5e02|ZS_close_\u5df2\u4f11\u5e02|NEWSH_close_\u5df2\u4f11\u5e02|NEWSZ_close_\u5df2\u4f11\u5e02|NEWHK_close_\u5df2\u4f11\u5e02|NEWUS_close_\u5df2\u4f11\u5e02|REPO_close_\u5df2\u4f11\u5e02|UK_close_\u5df2\u4f11\u5e02|KCB_close_\u5df2\u4f11\u5e02|HSZB_close_\u5df2\u4f11\u5e02|IT_close_\u5df2\u4f11\u5e02|MY_close_\u5df2\u4f11\u5e02|EU_close_\u5df2\u4f11\u5e02|AH_close_\u5df2\u4f11\u5e02|DE_close_\u5df2\u4f11\u5e02|JW_close_\u5df2\u4f11\u5e02|CYB_close_\u5df2\u4f11\u5e02|USA_close_\u5df2\u4f11\u5e02|USB_close_\u5df2\u4f11\u5e02|ZQ_close_\u5df2\u4f11\u5e02"]},"pandata":{"last":"334.80","volume":"86588203","pct":"-0.40","netchange":"-1.33","time":"2026-09-18 20:01:00","tag":"after","season":"EST"},"prec":"331.340","version":"16"}}}"#;
     const AM: &str = r#"{"code":0,"msg":"","data":{"usSPY.AM":{"day":[["2026-09-16","759.500","754.050","761.670","749.600","59217653.000"],["2026-09-17","763.150","762.600","763.570","759.960","49652754.000"],["2026-09-18","761.310","761.690","762.000","757.970","65395148.000",{"FHcontent":"\u6bcf\u80a1\u5206\u914d1.889\u7f8e\u5143","hgcgContent":"","cqr":"2026-09-18"}]],"qt":{"usSPY.AM":["delay","\u6807\u666e500\u6307\u6570ETF-SPDR","SPY.AM","761.69","760.71","761.31","65395148","0","0","762.94","80","0","0","0","0","0","0","0","0","762.99","2720","0","0","0","0","0","0","0","0","","2026-09-18 16:00:01","0.98","0.13","762.00","757.97","USD","65395148","49730810811","","","","","","0.53","","","State Street Spdr S&P 500 Etf","","777.42","626.07","-2640","","","","12.57","-0.09","GP-ETF","","","-1.24","0.13","4.14","","","1.34","","","760.47","","","","1031882000",""],"market":["2026-09-20 12:43:40|HK_close_\u5df2\u4f11\u5e02|SH_close_\u5df2\u4f11\u5e02|SZ_close_\u5df2\u4f11\u5e02|US_close_\u5df2\u4f11\u5e02|SQ_close_\u5df2\u4f11\u5e02|DS_close_\u5df2\u4f11\u5e02|ZS_close_\u5df2\u4f11\u5e02|NEWSH_close_\u5df2\u4f11\u5e02|NEWSZ_close_\u5df2\u4f11\u5e02|NEWHK_close_\u5df2\u4f11\u5e02|NEWUS_close_\u5df2\u4f11\u5e02|REPO_close_\u5df2\u4f11\u5e02|UK_close_\u5df2\u4f11\u5e02|KCB_close_\u5df2\u4f11\u5e02|HSZB_close_\u5df2\u4f11\u5e02|IT_close_\u5df2\u4f11\u5e02|MY_close_\u5df2\u4f11\u5e02|EU_close_\u5df2\u4f11\u5e02|AH_close_\u5df2\u4f11\u5e02|DE_close_\u5df2\u4f11\u5e02|JW_close_\u5df2\u4f11\u5e02|CYB_close_\u5df2\u4f11\u5e02|USA_close_\u5df2\u4f11\u5e02|USB_close_\u5df2\u4f11\u5e02|ZQ_close_\u5df2\u4f11\u5e02"]},"pandata":{"last":"762.94","volume":"65395148","pct":"0.16","netchange":"1.25","time":"2026-09-18 20:04:00","tag":"after","season":"EST"},"prec":"757.390","version":"16"}}}"#;
     const BAD: &str = r#"{"code":0,"msg":"","data":{"sh999999":{"day":[],"qt":{"sh999999":[],"market":["2026-09-20 12:43:40|HK_close_\u5df2\u4f11\u5e02|SH_close_\u5df2\u4f11\u5e02|SZ_close_\u5df2\u4f11\u5e02|US_close_\u5df2\u4f11\u5e02|SQ_close_\u5df2\u4f11\u5e02|DS_close_\u5df2\u4f11\u5e02|ZS_close_\u5df2\u4f11\u5e02|NEWSH_close_\u5df2\u4f11\u5e02|NEWSZ_close_\u5df2\u4f11\u5e02|NEWHK_close_\u5df2\u4f11\u5e02|NEWUS_close_\u5df2\u4f11\u5e02|REPO_close_\u5df2\u4f11\u5e02|UK_close_\u5df2\u4f11\u5e02|KCB_close_\u5df2\u4f11\u5e02|HSZB_close_\u5df2\u4f11\u5e02|IT_close_\u5df2\u4f11\u5e02|MY_close_\u5df2\u4f11\u5e02|EU_close_\u5df2\u4f11\u5e02|AH_close_\u5df2\u4f11\u5e02|DE_close_\u5df2\u4f11\u5e02|JW_close_\u5df2\u4f11\u5e02|CYB_close_\u5df2\u4f11\u5e02|USA_close_\u5df2\u4f11\u5e02|USB_close_\u5df2\u4f11\u5e02|ZQ_close_\u5df2\u4f11\u5e02"]},"mx_price":{"mx":[],"price":[]},"prec":"","version":"16"}}}"#;
+    /// 沪深分红日行（2026-09-20 实测原样：`sh600519` 2023-06-30 除息日行尾多带
+    /// 分红对象元素——沪深与港美的行都可能是 6 或 7 字段，不是按市场分行）。
+    const SH_DIVIDEND: &str = r#"{"code":0,"msg":"","data":{"sh600519":{"day":[["2023-06-28","1713.180","1728.380","1734.000","1711.000","18574.000"],["2023-06-29","1731.000","1713.710","1734.990","1713.010","14231.000"],["2023-06-30","1700.000","1691.000","1708.990","1686.480","20459.000",{"nd":"2022","fh_sh":"259.11","djr":"2023-06-29","cqr":"2023-06-30","FHcontent":"10\u6d3e259.11\u5143"}]],"qt":{"sh600519":["1","\u8d35\u5dde\u8305\u53f0","600519","1257.12","1266.98","1262.99","24891","12061","12829","1257.12","8","1257.11","2","1257.08","1","1257.06","2","1257.05","2","1257.13","1","1257.24","2","1257.28","1","1258.00","16","1258.28","1","","20260918161436","-9.86","-0.78","1265.88","1256.10","1257.12\/24891\/3135849108","24891","313585","0.20","19.30","","1265.88","1256.10","0.77","15715.03","15715.03","6.25","1393.68","1140.28","1.14","-6","1259.84","17.65","19.09","","","0.08","313584.9108","527.9904","42","   A","GP-A","-6.82","-1.41","4.14","32.41","27.30","1539.98","1151.01","-5.48","-1.23","7.57","1250081601","1250081601","-16.67","-8.89","1250081601","","","-11.22","-0.42","","CNY","0","___D__F__N","1257.00","102",""],"market":["2026-09-20 13:01:58|HK_close_\u5df2\u4f11\u5e02|SH_close_\u5df2\u4f11\u5e02|SZ_close_\u5df2\u4f11\u5e02|US_close_\u5df2\u4f11\u5e02|SQ_close_\u5df2\u4f11\u5e02|DS_close_\u5df2\u4f11\u5e02|ZS_close_\u5df2\u4f11\u5e02|NEWSH_close_\u5df2\u4f11\u5e02|NEWSZ_close_\u5df2\u4f11\u5e02|NEWHK_close_\u5df2\u4f11\u5e02|NEWUS_close_\u5df2\u4f11\u5e02|REPO_close_\u5df2\u4f11\u5e02|UK_close_\u5df2\u4f11\u5e02|KCB_close_\u5df2\u4f11\u5e02|HSZB_close_\u5df2\u4f11\u5e02|IT_close_\u5df2\u4f11\u5e02|MY_close_\u5df2\u4f11\u5e02|EU_close_\u5df2\u4f11\u5e02|AH_close_\u5df2\u4f11\u5e02|DE_close_\u5df2\u4f11\u5e02|JW_close_\u5df2\u4f11\u5e02|CYB_close_\u5df2\u4f11\u5e02|USA_close_\u5df2\u4f11\u5e02|USB_close_\u5df2\u4f11\u5e02|ZQ_close_\u5df2\u4f11\u5e02"]},"mx_price":{"mx":[],"price":[]},"prec":"31.390","version":"16"}}}"#;
 
     /// fixture → 解析结果（解析路径与生产同一条：serde 反序列化 + 行解析）。
     fn bars(fixture: &str, symbol: &str) -> Vec<KlineBar> {
         serde_json::from_str::<TencentKlineResponse>(fixture)
             .expect("真实报文 fixture 应可解析")
             .into_bars(symbol)
+    }
+
+    /// 「市场 + 代码」查询单元的测试构造。
+    fn q(market: &str, code: &str) -> QuoteQuery {
+        QuoteQuery {
+            market: market.to_string(),
+            code: code.to_string(),
+        }
     }
 
     /// 沪深日线解析各有一份真实报文 fixture：收盘价取**下标 2**（下标 1 是开盘价）
@@ -205,8 +223,9 @@ mod tests {
     }
 
     /// 港美日线解析（各一份真实报文 fixture）：港美行在分红 / 回购日多带第 7 个
-    /// 对象元素（实测 `hk00700` 三行皆 7 字段、`usSPY.AM` 末行 7 字段），解析只取
-    /// 前 6 个下标、多余字段忽略；美股查询键带交易所后缀。
+    /// 对象元素（实测 `hk00700` 三行皆 7 字段、`usSPY.AM` 末行 7 字段；A 股分红日
+    /// 同样如此，见下一测试），解析只取前 6 个下标、多余字段忽略；美股查询键带
+    /// 交易所后缀。
     #[test]
     fn parses_hong_kong_and_us_day_lines_with_extra_row_element() {
         assert_eq!(
@@ -269,13 +288,39 @@ mod tests {
     /// 的必要条件）；市场闭集之外不构造键、不发请求。
     #[test]
     fn kline_symbol_pins_each_market_code_form() {
-        assert_eq!(kline_symbol("sh", "600519").as_deref(), Some("sh600519"));
-        assert_eq!(kline_symbol("sz", "000001").as_deref(), Some("sz000001"));
-        assert_eq!(kline_symbol("hk", "00700").as_deref(), Some("hk00700"));
-        assert_eq!(kline_symbol("nasdaq", "AAPL").as_deref(), Some("usAAPL.OQ"));
-        assert_eq!(kline_symbol("nyse", "BABA").as_deref(), Some("usBABA.N"));
-        assert_eq!(kline_symbol("amex", "SPY").as_deref(), Some("usSPY.AM"));
-        assert_eq!(kline_symbol("unknown", "NVDA"), None);
+        assert_eq!(
+            kline_symbol(&q("sh", "600519")).as_deref(),
+            Some("sh600519")
+        );
+        assert_eq!(
+            kline_symbol(&q("sz", "000001")).as_deref(),
+            Some("sz000001")
+        );
+        assert_eq!(kline_symbol(&q("hk", "00700")).as_deref(), Some("hk00700"));
+        assert_eq!(
+            kline_symbol(&q("nasdaq", "AAPL")).as_deref(),
+            Some("usAAPL.OQ")
+        );
+        assert_eq!(
+            kline_symbol(&q("nyse", "BABA")).as_deref(),
+            Some("usBABA.N")
+        );
+        assert_eq!(kline_symbol(&q("amex", "SPY")).as_deref(), Some("usSPY.AM"));
+        assert_eq!(kline_symbol(&q("unknown", "NVDA")), None);
+    }
+
+    /// 沪深行同样会在分红日多带第 7 个对象元素（真实报文：`sh600519` 2023-06-30
+    /// 除息日）——字段布局差异不是「沪深恒 6 / 港美可 7」，解析不按市场分支。
+    #[test]
+    fn parses_a_share_dividend_row_with_extra_element() {
+        assert_eq!(
+            bars(SH_DIVIDEND, "sh600519"),
+            vec![
+                KlineBar::new("2023-06-28", 1728.38),
+                KlineBar::new("2023-06-29", 1713.71),
+                KlineBar::new("2023-06-30", 1691.0),
+            ]
+        );
     }
 
     /// 请求参数串：末段留空（不复权 → 响应键 `day`）的尾逗号不能省——实测少一段

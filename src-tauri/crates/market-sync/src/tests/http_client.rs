@@ -478,8 +478,8 @@ fn ecb_host_and_paths_pin_to_the_official_reference_rates_files() {
 // 与无效代码处置都经本地 HTTP 服务钉住，不依赖真实网络。
 // ---------------------------------------------------------------------------
 
-/// 最小真实形状的腾讯日线响应（2026-09-19 实测原样，trim 到两根日线 + 信封旁路
-/// 字段 `qt` / `version`）。
+/// 最小真实形状的腾讯日线响应（2026-09-19 实测形状：`day` 行与信封键原样，
+/// `qt` 旁路字段 trim）。
 const TENCENT_KLINE_BODY: &str = r#"{"code":0,"msg":"","data":{"sh600519":{"day":[["2026-09-17","1257.980","1266.980","1267.600","1254.000","17554.000"],["2026-09-18","1262.990","1257.120","1265.880","1256.100","24891.000"]],"qt":{"sh600519":["1","\u8d35\u5dde\u8305\u53f0","600519"]},"version":"16"}}}"#;
 
 /// 请求形态钉（issue #1559 AC：本地 HTTP 服务用例钉住请求形态）：路径 / 查询键 /
@@ -515,11 +515,12 @@ fn fetch_tencent_day_kline_pins_request_shape() {
     );
 }
 
-/// 根数 / 区间上限行为（issue #1559 AC）：请求 800 根而服务端压缩回 1 根（实测
-/// 1000 / 2000 曾被压回 640）时不报错、不补偿，按返回照常解析；请求确实要了 800
-/// 根，压缩是服务端行为而不是我们少要。
+/// 根数与区间上限行为（issue #1559 AC）：请求区间两年、根数 800，而服务端只回 1
+/// 根（区间裁剪 / 压缩；研究文档 §4.2 记复权形态 1000 / 2000 曾被压回 640）时不
+/// 报错、不补偿，按返回照常解析；请求确实要了 800 根，短返回是服务端行为而不是
+/// 我们少要。
 #[test]
-fn fetch_tencent_day_kline_accepts_server_compressed_series() {
+fn fetch_tencent_day_kline_accepts_shorter_series_than_requested() {
     let body = r#"{"code":0,"msg":"","data":{"sh600519":{"day":[["2026-09-18","1262.990","1257.120","1265.880","1256.100","24891.000"]],"version":"16"}}}"#;
     let (url, heads) = spawn_header_capture_server(body.to_string());
     let client = reqwest::Client::new();
@@ -538,7 +539,7 @@ fn fetch_tencent_day_kline_accepts_server_compressed_series() {
     let head = heads.lock().unwrap().first().cloned().unwrap_or_default();
     assert!(
         head.contains("%2C800%2C"),
-        "压缩是服务端行为：请求仍须带上要的根数，实际请求头：{head}"
+        "短返回是服务端行为：请求仍须带上要的根数，实际请求头：{head}"
     );
 }
 
