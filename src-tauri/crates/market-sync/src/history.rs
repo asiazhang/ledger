@@ -66,9 +66,7 @@ use super::model::WriteWitness;
 use super::progress::{FundNavProgress, SyncProgress};
 use super::session::{FacadeWriteSession, ScopedSession};
 use ledger_investment::backfill;
-use ledger_investment::prices::{
-    EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_price_history,
-};
+use ledger_investment::prices::{TENCENT_PRICE_SOURCE, price_value_to_cents, upsert_price_history};
 
 /// 应用启动后的首轮延迟：让出启动期（引导、参考数据装载、首屏渲染），再开始
 /// 第一轮补全。延迟是可逆工程决策，测试注入 [`BackfillTimings`] 覆写。后台
@@ -251,7 +249,13 @@ where
     session
         .with_connection(move |conn| {
             ensure_transaction(conn, || {
-                write_weekly_price_history(conn, &instrument_id, &currency, &bars)
+                write_weekly_price_history(
+                    conn,
+                    &instrument_id,
+                    &currency,
+                    &bars,
+                    TENCENT_PRICE_SOURCE,
+                )
             })
         })
         .await
@@ -288,11 +292,9 @@ fn has_new_weekly_point(
 /// 幂等」语义不变，同周同值零写入。返回是否实际落库（调用方据此决定是否计入
 /// 写入见证）。
 ///
-/// `trade_date` 取同步当日（批量报价响应不携带行情日期）：周末 / 节假日同步时
-/// 点的价格是最近交易日的收盘价，而日期标签落在同步日——价格正确、周归属正确
-///（周键按 ISO 周算），仅横轴标签可能落在非交易日；下一个有报价交易日的同步
-/// 以同周覆盖改写回真实交易日（整周覆盖幂等），仓库无交易日历事实源（见价格
-/// 过期提示词条），不为标签引入第二口径。
+/// `trade_date` 为行情日期——取数层给出的**交易所当地交易日**的日期部分
+///（ADR-0130 决策 5），或取数层缺日期时调用方的北京日内兜底；价格与周归属
+/// 以它为准，不做时区换算。
 pub(super) fn land_current_week_point(
     conn: &Connection,
     instrument_id: &str,
@@ -328,7 +330,7 @@ pub(super) fn land_current_week_point(
         trade_date,
         price_cents,
         currency,
-        EASTMONEY_PRICE_SOURCE,
+        TENCENT_PRICE_SOURCE,
     )?;
     Ok(true)
 }

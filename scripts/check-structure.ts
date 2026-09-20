@@ -804,7 +804,7 @@ export const INVESTMENT_MODULES: readonly WhitelistEntry[] = [
   {
     path: "prices.rs",
     layer: "域目录",
-    note: "价格写入单点——现价缓存 upsert、价格历史周采样 upsert、价格刻度换算、东财来源标记（#401 自 sync/persist 迁入）",
+    note: "价格写入单点——现价缓存 upsert、价格历史周采样 upsert、价格刻度换算、价格来源标记（存量 eastmoney / 新写入按实际取数源，ADR-0130 决策 7）（#401 自 sync/persist 迁入）",
   },
   {
     path: "quote.rs",
@@ -855,7 +855,7 @@ export const INVESTMENT_SRC_REL = "crates/investment/src";
 
 /**
  * 行情同步域 crate 的模块清单（spec #1086 / issue #1106）：路径相对
- * `src-tauri/crates/market-sync/src`。P4 首个业务域 crate——东财行情抓取（批量报价 /
+ * `src-tauri/crates/market-sync/src`。P4 首个业务域 crate——行情抓取（批量报价 /
  * 单点行情 / 日 K / 历史净值）与增量同步编排，成为可被多端同步域依赖的独立编译
  * 单元。依赖面为票面 AC 允许集全量：基础设施（db / error / events）、同步协议
  *（op 落库行的 device_id）、核心交易域（币种缺省推导）与投资域（价格写入单点 /
@@ -874,7 +874,7 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   {
     path: "channels.rs",
     layer: "域目录",
-    note: "同步网络通道束（issue #1276）：六个抓取闭包的打包形态与生产/测试换装接缝——生产接 HTTP 层（主机池/限流 pacer 单点，日 K 闭包经腾讯 K 线取数，issue #1561），测试注入桩经命令壳 SyncChannelsSlot 换装使「同步真实在途」可确定复现；编排本体经 do_incremental_sync_channels 单点拆交",
+    note: "同步网络通道束（issue #1276）：六个抓取闭包的打包形态与生产/测试换装接缝——生产接 HTTP 层（主机池/限流 pacer 单点，报价闭包经腾讯批量报价 issue #1560、日 K 闭包经腾讯 K 线 issue #1561），测试注入桩经命令壳 SyncChannelsSlot 换装使「同步真实在途」可确定复现；编排本体经 do_incremental_sync_channels 单点拆交",
   },
   {
     path: "csrc.rs",
@@ -919,12 +919,12 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   {
     path: "http.rs",
     layer: "域目录",
-    note: "行情 HTTP 网络层（issue #89）：多主机切换 / 重试 / 限流冷却 / Referer 与报价、日 K、汇率 K 报文解析；价格换算按随行精度位单点（批量报价与单点行情共用，#695）",
+    note: "行情 HTTP 网络层（issue #89）：多主机切换 / 重试 / 限流冷却 / Referer 与日 K、汇率 K 报文解析；价格换算按精度位单点（单点行情用，#695）",
   },
   {
     path: "incremental.rs",
     layer: "域目录",
-    note: "标的信息同步编排（issue #103 / #137 / #303 / #695 / #827）：批量报价 upsert 现价 + 近两年日 K 周采样 + 汇率 K 线 + 基金净值按水位增量 + 数据源权威名称随行刷新；抓取通道全部经闭包注入，编排不碰网络",
+    note: "标的信息同步编排（issue #103 / #137 / #303 / #695 / #827 / #1560）：腾讯批量报价 upsert 现价（行情日期取交易所当地交易日，来源标记 tencent）+ 汇率 K 线 + 基金净值按水位增量 + 数据源权威名称随行刷新；抓取通道全部经闭包注入，编排不碰网络（近两年日 K 周采样已随 ADR-0122 / #1377 移出编排，归价格历史后台补全）",
   },
   {
     path: "js.rs",
@@ -969,7 +969,7 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   {
     path: "tencent.rs",
     layer: "域目录",
-    note: "腾讯行情批量报价取数单元（ADR-0130 决策 2/3 / issue #1558）：一次请求携带多只沪深港美股票与场内基金（GBK、无需 Referer），解出代码 / 名称 / 价格 / 价格日期 / 证券类型码 / 币种 / 交易所后缀；三套字段布局与类型探测收口单点，非预期响应 fail-closed；本票只取数与解析，接线随 #1560 / #1567",
+    note: "腾讯行情批量报价取数单元（ADR-0130 决策 2/3 / issue #1558）：一次请求携带多只沪深港美股票与场内基金（GBK、无需 Referer），解出代码 / 名称 / 价格 / 价格日期 / 证券类型码 / 币种 / 交易所后缀；三套字段布局与类型探测收口单点，非预期响应 fail-closed；场内现价刷新接线见 channels（issue #1560），按代码查询 / 创建接线随 #1567",
   },
   {
     path: "tencent_kline.rs",
@@ -1432,7 +1432,7 @@ export const CRATES: readonly CrateEntry[] = [
     name: "ledger-market-sync",
     dir: "crates/market-sync",
     layer: CRATE_LAYER.DOMAIN,
-    note: "行情同步域 crate（#1106，P4 首个业务域 crate：东财行情抓取——批量报价/单点行情/日 K/历史净值——与增量同步编排，成为可被多端同步域依赖的独立编译单元）；依赖面为票面 AC 允许集全量：基础设施（db/error/events）、同步协议（op 落库行 device_id）、核心交易域（币种缺省推导 amount::default_currency_code）、投资域（价格写入单点 prices/名称随行刷新 crud/通道派生 channel/统一报价载荷 Quote，ADR-0103）——四条域→域均为上层域消费下层域的合法直呼（ADR-0112 决策 2），对壳层与多端同步域零直接依赖（壳层同步命令经根包再导出面消费），反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）",
+    note: "行情同步域 crate（#1106，P4 首个业务域 crate：行情抓取——批量报价/单点行情/日 K/历史净值——与增量同步编排，成为可被多端同步域依赖的独立编译单元）；依赖面为票面 AC 允许集全量：基础设施（db/error/events）、同步协议（op 落库行 device_id）、核心交易域（币种缺省推导 amount::default_currency_code）、投资域（价格写入单点 prices/名称随行刷新 crud/通道派生 channel/统一报价载荷 Quote，ADR-0103）——四条域→域均为上层域消费下层域的合法直呼（ADR-0112 决策 2），对壳层与多端同步域零直接依赖（壳层同步命令经根包再导出面消费），反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）",
   },
   {
     name: "ledger-sync-engine",

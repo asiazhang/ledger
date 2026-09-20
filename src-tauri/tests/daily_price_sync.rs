@@ -36,7 +36,7 @@ use tauri::{Listener, Manager};
 use ledger_infra::db::{self, DbState};
 use ledger_infra::events;
 use ledger_market_sync::{
-    BulkFetchSurfaces, DailyPriceRefreshChannelsSlot, DailyPriceRefreshTimings, StockItem,
+    BulkFetchSurfaces, DailyPriceRefreshChannelsSlot, DailyPriceRefreshTimings, QuoteItem,
     SyncFetchChannels, start_daily_price_refresh_with,
 };
 use tauri_app_lib::commands::sync::{SyncChannelsSlot, sync_instrument_info};
@@ -51,23 +51,23 @@ const POLL_INTERVAL: Duration = Duration::from_millis(300);
 fn gated_daily_refresh_channels(
     entered: std::sync::mpsc::Sender<()>,
     release: std::sync::mpsc::Receiver<()>,
-    ulist_calls: Arc<std::sync::atomic::AtomicUsize>,
+    quote_calls: Arc<std::sync::atomic::AtomicUsize>,
 ) -> DailyPriceRefreshChannelsSlot {
     let channels = SyncFetchChannels {
         // 门控等待在闭包同步段完成（编排调用闭包即阻塞在途），应答装箱为 future
         // ——「后台刷新真实在途」语义与断言不变（issue #1412 通道闭包 async 形态）。
-        fetch_ulist: Box::new(move |_queries| {
-            ulist_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        fetch_quotes: Box::new(move |_queries| {
+            quote_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             entered.send(()).expect("在途通知应可送达");
             release
                 .recv_timeout(Duration::from_secs(10))
                 .expect("测试应放行后台抓取");
             Box::pin(async move {
-                Ok(vec![StockItem {
+                Ok(vec![QuoteItem {
                     code: "600519".into(),
                     name: "贵州茅台".into(),
-                    price: Some(1300.0),
-                    precision: None,
+                    price_cents: Some(130_000),
+                    price_date: None,
                 }])
             })
         }),
@@ -101,13 +101,13 @@ fn gated_daily_refresh_channels(
 /// 区分「哪一轮写了哪个价」。
 fn frontend_sync_channels() -> SyncChannelsSlot {
     let channels = SyncFetchChannels {
-        fetch_ulist: Box::new(|_| {
+        fetch_quotes: Box::new(|_| {
             Box::pin(async move {
-                Ok(vec![StockItem {
+                Ok(vec![QuoteItem {
                     code: "600519".into(),
                     name: "贵州茅台".into(),
-                    price: Some(1302.80),
-                    precision: None,
+                    price_cents: Some(130_280),
+                    price_date: None,
                 }])
             })
         }),
@@ -177,11 +177,11 @@ fn startup_wiring_refreshes_prices_and_frontend_sync_stays_unblocked() {
     // 注入两车道桩束：后台门控（在途可控），前台独立桩（同步可独立完成）。
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let ulist_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let quote_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     app.manage(gated_daily_refresh_channels(
         entered_tx,
         release_rx,
-        ulist_calls.clone(),
+        quote_calls.clone(),
     ));
     app.manage(frontend_sync_channels());
 
@@ -297,10 +297,10 @@ fn startup_wiring_refreshes_prices_and_frontend_sync_stays_unblocked() {
     // 或写坏时第二轮会在这两个周期内起跑并在本轮计数（先例：注入周期 300ms 时
     // 原 1s 观察窗内即可见，实测红）。
     wait_poll_cycles(2, POLL_INTERVAL, || {
-        ulist_calls.load(std::sync::atomic::Ordering::SeqCst) == 1
+        quote_calls.load(std::sync::atomic::Ordering::SeqCst) == 1
     });
     assert_eq!(
-        ulist_calls.load(std::sync::atomic::Ordering::SeqCst),
+        quote_calls.load(std::sync::atomic::Ordering::SeqCst),
         1,
         "同一自然日窗口内巡检到期不得重跑第二轮"
     );

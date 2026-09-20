@@ -3,11 +3,21 @@
 
 use std::time::Duration;
 
-use crate::http::{
-    KlineBar, Pacer, RetryConfig, UlistResponse, request_json_from_hosts, request_json_with_retry,
-};
+use crate::http::{KlineBar, Pacer, RetryConfig, request_json_from_hosts, request_json_with_retry};
 
 use super::spawn_header_capture_server;
+
+/// HTTP 层测试的通用应答形状（ulist 通道退役后改为最小本地形状，测试只关心
+/// 「能否解析出 JSON 对象」）。
+#[derive(Debug, serde::Deserialize)]
+struct TestJson {
+    data: Option<TestBody>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TestBody {
+    diff: Option<Vec<serde_json::Value>>,
+}
 
 fn fast_cfg(max_retries: u32, max_throttle_retries: u32) -> RetryConfig {
     RetryConfig {
@@ -77,7 +87,7 @@ fn throttle_responses_slow_the_request_interval() {
     let baseline = Duration::from_millis(20);
     let mut pacer = Pacer::new(baseline);
     let params = [("fs", "test")];
-    let _ = tauri::async_runtime::block_on(request_json_with_retry::<UlistResponse>(
+    let _ = tauri::async_runtime::block_on(request_json_with_retry::<TestJson>(
         &client,
         &url,
         &params,
@@ -101,7 +111,7 @@ fn throttle_responses_slow_the_request_interval() {
         }
     });
     let mut pacer = Pacer::new(baseline);
-    let _ = tauri::async_runtime::block_on(request_json_with_retry::<UlistResponse>(
+    let _ = tauri::async_runtime::block_on(request_json_with_retry::<TestJson>(
         &client,
         &url,
         &params,
@@ -155,7 +165,7 @@ fn request_json_retries_429_then_succeeds() {
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test"), ("pn", "1")];
-    let json = tauri::async_runtime::block_on(request_json_with_retry::<UlistResponse>(
+    let json = tauri::async_runtime::block_on(request_json_with_retry::<TestJson>(
         &client,
         &url,
         &params,
@@ -166,7 +176,7 @@ fn request_json_retries_429_then_succeeds() {
     ))
     .unwrap();
     assert_eq!(
-        json.data.unwrap().diff.unwrap().into_items().len(),
+        json.data.unwrap().diff.unwrap().len(),
         0,
         "解析成功即视为重试成功"
     );
@@ -184,7 +194,7 @@ fn request_json_retries_on_json_decode_failure() {
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let json = tauri::async_runtime::block_on(request_json_with_retry::<UlistResponse>(
+    let json = tauri::async_runtime::block_on(request_json_with_retry::<TestJson>(
         &client,
         &url,
         &params,
@@ -195,7 +205,7 @@ fn request_json_retries_on_json_decode_failure() {
     ))
     .unwrap();
     assert_eq!(
-        json.data.unwrap().diff.unwrap().into_items().len(),
+        json.data.unwrap().diff.unwrap().len(),
         0,
         "解析成功即视为重试成功"
     );
@@ -207,7 +217,7 @@ fn request_json_returns_error_after_429_exhausted() {
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let err = tauri::async_runtime::block_on(request_json_with_retry::<UlistResponse>(
+    let err = tauri::async_runtime::block_on(request_json_with_retry::<TestJson>(
         &client,
         &url,
         &params,
@@ -229,7 +239,7 @@ fn request_json_returns_error_when_connection_refused() {
     let url = "http://127.0.0.1:1/x".to_string();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let err = tauri::async_runtime::block_on(request_json_with_retry::<UlistResponse>(
+    let err = tauri::async_runtime::block_on(request_json_with_retry::<TestJson>(
         &client,
         &url,
         &params,
@@ -263,7 +273,7 @@ fn request_json_falls_back_to_next_host() {
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let resp = tauri::async_runtime::block_on(request_json_from_hosts::<UlistResponse>(
+    let resp = tauri::async_runtime::block_on(request_json_from_hosts::<TestJson>(
         &client,
         &params,
         "/x",
@@ -275,7 +285,7 @@ fn request_json_falls_back_to_next_host() {
     ))
     .unwrap();
     assert_eq!(
-        resp.data.unwrap().diff.unwrap().into_items().len(),
+        resp.data.unwrap().diff.unwrap().len(),
         0,
         "解析成功即视为主机切换成功"
     );
@@ -289,7 +299,7 @@ fn request_json_returns_error_when_all_hosts_fail() {
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let err = tauri::async_runtime::block_on(request_json_from_hosts::<UlistResponse>(
+    let err = tauri::async_runtime::block_on(request_json_from_hosts::<TestJson>(
         &client,
         &params,
         "/x",
@@ -365,7 +375,7 @@ fn concurrent_requests_serialize_on_the_shared_pacer() {
                 let client = reqwest::Client::new();
                 // 共享 pacer 锁从发请求前持有到响应处理完——与生产通道束同形。
                 let mut pacer = crate::http::lock_pacer(&pacer).await;
-                crate::http::request_json_from_hosts::<UlistResponse>(
+                crate::http::request_json_from_hosts::<TestJson>(
                     &client,
                     &[("fs", "test")],
                     "/x",

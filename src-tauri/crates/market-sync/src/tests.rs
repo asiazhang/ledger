@@ -5,7 +5,7 @@
 //! - `bulk_fetch`：行情批量取数面报文解析、请求形态与跨同步记忆（ADR-0121，issue #1374）；
 //! - `csrc`：证监会基金电子披露区间查询报文解析与请求形态（issue #1562 / ADR-0130，fixture 为真实报文 + 本地 HTTP 服务）；
 //! - `http_client`：HTTP 重试、多主机切换与各来源取数入口的请求形态 / 上限行为（ECB 参考汇率、腾讯日线 K 线）；
-//! - `instrument_info_sync`：标的信息同步与 ulist / 日 K 报文解析；
+//! - `instrument_info_sync`：标的信息同步与日 K 报文解析；
 //! - `fund_search`：东财基金搜索报文解析与命中挑选（issue #301，fixture 驱动）；
 //! - `fund_nav`：历史净值报文解析、水位窗口与 Referer 传播（issue #303，fixture 驱动）；
 //! - `stock_quote`：股票单点行情报文解析、类型特征探测与命中挑选（issue #693，fixture 驱动）；

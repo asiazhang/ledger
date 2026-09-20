@@ -32,13 +32,14 @@ use super::bulk::BulkFetchSurfaces;
 use super::fund::fetch_fund_quote;
 use super::fund_nav::{FullSeries, NavPage, NavQuery, fetch_nav_full_series, fetch_nav_page};
 use super::http::{
-    ForegroundGuard, KlineBar, Pacer, StockItem, build_client, fetch_fx_kline, fetch_ulist,
-    lock_pacer, quote_query_key, shared_pacer, wait_foreground_idle,
+    ForegroundGuard, KlineBar, Pacer, build_client, fetch_fx_kline, lock_pacer, shared_pacer,
+    wait_foreground_idle,
 };
 use super::incremental::{do_incremental_sync_with, kline_beg, kline_window};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use super::progress::SyncProgress;
 use super::session::ScopedSession;
+use super::tencent::{TENCENT_QUOTE_HOSTS, fetch_tencent_quotes};
 use super::tencent_kline;
 
 /// 抓取通道 future 的装箱形态：网络等待以 `await` 表达（ADR-0125 决策 5 /
@@ -46,18 +47,30 @@ use super::tencent_kline;
 pub type FetchFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 
 /// 「市场 + 代码」查询单元（issue #1555 批量报价 / issue #1556 日 K）：编排只递
-/// 「市场 + 代码」，数据源查询键（如东财 secid `1.600519`、腾讯 K 线键
-/// `sh600519`）由各通道在内部构造——换源只改通道实现，编排零改动。`market` 取
-/// 既有市场闭集（`sh`/`sz`/`hk`/`nasdaq`/`nyse`/`amex`），`code` 是响应回显形态
-/// 的裸代码（如 `600519` / `00700`，已去市场后缀）。
+/// 「市场 + 代码」，数据源查询键（腾讯报价键 / 腾讯 K 线键 / 东财 secid 等）由
+/// 各通道在内部构造——换源只改通道实现，编排零改动。`market` 取既有市场闭集
+///（`sh`/`sz`/`hk`/`nasdaq`/`nyse`/`amex`），`code` 是响应回显形态的裸代码
+///（如 `600519` / `00700`，已去市场后缀）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuoteQuery {
     pub market: String,
     pub code: String,
 }
 
+/// 场内批量报价条目（通道束注入接缝的公开面，issue #1560）：编排只消费这四个
+/// 成员——代码、数据源权威名称、价格（万分之一元，ADR-0038）与行情日期
+///（交易所当地交易日，ADR-0130 决策 5）。数据源私有字段（类型码 / 币种 /
+/// 精确市场）不进本形状，换源只改投影端（见 `tencent::TencentQuote` 的投影）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuoteItem {
+    pub code: String,
+    pub name: String,
+    pub price_cents: Option<i64>,
+    pub price_date: Option<String>,
+}
+
 /// 抓取通道闭包的统一形态（`Box<dyn FnMut>` 别名，降低束字段签名复杂度）。
-pub type FetchUlist = Box<dyn FnMut(&[QuoteQuery]) -> FetchFuture<Vec<StockItem>> + Send>;
+pub type FetchQuotes = Box<dyn FnMut(&[QuoteQuery]) -> FetchFuture<Vec<QuoteItem>> + Send>;
 /// 日 K（近两年日线）抓取通道闭包形态：「市场 + 代码」查询单元 → 日线序列；
 /// 查询键（腾讯 K 线键，issue #1561 接线）由通道内部构造（issue #1556 起编排
 /// 不拼数据源键，与批量报价通道同形）。
@@ -77,9 +90,9 @@ pub type FetchFundName = Box<dyn FnMut(&str) -> FetchFuture<String> + Send>;
 /// 内部可变、跨 `.await` 持有，串行语义与既有守卫一致，批量面同样经它限速）；
 /// 测试实现为注入桩。
 pub struct SyncFetchChannels {
-    /// 批量报价（东财 ulist）：一批「市场 + 代码」查询单元 → 报价条目；查询键
-    ///（secid）由通道内部构造（issue #1555）。
-    pub fetch_ulist: FetchUlist,
+    /// 批量报价（腾讯行情，issue #1560）：一批「市场 + 代码」查询单元 → 报价条目；
+    /// 查询键（市场前缀/交易所后缀）由通道内部构造（issue #1555）。
+    pub fetch_quotes: FetchQuotes,
     /// 日 K（近两年日线）：「市场 + 代码」查询单元 → 日线序列；查询键（腾讯
     /// K 线键）由通道内部构造（issue #1556 接缝，issue #1561 接线腾讯 K 线）。
     pub fetch_kline: FetchKline,
@@ -96,51 +109,69 @@ pub struct SyncFetchChannels {
     pub bulk: BulkFetchSurfaces,
 }
 
+/// 生产通道束的取数主机注入面（测试用，ADR-0130 三条腾讯取数面）：两面的主机
+/// 列表各具名——相邻同型 `Vec<String>` 位置参数可互换编译（静默错路由），
+/// 具名结构让「哪一面用哪个本地主机」在调用点自证。
+#[derive(Debug, Clone, Default)]
+pub(super) struct SyncFetchHosts {
+    /// 腾讯行情批量报价主机。
+    pub(super) quote: Vec<String>,
+    /// 腾讯日 K 主机。
+    pub(super) kline: Vec<String>,
+}
+
 impl SyncFetchChannels {
     /// 生产通道束（前台车道，手动同步等用户动作）：六个闭包接 HTTP 层
     ///（`build_client` 主机池 / 重试；pacer 取**进程级全局限速器**单点，issue
     /// #1375——与后台补全共用同一份数据源额度）。回填窗口起点在束构造时取
     /// 一次（与先前每次同步取一次同口径）。
     pub fn production() -> Result<Self> {
-        Self::production_lane(Lane::Foreground, tencent_kline_hosts())
+        Self::production_lane(Lane::Foreground, tencent_hosts())
     }
 
     /// 生产通道束（后台车道，issue #1375 价格历史补全）：同一全局限速器，但
     /// 请求前不占前台在途计数、反而**让行**——前台请求在途时后台等归零再发，
     /// 用户动作优先于后台补全。束形状与前台车道完全一致（编排消费零分叉）。
     pub fn production_backfill() -> Result<Self> {
-        Self::production_lane(Lane::Backfill, tencent_kline_hosts())
+        Self::production_lane(Lane::Backfill, tencent_hosts())
     }
 
-    /// 生产通道束构造本体：`kline_hosts` 是腾讯日 K 主机。生产经
-    /// [`tencent_kline_hosts`] 传取数单元单点常量；测试注入本地 HTTP 服务，
-    /// 驱动**生产束**钉住「历史补全的日 K 确实打到腾讯 `fqkline/get`」这条
-    /// 接线（issue #1561，删除接线即红）。
-    pub(super) fn production_lane(lane: Lane, kline_hosts: Vec<String>) -> Result<Self> {
+    /// 生产通道束构造本体：`hosts` 携带腾讯行情报价与腾讯日 K 主机。生产经
+    /// [`tencent_hosts`] 传取数单元单点常量；测试注入本地 HTTP 服务，驱动
+    /// **生产束**钉住两条接线：「场内现价刷新打到腾讯批量报价端点」
+    ///（issue #1560）与「历史补全的日 K 打到腾讯 `fqkline/get`」（issue #1561），
+    /// 删除接线即红。
+    pub(super) fn production_lane(lane: Lane, hosts: SyncFetchHosts) -> Result<Self> {
         let client = build_client()?;
         let pacer = shared_pacer();
         let beg = kline_beg();
         Ok(Self {
-            fetch_ulist: {
+            fetch_quotes: {
                 let client = client.clone();
                 let pacer = pacer.clone();
+                let hosts = hosts.quote.clone();
                 Box::new(move |queries: &[QuoteQuery]| {
-                    // 查询键（东财 secid）在通道内部构造（issue #1555）：编排只递
-                    // 「市场 + 代码」。
-                    let secids = ulist_secids(queries);
+                    // 查询键（腾讯市场前缀 / 美股交易所后缀）在通道内部构造
+                    //（issue #1555 / #1558）：编排只递「市场 + 代码」；批量承载量
+                    // 由取数层按实测请求行上限自行分批（issue #1558）。
+                    let queries = queries.to_vec();
                     let client = client.clone();
                     let pacer = pacer.clone();
+                    let hosts = hosts.clone();
                     Box::pin(async move {
                         let _foreground = lane.before_request().await;
                         let mut pacer = lock_pacer(&pacer).await;
-                        fetch_ulist(&client, &mut pacer, &secids).await
+                        let hosts: Vec<&str> = hosts.iter().map(String::as_str).collect();
+                        let quotes =
+                            fetch_tencent_quotes(&client, &mut pacer, &hosts, &queries).await?;
+                        Ok(quotes.into_iter().map(|q| q.into_quote_item()).collect())
                     })
                 })
             },
             fetch_kline: {
                 let client = client.clone();
                 let pacer = pacer.clone();
-                let hosts = kline_hosts.clone();
+                let hosts = hosts.kline.clone();
                 // 近两年窗口在束构造时取一次（与汇率腿同口径）。
                 let (beg, end) = kline_window();
                 Box::new(move |query: &QuoteQuery| {
@@ -235,24 +266,20 @@ impl SyncFetchChannels {
     }
 }
 
-/// 腾讯日 K 主机（生产形态的拥有副本）：取数单元单点常量 [`tencent_kline::TENCENT_KLINE_HOSTS`]
-/// 的 `Vec<String>` 形态，供通道束构造持有；测试注入本地 HTTP 服务地址替换它。
-fn tencent_kline_hosts() -> Vec<String> {
-    tencent_kline::TENCENT_KLINE_HOSTS
-        .iter()
-        .map(|host| host.to_string())
-        .collect()
-}
-
-/// 一批查询单元 → 批量报价请求的 secid 逗号串（issue #1555 的键构造单点）：
-/// 市场前缀与代码的组合只发生在这里；市场无法构造键的查询单元不进请求（防御
-/// 派生不变量破损的兼底，编排侧不重复镜像市场能力判定）。
-fn ulist_secids(queries: &[QuoteQuery]) -> String {
-    queries
-        .iter()
-        .filter_map(|q| quote_query_key(&q.market, &q.code))
-        .collect::<Vec<_>>()
-        .join(",")
+/// 腾讯两条取数面的生产主机（发送单元单点常量的拥有副本）：取数单元单点常量
+/// [`TENCENT_QUOTE_HOSTS`] 与 [`tencent_kline::TENCENT_KLINE_HOSTS`] 的
+/// `Vec<String>` 形态，供通道束构造持有；测试注入本地 HTTP 服务地址替换它们。
+fn tencent_hosts() -> SyncFetchHosts {
+    SyncFetchHosts {
+        quote: TENCENT_QUOTE_HOSTS
+            .iter()
+            .map(|host| host.to_string())
+            .collect(),
+        kline: tencent_kline::TENCENT_KLINE_HOSTS
+            .iter()
+            .map(|host| host.to_string())
+            .collect(),
+    }
 }
 
 /// 通道车道（issue #1375）：前台请求在途计数（[`ForegroundGuard`]）让后台让行；
@@ -297,7 +324,7 @@ where
 {
     do_incremental_sync_with(
         session,
-        &mut channels.fetch_ulist,
+        &mut channels.fetch_quotes,
         &mut channels.fetch_fx,
         &mut channels.fetch_nav,
         &mut channels.fetch_fund_name,
@@ -317,7 +344,7 @@ mod tests {
     /// `production` 同型——命令壳换装时对两侧零分叉。
     fn stub_channels() -> SyncFetchChannels {
         SyncFetchChannels {
-            fetch_ulist: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+            fetch_quotes: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_kline: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_nav: Box::new(|_| {
@@ -341,36 +368,6 @@ mod tests {
             fetch_fund_name: Box::new(|_| Box::pin(async { Ok(String::new()) })),
             bulk: BulkFetchSurfaces::absent(),
         }
-    }
-
-    /// 批量报价请求的查询键构造归通道（issue #1555）：一批「市场 + 代码」查询单元
-    /// → secid 逗号串（`前缀.代码`），市场无法构造键的单元不进请求。删掉本函数
-    /// 中的 `quote_query_key` 组合（改传裸代码）即红。
-    #[test]
-    fn ulist_secids_combine_market_prefix_and_bare_code() {
-        let queries = vec![
-            QuoteQuery {
-                market: "sh".into(),
-                code: "600519".into(),
-            },
-            QuoteQuery {
-                market: "hk".into(),
-                code: "00700".into(),
-            },
-            QuoteQuery {
-                market: "nasdaq".into(),
-                code: "AAPL".into(),
-            },
-        ];
-        assert_eq!(ulist_secids(&queries), "1.600519,116.00700,105.AAPL");
-        // 防御兼底（派生不变量破损时的兜底）：未知市场不构造键、不进请求。
-        assert_eq!(
-            ulist_secids(&[QuoteQuery {
-                market: "unknown".into(),
-                code: "NVDA".into(),
-            }]),
-            ""
-        );
     }
 
     /// 直通会话（测试态）：作业闭包在 `await` 点内联完成——future 立即就绪，

@@ -262,6 +262,7 @@ where
                     &instrument_id,
                     &currency,
                     &bars,
+                    EASTMONEY_PRICE_SOURCE,
                 )?;
                 upsert_market_price(
                     conn,
