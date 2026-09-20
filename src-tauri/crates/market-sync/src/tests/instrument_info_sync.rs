@@ -4260,9 +4260,22 @@ fn mixed_ledger_keeps_constant_fund_out_of_requests_denominator_and_gaps() {
         Some((30_000, Some(today_s.clone()))),
         "普通基金的批量面直落照旧"
     );
+    // 当周采样点按「整周覆盖」幂等：水位日与今日同 ISO 周则覆盖为一条，跨周
+    // 则两条并存（用例不能假定运行日在周内的位置，参照同文件 current-week 用例）。
+    let yesterday_date = today - chrono::Duration::days(1);
+    let expected_history = if crate::incremental::week_monday(yesterday_date)
+        == crate::incremental::week_monday(today)
+    {
+        vec![(today_s.clone(), 30_000, "CNY".into())]
+    } else {
+        vec![
+            (yesterday.clone(), 30_000, "CNY".into()),
+            (today_s.clone(), 30_000, "CNY".into()),
+        ]
+    };
     assert_eq!(
         price_history_rows(&conn, "inst-fund"),
-        vec![(today_s.clone(), 30_000, "CNY".into())],
+        expected_history,
         "普通基金的当周采样点照旧"
     );
     assert_eq!(
