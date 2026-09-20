@@ -5,8 +5,6 @@ import { join } from "node:path";
 import {
   CRATE_MODULE_TARGETS,
   CRATES,
-  DOMAIN_PAIR_ALLOWED_EDGES,
-  DOMAIN_PAIR_FORBIDDEN,
   INFRA_SRC_REL,
   LAYER,
   TRANSACTION_ZONE_ALLOWED_EDGES,
@@ -452,9 +450,16 @@ describe("check-structure（结构守门）", () => {
     expect(run(args).status).toBe(0);
   });
 
-  it("别名引入（use … as）同样识别为依赖", () => {
-    const args = fixtureWith(
-      infraCase({ "db/helper.rs": "use crate::commands as shell;\npub fn y() {}\n" }),
+  it("别名引入（use … as）同样识别为依赖（根 src 白名单面）", () => {
+    // 跨 crate 面（如 ledger-infra 内的 `crate::commands`）自 #1596 起归编译期；
+    // 仅存的壳层反向依赖文本扫描面 = 根包 src 白名单（test_support 与 commands
+    // 同居根包，属同 crate 引用）。
+    const args = makeCrateFixture();
+    writeCrateFile(
+      args[1],
+      ".",
+      "test_support/cost.rs",
+      "use crate::commands as shell;\npub fn y() {}\n",
     );
     const r = run(args);
     expect(r.status).toBe(1);
@@ -528,27 +533,16 @@ describe("check-structure 模块面投影核对（#1595：expected 由 lib.rs mo
     expect(run(args).status).toBe(0);
   });
 
-  it("文件模块与目录模块同名共存（transport.rs + transport/）：两形态都入扫描", () => {
-    const clean = fixtureWith({
+  it("文件模块与目录模块同名共存（transport.rs + transport/）→ 绿（声明面与磁盘双向全等）", () => {
+    // `mod transport;` 在 Rust 里同时允许 transport.rs（模块本体）与 transport/
+    // （子模块目录）——磁盘枚举按模块键判等，不因同名报孤儿。
+    const args = fixtureWith({
       crate: "ledger-sync-engine",
       dir: "crates/sync-engine",
       libRs: "pub mod transport;\n",
       files: { "transport.rs": STUB, "transport/s3.rs": STUB },
     });
-    expect(run(clean).status).toBe(0);
-    // 目录成员（transport/s3.rs）与文件（transport.rs）同在扫描面：各注入一枚
-    // 违规即分别红（title 不落空断言）。
-    for (const rel of ["transport.rs", "transport/s3.rs"]) {
-      const args = fixtureWith({
-        crate: "ledger-sync-engine",
-        dir: "crates/sync-engine",
-        libRs: "pub mod transport;\n",
-        files: { "transport.rs": STUB, "transport/s3.rs": STUB, [rel]: shellUse },
-      });
-      const r = run(args);
-      expect(r.status, `${rel} 未入扫描面`).toBe(1);
-      expect(r.output).toContain(`${rel}:1`);
-    }
+    expect(run(args).status).toBe(0);
   });
 
   it("形状判定：#[cfg(test)] mod tests; 豁免（ADR-0056 决策 5）→ 绿", () => {
@@ -641,124 +635,146 @@ describe("check-structure 模块面投影核对（#1595：expected 由 lib.rs mo
   });
 });
 
-describe("check-structure 分层扫描（crate 模块面，ADR-0056 决策 4）", () => {
-  it("域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    const args = fixtureWith(accountsCase({ "core.rs": shellUse }));
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("core.rs:1");
+describe("check-structure 跨 crate 依赖方向（#1596 cargo 退役 / ADR-0071 修订注记）", () => {
+  /**
+   * 退役留痕（#1596 / ADR-0056 决策 4 修订注记）：跨 crate 越界方向的源码文本
+   * 扫描退役——未声明依赖即编译失败（cargo 强于文本扫描：`use crate::x as y`
+   * 别名改写对文本不可达、编译期逃不掉），已声明的越界方向由 crate 边界核对按
+   * `Cargo.toml` 声明面判定（层秩 + 业务域→多端同步域禁令）。下列用例把原
+   * 「文本扫描红」钉成「文本扫描不再报红」——退役不得静默回潮（扫描若被恢复，
+   * 本组变红）。逐族编译错误证据见 PR #1605。
+   */
+  /** 成员 crate 清单桩：依赖面 + 门禁继承。 */
+  const crateManifest = (name: string, deps: string): string =>
+    `[package]\nname = "${name}"\nversion = "0.6.0"\nedition = "2024"\n\n` +
+    `[dependencies]\n${deps}\n\n[lints]\nworkspace = true\n`;
+
+  /** infra 清单桩：带 http 投影门 features/axum 形态 + 给定 dev-dependency 行。 */
+  const infraFixtureManifest = (devDeps: string): string =>
+    '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+    '[features]\nhttp = ["dep:axum"]\n\n' +
+    '[dependencies]\naxum = { version = "0.8", optional = true }\n\n' +
+    `[dev-dependencies]\n${devDeps}\n\n[lints]\nworkspace = true\n`;
+
+  it("基础设施文件引用域模块 / 域 crate 模块引用壳层 → 文本扫描已退役（红源换为编译期）", () => {
+    // `crate::test_support` 在 ledger-infra 内即 `ledger_infra::test_support`——不存在；
+    // 即便写成 `tauri_app_lib::test_support`，dev-dependency 也只对测试目标可见，
+    // 生产面编译失败。原文扫描已无靶向价值。
+    expect(
+      run(
+        fixtureWith(
+          infraCase({ "db/helper.rs": "use crate::test_support::open;\npub fn x() {}\n" }),
+        ),
+      ).status,
+    ).toBe(0);
+    const account = fixtureWith(accountsCase({ "core.rs": shellUse }));
+    expect(run(account).status).toBe(0);
   });
 
-  it("基础设施 crate 内代码引用壳层 → 红并定位文件行号", () => {
-    const args = fixtureWith(infraCase({ "db/helper.rs": shellUse }));
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("db/helper.rs:1");
-  });
-
-  it("协议 crate 模块引用域目录 → 红（共享底座零依赖，#1089）", () => {
+  it("协议 crate 模块引用域目录 → 文本扫描已退役（红源换为编译期 / 层秩声明面）", () => {
     const args = fixtureWith(
       protocolCase({ "op.rs": "use crate::test_support::open;\npub fn x() {}\n" }),
     );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("引用域目录 test_support");
-    expect(r.output).toContain("op.rs:1");
+    expect(run(args).status).toBe(0);
   });
 
-  it("基础设施→域引用 → 红（生产挂载点不得复活）", () => {
+  it("域 crate 模块引用同步域 → 文本扫描已退役（红源换为编译期 / 声明面禁令）", () => {
+    // `crate::sync_engine` 在域 crate 内编不过；`ledger_sync_engine::` 必伴随声明
+    // 依赖，由 crate 边界禁令拦下（负向夹具见下）。
     const args = fixtureWith(
-      infraCase({ "db/helper.rs": "use crate::test_support::open;\npub fn x() {}\n" }),
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("引用域目录");
-    expect(r.output).toContain("db/helper.rs:1");
-  });
-
-  it("内联全限定路径（crate::域::x() 形态）同样识别 → 红", () => {
-    const args = fixtureWith(
-      infraCase({ "db/helper.rs": "pub fn y() { crate::test_support::open(); }\n" }),
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("引用域目录 test_support");
-    expect(r.output).toContain("db/helper.rs:1");
-  });
-
-  it("tauri_app_lib:: 前缀与 use as 别名引入同样识别 → 红", () => {
-    const args = fixtureWith(
-      infraCase({
-        "db/helper.rs":
-          "use tauri_app_lib::test_support::open;\nuse crate::test_support as support;\npub fn y() {}\n",
-      }),
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output.match(/引用域目录 test_support/g)?.length).toBe(2);
-  });
-
-  it("模块自身导入（use crate::<域>;）同样识别 → 红", () => {
-    const args = fixtureWith(
-      infraCase({ "db/helper.rs": "use crate::test_support;\npub fn z() {}\n" }),
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("引用域目录 test_support");
-  });
-
-  it("std::sync 等同名路径不误报（crate 根前缀限定边界）", () => {
-    const args = fixtureWith(
-      infraCase({
-        "db/helper.rs": "use std::sync::{Arc, Mutex};\npub fn z(a: Arc<Mutex<u8>>) {}\n",
-      }),
+      accountsCase({ "core.rs": "use crate::sync_engine::engine::ReplayEffect;\npub fn x() {}\n" }),
     );
     expect(run(args).status).toBe(0);
   });
 
-  it("注释与字符串中的域路径不误报（掩码边界）", () => {
-    const args = fixtureWith(
-      infraCase({
-        "db/helper.rs": [
-          "/// 提交点由 [`crate::backup::run_due_backup`] 统一门禁（文档注释不算引用）",
-          "// 见 crate::test_support::open 说明",
-          'let s = "crate::backup::mark_dirty";',
-          'let re = r#"crate::test_support::open"#;',
-          "pub fn f() {}",
-          "",
-        ].join("\n"),
-      }),
-    );
+  it("基础设施 dev-dependency 反向依赖更高层 crate 未留痕 → 红（换载体：声明面核对）", () => {
+    // cargo 对 dev-dependency 环放行（测试目标与生产依赖图分离），是编译期盲区：
+    // 基础设施对业务域 crate 的 dev-dependency 须逐条留痕于
+    // INFRA_DOMAIN_ALLOWED_EDGES，清单之外的声明即红。
+    const args = makeCrateFixture({
+      memberManifests: {
+        "crates/infra": infraFixtureManifest('ledger-policy = { path = "../policy" }'),
+      },
+    });
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("基础设施→域方向");
+    expect(r.output).toContain("ledger-policy");
+  });
+
+  it("基础设施 dev-dependency 已留痕于台账（测试专用边）→ 绿", () => {
+    const args = makeCrateFixture({
+      memberManifests: {
+        "crates/infra": infraFixtureManifest(
+          'tauri-app = { path = "../.." }\nledger-transaction = { path = "../transaction" }',
+        ),
+      },
+    });
     expect(run(args).status).toBe(0);
   });
 
-  it("外挂测试豁免不变：tests.rs 与 tests/ 目录引用域不红（ADR-0056 决策 5）", () => {
-    const args = fixtureWith(
-      infraCase({
-        "db/tests.rs": "use crate::test_support::open;\n",
-        "db/tests/common.rs": "pub fn s() -> crate::backup::AutoBackupState { todo!() }\n",
-      }),
-    );
+  it("基础设施 dev-dependency 指向非域层（协议 / 基础设施）→ 不受台账约束（生产方向仍归层秩核对）", () => {
+    const args = makeCrateFixture({
+      memberManifests: {
+        "crates/infra": infraFixtureManifest(
+          'ledger-infra = { path = "." }\nledger-sync-protocol = { path = "../sync-protocol" }',
+        ),
+      },
+    });
     expect(run(args).status).toBe(0);
   });
 
-  it("认许边精确匹配：settings.rs→test_support 绿；他文件同域仍红", () => {
-    const settingsLibRs = INFRA_CASE.libRs + "pub mod settings;\n";
-    const green = fixtureWith(
-      infraCase(
-        { "settings.rs": "use tauri_app_lib::test_support::open;\npub fn x() {}\n" },
-        settingsLibRs,
-      ),
-    );
-    expect(run(green).status).toBe(0);
-    const otherFile = fixtureWith(
-      infraCase({ "db/helper.rs": "use crate::test_support::open;\n" }),
-    );
-    const r2 = run(otherFile);
-    expect(r2.status).toBe(1);
-    expect(r2.output).toContain("db/helper.rs:1");
+  it("基础设施 crate 生产依赖域 crate → 红（层秩声明面核对，F8 生产面换载体后仍守）", () => {
+    const args = makeCrateFixture({
+      memberManifests: {
+        "crates/infra":
+          '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+          '[features]\nhttp = ["dep:axum"]\n\n' +
+          '[dependencies]\naxum = { version = "0.8", optional = true }\n' +
+          'ledger-policy = { path = "../policy" }\n\n[lints]\nworkspace = true\n',
+      },
+    });
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("crate 依赖方向");
+    expect(r.output).toContain("ledger-infra");
+    expect(r.output).toContain("ledger-policy");
+  });
+
+  it("协议 crate 生产依赖域 crate / 壳 crate → 红（层秩声明面核对，#1089 退役文本扫描后仍守）", () => {
+    const args = makeCrateFixture({
+      memberManifests: {
+        "crates/sync-protocol": crateManifest(
+          "ledger-sync-protocol",
+          'ledger-transaction = { path = "../transaction" }\ntauri-app = { path = "../.." }',
+        ),
+      },
+    });
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("crate 依赖方向");
+    expect(r.output).toContain("ledger-sync-protocol");
+    expect(r.output).toContain("ledger-transaction");
+    expect(r.output).toContain("tauri-app");
+  });
+
+  it("账户域 crate 生产依赖核心交易域 crate → 绿（域→域合法上层依赖，ADR-0071 决策 5）", () => {
+    const args = makeCrateFixture({
+      memberManifests: {
+        "crates/accounts": crateManifest(
+          "ledger-accounts",
+          'ledger-transaction = { path = "../transaction" }',
+        ),
+      },
+    });
+    expect(run(args).status).toBe(0);
+  });
+
+  it("真实仓库默认通过：跨 crate 方向走声明面（认许边留痕于脚本）", () => {
+    const r = run([]);
+    expect(r.status).toBe(0);
+    expect(r.output).toContain("跨 crate 依赖方向：声明面判定");
+    expect(r.output).toContain("基础设施 dev-dependency 方向零未留痕声明（认许边 4 条");
   });
 });
 
@@ -773,6 +789,26 @@ describe("check-structure 基础设施 crate 内块间禁边（ADR-0111 决策 4
     expect(r.status).toBe(1);
     expect(r.output).toContain("crate 内反向依赖");
     expect(r.output).toContain("db/helper.rs:1");
+  });
+
+  it("块间禁边两形态都入扫描：db.rs（单文件模块）注入违规同样红", () => {
+    // 目录形态（db/helper.rs）由上一枚用例覆盖；本用例锁单文件模块形态
+    // （db.rs）——两形态都在扫描面内（条目由声明投影，不因形态不同漏扫）。
+    const args = fixtureWith({
+      crate: "ledger-infra",
+      dir: "crates/infra",
+      libRs: INFRA_CASE.libRs,
+      files: {
+        "boot/mod.rs": STUB,
+        "db.rs": "use crate::boot::encryption::probe_file_kind;\npub fn x() {}\n",
+        "error.rs": INFRA_CASE.files["error.rs"] as string,
+        "test_utils.rs": STUB,
+      },
+    });
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("crate 内反向依赖");
+    expect(r.output).toContain("db.rs:1");
   });
 
   it("db 引用 signals → 红（shell_support 靶已随 #1108 迁出退役）", () => {
@@ -822,125 +858,6 @@ describe("check-structure 基础设施 crate 内块间禁边（ADR-0111 决策 4
       }),
     );
     expect(run(args).status).toBe(0);
-  });
-});
-
-describe("check-structure 业务域→同步域零容忍（ADR-0101 决策 4b / #1089 收紧）", () => {
-  it("业务域引用同步域内部件（engine::/ops::/model::…）→ 红并定位文件行号", () => {
-    const args = fixtureWith(
-      accountsCase({ "core.rs": "use crate::sync_engine::engine::ReplayEffect;\n" }),
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("core.rs:1");
-    expect(r.output).toContain("sync_engine::engine");
-  });
-
-  it("契约模块与原白名单根符号亦红（#1089 零容忍：协议面下放协议 crate）", () => {
-    const args = fixtureWith(
-      accountsCase({
-        "core.rs": [
-          "use crate::sync_engine::command::ReplayEffect;",
-          "use crate::sync_engine::{DomainCommand, record_local as record_op};",
-          "use crate::sync_engine::device_id;",
-          "use crate::sync_engine;",
-          "pub fn x() {}",
-          "",
-        ].join("\n"),
-      }),
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("core.rs:1");
-  });
-
-  it("根花括号列举夹带任一符号 → 红（零容忍逐条判定）", () => {
-    const args = fixtureWith(
-      accountsCase({ "core.rs": "use crate::sync_engine::{DomainCommand, model::SyncOp};\n" }),
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("model");
-  });
-
-  it("根 glob 引入与根别名引入 → 红（零容忍堵别名盲区）", () => {
-    expect(
-      run(fixtureWith(accountsCase({ "core.rs": "use crate::sync_engine::*;\n" }))).status,
-    ).toBe(1);
-    const alias = run(
-      fixtureWith(accountsCase({ "core.rs": "use crate::sync_engine as se;\npub fn x() {}\n" })),
-    );
-    expect(alias.status).toBe(1);
-    expect(alias.output).toContain("core.rs:1");
-  });
-
-  it("业务域直接引用同步域 crate 名（ledger_sync_engine::）→ 红（#1107 crate 化后堵漏）", () => {
-    const args = fixtureWith(
-      accountsCase({ "core.rs": "use ledger_sync_engine::engine::ReplayEffect;\npub fn x() {}\n" }),
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("ledger_sync_engine::engine");
-  });
-
-  it("同步域自身与测试支持域不参与（作用域边界）", () => {
-    const syncSelf = fixtureWith({
-      crate: "ledger-sync-engine",
-      dir: "crates/sync-engine",
-      libRs: "pub mod core;\n",
-      files: { "core.rs": "use crate::sync_engine::ops::insert_row;\n" },
-    });
-    expect(run(syncSelf).status).toBe(0);
-    const rootSrc = makeCrateFixture();
-    writeCrateFile(
-      rootSrc[1],
-      ".",
-      "test_support/channel.rs",
-      "use crate::sync_engine::model::SyncOp;\n",
-    );
-    expect(run(rootSrc).status).toBe(0);
-  });
-
-  it("注释与字符串中的同步域内部路径不误报（掩码边界）", () => {
-    const args = fixtureWith(
-      accountsCase({
-        "core.rs": [
-          "/// 见 `crate::sync_engine::ops::record_local` 说明（文档注释不算引用）",
-          "// crate::sync_engine::engine::dispatch",
-          'let s = "crate::sync_engine::parked::ParkedOp";',
-          'let re = r#"crate::sync_engine::model::SyncOp"#;',
-          "pub fn f() {}",
-          "",
-        ].join("\n"),
-      }),
-    );
-    expect(run(args).status).toBe(0);
-  });
-
-  it("真实仓库默认通过：业务域→同步域零容忍零违规", () => {
-    const r = run([]);
-    expect(r.status).toBe(0);
-    expect(r.output).toContain("业务域→同步域零容忍零违规");
-  });
-});
-
-describe("check-structure 域间禁边（issue #1090 写路径副作用接缝反转）", () => {
-  it("禁边清单已随双方 crate 化退役、归空（文本清单不再辖，方向归 cargo 依赖图）", () => {
-    expect(DOMAIN_PAIR_FORBIDDEN).toHaveLength(0);
-    expect(DOMAIN_PAIR_ALLOWED_EDGES).toHaveLength(0);
-  });
-
-  it("真实仓库默认通过：域间禁边零未认许引用", () => {
-    const r = run([]);
-    expect(r.status).toBe(0);
-    expect(r.output).toContain(
-      `域间禁边 ${DOMAIN_PAIR_FORBIDDEN.length} 对零未认许引用` +
-        `（认许边 ${DOMAIN_PAIR_ALLOWED_EDGES.length} 条，#1090 接缝反转）`,
-    );
   });
 });
 
@@ -1117,26 +1034,6 @@ describe("check-structure 交易域区级层序（ADR-0113 决策 7 / #1181）",
   // ① 声明面双向全等（投影核对 describe 覆盖）、② 区级层序、③ 模型目录判据
   // 各有一枚夹具；删任一条断言须动脚本（清单外无豁免面），对应夹具转绿 →
   // 该夹具测试失败（CI 红）。
-  it("全成员 crate 模块面都入分层扫描：逐 crate 注入壳层引用 → 逐个红（旧逐 crate 用例等价）", () => {
-    // 逐 crate 覆盖等价（#1595 前的 12 个逐域 describe 各测本 crate 扫描面）：
-    // 声明面 → 扫描面的接线对每个成员 crate 都成立，任一 crate 的模块面掉出
-    // 扫描面即此处红。
-    for (const target of CRATE_MODULE_TARGETS) {
-      const dir = target.srcRel.slice(0, -"/src".length);
-      const caseSpec = SKELETON_CASES.find((c) => c.dir === dir);
-      expect(caseSpec, `骨架缺 ${target.crate} 的模块面声明`).toBeDefined();
-      const [firstRel] = Object.keys(caseSpec?.files ?? {});
-      expect(firstRel, `${target.crate} 的夹具声明缺模块文件`).toBeDefined();
-      const args = fixtureWith({
-        ...(caseSpec as CrateCase),
-        files: { ...(caseSpec as CrateCase).files, [firstRel as string]: shellUse },
-      });
-      const r = run(args);
-      expect(r.status, `${target.crate} 的模块面未入分层扫描`).toBe(1);
-      expect(r.output).toContain("反向依赖");
-    }
-  });
-
   it("新增交易域模块未登记区归属 → 红（政策表双向全等，不静默漏扫）", () => {
     const args = fixtureWith(
       transactionCase({ "extra_zone.rs": STUB }, TRANSACTION_CASE.libRs + "pub mod extra_zone;\n"),
@@ -1496,6 +1393,22 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
       },
     });
     expect(run(args).status).toBe(0);
+  });
+
+  it("全成员 crate 生产依赖壳层 crate → 逐个红（旧逐 crate describe 的声明面覆盖等价）", () => {
+    // 逐 crate 覆盖等价（#1596 前 12 个逐域 describe 各测本 crate 的声明面红线）：
+    // 声明面核对对每个成员 crate 都成立，任一 crate 掉出核对面即此处红。
+    for (const crate of CRATES) {
+      if (crate.dir === ".") continue; // 根包即壳层自身
+      const manifest =
+        `[package]\nname = "${crate.name}"\nversion = "0.6.0"\nedition = "2024"\n\n` +
+        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n';
+      const args = makeCrateFixture({ memberManifests: { [crate.dir]: manifest } });
+      const r = run(args);
+      expect(r.status, `${crate.name} 生产依赖壳层未变红`).toBe(1);
+      expect(r.output).toContain("crate 依赖方向");
+      expect(r.output).toContain(crate.name);
+    }
   });
 
   it("业务域 crate 生产依赖多端同步域 crate → 红（同层禁边，ADR-0101 决策 4b / #1107）", () => {
