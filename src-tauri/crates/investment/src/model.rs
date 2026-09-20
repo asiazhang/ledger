@@ -105,8 +105,8 @@ pub struct Instrument {
     pub updated_at: String,
     pub version: i64,
     pub device_id: String,
-    /// 字典条目来源（自建标的，ADR-0036 决策 2）：'eastmoney' 同步 | 'manual' 手动，
-    /// 与价格侧 source 同词表但语义正交；来源随行终身不变（upsert/同步均不改写）。
+    /// 字典条目来源（自建标的，ADR-0036 决策 2）：'manual' 手动 | 历史同步行保留原值，
+    /// 与价格侧 source 语义正交；来源随行终身不变（upsert/同步均不改写）。
     pub source: String,
     /// 最新市场价格（万分之一元，0.0001 元，ADR-0038 价格刻度），同步来源；无行情时为空。
     pub price_cents: Option<i64>,

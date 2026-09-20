@@ -430,10 +430,21 @@ async fn contract_size_within_budget() {
 async fn contract_is_data_source_neutral() {
     let doc = fetch_contract().await;
     let text = serde_json::to_string(&doc).unwrap();
-    for banned in ["东财", "东方财富"] {
+    for banned in ["东财", "东方财富", "eastmoney"] {
+        let at = text.find(banned).map(|i| {
+            let mut s = i.saturating_sub(120);
+            let mut e = (i + banned.len() + 80).min(text.len());
+            while !text.is_char_boundary(s) {
+                s -= 1;
+            }
+            while !text.is_char_boundary(e) {
+                e -= 1;
+            }
+            format!("…{}…", &text[s..e])
+        });
         assert!(
             !text.contains(banned),
-            "契约方言应数据源中立，不得出现数据源名 {banned:?}（ADR-0130）"
+            "契约方言应数据源中立，不得出现数据源名 {banned:?}（ADR-0130）：{at:?}"
         );
     }
 }

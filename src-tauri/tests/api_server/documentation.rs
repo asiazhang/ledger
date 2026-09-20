@@ -256,6 +256,10 @@ async fn test_openapi_doc_has_currencies_endpoint() {
 /// 「一次拉取即自足」）。spec #1327 / ADR-0119（信用卡档案字段）：三个新字段跨
 /// `Account` / `AccountInput` / `AccountUpdateInput` 三个 schema，字段描述已收敛到
 /// 单行后实测 49312 字节越 48KB，本票提至 50KB（与紧凑方言同票同因，ADR-0119 后果节）。
+///
+/// issue #1569 复核：Instrument.source 描述去东财化改写后实测 51181 字节，
+/// 余量仅 19——本票已就地瘦身（删「同词表」措辞、压历史值说明）未提预算；
+/// 下一个新增端点/字段大概率触线，延续人工决策与留痕传统。
 #[tokio::test]
 async fn test_openapi_doc_size_within_budget() {
     let (app, _) = setup_app();
@@ -611,7 +615,7 @@ async fn test_knowledge_sections_are_data_source_neutral() {
         assert_eq!(response.status(), StatusCode::OK);
         let bytes = body_to_bytes(response.into_body()).await;
         let text = String::from_utf8(bytes).unwrap();
-        for banned in ["东财", "东方财富"] {
+        for banned in ["东财", "东方财富", "eastmoney"] {
             assert!(
                 !text.contains(banned),
                 "{uri} 应数据源中立，不得出现数据源名 {banned:?}（ADR-0130）"
