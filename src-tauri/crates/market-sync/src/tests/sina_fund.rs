@@ -12,7 +12,8 @@ use crate::http::Pacer;
 use crate::sina_fund::{
     SINA_FUND_BATCH_HOSTS, SINA_FUND_BATCH_PATH_PREFIX, SINA_FUND_BATCH_REFERER,
     SINA_FUND_BATCH_SIZE, SINA_FUND_HISTORY_HOSTS, SinaFundNavForm, fetch_fund_nav_history,
-    fetch_sina_fund_nav_rows, parse_fund_nav_history, parse_sina_fund_nav_rows,
+    fetch_sina_fund_nav_rows, fund_batch_from_rows, parse_fund_nav_history,
+    parse_sina_fund_nav_rows,
 };
 
 // ---------------------------------------------------------------------------
@@ -156,6 +157,30 @@ fn into_nav_point_projects_unit_nav_rows_only() {
         }),
         "普通行投影「净值日期 + 单位净值」"
     );
+}
+
+/// 批量面行序列 → 取数面载荷（issue #1565 接线）：名称字典覆盖面内全部行（含
+/// 货基），净值表只收录产出价格点的普通行——某码「在名称字典、不在净值表」即
+/// 货基错位行，消费方据此把它落逐只臂经官方披露判定门，而不是当缺口或把万份
+/// 收益写成净值。
+#[test]
+fn fund_batch_from_rows_splits_names_from_price_points() {
+    let batch = fund_batch_from_rows(parse_batch(BATCH_BODY));
+    assert!(batch.covers("000001"));
+    assert!(batch.covers("000198"), "货基行被面收录（有名称）");
+    assert_eq!(batch.name_of("000198"), Some("天弘余额宝货币"));
+    assert!(batch.nav_of("000198").is_none(), "货基行不产出价格点");
+    assert_eq!(
+        batch.nav_of("000001"),
+        Some(&BulkNavPoint {
+            date: "2026-09-18".into(),
+            nav: 1.333,
+        })
+    );
+    assert!(batch.nav_of("002503").is_some(), "已终止普通基金末点照常在");
+    assert!(!batch.covers("999999"), "查无此码的空值语句不产出行");
+    assert_eq!(batch.names.len(), 4, "四条非空语句进名称字典");
+    assert_eq!(batch.nav.len(), 2, "只有两条普通行产出价格点");
 }
 
 #[test]

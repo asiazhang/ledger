@@ -1,10 +1,11 @@
-//! 同步网络通道束（issue #1276）：七个逐标的抓取通道 + 两个批量取数面
-//!（ADR-0121 / issue #1374）的打包形态与生产/测试换装接缝。
+//! 同步网络通道束（issue #1276）：七个逐标的抓取通道 + 一个批量取数面
+//!（ADR-0121 / issue #1374 / ADR-0130 决策 2）的打包形态与生产/测试换装接缝。
 //!
 //! 编排（[`super::incremental`]）消费六个逐标的抓取闭包（批量报价 / 日 K / 汇率 K /
-//! 历史净值页 / 单请求全量净值 / 基金名称）与两个批量取数面（名称全量字典 /
-//! 场外基金净值全市场批量面，见 `do_incremental_sync_with`）；货基判定确认闭包
-//!（issue #1563 / ADR-0126 决策 3 换源）由现价刷新与历史补全两编排消费。
+//! 历史净值页 / 单请求全量净值 / 基金名称）与一个批量取数面（新浪 `f_` 面：
+//! 名称与最新净值同面返回，见 `do_incremental_sync_with`；issue #1565 换源）；
+//! 货基判定确认闭包（issue #1563 / ADR-0126 决策 3 换源）由现价刷新与历史补全
+//! 两编排消费。
 //! 本模块把它们打成**一个通道束**：生产经 [`SyncFetchChannels::production`]
 //! 接 HTTP 层（复用主机池 / 重试 / 限流 pacer 与价格换算），测试把桩闭包装进
 //! 同一结构注入命令壳（壳层 `SyncChannelsSlot` 管理态，issue #1276 的「命令壳
@@ -41,6 +42,7 @@ use super::incremental::{do_incremental_sync_with, kline_beg, kline_window};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use super::progress::SyncProgress;
 use super::session::ScopedSession;
+use super::sina_fund::SINA_FUND_BATCH_HOSTS;
 use super::tencent::{TENCENT_QUOTE_HOSTS, fetch_tencent_quotes};
 use super::tencent_kline;
 
@@ -91,7 +93,7 @@ pub type FetchFundName = Box<dyn FnMut(&str) -> FetchFuture<String> + Send>;
 ///（不是「不是恒定标的」的反证）；`Err` = 披露源不可信（本轮不落任何价格）。
 pub type FetchMoneyFundForm = Box<dyn FnMut(&str) -> FetchFuture<bool> + Send>;
 
-/// 六个逐标的抓取通道 + 两个批量取数面的打包束：闭包签名与编排注入点逐一同形。
+/// 六个逐标的抓取通道 + 一个批量取数面的打包束：闭包签名与编排注入点逐一同形。
 /// 生产实现共享一个异步 HTTP client 与限流 pacer（`Arc<tokio::sync::Mutex<_>>`
 /// 内部可变、跨 `.await` 持有，串行语义与既有守卫一致，批量面同样经它限速）；
 /// 测试实现为注入桩。
@@ -114,20 +116,22 @@ pub struct SyncFetchChannels {
     /// 自报形态确认。逐只刷新与历史首刷两确认点消费；判定不进日常热路径——
     /// 确认后标的退出采集链路，不再产生逐轮请求（ADR-0126 决策 3/4）。
     pub confirm_money_fund_form: FetchMoneyFundForm,
-    /// 批量取数面（ADR-0121 / issue #1374）：名称全量字典 + 场外基金净值全市场
-    /// 批量面 + 跨同步记忆。
+    /// 批量取数面（ADR-0121 / issue #1374 / ADR-0130 决策 2）：新浪 `f_` 面把
+    /// 名称与最新净值同面返回（issue #1565 换源）+ 跨同步记忆。
     pub bulk: BulkFetchSurfaces,
 }
 
-/// 生产通道束的取数主机注入面（测试用，ADR-0130 三条腾讯取数面）：两面的主机
-/// 列表各具名——相邻同型 `Vec<String>` 位置参数可互换编译（静默错路由），
-/// 具名结构让「哪一面用哪个本地主机」在调用点自证。
+/// 生产通道束的取数主机注入面（测试用，ADR-0130 三条取数面）：三面的主机列表
+/// 各具名——相邻同型 `Vec<String>` 位置参数可互换编译（静默错路由），具名结构让
+/// 「哪一面用哪个本地主机」在调用点自证。
 #[derive(Debug, Clone, Default)]
 pub(super) struct SyncFetchHosts {
     /// 腾讯行情批量报价主机。
     pub(super) quote: Vec<String>,
     /// 腾讯日 K 主机。
     pub(super) kline: Vec<String>,
+    /// 新浪场外基金批量面主机（名称 + 最新净值同面，issue #1565）。
+    pub(super) fund_batch: Vec<String>,
 }
 
 impl SyncFetchChannels {
@@ -136,20 +140,21 @@ impl SyncFetchChannels {
     /// #1375——与后台补全共用同一份数据源额度）。回填窗口起点在束构造时取
     /// 一次（与先前每次同步取一次同口径）。
     pub fn production() -> Result<Self> {
-        Self::production_lane(Lane::Foreground, tencent_hosts())
+        Self::production_lane(Lane::Foreground, production_hosts())
     }
 
     /// 生产通道束（后台车道，issue #1375 价格历史补全）：同一全局限速器，但
     /// 请求前不占前台在途计数、反而**让行**——前台请求在途时后台等归零再发，
     /// 用户动作优先于后台补全。束形状与前台车道完全一致（编排消费零分叉）。
     pub fn production_backfill() -> Result<Self> {
-        Self::production_lane(Lane::Backfill, tencent_hosts())
+        Self::production_lane(Lane::Backfill, production_hosts())
     }
 
-    /// 生产通道束构造本体：`hosts` 携带腾讯行情报价与腾讯日 K 主机。生产经
-    /// [`tencent_hosts`] 传取数单元单点常量；测试注入本地 HTTP 服务，驱动
-    /// **生产束**钉住两条接线：「场内现价刷新打到腾讯批量报价端点」
-    ///（issue #1560）与「历史补全的日 K 打到腾讯 `fqkline/get`」（issue #1561），
+    /// 生产通道束构造本体：`hosts` 携带腾讯行情报价、腾讯日 K 与新浪场外基金
+    /// 批量面主机。生产经 [`production_hosts`] 传取数单元单点常量；测试注入本地
+    /// HTTP 服务，驱动**生产束**钉住三条接线：「场内现价刷新打到腾讯批量报价
+    /// 端点」（issue #1560）、「历史补全的日 K 打到腾讯 `fqkline/get`」（issue
+    /// #1561）与「场外基金现价与名称刷新打到新浪 `f_` 批量面」（issue #1565），
     /// 删除接线即红。
     pub(super) fn production_lane(lane: Lane, hosts: SyncFetchHosts) -> Result<Self> {
         let client = build_client()?;
@@ -285,21 +290,26 @@ impl SyncFetchChannels {
                     })
                 })
             },
-            bulk: BulkFetchSurfaces::production(&client, pacer),
+            bulk: BulkFetchSurfaces::production(&client, pacer, hosts.fund_batch.clone()),
         })
     }
 }
 
-/// 腾讯两条取数面的生产主机（发送单元单点常量的拥有副本）：取数单元单点常量
-/// [`TENCENT_QUOTE_HOSTS`] 与 [`tencent_kline::TENCENT_KLINE_HOSTS`] 的
-/// `Vec<String>` 形态，供通道束构造持有；测试注入本地 HTTP 服务地址替换它们。
-fn tencent_hosts() -> SyncFetchHosts {
+/// 三条取数面的生产主机（发送单元单点常量的拥有副本）：取数单元单点常量
+/// [`TENCENT_QUOTE_HOSTS`]、[`tencent_kline::TENCENT_KLINE_HOSTS`] 与
+/// [`SINA_FUND_BATCH_HOSTS`] 的 `Vec<String>` 形态，供通道束构造持有；
+/// 测试注入本地 HTTP 服务地址替换它们。
+fn production_hosts() -> SyncFetchHosts {
     SyncFetchHosts {
         quote: TENCENT_QUOTE_HOSTS
             .iter()
             .map(|host| host.to_string())
             .collect(),
         kline: tencent_kline::TENCENT_KLINE_HOSTS
+            .iter()
+            .map(|host| host.to_string())
+            .collect(),
+        fund_batch: SINA_FUND_BATCH_HOSTS
             .iter()
             .map(|host| host.to_string())
             .collect(),

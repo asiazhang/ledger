@@ -11,8 +11,8 @@ use chrono::NaiveDate;
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_investment::prices::{
-    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
-    upsert_price_history,
+    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, SINA_PRICE_SOURCE, price_value_to_cents,
+    upsert_market_price, upsert_price_history,
 };
 
 use super::bulk::BulkNavPoint;
@@ -323,11 +323,15 @@ fn week_gap_needs_per_instrument(watermark: Option<&str>, bulk_date: &str) -> bo
 /// `upsert_price_history`）。只在批量面报出比水位更新的净值时调用（见
 /// [`bulk_decision`]）。
 ///
-/// **本臂不经货基判定门的前提是批量面结构上不含货基**（东财排行面无货币桶，
-/// ADR-0126 背景）：未打标货基恒落逐只臂、由判定门确认后收尾，万份收益永不
-/// 落库。#1565 把批量面换成新浪后该前提消失（新浪 `f_` 面含货基，且把万份
-/// 收益放在单位净值位，ADR-0130 决策 6）——换源时未打标标的的批量直落必须
-/// 先经官方披露判定，否则在批量命中臂复现 #1342 的市值错法。
+/// **本臂不经货基判定门的前提由批量面取数层的行形态判别承接**（issue #1565 /
+/// ADR-0130 决策 2/6）：新浪 `f_` 面含货基且把万份收益放在单位净值位，但取数层
+/// 按「前一日单位净值位为空」判形为 `MoneyYield`、
+/// [`super::sina_fund::SinaFundNavRow::into_nav_point`] 对它**不产出价格点**——
+/// 它只进批量面的名称字典、不进净值表，于是 `latest_hint` 为 None、落逐只臂由
+/// 官方披露判定门（[`super::csrc::confirm_money_fund_form`]）确认收尾，万份收益
+/// 永不进本臂。若要给未打标标的的批量直落再加一道判定门，代价是每只未打标基金
+/// 每次同步一次官方披露请求（与「批量命中零逐只请求」相悖）——本臂只收普通净值行
+/// 的形态保证就是那道门的等价物。
 ///
 /// 当周采样点只落**已有历史序列**的标的：无历史序列者落单点会让「有历史序列」
 /// 冒充「历史完整」，永久破坏首刷判据（ADR-0038 决策 6）——首刷的历史由后台
@@ -352,7 +356,9 @@ async fn land_bulk_point<Q: ScopedSession>(
                     currency_code: &currency,
                     priced_at: &hint_date,
                     nav_date: Some(&hint_date),
-                    source: Some(EASTMONEY_PRICE_SOURCE),
+                    // 价格来源随取数面换源如实记新浪（ADR-0130 决策 7 / issue #1565）——
+                    // 存量 `eastmoney` 行保留为历史事实，不重写不迁移。
+                    source: Some(SINA_PRICE_SOURCE),
                 },
             )?;
             if has_history {
@@ -362,7 +368,7 @@ async fn land_bulk_point<Q: ScopedSession>(
                     &hint_date,
                     price_cents,
                     &currency,
-                    EASTMONEY_PRICE_SOURCE,
+                    SINA_PRICE_SOURCE,
                 )?;
             }
             Ok(())

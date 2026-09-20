@@ -258,6 +258,19 @@ pub struct NavPage {
     pub(super) blocked: bool,
 }
 
+impl NavPage {
+    /// 空页（窗口内确实无新净值；`total=0`、非 `blocked`）：通道束为壳层注入接缝
+    /// 的公开面，桩实现方需要能命名与构造应答形状（与 [`super::channels::QuoteItem`]
+    /// 同款，issue #1276）；生产侧页不由此构造。
+    pub fn empty() -> Self {
+        Self {
+            points: vec![],
+            total: 0,
+            blocked: false,
+        }
+    }
+}
+
 /// 一只基金的单页查询（注入接缝的请求形状）：日期闭区间、页码 1 起。类型名
 /// 为数据源中立命名（issue #1557），与页形状 [`NavPage`] 同属分页通道接缝。
 #[derive(Debug, Clone, PartialEq)]

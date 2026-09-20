@@ -677,6 +677,7 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
         SyncFetchHosts {
             quote: vec![],
             kline: vec![url],
+            fund_batch: vec![],
         },
     )
     .expect("生产后台车道束应可构造");

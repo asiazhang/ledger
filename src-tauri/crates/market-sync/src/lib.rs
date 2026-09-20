@@ -17,10 +17,11 @@
 //! 自根包域目录拆为 workspace 成员 `ledger-market-sync`）。
 //!
 //! HTTP 网络爬取、东财基金访问与增量同步编排在本域收口：
-//! - [`bulk`]：行情批量取数面（ADR-0121 / issue #1374）——名称全量字典 + 场外基金
-//!   净值全市场批量面（各整次同步一次请求）、fail-closed 降级、同步内熔断、跨同步
-//!   记忆与缺口容忍；取数方式与价格来源正交（来源标记不变）；
-//! - [`channels`]：同步网络通道束（issue #1276）——六个逐标的抓取闭包 + 两个批量
+//! - [`bulk`]：行情批量取数面（ADR-0121 / issue #1374 / ADR-0130 决策 2）——
+//!   新浪 `f_` 场外基金批量面（按本次现场的基金代码一次请求取回名称与最新净值，
+//!   各整次同步最多一次逻辑请求）、fail-closed 降级、跨同步记忆与缺口
+//!   容忍；
+//! - [`channels`]：同步网络通道束（issue #1276）——六个逐标的抓取闭包 + 一个批量
 //!   取数面的打包形态，生产接 HTTP 层、测试注入桩经命令壳换装；
 //! - [`csrc`]：证监会基金电子披露取数单元（issue #1562 / ADR-0130）——官方场外
 //!   基金净值披露的单只基金区间查询与解析：名称、单位净值、累计净值、净值日期
@@ -86,7 +87,8 @@
 //!   （一次请求取整只历史，含已终止基金末点）；货基行的字段错位（万份收益放在
 //!   单位净值位）按「前一日单位净值位为空」单点判别并显式分类，错位行不产出
 //!   价格点（ADR-0130 决策 6）；全历史空序列不等于「查无此码」，非预期形状
-//!   fail-closed。本票只取数与解析，接线随 #1565 / #1566；
+//!   fail-closed。批量面已随现价刷新接线（issue #1565，名称与最新净值同面返回），
+//!   单只全历史面接线随 #1566；
 //! - [`stock`]：东财股票单点行情访问——按（市场，代码）实时查询（issue #693 /
 //!   ADR-0081），类型特征探测单点隔离，同接缝查询半边的场内实例；
 //! - [`tencent`]：腾讯行情批量报价取数单元（ADR-0130 决策 2/3 / issue #1558）
@@ -150,10 +152,9 @@ mod model;
 mod persist;
 mod progress;
 mod session;
-/// 新浪场外基金取数单元（issue #1564）：单元本体与测试已就位，crate 内消费点随
-/// 现价刷新批量面接线（#1565）与历史补全全历史面接线（#1566）落地，接装时撤去
-/// dead_code 豁免并按消费面补再导出。
-#[allow(dead_code)]
+/// 新浪场外基金取数单元（issue #1564）：批量最新净值面的 crate 内消费点已随
+/// 现价刷新接线落地（issue #1565，通道束的批量面闭包），全历史面接线随 #1566
+/// 落地——全历史半边暂以条目级 dead_code 豁免，接装时撤去。
 mod sina_fund;
 mod stock;
 /// 腾讯行情批量报价取数单元（issue #1558）：现价刷新接线见 [`channels`]
@@ -168,7 +169,7 @@ mod tests;
 
 pub use bulk::{
     BULK_DISABLE_PERIOD, BULK_FAILURE_THRESHOLD, BulkFetchCircuit, BulkFetchSurfaces, BulkNavPoint,
-    FundNameDictionary, FundNavTable,
+    FundBatch, FundNameDictionary, FundNavTable,
 };
 pub use channels::{
     FetchFundName, FetchFxKline, FetchKline, FetchMoneyFundForm, FetchNavFull, FetchNavPage,
