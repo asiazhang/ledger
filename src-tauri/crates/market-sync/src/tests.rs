@@ -29,6 +29,7 @@ mod bulk_fetch;
 mod csrc;
 mod fund_nav;
 mod fund_search;
+mod fx_persist;
 mod history_backfill;
 mod http_client;
 mod instrument_info_sync;

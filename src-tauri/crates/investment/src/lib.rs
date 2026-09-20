@@ -158,7 +158,7 @@ pub use constant_price::{
 pub use crud::{
     create_exchange_rate, create_instrument, create_instrument_manual, create_market_price,
     delete_instrument, get_instrument, list_exchange_rates, list_holdings, list_instruments,
-    list_market_prices,
+    list_market_prices, upsert_auto_exchange_rate,
 };
 pub use financial_freedom::{query_financial_freedom, query_investable_assets_cents};
 pub use fund::{

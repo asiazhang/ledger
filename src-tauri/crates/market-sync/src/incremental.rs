@@ -51,8 +51,8 @@ use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use ledger_infra::error::Result;
 use ledger_investment::crud::refresh_instrument_name;
 use ledger_investment::prices::{
-    MarketPriceWrite, TENCENT_PRICE_SOURCE, price_value_to_cents, upsert_market_price,
-    upsert_price_history,
+    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, TENCENT_PRICE_SOURCE, price_value_to_cents,
+    upsert_market_price, upsert_price_history,
 };
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 use ledger_transaction::amount::default_currency_code;
@@ -741,7 +741,14 @@ where
         session
             .with_connection(move |conn| {
                 for (trade_date, rate) in downsample_weekly(&bars) {
-                    upsert_fx_rate_history(conn, &base, &quote, &trade_date, rate)?;
+                    upsert_fx_rate_history(
+                        conn,
+                        &base,
+                        &quote,
+                        &trade_date,
+                        rate,
+                        EASTMONEY_PRICE_SOURCE,
+                    )?;
                 }
                 Ok(())
             })

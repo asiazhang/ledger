@@ -84,8 +84,8 @@ pub use s3::{
     S3Addressing, S3Deny, S3Gate, S3ObservedRequest, S3Stub, S3StubConfig, spawn_s3_stub,
 };
 pub use seed::{
-    seed_account, seed_exchange_rate, seed_fx_rate_history, seed_instrument, seed_investment_setup,
-    seed_price_history,
+    seed_account, seed_exchange_rate, seed_exchange_rate_with_source, seed_fx_rate_history,
+    seed_instrument, seed_investment_setup, seed_price_history,
 };
 
 use std::future::Future;

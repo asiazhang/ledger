@@ -53,11 +53,37 @@ pub fn seed_instrument(
 /// （表约束 `UNIQUE(base_code, quote_code)`：每货币对仅一行最新汇率）；簿记戳取
 /// [`FIXED_NOW`](super::FIXED_NOW)，`priced_at` 语义为「行情采集时间」，测试不读它。
 pub fn seed_exchange_rate(conn: &Connection, base: &str, quote: &str, rate: f64) -> String {
+    seed_exchange_rate_row(conn, base, quote, rate, FIXED_NOW, None)
+}
+
+/// 种入一行带来源与采集日期的「当前汇率」（issue #1543：人工行保护的 source
+/// 形态）。行 id 与簿记戳同 [`seed_exchange_rate`]；`priced_at` 与 `source`
+/// 是被测行为输入，显式传入（source 传 "manual" 即人工行）。
+pub fn seed_exchange_rate_with_source(
+    conn: &Connection,
+    base: &str,
+    quote: &str,
+    rate: f64,
+    priced_at: &str,
+    source: &str,
+) -> String {
+    seed_exchange_rate_row(conn, base, quote, rate, priced_at, Some(source))
+}
+
+/// `exchange_rates` 插入同体（吸收各处同形状插入的单一形态；source 不传即 NULL）。
+fn seed_exchange_rate_row(
+    conn: &Connection,
+    base: &str,
+    quote: &str,
+    rate: f64,
+    priced_at: &str,
+    source: Option<&str>,
+) -> String {
     let id = format!("er-{base}-{quote}");
     conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,?5,1,'test')",
-        params![id, base, quote, rate, FIXED_NOW],
+        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,1,'test')",
+        params![id, base, quote, rate, priced_at, source, FIXED_NOW],
     )
     .unwrap();
     id

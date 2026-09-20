@@ -944,7 +944,7 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   {
     path: "persist.rs",
     layer: "域目录",
-    note: "行情同步持久化（issue #137）：fx_rate_history 周采样 upsert（价格写入单点已随投资域归位迁入 ledger_investment::prices，#401）",
+    note: "行情同步持久化（issue #137）：ECB 汇率落库单元（issue #1543）——周采样序列 → fx_rate_history（币种对 × 周键整周覆盖幂等）+ 当期汇率表（每对最新一条，经投资域 upsert_auto_exchange_rate 人工行保护），单一事务、不产同步 op；东财 FX 通道的周采样 upsert 同住（#1551 退役前）；价格写入单点已随投资域归位迁入 ledger_investment::prices，#401",
   },
   {
     path: "progress.rs",
@@ -1432,7 +1432,7 @@ export const CRATES: readonly CrateEntry[] = [
     name: "ledger-market-sync",
     dir: "crates/market-sync",
     layer: CRATE_LAYER.DOMAIN,
-    note: "行情同步域 crate（#1106，P4 首个业务域 crate：行情抓取——批量报价/单点行情/日 K/历史净值——与增量同步编排，成为可被多端同步域依赖的独立编译单元）；依赖面为票面 AC 允许集全量：基础设施（db/error/events）、同步协议（op 落库行 device_id）、核心交易域（币种缺省推导 amount::default_currency_code）、投资域（价格写入单点 prices/名称随行刷新 crud/通道派生 channel/统一报价载荷 Quote，ADR-0103）——四条域→域均为上层域消费下层域的合法直呼（ADR-0112 决策 2），对壳层与多端同步域零直接依赖（壳层同步命令经根包再导出面消费），反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）",
+    note: "行情同步域 crate（#1106，P4 首个业务域 crate：行情抓取——批量报价/单点行情/日 K/历史净值——与增量同步编排，成为可被多端同步域依赖的独立编译单元）；依赖面为票面 AC 允许集全量：基础设施（db/error/events）、同步协议（op 落库行 device_id）、核心交易域（币种缺省推导 amount::default_currency_code）、投资域（价格写入单点 prices/名称随行刷新 crud/通道派生 channel/统一报价载荷 Quote，ADR-0103；#1543 起另消费汇率写入 crud::upsert_auto_exchange_rate，人工行保护）——四条域→域均为上层域消费下层域的合法直呼（ADR-0112 决策 2），对壳层与多端同步域零直接依赖（壳层同步命令经根包再导出面消费），反向引用由生产依赖面编译期拒绝（dev-dependency 环只覆盖测试目标）",
   },
   {
     name: "ledger-sync-engine",
