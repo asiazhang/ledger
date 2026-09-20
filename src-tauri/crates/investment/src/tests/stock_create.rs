@@ -5,7 +5,7 @@
 
 use crate::{
     InstrumentType, Quote, StockCreateRoute, adopt_stock_quote, create_stock_degraded,
-    route_stock_creation,
+    prices::TENCENT_PRICE_SOURCE, route_stock_creation,
 };
 
 use tauri_app_lib::test_support::open;
@@ -22,6 +22,7 @@ fn quote(code: &str, name: &str, market: &str, price: Option<i64>) -> Quote {
         fund_class: None,
         nav_date: None,
         constant_unit_price_cents: None,
+        price_source: TENCENT_PRICE_SOURCE,
     }
 }
 

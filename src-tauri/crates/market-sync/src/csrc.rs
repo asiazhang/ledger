@@ -36,8 +36,9 @@
 //!
 //! 判定确认（issue #1563 接线，ADR-0126 决策 3 换源）：[`confirm_money_fund_form`]
 //! 消费本单元的披露记录回答「这只基金是不是货基」——官方自报形态判定，接线在
-//! 逐只刷新与历史首刷两确认点（查询创建接线归 #1568）；区间取数的翻页与完整
-//! 性核验（[`fetch_fund_nav_series`]）归 #1568 的已终止基金兜底消费。
+//! 逐只刷新、历史首刷（#1563）与基金查询创建（#1568）三处；区间取数的翻页与
+//! 完整性核验（[`fetch_fund_nav_series`]）由查询创建接线（#1568）的已终止基金
+//! 存在性兜底消费。
 
 use serde::Deserialize;
 
@@ -78,13 +79,11 @@ fn malformed_source() -> AppError {
 /// 区间查询的一页解析产物：过滤汇总行后的披露记录 + 服务端声明的窗口内总行数
 ///（`iTotalRecords`，驱动翻页）+ 本页原始行数（翻页完整性核对：声明行数须逐页
 /// 取全，取不全即窗口不完整）。记录按服务端原序（净值日期降序，跨页拼接保持
-/// 先新后旧）。`total` / `raw` 只被区间取数的翻页面消费（#1568 接线前豁免）。
+/// 先新后旧）。`total` / `raw` 只被区间取数的翻页面消费（#1568 的兜底臂）。
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct DisclosurePage {
     pub(super) records: Vec<CsrcNavRecord>,
-    #[allow(dead_code)]
     pub(super) total: i64,
-    #[allow(dead_code)]
     pub(super) raw: usize,
 }
 
@@ -324,10 +323,24 @@ fn body_head(body: &str) -> String {
     body.chars().take(120).collect()
 }
 
-/// 货基判定确认窗口的回看跨度：窗口拉宽只为让**已终止基金**的存量披露落进
-/// 查询区间（披露止于终止日，终止越深记录越靠前）；确认只看最新一页，窗口
-/// 宽度不影响活跃基金的请求数（最新 500 行一页装下约两年日频披露）。
-const CONFIRM_WINDOW_MONTHS: chrono::Months = chrono::Months::new(120);
+/// 披露查询窗口的回看跨度（判定确认与查询创建的兜底区间共用）：窗口拉宽只为
+/// 让**已终止基金**的存量披露落进查询区间（披露止于终止日，终止越深记录越靠
+/// 前）；确认与兜底都只消费最新记录，窗口宽度不影响活跃基金的请求数（最新
+/// 500 行一页装下约两年日频披露）。
+const DISCLOSURE_WINDOW_MONTHS: chrono::Months = chrono::Months::new(120);
+
+/// 披露查询窗口（`YYYY-MM-DD` 闭区间，北京时间今天 − 10 年 → 今天）：判定确认
+/// 与查询创建的兜底区间共用同一窗口口径，起点单点。
+pub(super) fn disclosure_window_dates() -> (String, String) {
+    let today = super::incremental::beijing_today();
+    let start = today
+        .checked_sub_months(DISCLOSURE_WINDOW_MONTHS)
+        .unwrap_or(today);
+    (
+        start.format("%Y-%m-%d").to_string(),
+        today.format("%Y-%m-%d").to_string(),
+    )
+}
 
 /// 货基判定确认（issue #1563 / ADR-0126 决策 3 换源）：官方披露的自报形态——
 /// 窗口内**最新一条**披露记录「单位净值为空、万份收益与七日年化有值」
@@ -358,20 +371,8 @@ pub(super) async fn confirm_money_fund_form_from(
     code: &str,
     hosts: &[&str],
 ) -> Result<bool> {
-    let today = super::incremental::beijing_today();
-    let start = today
-        .checked_sub_months(CONFIRM_WINDOW_MONTHS)
-        .unwrap_or(today);
-    let page = fetch_disclosure_page(
-        client,
-        pacer,
-        code,
-        &start.format("%Y-%m-%d").to_string(),
-        &today.format("%Y-%m-%d").to_string(),
-        hosts,
-        0,
-    )
-    .await?;
+    let (start, end) = disclosure_window_dates();
+    let page = fetch_disclosure_page(client, pacer, code, &start, &end, hosts, 0).await?;
     Ok(page
         .records
         .iter()
@@ -379,27 +380,14 @@ pub(super) async fn confirm_money_fund_form_from(
         .is_some_and(|latest| latest.is_money_fund_form()))
 }
 
-/// 拉取一只基金的区间披露记录（生产主机池）。日期闭区间、按服务端声明总数
-/// 翻页（见 [`fetch_fund_nav_series_from`]）。区间取数面（翻页 + 完整性核验）
-/// 的消费在已终止基金存在性兜底（#1568 接线），接线前豁免。
-#[allow(dead_code)]
-pub(super) async fn fetch_fund_nav_series(
-    client: &reqwest::Client,
-    pacer: &mut Pacer,
-    code: &str,
-    start_date: &str,
-    end_date: &str,
-) -> Result<Vec<CsrcNavRecord>> {
-    fetch_fund_nav_series_from(client, pacer, code, start_date, end_date, CSRC_HOSTS).await
-}
-
-/// 同 [`fetch_fund_nav_series`]，主机池可注入（本地 HTTP 服务测试请求形态与
-/// 异常响应处置）。
+/// 拉取一只基金的区间披露记录（日期闭区间、按服务端声明总数翻页）：消费面是
+/// 基金查询创建的已终止基金存在性兜底（issue #1568，编排单点 [`super::fund`]）。
+/// 主机池由调用方传入（生产接 [`CSRC_HOSTS`]，测试注入本地 HTTP 服务钉请求
+/// 形态与异常响应处置）。
 ///
 /// 翻页由页 1 声明的 `iTotalRecords` 驱动：声明总数超出页数上限即窗口过深，
 /// fail-closed 报错（不静默截断、不发无界请求）；声明行数未逐页取全（翻页被
 /// 拦截、报文异常）同样 fail-closed——半截窗口冒充完整数据比慢更糟。
-#[allow(dead_code)]
 pub(super) async fn fetch_fund_nav_series_from(
     client: &reqwest::Client,
     pacer: &mut Pacer,

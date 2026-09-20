@@ -4,6 +4,7 @@
 //! 编排（[`super::incremental`]）消费六个逐标的抓取闭包（批量报价 / 日 K / 汇率 K /
 //! 历史净值页 / 新浪单只全历史 / 基金名称）与一个批量取数面（新浪 `f_` 面：
 //! 名称与最新净值同面返回，见 `do_incremental_sync_with`；issue #1565 换源）；
+//! 基金名称闭包走按代码取价编排（新浪批量面 + 官方披露，issue #1568 换源）；
 //! 货基判定确认闭包（issue #1563 / ADR-0126 决策 3 换源）由现价刷新与历史补全
 //! 两编排消费。
 //! 本模块把它们打成**一个通道束**：生产经 [`SyncFetchChannels::production`]
@@ -279,8 +280,8 @@ impl SyncFetchChannels {
                 let code = code.to_string();
                 Box::pin(async move {
                     let _foreground = lane.before_request().await;
-                    // 基金详情通道自带客户端与独立限速器（与共享 pacer 无关），
-                    // 与既有 `fetch_fund_quote_production` 同形，但在同一异步块内
+                    // 基金报价编排自带客户端与独立限速器（与共享 pacer 无关），
+                    // 与 `fetch_fund_quote_production` 同形，但在同一异步块内
                     // 完成以让前台在途守卫覆盖整次请求。
                     let client = build_client()?;
                     let mut pacer = Pacer::default();

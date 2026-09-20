@@ -24,6 +24,7 @@
 //!（三套布局的类型码、币种与交易所后缀）。
 
 use ledger_infra::error::{AppError, Result};
+use ledger_investment::prices::TENCENT_PRICE_SOURCE;
 use ledger_investment::{InstrumentType, Quote};
 
 use super::channels::{QuoteItem, QuoteQuery};
@@ -94,6 +95,8 @@ impl TencentQuote {
             fund_class: None,
             nav_date: None,
             constant_unit_price_cents: None,
+            // 来源随取数产物携带（ADR-0130 决策 7）：场内行情自腾讯取得。
+            price_source: TENCENT_PRICE_SOURCE,
         }
     }
 }

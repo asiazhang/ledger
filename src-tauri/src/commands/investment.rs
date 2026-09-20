@@ -9,7 +9,7 @@
 //! 写命令经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
 //! 仪式（锁、事务、置脏、信号）内化单点，证据随闭包返回必达；读命令经
 //! `run_db`（形状乙，spec #498 / #503）。
-//! `add_fund_by_code` 的东财拉取（单请求叠加限流冷却重试最长可达分钟级）在
+//! `add_fund_by_code` 的行情拉取（单请求叠加限流冷却重试最长可达分钟级）在
 //! 命令体直接 `await`（async 生产入口，ADR-0125 决策 7 / issue #1413），连接锁外
 //! 先行完成，任何形状下不进锁（慢闭包纪律）；`spawn_blocking` 包装已删。
 //
@@ -275,7 +275,7 @@ pub async fn get_transaction_split(db: State<'_, DbState>, id: String) -> Result
 }
 
 /// IPC 命令：按 6 位基金代码即拉添加场外基金（issue #301 / ADR-0038）。
-/// 格式校验即刻拒绝（不发网络请求）→ 东财拉取（名称/分类/最新净值）在命令体
+/// 格式校验即刻拒绝（不发网络请求）→ 行情拉取（名称/最新净值）在命令体
 /// 直接 `await`（连接锁外，单请求叠加限流冷却重试最长可达分钟级，任何形状下
 /// 不进锁，慢闭包纪律；async 形态 ADR-0125 决策 7 / issue #1413：生产入口已
 /// async 化，`spawn_blocking` 包装与 JoinError 归一化删除）→ 落库与信号经统一
@@ -428,7 +428,7 @@ mod tests {
         &masked[open..end]
     }
 
-    /// `add_fund_by_code` 的东财拉取必须发生在连接锁外（慢闭包纪律，ADR-0069
+    /// `add_fund_by_code` 的行情拉取必须发生在连接锁外（慢闭包纪律，ADR-0069
     /// 决策 4 / issue #1282）：生产拉取入口 [`ledger_market_sync::fetch_fund_quote_production`]
     /// 不经数据库连接，命令体把拉取放在 `write_entry` 之前即结构上不可能持锁；
     /// 拉取被移回统一写入口闭包（锁内）时本守门即红。IPC 命令路径无报价注入
@@ -443,13 +443,13 @@ mod tests {
             .find("write_entry(")
             .expect("落库应经统一写入口 write_entry");
         let fetch_count = body.matches("fetch_fund_quote_production(").count();
-        assert_eq!(fetch_count, 1, "东财拉取入口在命令体内应恰出现一次");
+        assert_eq!(fetch_count, 1, "行情拉取入口在命令体内应恰出现一次");
         let fetch_at = body
             .find("fetch_fund_quote_production(")
-            .expect("东财拉取入口应在命令体内");
+            .expect("行情拉取入口应在命令体内");
         assert!(
             fetch_at < write_at,
-            "东财拉取（单请求叠加限流冷却重试最长可达分钟级）必须在 write_entry \
+            "行情拉取（单请求叠加限流冷却重试最长可达分钟级）必须在 write_entry \
              之前完成——移回统一写入口闭包即在连接锁内执行网络等待，阻塞全应用 \
              IPC/HTTP 读写（ADR-0069 决策 4 / issue #1282）"
         );

@@ -1,87 +1,47 @@
-//! 东财基金访问层（issue #301 / ADR-0038 决策 1）：按 6 位基金代码取报价
-//! （名称 / 东财分类 / 最新单位净值 + 净值日期），投影为行情接入接缝的统一
-//! 载荷 [`Quote`]（ADR-0103 决策 2）；供「按代码即拉」添加基金与 AI 查询/创建
-//! 端点（#304 / ADR-0039）复用，即接缝的**查询半边**（按代码取行情，纯取数不落库）。
-//! 报文解析与命中挑选为纯函数（fixture 单测，见 `tests/fund_search.rs`），
-//! 网络请求复用行情 HTTP 层的主机池 / 重试 / 限流。
+//! 场外基金按代码取价编排（issue #301 / ADR-0038 决策 1；换源 ADR-0130 决策 2 /
+//! issue #1568）：按 6 位基金代码取报价（权威名称 / 最新单位净值 + 净值日期），
+//! 投影为行情接入接缝的统一载荷 [`Quote`]（ADR-0103 决策 2）；供「按代码即拉」
+//! 添加基金、AI 查询/创建端点（#304 / ADR-0039）、名称随行刷新通道（#827）复用，
+//! 即接缝的**查询半边**（按代码取行情，纯取数不落库）。
 //!
-//! 接口：基金搜索建议 `FundSearchAPI.ashx`——搜索关键词命中多条（基金 / 股票 /
-//! 指数等类别混排），基金条目带 `FundBaseInfo`（含 FCODE / SHORTNAME / FTYPE /
-//! FUNDTYPE 类型码 / DWJZ 单位净值 / FSRQ 净值日期）；同码股票条目
-//! `FundBaseInfo` 为 null。命中判定 = `FundBaseInfo` 存在且 FCODE 与请求代码
-//! 全等（基金代码全局唯一）。
+//! 取数编排三臂（新浪为主源、证监会基金电子披露为权威兜底与判定源）：
+//! 1. **新浪批量面**（`f_` 前缀，单只 = 一批一条，取数单元 [`super::sina_fund`]）：
+//!    普通行直接给出名称与最新单位净值——在用基金与已终止普通基金都在面（实测
+//!    清盘样本末点照常在），一次请求即答；
+//! 2. **货基判定确认**（批量面为货基错位行——万份收益在单位净值位、产不出价格
+//!    点——时经官方披露自报形态确认，[`super::csrc::confirm_money_fund_form`]）：
+//!    确认即按恒定单位净值 1.0000 落恒定价并携带恒定价格信号（ADR-0126 决策 3；
+//!    万份收益永不进价，#1342）；缺信号落第 3 臂；
+//! 3. **证监会披露区间查询**（[`super::csrc::fetch_fund_nav_series`]，已终止基金
+//!    存在性与最后一期净值的权威兜底面）：批量面未收录的代码在此改判存在性，
+//!    最新披露记录给出名称与取值形态（货基自报形态 → 恒定价，普通形态 → 单位
+//!    净值）。
 //!
-//! 该索引只收**在用**基金：已终止（清盘）基金被东财摘出索引，但档案通道（基金
-//! 详情页数据文件）仍在服务。搜索未命中时回退档案通道改判「存在」并回填名称与
-//! 最后一期单位净值（ADR-0039 修订，issue #1212），两段皆未命中才是查无此码。
+//! 「查无此码」的唯一结论来源是第 3 臂的可信空报文（结构完好且记录为空）——
+//! 批量面的空值语句只说明「此面未收录」，不宣布不存在；披露源不可信（Err）按
+//! fail-closed 上抛，不降级为查无此码。基金分类在替代源无来源：恒缺省（契约
+//! 投影为空串，ADR-0130 决策 8，不用名称关键词推导）。价格来源标记随取数产物
+//! 携带（[`Quote::price_source`]，ADR-0130 决策 7：批量面记 `sina`、披露臂记
+//! `csrc`）。
+//!
+//! 解析与行形态判别归各取数单元（`sina_fund` / `csrc`，fixture 单测见各自测试
+//! 文件）；本模块只做臂间编排与 [`Quote`] 投影。网络请求复用行情 HTTP 层的
+//! 主机池 / 重试 / 限流。
 
 use serde::Deserialize;
 
-use super::http::{Pacer, RetryConfig, build_client, request_json_from_hosts};
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::Quote;
-use ledger_investment::prices::price_value_to_cents;
+use ledger_investment::prices::{CSRC_PRICE_SOURCE, SINA_PRICE_SOURCE, price_value_to_cents};
 
-use super::fund_nav::{
-    FundArchive, MONEY_FUND_UNIT_NAV, PINGZHONG_HOSTS, fetch_fund_archive_from,
-    is_money_fund_type_code,
+use super::csrc::{
+    CSRC_HOSTS, confirm_money_fund_form_from, disclosure_window_dates, fetch_fund_nav_series_from,
 };
+use super::http::{Pacer, build_client};
+use super::sina_fund::{SINA_FUND_BATCH_HOSTS, SinaFundNavForm, fetch_sina_fund_nav_rows};
 
-// 基金搜索建议接口：单主机（无公开镜像池），复用行情层的重试与限流泛型层。
-const FUND_SEARCH_HOSTS: &[&str] = &["https://fundsuggest.eastmoney.com"];
-const FUND_SEARCH_PATH: &str = "/FundSearch/api/FundSearchAPI.ashx";
-
-/// 基金搜索建议接口整体响应：`Datas` 可能缺省（接口异常形态），按无命中处理。
-#[derive(Debug, Deserialize)]
-pub(crate) struct FundSearchResponse {
-    #[serde(rename = "Datas", default)]
-    pub(crate) datas: Option<Vec<FundSearchItem>>,
-}
-
-/// 搜索建议单条：基金条目 `FundBaseInfo` 非空；股票 / 指数条目为 null。
-#[derive(Debug, Deserialize)]
-pub(crate) struct FundSearchItem {
-    #[serde(rename = "NAME", default)]
-    pub(crate) name: Option<String>,
-    #[serde(rename = "FundBaseInfo")]
-    pub(crate) fund_base_info: Option<FundBaseInfo>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct FundBaseInfo {
-    /// 基金代码（全局唯一，命中判定键）。
-    #[serde(rename = "FCODE")]
-    pub(crate) fcode: String,
-    /// 基金简称（如「华夏成长混合」）；接口偶发缺省时回退条目外层 NAME。
-    #[serde(rename = "SHORTNAME", default)]
-    pub(crate) shortname: Option<String>,
-    /// 东财基金分类（如「混合型-灵活」），只作展示不参与拒绝。
-    #[serde(rename = "FTYPE", default)]
-    pub(crate) ftype: String,
-    /// 东财基金类型码（`005` = 货币型，搜索通道建档口径，issue #1342）；货基的
-    /// `DWJZ` 是万份收益而非单位净值。宽容解析：未知形态归缺省（信号缺席代价
-    /// = 退回修复前口径），不使整页报文失败。建档确认点的存量口径随 #1568
-    /// 查询创建接线退役；同步路径的判定已改取官方披露自报形态（issue #1563）。
-    #[serde(
-        rename = "FUNDTYPE",
-        default,
-        deserialize_with = "deserialize_flexible_string"
-    )]
-    pub(crate) fund_type: Option<String>,
-    /// 最新单位净值（真实价格值，元）：数字或数字字符串，未公布为 null。
-    #[serde(
-        rename = "DWJZ",
-        default,
-        deserialize_with = "deserialize_flexible_f64"
-    )]
-    pub(crate) dwjz: Option<f64>,
-    /// 净值日期（ISO 日期）；未公布净值时缺省。
-    #[serde(rename = "FSRQ", default)]
-    pub(crate) fsrq: Option<String>,
-}
-
-/// 数值字段兼容数字与数字字符串两种 wire 形态（DWJZ 两种都出现过）；
-/// 非数值（含 null）按缺省处理。历史净值接口（fund_nav）的 DWJZ 同形态，共用。
+/// 数值字段兼容数字与数字字符串两种 wire 形态；非数值（含 null）按缺省处理。
+/// 历史净值接口（fund_nav）与新浪/披露取数单元共用。
 pub(super) fn deserialize_flexible_f64<'de, D>(d: D) -> std::result::Result<Option<f64>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -112,135 +72,137 @@ where
     })
 }
 
-/// 从搜索建议响应中挑选与请求代码全等的基金条目并投影为统一报价：[`Quote`]
-/// 的公共成员（代码 / 名称 / 价格 / 价格日期）+ 场外通道成员（基金分类 /
-/// 净值日期）；市场与类型提示是场内通道成员，基金侧恒缺省（`None`）。
-/// `FundBaseInfo` 存在且 FCODE == code 即命中（同码股票 / 指数条目无
-/// FundBaseInfo，天然排除；名称凑巧含代码的其他基金被 FCODE 全等判定排除）。
-/// 无命中返回 None（查无此码）。
-pub(crate) fn pick_fund_quote(resp: &FundSearchResponse, code: &str) -> Option<Quote> {
-    let item = resp.datas.as_ref()?.iter().find(|item| {
-        item.fund_base_info
-            .as_ref()
-            .is_some_and(|base| base.fcode == code)
-    })?;
-    let base = item.fund_base_info.as_ref()?;
-    let name = base
-        .shortname
-        .clone()
-        .filter(|n| !n.trim().is_empty())
-        .or_else(|| item.name.clone())?;
-    // 货币基金（issue #1342 / ADR-0126）：`DWJZ` 列是万份收益而非单位净值，
-    // 现价按恒定单位净值 1.0000 落；类型码自报货币型即恒定价格信号（建档
-    // 确认三处之一），随报价载荷带回落库半边打标。非货基维持原口径：净值对
-    //（值 + 日期）齐备才有效，任一缺省按「未取到净值」处理（不落现价）。
-    let fsrq = base
-        .fsrq
-        .as_deref()
-        .map(str::trim)
-        .filter(|d| !d.is_empty());
-    let (price_cents, nav_date, constant_unit_price_cents) = if base
-        .fund_type
-        .as_deref()
-        .is_some_and(is_money_fund_type_code)
-    {
-        let date = fsrq.map(str::to_string);
-        let cents = date
-            .as_ref()
-            .map(|_| price_value_to_cents(MONEY_FUND_UNIT_NAV));
-        (cents, date, Some(price_value_to_cents(MONEY_FUND_UNIT_NAV)))
-    } else {
-        match (base.dwjz, fsrq) {
-            (Some(nav), Some(date)) if nav > 0.0 => (
-                Some(price_value_to_cents(nav)),
-                Some(date.to_string()),
-                None,
-            ),
-            _ => (None, None, None),
-        }
-    };
-    Some(Quote {
-        code: base.fcode.clone(),
-        name: name.trim().to_string(),
-        price_cents,
-        // 场外基金的价格日期即净值日期（现价的行情日期就是净值本身对应的日期）。
-        price_date: nav_date.clone(),
-        market: None,
-        kind_hint: None,
-        fund_class: Some(base.ftype.trim().to_string()),
-        nav_date,
-        constant_unit_price_cents,
-    })
-}
-
-/// 按 6 位代码拉取基金报价（名称 / 分类 / 最新净值 + 净值日期）。
-/// 搜索通道未命中时回退档案通道（ADR-0039 修订，issue #1212）：已终止（清盘）
-/// 基金被东财摘出在用索引、档案文件仍在服务，据此改判为「存在」并回填权威名称
-/// 与最后一期单位净值（档案通道无基金分类，该成员缺省）。
-/// 两段皆未命中才返回查无此码的中文错误（Invalid），网络失败 / 风控拦截由 HTTP
-/// 层重试后上抛。
+/// 按 6 位代码取基金报价（三臂编排，见模块文档）：新浪批量面 → 货基判定确认 →
+/// 证监会披露区间兜底。批量面取数失败（被拦截 / 不可信形状）与披露源不可信
+/// 一律上抛，不静默降级；两源皆未收录才返回查无此码的码化错误。
 pub(super) async fn fetch_fund_quote(
     client: &reqwest::Client,
     pacer: &mut Pacer,
     code: &str,
 ) -> Result<Quote> {
-    fetch_fund_quote_from(client, pacer, code, FUND_SEARCH_HOSTS, PINGZHONG_HOSTS).await
+    fetch_fund_quote_from(client, pacer, code, SINA_FUND_BATCH_HOSTS, CSRC_HOSTS).await
 }
 
-/// 同 [`fetch_fund_quote`]，两个通道的主机池都可注入（本地 HTTP 服务测试回退路径）。
+/// 同 [`fetch_fund_quote`]，两个源的主机池都可注入（本地 HTTP 服务测试编排三臂
+/// 与请求形态）。
 pub(super) async fn fetch_fund_quote_from(
     client: &reqwest::Client,
     pacer: &mut Pacer,
     code: &str,
-    search_hosts: &[&str],
-    archive_hosts: &[&str],
+    batch_hosts: &[&str],
+    csrc_hosts: &[&str],
 ) -> Result<Quote> {
     tracing::debug!(code, "基金行情查询");
-    let params = [("m", "1"), ("key", code)];
-    let resp: FundSearchResponse = request_json_from_hosts(
-        client,
-        &params,
-        FUND_SEARCH_PATH,
-        search_hosts,
-        RetryConfig::production(),
-        pacer,
-        &format!("fetch_fund_quote:{code}"),
-        None,
-    )
-    .await?;
-    if let Some(quote) = pick_fund_quote(&resp, code) {
-        return Ok(quote);
+    // 臂 1：新浪批量面（单只 = 一批一条）。普通行一次请求即答。
+    let rows = fetch_sina_fund_nav_rows(client, pacer, batch_hosts, &[code.to_string()]).await?;
+    if let Some(row) = rows.into_iter().find(|row| row.code == code) {
+        if let SinaFundNavForm::UnitNav { unit_nav, .. } = row.form {
+            return Ok(unit_nav_quote(
+                code,
+                &row.name,
+                &row.nav_date,
+                unit_nav,
+                SINA_PRICE_SOURCE,
+            ));
+        }
+        // 货基错位行：万份收益在单位净值位，不产出价格点——判定确认后才定价。
+        match confirm_money_fund_form_from(client, pacer, code, csrc_hosts).await {
+            Ok(true) => return Ok(constant_price_quote(code, &row.name, &row.nav_date)),
+            // 缺信号不是反证，但批量面给不出可采信价格——落权威兜底臂取披露记录。
+            Ok(false) => {}
+            Err(error) => return Err(error),
+        }
     }
-    match fetch_fund_archive_from(client, pacer, code, archive_hosts).await? {
-        Some(archive) => Ok(quote_from_archive(archive, code)),
-        None => Err(fund_not_found(code)),
+    // 臂 3：证监会披露区间查询（存在性 + 名称 + 最后一期净值的权威兜底）。
+    // 窗口拉宽覆盖已终止基金的存量披露（披露止于终止日，终止越深记录越靠前）。
+    let (start, end) = disclosure_window_dates();
+    let records = fetch_fund_nav_series_from(client, pacer, code, &start, &end, csrc_hosts).await?;
+    let latest = records
+        .into_iter()
+        .max_by(|a, b| a.valuation_date.cmp(&b.valuation_date));
+    let Some(latest) = latest else {
+        // 可信空报文是「查无此码」的唯一结论来源（解析层保证空序列可信）。
+        return Err(fund_not_found(code));
+    };
+    if latest.is_money_fund_form() {
+        return Ok(constant_price_quote(
+            code,
+            &latest.name,
+            &latest.valuation_date,
+        ));
+    }
+    match latest.unit_nav {
+        Some(nav) => Ok(unit_nav_quote(
+            code,
+            &latest.name,
+            &latest.valuation_date,
+            nav,
+            // 价格自官方披露取得（兜底臂，ADR-0130 决策 7）。
+            CSRC_PRICE_SOURCE,
+        )),
+        // 普通形态记录缺单位净值（仅累计等字段有值）：名称可用、无价可落。
+        None => Ok(name_only_quote(code, &latest.name)),
     }
 }
 
-/// 档案通道报价投影：公共成员（代码 / 名称 / 价格 / 价格日期）齐备，净值日期同为
-/// 价格日期（场外基金现价的行情日期就是净值本身对应的日期）；基金分类是搜索通道
-/// 成员，档案通道缺省。
-fn quote_from_archive(archive: FundArchive, code: &str) -> Quote {
-    let last_nav = archive.last_nav;
+/// 普通净值行报价投影（新浪批量面臂与披露兜底臂共用，来源由调用臂带入）：
+/// 名称 + 最新单位净值（净值即价格、万分之一元刻度），价格日期与净值日期同为
+/// 净值日期（现价的行情日期就是净值本身对应的日期）。场外通道成员（基金分类、
+/// 恒定价格信号、精确市场、类型提示）按通道形态缺省。
+fn unit_nav_quote(code: &str, name: &str, nav_date: &str, nav: f64, source: &'static str) -> Quote {
     Quote {
         code: code.to_string(),
-        name: archive.name,
-        price_cents: last_nav
-            .as_ref()
-            .map(|point| price_value_to_cents(point.nav)),
-        price_date: last_nav.as_ref().map(|point| point.date.clone()),
+        name: name.trim().to_string(),
+        price_cents: Some(price_value_to_cents(nav)),
+        price_date: Some(nav_date.to_string()),
         market: None,
         kind_hint: None,
         fund_class: None,
-        nav_date: last_nav.map(|point| point.date),
-        // 货基形态信号 → 恒定单位价格（建档打标，ADR-0126 决策 3）。
-        constant_unit_price_cents: archive
-            .is_constant_price
-            .then(|| price_value_to_cents(MONEY_FUND_UNIT_NAV)),
+        nav_date: Some(nav_date.to_string()),
+        constant_unit_price_cents: None,
+        price_source: source,
     }
 }
 
-/// 「查无此码」码化错误（Invalid → 400）：搜索与档案两段皆未命中时的唯一出口。
+/// 货基（官方披露自报形态确认）报价投影：现价 = 恒定单位净值 1.0000（万份收益
+/// 永不进价，ADR-0126 / ADR-0130 决策 6），恒定价格信号随载荷带回落库半边打标
+///（建档一次确认，单向幂等）；价格日期与净值日期同为最新披露（收益）日期。
+/// 来源记证监会披露——恒定价格的**确认源**是官方自报形态。
+fn constant_price_quote(code: &str, name: &str, date: &str) -> Quote {
+    let cents = price_value_to_cents(super::fund_nav::MONEY_FUND_UNIT_NAV);
+    Quote {
+        code: code.to_string(),
+        name: name.trim().to_string(),
+        price_cents: Some(cents),
+        price_date: Some(date.to_string()),
+        market: None,
+        kind_hint: None,
+        fund_class: None,
+        nav_date: Some(date.to_string()),
+        constant_unit_price_cents: Some(cents),
+        price_source: CSRC_PRICE_SOURCE,
+    }
+}
+
+/// 名称可用、无价可落的报价投影（披露记录缺单位净值、批量面缺信号等形态）：
+/// 未取到净值不落现价，标的行仍以权威名称建成。
+fn name_only_quote(code: &str, name: &str) -> Quote {
+    Quote {
+        code: code.to_string(),
+        name: name.trim().to_string(),
+        price_cents: None,
+        price_date: None,
+        market: None,
+        kind_hint: None,
+        fund_class: None,
+        nav_date: None,
+        constant_unit_price_cents: None,
+        price_source: CSRC_PRICE_SOURCE,
+    }
+}
+
+/// 「查无此码」码化错误（Invalid → 400）：批量面未收录且官方披露可信空——两源
+/// 皆未命中时的唯一出口。
 fn fund_not_found(code: &str) -> AppError {
     AppError::codedp(
         "sync.fund-not-found",
@@ -249,7 +211,7 @@ fn fund_not_found(code: &str) -> AppError {
     )
 }
 
-/// 生产拉取入口：构建客户端与限流器后执行单次详情查询（不经数据库连接，
+/// 生产拉取入口：构建客户端与限流器后执行单次查询（不经数据库连接，
 /// 供两壳在连接锁外完成网络往返，避免长限流重试阻塞其它命令）。async 形态
 ///（ADR-0125 决策 5/7，issue #1413）：网络等待以 `await` 表达，在异步上下文
 /// 内直接可调，#1411 的过渡同步桥已随接缝 async 化拆除。

@@ -38,6 +38,12 @@ pub const TENCENT_PRICE_SOURCE: &str = "tencent";
 /// 闭集由写入通道收口。
 pub const SINA_PRICE_SOURCE: &str = "sina";
 
+/// 证监会基金电子披露来源标记（ADR-0130 决策 7 / issue #1568）：基金按代码
+/// 查询与创建的已终止基金兜底面取价（最后一期单位净值），以及经官方自报形态
+/// 确认的建档常量价（恒定单位净值 1.0000 的确认源，ADR-0126 决策 3）。价格侧
+/// 无 CHECK，闭集由写入通道收口。
+pub const CSRC_PRICE_SOURCE: &str = "csrc";
+
 /// 真实价格值（元）→ 万分之一元（0.0001 元，价格刻度 ADR-0038）。
 /// A 股/港股 K 线收盘价与场外基金单位净值同刻度换算（基金净值 4 位小数，
 /// issue #301），统一 ×10000。

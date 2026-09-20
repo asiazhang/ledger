@@ -144,7 +144,7 @@ function stockHitMessage(result: AddStockInstrumentResult): string {
   });
 }
 
-/** 命中回执（场外基金通道，语义不变）：权威名称 + 分类 + 最新净值 */
+/** 命中回执（场外基金通道）：权威名称 + 分类（已弃用恒空，空时不渲染分隔符，ADR-0130 决策 8）+ 最新净值 */
 function fundHitMessage(result: AddFundResult): string {
   const nav =
     result.nav_cents !== null && result.nav_date !== null
@@ -156,7 +156,7 @@ function fundHitMessage(result: AddFundResult): string {
   return t("investments.addInstrument.successFund", {
     name: result.name,
     symbol: result.symbol,
-    fundClass: result.fund_class,
+    fundClass: result.fund_class ? ` · ${result.fund_class}` : "",
     nav,
   });
 }

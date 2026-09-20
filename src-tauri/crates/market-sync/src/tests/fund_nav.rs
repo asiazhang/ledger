@@ -8,8 +8,7 @@ use std::time::Duration;
 use chrono::NaiveDate;
 
 use crate::fund_nav::{
-    NavPoint, NavQuery, NavResponse, fetch_nav_page_from, nav_window, parse_fund_archive,
-    parse_lsjz, parse_money_fund_income_series, parse_net_worth_trend,
+    NavPoint, NavQuery, NavResponse, fetch_nav_page_from, nav_window, parse_lsjz,
 };
 use crate::http::{Pacer, request_json_from_hosts};
 
@@ -97,7 +96,7 @@ fn lsjz_invalid_nav_rows_are_filtered() {
 // ---------------------------------------------------------------------------
 // 货币基金口径（issue #1342）：货基的万份收益列不是单位净值——lsjz 响应自报
 // 收益口径（SYType=每万份收益 / FundType=005）即判定，单位净值恒 1.0000，
-// 只取收益日期；档案文件缺单位净值序列而有万份收益序列是货基特征。
+// 只取收益日期。
 // ---------------------------------------------------------------------------
 
 /// 真实 lsjz 响应形状（货币基金 000905，实测 2026-09-15）：Data.FundType=005、
@@ -140,142 +139,6 @@ fn lsjz_unknown_fields_never_fail_response() {
             nav: 3.348
         }],
         "未知字段按普通基金口径解析原值"
-    );
-}
-
-/// 真实货币基金档案文件片段（000905，实测 2026-09-15）：没有单位净值序列变量
-/// `Data_netWorthTrend`，万份收益序列 `Data_millionCopiesIncome` 为
-/// `[北京时间午夜毫秒时间戳, 万份收益]` 升序数组。
-const MONEY_FUND_ARCHIVE_JS: &str = r#"/*货币基金*/var ishb=true;var fS_name = "鹏华安盈宝货币A";var fS_code = "000905";
-var Data_millionCopiesIncome = [[1694448000000,0.5807],[1694534400000,0.5809],[1694620800000,-0.5811]];
-var Data_sevenDaysYearIncome = [[1694448000000,2.114],[1694534400000,2.115]];
-"#;
-
-#[test]
-fn parse_money_fund_income_series_projects_income_dates_to_unit_nav() {
-    // 收益序列的日期 × 恒定单位净值 1.0000；收益值（含负值）不消费；时间戳语义
-    // 与单位净值序列一致（北京时间午夜毫秒 → 净值日期）。
-    let points = parse_money_fund_income_series(MONEY_FUND_ARCHIVE_JS).unwrap();
-    assert_eq!(
-        points,
-        vec![
-            NavPoint {
-                date: "2023-09-12".into(),
-                nav: 1.0
-            },
-            NavPoint {
-                date: "2023-09-13".into(),
-                nav: 1.0
-            },
-            NavPoint {
-                date: "2023-09-14".into(),
-                nav: 1.0
-            },
-        ]
-    );
-}
-
-#[test]
-fn parse_money_fund_income_series_missing_or_malformed_is_none() {
-    // 缺变量、整体不是数组、数组被截断、元素不是 [时间戳, 值] 对：都不可信，
-    // 返回 None（与单位净值序列解析同姿态）。
-    assert_eq!(parse_money_fund_income_series("var fS_name = \"x\";"), None);
-    assert_eq!(
-        parse_money_fund_income_series("var Data_millionCopiesIncome = 5;"),
-        None
-    );
-    assert_eq!(
-        parse_money_fund_income_series("var Data_millionCopiesIncome = [[1694448000000,0.58]"),
-        None
-    );
-    assert_eq!(
-        parse_money_fund_income_series("var Data_millionCopiesIncome = [[1694448000000]];"),
-        None
-    );
-}
-
-// ---------------------------------------------------------------------------
-// 单请求全量净值通道（基金详情页数据文件，issue #1062）
-// ---------------------------------------------------------------------------
-
-/// 真实 pingzhongdata 数据文件片段（fundCode=110022，实测 2026-09-11）：单位净值
-/// 序列变量 `Data_netWorthTrend` 为 `{x: 毫秒时间戳, y: 单位净值, ...}` 升序数组；
-/// `Data_ACWorthTrend` 是并存的累计净值数组（本通道刻意不取）。片段同时带
-/// 前缀声明与尾随声明，钉住「取变量、不误取另一数组」。
-const REAL_PINGZHONG_SNIPPET: &str = r#"/*基金或股票信息*/var fS_name = "易方达消费行业股票";var fS_code = "110022";
-var Data_ACWorthTrend = [[1282233600000,1.0],[1282838400000,1.001]];
-var Data_netWorthTrend = [{"x":1282233600000,"y":1.0,"equityReturn":0,"unitMoney":""},{"x":1282838400000,"y":1.001,"equityReturn":0.1,"unitMoney":""},{"x":1283443200000,"y":1.006,"equityReturn":0.4995,"unitMoney":""}];
-var Data_currentFundManager = [{"id":"1"}];
-"#;
-
-#[test]
-fn parse_net_worth_trend_reads_real_fixture() {
-    // x 为北京时间午夜的毫秒时间戳（UTC 前一日 16:00）：+8h 后取日期即净值日期。
-    let points = parse_net_worth_trend(REAL_PINGZHONG_SNIPPET).unwrap();
-    assert_eq!(
-        points,
-        vec![
-            NavPoint {
-                date: "2010-08-20".into(),
-                nav: 1.0
-            },
-            NavPoint {
-                date: "2010-08-27".into(),
-                nav: 1.001
-            },
-            NavPoint {
-                date: "2010-09-03".into(),
-                nav: 1.006
-            },
-        ]
-    );
-}
-
-#[test]
-fn parse_net_worth_trend_skills_accumulated_array() {
-    // 只有累计净值数组、没有单位净值数组：不得误取 Data_ACWorthTrend——返回 None
-    // 让上层 fail-closed 回退分页通道（口径不一致比慢更糟）。
-    let js = r#"var Data_ACWorthTrend = [[1282233600000,9.9],[1282838400000,9.8]];"#;
-    assert_eq!(parse_net_worth_trend(js), None);
-}
-
-#[test]
-fn parse_net_worth_trend_missing_or_malformed_is_none() {
-    // 缺变量、整体不是数组、数组被截断：都无法作为可信数据源，返回 None。
-    assert_eq!(parse_net_worth_trend("var fS_name = \"x\";"), None);
-    assert_eq!(parse_net_worth_trend("var Data_netWorthTrend = 5;"), None);
-    assert_eq!(
-        parse_net_worth_trend(r#"var Data_netWorthTrend = [{"x":1282233600000,"y":1.0}"#),
-        None
-    );
-}
-
-#[test]
-fn parse_net_worth_trend_well_formed_empty_is_some_empty() {
-    // 结构完好但为空（新基金未公布净值）：是可信空结果，与「解析失败」区分开。
-    assert_eq!(
-        parse_net_worth_trend("var Data_netWorthTrend = [];"),
-        Some(vec![])
-    );
-}
-
-#[test]
-fn parse_net_worth_trend_filters_invalid_rows() {
-    // 单位净值 null / ≤0 的行静默过滤（与 lsjz 无效行同姿态），其余照常解析。
-    let js = r#"var Data_netWorthTrend = [{"x":1282233600000,"y":1.0},{"x":1282838400000,"y":null},{"x":1283443200000,"y":0},{"x":1284048000000,"y":"1.5"}];"#;
-    let points = parse_net_worth_trend(js).unwrap();
-    assert_eq!(
-        points,
-        vec![
-            NavPoint {
-                date: "2010-08-20".into(),
-                nav: 1.0
-            },
-            NavPoint {
-                date: "2010-09-10".into(),
-                nav: 1.5
-            },
-        ]
     );
 }
 
@@ -383,57 +246,4 @@ fn request_json_from_hosts_accepts_referer_argument() {
         head.to_lowercase().contains("referer: http://ref.example/"),
         "{head}"
     );
-}
-
-// ---------------------------------------------------------------------------
-// 档案通道解析（ADR-0039 修订，issue #1212）：同一份数据文件取权威名称与
-// 最后一期单位净值；命中判据 = 代码全等 + 名称非空。
-// ---------------------------------------------------------------------------
-
-/// 已终止基金 002503 的档案文件真实形态截取（名称 / 代码变量 + 单位净值序列末两点）。
-const ARCHIVE_JS: &str = r#"/*2023-11-19 00:21:59*/var ishb=false;var fS_name = "中银腾利混合C";var fS_code = "002503";
-var Data_netWorthTrend = [{"x":1694448000000,"y":1.138,"equityReturn":-0.09,"unitMoney":""},{"x":1694966400000,"y":1.144,"equityReturn":0.62,"unitMoney":""}];
-var Data_ACWorthTrend = [[1694966400000,1.415]];"#;
-
-#[test]
-fn parse_fund_archive_returns_name_and_last_nav() {
-    let archive = parse_fund_archive(ARCHIVE_JS, "002503").expect("代码全等 + 名称非空应命中");
-    assert_eq!(archive.name, "中银腾利混合C");
-    let last = archive.last_nav.expect("应带回最后一期单位净值");
-    assert_eq!(last.date, "2023-09-18", "取序列末点（净值日）");
-    assert_eq!(last.nav, 1.144);
-}
-
-#[test]
-fn parse_fund_archive_requires_code_equality_and_nonempty_name() {
-    // 同码防守：文件声明的代码与请求代码不符不得命中（与搜索通道 FCODE 全等同纪律）。
-    assert!(parse_fund_archive(ARCHIVE_JS, "003967").is_none());
-    // 名称空：不可作为权威名称落库。
-    let no_name = r#"var fS_name = "";var fS_code = "002503";"#;
-    assert!(parse_fund_archive(no_name, "002503").is_none());
-    // 无效代码被重定向到的错误页：没有声明变量，不命中。
-    assert!(parse_fund_archive("<html>blocked by waf</html>", "002503").is_none());
-    // 缺代码变量（形态不符）同样不命中。
-    assert!(parse_fund_archive(r#"var fS_name = "某基金";"#, "002503").is_none());
-}
-
-#[test]
-fn parse_fund_archive_degrades_to_name_only_without_nav_series() {
-    // 名称齐备但净值序列缺失 / 不可信：按「未取到净值」降级（与搜索通道
-    // 「命中但未公布净值」同形），名称仍可用于建行。
-    let js = r#"var fS_name = "某基金";var fS_code = "110022";"#;
-    let archive = parse_fund_archive(js, "110022").expect("名称齐备即命中");
-    assert_eq!(archive.name, "某基金");
-    assert!(archive.last_nav.is_none());
-}
-
-#[test]
-fn parse_fund_archive_money_fund_last_nav_is_unit_nav_on_latest_income_date() {
-    // 货基没有单位净值序列：最后一期净值 = 最新收益日 × 恒定单位净值 1.0000
-    //（issue #1342），档案回退报价据此落 1.0000 而非无价或万份收益。
-    let archive = parse_fund_archive(MONEY_FUND_ARCHIVE_JS, "000905").expect("代码全等应命中");
-    assert_eq!(archive.name, "鹏华安盈宝货币A");
-    let last = archive.last_nav.expect("货基按收益序列取最后一期净值");
-    assert_eq!(last.date, "2023-09-14");
-    assert_eq!(last.nav, 1.0);
 }
