@@ -21,7 +21,15 @@ pub const PRICE_UNITS_PER_FEN: f64 = 100.0;
 
 /// 同步价格数据来源标记常量：价格侧 source 词表与字典侧同词（ADR-0036），
 /// 与手动报价的 [`super::manual_price::MANUAL_PRICE_SOURCE`] 对称。
+///
+/// 存量行仍为 `eastmoney`（历史事实，不重写不迁移）；换源后新写入的来源标记
+/// 按实际取数源取值——场内现价走腾讯（[`TENCENT_PRICE_SOURCE`]）。
 pub const EASTMONEY_PRICE_SOURCE: &str = "eastmoney";
+
+/// 场内（沪深港美股票与场内基金）价格来源标记（ADR-0130 决策 7）：行情同步的
+/// 场内通道改走腾讯行情报价后写入（现价缓存、当周采样点与历史补全共用）。
+/// 价格侧无 CHECK，闭集由写入通道收口。
+pub const TENCENT_PRICE_SOURCE: &str = "tencent";
 
 /// 真实价格值（元）→ 万分之一元（0.0001 元，价格刻度 ADR-0038）。
 /// A 股/港股 K 线收盘价与场外基金单位净值同刻度换算（基金净值 4 位小数，
@@ -33,7 +41,7 @@ pub fn price_value_to_cents(value: f64) -> i64 {
 /// 按 (标的, ISO 周) 插入或覆盖一条周采样价格历史（issue #137 / ADR-0019）。
 /// 「整周覆盖」幂等由 UNIQUE(instrument_id, week_start)（week_start 为生成列）保证：
 /// 同周任一采样日写入都落在同一行上，重复回填零重复行。清仓不删历史（仅随标的删除级联）。
-/// `source` 为价格数据来源标记（与字典侧 source 同词表）：同步 'eastmoney'、手动报价 'manual'
+/// `source` 为价格数据来源标记（与字典侧 source 同词表）：同步按实际取数源取值、手动报价 'manual'
 /// （ADR-0036）——周采样落库单点，不立第二承载。
 pub fn upsert_price_history(
     conn: &Connection,
@@ -72,7 +80,7 @@ pub struct MarketPriceWrite<'a> {
     /// 单位净值日期（兼任净值同步水位，ADR-0038）：仅场外基金现价携带；
     /// 股票与手动报价传 None（无净值日期语义，覆盖为 NULL）。
     pub nav_date: Option<&'a str>,
-    /// 价格数据来源（与字典侧 source 同词表）：同步 'eastmoney'、手动报价 'manual'
+    /// 价格数据来源（与字典侧 source 同词表）：同步按实际取数源取值、手动报价 'manual'
     ///（ADR-0036）；可空透传是已发布行为（重放与 `create_market_price` 透传）。
     pub source: Option<&'a str>,
 }

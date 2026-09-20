@@ -5,9 +5,8 @@
 //! 入口与投资域注入闭包已随 #1413 async 化，#1411 过渡同步桥拆除——本层生产面
 //! 不再有任何阻塞驱动点。
 //! 标的全量同步（clist 分页爬取）已随 ADR-0081 决策 3 退役删除（issue #698），
-//! 本层现服务增量同步批量报价、单点行情、日 K 与基金净值通道。
+//! 本层现服务单点行情、日 K 与基金净值通道。
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -17,13 +16,9 @@ use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 
 use ledger_infra::error::{AppError, Result};
 
-// 批量报价接口路径：按 secid 一次携带多只跨市场代码查询最新价（增量同步用，issue #103）。
-// 响应 data 为列表对象（data.diff，条目 f12/f14/f1/f2），与已退役的 clist 接口同形、
-// 复用同一套解析（全量同步 clist 爬取已随 ADR-0081 决策 3 退役）。
-pub(super) const ULIST_PATH: &str = "/api/qt/ulist.np/get";
 // 单点行情接口路径：按单个 secid 返回个股实时详情（股票按代码查询用，issue #693）。
 // 响应 data 为单个对象（f43 价格 / f57 代码 / f58 名称 / f59 精度 / f62 类型特征 /
-// f86 时间戳），与 clist 的 diff 包装不同；stock 与 ulist 同主机池。
+// f86 时间戳）；与已退役的批量报价接口（ulist）同主机池。
 pub(super) const STOCK_GET_PATH: &str = "/api/qt/stock/get";
 // 日 K 线接口路径：按 secid 一次返回一段日线（近两年回填用，issue #137 / ADR-0019）。
 // 注意历史 K 线仅在 push2his 主机上提供服务（push2delay 只响应当日报价、
@@ -44,11 +39,6 @@ const KLINE_KLT_DAILY: &str = "101";
 const KLINE_FQT_NONE: &str = "0";
 /// 日 K 区间终点（远期占位，实际覆盖由 beg 控制近两年窗口）。
 const KLINE_END: &str = "20500101";
-// 每批最多携带的 secid 数。批量报价接口实测一次 500 个 secid 稳定、800 个可用、
-// 1000 个触发 503（2026-09-15 实测，见 docs/research/market-quote-data-sources.md
-// §3.1）；取 300 留足余量——批量面「每批一次请求」的批大小按实测可用量级，不再
-// 按「越小越安全」的保守值把请求量按标的数摊开（ADR-0121 决策 1 / issue #1374）。
-pub(super) const ULIST_BATCH_SIZE: usize = 300;
 // 优先使用延迟行情主机池：push2 实时主机曾被东财对该出口 IP 触发风控（连接重置），
 // push2delay 返回相同数据结构且对批量访问更稳定。
 pub(super) const API_HOSTS: &[&str] = &[
@@ -223,38 +213,6 @@ async fn sleep(duration: Duration) {
     tokio::time::sleep(duration).await;
 }
 
-/// 行情接口返回的单个股票条目（字段 f12=代码, f14=名称, f2=价格原始值, f1=价格精度位）。
-/// 注意 f2 的隐含小数位随标的种类而异（由随行返回的 f1 精度位声明，与 stock/get
-/// 的 f59 同义：A 股股票 2 位、场内基金 ETF 与港股/美股 3 位），因此这里保留
-/// 原始 f2 与 f1，换算在 [`price_cents_from_raw`] 按精度位单点处理、缺省按市场
-/// 回退（[`f2_to_price`]）；响应条目可能缺 f14/f2/f1，名称/价格/精度均可缺省。
-#[derive(Debug, Deserialize)]
-pub struct StockItem {
-    #[serde(rename = "f12")]
-    pub code: String,
-    #[serde(rename = "f14", default)]
-    pub name: String,
-    #[serde(rename = "f2", default, deserialize_with = "deserialize_positive_f64")]
-    pub price: Option<f64>,
-    /// 价格小数位（f1；缺省/异常时为 None，换算按市场回退）。
-    #[serde(rename = "f1", default, deserialize_with = "deserialize_positive_f64")]
-    pub precision: Option<f64>,
-}
-
-/// 把可能缺失/非数值/非正数的字段（f2 价格、f1 精度位；停牌为 "-"、无效价 ≤0）
-/// 宽容为 Option<f64>：仅接受正数，其余一律 None。
-fn deserialize_positive_f64<'de, D>(d: D) -> std::result::Result<Option<f64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(d)?;
-    let raw = match value {
-        serde_json::Value::Number(n) => n.as_f64(),
-        _ => None,
-    };
-    Ok(raw.filter(|&p| p > 0.0))
-}
-
 /// 将原始 f2 换算为万分之一元（0.0001 元，价格刻度 ADR-0038）：
 /// A 股 f2=价格×100（再 ×100 得万分之一元），港股与美股三市场 f2=价格×1000
 ///（×10 得万分之一元；美股 3 位小数刻度，2026-01 实测：105.AAPL f2=319970 →
@@ -267,51 +225,15 @@ pub(super) fn f2_to_price(raw: f64, market_code: &str) -> i64 {
     }
 }
 
-/// 东财最新价原始值（按精度位缩放的整数：批量报价的 f1 与单点行情的 f59 同义）
-/// → 万分之一元（0.0001 元，价格刻度 ADR-0038）：`price_cents = raw × 10^(4 − 精度)`。
+/// 东财最新价原始值（按精度位缩放的整数：单点行情的 f59）→ 万分之一元
+/// （0.0001 元，价格刻度 ADR-0038）：`price_cents = raw × 10^(4 − 精度)`。
 /// 精度缺省或越界（1..=4 之外）时按市场回退（A 股 2 位、港股/美股 3 位，与
 /// [`f2_to_price`] 同口径）——回退分支只兜异常/旧形态，正常样本恒带精度位。
-/// 批量报价（增量同步）与单点行情（股票按代码查询）两条通道共用本单点，
 /// 数据源刻度语义漂移时改这一处（#695，场内 ETF 三位小数报价实测钉住）。
 pub(super) fn price_cents_from_raw(raw: f64, precision: Option<f64>, market: &str) -> i64 {
     match precision {
         Some(p) if (1.0..=4.0).contains(&p) => (raw * 10f64.powi(4 - p as i32)).round() as i64,
         _ => f2_to_price(raw, market),
-    }
-}
-
-/// ulist 批量报价响应：`data` 可能为 null（全部代码无效时东财返回 `rc=102` 且 `data:null`），
-/// 此时应视为无行情条目而非错误，保证增量同步「停牌/无效价不中断同步」语义。
-#[derive(Debug, Deserialize)]
-pub(super) struct UlistResponse {
-    pub(super) data: Option<UlistData>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct UlistData {
-    pub(super) diff: Option<DiffField>,
-}
-
-/// data.diff 东财既可能返回按序号 key 的对象，也可能返回数组。
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub(super) enum DiffField {
-    Object(HashMap<String, StockItem>),
-    Array(Vec<StockItem>),
-}
-
-impl DiffField {
-    pub(super) fn into_items(self) -> Vec<StockItem> {
-        let mut items: Vec<StockItem> = match self {
-            DiffField::Object(map) => {
-                let mut pairs: Vec<_> = map.into_iter().collect();
-                pairs.sort_by_key(|(k, _)| k.parse::<usize>().unwrap_or(usize::MAX));
-                pairs.into_iter().map(|(_, v)| v).collect()
-            }
-            DiffField::Array(items) => items,
-        };
-        items.retain(|s| !s.code.is_empty() && !s.name.is_empty());
-        items
     }
 }
 
@@ -337,12 +259,6 @@ pub(super) fn secid_prefix(market: &str) -> Option<&'static str> {
         "amex" => Some("107"),
         _ => None,
     }
-}
-
-/// 行情批量报价的查询键（东财 secid，issue #1555）：键构造单点（市场前缀 ∘ 代码），
-/// 换数据源只改这里，编排零改动。市场未知（`unknown`）返回 None，不构造键。
-pub(super) fn quote_query_key(market: &str, code: &str) -> Option<String> {
-    secid_prefix(market).map(|prefix| format!("{prefix}.{code}"))
 }
 
 /// 发送请求并解析 JSON，按序尝试多个主机，对传输错误做短退避、对限流拦截做长冷却重试。
@@ -580,36 +496,6 @@ where
             }
         }
     }
-}
-
-/// 按 secid 批量查询最新价（跨市场一次携带多只，复用 clist 同一套主机池/重试/限流与解析）。
-/// `secids` 为逗号分隔的东财 secid 串（形如 `1.600519,0.000001,116.00700`）。
-/// 响应 `data` 为 null（全部代码无效）时返回空列表，不报错。
-pub(super) async fn fetch_ulist(
-    client: &reqwest::Client,
-    pacer: &mut Pacer,
-    secids: &str,
-) -> Result<Vec<StockItem>> {
-    tracing::debug!(secids, "批量报价查询");
-    // f1 随行返回价格精度位：场内 ETF 为三位小数报价，按市场固定倍数换算会得十倍错价
-    // （#695 实测）；缺 f1 的旧形态响应由换算单点按市场回退。
-    let params = [("secids", secids), ("fields", "f12,f14,f1,f2")];
-    let resp: UlistResponse = request_json_from_hosts(
-        client,
-        &params,
-        ULIST_PATH,
-        API_HOSTS,
-        RetryConfig::production(),
-        pacer,
-        "fetch_ulist",
-        None,
-    )
-    .await?;
-    Ok(resp
-        .data
-        .and_then(|d| d.diff)
-        .map(DiffField::into_items)
-        .unwrap_or_default())
 }
 
 /// 日 K 线单根样本：交易日（ISO 日期）与收盘价（真实价格值，非 f2 缩放值）。

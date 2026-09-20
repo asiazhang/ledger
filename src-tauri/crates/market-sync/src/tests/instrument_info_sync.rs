@@ -1,6 +1,6 @@
 //! 标的信息同步（InstrumentInfoSync，issue #103 / #137 / ADR-0019；覆盖面放开
 //! 至库内全部标的 + 名称随行刷新 issue #827；确定进度序列 issue #897 / ADR-0095）：
-//! 查询单元路由（市场 + 代码）、ulist / 日 K / 汇率 K 报文解析、现价 upsert、K 线周采样回填、名称
+//! 查询单元路由（市场 + 代码）、日 K / 汇率 K 报文解析、现价 upsert、K 线周采样回填、名称
 //! 刷新与幂等语义。
 //! 编排经注入 mock 查询 / kline / fx / 净值 / 基金名称闭包与进度回调驱动，不依赖
 //! 真实网络。
@@ -16,11 +16,14 @@ use crate::bulk::{
     BULK_DISABLE_PERIOD, BULK_FAILURE_THRESHOLD, BulkFetchCircuit, BulkFetchSurfaces, BulkNavPoint,
     FetchFundNameDictionary, FetchFundNavTable, FundNameDictionary, FundNavTable,
 };
-use crate::channels::{FetchFuture, QuoteQuery, SyncFetchChannels, do_incremental_sync_channels};
+use crate::channels::{
+    FetchFuture, Lane, QuoteItem, QuoteQuery, SyncFetchChannels, SyncFetchHosts,
+    do_incremental_sync_channels,
+};
 use crate::fund_nav::{FullSeries, NavPage, NavPoint, NavQuery};
 use crate::http::{
-    KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
-    fx_secid_candidates, parse_klines, price_cents_from_raw, secid_prefix,
+    KlineBar, KlineResponse, f2_to_price, fx_secid_candidates, parse_klines, price_cents_from_raw,
+    secid_prefix,
 };
 use crate::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
 use crate::model::WriteWitness;
@@ -28,14 +31,15 @@ use crate::session::ScopedSession;
 use crate::{FetchFundName, FetchNavFull, FetchNavPage};
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::{
-    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, upsert_market_price, upsert_price_history,
+    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, TENCENT_PRICE_SOURCE, upsert_market_price,
+    upsert_price_history,
 };
 
 use super::{insert_holding, insert_lot};
 use tauri_app_lib::test_support::{seed_account, seed_instrument};
 
 // ---------------------------------------------------------------------------
-// 持仓价格增量同步（issue #103）：查询单元路由（市场 + 代码）、ulist 响应解析、编排、跳过规则、
+// 持仓价格增量同步（issue #103）：查询单元路由（市场 + 代码）、批量报价条目消费、编排、跳过规则、
 // 结果统计与幂等。编排经注入 mock 查询函数驱动，不依赖真实网络。
 // ---------------------------------------------------------------------------
 
@@ -179,37 +183,56 @@ fn query_log_line(queries: &[QuoteQuery]) -> String {
 }
 
 /// 模拟批量报价：对每个查询单元生成条目。`prices` 为 code → 原始 f2
-/// （None 表示停牌/无效价），不在映射中的代码不返回（模拟查询无果）。
+/// （None 表示停牌/无效价；经[`price_cents_from_raw`]换算为万分之一元），
+/// 不在映射中的代码不返回（模拟查询无果）。行情日期不携带（None）——
+/// 落库走北京日内兜底，与既有断言语义一致。
 fn mock_fetch<'a>(
     prices: &'a [(&'a str, Option<f64>)],
-) -> impl FnMut(&[QuoteQuery]) -> FetchFuture<Vec<StockItem>> + Send + 'a {
+) -> impl FnMut(&[QuoteQuery]) -> FetchFuture<Vec<QuoteItem>> + Send + 'a {
     move |queries: &[QuoteQuery]| {
         let mut items = Vec::new();
         for query in queries {
             let code = query.code.clone();
             if let Some((_, price)) = prices.iter().find(|(c, _)| *c == query.code.as_str()) {
-                items.push(StockItem {
-                    name: format!("名称-{code}"),
-                    code,
-                    price: *price,
-                    precision: None,
-                });
+                items.push(quote_item(
+                    query,
+                    &format!("名称-{code}"),
+                    price.map(|raw| price_cents_from_raw(raw, None, &query.market)),
+                    None,
+                ));
             }
         }
         super::ready(Ok(items))
     }
 }
 
-/// 每查询单元一条默认报价（名称随代码、价 1000.00 元、无精度位）：拆批与进度
-/// 用例的应答形状，避免各处重抄同一 `StockItem` 映射体。
-fn quote_items_for(queries: &[QuoteQuery]) -> Vec<StockItem> {
+/// 测试用场内报价条目（万分之一元已换算、行情日期可空）。
+fn quote_item(
+    query: &QuoteQuery,
+    name: &str,
+    price_cents: Option<i64>,
+    price_date: Option<&str>,
+) -> QuoteItem {
+    QuoteItem {
+        code: query.code.clone(),
+        name: name.to_string(),
+        price_cents,
+        price_date: price_date.map(str::to_string),
+    }
+}
+
+/// 每查询单元一条默认报价（名称随代码、价 1000.00 元原始 f2、无精度位）：拆批与
+/// 进度用例的应答形状，避免各处重抄同一 `QuoteItem` 映射体。
+fn quote_items_for(queries: &[QuoteQuery]) -> Vec<QuoteItem> {
     queries
         .iter()
-        .map(|query| StockItem {
-            name: format!("名称-{}", query.code),
-            code: query.code.clone(),
-            price: Some(1000.0),
-            precision: None,
+        .map(|query| {
+            quote_item(
+                query,
+                &format!("名称-{}", query.code),
+                Some(price_cents_from_raw(1000.0, None, &query.market)),
+                None,
+            )
         })
         .collect()
 }
@@ -242,22 +265,8 @@ fn quote_channel_derivation_matches_secid_construction() {
     }
 }
 
-#[test]
-fn ulist_response_deserializes_cross_market_codes() {
-    // 真实 ulist.np/get 响应样本（一次携带跨市场：沪 1.600519 / 深 0.000001 / 港 116.00700）
-    let json = r#"{"rc":0,"rt":11,"svr":177542529,"lt":1,"full":1,"dlmkts":"8,10,128","dsc":"0","data":{"total":3,"diff":[{"f2":130280,"f12":"600519","f14":"贵州茅台"},{"f2":1173,"f12":"000001","f14":"平安银行"},{"f2":445400,"f12":"00700","f14":"腾讯控股"}]}}"#;
-    let resp: UlistResponse = serde_json::from_str(json).unwrap();
-    let items = resp.data.unwrap().diff.unwrap().into_items();
-    assert_eq!(items.len(), 3);
-    assert_eq!(items[0].code, "600519");
-    // 价格换算（万分之一元，ADR-0038）：A 股 f2 × 100、港股 × 10（市场回退单点）
-    assert_eq!(f2_to_price(items[0].price.unwrap(), "sh"), 13028000);
-    assert_eq!(f2_to_price(items[1].price.unwrap(), "sz"), 117300);
-    assert_eq!(f2_to_price(items[2].price.unwrap(), "hk"), 4454000);
-}
-
-/// 市场固定倍数回退换算（万分之一元，ADR-0038）：批量报价精度位缺失/越界时
-/// 的回退单点（[`f2_to_price`]），与增量同步/按代码查询两条通道共用。
+/// 市场固定倍数回退换算（万分之一元，ADR-0038）：精度位缺失/越界时的回退单点
+/// （[`f2_to_price`]），与按代码查询通道共用。
 #[test]
 fn f2_to_price_scales_by_market() {
     assert_eq!(f2_to_price(951.0, "sh"), 95100);
@@ -268,52 +277,6 @@ fn f2_to_price_scales_by_market() {
     assert_eq!(f2_to_price(319970.0, "nasdaq"), 3_199_700);
     assert_eq!(f2_to_price(113240.0, "nyse"), 1_132_400);
     assert_eq!(f2_to_price(770190.0, "amex"), 7_701_900);
-}
-
-#[test]
-fn ulist_response_null_data_yields_no_items() {
-    // 全部代码无效时东财返回 rc=102 且 data:null：应解析为空而非报错（不中断同步）。
-    let json = r#"{"rc":102,"rt":1,"svr":177622402,"lt":1,"full":1,"dlmkts":"8,10,128","dsc":"0","data":null}"#;
-    let resp: UlistResponse = serde_json::from_str(json).unwrap();
-    assert!(resp.data.is_none());
-}
-
-#[test]
-fn ulist_items_carry_precision_and_convert_etf_scale() {
-    // 真实 ulist.np/get 响应样本（2026-02 实测，fields=f12,f14,f1,f2）：场内 ETF
-    // 报价为 3 位小数刻度（f1=3，与 stock/get 的 f59 同义），A 股股票为 2 位（f1=2）
-    // ——批量报价换算按精度位单点，不再按市场固定倍数（#695）。
-    let json = r#"{"rc":0,"rt":11,"svr":177622159,"lt":1,"full":1,"dlmkts":"8,10,128","dsc":"0","data":{"total":2,"diff":[{"f1":3,"f2":4634,"f12":"510300","f14":"沪深300ETF华泰柏瑞"},{"f1":2,"f2":131601,"f12":"600519","f14":"贵州茅台"}]}}"#;
-    let resp: UlistResponse = serde_json::from_str(json).unwrap();
-    let items = resp.data.unwrap().diff.unwrap().into_items();
-    assert_eq!(items.len(), 2);
-    assert_eq!(items[0].precision, Some(3.0), "ETF 精度位随行返回");
-    assert_eq!(items[1].precision, Some(2.0));
-    // 精度位换算（万分之一元，ADR-0038）：ETF 4.634 元 → 46340；股票 1316.01 元 → 13160100。
-    assert_eq!(
-        price_cents_from_raw(items[0].price.unwrap(), items[0].precision, "sh"),
-        46_340,
-        "ETF 按三位小数精度换算，市场固定 ×100 会得十倍错价"
-    );
-    assert_eq!(
-        price_cents_from_raw(items[1].price.unwrap(), items[1].precision, "sh"),
-        13_160_100
-    );
-}
-
-#[test]
-fn ulist_items_without_precision_fall_back_to_market_scale() {
-    // 缺 f1（旧形态响应）→ None：按市场回退，
-    // 股票行为与既有 f2_to_price 完全一致（回退分支只兜异常/旧形态）。
-    let json = r#"{"rc":0,"data":{"total":1,"diff":[{"f2":4634,"f12":"510300","f14":"沪深300ETF华泰柏瑞"}]}}"#;
-    let resp: UlistResponse = serde_json::from_str(json).unwrap();
-    let items = resp.data.unwrap().diff.unwrap().into_items();
-    assert_eq!(items[0].precision, None);
-    assert_eq!(
-        price_cents_from_raw(items[0].price.unwrap(), items[0].precision, "sh"),
-        463_400,
-        "缺精度位回退按市场粗粒度（与 f2_to_price 同口径）"
-    );
 }
 
 #[test]
@@ -740,11 +703,14 @@ fn incremental_sync_pulls_a_daily_ledgers_quotes_in_one_batch() {
 }
 
 #[test]
-fn incremental_sync_batches_quote_requests_by_the_batch_size_constant() {
+fn incremental_sync_hands_all_quote_queries_to_the_channel_in_one_call() {
+    // 编排不再按数据源批大小切割查询（issue #1560）：全部行情标的作为一次
+    // 通道调用递交，单次请求的批量承载量由取数层自行分批（见腾讯取数层用例）。
+    // 标数取 **旧东财报批大小 300 再加 5**：跨越那个边界后仍是一次调用，
+    // 证明编排层不再保留任何源相关批大小。
     let conn = tauri_app_lib::test_support::open();
-    // 常量 + 5 只股票：应拆为 2 批（常量 + 5），每批查询单元数不超 ULIST_BATCH_SIZE
-    // ——拆批规则按常量走（超量仍会拆，不会硬塞一个请求）。
-    let total = ULIST_BATCH_SIZE + 5;
+    let legacy_eastmoney_batch_size = 300;
+    let total = legacy_eastmoney_batch_size + 5;
     for i in 0..total {
         let symbol = format!("{:06}", 600000 + i);
         insert_holding(
@@ -760,7 +726,6 @@ fn incremental_sync_batches_quote_requests_by_the_batch_size_constant() {
 
     let mut batch_sizes: Vec<usize> = Vec::new();
     let mut fetch = |queries: &[QuoteQuery]| {
-        assert!(queries.len() <= ULIST_BATCH_SIZE);
         batch_sizes.push(queries.len());
         super::ready(Ok(quote_items_for(queries)))
     };
@@ -777,7 +742,7 @@ fn incremental_sync_batches_quote_requests_by_the_batch_size_constant() {
     .unwrap();
 
     assert_eq!(result.synced, total);
-    assert_eq!(batch_sizes, vec![ULIST_BATCH_SIZE, 5]);
+    assert_eq!(batch_sizes, vec![total], "全部查询单元在一次通道调用内递交");
 }
 
 /// 「替换通道实现即换源」负向接线证明（issue #1555）：现价刷新编排只递
@@ -797,12 +762,7 @@ fn swapping_quote_channel_keeps_prices_landing_without_source_key_in_orchestrati
         let items = queries
             .iter()
             .filter(|q| q.market == "sh" && q.code == "600519")
-            .map(|_| StockItem {
-                name: "贵州茅台".into(),
-                code: "600519".into(),
-                price: Some(1302.80),
-                precision: None,
-            })
+            .map(|q| quote_item(q, "贵州茅台", Some(130_280), None))
             .collect();
         super::ready(Ok(items))
     };
@@ -1467,13 +1427,13 @@ fn etf_holding_syncs_quote_only_without_history() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "sh");
 
-    // 批量报价按精度位换算（ETF f1=3，raw 4634 → 4.634 元 → 46340 万分之一元）。
+    // 批量报价：ETF 4.634 元 → 46340 万分之一元（取数层已换算）。
     let mut fetch = |_: &[QuoteQuery]| {
-        super::ready(Ok(vec![StockItem {
-            name: "沪深300ETF华泰柏瑞".into(),
+        super::ready(Ok(vec![QuoteItem {
             code: "510300".into(),
-            price: Some(4634.0),
-            precision: Some(3.0),
+            name: "沪深300ETF华泰柏瑞".into(),
+            price_cents: Some(46_340),
+            price_date: None,
         }]))
     };
 
@@ -1584,22 +1544,22 @@ fn three_type_partitions_roll_up_into_one_result() {
     );
 
     // 报价批次同时携带股票与 ETF（同一分区、同批路由「市场 + 代码」，收集按 symbol 升序）；
-    // 精度位随行：ETF f1=3、股票 f1=2。
+    // 价格已按取数层刻度换算为万分之一元：ETF 4.634 元、股票 1316.01 元。
     let query_log = Mutex::new(Vec::new());
     let mut fetch = |queries: &[QuoteQuery]| {
         query_log.lock().unwrap().push(query_log_line(queries));
         super::ready(Ok(vec![
-            StockItem {
-                name: "沪深300ETF华泰柏瑞".into(),
+            QuoteItem {
                 code: "510300".into(),
-                price: Some(4634.0),
-                precision: Some(3.0),
+                name: "沪深300ETF华泰柏瑞".into(),
+                price_cents: Some(46_340),
+                price_date: None,
             },
-            StockItem {
-                name: "贵州茅台".into(),
+            QuoteItem {
                 code: "600519".into(),
-                price: Some(131601.0),
-                precision: Some(2.0),
+                name: "贵州茅台".into(),
+                price_cents: Some(13_160_100),
+                price_date: None,
             },
         ]))
     };
@@ -1662,26 +1622,6 @@ fn three_type_partitions_roll_up_into_one_result() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn us_quotes_deserialize_with_thousand_scale() {
-    // 真实 ulist.np/get 响应样本（2026-01 实测，一次携带纳斯达克 105.AAPL /
-    // 纽交所 106.BABA / 美交所 107.SPY；f1 精度位随行返回、经换算单点消费，
-    // 美股 Some(3) 与市场回退同刻度；刻度按市场单点换算：美股 f2 与港股同为 3 位小数 ×1000）。
-    let json = r#"{"rc":0,"rt":11,"svr":177542528,"lt":1,"full":1,"dlmkts":"8,10,128","dsc":"0","data":{"total":3,"diff":[{"f1":3,"f2":319970,"f12":"AAPL","f14":"苹果"},{"f1":3,"f2":113240,"f12":"BABA","f14":"阿里巴巴"},{"f1":3,"f2":770190,"f12":"SPY","f14":"标普500ETF-SPDR"}]}}"#;
-    let resp: UlistResponse = serde_json::from_str(json).unwrap();
-    let items = resp.data.unwrap().diff.unwrap().into_items();
-    assert_eq!(items.len(), 3);
-    assert_eq!(
-        items[0].precision,
-        Some(3.0),
-        "美股精度位随行返回（与本票 ETF 共用同一字段）"
-    );
-    // 价格换算（万分之一元）：美股 f2 × 10 —— 319.970 / 113.240 / 770.190。
-    assert_eq!(f2_to_price(items[0].price.unwrap(), "nasdaq"), 3_199_700);
-    assert_eq!(f2_to_price(items[1].price.unwrap(), "nyse"), 1_132_400);
-    assert_eq!(f2_to_price(items[2].price.unwrap(), "amex"), 7_701_900);
-}
-
-#[test]
 fn us_stock_holding_syncs_quote_kline_and_usdcny() {
     let conn = tauri_app_lib::test_support::open();
     // 美股持仓：纳斯达克标的、USD 币种（创建增强落库形态）。
@@ -1699,12 +1639,12 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
     let query_log = Mutex::new(Vec::new());
     let mut fetch = |queries: &[QuoteQuery]| {
         query_log.lock().unwrap().push(query_log_line(queries));
-        // 原始 f2（3 位小数刻度）：AAPL $319.97 → 319970。
-        super::ready(Ok(vec![StockItem {
-            name: "苹果".into(),
+        // AAPL $319.97 → 3199700 万分之一元（取数层已换算）。
+        super::ready(Ok(vec![QuoteItem {
             code: "AAPL".into(),
-            price: Some(319_970.0),
-            precision: None,
+            name: "苹果".into(),
+            price_cents: Some(3_199_700),
+            price_date: None,
         }]))
     };
 
@@ -1745,7 +1685,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         )
         .unwrap();
     assert_eq!(price_ccy, "USD");
-    assert_eq!(source, EASTMONEY_PRICE_SOURCE);
+    assert_eq!(source, TENCENT_PRICE_SOURCE);
 
     // 同步不回填价格历史（归价格历史后台补全，issue #1377）。
     let count: i64 = conn
@@ -1767,11 +1707,11 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
     // 重跑幂等：现价覆盖更新、汇率历史同周整周覆盖，零重复行。
     let mut fetch = |queries: &[QuoteQuery]| {
         query_log.lock().unwrap().push(query_log_line(queries));
-        super::ready(Ok(vec![StockItem {
-            name: "苹果".into(),
+        super::ready(Ok(vec![QuoteItem {
             code: "AAPL".into(),
-            price: Some(320_000.0),
-            precision: None,
+            name: "苹果".into(),
+            price_cents: Some(3_200_000),
+            price_date: None,
         }]))
     };
     let mut fx = mock_fx(&fx_pairs, &fx_log);
@@ -1830,6 +1770,141 @@ fn us_stock_holdings_route_exact_market_per_instrument() {
         *query_log.lock().unwrap(),
         vec!["nasdaq:AAPL,nyse:BABA,amex:SPY".to_string()],
         "三市场持仓同批查询，各按精确市场路由（收集按 symbol 升序）"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 场内现价刷新接线腾讯批量报价（issue #1560 / ADR-0130 决策 2/5/7）
+// ---------------------------------------------------------------------------
+
+/// 构造一条最小但合法的腾讯 A 股报价语句（88 字段）：只填解析消费的字段
+///（名称 @1 / 代码 @2 / 价格 @3 / 行情日期 @30 / 类型码 @61 / 币种 @82），
+/// 其余留空——用于驱动**生产通道束**的端到端接线钉。
+fn tencent_a_share_line(code: &str, name: &str, price: &str, timestamp: &str) -> String {
+    let mut fields = [""; 88];
+    fields[1] = name;
+    fields[2] = code;
+    fields[3] = price;
+    fields[30] = timestamp;
+    fields[61] = "GP-A";
+    fields[82] = "CNY";
+    format!("v_sh{code}=\"{}\";", fields.join("~"))
+}
+
+/// 生产接线钉（issue #1560，删除接线即红）：生产通道束的批量报价闭包打到腾讯
+/// 批量报价端点（路径段 `q=<市场前缀代码逗号串>`），价格与名称照常落库——
+/// 场内现价刷新不再走东财 ulist：把换装改回东财实现，注入的主机就收不到请求，
+/// 本用例的「一次腾讯请求」断言即红。
+#[test]
+fn production_quote_channel_requests_tencent_batch_endpoint() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-sh", "600000", "stock", "CNY", "sh");
+
+    let body = tencent_a_share_line("600000", "浦发银行", "9.07", "20260918161458");
+    let gbk = encoding_rs::GBK.encode(&body).0.into_owned();
+    let (url, requests) = super::spawn_header_capture_server(gbk);
+    let mut channels = SyncFetchChannels::production_lane(
+        Lane::Foreground,
+        SyncFetchHosts {
+            quote: vec![url],
+            kline: vec![],
+        },
+    )
+    .expect("生产束应可构造");
+
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut WriteWitness::default(),
+    ))
+    .unwrap();
+
+    assert_eq!(result.synced, 1);
+    assert_eq!(market_price_of(&conn, "inst-sh"), Some(90_700));
+    assert_eq!(instrument_name(&conn, "inst-sh"), "浦发银行");
+    let captured = requests.lock().unwrap().clone();
+    assert_eq!(
+        captured.len(),
+        1,
+        "场内现价刷新一次批量报价请求（无其余请求）"
+    );
+    assert!(
+        captured[0].starts_with("GET /q=sh600000 "),
+        "批量报价打到腾讯路径段 q=<代码逗号串>，实际 {}",
+        captured[0].lines().next().unwrap_or("")
+    );
+}
+
+/// 行情日期取交易所当地交易日（ADR-0130 决策 5 / issue #1560）：现价缓存
+/// 当周采样日取交易所当地交易日（ADR-0130 决策 5 / issue #1560）：现价刷新直落
+/// 的当周采样点用取数层给出的行情日期，不做北京时间换算；改回按北京时间
+/// （`beijing_today`）本用例变红。现价缓存与价格历史的来源标记均为新来源值
+///（ADR-0130 决策 7）。现价时点仍为写入时刻（ADR-0103 决策 4），行情日期由
+/// 采样日承载。
+#[test]
+fn quote_date_is_exchange_local_and_source_is_tencent() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(
+        &conn,
+        "acc-usd",
+        "inst-aapl",
+        "AAPL",
+        "stock",
+        "USD",
+        "nasdaq",
+    );
+    // 已有历史序列是当周采样点直落的前提；旧点取上月，与本轮不同周。
+    let old = (beijing_today() - chrono::Duration::days(30))
+        .format("%Y-%m-%d")
+        .to_string();
+    upsert_price_history(&conn, "inst-aapl", &old, 100, "USD", EASTMONEY_PRICE_SOURCE).unwrap();
+
+    // 交易所当地交易日（美股收盘日）与北京日历日相差一天——按北京时间换算会记错。
+    let exchange_date = (beijing_today() - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+    let mut fetch = |queries: &[QuoteQuery]| {
+        super::ready(Ok(queries
+            .iter()
+            .map(|q| quote_item(q, "苹果", Some(3_361_300), Some(&exchange_date)))
+            .collect()))
+    };
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+        &mut no_bulk(),
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    ))
+    .unwrap();
+    assert_eq!(result.synced, 1);
+
+    let source: String = conn
+        .query_row(
+            "SELECT source FROM market_prices WHERE instrument_id='inst-aapl'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(source, TENCENT_PRICE_SOURCE, "价格来源标记为新来源值");
+
+    let (trade_date, price_cents, history_source): (String, i64, String) = conn
+        .query_row(
+            "SELECT trade_date, price_cents, source FROM price_history \
+             WHERE instrument_id='inst-aapl' ORDER BY trade_date DESC LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(trade_date, exchange_date, "当周采样日取交易所当地交易日");
+    assert_eq!(price_cents, 3_361_300);
+    assert_eq!(
+        history_source, TENCENT_PRICE_SOURCE,
+        "历史来源标记为新来源值"
     );
 }
 
@@ -2699,14 +2774,14 @@ fn instrument_version(conn: &Connection, instrument_id: &str) -> i64 {
 /// 这三条通道恒不应被触达——被触达即计数 + 断言面（同时硬失败，避免静默）。
 #[derive(Clone, Default)]
 struct QuoteChannelCalls {
-    ulist: Arc<AtomicUsize>,
+    quote: Arc<AtomicUsize>,
     kline: Arc<AtomicUsize>,
     fx: Arc<AtomicUsize>,
 }
 
 impl QuoteChannelCalls {
     fn total(&self) -> usize {
-        self.ulist.load(Ordering::SeqCst)
+        self.quote.load(Ordering::SeqCst)
             + self.kline.load(Ordering::SeqCst)
             + self.fx.load(Ordering::SeqCst)
     }
@@ -2722,8 +2797,8 @@ fn fund_channels(
     bulk: BulkFetchSurfaces,
 ) -> SyncFetchChannels {
     SyncFetchChannels {
-        fetch_ulist: Box::new({
-            let calls = quote_calls.ulist.clone();
+        fetch_quotes: Box::new({
+            let calls = quote_calls.quote.clone();
             move |_: &[QuoteQuery]| {
                 calls.fetch_add(1, Ordering::SeqCst);
                 unreachable!("用例现场无行情通道标的")
@@ -4001,7 +4076,7 @@ fn mixed_ledger_keeps_constant_fund_out_of_requests_denominator_and_gaps() {
     .into_iter()
     .collect();
     let mut channels = SyncFetchChannels {
-        fetch_ulist: Box::new(mock_fetch(&[("600519", Some(1000.0))])),
+        fetch_quotes: Box::new(mock_fetch(&[("600519", Some(1000.0))])),
         fetch_kline: Box::new(|_| {
             Box::pin(async { unreachable!("历史日 K 已移出现价刷新编排") })
         }),

@@ -36,7 +36,7 @@ use ledger_infra::db::{self, DbState};
 use ledger_infra::events;
 use ledger_market_sync::{
     BackfillChannelsSlot, BackfillTimings, BulkFetchSurfaces, HISTORY_BACKFILL_PROGRESS, KlineBar,
-    StockItem, SyncFetchChannels, start_history_backfill_with,
+    QuoteItem, SyncFetchChannels, start_history_backfill_with,
 };
 use tauri_app_lib::commands::sync::{SyncChannelsSlot, sync_instrument_info};
 
@@ -53,7 +53,7 @@ fn gated_backfill_channels(
     kline_calls: Arc<std::sync::atomic::AtomicUsize>,
 ) -> BackfillChannelsSlot {
     let channels = SyncFetchChannels {
-        fetch_ulist: Box::new(|_| {
+        fetch_quotes: Box::new(|_| {
             Box::pin(async {
                 unreachable!("后台补全不刷现价，批量报价通道不应被触达")
             })
@@ -99,13 +99,13 @@ fn gated_backfill_channels(
 /// 后台补全」的断言面。
 fn frontend_sync_channels() -> SyncChannelsSlot {
     let channels = SyncFetchChannels {
-        fetch_ulist: Box::new(|_| {
+        fetch_quotes: Box::new(|_| {
             Box::pin(async move {
-                Ok(vec![StockItem {
+                Ok(vec![QuoteItem {
                     code: "600519".into(),
                     name: "贵州茅台".into(),
-                    price: Some(1302.80),
-                    precision: None,
+                    price_cents: Some(130_280),
+                    price_date: None,
                 }])
             })
         }),

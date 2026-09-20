@@ -25,8 +25,8 @@ use crate::model::WriteWitness;
 use crate::tests::insert_holding;
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::{
-    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
-    upsert_price_history,
+    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, TENCENT_PRICE_SOURCE, price_value_to_cents,
+    upsert_market_price, upsert_price_history,
 };
 use ledger_investment::{InstrumentType, derive_price_channel};
 use tauri_app_lib::test_support::seed_instrument;
@@ -642,7 +642,7 @@ fn swapping_kline_channel_keeps_history_landing_without_source_key_in_orchestrat
 /// 计入失败）；把窗口换回东财的 `YYYYMMDD` 形态同样被请求形态断言拦下。
 #[test]
 fn production_backfill_channel_lands_history_via_tencent_kline() {
-    use crate::channels::{Lane, SyncFetchChannels};
+    use crate::channels::{Lane, SyncFetchChannels, SyncFetchHosts};
 
     let conn = tauri_app_lib::test_support::open();
     // 沪深港美四类标的各一只（场上市场闭集的代表，其余市场同一路由单点）。
@@ -671,8 +671,14 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
 
     // 只取生产束的日 K 闭包（接线本体）；汇率 / 净值通道用空桩，避免本用例
     // 触发与接线无关的真实网络。
-    let channels = SyncFetchChannels::production_lane(Lane::Backfill, vec![url])
-        .expect("生产后台车道束应可构造");
+    let channels = SyncFetchChannels::production_lane(
+        Lane::Backfill,
+        SyncFetchHosts {
+            quote: vec![],
+            kline: vec![url],
+        },
+    )
+    .expect("生产后台车道束应可构造");
     let mut fetch_kline = channels.fetch_kline;
     let mut fetch_fx = |_: &str| super::ready(Ok(vec![]));
     let mut fetch_nav = |_: &NavQuery| super::ready(Ok(nav_page(0, &[])));
@@ -703,6 +709,16 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
             "{id} 的日 K 打到腾讯端点后周点照常落库"
         );
     }
+    // 场内历史补全的来源标记与实际取数源一致（ADR-0130 决策 7 / issue #1560）：
+    // 日 K 改走腾讯后不再写存量的 `eastmoney`。
+    let source: String = conn
+        .query_row(
+            "SELECT source FROM price_history WHERE instrument_id='inst-us'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(source, TENCENT_PRICE_SOURCE, "历史补全来源标记为新来源值");
 
     // 请求形态：腾讯端点 + 腾讯查询键（美股带交易所后缀）+ 近两年 `YYYY-MM-DD`
     // 窗口 + 根数。换回东财 `YYYYMMDD` 窗口或东财查询键即红。

@@ -31,7 +31,7 @@ use ledger_infra::error::{AppError, Result};
 use ledger_infra::events;
 use ledger_market_sync::{
     BulkFetchCircuit, BulkFetchSurfaces, FundNameDictionary, FundNavTable,
-    INSTRUMENT_SYNC_PROGRESS, StockItem, SyncFetchChannels,
+    INSTRUMENT_SYNC_PROGRESS, QuoteItem, SyncFetchChannels,
 };
 use tauri_app_lib::commands::sync::SyncChannelsSlot;
 use tauri_app_lib::commands::{investment, sync};
@@ -58,17 +58,17 @@ fn gated_channels(
     let channels = SyncFetchChannels {
         // 门控等待在闭包同步段完成（编排调用闭包即阻塞在途），应答装箱为 future
         // ——「同步真实在途」语义与断言不变（issue #1412 通道闭包 async 形态）。
-        fetch_ulist: Box::new(move |_queries| {
+        fetch_quotes: Box::new(move |_queries| {
             entered.send(()).expect("在途通知应可送达");
             release
                 .recv_timeout(Duration::from_secs(10))
                 .expect("测试应放行批量报价");
             Box::pin(async move {
-                Ok(vec![StockItem {
+                Ok(vec![QuoteItem {
                     code: "600519".into(),
                     name: "贵州茅台".into(),
-                    price: Some(1302.80),
-                    precision: None,
+                    price_cents: Some(130_280),
+                    price_date: None,
                 }])
             })
         }),
@@ -452,7 +452,7 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
     /// 返回权威名称（名称面未覆盖时逐只兜底的合法应答）。
     fn per_item_channels() -> SyncFetchChannels {
         SyncFetchChannels {
-            fetch_ulist: Box::new(|_| Box::pin(async { Ok(vec![]) })),
+            fetch_quotes: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_kline: Box::new(|_| {
                 Box::pin(async {
                     unreachable!("测试现场无行情标的，K 线通道不应被触达")

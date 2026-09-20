@@ -41,7 +41,8 @@
 //! - [`tencent`]：腾讯行情批量报价取数单元（ADR-0130 决策 2/3 / issue #1558）
 //!   ——一次请求携带多只沪深港美股票与场内基金（GBK、无需 Referer），解出代码 /
 //!   名称 / 价格 / 价格日期 / 证券类型码 / 币种 / 交易所后缀；三套字段布局与类型
-//!   探测收口单点，非预期响应 fail-closed；本票只取数与解析，接线随 #1560 / #1567；
+//!   探测收口单点，非预期响应 fail-closed；现价刷新接线见 [`channels`]（issue #1560），
+//!   按代码查询 / 创建接线随 #1567；
 //! - [`fund_nav`]：东财历史净值共享件（issue #303 / ADR-0038 决策 6；issue #1388
 //!   自通道拆出编排后留守）——lsjz / 详情页数据文件访问与报文解析、净值水位窗口、
 //!   分页器与水位读；首刷深回填另走详情页数据文件的单请求全量通道、失败
@@ -141,10 +142,8 @@ mod persist;
 mod progress;
 mod session;
 mod stock;
-/// 腾讯行情批量报价取数单元（issue #1558）：单元本体与测试已就位，crate 内消费点
-/// 随现价刷新接线（#1560）与按代码查询 / 创建（#1567）接装时落地，接装时撤去
-/// dead_code 豁免并按消费面补再导出。
-#[allow(dead_code)]
+/// 腾讯行情批量报价取数单元（issue #1558）：现价刷新接线见 [`channels`]
+/// （issue #1560）；按代码查询 / 创建接线随 #1567。
 mod tencent;
 /// 腾讯日线 K 线取数单元（issue #1559）：单元本体与测试已就位，crate 内消费点
 /// 随历史补全接线（issue #1561，通道束的日 K 闭包）落地。
@@ -158,21 +157,21 @@ pub use bulk::{
     FundNameDictionary, FundNavTable,
 };
 pub use channels::{
-    FetchFundName, FetchFxKline, FetchKline, FetchNavFull, FetchNavPage, FetchUlist, QuoteQuery,
-    SyncFetchChannels, do_incremental_sync_channels,
+    FetchFundName, FetchFxKline, FetchKline, FetchNavFull, FetchNavPage, FetchQuotes, QuoteItem,
+    QuoteQuery, SyncFetchChannels, do_incremental_sync_channels,
 };
 pub use daily_refresh::{
     DailyPriceRefreshChannelsSlot, DailyPriceRefreshTimings, start_daily_price_refresh,
     start_daily_price_refresh_with,
 };
 // 通道束载荷 DTO（issue #1276）：通道束是壳层注入接缝的公开面，桩实现方需要
-// 能命名与构造应答形状（StockItem 可构造；Kline/Nav 形状测试回空表即可命名）。
+// 能命名与构造应答形状（QuoteItem 可构造；Kline/Nav 形状测试回空表即可命名）。
 pub use fund::fetch_fund_quote_production;
 pub use fund_nav::{NavPage, NavPoint, NavQuery};
 pub use history::{
     BackfillChannelsSlot, BackfillTimings, start_history_backfill, start_history_backfill_with,
 };
-pub use http::{KlineBar, StockItem};
+pub use http::KlineBar;
 pub use model::{SyncInstrumentInfoResult, WriteWitness};
 pub use progress::{
     BackfillProgressEmitter, FundNavProgress, HISTORY_BACKFILL_PROGRESS, INSTRUMENT_SYNC_PROGRESS,

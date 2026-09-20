@@ -51,16 +51,16 @@ use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use ledger_infra::error::Result;
 use ledger_investment::crud::refresh_instrument_name;
 use ledger_investment::prices::{
-    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
+    MarketPriceWrite, TENCENT_PRICE_SOURCE, price_value_to_cents, upsert_market_price,
     upsert_price_history,
 };
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 use ledger_transaction::amount::default_currency_code;
 
-use super::channels::{FetchFuture, QuoteQuery};
+use super::channels::{FetchFuture, QuoteItem, QuoteQuery};
 use super::fund_nav::{NavPage, NavQuery};
 use super::fund_price_refresh::{FundSyncStats, refresh_one_fund_price};
-use super::http::{KlineBar, StockItem, ULIST_BATCH_SIZE, price_cents_from_raw};
+use super::http::KlineBar;
 use super::persist::upsert_fx_rate_history;
 use super::progress::{FundNavProgress, SyncProgress};
 use super::session::ScopedSession;
@@ -274,7 +274,7 @@ where
     // 作用域会话接缝（issue #1275 / #1412 async 形态）：读写库的唯一通道，
     // 签名层面取不到连接。
     Q: ScopedSession,
-    F: FnMut(&[QuoteQuery]) -> FetchFuture<Vec<StockItem>> + Send,
+    F: FnMut(&[QuoteQuery]) -> FetchFuture<Vec<QuoteItem>> + Send,
     X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
     N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
     // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
@@ -349,19 +349,22 @@ where
     }
     let mut done = 0usize;
 
-    // ① 按批查询并 upsert 现价（幂等：每标的一条 market_prices 覆盖更新，原行为不变），
-    // 名称随行刷新（issue #827）：批量报价响应携带数据源权威名称（f14），零额外请求，
+    // ① 查询并 upsert 现价（幂等：每标的一条 market_prices 覆盖更新，原行为不变），
+    // 名称随行刷新（issue #827）：批量报价响应携带数据源权威名称，零额外请求，
     // 与价格解耦——停牌无价仍刷名称。报价 + 当周采样点直落合并为该标的一格
     //（issue #897；历史日 K 已移出本编排，ADR-0122 / issue #1377），停牌/查询无果
-    // 照常推进。
+    // 照常推进。行情批量报价一次递出全部分区标的（issue #1560）：单次请求的批量
+    // 承载量由取数层按实测请求行上限自行分批，编排不再按源相关批大小切割。
     let mut synced_codes: HashSet<String> = HashSet::new();
     let mut renamed = 0usize;
-    for chunk in queryable.chunks(ULIST_BATCH_SIZE) {
-        // 批量报价是网络请求，在会话之外（await，issue #1412）；响应落库（名称
-        // 随行刷新 + 现价 upsert）才短暂取一次连接（issue #1275）。
-        // 查询键（数据源 secid）由通道内部构造（issue #1555），编排只递
-        // 「市场 + 代码」。
-        let items = fetch(chunk).await?;
+    // 批量报价是网络请求，在会话之外（await，issue #1412）；响应落库（名称
+    // 随行刷新 + 现价 upsert）才短暂取一次连接（issue #1275）。查询键（腾讯
+    // 市场前缀 / 美股交易所后缀）由通道内部构造（issue #1555 / #1560），编排只递
+    // 「市场 + 代码」。
+    // 库内行情分区为空则不调通道（零请求）：通道仍被调用会在无行情标的的
+    // 用例现场多一次无谓请求（先例：批量面为空时不尝试）。
+    if !queryable.is_empty() {
+        let items = fetch(&queryable).await?;
         for item in &items {
             if let Some(inst) = meta.get(&item.code) {
                 // 落库作业（门面作业形态，Send + 'static）：编现场的见证器 / 计数器
@@ -374,43 +377,47 @@ where
                     .with_connection({
                         let instrument_id = inst.instrument_id.clone();
                         let currency = inst.currency.clone();
-                        let market = inst.market.clone();
                         let name = item.name.clone();
-                        let raw = item.price;
-                        let precision = item.precision;
+                        let price_cents = item.price_cents;
+                        let price_date = item.price_date.clone();
                         move |conn| {
                             // 名称随行刷新（issue #827）：以数据源权威名称覆盖（仅实际变化才落库）。
                             if refresh_instrument_name(conn, &instrument_id, &name)? {
                                 mark(&sink, StockMark::Renamed);
                             }
-                            // f2≤0（停牌/无效价）经 deserialize_positive_f64 已过滤为 None，此处跳过、保留旧价。
-                            if let Some(raw) = raw {
-                                // 换算按随行精度位单点（场内 ETF 三位小数报价，#695；缺 f1 按市场回退）。
-                                let price = price_cents_from_raw(raw, precision, &market);
+                            // 停牌/无效价（≤0）在取数层已解为 None，此处跳过、保留旧价。
+                            if let Some(price_cents) = price_cents {
                                 upsert_market_price(
                                     conn,
                                     &MarketPriceWrite {
                                         instrument_id: &instrument_id,
-                                        price_cents: price,
+                                        price_cents,
                                         currency_code: &currency,
-                                        // 场内现价时点 = 写入时刻、无净值日期语义（ADR-0036）。
+                                        // 场内现价时点 = 写入时刻、无净值日期语义（ADR-0036 /
+                                        // ADR-0103 决策 4）；行情日期由当周采样点的
+                                        // `trade_date` 承载（见下）。
                                         priced_at: &ledger_infra::db::now_iso(),
                                         nav_date: None,
-                                        source: Some(EASTMONEY_PRICE_SOURCE),
+                                        source: Some(TENCENT_PRICE_SOURCE),
                                     },
                                 )?;
                                 mark(&sink, StockMark::Priced);
                                 // 当周采样点直落（ADR-0122 决策 2 / issue #1377）：现价刷新
                                 // 已携带该标的当日有效报价，有历史序列者把当周点一并落库，
                                 // 不另发逐只日 K 请求；无历史序列者不落（单点会冒充历史完整，
-                                // 破坏后台补全的首刷判据）；同周同值零写入。
-                                let today = beijing_today().format("%Y-%m-%d").to_string();
+                                // 破坏后台补全的首刷判据）；同周同值零写入。采样日取
+                                // **行情日期**——交易所当地交易日的日期部分，不做时区换算
+                                //（ADR-0130 决策 5）：按北京时间切分会把美股周五的收盘记成
+                                // 周六；取数层解不出日期时按北京日历日兜底。
+                                let trade_date = price_date.clone().unwrap_or_else(|| {
+                                    beijing_today().format("%Y-%m-%d").to_string()
+                                });
                                 super::history::land_current_week_point(
                                     conn,
                                     &instrument_id,
                                     &currency,
-                                    &today,
-                                    price,
+                                    &trade_date,
+                                    price_cents,
                                 )?;
                             }
                             Ok(())
@@ -437,15 +444,15 @@ where
                 renamed_now?;
             }
         }
+    }
 
-        // 进度推进（issue #897）：批内每只有通道标的一格——现价 + 当周采样点 +
-        // 名称随行刷新合并为一格，停牌/查询无果照常推进（不以成败计格）。
-        // 历史日 K 回填已随 ADR-0122 / issue #1377 移出本编排（归后台补全），
-        // 行情分区的逐只请求自此消失。
-        for _ in chunk {
-            done += 1;
-            progress(SyncProgress::instrument(done, total));
-        }
+    // 进度推进（issue #897）：每只有通道标的一格——现价 + 当周采样点 +
+    // 名称随行刷新合并为一格，停牌/查询无果照常推进（不以成败计格）。
+    // 历史日 K 回填已随 ADR-0122 / issue #1377 移出本编排（归后台补全），
+    // 行情分区的逐只请求自此消失。
+    for _ in &queryable {
+        done += 1;
+        progress(SyncProgress::instrument(done, total));
     }
 
     // ② 汇率 K 线回填 → FxRateHistory：共用单元（[`backfill_fx_pairs`]，issue
@@ -677,15 +684,20 @@ where
 /// 零重复行）。返回本次落库的周点数（调用方可据此判定「是否实际写过」；既有
 /// 调用点不消费该返回值，行为不变）。
 ///
+/// `source` 由调用方按**实际取数源**声明（ADR-0130 决策 7）：场内日 K 走腾讯
+/// （`TENCENT_PRICE_SOURCE`），基金净值通道在换源前仍为东财
+///（`EASTMONEY_PRICE_SOURCE`）——共用写入形体不再硬编码单一来源。
+///
 /// 本函数只写行、**不开事务**：调用方必须在**一只一个事务**里包住它
-///（[`ensure_transaction`]），否则第 N 个周点写入失败会留下半根历史。两个现役
-/// 调用点（行情分区日 K 回填、基金净值回填）都已如此接线；基金侧另有现价与
-/// 历史同事务的需求，故事务边界留在调用方而非本函数。
+///（[`ensure_transaction`]），否则第 N 个周点写入失败会留下半根历史。三个现役
+/// 调用点（行情分区日 K 回填、基金净值回填、基金现价刷新的缺周点补齐）都已如此
+/// 接线；基金侧另有现价与历史同事务的需求，故事务边界留在调用方而非本函数。
 pub(super) fn write_weekly_price_history(
     conn: &Connection,
     instrument_id: &str,
     currency: &str,
     bars: &[KlineBar],
+    source: &str,
 ) -> Result<usize> {
     let points = downsample_weekly(bars);
     let count = points.len();
@@ -696,7 +708,7 @@ pub(super) fn write_weekly_price_history(
             &trade_date,
             price_value_to_cents(close),
             currency,
-            EASTMONEY_PRICE_SOURCE,
+            source,
         )?;
     }
     Ok(count)

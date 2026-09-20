@@ -9,8 +9,9 @@
 //! 行情日期取数据源给出的交易所当地交易日的日期部分，**不做时区换算**（ADR-0130
 //! 决策 5）——沿用北京时间切分会把美股周五的收盘记成周六。
 //!
-//! 本单元只取数与解析，不落库、不接 UI、不接编排；接线随 #1560（现价刷新）与
-//! #1567（按代码查询与创建）落地，接装前模块级 `allow(dead_code)` 豁免。
+//! 本单元只取数与解析，不落库、不接 UI；现价刷新接线见通道束（issue #1560），
+//! 按代码查询 / 创建接线随 #1567（[`TencentQuote::into_quote`] 供后者投影统一
+//! 载荷，暂以 dead_code 豁免）。
 //!
 //! fail-closed：被风控拦截的响应（HTML 页 / 空体）与非预期形状（缺报价语句、GBK
 //! 解码出错、字段数少于该市场布局下界、未知市场前缀、未知美股交易所后缀）一律报
@@ -25,7 +26,7 @@
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::{InstrumentType, Quote};
 
-use super::channels::QuoteQuery;
+use super::channels::{QuoteItem, QuoteQuery};
 use super::http::{Pacer, RetryConfig, request_bytes_from_hosts};
 
 /// 生成主机：腾讯财经公开报价端点（免费、无需 key 与 Referer；ADR-0130 决策 2）。
@@ -63,9 +64,22 @@ pub struct TencentQuote {
 }
 
 impl TencentQuote {
+    /// 投影为通道束载荷 [`QuoteItem`]（issue #1560）：编排只需代码 / 名称 /
+    /// 价格 / 行情日期，数据源私有字段（类型码 / 币种 / 精确市场）留在本层。
+    /// 投影定义在取数单元内（而非接缝模块）：换源时改的是投影端，接缝零知识。
+    pub(super) fn into_quote_item(self) -> QuoteItem {
+        QuoteItem {
+            code: self.code,
+            name: self.name,
+            price_cents: self.price_cents,
+            price_date: self.price_date,
+        }
+    }
+
     /// 投影为行情接入接缝的统一载荷 [`Quote`]（ADR-0103）：场内通道成员（代码 /
     /// 名称 / 价格 / 价格日期 / 精确市场 / 类型提示）就位，场外成员（基金分类 /
-    /// 净值日期 / 恒定价格信号）恒缺省。
+    /// 净值日期 / 恒定价格信号）恒缺省。消费方为按代码查询 / 创建接线（#1567）。
+    #[allow(dead_code)]
     pub fn into_quote(self) -> Quote {
         Quote {
             code: self.code,
@@ -221,7 +235,7 @@ fn quote_layout(key: &str) -> Option<(&'static str, QuoteLayout)> {
 ///
 /// 字段数偏少是**整批**报错而非丢单行：布局漂移会让全部行同形缩短，丢单行会把
 /// 「数据源改版」静默伪装成「这只今天缺行情」；空名称则是字段自身的合法缺值
-///（与既有 `StockItem` 丢弃空名行同口径），两者性质不同。
+///（与既有行情解析丢弃空名行同口径），两者性质不同。
 pub(super) fn parse_tencent_quotes(body: &str) -> Result<Vec<TencentQuote>> {
     let mut quotes = Vec::new();
     let mut saw_statement = false;
