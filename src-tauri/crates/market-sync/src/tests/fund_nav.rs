@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::NaiveDate;
 
 use crate::fund_nav::{
-    LsjzResponse, NavPoint, NavQuery, fetch_nav_full_series_from, fetch_nav_page_from, nav_window,
+    NavPoint, NavQuery, NavResponse, fetch_nav_full_series_from, fetch_nav_page_from, nav_window,
     parse_fund_archive, parse_lsjz, parse_money_fund_income_series, parse_net_worth_trend,
 };
 use crate::http::{Pacer, request_json_from_hosts};
@@ -23,7 +23,7 @@ fn date(s: &str) -> NaiveDate {
 
 #[test]
 fn lsjz_response_deserializes_real_payload() {
-    let resp: LsjzResponse = serde_json::from_str(REAL_PAYLOAD).unwrap();
+    let resp: NavResponse = serde_json::from_str(REAL_PAYLOAD).unwrap();
     assert_eq!(resp.total_count, 506);
     let parsed = parse_lsjz(&resp);
     assert!(!parsed.blocked, "正常对象报文不是空响应");
@@ -39,7 +39,7 @@ fn lsjz_blocked_payload_parses_to_empty() {
     // 缺 Referer / 风控拦截形态：Data 是空字符串（非对象），宽容解析为空而非报错，
     // 但形态标记为 blocked——空表不可信（issue #1059，与「窗口内无新净值」区分）。
     let json = r#"{"Data":"","ErrCode":-999,"ErrMsg":"","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}"#;
-    let resp: LsjzResponse = serde_json::from_str(json).unwrap();
+    let resp: NavResponse = serde_json::from_str(json).unwrap();
     let parsed = parse_lsjz(&resp);
     assert!(parsed.points.is_empty());
     assert!(parsed.blocked, "空响应形态必须标记，不得与正常空窗混同");
@@ -50,7 +50,7 @@ fn lsjz_no_data_yet_shape_parses_to_empty() {
     // 查无此码 / 新基金未公布 / 增量窗口内无新净值：ErrCode=0、Data 是对象但
     // LSJZList 为空——空表可信（窗口内确实没有净值），不是被拦截形态。
     let json = r#"{"Data":{"LSJZList":[],"FundType":"","SYType":null,"isNewType":false,"Feature":null},"ErrCode":0,"ErrMsg":null,"TotalCount":0,"Expansion":null,"PageSize":20,"PageIndex":1}"#;
-    let resp: LsjzResponse = serde_json::from_str(json).unwrap();
+    let resp: NavResponse = serde_json::from_str(json).unwrap();
     let parsed = parse_lsjz(&resp);
     assert!(parsed.points.is_empty());
     assert!(!parsed.blocked, "正常空表不是空响应");
@@ -59,7 +59,7 @@ fn lsjz_no_data_yet_shape_parses_to_empty() {
 #[test]
 fn lsjz_missing_data_field_is_blocked() {
     // Data 字段整体缺省（另一种空响应形态）：同样标记 blocked。
-    let resp: LsjzResponse = serde_json::from_str(r#"{"ErrCode":-999,"TotalCount":0}"#).unwrap();
+    let resp: NavResponse = serde_json::from_str(r#"{"ErrCode":-999,"TotalCount":0}"#).unwrap();
     let parsed = parse_lsjz(&resp);
     assert!(parsed.points.is_empty());
     assert!(parsed.blocked);
@@ -76,7 +76,7 @@ fn lsjz_invalid_nav_rows_are_filtered() {
         {"FSRQ":"2026-01-26","DWJZ":2.5},
         {"FSRQ":"","DWJZ":1.5}
     ]},"TotalCount":6}"#;
-    let resp: LsjzResponse = serde_json::from_str(json).unwrap();
+    let resp: NavResponse = serde_json::from_str(json).unwrap();
     let points = parse_lsjz(&resp);
     assert_eq!(
         points.points,
@@ -110,7 +110,7 @@ const MONEY_FUND_PAYLOAD: &str = r#"{"Data":{"LSJZList":[{"FSRQ":"2026-09-14","D
 fn lsjz_money_fund_income_column_normalizes_to_unit_nav() {
     // 货基判定命中：日期即净值日本体，单位净值恒 1.0000——万份收益数值（含 0
     // 与负值）甚至缺省（null）都不影响行有效性，也不进价格。
-    let resp: LsjzResponse = serde_json::from_str(MONEY_FUND_PAYLOAD).unwrap();
+    let resp: NavResponse = serde_json::from_str(MONEY_FUND_PAYLOAD).unwrap();
     let parsed = parse_lsjz(&resp);
     assert!(!parsed.blocked);
     assert_eq!(
@@ -141,7 +141,7 @@ fn lsjz_money_fund_signal_unknown_shape_never_fails_response() {
     // 判定信号（FundType/SYType）未知 wire 形态（如数字）：宽容归缺省，整页
     // 照常解析、不中断同步——信号缺席的代价是退回旧口径，不是报错。
     let json = r#"{"Data":{"LSJZList":[{"FSRQ":"2026-01-30","DWJZ":"3.3480"}],"FundType":5,"SYType":7},"TotalCount":1}"#;
-    let resp: LsjzResponse = serde_json::from_str(json).unwrap();
+    let resp: NavResponse = serde_json::from_str(json).unwrap();
     let parsed = parse_lsjz(&resp);
     assert_eq!(
         parsed.points,
@@ -157,7 +157,7 @@ fn lsjz_money_fund_signal_unknown_shape_never_fails_response() {
 fn lsjz_money_fund_detected_by_fund_type_code_alone() {
     // SYType 缺省而 FundType=005：类型码单信号同样判定（两信号任一命中即真）。
     let json = r#"{"Data":{"LSJZList":[{"FSRQ":"2026-09-14","DWJZ":"0.3117"}],"FundType":"005","SYType":null},"TotalCount":1}"#;
-    let resp: LsjzResponse = serde_json::from_str(json).unwrap();
+    let resp: NavResponse = serde_json::from_str(json).unwrap();
     let parsed = parse_lsjz(&resp);
     assert_eq!(
         parsed.points,

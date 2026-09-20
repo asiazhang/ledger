@@ -131,7 +131,7 @@ pub use daily_refresh::{
 // 通道束载荷 DTO（issue #1276）：通道束是壳层注入接缝的公开面，桩实现方需要
 // 能命名与构造应答形状（StockItem 可构造；Kline/Nav 形状测试回空表即可命名）。
 pub use fund::fetch_fund_quote_production;
-pub use fund_nav::{LsjzPage, NavPoint, NavQuery};
+pub use fund_nav::{NavPage, NavPoint, NavQuery};
 pub use history::{
     BackfillChannelsSlot, BackfillTimings, start_history_backfill, start_history_backfill_with,
 };

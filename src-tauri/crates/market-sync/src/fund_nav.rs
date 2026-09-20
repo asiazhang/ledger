@@ -45,21 +45,21 @@ pub(super) const PINGZHONG_HOSTS: &[&str] = &["https://fund.eastmoney.com"];
 const PINGZHONG_PATH_PREFIX: &str = "/pingzhongdata/";
 
 /// lsjz 整体响应。`TotalCount` 在顶层；`Data` 正常为对象，被拦截形态（缺
-/// Referer / 风控）是空字符串，以无标签枚举宽容为 [`LsjzDataField::Blocked`]；
+/// Referer / 风控）是空字符串，以无标签枚举宽容为 [`NavDataField::Blocked`]；
 /// 缺省（Data 字段不存在）为 None。
 #[derive(Debug, Deserialize)]
-pub(super) struct LsjzResponse {
+pub(super) struct NavResponse {
     #[serde(rename = "Data", default)]
-    pub(super) data: Option<LsjzDataField>,
+    pub(super) data: Option<NavDataField>,
     #[serde(rename = "TotalCount", default)]
     pub(super) total_count: u64,
 }
 
-/// `Data` 字段的两种 wire 形态（见 [`LsjzResponse`]）。
+/// `Data` 字段的两种 wire 形态（见 [`NavResponse`]）。
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-pub(super) enum LsjzDataField {
-    Data(LsjzData),
+pub(super) enum NavDataField {
+    Data(NavData),
     /// 被拦截形态兜底（`Data:""` 等）：payload 仅为宽容解析的承接容器，
     /// 解析层不消费其内容（整体按空处理并记 debug 日志）。
     #[allow(dead_code)]
@@ -67,9 +67,9 @@ pub(super) enum LsjzDataField {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct LsjzData {
+pub(super) struct NavData {
     #[serde(rename = "LSJZList", default)]
-    pub(super) lsjz_list: Option<Vec<LsjzItem>>,
+    pub(super) entries: Option<Vec<NavEntry>>,
     /// 东财基金类型码（`005` = 货币型，与搜索通道 `FUNDTYPE` 同一枚代码表，
     /// issue #1342）；宽容解析，未知形态归缺省（不使整页报文失败），已终止
     /// 基金等形态会缺省。
@@ -92,7 +92,7 @@ pub(super) struct LsjzData {
 /// 历史净值单行：净值日期 + 单位净值。只解析消费的两列，其余（累计净值、
 /// 申购赎回状态等）忽略。
 #[derive(Debug, Deserialize)]
-pub(super) struct LsjzItem {
+pub(super) struct NavEntry {
     /// 净值日期（ISO）。
     #[serde(rename = "FSRQ")]
     pub(super) fsrq: String,
@@ -270,9 +270,10 @@ pub(super) fn parse_money_fund_income_series(js: &str) -> Option<Vec<NavPoint>> 
 
 /// 一页净值的解析结果：有效净值点 + 窗口内总条数（服务端按起止日期过滤后的
 /// 总数，供分页循环定界）+ 报文形态（`blocked` = 空响应/被拦截，见
-/// [`parse_lsjz`]）+ 货基信号（ADR-0126 打标确认源之一）。
+/// [`parse_lsjz`]）+ 货基信号（ADR-0126 打标确认源之一）。类型名为数据源
+/// 中立命名（issue #1557）：页形状由通道闭包签名固定，换源只改通道实现。
 #[derive(Debug, Clone, PartialEq)]
-pub struct LsjzPage {
+pub struct NavPage {
     pub(super) points: Vec<NavPoint>,
     pub(super) total: u64,
     /// 空响应/异常形态（`Data` 缺省或非对象，如缺 Referer 被拦截 / 风控）：
@@ -284,7 +285,8 @@ pub struct LsjzPage {
     pub(super) money_fund: bool,
 }
 
-/// 一只基金的单页查询（注入接缝的请求形状）：日期闭区间、页码 1 起。
+/// 一只基金的单页查询（注入接缝的请求形状）：日期闭区间、页码 1 起。类型名
+/// 为数据源中立命名（issue #1557），与页形状 [`NavPage`] 同属分页通道接缝。
 #[derive(Debug, Clone, PartialEq)]
 pub struct NavQuery {
     pub(super) code: String,
@@ -295,19 +297,19 @@ pub struct NavQuery {
 
 /// 解析一页 lsjz 报文：挑出有效净值点（日期非空、单位净值 > 0；未公布/异常行
 /// 静默过滤，与日线「无效样本不中断」同一姿态）+ 顶层总条数 + 报文形态。被拦截
-/// 形态（`Data:""` / [`LsjzDataField::Blocked`]，含 `Data` 缺省）得空表并标记
+/// 形态（`Data:""` / [`NavDataField::Blocked`]，含 `Data` 缺省）得空表并标记
 /// `blocked`——空表有两种语义（抓取不可信 vs 窗口内确实没有新净值），解析层
 /// 负责把它们区分开（issue #1059）。
 ///
 /// 货币基金（[`is_money_fund_lsjz`] 命中，issue #1342）：`DWJZ` 列是万份收益
 /// 而非单位净值，单位净值恒 [`MONEY_FUND_UNIT_NAV`]——日期即净值日本体，
 /// 收益值是否在场 / 为何值（含 0 与偶发负值）不影响行有效性，不进价格。
-pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzPage {
+pub(super) fn parse_lsjz(resp: &NavResponse) -> NavPage {
     let data = match &resp.data {
-        Some(LsjzDataField::Data(data)) => data,
+        Some(NavDataField::Data(data)) => data,
         other => {
             tracing::debug!(payload = ?other, "lsjz Data 缺省或为被拦截形态，按空响应处理");
-            return LsjzPage {
+            return NavPage {
                 points: Vec::new(),
                 total: resp.total_count,
                 blocked: true,
@@ -317,7 +319,7 @@ pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzPage {
     };
     let money_fund = is_money_fund_lsjz(data.sy_type.as_deref(), data.fund_type.as_deref());
     let points = data
-        .lsjz_list
+        .entries
         .as_deref()
         .unwrap_or(&[])
         .iter()
@@ -337,7 +339,7 @@ pub(super) fn parse_lsjz(resp: &LsjzResponse) -> LsjzPage {
             })
         })
         .collect();
-    LsjzPage {
+    NavPage {
         points,
         total: resp.total_count,
         blocked: false,
@@ -380,7 +382,7 @@ pub(super) async fn fetch_nav_page(
     client: &reqwest::Client,
     pacer: &mut Pacer,
     query: &NavQuery,
-) -> Result<LsjzPage> {
+) -> Result<NavPage> {
     fetch_nav_page_from(client, pacer, query, LSJZ_HOSTS).await
 }
 
@@ -390,7 +392,7 @@ pub(super) async fn fetch_nav_page_from(
     pacer: &mut Pacer,
     query: &NavQuery,
     hosts: &[&str],
-) -> Result<LsjzPage> {
+) -> Result<NavPage> {
     tracing::debug!(
         code = %query.code, page = %query.page,
         start = %query.start_date, end = %query.end_date,
@@ -406,7 +408,7 @@ pub(super) async fn fetch_nav_page_from(
         ("endDate", query.end_date.as_str()),
     ];
     let referer = nav_referer(&query.code);
-    let resp: LsjzResponse = request_json_from_hosts(
+    let resp: NavResponse = request_json_from_hosts(
         client,
         &params,
         LSJZ_PATH,
@@ -575,7 +577,7 @@ pub(super) async fn fetch_nav_pages<N, P>(
     on_page: &mut P,
 ) -> Result<NavPages>
 where
-    N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
+    N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
     P: FnMut(u64, u64) + Send,
 {
     let query = |page: u64| NavQuery {

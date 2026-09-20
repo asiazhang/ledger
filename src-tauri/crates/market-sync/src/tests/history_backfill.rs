@@ -17,7 +17,7 @@ use std::sync::Mutex;
 use crate::SyncProgress;
 use crate::channels::FetchFuture;
 use crate::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
-use crate::fund_nav::{FullSeries, LsjzPage, NavPoint, NavQuery};
+use crate::fund_nav::{FullSeries, NavPage, NavPoint, NavQuery};
 use crate::history::{HistoryBackfillStats, run_history_backfill_round};
 use crate::http::KlineBar;
 use crate::incremental::{SyncInstrument, beijing_today, daily_window_opens, week_monday};
@@ -38,8 +38,8 @@ fn bar(date: &str, close: f64) -> KlineBar {
     }
 }
 
-fn nav_page(total: u64, points: &[(&str, f64)]) -> LsjzPage {
-    LsjzPage {
+fn nav_page(total: u64, points: &[(&str, f64)]) -> NavPage {
+    NavPage {
         total,
         blocked: false,
         money_fund: false,
@@ -137,7 +137,7 @@ struct Harness {
     /// 注入单只失败：命中该 secid 的日 K 请求返回 Err。
     fail_kline: Option<&'static str>,
     /// 基金代码 → (服务端总条数, 按页的净值页序列)；未收录 = 空页。
-    nav_pages: Vec<(&'static str, u64, Vec<LsjzPage>)>,
+    nav_pages: Vec<(&'static str, u64, Vec<NavPage>)>,
     /// 币种对 → 汇率日线。
     fx: Vec<(&'static str, Vec<KlineBar>)>,
 }
@@ -163,7 +163,7 @@ impl Harness {
         self
     }
 
-    fn with_nav_pages(mut self, pages: Vec<(&'static str, u64, Vec<LsjzPage>)>) -> Self {
+    fn with_nav_pages(mut self, pages: Vec<(&'static str, u64, Vec<NavPage>)>) -> Self {
         self.nav_pages = pages;
         self
     }
@@ -197,7 +197,7 @@ impl Harness {
             .unwrap_or_default())
     }
 
-    fn fetch_nav(&self, query: &NavQuery) -> Result<LsjzPage> {
+    fn fetch_nav(&self, query: &NavQuery) -> Result<NavPage> {
         self.log.lock().unwrap().push(format!("nav:{}", query.code));
         let page_index = (query.page - 1) as usize;
         Ok(self
@@ -205,7 +205,7 @@ impl Harness {
             .iter()
             .find(|(code, _, _)| *code == query.code)
             .and_then(|(_, _, pages)| pages.get(page_index).cloned())
-            .unwrap_or(LsjzPage {
+            .unwrap_or(NavPage {
                 points: vec![],
                 total: 0,
                 blocked: false,
@@ -680,7 +680,7 @@ async fn run_fund_backfill<N, S>(
     fetch_full: &mut S,
 ) -> Result<BackfillOutcome>
 where
-    N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
+    N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
     S: FnMut(&str) -> FetchFuture<FullSeries> + Send,
 {
     backfill_one_fund_history(
@@ -695,8 +695,8 @@ where
 
 /// 空实现：既有用例只关心单请求全量通道时注入（分页通道最小桩，形态 = 窗口
 /// 内确实无净值、非拦截）。
-fn empty_nav(_: &NavQuery) -> FetchFuture<LsjzPage> {
-    super::ready(Ok(LsjzPage {
+fn empty_nav(_: &NavQuery) -> FetchFuture<NavPage> {
+    super::ready(Ok(NavPage {
         points: vec![],
         total: 0,
         blocked: false,
@@ -707,9 +707,9 @@ fn empty_nav(_: &NavQuery) -> FetchFuture<LsjzPage> {
 /// 模拟历史净值页抓取：按代码返回页序列（下标 = 页码 − 1，越界页返回空），
 /// 并记录全部查询（断言水位窗口、翻页与「非可拉取行零请求」）。
 fn mock_nav<'a>(
-    pages_by_code: &'a [(&'a str, Vec<LsjzPage>)],
+    pages_by_code: &'a [(&'a str, Vec<NavPage>)],
     requested: &'a Mutex<Vec<NavQuery>>,
-) -> impl FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send + 'a {
+) -> impl FnMut(&NavQuery) -> FetchFuture<NavPage> + Send + 'a {
     move |query: &NavQuery| {
         requested.lock().unwrap().push(query.clone());
         super::ready(Ok(pages_by_code
@@ -717,7 +717,7 @@ fn mock_nav<'a>(
             .find(|(c, _)| *c == query.code)
             .and_then(|(_, pages)| pages.get((query.page - 1) as usize))
             .cloned()
-            .unwrap_or(LsjzPage {
+            .unwrap_or(NavPage {
                 points: vec![],
                 total: 0,
                 blocked: false,
@@ -783,7 +783,7 @@ fn daily_nav_series(start: NaiveDate, end: NaiveDate) -> Vec<(String, f64)> {
 fn mock_nav_series<'a>(
     series: &'a [(String, f64)],
     requested: &'a Mutex<Vec<NavQuery>>,
-) -> impl FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send + 'a {
+) -> impl FnMut(&NavQuery) -> FetchFuture<NavPage> + Send + 'a {
     move |query: &NavQuery| {
         requested.lock().unwrap().push(query.clone());
         let mut in_window: Vec<&(String, f64)> = series
@@ -804,7 +804,7 @@ fn mock_nav_series<'a>(
                 nav: *nav,
             })
             .collect();
-        super::ready(Ok(LsjzPage {
+        super::ready(Ok(NavPage {
             points,
             total,
             blocked: false,
@@ -1338,7 +1338,7 @@ fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
     seed_fund_price(&conn, "inst-fund", 30000, &watermark, true);
 
     let mut nav = |_: &NavQuery| {
-        super::ready(Ok(LsjzPage {
+        super::ready(Ok(NavPage {
             points: vec![],
             total: 0,
             blocked: true,
@@ -1451,7 +1451,7 @@ fn fund_partial_blocked_page_skips_whole_instrument() {
         "110022",
         vec![
             nav_page(45, &[("2026-01-30", 3.348), ("2026-01-28", 3.293)]),
-            LsjzPage {
+            NavPage {
                 points: vec![],
                 total: 45,
                 blocked: true,
@@ -1505,7 +1505,7 @@ fn fund_incremental_partial_blocked_page_keeps_existing_history_and_watermark() 
         "110022",
         vec![
             nav_page(45, &[("2026-01-30", 3.348)]),
-            LsjzPage {
+            NavPage {
                 points: vec![],
                 total: 45,
                 blocked: true,

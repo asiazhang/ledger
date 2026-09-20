@@ -16,7 +16,7 @@ use ledger_investment::prices::{
 
 use super::channels::FetchFuture;
 use super::fund_nav::{
-    FullSeries, LsjzPage, MONEY_FUND_UNIT_NAV, NavPages, NavQuery, fetch_nav_pages, nav_window,
+    FullSeries, MONEY_FUND_UNIT_NAV, NavPage, NavPages, NavQuery, fetch_nav_pages, nav_window,
     read_fund_watermark,
 };
 use super::http::KlineBar;
@@ -68,7 +68,7 @@ pub(super) async fn backfill_one_fund_history<Q, N, S, P>(
 where
     // 作用域会话接缝（issue #1275）：本函数读写库的唯一通道，签名层面取不到连接。
     Q: ScopedSession,
-    N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
+    N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
     S: FnMut(&str) -> FetchFuture<FullSeries> + Send,
     P: FnMut(u64, u64) + Send,
 {
