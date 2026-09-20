@@ -195,7 +195,8 @@
     "rate-positive": "汇率必须大于 0",
     "rate-non-positive": "汇率 {0}->{1} 非正: {2}",
     "reverse-rate-non-positive": "反向汇率 {0}->{1} 非正: {2}",
-    "rate-missing": "未找到 {0} -> {1} 的汇率（正反向均无）"
+    "rate-missing": "未找到 {0} -> {1} 的汇率（正反向均无）",
+    "source-malformed": "汇率数据源返回了无法解析的内容（{0}），请稍后重试同步"
   },
   "instrument": {
     "price-positive": "价格必须大于 0",
