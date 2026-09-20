@@ -945,6 +945,14 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
       "FundSyncStats 统计",
   },
   {
+    path: "fx.rs",
+    layer: "域目录",
+    note:
+      "ECB 汇率同步编排（issue #1544 / ADR-0019 修订记录）：汇率序列「要拉多深」的窗口判据单点——深度 = 账本最早的非本位币痕迹日期（非本位币账户创建日 / 非本位币交易日取 MIN，软删行与隐藏账户排除，黑洞账户是种子系统缓冲池非用户痕迹）所属 ISO 周的周一再前推一周，与标的 K 线「近两年」窗口和首刷 / 缺周队列彻底无关；" +
+      "按判据分派全量回填（按窗口起点裁剪）或 90 天增量，经通道束接 ecb 取数、persist 落库（单一事务、整周覆盖幂等、不产同步 op）；" +
+      "触发面（手动入口 / 每日调度）归 #1545 / #1546",
+  },
+  {
     path: "history.rs",
     layer: "域目录",
     note:

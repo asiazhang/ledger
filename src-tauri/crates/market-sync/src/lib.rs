@@ -49,6 +49,13 @@
 //!   fail-closed 回退 lsjz 分页（issue #1062）；
 //! - [`fund_price_refresh`]：基金现价刷新单元（issue #1377 / #1388）——服务标的
 //!   信息同步的逐只编排：批量面命中零请求、未命中退逐只短窗封顶；
+//! - [`fx`]：ECB 汇率同步编排（issue #1544 / ADR-0019 修订记录）——汇率序列
+//!   「要拉多深」的窗口判据单点：深度 = 账本中最早的非本位币痕迹日期（非本位币
+//!   账户创建日 / 非本位币交易日取 MIN，软删排除）所属 ISO 周的周一再前推一周，
+//!   与标的 K 线的「近两年」窗口和首刷 / 缺周队列彻底无关；按判据分派全量回填
+//!   （按窗口起点裁剪）或 90 天增量，经通道束接 [`ecb`] 取数、[`persist`] 落库
+//!   （单一事务、整周覆盖幂等、不产同步 op）。手动入口 / 每日调度的触发面归
+//!   #1545 / #1546，本单元即其共同消费的唯一编排；
 //! - [`history`]：价格历史后台补全（ADR-0122 / issue #1375）——派生事实队列
 //!   （有价格通道但历史不完整，持仓优先）+ 一轮排空（后台补全专用的单只
 //!   回填单元，issue #1377 起不再与现价刷新共用）+ 启动延迟与自然日窗口调度 +
@@ -136,14 +143,16 @@ mod channels;
 mod csrc;
 mod daily_refresh;
 /// ECB 参考汇率取数单元（issue #1542）：单元本体与测试已就位，序列类型已由落库
-/// 单元（persist，#1543）消费；两个取数入口与交叉推导的接线随回填 / 每日增量票
-///（#1544 / #1546）接装通道束时落地，接装时撤去 dead_code 豁免并按消费面补再导出。
-#[allow(dead_code)]
+/// 单元（persist，#1543）消费；两个取数入口与交叉推导已由汇率同步编排
+///（[`fx`]，issue #1544）经通道束消费。
 mod ecb;
 mod fund;
 mod fund_backfill;
 mod fund_nav;
 mod fund_price_refresh;
+/// ECB 汇率同步编排（issue #1544）：窗口判据与全量 / 增量两腿的分派已就位；
+/// 触发面（设置页手动入口 / 每日自动调度）随 #1545 / #1546 消费再导出面。
+mod fx;
 mod history;
 mod http;
 mod incremental;
@@ -184,6 +193,7 @@ pub use daily_refresh::{
 // 能命名与构造应答形状（QuoteItem 可构造；Kline/Nav 形状测试回空表即可命名）。
 pub use fund::fetch_fund_quote_production;
 pub use fund_nav::{NavPage, NavPoint, NavQuery};
+pub use fx::{FxSyncChannels, FxSyncReport, sync_fx_rates};
 pub use history::{
     BackfillChannelsSlot, BackfillTimings, start_history_backfill, start_history_backfill_with,
 };

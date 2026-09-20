@@ -18,10 +18,6 @@ use super::ecb::FxPairWeeklySeries;
 /// ECB 汇率来源标记（issue #1543 / ADR-0019 修订记录）：汇率历史与当期汇率表
 /// 的自动写入共用同一来源词；人工录入行仍记 'manual'（写入协议既有词表），
 /// 人工行保护以该词判定。
-///
-/// `allow(dead_code)`：落库单元的接线归触发票（#1544 回填 / #1545 手动入口 /
-/// #1546 每日增量），接装时撤去。
-#[allow(dead_code)]
 pub(super) const ECB_FX_SOURCE: &str = "ecb";
 
 /// ECB 汇率落库结果统计（issue #1543）：服务触发编排的提示拼装（覆盖区间 /
@@ -55,9 +51,6 @@ pub struct FxPersistReport {
 /// 写入口并记 op。
 ///
 /// 空序列与全空点集是无害 no-op。返回 [`FxPersistReport`] 统计。
-///
-/// `allow(dead_code)`：同 [`ECB_FX_SOURCE`]，接线票接装时撤去。
-#[allow(dead_code)]
 pub(super) fn persist_ecb_fx_series(
     conn: &Connection,
     series: &[FxPairWeeklySeries],
