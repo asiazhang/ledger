@@ -15,7 +15,7 @@ use rusqlite::{Connection, params};
 use std::sync::Mutex;
 
 use crate::SyncProgress;
-use crate::channels::FetchFuture;
+use crate::channels::{FetchFuture, QuoteQuery};
 use crate::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
 use crate::fund_nav::{FullSeries, LsjzPage, NavPoint, NavQuery};
 use crate::history::{HistoryBackfillStats, run_history_backfill_round};
@@ -129,12 +129,13 @@ type ObservedProgress = (usize, usize, Option<(String, u64, u64)>);
 /// 一轮补全的注入桩集合：按 secid / 基金代码应答并记录「谁被抓取了」——队列
 /// 成员与排队顺序都经这份可观察日志断言。
 struct Harness {
-    /// 处理序日志：行情标的记 `kline:<secid>`，基金页记 `nav:<code>`，基金单
-    /// 请求全量通道记 `full:<code>`，汇率记 `fx:<pair>`。
+    /// 处理序日志：行情标的记 `kline:<市场>:<代码>`（不观数据源查询键形态，
+    /// issue #1556），基金页记 `nav:<code>`，基金单请求全量通道记 `full:<code>`，
+    /// 汇率记 `fx:<pair>`。
     log: Mutex<Vec<String>>,
-    /// secid → 日线样本；未命中 = 空表（零有效周点）。
+    /// 「市场:代码」→ 日线样本；未命中 = 空表（零有效周点）。
     klines: Vec<(&'static str, Vec<KlineBar>)>,
-    /// 注入单只失败：命中该 secid 的日 K 请求返回 Err。
+    /// 注入单只失败：命中该「市场:代码」键的日 K 请求返回 Err。
     fail_kline: Option<&'static str>,
     /// 基金代码 → (服务端总条数, 按页的净值页序列)；未收录 = 空页。
     nav_pages: Vec<(&'static str, u64, Vec<LsjzPage>)>,
@@ -158,8 +159,8 @@ impl Harness {
         self
     }
 
-    fn with_failing_kline(mut self, secid: &'static str) -> Self {
-        self.fail_kline = Some(secid);
+    fn with_failing_kline(mut self, key: &'static str) -> Self {
+        self.fail_kline = Some(key);
         self
     }
 
@@ -184,15 +185,18 @@ impl Harness {
             .count()
     }
 
-    fn fetch_kline(&self, secid: &str) -> Result<Vec<KlineBar>> {
-        self.log.lock().unwrap().push(format!("kline:{secid}"));
-        if self.fail_kline.map(|f| f == secid).unwrap_or(false) {
+    fn fetch_kline(&self, query: &QuoteQuery) -> Result<Vec<KlineBar>> {
+        // 桩按自己的「市场:代码」形态路由（数据源查询键归通道内部构造，
+        // issue #1556）；断言对准「谁被抓取了」，不钉 secid 形态。
+        let key = format!("{}:{}", query.market, query.code);
+        self.log.lock().unwrap().push(format!("kline:{key}"));
+        if self.fail_kline.map(|f| f == key).unwrap_or(false) {
             return Err(AppError::Io("日 K 抓取失败".into()));
         }
         Ok(self
             .klines
             .iter()
-            .find(|(key, _)| *key == secid)
+            .find(|(stored, _)| *stored == key.as_str())
             .map(|(_, bars)| bars.clone())
             .unwrap_or_default())
     }
@@ -238,7 +242,7 @@ fn run_round(
 ) -> (Result<HistoryBackfillStats>, Vec<SyncProgress>, bool) {
     let progress_log: Mutex<Vec<SyncProgress>> = Mutex::new(vec![]);
     let mut witness = WriteWitness::default();
-    let mut fetch_kline = |secid: &str| super::ready(harness.fetch_kline(secid));
+    let mut fetch_kline = |query: &QuoteQuery| super::ready(harness.fetch_kline(query));
     let mut fetch_fx = |pair: &str| super::ready(harness.fetch_fx(pair));
     let mut fetch_nav = |query: &NavQuery| super::ready(harness.fetch_nav(query));
     let mut fetch_nav_full = |code: &str| super::ready(harness.fetch_nav_full(code));
@@ -294,8 +298,8 @@ fn queue_keeps_only_incomplete_and_holding_comes_first() {
 
     let harness = Harness::new()
         .with_klines(vec![
-            ("1.600519", vec![bar(&date_offset(1), 13.0)]),
-            ("0.000003", vec![bar(&date_offset(1), 7.0)]),
+            ("sh:600519", vec![bar(&date_offset(1), 13.0)]),
+            ("sz:000003", vec![bar(&date_offset(1), 7.0)]),
         ])
         .with_nav_pages(vec![
             ("000001", 1, vec![nav_page(1, &[(&date_offset(1), 1.5)])]),
@@ -315,10 +319,10 @@ fn queue_keeps_only_incomplete_and_holding_comes_first() {
     assert_eq!(
         harness.requested(),
         vec![
-            "kline:1.600519".to_string(),
+            "kline:sh:600519".to_string(),
             "full:000001".to_string(),
             "nav:000001".to_string(),
-            "kline:0.000003".to_string(),
+            "kline:sz:000003".to_string(),
             "nav:000005".to_string(),
         ],
         "抓取序 = 持仓优先 + symbol 升序"
@@ -377,7 +381,7 @@ fn queue_drains_and_stays_empty_once_histories_complete() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-held", "600519", "stock", "CNY", "sh");
     let harness = Harness::new().with_klines(vec![(
-        "1.600519",
+        "sh:600519",
         vec![bar(&date_offset(8), 12.0), bar(&date_offset(1), 13.0)],
     )]);
 
@@ -416,8 +420,8 @@ fn round_emits_instrument_level_progress_sequence() {
     insert_plain_instrument(&conn, "inst-a", "000002", "stock", "CNY", "sz");
     insert_plain_instrument(&conn, "inst-b", "000003", "stock", "CNY", "sz");
     let harness = Harness::new().with_klines(vec![
-        ("0.000002", vec![bar(&date_offset(1), 5.0)]),
-        ("0.000003", vec![bar(&date_offset(1), 6.0)]),
+        ("sz:000002", vec![bar(&date_offset(1), 5.0)]),
+        ("sz:000003", vec![bar(&date_offset(1), 6.0)]),
     ]);
     let (result, progress, _written) = run_round(&conn, &harness);
     result.unwrap();
@@ -481,8 +485,8 @@ fn round_continues_after_single_instrument_failure() {
     insert_plain_instrument(&conn, "inst-a", "000002", "stock", "CNY", "sz");
     insert_plain_instrument(&conn, "inst-b", "000003", "stock", "CNY", "sz");
     let harness = Harness::new()
-        .with_failing_kline("0.000002")
-        .with_klines(vec![("0.000003", vec![bar(&date_offset(1), 6.0)])]);
+        .with_failing_kline("sz:000002")
+        .with_klines(vec![("sz:000003", vec![bar(&date_offset(1), 6.0)])]);
     let (result, progress, written) = run_round(&conn, &harness);
     let stats = result.unwrap();
     assert_eq!(stats.queued, 2);
@@ -508,14 +512,14 @@ fn stock_unchanged_kline_writes_nothing_but_changed_value_rewrites() {
     seed_history_point(&conn, "inst-a", "CNY", &stale);
 
     // ① 同日同值：零写入、零见证。
-    let harness = Harness::new().with_klines(vec![("0.000002", vec![bar(&stale, 10.0)])]);
+    let harness = Harness::new().with_klines(vec![("sz:000002", vec![bar(&stale, 10.0)])]);
     let (result, _progress, written) = run_round(&conn, &harness);
     let stats = result.unwrap();
     assert_eq!((stats.queued, stats.failed), (1, 0));
     assert!(!written, "全部无新点不置见证");
 
     // ② 同周不同值：有新值 → 照常落库（整周覆盖幂等）并置见证。
-    let harness = Harness::new().with_klines(vec![("0.000002", vec![bar(&stale, 10.5)])]);
+    let harness = Harness::new().with_klines(vec![("sz:000002", vec![bar(&stale, 10.5)])]);
     let (result, _progress, written) = run_round(&conn, &harness);
     result.unwrap();
     assert!(written, "同周新值应重写并置见证");
@@ -531,7 +535,7 @@ fn stock_unchanged_kline_writes_nothing_but_changed_value_rewrites() {
     // ③ 新增周点：照常落库。
     let fresh = date_offset(1);
     let harness = Harness::new().with_klines(vec![(
-        "0.000002",
+        "sz:000002",
         vec![bar(&stale, 10.5), bar(&fresh, 11.0)],
     )]);
     let (result, _progress, written) = run_round(&conn, &harness);
@@ -561,7 +565,7 @@ fn round_backfills_fx_pairs_for_queued_currencies() {
     let conn = tauri_app_lib::test_support::open();
     insert_plain_instrument(&conn, "inst-us", "AAPL", "stock", "USD", "nasdaq");
     let harness = Harness::new()
-        .with_klines(vec![("105.AAPL", vec![bar(&date_offset(1), 319.97)])])
+        .with_klines(vec![("nasdaq:AAPL", vec![bar(&date_offset(1), 319.97)])])
         .with_fx(vec![("USDCNY", vec![bar(&date_offset(1), 7.02)])]);
     let (result, _progress, _written) = run_round(&conn, &harness);
     result.unwrap();
@@ -574,6 +578,57 @@ fn round_backfills_fx_pairs_for_queued_currencies() {
         .unwrap();
     assert_eq!(fx_rows, 1, "USDCNY 周点落 fx_rate_history");
     assert!(harness.requested().contains(&"fx:USDCNY".to_string()));
+}
+
+/// 「替换通道实现即换源」负向接线证明（issue #1556）：历史补全编排只递
+/// 「市场 + 代码」，日 K 查询键由通道在内部构造——本用例注入一个按自己形态
+///（模拟换源）路由查询的通道实现，历史照常落库。
+///
+/// 把查询键构造挪回编排（编排先拼出东财 secid `1.600519` 再当查询单元的代码
+/// 交给通道）后，本桩拿到的 `code` 是 secid 而非裸代码 `600519`，路由不中
+/// → 无日线样本 → 无周点可落，本用例变红。
+#[test]
+fn swapping_kline_channel_keeps_history_landing_without_source_key_in_orchestration() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-held", "600519", "stock", "CNY", "sh");
+
+    // 换源形态的通道桩：自己把（市场，代码）编成自己的查询键，只应答自己的形态。
+    let mut fetch_kline = |query: &QuoteQuery| {
+        let bars = if query.market == "sh" && query.code == "600519" {
+            vec![bar(&date_offset(1), 13.0)]
+        } else {
+            vec![]
+        };
+        super::ready(Ok(bars))
+    };
+    let mut fetch_fx = |_: &str| super::ready(Ok(vec![]));
+    let mut fetch_nav = |_: &NavQuery| super::ready(Ok(nav_page(0, &[])));
+    let mut fetch_nav_full = |_: &str| {
+        super::ready(Ok(FullSeries {
+            points: vec![],
+            money_fund: false,
+        }))
+    };
+    let mut progress = |_: SyncProgress| {};
+    let mut witness = WriteWitness::default();
+    let stats = tauri::async_runtime::block_on(run_history_backfill_round(
+        &conn,
+        &mut fetch_kline,
+        &mut fetch_fx,
+        &mut fetch_nav,
+        &mut fetch_nav_full,
+        &mut progress,
+        &mut witness,
+    ))
+    .unwrap();
+
+    assert_eq!(stats.queued, 1);
+    assert_eq!(stats.failed, 0);
+    assert_eq!(
+        history_rows(&conn, "inst-held"),
+        1,
+        "换一个自己构造查询键的通道实现，历史照常落库（编排不含数据源键）"
+    );
 }
 
 /// 缺周点判据的边界自证：6 天前的周点按 ISO 周差至多落后一周（≤ 7 天），
