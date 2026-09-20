@@ -52,7 +52,7 @@ use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 
 use super::channels::{FetchFuture, QuoteQuery, SyncFetchChannels};
 use super::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
-use super::fund_nav::{FullSeries, NavPage, NavQuery};
+use super::fund_nav::NavPoint;
 use super::http::KlineBar;
 use super::incremental::{
     SyncInstrument, backfill_fx_pairs, beijing_today, daily_window_opens, downsample_weekly,
@@ -63,7 +63,7 @@ use super::lane::{
     run_background_lane_round,
 };
 use super::model::WriteWitness;
-use super::progress::{FundNavProgress, SyncProgress};
+use super::progress::SyncProgress;
 use super::session::{FacadeWriteSession, ScopedSession};
 use ledger_investment::backfill;
 use ledger_investment::prices::{TENCENT_PRICE_SOURCE, price_value_to_cents, upsert_price_history};
@@ -346,19 +346,19 @@ pub(super) struct HistoryBackfillStats {
 /// 一轮价格历史补全：收集派生队列 → 排空（逐只回填单元，单只失败继续）→
 /// 汇率 K 线同期补齐。进度回调是唯一对外观察点：分母 = 队列长度，收集完成
 /// 立即发 `{ done: 0, total }`，此后每只处理完推进一格（成败同计格，与手动
-/// 同步口径一致——有通道标的不以成败计格）；基金首刷翻页期间另带页级明细
-///（issue #1061 形状）。队列空零动作：不发进度、零网络请求。
+/// 同步口径一致——有通道标的不以成败计格）。队列空零动作：不发进度、零网络
+/// 请求。（基金首刷翻页的页级明细随 #1566 换源新浪全历史面退场：逐只回填
+/// 已无翻页长等待。）
 ///
 /// 单只网络失败不中断本轮（记 warn 继续）：无用户在场，失败的标的靠派生事实
 /// 在下一窗口自然重进队列；单只原子（issue #1373）保证失败不留半根历史。
 /// 汇率失败同样不中断（辅助性折算序列，缺失段由后续窗口的后台补全补齐）。
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn run_history_backfill_round<Q, K, X, N, S, C, P>(
+pub(super) async fn run_history_backfill_round<Q, K, X, H, C, P>(
     session: &Q,
     fetch_kline: &mut K,
     fetch_fx: &mut X,
-    fetch_nav: &mut N,
-    fetch_nav_full: &mut S,
+    fetch_nav_history: &mut H,
     confirm_money_fund: &mut C,
     progress: &mut P,
     witness: &mut WriteWitness,
@@ -367,8 +367,8 @@ where
     Q: ScopedSession,
     K: FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> + Send,
     X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
-    N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
-    S: FnMut(&str) -> FetchFuture<FullSeries> + Send,
+    // 新浪单只全历史通道（issue #1566）：6 位代码 → 整只历史单位净值。
+    H: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
     // 货基判定确认通道（issue #1563）：6 位代码 → 官方披露自报形态三态。
     C: FnMut(&str) -> FetchFuture<bool> + Send,
     P: FnMut(SyncProgress) + Send,
@@ -394,30 +394,14 @@ where
                 .await
                 .map(|written| (written, false)),
             BackfillTarget::FundNav => {
-                // 页级推进（issue #1061）：done/total 仍是标的级口径，页抓取
-                // 返回后才带出本基金的页明细；块作用域限定回调借用。
-                let code = item.instrument.symbol.clone();
-                let mut on_page = |page: u64, pages: u64| {
-                    progress(SyncProgress {
-                        done,
-                        total,
-                        fund: Some(FundNavProgress {
-                            code: code.clone(),
-                            page,
-                            pages,
-                        }),
-                    });
-                };
                 // 队列只收「历史不完整」的基金：首刷与缺周点补齐正是逐只通道
                 // 的两种接管形态（issue #1377 起本单元为后台补全专用，现价刷新
                 // 走 refresh_one_fund_price）。
                 backfill_one_fund_history(
                     session,
                     &item.instrument,
-                    fetch_nav,
-                    fetch_nav_full,
+                    fetch_nav_history,
                     confirm_money_fund,
-                    &mut on_page,
                 )
                 .await
                 .map(|outcome: BackfillOutcome| (outcome.written, outcome.inconclusive))
@@ -577,8 +561,7 @@ impl LaneRound for HistoryBackfillRound {
             let SyncFetchChannels {
                 fetch_kline,
                 fetch_fx,
-                fetch_nav,
-                fetch_nav_full,
+                fetch_nav_history,
                 confirm_money_fund_form,
                 ..
             } = channels;
@@ -589,8 +572,7 @@ impl LaneRound for HistoryBackfillRound {
                 session,
                 fetch_kline,
                 fetch_fx,
-                fetch_nav,
-                fetch_nav_full,
+                fetch_nav_history,
                 confirm_money_fund_form,
                 &mut forward,
                 witness,

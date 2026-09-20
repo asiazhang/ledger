@@ -20,12 +20,12 @@ use crate::channels::{
     FetchFuture, FetchMoneyFundForm, Lane, QuoteItem, QuoteQuery, SyncFetchChannels,
     SyncFetchHosts, do_incremental_sync_channels,
 };
-use crate::fund_nav::{FullSeries, NavPage, NavPoint, NavQuery};
+use crate::fund_nav::{NavPage, NavPoint, NavQuery};
 use crate::http::{KlineBar, KlineResponse, fx_secid_candidates, parse_klines};
 use crate::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
 use crate::model::WriteWitness;
 use crate::session::ScopedSession;
-use crate::{FetchFundName, FetchNavFull, FetchNavPage};
+use crate::{FetchFundName, FetchNavHistory, FetchNavPage};
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, SINA_PRICE_SOURCE, TENCENT_PRICE_SOURCE,
@@ -1800,6 +1800,7 @@ fn production_quote_channel_requests_tencent_batch_endpoint() {
             quote: vec![url],
             kline: vec![],
             fund_batch: vec![],
+            fund_history: vec![],
         },
     )
     .expect("生产束应可构造");
@@ -1858,6 +1859,7 @@ fn production_fund_batch_channel_requests_sina_batch_endpoint() {
             quote: vec![],
             kline: vec![],
             fund_batch: vec![url],
+            fund_history: vec![],
         },
     )
     .expect("生产束应可构造");
@@ -2879,7 +2881,7 @@ impl QuoteChannelCalls {
 fn fund_channels(
     quote_calls: QuoteChannelCalls,
     fetch_nav: FetchNavPage,
-    fetch_nav_full: FetchNavFull,
+    fetch_nav_history: FetchNavHistory,
     fetch_fund_name: FetchFundName,
     confirm_money_fund_form: FetchMoneyFundForm,
     bulk: BulkFetchSurfaces,
@@ -2907,7 +2909,7 @@ fn fund_channels(
             }
         }),
         fetch_nav,
-        fetch_nav_full,
+        fetch_nav_history,
         fetch_fund_name,
         // 货基判定确认（issue #1563）：由用例注入（缺信号桩 `no_confirm` 闭包或
         // 判定用例的确认桩）。
@@ -3079,7 +3081,7 @@ fn bulk_surfaces_pin_daily_sync_request_count_to_a_constant() {
                     let calls = calls.clone();
                     Box::pin(async move {
                         calls.fetch_add(1, Ordering::SeqCst);
-                        Ok(FullSeries { points: vec![] })
+                        Ok(vec![])
                     })
                 })
             },
@@ -3192,7 +3194,7 @@ fn bulk_surface_failure_falls_back_per_instrument_and_counts_toward_the_circuit(
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         counting_nav(per_fund_nav_calls.clone(), today.clone(), 5.0),
-        Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
+        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(per_fund_name_calls.clone()),
         Box::new(no_confirm),
         bulk_surfaces(
@@ -3298,7 +3300,7 @@ fn bulk_coverage_gaps_fall_back_per_item_without_tripping_the_circuit() {
         let mut channels = fund_channels(
             QuoteChannelCalls::default(),
             counting_nav(per_fund_nav_calls.clone(), today.clone(), 3.0),
-            Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
+            Box::new(|_| super::ready(Ok(vec![]))),
             counting_name(per_fund_name_calls.clone()),
             Box::new(no_confirm),
             bulk_surfaces(
@@ -3396,7 +3398,7 @@ fn bulk_surfaces_stay_disabled_after_threshold_failures_and_half_open_after_the_
         let mut channels = fund_channels(
             QuoteChannelCalls::default(),
             empty_nav(per_fund_nav_calls.clone()),
-            Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
+            Box::new(|_| super::ready(Ok(vec![]))),
             Box::new(|_: &str| super::ready(Ok(String::new()))),
             Box::new(no_confirm),
             bulk_surfaces(
@@ -3519,7 +3521,7 @@ fn bulk_nav_point_of_the_current_week_lands_price_and_weekly_sample_without_per_
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
+        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(Arc::new(AtomicUsize::new(0))),
         Box::new(no_confirm),
         bulk_surfaces(
@@ -3595,7 +3597,7 @@ fn bulk_week_gap_beyond_one_week_falls_back_per_instrument_to_fill_missing_weeks
             requested_clone.lock().unwrap().push(query.clone());
             super::ready(Ok(nav_page(1, &[(page_date.as_str(), 3.5)])))
         }),
-        Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
+        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(Arc::new(AtomicUsize::new(0))),
         Box::new(no_confirm),
         bulk_surfaces(
@@ -3682,7 +3684,7 @@ fn fund_bulk_hit_without_history_writes_price_but_no_weekly_point() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
+        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(Arc::new(AtomicUsize::new(0))),
         Box::new(no_confirm),
         bulk_surfaces(
@@ -4204,7 +4206,7 @@ fn mixed_ledger_keeps_constant_fund_out_of_requests_denominator_and_gaps() {
         }),
         fetch_fx: Box::new(|_| Box::pin(async { unreachable!("全仓 CNY，零汇率抓取") })),
         fetch_nav: counting_nav(per_fund_nav_calls.clone(), today_s.clone(), 3.0),
-        fetch_nav_full: Box::new(|_| {
+        fetch_nav_history: Box::new(|_| {
             Box::pin(async { unreachable!("现价刷新不触达全量通道") })
         }),
         fetch_fund_name: counting_name(per_fund_name_calls.clone()),

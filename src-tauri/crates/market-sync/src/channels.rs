@@ -2,7 +2,7 @@
 //!（ADR-0121 / issue #1374 / ADR-0130 决策 2）的打包形态与生产/测试换装接缝。
 //!
 //! 编排（[`super::incremental`]）消费六个逐标的抓取闭包（批量报价 / 日 K / 汇率 K /
-//! 历史净值页 / 单请求全量净值 / 基金名称）与一个批量取数面（新浪 `f_` 面：
+//! 历史净值页 / 新浪单只全历史 / 基金名称）与一个批量取数面（新浪 `f_` 面：
 //! 名称与最新净值同面返回，见 `do_incremental_sync_with`；issue #1565 换源）；
 //! 货基判定确认闭包（issue #1563 / ADR-0126 决策 3 换源）由现价刷新与历史补全
 //! 两编排消费。
@@ -33,7 +33,7 @@ use ledger_infra::error::Result;
 use super::bulk::BulkFetchSurfaces;
 use super::csrc::confirm_money_fund_form;
 use super::fund::fetch_fund_quote;
-use super::fund_nav::{FullSeries, NavPage, NavQuery, fetch_nav_full_series, fetch_nav_page};
+use super::fund_nav::{NavPage, NavPoint, NavQuery, fetch_nav_page};
 use super::http::{
     ForegroundGuard, KlineBar, Pacer, build_client, fetch_fx_kline, lock_pacer, shared_pacer,
     wait_foreground_idle,
@@ -42,7 +42,7 @@ use super::incremental::{do_incremental_sync_with, kline_beg, kline_window};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use super::progress::SyncProgress;
 use super::session::ScopedSession;
-use super::sina_fund::SINA_FUND_BATCH_HOSTS;
+use super::sina_fund::{SINA_FUND_BATCH_HOSTS, SINA_FUND_HISTORY_HOSTS, fetch_fund_nav_history};
 use super::tencent::{TENCENT_QUOTE_HOSTS, fetch_tencent_quotes};
 use super::tencent_kline;
 
@@ -84,8 +84,10 @@ pub type FetchKline = Box<dyn FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> +
 pub type FetchFxKline = Box<dyn FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send>;
 /// 历史净值页抓取通道闭包形态。
 pub type FetchNavPage = Box<dyn FnMut(&NavQuery) -> FetchFuture<NavPage> + Send>;
-/// 单请求全量净值抓取通道闭包形态（issue #1062 首刷深回填通道）。
-pub type FetchNavFull = Box<dyn FnMut(&str) -> FetchFuture<FullSeries> + Send>;
+/// 单只全历史净值抓取通道闭包形态（新浪全历史面，issue #1566 接线）：代码 →
+/// 整只历史单位净值（含已终止基金）；窗口语义（首刷近两年 / 水位次日增量）由
+/// 消费方本地裁剪，通道不携带窗口参数。
+pub type FetchNavHistory = Box<dyn FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send>;
 /// 基金详情名称抓取通道闭包形态（issue #827）。
 pub type FetchFundName = Box<dyn FnMut(&str) -> FetchFuture<String> + Send>;
 /// 货基判定确认通道闭包形态（issue #1563 / ADR-0126 决策 3 换源）：6 位代码 →
@@ -106,10 +108,12 @@ pub struct SyncFetchChannels {
     pub fetch_kline: FetchKline,
     /// 汇率 K 线：币种对（如 `USDCNY`）→ 日线序列。
     pub fetch_fx: FetchFxKline,
-    /// 历史净值页（lsjz 分页）：查询 → 单页净值。
+    /// 历史净值页（lsjz 分页）：查询 → 单页净值（现价刷新逐只短窗消费，
+    /// issue #1377）。
     pub fetch_nav: FetchNavPage,
-    /// 单请求全量净值（首刷深回填，issue #1062）：代码 → 整只历史单位净值。
-    pub fetch_nav_full: FetchNavFull,
+    /// 单只全历史净值（新浪全历史面，issue #1566 接线）：代码 → 整只历史
+    /// 单位净值（含已终止基金）；价格历史后台补全消费（首刷深回填与缺周点补齐）。
+    pub fetch_nav_history: FetchNavHistory,
     /// 基金详情名称（issue #827）：代码 → 数据源权威名称。
     pub fetch_fund_name: FetchFundName,
     /// 货基判定确认（issue #1563 / ADR-0126 决策 3 换源）：代码 → 官方披露
@@ -121,7 +125,7 @@ pub struct SyncFetchChannels {
     pub bulk: BulkFetchSurfaces,
 }
 
-/// 生产通道束的取数主机注入面（测试用，ADR-0130 三条取数面）：三面的主机列表
+/// 生产通道束的取数主机注入面（测试用，ADR-0130 四条取数面）：四面的主机列表
 /// 各具名——相邻同型 `Vec<String>` 位置参数可互换编译（静默错路由），具名结构让
 /// 「哪一面用哪个本地主机」在调用点自证。
 #[derive(Debug, Clone, Default)]
@@ -132,6 +136,8 @@ pub(super) struct SyncFetchHosts {
     pub(super) kline: Vec<String>,
     /// 新浪场外基金批量面主机（名称 + 最新净值同面，issue #1565）。
     pub(super) fund_batch: Vec<String>,
+    /// 新浪场外基金单只全历史面主机（历史补全，issue #1566）。
+    pub(super) fund_history: Vec<String>,
 }
 
 impl SyncFetchChannels {
@@ -151,11 +157,12 @@ impl SyncFetchChannels {
     }
 
     /// 生产通道束构造本体：`hosts` 携带腾讯行情报价、腾讯日 K 与新浪场外基金
-    /// 批量面主机。生产经 [`production_hosts`] 传取数单元单点常量；测试注入本地
-    /// HTTP 服务，驱动**生产束**钉住三条接线：「场内现价刷新打到腾讯批量报价
-    /// 端点」（issue #1560）、「历史补全的日 K 打到腾讯 `fqkline/get`」（issue
-    /// #1561）与「场外基金现价与名称刷新打到新浪 `f_` 批量面」（issue #1565），
-    /// 删除接线即红。
+    /// 批量面 / 单只全历史面主机。生产经 [`production_hosts`] 传取数单元单点常量；
+    /// 测试注入本地 HTTP 服务，驱动**生产束**钉住四条接线：「场内现价刷新打到
+    /// 腾讯批量报价端点」（issue #1560）、「历史补全的日 K 打到腾讯 `fqkline/get`」
+    ///（issue #1561）、「场外基金现价与名称刷新打到新浪 `f_` 批量面」（issue
+    /// #1565）与「场外基金历史补全打到新浪全历史面」（issue #1566），删除接线
+    /// 即红。
     pub(super) fn production_lane(lane: Lane, hosts: SyncFetchHosts) -> Result<Self> {
         let client = build_client()?;
         let pacer = shared_pacer();
@@ -248,17 +255,23 @@ impl SyncFetchChannels {
                     })
                 })
             },
-            fetch_nav_full: {
+            fetch_nav_history: {
                 let client = client.clone();
                 let pacer = pacer.clone();
+                let hosts = hosts.fund_history.clone();
                 Box::new(move |code: &str| {
                     let code = code.to_string();
                     let client = client.clone();
                     let pacer = pacer.clone();
+                    let hosts = hosts.clone();
                     Box::pin(async move {
                         let _foreground = lane.before_request().await;
                         let mut pacer = lock_pacer(&pacer).await;
-                        fetch_nav_full_series(&client, &mut pacer, &code).await
+                        let hosts: Vec<&str> = hosts.iter().map(String::as_str).collect();
+                        // 窗口参数不传（None = 不限）：整只历史一次取全，首刷近
+                        // 两年 / 水位次日增量的窗口语义由消费方本地裁剪——不依赖
+                        // 服务端窗口过滤行为（issue #1566）。
+                        fetch_fund_nav_history(&client, &mut pacer, &hosts, &code, None, None).await
                     })
                 })
             },
@@ -295,10 +308,10 @@ impl SyncFetchChannels {
     }
 }
 
-/// 三条取数面的生产主机（发送单元单点常量的拥有副本）：取数单元单点常量
-/// [`TENCENT_QUOTE_HOSTS`]、[`tencent_kline::TENCENT_KLINE_HOSTS`] 与
-/// [`SINA_FUND_BATCH_HOSTS`] 的 `Vec<String>` 形态，供通道束构造持有；
-/// 测试注入本地 HTTP 服务地址替换它们。
+/// 四条取数面的生产主机（发送单元单点常量的拥有副本）：取数单元单点常量
+/// [`TENCENT_QUOTE_HOSTS`]、[`tencent_kline::TENCENT_KLINE_HOSTS`]、
+/// [`SINA_FUND_BATCH_HOSTS`] 与 [`SINA_FUND_HISTORY_HOSTS`] 的 `Vec<String>` 形态，
+/// 供通道束构造持有；测试注入本地 HTTP 服务地址替换它们。
 fn production_hosts() -> SyncFetchHosts {
     SyncFetchHosts {
         quote: TENCENT_QUOTE_HOSTS
@@ -310,6 +323,10 @@ fn production_hosts() -> SyncFetchHosts {
             .map(|host| host.to_string())
             .collect(),
         fund_batch: SINA_FUND_BATCH_HOSTS
+            .iter()
+            .map(|host| host.to_string())
+            .collect(),
+        fund_history: SINA_FUND_HISTORY_HOSTS
             .iter()
             .map(|host| host.to_string())
             .collect(),
@@ -344,8 +361,8 @@ impl Lane {
 /// [`do_incremental_sync_with`](super::incremental::do_incremental_sync_with)
 /// （编排本体单点，另透传写入见证，issue #1277）。命令壳经本入口跑同步——
 /// 生产束（[`SyncFetchChannels::production`]）与测试注入束共用，锁形态与
-/// 编排路径零分叉。日 K 与单请求全量净值两通道不进现价刷新编排（issue #1377
-/// 现价与历史解耦）：束内保留它们供价格历史后台补全消费。
+/// 编排路径零分叉。日 K 与新浪单只全历史两通道不进现价刷新编排（issue #1377
+/// 现价与历史解耦）：束内保留它们供价格历史后台补全消费（issue #1561 / #1566）。
 pub async fn do_incremental_sync_channels<Q, P>(
     session: &Q,
     channels: &mut SyncFetchChannels,
@@ -391,7 +408,7 @@ mod tests {
                     })
                 })
             }),
-            fetch_nav_full: Box::new(|_| Box::pin(async { Ok(FullSeries { points: vec![] }) })),
+            fetch_nav_history: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_fund_name: Box::new(|_| Box::pin(async { Ok(String::new()) })),
             confirm_money_fund_form: Box::new(|_| Box::pin(async { Ok(false) })),
             bulk: BulkFetchSurfaces::absent(),

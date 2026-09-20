@@ -173,7 +173,7 @@ pub use bulk::{
     FundBatch, FundNameDictionary, FundNavTable,
 };
 pub use channels::{
-    FetchFundName, FetchFxKline, FetchKline, FetchMoneyFundForm, FetchNavFull, FetchNavPage,
+    FetchFundName, FetchFxKline, FetchKline, FetchMoneyFundForm, FetchNavHistory, FetchNavPage,
     FetchQuotes, QuoteItem, QuoteQuery, SyncFetchChannels, do_incremental_sync_channels,
 };
 pub use daily_refresh::{
