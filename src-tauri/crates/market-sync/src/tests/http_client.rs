@@ -4,8 +4,10 @@
 use std::time::Duration;
 
 use crate::http::{
-    Pacer, RetryConfig, UlistResponse, request_json_from_hosts, request_json_with_retry,
+    KlineBar, Pacer, RetryConfig, UlistResponse, request_json_from_hosts, request_json_with_retry,
 };
+
+use super::spawn_header_capture_server;
 
 fn fast_cfg(max_retries: u32, max_throttle_retries: u32) -> RetryConfig {
     RetryConfig {
@@ -468,5 +470,109 @@ fn ecb_host_and_paths_pin_to_the_official_reference_rates_files() {
     assert_eq!(
         crate::ecb::INCREMENTAL_90D_PATH,
         "/stats/eurofxref/eurofxref-hist-90d.xml"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 腾讯日线 K 线取数入口（issue #1559 / ADR-0130 决策 2）：请求形态、服务端压缩
+// 与无效代码处置都经本地 HTTP 服务钉住，不依赖真实网络。
+// ---------------------------------------------------------------------------
+
+/// 最小真实形状的腾讯日线响应（2026-09-19 实测原样，trim 到两根日线 + 信封旁路
+/// 字段 `qt` / `version`）。
+const TENCENT_KLINE_BODY: &str = r#"{"code":0,"msg":"","data":{"sh600519":{"day":[["2026-09-17","1257.980","1266.980","1267.600","1254.000","17554.000"],["2026-09-18","1262.990","1257.120","1265.880","1256.100","24891.000"]],"qt":{"sh600519":["1","\u8d35\u5dde\u8305\u53f0","600519"]},"version":"16"}}}"#;
+
+/// 请求形态钉（issue #1559 AC：本地 HTTP 服务用例钉住请求形态）：路径 / 查询键 /
+/// 周期 / 区间 / 根数 / 末段空（不复权）逐段比对，改任一段即红。
+#[test]
+fn fetch_tencent_day_kline_pins_request_shape() {
+    let (url, heads) = spawn_header_capture_server(TENCENT_KLINE_BODY.to_string());
+    let client = reqwest::Client::new();
+    let mut pacer = Pacer::new(Duration::ZERO);
+    let bars = tauri::async_runtime::block_on(crate::tencent_kline::fetch_tencent_day_kline(
+        &client,
+        &mut pacer,
+        &[url.as_str()],
+        "sh600519",
+        "2024-09-19",
+        "2026-09-19",
+        crate::tencent_kline::KLINE_COUNT,
+    ))
+    .unwrap();
+    assert_eq!(
+        bars,
+        vec![
+            KlineBar::new("2026-09-17", 1266.98),
+            KlineBar::new("2026-09-18", 1257.12),
+        ]
+    );
+    let head = heads.lock().unwrap().first().cloned().unwrap_or_default();
+    assert!(
+        head.contains(
+            "GET /appstock/app/fqkline/get?param=sh600519%2Cday%2C2024-09-19%2C2026-09-19%2C800%2C HTTP/1.1"
+        ),
+        "请求形态须为「查询键,day,起始,结束,根数,」（末段空 = 不复权），实际请求头：{head}"
+    );
+}
+
+/// 根数 / 区间上限行为（issue #1559 AC）：请求 800 根而服务端压缩回 1 根（实测
+/// 1000 / 2000 曾被压回 640）时不报错、不补偿，按返回照常解析；请求确实要了 800
+/// 根，压缩是服务端行为而不是我们少要。
+#[test]
+fn fetch_tencent_day_kline_accepts_server_compressed_series() {
+    let body = r#"{"code":0,"msg":"","data":{"sh600519":{"day":[["2026-09-18","1262.990","1257.120","1265.880","1256.100","24891.000"]],"version":"16"}}}"#;
+    let (url, heads) = spawn_header_capture_server(body.to_string());
+    let client = reqwest::Client::new();
+    let mut pacer = Pacer::new(Duration::ZERO);
+    let bars = tauri::async_runtime::block_on(crate::tencent_kline::fetch_tencent_day_kline(
+        &client,
+        &mut pacer,
+        &[url.as_str()],
+        "sh600519",
+        "2024-09-19",
+        "2026-09-19",
+        crate::tencent_kline::KLINE_COUNT,
+    ))
+    .unwrap();
+    assert_eq!(bars, vec![KlineBar::new("2026-09-18", 1257.12)]);
+    let head = heads.lock().unwrap().first().cloned().unwrap_or_default();
+    assert!(
+        head.contains("%2C800%2C"),
+        "压缩是服务端行为：请求仍须带上要的根数，实际请求头：{head}"
+    );
+}
+
+/// 无效代码返回空序列而非错误（issue #1559 AC：补全不被中断）：`code` 仍为 0、
+/// `day` 为空数组，取数入口直接回空序列而不是 Err。
+#[test]
+fn fetch_tencent_day_kline_returns_empty_for_invalid_code() {
+    let body = r#"{"code":0,"msg":"","data":{"sh999999":{"day":[],"version":"16"}}}"#;
+    let (url, _) = spawn_header_capture_server(body.to_string());
+    let client = reqwest::Client::new();
+    let mut pacer = Pacer::new(Duration::ZERO);
+    let bars = tauri::async_runtime::block_on(crate::tencent_kline::fetch_tencent_day_kline(
+        &client,
+        &mut pacer,
+        &[url.as_str()],
+        "sh999999",
+        "2024-09-19",
+        "2026-09-19",
+        crate::tencent_kline::KLINE_COUNT,
+    ))
+    .unwrap();
+    assert!(bars.is_empty(), "无效代码应返回空序列而非错误");
+}
+
+/// 生产主机与接口路径的接线钉（删除即红）：入口默认指向腾讯 K 线站与
+/// `fqkline/get` 路径，换源或改路径须显式改此处。
+#[test]
+fn tencent_kline_host_and_path_pin_to_the_quote_site() {
+    assert_eq!(
+        crate::tencent_kline::TENCENT_KLINE_HOSTS,
+        ["https://web.ifzq.gtimg.cn"]
+    );
+    assert_eq!(
+        crate::tencent_kline::TENCENT_KLINE_PATH,
+        "/appstock/app/fqkline/get"
     );
 }

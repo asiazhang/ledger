@@ -4,7 +4,7 @@
 //! #256 按行为主题拆为子模块（纯移动）：
 //! - `bulk_fetch`：行情批量取数面报文解析、请求形态与跨同步记忆（ADR-0121，issue #1374）；
 //! - `csrc`：证监会基金电子披露区间查询报文解析与请求形态（issue #1562 / ADR-0130，fixture 为真实报文 + 本地 HTTP 服务）；
-//! - `http_client`：HTTP 重试与多主机切换；
+//! - `http_client`：HTTP 重试、多主机切换与各来源取数入口的请求形态 / 上限行为（ECB 参考汇率、腾讯日线 K 线）；
 //! - `instrument_info_sync`：标的信息同步与 ulist / 日 K 报文解析；
 //! - `fund_search`：东财基金搜索报文解析与命中挑选（issue #301，fixture 驱动）；
 //! - `fund_nav`：历史净值报文解析、水位窗口与 Referer 传播（issue #303，fixture 驱动）；
@@ -237,6 +237,10 @@ fn production_source_files() -> Vec<(&'static str, String)> {
         ("session.rs", include_str!("session.rs").to_string()),
         ("stock.rs", include_str!("stock.rs").to_string()),
         ("tencent.rs", include_str!("tencent.rs").to_string()),
+        (
+            "tencent_kline.rs",
+            include_str!("tencent_kline.rs").to_string(),
+        ),
     ];
     files.sort_by_key(|(name, _)| *name);
     files

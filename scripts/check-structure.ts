@@ -966,6 +966,11 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
     layer: "域目录",
     note: "腾讯行情批量报价取数单元（ADR-0130 决策 2/3 / issue #1558）：一次请求携带多只沪深港美股票与场内基金（GBK、无需 Referer），解出代码 / 名称 / 价格 / 价格日期 / 证券类型码 / 币种 / 交易所后缀；三套字段布局与类型探测收口单点，非预期响应 fail-closed；本票只取数与解析，接线随 #1560 / #1567",
   },
+  {
+    path: "tencent_kline.rs",
+    layer: "域目录",
+    note: "腾讯日线 K 线取数单元（ADR-0130 决策 2 / issue #1559）：市场 + 代码 → 腾讯查询键（沪深港前缀 + 美股三市场交易所后缀）、区间 / 根数参数与日线报文解析（收盘价在下标 2、港美行可带多余元素）；无效代码返回空序列而非错误，非预期形状 fail-closed；本票只产出日线序列，接线归 #1561",
+  },
 ];
 
 /** 行情同步域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-market-sync.dir 同源。 */
