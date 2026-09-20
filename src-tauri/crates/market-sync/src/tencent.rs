@@ -3,22 +3,24 @@
 //! 一次请求携带多只沪深港美股票与场内基金（`GET https://qt.gtimg.cn/q=<代码逗号串>`，
 //! GBK 编码、无需 Referer），解析出代码、名称、价格、价格日期、证券类型码、币种与
 //! 交易所后缀。类型码按市场分三套字段布局（A 股 88 字段 / 港股 78 / 美股 73，下标
-//! 随之不同，不能按固定下标取），布局表与探测收口在 [`detect_kind_hint`] 单点；币种
-//! 与美股交易所后缀同样自报（`.OQ` → 纳斯达克 / `.N` → 纽交所 / `.AM` → 美交所）。
+//! 随之不同，不能按固定下标取），字段布局由 [`quote_layout`] 单点定义、类型码探测
+//! 收口在 [`detect_kind_hint`] 单点；币种与美股交易所后缀同样自报（`.OQ` → 纳斯达
+//! 克 / `.N` → 纽交所 / `.AM` → 美交所）。
 //! 行情日期取数据源给出的交易所当地交易日的日期部分，**不做时区换算**（ADR-0130
 //! 决策 5）——沿用北京时间切分会把美股周五的收盘记成周六。
 //!
 //! 本单元只取数与解析，不落库、不接 UI、不接编排；接线随 #1560（现价刷新）与
 //! #1567（按代码查询与创建）落地，接装前模块级 `allow(dead_code)` 豁免。
 //!
-//! fail-closed：被风控拦截的响应（HTML 页 / 空体 / 非 GBK 内容）与非预期形状（缺
-//! 报价语句、字段数少于该市场布局下界、未知市场前缀、未知美股交易所后缀）一律报错，
-//! **不**退化为「无数据」空序列——空序列会让「今天没有行情」与「数据源坏了」不可
-//! 分辨。合法的「批量内全部代码无效」由数据源以 `v_pv_none_match="1"` 明示，仍按
-//! 零命中（空序列）返回。
+//! fail-closed：被风控拦截的响应（HTML 页 / 空体）与非预期形状（缺报价语句、GBK
+//! 解码出错、字段数少于该市场布局下界、未知市场前缀、未知美股交易所后缀）一律报
+//! 错，**不**退化为「无数据」空序列——空序列会让「今天没有行情」与「数据源坏了」
+//! 不可分辨。合法的「批量内全部代码无效」由数据源以 `v_pv_none_match="1"` 明示，
+//! 仍按零命中（空序列）返回。
 //!
 //! 报文形态是未公开字段（腾讯无公开契约），探测与解析收口于本模块，漂移时改一处；
-//! fixture 单测钉住 2026-09-18 实测的真实报文（三套布局的类型码、币种与交易所后缀）。
+//! fixture 单测钉住取数面实测（2026-09-19 采集，行情日为 2026-09-18）的真实报文
+//!（三套布局的类型码、币种与交易所后缀）。
 
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::{InstrumentType, Quote};
@@ -106,8 +108,8 @@ pub(super) fn detect_kind_hint(security_type: &str) -> InstrumentType {
 }
 
 /// 十进制价格串（`9.07` / `4.582` / `419.000`）→ 万分之一元（0.0001 元，价格刻度
-/// ADR-0038）。腾讯报价最多 3 位小数，第 4 位起截断；≤0 或非数值返回 None（停牌 /
-/// 无效价）。走整数换算避开浮点误差。
+/// ADR-0038）。腾讯报价不超过 4 位小数，不足补零、超出截断；≤0 或非数值返回 None
+/// （停牌 / 无效价）。走整数换算避开浮点误差。
 pub(super) fn price_cents_from_decimal(raw: &str) -> Option<i64> {
     let raw = raw.trim();
     let (int_part, frac_part) = match raw.split_once('.') {
@@ -157,8 +159,9 @@ pub(super) fn price_date_from_timestamp(raw: &str) -> Option<String> {
     None
 }
 
-/// GBK 字节 → 文本（腾讯报价为 GBK 编码）。解码出错（截断 / 非 GBK 内容）即
-/// fail-closed，不把替换字符混进权威名称字段。
+/// GBK 字节 → 文本（腾讯报价为 GBK 编码）。解码出错（截断 / 非法字节序列）即
+/// fail-closed；合法但非 GBK 的内容（如被拦截页）留给 [`parse_tencent_quotes`]
+/// 的形状判据处理。
 pub(super) fn decode_gbk(bytes: &[u8]) -> Result<String> {
     let (text, _, had_errors) = encoding_rs::GBK.decode(bytes);
     if had_errors {
@@ -215,6 +218,10 @@ fn quote_layout(key: &str) -> Option<(&'static str, QuoteLayout)> {
 /// 代码无效」）忽略。fail-closed：整段无任何报价语句（风控 HTML 页 / 空体）、未知
 /// 市场前缀、字段数少于该市场布局下界（布局漂移 / 截断）一律报错；空名称/空代码行
 /// 按无效行丢弃。零命中（只有 `pv_none_match`）返回空序列，是可信结果。
+///
+/// 字段数偏少是**整批**报错而非丢单行：布局漂移会让全部行同形缩短，丢单行会把
+/// 「数据源改版」静默伪装成「这只今天缺行情」；空名称则是字段自身的合法缺值
+///（与既有 `StockItem` 丢弃空名行同口径），两者性质不同。
 pub(super) fn parse_tencent_quotes(body: &str) -> Result<Vec<TencentQuote>> {
     let mut quotes = Vec::new();
     let mut saw_statement = false;
@@ -367,12 +374,15 @@ async fn fetch_tencent_batch(
         None,
     )
     .await?;
-    let body = decode_gbk(&bytes)?;
-    parse_tencent_quotes(&body).map_err(|error| {
-        tracing::warn!(%error, "腾讯行情报价响应不可信");
-        pacer.record_throttled();
-        error
-    })
+    // GBK 解码与报文形状两道判据都归本层：任一失败都补降速信号
+    //（ADR-0121 决策 5，先例：bulk 的两个批量面）。
+    decode_gbk(&bytes)
+        .and_then(|body| parse_tencent_quotes(&body))
+        .map_err(|error| {
+            tracing::warn!(%error, "腾讯行情报价响应不可信");
+            pacer.record_throttled();
+            error
+        })
 }
 
 /// 非预期形状的统一错误（被拦截 / 截断 / 布局漂移）：退出取数与解析，不回退为空

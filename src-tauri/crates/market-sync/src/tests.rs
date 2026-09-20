@@ -111,27 +111,48 @@ pub(super) fn insert_lot(conn: &Connection, account_id: &str, instrument_id: &st
 
 /// 起一个捕获请求头的本地 HTTP 服务（响应体固定、按顺序收集请求头），返回
 /// (基础地址, 请求头收集器)——文本 / JSON 两类通道的请求形态断言共用一份脚手架。
-pub(super) fn spawn_header_capture_server(body: String) -> (String, Arc<Mutex<Vec<String>>>) {
-    use std::io::{Read, Write};
+pub(super) fn spawn_header_capture_server(
+    body: impl Into<Vec<u8>>,
+) -> (String, Arc<Mutex<Vec<String>>>) {
+    use std::io::{BufRead, BufReader, Write};
 
+    let body: Vec<u8> = body.into();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let heads = Arc::new(Mutex::new(Vec::new()));
     let heads_clone = heads.clone();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { break };
-            let mut buf = [0u8; 4096];
-            let _ = stream.read(&mut buf);
-            heads_clone
-                .lock()
-                .unwrap()
-                .push(String::from_utf8_lossy(&buf).to_string());
-            let resp = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            let Ok(stream) = stream else { break };
+            let Ok(reader_stream) = stream.try_clone() else {
+                break;
+            };
+            // 循环读到请求头结束：请求行可能很长（批量承载量用例 ~7KB），单次 read
+            // 可能截断。
+            let mut reader = BufReader::new(reader_stream);
+            let mut head = String::new();
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let ends_head = line == "\r\n" || line == "\n";
+                        head.push_str(&line);
+                        if ends_head {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            heads_clone.lock().unwrap().push(head);
+            let mut stream = stream;
+            let resp_head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 body.len()
             );
-            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.write_all(resp_head.as_bytes());
+            let _ = stream.write_all(&body);
         }
     });
     (url, heads)

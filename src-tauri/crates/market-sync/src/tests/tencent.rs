@@ -1,9 +1,8 @@
 //! 腾讯行情批量报价取数单元（ADR-0130 / issue #1558）：三套字段布局的类型码、币种与
 //! 交易所后缀解析，价格 / 价格日期换算，非预期响应 fail-closed，请求形态与批量承载量。
-//! 报文为 2026-09-18 实测真实报文（GBK 解码后截取），请求形态经本地 HTTP 服务验证，
-//! 不依赖真实网络。
+//! 报文为取数面实测（2026-09-19 采集，行情日 2026-09-18）的真实报文（GBK 解码后截取），
+//! 请求形态经本地 HTTP 服务验证，不依赖真实网络。
 
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ledger_investment::InstrumentType;
@@ -13,11 +12,12 @@ use crate::http::Pacer;
 use crate::tencent::{
     TENCENT_QUOTE_BATCH_SIZE, TENCENT_QUOTE_HOSTS, TENCENT_QUOTE_PATH_PREFIX, detect_kind_hint,
     fetch_tencent_quotes, parse_tencent_quotes, price_cents_from_decimal,
-    price_date_from_timestamp,
+    price_date_from_timestamp, tencent_query_key,
 };
+use crate::tests::spawn_header_capture_server;
 
 // ---------------------------------------------------------------------------
-// 真实报文 fixture（2026-09-18 实测，GBK 解码后原样；下标注释为 0 基）
+// 真实报文 fixture（2026-09-19 采集、行情日 2026-09-18，GBK 解码后原样；下标注释为 0 基）
 // ---------------------------------------------------------------------------
 
 /// 沪市股票（88 字段，类型码 GP-A @61、币种 CNY @82） — 2026-09-18 实测报文截取。
@@ -56,9 +56,10 @@ fn parse_one(body: &str) -> Vec<crate::tencent::TencentQuote> {
 #[test]
 fn a_share_layout_pins_type_codes_and_fields() {
     // 沪市股票 / ETF / LOF / 可转债共用 A 股布局（88 字段）：类型码 @61、币种 @82。
-    for (body, code, name, price_cents, security_type, kind) in [
+    for (body, market, code, name, price_cents, security_type, kind) in [
         (
             SH_STOCK,
+            "sh",
             "600000",
             "浦发银行",
             90_700,
@@ -67,6 +68,7 @@ fn a_share_layout_pins_type_codes_and_fields() {
         ),
         (
             SH_ETF,
+            "sh",
             "510300",
             "沪深300ETF华泰柏瑞",
             45_820,
@@ -75,6 +77,7 @@ fn a_share_layout_pins_type_codes_and_fields() {
         ),
         (
             SZ_LOF,
+            "sz",
             "161725",
             "白酒基金LOF",
             5_290,
@@ -83,6 +86,7 @@ fn a_share_layout_pins_type_codes_and_fields() {
         ),
         (
             SH_BOND,
+            "sh",
             "113050",
             "南银转债",
             1_449_670,
@@ -96,7 +100,7 @@ fn a_share_layout_pins_type_codes_and_fields() {
         assert_eq!(quote.code, code);
         assert_eq!(quote.name, name);
         assert_eq!(quote.price_cents, Some(price_cents), "{code} 价格换算");
-        assert_eq!(quote.market, code_market(body), "{code} 精确市场");
+        assert_eq!(quote.market, market, "{code} 精确市场");
         assert_eq!(quote.security_type, security_type, "{code} 类型码");
         assert_eq!(quote.kind_hint, kind, "{code} 类型提示");
         assert_eq!(quote.currency_code, "CNY", "{code} 币种");
@@ -106,16 +110,6 @@ fn a_share_layout_pins_type_codes_and_fields() {
             "{code} 价格日期"
         );
     }
-}
-
-/// 由 `v_<键>=` 取该 fixture 的市场段（测试辅助，避免重复硬编码）。
-fn code_market(body: &str) -> String {
-    let key = body
-        .trim_start_matches("v_")
-        .split('=')
-        .next()
-        .unwrap_or_default();
-    key[..2].to_string()
 }
 
 #[test]
@@ -193,6 +187,31 @@ fn detect_kind_hint_maps_fund_like_codes_to_etf() {
             "{stock_like}"
         );
     }
+}
+
+#[test]
+fn tencent_query_key_pins_market_prefixes() {
+    // 「市场 + 代码」→ 腾讯查询键：沪深港用市场前缀，美股三市场统用 us（精确交易所
+    // 由响应自报后缀判定）。
+    assert_eq!(
+        tencent_query_key("sh", "600000").as_deref(),
+        Some("sh600000")
+    );
+    assert_eq!(
+        tencent_query_key("sz", "161725").as_deref(),
+        Some("sz161725")
+    );
+    assert_eq!(tencent_query_key("hk", "00700").as_deref(), Some("hk00700"));
+    for us_market in ["nasdaq", "nyse", "amex"] {
+        assert_eq!(
+            tencent_query_key(us_market, "AAPL").as_deref(),
+            Some("usAAPL"),
+            "{us_market}"
+        );
+    }
+    // 市场未知不构造键（调用侧跳过该查询单元）。
+    assert_eq!(tencent_query_key("unknown", "NVDA"), None);
+    assert_eq!(tencent_query_key("", "NVDA"), None);
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +319,7 @@ fn fetch_pins_request_shape_and_batch_capacity() {
 
     // 小批量四只（沪深港美各一）：一次请求，请求目标是路径段 `q=<逗号串>`（端点形态，
     // 非查询参数），未携带 Referer。
-    let (url, requests) = spawn_capture_server(vec![gbk.clone()]);
+    let (url, requests) = spawn_header_capture_server(gbk.clone());
     let queries = vec![
         QuoteQuery {
             market: "sh".into(),
@@ -346,14 +365,15 @@ fn fetch_pins_request_shape_and_batch_capacity() {
             code: format!("{i:06}"),
         })
         .collect();
-    let (url, requests) = spawn_capture_server(vec![gbk.clone(), gbk]);
-    let _ = tauri::async_runtime::block_on(fetch_tencent_quotes(
+    let (url, requests) = spawn_header_capture_server(gbk);
+    let quotes = tauri::async_runtime::block_on(fetch_tencent_quotes(
         &client,
         &mut pacer,
         &[url.as_str()],
         &many,
     ))
     .expect("分批请求应成功");
+    assert_eq!(quotes.len(), 2, "两次请求各回一条 sh600000");
     let captured = requests.lock().unwrap().clone();
     assert_eq!(captured.len(), 2, "超过承载量应分两次请求");
     assert_eq!(
@@ -380,7 +400,7 @@ fn fetch_decodes_gbk_and_fails_closed_on_intercepted_response() {
 
     // GBK 报文正确解码出中文权威名称（未按 UTF-8 误解）。
     let gbk = encoding_rs::GBK.encode(SH_STOCK).0.into_owned();
-    let (url, _) = spawn_capture_server(vec![gbk]);
+    let (url, _) = spawn_header_capture_server(gbk);
     let quotes = tauri::async_runtime::block_on(fetch_tencent_quotes(
         &client,
         &mut pacer,
@@ -390,12 +410,12 @@ fn fetch_decodes_gbk_and_fails_closed_on_intercepted_response() {
     .expect("GBK 报文应解析成功");
     assert_eq!(quotes[0].name, "浦发银行");
 
-    // 被风控拦截（200 + HTML）与非 GBK 内容：报错，不退化为空序列。
+    // 被风控拦截（200 + HTML）与非法 GBK 字节：报错，不退化为空序列。
     for body in [
         b"<html><body>risk control</body></html>".to_vec(),
         vec![0xff, 0xfe, 0x00, 0x01],
     ] {
-        let (url, _) = spawn_capture_server(vec![body]);
+        let (url, _) = spawn_header_capture_server(body);
         let error = tauri::async_runtime::block_on(fetch_tencent_quotes(
             &client,
             &mut pacer,
@@ -418,53 +438,9 @@ fn production_host_and_path_pin_to_tencent_quote_endpoint() {
 }
 
 // ---------------------------------------------------------------------------
-// 本地 HTTP 服务（捕获请求头，按序回预置响应体）
+// 捕获到的请求头解析辅助（本地 HTTP 服务本体是共享单点
+// `tests::spawn_header_capture_server`）
 // ---------------------------------------------------------------------------
-
-/// 捕获请求头的本地服务：第 n 个请求回 `responses[n]`（缺省空体）。请求行可能很长
-/// （批量承载量用例 ~7KB），故循环读到请求头结束。
-fn spawn_capture_server(responses: Vec<Vec<u8>>) -> (String, Arc<Mutex<Vec<String>>>) {
-    use std::io::{BufRead, BufReader, Write};
-
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let sink = Arc::clone(&requests);
-    std::thread::spawn(move || {
-        for (index, stream) in listener.incoming().enumerate() {
-            let Ok(stream) = stream else { break };
-            let Ok(reader_stream) = stream.try_clone() else {
-                break;
-            };
-            let mut reader = BufReader::new(reader_stream);
-            let mut head = String::new();
-            loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line) {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        let ends_head = line == "\r\n" || line == "\n";
-                        head.push_str(&line);
-                        if ends_head {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-            sink.lock().unwrap().push(head);
-            let body = responses.get(index).cloned().unwrap_or_default();
-            let mut stream = stream;
-            let header = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            );
-            let _ = stream.write_all(header.as_bytes());
-            let _ = stream.write_all(&body);
-        }
-    });
-    (url, requests)
-}
 
 /// 取请求头首行的请求目标（`GET <target> HTTP/1.1` 第二段）。
 fn request_target(head: &str) -> &str {
