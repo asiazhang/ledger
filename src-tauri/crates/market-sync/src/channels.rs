@@ -33,7 +33,7 @@ use super::fund::fetch_fund_quote;
 use super::fund_nav::{FullSeries, LsjzPage, NavQuery, fetch_nav_full_series, fetch_nav_page};
 use super::http::{
     ForegroundGuard, KlineBar, Pacer, StockItem, build_client, fetch_fx_kline, fetch_kline,
-    fetch_ulist, lock_pacer, shared_pacer, wait_foreground_idle,
+    fetch_ulist, lock_pacer, quote_query_key, shared_pacer, wait_foreground_idle,
 };
 use super::incremental::{do_incremental_sync_with, kline_beg};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
@@ -43,8 +43,19 @@ use super::session::ScopedSession;
 /// 抓取通道 future 的装箱形态：网络等待以 `await` 表达（ADR-0125 决策 5 /
 /// issue #1412）；限 `Send` 以便整束经互斥体跨线程交接。
 pub type FetchFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
+
+/// 行情批量报价的查询单元（issue #1555）：编排只递「市场 + 代码」，数据源查询键
+///（东财 secid，形如 `1.600519`）由批量报价通道在内部构造——换源只改通道实现，
+/// 编排零改动。`market` 取既有市场闭集（`sh`/`sz`/`hk`/`nasdaq`/`nyse`/`amex`），
+/// `code` 是响应回显形态的裸代码（如 `600519` / `00700`，已去市场后缀）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuoteQuery {
+    pub market: String,
+    pub code: String,
+}
+
 /// 抓取通道闭包的统一形态（`Box<dyn FnMut>` 别名，降低束字段签名复杂度）。
-pub type FetchUlist = Box<dyn FnMut(&str) -> FetchFuture<Vec<StockItem>> + Send>;
+pub type FetchUlist = Box<dyn FnMut(&[QuoteQuery]) -> FetchFuture<Vec<StockItem>> + Send>;
 /// 日 K / 汇率 K 抓取通道闭包形态（两通道同签名，别名共用）。
 pub type FetchKline = Box<dyn FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send>;
 /// 历史净值页抓取通道闭包形态。
@@ -59,7 +70,8 @@ pub type FetchFundName = Box<dyn FnMut(&str) -> FetchFuture<String> + Send>;
 /// 内部可变、跨 `.await` 持有，串行语义与既有守卫一致，批量面同样经它限速）；
 /// 测试实现为注入桩。
 pub struct SyncFetchChannels {
-    /// 批量报价（东财 ulist）：secid 逗号串 → 报价条目。
+    /// 批量报价（东财 ulist）：一批「市场 + 代码」查询单元 → 报价条目；查询键
+    ///（secid）由通道内部构造（issue #1555）。
     pub fetch_ulist: FetchUlist,
     /// 日 K（近两年日线）：secid → 日线序列。
     pub fetch_kline: FetchKline,
@@ -100,8 +112,10 @@ impl SyncFetchChannels {
             fetch_ulist: {
                 let client = client.clone();
                 let pacer = pacer.clone();
-                Box::new(move |secids: &str| {
-                    let secids = secids.to_string();
+                Box::new(move |queries: &[QuoteQuery]| {
+                    // 查询键（东财 secid）在通道内部构造（issue #1555）：编排只递
+                    // 「市场 + 代码」。
+                    let secids = ulist_secids(queries);
                     let client = client.clone();
                     let pacer = pacer.clone();
                     Box::pin(async move {
@@ -190,6 +204,17 @@ impl SyncFetchChannels {
     }
 }
 
+/// 一批查询单元 → 批量报价请求的 secid 逗号串（issue #1555 的键构造单点）：
+/// 市场前缀与代码的组合只发生在这里；市场无法构造键的查询单元不进请求（防御
+/// 派生不变量破损的兼底，编排侧不重复镜像市场能力判定）。
+fn ulist_secids(queries: &[QuoteQuery]) -> String {
+    queries
+        .iter()
+        .filter_map(|q| quote_query_key(&q.market, &q.code))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// 通道车道（issue #1375）：前台请求在途计数（[`ForegroundGuard`]）让后台让行；
 /// 后台请求发前等在途归零。闭包请求前的统一前置动作收在 [`Lane::before_request`]：
 /// 前台车道返回在途守卫（RAII，闭包返回自动释放），后台车道等待归零、返回 None。
@@ -276,6 +301,36 @@ mod tests {
             fetch_fund_name: Box::new(|_| Box::pin(async { Ok(String::new()) })),
             bulk: BulkFetchSurfaces::absent(),
         }
+    }
+
+    /// 批量报价请求的查询键构造归通道（issue #1555）：一批「市场 + 代码」查询单元
+    /// → secid 逗号串（`前缀.代码`），市场无法构造键的单元不进请求。删掉本函数
+    /// 中的 `quote_query_key` 组合（改传裸代码）即红。
+    #[test]
+    fn ulist_secids_combine_market_prefix_and_bare_code() {
+        let queries = vec![
+            QuoteQuery {
+                market: "sh".into(),
+                code: "600519".into(),
+            },
+            QuoteQuery {
+                market: "hk".into(),
+                code: "00700".into(),
+            },
+            QuoteQuery {
+                market: "nasdaq".into(),
+                code: "AAPL".into(),
+            },
+        ];
+        assert_eq!(ulist_secids(&queries), "1.600519,116.00700,105.AAPL");
+        // 防御兼底（派生不变量破损时的兜底）：未知市场不构造键、不进请求。
+        assert_eq!(
+            ulist_secids(&[QuoteQuery {
+                market: "unknown".into(),
+                code: "NVDA".into(),
+            }]),
+            ""
+        );
     }
 
     /// 直通会话（测试态）：作业闭包在 `await` 点内联完成——future 立即就绪，

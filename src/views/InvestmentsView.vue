@@ -122,7 +122,7 @@ onMounted(() => focusParam.consume());
     <NTabs :value="activeTab" type="line" @update:value="onActiveTabChange">
       <!-- 概览页签（spec #1532 / issue #1536）：默认落点与 ESC 复位目标——一进
            投资页就看到可投资资产与两腿拆分。纯只读，取数口径单点在后端
-           `investment_overview`（ADR-0130：全页折本位币单值）。 -->
+           `investment_overview`（ADR-0131：全页折本位币单值）。 -->
       <NTabPane name="overview">
         <template #tab
           ><span class="pane-tab"

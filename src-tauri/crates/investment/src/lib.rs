@@ -51,7 +51,7 @@
 //!   [`quote`] 模块的统一载荷；
 //! - [`overview`]：投资概览读数（InvestmentOverview，spec #1532 / issue #1536）——
 //!   投资页「概览」页签的全页折本位币单值：可投资资产合计 + 现金 / 持仓两腿 +
-//!   缺价持仓计数（只增读投影，口径归财务自由度两腿单点；ADR-0130）；
+//!   缺价持仓计数（只增读投影，口径归财务自由度两腿单点；ADR-0131）；
 //! - [`predicates`]：「持仓标的」判定谓词单点（`INVESTED_EXISTS`）；
 //! - [`prices`]：价格写入单点——现价缓存 upsert、价格历史周采样 upsert、
 //!   价格刻度换算（`PRICE_UNITS_PER_FEN` / `price_value_to_cents`）、东财来源标记；

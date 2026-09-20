@@ -339,6 +339,12 @@ pub(super) fn secid_prefix(market: &str) -> Option<&'static str> {
     }
 }
 
+/// 行情批量报价的查询键（东财 secid，issue #1555）：键构造单点（市场前缀 ∘ 代码），
+/// 换数据源只改这里，编排零改动。市场未知（`unknown`）返回 None，不构造键。
+pub(super) fn quote_query_key(market: &str, code: &str) -> Option<String> {
+    secid_prefix(market).map(|prefix| format!("{prefix}.{code}"))
+}
+
 /// 发送请求并解析 JSON，按序尝试多个主机，对传输错误做短退避、对限流拦截做长冷却重试。
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn request_json_from_hosts<T>(
