@@ -27,14 +27,15 @@ export type ConceptKey = (typeof CONCEPT_KEYS)[number];
 
 /**
  * 作用域变体闭集（键即 `investments.concepts.scope<X>` 的 `<X>`）：
- * 概念文案只写「这个数是什么」，作用域差异（随不随筛选收窄、本内还是跨本折算）
- * 归变体句——同一份概念文案在持仓页是过滤子集、在首页是全量、在跨账本页是逐本
- * 折算合并，写进概念文案必有一处失真。
+ * 概念文案只写「这个数是什么」，作用域差异（随不随筛选收窄、按账户币种分组还是
+ * 折本位币单值、本内还是跨本折算）归变体句——同一份概念文案在持仓页是过滤子集、
+ * 在首页是全量、在概览页是折本位币单值、在跨账本页是逐本折算合并，写进概念文案
+ * 必有一处失真。
  *
  * 只覆盖**语境相关**的挂点：单行值不随筛选变化、或口径本身自带「不随筛选收窄」
  * 属性时（如资金加权收益率按完整历史计算）不挂变体，故本 prop 可选。
  */
-export const CONCEPT_SCOPES = ["filtered", "wholeLedger", "crossBook"] as const;
+export const CONCEPT_SCOPES = ["filtered", "wholeLedger", "overview", "crossBook"] as const;
 
 export type ConceptScope = (typeof CONCEPT_SCOPES)[number];
 
@@ -42,5 +43,6 @@ export type ConceptScope = (typeof CONCEPT_SCOPES)[number];
 export const CONCEPT_SCOPE_KEY_SUFFIX: Record<ConceptScope, string> = {
   filtered: "Filtered",
   wholeLedger: "WholeLedger",
+  overview: "Overview",
   crossBook: "CrossBook",
 };
