@@ -17,8 +17,6 @@ import {
   CURRENCIES_SRC_REL,
   DASHBOARD_MODULES,
   DASHBOARD_SRC_REL,
-  DOMAIN_PAIR_ALLOWED_EDGES,
-  DOMAIN_PAIR_FORBIDDEN,
   INFRA_MODULES,
   INFRA_SRC_REL,
   INVESTMENT_MODULES,
@@ -330,21 +328,15 @@ describe("check-structure（结构守门）", () => {
   });
 
   it("域目录代码引用壳层 → 失败并定位文件行号", () => {
-    // 全部业务域 crate 化后，根包仅余测试支持域（test_support），域目录壳层
-    // 反向依赖靶随之更替；业务域 crate 的反向依赖由各自模块清单用例覆盖。
+    // 全部业务域 crate 化后，根包仅余测试支持域（test_support）——它与壳层
+    // commands/ 同居根包，属**同 crate 引用**，cargo 看不见，是壳层反向依赖
+    // 文本扫描仅存的作用面（#1596 退役跨 crate 扫描后）。业务域 crate 对壳层的
+    // 源码引用由编译期拒绝（未声明依赖即编不过）。
     const args = makeFixture({ "test_support/crud.rs": shellUse });
     const r = run(args);
     expect(r.status).toBe(1);
     expect(r.output).toContain("反向依赖");
     expect(r.output).toContain("test_support/crud.rs:1");
-  });
-
-  it("基础设施 crate 内代码引用壳层 → 失败并定位文件行号（#1088 归位后清单基准在 crate）", () => {
-    const args = makeFixture({ "db/helper.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("db/helper.rs:1");
   });
 
   it("注释与字符串中的 commands:: 不误报（掩码边界）", () => {
@@ -373,10 +365,19 @@ describe("check-structure（结构守门）", () => {
   });
 
   it("别名引入（use … as）同样识别为依赖", () => {
-    const args = makeFixture({ "db/helper.rs": "use crate::commands as shell;\npub fn y() {}\n" });
+    const args = makeFixture({
+      "test_support/cost.rs": "use crate::commands as shell;\npub fn y() {}\n",
+    });
     const r = run(args);
     expect(r.status).toBe(1);
     expect(r.output).toContain("commands as");
+  });
+
+  it("基础设施 crate 内代码引用壳层 → 文本扫描已退役（跨 crate 引用归编译期，#1596）", () => {
+    // db/helper.rs 的 `crate::commands` 在 ledger-infra 内即 `ledger_infra::commands`
+    // ——不存在，未声明依赖编译失败；crate 清单面不再做源码文本扫描。
+    const args = makeFixture({ "db/helper.rs": shellUse });
+    expect(run(args).status).toBe(0);
   });
 
   it("白名单路径缺失（清单漂移）→ fail loud", () => {
@@ -407,327 +408,134 @@ describe("check-structure（结构守门）", () => {
   });
 });
 
-describe("check-structure 基础设施→域扫描（ADR-0071 决策 6 / #538）", () => {
+describe("check-structure 跨 crate 依赖方向（#1596 cargo 退役 / ADR-0071 修订注记）", () => {
   /**
-   * 迁移前 db/mod.rs after_commit 的形态（ADR-0032 置脏单点）：#1088 起该生产边
-   * 已由注册点反转消除（基础设施只留调用时机、备份域提供实现），故本形态现为
-   * **未认许**的产出式反向引用——夹具用它钉死「生产挂载点不得复活」。
+   * 退役留痕（#1596 / ADR-0056 决策 4 修订注记）：跨 crate 越界方向的源码文本
+   * 扫描退役——未声明依赖即编译失败（cargo 强于文本扫描：`use crate::x as y`
+   * 别名改写对文本不可达、编译期逃不掉），已声明的越界方向由 crate 边界核对按
+   * `Cargo.toml` 声明面判定（层秩 + 业务域→多端同步域禁令）。下列用例把原
+   * 「文本扫描红」钉成「文本扫描不再报红」——退役不得静默回潮（扫描若被恢复，
+   * 本组变红）。PR 另附逐族编译错误证据（构造违规样例 `cargo check` 报错）。
    */
-  // 全部业务域 crate 化后，根包仅余测试支持域（test_support）；基础设施对该域
-  // 的 4 条认许边全是测试专用边（ADR-0084），其余文件/目标仍红——「基础设施
-  // 生产路径直调域副作用不得复活」的钉子不变；对业务域 crate 的依赖由 cargo
-  // 依赖图（infra Cargo.toml 无域依赖）编译期拒绝。
-  const afterCommitShape = [
-    "pub fn write<T>(f: impl FnOnce() -> T) -> T { f() }",
-    "fn after_commit(conn: &Connection) {",
-    "    if let Err(e) = crate::test_support::mark_dirty(conn) {",
-    '        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");',
-    "    }",
-    "    let dir = crate::test_support::shared_prefs().snapshot_dir();",
-    "    crate::test_support::run_due_backup(",
-    "        conn,",
-    "        dir.as_deref(),",
-    "    );",
-    "}",
-    "",
-  ].join("\n");
+  /** 成员 crate 清单桩：依赖面 + 门禁继承（http 投影门的 axum 只在 infra 桩带上
+   *  ——域侧成员直接声明 axum 本身就是被守的越界形态）。 */
+  const crateManifest = (name: string, deps: string): string =>
+    `[package]\nname = "${name}"\nversion = "0.6.0"\nedition = "2024"\n\n` +
+    `[dependencies]\n${deps}\n\n[lints]\nworkspace = true\n`;
 
-  it("基础设施文件 use 域模块 → 红", () => {
-    const args = makeFixture({ "db/helper.rs": "use crate::test_support::open;\npub fn x() {}\n" });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("引用域目录");
-    expect(r.output).toContain("db/helper.rs:1");
-  });
+  /** infra 清单桩：带 http 投影门的 features/axum 形态 + 给定 dev-dependency 行。 */
+  const infraFixtureManifest = (devDeps: string): string =>
+    '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+    '[features]\nhttp = ["dep:axum"]\n\n' +
+    '[dependencies]\naxum = { version = "0.8", optional = true }\n\n' +
+    `[dev-dependencies]\n${devDeps}\n\n[lints]\nworkspace = true\n`;
 
-  it("内联全限定路径（crate::域::x() 形态）同样识别 → 红", () => {
+  it("基础设施文件引用域模块 → 文本扫描已退役（红源换为编译期）", () => {
+    // 迁移前 db/mod.rs after_commit 的形态（ADR-0032 置脏单点）：生产文件里的
+    // `crate::test_support` 即 `ledger_infra::test_support`——不存在；即便写成
+    // `tauri_app_lib::test_support`，dev-dependency 也只对测试目标可见，生产面
+    // 编译失败。原文扫描已无靶向价值。
     const args = makeFixture({
-      "db/helper.rs": "pub fn y() { crate::test_support::open(); }\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("引用域目录 test_support");
-    expect(r.output).toContain("db/helper.rs:1");
-  });
-
-  it("tauri_app_lib:: 前缀与 use as 别名引入同样识别 → 红", () => {
-    // 全部业务域 crate 化后，根包仅余测试支持域；前缀与别名形态以非认许文件钉住。
-    const args = makeFixture({
-      "events.rs": "use tauri_app_lib::test_support::open;\npub fn x() {}\n",
-      "db/helper.rs": "use crate::test_support as support;\npub fn y() {}\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("引用域目录 test_support");
-    expect(r.output).toContain("引用域目录 test_support");
-  });
-
-  it("模块自身导入（use crate::<域>;）同样识别 → 红", () => {
-    const args = makeFixture({ "db/helper.rs": "use crate::test_support;\npub fn z() {}\n" });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("引用域目录 test_support");
-  });
-
-  it("std::sync 等同名路径不误报（crate 根前缀限定边界）", () => {
-    const args = makeFixture({
-      "db/helper.rs": "use std::sync::{Arc, Mutex};\npub fn z(a: Arc<Mutex<u8>>) {}\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(0);
-  });
-
-  it("非禁边对的域间横向引用不红（扫描范围仅基础设施条目，ADR-0071 决策 5）", () => {
-    // transaction→accounts 自 #1090 起属域间禁边（另见域间禁边 describe）；
-    // 本用例改用非禁边对（保单域→核心交易域：真实且受 AC 允许的域→域上层依赖，
-    // dashboard 靶随 #1104 crate 化退役、sync 靶随 #1106 crate 化更替）钉住
-    // 「域间横向引用本身不在 infra 扫描范围」——'insurer.rs' 经 placeOverride 落
-    // 保单域 crate（#1100 后守门基准随迁 crate，业务域扫描照扫）。
-    const args = makeFixture({
-      "insurer.rs": "use ledger_transaction::amount::TransactionKind;\npub fn x() {}\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(0);
-  });
-
-  it("注释与字符串中的域路径不误报（掩码边界）", () => {
-    const args = makeFixture({
-      "db/helper.rs": [
-        "/// 提交点由 [`crate::backup::run_due_backup`] 统一门禁（文档注释不算引用）",
-        "// 见 crate::test_support::open 说明",
-        'let s = "crate::backup::mark_dirty";',
-        'let re = r#"crate::test_support::open"#;',
-        "pub fn f() {}",
-        "",
-      ].join("\n"),
-    });
-    const r = run(args);
-    expect(r.status).toBe(0);
-  });
-
-  it("外挂测试豁免不变：tests.rs 与 tests/ 目录引用域不红（ADR-0056 决策 5）", () => {
-    const args = makeFixture({
-      "db/tests.rs": "use crate::test_support::open;\n",
-      "db/tests/common.rs": "pub fn s() -> crate::backup::AutoBackupState { todo!() }\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(0);
-  });
-
-  it("生产挂载点已反转：db/mod.rs 直调域副作用 → 红（认许边不再含该条）", () => {
-    const args = makeFixture({ "db/mod.rs": afterCommitShape });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("引用域目录 test_support");
-    expect(r.output).toContain("db/mod.rs:3");
-  });
-
-  it("认许边精确匹配：settings.rs→test_support 绿；他文件同域仍红", () => {
-    const green = makeFixture({
-      "settings.rs": "use tauri_app_lib::test_support::open;\npub fn x() {}\n",
-    });
-    expect(run(green).status).toBe(0);
-
-    const otherFile = makeFixture({
-      "db/helper.rs": "use crate::test_support::open;\n",
-    });
-    const r2 = run(otherFile);
-    expect(r2.status).toBe(1);
-    expect(r2.output).toContain("db/helper.rs:1");
-  });
-
-  it("真实仓库默认通过：基础设施→域零未认许引用（认许边留痕于脚本）", () => {
-    const r = run([]);
-    expect(r.status).toBe(0);
-    // 生产挂载点 0（#1088 注册点反转消除 db/mod.rs→backup）+ settings.rs→test_support
-    //（ADR-0084，#758）；shell_support 三条测试专用边随 #1108 迁出根包退役。
-    expect(r.output).toContain("认许边 1 条");
-  });
-});
-
-describe("check-structure 业务域→同步域零容忍（ADR-0101 决策 4b / #1089 收紧）", () => {
-  it("业务域引用同步域内部件（engine::/ops::/model::…）→ 红并定位文件行号", () => {
-    // 'auto_run.rs' 经 placeOverride 落定时计划域 crate（SCHEDULED_MODULES 派生
-    // 路由，#1098 起守门基准随迁 crate；原 scheduled_transactions/command.rs
-    // 域目录夹具随拆分消亡）。
-    const args = makeFixture({
-      "auto_run.rs": "use crate::sync_engine::engine::ReplayEffect;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("auto_run.rs:1");
-    expect(r.output).toContain("sync_engine::engine");
-  });
-
-  it("契约模块与原白名单根符号亦红（#1089 零容忍：协议面下放协议 crate）", () => {
-    // 'insurer.rs' 经 placeOverride 落保单域 crate（POLICY_MODULES 派生路由）——
-    // 业务域靶随 #1106 行情同步域拆出改以仍在 crate 清单的保单域承载（原
-    // `sync/command.rs` 域目录夹具随拆分消亡）。
-    const args = makeFixture({
-      "insurer.rs": [
-        "use crate::sync_engine::command::ReplayEffect;",
-        "use crate::sync_engine::{DomainCommand, record_local as record_op};",
-        "use crate::sync_engine::device_id;",
-        "use crate::sync_engine;",
-        "pub fn x() {}",
-        "",
-      ].join("\n"),
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("insurer.rs:1");
-  });
-
-  it("根花括号列举夹带任一符号 → 红（零容忍逐条判定）", () => {
-    const args = makeFixture({
-      "insurer.rs": "use crate::sync_engine::{DomainCommand, model::SyncOp};\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("model");
-  });
-
-  it("根 glob 引入 → 红（零容忍）", () => {
-    const args = makeFixture({ "insurer.rs": "use crate::sync_engine::*;\n" });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-  });
-
-  it("根别名引入（use crate::sync_engine as se）→ 红（堵别名盲区）", () => {
-    const args = makeFixture({
-      "insurer.rs": "use crate::sync_engine as se;\npub fn x() {}\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("insurer.rs:1");
-  });
-
-  it("业务域直接引用同步域 crate 名（ledger_sync_engine::）→ 红（#1107 crate 化后堵漏）", () => {
-    const args = makeFixture({
-      "insurer.rs": "use ledger_sync_engine::engine::ReplayEffect;\npub fn x() {}\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("ledger_sync_engine::engine");
-  });
-
-  it("同步域自身与测试支持域不参与（作用域边界）", () => {
-    const args = makeFixture({
-      // checkpoint.rs 经 placeOverride 落多端同步域 crate（SYNC_ENGINE_MODULES
-      // 派生路由，#1107）；同步域自身不参与业务域→同步域零容忍扫描。
-      "checkpoint.rs": "use crate::sync_engine::ops::insert_row;\n",
-      "test_support/channel.rs": "use crate::sync_engine::model::SyncOp;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(0);
-  });
-
-  it("注释与字符串中的同步域内部路径不误报（掩码边界）", () => {
-    const args = makeFixture({
-      "insurer.rs": [
-        "/// 见 `crate::sync_engine::ops::record_local` 说明（文档注释不算引用）",
-        "// crate::sync_engine::engine::dispatch",
-        'let s = "crate::sync_engine::parked::ParkedOp";',
-        'let re = r#"crate::sync_engine::model::SyncOp"#;',
-        "pub fn f() {}",
-        "",
-      ].join("\n"),
-    });
-    const r = run(args);
-    expect(r.status).toBe(0);
-  });
-
-  it("真实仓库默认通过：业务域→同步域零容忍零违规", () => {
-    const r = run([]);
-    expect(r.status).toBe(0);
-    expect(r.output).toContain("业务域→同步域零容忍零违规");
-  });
-});
-
-describe("check-structure 域间禁边（issue #1090 写路径副作用接缝反转）", () => {
-  it("transaction 起点禁边已随 crate 化退役（#1092）：文本清单不再辖，依赖方向归 cargo 依赖图", () => {
-    // 核心交易域拆为 ledger-transaction crate 后，对业务域/壳层的引用由生产依赖面
-    // 编译期拒绝；带类型签名的钩子无法跨实例（名义类型不等价），文本扫描对 crate
-    // 内代码不再可及，故 from='transaction' 规则全部退役（守门基准随迁
-    // TRANSACTION_MODULES：对壳层/同步域零容忍照扫）。
-    expect(DOMAIN_PAIR_FORBIDDEN.some((r) => r.from === "transaction")).toBe(false);
-  });
-
-  it("scheduled_transactions→backup 禁边已随 crate 化退役（#1098）：文本清单不再辖，依赖方向归 cargo 依赖图", () => {
-    // 定时计划域拆为 ledger-scheduled crate 后：置脏实现住 ledger-backup、追补触发
-    // 实现住本域，双向均经注册点接缝、壳层对装；本域生产依赖面不含 ledger-backup，
-    // 构造引用即编译失败（守门基准随迁 SCHEDULED_MODULES：对壳层/同步域零容忍照
-    // 扫），故最后一条规则退役、清单归空（保留空集留痕）。
-    expect(DOMAIN_PAIR_FORBIDDEN.some((r) => r.from === "scheduled_transactions")).toBe(false);
-    expect(DOMAIN_PAIR_FORBIDDEN).toHaveLength(0);
-  });
-
-  it("核心交易域 crate 模块引用壳层 → 红并定位文件行号（#1092 crate 化后守门基准随迁）", () => {
-    // 'write/writer.rs' 经 placeOverride 落核心交易域 crate（TRANSACTION_MODULES 派生路由）。
-    const args = makeFixture({ "write/writer.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("write/writer.rs:1");
-  });
-
-  it("核心交易域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate，#1092）", () => {
-    const args = makeFixture({
-      "write/protocol.rs": "use tauri_app_lib::sync_engine::registry::dispatch;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("write/protocol.rs:1");
-  });
-
-  it("方向性：账户域 crate 引用核心交易域 crate（生产依赖方向合法）不红", () => {
-    // #1093 起账户域为独立 crate：accounts → transaction 是 Cargo.toml 声明的合法
-    // 生产依赖（余额口径消费 kind→度量矩阵，ADR-0071 决策 5 修订后方向）。
-    // 'core.rs' 经 placeOverride 落账户域 crate（ACCOUNTS_MODULES 派生路由）。
-    const args = makeFixture({
-      "core.rs": "use ledger_transaction::amount::account_flow_expr;\npub fn x() {}\n",
+      "db/helper.rs": "use crate::test_support::open;\npub fn x() {}\n",
     });
     expect(run(args).status).toBe(0);
   });
 
-  it("注释与字符串中的禁边路径不误报（掩码边界）", () => {
-    const args = makeFixture({
-      "transaction/writer.rs": [
-        "/// 经接缝（#1090）替代旧 `crate::accounts::balance` 直引（文档注释不算依赖）",
-        "// 见 crate::scheduled_transactions::source 说明",
-        'let s = "crate::backup::mark_dirty";',
-        "pub fn f() {}",
-        "",
-      ].join("\n"),
-    });
-    const r = run(args);
-    expect(r.status).toBe(0);
+  it("域 crate 模块引用壳层 → 文本扫描已退役（红源换为编译期）", () => {
+    // 域 crate 内的 `crate::commands` 即 `<crate>::commands`——不存在；跨 crate
+    // 形态（`tauri_app_lib::…`）未声明依赖即编不过。声明面负向夹具见各域 describe。
+    const args = makeFixture({ "insurer.rs": shellUse });
+    expect(run(args).status).toBe(0);
   });
 
-  it("外挂测试豁免不变：tests/ 目录引用禁边对不红（ADR-0056 决策 5）", () => {
+  it("域 crate 模块引用同步域 → 文本扫描已退役（红源换为编译期 / 声明面禁令）", () => {
+    // `crate::sync_engine` 在域 crate 内编不过；`ledger_sync_engine::` 必伴随
+    // 声明依赖，由 crate 边界禁令拦下（负向夹具见多端同步域 describe）。
     const args = makeFixture({
-      "transaction/tests/balance_cache.rs": "use ledger_transaction::read::list_transactions;\n",
-      "tests/auto_run.rs": "crate::backup::get_state(&conn);\n",
+      "auto_run.rs": "use crate::sync_engine::engine::ReplayEffect;\n",
     });
-    const r = run(args);
-    expect(r.status).toBe(0);
+    expect(run(args).status).toBe(0);
   });
 
-  it("真实仓库默认通过：域间禁边零未认许引用（认许边留痕于脚本）", () => {
+  it("基础设施 dev-dependency 反向依赖更高层 crate 未留痕 → 红（换载体：声明面核对）", () => {
+    // cargo 对 dev-dependency 环放行（测试目标与生产依赖图分离），是编译期盲区：
+    // 基础设施对业务域 crate 的 dev-dependency 须逐条留痕于
+    // INFRA_DOMAIN_ALLOWED_EDGES，清单之外的声明即红。
+    const args = makeCrateFixture({
+      memberManifest: infraFixtureManifest('ledger-policy = { path = "../policy" }'),
+    });
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("基础设施→域方向");
+    expect(r.output).toContain("ledger-policy");
+  });
+
+  it("基础设施 dev-dependency 已留痕于台账（测试专用边）→ 绿", () => {
+    const args = makeCrateFixture({
+      memberManifest: infraFixtureManifest(
+        'tauri-app = { path = "../.." }\nledger-transaction = { path = "../transaction" }',
+      ),
+    });
+    expect(run(args).status).toBe(0);
+  });
+
+  it("基础设施 dev-dependency 指向非域层（协议/基础设施）→ 不受台账约束（生产方向仍归层秩核对）", () => {
+    const args = makeCrateFixture({
+      memberManifest: infraFixtureManifest(
+        'ledger-infra = { path = "." }\nledger-sync-protocol = { path = "../sync-protocol" }',
+      ),
+    });
+    expect(run(args).status).toBe(0);
+  });
+
+  it("基础设施 crate 生产依赖域 crate → 红（层秩声明面核对，F8 生产面换载体后仍守）", () => {
+    // F8「生产面」的红源：生产依赖越界由层秩核对拦下（dev-dependency 面另由台账核）。
+    const args = makeCrateFixture({
+      memberManifest:
+        '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+        '[features]\nhttp = ["dep:axum"]\n\n' +
+        '[dependencies]\naxum = { version = "0.8", optional = true }\n' +
+        'ledger-policy = { path = "../policy" }\n\n[lints]\nworkspace = true\n',
+    });
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("crate 依赖方向");
+    expect(r.output).toContain("ledger-infra");
+    expect(r.output).toContain("ledger-policy");
+  });
+
+  it("协议 crate 生产依赖域 crate / 壳 crate → 红（层秩声明面核对，#1089 退役文本扫描后仍守）", () => {
+    const args = makeCrateFixture({
+      protocolManifest: crateManifest(
+        "ledger-sync-protocol",
+        'ledger-transaction = { path = "../transaction" }\ntauri-app = { path = "../.." }',
+      ),
+    });
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("crate 依赖方向");
+    expect(r.output).toContain("ledger-sync-protocol");
+    expect(r.output).toContain("ledger-transaction");
+    expect(r.output).toContain("tauri-app");
+  });
+
+  it("账户域 crate 生产依赖核心交易域 crate → 绿（域→域合法上层依赖，ADR-0071 决策 5）", () => {
+    // accounts → transaction 是 Cargo.toml 声明的合法生产依赖（余额口径消费
+    // kind→度量矩阵，ADR-0071 决策 5 修订后方向）——声明面核对只拦越界方向。
+    const args = makeCrateFixture({
+      accountsManifest: crateManifest(
+        "ledger-accounts",
+        'ledger-transaction = { path = "../transaction" }',
+      ),
+    });
+    expect(run(args).status).toBe(0);
+  });
+
+  it("真实仓库默认通过：跨 crate 方向走声明面（认许边留痕于脚本）", () => {
     const r = run([]);
     expect(r.status).toBe(0);
-    // 汇总字符串自脚本导出清单派生（单一事实源，无双源漂移）。
-    expect(r.output).toContain(
-      `域间禁边 ${DOMAIN_PAIR_FORBIDDEN.length} 对零未认许引用` +
-        `（认许边 ${DOMAIN_PAIR_ALLOWED_EDGES.length} 条，#1090 接缝反转）`,
-    );
+    expect(r.output).toContain("跨 crate 依赖方向：声明面判定");
+    expect(r.output).toContain("基础设施 dev-dependency 方向零未留痕声明（认许边 4 条");
   });
 });
 
@@ -1760,29 +1568,6 @@ describe("check-structure 报表域 crate（#1103 P3 叶子业务域 crate 自�
     expect(r.output).toContain(`报表域模块 ${REPORTS_MODULES.length} 项`);
   });
 
-  it("报表域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 报表域唯一模块 model.rs 与交易域清单撞名（路由优先级归交易 crate，与
-    // placeOverride 先后链一致），夹具直接写入报表域 crate 的模块路径。
-    const args = makeFixture();
-    writeFileSync(join(args[1], REPORTS_SRC_REL, "model.rs"), shellUse);
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("model.rs:1");
-  });
-
-  it("报表域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    const args = makeFixture();
-    writeFileSync(
-      join(args[1], REPORTS_SRC_REL, "model.rs"),
-      "use tauri_app_lib::sync_engine::engine::ReplayEffect;\n",
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("model.rs:1");
-  });
-
   it("报表域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1103）", () => {
     const args = makeCrateFixture({
       reportsManifest:
@@ -1820,29 +1605,6 @@ describe("check-structure 仪表盘域 crate（#1104 P3 叶子业务域 crate �
     const r = run([]);
     expect(r.status).toBe(0);
     expect(r.output).toContain(`仪表盘域模块 ${DASHBOARD_MODULES.length} 项`);
-  });
-
-  it("仪表盘域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 仪表盘域模块 model.rs 与交易域清单撞名（路由优先级归交易 crate，与
-    // placeOverride 先后链一致），夹具直接写入仪表盘域 crate 的模块路径。
-    const args = makeFixture();
-    writeFileSync(join(args[1], DASHBOARD_SRC_REL, "model.rs"), shellUse);
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("model.rs:1");
-  });
-
-  it("仪表盘域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    const args = makeFixture();
-    writeFileSync(
-      join(args[1], DASHBOARD_SRC_REL, "model.rs"),
-      "use tauri_app_lib::sync_engine::engine::ReplayEffect;\n",
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("model.rs:1");
   });
 
   it("仪表盘域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1104）", () => {
@@ -1893,26 +1655,6 @@ describe("check-structure 保单域 crate（#1100 P3 叶子业务域 crate 自�
     expect(r.output).toContain(`保单域模块 ${POLICY_MODULES.length} 项`);
   });
 
-  it("保单域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 'stats.rs' 无撞名（command.rs / model.rs 与交易域清单、crud.rs 与商户域
-    // 清单撞名，路由优先级归先登记的 crate），经 placeOverride 落保单域 crate。
-    const args = makeFixture({ "stats.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("stats.rs:1");
-  });
-
-  it("保单域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    const args = makeFixture({
-      "stats.rs": "use tauri_app_lib::sync_engine::engine::ReplayEffect;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("stats.rs:1");
-  });
-
   it("保单域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1100）", () => {
     const args = makeCrateFixture({
       policyManifest:
@@ -1951,26 +1693,6 @@ describe("check-structure 预算域 crate（#1101 P3 叶子业务域 crate 自�
     const r = run([]);
     expect(r.status).toBe(0);
     expect(r.output).toContain(`预算域模块 ${BUDGET_MODULES.length} 项`);
-  });
-
-  it("预算域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 'progress.rs' 无撞名（command.rs / model.rs 与交易域清单、crud.rs 与商户域
-    // 清单撞名，路由优先级归先登记的 crate），经 placeOverride 落预算域 crate。
-    const args = makeFixture({ "progress.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("progress.rs:1");
-  });
-
-  it("预算域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    const args = makeFixture({
-      "progress.rs": "use tauri_app_lib::sync_engine::engine::ReplayEffect;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("progress.rs:1");
   });
 
   it("预算域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1101）", () => {
@@ -2013,32 +1735,6 @@ describe("check-structure 实物资产域 crate（#1102 P3 叶子业务域 crate
     expect(r.output).toContain(`实物资产域模块 ${PHYSICAL_ASSET_MODULES.length} 项`);
   });
 
-  it("实物资产域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 本域模块文件名与先登记 crate 全部撞名（command.rs / model.rs → 交易域、
-    // crud.rs → 商户域、validation.rs → 保单域，placeOverride 路由优先级归先
-    // 登记 crate），经 makeFixture 后直写 crate 路径覆盖桩（writeModuleStubs
-    // 已按 PHYSICAL_ASSET_MODULES 落位）。
-    const args = makeFixture();
-    writeFileSync(join(args[1], PHYSICAL_ASSET_SRC_REL, "validation.rs"), shellUse);
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("validation.rs:1");
-  });
-
-  it("实物资产域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    // 撞名同上：直写 crate 路径覆盖桩。
-    const args = makeFixture();
-    writeFileSync(
-      join(args[1], PHYSICAL_ASSET_SRC_REL, "validation.rs"),
-      "use tauri_app_lib::sync_engine::engine::ReplayEffect;\n",
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("validation.rs:1");
-  });
-
   it("实物资产域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1102）", () => {
     const args = makeCrateFixture({
       physicalAssetManifest:
@@ -2077,25 +1773,6 @@ describe("check-structure 备份域 crate（#1091 首个业务域 crate 自根�
     const r = run([]);
     expect(r.status).toBe(0);
     expect(r.output).toContain(`备份域模块 ${BACKUP_MODULES.length} 项`);
-  });
-
-  it("备份域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 'auto.rs' 经 placeOverride 落备份域 crate（BACKUP_MODULES 派生路由，#1091）。
-    const args = makeFixture({ "auto.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("auto.rs:1");
-  });
-
-  it("备份域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    const args = makeFixture({
-      "engine.rs": "use tauri_app_lib::sync_engine::engine::ReplayEffect;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("engine.rs:1");
   });
 
   it("备份域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面）", () => {
@@ -2141,25 +1818,6 @@ describe("check-structure 账户域 crate（#1093 叶子业务域 crate 自根�
     expect(r.status).toBe(0);
   });
 
-  it("账户域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 'core.rs' 经 placeOverride 落账户域 crate（ACCOUNTS_MODULES 派生路由，#1093）。
-    const args = makeFixture({ "core.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("core.rs:1");
-  });
-
-  it("账户域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    const args = makeFixture({
-      "balance.rs": "use tauri_app_lib::sync_engine::registry::dispatch;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("balance.rs:1");
-  });
-
   it("账户域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1093）", () => {
     const args = makeCrateFixture({
       accountsManifest:
@@ -2186,26 +1844,6 @@ describe("check-structure 分类域 crate（#1094 P3 叶子域自根包拆出）
     expect(r.output).toContain(`分类域模块 ${CATEGORIES_MODULES.length} 项`);
   });
 
-  it("分类域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 'core.rs' 无撞名（`command.rs` / `model.rs` 与交易域清单撞名，路由优先
-    // 落交易域），经 placeOverride 落分类域 crate（CATEGORIES_MODULES 派生路由）。
-    const args = makeFixture({ "core.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("core.rs:1");
-  });
-
-  it("分类域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    const args = makeFixture({
-      "core.rs": "use tauri_app_lib::sync_engine::engine::ReplayEffect;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("core.rs:1");
-  });
-
   it("分类域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面）", () => {
     const args = makeCrateFixture({
       categoriesManifest:
@@ -2230,26 +1868,6 @@ describe("check-structure 商户域 crate（#1096 参考数据域独立 crate �
     const r = run([]);
     expect(r.status).toBe(0);
     expect(r.output).toContain(`商户域模块 ${MERCHANTS_MODULES.length} 项`);
-  });
-
-  it("商户域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 'crud.rs' 经 placeOverride 落商户域 crate（MERCHANTS_MODULES 派生路由，#1096；
-    // command.rs / model.rs 与交易清单同名，路由优先级归交易 crate）。
-    const args = makeFixture({ "crud.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("crud.rs:1");
-  });
-
-  it("商户域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    const args = makeFixture({
-      "crud.rs": "use tauri_app_lib::sync_engine::engine::ReplayEffect;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("crud.rs:1");
   });
 
   it("商户域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面）", () => {
@@ -2296,27 +1914,6 @@ describe("check-structure 定时计划域 crate（#1098 业务域 crate 自根�
     expect(r.status).toBe(0);
   });
 
-  it("定时计划域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 'source.rs' 经 placeOverride 落定时计划域 crate（SCHEDULED_MODULES 派生路由，
-    // #1098；无撞名可用——engine.rs 归备份域、command.rs 归账户域，夹具只用
-    // auto_run / models / source / spend 四名）。
-    const args = makeFixture({ "source.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("source.rs:1");
-  });
-
-  it("定时计划域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    const args = makeFixture({
-      "spend.rs": "use tauri_app_lib::sync_engine::registry::dispatch;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("spend.rs:1");
-  });
-
   it("定时计划域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面，#1098）", () => {
     const args = makeCrateFixture({
       scheduledManifest:
@@ -2357,26 +1954,6 @@ describe("check-structure 物品域 crate（#1099 P3 叶子域自根包拆出）
     expect(r.output).toContain(`物品域模块 ${ITEM_MODULES.length} 项`);
   });
 
-  it("物品域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 'guard.rs' 无撞名（`command.rs` / `model.rs` 与交易域清单撞名，路由优先
-    // 落交易域），经 placeOverride 落物品域 crate（ITEM_MODULES 派生路由，#1099）。
-    const args = makeFixture({ "guard.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("guard.rs:1");
-  });
-
-  it("物品域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    const args = makeFixture({
-      "guard.rs": "use tauri_app_lib::sync_engine::engine::ReplayEffect;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("guard.rs:1");
-  });
-
   it("物品域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面）", () => {
     const args = makeCrateFixture({
       itemManifest:
@@ -2414,26 +1991,6 @@ describe("check-structure 投资域 crate（#1097 业务域 crate 自根包拆�
     const r = run([]);
     expect(r.status).toBe(0);
     expect(r.output).toContain(`投资域模块 ${INVESTMENT_MODULES.length} 项`);
-  });
-
-  it("投资域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 'trend.rs' 经 placeOverride 落投资域 crate（INVESTMENT_MODULES 派生路由，#1097；
-    // command.rs / model.rs 与交易/账户/分类/商户/币种清单同名，路由优先级归先登记 crate）。
-    const args = makeFixture({ "trend.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("trend.rs:1");
-  });
-
-  it("投资域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    const args = makeFixture({
-      "trend.rs": "use tauri_app_lib::sync_engine::engine::ReplayEffect;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("trend.rs:1");
   });
 
   it("投资域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面）", () => {
@@ -2480,27 +2037,6 @@ describe("check-structure 行情同步域 crate（#1106 P4 业务域 crate 自�
     expect(r.output).toContain(`行情同步域模块 ${MARKET_SYNC_MODULES.length} 项`);
   });
 
-  it("行情同步域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // 'http.rs' 经 placeOverride 落行情同步域 crate（MARKET_SYNC_MODULES 派生路由，
-    // #1106；model.rs / progress.rs / fund.rs / stock.rs 与先登记 crate 清单同名，
-    // 路由优先级归先登记 crate）。
-    const args = makeFixture({ "http.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("http.rs:1");
-  });
-
-  it("行情同步域 crate 模块引用同步域 → 红（业务域→同步域零容忍覆盖 crate）", () => {
-    const args = makeFixture({
-      "incremental.rs": "use tauri_app_lib::sync_engine::engine::ReplayEffect;\n",
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("业务域引用同步域");
-    expect(r.output).toContain("incremental.rs:1");
-  });
-
   it("行情同步域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面）", () => {
     const args = makeCrateFixture({
       marketSyncManifest:
@@ -2544,17 +2080,6 @@ describe("check-structure 多端同步域 crate（#1107 P4 业务域 crate 自�
     const r = run([]);
     expect(r.status).toBe(0);
     expect(r.output).toContain(`多端同步域模块 ${SYNC_ENGINE_MODULES.length} 项`);
-  });
-
-  it("多端同步域 crate 模块引用壳层 → 红并定位文件行号", () => {
-    // checkpoint.rs 经 placeOverride 落多端同步域 crate（SYNC_ENGINE_MODULES
-    // 派生路由，#1107；engine.rs / command.rs / model.rs / channel.rs 与先登记
-    // crate 清单同名，夹具只用无撞名条目）。
-    const args = makeFixture({ "checkpoint.rs": shellUse });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("checkpoint.rs:1");
   });
 
   it("多端同步域 crate 生产依赖壳层 crate → 红（依赖方向核对，编译期拒绝的机器面）", () => {
