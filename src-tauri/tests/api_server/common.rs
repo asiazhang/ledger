@@ -31,7 +31,7 @@ pub(crate) fn setup_app() -> (Router, Arc<Mutex<rusqlite::Connection>>) {
     setup_app_with_fund_fetch(None)
 }
 
-/// 共享装配：内存库初始化 + 注入东财接缝与发射槽（spec #367 code review 去重：
+/// 共享装配：内存库初始化 + 注入行情接缝与发射槽（spec #367 code review 去重：
 /// 各 setup 变体只差注入项，装配序列单一承载）。锁定门默认不锁（明文行为基线）。
 /// 建库两行序经统一测试工厂 `test_support::open()` 承载（spec #728 / issue #753 /
 /// ADR-0084 决策 7）：`ApiState` 注入形状不变，外部调用点零改动。
@@ -55,8 +55,8 @@ fn build_test_app(
     (app, conn)
 }
 
-/// 装配带东财基金详情注入桩的应用（issue #304）：全部基金端点集成测试以桩
-/// 离线驱动，不触真实网络；`None` 即生产路径（真实东财，测试不用）。
+/// 装配带基金行情注入桩的应用（issue #304）：全部基金端点集成测试以桩
+/// 离线驱动，不触真实网络；`None` 即生产路径（真实数据源，测试不用）。
 pub(crate) fn setup_app_with_fund_fetch(
     fund_fetch: Option<FundQuoteFetcher>,
 ) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
@@ -64,8 +64,8 @@ pub(crate) fn setup_app_with_fund_fetch(
     build_test_app(fund_fetch, None, None)
 }
 
-/// 装配带东财股票行情注入桩的应用（issue #693）：全部股票端点集成测试以桩
-/// 离线驱动，不触真实网络；`None` 即生产路径（真实东财，测试不用）。
+/// 装配带股票行情注入桩的应用（issue #693）：全部股票端点集成测试以桩
+/// 离线驱动，不触真实网络；`None` 即生产路径（真实数据源，测试不用）。
 pub(crate) fn setup_app_with_stock_fetch(
     stock_fetch: Option<StockQuoteFetcher>,
 ) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
@@ -104,14 +104,14 @@ pub(crate) fn setup_boot_failed_app() -> Router {
 
 /// 装配带受控发射器的应用（spec #367）：发射槽接到外部提供的发射器上，
 /// 供「写请求返回后信号最终到达」的集成断言观察事件交接与送达
-///（先例：`setup_app_with_fund_fetch` 的东财桩注入，同一「真端点 + 受控接缝」形状）。
+///（先例：`setup_app_with_fund_fetch` 的行情桩注入，同一「真端点 + 受控接缝」形状）。
 pub(crate) fn setup_app_with_emitter(
     emitter: Arc<dyn SignalEmitter>,
 ) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
     build_test_app(None, None, Some(emitter))
 }
 
-/// 东财基金详情桩的返回形态（命中）：名称 / 东财分类 / 可选（净值，净值日期）/
+/// 基金行情桩的返回形态（命中）：名称 / 可选（净值，净值日期）/
 /// 可选货基信号（恒定价格标的的建档确认源，ADR-0126）。
 pub(crate) struct FundStubHit {
     pub name: &'static str,
@@ -121,7 +121,7 @@ pub(crate) struct FundStubHit {
     pub money_fund: bool,
 }
 
-/// 构造可注入的东财基金详情桩：命中表驱动（`hits` 内的代码按表返回；表外代码
+/// 构造可注入的基金行情桩：命中表驱动（`hits` 内的代码按表返回；表外代码
 /// 返回「查无此码」码化错误 `sync.fund-not-found`——与生产 `fetch_fund_quote`
 /// 未命中同形状，#1186：裸 `Invalid` 掩盖了生产差异，测试绿、线上错），
 /// 并按调用顺序记录请求代码（`calls`，供测试断言「未发起网络请求」「请求了哪些
@@ -145,6 +145,7 @@ pub(crate) fn fund_fetch_stub(
                 fund_class: Some(hit.fund_class.to_string()),
                 nav_date: hit.nav.map(|(_, nav_date)| nav_date.to_string()),
                 constant_unit_price_cents: hit.money_fund.then(|| price_value_to_cents(1.0)),
+                price_source: ledger_investment::prices::SINA_PRICE_SOURCE,
             }),
             None => Err(AppError::codedp(
                 "sync.fund-not-found",
@@ -212,6 +213,7 @@ pub(crate) fn stock_fetch_stub(
                 nav_date: None,
                 // 场内通道无恒定价格信号（ADR-0126）。
                 constant_unit_price_cents: None,
+                price_source: ledger_investment::prices::TENCENT_PRICE_SOURCE,
             }),
             None => Err(AppError::codedp(
                 "sync.stock-not-found",

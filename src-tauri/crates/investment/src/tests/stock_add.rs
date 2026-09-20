@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use crate::{
     InstrumentType, Quote, add_stock_instrument_with_quote, fetch_stock_quote_for_add,
-    resolve_add_stock_channel,
+    prices::TENCENT_PRICE_SOURCE, resolve_add_stock_channel,
 };
 use ledger_infra::error::AppError;
 use tauri_app_lib::test_support::{block_on, open};
@@ -26,6 +26,7 @@ fn hit_quote(market: &str, code: &str, kind: InstrumentType) -> Quote {
         fund_class: None,
         nav_date: None,
         constant_unit_price_cents: None,
+        price_source: TENCENT_PRICE_SOURCE,
     }
 }
 

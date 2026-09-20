@@ -155,15 +155,17 @@ pub struct InstrumentListResult {
 }
 
 /// 按代码即拉添加基金的结果（issue #301 / ADR-0038 决策 1）：标的行落库 +
-/// 现价写入状态。名称与东财分类来自东方财富权威数据；未取到净值时仅建标的、
-/// 不落现价（`price_written=false`，IPC 层据此不广播价格失效信号）。
+/// 现价写入状态。名称来自数据源权威数据（新浪/官方披露，#1568 换源）；
+/// 未取到净值时仅建标的、不落现价（`price_written=false`，IPC 层据此不广播
+/// 价格失效信号）。
 #[derive(Debug, Serialize)]
 pub struct AddFundResult {
     pub instrument_id: String,
     pub symbol: String,
-    /// 东财权威名称（已回填标的行）。
+    /// 数据源权威名称（已回填标的行）。
     pub name: String,
-    /// 东财基金分类（如「混合型-灵活」），展示透传，不落库。
+    /// 已弃用：基金分类在替代源无来源，恒返回空串（ADR-0130 决策 8；
+    /// 字段保留为已发布契约的一部分，展示层可不渲染）。
     pub fund_class: String,
     /// 最新单位净值（万分之一元，ADR-0038 价格刻度）；未取到为 None。
     pub nav_cents: Option<i64>,
@@ -174,15 +176,15 @@ pub struct AddFundResult {
 }
 
 /// 「添加投资标的」股票侧（沪/深/港/美股通道）按代码添加的结果（issue #697 /
-/// ADR-0081）：标的行落库 + 识别回显投影——东财权威名称、自动识别的类型
-/// （行情命中 → stock、类型特征 → etf）、精确市场（美股为遍历命中的交易所
+/// ADR-0081）：标的行落库 + 识别回显投影——数据源权威名称、自动识别的类型
+/// （行情命中 → stock、类型特征 → etf）、精确市场（美股为行情自报的交易所
 /// 归属）与最新价（万分之一元）。场外基金通道返回既有 [`AddFundResult`]。
 #[derive(Debug, Serialize)]
 pub struct AddStockInstrumentResult {
     pub instrument_id: String,
     /// 归一化代码（港股左补零至 5 位、美股大写）。
     pub symbol: String,
-    /// 东财权威名称（已回填标的行）。
+    /// 数据源权威名称（已回填标的行）。
     pub name: String,
     /// 自动识别的类型（stock / etf）。
     #[serde(rename = "type")]

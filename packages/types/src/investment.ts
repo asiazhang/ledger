@@ -154,9 +154,9 @@ export interface ManualPriceResult {
 export interface AddFundResult {
   instrument_id: string;
   symbol: string;
-  /** 东财权威名称（已回填标的行） */
+  /** 数据源权威名称（已回填标的行） */
   name: string;
-  /** 东财基金分类（如「混合型-灵活」），展示透传，不落库 */
+  /** 已弃用：基金分类在替代源无来源，恒为空串（ADR-0130 决策 8；字段保留为契约的一部分，展示层可不渲染） */
   fund_class: string;
   /** 最新单位净值（万分之一元，ADR-0038 价格刻度）；未取到为 null */
   nav_cents: number | null;

@@ -257,7 +257,7 @@
     "notFoundHint": "数据源未覆盖该代码？切换「自定义标的」通道手动建档。",
     "cancel": "取消",
     "successStock": "已添加投资标的：{name}（{symbol} · {typeLabel}）{price}",
-    "successFund": "已添加场外基金：{name}（{symbol} · {fundClass}）{nav}",
+    "successFund": "已添加场外基金：{name}（{symbol}{fundClass}）{nav}",
     "price": "最新价 {price}",
     "priceMissing": "暂未取到最新价",
     "nav": "最新净值 {price}（{date}）",

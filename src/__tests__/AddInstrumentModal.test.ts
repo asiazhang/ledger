@@ -33,7 +33,7 @@ const fundHit = {
   instrument_id: "inst-fund",
   symbol: "000001",
   name: "华夏成长混合",
-  fund_class: "混合型-灵活",
+  fund_class: "",
   nav_cents: 13180,
   nav_date: "2026-08-28",
   price_written: true,
@@ -146,7 +146,8 @@ describe("AddInstrumentModal 添加投资标的弹窗（issue #826 / spec #690�
     await flushPromises();
     expect(mockInvoke).toHaveBeenCalledWith("add_fund_by_code", { code: "000001" });
     expect(added[0]).toContain("华夏成长混合");
-    expect(added[0]).toContain("混合型-灵活");
+    // 分类已弃用恒空串（ADR-0130 决策 8）：回执不渲染空分类段（无悬空分隔符）。
+    expect(added[0]).not.toContain("· ）");
     expect(wrapper.emitted("update:show")).toContainEqual([false]);
   });
 

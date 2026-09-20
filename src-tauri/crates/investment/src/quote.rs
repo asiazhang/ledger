@@ -55,7 +55,7 @@ use ledger_infra::error::{AppError, Result};
 pub struct Quote {
     /// 标的代码（场内为归一化形态：港股左补零至 5 位、美股大写）。
     pub code: String,
-    /// 数据源权威名称（基金为东财简称、场内为腾讯行情回显名称）。
+    /// 数据源权威名称（基金为新浪/官方披露简称、场内为腾讯行情回显名称）。
     pub name: String,
     /// 最新价格（万分之一元，0.0001 元，ADR-0038 价格刻度）。
     pub price_cents: Option<i64>,
@@ -69,16 +69,20 @@ pub struct Quote {
     /// detect_kind_hint`，ADR-0081 判据 / ADR-0130 决策 3）：场内通道携带；
     /// 场外基金无类型特征字段，为 None。
     pub kind_hint: Option<InstrumentType>,
-    /// 东财基金分类（如「混合型-灵活」）：场外基金透传展示；场内为 None。
+    /// 基金分类（如「混合型-灵活」）：已弃用，替代源无分类字段（ADR-0130
+    /// 决策 8），场外通道恒缺省——契约投影为空串，不用名称关键词推导；场内为 None。
     pub fund_class: Option<String>,
     /// 净值日期（ISO 日期，兼任净值同步水位，ADR-0038）：场外基金携带；
     /// 场内现价无净值日期语义，为 None。
     pub nav_date: Option<String>,
-    /// 恒定单位价格信号（万分之一元，ADR-0126 决策 3）：数据源自报口径确认
-    /// 该标的价格恒定时携带（搜索索引的类型码 / 档案数据文件的形态）；落库
-    /// 半边据此在建档时回填标的行的恒定单位价格（打标单向，建档一次确认）。
-    /// 信号缺席为 None，不得反推「不是恒定标的」。
+    /// 恒定单位价格信号（万分之一元，ADR-0126 决策 3）：官方披露自报形态确认
+    /// 该标的价格恒定时携带（证监会基金电子披露的货基自报口径，issue #1563 /
+    /// #1568）；信号缺席为 None，不得反推「不是恒定标的」。
     pub constant_unit_price_cents: Option<i64>,
+    /// 价格来源标记（ADR-0130 决策 7）：按实际取数源取值（场内腾讯、场外基金
+    /// 新浪批量面 / 证监会披露兑底），随取数产物携带、落库半边照实落库——
+    /// 同一通道多源取价时来源是取数产物的事实，不是通道常量。
+    pub price_source: &'static str,
 }
 
 impl Quote {
@@ -101,8 +105,8 @@ impl Quote {
 
 /// 落库半边输入（ADR-0103 决策 3 / 4）：通道判定出的字典形态、现价时点与价格
 /// 来源。通道语义留各自通道——现价时点（场外基金 = 净值日期、场内 = 写入时刻）、
-/// 净值日期、市场与币种的强约束都由调用方通道判定后带入；价格来源标记按实际
-/// 取数源取值（ADR-0130 决策 7：场外基金东财、场内腾讯），接缝只执行建档 + 落价。
+/// 净值日期、市场与币种的强约束都由调用方通道判定后带入；价格来源标记随取数
+/// 产物 [`Quote::price_source`] 携带（ADR-0130 决策 7），接缝只执行建档 + 落价。
 pub struct QuoteAdoptionInput<'a> {
     /// 落库类型（场外基金恒 Fund；场内取调用方提交类型 stock / etf）。
     pub kind: InstrumentType,
@@ -114,8 +118,6 @@ pub struct QuoteAdoptionInput<'a> {
     pub priced_at: &'a str,
     /// 净值日期（场外基金携带，兼任净值同步水位）；场内为 None。
     pub nav_date: Option<&'a str>,
-    /// 现价来源标记（ADR-0130 决策 7）：按实际取数源取值，由通道带入。
-    pub price_source: &'a str,
 }
 
 /// 落库半边产出：标的 id + 是否落现价（价格失效信号的广播判定依据，
@@ -158,7 +160,7 @@ pub fn adopt_quote(
             price_cents,
             adoption.currency_code,
             adoption.priced_at,
-            adoption.price_source,
+            quote.price_source,
         )?;
         return Ok(QuoteAdoptionOutcome {
             instrument_id,
@@ -174,7 +176,7 @@ pub fn adopt_quote(
                 currency_code: adoption.currency_code,
                 priced_at: adoption.priced_at,
                 nav_date: adoption.nav_date,
-                source: Some(adoption.price_source),
+                source: Some(quote.price_source),
             },
         )?;
         price_written = true;

@@ -361,18 +361,16 @@ where
     }
 }
 
-#[when(
-    expr = "按代码添加基金 {string} 东财返回名称 {string} 分类 {string} 净值 {float} 净值日期 {string}"
-)]
+#[when(expr = "按代码添加基金 {string} 行情源返回名称 {string} 净值 {float} 净值日期 {string}")]
 fn add_fund_with_stub_detail(
     world: &mut LedgerWorld,
     code: String,
     name: String,
-    fund_class: String,
     nav: f64,
     nav_date: String,
 ) {
-    // 统一报价载荷（行情接入，ADR-0103）：价格日期与净值日期同为净值日期。
+    // 统一报价载荷（行情接入，ADR-0103）：价格日期与净值日期同为净值日期；
+    // 基金分类已弃用恒缺省（ADR-0130 决策 8），桩与生产取数产物同形。
     let quote = Quote {
         code: code.clone(),
         name,
@@ -380,9 +378,10 @@ fn add_fund_with_stub_detail(
         price_date: Some(nav_date.clone()),
         market: None,
         kind_hint: None,
-        fund_class: Some(fund_class),
+        fund_class: None,
         nav_date: Some(nav_date),
         constant_unit_price_cents: None,
+        price_source: ledger_investment::prices::SINA_PRICE_SOURCE,
     };
     run_add_fund(world, code, move |requested: &str, _market: &str| {
         assert_eq!(requested, quote.code, "获取函数应收到请求代码");
@@ -390,13 +389,8 @@ fn add_fund_with_stub_detail(
     });
 }
 
-#[when(expr = "按代码添加基金 {string} 东财返回名称 {string} 分类 {string} 未取到净值")]
-fn add_fund_with_stub_no_nav(
-    world: &mut LedgerWorld,
-    code: String,
-    name: String,
-    fund_class: String,
-) {
+#[when(expr = "按代码添加基金 {string} 行情源返回名称 {string} 未取到净值")]
+fn add_fund_with_stub_no_nav(world: &mut LedgerWorld, code: String, name: String) {
     let quote = Quote {
         code: code.clone(),
         name,
@@ -404,9 +398,10 @@ fn add_fund_with_stub_no_nav(
         price_date: None,
         market: None,
         kind_hint: None,
-        fund_class: Some(fund_class),
+        fund_class: None,
         nav_date: None,
         constant_unit_price_cents: None,
+        price_source: ledger_investment::prices::SINA_PRICE_SOURCE,
     };
     run_add_fund(world, code, move |requested: &str, _market: &str| {
         assert_eq!(requested, quote.code, "获取函数应收到请求代码");
@@ -414,7 +409,7 @@ fn add_fund_with_stub_no_nav(
     });
 }
 
-#[when(expr = "按代码添加基金 {string} 东财查无此码")]
+#[when(expr = "按代码添加基金 {string} 行情源查无此码")]
 fn add_fund_with_stub_not_found(world: &mut LedgerWorld, code: String) {
     let mut fetch = |requested: &str, _market: &str| -> Result<Quote> {
         Err(ledger_infra::error::AppError::Invalid(format!(
@@ -500,6 +495,7 @@ async fn add_instrument_with_stub_quote(
                     fund_class: None,
                     nav_date: None,
                     constant_unit_price_cents: None,
+                    price_source: ledger_investment::prices::TENCENT_PRICE_SOURCE,
                 })
             } else {
                 Err(ledger_infra::error::AppError::codedp(

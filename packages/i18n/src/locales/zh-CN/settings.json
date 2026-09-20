@@ -449,5 +449,11 @@
     "displayCurrencyHint": "本设备的金额展示格式与新表单预选币种，不随同步。",
     "baseCurrencyLoadFailed": "读取本位币基准失败：{msg}",
     "baseCurrencySaveFailed": "保存本位币基准失败：{msg}"
+  },
+  "fxSync": {
+    "title": "同步汇率",
+    "hint": "从欧洲央行参考汇率同步当期与历史汇率；除每日自动同步外，可在此手动触发一次。",
+    "action": "立即同步",
+    "ok": "同步完成：{points} 条汇率数据（覆盖 {earliest} 至 {latest}）"
   }
 }

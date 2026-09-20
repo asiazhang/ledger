@@ -11,7 +11,7 @@
 //!   - [`PriceCommand`]：现价录入裁决域 = 标的的现价行（`market_prices` 每标的
 //!     一行）；手动报价裁决域 = 标的 × ISO 周的周采样行（同周后写覆盖先写，
 //!     裁决键与落库冲突键同粒度，跨周报价互不压制、全部沉淀）。**只增不改**。
-//! - **行情数据不进 op**：东财外拉的现价/净值/权威名称刷新（`sync` 域、按代码
+//! - **行情数据不进 op**：行情源外拉的现价/净值/权威名称刷新（`sync` 域、按代码
 //!   即拉/创建增强的价格落库）是外部事实，各端自行拉取——「同步 ≠ 行情同步」
 //!   （CONTEXT-sync Transport 词条）；本命令面只承载用户产生的数据变化。
 //! - **产出单点**（`record_*`）：投资域各写编排入口（`crud` / `manual_price`）
@@ -126,7 +126,7 @@ impl SyncCommand for ExchangeRateCommand {
     }
 }
 
-/// 用户侧价格同步命令：现价录入与手动报价（东财行情通道不产出本命令）。
+/// 用户侧价格同步命令：现价录入与手动报价（行情通道不产出本命令）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum PriceCommand {

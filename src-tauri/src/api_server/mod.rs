@@ -3,7 +3,7 @@
 //! 写入口/读 helper 一行调用（事务、置脏、信号内化单点，ADR-0073），不含业务语义。
 //!
 //! 分主题模块（自单文件拆出，issue #429）：
-//! - [`state`]：服务器状态（连接 + 发射槽 + 东财基金详情接缝）与 `FromRef` 提取器；
+//! - [`state`]：服务器状态（连接 + 发射槽 + 基金行情接缝）与 `FromRef` 提取器；
 //! - [`error`]：统一错误响应（`AppError` → HTTP 状态/JSON）与错误 OpenAPI schema；
 //! - [`openapi`]：OpenAPI 契约装配（`ApiDoc`）与契约自举端点；
 //! - [`contract`]：紧凑契约方言投影（`GET /api/v1/contract`，同一 ApiDoc 第二投影，issue #839）；
