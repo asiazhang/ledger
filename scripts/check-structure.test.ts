@@ -107,6 +107,30 @@ function populateWhitelistEntries(srcTauri: string): void {
   writeModuleStubs(join(srcTauri, SYNC_ENGINE_SRC_REL), SYNC_ENGINE_MODULES);
 }
 
+/**
+ * 由清单条目生成 crate 根 lib.rs 的 `mod` 声明文本（#1593）：夹具的声明面与手写
+ * 清单同源，投影核对在夹具上天然一致（否则全部骨架夹具会因声明面缺失变红）。
+ * `lib.rs` 条目是 crate 根自身，不自声明（#1595 前 infra 单独登记，由磁盘面核对）。
+ */
+function libRsDeclsFor(modules: readonly { path: string }[]): string {
+  return (
+    modules
+      .map((m) => m.path.replace(/\.rs$/, ""))
+      .filter((k) => k !== "lib")
+      .map((k) => `pub mod ${k};`)
+      .join("\n") + "\n"
+  );
+}
+
+/** infra crate 根 lib.rs 的 test_utils「放行测试」cfg 门（同真实仓库，ADR-0111 决策 5）。 */
+const INFRA_TEST_UTILS_GATE = '#[cfg(any(test, feature = "test-utils"))]\n#[doc(hidden)]\n';
+
+/** 构造 infra crate 根 lib.rs：除 test_utils 外的全部登记模块声明 + 给定的
+ *  test_utils 声明面（负向夹具只改 test_utils 的门，投影核对保持等价）。 */
+function infraLibRsWith(testUtilsDecl: string): string {
+  return libRsDeclsFor(INFRA_MODULES.filter((m) => m.path !== "test_utils.rs")) + testUtilsDecl;
+}
+
 /** 基础设施模块路径判定（覆盖文件按此归位：命中即落 crate，其余落根 src）。 */
 const INFRA_ENTRY_PATHS = new Set(INFRA_MODULES.map((m) => m.path));
 
@@ -1033,11 +1057,9 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   writeFileSync(join(srcTauri, "crates", "infra", "Cargo.toml"), memberManifest);
   writeFileSync(
     join(srcTauri, "crates", "infra", "src", "lib.rs"),
-    overrides.infraLibRs ??
-      "pub fn stub() {}\n" +
-        '#[cfg(any(test, feature = "test-utils"))]\n' +
-        "#[doc(hidden)]\n" +
-        "pub mod test_utils;\n",
+    // 声明面由清单派生（#1593 投影核对）；test_utils 声明带默认「放行测试」门，
+    // 与真实仓库同形。负向夹具（infraLibRs）各自用 infraLibRsWith 重建其余声明。
+    overrides.infraLibRs ?? infraLibRsWith(INFRA_TEST_UTILS_GATE + "pub mod test_utils;\n"),
   );
   writeFileSync(
     join(srcTauri, "crates", "infra", "src", "error.rs"),
@@ -1091,7 +1113,7 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "backup", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(join(srcTauri, "crates", "backup", "src", "lib.rs"), libRsDeclsFor(BACKUP_MODULES));
 
   // 核心交易域 crate（#1092，P2 首个底层业务域 crate）：夹具与真实仓库同形——
   // 成员目录 + 门禁继承 + dev-dependency 测试环。
@@ -1113,7 +1135,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "transaction", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "transaction", "src", "lib.rs"),
+    libRsDeclsFor(TRANSACTION_MODULES),
+  );
 
   // 账户域 crate（#1093，P3 叶子业务域 crate）：夹具与真实仓库同形——成员目录 +
   // 门禁继承 + dev-dependency 测试环。
@@ -1135,7 +1160,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "accounts", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "accounts", "src", "lib.rs"),
+    libRsDeclsFor(ACCOUNTS_MODULES),
+  );
 
   // 分类域 crate（#1094，P3 叶子域）：夹具与真实仓库同形——成员目录 + 门禁继承
   // + dev-dependency 测试环。
@@ -1157,7 +1185,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "categories", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "categories", "src", "lib.rs"),
+    libRsDeclsFor(CATEGORIES_MODULES),
+  );
 
   // 商户域 crate（#1096，参考数据域独立 crate）：夹具与真实仓库同形——成员目录 +
   // 门禁继承 + dev-dependency 测试环。
@@ -1179,7 +1210,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "merchants", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "merchants", "src", "lib.rs"),
+    libRsDeclsFor(MERCHANTS_MODULES),
+  );
 
   // 币种域 crate（#1095，P3 叶子域）：夹具与真实仓库同形——成员目录 + 门禁继承 +
   // dev-dependency 测试环。
@@ -1201,7 +1235,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "currencies", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "currencies", "src", "lib.rs"),
+    libRsDeclsFor(CURRENCIES_MODULES),
+  );
 
   // 保单域 crate（#1100，P3 叶子业务域 crate）：夹具与真实仓库同形——成员目录 +
   // 门禁继承 + dev-dependency 测试环。
@@ -1223,7 +1260,7 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "policy", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(join(srcTauri, "crates", "policy", "src", "lib.rs"), libRsDeclsFor(POLICY_MODULES));
 
   // 定时计划域 crate（#1098，P3 业务域）：夹具与真实仓库同形——成员目录 + 门禁继承
   // + dev-dependency 测试环（真实 crate 生产依赖面另有基础设施/协议/核心交易三行，
@@ -1246,7 +1283,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "scheduled", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "scheduled", "src", "lib.rs"),
+    libRsDeclsFor(SCHEDULED_MODULES),
+  );
 
   // 预算域 crate（#1101，P3 叶子业务域 crate）：夹具与真实仓库同形——成员目录 +
   // 门禁继承 + dev-dependency 测试环。
@@ -1268,7 +1308,7 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "budget", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(join(srcTauri, "crates", "budget", "src", "lib.rs"), libRsDeclsFor(BUDGET_MODULES));
 
   // 实物资产域 crate（#1102，P3 叶子业务域 crate）：夹具与真实仓库同形——成员目录 +
   // 门禁继承 + dev-dependency 测试环。
@@ -1290,7 +1330,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "physical-asset", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "physical-asset", "src", "lib.rs"),
+    libRsDeclsFor(PHYSICAL_ASSET_MODULES),
+  );
 
   // 报表域 crate（#1103，P3 叶子业务域 crate）：夹具与真实仓库同形——成员目录 +
   // 门禁继承 + dev-dependency 测试环。
@@ -1312,7 +1355,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "reports", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "reports", "src", "lib.rs"),
+    libRsDeclsFor(REPORTS_MODULES),
+  );
 
   // 物品域 crate（#1099，P3 叶子域）：夹具与真实仓库同形——成员目录 + 门禁继承 +
   // dev-dependency 测试环。
@@ -1334,7 +1380,7 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "item", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(join(srcTauri, "crates", "item", "src", "lib.rs"), libRsDeclsFor(ITEM_MODULES));
 
   // 投资域 crate（#1097，P3 业务域）：夹具与真实仓库同形——成员目录 + 门禁继承 +
   // dev-dependency 测试环（真实 crate 生产依赖面另有基础设施/协议/核心交易/账户/
@@ -1357,7 +1403,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "investment", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "investment", "src", "lib.rs"),
+    libRsDeclsFor(INVESTMENT_MODULES),
+  );
 
   // 仪表盘域 crate（#1104，P3 叶子业务域 crate）：夹具与真实仓库同形——成员目录 +
   // 门禁继承（真实 crate 无 dev-dependency 环：域内无测试目标，三层测试全在根
@@ -1377,7 +1426,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "dashboard", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "dashboard", "src", "lib.rs"),
+    libRsDeclsFor(DASHBOARD_MODULES),
+  );
 
   // 行情同步域 crate（#1106，P4 首个业务域 crate）：夹具与真实仓库同形——成员目录 +
   // 门禁继承 + dev-dependency 测试环（真实 crate 生产依赖面另有基础设施/同步协议/
@@ -1400,7 +1452,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "market-sync", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "market-sync", "src", "lib.rs"),
+    libRsDeclsFor(MARKET_SYNC_MODULES),
+  );
 
   // 多端同步域 crate（#1107，P4 业务域 crate）：夹具与真实仓库同形——成员目录 +
   // 门禁继承 + dev-dependency 测试环（生产依赖面另有一组基础设施/协议/域依赖，
@@ -1423,7 +1478,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "sync-engine", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "sync-engine", "src", "lib.rs"),
+    libRsDeclsFor(SYNC_ENGINE_MODULES),
+  );
 
   // 同步协议 crate（#1089）：夹具与真实仓库同形——成员目录 + 门禁继承。
   mkdirSync(join(srcTauri, "crates", "sync-protocol", "src"), { recursive: true });
@@ -1441,7 +1499,10 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "",
       ].join("\n"),
   );
-  writeFileSync(join(srcTauri, "crates", "sync-protocol", "src", "lib.rs"), "pub fn stub() {}\n");
+  writeFileSync(
+    join(srcTauri, "crates", "sync-protocol", "src", "lib.rs"),
+    libRsDeclsFor(PROTOCOL_MODULES),
+  );
 
   if (overrides.orphanCrate) {
     mkdirSync(join(srcTauri, "crates", overrides.orphanCrate, "src"), { recursive: true });
@@ -2568,7 +2629,7 @@ describe("check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
 
   it("infra lib.rs 摘掉 test_utils cfg 门 → 红（删除 cfg 门即变红）", () => {
     const args = makeCrateFixture({
-      infraLibRs: "pub fn stub() {}\n#[doc(hidden)]\npub mod test_utils;\n",
+      infraLibRs: infraLibRsWith("pub fn stub() {}\n#[doc(hidden)]\npub mod test_utils;\n"),
     });
     const r = run(args);
     expect(r.status).toBe(1);
@@ -2578,7 +2639,9 @@ describe("check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
 
   it("模块声明前只有普通注释 → 仍红（注释不构成门）", () => {
     const args = makeCrateFixture({
-      infraLibRs: "pub fn stub() {}\n// 仅注释说明，不构成门\npub mod test_utils;\n",
+      infraLibRs: infraLibRsWith(
+        "pub fn stub() {}\n// 仅注释说明，不构成门\npub mod test_utils;\n",
+      ),
     });
     const r = run(args);
     expect(r.status).toBe(1);
@@ -2587,8 +2650,9 @@ describe("check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
 
   it("cfg 门写在 doc(hidden) 之前 → 绿（属性顺序不敏感）", () => {
     const args = makeCrateFixture({
-      infraLibRs:
+      infraLibRs: infraLibRsWith(
         'pub fn stub() {}\n#[doc(hidden)]\n#[cfg(any(test, feature = "test-utils"))]\npub mod test_utils;\n',
+      ),
     });
     const r = run(args);
     expect(r.status).toBe(0);
@@ -2596,14 +2660,15 @@ describe("check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
 
   it("rustfmt 拆行的多行 cfg 门 → 绿（属性链解析读到配对闭合为止，#1469）", () => {
     const args = makeCrateFixture({
-      infraLibRs:
+      infraLibRs: infraLibRsWith(
         "pub fn stub() {}\n" +
-        "#[cfg(any(\n" +
-        "    test,\n" +
-        '    feature = "test-utils",\n' +
-        "))]\n" +
-        "#[doc(hidden)]\n" +
-        "pub mod test_utils;\n",
+          "#[cfg(any(\n" +
+          "    test,\n" +
+          '    feature = "test-utils",\n' +
+          "))]\n" +
+          "#[doc(hidden)]\n" +
+          "pub mod test_utils;\n",
+      ),
     });
     const r = run(args);
     expect(r.status).toBe(0);
@@ -2611,13 +2676,14 @@ describe("check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
 
   it("多行 cfg 门内注释提及 not( 不误判 → 绿（属性全文掩码注释后判定，#1469）", () => {
     const args = makeCrateFixture({
-      infraLibRs:
+      infraLibRs: infraLibRsWith(
         "pub fn stub() {}\n" +
-        "#[cfg(any(\n" +
-        "    // 反向门 not(test) 形态已废弃，改为 feature 放行\n" +
-        '    feature = "test-utils",\n' +
-        "))]\n" +
-        "pub mod test_utils;\n",
+          "#[cfg(any(\n" +
+          "    // 反向门 not(test) 形态已废弃，改为 feature 放行\n" +
+          '    feature = "test-utils",\n' +
+          "))]\n" +
+          "pub mod test_utils;\n",
+      ),
     });
     const r = run(args);
     expect(r.status).toBe(0);
@@ -2625,7 +2691,9 @@ describe("check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
 
   it("多行反向门 #[cfg(not(…))] → 仍红（多行解析不弱化反向门判定，#1469）", () => {
     const args = makeCrateFixture({
-      infraLibRs: "pub fn stub() {}\n#[cfg(not(\n    test,\n))]\npub mod test_utils;\n",
+      infraLibRs: infraLibRsWith(
+        "pub fn stub() {}\n#[cfg(not(\n    test,\n))]\npub mod test_utils;\n",
+      ),
     });
     const r = run(args);
     expect(r.status).toBe(1);
@@ -2645,7 +2713,7 @@ describe("check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
 
   it("反向门 #[cfg(not(test))] → 红（模块只留给生产）", () => {
     const args = makeCrateFixture({
-      infraLibRs: "pub fn stub() {}\n#[cfg(not(test))]\npub mod test_utils;\n",
+      infraLibRs: infraLibRsWith("pub fn stub() {}\n#[cfg(not(test))]\npub mod test_utils;\n"),
     });
     const r = run(args);
     expect(r.status).toBe(1);
@@ -2655,7 +2723,9 @@ describe("check-structure test_utils 生产编译门（ADR-0111 决策 5 / issue
 
   it("与测试无关的 cfg 门 → 红（等价于无门）", () => {
     const args = makeCrateFixture({
-      infraLibRs: "pub fn stub() {}\n#[cfg(debug_assertions)]\npub mod test_utils;\n",
+      infraLibRs: infraLibRsWith(
+        "pub fn stub() {}\n#[cfg(debug_assertions)]\npub mod test_utils;\n",
+      ),
     });
     const r = run(args);
     expect(r.status).toBe(1);
@@ -3028,7 +3098,10 @@ describe("check-structure TRANSACTION_MODULES 双向全等 + 区级层序（ADR-
     const args = makeCrateFixture();
     writeFileSync(
       join(args[1], TRANSACTION_SRC_REL, "lib.rs"),
-      "pub use crate::write::writer::NormalizedRow;\npub use crate::read::TransactionView;\npub fn stub() {}\n",
+      // 声明面与清单同源（#1593 投影核对），跨区再导出额外附上——再导出不是 mod
+      // 声明，不参与区级判向，也不入 expected。
+      libRsDeclsFor(TRANSACTION_MODULES) +
+        "pub use crate::write::writer::NormalizedRow;\npub use crate::read::TransactionView;\n",
     );
     const r = run(args);
     expect(r.status).toBe(0);
@@ -3206,18 +3279,24 @@ describe("check-structure 模块清单双向全等推广到全部 crate 清单�
     expect(r.status).toBe(0);
   });
 
-  it("crate 根 lib.rs 免登清单（infra 除外）：声明与再导出面不触发未登记", () => {
+  it("crate 根 lib.rs 免登清单（infra 除外）：lib.rs 内容不入磁盘枚举，声明漂移改由投影核对报", () => {
     const args = makeCrateFixture();
     for (const spec of CRATE_MODULE_LISTS) {
       if (spec.excludeCrateRoot) {
         writeFileSync(
           join(args[1], spec.srcRel, "lib.rs"),
-          "pub mod declared_module_not_on_disk;\npub fn stub() {}\n",
+          "pub mod declared_module_not_on_disk;\n",
         );
       }
     }
     const r = run(args);
-    expect(r.status).toBe(0);
+    expect(r.status).toBe(1);
+    // 磁盘枚举面（双向全等）不把 lib.rs 内容当磁盘模块：无「<清单> 未登记模块」报文
+    for (const spec of CRATE_MODULE_LISTS) {
+      expect(r.output).not.toContain(`${spec.label} 未登记模块`);
+    }
+    // 声明漂移由投影核对报（#1593）
+    expect(r.output).toContain("模块清单漂移（投影核对）");
   });
 
   it("真实仓库默认通过：全部 crate 清单双向全等入摘要（#1448 推广）", () => {
@@ -3234,6 +3313,137 @@ describe("check-structure 模块清单双向全等推广到全部 crate 清单�
     // （否则成员登记红）而漏扩 CRATE_MODULE_LISTS → 本断言红 + 守门脚本
     // checkModuleListRegistry 红，两面同锁（ADR-0087 删除即变红）。
     expect(CRATE_MODULE_LISTS.length).toBe(CRATES.length - 1); // -1 根包（壳层，无清单）
+  });
+});
+
+describe("check-structure 模块清单投影核对（#1593 expand：派生与手写并行核对）", () => {
+  // 合成输入夹具（#1593 的夹具形态）：只改 crate 根 lib.rs 的声明文本与磁盘布局，
+  // 不再改手写清单字面量——手写清单本票不删（contract 票 #1595 退役）。
+  const accountsDecls = (): string => libRsDeclsFor(ACCOUNTS_MODULES);
+
+  /** 覆盖 accounts crate 根 lib.rs 的声明面（其余 crate 保持与清单同形）。 */
+  function withAccountsLibRs(source: string): string[] {
+    const args = makeCrateFixture();
+    writeFileSync(join(args[1], ACCOUNTS_SRC_REL, "lib.rs"), source);
+    return args;
+  }
+
+  it("真实仓库默认通过：派生器认得出仓库实际形态（T2-3 判据①）", () => {
+    // 真实仓库自检绿是唯一能发现「派生器认不出仓库实际形态」的测试（exit 0）；
+    // 摘要里的「模块清单投影核对」是无条件 literals，不作断言（删接线不变红）。
+    const r = run([]);
+    expect(r.status).toBe(0);
+  });
+
+  it("手写清单多出未声明模块（lib.rs 少一条声明）→ 红", () => {
+    const decls = ACCOUNTS_MODULES.filter((m) => m.path !== "model.rs");
+    const r = run(withAccountsLibRs(libRsDeclsFor(decls)));
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("模块清单漂移（投影核对）");
+    expect(r.output).toContain("手写清单登记但 lib.rs 未声明");
+    expect(r.output).toContain("model");
+  });
+
+  it("lib.rs 声明未登记模块（手写清单少一条）→ 红", () => {
+    const r = run(withAccountsLibRs(accountsDecls() + "pub mod extra;\n"));
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("模块清单漂移（投影核对）");
+    expect(r.output).toContain("lib.rs 已声明但手写清单未登记");
+    expect(r.output).toContain("extra");
+  });
+
+  it("磁盘侧多出孤儿文件 → 红（双向全等），投影核对不受影响", () => {
+    const args = makeCrateFixture();
+    writeFileSync(join(args[1], ACCOUNTS_SRC_REL, "orphan.rs"), STUB);
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("ACCOUNTS_MODULES 未登记模块");
+    expect(r.output).toContain("orphan.rs");
+    // 磁盘孤儿不改声明面与手写清单的关系，投影核对不参与本红
+    expect(r.output).not.toContain("模块清单漂移（投影核对）");
+  });
+
+  it("crate 根 lib.rs 缺失 → fail loud（无法派生 expected）", () => {
+    const args = makeCrateFixture();
+    rmSync(join(args[1], ACCOUNTS_SRC_REL, "lib.rs"));
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("找不到 crate 根声明文件");
+    expect(r.output).toContain("crates/accounts/src/lib.rs");
+  });
+
+  it("形状判定：#[cfg(test)] mod tests; 豁免（ADR-0056 决策 5）→ 绿", () => {
+    const r = run(withAccountsLibRs(accountsDecls() + "#[cfg(test)]\nmod tests;\n"));
+    expect(r.status).toBe(0);
+  });
+
+  it("形状判定：豁免按目标模块名 tests 判，#[cfg(test)] mod helper; 仍计入 expected → 红", () => {
+    // 与磁盘枚举 isTestFile 同规：只有 tests.rs / tests/ 是测试豁免形态，
+    // 带 cfg(test) 门但名字非 tests 的模块仍是登记面的一员。
+    const r = run(withAccountsLibRs(accountsDecls() + "#[cfg(test)]\nmod helper;\n"));
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("lib.rs 已声明但手写清单未登记");
+    expect(r.output).toContain("helper");
+  });
+
+  it("形状判定：非 pub mod 与 #[allow(dead_code)] 计入 expected → 绿", () => {
+    const source =
+      "mod balance;\n" +
+      "#[allow(dead_code)]\nmod command;\n" +
+      "#[allow(dead_code)] mod core;\n" +
+      "pub(crate) mod model;\n";
+    const r = run(withAccountsLibRs(source));
+    expect(r.status).toBe(0);
+  });
+
+  it("形状判定：feature 门控 mod（含 rustfmt 拆行多行 cfg）计入 expected → 绿", () => {
+    const source =
+      '#[cfg(feature = "x")]\nmod balance;\n' +
+      '#[cfg(any(\n    test,\n    feature = "test-utils",\n))]\n#[doc(hidden)]\nmod command;\n' +
+      "mod core;\nmod model;\n";
+    const r = run(withAccountsLibRs(source));
+    expect(r.status).toBe(0);
+  });
+
+  it("形状判定：注释与字符串中的 mod 不误报（掩码边界）→ 绿", () => {
+    const source = "// mod phantom;\n" + 'const DOC: &str = "mod phantom;";\n' + accountsDecls();
+    const r = run(withAccountsLibRs(source));
+    expect(r.status).toBe(0);
+  });
+
+  it("形状判定：raw identifier 声明（mod r#type;）同样计入 expected → 红", () => {
+    const r = run(withAccountsLibRs(accountsDecls() + "pub mod r#type;\n"));
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("lib.rs 已声明但手写清单未登记");
+    expect(r.output).toContain("未登记 type（");
+  });
+
+  it("形状判定：#[path] mod → fail loud（改写模块↔文件映射）", () => {
+    const source =
+      '#[path = "balance_impl.rs"]\nmod balance;\nmod command;\nmod core;\nmod model;\n';
+    const r = run(withAccountsLibRs(source));
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("认不出的 lib.rs 声明形状");
+    expect(r.output).toContain("path");
+  });
+
+  it("形状判定：include! → fail loud（展开面文本不可达）", () => {
+    const r = run(withAccountsLibRs('include!("generated.rs");\n' + accountsDecls()));
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("认不出的 lib.rs 声明形状");
+    expect(r.output).toContain("include!");
+  });
+
+  it("形状判定：内联模块块与认不出的属性链 → fail loud", () => {
+    const inline = run(withAccountsLibRs("mod balance { }\nmod command;\nmod core;\nmod model;\n"));
+    expect(inline.status).toBe(1);
+    expect(inline.output).toContain("内联模块块");
+    const unknown = run(
+      withAccountsLibRs("#[some_proc_macro]\nmod balance;\nmod command;\nmod core;\nmod model;\n"),
+    );
+    expect(unknown.status).toBe(1);
+    expect(unknown.output).toContain("认不出的 lib.rs 声明形状");
+    expect(unknown.output).toContain("some_proc_macro");
   });
 });
 

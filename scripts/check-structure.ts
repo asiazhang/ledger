@@ -69,6 +69,18 @@
 // sync-engine（#1107）三面（其余清单磁盘上多出的生产模块曾静默漏过结构守门）；
 // 三处专用核对由此合流为通用核对函数，登记面收敛 CRATE_MODULE_LISTS 单表——
 // 模块级扫描与双向全等两面共用，新 crate 不可能只接一半。
+// 模块清单投影核对（#1593，expand 半：#1591 定案的并行核对期）：模块清单 expected
+// 由各 crate 根 lib.rs 的 `mod` 声明文本派生，与手写清单集合等价断言——任一侧
+// 单独漂移即红（手写侧多/少一条、lib.rs 声明多/少一条、磁盘多出孤儿文件各自即红）；
+// 底层判据「事实有权威源就投影」住 ADR-0056 决策 4 修订注记，手写清单本票不删
+//（contract 票 #1595 退役）。形状判定表（ADR-0113 决策 7 / ADR-0111 决策 5 修订
+// 注记）：`pub mod x;` / `mod x;` / `pub(crate) mod x;` 与可见性前置的声明，带
+// lint 属性（`allow`/`warn`/`deny`/`forbid`/`expect`）、doc 属性或 `#[cfg]` /
+// `#[cfg_attr]` 门控者一律计入 expected；`#[cfg(test)] mod tests;` 豁免（ADR-0056
+// 决策 5，按目标模块名 tests 判，与磁盘枚举的 isTestFile 同规）；`#[path]`（含
+// `cfg_attr` 夹带 path）/ `include!` / 内联模块块 `mod x { … }` / 上述之外认不出的
+// 属性链 fail loud（报文给如何登记的指引），不静默跳过。crate 根 lib.rs 自身
+// 不是 mod 声明，不入 expected（infra 的 lib.rs 清单条目由磁盘枚举面单独核对）。
 // crate 边界核对（spec #1086 / issue #1087 门禁前置）：模块路径白名单之上再加
 // crate 级核对——CRATES 是 workspace 成员、分层与允许依赖方向的唯一事实源；
 // 成员目录（crates/*）与 CRATES 双向全等（新 crate 未登记即红）；每个成员须写
@@ -2851,9 +2863,177 @@ function checkModuleListEquality(spec: CrateModuleListSpec, srcTauriDir: string)
   return problems;
 }
 
+/**
+ * lib.rs `mod` 声明扫描（#1593）：模块清单投影的权威源，形状判定表见文件头。
+ * 注释与字符串掩码后匹配声明；`#[path]` / `include!` / 内联模块块 / 认不出的
+ * 属性链记入 violations（调用方 fail loud），不静默跳过。
+ */
+interface ModDeclScan {
+  /** 计入 expected 的模块名（去 .rs 后缀的模块键），按声明出现顺序 */
+  modules: string[];
+  /** 认不出的形状（行号 + 形状描述），调用方 fail loud */
+  violations: { line: number; shape: string }[];
+}
+
+/** 属性链允许的形状：cfg 门、lint 属性与 doc 属性不改变模块↔文件映射。
+ *  `#[path]` 改写映射（单列 fail loud），`cfg_attr` 夹带 path 等价。 */
+function isRecognizedModAttr(attr: string): boolean {
+  if (!/^#\[\s*(?:cfg|cfg_attr|allow|warn|deny|forbid|expect|doc)\b/.test(attr)) return false;
+  if (/^#\[\s*cfg_attr\b/.test(attr) && /\bpath\b/.test(attr)) return false;
+  return true;
+}
+
+/** 声明（idx 处 `mod` 关键字）前的属性链全文，自近及远收集：跳过空白与已掩码的
+ *  注释，逐条按配对括号取回 `#[…]`，遇到非属性代码即止。 */
+function attributesBefore(text: string, idx: number): string[] {
+  const attrs: string[] = [];
+  let i = idx - 1;
+  while (i >= 0) {
+    while (i >= 0 && /\s/.test(text[i])) i--;
+    if (i < 0 || text[i] !== "]") break;
+    let depth = 0;
+    let open = -1;
+    for (let j = i; j >= 0; j--) {
+      if (text[j] === "]") depth++;
+      else if (text[j] === "[") {
+        depth--;
+        if (depth === 0) {
+          open = j;
+          break;
+        }
+      }
+    }
+    if (open <= 0 || text[open - 1] !== "#") break;
+    attrs.unshift(text.slice(open - 1, i + 1));
+    i = open - 2;
+  }
+  return attrs;
+}
+
+/** 去掉字符串开头连续的属性块（`#[…]`，含同行内联），返回其余文本。 */
+function stripLeadingAttrs(text: string): string {
+  let s = text;
+  while (/^\s*#\[/.test(s)) {
+    const open = s.indexOf("[");
+    let depth = 0;
+    let end = -1;
+    for (let i = open; i < s.length; i++) {
+      if (s[i] === "[") depth++;
+      else if (s[i] === "]") {
+        depth--;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    if (end === -1) break;
+    s = s.slice(end + 1);
+  }
+  return s;
+}
+
+function scanModDeclarations(source: string): ModDeclScan {
+  const keep = maskNonCode(source, true);
+  const code = maskNonCode(source, false);
+  const lineOf = (idx: number): number => (code.slice(0, idx).match(/\n/g)?.length ?? 0) + 1;
+  const violations: { line: number; shape: string }[] = [];
+  const modules: string[] = [];
+
+  // include! 展开出的模块面对文本扫描不可达：fail loud，不静默跳过。
+  for (const m of code.matchAll(/\binclude\s*!/g)) {
+    violations.push({ line: lineOf(m.index ?? 0), shape: "include!(…)" });
+  }
+
+  const declRe = /\bmod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*([;{])/g;
+  for (const m of code.matchAll(declRe)) {
+    const idx = m.index ?? 0;
+    const line = lineOf(idx);
+    const name = m[1];
+    const lineStart = code.lastIndexOf("\n", idx - 1) + 1;
+    const prefix = code.slice(lineStart, idx);
+    if (!/^\s*(?:pub(?:\s*\([^)]*\))?\s+)?$/.test(stripLeadingAttrs(prefix))) {
+      violations.push({
+        line,
+        shape: `认不出的声明前缀：${source.slice(lineStart, idx + m[0].length).trim()}`,
+      });
+      continue;
+    }
+    if (m[2] === "{") {
+      violations.push({ line, shape: `内联模块块 mod ${name} { … }` });
+      continue;
+    }
+    const attrs = attributesBefore(keep, idx);
+    const path = attrs.find((a) => /^#\[\s*path\b/.test(a));
+    if (path) {
+      violations.push({ line, shape: `${path} mod ${name};` });
+      continue;
+    }
+    const unknown = attrs.find((a) => !isRecognizedModAttr(a));
+    if (unknown) {
+      violations.push({ line, shape: `${unknown} mod ${name};` });
+      continue;
+    }
+    if (name === "tests") continue; // 测试豁免（ADR-0056 决策 5，与 isTestFile 同规）
+    modules.push(name);
+  }
+  return { modules, violations };
+}
+
 /** 清单条目路径 → 模块键（去 .rs 后缀：flat 文件条目 amount.rs 与目录条目 amount 同键）。 */
-function transactionModuleKey(path: string): string {
+function moduleKey(path: string): string {
   return path.replace(/\.rs$/, "");
+}
+
+/**
+ * 模块清单投影核对（#1593，expand 半）：expected 由 crate 根 lib.rs 的 `mod`
+ * 声明派生，与手写清单集合等价断言——lib.rs 已声明但清单未登记、或清单登记但
+ * lib.rs 未声明，任一方向即红。crate 根 lib.rs 自身不是 mod 声明（infra 的
+ * `lib.rs` 清单条目由磁盘枚举面核对），故手写侧比较面去掉 `lib` 键。
+ */
+function checkModuleListProjection(spec: CrateModuleListSpec, srcTauriDir: string): string[] {
+  const problems: string[] = [];
+  const srcDir = join(srcTauriDir, spec.srcRel);
+  if (!existsSync(srcDir)) return problems; // 清单循环逐条报「路径不存在」
+  const libRsRel = `${spec.srcRel}/lib.rs`;
+  const libRs = join(srcTauriDir, libRsRel);
+  if (!existsSync(libRs)) {
+    problems.push(
+      `✗ 找不到 crate 根声明文件：${libRsRel}\n` +
+        "    模块清单 expected 由 crate 根 lib.rs 的 mod 声明投影（ADR-0056 决策 4 / #1593）：" +
+        "声明文件缺失即无法派生 expected，fail loud",
+    );
+    return problems;
+  }
+  const scan = scanModDeclarations(readFileSync(libRs, "utf8"));
+  for (const v of scan.violations) {
+    problems.push(
+      `✗ 认不出的 lib.rs 声明形状：${libRsRel}:${v.line}（${v.shape}）\n` +
+        "    mod 扫描形状判定表（ADR-0056 决策 4 / ADR-0113 决策 7 / ADR-0111 决策 5 修订注记 / #1593）：" +
+        "lint 属性（allow/warn/deny/forbid/expect）、doc 属性与 #[cfg] / #[cfg_attr] 门控 mod 计入 expected；" +
+        "#[cfg(test)] mod tests; 豁免；#[path]（含 cfg_attr 夹带 path）/ include! / 内联模块块 / 上述之外认不出的属性链 fail loud——" +
+        "按上表改写声明，或把新形态登记进形状判定表",
+    );
+  }
+  const derived = new Set(scan.modules);
+  const hand = new Set(spec.modules.map((m) => moduleKey(m.path)).filter((k) => k !== "lib"));
+  const declaredOnly = [...derived].filter((k) => !hand.has(k)).sort();
+  const registeredOnly = [...hand].filter((k) => !derived.has(k)).sort();
+  if (declaredOnly.length > 0) {
+    problems.push(
+      `✗ 模块清单漂移（投影核对）：lib.rs 已声明但手写清单未登记 ${declaredOnly.join(" / ")}（${libRsRel}）\n` +
+        "    事实有权威源就投影（ADR-0056 决策 4 / #1593）：expected 由 crate 根 lib.rs 的 mod 声明派生，" +
+        `手写清单须与之等价——新增模块须同时落 lib.rs 声明与 ${spec.label} 条目（#1595 后清单整体退役）`,
+    );
+  }
+  if (registeredOnly.length > 0) {
+    problems.push(
+      `✗ 模块清单漂移（投影核对）：手写清单登记但 lib.rs 未声明 ${registeredOnly.join(" / ")}（${libRsRel}）\n` +
+        "    事实有权威源就投影（ADR-0056 决策 4 / #1593）：模块删除或改名后 lib.rs 声明与清单须同步——" +
+        `${spec.label} 条目不得先于声明存在，漏删即与声明面分裂`,
+    );
+  }
+  return problems;
 }
 
 /** 文件所属模块条目：精确匹配优先，其次目录前缀（目录型条目覆盖其全部子目录）。 */
@@ -2929,11 +3109,11 @@ function checkTransactionZoneDirection(srcTauriDir: string): string[] {
     if (!owner) continue;
     const source = readFileSync(f.abs, "utf8");
     for (const hit of scanTransactionZoneRefs(source)) {
-      const target = TRANSACTION_MODULES.find((m) => transactionModuleKey(m.path) === hit.captured);
+      const target = TRANSACTION_MODULES.find((m) => moduleKey(m.path) === hit.captured);
       if (!target || target.zone === owner.zone) continue;
       if (TRANSACTION_ZONE_RANK[owner.zone] > TRANSACTION_ZONE_RANK[target.zone]) continue;
       const allowed = TRANSACTION_ZONE_ALLOWED_EDGES.some(
-        (e) => e.file === owner.path && e.target === transactionModuleKey(target.path),
+        (e) => e.file === owner.path && e.target === moduleKey(target.path),
       );
       if (allowed) continue;
       problems.push(
@@ -3194,6 +3374,7 @@ function main(): void {
   // 反边）之外即红。
   for (const spec of CRATE_MODULE_LISTS) {
     problems.push(...checkModuleListEquality(spec, srcTauriDir));
+    problems.push(...checkModuleListProjection(spec, srcTauriDir));
   }
   problems.push(...checkTransactionZoneDirection(srcTauriDir));
 
@@ -3223,6 +3404,7 @@ function main(): void {
       `· 登记面全等：CRATES 成员 ↔ CRATE_MODULE_LISTS 双向全等（#1448）` +
       `· crate 内块间反向依赖零未认许引用（认许边 ${INFRA_BLOCK_ALLOWED_EDGES.length} 条，ADR-0111 决策 4 / #1134）` +
       `· 模块清单双向全等推广至全部 ${CRATE_MODULE_LISTS.length} 份 crate 清单（磁盘模块全部登记，#1134/#1181/#1107 起三面、#1448 推广）` +
+      `· 模块清单投影核对：expected 由 crate 根 lib.rs 的 mod 声明派生，手写清单与派生集合等价（${CRATE_MODULE_LISTS.length} 份，#1593 expand）` +
       `· 交易域区级层序零未认许反向引用（写读 → 接缝 → 共享语义，认许边 ${TRANSACTION_ZONE_ALLOWED_EDGES.length} 条，ADR-0113 决策 3 / #1181）` +
       `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）` +
       `· 投资五节锚点生产编译门（cfg 门，#1185）` +
