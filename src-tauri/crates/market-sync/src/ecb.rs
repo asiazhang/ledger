@@ -37,13 +37,14 @@ pub(super) const INCREMENTAL_90D_PATH: &str = "/stats/eurofxref/eurofxref-hist-9
 const FULL_HISTORY_LABEL: &str = "ECB 全量历史";
 const INCREMENTAL_90D_LABEL: &str = "ECB 90 天增量";
 
-/// 非预期形状的统一码化错误（空文件 / 非 XML / 截断共用一码，`label` 参数区分
-/// 是哪个文件，供前端按码本地化）。
-fn malformed_source(label: &str) -> AppError {
-    AppError::codedp(
+/// 非预期形状的统一码化错误（空文件 / 非 XML / 截断 / 零可用日共用一码）。
+/// 具体是哪个文件、什么形状，由日志 ctx（`fetch_ecb:{label}`）与解析日志定位；
+/// 两个入口的用户补救动作相同（稍后重试），不区分错误参数（ADR-0050：params
+/// 须 locale 无关，中文数据集名不进 params）。
+fn malformed_source() -> AppError {
+    AppError::coded(
         "fx.source-malformed",
-        format!("汇率数据源响应无法解析（{label}）"),
-        &[label],
+        "汇率数据源返回了无法解析的内容，请稍后重试同步",
     )
 }
 
@@ -116,7 +117,7 @@ async fn fetch_ecb_document(
         None,
     )
     .await?;
-    parse_ecb_rates(&text, label)
+    parse_ecb_rates(&text)
 }
 
 /// 解析 ECB 参考汇率 XML（gesmes:Envelope → Cube → 按日 Cube@time → 每币种
@@ -126,9 +127,9 @@ async fn fetch_ecb_document(
 /// （rate 非数值 / ≤ 0）与坏日（time 缺失或不可解析）按「该腿 / 该日缺失」跳过
 /// ——单点损坏不中断整体。文件级非预期形状（空 / 非 XML / 截断 / 零可用日）报
 /// [`malformed_source`] 码化错误。
-pub(super) fn parse_ecb_rates(xml: &str, label: &str) -> Result<Vec<EcbDayRates>> {
+pub(super) fn parse_ecb_rates(xml: &str) -> Result<Vec<EcbDayRates>> {
     if xml.trim().is_empty() {
-        return Err(malformed_source(label));
+        return Err(malformed_source());
     }
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
@@ -140,21 +141,24 @@ pub(super) fn parse_ecb_rates(xml: &str, label: &str) -> Result<Vec<EcbDayRates>
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 depth += 1;
-                on_cube(&e, &mut days, &mut current, label)?;
+                on_cube(&e, &mut days, &mut current)?;
             }
             Ok(Event::Empty(e)) => {
-                on_cube(&e, &mut days, &mut current, label)?;
+                on_cube(&e, &mut days, &mut current)?;
             }
             Ok(Event::End(_)) => depth = depth.saturating_sub(1),
             Ok(Event::Eof) => break,
             Ok(_) => {}
-            Err(_) => return Err(malformed_source(label)),
+            Err(e) => {
+                tracing::warn!(error = %e, "ECB 参考汇率报文解析失败");
+                return Err(malformed_source());
+            }
         }
     }
     // 截断文档（元素未闭合，读到 EOF 仍在开标签内）按非预期形状报错；
     // 零可用日（如被拦截页恰好是合法 XML）同样不静默产出空序列。
     if depth != 0 || days.is_empty() {
-        return Err(malformed_source(label));
+        return Err(malformed_source());
     }
     Ok(days
         .into_iter()
@@ -168,7 +172,6 @@ fn on_cube(
     e: &quick_xml::events::BytesStart<'_>,
     days: &mut BTreeMap<NaiveDate, BTreeMap<String, f64>>,
     current: &mut Option<NaiveDate>,
-    label: &str,
 ) -> Result<()> {
     if e.name().local_name().as_ref() != "Cube" {
         return Ok(());
@@ -177,7 +180,7 @@ fn on_cube(
     let mut currency: Option<String> = None;
     let mut rate: Option<f64> = None;
     for attr in e.attributes() {
-        let attr = attr.map_err(|_| malformed_source(label))?;
+        let attr = attr.map_err(|_| malformed_source())?;
         match attr.key.local_name().as_ref() {
             "time" => time_raw = Some(attr.value.trim().to_owned()),
             "currency" => currency = Some(attr.value.trim().to_owned()),
@@ -253,8 +256,6 @@ mod tests {
 <Cube time="2026-09-17"><Cube currency="USD" rate="1.1481"/><Cube currency="HKD" rate="9.0071"/><Cube currency="CNY" rate="7.7009"/></Cube>
 </Cube></gesmes:Envelope>"#;
 
-    const LABEL: &str = "ECB 全量历史";
-
     fn assert_malformed(err: AppError) {
         assert!(
             err.is_code("fx.source-malformed"),
@@ -265,7 +266,7 @@ mod tests {
     /// 真实形状解析钉值：日期升序化、腿值原样。
     #[test]
     fn parse_pins_real_envelope_shape() {
-        let days = parse_ecb_rates(SAMPLE_XML, LABEL).unwrap();
+        let days = parse_ecb_rates(SAMPLE_XML).unwrap();
         assert_eq!(
             days.iter().map(|d| d.date).collect::<Vec<_>>(),
             vec![
@@ -285,7 +286,7 @@ mod tests {
     fn parse_accepts_plain_cube_without_namespaces() {
         let xml =
             r#"<Cube><Cube time="2026-09-18"><Cube currency="CNY" rate="7.6755"/></Cube></Cube>"#;
-        let days = parse_ecb_rates(xml, LABEL).unwrap();
+        let days = parse_ecb_rates(xml).unwrap();
         assert_eq!(days.len(), 1);
         assert_eq!(days[0].rates.get("CNY"), Some(&7.6755));
     }
@@ -294,7 +295,7 @@ mod tests {
     #[test]
     fn parse_rejects_empty_file() {
         for empty in ["", "   \n\t"] {
-            assert_malformed(parse_ecb_rates(empty, LABEL).unwrap_err());
+            assert_malformed(parse_ecb_rates(empty).unwrap_err());
         }
     }
 
@@ -306,7 +307,7 @@ mod tests {
             "<<>>",
             "<html><body>blocked</body></html>",
         ] {
-            assert_malformed(parse_ecb_rates(garbage, LABEL).unwrap_err());
+            assert_malformed(parse_ecb_rates(garbage).unwrap_err());
         }
     }
 
@@ -314,9 +315,9 @@ mod tests {
     #[test]
     fn parse_rejects_truncated_document() {
         let cut_mid_element = &SAMPLE_XML[..SAMPLE_XML.len() - 40];
-        assert_malformed(parse_ecb_rates(cut_mid_element, LABEL).unwrap_err());
+        assert_malformed(parse_ecb_rates(cut_mid_element).unwrap_err());
         let missing_envelope_close = SAMPLE_XML.strip_suffix("</gesmes:Envelope>").unwrap();
-        assert_malformed(parse_ecb_rates(missing_envelope_close, LABEL).unwrap_err());
+        assert_malformed(parse_ecb_rates(missing_envelope_close).unwrap_err());
     }
 
     /// 个别坏腿（rate 非数值 / ≤ 0）与坏日（time 不可解析）跳过，其余照常解析。
@@ -326,7 +327,7 @@ mod tests {
 <Cube time="2026-13-99"><Cube currency="CNY" rate="7.6755"/></Cube>
 <Cube time="2026-09-18"><Cube currency="BAD" rate="n/a"/><Cube currency="ZERO" rate="0"/><Cube currency="NEG" rate="-1.5"/><Cube currency="CNY" rate="7.6755"/></Cube>
 </Cube>"#;
-        let days = parse_ecb_rates(xml, LABEL).unwrap();
+        let days = parse_ecb_rates(xml).unwrap();
         assert_eq!(days.len(), 1, "坏日期的日条目跳过");
         let day = &days[0];
         assert_eq!(day.rates.len(), 1, "坏腿跳过，只留好腿");
@@ -336,7 +337,7 @@ mod tests {
     /// EUR 作基准腿的专门断言：双非 EUR 对取两腿之商，EUR 端直取腿 / 倒数。
     #[test]
     fn derive_eur_is_the_pivot_leg() {
-        let days = parse_ecb_rates(SAMPLE_XML, LABEL).unwrap();
+        let days = parse_ecb_rates(SAMPLE_XML).unwrap();
         let day = &days[1];
         let pairs = [
             ("HKD".to_string(), "CNY".to_string()),
@@ -346,8 +347,14 @@ mod tests {
         ];
         let series = derive_ecb_weekly_series(std::slice::from_ref(day), &pairs);
         let rate = |base: &str| series.iter().find(|s| s.base == base).unwrap().points[0].1;
-        // HKD/CNY = CNY 腿 ÷ HKD 腿（同日两腿交叉）
+        // HKD/CNY = CNY 腿 ÷ HKD 腿（同日两腿交叉）；独立数值锥区间锚定（除法公式
+        // 同源表达式之外，另行锚定结果的绝对取值范围）。
         assert_eq!(rate("HKD"), 7.6755f64 / 8.9903f64);
+        assert!(
+            rate("HKD") > 0.8537 && rate("HKD") < 0.8538,
+            "独立数值锥：7.6755/8.9903 ≈ 0.85375，实际 {}",
+            rate("HKD")
+        );
         // EUR 为基准腿：EUR→X 直取 X 腿，X→EUR 取 X 腿倒数
         assert_eq!(rate("EUR"), 7.6755f64);
         assert_eq!(rate("CNY"), 1.0f64 / 7.6755f64);
@@ -361,7 +368,7 @@ mod tests {
 <Cube time="2026-09-17"><Cube currency="HKD" rate="9.0071"/></Cube>
 <Cube time="2026-09-18"><Cube currency="HKD" rate="8.9903"/><Cube currency="CNY" rate="7.6755"/></Cube>
 </Cube>"#;
-        let days = parse_ecb_rates(xml, LABEL).unwrap();
+        let days = parse_ecb_rates(xml).unwrap();
         let series = derive_ecb_weekly_series(&days, &[("HKD".to_string(), "CNY".to_string())]);
         assert_eq!(
             series[0].points,
@@ -380,7 +387,7 @@ mod tests {
 <Cube time="2026-09-18"><Cube currency="CNY" rate="7.6755"/><Cube currency="HKD" rate="8.9903"/></Cube>
 <Cube time="2026-09-28"><Cube currency="CNY" rate="7.80"/><Cube currency="HKD" rate="9.10"/></Cube>
 </Cube>"#;
-        let days = parse_ecb_rates(xml, LABEL).unwrap();
+        let days = parse_ecb_rates(xml).unwrap();
         let series = derive_ecb_weekly_series(&days, &[("HKD".to_string(), "CNY".to_string())]);
         assert_eq!(
             series[0].points,
@@ -394,13 +401,16 @@ mod tests {
     /// 同币种对无需折算，不产出序列。
     #[test]
     fn derive_skips_same_currency_pair() {
-        let days = parse_ecb_rates(SAMPLE_XML, LABEL).unwrap();
+        let days = parse_ecb_rates(SAMPLE_XML).unwrap();
         let series = derive_ecb_weekly_series(&days, &[("CNY".to_string(), "CNY".to_string())]);
         assert!(series.is_empty(), "同币种对不产出序列");
     }
 
     /// 币种字典全量覆盖：字典内每个非本位币币种（含 EUR 自身）在正常响应下都
     /// 能推导出与本位币的币种对。字典读种子库、本位币走既有接缝，与生产同源。
+    /// 真实 ECB 文件对种子币种的覆盖已实测核对（父 spec #1540 事实依据节：
+    /// 全量文件含字典全部非 EUR 币种，CNY 自 2005-04）；本测试以同形夹具钉住
+    /// 推导面，真实文件级复核随 #1543 落库接线再验。
     #[test]
     fn dictionary_covers_all_currencies_against_base() {
         let conn = tauri_app_lib::test_support::open();
@@ -443,7 +453,7 @@ mod tests {
         }
         xml.push_str("</Cube>");
 
-        let days = parse_ecb_rates(&xml, LABEL).unwrap();
+        let days = parse_ecb_rates(&xml).unwrap();
         let series = derive_ecb_weekly_series(&days, &pairs);
         assert_eq!(series.len(), pairs.len(), "每个币种对都有序列");
         for s in &series {
