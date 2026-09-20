@@ -956,6 +956,11 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
     layer: "域目录",
     note: "东财股票单点行情访问（issue #693 / ADR-0081）：按（市场，代码）实时查询，类型特征探测与更新时间戳投影单点隔离——接缝查询半边的场内实例",
   },
+  {
+    path: "tencent.rs",
+    layer: "域目录",
+    note: "腾讯行情批量报价取数单元（ADR-0130 决策 2/3 / issue #1558）：一次请求携带多只沪深港美股票与场内基金（GBK、无需 Referer），解出代码 / 名称 / 价格 / 价格日期 / 证券类型码 / 币种 / 交易所后缀；三套字段布局与类型探测收口单点，非预期响应 fail-closed；本票只取数与解析，接线随 #1560 / #1567",
+  },
 ];
 
 /** 行情同步域 crate 的模块根（相对 src-tauri），与 CRATES 的 ledger-market-sync.dir 同源。 */
