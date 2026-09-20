@@ -14,7 +14,7 @@ use rusqlite::Connection;
 use crate::overview::query_investment_overview;
 use crate::prices::{MarketPriceWrite, upsert_market_price};
 use crate::{query_cumulative_pnl_summary, query_holdings_summary_by_currency};
-use ledger_transaction::amount::convert_to_native;
+use ledger_transaction::amount::convert_to_native_current;
 use ledger_transaction::{TransactionInput, create_transaction_internal};
 use tauri_app_lib::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
 
@@ -276,13 +276,18 @@ fn overview_totals_fold_to_native_currency() {
     let grouped_market_value: i64 = query_holdings_summary_by_currency(&conn)
         .unwrap()
         .iter()
-        .map(|g| convert_to_native(&conn, g.market_value_cents.unwrap(), &g.currency_code).unwrap())
+        .map(|g| {
+            convert_to_native_current(&conn, g.market_value_cents.unwrap(), &g.currency_code)
+                .unwrap()
+        })
         .sum();
     assert_eq!(grouped_market_value, overview.total_market_value_cents);
     let grouped_cumulative: i64 = query_cumulative_pnl_summary(&conn)
         .unwrap()
         .iter()
-        .map(|g| convert_to_native(&conn, g.cumulative_pnl_cents, &g.currency_code).unwrap())
+        .map(|g| {
+            convert_to_native_current(&conn, g.cumulative_pnl_cents, &g.currency_code).unwrap()
+        })
         .sum();
     assert_eq!(grouped_cumulative, overview.cumulative_pnl_cents);
 }
@@ -350,13 +355,18 @@ fn overview_totals_exclude_hidden_accounts() {
     let grouped_market_value: i64 = query_holdings_summary_by_currency(&conn)
         .unwrap()
         .iter()
-        .map(|g| convert_to_native(&conn, g.market_value_cents.unwrap(), &g.currency_code).unwrap())
+        .map(|g| {
+            convert_to_native_current(&conn, g.market_value_cents.unwrap(), &g.currency_code)
+                .unwrap()
+        })
         .sum();
     assert_eq!(grouped_market_value, 23_000);
     let grouped_cumulative: i64 = query_cumulative_pnl_summary(&conn)
         .unwrap()
         .iter()
-        .map(|g| convert_to_native(&conn, g.cumulative_pnl_cents, &g.currency_code).unwrap())
+        .map(|g| {
+            convert_to_native_current(&conn, g.cumulative_pnl_cents, &g.currency_code).unwrap()
+        })
         .sum();
     assert_eq!(grouped_cumulative, 7_000);
 }

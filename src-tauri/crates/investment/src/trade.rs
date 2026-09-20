@@ -304,8 +304,10 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         &account_currency,
     )?;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
-    // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
-    let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
+    // 与通用 kind / 定时引擎共用同一折算路径（当期入口 convert_to_native_current，
+    // 基准为默认币种；写路径改接按交易日入口随 #1547 统一做）。
+    let amount_native_cents =
+        amount::convert_to_native_current(conn, amount_cents, &account_currency)?;
 
     Ok(BuyPlan {
         normalized: NormalizedTransaction {
@@ -430,8 +432,10 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         &account_currency,
     )?;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
-    // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
-    let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
+    // 与通用 kind / 定时引擎共用同一折算路径（当期入口 convert_to_native_current，
+    // 基准为默认币种；写路径改接按交易日入口随 #1547 统一做）。
+    let amount_native_cents =
+        amount::convert_to_native_current(conn, amount_cents, &account_currency)?;
 
     // 取批次 → 分摊（含「可卖出数量不足」守卫）两步单点算定消耗规划：apply 只落盘。
     let active_lots = lots::active_lots(conn, &input.account_id, &instrument_id)?;
@@ -588,7 +592,7 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
     let consumed = lots::plan(conn, &active_lots, quantity)?;
     let carried_cost_cents = lots::total_cost(&consumed);
     let amount_native_cents =
-        amount::convert_to_native(conn, carried_cost_cents, &account_currency)?;
+        amount::convert_to_native_current(conn, carried_cost_cents, &account_currency)?;
 
     Ok(ConvertPlan {
         normalized: NormalizedTransaction {
@@ -885,7 +889,7 @@ fn prepare_dividend(conn: &Connection, input: &TransactionInput) -> Result<Divid
         &account_currency,
     )?;
     let amount_native_cents =
-        amount::convert_to_native(conn, input.amount_cents, &account_currency)?;
+        amount::convert_to_native_current(conn, input.amount_cents, &account_currency)?;
     Ok(DividendPlan {
         normalized: NormalizedTransaction {
             kind: TransactionKind::Dividend,

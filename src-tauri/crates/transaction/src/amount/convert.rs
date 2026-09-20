@@ -1,9 +1,13 @@
-//! 本位币折算（共享语义区）：raw 币种金额 → 全局默认币种。
+//! 本位币折算（共享语义区）：raw 币种金额 → 全局默认币种，两个具名入口。
 //!
-//! 职责：[`default_currency_code`]（经接缝读本位币基准）、[`convert_to_native`]
-//! （四舍五入到分）。不变量：基准为全局默认币种、与账户币种无关（避免跨账户漂移）；
-//! 正反向汇率均无即报错，不静默混币种。ADR 指针：ADR-0091 决策 3 / ADR-0113 决策
-//! 3.1。陷阱：本位币读取经 `super::base_currency` 接缝，未注册即码化错误。
+//! 职责：[`default_currency_code`](本位币基准读取)、[`convert_to_native_current`]
+//! （**当期折算**，读路径入口：持仓市值、净资产、财务自由度、实物资产估值、跨账本
+//! 汇总、定时花费）、[`convert_to_native_on_trade_date`]（**按交易日折算**，写路径
+//! 入口，#1541 只留出入口）。两入口不设隐式默认，调用方必须显式选择（#1540 spec）。
+//! 共同不变量：基准为全局默认币种、与账户币种无关（避免跨账户漂移）；与本位币同
+//! 币种原样返回；正反向汇率均无即报错，不静默混币种。ADR 指针：ADR-0011 / ADR-0091
+//! 决策 3 / ADR-0113 决策 3.1。陷阱：本位币读取经 `super::base_currency` 接缝，
+//! 未注册即码化错误。
 
 use rusqlite::Connection;
 
@@ -66,17 +70,42 @@ fn lookup_exchange_rate(conn: &Connection, base_code: &str, quote_code: &str) ->
     ))
 }
 
-/// 将原始币种金额折算为**全局默认币种**金额（四舍五入到分）。
+/// **当期折算**（读路径入口）：将原始币种金额按**当期汇率**折算为全局默认币种
+/// 金额（四舍五入到分）。
 ///
+/// - 取数读当期汇率表 `exchange_rates`（每币种对一行当期值）。
 /// - 币种与默认币种相同 → 1:1 原样返回。
 /// - 基准为 [`default_currency_code`]，**与账户币种无关**：
 ///   各账户的交易统一折算到同一本位币，避免跨账户漂移。
 /// - 正反向汇率均无 → 报错，不静默混币种。
-pub fn convert_to_native(conn: &Connection, amount_cents: i64, currency_code: &str) -> Result<i64> {
+///
+/// 消费面（#1541 起）：持仓市值、净资产、财务自由度、实物资产估值、跨账本汇总、
+/// 定时花费等读路径，以及拆分时仍存量的写路径调用点（写路径由 #1547 统一改接
+/// [`convert_to_native_on_trade_date`]）。
+pub fn convert_to_native_current(
+    conn: &Connection,
+    amount_cents: i64,
+    currency_code: &str,
+) -> Result<i64> {
     let target = default_currency_code(conn)?;
     if currency_code == target {
         return Ok(amount_cents);
     }
     let rate = lookup_exchange_rate(conn, currency_code, &target)?;
     Ok((amount_cents as f64 * rate).round() as i64)
+}
+
+/// **按交易日折算**（写路径入口）：raw 币种金额 → 全局默认币种，取数时点为
+/// 交易所属日期（#1540 spec：折算时点取交易日期，不用当期值折算历史交易）。
+///
+/// #1541 只留出入口：按交易所属 ISO 周命中汇率历史序列（FxRateHistory，正反向
+/// 兜底、该周无点报错）与可选显式汇率优先由 #1547 / #1549 接入；在此之前非本位币
+/// 显式委托当期入口（行为与拆分前逐位一致）。两入口自拆分起各自具名，调用方必须
+/// 显式选择，不得把本入口当作已具备按交易日语义改接调用点（改接随 #1547 统一做）。
+pub fn convert_to_native_on_trade_date(
+    conn: &Connection,
+    amount_cents: i64,
+    currency_code: &str,
+) -> Result<i64> {
+    convert_to_native_current(conn, amount_cents, currency_code)
 }

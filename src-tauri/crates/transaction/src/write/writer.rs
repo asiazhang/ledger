@@ -102,7 +102,8 @@ pub struct NormalizedRow {
 ///   记 income 挂单，非 refund，ADR-0051 决策 4），调用方传什么校验什么。
 /// - refund 必须关联**未删除**的原支出交易，且账户/币种/分类继承原支出
 ///   （忽略调用方填的 account_id / currency_code / category_id）；
-/// - 本位币折算走 Amount 接缝 [`amount::convert_to_native`]（基准为全局默认币种）。
+/// - 本位币折算走 Amount 接缝当期入口 [`amount::convert_to_native_current`]
+///   （基准为全局默认币种；写路径改接按交易日入口随 #1547 统一做，#1541）。
 ///
 /// 与旧命令层实现的两处**刻意差异**（issue #59 定时引擎 / issue #60 创建修改与
 /// 买入卖出行已接线，语义由本模块测试锁定）：
@@ -210,7 +211,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         input.funding_account_id.as_deref(),
         &currency_code,
     )?;
-    let native = amount::convert_to_native(conn, input.amount_cents, &currency_code)?;
+    let native = amount::convert_to_native_current(conn, input.amount_cents, &currency_code)?;
     let policy_id = input.policy_id.clone();
     let to_account_id = if input.kind == TransactionKind::Transfer {
         input.to_account_id.clone()

@@ -163,7 +163,8 @@ fn query_projected_cost(conn: &Connection) -> Result<(i64, i64)> {
     for p in plans {
         // 未知周期类型为脏数据，报错上抛，不静默跳过
         let recurrence_type: RecurrenceType = p.recurrence_type.parse()?;
-        let native_cents = amount::convert_to_native(conn, p.amount_cents, &p.currency_code)?;
+        let native_cents =
+            amount::convert_to_native_current(conn, p.amount_cents, &p.currency_code)?;
         let coefficient = monthly_coefficient(recurrence_type, p.recurrence_interval);
         projected_month += (native_cents as f64 * coefficient).round() as i64;
     }

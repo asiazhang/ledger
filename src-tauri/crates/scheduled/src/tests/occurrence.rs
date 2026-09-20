@@ -32,7 +32,7 @@ fn execute_occurrence_converts_non_default_currency_to_native() {
     assert_eq!(txn.currency_code, "USD");
     assert_eq!(
         txn.amount_native_cents, 72000,
-        "本位币金额应经 convert_to_native 折算"
+        "本位币金额应经 convert_to_native_current 折算"
     );
     assert_eq!(txn.account_id, "acc-usd");
     assert_eq!(txn.to_account_id, None);

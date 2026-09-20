@@ -146,7 +146,7 @@ fn assert_occurrence_txn_native(world: &mut LedgerWorld, expected: i64) {
     let txn = occurrence_txn(world);
     assert_eq!(
         txn.amount_native_cents, expected,
-        "本位币金额应经 convert_to_native 折算"
+        "本位币金额应经 convert_to_native_current 折算"
     );
 }
 

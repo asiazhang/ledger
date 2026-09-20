@@ -9,7 +9,7 @@
 //! 只做参数解包、统一写入口与信号发射，转调本模块。
 //!
 //! 接缝约定：
-//! - 金额折算走 Amount 接缝（`transaction::amount::convert_to_native`），不另写口径；
+//! - 金额折算走 Amount 接缝（当期入口 `transaction::amount::convert_to_native_current`），不另写口径；
 //! - 每天使用成本走 `item::cost` 接缝（DailyUsageCost 单一权威），列表不重算口径；
 //! - 溯源守卫（创建唯一入口的准入接缝）独立在 [`guard`]：
 //!   创建/换关路径经其解析关联购买交易并自动带出；
@@ -164,7 +164,7 @@ pub fn calculate_item_cost(
 /// 必填仅约束创建时刻。
 ///
 /// 其余校验：名称非空、总成本 > 0、购买日期可解析（YYYY-MM-DD）；
-/// 币种折算经 [`amount::convert_to_native`]（无汇率即报错，不静默混币种）。
+/// 币种折算经 [`amount::convert_to_native_current`]（无汇率即报错，不静默混币种）。
 pub fn create_item(
     conn: &Connection,
     input: ItemInput,
@@ -248,7 +248,7 @@ fn validate_and_convert(conn: &Connection, input: &ItemInput) -> Result<(String,
     }
     let purchase_date = parse_date(&input.purchase_date)?;
     let cost_native_cents =
-        amount::convert_to_native(conn, input.total_cost_cents, &input.currency_code)?;
+        amount::convert_to_native_current(conn, input.total_cost_cents, &input.currency_code)?;
     Ok((
         name.to_string(),
         purchase_date.format("%Y-%m-%d").to_string(),
@@ -559,8 +559,11 @@ pub fn item_daily_total(conn: &Connection) -> Result<ItemDailyTotal> {
         if entry.item.status != ItemStatus::InUse {
             continue;
         }
-        let numerator_native =
-            amount::convert_to_native(conn, entry.numerator_cents, &entry.item.currency_code)?;
+        let numerator_native = amount::convert_to_native_current(
+            conn,
+            entry.numerator_cents,
+            &entry.item.currency_code,
+        )?;
         per_day_total += numerator_native as f64 / entry.used_days as f64;
         item_count += 1;
     }

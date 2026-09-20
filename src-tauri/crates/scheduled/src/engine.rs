@@ -940,7 +940,7 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
     };
 
     // 经 Writer 接缝归一化（issue #59 / spec #52）：
-    // - 本位币金额由 Amount 接缝 convert_to_native 折算，修复非默认币种定时交易
+    // - 本位币金额由 Amount 接缝当期入口折算，修复非默认币种定时交易
     //   把原始金额当作 amount_native_cents 落库的 bug（故事 3/17/23）；
     // - normalize 为只读校验+折算，放在 CAS 锁定**之前**：业务错误（如非默认币种
     //   缺汇率）直接返回、期次保持 pending 可重试，不会滞留 processing；
