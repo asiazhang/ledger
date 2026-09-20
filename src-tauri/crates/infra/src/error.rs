@@ -1,3 +1,7 @@
+//! 错误：`AppError`（系统错误 + 码化错误的稳定 `code` / `params`，ADR-0050）与
+//! `Result` 别名；HTTP 响应投影经 `http` feature 门只在壳侧编入（ADR-0111 决策 5
+//! / #1133）。
+
 use serde::{Serialize, Serializer};
 use thiserror::Error;
 

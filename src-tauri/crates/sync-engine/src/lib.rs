@@ -40,7 +40,8 @@
 //!   `sync_ops` 表的唯一 SQL 收口）自 #1089 起下放协议 crate
 //!   `ledger-sync-protocol`（rank 0，业务域与 sync_engine 共同底座）；本域经
 //!   适配层（[`ops`]）承载域信封的载荷知识（serde 往返）。
-//! - [`ops`]：op 行落库与读取的适配层（域信封 ↔ JSON；SQL 收口在协议 crate）。
+//! - [`ops`]：op 行落库与读取的适配层（域信封 ↔ JSON；SQL 收口在协议 crate，
+//!   ADR-0091/#1089）。
 //! - [`command`]：跨端语义命令信封与重放契约（DomainCommand / ReplayBinding，
 //!   只增不改）——同步域对业务域暴露的契约面（ADR-0101 决策 4b）；重放效果
 //!   ReplayEffect 与命令契约 SyncCommand 已下放协议 crate（#1089）。
@@ -58,9 +59,12 @@
 //! 不阻塞其余重放，不静默丢弃。
 //!
 //! 依赖方向（spec #1086 / ADR-0112）：本 crate 消费基础设施、同步协议、核心
-//! 交易域与各业务域；对业务域的重放分派是同步域消费各域的合法单向依赖，域间
-//! 无环且方向单一。对根包（壳层）零生产依赖，反向引用由 cargo 依赖图编译期
-//! 拒绝（生产依赖面无根包，dev-dependency 环只覆盖测试目标）。
+//! 交易域与各业务域；对业务域的重放分派是同步域消费各域的合法单向依赖（对
+//! `ledger-backup` 的调度锁复用亦为域→域合法上层依赖），域间无环且方向单一——
+//! 分层方向由结构守门（`scripts/check-structure.ts`）核对、环由 cargo 依赖图拒绝。
+//! 对根包（壳层）
+//! 零生产依赖，反向引用由 cargo 依赖图编译期拒绝（生产依赖面无根包，
+//! dev-dependency 环只覆盖测试目标）。
 //!
 //! **测试实例纪律（dev-dependency 环双实例，ledger-transaction/#1092 同款）**：
 //! `cargo test -p ledger-sync-engine` 的依赖图内存在本 crate 两份实例（被测本

@@ -76,9 +76,9 @@
 //!   `{ done, total }` 的 `ledger:instrument-sync-progress` 事件，事件名常量、
 //!   载荷与 [`progress::ProgressEmitter`] 发射器接缝收口于此（不经失效信号映射，
 //!   只共用 `events` 的主线程非阻塞投递机制）；
-//! - [`session`]：作用域会话接缝（issue #1275；async 形态见 issue #1412 /
-//!   ADR-0125 决策 5）——编排获取数据库连接的唯一通道：取连接作业 async
-//!   （经门面写槽裸作业）、闭包内同步 rusqlite；生产实现
+//! - [`session`]：作用域会话接缝（issue #1275 / ADR-0112 决策 5 挂载点⑥；
+//!   async 形态见 issue #1412 / ADR-0125 决策 5）——编排获取数据库连接的唯一
+//!   通道（取连接作业 async、经门面写槽裸作业），闭包内同步 rusqlite；生产实现
 //!   [`session::FacadeWriteSession`]（命令壳侧与域内后台车道各自持门面句柄
 //!   构造），编排抓取路径在类型上取不到连接；
 //! - [`sina_fund`]：新浪场外基金取数单元（ADR-0130 决策 2 / issue #1564）——批量
@@ -109,7 +109,8 @@
 //!（op 落库行的 `device_id` 字段）、**核心交易域**（币种缺省推导
 //! `transaction::amount::default_currency_code`）与**投资域**（价格写入单点
 //! `prices`、名称随行刷新 `crud`、通道派生 `channel` 与统一报价载荷 [`Quote`]，
-//! ADR-0103）——四条即票面 AC 允许集全量，域→域均为上层消费下层的合法直呼
+//! ADR-0103；#1543 起另消费汇率写入 `crud::upsert_auto_exchange_rate`，人工
+//! 行保护）——四条即票面 AC 允许集全量，域→域均为上层消费下层的合法直呼
 //!（ADR-0112 决策 2；本域为 P4 起点，不再反向依赖任何同级业务域）。对根包（壳层）
 //! 与多端同步域零生产依赖，反向引用由 cargo 依赖图编译期拒绝（生产依赖面无根包，
 //! dev-dependency 环只覆盖测试目标）。

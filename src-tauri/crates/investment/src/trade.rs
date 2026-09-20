@@ -1,3 +1,12 @@
+//! 投资交易协议分派与明细投影（issue #72 / spec #69 / ADR-0099 / ADR-0106）：投资 kind
+//! 的 `prepare` / `apply` / `revert` 三件套与删除路径专用 `release_for_delete`。
+//!
+//! - buy 建仓 / sell（FIFO 卖出匹配与已实现盈亏）/ convert 两腿结转 / split 批次重述 /
+//!   dividend 扩展行；行写入一律经核心交易域 Writer 接缝，本模块不反向依赖行更新。
+//! - FIFO 取批次与回补原语归 [`lots`]，守卫与清理模板归 [`unwind`]——`revert` /
+//!   `release_for_delete` 只是薄委托；明细投影 `TransactionTrade`（buy/sell）/
+//!   `TransactionConvert`（convert 两腿）/ `TransactionSplit`（split 带符号 Δ）。
+
 use rusqlite::{Connection, OptionalExtension};
 
 use super::lots::{self, Consumption};

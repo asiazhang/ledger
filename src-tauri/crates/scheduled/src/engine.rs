@@ -1,3 +1,9 @@
+//! 计划/期次引擎（issue #59 / #230 / #856）：定时计划的建档与状态机、期次展开
+//! （预生成窗口，行 id 各端独立生成、不作落地身份）与期次执行。
+//!
+//! 事务自持（issue #230 / ADR-0033 决策 6）：本模块是登记的「事务自持唯一合法
+//! 例外」，继续直调 Writer 接缝、不经行为层编排入口。
+
 use chrono::Datelike;
 use rusqlite::{Connection, OptionalExtension};
 

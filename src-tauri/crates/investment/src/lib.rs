@@ -15,7 +15,8 @@
 
 //! 投资领域 crate（Instrument / Holding / TransactionTrade / PortfolioValueTrend，
 //! spec #69 / ADR-0015 / ADR-0019 / ADR-0036 / ADR-0038；域目录化 #401 / ADR-0056；
-//! spec #1086 / issue #1097 自根包域目录拆为 workspace 成员）。
+//! spec #1086 / issue #1097 自根包域目录拆为 workspace 成员）。本域是 P3 业务域
+//! crate，可被行情同步域与多端同步域依赖。
 //!
 //! 职责：标的字典、市场数据（现价缓存 / 价格历史 / 汇率历史）与汇率录入、
 //! 买入/卖出协议（prepare/apply/revert 三件套，issue #72）、时点持仓推算、
@@ -35,7 +36,8 @@
 //! - [`crud`]：标的字典 / 汇率 / 现价列表与写入、标的搜索（含统一模糊搜索语义）、
 //!   手动创建守卫与自建标的删除守卫；
 //! - [`financial_freedom`]：财务自由度口径——可投资资产 × 3% 安全提取率对
-//!   年度预算总额的覆盖比例（只读，ADR-0048）；
+//!   年度预算总额的覆盖比例（只读，ADR-0048）；可投资资产分子按两腿拆分
+//!   （投资账户现金 / 持仓市值），合计 = 两腿之和（issue #1536）；
 //! - [`fund`]：场外基金接入——6 位代码校验、行情接入落库半边（`adopt_fund_quote`）、
 //!   AI 降级建行、按代码即拉注入接缝（`add_fund_by_code_with`）；
 //! - [`holdings`]：时点持仓（AsOfHolding）推算单点；
@@ -54,7 +56,8 @@
 //!   缺价持仓计数（只增读投影，口径归财务自由度两腿单点；ADR-0131）；
 //! - [`predicates`]：「持仓标的」判定谓词单点（`INVESTED_EXISTS`）；
 //! - [`prices`]：价格写入单点——现价缓存 upsert、价格历史周采样 upsert、
-//!   价格刻度换算（`PRICE_UNITS_PER_FEN` / `price_value_to_cents`）、东财来源标记；
+//!   价格刻度换算（`PRICE_UNITS_PER_FEN` / `price_value_to_cents`）、东财来源标记
+//!   （存量行 `eastmoney`、换源后新写入按实际取数源，ADR-0130 决策 7）；
 //! - [`quote`]：行情接入接缝（QuoteAdoption，ADR-0103）——统一报价载荷
 //!   `Quote` 与落库半边 `adopt_quote`（建档 + 落现价一体）；查询半边实现在
 //!   行情同步域 `ledger-market-sync` crate 网络层
