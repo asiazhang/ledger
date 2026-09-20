@@ -54,8 +54,11 @@
 //!   账户创建日 / 非本位币交易日取 MIN，软删排除）所属 ISO 周的周一再前推一周，
 //!   与标的 K 线的「近两年」窗口和首刷 / 缺周队列彻底无关；按判据分派全量回填
 //!   （按窗口起点裁剪）或 90 天增量，经通道束接 [`ecb`] 取数、[`persist`] 落库
-//!   （单一事务、整周覆盖幂等、不产同步 op）。手动入口 / 每日调度的触发面归
-//!   #1545 / #1546，本单元即其共同消费的唯一编排；
+//!   （单一事务、整周覆盖幂等、不产同步 op）。失败原因三态互不吞并（spec #1540
+//!   「数据源不可达 vs 该来源无数据要能分辨」，issue #1545）：取数网络失败 →
+//!   `fx.source-unreachable`，取数成功但推导零点 → `fx.source-no-data`，
+//!   `fx.source-malformed` 原样透传。手动入口 / 每日调度的触发面归
+//!   #1545 / #1546，本单元即其共同消费的唯一编排（#1545 手动入口已接线）；
 //! - [`history`]：价格历史后台补全（ADR-0122 / issue #1375）——派生事实队列
 //!   （有价格通道但历史不完整，持仓优先）+ 一轮排空（后台补全专用的单只
 //!   回填单元，issue #1377 起不再与现价刷新共用）+ 启动延迟与自然日窗口调度 +
@@ -127,8 +130,9 @@
 //! 兼容面（ADR-0112 决策 3「调用点零改动」）：根包以
 //! `pub use ledger_market_sync as sync;` 再导出保留原引用路径——壳层
 //! `commands::sync`（只做参数解包与信号发射，对外暴露 `sync_instrument_info`
-//! 标的信息同步一个 IPC 命令，只刷现价 + 名称随行刷新，issue #827 改名、
-//! ADR-0122 / issue #1377 起 history 采集移出）、
+//! 标的信息同步与 `sync_exchange_rates` 手动汇率同步（issue #1545）两个 IPC
+//! 命令，前者只刷现价 + 名称随行刷新，issue #827 改名、ADR-0122 / issue #1377
+//! 起 history 采集移出）、
 //! `commands::investment` 与 `api_server` 的行情查询注入点、e2e 与汇总文档的
 //! `crate::sync::…` / `tauri_app_lib::ledger_market_sync::…` 引用零改动。
 //!
@@ -150,8 +154,9 @@ mod fund;
 mod fund_backfill;
 mod fund_nav;
 mod fund_price_refresh;
-/// ECB 汇率同步编排（issue #1544）：窗口判据与全量 / 增量两腿的分派已就位；
-/// 触发面（设置页手动入口 / 每日自动调度）随 #1545 / #1546 消费再导出面。
+/// ECB 汇率同步编排（issue #1544，#1545 手动入口已接线）：窗口判据与全量 / 增量
+/// 两腿的分派、失败三态分类（fx.source-unreachable / fx.source-no-data /
+/// fx.source-malformed 透传）已就位；每日自动调度触发面随 #1546 消费再导出面。
 mod fx;
 mod history;
 mod http;
@@ -199,6 +204,7 @@ pub use history::{
 };
 pub use http::KlineBar;
 pub use model::{SyncInstrumentInfoResult, WriteWitness};
+pub use persist::FxPersistReport;
 pub use progress::{
     BackfillProgressEmitter, FundNavProgress, HISTORY_BACKFILL_PROGRESS, INSTRUMENT_SYNC_PROGRESS,
     ProgressEmitter, SyncProgress,

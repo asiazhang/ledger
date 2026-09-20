@@ -33,13 +33,16 @@
 //!   消费的唯一编排。
 //!
 //! 汇率拉取按**可重建缓存**对待（ADR-0019 修订记录）：不进同步日志、不计入任何
-//! 写入见证；同步失败上抛（数据源不可达 / 报文损坏由既有码化错误区分），已有
-//! 汇率不受影响（落库是覆盖幂等 upsert）。
+//! 写入见证；同步失败上抛且原因三态互不吞并（spec #1540「数据源不可达 vs 该来源
+//! 无数据要能分辨」，issue #1545 AC）：取数网络失败 → `fx.source-unreachable`，
+//! 取数成功但推导零点 → `fx.source-no-data`，`fx.source-malformed` 原样透传不
+//! 折算，已有汇率不受影响（落库是覆盖幂等 upsert）。
 
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
+use serde::Serialize;
 
-use ledger_infra::error::Result;
+use ledger_infra::error::{AppError, Result};
 use ledger_transaction::amount::default_currency_code;
 
 use super::channels::FetchFuture;
@@ -56,6 +59,45 @@ use super::session::ScopedSession;
 /// 采样点（AC「全量回填覆盖到该日期之前」的余量——即使该日期所属周首日无报价，
 /// 前一周的点也已先于它落库）。
 const WINDOW_LEAD_WEEKS: i64 = 1;
+
+/// 「数据源不可达」码化错误（spec #1540 用户故事 12 / issue #1545：失败提示可
+/// 自助补救——先分清是网络问题还是账本问题）。params 无动态值（ADR-0050）。
+fn source_unreachable() -> AppError {
+    AppError::coded(
+        "fx.source-unreachable",
+        "汇率数据源暂时不可达，请检查网络后重试",
+    )
+}
+
+/// 「该来源无数据」码化错误：源可达、报文合法，但没有推导出任何可用汇率点
+///（如响应缺本位币腿）。params 无动态值（ADR-0050）。
+fn source_no_data() -> AppError {
+    AppError::coded(
+        "fx.source-no-data",
+        "数据源已连通，但当前没有可用的汇率数据，请稍后重试",
+    )
+}
+
+/// 取数失败的归类（issue #1545 AC：不可达与无数据可分辨）：`fx.source-malformed`
+/// 是独立条件（源返回了无法解析的内容），原样透传；其余（连接失败 / 超时 /
+/// 限流放弃 / HTTP 状态异常，HTTP 层报 `AppError::Io`）收口为「数据源不可达」。
+fn classify_fetch_error(error: AppError) -> AppError {
+    if error.is_code("fx.source-malformed") {
+        return error;
+    }
+    tracing::warn!(error = %error, "汇率数据源不可达（取数失败已归类）");
+    source_unreachable()
+}
+
+/// 取数成功但推导零点的判定（issue #1545 AC）：全部币种对都无点 = 该来源无可用
+/// 数据，显式报错——零点不白落一次空事务、也不冒充成功（零痕迹跳过是判据层的
+/// 独立路径，不经此处）。
+fn ensure_series_has_points(series: &[super::ecb::FxPairWeeklySeries]) -> Result<()> {
+    if series.iter().all(|s| s.points.is_empty()) {
+        return Err(source_no_data());
+    }
+    Ok(())
+}
 
 /// ECB 文档抓取通道闭包形态：无参数（文件路径由通道内部固定，全量 / 增量各一）
 /// → 按日快照序列。编排不拼数据源键，换源只改通道实现。
@@ -120,7 +162,8 @@ impl FxSyncChannels {
 }
 
 /// 一轮汇率同步的结果（#1544）：触发面（#1545 结果面 / #1546 日志）消费。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// `Serialize`：#1545 起 IPC 命令直接返回本类型（前端展示覆盖区间 / 条数）。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct FxSyncReport {
     /// 本次是否执行了全量历史回填（false = 深度已达成只走增量，或零痕迹跳过）。
     pub full_backfilled: bool,
@@ -156,9 +199,12 @@ pub async fn sync_fx_rates<S: ScopedSession>(
             Ok(FxSyncReport::default())
         }
         FxSyncPlan::FullBackfill(window_start) => {
-            let days = (channels.fetch_full)().await?;
+            let days = (channels.fetch_full)()
+                .await
+                .map_err(classify_fetch_error)?;
             let series =
                 trim_series_to_window(derive_ecb_weekly_series(&days, &pairs), window_start);
+            ensure_series_has_points(&series)?;
             let persist = session
                 .with_connection(move |conn| persist_ecb_fx_series(conn, &series))
                 .await?;
@@ -173,8 +219,11 @@ pub async fn sync_fx_rates<S: ScopedSession>(
             })
         }
         FxSyncPlan::Incremental => {
-            let days = (channels.fetch_incremental)().await?;
+            let days = (channels.fetch_incremental)()
+                .await
+                .map_err(classify_fetch_error)?;
             let series = derive_ecb_weekly_series(&days, &pairs);
+            ensure_series_has_points(&series)?;
             let persist = session
                 .with_connection(move |conn| persist_ecb_fx_series(conn, &series))
                 .await?;

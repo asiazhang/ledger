@@ -6,6 +6,7 @@
 
 use rusqlite::Connection;
 use rusqlite::params;
+use serde::Serialize;
 
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::db::{new_uuid, now_iso};
@@ -22,8 +23,9 @@ pub(super) const ECB_FX_SOURCE: &str = "ecb";
 
 /// ECB 汇率落库结果统计（issue #1543）：服务触发编排的提示拼装（覆盖区间 /
 /// 条数，#1545 手动同步结果面 / #1546 每日增量日志）；库内可观察行为以两表
-/// 内容为准，统计只是本次处理的记录。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// 内容为准，统计只是本次处理的记录。`Serialize`：#1545 起 IPC 命令经
+/// [`super::fx::FxSyncReport`] 的 persist 字段直达前端（展示覆盖区间 / 条数）。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct FxPersistReport {
     /// 实际落库的币种对数（空序列的对不计）。
     pub pairs: usize,

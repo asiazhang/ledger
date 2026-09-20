@@ -3,6 +3,10 @@
 //! 强度），不断言函数调用形状；接线证明例外——经本地 HTTP 服务驱动生产束
 //!（[`FxSyncChannels::with_hosts`]），断言两个 ECB 文件路径的到达（删除接线即红）。
 //!
+//! 失败原因三态互不吞并与人工行保护经编排回归（issue #1545，spec #1540「数据源
+//! 不可达 vs 该来源无数据要能分辨」）：取数网络失败 → `fx.source-unreachable`，
+//! 推导零点 → `fx.source-no-data`，`fx.source-malformed` 原样透传不折算。
+//!
 //! 判据夹具的域时刻（账户创建日 / 交易日）经种子 + UPDATE 显式传入（种子簿记戳
 //! 是 FIXED_NOW，行为输入按 ADR-0084 由测试显式给定）；取数腿覆盖字典全量币种。
 
@@ -13,7 +17,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
-use tauri_app_lib::test_support::{block_on, seed_account, seed_instrument};
+use tauri_app_lib::test_support::{
+    block_on, seed_account, seed_exchange_rate_with_source, seed_instrument,
+};
 
 use crate::ecb::EcbDayRates;
 use crate::fx::{FxSyncChannels, FxSyncReport, sync_fx_rates};
@@ -350,4 +356,159 @@ fn production_bundle_hits_both_ecb_documents() {
         "深度达成后的增量打到 90 天文件，实际 {}",
         heads[1]
     );
+}
+
+// ---------------------------------------------------------------------------
+// 失败三态互不吞并与结果面（issue #1545，spec #1540）
+// ---------------------------------------------------------------------------
+
+/// 缺腿日快照：只给给定腿（如响应缺本位币腿——真实报文形态同构），缺腿的币种对
+/// 按「该日缺失」跳过。
+fn partial_leg_day(date: &str, legs: &[&str]) -> EcbDayRates {
+    let rates = legs
+        .iter()
+        .map(|code| (code.to_string(), 7.3))
+        .collect::<BTreeMap<_, _>>();
+    EcbDayRates {
+        date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+        rates,
+    }
+}
+
+/// 两侧同源的桩通道束（与 [`stub_channels`] 同形，日序列由调用方给全集）。
+fn stub_channels_with_days(days: Vec<EcbDayRates>) -> FxSyncChannels {
+    FxSyncChannels {
+        fetch_full: {
+            let days = days.clone();
+            Box::new(move || super::ready(Ok(days.clone())))
+        },
+        fetch_incremental: {
+            let days = days.clone();
+            Box::new(move || super::ready(Ok(days.clone())))
+        },
+    }
+}
+
+/// 同步 op 总数（自动采集不产同步 op 的可观察面）。
+fn op_count(conn: &Connection) -> i64 {
+    conn.query_row("SELECT count(*) FROM sync_ops", [], |r| r.get(0))
+        .unwrap()
+}
+
+/// 正常路径的报告面（issue #1545 结果面）：覆盖区间 / 条数 / 币种对数经编排透出
+///（首轮窗口判据走全量腿），当期汇率交叉方向钉值，且自动采集不产同步 op。
+#[test]
+fn fx_sync_reports_persist_stats_and_produces_no_sync_ops() {
+    let conn = tauri_app_lib::test_support::open();
+    seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
+    let (mut channels, _, _) = stub_channels(
+        &conn,
+        &[
+            ("2022-06-06", 7.2),
+            ("2022-06-15", 7.3),
+            ("2026-09-14", 7.4),
+        ],
+    );
+
+    let report = block_on(sync_fx_rates(&conn, &mut channels)).unwrap();
+
+    assert_eq!(report.persist.pairs, 10, "字典 11 币种减本位币 = 10 对");
+    assert_eq!(report.persist.points, 30, "10 对 × 3 个窗口内周");
+    assert_eq!(report.persist.earliest.as_deref(), Some("2022-06-06"));
+    assert_eq!(report.persist.latest.as_deref(), Some("2026-09-14"));
+    assert_eq!(report.persist.manual_protected, 0);
+    // 交叉方向钉值：USD/CNY = CNY 腿 ÷ USD 腿（1 base = ? quote）。
+    let codes = dictionary_codes(&conn);
+    let usd_leg = leg_rate(&codes, "USD", 7.4);
+    let (rate, source): (f64, String) = conn
+        .query_row(
+            "SELECT rate, source FROM exchange_rates WHERE base_code='USD' AND quote_code='CNY'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(source, "ecb");
+    assert!((rate - 7.4 / usd_leg).abs() < 1e-12, "实际 rate={rate}");
+    assert_eq!(op_count(&conn), 0, "自动采集不产同步 op");
+}
+
+/// 人工行保护经编排照常生效（#1543 落库单元契约在编排路径的回归面）：当期表
+/// 人工行不被覆盖并计入统计。
+#[test]
+fn fx_sync_keeps_manual_rows_through_the_orchestration() {
+    let conn = tauri_app_lib::test_support::open();
+    seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
+    seed_exchange_rate_with_source(&conn, "HKD", "CNY", 0.8800, "2026-01-01", "manual");
+    let (mut channels, _, _) = stub_channels(&conn, &[("2022-06-06", 7.2), ("2026-09-14", 7.4)]);
+
+    let report = block_on(sync_fx_rates(&conn, &mut channels)).unwrap();
+
+    assert_eq!(report.persist.manual_protected, 1, "人工行计入保护统计");
+    let (rate, priced_at): (f64, String) = conn
+        .query_row(
+            "SELECT rate, priced_at FROM exchange_rates WHERE base_code='HKD' AND quote_code='CNY'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(rate, 0.8800, "人工录入值不被覆盖");
+    assert_eq!(priced_at, "2026-01-01", "人工行采集日期不被触碰");
+}
+
+/// 报文可解析但推导零点（如响应缺本位币腿）→ 报 fx.source-no-data，
+/// 「该来源无数据」与网络不可达可分辨；库内两表零写入。
+#[test]
+fn fx_sync_reports_no_data_when_source_yields_no_usable_points() {
+    let conn = tauri_app_lib::test_support::open();
+    seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
+    // 只有 USD 腿：USD→CNY 缺 CNY 腿、其余对缺两条腿——全部对无点。
+    let mut channels = stub_channels_with_days(vec![partial_leg_day("2026-09-18", &["USD"])]);
+
+    let err = block_on(sync_fx_rates(&conn, &mut channels)).unwrap_err();
+
+    assert!(
+        err.is_code("fx.source-no-data"),
+        "应报 fx.source-no-data，实际 {err:?}"
+    );
+    assert_eq!(fx_point_count(&conn), 0, "无数据不落库");
+    let exchange_rows: i64 = conn
+        .query_row("SELECT count(*) FROM exchange_rates", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(exchange_rows, 0, "无数据不写当期表");
+}
+
+/// 网络不可达（连接拒绝）→ 报 fx.source-unreachable，「数据源不可达」与
+/// 「该来源无数据」可分辨。既有行不受影响（#1546 同款边界在本票先钉）。
+#[test]
+fn fx_sync_classifies_unreachable_source() {
+    let conn = tauri_app_lib::test_support::open();
+    seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
+    // 127.0.0.1:1 无监听，连接立即被拒；生产束构造（有痕迹才取数，判据非 Skip）。
+    let mut channels = FxSyncChannels::with_hosts(vec!["http://127.0.0.1:1".to_string()]).unwrap();
+
+    let err = block_on(sync_fx_rates(&conn, &mut channels)).unwrap_err();
+
+    assert!(
+        err.is_code("fx.source-unreachable"),
+        "应报 fx.source-unreachable，实际 {err:?}"
+    );
+    assert_eq!(fx_point_count(&conn), 0, "失败不落库");
+}
+
+/// 报文非预期形状（被拦截页）→ fx.source-malformed 原样透传，
+/// 不折算成「不可达」——三种失败原因互不吞并。
+#[test]
+fn fx_sync_passes_malformed_source_through_unwrapped() {
+    let conn = tauri_app_lib::test_support::open();
+    seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
+    let (url, _) = spawn_header_capture_server("<html>waf blocked</html>".to_string());
+    let mut channels = FxSyncChannels::with_hosts(vec![url]).unwrap();
+
+    let err = block_on(sync_fx_rates(&conn, &mut channels)).unwrap_err();
+
+    assert!(
+        err.is_code("fx.source-malformed"),
+        "malformed 应原样透传，实际 {err:?}"
+    );
+    assert_eq!(fx_point_count(&conn), 0, "失败不落库");
 }
