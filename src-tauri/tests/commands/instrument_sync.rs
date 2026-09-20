@@ -31,7 +31,7 @@ use ledger_infra::error::{AppError, Result};
 use ledger_infra::events;
 use ledger_market_sync::{
     BulkFetchCircuit, BulkFetchSurfaces, FundBatch, FundNavTable, INSTRUMENT_SYNC_PROGRESS,
-    NavPage, QuoteItem, SyncFetchChannels,
+    QuoteItem, SyncFetchChannels,
 };
 use tauri_app_lib::commands::sync::SyncChannelsSlot;
 use tauri_app_lib::commands::{investment, sync};
@@ -74,14 +74,9 @@ fn gated_channels(
         }),
         fetch_kline: Box::new(|_| Box::pin(async { Ok(vec![]) })),
         fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
-        fetch_nav: Box::new(|_| {
-            Box::pin(async {
-                unreachable!("测试现场无基金标的，净值通道不应被触达")
-            })
-        }),
         fetch_nav_history: Box::new(|_| {
             Box::pin(async {
-                unreachable!("测试现场无基金标的，全量净值通道不应被触达")
+                unreachable!("测试现场无基金标的，净值通道不应被触达")
             })
         }),
         fetch_fund_name: Box::new(|_| {
@@ -448,7 +443,7 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
         );
     }
 
-    /// 逐只通道桩：无行情标的（报价/K 线/汇率不触达）；净值两通道不触达
+    /// 逐只通道桩：无行情标的（报价/K 线/汇率不触达）；净值通道不触达
     ///（净值面命中即「无新净值」零逐只请求，触达即测试场景失真）；名称通道
     /// 返回权威名称（名称面未覆盖时逐只兜底的合法应答）。
     fn per_item_channels() -> SyncFetchChannels {
@@ -464,14 +459,9 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
                     unreachable!("测试现场无外币标的，汇率通道不应被触达")
                 })
             }),
-            fetch_nav: Box::new(|_| {
-                Box::pin(async {
-                    unreachable!("净值面命中即无新净值，逐只净值通道不应被触达")
-                })
-            }),
             fetch_nav_history: Box::new(|_| {
                 Box::pin(async {
-                    unreachable!("净值面命中即无新净值，单请求全量净值通道不应被触达")
+                    unreachable!("净值面命中即无新净值，逐只净值通道不应被触达")
                 })
             }),
             fetch_fund_name: Box::new(|_| Box::pin(async { Ok("权威名称-110022".into()) })),
@@ -516,9 +506,9 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
     // 结果带 `bulk_degraded: true`。
     let degraded = {
         let mut channels = per_item_channels();
-        // 批量面整体失败 → 逐只净值通道接管：桩回空页（窗口内无新净值），
+        // 批量面整体失败 → 逐只净值通道接管：桩回空历史（窗口内无新净值），
         // 同步照常成功返回并带降级事实。
-        channels.fetch_nav = Box::new(|_| Box::pin(async { Ok(NavPage::empty()) }));
+        channels.fetch_nav_history = Box::new(|_| Box::pin(async { Ok(vec![]) }));
         channels.bulk = BulkFetchSurfaces {
             funds: Box::new(|_: &[String]| {
                 Box::pin(async { Err(AppError::Io("场外基金批量面被风控拦截".into())) })

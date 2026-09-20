@@ -40,22 +40,9 @@ use super::csrc::{
 use super::http::{Pacer, build_client};
 use super::sina_fund::{SINA_FUND_BATCH_HOSTS, SinaFundNavForm, fetch_sina_fund_nav_rows};
 
-/// 数值字段兼容数字与数字字符串两种 wire 形态；非数值（含 null）按缺省处理。
-/// 历史净值接口（fund_nav）与新浪/披露取数单元共用。
-pub(super) fn deserialize_flexible_f64<'de, D>(d: D) -> std::result::Result<Option<f64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(d)?;
-    Ok(match value {
-        serde_json::Value::Number(n) => n.as_f64(),
-        serde_json::Value::String(s) => s.trim().parse::<f64>().ok(),
-        _ => None,
-    })
-}
-
 /// 字符串字段兼容任意 wire 形态且**不使报文失败**（基金类型码等判定信号）：字符串去首尾空白；其余形态（数字、null 等）归为
 /// 缺省——信号缺席的代价只是退回修复前口径，不得让整页解析失败中断同步。
+/// 新浪/披露取数单元共用。
 pub(super) fn deserialize_flexible_string<'de, D>(
     d: D,
 ) -> std::result::Result<Option<String>, D::Error>

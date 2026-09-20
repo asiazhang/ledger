@@ -1,12 +1,13 @@
-//! 行情 HTTP 网络层（issue #89）：东财行情接口请求、多主机切换、重试与限流冷却、
+//! 行情 HTTP 网络层（issue #89）：行情接口请求、多主机切换、重试与限流冷却、
 //! 响应解析。与数据库无关，可独立测试（见 `tests.rs` 中本地 HTTP 服务用例）。
 //! 客户端与等待原语为异步形态（reqwest async / 异步睡眠 / 异步互斥体，issue #1411
 //! / ADR-0125 决策 5/6）；同步编排与通道束闭包已随 #1412 直接 `.await`，两壳生产
 //! 入口与投资域注入闭包已随 #1413 async 化，#1411 过渡同步桥拆除——本层生产面
 //! 不再有任何阻塞驱动点。
 //! 标的全量同步（clist 分页爬取）已随 ADR-0081 决策 3 退役删除（issue #698），
-//! 单点行情（stock/get）已随 #1567 接线腾讯后删除（ADR-0130 决策 1：不留死代码），
-//! 本层现服务东财场外基金净值通道与汇率日 K。
+//! 单点行情（stock/get）已随 #1567 接线腾讯后删除、历史净值通道（lsjz）已随
+//! #1571 接线新浪全历史面后删除（ADR-0130 决策 1：不留死代码），本层现仅服务
+//! 东财汇率日 K（FX 采集通道，随 #1551 换 ECB 后退役）。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -370,7 +371,8 @@ where
     let mut throttle_attempts = 0u32;
     loop {
         pacer.wait().await;
-        // 部分东财接口（如历史净值 lsjz）要求带 Referer 头，缺省被拦截（issue #303）。
+        // 部分行情接口要求带 Referer 头模拟站内跳来源，缺省被拦截：新浪批量面
+        // 缺 Referer 返回 403（issue #1564）；已退役的东财 lsjz 亦同（issue #303）。
         let mut req = client.get(url).query(params).timeout(REQUEST_TIMEOUT);
         if let Some(referer) = referer {
             req = req.header(reqwest::header::REFERER, referer);

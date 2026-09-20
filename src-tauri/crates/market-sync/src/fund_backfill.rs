@@ -17,7 +17,9 @@ use ledger_investment::prices::{
 };
 
 use super::channels::FetchFuture;
-use super::fund_nav::{NavPoint, mark_constant_price_on_confirm, nav_window, read_fund_watermark};
+use super::fund_nav::{
+    NavPoint, mark_constant_price_on_confirm, nav_window, read_fund_watermark, trim_to_window,
+};
 use super::http::KlineBar;
 use super::session::ScopedSession;
 
@@ -141,10 +143,7 @@ where
     // 不把不可信结果当「无净值」——半根历史冒充完整数据比慢更糟（ADR-0122
     // 决策 8 的「整只不落」由「要么全序列可信、要么零落库」承接）。
     let points: Vec<NavPoint> = fetch_nav_history(&fund.symbol).await?;
-    let collected: Vec<NavPoint> = points
-        .into_iter()
-        .filter(|p| p.date.as_str() >= start.as_str() && p.date.as_str() <= end.as_str())
-        .collect();
+    let collected: Vec<NavPoint> = trim_to_window(points, &start, &end);
 
     if collected.is_empty() {
         // 首刷查无净值（查无此码 / 新基金未公布首期 / 已终止基金末点在窗口外）
