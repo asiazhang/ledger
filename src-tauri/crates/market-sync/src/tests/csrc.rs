@@ -9,7 +9,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::csrc::{CsrcNavRecord, fetch_fund_nav_series_from, parse_disclosure_page};
+use crate::csrc::{
+    CsrcNavRecord, confirm_money_fund_form_from, fetch_fund_nav_series_from, parse_disclosure_page,
+};
 
 // ---------------------------------------------------------------------------
 // 真实报文 fixture（2026-09-20 实测 eid.csrc.gov.cn，字段截取保持真实键序与值）
@@ -550,4 +552,127 @@ fn fetch_incomplete_paging_fails_closed() {
         &[url.as_str()],
     ));
     assert_malformed(result.unwrap_err(), "翻页不完整");
+}
+
+// ---------------------------------------------------------------------------
+// 货基判定确认（issue #1563 / ADR-0126 决策 3 换源）：最新一页披露记录的
+// 自报形态三态——确认 / 缺信号 / 源不可信。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn confirm_money_fund_form_pins_money_fund_self_report() {
+    // 货基自报形态（真实报文 fixture）：最新记录「单位净值为空、万份收益与
+    // 七日年化有值」即确认。
+    let (url, heads) = spawn_capture_server(|_| (200, MONEY_FUND_PAYLOAD.to_string()));
+    let client = reqwest::Client::new();
+    let mut pacer = fast_pacer();
+    let confirmed = tauri::async_runtime::block_on(confirm_money_fund_form_from(
+        &client,
+        &mut pacer,
+        "000198",
+        &[url.as_str()],
+    ))
+    .unwrap();
+    assert!(confirmed, "货基自报形态确认");
+
+    // 确认只取最新一页（display_start = 0），不发翻页请求——一次确认一次请求。
+    // （锁守卫一次取齐：std Mutex 不可重入，持守卫再 lock 同线程即死锁。）
+    let (head, served) = {
+        let guard = heads.lock().unwrap();
+        (guard[0].clone(), guard.len())
+    };
+    let ao = decoded_ao_data(&head);
+    assert!(
+        ao.contains(r#""name":"iDisplayStart","value":0"#),
+        "确认请求应为最新一页: {ao}"
+    );
+    assert_eq!(served, 1, "确认不翻页、单请求");
+}
+
+#[test]
+fn confirm_normal_fund_and_trusted_empty_are_missing_signal() {
+    // 普通净值形态记录：不是货基自报形态 → Ok(false)——缺信号不是「不是恒定
+    // 标的」的反证，调用方不得据此清空既有标记。
+    let (url, _) = spawn_capture_server(|_| (200, NORMAL_FUND_PAYLOAD.to_string()));
+    let client = reqwest::Client::new();
+    let mut pacer = fast_pacer();
+    let confirmed = tauri::async_runtime::block_on(confirm_money_fund_form_from(
+        &client,
+        &mut pacer,
+        "110022",
+        &[url.as_str()],
+    ))
+    .unwrap();
+    assert!(!confirmed, "普通净值形态缺信号");
+
+    // 已终止基金的老记录（普通净值形态）同样缺信号；可信空报文（查无此码 /
+    // 窗口内无披露）同样缺信号、绝不报错。
+    let (url, _) = spawn_capture_server(|_| (200, TERMINATED_FUND_PAYLOAD.to_string()));
+    let mut pacer = fast_pacer();
+    let confirmed = tauri::async_runtime::block_on(confirm_money_fund_form_from(
+        &client,
+        &mut pacer,
+        "002503",
+        &[url.as_str()],
+    ))
+    .unwrap();
+    assert!(!confirmed, "已终止基金普通形态缺信号");
+
+    let (url, _) = spawn_capture_server(|_| (200, TRUSTED_EMPTY_PAYLOAD.to_string()));
+    let mut pacer = fast_pacer();
+    let confirmed = tauri::async_runtime::block_on(confirm_money_fund_form_from(
+        &client,
+        &mut pacer,
+        "999999",
+        &[url.as_str()],
+    ))
+    .unwrap();
+    assert!(!confirmed, "可信空是缺信号而非错误");
+}
+
+#[test]
+fn confirm_summary_row_mixed_page_confirms_by_share_row() {
+    // 混排形态（汇总行 + 份额行）：解析层滤掉空值汇总行后，最新份额行即货基
+    // 自报形态——只看第一条原始行会取到全空的汇总行（13.5 节记录形态陷阱）。
+    let (url, _) = spawn_capture_server(|_| (200, MIXED_MONEY_FUND_PAYLOAD.to_string()));
+    let client = reqwest::Client::new();
+    let mut pacer = fast_pacer();
+    let confirmed = tauri::async_runtime::block_on(confirm_money_fund_form_from(
+        &client,
+        &mut pacer,
+        "000905",
+        &[url.as_str()],
+    ))
+    .unwrap();
+    assert!(confirmed, "混排页按份额行形态确认");
+}
+
+#[test]
+fn confirm_untrusted_response_fails_closed() {
+    // 披露源不可信（500 系统异常页 / 非 JSON 拦截页 / 缺 aaData）：Err 上抛，
+    // 调用方本轮整只不落——不把不可信当「缺信号」。
+    for (label, status, body) in [
+        ("500 系统异常页", 500u16, SERVER_ERROR_HTML.to_string()),
+        (
+            "200 非 JSON 拦截页",
+            200,
+            "<html>blocked</html>".to_string(),
+        ),
+        (
+            "对象缺 aaData",
+            200,
+            r#"{"sEcho":1,"iTotalRecords":0}"#.to_string(),
+        ),
+    ] {
+        let (url, _) = spawn_capture_server(move |_| (status, body.clone()));
+        let client = reqwest::Client::new();
+        let mut pacer = fast_pacer();
+        let result = tauri::async_runtime::block_on(confirm_money_fund_form_from(
+            &client,
+            &mut pacer,
+            "110022",
+            &[url.as_str()],
+        ));
+        assert_malformed(result.unwrap_err(), label);
+    }
 }

@@ -42,7 +42,6 @@ fn nav_page(total: u64, points: &[(&str, f64)]) -> NavPage {
     NavPage {
         total,
         blocked: false,
-        money_fund: false,
         points: points
             .iter()
             .map(|(d, n)| NavPoint {
@@ -51,6 +50,12 @@ fn nav_page(total: u64, points: &[(&str, f64)]) -> NavPage {
             })
             .collect(),
     }
+}
+
+/// 空实现：既有用例不关心货基判定时注入（缺信号形态——不打标、照常回填）。
+/// 货基判定用例注入自己的确认桩（确认 / 缺信号 / 源不可信三态）。
+fn no_confirm(_: &str) -> FetchFuture<bool> {
+    Box::pin(std::future::ready(Ok(false)))
 }
 
 /// 直插一条无持仓标的（seed_instrument 固定 stock 类型；kind ≠ stock 时就地修正
@@ -213,7 +218,6 @@ impl Harness {
                 points: vec![],
                 total: 0,
                 blocked: false,
-                money_fund: false,
             }))
     }
 
@@ -253,6 +257,7 @@ fn run_round(
         &mut fetch_fx,
         &mut fetch_nav,
         &mut fetch_nav_full,
+        &mut no_confirm,
         &mut progress,
         &mut witness,
     ));
@@ -603,12 +608,7 @@ fn swapping_kline_channel_keeps_history_landing_without_source_key_in_orchestrat
     };
     let mut fetch_fx = |_: &str| super::ready(Ok(vec![]));
     let mut fetch_nav = |_: &NavQuery| super::ready(Ok(nav_page(0, &[])));
-    let mut fetch_nav_full = |_: &str| {
-        super::ready(Ok(FullSeries {
-            points: vec![],
-            money_fund: false,
-        }))
-    };
+    let mut fetch_nav_full = |_: &str| super::ready(Ok(FullSeries { points: vec![] }));
     let mut progress = |_: SyncProgress| {};
     let mut witness = WriteWitness::default();
     let stats = tauri::async_runtime::block_on(run_history_backfill_round(
@@ -617,6 +617,7 @@ fn swapping_kline_channel_keeps_history_landing_without_source_key_in_orchestrat
         &mut fetch_fx,
         &mut fetch_nav,
         &mut fetch_nav_full,
+        &mut no_confirm,
         &mut progress,
         &mut witness,
     ))
@@ -682,12 +683,8 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
     let mut fetch_kline = channels.fetch_kline;
     let mut fetch_fx = |_: &str| super::ready(Ok(vec![]));
     let mut fetch_nav = |_: &NavQuery| super::ready(Ok(nav_page(0, &[])));
-    let mut fetch_nav_full = |_: &str| {
-        super::ready(Ok(FullSeries {
-            points: vec![],
-            money_fund: false,
-        }))
-    };
+    let mut fetch_nav_full = |_: &str| super::ready(Ok(FullSeries { points: vec![] }));
+    let mut confirm = no_confirm;
     let mut progress = |_: SyncProgress| {};
     let mut witness = WriteWitness::default();
     let stats = tauri::async_runtime::block_on(run_history_backfill_round(
@@ -696,6 +693,7 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
         &mut fetch_fx,
         &mut fetch_nav,
         &mut fetch_nav_full,
+        &mut confirm,
         &mut progress,
         &mut witness,
     ))
@@ -834,22 +832,26 @@ fn fund_instrument(id: &str, code: &str) -> SyncInstrument {
 }
 
 /// 直驱逐只回填：页级推进回调置空（页级明细断言归上方 run_history_backfill_round
-/// 的用例，此处不重复），返回结局。
-async fn run_fund_backfill<N, S>(
+/// 的用例，此处不重复），判定确认默认缺信号（不打标、照常回填；货基用例注入
+/// 确认桩），返回结局。
+async fn run_fund_backfill<N, S, C>(
     conn: &Connection,
     fund: &SyncInstrument,
     fetch_nav: &mut N,
     fetch_full: &mut S,
+    confirm_money_fund: &mut C,
 ) -> Result<BackfillOutcome>
 where
     N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
     S: FnMut(&str) -> FetchFuture<FullSeries> + Send,
+    C: FnMut(&str) -> FetchFuture<bool> + Send,
 {
     backfill_one_fund_history(
         conn,
         fund,
         fetch_nav,
         fetch_full,
+        confirm_money_fund,
         &mut |_done: u64, _total: u64| {},
     )
     .await
@@ -862,7 +864,6 @@ fn empty_nav(_: &NavQuery) -> FetchFuture<NavPage> {
         points: vec![],
         total: 0,
         blocked: false,
-        money_fund: false,
     }))
 }
 
@@ -883,7 +884,6 @@ fn mock_nav<'a>(
                 points: vec![],
                 total: 0,
                 blocked: false,
-                money_fund: false,
             })))
     }
 }
@@ -898,7 +898,6 @@ fn full_series(series: &[(String, f64)]) -> FullSeries {
                 nav: *nav,
             })
             .collect(),
-        money_fund: false,
     }
 }
 
@@ -914,10 +913,7 @@ fn mock_full_nav<'a>(
             .iter()
             .find(|(c, _)| *c == code)
             .map(|(_, series)| series.clone())
-            .unwrap_or(FullSeries {
-                points: vec![],
-                money_fund: false,
-            })))
+            .unwrap_or(FullSeries { points: vec![] })))
     }
 }
 
@@ -970,7 +966,6 @@ fn mock_nav_series<'a>(
             points,
             total,
             blocked: false,
-            money_fund: false,
         }))
     }
 }
@@ -1082,9 +1077,14 @@ fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
     let full_requested = Mutex::new(Vec::new());
     let mut nav = mock_nav(&pages, &requested);
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     assert!(outcome.written, "首刷跨页回填应落库");
     assert!(!outcome.inconclusive);
@@ -1133,9 +1133,14 @@ fn fund_first_sync_prefers_single_request_full_series() {
     let page_requested = Mutex::new(Vec::new());
     let mut nav = mock_nav(&[], &page_requested);
 
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     assert!(outcome.written);
     assert!(!outcome.inconclusive);
@@ -1191,9 +1196,14 @@ fn fund_first_sync_full_series_failure_falls_back_to_pages() {
     )];
     let mut nav = mock_nav(&pages, &requested);
 
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     assert!(outcome.written);
     assert!(!outcome.inconclusive);
@@ -1216,19 +1226,19 @@ fn fund_first_sync_full_series_empty_falls_back_to_pages() {
     insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
     let fund = fund_instrument("inst-fund", "110022");
 
-    let mut full = |_: &str| {
-        super::ready(Ok(FullSeries {
-            points: vec![],
-            money_fund: false,
-        }))
-    };
+    let mut full = |_: &str| super::ready(Ok(FullSeries { points: vec![] }));
     let requested = Mutex::new(Vec::new());
     let pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.348)])])];
     let mut nav = mock_nav(&pages, &requested);
 
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     assert!(outcome.written);
     assert!(!outcome.inconclusive);
@@ -1252,7 +1262,6 @@ fn fund_first_sync_full_series_without_window_points_falls_back_to_pages() {
             date: "2010-08-20".into(),
             nav: 1.0,
         }],
-        money_fund: false,
     };
     let full_by_code = [("110022", stale)];
     let full_requested = Mutex::new(Vec::new());
@@ -1261,9 +1270,14 @@ fn fund_first_sync_full_series_without_window_points_falls_back_to_pages() {
     let pages = [("110022", vec![nav_page(0, &[])])];
     let mut nav = mock_nav(&pages, &requested);
 
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     assert_eq!(requested.lock().unwrap().len(), 1, "窗口外点回退分页通道");
     assert_eq!(
@@ -1295,7 +1309,6 @@ fn fund_incremental_does_not_touch_single_request_full_series() {
                 date: "2026-01-30".into(),
                 nav: 9.99,
             }],
-            money_fund: false,
         },
     )];
     let full_requested = Mutex::new(Vec::new());
@@ -1307,9 +1320,14 @@ fn fund_incremental_does_not_touch_single_request_full_series() {
     )];
     let mut nav = mock_nav(&pages, &requested);
 
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     assert!(outcome.written);
     assert_eq!(requested.lock().unwrap().len(), 1, "增量走分页通道");
@@ -1353,9 +1371,14 @@ fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
     let mut nav = mock_nav(&pages, &requested);
     let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     assert!(outcome.written);
     assert!(!outcome.inconclusive);
@@ -1393,9 +1416,14 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
     let mut nav = mock_nav(&[], &requested);
     let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     // 「已是最新」= 结局确定但不落库：written 为 false、非「窗口不完整」
     //（原断言：synced 计入、written 为 0、零变化不广播）。
@@ -1450,9 +1478,14 @@ fn fund_with_nav_date_but_no_history_backfills_two_years() {
     let mut nav = mock_nav_series(&series, &requested);
     let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     assert!(outcome.written);
     assert!(!outcome.inconclusive);
@@ -1504,14 +1537,18 @@ fn fund_blocked_empty_response_with_watermark_is_not_counted_synced() {
             points: vec![],
             total: 0,
             blocked: true,
-            money_fund: false,
         }))
     };
     let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     // 空响应不可信：结局 = 窗口不完整待重试（原断言：不计 synced、计跳过）。
     assert_eq!(
@@ -1555,9 +1592,14 @@ fn fund_backfill_write_failure_leaves_no_history() {
     let full_requested = Mutex::new(Vec::new());
     let mut full_nav = mock_full_nav(&full, &full_requested);
     let mut nav = empty_nav;
-    let err =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full_nav))
-            .unwrap_err();
+    let err = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full_nav,
+        &mut no_confirm,
+    ))
+    .unwrap_err();
 
     assert!(
         err.to_string().contains("注入周点写入失败"),
@@ -1585,6 +1627,7 @@ fn fund_backfill_write_failure_leaves_no_history() {
         &fund,
         &mut nav_retry,
         &mut full_nav_retry,
+        &mut no_confirm,
     ))
     .unwrap();
     assert!(
@@ -1617,7 +1660,6 @@ fn fund_partial_blocked_page_skips_whole_instrument() {
                 points: vec![],
                 total: 45,
                 blocked: true,
-                money_fund: false,
             },
         ],
     )];
@@ -1625,9 +1667,14 @@ fn fund_partial_blocked_page_skips_whole_instrument() {
     let mut nav = mock_nav(&pages, &requested);
     let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     // 部分页被拦截不得计成功：结局 = 窗口不完整待重试（原断言：计跳过）。
     assert_eq!(
@@ -1671,7 +1718,6 @@ fn fund_incremental_partial_blocked_page_keeps_existing_history_and_watermark() 
                 points: vec![],
                 total: 45,
                 blocked: true,
-                money_fund: false,
             },
         ],
     )];
@@ -1679,9 +1725,14 @@ fn fund_incremental_partial_blocked_page_keeps_existing_history_and_watermark() 
     let mut nav = mock_nav(&pages, &requested);
     let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     // 部分页被拦截不得计成功：结局 = 窗口不完整待重试（原断言：计跳过）。
     assert_eq!(
@@ -1719,9 +1770,14 @@ fn fund_page_cap_truncation_skips_whole_instrument() {
     let mut nav = mock_nav(&pages, &requested);
     let full_requested = Mutex::new(Vec::new());
     let mut full = mock_full_nav(&[], &full_requested);
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut no_confirm,
+    ))
+    .unwrap();
 
     // 页数触顶不得计成功：结局 = 窗口已知未采全，按待重试（原断言：计跳过）。
     assert_eq!(
@@ -1745,10 +1801,10 @@ fn fund_page_cap_truncation_skips_whole_instrument() {
 }
 
 // ---------------------------------------------------------------------------
-// 恒定价格标的（ADR-0126 / issue #1450）：队列不收恒定通道标的——它的走势由
+// 恒定价格标的（ADR-0126 / issue #1450 / #1563）：队列不收恒定通道标的——它的走势由
 // 读侧按常量合成，历史行不带来任何信息；打标后净值水位已清空，仍按净值通道
-// 收集会让它每窗口整根重采。首刷撞上货基形态（详情页数据文件缺单位净值序列
-// 而有万份收益序列）即打标 + 兜底建档常量价，不落平坦历史。
+// 收集会让它每窗口整根重采。首刷撞上官方披露自报形态（单位净值为空、万份收益
+// 与七日年化有值）即打标 + 兜底建档常量价，不落平坦历史。
 // ---------------------------------------------------------------------------
 
 /// 队列豁免：恒定标的即使「无历史（首刷判据必中）」也不进队、零请求
@@ -1771,32 +1827,35 @@ fn queue_excludes_constant_price_instruments() {
     assert!(!written);
 }
 
-/// 首刷撞上货基形态：单请求全量通道带回万份收益序列（money_fund 信号）即
-/// 打标 + 兜底建档常量价（净值日期空），不落平坦历史行（读侧按常量取值）。
+/// 首刷撞上官方披露自报形态：确认即打标 + 兜底建档常量价（净值日期空），
+/// 不落平坦历史行（读侧按常量取值），且**零净值抓取请求**——万份收益不得经
+/// 取数面冒充单位净值（#1342）。
+/// **负向接线证明（ADR-0087）**：删除 `backfill_one_fund_history` 的判定门
+///（确认即打标收尾），货基按普通基金回填——历史行与现价被写成万份收益 0.2229
+/// → 本用例断言变红（市值口径回归 #1342 的错法）。
 #[test]
 fn fund_first_sync_money_shape_marks_and_lands_no_flat_rows() {
     let conn = tauri_app_lib::test_support::open();
     insert_plain_instrument(&conn, "inst-money", "000905", "fund", "CNY", "unknown");
     let fund = fund_instrument("inst-money", "000905");
 
-    let series = daily_nav_series(
-        NaiveDate::from_ymd_opt(2026, 1, 5).unwrap(),
-        beijing_today(),
-    );
-    let full_by_code = [(
-        "000905",
-        FullSeries {
-            points: full_series(&series).points,
-            money_fund: true,
-        },
-    )];
-    let full_requested = Mutex::new(Vec::new());
-    let mut full = mock_full_nav(&full_by_code, &full_requested);
-    let mut nav = empty_nav;
+    // 取数面的事实透传形态（判定口径退役后）：取值位是万份收益——判定门必须
+    // 拦在落库前。
+    let nav_calls = Mutex::new(0usize);
+    let full_calls = Mutex::new(0usize);
+    let mut nav = empty_nav_counting(&nav_calls);
+    let mut full = income_value_full_nav(&full_calls);
 
-    let outcome =
-        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut full))
-            .unwrap();
+    let confirm_calls = Mutex::new(0usize);
+    let mut confirm = confirm_true_counting(&confirm_calls);
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut confirm,
+    ))
+    .unwrap();
 
     // 建档常价是实际价格写入（现价缓存首落按价格写入广播）。
     assert!(outcome.written);
@@ -1808,7 +1867,7 @@ fn fund_first_sync_money_shape_marks_and_lands_no_flat_rows() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(cents, Some(10_000), "数据文件形态确认即打标");
+    assert_eq!(cents, Some(10_000), "官方披露自报形态确认即打标");
     assert_eq!(
         fund_price_of(&conn, "inst-money"),
         Some((10_000, None)),
@@ -1818,9 +1877,91 @@ fn fund_first_sync_money_shape_marks_and_lands_no_flat_rows() {
         price_history_rows(&conn, "inst-money").is_empty(),
         "确认即收尾：平坦历史行不再生长（读侧按常量取值）"
     );
+    assert_eq!(*confirm_calls.lock().unwrap(), 1, "一次确认请求");
+    assert_eq!(*full_calls.lock().unwrap(), 0, "确认即收尾：零全量净值抓取");
+    assert_eq!(*nav_calls.lock().unwrap(), 0, "确认即收尾：零分页净值抓取");
 }
 
-// ---------------------------------------------------------------------------
+/// 首刷时官方披露源不可信（响应异常）：本轮整只不落、按不可信结局待重试——
+/// 信号缺席时落取值位，万份收益就回冒充单位净值（#1342）。
+#[test]
+fn fund_first_sync_disclosure_unavailable_is_inconclusive_and_lands_nothing() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-money", "000905", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-money", "000905");
+
+    let calls = Mutex::new(0usize);
+    let mut nav = empty_nav_counting(&calls);
+    let full_requested = Mutex::new(Vec::new());
+    let mut full = mock_full_nav(&[], &full_requested);
+    let mut confirm: fn(&str) -> FetchFuture<bool> = |_| {
+        Box::pin(std::future::ready(Err(AppError::coded(
+            "sync.disclosure-source-malformed",
+            "基金官方披露数据源返回了无法解析的内容，请稍后重试同步",
+        ))))
+    };
+    let outcome = tauri::async_runtime::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav,
+        &mut full,
+        &mut confirm,
+    ))
+    .unwrap();
+
+    assert!(!outcome.written);
+    assert!(outcome.inconclusive, "披露源不可信 = 待重试，不是无数据");
+    assert_eq!(
+        fund_price_of(&conn, "inst-money"),
+        None,
+        "本轮整只不落：万份收益不得经取数面冒充单位净值"
+    );
+    assert!(price_history_rows(&conn, "inst-money").is_empty());
+    let cents: Option<i64> = conn
+        .query_row(
+            "SELECT constant_unit_price FROM instruments WHERE id = 'inst-money'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(cents, None, "披露源不可信不打标");
+    assert_eq!(*calls.lock().unwrap(), 0, "判定门在抓取前收尾");
+}
+
+/// 确认桩（Ok(true) 计数）：首刷货基判定用例注入。
+fn confirm_true_counting(calls: &Mutex<usize>) -> impl FnMut(&str) -> FetchFuture<bool> + '_ {
+    move |_: &str| {
+        *calls.lock().unwrap() += 1;
+        Box::pin(std::future::ready(Ok(true)))
+    }
+}
+
+/// 空分页净值页桩（计数）：判定门在抓取前的断言面。
+fn empty_nav_counting(calls: &Mutex<usize>) -> impl FnMut(&NavQuery) -> FetchFuture<NavPage> + '_ {
+    move |_: &NavQuery| {
+        *calls.lock().unwrap() += 1;
+        super::ready(Ok(NavPage {
+            points: vec![],
+            total: 0,
+            blocked: false,
+        }))
+    }
+}
+
+/// 单请求全量通道桩（计数，取值位携带万份收益 0.2229）：删除判定门即红——
+/// 货基按普通基金回填时历史行与现价被写成万份收益。
+fn income_value_full_nav(calls: &Mutex<usize>) -> impl FnMut(&str) -> FetchFuture<FullSeries> + '_ {
+    move |_: &str| {
+        *calls.lock().unwrap() += 1;
+        super::ready(Ok(FullSeries {
+            points: vec![NavPoint {
+                date: "2026-09-17".into(),
+                nav: 0.2229,
+            }],
+        }))
+    }
+}
+
 // 自然日窗口规则（ADR-0122 决策 3）：两条后台车道（每日现价刷新 / 价格历史补全）
 // 共用 `daily_window_opens`。规则在本层直接钉住——同日不开、跨日开、首轮开——
 // 集成侧不再靠「睡够一段时间看计数没变」来反推规则（那种写法既慢又把时间猜测

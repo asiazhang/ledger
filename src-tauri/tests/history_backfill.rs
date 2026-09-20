@@ -89,6 +89,7 @@ fn gated_backfill_channels(
                 unreachable!("测试现场无基金标的，名称通道不应被触达")
             })
         }),
+        confirm_money_fund_form: Box::new(|_| Box::pin(async { Ok(false) })),
         bulk: BulkFetchSurfaces::absent(),
     };
     BackfillChannelsSlot(Arc::new(tokio::sync::Mutex::new(channels)))
@@ -126,6 +127,7 @@ fn frontend_sync_channels() -> SyncChannelsSlot {
                 unreachable!("测试现场无基金标的，名称通道不应被触达")
             })
         }),
+        confirm_money_fund_form: Box::new(|_| Box::pin(async { Ok(false) })),
         bulk: BulkFetchSurfaces::absent(),
     };
     SyncChannelsSlot(Arc::new(tokio::sync::Mutex::new(channels)))

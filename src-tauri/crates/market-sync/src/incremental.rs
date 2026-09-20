@@ -255,17 +255,20 @@ async fn take_bulk_surface<T: BulkCoverage>(
 /// 取数面注入（ADR-0121 / issue #1374）：`bulk` 是名称全量字典 + 场外基金净值
 /// 全市场批量面 + 跨同步记忆的打包束（生产接 HTTP 层、测试注入桩，见
 /// [`super::channels`]）。批量面只回答「这次刷新用几次请求」，不改变价格来源归属。
-// 四个逐标的抓取闭包 + 取数面 + 会话 + 进度回调 + 写入见证共 8 参：网络接缝
-// 逐通道注入使然（与 HTTP 层多主机请求同形），参数表就是「本编排消费
-// 哪些外部通道」的清单（issue #1377 起日 K 与单请求全量净值两通道归后台补全，
-// 不在本编排的参数表）。
+/// 货基判定确认闭包（issue #1563 / ADR-0126 决策 3 换源）由逐只刷新单元消费：
+/// 未打标标的进逐只通道先确认、确认即退出采集链路。
+// 五个逐标的抓取闭包（含货基判定确认）+ 取数面 + 会话 + 进度回调 + 写入见证
+// 共 9 参：网络接缝逐通道注入使然（与 HTTP 层多主机请求同形），参数表就是
+// 「本编排消费哪些外部通道」的清单（issue #1377 起日 K 与单请求全量净值两通道
+// 归后台补全，不在本编排的参数表）。
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn do_incremental_sync_with<Q, F, X, N, M, P>(
+pub(super) async fn do_incremental_sync_with<Q, F, X, N, M, C, P>(
     session: &Q,
     fetch: &mut F,
     fetch_fx: &mut X,
     fetch_nav: &mut N,
     fetch_fund_name: &mut M,
+    confirm_money_fund: &mut C,
     bulk: &mut BulkFetchSurfaces,
     progress: &mut P,
     witness: &mut WriteWitness,
@@ -280,6 +283,8 @@ where
     // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
     // （不落库）。生产接基金详情通道，测试注入 mock。
     M: FnMut(&str) -> FetchFuture<String> + Send,
+    // 货基判定确认闭包（issue #1563）：6 位代码 → 官方披露自报形态三态。
+    C: FnMut(&str) -> FetchFuture<bool> + Send,
     // 进度回调闭包（issue #897 / ADR-0095；页级明细 issue #1061）：三字段载荷，
     // 逐有通道标的推进、基金深回填带页级明细；生产接事件发射（壳层接线），
     // 测试注入记录闭包。
@@ -299,8 +304,8 @@ where
     // 净值分区不含恒定价格通道（ADR-0126 决策 4 / #1451）：恒定标的不进逐只
     // 刷新（批量面未覆盖不再对它回退）、不进进度分母、不计批量面缺口——为一
     // 个已知常量发请求收益为零。未打标的货基仍留在净值通道内，由逐只刷新的
-    // 数据源自报口径确认即打标（见 [`refresh_one_fund_price`]），自下一轮同步
-    // 起豁免。
+    // 官方披露自报形态判定门确认即打标（issue #1563 / ADR-0126 决策 3 换源，
+    // 见 [`refresh_one_fund_price`]），自下一轮同步起豁免。
     let funds: Vec<&SyncInstrument> = held
         .iter()
         .filter(|i| i.channel == PriceChannel::FundNav)
@@ -517,6 +522,7 @@ where
                 fund,
                 latest_hint,
                 fetch_nav,
+                confirm_money_fund,
                 &mut fund_stats,
                 &mut on_page,
             )

@@ -89,6 +89,7 @@ fn gated_channels(
                 unreachable!("测试现场无基金标的，名称通道不应被触达")
             })
         }),
+        confirm_money_fund_form: Box::new(|_| Box::pin(async { Ok(false) })),
         bulk: BulkFetchSurfaces::absent(),
     };
     SyncChannelsSlot(Arc::new(tokio::sync::Mutex::new(channels)))
@@ -474,6 +475,7 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
                 })
             }),
             fetch_fund_name: Box::new(|_| Box::pin(async { Ok("权威名称-110022".into()) })),
+            confirm_money_fund_form: Box::new(|_| Box::pin(async { Ok(false) })),
             bulk: BulkFetchSurfaces::absent(),
         }
     }

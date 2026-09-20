@@ -107,39 +107,29 @@ fn lsjz_invalid_nav_rows_are_filtered() {
 const MONEY_FUND_PAYLOAD: &str = r#"{"Data":{"LSJZList":[{"FSRQ":"2026-09-14","DWJZ":"0.3117","LJJZ":"1.1410","SDATE":"","ACTUALSYI":"","NAVTYPE":"1","JZZZL":"0.00","SGZT":"限制大额申购","SHZT":"开放赎回","FHFCZ":"","FHFCZ10":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-09-13","DWJZ":"0.0000","LJJZ":"1.1410","SDATE":"","ACTUALSYI":"","NAVTYPE":"1","JZZZL":"0.00","SGZT":"限制大额申购","SHZT":"开放赎回","FHFCZ":"","FHFCZ10":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-09-12","DWJZ":"-0.6228","LJJZ":"1.1409","SDATE":"","ACTUALSYI":"","NAVTYPE":"1","JZZZL":"0.00","SGZT":"限制大额申购","SHZT":"开放赎回","FHFCZ":"","FHFCZ10":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-09-11","DWJZ":null,"LJJZ":"1.1410","SDATE":"","ACTUALSYI":"","NAVTYPE":"1","JZZZL":"0.00","SGZT":"限制大额申购","SHZT":"开放赎回","FHFCZ":"","FHFCZ10":"","FHFCBZ":"","DTYPE":null,"FHSP":""}],"FundType":"005","SYType":"每万份收益","isNewType":false,"Feature":null},"ErrCode":0,"ErrMsg":null,"TotalCount":3431,"Expansion":null,"PageSize":4,"PageIndex":1}"#;
 
 #[test]
-fn lsjz_money_fund_income_column_normalizes_to_unit_nav() {
-    // 货基判定命中：日期即净值日本体，单位净值恒 1.0000——万份收益数值（含 0
-    // 与负值）甚至缺省（null）都不影响行有效性，也不进价格。
+fn lsjz_money_fund_rows_pass_income_value_through_unrewritten() {
+    // 判定不在此层（issue #1563 / ADR-0126 决策 3 换源）：东财自报口径退役后，
+    // 取值列按事实解析、原样透传——货基行的 DWJZ（万份收益）不再被改写为恒定
+    // 单位净值，落库由逐只刷新与历史首刷的官方披露判定门拦截（确认前不落任何
+    // 取值，万份收益不得冒充单位净值，#1342）。零 / 负 / 缺省取值行按「无效行
+    // 过滤」丢弃，与普通基金同姿态。
     let resp: NavResponse = serde_json::from_str(MONEY_FUND_PAYLOAD).unwrap();
     let parsed = parse_lsjz(&resp);
     assert!(!parsed.blocked);
     assert_eq!(
         parsed.points,
-        vec![
-            NavPoint {
-                date: "2026-09-14".into(),
-                nav: 1.0
-            },
-            NavPoint {
-                date: "2026-09-13".into(),
-                nav: 1.0
-            },
-            NavPoint {
-                date: "2026-09-12".into(),
-                nav: 1.0
-            },
-            NavPoint {
-                date: "2026-09-11".into(),
-                nav: 1.0
-            },
-        ]
+        vec![NavPoint {
+            date: "2026-09-14".into(),
+            nav: 0.3117
+        }],
+        "万份收益原样透传（不进价格：判定门拦在落库前）"
     );
 }
 
 #[test]
-fn lsjz_money_fund_signal_unknown_shape_never_fails_response() {
-    // 判定信号（FundType/SYType）未知 wire 形态（如数字）：宽容归缺省，整页
-    // 照常解析、不中断同步——信号缺席的代价是退回旧口径，不是报错。
+fn lsjz_unknown_fields_never_fail_response() {
+    // 东财响应的未知 / 信号类字段（如退役前的 FundType/SYType，或未来新增字段）
+    // 宽容忽略：整页照常解析、不中断同步——解析层只认消费的列。
     let json = r#"{"Data":{"LSJZList":[{"FSRQ":"2026-01-30","DWJZ":"3.3480"}],"FundType":5,"SYType":7},"TotalCount":1}"#;
     let resp: NavResponse = serde_json::from_str(json).unwrap();
     let parsed = parse_lsjz(&resp);
@@ -149,22 +139,7 @@ fn lsjz_money_fund_signal_unknown_shape_never_fails_response() {
             date: "2026-01-30".into(),
             nav: 3.348
         }],
-        "信号缺席按普通基金口径解析原值"
-    );
-}
-
-#[test]
-fn lsjz_money_fund_detected_by_fund_type_code_alone() {
-    // SYType 缺省而 FundType=005：类型码单信号同样判定（两信号任一命中即真）。
-    let json = r#"{"Data":{"LSJZList":[{"FSRQ":"2026-09-14","DWJZ":"0.3117"}],"FundType":"005","SYType":null},"TotalCount":1}"#;
-    let resp: NavResponse = serde_json::from_str(json).unwrap();
-    let parsed = parse_lsjz(&resp);
-    assert_eq!(
-        parsed.points,
-        vec![NavPoint {
-            date: "2026-09-14".into(),
-            nav: 1.0
-        }]
+        "未知字段按普通基金口径解析原值"
     );
 }
 
@@ -430,7 +405,6 @@ fn nav_full_series_fetch_reads_single_file() {
         head.contains("GET /pingzhongdata/110022.js"),
         "请求路径应为基金详情页数据文件: {head}"
     );
-    assert!(!series.money_fund, "单位净值序列在场：非货基形态信号");
     assert_eq!(
         series.points,
         vec![
@@ -469,39 +443,23 @@ fn nav_full_series_fetch_untrusted_body_errors_for_fallback() {
 }
 
 #[test]
-fn nav_full_series_serves_money_fund_from_income_series() {
-    // 货币基金没有单位净值序列：单请求通道直接按万份收益序列收录（日期 ×
-    // 恒定单位净值 1.0000，issue #1342），不再必然失败回退分页通道。
+fn nav_full_series_money_fund_is_untrusted_fail_closed() {
+    // 货币基金没有单位净值序列：万份收益序列的存量投影随东财判定口径退役
+    //（issue #1563 / ADR-0126 决策 3 换源）——判定门已在抓取前收尾，能走到本
+    // 通道的都是非货基；缺单位净值序列 = 形态漂移或风控页，fail-closed 报错，
+    // 由调用方回退分页通道，不把不可信结果当「无净值」。
     let (url, _) = spawn_header_capture_server(MONEY_FUND_ARCHIVE_JS.to_string());
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let series = tauri::async_runtime::block_on(fetch_nav_full_series_from(
-        &client,
-        &mut pacer,
-        "000905",
-        &[url.as_str()],
-    ))
-    .unwrap();
     assert!(
-        series.money_fund,
-        "缺单位净值序列而有万份收益序列：货基形态信号"
-    );
-    assert_eq!(
-        series.points,
-        vec![
-            NavPoint {
-                date: "2023-09-12".into(),
-                nav: 1.0
-            },
-            NavPoint {
-                date: "2023-09-13".into(),
-                nav: 1.0
-            },
-            NavPoint {
-                date: "2023-09-14".into(),
-                nav: 1.0
-            },
-        ]
+        tauri::async_runtime::block_on(fetch_nav_full_series_from(
+            &client,
+            &mut pacer,
+            "000905",
+            &[url.as_str()],
+        ))
+        .is_err(),
+        "缺单位净值序列不可信，不产出任何取值"
     );
 }
 
@@ -523,7 +481,6 @@ fn nav_full_series_prefers_net_worth_trend_when_both_series_exist() {
         &[url.as_str()],
     ))
     .unwrap();
-    assert!(!series.money_fund, "单位净值序列在场：非货基形态信号");
     assert_eq!(series.points.len(), 3);
     assert_eq!(
         series.points[2].nav, 1.006,
