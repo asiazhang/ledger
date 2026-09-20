@@ -378,15 +378,15 @@ fn account_flow_expr_balances_match_rust() {
 }
 
 // ---------------------------------------------------------------------------
-// convert_to_native
+// convert_to_native_current
 // ---------------------------------------------------------------------------
 
 /// 币种与默认币种相同 → 1:1 原样返回。
 #[test]
-fn convert_to_native_same_currency_is_identity() {
+fn convert_to_native_current_same_currency_is_identity() {
     let conn = test_support::open();
     assert_eq!(
-        convert_to_native(&conn, 12345, &default_currency_code(&conn).unwrap()).unwrap(),
+        convert_to_native_current(&conn, 12345, &default_currency_code(&conn).unwrap()).unwrap(),
         12345
     );
 }
@@ -403,55 +403,106 @@ fn default_currency_code_reads_ledger_setting() {
 
 /// 折算基准跟随账本级设置：基准设为 USD 后，EUR 按 EUR→USD 汇率折算。
 #[test]
-fn convert_to_native_follows_base_currency_setting() {
+fn convert_to_native_current_follows_base_currency_setting() {
     let conn = test_support::open();
     test_support::seed_exchange_rate(&conn, "EUR", "USD", 1.1);
     ledger_currencies::set_base_currency(&conn, "USD").unwrap();
-    assert_eq!(convert_to_native(&conn, 10000, "EUR").unwrap(), 11000);
+    assert_eq!(
+        convert_to_native_current(&conn, 10000, "EUR").unwrap(),
+        11000
+    );
 }
 
 /// 非默认币种按汇率折算到全局默认币种。
 #[test]
-fn convert_to_native_uses_rate_to_default_currency() {
+fn convert_to_native_current_uses_rate_to_default_currency() {
     let conn = test_support::open();
     test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
-    assert_eq!(convert_to_native(&conn, 10000, "USD").unwrap(), 72000);
+    assert_eq!(
+        convert_to_native_current(&conn, 10000, "USD").unwrap(),
+        72000
+    );
 }
 
 /// 折算基准是全局默认币种，与账户币种无关：
 /// 即使存在 USD 账户，USD 金额仍折算到 CNY，而非 1:1 落库。
 #[test]
-fn convert_to_native_is_independent_of_account_currency() {
+fn convert_to_native_current_is_independent_of_account_currency() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0);
     test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
-    assert_eq!(convert_to_native(&conn, 10000, "USD").unwrap(), 72000);
+    assert_eq!(
+        convert_to_native_current(&conn, 10000, "USD").unwrap(),
+        72000
+    );
 }
 
 /// 只有反向汇率时取倒数折算。
 #[test]
-fn convert_to_native_uses_reverse_rate_when_only_reverse_exists() {
+fn convert_to_native_current_uses_reverse_rate_when_only_reverse_exists() {
     let conn = test_support::open();
     test_support::seed_exchange_rate(&conn, "CNY", "EUR", 0.13);
     // 1 EUR = 1/0.13 CNY ≈ 7.6923
-    assert_eq!(convert_to_native(&conn, 10000, "EUR").unwrap(), 76923);
+    assert_eq!(
+        convert_to_native_current(&conn, 10000, "EUR").unwrap(),
+        76923
+    );
 }
 
 /// 正反向汇率均无 → 报错（不允许静默 1:1 混币种相加）。
 #[test]
-fn convert_to_native_errors_without_rate() {
+fn convert_to_native_current_errors_without_rate() {
     let conn = test_support::open();
-    assert!(convert_to_native(&conn, 10000, "JPY").is_err());
+    assert!(convert_to_native_current(&conn, 10000, "JPY").is_err());
 }
 
 /// 非正汇率（正查或反查）应报错，不得静默产出 0/负本位币金额。
 #[test]
-fn convert_to_native_rejects_non_positive_rate() {
+fn convert_to_native_current_rejects_non_positive_rate() {
     let conn = test_support::open();
     test_support::seed_exchange_rate(&conn, "USD", "CNY", 0.0);
-    assert!(convert_to_native(&conn, 10000, "USD").is_err());
+    assert!(convert_to_native_current(&conn, 10000, "USD").is_err());
 
     let conn = test_support::open();
     test_support::seed_exchange_rate(&conn, "CNY", "EUR", -0.13);
-    assert!(convert_to_native(&conn, 10000, "EUR").is_err());
+    assert!(convert_to_native_current(&conn, 10000, "EUR").is_err());
+}
+
+// ---------------------------------------------------------------------------
+// convert_to_native_on_trade_date（按交易日折算入口，#1541 留出入口）
+// ---------------------------------------------------------------------------
+
+/// 与本位币同币种 → 原样返回，与当期入口一致（#1541 验收：新入口对这条共同
+/// 不变量可被单测直接调用）。
+#[test]
+fn convert_to_native_on_trade_date_same_currency_is_identity_matches_current() {
+    let conn = test_support::open();
+    assert_eq!(
+        convert_to_native_on_trade_date(&conn, 12345, &default_currency_code(&conn).unwrap())
+            .unwrap(),
+        12345
+    );
+}
+
+/// 临时同源桥（#1541 → #1547）：非本位币在序列取数接入前显式委托当期入口，
+/// 行为与拆分前逐位一致；#1547 改接序列取数时本测试随语义改写。
+#[test]
+fn convert_to_native_on_trade_date_currently_delegates_to_current_table() {
+    let conn = test_support::open();
+    test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    assert_eq!(
+        convert_to_native_on_trade_date(&conn, 10000, "USD").unwrap(),
+        72000
+    );
+
+    let conn = test_support::open();
+    test_support::seed_exchange_rate(&conn, "CNY", "EUR", 0.13);
+    assert_eq!(
+        convert_to_native_on_trade_date(&conn, 10000, "EUR").unwrap(),
+        76923
+    );
+
+    // 缺汇率同样报错不静默（与当期入口一致）。
+    let conn = test_support::open();
+    assert!(convert_to_native_on_trade_date(&conn, 10000, "JPY").is_err());
 }

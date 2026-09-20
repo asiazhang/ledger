@@ -59,9 +59,9 @@ pub use model::{
 
 pub use amount::{
     Measure, TransactionKind, TransferSide, account_flow_expr, contributing_kinds,
-    contributing_kinds_sql, convert_to_native, default_currency_code, expense_gross_expr,
-    expense_net_expr, income_net_expr, policy_inflow_expr, policy_premium_expr, refund_gross_expr,
-    signed_amount,
+    contributing_kinds_sql, convert_to_native_current, convert_to_native_on_trade_date,
+    default_currency_code, expense_gross_expr, expense_net_expr, income_net_expr,
+    policy_inflow_expr, policy_premium_expr, refund_gross_expr, signed_amount,
 };
 pub use command::{ConvertCommandFields, InvestmentCommandFields, TransactionCommand};
 pub use read::search::{repair_note_pinyin, search_transactions, search_transactions_internal};

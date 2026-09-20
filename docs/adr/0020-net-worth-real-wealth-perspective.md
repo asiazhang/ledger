@@ -23,7 +23,7 @@
 配套细则：
 
 1. **投资账户余额不计入**（B 方案成立的关键）：买入后现金已转化为持仓，账户侧剔除 `type='investment'` 后，「卖出得到的现金在普通账户余额里、持仓市值只计 `remaining_quantity` 对应部分」两个事实天然互斥，不重复计算。
-2. **折算单一入口**：币种折算一律复用 Amount 接缝的 `convert_to_native`（基准为全局默认币种）；账户余额沿用 `list_account_balances_with_visibility` 的 `account_flow` 口径。不在命令里另写第二份口径表达式。
+2. **折算单一入口**：币种折算一律复用 Amount 接缝的当期入口 `convert_to_native_current`（基准为全局默认币种）；账户余额沿用 `list_account_balances_with_visibility` 的 `account_flow` 口径。不在命令里另写第二份口径表达式。
 3. **缺汇率上抛**：任一参与合计的币种缺正反向汇率时，命令整体报错（中文错误信息），不静默返回残缺合计——错误的数字比没有数字更有害。
 4. **未录价按空值语义**：`v_holdings.market_value_cents` 为 NULL（从未录价或缺折算汇率）的持仓跳过，不以零计入——零会把「未知」伪装成「已知为零」。
 5. **负债账户维持现状**：按 `account_flow` 现行符号忠实求和，不在净资产层强制取负（口径修正是独立议题，见 spec #140 Out of Scope）。

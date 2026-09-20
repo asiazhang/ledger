@@ -195,7 +195,8 @@
     "rate-positive": "exchange rate must be greater than 0",
     "rate-non-positive": "exchange rate {0}->{1} is not positive: {2}",
     "reverse-rate-non-positive": "reverse exchange rate {0}->{1} is not positive: {2}",
-    "rate-missing": "no exchange rate found for {0} -> {1} (neither direction)"
+    "rate-missing": "no exchange rate found for {0} -> {1} (neither direction)",
+    "source-malformed": "the exchange rate source returned unparseable content; please retry the sync later"
   },
   "instrument": {
     "price-positive": "price must be greater than 0",

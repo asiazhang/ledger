@@ -23,7 +23,7 @@ use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::db::{new_uuid, now_iso};
 use ledger_infra::error::{AppError, Result};
 use ledger_sync_protocol::device::device_id;
-use ledger_transaction::amount::{convert_to_native, default_currency_code};
+use ledger_transaction::amount::{convert_to_native_current, default_currency_code};
 
 /// 资产全列 + 当前估值三件套（JOIN 每资产最新一条估值历史行）。
 /// 「最新」= 估值日期最新，同日按插入序（UUID v7 主键时间有序，降序首条）。
@@ -193,7 +193,7 @@ fn into_entity(
 ) -> Result<PhysicalAsset> {
     let current_valuation_native_cents = match record.status {
         PhysicalAssetStatus::Holding => {
-            let native = convert_to_native(
+            let native = convert_to_native_current(
                 conn,
                 record.current_valuation_cents,
                 &record.current_valuation_currency_code,

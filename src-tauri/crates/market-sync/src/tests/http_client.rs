@@ -387,3 +387,86 @@ fn concurrent_requests_serialize_on_the_shared_pacer() {
         "相邻请求必须严格串行，服务端侧不得出现重叠在途（绕过共享 pacer 锁即红）"
     );
 }
+
+// ---------------------------------------------------------------------------
+// ECB 参考汇率取数入口（issue #1542 / ADR-0019 修订记录）：两个入口都经本地
+// HTTP 服务以假响应驱动，不依赖真实网络；非预期形状报 fx.source-malformed
+// 码化错误，不静默产出空序列。
+// ---------------------------------------------------------------------------
+
+/// 最小真实形状的 ECB Cube 报文（gesmes 前缀 + 默认命名空间 + 自闭腿条目）。
+fn ecb_sample_xml(date: &str, cny: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref"><Cube>
+<Cube time="{date}"><Cube currency="USD" rate="1.146"/><Cube currency="HKD" rate="8.9903"/><Cube currency="CNY" rate="{cny}"/></Cube>
+</Cube></gesmes:Envelope>"#
+    )
+}
+
+#[test]
+fn fetch_ecb_full_history_and_90d_entries_parse_fake_responses() {
+    let url = spawn_http_server({
+        let body = ecb_sample_xml("2026-09-18", "7.6755");
+        move |_| (200, body.clone())
+    });
+    let client = reqwest::Client::new();
+    let mut pacer = Pacer::new(Duration::ZERO);
+    // 全量历史入口：假响应驱动出日快照序列（解析正确性钉值）。
+    let days = tauri::async_runtime::block_on(crate::ecb::fetch_ecb_full_history(
+        &client,
+        &mut pacer,
+        &[url.as_str()],
+    ))
+    .unwrap();
+    assert_eq!(days.len(), 1);
+    assert_eq!(days[0].rates.get("HKD"), Some(&8.9903));
+    // 90 天增量入口：同一报文形状、不同文件路径，同样可解析。
+    let days = tauri::async_runtime::block_on(crate::ecb::fetch_ecb_90d_incremental(
+        &client,
+        &mut pacer,
+        &[url.as_str()],
+    ))
+    .unwrap();
+    assert_eq!(days[0].rates.get("CNY"), Some(&7.6755));
+}
+
+#[test]
+fn fetch_ecb_entries_report_coded_error_on_unexpected_shapes() {
+    let client = reqwest::Client::new();
+    // 空文件（200 + 空 body）：报 fx.source-malformed，不产出空序列。
+    let url = spawn_http_server(|_| (200, String::new()));
+    let mut pacer = Pacer::new(Duration::ZERO);
+    let err = tauri::async_runtime::block_on(crate::ecb::fetch_ecb_full_history(
+        &client,
+        &mut pacer,
+        &[url.as_str()],
+    ))
+    .unwrap_err();
+    assert!(err.is_code("fx.source-malformed"), "实际 {err:?}");
+    // 非 XML（被拦截页）：同码报错。
+    let url = spawn_http_server(|_| (200, "<html>waf blocked</html>".into()));
+    let mut pacer = Pacer::new(Duration::ZERO);
+    let err = tauri::async_runtime::block_on(crate::ecb::fetch_ecb_90d_incremental(
+        &client,
+        &mut pacer,
+        &[url.as_str()],
+    ))
+    .unwrap_err();
+    assert!(err.is_code("fx.source-malformed"), "实际 {err:?}");
+}
+
+/// 生产主机与两条文件路径的接线钉（删除即红）：入口默认指向 ECB 官方站的
+/// 全量 / 90 天增量文件，换源或改路径须显式改此处。
+#[test]
+fn ecb_host_and_paths_pin_to_the_official_reference_rates_files() {
+    assert_eq!(crate::ecb::ECB_HOSTS, ["https://www.ecb.europa.eu"]);
+    assert_eq!(
+        crate::ecb::FULL_HISTORY_PATH,
+        "/stats/eurofxref/eurofxref-hist.xml"
+    );
+    assert_eq!(
+        crate::ecb::INCREMENTAL_90D_PATH,
+        "/stats/eurofxref/eurofxref-hist-90d.xml"
+    );
+}

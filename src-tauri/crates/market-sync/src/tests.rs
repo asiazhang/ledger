@@ -187,6 +187,7 @@ fn production_source_files() -> Vec<(&'static str, String)> {
             "daily_refresh.rs",
             include_str!("daily_refresh.rs").to_string(),
         ),
+        ("ecb.rs", include_str!("ecb.rs").to_string()),
         ("fund.rs", include_str!("fund.rs").to_string()),
         (
             "fund_backfill.rs",

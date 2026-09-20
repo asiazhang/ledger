@@ -633,15 +633,30 @@ pub(crate) fn kline_beg() -> String {
 /// 整周无有效报价则该周无点。周键见 [`week_monday`]。基金净值点共用本函数
 ///（单位净值即价格，ADR-0038 决策 3，fund_nav 攒齐全部净值点后一次降采样）。
 pub(super) fn downsample_weekly(bars: &[KlineBar]) -> Vec<(String, f64)> {
-    let mut sorted: Vec<&KlineBar> = bars.iter().filter(|b| b.close > 0.0).collect();
-    sorted.sort_by(|a, b| a.date.cmp(&b.date));
+    downsample_weekly_points(bars.iter().filter(|b| b.close > 0.0).filter_map(|b| {
+        Some((
+            NaiveDate::parse_from_str(&b.date, "%Y-%m-%d").ok()?,
+            b.close,
+        ))
+    }))
+}
+
+/// 周采样核心（日线 / 基金净值 / ECB 汇率腿共用，issue #1542）：(日期, 数值) 点
+/// 按 ISO 周降采样，每周取最后一个有报价交易日的 (trade_date, 数值)。无效数值
+///（≤0）跳过；整周无有效报价则该周无点；输出按日期升序。周键见 [`week_monday`]。
+pub(super) fn downsample_weekly_points<I>(points: I) -> Vec<(String, f64)>
+where
+    I: IntoIterator<Item = (NaiveDate, f64)>,
+{
+    let mut sorted: Vec<(NaiveDate, f64)> = points
+        .into_iter()
+        .filter(|(_, value)| *value > 0.0)
+        .collect();
+    sorted.sort_by_key(|(date, _)| *date);
     let mut by_week: BTreeMap<NaiveDate, (String, f64)> = BTreeMap::new();
-    for bar in sorted {
-        let Ok(d) = NaiveDate::parse_from_str(&bar.date, "%Y-%m-%d") else {
-            continue;
-        };
+    for (d, value) in sorted {
         // 升序遍历：后写入者即该周最后一个交易日。
-        by_week.insert(week_monday(d), (bar.date.clone(), bar.close));
+        by_week.insert(week_monday(d), (d.format("%Y-%m-%d").to_string(), value));
     }
     by_week.into_values().collect()
 }

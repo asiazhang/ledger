@@ -2731,7 +2731,7 @@ fn fund_channels(
         }),
         fetch_kline: Box::new({
             let calls = quote_calls.kline.clone();
-            move |_: &str| {
+            move |_: &QuoteQuery| {
                 calls.fetch_add(1, Ordering::SeqCst);
                 unreachable!("用例现场无行情通道标的")
             }

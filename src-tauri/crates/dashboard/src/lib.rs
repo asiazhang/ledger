@@ -11,7 +11,7 @@
 //!   经持仓市值计入，避免同一笔资产重复计算）；
 //! - 持仓侧读 `v_holdings` 视图市值（账户本位币），再折算到全局默认币种；
 //!   `market_value_cents` 为 NULL（从未录价或缺折算汇率）时按空值语义跳过；
-//! - 币种折算一律复用 [`amount::convert_to_native`]，缺汇率错误上抛
+//! - 币种折算一律复用 Amount 接缝当期入口 [`amount::convert_to_native_current`]，缺汇率错误上抛
 //!   （中文错误信息），不静默混币种；
 //! - 实物资产腿复用 [`ledger_physical_asset`] 域 API 的在持合计读口径
 //!   （`list_physical_assets` 的 `holding_total_native_cents`，最新估值行经
@@ -84,7 +84,7 @@ fn compute_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
             continue;
         }
         accounts_sum +=
-            amount::convert_to_native(conn, ab.balance_cents, &ab.account.currency_code)?;
+            amount::convert_to_native_current(conn, ab.balance_cents, &ab.account.currency_code)?;
     }
 
     // 持仓市值合计：v_holdings 市值（账户本位币）→ 全局默认币种；NULL 市值跳过。
@@ -97,7 +97,8 @@ fn compute_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
     let mut holdings_sum = 0i64;
     for h in holdings {
         if let Some(market_value_cents) = h.market_value_cents {
-            holdings_sum += amount::convert_to_native(conn, market_value_cents, &h.currency_code)?;
+            holdings_sum +=
+                amount::convert_to_native_current(conn, market_value_cents, &h.currency_code)?;
         }
     }
 

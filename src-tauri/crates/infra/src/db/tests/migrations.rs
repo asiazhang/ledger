@@ -504,7 +504,7 @@ fn insurer_seed_is_present_and_idempotent() {
 }
 
 /// 汇率表每货币对仅保留一行最新（UNIQUE(base_code, quote_code) 约束）。
-/// 正反向查表与折算语义已收口到 Amount 接缝（`transaction::amount::convert_to_native`，
+/// 正反向查表与折算语义已收口到 Amount 接缝（`transaction::amount::convert_to_native_current`，
 /// 见 transaction/tests.rs），此处不再重复。
 #[test]
 fn exchange_rate_single_row_per_pair() {

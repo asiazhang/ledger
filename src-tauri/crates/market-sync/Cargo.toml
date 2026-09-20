@@ -30,6 +30,9 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "que
 tokio = { version = "1", features = ["sync", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# ECB 参考汇率 Cube 报文解析（issue #1542 / ADR-0019 修订记录）：版本与 lock 中
+# tauri 传递依赖同线，不额外拉重依赖。
+quick-xml = "0.42"
 chrono = { version = "0.4.45", features = ["serde"] }
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
 tauri = { version = "2", features = ["tracing"] }
