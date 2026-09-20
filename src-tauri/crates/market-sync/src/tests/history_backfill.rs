@@ -631,6 +631,97 @@ fn swapping_kline_channel_keeps_history_landing_without_source_key_in_orchestrat
     );
 }
 
+/// 生产补全通道的日 K 接线证明（issue #1561）：驱动**生产后台车道束的日 K
+/// 闭包**跑一轮补全——沪深港美四类标的的日 K 都真的打到腾讯 `fqkline/get`
+///（查询键、近两年窗口与根数由通道内部构造，新浪 K 线对港美返回空，这条接线
+/// 是港美能补到近两年的根据），周点照常落库。本地 HTTP 服务替换腾讯主机应答
+/// 真实形态报文，断言先对准可观察结果（队列取到价、库里有周点），再钉住请求
+/// 形态（腾讯端点 + 腾讯查询键 + `YYYY-MM-DD` 窗口）。删除 / 换回这条接线
+///（回到东财查询键与东财取数路径）后，注入的本地主机不再被使用——请求落到
+/// 那套已经失效的东财端点上，队列取不到价、`price_history` 零行（实测：单只
+/// 计入失败）；把窗口换回东财的 `YYYYMMDD` 形态同样被请求形态断言拦下。
+#[test]
+fn production_backfill_channel_lands_history_via_tencent_kline() {
+    use crate::channels::{Lane, SyncFetchChannels};
+
+    let conn = tauri_app_lib::test_support::open();
+    // 沪深港美四类标的各一只（场上市场闭集的代表，其余市场同一路由单点）。
+    insert_plain_instrument(&conn, "inst-sh", "600519", "stock", "CNY", "sh");
+    insert_plain_instrument(&conn, "inst-sz", "000001", "stock", "CNY", "sz");
+    insert_plain_instrument(&conn, "inst-hk", "00700", "stock", "HKD", "hk");
+    insert_plain_instrument(&conn, "inst-us", "AAPL", "stock", "USD", "nasdaq");
+
+    // 腾讯日 K 报文（形状与 #1559 真实 fixture 同：`data[查询键].day` 每行
+    // `[日期, 开, 收, 高, 低, 量]`，收盘价在下标 2），日期取近端交易日使周点
+    // 落在当前周；美股查询键带交易所后缀。
+    let day = date_offset(1);
+    let entry = |symbol: &str| {
+        format!(
+            r#""{symbol}":{{"day":[["{day}","1262.990","1257.120","1265.880","1256.100","24891.000"]]}}"#
+        )
+    };
+    let body = format!(
+        r#"{{"code":0,"msg":"","data":{{{},{},{},{}}}}}"#,
+        entry("sh600519"),
+        entry("sz000001"),
+        entry("hk00700"),
+        entry("usAAPL.OQ"),
+    );
+    let (url, heads) = super::spawn_header_capture_server(body);
+
+    // 只取生产束的日 K 闭包（接线本体）；汇率 / 净值通道用空桩，避免本用例
+    // 触发与接线无关的真实网络。
+    let channels = SyncFetchChannels::production_lane(Lane::Backfill, vec![url])
+        .expect("生产后台车道束应可构造");
+    let mut fetch_kline = channels.fetch_kline;
+    let mut fetch_fx = |_: &str| super::ready(Ok(vec![]));
+    let mut fetch_nav = |_: &NavQuery| super::ready(Ok(nav_page(0, &[])));
+    let mut fetch_nav_full = |_: &str| {
+        super::ready(Ok(FullSeries {
+            points: vec![],
+            money_fund: false,
+        }))
+    };
+    let mut progress = |_: SyncProgress| {};
+    let mut witness = WriteWitness::default();
+    let stats = tauri::async_runtime::block_on(run_history_backfill_round(
+        &conn,
+        &mut fetch_kline,
+        &mut fetch_fx,
+        &mut fetch_nav,
+        &mut fetch_nav_full,
+        &mut progress,
+        &mut witness,
+    ))
+    .unwrap();
+
+    assert_eq!((stats.queued, stats.failed), (4, 0));
+    for id in ["inst-sh", "inst-sz", "inst-hk", "inst-us"] {
+        assert_eq!(
+            history_rows(&conn, id),
+            1,
+            "{id} 的日 K 打到腾讯端点后周点照常落库"
+        );
+    }
+
+    // 请求形态：腾讯端点 + 腾讯查询键（美股带交易所后缀）+ 近两年 `YYYY-MM-DD`
+    // 窗口 + 根数。换回东财 `YYYYMMDD` 窗口或东财查询键即红。
+    let today = beijing_today();
+    let beg = crate::incremental::two_years_ago(today)
+        .format("%Y-%m-%d")
+        .to_string();
+    let end = today.format("%Y-%m-%d").to_string();
+    let heads = heads.lock().unwrap().clone();
+    for symbol in ["sh600519", "sz000001", "hk00700", "usAAPL.OQ"] {
+        let expected =
+            format!("/appstock/app/fqkline/get?param={symbol}%2Cday%2C{beg}%2C{end}%2C800%2C");
+        assert!(
+            heads.iter().any(|head| head.contains(&expected)),
+            "日 K 请求须为腾讯 fqkline/get 且带腾讯查询键与近两年窗口，缺 {expected}，实际：{heads:?}"
+        );
+    }
+}
+
 /// 缺周点判据的边界自证：6 天前的周点按 ISO 周差至多落后一周（≤ 7 天），
 /// 不进队列——常态跨周不触发补采；14 天前必然跨两周，进队列。
 #[test]

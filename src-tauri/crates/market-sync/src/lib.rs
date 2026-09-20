@@ -146,9 +146,8 @@ mod stock;
 /// dead_code 豁免并按消费面补再导出。
 #[allow(dead_code)]
 mod tencent;
-/// 腾讯日线 K 线取数单元（issue #1559）：单元本体与测试已就位，crate 内消费点随
-/// 历史补全接线票（#1561）换装通道束时落地，接装时撤去 dead_code 豁免。
-#[allow(dead_code)]
+/// 腾讯日线 K 线取数单元（issue #1559）：单元本体与测试已就位，crate 内消费点
+/// 随历史补全接线（issue #1561，通道束的日 K 闭包）落地。
 mod tencent_kline;
 
 #[cfg(test)]
