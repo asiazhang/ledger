@@ -37,6 +37,7 @@ describe("ConceptLabel 口径说明标签（issue #1369）", () => {
     for (const [scope, key] of [
       ["filtered", "scopeFiltered"],
       ["wholeLedger", "scopeWholeLedger"],
+      ["overview", "scopeOverview"],
       ["crossBook", "scopeCrossBook"],
     ] as const) {
       const wrapper = mount(ConceptLabel, {

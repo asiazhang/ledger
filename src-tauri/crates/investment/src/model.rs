@@ -750,6 +750,14 @@ pub struct InvestmentOverview {
     pub investment_cash_cents: i64,
     /// 可投资资产·持仓市值腿（分）：Σ 折本位币持仓市值（排除隐藏账户）
     pub holdings_market_value_cents: i64,
+    /// 投资合计·总市值（分）：Σ 折本位币持仓市值，缺价持仓跳过（排除隐藏账户）
+    pub total_market_value_cents: i64,
+    /// 投资合计·持仓收益（未实现盈亏，分）：Σ 折本位币未实现盈亏，缺价持仓跳过
+    /// （排除隐藏账户）
+    pub unrealized_pnl_cents: i64,
+    /// 投资合计·累计收益（分）= 持仓收益 + 已实现盈亏 + 累计分红，三腿均折本位币
+    /// （排除隐藏账户，缺价持仓在未实现腿按空值语义跳过）
+    pub cumulative_pnl_cents: i64,
     /// 未计入合计的持仓数：缺现价（或缺价格币→账户币汇率）按空值语义跳过的行数
     pub missing_price_holding_count: i64,
     /// 账本内是否存在未删除的投资账户：否时展示层给「还没有投资账户」引导句

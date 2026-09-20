@@ -92,6 +92,12 @@ export interface InvestmentOverview {
   investment_cash_cents: number;
   /** 可投资资产·持仓市值腿（排除隐藏账户、缺价持仓跳过） */
   holdings_market_value_cents: number;
+  /** 投资合计·总市值 = Σ 折本位币持仓市值（与持仓市值腿同一聚合，缺价持仓跳过） */
+  total_market_value_cents: number;
+  /** 投资合计·持仓收益（未实现盈亏，折本位币，缺价持仓跳过） */
+  unrealized_pnl_cents: number;
+  /** 投资合计·累计收益 = 持仓收益 + 已实现盈亏 + 累计分红（均折本位币） */
+  cumulative_pnl_cents: number;
   /** 未计入合计的持仓数：缺现价（或缺价格币→账户币汇率）按空值语义跳过的行数 */
   missing_price_holding_count: number;
   /** 账本内是否存在未删除的投资账户：否时展示「还没有投资账户」引导句 */

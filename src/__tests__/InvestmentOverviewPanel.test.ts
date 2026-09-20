@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { formatAmount } from "@ledger/money";
+import { t } from "@ledger/i18n";
 import { useReferenceStore } from "@/stores/reference";
 import { refCurrencies } from "@ledger/test-support/reference-stubs";
 import { resetOverlays } from "@ledger/ui-kit/overlayRegistry";
@@ -21,11 +22,15 @@ vi.mock("@/investment/usePricesChanged", async () => {
 // 金额断言委托形态：期待值调同一 formatAmount 实现（格式规则唯一归属其专测）。
 const cny = refCurrencies[0];
 
-/** 投资概览契约快照：可投资资产 2200 元 = 现金 1000 元 + 持仓市值 1200 元。 */
+/** 投资概览契约快照：可投资资产 2200 元 = 现金 1000 元 + 持仓市值 1200 元；
+ * 投资合计三项（#1537）：总市值 1200 / 持仓收益 200 / 累计收益 350 元。 */
 const OVERVIEW = makeInvestmentOverview({
   investable_assets_cents: 220_000,
   investment_cash_cents: 100_000,
   holdings_market_value_cents: 120_000,
+  total_market_value_cents: 120_000,
+  unrealized_pnl_cents: 20_000,
+  cumulative_pnl_cents: 35_000,
 });
 
 beforeEach(async () => {
@@ -58,6 +63,37 @@ describe("InvestmentOverviewPanel 投资概览（spec #1532 / issue #1536）", (
     // 无缺料状态时不显示额外说明
     expect(wrapper.find('[data-testid="overview-missing-price"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="overview-no-account"]').exists()).toBe(false);
+  });
+
+  it("投资合计三项与可投资资产同页可读（总市值 / 持仓收益 / 累计收益，均折本位币）", async () => {
+    const wrapper = await mountPanel();
+
+    expect(wrapper.get('[data-testid="overview-totals-title"]').text()).toBe("投资合计");
+    expect(wrapper.get('[data-testid="overview-total-market-value"]').text()).toContain("总市值");
+    expect(wrapper.get('[data-testid="overview-total-market-value-value"]').text()).toBe(
+      formatAmount(120_000, cny),
+    );
+    expect(wrapper.get('[data-testid="overview-unrealized-pnl"]').text()).toContain("持仓收益");
+    expect(wrapper.get('[data-testid="overview-unrealized-pnl-value"]').text()).toBe(
+      formatAmount(20_000, cny),
+    );
+    expect(wrapper.get('[data-testid="overview-cumulative-pnl"]').text()).toContain("累计收益");
+    expect(wrapper.get('[data-testid="overview-cumulative-pnl-value"]').text()).toBe(
+      formatAmount(35_000, cny),
+    );
+    // 同一标签在两处页签的口径差异必须可解释：合计三项的 ⓘ 挂概览 scope 变体句
+    // （读屏经 aria 也能听到差异说明，ADR-0131 决策 3）。
+    for (const [id, label] of [
+      ["overview-total-market-value", t("investments.concepts.marketValue")],
+      ["overview-unrealized-pnl", t("investments.concepts.unrealizedPnl")],
+      ["overview-cumulative-pnl", t("investments.concepts.cumulativePnl")],
+    ] as const) {
+      const wrapper = await mountPanel();
+      expect(wrapper.get(`[data-testid="${id}-info"]`).attributes("aria-label")).toBe(
+        t("investments.concepts.tipAria", { concept: label }),
+      );
+      wrapper.unmount();
+    }
   });
 
   it("缺现价持仓不计入但显式给出未计入数量说明（不静默低估）", async () => {
@@ -104,9 +140,10 @@ describe("InvestmentOverviewPanel 投资概览（spec #1532 / issue #1536）", (
 
     const alert = wrapper.get('[data-testid="overview-error"]');
     expect(alert.text()).toContain("汇率");
-    // 不显示半截数字：警告在场时数字与两腿都不渲染
+    // 缺折算汇率等报错在场时数字与两腿、合计三项都不渲染（不显示半截数字）
     expect(wrapper.find('[data-testid="overview-investable-assets-value"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="overview-cash-leg"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="overview-total-market-value-value"]').exists()).toBe(false);
 
     await wrapper.get('[data-testid="overview-retry"]').trigger("click");
     await flushPromises();
@@ -154,9 +191,12 @@ describe("InvestmentOverviewPanel 投资概览（spec #1532 / issue #1536）", (
     expect(wrapper.text()).not.toContain("同步标的信息");
     expect(wrapper.text()).not.toContain("录价");
     expect(wrapper.text()).not.toContain("设置预算");
-    // 页内唯一按钮 = 可投资资产的口径说明触发器（读，不写）
+    // 页内唯一按钮 = 各口径说明触发器（读，不写）：可投资资产 + 合计三项各一个
     expect(wrapper.findAll("button").map((b) => b.attributes("data-testid"))).toEqual([
       "overview-investable-assets-info",
+      "overview-total-market-value-info",
+      "overview-unrealized-pnl-info",
+      "overview-cumulative-pnl-info",
     ]);
   });
 });

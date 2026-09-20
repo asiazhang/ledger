@@ -59,10 +59,46 @@ fn buy_input(
     price_cents: i64,
     currency: &str,
 ) -> TransactionInput {
+    trade_input(
+        TransactionKind::Buy,
+        account_id,
+        instrument_id,
+        qty,
+        price_cents,
+        currency,
+    )
+}
+
+/// 卖出输入（已实现盈亏腿造数）。
+fn sell_input(
+    account_id: &str,
+    instrument_id: &str,
+    qty: f64,
+    price_cents: i64,
+    currency: &str,
+) -> TransactionInput {
+    trade_input(
+        TransactionKind::Sell,
+        account_id,
+        instrument_id,
+        qty,
+        price_cents,
+        currency,
+    )
+}
+
+fn trade_input(
+    kind: TransactionKind,
+    account_id: &str,
+    instrument_id: &str,
+    qty: f64,
+    price_cents: i64,
+    currency: &str,
+) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
         policy_id: None,
-        kind: TransactionKind::Buy,
+        kind,
         amount_cents: 0,
         currency_code: currency.into(),
         account_id: account_id.into(),
@@ -76,6 +112,41 @@ fn buy_input(
         instrument_id: Some(instrument_id.into()),
         quantity: Some(qty),
         price_cents: Some(price_cents),
+        fee_cents: Some(0),
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        idempotency_key: None,
+        origin: None,
+    }
+}
+
+/// 现金分红输入（累计收益第三腿造数）：金额 = `amount_cents`，币种须与到账
+/// 账户一致（写路径守卫）。
+fn dividend_input(
+    account_id: &str,
+    instrument_id: &str,
+    amount_cents: i64,
+    currency: &str,
+) -> TransactionInput {
+    TransactionInput {
+        merchant_name: None,
+        policy_id: None,
+        kind: TransactionKind::Dividend,
+        amount_cents,
+        currency_code: currency.into(),
+        account_id: account_id.into(),
+        to_account_id: None,
+        funding_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-02-10".into(),
+        instrument_id: Some(instrument_id.into()),
+        quantity: None,
+        price_cents: None,
         fee_cents: Some(0),
         to_instrument_id: None,
         to_quantity: None,
@@ -140,6 +211,11 @@ async fn investment_overview_returns_two_legs_and_unpriced_count() {
         overview.investable_assets_cents,
         overview.investment_cash_cents + overview.holdings_market_value_cents
     );
+    // 投资合计三项（#1537）：有价持仓现价 120 元（成本 100 元）→ 市值 120 元、
+    // 持仓收益 +20 元；无卖出与分红 → 累计收益 = 持仓收益。
+    assert_eq!(overview.total_market_value_cents, 12_000);
+    assert_eq!(overview.unrealized_pnl_cents, 2_000);
+    assert_eq!(overview.cumulative_pnl_cents, 2_000);
     assert_eq!(overview.missing_price_holding_count, 1);
     assert!(overview.has_investment_account);
 
@@ -151,9 +227,54 @@ async fn investment_overview_returns_two_legs_and_unpriced_count() {
             "investable_assets_cents": 72_000,
             "investment_cash_cents": 60_000,
             "holdings_market_value_cents": 12_000,
+            "total_market_value_cents": 12_000,
+            "unrealized_pnl_cents": 2_000,
+            "cumulative_pnl_cents": 2_000,
             "missing_price_holding_count": 1,
             "has_investment_account": true,
         })
+    );
+}
+
+/// 投资合计三项折全局默认币种（#1537 验收判据的 API 层半边）：买入 + 卖出（已实现）
+/// + 分红 + 现价，三项均折本位币；契约细节与恒等绑定归域单测，此处只断言
+/// 命令面返回值。
+#[tokio::test]
+async fn investment_overview_totals_fold_realized_and_dividends() {
+    let app = device_app("totals");
+    let conn = app.state::<DbState>().conn.clone();
+    {
+        let guard = conn.lock().expect("种子写入锁应可取");
+        seed_account(&guard, "acc-usd", "美股券商", "investment", "USD", 0);
+        seed_instrument(&guard, "inst-x", "XX", "标的X", "USD", "nasdaq");
+        seed_exchange_rate(&guard, "USD", "CNY", 7.0);
+        ledger_accounts::balance::refresh_all_account_balances(&guard).expect("余额缓存应可回填");
+        // 买 2 股 @ $100 → 卖 1 股 @ $120（已实现 +$20）→ 分红 $30；现价 $150 →
+        // 余 1 股成本 $100：市值 $150、未实现 +$50。
+        create_transaction_internal(
+            &guard,
+            buy_input("acc-usd", "inst-x", 2.0, 1_000_000, "USD"),
+        )
+        .expect("建仓应成功");
+        create_transaction_internal(
+            &guard,
+            sell_input("acc-usd", "inst-x", 1.0, 1_200_000, "USD"),
+        )
+        .expect("卖出应成功");
+        create_transaction_internal(&guard, dividend_input("acc-usd", "inst-x", 3_000, "USD"))
+            .expect("分红应成功");
+        seed_price(&guard, "inst-x", 1_500_000, "USD");
+    }
+
+    let overview = investment_overview(app.state::<DbState>())
+        .await
+        .expect("投资概览应返回");
+    assert_eq!(overview.native_currency, "CNY");
+    assert_eq!(overview.total_market_value_cents, 105_000, "$150 × 7.0");
+    assert_eq!(overview.unrealized_pnl_cents, 35_000);
+    assert_eq!(
+        overview.cumulative_pnl_cents, 70_000,
+        "($50 + $20 + $30) × 7.0"
     );
 }
 
@@ -198,6 +319,10 @@ async fn investment_overview_folds_multi_currency_and_excludes_hidden() {
     );
     assert_eq!(overview.holdings_market_value_cents, 0);
     assert_eq!(overview.investable_assets_cents, 700_000);
+    // 投资合计三项同面排除隐藏账户（页面级边界「同 InvestableAssets 口径」）。
+    assert_eq!(overview.total_market_value_cents, 0);
+    assert_eq!(overview.unrealized_pnl_cents, 0);
+    assert_eq!(overview.cumulative_pnl_cents, 0);
     assert_eq!(overview.missing_price_holding_count, 0);
     assert!(overview.has_investment_account);
 }
@@ -219,6 +344,9 @@ async fn investment_overview_without_investment_account_returns_zero() {
     assert_eq!(overview.investable_assets_cents, 0);
     assert_eq!(overview.investment_cash_cents, 0);
     assert_eq!(overview.holdings_market_value_cents, 0);
+    assert_eq!(overview.total_market_value_cents, 0);
+    assert_eq!(overview.unrealized_pnl_cents, 0);
+    assert_eq!(overview.cumulative_pnl_cents, 0);
     assert_eq!(overview.missing_price_holding_count, 0);
     assert!(!overview.has_investment_account);
 }

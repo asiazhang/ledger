@@ -13,10 +13,12 @@ use rusqlite::Connection;
 
 use crate::overview::query_investment_overview;
 use crate::prices::{MarketPriceWrite, upsert_market_price};
+use crate::{query_cumulative_pnl_summary, query_holdings_summary_by_currency};
+use ledger_transaction::amount::convert_to_native;
 use ledger_transaction::{TransactionInput, create_transaction_internal};
 use tauri_app_lib::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
 
-use super::common::make_buy_input;
+use super::common::{make_buy_input, make_dividend_input, make_sell_input};
 
 /// 币种显式的买入输入构造器：`make_buy_input` 固定 USD，多币种与 CNY 场景各自构造。
 fn buy_in(
@@ -223,4 +225,173 @@ fn overview_without_investment_account_reports_zero_with_guide_fact() {
     assert_eq!(overview.holdings_market_value_cents, 0);
     assert_eq!(overview.missing_price_holding_count, 0);
     assert!(!overview.has_investment_account);
+}
+
+/// 投资合计三项折全局默认币种（#1537；负向判据：删掉三项的折本位币聚合 → 本用例
+/// 变红）：总市值 = 持仓市值腿（同一聚合）；持仓收益 = 未实现盈亏；累计收益 =
+/// 持仓收益 + 已实现盈亏 + 累计分红——三项均与既有分组口径同源（无隐藏账户时
+/// 与「分组求和再折算」恒等，绑定断言钉住同源不漂移）。
+#[test]
+fn overview_totals_fold_to_native_currency() {
+    let conn = open();
+    // 买 2 股 @ $100 → 卖 1 股 @ $120（已实现 +$20）→ 余 1 股成本 $100；
+    // 现价 $150 → 市值 $150、未实现 +$50；现金分红 $30。
+    seed_account(&conn, "acc-usd", "美股账户", "investment", "USD", 0);
+    seed_instrument(&conn, "inst-x", "XX", "标的X", "USD", "nasdaq");
+    seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+    create_transaction_internal(&conn, buy_in("acc-usd", "inst-x", 2.0, 1_000_000, "USD", 0))
+        .unwrap();
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            ..make_sell_input("acc-usd", "inst-x", 1.0, 1_200_000, 0)
+        },
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            ..make_dividend_input("acc-usd", "inst-x", 3_000, "USD")
+        },
+    )
+    .unwrap();
+    seed_price(&conn, "inst-x", 1_500_000, "USD");
+
+    let overview = query_investment_overview(&conn).unwrap();
+    assert_eq!(overview.native_currency, "CNY");
+    assert_eq!(overview.total_market_value_cents, 105_000, "$150 × 7.0");
+    assert_eq!(overview.unrealized_pnl_cents, 35_000, "($150−$100) × 7.0");
+    assert_eq!(
+        overview.cumulative_pnl_cents, 70_000,
+        "($50 未实现 + $20 已实现 + $30 分红) × 7.0"
+    );
+    // 总市值与持仓市值腿在全页口径下是同一聚合（同取数面同折算），恒等绑定。
+    assert_eq!(
+        overview.total_market_value_cents,
+        overview.holdings_market_value_cents
+    );
+
+    // 与既有分组口径同源（同源不漂移）：无隐藏账户时「分组求和再逐组折算」与
+    // 本页逐行折算在单币种组下恒等。
+    let grouped_market_value: i64 = query_holdings_summary_by_currency(&conn)
+        .unwrap()
+        .iter()
+        .map(|g| convert_to_native(&conn, g.market_value_cents.unwrap(), &g.currency_code).unwrap())
+        .sum();
+    assert_eq!(grouped_market_value, overview.total_market_value_cents);
+    let grouped_cumulative: i64 = query_cumulative_pnl_summary(&conn)
+        .unwrap()
+        .iter()
+        .map(|g| convert_to_native(&conn, g.cumulative_pnl_cents, &g.currency_code).unwrap())
+        .sum();
+    assert_eq!(grouped_cumulative, overview.cumulative_pnl_cents);
+}
+
+/// 投资合计三项同样排除隐藏账户（页面级边界「同 InvestableAssets 口径」，词汇表
+/// 「投资概览」）：隐藏账户的持仓、已实现与分红一并不进三项；既有分组口径仍含
+/// 隐藏账户（绑定断言钉住差异轴恰为隐藏账户）。缺价持仓照常跳过并计数。
+#[test]
+fn overview_totals_exclude_hidden_accounts() {
+    let conn = open();
+    // 可见账户：买 1 股 @ ¥100，现价 ¥110 → 市值 ¥110、未实现 +¥10；另持一只缺价标的。
+    seed_account(&conn, "acc-vis", "可见账户", "investment", "CNY", 50_000);
+    seed_instrument(&conn, "inst-vis", "VIS", "可见标的", "CNY", "sh");
+    seed_instrument(&conn, "inst-bare", "BARE", "缺价标的", "CNY", "sh");
+    // 隐藏账户：买 2 股 @ ¥100 → 卖 1 股 @ ¥90（已实现 −¥10）→ 现价 ¥120 →
+    // 市值 ¥120、未实现 +¥20；分红 ¥50。
+    seed_account(&conn, "acc-h", "隐藏账户", "investment", "CNY", 70_000);
+    seed_instrument(&conn, "inst-h", "HID", "隐藏标的", "CNY", "sh");
+    ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
+    cny_identity(&conn);
+    create_transaction_internal(
+        &conn,
+        buy_in("acc-vis", "inst-vis", 1.0, 1_000_000, "CNY", 0),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        buy_in("acc-vis", "inst-bare", 3.0, 1_000_000, "CNY", 0),
+    )
+    .unwrap();
+    create_transaction_internal(&conn, buy_in("acc-h", "inst-h", 2.0, 1_000_000, "CNY", 0))
+        .unwrap();
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            ..make_sell_input("acc-h", "inst-h", 1.0, 900_000, 0)
+        },
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            ..make_dividend_input("acc-h", "inst-h", 5_000, "CNY")
+        },
+    )
+    .unwrap();
+    seed_price(&conn, "inst-vis", 1_100_000, "CNY");
+    seed_price(&conn, "inst-h", 1_200_000, "CNY");
+    conn.execute("UPDATE accounts SET is_hidden=1 WHERE id='acc-h'", [])
+        .unwrap();
+
+    let overview = query_investment_overview(&conn).unwrap();
+    assert_eq!(
+        overview.total_market_value_cents, 11_000,
+        "只计可见账户持仓市值；缺价标的不以零计入"
+    );
+    assert_eq!(overview.unrealized_pnl_cents, 1_000);
+    assert_eq!(
+        overview.cumulative_pnl_cents, 1_000,
+        "隐藏账户的已实现 −¥10 与分红 ¥50 一并不进累计收益"
+    );
+    assert_eq!(overview.missing_price_holding_count, 1);
+
+    // 既有分组口径含隐藏账户：三项与之的差恰为隐藏账户的贡献（差异轴唯一）。
+    let grouped_market_value: i64 = query_holdings_summary_by_currency(&conn)
+        .unwrap()
+        .iter()
+        .map(|g| convert_to_native(&conn, g.market_value_cents.unwrap(), &g.currency_code).unwrap())
+        .sum();
+    assert_eq!(grouped_market_value, 23_000);
+    let grouped_cumulative: i64 = query_cumulative_pnl_summary(&conn)
+        .unwrap()
+        .iter()
+        .map(|g| convert_to_native(&conn, g.cumulative_pnl_cents, &g.currency_code).unwrap())
+        .sum();
+    assert_eq!(grouped_cumulative, 7_000);
+}
+
+/// 已实现/分红腿与未实现腿同走单一折算点：任一腿缺折算汇率即整命令码化上抛
+/// （前端整卡警告 + 重试，不给半截数字）。
+#[test]
+fn overview_totals_missing_rate_raises_coded_error() {
+    let conn = open();
+    seed_account(&conn, "acc-usd", "美股账户", "investment", "USD", 0);
+    seed_instrument(&conn, "inst-y", "YY", "标的Y", "USD", "nasdaq");
+    seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+    create_transaction_internal(&conn, buy_in("acc-usd", "inst-y", 1.0, 1_000_000, "USD", 0))
+        .unwrap();
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            ..make_sell_input("acc-usd", "inst-y", 1.0, 1_100_000, 0)
+        },
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            ..make_dividend_input("acc-usd", "inst-y", 500, "USD")
+        },
+    )
+    .unwrap();
+    // 写入时汇率在位（买入归一需要它），读数时撤走：本页按当期汇率折算，
+    // 读时缺汇率即失败——不静默回退、不给半截数字。
+    conn.execute("DELETE FROM exchange_rates", []).unwrap();
+
+    let err = query_investment_overview(&conn).unwrap_err();
+    assert!(
+        err.is_code("fx.rate-missing"),
+        "缺汇率应报 fx.rate-missing，实际 {err:?}"
+    );
 }

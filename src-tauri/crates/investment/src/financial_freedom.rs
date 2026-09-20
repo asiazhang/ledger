@@ -32,16 +32,16 @@ use super::model::FinancialFreedomOverview;
 /// 总额的覆盖比例。取保守的 3% 而非教科书 4%——达标线更扎实、留足安全边际。
 const SAFE_WITHDRAWAL_RATE: f64 = 0.03;
 
-/// 持仓市值行：`v_holdings` 市值（账户本位币，可为 NULL）+ 账户币种。
+/// 持仓金额行：`v_holdings` 金额列（账户本位币，可为 NULL）+ 账户币种。
 struct HoldingValue {
-    market_value_cents: Option<i64>,
+    amount_cents: Option<i64>,
     currency_code: String,
 }
 
 impl FromRow for HoldingValue {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(HoldingValue {
-            market_value_cents: row.get(0)?,
+            amount_cents: row.get(0)?,
             currency_code: row.get(1)?,
         })
     }
@@ -71,22 +71,32 @@ pub fn query_investable_assets_cash_leg_cents(conn: &Connection) -> Result<i64> 
     Ok(cash_sum)
 }
 
+/// v_holdings 金额列的折本位币求和（可见持仓取数面的共用单点）：市值腿与
+/// 投资概览的持仓收益（未实现盈亏）列同形——同一 FROM/WHERE
+/// （[`HOLDINGS_VISIBLE_FACET`]，软删与隐藏账户一律排除）、NULL 按空值语义
+/// 跳过、逐行折全局默认币种（缺折算到本位币的汇率时错误上抛，码化
+/// `fx.rate-missing`，不静默混币种）。列名是本 crate 内调用方传入的字面量，
+/// 非外部输入（ADR-0131 决策 4：口径表达式不复制，计数与合计同源不漂移）。
+pub(crate) fn sum_holdings_facet_column_cents(conn: &Connection, column: &str) -> Result<i64> {
+    let sql = format!("SELECT h.{column}, a.currency_code {HOLDINGS_VISIBLE_FACET}");
+    let holdings: Vec<HoldingValue> = query_all(conn, &sql, [])?;
+    let mut sum = 0i64;
+    for h in holdings {
+        if let Some(value_cents) = h.amount_cents {
+            sum += amount::convert_to_native(conn, value_cents, &h.currency_code)?;
+        }
+    }
+    Ok(sum)
+}
+
 /// conn 级聚合：可投资资产分子·**持仓市值腿**（折全局默认币种，分）。
 ///
 /// v_holdings 市值（账户本位币）→ 全局默认币种；NULL 市值（缺现价或缺价格币→账户币
 /// 汇率）按空值语义跳过、不以零计入；排除隐藏账户（v_holdings 本身不过滤可见性，
-/// 与净资产管线共用的视图口径在此由本口径收紧）；缺折算到本位币的汇率时错误上抛
-/// （码化 `fx.rate-missing`），不静默混币种。
+/// 与净资产管线共用的视图口径在此由本口径收紧）。折算与空值语义收口在
+/// [`sum_holdings_facet_column_cents`]，投资概览的持仓收益列同源消费。
 pub fn query_investable_assets_holdings_leg_cents(conn: &Connection) -> Result<i64> {
-    let sql = format!("SELECT h.market_value_cents, a.currency_code {HOLDINGS_VISIBLE_FACET}");
-    let holdings: Vec<HoldingValue> = query_all(conn, &sql, [])?;
-    let mut holdings_sum = 0i64;
-    for h in holdings {
-        if let Some(market_value_cents) = h.market_value_cents {
-            holdings_sum += amount::convert_to_native(conn, market_value_cents, &h.currency_code)?;
-        }
-    }
-    Ok(holdings_sum)
+    sum_holdings_facet_column_cents(conn, "market_value_cents")
 }
 
 /// conn 级聚合：可投资资产分子（折本位币，单点提取，issue #1196）。
