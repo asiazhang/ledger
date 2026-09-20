@@ -162,8 +162,8 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
                 // 行情标的的「市场 + 代码」随标的携带，日 K 查询键由通道在内部
                 // 构造（issue #1556，编排不拼数据源查询键）。行情分区市场必可查：
                 // 派生单点 `derive_price_channel` 只把可构造查询键的市场判成
-                // Quote，绑定测试 `quote_channel_derivation_matches_secid_
-                // construction` 钉住这一不变量（本编排不镜像市场能力判定）；
+                // Quote，绑定测试 `quote_channel_derivation_matches_secid_construction`
+                // 钉住这一不变量（本编排不镜像市场能力判定）；
                 // 通道侧对无法构造键的市场另有防御兼底（不发请求回空序列）。
                 let incomplete = match &latest_history {
                     None => true,

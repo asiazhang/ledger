@@ -159,8 +159,8 @@ impl Harness {
         self
     }
 
-    fn with_failing_kline(mut self, secid: &'static str) -> Self {
-        self.fail_kline = Some(secid);
+    fn with_failing_kline(mut self, key: &'static str) -> Self {
+        self.fail_kline = Some(key);
         self
     }
 
