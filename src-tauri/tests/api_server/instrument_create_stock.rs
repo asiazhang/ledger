@@ -1,13 +1,14 @@
 //! 标的创建端点的 stock 增强（`POST /api/v1/instruments`，issue #694/#696 /
-//! ADR-0081 决策 2）。
+//! ADR-0081 决策 2；换源 ADR-0130 决策 2 / issue #1567）。
 //!
-//! 只断言外部行为：stock + 可解析真实代码经东财校验——命中回填权威名称并落最新
-//! 价现价（万分之一元刻度）、查无此码 400 拒绝且不产生标的行、网络不可达降级为
-//! 提交名称 + 真实代码 + 降级市场建行（**市场保留**——股票行情通道只依赖市场+代码，
-//! 降级行价格同步仍可达；美股缺省遍历降级 unknown）；美股 ticker 三市场候选遍历
-//! 落精确交易所市场与 USD、大小写归一幂等；北交所代码与真实代码形态的 market
-//! 矛盾显式 400 不建行；名称充代码兜底不发起网络请求；降级重放不覆盖既有权威
-//! 名称；幂等重放返回同一 id。东财访问经注入桩离线驱动。
+//! 只断言外部行为：stock + 可解析真实代码经行情源校验——命中回填权威名称并落最新
+//! 价现价（万分之一元刻度，来源标记 tencent）、查无此码 400 拒绝且不产生标的行、
+//! 网络不可达降级为提交名称 + 真实代码 + 降级市场建行（**显式市场/形态可推断市场
+//! 保留**——股票行情通道只依赖市场+代码，降级行价格同步仍可达；美股 ticker 缺省
+//! 降级 unknown）；美股 ticker 单查询落数据源自报的精确交易所市场与 USD、大小写
+//! 归一幂等；北交所代码与真实代码形态的 market 矛盾显式 400 不建行；名称充代码
+//! 兜底不发起网络请求；降级重放不覆盖既有权威名称；幂等重放返回同一 id。行情
+//! 访问经注入桩离线驱动。
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -83,28 +84,31 @@ fn stub_hit() -> HashMap<String, StockStubHit> {
             name: "贵州茅台",
             price: Some((150000, "2026-09-04")),
             kind_hint: InstrumentType::Stock,
+            market: "sh",
         },
     )])
 }
 
-/// 美股命中表（issue #696）：nasdaq/AAPL 苹果、nyse/BABA 阿里巴巴（价格为
-/// 万分之一元刻度）。
+/// 美股命中表（issue #696/#1567）：聚合键 us/AAPL 苹果（自报 nasdaq）、
+/// us/BABA 阿里巴巴（自报 nyse）（价格为万分之一元刻度）。
 fn us_stub_hits() -> HashMap<String, StockStubHit> {
     HashMap::from([
         (
-            "nasdaq/AAPL".to_string(),
+            "us/AAPL".to_string(),
             StockStubHit {
                 name: "苹果",
                 price: Some((3_199_700, "2026-01-08")),
                 kind_hint: InstrumentType::Stock,
+                market: "nasdaq",
             },
         ),
         (
-            "nyse/BABA".to_string(),
+            "us/BABA".to_string(),
             StockStubHit {
                 name: "阿里巴巴",
                 price: Some((1_132_400, "2026-01-08")),
                 kind_hint: InstrumentType::Stock,
+                market: "nyse",
             },
         ),
     ])
@@ -129,7 +133,7 @@ async fn test_create_stock_with_known_code_backfills_authoritative_name_and_pric
     assert_eq!(
         row.name.as_deref(),
         Some("贵州茅台"),
-        "东财可达时应回填权威名称，而非 AI 抄写名"
+        "行情可达时应回填权威名称，而非 AI 抄写名"
     );
     assert_eq!(row.market, "sh", "应落解析市场");
     assert_eq!(row.source, "manual");
@@ -140,7 +144,11 @@ async fn test_create_stock_with_known_code_backfills_authoritative_name_and_pric
     );
     assert!(priced, "priced_at = 写入时刻（同步通道同口径）");
     assert_eq!(nav_date, None, "nav_date 是场外基金语义，股票恒 None");
-    assert_eq!(price_source.as_deref(), Some("eastmoney"));
+    assert_eq!(
+        price_source.as_deref(),
+        Some("tencent"),
+        "股票现价来源标记 = 腾讯（ADR-0130 决策 7）"
+    );
     assert_eq!(
         *calls.lock().unwrap(),
         vec![("sh".to_string(), "600519".to_string())]
@@ -156,6 +164,7 @@ async fn test_create_stock_without_market_infers_and_creates_with_resolved_marke
             name: "平安银行",
             price: Some((115600, "2026-09-04")),
             kind_hint: InstrumentType::Stock,
+            market: "sz",
         },
     );
     let (app, conn, calls) = setup_app_with_stock_stub(hits);
@@ -173,7 +182,7 @@ async fn test_create_stock_without_market_infers_and_creates_with_resolved_marke
     assert_eq!(
         *calls.lock().unwrap(),
         vec![("sz".to_string(), "000001".to_string())],
-        "推断市场应作为行情查询键"
+        "推断市场应作为行情查询路由"
     );
 }
 
@@ -186,6 +195,7 @@ async fn test_create_etf_typed_instrument_gets_same_enhancement() {
             name: "沪深300ETF",
             price: Some((398500, "2026-09-04")),
             kind_hint: InstrumentType::Etf,
+            market: "sh",
         },
     );
     let (app, conn, calls) = setup_app_with_stock_stub(hits);
@@ -206,7 +216,7 @@ async fn test_create_etf_typed_instrument_gets_same_enhancement() {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .expect("etf 行 + 现价应存在");
-    assert_eq!(name, "沪深300ETF", "应回填东财权威名称");
+    assert_eq!(name, "沪深300ETF", "应回填数据源权威名称");
     assert_eq!(row_type, "etf", "类型按提交落库");
     assert_eq!(price_cents, 398500, "etf 命中同样落最新价现价");
     assert_eq!(
@@ -259,7 +269,7 @@ async fn test_create_stock_with_unknown_code_rejects_without_row() {
 // 网络不可达：降级为提交名称 + 真实代码 + 降级市场建行（市场保留、价格通道可达）
 // ---------------------------------------------------------------------------
 
-/// 状态开关桩：`down=true` 模拟东财网络不可达（Io），否则按命中表返回。
+/// 状态开关桩：`down=true` 模拟行情网络不可达（Io），否则按命中表返回。
 fn toggle_stub(
     hits: HashMap<String, StockStubHit>,
     down: Arc<AtomicBool>,
@@ -271,7 +281,7 @@ fn toggle_stub(
             .unwrap()
             .push((market.to_string(), code.to_string()));
         let result = if down.load(Ordering::SeqCst) {
-            Err(AppError::Io("东财网络不可达".into()))
+            Err(AppError::Io("行情网络不可达".into()))
         } else {
             match hits.get(&format!("{market}/{code}")) {
                 Some(hit) => Ok(Quote {
@@ -279,7 +289,7 @@ fn toggle_stub(
                     name: hit.name.to_string(),
                     price_cents: hit.price.map(|(p, _)| p),
                     price_date: hit.price.map(|(_, d)| d.to_string()),
-                    market: Some(market.to_string()),
+                    market: Some(hit.market.to_string()),
                     kind_hint: Some(hit.kind_hint),
                     fund_class: None,
                     nav_date: None,
@@ -373,13 +383,13 @@ async fn test_create_stock_degrades_without_ai_name_creates_code_only_row() {
 async fn test_create_stock_degrade_replay_keeps_existing_authoritative_name() {
     let (app, conn, down, calls) = setup_app_with_toggle_stub(stub_hit());
 
-    // 第一笔：东财可达 → 权威名称回填 + 落价。
+    // 第一笔：行情可达 → 权威名称回填 + 落价。
     let (status, bytes) =
         post_instrument(&app, r#"{"symbol":"600519","type":"stock","market":"sh"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
     let id: String = serde_json::from_slice(&bytes).unwrap();
 
-    // 第二笔：东财不可达 + AI 提交另一名称 → 降级建行成功、返回同一 id，
+    // 第二笔：行情不可达 + AI 提交另一名称 → 降级建行成功、返回同一 id，
     // 既有权威名称不被 AI 名称覆盖。
     down.store(true, Ordering::SeqCst);
     let (status, bytes) = post_instrument(
@@ -395,10 +405,10 @@ async fn test_create_stock_degrade_replay_keeps_existing_authoritative_name() {
     assert_eq!(
         row.name.as_deref(),
         Some("贵州茅台"),
-        "降级重放不得用 AI 名称覆盖既有东财权威名称"
+        "降级重放不得用 AI 名称覆盖既有权威名称"
     );
     assert!(row.price.is_some(), "既有现价不被降级重放破坏");
-    assert_eq!(calls.lock().unwrap().len(), 2, "两笔各发起一次东财尝试");
+    assert_eq!(calls.lock().unwrap().len(), 2, "两笔各发起一次行情尝试");
 }
 
 // ---------------------------------------------------------------------------
@@ -455,10 +465,10 @@ async fn test_create_stock_with_conflicting_market_rejects() {
 }
 
 #[tokio::test]
-async fn test_create_stock_with_name_as_code_skips_eastmoney_lookup() {
+async fn test_create_stock_with_name_as_code_skips_quote_lookup() {
     let (app, conn, calls) = setup_app_with_stock_stub(stub_hit());
 
-    // 源数据确无代码：名称充代码兜底建行（自然键防碎），不触发东财校验、无现价。
+    // 源数据确无代码：名称充代码兜底建行（自然键防碎），不触发行情校验、无现价。
     let (status, bytes) = post_instrument(
         &app,
         r#"{"symbol":"某雪球私募一号","type":"stock","name":"某雪球私募一号"}"#,
@@ -473,26 +483,26 @@ async fn test_create_stock_with_name_as_code_skips_eastmoney_lookup() {
     assert!(row.price.is_none(), "名称充代码的行不进行情通道");
     assert!(
         calls.lock().unwrap().is_empty(),
-        "非代码形态不应发起东财请求"
+        "非代码形态不应发起行情请求"
     );
 }
 
 // ---------------------------------------------------------------------------
-// 美股 ticker：候选遍历落精确市场与 USD（issue #696 / ADR-0081 决策 2）
+// 美股 ticker：单查询落数据源自报的精确市场与 USD（issue #696 / ADR-0130 决策 2）
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_create_us_ticker_traversal_lands_exact_market_usd_and_price() {
+async fn test_create_us_ticker_lands_source_reported_market_usd_and_price() {
     let (app, conn, calls) = setup_app_with_stock_stub(us_stub_hits());
 
-    // 缺省 market + 小写 ticker：三市场候选遍历，命中 nasdaq，大写归一落库。
+    // 缺省 market + 小写 ticker：聚合 us 单次查询，命中后落数据源自报的精确市场。
     let (status, bytes) = post_instrument(&app, r#"{"symbol":"aapl","type":"stock"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
     let _: String = serde_json::from_slice(&bytes).unwrap();
 
     let row = stock_row(&conn, "AAPL");
     assert_eq!(row.name.as_deref(), Some("苹果"), "权威名称回填");
-    assert_eq!(row.market, "nasdaq", "应落精确交易所市场");
+    assert_eq!(row.market, "nasdaq", "应落数据源自报的精确交易所市场");
     assert_eq!(row.currency, "USD", "美股推导美元");
     assert_eq!(
         row.price.map(|(p, _, _, _)| p),
@@ -501,8 +511,8 @@ async fn test_create_us_ticker_traversal_lands_exact_market_usd_and_price() {
     );
     assert_eq!(
         *calls.lock().unwrap(),
-        vec![("nasdaq".to_string(), "AAPL".to_string())],
-        "首候选命中即止，以大写归一代码发起请求"
+        vec![("us".to_string(), "AAPL".to_string())],
+        "一次查询即命中，以大写归一代码发起请求"
     );
 
     // 小写形态不产生第二条标的行（自然键归一后同键）。
@@ -519,24 +529,21 @@ async fn test_create_us_ticker_traversal_lands_exact_market_usd_and_price() {
 }
 
 #[tokio::test]
-async fn test_create_us_ticker_traversal_falls_through_to_nyse() {
+async fn test_create_us_ticker_lands_other_exchange_market() {
     let (app, conn, calls) = setup_app_with_stock_stub(us_stub_hits());
 
-    // nasdaq 无 BABA：遍历至 nyse 命中，落纽约交易所。
+    // 同一聚合键形态，数据源自报 nyse → 落纽约交易所（一次查询即命中）。
     let (status, bytes) = post_instrument(&app, r#"{"symbol":"BABA","type":"stock"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
     let _: String = serde_json::from_slice(&bytes).unwrap();
 
     let row = stock_row(&conn, "BABA");
-    assert_eq!(row.market, "nyse", "应落精确交易所市场");
+    assert_eq!(row.market, "nyse", "应落数据源自报的精确交易所市场");
     assert_eq!(row.currency, "USD");
     assert_eq!(
         *calls.lock().unwrap(),
-        vec![
-            ("nasdaq".to_string(), "BABA".to_string()),
-            ("nyse".to_string(), "BABA".to_string()),
-        ],
-        "未命中候选逐个跳过"
+        vec![("us".to_string(), "BABA".to_string())],
+        "单查询命中，不必遍历三市场"
     );
 }
 
@@ -554,9 +561,9 @@ async fn test_create_us_ticker_all_miss_rejected_without_row() {
             .as_str()
             .unwrap()
             .contains("查无股票代码 ZZZZZ"),
-        "全不命中应中文报错，实际: {err}"
+        "查无此码应中文报错，实际: {err}"
     );
-    assert_eq!(calls.lock().unwrap().len(), 3, "三候选全部尝试后才拒绝");
+    assert_eq!(calls.lock().unwrap().len(), 1, "单查询未命中即拒绝");
     let count: i64 = conn
         .lock()
         .unwrap()
@@ -617,18 +624,19 @@ async fn test_create_us_ticker_degrade_with_explicit_market_preserves_channel() 
     let (status, lookup) = get_json(&app, "/api/v1/stocks/AAPL?market=nasdaq").await;
     assert_eq!(status, StatusCode::OK, "降级行的（市场，代码）应行情可达");
     assert_eq!(lookup["name"], "苹果");
-    // 两次请求：创建时一次、行情恢复后查询端点验证一次。
+    // 两次请求：创建时一次、行情恢复后查询端点验证一次（美股显式市场与缺省
+    // 同解为聚合 us 查询）。
     assert_eq!(
         *calls.lock().unwrap(),
         vec![
-            ("nasdaq".to_string(), "AAPL".to_string()),
-            ("nasdaq".to_string(), "AAPL".to_string()),
+            ("us".to_string(), "AAPL".to_string()),
+            ("us".to_string(), "AAPL".to_string()),
         ]
     );
 }
 
 #[tokio::test]
-async fn test_create_us_ticker_traversal_degrade_lands_unknown_market() {
+async fn test_create_us_ticker_degrade_without_market_lands_unknown() {
     let (app, conn, down, calls) = setup_app_with_toggle_stub(us_stub_hits());
     down.store(true, Ordering::SeqCst);
 
@@ -640,16 +648,12 @@ async fn test_create_us_ticker_traversal_degrade_lands_unknown_market() {
     let _: String = serde_json::from_slice(&bytes).unwrap();
 
     let row = stock_row(&conn, "AAPL");
-    assert_eq!(row.market, "unknown", "遍历降级落 unknown");
+    assert_eq!(row.market, "unknown", "缺省降级落 unknown");
     assert_eq!(
         row.currency, "CNY",
         "unknown 市场推导人民币（推导表既有口径）"
     );
-    assert_eq!(
-        calls.lock().unwrap().len(),
-        1,
-        "临时网络故障不盲试剩余候选，首候选即降级"
-    );
+    assert_eq!(calls.lock().unwrap().len(), 1, "临时故障单次尝试即降级");
 }
 
 // ---------------------------------------------------------------------------

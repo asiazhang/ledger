@@ -1,174 +1,50 @@
-//! 东财股票行情访问层（issue #693 / ADR-0081 决策 1）：按（市场，代码）实时查询
-//! 东财个股行情（权威名称 / 最新价 / 价格日期 / 类型提示），投影为行情接入接缝的
-//! 统一载荷 [`Quote`]（ADR-0103 决策 2），供 stocks 查询端点与创建增强、添加投资
-//! 标的壳共用（即接缝的**查询半边**场内通道，注入签名与基金报价获取接缝同形）。
-//! 报文解析、类型探测、价格换算与命中挑选为纯函数（fixture 单测钉沪深
-//! ETF/LOF/股票已知样本，不依赖真实网络）；网络复用行情 HTTP 层的主机池 /
-//! 重试 / 限流。
+//! 股票按代码查询的取数适配层（ADR-0130 决策 2 / issue #1567）：按（市场，代码）
+//! 单只查询腾讯行情批量报价端点（`GET /q=<市场前缀代码>`，单只 = 一批一条），
+//! 解析与类型探测收口在 [`super::tencent`] 取数单元（三套字段布局、类型码探测、
+//! 美股交易所后缀映射、fail-closed 语义均归该单点），本模块只做查询键构造、
+//! 命中挑选与统一报价载荷投影，投影为行情接入接缝的 [`Quote`]（ADR-0103 决策 2），
+//! 供 stocks 查询端点与创建增强、添加投资标的壳共用（即接缝的**查询半边**场内
+//! 通道，注入签名与基金报价获取接缝同形）。网络复用行情 HTTP 层的重试与限流；
+//! 测试以本地 HTTP 服务注入主机，驱动生产适配钉住请求形态（删除接线即红）。
 //!
-//! 接口：单点行情 `stock/get`——`secid=<市场前缀>.<代码>`，响应 `data` 为单对象：
-//! f57 代码、f58 名称、f43 最新价（按 f59 精度位缩放的整数）、f59 价格小数位
-//! （股票 2 位、场内基金/港股 3 位）、f62 类型特征字段、f86 更新时间戳（unix 秒）。
-//! `data:null`（代码无效，如港股未补零）按查无此码处理。命中判定 = f57 与请求
-//! 归一化代码全等（错前缀 secid 也会返回其他标的，回显全等防错配）。
-//!
-//! f62 与 f59 为未公开字段，语义可能无声变更（spec #690 Further Notes）——
-//! f62 的类型探测隔离在 [`detect_kind_hint`] 单点、f59 的价格换算隔离在 http 层
-//! [`price_cents_from_raw`] 单点（与增量同步批量报价共用，#695），fixture 单测
-//! 钉住已知样本，漂移时改一处即可。
+//! 命中判定 = 响应回显代码与请求归一化代码全等（回显全等是防错配的关键，与
+//! 东财 f57 回显同判据）；未命中（数据源明示批量内全部无效，或回显不等）返回
+//! 码化「查无此码」，网络失败 / 风控拦截由 HTTP 层与取数单元 fail-closed 上抛。
 
-use serde::Deserialize;
-
-use super::fund::deserialize_flexible_f64;
-use super::http::{
-    API_HOSTS, Pacer, RetryConfig, STOCK_GET_PATH, build_client, price_cents_from_raw,
-    request_json_from_hosts, secid_prefix,
-};
-use super::incremental::beijing_date;
+use super::http::{Pacer, build_client};
+use super::tencent::{TENCENT_QUOTE_HOSTS, fetch_tencent_batch, tencent_query_key};
 use ledger_infra::error::{AppError, Result};
-use ledger_investment::{InstrumentType, Quote};
+use ledger_investment::Quote;
 
-/// 单点行情查询字段：最新价 / 代码 / 名称 / 精度位 / 类型特征 / 更新时间戳。
-const STOCK_QUOTE_FIELDS: &str = "f43,f57,f58,f59,f62,f86";
-
-/// 单点行情接口整体响应：`data` 为 null（secid 无效）时按查无此码处理。
-#[derive(Debug, Deserialize)]
-pub(crate) struct StockQuoteResponse {
-    #[serde(default)]
-    pub(crate) data: Option<StockQuoteData>,
-}
-
-/// 单点行情详情对象（stock/get 的 data）。
-#[derive(Debug, Deserialize)]
-pub(crate) struct StockQuoteData {
-    /// 最新价原始值（按 f59 精度缩放的整数；停牌/无有效价为 "-"，按缺省 None）。
-    #[serde(rename = "f43", default, deserialize_with = "deserialize_flexible_f64")]
-    pub(crate) price_raw: Option<f64>,
-    /// 回显代码（命中判定键：与请求归一化代码全等）。
-    #[serde(rename = "f57", default)]
-    pub(crate) code: String,
-    /// 东财权威名称（如「贵州茅台」）。
-    #[serde(rename = "f58", default)]
-    pub(crate) name: String,
-    /// 价格小数位（f59，未公开字段；股票 2 位、场内基金/港股 3 位，2026-09 实测）。
-    #[serde(rename = "f59", default, deserialize_with = "deserialize_flexible_f64")]
-    pub(crate) precision: Option<f64>,
-    /// 类型特征字段（f62，未公开字段；场内基金类恒为 0，2026-09 实测）。
-    /// 消费只经 [`detect_kind_hint`] 单点，字段语义漂移时改一处。
-    #[serde(rename = "f62", default, deserialize_with = "deserialize_flexible_f64")]
-    pub(crate) kind_feature: Option<f64>,
-    /// 更新时间戳（unix 秒；"-" 等形态按缺省 None，无有效时间不投影价格日期）。
-    #[serde(rename = "f86", default, deserialize_with = "deserialize_timestamp")]
-    pub(crate) updated_at: Option<i64>,
-}
-
-/// 时间戳字段兼容数字与数字字符串（与基金净值 DWJZ 同策略）；≤0 视为无有效时间。
-fn deserialize_timestamp<'de, D>(d: D) -> std::result::Result<Option<i64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(d)?;
-    let raw = match value {
-        serde_json::Value::Number(n) => n.as_i64(),
-        serde_json::Value::String(s) => s.trim().parse::<i64>().ok(),
-        _ => None,
-    };
-    Ok(raw.filter(|&t| t > 0))
-}
-
-/// 东财类型特征字段（stock/get 的 f62）→ 标的类型提示的单点探测
-/// （spec #690 测试决策 / ADR-0081）。反向工程实测（2026-09）：场内基金类
-/// （ETF/LOF）该字段恒为 0，股票为非零值或缺省。字段未公开、语义可能无声
-/// 变更——隔离本单点，fixture 单测钉住沪深 ETF/LOF/股票已知样本；探测漂移时
-/// 改本函数一处。误判代价仅类型标签（不影响通道与录入形态），已接受。
-pub(crate) fn detect_kind_hint(kind_feature: Option<f64>) -> InstrumentType {
-    match kind_feature {
-        Some(0.0) => InstrumentType::Etf,
-        _ => InstrumentType::Stock,
-    }
-}
-
-/// 更新时间戳（unix 秒，f86）→ 价格日期（北京日历日 ISO 串）；无有效时间戳为
-/// None。行情日历以北京时间为准（先例：[`beijing_date`]，UTC+8 边界由测试钉住）。
-pub(crate) fn price_date_from_timestamp(ts: Option<i64>) -> Option<String> {
-    ts.filter(|&t| t > 0)
-        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
-        .map(|utc| beijing_date(utc).format("%Y-%m-%d").to_string())
-}
-
-/// 从单点行情响应投影统一报价：命中判定 = f57 与请求归一化代码全等且名称非空
-/// （stock/get 按 secid 精确查询，但错前缀 secid 也会返回其他标的——如
-/// 0.501018 返回深市权证「奇消23B」——回显全等是防错配的关键）；未命中返回
-/// None（上层转「查无此码」码化错误）。无有效报价（停牌）时价格为 None，
-/// 投影为 null（与基金未公布净值投影 null 同构）。公共成员（代码 / 名称 / 价格 /
-/// 价格日期）+ 场内通道成员（精确市场 / 类型提示）；基金分类与净值日期是场外
-/// 通道成员，场内恒缺省（`None`）。
-pub(crate) fn pick_stock_quote(
-    resp: StockQuoteResponse,
-    market: &str,
-    code: &str,
-) -> Option<Quote> {
-    let data = resp.data?;
-    if data.code != code || data.name.trim().is_empty() {
-        return None;
-    }
-    Some(Quote {
-        code: code.to_string(),
-        name: data.name.trim().to_string(),
-        price_cents: data
-            .price_raw
-            .map(|raw| price_cents_from_raw(raw, data.precision, market)),
-        price_date: price_date_from_timestamp(data.updated_at),
-        market: Some(market.to_string()),
-        kind_hint: Some(detect_kind_hint(data.kind_feature)),
-        fund_class: None,
-        nav_date: None,
-        // 场内通道无恒定价格信号（恒定是数据源自报的基金口径，ADR-0126）。
-        constant_unit_price_cents: None,
-    })
-}
-
-/// 按（市场，代码）拉取单点行情。市场须已过投资域候选解析（沪深港美，见
-/// `investment::stock::resolve_stock_quote_candidates`）；查无此码返回码化中文错误
-///（Invalid → 400），网络失败 / 风控拦截由 HTTP 层重试后上抛（Io → 500）。
+/// 按（市场，代码）拉取单只腾讯行情并投影统一报价。市场为投资域候选解析产物
+///（沪深港精确市场，或美股聚合路由值 `us`——腾讯不区分交易所，精确市场由响应
+/// 自报后缀给出，ADR-0130 决策 2/4）；查无此码返回码化中文错误（Invalid → 400），
+/// 网络失败 / 风控拦截由 HTTP 层重试后上抛（Io → 500）。
 pub(super) async fn fetch_stock_quote(
     client: &reqwest::Client,
     pacer: &mut Pacer,
+    hosts: &[&str],
     market: &str,
     code: &str,
 ) -> Result<Quote> {
-    let secid = format!(
-        "{}.{}",
-        // resolve 已限定沪深港闭集，三市场在 secid_prefix 均有映射；两者闭集
-        // 漂移才落到此分支——码化内部不一致（先例：scheduled-occurrence.kind-mismatch）。
-        secid_prefix(market).ok_or_else(|| {
-            AppError::codedp(
-                "sync.secid-unroutable",
-                format!("市场 {market} 无法构造行情查询（内部不一致）"),
-                &[market],
-            )
-        })?,
-        code
-    );
-    tracing::debug!(secid, "股票单点行情查询");
-    let resp: StockQuoteResponse = request_json_from_hosts(
-        client,
-        &[("secid", secid.as_str()), ("fields", STOCK_QUOTE_FIELDS)],
-        STOCK_GET_PATH,
-        API_HOSTS,
-        RetryConfig::production(),
-        pacer,
-        &format!("fetch_stock_quote:{secid}"),
-        None,
-    )
-    .await?;
-    pick_stock_quote(resp, market, code).ok_or_else(|| {
+    let key = tencent_query_key(market, code).ok_or_else(|| {
+        // resolve 已限定沪深港 + 美股（含聚合 us）闭集，全部可构造查询键；
+        // 两者闭集漂移才落到此分支——码化内部不一致（先例：scheduled-occurrence.kind-mismatch）。
         AppError::codedp(
+            "sync.secid-unroutable",
+            format!("市场 {market} 无法构造行情查询（内部不一致）"),
+            &[market],
+        )
+    })?;
+    let quotes = fetch_tencent_batch(client, pacer, hosts, &key).await?;
+    match quotes.into_iter().find(|quote| quote.code == code) {
+        Some(quote) => Ok(quote.into_quote()),
+        None => Err(AppError::codedp(
             "sync.stock-not-found",
             format!("查无股票代码 {code}，请核对后重试"),
             &[code],
-        )
-    })
+        )),
+    }
 }
 
 /// 生产拉取入口：构建客户端与限流器后执行单次行情查询（不经数据库连接，
@@ -179,5 +55,5 @@ pub(super) async fn fetch_stock_quote(
 pub async fn fetch_stock_quote_production(market: &str, code: &str) -> Result<Quote> {
     let client = build_client()?;
     let mut pacer = Pacer::default();
-    fetch_stock_quote(&client, &mut pacer, market, code).await
+    fetch_stock_quote(&client, &mut pacer, TENCENT_QUOTE_HOSTS, market, code).await
 }

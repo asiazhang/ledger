@@ -1,4 +1,4 @@
-//! 股票创建增强的领域落库接缝（issue #694 / ADR-0081 决策 2 / ADR-0103）：东财
+//! 股票创建增强的领域落库接缝（issue #694 / ADR-0081 决策 2 / ADR-0103）：行情源
 //! 往返路由判定（真实代码触网 / 北交所与矛盾 market 拒绝 / 非代码形态走通用路径）、
 //! 命中落库（权威名称 + 解析市场 + 现价，经行情接入落库半边）、降级落库（市场保留、
 //! 既有行不覆盖）。全部离线驱动，先例：[`super::fund_add`]。
@@ -61,7 +61,7 @@ fn price_row(conn: &rusqlite::Connection, instrument_id: &str) -> Option<StockPr
 }
 
 // ---------------------------------------------------------------------------
-// 东财往返路由判定：真实代码触网、边界显式拒绝、兜底不触网
+// 行情往返路由判定：真实代码触网、边界显式拒绝、兜底不触网
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -70,49 +70,40 @@ fn routes_resolvable_real_code_to_enhance_with_resolved_market() {
     let StockCreateRoute::Enhance(plan) = route else {
         panic!("显式一致 market 应路由到增强: {route:?}");
     };
-    assert_eq!(plan.candidates.len(), 1, "显式一致 market 为单候选");
-    assert_eq!(plan.candidates[0].market, "sh");
-    assert_eq!(plan.candidates[0].code, "600519");
-    assert_eq!(plan.degrade_market, "sh", "单候选降级保留该市场");
+    assert_eq!(plan.candidate.market, "sh");
+    assert_eq!(plan.candidate.code, "600519");
+    assert_eq!(plan.degrade_market, "sh", "降级保留解析市场");
 
     // 缺省 market：按形态推断（深市 + 港股补零归一）后同样路由到增强。
     for (market, code) in [("sz", "000001"), ("hk", "00700")] {
         let StockCreateRoute::Enhance(plan) = route_stock_creation(None, code) else {
             panic!("缺省 market 的真实代码应路由到增强: {code}");
         };
-        assert_eq!(plan.candidates.len(), 1);
-        assert_eq!(plan.candidates[0].market, market);
-        assert_eq!(plan.candidates[0].code, code, "港股应左补零归一");
+        assert_eq!(plan.candidate.market, market);
+        assert_eq!(plan.candidate.code, code, "港股应左补零归一");
         assert_eq!(plan.degrade_market, market);
     }
 }
 
 #[test]
-fn routes_us_ticker_to_enhance_with_traversal_candidates() {
-    // 美股 ticker 缺省 market：三市场候选遍历（首个命中生效），降级市场 unknown
-    //（无网络时无法预知交易所归属，issue #696）。
+fn routes_us_ticker_to_enhance_with_single_query() {
+    // 美股 ticker 缺省 market：聚合查询单只（精确交易所由行情源自报，
+    // ADR-0130 决策 2），降级市场 unknown——无网络时无法预知交易所归属（issue #696）。
     let route = route_stock_creation(None, "aapl");
     let StockCreateRoute::Enhance(plan) = route else {
         panic!("美股 ticker 应路由到增强: {route:?}");
     };
-    assert_eq!(
-        plan.candidates
-            .iter()
-            .map(|c| (c.market, c.code.as_str()))
-            .collect::<Vec<_>>(),
-        vec![("nasdaq", "AAPL"), ("nyse", "AAPL"), ("amex", "AAPL")],
-        "候选应按纳斯达克→纽交所→美交所序、代码大写归一"
-    );
-    assert_eq!(plan.degrade_market, "unknown", "遍历降级无法预知市场");
+    assert_eq!(plan.candidate.market, "us", "聚合路由值，不落库不出响应");
+    assert_eq!(plan.candidate.code, "AAPL", "代码大写归一");
+    assert_eq!(plan.degrade_market, "unknown", "缺省降级无法预知市场");
 
-    // 显式美股市场：单候选、降级保留该市场（行情通道仍可达）。
+    // 显式美股市场：同解为聚合查询；降级保留显式市场（行情通道仍可达，issue #694）。
     for market in ["nasdaq", "nyse", "amex"] {
         let StockCreateRoute::Enhance(plan) = route_stock_creation(Some(market), "AAPL") else {
             panic!("显式美股市场应路由到增强: {market}");
         };
-        assert_eq!(plan.candidates.len(), 1);
-        assert_eq!(plan.candidates[0].market, market);
-        assert_eq!(plan.candidates[0].code, "AAPL");
+        assert_eq!(plan.candidate.market, "us");
+        assert_eq!(plan.candidate.code, "AAPL");
         assert_eq!(plan.degrade_market, market);
     }
 }
@@ -170,7 +161,7 @@ fn routes_non_code_shapes_to_generic_path() {
 }
 
 // ---------------------------------------------------------------------------
-// 东财命中落库：权威名称 + 解析市场 + 现价
+// 行情命中落库：权威名称 + 解析市场 + 现价
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -184,7 +175,7 @@ fn persists_quote_as_stock_row_with_market_and_price() {
     .expect("命中落库应成功");
 
     let (name, market, currency, source) = stock_row(&conn, "600519");
-    assert_eq!(name.as_deref(), Some("贵州茅台"), "应回填东财权威名称");
+    assert_eq!(name.as_deref(), Some("贵州茅台"), "应回填数据源权威名称");
     assert_eq!(market, "sh", "应落解析市场");
     assert_eq!(currency, "CNY", "币种按市场推导（沪深→人民币）");
     assert_eq!(source, "manual");
@@ -195,7 +186,11 @@ fn persists_quote_as_stock_row_with_market_and_price() {
     assert_eq!(price_currency, "CNY");
     assert!(priced, "priced_at = 写入时刻（同步通道同口径），应非空");
     assert_eq!(nav_date, None, "nav_date 是场外基金语义，股票恒 None");
-    assert_eq!(price_source.as_deref(), Some("eastmoney"));
+    assert_eq!(
+        price_source.as_deref(),
+        Some("tencent"),
+        "股票现价来源标记 = 腾讯（ADR-0130 决策 7）"
+    );
     assert!(outcome.price_written);
 }
 
@@ -287,14 +282,14 @@ fn degraded_creation_without_ai_name_creates_nameless_row() {
 #[test]
 fn degraded_replay_reuses_row_without_overwriting_authoritative_name() {
     let conn = open();
-    // 第一笔：东财可达 → 权威名称回填 + 落价。
+    // 第一笔：行情可达 → 权威名称回填 + 落价。
     let first = adopt_stock_quote(
         &conn,
         InstrumentType::Stock,
         &quote("600519", "贵州茅台", "sh", Some(150000)),
     )
     .expect("命中落库应成功");
-    // 第二笔：东财不可达 + AI 提交另一名称 → 降级复用同一 id，权威名称与现价不动。
+    // 第二笔：行情不可达 + AI 提交另一名称 → 降级复用同一 id，权威名称与现价不动。
     let replay = create_stock_degraded(
         &conn,
         InstrumentType::Stock,
@@ -311,7 +306,7 @@ fn degraded_replay_reuses_row_without_overwriting_authoritative_name() {
     assert_eq!(
         name.as_deref(),
         Some("贵州茅台"),
-        "降级重放不得覆盖东财权威名称"
+        "降级重放不得覆盖既有权威名称"
     );
     assert_eq!(market, "sh");
     assert!(
@@ -324,7 +319,7 @@ fn degraded_replay_reuses_row_without_overwriting_authoritative_name() {
 fn persists_quote_with_submitted_etf_kind_preserves_type() {
     let conn = open();
     // 场内基金段代码 + 调用方按类型提示提交 etf：增强照常生效，类型以提交为准
-    //（东财类型提示只在查询端点投影，不在此改写）。
+    //（行情类型提示只在查询端点投影，不在此改写）。
     let outcome = adopt_stock_quote(
         &conn,
         InstrumentType::Etf,

@@ -24,6 +24,7 @@ use rusqlite::Connection;
 
 use super::crud;
 use super::model::{AddFundResult, InstrumentInput, InstrumentType};
+use super::prices::EASTMONEY_PRICE_SOURCE;
 use super::quote::{Quote, QuoteAdoptionInput, adopt_quote};
 use ledger_infra::error::{AppError, Result};
 
@@ -145,6 +146,8 @@ pub fn adopt_fund_quote(conn: &Connection, quote: &Quote) -> Result<AddFundResul
             // 基金现价时点 = 净值日期；无净值时不落现价，该值不被消费。
             priced_at: nav_date.unwrap_or_default(),
             nav_date,
+            // 场外基金净值仍自东财取（ADR-0130 决策 2；换源随 #1565/#1568）。
+            price_source: EASTMONEY_PRICE_SOURCE,
         },
         quote,
     )?;

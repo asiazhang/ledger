@@ -5,7 +5,8 @@
 //! 入口与投资域注入闭包已随 #1413 async 化，#1411 过渡同步桥拆除——本层生产面
 //! 不再有任何阻塞驱动点。
 //! 标的全量同步（clist 分页爬取）已随 ADR-0081 决策 3 退役删除（issue #698），
-//! 本层现服务单点行情、日 K 与基金净值通道。
+//! 单点行情（stock/get）已随 #1567 接线腾讯后删除（ADR-0130 决策 1：不留死代码），
+//! 本层现服务东财场外基金净值通道与汇率日 K。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -16,13 +17,10 @@ use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 
 use ledger_infra::error::{AppError, Result};
 
-// 单点行情接口路径：按单个 secid 返回个股实时详情（股票按代码查询用，issue #693）。
-// 响应 data 为单个对象（f43 价格 / f57 代码 / f58 名称 / f59 精度 / f62 类型特征 /
-// f86 时间戳）；与已退役的批量报价接口（ulist）同主机池。
-pub(super) const STOCK_GET_PATH: &str = "/api/qt/stock/get";
-// 日 K 线接口路径：按 secid 一次返回一段日线（近两年回填用，issue #137 / ADR-0019）。
-// 注意历史 K 线仅在 push2his 主机上提供服务（push2delay 只响应当日报价、
-// 返回空 klines），因此 K 线走独立主机池，但复用同一套轮换/限流/重试泛型层。
+// 日 K 线接口路径：按 secid 一次返回一段日线（汇率历史采集用；场内历史 K 线
+// 已接腾讯 `web.ifzq.gtimg.cn`，issue #1561）。注意历史 K 线仅在 push2his 主机上
+// 提供服务（push2delay 只响应当日报价、返回空 klines），因此 K 线走独立主机池，
+// 但复用同一套轮换/限流/重试泛型层。
 const KLINE_PATH: &str = "/api/qt/stock/kline/get";
 const KLINE_HOSTS: &[&str] = &[
     "https://push2his.eastmoney.com",
@@ -39,16 +37,6 @@ const KLINE_KLT_DAILY: &str = "101";
 const KLINE_FQT_NONE: &str = "0";
 /// 日 K 区间终点（远期占位，实际覆盖由 beg 控制近两年窗口）。
 const KLINE_END: &str = "20500101";
-// 优先使用延迟行情主机池：push2 实时主机曾被东财对该出口 IP 触发风控（连接重置），
-// push2delay 返回相同数据结构且对批量访问更稳定。
-pub(super) const API_HOSTS: &[&str] = &[
-    "https://push2delay.eastmoney.com",
-    "https://12.push2delay.eastmoney.com",
-    "https://21.push2delay.eastmoney.com",
-    "https://60.push2delay.eastmoney.com",
-    "https://90.push2delay.eastmoney.com",
-    "https://push2.eastmoney.com",
-];
 // 东方财富公开行情接口限频约 60 次/分钟（1 次/秒）——这就是「正常状态贴近数据源
 // 可承受量级」的起点（ADR-0121 决策 5）。出口 IP 会被 onegate WAF 间歇性限流
 //（返回 200 非 JSON 拦截页或 429），限流窗口约 2-4 分钟自动恢复；写死的固定间隔
@@ -213,30 +201,6 @@ async fn sleep(duration: Duration) {
     tokio::time::sleep(duration).await;
 }
 
-/// 将原始 f2 换算为万分之一元（0.0001 元，价格刻度 ADR-0038）：
-/// A 股 f2=价格×100（再 ×100 得万分之一元），港股与美股三市场 f2=价格×1000
-///（×10 得万分之一元；美股 3 位小数刻度，2026-01 实测：105.AAPL f2=319970 →
-/// 319.970 美元、106.BABA f1/f2=3/113240 → 113.240、107.SPY f2=770190 → 770.190）。
-pub(super) fn f2_to_price(raw: f64, market_code: &str) -> i64 {
-    if market_code == "hk" || matches!(market_code, "nasdaq" | "nyse" | "amex") {
-        (raw * 10.0).round() as i64
-    } else {
-        (raw * 100.0).round() as i64
-    }
-}
-
-/// 东财最新价原始值（按精度位缩放的整数：单点行情的 f59）→ 万分之一元
-/// （0.0001 元，价格刻度 ADR-0038）：`price_cents = raw × 10^(4 − 精度)`。
-/// 精度缺省或越界（1..=4 之外）时按市场回退（A 股 2 位、港股/美股 3 位，与
-/// [`f2_to_price`] 同口径）——回退分支只兜异常/旧形态，正常样本恒带精度位。
-/// 数据源刻度语义漂移时改这一处（#695，场内 ETF 三位小数报价实测钉住）。
-pub(super) fn price_cents_from_raw(raw: f64, precision: Option<f64>, market: &str) -> i64 {
-    match precision {
-        Some(p) if (1.0..=4.0).contains(&p) => (raw * 10f64.powi(4 - p as i32)).round() as i64,
-        _ => f2_to_price(raw, market),
-    }
-}
-
 /// 构建行情 HTTP 客户端（异步 reqwest，issue #1411 / ADR-0125 决策 5：不再自持
 /// 运行时线程，构造与请求等待都不再要求调用线程不在异步上下文；增量同步与
 /// 按代码查询通道共用，UA 保持一致）。
@@ -245,20 +209,6 @@ pub(super) fn build_client() -> Result<reqwest::Client> {
         .user_agent("Mozilla/5.0")
         .build()
         .map_err(|e| AppError::Io(e.to_string()))
-}
-
-/// 市场代码 → 东财 secid 前缀（沪 1 / 深 0 / 港 116；美股三市场：纳斯达克 105 /
-/// 纽交所 106 / 美交所 107，ADR-0081）。市场未知（unknown）无法查询，返回 None。
-pub(super) fn secid_prefix(market: &str) -> Option<&'static str> {
-    match market {
-        "sh" => Some("1"),
-        "sz" => Some("0"),
-        "hk" => Some("116"),
-        "nasdaq" => Some("105"),
-        "nyse" => Some("106"),
-        "amex" => Some("107"),
-        _ => None,
-    }
 }
 
 /// 发送请求并解析 JSON，按序尝试多个主机，对传输错误做短退避、对限流拦截做长冷却重试。
