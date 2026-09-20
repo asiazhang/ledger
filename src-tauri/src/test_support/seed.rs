@@ -128,12 +128,14 @@ pub fn seed_fx_rate_history(
     id.to_string()
 }
 
-/// 投资铺垫组合种子：账户 + 标的 + 1:1 汇率一行建成（ADR-0084 决策 4，吸收
-/// transaction 域 `setup_investment_account` 与 api 集成 `seed_investment_account`
-/// 的体）。账户为 USD 投资账户、标的为 USD 股票、汇率 USD→CNY 1:1（buy/sell 本位币
-/// 折算走 Amount 接缝，issue #70——非默认币种账户交易不报缺汇率）。非 1:1 折算是
-/// 测试的行为输入，不经本种子表达：表约束每货币对仅一行，调用方可删除该 1:1 行
-/// 后经 [`seed_exchange_rate`] 种入目标汇率。
+/// 投资铺垫组合种子：账户 + 标的 + 1:1 汇率一行 + 1:1 周点序列（ADR-0084 决策 4，
+/// 吸收 transaction 域 `setup_investment_account` 与 api 集成
+/// `seed_investment_account` 的体）。账户为 USD 投资账户、标的为 USD 股票；
+/// 汇率 USD→CNY 1:1 当期行服务读路径，1:1 周点序列服务写路径（#1547，见
+/// [`seed_fx_history_series_1to1`]; buy/sell 本位币折算走 Amount 接缝，issue #70
+/// ——非默认币种账户交易不报缺汇率）。非 1:1 折算是测试的行为输入，不经本种子
+/// 表达：调用方可删除该 1:1 行后经 [`seed_exchange_rate`] / [`seed_fx_rate_history`]
+/// 种入目标汇率。
 pub fn seed_investment_setup(
     conn: &Connection,
     account_id: &str,
@@ -142,5 +144,59 @@ pub fn seed_investment_setup(
     seed_account(conn, account_id, "美股", "investment", "USD", 0);
     seed_instrument(conn, instrument_id, "SYM", "Symbol", "USD", "unknown");
     seed_exchange_rate(conn, "USD", "CNY", 1.0);
+    seed_fx_history_series_1to1(conn, "USD", "CNY");
     (account_id.to_string(), instrument_id.to_string())
+}
+
+/// 为给定日期各自所属周种汇率历史周点（#1547 写路径按交易日取数的测试夹具）：
+/// 同周去重、`INSERT OR IGNORE` 幂等，不覆盖已有点（读侧语义测试先种的特定
+/// 汇率不受影响）。交易写入按所属 ISO 周取数，日期清单由调用方按测试内交易
+/// 日期给出，汇率通常与该测试的当期行同值。
+pub fn seed_fx_history_weeks(
+    conn: &Connection,
+    base: &str,
+    quote: &str,
+    rate: f64,
+    dates: &[&str],
+) {
+    let mut done: Vec<String> = Vec::new();
+    for d in dates {
+        let week: String = conn
+            .query_row("SELECT date(?1,'-6 days','weekday 1')", params![d], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        if done.contains(&week) {
+            continue;
+        }
+        done.push(week.clone());
+        conn.execute(
+            "INSERT OR IGNORE INTO fx_rate_history (id,base_code,quote_code,trade_date,rate,source,created_at,updated_at,version,device_id) \
+             VALUES (?1,?2,?3,?4,?6,'eastmoney',?5,?5,1,'test')",
+            params![format!("fxh-{base}-{quote}-{week}"), base, quote, week, FIXED_NOW, rate],
+        )
+        .unwrap();
+    }
+}
+
+/// 写路径按交易日折算所需的汇率历史周点序列（#1547）：buy/sell/convert/dividend
+/// 等写路径按交易所属 ISO 周取 `fx_rate_history`，1:1 周点覆盖测试交易日期的
+/// 宽窗口（2025-01-06 起每周一点，共 160 周）；与 1:1 当期行并存——当期表服务
+/// 读路径、历史序列服务写路径（#1541 拆分）。`INSERT OR IGNORE`：同一连接内
+/// 多次调用 setup 不撞周唯一约束。
+fn seed_fx_history_series_1to1(conn: &Connection, base: &str, quote: &str) {
+    // 窗口依据：本仓测试交易日期集中在 2026 年（工厂日期 2026-01~02、mwr 到
+    // 2027-01），自 2025-01-06 起 160 周覆盖 2025-01 ~ 2028-02，留双倍余量。
+    let mut week = "2025-01-06".to_string();
+    let mut dates: Vec<String> = Vec::with_capacity(160);
+    for _ in 0..160 {
+        dates.push(week.clone());
+        week = conn
+            .query_row("SELECT date(?1,'+7 days')", params![week], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap();
+    }
+    let refs: Vec<&str> = dates.iter().map(String::as_str).collect();
+    seed_fx_history_weeks(conn, base, quote, 1.0, &refs);
 }

@@ -22,6 +22,20 @@ fn add_exchange_rate(world: &mut LedgerWorld, base: String, quote: String, rate:
     create_exchange_rate_verb(world, &base, &quote, rate, "2026-02-01T00:00:00Z");
 }
 
+/// 写入汇率历史周点序列（#1547 写路径按交易日取数的 Given 夹具）：自起始日期
+/// 起每周一点直到今天后，覆盖场景内固定与相对交易日期的所属周。步骤定义全局
+/// 注册，跨 feature 复用（与「存在汇率」同款共享方式）。
+#[given(expr = "存在汇率历史 {string} 兑 {string} 为 {float} 自 {string} 起每周")]
+fn add_fx_history_series(
+    world: &mut LedgerWorld,
+    base: String,
+    quote: String,
+    rate: f64,
+    from_date: String,
+) {
+    crate::step_verbs::seed_fx_history_series_verb(world, &base, &quote, rate, &from_date);
+}
+
 // ---------------------------------------------------------------------------
 // When：执行期次
 // ---------------------------------------------------------------------------
@@ -146,7 +160,7 @@ fn assert_occurrence_txn_native(world: &mut LedgerWorld, expected: i64) {
     let txn = occurrence_txn(world);
     assert_eq!(
         txn.amount_native_cents, expected,
-        "本位币金额应经 convert_to_native_current 折算"
+        "本位币金额应经 convert_to_native_on_trade_date 按交易日折算（#1547）"
     );
 }
 

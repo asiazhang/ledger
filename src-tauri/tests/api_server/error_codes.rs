@@ -60,7 +60,8 @@ async fn transfer_without_to_account_returns_coded_400() {
 }
 
 /// 400 码化错误（带参形态）：把既有交易币种改为无汇率的 USD → `fx.rate-missing`，
-/// `params` 按消息中动态值出现顺序排列（base → quote）。
+/// `params` 按消息中动态值出现顺序排列（base → quote）。#1547 起写路径按交易日
+/// 取数，整周无点的文案区分历史空缺（交易日期 2026-07-01 为历史周）。
 #[tokio::test]
 async fn missing_exchange_rate_returns_coded_400_with_params() {
     let (app, _) = setup_app();
@@ -93,8 +94,8 @@ async fn missing_exchange_rate_returns_coded_400_with_params() {
     let err: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(err["kind"], "Invalid");
     assert_eq!(
-        err["message"], "未找到 USD -> CNY 的汇率（正反向均无）",
-        "既有文案逐字不变"
+        err["message"], "未找到 USD -> CNY 在 2026-06-29 当周的汇率：该周历史空缺",
+        "按交易日入口的历史周空缺文案"
     );
     assert_eq!(err["code"], "fx.rate-missing");
     assert_eq!(

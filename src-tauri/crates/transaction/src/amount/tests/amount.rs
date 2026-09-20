@@ -4,6 +4,7 @@
 //! SQL 片段在真实内存库上与 Rust 助手聚合一致、本位币折算（基准为全局默认币种，
 //! 独立于账户币种）。
 
+use ledger_infra::error::AppError;
 use rusqlite::Connection;
 use rusqlite::params;
 
@@ -468,8 +469,23 @@ fn convert_to_native_current_rejects_non_positive_rate() {
     assert!(convert_to_native_current(&conn, 10000, "EUR").is_err());
 }
 
+/// 读路径回归（#1547）：当期入口只读当期表，不因汇率历史有点而改源——
+/// 无当期行即报错（即使历史序列有点）；有当期行时用当期值而非历史值。
+#[test]
+fn convert_to_native_current_ignores_fx_rate_history() {
+    let conn = test_support::open();
+    test_support::seed_fx_rate_history(&conn, "fxh-r", "USD", "CNY", "2026-01-05", 7.5);
+    assert!(convert_to_native_current(&conn, 10000, "USD").is_err());
+
+    test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    assert_eq!(
+        convert_to_native_current(&conn, 10000, "USD").unwrap(),
+        72000
+    );
+}
+
 // ---------------------------------------------------------------------------
-// convert_to_native_on_trade_date（按交易日折算入口，#1541 留出入口）
+// convert_to_native_on_trade_date（按交易日折算，#1547：写路径取数汇率历史）
 // ---------------------------------------------------------------------------
 
 /// 与本位币同币种 → 原样返回，与当期入口一致（#1541 验收：新入口对这条共同
@@ -478,31 +494,134 @@ fn convert_to_native_current_rejects_non_positive_rate() {
 fn convert_to_native_on_trade_date_same_currency_is_identity_matches_current() {
     let conn = test_support::open();
     assert_eq!(
-        convert_to_native_on_trade_date(&conn, 12345, &default_currency_code(&conn).unwrap())
-            .unwrap(),
+        convert_to_native_on_trade_date(
+            &conn,
+            12345,
+            &default_currency_code(&conn).unwrap(),
+            "2026-01-07"
+        )
+        .unwrap(),
         12345
     );
 }
 
-/// 临时同源桥（#1541 → #1547）：非本位币在序列取数接入前显式委托当期入口，
-/// 行为与拆分前逐位一致；#1547 改接序列取数时本测试随语义改写。
+/// 历史某周的交易按该周汇率折算（断言到分）：周一为周键，周内任一日期同值；
+/// 相邻周各用自己的点，互不串周（issue #1547 验收 1）。
 #[test]
-fn convert_to_native_on_trade_date_currently_delegates_to_current_table() {
+fn convert_to_native_on_trade_date_uses_week_rate_of_trade_date() {
+    let conn = test_support::open();
+    // 2026-01-05 为周一：种子落 2026-01-05 当周（7.5）与下一周（8.0）各一点。
+    test_support::seed_fx_rate_history(&conn, "fxh-w1", "USD", "CNY", "2026-01-05", 7.5);
+    test_support::seed_fx_rate_history(&conn, "fxh-w2", "USD", "CNY", "2026-01-12", 8.0);
+    // 周三 2026-01-07 与周日 2026-01-11 都命中同一周键，按该周汇率折算到分。
+    assert_eq!(
+        convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").unwrap(),
+        75000
+    );
+    assert_eq!(
+        convert_to_native_on_trade_date(&conn, 12345, "USD", "2026-01-11").unwrap(),
+        92588
+    );
+    // 下周的交易用下周的点（12345 × 8.0）。
+    assert_eq!(
+        convert_to_native_on_trade_date(&conn, 12345, "USD", "2026-01-13").unwrap(),
+        98760
+    );
+    // 港币交易按交易周折算（#1547 验收字面）：52508160 分 × 0.9 = 47257344 分。
+    test_support::seed_fx_rate_history(&conn, "fxh-hkd", "HKD", "CNY", "2026-01-05", 0.9);
+    assert_eq!(
+        convert_to_native_on_trade_date(&conn, 52_508_160, "HKD", "2026-01-07").unwrap(),
+        47_257_344
+    );
+}
+
+/// 只有反向序列点时取倒数折算（正反向兜底，与当期入口同规则）。
+#[test]
+fn convert_to_native_on_trade_date_uses_reverse_rate_when_only_reverse_exists() {
+    let conn = test_support::open();
+    test_support::seed_fx_rate_history(&conn, "fxh-rev", "CNY", "USD", "2026-01-06", 0.125);
+    assert_eq!(
+        convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").unwrap(),
+        80000
+    );
+}
+
+/// 交易所属周整周无点 → 既有 `fx.rate-missing` 码化错误，且不滑到相邻周、
+/// 不回落当期表：相邻周与当期表都有值，仍报错（issue #1547）。
+#[test]
+fn convert_to_native_on_trade_date_errors_when_whole_week_missing() {
+    let conn = test_support::open();
+    test_support::seed_fx_rate_history(&conn, "fxh-next", "USD", "CNY", "2026-01-12", 8.0);
+    test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    let err = convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").unwrap_err();
+    match err {
+        AppError::Coded { code, params, .. } => {
+            assert_eq!(code, "fx.rate-missing");
+            assert_eq!(params, vec!["USD".to_string(), "CNY".to_string()]);
+        }
+        other => panic!("应为中心化缺失码化错误，实际: {other}"),
+    }
+}
+
+/// 整周无点的文案区分（issue #1547 验收 2）：当周（含未到周）缺点 →
+/// 「该周尚未发布，待汇率同步后重试即可」；历史周缺点 → 「该周历史空缺」。
+#[test]
+fn convert_to_native_on_trade_date_missing_week_copy_distinguishes_current_from_gap() {
+    // 当周：周一取自真实时钟（本周一无点 → 尚未发布，重试即可）。
+    let conn = test_support::open();
+    let this_monday: String = conn
+        .query_row(
+            "SELECT date('now','localtime','-6 days','weekday 1')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let err = convert_to_native_on_trade_date(&conn, 10000, "USD", &this_monday).unwrap_err();
+    match err {
+        AppError::Coded { code, message, .. } => {
+            assert_eq!(code, "fx.rate-missing");
+            assert!(message.contains("尚未发布"), "实际: {message}");
+            assert!(message.contains("重试"), "实际: {message}");
+        }
+        other => panic!("应为码化错误，实际: {other}"),
+    }
+
+    // 历史周：固定过去日期缺点 → 历史空缺（重试无济于事）。
+    let conn = test_support::open();
+    let err = convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").unwrap_err();
+    match err {
+        AppError::Coded { code, message, .. } => {
+            assert_eq!(code, "fx.rate-missing");
+            assert!(message.contains("历史空缺"), "实际: {message}");
+            assert!(!message.contains("尚未发布"), "实际: {message}");
+        }
+        other => panic!("应为码化错误，实际: {other}"),
+    }
+}
+
+/// 序列点非正（正查或反查）报错，不得静默产出 0/负本位币金额。
+#[test]
+fn convert_to_native_on_trade_date_rejects_non_positive_rate() {
+    let conn = test_support::open();
+    test_support::seed_fx_rate_history(&conn, "fxh-zero", "USD", "CNY", "2026-01-05", 0.0);
+    assert!(convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").is_err());
+
+    let conn = test_support::open();
+    test_support::seed_fx_rate_history(&conn, "fxh-neg", "CNY", "USD", "2026-01-05", -0.13);
+    assert!(convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").is_err());
+}
+
+/// 写路径入口只认汇率历史，不回落当期表（#1547）：当期表有点、序列无点 →
+/// 报错而非拿当期值顶上；序列有点时用序列值，而非当期表值。
+#[test]
+fn convert_to_native_on_trade_date_does_not_fall_back_to_current_table() {
     let conn = test_support::open();
     test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
-    assert_eq!(
-        convert_to_native_on_trade_date(&conn, 10000, "USD").unwrap(),
-        72000
-    );
+    assert!(convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").is_err());
 
-    let conn = test_support::open();
-    test_support::seed_exchange_rate(&conn, "CNY", "EUR", 0.13);
+    test_support::seed_fx_rate_history(&conn, "fxh-cur", "USD", "CNY", "2026-01-05", 7.5);
     assert_eq!(
-        convert_to_native_on_trade_date(&conn, 10000, "EUR").unwrap(),
-        76923
+        convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").unwrap(),
+        75000
     );
-
-    // 缺汇率同样报错不静默（与当期入口一致）。
-    let conn = test_support::open();
-    assert!(convert_to_native_on_trade_date(&conn, 10000, "JPY").is_err());
 }

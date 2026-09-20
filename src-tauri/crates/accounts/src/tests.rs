@@ -734,6 +734,8 @@ fn adjust(conn: &rusqlite::Connection, id: &str, target: i64) -> Result<(String,
 }
 
 /// 为非本位币测试补汇率（余额调整经 Writer 接缝折算本位币，缺汇率报错）。
+/// #1547 起写路径按交易日取数：当期行服务读路径，另种调整日期所属周的历史点
+/// （adjust 固定日期 2026-09-15，周一为 2026-09-14）。
 fn ensure_rate(conn: &rusqlite::Connection, code: &str, rate: f64) {
     conn.execute(
         "INSERT OR IGNORE INTO currencies (code, name, symbol, decimal_places) VALUES (?1, ?1, '$', 2)",
@@ -743,6 +745,14 @@ fn ensure_rate(conn: &rusqlite::Connection, code: &str, rate: f64) {
     // 汇率行：工厂汇率种子（簿记戳内部发放，spec #728 / ADR-0084 决策 5；
     // 来源列落表默认，被测调整路径只读汇率值）。
     tauri_app_lib::test_support::seed_exchange_rate(conn, code, "CNY", rate);
+    tauri_app_lib::test_support::seed_fx_rate_history(
+        conn,
+        &format!("fxh-adjust-{code}"),
+        code,
+        "CNY",
+        "2026-09-15",
+        rate,
+    );
 }
 
 #[test]

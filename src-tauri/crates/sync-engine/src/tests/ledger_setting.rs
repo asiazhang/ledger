@@ -95,6 +95,9 @@ fn conversion_is_deterministic_across_devices_after_sync() {
     // 同额 EUR 支出：native 均按 USD 基准折算，两端一致。
     seed_exchange_rate(&conn_a, "EUR", "USD", 1.1);
     seed_exchange_rate(&conn_b, "EUR", "USD", 1.1);
+    // 交易写入按交易日取数（#1547）：两端各种交易周（2026-01-10 所属周）历史点。
+    test_support::seed_fx_rate_history(&conn_a, "fxh-ls-a", "EUR", "USD", "2026-01-05", 1.1);
+    test_support::seed_fx_rate_history(&conn_b, "fxh-ls-b", "EUR", "USD", "2026-01-05", 1.1);
     let mut input = make_expense("acc-1", 10000, "外币支出");
     input.currency_code = "EUR".into();
     let id_a = protocol::create(&conn_a, input.clone()).unwrap().id;

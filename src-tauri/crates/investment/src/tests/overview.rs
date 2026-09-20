@@ -16,7 +16,9 @@ use crate::prices::{MarketPriceWrite, upsert_market_price};
 use crate::{query_cumulative_pnl_summary, query_holdings_summary_by_currency};
 use ledger_transaction::amount::convert_to_native_current;
 use ledger_transaction::{TransactionInput, create_transaction_internal};
-use tauri_app_lib::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
+use tauri_app_lib::test_support::{
+    open, seed_account, seed_exchange_rate, seed_fx_history_weeks, seed_instrument,
+};
 
 use super::common::{make_buy_input, make_dividend_input, make_sell_input};
 
@@ -101,6 +103,15 @@ fn overview_folds_cash_leg_by_account_currency() {
     seed_account(&conn, "acc-usd", "美股账户", "investment", "USD", 100_000);
     ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
     seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+    // 写路径按交易日取数（#1547）：另种交易周（工厂日期）的汇率历史点，
+    // 当期行服务概览读侧折算。
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        7.0,
+        &["2026-01-10", "2026-01-20", "2026-02-10"],
+    );
 
     let overview = query_investment_overview(&conn).unwrap();
     assert_eq!(overview.native_currency, "CNY", "折算目标 = 全局默认币种");
@@ -124,6 +135,15 @@ fn overview_folds_holdings_leg_by_account_currency() {
     ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
     seed_instrument(&conn, "inst-nvda", "NVDA", "英伟达", "USD", "nasdaq");
     seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+    // 写路径按交易日取数（#1547）：另种交易周（工厂日期）的汇率历史点，
+    // 当期行服务概览读侧折算。
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        7.0,
+        &["2026-01-10", "2026-01-20", "2026-02-10"],
+    );
     create_transaction_internal(
         &conn,
         buy_in("acc-usd", "inst-nvda", 2.0, 1_000_000, "USD", 0),
@@ -239,6 +259,15 @@ fn overview_totals_fold_to_native_currency() {
     seed_account(&conn, "acc-usd", "美股账户", "investment", "USD", 0);
     seed_instrument(&conn, "inst-x", "XX", "标的X", "USD", "nasdaq");
     seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+    // 写路径按交易日取数（#1547）：另种交易周（工厂日期）的汇率历史点，
+    // 当期行服务概览读侧折算。
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        7.0,
+        &["2026-01-10", "2026-01-20", "2026-02-10"],
+    );
     create_transaction_internal(&conn, buy_in("acc-usd", "inst-x", 2.0, 1_000_000, "USD", 0))
         .unwrap();
     create_transaction_internal(
@@ -379,6 +408,15 @@ fn overview_totals_missing_rate_raises_coded_error() {
     seed_account(&conn, "acc-usd", "美股账户", "investment", "USD", 0);
     seed_instrument(&conn, "inst-y", "YY", "标的Y", "USD", "nasdaq");
     seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+    // 写路径按交易日取数（#1547）：另种交易周（工厂日期）的汇率历史点，
+    // 当期行服务概览读侧折算。
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        7.0,
+        &["2026-01-10", "2026-01-20", "2026-02-10"],
+    );
     create_transaction_internal(&conn, buy_in("acc-usd", "inst-y", 1.0, 1_000_000, "USD", 0))
         .unwrap();
     create_transaction_internal(

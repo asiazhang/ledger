@@ -128,12 +128,15 @@ fn normalize_rejects_non_generic_kinds() {
 // normalize：本位币折算（Amount 接缝）
 // ---------------------------------------------------------------------------
 
-/// 非默认币种按 Amount 接缝折算到全局默认币种（CNY），与账户币种无关。
+/// 非默认币种按 Amount 接缝按交易日入口折算到全局默认币种（CNY），与账户币种
+/// 无关（#1547：取数改汇率历史周点，当期表不再服务写路径——本测试不种当期行，
+/// 删除「按交易日取数」接线（改回当期入口）即红）。
 #[test]
 fn normalize_converts_via_amount_seam_to_default_currency() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0);
-    test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    // 交易日期 2026-01-01（周四）所属周的周一为 2025-12-29：只种该周历史点。
+    test_support::seed_fx_rate_history(&conn, "fxh-w", "USD", "CNY", "2025-12-29", 7.2);
     let norm = normalize(
         &conn,
         &Input {

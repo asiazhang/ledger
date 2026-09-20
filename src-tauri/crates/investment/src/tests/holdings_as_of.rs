@@ -4,7 +4,7 @@ use rusqlite::params;
 
 use super::super::*;
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
+use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
 
 // ---------------------------------------------------------------------------
 // 时点持仓（AsOfHolding，spec #168 / issue #218）：
@@ -110,7 +110,13 @@ fn holdings_as_of_is_currency_agnostic_for_cross_currency_instrument() {
     let conn = open();
     seed_account(&conn, "acc-usd", "美股户", "investment", "USD", 0);
     seed_instrument(&conn, "inst-usd", "AAPL", "苹果", "USD", "unknown");
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0); // 买卖落库经 Amount 接缝需要当期汇率
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    ); // 买卖落库经 Amount 接缝需要当期汇率
     create_transaction_internal(&conn, make_buy_input("acc-usd", "inst-usd", 5.0, 10_000, 0))
         .unwrap();
     create_transaction_internal(

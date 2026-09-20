@@ -9,7 +9,7 @@ use rusqlite::{Connection, params};
 
 use super::super::*;
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
+use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
 
 /// 价格刻度不变式（ADR-0038）：四类价格列（成交单价/每份成本/现价/价格历史）
 /// 以万分之一元（0.0001 元）存储，金额列仍为整数分——金额分 = 数量 × 单价 ÷ 100。
@@ -138,7 +138,13 @@ fn price_scale_invariant_v_holdings_market_value() {
 fn buy_transaction_creates_lot() {
     let conn = open();
     seed_account(&conn, "acc-test-buy", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01"],
+    );
     seed_instrument(&conn, "inst-test-nvda", "NVDA", "NVIDIA", "USD", "unknown");
 
     let input = make_buy_input("acc-test-buy", "inst-test-nvda", 10.0, 1_000_000, 500);
@@ -220,7 +226,9 @@ fn buy_transaction_creates_lot() {
 fn buy_native_cents_converted_via_amount_seam() {
     let conn = open();
     seed_account(&conn, "acc-test-conv", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    // #1547 写路径按交易日取数：只种交易周（2026-01-10）的汇率历史点，不种当期行
+    // ——删除「按交易日取数」接线（改回当期入口）本测试即红。
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.2, &["2026-01-10"]);
     seed_instrument(&conn, "inst-test-conv", "NVDA", "NVIDIA", "USD", "unknown");
 
     let input = make_buy_input("acc-test-conv", "inst-test-conv", 10.0, 1_000_000, 500);
@@ -247,7 +255,8 @@ fn buy_update_native_cents_converted_via_amount_seam() {
     use ledger_transaction::update_transaction_internal;
     let conn = open();
     seed_account(&conn, "acc-test-conv-upd", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    // #1547 按交易日取数：创建周（2026-01-10）与改期后周（2026-02-01）各一历史点。
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.2, &["2026-01-10", "2026-02-01"]);
     seed_instrument(
         &conn,
         "inst-test-conv-upd",
@@ -294,7 +303,8 @@ fn buy_update_native_cents_converted_via_amount_seam() {
 fn sell_native_cents_converted_via_amount_seam() {
     let conn = open();
     seed_account(&conn, "acc-test-sell-conv", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    // #1547 按交易日取数：建仓（2026-01-10）与卖出（2026-01-20）各一周历史点。
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.2, &["2026-01-10", "2026-01-20"]);
     seed_instrument(
         &conn,
         "inst-test-sell-conv",
@@ -389,7 +399,13 @@ fn missing_instrument_rejection_reason_table() {
             expected: &["买入标的不存在", "inst-not-exist"],
             action: |conn| {
                 seed_account(conn, "acc-test-missing", "美股", "investment", "USD", 0);
-                seed_exchange_rate(conn, "USD", "CNY", 1.0);
+                seed_fx_history_weeks(
+                    conn,
+                    "USD",
+                    "CNY",
+                    1.0,
+                    &["2026-01-10", "2026-01-20", "2026-02-01"],
+                );
                 let input = make_buy_input("acc-test-missing", "inst-not-exist", 10.0, 10000, 0);
                 create_transaction_internal(conn, input).map(|_| ())
             },
@@ -411,7 +427,13 @@ fn missing_instrument_rejection_reason_table() {
             expected: &["卖出标的不存在", "inst-not-exist"],
             action: |conn| {
                 seed_account(conn, "acc-test-sell-miss", "美股", "investment", "USD", 0);
-                seed_exchange_rate(conn, "USD", "CNY", 1.0);
+                seed_fx_history_weeks(
+                    conn,
+                    "USD",
+                    "CNY",
+                    1.0,
+                    &["2026-01-10", "2026-01-20", "2026-02-01"],
+                );
                 let input = make_sell_input("acc-test-sell-miss", "inst-not-exist", 5.0, 12000, 0);
                 create_transaction_internal(conn, input).map(|_| ())
             },
@@ -423,7 +445,13 @@ fn missing_instrument_rejection_reason_table() {
             expected: &["买入标的不存在"],
             action: |conn| {
                 seed_account(conn, "acc-test-upd-miss", "美股", "investment", "USD", 0);
-                seed_exchange_rate(conn, "USD", "CNY", 1.0);
+                seed_fx_history_weeks(
+                    conn,
+                    "USD",
+                    "CNY",
+                    1.0,
+                    &["2026-01-10", "2026-01-20", "2026-02-01"],
+                );
                 seed_instrument(
                     conn,
                     "inst-test-upd-miss",
@@ -504,7 +532,13 @@ fn buy_sell_to_account_carry_rejected_with_coded_error() {
     let conn = open();
     seed_account(&conn, "acc-ta", "美股", "investment", "USD", 0);
     seed_instrument(&conn, "inst-ta", "NVDA", "NVIDIA", "USD", "unknown");
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01"],
+    );
 
     // buy 创建携带转入账户。
     let mut input = make_buy_input("acc-ta", "inst-ta", 10.0, 1_000_000, 0);
@@ -547,7 +581,13 @@ fn buy_sell_to_account_carry_rejected_with_coded_error() {
 fn sell_transaction_matches_multiple_lots_fifo() {
     let conn = open();
     seed_account(&conn, "acc-test-sell", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01"],
+    );
     seed_instrument(&conn, "inst-test-sell", "TSLA", "Tesla", "USD", "unknown");
 
     let lot1_txn = create_transaction_internal(
@@ -638,7 +678,13 @@ fn sell_transaction_matches_multiple_lots_fifo() {
 fn sell_transaction_rejects_oversell() {
     let conn = open();
     seed_account(&conn, "acc-test-oversell", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01"],
+    );
     seed_instrument(
         &conn,
         "inst-test-oversell",
@@ -662,7 +708,13 @@ fn sell_transaction_rejects_oversell() {
 fn sell_transaction_pnl_deducts_fee() {
     let conn = open();
     seed_account(&conn, "acc-test-pnl", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01"],
+    );
     seed_instrument(&conn, "inst-test-pnl", "AAPL", "Apple", "USD", "unknown");
 
     let buy_txn = create_transaction_internal(
@@ -715,7 +767,13 @@ fn get_transaction_trade_returns_buy_detail_with_instrument_display() {
     let conn = open();
     seed_account(&conn, "acc-inv", "证券户", "investment", "USD", 0);
     seed_instrument(&conn, "inst-t", "600519", "贵州茅台", "USD", "unknown");
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01"],
+    );
     let id = create_transaction_internal(
         &conn,
         make_buy_input("acc-inv", "inst-t", 100.0, 150_000, 500),
@@ -786,7 +844,13 @@ fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
 fn sell_full_clearance_with_fifo_noise_is_allowed() {
     let conn = open();
     seed_account(&conn, "acc-noise", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01"],
+    );
     seed_instrument(
         &conn,
         "inst-noise-src",
@@ -876,7 +940,13 @@ fn sell_full_clearance_with_fifo_noise_is_allowed() {
 fn sell_guard_rejects_oversell_beyond_tolerance() {
     let conn = open();
     seed_account(&conn, "acc-eps", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01"],
+    );
     seed_instrument(&conn, "inst-eps", "AAPL", "Apple", "USD", "unknown");
     create_transaction_internal(
         &conn,
@@ -911,7 +981,13 @@ fn sell_guard_rejects_oversell_beyond_tolerance() {
 fn sell_full_clearance_consumes_noise_over_lot_exactly() {
     let conn = open();
     seed_account(&conn, "acc-dust", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01"],
+    );
     seed_instrument(&conn, "inst-dust", "MSFT", "Microsoft", "USD", "unknown");
     let buy_id = create_transaction_internal(
         &conn,
@@ -955,7 +1031,13 @@ fn sell_full_clearance_consumes_noise_over_lot_exactly() {
 fn insufficient_holding_error_message_hides_float_noise() {
     let conn = open();
     seed_account(&conn, "acc-msg", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01"],
+    );
     seed_instrument(&conn, "inst-msg", "TSLA", "Tesla", "USD", "unknown");
     let buy_id = create_transaction_internal(
         &conn,
