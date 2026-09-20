@@ -105,12 +105,12 @@ fn code_shape(code: &str) -> CodeShape {
     }
 }
 
-/// 港股代码左补零至 5 位归一（"700"→"00700"；已 5 位不变）、美股 ticker 大写
-/// 归一（"aapl"→"AAPL"，幂等建行同自然键）；其余市场原样。
+/// 港股代码左补零至 5 位归一（"700"→"00700"；已 5 位不变）、美股聚合查询的
+/// ticker 大写归一（"aapl"→"AAPL"，幂等建行同自然键）；其余市场原样。
 fn normalize_code(market: &str, code: &str) -> String {
     if market == "hk" {
         format!("{code:0>5}")
-    } else if market == US_AGGREGATE_MARKET || is_us_market(market) {
+    } else if market == US_AGGREGATE_MARKET {
         code.to_ascii_uppercase()
     } else {
         code.to_string()
@@ -297,7 +297,8 @@ pub struct StockEnhancePlan {
 
 /// 按创建入参路由行情增强（判定全部在发起网络前完成，先例：基金代码格式校验）。
 pub fn route_stock_creation(market: Option<&str>, symbol: &str) -> StockCreateRoute {
-    match code_shape(symbol) {
+    let shape = code_shape(symbol);
+    match shape {
         CodeShape::BeijingExchange => StockCreateRoute::Reject(bse_unsupported(symbol)),
         CodeShape::Single(_) | CodeShape::UsTicker => {
             match resolve_stock_code(market, symbol) {
@@ -308,7 +309,7 @@ pub fn route_stock_creation(market: Option<&str>, symbol: &str) -> StockCreateRo
                     // 无法预知交易所 → unknown。
                     degrade_market: match market {
                         Some(m) => m.to_string(),
-                        None => match code_shape(symbol) {
+                        None => match shape {
                             CodeShape::Single(m) => m.to_string(),
                             _ => "unknown".to_string(),
                         },

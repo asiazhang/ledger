@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::ApiState;
 use ledger_infra::error::AppError;
-use ledger_investment::{InstrumentType, Quote, derive_quote_currency};
+use ledger_investment::{InstrumentType, Quote, derive_quote_currency, resolve_stock_code};
 
 /// 股票行情获取（查询端点与创建增强、添加投资标的壳共用，issue #693）：
 /// 测试注入桩直接在异步上下文 await（离线驱动）；生产路径为 async 生产入口
@@ -109,7 +109,7 @@ pub async fn lookup_stock_handler(
     Query(query): Query<StockLookupQuery>,
 ) -> Result<Json<StockLookup>, AppError> {
     // 形态解析（推断 / 矛盾 / 不支持 / 北交所）在发起网络前完成：非法参数即刻 400。
-    let candidate = ledger_investment::resolve_stock_code(query.market.as_deref(), &code)?;
+    let candidate = resolve_stock_code(query.market.as_deref(), &code)?;
     let quote = fetch_stock_quote_for_api(&state, candidate.market, &candidate.code).await?;
     Ok(Json(StockLookup::try_from(quote)?))
 }

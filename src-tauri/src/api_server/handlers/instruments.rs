@@ -147,8 +147,8 @@ pub async fn create_instrument_handler(
 ) -> Result<(StatusCode, Json<String>), AppError> {
     // 行情增强的往返判定（ADR-0039 决策 3 / ADR-0081 决策 2）：仅 fund + 真实 6 位代码、
     // stock/etf + 可解析真实代码触发（场内两类型同属行情通道，类型以提交为准落库；
-    // 美股 ticker 缺省按候选序遍历三市场，issue #696）；名称充代码（兜底）与其他类型
-    // 不发起网络请求。stock 的路由判定收口在投资域单点（route_stock_creation）：
+    // 美股 ticker 缺省单查询解析，精确交易所由行情源自报，issue #696/#1567）；
+    // 名称充代码（兜底）与其他类型不发起网络请求。stock 的路由判定收口在投资域单点（route_stock_creation）：
     // 北交所与真实代码形态的 market 矛盾在发起网络前显式 400；非代码形态走通用创建路径。
     enum Enrichment {
         FundAuthoritative(Quote),

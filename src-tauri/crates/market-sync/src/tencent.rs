@@ -79,6 +79,10 @@ impl TencentQuote {
     /// 投影为行情接入接缝的统一载荷 [`Quote`]（ADR-0103）：场内通道成员（代码 /
     /// 名称 / 价格 / 价格日期 / 精确市场 / 类型提示）就位，场外成员（基金分类 /
     /// 净值日期 / 恒定价格信号）恒缺省。消费方为按代码查询 / 创建接线（#1567）。
+    /// 币种不随投影携带：统一载荷无币种成员，落库与响应按精确市场推导
+    ///（`derive_quote_currency`，ADR-0037 决策 2）——当前闭集内与自报币种
+    ///（CNY/HKD/USD）恒等；若数据源自报漂移，判据在本层 `currency_code` 字段
+    ///（fixture 钉住），届时显式改投影，不静默沿用推导。
     pub fn into_quote(self) -> Quote {
         Quote {
             code: self.code,
