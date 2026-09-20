@@ -67,7 +67,7 @@
     "cumulativePnl": "Cumulative P&L",
     "tipAria": "About {concept}",
     "tipTemplate": "{body} {scope}",
-    "marketValueTip": "Each holding is valued at quantity × latest price; holdings without a price or FX rate are excluded; cash held in investment accounts is not included.",
+    "marketValueTip": "Sum of each holding's value at quantity × latest price; holdings without a price or FX rate are excluded; cash held in investment accounts is not included.",
     "unrealizedPnlTip": "Market value minus cost basis (FIFO lots, including buy fees) — unrealized P&L that moves with prices and turns into realized P&L only after you sell.",
     "cumulativePnlTip": "Holding P&L (unrealized) + realized P&L + dividends.",
     "scopeFiltered": "Amounts are converted to each account's currency and listed separately, never merged; the totals narrow with the current search and account filters.",

@@ -82,7 +82,7 @@ describe("InvestmentOverviewPanel 投资概览（spec #1532 / issue #1536）", (
       formatAmount(35_000, cny),
     );
     // 同一标签在两处页签的口径差异必须可解释：合计三项的 ⓘ 挂概览 scope 变体句
-    // （读屏经 aria 也能听到差异说明，ADR-0130 决策 3）。
+    // （读屏经 aria 也能听到差异说明，ADR-0131 决策 3）。
     for (const [id, label] of [
       ["overview-total-market-value", t("investments.concepts.marketValue")],
       ["overview-unrealized-pnl", t("investments.concepts.unrealizedPnl")],
