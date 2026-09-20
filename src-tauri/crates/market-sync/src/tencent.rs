@@ -10,8 +10,8 @@
 //! 决策 5）——沿用北京时间切分会把美股周五的收盘记成周六。
 //!
 //! 本单元只取数与解析，不落库、不接 UI；现价刷新接线见通道束（issue #1560），
-//! 按代码查询 / 创建接线随 #1567（[`TencentQuote::into_quote`] 供后者投影统一
-//! 载荷，暂以 dead_code 豁免）。
+//! 按代码查询 / 创建接线见 [`super::stock`]（issue #1567，[`TencentQuote::into_quote`
+//! ] 投影统一载荷）。
 //!
 //! fail-closed：被风控拦截的响应（HTML 页 / 空体）与非预期形状（缺报价语句、GBK
 //! 解码出错、字段数少于该市场布局下界、未知市场前缀、未知美股交易所后缀）一律报
@@ -79,7 +79,10 @@ impl TencentQuote {
     /// 投影为行情接入接缝的统一载荷 [`Quote`]（ADR-0103）：场内通道成员（代码 /
     /// 名称 / 价格 / 价格日期 / 精确市场 / 类型提示）就位，场外成员（基金分类 /
     /// 净值日期 / 恒定价格信号）恒缺省。消费方为按代码查询 / 创建接线（#1567）。
-    #[allow(dead_code)]
+    /// 币种不随投影携带：统一载荷无币种成员，落库与响应按精确市场推导
+    ///（`derive_quote_currency`，ADR-0037 决策 2）——当前闭集内与自报币种
+    ///（CNY/HKD/USD）恒等；若数据源自报漂移，判据在本层 `currency_code` 字段
+    ///（fixture 钉住），届时显式改投影，不静默沿用推导。
     pub fn into_quote(self) -> Quote {
         Quote {
             code: self.code,
@@ -97,12 +100,13 @@ impl TencentQuote {
 
 /// 「市场 + 代码」→ 腾讯查询键（键构造单点，ADR-0130 决策 2 / issue #1555 的换源
 /// 落点）：沪深港用 `<市场前缀><代码>`（`sh600000` / `sz161725` / `hk00700`），美股
-/// 三市场统用 `us<代码>`——腾讯不区分交易所，精确交易所由响应自报后缀判定。市场
-/// 未知返回 None（调用侧不发请求、跳过该查询单元）。
+/// 三市场与聚合路由值 `us`（按代码查询的解析产物，issue #1567——腾讯不区分交易
+/// 所，精确交易所由响应自报后缀判定）统用 `us<代码>`。市场未知返回 None（同步
+/// 编排侧不发请求、跳过该查询单元；查询侧为码化内部不一致）。
 pub(super) fn tencent_query_key(market: &str, code: &str) -> Option<String> {
     match market {
         "sh" | "sz" | "hk" => Some(format!("{market}{code}")),
-        "nasdaq" | "nyse" | "amex" => Some(format!("us{code}")),
+        "nasdaq" | "nyse" | "amex" | "us" => Some(format!("us{code}")),
         _ => None,
     }
 }
@@ -361,8 +365,9 @@ pub(super) async fn fetch_tencent_quotes(
 
 /// 单批请求：请求行 `GET /q=<代码逗号串>`（无 Referer），GBK 解码后按
 /// [`parse_tencent_quotes`] 解析。解析失败按疑似风控页补降速信号（文本形状判定在
-/// HTTP 层看不见，先例：`bulk` 的两个批量面）。
-async fn fetch_tencent_batch(
+/// HTTP 层看不见，先例：`bulk` 的两个批量面）。按代码查询的单只取数（#1567）
+/// 复用本请求原语：单只 = 一批一条。
+pub(super) async fn fetch_tencent_batch(
     client: &reqwest::Client,
     pacer: &mut Pacer,
     hosts: &[&str],

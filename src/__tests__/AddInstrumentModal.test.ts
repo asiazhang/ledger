@@ -15,7 +15,7 @@ const mockCurrencies: Currency[] = [
 /** 弹窗布线：list_currencies 参考命令本场景需自定义值（CNY+USD）。 */
 const BASE_OVERRIDES = { list_currencies: mockCurrencies };
 
-/** 命中回显的股票侧结果（桩：东财回填 + 类型识别 etf）。 */
+/** 命中回显的股票侧结果（桩：行情回填 + 类型识别 etf）。 */
 const stockHit = {
   instrument_id: "inst-1",
   symbol: "159915",
@@ -124,7 +124,7 @@ describe("AddInstrumentModal 添加投资标的弹窗（issue #826 / spec #690�
       market: "sh",
       code: "600519",
     });
-    // 识别回显：类型标签 + 东财名称 + 现价（万分之一元 → 元展示）
+    // 识别回显：类型标签 + 权威名称 + 现价（万分之一元 → 元展示）
     expect(added[0]).toContain("创业板ETF");
     expect(added[0]).toContain("ETF");
     expect(added).toHaveLength(1);
@@ -250,13 +250,13 @@ describe("AddInstrumentModal 添加投资标的弹窗（issue #826 / spec #690�
     wireInvokeSeam({
       overrides: {
         ...BASE_OVERRIDES,
-        add_instrument_by_code: () => Promise.reject({ kind: "Io", message: "东财临时不可达" }),
+        add_instrument_by_code: () => Promise.reject({ kind: "Io", message: "行情源临时不可达" }),
       },
     });
     await clickBody("submit-add-instrument");
     await flushPromises();
     expect(bodyQuery('[data-testid="add-instrument-error"]')!.textContent).toContain(
-      "东财临时不可达",
+      "行情源临时不可达",
     );
     expect(bodyQuery('[data-testid="add-instrument-not-found-hint"]')).toBeNull();
     expect(bodyQuery('[data-testid="add-instrument-name"]')).toBeNull();

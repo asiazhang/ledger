@@ -29,7 +29,7 @@ use utoipa::{PartialSchema, ToSchema};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PriceChannel {
-    /// 行情通道：股票与场内 ETF，市场已知（可构造 secid），现价与周线经行情
+    /// 行情通道：股票与场内 ETF，市场已知（可构造行情查询），现价与周线经行情
     /// 同步写入（issue #695）。
     Quote,
     /// 净值通道：6 位真实代码的场外基金，净值经标的信息同步逐只写入
@@ -42,7 +42,7 @@ pub enum PriceChannel {
     /// 手动报价通道：同步覆盖不到但录价入口开放的行——自建标的（债券/ETF/其他）
     /// 与名称充代码的基金行（ADR-0036 决策 1）。
     Manual,
-    /// 无价格来源：市场未知的股票类——行情不可达（无法构造 secid）且录价入口
+    /// 无价格来源：市场未知的股票类——行情不可达（无法构造行情查询）且录价入口
     /// 不开放，走势与市值四消费方全部落空。
     None,
 }
@@ -90,10 +90,10 @@ impl PartialSchema for PriceChannel {
 
 impl ToSchema for PriceChannel {}
 
-/// 行情通道的市场能力：已知市场（沪/深/港/美股三交易所）才可构造 secid 查询。
-/// 与行情同步网络层的 `sync::http::secid_prefix`（行情同步域 `ledger-market-sync`
-/// crate，#1106）同一闭集——同步侧绑定测试钉住两者一致（该 crate 的
-/// `tests::instrument_info_sync`），改其一必同步另一。
+/// 行情通道的市场能力：已知市场（沪/深/港/美股三交易所）才可构造行情查询。
+/// 与行情同步域的腾讯查询键构造 `sync::tencent::tencent_query_key`（行情同步域
+/// `ledger-market-sync` crate，issue #1560 接线后）同一闭集——同步侧绑定测试钉住
+/// 两者一致（该 crate 的 `tests::instrument_info_sync`），改其一必同步另一。
 pub fn quote_market(market: &str) -> bool {
     matches!(market, "sh" | "sz" | "hk" | "nasdaq" | "nyse" | "amex")
 }

@@ -11,7 +11,7 @@ use crate::{
 use super::common::insert_instrument_with_market;
 use tauri_app_lib::test_support::open;
 
-/// 行情通道：股票与场内 ETF（有市场 + 代码即可构造 secid，issue #695）。
+/// 行情通道：股票与场内 ETF（有市场 + 代码即可构造行情查询，issue #695）。
 #[test]
 fn stock_and_listed_etf_with_known_market_sit_in_quote_channel() {
     for market in ["sh", "sz", "hk", "nasdaq", "nyse", "amex"] {
@@ -28,7 +28,7 @@ fn stock_and_listed_etf_with_known_market_sit_in_quote_channel() {
     }
 }
 
-/// 市场未知的股票类标的：既不进行情分区（无法构造 secid）、也不开录价入口
+/// 市场未知的股票类标的：既不进行情分区（无法构造行情查询）、也不开录价入口
 /// （ADR-0036 决策 1：股票现价归同步）——真正没有价格来源的行（issue #1060）。
 #[test]
 fn stock_with_unknown_market_has_no_price_source() {

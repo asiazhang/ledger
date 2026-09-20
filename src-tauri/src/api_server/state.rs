@@ -1,4 +1,5 @@
-//! HTTP 服务器状态与注入接缝：数据库连接 + 失效信号发射槽 + 可选东财基金/股票详情接缝 + 加密锁定门。
+//! HTTP 服务器状态与注入接缝：数据库连接 + 失效信号发射槽 + 可选行情详情接缝
+//! （基金东财 / 股票腾讯，ADR-0130）+ 加密锁定门。
 
 use std::future::Future;
 use std::pin::Pin;
@@ -23,12 +24,12 @@ use rusqlite::Connection;
 pub type QuoteFuture = Pin<Box<dyn Future<Output = Result<Quote, AppError>> + Send>>;
 pub type FundQuoteFetcher = Arc<dyn Fn(&str) -> QuoteFuture + Send + Sync>;
 
-/// 东财股票行情获取函数接缝（issue #693 / ADR-0081）：`(市场, 代码) → future<Result<Quote>>`，
-/// 查无此码以码化中文错误上抛——注入桩形态与 [`FundQuoteFetcher`] 同构（统一报价
-/// 载荷，ADR-0103）。市场/代码
-/// 形态解析在投资域单点完成（`resolve_stock_quote_candidates`），本接缝只接归一化后的查询；
-/// 美股 ticker 的候选遍历由壳层共享助手 `fetch_stock_quote_first_hit_for_api` 执行（issue #696）。
-/// 生产路径为东财单点行情（`fetch_stock_quote_production`，async 形态直接 await）；
+/// 股票行情获取函数接缝（issue #693 / ADR-0081；换源 ADR-0130 决策 2 / #1567）：
+/// `(市场, 代码) → future<Result<Quote>>`，查无此码以码化中文错误上抛——注入桩
+/// 形态与 [`FundQuoteFetcher`] 同构（统一报价载荷，ADR-0103）。市场/代码
+/// 形态解析在投资域单点完成（`resolve_stock_code`），本接缝只接归一化后的查询单元
+///（美股为聚合路由值 `us`，精确交易所由行情源自报，候选遍历已退役）。
+/// 生产路径为腾讯行情（`fetch_stock_quote_production`，async 形态直接 await）；
 /// HTTP 集成测试以注入桩离线驱动，全部股票端点集成测试不触真实网络。
 pub type StockQuoteFetcher = Arc<dyn Fn(&str, &str) -> QuoteFuture + Send + Sync>;
 
@@ -55,7 +56,7 @@ pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 ///
 /// `fund_fetch` 为东财基金详情获取接缝：`None` = 生产路径（真实东财，async
 /// 生产入口直接 await，连接锁外往返）；集成测试注入桩离线驱动（issue #304）。
-/// `stock_fetch` 为东财股票行情获取接缝，同构（issue #693）。
+/// `stock_fetch` 为股票行情获取接缝，同构（issue #693；生产路径腾讯，ADR-0130）。
 ///
 /// `lock_gate` 为加密锁定门（issue #570 / ADR-0075 决策 5）：与 IPC 壳共享
 /// 同一进程级门实例（`lib.rs` 创建的 [`ledger_infra::db::encryption::EncryptionGate`]），

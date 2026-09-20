@@ -582,7 +582,7 @@ pub fn create_instrument_manual(conn: &Connection, input: InstrumentInput) -> Re
         InstrumentType::Stock => {
             return Err(AppError::coded(
                 "instrument.stock-manual-forbidden",
-                "股票类标的不支持手动创建：请用「添加投资标的」按代码查询，自动回填东财权威名称",
+                "股票类标的不支持手动创建：请用「添加投资标的」按代码查询，自动回填权威名称",
             ));
         }
         InstrumentType::Fund => {
