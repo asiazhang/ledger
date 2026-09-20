@@ -78,7 +78,8 @@
   "sync": {
     "fund-not-found": "查无基金代码 {0}，请核对后重试",
     "stock-not-found": "查无股票代码 {0}，请核对后重试",
-    "secid-unroutable": "市场 {0} 无法构造行情查询（内部不一致）"
+    "secid-unroutable": "市场 {0} 无法构造行情查询（内部不一致）",
+    "disclosure-source-malformed": "基金官方披露数据源返回了无法解析的内容，请稍后重试同步"
   },
   "data-location": {
     "mkdir-failed": "无法创建目标目录（{0}）：{1}",
