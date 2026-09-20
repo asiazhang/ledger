@@ -30,7 +30,7 @@ use ledger_infra::error::Result;
 
 use super::bulk::BulkFetchSurfaces;
 use super::fund::fetch_fund_quote;
-use super::fund_nav::{FullSeries, LsjzPage, NavQuery, fetch_nav_full_series, fetch_nav_page};
+use super::fund_nav::{FullSeries, NavPage, NavQuery, fetch_nav_full_series, fetch_nav_page};
 use super::http::{
     ForegroundGuard, KlineBar, Pacer, StockItem, build_client, fetch_fx_kline, fetch_kline,
     fetch_ulist, lock_pacer, quote_query_key, shared_pacer, wait_foreground_idle,
@@ -64,7 +64,7 @@ pub type FetchKline = Box<dyn FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> +
 /// 行情查询键，键形态归汇率通道内部）。
 pub type FetchFxKline = Box<dyn FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send>;
 /// 历史净值页抓取通道闭包形态。
-pub type FetchNavPage = Box<dyn FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send>;
+pub type FetchNavPage = Box<dyn FnMut(&NavQuery) -> FetchFuture<NavPage> + Send>;
 /// 单请求全量净值抓取通道闭包形态（issue #1062 首刷深回填通道）。
 pub type FetchNavFull = Box<dyn FnMut(&str) -> FetchFuture<FullSeries> + Send>;
 /// 基金详情名称抓取通道闭包形态（issue #827）。
@@ -299,7 +299,7 @@ mod tests {
             fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_nav: Box::new(|_| {
                 Box::pin(async {
-                    Ok(LsjzPage {
+                    Ok(NavPage {
                         points: vec![],
                         total: 0,
                         blocked: false,

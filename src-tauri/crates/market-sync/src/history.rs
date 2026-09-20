@@ -52,7 +52,7 @@ use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 
 use super::channels::{FetchFuture, QuoteQuery, SyncFetchChannels};
 use super::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
-use super::fund_nav::{FullSeries, LsjzPage, NavQuery};
+use super::fund_nav::{FullSeries, NavPage, NavQuery};
 use super::http::KlineBar;
 use super::incremental::{
     SyncInstrument, backfill_fx_pairs, beijing_today, daily_window_opens, downsample_weekly,
@@ -364,7 +364,7 @@ where
     Q: ScopedSession,
     K: FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> + Send,
     X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
-    N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
+    N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
     S: FnMut(&str) -> FetchFuture<FullSeries> + Send,
     P: FnMut(SyncProgress) + Send,
 {

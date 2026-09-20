@@ -17,7 +17,7 @@ use crate::bulk::{
     FetchFundNameDictionary, FetchFundNavTable, FundNameDictionary, FundNavTable,
 };
 use crate::channels::{FetchFuture, QuoteQuery, SyncFetchChannels, do_incremental_sync_channels};
-use crate::fund_nav::{FullSeries, LsjzPage, NavPoint, NavQuery};
+use crate::fund_nav::{FullSeries, NavPage, NavPoint, NavQuery};
 use crate::http::{
     KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
     fx_secid_candidates, parse_klines, price_cents_from_raw, secid_prefix,
@@ -1011,8 +1011,8 @@ fn no_fx(_: &str) -> FetchFuture<Vec<KlineBar>> {
 
 /// 空实现：既有用例只关心股票/汇率行为时注入（净值通道最小桩，首刷查无净值
 /// 形态——基金计入跳过）。
-fn no_nav(_: &NavQuery) -> FetchFuture<LsjzPage> {
-    super::ready(Ok(LsjzPage {
+fn no_nav(_: &NavQuery) -> FetchFuture<NavPage> {
+    super::ready(Ok(NavPage {
         points: vec![],
         total: 0,
         blocked: false,
@@ -1271,8 +1271,8 @@ fn week_key_matches_sqlite_week_start_column() {
 // ---------------------------------------------------------------------------
 
 /// 构造一页净值结果：total 为窗口内总条数（分页定界），points 为 (日期, 单位净值)。
-fn nav_page(total: u64, points: &[(&str, f64)]) -> LsjzPage {
-    LsjzPage {
+fn nav_page(total: u64, points: &[(&str, f64)]) -> NavPage {
+    NavPage {
         total,
         blocked: false,
         money_fund: false,
@@ -1289,9 +1289,9 @@ fn nav_page(total: u64, points: &[(&str, f64)]) -> LsjzPage {
 /// 模拟历史净值页抓取：按代码返回页序列（下标 = 页码 − 1，越界页返回空），
 /// 并记录全部查询（断言水位窗口、翻页与「非可拉取行零请求」）。
 fn mock_nav<'a>(
-    pages_by_code: &'a [(&'a str, Vec<LsjzPage>)],
+    pages_by_code: &'a [(&'a str, Vec<NavPage>)],
     requested: &'a Mutex<Vec<NavQuery>>,
-) -> impl FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send + 'a {
+) -> impl FnMut(&NavQuery) -> FetchFuture<NavPage> + Send + 'a {
     move |query: &NavQuery| {
         requested.lock().unwrap().push(query.clone());
         super::ready(Ok(pages_by_code
@@ -1299,7 +1299,7 @@ fn mock_nav<'a>(
             .find(|(c, _)| *c == query.code)
             .and_then(|(_, pages)| pages.get((query.page - 1) as usize))
             .cloned()
-            .unwrap_or(LsjzPage {
+            .unwrap_or(NavPage {
                 points: vec![],
                 total: 0,
                 blocked: false,
@@ -2804,7 +2804,7 @@ fn empty_nav(calls: Arc<AtomicUsize>) -> FetchNavPage {
         let calls = calls.clone();
         Box::pin(async move {
             calls.fetch_add(1, Ordering::SeqCst);
-            Ok(LsjzPage {
+            Ok(NavPage {
                 points: vec![],
                 total: 0,
                 blocked: false,
@@ -3905,7 +3905,7 @@ fn money_fund_signal_marks_instrument_and_lands_nothing() {
         let calls = per_fund_nav_calls.clone();
         Box::pin(async move {
             calls.fetch_add(1, Ordering::SeqCst);
-            Ok(LsjzPage {
+            Ok(NavPage {
                 points: vec![NavPoint { date, nav: 1.0 }],
                 total: 1,
                 blocked: false,

@@ -19,7 +19,7 @@ use ledger_investment::prices::{
 use super::bulk::BulkNavPoint;
 use super::channels::FetchFuture;
 use super::fund_nav::{
-    LsjzPage, MONEY_FUND_UNIT_NAV, NavQuery, fetch_nav_pages, nav_window, read_fund_watermark,
+    MONEY_FUND_UNIT_NAV, NavPage, NavQuery, fetch_nav_pages, nav_window, read_fund_watermark,
 };
 use super::http::KlineBar;
 use super::session::ScopedSession;
@@ -76,7 +76,7 @@ pub(super) async fn refresh_one_fund_price<Q, N, P>(
 where
     // 作用域会话接缝（issue #1275）：本函数读写库的唯一通道，签名层面取不到连接。
     Q: ScopedSession,
-    N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
+    N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
     // 页级推进回调（issue #1061）：(已完成页, 总页数)。只在本页抓取返回之后发出
     //（抓取内部的退避/重试等待不产生推进）；单页（pages ≤ 1）不发——增量常态
     // 的事件形状与频率不变。

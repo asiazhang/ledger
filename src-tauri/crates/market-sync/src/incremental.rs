@@ -21,7 +21,7 @@
 //! 编排与网络解耦：核心流程 [`do_incremental_sync_with`] 接受注入的批量报价 / 日 K /
 //! 汇率 K 三个闭包（日 K / 汇率 K 同签名 `&str → Result<Vec<_>>`；批量报价收
 //! [「市场 + 代码」查询单元](QuoteQuery)，issue #1555）、历史净值页闭包
-//!（[`NavQuery`] → [`LsjzPage`]）、基金名称闭包（`&str → Result<String>`）与进度回调
+//!（[`NavQuery`] → [`NavPage`]）、基金名称闭包（`&str → Result<String>`）与进度回调
 //! 闭包（`done, total`，issue #897），测试以 mock 数据驱动（不依赖真实网络）；
 //! 生产经 [`super::channels`] 的通道束接 HTTP 层（复用主机池/重试/限流 pacer
 //! 与价格换算）。进度回调闭包是本函数唯一的对外观察点：编排核心不碰网络、不碰事件
@@ -58,7 +58,7 @@ use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 use ledger_transaction::amount::default_currency_code;
 
 use super::channels::{FetchFuture, QuoteQuery};
-use super::fund_nav::{LsjzPage, NavQuery};
+use super::fund_nav::{NavPage, NavQuery};
 use super::fund_price_refresh::{FundSyncStats, refresh_one_fund_price};
 use super::http::{KlineBar, StockItem, ULIST_BATCH_SIZE, price_cents_from_raw};
 use super::persist::upsert_fx_rate_history;
@@ -276,7 +276,7 @@ where
     Q: ScopedSession,
     F: FnMut(&[QuoteQuery]) -> FetchFuture<Vec<StockItem>> + Send,
     X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
-    N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
+    N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
     // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
     // （不落库）。生产接基金详情通道，测试注入 mock。
     M: FnMut(&str) -> FetchFuture<String> + Send,
