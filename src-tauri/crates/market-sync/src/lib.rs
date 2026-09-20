@@ -26,10 +26,11 @@
 //! - [`csrc`]：证监会基金电子披露取数单元（issue #1562 / ADR-0130）——官方场外
 //!   基金净值披露的单只基金区间查询与解析：名称、单位净值、累计净值、净值日期
 //!   与货基自报形态信号（单位净值为空、万份收益与七日年化有值，ADR-0126 决策 3
-//!   换源后的确认源）；DataTables 参数全集请求构造单点、汇总行与份额行混排
+//!   换源后的判定信号）；DataTables 参数全集请求构造单点、汇总行与份额行混排
 //!   过滤、已终止基金可取（存在性与最后一期净值的权威兑底）；异常响应
 //!   fail-closed 报 sync.disclosure-source-malformed，不误判「查无此码」。
-//!   本票只产出披露记录，不落库、不接编排（判定与查询创建接线归 #1563 / #1568）；
+//!   判定确认（[`csrc::confirm_money_fund_form`]，issue #1563）接线在逐只刷新与
+//!   历史首刷两确认点；区间取数的翻页面归 #1568 的查询创建接线消费；
 //! - [`tencent_kline`]：腾讯日线 K 线取数单元（ADR-0130 决策 2 / issue #1559）
 //!   ——「市场 + 代码」→ 腾讯查询键（沪深港前缀 + 美股三市场交易所后缀）、区间 /
 //!   根数参数与日线报文解析（收盘价在下标 2；港美行可带多余元素）；无效代码返回
@@ -123,10 +124,10 @@
 
 mod bulk;
 mod channels;
-/// 证监会基金电子披露取数单元（issue #1562）：单元本体与测试已就位，crate 内
-/// 消费点随判定与查询创建接线票（#1563 / #1568）落地，接装时撤去 dead_code 豁免
-/// 并按消费面补再导出。
-#[allow(dead_code)]
+/// 证监会基金电子披露取数单元（issue #1562）：判定确认（[`csrc::confirm_money_fund_form`]，
+/// issue #1563 接线在逐只刷新与历史首刷两确认点）与区间取数面（翻页 + 完整性
+/// 核验，已终止基金存在性兜底）已就位，后者的 crate 内消费点随查询创建接线票
+///（#1568）落地时撤去其函数级豁免并按消费面补再导出。
 mod csrc;
 mod daily_refresh;
 /// ECB 参考汇率取数单元（issue #1542）：单元本体与测试已就位，crate 内消费点
@@ -168,8 +169,8 @@ pub use bulk::{
     FundNameDictionary, FundNavTable,
 };
 pub use channels::{
-    FetchFundName, FetchFxKline, FetchKline, FetchNavFull, FetchNavPage, FetchQuotes, QuoteItem,
-    QuoteQuery, SyncFetchChannels, do_incremental_sync_channels,
+    FetchFundName, FetchFxKline, FetchKline, FetchMoneyFundForm, FetchNavFull, FetchNavPage,
+    FetchQuotes, QuoteItem, QuoteQuery, SyncFetchChannels, do_incremental_sync_channels,
 };
 pub use daily_refresh::{
     DailyPriceRefreshChannelsSlot, DailyPriceRefreshTimings, start_daily_price_refresh,

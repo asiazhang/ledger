@@ -17,8 +17,8 @@ use crate::bulk::{
     FetchFundNameDictionary, FetchFundNavTable, FundNameDictionary, FundNavTable,
 };
 use crate::channels::{
-    FetchFuture, Lane, QuoteItem, QuoteQuery, SyncFetchChannels, SyncFetchHosts,
-    do_incremental_sync_channels,
+    FetchFuture, FetchMoneyFundForm, Lane, QuoteItem, QuoteQuery, SyncFetchChannels,
+    SyncFetchHosts, do_incremental_sync_channels,
 };
 use crate::fund_nav::{FullSeries, NavPage, NavPoint, NavQuery};
 use crate::http::{
@@ -123,6 +123,7 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -296,6 +297,7 @@ fn incremental_sync_normalizes_symbol_suffix() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -331,6 +333,7 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -353,6 +356,7 @@ fn incremental_sync_empty_library_returns_message() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -396,6 +400,7 @@ fn incremental_sync_updates_holding_prices_only() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -464,6 +469,7 @@ fn incremental_sync_skips_holdings_without_quote_source() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -514,6 +520,7 @@ fn incremental_sync_keeps_old_price_when_suspended() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -545,6 +552,7 @@ fn incremental_sync_counts_missing_response_as_skipped() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -574,6 +582,7 @@ fn incremental_sync_skips_unknown_market() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -598,6 +607,7 @@ fn incremental_sync_is_idempotent() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -612,6 +622,7 @@ fn incremental_sync_is_idempotent() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -643,6 +654,7 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -688,6 +700,7 @@ fn incremental_sync_pulls_a_daily_ledgers_quotes_in_one_batch() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -735,6 +748,7 @@ fn incremental_sync_hands_all_quote_queries_to_the_channel_in_one_call() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -772,6 +786,7 @@ fn swapping_quote_channel_keeps_prices_landing_without_source_key_in_orchestrati
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -799,6 +814,7 @@ fn incremental_sync_propagates_fetch_error() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut witness,
@@ -847,6 +863,7 @@ fn witness_survives_mid_run_failure_after_write() {
         &mut no_fx,
         &mut nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut witness,
@@ -877,6 +894,7 @@ fn witness_mirrors_result_any_written_on_success() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut witness,
@@ -937,6 +955,7 @@ fn witness_mirrors_result_any_written_on_success() {
         &mut no_fx,
         &mut nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut witness,
@@ -976,13 +995,18 @@ fn no_nav(_: &NavQuery) -> FetchFuture<NavPage> {
         points: vec![],
         total: 0,
         blocked: false,
-        money_fund: false,
     }))
 }
 
 /// 空实现：既有用例不关心基金名称刷新时注入（返回空串 = 未取到名称，不落库）。
 fn no_name(_: &str) -> FetchFuture<String> {
     super::ready(Ok(String::new()))
+}
+
+/// 空实现：既有用例不关心货基判定时注入（缺信号形态——不打标、照常取数落库）。
+/// 货基判定用例注入自己的确认桩（确认 / 缺信号 / 源不可信三态）。
+fn no_confirm(_: &str) -> FetchFuture<bool> {
+    super::ready(Ok(false))
 }
 
 /// 空实现：既有用例不关心进度序列时注入（进度回调最小桩，issue #897）。
@@ -1076,6 +1100,7 @@ fn sync_writes_no_price_history_quote_only() {
         &mut fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1122,6 +1147,7 @@ fn sync_lands_current_week_point_for_instrument_with_existing_history() {
         &mut fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1235,7 +1261,6 @@ fn nav_page(total: u64, points: &[(&str, f64)]) -> NavPage {
     NavPage {
         total,
         blocked: false,
-        money_fund: false,
         points: points
             .iter()
             .map(|(d, n)| NavPoint {
@@ -1263,7 +1288,6 @@ fn mock_nav<'a>(
                 points: vec![],
                 total: 0,
                 blocked: false,
-                money_fund: false,
             })))
     }
 }
@@ -1325,6 +1349,7 @@ fn fund_first_sync_without_nav_counts_skipped() {
         &mut no_fx,
         &mut nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1371,6 +1396,7 @@ fn fund_rows_without_real_code_skip_without_fetch() {
         &mut no_fx,
         &mut nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1407,6 +1433,7 @@ fn fund_nav_fetch_error_propagates() {
         &mut no_fx,
         &mut nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1444,6 +1471,7 @@ fn etf_holding_syncs_quote_only_without_history() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1484,6 +1512,7 @@ fn etf_holding_unknown_market_counts_skipped_without_requests() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1573,6 +1602,7 @@ fn three_type_partitions_roll_up_into_one_result() {
         &mut no_fx,
         &mut nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1663,6 +1693,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         &mut fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1721,6 +1752,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         &mut fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1760,6 +1792,7 @@ fn us_stock_holdings_route_exact_market_per_instrument() {
         &mut fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1876,6 +1909,7 @@ fn quote_date_is_exchange_local_and_source_is_tencent() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1947,6 +1981,7 @@ fn incremental_sync_includes_cleared_instrument() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -1979,6 +2014,7 @@ fn incremental_sync_includes_never_traded_instrument() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -2010,6 +2046,7 @@ fn incremental_sync_refreshes_names_from_quote_batch() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -2056,6 +2093,7 @@ fn incremental_sync_skips_name_write_when_unchanged() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -2106,6 +2144,7 @@ fn fund_name_refresh_via_detail_lookup() {
         &mut no_fx,
         &mut nav,
         &mut fund_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -2162,6 +2201,7 @@ fn fund_name_refresh_degrades_deterministic_not_found_to_skip() {
         &mut no_fx,
         &mut nav,
         &mut fund_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -2203,6 +2243,7 @@ fn fund_name_refresh_still_propagates_network_failure() {
         &mut no_fx,
         &mut nav,
         &mut fund_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -2251,6 +2292,7 @@ fn fund_name_lookup_skips_name_as_code_rows_and_empty_names() {
         &mut no_fx,
         &mut nav,
         &mut fund_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut no_progress,
         &mut WriteWitness::default(),
@@ -2324,6 +2366,7 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
@@ -2392,6 +2435,7 @@ fn progress_denominator_counts_channel_capable_instruments_only() {
         &mut no_fx,
         &mut nav,
         &mut fund_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
@@ -2446,6 +2490,7 @@ fn progress_advances_even_when_quote_invalid_or_missing() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
@@ -2515,6 +2560,7 @@ fn fund_up_to_date_still_advances_progress() {
         &mut no_fx,
         &mut nav,
         &mut fund_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
@@ -2566,6 +2612,7 @@ fn fund_progress_advances_after_nav_and_name_complete() {
         &mut no_fx,
         &mut nav,
         &mut fund_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
@@ -2612,6 +2659,7 @@ fn page_level_detail_only_for_multi_page_fund_sync() {
         &mut no_fx,
         &mut nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
@@ -2643,6 +2691,7 @@ fn progress_not_emitted_for_empty_library() {
         &mut no_fx,
         &mut no_nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
@@ -2687,6 +2736,7 @@ fn progress_not_emitted_when_no_channel_capable_instrument() {
         &mut no_fx,
         &mut nav,
         &mut no_name,
+        &mut no_confirm,
         &mut no_bulk(),
         &mut progress,
         &mut WriteWitness::default(),
@@ -2794,6 +2844,7 @@ fn fund_channels(
     fetch_nav: FetchNavPage,
     fetch_nav_full: FetchNavFull,
     fetch_fund_name: FetchFundName,
+    confirm_money_fund_form: FetchMoneyFundForm,
     bulk: BulkFetchSurfaces,
 ) -> SyncFetchChannels {
     SyncFetchChannels {
@@ -2821,6 +2872,9 @@ fn fund_channels(
         fetch_nav,
         fetch_nav_full,
         fetch_fund_name,
+        // 货基判定确认（issue #1563）：由用例注入（缺信号桩 `no_confirm` 闭包或
+        // 判定用例的确认桩）。
+        confirm_money_fund_form,
         bulk,
     }
 }
@@ -2883,7 +2937,6 @@ fn empty_nav(calls: Arc<AtomicUsize>) -> FetchNavPage {
                 points: vec![],
                 total: 0,
                 blocked: false,
-                money_fund: false,
             })
         })
     })
@@ -2987,10 +3040,7 @@ fn bulk_surfaces_pin_daily_sync_request_count_to_a_constant() {
                     let calls = calls.clone();
                     Box::pin(async move {
                         calls.fetch_add(1, Ordering::SeqCst);
-                        Ok(FullSeries {
-                            points: vec![],
-                            money_fund: false,
-                        })
+                        Ok(FullSeries { points: vec![] })
                     })
                 })
             },
@@ -3006,6 +3056,7 @@ fn bulk_surfaces_pin_daily_sync_request_count_to_a_constant() {
                     })
                 })
             },
+            Box::new(no_confirm),
             bulk_surfaces(
                 {
                     let calls = bulk_names_calls.clone();
@@ -3121,13 +3172,9 @@ fn bulk_nav_failure_falls_back_per_instrument_and_trips_the_in_sync_breaker() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         counting_nav(per_fund_nav_calls.clone(), today.clone(), 5.0),
-        Box::new(|_| {
-            super::ready(Ok(FullSeries {
-                points: vec![],
-                money_fund: false,
-            }))
-        }),
+        Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
         counting_name(per_fund_name_calls.clone()),
+        Box::new(no_confirm),
         bulk_surfaces(
             {
                 let calls = bulk_names_calls.clone();
@@ -3237,13 +3284,9 @@ fn bulk_name_dictionary_failure_falls_back_to_per_instrument_names() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| {
-            super::ready(Ok(FullSeries {
-                points: vec![],
-                money_fund: false,
-            }))
-        }),
+        Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
         counting_name(per_fund_name_calls.clone()),
+        Box::new(no_confirm),
         bulk_surfaces(
             {
                 let calls = bulk_names_calls.clone();
@@ -3343,13 +3386,9 @@ fn bulk_coverage_gaps_fall_back_per_item_without_tripping_the_circuit() {
         let mut channels = fund_channels(
             QuoteChannelCalls::default(),
             counting_nav(per_fund_nav_calls.clone(), today.clone(), 3.0),
-            Box::new(|_| {
-                super::ready(Ok(FullSeries {
-                    points: vec![],
-                    money_fund: false,
-                }))
-            }),
+            Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
             counting_name(per_fund_name_calls.clone()),
+            Box::new(no_confirm),
             bulk_surfaces(
                 {
                     let calls = bulk_names_calls.clone();
@@ -3456,13 +3495,9 @@ fn bulk_surfaces_stay_disabled_after_threshold_failures_and_half_open_after_the_
         let mut channels = fund_channels(
             QuoteChannelCalls::default(),
             empty_nav(per_fund_nav_calls.clone()),
-            Box::new(|_| {
-                super::ready(Ok(FullSeries {
-                    points: vec![],
-                    money_fund: false,
-                }))
-            }),
+            Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
             Box::new(|_: &str| super::ready(Ok(String::new()))),
+            Box::new(no_confirm),
             bulk_surfaces(
                 {
                     let calls = bulk_names_calls.clone();
@@ -3594,13 +3629,9 @@ fn bulk_nav_point_of_the_current_week_lands_price_and_weekly_sample_without_per_
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| {
-            super::ready(Ok(FullSeries {
-                points: vec![],
-                money_fund: false,
-            }))
-        }),
+        Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
         counting_name(Arc::new(AtomicUsize::new(0))),
+        Box::new(no_confirm),
         bulk_surfaces(
             Box::new(|| super::ready(Ok(FundNameDictionary::new()))),
             Box::new({
@@ -3679,13 +3710,9 @@ fn bulk_week_gap_beyond_one_week_falls_back_per_instrument_to_fill_missing_weeks
             requested_clone.lock().unwrap().push(query.clone());
             super::ready(Ok(nav_page(1, &[(page_date.as_str(), 3.5)])))
         }),
-        Box::new(|_| {
-            super::ready(Ok(FullSeries {
-                points: vec![],
-                money_fund: false,
-            }))
-        }),
+        Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
         counting_name(Arc::new(AtomicUsize::new(0))),
+        Box::new(no_confirm),
         bulk_surfaces(
             Box::new(|| super::ready(Ok(FundNameDictionary::new()))),
             Box::new({
@@ -3775,13 +3802,9 @@ fn fund_bulk_hit_without_history_writes_price_but_no_weekly_point() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| {
-            super::ready(Ok(FullSeries {
-                points: vec![],
-                money_fund: false,
-            }))
-        }),
+        Box::new(|_| super::ready(Ok(FullSeries { points: vec![] }))),
         counting_name(Arc::new(AtomicUsize::new(0))),
+        Box::new(no_confirm),
         bulk_surfaces(
             Box::new(|| super::ready(Ok(FundNameDictionary::new()))),
             Box::new({
@@ -3893,6 +3916,7 @@ fn constant_price_fund_gets_no_requests_and_is_excluded_from_denominator_and_gap
             })
         }),
         counting_name(per_fund_name_calls.clone()),
+        Box::new(no_confirm),
         counting_bulk_surfaces(
             bulk_names_calls.clone(),
             FundNameDictionary::new(),
@@ -3965,8 +3989,12 @@ fn constant_price_fund_gets_no_requests_and_is_excluded_from_denominator_and_gap
     );
 }
 
-/// 未标记货基的逐只刷新：可信页自报货基口径（收益披露声明 / 类型码）即回填
-/// 恒定标记并兜底建档常量价（1.0000、净值日期空），本轮不落现价与周点。
+/// 未打标货基的逐只刷新：官方披露自报形态（单位净值为空、万份收益与七日年化
+/// 有值）确认即回填恒定标记并兜底建档常量价（1.0000、净值日期空），本轮**零
+/// 逐只净值请求**、不落任何取值——万份收益不得经取数面冒充单位净值（#1342）。
+/// **负向接线证明（ADR-0087）**：删除 `refresh_one_fund_price` 的判定门（确认
+/// 即打标收尾），货基按普通基金落库——现价被写成万份收益 0.2229 → 本用例的
+/// 现价断言变红（市值口径回归 #1342 的错法）。
 #[test]
 fn money_fund_signal_marks_instrument_and_lands_nothing() {
     let today = beijing_today().format("%Y-%m-%d").to_string();
@@ -3974,19 +4002,27 @@ fn money_fund_signal_marks_instrument_and_lands_nothing() {
     seed_fund(&conn, "inst-money", "000198", "余额宝");
 
     let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
+    let calls_outer = per_fund_nav_calls.clone();
     let date = today.clone();
     let nav: FetchNavPage = Box::new(move |_: &NavQuery| {
         let date = date.clone();
-        let calls = per_fund_nav_calls.clone();
+        let calls = calls_outer.clone();
         Box::pin(async move {
             calls.fetch_add(1, Ordering::SeqCst);
+            // 取数面的事实透传形态（判定口径退役后）：货基行的取值位是万份
+            // 收益——判定门必须拦在落库前。
             Ok(NavPage {
-                points: vec![NavPoint { date, nav: 1.0 }],
+                points: vec![NavPoint { date, nav: 0.2229 }],
                 total: 1,
                 blocked: false,
-                money_fund: true,
             })
         })
+    });
+    let confirm_calls = Arc::new(AtomicUsize::new(0));
+    let confirm_calls_clone = confirm_calls.clone();
+    let confirm: FetchMoneyFundForm = Box::new(move |_: &str| {
+        confirm_calls_clone.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(true) })
     });
     let mut witness = WriteWitness::default();
     let mut channels = fund_channels(
@@ -3994,6 +4030,7 @@ fn money_fund_signal_marks_instrument_and_lands_nothing() {
         nav,
         Box::new(|_| Box::pin(async { unreachable!("现价刷新不触达全量通道") })),
         counting_name(Arc::new(AtomicUsize::new(0))),
+        confirm,
         bulk_surfaces(
             Box::new(|| Box::pin(async { Ok(FundNameDictionary::new()) })),
             Box::new(|| Box::pin(async { Err(AppError::Io("批量面未覆盖".into())) })),
@@ -4012,7 +4049,7 @@ fn money_fund_signal_marks_instrument_and_lands_nothing() {
     assert_eq!(
         constant_unit_price_of(&conn, "inst-money"),
         Some(10_000),
-        "数据源自报口径确认即打标（单向）"
+        "官方披露自报形态确认即打标（单向）"
     );
     assert_eq!(
         fund_price_of(&conn, "inst-money"),
@@ -4024,9 +4061,213 @@ fn money_fund_signal_marks_instrument_and_lands_nothing() {
         vec![],
         "确认即收尾：平坦周点不再生长"
     );
+    assert_eq!(
+        per_fund_nav_calls.load(Ordering::SeqCst),
+        0,
+        "确认即收尾：零逐只净值请求（万份收益取值位永不落库）"
+    );
+    assert_eq!(confirm_calls.load(Ordering::SeqCst), 1, "一次确认请求");
     assert_eq!(result.synced, 1);
     assert_eq!(result.written, 1, "建档常量价是实际价格写入");
     assert!(witness.any_written(), "常量价首落按价格写入广播");
+}
+
+/// 缺信号（官方披露记录为普通净值形态或无记录）不打标、不清空、照常取数落库
+/// ——缺信号不是「不是恒定标的」的反证（ADR-0126 决策 3）。
+#[test]
+fn money_fund_absent_signal_lands_nav_without_marking() {
+    let today = beijing_today().format("%Y-%m-%d").to_string();
+    let conn = tauri_app_lib::test_support::open();
+    seed_fund(&conn, "inst-fund", "110022", "消费行业");
+
+    let nav_date = today.clone();
+    let nav: FetchNavPage = Box::new(move |_: &NavQuery| {
+        let date = nav_date.clone();
+        Box::pin(async move {
+            Ok(NavPage {
+                points: vec![NavPoint { date, nav: 2.811 }],
+                total: 1,
+                blocked: false,
+            })
+        })
+    });
+    let confirm_calls = Arc::new(AtomicUsize::new(0));
+    let confirm_calls_clone = confirm_calls.clone();
+    let confirm: FetchMoneyFundForm = Box::new(move |_: &str| {
+        confirm_calls_clone.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(false) })
+    });
+    let mut channels = fund_channels(
+        QuoteChannelCalls::default(),
+        nav,
+        Box::new(|_| Box::pin(async { unreachable!("现价刷新不触达全量通道") })),
+        counting_name(Arc::new(AtomicUsize::new(0))),
+        confirm,
+        bulk_surfaces(
+            Box::new(|| Box::pin(async { Ok(FundNameDictionary::new()) })),
+            Box::new(|| Box::pin(async { Err(AppError::Io("批量面未覆盖".into())) })),
+            Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        ),
+    );
+    let mut witness = WriteWitness::default();
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut witness,
+    ))
+    .unwrap();
+
+    assert_eq!(
+        constant_unit_price_of(&conn, "inst-fund"),
+        None,
+        "缺信号不打标（更不清空既有标记）"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((28_110, Some(today))),
+        "普通净值照常落现价（净值日期兼任水位）"
+    );
+    assert_eq!(result.synced, 1);
+    assert_eq!(result.written, 1);
+}
+
+/// 官方披露源不可信（响应异常）：本轮整只不落——信号缺席时落取数面的取值位，
+/// 万份收益就回冒充单位净值（#1342）；计入跳过、不报错不中断同步。
+#[test]
+fn money_fund_disclosure_unavailable_lands_nothing() {
+    let today = beijing_today().format("%Y-%m-%d").to_string();
+    let conn = tauri_app_lib::test_support::open();
+    seed_fund(&conn, "inst-money", "000198", "余额宝");
+
+    let nav_calls = Arc::new(AtomicUsize::new(0));
+    let nav_calls_clone = nav_calls.clone();
+    let nav: FetchNavPage = Box::new(move |_: &NavQuery| {
+        let calls = nav_calls_clone.clone();
+        let date = today.clone();
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(NavPage {
+                points: vec![NavPoint { date, nav: 0.2229 }],
+                total: 1,
+                blocked: false,
+            })
+        })
+    });
+    // 名称通道返回原名称：本用例隔离判定门行为，名称随行刷新不产生写入。
+    let mut channels = fund_channels(
+        QuoteChannelCalls::default(),
+        nav,
+        Box::new(|_| Box::pin(async { unreachable!("现价刷新不触达全量通道") })),
+        Box::new(|_| Box::pin(async { Ok("余额宝".to_string()) })),
+        Box::new(|_| {
+            Box::pin(async {
+                Err(AppError::coded(
+                    "sync.disclosure-source-malformed",
+                    "基金官方披露数据源返回了无法解析的内容，请稍后重试同步",
+                ))
+            })
+        }),
+        bulk_surfaces(
+            Box::new(|| Box::pin(async { Ok(FundNameDictionary::new()) })),
+            Box::new(|| Box::pin(async { Err(AppError::Io("批量面未覆盖".into())) })),
+            Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        ),
+    );
+    let mut witness = WriteWitness::default();
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut witness,
+    ))
+    .unwrap();
+
+    assert_eq!(
+        constant_unit_price_of(&conn, "inst-money"),
+        None,
+        "披露源不可信不打标"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-money"),
+        None,
+        "本轮整只不落：万份收益不得经取数面冒充单位净值"
+    );
+    assert_eq!(nav_calls.load(Ordering::SeqCst), 0, "判定门在抓取前收尾");
+    assert_eq!(result.synced, 0);
+    assert_eq!(result.skipped, 1, "与被拦截同桶计入跳过");
+    assert_eq!(result.written, 0);
+    assert_eq!(result.renamed, 0);
+    assert!(!witness.any_written(), "零价格零名称写入：见证器不标记");
+}
+
+/// 判定不进日常热路径：确认后标的退出采集链路——下一轮同步零确认请求、零逐只
+/// 净值请求（编排层分区排除；删除排除即红：确认请求与净值请求重新出现）。
+#[test]
+fn confirmed_money_fund_generates_no_per_round_requests() {
+    let conn = tauri_app_lib::test_support::open();
+    seed_fund(&conn, "inst-money", "000198", "余额宝");
+
+    let confirm_calls = Arc::new(AtomicUsize::new(0));
+    let confirm_calls_clone = confirm_calls.clone();
+    let confirm: FetchMoneyFundForm = Box::new(move |_: &str| {
+        confirm_calls_clone.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(true) })
+    });
+    let nav_calls = Arc::new(AtomicUsize::new(0));
+    let nav_calls_clone = nav_calls.clone();
+    let nav: FetchNavPage = Box::new(move |_: &NavQuery| {
+        let calls = nav_calls_clone.clone();
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(NavPage {
+                points: vec![],
+                total: 0,
+                blocked: false,
+            })
+        })
+    });
+    let mut channels = fund_channels(
+        QuoteChannelCalls::default(),
+        nav,
+        Box::new(|_| Box::pin(async { unreachable!("现价刷新不触达全量通道") })),
+        counting_name(Arc::new(AtomicUsize::new(0))),
+        confirm,
+        bulk_surfaces(
+            Box::new(|| Box::pin(async { Ok(FundNameDictionary::new()) })),
+            Box::new(|| Box::pin(async { Err(AppError::Io("批量面未覆盖".into())) })),
+            Arc::new(Mutex::new(BulkFetchCircuit::new())),
+        ),
+    );
+    let mut witness = WriteWitness::default();
+    tauri::async_runtime::block_on(do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut witness,
+    ))
+    .unwrap();
+    assert_eq!(
+        constant_unit_price_of(&conn, "inst-money"),
+        Some(10_000),
+        "首轮确认打标"
+    );
+
+    // 下一轮：标的已退出采集链路（分区排除），零确认请求、零逐只净值请求。
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut witness,
+    ))
+    .unwrap();
+    assert_eq!(
+        confirm_calls.load(Ordering::SeqCst),
+        1,
+        "确认后零逐轮确认请求（判定不进日常热路径）"
+    );
+    assert_eq!(nav_calls.load(Ordering::SeqCst), 0, "确认后零逐只净值请求");
+    assert_eq!(result.synced, 0, "恒定标的计入跳过桶（不为常量发请求）");
 }
 
 /// 混合账本（场内行情 / 普通场外基金 / 恒定标的并存，ADR-0126 决策 4 / issue
@@ -4086,6 +4327,7 @@ fn mixed_ledger_keeps_constant_fund_out_of_requests_denominator_and_gaps() {
             Box::pin(async { unreachable!("现价刷新不触达全量通道") })
         }),
         fetch_fund_name: counting_name(per_fund_name_calls.clone()),
+        confirm_money_fund_form: Box::new(|_| Box::pin(async { Ok(false) })),
         bulk: counting_bulk_surfaces(
             bulk_names_calls.clone(),
             bulletin_names,

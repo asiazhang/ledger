@@ -1,9 +1,10 @@
-//! 同步网络通道束（issue #1276）：六个逐标的抓取通道 + 两个批量取数面
+//! 同步网络通道束（issue #1276）：七个逐标的抓取通道 + 两个批量取数面
 //!（ADR-0121 / issue #1374）的打包形态与生产/测试换装接缝。
 //!
 //! 编排（[`super::incremental`]）消费六个逐标的抓取闭包（批量报价 / 日 K / 汇率 K /
 //! 历史净值页 / 单请求全量净值 / 基金名称）与两个批量取数面（名称全量字典 /
-//! 场外基金净值全市场批量面，见 `do_incremental_sync_with`）。
+//! 场外基金净值全市场批量面，见 `do_incremental_sync_with`）；货基判定确认闭包
+//!（issue #1563 / ADR-0126 决策 3 换源）由现价刷新与历史补全两编排消费。
 //! 本模块把它们打成**一个通道束**：生产经 [`SyncFetchChannels::production`]
 //! 接 HTTP 层（复用主机池 / 重试 / 限流 pacer 与价格换算），测试把桩闭包装进
 //! 同一结构注入命令壳（壳层 `SyncChannelsSlot` 管理态，issue #1276 的「命令壳
@@ -29,6 +30,7 @@ use std::pin::Pin;
 use ledger_infra::error::Result;
 
 use super::bulk::BulkFetchSurfaces;
+use super::csrc::confirm_money_fund_form;
 use super::fund::fetch_fund_quote;
 use super::fund_nav::{FullSeries, NavPage, NavQuery, fetch_nav_full_series, fetch_nav_page};
 use super::http::{
@@ -84,6 +86,10 @@ pub type FetchNavPage = Box<dyn FnMut(&NavQuery) -> FetchFuture<NavPage> + Send>
 pub type FetchNavFull = Box<dyn FnMut(&str) -> FetchFuture<FullSeries> + Send>;
 /// 基金详情名称抓取通道闭包形态（issue #827）。
 pub type FetchFundName = Box<dyn FnMut(&str) -> FetchFuture<String> + Send>;
+/// 货基判定确认通道闭包形态（issue #1563 / ADR-0126 决策 3 换源）：6 位代码 →
+/// 官方披露自报形态确认。三态：`Ok(true)` = 货基形态确认；`Ok(false)` = 缺信号
+///（不是「不是恒定标的」的反证）；`Err` = 披露源不可信（本轮不落任何价格）。
+pub type FetchMoneyFundForm = Box<dyn FnMut(&str) -> FetchFuture<bool> + Send>;
 
 /// 六个逐标的抓取通道 + 两个批量取数面的打包束：闭包签名与编排注入点逐一同形。
 /// 生产实现共享一个异步 HTTP client 与限流 pacer（`Arc<tokio::sync::Mutex<_>>`
@@ -104,6 +110,10 @@ pub struct SyncFetchChannels {
     pub fetch_nav_full: FetchNavFull,
     /// 基金详情名称（issue #827）：代码 → 数据源权威名称。
     pub fetch_fund_name: FetchFundName,
+    /// 货基判定确认（issue #1563 / ADR-0126 决策 3 换源）：代码 → 官方披露
+    /// 自报形态确认。逐只刷新与历史首刷两确认点消费；判定不进日常热路径——
+    /// 确认后标的退出采集链路，不再产生逐轮请求（ADR-0126 决策 3/4）。
+    pub confirm_money_fund_form: FetchMoneyFundForm,
     /// 批量取数面（ADR-0121 / issue #1374）：名称全量字典 + 场外基金净值全市场
     /// 批量面 + 跨同步记忆。
     pub bulk: BulkFetchSurfaces,
@@ -261,6 +271,20 @@ impl SyncFetchChannels {
                         .map(|quote| quote.name)
                 })
             }),
+            confirm_money_fund_form: {
+                let client = client.clone();
+                let pacer = pacer.clone();
+                Box::new(move |code: &str| {
+                    let code = code.to_string();
+                    let client = client.clone();
+                    let pacer = pacer.clone();
+                    Box::pin(async move {
+                        let _foreground = lane.before_request().await;
+                        let mut pacer = lock_pacer(&pacer).await;
+                        confirm_money_fund_form(&client, &mut pacer, &code).await
+                    })
+                })
+            },
             bulk: BulkFetchSurfaces::production(&client, pacer),
         })
     }
@@ -328,6 +352,7 @@ where
         &mut channels.fetch_fx,
         &mut channels.fetch_nav,
         &mut channels.fetch_fund_name,
+        &mut channels.confirm_money_fund_form,
         &mut channels.bulk,
         progress,
         witness,
@@ -353,19 +378,12 @@ mod tests {
                         points: vec![],
                         total: 0,
                         blocked: false,
-                        money_fund: false,
                     })
                 })
             }),
-            fetch_nav_full: Box::new(|_| {
-                Box::pin(async {
-                    Ok(FullSeries {
-                        points: vec![],
-                        money_fund: false,
-                    })
-                })
-            }),
+            fetch_nav_full: Box::new(|_| Box::pin(async { Ok(FullSeries { points: vec![] }) })),
             fetch_fund_name: Box::new(|_| Box::pin(async { Ok(String::new()) })),
+            confirm_money_fund_form: Box::new(|_| Box::pin(async { Ok(false) })),
             bulk: BulkFetchSurfaces::absent(),
         }
     }

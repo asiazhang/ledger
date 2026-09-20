@@ -2,6 +2,8 @@
 //! ADR-0122 决策 2；issue #1377 起归价格历史后台补全专用）：首刷判据 = 磁盘上
 //! 没有任何历史序列，首刷回填近两年——优先单请求全量通道（详情页数据文件，
 //! issue #1062），失败 fail-closed 回退 lsjz 分页；增量以现价缓存净值日期为水位。
+//! 未打标标的回填前先经官方披露判定门（issue #1563 / ADR-0126 决策 3 换源）：
+//! 确认即打标收尾、零抓取，万份收益不得经取数面冒充单位净值落库（#1342）。
 //!
 //! 共享件（lsjz 报文解析、水位窗口、分页器、水位读）留守 `fund_nav`，本模块
 //! 只收历史回填的编排。
@@ -9,15 +11,14 @@
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_investment::PriceChannel;
-use ledger_investment::constant_price::{ensure_constant_base_price, mark_constant_unit_price};
 use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
 };
 
 use super::channels::FetchFuture;
 use super::fund_nav::{
-    FullSeries, MONEY_FUND_UNIT_NAV, NavPage, NavPages, NavQuery, fetch_nav_pages, nav_window,
-    read_fund_watermark,
+    FullSeries, NavPage, NavPages, NavQuery, fetch_nav_pages, mark_constant_price_on_confirm,
+    nav_window, read_fund_watermark,
 };
 use super::http::KlineBar;
 use super::session::ScopedSession;
@@ -53,16 +54,23 @@ pub(super) struct BackfillOutcome {
 /// #1061——每页抓取返回后报告「已完成页/总页数」，抓取内部的退避/重试等待不
 /// 产生推进）。
 ///
+/// **判定门前置（issue #1563 / ADR-0126 决策 3 换源）**：未打标标的抓取前先查
+/// 官方披露自报形态——确认即打标收尾（单向，幂等；现价缓存保留建档一条、不落
+/// 历史周点），**零净值抓取请求**；缺信号照常回填（不清空既有标记）；披露源
+/// 不可信则本轮整只不落，按 `inconclusive` 待重试。已标记行的竞态窗（排队后才
+/// 被并行刷新打标）沿用既有短路，不再触碰网络。
+///
 /// **前置条件**：`fund` 为 6 位真实代码的有通道基金行。跳过语义：首刷查无净值
 /// 与**空响应/被拦截**（issue #1059）不报错不中断，以 [`BackfillOutcome`] 表达
 /// 结局；其中**本轮窗口不完整**（部分页空响应或页数触顶，ADR-0122 决策 8 /
 /// issue #1373）整只不落库并记 `inconclusive`，不留半根历史；单只网络失败上抛
 ///（后台补全编排单只失败不中断本轮）。
-pub(super) async fn backfill_one_fund_history<Q, N, S, P>(
+pub(super) async fn backfill_one_fund_history<Q, N, S, C, P>(
     session: &Q,
     fund: &super::incremental::SyncInstrument,
     fetch_nav: &mut N,
     fetch_nav_full_series: &mut S,
+    confirm_money_fund: &mut C,
     on_page: &mut P,
 ) -> Result<BackfillOutcome>
 where
@@ -70,6 +78,8 @@ where
     Q: ScopedSession,
     N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
     S: FnMut(&str) -> FetchFuture<FullSeries> + Send,
+    // 货基判定确认通道（issue #1563）：6 位代码 → 官方披露自报形态三态。
+    C: FnMut(&str) -> FetchFuture<bool> + Send,
     P: FnMut(u64, u64) + Send,
 {
     let today = super::incremental::beijing_today();
@@ -87,6 +97,56 @@ where
         watermark.as_deref()
     };
     let (start, end) = nav_window(window_watermark, today);
+
+    // 判定门前置（issue #1563 / ADR-0126 决策 3 换源）：官方披露自报形态确认即
+    // 打标收尾——不发起净值抓取，万份收益不得经取数面冒充单位净值落库（#1342）。
+    // 确认单向幂等：已标记行零触碰、缺信号（Ok(false)）不清空、照常回填；披露
+    // 源不可信（Err）则本轮整只不落，按不可信结局待重试。已标记行（竞态窗：
+    // 排队后才被并行刷新打标）在下方短路，不重复确认。
+    if fund.channel != PriceChannel::Constant {
+        match confirm_money_fund(&fund.symbol).await {
+            Ok(true) => {
+                let written = mark_constant_price_on_confirm(
+                    session,
+                    &fund.instrument_id,
+                    &fund.currency,
+                    today.format("%Y-%m-%d").to_string(),
+                )
+                .await?;
+                return Ok(BackfillOutcome {
+                    written,
+                    inconclusive: false,
+                });
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(
+                    code = %fund.symbol, %error,
+                    "官方披露判定源不可信，本轮整只不落（信号缺席时落取值位即万份收益冒充净值）"
+                );
+                return Ok(BackfillOutcome {
+                    written: false,
+                    inconclusive: true,
+                });
+            }
+        }
+    }
+
+    // 恒定价格标的（ADR-0126 决策 3/5/6）：队列判据已在收集侧排除恒定标的，能到
+    // 这里的恒定通道行只剩「排队后才被并行刷新打标」的竞态窗——打标收尾，零网络。
+    if fund.channel == PriceChannel::Constant {
+        let written = mark_constant_price_on_confirm(
+            session,
+            &fund.instrument_id,
+            &fund.currency,
+            today.format("%Y-%m-%d").to_string(),
+        )
+        .await?;
+        return Ok(BackfillOutcome {
+            written,
+            inconclusive: false,
+        });
+    }
 
     // 首刷优先走单请求全量通道（ADR-0038 决策 6 修订，issue #1062）：一次请求拿
     // 整只基金的历史单位净值，本地裁剪到与分页通道相同的近两年窗口后再用。抓取
@@ -109,10 +169,7 @@ where
                     );
                     None
                 } else {
-                    Some(FullSeries {
-                        points: clipped,
-                        money_fund: series.money_fund,
-                    })
+                    Some(FullSeries { points: clipped })
                 }
             }
             Err(error) => {
@@ -133,7 +190,6 @@ where
             points: series.points,
             blocked: false,
             truncated: false,
-            money_fund: series.money_fund,
         },
         None => {
             fetch_nav_pages(
@@ -147,41 +203,6 @@ where
             .await?
         }
     };
-
-    // 恒定价格标的（ADR-0126 决策 3/5/6）：数据源自报货基口径（可信页自报或
-    // 数据文件形态）即回填恒定单位价格标记（单向，幂等；响应缺信号不走此路、
-    // 不清空既有标记）。确认即收尾——现价缓存保留建档一条（行缺失时落一条
-    // 1.0000、净值日期空），不落历史周点、不更新现价：读侧自此按常量取值，
-    // 平坦序列不再生长。队列判据已在收集侧排除恒定标的，能到这里的恒定通道
-    // 行只剩「排队后才被并行刷新打标」的竞态窗，同一处置。
-    if collected.money_fund || fund.channel == PriceChannel::Constant {
-        let instrument_id = fund.instrument_id.clone();
-        let currency = fund.currency.clone();
-        let cents = price_value_to_cents(MONEY_FUND_UNIT_NAV);
-        let priced_at = collected
-            .points
-            .iter()
-            .map(|p| p.date.clone())
-            .max()
-            .unwrap_or_else(|| today.format("%Y-%m-%d").to_string());
-        let written = session
-            .with_connection(move |conn| {
-                mark_constant_unit_price(conn, &instrument_id, cents)?;
-                ensure_constant_base_price(
-                    conn,
-                    &instrument_id,
-                    cents,
-                    &currency,
-                    &priced_at,
-                    EASTMONEY_PRICE_SOURCE,
-                )
-            })
-            .await?;
-        return Ok(BackfillOutcome {
-            written,
-            inconclusive: false,
-        });
-    }
 
     if collected.points.is_empty() {
         if collected.blocked {

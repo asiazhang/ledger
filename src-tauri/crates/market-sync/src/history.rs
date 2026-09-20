@@ -353,12 +353,13 @@ pub(super) struct HistoryBackfillStats {
 /// 在下一窗口自然重进队列；单只原子（issue #1373）保证失败不留半根历史。
 /// 汇率失败同样不中断（辅助性折算序列，缺失段由后续窗口的后台补全补齐）。
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn run_history_backfill_round<Q, K, X, N, S, P>(
+pub(super) async fn run_history_backfill_round<Q, K, X, N, S, C, P>(
     session: &Q,
     fetch_kline: &mut K,
     fetch_fx: &mut X,
     fetch_nav: &mut N,
     fetch_nav_full: &mut S,
+    confirm_money_fund: &mut C,
     progress: &mut P,
     witness: &mut WriteWitness,
 ) -> Result<HistoryBackfillStats>
@@ -368,6 +369,8 @@ where
     X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
     N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
     S: FnMut(&str) -> FetchFuture<FullSeries> + Send,
+    // 货基判定确认通道（issue #1563）：6 位代码 → 官方披露自报形态三态。
+    C: FnMut(&str) -> FetchFuture<bool> + Send,
     P: FnMut(SyncProgress) + Send,
 {
     let queue = session.with_connection(collect_backfill_queue).await?;
@@ -413,6 +416,7 @@ where
                     &item.instrument,
                     fetch_nav,
                     fetch_nav_full,
+                    confirm_money_fund,
                     &mut on_page,
                 )
                 .await
@@ -569,12 +573,13 @@ impl LaneRound for HistoryBackfillRound {
     ) -> LaneRoundFuture<'a, Self::Stats> {
         Box::pin(async move {
             // 借用拆字段：编排各通道由独立参数消费（历史补全不消费批量取数面），
-            // 四条通道互不重叠地交给编排。
+            // 五条通道互不重叠地交给编排。
             let SyncFetchChannels {
                 fetch_kline,
                 fetch_fx,
                 fetch_nav,
                 fetch_nav_full,
+                confirm_money_fund_form,
                 ..
             } = channels;
             // 骨架交来进度接缝的 trait 对象，编排接缝要泛型 `FnMut`：经骨架的
@@ -586,6 +591,7 @@ impl LaneRound for HistoryBackfillRound {
                 fetch_fx,
                 fetch_nav,
                 fetch_nav_full,
+                confirm_money_fund_form,
                 &mut forward,
                 witness,
             )

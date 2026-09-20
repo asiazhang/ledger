@@ -10,7 +10,6 @@ use chrono::NaiveDate;
 
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
-use ledger_investment::constant_price::{ensure_constant_base_price, mark_constant_unit_price};
 use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, price_value_to_cents, upsert_market_price,
     upsert_price_history,
@@ -19,7 +18,8 @@ use ledger_investment::prices::{
 use super::bulk::BulkNavPoint;
 use super::channels::FetchFuture;
 use super::fund_nav::{
-    MONEY_FUND_UNIT_NAV, NavPage, NavQuery, fetch_nav_pages, nav_window, read_fund_watermark,
+    NavPage, NavQuery, fetch_nav_pages, mark_constant_price_on_confirm, nav_window,
+    read_fund_watermark,
 };
 use super::http::KlineBar;
 use super::session::ScopedSession;
@@ -56,20 +56,30 @@ pub(super) struct FundSyncStats {
 /// 之前**，否则缺周点在队列判定（水位判缺）里永久消失。无历史序列者取近一个月
 /// 短窗（[`REFRESH_RECENT_WINDOW_MONTHS`]）的最新净值落现价，历史一行为零、
 /// 不落采样点（历史归后台补全首刷）。
+///
+/// **判定门前置（issue #1563 / ADR-0126 决策 3 换源）**：未打标标的进入逐只通道
+/// 即先查官方披露自报形态——确认即打标收尾（单向，幂等；建档常量价行缺失时兑底
+/// 一行），**零逐只净值请求**；自下一轮同步起标的退出采集链路（编排层分区排除），
+/// 判定不进日常热路径（确认后不产生逐轮请求）。缺信号（披露记录为普通净值形态
+/// 或无记录）照常取数落库——缺信号不是「不是恒定标的」的反证，更不清空既有
+/// 标记；披露源不可信（Err）则本轮整只不落——信号缺席时落取数面的取值位，
+/// 万份收益就回冒充单位净值（#1342 错法）。
 /// 单只结果累加进调用方的 `stats`；页级推进经注入的 `on_page` 回调透传
 ///（issue #1061）。基金间的遍历、名称随行刷新与标的级进度推进归编排层
-///（issue #897）。跳过语义与 [`super::fund_backfill::backfill_one_fund_history`] 一致：查无净值与
-/// 空响应/被拦截计入 `skipped`，不报错不中断；单只网络失败上抛中断同步。
+///（issue #897）。跳过语义与 [`super::fund_backfill::backfill_one_fund_history`] 一致：查无净值、
+/// 空响应/被拦截与披露源不可信计入 `skipped`，不报错不中断；单只网络失败上抛
+/// 中断同步。
 ///
 /// **前置条件**：`fund` 为净值通道（FundNav）的 6 位真实代码基金行——名称充
 /// 代码行（查不到净值）由调用方计入跳过、零请求（issue #897 起跳过判定与分母
 /// 口径同收编排层）；恒定价格标的由编排层分区排除、不经本函数（ADR-0126
-/// 决策 4 / #1451），货基的打标确认由下方数据源自报口径分支承担。
-pub(super) async fn refresh_one_fund_price<Q, N, P>(
+/// 决策 4 / #1451），未打标货基的打标确认由上方官方披露判定门承担。
+pub(super) async fn refresh_one_fund_price<Q, N, C, P>(
     session: &Q,
     fund: &super::incremental::SyncInstrument,
     latest_hint: Option<&BulkNavPoint>,
     fetch_nav: &mut N,
+    confirm_money_fund: &mut C,
     stats: &mut FundSyncStats,
     on_page: &mut P,
 ) -> Result<()>
@@ -77,6 +87,8 @@ where
     // 作用域会话接缝（issue #1275）：本函数读写库的唯一通道，签名层面取不到连接。
     Q: ScopedSession,
     N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
+    // 货基判定确认通道（issue #1563）：6 位代码 → 官方披露自报形态三态。
+    C: FnMut(&str) -> FetchFuture<bool> + Send,
     // 页级推进回调（issue #1061）：(已完成页, 总页数)。只在本页抓取返回之后发出
     //（抓取内部的退避/重试等待不产生推进）；单页（pages ≤ 1）不发——增量常态
     // 的事件形状与频率不变。
@@ -107,6 +119,35 @@ where
             }
         }
     }
+    // 判定门前置（issue #1563 / ADR-0126 决策 3 换源）：官方披露自报形态确认即
+    // 打标收尾——不发起逐只净值请求，万份收益不得经取数面冒充单位净值落库
+    //（#1342）。确认单向幂等：已标记行零触碰、缺信号不清空；披露源不可信则
+    // 本轮整只不落（跳过，与被拦截同桶），下一窗口重试。
+    match confirm_money_fund(&fund.symbol).await {
+        Ok(true) => {
+            let written = mark_constant_price_on_confirm(
+                session,
+                &fund.instrument_id,
+                &fund.currency,
+                today.format("%Y-%m-%d").to_string(),
+            )
+            .await?;
+            if written {
+                stats.written += 1;
+            }
+            stats.synced += 1;
+            return Ok(());
+        }
+        Ok(false) => {}
+        Err(error) => {
+            tracing::warn!(
+                code = %fund.symbol, %error,
+                "官方披露判定源不可信，本轮整只不落（信号缺席时落取值位即万份收益冒充净值）"
+            );
+            stats.skipped += 1;
+            return Ok(());
+        }
+    }
     // 逐只回退的窗口按「现价刷新」收窄（issue #1377）：有历史序列者从水位次日
     // 增量（封顶页数内窗口完整才落库）；无历史序列者取近一个月短窗拿最新净值。
     let (start, end) = if has_history {
@@ -129,40 +170,6 @@ where
         on_page,
     )
     .await?;
-
-    // 打标确认（ADR-0126 决策 3；建档/日常刷新任一次确认即回填）：可信页自报
-    // 货基口径即回填恒定单位价格标记（单向，幂等）。确认即收尾——不再落采集
-    // 价格（现价覆盖与周点停落，读侧自此按常量取值，平坦序列不再生长；建档
-    // 常量价行缺失时由兜底补一行）；响应缺信号不走此路，不清空既有标记。
-    if collected.money_fund {
-        let instrument_id = fund.instrument_id.clone();
-        let currency = fund.currency.clone();
-        let cents = price_value_to_cents(MONEY_FUND_UNIT_NAV);
-        let priced_at = collected
-            .points
-            .iter()
-            .map(|p| p.date.clone())
-            .max()
-            .unwrap_or_else(|| today.format("%Y-%m-%d").to_string());
-        let written = session
-            .with_connection(move |conn| {
-                mark_constant_unit_price(conn, &instrument_id, cents)?;
-                ensure_constant_base_price(
-                    conn,
-                    &instrument_id,
-                    cents,
-                    &currency,
-                    &priced_at,
-                    EASTMONEY_PRICE_SOURCE,
-                )
-            })
-            .await?;
-        if written {
-            stats.written += 1;
-        }
-        stats.synced += 1;
-        return Ok(());
-    }
 
     if collected.points.is_empty() {
         if collected.blocked {
@@ -315,6 +322,12 @@ fn week_gap_needs_per_instrument(watermark: Option<&str>, bulk_date: &str) -> bo
 /// 外加当周采样点（每周至多一条、整周覆盖幂等——落库单点与逐只通道共用
 /// `upsert_price_history`）。只在批量面报出比水位更新的净值时调用（见
 /// [`bulk_decision`]）。
+///
+/// **本臂不经货基判定门的前提是批量面结构上不含货基**（东财排行面无货币桶，
+/// ADR-0126 背景）：未打标货基恒落逐只臂、由判定门确认后收尾，万份收益永不
+/// 落库。#1565 把批量面换成新浪后该前提消失（新浪 `f_` 面含货基，且把万份
+/// 收益放在单位净值位，ADR-0130 决策 6）——换源时未打标标的的批量直落必须
+/// 先经官方披露判定，否则在批量命中臂复现 #1342 的市值错法。
 ///
 /// 当周采样点只落**已有历史序列**的标的：无历史序列者落单点会让「有历史序列」
 /// 冒充「历史完整」，永久破坏首刷判据（ADR-0038 决策 6）——首刷的历史由后台
