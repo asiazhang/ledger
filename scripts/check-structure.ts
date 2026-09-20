@@ -881,14 +881,15 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
     path: "bulk.rs",
     layer: "域目录",
     note:
-      "行情批量取数面（ADR-0121 / issue #1374）：名称全量字典 + 场外基金净值全市场批量面（各整次同步一次请求）、fail-closed 降级、同步内熔断、跨同步记忆（BulkFetchCircuit）与覆盖缺口容忍；" +
-      "取数方式与价格来源正交",
+      "行情批量取数面（ADR-0121 / issue #1374 / ADR-0130 决策 2）：新浪 f_ 场外基金批量面（按本次同步现场的基金代码一次请求取回名称与最新净值）、fail-closed 降级、跨同步记忆（BulkFetchCircuit）与覆盖缺口容忍；" +
+      "取数方式与价格来源正交；" +
+      "货基错位行只进名称字典不进净值表（issue #1565 / ADR-0130 决策 6）",
   },
   {
     path: "channels.rs",
     layer: "域目录",
     note:
-      "同步网络通道束（issue #1276）：六个抓取闭包的打包形态与生产/测试换装接缝——生产接 HTTP 层（主机池/限流 pacer 单点，报价闭包经腾讯批量报价 issue #1560、日 K 闭包经腾讯 K 线 issue #1561），测试注入桩经命令壳 SyncChannelsSlot 换装使「同步真实在途」可确定复现；" +
+      "同步网络通道束（issue #1276）：六个抓取闭包的打包形态与生产/测试换装接缝——生产接 HTTP 层（主机池/限流 pacer 单点，报价闭包经腾讯批量报价 issue #1560、日 K 闭包经腾讯 K 线 issue #1561、场外基金批量面闭包经新浪 f_ 面 issue #1565），测试注入桩经命令壳 SyncChannelsSlot 换装使「同步真实在途」可确定复现；" +
       "编排本体经 do_incremental_sync_channels 单点拆交",
   },
   {
@@ -966,7 +967,7 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   {
     path: "js.rs",
     layer: "域目录",
-    note: "JS 文本字面量提取原语（fund_nav / bulk）：从 `.js` 数据文件的 `var x = […]` 与对象字段 `datas:[…]` 两种赋值形态取出数组 / 字符串字面量，被拦截形态天然缺声明即返回 None",
+    note: "JS 文本字面量提取原语（fund_nav）：从 `.js` 数据文件的 `var x = […]` 与对象字段 `datas:[…]` 两种赋值形态取出数组 / 字符串字面量，被拦截形态天然缺声明即返回 None",
   },
   {
     path: "lane.rs",
@@ -1007,7 +1008,7 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
       "新浪场外基金取数单元（ADR-0130 决策 2 / issue #1564）：批量最新净值面（f_ 前缀一次请求多只，GBK、必须带 Referer）与单只全历史面（一次请求取整只历史，含已终止基金末点）；" +
       "货基行的字段错位（万份收益放在单位净值位）按「前一日单位净值位为空」单点判别并显式分类，错位行不产出价格点（ADR-0130 决策 6，判定打标信号归官方披露面 #1563）；" +
       "全历史空序列不等于查无此码，非预期形状 fail-closed；" +
-      "本票只取数与解析，接线随 #1565 / #1566",
+      "批量面已随现价刷新接线（issue #1565），单只全历史面接线随 #1566",
   },
   {
     path: "stock.rs",

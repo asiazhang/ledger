@@ -1,11 +1,18 @@
-//! 行情批量取数面（ADR-0121 / issue #1374）：名称全量字典 + 场外基金净值全市场
-//! 批量面——回答「这次刷新用几次请求」，不回答价格从哪条通道写入（价格来源与
-//! 来源标记不动，决策 2）。
+//! 行情批量取数面（ADR-0121 / issue #1374）：场外基金批量面——一次请求携带本次
+//! 同步现场的全部基金代码，报出数据源权威名称与最新单位净值（ADR-0130 决策 2
+//! 换源为新浪 `f_` 面，issue #1565）；回答「这次刷新用几次请求」，不决定价格从哪
+//! 条通道写入（来源标记按实际取数源取值的口径见 ADR-0130 决策 7）。
 //!
-//! 不变量：两个面各整次同步最多一次请求；取数失败一律 fail-closed 回退逐标的
-//! 通道并熔断本次同步，连续失败由跨同步记忆（[`BulkFetchCircuit`]）停用后半开；
-//! 批量面未覆盖的标的按缺口逐条回退——缺口不是失败。陷阱：面报文是 `var x = …`
-//! 形态的非 JSON 文本，被拦截形态必须报错、不得伪装成「零覆盖」（决策 3）。
+//! 不变量：本面每次同步最多一次逻辑请求（批量承载量由取数层按实测请求行上限
+//! 自行分批）；取数失败一律 fail-closed 回退逐标的通道并记入跨同步记忆，连续
+//! 失败由 [`BulkFetchCircuit`] 停用后半开；面未返回的标的按缺口逐条回退——缺口
+//! 不是失败。陷阱：面报文是 `var x = …` 形态的非 JSON 文本，被拦截形态必须报错、
+//! 不得伪装成「零覆盖」（决策 3）。
+//!
+//! 名称与净值同面返回：`f_` 面按代码查询、逐行携带名称与净值位，因此名称字典
+//! 与净值表来自同一次响应。**货基错位行只在名称字典、不在净值表**——万份收益
+//! 在单位净值位（ADR-0130 决策 6），取数层判形为 `MoneyYield` 不产出价格点；
+//! 消费方按「在名称字典、不在净值表」识别它，落逐只臂经官方披露判定门收尾。
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -13,12 +20,11 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex as AsyncMutex;
 
-use ledger_infra::error::{AppError, Result};
-
 use super::channels::FetchFuture;
-use super::http::{Pacer, RetryConfig, lock_pacer, request_text_from_hosts};
+use super::http::{Pacer, lock_pacer};
+use super::sina_fund::{fetch_sina_fund_nav_rows, fund_batch_from_rows};
 
-/// 全量名称字典：基金代码 → 数据源权威名称。
+/// 名称字典：基金代码 → 数据源权威名称（本次批量面覆盖的行，含货基）。
 pub type FundNameDictionary = HashMap<String, String>;
 
 /// 批量面的最新净值条目：净值日期 + 单位净值（真实价格值，元，口径同 lsjz 的 `DWJZ`）。
@@ -37,25 +43,41 @@ impl BulkNavPoint {
     }
 }
 
-/// 全市场最新净值表：基金代码 → 最新单位净值与净值日期。
+/// 最新净值表：基金代码 → 最新单位净值与净值日期（只收录产出价格点的行）。
 pub type FundNavTable = HashMap<String, BulkNavPoint>;
 
-/// 批量面取回的数据都是「代码 → 值」的映射：命中日志据此统一记录覆盖规模。
-pub(super) trait BulkCoverage {
-    fn covered(&self) -> usize;
+/// 场外基金批量面载荷（名称 + 最新净值同面返回，issue #1565）：名称字典覆盖面内
+/// 全部行（含货基），净值表只收录产出价格点的普通行。**`names` 是覆盖面的判据**
+///（有名称即有该码），`nav` 是「面是否给出可采信的价格点」的判据——某码在
+/// `names` 而不在 `nav` 即货基错位行（万份收益在单位净值位，ADR-0130 决策 6），
+/// 消费方按缺口之外的「已收录、无价格点」语义落逐只臂。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FundBatch {
+    pub names: FundNameDictionary,
+    pub nav: FundNavTable,
 }
 
-impl<K, V> BulkCoverage for HashMap<K, V> {
-    fn covered(&self) -> usize {
-        self.len()
+impl FundBatch {
+    /// 该码是否被本面收录（有名称即收录，与净值点无关）。
+    pub fn covers(&self, code: &str) -> bool {
+        self.names.contains_key(code)
+    }
+
+    /// 面给出的数据源权威名称（未收录为 None）。
+    pub fn name_of(&self, code: &str) -> Option<&str> {
+        self.names.get(code).map(String::as_str)
+    }
+
+    /// 面给出的最新单位净值点（未收录或货基错位行为 None）。
+    pub fn nav_of(&self, code: &str) -> Option<&BulkNavPoint> {
+        self.nav.get(code)
     }
 }
 
-/// 名称全量字典抓取通道闭包形态（整次同步一次请求）：网络等待以 `await`
+/// 场外基金批量面抓取通道闭包形态（整次同步一次逻辑请求）：入参是本次同步现场
+/// 的基金代码（新浪 `f_` 面按代码查询，名称与净值随行返回），网络等待以 `await`
 /// 表达（ADR-0125 决策 5 / issue #1412），闭包返回装箱 future。
-pub type FetchFundNameDictionary = Box<dyn FnMut() -> FetchFuture<FundNameDictionary> + Send>;
-/// 场外基金净值批量面抓取通道闭包形态（整次同步一次请求）。
-pub type FetchFundNavTable = Box<dyn FnMut() -> FetchFuture<FundNavTable> + Send>;
+pub type FetchFundBatch = Box<dyn FnMut(&[String]) -> FetchFuture<FundBatch> + Send>;
 
 /// 跨同步记忆阈值：连续这么多次同步的批量取数失败后停用批量面（ADR-0121 决策 3）。
 pub const BULK_FAILURE_THRESHOLD: u32 = 3;
@@ -140,42 +162,45 @@ pub fn shared_circuit() -> Arc<Mutex<BulkFetchCircuit>> {
         .clone()
 }
 
-/// 两个批量取数面 + 跨同步记忆的打包束（与 [`super::channels::SyncFetchChannels`]
+/// 场外基金批量面 + 跨同步记忆的打包束（与 [`super::channels::SyncFetchChannels`]
 /// 同款换装形态：生产接 HTTP 层，测试注入桩）。
+///
+/// 取数面成员随源替换（ADR-0121 修订）：新浪 `f_` 面把名称与最新净值放在同一
+/// 次响应里（按代码查询），因此原来的「名称全量字典 + 排行批量面」两个成员合并
+/// 为一个面，`degraded`/缺口/跨同步记忆语义不变（单面下「一面失败不再试其余面」
+/// 自然消解）。
 pub struct BulkFetchSurfaces {
-    /// 名称全量字典（一次请求覆盖全市场基金代码与权威名称）。
-    pub names: FetchFundNameDictionary,
-    /// 场外基金净值批量面（一次请求覆盖全市场基金的最新单位净值与净值日期）。
-    pub nav: FetchFundNavTable,
+    /// 场外基金批量面（名称 + 最新单位净值同面返回，issue #1565）。
+    pub funds: FetchFundBatch,
     /// 跨同步记忆（ADR-0121 决策 3）。
     pub circuit: Arc<Mutex<BulkFetchCircuit>>,
 }
 
 impl BulkFetchSurfaces {
-    /// 生产构造：两面接 HTTP 层（复用主机池 / 重试 / 自适应限速 pacer），跨同步
-    /// 记忆取进程级单例（每次同步新建通道束不保留状态）。
-    pub(super) fn production(client: &reqwest::Client, pacer: Arc<AsyncMutex<Pacer>>) -> Self {
+    /// 生产构造：本面接 HTTP 层（复用主机池 / 重试 / 自适应限速 pacer），跨同步
+    /// 记忆取进程级单例（每次同步新建通道束不保留状态）。`hosts` 是新浪 `f_`
+    /// 批量面主机（等价位置参数可互换编译，故由调用方具名传入）。
+    pub(super) fn production(
+        client: &reqwest::Client,
+        pacer: Arc<AsyncMutex<Pacer>>,
+        hosts: Vec<String>,
+    ) -> Self {
         Self {
-            names: {
+            funds: {
                 let client = client.clone();
                 let pacer = pacer.clone();
-                Box::new(move || {
+                Box::new(move |codes: &[String]| {
+                    let codes = codes.to_vec();
                     let client = client.clone();
                     let pacer = pacer.clone();
+                    let hosts = hosts.clone();
                     Box::pin(async move {
                         let mut pacer = lock_pacer(&pacer).await;
-                        fetch_fund_name_dictionary(&client, &mut pacer).await
-                    })
-                })
-            },
-            nav: {
-                let client = client.clone();
-                Box::new(move || {
-                    let client = client.clone();
-                    let pacer = pacer.clone();
-                    Box::pin(async move {
-                        let mut pacer = lock_pacer(&pacer).await;
-                        fetch_fund_nav_table(&client, &mut pacer).await
+                        let hosts: Vec<&str> = hosts.iter().map(String::as_str).collect();
+                        // 批量承载量由取数层按实测请求行上限自行分批（issue #1564）。
+                        let rows =
+                            fetch_sina_fund_nav_rows(&client, &mut pacer, &hosts, &codes).await?;
+                        Ok(fund_batch_from_rows(rows))
                     })
                 })
             },
@@ -183,174 +208,14 @@ impl BulkFetchSurfaces {
         }
     }
 
-    /// 无批量取数面（逐标的通道直通）的**最小形状**：两面恒定报「零覆盖」，
+    /// 无批量取数面（逐标的通道直通）的**最小形状**：本面恒定报「零覆盖」，
     /// 所有标的按缺口走逐标的通道——与批量面被数据源整市场漏掉等价。测试注入用，
     /// 也是「取数面整体不可用」这一降级形态的对照物（缺口 ≠ 失败：不触发熔断）。
     /// 记忆句柄随构造独立发放，不共享生产单例（测试之间零串扰）。
     pub fn absent() -> Self {
         Self {
-            names: Box::new(|| Box::pin(async { Ok(FundNameDictionary::new()) })),
-            nav: Box::new(|| Box::pin(async { Ok(FundNavTable::new()) })),
+            funds: Box::new(|_: &[String]| Box::pin(async { Ok(FundBatch::default()) })),
             circuit: Arc::new(Mutex::new(BulkFetchCircuit::new())),
         }
     }
-}
-
-// 名称全量字典：东财静态数据文件（`var r = [["000001","HXCZHH","华夏成长混合",…], …]`），
-// 单主机（无公开镜像池），复用行情层的重试与限流泛型层。
-const FUND_NAME_DICTIONARY_HOSTS: &[&str] = &["https://fund.eastmoney.com"];
-const FUND_NAME_DICTIONARY_PATH: &str = "/js/fundcode_search.js";
-
-// 场外基金净值排行批量面：单主机（无公开镜像池）。`pn` 拉满即一次请求覆盖全市场
-// （实测 pn=30000 → 20,360 只）；缺 Referer 会被接口以「无访问权限」拦截。
-const FUND_NAV_RANKING_HOSTS: &[&str] = &["https://fund.eastmoney.com"];
-const FUND_NAV_RANKING_PATH: &str = "/data/rankhandler.aspx";
-const FUND_NAV_RANKING_REFERER: &str = "https://fund.eastmoney.com/data/fundranking.html";
-/// 单页条数：实测服务端一次可给全市场（`pn=30000` → 20,360 只），日常路径不依赖分页。
-const FUND_NAV_RANKING_PAGE_SIZE: &str = "30000";
-
-/// 拉取名称全量字典（一次请求覆盖全市场基金代码与权威名称）。报文被拦截（风控
-/// HTML 页）或数据数组不可信时返回 `Err`——调用方 fail-closed 回退逐只名称通道，
-/// 不把不可信结果当「查无此码」。
-pub(super) async fn fetch_fund_name_dictionary(
-    client: &reqwest::Client,
-    pacer: &mut Pacer,
-) -> Result<FundNameDictionary> {
-    fetch_fund_name_dictionary_from(client, pacer, FUND_NAME_DICTIONARY_HOSTS).await
-}
-
-/// 同 [`fetch_fund_name_dictionary`]，主机池可注入（本地 HTTP 服务测试请求形态与
-/// 被拦截响应处置，先例：`fund_nav::fetch_nav_full_series_from`）。
-pub(super) async fn fetch_fund_name_dictionary_from(
-    client: &reqwest::Client,
-    pacer: &mut Pacer,
-    hosts: &[&str],
-) -> Result<FundNameDictionary> {
-    tracing::debug!("基金名称全量字典查询");
-    let body = request_text_from_hosts(
-        client,
-        &[],
-        FUND_NAME_DICTIONARY_PATH,
-        hosts,
-        RetryConfig::production(),
-        pacer,
-        "fetch_fund_name_dictionary",
-        None,
-    )
-    .await?;
-    parse_fund_name_dictionary(&body).ok_or_else(|| {
-        // 文本通道的解析恒成功，疑似风控页在 HTTP 层看不见——降速信号由做可信度
-        // 判定的这一层补上（ADR-0121 决策 5）。
-        pacer.record_throttled();
-        AppError::Parse("基金名称全量字典缺少可信的数据数组（疑似被风控拦截）".into())
-    })
-}
-
-/// 拉取场外基金净值批量面（一次请求覆盖全市场基金的最新单位净值与净值日期）。
-/// 报文缺 `datas` 数组（被拦截 / `ErrCode=-999` 无权限）时返回 `Err`——调用方
-/// fail-closed 回退逐只净值通道。
-pub(super) async fn fetch_fund_nav_table(
-    client: &reqwest::Client,
-    pacer: &mut Pacer,
-) -> Result<FundNavTable> {
-    fetch_fund_nav_table_from(client, pacer, FUND_NAV_RANKING_HOSTS).await
-}
-
-/// 同 [`fetch_fund_nav_table`]，主机池可注入（本地 HTTP 服务测试请求参数 /
-/// Referer 传播与被拦截响应处置）。
-pub(super) async fn fetch_fund_nav_table_from(
-    client: &reqwest::Client,
-    pacer: &mut Pacer,
-    hosts: &[&str],
-) -> Result<FundNavTable> {
-    tracing::debug!("场外基金净值批量面查询");
-    let params = [
-        ("op", "ph"),
-        ("dt", "kf"),
-        ("ft", "all"),
-        ("rs", ""),
-        ("gs", "0"),
-        ("sc", "1nzf"),
-        ("st", "desc"),
-        ("sd", ""),
-        ("ed", ""),
-        ("qdii", ""),
-        ("tabSubtype", ",,,,,"),
-        ("pi", "1"),
-        ("pn", FUND_NAV_RANKING_PAGE_SIZE),
-        ("dx", "1"),
-    ];
-    let body = request_text_from_hosts(
-        client,
-        &params,
-        FUND_NAV_RANKING_PATH,
-        hosts,
-        RetryConfig::production(),
-        pacer,
-        "fetch_fund_nav_table",
-        Some(FUND_NAV_RANKING_REFERER),
-    )
-    .await?;
-    parse_fund_nav_table(&body).ok_or_else(|| {
-        pacer.record_throttled();
-        AppError::Parse("场外基金净值批量面缺少可信的数据数组（疑似被风控拦截）".into())
-    })
-}
-
-/// 解析名称全量字典：`var r = [["000001","HXCZHH","华夏成长混合","混合型-灵活","…"], …]`，
-/// 取每行的 `[0] 代码` 与 `[2] 名称`。零覆盖是**可信空结果**（字典为空即全部按缺口
-/// 走逐只通道）；数据数组缺失或不合法（风控 HTML 页、变量改名）返回 None，调用方
-/// fail-closed 回退逐只通道。行内异常（缺代码/缺名称）逐行跳过。
-pub(super) fn parse_fund_name_dictionary(body: &str) -> Option<FundNameDictionary> {
-    let array = super::js::declared_array(body, "var r")?;
-    let rows: Vec<serde_json::Value> = serde_json::from_str(array).ok()?;
-    let mut dictionary = FundNameDictionary::new();
-    for row in rows {
-        let Some(cells) = row.as_array() else {
-            continue;
-        };
-        let code = cells.first().and_then(|v| v.as_str()).map(str::trim);
-        let name = cells.get(2).and_then(|v| v.as_str()).map(str::trim);
-        let (Some(code), Some(name)) = (code, name) else {
-            continue;
-        };
-        if code.is_empty() || name.is_empty() {
-            continue;
-        }
-        dictionary.insert(code.to_string(), name.to_string());
-    }
-    Some(dictionary)
-}
-
-/// 解析场外基金净值批量面：`var rankData = {datas:["代码,简称,拼音,净值日期,单位净值,
-/// 累计净值,…", …], …}`，取每行的 `[0] 代码`、`[3] 净值日期`、`[4] 单位净值`
-/// （净值即价格，ADR-0038 决策 3）。列形态不符 / 净值非正的行逐行跳过（该只按缺口
-/// 走逐只通道，等价于「排行面没收录它」）；数据数组缺失或不合法返回 None，调用方
-/// fail-closed 回退逐只通道。
-pub(super) fn parse_fund_nav_table(body: &str) -> Option<FundNavTable> {
-    let array = super::js::declared_array(body, "datas")?;
-    let rows: Vec<String> = serde_json::from_str(array).ok()?;
-    let mut table = FundNavTable::new();
-    for row in rows {
-        let cells: Vec<&str> = row.split(',').collect();
-        let (Some(code), Some(date), Some(nav)) = (cells.first(), cells.get(3), cells.get(4))
-        else {
-            continue;
-        };
-        let (code, date) = (code.trim(), date.trim());
-        let Ok(nav) = nav.trim().parse::<f64>() else {
-            continue;
-        };
-        if code.is_empty() || date.is_empty() || nav <= 0.0 {
-            continue;
-        }
-        table.insert(
-            code.to_string(),
-            BulkNavPoint {
-                date: date.to_string(),
-                nav,
-            },
-        );
-    }
-    Some(table)
 }

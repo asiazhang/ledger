@@ -30,8 +30,8 @@ use ledger_infra::db::{self, DbState};
 use ledger_infra::error::{AppError, Result};
 use ledger_infra::events;
 use ledger_market_sync::{
-    BulkFetchCircuit, BulkFetchSurfaces, FundNameDictionary, FundNavTable,
-    INSTRUMENT_SYNC_PROGRESS, QuoteItem, SyncFetchChannels,
+    BulkFetchCircuit, BulkFetchSurfaces, FundBatch, FundNavTable, INSTRUMENT_SYNC_PROGRESS,
+    NavPage, QuoteItem, SyncFetchChannels,
 };
 use tauri_app_lib::commands::sync::SyncChannelsSlot;
 use tauri_app_lib::commands::{investment, sync};
@@ -480,17 +480,23 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
         }
     }
 
-    /// 净值批量面命中桩：收录该基金且最新净值日期不晚于水位（无新净值）。
-    /// 批量面为 async 闭包（issue #1412）：应答装箱为就绪 future。
-    fn nav_hit() -> Pin<Box<dyn Future<Output = Result<FundNavTable>> + Send>> {
+    /// 批量面命中桩（issue #1565 单面）：收录该基金（名称 + 最新净值日期不晚于
+    /// 水位，即「无新净值」）。批量面为 async 闭包（issue #1412）：应答装箱为
+    /// 就绪 future。
+    fn nav_hit() -> Pin<Box<dyn Future<Output = Result<FundBatch>> + Send>> {
         Box::pin(async {
-            Ok(FundNavTable::from([(
-                "110022".to_string(),
-                ledger_market_sync::BulkNavPoint {
-                    date: "2026-01-30".into(),
-                    nav: 3.348,
-                },
-            )]))
+            Ok(FundBatch {
+                names: [("110022".to_string(), "易方达消费行业A".to_string())]
+                    .into_iter()
+                    .collect(),
+                nav: FundNavTable::from([(
+                    "110022".to_string(),
+                    ledger_market_sync::BulkNavPoint {
+                        date: "2026-01-30".into(),
+                        nav: 3.348,
+                    },
+                )]),
+            })
         })
     }
 
@@ -506,15 +512,17 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
         ))
     };
 
-    // 场景一（降级）：名称全量字典报错 → 一面失败即本次同步降级（净值面已命中，
-    // 逐只路径不受影响）→ 结果带 `bulk_degraded: true`。
+    // 场景一（降级）：批量面报错 → 本次同步降级（逐只通道 fail-closed 兜底）→
+    // 结果带 `bulk_degraded: true`。
     let degraded = {
         let mut channels = per_item_channels();
+        // 批量面整体失败 → 逐只净值通道接管：桩回空页（窗口内无新净值），
+        // 同步照常成功返回并带降级事实。
+        channels.fetch_nav = Box::new(|_| Box::pin(async { Ok(NavPage::empty()) }));
         channels.bulk = BulkFetchSurfaces {
-            names: Box::new(|| {
-                Box::pin(async { Err(AppError::Io("名称字典被风控拦截".into())) })
+            funds: Box::new(|_: &[String]| {
+                Box::pin(async { Err(AppError::Io("场外基金批量面被风控拦截".into())) })
             }),
-            nav: Box::new(nav_hit),
             circuit: Arc::new(Mutex::new(BulkFetchCircuit::new())),
         };
         *slot.blocking_lock() = channels;
@@ -526,13 +534,12 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
         "降级事实应进 IPC 线，实际 {degraded_json}"
     );
 
-    // 场景二（正常）：两个批量面全部命中 → 结果带 `bulk_degraded: false`——
-    // 正常路径不带降级事实。通道束经同一槽原地换装。
+    // 场景二（正常）：批量面命中 → 结果带 `bulk_degraded: false`——正常路径不带
+    // 降级事实。通道束经同一槽原地换装。
     let normal = {
         let mut channels = per_item_channels();
         channels.bulk = BulkFetchSurfaces {
-            names: Box::new(|| Box::pin(async { Ok(FundNameDictionary::new()) })),
-            nav: Box::new(nav_hit),
+            funds: Box::new(|_: &[String]| nav_hit()),
             circuit: Arc::new(Mutex::new(BulkFetchCircuit::new())),
         };
         *slot.blocking_lock() = channels;

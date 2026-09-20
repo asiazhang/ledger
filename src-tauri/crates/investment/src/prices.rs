@@ -23,13 +23,19 @@ pub const PRICE_UNITS_PER_FEN: f64 = 100.0;
 /// 与手动报价的 [`super::manual_price::MANUAL_PRICE_SOURCE`] 对称。
 ///
 /// 存量行仍为 `eastmoney`（历史事实，不重写不迁移）；换源后新写入的来源标记
-/// 按实际取数源取值——场内现价走腾讯（[`TENCENT_PRICE_SOURCE`]）。
+/// 按实际取数源取值——场内现价走腾讯（[`TENCENT_PRICE_SOURCE`]）、场外基金
+/// 净值走新浪（[`SINA_PRICE_SOURCE`]）。
 pub const EASTMONEY_PRICE_SOURCE: &str = "eastmoney";
 
 /// 场内（沪深港美股票与场内基金）价格来源标记（ADR-0130 决策 7）：行情同步的
 /// 场内通道改走腾讯行情报价后写入（现价缓存、当周采样点与历史补全共用）。
 /// 价格侧无 CHECK，闭集由写入通道收口。
 pub const TENCENT_PRICE_SOURCE: &str = "tencent";
+
+/// 场外基金净值来源标记（ADR-0130 决策 7 / issue #1565）：行情同步的基金净值
+/// 通道改走新浪后写入——批量面直落的现价与当周采样点（issue #1565 起），单只面
+/// 补数随 #1566 接入。价格侧无 CHECK，闭集由写入通道收口。
+pub const SINA_PRICE_SOURCE: &str = "sina";
 
 /// 真实价格值（元）→ 万分之一元（0.0001 元，价格刻度 ADR-0038）。
 /// A 股/港股 K 线收盘价与场外基金单位净值同刻度换算（基金净值 4 位小数，

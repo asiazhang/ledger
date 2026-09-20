@@ -365,7 +365,7 @@ pub(super) async fn fetch_tencent_quotes(
 
 /// 单批请求：请求行 `GET /q=<代码逗号串>`（无 Referer），GBK 解码后按
 /// [`parse_tencent_quotes`] 解析。解析失败按疑似风控页补降速信号（文本形状判定在
-/// HTTP 层看不见，先例：`bulk` 的两个批量面）。按代码查询的单只取数（#1567）
+/// HTTP 层看不见，先例：`bulk` 的批量面）。按代码查询的单只取数（#1567）
 /// 复用本请求原语：单只 = 一批一条。
 pub(super) async fn fetch_tencent_batch(
     client: &reqwest::Client,
@@ -387,7 +387,7 @@ pub(super) async fn fetch_tencent_batch(
     )
     .await?;
     // GBK 解码与报文形状两道判据都归本层：任一失败都补降速信号
-    //（ADR-0121 决策 5，先例：bulk 的两个批量面）。解码错误统一包装为本单元
+    //（ADR-0121 决策 5，先例：bulk 的批量面）。解码错误统一包装为本单元
     // 的非预期响应错误（解码原语归 HTTP 层单点，单元上下文在此补齐）。
     decode_gbk(&bytes)
         .map_err(unexpected_response)
