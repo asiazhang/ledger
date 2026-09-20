@@ -31,6 +31,7 @@ mod csrc;
 mod fund_nav;
 mod fund_search;
 mod fx_persist;
+mod fx_sync;
 mod history_backfill;
 mod http_client;
 mod instrument_info_sync;
@@ -231,6 +232,7 @@ fn production_source_files() -> Vec<(&'static str, String)> {
             "fund_price_refresh.rs",
             include_str!("fund_price_refresh.rs").to_string(),
         ),
+        ("fx_sync.rs", include_str!("fx_sync.rs").to_string()),
         ("history.rs", include_str!("history.rs").to_string()),
         ("http.rs", include_str!("http.rs").to_string()),
         ("incremental.rs", include_str!("incremental.rs").to_string()),

@@ -935,6 +935,14 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
     note: "东财基金报价访问（按 6 位代码即拉，issue #301 / ADR-0038；搜索建议未命中回退档案通道改判存在，issue #1212）——行情接入接缝查询半边的场外实例，统一载荷 investment::Quote（ADR-0103）",
   },
   {
+    path: "fx_sync.rs",
+    layer: "域目录",
+    note:
+      "汇率增量同步编排（issue #1545 设置页手动入口，#1546 每日自动增量将复用）：会话内读币种对（字典 → 本位币）→ 会话外 ECB 90 天增量取数推导 → 会话内单事务幂等落库；" +
+      "失败三态码化互不吞并（fx.source-unreachable / fx.source-no-data / fx.source-malformed 透传）；" +
+      "全量回填窗口判据归 #1544，不在本单元",
+  },
+  {
     path: "fund_backfill.rs",
     layer: "域目录",
     note:

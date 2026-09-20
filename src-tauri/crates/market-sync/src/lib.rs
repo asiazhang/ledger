@@ -38,6 +38,10 @@
 //!   90 天增量两个取数入口（Cube 报文解析）、同日两腿交叉推导（EUR 作基准腿）与
 //!   周采样序列产出；非预期形状（空 / 非 XML / 截断）报 fx.source-malformed 码化
 //!   错误，不静默产出空序列。本票只产出可落库序列，不落库、不接 UI；
+//! - [`fx_sync`]：汇率增量同步编排（issue #1545 设置页手动入口；#1546 每日自动
+//!   增量将复用）——「同步一次」的定义：会话内读币种对（字典 → 本位币）→ 会话外
+//!   ECB 90 天增量取数推导 → 会话内单事务幂等落库；失败三态（不可达 / 无数据 /
+//!   报文异常）码化互不吞并，全量回填窗口判据归 #1544；
 //! - [`fund`]：东财基金报价访问（按代码即拉，issue #301 / ADR-0038）——行情接入
 //!   接缝查询半边的场外实例（统一载荷 [`ledger_investment::Quote`]，ADR-0103）；
 //! - [`fund_backfill`]：基金历史回填单元（issue #1062 / #1377 / #1388）——服务
@@ -135,15 +139,15 @@ mod channels;
 ///（#1568）落地时撤去其函数级豁免并按消费面补再导出。
 mod csrc;
 mod daily_refresh;
-/// ECB 参考汇率取数单元（issue #1542）：单元本体与测试已就位，序列类型已由落库
-/// 单元（persist，#1543）消费；两个取数入口与交叉推导的接线随回填 / 每日增量票
-///（#1544 / #1546）接装通道束时落地，接装时撤去 dead_code 豁免并按消费面补再导出。
-#[allow(dead_code)]
+/// ECB 参考汇率取数单元（issue #1542）：90 天增量入口与交叉推导已随汇率同步
+/// 编排接线（#1545）；全量历史入口的接线随回填窗口票（#1544）落地，接装时撤去
+/// 其条目级 dead_code 豁免。
 mod ecb;
 mod fund;
 mod fund_backfill;
 mod fund_nav;
 mod fund_price_refresh;
+mod fx_sync;
 mod history;
 mod http;
 mod incremental;
@@ -184,11 +188,13 @@ pub use daily_refresh::{
 // 能命名与构造应答形状（QuoteItem 可构造；Kline/Nav 形状测试回空表即可命名）。
 pub use fund::fetch_fund_quote_production;
 pub use fund_nav::{NavPage, NavPoint, NavQuery};
+pub use fx_sync::run_fx_incremental_sync;
 pub use history::{
     BackfillChannelsSlot, BackfillTimings, start_history_backfill, start_history_backfill_with,
 };
 pub use http::KlineBar;
 pub use model::{SyncInstrumentInfoResult, WriteWitness};
+pub use persist::FxPersistReport;
 pub use progress::{
     BackfillProgressEmitter, FundNavProgress, HISTORY_BACKFILL_PROGRESS, INSTRUMENT_SYNC_PROGRESS,
     ProgressEmitter, SyncProgress,

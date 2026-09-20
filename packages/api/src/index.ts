@@ -39,6 +39,7 @@ import type {
   BootStatus,
   ExchangeRate,
   ExchangeRateInput,
+  ExchangeRateSyncReport,
   ExecuteOccurrenceInput,
   FinancialFreedomOverview,
   Holding,
@@ -363,6 +364,10 @@ export const api = {
   listExchangeRates: () => invoke<ExchangeRate[]>("list_exchange_rates"),
   createExchangeRate: (input: ExchangeRateInput) =>
     invoke<string>("create_exchange_rate", { input }),
+  // 手动同步汇率一次（issue #1545 设置页「同步汇率」入口）：ECB 90 天增量取数 +
+  // 幂等落库，返回覆盖区间 / 条数报告；失败原因码化（数据源不可达 / 该来源无数据 /
+  // 报文异常），前端按码本地化后可分辨
+  syncExchangeRates: () => invoke<ExchangeRateSyncReport>("sync_exchange_rates"),
 
   // 行情价格
   listMarketPrices: () => invoke<MarketPrice[]>("list_market_prices"),

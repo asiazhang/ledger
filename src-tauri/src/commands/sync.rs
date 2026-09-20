@@ -18,8 +18,9 @@ use ledger_infra::db::DbState;
 use ledger_infra::error::Result;
 use ledger_infra::signals::{WriteEvidence, WriteOp};
 use ledger_market_sync::{
-    FacadeWriteSession, ProgressEmitter, SyncFetchChannels, SyncInstrumentInfoResult, SyncProgress,
-    WriteWitness, do_incremental_sync_channels,
+    FacadeWriteSession, FxPersistReport, ProgressEmitter, SyncFetchChannels,
+    SyncInstrumentInfoResult, SyncProgress, WriteWitness, do_incremental_sync_channels,
+    run_fx_incremental_sync,
 };
 
 /// 同步网络通道注入接缝（issue #1276）：生产**不管理**本状态（命令走生产通道
@@ -36,9 +37,13 @@ pub struct SyncChannelsSlot(pub Arc<tokio::sync::Mutex<SyncFetchChannels>>);
 /// 都经这里短暂投递一次门面作业、`await` 结果即还；分钟级网络等待发生在分段与
 /// 分段之间（会话之外，`await` 表达）——同步在途时连接对其他命令保持可取
 ///（父 spec #1274 路线 A 的落点）。独立成函数与 [`progress_to_emitter`] 同款：
-/// 命令体一行调用，接线点可命名、可被测试钉住。
-pub(crate) fn facade_session(write: ledger_infra::db::DbWriteHandle) -> FacadeWriteSession {
-    FacadeWriteSession::new(write, "sync_instrument_info")
+/// 命令体一行调用，接线点可命名、可被测试钉住。`span` = 作业的 SQL 归因串
+///（== 命令名，ADR-0073 决策 4 同口径）。
+pub(crate) fn facade_session(
+    write: ledger_infra::db::DbWriteHandle,
+    span: &'static str,
+) -> FacadeWriteSession {
+    FacadeWriteSession::new(write, span)
 }
 
 /// 生产进度接线（issue #897 / ADR-0095）：把编排的进度回调（标的级 `done`/
@@ -107,7 +112,7 @@ pub async fn sync_instrument_info<R: Runtime>(
             // 发射失败静默，不影响同步结果）。会话接线（issue #1275/#1276，
             // #1412 async 形态）：门面写槽裸作业会话交给编排——编排的读写只经
             // 会话短暂投递门面作业，网络 I/O（await）在作业之外。
-            let session = facade_session(session_write);
+            let session = facade_session(session_write, "sync_instrument_info");
             let mut progress = progress_to_emitter(&progress_app);
             let mut channels = channels.lock().await;
             // 写入见证（issue #1277）：编排的每个实际写入点标记，跨分段累积；
@@ -131,6 +136,23 @@ pub async fn sync_instrument_info<R: Runtime>(
         },
     )
     .await
+}
+
+/// IPC 命令：手动同步汇率一次（issue #1545 设置页「同步汇率」入口）：门面写槽裸
+/// 作业会话交给汇率同步编排（[`run_fx_incremental_sync`]，#1275 会话接缝同款），
+/// 返回落库报告（覆盖区间 / 条数，前端结果面）。失败原因码化三态互不吞并
+///（fx.source-unreachable / fx.source-no-data / fx.source-malformed），前端按码
+/// 本地化后可分辨。
+///
+/// 不经 [`write_entry`](crate::shell_support::write_entry)：ECB 汇率落库是可重建
+/// 缓存的自动采集——不产同步 op（ADR-0019 修订记录）、不发失效信号（当期汇率表
+/// 不在 ledger:prices-changed 覆盖内，ADR-0031 映射）、不置脏（余额缓存是本位币
+/// 口径，汇率变化不涉及）。写连接取用经会话裸作业（与后台车道同款形态），
+/// 网络等待在会话之外以 await 表达（慢闭包纪律）。
+#[tauri::command]
+pub async fn sync_exchange_rates(db: State<'_, DbState>) -> Result<FxPersistReport> {
+    let session = facade_session(db.write_handle(), "sync_exchange_rates");
+    run_fx_incremental_sync(&session).await
 }
 
 #[cfg(test)]
@@ -166,7 +188,7 @@ mod tests {
             std::sync::Arc::clone(&shared),
         )
         .write_handle();
-        let session = facade_session(handle);
+        let session = facade_session(handle, "sync_instrument_info");
 
         tauri::async_runtime::block_on(session.with_connection(|c| {
             use ledger_infra::error::AppError;

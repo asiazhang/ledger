@@ -129,7 +129,9 @@ fn throttle_responses_slow_the_request_interval() {
 }
 
 /// 起一个本地 HTTP 服务，按调用次数回调响应 (status, body)，返回基础地址。
-fn spawn_http_server(responder: impl Fn(usize) -> (u16, String) + Send + 'static) -> String {
+pub(crate) fn spawn_http_server(
+    responder: impl Fn(usize) -> (u16, String) + Send + 'static,
+) -> String {
     use std::io::{Read, Write};
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
