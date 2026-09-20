@@ -236,7 +236,7 @@ fn buy_native_cents_converted_via_amount_seam() {
     assert_eq!(amount_cents, 100500, "原始币种金额 = 数量×单价+手续费");
     assert_eq!(
         amount_native_cents, 723600,
-        "本位币金额应经 convert_to_native 折算（100500 × 7.2）"
+        "本位币金额应经 convert_to_native_current 折算（100500 × 7.2）"
     );
 }
 
@@ -284,7 +284,7 @@ fn buy_update_native_cents_converted_via_amount_seam() {
     assert_eq!(amount_cents, 60000, "修改后金额 = 5×12000");
     assert_eq!(
         amount_native_cents, 432000,
-        "修改后本位币金额应经 convert_to_native 折算（60000 × 7.2）"
+        "修改后本位币金额应经 convert_to_native_current 折算（60000 × 7.2）"
     );
 }
 
@@ -339,7 +339,7 @@ fn sell_native_cents_converted_via_amount_seam() {
     assert_eq!(amount_cents, 44000, "卖出入账 = 数量×单价−手续费");
     assert_eq!(
         amount_native_cents, 316800,
-        "本位币金额应经 convert_to_native 折算（44000 × 7.2）"
+        "本位币金额应经 convert_to_native_current 折算（44000 × 7.2）"
     );
 }
 

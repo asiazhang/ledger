@@ -91,7 +91,7 @@ fn sum_leg_entries(conn: &Connection, sql: &str) -> Result<i64> {
     let entries: Vec<LegEntry> = query_all(conn, sql, [])?;
     let mut sum = 0i64;
     for entry in entries {
-        sum += amount::convert_to_native(conn, entry.amount_cents, &entry.currency_code)?;
+        sum += amount::convert_to_native_current(conn, entry.amount_cents, &entry.currency_code)?;
     }
     Ok(sum)
 }

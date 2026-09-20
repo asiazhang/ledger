@@ -3,7 +3,8 @@
 //! 只做编排接线：注册表枚举 → 活动本 schema 版本 → 非活动本逐本探测与只读取数
 //! → 活动本读 + 折算合并，编排语义权威在 [`crate::cross_book_summary`]（壳层编
 //! 排模块，接缝归属见 ADR-0114 与其修订记录）；投资口径读函数归投资域
-//! （`ledger_investment`），折算归核心交易域金额接缝（`convert_to_native`）。
+//! （`ledger_investment`），折算归核心交易域金额接缝（当期入口
+//! `convert_to_native_current`）。
 //!
 //! 全程只读：注册表读、逐本只读建连、活动本走读连接；不触碰任何写入口。
 //! 阻塞 IO（注册表文件、逐本建连）经 [`ledger_infra::db::run_db`] 投放阻塞线程
@@ -72,7 +73,7 @@ pub async fn cross_book_investment_summary<R: Runtime>(
         readings.push(read_book_investment(conn)?);
         let target_currency = amount::default_currency_code(conn)?;
         let totals = merge_readings(&readings, &target_currency, &mut |cents, currency| {
-            amount::convert_to_native(conn, cents, currency)
+            amount::convert_to_native_current(conn, cents, currency)
         })?;
         Ok(CrossBookInvestmentSummary {
             target_currency,

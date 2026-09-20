@@ -64,8 +64,11 @@ pub fn query_investable_assets_cash_leg_cents(conn: &Connection) -> Result<i64> 
     let mut cash_sum = 0i64;
     for ab in list_account_balances_with_visibility(conn, false)? {
         if ab.account.kind == AccountType::Investment {
-            cash_sum +=
-                amount::convert_to_native(conn, ab.balance_cents, &ab.account.currency_code)?;
+            cash_sum += amount::convert_to_native_current(
+                conn,
+                ab.balance_cents,
+                &ab.account.currency_code,
+            )?;
         }
     }
     Ok(cash_sum)
@@ -83,7 +86,7 @@ pub(crate) fn sum_holdings_facet_column_cents(conn: &Connection, column: &str) -
     let mut sum = 0i64;
     for h in holdings {
         if let Some(value_cents) = h.amount_cents {
-            sum += amount::convert_to_native(conn, value_cents, &h.currency_code)?;
+            sum += amount::convert_to_native_current(conn, value_cents, &h.currency_code)?;
         }
     }
     Ok(sum)
