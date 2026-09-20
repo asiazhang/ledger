@@ -31,9 +31,11 @@ pub const INSTRUMENT_SYNC_PROGRESS: &str = "ledger:instrument-sync-progress";
 /// 形状（[`SyncProgress`]）、不同事件名——静默计数面的唯一事件来路。
 pub const HISTORY_BACKFILL_PROGRESS: &str = "ledger:history-backfill-progress";
 
-/// 场外基金深回填的**页级明细**（issue #1061）：正在按页拉取的基金代码与
+/// 场外基金净值同步的**页级明细**（issue #1061）：正在按页拉取的基金代码与
 /// 「已完成页 / 总页数」。只在真正翻页（`pages > 1`）时随进度事件带出——
-/// 单页的增量常态不产生该明细，既有事件形状与频率不变。
+/// 单页的增量常态不产生该明细，既有事件形状与频率不变。历史回填换源新浪
+/// 全历史面后已无翻页（issue #1566），本明细只剩现价刷新逐只短窗一个发射点
+///（issue #1377）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FundNavProgress {
     /// 正在回填的基金代码（即标的 symbol）。
@@ -62,7 +64,8 @@ pub struct SyncProgress {
 
 impl SyncProgress {
     /// 标的级推进（不带页级明细）：`done` = 已完成的有通道标的数，`total` =
-    /// 有通道标的总数。基金深回填期间另带 [`FundNavProgress`]，不在此构造。
+    /// 有通道标的总数。基金现价刷新短窗翻页期间另带 [`FundNavProgress`]，
+    /// 不在此构造。
     pub fn instrument(done: usize, total: usize) -> Self {
         Self {
             done,

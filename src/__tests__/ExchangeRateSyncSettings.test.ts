@@ -12,13 +12,17 @@ import ExchangeRateSyncSettings from "@/settings/ExchangeRateSyncSettings.vue";
  * - 失败：失败原因按码本地化（errorMessage），「数据源不可达」与「该来源无数据」可分辨。
  */
 
-/** 命令契约静态快照：一次正常落库报告（ECB 单日多周点形态的合理取值）。 */
+/** 命令契约静态快照：一次正常落库报告（#1544 窗口判据走全量回填、ECB 多周点
+ * 形态的合理取值）。形状镜像 Rust `FxSyncReport`（含 persist 嵌套）。 */
 const REPORT = {
-  pairs: 10,
-  points: 30,
-  earliest: "2026-06-27",
-  latest: "2026-09-18",
-  manual_protected: 0,
+  full_backfilled: true,
+  persist: {
+    pairs: 10,
+    points: 30,
+    earliest: "2026-06-27",
+    latest: "2026-09-18",
+    manual_protected: 0,
+  },
 };
 
 function mountCard() {

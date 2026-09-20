@@ -30,14 +30,10 @@ use super::incremental::downsample_weekly_points;
 pub(super) const ECB_HOSTS: &[&str] = &["https://www.ecb.europa.eu"];
 
 /// 全量历史文件路径（1999-01-04 起全部已发布参考汇率）。
-///
-/// `allow(dead_code)`：全量入口的接线随回填窗口票（#1544）落地，接装时撤去。
-#[allow(dead_code)]
 pub(super) const FULL_HISTORY_PATH: &str = "/stats/eurofxref/eurofxref-hist.xml";
 /// 90 天增量文件路径（每日自动增量的数据源）。
 pub(super) const INCREMENTAL_90D_PATH: &str = "/stats/eurofxref/eurofxref-hist-90d.xml";
 
-#[allow(dead_code)]
 const FULL_HISTORY_LABEL: &str = "ECB 全量历史";
 const INCREMENTAL_90D_LABEL: &str = "ECB 90 天增量";
 
@@ -74,10 +70,6 @@ pub struct FxPairWeeklySeries {
 /// 拉取 ECB 参考汇率**全量历史**文件并解析（历史回填入口：窗口深度由调用方按
 /// 账本最早非本位币日期裁剪，ADR-0019 修订记录）。`hosts` 供测试注入本地服务，
 /// 生产传 [`ECB_HOSTS`]。
-///
-/// `allow(dead_code)`：全量入口的接线随 #1544 落地，接装时撤去（90 天增量入口
-/// 已随 #1545 接线，不再豁免）。
-#[allow(dead_code)]
 pub(super) async fn fetch_ecb_full_history(
     client: &reqwest::Client,
     pacer: &mut Pacer,

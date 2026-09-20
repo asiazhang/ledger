@@ -19,13 +19,12 @@ use super::ecb::FxPairWeeklySeries;
 /// ECB 汇率来源标记（issue #1543 / ADR-0019 修订记录）：汇率历史与当期汇率表
 /// 的自动写入共用同一来源词；人工录入行仍记 'manual'（写入协议既有词表），
 /// 人工行保护以该词判定。
-///
 pub(super) const ECB_FX_SOURCE: &str = "ecb";
 
 /// ECB 汇率落库结果统计（issue #1543）：服务触发编排的提示拼装（覆盖区间 /
 /// 条数，#1545 手动同步结果面 / #1546 每日增量日志）；库内可观察行为以两表
-/// 内容为准，统计只是本次处理的记录。`Serialize`：#1545 起 IPC 命令直接返回本
-/// 类型（前端展示覆盖区间 / 条数）。
+/// 内容为准，统计只是本次处理的记录。`Serialize`：#1545 起 IPC 命令经
+/// [`super::fx::FxSyncReport`] 的 persist 字段直达前端（展示覆盖区间 / 条数）。
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct FxPersistReport {
     /// 实际落库的币种对数（空序列的对不计）。

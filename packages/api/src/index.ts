@@ -364,8 +364,9 @@ export const api = {
   listExchangeRates: () => invoke<ExchangeRate[]>("list_exchange_rates"),
   createExchangeRate: (input: ExchangeRateInput) =>
     invoke<string>("create_exchange_rate", { input }),
-  // 手动同步汇率一次（issue #1545 设置页「同步汇率」入口）：ECB 90 天增量取数 +
-  // 幂等落库，返回覆盖区间 / 条数报告；失败原因码化（数据源不可达 / 该来源无数据 /
+  // 手动同步汇率一次（issue #1545 设置页「同步汇率」入口）：取数深度由窗口判据
+  // 分派（深度未达走 ECB 全量历史回填、已达走 90 天增量），幂等落库后返回同步
+  // 报告（是否回填 + 覆盖区间 / 条数）；失败原因码化（数据源不可达 / 该来源无数据 /
   // 报文异常），前端按码本地化后可分辨
   syncExchangeRates: () => invoke<ExchangeRateSyncReport>("sync_exchange_rates"),
 

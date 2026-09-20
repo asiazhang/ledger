@@ -18,9 +18,9 @@ use ledger_infra::db::DbState;
 use ledger_infra::error::Result;
 use ledger_infra::signals::{WriteEvidence, WriteOp};
 use ledger_market_sync::{
-    FacadeWriteSession, FxPersistReport, ProgressEmitter, SyncFetchChannels,
+    FacadeWriteSession, FxSyncChannels, FxSyncReport, ProgressEmitter, SyncFetchChannels,
     SyncInstrumentInfoResult, SyncProgress, WriteWitness, do_incremental_sync_channels,
-    run_fx_incremental_sync,
+    sync_fx_rates,
 };
 
 /// 同步网络通道注入接缝（issue #1276）：生产**不管理**本状态（命令走生产通道
@@ -139,10 +139,11 @@ pub async fn sync_instrument_info<R: Runtime>(
 }
 
 /// IPC 命令：手动同步汇率一次（issue #1545 设置页「同步汇率」入口）：门面写槽裸
-/// 作业会话交给汇率同步编排（[`run_fx_incremental_sync`]，#1275 会话接缝同款），
-/// 返回落库报告（覆盖区间 / 条数，前端结果面）。失败原因码化三态互不吞并
-///（fx.source-unreachable / fx.source-no-data / fx.source-malformed），前端按码
-/// 本地化后可分辨。
+/// 作业会话交给汇率同步编排（[`sync_fx_rates`]，#1275 会话接缝同款；生产通道束
+/// 接 ECB 官方站，取数深度由窗口判据分派——深度未达走全量回填、已达走 90 天
+/// 增量），返回同步报告（是否回填 + 覆盖区间 / 条数，前端结果面）。失败原因码化
+/// 三态互不吞并（fx.source-unreachable / fx.source-no-data /
+/// fx.source-malformed），前端按码本地化后可分辨。
 ///
 /// 不经 [`write_entry`](crate::shell_support::write_entry)：ECB 汇率落库是可重建
 /// 缓存的自动采集——不产同步 op（ADR-0019 修订记录）、不发失效信号（当期汇率表
@@ -150,9 +151,10 @@ pub async fn sync_instrument_info<R: Runtime>(
 /// 口径，汇率变化不涉及）。写连接取用经会话裸作业（与后台车道同款形态），
 /// 网络等待在会话之外以 await 表达（慢闭包纪律）。
 #[tauri::command]
-pub async fn sync_exchange_rates(db: State<'_, DbState>) -> Result<FxPersistReport> {
+pub async fn sync_exchange_rates(db: State<'_, DbState>) -> Result<FxSyncReport> {
     let session = facade_session(db.write_handle(), "sync_exchange_rates");
-    run_fx_incremental_sync(&session).await
+    let mut channels = FxSyncChannels::production()?;
+    sync_fx_rates(&session, &mut channels).await
 }
 
 #[cfg(test)]

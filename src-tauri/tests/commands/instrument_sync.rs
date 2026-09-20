@@ -79,7 +79,7 @@ fn gated_channels(
                 unreachable!("测试现场无基金标的，净值通道不应被触达")
             })
         }),
-        fetch_nav_full: Box::new(|_| {
+        fetch_nav_history: Box::new(|_| {
             Box::pin(async {
                 unreachable!("测试现场无基金标的，全量净值通道不应被触达")
             })
@@ -469,7 +469,7 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
                     unreachable!("净值面命中即无新净值，逐只净值通道不应被触达")
                 })
             }),
-            fetch_nav_full: Box::new(|_| {
+            fetch_nav_history: Box::new(|_| {
                 Box::pin(async {
                     unreachable!("净值面命中即无新净值，单请求全量净值通道不应被触达")
                 })

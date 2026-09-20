@@ -7,6 +7,9 @@
 //! - `csrc`：证监会基金电子披露区间查询报文解析与请求形态（issue #1562 / ADR-0130，fixture 为真实报文 + 本地 HTTP 服务）；
 //! - `fund_nav`：历史净值报文解析、水位窗口与 Referer 传播（issue #303，fixture 驱动）；
 //! - `fund_search`：东财基金搜索报文解析与命中挑选（issue #301，fixture 驱动）；
+//! - `fx_sync`：ECB 汇率同步编排（issue #1544）——窗口判据（最早非本位币痕迹
+//!   所属周前推一周、零痕迹跳过、深度达成后只走增量的幂等）与两文件接线证明；
+//!   失败三态互不吞并与人工行保护经编排回归（issue #1545）；
 //! - `http_client`：HTTP 重试、多主机切换与各来源取数入口的请求形态 / 上限行为（ECB 参考汇率、腾讯日线 K 线）；
 //! - `instrument_info_sync`：标的信息同步与日 K 报文解析；
 //! - `sina_fund`：新浪场外基金取数（issue #1564，fixture 驱动）——批量面普通行 /
@@ -232,7 +235,7 @@ fn production_source_files() -> Vec<(&'static str, String)> {
             "fund_price_refresh.rs",
             include_str!("fund_price_refresh.rs").to_string(),
         ),
-        ("fx_sync.rs", include_str!("fx_sync.rs").to_string()),
+        ("fx.rs", include_str!("fx.rs").to_string()),
         ("history.rs", include_str!("history.rs").to_string()),
         ("http.rs", include_str!("http.rs").to_string()),
         ("incremental.rs", include_str!("incremental.rs").to_string()),

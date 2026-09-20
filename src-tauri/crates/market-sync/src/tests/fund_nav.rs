@@ -8,8 +8,8 @@ use std::time::Duration;
 use chrono::NaiveDate;
 
 use crate::fund_nav::{
-    NavPoint, NavQuery, NavResponse, fetch_nav_full_series_from, fetch_nav_page_from, nav_window,
-    parse_fund_archive, parse_lsjz, parse_money_fund_income_series, parse_net_worth_trend,
+    NavPoint, NavQuery, NavResponse, fetch_nav_page_from, nav_window, parse_fund_archive,
+    parse_lsjz, parse_money_fund_income_series, parse_net_worth_trend,
 };
 use crate::http::{Pacer, request_json_from_hosts};
 
@@ -382,109 +382,6 @@ fn request_json_from_hosts_accepts_referer_argument() {
     assert!(
         head.to_lowercase().contains("referer: http://ref.example/"),
         "{head}"
-    );
-}
-
-#[test]
-fn nav_full_series_fetch_reads_single_file() {
-    // 单请求全量净值通道：一次 GET 详情页数据文件即取整只基金的历史净值序列
-    // （issue #1062）。本地 HTTP 服务验证请求路径与报文解析，不依赖真实网络。
-    let (url, heads) = spawn_header_capture_server(REAL_PINGZHONG_SNIPPET.to_string());
-    let client = reqwest::Client::new();
-    let mut pacer = Pacer::new(Duration::ZERO);
-    let series = tauri::async_runtime::block_on(fetch_nav_full_series_from(
-        &client,
-        &mut pacer,
-        "110022",
-        &[url.as_str()],
-    ))
-    .unwrap();
-
-    let head = &heads.lock().unwrap()[0];
-    assert!(
-        head.contains("GET /pingzhongdata/110022.js"),
-        "请求路径应为基金详情页数据文件: {head}"
-    );
-    assert_eq!(
-        series.points,
-        vec![
-            NavPoint {
-                date: "2010-08-20".into(),
-                nav: 1.0
-            },
-            NavPoint {
-                date: "2010-08-27".into(),
-                nav: 1.001
-            },
-            NavPoint {
-                date: "2010-09-03".into(),
-                nav: 1.006
-            },
-        ]
-    );
-}
-
-#[test]
-fn nav_full_series_fetch_untrusted_body_errors_for_fallback() {
-    // 被风控拦截形态（HTML 而非数据文件）：解析不可信 → 返回 Err，上层 fail-closed
-    // 回退分页通道，不把空结果当「无净值」静默吞掉。
-    let (url, _) = spawn_header_capture_server("<html>blocked by waf</html>".to_string());
-    let client = reqwest::Client::new();
-    let mut pacer = Pacer::new(Duration::ZERO);
-    assert!(
-        tauri::async_runtime::block_on(fetch_nav_full_series_from(
-            &client,
-            &mut pacer,
-            "110022",
-            &[url.as_str()]
-        ))
-        .is_err()
-    );
-}
-
-#[test]
-fn nav_full_series_money_fund_is_untrusted_fail_closed() {
-    // 货币基金没有单位净值序列：万份收益序列的存量投影随东财判定口径退役
-    //（issue #1563 / ADR-0126 决策 3 换源）——判定门已在抓取前收尾，能走到本
-    // 通道的都是非货基；缺单位净值序列 = 形态漂移或风控页，fail-closed 报错，
-    // 由调用方回退分页通道，不把不可信结果当「无净值」。
-    let (url, _) = spawn_header_capture_server(MONEY_FUND_ARCHIVE_JS.to_string());
-    let client = reqwest::Client::new();
-    let mut pacer = Pacer::new(Duration::ZERO);
-    assert!(
-        tauri::async_runtime::block_on(fetch_nav_full_series_from(
-            &client,
-            &mut pacer,
-            "000905",
-            &[url.as_str()],
-        ))
-        .is_err(),
-        "缺单位净值序列不可信，不产出任何取值"
-    );
-}
-
-#[test]
-fn nav_full_series_prefers_net_worth_trend_when_both_series_exist() {
-    // 两序列并存的防御形态：单位净值序列优先——货基特征判定只在缺单位净值
-    // 序列时生效，普通基金永不按 1.0000 收录。
-    let both = format!(
-        "{}\nvar Data_millionCopiesIncome = [[1694448000000,9.99]];",
-        REAL_PINGZHONG_SNIPPET
-    );
-    let (url, _) = spawn_header_capture_server(both);
-    let client = reqwest::Client::new();
-    let mut pacer = Pacer::new(Duration::ZERO);
-    let series = tauri::async_runtime::block_on(fetch_nav_full_series_from(
-        &client,
-        &mut pacer,
-        "110022",
-        &[url.as_str()],
-    ))
-    .unwrap();
-    assert_eq!(series.points.len(), 3);
-    assert_eq!(
-        series.points[2].nav, 1.006,
-        "取单位净值序列原值，不是 1.0 归一化"
     );
 }
 

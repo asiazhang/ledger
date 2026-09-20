@@ -2,9 +2,9 @@
 //! 的两个取数面——**批量最新净值面**（`hq.sinajs.cn` 的 `f_` 前缀，一次请求携带
 //! 多只 6 位基金代码，GBK 编码、必须带 Referer，缺省 403）与**单只全历史面**
 //!（`CaihuiFundInfoService.getNav`，一次请求取整只历史单位净值，已终止基金
-//! 同样可取）。本单元只取数与解析，不落库、不接 UI。**批量面已随现价刷新接线**
-//!（issue #1565，通道束的批量面闭包），**单只全历史面接线随 #1566**——全历史
-//! 半边当前以条目级 `allow(dead_code)` 豁免，接装时逐条撤去。
+//! 同样可取）。本单元只取数与解析，不落库、不接 UI。两个面均已接线：批量面
+//! 随现价刷新（issue #1565，通道束的批量面闭包），单只全历史面随价格历史后台
+//! 补全（issue #1566，通道束的全历史闭包）。
 //!
 //! **货基行的字段错位（#1342 / ADR-0130 决策 6，本单元的硬约束）**：批量面的
 //! 货基行把万份收益放在单位净值位（实测 `f_000198` 单位净值位是 `0.2229`），
@@ -43,7 +43,7 @@ use super::bulk::{BulkNavPoint, FundBatch, FundNameDictionary, FundNavTable};
 use super::fund::deserialize_flexible_string;
 use super::fund_nav::NavPoint;
 use super::http::{
-    Pacer, RetryConfig, decode_gbk, request_bytes_from_hosts, request_json_from_hosts,
+    Pacer, RetryConfig, decode_gbk, request_bytes_from_hosts, request_text_from_hosts,
 };
 
 /// 批量最新净值面主机（新浪行情，免注册；必须带 Referer，调研 13.4 节实测）。
@@ -65,18 +65,16 @@ pub(super) const SINA_FUND_BATCH_REFERER: &str = "https://finance.sina.com.cn/";
 pub(super) const SINA_FUND_BATCH_SIZE: usize = 750;
 
 /// 单只全历史面主机（新浪基金频道，免注册、无需 Referer，2026-09-20 实测）。
-#[allow(dead_code)] // #1566 单只全历史面接线前豁免（接线时连同本注记撤去）
+/// 测试经本地 HTTP 服务注入假响应。
 pub(super) const SINA_FUND_HISTORY_HOSTS: &[&str] = &["https://stock.finance.sina.com.cn"];
 
 /// 单只全历史面接口路径。
-#[allow(dead_code)] // #1566 单只全历史面接线前豁免（接线时连同本注记撤去）
 const FUND_NAV_HISTORY_PATH: &str = "/fundInfo/api/openapi.php/CaihuiFundInfoService.getNav";
 
 /// 单只全历史面单页条数：实测照单全给（6,010 条全历史单请求返回，调研 4.1 节）；
 /// 上限 10,000 超过国内任一基金的全部历史净值日数（最早 2001 年 → 约 6,010），
 /// 单请求即取全。声明总数超出即窗口不完整，fail-closed 报错（不静默截断、
 /// 不发无界翻页）。
-#[allow(dead_code)] // #1566 单只全历史面接线前豁免（接线时连同本注记撤去）
 const FUND_NAV_HISTORY_NUM: &str = "10000";
 
 /// 新浪批量面单行（一只场外基金的最新净值行，字段错位已按形态显式分类）：
@@ -335,7 +333,6 @@ fn unexpected_batch_response(detail: impl std::fmt::Display) -> AppError {
 /// 在报文但在场不消费（口径同既有通道：单位净值即价格，累计净值不入价，
 /// ADR-0038 决策 3 / ADR-0126）。
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // #1566 单只全历史面接线前豁免（接线时连同本注记撤去）
 struct NavHistoryRow {
     #[serde(default, deserialize_with = "deserialize_flexible_string")]
     fbrq: Option<String>,
@@ -346,7 +343,6 @@ struct NavHistoryRow {
 /// 全历史面 `data` 对象：`data.data` 数组是信任锚（在场即结构可信，空数组 =
 /// 可信空），`total_num` 驱动完整性核对（字符串形态，实测 `"6010"`）。
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // #1566 单只全历史面接线前豁免（接线时连同本注记撤去）
 struct NavHistoryData {
     #[serde(rename = "data", default)]
     rows: Option<Vec<NavHistoryRow>>,
@@ -368,7 +364,6 @@ struct NavHistoryResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // #1566 单只全历史面接线前豁免（接线时连同本注记撤去）
 struct NavHistoryResult {
     #[serde(default)]
     status: Option<NavHistoryStatus>,
@@ -377,7 +372,6 @@ struct NavHistoryResult {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // #1566 单只全历史面接线前豁免（接线时连同本注记撤去）
 struct NavHistoryStatus {
     #[serde(default, deserialize_with = "deserialize_flexible_string")]
     code: Option<String>,
@@ -391,7 +385,6 @@ struct NavHistoryStatus {
 ///
 /// 行纪律：日期取 `fbrq` 的日期部分并按 ISO 校验、单位净值（`jjjz`）为正才
 /// 产出（无效行静默过滤，与日线「无效样本不中断」同姿态）。
-#[allow(dead_code)] // #1566 单只全历史面接线前豁免（接线时连同本注记撤去）
 pub(super) fn parse_fund_nav_history(body: &str) -> Result<Vec<NavPoint>> {
     let resp: NavHistoryResponse = serde_json::from_str(body).map_err(|error| {
         tracing::warn!(error = %error, head = %body_head(body), "新浪基金历史净值响应不是可信 JSON 报文");
@@ -400,9 +393,8 @@ pub(super) fn parse_fund_nav_history(body: &str) -> Result<Vec<NavPoint>> {
     parse_fund_nav_history_response(resp)
 }
 
-/// 已反序列化响应的结构纪律（与 [`parse_fund_nav_history`] 同判，供拉取入口
-/// 直接消费反序列化产物；非 JSON 报文在反序列化处已失败，由重试层处置）。
-#[allow(dead_code)] // #1566 单只全历史面接线前豁免（接线时连同本注记撤去）
+/// 已反序列化响应的结构纪律（与 [`parse_fund_nav_history`] 同判，由它取出
+/// 报文里的响应对象后委托本函数收口）。
 fn parse_fund_nav_history_response(resp: NavHistoryResponse) -> Result<Vec<NavPoint>> {
     let result = resp.result.ok_or_else(unexpected_history_response)?;
     if result
@@ -460,8 +452,12 @@ fn parse_fund_nav_history_response(resp: NavHistoryResponse) -> Result<Vec<NavPo
 
 /// 拉取一只基金的全历史单位净值。主机池由调用方传入（生产接
 /// [`SINA_FUND_HISTORY_HOSTS`]，测试注入假响应）。`datefrom` / `dateto` 为 ISO
-/// 日期窗口（None = 不限，一次请求取整只历史，含已终止基金的末点）。
-#[allow(dead_code)] // #1566 单只全历史面接线前豁免（接线时连同本注记撤去）
+/// 日期窗口（None = 不限，一次请求取整只历史，含已终止基金的末点）。两参是
+/// 端点 wire 契约的组成部分（实测请求形态携空值，fixture 钉住），当前唯一
+/// 调用方（通道束全历史闭包）恒传 None：窗口语义（首刷近两年 / 水位次日
+/// 增量）由消费方本地裁剪，不依赖服务端窗口过滤行为（issue #1566）。报文体按
+/// 原始文本取回（UTF-8 解码归重试层），解析与可信度判定收口在
+/// [`parse_fund_nav_history`]。
 pub(super) async fn fetch_fund_nav_history(
     client: &reqwest::Client,
     pacer: &mut Pacer,
@@ -478,7 +474,7 @@ pub(super) async fn fetch_fund_nav_history(
         ("page", "1"),
         ("num", FUND_NAV_HISTORY_NUM),
     ];
-    let resp: NavHistoryResponse = request_json_from_hosts(
+    let body = request_text_from_hosts(
         client,
         &params,
         FUND_NAV_HISTORY_PATH,
@@ -489,8 +485,8 @@ pub(super) async fn fetch_fund_nav_history(
         None,
     )
     .await?;
-    parse_fund_nav_history_response(resp).inspect_err(|_| {
-        // JSON 通道的网络/解码失败已在 HTTP 层补降速信号；报文形状判据在本层，
+    parse_fund_nav_history(&body).inspect_err(|_| {
+        // 文本通道的网络/解码失败已在重试层补降速信号；报文形状判据在本层，
         // 失败同样补记（文本可信度由解析层判定，先例：csrc 的区间查询）。
         pacer.record_throttled()
     })
@@ -498,13 +494,11 @@ pub(super) async fn fetch_fund_nav_history(
 
 /// 非预期全历史形状的统一错误（非 JSON / 缺结构 / 自报失败 / 截断）：退出解析
 /// 不产出半截序列。文案内部化（消费面是历史补全的回退与查询创建的失败分流）。
-#[allow(dead_code)] // #1566 单只全历史面接线前豁免（接线时连同本注记撤去）
 fn unexpected_history_response() -> AppError {
     AppError::Parse("新浪基金历史净值响应不可解析".into())
 }
 
 /// 日志用的响应头片段（截断，避免日志吞下整页 HTML）。
-#[allow(dead_code)] // #1566 单只全历史面接线前豁免（接线时连同本注记撤去）
 fn body_head(body: &str) -> String {
     body.chars().take(120).collect()
 }
