@@ -1,8 +1,8 @@
-//! 「添加投资标的」股票侧录入的领域规则（issue #697 / ADR-0081 / spec #690）：
-//! 录入通道解析（沪/深/港显式市场、美股 UI 折叠通道 → 三市场遍历）、查询阶段
-//! 编排（候选解析在先、遍历未命中继续 / 临时错误上抛）与识别落库（类型自动识别
-//! = 行情 kind_hint，经创建增强同一落库接缝）。全部离线驱动，先例：
-//! [`super::stock_lookup`] / [`super::fund_add`]。
+//! 「添加投资标的」股票侧录入的领域规则（issue #697 / ADR-0081 / spec #690；
+//! 换源 ADR-0130 决策 2 / issue #1567）：录入通道解析（沪/深/港显式市场、美股
+//! UI 折叠通道 → 聚合查询）、查询阶段编排（解析在先、单次查询）与识别落库
+//!（类型自动识别 = 行情 kind_hint，经创建增强同一落库接缝）。全部离线驱动，
+//! 先例：[`super::stock_lookup`] / [`super::fund_add`]。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -41,9 +41,9 @@ fn miss(code: &str) -> AppError {
 /// 请求轨迹句柄：共享 Rc 引用，断言时 borrow 只读访问。
 type RequestTrack = Rc<RefCell<Vec<(String, String)>>>;
 
-/// 记录请求轨迹的桩：请求（市场，代码）落在命中市场即返回命中行情，其余行情
-/// 候选一律未命中——单候选通道首请求即命中；美股通道命中前的候选按未命中继续
-/// （遍历语义随之被驱动）。请求轨迹经共享句柄带出供断言。
+/// 记录请求轨迹的桩：请求市场与命中市场全等（沪深港显式市场）或为聚合路由值
+/// `us` 且命中市场属美股三市场（行情源不区分交易所）即返回命中行情，否则未命中
+/// ——换源后查询恒单只。请求轨迹经共享句柄带出供断言。
 fn tracking_fetch(
     hit: Option<(&'static str, Quote)>,
 ) -> (
@@ -59,7 +59,11 @@ fn tracking_fetch(
                 .borrow_mut()
                 .push((market.to_string(), code.to_string()));
             match &hit {
-                Some((hit_market, quote)) if *hit_market == market => {
+                Some((hit_market, quote))
+                    if *hit_market == market
+                        || (market == "us"
+                            && matches!(*hit_market, "nasdaq" | "nyse" | "amex")) =>
+                {
                     std::future::ready(Ok(quote.clone()))
                 }
                 _ => std::future::ready(Err(miss(code))),
@@ -81,9 +85,9 @@ fn sh_sz_hk_channels_map_to_explicit_markets() {
 }
 
 #[test]
-fn us_channel_maps_to_shape_resolution_for_traversal() {
-    // 美股是 UI 折叠的通道标签（ADR-0081），落库精确交易所交由候选遍历——
-    // 通道映射为 None（按 ticker 形态遍历三市场）。
+fn us_channel_maps_to_shape_resolution_for_aggregate_query() {
+    // 美股是 UI 折叠的通道标签（ADR-0081），精确交易所由行情源自报——通道映射
+    // 为 None（按 ticker 形态解析为聚合查询，ADR-0130 决策 2）。
     assert_eq!(resolve_add_stock_channel("us").unwrap(), None);
 }
 
@@ -134,37 +138,34 @@ fn hk_channel_normalizes_code_before_fetch() {
 }
 
 #[test]
-fn us_channel_traverses_candidates_until_first_hit() {
+fn us_channel_hits_in_single_query_with_source_reported_market() {
     let (mut fetch, requests) = tracking_fetch(Some((
-        "amex",
-        hit_quote("amex", "AAPL", InstrumentType::Stock),
+        "nasdaq",
+        hit_quote("nasdaq", "AAPL", InstrumentType::Stock),
     )));
     let quote = block_on(fetch_stock_quote_for_add("us", "aapl", &mut fetch)).unwrap();
     assert_eq!(
         quote.stock_market().unwrap(),
-        "amex",
-        "落库市场取东财回显的精确交易所"
+        "nasdaq",
+        "落库市场取行情源自报的精确交易所"
     );
     assert_eq!(quote.code, "AAPL", "ticker 大写归一");
     assert_eq!(
         *requests.borrow(),
-        vec![
-            ("nasdaq".into(), "AAPL".into()),
-            ("nyse".into(), "AAPL".into()),
-            ("amex".into(), "AAPL".into()),
-        ]
+        vec![("us".into(), "AAPL".into())],
+        "一次聚合查询即命中，不必遍历三市场（ADR-0130 决策 2）"
     );
 }
 
 #[test]
-fn all_candidates_miss_surfaces_not_found() {
+fn all_miss_surfaces_not_found() {
     let (mut fetch, requests) = tracking_fetch(None);
     let err = block_on(fetch_stock_quote_for_add("us", "NOPE", &mut fetch)).unwrap_err();
     assert!(
         err.is_code("sync.stock-not-found"),
-        "全候选未命中报查无此码: {err}"
+        "查无此码显式报错: {err}"
     );
-    assert_eq!(requests.borrow().len(), 3, "美股通道三候选逐一遍历");
+    assert_eq!(requests.borrow().len(), 1, "单查询未命中即报");
 }
 
 #[test]
@@ -191,18 +192,18 @@ fn beijing_exchange_code_rejects_before_any_fetch() {
 }
 
 #[test]
-fn temporary_error_stops_traversal_immediately() {
+fn temporary_error_surfaced_immediately() {
     let requests = Rc::new(RefCell::new(Vec::new()));
     let track = Rc::clone(&requests);
     let mut fetch = move |code: &str, market: &str| {
         track
             .borrow_mut()
             .push((market.to_string(), code.to_string()));
-        std::future::ready(Err(AppError::Io("东财临时不可达".into())))
+        std::future::ready(Err(AppError::Io("行情源临时不可达".into())))
     };
     let err = block_on(fetch_stock_quote_for_add("us", "AAPL", &mut fetch)).unwrap_err();
-    assert!(matches!(err, AppError::Io(_)), "临时错误上抛不盲试");
-    assert_eq!(requests.borrow().len(), 1, "首个候选即中止，不继续遍历");
+    assert!(matches!(err, AppError::Io(_)), "临时错误原样上抛");
+    assert_eq!(requests.borrow().len(), 1);
 }
 
 // ---------------------------------------------------------------------------

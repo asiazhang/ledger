@@ -1,4 +1,5 @@
-//! 标的端点：搜索（统一模糊搜索、封顶返回）与幂等创建（含东财基金/股票增强）。
+//! 标的端点：搜索（统一模糊搜索、封顶返回）与幂等创建（含行情增强：基金经东财、
+//! 股票经腾讯行情，ADR-0130）。
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -7,7 +8,7 @@ use serde::Deserialize;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::handlers::funds::fetch_fund_quote_for_api;
-use crate::api_server::handlers::stocks::fetch_stock_quote_first_hit_for_api;
+use crate::api_server::handlers::stocks::fetch_stock_quote_for_api;
 use crate::api_server::state::{ApiState, ReadConn};
 use crate::shell_support::read_entry::read_entry;
 use crate::shell_support::write_entry::{Outcome, write_entry};
@@ -128,9 +129,9 @@ pub struct InstrumentCreateInput {
     post,
     path = "/api/v1/instruments",
     tag = "instruments",
-    summary = "创建标的（按（代码，类型）幂等 find-or-create，fund/stock 类型经东财增强）",
+    summary = "创建标的（按（代码，类型）幂等 find-or-create，fund/stock 类型经行情源增强）",
     description = "按（symbol + type）幂等 find-or-create 标的：同码同类型静默复用返回既有 id（\
-                  201 + 裸 id 字符串）；fund/stock 类型经东财校验回填权威名称与最新价，\
+                  201 + 裸 id 字符串）；fund/stock 类型经行情源校验回填权威名称与最新价，\
                   查无此码 400、临时不可达降级建行。标的解析三步法与降级细节见导入知识「投资交易」「\
                   基金申赎」节。",
     request_body = InstrumentCreateInput,
@@ -144,7 +145,7 @@ pub async fn create_instrument_handler(
     State(state): State<ApiState>,
     Json(input): Json<InstrumentCreateInput>,
 ) -> Result<(StatusCode, Json<String>), AppError> {
-    // 东财增强的往返判定（ADR-0039 决策 3 / ADR-0081 决策 2）：仅 fund + 真实 6 位代码、
+    // 行情增强的往返判定（ADR-0039 决策 3 / ADR-0081 决策 2）：仅 fund + 真实 6 位代码、
     // stock/etf + 可解析真实代码触发（场内两类型同属行情通道，类型以提交为准落库；
     // 美股 ticker 缺省按候选序遍历三市场，issue #696）；名称充代码（兜底）与其他类型
     // 不发起网络请求。stock 的路由判定收口在投资域单点（route_stock_creation）：
@@ -189,22 +190,28 @@ pub async fn create_instrument_handler(
             match route_stock_creation(input.market.as_deref(), &input.symbol) {
                 StockCreateRoute::Enhance(plan) => {
                     Some(
-                        match fetch_stock_quote_first_hit_for_api(&state, &plan.candidates).await {
-                            // 东财命中：权威名称回填 + 最新价落现价（精确市场随行情回显）。
+                        match fetch_stock_quote_for_api(
+                            &state,
+                            plan.candidate.market,
+                            &plan.candidate.code,
+                        )
+                        .await
+                        {
+                            // 行情命中：权威名称回填 + 最新价落现价（精确市场随行情自报）。
                             Ok(quote) => Enrichment::StockAuthoritative {
                                 kind: input.kind,
                                 quote,
                             },
-                            // 查无此码（含美股全候选未命中；接缝约定以 sync.stock-not-found
+                            // 查无此码（接缝约定以 sync.stock-not-found
                             // 码化 400 上抛）：显式拒绝创建，AI 可提示用户核对代码或跳过该行。
                             Err(e) if e.is_code("sync.stock-not-found") => return Err(e),
                             // 网络不可达等临时故障：降级为提交名称 + 真实代码 + 降级市场建行
-                            //（候选唯一 → 保留市场，行情恢复后价格同步仍可达；美股缺省遍历
-                            // → unknown，见 StockEnhancePlan），不阻塞导入。
+                            //（显式市场或形态可推断的沪深港 → 保留市场，行情恢复后价格同步仍
+                            // 可达；美股 ticker 缺省 → unknown，见 StockEnhancePlan），不阻塞导入。
                             Err(_) => Enrichment::StockDegrade {
                                 kind: input.kind,
                                 market: plan.degrade_market,
-                                code: plan.degrade_code,
+                                code: plan.candidate.code,
                             },
                         },
                     )
@@ -225,7 +232,7 @@ pub async fn create_instrument_handler(
         derive_quote_currency(input.market.as_deref().unwrap_or("unknown")).to_string()
     });
     // 壳层统一写入口（ADR-0073）：find-or-create 与信息更新同一写闭包，提交点置脏
-    // 与信号内化单点；东财往返已在锁外完成（阻塞网络往返不进锁，慢闭包纪律），
+    // 与信号内化单点；行情往返已在锁外完成（阻塞网络往返不进锁，慢闭包纪律），
     // 写闭包内零网络。泛型入参仅泛型分支消费，惰性构造；基金增强分支的落现价
     // 证据随闭包返回必达（映射单点判定发不发价格信号，ADR-0044）。
     let instrument_id = write_entry(
@@ -245,7 +252,7 @@ pub async fn create_instrument_handler(
                     (r.instrument_id, r.price_written)
                 }
                 Some(Enrichment::StockAuthoritative { kind, quote }) => {
-                    // 东财命中：与查询端点同一行情投影落库（权威名称回填 + 最新价落现价）。
+                    // 行情命中：与查询端点同一行情投影落库（权威名称回填 + 最新价落现价）。
                     let r = adopt_stock_quote(conn, *kind, quote)?;
                     (r.instrument_id, r.price_written)
                 }

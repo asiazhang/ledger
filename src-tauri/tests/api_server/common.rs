@@ -175,19 +175,22 @@ pub(crate) fn setup_app_with_fund_stub(
     (app, conn, calls)
 }
 
-/// 东财股票行情桩的返回形态（命中）：权威名称 / 可选（万分之一元价格，ISO 日期）/
-/// 类型提示；市场由请求路径决定（归一化后代码与精确市场由后端传入桩）。
+/// 股票行情桩的返回形态（命中）：权威名称 / 可选（万分之一元价格，ISO 日期）/
+/// 类型提示 / 精确市场。市场不可由请求路径推导（换源后美股请求市场为聚合路由值
+/// `us`，精确交易所由数据源自报）——命中行自带应答市场，与数据源行为同构。
 pub(crate) struct StockStubHit {
     pub name: &'static str,
     pub price: Option<(i64, &'static str)>,
     pub kind_hint: InstrumentType,
+    pub market: &'static str,
 }
 
-/// 构造可注入的东财股票行情桩：命中表按 `市场/代码` 键驱动（表外代码返回
+/// 构造可注入的股票行情桩：命中表按 `请求市场/代码` 键驱动（表外代码返回
 /// 「查无此码」码化中文 Invalid——与生产 `fetch_stock_quote` 未命中同形状），
 /// 并按调用顺序记录（市场， 代码）二元组（`calls`，供测试断言「未发起网络
-/// 请求」「推断与补零归一后请求了哪个市场代码」）。网络不可达等特殊形态由
-/// 测试自建闭包表达（先例 instrument_create_fund.rs 的命中/不可达切换桩）。
+/// 请求」「解析后以哪个查询单元发起请求」；美股为聚合 `us` 单键）。网络不可达
+/// 等特殊形态由测试自建闭包表达（先例 instrument_create_fund.rs 的命中/不可达
+/// 切换桩）。
 pub(crate) fn stock_fetch_stub(
     hits: std::collections::HashMap<String, StockStubHit>,
     calls: Arc<Mutex<Vec<(String, String)>>>,
@@ -203,7 +206,7 @@ pub(crate) fn stock_fetch_stub(
                 name: hit.name.to_string(),
                 price_cents: hit.price.map(|(p, _)| p),
                 price_date: hit.price.map(|(_, d)| d.to_string()),
-                market: Some(market.to_string()),
+                market: Some(hit.market.to_string()),
                 kind_hint: Some(hit.kind_hint),
                 fund_class: None,
                 nav_date: None,

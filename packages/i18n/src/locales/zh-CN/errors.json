@@ -207,7 +207,7 @@
     "type-unknown": "未知金融工具类型: {0}（合法值: {1}）",
     "sync-delete-forbidden": "同步来源标的不支持删除：名称与市场由按代码查询/创建带回权威信息维护",
     "traded-delete-forbidden": "该标的已有买卖流水，无法删除：可先删除相关交易后再试",
-    "stock-manual-forbidden": "股票类标的不支持手动创建：请用「添加投资标的」按代码查询，自动回填东财权威名称",
+    "stock-manual-forbidden": "股票类标的不支持手动创建：请用「添加投资标的」按代码查询，自动回填权威名称",
     "fund-manual-forbidden": "基金类标的不支持手动创建：请用「添加基金」输入 6 位代码自动回填",
     "fund-market-forbidden": "基金标的市场恒为未知：不能携带市场 {0}（场外基金无交易所市场概念）",
     "name-required": "标的名称不能为空",

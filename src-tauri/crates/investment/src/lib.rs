@@ -180,8 +180,8 @@ pub use staleness::{PRICE_STALE_AFTER_DAYS, PriceStaleness, instrument_price_sta
 pub use stock::{
     ResolvedStockCode, StockCreateOutcome, StockCreateRoute, StockEnhancePlan,
     add_stock_instrument_with_quote, adopt_stock_quote, create_stock_degraded,
-    derive_quote_currency, fetch_stock_quote_for_add, is_stock_lookup_miss,
-    resolve_add_stock_channel, resolve_stock_quote_candidates, route_stock_creation,
+    derive_quote_currency, fetch_stock_quote_for_add, resolve_add_stock_channel,
+    resolve_stock_code, route_stock_creation,
 };
 // 投资交易对外出口收窄为 prepare/apply/revert 三件套 + 删除路径专用 release_for_delete
 // （issue #72 / spec #69 / #940 / ADR-0097）：校验归一化（prepare）、应用副作用（apply）、

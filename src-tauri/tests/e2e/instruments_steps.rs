@@ -429,12 +429,13 @@ fn add_fund_with_stub_not_found(world: &mut LedgerWorld, code: String) {
 }
 
 // ---------------------------------------------------------------------------
-// 添加投资标的·股票通道（issue #697 / spec #690）：市场必选的录入通道 → 按代码
-// 查询 → 类型自动识别 → 创建增强回填。编排接缝与生产 IPC 命令同一组合：
-// fetch_stock_quote_for_add（锁外查询阶段）→ add_stock_instrument_with_quote
-//（识别落库阶段）；东财行情以注入桩离线驱动，桩按请求市场是否等于命中市场
-// 决定命中或未命中——美股通道命中前的候选按未命中继续（遍历语义随之被驱动），
-// 代码回显请求归一化形态（港股补零 / 美股大写，与访问层回显同构）。
+// 添加投资标的·股票通道（issue #697 / spec #690；换源 ADR-0130 决策 2 / #1567）：
+// 市场必选的录入通道 → 按代码查询 → 类型自动识别 → 创建增强回填。编排接缝与
+// 生产 IPC 命令同一组合：fetch_stock_quote_for_add（锁外查询阶段）→
+// add_stock_instrument_with_quote（识别落库阶段）；行情以注入桩离线驱动，桩按
+// 「请求市场与命中市场全等（沪深港），或为聚合 us 且命中市场属美股三市场」决定
+// 命中——与数据源行为同构（美股不区分交易所，精确市场由响应自报），代码回显
+// 请求归一化形态（港股补零 / 美股大写）。
 // ---------------------------------------------------------------------------
 
 /// 股票添加的桩驱动组合：命中市场与行情内容随参数给定；`quote_market` 为 None
@@ -483,14 +484,18 @@ async fn add_instrument_with_stub_quote(
         let quote_market = quote_market.clone();
         let name = name.clone();
         async move {
-            if market == quote_market {
+            let hit = market == quote_market
+                || (market == "us" && matches!(quote_market.as_str(), "nasdaq" | "nyse" | "amex"));
+            if hit {
                 Ok(Quote {
-                    // 代码回显请求归一化形态（与访问层回显同构：命中判定 = 回显全等）。
+                    // 代码回显请求归一化形态（与访问层回显同构：命中判定 = 回显全等）；
+                    // 市场回显命中行自报的精确市场（美股请求为聚合 us，数据源自报
+                    // nasdaq/nyse/amex，落库闭集不受聚合路由值污染）。
                     code,
                     name,
                     price_cents: Some(price_value_to_cents(price)),
                     price_date: Some("2026-09-04".to_string()),
-                    market: Some(market),
+                    market: Some(quote_market),
                     kind_hint: Some(kind),
                     fund_class: None,
                     nav_date: None,
@@ -531,7 +536,7 @@ async fn add_instrument_with_stub_temporary_failure(
     code: String,
 ) {
     let mut fetch = |_code: &str, _market: &str| async move {
-        Err(ledger_infra::error::AppError::Io("东财临时不可达".into()))
+        Err(ledger_infra::error::AppError::Io("行情源临时不可达".into()))
     };
     run_add_instrument(world, channel, code, &mut fetch).await;
 }

@@ -25,7 +25,7 @@ use crate::common::{
     setup_app_with_fund_stub, setup_app_with_stock_stub,
 };
 
-/// 通用链路的股票东财桩命中表（issue #694 起 stock 真实代码创建经东财增强，
+/// 通用链路的股票行情桩命中表（issue #694 起 stock 真实代码创建经行情增强，
 /// 全部链路测试离线驱动、不触真实网络）。
 fn generic_chain_stock_hits() -> HashMap<String, StockStubHit> {
     HashMap::from([
@@ -35,6 +35,7 @@ fn generic_chain_stock_hits() -> HashMap<String, StockStubHit> {
                 name: "贵州茅台",
                 price: Some((150000, "2026-09-04")),
                 kind_hint: InstrumentType::Stock,
+                market: "sh",
             },
         ),
         (
@@ -43,6 +44,7 @@ fn generic_chain_stock_hits() -> HashMap<String, StockStubHit> {
                 name: "招商银行",
                 price: Some((45000, "2026-09-04")),
                 kind_hint: InstrumentType::Stock,
+                market: "sh",
             },
         ),
     ])
@@ -205,7 +207,7 @@ async fn test_update_trade_to_missing_instrument_returns_400_not_500() {
 // ---------------------------------------------------------------------------
 
 /// 基金链路接线证明（ADR-0087 决策 2）：HTTP 查询 → 创建 → 批量导入 → 读回行存在；
-/// 桩注入装配证明全链路对东财的依赖仅两次（查询 + 创建校验），批量导入零网络。
+/// 桩注入装配证明全链路对行情源的依赖仅两次（查询 + 创建校验），批量导入零网络。
 #[tokio::test]
 async fn test_fund_migration_chain_lookup_create_batch_import_wired() {
     let hits = HashMap::from([(
@@ -267,12 +269,12 @@ async fn test_fund_migration_chain_lookup_create_batch_import_wired() {
 }
 
 // ---------------------------------------------------------------------------
-// 股票迁移链路（issue #694 / ADR-0081）：查询 → 创建（东财增强）→ 批量导入的
+// 股票迁移链路（issue #694 / ADR-0081）：查询 → 创建（行情增强）→ 批量导入的
 // 接线证明，与基金申赎链路对称；空标的字典账本起点，全程不依赖全量同步。
 // ---------------------------------------------------------------------------
 
 /// 股票链路接线证明（ADR-0087 决策 2）：HTTP 查询 → 创建 → 批量导入 → 读回行存在；
-/// 桩注入装配证明全链路对东财的依赖仅两次（查询 + 创建校验），批量导入零网络。
+/// 桩注入装配证明全链路对行情源的依赖仅两次（查询 + 创建校验），批量导入零网络。
 #[tokio::test]
 async fn test_stock_migration_chain_lookup_create_batch_import_wired() {
     let hits = HashMap::from([(
@@ -281,6 +283,7 @@ async fn test_stock_migration_chain_lookup_create_batch_import_wired() {
             name: "贵州茅台",
             price: Some((200000, "2026-09-04")),
             kind_hint: InstrumentType::Stock,
+            market: "sh",
         },
     )]);
     let (app, conn, calls) = setup_app_with_stock_stub(hits);

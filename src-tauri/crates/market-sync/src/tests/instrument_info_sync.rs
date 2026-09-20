@@ -21,10 +21,7 @@ use crate::channels::{
     do_incremental_sync_channels,
 };
 use crate::fund_nav::{FullSeries, NavPage, NavPoint, NavQuery};
-use crate::http::{
-    KlineBar, KlineResponse, f2_to_price, fx_secid_candidates, parse_klines, price_cents_from_raw,
-    secid_prefix,
-};
+use crate::http::{KlineBar, KlineResponse, fx_secid_candidates, parse_klines};
 use crate::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
 use crate::model::WriteWitness;
 use crate::session::ScopedSession;
@@ -108,7 +105,7 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
         log: &log,
     };
 
-    let prices = [("600519", Some(130280.0))];
+    let prices = [("600519", Some(13_028_000))];
     let mut fetch = mock_fetch(&prices);
     let mut logging_fetch = |queries: &[QuoteQuery]| {
         log.lock().unwrap().push("fetch:start");
@@ -182,24 +179,18 @@ fn query_log_line(queries: &[QuoteQuery]) -> String {
         .join(",")
 }
 
-/// 模拟批量报价：对每个查询单元生成条目。`prices` 为 code → 原始 f2
-/// （None 表示停牌/无效价；经[`price_cents_from_raw`]换算为万分之一元），
-/// 不在映射中的代码不返回（模拟查询无果）。行情日期不携带（None）——
-/// 落库走北京日内兜底，与既有断言语义一致。
+/// 模拟批量报价：对每个查询单元生成条目。`prices` 为 code → 现价
+///（万分之一元刻度；None 表示停牌/无效价），不在映射中的代码不返回
+///（模拟查询无果）。行情日期不携带（None）——落库走北京日内兜底，与既有断言语义一致。
 fn mock_fetch<'a>(
-    prices: &'a [(&'a str, Option<f64>)],
+    prices: &'a [(&'a str, Option<i64>)],
 ) -> impl FnMut(&[QuoteQuery]) -> FetchFuture<Vec<QuoteItem>> + Send + 'a {
     move |queries: &[QuoteQuery]| {
         let mut items = Vec::new();
         for query in queries {
             let code = query.code.clone();
             if let Some((_, price)) = prices.iter().find(|(c, _)| *c == query.code.as_str()) {
-                items.push(quote_item(
-                    query,
-                    &format!("名称-{code}"),
-                    price.map(|raw| price_cents_from_raw(raw, None, &query.market)),
-                    None,
-                ));
+                items.push(quote_item(query, &format!("名称-{code}"), *price, None));
             }
         }
         super::ready(Ok(items))
@@ -221,62 +212,30 @@ fn quote_item(
     }
 }
 
-/// 每查询单元一条默认报价（名称随代码、价 1000.00 元原始 f2、无精度位）：拆批与
+/// 每查询单元一条默认报价（名称随代码、价 10.00 元）：拆批与
 /// 进度用例的应答形状，避免各处重抄同一 `QuoteItem` 映射体。
 fn quote_items_for(queries: &[QuoteQuery]) -> Vec<QuoteItem> {
     queries
         .iter()
-        .map(|query| {
-            quote_item(
-                query,
-                &format!("名称-{}", query.code),
-                Some(price_cents_from_raw(1000.0, None, &query.market)),
-                None,
-            )
-        })
+        .map(|query| quote_item(query, &format!("名称-{}", query.code), Some(100_000), None))
         .collect()
 }
 
 #[test]
-fn secid_prefix_maps_known_markets() {
-    assert_eq!(secid_prefix("sh"), Some("1"));
-    assert_eq!(secid_prefix("sz"), Some("0"));
-    assert_eq!(secid_prefix("hk"), Some("116"));
-    // 美股三市场（issue #692 / ADR-0081）：纳斯达克 105 / 纽交所 106 / 美交所 107。
-    assert_eq!(secid_prefix("nasdaq"), Some("105"));
-    assert_eq!(secid_prefix("nyse"), Some("106"));
-    assert_eq!(secid_prefix("amex"), Some("107"));
-    assert_eq!(secid_prefix("unknown"), None);
-}
-
-#[test]
-fn quote_channel_derivation_matches_secid_construction() {
+fn quote_channel_derivation_matches_quote_key_construction() {
     // 价格通道收口（issue #1060）：行情通道派生（投资域单点 `derive_price_channel`）
-    // 与 secid 构造能力（同步域 `secid_prefix`）恒等——判「可行情」的市场必须恰是
-    // 可构造 secid 的市场，否则 Quote 行进不了查询（静默跳过）或无通道行混进行情分区。
+    // 与行情查询键构造能力（同步域 `tencent_query_key`，issue #1560 接线后）恒等
+    // ——判「可行情」的市场必须恰是可构造查询键的市场，否则 Quote 行进不了查询
+    //（静默跳过）或无通道行混进行情分区。
     use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
     for market in ["sh", "sz", "hk", "nasdaq", "nyse", "amex", "unknown"] {
         assert_eq!(
             derive_price_channel(InstrumentType::Stock, market, "600000", None)
                 == PriceChannel::Quote,
-            secid_prefix(market).is_some(),
-            "行情通道判定与 secid 构造能力漂移：{market}"
+            crate::tencent::tencent_query_key(market, "600000").is_some(),
+            "行情通道判定与行情查询键构造能力漂移：{market}"
         );
     }
-}
-
-/// 市场固定倍数回退换算（万分之一元，ADR-0038）：精度位缺失/越界时的回退单点
-/// （[`f2_to_price`]），与按代码查询通道共用。
-#[test]
-fn f2_to_price_scales_by_market() {
-    assert_eq!(f2_to_price(951.0, "sh"), 95100);
-    assert_eq!(f2_to_price(1700.0, "sz"), 170000);
-    assert_eq!(f2_to_price(475200.0, "hk"), 4752000);
-    assert_eq!(f2_to_price(73600.0, "hk"), 736000);
-    // 美股三市场 3 位小数刻度（ADR-0081，#695 实测钉住）。
-    assert_eq!(f2_to_price(319970.0, "nasdaq"), 3_199_700);
-    assert_eq!(f2_to_price(113240.0, "nyse"), 1_132_400);
-    assert_eq!(f2_to_price(770190.0, "amex"), 7_701_900);
 }
 
 #[test]
@@ -288,7 +247,7 @@ fn incremental_sync_normalizes_symbol_suffix() {
     insert_holding(&conn, "acc-2", "inst-hk", "00700.HK", "stock", "HKD", "hk");
 
     // mock 按响应侧裸代码（f12）返回：归一化后应能匹配并写入价格。
-    let prices = [("600519", Some(130280.0)), ("00700", Some(445400.0))];
+    let prices = [("600519", Some(13_028_000)), ("00700", Some(4_454_000))];
     let mut fetch = mock_fetch(&prices);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -323,8 +282,7 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
     insert_holding(&conn, "acc-2", "inst-b", "600002", "stock", "CNY", "sh");
 
     // 查询全部无果（如整批代码无效、响应 data:null）：不报错、全部计入跳过。
-    let prices: [(&str, Option<f64>); 0] = [];
-    let mut fetch = mock_fetch(&prices);
+    let mut fetch = mock_fetch(&[]);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
@@ -385,9 +343,9 @@ fn incremental_sync_updates_holding_prices_only() {
     .unwrap();
 
     let prices = [
-        ("600519", Some(130280.0)),
-        ("000001", Some(1173.0)),
-        ("00700", Some(445400.0)),
+        ("600519", Some(13_028_000)),
+        ("000001", Some(117_300)),
+        ("00700", Some(4_454_000)),
     ];
     let mut fetch = mock_fetch(&prices);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
@@ -456,7 +414,7 @@ fn incremental_sync_skips_holdings_without_quote_source() {
         "unknown",
     );
 
-    let prices = [("600519", Some(130280.0))];
+    let prices = [("600519", Some(13_028_000))];
     let mut fetch = mock_fetch(&prices);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -506,7 +464,7 @@ fn incremental_sync_keeps_old_price_when_suspended() {
     .unwrap();
 
     // 600519 正常价；000001 停牌（f2 无效 → None）
-    let prices = [("600519", Some(130280.0)), ("000001", None)];
+    let prices = [("600519", Some(13_028_000)), ("000001", None)];
     let mut fetch = mock_fetch(&prices);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -537,7 +495,7 @@ fn incremental_sync_counts_missing_response_as_skipped() {
     insert_holding(&conn, "acc-2", "inst-b", "600002", "stock", "CNY", "sh");
 
     // mock 只返回 600001：600002 查询无果（响应缺失）→ 计入跳过
-    let prices = [("600001", Some(1000.0))];
+    let prices = [("600001", Some(100_000))];
     let mut fetch = mock_fetch(&prices);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -566,7 +524,7 @@ fn incremental_sync_skips_unknown_market() {
         &conn, "acc-2", "inst-unk", "NVDA", "stock", "USD", "unknown",
     );
 
-    let prices = [("600519", Some(130280.0))];
+    let prices = [("600519", Some(13_028_000))];
     let mut fetch = mock_fetch(&prices);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -590,7 +548,7 @@ fn incremental_sync_is_idempotent() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
-    let prices = [("600519", Some(130280.0))];
+    let prices = [("600519", Some(13_028_000))];
     let mut fetch = mock_fetch(&prices);
     let first = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -635,7 +593,7 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
     seed_account(&conn, "acc-2", "账户-acc-2", "investment", "CNY", 0);
     insert_lot(&conn, "acc-2", "inst-sh", "CNY");
 
-    let prices = [("600519", Some(1000.0))];
+    let prices = [("600519", Some(100_000))];
     let mut fetch = mock_fetch(&prices);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -837,7 +795,7 @@ fn witness_survives_mid_run_failure_after_write() {
     // 批量报价成功（股票落现价），随后基金净值抓取失败——报价写入已 autocommit、
     // 失败回不去；见证器必须仍报告「写过」。现价与历史解耦后（issue #1377），
     // 同步中途的网络失败来自基金净值通道（日 K 已归后台补全）。
-    let prices = [("600001", Some(1000.0))];
+    let prices = [("600001", Some(100_000))];
     let mut fetch = mock_fetch(&prices);
     let mut nav = |_: &NavQuery| super::ready(Err(AppError::Io("模拟净值网络失败".into())));
     let mut witness = WriteWitness::default();
@@ -868,7 +826,7 @@ fn witness_mirrors_result_any_written_on_success() {
     // 侧一：股票有效价 → 有写入，见证器与结果统计同为真。
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-a", "600001", "stock", "CNY", "sh");
-    let prices = [("600001", Some(1000.0))];
+    let prices = [("600001", Some(100_000))];
     let mut fetch = mock_fetch(&prices);
     let mut witness = WriteWitness::default();
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
@@ -1063,7 +1021,7 @@ fn fx_rows(conn: &Connection, base: &str, quote: &str) -> Vec<(String, f64)> {
 fn sync_writes_no_price_history_quote_only() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
-    let prices = [("600519", Some(1000.0))];
+    let prices = [("600519", Some(100_000))];
     let fx_log = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&prices);
     let mut fx = mock_fx(&[], &fx_log);
@@ -1112,7 +1070,7 @@ fn sync_lands_current_week_point_for_instrument_with_existing_history() {
         EASTMONEY_PRICE_SOURCE,
     )
     .unwrap();
-    let prices = [("600519", Some(1000.0))];
+    let prices = [("600519", Some(100_000))];
     let fx_log = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&prices);
     let mut fx = mock_fx(&[], &fx_log);
@@ -1939,7 +1897,7 @@ fn incremental_sync_includes_cleared_instrument() {
     );
     clear_position(&conn, "inst-cleared");
 
-    let prices = [("600519", Some(130280.0)), ("000001", Some(1173.0))];
+    let prices = [("600519", Some(13_028_000)), ("000001", Some(117_300))];
     let mut fetch = mock_fetch(&prices);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -1971,7 +1929,7 @@ fn incremental_sync_includes_never_traded_instrument() {
     // 纯建档未交易标的：只有 instruments 行，无任何交易/批次。
     seed_instrument(&conn, "inst-archived", "600000", "浦发银行", "CNY", "sh");
 
-    let prices = [("600000", Some(1000.0))];
+    let prices = [("600000", Some(100_000))];
     let mut fetch = mock_fetch(&prices);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -2002,7 +1960,7 @@ fn incremental_sync_refreshes_names_from_quote_batch() {
         )
         .unwrap();
 
-    let prices = [("600519", Some(130280.0))];
+    let prices = [("600519", Some(13_028_000))];
     let mut fetch = mock_fetch(&prices);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -2048,7 +2006,7 @@ fn incremental_sync_skips_name_write_when_unchanged() {
         )
         .unwrap();
 
-    let prices = [("600519", Some(130280.0))];
+    let prices = [("600519", Some(13_028_000))];
     let mut fetch = mock_fetch(&prices);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -2380,7 +2338,7 @@ fn progress_denominator_counts_channel_capable_instruments_only() {
     );
 
     let requested = Mutex::new(Vec::new());
-    let mut fetch = mock_fetch(&[("600519", Some(1000.0))]);
+    let mut fetch = mock_fetch(&[("600519", Some(100_000))]);
     let fund_pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.3)])])];
     let mut nav = mock_nav(&fund_pages, &requested);
     let mut fund_name = |code: &str| super::ready(Ok(format!("权威-{code}")));
@@ -2436,7 +2394,7 @@ fn progress_advances_even_when_quote_invalid_or_missing() {
     );
 
     // 600002 停牌（None）、600003 不在响应中（查询无果）。
-    let prices = [("600001", Some(1000.0)), ("600002", None)];
+    let prices = [("600001", Some(100_000)), ("600002", None)];
     let mut fetch = mock_fetch(&prices);
     let log = Mutex::new(Vec::new());
     let mut progress = progress_recorder(&log);
@@ -2602,7 +2560,7 @@ fn page_level_detail_only_for_multi_page_fund_sync() {
 
     let pages = [("110022", vec![nav_page(2, &[("2026-01-30", 3.3)])])];
     let requested = Mutex::new(Vec::new());
-    let mut fetch = mock_fetch(&[("600001", Some(1000.0))]);
+    let mut fetch = mock_fetch(&[("600001", Some(100_000))]);
     let mut nav = mock_nav(&pages, &requested);
     let log = Mutex::new(Vec::new());
     let mut progress = |progress: SyncProgress| log.lock().unwrap().push(progress);
@@ -4076,7 +4034,7 @@ fn mixed_ledger_keeps_constant_fund_out_of_requests_denominator_and_gaps() {
     .into_iter()
     .collect();
     let mut channels = SyncFetchChannels {
-        fetch_quotes: Box::new(mock_fetch(&[("600519", Some(1000.0))])),
+        fetch_quotes: Box::new(mock_fetch(&[("600519", Some(100_000))])),
         fetch_kline: Box::new(|_| {
             Box::pin(async { unreachable!("历史日 K 已移出现价刷新编排") })
         }),
