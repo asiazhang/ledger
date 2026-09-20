@@ -50,10 +50,10 @@ use ledger_infra::error::{AppError, Result};
 use ledger_investment::predicates::INVESTED_EXISTS;
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 
-use super::channels::{FetchFuture, SyncFetchChannels};
+use super::channels::{FetchFuture, QuoteQuery, SyncFetchChannels};
 use super::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
 use super::fund_nav::{FullSeries, LsjzPage, NavQuery};
-use super::http::{KlineBar, secid_prefix};
+use super::http::KlineBar;
 use super::incremental::{
     SyncInstrument, backfill_fx_pairs, beijing_today, daily_window_opens, downsample_weekly,
     quote_code, week_monday, write_weekly_price_history,
@@ -94,10 +94,12 @@ fn week_behind(reference: Option<&str>, today: NaiveDate) -> bool {
     week_monday(today) - week_monday(reference) > chrono::Duration::days(7)
 }
 
-/// 一只标的的补全目标（通道分区的产物）：行情标的按 secid 拉日 K，基金走
-/// 历史净值通道（首刷近两年 / 水位增量；issue #1377 起本通道为后台补全专用）。
+/// 一只标的的补全目标（通道分区的产物）：行情标的走日 K 通道（查询键由通道
+/// 内部构造，issue #1556），基金走历史净值通道（首刷近两年 / 水位增量；
+/// issue #1377 起本通道为后台补全专用）。目标只分派回填单元、不携带数据源
+/// 查询键——「市场 + 代码」随标的（[`BackfillItem::instrument`]）携带。
 enum BackfillTarget {
-    Quote { secid: String },
+    Quote,
     FundNav,
 }
 
@@ -157,11 +159,12 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
         let channel = derive_price_channel(kind, &market, &symbol, constant_unit_price);
         let target = match channel {
             PriceChannel::Quote => {
-                let Some(prefix) = secid_prefix(&market) else {
-                    // 行情通道市场必已知（派生单点保证）；不可构造 secid 的形态
-                    // 保守不进队列（零请求），防御派生规则未来漂移。
-                    continue;
-                };
+                // 行情标的的「市场 + 代码」随标的携带，日 K 查询键由通道在内部
+                // 构造（issue #1556，编排不拼数据源查询键）。行情分区市场必可查：
+                // 派生单点 `derive_price_channel` 只把可构造查询键的市场判成
+                // Quote，绑定测试 `quote_channel_derivation_matches_secid_
+                // construction` 钉住这一不变量（本编排不镜像市场能力判定）；
+                // 通道侧对无法构造键的市场另有防御兼底（不发请求回空序列）。
                 let incomplete = match &latest_history {
                     None => true,
                     Some(latest) => week_behind(Some(latest), today),
@@ -169,9 +172,7 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
                 if !incomplete {
                     continue;
                 }
-                BackfillTarget::Quote {
-                    secid: format!("{prefix}.{}", quote_code(&symbol)),
-                }
+                BackfillTarget::Quote
             }
             PriceChannel::FundNav => {
                 // 首刷判据 = 磁盘上没有任何历史序列（issue #1059，与基金分区
@@ -221,14 +222,20 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
 pub(super) async fn backfill_stock_history<Q, K>(
     session: &Q,
     fetch_kline: &mut K,
-    secid: &str,
     inst: &SyncInstrument,
 ) -> Result<bool>
 where
     Q: ScopedSession,
-    K: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
+    K: FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> + Send,
 {
-    let bars = fetch_kline(secid).await?;
+    // 编排只递「市场 + 代码」查询单元（issue #1556）：数据源查询键（东财 secid）
+    // 由日 K 通道在内部构造——换源只改通道实现，本编排零改动。报价代码与批量
+    // 报价同式归一化（symbol 去市场后缀取裸代码，与响应回显形态对齐）。
+    let query = QuoteQuery {
+        market: inst.market.clone(),
+        code: quote_code(&inst.symbol).to_string(),
+    };
+    let bars = fetch_kline(&query).await?;
     let points = downsample_weekly(&bars);
     if points.is_empty() {
         return Ok(false);
@@ -355,7 +362,7 @@ pub(super) async fn run_history_backfill_round<Q, K, X, N, S, P>(
 ) -> Result<HistoryBackfillStats>
 where
     Q: ScopedSession,
-    K: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
+    K: FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> + Send,
     X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
     N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
     S: FnMut(&str) -> FetchFuture<FullSeries> + Send,
@@ -378,11 +385,9 @@ where
 
     for item in &queue {
         let result: Result<(bool, bool)> = match &item.target {
-            BackfillTarget::Quote { secid } => {
-                backfill_stock_history(session, fetch_kline, secid, &item.instrument)
-                    .await
-                    .map(|written| (written, false))
-            }
+            BackfillTarget::Quote => backfill_stock_history(session, fetch_kline, &item.instrument)
+                .await
+                .map(|written| (written, false)),
             BackfillTarget::FundNav => {
                 // 页级推进（issue #1061）：done/total 仍是标的级口径，页抓取
                 // 返回后才带出本基金的页明细；块作用域限定回调借用。
