@@ -20,7 +20,7 @@ use ledger_sync_protocol::device::device_id;
 pub const PRICE_UNITS_PER_FEN: f64 = 100.0;
 
 /// 同步价格数据来源标记常量：价格侧 source 词表与字典侧同词（ADR-0036），
-/// 与手动报价的 [`super::manual_price::MANUAL_PRICE_SOURCE`] 对称。
+/// 与人工标记 [`super::model::MANUAL_SOURCE`] 同表对称。
 ///
 /// 存量行仍为 `eastmoney`（历史事实，不重写不迁移）；换源后新写入的来源标记
 /// 按实际取数源取值——场内现价走腾讯（[`TENCENT_PRICE_SOURCE`]）、场外基金

@@ -12,7 +12,7 @@ use super::command::{
 use super::fund::{FUND_MARKET, reject_non_unknown_fund_market};
 use super::model::{
     Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
-    InstrumentType, MarketPrice, MarketPriceInput,
+    InstrumentType, MANUAL_SOURCE, MarketPrice, MarketPriceInput,
 };
 use super::predicates::INVESTED_EXISTS;
 use super::prices::{MarketPriceWrite, upsert_market_price};
@@ -116,7 +116,7 @@ pub(crate) fn write_exchange_rate(
 /// 自动采集通道的当期汇率写入（issue #1543 / ADR-0019 修订记录）：ECB 等自动
 /// 通道把最新汇率填进当期表走本入口——与手动录入、同步重放共用写入协议
 /// （[`write_exchange_rate`]，每对一行 upsert），外加**人工行保护**：既有行
-/// `source='manual'` 时整行跳过，自动写入不覆盖人工录入。返回是否实际写入
+/// 来源为 [`MANUAL_SOURCE`]（人工录入）时整行跳过，自动写入不覆盖人工录入。返回是否实际写入
 /// （跳过计 false，供调用方统计）。
 ///
 /// 自动采集按可重建缓存对待、不进同步日志（不产 op），由调用方通道保证；
@@ -137,7 +137,7 @@ pub fn upsert_auto_exchange_rate(
         )
         .ok()
         .flatten();
-    if existing_source.as_deref() == Some("manual") {
+    if existing_source.as_deref() == Some(MANUAL_SOURCE) {
         return Ok(false);
     }
     write_exchange_rate(
@@ -371,7 +371,7 @@ pub(crate) fn write_delete_instrument(conn: &Connection, id: &str) -> Result<()>
     let source = source.ok_or_else(|| {
         AppError::codedp_not_found("instrument.not-found", format!("标的 {id} 不存在"), &[id])
     })?;
-    if source != "manual" {
+    if source != MANUAL_SOURCE {
         return Err(AppError::coded(
             "instrument.sync-delete-forbidden",
             "同步来源标的不支持删除：名称与市场由按代码查询/创建带回权威信息维护",
@@ -393,7 +393,7 @@ pub(crate) fn write_delete_instrument(conn: &Connection, id: &str) -> Result<()>
 }
 
 /// 核心创建函数（手动 IPC 命令与 AI HTTP 端点共用，ADR-0037）：新建行来源标
-/// 'manual'（非同步即手动），（代码，类型）命中既有行则复用并只更新名称/市场，
+/// 记 [`MANUAL_SOURCE`]（非同步即手动），（代码，类型）命中既有行则复用并只更新名称/市场，
 /// 来源随行终身不变（issue #293 / ADR-0036 决策 2）。写入委托共享协议
 /// [`write_instrument`]，实际变化按形态产出 op（issue #861）——新建 →
 /// Create op；复用改名/改市场 → Update op；无变化复用不产出（op 是本机数据
@@ -492,7 +492,7 @@ pub(crate) fn write_instrument(
     let now = now_iso();
     conn.execute(
         "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'manual')",
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
         rusqlite::params![
             insert_id,
             row.symbol,
@@ -503,7 +503,8 @@ pub(crate) fn write_instrument(
             now,
             now,
             1,
-            device_id(conn)?
+            device_id(conn)?,
+            MANUAL_SOURCE
         ],
     )?;
     Ok((insert_id.to_string(), InstrumentWrite::Created))

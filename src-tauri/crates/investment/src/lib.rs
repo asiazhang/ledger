@@ -50,7 +50,8 @@
 //!   与全账级），现金流、区间期初市值、空值与无解口径见模块头注；
 //! - [`model`]：域集中模型——全量投资类型与财务自由度总览（#422 模型域化随域
 //!   归位），经本入口逐类型再导出（禁止 glob）；行情 DTO 已随 ADR-0103 收口为
-//!   [`quote`] 模块的统一载荷；
+//!   [`quote`] 模块的统一载荷；来源词表「人工」标记 `MANUAL_SOURCE`（issue
+//!   #1587，字典侧与价格侧跨实体共用）同址声明；
 //! - [`overview`]：投资概览读数（InvestmentOverview，spec #1532 / issue #1536）——
 //!   投资页「概览」页签的全页折本位币单值：可投资资产合计 + 现金 / 持仓两腿 +
 //!   缺价持仓计数（只增读投影，口径归财务自由度两腿单点；ADR-0131）；
@@ -135,7 +136,8 @@ pub mod unwind;
 /// 域集中模型（#422 模型域化随域归位，样板先例：`reports::model`）：全量投资
 /// 类型与财务自由度类型（自由度归投资域，ADR-0048 既有裁决）集中本文件，经
 /// 域路径逐类型再导出（禁止 glob），消费方经域路径显式 import。行情 DTO 已随
-/// ADR-0103 收口为 [`quote`] 模块的统一载荷。
+/// ADR-0103 收口为 [`quote`] 模块的统一载荷；来源词表「人工」标记
+/// [`MANUAL_SOURCE`]（issue #1587）为跨实体共用的常量声明，同址本文件。
 mod model;
 
 pub use model::{
@@ -143,7 +145,7 @@ pub use model::{
     CurrencyHoldingTotals, CurrencyPnl, FinancialFreedomOverview, Holding, Instrument,
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPnl,
     InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, InvestmentOverview,
-    ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter,
+    MANUAL_SOURCE, ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter,
     PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary,
     TransactionConvert, TransactionSplit, TransactionTrade, TrendRange, YearPnl,
 };

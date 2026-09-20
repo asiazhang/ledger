@@ -25,6 +25,8 @@
 use chrono::{Datelike, Duration, NaiveDate};
 use rusqlite::Connection;
 
+use ledger_investment::MANUAL_SOURCE;
+
 use super::generate::date_millis;
 use super::generate::{DEVICE_ID, GenCounts, Window};
 use super::rng::{Rng, time_ordered_id};
@@ -223,7 +225,7 @@ pub(crate) const INSTRUMENTS: [InstrumentSpec; INSTRUMENT_TOTAL] = [
         name: "易方达蓝筹精选",
         ccy: "CNY",
         market: "unknown",
-        source: "manual",
+        source: MANUAL_SOURCE,
         base_price: 25_000,
     },
     InstrumentSpec {
@@ -232,7 +234,7 @@ pub(crate) const INSTRUMENTS: [InstrumentSpec; INSTRUMENT_TOTAL] = [
         name: "中欧医疗健康",
         ccy: "CNY",
         market: "unknown",
-        source: "manual",
+        source: MANUAL_SOURCE,
         base_price: 18_000,
     },
     InstrumentSpec {
@@ -241,7 +243,7 @@ pub(crate) const INSTRUMENTS: [InstrumentSpec; INSTRUMENT_TOTAL] = [
         name: "天弘沪深300ETF联接A",
         ccy: "CNY",
         market: "unknown",
-        source: "manual",
+        source: MANUAL_SOURCE,
         base_price: 15_000,
     },
 ];
