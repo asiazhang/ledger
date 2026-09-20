@@ -81,7 +81,7 @@ export interface PriceStaleness {
  * `investment_overview` 命令返回的投资概览读数（spec #1532 / issue #1536）：
  * 投资页「概览」页签的唯一取数接缝——全页折全局默认币种单值，前端只装配数值，
  * 不做任何折算或分组（口径与折算单点在后端投资域；与持仓视图「按账户币种分组、
- * 不跨币种合并」的分工见 ADR-0130）。金额单位：分。
+ * 不跨币种合并」的分工见 ADR-0131）。金额单位：分。
  */
 export interface InvestmentOverview {
   /** 折算基准币种（全局默认币种）——本页全部金额的币种标注来源 */

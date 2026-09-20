@@ -739,7 +739,7 @@ pub struct FinancialFreedomOverview {
 ///
 /// 投资页「概览」页签的唯一取数接缝：前端只装配数值，不出现第二份口径表达式
 /// （折算、两腿相加与缺价计数全在本域单点，见 [`super::overview`]）。
-/// 口径与持仓视图「按账户币种分组、不跨币种合并」的分工见 ADR-0130。
+/// 口径与持仓视图「按账户币种分组、不跨币种合并」的分工见 ADR-0131。
 #[derive(Debug, Clone, Serialize)]
 pub struct InvestmentOverview {
     /// 折算基准币种（全局默认币种）——本页全部金额的币种标注来源

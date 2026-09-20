@@ -17,10 +17,10 @@ import { useInvestmentOverview } from "@/investment/useInvestmentOverview";
  * 口径说明。缺料状态显式可见：缺现价持仓按既有空值语义跳过但给出未计入数量
  * 说明；没有投资账户时数字照常显示 0 并给一句引导——不隐藏功能、不以零虚增。
  *
- * 口径与折算全在后端单点（`investment_overview`，ADR-0130：全页折本位币单值；
+ * 口径与折算全在后端单点（`investment_overview`，ADR-0131：全页折本位币单值；
  * 与持仓视图「按账户币种分组、不跨币种合并」分工）：本组件只做装配与格式化。
  * 合计三项沿用既有标签（概念键同名），币种口径差异由概念说明的概览 scope 变体
- * 句承担（ADR-0130 决策 3 / ADR-0129 先例），不另造标签。
+ * 句承担（ADR-0131 决策 3 / ADR-0129 先例），不另造标签。
  */
 const reference = useReferenceStore();
 const { data, loading, error, refresh } = useInvestmentOverview();

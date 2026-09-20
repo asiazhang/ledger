@@ -49,7 +49,7 @@ impl FromRow for HoldingValue {
 
 /// 持仓腿取数面（软删与隐藏账户一律排除）：可投资资产·持仓市值腿与其
 /// 「未计入持仓数」（投资概览，[`super::overview`]）共用同一 FROM/WHERE 片段
-/// ——计数面与合计面同源不漂移（ADR-0130 决策 4：口径表达式不复制）。
+/// ——计数面与合计面同源不漂移（ADR-0131 决策 4：口径表达式不复制）。
 pub(crate) const HOLDINGS_VISIBLE_FACET: &str = "FROM v_holdings h \
      JOIN accounts a ON a.id = h.account_id \
      WHERE a.is_deleted=0 AND a.is_hidden=0";
@@ -76,7 +76,7 @@ pub fn query_investable_assets_cash_leg_cents(conn: &Connection) -> Result<i64> 
 /// （[`HOLDINGS_VISIBLE_FACET`]，软删与隐藏账户一律排除）、NULL 按空值语义
 /// 跳过、逐行折全局默认币种（缺折算到本位币的汇率时错误上抛，码化
 /// `fx.rate-missing`，不静默混币种）。列名是本 crate 内调用方传入的字面量，
-/// 非外部输入（ADR-0130 决策 4：口径表达式不复制，计数与合计同源不漂移）。
+/// 非外部输入（ADR-0131 决策 4：口径表达式不复制，计数与合计同源不漂移）。
 pub(crate) fn sum_holdings_facet_column_cents(conn: &Connection, column: &str) -> Result<i64> {
     let sql = format!("SELECT h.{column}, a.currency_code {HOLDINGS_VISIBLE_FACET}");
     let holdings: Vec<HoldingValue> = query_all(conn, &sql, [])?;

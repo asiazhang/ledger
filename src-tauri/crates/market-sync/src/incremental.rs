@@ -19,7 +19,8 @@
 //! 退役，issue #698）。
 //!
 //! 编排与网络解耦：核心流程 [`do_incremental_sync_with`] 接受注入的批量报价 / 日 K /
-//! 汇率 K 三个闭包（同一签名 `&str → Result<Vec<_>>`）、历史净值页闭包
+//! 汇率 K 三个闭包（日 K / 汇率 K 同签名 `&str → Result<Vec<_>>`；批量报价收
+//! [「市场 + 代码」查询单元](QuoteQuery)，issue #1555）、历史净值页闭包
 //!（[`NavQuery`] → [`LsjzPage`]）、基金名称闭包（`&str → Result<String>`）与进度回调
 //! 闭包（`done, total`，issue #897），测试以 mock 数据驱动（不依赖真实网络）；
 //! 生产经 [`super::channels`] 的通道束接 HTTP 层（复用主机池/重试/限流 pacer
@@ -56,15 +57,15 @@ use ledger_investment::prices::{
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 use ledger_transaction::amount::default_currency_code;
 
-use super::channels::FetchFuture;
+use super::channels::{FetchFuture, QuoteQuery};
 use super::fund_nav::{LsjzPage, NavQuery};
 use super::fund_price_refresh::{FundSyncStats, refresh_one_fund_price};
-use super::http::{KlineBar, StockItem, ULIST_BATCH_SIZE, price_cents_from_raw, secid_prefix};
+use super::http::{KlineBar, StockItem, ULIST_BATCH_SIZE, price_cents_from_raw};
 use super::persist::upsert_fx_rate_history;
 use super::progress::{FundNavProgress, SyncProgress};
 use super::session::ScopedSession;
 
-/// 持仓股票的报价代码：东财 secid 与响应 f12 均为裸代码（如 600519 / 00700）。
+/// 持仓股票的报价代码：数据源响应 f12 与查询单元的代码均为裸代码（如 600519 / 00700）。
 /// 字典 symbol 可能带市场后缀（schema 注释示例格式如 "600519.SH"），取点号前段归一化。
 pub(super) fn quote_code(symbol: &str) -> &str {
     symbol.split('.').next().unwrap_or(symbol)
@@ -223,7 +224,8 @@ async fn take_bulk_surface<T: BulkCoverage>(
 }
 
 /// 标的信息同步核心流程（ADR-0122 / issue #1377 起只刷现价）：单次收集库内全部
-/// 标的并按通道分区 → 行情分区（stock|etf，#695）构造 secid 批量报价 upsert 现价
+/// 标的并按通道分区 → 行情分区（stock|etf，#695）递「市场 + 代码」查询单元批量报价
+///（查询键由通道内部构造，issue #1555）upsert 现价
 ///（换算按随行精度位单点）、名称随行刷新、有历史序列者由现价刷新直落当周采样点
 ///（不另发逐只请求）；汇率 K 线同期落 `fx_rate_history` → 基金侧先取两个批量取
 /// 数面（ADR-0121，未命中 / 失败 / 停用一律回退逐标的短窗），逐只刷新现价与名称
@@ -272,7 +274,7 @@ where
     // 作用域会话接缝（issue #1275 / #1412 async 形态）：读写库的唯一通道，
     // 签名层面取不到连接。
     Q: ScopedSession,
-    F: FnMut(&str) -> FetchFuture<Vec<StockItem>> + Send,
+    F: FnMut(&[QuoteQuery]) -> FetchFuture<Vec<StockItem>> + Send,
     X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
     N: FnMut(&NavQuery) -> FetchFuture<LsjzPage> + Send,
     // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
@@ -286,7 +288,7 @@ where
     let held = session.with_connection(collect_instruments).await?;
     // 单次收集库内全部标的（一条 SQL，无持仓前置，issue #827），按投资域派生的
     // 价格通道分区（issue #1060，判定单点 `derive_price_channel`）：行情分区
-    // 构造 secid 查报价与日 K；净值分区（fund 且 6 位真实代码，ADR-0038 决策 6）
+    // 递「市场 + 代码」查报价与日 K；净值分区（fund 且 6 位真实代码，ADR-0038 决策 6）
     // 走历史净值通道；其余（恒定价格通道行：ADR-0126 决策 4 采集链路全豁免、
     // 批量面结构上也不覆盖它，#1451；手动报价通道与无来源行：债券/其他、市场
     // 未知自建行、名称充代码基金行等）计入跳过统计——各类统计天然同源。
@@ -319,21 +321,22 @@ where
         });
     }
 
-    // 构造可查询 secid 与报价代码 → 行情分区标的 映射。键为报价代码（已归一化，
-    // 与响应 f12 对齐）；行情分区内 symbol 唯一（instruments 的
-    // UNIQUE(symbol, instrument_type)），同代码不冲突。
-    // 市场未知（unknown）无法构造 secid，计入跳过。
+    // 构造行情批量报价的查询单元（「市场 + 代码」，issue #1555）：编排不拼数据源
+    // 查询键，键由报价通道内部构造。报价代码已归一化、与响应 f12 对齐；行情分区内
+    // symbol 唯一（instruments 的 UNIQUE(symbol, instrument_type)），同代码不冲突。
+    // 行情分区市场必可查：派生单点 `derive_price_channel` 只把 `quote_market` 的市场
+    // 判成 Quote，绑定测试 `quote_channel_derivation_matches_secid_construction` 钉住
+    // 这一不变量（同步域不再镜像市场能力判定，ADR-0103 / issue #1060 同款）；通道侧
+    // 对无法构造键的市场另有防御兼底（不进请求）。
     let mut meta: HashMap<String, &SyncInstrument> = HashMap::new();
-    let mut queryable: Vec<(String, &SyncInstrument)> = Vec::new();
-    let mut skipped_unqueryable = 0usize;
+    let mut queryable: Vec<QuoteQuery> = Vec::new();
     for inst in &quote_channel {
-        if let Some(prefix) = secid_prefix(&inst.market) {
-            let code = quote_code(&inst.symbol);
-            meta.insert(code.to_string(), inst);
-            queryable.push((format!("{prefix}.{code}"), inst));
-        } else {
-            skipped_unqueryable += 1;
-        }
+        let code = quote_code(&inst.symbol);
+        meta.insert(code.to_string(), inst);
+        queryable.push(QuoteQuery {
+            market: inst.market.clone(),
+            code: code.to_string(),
+        });
     }
 
     // 进度分母（issue #897 / ADR-0095）：有通道标的数 = 行情分区标的 + 净值分区
@@ -354,10 +357,11 @@ where
     let mut synced_codes: HashSet<String> = HashSet::new();
     let mut renamed = 0usize;
     for chunk in queryable.chunks(ULIST_BATCH_SIZE) {
-        let secids: Vec<&str> = chunk.iter().map(|(secid, _)| secid.as_str()).collect();
         // 批量报价是网络请求，在会话之外（await，issue #1412）；响应落库（名称
         // 随行刷新 + 现价 upsert）才短暂取一次连接（issue #1275）。
-        let items = fetch(&secids.join(",")).await?;
+        // 查询键（数据源 secid）由通道内部构造（issue #1555），编排只递
+        // 「市场 + 代码」。
+        let items = fetch(chunk).await?;
         for item in &items {
             if let Some(inst) = meta.get(&item.code) {
                 // 落库作业（门面作业形态，Send + 'static）：编现场的见证器 / 计数器
@@ -558,7 +562,7 @@ where
     // 无通道行（手动报价通道与无来源：债券/其他、市场未知自建行、名称充代码基金行）
     // 与恒定价格行（不进收集面，ADR-0126 决策 4）、停牌/查询无果/首刷查无净值等
     // 一并计入跳过。
-    let skipped = uncollected + skipped_unqueryable + invalid + fund_stats.skipped;
+    let skipped = uncollected + invalid + fund_stats.skipped;
     // 实际写入 = 股票有效价 + 基金实际落库净值（基金「已是最新」不算写入）。
     let written = synced_codes.len() + fund_stats.written;
     // 取数面统计收尾（ADR-0121 决策 3）：缺口与失败在统计上分开——缺口（批量面
