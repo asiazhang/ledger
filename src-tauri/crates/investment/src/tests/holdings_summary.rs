@@ -13,7 +13,9 @@ use ledger_transaction::{TransactionInput, create_transaction_internal};
 
 use super::super::*;
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
+use tauri_app_lib::test_support::{
+    open, seed_account, seed_exchange_rate, seed_fx_history_weeks, seed_instrument,
+};
 
 /// 币种显式的买入输入构造器（`make_buy_input` 固定 USD，多币种账户按守卫要求
 /// 交易币种与账户币种一致，故多币种场景各自构造）。
@@ -84,8 +86,9 @@ fn holdings_summary_groups_by_account_currency() {
     // USD 账户：买 2 @ 50，现价 60 → 市值 12_000 分、未实现 2_000 分。
     seed_account(&conn, "acc-usd", "美股账户", "investment", "USD", 0);
     seed_instrument(&conn, "inst-usd", "AAPL", "Apple", "USD", "nasdaq");
-    // 买入写入的行金额归一需要 USD→CNY 当期汇率（与读无关，v_holdings 金额已是账户币）。
-    seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+    // 买入写入的行金额归一需要交易周（2026-01-10 所属周）的 USD→CNY 汇率历史点
+    //（#1547 写路径按交易日取数；与读无关，v_holdings 金额已是账户币）。
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.0, &["2026-01-10"]);
     create_transaction_internal(
         &conn,
         make_buy_input_in("acc-usd", "inst-usd", 2.0, 500_000, 0, "USD"),
@@ -132,7 +135,7 @@ fn holdings_summary_skips_null_values() {
     // 全空组：只有缺价持仓的币种不出现分组（USD 买入需汇率，读侧不影响）。
     seed_account(&conn, "acc-b", "账户B", "investment", "USD", 0);
     seed_instrument(&conn, "inst-bare2", "BARE2", "缺价标的2", "USD", "nasdaq");
-    seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.0, &["2026-01-10"]);
     create_transaction_internal(
         &conn,
         make_buy_input_in("acc-b", "inst-bare2", 1.0, 100_000, 0, "USD"),

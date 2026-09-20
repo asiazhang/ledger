@@ -19,8 +19,8 @@ use super::super::mwr::xirr;
 use super::super::*;
 use super::common::*;
 use tauri_app_lib::test_support::{
-    open, seed_account, seed_exchange_rate, seed_fx_rate_history, seed_instrument,
-    seed_price_history,
+    open, seed_account, seed_exchange_rate, seed_fx_history_weeks, seed_fx_rate_history,
+    seed_instrument, seed_price_history,
 };
 
 /// 测试锚定「今天」：默认口径的期末现金流落在本日（2026-01-01 起整一年的
@@ -477,7 +477,8 @@ fn mwr_groups_ledger_total_by_currency_without_mixing() {
     let conn = open();
     seed_account(&conn, "acc-us", "美股户", "investment", "USD", 0);
     seed_account(&conn, "acc-cn", "A 股户", "investment", "CNY", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    // USD 买入写入按交易日取数（#1547）：2026-01-01 所属周（周一 2025-12-29）的历史点。
+    seed_fx_history_weeks(&conn, "USD", "CNY", 1.0, &["2026-01-01"]);
     seed_instrument(&conn, "inst-us", "AAPL", "Apple", "USD", "unknown");
     seed_instrument(&conn, "inst-cn", "600519", "贵州茅台", "CNY", "unknown");
     create_transaction_internal(
@@ -1153,7 +1154,8 @@ fn mwr_currency_groups_flip_basis_independently() {
     let conn = open();
     seed_account(&conn, "acc-oc", "雪球基金", "investment", "CNY", 0);
     seed_account(&conn, "acc-uc", "美股户", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    // USD 买入写入按交易日取数（#1547）：2026-01-01 所属周的历史点。
+    seed_fx_history_weeks(&conn, "USD", "CNY", 1.0, &["2026-01-01"]);
     seed_instrument(
         &conn,
         "inst-oc",

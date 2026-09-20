@@ -242,7 +242,10 @@ fn subscription_projected_spend_converts_and_requires_rate() {
 fn subscription_spend_uses_native_amounts_from_transactions() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0);
+    // 当期行服务花费读侧预估折算；期次写入按交易日取数（#1547），另种
+    // 期次日期 2026-01-15 所属周（周一 2026-01-12）的历史点。
     test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    test_support::seed_fx_rate_history(&conn, "fxh-spend", "USD", "CNY", "2026-01-12", 7.2);
     let plan_id = create_subscription(&conn, "acc-usd", "USD", 10000, Some("国际订阅"));
     execute_first_n_occurrences(&conn, &plan_id, 1);
 

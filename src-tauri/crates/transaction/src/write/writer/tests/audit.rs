@@ -136,8 +136,9 @@ fn update_transaction_internal_preserves_created_at_and_refreshes_audit() {
 fn create_transaction_internal_generic_converts_native_via_amount_seam() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-usd", "美元", "cash", "USD", 0);
-    // 汇率行经工厂种子（行 id 由货币对派生，priced_at 由工厂发放，测试不读该列）。
-    test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    // #1547 起写路径按交易日取数：只种交易周（2026-01-01 所属周，周一 2025-12-29）
+    // 的汇率历史点，不种当期行——改回当期入口本测试即红。
+    test_support::seed_fx_rate_history(&conn, "fxh-w", "USD", "CNY", "2025-12-29", 7.2);
 
     let id = create_transaction_internal(
         &conn,

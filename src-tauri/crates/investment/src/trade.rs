@@ -304,10 +304,14 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         &account_currency,
     )?;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
-    // 与通用 kind / 定时引擎共用同一折算路径（当期入口 convert_to_native_current，
-    // 基准为默认币种；写路径改接按交易日入口随 #1547 统一做）。
-    let amount_native_cents =
-        amount::convert_to_native_current(conn, amount_cents, &account_currency)?;
+    // 与通用 kind / 定时引擎共用同一折算路径（按交易日入口 convert_to_native_on_trade_date，
+    // #1547：按交易所属 ISO 周命中汇率历史，基准为默认币种）。
+    let amount_native_cents = amount::convert_to_native_on_trade_date(
+        conn,
+        amount_cents,
+        &account_currency,
+        &input.date,
+    )?;
 
     Ok(BuyPlan {
         normalized: NormalizedTransaction {
@@ -432,10 +436,14 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         &account_currency,
     )?;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
-    // 与通用 kind / 定时引擎共用同一折算路径（当期入口 convert_to_native_current，
-    // 基准为默认币种；写路径改接按交易日入口随 #1547 统一做）。
-    let amount_native_cents =
-        amount::convert_to_native_current(conn, amount_cents, &account_currency)?;
+    // 与通用 kind / 定时引擎共用同一折算路径（按交易日入口 convert_to_native_on_trade_date，
+    // #1547：按交易所属 ISO 周命中汇率历史，基准为默认币种）。
+    let amount_native_cents = amount::convert_to_native_on_trade_date(
+        conn,
+        amount_cents,
+        &account_currency,
+        &input.date,
+    )?;
 
     // 取批次 → 分摊（含「可卖出数量不足」守卫）两步单点算定消耗规划：apply 只落盘。
     let active_lots = lots::active_lots(conn, &input.account_id, &instrument_id)?;
@@ -591,8 +599,13 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
     let active_lots = lots::active_lots(conn, &input.account_id, &instrument_id)?;
     let consumed = lots::plan(conn, &active_lots, quantity)?;
     let carried_cost_cents = lots::total_cost(&consumed);
-    let amount_native_cents =
-        amount::convert_to_native_current(conn, carried_cost_cents, &account_currency)?;
+    // 按交易日入口折算（#1547）：结转成本按交易所属 ISO 周的汇率历史折算。
+    let amount_native_cents = amount::convert_to_native_on_trade_date(
+        conn,
+        carried_cost_cents,
+        &account_currency,
+        &input.date,
+    )?;
 
     Ok(ConvertPlan {
         normalized: NormalizedTransaction {
@@ -888,8 +901,13 @@ fn prepare_dividend(conn: &Connection, input: &TransactionInput) -> Result<Divid
         input.funding_account_id.as_deref(),
         &account_currency,
     )?;
-    let amount_native_cents =
-        amount::convert_to_native_current(conn, input.amount_cents, &account_currency)?;
+    // 按交易日入口折算（#1547）：分红现金腿按交易所属 ISO 周的汇率历史折算。
+    let amount_native_cents = amount::convert_to_native_on_trade_date(
+        conn,
+        input.amount_cents,
+        &account_currency,
+        &input.date,
+    )?;
     Ok(DividendPlan {
         normalized: NormalizedTransaction {
             kind: TransactionKind::Dividend,

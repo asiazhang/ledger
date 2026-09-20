@@ -47,11 +47,14 @@ fn legacy_foreign_txn(
 ) {
     assert!(amount > 0, "存量外币交易金额须为正（汇率综合需要）");
     let account_id = world.account_id(&account_name);
-    create_exchange_rate_verb(
+    let synthesized_rate = native_amount as f64 / amount as f64;
+    create_exchange_rate_verb(world, &currency, "CNY", synthesized_rate, &date);
+    // 交易写入按交易日取数（#1547）：另种交易周历史点（同一综合汇率）。
+    crate::step_verbs::seed_fx_history_series_verb(
         world,
         &currency,
         "CNY",
-        native_amount as f64 / amount as f64,
+        synthesized_rate,
         &date,
     );
     let input = TransactionInput {

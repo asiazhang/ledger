@@ -13,7 +13,7 @@ use ledger_transaction::{
 
 use super::super::*;
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
+use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
 
 /// 种入标的当前行情（现价缓存单行，`v_holdings` 据此算市值与未实现盈亏）。
 /// `market_prices` 不在种子工厂登记处，故按既有投资域测试先例裸插（形状见 trade 测试）。
@@ -77,7 +77,13 @@ fn legs_of(conn: &rusqlite::Connection) -> (i64, i64) {
 fn cumulative_pnl_equals_unrealized_plus_realized_after_partial_sell() {
     let conn = open();
     seed_account(&conn, "acc-cp", "美股账户", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-cp", "AAPL", "Apple", "USD", "unknown");
 
     // 买 10 @100 元、卖 5 @120 元（费 2 元）→ 已实现 98 元 = 9800 分。
@@ -108,7 +114,13 @@ fn cumulative_pnl_equals_unrealized_plus_realized_after_partial_sell() {
 fn cumulative_pnl_after_full_liquidation_equals_realized() {
     let conn = open();
     seed_account(&conn, "acc-cp", "美股账户", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-cp", "AAPL", "Apple", "USD", "unknown");
 
     create_transaction_internal(
@@ -139,7 +151,13 @@ fn cumulative_pnl_groups_by_currency_without_mixing() {
     let conn = open();
     seed_account(&conn, "acc-usd", "美股账户", "investment", "USD", 0);
     seed_account(&conn, "acc-cny", "A 股账户", "investment", "CNY", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-usd", "USDX", "USDX Corp", "USD", "unknown");
     seed_instrument(&conn, "inst-cny", "CNYX", "CNYX Corp", "CNY", "unknown");
 
@@ -182,7 +200,13 @@ fn cumulative_pnl_skips_holding_without_price() {
     // 缺价持仓采 Holding 侧空值语义：未实现腿为空 → 不计入、不以零计入。
     let conn = open();
     seed_account(&conn, "acc-nop", "美股账户", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-nop", "AAPL", "Apple", "USD", "unknown");
     create_transaction_internal(
         &conn,
@@ -204,7 +228,13 @@ fn cumulative_pnl_skips_holding_without_fx_rate() {
     let conn = open();
     seed_account(&conn, "acc-fx", "美股账户", "investment", "USD", 0);
     // 建仓流水的本位币折算走 USD→CNY；与 JPY 报价腿无关。
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-fx", "7203", "Toyota", "JPY", "unknown");
     create_transaction_internal(
         &conn,
@@ -299,7 +329,13 @@ fn cumulative_pnl_includes_dividend_as_third_leg() {
     // 已实现盈亏 + 累计分红；分红不摊薄成本——未实现 / 已实现两腿逐位不变。
     let conn = open();
     seed_account(&conn, "acc-dv", "美股账户", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-dv", "AAPL", "Apple", "USD", "unknown");
 
     create_transaction_internal(
@@ -342,7 +378,13 @@ fn cumulative_pnl_dividend_leg_survives_missing_price() {
     // 分红腿独立让该币种分组出现，且金额精确。
     let conn = open();
     seed_account(&conn, "acc-dvp", "美股账户", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-dvp", "AAPL", "Apple", "USD", "unknown");
 
     create_transaction_internal(
@@ -463,7 +505,13 @@ fn cumulative_pnl_dividend_groups_by_currency_without_mixing() {
     let conn = open();
     seed_account(&conn, "acc-dv-usd", "美股账户", "investment", "USD", 0);
     seed_account(&conn, "acc-dv-cny", "A 股账户", "investment", "CNY", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-dv-usd", "USDX", "USDX Corp", "USD", "unknown");
     seed_instrument(&conn, "inst-dv-cny", "CNYX", "CNYX Corp", "CNY", "unknown");
 

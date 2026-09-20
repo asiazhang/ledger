@@ -32,7 +32,9 @@ use ledger_investment::prices::{MarketPriceWrite, upsert_market_price};
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::{TransactionInput, create_transaction_internal};
 use tauri_app_lib::commands::investment::investment_overview;
-use tauri_app_lib::test_support::{seed_account, seed_exchange_rate, seed_instrument};
+use tauri_app_lib::test_support::{
+    seed_account, seed_exchange_rate, seed_fx_history_weeks, seed_instrument,
+};
 
 /// mock 应用 + 独立临时目录文件库（`readonly_connection` / `instrument_sync`
 /// 同款现场：产品建连缝 + 交易域接缝接线，本位币读取钩子随此装入）。
@@ -248,6 +250,14 @@ async fn investment_overview_totals_fold_realized_and_dividends() {
         seed_account(&guard, "acc-usd", "美股券商", "investment", "USD", 0);
         seed_instrument(&guard, "inst-x", "XX", "标的X", "USD", "nasdaq");
         seed_exchange_rate(&guard, "USD", "CNY", 7.0);
+        // 写入按交易日取数（#1547）：另种交易周（工厂日期）历史点；当期行服务概览读侧折算
+        seed_fx_history_weeks(
+            &guard,
+            "USD",
+            "CNY",
+            7.0,
+            &["2026-01-10", "2026-01-20", "2026-02-10"],
+        );
         ledger_accounts::balance::refresh_all_account_balances(&guard).expect("余额缓存应可回填");
         // 买 2 股 @ $100 → 卖 1 股 @ $120（已实现 +$20）→ 分红 $30；现价 $150 →
         // 余 1 股成本 $100：市值 $150、未实现 +$50。
@@ -296,6 +306,14 @@ async fn investment_overview_folds_multi_currency_and_excludes_hidden() {
         );
         seed_instrument(&guard, "inst-hid", "HID", "隐藏标的", "USD", "nasdaq");
         seed_exchange_rate(&guard, "USD", "CNY", 7.0);
+        // 写入按交易日取数（#1547）：另种交易周（工厂日期）历史点；当期行服务概览读侧折算
+        seed_fx_history_weeks(
+            &guard,
+            "USD",
+            "CNY",
+            7.0,
+            &["2026-01-10", "2026-01-20", "2026-02-10"],
+        );
         ledger_accounts::balance::refresh_all_account_balances(&guard).expect("余额缓存应可回填");
         // 隐藏账户里的持仓（市值 2 × 150 美元 = 30000 美分）与现金一并不计入。
         create_transaction_internal(

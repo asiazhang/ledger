@@ -20,7 +20,8 @@ use tauri_app_lib::test_support;
 fn execute_occurrence_converts_non_default_currency_to_native() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0);
-    test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    // #1547 写路径按交易日取数：期次日期 2026-01-15 所属周（周一 2026-01-12）的历史点。
+    test_support::seed_fx_rate_history(&conn, "fxh-occ", "USD", "CNY", "2026-01-12", 7.2);
     let plan_id = create_subscription(&conn, "acc-usd", "USD", 10000, Some("国际订阅"));
     let occ_id = first_pending_occurrence(&conn, &plan_id);
 
@@ -32,7 +33,7 @@ fn execute_occurrence_converts_non_default_currency_to_native() {
     assert_eq!(txn.currency_code, "USD");
     assert_eq!(
         txn.amount_native_cents, 72000,
-        "本位币金额应经 convert_to_native_current 折算"
+        "本位币金额应经 convert_to_native_on_trade_date 按交易日折算"
     );
     assert_eq!(txn.account_id, "acc-usd");
     assert_eq!(txn.to_account_id, None);
@@ -56,8 +57,8 @@ fn execute_occurrence_errors_without_rate_for_non_default_currency() {
     let (status, backfilled) = occurrence_status(&conn, &occ_id);
     assert_eq!(status, "pending", "期次不应滞留 processing");
     assert_eq!(backfilled, None, "失败不应回填交易 id");
-    // 补录汇率后同一期次可重试成功
-    test_support::seed_exchange_rate(&conn, "JPY", "CNY", 0.05);
+    // 补录汇率（历史周点，#1547 写路径按交易日取数）后同一期次可重试成功
+    test_support::seed_fx_rate_history(&conn, "fxh-occ-retry", "JPY", "CNY", "2026-01-12", 0.05);
     let txn_id = execute_occurrence(&conn, &occ_id).unwrap();
     let txn = read_txn(&conn, &txn_id);
     assert_eq!(txn.amount_native_cents, 500);

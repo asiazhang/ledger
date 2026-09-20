@@ -1,11 +1,12 @@
 Feature: 定时交易引擎接入共享写入权威（native 折算）
-  定时引擎生成的交易经 transaction::write::writer 落库：本位币金额由 Amount 接缝当期入口 convert_to_native_current 折算
-  （而非硬编码 1:1），修复多币种启用后定时交易静默算错的隐患；
+  定时引擎生成的交易经 transaction::write::writer 落库：本位币金额由 Amount 接缝按交易日入口 convert_to_native_on_trade_date
+  折算（#1547：按交易所属 ISO 周命中汇率历史，而非硬编码 1:1 或当期值），
+  修复多币种启用后定时交易静默算错的隐患；
   分期 / 订阅 / 定时转账生成的类型与金额保持既有行为（issue #71）。
 
   Scenario: 非默认币种订阅执行后本位币金额经汇率折算
     Given 存在账户 "美股订阅" 类型 "cash" 币种 "USD"
-    And 存在汇率 "USD" 兑 "CNY" 为 7.2
+    And 存在汇率历史 "USD" 兑 "CNY" 为 7.2 自 "2026-01-15" 起每周
     When 创建订阅计划 金额 10000 币种 "USD" 账户 "美股订阅" 起始日期 "2026-01-15" 备注 "国际订阅"
     And 执行该计划第一期
     Then 该期次交易类型应为 "expense" 金额应为 10000
@@ -19,7 +20,7 @@ Feature: 定时交易引擎接入共享写入权威（native 折算）
     Then 执行应失败并提示 "汇率"
     And 该期次状态应为 "pending"
     And 期次未回填交易
-    Given 存在汇率 "JPY" 兑 "CNY" 为 0.05
+    Given 存在汇率历史 "JPY" 兑 "CNY" 为 0.05 自 "2026-01-15" 起每周
     When 重新执行该期次
     Then 该期次交易类型应为 "expense" 金额应为 10000
     And 该期次交易本位币金额应为 500

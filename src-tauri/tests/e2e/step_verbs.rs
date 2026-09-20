@@ -286,6 +286,38 @@ pub fn update_plan_status_verb(world: &mut LedgerWorld, id: &str, status: Schedu
 // 投资域动词：汇率夹具经 investment::create_exchange_rate（upsert 单点）
 // ---------------------------------------------------------------------------
 
+/// 汇率历史周点序列夹具（#1547 写路径按交易日取数）：从 `from_date` 起每周
+/// 一个周采样点，一直种到「今天 + 8 天」，使固定日期与相对日期（今天前 N 天）
+/// 的交易周都被覆盖。直插 `fx_rate_history`（生产写入口是 market-sync 的
+/// `persist_ecb_fx_series`，#1543——本夹具需任意币种对 × 合成汇率的序列，
+/// 不经 ECB 两腿推导；与 test_support::seed_fx_rate_history 同形夹具）；
+/// **不经 `db.write` 置脏包装**（与 [`create_exchange_rate_verb`] 同款取舍）。
+pub fn seed_fx_history_series_verb(
+    world: &mut LedgerWorld,
+    base: &str,
+    quote: &str,
+    rate: f64,
+    from_date: &str,
+) {
+    use chrono::Datelike;
+    let mut d = chrono::NaiveDate::parse_from_str(from_date, "%Y-%m-%d")
+        .expect("汇率历史夹具起始日期须为 YYYY-MM-DD");
+    let today = chrono::Local::now().date_naive() + chrono::Duration::days(8);
+    while d <= today {
+        let date = d.format("%Y-%m-%d").to_string();
+        tauri_app_lib::test_support::seed_fx_rate_history(
+            &world_conn!(world),
+            &format!("fxh-{base}-{quote}-{}", d.format("%Y%m%d")),
+            base,
+            quote,
+            &date,
+            rate,
+        );
+        d = d - chrono::Duration::days(d.weekday().num_days_from_monday() as i64)
+            + chrono::Duration::weeks(1);
+    }
+}
+
 /// 汇率夹具动词（#764 接线，替代「存在汇率」类步骤的内联直写）：经投资域公开
 /// 创建入口写入一条汇率（base → quote，upsert 单点）；失败即 panic。**不经
 /// `db.write` 置脏包装**——与 [`create_account_verb`] 同款取舍：本动词服务

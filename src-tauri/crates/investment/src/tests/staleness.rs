@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use crate::prices::{MarketPriceWrite, upsert_market_price};
 use crate::staleness::{PRICE_STALE_AFTER_DAYS, beijing_date, instrument_price_staleness_on};
 use ledger_transaction::create_transaction_internal;
-use tauri_app_lib::test_support::{open, seed_account, seed_exchange_rate};
+use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks};
 
 use super::common::{insert_fund_instrument, insert_instrument_with_market, make_buy_input};
 
@@ -48,9 +48,10 @@ fn hold(conn: &Connection, account_id: &str, instrument_id: &str) {
     .expect("建仓应成功");
 }
 
-/// 建仓所需的本位币折算行（每用例一次）。
+/// 建仓所需的本位币折算周点（每用例一次；#1547 写路径按交易日取数，
+/// 建仓日期 make_buy_input 固定 2026-01-10）。
 fn usd_rate(conn: &Connection) {
-    seed_exchange_rate(conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(conn, "USD", "CNY", 1.0, &["2026-01-10"]);
 }
 
 /// 行情通道阈值边界：水位距今 0 / 3 / 4 个自然日分别不计、不计（阈值上）、计入。

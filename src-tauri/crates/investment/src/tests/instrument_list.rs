@@ -6,7 +6,7 @@ use ledger_transaction::create_transaction_internal;
 use rusqlite::{Connection, params};
 
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
+use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
 
 #[test]
 fn list_instruments_pagination_and_search() {
@@ -175,7 +175,13 @@ fn search_all(conn: &Connection, search: &str) -> InstrumentListResult {
 fn list_instruments_invested_flag() {
     let conn = open();
     seed_account(&conn, "acc-inv", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     // 持仓中：买入 10 股，未卖出
     insert_instrument_with_market(&conn, "inst-held", "HELD", "持仓标的", "USD", "sh", "stock");
     // 已清仓：买入 10 股后全部卖出
@@ -235,7 +241,13 @@ fn list_instruments_invested_flag() {
 fn list_instruments_only_invested_filter() {
     let conn = open();
     seed_account(&conn, "acc-inv", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     insert_instrument_with_market(&conn, "inst-held", "HELD", "持仓标的", "USD", "sh", "stock");
     insert_instrument_with_market(
         &conn,
@@ -347,7 +359,13 @@ fn list_instruments_only_invested_filter() {
 fn list_instruments_invested_excludes_soft_deleted_accounts() {
     let conn = open();
     seed_account(&conn, "acc-del", "已删账户", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     insert_instrument_with_market(
         &conn,
         "inst-del",
@@ -504,7 +522,13 @@ fn create_instrument_is_idempotent() {
 fn list_holdings_returns_after_buy_and_market_price() {
     let conn = open();
     seed_account(&conn, "acc-hold", "投资账户", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-hold", "GOOGL", "Alphabet", "USD", "unknown");
 
     let buy_input = make_buy_input("acc-hold", "inst-hold", 10.0, 1_500_000, 1000);

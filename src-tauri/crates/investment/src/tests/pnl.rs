@@ -7,7 +7,7 @@ use ledger_transaction::create_transaction_internal;
 
 use super::super::*;
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
+use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
 
 fn empty_filter() -> PnlFilter {
     PnlFilter {
@@ -40,7 +40,13 @@ fn realized_pnl_summary_empty_when_no_sales() {
 fn realized_pnl_summary_aggregates_single_sale() {
     let conn = open();
     seed_account(&conn, "acc-pnl", "美股账户", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-pnl", "AAPL", "Apple", "USD", "unknown");
 
     let _buy = create_transaction_internal(
@@ -317,7 +323,7 @@ fn realized_pnl_summary_groups_dividend_by_currency() {
     let conn = open();
     seed_account(&conn, "acc-cny", "人民币户", "investment", "CNY", 0);
     seed_account(&conn, "acc-usd", "美元户", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(&conn, "USD", "CNY", 1.0, &["2021-03-01"]);
     seed_instrument(&conn, "inst-cny", "501000", "基金A", "CNY", "unknown");
     seed_instrument(&conn, "inst-usd", "AAPL", "Apple", "USD", "unknown");
 
@@ -354,7 +360,13 @@ fn realized_pnl_summary_aggregates_multiple_accounts() {
     let conn = open();
     seed_account(&conn, "acc-a", "账户A", "investment", "USD", 0);
     seed_account(&conn, "acc-b", "账户B", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD", "unknown");
 
     create_transaction_internal(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 100_000, 0))
@@ -381,7 +393,13 @@ fn realized_pnl_summary_filter_by_account() {
     let conn = open();
     seed_account(&conn, "acc-a", "账户A", "investment", "USD", 0);
     seed_account(&conn, "acc-b", "账户B", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD", "unknown");
 
     create_transaction_internal(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 100_000, 0))
@@ -410,7 +428,13 @@ fn realized_pnl_summary_excludes_soft_deleted_account() {
     let conn = open();
     seed_account(&conn, "acc-live", "在用户", "investment", "USD", 0);
     seed_account(&conn, "acc-del", "已删户", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-sd", "SD", "Soft Del Corp", "USD", "unknown");
 
     create_transaction_internal(
@@ -450,7 +474,13 @@ fn realized_pnl_summary_excludes_soft_deleted_sell() {
     // 读口径——软删 sell 的已实现盈亏不再计入汇总，与软删账户同原则。
     let conn = open();
     seed_account(&conn, "acc-pnl", "美股账户", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-sd", "SD", "Soft Del Corp", "USD", "unknown");
 
     create_transaction_internal(
@@ -485,7 +515,13 @@ fn realized_pnl_summary_excludes_soft_deleted_sell() {
 fn realized_pnl_summary_filter_by_instrument() {
     let conn = open();
     seed_account(&conn, "acc-pnl", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-a", "AAPL", "Apple", "USD", "unknown");
     seed_instrument(&conn, "inst-b", "GOOGL", "Alphabet", "USD", "unknown");
 
@@ -516,7 +552,13 @@ fn realized_pnl_summary_groups_by_currency_without_mixing() {
     let conn = open();
     seed_account(&conn, "acc-usd", "美股账户", "investment", "USD", 0);
     seed_account(&conn, "acc-cny", "A 股账户", "investment", "CNY", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
     seed_instrument(&conn, "inst-usd", "USDX", "USDX Corp", "USD", "unknown");
     seed_instrument(&conn, "inst-cny", "CNYX", "CNYX Corp", "CNY", "unknown");
 

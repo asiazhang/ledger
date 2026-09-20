@@ -163,7 +163,11 @@ fn black_hole_adjust_produces_account_and_transaction_ops() {
 
     // 余额调整：黑洞即建（账户写）+ 调整转账（交易写）——两类 op 同事务产出。
     // 折算汇率只在 A 端存在：调整转账折算在源端完成、随 op 携带（ADR-0091 决策 3）。
+    // 当期行留作既有夹具；调整转账写入按交易日取数（#1547），源端另种
+    // 交易周（2026-01-10 所属周，周一 2026-01-05）历史点——B 端仍无汇率，
+    // 折算结果随 op 携带（ADR-0091 决策 3）不受影响。
     test_support::seed_exchange_rate(&conn_a, "USD", "CNY", 7.2);
+    test_support::seed_fx_rate_history(&conn_a, "fxh-bh", "USD", "CNY", "2026-01-05", 7.2);
     let (tx_id, created) = ledger_accounts::adjust_account_balance(
         &conn_a,
         &account_id,

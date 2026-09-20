@@ -122,7 +122,7 @@ fn create_expense_in_relative_year(
 // When
 // ---------------------------------------------------------------------------
 
-/// 创建带商户的跨币种交易（本位币折算由写路径经 Amount 接缝当期入口 `convert_to_native_current` 完成）。
+/// 创建带商户的跨币种交易（本位币折算由写路径经 Amount 接缝按交易日入口 `convert_to_native_on_trade_date` 完成，#1547）。
 #[when(
     expr = "创建交易 类型 {string} 金额 {int} 币种 {string} 到账户 {string} 日期 {string} 商户 {string}"
 )]
