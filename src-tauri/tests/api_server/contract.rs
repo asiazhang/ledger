@@ -420,3 +420,20 @@ async fn contract_size_within_budget() {
         bytes.len()
     );
 }
+
+/// 数据源中立守门（issue #1569 / ADR-0130）：契约方言产物不得把东方财富当作
+/// 数据源陈述——端点描述、故障描述（网络不可达语义）、降级建行、「精确交易所」
+/// 措辞与基金分类弃用说明一律用「行情源」中立交称。负向断言对准方言产物全文
+/// （任一注解层描述改回东财措辞即红，ADR-0087）；导入知识半边见
+/// `documentation.rs` 的 `test_knowledge_sections_are_data_source_neutral`。
+#[tokio::test]
+async fn contract_is_data_source_neutral() {
+    let doc = fetch_contract().await;
+    let text = serde_json::to_string(&doc).unwrap();
+    for banned in ["东财", "东方财富"] {
+        assert!(
+            !text.contains(banned),
+            "契约方言应数据源中立，不得出现数据源名 {banned:?}（ADR-0130）"
+        );
+    }
+}
