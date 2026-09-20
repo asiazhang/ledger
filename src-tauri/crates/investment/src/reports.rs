@@ -1,3 +1,12 @@
+//! 投资盈亏读投影（issue #1077 / #1078；ADR-0107 / ADR-0129 / ADR-0114）：已实现
+//! 盈亏汇总与按币种累计收益查询的只读单点。
+//!
+//! - [`query_cumulative_pnl_summary`]：未实现盈亏（`v_holdings`）+ 已实现盈亏（卖出
+//!   匹配）+ 累计分红三腿按币种独立成组，不跨币种折算；缺价 / 缺汇率持仓按空值跳过。
+//! - [`query_realized_pnl_summary`]：盈亏页按年 / 按账户两表（已实现 + 分红两腿）与按
+//!   币种总数、按标的行；软删账户与软删流水排除、隐藏账户照常计入。
+//! - [`query_holdings_summary_by_currency`]：持仓市值 / 未实现盈亏按账户币种分组合计。
+
 use rusqlite::Connection;
 
 use super::model::{

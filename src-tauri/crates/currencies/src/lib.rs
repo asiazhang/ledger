@@ -31,8 +31,8 @@
 //! 协议与核心交易域（`ledger-infra` / `ledger-sync-protocol` /
 //! `ledger-transaction`），对根包（壳层）与任何同级业务域零依赖——本位币基准
 //! 读取对核心交易域的供给经 [`install_base_currency_hook`]
-//! 注册进交易域接缝（`transaction::base_currency_seam`，下层提供实现、壳层启动
-//! 接线，ADR-0112 决策 5），反向引用由 cargo 依赖图编译期拒绝（生产依赖面无
+//! 注册进交易域接缝（`transaction::base_currency_seam`，接缝实现注册侧 #1092；
+//! 下层提供实现、壳层启动接线，ADR-0112 决策 5），反向引用由 cargo 依赖图编译期拒绝（生产依赖面无
 //! 根包，dev-dependency 环只覆盖测试目标；机器面负向核对住结构守门的 crate
 //! 依赖方向，Cargo.toml 注释留痕）。
 //!

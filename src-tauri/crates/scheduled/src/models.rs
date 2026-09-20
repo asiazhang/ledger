@@ -1,3 +1,7 @@
+//! 域集中模型（#419 随域归位）：计划/期次/扩展实体与入参、闭集枚举。
+//!
+//! 消费方经 crate 根再导出面逐类型显式 import（域语言短名）。
+
 use serde::{Deserialize, Serialize};
 
 use ledger_infra::db::query::FromRow;

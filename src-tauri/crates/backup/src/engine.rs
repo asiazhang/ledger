@@ -1,3 +1,8 @@
+//! 备份引擎（ADR-0007 / ADR-0016）：zip 打包（`VACUUM INTO` 一致性快照 +
+//! `backup.json` 元数据）、恢复与恢复前安全备份、schema 版本校验（旧→新迁移、
+//! 新→旧拒绝）、受管备份列表与滚动清理（按活动账本分域，ADR-0089 决策 5；
+//! 无账本标识的历史产物归属「登记序首本」）。
+
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};

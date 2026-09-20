@@ -28,6 +28,9 @@
 //! - 金额一律整数分；当前估值折本位币复用 [`ledger_transaction::amount`]
 //!   接缝（域间横向依赖，ADR-0056 决策 2 允许）。
 //!
+//! `crud` 模块另含处置（issue #468 T3：状态转 `disposed` + 处置日期与可选处置价）
+//! 与软删除（`is_deleted = 1`，数据与估值历史保留，误删有后悔药）。
+//!
 //! 依赖方向（spec #1086 / issue #1102 AC）：本 crate 消费基础设施、同步协议与
 //! 核心交易域（`ledger-infra` / `ledger-sync-protocol` / `ledger-transaction`）
 //! ——当前估值折本位币消费交易域 Amount 口径，对根包（壳层）与任何同级业务域

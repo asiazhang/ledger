@@ -1,4 +1,7 @@
 //! 预算进度域行为：按当前自然月/年实时计算支出净额。
+//!
+//! issue #182：当前周期进度——spent = `expense_net` 口径，参与 kind 由核心交易域
+//! kind→度量矩阵导出（本模块不定义口径，只消费）。
 
 use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
