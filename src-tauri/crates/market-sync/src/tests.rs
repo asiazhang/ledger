@@ -3,6 +3,7 @@
 //!
 //! #256 按行为主题拆为子模块（纯移动）：
 //! - `bulk_fetch`：行情批量取数面报文解析、请求形态与跨同步记忆（ADR-0121，issue #1374）；
+//! - `csrc`：证监会基金电子披露区间查询报文解析与请求形态（issue #1562 / ADR-0130，fixture 为真实报文 + 本地 HTTP 服务）；
 //! - `http_client`：HTTP 重试与多主机切换；
 //! - `instrument_info_sync`：标的信息同步与 ulist / 日 K 报文解析；
 //! - `fund_search`：东财基金搜索报文解析与命中挑选（issue #301，fixture 驱动）；
@@ -20,6 +21,7 @@ use tauri_app_lib::test_support::scan::{mask_non_code, matching_brace_end};
 use tauri_app_lib::test_support::{seed_account, seed_instrument};
 
 mod bulk_fetch;
+mod csrc;
 mod fund_nav;
 mod fund_search;
 mod history_backfill;
@@ -183,6 +185,7 @@ fn production_source_files() -> Vec<(&'static str, String)> {
     let mut files: Vec<(&'static str, String)> = vec![
         ("bulk.rs", include_str!("bulk.rs").to_string()),
         ("channels.rs", include_str!("channels.rs").to_string()),
+        ("csrc.rs", include_str!("csrc.rs").to_string()),
         (
             "daily_refresh.rs",
             include_str!("daily_refresh.rs").to_string(),

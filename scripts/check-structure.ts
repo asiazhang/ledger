@@ -877,6 +877,11 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
     note: "同步网络通道束（issue #1276）：六个抓取闭包的打包形态与生产/测试换装接缝——生产接 HTTP 层（主机池/限流 pacer 单点），测试注入桩经命令壳 SyncChannelsSlot 换装使「同步真实在途」可确定复现；编排本体经 do_incremental_sync_channels 单点拆交",
   },
   {
+    path: "csrc.rs",
+    layer: "域目录",
+    note: "证监会基金电子披露取数单元（issue #1562 / ADR-0130）：官方场外基金净值披露的单只基金区间查询与解析——名称、单位净值、累计净值、净值日期与货基自报形态信号（ADR-0126 决策 3 换源后的确认源，#1563 接线）；DataTables 参数全集请求构造单点（缺参数即 500 系统异常的参数门槛）、汇总行与份额行混排过滤、已终止基金可取；异常响应 fail-closed 报 sync.disclosure-source-malformed，不误判查无此码；已终止基金存在性与最后一期净值的权威兑底面（#1568 接线）",
+  },
+  {
     path: "daily_refresh.rs",
     layer: "域目录",
     note: "现价刷新的后台每日形态（ADR-0122 决策 3 / issue #1377）：启动后延迟补跑一次 + 每自然日窗口一次（自然日窗口巡检与进程级单次拉起守卫）；与手动形态同编排、同进度事件、同收尾裁决，差异只有触发方式、后台车道与静默失败面；单轮骨架（换装/会话/见证/裁决/发射/失败日志）经 lane.rs 单点（issue #1426），本模块只留编排与统计日志",
