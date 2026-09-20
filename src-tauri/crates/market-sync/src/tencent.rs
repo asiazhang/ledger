@@ -159,16 +159,9 @@ pub(super) fn price_date_from_timestamp(raw: &str) -> Option<String> {
     None
 }
 
-/// GBK 字节 → 文本（腾讯报价为 GBK 编码）。解码出错（截断 / 非法字节序列）即
-/// fail-closed；合法但非 GBK 的内容（如被拦截页）留给 [`parse_tencent_quotes`]
-/// 的形状判据处理。
-pub(super) fn decode_gbk(bytes: &[u8]) -> Result<String> {
-    let (text, _, had_errors) = encoding_rs::GBK.decode(bytes);
-    if had_errors {
-        return Err(unexpected_response("GBK 解码出错（响应可能被截断）"));
-    }
-    Ok(text.into_owned())
-}
+/// GBK 字节 → 文本：解码原语收口在 HTTP 层单点（[`super::http::decode_gbk`]）——
+/// 腾讯报价与新浪场外基金批量面同为 GBK 通道，共用一份实现（issue #1564 上收）。
+use super::http::decode_gbk;
 
 /// 三套字段布局的唯一下标表（ADR-0130 决策 3 / 2026-09-19 取数面实测）：类型码、
 /// 币种与字段数下界按市场不同，不能按固定下标取。`min_fields` 是布局漂移的判据——
@@ -375,8 +368,10 @@ async fn fetch_tencent_batch(
     )
     .await?;
     // GBK 解码与报文形状两道判据都归本层：任一失败都补降速信号
-    //（ADR-0121 决策 5，先例：bulk 的两个批量面）。
+    //（ADR-0121 决策 5，先例：bulk 的两个批量面）。解码错误统一包装为本单元
+    // 的非预期响应错误（解码原语归 HTTP 层单点，单元上下文在此补齐）。
     decode_gbk(&bytes)
+        .map_err(unexpected_response)
         .and_then(|body| parse_tencent_quotes(&body))
         .map_err(|error| {
             tracing::warn!(%error, "腾讯行情报价响应不可信");
