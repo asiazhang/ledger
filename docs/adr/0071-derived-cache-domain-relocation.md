@@ -93,3 +93,9 @@ workspace 拆分后（ADR-0112），基础设施→域的生产性引用在 crat
 - **清单续辖测试专用边**：余下 4 条全部是基础设施 crate 内联 cfg(test) 经测试工厂建库的引用（dev-dependency 环，非生产依赖图，ADR-0084 修订注记同源）；新增生产性 infra→域引用，未声明依赖即编译失败、声明了依赖即被结构守门 CRATES 依赖方向核对拦住，均无需清单裁决。
 
 决策 6 的扫描机制（文本级、掩码注释与字符串、fail loud、逐条精确到文件 + 目标域 + 成因）不变，扫描基准自 #1088 起改为 `crates/infra/src`。
+
+## 修订注记（#1591 定案，2026-09-20）：infra→域方向的判定载体收成声明面
+
+决策 6 的**源码文本扫描**对「跨 crate 域引用」退役：违规形态今天要么未声明依赖（编译失败）、要么成环（infra 与业务域互依，cargo 拒绝），退役后红源从守门输出换为编译错误。实测事实：`INFRA_DOMAIN_DEP_PATTERN` 的域名表派生自 `WHITELIST`，而业务域早已全部拆为独立 crate、`WHITELIST` 只剩 `test_support`——该扫描对跨 crate 域引用已实质失靶，真正在守的是 `CRATES` 方向核对 + cargo 依赖图。
+
+**保留**：`INFRA_DOMAIN_ALLOWED_EDGES` 台账（本注记上文所述测试专用边，cargo 对 dev-dependency 环放行，是 cargo 盲区）改为按 `Cargo.toml` 声明面核对；crate 内块间禁边（ADR-0111 决策 4，同 crate 内引用）文本扫描不变。机制判据见 ADR-0056 决策 4 修订注记；逐族退役清单与验收见 #1596。

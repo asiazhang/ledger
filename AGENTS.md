@@ -34,7 +34,7 @@ Rust 根（`src-tauri/`）是 workspace：根包仍是 tauri 应用包（壳层�
 
 协议（`ledger-sync-protocol`）：多端同步的最底层共享协议，内容清单见 `check-structure.ts` 的 CRATES；业务域只依赖协议 crate，不依赖多端同步域。
 
-门禁保底：clippy 六件套唯一声明处在 workspace 级 `[workspace.lints.clippy]`，成员必须显式 `[lints] workspace = true` 继承；静态检查与测试命令显式 `--workspace` 覆盖全部成员。结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）：crate 边界唯一事实源是脚本内 `CRATES` 清单（成员登记、分层、允许依赖方向），模块级白名单与认许边继续辖编译器看不见的规则，逐条留痕在脚本内（ADR-0056 决策 4、ADR-0071 修订注记）。
+门禁保底：clippy 六件套唯一声明处在 workspace 级 `[workspace.lints.clippy]`，成员必须显式 `[lints] workspace = true` 继承；静态检查与测试命令显式 `--workspace` 覆盖全部成员。结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）：crate 边界**政策核**是脚本内 `CRATES` 清单（成员登记、分层、允许依赖方向），模块级白名单与认许边继续辖编译器看不见的规则，逐条留痕在脚本内（ADR-0056 决策 4、ADR-0071 修订注记）；守门数据按「事实有权威源就投影，政策无源就显式」分界（#1591 定案，实施 #1593–#1595：模块清单由各 crate `lib.rs` 的 `mod` 声明投影、注记归 crate `//!` 与模块文件头、cargo 编译期已拒绝的方向退役给编译期）。
 
 ## 数据与交易
 
