@@ -4,10 +4,10 @@
 //! 更新名称/市场、返回既有 id）、201 + 裸 id 响应形状（照账户/分类创建先例）、
 //! 创建行来源标记 = `'manual'`、报价币种缺省按市场推导（沪深→CNY、港→HKD、
 //! 美股三市场→USD、未知→CNY，ADR-0081），显式传参可覆盖）、类型五类全开、错误为统一错误形状中文信息、
-//! 开放 API 契约自描述。泛型断言以非 fund 类型为代表；fund 类型的东财增强
+//! 开放 API 契约自描述。泛型断言以非 fund 类型为代表；fund 类型的行情增强
 //! （回填权威名称/净值、查无此码拒绝、不可达降级）见 instrument_create_fund.rs
-//! （issue #304 / ADR-0039）；stock 类型的东财增强（issue #694 / ADR-0081）见
-//! instrument_create_stock.rs——本文件以「东财不可达」桩让 stock 真实代码创建
+//! （issue #304 / ADR-0039）；stock 类型的行情增强（issue #694 / ADR-0081）见
+//! instrument_create_stock.rs——本文件以「行情不可达」桩让 stock 真实代码创建
 //! 一律走降级路径（不触真实网络），聚焦通用创建语义。
 
 use std::sync::{Arc, Mutex};
@@ -20,7 +20,7 @@ use tauri_app_lib::api_server::StockQuoteFetcher;
 
 use crate::common::{post_instrument, setup_app, setup_app_with_stock_fetch};
 
-/// 东财不可达桩：stock 真实代码创建的东财往返一律失败（Io）→ 降级路径——
+/// 行情不可达桩：stock 真实代码创建的行情往返一律失败（Io）→ 降级路径——
 /// 提交名称 + 真实代码 + 解析市场建行，与预增强时代的通用行为对齐（除显式
 /// currency_code 在增强分支不生效外）。全部请求离线，不触真实网络。
 fn setup_app_stock_degraded() -> (axum::Router, Arc<Mutex<rusqlite::Connection>>) {
@@ -73,7 +73,7 @@ async fn test_create_instrument_returns_201_with_bare_id_and_manual_source() {
 }
 
 // ---------------------------------------------------------------------------
-// find-or-create 幂等：命中静默复用并按需更新名称/市场（bond：不经东财增强的
+// find-or-create 幂等：命中静默复用并按需更新名称/市场（bond：不经行情增强的
 // 通用类型——stock 真实代码重放携矛盾 market 会被增强分支显式 400，见
 // instrument_create_stock.rs；同码改市场本就是应被拦截的错挂行为）
 // ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ async fn test_create_instrument_without_market_defaults_unknown_and_cny() {
 async fn test_create_instrument_explicit_currency_overrides_derivation() {
     let (app, conn) = setup_app();
 
-    // bond 不经东财增强：显式 currency_code 在通用路径生效。stock 真实代码的
+    // bond 不经行情增强：显式 currency_code 在通用路径生效。stock 真实代码的
     // 增强/降级分支以解析市场推导币种为权威、显式传参不生效（镜像 fund 分支
     // 字典形态收口，instrument_create_stock.rs / instrument_create_fund.rs）。
     let (status, _) = post_instrument(

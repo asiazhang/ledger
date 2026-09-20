@@ -20,7 +20,6 @@ use rusqlite::params;
 
 use super::crud;
 use super::model::{AddStockInstrumentResult, InstrumentInput, InstrumentType};
-use super::prices::TENCENT_PRICE_SOURCE;
 use super::quote::{Quote, QuoteAdoptionInput, adopt_quote};
 use ledger_infra::db::now_iso;
 use ledger_infra::error::{AppError, Result};
@@ -330,8 +329,8 @@ pub fn route_stock_creation(market: Option<&str>, symbol: &str) -> StockCreateRo
 /// 通道；导入知识按类型提示填）——行情类型提示只在查询端点投影，不在此改写类型
 ///（自然键（代码，类型）不因探测漂移而漂移）。现价 `priced_at` = 写入时刻、
 /// `nav_date` 恒 None——与同步通道的股票现价写入口径一致（净值日期是场外基金
-/// 语义）；价格来源标记记 `tencent`（ADR-0130 决策 7，价格自腾讯行情取得）。
-/// 覆盖不比较新旧：本通道语义 = 数据源当前最新值整体回放。
+/// 语义）；价格来源随取数产物携带（`Quote::price_source`，ADR-0130 决策 7，
+/// 腾讯投影单点填入）。覆盖不比较新旧：本通道语义 = 数据源当前最新值整体回放。
 pub fn adopt_stock_quote(
     conn: &rusqlite::Connection,
     kind: InstrumentType,
@@ -347,7 +346,6 @@ pub fn adopt_stock_quote(
             // 场内现价时点 = 写入时刻（无净值日期语义）。
             priced_at: &now_iso(),
             nav_date: None,
-            price_source: TENCENT_PRICE_SOURCE,
         },
         quote,
     )?;

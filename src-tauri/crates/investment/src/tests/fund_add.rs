@@ -16,7 +16,7 @@ use tauri_app_lib::test_support::open;
 
 /// 构造一份典型基金报价（统一载荷，ADR-0103）：净值 1.3180 → 13180 万分之一元；
 /// 场外通道的价格日期与净值日期同为净值日期，市场与类型提示是场内成员（缺省）。
-fn quote(code: &str, name: &str, fund_class: &str, nav: Option<(f64, &str)>) -> Quote {
+fn quote(code: &str, name: &str, nav: Option<(f64, &str)>) -> Quote {
     let nav = nav.map(|(nav, date)| (price_value_to_cents(nav), date.to_string()));
     Quote {
         code: code.to_string(),
@@ -25,9 +25,10 @@ fn quote(code: &str, name: &str, fund_class: &str, nav: Option<(f64, &str)>) -> 
         price_date: nav.as_ref().map(|(_, date)| date.clone()),
         market: None,
         kind_hint: None,
-        fund_class: Some(fund_class.to_string()),
+        fund_class: None,
         nav_date: nav.map(|(_, date)| date),
         constant_unit_price_cents: None,
+        price_source: crate::prices::SINA_PRICE_SOURCE,
     }
 }
 
@@ -82,16 +83,11 @@ fn adds_fund_with_nav_and_price_cache() {
     let result = add_fund_by_code_with(
         &conn,
         "000001",
-        &mut stub_fetch_with(quote(
-            "000001",
-            "华夏成长混合",
-            "混合型-灵活",
-            Some((1.318, "2026-08-28")),
-        )),
+        &mut stub_fetch_with(quote("000001", "华夏成长混合", Some((1.318, "2026-08-28")))),
     )
     .unwrap();
 
-    // 标的行：类型 fund、市场 unknown、名称为东财权威名称、来源 manual（ADR-0036）。
+    // 标的行：类型 fund、市场 unknown、名称为数据源权威名称、来源 manual（ADR-0036）。
     let (id, name, market, source) = instrument_row(&conn, "000001").expect("应建 fund 标的行");
     assert_eq!(id, result.instrument_id);
     assert_eq!(name, "华夏成长混合");
@@ -99,19 +95,23 @@ fn adds_fund_with_nav_and_price_cache() {
     assert_eq!(source, "manual");
 
     // 现价缓存：净值 1.3180 元 = 13180 万分之一元（4 位小数保真，ADR-0038）；
-    // 币种人民币；priced_at 与 nav_date 同为净值日期；来源东财（净值数据来源）。
+    // 币种人民币；priced_at 与 nav_date 同为净值日期；来源随取数产物（新浪批量
+    // 面，ADR-0130 决策 7 / issue #1568）。
     let (price, currency, priced_at, nav_date, price_source) =
         price_row(&conn, &result.instrument_id).expect("应落现价缓存");
     assert_eq!(price, 13180);
     assert_eq!(currency, "CNY");
     assert_eq!(priced_at, "2026-08-28");
     assert_eq!(nav_date.as_deref(), Some("2026-08-28"));
-    assert_eq!(price_source.as_deref(), Some("eastmoney"));
+    assert_eq!(price_source.as_deref(), Some("sina"));
 
     // 结果回执：回填信息与写入状态（价格失效信号判定依据）。
     assert_eq!(result.symbol, "000001");
     assert_eq!(result.name, "华夏成长混合");
-    assert_eq!(result.fund_class, "混合型-灵活");
+    assert_eq!(
+        result.fund_class, "",
+        "分类已弃用，恒空串（ADR-0130 决策 8）"
+    );
     assert_eq!(result.nav_cents, Some(13180));
     assert_eq!(result.nav_date.as_deref(), Some("2026-08-28"));
     assert!(result.price_written);
@@ -119,13 +119,13 @@ fn adds_fund_with_nav_and_price_cache() {
 
 #[test]
 fn adds_fund_without_nav_only_instrument_row() {
-    // 新发基金未公布净值：仍建标的行（名称/分类权威回填），不落现价、
+    // 新发基金未公布净值：仍建标的行（权威名称回填），不落现价、
     // price_written=false（IPC 层据此不广播价格失效信号——零变化不广播）。
     let conn = open();
     let result = add_fund_by_code_with(
         &conn,
         "012345",
-        &mut stub_fetch_with(quote("012345", "新发基金", "混合型", None)),
+        &mut stub_fetch_with(quote("012345", "新发基金", None)),
     )
     .unwrap();
 
@@ -143,7 +143,7 @@ fn invalid_code_rejected_before_fetch() {
         let mut called = 0usize;
         let mut fetch = |_code: &str, _market: &str| -> Result<Quote> {
             called += 1;
-            Ok(quote("000001", "华夏成长混合", "混合型", None))
+            Ok(quote("000001", "华夏成长混合", None))
         };
         let err = add_fund_by_code_with(&conn, bad, &mut fetch).unwrap_err();
         assert!(
@@ -204,23 +204,13 @@ fn re_add_reuses_instrument_row_and_overwrites_price() {
     let first = add_fund_by_code_with(
         &conn,
         "000001",
-        &mut stub_fetch_with(quote(
-            "000001",
-            "旧名称",
-            "混合型-灵活",
-            Some((1.0, "2026-08-01")),
-        )),
+        &mut stub_fetch_with(quote("000001", "旧名称", Some((1.0, "2026-08-01")))),
     )
     .unwrap();
     let second = add_fund_by_code_with(
         &conn,
         "000001",
-        &mut stub_fetch_with(quote(
-            "000001",
-            "华夏成长混合",
-            "混合型-灵活",
-            Some((1.318, "2026-08-28")),
-        )),
+        &mut stub_fetch_with(quote("000001", "华夏成长混合", Some((1.318, "2026-08-28")))),
     )
     .unwrap();
 
@@ -274,12 +264,7 @@ fn re_add_reuses_instrument_row_and_overwrites_price() {
 #[test]
 fn adds_money_fund_marks_constant_and_lands_base_price_without_nav_date() {
     let conn = open();
-    let mut q = quote(
-        "000198",
-        "天弘余额宝货币",
-        "货币型",
-        Some((1.0, "2026-09-17")),
-    );
+    let mut q = quote("000198", "天弘余额宝货币", Some((1.0, "2026-09-17")));
     q.constant_unit_price_cents = Some(10_000);
     let result = add_fund_by_code_with(&conn, "000198", &mut stub_fetch_with(q)).unwrap();
 
@@ -304,7 +289,7 @@ fn adds_money_fund_marks_constant_and_lands_base_price_without_nav_date() {
 #[test]
 fn adds_money_fund_without_price_still_lands_constant_base_price() {
     let conn = open();
-    let mut q = quote("000199", "已终止货基", "", None);
+    let mut q = quote("000199", "已终止货基", None);
     q.constant_unit_price_cents = Some(10_000);
     let result = add_fund_by_code_with(&conn, "000199", &mut stub_fetch_with(q)).unwrap();
 

@@ -1,8 +1,9 @@
 //! 场外基金的行情接入通道（ADR-0103）：按代码即拉添加（issue #301 / ADR-0038
 //! 决策 1）与 AI 创建端点 fund 增强（issue #304 / ADR-0039 决策 3）共用同一套
-//! 字典形态——手动输入 / AI 提交 6 位基金代码 → 查询半边取东财报价（名称 /
-//! 分类 / 最新单位净值 + 净值日期，`sync::fetch_fund_quote_production`，
-//! 行情同步域 `ledger-market-sync` crate，#1106）→
+//! 字典形态——手动输入 / AI 提交 6 位基金代码 → 查询半边取新浪批量面报价（名称
+//! / 最新单位净值 + 净值日期；已终止基金回退证监会基金电子披露权威兑底，货基
+//! 经官方自报形态确认落恒定价，取数编排单点在行情同步域 `ledger-market-sync`
+//! crate 的 `sync::fetch_fund_quote_production`，#1106 / #1568 换源）→
 //! 落库半边（[`adopt_fund_quote`]）落标的字典（类型 fund、市场恒 unknown、
 //! 来源 manual）与现价缓存（净值即价格、币种人民币、带净值日期）。查无此码
 //! 返回中文错误，不产生标的行。
@@ -24,7 +25,6 @@ use rusqlite::Connection;
 
 use super::crud;
 use super::model::{AddFundResult, InstrumentInput, InstrumentType};
-use super::prices::EASTMONEY_PRICE_SOURCE;
 use super::quote::{Quote, QuoteAdoptionInput, adopt_quote};
 use ledger_infra::error::{AppError, Result};
 
@@ -65,7 +65,7 @@ pub fn reject_carried_fund_market(market: Option<&str>) -> Result<()> {
 /// 6 位纯数字判定（入口收口的安全前提，ADR-0038 决策 6 / ADR-0039 决策 3）：
 /// 消费三方——按代码即拉的入口校验（[`validate_fund_code`]）、AI 端点 fund
 /// 增强/查询的触发前提、净值同步分区的「可拉取」判定；名称充代码的 fund 行
-///（源数据无代码）非 6 位，不触发东财校验、不进净值通道，自编 6 位代码无产生通道。
+///（源数据无代码）非 6 位，不触发行情源校验、不进净值通道，自编 6 位代码无产生通道。
 pub fn is_six_digit_code(code: &str) -> bool {
     code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit())
 }
@@ -89,11 +89,11 @@ pub struct FundCreateOutcome {
     pub price_written: bool,
 }
 
-/// AI 创建端点 fund 增强的降级落库（issue #304 / ADR-0039 决策 3）：东财网络
+/// AI 创建端点 fund 增强的降级落库（issue #304 / ADR-0039 决策 3）：行情源网络
 /// 不可达等临时故障时，以 AI 提供的名称 + 真实代码建行（不阻塞导入，名称误差
 /// 留待人工编辑）。字典形态与按代码即拉一致（类型 fund、市场 unknown、币种
 /// 人民币）；既有行直接复用、名称不动——降级重放不得用 AI 名称覆盖已回填的
-/// 东财权威名称。
+/// 权威名称。
 pub fn create_fund_degraded(
     conn: &Connection,
     symbol: &str,
@@ -132,9 +132,11 @@ pub fn create_fund_degraded(
 /// 判定——类型恒 fund、市场恒 unknown（场外无交易所市场，纯字典键）、币种恒
 /// 人民币（含 QDII 人民币份额）；有净值时 priced_at 与 nav_date 同为净值日期
 ///（现价的行情日期就是净值本身对应的日期）。覆盖不比较新旧净值日期：水位比较
-/// 归净值同步通道（#303 以 nav_date 为增量水位），本通道语义 = 东财当前最新值
-/// 整体回放。建档 + 落现价交 [`adopt_quote`] 一体执行，此处只构造回显投影
-/// [`AddFundResult`]（含 `price_written`，价格失效信号判定依据）。
+/// 归净值同步通道（#303 以 nav_date 为增量水位），本通道语义 = 数据源当前最新值
+/// 整体回放。价格来源随取数产物携带（`Quote::price_source`，ADR-0130 决策 7：
+/// 新浪批量面 / 证监会披露兑底）。建档 + 落现价交 [`adopt_quote`] 一体执行，
+/// 此处只构造回显投影 [`AddFundResult`]（含 `price_written`，价格失效信号判定
+/// 依据）。
 pub fn adopt_fund_quote(conn: &Connection, quote: &Quote) -> Result<AddFundResult> {
     let nav_date = quote.nav_date.as_deref();
     let outcome = adopt_quote(
@@ -146,8 +148,6 @@ pub fn adopt_fund_quote(conn: &Connection, quote: &Quote) -> Result<AddFundResul
             // 基金现价时点 = 净值日期；无净值时不落现价，该值不被消费。
             priced_at: nav_date.unwrap_or_default(),
             nav_date,
-            // 场外基金净值仍自东财取（ADR-0130 决策 2；换源随 #1565/#1568）。
-            price_source: EASTMONEY_PRICE_SOURCE,
         },
         quote,
     )?;

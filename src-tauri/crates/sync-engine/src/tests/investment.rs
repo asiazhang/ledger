@@ -7,7 +7,8 @@ use super::super::{OpOutcome, parked_ops, read_ops};
 use super::common::{read_lot, read_lot_sale, read_transaction, seed_device, wire_in, wire_out};
 use ledger_investment::{
     InstrumentInput, InstrumentType, add_fund_by_code_with, create_exchange_rate,
-    create_instrument, create_market_price, delete_instrument, record_manual_price,
+    create_instrument, create_market_price, delete_instrument, prices::SINA_PRICE_SOURCE,
+    record_manual_price,
 };
 use ledger_transaction::TransactionInput;
 use ledger_transaction::amount::TransactionKind;
@@ -405,7 +406,7 @@ fn fund_add_by_code_syncs_dictionary_not_quote() {
     seed_device(&conn_a, "dev-a");
     seed_device(&conn_b, "dev-b");
 
-    // 按代码即拉（注入桩离线驱动）：标的字典随 op 同步；东财现价是行情外拉
+    // 按代码即拉（注入桩离线驱动）：标的字典随 op 同步；行情现价是行情外拉
     // 数据，不进 op——重放端字典有行、现价无行（各端自行拉行情）。
     // 统一报价载荷（行情接入，ADR-0103）：净值 1.2345 元 → 12345 万分之一元，
     // 价格日期与净值日期同为净值日期。
@@ -416,9 +417,10 @@ fn fund_add_by_code_syncs_dictionary_not_quote() {
         price_date: Some("2026-01-09".into()),
         market: None,
         kind_hint: None,
-        fund_class: Some("混合型-灵活".into()),
+        fund_class: None,
         nav_date: Some("2026-01-09".into()),
         constant_unit_price_cents: None,
+        price_source: SINA_PRICE_SOURCE,
     };
     let mut fetch = |_: &str, _: &str| Ok(quote.clone());
     let result = add_fund_by_code_with(&conn_a, "000001", &mut fetch).unwrap();
@@ -450,7 +452,7 @@ fn fund_add_by_code_syncs_dictionary_not_quote() {
         )
         .unwrap()
     };
-    assert_eq!(quote_rows(&conn_a), 1, "源端落现价（东财净值）");
+    assert_eq!(quote_rows(&conn_a), 1, "源端落现价（行情净值）");
     assert_eq!(quote_rows(&conn_b), 0, "行情不随 op 同步（各端自拉）");
 }
 

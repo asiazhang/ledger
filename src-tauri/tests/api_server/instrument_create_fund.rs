@@ -1,10 +1,10 @@
 //! 标的创建端点的 fund 增强（`POST /api/v1/instruments`，issue #304 / ADR-0039 决策 3）。
 //!
-//! 只断言外部行为：fund + 真实 6 位代码经东财校验——命中回填权威名称并落最新
+//! 只断言外部行为：fund + 真实 6 位代码经行情源校验——命中回填权威名称并落最新
 //! 净值现价（万分之一元刻度 + 净值日期）、查无此码 400 拒绝且不产生标的行、
 //! 网络不可达降级为提交名称 + 真实代码建行（不阻塞）；降级重放不覆盖既有权威
 //! 名称；名称充代码（非 6 位）与其他类型不发起网络请求；幂等重放返回同一 id。
-//! 东财访问经注入桩离线驱动。
+//! 行情源访问经注入桩离线驱动（#1568 换源）。
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -81,14 +81,14 @@ fn stub_hit() -> HashMap<String, FundStubHit> {
 }
 
 // ---------------------------------------------------------------------------
-// 东财命中：权威名称回填 + 净值落现价
+// 行情命中：权威名称回填 + 净值落现价
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_create_fund_with_known_code_backfills_authoritative_name_and_price() {
     let (app, conn, calls) = setup_app_with_fund_stub(stub_hit());
 
-    // AI 提交的名称有误（抄错），后端应以东财权威名称为准。
+    // AI 提交的名称有误（抄错），后端应以数据源权威名称为准。
     let body = r#"{"symbol":"000001","type":"fund","name":"华夏成长混合A（错误抄写）"}"#;
     let (status, bytes) = post_instrument(&app, body).await;
     assert_eq!(status, StatusCode::CREATED);
@@ -99,18 +99,18 @@ async fn test_create_fund_with_known_code_backfills_authoritative_name_and_price
     assert_eq!(
         row.name.as_deref(),
         Some("华夏成长混合"),
-        "东财可达时应回填权威名称，而非 AI 抄写名"
+        "行情源可达时应回填权威名称，而非 AI 抄写名"
     );
     assert_eq!(row.market, "unknown", "场外基金市场恒 unknown（ADR-0038）");
     assert_eq!(row.source, "manual");
-    let (price_cents, nav_date, price_source) = row.price.expect("东财命中应落现价缓存");
+    let (price_cents, nav_date, price_source) = row.price.expect("行情命中应落现价缓存");
     assert_eq!(price_cents, 13180, "净值 1.318 元 = 万分之一元刻度 13180");
     assert_eq!(
         nav_date.as_deref(),
         Some("2026-08-28"),
         "现价应携带净值日期"
     );
-    assert_eq!(price_source, "eastmoney");
+    assert_eq!(price_source, "sina");
     assert_eq!(*calls.lock().unwrap(), vec!["000001".to_string()]);
 }
 
@@ -214,7 +214,7 @@ async fn test_create_fund_with_unknown_code_rejects_without_row() {
 // 网络不可达：降级为提交名称 + 真实代码建行；重放不覆盖既有权威名称
 // ---------------------------------------------------------------------------
 
-/// 状态开关桩：`down=true` 模拟东财网络不可达（Io），否则按命中表返回。
+/// 状态开关桩：`down=true` 模拟行情源网络不可达（Io），否则按命中表返回。
 fn toggle_stub(
     hits: HashMap<String, FundStubHit>,
     down: Arc<AtomicBool>,
@@ -241,6 +241,7 @@ fn toggle_stub(
                     constant_unit_price_cents: hit
                         .money_fund
                         .then(|| ledger_investment::prices::price_value_to_cents(1.0)),
+                    price_source: ledger_investment::prices::SINA_PRICE_SOURCE,
                 }),
                 // 未命中形状与生产同源（码化 sync.fund-not-found，#1186），不回退裸 Invalid。
                 None => Err(AppError::codedp(
@@ -320,12 +321,12 @@ async fn test_create_fund_degrades_without_ai_name_creates_code_only_row() {
 async fn test_create_fund_degrade_replay_keeps_existing_authoritative_name() {
     let (app, conn, down, calls) = setup_app_with_toggle_stub(stub_hit());
 
-    // 第一笔：东财可达 → 权威名称回填。
+    // 第一笔：行情源可达 → 权威名称回填。
     let (status, bytes) = post_instrument(&app, r#"{"symbol":"000001","type":"fund"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
     let id: String = serde_json::from_slice(&bytes).unwrap();
 
-    // 第二笔：东财不可达 + AI 提交了另一个名称 → 降级建行成功、返回同一 id，
+    // 第二笔：行情源不可达 + AI 提交了另一个名称 → 降级建行成功、返回同一 id，
     // 既有权威名称不被 AI 名称覆盖。
     down.store(true, Ordering::SeqCst);
     let (status, bytes) = post_instrument(
@@ -341,7 +342,7 @@ async fn test_create_fund_degrade_replay_keeps_existing_authoritative_name() {
     assert_eq!(
         row.name.as_deref(),
         Some("华夏成长混合"),
-        "降级重放不得用 AI 名称覆盖既有东财权威名称"
+        "降级重放不得用 AI 名称覆盖既有权威名称"
     );
     assert!(row.price.is_some(), "既有现价不被降级重放破坏");
     assert_eq!(calls.lock().unwrap().len(), 2, "两笔各发起一次东财尝试");
@@ -584,5 +585,5 @@ async fn test_create_money_fund_marks_constant_price_with_empty_nav_date() {
         .expect("货基建档应落常量现价");
     assert_eq!(price_cents, 10_000, "恒定单位净值 1.0000");
     assert_eq!(nav_date, None, "净值日期列为空");
-    assert_eq!(price_source, "eastmoney");
+    assert_eq!(price_source, "sina");
 }

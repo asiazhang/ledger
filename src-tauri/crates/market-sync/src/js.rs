@@ -6,17 +6,6 @@
 //! 通道解析层的 fail-closed 判据。被拦截形态（风控 HTML 页、无权限报文）天然缺
 //! 声明，提取失败即由调用方按不可信数据处置。
 
-/// 从 JS 文本里取出 `var <marker> = "..."` 的字符串字面量（基金名称与代码的实际
-/// 形态不含转义，不做转义处理）。未声明 / 缺 `=` / 缺引号均返回 None。
-pub(super) fn declared_string<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
-    let after_marker = &text[text.find(marker)? + marker.len()..];
-    let after_eq = &after_marker[after_marker.find('=')? + 1..];
-    let open = after_eq.find('"')?;
-    let rest = &after_eq[open + 1..];
-    let close = rest.find('"')?;
-    Some(&rest[..close])
-}
-
 /// 从 JS 文本里取出 `marker` 之后的**第一个**数组字面量：先按 `marker` 定位（变量名
 /// 或对象字段名，如 `var r` / `Data_netWorthTrend` / `datas`——`=` 与 `:` 两种赋值形态
 /// 都适用），再从其后第一个 `[` 做括号配对（跳过 JSON 字符串内的括号与转义）。

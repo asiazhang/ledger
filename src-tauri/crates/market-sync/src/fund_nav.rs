@@ -6,10 +6,10 @@
 //! 万份收益列不是单位净值（货基单位净值恒 [`MONEY_FUND_UNIT_NAV`]，收益以份额
 //! 结转体现）。判定信号已改取证监会基金电子披露的自报形态（确认函数在
 //! [`super::csrc`]，接线在逐只刷新与历史首刷两确认点）；本通道的东财自报口径
-//!（lsjz `SYType`/`FundType`、详情页数据文件形态）已从同步路径退役——解析层
-//! 不再识别与改写，货基行按事实透传（取值位是万份收益），落库由判定门拦截
-//! （确认前不落任何取值）。档案与搜索通道的存量口径（建档确认点）未换装，
-//! 归 #1568；万份收益序列投影仍服务档案通道的最后一期净值兑底。
+//!（lsjz `SYType`/`FundType`）已从同步路径退役——解析层不再识别与改写，货基行
+//! 按事实透传（取值位是万份收益），落库由判定门拦截（确认前不落任何取值）。
+//! 建档路径的档案/搜索存量口径已随基金查询创建换源退役（issue #1568），万份
+//! 收益序列投影随之删除。
 //!
 //! - 报文解析（[`parse_lsjz`]）与水位窗口（[`nav_window`]）为纯函数，fixture
 //!   单测见 `tests/fund_nav.rs`（真实报文形状，不依赖真实网络）；
@@ -30,7 +30,7 @@ use rusqlite::params;
 use serde::Deserialize;
 
 use ledger_investment::constant_price::{ensure_constant_base_price, mark_constant_unit_price};
-use ledger_investment::prices::{EASTMONEY_PRICE_SOURCE, price_value_to_cents};
+use ledger_investment::prices::{CSRC_PRICE_SOURCE, price_value_to_cents};
 
 use ledger_infra::error::{AppError, Result};
 
@@ -106,29 +106,9 @@ pub struct NavPoint {
 /// 净值（与历史净值接口 `DWJZ` 同口径，见 [`parse_net_worth_trend`]）。
 const NET_WORTH_TREND_VAR: &str = "Data_netWorthTrend";
 
-/// 同一数据文件里万份收益序列的变量名（`[北京时间午夜毫秒时间戳, 万份收益]`
-/// 升序数组）：货币基金没有单位净值序列，本通道以「缺 [`NET_WORTH_TREND_VAR`]
-/// 而有本序列」为货基特征，收益日期 × 恒定单位净值收录（issue #1342）。
-const MONEY_INCOME_TREND_VAR: &str = "Data_millionCopiesIncome";
-
-/// 东财基金类型码「货币型」：搜索通道 `FUNDTYPE` 沿用的同一枚代码表
-///（issue #1342；建档确认点的存量口径，随 #1568 查询创建接线退役）。
-const MONEY_FUND_TYPE_CODE: &str = "005";
-
 /// 货币基金的恒定单位净值（issue #1342）：收益以份额结转体现，单位净值恒为
-/// 1.0000——现价与净值序列都按此值收录，万份收益数值不参与。
+/// 1.0000——现价与恒定价兜底行都按此值收录，万份收益数值不参与。
 pub(super) const MONEY_FUND_UNIT_NAV: f64 = 1.0;
-
-/// 按东财基金类型码判定货币基金（issue #1342）：搜索通道（`FUNDTYPE`）的建档
-/// 存量口径（随 #1568 查询创建接线退役）。
-pub(super) fn is_money_fund_type_code(code: &str) -> bool {
-    code.trim() == MONEY_FUND_TYPE_CODE
-}
-
-/// 同一数据文件里的基金名称与代码变量名（issue #1212 / ADR-0039 修订）：档案通道
-/// 据此判定「这份文件是不是本基金的」并取权威名称。
-const FUND_NAME_VAR: &str = "fS_name";
-const FUND_CODE_VAR: &str = "fS_code";
 
 /// 单位净值序列的单个元素：`x` = 净值日北京时间午夜的毫秒时间戳；`y` = 单位
 /// 净值（真实价格值，元）；其余字段（equityReturn / unitMoney）不消费。
@@ -160,53 +140,6 @@ pub(super) fn parse_net_worth_trend(js: &str) -> Option<Vec<NavPoint>> {
     )
 }
 
-/// 档案通道（基金详情页数据文件）的基金档案：权威名称 + 最后一期单位净值 +
-/// 货基形态信号。搜索索引只收在用基金，已终止（清盘）基金被东财摘出该索引
-/// （ADR-0039 修订，issue #1212），这两项由档案通道承接；恒定价格信号亦然
-/// ——终止货基的类型码已不可达，数据文件形态是它的建档确认面（ADR-0126）。
-pub(super) struct FundArchive {
-    pub(super) name: String,
-    pub(super) last_nav: Option<NavPoint>,
-    /// 详情页数据文件缺单位净值序列而有万份收益序列（货基形态，ADR-0126
-    /// 决策 3）：建档打标的三处确认源之一。
-    pub(super) is_constant_price: bool,
-}
-
-/// 序列里的最新净值点（按净值日期；水位与「最后一期净值」同此判）。
-fn latest_point(points: Option<Vec<NavPoint>>) -> Option<NavPoint> {
-    points?.into_iter().max_by(|a, b| a.date.cmp(&b.date))
-}
-
-/// 解析档案通道响应：`fS_code` 与请求代码全等且 `fS_name` 非空才命中（与搜索通道
-/// 的 FCODE 全等同一防御纪律）；未声明 / 形态不符 / 代码不符均返回 None，由调用方
-/// 按「查无此码」处置。单位净值序列缺失或不可信时按「未取到净值」降级（名称仍可用），
-/// 与搜索通道「命中但未公布净值」同形。
-pub(super) fn parse_fund_archive(js: &str, code: &str) -> Option<FundArchive> {
-    let declared_code = super::js::declared_string(js, FUND_CODE_VAR)?;
-    if declared_code != code {
-        return None;
-    }
-    let name = super::js::declared_string(js, FUND_NAME_VAR)?.trim();
-    if name.is_empty() {
-        return None;
-    }
-    let net_worth = parse_net_worth_trend(js);
-    let last_nav = latest_point(net_worth.clone()).or_else(|| {
-        // 货基没有单位净值序列：最后一期净值 = 最新收益日 × 恒定单位净值
-        // 1.0000（issue #1342）——档案回退报价据此落 1.0000 而非无价。
-        latest_point(parse_money_fund_income_series(js))
-    });
-    // 货基形态信号（ADR-0126 决策 3）：缺单位净值序列（无可用行）而有万份
-    // 收益序列——与 last_nav 的回退分支同判，两处消费同一份解析结果。
-    let is_constant_price = net_worth.map(|points| points.is_empty()).unwrap_or(true)
-        && parse_money_fund_income_series(js).is_some();
-    Some(FundArchive {
-        name: name.to_string(),
-        last_nav,
-        is_constant_price,
-    })
-}
-
 /// 毫秒时间戳（净值日北京时间午夜，见单位净值序列元素的 `x`）→ ISO 净值日期：
 /// 委托北京日历日单点 [`super::incremental::beijing_date`]（UTC + 8h 取日期部分），
 /// 不在此复刻 +8h 口径。
@@ -216,32 +149,6 @@ fn beijing_date_from_epoch_ms(ms: i64) -> Option<String> {
         super::incremental::beijing_date(utc)
             .format("%Y-%m-%d")
             .to_string(),
-    )
-}
-
-/// 解析货币基金档案文件里的**万份收益序列**（issue #1342）：货基没有单位净值
-/// 序列（`Data_netWorthTrend` 缺省），单位净值恒 [`MONEY_FUND_UNIT_NAV`]，本
-/// 函数把收益序列的日期投影成净值点（收益值不消费，含 0 与偶发负值）；时间戳
-/// 不可解析的行静默过滤，与 [`parse_net_worth_trend`] 同姿态。
-///
-/// 返回值语义与 [`parse_net_worth_trend`] 一致：`None` = 变量缺省 / 数组截断 /
-/// 元素形态不符——数据不可信，调用方 fail-closed 回退分页通道；`Some(vec![])`
-/// = 结构完好但序列为空（新基金无收益记录），是可信空结果。
-pub(super) fn parse_money_fund_income_series(js: &str) -> Option<Vec<NavPoint>> {
-    let array = super::js::declared_array(js, MONEY_INCOME_TREND_VAR)?;
-    // 元素为 `[毫秒时间戳, 万份收益]` 对：时间戳即净值日本体；收益值类型放宽
-    // 承接任意形态（不消费），只为保住日期。
-    let raw: Vec<(i64, serde_json::Value)> = serde_json::from_str(array).ok()?;
-    Some(
-        raw.into_iter()
-            .filter_map(|(timestamp, _)| {
-                let date = beijing_date_from_epoch_ms(timestamp)?;
-                Some(NavPoint {
-                    date,
-                    nav: MONEY_FUND_UNIT_NAV,
-                })
-            })
-            .collect(),
     )
 }
 
@@ -410,33 +317,6 @@ pub struct FullSeries {
 }
 
 /// 单请求全量净值通道（issue #1062）：一次 GET 基金详情页数据文件，解析
-/// 档案通道取数（issue #1212 / ADR-0039 修订）：一次 GET 基金详情页数据文件，解析
-/// 出权威名称与最后一期单位净值；主机池可注入（本地 HTTP 服务测试请求路径与解析）。
-/// `Ok(None)` = 这份文件不是本基金的（含无效代码被重定向到错误页的形态），由调用方
-/// 按查无此码处置；`Err` 只留给传输类失败（网络 / 限流耗尽重试），与既有「网络失败
-/// 上抛」契约一致。
-pub(super) async fn fetch_fund_archive_from(
-    client: &reqwest::Client,
-    pacer: &mut Pacer,
-    code: &str,
-    hosts: &[&str],
-) -> Result<Option<FundArchive>> {
-    tracing::debug!(code, "基金档案通道查询");
-    let path = format!("{PINGZHONG_PATH_PREFIX}{code}.js");
-    let body = request_text_from_hosts(
-        client,
-        &[],
-        &path,
-        hosts,
-        RetryConfig::production(),
-        pacer,
-        &format!("fetch_fund_archive:{code}"),
-        None,
-    )
-    .await?;
-    Ok(parse_fund_archive(&body, code))
-}
-
 /// 单请求全量净值通道（issue #1062）：一次 GET 基金详情页数据文件，解析
 /// `Data_netWorthTrend` 得整只基金的**全部历史单位净值**——口径与 lsjz 的 `DWJZ`
 /// 逐值一致、同落在万分位价格刻度上（spike 四类型样本验证见 ADR-0038 修订记录）。
@@ -511,7 +391,9 @@ pub(super) async fn mark_constant_price_on_confirm<Q: ScopedSession>(
                 cents,
                 &currency_code,
                 &priced_at,
-                EASTMONEY_PRICE_SOURCE,
+                // 恒定价格的确认源是官方披露自报形态（issue #1563 / #1568，
+                // ADR-0130 决策 7：来源键随换源如实记 csrc）。
+                CSRC_PRICE_SOURCE,
             )
         })
         .await

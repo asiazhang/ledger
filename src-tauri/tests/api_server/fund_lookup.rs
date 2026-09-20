@@ -1,8 +1,9 @@
 //! 基金按代码查询 HTTP 端点（`GET /api/v1/funds/{code}`，issue #304 / ADR-0039 决策 2）。
 //!
-//! 只断言外部行为：命中返回名称/东财分类/最新净值/净值日期（净值按 API 价格刻度
-//! 万分之一元投影）、净值未公布为 null、格式非法（非 6 位）不发起网络请求即 400、
-//! 查无此码 400 中文错误、开放 API 契约自描述覆盖。东财访问经注入桩离线驱动。
+//! 只断言外部行为：命中返回名称/最新净值/净值日期（净值按 API 价格刻度万分之一
+//! 元投影；fund_class 已弃用恒空串，ADR-0130 决策 8）、净值未公布为 null、格式
+//! 非法（非 6 位）不发起网络请求即 400、查无此码 400 中文错误、开放 API 契约自
+//! 描述覆盖。行情源访问经注入桩离线驱动（#1568 换源）。
 
 use std::collections::HashMap;
 
@@ -10,13 +11,14 @@ use axum::http::StatusCode;
 
 use crate::common::{FundStubHit, get_json, setup_app_with_fund_stub};
 
-/// 命中表：000001 → 华夏成长混合 / 混合型-灵活 / 净值 1.2345 元 @ 2026-08-28。
+/// 命中表：000001 → 华夏成长混合 / 净值 1.2345 元 @ 2026-08-28。
+/// fund_class 恒空串：替代源无分类来源，桩与生产取数产物同形（#1568）。
 fn stub_hit() -> HashMap<String, FundStubHit> {
     HashMap::from([(
         "000001".to_string(),
         FundStubHit {
             name: "华夏成长混合",
-            fund_class: "混合型-灵活",
+            fund_class: "",
             nav: Some((1.2345, "2026-08-28")),
             money_fund: false,
         },
@@ -34,8 +36,11 @@ async fn test_lookup_fund_returns_name_class_nav_and_nav_date() {
     let (status, body) = get_json(&app, "/api/v1/funds/000001").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["code"], "000001");
-    assert_eq!(body["name"], "华夏成长混合", "应返回东财权威名称");
-    assert_eq!(body["fund_class"], "混合型-灵活", "应返回东财基金分类");
+    assert_eq!(body["name"], "华夏成长混合", "应返回数据源权威名称");
+    assert_eq!(
+        body["fund_class"], "",
+        "分类已弃用：替代源无来源，恒返回空串（ADR-0130 决策 8）"
+    );
     assert_eq!(
         body["nav_cents"], 12345,
         "净值 1.2345 元应投影为万分之一元刻度 12345"
@@ -49,7 +54,7 @@ async fn test_lookup_fund_with_unpublished_nav_returns_null_nav_fields() {
         "012345".to_string(),
         FundStubHit {
             name: "新发基金",
-            fund_class: "混合型",
+            fund_class: "",
             nav: None,
             money_fund: false,
         },
@@ -66,9 +71,10 @@ async fn test_lookup_fund_with_unpublished_nav_returns_null_nav_fields() {
 }
 
 #[tokio::test]
-async fn test_lookup_terminated_fund_from_archive_channel_returns_empty_class() {
-    // 已终止（清盘）基金经档案通道回退命中（ADR-0039 修订，issue #1212）：名称与
-    // 最后一期净值齐备；基金分类是搜索通道成员，档案通道缺省 → 投影为空串。
+async fn test_lookup_terminated_fund_returns_name_and_last_nav() {
+    // 已终止（清盘）基金经官方披露兑底命中（ADR-0039 修订 / ADR-0130 决策 2，
+    // issue #1212 / #1568）：名称与最后一期净值齐备，不再误报查无此码；
+    // 分类字段弃用，恒投影空串。
     let hits = HashMap::from([(
         "002503".to_string(),
         FundStubHit {
@@ -84,7 +90,7 @@ async fn test_lookup_terminated_fund_from_archive_channel_returns_empty_class() 
     assert_eq!(status, StatusCode::OK, "已终止基金不再是查无此码: {body}");
     assert_eq!(body["code"], "002503");
     assert_eq!(body["name"], "中银腾利混合C");
-    assert_eq!(body["fund_class"], "", "档案通道无分类，投影为空串");
+    assert_eq!(body["fund_class"], "", "分类已弃用，投影为空串");
     assert_eq!(body["nav_cents"], 11_440);
     assert_eq!(body["nav_date"], "2023-09-18");
 }
@@ -132,7 +138,7 @@ async fn test_lookup_fund_with_unknown_code_returns_400_chinese_error() {
     assert_eq!(
         *calls.lock().unwrap(),
         vec!["999999".to_string()],
-        "查无此码路径应已发起一次东财查询"
+        "查无此码路径应已发起一次行情查询"
     );
 }
 

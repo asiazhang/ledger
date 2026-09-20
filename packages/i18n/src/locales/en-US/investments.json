@@ -257,7 +257,7 @@
     "notFoundHint": "Not covered by the data source? Switch to the Custom Instrument channel to create it manually.",
     "cancel": "Cancel",
     "successStock": "Instrument added: {name} ({symbol} · {typeLabel}){price}",
-    "successFund": "OTC fund added: {name} ({symbol} · {fundClass}){nav}",
+    "successFund": "OTC fund added: {name} ({symbol}{fundClass}){nav}",
     "price": "Latest price {price}",
     "priceMissing": "Latest price not available",
     "nav": "Latest NAV {price} ({date})",

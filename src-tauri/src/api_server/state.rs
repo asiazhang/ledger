@@ -1,5 +1,5 @@
 //! HTTP 服务器状态与注入接缝：数据库连接 + 失效信号发射槽 + 可选行情详情接缝
-//! （基金东财 / 股票腾讯，ADR-0130）+ 加密锁定门。
+//! （基金新浪与官方披露 / 股票腾讯，ADR-0130）+ 加密锁定门。
 
 use std::future::Future;
 use std::pin::Pin;
@@ -14,11 +14,11 @@ use ledger_infra::events::SignalEmitter;
 use ledger_investment::Quote;
 use rusqlite::Connection;
 
-/// 东财基金报价获取函数接缝（issue #304 / ADR-0039）：`基金代码 → future<Result<Quote>>`，
+/// 基金报价获取函数接缝（issue #304 / ADR-0039 / #1568 换源）：`基金代码 → future<Result<Quote>>`，
 /// 查无此码以 `AppError::Invalid`（中文错误）上抛——与 IPC 壳按代码即拉生产入口
 /// 同一载荷（行情接入统一报价，ADR-0103）；本接缝是查询端点的场外通道注入
 ///（按代码一参），与接缝的统一注入签名（代码，市场）同源不同面。生产路径为
-/// 东财 FundSearchAPI（`fetch_fund_quote_production`，async 形态直接 await，
+/// 新浪/官方披露取数编排（`fetch_fund_quote_production`，async 形态直接 await，
 /// ADR-0125 决策 7 / issue #1413）；HTTP 集成测试以注入桩离线驱动
 ///（`setup_app_with_fund_fetch`），全部基金端点集成测试不触真实网络。
 pub type QuoteFuture = Pin<Box<dyn Future<Output = Result<Quote, AppError>> + Send>>;
@@ -39,7 +39,7 @@ pub type StockQuoteFetcher = Arc<dyn Fn(&str, &str) -> QuoteFuture + Send + Sync
 /// 生产注入 `AppHandle`（主线程非阻塞投递实现）经未尺寸化强转装入。
 pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 
-/// HTTP 服务器状态：数据库连接 + 失效信号发射槽 + 可选东财基金详情接缝 + 加密锁定门。
+/// HTTP 服务器状态：数据库连接 + 失效信号发射槽 + 可选基金行情接缝 + 加密锁定门。
 ///
 /// `emitter`（发射槽，ADR-0044 / ADR-0054）：`Some` 时写事务提交成功后经信号
 /// 映射单点发射失效信号。生产路径由 `start_http_server` 注入
@@ -54,7 +54,7 @@ pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 /// 两槽同用「共享句柄 + 互斥体内槽替换」形态：壳层换连后本状态持有的克隆
 /// 同步可见（ADR-0080）。
 ///
-/// `fund_fetch` 为东财基金详情获取接缝：`None` = 生产路径（真实东财，async
+/// `fund_fetch` 为基金报价获取接缝（新浪批量面 + 官方披露兑底，#1568）：`None` = 生产路径（真实数据源，async
 /// 生产入口直接 await，连接锁外往返）；集成测试注入桩离线驱动（issue #304）。
 /// `stock_fetch` 为股票行情获取接缝，同构（issue #693；生产路径腾讯，ADR-0130）。
 ///

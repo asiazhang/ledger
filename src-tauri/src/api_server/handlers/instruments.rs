@@ -1,5 +1,5 @@
-//! 标的端点：搜索（统一模糊搜索、封顶返回）与幂等创建（含行情增强：基金经东财、
-//! 股票经腾讯行情，ADR-0130）。
+//! 标的端点：搜索（统一模糊搜索、封顶返回）与幂等创建（含行情增强：基金经新浪
+//! 与证监会基金电子披露、股票经腾讯行情，ADR-0130）。
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -174,7 +174,7 @@ pub async fn create_instrument_handler(
         InstrumentType::Fund if is_six_digit_code(&input.symbol) => {
             Some(
                 match fetch_fund_quote_for_api(&state, &input.symbol).await {
-                    // 东财命中：权威名称回填 + 净值落现价。
+                    // 行情命中：权威名称回填 + 净值落现价。
                     Ok(quote) => Enrichment::FundAuthoritative(quote),
                     // 查无此码（接缝约定以 sync.fund-not-found 码化 400 上抛）：显式拒绝
                     // 创建，AI 可提示用户或跳过该行。按稳定错误码判定（与下方股票分支同款
@@ -243,7 +243,7 @@ pub async fn create_instrument_handler(
         move |conn| {
             let (instrument_id, price_written) = match &enrichment {
                 Some(Enrichment::FundAuthoritative(quote)) => {
-                    // 东财命中：与按代码即拉同一落库接缝（权威名称回填 + 净值落现价）。
+                    // 行情命中：与按代码即拉同一落库接缝（权威名称回填 + 净值落现价）。
                     let r = adopt_fund_quote(conn, quote)?;
                     (r.instrument_id, r.price_written)
                 }

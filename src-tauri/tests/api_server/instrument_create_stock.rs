@@ -295,6 +295,7 @@ fn toggle_stub(
                     nav_date: None,
                     // 场内通道无恒定价格信号（ADR-0126）。
                     constant_unit_price_cents: None,
+                    price_source: ledger_investment::prices::TENCENT_PRICE_SOURCE,
                 }),
                 None => Err(AppError::codedp(
                     "sync.stock-not-found",
