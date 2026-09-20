@@ -6,9 +6,9 @@
 //! 与份额行混排；以及参数门槛与异常响应的 fail-closed 语义——缺参数的 500
 //! 「系统异常」页、空响应、非 JSON 拦截页一律报错上抛，绝不落「无数据」结论。
 
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use super::spawn_capture_server;
 use crate::csrc::{
     CsrcNavRecord, confirm_money_fund_form_from, fetch_fund_nav_series_from, parse_disclosure_page,
 };
@@ -258,40 +258,9 @@ fn parse_all_rows_filtered_by_discipline_fails_closed() {
 // 取数层：本地 HTTP 服务钉住请求形态（不依赖真实网络）
 // ---------------------------------------------------------------------------
 
-/// 起一个按调用次数回调响应 (status, body) 并按序收集请求头的本地 HTTP 服务。
-fn spawn_capture_server(
-    responder: impl Fn(usize) -> (u16, String) + Send + 'static,
-) -> (String, Arc<Mutex<Vec<String>>>) {
-    use std::io::{Read, Write};
-
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let heads = Arc::new(Mutex::new(Vec::new()));
-    let heads_clone = heads.clone();
-    std::thread::spawn(move || {
-        let mut seq = 0usize;
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { break };
-            let mut buf = [0u8; 8192];
-            let _ = stream.read(&mut buf);
-            heads_clone
-                .lock()
-                .unwrap()
-                .push(String::from_utf8_lossy(&buf).to_string());
-            seq += 1;
-            let (status, body) = responder(seq);
-            let reason = if status == 200 { "OK" } else { "Error" };
-            let resp = format!(
-                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(resp.as_bytes());
-        }
-    });
-    (url, heads)
-}
-
-/// 从原始请求头里取出 aoData 参数值并百分号解码（请求形态断言用）。
+/// 从原始请求头里取出 aoData 参数值并解码（请求形态断言用）。percent 解码经
+/// `url::form_urlencoded`（issue #1582 附带：手写字节循环退役，form 语义——
+/// 含 `+`→空格——与标准实现对齐）。
 fn decoded_ao_data(head: &str) -> String {
     let request_line = head.lines().next().expect("请求行应存在");
     let query = request_line
@@ -304,28 +273,11 @@ fn decoded_ao_data(head: &str) -> String {
         .split(" HTTP/")
         .next()
         .unwrap();
-    let raw = query
-        .split('&')
-        .find(|pair| pair.starts_with("aoData="))
-        .expect("查询串应携带 aoData 参数");
-    let encoded = raw.strip_prefix("aoData=").unwrap();
-    let bytes = encoded.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' if i + 2 < bytes.len() => {
-                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap();
-                out.push(u8::from_str_radix(hex, 16).unwrap());
-                i += 3;
-            }
-            _ => {
-                out.push(bytes[i]);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8(out).unwrap()
+    url::form_urlencoded::parse(query.as_bytes())
+        .find(|(name, _)| name == "aoData")
+        .expect("查询串应携带 aoData 参数")
+        .1
+        .into_owned()
 }
 
 fn fast_pacer() -> crate::http::Pacer {
@@ -336,7 +288,7 @@ fn fast_pacer() -> crate::http::Pacer {
 fn fetch_pins_request_shape_with_full_datatables_params() {
     // 参数门槛（13.5 节）：官方站缺参数返回 500 系统异常而非空数据——请求必须
     // 完整携带 DataTables 风格参数与业务参数。本用例把请求形态钉住。
-    let (url, heads) = spawn_capture_server(|_| (200, NORMAL_FUND_PAYLOAD.to_string()));
+    let (url, heads) = spawn_capture_server(|_| (200, NORMAL_FUND_PAYLOAD.into()));
     let client = reqwest::Client::new();
     let mut pacer = fast_pacer();
     let records = tauri::async_runtime::block_on(fetch_fund_nav_series_from(
@@ -391,7 +343,7 @@ fn fetch_pins_request_shape_with_full_datatables_params() {
 #[test]
 fn fetch_trusted_empty_from_server_is_ok_empty() {
     // 查无此码的服务端形态（结构完好 + aaData 空）才允许得出「无数据」结论。
-    let (url, _) = spawn_capture_server(|_| (200, TRUSTED_EMPTY_PAYLOAD.to_string()));
+    let (url, _) = spawn_capture_server(|_| (200, TRUSTED_EMPTY_PAYLOAD.into()));
     let client = reqwest::Client::new();
     let mut pacer = fast_pacer();
     let records = tauri::async_runtime::block_on(fetch_fund_nav_series_from(
@@ -425,7 +377,7 @@ fn fetch_abnormal_responses_fail_closed() {
             r#"{"sEcho":1,"iTotalRecords":0}"#.to_string(),
         ),
     ] {
-        let (url, _) = spawn_capture_server(move |_| (status, body.clone()));
+        let (url, _) = spawn_capture_server(move |_| (status, body.clone().into()));
         let client = reqwest::Client::new();
         let mut pacer = fast_pacer();
         let result = tauri::async_runtime::block_on(fetch_fund_nav_series_from(
@@ -467,9 +419,9 @@ fn fetch_follows_declared_total_across_pages() {
     );
     let (url, heads) = spawn_capture_server(move |n| {
         if n == 1 {
-            (200, page1.clone())
+            (200, page1.clone().into())
         } else {
-            (200, page2.clone())
+            (200, page2.clone().into())
         }
     });
     let client = reqwest::Client::new();
@@ -504,7 +456,7 @@ fn fetch_window_deeper_than_page_cap_fails_closed() {
             .collect::<Vec<_>>()
             .join(",")
     );
-    let (url, heads) = spawn_capture_server(move |_| (200, full_page.clone()));
+    let (url, heads) = spawn_capture_server(move |_| (200, full_page.clone().into()));
     let client = reqwest::Client::new();
     let mut pacer = fast_pacer();
     let result = tauri::async_runtime::block_on(fetch_fund_nav_series_from(
@@ -536,9 +488,9 @@ fn fetch_incomplete_paging_fails_closed() {
     );
     let (url, _) = spawn_capture_server(move |n| {
         if n == 1 {
-            (200, page1.clone())
+            (200, page1.clone().into())
         } else {
-            (200, TRUSTED_EMPTY_PAYLOAD.to_string())
+            (200, TRUSTED_EMPTY_PAYLOAD.into())
         }
     });
     let client = reqwest::Client::new();
@@ -563,7 +515,7 @@ fn fetch_incomplete_paging_fails_closed() {
 fn confirm_money_fund_form_pins_money_fund_self_report() {
     // 货基自报形态（真实报文 fixture）：最新记录「单位净值为空、万份收益与
     // 七日年化有值」即确认。
-    let (url, heads) = spawn_capture_server(|_| (200, MONEY_FUND_PAYLOAD.to_string()));
+    let (url, heads) = spawn_capture_server(|_| (200, MONEY_FUND_PAYLOAD.into()));
     let client = reqwest::Client::new();
     let mut pacer = fast_pacer();
     let confirmed = tauri::async_runtime::block_on(confirm_money_fund_form_from(
@@ -593,7 +545,7 @@ fn confirm_money_fund_form_pins_money_fund_self_report() {
 fn confirm_normal_fund_and_trusted_empty_are_missing_signal() {
     // 普通净值形态记录：不是货基自报形态 → Ok(false)——缺信号不是「不是恒定
     // 标的」的反证，调用方不得据此清空既有标记。
-    let (url, _) = spawn_capture_server(|_| (200, NORMAL_FUND_PAYLOAD.to_string()));
+    let (url, _) = spawn_capture_server(|_| (200, NORMAL_FUND_PAYLOAD.into()));
     let client = reqwest::Client::new();
     let mut pacer = fast_pacer();
     let confirmed = tauri::async_runtime::block_on(confirm_money_fund_form_from(
@@ -607,7 +559,7 @@ fn confirm_normal_fund_and_trusted_empty_are_missing_signal() {
 
     // 已终止基金的老记录（普通净值形态）同样缺信号；可信空报文（查无此码 /
     // 窗口内无披露）同样缺信号、绝不报错。
-    let (url, _) = spawn_capture_server(|_| (200, TERMINATED_FUND_PAYLOAD.to_string()));
+    let (url, _) = spawn_capture_server(|_| (200, TERMINATED_FUND_PAYLOAD.into()));
     let mut pacer = fast_pacer();
     let confirmed = tauri::async_runtime::block_on(confirm_money_fund_form_from(
         &client,
@@ -618,7 +570,7 @@ fn confirm_normal_fund_and_trusted_empty_are_missing_signal() {
     .unwrap();
     assert!(!confirmed, "已终止基金普通形态缺信号");
 
-    let (url, _) = spawn_capture_server(|_| (200, TRUSTED_EMPTY_PAYLOAD.to_string()));
+    let (url, _) = spawn_capture_server(|_| (200, TRUSTED_EMPTY_PAYLOAD.into()));
     let mut pacer = fast_pacer();
     let confirmed = tauri::async_runtime::block_on(confirm_money_fund_form_from(
         &client,
@@ -634,7 +586,7 @@ fn confirm_normal_fund_and_trusted_empty_are_missing_signal() {
 fn confirm_summary_row_mixed_page_confirms_by_share_row() {
     // 混排形态（汇总行 + 份额行）：解析层滤掉空值汇总行后，最新份额行即货基
     // 自报形态——只看第一条原始行会取到全空的汇总行（13.5 节记录形态陷阱）。
-    let (url, _) = spawn_capture_server(|_| (200, MIXED_MONEY_FUND_PAYLOAD.to_string()));
+    let (url, _) = spawn_capture_server(|_| (200, MIXED_MONEY_FUND_PAYLOAD.into()));
     let client = reqwest::Client::new();
     let mut pacer = fast_pacer();
     let confirmed = tauri::async_runtime::block_on(confirm_money_fund_form_from(
@@ -664,7 +616,7 @@ fn confirm_untrusted_response_fails_closed() {
             r#"{"sEcho":1,"iTotalRecords":0}"#.to_string(),
         ),
     ] {
-        let (url, _) = spawn_capture_server(move |_| (status, body.clone()));
+        let (url, _) = spawn_capture_server(move |_| (status, body.clone().into()));
         let client = reqwest::Client::new();
         let mut pacer = fast_pacer();
         let result = tauri::async_runtime::block_on(confirm_money_fund_form_from(
