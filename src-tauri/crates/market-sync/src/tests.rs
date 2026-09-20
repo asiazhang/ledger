@@ -7,7 +7,9 @@
 //! - `instrument_info_sync`：标的信息同步与 ulist / 日 K 报文解析；
 //! - `fund_search`：东财基金搜索报文解析与命中挑选（issue #301，fixture 驱动）；
 //! - `fund_nav`：历史净值报文解析、水位窗口与 Referer 传播（issue #303，fixture 驱动）；
-//! - `stock_quote`：股票单点行情报文解析、类型特征探测与命中挑选（issue #693，fixture 驱动）。
+//! - `stock_quote`：股票单点行情报文解析、类型特征探测与命中挑选（issue #693，fixture 驱动）；
+//! - `tencent`：腾讯行情批量报价取数（issue #1558，fixture 驱动）——三套字段布局的类型码 / 币种 /
+//!   交易所后缀、请求形态与批量承载量、被拦截响应 fail-closed。
 //!
 //! 全量同步（clist 报文解析、分页编排、取消与重入守卫）已随 ADR-0081 决策 3
 //! 退役删除（issue #698）。
@@ -26,6 +28,7 @@ mod history_backfill;
 mod http_client;
 mod instrument_info_sync;
 mod stock_quote;
+mod tencent;
 
 // ---------------------------------------------------------------------------
 // 共享测试脚手架（一份）
@@ -209,6 +212,7 @@ fn production_source_files() -> Vec<(&'static str, String)> {
         ("progress.rs", include_str!("progress.rs").to_string()),
         ("session.rs", include_str!("session.rs").to_string()),
         ("stock.rs", include_str!("stock.rs").to_string()),
+        ("tencent.rs", include_str!("tencent.rs").to_string()),
     ];
     files.sort_by_key(|(name, _)| *name);
     files

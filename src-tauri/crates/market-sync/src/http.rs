@@ -402,6 +402,40 @@ pub(super) async fn request_text_from_hosts(
     )))
 }
 
+/// 同 [`request_text_from_hosts`] 的多主机切换，但返回**原始字节**（非 UTF-8
+/// 编码的通道用，如 GBK 报文；issue #1558）。复用同一套重试 / 多主机 / 限流冷却，
+/// 解码与可信度判定留给调用方（字节层无法区分正常 GBK 报文与被拦截 HTML 页）。
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn request_bytes_from_hosts(
+    client: &reqwest::Client,
+    params: &[(&str, &str)],
+    path: &str,
+    hosts: &[&str],
+    cfg: RetryConfig,
+    pacer: &mut Pacer,
+    ctx: &str,
+    referer: Option<&str>,
+) -> Result<Vec<u8>> {
+    let mut failures: Vec<String> = Vec::new();
+    for host in hosts {
+        let url = format!("{host}{path}");
+        // 纯字节通道的解析恒成功（解码与形状判定在调用方），因此不命中
+        // `request_with_retry` 的「疑似被风控页」长冷却重试。
+        let parsed = request_with_retry(client, &url, params, pacer, ctx, cfg, referer, &|bytes| {
+            Ok(bytes.to_vec())
+        })
+        .await;
+        match parsed {
+            Ok(resp) => return Ok(resp),
+            Err(e) => failures.push(format!("{host}: {e}")),
+        }
+    }
+    Err(AppError::Io(format!(
+        "全部行情主机请求失败: {}",
+        failures.join("; ")
+    )))
+}
+
 pub(super) async fn request_json_with_retry<T>(
     client: &reqwest::Client,
     url: &str,

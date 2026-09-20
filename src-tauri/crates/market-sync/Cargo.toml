@@ -33,6 +33,9 @@ serde_json = "1"
 # ECB 参考汇率 Cube 报文解析（issue #1542 / ADR-0019 修订记录）：版本与 lock 中
 # tauri 传递依赖同线，不额外拉重依赖。
 quick-xml = "0.42"
+# 腾讯行情报价为 GBK 编码（ADR-0130 / issue #1558）：标准 WHATWG 编码实现，
+# 解码出错即 fail-closed，不把替换字符混进权威名称字段。
+encoding_rs = "0.8"
 chrono = { version = "0.4.45", features = ["serde"] }
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
 tauri = { version = "2", features = ["tracing"] }
