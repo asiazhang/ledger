@@ -874,7 +874,7 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   {
     path: "channels.rs",
     layer: "域目录",
-    note: "同步网络通道束（issue #1276）：六个抓取闭包的打包形态与生产/测试换装接缝——生产接 HTTP 层（主机池/限流 pacer 单点），测试注入桩经命令壳 SyncChannelsSlot 换装使「同步真实在途」可确定复现；编排本体经 do_incremental_sync_channels 单点拆交",
+    note: "同步网络通道束（issue #1276）：六个抓取闭包的打包形态与生产/测试换装接缝——生产接 HTTP 层（主机池/限流 pacer 单点，日 K 闭包经腾讯 K 线取数，issue #1561），测试注入桩经命令壳 SyncChannelsSlot 换装使「同步真实在途」可确定复现；编排本体经 do_incremental_sync_channels 单点拆交",
   },
   {
     path: "csrc.rs",
@@ -969,7 +969,7 @@ export const MARKET_SYNC_MODULES: readonly WhitelistEntry[] = [
   {
     path: "tencent_kline.rs",
     layer: "域目录",
-    note: "腾讯日线 K 线取数单元（ADR-0130 决策 2 / issue #1559）：市场 + 代码 → 腾讯查询键（沪深港前缀 + 美股三市场交易所后缀）、区间 / 根数参数与日线报文解析（收盘价在下标 2、港美行可带多余元素）；无效代码返回空序列而非错误，非预期形状 fail-closed；本票只产出日线序列，接线归 #1561",
+    note: "腾讯日线 K 线取数单元（ADR-0130 决策 2 / issue #1559，接线 issue #1561）：市场 + 代码 → 腾讯查询键（沪深港前缀 + 美股三市场交易所后缀）、区间 / 根数参数与日线报文解析（收盘价在下标 2、港美行可带多余元素）；无效代码返回空序列而非错误，非预期形状 fail-closed；历史补全通道束的日 K 闭包即本单元（#1561）",
   },
 ];
 

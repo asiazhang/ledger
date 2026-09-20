@@ -622,8 +622,18 @@ pub(super) fn two_years_ago(today: NaiveDate) -> NaiveDate {
         .unwrap_or(today)
 }
 
-/// 近两年回填窗口起点（YYYYMMDD 形态，日 K 接口参数用）。生产通道束构造时
-/// 取一次（`channels::SyncFetchChannels::production`，每次同步一次的口径不变）。
+/// 近两年回填窗口（`YYYY-MM-DD` 形态，腾讯日 K 接口参数用，issue #1561）：
+/// 起点 = 北京时间今天 − 2 年、终点 = 今天。生产通道束构造时取一次（每次同步
+/// 一次的口径不变，与 [`kline_beg`] 同型）。
+pub(crate) fn kline_window() -> (String, String) {
+    let today = beijing_today();
+    let beg = two_years_ago(today).format("%Y-%m-%d").to_string();
+    (beg, today.format("%Y-%m-%d").to_string())
+}
+
+/// 近两年回填窗口起点（YYYYMMDD 形态，**东财**日 K 接口参数用——汇率 K 线腿
+/// 随 ECB 换源退役前仍走东财，ADR-0130 决策 2 把汇率单列）。生产通道束构造时
+/// 取一次（`channels::SyncFetchChannels::production_lane`，每次同步一次的口径不变）。
 pub(crate) fn kline_beg() -> String {
     two_years_ago(beijing_today()).format("%Y%m%d").to_string()
 }
