@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +8,7 @@ import {
   INFRA_SRC_REL,
   LAYER,
   TRANSACTION_ZONE_ALLOWED_EDGES,
+  TRANSACTION_ZONE_BY_DIR,
   WHITELIST,
   maskNonCode,
 } from "../scripts/check-structure.ts";
@@ -76,20 +77,21 @@ const INFRA_CASE: CrateCase = {
   },
 };
 
-/** 核心交易域 crate 的骨架形状（四区模块键与区归属政策表一致，供区级层序用例消费）。 */
+/** 核心交易域 crate 的骨架形状（四区目录与区归属政策表一致，供区级层序用例消费）。 */
 const TRANSACTION_CASE: CrateCase = {
   crate: "ledger-transaction",
   dir: "crates/transaction",
   libRs:
     "pub mod amount;\npub mod command;\npub mod model;\npub mod read;\n" +
-    "pub mod seams;\npub mod search_text;\npub mod write;\n",
+    "pub mod seams;\npub mod shared;\npub mod write;\n",
   files: {
     "amount/mod.rs": STUB,
     "command/mod.rs": STUB,
     "model/mod.rs": STUB,
     "read/mod.rs": STUB,
     "seams/mod.rs": STUB,
-    "search_text.rs": STUB,
+    "shared/mod.rs": "pub mod search_text;\n",
+    "shared/search_text.rs": STUB,
     "write/mod.rs": STUB,
   },
 };
@@ -1029,32 +1031,42 @@ describe("check-structure 原生事务语句禁令（issue #1014 / #1003 定案 
   });
 });
 
-describe("check-structure 交易域区级层序（ADR-0113 决策 7 / #1181）", () => {
-  // 四条新断言各由负向夹具锚定（ADR-0087 断言强度，断言对准退出码与输出）：
-  // ① 声明面双向全等（投影核对 describe 覆盖）、② 区级层序、③ 模型目录判据
-  // 各有一枚夹具；删任一条断言须动脚本（清单外无豁免面），对应夹具转绿 →
-  // 该夹具测试失败（CI 红）。
-  it("新增交易域模块未登记区归属 → 红（政策表双向全等，不静默漏扫）", () => {
+describe("check-structure 交易域区级层序（ADR-0113 决策 7 / #1181 / #1597）", () => {
+  // 负向夹具各由一条断言锚定（ADR-0087 断言强度，断言对准退出码与输出）：
+  // 区级层序、根级单文件、未登记区目录各有一枚夹具；删任一条断言须动脚本
+  //（清单外无豁免面），对应夹具转绿 → 该夹具测试失败（CI 红）。
+  it("④ 根级单文件必须进区目录（fail loud）→ 红（#1597，删除检查即变红）", () => {
     const args = fixtureWith(
-      transactionCase({ "extra_zone.rs": STUB }, TRANSACTION_CASE.libRs + "pub mod extra_zone;\n"),
+      transactionCase({ "search_semantics.rs": STUB }, TRANSACTION_CASE.libRs),
     );
     const r = run(args);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("交易域区归属缺失");
-    expect(r.output).toContain("extra_zone");
+    expect(r.output).toContain("根级单文件必须进区目录");
   });
 
-  it("区归属政策表条目无对应声明 → 红（模块删除后政策表须同删）", () => {
-    const args = fixtureWith({
-      crate: "ledger-transaction",
-      dir: "crates/transaction",
-      libRs: "pub mod amount;\n",
-      files: { "amount/mod.rs": STUB },
-    });
+  it("④ 未登记区归属的顶层目录 → 红（判向不静默失靶，#1597）", () => {
+    const args = fixtureWith(
+      transactionCase(
+        { "rogue_zone/helper.rs": STUB },
+        TRANSACTION_CASE.libRs + "pub mod rogue_zone;\n",
+      ),
+    );
     const r = run(args);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("交易域区归属漂移");
-    expect(r.output).toContain("write");
+    expect(r.output).toContain("区目录未登记区归属");
+  });
+
+  it("区目录表与真实仓库顶层区目录全等（#1597）：zone 表无悬空行、顶层目录全有区归属", () => {
+    // 常量表核对无法经夹具红，用双向全等锚替代（同登记面长度锚先例）：新增 /
+    // 删除区目录而 zone 表不同步 → 本断言红；zone 表悬空行同理。真实仓库自检
+    //（run([])）同样照 zone 表判向，两侧互为见证。
+    const srcDir = join(process.cwd(), "src-tauri", "crates", "transaction", "src");
+    const dirs = readdirSync(srcDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name !== "tests")
+      .map((e) => e.name)
+      .filter((name) => readdirSync(join(srcDir, name)).some((f) => f.endsWith(".rs")))
+      .sort();
+    expect(Object.keys(TRANSACTION_ZONE_BY_DIR).sort()).toEqual(dirs);
   });
 
   it("真实仓库默认通过：区级层序零未认许反向引用（#1182 消除反边后认许边归空）", () => {
@@ -1079,7 +1091,7 @@ describe("check-structure 交易域区级层序（ADR-0113 决策 7 / #1181）",
   it("② 共享语义引用接缝（认许边之外）→ 红", () => {
     const args = fixtureWith(
       transactionCase({
-        "search_text.rs": "use crate::seams::merchant::ensure_merchant;\npub fn x() {}\n",
+        "shared/search_text.rs": "use crate::seams::merchant::ensure_merchant;\npub fn x() {}\n",
       }),
     );
     const r = run(args);
@@ -1145,7 +1157,7 @@ describe("check-structure 交易域区级层序（ADR-0113 决策 7 / #1181）",
   it("注释与字符串中的跨区路径不误报（掩码边界）", () => {
     const args = fixtureWith(
       transactionCase({
-        "search_text.rs": [
+        "shared/search_text.rs": [
           "/// 消费方见 `crate::write::writer` 与 `crate::read`（文档注释不算依赖）",
           "// crate::write::protocol::create",
           'let s = "crate::write::batch::run";',
@@ -1160,7 +1172,8 @@ describe("check-structure 交易域区级层序（ADR-0113 决策 7 / #1181）",
   it("花括号列举逐条展开：非首段跨区条目同样命中", () => {
     const args = fixtureWith(
       transactionCase({
-        "search_text.rs": "use crate::{model::Transaction, read::list_view};\npub fn x() {}\n",
+        "shared/search_text.rs":
+          "use crate::{model::Transaction, read::list_view};\npub fn x() {}\n",
       }),
     );
     const r = run(args);
@@ -1172,7 +1185,7 @@ describe("check-structure 交易域区级层序（ADR-0113 决策 7 / #1181）",
   it("花括号列举闭括号后文本不吞入：后续枚举变体同名不误报（off-by-one 回归锚）", () => {
     const args = fixtureWith(
       transactionCase({
-        "search_text.rs":
+        "shared/search_text.rs":
           "use crate::{model::Transaction};\npub enum E { A, write }\npub fn x() {}\n",
       }),
     );

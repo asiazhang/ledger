@@ -53,10 +53,12 @@
 // `BEGIN`/`COMMIT`/`ROLLBACK` 即红——靶形态落在字符串里，扫描保留字符串、只掩码
 // 注释；唯一合法住址 `db/tx_scope.rs`（issue #1014）。
 //
-// 交易域区级层序（ADR-0113 决策 3/7 / #1181）：区归属住 TRANSACTION_ZONE_BY_MODULE
-// （过渡态：#1597 落地目录约定后改由路径投影），引用形态掩码后匹配 `super::` /
-// `crate::` 前缀 + 目标模块名（含花括号列举逐条展开）；设计意图边逐条留痕
-// TRANSACTION_ZONE_ALLOWED_EDGES，清单之外即红。
+// 交易域区级层序（ADR-0113 决策 2/3/7 / #1181 / #1597）：区归属按目录约定投影——
+// zone = crate 顶层区目录（TRANSACTION_ZONE_BY_DIR 一表单点声明，per-module zone
+// 字段退役）；crate 根顶层单文件必须进区目录、未登记区归属的顶层目录即红（fail
+// loud，不允许「根级单文件默认为共享语义」——那会给写路径模块留静默错分类的
+// 洞）。引用形态掩码后匹配 `super::` / `crate::` 前缀 + 目标首段（含花括号列举
+// 逐条展开）；设计意图边逐条留痕 TRANSACTION_ZONE_ALLOWED_EDGES，清单之外即红。
 //
 // crate 边界核对（spec #1086 / issue #1087 门禁前置）：`CRATES` 是 workspace 成员、
 // 分层与允许依赖方向的唯一政策核——成员目录（crates/*）与 CRATES 双向全等（新 crate
@@ -117,18 +119,21 @@ export const TRANSACTION_ZONE = {
 export type TransactionZone = (typeof TRANSACTION_ZONE)[keyof typeof TRANSACTION_ZONE];
 
 /**
- * 交易域区归属政策表（ADR-0113 决策 2；#1595 过渡态）：zone 是人裁决的政策数据，
- * 而目录约定（zone = crate 顶层区目录）尚未落地——共享语义模块仍平铺在 crate
- * 根，无权威源可投影，故逐键显式声明。#1597 落地目录约定后本表退役、zone 改由
- * 路径投影。
+ * 交易域区目录 → 区归属（ADR-0113 决策 2 目录约定 / #1597）：zone 靠路径投影——
+ * 文件的区归属 = 其所在 crate 顶层区目录的归属，#1181 期随清单条目同址登记的
+ * per-module zone 字段退役；区归属改变即目录移动 + 本表一行改注，移动本身是
+ * 评审可见的改动。crate 根 lib.rs 与测试豁免形态（tests.rs / tests/）不投影；
+ * 顶层单文件不在本表（fail loud：根级单文件必须进区目录，不允许「默认为共享
+ * 语义」——那会给写路径模块留静默错分类的洞）；未登记区归属的顶层目录同样
+ * fail loud。
  */
-export const TRANSACTION_ZONE_BY_MODULE: Readonly<Record<string, TransactionZone>> = {
+export const TRANSACTION_ZONE_BY_DIR: Readonly<Record<string, TransactionZone>> = {
   amount: TRANSACTION_ZONE.SHARED,
   command: TRANSACTION_ZONE.SHARED,
   model: TRANSACTION_ZONE.SHARED,
-  search_text: TRANSACTION_ZONE.SHARED,
   read: TRANSACTION_ZONE.READ,
   seams: TRANSACTION_ZONE.SEAM,
+  shared: TRANSACTION_ZONE.SHARED,
   write: TRANSACTION_ZONE.WRITE,
 };
 
@@ -144,9 +149,9 @@ const TRANSACTION_ZONE_RANK: Record<TransactionZone, number> = {
   [TRANSACTION_ZONE.READ]: 2,
 };
 
-/** 交易域区级认许边条目：拥有模块的模块键 + 目标模块键 + 成因留痕 */
+/** 交易域区级认许边条目：拥有文件的区目录名 + 目标区目录名 + 成因留痕 */
 interface TransactionZoneEdge {
-  file: string;
+  dir: string;
   target: string;
   reason: string;
 }
@@ -154,9 +159,10 @@ interface TransactionZoneEdge {
 /**
  * 交易域区级认许边（ADR-0113 决策 3 / #1181）：原形状上与区级层序冲突的既有
  * 设计意图边逐条留痕于本脚本（与 INFRA_DOMAIN_ALLOWED_EDGES 同款纪律），精确到
- * 拥有模块的模块键 + 目标模块键，附 ADR 指针；清单之外的区级反向引用一律红。
- * 两条原反边已由重排票（#1182）消除（本位币接缝归共享语义区、model→writer 转换
- * 归写路径），故本清单归空——再出现区级反向引用即红，不设认许。
+ * 区目录名 + 目标区目录名（目录约定 / #1597 后的判向单位），附 ADR 指针；清单
+ * 之外的区级反向引用一律红。两条原反边已由重排票（#1182）消除（本位币接缝归
+ * 共享语义区、model→writer 转换归写路径），故本清单归空——再出现区级反向引用
+ * 即红，不设认许。
  */
 export const TRANSACTION_ZONE_ALLOWED_EDGES: readonly TransactionZoneEdge[] = [];
 
@@ -1619,23 +1625,13 @@ function scanModDeclarations(source: string): ModDeclScan {
 }
 
 /**
- * 文件所属区（#1595 过渡态）：模块键 = 路径首段去 `.rs` 后缀——单文件模块
- * （search_text.rs）与目录模块（write/）同键；键到 zone 的映射住政策表
- * TRANSACTION_ZONE_BY_MODULE（#1597 落地目录约定后改由路径投影）。
- */
-function transactionZoneOf(rel: string): { key: string; zone: TransactionZone } | undefined {
-  const key = rel.split("/")[0].replace(/\.rs$/, "");
-  const zone = TRANSACTION_ZONE_BY_MODULE[key];
-  return zone === undefined ? undefined : { key, zone };
-}
-
-/**
  * 交易域 crate 内区级依赖引用扫描（ADR-0113 决策 7 / #1181）：掩码注释与字面量
- * 后匹配 `super::` / `crate::` 前缀 + 目标模块名（flat 布局的模块名与重排后的
- * 区目录名同形，两种形状同扫，判向不变）；`::{…}` 花括号列举跨行取匹配闭括号
- * 后逐条目切分取首段标识符。捕获 = 目标模块名（区归属查表用）。表达式位裸路径
- * （`writer::x` 无前缀形态，依赖边已由 use 语句承载）与别名改写文本不可达，
- * 靠评审兜底（与壳层/基础设施扫描同款边界）。
+ * 后匹配 `super::` / `crate::` 前缀 + 目标首段标识符（目录约定 / #1597 后顶层
+ * 只有区目录，`crate::` 首段即区目录；深层 `super::` 指向同区子模块，不命中
+ * 区目录表即被调用方跳过）；`::{…}` 花括号列举跨行取匹配闭括号后逐条目切分取
+ * 首段标识符。捕获 = 目标首段（区归属查表用）。表达式位裸路径（`writer::x`
+ * 无前缀形态，依赖边已由 use 语句承载）与别名改写文本不可达，靠评审兜底
+ * （与壳层/基础设施扫描同款边界）。
  */
 function scanTransactionZoneRefs(text: string): ScanHit[] {
   const masked = maskNonCode(text);
@@ -1679,12 +1675,14 @@ function scanTransactionZoneRefs(text: string): ScanHit[] {
 }
 
 /**
- * 交易域 crate 内区级层序核对（ADR-0113 决策 3/7 / #1181）：对 crate 内全部非
- * 测试 Rust 文件，按其所属模块的 zone 判向——同区互依合法；跨区时秩大者方可
- * 依赖秩小者（写读 → 接缝 → 共享语义，写读两径互不依赖）；认许边之外即红。
- * crate 根 lib.rs（声明与再导出面，无所属模块）与未声明孤儿文件（投影核对已红）
- * 不参与判向——「声明了模块却无 zone」由区归属覆盖核对 fail loud，不静默跳过。
- * 测试豁免形态由 collectRustFiles 过滤（ADR-0056 决策 5）。
+ * 交易域 crate 内区级层序核对（ADR-0113 决策 2/3/7 / #1181 / #1597）：区归属按
+ * 目录约定投影——文件的区 = 其所在 crate 顶层区目录的区（TRANSACTION_ZONE_BY_DIR），
+ * 同区互依合法；跨区时秩大者方可依赖秩小者（写读 → 接缝 → 共享语义，写读两径
+ * 互不依赖）；认许边之外即红。fail loud 两类区登记面违例：① crate 根顶层单
+ * 文件（无区目录可投影，不允许「根级单文件默认为共享语义」——那会给写路径模块
+ * 留静默错分类的洞）；② 未登记区归属的顶层目录（新区目录漏登区表，判向静默
+ * 失靶）。crate 根 lib.rs（声明与再导出面）豁免判向。测试豁免形态由
+ * collectRustFiles 过滤（ADR-0056 决策 5）。
  */
 function checkTransactionZoneDirection(srcTauriDir: string): string[] {
   const problems: string[] = [];
@@ -1695,67 +1693,54 @@ function checkTransactionZoneDirection(srcTauriDir: string): string[] {
         "（规则见 ADR-0113 决策 3 / #1181）",
     ];
   }
-  checkTransactionZoneRegistry(target, srcTauriDir, problems);
   const srcDir = join(srcTauriDir, target.srcRel);
   if (!existsSync(srcDir)) return problems; // 模块面投影核对逐条报「找不到声明文件」
   for (const f of collectRustFiles(srcDir, "")) {
-    const owner = transactionZoneOf(f.rel);
-    if (!owner) continue;
+    const rel = f.rel;
+    if (rel === "lib.rs") continue; // crate 根声明与再导出面，免判向（#1181 同规）
+    const isRootFile = !rel.includes("/");
+    const zoneDir = isRootFile ? rel : (rel.split("/")[0] as string);
+    const zone = TRANSACTION_ZONE_BY_DIR[zoneDir];
+    if (zone === undefined) {
+      problems.push(
+        isRootFile
+          ? `✗ 根级单文件必须进区目录：${rel}（${target.srcRel}）\n` +
+              "    区归属的登记面是目录约定（ADR-0113 决策 2 / #1597）：zone = crate 顶层区目录，" +
+              "根级单文件无区目录可投影，不允许「默认为共享语义」——那会给写路径模块留静默错分类的洞；" +
+              "把文件移入区目录并同步 lib.rs 声明"
+          : `✗ 区目录未登记区归属：${zoneDir}/（${rel}）\n` +
+              "    zone 靠路径投影（ADR-0113 决策 2 / #1597）：crate 顶层目录须在 " +
+              "TRANSACTION_ZONE_BY_DIR 登记区归属，未登记即无法判向、区级层序静默失靶；" +
+              "登记区归属，或把模块并入既有区目录",
+      );
+      continue;
+    }
     const source = readFileSync(f.abs, "utf8");
     for (const hit of scanTransactionZoneRefs(source)) {
-      const targetZone =
-        hit.captured === undefined ? undefined : TRANSACTION_ZONE_BY_MODULE[hit.captured];
-      if (targetZone === undefined || targetZone === owner.zone) continue;
-      if (TRANSACTION_ZONE_RANK[owner.zone] > TRANSACTION_ZONE_RANK[targetZone]) continue;
+      const captured = hit.captured;
+      // 目标首段非区目录（同区子模块 / 未登记孤儿）不判向：同区子模块随 owner
+      // 同区，孤儿文件由模块面投影核对另行报红。
+      if (captured === undefined) continue;
+      const targetZone = TRANSACTION_ZONE_BY_DIR[captured];
+      if (targetZone === undefined || targetZone === zone) continue;
+      if (TRANSACTION_ZONE_RANK[zone] > TRANSACTION_ZONE_RANK[targetZone]) continue;
       const allowed = TRANSACTION_ZONE_ALLOWED_EDGES.some(
-        (e) => e.file === owner.key && e.target === hit.captured,
+        (e) => e.dir === zoneDir && e.target === captured,
       );
       if (allowed) continue;
       problems.push(
-        `✗ 区级反向依赖：${owner.zone}「${owner.key}」引用 ${targetZone}「${hit.captured}」 → ` +
-          `${f.rel}:${hit.line}（${hit.match}）\n` +
+        `✗ 区级反向依赖：${zone}「${zoneDir}/」引用 ${targetZone}「${captured}/」 → ` +
+          `${rel}:${hit.line}（${hit.match}）\n` +
           `    ${hit.text}\n` +
           `    区级层序唯一：写路径/读路径 → 跨域接缝 → 共享语义（规则见 ADR-0113 决策 3）——` +
           `共享语义不得依赖接缝与路径区，接缝不得依赖路径区，写读两径互不依赖；` +
-          `区归属住 TRANSACTION_ZONE_BY_MODULE（#1597 后改由路径投影）；` +
+          `区归属按目录约定投影（TRANSACTION_ZONE_BY_DIR，ADR-0113 决策 2 / #1597）；` +
           `设计意图边须逐条留痕于本脚本 TRANSACTION_ZONE_ALLOWED_EDGES（附 ADR 指针），` +
           `或把依赖下沉到层序更低的区`,
       );
     }
   }
   return problems;
-}
-
-/**
- * 交易域区归属覆盖核对（ADR-0113 决策 2；#1597 过渡态）：政策表
- * TRANSACTION_ZONE_BY_MODULE 与 crate 声明面双向全等——声明了模块而政策表无
- * zone（新增模块漏登记）或政策表有条目而无声明（模块删除后漏删）都即红。
- * 没有本核对，新增交易域模块会静默落进区级层序的漏扫面（同 #1595 前的
- * 「磁盘模块未登记即红」等价判据）。#1597 落地目录约定后本表与本核对一并退役。
- */
-function checkTransactionZoneRegistry(
-  target: CrateModuleTarget,
-  srcTauriDir: string,
-  problems: string[],
-): void {
-  const libRsRel = `${target.srcRel}/lib.rs`;
-  const abs = join(srcTauriDir, libRsRel);
-  if (!existsSync(abs)) return; // 模块面投影核对已报「找不到 crate 根声明文件」
-  const declared = new Set(scanModDeclarations(readFileSync(abs, "utf8")).modules);
-  const registered = new Set(Object.keys(TRANSACTION_ZONE_BY_MODULE));
-  for (const key of [...declared].filter((k) => !registered.has(k)).sort()) {
-    problems.push(
-      `✗ 交易域区归属缺失：${libRsRel} 声明 \`mod ${key};\`，区归属政策表 TRANSACTION_ZONE_BY_MODULE 无此键\n` +
-        "    zone 是人裁决的政策数据（ADR-0113 决策 2）：#1597 落地目录约定前，新增模块须在政策表登记所属区" +
-        "（共享语义/跨域接缝/写路径/读路径）——否则区级层序漏扫该模块，不静默跳过",
-    );
-  }
-  for (const key of [...registered].filter((k) => !declared.has(k)).sort()) {
-    problems.push(
-      `✗ 交易域区归属漂移：区归属政策表有 ${key}，但 ${libRsRel} 未声明该模块\n` +
-        "    政策表与声明面双向全等（ADR-0113 决策 2）：模块删除/改名后政策表条目须同步删除",
-    );
-  }
 }
 
 /**
@@ -1960,8 +1945,9 @@ function main(): void {
   // 静态检查/测试命令的 workspace 覆盖——与模块路径白名单并列，同为删除即变红。
   problems.push(...checkCrateBoundaries(srcTauriDir));
 
-  // 交易域区级层序（ADR-0113 决策 3/7 / #1181）：区归属据 TRANSACTION_ZONE_BY_MODULE
-  // 判向，认许边（决策 3 原形状反边）之外即红。
+  // 交易域区级层序（ADR-0113 决策 2/3/7 / #1181 / #1597）：区归属据
+  // TRANSACTION_ZONE_BY_DIR 按目录约定投影判向（根级单文件与未登记区目录 fail
+  // loud），认许边（决策 3 原形状反边）之外即红。
   problems.push(...checkTransactionZoneDirection(srcTauriDir));
 
   if (problems.length > 0) {

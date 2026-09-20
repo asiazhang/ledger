@@ -16,10 +16,11 @@
 //! 核心交易域 crate（Transaction，spec #1086 / issue #1092）：交易写入、读取、搜索
 //! 与金额口径的单一权威，全部业务域可依赖的最底层域。
 //!
-//! **四区唯一地图（ADR-0113）**：`amount/` `model` `command` `search_text` 共享语义；
-//! `seams/` 跨域接缝；`write/` 写路径；`read/` 读路径。允许依赖方向唯一——写路径 /
-//! 读路径 → 跨域接缝 → 共享语义，写读两径互不依赖。**新代码一律走区路径**；下方
-//! crate 根扁平再导出只是壳层兼容面，不是权威入口。
+//! **四区唯一地图（ADR-0113）**：`amount/` `model/` `command/` `shared/`（search_text）
+//! 共享语义；`seams/` 跨域接缝；`write/` 写路径；`read/` 读路径。区归属 = 顶层区目
+//! 录（目录约定，ADR-0113 决策 2 / #1597），根级单文件不得绕过区目录。允许依赖方
+//! 向唯一——写路径 / 读路径 → 跨域接缝 → 共享语义，写读两径互不依赖。**新代码一
+//! 律走区路径**；下方 crate 根扁平再导出只是壳层兼容面，不是权威入口。
 //!
 //! 共享语义 `command` 持同步命令载荷契约（被接缝与写路径共同消费），op 产出单点归
 //! 写路径 `write/op.rs`（ADR-0113 决策 3.3）。
@@ -44,7 +45,7 @@ pub mod amount;
 pub mod command;
 pub mod read;
 pub mod seams;
-pub mod search_text;
+pub mod shared;
 pub mod write;
 
 /// 域集中模型（#423 模型域化随域归位，样板先例：`investment::model`）：交易
@@ -71,7 +72,7 @@ pub use read::search::{repair_note_pinyin, search_transactions, search_transacti
 pub use read::{
     get_transaction, get_transaction_internal, list_transactions, list_transactions_internal,
 };
-pub use search_text::{
+pub use shared::search_text::{
     is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
 };
 pub use write::batch::{

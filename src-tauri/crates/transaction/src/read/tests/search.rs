@@ -11,7 +11,7 @@ use tauri_app_lib::ledger_transaction::TransactionSearchResult;
 use tauri_app_lib::ledger_transaction::read::search::{
     Stage1Filter, TermLowered, build_stage1_query, load_search_dicts, search_transactions_internal,
 };
-use tauri_app_lib::ledger_transaction::search_text::{
+use tauri_app_lib::ledger_transaction::shared::search_text::{
     is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
 };
 use tauri_app_lib::ledger_transaction::write::writer::{NormalizedRow, insert_row, update_row};
