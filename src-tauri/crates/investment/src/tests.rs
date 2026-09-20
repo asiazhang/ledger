@@ -22,6 +22,9 @@
 //! - [`mwr`]：资金加权收益率（ADR-0115 / issue #1195）——XIRR 求解器手算样本对齐
 //!   与无解不给数、读投影场景矩阵（单笔/定投/部分卖出/分红/转换两腿/缺价跳过/
 //!   币种分组/DRIP 自相抵/区间期初市值）
+//! - [`overview`]：投资概览读数（spec #1532 / issue #1536）——可投资资产两腿拆分
+//!   与既有单点恒等、两腿折本位币（负向：删折算即红）、缺汇率码化上抛、隐藏账户
+//!   与缺价持仓排除、无投资账户的零值与引导事实
 //! - [`dividend`]：现金分红（dividend）写入——现金腿 + 标的扩展行、任意在用账户、
 //!   无持仓可录、守卫齐全、kind 变更拒绝与改 / 删回退（issue #1078 / ADR-0109）
 //! - [`trend`]：走势查询（单标的 / 组合）
@@ -55,6 +58,7 @@ mod instrument_type_check;
 mod instrument_type_string;
 mod manual_price;
 mod mwr;
+mod overview;
 mod pnl;
 mod predicates;
 mod price_channel;

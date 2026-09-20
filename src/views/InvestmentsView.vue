@@ -3,6 +3,7 @@ import { computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { NAlert, NButton, NIcon, NSpace, NTabPane, NTabs, NText } from "naive-ui";
 import {
+  SpeedometerOutline,
   StatsChartOutline,
   ListOutline,
   PieChartOutline,
@@ -14,6 +15,7 @@ import { useFocusParam } from "@/composables/useFocusParam";
 import { usePriceStaleness } from "@/investment/usePriceStaleness";
 import { registerViewReset } from "@/composables/viewResetRegistry";
 import { useInvestmentsSessionStore } from "@/investment/investments-session";
+import InvestmentOverviewPanel from "@/investment/InvestmentOverviewPanel.vue";
 import RealizedPnlPanel from "@/investment/RealizedPnlPanel.vue";
 import HoldingsOverview from "@/investment/HoldingsOverview.vue";
 import HistoryBackfillIndicator from "@/investment/HistoryBackfillIndicator.vue";
@@ -118,6 +120,18 @@ onMounted(() => focusParam.consume());
     <HistoryBackfillIndicator />
 
     <NTabs :value="activeTab" type="line" @update:value="onActiveTabChange">
+      <!-- 概览页签（spec #1532 / issue #1536）：默认落点与 ESC 复位目标——一进
+           投资页就看到可投资资产与两腿拆分。纯只读，取数口径单点在后端
+           `investment_overview`（ADR-0130：全页折本位币单值）。 -->
+      <NTabPane name="overview">
+        <template #tab
+          ><span class="pane-tab"
+            ><NIcon :component="SpeedometerOutline" />{{ t("investments.tabs.overview") }}</span
+          ></template
+        >
+        <InvestmentOverviewPanel />
+      </NTabPane>
+
       <!-- pnl pane 用 display-directive='show'：内容保持挂载（v-show 隐藏），
            筛选/汇总状态在 tab 切换间保留，与原视图顶层 ref 行为一致。
            持仓/标的/走势 tab 保持默认 'if'，切回时重新挂载加载（ADR-0094 否决

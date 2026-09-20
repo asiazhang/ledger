@@ -13,9 +13,9 @@ afterEach(() => {
 });
 
 describe("useInvestmentsSessionStore（issue #1192 投资页会话状态）", () => {
-  it("冷启动默认：默认页签、无持仓筛选/排序、第 1 页、组合走势默认区间", () => {
+  it("冷启动默认：默认页签「概览」、无持仓筛选/排序、第 1 页、组合走势默认区间", () => {
     const store = useInvestmentsSessionStore();
-    expect(store.activeTab).toBe("pnl");
+    expect(store.activeTab).toBe("overview");
     expect(store.holdingsSearchInput).toBe("");
     expect(store.holdingsSearch).toBe("");
     expect(store.holdingsAccountId).toBeNull();
@@ -44,7 +44,7 @@ describe("useInvestmentsSessionStore（issue #1192 投资页会话状态）", ()
     // 新 pinia = 冷启动：全部回默认
     setActivePinia(createPinia());
     const cold = useInvestmentsSessionStore();
-    expect(cold.activeTab).toBe("pnl");
+    expect(cold.activeTab).toBe("overview");
     expect(cold.holdingsAccountId).toBeNull();
     expect(cold.holdingsSorter).toBeNull();
     expect(cold.holdingsPage).toBe(1);
@@ -107,7 +107,7 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
     store.setTrendPreset("1m");
 
     store.resetToDefault();
-    expect(store.activeTab).toBe("pnl");
+    expect(store.activeTab).toBe("overview");
     expect(store.holdingsSearchInput).toBe("");
     expect(store.holdingsSearch).toBe("");
     expect(store.holdingsAccountId).toBeNull();
@@ -169,7 +169,7 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
   it("默认态复位幂等：全默认时复位无副作用", () => {
     const store = useInvestmentsSessionStore();
     store.resetToDefault();
-    expect(store.activeTab).toBe("pnl");
+    expect(store.activeTab).toBe("overview");
     expect(store.holdingsPage).toBe(1);
     expect(store.trendMode).toBe(TREND_MODE_DEFAULT);
     expect(store.trendInstrument).toBeNull();
@@ -179,7 +179,7 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
 describe("store 写路径唯一（issue #1192 Standards 轴 finding）", () => {
   it("全部状态变化都经意图入口（只读投影 + 入口动作是唯一写路）", () => {
     const store = useInvestmentsSessionStore();
-    expect(store.activeTab).toBe("pnl");
+    expect(store.activeTab).toBe("overview");
     store.setActiveTab("holdings");
     expect(store.activeTab).toBe("holdings");
     expect(store.trendPreset).toBe(TREND_PRESET_DEFAULT);
