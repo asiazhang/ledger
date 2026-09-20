@@ -49,7 +49,7 @@ impl FromRow for HoldingValue {
 
 /// 持仓腿取数面（软删与隐藏账户一律排除）：可投资资产·持仓市值腿与其
 /// 「未计入持仓数」（投资概览，[`super::overview`]）共用同一 FROM/WHERE 片段
-/// ——计数面与合计面同源不漂移（ADR-0130 决策 4：口径表达式不复制）。
+/// ——计数面与合计面同源不漂移（ADR-0131 决策 4：口径表达式不复制）。
 pub(crate) const HOLDINGS_VISIBLE_FACET: &str = "FROM v_holdings h \
      JOIN accounts a ON a.id = h.account_id \
      WHERE a.is_deleted=0 AND a.is_hidden=0";

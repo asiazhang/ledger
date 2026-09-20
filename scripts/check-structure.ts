@@ -798,7 +798,7 @@ export const INVESTMENT_MODULES: readonly WhitelistEntry[] = [
   {
     path: "overview.rs",
     layer: "域目录",
-    note: "投资概览读数（InvestmentOverview，spec #1532 / issue #1536）——投资页「概览」页签的全页折本位币单值：可投资资产合计 + 现金 / 持仓两腿 + 未计入持仓计数 + 有无投资账户，只读无写入（ADR-0130）",
+    note: "投资概览读数（InvestmentOverview，spec #1532 / issue #1536）——投资页「概览」页签的全页折本位币单值：可投资资产合计 + 现金 / 持仓两腿 + 未计入持仓计数 + 有无投资账户，只读无写入（ADR-0131）",
   },
   { path: "predicates.rs", layer: "域目录", note: "「持仓标的」判定谓词单点（INVESTED_EXISTS）" },
   {
