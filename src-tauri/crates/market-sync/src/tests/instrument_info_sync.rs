@@ -1,6 +1,6 @@
 //! 标的信息同步（InstrumentInfoSync，issue #103 / #137 / ADR-0019；覆盖面放开
 //! 至库内全部标的 + 名称随行刷新 issue #827；确定进度序列 issue #897 / ADR-0095）：
-//! secid 构造、ulist / 日 K / 汇率 K 报文解析、现价 upsert、K 线周采样回填、名称
+//! 查询单元路由（市场 + 代码）、ulist / 日 K / 汇率 K 报文解析、现价 upsert、K 线周采样回填、名称
 //! 刷新与幂等语义。
 //! 编排经注入 mock 查询 / kline / fx / 净值 / 基金名称闭包与进度回调驱动，不依赖
 //! 真实网络。
@@ -16,7 +16,7 @@ use crate::bulk::{
     BULK_DISABLE_PERIOD, BULK_FAILURE_THRESHOLD, BulkFetchCircuit, BulkFetchSurfaces, BulkNavPoint,
     FetchFundNameDictionary, FetchFundNavTable, FundNameDictionary, FundNavTable,
 };
-use crate::channels::{FetchFuture, SyncFetchChannels, do_incremental_sync_channels};
+use crate::channels::{FetchFuture, QuoteQuery, SyncFetchChannels, do_incremental_sync_channels};
 use crate::fund_nav::{FullSeries, LsjzPage, NavPoint, NavQuery};
 use crate::http::{
     KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
@@ -35,7 +35,7 @@ use super::{insert_holding, insert_lot};
 use tauri_app_lib::test_support::{seed_account, seed_instrument};
 
 // ---------------------------------------------------------------------------
-// 持仓价格增量同步（issue #103）：secid 构造、ulist 响应解析、编排、跳过规则、
+// 持仓价格增量同步（issue #103）：查询单元路由（市场 + 代码）、ulist 响应解析、编排、跳过规则、
 // 结果统计与幂等。编排经注入 mock 查询函数驱动，不依赖真实网络。
 // ---------------------------------------------------------------------------
 
@@ -106,9 +106,9 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let mut logging_fetch = |secids: &str| {
+    let mut logging_fetch = |queries: &[QuoteQuery]| {
         log.lock().unwrap().push("fetch:start");
-        let items = fetch(secids);
+        let items = fetch(queries);
         log.lock().unwrap().push("fetch:end");
         items
     };
@@ -168,16 +168,26 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
     );
 }
 
-/// 模拟批量报价：对每个查询的 secid 生成条目。`prices` 为 code → 原始 f2
+/// 查询单元 → 断言用字符串（`市场:代码` 逗号串，issue #1555）：测试断言不依赖
+/// 数据源查询键（secid）形态。
+fn query_log_line(queries: &[QuoteQuery]) -> String {
+    queries
+        .iter()
+        .map(|q| format!("{}:{}", q.market, q.code))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// 模拟批量报价：对每个查询单元生成条目。`prices` 为 code → 原始 f2
 /// （None 表示停牌/无效价），不在映射中的代码不返回（模拟查询无果）。
 fn mock_fetch<'a>(
     prices: &'a [(&'a str, Option<f64>)],
-) -> impl FnMut(&str) -> FetchFuture<Vec<StockItem>> + Send + 'a {
-    move |secids: &str| {
+) -> impl FnMut(&[QuoteQuery]) -> FetchFuture<Vec<StockItem>> + Send + 'a {
+    move |queries: &[QuoteQuery]| {
         let mut items = Vec::new();
-        for secid in secids.split(',') {
-            let code = secid.split('.').nth(1).unwrap_or(secid).to_string();
-            if let Some((_, price)) = prices.iter().find(|(c, _)| *c == code) {
+        for query in queries {
+            let code = query.code.clone();
+            if let Some((_, price)) = prices.iter().find(|(c, _)| *c == query.code.as_str()) {
                 items.push(StockItem {
                     name: format!("名称-{code}"),
                     code,
@@ -188,6 +198,20 @@ fn mock_fetch<'a>(
         }
         super::ready(Ok(items))
     }
+}
+
+/// 每查询单元一条默认报价（名称随代码、价 1000.00 元、无精度位）：拆批与进度
+/// 用例的应答形状，避免各处重抄同一 `StockItem` 映射体。
+fn quote_items_for(queries: &[QuoteQuery]) -> Vec<StockItem> {
+    queries
+        .iter()
+        .map(|query| StockItem {
+            name: format!("名称-{}", query.code),
+            code: query.code.clone(),
+            price: Some(1000.0),
+            precision: None,
+        })
+        .collect()
 }
 
 #[test]
@@ -295,7 +319,8 @@ fn ulist_items_without_precision_fall_back_to_market_scale() {
 #[test]
 fn incremental_sync_normalizes_symbol_suffix() {
     let conn = tauri_app_lib::test_support::open();
-    // schema 注释示例格式：symbol 带市场后缀（"600519.SH"），secid 应取裸代码 "1.600519"。
+    // schema 注释示例格式：symbol 带市场后缀（"600519.SH"），查询单元取裸代码
+    // "600519"（市场前缀由通道内部与代码组合，issue #1555）。
     insert_holding(&conn, "acc-1", "inst-sh", "600519.SH", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-hk", "00700.HK", "stock", "HKD", "hk");
 
@@ -573,7 +598,7 @@ fn incremental_sync_counts_missing_response_as_skipped() {
 fn incremental_sync_skips_unknown_market() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-ok", "600519", "stock", "CNY", "sh");
-    // 市场未知的持仓股票（如手动创建未设市场）：无法构造 secid，计入跳过
+    // 市场未知的持仓股票（如手动创建未设市场）：无行情通道，计入跳过
     insert_holding(
         &conn, "acc-2", "inst-unk", "NVDA", "stock", "USD", "unknown",
     );
@@ -690,21 +715,9 @@ fn incremental_sync_pulls_a_daily_ledgers_quotes_in_one_batch() {
     }
 
     let mut batch_sizes: Vec<usize> = Vec::new();
-    let mut fetch = |secids: &str| {
-        let codes: Vec<&str> = secids.split(',').collect();
-        batch_sizes.push(codes.len());
-        super::ready(Ok(codes
-            .iter()
-            .map(|secid| {
-                let code = secid.split('.').nth(1).unwrap().to_string();
-                StockItem {
-                    code,
-                    name: "名称".into(),
-                    price: Some(1000.0),
-                    precision: None,
-                }
-            })
-            .collect()))
+    let mut fetch = |queries: &[QuoteQuery]| {
+        batch_sizes.push(queries.len());
+        super::ready(Ok(quote_items_for(queries)))
     };
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -729,7 +742,7 @@ fn incremental_sync_pulls_a_daily_ledgers_quotes_in_one_batch() {
 #[test]
 fn incremental_sync_batches_quote_requests_by_the_batch_size_constant() {
     let conn = tauri_app_lib::test_support::open();
-    // 常量 + 5 只股票：应拆为 2 批（常量 + 5），每批 secid 数不超 ULIST_BATCH_SIZE
+    // 常量 + 5 只股票：应拆为 2 批（常量 + 5），每批查询单元数不超 ULIST_BATCH_SIZE
     // ——拆批规则按常量走（超量仍会拆，不会硬塞一个请求）。
     let total = ULIST_BATCH_SIZE + 5;
     for i in 0..total {
@@ -746,22 +759,10 @@ fn incremental_sync_batches_quote_requests_by_the_batch_size_constant() {
     }
 
     let mut batch_sizes: Vec<usize> = Vec::new();
-    let mut fetch = |secids: &str| {
-        let codes: Vec<&str> = secids.split(',').collect();
-        assert!(codes.len() <= ULIST_BATCH_SIZE);
-        batch_sizes.push(codes.len());
-        super::ready(Ok(codes
-            .iter()
-            .map(|secid| {
-                let code = secid.split('.').nth(1).unwrap().to_string();
-                StockItem {
-                    code,
-                    name: "名称".into(),
-                    price: Some(1000.0),
-                    precision: None,
-                }
-            })
-            .collect()))
+    let mut fetch = |queries: &[QuoteQuery]| {
+        assert!(queries.len() <= ULIST_BATCH_SIZE);
+        batch_sizes.push(queries.len());
+        super::ready(Ok(quote_items_for(queries)))
     };
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -779,12 +780,58 @@ fn incremental_sync_batches_quote_requests_by_the_batch_size_constant() {
     assert_eq!(batch_sizes, vec![ULIST_BATCH_SIZE, 5]);
 }
 
+/// 「替换通道实现即换源」负向接线证明（issue #1555）：现价刷新编排只递
+/// 「市场 + 代码」查询单元，查询键由批量报价通道在内部构造——本用例注入一个
+/// 按自己形态（模拟换源）构造查询键的通道实现，价格照常落库。
+///
+/// 把查询键构造挪回编排（编排先拼出东财 secid `1.600519` 再交给通道）后，
+/// 本桩拿到的 `code` 是 secid 而非裸代码 `600519`，构造不出任何匹配的查询键
+/// → 无报价条目 → 价格未落库，本用例变红。
+#[test]
+fn swapping_quote_channel_keeps_prices_landing_without_source_key_in_orchestration() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
+
+    // 换源形态的通道桩：自己把（市场，代码）编成自己的查询键，只收自己的形态。
+    let mut fetch = |queries: &[QuoteQuery]| {
+        let items = queries
+            .iter()
+            .filter(|q| q.market == "sh" && q.code == "600519")
+            .map(|_| StockItem {
+                name: "贵州茅台".into(),
+                code: "600519".into(),
+                price: Some(1302.80),
+                precision: None,
+            })
+            .collect();
+        super::ready(Ok(items))
+    };
+    let result = tauri::async_runtime::block_on(do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+        &mut no_bulk(),
+        &mut no_progress,
+        &mut WriteWitness::default(),
+    ))
+    .unwrap();
+
+    assert_eq!(result.synced, 1);
+    assert_eq!(
+        market_price_of(&conn, "inst-sh"),
+        Some(130_280),
+        "换一个自己构造查询键的通道实现，价格照常落库（编排不含数据源键）"
+    );
+}
+
 #[test]
 fn incremental_sync_propagates_fetch_error() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
-    let mut fetch = |_: &str| super::ready(Err(AppError::Io("模拟网络失败".into())));
+    let mut fetch = |_: &[QuoteQuery]| super::ready(Err(AppError::Io("模拟网络失败".into())));
     let mut witness = WriteWitness::default();
     let err = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -1421,7 +1468,7 @@ fn etf_holding_syncs_quote_only_without_history() {
     insert_holding(&conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "sh");
 
     // 批量报价按精度位换算（ETF f1=3，raw 4634 → 4.634 元 → 46340 万分之一元）。
-    let mut fetch = |_: &str| {
+    let mut fetch = |_: &[QuoteQuery]| {
         super::ready(Ok(vec![StockItem {
             name: "沪深300ETF华泰柏瑞".into(),
             code: "510300".into(),
@@ -1460,15 +1507,15 @@ fn etf_holding_syncs_quote_only_without_history() {
 #[test]
 fn etf_holding_unknown_market_counts_skipped_without_requests() {
     let conn = tauri_app_lib::test_support::open();
-    // 市场未知的 ETF 持仓（如手动建档未设市场）：在行情分区内仍无法构造 secid，
+    // 市场未知的 ETF 持仓（如手动建档未设市场）：无行情通道，
     // 计入跳过且零请求（跳过统计与标的收集同源，不报错）。
     insert_holding(
         &conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "unknown",
     );
 
-    let secid_log = Mutex::new(Vec::new());
-    let mut fetch = |secids: &str| {
-        secid_log.lock().unwrap().push(secids.to_string());
+    let query_log = Mutex::new(Vec::new());
+    let mut fetch = |queries: &[QuoteQuery]| {
+        query_log.lock().unwrap().push(query_log_line(queries));
         super::ready(Ok(vec![]))
     };
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
@@ -1486,7 +1533,7 @@ fn etf_holding_unknown_market_counts_skipped_without_requests() {
     assert_eq!(result.synced, 0);
     assert_eq!(result.skipped, 1, "市场未知在行情分区内仍计入跳过");
     assert!(
-        secid_log.lock().unwrap().is_empty(),
+        query_log.lock().unwrap().is_empty(),
         "不可查询行不得发起报价请求"
     );
     assert_eq!(market_price_of(&conn, "inst-etf"), None);
@@ -1536,11 +1583,11 @@ fn three_type_partitions_roll_up_into_one_result() {
         "unknown",
     );
 
-    // 报价批次同时携带股票与 ETF（同一分区、同批构造 secid，收集按 symbol 升序）；
+    // 报价批次同时携带股票与 ETF（同一分区、同批路由「市场 + 代码」，收集按 symbol 升序）；
     // 精度位随行：ETF f1=3、股票 f1=2。
-    let secid_log = Mutex::new(Vec::new());
-    let mut fetch = |secids: &str| {
-        secid_log.lock().unwrap().push(secids.to_string());
+    let query_log = Mutex::new(Vec::new());
+    let mut fetch = |queries: &[QuoteQuery]| {
+        query_log.lock().unwrap().push(query_log_line(queries));
         super::ready(Ok(vec![
             StockItem {
                 name: "沪深300ETF华泰柏瑞".into(),
@@ -1579,9 +1626,9 @@ fn three_type_partitions_roll_up_into_one_result() {
     assert_eq!(result.written, 3);
     assert_eq!(result.message, "已同步 3 只，跳过 3 只");
     assert_eq!(
-        *secid_log.lock().unwrap(),
-        vec!["1.510300,1.600519".to_string()],
-        "股票与 ETF 同走行情分区、同批查询（收集按 symbol 升序）"
+        *query_log.lock().unwrap(),
+        vec!["sh:510300,sh:600519".to_string()],
+        "股票与 ETF 同走行情分区、同批查询（收集按 symbol 升序）；编排只递市场 + 代码"
     );
     let nav_codes: Vec<String> = nav_requested
         .lock()
@@ -1648,10 +1695,10 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         "nasdaq",
     );
 
-    // 记录批量报价请求的完整 secid 串：断言按精确市场构造 105.AAPL（零候选开销）。
-    let secid_log = Mutex::new(Vec::new());
-    let mut fetch = |secids: &str| {
-        secid_log.lock().unwrap().push(secids.to_string());
+    // 记录批量报价的查询单元：编排只递「市场 + 代码」，按精确市场路由（nasdaq:AAPL，零候选开销）。
+    let query_log = Mutex::new(Vec::new());
+    let mut fetch = |queries: &[QuoteQuery]| {
+        query_log.lock().unwrap().push(query_log_line(queries));
         // 原始 f2（3 位小数刻度）：AAPL $319.97 → 319970。
         super::ready(Ok(vec![StockItem {
             name: "苹果".into(),
@@ -1685,8 +1732,8 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
     assert_eq!(result.skipped, 0);
     assert_eq!(result.written, 1, "实际落价应计入写入（信号判定）");
 
-    // secid 按精确市场构造：105.AAPL（#692 已扩 105/106/107 映射）。
-    assert_eq!(*secid_log.lock().unwrap(), vec!["105.AAPL".to_string()]);
+    // 编排按精确市场路由查询单元：nasdaq:AAPL（#692 已扩 nasdaq/nyse/amex 市场）。
+    assert_eq!(*query_log.lock().unwrap(), vec!["nasdaq:AAPL".to_string()]);
 
     // 现价：f2 319970 × 10 = 3199700 万分之一元（$319.97），币种 USD。
     assert_eq!(market_price_of(&conn, "inst-aapl"), Some(3_199_700));
@@ -1718,8 +1765,8 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
     );
 
     // 重跑幂等：现价覆盖更新、汇率历史同周整周覆盖，零重复行。
-    let mut fetch = |secids: &str| {
-        secid_log.lock().unwrap().push(secids.to_string());
+    let mut fetch = |queries: &[QuoteQuery]| {
+        query_log.lock().unwrap().push(query_log_line(queries));
         super::ready(Ok(vec![StockItem {
             name: "苹果".into(),
             code: "AAPL".into(),
@@ -1751,16 +1798,17 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
 }
 
 #[test]
-fn us_stock_holdings_route_exact_secids_per_market() {
-    // 三市场各一持仓：secid 前缀按精确市场映射（105/106/107），互不串市场。
+fn us_stock_holdings_route_exact_market_per_instrument() {
+    // 三市场各一持仓：编排按精确市场路由查询单元（nasdaq/nyse/amex），互不串市场；
+    // 市场 → 数据源查询键的映射归通道（`quote_query_key` 单测钉住）。
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-nq", "AAPL", "stock", "USD", "nasdaq");
     insert_holding(&conn, "acc-2", "inst-ny", "BABA", "stock", "USD", "nyse");
     insert_holding(&conn, "acc-3", "inst-am", "SPY", "stock", "USD", "amex");
 
-    let secid_log = Mutex::new(Vec::new());
-    let mut fetch = |secids: &str| {
-        secid_log.lock().unwrap().push(secids.to_string());
+    let query_log = Mutex::new(Vec::new());
+    let mut fetch = |queries: &[QuoteQuery]| {
+        query_log.lock().unwrap().push(query_log_line(queries));
         super::ready(Ok(vec![]))
     };
     let fx_log = Mutex::new(Vec::new());
@@ -1779,9 +1827,9 @@ fn us_stock_holdings_route_exact_secids_per_market() {
     .unwrap();
 
     assert_eq!(
-        *secid_log.lock().unwrap(),
-        vec!["105.AAPL,106.BABA,107.SPY".to_string()],
-        "三市场持仓同批查询，secid 各自按精确前缀构造（收集按 symbol 升序）"
+        *query_log.lock().unwrap(),
+        vec!["nasdaq:AAPL,nyse:BABA,amex:SPY".to_string()],
+        "三市场持仓同批查询，各按精确市场路由（收集按 symbol 升序）"
     );
 }
 
@@ -2182,20 +2230,12 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
     // 每只标的在报价落库后推进一格（现价 + 名称合并计格；历史日 K 已移出同步，
     // issue #1377）。
     let events = Mutex::new(Vec::new());
-    let mut fetch = |secids: &str| {
-        events.lock().unwrap().push(format!("fetch:{secids}"));
-        super::ready(Ok(secids
-            .split(',')
-            .map(|secid| {
-                let code = secid.split('.').nth(1).unwrap().to_string();
-                StockItem {
-                    name: format!("名称-{code}"),
-                    code,
-                    price: Some(1000.0),
-                    precision: None,
-                }
-            })
-            .collect()))
+    let mut fetch = |queries: &[QuoteQuery]| {
+        events
+            .lock()
+            .unwrap()
+            .push(format!("fetch:{}", query_log_line(queries)));
+        super::ready(Ok(quote_items_for(queries)))
     };
     let mut progress = |progress: SyncProgress| {
         events
@@ -2219,7 +2259,7 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
         *events.lock().unwrap(),
         vec![
             "progress:0/2".to_string(),
-            "fetch:1.600001,0.600002".to_string(),
+            "fetch:sh:600001,sz:600002".to_string(),
             "progress:1/2".to_string(),
             "progress:2/2".to_string(),
         ],
@@ -2684,7 +2724,7 @@ fn fund_channels(
     SyncFetchChannels {
         fetch_ulist: Box::new({
             let calls = quote_calls.ulist.clone();
-            move |_: &str| {
+            move |_: &[QuoteQuery]| {
                 calls.fetch_add(1, Ordering::SeqCst);
                 unreachable!("用例现场无行情通道标的")
             }

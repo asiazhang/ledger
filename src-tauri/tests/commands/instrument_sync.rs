@@ -58,7 +58,7 @@ fn gated_channels(
     let channels = SyncFetchChannels {
         // 门控等待在闭包同步段完成（编排调用闭包即阻塞在途），应答装箱为 future
         // ——「同步真实在途」语义与断言不变（issue #1412 通道闭包 async 形态）。
-        fetch_ulist: Box::new(move |_secids| {
+        fetch_ulist: Box::new(move |_queries| {
             entered.send(()).expect("在途通知应可送达");
             release
                 .recv_timeout(Duration::from_secs(10))

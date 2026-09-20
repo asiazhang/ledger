@@ -121,8 +121,8 @@ pub use bulk::{
     FundNameDictionary, FundNavTable,
 };
 pub use channels::{
-    FetchFundName, FetchKline, FetchNavFull, FetchNavPage, FetchUlist, SyncFetchChannels,
-    do_incremental_sync_channels,
+    FetchFundName, FetchKline, FetchNavFull, FetchNavPage, FetchUlist, QuoteQuery,
+    SyncFetchChannels, do_incremental_sync_channels,
 };
 pub use daily_refresh::{
     DailyPriceRefreshChannelsSlot, DailyPriceRefreshTimings, start_daily_price_refresh,

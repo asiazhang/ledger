@@ -40,7 +40,7 @@ pub(super) fn ready<T: Send + 'static>(value: Result<T>) -> crate::channels::Fet
 
 /// 直插一条持仓（账户 + 标的 + 交易 + 批次），绕过交易行为层以聚焦增量同步自身逻辑。
 /// 账户/标的经工厂种子（spec #728 / ADR-0084 决策 4）；标的类型工厂固定 stock，
-/// bond/other/fund 等域变体经类型修正表达——类型是本域 secid 构造/跳过规则的
+/// bond/other/fund 等域变体经类型修正表达——类型是本域行情通道路由/跳过规则的
 /// 行为输入，不入工厂种子。
 pub(super) fn insert_holding(
     conn: &Connection,
