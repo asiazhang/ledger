@@ -256,6 +256,10 @@ async fn test_openapi_doc_has_currencies_endpoint() {
 /// 「一次拉取即自足」）。spec #1327 / ADR-0119（信用卡档案字段）：三个新字段跨
 /// `Account` / `AccountInput` / `AccountUpdateInput` 三个 schema，字段描述已收敛到
 /// 单行后实测 49312 字节越 48KB，本票提至 50KB（与紧凑方言同票同因，ADR-0119 后果节）。
+///
+/// issue #1569 复核：Instrument.source 描述去东财化改写后实测 51181 字节，
+/// 余量仅 19——本票已就地瘦身（删「同词表」措辞、压历史值说明）未提预算；
+/// 下一个新增端点/字段大概率触线，延续人工决策与留痕传统。
 #[tokio::test]
 async fn test_openapi_doc_size_within_budget() {
     let (app, _) = setup_app();
@@ -506,14 +510,14 @@ async fn test_import_investment_knowledge_covers_key_conventions() {
         "6 位代码",
         "GET /api/v1/funds",
         "名称充代码",
-        // 投资交易三步法关键词锁（issue #694 / ADR-0081）：查询未命中/东财
+        // 投资交易三步法关键词锁（issue #694 / ADR-0081）：查询未命中/行情源
         // 降级的流程措辞；市场推断/类型提示/回填落价等行为语义已随 #931
         // 迁回契约端点描述，锁在契约锁测试。
         "查无此码",
         "降级",
         "兜底建行",
         "恒 unknown", // fund 标的市场收口（知识侧差异教学保留）
-        "市场保留",   // 股票降级建行保留解析市场（流程后果措辞）
+        "市场保留",   // 股票降级建行保留离线可知市场（流程后果措辞）
         // 出资账户教学关键词锁（issue #939 / ADR-0096 决策 8）的投资侧：
         // 直扣/直付场景携带出资账户、余额核对含结算账户现金流（含出资账户）。
         "funding_account_id",
@@ -589,6 +593,37 @@ async fn test_import_investment_knowledge_covers_key_conventions() {
         assert!(text.contains(kw), "导入知识应包含关键约定关键词 {kw:?}");
     }
 }
+
+/// 数据源中立守门（issue #1569 / ADR-0130）：AI 看到的导入知识不得把任何具体
+/// 行情数据源（东方财富）当作数据源陈述——换源后知识节降级建行、兜底建行等
+/// 表述一律用「行情源」中立交称。负向断言对准端点产物文本（删除知识节的
+/// 中立化改写即红，ADR-0087）；契约方言半边见 `contract.rs` 的
+/// `contract_is_data_source_neutral`。
+#[tokio::test]
+async fn test_knowledge_sections_are_data_source_neutral() {
+    let (app, _) = setup_app();
+
+    for uri in [
+        "/api/v1/import/knowledge",
+        "/api/v1/import/knowledge/investment",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_to_bytes(response.into_body()).await;
+        let text = String::from_utf8(bytes).unwrap();
+        for banned in ["东财", "东方财富", "eastmoney"] {
+            assert!(
+                !text.contains(banned),
+                "{uri} 应数据源中立，不得出现数据源名 {banned:?}（ADR-0130）"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn test_contract_covers_behavior_semantics_keywords() {
     let (app, _) = setup_app();
@@ -614,11 +649,11 @@ async fn test_contract_covers_behavior_semantics_keywords() {
     let required_keywords = [
         "类型提示",             // GET /stocks 返回（stock/etf）
         "精确市场",             // GET /stocks 返回与 POST /instruments 入参
-        "权威名称",             // 东财校验回填（POST /instruments 描述）
+        "权威名称",             // 行情源校验回填（POST /instruments 描述）
         "北交所",               // 显式 400 边界（GET /stocks 描述）
         "美股",                 // ticker 遍历三市场（GET /stocks 描述）
         "静默复用",             // 标的 find-or-create（POST /instruments 描述）
-        "回填权威名称与最新价", // 东财增强落价（POST /instruments 描述）
+        "回填权威名称与最新价", // 行情源增强落价（POST /instruments 描述）
         "上限 100",             // 搜索封顶上限（GET /instruments 描述）
         "不影响其余行",         // 批量单行失败隔离（POST /transactions/batch 描述）
     ];

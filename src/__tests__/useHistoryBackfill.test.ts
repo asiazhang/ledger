@@ -64,31 +64,16 @@ describe("useHistoryBackfill 价格历史后台补全（静默计数接缝）", 
     expect(progress.value).toEqual({ done: 0, total: 3 });
   });
 
-  it("基金首刷页级明细随事件带出（issue #1061 形状随迁）", () => {
+  it("事件恒为标的级两字段：多余字段不影响计数（原页级明细已随换源退役）", () => {
     const { progress } = useHistoryBackfill();
     fire(handlers, {
       done: 3,
       total: 228,
       fund: { code: "110022", page: 3, pages: 25 },
-    });
-    expect(progress.value).toEqual({
-      done: 3,
-      total: 228,
-      fund: { code: "110022", page: 3, pages: 25 },
-    });
-    // 下一事件不带 fund：不残留上一只基金的页明细。
+    } as never);
+    expect(progress.value).toEqual({ done: 3, total: 228 });
     fire(handlers, { done: 4, total: 228 });
     expect(progress.value).toEqual({ done: 4, total: 228 });
-  });
-
-  it("页级明细形状不合法即丢弃明细、保留标的级计数", () => {
-    const { progress } = useHistoryBackfill();
-    fire(handlers, {
-      done: 3,
-      total: 228,
-      fund: { code: "110022", page: 3, pages: 0 },
-    });
-    expect(progress.value).toEqual({ done: 3, total: 228 });
   });
 
   it("载荷形状异常（脏数据/NaN）整体忽略", () => {

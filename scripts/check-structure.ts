@@ -871,66 +871,23 @@ function inheritsWorkspaceLints(manifest: string): boolean {
   return section !== null && /(?:^|\n)\s*workspace\s*=\s*true\b/.test(section);
 }
 
-/** 行内括号净计数（`(` 减 `)`）——属性全文跨行闭合判定用（文本级扫描，
- *  字符串与注释内的括号不豁免；属性谓词不含带括号字符串的常态下可靠，
- *  残余场景靠评审兜底）。 */
-function parenDelta(line: string): number {
-  let delta = 0;
-  for (const ch of line) {
-    if (ch === "(") delta++;
-    else if (ch === ")") delta--;
-  }
-  return delta;
-}
-
 /**
- * 声明（declIndex）前属性链中的首条 `#[cfg(...)]` 属性全文：跳过空行与注释、
- * 透明放行其它属性（如 `#[doc(hidden)]`），停在首个非属性行——无 cfg 即 null。
- * 属性自起点行向下读到配对闭合括号为止（#1469）：rustfmt 拆行的多行属性同样
- * 识别——声明前命中续行（如 `))]`）时向上找最近 `#[` 行作起点，途中被普通
- * 代码行隔开即属性链终止（属性与被饰声明必须相邻）；起点与续行不相干
- * （闭合行未覆盖续行，如更上层无关属性的闭合在代码行之前）按无门处理，
- * 不吞更上层的无关属性（防借无关 cfg 门假绿）。属性判定在掩码注释后进行
- * （keepLiterals=true，保留字符串字面量），属性内注释不参与门匹配。
- * 供生产编译 feature 门的各判定共用（test_utils / http 投影，ADR-0111 决策 5）。
+ * 声明（declIndex 行）前属性链中距声明最近的一条 `#[cfg(...)]` 属性全文——链
+ * 提取委托唯一原语 attributeChainBefore（#1602），提取规则（注释透明、多行闭合、
+ * 相邻终止）以其注记为准，此处只消费：自链上取最近 cfg（多 cfg 叠加取最内层），
+ * 无 cfg 即 null。属性判定在掩码注释后进行（keepLiterals=true，保留字符串
+ * 字面量），属性内注释不参与门匹配。供生产编译 feature 门的各判定共用
+ * （test_utils / http 投影，ADR-0111 决策 5）。
  */
 function firstCfgTextBefore(lines: readonly string[], declIndex: number): string | null {
-  let i = declIndex - 1;
-  while (i >= 0) {
-    const line = lines[i].trim();
-    if (line === "" || line.startsWith("//")) {
-      i--;
-      continue;
-    }
-    // 定位本条属性的起点行：首个相关行为 `#[` 时即其自身；为续行（如 `))]`）时
-    // 向上找最近 `#[` 行作候选起点（途中代码行不拦截，交由下方闭合连续性校验拒绝）
-    let start = -1;
-    if (line.startsWith("#[")) {
-      start = i;
-    } else {
-      for (let j = i - 1; j >= 0; j--) {
-        if (lines[j].trim().startsWith("#[")) {
-          start = j;
-          break;
-        }
-      }
-      if (start === -1) return null;
-    }
-    // 自起点向下读属性全文，到配对闭合（累计括号归零）为止
-    let balance = 0;
-    let end = -1;
-    for (let k = start; k < declIndex; k++) {
-      balance += parenDelta(lines[k]);
-      if (balance <= 0) {
-        end = k;
-        break;
-      }
-    }
-    if (end === -1) return null; // 到声明仍未闭合——残缺属性，按无门处理
-    if (end < i) return null; // 闭合行未覆盖声明前相关行——属性与续行/代码不相干，属性链终止
-    const attr = maskNonCode(lines.slice(start, end + 1).join("\n"), true);
-    if (attr.startsWith("#[cfg(")) return attr;
-    i = start - 1; // 其它属性（如 `#[doc(hidden)]`）：透明放行，继续向上
+  const keep = maskNonCode(lines.join("\n"), true);
+  // boundary = declIndex 行首字符位：属性链必须整条落在声明行之前（声明行内
+  // 前缀的属性不入链，与既有行级扫描「自上一行起找」的边界一致）
+  let boundary = 0;
+  for (let k = 0; k < declIndex; k++) boundary += lines[k].length + 1;
+  const attrs = attributeChainBefore(keep, boundary);
+  for (let k = attrs.length - 1; k >= 0; k--) {
+    if (attrs[k].startsWith("#[cfg(")) return attrs[k];
   }
   return null;
 }
@@ -1527,11 +1484,20 @@ function isRecognizedModAttr(attr: string): boolean {
   return true;
 }
 
-/** 声明（idx 处 `mod` 关键字）前的属性链全文，自近及远收集：跳过空白与已掩码的
- *  注释，逐条按配对括号取回 `#[…]`，遇到非属性代码即止。 */
-function attributesBefore(text: string, idx: number): string[] {
+/**
+ * 声明前属性链提取的唯一原语（#1602：合并 #1469 的 cfg 门解析与 #1593 的形状
+ * 判定两套「取声明前属性链」实现，括号配对与相邻判定只此一份）：在掩码文本
+ * （maskNonCode keepLiterals=true，注释已为空白、字符串字面量保留）中自
+ * boundaryIdx（声明起点字符位）向前收集相邻的 `#[…]` 属性全文，返回按源码
+ * 顺序排列的列表。跳过空白（含换行——rustfmt 拆行的多行属性同样识别，读到
+ * 配对方括号闭合为止）；遇到首个非属性代码（非 `]` 起步，或 `[` 前非 `#`）
+ * 即止——属性与被饰声明必须相邻。括号配对为文本级：属性谓词不含带括号字符串
+ * 的常态下可靠，残余场景靠评审兜底。消费者：scanModDeclarations（消费完整链
+ * 做形状判定）与 firstCfgTextBefore（取最近 cfg 门，ADR-0111 决策 5）。
+ */
+function attributeChainBefore(text: string, boundaryIdx: number): string[] {
   const attrs: string[] = [];
-  let i = idx - 1;
+  let i = boundaryIdx - 1;
   while (i >= 0) {
     while (i >= 0 && /\s/.test(text[i])) i--;
     if (i < 0 || text[i] !== "]") break;
@@ -1607,7 +1573,7 @@ function scanModDeclarations(source: string): ModDeclScan {
       violations.push({ line, shape: `内联模块块 mod ${name} { … }` });
       continue;
     }
-    const attrs = attributesBefore(keep, idx);
+    const attrs = attributeChainBefore(keep, idx);
     const path = attrs.find((a) => /^#\[\s*path\b/.test(a));
     if (path) {
       violations.push({ line, shape: `${path} mod ${name};` });

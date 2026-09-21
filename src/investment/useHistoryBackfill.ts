@@ -47,25 +47,9 @@ function ensureProgressSubscription(): void {
     ) {
       return;
     }
-    // 页级明细为可选字段：形状不合法即丢弃明细、保留标的级进度。
-    const fund = payload.fund;
-    const validFund =
-      fund &&
-      typeof fund.code === "string" &&
-      typeof fund.page === "number" &&
-      Number.isFinite(fund.page) &&
-      typeof fund.pages === "number" &&
-      Number.isFinite(fund.pages) &&
-      fund.pages > 0
-        ? { code: fund.code, page: fund.page, pages: fund.pages }
-        : null;
     // 终态静默收起：本轮队列排空即收起计数（不残留 228/228 的完成态）。
     progress.value =
-      payload.done >= payload.total
-        ? null
-        : validFund
-          ? { done: payload.done, total: payload.total, fund: validFund }
-          : { done: payload.done, total: payload.total };
+      payload.done >= payload.total ? null : { done: payload.done, total: payload.total };
   }).catch((e) => {
     console.warn(`订阅 ${HISTORY_BACKFILL_PROGRESS_EVENT} 失败`, e);
   });

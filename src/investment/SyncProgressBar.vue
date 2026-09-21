@@ -10,11 +10,8 @@ import { bar, root, text, textStack, track } from "./sync-progress-bar.css.ts";
 // 语言（ADR-0049 文案纪律）。纯展示组件：进度状态由 useInstrumentInfoSync
 // 接缝统一产出，两入口（盈亏页当前持仓卡 / 标的页标的列表）渲染同一份组件，
 // 行为零分叉。位于卡片内文档流、非模态环境指示（不接弹层注册表、不抑制快捷
-// 键，与 GlobalBusyBar 同一豁免口径）。
-//
-// 基金深回填的页级明细（issue #1061）：主行计数之下再渲染一行「回填 110022：
-// 第 3/25 页」——单只基金首刷要翻约 25 页，明细让这段接近一分钟的窗口可见；
-// 进度条宽度仍按标的级 done/total，页推进不虚报整体百分比。
+// 键，与 GlobalBusyBar 同一豁免口径）。原基金深回填页级明细次行（issue
+// #1061）已随逐只净值通道换源退役（issue #1571），事件恒为标的级两字段。
 
 const props = defineProps<{ progress: InstrumentSyncProgress | null }>();
 
@@ -46,15 +43,6 @@ const percent = computed(() => {
     <div :class="textStack">
       <span :class="text">
         {{ t("investments.sync.progress", { done: progress.done, total: progress.total }) }}
-      </span>
-      <span v-if="progress.fund" :class="text" data-testid="instrument-sync-progress-fund">
-        {{
-          t("investments.sync.progressFundPages", {
-            code: progress.fund.code,
-            page: progress.fund.page,
-            pages: progress.fund.pages,
-          })
-        }}
       </span>
     </div>
   </div>

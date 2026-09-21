@@ -16,7 +16,7 @@
 //! 行情同步域（MarketSync，#407 域目录化归位 ADR-0056；spec #1086 / issue #1106
 //! 自根包域目录拆为 workspace 成员 `ledger-market-sync`）。
 //!
-//! HTTP 网络爬取、东财基金访问与增量同步编排在本域收口：
+//! HTTP 网络爬取与增量同步编排在本域收口：
 //! - [`bulk`]：行情批量取数面（ADR-0121 / issue #1374 / ADR-0130 决策 2）——
 //!   新浪 `f_` 场外基金批量面（按本次现场的基金代码一次请求取回名称与最新净值，
 //!   各整次同步最多一次逻辑请求）、fail-closed 降级、跨同步记忆与缺口
@@ -45,12 +45,14 @@
 //! - [`fund_backfill`]：基金历史回填单元（issue #1062 / #1377 / #1388）——服务
 //!   价格历史后台补全的逐只编排：首刷近两年、增量按水位，取数走新浪单只全历史面
 //!   并由本地裁剪窗口（issue #1566）；
-//! - [`fund_nav`]：东财历史净值共享件（issue #303 / ADR-0038 决策 6；issue #1388
-//!   自通道拆出编排后留守）——lsjz 报文访问与解析、净值水位窗口、分页器与水位读；
-//!   详情页数据文件的单请求全量通道（issue #1062）与档案通道（issue #1212）随
-//!   换源退役删除（issue #1566 / #1568）；
+//! - [`fund_nav`]：基金净值同步共享件（issue #303 / ADR-0038 决策 6；issue #1388
+//!   自通道拆出编排后留守）——净值点形状、净值水位窗口与水位读；东财 lsjz
+//!   分页通道随逐只回退换源新浪全历史面退役删除（issue #1571），详情页数据
+//!   文件的单请求全量通道（issue #1062）与档案通道（issue #1212）已随换源
+//!   退役删除（issue #1566 / #1568）；
 //! - [`fund_price_refresh`]：基金现价刷新单元（issue #1377 / #1388）——服务标的
-//!   信息同步的逐只编排：批量面命中零请求、未命中退逐只短窗封顶；
+//!   信息同步的逐只编排：批量面命中零请求、未命中退新浪单只全历史通道
+//!   （issue #1571）；
 //! - [`fx`]：ECB 汇率同步编排（issue #1544 / ADR-0019 修订记录）——汇率序列
 //!   「要拉多深」的窗口判据单点：深度 = 账本中最早的非本位币痕迹日期（非本位币
 //!   账户创建日 / 非本位币交易日取 MIN，软删排除）所属 ISO 周的周一再前推一周，
@@ -101,8 +103,9 @@
 //!   价格点（ADR-0130 决策 6）；全历史空序列不等于「查无此码」，非预期形状
 //!   fail-closed。批量面的 crate 内消费点：现价刷新（issue #1565）与基金按代码
 //!   查询（issue #1568）；单只全历史面随价格历史后台补全（issue #1566）；
-//! - [`stock`]：东财股票单点行情访问——按（市场，代码）实时查询（issue #693 /
-//!   ADR-0081），类型特征探测单点隔离，同接缝查询半边的场内实例；
+//! - [`stock`]：股票按代码查询的取数适配层——按（市场，代码）查腾讯行情
+//!   （issue #693 / ADR-0081；issue #1567 接线腾讯，ADR-0130），解析与类型探测
+//!   收口在 [`tencent`] 取数单元，同接缝查询半边的场内实例；
 //! - [`tencent`]：腾讯行情批量报价取数单元（ADR-0130 决策 2/3 / issue #1558）
 //!   ——一次请求携带多只沪深港美股票与场内基金（GBK、无需 Referer），解出代码 /
 //!   名称 / 价格 / 价格日期 / 证券类型码 / 币种 / 交易所后缀；三套字段布局与类型
@@ -187,8 +190,8 @@ pub use bulk::{
     FundBatch, FundNameDictionary, FundNavTable,
 };
 pub use channels::{
-    FetchFundName, FetchFxKline, FetchKline, FetchMoneyFundForm, FetchNavHistory, FetchNavPage,
-    FetchQuotes, QuoteItem, QuoteQuery, SyncFetchChannels, do_incremental_sync_channels,
+    FetchFundName, FetchFxKline, FetchKline, FetchMoneyFundForm, FetchNavHistory, FetchQuotes,
+    QuoteItem, QuoteQuery, SyncFetchChannels, do_incremental_sync_channels,
 };
 pub use daily_refresh::{
     DailyPriceRefreshChannelsSlot, DailyPriceRefreshTimings, start_daily_price_refresh,
@@ -197,7 +200,7 @@ pub use daily_refresh::{
 // 通道束载荷 DTO（issue #1276）：通道束是壳层注入接缝的公开面，桩实现方需要
 // 能命名与构造应答形状（QuoteItem 可构造；Kline/Nav 形状测试回空表即可命名）。
 pub use fund::fetch_fund_quote_production;
-pub use fund_nav::{NavPage, NavPoint, NavQuery};
+pub use fund_nav::NavPoint;
 pub use fx::{FxSyncChannels, FxSyncReport, sync_fx_rates};
 pub use history::{
     BackfillChannelsSlot, BackfillTimings, start_history_backfill, start_history_backfill_with,
@@ -206,8 +209,8 @@ pub use http::KlineBar;
 pub use model::{SyncInstrumentInfoResult, WriteWitness};
 pub use persist::FxPersistReport;
 pub use progress::{
-    BackfillProgressEmitter, FundNavProgress, HISTORY_BACKFILL_PROGRESS, INSTRUMENT_SYNC_PROGRESS,
-    ProgressEmitter, SyncProgress,
+    BackfillProgressEmitter, HISTORY_BACKFILL_PROGRESS, INSTRUMENT_SYNC_PROGRESS, ProgressEmitter,
+    SyncProgress,
 };
 pub use session::{FacadeWriteSession, ScopedSession};
 pub use stock::fetch_stock_quote_production;

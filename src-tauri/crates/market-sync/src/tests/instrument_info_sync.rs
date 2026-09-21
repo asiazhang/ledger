@@ -20,12 +20,12 @@ use crate::channels::{
     FetchFuture, FetchMoneyFundForm, Lane, QuoteItem, QuoteQuery, SyncFetchChannels,
     SyncFetchHosts, do_incremental_sync_channels,
 };
-use crate::fund_nav::{NavPage, NavPoint, NavQuery};
+use crate::fund_nav::NavPoint;
 use crate::http::{KlineBar, KlineResponse, fx_secid_candidates, parse_klines};
 use crate::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
 use crate::model::WriteWitness;
 use crate::session::ScopedSession;
-use crate::{FetchFundName, FetchNavHistory, FetchNavPage};
+use crate::{FetchFundName, FetchNavHistory};
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, SINA_PRICE_SOURCE, TENCENT_PRICE_SOURCE,
@@ -813,7 +813,7 @@ fn witness_survives_mid_run_failure_after_write() {
     // 同步中途的网络失败来自基金净值通道（日 K 已归后台补全）。
     let prices = [("600001", Some(100_000))];
     let mut fetch = mock_fetch(&prices);
-    let mut nav = |_: &NavQuery| super::ready(Err(AppError::Io("模拟净值网络失败".into())));
+    let mut nav = |_: &str| super::ready(Err(AppError::Io("模拟净值网络失败".into())));
     let mut witness = WriteWitness::default();
     let err = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -948,12 +948,8 @@ fn no_fx(_: &str) -> FetchFuture<Vec<KlineBar>> {
 
 /// 空实现：既有用例只关心股票/汇率行为时注入（净值通道最小桩，首刷查无净值
 /// 形态——基金计入跳过）。
-fn no_nav(_: &NavQuery) -> FetchFuture<NavPage> {
-    super::ready(Ok(NavPage {
-        points: vec![],
-        total: 0,
-        blocked: false,
-    }))
+fn no_nav(_: &str) -> FetchFuture<Vec<NavPoint>> {
+    super::ready(Ok(vec![]))
 }
 
 /// 空实现：既有用例不关心基金名称刷新时注入（返回空串 = 未取到名称，不落库）。
@@ -978,14 +974,11 @@ fn no_bulk() -> BulkFetchSurfaces {
 }
 
 /// 进度记录闭包：把**标的级一格的** (done, total) 推进序列攒进测试侧共享缓冲
-///（与 [`mock_fx`] 的请求记录同纪律：缓冲由测试持有，断言时 borrow）。基金
-/// 页级明细（issue #1061）由 `fund.is_some()` 的专用记录覆盖，本闭包只收标的级
-/// 推进——既有断言对准的正是那一层序列。
+///（与 [`mock_fx`] 的请求记录同纪律：缓冲由测试持有，断言时 borrow）。事件恒为
+/// 标的级两字段（原页级明细随逐只通道换源退役，issue #1571）。
 fn progress_recorder<'a>(log: &'a Mutex<Vec<(usize, usize)>>) -> impl FnMut(SyncProgress) + 'a {
     move |progress| {
-        if progress.fund.is_none() {
-            log.lock().unwrap().push((progress.done, progress.total));
-        }
+        log.lock().unwrap().push((progress.done, progress.total));
     }
 }
 
@@ -1209,44 +1202,36 @@ fn week_key_matches_sqlite_week_start_column() {
 }
 
 // ---------------------------------------------------------------------------
-// 基金分区：历史净值按水位增量回填（issue #303 / ADR-0038 决策 6）。编排经
-// 注入 mock 页抓取闭包驱动，不依赖真实网络；水位语义（首刷近两年 / 增量从
-// 水位次日起）与跨页降采样、同周整周覆盖在此端到端钉住。
+// 基金分区：现价刷新的逐只回退（issue #303 / ADR-0038 决策 6 / issue #1571 换源）。
+// 编排经注入 mock 全历史闭包驱动，不依赖真实网络；逐只回退与历史回填同用新浪
+// 单只全历史通道（一次请求整只历史），窗口由编排本地裁剪——水位语义（首刷近两年
+// / 增量从水位次日起）经「窗口外点不落库」钉住，每只至多一次请求。
 // ---------------------------------------------------------------------------
 
-/// 构造一页净值结果：total 为窗口内总条数（分页定界），points 为 (日期, 单位净值)。
-fn nav_page(total: u64, points: &[(&str, f64)]) -> NavPage {
-    NavPage {
-        total,
-        blocked: false,
-        points: points
-            .iter()
-            .map(|(d, n)| NavPoint {
-                date: d.to_string(),
-                nav: *n,
-            })
-            .collect(),
-    }
+/// 构造整只历史净值序列：points 为 (日期, 单位净值)。
+fn nav_points(points: &[(&str, f64)]) -> Vec<NavPoint> {
+    points
+        .iter()
+        .map(|(d, n)| NavPoint {
+            date: d.to_string(),
+            nav: *n,
+        })
+        .collect()
 }
 
-/// 模拟历史净值页抓取：按代码返回页序列（下标 = 页码 − 1，越界页返回空），
-/// 并记录全部查询（断言水位窗口、翻页与「非可拉取行零请求」）。
+/// 模拟新浪单只全历史抓取：按代码返回整只历史净值序列（未收录代码回可信空），
+/// 并记录全部请求（断言每只至多一次请求与「非可拉取行零请求」）。
 fn mock_nav<'a>(
-    pages_by_code: &'a [(&'a str, Vec<NavPage>)],
-    requested: &'a Mutex<Vec<NavQuery>>,
-) -> impl FnMut(&NavQuery) -> FetchFuture<NavPage> + Send + 'a {
-    move |query: &NavQuery| {
-        requested.lock().unwrap().push(query.clone());
-        super::ready(Ok(pages_by_code
+    history_by_code: &'a [(&'a str, Vec<NavPoint>)],
+    requested: &'a Mutex<Vec<String>>,
+) -> impl FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send + 'a {
+    move |code: &str| {
+        requested.lock().unwrap().push(code.to_string());
+        super::ready(Ok(history_by_code
             .iter()
-            .find(|(c, _)| *c == query.code)
-            .and_then(|(_, pages)| pages.get((query.page - 1) as usize))
-            .cloned()
-            .unwrap_or(NavPage {
-                points: vec![],
-                total: 0,
-                blocked: false,
-            })))
+            .find(|(c, _)| *c == code)
+            .map(|(_, points)| points.clone())
+            .unwrap_or_default()))
     }
 }
 
@@ -1384,7 +1369,7 @@ fn fund_nav_fetch_error_propagates() {
     );
 
     let mut fetch = mock_fetch(&[]);
-    let mut nav = |_: &NavQuery| super::ready(Err(AppError::Io("模拟净值请求失败".into())));
+    let mut nav = |_: &str| super::ready(Err(AppError::Io("模拟净值请求失败".into())));
     let err = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
@@ -1550,9 +1535,10 @@ fn three_type_partitions_roll_up_into_one_result() {
             },
         ]))
     };
-    let pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.348)])])];
+    let today_s = beijing_today().format("%Y-%m-%d").to_string();
+    let history = [("110022", nav_points(&[(today_s.as_str(), 3.348)]))];
     let nav_requested = Mutex::new(Vec::new());
-    let mut nav = mock_nav(&pages, &nav_requested);
+    let mut nav = mock_nav(&history, &nav_requested);
 
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
@@ -1578,12 +1564,7 @@ fn three_type_partitions_roll_up_into_one_result() {
         vec!["sh:510300,sh:600519".to_string()],
         "股票与 ETF 同走行情分区、同批查询（收集按 symbol 升序）；编排只递市场 + 代码"
     );
-    let nav_codes: Vec<String> = nav_requested
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|q| q.code.clone())
-        .collect();
+    let nav_codes: Vec<String> = nav_requested.lock().unwrap().clone();
     assert_eq!(
         nav_codes,
         vec!["110022".to_string()],
@@ -1593,7 +1574,7 @@ fn three_type_partitions_roll_up_into_one_result() {
     assert_eq!(market_price_of(&conn, "inst-sh"), Some(13_160_100));
     assert_eq!(
         fund_price_of(&conn, "inst-fund"),
-        Some((33480, Some("2026-01-30".into())))
+        Some((33480, Some(today_s)))
     );
     assert_eq!(
         market_price_of(&conn, "inst-bond"),
@@ -2463,8 +2444,9 @@ fn progress_denominator_counts_channel_capable_instruments_only() {
 
     let requested = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&[("600519", Some(100_000))]);
-    let fund_pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.3)])])];
-    let mut nav = mock_nav(&fund_pages, &requested);
+    let today_s = beijing_today().format("%Y-%m-%d").to_string();
+    let fund_history = [("110022", nav_points(&[(today_s.as_str(), 3.3)]))];
+    let mut nav = mock_nav(&fund_history, &requested);
     let mut fund_name = |code: &str| super::ready(Ok(format!("权威-{code}")));
     let log = Mutex::new(Vec::new());
     let mut progress = progress_recorder(&log);
@@ -2631,9 +2613,11 @@ fn fund_progress_advances_after_nav_and_name_complete() {
 
     let events = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&[]);
-    let mut nav = |query: &NavQuery| {
-        events.lock().unwrap().push(format!("nav:{}", query.code));
-        super::ready(Ok(nav_page(1, &[("2026-01-30", 3.3)])))
+    let today_s = beijing_today().format("%Y-%m-%d").to_string();
+    let mut nav = |code: &str| {
+        events.lock().unwrap().push(format!("nav:{code}"));
+        let date = today_s.clone();
+        super::ready(Ok(nav_points(&[(date.as_str(), 3.3)])))
     };
     let mut fund_name = |code: &str| {
         events.lock().unwrap().push(format!("name:{code}"));
@@ -2667,53 +2651,6 @@ fn fund_progress_advances_after_nav_and_name_complete() {
             "progress:1/1".to_string(),
         ],
         "先发 total；净值与名称都完成后才推进该基金的一格"
-    );
-}
-
-#[test]
-fn page_level_detail_only_for_multi_page_fund_sync() {
-    // 单页基金（增量常态）与行情标的不产生页级明细——只有真正翻页的首刷/深回填
-    // 才有页级推进，增量常态事件形状保持既有 { done, total } 两字段。
-    let conn = tauri_app_lib::test_support::open();
-    insert_holding(&conn, "acc-1", "inst-stock", "600001", "stock", "CNY", "sh");
-    insert_holding(
-        &conn,
-        "acc-2",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-
-    let pages = [("110022", vec![nav_page(2, &[("2026-01-30", 3.3)])])];
-    let requested = Mutex::new(Vec::new());
-    let mut fetch = mock_fetch(&[("600001", Some(100_000))]);
-    let mut nav = mock_nav(&pages, &requested);
-    let log = Mutex::new(Vec::new());
-    let mut progress = |progress: SyncProgress| log.lock().unwrap().push(progress);
-    tauri::async_runtime::block_on(do_incremental_sync_with(
-        &conn,
-        &mut fetch,
-        &mut no_fx,
-        &mut nav,
-        &mut no_name,
-        &mut no_confirm,
-        &mut no_bulk(),
-        &mut progress,
-        &mut WriteWitness::default(),
-    ))
-    .unwrap();
-
-    let events = log.lock().unwrap();
-    assert!(
-        events.iter().all(|e| e.fund.is_none()),
-        "单页基金与行情标的不产生页级明细：{events:?}"
-    );
-    assert_eq!(
-        events.iter().map(|e| (e.done, e.total)).collect::<Vec<_>>(),
-        vec![(0, 2), (1, 2), (2, 2)],
-        "标的级推进序列不受页级明细影响"
     );
 }
 
@@ -2880,7 +2817,6 @@ impl QuoteChannelCalls {
 /// （用例现场无行情标的），逐标的基金通道与批量取数面由用例注入。
 fn fund_channels(
     quote_calls: QuoteChannelCalls,
-    fetch_nav: FetchNavPage,
     fetch_nav_history: FetchNavHistory,
     fetch_fund_name: FetchFundName,
     confirm_money_fund_form: FetchMoneyFundForm,
@@ -2908,7 +2844,6 @@ fn fund_channels(
                 unreachable!("用例现场无行情通道标的")
             }
         }),
-        fetch_nav,
         fetch_nav_history,
         fetch_fund_name,
         // 货基判定确认（issue #1563）：由用例注入（缺信号桩 `no_confirm` 闭包或
@@ -2958,29 +2893,26 @@ fn batch_surfaces(names: FundNameDictionary, nav: FundNavTable) -> BulkFetchSurf
     )
 }
 
-/// 逐标的净值页桩：固定返回同一页（给定日期单点），并累加调用次数。
-fn counting_nav(calls: Arc<AtomicUsize>, date: String, nav: f64) -> FetchNavPage {
-    Box::new(move |_: &NavQuery| {
+/// 逐标的净值桩（新浪全历史通道，issue #1571）：固定返回单点历史（给定日期），
+/// 并累加调用次数。
+fn counting_nav(calls: Arc<AtomicUsize>, date: String, nav: f64) -> FetchNavHistory {
+    Box::new(move |_: &str| {
         let calls = calls.clone();
         let date = date.clone();
         Box::pin(async move {
             calls.fetch_add(1, Ordering::SeqCst);
-            Ok(nav_page(1, &[(date.as_str(), nav)]))
+            Ok(nav_points(&[(date.as_str(), nav)]))
         })
     })
 }
 
-/// 空净值页桩（窗口内无新净值）：即便被触达也不会写库，只留调用事实。
-fn empty_nav(calls: Arc<AtomicUsize>) -> FetchNavPage {
-    Box::new(move |_: &NavQuery| {
+/// 空历史桩（窗口内无新净值）：即便被触达也不会写库，只留调用事实。
+fn empty_nav(calls: Arc<AtomicUsize>) -> FetchNavHistory {
+    Box::new(move |_: &str| {
         let calls = calls.clone();
         Box::pin(async move {
             calls.fetch_add(1, Ordering::SeqCst);
-            Ok(NavPage {
-                points: vec![],
-                total: 0,
-                blocked: false,
-            })
+            Ok(vec![])
         })
     })
 }
@@ -3002,7 +2934,6 @@ fn counting_name(calls: Arc<AtomicUsize>) -> FetchFundName {
 struct RequestCounts {
     quote: usize,
     per_fund_nav: usize,
-    per_fund_nav_full: usize,
     per_fund_name: usize,
     bulk_funds: usize,
 }
@@ -3069,14 +3000,12 @@ fn bulk_surfaces_pin_daily_sync_request_count_to_a_constant() {
 
         let quote_calls = QuoteChannelCalls::default();
         let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
-        let per_fund_nav_full_calls = Arc::new(AtomicUsize::new(0));
         let per_fund_name_calls = Arc::new(AtomicUsize::new(0));
         let bulk_calls = Arc::new(AtomicUsize::new(0));
         let mut channels = fund_channels(
             quote_calls.clone(),
-            empty_nav(per_fund_nav_calls.clone()),
             {
-                let calls = per_fund_nav_full_calls.clone();
+                let calls = per_fund_nav_calls.clone();
                 Box::new(move |_: &str| {
                     let calls = calls.clone();
                     Box::pin(async move {
@@ -3115,7 +3044,6 @@ fn bulk_surfaces_pin_daily_sync_request_count_to_a_constant() {
         let counts = RequestCounts {
             quote: quote_calls.total(),
             per_fund_nav: per_fund_nav_calls.load(Ordering::SeqCst),
-            per_fund_nav_full: per_fund_nav_full_calls.load(Ordering::SeqCst),
             per_fund_name: per_fund_name_calls.load(Ordering::SeqCst),
             bulk_funds: bulk_calls.load(Ordering::SeqCst),
         };
@@ -3124,7 +3052,6 @@ fn bulk_surfaces_pin_daily_sync_request_count_to_a_constant() {
             RequestCounts {
                 quote: 0,
                 per_fund_nav: 0,
-                per_fund_nav_full: 0,
                 per_fund_name: 0,
                 bulk_funds: 1,
             },
@@ -3194,7 +3121,6 @@ fn bulk_surface_failure_falls_back_per_instrument_and_counts_toward_the_circuit(
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         counting_nav(per_fund_nav_calls.clone(), today.clone(), 5.0),
-        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(per_fund_name_calls.clone()),
         Box::new(no_confirm),
         bulk_surfaces(
@@ -3300,7 +3226,6 @@ fn bulk_coverage_gaps_fall_back_per_item_without_tripping_the_circuit() {
         let mut channels = fund_channels(
             QuoteChannelCalls::default(),
             counting_nav(per_fund_nav_calls.clone(), today.clone(), 3.0),
-            Box::new(|_| super::ready(Ok(vec![]))),
             counting_name(per_fund_name_calls.clone()),
             Box::new(no_confirm),
             bulk_surfaces(
@@ -3398,7 +3323,6 @@ fn bulk_surfaces_stay_disabled_after_threshold_failures_and_half_open_after_the_
         let mut channels = fund_channels(
             QuoteChannelCalls::default(),
             empty_nav(per_fund_nav_calls.clone()),
-            Box::new(|_| super::ready(Ok(vec![]))),
             Box::new(|_: &str| super::ready(Ok(String::new()))),
             Box::new(no_confirm),
             bulk_surfaces(
@@ -3521,7 +3445,6 @@ fn bulk_nav_point_of_the_current_week_lands_price_and_weekly_sample_without_per_
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(Arc::new(AtomicUsize::new(0))),
         Box::new(no_confirm),
         bulk_surfaces(
@@ -3590,14 +3513,23 @@ fn bulk_week_gap_beyond_one_week_falls_back_per_instrument_to_fill_missing_weeks
     let requested_clone = requested.clone();
     let per_fund_calls = per_fund_nav_calls.clone();
     let page_date = today.clone();
+    // 逐只通道返回整只历史（与新浪全历史面同形）：窗口外的陈旧点（水位前一周）
+    // 与当日新点同在报文里——窗口裁剪把陈旧点挡在落库之外，只补窗口内缺失周点。
+    let stale_date = (watermark_date - chrono::Duration::days(7))
+        .format("%Y-%m-%d")
+        .to_string();
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
-        Box::new(move |query: &NavQuery| {
+        Box::new(move |code: &str| {
             per_fund_calls.fetch_add(1, Ordering::SeqCst);
-            requested_clone.lock().unwrap().push(query.clone());
-            super::ready(Ok(nav_page(1, &[(page_date.as_str(), 3.5)])))
+            requested_clone.lock().unwrap().push(code.to_string());
+            let page_date = page_date.clone();
+            let stale_date = stale_date.clone();
+            super::ready(Ok(nav_points(&[
+                (stale_date.as_str(), 2.0),
+                (page_date.as_str(), 3.5),
+            ])))
         }),
-        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(Arc::new(AtomicUsize::new(0))),
         Box::new(no_confirm),
         bulk_surfaces(
@@ -3628,22 +3560,18 @@ fn bulk_week_gap_beyond_one_week_falls_back_per_instrument_to_fill_missing_weeks
         1,
         "水位落后超过一周即逐只补齐缺失周点"
     );
-    let requested = requested.lock().unwrap();
-    assert_eq!(requested.len(), 1);
     assert_eq!(
-        requested[0].start_date,
-        (watermark_date + chrono::Duration::days(1))
-            .format("%Y-%m-%d")
-            .to_string(),
-        "增量窗口自水位次日起"
+        requested.lock().unwrap().as_slice(),
+        ["100000"],
+        "逐只回退即新浪全历史通道：每只一次请求、不携带窗口参数"
     );
-    assert_eq!(requested[0].end_date, today);
     assert_eq!(result.written, 1);
     assert_eq!(
         fund_price_of(&conn, "inst-fund-0"),
         Some((35000, Some(today.clone())))
     );
-    // 水位与今日相隔两周（必跨 ISO 周）：两条周采样点并存，新增点落在当周。
+    // 水位与今日相隔两周（必跨 ISO 周）：窗口裁剪挡掉水位前的陈旧点，两条周采样
+    // 点并存（存量水位周点 + 当周新点），新增点落在当周。
     assert_eq!(
         price_history_rows(&conn, "inst-fund-0"),
         vec![
@@ -3684,7 +3612,6 @@ fn fund_bulk_hit_without_history_writes_price_but_no_weekly_point() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         empty_nav(per_fund_nav_calls.clone()),
-        Box::new(|_| super::ready(Ok(vec![]))),
         counting_name(Arc::new(AtomicUsize::new(0))),
         Box::new(no_confirm),
         bulk_surfaces(
@@ -3786,11 +3713,6 @@ fn constant_price_fund_gets_no_requests_and_is_excluded_from_denominator_and_gap
             today.format("%Y-%m-%d").to_string(),
             1.0,
         ),
-        Box::new(|_| {
-            Box::pin(async {
-                unreachable!("恒定标的的历史归读侧常量，后台补全不触达全量通道")
-            })
-        }),
         counting_name(per_fund_name_calls.clone()),
         Box::new(no_confirm),
         bulk_surfaces(
@@ -3882,18 +3804,14 @@ fn money_fund_signal_marks_instrument_and_lands_nothing() {
     let per_fund_nav_calls = Arc::new(AtomicUsize::new(0));
     let calls_outer = per_fund_nav_calls.clone();
     let date = today.clone();
-    let nav: FetchNavPage = Box::new(move |_: &NavQuery| {
+    let nav: FetchNavHistory = Box::new(move |_: &str| {
         let date = date.clone();
         let calls = calls_outer.clone();
         Box::pin(async move {
             calls.fetch_add(1, Ordering::SeqCst);
             // 取数面的事实透传形态（判定口径退役后）：货基行的取值位是万份
             // 收益——判定门必须拦在落库前。
-            Ok(NavPage {
-                points: vec![NavPoint { date, nav: 0.2229 }],
-                total: 1,
-                blocked: false,
-            })
+            Ok(nav_points(&[(date.as_str(), 0.2229)]))
         })
     });
     let confirm_calls = Arc::new(AtomicUsize::new(0));
@@ -3906,7 +3824,6 @@ fn money_fund_signal_marks_instrument_and_lands_nothing() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         nav,
-        Box::new(|_| Box::pin(async { unreachable!("现价刷新不触达全量通道") })),
         counting_name(Arc::new(AtomicUsize::new(0))),
         confirm,
         bulk_surfaces(
@@ -3965,15 +3882,9 @@ fn money_fund_absent_signal_lands_nav_without_marking() {
     seed_fund(&conn, "inst-fund", "110022", "消费行业");
 
     let nav_date = today.clone();
-    let nav: FetchNavPage = Box::new(move |_: &NavQuery| {
+    let nav: FetchNavHistory = Box::new(move |_: &str| {
         let date = nav_date.clone();
-        Box::pin(async move {
-            Ok(NavPage {
-                points: vec![NavPoint { date, nav: 2.811 }],
-                total: 1,
-                blocked: false,
-            })
-        })
+        Box::pin(async move { Ok(nav_points(&[(date.as_str(), 2.811)])) })
     });
     let confirm_calls = Arc::new(AtomicUsize::new(0));
     let confirm_calls_clone = confirm_calls.clone();
@@ -3984,7 +3895,6 @@ fn money_fund_absent_signal_lands_nav_without_marking() {
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         nav,
-        Box::new(|_| Box::pin(async { unreachable!("现价刷新不触达全量通道") })),
         counting_name(Arc::new(AtomicUsize::new(0))),
         confirm,
         batch_surfaces(FundNameDictionary::new(), FundNavTable::new()),
@@ -4022,23 +3932,18 @@ fn money_fund_disclosure_unavailable_lands_nothing() {
 
     let nav_calls = Arc::new(AtomicUsize::new(0));
     let nav_calls_clone = nav_calls.clone();
-    let nav: FetchNavPage = Box::new(move |_: &NavQuery| {
+    let nav: FetchNavHistory = Box::new(move |_: &str| {
         let calls = nav_calls_clone.clone();
         let date = today.clone();
         Box::pin(async move {
             calls.fetch_add(1, Ordering::SeqCst);
-            Ok(NavPage {
-                points: vec![NavPoint { date, nav: 0.2229 }],
-                total: 1,
-                blocked: false,
-            })
+            Ok(nav_points(&[(date.as_str(), 0.2229)]))
         })
     });
     // 名称通道返回原名称：本用例隔离判定门行为，名称随行刷新不产生写入。
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         nav,
-        Box::new(|_| Box::pin(async { unreachable!("现价刷新不触达全量通道") })),
         Box::new(|_| Box::pin(async { Ok("余额宝".to_string()) })),
         Box::new(|_| {
             Box::pin(async {
@@ -4098,21 +4003,16 @@ fn confirmed_money_fund_generates_no_per_round_requests() {
     });
     let nav_calls = Arc::new(AtomicUsize::new(0));
     let nav_calls_clone = nav_calls.clone();
-    let nav: FetchNavPage = Box::new(move |_: &NavQuery| {
+    let nav: FetchNavHistory = Box::new(move |_: &str| {
         let calls = nav_calls_clone.clone();
         Box::pin(async move {
             calls.fetch_add(1, Ordering::SeqCst);
-            Ok(NavPage {
-                points: vec![],
-                total: 0,
-                blocked: false,
-            })
+            Ok(vec![])
         })
     });
     let mut channels = fund_channels(
         QuoteChannelCalls::default(),
         nav,
-        Box::new(|_| Box::pin(async { unreachable!("现价刷新不触达全量通道") })),
         counting_name(Arc::new(AtomicUsize::new(0))),
         confirm,
         bulk_surfaces(
@@ -4208,10 +4108,7 @@ fn mixed_ledger_keeps_constant_fund_out_of_requests_denominator_and_gaps() {
             Box::pin(async { unreachable!("历史日 K 已移出现价刷新编排") })
         }),
         fetch_fx: Box::new(|_| Box::pin(async { unreachable!("全仓 CNY，零汇率抓取") })),
-        fetch_nav: counting_nav(per_fund_nav_calls.clone(), today_s.clone(), 3.0),
-        fetch_nav_history: Box::new(|_| {
-            Box::pin(async { unreachable!("现价刷新不触达全量通道") })
-        }),
+        fetch_nav_history: counting_nav(per_fund_nav_calls.clone(), today_s.clone(), 3.0),
         fetch_fund_name: counting_name(per_fund_name_calls.clone()),
         confirm_money_fund_form: Box::new(|_| Box::pin(async { Ok(false) })),
         bulk: bulk_surfaces(
