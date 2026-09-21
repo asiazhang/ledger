@@ -56,3 +56,9 @@
 - issue #30（父 spec）：交易列表服务端分页（items + total，offset 页码模式）
 - issue #32（T1）：服务端分页查询与全链路契约替换
 - 投资域（`InstrumentListFilter/InstrumentListResult` 先例；历史坐标：`src-tauri/src/commands/investment/`（#401 域归位前）→ `src-tauri/src/investment/`（域归位后）→ `ledger-investment` crate（#1097 现役））
+
+## 修订注记（#1631，2026-10-21）：HTTP 半边缺省上限与超限码化拒绝
+
+决策中「缺省行为（不传分页参数返回全部）保持不变」的适用范围自本票起收窄为 **IPC 通道**：HTTP `GET /api/v1/transactions` 缺省不再返回全部，等价第一页 × 上限 100（`total` 恒返回）；显式 `page_size` 超过 100 报 400 码化错误 `transaction.page-size-over-cap`，`limit` 超过 100 或负值（SQLite 负值无上限语义仅限 IPC）报 400 `transaction.limit-out-of-range`。守卫住壳层 api_server handler（`enforce_http_page_bounds`），与 IPC 共用的 `list_transactions_internal` 零改动——分页语义、`total` 口径、排序与 `page_size` 缺 1 钳制等原决策对 IPC 全部不变。
+
+理由：决策时「缺省返回全部」的支撑是理由 #5（AI 读回与现有调用方零迁移）；属性能缺口调研（2026-10，#1631）实测大库下多端 HTTP 客户端一次拉全表会拖垮壳进程只读连接与客户端，零迁移收益不再抵得过整表序列化代价。上限取 100 对齐既有口径（标的搜索端点「上限收敛 100」的 AI 上下文预算、前端页大小闭集最大值）；拒绝而非静默截断，截断会造成读回少行不自知，AI 导入按码自纠（ADR-0050）。兼容性：前端与多端同步走 IPC 不受影响；唯一依赖「缺省全量」的 AI 导入读回流程，教学已同步改为按 `total` 分页读回（导入知识「对账完成判定」节），旧提示词口径（「不传分页参数即返回全部」）退役。

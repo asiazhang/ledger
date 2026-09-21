@@ -452,6 +452,14 @@ async fn test_import_knowledge_covers_key_conventions() {
         // 迁至投资端点锁测试）。
         "稳定排序", // 读回确定性排序（流程保证）
         "逗号分隔", // kinds 多类型过滤（读回用法）
+        // HTTP 读回分页教学锁（issue #1631）：缺省不再返回全部，分页读回是
+        // 必选流程、按 total 取齐、超上限码化按码自纠——教学被误删或退回
+        // 「缺省全量」旧口径时逐词报红。
+        "单请求行数上限为 100",           // 缺省上限（对账读回前提）
+        "必须分页读回",                   // 读回流程（不再缺省全量）
+        "即已读全",                       // 按 total 取齐的判定句
+        "transaction.page-size-over-cap", // 超上限码化（按码自纠）
+        "transaction.limit-out-of-range", // limit 超范围码化（按码自纠）
         // 出资账户教学关键词锁（issue #939 / ADR-0096 决策 8）的基础侧：去重
         // 哈希纳入出资账户——新表述被误删或退回旧口径时逐词报红；直扣/直付
         // 携带与现金腿归属的锁随投资节正文在投资端点锁测试。
@@ -754,6 +762,18 @@ async fn test_openapi_doc_covers_list_transactions_params_and_schema() {
     assert_eq!(
         response_200["$ref"], "#/components/schemas/TransactionListResult",
         "响应 schema 应为 TransactionListResult"
+    );
+    // HTTP 缺省上限契约声明（issue #1631）：400 码化超限响应必须在契约中
+    // 可见（AI 唯一契约来源是 openapi/contract），描述携带两码供按码自纠。
+    let get_desc = get["description"].as_str().unwrap_or_default();
+    assert!(
+        get_desc.contains("HTTP 单请求行数上限 100"),
+        "GET /transactions 契约自述应声明缺省上限，实际: {get_desc}"
+    );
+    assert_eq!(
+        get["responses"]["400"]["description"],
+        "分页参数超上限：page_size > 100（transaction.page-size-over-cap）或 limit 超范围/负值（transaction.limit-out-of-range）",
+        "400 响应应声明两码化条件"
     );
     let schemas = doc["components"]["schemas"]
         .as_object()

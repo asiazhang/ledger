@@ -617,3 +617,99 @@ async fn test_get_transactions_includes_instrument_source() {
         "无标的交易 source 应为 null: {plain_txn:?}"
     );
 }
+
+/// HTTP 缺省行数上限（issue #1631）：不传分页参数不再返回全部，等价第一页 ×
+/// 上限 100（total 恒返回，客户端据 total 翻页）——多端一次拉全表可拖垮壳进程
+/// 只读连接与客户端。IPC 通道缺省全量语义不变（只动 HTTP-only 端点）。
+/// 删除 handler 缺省上限注入即红（断言对准 items 条数与 total，ADR-0087）。
+#[tokio::test]
+async fn test_get_transactions_default_caps_at_page_size_100() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    let txs: Vec<String> = (1..=150)
+        .map(|i| {
+            format!(
+                r#"{{"kind":"expense","amount_cents":{},"currency_code":"CNY","account_id":"{account_id}","date":"2026-06-{:02}"}}"#,
+                i * 100,
+                i % 28 + 1
+            )
+        })
+        .collect();
+    let refs: Vec<&str> = txs.iter().map(String::as_str).collect();
+    let created = post_batch(&app, batch_body(&refs, None)).await;
+    assert!(
+        created.iter().all(|r| r["success"] == true),
+        "150 行应全部写入"
+    );
+
+    let (status, body) = get_json(&app, "/api/v1/transactions").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        items_of(&body).len(),
+        100,
+        "缺省应只返回前 100 条，不整表序列化"
+    );
+    assert_eq!(body["total"], 150, "total 恒为过滤后总数，供客户端翻页");
+
+    // 分页取回其余 50 条：客户端分页可取齐（读回核对纪律的机械可行性）
+    let (_, p2) = get_json(&app, "/api/v1/transactions?page=2").await;
+    assert_eq!(items_of(&p2).len(), 50, "第 2 页返回剩余 50 条");
+    assert_eq!(p2["total"], 150);
+}
+
+/// HTTP 显式 page_size 超上限 → 400 码化错误（issue #1631，决策 2：拒绝而非
+/// 静默截断——截断会造成读回少行不自知，AI 按码自纠）。壳三件套断言面：
+/// HTTP 状态码 + 稳定错误码 + 中文 message 与 params。删除上限校验即红。
+#[tokio::test]
+async fn test_get_transactions_page_size_over_cap_returns_coded_400() {
+    let (app, _) = setup_app();
+
+    let (status, err) = get_json(&app, "/api/v1/transactions?page_size=101").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(err["kind"], "Invalid", "码化参数错误归类 Invalid");
+    assert_eq!(err["code"], "transaction.page-size-over-cap");
+    assert_eq!(
+        err["message"], "page_size 101 超过单页上限 100",
+        "中文 message 与 zh 模板逐字一致"
+    );
+    assert_eq!(
+        err["params"],
+        serde_json::json!(["101", "100"]),
+        "params 与消息中动态值顺序一致（请求值 → 上限）"
+    );
+}
+
+/// HTTP limit 同规加固（issue #1631）：limit 是同一「单请求行数」上限的第二个
+/// 入口——超上限与负值（SQLite 负值无上限语义）都拒绝；边界 100 放行。
+/// 删除 limit 校验即红。
+#[tokio::test]
+async fn test_get_transactions_limit_out_of_range_returns_coded_400() {
+    let (app, _) = setup_app();
+    seed_readback_transactions(&app).await;
+
+    for limit in ["101", "-1"] {
+        let (status, err) = get_json(&app, &format!("/api/v1/transactions?limit={limit}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "limit={limit} 应拒绝");
+        assert_eq!(
+            err["code"], "transaction.limit-out-of-range",
+            "limit={limit}"
+        );
+        assert_eq!(
+            err["message"],
+            format!("limit {limit} 超出允许范围（0 到 100，负值无上限仅限 IPC）"),
+            "limit={limit} 中文 message 与 zh 模板逐字一致"
+        );
+        assert_eq!(
+            err["params"],
+            serde_json::json!([limit, "100"]),
+            "params 与消息中动态值顺序一致"
+        );
+    }
+
+    // 边界放行：limit=100 与 page_size=100 都可用（上限本身不拒绝）
+    let (status, body) = get_json(&app, "/api/v1/transactions?limit=100").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(items_of(&body).len(), 5);
+    let (status, _) = get_json(&app, "/api/v1/transactions?page_size=100").await;
+    assert_eq!(status, StatusCode::OK);
+}

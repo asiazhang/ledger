@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### BREAKING
+
+- **AI 导入 / HTTP API**：`GET /api/v1/transactions` 缺省不再返回全部——HTTP 单请求行数上限 100，缺省等价第一页 × 100（`total` 恒返回，读全部须按 `total` 翻页取齐）；显式 `page_size` 超过 100 报 400 码化错误 `transaction.page-size-over-cap`，`limit` 超过 100 或负值报 400 `transaction.limit-out-of-range`。读回核对教学同步改为分页读回；IPC 通道分页语义不变（前端与多端同步不受影响）（[#1631]）。
+
 ### Added
 
 - **交易**：非本位币交易随行留痕折算来源——每笔记录本笔折算使用的汇率值与来源（「来自汇率序列」/「来自调用方显式给定」，后者写入入口由后续票接入），列表与详情可读回解释「这个本位币金额是怎么来的」；与本位币同币种、不折算（份额调整）及存量行留痕为空（[#1548]，只增不改、存量库免重建）。
@@ -400,3 +404,4 @@
 [#1451]: https://github.com/asiazhang/ledger/issues/1451
 [#1456]: https://github.com/asiazhang/ledger/issues/1456
 [#1519]: https://github.com/asiazhang/ledger/issues/1519
+[#1631]: https://github.com/asiazhang/ledger/issues/1631
