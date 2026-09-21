@@ -76,6 +76,52 @@ pub(super) fn trim_to_window(points: Vec<NavPoint>, start: &str, end: &str) -> V
         .collect()
 }
 
+/// 覆盖不足判据（issue #1534）：最早历史周点所在周晚于首笔持仓流水日所在周
+/// 即覆盖不足——已有近两年历史但覆盖不到持仓期起点的存量基金要深回填。
+/// 无持仓流水（`None`）不存在「覆盖不足」：覆盖目标就是近两年（默认窗口，
+/// 行为不变）；最早周点缺失或不可解析时保守判缺（宁可多采一轮，不静默放过
+/// 深度缺口），与队列的缺周点判据 `week_behind` 同一品味。
+pub(super) fn coverage_short_of_first_position(
+    earliest_history: Option<&str>,
+    first_position_date: Option<&str>,
+) -> bool {
+    let Some(first) = first_position_date.map(str::trim) else {
+        return false;
+    };
+    let Ok(first) = NaiveDate::parse_from_str(first, "%Y-%m-%d") else {
+        return false;
+    };
+    let Some(earliest) =
+        earliest_history.and_then(|d| NaiveDate::parse_from_str(d.trim(), "%Y-%m-%d").ok())
+    else {
+        return true;
+    };
+    super::incremental::week_monday(first) < super::incremental::week_monday(earliest)
+}
+
+/// 深回填窗口（issue #1534）：基金价格历史的覆盖深度由「近两年」放宽到
+/// 「首笔持仓流水日所在周」——起点 = 近两年起点与首笔持仓流水日所在周周一
+/// 的较早者（无持仓流水 / 不可解析 = 近两年，行为不变），终点 = 今天。基金
+/// 首刷与深回填（覆盖不足的存量补齐）同用本窗口；增量窗口仍走 [`nav_window`]。
+/// 首刷已走单请求全量通道（ADR-0038 决策 6 修订 / issue #1062），放宽深度
+/// 不增加网络请求，只多落周采样行。
+pub(super) fn deep_backfill_window(
+    first_position_date: Option<&str>,
+    today: NaiveDate,
+) -> (String, String) {
+    let mut start = super::incremental::two_years_ago(today);
+    if let Some(d) = first_position_date
+        .map(str::trim)
+        .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+    {
+        start = start.min(super::incremental::week_monday(d));
+    }
+    (
+        start.format("%Y-%m-%d").to_string(),
+        today.format("%Y-%m-%d").to_string(),
+    )
+}
+
 /// 恒定价格标的的打标收尾单点（ADR-0126 决策 3/5；issue #1563 判定门两确认点
 /// 与排队竞态窗共用）：回填恒定单位价格标记（单向幂等）并兜底建档常量价
 ///（1.0000、净值日期空），返回是否实际落价（调用方据此计入价格写入见证）。
@@ -126,6 +172,30 @@ pub(super) async fn read_fund_watermark<Q: ScopedSession>(
                 .ok();
             let has_history = ledger_investment::backfill::has_any_history(conn, &instrument_id)?;
             Ok((watermark, has_history))
+        })
+        .await
+}
+
+/// 基金深回填判据的共享读（issue #1534）：最早历史周点（当前覆盖起点）与
+/// 首笔持仓流水日（覆盖目标深度，投资域单点 [`ledger_investment::holdings::first_position_date`]）。
+/// 经作用域会话短暂取一次连接完成（issue #1275）。
+pub(super) async fn read_fund_coverage<Q: ScopedSession>(
+    session: &Q,
+    fund: &super::incremental::SyncInstrument,
+) -> Result<(Option<String>, Option<String>)> {
+    let instrument_id = fund.instrument_id.clone();
+    session
+        .with_connection(move |conn| {
+            let earliest_history: Option<String> = conn
+                .query_row(
+                    "SELECT MIN(trade_date) FROM price_history WHERE instrument_id=?1",
+                    params![instrument_id],
+                    |r| r.get(0),
+                )
+                .map_err(ledger_infra::error::AppError::from)?;
+            let first_position =
+                ledger_investment::holdings::first_position_date(conn, &instrument_id)?;
+            Ok((earliest_history, first_position))
         })
         .await
 }

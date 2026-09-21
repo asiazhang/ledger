@@ -113,6 +113,45 @@ fn date_offset(days: i64) -> String {
         .to_string()
 }
 
+/// 直插一笔指定日期的买入流水（transactions + security_transactions 两行，不建
+/// 批次）：首笔持仓流水日的判据输入是流水腿本身（issue #1534），批次与持仓
+/// 视图不在判据内。
+fn seed_buy_transaction(
+    conn: &Connection,
+    account_id: &str,
+    instrument_id: &str,
+    currency: &str,
+    date: &str,
+) {
+    tauri_app_lib::test_support::seed_account(
+        conn,
+        account_id,
+        &format!("账户-{account_id}"),
+        "investment",
+        currency,
+        0,
+    );
+    let txn_id = format!("txn-buy-{account_id}-{instrument_id}");
+    conn.execute(
+        "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id) \
+         VALUES (?1,'buy',1000,?2,1000,?3,?4,?5,?5,1,'test')",
+        params![
+            txn_id,
+            currency,
+            account_id,
+            date,
+            format!("{date}T00:00:00Z")
+        ],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
+         VALUES (?1,?2,'buy',10,100,0)",
+        params![txn_id, instrument_id],
+    )
+    .unwrap();
+}
+
 fn history_rows(conn: &Connection, instrument_id: &str) -> i64 {
     conn.query_row(
         "SELECT count(*) FROM price_history WHERE instrument_id=?1",
@@ -378,6 +417,186 @@ fn queue_drains_and_stays_empty_once_histories_complete() {
             .count(),
         1,
         "第二轮零日 K 请求"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 深回填：基金价格历史覆盖到首笔持仓流水日（issue #1534）——队列新增
+// 「覆盖不足」判据，回填窗口起点放宽到首笔持仓周；无持仓流水与行情标的
+// 行为不变。
+// ---------------------------------------------------------------------------
+
+/// 队列「覆盖不足」判据（issue #1534）：已有近两年历史、但首笔持仓流水早于
+/// 覆盖起点的基金进队做深回填；覆盖已达标的基金与行情标的（同样的事实组合）
+/// 不进队——日 K 深度受源限制，行为逐位不变。
+#[test]
+fn queue_enqueues_fund_short_of_first_position_but_not_stock() {
+    let conn = tauri_app_lib::test_support::open();
+    // 基金：历史新鲜（不缺周点），但首笔买入早于覆盖起点 → 覆盖不足进队。
+    insert_plain_instrument(&conn, "inst-fund", "000025", "fund", "CNY", "unknown");
+    seed_history_point(&conn, "inst-fund", "CNY", &date_offset(2));
+    seed_buy_transaction(&conn, "acc-fund", "inst-fund", "CNY", &date_offset(400));
+    // 股票：同样的事实组合（历史新鲜 + 早期买入）——不进队（行为不变）。
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+    seed_history_point(&conn, "inst-stock", "CNY", &date_offset(2));
+    seed_buy_transaction(&conn, "acc-stock", "inst-stock", "CNY", &date_offset(400));
+    // 覆盖已达标的基金（最早周点与首笔买入同周）不进队。
+    insert_plain_instrument(&conn, "inst-deep", "000026", "fund", "CNY", "unknown");
+    seed_history_point(&conn, "inst-deep", "CNY", &date_offset(2));
+    seed_buy_transaction(&conn, "acc-deep", "inst-deep", "CNY", &date_offset(2));
+
+    let harness =
+        Harness::new().with_nav_history(vec![("000025", vec![nav_point(&date_offset(1), 1.5)])]);
+    let (result, _progress, _written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+
+    assert_eq!(stats.queued, 1, "只有覆盖不足的基金进队");
+    assert_eq!(stats.failed, 0);
+    assert_eq!(
+        harness.requested(),
+        vec!["history:000025".to_string()],
+        "基金走全历史通道深回填；股票零请求"
+    );
+}
+
+/// 首刷窗口放宽（issue #1534 验收）：首笔买入早于近两年的基金，首刷直接从
+/// 首笔持仓所在周起落周点——最早周点 ≤ 首笔买入所在周。
+#[test]
+fn fund_first_fill_covers_holding_period_when_first_buy_predates_window() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    let first_buy = date_offset(800);
+    seed_buy_transaction(&conn, "acc-fund", "inst-fund", "CNY", &first_buy);
+    let series = daily_nav_series(beijing_today() - ChronoDuration::days(820), beijing_today());
+    let full = [(
+        "110022",
+        series
+            .iter()
+            .map(|(d, n)| nav_point(d, *n))
+            .collect::<Vec<_>>(),
+    )];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&full, &requested);
+
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert!(outcome.written);
+    assert_earliest_row_within_first_position_week(&conn, "inst-fund", &first_buy);
+}
+
+/// 深回填（issue #1534 现状缺口的主场景）：已有近两年历史、首笔买入早于覆盖
+/// 起点的基金，按覆盖目标整根补齐到首笔持仓周；现价仍是窗口内最新净值。
+#[test]
+fn fund_deep_backfill_lands_history_back_to_first_position_week() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    let recent = date_offset(2);
+    seed_fund_price(&conn, "inst-fund", 30000, &recent, true);
+    let first_buy = date_offset(800);
+    seed_buy_transaction(&conn, "acc-fund", "inst-fund", "CNY", &first_buy);
+
+    let series = daily_nav_series(beijing_today() - ChronoDuration::days(820), beijing_today());
+    let latest = series.last().unwrap();
+    let full = [(
+        "110022",
+        series
+            .iter()
+            .map(|(d, n)| nav_point(d, *n))
+            .collect::<Vec<_>>(),
+    )];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&full, &requested);
+
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert!(outcome.written);
+    let rows = price_history_rows(&conn, "inst-fund");
+    assert!(rows.len() > 50, "400 天 ≈ 57 个周点，实际 {}", rows.len());
+    assert_earliest_row_within_first_position_week(&conn, "inst-fund", &first_buy);
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((price_value_to_cents(latest.1), Some(latest.0.clone()))),
+        "深回填后现价 = 窗口内最新公布净值"
+    );
+}
+
+/// 幂等（issue #1534 验收）：覆盖不足进队但数据源没有更深的点时，重复补全
+/// 零新点——不落库、不置写入见证（零新点不置脏不广播）。
+#[test]
+fn fund_deep_backfill_zero_new_points_writes_nothing() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "000001", "fund", "CNY", "unknown");
+    seed_history_point(&conn, "inst-fund", "CNY", &date_offset(2));
+    seed_buy_transaction(&conn, "acc-fund", "inst-fund", "CNY", &date_offset(400));
+
+    // 全历史面只有既有周点（同周同值）：窗口非空但零新点。
+    let harness =
+        Harness::new().with_nav_history(vec![("000001", vec![nav_point(&date_offset(2), 10.0)])]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+
+    assert_eq!(stats.queued, 1, "覆盖不足照常进队");
+    assert_eq!(stats.failed, 0);
+    assert!(!written, "零新点不置写入见证（不置脏不广播）");
+    assert_eq!(history_rows(&conn, "inst-fund"), 1, "既有历史不变");
+    assert_eq!(harness.nav_history_hits("000001"), 1, "每轮至多一次请求");
+}
+
+/// 覆盖达标后退出队列：深回填落齐后，重复补全不再进队（派生事实自然排空）。
+#[test]
+fn queue_drains_after_deep_backfill_completes_coverage() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "000025", "fund", "CNY", "unknown");
+    seed_history_point(&conn, "inst-fund", "CNY", &date_offset(2));
+    let first_buy = date_offset(800);
+    seed_buy_transaction(&conn, "acc-fund", "inst-fund", "CNY", &first_buy);
+
+    let series = daily_nav_series(beijing_today() - ChronoDuration::days(820), beijing_today());
+    let harness = Harness::new().with_nav_history(vec![(
+        "000025",
+        series
+            .iter()
+            .map(|(d, n)| nav_point(d, *n))
+            .collect::<Vec<_>>(),
+    )]);
+
+    let (result, _progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+    assert!(written, "首轮深回填实际落库");
+    assert_earliest_row_within_first_position_week(&conn, "inst-fund", &first_buy);
+
+    // 第二轮：覆盖已达标 → 队列空零动作。
+    let (result, progress, _written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+    assert_eq!(stats.queued, 0, "覆盖达标后按派生事实退出队列");
+    assert!(progress.is_empty());
+    assert_eq!(harness.nav_history_hits("000025"), 1, "第二轮零请求");
+}
+
+/// 断言辅助：最早周点落在首笔持仓流水日所在周内（issue #1534 验收判据）。
+fn assert_earliest_row_within_first_position_week(
+    conn: &Connection,
+    instrument_id: &str,
+    first_buy: &str,
+) {
+    let first = NaiveDate::parse_from_str(first_buy, "%Y-%m-%d").unwrap();
+    let monday = week_monday(first);
+    let week_end = (monday + Days::new(6)).format("%Y-%m-%d").to_string();
+    let rows = price_history_rows(conn, instrument_id);
+    let earliest = rows.first().map(|(d, _, _)| d.clone()).unwrap_or_default();
+    assert!(
+        earliest >= monday.format("%Y-%m-%d").to_string() && earliest <= week_end,
+        "最早周点应落在首笔持仓周 [{}, {}] 内，实际 {earliest}",
+        monday.format("%Y-%m-%d"),
+        week_end
     );
 }
 

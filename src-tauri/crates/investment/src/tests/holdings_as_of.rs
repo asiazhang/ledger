@@ -167,6 +167,217 @@ fn holdings_as_of_without_instrument_sums_whole_portfolio() {
     assert!((qty_a - 3.0).abs() < 1e-9);
 }
 
+// ---------------------------------------------------------------------------
+// 首笔持仓流水日（issue #1534）：四臂腿流（buy/sell、convert 两腿、split）的
+// 最早交易日——价格历史回填深度的覆盖目标。与 as-of / 腿流同一推算不变量的
+// MIN 投影：认同一组腿、排除同一组软删行/户；dividend 零份额变动不入判。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn first_position_date_takes_earliest_leg_date() {
+    let conn = open();
+    seed_account(&conn, "acc-fp", "证券户", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        "inst-fp",
+        "000025",
+        "大摩双利增强债券C",
+        "CNY",
+        "unknown",
+    );
+    for (kind, qty, price, date) in [
+        (TransactionKind::Buy, 10.0, 1500, "2020-06-10"),
+        (TransactionKind::Buy, 5.0, 1600, "2021-03-04"),
+        (TransactionKind::Sell, 3.0, 1700, "2022-08-18"),
+    ] {
+        create_transaction_internal(
+            &conn,
+            make_trade_input(kind, "acc-fp", "inst-fp", qty, price, date),
+        )
+        .unwrap();
+    }
+
+    let first = holdings::first_position_date(&conn, "inst-fp").unwrap();
+    assert_eq!(first.as_deref(), Some("2020-06-10"), "首笔腿 = 最早交易日");
+}
+
+#[test]
+fn first_position_date_counts_convert_legs_and_split() {
+    // 转入标的（to_instrument_id）经 convert 转入腿建仓：其首笔腿 = 转换日。
+    let conn = open();
+    seed_account(&conn, "acc-fp2", "证券户", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        "inst-fp-out",
+        "000024.OF",
+        "转出基金",
+        "CNY",
+        "unknown",
+    );
+    seed_instrument(
+        &conn,
+        "inst-fp-in",
+        "000025.OF",
+        "转入基金",
+        "CNY",
+        "unknown",
+    );
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-fp2",
+            "inst-fp-out",
+            10.0,
+            1500,
+            "2025-12-01",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_convert_input(
+            "acc-fp2",
+            "inst-fp-out",
+            "inst-fp-in",
+            10.0,
+            12.0,
+            15_000,
+            15_000,
+            0,
+        ),
+    )
+    .unwrap();
+
+    let out = holdings::first_position_date(&conn, "inst-fp-out").unwrap();
+    let inp = holdings::first_position_date(&conn, "inst-fp-in").unwrap();
+    assert_eq!(out.as_deref(), Some("2025-12-01"), "转出标的 = 前置买入日");
+    assert_eq!(
+        inp.as_deref(),
+        Some("2026-02-01"),
+        "转入标的 = 转换日（转入腿命中）"
+    );
+}
+
+#[test]
+fn first_position_date_excludes_dividend_and_soft_deleted_rows() {
+    let conn = open();
+    seed_account(&conn, "acc-fp3", "证券户", "investment", "CNY", 0);
+    seed_account(&conn, "acc-fp3-gone", "待删户", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        "inst-fp-div",
+        "000026",
+        "仅分红标的",
+        "CNY",
+        "unknown",
+    );
+    seed_instrument(
+        &conn,
+        "inst-fp-gone",
+        "000027",
+        "软删户标的",
+        "CNY",
+        "unknown",
+    );
+    seed_instrument(
+        &conn,
+        "inst-fp-del",
+        "000028",
+        "软删流水标的",
+        "CNY",
+        "unknown",
+    );
+    // dividend 不改变持有数量：仅分红标的无首笔腿。
+    create_transaction_internal(
+        &conn,
+        make_dividend_input_on("acc-fp3", "inst-fp-div", 1_000, "CNY", "2026-01-05"),
+    )
+    .unwrap();
+    // 软删账户名下的买入不进判（与腿流/as-of 同过滤）。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-fp3-gone",
+            "inst-fp-gone",
+            10.0,
+            1500,
+            "2026-01-06",
+        ),
+    )
+    .unwrap();
+    // 软删流水的买入不进判；同标的在场买入更晚。
+    let mut deleted_buy = make_trade_input(
+        TransactionKind::Buy,
+        "acc-fp3",
+        "inst-fp-del",
+        2.0,
+        1500,
+        "2019-01-07",
+    );
+    deleted_buy.note = Some("fp-to-delete".into());
+    create_transaction_internal(&conn, deleted_buy).unwrap();
+    conn.execute(
+        "UPDATE transactions SET is_deleted=1 WHERE note='fp-to-delete'",
+        [],
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-fp3",
+            "inst-fp-del",
+            8.0,
+            1500,
+            "2026-01-08",
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(
+        holdings::first_position_date(&conn, "inst-fp-div").unwrap(),
+        None,
+        "仅分红（零份额变动）标的无首笔持仓腿"
+    );
+    conn.execute(
+        "UPDATE accounts SET is_deleted=1 WHERE id='acc-fp3-gone'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        holdings::first_position_date(&conn, "inst-fp-gone").unwrap(),
+        None,
+        "软删账户的买入不进判"
+    );
+    assert_eq!(
+        holdings::first_position_date(&conn, "inst-fp-del")
+            .unwrap()
+            .as_deref(),
+        Some("2026-01-08"),
+        "软删流水不进判，取在场最早腿"
+    );
+}
+
+#[test]
+fn first_position_date_none_for_instrument_without_legs() {
+    let conn = open();
+    seed_instrument(
+        &conn,
+        "inst-fp-none",
+        "000029",
+        "无流水标的",
+        "CNY",
+        "unknown",
+    );
+    assert_eq!(
+        holdings::first_position_date(&conn, "inst-fp-none").unwrap(),
+        None,
+        "无持仓流水 → None（覆盖目标维持近两年）"
+    );
+}
+
 /// 绑定不变式（spec #168 定案第 6 条 / issue #218）：同一批 buy/sell 流水下，
 /// as-of「今天」≡ Holding 数量口径（v_holdings 聚合，即 lots remaining_quantity 之和）。
 /// 未来 split 落地改变数量时最先报警的哨兵。
@@ -361,7 +572,20 @@ fn holdings_legs_stream_prefix_sums_match_as_of_on_mixed_fixture() {
                     "{label}：{instrument_id} @{date} 腿流前缀和 {running} ≠ as-of {as_of}"
                 );
             }
+            // 第三投影绑定（issue #1534）：首笔持仓流水日 = 腿流首行日期。
+            let first = holdings::first_position_date(conn, instrument_id).unwrap();
+            assert_eq!(
+                first.as_deref(),
+                Some(legs[0].0.as_str()),
+                "{label}：{instrument_id} 首笔腿 ≠ 腿流首行"
+            );
         }
+        assert!(
+            !holdings::first_position_date(conn, "inst-lg-none")
+                .unwrap()
+                .is_some(),
+            "无腿标的无首笔持仓腿"
+        );
         stream
     };
 
