@@ -108,6 +108,7 @@
 //! IPC 参数解包、事务边界、命令注册和失效信号发射留在投资命令壳层
 //! （`commands::investment`）。
 
+pub mod as_of;
 pub mod backfill;
 pub mod channel;
 pub mod command;
