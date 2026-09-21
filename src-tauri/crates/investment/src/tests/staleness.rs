@@ -280,3 +280,60 @@ fn constant_price_instrument_is_exempt_even_with_stale_nav_date() {
     let result = instrument_price_staleness_on(&conn, today()).expect("检查应成功");
     assert_eq!(result.stale_count, 0, "陈旧残留水位对恒定标的不构成过期");
 }
+
+// ---------------------------------------------------------------------------
+// 长期陈旧的已清仓标的退出计数面（issue #1663）：水位距今超过
+// [`PRICE_STALE_CLEARED_EXIT_DAYS`]（一年）的**非持仓**行视作数据源已停止
+// 披露（清盘 / 长期停牌）——同步永远修不了、又不影响报表，不再计入；持仓行
+// 不豁免（估值依据陈旧的提示仍然诚实）。「删除即变红」：退出臂撤掉（回到
+// 只看 3 日阈值）后，下方两用例即被计入。
+// ---------------------------------------------------------------------------
+
+/// 已清仓基金的净值水位：超过一年退出计数；恰在退出阈值上（365 日）与普通
+/// 过期（4 日）仍计入——退出只收「数据源已死」的长尾。
+#[test]
+fn cleared_instrument_exits_count_only_beyond_exit_threshold() {
+    let conn = open();
+    insert_fund_instrument(&conn, "f-ancient", "002503", "清盘多年");
+    insert_fund_instrument(&conn, "f-edge", "002414", "退出阈值上");
+    insert_fund_instrument(&conn, "f-stale", "002435", "普通过期");
+
+    // 基准日 2026-03-09：2020 年的净值 = 数据源早已停止披露；2025-03-09 距今
+    // 恰 365 日（退出阈值上，不退出）；2026-03-05 距 4 日（普通过期）。
+    seed_watermark(
+        &conn,
+        "f-ancient",
+        "2026-03-09T02:00:00Z",
+        Some("2020-01-01"),
+    );
+    seed_watermark(&conn, "f-edge", "2026-03-09T02:00:00Z", Some("2025-03-09"));
+    seed_watermark(&conn, "f-stale", "2026-03-09T02:00:00Z", Some("2026-03-05"));
+
+    let result = instrument_price_staleness_on(&conn, today()).expect("检查应成功");
+    assert_eq!(
+        result.stale_count, 2,
+        "超过退出阈值的已清仓行不计入，阈值上与普通过期仍计入"
+    );
+}
+
+/// 同样一年以上的陈旧水位，持仓标的仍计入：退出只豁免已清仓行——账本里
+/// 真有一笔资产的估值依据陈旧，提示不因陈旧太久失去意义。
+#[test]
+fn invested_instrument_stays_counted_beyond_exit_threshold() {
+    let conn = open();
+    insert_fund_instrument(&conn, "f-held-dead", "003967", "持仓且清盘");
+    usd_rate(&conn);
+    hold_fund(&conn, "acc-held-dead", "f-held-dead");
+    seed_watermark(
+        &conn,
+        "f-held-dead",
+        "2026-03-09T02:00:00Z",
+        Some("2020-01-01"),
+    );
+
+    let result = instrument_price_staleness_on(&conn, today()).expect("检查应成功");
+    assert_eq!(
+        result.stale_count, 1,
+        "持仓行不退出计数面，无论水位陈旧多久"
+    );
+}
