@@ -226,7 +226,7 @@ where
     Q: ScopedSession,
     K: FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> + Send,
 {
-    // 编排只递「市场 + 代码」查询单元（issue #1556）：数据源查询键（东财 secid）
+    // 编排只递「市场 + 代码」查询单元（issue #1556）：数据源查询键（腾讯 K 线键）
     // 由日 K 通道在内部构造——换源只改通道实现，本编排零改动。报价代码与批量
     // 报价同式归一化（symbol 去市场后缀取裸代码，与响应回显形态对齐）。
     let query = QuoteQuery {

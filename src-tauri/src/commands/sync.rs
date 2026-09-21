@@ -160,7 +160,7 @@ pub async fn sync_exchange_rates(db: State<'_, DbState>) -> Result<FxSyncReport>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ledger_market_sync::{FundNavProgress, ScopedSession};
+    use ledger_market_sync::ScopedSession;
     use std::sync::Mutex;
 
     /// 记录型假发射器：接收到的进度推进按序攒入缓冲（发射器接缝的测试注入
@@ -222,7 +222,8 @@ mod tests {
     /// 壳层接线证明（issue #897 / ADR-0095；先例：信号发射两层测试——映射层
     /// 钉「谁发什么」，本测试钉「命令壳把编排回调接到事件发射」的接线半边，
     /// 编排回调的触发时序归 sync 域进度序列测试）：`progress_to_emitter` 把
-    /// 编排的进度回调接到发射器，载荷形状与顺序保持不变（含基金页级明细）。
+    /// 编排的进度回调接到发射器，载荷形状与顺序保持不变（事件恒为标的级
+    /// 两字段，原页级明细随逐只通道换源退役，issue #1571）。
     #[test]
     fn command_shell_wires_orchestration_progress_to_emitter() {
         let emitter = RecordingEmitter::default();
@@ -231,26 +232,14 @@ mod tests {
         progress(SyncProgress {
             done: 0,
             total: 100,
-            fund: None,
         });
         progress(SyncProgress {
             done: 37,
             total: 100,
-            fund: None,
-        });
-        progress(SyncProgress {
-            done: 37,
-            total: 100,
-            fund: Some(FundNavProgress {
-                code: "110022".into(),
-                page: 3,
-                pages: 25,
-            }),
         });
         progress(SyncProgress {
             done: 100,
             total: 100,
-            fund: None,
         });
 
         assert_eq!(
@@ -259,29 +248,17 @@ mod tests {
                 SyncProgress {
                     done: 0,
                     total: 100,
-                    fund: None,
                 },
                 SyncProgress {
                     done: 37,
                     total: 100,
-                    fund: None,
-                },
-                SyncProgress {
-                    done: 37,
-                    total: 100,
-                    fund: Some(FundNavProgress {
-                        code: "110022".into(),
-                        page: 3,
-                        pages: 25,
-                    }),
                 },
                 SyncProgress {
                     done: 100,
                     total: 100,
-                    fund: None,
                 },
             ],
-            "编排回调逐次直达发射器，载荷形状与顺序保持不变（含基金页级明细）"
+            "编排回调逐次直达发射器，载荷形状与顺序保持不变"
         );
     }
 }

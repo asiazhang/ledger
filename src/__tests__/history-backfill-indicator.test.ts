@@ -47,18 +47,11 @@ describe("HistoryBackfillIndicator 后台补全静默计数（投资页）", () 
     expect(indicator.find('[role="progressbar"]').exists()).toBe(false);
     expect(indicator.find("button").exists()).toBe(false);
   });
-
-  it("基金首刷深回填期间另起一行渲染页级明细", async () => {
+  it("页级明细已随换源退役：仅渲染标的级计数行", async () => {
     const wrapper = mount(HistoryBackfillIndicator);
-    fire(handlers, {
-      done: 3,
-      total: 228,
-      fund: { code: "110022", page: 3, pages: 25 },
-    });
+    fire(handlers, { done: 3, total: 228 });
     await wrapper.vm.$nextTick();
-    expect(wrapper.find('[data-testid="history-backfill-indicator-fund"]').text()).toBe(
-      "回填 110022：第 3/25 页",
-    );
+    expect(wrapper.find('[data-testid="history-backfill-indicator-fund"]').exists()).toBe(false);
   });
 
   it("终态静默收起：done ≥ total 后组件消失", async () => {

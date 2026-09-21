@@ -51,10 +51,9 @@ export const text = style({
 });
 
 /**
- * 计数文案与基金页级明细（issue #1061）的纵向栈：进度条右侧两行——主行是
- * 标的级计数，次行（仅深回填期间出现）是当前基金的页号。右对齐堆叠，窄卡片
- * 下不把两段文案挤成一行溢出。display/对齐族走 Sprinkles 原子（ADR-0093
- * 布尔轴约定，与 `root` 同形），gap/minWidth 留本文件字面量。
+ * 计数文案的纵向栈：进度条右侧标的级计数行，右对齐。display/对齐族走
+ * Sprinkles 原子（ADR-0093 布尔轴约定，与 `root` 同形），gap/minWidth 留本
+ * 文件字面量。（原次行基金页级明细已随换源退役，issue #1571。）
  */
 export const textStack = style([
   sprinkles({
