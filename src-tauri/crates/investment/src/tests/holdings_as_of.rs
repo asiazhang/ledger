@@ -579,13 +579,13 @@ fn holdings_legs_stream_prefix_sums_match_as_of_on_mixed_fixture() {
                 Some(legs[0].0.as_str()),
                 "{label}：{instrument_id} 首笔腿 ≠ 腿流首行"
             );
-            assert!(
-                !holdings::first_position_date(conn, "inst-lg-none")
-                    .unwrap()
-                    .is_some(),
-                "{label}：无腿标的无首笔持仓腿"
-            );
         }
+        assert!(
+            !holdings::first_position_date(conn, "inst-lg-none")
+                .unwrap()
+                .is_some(),
+            "无腿标的无首笔持仓腿"
+        );
         stream
     };
 
