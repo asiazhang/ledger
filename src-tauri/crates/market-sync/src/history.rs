@@ -22,9 +22,10 @@
 //!   带出（issue #1061 的明细随首刷深回填迁入本任务），并登记走势空态三态
 //!   的判据输入（轮次计数与尝试结局，投资域 [`ledger_investment::backfill`]）。
 //! - **调度**（[`start_history_backfill`]）：启动后延迟一轮 + 每个自然日窗口
-//!   各一轮的巡检任务（挂全局运行时的 async 任务，ADR-0125 决策 7 / #1413）；
-//!   每轮门检锁定/启动失败（先例：自动备份调度）；启动
-//!   接线在壳层后台服务编排单点（issue #961 名单）。
+//!   各一轮的巡检任务，循环与守卫经 [`super::lane::start_daily_lane`] 域内单点
+//!   （issue #1622 收敛，含每轮门检锁定/启动失败，先例：自动备份调度；挂全局
+//!   运行时的 async 任务，ADR-0125 决策 7 / #1413）；启动接线在壳层后台服务
+//!   编排单点（issue #961 名单）。
 //!
 //! 与手动同步的解耦关系（issue #1377 收尾）：手动同步只刷现价（含当周采样点
 //! 直落），不再采集历史；写入同是「现价覆盖 + 同周整周覆盖」的幂等 upsert，
@@ -36,15 +37,12 @@
 //! 与手动同步同口径不计入写入见证。
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::atomic::AtomicBool;
 
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 
-use ledger_infra::db::boot::BootFailureGate;
-use ledger_infra::db::encryption::EncryptionGate;
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::predicates::INVESTED_EXISTS;
@@ -55,28 +53,18 @@ use super::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
 use super::fund_nav::NavPoint;
 use super::http::KlineBar;
 use super::incremental::{
-    SyncInstrument, backfill_fx_pairs, beijing_today, daily_window_opens, downsample_weekly,
-    quote_code, week_monday, write_weekly_price_history,
+    SyncInstrument, backfill_fx_pairs, beijing_today, downsample_weekly, quote_code, week_monday,
+    write_weekly_price_history,
 };
 use super::lane::{
-    LaneChannelsSlot, LaneId, LaneRound, LaneRoundFuture, progress_forwarder,
-    run_background_lane_round,
+    LaneChannelsSlot, LaneId, LaneRound, LaneRoundFuture, LaneTimings, progress_forwarder,
+    run_background_lane_round, start_daily_lane,
 };
 use super::model::WriteWitness;
 use super::progress::SyncProgress;
 use super::session::{FacadeWriteSession, ScopedSession};
 use ledger_investment::backfill;
 use ledger_investment::prices::{TENCENT_PRICE_SOURCE, price_value_to_cents, upsert_price_history};
-
-/// 应用启动后的首轮延迟：让出启动期（引导、参考数据装载、首屏渲染），再开始
-/// 第一轮补全。延迟是可逆工程决策，测试注入 [`BackfillTimings`] 覆写。后台
-/// 每日现价刷新（[`super::daily_refresh`]）与同一节奏（同形调度，issue #1377）。
-pub(super) const STARTUP_DELAY: Duration = Duration::from_secs(30);
-
-/// 自然日窗口的巡检周期：任务低频醒来比对北京日历日，跨日即跑当天的窗口。
-/// 与自动备份调度、多端同步轮询同一「低频」品味（分钟级间隔，代价为零——
-/// 每次巡检只做一次日期比对）。
-pub(super) const WINDOW_POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
 /// 缺周点判据（ADR-0122 决策 2「逐只采集只服务首刷与缺周点」的队列半边）：
 /// 参考点（行情标的历史的最新周点 / 基金水位的净值日期）落后当前自然周**超过
@@ -478,65 +466,20 @@ impl LaneChannelsSlot for BackfillChannelsSlot {
     }
 }
 
-/// 调度时机的显式参数（启动延迟与自然日窗口巡检周期）：生产走默认值，接线型
-/// 集成测试注入短时机——断言只等窗口到达，不被生产常数拖慢（先例：
-/// 多端同步 `TriggerTimings`）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BackfillTimings {
-    /// 应用启动后到首轮补全的延迟。
-    pub startup_delay: Duration,
-    /// 自然日窗口的巡检周期（跨北京日历日即跑当天窗口）。
-    pub window_poll: Duration,
-}
-
-impl Default for BackfillTimings {
-    fn default() -> Self {
-        Self {
-            startup_delay: STARTUP_DELAY,
-            window_poll: WINDOW_POLL_INTERVAL,
-        }
-    }
-}
-
 /// 价格历史后台补全的启动入口（壳层后台服务编排单点调用，issue #961 名单）：
-/// 进程级单次拉起（原位重引导重复调用幂等，ADR-0080），async 任务自持
-/// 「启动延迟一轮 + 每自然日窗口一轮」的巡检循环（挂全局运行时，ADR-0125
-/// 决策 7 / issue #1413：启动延迟与自然日窗口用异步定时，不再自建 OS 线程；
-/// 执行器 = `tauri::async_runtime`）。
+/// 进程级单次拉起与「启动延迟一轮 + 每自然日窗口一轮」的巡检循环归
+/// [`super::lane::start_daily_lane`] 域内单点（issue #1622），本模块只留每车道
+/// 一枚守卫标志与一轮编排 + 统计日志。
 pub fn start_history_backfill<R: Runtime>(app: &AppHandle<R>) {
-    start_history_backfill_with(app, BackfillTimings::default());
+    start_history_backfill_with(app, LaneTimings::default());
 }
 
 /// 同 [`start_history_backfill`]，调度时机可注入（测试短时机先例
 /// `start_sync_scheduler_with`）。
-pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: BackfillTimings) {
+pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: LaneTimings) {
     static SPAWNED: AtomicBool = AtomicBool::new(false);
-    if SPAWNED.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    let gate = EncryptionGate::clone(&app.state::<EncryptionGate>());
-    let boot_gate = BootFailureGate::clone(&app.state::<BootFailureGate>());
-    let handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        // 启动延迟（issue #1375）：让出启动期再开始第一轮；应用退出即任务随
-        // 进程硬停，无需优雅关闭（单只原子保证中断不留半根历史）。
-        tokio::time::sleep(timings.startup_delay).await;
-        let mut last_round_date: Option<NaiveDate> = None;
-        loop {
-            // 每轮门检（先例：自动备份调度，issue #644 / ADR-0080）：锁定/
-            // 启动失败期间不触碰占位连接；门开后首个到达的自然日窗口即补跑
-            // ——启动轮即当天的窗口（「启动后延迟一次 + 此后每日各一次」）。
-            if !gate.is_locked() && !boot_gate.is_failed() {
-                let today = beijing_today();
-                // 同日只开一次窗口（规则单点见 `incremental::daily_window_opens`）：
-                // 循环只负责把判定接上「标记已跑 + 跑一轮」的副作用。
-                if daily_window_opens(last_round_date, today) {
-                    last_round_date = Some(today);
-                    run_backfill_round_gated(&handle).await;
-                }
-            }
-            tokio::time::sleep(timings.window_poll).await;
-        }
+    start_daily_lane(app, &SPAWNED, timings, |handle| {
+        run_backfill_round_gated(handle)
     });
 }
 
@@ -586,9 +529,9 @@ impl LaneRound for HistoryBackfillRound {
 /// 失败日志归 [`super::lane`] 单点（与每日现价刷新共用），本函数只留本车道的统计
 /// 日志。async 形态（ADR-0125 决策 7 / issue #1413）：编排直接在车道 async 任务上
 /// `await`，不再经全局运行时跨线程驱动。
-async fn run_backfill_round_gated<R: Runtime>(app: &AppHandle<R>) {
+async fn run_backfill_round_gated<R: Runtime>(app: AppHandle<R>) {
     let result = run_background_lane_round::<R, BackfillChannelsSlot, _>(
-        app,
+        &app,
         LaneId::HistoryBackfill,
         HistoryBackfillRound,
     )

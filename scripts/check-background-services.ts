@@ -142,14 +142,25 @@ export interface BootWiring {
  * 异步定时）。改回 `std::thread::spawn` / `std::thread::sleep` 即红；删掉异步
  * 执行器或异步定时接线同样红。扫描面 = 行情域 crate 生产源码（tests.rs 与
  * tests/ 目录为测试豁免形态，与家族一致）；文本级扫描，掩码注释与字面量
- *（复用 maskNonCode），别名盲区靠评审兜底。
+ *（复用 maskNonCode），别名与车道模块本地同名遮蔽盲区靠评审兜底。
+ *
+ * issue #1622 收敛后，调度循环（含异步执行器 / 定时接线）单点住 lane.rs
+ *（LANE_SCHEDULER_REL，在两枚异步标识符上断言）；三车道文件只留调度接线
+ *——每文件必须调起 `start_daily_lane`（LANE_WIRE_TOKEN，缺失即红：车道模块
+ * 自建平行调度循环，含 async 形态重写，即「规则改一处漏两处」回归）。
  */
 export const MARKET_SYNC_SRC_REL = "crates/market-sync/src";
 export const LANE_EXECUTOR_TOKEN = "tauri::async_runtime::spawn";
 export const LANE_TIMER_TOKEN = "tokio::time::sleep";
 export const LANE_BANNED_TOKENS = ["thread::spawn", "std::thread::sleep"] as const;
-/** 后台车道的住址（相对 src-tauri 根；与 GUARDED_NAMES 的 wholeFile 同源路径；
- *  每日汇率增量同步车道（#1546）不经 lane 骨架但同受异步执行器守门） */
+/** 调度循环单点（issue #1622 收敛）：三车道共用的巡检循环住 lane.rs——进程级
+ *  守卫 + 门检 + 自然日窗口 + 异步执行器/定时都在此，异步接线在本文件断言
+ * （删除即变红）。 */
+export const LANE_SCHEDULER_REL = "crates/market-sync/src/lane.rs";
+/** 各车道文件必须持有的调度接线标识符：调起共享调度循环（删除即变红）。 */
+export const LANE_WIRE_TOKEN = "start_daily_lane";
+/** 三条后台车道的住址（相对 src-tauri 根；#1622 收敛后是「接线面」：每文件必须
+ *  调起 lane::start_daily_lane，异步执行器/定时住 LANE_SCHEDULER_REL 单点） */
 export const LANE_FILES = [
   "crates/market-sync/src/daily_refresh.rs",
   "crates/market-sync/src/history.rs",
@@ -328,9 +339,10 @@ function main(): void {
     }
   }
 
-  // 后台车道执行器守门（issue #1413 / ADR-0125 决策 7）：两车道必须以全局运行时
-  // async 任务拉起 + 异步定时，生产面零自建线程。目录缺失 fail loud（拒绝以
-  // 空集假绿通过，与全树扫描同款取舍）。
+  // 后台车道执行器守门（issue #1413 / ADR-0125 决策 7；#1622 收敛后调度循环
+  // 单点住 lane.rs）：调度循环必须以全局运行时 async 任务拉起 + 异步定时；
+  // 三车道文件必须各自调起共享循环；生产面零自建线程。目录缺失 fail loud
+  //（拒绝以空集假绿通过，与全树扫描同款取舍）。
   const marketSyncSrcDir = join(scanRoot, MARKET_SYNC_SRC_REL);
   let laneFiles: { abs: string; rel: string }[] = [];
   try {
@@ -340,19 +352,41 @@ function main(): void {
       `✗ 车道执行器扫描面不可达：${MARKET_SYNC_SRC_REL}——行情域 crate 目录漂移，拒绝以空集假绿通过`,
     );
   }
+  // 调度循环单点（#1622）：异步执行器 / 定时接线在 lane.rs 上断言（删除即变红）。
+  let schedulerMasked: string | null = null;
+  try {
+    schedulerMasked = maskNonCode(readFileSync(join(scanRoot, LANE_SCHEDULER_REL), "utf8"));
+  } catch {
+    problems.push(
+      `✗ 调度循环单点缺失：${LANE_SCHEDULER_REL}——三车道共用的巡检循环住址漂移，` +
+        `确认收敛结构（issue #1622）后同步更新本脚本`,
+    );
+  }
+  if (schedulerMasked !== null) {
+    for (const token of [LANE_EXECUTOR_TOKEN, LANE_TIMER_TOKEN]) {
+      if (!new RegExp(`\\b${token.replace(/::/g, "\\s*::\\s*")}\\b`).test(schedulerMasked)) {
+        problems.push(
+          `✗ 调度循环执行器接线缺失：${LANE_SCHEDULER_REL} 未以 \`${token}\` 表达` +
+            (token === LANE_TIMER_TOKEN ? "异步定时（启动延迟/自然日窗口）" : "async 任务拉起") +
+            `\n    调度循环必须是挂全局运行时的 async 任务（ADR-0125 决策 7 / issue #1413）；删掉接线不会让\n` +
+            `    行为测试直接变红，故以源码扫描守门（#959 / #961 先例）`,
+        );
+      }
+    }
+  }
   for (const f of laneFiles) {
     const masked = maskNonCode(readFileSync(f.abs, "utf8"));
     const isLaneFile = (LANE_FILES as readonly string[]).includes(f.rel);
-    if (isLaneFile) {
-      for (const token of [LANE_EXECUTOR_TOKEN, LANE_TIMER_TOKEN]) {
-        if (!new RegExp(`\\b${token.replace(/::/g, "\\s*::\\s*")}\\b`).test(masked)) {
-          problems.push(
-            `✗ 车道执行器接线缺失：${f.rel} 未以 \`${token}\` 表达${token === LANE_TIMER_TOKEN ? "异步定时（启动延迟/自然日窗口）" : "async 任务拉起"}\n` +
-              `    车道必须是挂全局运行时的 async 任务（ADR-0125 决策 7 / issue #1413）；删掉接线不会让\n` +
-              `    行为测试直接变红，故以源码扫描守门（#959 / #961 先例）`,
-          );
-        }
-      }
+    // 断言对准调用形状（名字后随括号）：只留 use 导入、删掉调用不动本测。
+    if (
+      isLaneFile &&
+      !new RegExp(`\\b${LANE_WIRE_TOKEN.replace(/::/g, "\\s*::\\s*")}\\s*\\(`).test(masked)
+    ) {
+      problems.push(
+        `✗ 车道调度接线缺失：${f.rel} 未调起共享调度循环 \`${LANE_WIRE_TOKEN}\`\n` +
+          `    三条后台车道的巡检循环已收敛为域内单点（issue #1622）；车道模块自建平行循环\n` +
+          `    （含 async 形态重写）即「规则改一处漏两处」回归，删掉接线即本守门红`,
+      );
     }
     for (const token of LANE_BANNED_TOKENS) {
       if (new RegExp(`\\b${token.replace(/::/g, "\\s*::\\s*")}\\b`).test(masked)) {
@@ -414,7 +448,8 @@ function main(): void {
     `✓ 后台服务成组拉起守门：受守入口 ${GUARDED_NAMES.length} 个` +
       `（${GUARDED_NAMES.map((g) => g.name).join(" / ")}）· 白名单路径 ${pathCount} 个（定义与再导出）` +
       ` · 生产调用收敛于 \`${ORCHESTRATOR_FN}\` 单点 · 启动接线 ${BOOT_WIRING.length} 项已接线（#1088）` +
-      ` · 车道执行器守门 ${laneFiles.length} 个生产文件零自建线程（#1413）` +
+      ` · 车道执行器守门：调度循环单点 ${LANE_SCHEDULER_REL}（异步执行器 + 异步定时，#1622）+ ` +
+      `${LANE_FILES.length} 条车道接线（#1413；扫描 ${laneFiles.length} 个生产文件零自建线程）` +
       ` · src-tauri 全树（排除 target/）扫描 ${files.length} 个非测试文件零脱离`,
   );
 }
