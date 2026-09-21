@@ -6,6 +6,8 @@ import {
   BOOT_WIRING,
   GUARDED_NAMES,
   LANE_FILES,
+  LANE_SCHEDULER_REL,
+  LANE_WIRE_TOKEN,
   ORCHESTRATOR_FILE,
   ORCHESTRATOR_FN,
 } from "../scripts/check-background-services.ts";
@@ -65,16 +67,19 @@ function makeFixture(overrides: Record<string, string> = {}): string[] {
   for (const [relPath, names] of namesByPath) {
     const abs = join(root, relPath);
     mkdirSync(join(abs, ".."), { recursive: true });
-    // 车道文件（issue #1413 车道执行器守门）须写入合法异步形态：spawn 拉起 +
-    // tokio::time::sleep 异步定时、零自建线程（与 LANE_EXECUTOR/LANE_TIMER_TOKEN
-    // 同源，夹具即规格）。
-    const laneTokens = (LANE_FILES as readonly string[]).includes(relPath)
-      ? `tauri::async_runtime::spawn(async move { tokio::time::sleep(std::time::Duration::from_millis(1)).await; });\n`
+    // 车道文件（issue #1413 车道执行器守门 + #1622 收敛后的接线面）：写入调度
+    // 接线 start_daily_lane（与 LANE_WIRE_TOKEN 同源，夹具即规格）、零自建线程。
+    const laneWire = (LANE_FILES as readonly string[]).includes(relPath)
+      ? `lane::start_daily_lane(app, &SPAWNED, timings, |h| round(h));\n`
       : "";
-    writeFileSync(abs, `pub use crate::x::{${names.join(", ")}}; // 再导出桩\n${laneTokens}`);
+    writeFileSync(abs, `pub use crate::x::{${names.join(", ")}}; // 再导出桩\n${laneWire}`);
   }
   const files: Record<string, string> = {
     [ORCHESTRATOR_FILE]: bootWiring + orchestratorPaired,
+    // 调度循环单点夹具（issue #1622，不在 GUARDED_NAMES 白名单内，显式落夹具）：
+    // lane.rs 持有合法异步形态——spawn 拉起 + tokio::time::sleep 异步定时。
+    [LANE_SCHEDULER_REL]:
+      "pub fn start_daily_lane() {\n    tauri::async_runtime::spawn(async move {\n        tokio::time::sleep(std::time::Duration::from_millis(1)).await;\n    });\n}\n",
     ...overrides,
   };
   for (const [relPath, content] of Object.entries(files)) {
@@ -206,14 +211,26 @@ describe("check-background-services（后台服务成对拉起守门，issue #96
     expect(r.output).toContain("thread::spawn");
   });
 
-  it("车道文件删掉异步执行器接线 → 报红（删除即变红，#1413）", () => {
+  it("车道文件删掉共享调度循环接线 → 报红（删除即变红，#1622 收敛）", () => {
     const lane = LANE_FILES[1];
+    // 只留 use 导入、删掉调用：接线断言对准调用形状，导入不足以假绿。
     const srcArg = makeFixture({
-      [lane]: "pub fn start_daily_price_refresh(app: &tauri::AppHandle) {}\n",
+      [lane]:
+        "use crate::lane::start_daily_lane;\npub fn start_daily_price_refresh(app: &tauri::AppHandle) {}\n",
     });
     const r = run(srcArg);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("车道执行器接线缺失");
+    expect(r.output).toContain("车道调度接线缺失");
+    expect(r.output).toContain(LANE_WIRE_TOKEN);
+  });
+
+  it("调度循环单点删掉异步执行器接线 → 报红（删除即变红，#1413 / #1622）", () => {
+    const srcArg = makeFixture({
+      [LANE_SCHEDULER_REL]: "pub fn start_daily_lane(app: &tauri::AppHandle) {}\n",
+    });
+    const r = run(srcArg);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("调度循环执行器接线缺失");
     expect(r.output).toContain("tauri::async_runtime::spawn");
   });
 

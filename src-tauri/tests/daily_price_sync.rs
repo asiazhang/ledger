@@ -36,12 +36,12 @@ use tauri::{Listener, Manager};
 use ledger_infra::db::{self, DbState};
 use ledger_infra::events;
 use ledger_market_sync::{
-    BulkFetchSurfaces, DailyPriceRefreshChannelsSlot, DailyPriceRefreshTimings, QuoteItem,
-    SyncFetchChannels, start_daily_price_refresh_with,
+    BulkFetchSurfaces, DailyPriceRefreshChannelsSlot, LaneTimings, QuoteItem, SyncFetchChannels,
+    start_daily_price_refresh_with,
 };
 use tauri_app_lib::commands::sync::{SyncChannelsSlot, sync_instrument_info};
 
-/// 每日刷新巡检周期（与下方注入的 `DailyPriceRefreshTimings::window_poll` 同源）：
+/// 每日刷新巡检周期（与下方注入的 `LaneTimings::window_poll` 同源）：
 /// 同日窗口的观察窗按它取整周期推导，不另写时长字面量。
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
 
@@ -189,7 +189,7 @@ fn startup_wiring_refreshes_prices_and_frontend_sync_stays_unblocked() {
     // 启动接线（生产唯一编排点的同款调用）：注入短时机（生产 30 秒延迟）。
     start_daily_price_refresh_with(
         app.handle(),
-        DailyPriceRefreshTimings {
+        LaneTimings {
             startup_delay: Duration::from_millis(100),
             // 巡检周期取短：轮询在窗口内多次到期，同日不得重跑（下方断言）。
             // 观察窗按本常量取整周期推导，不另写时长字面量。

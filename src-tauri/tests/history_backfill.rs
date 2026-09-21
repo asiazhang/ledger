@@ -35,12 +35,12 @@ use tauri::{Listener, Manager};
 use ledger_infra::db::{self, DbState};
 use ledger_infra::events;
 use ledger_market_sync::{
-    BackfillChannelsSlot, BackfillTimings, BulkFetchSurfaces, HISTORY_BACKFILL_PROGRESS, KlineBar,
+    BackfillChannelsSlot, BulkFetchSurfaces, HISTORY_BACKFILL_PROGRESS, KlineBar, LaneTimings,
     QuoteItem, SyncFetchChannels, start_history_backfill_with,
 };
 use tauri_app_lib::commands::sync::{SyncChannelsSlot, sync_instrument_info};
 
-/// 补全巡检周期（与下方注入的 `BackfillTimings::window_poll` 同源）：同日窗口的
+/// 补全巡检周期（与下方注入的 `LaneTimings::window_poll` 同源）：同日窗口的
 /// 观察窗按它取整周期推导，不另写时长字面量。
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
 
@@ -189,7 +189,7 @@ fn startup_wiring_backfills_history_and_frontend_sync_stays_unblocked() {
     // 启动接线（生产唯一编排点的同款调用）：注入短时机（生产 30 秒延迟）。
     start_history_backfill_with(
         app.handle(),
-        BackfillTimings {
+        LaneTimings {
             startup_delay: Duration::from_millis(100),
             // 巡检周期取短：轮询在窗口内多次到期，同日不得重跑（下方断言）。
             // 观察窗按本常量取整周期推导，不另写时长字面量。

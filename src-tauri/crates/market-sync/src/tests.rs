@@ -314,13 +314,19 @@ fn guard_source_list_matches_directory_exactly() {
     );
 }
 
-/// 后台车道（含不经 lane 骨架的每日汇率增量同步）必须是挂全局运行时的 async
-/// 任务（ADR-0125 决策 7 / issue #1413，
-/// 删除即变红）：调度入口以 `tauri::async_runtime::spawn` 拉起 async 任务，启动
-/// 延迟与自然日窗口用 `tokio::time::sleep` 异步定时；生产面零自建线程。把车道
-/// 改回 `std::thread::spawn` + `std::thread::sleep`（或删掉异步执行器接线）本测
-/// 即红——「删除即变红」的负向半边，与 `scripts/check-background-services.ts`
+/// 后台车道（含不经 lane 单轮骨架的每日汇率增量同步）必须是挂全局运行时的 async
+/// 任务（ADR-0125 决策 7 / issue #1413，删除即变红）：调度循环以
+/// `tauri::async_runtime::spawn` 拉起 async 任务，启动延迟与自然日窗口用
+/// `tokio::time::sleep` 异步定时；生产面零自建线程。把调度循环改回
+/// `std::thread::spawn` + `std::thread::sleep`（或删掉异步执行器接线）本测即红
+/// ——「删除即变红」的负向半边，与 `scripts/check-background-services.ts`
 /// 的成对拉起守门互补（那边管「在哪拉起」，本测管「以什么执行器拉起」）。
+///
+/// issue #1622 收敛后，执行器与异步定时接线单点住 lane.rs（三车道共用调度循环
+/// `start_daily_lane`）；车道模块只留接线（调起共享循环）与本车道编排——车道
+/// 模块自建平行调度循环（含 async 形态重写）即接线缺失变红；「接线调起的是真
+/// 车道」这正向事实无法由结构断言观察，行为半边由 tests/ 下三条接线 IT 的
+/// 在途等待超时兑底。
 #[test]
 fn background_lanes_are_global_runtime_async_tasks() {
     let sources: Vec<(&'static str, String)> = production_source_files()
@@ -328,38 +334,46 @@ fn background_lanes_are_global_runtime_async_tasks() {
         .map(|(name, src)| (name, blank_inline_test_modules(&mask_non_code(&src))))
         .collect();
 
-    // 生产面零自建线程：车道线程是 ADR-0125 决策 7 显式去除的执行环境，回归
-    // 即在异步上下文之外多出一条自持运行时状态的线程。
+    // 生产面零自建线程 / 零阻塞定时：车道线程是 ADR-0125 决策 7 显式去除的执行
+    // 环境，回归即在异步上下文之外多出一条自持运行时状态的线程。
     let thread_hits: Vec<&str> = sources
         .iter()
-        .filter(|(_, src)| src.contains("thread::spawn"))
+        .filter(|(_, src)| src.contains("thread::spawn") || src.contains("std::thread::sleep"))
         .map(|(name, _)| *name)
         .collect();
     assert!(
         thread_hits.is_empty(),
-        "行情同步域生产面出现自建线程 {thread_hits:?}——后台车道必须是挂全局运行时的 \
+        "行情同步域生产面出现自建线程/阻塞定时 {thread_hits:?}——后台车道必须是挂全局运行时的 \
          async 任务（tauri::async_runtime::spawn + tokio::time::sleep，ADR-0125 决策 7）"
     );
 
     for (name, src) in &sources {
-        let is_lane = matches!(*name, "daily_refresh.rs" | "history.rs" | "fx_daily.rs");
-        if !is_lane {
-            continue;
+        match *name {
+            // 调度循环单点（issue #1622 收敛）：执行器与异步定时接线住 lane.rs，
+            // 删掉任一接线（或改回自建线程）本测即红。
+            "lane.rs" => {
+                assert!(
+                    src.contains("tauri::async_runtime::spawn"),
+                    "lane.rs 调度循环应以 tauri::async_runtime::spawn 拉起 async 任务 \
+                     （ADR-0125 决策 7 / issue #1413）"
+                );
+                assert!(
+                    src.contains("tokio::time::sleep"),
+                    "lane.rs 的启动延迟与自然日窗口应用 tokio::time::sleep 异步定时 \
+                     （ADR-0125 决策 7 / issue #1413）"
+                );
+            }
+            // 三条车道（接线面）：只允许经共享调度循环拉起——删接线即红。断言
+            // 对准调用形状（带括号）：只留 use 导入、删掉调用不动本测。
+            "daily_refresh.rs" | "history.rs" | "fx_daily.rs" => {
+                assert!(
+                    src.contains("start_daily_lane("),
+                    "{name} 应调起共享调度循环 start_daily_lane（issue #1622）——\
+                     自建平行调度循环即 Shotgun Surgery 回归"
+                );
+            }
+            _ => {}
         }
-        assert!(
-            src.contains("tauri::async_runtime::spawn"),
-            "{name} 调度入口应以 tauri::async_runtime::spawn 拉起 async 任务 \
-             （ADR-0125 决策 7 / issue #1413）"
-        );
-        assert!(
-            src.contains("tokio::time::sleep"),
-            "{name} 的启动延迟与自然日窗口应用 tokio::time::sleep 异步定时 \
-             （ADR-0125 决策 7 / issue #1413）"
-        );
-        assert!(
-            !src.contains("std::thread::sleep"),
-            "{name} 不得回归 std::thread::sleep 阻塞定时（ADR-0125 决策 7）"
-        );
     }
 }
 

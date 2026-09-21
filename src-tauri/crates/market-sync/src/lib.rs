@@ -172,6 +172,8 @@ mod fx_daily;
 mod history;
 mod http;
 mod incremental;
+/// 后台车道骨架（单轮半边 issue #1426 / 调度半边 issue #1622）：单轮骨架与
+/// 三车道共用的巡检调度循环单点，见模块文档。
 mod lane;
 mod model;
 mod persist;
@@ -201,8 +203,7 @@ pub use channels::{
     QuoteItem, QuoteQuery, SyncFetchChannels, do_incremental_sync_channels,
 };
 pub use daily_refresh::{
-    DailyPriceRefreshChannelsSlot, DailyPriceRefreshTimings, start_daily_price_refresh,
-    start_daily_price_refresh_with,
+    DailyPriceRefreshChannelsSlot, start_daily_price_refresh, start_daily_price_refresh_with,
 };
 // 通道束载荷 DTO（issue #1276）：通道束是壳层注入接缝的公开面，桩实现方需要
 // 能命名与构造应答形状（QuoteItem 可构造；Kline/Nav 形状测试回空表即可命名；
@@ -212,13 +213,11 @@ pub use ecb::EcbDayRates;
 pub use fund::fetch_fund_quote_production;
 pub use fund_nav::NavPoint;
 pub use fx::{FxSyncChannels, FxSyncReport, sync_fx_rates};
-pub use fx_daily::{
-    DailyFxSyncChannelsSlot, DailyFxSyncTimings, start_daily_fx_sync, start_daily_fx_sync_with,
-};
-pub use history::{
-    BackfillChannelsSlot, BackfillTimings, start_history_backfill, start_history_backfill_with,
-};
+pub use fx_daily::{DailyFxSyncChannelsSlot, start_daily_fx_sync, start_daily_fx_sync_with};
+pub use history::{BackfillChannelsSlot, start_history_backfill, start_history_backfill_with};
 pub use http::KlineBar;
+/// 三条后台车道共用的调度时机（issue #1622 收敛：三份同构 timing 类型并成一份）
+pub use lane::LaneTimings;
 pub use model::{SyncInstrumentInfoResult, WriteWitness};
 pub use persist::FxPersistReport;
 pub use progress::{
