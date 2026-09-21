@@ -1,6 +1,6 @@
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::create_transaction_internal;
-use rusqlite::params;
+use rusqlite::{Connection, params};
 
 use super::super::*;
 use super::common::*;
@@ -229,4 +229,176 @@ fn holdings_as_of_today_matches_holding_quantity() {
         .unwrap();
     assert_eq!(holding_rows, 0);
     assert!((qty - 0.0).abs() < 1e-9, "清仓后 as-of = {qty}");
+}
+
+// ---------------------------------------------------------------------------
+// 腿流投影 ≡ as-of 配对测试（issue #1654）：`holdings_legs_by_instrument` 与
+// `holdings_as_of` 是同一推算不变量的两种形态（流水前缀投影 / 逐时点聚合）。
+// 两处 SQL 的同步纪律由本测试钉住——任何一侧口径变化（腿类型、软删过滤、
+// NULL 条件）而另一侧未同步，前缀和与 as-of 即在混合夹具上分叉变红。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn holdings_legs_stream_prefix_sums_match_as_of_on_mixed_fixture() {
+    let conn = open();
+    seed_account(&conn, "acc-lg", "证券户", "investment", "CNY", 0);
+    seed_account(&conn, "acc-lg-gone", "待删户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-lg-a", "000001", "平安银行", "CNY", "unknown");
+    seed_instrument(&conn, "inst-lg-b", "600036", "招商银行", "CNY", "unknown");
+    seed_instrument(
+        &conn,
+        "inst-lg-out",
+        "000001.OF",
+        "转出基金",
+        "CNY",
+        "unknown",
+    );
+    seed_instrument(
+        &conn,
+        "inst-lg-in",
+        "000002.OF",
+        "转入基金",
+        "CNY",
+        "unknown",
+    );
+    seed_instrument(
+        &conn,
+        "inst-lg-none",
+        "000008",
+        "无腿标的",
+        "CNY",
+        "unknown",
+    );
+
+    // inst-a：同标的买/卖/买多腿 + split 带符号 Δ + 一笔待软删的买入。
+    for (kind, qty, price, date) in [
+        (TransactionKind::Buy, 10.0, 1500, "2026-02-04"),
+        (TransactionKind::Sell, 4.0, 1600, "2026-02-05"),
+        (TransactionKind::Buy, 2.0, 1500, "2026-02-06"),
+    ] {
+        create_transaction_internal(
+            &conn,
+            make_trade_input(kind, "acc-lg", "inst-lg-a", qty, price, date),
+        )
+        .unwrap();
+    }
+    let mut deleted_buy = make_trade_input(
+        TransactionKind::Buy,
+        "acc-lg",
+        "inst-lg-a",
+        2.0,
+        1500,
+        "2026-02-07",
+    );
+    deleted_buy.note = Some("legs-to-delete".into());
+    create_transaction_internal(&conn, deleted_buy).unwrap();
+    let mut split = make_split_input("acc-lg", "inst-lg-a", 3.0);
+    split.date = "2026-02-08".into();
+    create_transaction_internal(&conn, split).unwrap();
+
+    // inst-b：挂在另一账户（后面整户软删）。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-lg-gone",
+            "inst-lg-b",
+            5.0,
+            1500,
+            "2026-02-04",
+        ),
+    )
+    .unwrap();
+
+    // convert 的前置批次：转出基金先买入 6 份（转换按 FIFO 消耗在用批次）。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-lg",
+            "inst-lg-out",
+            6.0,
+            1500,
+            "2026-02-03",
+        ),
+    )
+    .unwrap();
+
+    // convert 一笔两腿：转出腿 −6、转入腿 +12（两标的各得一条腿）。
+    let mut convert = make_convert_input(
+        "acc-lg",
+        "inst-lg-out",
+        "inst-lg-in",
+        6.0,
+        12.0,
+        10_000,
+        10_000,
+        0,
+    );
+    convert.date = "2026-02-10".into();
+    create_transaction_internal(&conn, convert).unwrap();
+
+    let check_pairing = |conn: &Connection, label: &str| {
+        let stream = holdings::holdings_legs_by_instrument(conn).unwrap();
+        assert!(
+            !stream.contains_key("inst-lg-none"),
+            "无腿标的不进腿流（{label}）"
+        );
+        for (instrument_id, legs) in &stream {
+            let dates: Vec<&str> = legs.iter().map(|(d, _)| d.as_str()).collect();
+            let mut sorted = dates.clone();
+            sorted.sort_unstable();
+            assert_eq!(
+                dates, sorted,
+                "{instrument_id} 腿流应按交易日升序（{label}）"
+            );
+            let mut running = 0.0f64;
+            for (date, qty) in legs {
+                running += qty;
+                let as_of = holdings::holdings_as_of(conn, Some(instrument_id), date).unwrap();
+                assert!(
+                    (running - as_of).abs() < 1e-9,
+                    "{label}：{instrument_id} @{date} 腿流前缀和 {running} ≠ as-of {as_of}"
+                );
+            }
+        }
+        stream
+    };
+
+    // 基线：四臂腿（buy/sell 取负、convert 两腿、split Δ）与过滤（软删行/户）
+    // 全部在场，两形态逐标的逐前缀一致。
+    let stream = check_pairing(&conn, "基线");
+    assert_eq!(
+        stream["inst-lg-a"].len(),
+        5,
+        "买 10 + 卖 −4 + 买 2 + 待删买 2 + split Δ3"
+    );
+    assert_eq!(stream["inst-lg-b"].len(), 1);
+    assert_eq!(stream["inst-lg-out"].len(), 2, "前置买入 +6 与转出腿 −6");
+    assert_eq!(stream["inst-lg-in"].len(), 1, "转入腿 +12");
+    assert_eq!(
+        stream["inst-lg-in"][0].1, 12.0,
+        "convert 转入腿取 to_quantity"
+    );
+
+    // 软删一笔交易（无公开软删入口，库内状态直置——本文件既有软删用例同款
+    // 显式例外）：腿流与 as-of 同步剔除该腿，配对保持。
+    conn.execute(
+        "UPDATE transactions SET is_deleted=1 WHERE note='legs-to-delete'",
+        [],
+    )
+    .unwrap();
+    let stream = check_pairing(&conn, "软删一笔买入后");
+    assert_eq!(stream["inst-lg-a"].len(), 4, "软删买入的腿不再投影");
+
+    // 软删整户（同款显式例外）：inst-b 整标的不再有腿，配对保持。
+    conn.execute(
+        "UPDATE accounts SET is_deleted=1 WHERE id='acc-lg-gone'",
+        [],
+    )
+    .unwrap();
+    let stream = check_pairing(&conn, "软删账户后");
+    assert!(!stream.contains_key("inst-lg-b"), "软删账户的腿流整体消失");
+    let qty = holdings::holdings_as_of(&conn, Some("inst-lg-b"), "2026-02-06").unwrap();
+    assert!((qty - 0.0).abs() < 1e-9, "as-of 同步排除软删账户");
 }

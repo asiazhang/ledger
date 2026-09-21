@@ -15,6 +15,7 @@
 ### Changed
 
 - **性能**：报表商户排名加商户维度覆盖索引（V030）并钉定查询计划，50 万笔库聚合 p95 777ms→148ms（[#1655]）。
+- **性能**：投资组合市值走势数量推算改按标的分组增量推进，50 万笔库全窗口周线 p95 8850ms→26ms（[#1654]）。
 
 ## [0.7.0] - 2026-09-19
 
@@ -410,3 +411,4 @@
 [#1519]: https://github.com/asiazhang/ledger/issues/1519
 [#1631]: https://github.com/asiazhang/ledger/issues/1631
 [#1655]: https://github.com/asiazhang/ledger/issues/1655
+[#1654]: https://github.com/asiazhang/ledger/issues/1654
