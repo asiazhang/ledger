@@ -19,8 +19,7 @@ use ledger_infra::db::query::query_one;
 use ledger_infra::db::{new_uuid, now_iso};
 use ledger_infra::error::{AppError, Result};
 use ledger_sync_protocol::device::device_id;
-use ledger_transaction::amount;
-use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::amount::{self, FxEditBaseline, TransactionKind};
 use ledger_transaction::command::{
     ConvertCommandFields, InvestmentCommandFields, SplitCommandFields,
 };
@@ -209,7 +208,11 @@ pub struct BuyPlan {
 
 /// 校验并归一化一笔买入交易（不落库）。创建与修改共用；
 /// 只做校验与字段解析，持仓建仓等副作用由 [`apply`] 在落库时按其身份（新增或替换）执行。
-fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
+fn prepare_buy(
+    conn: &Connection,
+    input: &TransactionInput,
+    fx_edit_baseline: Option<&FxEditBaseline>,
+) -> Result<BuyPlan> {
     let instrument_id = input
         .instrument_id
         .as_ref()
@@ -312,15 +315,15 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         input.funding_account_id.as_deref(),
         &account_currency,
     )?;
-    // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
-    // 与通用 kind / 定时引擎共用同一折算路径（按交易日入口 convert_to_native_on_trade_date，
-    // #1547：按交易所属 ISO 周命中汇率历史，基准为默认币种）。
-    let native = amount::convert_to_native_on_trade_date(
+    // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70：按交易日入口，#1547）；
+    // 修改路径携沿用基线，三元组未变不重查（#1550）。
+    let native = amount::convert_to_native_on_edit(
         conn,
         amount_cents,
         &account_currency,
         &input.date,
         input.fx_rate,
+        fx_edit_baseline,
     )?;
 
     Ok(BuyPlan {
@@ -355,7 +358,11 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
 /// 校验并归一化一笔卖出交易（不落库）。创建与修改共用；
 /// FIFO 消耗（含「可卖出数量不足」守卫）在本阶段算定，卖出匹配等副作用由
 /// [`apply`] 按该消耗快照落盘、不再复算（与 convert 同一形态，issue #1019）。
-fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan> {
+fn prepare_sell(
+    conn: &Connection,
+    input: &TransactionInput,
+    fx_edit_baseline: Option<&FxEditBaseline>,
+) -> Result<SellPlan> {
     let instrument_id = input
         .instrument_id
         .as_ref()
@@ -447,15 +454,15 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         input.funding_account_id.as_deref(),
         &account_currency,
     )?;
-    // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
-    // 与通用 kind / 定时引擎共用同一折算路径（按交易日入口 convert_to_native_on_trade_date，
-    // #1547：按交易所属 ISO 周命中汇率历史，基准为默认币种）。
-    let native = amount::convert_to_native_on_trade_date(
+    // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70：按交易日入口，#1547）；
+    // 修改路径携沿用基线，三元组未变不重查（#1550）。
+    let native = amount::convert_to_native_on_edit(
         conn,
         amount_cents,
         &account_currency,
         &input.date,
         input.fx_rate,
+        fx_edit_baseline,
     )?;
 
     // 取批次 → 分摊（含「可卖出数量不足」守卫）两步单点算定消耗规划：apply 只落盘。
@@ -514,7 +521,11 @@ fn derived_out_price_cents(out_amount_cents: i64, quantity: f64) -> Result<i64> 
 /// 守卫（全部码化中文错误，ADR-0050）：转出/转入标的存在且互不相同、账户为投资账户、
 /// 不得携带转入账户（不跨账户）与出资账户（出资闭集仅 buy/sell，ADR-0096）、
 /// 转出份额不得超当前持仓（与 sell 同码 `trade.insufficient-holding`）。
-fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<ConvertPlan> {
+fn prepare_convert(
+    conn: &Connection,
+    input: &TransactionInput,
+    fx_edit_baseline: Option<&FxEditBaseline>,
+) -> Result<ConvertPlan> {
     let instrument_id = input
         .instrument_id
         .as_ref()
@@ -614,13 +625,15 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
     let active_lots = lots::active_lots(conn, &input.account_id, &instrument_id)?;
     let consumed = lots::plan(conn, &active_lots, quantity)?;
     let carried_cost_cents = lots::total_cost(&consumed);
-    // 按交易日入口折算（#1547）：结转成本按交易所属 ISO 周的汇率历史折算。
-    let native = amount::convert_to_native_on_trade_date(
+    // 按交易日入口折算（#1547）：结转成本按交易所属周汇率折算；
+    // 修改路径携沿用基线，三元组未变不重查（#1550）。
+    let native = amount::convert_to_native_on_edit(
         conn,
         carried_cost_cents,
         &account_currency,
         &input.date,
         input.fx_rate,
+        fx_edit_baseline,
     )?;
 
     Ok(ConvertPlan {
@@ -858,7 +871,11 @@ fn prepare_split(
 /// - 不接受份额 / 成交单价 / 手续费 / 转入标的 / 转入账户（意图漂移 fail fast）；
 /// - 商户 / 分类 / 保单由行为层参考数据携带准入拒绝（dividend 不在任何准入集）；
 ///   出资账户由出资准入闭集拒绝（仅 buy/sell 可携带，ADR-0096）。
-fn prepare_dividend(conn: &Connection, input: &TransactionInput) -> Result<DividendPlan> {
+fn prepare_dividend(
+    conn: &Connection,
+    input: &TransactionInput,
+    fx_edit_baseline: Option<&FxEditBaseline>,
+) -> Result<DividendPlan> {
     let instrument_id = input
         .instrument_id
         .as_ref()
@@ -928,13 +945,15 @@ fn prepare_dividend(conn: &Connection, input: &TransactionInput) -> Result<Divid
         input.funding_account_id.as_deref(),
         &account_currency,
     )?;
-    // 按交易日入口折算（#1547）：分红现金腿按交易所属 ISO 周的汇率历史折算。
-    let native = amount::convert_to_native_on_trade_date(
+    // 按交易日入口折算（#1547）：分红现金腿按交易所属周汇率折算；
+    // 修改路径携沿用基线，三元组未变不重查（#1550）。
+    let native = amount::convert_to_native_on_edit(
         conn,
         input.amount_cents,
         &account_currency,
         &input.date,
         input.fx_rate,
+        fx_edit_baseline,
     )?;
     Ok(DividendPlan {
         normalized: NormalizedTransaction {
@@ -1168,20 +1187,32 @@ impl Plan {
 ///
 /// 由行为层（`transaction`）在创建/修改路径按 kind 分派调用；
 /// `kind` 为已解析的 [`TransactionKind`]，收到其余 kind 属编排错误，报错防误用。
-/// `existing_id`：修改路径的既有交易 id（创建路径 `None`）——仅 split 消费，用于把
+/// `existing_id`：修改路径的既有交易 id（创建路径 `None`）——split 消费，用于把
 /// 重述目标限定在该行落账那一刻在场的批次（ADR-0106 决策 6）；其余 kind 忽略。
+/// `fx_edit_baseline`：折算沿用基线（#1550，修改路径由协议传入）——buy/sell/
+/// convert/dividend 在币种/金额/日期未变时沿用行内留痕、不再重查序列；创建路径
+/// 传 `None`。
 pub fn prepare(
     conn: &Connection,
     kind: TransactionKind,
     input: &TransactionInput,
     existing_id: Option<&str>,
+    fx_edit_baseline: Option<&FxEditBaseline>,
 ) -> Result<Plan> {
     match kind {
-        TransactionKind::Buy => Ok(Plan::Buy(prepare_buy(conn, input)?)),
-        TransactionKind::Sell => Ok(Plan::Sell(prepare_sell(conn, input)?)),
-        TransactionKind::Convert => Ok(Plan::Convert(prepare_convert(conn, input)?)),
+        TransactionKind::Buy => Ok(Plan::Buy(prepare_buy(conn, input, fx_edit_baseline)?)),
+        TransactionKind::Sell => Ok(Plan::Sell(prepare_sell(conn, input, fx_edit_baseline)?)),
+        TransactionKind::Convert => Ok(Plan::Convert(prepare_convert(
+            conn,
+            input,
+            fx_edit_baseline,
+        )?)),
         TransactionKind::Split => Ok(Plan::Split(prepare_split(conn, input, existing_id)?)),
-        TransactionKind::Dividend => Ok(Plan::Dividend(prepare_dividend(conn, input)?)),
+        TransactionKind::Dividend => Ok(Plan::Dividend(prepare_dividend(
+            conn,
+            input,
+            fx_edit_baseline,
+        )?)),
         // 行为层穷尽分派保证仅转发投资 kind；其余 kind 属编排错误，显式拒绝防误用
         // （显式枚举保证新增 kind 时此处编译报错，而非落入兜底）。
         TransactionKind::Income

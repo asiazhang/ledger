@@ -254,3 +254,45 @@ fn convert_op_carries_convert_fields_and_carried_cost() {
         "结转成本由源端算定随命令携带"
     );
 }
+
+/// 编辑沿用的折算留痕随 op 携带（#1550）：序列点消失后的 note-only 修改仍产出
+/// update op，且行内留痕取沿用值——对端重放按命令携带行落库（不重折算，
+/// ADR-0091 决策 3），两端对同一笔交易收敛到同一折算结果。
+#[test]
+fn update_op_carries_reused_fx_trace_when_series_missing() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-op-fx", "港币户", "cash", "HKD", 0);
+    test_support::seed_fx_rate_history(&conn, "fxh-op", "HKD", "CNY", "2026-06-29", 0.9);
+    let input = TransactionInput {
+        currency_code: "HKD".into(),
+        ..make_input("acc-op-fx", TransactionKind::Expense, 1000, "2026-07-01")
+    };
+    let id = create_transaction_internal(&conn, input).unwrap().id;
+    conn.execute("DELETE FROM fx_rate_history", []).unwrap();
+
+    let edited = TransactionInput {
+        currency_code: "HKD".into(),
+        note: Some("只改备注".into()),
+        ..make_input("acc-op-fx", TransactionKind::Expense, 1000, "2026-07-01")
+    };
+    update_transaction_internal(&conn, &id, edited).unwrap();
+
+    let ops = ops(&conn);
+    assert_eq!(ops.len(), 2, "创建 + 修改各一条 op");
+    let DomainCommand::Transaction(TransactionCommand::Update { id: uid, row, .. }) =
+        &ops[1].command
+    else {
+        panic!("应为 update 命令");
+    };
+    assert_eq!(uid, &id);
+    assert_eq!(row.amount_native_cents, 900, "op 行携带沿用的本位币金额");
+    assert_eq!(
+        row.fx_rate_used,
+        Some(0.9),
+        "op 行携带沿用的折算留痕，对端收敛一致"
+    );
+    assert_eq!(
+        row.fx_rate_source,
+        Some(tauri_app_lib::ledger_transaction::amount::FxRateSource::Series)
+    );
+}

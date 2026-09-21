@@ -671,6 +671,186 @@ fn convert_to_native_on_trade_date_rejects_non_positive_rate() {
     assert!(convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07", None).is_err());
 }
 
+// convert_to_native_on_edit（编辑沿用，#1550：币种/金额/日期未变沿用行内留痕）
+// ---------------------------------------------------------------------------
+
+/// 沿用基线构造器（本节测试专用）：旧行三元组 + 行内留痕。
+fn reuse_baseline(
+    amount_cents: i64,
+    currency_code: &str,
+    date: &str,
+    conversion: NativeConversion,
+) -> FxEditBaseline {
+    FxEditBaseline {
+        amount_cents,
+        currency_code: currency_code.into(),
+        date: date.into(),
+        conversion,
+    }
+}
+
+/// 三元组（金额/币种/日期）未变 → 原样返回行内留痕，不再查序列：序列整表为空
+/// 仍成功，且留痕逐位不变（#1550 验收 1——只改备注/分类/商户的场景，序列已
+/// 清空也改得动，导入的历史行不因数据源查不到当年值而不可编辑）。
+#[test]
+fn convert_to_native_on_edit_reuses_inline_trace_when_triple_unchanged() {
+    let conn = test_support::open();
+    let baseline = reuse_baseline(
+        1000,
+        "HKD",
+        "2026-01-07",
+        NativeConversion {
+            native_cents: 900,
+            fx_rate_used: Some(0.9),
+            fx_rate_source: Some(FxRateSource::Series),
+        },
+    );
+    let conv =
+        convert_to_native_on_edit(&conn, 1000, "HKD", "2026-01-07", None, Some(&baseline)).unwrap();
+    assert_eq!(conv.native_cents, 900, "本位币金额逐位不变");
+    assert_eq!(conv.fx_rate_used, Some(0.9), "汇率值逐位不变");
+    assert_eq!(
+        conv.fx_rate_source,
+        Some(FxRateSource::Series),
+        "来源逐位不变"
+    );
+}
+
+/// 三元组未变但行内留痕为空（存量行写入早于留痕功能，或同币种未折算）→
+/// 空值原样保留：只改备注不得把存量行的本位币金额与留痕改写（#1548 空值语义
+/// 在编辑路径的延续）。
+#[test]
+fn convert_to_native_on_edit_reuses_null_trace_when_triple_unchanged() {
+    let conn = test_support::open();
+    test_support::seed_fx_rate_history(&conn, "fxh-legacy", "HKD", "CNY", "2026-01-05", 0.9);
+    let baseline = reuse_baseline(
+        1000,
+        "HKD",
+        "2026-01-07",
+        NativeConversion {
+            native_cents: 1000,
+            fx_rate_used: None,
+            fx_rate_source: None,
+        },
+    );
+    let conv =
+        convert_to_native_on_edit(&conn, 1000, "HKD", "2026-01-07", None, Some(&baseline)).unwrap();
+    assert_eq!(conv.native_cents, 1000, "存量行金额不改写");
+    assert_eq!(conv.fx_rate_used, None, "存量行空留痕不改写");
+    assert_eq!(conv.fx_rate_source, None, "存量行空来源不改写");
+}
+
+/// 金额变了 → 按新金额重查序列，不沿用旧留痕（#1550 验收 2）。
+#[test]
+fn convert_to_native_on_edit_requeries_when_amount_changed() {
+    let conn = test_support::open();
+    test_support::seed_fx_rate_history(&conn, "fxh-amt", "HKD", "CNY", "2026-01-05", 0.8);
+    let baseline = reuse_baseline(
+        1000,
+        "HKD",
+        "2026-01-07",
+        NativeConversion {
+            native_cents: 900,
+            fx_rate_used: Some(0.9),
+            fx_rate_source: Some(FxRateSource::Series),
+        },
+    );
+    let conv =
+        convert_to_native_on_edit(&conn, 2000, "HKD", "2026-01-07", None, Some(&baseline)).unwrap();
+    assert_eq!(conv.native_cents, 1600, "按新金额与新序列值重算");
+    assert_eq!(conv.fx_rate_used, Some(0.8), "留痕更新为本笔使用的序列值");
+    assert_eq!(conv.fx_rate_source, Some(FxRateSource::Series));
+}
+
+/// 日期变了 → 按新日期所属周重查，用新周点（不沿用旧周留痕）。
+#[test]
+fn convert_to_native_on_edit_requeries_when_date_changed() {
+    let conn = test_support::open();
+    test_support::seed_fx_rate_history(&conn, "fxh-w1", "HKD", "CNY", "2026-01-05", 0.9);
+    test_support::seed_fx_rate_history(&conn, "fxh-w2", "HKD", "CNY", "2026-01-12", 0.95);
+    let baseline = reuse_baseline(
+        1000,
+        "HKD",
+        "2026-01-07",
+        NativeConversion {
+            native_cents: 900,
+            fx_rate_used: Some(0.9),
+            fx_rate_source: Some(FxRateSource::Series),
+        },
+    );
+    let conv =
+        convert_to_native_on_edit(&conn, 1000, "HKD", "2026-01-14", None, Some(&baseline)).unwrap();
+    assert_eq!(conv.native_cents, 950, "按新日期所属周重算");
+    assert_eq!(conv.fx_rate_used, Some(0.95));
+    assert_eq!(conv.fx_rate_source, Some(FxRateSource::Series));
+}
+
+/// 币种变了 → 按新币种重查（旧币种留痕不沿用）。
+#[test]
+fn convert_to_native_on_edit_requeries_when_currency_changed() {
+    let conn = test_support::open();
+    test_support::seed_fx_rate_history(&conn, "fxh-usd", "USD", "CNY", "2026-01-05", 7.1);
+    let baseline = reuse_baseline(
+        1000,
+        "HKD",
+        "2026-01-07",
+        NativeConversion {
+            native_cents: 900,
+            fx_rate_used: Some(0.9),
+            fx_rate_source: Some(FxRateSource::Series),
+        },
+    );
+    let conv =
+        convert_to_native_on_edit(&conn, 1000, "USD", "2026-01-07", None, Some(&baseline)).unwrap();
+    assert_eq!(conv.native_cents, 7100, "按新币种序列值重算");
+    assert_eq!(conv.fx_rate_used, Some(7.1));
+    assert_eq!(conv.fx_rate_source, Some(FxRateSource::Series));
+}
+
+/// 三元组任一变了且新周查不到 → 既有 `fx.rate-missing` 码化错误失败，
+/// 不静默沿用旧值（#1550 验收 3）；当期表有点也不回落（与按交易日入口同规）。
+#[test]
+fn convert_to_native_on_edit_fails_coded_when_changed_and_week_missing() {
+    let conn = test_support::open();
+    test_support::seed_exchange_rate(&conn, "HKD", "CNY", 0.91);
+    let baseline = reuse_baseline(
+        1000,
+        "HKD",
+        "2026-01-07",
+        NativeConversion {
+            native_cents: 900,
+            fx_rate_used: Some(0.9),
+            fx_rate_source: Some(FxRateSource::Series),
+        },
+    );
+    let err = convert_to_native_on_edit(&conn, 2000, "HKD", "2026-01-07", None, Some(&baseline))
+        .unwrap_err();
+    match err {
+        AppError::Coded { code, params, .. } => {
+            assert_eq!(code, "fx.rate-missing");
+            assert_eq!(params, vec!["HKD".to_string(), "CNY".to_string()]);
+        }
+        other => panic!("应为既有码化缺失错误，实际: {other}"),
+    }
+}
+
+/// 基线缺席（创建路径）与按交易日入口完全一致：同币种 1:1、无留痕；外币按
+/// 序列折算并留痕（写入路径零变化）。
+#[test]
+fn convert_to_native_on_edit_without_baseline_matches_trade_date_entry() {
+    let conn = test_support::open();
+    let conv = convert_to_native_on_edit(&conn, 12345, "CNY", "2026-01-07", None, None).unwrap();
+    assert_eq!(conv.native_cents, 12345);
+    assert_eq!(conv.fx_rate_used, None);
+    assert_eq!(conv.fx_rate_source, None);
+
+    test_support::seed_fx_rate_history(&conn, "fxh-new", "USD", "CNY", "2026-01-05", 7.5);
+    let conv = convert_to_native_on_edit(&conn, 10000, "USD", "2026-01-07", None, None).unwrap();
+    assert_eq!(conv.native_cents, 75000);
+    assert_eq!(conv.fx_rate_used, Some(7.5));
+    assert_eq!(conv.fx_rate_source, Some(FxRateSource::Series));
+}
+
 /// 写路径入口只认汇率历史，不回落当期表（#1547）：当期表有点、序列无点 →
 /// 报错而非拿当期值顶上；序列有点时用序列值，而非当期表值。
 #[test]
@@ -757,4 +937,45 @@ fn convert_to_native_on_trade_date_rejects_explicit_rate_on_same_currency_row() 
     assert_eq!(conv.native_cents, 12345);
     assert_eq!(conv.fx_rate_used, None);
     assert_eq!(conv.fx_rate_source, None);
+}
+
+/// 编辑时调用方逐笔显式给定汇率（#1549 × #1550）：显式 > 沿用 > 序列——三元组
+/// 未变也不沿用行内留痕，按给定汇率折算、来源标为 `Explicit`（沿用吞掉显式
+/// 等于无视调用方指令）；显式非法照走按交易日入口的既有码化校验。
+#[test]
+fn convert_to_native_on_edit_explicit_rate_beats_baseline_reuse() {
+    let conn = test_support::open();
+    // 序列整表为空：显式在场不查序列；基线三元组与请求完全一致。
+    let baseline = reuse_baseline(
+        1000,
+        "HKD",
+        "2026-01-07",
+        NativeConversion {
+            native_cents: 900,
+            fx_rate_used: Some(0.9),
+            fx_rate_source: Some(FxRateSource::Series),
+        },
+    );
+    let conv = convert_to_native_on_edit(
+        &conn,
+        1000,
+        "HKD",
+        "2026-01-07",
+        Some(0.88),
+        Some(&baseline),
+    )
+    .unwrap();
+    assert_eq!(conv.native_cents, 880, "按显式给定值折算");
+    assert_eq!(conv.fx_rate_used, Some(0.88));
+    assert_eq!(
+        conv.fx_rate_source,
+        Some(FxRateSource::Explicit),
+        "来源改标显式"
+    );
+
+    // 显式值非法（非正）→ 既有码化错误，不落旧值。
+    let err =
+        convert_to_native_on_edit(&conn, 1000, "HKD", "2026-01-07", Some(0.0), Some(&baseline))
+            .unwrap_err();
+    assert_eq!(err.code(), Some("fx.explicit-rate-non-positive"));
 }

@@ -868,6 +868,58 @@ async fn test_batch_import_foreign_currency_row_readback_exposes_fx_trace() {
     }
 }
 
+/// 编辑沿用的折算留痕（#1550 / ADR-0011 修订）：批量导入的非本位币历史行，
+/// 序列点消失后仍可编辑非金额字段且留痕逐位不变；改金额则按既有码化错误失败，
+/// 不静默沿用旧值。接线证明：删除修改协议的沿用接线（基线未传/三元组比较删除）
+/// → 本用例变红（note-only PUT 会因 fx.rate-missing 变 400）。
+#[tokio::test]
+async fn test_update_foreign_currency_row_reuses_fx_trace_when_series_missing() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "港币编辑户").await;
+    {
+        let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
+        test_support::seed_fx_rate_history(&guard, "fxh-upd", "HKD", "CNY", "2026-06-29", 0.9);
+    }
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2026-07-01"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&tx], None)).await;
+    assert_eq!(created[0]["success"], true, "{created:?}");
+    let id = created[0]["id"].as_str().unwrap().to_string();
+
+    // 数据源查不到当年值：序列点在编辑前消失。
+    {
+        let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
+        guard.execute("DELETE FROM fx_rate_history", []).unwrap();
+    }
+
+    // 只改备注：成功且折算留痕逐位不变（僵尸行可编辑）。
+    let note_only = format!(
+        r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2026-07-01","note":"只改备注"}}"#
+    );
+    let (status, bytes) = put_transaction_via_api(&app, &id, &note_only).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "note-only 编辑不应重查序列: {bytes:?}"
+    );
+    let updated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    // 断言面 = 本票新增的用户可观察结果：编辑成功 + 折算留痕逐位可读回；
+    // 本位币金额数值归域单测（CONTEXT-testing「接线证明」，#1548 同款退让）。
+    assert_eq!(updated["fx_rate_used"], 0.9);
+    assert_eq!(updated["fx_rate_source"], "series");
+    assert_eq!(updated["note"], "只改备注");
+
+    // 改金额：新三元组查不到汇率 → 既有 fx.rate-missing 码化 400，不静默沿用。
+    let amount_changed = format!(
+        r#"{{"kind":"expense","amount_cents":2000,"currency_code":"HKD","account_id":"{account_id}","date":"2026-07-01"}}"#
+    );
+    let (status, bytes) = put_transaction_via_api(&app, &id, &amount_changed).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{bytes:?}");
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "fx.rate-missing");
+}
+
 /// 逐笔显式汇率（#1549 / ADR-0011 修订）：批量导入带 `fxRate` 的历史行——
 /// 数据源覆盖不到的日期（不种序列点）由调用方给定汇率，整行成功且读回留痕
 /// 标为 `explicit`；同批不带 `fxRate` 的本位币行零改动照常落库（契约只增不改）。

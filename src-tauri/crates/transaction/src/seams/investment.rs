@@ -16,7 +16,7 @@ use crate::command::{ConvertCommandFields, InvestmentCommandFields, SplitCommand
 use crate::model::{ConvertFields, NormalizedTransaction, TransactionInput, TransactionSource};
 use ledger_infra::error::{AppError, Result};
 
-use crate::amount::TransactionKind;
+use crate::amount::{FxEditBaseline, TransactionKind};
 
 // ---------------------------------------------------------------------------
 // 计划契约：投资域实现、本域消费的计划对象接口
@@ -72,12 +72,15 @@ pub trait InvestmentPlan {
 // ---------------------------------------------------------------------------
 
 /// 投资计划装配钩子（Local 形态）：按输入装配投资 kind 计划（校验 + 折算 +
-/// 副作用数据算定，不落库不产副作用）。实现由投资域提供。
+/// 副作用数据算定，不落库不产副作用）。折算沿用基线（#1550）由修改路径传入：
+/// 币种/金额/日期未变时投资域 prepare 沿用行内留痕、不再重查序列；创建路径
+/// 传 `None`。实现由投资域提供。
 pub type PrepareHook = fn(
     &Connection,
     TransactionKind,
     &TransactionInput,
     Option<&str>,
+    Option<&FxEditBaseline>,
 ) -> Result<Box<dyn InvestmentPlan>>;
 
 /// 投资计划装配钩子（Replay 形态）：从命令携带的归一化行与语义字段装配计划，
@@ -142,11 +145,12 @@ pub(crate) fn prepare_investment(
     kind: TransactionKind,
     input: &TransactionInput,
     existing_id: Option<&str>,
+    fx_edit_baseline: Option<&FxEditBaseline>,
 ) -> Result<Box<dyn InvestmentPlan>> {
     let hook = PREPARE_HOOK
         .get()
         .ok_or_else(|| investment_hook_missing_error("prepare"))?;
-    hook(conn, kind, input, existing_id)
+    hook(conn, kind, input, existing_id, fx_edit_baseline)
 }
 
 /// 装配委派（Replay 形态）：钩子在场即调用，缺席即码化错误。

@@ -324,6 +324,7 @@ fn execute_occurrence_with_preexisting_landing_completes_without_second_row() {
             note: None,
             date: date.clone(),
             fx_rate: None,
+            fx_edit_baseline: None,
         },
     )
     .unwrap();
