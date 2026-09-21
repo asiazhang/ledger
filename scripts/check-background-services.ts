@@ -43,10 +43,10 @@
 // bun scripts/check-background-services.ts [src-tauri-dir]
 // 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job）。
 
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { maskNonCode } from "./check-structure.ts";
+import { maskNonCode, walkTextFiles, type WalkedFile } from "./check-structure.ts";
 
 /** 唯一编排点：壳层文件（相对 src-tauri 根，#1472 起扫描面基准同址）与函数名
  *  （issue #961 单点） */
@@ -205,22 +205,21 @@ function isTestFile(relPath: string): boolean {
   return file === "tests.rs" || segments.slice(0, -1).includes("tests");
 }
 
-/** 递归收集目录下全部非测试 .rs 文件，相对路径排序保证输出确定；
- *  `target/` 目录整体跳过（#1472：构建产物不参与扫描面，防膨胀与生成代码假红） */
-function collectRustFiles(dir: string, relBase: string): { abs: string; rel: string }[] {
-  const out: { abs: string; rel: string }[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  )) {
-    const abs = join(dir, entry.name);
-    const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
-    if (isTestFile(rel)) continue;
-    if (entry.isDirectory()) {
-      if (entry.name === "target") continue;
-      out.push(...collectRustFiles(abs, rel));
-    } else if (entry.name.endsWith(".rs")) out.push({ abs, rel });
-  }
-  return out;
+/** 扫描面：Rust 源文件扩展名闭集 + `target/` 目录剪枝（#1472：构建产物不参与
+ *  扫描面，防膨胀与生成代码假红），walkTextFiles 消费参数。 */
+const RUST_EXTENSIONS: ReadonlySet<string> = new Set([".rs"]);
+const SKIP_DIRS: ReadonlySet<string> = new Set(["target"]);
+
+/** 收集目录下全部非测试 .rs 文件：遍历机制归守门家族共享单点 walkTextFiles
+ *（#1625 收口，#1637 起本脚本同源），localeCompare 排序保证输出确定；文件结构
+ * 复用 WalkedFile（#1634 先例同款）。测试豁免是本守门政策谓词（isTestFile 只看
+ * rel 形状），walk 后按 rel 过滤——与遍历中剪枝输出全等；唯一分歧形态是名为
+ * tests.rs 的目录（非合法 Rust 模块布局），walk 后过滤会收进其中 .rs 文件，
+ * 只多扫不漏扫，不致假绿（#1634 同款取舍）。 */
+function collectRustFiles(dir: string, relBase: string): WalkedFile[] {
+  return walkTextFiles(dir, relBase, { extensions: RUST_EXTENSIONS, skipDirs: SKIP_DIRS }).filter(
+    (f) => !isTestFile(f.rel),
+  );
 }
 
 /** 编排点函数体在掩码文本中的行区间 [fnLine, closeLine]（1 起算，含端点）。
@@ -344,7 +343,7 @@ function main(): void {
   // 三车道文件必须各自调起共享循环；生产面零自建线程。目录缺失 fail loud
   //（拒绝以空集假绿通过，与全树扫描同款取舍）。
   const marketSyncSrcDir = join(scanRoot, MARKET_SYNC_SRC_REL);
-  let laneFiles: { abs: string; rel: string }[] = [];
+  let laneFiles: WalkedFile[] = [];
   try {
     laneFiles = collectRustFiles(marketSyncSrcDir, MARKET_SYNC_SRC_REL);
   } catch {
@@ -399,7 +398,7 @@ function main(): void {
     }
   }
 
-  let files: { abs: string; rel: string }[] = [];
+  let files: WalkedFile[] = [];
   try {
     files = collectRustFiles(scanRoot, "");
   } catch {
