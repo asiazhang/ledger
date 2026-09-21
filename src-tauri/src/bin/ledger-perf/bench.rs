@@ -1,6 +1,6 @@
-//! bench 子命令：对 generate 产出的库跑 15 项查询基准并输出 min/avg/p95 报告
+//! bench 子命令：对 generate 产出的库跑 16 项查询基准并输出 min/avg/p95 报告
 //! （issue #461 / spec #458；拼音子序列基准 issue #514；商户占比与投资三项
-//! 读基准 issue #1627）。
+//! 读基准 issue #1627；跨账本投资汇总基准 issue #1630）。
 //!
 //! 唯一接缝（验收项）：全部基准经「现有 pub 查询函数 + 标准连接工厂
 //! （[`open_connection`]）打开文件库」调用，与 IPC 命令同一 SQL 路径——
@@ -35,12 +35,22 @@ use ledger_investment::{
     query_money_weighted_return_summary, query_portfolio_value_trend,
 };
 use ledger_reports as reports_domain;
+use ledger_transaction::amount;
 use ledger_transaction::{
     TransactionListFilter, list_transactions_internal, search_transactions_internal,
+};
+use tauri_app_lib::cross_book_summary::{
+    CrossBookBookStatus, collect_other_books, merge_readings, read_book_investment,
 };
 
 /// 列表类基准的页大小（与前端默认页大小同量级）。
 const PAGE_SIZE: usize = 20;
+
+/// 跨账本基准里主库连接的「活动本」标识（生产＝当前活动账本，ADR-0114）。
+/// 附属账本 id 恒为 book-NN（books 模块命名），不与之相撞——逐本探测路径
+/// 因此覆盖全部附属账本，主库走活动本读连接（生产同款：活动本复用进程内
+/// 读连接）。
+const ACTIVE_BOOK_ID: &str = "ledger-perf-main";
 
 /// 分项门禁阈值例外（ADR-0068）：默认判据 200ms 对全部基准生效；个别基准
 /// 确需不同阈值时在此登记（项名精确匹配 + 阈值），增删须同步修订 ADR-0068
@@ -164,6 +174,9 @@ pub(crate) struct BenchConfig {
     pub iterations: usize,
     pub search_term: String,
     pub pinyin_search_term: String,
+    /// 附属账本根目录（issue #1630；生产由 `--db` 同级推导，books 模块）：
+    /// 跨账本投资汇总基准项的前置探测与逐本建连都消费它。
+    pub books_dir: PathBuf,
 }
 
 /// 单项基准的统计结果（人读报告行 + 冒烟断言面）。
@@ -216,6 +229,7 @@ pub(crate) fn run(cli: BenchCli) -> Result<(), String> {
         iterations: cli.iterations,
         search_term: cli.search.clone(),
         pinyin_search_term: cli.search_pinyin.clone(),
+        books_dir: super::books::attached_books_root(&cli.db),
     };
     let results = run_benchmarks(&conn, &cfg)?;
     print_report(&cli.db, &cfg, &results);
@@ -271,7 +285,7 @@ pub(crate) fn gate_failures(results: &[BenchMetrics], max_p95_ms: f64) -> Vec<St
         .collect()
 }
 
-/// 基准执行核心（测试接缝）：对已打开的连接跑全部 15 项基准。
+/// 基准执行核心（测试接缝）：对已打开的连接跑全部 16 项基准。
 ///
 /// 前置数据（账户 id、日期极值、深分页页码）全部经现有查询函数在预热外
 /// 一次性探测，基准闭包内只做「参数已定型的单次查询调用」。
@@ -312,7 +326,16 @@ pub(crate) fn run_benchmarks(
         .map(|d| d.to_string())
         .ok_or_else(|| "日期窗口起点计算失败".to_string())?;
 
-    // ---- 15 项基准（每项一个定型参数的查询闭包） ------------------------
+    // 跨账本投资汇总基准的前置探测（issue #1630，不计入任何基准）：附属账本
+    // 夹具必须齐备且 schema 与主库一致——删除生成侧（或夹具残缺）→ 此处失败
+    // → 基准运行红（删除即变红），不静默少算本数。主库连接即「活动本」，
+    // schema 版本同生产取自活动本（建连必经迁移，即当前应用 schema 版本）。
+    let active_schema_version =
+        ledger_infra::db::schema_version(conn).map_err(|e| e.to_string())?;
+    let attached_books =
+        super::books::discover_attached_books(&cfg.books_dir, active_schema_version)?;
+
+    // ---- 16 项基准（每项一个定型参数的查询闭包） ------------------------
     let first_page_filter = TransactionListFilter {
         page_size: Some(PAGE_SIZE),
         page: Some(1),
@@ -559,6 +582,37 @@ pub(crate) fn run_benchmarks(
                             o.coverage_years
                         )
                     })
+            }),
+        ),
+        (
+            "跨账本投资汇总",
+            Box::new(move |conn| {
+                // 生产编排同形（issue #1630 / ADR-0114，唯一接缝不变）：经壳层
+                // 编排 pub 函数与 IPC 命令同一编排/SQL 路径——附属账本逐本只读
+                // 建连探测取数（collect_other_books 内含密文/空库/版本分派，
+                // 连接取数后即弃）→ 主库连接＝活动本读 → 当期汇率折算合并。
+                // 每次迭代重建附属账本连接是生产形态（汇总命令逐次建连）。
+                let (rows, mut readings) =
+                    collect_other_books(&attached_books, ACTIVE_BOOK_ID, active_schema_version);
+                readings.push(read_book_investment(conn).map_err(|e| e.to_string())?);
+                let target_currency =
+                    amount::default_currency_code(conn).map_err(|e| e.to_string())?;
+                let totals = merge_readings(&readings, &target_currency, &mut |cents, currency| {
+                    amount::convert_to_native_current(conn, cents, currency)
+                })
+                .map_err(|e| e.to_string())?;
+                let included = rows
+                    .iter()
+                    .filter(|r| r.status == CrossBookBookStatus::Included)
+                    .count()
+                    + 1; // + 主库（活动本恒计入）
+                Ok(format!(
+                    "{included}/{} 本计入（{} 附属 + 主库），市值合计 {} 分，可投资资产 {} 分",
+                    rows.len() + 1,
+                    attached_books.len(),
+                    totals.market_value_cents,
+                    totals.investable_assets_cents,
+                ))
             }),
         ),
     ];

@@ -1,5 +1,6 @@
 //! generate 子命令：核心交易域 + 投资域/计划域画像的确定性生成
-//! （issue #459/#460 / ADR-0062）。
+//! （issue #459/#460 / ADR-0062）+ 附属账本夹具（issue #1630：1 主库 + N
+//! 附属账本的多账本数据集形状，见 [`super::books`] 模块头）。
 //!
 //! 建库经应用自身的迁移应用路径（[`open_connection`] + [`init_db`]，从 lib 复用，
 //! 不复制 DDL）；数据行由本模块批量直插（一次性事务 + 关闭 fsync 的连接级 PRAGMA，
@@ -21,6 +22,7 @@ use ledger_infra::db::{init_db, open_connection};
 use ledger_transaction::pinyin_initials;
 
 use super::GenerateCli;
+use super::books;
 use super::investments::{self, MarketData, Portfolio, TradeKind};
 use super::plans;
 use super::rng::{Rng, time_ordered_id};
@@ -164,6 +166,13 @@ pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
 
     let started = std::time::Instant::now();
     let counts = generate_into(&mut conn, &params)?;
+    drop(conn);
+
+    // 附属账本（issue #1630）：跨账本投资汇总基准（bench，ADR-0114）的消费
+    // 夹具——1 主库 + N 附属账本的多账本数据集形状。小规模独立库、种子派生
+    // 确定性、每次先清后建；目录与主库同级（形态同产品「一库 = 一本账」）。
+    let books_dirs = books::generate_attached_books(&cli.out, &params)?;
+
     println!(
         "生成完成：核心域 {} accounts / {} categories（迁移种子另计）/ {} merchants / {} transactions\
          （软删 {}、转账 {}、退款 {}）",
@@ -194,6 +203,12 @@ pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
         counts.exchange_rates,
         counts.fx_rate_history,
         counts.fx_rate_history / 3,
+    );
+    println!(
+        "附属账本：{} 本 × {} 交易（{}）",
+        books_dirs.len(),
+        books::ATTACHED_BOOK_TRANSACTIONS,
+        books::attached_books_root(&cli.out).display(),
     );
     println!(
         "输出：{}（耗时 {:.1?}）",
