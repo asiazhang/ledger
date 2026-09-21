@@ -19,9 +19,8 @@
 //! 退役，issue #698）。
 //!
 //! 编排与网络解耦：核心流程 [`do_incremental_sync_with`] 接受注入的批量报价 / 日 K /
-//! 汇率 K 三个闭包（日 K / 汇率 K 同签名 `&str → Result<Vec<_>>`；批量报价收
-//! [「市场 + 代码」查询单元](QuoteQuery)，issue #1555）、历史净值页闭包
-//!（[`NavQuery`] → [`NavPage`]）、基金名称闭包（`&str → Result<String>`）与进度回调
+//! 汇率 K 三个闭包（日 K / 汇率 K / 新浪单只全历史同签名 `&str → Result<Vec<_>>`；批量报价收
+//! [「市场 + 代码」查询单元](QuoteQuery)，issue #1555）、基金名称闭包（`&str → Result<String>`）与进度回调
 //! 闭包（`done, total`，issue #897），测试以 mock 数据驱动（不依赖真实网络）；
 //! 生产经 [`super::channels`] 的通道束接 HTTP 层（复用主机池/重试/限流 pacer
 //! 与价格换算）。进度回调闭包是本函数唯一的对外观察点：编排核心不碰网络、不碰事件
@@ -58,11 +57,11 @@ use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 use ledger_transaction::amount::default_currency_code;
 
 use super::channels::{FetchFuture, QuoteItem, QuoteQuery};
-use super::fund_nav::{NavPage, NavQuery};
+use super::fund_nav::NavPoint;
 use super::fund_price_refresh::{FundSyncStats, refresh_one_fund_price};
 use super::http::KlineBar;
 use super::persist::upsert_fx_rate_history;
-use super::progress::{FundNavProgress, SyncProgress};
+use super::progress::SyncProgress;
 use super::session::ScopedSession;
 
 /// 持仓股票的报价代码：数据源响应 f12 与查询单元的代码均为裸代码（如 600519 / 00700）。
@@ -278,14 +277,14 @@ async fn take_bulk_surface(fetch: &mut FetchFundBatch, codes: &[String]) -> Opti
 /// 未打标标的进逐只通道先确认、确认即退出采集链路。
 // 五个逐标的抓取闭包（含货基判定确认）+ 取数面 + 会话 + 进度回调 + 写入见证
 // 共 9 参：网络接缝逐通道注入使然（与 HTTP 层多主机请求同形），参数表就是
-// 「本编排消费哪些外部通道」的清单（issue #1377 起日 K 与单请求全量净值两通道
-// 归后台补全，不在本编排的参数表）。
+// 「本编排消费哪些外部通道」的清单（issue #1377 起日 K 通道归后台补全，不在
+// 本编排的参数表；issue #1571 起逐只净值回退与后台补全共用新浪全历史通道）。
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn do_incremental_sync_with<Q, F, X, N, M, C, P>(
+pub(super) async fn do_incremental_sync_with<Q, F, X, H, M, C, P>(
     session: &Q,
     fetch: &mut F,
     fetch_fx: &mut X,
-    fetch_nav: &mut N,
+    fetch_nav_history: &mut H,
     fetch_fund_name: &mut M,
     confirm_money_fund: &mut C,
     bulk: &mut BulkFetchSurfaces,
@@ -298,7 +297,7 @@ where
     Q: ScopedSession,
     F: FnMut(&[QuoteQuery]) -> FetchFuture<Vec<QuoteItem>> + Send,
     X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
-    N: FnMut(&NavQuery) -> FetchFuture<NavPage> + Send,
+    H: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
     // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
     // （不落库）。生产接基金详情通道，测试注入 mock。
     M: FnMut(&str) -> FetchFuture<String> + Send,
@@ -500,11 +499,12 @@ where
 
     // ④ 基金分区逐只（issue #897 逐只合并推进）：现价刷新（ADR-0122 决策 2，
     // 委托 [`refresh_one_fund_price`]——批量面命中整只零请求，未收录/降级退逐只
-    // 短窗，issue #1377 起不再承担首刷与缺周点深补）+ 权威名称随行刷新
+    // 通道（新浪全历史面，issue #1571），issue #1377 起不再承担首刷与缺周点深补）
+    // + 权威名称随行刷新
     //（issue #827）合并为该基金的一格；「已是最新（无新净值）」同样推进。名称与
     // 耗时随取数面改写：批量面命中即零请求（名称与最新净值同面返回，最新净值
-    // 日期即「是否有新净值」的判据），未收录的标的退回既有逐标的通道（名称走
-    // 基金详情通道、净值走 lsjz 短窗）。名称充代码行无通道：不进净值分区（不进
+    // 日期即「是否有新净值」的判据），未收录的标的退回逐标的通道（名称与净值
+    // 同退逐只）。名称充代码行无通道：不进净值分区（不进
     // 分母、零请求），计入跳过（见上）。
     let mut fund_stats = FundSyncStats {
         synced: 0,
@@ -512,8 +512,6 @@ where
         written: 0,
     };
     for fund in &funds {
-        // 页级推进（issue #1061）：`done`/`total` 仍是标的级口径，页抓取返回后
-        // 才带出本基金的页明细——抓取内部的退避/重试等待不产生推进。
         let code = fund.symbol.clone();
         // 覆盖面以名称字典为准（有名称即被面收录）：未收录 = 缺口，逐条回退逐标的
         // 通道补齐，不触发熔断。面已收录但净值表无该码 = 货基错位行（万份收益在
@@ -529,26 +527,14 @@ where
             );
         }
         {
-            let mut on_page = |page: u64, pages: u64| {
-                progress(SyncProgress {
-                    done,
-                    total,
-                    fund: Some(FundNavProgress {
-                        code: code.clone(),
-                        page,
-                        pages,
-                    }),
-                });
-            };
             let written_before = fund_stats.written;
             refresh_one_fund_price(
                 session,
                 fund,
                 latest_hint,
-                fetch_nav,
+                fetch_nav_history,
                 confirm_money_fund,
                 &mut fund_stats,
-                &mut on_page,
             )
             .await?;
             // 净值实际落库才标记（「已是最新」不算写入，与 fund_stats.written 同判）。

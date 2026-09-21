@@ -203,7 +203,6 @@
     "failed": "Sync failed: {message}",
     "degraded": "Degraded: this sync is slower",
     "progress": "Syncing instruments {done}/{total}",
-    "progressFundPages": "Backfilling {code}: page {page}/{pages}",
     "progressAriaLabel": "Instrument info sync progress"
   },
   "staleness": {
@@ -265,7 +264,6 @@
     "customSuccess": "Instrument created: {name} ({symbol})"
   },
   "backfill": {
-    "progress": "Backfilling price history {done}/{total}",
-    "progressFundPages": "Backfilling {code}: page {page}/{pages}"
+    "progress": "Backfilling price history {done}/{total}"
   }
 }

@@ -1,12 +1,13 @@
-//! 同步网络通道束（issue #1276）：七个逐标的抓取通道 + 一个批量取数面
+//! 同步网络通道束（issue #1276）：六个逐标的抓取通道 + 一个批量取数面
 //!（ADR-0121 / issue #1374 / ADR-0130 决策 2）的打包形态与生产/测试换装接缝。
 //!
-//! 编排（[`super::incremental`]）消费六个逐标的抓取闭包（批量报价 / 日 K / 汇率 K /
-//! 历史净值页 / 新浪单只全历史 / 基金名称）与一个批量取数面（新浪 `f_` 面：
-//! 名称与最新净值同面返回，见 `do_incremental_sync_with`；issue #1565 换源）；
-//! 基金名称闭包走按代码取价编排（新浪批量面 + 官方披露，issue #1568 换源）；
-//! 货基判定确认闭包（issue #1563 / ADR-0126 决策 3 换源）由现价刷新与历史补全
-//! 两编排消费。
+//! 束内闭包：批量报价 / 日 K / 汇率 K 线 / 新浪单只全历史 / 基金名称 /
+//! 货基判定确认（issue #1563 换源，由现价刷新与历史补全两编排消费）六个，
+//! 外加一个批量取数面（新浪 `f_` 面：名称与最新净值同面返回；issue #1565 换源）。
+//! 增量编排（[`super::incremental`]）消费批量报价 / 汇率 K / 新浪单只全历史
+//!（issue #1571 起与历史补全同通道）/ 基金名称四闭包 + 批量面 + 货基确认，
+//! 见 `do_incremental_sync_with`；日 K 通道归价格历史后台补全（issue #1377）。
+//! 基金名称闭包走按代码取价编排（新浪批量面 + 官方披露，issue #1568 换源）。
 //! 本模块把它们打成**一个通道束**：生产经 [`SyncFetchChannels::production`]
 //! 接 HTTP 层（复用主机池 / 重试 / 限流 pacer 与价格换算），测试把桩闭包装进
 //! 同一结构注入命令壳（壳层 `SyncChannelsSlot` 管理态，issue #1276 的「命令壳
@@ -34,7 +35,7 @@ use ledger_infra::error::Result;
 use super::bulk::BulkFetchSurfaces;
 use super::csrc::confirm_money_fund_form;
 use super::fund::fetch_fund_quote;
-use super::fund_nav::{NavPage, NavPoint, NavQuery, fetch_nav_page};
+use super::fund_nav::NavPoint;
 use super::http::{
     ForegroundGuard, KlineBar, Pacer, build_client, fetch_fx_kline, lock_pacer, shared_pacer,
     wait_foreground_idle,
@@ -52,7 +53,7 @@ use super::tencent_kline;
 pub type FetchFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 
 /// 「市场 + 代码」查询单元（issue #1555 批量报价 / issue #1556 日 K）：编排只递
-/// 「市场 + 代码」，数据源查询键（腾讯报价键 / 腾讯 K 线键 / 东财 secid 等）由
+/// 「市场 + 代码」，数据源查询键（腾讯报价键 / 腾讯 K 线键等）由
 /// 各通道在内部构造——换源只改通道实现，编排零改动。`market` 取既有市场闭集
 ///（`sh`/`sz`/`hk`/`nasdaq`/`nyse`/`amex`），`code` 是响应回显形态的裸代码
 ///（如 `600519` / `00700`，已去市场后缀）。
@@ -83,11 +84,10 @@ pub type FetchKline = Box<dyn FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> +
 /// 汇率 K 线抓取通道闭包形态：币种对（如 `USDCNY`）→ 日线序列（币种对不是
 /// 行情查询键，键形态归汇率通道内部）。
 pub type FetchFxKline = Box<dyn FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send>;
-/// 历史净值页抓取通道闭包形态。
-pub type FetchNavPage = Box<dyn FnMut(&NavQuery) -> FetchFuture<NavPage> + Send>;
 /// 单只全历史净值抓取通道闭包形态（新浪全历史面，issue #1566 接线）：代码 →
 /// 整只历史单位净值（含已终止基金）；窗口语义（首刷近两年 / 水位次日增量）由
-/// 消费方本地裁剪，通道不携带窗口参数。
+/// 消费方本地裁剪，通道不携带窗口参数。现价刷新逐只回退与价格历史后台补全
+/// 共用本通道（issue #1571：逐只分页通道随 lsjz 换源退役）。
 pub type FetchNavHistory = Box<dyn FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send>;
 /// 基金详情名称抓取通道闭包形态（issue #827）。
 pub type FetchFundName = Box<dyn FnMut(&str) -> FetchFuture<String> + Send>;
@@ -109,11 +109,9 @@ pub struct SyncFetchChannels {
     pub fetch_kline: FetchKline,
     /// 汇率 K 线：币种对（如 `USDCNY`）→ 日线序列。
     pub fetch_fx: FetchFxKline,
-    /// 历史净值页（lsjz 分页）：查询 → 单页净值（现价刷新逐只短窗消费，
-    /// issue #1377）。
-    pub fetch_nav: FetchNavPage,
     /// 单只全历史净值（新浪全历史面，issue #1566 接线）：代码 → 整只历史
-    /// 单位净值（含已终止基金）；价格历史后台补全消费（首刷深回填与缺周点补齐）。
+    /// 单位净值（含已终止基金）；价格历史后台补全（首刷深回填与缺周点补齐）
+    /// 与现价刷新逐只回退共用（issue #1571：逐只分页通道随 lsjz 换源退役）。
     pub fetch_nav_history: FetchNavHistory,
     /// 基金详情名称（issue #827）：代码 → 数据源权威名称。
     pub fetch_fund_name: FetchFundName,
@@ -242,20 +240,6 @@ impl SyncFetchChannels {
                     })
                 })
             },
-            fetch_nav: {
-                let client = client.clone();
-                let pacer = pacer.clone();
-                Box::new(move |query: &NavQuery| {
-                    let query = query.clone();
-                    let client = client.clone();
-                    let pacer = pacer.clone();
-                    Box::pin(async move {
-                        let _foreground = lane.before_request().await;
-                        let mut pacer = lock_pacer(&pacer).await;
-                        fetch_nav_page(&client, &mut pacer, &query).await
-                    })
-                })
-            },
             fetch_nav_history: {
                 let client = client.clone();
                 let pacer = pacer.clone();
@@ -362,8 +346,10 @@ impl Lane {
 /// [`do_incremental_sync_with`](super::incremental::do_incremental_sync_with)
 /// （编排本体单点，另透传写入见证，issue #1277）。命令壳经本入口跑同步——
 /// 生产束（[`SyncFetchChannels::production`]）与测试注入束共用，锁形态与
-/// 编排路径零分叉。日 K 与新浪单只全历史两通道不进现价刷新编排（issue #1377
-/// 现价与历史解耦）：束内保留它们供价格历史后台补全消费（issue #1561 / #1566）。
+/// 编排路径零分叉。日 K 通道不进现价刷新编排（issue #1377 现价与历史解耦）：
+/// 束内保留供价格历史后台补全消费（issue #1561）；新浪单只全历史通道自
+/// issue #1571 起为现价刷新逐只回退与后台补全共用（逐只分页通道随 lsjz 换源
+/// 退役）。
 pub async fn do_incremental_sync_channels<Q, P>(
     session: &Q,
     channels: &mut SyncFetchChannels,
@@ -378,7 +364,7 @@ where
         session,
         &mut channels.fetch_quotes,
         &mut channels.fetch_fx,
-        &mut channels.fetch_nav,
+        &mut channels.fetch_nav_history,
         &mut channels.fetch_fund_name,
         &mut channels.confirm_money_fund_form,
         &mut channels.bulk,
@@ -400,15 +386,6 @@ mod tests {
             fetch_quotes: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_kline: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
-            fetch_nav: Box::new(|_| {
-                Box::pin(async {
-                    Ok(NavPage {
-                        points: vec![],
-                        total: 0,
-                        blocked: false,
-                    })
-                })
-            }),
             fetch_nav_history: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_fund_name: Box::new(|_| Box::pin(async { Ok(String::new()) })),
             confirm_money_fund_form: Box::new(|_| Box::pin(async { Ok(false) })),
