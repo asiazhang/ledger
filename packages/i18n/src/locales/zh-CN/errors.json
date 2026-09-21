@@ -93,6 +93,8 @@
   "transaction": {
     "amount-positive": "金额必须大于 0",
     "not-found": "交易不存在: {0}",
+    "page-size-over-cap": "page_size {0} 超过单页上限 {1}",
+    "limit-out-of-range": "limit {0} 超出允许范围（0 到 {1}，负值无上限仅限 IPC）",
     "merchant-unsupported": "交易类型 {0} 不能携带商户",
     "category-unsupported": "交易类型 {0} 不能携带分类",
     "merchant-id-and-name-conflict": "merchant_id 与 merchant_name 不可同时提供",

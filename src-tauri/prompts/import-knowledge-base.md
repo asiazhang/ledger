@@ -56,10 +56,10 @@
 
 迁移完成的判定，以下两项全过才算完成：
 
-- **读回核对**：`GET /api/v1/transactions` 按日期区间过滤（区间取源文件覆盖范围）核对：响应为 `{items, total}`，读回取 `.items`；不传分页参数（`page`/`page_size`）即返回满足条件的全部交易，逐行核对源文件各行是否全部落库、金额是否一致；按账户核对（含转账转入侧）时加 `involving_account_id`（涉及账户：`account_id` 或 `to_account_id` 命中即算），账户 id 取自 `GET /api/v1/accounts`（**含黑洞账户**）。
-- 读回过滤参数全部可选：`kinds=expense,refund` 逗号分隔多类型（与其余维度 AND 组合）、`category_id` / `merchant_id` 按分类/商户精确过滤（含软删字典的历史行）、`uncategorized_only=true` 仅无分类行、`limit` 取前 N 条与分页互斥；默认按日期倒序稳定排序，翻页无重复无遗漏。
+- **读回核对**：`GET /api/v1/transactions` 按日期区间过滤（区间取源文件覆盖范围）核对：响应为 `{items, total}`，读回取 `.items`；**HTTP 单请求行数上限为 100：缺省（不传分页参数）只返回第一页，不再返回全部——必须分页读回**：携 `page_size=100` 从 `page=1` 起逐页拉取，累计各行 `items` 直到累计条数 = `total` 即已读全，逐行核对源文件各行是否全部落库、金额是否一致；只核对某页/某段时按 `page` 直取该页。按账户核对（含转账转入侧）时加 `involving_account_id`（涉及账户：`account_id` 或 `to_account_id` 命中即算），账户 id 取自 `GET /api/v1/accounts`（**含黑洞账户**）。
+- 读回过滤参数全部可选：`kinds=expense,refund` 逗号分隔多类型（与其余维度 AND 组合）、`category_id` / `merchant_id` 按分类/商户精确过滤（含软删字典的历史行）、`uncategorized_only=true` 仅无分类行、`limit` 取前 N 条（0 到 100，超出或负值报 400 码化错误）与分页互斥；`page_size` 超过 100 也报 400 码化错误（`transaction.page-size-over-cap` / `transaction.limit-out-of-range`，按码自纠减小后重试）；默认按日期倒序稳定排序，翻页无重复无遗漏。
 - **查询纪律**：子集检查——只确认某类行是否存在或求合计——直接用服务端过滤参数查询（如按 `kinds` 过滤，多类型用法见上条），返回行即全部待核对对象。
-- **分页纪律**：分页读回时响应 `total` 是满足过滤条件的总条数，`len(items)` 只是本页条数；未核对 `total` 前不得下「不存在 / 已全部读回」的结论（按日期倒序的首页只覆盖最新一段，更早区间可能仍有行）。
+- **分页纪律**：分页读回时响应 `total` 是满足过滤条件的总条数，`len(items)` 只是本页条数；未核对 `total` 前不得下「不存在 / 已全部读回」的结论（首页按日期倒序只覆盖最新一段，更早区间可能仍有行）；`total` > 已读条数就必须继续翻页取齐，不得以首页 100 条截断下结论。
 - 投资行（buy / sell / convert）读回的标的关联 `source` 字段等来源口径，与投资 `kinds` 读回过滤一起由投资节承载（见「投资交易」节对账条）。
 - **余额核对**：`GET /api/v1/accounts/balances`（**含黑洞账户**）核对各账户期末余额与源数据吻合。
 

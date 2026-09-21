@@ -1,8 +1,13 @@
-//! 交易端点：列表（过滤 + 分页）/ 批量创建（默认去重）/ 全字段替换 / 软删除。
+//! 交易端点：列表（过滤 + 分页 + HTTP 缺省上限）/ 批量创建（默认去重）/ 全字段替换 / 软删除。
 //!
 //! 写端点经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
 //! 事务、置脏、信号内化单点，「即建商户」证据随闭包返回必达；读端点经
 //! `run_db`（形状乙）。
+//!
+//! 列表读端点的 HTTP 缺省上限（issue #1631）：缺省不再返回全部，等价第一页 ×
+//! 上限；显式 `page_size` / `limit` 超上限或负值报 400 码化错误。校验住本层，
+//! 与 IPC 共用的域实现（`list_transactions_internal`）零改动——IPC 缺省全量
+//! 语义不变（ADR-0008 原决策辖 IPC；HTTP 半边修订见其修订注记）。
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -21,6 +26,46 @@ use ledger_transaction::{
     TransactionListResult, UpdateTransactionInput,
 };
 
+/// HTTP 列表单请求行数上限：缺省分页大小与显式 `page_size` / `limit` 共用同一
+/// 上限（issue #1631）。取值对齐既有上限口径——标的搜索端点「上限收敛 100」
+/// （AI 上下文预算可控）与前端页大小闭集 10/20/50/100 的最大值。
+const HTTP_MAX_PAGE_SIZE: usize = 100;
+
+/// HTTP 列表入参行数守卫（issue #1631，只辖 HTTP）：缺省（`page_size` 与
+/// `limit` 均未携带）注入等价第一页 × 上限，不再整表序列化；显式超上限或
+/// 负值 `limit`（SQLite 负值无上限语义仅限 IPC）报 400 码化错误——拒绝而非
+/// 静默截断，截断会造成读回少行不自知，AI 导入按码自纠（ADR-0050）。只携
+/// `limit` 时不注入缺省页（保留「取前 N 条」与分页互斥的既有语义，ADR-0008）。
+fn enforce_http_page_bounds(
+    mut filter: TransactionListFilter,
+) -> Result<TransactionListFilter, AppError> {
+    if let Some(page_size) = filter.page_size {
+        if page_size > HTTP_MAX_PAGE_SIZE {
+            let requested = page_size.to_string();
+            let cap = HTTP_MAX_PAGE_SIZE.to_string();
+            return Err(AppError::codedp(
+                "transaction.page-size-over-cap",
+                format!("page_size {requested} 超过单页上限 {cap}"),
+                &[&requested, &cap],
+            ));
+        }
+    } else if filter.limit.is_none() {
+        filter.page_size = Some(HTTP_MAX_PAGE_SIZE);
+    }
+    if let Some(limit) = filter.limit
+        && (limit < 0 || limit > HTTP_MAX_PAGE_SIZE as i64)
+    {
+        let requested = limit.to_string();
+        let cap = HTTP_MAX_PAGE_SIZE.to_string();
+        return Err(AppError::codedp(
+            "transaction.limit-out-of-range",
+            format!("limit {requested} 超出允许范围（0 到 {cap}，负值无上限仅限 IPC）"),
+            &[&requested, &cap],
+        ));
+    }
+    Ok(filter)
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/transactions",
@@ -29,6 +74,11 @@ use ledger_transaction::{
     description = "读回/列表唯一入口：返回 `{items, total}`，过滤参数（from/to、account_id、\
                   involving_account_id、merchant_id、category_id、instrument_id、kinds、\
                   uncategorized_only、limit、page/page_size）全部可选；默认按日期倒序稳定排序。\
+                  HTTP 单请求行数上限 100：缺省（不传 page/page_size）等价第一页 × 100，\
+                  不再返回全部；显式 page_size 超过 100 报 400 码化错误 \
+                  `transaction.page-size-over-cap`，limit 超过 100 或负值报 400 \
+                  `transaction.limit-out-of-range`（负值无上限语义仅限 IPC）；\
+                  读全部须按 total 翻页取齐。\
                   读回核对与参数语义见导入知识「对账完成判定」节；行携带 `source` 来源字段（读时反查推导），\
                   无来源交易为`null`。",
     params(
@@ -41,12 +91,13 @@ use ledger_transaction::{
         ("uncategorized_only" = Option<bool>, Query, description = "true 时仅返回无分类交易；与 category_id 同携按 AND 组合"),
         ("instrument_id" = Option<String>, Query, description = "按标的过滤（ADR-0107）：命中证券交易扩展表中该标的的 buy/sell 行，convert 任一腿命中即算（转入腿同算）；与其余维度 AND 组合"),
         ("kinds" = Option<Vec<TransactionKind>>, Query, description = "交易类型集合过滤（唯一类型维度，手动多选与下钻共用）：逗号分隔单参数如 expense,refund（同时承担单值与多值，取代原单值 kind 参数），命中 kind IN (...)；与其余维度 AND 组合，非法值 4xx"),
-        ("limit" = Option<i64>, Query, description = "取前 N 条，缺省返回全部；传 page_size 时分页路径生效"),
+        ("limit" = Option<i64>, Query, description = "取前 N 条，须在 0 到 100 之间（负值无上限语义仅限 IPC），超范围 400 码化错误；与 page_size 互斥，仅携 limit 时按 limit 截取"),
         ("page" = Option<usize>, Query, description = "页码，从 1 开始，默认 1"),
-        ("page_size" = Option<usize>, Query, description = "每页条数，缺省返回全部（total 恒返回）")
+        ("page_size" = Option<usize>, Query, description = "每页条数，上限 100，超过报 400 码化错误；缺省等价第一页 × 100（total 恒返回，读全部按 total 翻页取齐）")
     ),
     responses(
         (status = 200, description = "交易分页结果 {items, total}", body = TransactionListResult),
+        (status = 400, description = "分页参数超上限：page_size > 100（transaction.page-size-over-cap）或 limit 超范围/负值（transaction.limit-out-of-range）", body = ErrorResponse),
         (status = 500, description = "数据库错误", body = ErrorResponse)
     )
 )]
@@ -54,6 +105,7 @@ pub async fn list_transactions_handler(
     State(read): State<ReadConn>,
     Query(query): Query<TransactionListFilter>,
 ) -> Result<Json<TransactionListResult>, AppError> {
+    let query = enforce_http_page_bounds(query)?;
     read_entry("GET /api/v1/transactions", read.0, move |conn| {
         let result = ledger_transaction::list_transactions_internal(conn, &query)?;
         Ok(Json(result))
