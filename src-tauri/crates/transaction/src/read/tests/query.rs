@@ -7,7 +7,7 @@ use tauri_app_lib::ledger_transaction::{TransactionInput, TransactionListFilter}
 use tauri_app_lib::test_support;
 
 use rusqlite::params;
-use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::amount::{FxRateSource, TransactionKind};
 
 #[test]
 fn list_transactions_ordered_by_date_desc() {
@@ -870,4 +870,73 @@ fn list_transactions_filter_by_unknown_instrument_returns_empty() {
     .unwrap();
     assert_eq!(result.total, 0);
     assert!(result.items.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// 折算来源留痕读回（issue #1548 / ADR-0011 修订，V029）
+// ---------------------------------------------------------------------------
+
+/// 列表 / 单笔 / 搜索读回折算来源留痕（#1548 验收 2/3）：非本位币行能读回
+/// 「使用了哪条汇率、来自哪里」；显式来源（写侧输入 #1549 接入，此处直置库内
+/// 状态作闭集映射夹具）读回为 `explicit`；同币种行两列恒空。
+#[test]
+fn readback_exposes_fx_rate_trace_and_distinguishes_sources() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-fx", "港币", "cash", "HKD", 0);
+    // 交易周（2026-01-05 当周）序列点 0.9：10000 分 × 0.9 = 9000 分。
+    test_support::seed_fx_rate_history(&conn, "fxh-read", "HKD", "CNY", "2026-01-05", 0.9);
+
+    let mut input = make_input("acc-fx", TransactionKind::Expense, 10000, "2026-01-07");
+    input.currency_code = "HKD".into();
+    let fx_id = create_transaction_internal(&conn, input).unwrap().id;
+    // 同币种对照行：不折算，两列恒空。
+    let cny_id = create_transaction_internal(
+        &conn,
+        make_input("acc-fx", TransactionKind::Expense, 500, "2026-01-07"),
+    )
+    .unwrap()
+    .id;
+
+    // 列表读回：序列行带留痕，同币种行为空。
+    let result = list_transactions_internal(&conn, &TransactionListFilter::default()).unwrap();
+    let by_id = |id: &str| {
+        result
+            .items
+            .iter()
+            .find(|t| t.id == id)
+            .unwrap_or_else(|| panic!("列表应含行 {id}"))
+    };
+    let fx_row = by_id(&fx_id);
+    assert_eq!(fx_row.amount_native_cents, 9000);
+    assert_eq!(fx_row.fx_rate_used, Some(0.9));
+    assert_eq!(fx_row.fx_rate_source, Some(FxRateSource::Series));
+    let cny_row = by_id(&cny_id);
+    assert_eq!(cny_row.fx_rate_used, None, "同币种不折算：无汇率留痕");
+    assert_eq!(cny_row.fx_rate_source, None, "同币种不折算：无来源留痕");
+
+    // 单笔读回同口径。
+    let got = get_transaction_internal(&conn, &fx_id).unwrap();
+    assert_eq!(got.fx_rate_source, Some(FxRateSource::Series));
+
+    // 「调用方显式给定」的读回区分（#1548 验收 2）：写侧输入由 #1549 接入，
+    // 先以库内闭集字面量作夹具——读回必须映射为 `explicit`，而非静默降级。
+    conn.execute(
+        "UPDATE transactions SET fx_rate_used=0.85, fx_rate_source='explicit' WHERE id=?1",
+        params![fx_id],
+    )
+    .unwrap();
+    let got = get_transaction_internal(&conn, &fx_id).unwrap();
+    assert_eq!(got.fx_rate_used, Some(0.85));
+    assert_eq!(got.fx_rate_source, Some(FxRateSource::Explicit));
+
+    // 搜索读回与列表同源（同一 FromRow 列序）；断言取显式来源行（上一分支
+    // 改写后的现状），证明搜索回表同样带出留痕列。
+    let found = search_transactions_internal(&conn, "港币", 1, 20, None, None, None, None).unwrap();
+    assert!(
+        found
+            .items
+            .iter()
+            .any(|t| t.id == fx_id && t.fx_rate_source == Some(FxRateSource::Explicit)),
+        "搜索读回应带折算来源留痕"
+    );
 }

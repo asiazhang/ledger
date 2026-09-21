@@ -277,8 +277,8 @@ async fn test_openapi_doc_size_within_budget() {
 
     let bytes = body_to_bytes(response.into_body()).await;
     assert!(
-        bytes.len() <= 50 * 1024,
-        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 50KB）",
+        bytes.len() <= 52 * 1024,
+        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 52KB）",
         bytes.len()
     );
 }

@@ -64,12 +64,19 @@ pub struct Input {
 }
 
 /// 归一化后的交易行字段（供 [`insert_row`] / [`update_row`] 落库）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NormalizedRow {
     pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
     pub amount_native_cents: i64,
+    /// 折算来源留痕（issue #1548 / ADR-0011 修订，V029）：本笔折算使用的汇率值与
+    /// 来源，随行落库（`transactions.fx_rate_used` / `fx_rate_source`）。由
+    /// [`amount::convert_to_native_on_trade_date`] 的返回值填充；未折算（与本位币
+    /// 同币种、无现金腿的 split）为 `None`——空值即「本笔未折算」的诚实语义。
+    /// 不参与导入幂等身份（去重哈希不含折算结果）。
+    pub fx_rate_used: Option<f64>,
+    pub fx_rate_source: Option<amount::FxRateSource>,
     pub account_id: String,
     pub to_account_id: Option<String>,
     /// 可选出资账户（issue #935 / ADR-0096）：随行落库的归因端点引用。
@@ -227,7 +234,9 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         kind: input.kind,
         amount_cents: input.amount_cents,
         currency_code,
-        amount_native_cents: native,
+        amount_native_cents: native.native_cents,
+        fx_rate_used: native.fx_rate_used,
+        fx_rate_source: native.fx_rate_source,
         account_id,
         to_account_id,
         // 通用 kind 经准入校验后恒为 None（仅 buy/sell 可携带，见 normalize）。
@@ -342,8 +351,9 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         funding_account_id,category_id,merchant_id,policy_id,refund_of_transaction_id,note,note_pinyin,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,0)",
+         funding_account_id,category_id,merchant_id,policy_id,refund_of_transaction_id,note,note_pinyin,date,created_at,updated_at,version,device_id,\
+         fx_rate_used,fx_rate_source,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,0)",
         params![
             id,
             row.kind.as_str(),
@@ -364,6 +374,8 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
             now,
             1,
             device_id(conn)?,
+            row.fx_rate_used,
+            row.fx_rate_source.map(amount::FxRateSource::as_str),
         ],
     )?;
     // 余额缓存写路径（issue #491 / ADR-0067）：新行落库后在同一事务内对受影响
@@ -403,7 +415,7 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
         "UPDATE transactions \
          SET kind=?2, amount_cents=?3, currency_code=?4, amount_native_cents=?5, account_id=?6, \
          to_account_id=?7, funding_account_id=?8, category_id=?9, merchant_id=?10, policy_id=?11, refund_of_transaction_id=?12, note=?13, note_pinyin=?14, date=?15, \
-         updated_at=?16, version=version+1, device_id=?17 \
+         updated_at=?16, version=version+1, device_id=?17, fx_rate_used=?18, fx_rate_source=?19 \
          WHERE id=?1",
         params![
             id,
@@ -423,6 +435,8 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             row.date,
             now_iso(),
             device_id(conn)?,
+            row.fx_rate_used,
+            row.fx_rate_source.map(amount::FxRateSource::as_str),
         ],
     )?;
     // 余额缓存写路径：受影响账户 = 旧行 ∪ 新行账户引用三元组，消费余额模块唯一
@@ -461,6 +475,8 @@ impl TryFrom<&NormalizedTransaction> for NormalizedRow {
             amount_cents: norm.amount_cents,
             currency_code: norm.currency_code.clone(),
             amount_native_cents: norm.amount_native_cents,
+            fx_rate_used: norm.fx_rate_used,
+            fx_rate_source: norm.fx_rate_source,
             account_id: norm.account_id.clone(),
             to_account_id: norm.to_account_id.clone(),
             funding_account_id: norm.funding_account_id.clone(),
@@ -484,6 +500,8 @@ impl From<&NormalizedRow> for NormalizedTransaction {
             amount_cents: row.amount_cents,
             currency_code: row.currency_code.clone(),
             amount_native_cents: row.amount_native_cents,
+            fx_rate_used: row.fx_rate_used,
+            fx_rate_source: row.fx_rate_source,
             account_id: row.account_id.clone(),
             to_account_id: row.to_account_id.clone(),
             funding_account_id: row.funding_account_id.clone(),

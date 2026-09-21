@@ -6,9 +6,11 @@
 //! 参考数据（账户字典）的同步归 #860，本目录两端以同一夹具等量种子。
 
 use super::super::{ApplyReport, DomainCommand, OpOutcome, apply_ops, parked_ops, read_ops};
-use super::common::{make_expense, read_transaction};
+use super::common::{make_expense, read_transaction, wire_in, wire_out};
 use ledger_transaction::write::protocol;
-use tauri_app_lib::test_support::{self, assert_balance_cache_matches_realtime, seed_account};
+use tauri_app_lib::test_support::{
+    self, assert_balance_cache_matches_realtime, seed_account, seed_fx_rate_history,
+};
 
 /// A 端记账 → B 端重放：业务字段逐列一致 + 派生缓存经既有接缝重算自洽。
 #[test]
@@ -39,6 +41,72 @@ fn a_writes_b_replays_ledger_converges() {
     assert_eq!(expected.is_deleted, 0);
     // 派生数据不进日志：B 端经既有接缝重算且自洽（ADR-0067 延伸）。
     assert_balance_cache_matches_realtime(&conn_b);
+}
+
+/// 折算来源留痕随 op 收敛（#1548 / ADR-0011 修订）：A 端外币行折算后，汇率值与
+/// 来源随行载荷搬运，B 端**无本地汇率历史**也收敛到与 A 端一致的行（源端折算
+/// 语义的留痕面：重放不重折算，也不依赖重放端的汇率数据）。
+#[test]
+fn fx_rate_trace_rides_op_and_converges() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_account(&conn_a, "acc-hkd", "港币户", "cash", "HKD", 0);
+    seed_account(&conn_b, "acc-hkd", "港币户", "cash", "HKD", 0);
+    // 只种 A 端汇率历史：B 端序列为空，重放仍必须得到同一行（含留痕）。
+    seed_fx_rate_history(&conn_a, "fxh-sync", "HKD", "CNY", "2026-01-05", 0.9);
+
+    let mut input = make_expense("acc-hkd", 10000, "港币午饭");
+    input.currency_code = "HKD".into();
+    input.date = "2026-01-07".into();
+    let created = protocol::create(&conn_a, input).unwrap();
+
+    apply_ops(&conn_b, &read_ops(&conn_a).unwrap()).unwrap();
+
+    let expected = read_transaction(&conn_a, &created.id).unwrap();
+    assert_eq!(expected.amount_native_cents, 9000);
+    assert_eq!(expected.fx_rate_used, Some(0.9));
+    assert_eq!(
+        read_transaction(&conn_b, &created.id).unwrap(),
+        expected,
+        "重放端应收敛到与源端一致的行（含折算留痕）"
+    );
+    assert_balance_cache_matches_realtime(&conn_b);
+}
+
+/// 旧格式 op（行载荷无留痕字段，V029 前设备产出）前向兼容：重放不报错、
+/// 按缺省 `None` 落库——与「写入时点早于留痕功能」的存量行 NULL 语义一致。
+#[test]
+fn legacy_op_without_fx_trace_fields_replays_with_null_trace() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_account(&conn_a, "acc-hkd", "港币户", "cash", "HKD", 0);
+    seed_account(&conn_b, "acc-hkd", "港币户", "cash", "HKD", 0);
+    seed_fx_rate_history(&conn_a, "fxh-sync", "HKD", "CNY", "2026-01-05", 0.9);
+
+    let mut input = make_expense("acc-hkd", 10000, "港币午饭");
+    input.currency_code = "HKD".into();
+    input.date = "2026-01-07".into();
+    let created = protocol::create(&conn_a, input).unwrap();
+
+    // 把 op 改写成旧格式（V029 前设备产出）：行载荷无两个留痕字段、schema 版本 22。
+    let mut legacy: serde_json::Value = serde_json::from_str(&wire_out(&conn_a)[0]).unwrap();
+    legacy["schema_version"] = serde_json::json!(22);
+    let row = legacy["command"]["payload"]["row"].as_object_mut().unwrap();
+    let removed = row.remove("fx_rate_used").is_some() && row.remove("fx_rate_source").is_some();
+    assert!(removed, "前置：op 行载荷应携带留痕字段");
+    let raw = serde_json::to_string(&legacy).unwrap();
+
+    let reports = wire_in(&conn_b, &[raw]);
+    assert!(
+        matches!(reports[0].outcome, OpOutcome::Applied),
+        "旧格式 op 应照常应用，实际: {:?}",
+        reports[0].outcome
+    );
+    let row = read_transaction(&conn_b, &created.id).unwrap();
+    assert_eq!(row.amount_native_cents, 9000, "源端折算结果照常搬运");
+    assert_eq!(row.fx_rate_used, None, "旧载荷缺省：无汇率留痕");
+    assert_eq!(row.fx_rate_source, None, "旧载荷缺省：无来源留痕");
+    assert!(parked_ops(&conn_b).unwrap().is_empty());
 }
 
 #[test]

@@ -2,6 +2,12 @@
 
 本文件记录开源记账（OpenLedger）各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [Unreleased]
+
+### Added
+
+- **交易**：非本位币交易随行留痕折算来源——每笔记录本笔折算使用的汇率值与来源（「来自汇率序列」/「来自调用方显式给定」，后者写入入口由后续票接入），列表与详情可读回解释「这个本位币金额是怎么来的」；与本位币同币种、不折算（份额调整）及存量行留痕为空（[#1548]，只增不改、存量库免重建）。
+
 ## [0.7.0] - 2026-09-19
 
 ### Added
@@ -255,6 +261,7 @@
 
 <!-- Unreleased 条目引用的 issue 链接（引用式链接，正文保持简洁） -->
 
+[#1548]: https://github.com/asiazhang/ledger/issues/1548
 [#273]: https://github.com/asiazhang/ledger/issues/273
 [#283]: https://github.com/asiazhang/ledger/issues/283
 [#286]: https://github.com/asiazhang/ledger/issues/286

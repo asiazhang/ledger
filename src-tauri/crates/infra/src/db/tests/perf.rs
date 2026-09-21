@@ -276,7 +276,7 @@ fn v016_list_pagination_uses_list_order_index_without_temp_btree() {
     let conn = v016_world();
     let sql = "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
                to_account_id,category_id,refund_of_transaction_id,note,date,created_at,\
-               updated_at,version,device_id,is_deleted,merchant_id,policy_id \
+               updated_at,version,device_id,is_deleted,merchant_id,policy_id,fx_rate_used,fx_rate_source \
                FROM transactions WHERE is_deleted=0 \
                ORDER BY date DESC, created_at DESC, id DESC";
 

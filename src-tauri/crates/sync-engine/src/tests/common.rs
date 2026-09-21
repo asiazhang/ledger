@@ -7,7 +7,7 @@ use rusqlite::Connection;
 
 use crate::{DirectConn, ingest_ops, read_ops};
 use ledger_transaction::TransactionInput;
-use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::amount::{FxRateSource, TransactionKind};
 use tauri_app_lib::test_support::FIXED_NOW;
 
 /// 直通连接源速记（轮次测试：调用方已持连接的形态，#1339 分段取锁接缝的
@@ -71,6 +71,10 @@ pub(crate) struct TxnRow {
     pub amount_cents: i64,
     pub currency_code: String,
     pub amount_native_cents: i64,
+    /// 折算来源留痕（#1548，V029）：源端折算事实随 op 搬运，属业务字段、
+    /// 参与两端状态等值判定。
+    pub fx_rate_used: Option<f64>,
+    pub fx_rate_source: Option<FxRateSource>,
     pub account_id: String,
     pub to_account_id: Option<String>,
     pub funding_account_id: Option<String>,
@@ -86,7 +90,7 @@ pub(crate) struct TxnRow {
 pub(crate) fn read_transaction(conn: &Connection, id: &str) -> Option<TxnRow> {
     conn.query_row(
         "SELECT kind, amount_cents, currency_code, amount_native_cents, account_id, \
-         to_account_id, funding_account_id, category_id, merchant_id, refund_of_transaction_id, note, date, is_deleted \
+         to_account_id, funding_account_id, category_id, merchant_id, refund_of_transaction_id, note, date, is_deleted, fx_rate_used, fx_rate_source \
          FROM transactions WHERE id = ?1",
         [id],
         |r| {
@@ -104,6 +108,8 @@ pub(crate) fn read_transaction(conn: &Connection, id: &str) -> Option<TxnRow> {
                 note: r.get(10)?,
                 date: r.get(11)?,
                 is_deleted: r.get(12)?,
+                fx_rate_used: r.get(13)?,
+                fx_rate_source: r.get(14)?,
             })
         },
     )

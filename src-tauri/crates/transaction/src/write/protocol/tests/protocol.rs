@@ -40,6 +40,8 @@ fn carried_row(kind: TransactionKind, account: &str, amount: i64) -> NormalizedT
         amount_cents: amount,
         currency_code: "CNY".into(),
         amount_native_cents: amount,
+        fx_rate_used: None,
+        fx_rate_source: None,
         account_id: account.into(),
         to_account_id: None,
         funding_account_id: None,

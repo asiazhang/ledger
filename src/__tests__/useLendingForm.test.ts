@@ -240,6 +240,8 @@ describe("useLendingForm（借贷变体 composable，issue #374 S3）", () => {
       amount_cents: 30000,
       currency_code: "CNY",
       amount_native_cents: 30000,
+      fx_rate_used: null,
+      fx_rate_source: null,
       account_id: "acc-cash",
       to_account_id: "acc-recv-zhang",
       funding_account_id: null,

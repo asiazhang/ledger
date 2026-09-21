@@ -3,20 +3,108 @@
 //! 职责：[`default_currency_code`](本位币基准读取)、[`convert_to_native_current`]
 //! （**当期折算**，读路径入口：持仓市值、净资产、财务自由度、实物资产估值、跨账本
 //! 汇总、定时花费）、[`convert_to_native_on_trade_date`]（**按交易日折算**，写路径
-//! 入口，#1547 接入：按交易所属 ISO 周命中汇率历史）。两入口不设隐式默认，调用方
-//! 必须显式选择（#1540 spec）。
+//! 入口，#1547 接入：按交易所属 ISO 周命中汇率历史；返回值随行携带折算留痕
+//! [`NativeConversion`]，#1548）。两入口不设隐式默认，调用方必须显式选择（#1540 spec）。
 //! 共同不变量：基准为全局默认币种、与账户币种无关（避免跨账户漂移）；与本位币同
 //! 币种原样返回；正反向汇率均无即报错，不静默混币种。ADR 指针：ADR-0011 / ADR-0091
 //! 决策 3 / ADR-0113 决策 3.1。陷阱：本位币读取经 `super::base_currency` 接缝，
 //! 未注册即码化错误。
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
+use rusqlite::OptionalExtension;
 
+use ledger_infra::closed_set;
 use ledger_infra::error::{AppError, Result};
 
 /// 周键派生表达式（与 `fx_rate_history.week_start` 生成列同式，V010）：周一为
 /// 周键。命中查询与文案推导共用同一片段，保证两侧对同一交易日恒得同周键。
 const WEEK_START_EXPR: &str = "date(?,'-6 days','weekday 1')";
+
+// ---------------------------------------------------------------------------
+// 折算来源闭集与留痕载体
+// ---------------------------------------------------------------------------
+
+closed_set! {
+/// 折算来源闭集（issue #1548 / ADR-0011 2026-09-19 修订）：本笔本位币金额的
+/// 折算取数来源，随交易行落库留痕（`transactions.fx_rate_source`，V029），使
+/// 「这个金额怎么来的」可读回解释、可与重算对齐。
+///
+/// 与 `transactions.fx_rate_source` 列字面量一一对应（五份表示由 `closed_set!`
+/// 同体派生，ADR-0108 同规）；`explicit` 的写入通道由 #1549 接入（调用方逐笔
+/// 显式给定），本闭集先收口字面量事实。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FxRateSource {
+    /// 命中汇率历史序列（`fx_rate_history` 交易所属周，正反向兜底）。
+    Series => "series",
+    /// 调用方逐笔显式给定（#1549 接入）：数据源覆盖不到的日期由写入方给出。
+    Explicit => "explicit",
+}
+err_label = "折算来源",
+err_code = "fx.source-unknown",
+}
+
+// rusqlite：从 `transactions.fx_rate_source` 列直接读为枚举（DB 边界：TEXT 列经
+// [`FxRateSource::parse`] 严格映射，未知值即 FromSql 错误——写入通道闭集收口，
+// 正常数据不可达，与 [`super::TransactionKind`] 同规）。
+impl rusqlite::types::FromSql for FxRateSource {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        FxRateSource::parse(value.as_str()?)
+            .map_err(|e| rusqlite::types::FromSqlError::Other(Box::new(e)))
+    }
+}
+
+// OpenAPI（utoipa）：闭集枚举以小写字符串枚举值入文档，与 wire 格式一致。
+impl utoipa::PartialSchema for FxRateSource {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::Schema> {
+        utoipa::openapi::RefOr::T(utoipa::openapi::Schema::Object(
+            utoipa::openapi::ObjectBuilder::new()
+                .schema_type(utoipa::openapi::Type::String)
+                .enum_values(Some(FxRateSource::ALL.map(|s| s.as_str().to_string())))
+                .description(Some(
+                    "折算来源（闭集：series=汇率历史序列；explicit=调用方显式给定）",
+                ))
+                .build(),
+        ))
+    }
+}
+
+impl utoipa::ToSchema for FxRateSource {}
+
+// serde：与列字面量同形的小写字符串（wire 格式）；反序列化复用 [`FxRateSource::parse`]。
+impl serde::Serialize for FxRateSource {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for FxRateSource {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        FxRateSource::parse(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// 按交易日折算的结果（写路径，#1548）：本位币金额 + 折算来源留痕。
+///
+/// 留痕两列随归一化行落库（`transactions.fx_rate_used` / `fx_rate_source`，V029）：
+/// 未折算（与本位币同币种）时留痕两列为 `None`——空值即「本笔未折算」的诚实语义
+/// （同币种原样返回、无汇率可留）。已折算时满足
+/// `native_cents ≈ amount_cents × fx_rate_used`（四舍五入到分）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NativeConversion {
+    /// 折算后的本位币金额（整数分，四舍五入）。
+    pub native_cents: i64,
+    /// 本笔使用的汇率值（反向兜底时存使用值即倒数）；未折算为 `None`。
+    pub fx_rate_used: Option<f64>,
+    /// 本笔折算来源；未折算为 `None`。
+    pub fx_rate_source: Option<FxRateSource>,
+}
 
 // ---------------------------------------------------------------------------
 // 本位币折算
@@ -108,20 +196,30 @@ pub fn convert_to_native_current(
 ///   整周无点即报错——不滑到相邻周、不回落当期表（`exchange_rates` 只服务
 ///   读路径当期折算 [`convert_to_native_current`]）。
 /// - 整周无点的文案区分「该周尚未发布（重试即可）」与「该周历史空缺」。
-/// - 币种与默认币种相同 → 1:1 原样返回；基准为 [`default_currency_code`]。
+/// - 币种与默认币种相同 → 1:1 原样返回，且不留痕（两个溯源列为 `None`）。
+/// - 基准为 [`default_currency_code`]。
+/// - 返回值随行携带折算来源留痕（#1548）：金额 + 使用汇率值 + 来源闭集。
 /// - 显式汇率优先由 #1549 接入。
 pub fn convert_to_native_on_trade_date(
     conn: &Connection,
     amount_cents: i64,
     currency_code: &str,
     trade_date: &str,
-) -> Result<i64> {
+) -> Result<NativeConversion> {
     let target = default_currency_code(conn)?;
     if currency_code == target {
-        return Ok(amount_cents);
+        return Ok(NativeConversion {
+            native_cents: amount_cents,
+            fx_rate_used: None,
+            fx_rate_source: None,
+        });
     }
     let rate = lookup_fx_history_rate(conn, currency_code, &target, trade_date)?;
-    Ok((amount_cents as f64 * rate).round() as i64)
+    Ok(NativeConversion {
+        native_cents: (amount_cents as f64 * rate).round() as i64,
+        fx_rate_used: Some(rate),
+        fx_rate_source: Some(FxRateSource::Series),
+    })
 }
 
 /// 按交易日所属 ISO 周在汇率历史序列查汇率（正查失败则反查取倒数）。

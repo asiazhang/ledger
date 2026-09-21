@@ -80,6 +80,8 @@ const editingTx: Transaction = {
   amount_cents: 15500,
   currency_code: "CNY",
   amount_native_cents: 15500,
+  fx_rate_used: null,
+  fx_rate_source: null,
   account_id: "acc-inv",
   to_account_id: null,
   funding_account_id: null,
