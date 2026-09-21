@@ -177,7 +177,11 @@ fn lookup_exchange_rate(conn: &Connection, base_code: &str, quote_code: &str) ->
     }
     Err(AppError::codedp(
         "fx.rate-missing",
-        format!("未找到 {base_code} -> {quote_code} 的汇率（正反向均无）"),
+        // 指路文案（issue #1664）：当期表无行多因从未同步，指向设置页「币种」
+        // 页签的手动同步入口，面向可自助补救。
+        format!(
+            "未找到 {base_code} -> {quote_code} 的汇率（正反向均无），可在设置页「币种」页签同步汇率后重试"
+        ),
         &[base_code, quote_code],
     ))
 }
@@ -379,7 +383,9 @@ fn missing_week_error(
         AppError::codedp(
             "fx.rate-missing",
             format!(
-                "未找到 {base_code} -> {quote_code} 在 {week} 当周的汇率：该周尚未发布，待汇率同步后重试即可"
+                // 指路文案（issue #1664）：同步可解的分支才指路；「该周历史空缺」
+                // 分支同步救不了，保持原样不误导。
+                "未找到 {base_code} -> {quote_code} 在 {week} 当周的汇率：该周尚未发布，可在设置页「币种」页签同步汇率后重试"
             ),
             &[base_code, quote_code],
         )

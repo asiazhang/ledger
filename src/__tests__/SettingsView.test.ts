@@ -99,11 +99,11 @@ beforeEach(async () => {
   await base.ready;
 });
 
-describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格局 6 页签）", () => {
-  it("Tab 格局为 通用 → 分类 → 数据 → 定时 → 功能 → 关于，共 6 个，功能插在关于之前、关于在末位（#308 定时；#444 商户 Tab 移除；#1243 功能 Tab，ADR-0116 修订 ADR-0022）", () => {
+describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格局 7 页签）", () => {
+  it("Tab 格局为 通用 → 分类 → 币种 → 数据 → 定时 → 功能 → 关于，共 7 个，功能插在关于之前、关于在末位（#308 定时；#444 商户 Tab 移除；#1243 功能 Tab；#1664 币种页签自「分类」拆出，ADR-0022 修订）", () => {
     const wrapper = mount(SettingsView);
     const labels = wrapper.findAll(".n-tabs-tab").map((t) => t.text());
-    expect(labels).toEqual(["通用", "分类", "数据", "定时", "功能", "关于"]);
+    expect(labels).toEqual(["通用", "分类", "币种", "数据", "定时", "功能", "关于"]);
   });
 
   it("英文界面：Tab 页签以英文渲染，切回中文后恢复（issue #352）", async () => {
@@ -116,12 +116,21 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
       await applyLocale("zh-CN");
       await nextTick();
     }
-    expect(enLabels).toEqual(["General", "Categories", "Data", "Scheduled", "Features", "About"]);
+    expect(enLabels).toEqual([
+      "General",
+      "Categories",
+      "Currencies",
+      "Data",
+      "Scheduled",
+      "Features",
+      "About",
+    ]);
     // 切回中文后新挂载的组件恢复中文页签
     const wrapper = mount(SettingsView);
     expect(wrapper.findAll(".n-tabs-tab").map((tab) => tab.text())).toEqual([
       "通用",
       "分类",
+      "币种",
       "数据",
       "定时",
       "功能",
@@ -130,11 +139,12 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
   });
 
   it("旧 Tab（备份与恢复 / 外观 / 存储位置）全部消失", () => {
-    // 「分类」「币种」不再列入：ADR-0034 后「分类」是现役 Tab 名（原「分类与币种」更名），
-    // 币种只读展示已移除，不再有独立币种 Tab。
+    // 「币种」自 #1664 起回归为现役 Tab 名（本位币基准与汇率同步卡自「分类」迁入，
+    // ADR-0022 修订注记）；「分类与币种」复合名不回归，ADR-0034 移除的只读币种
+    // 展示仍不回归。
     const wrapper = mount(SettingsView);
     const labels = wrapper.findAll(".n-tabs-tab").map((t) => t.text());
-    expect(labels).not.toContain("币种");
+    expect(labels).not.toContain("分类与币种");
     expect(labels).not.toContain("备份与恢复");
     expect(labels).not.toContain("外观");
     expect(labels).not.toContain("存储位置");
@@ -150,7 +160,7 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     await nextTick();
     const closedLabels = wrapper.findAll(".n-tabs-tab").map((t) => t.text());
     expect(closedLabels).not.toContain("定时");
-    expect(closedLabels).toEqual(["通用", "分类", "数据", "功能", "关于"]);
+    expect(closedLabels).toEqual(["通用", "分类", "币种", "数据", "功能", "关于"]);
     // 重新打开即回原位置（关闭不改写任何清单，ADR-0116 决策 3）。
     await wrapper.find('[data-testid="feature-toggle-scheduled"] .n-switch').trigger("click");
     await nextTick();
@@ -189,7 +199,7 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     // 日志卡片（issue #930 / ADR-0022 修订）：等级下拉与「打开日志目录」同卡在末位。
     expect(html).toContain("日志等级");
     expect(html).toContain("打开日志目录");
-    // 本位币基准是账本级设置，落「分类」页签。
+    // 本位币基准是账本级设置，落「币种」页签（#1664）。
     expect(html).not.toContain("本位币基准");
     // 深色模式开关反映当前主题（默认暗色）。
     expect(wrapper.find(".n-switch").attributes("aria-checked")).toBe("true");
@@ -202,15 +212,20 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(store.theme).toBe("light");
   });
 
-  it("「分类」含分类管理器与本位币基准卡片（issue #858，账本级设置按领域归属落本页签）", async () => {
+  it("「币种」含本位币基准与汇率同步卡，「分类」回归纯分类管理器（#1664，ADR-0022 修订）", async () => {
     const wrapper = mount(SettingsView);
-    await openTab(wrapper, "分类");
-    expect(wrapper.findComponent(CategoryManager).exists()).toBe(true);
+    await openTab(wrapper, "币种");
     const html = wrapper.html();
     expect(html).toContain("本位币基准");
+    expect(html).toContain("同步汇率");
     // 币种字典本体仍无维护界面（ADR-0034，只读表格不回归）。
     expect(html).not.toContain("支持币种");
     expect(html).not.toContain("默认币种");
+    await openTab(wrapper, "分类");
+    expect(wrapper.findComponent(CategoryManager).exists()).toBe(true);
+    // 币种域卡片已迁出（displayDirective 默认 'if'，离开即卸载）。
+    expect(wrapper.html()).not.toContain("本位币基准");
+    expect(wrapper.html()).not.toContain("同步汇率");
   });
 
   it("「数据」页签内部子页签为 备份 / 存储位置 / 数据修复，默认「备份」（issue #568）", async () => {
