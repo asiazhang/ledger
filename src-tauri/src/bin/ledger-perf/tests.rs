@@ -33,6 +33,7 @@ use super::bench::{self, BenchCli, BenchConfig, BenchMetrics, ParsedBench};
 use super::bench_import::{
     self, BenchImportCli, Distribution, ImportBenchConfig, ParsedBenchImport,
 };
+use super::bench_market::{self, BenchMarketCli, ParsedBenchMarket, Spread};
 use super::bench_sync::{
     self, BenchSyncCli, EntryForm, ParsedBenchSync, SOURCE_DEVICE_ID, SyncBenchConfig,
     generate_ops, generate_wire,
@@ -1878,4 +1879,290 @@ fn bench_sync_smoke_runs_matrix_and_produces_all_metrics() {
             r.context
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// bench-market 行情/价格历史批量 upsert 写基准（issue #1629）：点流生成、
+// 冒烟与名单钉住
+// ---------------------------------------------------------------------------
+
+/// 解析并取 bench-market 运行参数（帮助请求在该测试套件中不该出现）。
+fn parse_bench_market_cli(args: &[&str]) -> Result<BenchMarketCli, String> {
+    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    match bench_market::parse_bench_market_args(&owned)? {
+        ParsedBenchMarket::Run(cli) => Ok(cli),
+        ParsedBenchMarket::Help => panic!("该输入应解析为运行参数"),
+    }
+}
+
+#[test]
+fn bench_market_cli_defaults_cover_market_refill_tiers() {
+    let cli = parse_bench_market_cli(&[]).unwrap();
+    assert_eq!(
+        cli.points,
+        vec![104, 1040, 5200],
+        "默认矩阵应按同步落库真实量级校准：单只近两年整根 / 部分批量重刷 / 全库价格线量级"
+    );
+    assert_eq!(cli.warmup, 1, "批量落库迭代成本高，预热默认 1 次");
+    assert_eq!(cli.iterations, 5);
+    assert_eq!(cli.db, super::default_out());
+}
+
+#[test]
+fn bench_market_cli_parses_overrides_and_rejects_bad_values() {
+    let cli = parse_bench_market_cli(&["--points", "10,20", "--warmup", "0", "--iterations", "2"])
+        .unwrap();
+    assert_eq!(cli.points, vec![10, 20]);
+    assert_eq!(cli.warmup, 0);
+    assert_eq!(cli.iterations, 2);
+    let cli = parse_bench_market_cli(&["--points=10"]).unwrap();
+    assert_eq!(cli.points, vec![10]);
+
+    assert!(
+        parse_bench_market_cli(&["--points", ""]).is_err(),
+        "空矩阵应报错"
+    );
+    assert!(
+        parse_bench_market_cli(&["--points", "0"]).is_err(),
+        "点数档 0 应报错"
+    );
+    assert!(
+        parse_bench_market_cli(&["--points", "1,x"]).is_err(),
+        "非数档位应报错"
+    );
+    assert!(
+        parse_bench_market_cli(&["--points", "10,10"]).is_err(),
+        "重复档位应报错"
+    );
+    assert!(
+        parse_bench_market_cli(&["--iterations", "0"]).is_err(),
+        "迭代 0 应报错"
+    );
+    assert!(
+        parse_bench_market_cli(&["--unknown", "1"]).is_err(),
+        "未知参数应报错"
+    );
+}
+
+/// 测试用标的池：两只场内（tencent）+ 一只场外基金（sina）。
+fn market_pool() -> Vec<bench_market::PoolInstrument> {
+    use bench_market::PoolInstrument;
+    vec![
+        PoolInstrument {
+            instrument_id: "inst-stock-0".to_string(),
+            currency_code: "CNY".to_string(),
+            is_fund: false,
+            source: ledger_investment::prices::TENCENT_PRICE_SOURCE,
+        },
+        PoolInstrument {
+            instrument_id: "inst-stock-1".to_string(),
+            currency_code: "HKD".to_string(),
+            is_fund: false,
+            source: ledger_investment::prices::TENCENT_PRICE_SOURCE,
+        },
+        PoolInstrument {
+            instrument_id: "inst-fund-2".to_string(),
+            currency_code: "CNY".to_string(),
+            is_fund: true,
+            source: ledger_investment::prices::SINA_PRICE_SOURCE,
+        },
+    ]
+}
+
+/// 点流生成（纯函数）：确定性、分布形态、新周追加与价格全异（换源重刷/
+/// 历史补全的落库计划替代取数层产出，剥网络）。
+#[test]
+fn bench_market_plan_is_deterministic_and_spread_shaped() {
+    use bench_market::generate_price_plan;
+    let pool = market_pool();
+    // 2026-01-05 是周一：采样周自锚点周起，采样日 = 当周周五。
+    let anchor = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+
+    let concentrated = generate_price_plan(5, &pool, Spread::Concentrated, anchor);
+    let replay = generate_price_plan(5, &pool, Spread::Concentrated, anchor);
+    let uniform = generate_price_plan(5, &pool, Spread::Uniform, anchor);
+
+    // 确定性：同参数两次生成，计划逐条相同（可复现规格）。
+    assert_eq!(concentrated, replay, "同参数两次生成应逐条相同");
+
+    // 分布形态：单标的集中只落首标的、拿到全部 5 点；多标的均匀按池依次
+    // 分块（逐只整根的生产形状）。
+    assert_eq!(concentrated.len(), 1, "单标的集中应只有首标的一条序列");
+    assert_eq!(concentrated[0].pool_index, 0, "单标的集中应落首标的");
+    assert_eq!(concentrated[0].points.len(), 5);
+    assert_eq!(
+        uniform.iter().map(|s| s.pool_index).collect::<Vec<_>>(),
+        vec![0, 1, 2],
+        "多标的均匀应按池序覆盖每只标的"
+    );
+    // 分块形态（5 点 ÷ 3 标的，块宽 ⌈5/3⌉=2，末块收短）：inst0 得第 0–1 周、
+    // inst1 第 2–3 周、inst2 第 4 周——每只获得一段连续周序列（周不重叠）。
+    assert_eq!(uniform[0].points.len(), 2);
+    assert_eq!(uniform[1].points.len(), 2);
+    assert_eq!(uniform[2].points.len(), 1);
+    let block_dates = |s: &bench_market::PlannedSeries| -> Vec<String> {
+        s.points.iter().map(|p| p.trade_date.clone()).collect()
+    };
+    assert_eq!(
+        block_dates(&uniform[0]),
+        ["2026-01-09", "2026-01-16"],
+        "均匀分布每只应得一段连续周（首块）"
+    );
+    assert_eq!(
+        block_dates(&uniform[1]),
+        ["2026-01-23", "2026-01-30"],
+        "第二块应紧接首块之后逐周递进"
+    );
+    assert_eq!(block_dates(&uniform[2]), ["2026-02-06"], "末块应收短不越界");
+
+    // 总点数守恒：两种分布的总点数都恰等于档位（行行真写的计数前提）。
+    assert_eq!(
+        concentrated.iter().map(|s| s.points.len()).sum::<usize>(),
+        5
+    );
+    assert_eq!(uniform.iter().map(|s| s.points.len()).sum::<usize>(), 5);
+
+    // 采样日形态：当周周五、逐周递进（生成器「周一进位、取当周周五」同款）。
+    let dates: Vec<&str> = concentrated[0]
+        .points
+        .iter()
+        .map(|p| p.trade_date.as_str())
+        .collect();
+    assert_eq!(
+        dates,
+        [
+            "2026-01-09",
+            "2026-01-16",
+            "2026-01-23",
+            "2026-01-30",
+            "2026-02-06"
+        ],
+        "采样周应自锚点周一逐周递进、采样日取当周周五"
+    );
+
+    // 价格逐点递增（全局全异，行行真写可核验）；现价 = 该标的最后一个采样点
+    // （MarketPrice 即时映像语义）。
+    let prices: Vec<i64> = concentrated[0]
+        .points
+        .iter()
+        .map(|p| p.price_units)
+        .collect();
+    assert_eq!(
+        prices,
+        vec![
+            bench_market::BASE_PRICE_UNITS,
+            bench_market::BASE_PRICE_UNITS + 1,
+            bench_market::BASE_PRICE_UNITS + 2,
+            bench_market::BASE_PRICE_UNITS + 3,
+            bench_market::BASE_PRICE_UNITS + 4,
+        ],
+        "价格应逐点递增（BASE + 全局序号）"
+    );
+    assert_eq!(
+        uniform[1].points[1].price_units,
+        bench_market::BASE_PRICE_UNITS + 3,
+        "均匀分布的价格应随全局序号递增（第二块末点 = 全局第 3 点）"
+    );
+}
+
+/// 小库上的行情基准配置（冒烟与报告口径共用）。
+fn small_market_cfg() -> bench_market::MarketBenchConfig {
+    bench_market::MarketBenchConfig {
+        points: vec![50],
+        warmup: 1,
+        iterations: 2,
+    }
+}
+
+/// 前置探测：标的池 = 行情/净值通道成员（生成库：17 场内 + 3 场外基金），
+/// 锚点周与基线行数随库定型。
+#[test]
+fn bench_market_probe_surveys_channel_pool_and_anchor_week() {
+    let (_dir, path) = temp_db("bench-market-probe");
+    build(&path, 300, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+    let conn = open_connection(&path).unwrap();
+
+    let probe = bench_market::probe_market_dataset(&conn).unwrap();
+
+    assert_eq!(
+        probe.pool.len(),
+        20,
+        "标的池应覆盖生成库全部行情/净值通道标的（手动/恒定/无来源不属同步采集面）"
+    );
+    assert_eq!(
+        probe.pool.iter().filter(|p| p.is_fund).count(),
+        3,
+        "场外基金应随字典形态标记（priced_at=净值日期、来源新浪）"
+    );
+    assert!(
+        probe.pool.iter().all(
+            |p| p.source == ledger_investment::prices::TENCENT_PRICE_SOURCE
+                || p.source == ledger_investment::prices::SINA_PRICE_SOURCE
+        ),
+        "来源标记应按通道映射（场内腾讯/场外新浪，ADR-0130 决策 7）"
+    );
+    assert_eq!(
+        probe.anchor_monday,
+        NaiveDate::from_ymd_opt(2026, 1, 5).unwrap(),
+        "锚点周应为数据集最大交易日期次日（2026-01-01）后的第一个周一"
+    );
+    assert!(
+        probe.pristine_history_rows > 0,
+        "生成库应已有价格历史行（周采样全窗口）"
+    );
+}
+
+/// 冒烟（对齐 bench_sync_smoke 形态）：小库 → 跑完量测矩阵 → 产出全部指标，
+/// 且快照恢复闭环未被违反——每次迭代前基线行数与 pristine 快照一致、落库后
+/// 恰增点数（连续迭代无写副作用残留），源库全程零改动。
+#[test]
+fn bench_market_smoke_runs_matrix_and_produces_all_metrics() {
+    let (_dir, path) = temp_db("bench-market-smoke");
+    build(&path, 2_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+    let pristine = {
+        let conn = open_connection(&path).unwrap();
+        bench_market::count_price_history_rows(&conn).unwrap()
+    };
+
+    let results = bench_market::run_benchmark(&path, &small_market_cfg()).unwrap();
+
+    // 名单钉住：1 档 × 2 分布，顺序稳定（矩阵展开次序：点数档外层、分布内层）。
+    // 删除任一矩阵轴项（Spread::ALL）或默认档位，本断言或默认档断言即红——
+    // 场景名单的删除即变红落点。
+    let names: Vec<String> = results.iter().map(|r| r.name.clone()).collect();
+    assert_eq!(names, ["行情 50 点·单标的集中", "行情 50 点·多标的均匀"],);
+    let spreads: Vec<Spread> = results.iter().map(|r| r.spread).collect();
+    assert_eq!(
+        spreads,
+        [Spread::Concentrated, Spread::Uniform],
+        "分布轴展开次序：单标的集中在前（Spread::ALL 稳定清单）"
+    );
+    for r in &results {
+        assert_eq!(r.points, 50, "指标行应携带点数档：{}", r.name);
+        assert!(
+            r.min_ms.is_finite() && r.min_ms >= 0.0,
+            "{} min 非法",
+            r.name
+        );
+        assert!(r.avg_ms >= r.min_ms, "{} avg 应不小于 min", r.name);
+        assert!(r.p95_ms >= r.min_ms, "{} p95 应不小于 min", r.name);
+        assert!(
+            r.per_point_p95_ms > 0.0 && r.per_point_p95_ms <= r.p95_ms,
+            "{} 单点均摊 p95 应在 (0, p95] 内",
+            r.name
+        );
+        assert!(
+            r.context.contains("单点均摊") && r.context.contains("点"),
+            "规模备注应携带单点均摊口径：{}",
+            r.context
+        );
+    }
+
+    // 源库零改动：基准只在工作库（快照副本）上落库，源库价格线行数不变。
+    let conn = open_connection(&path).unwrap();
+    assert_eq!(
+        bench_market::count_price_history_rows(&conn).unwrap(),
+        pristine,
+        "源库不应被基准修改（pristine 快照机制的源库侧闭环）"
+    );
 }

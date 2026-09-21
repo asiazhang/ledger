@@ -7,8 +7,10 @@
 #   两分布、只记录不判定——写基准阈值未立，待 CI 基线分布稳定后修订
 #   ADR-0068 另立判据）→ 同步重放写基准观测（ledger-perf bench-sync，
 #   issue #1628：只跑最大档 2000 op × 两分布 × 两入口、剥网络只量本地
-#   合并/写库，网络边界豁免见 ADR-0068）→ Markdown 报告写入
-#   $GITHUB_STEP_SUMMARY。
+#   合并/写库，网络边界豁免见 ADR-0068）→ 行情/价格历史批量 upsert 写
+#   基准观测（ledger-perf bench-market，issue #1629：只跑最大档 5200 点
+#   × 两分布、剥网络只量本地落库，网络边界豁免见 ADR-0068）→ Markdown
+#   报告写入 $GITHUB_STEP_SUMMARY。
 # 「每日一次、前提是有代码变动」由 gate job 兜底：schedule 触发时比对本次
 # 调度的提交与本 workflow 最近一次成功运行的 head_sha——相同即自上次成功
 # 以来无新代码，整体跳过不空转；上次失败则最近成功停在更早提交、差异
@@ -19,9 +21,10 @@
 # 实测撤销（issue #516），分项例外机制保留、现行清单见 ADR-0068 与 bench
 # 工具内 PER_BENCH_MAX_P95_MS（当前为空）。任何一项超标 bench 以非零退出、
 # job 失败（超标清单随报告
-# 进 Summary）。不在 PR 上跑：一次 release 冷编译 + 生成 + 三段基准 ≈ 35
+# 进 Summary）。不在 PR 上跑：一次 release 冷编译 + 生成 + 四段基准 ≈ 35
 # 分钟（rust-cache 命中时；bench-import 最大档观测约占 7 分钟，bench-sync
-# 最大档观测约占 20 分钟），回归由
+# 最大档观测约占 20 分钟，bench-market 最大档观测约占数分钟——单元为少量
+# 事务的批量 upsert，显著低于 bench-sync 的逐条事务形态），回归由
 # 每日基线与性能批合入后的手动触发拦截。
 # 生成器正确性单测（src/bin/ledger-perf/tests.rs，issue #459 验收项）原随
 # build.yml 的 cargo test --all 运行，2026-09 起迁入本 workflow：bin 测试
@@ -170,6 +173,24 @@ jobs:
           # ADR-0068 另立判据）。
           ./target/release/ledger-perf bench-sync --ops 2000 --iterations 5 | tee bench-sync-report.txt
 
+      - name: 运行行情/价格历史批量 upsert 写基准（bench-market，最大档 5200 点 × 两分布，剥网络，只记录不判定）
+        id: bench-market
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          set -o pipefail
+          # --points 5200：CI 只跑全库价格线量级最大档（换源大批复的极限
+          # 形态；104/1040 档留作本地观察档）；两分布（单标的集中 /
+          # 多标的均匀）是索引局部性判别面，不裁剪。
+          # 网络边界豁免（ADR-0068）：行情源抓取不属回归面，本基准只量
+          # 剥网络后的本地批量落库（价格写入单点，一只标的一个事务）。
+          # --iterations 20：真分位数口径（n<20 时 p95=max 无分辨力）；
+          # 单元为少量事务的批量 upsert（本地实测秒级），20 次可承受
+          # （与 bench-import 同款，不同于 bench-sync 的逐条事务形态）。
+          # 不传门禁参数：写基准无门禁（同 bench-import / bench-sync，
+          # 阈值待 CI 基线分布稳定后修订 ADR-0068 另立判据）。
+          ./target/release/ledger-perf bench-market --points 5200 --iterations 20 | tee bench-market-report.txt
+
       - name: 写入 Job Summary（Markdown 耗时报告 + 门禁结果）
         if: always()
         run: |
@@ -216,5 +237,19 @@ jobs:
               ./scripts/perf-summary.sh src-tauri/bench-sync-report.txt "ledger-perf bench-sync stdout"
             else
               echo '> ⚠️ bench-sync 未产出报告（步骤失败，详见上方日志）'
+            fi
+            echo
+            echo "## ledger-perf 行情/价格历史批量 upsert 写基准（bench-market，剥网络，只记录不判定）"
+            echo
+            if [ "${{ steps.bench-market.outcome }}" = "success" ]; then
+              echo "- 观测：✅ 完成（最大档 5200 点 × 两分布；写基准无门禁阈值，待 CI 基线分布稳定后修订 ADR-0068 另立判据）"
+            else
+              echo "- 观测：❌ 未完成 —— bench-market 步骤失败（详见上方日志）"
+            fi
+            echo
+            if [ -f src-tauri/bench-market-report.txt ]; then
+              ./scripts/perf-summary.sh src-tauri/bench-market-report.txt "ledger-perf bench-market stdout"
+            else
+              echo '> ⚠️ bench-market 未产出报告（步骤失败，详见上方日志）'
             fi
           } >> "$GITHUB_STEP_SUMMARY"

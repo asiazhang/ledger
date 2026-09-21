@@ -139,6 +139,28 @@
 //!   最大档 2000 op × 两分布 × 两入口观测、只记录进 Summary；check.sh
 //!   不跑本基准。
 //!
+//! ## bench-market：行情/价格历史批量 upsert 写基准（issue #1629）
+//!
+//! 对 generate 产出的库量测行情同步与价格历史补全的本地批量 upsert 耗时
+//! （剥网络：行情源抓取不属回归面，ADR-0068 网络边界豁免）：
+//!
+//! ```text
+//! cargo run --bin ledger-perf -- bench-market [--db PATH] [--points <CSV>]
+//!                                             [--warmup N] [--iterations N]
+//! ```
+//!
+//! - 量测矩阵：周采样点数档（默认 104,1040,5200，按同步落库真实量级：单只
+//!   近两年整根首刷 / 部分批量重刷 / 全库价格线整根重刷）× 两种落位分布
+//!   （单标的集中 / 多标的均匀）；报告每单元总耗时 min/avg/p95 与单点均摊
+//!   p95（n<20 时 p95=max，同 ADR-0068 统计口径）。
+//! - 落库走投资域价格写入单点（upsert_market_price / upsert_price_history，
+//!   与生产同步/回填通道同一 SQL 路径），事务边界照生产形态「一只标的一个
+//!   事务」；点流确定性生成，迭代前从 pristine 快照恢复隔离写副作用（快照
+//!   机制与 bench-import / bench-sync 共用）；落库后行数恰增与现价一致性
+//!   断言失败即量测作废（照 bench-import 既有断言模式）。
+//! - 无门禁判定：写基准阈值未立（同 bench-import）；perf-bench CI 每日以
+//!   最大档 5200 点 × 两分布观测、只记录进 Summary；check.sh 不跑本基准。
+//!
 //! # 实现边界
 //!
 //! 全部生成/基准/摘要逻辑封在本 bin 模块内部，产品 lib 不新增模块、
@@ -146,6 +168,7 @@
 
 mod bench;
 mod bench_import;
+mod bench_market;
 mod bench_sync;
 mod generate;
 mod investments;
@@ -187,6 +210,8 @@ SUBCOMMANDS:
     bench-sync     同步重放写基准——op 流重放（ingest_ops/apply_ops 权威入口）
                    × 两种分布 × 总耗时/单 op 均摊 p95（issue #1628，剥网络，
                    纯观测无门禁）
+    bench-market   行情/价格历史批量 upsert 写基准——点数档 × 两种分布 ×
+                   总耗时/单点均摊 p95（issue #1629，剥网络，纯观测无门禁）
 
 bench OPTIONS:
     --db <PATH>            目标库文件（默认同 generate 输出路径，须已生成）
@@ -213,6 +238,15 @@ bench-sync OPTIONS:
     --db <PATH>            源库文件（默认同 generate 输出路径，须已生成；本命令不
                            修改源库——内部建 pristine 快照，每次迭代从快照恢复）
     --ops <CSV>            每档重放 op 条数（默认 100,500,2000；逗号分隔、保持次序）
+    --warmup <N>           每档预热次数（默认 1，不计入统计）
+    --iterations <N>       每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集
+                           规模固定）
+    -h, --help             打印本说明
+
+bench-market OPTIONS:
+    --db <PATH>            源库文件（默认同 generate 输出路径，须已生成；本命令不
+                           修改源库——内部建 pristine 快照，每次迭代从快照恢复）
+    --points <CSV>         每档周采样点数（默认 104,1040,5200；逗号分隔、保持次序）
     --warmup <N>           每档预热次数（默认 1，不计入统计）
     --iterations <N>       每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集
                            规模固定）
@@ -390,6 +424,24 @@ fn main() -> ExitCode {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(msg) => {
                     eprintln!("bench-sync 失败：{msg}");
+                    ExitCode::FAILURE
+                }
+            },
+            Err(msg) => {
+                eprintln!("参数错误：{msg}\n");
+                print_usage();
+                ExitCode::from(2)
+            }
+        },
+        "bench-market" => match bench_market::parse_bench_market_args(&args[1..]) {
+            Ok(bench_market::ParsedBenchMarket::Help) => {
+                print_usage();
+                ExitCode::SUCCESS
+            }
+            Ok(bench_market::ParsedBenchMarket::Run(cli)) => match bench_market::run(cli) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(msg) => {
+                    eprintln!("bench-market 失败：{msg}");
                     ExitCode::FAILURE
                 }
             },
