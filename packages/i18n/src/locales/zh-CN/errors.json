@@ -200,7 +200,7 @@
     "rate-positive": "汇率必须大于 0",
     "rate-non-positive": "汇率 {0}->{1} 非正: {2}",
     "reverse-rate-non-positive": "反向汇率 {0}->{1} 非正: {2}",
-    "rate-missing": "未找到 {0} -> {1} 的汇率（正反向均无）",
+    "rate-missing": "未找到 {0} -> {1} 的汇率（正反向均无），可在设置页「币种」页签同步汇率后重试",
     "explicit-rate-non-positive": "显式汇率必须大于 0: {0}",
     "explicit-rate-direction-mismatch": "显式汇率方向不符：{0} 即本位币，本笔无折算，不应显式给定汇率",
     "source-unknown": "未知折算来源: {0}（合法值: {1}）",

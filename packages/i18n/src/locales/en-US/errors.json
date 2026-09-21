@@ -200,7 +200,7 @@
     "rate-positive": "exchange rate must be greater than 0",
     "rate-non-positive": "exchange rate {0}->{1} is not positive: {2}",
     "reverse-rate-non-positive": "reverse exchange rate {0}->{1} is not positive: {2}",
-    "rate-missing": "no exchange rate found for {0} -> {1} (neither direction)",
+    "rate-missing": "no exchange rate found for {0} -> {1} (neither direction); sync exchange rates in Settings → Currencies and retry",
     "explicit-rate-non-positive": "explicit fx rate must be greater than 0: {0}",
     "explicit-rate-direction-mismatch": "explicit fx rate direction mismatch: {0} is the base currency; this transaction has no conversion, so an explicit fx rate is not allowed",
     "source-unknown": "unknown fx rate source: {0} (valid values: {1})",

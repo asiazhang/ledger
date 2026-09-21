@@ -4,8 +4,12 @@
  * #444 移除商户 Tab——商户管理迁入「更多」聚合页，入口全应用唯一，ADR-0063；
  * issue #930「通用」定义放宽为不归属业务域页签的应用级偏好，日志卡片迁入；
  * issue #1243 / ADR-0116 新增「功能」Tab——功能可见性开关体量独立成页，插在「关于」
- * 之前）：
- * 通用（应用级偏好：轻量设备偏好为主 + 日志卡片）→ 分类（参考数据）→ 数据（备份 /
+ * 之前；issue #1664「币种」页签自「分类」拆出——本位币基准、展示币种与汇率同步卡
+ * 按领域归属（展示币种自「通用」迁入：#930 后通用定义是"不归属业务域页签"，
+ * 币种域页签成立后展示币种有了归口）整体聚簇，「分类」回归纯分类维护，ADR-0022
+ * 修订注记）：
+ * 通用（应用级偏好：轻量设备偏好为主 + 日志卡片）→ 分类（分类维护）→ 币种（本位币
+ * 基准 + 展示币种 + 汇率同步）→ 数据（备份 /
  * 存储位置 / 数据修复 子页签）→ 定时（定时计划域设备偏好，可经「功能」Tab 关闭后隐藏）
  * → 功能（功能可见性开关）→ 关于（纯元信息，恒在末位，新增 Tab 一律插在它之前）。
  *
@@ -32,6 +36,7 @@ import { NTabs, NTabPane, NIcon } from "naive-ui";
 import {
   OptionsOutline,
   GridOutline,
+  CashOutline,
   ServerOutline,
   RepeatOutline,
   ToggleOutline,
@@ -40,6 +45,7 @@ import {
 import GeneralSettings from "@/settings/GeneralSettings.vue";
 import CategoryManager from "@/categories/CategoryManager.vue";
 import BaseCurrencySettings from "@/settings/BaseCurrencySettings.vue";
+import DisplayCurrencySettings from "@/settings/DisplayCurrencySettings.vue";
 import ExchangeRateSyncSettings from "@/settings/ExchangeRateSyncSettings.vue";
 import BackupSettings from "@/settings/BackupSettings.vue";
 import DataLocationSettings from "@/settings/DataLocationSettings.vue";
@@ -81,14 +87,25 @@ const featureToggles = useFeatureToggleStore();
             ><NIcon :component="GridOutline" />{{ t("settings.tabs.categories") }}</span
           ></template
         >
-        <!-- 本位币基准（issue #858，账本级设置）随币种域落本页签（ADR-0022
-             归属领域定 Tab；与分类管理器同属参考数据域维护面）。 -->
+        <!-- 币种域卡片已迁「币种」页签（issue #1664，ADR-0022 修订注记），
+             本页签回归纯分类维护、名实相符。 -->
+        <CategoryManager />
+      </NTabPane>
+
+      <!-- 币种域维护面（issue #1664，ADR-0022 修订注记）：本位币基准（issue #858，
+           账本级设置）、展示币种（轻量设备偏好，自「通用」迁入——与本位币基准相邻、
+           各带作用域提示，正对本位币/展示币的混淆面）、汇率同步手动入口（issue #1545）
+           按领域归属（ADR-0059）自「分类」「通用」迁入独立页签；同步语义全在后端命令。 -->
+      <NTabPane name="currencies" key="currencies">
+        <template #tab
+          ><span class="pane-tab"
+            ><NIcon :component="CashOutline" />{{ t("settings.tabs.currencies") }}</span
+          ></template
+        >
         <div :class="SETTINGS_CARD_STACK_CLASS">
           <BaseCurrencySettings />
-          <!-- 汇率同步手动入口（issue #1545）：ExchangeRate 实体随币种参考数据
-               归属（ADR-0059），与本位币基准卡同页签；同步语义全在后端命令。 -->
+          <DisplayCurrencySettings />
           <ExchangeRateSyncSettings />
-          <CategoryManager />
         </div>
       </NTabPane>
 

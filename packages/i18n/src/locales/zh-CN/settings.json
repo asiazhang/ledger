@@ -2,6 +2,7 @@
   "tabs": {
     "general": "通用",
     "categories": "分类",
+    "currencies": "币种",
     "data": "数据",
     "scheduled": "定时",
     "features": "功能",
@@ -446,7 +447,7 @@
     "baseCurrency": "本位币基准",
     "baseCurrencyHint": "账本级设置：修改后随多端同步，在所有设备一致生效，折算口径保持唯一。",
     "displayCurrency": "展示币种",
-    "displayCurrencyHint": "本设备的金额展示格式与新表单预选币种，不随同步。",
+    "displayCurrencyHint": "仅本设备生效：新表单的币种预选与金额符号提示；不随同步，不参与账本折算。",
     "baseCurrencyLoadFailed": "读取本位币基准失败：{msg}",
     "baseCurrencySaveFailed": "保存本位币基准失败：{msg}"
   },
