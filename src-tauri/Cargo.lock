@@ -3206,6 +3206,7 @@ dependencies = [
  "tauri-app",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

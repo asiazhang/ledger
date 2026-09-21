@@ -4063,7 +4063,10 @@ fn confirmed_money_fund_generates_no_per_round_requests() {
 fn mixed_ledger_keeps_constant_fund_out_of_requests_denominator_and_gaps() {
     let today = beijing_today();
     let today_s = today.format("%Y-%m-%d").to_string();
-    let yesterday = (today - chrono::Duration::days(1))
+    // 水位取恰好七个自然日前：恒落在上一 ISO 周（周采样按周唯一键，不与本周点
+    // 同周互覆），任意运行日断言确定性成立——种子用「昨天」会在周一跨周多出一行
+    //（日历依赖缺陷，#1582 范围外修复）。
+    let last_week = (today - chrono::Duration::days(7))
         .format("%Y-%m-%d")
         .to_string();
     let conn = tauri_app_lib::test_support::open();
@@ -4076,9 +4079,9 @@ fn mixed_ledger_keeps_constant_fund_out_of_requests_denominator_and_gaps() {
         "CNY",
         "sh",
     );
-    // 普通场外基金：水位昨天，批量面报今天 → 新净值直落（零逐只请求）。
+    // 普通场外基金：水位上周，批量面报今天 → 新净值直落（零逐只请求）。
     seed_fund(&conn, "inst-fund", "100001", "陈旧名称-基金");
-    seed_fund_history(&conn, "inst-fund", &yesterday);
+    seed_fund_history(&conn, "inst-fund", &last_week);
     // 恒定标的：排行面无货币型桶（ADR-0126 背景），不出现在两个批量面里。
     seed_fund(&conn, "inst-const", "000198", "余额宝");
     mark_constant(&conn, "inst-const");
@@ -4157,23 +4160,13 @@ fn mixed_ledger_keeps_constant_fund_out_of_requests_denominator_and_gaps() {
         Some((30_000, Some(today_s.clone()))),
         "普通基金的批量面直落照旧"
     );
-    // 当周采样点按「整周覆盖」幂等：水位日与今日同 ISO 周则覆盖为一条，跨周
-    // 则两条并存（用例不能假定运行日在周内的位置，参照同文件 current-week 用例）。
-    let yesterday_date = today - chrono::Duration::days(1);
-    let expected_history = if crate::incremental::week_monday(yesterday_date)
-        == crate::incremental::week_monday(today)
-    {
-        vec![(today_s.clone(), 30_000, "CNY".into())]
-    } else {
-        vec![
-            (yesterday.clone(), 30_000, "CNY".into()),
-            (today_s.clone(), 30_000, "CNY".into()),
-        ]
-    };
     assert_eq!(
         price_history_rows(&conn, "inst-fund"),
-        expected_history,
-        "普通基金的当周采样点照旧"
+        vec![
+            (last_week.clone(), 30_000, "CNY".into()),
+            (today_s.clone(), 30_000, "CNY".into()),
+        ],
+        "普通基金的当周采样点照旧：上周采样点保留、本周点由批量面直落"
     );
     assert_eq!(
         instrument_name(&conn, "inst-fund"),

@@ -127,19 +127,22 @@ pub(super) fn insert_lot(conn: &Connection, account_id: &str, instrument_id: &st
     .unwrap();
 }
 
-/// 起一个捕获请求头的本地 HTTP 服务（响应体固定、按顺序收集请求头），返回
-/// (基础地址, 请求头收集器)——文本 / JSON 两类通道的请求形态断言共用一份脚手架。
-pub(super) fn spawn_header_capture_server(
-    body: impl Into<Vec<u8>>,
+/// 起一个本地 HTTP 服务：按调用次数回调响应 (status, body)（body 字节安全，GBK
+/// fixture 可直传），并按序收集完整请求头，返回 (基础地址, 请求头收集器)——本域
+/// 唯一一份本地 HTTP 测试服务机制（issue #1582 上收：tests/http_client.rs 与
+/// tests/csrc.rs 的同形本地实现退役）；固定应答的用例经
+/// [`spawn_header_capture_server`] 表达。
+pub(super) fn spawn_capture_server(
+    responder: impl Fn(usize) -> (u16, Vec<u8>) + Send + 'static,
 ) -> (String, Arc<Mutex<Vec<String>>>) {
     use std::io::{BufRead, BufReader, Write};
 
-    let body: Vec<u8> = body.into();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let heads = Arc::new(Mutex::new(Vec::new()));
     let heads_clone = heads.clone();
     std::thread::spawn(move || {
+        let mut seq = 0usize;
         for stream in listener.incoming() {
             let Ok(stream) = stream else { break };
             let Ok(reader_stream) = stream.try_clone() else {
@@ -164,9 +167,12 @@ pub(super) fn spawn_header_capture_server(
                 }
             }
             heads_clone.lock().unwrap().push(head);
+            seq += 1;
+            let (status, body) = responder(seq);
+            let reason = if status == 200 { "OK" } else { "Error" };
             let mut stream = stream;
             let resp_head = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 body.len()
             );
             let _ = stream.write_all(resp_head.as_bytes());
@@ -174,6 +180,16 @@ pub(super) fn spawn_header_capture_server(
         }
     });
     (url, heads)
+}
+
+/// 起一个捕获请求头的本地 HTTP 服务（固定 200 + 固定响应体、按顺序收集请求头），
+/// 返回 (基础地址, 请求头收集器)——单页 fixture 用例的便捷形态，机制单点在
+/// [`spawn_capture_server`]；文本 / JSON 两类通道的请求形态断言共用。
+pub(super) fn spawn_header_capture_server(
+    body: impl Into<Vec<u8>>,
+) -> (String, Arc<Mutex<Vec<String>>>) {
+    let body = body.into();
+    spawn_capture_server(move |_| (200, body.clone()))
 }
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crate::http::{KlineBar, Pacer, RetryConfig, request_json_from_hosts, request_json_with_retry};
 
-use super::spawn_header_capture_server;
+use super::{spawn_capture_server, spawn_header_capture_server};
 
 /// HTTP 层测试的通用应答形状（ulist 通道退役后改为最小本地形状，测试只关心
 /// 「能否解析出 JSON 对象」）。
@@ -73,7 +73,7 @@ fn pacer_zero_interval_stays_inert() {
 fn throttle_responses_slow_the_request_interval() {
     // 疑似风控页（200 + 非 JSON）与 429 都是「对方在限我们」的信号：降速一档，
     // 冷却等待复用既有 throttle_cooldown（本用例把它压到 1ms）。
-    let url = spawn_http_server(|n| {
+    let (url, _) = spawn_capture_server(|n| {
         if n == 1 {
             (200, "risk control page".into())
         } else {
@@ -103,7 +103,7 @@ fn throttle_responses_slow_the_request_interval() {
         pacer.interval()
     );
 
-    let url = spawn_http_server(|n| {
+    let (url, _) = spawn_capture_server(|n| {
         if n == 1 {
             (429, "rate limited".into())
         } else {
@@ -128,36 +128,9 @@ fn throttle_responses_slow_the_request_interval() {
     );
 }
 
-/// 起一个本地 HTTP 服务，按调用次数回调响应 (status, body)，返回基础地址。
-pub(crate) fn spawn_http_server(
-    responder: impl Fn(usize) -> (u16, String) + Send + 'static,
-) -> String {
-    use std::io::{Read, Write};
-
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    std::thread::spawn(move || {
-        let mut seq = 0usize;
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { break };
-            let mut buf = [0u8; 2048];
-            let _ = stream.read(&mut buf);
-            seq += 1;
-            let (status, body) = responder(seq);
-            let reason = if status == 200 { "OK" } else { "Limited" };
-            let resp = format!(
-                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(resp.as_bytes());
-        }
-    });
-    url
-}
-
 #[test]
 fn request_json_retries_429_then_succeeds() {
-    let url = spawn_http_server(|n| {
+    let (url, _) = spawn_capture_server(|n| {
         if n == 1 {
             (429, "rate limited".into())
         } else {
@@ -186,7 +159,7 @@ fn request_json_retries_429_then_succeeds() {
 
 #[test]
 fn request_json_retries_on_json_decode_failure() {
-    let url = spawn_http_server(|n| {
+    let (url, _) = spawn_capture_server(|n| {
         if n == 1 {
             (200, "not json at all".into())
         } else {
@@ -215,7 +188,7 @@ fn request_json_retries_on_json_decode_failure() {
 
 #[test]
 fn request_json_returns_error_after_429_exhausted() {
-    let url = spawn_http_server(|_| (429, "rate limited".into()));
+    let (url, _) = spawn_capture_server(|_| (429, "rate limited".into()));
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
@@ -261,12 +234,12 @@ fn request_json_falls_back_to_next_host() {
 
     let hits = Arc::new(AtomicUsize::new(0));
     let h1 = hits.clone();
-    let url1 = spawn_http_server(move |_| {
+    let (url1, _) = spawn_capture_server(move |_| {
         h1.fetch_add(1, Ordering::SeqCst);
         (500, "boom".into())
     });
     let h2 = hits.clone();
-    let url2 = spawn_http_server(move |_| {
+    let (url2, _) = spawn_capture_server(move |_| {
         h2.fetch_add(1, Ordering::SeqCst);
         (200, r#"{"data":{"diff":[]}}"#.into())
     });
@@ -296,7 +269,7 @@ fn request_json_falls_back_to_next_host() {
 
 #[test]
 fn request_json_returns_error_when_all_hosts_fail() {
-    let url = spawn_http_server(|_| (500, "boom".into()));
+    let (url, _) = spawn_capture_server(|_| (500, "boom".into()));
     let hosts = [url.as_str()];
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
@@ -420,9 +393,9 @@ fn ecb_sample_xml(date: &str, cny: &str) -> String {
 
 #[test]
 fn fetch_ecb_full_history_and_90d_entries_parse_fake_responses() {
-    let url = spawn_http_server({
+    let (url, _) = spawn_capture_server({
         let body = ecb_sample_xml("2026-09-18", "7.6755");
-        move |_| (200, body.clone())
+        move |_| (200, body.clone().into())
     });
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
@@ -449,7 +422,7 @@ fn fetch_ecb_full_history_and_90d_entries_parse_fake_responses() {
 fn fetch_ecb_entries_report_coded_error_on_unexpected_shapes() {
     let client = reqwest::Client::new();
     // 空文件（200 + 空 body）：报 fx.source-malformed，不产出空序列。
-    let url = spawn_http_server(|_| (200, String::new()));
+    let (url, _) = spawn_capture_server(|_| (200, String::new().into()));
     let mut pacer = Pacer::new(Duration::ZERO);
     let err = tauri::async_runtime::block_on(crate::ecb::fetch_ecb_full_history(
         &client,
@@ -459,7 +432,7 @@ fn fetch_ecb_entries_report_coded_error_on_unexpected_shapes() {
     .unwrap_err();
     assert!(err.is_code("fx.source-malformed"), "实际 {err:?}");
     // 非 XML（被拦截页）：同码报错。
-    let url = spawn_http_server(|_| (200, "<html>waf blocked</html>".into()));
+    let (url, _) = spawn_capture_server(|_| (200, "<html>waf blocked</html>".into()));
     let mut pacer = Pacer::new(Duration::ZERO);
     let err = tauri::async_runtime::block_on(crate::ecb::fetch_ecb_90d_incremental(
         &client,
