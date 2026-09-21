@@ -427,10 +427,8 @@ fn fetch_batch_decodes_gbk_and_fails_closed_on_intercepted_response() {
         ))
         .expect_err("被拦截响应应报错");
         assert!(
-            error
-                .to_string()
-                .contains("新浪场外基金批量净值响应不可解析"),
-            "实际 {error:?}"
+            error.is_code("sync.fund-batch-source-malformed"),
+            "被拦截响应应报批量源不可信码化错误，实际 {error:?}"
         );
     }
 }
