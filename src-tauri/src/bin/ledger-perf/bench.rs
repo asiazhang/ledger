@@ -1,5 +1,6 @@
-//! bench 子命令：对 generate 产出的库跑 11 项查询基准并输出 min/avg/p95 报告
-//! （issue #461 / spec #458；拼音子序列基准 issue #514）。
+//! bench 子命令：对 generate 产出的库跑 15 项查询基准并输出 min/avg/p95 报告
+//! （issue #461 / spec #458；拼音子序列基准 issue #514；商户占比与投资三项
+//! 读基准 issue #1627）。
 //!
 //! 唯一接缝（验收项）：全部基准经「现有 pub 查询函数 + 标准连接工厂
 //! （[`open_connection`]）打开文件库」调用，与 IPC 命令同一 SQL 路径——
@@ -29,7 +30,10 @@ use ledger_dashboard as dashboard_domain;
 use ledger_infra::db::open_connection;
 use ledger_infra::db::perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD;
 use ledger_investment::holdings::holdings_as_of;
-use ledger_investment::list_holdings;
+use ledger_investment::{
+    MwrRange, TrendRange, list_holdings, query_financial_freedom,
+    query_money_weighted_return_summary, query_portfolio_value_trend,
+};
 use ledger_reports as reports_domain;
 use ledger_transaction::{
     TransactionListFilter, list_transactions_internal, search_transactions_internal,
@@ -260,7 +264,7 @@ pub(crate) fn gate_failures(results: &[BenchMetrics], max_p95_ms: f64) -> Vec<St
         .collect()
 }
 
-/// 基准执行核心（测试接缝）：对已打开的连接跑全部 11 项基准。
+/// 基准执行核心（测试接缝）：对已打开的连接跑全部 15 项基准。
 ///
 /// 前置数据（账户 id、日期极值、深分页页码）全部经现有查询函数在预热外
 /// 一次性探测，基准闭包内只做「参数已定型的单次查询调用」。
@@ -301,7 +305,7 @@ pub(crate) fn run_benchmarks(
         .map(|d| d.to_string())
         .ok_or_else(|| "日期窗口起点计算失败".to_string())?;
 
-    // ---- 10 项基准（每项一个定型参数的查询闭包） ------------------------
+    // ---- 15 项基准（每项一个定型参数的查询闭包） ------------------------
     let first_page_filter = TransactionListFilter {
         page_size: Some(PAGE_SIZE),
         page: Some(1),
@@ -328,6 +332,14 @@ pub(crate) fn run_benchmarks(
     let monthly_max = max_date.clone();
     let shares_min = min_date.clone();
     let shares_max = max_date.clone();
+    let merchant_min = min_date.clone();
+    let merchant_max = max_date.clone();
+    let trend_min = min_date.clone();
+    let trend_max = max_date.clone();
+    let trend_range = TrendRange {
+        start_date: Some(trend_min.clone()),
+        end_date: Some(trend_max.clone()),
+    };
     let as_of_date = max_date.clone();
 
     let benches: Vec<(&'static str, Box<BenchFn>)> = vec![
@@ -408,6 +420,28 @@ pub(crate) fn run_benchmarks(
             }),
         ),
         (
+            "商户占比",
+            Box::new(move |conn| {
+                // 全窗口期间口径（year 不参与），top_n None = 全量（issue #588
+                // 语义），报表三件套的第三件入集（issue #1627）。
+                reports_domain::merchant_shares_report(
+                    conn,
+                    0,
+                    Some(&merchant_min),
+                    Some(&merchant_max),
+                    None,
+                )
+                .map_err(|e| e.to_string())
+                .map(|r| {
+                    format!(
+                        "{merchant_min} → {merchant_max} expense 净值，{} 个商户，合计 {} 分",
+                        r.rows.len(),
+                        r.total_cents
+                    )
+                })
+            }),
+        ),
+        (
             "备注搜索拼音过滤",
             Box::new(move |conn| {
                 search_transactions_internal(
@@ -468,6 +502,55 @@ pub(crate) fn run_benchmarks(
                 holdings_as_of(conn, None, &as_of_date)
                     .map_err(|e| e.to_string())
                     .map(|q| format!("全组合 @{as_of_date}（直接聚合标的交易），合计 {q:.2}"))
+            }),
+        ),
+        (
+            "投资组合趋势",
+            Box::new(move |conn| {
+                // 全窗口周线（issue #1627）：逐价格行委托时点持仓接缝
+                // （holdings_as_of），周采样 × 标的的嵌套循环是本项被测成本。
+                query_portfolio_value_trend(conn, &trend_range)
+                    .map_err(|e| e.to_string())
+                    .map(|t| {
+                        format!(
+                            "{trend_min} → {trend_max} 全组合周线，{} 个周点（折算 {}）",
+                            t.points.len(),
+                            t.currency_code
+                        )
+                    })
+            }),
+        ),
+        (
+            "资金加权收益",
+            Box::new(move |conn| {
+                // 区间不设界 = IPC 命令的缺省调用形态（unwrap_or_default）；
+                // 每对（账户 × 标的）一次 XIRR 数值解（200 次迭代）。
+                query_money_weighted_return_summary(conn, &MwrRange::default())
+                    .map_err(|e| e.to_string())
+                    .map(|s| {
+                        format!(
+                            "区间不设界，标的行 {} / 账户行 {} / 币种行 {}（含 XIRR 数值解）",
+                            s.by_instrument.len(),
+                            s.by_account.len(),
+                            s.total.len()
+                        )
+                    })
+            }),
+        ),
+        (
+            "财务自由度",
+            Box::new(|conn| {
+                query_financial_freedom(conn)
+                    .map_err(|e| e.to_string())
+                    .map(|o| {
+                        format!(
+                            "可投资资产 {} 分（{}），年预算 {} 分，覆盖 {} 年",
+                            o.numerator_cents,
+                            o.native_currency,
+                            o.denominator_cents,
+                            o.coverage_years
+                        )
+                    })
             }),
         ),
     ];
