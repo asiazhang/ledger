@@ -274,10 +274,10 @@ export const api = {
   // 自建标的删除（issue #292 / ADR-0036）：仅手动来源且无买卖流水引用可删，
   // 守卫在后端前置检查，同步来源拒删
   deleteInstrument: (id: string) => invoke<void>("delete_instrument", { id }),
-  // 按代码即拉添加场外基金（issue #301 / ADR-0038）：东财回填名称/分类/最新净值
+  // 按代码即拉添加场外基金（issue #301 / ADR-0038）：行情源回填权威名称与最新净值
   addFundByCode: (code: string) => invoke<AddFundResult>("add_fund_by_code", { code }),
   // 按代码添加投资标的·场内通道（issue #697 / ADR-0081）：市场必选录入通道
-  // （sh/sz/hk/us），后端按代码查询东财、类型自动识别并经创建增强回填名称与最新价
+  // （sh/sz/hk/us），后端按代码查询行情源、类型自动识别并经创建增强回填名称与最新价
   addInstrumentByCode: (market: AddInstrumentChannel, code: string) =>
     invoke<AddStockInstrumentResult>("add_instrument_by_code", { market, code }),
   // 手动报价（issue #291 / ADR-0036）：无行情来源标的的「日期 + 价格」单点录入，

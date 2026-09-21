@@ -25,7 +25,7 @@ use crate::common::{post_instrument, setup_app, setup_app_with_stock_fetch};
 /// currency_code 在增强分支不生效外）。全部请求离线，不触真实网络。
 fn setup_app_stock_degraded() -> (axum::Router, Arc<Mutex<rusqlite::Connection>>) {
     let fetch: StockQuoteFetcher =
-        Arc::new(|_, _| crate::common::ready_quote(Err(AppError::Io("东财网络不可达".into()))));
+        Arc::new(|_, _| crate::common::ready_quote(Err(AppError::Io("行情源网络不可达".into()))));
     setup_app_with_stock_fetch(Some(fetch))
 }
 

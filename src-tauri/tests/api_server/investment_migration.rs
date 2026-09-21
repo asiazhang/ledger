@@ -8,8 +8,8 @@
 //! `transaction/tests/amount.rs`、`balance_cache.rs`）；链路「搜索→建标的→批量
 //! 导入→读回」的旅程权威在 e2e BDD（`e2e/features/instruments.feature` 投资迁移链路）。
 //!
-//! 通用链路示例标的用非 fund 类型（stock，东财往返经注入桩离线驱动——issue #694
-//! 起 stock 真实代码创建经东财增强）；基金申赎迁移链路（查询→创建→
+//! 通用链路示例标的用非 fund 类型（stock，行情源往返经注入桩离线驱动——issue #694
+//! 起 stock 真实代码创建经行情源增强）；基金申赎迁移链路（查询→创建→
 //! 批量导入，issue #304）与股票三步法链路（issue #694）见本文件末尾独立测试。
 
 use std::collections::HashMap;
@@ -72,7 +72,7 @@ fn trade_row(
 async fn test_migration_chain_create_instrument_batch_import_rows_readback() {
     let (app, conn, _calls) = setup_app_with_stock_stub(generic_chain_stock_hits());
 
-    // HTTP 建标的（东财桩离线增强）→ 201 + 裸 id
+    // HTTP 建标的（行情源桩离线增强）→ 201 + 裸 id
     let create_body = r#"{"symbol":"600519","type":"stock","name":"贵州茅台","market":"sh"}"#;
     let (status, bytes) = post_instrument(&app, create_body).await;
     assert_eq!(status, StatusCode::CREATED);
@@ -202,7 +202,7 @@ async fn test_update_trade_to_missing_instrument_returns_400_not_500() {
 
 // ---------------------------------------------------------------------------
 // 基金申赎迁移链路（issue #304 / ADR-0039）：查询 → 创建 → 批量导入的
-// 接线证明（东财经注入桩离线驱动）。确认单金额权威、净值反算、幂等键去重、
+// 接线证明（行情源经注入桩离线驱动）。确认单金额权威、净值反算、幂等键去重、
 // 余额口径等域语义权威见文件头坐标，此处不展开。
 // ---------------------------------------------------------------------------
 
@@ -225,7 +225,7 @@ async fn test_fund_migration_chain_lookup_create_batch_import_wired() {
     let (status, _) = get_json(&app, "/api/v1/funds/012345").await;
     assert_eq!(status, StatusCode::OK);
 
-    // 2. 以真实 6 位代码创建标的 → 201 + 裸 id（东财回填细节权威在
+    // 2. 以真实 6 位代码创建标的 → 201 + 裸 id（行情源回填细节权威在
     //    instrument_create_fund.rs）
     let create_body = r#"{"symbol":"012345","type":"fund","name":"华夏成长混合(账单抄写)"}"#;
     let (status, bytes) = post_instrument(&app, create_body).await;
@@ -261,7 +261,7 @@ async fn test_fund_migration_chain_lookup_create_batch_import_wired() {
     let items = list["items"].as_array().expect("读回应为 {items, total}");
     assert_eq!(items.len(), 2, "两行申赎应全部落库");
 
-    // 桩注入装配：全链路对东财的依赖仅两次（查询 + 创建校验），批量导入零网络
+    // 桩注入装配：全链路对行情源的依赖仅两次（查询 + 创建校验），批量导入零网络
     assert_eq!(
         *calls.lock().unwrap(),
         vec!["012345".to_string(), "012345".to_string()]
@@ -292,7 +292,7 @@ async fn test_stock_migration_chain_lookup_create_batch_import_wired() {
     let (status, _) = get_json(&app, "/api/v1/stocks/600519").await;
     assert_eq!(status, StatusCode::OK);
 
-    // 2. 再以真实代码 + 精确市场创建标的 → 201 + 裸 id（东财增强回填细节权威在
+    // 2. 再以真实代码 + 精确市场创建标的 → 201 + 裸 id（行情源增强回填细节权威在
     //    instrument_create_stock.rs）
     let create_body =
         r#"{"symbol":"600519","type":"stock","market":"sh","name":"贵州茅台(账单抄写)"}"#;
@@ -329,7 +329,7 @@ async fn test_stock_migration_chain_lookup_create_batch_import_wired() {
     let items = list["items"].as_array().expect("读回应为 {items, total}");
     assert_eq!(items.len(), 2, "两行买卖应全部落库");
 
-    // 桩注入装配：全链路对东财的依赖仅两次（查询 + 创建校验），批量导入零网络
+    // 桩注入装配：全链路对行情源的依赖仅两次（查询 + 创建校验），批量导入零网络
     assert_eq!(
         *calls.lock().unwrap(),
         vec![

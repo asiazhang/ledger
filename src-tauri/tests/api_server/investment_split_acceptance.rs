@@ -163,7 +163,7 @@ fn readout(
 /// 6 笔结转实写 → 持仓补足 5,820.53 份 → 被阻塞的真实卖出走通。
 #[tokio::test]
 async fn test_split_real_migration_data_unblocks_blocked_sell_end_to_end() {
-    // 502010 经场外基金通道按代码创建（东财桩离线驱动）：类型 fund、市场 unknown，
+    // 502010 经场外基金通道按代码创建（行情源桩离线驱动）：类型 fund、市场 unknown，
     // 创建带回的权威净值落 `market_prices` 现价——即持仓视图消费的价格通道。
     let hits = HashMap::from([(
         "502010".to_string(),

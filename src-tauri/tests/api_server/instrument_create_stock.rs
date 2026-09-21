@@ -115,14 +115,14 @@ fn us_stub_hits() -> HashMap<String, StockStubHit> {
 }
 
 // ---------------------------------------------------------------------------
-// 东财命中：权威名称回填 + 最新价落现价
+// 行情源命中：权威名称回填 + 最新价落现价
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_create_stock_with_known_code_backfills_authoritative_name_and_price() {
     let (app, conn, calls) = setup_app_with_stock_stub(stub_hit());
 
-    // AI 提交的名称有误（账单抄写名），后端应以东财权威名称为准。
+    // AI 提交的名称有误（账单抄写名），后端应以行情源权威名称为准。
     let body = r#"{"symbol":"600519","type":"stock","market":"sh","name":"贵州茅台A（账单抄写）"}"#;
     let (status, bytes) = post_instrument(&app, body).await;
     assert_eq!(status, StatusCode::CREATED);
@@ -137,7 +137,7 @@ async fn test_create_stock_with_known_code_backfills_authoritative_name_and_pric
     );
     assert_eq!(row.market, "sh", "应落解析市场");
     assert_eq!(row.source, "manual");
-    let (price_cents, priced, nav_date, price_source) = row.price.expect("东财命中应落现价缓存");
+    let (price_cents, priced, nav_date, price_source) = row.price.expect("行情源命中应落现价缓存");
     assert_eq!(
         price_cents, 150000,
         "最新价 15.00 元 = 万分之一元刻度 150000"
@@ -681,7 +681,11 @@ async fn test_create_stock_replay_returns_same_id_without_price_fragments() {
         .query_row("SELECT COUNT(*) FROM market_prices", [], |r| r.get(0))
         .unwrap();
     assert_eq!(price_rows, 1, "重放应刷新现价而非产生碎片行");
-    assert_eq!(calls.lock().unwrap().len(), 2, "两次创建各发起一次东财校验");
+    assert_eq!(
+        calls.lock().unwrap().len(),
+        2,
+        "两次创建各发起一次行情源校验"
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -278,7 +278,7 @@ impl ReplayBinding for ExchangeRateBinding {
     }
 }
 
-/// 用户侧价格适配绑定（现价录入 / 手动报价；东财行情不进 op）。
+/// 用户侧价格适配绑定（现价录入 / 手动报价；行情采集不进 op）。
 pub(crate) struct PriceBinding;
 
 impl ReplayBinding for PriceBinding {
