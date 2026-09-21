@@ -667,6 +667,9 @@ fn plan_with_existing_refs(
                     refund_of_transaction_id: input.refund_of_transaction_id.clone(),
                     note: input.note.clone(),
                     date: input.date.clone(),
+                    // 逐笔显式汇率随输入下传（#1549）：归一化与非法值校验归
+                    // Amount 接缝按交易日入口单点，本层不重复判定。
+                    fx_rate: input.fx_rate,
                 },
             )?;
             // 行内校验全部通过后才即建商户：未命中名字在此落定（失败行不产生碎商户）；

@@ -980,6 +980,9 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             refund_of_transaction_id: None,
             note: st.note.clone(),
             date: occ.scheduled_date.clone(),
+            // 定时计划无逐笔显式汇率契约（#1549 可选字段的调用方是导入/HTTP 面），
+            // 期次恒走序列查询路径（#1547），缺汇率报错期次保持可重试。
+            fx_rate: None,
         },
     )?;
 

@@ -357,6 +357,7 @@ fn writer_insert_row_direct_seam_refreshes_cache() {
         funding_account_id: None,
         note: None,
         date: "2026-03-01".into(),
+        fx_rate: None,
     };
     let row = writer::normalize(&conn, &input).unwrap();
     writer::insert_row(&conn, &row).unwrap();

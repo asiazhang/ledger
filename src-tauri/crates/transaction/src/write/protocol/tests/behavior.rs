@@ -80,6 +80,7 @@ fn create_transfer_with_to_account() {
             in_amount_cents: None,
             idempotency_key: None,
             origin: None,
+            fx_rate: None,
         },
     )
     .unwrap()
@@ -672,6 +673,7 @@ fn create_refund_linked_to_expense() {
             in_amount_cents: None,
             idempotency_key: None,
             origin: None,
+            fx_rate: None,
         },
     )
     .unwrap()
@@ -703,6 +705,7 @@ fn create_refund_linked_to_expense() {
             in_amount_cents: None,
             idempotency_key: None,
             origin: None,
+            fx_rate: None,
         },
     )
     .unwrap()

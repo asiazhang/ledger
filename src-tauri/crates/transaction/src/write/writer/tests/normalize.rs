@@ -1,7 +1,8 @@
 //! normalize 归一化校验：通用 kind 直通、金额 > 0、transfer 必填目标账户、
 //! 仅接受通用 kind（buy/sell/dividend/split 拒绝）、本位币折算（Amount 接缝）。
 
-use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+use ledger_infra::error::AppError;
+use tauri_app_lib::ledger_transaction::amount::{FxRateSource, TransactionKind};
 use tauri_app_lib::ledger_transaction::write::writer::{Input, normalize};
 
 use super::common::{input, insert_category};
@@ -149,6 +150,68 @@ fn normalize_converts_via_amount_seam_to_default_currency() {
     assert_eq!(norm.currency_code, "USD");
     // 基准为全局默认币种（CNY），即使账户是 USD 也不按账户币种 1:1
     assert_eq!(norm.amount_native_cents, 72000);
+}
+
+/// 显式汇率优先（#1549）：入参携 `fx_rate` 的行跳过序列查询、按给定值折算，
+/// 留痕标为 `explicit`；不带显式汇率的行行为不变（序列点仍生效）。
+#[test]
+fn normalize_explicit_fx_rate_skips_series_and_traces_explicit() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0);
+    test_support::seed_fx_rate_history(&conn, "fxh-w", "USD", "CNY", "2025-12-29", 7.2);
+
+    // 带显式汇率：序列有点仍不用，按给定值折算并标 `explicit`。
+    let norm = normalize(
+        &conn,
+        &Input {
+            currency_code: "USD".into(),
+            fx_rate: Some(7.0),
+            ..input(TransactionKind::Expense, 10000, "acc-usd")
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        norm.amount_native_cents, 70000,
+        "native = amount × 显式汇率"
+    );
+    assert_eq!(norm.fx_rate_used, Some(7.0));
+    assert_eq!(
+        norm.fx_rate_source,
+        Some(FxRateSource::Explicit),
+        "留痕标为显式"
+    );
+
+    // 不带显式汇率：行为与 #1547 逐位一致（同周序列点 7.2 生效）。
+    let norm = normalize(
+        &conn,
+        &Input {
+            currency_code: "USD".into(),
+            ..input(TransactionKind::Expense, 10000, "acc-usd")
+        },
+    )
+    .unwrap();
+    assert_eq!(norm.amount_native_cents, 72000);
+    assert_eq!(norm.fx_rate_source, Some(FxRateSource::Series));
+}
+
+/// 显式汇率非法（非正）→ 码化错误，归一化失败整笔不落库（#1549 验收 3）。
+#[test]
+fn normalize_explicit_fx_rate_non_positive_coded_error() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0);
+    let err = normalize(
+        &conn,
+        &Input {
+            currency_code: "USD".into(),
+            fx_rate: Some(0.0),
+            ..input(TransactionKind::Expense, 10000, "acc-usd")
+        },
+    )
+    .unwrap_err();
+    match err {
+        AppError::Coded { code, .. } => assert_eq!(code, "fx.explicit-rate-non-positive"),
+        other => panic!("应为码化错误，实际: {other}"),
+    }
 }
 
 /// 非默认币种且无汇率 → 报错，不静默 1:1 混币种。
