@@ -53,10 +53,13 @@ fn isolate_home() {
 
 /// 密文库 + 锁定现场（解锁屏 AwaitUnlock 同形）：mock 应用 + 引导登记态 +
 /// 密文库（明文库建好即弃连接 → 原位转密文 → 清 .bak）+ 锁定门 + 占位连接对
-///（门立起、占位对维持形状；readonly_connection 解锁场景同款）。
-fn locked_encrypted_device_app(tag: &str, passphrase: &str) -> AppHandle {
-    let dir = std::env::temp_dir().join(format!("ledger-sessionenv-it-{tag}-{}", db::new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
+///（门立起、占位对维持形状；readonly_connection 解锁场景同款）。库目录走
+/// ScratchDir（issue #1645）：guard 随元组交调用方持有，用例结束整棵删除。
+fn locked_encrypted_device_app(
+    tag: &str,
+    passphrase: &str,
+) -> (AppHandle, tauri_app_lib::test_support::ScratchDir) {
+    let dir = tauri_app_lib::test_support::ScratchDir::new(&format!("sessionenv-it-{tag}"));
     let app = tauri::test::mock_app();
     app.manage(BootCell::new(db::data_location::boot(&dir)));
     app.manage(EncryptionGate::new(true));
@@ -69,14 +72,13 @@ fn locked_encrypted_device_app(tag: &str, passphrase: &str) -> AppHandle {
     let placeholder_dir = dir.join("placeholder-shape");
     std::fs::create_dir_all(&placeholder_dir).unwrap();
     app.manage(db::open_db_in(&placeholder_dir).unwrap());
-    app.handle().clone()
+    (app.handle().clone(), dir)
 }
 
 /// 启动失败现场（失败恢复屏同形）：失败门登记 + 占位连接对 + 引导登记态，
 /// 库目录指向独立临时目录（重置在其内新建明文空库）。
-fn failed_device_app() -> AppHandle {
-    let dir = std::env::temp_dir().join(format!("ledger-sessionenv-it-failed-{}", db::new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
+fn failed_device_app() -> (AppHandle, tauri_app_lib::test_support::ScratchDir) {
+    let dir = tauri_app_lib::test_support::ScratchDir::new("sessionenv-it-failed");
     let app = tauri::test::mock_app();
     app.manage(BootCell::new(db::data_location::boot(&dir)));
     app.manage(EncryptionGate::new(false));
@@ -86,7 +88,7 @@ fn failed_device_app() -> AppHandle {
     let placeholder_dir = dir.join("placeholder-shape");
     std::fs::create_dir_all(&placeholder_dir).unwrap();
     app.manage(db::open_db_in(&placeholder_dir).unwrap());
-    app.handle().clone()
+    (app.handle().clone(), dir)
 }
 
 /// 三起点顺序旅程（会话信封是进程级单例，场景必须串行）：
@@ -100,7 +102,7 @@ async fn resume_surfaces_declare_session_envelope_in_signature() {
 
     // ---------- 场景①：解锁（do_unlock → Encrypted(口令)） ----------
     {
-        let app = locked_encrypted_device_app("unlock", "解锁主口令");
+        let (app, _dir) = locked_encrypted_device_app("unlock", "解锁主口令");
         unlock_encryption(app.clone(), "解锁主口令".into())
             .await
             .expect("解锁应成功");
@@ -113,7 +115,7 @@ async fn resume_surfaces_declare_session_envelope_in_signature() {
 
     // ---------- 场景②：忘记口令重置（→ Plaintext，新库是明文空库） ----------
     {
-        let app = locked_encrypted_device_app("forgot-reset", "待重置主口令");
+        let (app, _dir) = locked_encrypted_device_app("forgot-reset", "待重置主口令");
         reset_after_forgotten_passphrase(app.clone())
             .await
             .expect("忘记口令重置应成功");
@@ -127,7 +129,7 @@ async fn resume_surfaces_declare_session_envelope_in_signature() {
 
     // ---------- 场景③：启动失败重置（→ Plaintext，该起点声明的不变量） ----------
     {
-        let app = failed_device_app();
+        let (app, _dir) = failed_device_app();
         // 会话先直接置密文形态：生产可达现场里失败态信封必为 None（可证 no-op），
         // 置值只为让断言可区分「该起点的明文声明生效」与「残留前值」——删除
         // resume 体内信封写入时本场景即红（e2e 步骤层直置进程态的同款先例）。

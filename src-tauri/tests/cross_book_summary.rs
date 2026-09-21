@@ -23,7 +23,7 @@
     )
 )]
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Once;
 
 use ledger_infra::db::data_location::{self, DB_FILE_NAME};
@@ -36,7 +36,7 @@ use tauri_app_lib::commands::book;
 use tauri_app_lib::commands::boot::BootCell;
 use tauri_app_lib::commands::cross_book_summary::cross_book_investment_summary;
 use tauri_app_lib::cross_book_summary::{CrossBookBookStatus, CrossBookInvestmentSummary};
-use tauri_app_lib::test_support::{seed_account, seed_exchange_rate, seed_instrument};
+use tauri_app_lib::test_support::{ScratchDir, seed_account, seed_exchange_rate, seed_instrument};
 
 /// HOME 重定向（本二进制进程内一次；理由与形态见 tests/commands/isolation.rs）。
 fn isolate_home() {
@@ -54,15 +54,12 @@ fn isolate_home() {
 }
 
 /// mock 应用 + 独立临时目录文件库 + 真实引导登记态（sync_channel::device_app 同款：
-/// 产品建缝拿连接，落库前显式注册写路径副作用实现）。
-fn device_app(tag: &str) -> (tauri::AppHandle<tauri::test::MockRuntime>, PathBuf) {
+/// 产品建缝拿连接，落库前显式注册写路径副作用实现）。库目录走 ScratchDir
+/// （issue #1645）：guard 随元组交调用方持有，用例结束（含 panic）整棵删除。
+fn device_app(tag: &str) -> (tauri::AppHandle<tauri::test::MockRuntime>, ScratchDir) {
     ledger_accounts::balance::install_balance_refresh_hook();
     tauri_app_lib::transaction_wiring::install_all();
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-crossbook-it-{tag}-{}",
-        ledger_infra::db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new(&format!("crossbook-it-{tag}"));
     let app = tauri::test::mock_app();
     let boot = data_location::boot(&dir);
     app.manage(BootCell::new(boot));
@@ -246,7 +243,7 @@ async fn cross_book_summary_command_surface_journey() {
     // 只读承诺基线：调用前快照五本库文件字节。
     let mut before = std::collections::BTreeMap::new();
     for (name, book_dir) in [
-        ("active", dir.clone()),
+        ("active", dir.path().to_path_buf()),
         ("empty", empty.dir.clone()),
         ("usd", usd.dir.clone()),
         ("locked", locked.dir.clone()),
@@ -261,11 +258,11 @@ async fn cross_book_summary_command_surface_journey() {
 
     // 只读承诺：调用后五本库文件字节不变（无迁移、无任何写入）。
     for (name, book_dir) in [
-        ("active", &dir),
-        ("empty", &empty.dir),
-        ("usd", &usd.dir),
-        ("locked", &locked.dir),
-        ("stale", &stale.dir),
+        ("active", dir.path()),
+        ("empty", empty.dir.as_path()),
+        ("usd", usd.dir.as_path()),
+        ("locked", locked.dir.as_path()),
+        ("stale", stale.dir.as_path()),
     ] {
         assert_eq!(
             before.get(name).unwrap(),

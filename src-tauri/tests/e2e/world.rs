@@ -274,6 +274,10 @@ pub struct BootGroup {
     pub sync_last_report: Option<ledger_sync_engine::SyncRoundReport>,
     /// 同步会话信封形态快照（密文会话场景断言用，issue #863）
     pub sync_session_encrypted: bool,
+    /// 场景暂存目录 guards（issue #1645）：真临时目录现场统一走 RAII——
+    /// cucumber 每 scenario 重建 World，drop（含 panic unwind）整棵删除。
+    /// 声明在组尾：同组内连接（dl_conn / enc_conn）先于目录清理关闭。
+    pub scratch: Vec<tauri_app_lib::test_support::ScratchDir>,
 }
 
 /// Cucumber World：每个 Scenario 独立持有一个 in-memory SQLite 数据库。
@@ -352,6 +356,17 @@ impl fmt::Debug for LedgerWorld {
 }
 
 impl LedgerWorld {
+    /// 场景暂存目录（issue #1645）：建 `ledger-test-{tag}-{uuid}/` 并把 guard
+    /// 登记进 [`BootGroup::scratch`]——scenario 结束随 World drop 整棵删除；
+    /// 返回路径供场景现场使用。散文件夹具（临时 .db/.zip）也住各自的暂存
+    /// 目录：取本方法返回值再 `join` 文件名即可。
+    pub fn scratch_dir(&mut self, tag: &str) -> PathBuf {
+        let guard = tauri_app_lib::test_support::ScratchDir::new(tag);
+        let path = guard.path().to_path_buf();
+        self.boot.scratch.push(guard);
+        path
+    }
+
     fn new() -> Self {
         // 提交点后置动作接线（spec #1086 / issue #1088）：BDD world 自建库，与
         // 生产启动/测试工厂同形先注册备份域的提交点实现，置脏语义才成立（幂等）。

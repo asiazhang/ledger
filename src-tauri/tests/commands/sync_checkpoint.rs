@@ -531,7 +531,7 @@ async fn bootstrap_refuses_library_with_user_data() {
     // 写入必产出 op，此处直置清空同步元数据模拟**前同步时代的存量库**
     //（该守卫的真实保护对象：升级前已记帐的旧库；ADR-0086「无公开入口的
     // 库内状态直置」同款）。
-    let (app_b, dir_b) = device_app("guard-b");
+    let (app_b, _dir_b) = device_app("guard-b");
     configure_channel(&app_b, &stub);
     let _ = seed_account_and_expense(&app_b, 900, "本机既有数据").await;
     let b_conn = app_b.state::<DbState>().conn.clone();
@@ -544,7 +544,6 @@ async fn bootstrap_refuses_library_with_user_data() {
         .await
         .expect_err("带业务数据的库应被拒");
     assert_code(err, "sync-channel.bootstrap-library-not-empty");
-    let _ = dir_b;
 }
 
 #[tokio::test]

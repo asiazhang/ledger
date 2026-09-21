@@ -21,6 +21,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::test_support::ScratchDir;
+
 /// 桩期望的 S3 寻址形态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum S3Addressing {
@@ -164,7 +166,9 @@ pub struct S3Stub {
     pub bucket: String,
     pub access_key: String,
     pub addressing: S3Addressing,
-    root: std::path::PathBuf,
+    /// 桩的临时根目录（issue #1645 走 ScratchDir）：仅持有以承接 Drop 清理，
+    /// 无读取点（StubState 拿的是路径副本）；下划线前缀标示 drop-guard 字段。
+    _root: ScratchDir,
     observations: Arc<Mutex<Vec<S3ObservedRequest>>>,
     violations: Arc<Mutex<Vec<String>>>,
 }
@@ -199,12 +203,6 @@ impl S3Stub {
             path_style: self.addressing == S3Addressing::PathStyle,
             space_id: space.to_string(),
         }
-    }
-}
-
-impl Drop for S3Stub {
-    fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.root).ok();
     }
 }
 
@@ -550,13 +548,13 @@ pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
         empty_response(StatusCode::METHOD_NOT_ALLOWED)
     }
 
-    let root =
-        std::env::temp_dir().join(format!("ledger-s3-stub-{}", ledger_infra::db::new_uuid()));
-    std::fs::create_dir_all(&root).unwrap();
+    // 桩的临时根目录（issue #1645）：ScratchDir guard 挂在句柄上，句柄 drop
+    // （含 panic unwind）整棵删除；HTTP 线程持有的 StubState 只留路径副本。
+    let root = ScratchDir::new("s3-stub");
     let observations = Arc::new(Mutex::new(Vec::new()));
     let violations = Arc::new(Mutex::new(Vec::new()));
     let state = Arc::new(StubState {
-        root: root.clone(),
+        root: root.path().to_path_buf(),
         region: config.region.clone(),
         bucket: config.bucket.clone(),
         access_key: config.access_key.clone(),
@@ -600,7 +598,7 @@ pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
         bucket: config.bucket,
         access_key: config.access_key,
         addressing: config.addressing,
-        root,
+        _root: root,
         observations,
         violations,
     }

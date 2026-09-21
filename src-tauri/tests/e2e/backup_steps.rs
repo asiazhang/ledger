@@ -35,22 +35,23 @@ use crate::common::{count_transactions, count_transactions_in_file, seed_account
 use crate::step_inputs::{expense_input, refund_input};
 use crate::world::LedgerWorld;
 
-fn temp_path(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("ledger-e2e-backup-{name}-{}.db", new_uuid()))
+/// 散文件夹具（issue #1645）：临时文件收进各自的暂存目录——guard 登记进
+/// World，scenario 结束（含 panic）整棵删除；返回目录内的文件路径。
+fn temp_path(world: &mut LedgerWorld, name: &str) -> PathBuf {
+    let dir = world.scratch_dir("e2e-backup-file");
+    dir.join(format!("ledger-e2e-backup-{name}-{}.db", new_uuid()))
 }
 
-fn temp_safety_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ledger-e2e-safety-{}", new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn temp_safety_dir(world: &mut LedgerWorld) -> PathBuf {
+    world.scratch_dir("e2e-safety")
 }
 
 /// 从 zip 备份包抽出 `ledger.db` 到临时文件（密文探测类断言共用）。抽出文件
 /// 的明文/密文由调用方经 [`probe_file_kind`] 判定，密文库凭主口令打开。
-fn extract_zip_db(backup: &std::path::Path) -> PathBuf {
+fn extract_zip_db(world: &mut LedgerWorld, backup: &std::path::Path) -> PathBuf {
     let file = std::fs::File::open(backup).expect("打开备份包失败");
     let mut archive = zip::ZipArchive::new(file).expect("不是有效 zip 备份包");
-    let out = temp_path("probe-extract.db");
+    let out = temp_path(world, "probe-extract.db");
     let mut entry = archive.by_name("ledger.db").expect("备份包缺 ledger.db");
     let mut out_f = std::fs::File::create(&out).unwrap();
     std::io::copy(&mut entry, &mut out_f).unwrap();
@@ -95,7 +96,7 @@ fn record_restore_outcome(
 
 #[when(expr = "备份数据库到临时文件")]
 fn backup_to_temp(world: &mut LedgerWorld) {
-    let target = temp_path("backup.zip");
+    let target = temp_path(world, "backup.zip");
     let result = backup_db_to(&world_conn!(world), &target, "0.2.0", BackupKind::Manual);
     assert!(result.is_ok(), "备份失败: {:?}", result.err());
     world.boot.last_backup_path = Some(target);
@@ -151,11 +152,10 @@ fn backup_file_name_carries_book_id(world: &mut LedgerWorld) {
 
 /// 触发入口的公共执行体：场景作用域（默认 None = 旧命名兼容口径）+ 独立临时目录。
 fn auto_backup_with_world_scope(world: &mut LedgerWorld) {
-    let dir = world.boot.auto_backup_dir.clone().unwrap_or_else(|| {
-        let dir = std::env::temp_dir().join(format!("ledger-e2e-auto-backup-{}", new_uuid()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    });
+    let dir = match world.boot.auto_backup_dir.clone() {
+        Some(dir) => dir,
+        None => world.scratch_dir("e2e-auto-backup"),
+    };
     world.boot.auto_backup_dir = Some(dir.clone());
     // 多账本旅程现场（有当前账本连接）备份当前账本的库；纯备份场景仍用 world 库。
     let outcome = if let Some(state) = world.boot.dl_conn.as_ref() {
@@ -224,25 +224,23 @@ fn delete_all_txns(world: &mut LedgerWorld) {
 #[when(expr = "从备份恢复到临时数据库")]
 fn restore_to_temp(world: &mut LedgerWorld) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
-    let db_path = temp_path("restored.db");
-    let safety_dir = temp_safety_dir();
+    let db_path = temp_path(world, "restored.db");
+    let safety_dir = temp_safety_dir(world);
     let expected = expected_schema_version().unwrap();
     let result = restore_db_from(&backup, &db_path, &safety_dir, expected, None);
     assert!(result.is_ok(), "恢复失败: {:?}", result.err());
     world.boot.restored_db_path = Some(db_path);
-    std::fs::remove_dir_all(&safety_dir).ok();
 }
 
 #[when(expr = "以主口令 {string} 从备份恢复到临时数据库")]
 fn restore_to_temp_with_passphrase(world: &mut LedgerWorld, passphrase: String) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
-    let db_path = temp_path("restored-enc.db");
-    let safety_dir = temp_safety_dir();
+    let db_path = temp_path(world, "restored-enc.db");
+    let safety_dir = temp_safety_dir(world);
     let expected = expected_schema_version().unwrap();
     let result = restore_db_from(&backup, &db_path, &safety_dir, expected, Some(&passphrase));
     assert!(result.is_ok(), "恢复失败: {:?}", result.err());
     world.boot.restored_db_path = Some(db_path);
-    std::fs::remove_dir_all(&safety_dir).ok();
 }
 
 /// 记录当前加密文件库字节快照（When 形态注册：cucumber 关键字不跨类匹配，
@@ -256,30 +254,26 @@ fn when_record_db_bytes(world: &mut LedgerWorld) {
 #[when(expr = "尝试不带主口令从备份恢复到临时数据库")]
 fn try_restore_without_passphrase(world: &mut LedgerWorld) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
-    let db_path = temp_path("restored-no-pass.db");
-    let safety_dir = temp_safety_dir();
+    let db_path = temp_path(world, "restored-no-pass.db");
+    let safety_dir = temp_safety_dir(world);
     let expected = expected_schema_version().unwrap();
     record_restore_outcome(
         world,
         restore_db_from(&backup, &db_path, &safety_dir, expected, None),
     );
-    std::fs::remove_dir_all(&safety_dir).ok();
-    std::fs::remove_file(&db_path).ok();
 }
 
 /// 错误主口令恢复密文备份：被拒且不改动任何库文件（可重试语义）。
 #[when(expr = "尝试以主口令 {string} 从备份恢复到临时数据库")]
 fn try_restore_with_wrong_passphrase(world: &mut LedgerWorld, passphrase: String) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
-    let db_path = temp_path("restored-wrong-pass.db");
-    let safety_dir = temp_safety_dir();
+    let db_path = temp_path(world, "restored-wrong-pass.db");
+    let safety_dir = temp_safety_dir(world);
     let expected = expected_schema_version().unwrap();
     record_restore_outcome(
         world,
         restore_db_from(&backup, &db_path, &safety_dir, expected, Some(&passphrase)),
     );
-    std::fs::remove_dir_all(&safety_dir).ok();
-    std::fs::remove_file(&db_path).ok();
 }
 
 /// 恢复覆盖当前加密文件库（真实 db_path 替换路径）：触发恢复安全备份语义。
@@ -287,7 +281,7 @@ fn try_restore_with_wrong_passphrase(world: &mut LedgerWorld, passphrase: String
 fn restore_onto_encrypted_current(world: &mut LedgerWorld, passphrase: String) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
     let db_path = enc_backup_db_path(world);
-    let safety_dir = temp_safety_dir();
+    let safety_dir = temp_safety_dir(world);
     world.boot.restore_safety_dir = Some(safety_dir.clone());
     let expected = expected_schema_version().unwrap();
     let result = restore_db_from(&backup, &db_path, &safety_dir, expected, Some(&passphrase));
@@ -297,21 +291,18 @@ fn restore_onto_encrypted_current(world: &mut LedgerWorld, passphrase: String) {
 #[when(expr = "尝试从更高 schema 版本恢复")]
 fn try_newer_restore(world: &mut LedgerWorld) {
     // 构造一个 schema 版本更高的库文件作为"备份"。
-    let newer = temp_path("newer.db");
+    let newer = temp_path(world, "newer.db");
     {
         let conn = open_connection(&newer).unwrap();
         conn.execute_batch("PRAGMA user_version = 999").unwrap();
     }
-    let db_path = temp_path("target.db");
-    let safety_dir = temp_safety_dir();
+    let db_path = temp_path(world, "target.db");
+    let safety_dir = temp_safety_dir(world);
     let expected = expected_schema_version().unwrap();
     world.last_error = match restore_db_from(&newer, &db_path, &safety_dir, expected, None) {
         Err(e) => Some(e.to_string()),
         Ok(_) => Some("预期失败但成功了".into()),
     };
-    std::fs::remove_dir_all(&safety_dir).ok();
-    std::fs::remove_file(&newer).ok();
-    std::fs::remove_file(&db_path).ok();
 }
 
 // ---------------------------------------------------------------------------
@@ -338,18 +329,17 @@ fn backup_contains(world: &mut LedgerWorld, a: String, b: String) {
 
 #[then(expr = "备份包内的数据库应包含 {int} 条交易")]
 fn backup_db_has_txns(world: &mut LedgerWorld, expected: i64) {
-    let p = world.boot.last_backup_path.as_ref().expect("尚未备份");
-    let file = std::fs::File::open(p).unwrap();
+    let p = world.boot.last_backup_path.clone().expect("尚未备份");
+    let file = std::fs::File::open(&p).unwrap();
     let mut archive = zip::ZipArchive::new(file).unwrap();
     let mut db_entry = archive.by_name("ledger.db").unwrap();
-    let out = temp_path("extract.db");
+    let out = temp_path(world, "extract.db");
     let mut out_f = std::fs::File::create(&out).unwrap();
     std::io::copy(&mut db_entry, &mut out_f).unwrap();
     drop(out_f);
     let conn = open_connection(&out).unwrap();
     let count = count_transactions(&conn);
     assert_eq!(count, expected, "备份包内交易数量不匹配");
-    std::fs::remove_file(&out).ok();
 }
 
 #[then(expr = "恢复的数据库应包含 {int} 条交易")]
@@ -896,8 +886,7 @@ fn given_encrypted_file_lib(
     account: String,
     count: usize,
 ) {
-    let dir = std::env::temp_dir().join(format!("ledger-e2e-bak-enc-{}", new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = world.scratch_dir("e2e-bak-enc");
     let db_path = dir.join("ledger.db");
     {
         let mut conn = open_connection(&db_path).unwrap();
@@ -921,8 +910,7 @@ fn given_encrypted_file_lib(
 /// 一份来自明文库的备份（独立明文临时库 + 手动备份产物，跨模式恢复场景用）。
 #[given(expr = "一份含 {int} 条交易的明文库备份")]
 fn given_plaintext_backup(world: &mut LedgerWorld, count: usize) {
-    let dir = std::env::temp_dir().join(format!("ledger-e2e-bak-plain-{}", new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = world.scratch_dir("e2e-bak-plain");
     let db_path = dir.join("plain.db");
     {
         let mut conn = open_connection(&db_path).unwrap();
@@ -949,10 +937,10 @@ fn write_legacy_plaintext_backup(world: &mut LedgerWorld) {
         .auto_backup_dir
         .clone()
         .expect("尚未自动备份（无受管目录）");
-    // 明文空库产物（schema 迁移后 0 条交易）。
-    let plain_db = dir
-        .parent()
-        .unwrap()
+    // 明文空库产物（schema 迁移后 0 条交易）：住自己的暂存目录（issue #1645，
+    // 原先落在受管目录的兄弟位——guard 化后那是 /tmp 根，会散落残留）。
+    let plain_db = world
+        .scratch_dir("e2e-backup-legacy")
         .join(format!("legacy-{}.db", new_uuid()));
     {
         let mut conn = open_connection(&plain_db).unwrap();
@@ -975,20 +963,18 @@ fn write_legacy_plaintext_backup(world: &mut LedgerWorld) {
     )
     .unwrap();
     zip.finish().unwrap();
-    std::fs::remove_file(&plain_db).ok();
     world.boot.last_backup_path = Some(target);
 }
 
 #[then(expr = "备份包内的数据库应探测为密文")]
 fn backup_zip_db_is_encrypted(world: &mut LedgerWorld) {
-    let p = world.boot.last_backup_path.as_ref().expect("尚未备份");
-    let extracted = extract_zip_db(p);
+    let p = world.boot.last_backup_path.clone().expect("尚未备份");
+    let extracted = extract_zip_db(world, &p);
     assert_eq!(
         probe_file_kind(&extracted).unwrap(),
         DbFileKind::Encrypted,
         "备份包内的数据库应为密文库（VACUUM INTO 继承源库加密与密钥）"
     );
-    std::fs::remove_file(&extracted).ok();
 }
 
 #[then(expr = "自动备份产物应探测为密文")]
@@ -996,15 +982,14 @@ fn auto_backup_product_is_encrypted(world: &mut LedgerWorld) {
     let p = world
         .boot
         .last_auto_backup_path
-        .as_ref()
+        .clone()
         .expect("尚未自动备份");
-    let extracted = extract_zip_db(p);
+    let extracted = extract_zip_db(world, &p);
     assert_eq!(
         probe_file_kind(&extracted).unwrap(),
         DbFileKind::Encrypted,
         "自动备份产物应为密文库"
     );
-    std::fs::remove_file(&extracted).ok();
 }
 
 #[then(expr = "备份元数据应标记为已加密")]
