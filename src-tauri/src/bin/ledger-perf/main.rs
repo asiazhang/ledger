@@ -177,6 +177,7 @@
 //! 零新增依赖（ADR-0062：确定性生成而非入库；被否决备选见该 ADR）。
 
 mod bench;
+mod bench_common;
 mod bench_import;
 mod bench_market;
 mod bench_sync;
@@ -239,7 +240,8 @@ bench OPTIONS:
 bench-import OPTIONS:
     --db <PATH>            源库文件（默认同 generate 输出路径，须已生成；本命令不
                            修改源库——内部建 pristine 快照，每次迭代从快照恢复）
-    --rows <CSV>           每档导入行数（默认 50,100,200；逗号分隔、保持次序）
+    --rows <CSV>           每档导入行数（默认 50,100,200；逗号分隔、保持次序；
+                           单档上限 1000000，issue #1650）
     --dedup <BOOL>         批量导入去重开关（默认 true，HTTP 批量导入生产默认）
     --warmup <N>           每档预热次数（默认 1，不计入统计）
     --iterations <N>       每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集
@@ -249,7 +251,8 @@ bench-import OPTIONS:
 bench-sync OPTIONS:
     --db <PATH>            源库文件（默认同 generate 输出路径，须已生成；本命令不
                            修改源库——内部建 pristine 快照，每次迭代从快照恢复）
-    --ops <CSV>            每档重放 op 条数（默认 100,500,2000；逗号分隔、保持次序）
+    --ops <CSV>            每档重放 op 条数（默认 100,500,2000；逗号分隔、保持次序；
+                           单档上限 1000000，issue #1650）
     --warmup <N>           每档预热次数（默认 1，不计入统计）
     --iterations <N>       每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集
                            规模固定）
@@ -258,7 +261,8 @@ bench-sync OPTIONS:
 bench-market OPTIONS:
     --db <PATH>            源库文件（默认同 generate 输出路径，须已生成；本命令不
                            修改源库——内部建 pristine 快照，每次迭代从快照恢复）
-    --points <CSV>         每档周采样点数（默认 104,1040,5200；逗号分隔、保持次序）
+    --points <CSV>         每档周采样点数（默认 104,1040,5200；逗号分隔、保持次序；
+                           单档上限 1000000，采样日运算防 chrono 日期越界，issue #1650）
     --warmup <N>           每档预热次数（默认 1，不计入统计）
     --iterations <N>       每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集
                            规模固定）
@@ -299,46 +303,34 @@ pub(crate) enum ParsedArgs {
     Help,
 }
 
-/// 手写参数解析（零新增依赖）。返回 Err(消息) 表示用法错误。
+/// 手写参数解析（零新增依赖；循环机制收口在 [`bench_common::CliArgs`]，
+/// issue #1650）。返回 Err(消息) 表示用法错误。
 pub(crate) fn parse_args(args: &[String]) -> Result<ParsedArgs, String> {
     let mut cli = GenerateCli::default();
-    let mut i = 0;
-    while i < args.len() {
-        let (key, inline_value) = match args[i].split_once('=') {
-            Some((k, v)) => (k.to_string(), Some(v.to_string())),
-            None => (args[i].clone(), None),
-        };
-        let take_value = |i: &mut usize, inline: Option<String>| -> Result<String, String> {
-            if let Some(v) = inline {
-                return Ok(v);
-            }
-            let next = args.get(*i + 1).ok_or_else(|| format!("{key} 缺少值"))?;
-            *i += 1;
-            Ok(next.clone())
-        };
-        match key.as_str() {
+    let mut it = bench_common::CliArgs::new(args);
+    while let Some(f) = it.next_flag() {
+        match f.flag {
             "--seed" => {
-                let v = take_value(&mut i, inline_value)?;
+                let v = it.value(f.inline_value, "--seed")?;
                 cli.seed = v
                     .parse::<u64>()
                     .map_err(|_| format!("--seed 需要非负整数，得到 {v:?}"))?;
             }
             "--transactions" => {
-                let v = take_value(&mut i, inline_value)?;
+                let v = it.value(f.inline_value, "--transactions")?;
                 cli.transactions = v
                     .parse::<u64>()
                     .map_err(|_| format!("--transactions 需要非负整数，得到 {v:?}"))?;
             }
             "--end-date" => {
-                cli.end_date = take_value(&mut i, inline_value)?;
+                cli.end_date = it.value(f.inline_value, "--end-date")?;
             }
             "--out" => {
-                cli.out = PathBuf::from(take_value(&mut i, inline_value)?);
+                cli.out = PathBuf::from(it.value(f.inline_value, "--out")?);
             }
             "-h" | "--help" => return Ok(ParsedArgs::Help),
             other => return Err(format!("未知参数 {other:?}")),
         }
-        i += 1;
     }
     Ok(ParsedArgs::Run(cli))
 }

@@ -25,6 +25,7 @@ use std::time::Instant;
 use chrono::{Months, NaiveDate};
 use rusqlite::Connection;
 
+use super::bench_common::{CliArgs, summarize};
 use ledger_accounts as accounts;
 use ledger_dashboard as dashboard_domain;
 use ledger_infra::db::open_connection;
@@ -108,47 +109,36 @@ pub(crate) enum ParsedBench {
     Help,
 }
 
-/// 手写参数解析（零新增依赖）。返回 Err(消息) 表示用法错误。
+/// 手写参数解析（零新增依赖；循环机制收口在 [`super::bench_common::CliArgs`]，
+/// issue #1650）。返回 Err(消息) 表示用法错误。
 pub(crate) fn parse_bench_args(args: &[String]) -> Result<ParsedBench, String> {
     let mut cli = BenchCli::default();
-    let mut i = 0;
-    while i < args.len() {
-        let (key, inline_value) = match args[i].split_once('=') {
-            Some((k, v)) => (k.to_string(), Some(v.to_string())),
-            None => (args[i].clone(), None),
-        };
-        let take_value = |i: &mut usize, inline: Option<String>| -> Result<String, String> {
-            if let Some(v) = inline {
-                return Ok(v);
-            }
-            let next = args.get(*i + 1).ok_or_else(|| format!("{key} 缺少值"))?;
-            *i += 1;
-            Ok(next.clone())
-        };
-        match key.as_str() {
+    let mut it = CliArgs::new(args);
+    while let Some(f) = it.next_flag() {
+        match f.flag {
             "--db" => {
-                cli.db = PathBuf::from(take_value(&mut i, inline_value)?);
+                cli.db = PathBuf::from(it.value(f.inline_value, "--db")?);
             }
             "--warmup" => {
-                let v = take_value(&mut i, inline_value)?;
+                let v = it.value(f.inline_value, "--warmup")?;
                 cli.warmup = v
                     .parse::<usize>()
                     .map_err(|_| format!("--warmup 需要非负整数，得到 {v:?}"))?;
             }
             "--iterations" => {
-                let v = take_value(&mut i, inline_value)?;
+                let v = it.value(f.inline_value, "--iterations")?;
                 cli.iterations = v
                     .parse::<usize>()
                     .map_err(|_| format!("--iterations 需要非负整数，得到 {v:?}"))?;
             }
             "--search" => {
-                cli.search = take_value(&mut i, inline_value)?;
+                cli.search = it.value(f.inline_value, "--search")?;
             }
             "--search-pinyin" => {
-                cli.search_pinyin = take_value(&mut i, inline_value)?;
+                cli.search_pinyin = it.value(f.inline_value, "--search-pinyin")?;
             }
             "--max-p95-ms" => {
-                let v = take_value(&mut i, inline_value)?;
+                let v = it.value(f.inline_value, "--max-p95-ms")?;
                 let ms = v
                     .parse::<f64>()
                     .ok()
@@ -159,7 +149,6 @@ pub(crate) fn parse_bench_args(args: &[String]) -> Result<ParsedBench, String> {
             "-h" | "--help" => return Ok(ParsedBench::Help),
             other => return Err(format!("未知参数 {other:?}")),
         }
-        i += 1;
     }
     if cli.iterations == 0 {
         return Err("--iterations 至少为 1".to_string());
@@ -195,24 +184,11 @@ pub(crate) struct BenchMetrics {
     pub iterations: usize,
 }
 
+/// 最近秩法 p95 与字符显示宽估算收口在 [`super::bench_common`]（issue #1650，
+/// 读基准与写基准共用）；本模块读基准的表列排版仍用自己的估算式，行为不变。
 /// 单项基准的执行体：吃连接、跑一次查询、返回人读规模备注
 /// （行数/命中数/数量等线索，由各基准自行描述语义）。
 type BenchFn<'a> = dyn Fn(&Connection) -> Result<String, String> + 'a;
-
-/// 最近秩法 p95：升序样本取第 ⌈0.95·n⌉ 个（n=10 时恒等于 max，
-/// n≥20 才有真分位数分辨力）。
-pub(crate) fn percentile_ms(sorted_ms: &[f64], p: f64) -> f64 {
-    let n = sorted_ms.len();
-    let rank = (p * n as f64).ceil().max(1.0) as usize;
-    sorted_ms[rank.min(n) - 1]
-}
-
-/// 字符串终端显示宽估算：ASCII 记 1、其余（CJK 等）记 2。人读报告表列
-/// 手排共用（bench-import / bench-sync print_report；本模块读基准的表列
-/// 用自己的估算式，行为不变）。
-pub(crate) fn display_width(s: &str) -> usize {
-    s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum()
-}
 
 /// 入口：打开库、跑全部基准、打印人读表格。
 pub(crate) fn run(cli: BenchCli) -> Result<(), String> {
@@ -633,17 +609,13 @@ pub(crate) fn run_benchmarks(
             context = bench_fn(conn).map_err(|e| format!("基准失败[{name}]：{e}"))?;
             durations.push(start.elapsed());
         }
-        durations.sort();
-        let ms: Vec<f64> = durations.iter().map(|d| d.as_secs_f64() * 1000.0).collect();
-        let min_ms = ms[0];
-        let avg_ms = ms.iter().sum::<f64>() / ms.len() as f64;
-        let p95_ms = percentile_ms(&ms, 0.95);
+        let stats = summarize(durations);
         results.push(BenchMetrics {
             name,
             context,
-            min_ms,
-            avg_ms,
-            p95_ms,
+            min_ms: stats.min_ms,
+            avg_ms: stats.avg_ms,
+            p95_ms: stats.p95_ms,
             iterations: cfg.iterations,
         });
     }
