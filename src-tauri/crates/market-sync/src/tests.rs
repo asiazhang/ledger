@@ -258,6 +258,7 @@ fn production_source_files() -> Vec<(&'static str, String)> {
             include_str!("fund_price_refresh.rs").to_string(),
         ),
         ("fx.rs", include_str!("fx.rs").to_string()),
+        ("fx_daily.rs", include_str!("fx_daily.rs").to_string()),
         ("history.rs", include_str!("history.rs").to_string()),
         ("http.rs", include_str!("http.rs").to_string()),
         ("incremental.rs", include_str!("incremental.rs").to_string()),
@@ -313,7 +314,8 @@ fn guard_source_list_matches_directory_exactly() {
     );
 }
 
-/// 后台两条车道必须是挂全局运行时的 async 任务（ADR-0125 决策 7 / issue #1413，
+/// 后台车道（含不经 lane 骨架的每日汇率增量同步）必须是挂全局运行时的 async
+/// 任务（ADR-0125 决策 7 / issue #1413，
 /// 删除即变红）：调度入口以 `tauri::async_runtime::spawn` 拉起 async 任务，启动
 /// 延迟与自然日窗口用 `tokio::time::sleep` 异步定时；生产面零自建线程。把车道
 /// 改回 `std::thread::spawn` + `std::thread::sleep`（或删掉异步执行器接线）本测
@@ -340,7 +342,7 @@ fn background_lanes_are_global_runtime_async_tasks() {
     );
 
     for (name, src) in &sources {
-        let is_lane = matches!(*name, "daily_refresh.rs" | "history.rs");
+        let is_lane = matches!(*name, "daily_refresh.rs" | "history.rs" | "fx_daily.rs");
         if !is_lane {
             continue;
         }

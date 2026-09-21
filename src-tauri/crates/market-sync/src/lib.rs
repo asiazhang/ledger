@@ -61,8 +61,9 @@
 //!   （单一事务、整周覆盖幂等、不产同步 op）。失败原因三态互不吞并（spec #1540
 //!   「数据源不可达 vs 该来源无数据要能分辨」，issue #1545）：取数网络失败 →
 //!   `fx.source-unreachable`，取数成功但推导零点 → `fx.source-no-data`，
-//!   `fx.source-malformed` 原样透传。手动入口 / 每日调度的触发面归
-//!   #1545 / #1546，本单元即其共同消费的唯一编排（#1545 手动入口已接线）；
+//!   `fx.source-malformed` 原样透传。手动入口（#1545，壳层命令）/ 每日调度
+//!   （#1546，[`fx_daily`] 后台车道）两个触发面已接线，本单元即其共同消费的
+//!   唯一编排；
 //! - [`history`]：价格历史后台补全（ADR-0122 / issue #1375）——派生事实队列
 //!   （有价格通道但历史不完整，持仓优先）+ 一轮排空（后台补全专用的单只
 //!   回填单元，issue #1377 起不再与现价刷新共用）+ 启动延迟与自然日窗口调度 +
@@ -158,10 +159,15 @@ mod fund;
 mod fund_backfill;
 mod fund_nav;
 mod fund_price_refresh;
-/// ECB 汇率同步编排（issue #1544，#1545 手动入口已接线）：窗口判据与全量 / 增量
+/// ECB 汇率同步编排（issue #1544，#1545 手动入口与 #1546 每日调度两个触发面
+/// 已接线）：窗口判据与全量 / 增量
 /// 两腿的分派、失败三态分类（fx.source-unreachable / fx.source-no-data /
-/// fx.source-malformed 透传）已就位；每日自动调度触发面随 #1546 消费再导出面。
+/// fx.source-malformed 透传）已就位。
 mod fx;
+/// 汇率每日自动增量同步的后台车道（ADR-0019 修订记录 / issue #1546）：启动
+/// 延迟补跑一次 + 每自然日窗口一次，经壳层后台服务编排单点拉起（issue #961
+/// 名单）；与手动入口共用 [`fx`] 编排，失败记日志可见、已有汇率不受影响。
+mod fx_daily;
 mod history;
 mod http;
 mod incremental;
@@ -198,10 +204,16 @@ pub use daily_refresh::{
     start_daily_price_refresh_with,
 };
 // 通道束载荷 DTO（issue #1276）：通道束是壳层注入接缝的公开面，桩实现方需要
-// 能命名与构造应答形状（QuoteItem 可构造；Kline/Nav 形状测试回空表即可命名）。
+// 能命名与构造应答形状（QuoteItem 可构造；Kline/Nav 形状测试回空表即可命名；
+// EcbDayRates 同理——FxSyncChannels 两条取数腿的应答形状，#1546 每日车道
+// 接线测试经槽接缝注入桩束时命名）。
+pub use ecb::EcbDayRates;
 pub use fund::fetch_fund_quote_production;
 pub use fund_nav::NavPoint;
 pub use fx::{FxSyncChannels, FxSyncReport, sync_fx_rates};
+pub use fx_daily::{
+    DailyFxSyncChannelsSlot, DailyFxSyncTimings, start_daily_fx_sync, start_daily_fx_sync_with,
+};
 pub use history::{
     BackfillChannelsSlot, BackfillTimings, start_history_backfill, start_history_backfill_with,
 };
