@@ -11,7 +11,7 @@ use tauri_app_lib::test_support;
 use ledger_infra::db::now_iso;
 use ledger_sync_protocol::device::device_id;
 use rusqlite::params;
-use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+use tauri_app_lib::ledger_transaction::amount::{FxRateSource, TransactionKind};
 
 #[test]
 fn create_income_and_expense_transactions() {
@@ -1102,4 +1102,304 @@ fn update_nested_mode_leaves_rollback_ownership_to_outer_holder() {
         .unwrap();
     assert_eq!(still_open, 2, "嵌套失败不应拖垮外层已写的行");
     conn.execute("ROLLBACK", []).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 编辑沿用的折算留痕（#1550 / ADR-0011 2026-09-19 修订）：币种/金额/日期未变
+// 沿用行内留痕不重查序列，任一变了按新日期重查，查不到即既有码化错误。
+// 断言对准用户可观察结果（修改后的行读回），删除协议内的沿用接线即红。
+// ---------------------------------------------------------------------------
+
+/// 港币支出输入构造器（本节专用）：make_input 的币种覆写薄皮。
+fn hkd_expense_input(account_id: &str, amount_cents: i64, date: &str) -> TransactionInput {
+    TransactionInput {
+        currency_code: "HKD".into(),
+        ..make_input(account_id, TransactionKind::Expense, amount_cents, date)
+    }
+}
+
+/// 港币行铺垫：账户 + 交易周序列点 + 经创建协议落库的港币支出，返回交易 id。
+/// 铺垫后调用方按需删序列点模拟「数据源查不到当年值」。
+fn seeded_hkd_expense(conn: &Connection, date: &str) -> String {
+    test_support::seed_account(conn, "acc-fx-ed", "港币户", "cash", "HKD", 0);
+    test_support::seed_fx_rate_history(conn, "fxh-ed-w1", "HKD", "CNY", "2026-06-29", 0.9);
+    create_transaction_internal(conn, hkd_expense_input("acc-fx-ed", 1000, date))
+        .unwrap()
+        .id
+}
+
+/// 只改备注（金额/币种/日期均未变）：序列点已消失仍成功，本位币金额与折算
+/// 来源逐位不变（验收 1）——导入的历史行不因数据源查不到当年值而不可编辑。
+#[test]
+fn update_note_only_reuses_inline_fx_when_series_missing() {
+    let conn = test_support::open();
+    let id = seeded_hkd_expense(&conn, "2026-07-01");
+    conn.execute("DELETE FROM fx_rate_history", []).unwrap();
+
+    let mut edited = hkd_expense_input("acc-fx-ed", 1000, "2026-07-01");
+    edited.note = Some("只改备注".into());
+    update_transaction_internal(&conn, &id, edited).unwrap();
+
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.amount_native_cents, 900, "本位币金额逐位不变");
+    assert_eq!(t.fx_rate_used, Some(0.9), "留痕汇率逐位不变");
+    assert_eq!(t.fx_rate_source, Some(FxRateSource::Series), "来源不变");
+    assert_eq!(t.note.as_deref(), Some("只改备注"));
+    assert_eq!(t.version, 2, "修改仍正常递增版本");
+}
+
+/// 只改分类：同上沿用（分类不参与折算三元组）。
+#[test]
+fn update_category_only_reuses_inline_fx_when_series_missing() {
+    let conn = test_support::open();
+    let id = seeded_hkd_expense(&conn, "2026-07-01");
+    conn.execute(
+        "INSERT INTO categories (id,name,kind,created_at,updated_at,version,device_id) \
+                  VALUES ('cat-fx-ed','交通','expense',?1,?1,1,'test')",
+        params![test_support::FIXED_NOW],
+    )
+    .unwrap();
+    conn.execute("DELETE FROM fx_rate_history", []).unwrap();
+
+    let mut edited = hkd_expense_input("acc-fx-ed", 1000, "2026-07-01");
+    edited.category_id = Some("cat-fx-ed".into());
+    update_transaction_internal(&conn, &id, edited).unwrap();
+
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.amount_native_cents, 900, "本位币金额逐位不变");
+    assert_eq!(t.fx_rate_used, Some(0.9));
+    assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
+}
+
+/// 只改商户：同上沿用（商户不参与折算三元组）。
+#[test]
+fn update_merchant_only_reuses_inline_fx_when_series_missing() {
+    let conn = test_support::open();
+    let id = seeded_hkd_expense(&conn, "2026-07-01");
+    conn.execute(
+        "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES ('mer-fx-ed','便利店',?1,?1,1,'test',0)",
+        params![test_support::FIXED_NOW],
+    )
+    .unwrap();
+    conn.execute("DELETE FROM fx_rate_history", []).unwrap();
+
+    let mut edited = hkd_expense_input("acc-fx-ed", 1000, "2026-07-01");
+    edited.merchant_id = Some("mer-fx-ed".into());
+    update_transaction_internal(&conn, &id, edited).unwrap();
+
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.amount_native_cents, 900, "本位币金额逐位不变");
+    assert_eq!(t.fx_rate_used, Some(0.9));
+    assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
+    assert_eq!(t.merchant_id.as_deref(), Some("mer-fx-ed"), "商户已改");
+}
+
+/// 改金额且新周查不到 → 既有 `fx.rate-missing` 码化错误（验收 3），不静默沿用
+/// 旧值，行保持原样（无部分写入）。
+#[test]
+fn update_amount_changed_fails_coded_when_series_missing() {
+    let conn = test_support::open();
+    let id = seeded_hkd_expense(&conn, "2026-07-01");
+    conn.execute("DELETE FROM fx_rate_history", []).unwrap();
+
+    let err = update_transaction_internal(
+        &conn,
+        &id,
+        hkd_expense_input("acc-fx-ed", 2000, "2026-07-01"),
+    )
+    .unwrap_err();
+    match err {
+        AppError::Coded { code, .. } => assert_eq!(code, "fx.rate-missing"),
+        other => panic!("应为 fx.rate-missing 码化错误，实际: {other:?}"),
+    }
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.amount_cents, 1000, "失败行保持原值");
+    assert_eq!(t.amount_native_cents, 900);
+    assert_eq!(t.fx_rate_used, Some(0.9));
+    assert_eq!(t.version, 1, "失败不落库");
+}
+
+/// 改日期 → 按新日期所属周重查，更新本位币金额与留痕（验收 2）。
+#[test]
+fn update_date_changed_requeries_new_week() {
+    let conn = test_support::open();
+    let id = seeded_hkd_expense(&conn, "2026-07-01");
+    test_support::seed_fx_rate_history(&conn, "fxh-ed-w2", "HKD", "CNY", "2026-07-06", 0.95);
+
+    update_transaction_internal(
+        &conn,
+        &id,
+        hkd_expense_input("acc-fx-ed", 1000, "2026-07-08"),
+    )
+    .unwrap();
+
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.date, "2026-07-08");
+    assert_eq!(t.amount_native_cents, 950, "按新周汇率重算");
+    assert_eq!(t.fx_rate_used, Some(0.95), "留痕更新为新周使用值");
+    assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
+}
+
+/// 改币种 → 按新币种重查，更新本位币金额与留痕（验收 2）。
+#[test]
+fn update_currency_changed_requeries() {
+    let conn = test_support::open();
+    let id = seeded_hkd_expense(&conn, "2026-07-01");
+
+    update_transaction_internal(
+        &conn,
+        &id,
+        make_input("acc-fx-ed", TransactionKind::Expense, 1000, "2026-07-01"),
+    )
+    .unwrap();
+
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.currency_code, "CNY", "币种改为本位币后按新币种折算");
+    assert_eq!(t.amount_native_cents, 1000, "同币种 1:1");
+    assert_eq!(t.fx_rate_used, None, "不再折算：留痕转空");
+    assert_eq!(t.fx_rate_source, None);
+}
+
+// ---------------------------------------------------------------------------
+// 投资 kind 的编辑沿用（#1550）：buy/sell/convert/dividend 的修改路径同样在
+// 币种/金额/日期未变时沿用行内留痕、不重查序列（投资域 prepare 经接缝基线）。
+// ---------------------------------------------------------------------------
+
+/// 港币投资户铺垫（本节专用）：HKD 投资账户 + 交易周序列点（0.9）+ 若干标的，
+/// 调用方铺垫后按需删序列点。
+fn seeded_hkd_investment(conn: &Connection, instruments: &[&str]) {
+    test_support::seed_account(conn, "acc-inv-fx", "港币投资户", "investment", "HKD", 0);
+    test_support::seed_fx_rate_history(conn, "fxh-inv-w1", "HKD", "CNY", "2026-06-29", 0.9);
+    for inst in instruments {
+        test_support::seed_instrument(conn, inst, inst, &format!("标的{inst}"), "HKD", "hk");
+    }
+}
+
+/// 港币买入输入（场内：金额 = 数量×单价+费用，服务端算定）。
+fn hkd_buy_input(instrument_id: &str, qty: f64, price: i64, fee: i64) -> TransactionInput {
+    TransactionInput {
+        currency_code: "HKD".into(),
+        // 交易日期落铺垫序列点（2026-06-29 当周），与 make_buy_input 缺省日期区分。
+        date: "2026-07-01".into(),
+        ..make_buy_input("acc-inv-fx", instrument_id, qty, price, fee)
+    }
+}
+
+/// 港币分红输入（现金腿金额权威，币种须与到账账户一致）。
+fn hkd_dividend_input(instrument_id: &str, amount_cents: i64) -> TransactionInput {
+    TransactionInput {
+        currency_code: "HKD".into(),
+        instrument_id: Some(instrument_id.into()),
+        ..make_input(
+            "acc-inv-fx",
+            TransactionKind::Dividend,
+            amount_cents,
+            "2026-07-01",
+        )
+    }
+}
+
+/// 买入只改备注：序列点消失仍成功，本位币金额与留痕逐位不变。
+#[test]
+fn update_buy_note_only_reuses_inline_fx_when_series_missing() {
+    let conn = test_support::open();
+    seeded_hkd_investment(&conn, &["inst-fx-b"]);
+    let id = create_transaction_internal(&conn, hkd_buy_input("inst-fx-b", 10.0, 100000, 100))
+        .unwrap()
+        .id;
+    conn.execute("DELETE FROM fx_rate_history", []).unwrap();
+
+    let mut edited = hkd_buy_input("inst-fx-b", 10.0, 100000, 100);
+    edited.note = Some("只改备注".into());
+    update_transaction_internal(&conn, &id, edited).unwrap();
+
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.amount_cents, 10100, "金额 = 数量×单价+费用");
+    assert_eq!(t.amount_native_cents, 9090, "本位币金额逐位不变");
+    assert_eq!(t.fx_rate_used, Some(0.9), "留痕汇率逐位不变");
+    assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
+}
+
+/// 卖出只改备注：同上沿用（卖出金额 = 数量×单价，服务端算定不变 → 沿用）。
+#[test]
+fn update_sell_note_only_reuses_inline_fx_when_series_missing() {
+    let conn = test_support::open();
+    seeded_hkd_investment(&conn, &["inst-fx-s"]);
+    create_transaction_internal(&conn, hkd_buy_input("inst-fx-s", 10.0, 100000, 0)).unwrap();
+    let mut sell = hkd_buy_input("inst-fx-s", 4.0, 100000, 0);
+    sell.kind = TransactionKind::Sell;
+    sell.date = "2026-07-02".into(); // 同一周
+    let sell_id = create_transaction_internal(&conn, sell).unwrap().id;
+    conn.execute("DELETE FROM fx_rate_history", []).unwrap();
+
+    let mut edited = hkd_buy_input("inst-fx-s", 4.0, 100000, 0);
+    edited.kind = TransactionKind::Sell;
+    edited.date = "2026-07-02".into();
+    edited.note = Some("只改备注".into());
+    update_transaction_internal(&conn, &sell_id, edited).unwrap();
+
+    let t = get_transaction_internal(&conn, &sell_id).unwrap();
+    assert_eq!(t.amount_cents, 4000);
+    assert_eq!(t.amount_native_cents, 3600, "本位币金额逐位不变");
+    assert_eq!(t.fx_rate_used, Some(0.9));
+    assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
+    assert_eq!(t.version, 2);
+}
+
+/// 分红只改备注：同上沿用。
+#[test]
+fn update_dividend_note_only_reuses_inline_fx_when_series_missing() {
+    let conn = test_support::open();
+    seeded_hkd_investment(&conn, &["inst-fx-d"]);
+    let id = create_transaction_internal(&conn, hkd_dividend_input("inst-fx-d", 6000))
+        .unwrap()
+        .id;
+    conn.execute("DELETE FROM fx_rate_history", []).unwrap();
+
+    let mut edited = hkd_dividend_input("inst-fx-d", 6000);
+    edited.note = Some("只改备注".into());
+    update_transaction_internal(&conn, &id, edited).unwrap();
+
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.amount_native_cents, 5400, "本位币金额逐位不变");
+    assert_eq!(t.fx_rate_used, Some(0.9));
+    assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
+}
+
+/// 转换只改备注：行金额锚点（结转成本）重算不变 → 沿用留痕。
+#[test]
+fn update_convert_note_only_reuses_inline_fx_when_series_missing() {
+    let conn = test_support::open();
+    seeded_hkd_investment(&conn, &["inst-fx-co", "inst-fx-ci"]);
+    create_transaction_internal(&conn, hkd_buy_input("inst-fx-co", 10.0, 100000, 0)).unwrap();
+    let mut convert = hkd_buy_input("inst-fx-co", 10.0, 0, 0);
+    convert.kind = TransactionKind::Convert;
+    convert.instrument_id = Some("inst-fx-co".into());
+    convert.to_instrument_id = Some("inst-fx-ci".into());
+    convert.to_quantity = Some(10.0);
+    convert.out_amount_cents = Some(11000);
+    convert.in_amount_cents = Some(11000);
+    convert.price_cents = None;
+    convert.date = "2026-07-03".into(); // 同一周
+    let convert_id = create_transaction_internal(&conn, convert).unwrap().id;
+    conn.execute("DELETE FROM fx_rate_history", []).unwrap();
+
+    let mut edited = hkd_buy_input("inst-fx-co", 10.0, 0, 0);
+    edited.kind = TransactionKind::Convert;
+    edited.instrument_id = Some("inst-fx-co".into());
+    edited.to_instrument_id = Some("inst-fx-ci".into());
+    edited.to_quantity = Some(10.0);
+    edited.out_amount_cents = Some(11000);
+    edited.in_amount_cents = Some(11000);
+    edited.price_cents = None;
+    edited.date = "2026-07-03".into();
+    edited.note = Some("只改备注".into());
+    update_transaction_internal(&conn, &convert_id, edited).unwrap();
+
+    let t = get_transaction_internal(&conn, &convert_id).unwrap();
+    assert_eq!(t.amount_cents, 10000, "结转成本锚点重算不变");
+    assert_eq!(t.amount_native_cents, 9000, "本位币金额逐位不变");
+    assert_eq!(t.fx_rate_used, Some(0.9));
+    assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
 }

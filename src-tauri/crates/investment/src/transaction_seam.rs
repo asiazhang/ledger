@@ -21,6 +21,7 @@ use rusqlite::Connection;
 use super::source as instrument_source;
 use super::trade::{self, Plan, replay_convert_plan, replay_plan, replay_split_plan};
 use ledger_infra::error::{AppError, Result};
+use ledger_transaction::amount::FxEditBaseline;
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::command::{
     ConvertCommandFields, InvestmentCommandFields, SplitCommandFields,
@@ -124,13 +125,21 @@ impl ledger_transaction::seams::investment::InvestmentPlan for Plan {
 // ---------------------------------------------------------------------------
 
 /// Local 装配实现：委托 [`trade::prepare`]（校验 + 折算 + 副作用数据算定）。
+/// 折算沿用基线（#1550）随修改路径透传，创建路径为 `None`。
 fn prepare_hook(
     conn: &Connection,
     kind: TransactionKind,
     input: &TransactionInput,
     existing_id: Option<&str>,
+    fx_edit_baseline: Option<&FxEditBaseline>,
 ) -> Result<Box<dyn ledger_transaction::seams::investment::InvestmentPlan>> {
-    Ok(Box::new(trade::prepare(conn, kind, input, existing_id)?))
+    Ok(Box::new(trade::prepare(
+        conn,
+        kind,
+        input,
+        existing_id,
+        fx_edit_baseline,
+    )?))
 }
 
 /// 投资命令字段解包（防御臂，自 behavior 迁入逐字保留）：buy/sell/dividend 命令

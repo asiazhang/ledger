@@ -1,10 +1,12 @@
-//! 本位币折算（共享语义区）：raw 币种金额 → 全局默认币种，两个具名入口。
+//! 本位币折算（共享语义区）：raw 币种金额 → 全局默认币种，三个具名入口。
 //!
 //! 职责：[`default_currency_code`](本位币基准读取)、[`convert_to_native_current`]
 //! （**当期折算**，读路径入口：持仓市值、净资产、财务自由度、实物资产估值、跨账本
 //! 汇总、定时花费）、[`convert_to_native_on_trade_date`]（**按交易日折算**，写路径
-//! 入口，#1547 接入：按交易所属 ISO 周命中汇率历史；返回值随行携带折算留痕
-//! [`NativeConversion`]，#1548）。两入口不设隐式默认，调用方必须显式选择（#1540 spec）。
+//! 创建入口，#1547 接入：按交易所属 ISO 周命中汇率历史；返回值随行携带折算留痕
+//! [`NativeConversion`]，#1548）、[`convert_to_native_on_edit`]（**编辑沿用**，写路径
+//! 修改入口，#1550 接入：币种/金额/日期未变沿用行内留痕，任一变才重查）。
+//! 两类入口不设隐式默认，调用方必须显式选择（#1540 spec）。
 //! 共同不变量：基准为全局默认币种、与账户币种无关（避免跨账户漂移）；与本位币同
 //! 币种原样返回；正反向汇率均无即报错，不静默混币种。ADR 指针：ADR-0011 / ADR-0091
 //! 决策 3 / ADR-0113 决策 3.1。陷阱：本位币读取经 `super::base_currency` 接缝，
@@ -88,6 +90,22 @@ impl<'de> serde::Deserialize<'de> for FxRateSource {
         let s = String::deserialize(deserializer)?;
         FxRateSource::parse(&s).map_err(serde::de::Error::custom)
     }
+}
+
+/// 编辑沿用基线（#1550 / ADR-0011 2026-09-19 修订）：旧行的折算判别三元组
+/// （金额/币种/日期）与行内留痕。由修改路径从旧行读出后传入
+/// [`convert_to_native_on_edit`]，创建路径传 `None`；重放路径不消费（携带源端
+/// 折算结果，ADR-0091 决策 3）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FxEditBaseline {
+    /// 旧行原始币种金额（分）。
+    pub amount_cents: i64,
+    /// 旧行币种（退款为继承后的生效币种，与归一化行同口径）。
+    pub currency_code: String,
+    /// 旧行交易日期。
+    pub date: String,
+    /// 旧行行内留痕（本位币金额 + 汇率值 + 来源；未折算/存量行为空）。
+    pub conversion: NativeConversion,
 }
 
 /// 按交易日折算的结果（写路径，#1548）：本位币金额 + 折算来源留痕。
@@ -199,7 +217,8 @@ pub fn convert_to_native_current(
 /// - 币种与默认币种相同 → 1:1 原样返回，且不留痕（两个溯源列为 `None`）。
 /// - 基准为 [`default_currency_code`]。
 /// - 返回值随行携带折算来源留痕（#1548）：金额 + 使用汇率值 + 来源闭集。
-/// - 显式汇率优先由 #1549 接入。
+/// - 显式汇率优先由 #1549 接入；修改路径经 [`convert_to_native_on_edit`] 沿用
+///   行内留痕（#1550），不直接调用本函数。
 pub fn convert_to_native_on_trade_date(
     conn: &Connection,
     amount_cents: i64,
@@ -220,6 +239,28 @@ pub fn convert_to_native_on_trade_date(
         fx_rate_used: Some(rate),
         fx_rate_source: Some(FxRateSource::Series),
     })
+}
+
+/// **按交易日折算的编辑沿用形态**（写路径修改入口，#1550）：币种、金额、日期
+/// 三元组与旧行完全一致 → 原样返回行内留痕（含空值），不再查序列——避免导入的
+/// 历史行因当前数据源查不到当年值而变成改不动的僵尸行；任一项变了 → 按新值走
+/// [`convert_to_native_on_trade_date`] 重查重算，新周查不到即既有码化错误，
+/// 不静默沿用旧值。基线缺席（创建路径）与按交易日入口完全一致。
+pub fn convert_to_native_on_edit(
+    conn: &Connection,
+    amount_cents: i64,
+    currency_code: &str,
+    trade_date: &str,
+    baseline: Option<&FxEditBaseline>,
+) -> Result<NativeConversion> {
+    if let Some(old) = baseline
+        && old.amount_cents == amount_cents
+        && old.currency_code == currency_code
+        && old.date == trade_date
+    {
+        return Ok(old.conversion);
+    }
+    convert_to_native_on_trade_date(conn, amount_cents, currency_code, trade_date)
 }
 
 /// 按交易日所属 ISO 周在汇率历史序列查汇率（正查失败则反查取倒数）。

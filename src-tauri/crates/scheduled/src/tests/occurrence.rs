@@ -323,6 +323,7 @@ fn execute_occurrence_with_preexisting_landing_completes_without_second_row() {
             funding_account_id: None,
             note: None,
             date: date.clone(),
+            fx_edit_baseline: None,
         },
     )
     .unwrap();

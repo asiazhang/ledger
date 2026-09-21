@@ -980,6 +980,8 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             refund_of_transaction_id: None,
             note: st.note.clone(),
             date: occ.scheduled_date.clone(),
+            // 期次是创建路径：无编辑沿用基线（#1550）。
+            fx_edit_baseline: None,
         },
     )?;
 

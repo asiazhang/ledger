@@ -25,7 +25,7 @@ use ledger_infra::error::{AppError, Result};
 use ledger_infra::signals::WriteEvidence;
 use ledger_sync_protocol::device::device_id;
 
-use crate::amount::TransactionKind;
+use crate::amount::{FxEditBaseline, NativeConversion, TransactionKind};
 use crate::write::op::record_local;
 use crate::write::writer;
 
@@ -217,7 +217,7 @@ fn create_protocol(conn: &Connection, source: CreateForm<'_>) -> Result<Transact
         }
         // ── 计划装配（分歧点①：Local 按输入重折算 / Replay 按命令携带行）──
         let (plan, merchant_created) = match &source {
-            CreateForm::Local(input) => plan(conn, input, None)?,
+            CreateForm::Local(input) => plan(conn, input)?,
             CreateForm::Replay {
                 row,
                 investment,
@@ -276,9 +276,10 @@ pub fn update(conn: &Connection, id: &str, input: TransactionInput) -> Result<Wr
 /// kind 变更守卫 → 回退」三步。
 ///
 /// 守卫段：
-/// - 旧行并集读取（ADR-0105 决策 8）——kind + 商户 + 保单一次读出：本地用于
-///   「保持历史引用」判定（提交值与原值相同则跳过在用校验，已软删商户/保单的
-///   历史交易仍可修改其他字段），重放仅用 kind（多读两列无可观察影响）；协议内
+/// - 旧行并集读取（ADR-0105 决策 8）——kind + 商户 + 保单 + 折算沿用基线一次读出：
+///   本地用于「保持历史引用」判定（提交值与原值相同则跳过在用校验，已软删商户/保单
+///   的历史交易仍可修改其他字段）与折算沿用判定（#1550：币种/金额/日期未变则沿用
+///   行内留痕、不重查序列），重放仅用 kind（多读列无可观察影响）；协议内
 ///   单次读取，不存在或已删除返回码化 NotFound（两形态同款）。读取在事务内
 ///   （协议已保证处于事务中，消除读取与 BEGIN 之间的窗口，ADR-0033 决策 #5）。
 /// - convert kind 变更守卫单点（ADR-0099 决策 5）——从 convert 出、或改为 convert
@@ -294,16 +295,32 @@ pub fn update(conn: &Connection, id: &str, input: TransactionInput) -> Result<Wr
 /// 仅 Replay（同创建协议，置于回退后、装配前——与投资域装配的依赖在位校验同族）。
 fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Result<WriteEvidence> {
     ensure_transaction(conn, || {
-        // ── 旧行并集读取（ADR-0105 决策 8）──
-        let (old_kind, old_merchant_id, old_policy_id): (
-            TransactionKind,
-            Option<String>,
-            Option<String>,
-        ) = conn
+        // ── 旧行并集读取（ADR-0105 决策 8）：读取时机、单次读取与各消费方见本
+        // 函数头「守卫段」首条；产物见 [`ExistingRow`]。──
+        let existing: ExistingRow = conn
             .query_row(
-                "SELECT kind, merchant_id, policy_id FROM transactions WHERE id=?1 AND is_deleted=0",
+                "SELECT kind, merchant_id, policy_id, amount_cents, currency_code, date, \
+                 amount_native_cents, fx_rate_used, fx_rate_source \
+                 FROM transactions WHERE id=?1 AND is_deleted=0",
                 rusqlite::params![id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| {
+                    Ok(ExistingRow {
+                        id: id.to_string(),
+                        kind: r.get(0)?,
+                        merchant_id: r.get(1)?,
+                        policy_id: r.get(2)?,
+                        fx_edit_baseline: FxEditBaseline {
+                            amount_cents: r.get(3)?,
+                            currency_code: r.get(4)?,
+                            date: r.get(5)?,
+                            conversion: NativeConversion {
+                                native_cents: r.get(6)?,
+                                fx_rate_used: r.get(7)?,
+                                fx_rate_source: r.get(8)?,
+                            },
+                        },
+                    })
+                },
             )
             .optional()?
             .ok_or_else(|| {
@@ -315,6 +332,7 @@ fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Resul
             })?;
         // ── 守卫段 ──
         let new_kind = source.kind();
+        let old_kind = existing.kind;
         if (old_kind == TransactionKind::Convert) != (new_kind == TransactionKind::Convert) {
             return Err(AppError::coded(
                 CONVERT_KIND_CHANGE_FORBIDDEN_CODE,
@@ -356,13 +374,7 @@ fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Resul
         }
         // ── 计划装配（分歧点①）──
         let (plan, merchant_created) = match &source {
-            UpdateForm::Local(input) => plan_with_existing_refs(
-                conn,
-                input,
-                old_merchant_id.as_deref(),
-                old_policy_id.as_deref(),
-                Some(id),
-            )?,
+            UpdateForm::Local(input) => plan_with_existing_refs(conn, input, Some(&existing))?,
             UpdateForm::Replay {
                 row,
                 investment,
@@ -501,6 +513,17 @@ fn soft_delete_transaction_row(conn: &Connection, id: &str, form: WriteForm) -> 
 // 守卫与计划装配（协议分歧点①的 Local 臂）
 // ---------------------------------------------------------------------------
 
+/// 旧行并集读取的产物（ADR-0105 决策 8）：实体 id（split 重述目标定位与命令构造）、
+/// kind、「保持历史引用」判定所需的商户/保单当前值、折算沿用基线（#1550：旧行
+/// 折算三元组与行内留痕）。修改路径整体作为编辑上下文传入计划装配。
+struct ExistingRow {
+    id: String,
+    kind: TransactionKind,
+    merchant_id: Option<String>,
+    policy_id: Option<String>,
+    fx_edit_baseline: FxEditBaseline,
+}
+
 /// 参考数据携带准入（协议守卫段的 Local 分歧步骤）：商户/分类/保单按 kind 单点
 /// 判定准入闭集，准入集外的 kind 携带对应引用即码化拒绝——创建/修改两协议经本
 /// 函数共用同一收口，不另设第二份判定。Replay 形态不判定：命令携带行已随源端
@@ -576,11 +599,8 @@ fn guard_reference_admission(input: &TransactionInput) -> Result<()> {
 }
 
 /// 校验并归一化一笔交易输入为计划（交易行不落库）。计划装配 Local 臂：按输入
-/// 重折算（归一化 + 本位币折算）并可即建商户。
-///
-/// `existing_merchant_id`：修改路径该行当前的商户 id（创建路径传 None）——提交商户
-/// 与其相同视为保持历史引用（软删商户的历史交易仍可修改其他字段，见
-/// [`writer::normalize`] 的商户校验）；改选其他商户按新选择校验在用。
+/// 重折算（归一化 + 本位币折算）并可即建商户。创建路径薄壳：无旧行上下文，
+/// 装配细节见 [`plan_with_existing_refs`]。
 ///
 /// 商户名归一化（AI 导入契约，issue #194）：输入带 `merchant_name` 时在此解析为
 /// `merchant_id`——精确匹配在用商户名，命中复用、未命中即建。两段式避免碎商户：
@@ -599,24 +619,22 @@ fn guard_reference_admission(input: &TransactionInput) -> Result<()> {
 /// 返回 `(计划, 是否即建商户)`：后者即 [`WriteEvidence::MerchantCreated`] 的载荷——
 /// 仅「入参带 `merchant_name` 且未命中、行内校验通过后落定即建」为真；命中复用、
 /// 直接带 `merchant_id`、refund 继承忽略、不涉商户的 kind 一律为假。
-fn plan(
-    conn: &Connection,
-    input: &TransactionInput,
-    existing_merchant_id: Option<&str>,
-) -> Result<(Plan, bool)> {
-    plan_with_existing_refs(conn, input, existing_merchant_id, None, None)
+fn plan(conn: &Connection, input: &TransactionInput) -> Result<(Plan, bool)> {
+    plan_with_existing_refs(conn, input, None)
 }
 
-/// [`plan`] 的全量形态：修改路径额外传该行当前的保单 id（保单「保持历史引用」判定，
-/// 与商户同款语义）与既有交易 id（split 重述目标以本行落账序为界，ADR-0106 决策 6）。
-/// 创建路径两者都传 None。
+/// [`plan_with_existing_refs`] 的修改形态：整体传旧行并集读取的产物
+/// （[`ExistingRow`]：实体 id、「保持历史引用」判定的商户/保单当前值、
+/// 折算沿用基线），创建路径传 `None`。
 fn plan_with_existing_refs(
     conn: &Connection,
     input: &TransactionInput,
-    existing_merchant_id: Option<&str>,
-    existing_policy_id: Option<&str>,
-    existing_id: Option<&str>,
+    existing: Option<&ExistingRow>,
 ) -> Result<(Plan, bool)> {
+    let existing_merchant_id = existing.and_then(|e| e.merchant_id.as_deref());
+    let existing_policy_id = existing.and_then(|e| e.policy_id.as_deref());
+    let fx_edit_baseline = existing.map(|e| &e.fx_edit_baseline);
+    let existing_id = existing.map(|e| e.id.as_str());
     let kind = input.kind;
     match kind {
         TransactionKind::Income
@@ -667,6 +685,8 @@ fn plan_with_existing_refs(
                     refund_of_transaction_id: input.refund_of_transaction_id.clone(),
                     note: input.note.clone(),
                     date: input.date.clone(),
+                    // 折算沿用基线随修改路径下传（#1550），创建路径为 None。
+                    fx_edit_baseline: fx_edit_baseline.cloned(),
                 },
             )?;
             // 行内校验全部通过后才即建商户：未命中名字在此落定（失败行不产生碎商户）；
@@ -687,8 +707,15 @@ fn plan_with_existing_refs(
             // 投资 kind 不涉商户（协议准入段已拒绝携带），证据恒假；split / dividend
             // 由投资域各自的 prepare 守卫与装配（ADR-0106 / ADR-0109）——经交易×
             // 投资接缝（#1092）委派，注册点在本域，实现由投资域启动时装入。
+            // 折算沿用基线随修改路径下传（#1550），创建路径为 None。
             Ok((
-                Plan::Investment(prepare_investment(conn, kind, input, existing_id)?),
+                Plan::Investment(prepare_investment(
+                    conn,
+                    kind,
+                    input,
+                    existing_id,
+                    fx_edit_baseline,
+                )?),
                 false,
             ))
         }
