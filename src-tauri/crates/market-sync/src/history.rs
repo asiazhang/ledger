@@ -490,7 +490,7 @@ impl LaneRound for HistoryBackfillRound {
     ) -> LaneRoundFuture<'a, Self::Stats> {
         Box::pin(async move {
             // 借用拆字段：编排各通道由独立参数消费（历史补全不消费批量取数面），
-            // 四条通道互不重叠地交给编排。
+            // 三条通道互不重叠地交给编排。
             let SyncFetchChannels {
                 fetch_kline,
                 fetch_nav_history,

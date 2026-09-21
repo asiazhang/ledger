@@ -186,7 +186,7 @@ function main(): void {
   console.log(
     `✓ 东财行情面零残留守门通过：扫描 ${scanned.length} 个文件，未登记端点域名零命中；` +
       `已登记例外 ${REGISTERED_EXCEPTIONS.length} 条` +
-      `${REGISTERED_EXCEPTIONS.length > 0 ? `（${REGISTERED_EXCEPTIONS.map((e) => e.file).join("、")}）` : "（零例外——FX 腿已随 #1551 退役，登记条目随之删除）"}`,
+      `${REGISTERED_EXCEPTIONS.length > 0 ? `（${REGISTERED_EXCEPTIONS.map((e) => e.file).join("、")}）` : "（零例外）"}`,
   );
 }
 
