@@ -177,9 +177,11 @@ pub(super) fn parse_sina_fund_nav_rows(body: &str) -> Result<Vec<SinaFundNavRow>
         }
     }
     if !saw_statement {
-        return Err(unexpected_batch_response(
-            "响应不含任何基金净值语句（疑似被拦截）",
-        ));
+        tracing::warn!(
+            head = %body_head(body),
+            "新浪场外基金批量净值响应不含任何基金净值语句（疑似被拦截）"
+        );
+        return Err(malformed_batch_source());
     }
     Ok(rows)
 }
@@ -311,10 +313,13 @@ async fn fetch_sina_fund_batch(
     )
     .await?;
     // GBK 解码与报文形状两道判据都归本层：任一失败都补降速信号
-    //（ADR-0121 决策 5，先例：tencent 的批量面）。解码错误统一包装为本单元
-    // 的非预期响应错误（解码原语归 HTTP 层单点，单元上下文在此补齐）。
+    //（ADR-0121 决策 5，先例：tencent 的批量面）。解码错误统一归本单元的
+    // 批量源不可信码化错误（解码原语归 HTTP 层单点，单元上下文在此补齐）。
     decode_gbk(&bytes)
-        .map_err(unexpected_batch_response)
+        .map_err(|error| {
+            tracing::warn!(%error, "新浪场外基金批量净值响应 GBK 解码失败（不可信形状）");
+            malformed_batch_source()
+        })
         .and_then(|body| parse_sina_fund_nav_rows(&body))
         .map_err(|error| {
             tracing::warn!(%error, "新浪场外基金批量净值响应不可信");
@@ -323,10 +328,17 @@ async fn fetch_sina_fund_batch(
         })
 }
 
-/// 非预期批量面形状的统一错误（被拦截 / 截断 / 无语句）：退出取数与解析，不
-/// 回退为空序列。文案内部化（用户可见面是编排的「已降级、本次较慢」）。
-fn unexpected_batch_response(detail: impl std::fmt::Display) -> AppError {
-    AppError::Parse(format!("新浪场外基金批量净值响应不可解析：{detail}"))
+/// 非预期批量面形状的统一码化错误（被拦截 / GBK 解码失败 / 无语句共用一码，
+/// #1612 对齐披露面形状）：fail-closed 退出取数与解析，不回退为空序列。具体
+/// 是哪种形状由解析日志定位；不区分错误参数（ADR-0050：params 须 locale 无关，
+/// 先例：csrc 披露源同款形状）。多数形状的用户补救动作相同（稍后重试）；与
+/// csrc 的 `sync.disclosure-source-malformed` 语义可区分——批量面与披露面是
+/// 两个数据源的独立健康信号，经基金按代码查询端点（#1568）直达调用方。
+fn malformed_batch_source() -> AppError {
+    AppError::coded(
+        "sync.fund-batch-source-malformed",
+        "新浪场外基金批量净值数据源返回了无法解析的内容，请稍后重试同步",
+    )
 }
 
 /// 单只全历史面的单行：只解析消费的两列——净值日期（`fbrq`，wire 形态

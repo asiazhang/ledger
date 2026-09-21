@@ -266,11 +266,11 @@ fn batch_face_intercepted_fails_without_fallback() {
         &[csrc.as_str()],
     ))
     .expect_err("批量面被拦截应上抛");
-    // 按稳定语义断言：既不是查无此码、也不是披露源不可信——批量面自身的取数
-    // 失败原样上抛（文案内部化，不按中文文案断言）。
+    // 按稳定错误码断言（#1612 码化后）：批量面自身的取数失败以批量源不可信
+    // 码化错误上抛，与查无此码、披露源不可信语义可区分。
     assert!(
-        !err.is_code("sync.fund-not-found") && !err.is_code("sync.disclosure-source-malformed"),
-        "批量面取数失败应原样上抛而非误判结论，实际 {err:?}"
+        err.is_code("sync.fund-batch-source-malformed"),
+        "批量面取数失败应报批量源不可信码化错误，实际 {err:?}"
     );
     assert!(
         csrc_requests.lock().unwrap().is_empty(),
