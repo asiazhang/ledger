@@ -151,9 +151,19 @@ pub fn category_shares_rows(
         (Measure::IncomeNet, income_net_expr("t"))
     };
     let kinds = contributing_kinds_sql(measure);
+    // INDEXED BY 钉定分类覆盖索引（issue #1640 范围外修复）：分组列/kind/日期/
+    // 金额全在 idx_transactions_category_covering 内，钉定防 planner 统计边际
+    // 摇摆退回表达式索引 ANY 扫 + GROUP BY 临时 B-tree。先例与量化：月度汇总
+    // 同款钉定（issue #490，不钉退回 ~1s 量级）；本次实测 V029 加两列（未被
+    // 本查询引用）即令 SQLite 3.51.3 计划器翻转（CI 09-20 → 09-21：p95
+    // 128.45ms → 1421.71ms，本地 500k 库同库复现 159ms → 1400ms），钉定后
+    // 计划恢复覆盖索引驱动。部分索引 WHERE is_deleted=0 与本查询谓词同形，
+    // 期间/遗留月份/遗留年份三种口径下索引均可用（遗留口径经 ANY(category_id)
+    // 分组序扫描，GROUP BY 免临时 B-tree）。
     let mut sql = format!(
         "SELECT t.category_id, COALESCE(c.name,'未分类'), SUM({expr}) AS net \
-         FROM transactions t LEFT JOIN categories c ON c.id=t.category_id \
+         FROM transactions t INDEXED BY idx_transactions_category_covering \
+         LEFT JOIN categories c ON c.id=t.category_id \
          WHERE t.kind IN ({kinds}) AND t.is_deleted=0"
     );
     let mut params: Vec<String> = Vec::new();

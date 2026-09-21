@@ -402,12 +402,15 @@ fn v016_monthly_summary_uses_pinned_expression_index() {
 #[test]
 fn v016_category_shares_use_category_covering_index() {
     let conn = v016_world();
-    // 与 reports 域分类聚合同形状（含 ORDER BY net 的结果排序步骤）。
+    // 与 reports 域分类聚合同形状（含 INDEXED BY 钉定与 ORDER BY net 的结果排序
+    // 步骤，issue #1640：不钉定则 planner 在统计边际上可退回表达式索引 ANY 扫
+    // + GROUP BY 临时 B-tree，50 万笔库实测 128ms → 1421ms）。
     let plan = v016_plan(
         &conn,
         "SELECT t.category_id, SUM(CASE WHEN t.kind='expense' THEN t.amount_native_cents \
          WHEN t.kind='refund' THEN -t.amount_native_cents ELSE 0 END) \
-         FROM transactions t LEFT JOIN categories c ON c.id=t.category_id \
+         FROM transactions t INDEXED BY idx_transactions_category_covering \
+         LEFT JOIN categories c ON c.id=t.category_id \
          WHERE t.kind IN ('expense','refund') AND t.is_deleted=0 \
          GROUP BY t.category_id ORDER BY 2 DESC",
         [],
@@ -415,6 +418,37 @@ fn v016_category_shares_use_category_covering_index() {
     assert!(
         plan.contains("idx_transactions_category_covering"),
         "分类聚合应由分类覆盖索引驱动: {plan}"
+    );
+    assert!(
+        !plan.contains("TEMP B-TREE FOR GROUP BY"),
+        "分类聚合不应有 GROUP BY 临时 B-tree（覆盖索引自带分组序）: {plan}"
+    );
+}
+
+/// 分类聚合期间口径钉计划（issue #1640）：日期区间下覆盖索引仍驱动分组与过滤，
+/// 不因日期范围约束退回其它索引 + GROUP BY 临时 B-tree（CI 50 万笔库上
+/// V029 加列后 planner 实际翻转即发生在期间口径）。
+#[test]
+fn v016_category_shares_period_form_stays_on_category_covering_index() {
+    let conn = v016_world();
+    let plan = v016_plan(
+        &conn,
+        "SELECT t.category_id, SUM(CASE WHEN t.kind='expense' THEN t.amount_native_cents \
+         WHEN t.kind='refund' THEN -t.amount_native_cents ELSE 0 END) \
+         FROM transactions t INDEXED BY idx_transactions_category_covering \
+         LEFT JOIN categories c ON c.id=t.category_id \
+         WHERE t.kind IN ('expense','refund') AND t.is_deleted=0 \
+         AND t.date>='2026-01-01' AND t.date<='2026-12-31' \
+         GROUP BY t.category_id ORDER BY 2 DESC",
+        [],
+    );
+    assert!(
+        plan.contains("idx_transactions_category_covering"),
+        "期间口径分类聚合应由分类覆盖索引驱动: {plan}"
+    );
+    assert!(
+        !plan.contains("TEMP B-TREE FOR GROUP BY"),
+        "期间口径分类聚合不应有 GROUP BY 临时 B-tree: {plan}"
     );
 }
 
