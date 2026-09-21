@@ -231,25 +231,26 @@ pub fn convert_to_native_on_trade_date(
             fx_rate_source: None,
         });
     }
-    if let Some(rate) = explicit_rate {
-        if !rate.is_finite() || rate <= 0.0 {
-            return Err(AppError::codedp(
-                "fx.explicit-rate-non-positive",
-                format!("显式汇率必须大于 0: {rate}"),
-                &[&rate.to_string()],
-            ));
+    let (rate, source) = match explicit_rate {
+        Some(rate) => {
+            if !rate.is_finite() || rate <= 0.0 {
+                return Err(AppError::codedp(
+                    "fx.explicit-rate-non-positive",
+                    format!("显式汇率必须大于 0: {rate}"),
+                    &[&rate.to_string()],
+                ));
+            }
+            (rate, FxRateSource::Explicit)
         }
-        return Ok(NativeConversion {
-            native_cents: (amount_cents as f64 * rate).round() as i64,
-            fx_rate_used: Some(rate),
-            fx_rate_source: Some(FxRateSource::Explicit),
-        });
-    }
-    let rate = lookup_fx_history_rate(conn, currency_code, &target, trade_date)?;
+        None => (
+            lookup_fx_history_rate(conn, currency_code, &target, trade_date)?,
+            FxRateSource::Series,
+        ),
+    };
     Ok(NativeConversion {
         native_cents: (amount_cents as f64 * rate).round() as i64,
         fx_rate_used: Some(rate),
-        fx_rate_source: Some(FxRateSource::Series),
+        fx_rate_source: Some(source),
     })
 }
 

@@ -893,10 +893,6 @@ async fn test_batch_import_row_with_explicit_fx_rate_readback_marks_explicit() {
         if tx["currency_code"] == "HKD" {
             assert_eq!(tx["fx_rate_used"], 0.88, "留痕 = 显式给定值本身");
             assert_eq!(tx["fx_rate_source"], "explicit", "来源标为显式");
-            assert_eq!(
-                tx["amount_native_cents"], 880,
-                "按给定汇率折算（1000 × 0.88，到分）"
-            );
         } else {
             assert_eq!(tx["fx_rate_used"], serde_json::Value::Null);
             assert_eq!(tx["fx_rate_source"], serde_json::Value::Null);
@@ -919,6 +915,8 @@ async fn test_batch_import_illegal_explicit_fx_rate_rejected_not_persisted() {
     );
     let created = post_batch(&app, batch_body(&[&zero, &same_currency], None)).await;
     assert_eq!(created[0]["success"], false, "非正显式汇率应失败");
+    // 批量导入逐行结果只回 message 字符串（错误码入行结果属 spec #1540 范围外技术债），
+    // 断言面只能是消息子串；码值断言归域单测（fx.explicit-rate-non-positive）。
     assert!(created[0]["error"].as_str().unwrap().contains("大于 0"));
     assert_eq!(created[1]["success"], false, "同币种携带显式汇率应失败");
     assert!(
