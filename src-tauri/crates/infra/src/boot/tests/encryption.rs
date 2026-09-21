@@ -9,17 +9,18 @@
 //! 不入测试工厂，ADR-0084 决策 3）；建库后的迁移补齐/重入经产品迁移缝
 //! `migrations().to_latest`（即 `init_db` 的迁移核心，spec #728 / issue #754）。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use tauri_app_lib::test_support::ScratchDir;
 
 use rusqlite::{Connection, params};
 
 use crate::db::encryption::{DbFileKind, SQLITE_HEADER_MAGIC, probe_file_kind};
-use crate::db::{migrations, new_uuid, open_connection, open_connection_with_passphrase};
+use crate::db::{migrations, open_connection, open_connection_with_passphrase};
 
-fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ledger-db-enc-{tag}-{}", new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// 暂存目录（ScratchDir guard，issue #1645）：drop（含 panic unwind）整棵删除。
+fn temp_dir(tag: &str) -> ScratchDir {
+    ScratchDir::new(&format!("db-enc-{tag}"))
 }
 
 fn read_header(db: &Path) -> [u8; 16] {

@@ -37,20 +37,22 @@ use tauri_app_lib::test_support::{
 };
 
 /// mock 应用 + 独立临时目录文件库（`readonly_connection` / `instrument_sync`
-/// 同款现场：产品建连缝 + 交易域接缝接线，本位币读取钩子随此装入）。
-fn device_app(tag: &str) -> tauri::App<tauri::test::MockRuntime> {
+/// 同款现场：产品建连缝 + 交易域接缝接线，本位币读取钩子随此装入）。库目录走
+/// ScratchDir（issue #1645）：guard 随元组交调用方持有，用例结束整棵删除。
+fn device_app(
+    tag: &str,
+) -> (
+    tauri::App<tauri::test::MockRuntime>,
+    tauri_app_lib::test_support::ScratchDir,
+) {
     // 写路径副作用接线（与测试工厂 / cross_book_summary 现场同款：交易写入的
     // 余额缓存重算实现随此装入；未接线时写入即码化拒绝）。
     ledger_accounts::balance::install_balance_refresh_hook();
     tauri_app_lib::transaction_wiring::install_all();
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-overview-it-{tag}-{}",
-        ledger_infra::db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).expect("临时目录应可建");
+    let dir = tauri_app_lib::test_support::ScratchDir::new(&format!("overview-it-{tag}"));
     let app = tauri::test::mock_app();
     app.manage(db::open_db_in(&dir).expect("文件库应可开"));
-    app
+    (app, dir)
 }
 
 /// 买入输入（公开写入口造数：建仓批次与现金腿由产品代码落库，非裸插）。
@@ -179,7 +181,7 @@ fn seed_price(conn: &Connection, instrument_id: &str, price_cents: i64, currency
 /// 缺价持仓跳过但计入未计入数（命令面形状，前端类型镜像此形状）。
 #[tokio::test]
 async fn investment_overview_returns_two_legs_and_unpriced_count() {
-    let app = device_app("contract");
+    let (app, _dir) = device_app("contract");
     let conn = app.state::<DbState>().conn.clone();
     {
         let guard = conn.lock().expect("种子写入锁应可取");
@@ -243,7 +245,7 @@ async fn investment_overview_returns_two_legs_and_unpriced_count() {
 /// 命令面返回值。
 #[tokio::test]
 async fn investment_overview_totals_fold_realized_and_dividends() {
-    let app = device_app("totals");
+    let (app, _dir) = device_app("totals");
     let conn = app.state::<DbState>().conn.clone();
     {
         let guard = conn.lock().expect("种子写入锁应可取");
@@ -291,7 +293,7 @@ async fn investment_overview_totals_fold_realized_and_dividends() {
 /// 多币种折全局默认币种 + 隐藏账户的现金与持仓一并排除（验收判据的 API 层半边）。
 #[tokio::test]
 async fn investment_overview_folds_multi_currency_and_excludes_hidden() {
-    let app = device_app("hidden");
+    let (app, _dir) = device_app("hidden");
     let conn = app.state::<DbState>().conn.clone();
     {
         let guard = conn.lock().expect("种子写入锁应可取");
@@ -348,7 +350,7 @@ async fn investment_overview_folds_multi_currency_and_excludes_hidden() {
 /// 没有投资账户：照常返回 0 与「还没有投资账户」的引导事实（不隐藏功能、不报错）。
 #[tokio::test]
 async fn investment_overview_without_investment_account_returns_zero() {
-    let app = device_app("empty");
+    let (app, _dir) = device_app("empty");
     let conn = app.state::<DbState>().conn.clone();
     {
         let guard = conn.lock().expect("种子写入锁应可取");
@@ -372,7 +374,7 @@ async fn investment_overview_without_investment_account_returns_zero() {
 /// 缺折算汇率：码化错误上抛（前端据此卡内警告 + 重试，不显示半截数字）。
 #[tokio::test]
 async fn investment_overview_missing_rate_returns_coded_error() {
-    let app = device_app("no-rate");
+    let (app, _dir) = device_app("no-rate");
     let conn = app.state::<DbState>().conn.clone();
     {
         let guard = conn.lock().expect("种子写入锁应可取");

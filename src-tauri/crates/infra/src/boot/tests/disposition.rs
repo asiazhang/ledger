@@ -5,17 +5,22 @@
 //! `features/startup_failure.feature` 以真临时目录文件库钉住；此处只钉
 //! 纯函数级别的三态分派与门状态翻转。
 
+use tauri_app_lib::test_support::{ScratchDir, ScratchFile};
+
 use crate::boot::disposition::{
     BOOT_DB_UNREADABLE, BootDisposition, BootFailureGate, classify_for_boot,
 };
 
-fn temp_file(name: &str, bytes: &[u8]) -> std::path::PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("ledger-unit-boot-{}-{}", std::process::id(), name));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("ledger.db");
-    std::fs::write(&path, bytes).unwrap();
-    path
+/// 文件夹具（issue #1645）：住各自的暂存目录，guard 随用例持有整棵删除。
+fn temp_file(name: &str, bytes: &[u8]) -> ScratchFile {
+    let file = ScratchFile::new(&format!("unit-boot-{name}"), "ledger.db");
+    std::fs::write(&file, bytes).unwrap();
+    file
+}
+
+/// 暂存目录（ScratchDir guard，issue #1645）：drop（含 panic unwind）整棵删除。
+fn temp_dir(tag: &str) -> ScratchDir {
+    ScratchDir::new(&format!("unit-boot-{tag}"))
 }
 
 #[test]
@@ -40,7 +45,8 @@ fn short_and_missing_files_are_plaintext_fresh_install() {
         classify_for_boot(&path).unwrap(),
         BootDisposition::OpenPlaintext
     );
-    let missing = std::env::temp_dir().join("ledger-unit-boot-missing-nonexistent.db");
+    let missing_dir = temp_dir("missing");
+    let missing = missing_dir.join("nonexistent.db");
     assert_eq!(
         classify_for_boot(&missing).unwrap(),
         BootDisposition::OpenPlaintext
@@ -74,22 +80,19 @@ fn foreign_reserved_bytes_plaintext_classifies_as_normalize_plaintext() {
     // 外来形态明文库（每页保留字节 12，外部工具写的合法库，issue #1453）：
     // 建连前先归一化——分类若漏了这一态，启动会带着畸形形态进入日常路径，
     // 备份与同步检查点产出全灭（用户可观察回归）。
-    let dir = std::env::temp_dir().join(format!("ledger-unit-boot-foreign-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = temp_dir("foreign");
     let path = dir.join("ledger.db");
     crate::test_utils::write_foreign_form_plaintext_db(&path, 1);
     assert_eq!(
         classify_for_boot(&path).unwrap(),
         BootDisposition::NormalizePlaintext
     );
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
 fn app_owned_plaintext_db_classifies_as_open_plaintext() {
     // 应用自有形态的明文库（保留字节 0）→ 既有建连路径零改动，不进归一化态。
-    let dir = std::env::temp_dir().join(format!("ledger-unit-boot-owned-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = temp_dir("owned");
     let path = dir.join("ledger.db");
     {
         let mut conn = crate::db::open_connection(&path).unwrap();
@@ -99,7 +102,6 @@ fn app_owned_plaintext_db_classifies_as_open_plaintext() {
         classify_for_boot(&path).unwrap(),
         BootDisposition::OpenPlaintext
     );
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -152,7 +154,7 @@ fn plan_boot_classifies_the_resolved_dir_not_the_default_dir() {
     // 重引导计划的两步同序钉子（issue #644）：DataLocation 解析把生效目录
     // 指向目标后，处置判定消费的是目标目录里的库文件，不是默认目录的。
     use crate::db::boot::plan_boot;
-    let base = std::env::temp_dir().join(format!("ledger-unit-planboot-{}", std::process::id()));
+    let base = temp_dir("planboot");
     let default_dir = base.join("default");
     let target = base.join("target");
     std::fs::create_dir_all(&default_dir).unwrap();
@@ -170,5 +172,4 @@ fn plan_boot_classifies_the_resolved_dir_not_the_default_dir() {
     let plan = plan_boot(&default_dir);
     assert_eq!(plan.boot.db_dir, target);
     assert_eq!(plan.disposition.unwrap(), BootDisposition::AwaitUnlock);
-    std::fs::remove_dir_all(base).ok();
 }

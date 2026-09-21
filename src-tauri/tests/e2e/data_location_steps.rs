@@ -10,9 +10,7 @@ use rusqlite::Connection;
 use ledger_infra::db::data_location::{
     WRITE_PROBE_FILE_NAME, gather_info_from_boot, validate_and_commit,
 };
-use ledger_infra::db::{
-    data_location, init_db, new_uuid, open_connection, open_db_in, reset_db_in,
-};
+use ledger_infra::db::{data_location, init_db, open_connection, open_db_in, reset_db_in};
 
 use crate::common::{count_transactions_in_file, seed_account_with_expenses};
 use crate::world::LedgerWorld;
@@ -23,9 +21,7 @@ use crate::world::LedgerWorld;
 
 fn ensure_default_dir(world: &mut LedgerWorld) {
     if world.boot.dl_default_dir.is_none() {
-        let dir = std::env::temp_dir().join(format!("ledger-e2e-dl-default-{}", new_uuid()));
-        std::fs::create_dir_all(&dir).unwrap();
-        world.boot.dl_default_dir = Some(dir);
+        world.boot.dl_default_dir = Some(world.scratch_dir("e2e-dl-default"));
     }
 }
 
@@ -91,7 +87,7 @@ fn empty_default_dir(world: &mut LedgerWorld) {
 fn pointer_to_target(world: &mut LedgerWorld) {
     ensure_default_dir(world);
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
-    let target = std::env::temp_dir().join(format!("ledger-e2e-dl-target-{}", new_uuid()));
+    let target = world.scratch_dir("e2e-dl-target");
     data_location::write_pointer(&default_dir, &target).unwrap();
     world.boot.dl_target_dir = Some(target);
 }
@@ -126,8 +122,7 @@ fn pointer_to_unusable_target(world: &mut LedgerWorld) {
 
 #[given(expr = "默认数据目录中存在一个损坏的库文件")]
 fn default_dir_with_corrupt_db(world: &mut LedgerWorld) {
-    let dir = std::env::temp_dir().join(format!("ledger-e2e-dl-reset-{}", new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = world.scratch_dir("e2e-dl-reset");
     std::fs::write(
         dir.join(data_location::DB_FILE_NAME),
         b"definitely not a sqlite file",
@@ -321,7 +316,7 @@ fn submit(world: &mut LedgerWorld, target: &std::path::Path, adopt_existing: boo
 #[when(expr = "向一个未占用的新目录提交更改意图")]
 fn submit_to_fresh_dir(world: &mut LedgerWorld) {
     ensure_default_dir(world);
-    let target = std::env::temp_dir().join(format!("ledger-e2e-dl-new-{}", new_uuid()));
+    let target = world.scratch_dir("e2e-dl-new");
     world.boot.dl_target_dir = Some(target.clone());
     submit(world, &target, false);
 }
@@ -339,8 +334,7 @@ fn submit_to_uncreatable(world: &mut LedgerWorld) {
 
 #[when(expr = "向一个只读目录提交更改意图")]
 fn submit_to_readonly_dir(world: &mut LedgerWorld) {
-    let target = std::env::temp_dir().join(format!("ledger-e2e-dl-readonly-{}", new_uuid()));
-    std::fs::create_dir_all(&target).unwrap();
+    let target = world.scratch_dir("e2e-dl-readonly");
     // 目录存在但不可写，两个互补手段（顺序关键：先建探针目录再改权限，
     // 否则非 root 环境下创建探针目录本身就会 PermissionDenied）：
     // ① 用探针同名目录预占试写路径：fs::write 对目录必然报 EISDIR，
@@ -550,8 +544,7 @@ fn info_not_pending(world: &mut LedgerWorld) {
 fn target_dir_with_db_no_pointer(world: &mut LedgerWorld, count: usize) {
     ensure_default_dir(world);
     // 不写指针：仅准备目标现场，供「二选一」场景提交时使用。
-    let target = std::env::temp_dir().join(format!("ledger-e2e-dl-adopt-{}", new_uuid()));
-    std::fs::create_dir_all(&target).unwrap();
+    let target = world.scratch_dir("e2e-dl-adopt");
     let mut conn = open_connection(target.join(data_location::DB_FILE_NAME)).unwrap();
     init_db(&mut conn).unwrap();
     seed_db(&conn, "目标现金", count);

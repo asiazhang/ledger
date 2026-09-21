@@ -135,11 +135,8 @@ fn startup_wiring_backfills_history_and_frontend_sync_stays_unblocked() {
 
     // 设备现场（sync_trigger_poll 同款）：mock 应用 + 独立临时目录文件库 +
     // 两扇门（调度线程做空转判定）。
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-history-backfill-it-{}",
-        ledger_infra::db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    // 目录走 ScratchDir（issue #1645）：用例结束（含 panic）整棵删除。
+    let dir = tauri_app_lib::test_support::ScratchDir::new("history-backfill-it");
     let app = tauri::test::mock_app();
     app.manage(db::open_db_in(&dir).unwrap());
     app.manage(ledger_infra::db::encryption::EncryptionGate::new(false));

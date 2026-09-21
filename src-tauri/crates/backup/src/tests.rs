@@ -1,7 +1,9 @@
 //! 备份/恢复测试（issue #91 外迁）：zip 打包/恢复往返/新旧 schema 策略/受管备份列表与修剪。
 
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use tauri_app_lib::test_support::{ScratchDir, ScratchFile};
 
 use rusqlite::Connection;
 use rusqlite::params;
@@ -10,12 +12,13 @@ use super::*;
 use ledger_infra::db;
 use ledger_infra::db::open_connection;
 
-fn temp_file(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "ledger-backup-test-{tag}-{}-{}.db",
-        std::process::id(),
-        db::new_uuid()
-    ))
+/// 散文件夹具（issue #1645）：临时文件收进各自的暂存目录，drop（含 panic
+/// unwind）连目录一起删除；手写 `fs_util::cleanup` 收尾随迁移退役。
+fn temp_file(tag: &str) -> ScratchFile {
+    ScratchFile::new(
+        &format!("backup-test-{tag}"),
+        format!("ledger-backup-test-{tag}-{}.db", db::new_uuid()),
+    )
 }
 
 /// 建内存库并写入一条账户 + 一条交易（账户经工厂种子，spec #728 / ADR-0084 决策 4）。
@@ -34,15 +37,9 @@ fn count_transactions(conn: &Connection) -> i64 {
         .unwrap()
 }
 
-/// 为每个测试准备独立的安全备份目录（互不干扰）。
-fn temp_safety_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-backup-test-safety-{}-{}",
-        std::process::id(),
-        db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// 为每个测试准备独立的安全备份目录（互不干扰）；guard drop 整棵删除。
+fn temp_safety_dir() -> ScratchDir {
+    ScratchDir::new("backup-test-safety")
 }
 
 #[test]
@@ -75,8 +72,6 @@ fn backup_creates_zip_with_db_and_meta() {
     drop(out);
     let db_conn = open_connection(&extracted).unwrap();
     assert_eq!(count_transactions(&db_conn), 1);
-    ledger_infra::fs_util::cleanup(&target);
-    ledger_infra::fs_util::cleanup(&extracted);
 }
 
 #[test]
@@ -139,10 +134,6 @@ fn restore_roundtrip_preserves_data() {
         })
         .collect();
     assert_eq!(safeties.len(), 1);
-
-    ledger_infra::fs_util::cleanup(&backup);
-    ledger_infra::fs_util::cleanup(&db_path);
-    std::fs::remove_dir_all(&safety_dir).ok();
 }
 
 #[test]
@@ -155,14 +146,13 @@ fn restore_rejects_newer_schema() {
     }
     let db_path = temp_file("db");
     let expected = expected_schema_version().unwrap();
-    let tmp_dir = std::env::temp_dir();
+    // 恢复安全备份的落盘父目录也走暂存目录（原先直接写 /tmp 根）。
+    let tmp_dir = ScratchDir::new("backup-test-restore-parent");
     let err = restore_db_from(&newer, &db_path, &tmp_dir, expected, None)
         .unwrap_err()
         .to_string();
     assert!(err.contains("更高版本"), "错误信息: {err}");
     assert!(!db_path.exists(), "恢复应被拒绝，不产生目标库");
-    ledger_infra::fs_util::cleanup(&newer);
-    ledger_infra::fs_util::cleanup(&db_path);
 }
 
 #[test]
@@ -181,9 +171,6 @@ fn restore_supports_bare_db() {
     restore_db_from(&bare, &db_path, &safety_dir, expected, None).unwrap();
     let c = open_connection(&db_path).unwrap();
     assert_eq!(count_transactions(&c), 1);
-    ledger_infra::fs_util::cleanup(&bare);
-    ledger_infra::fs_util::cleanup(&db_path);
-    std::fs::remove_dir_all(&safety_dir).ok();
 }
 
 #[test]
@@ -194,13 +181,11 @@ fn backup_meta_records_kind_for_auto_and_manual() {
     let manual = temp_file("meta-manual");
     backup_db_to(&conn, &manual, "0.2.0", BackupKind::Manual).unwrap();
     assert_eq!(read_backup_kind(&manual).unwrap(), BackupKind::Manual);
-    ledger_infra::fs_util::cleanup(&manual);
 
     // 自动产物：kind 落盘为 auto。
     let auto = temp_file("meta-auto");
     backup_db_to(&conn, &auto, "0.2.0", BackupKind::Auto).unwrap();
     assert_eq!(read_backup_kind(&auto).unwrap(), BackupKind::Auto);
-    ledger_infra::fs_util::cleanup(&auto);
 }
 
 /// 旧版本备份的 backup.json 缺 kind 字段：读取不报错且视为 manual。
@@ -222,7 +207,6 @@ fn legacy_meta_without_kind_reads_as_manual() {
         zip.finish().unwrap();
     }
     assert_eq!(read_backup_kind(&path).unwrap(), BackupKind::Manual);
-    ledger_infra::fs_util::cleanup(&path);
 }
 
 /// 元数据里出现未知/非法的 kind 值：宽容回落 manual 而非解析失败（兼容优先）。
@@ -244,7 +228,6 @@ fn meta_with_unknown_kind_reads_as_manual() {
         zip.finish().unwrap();
     }
     assert_eq!(read_backup_kind(&path).unwrap(), BackupKind::Manual);
-    ledger_infra::fs_util::cleanup(&path);
 }
 
 /// 旧版本备份（元数据无 kind 字段）：恢复不报错、列表正常出现，视为 manual。
@@ -257,12 +240,7 @@ fn legacy_backup_restores_and_lists_without_error() {
     let raw = temp_file("legacy-raw");
     conn.execute("VACUUM INTO ?1", params![raw.to_string_lossy()])
         .unwrap();
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-backup-legacy-dir-{}-{}",
-        std::process::id(),
-        db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new("backup-test-legacy-dir");
     let legacy = dir.join("ledger-backup-20260101-000000.db.zip");
     {
         let file = File::create(&legacy).unwrap();
@@ -278,8 +256,6 @@ fn legacy_backup_restores_and_lists_without_error() {
         .unwrap();
         zip.finish().unwrap();
     }
-    ledger_infra::fs_util::cleanup(&raw);
-
     // 列表：旧格式文件按命名规则正常被识别，来源按 manual 处理。
     let list = list_managed_backups(&dir, None).unwrap();
     assert_eq!(list.len(), 1);
@@ -303,21 +279,11 @@ fn legacy_backup_restores_and_lists_without_error() {
     assert!(result.is_ok(), "旧格式备份恢复失败: {:?}", result.err());
     let c = open_connection(&db_path).unwrap();
     assert_eq!(count_transactions(&c), 1);
-
-    ledger_infra::fs_util::cleanup(&legacy);
-    ledger_infra::fs_util::cleanup(&db_path);
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&safety_dir);
 }
 
 #[test]
 fn list_and_prune_managed_backups() {
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-backup-managed-{}-{}",
-        std::process::id(),
-        db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new("backup-test-managed");
     // 3 个手动自动命名文件 + 1 个自动备份命名文件 + 1 个不匹配命名 + 1 个名字匹配但为目录。
     for (name, size) in [
         ("ledger-backup-20260101-010101.db.zip", 10u64),
@@ -362,18 +328,11 @@ fn list_and_prune_managed_backups() {
     assert_eq!(r2.deleted, vec!["ledger-backup-20260103-010101.db.zip"]);
     assert_eq!(r2.kept, 1);
     assert!(dir.join("ledger-auto-20260201-010101.db.zip").exists());
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
 fn prune_keeps_all_when_within_limit_and_missing_dir() {
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-backup-prune-none-{}-{}",
-        std::process::id(),
-        db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new("backup-test-prune-none");
     std::fs::write(dir.join("ledger-backup-20260101-010101.db.zip"), b"x").unwrap();
 
     let r = prune_managed_backups(&dir, 30, None).unwrap();
@@ -386,19 +345,14 @@ fn prune_keeps_all_when_within_limit_and_missing_dir() {
     let r2 = prune_managed_backups(&missing, 5, None).unwrap();
     assert_eq!(r2.kept, 0);
     assert!(r2.deleted.is_empty());
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
 fn backup_fails_when_target_dir_missing() {
     let conn = tauri_app_lib::test_support::open();
-    let missing = std::env::temp_dir().join(format!(
-        "no-such-dir-{}-{}",
-        std::process::id(),
-        db::new_uuid()
-    ));
-    let target = missing.join("x.zip");
+    // 目标父级不存在（暂存目录在场、其下 gone 子目录不建）→ 备份必失败。
+    let missing_root = ScratchDir::new("backup-test-missing-target");
+    let target = missing_root.join("gone").join("x.zip");
     let err = backup_db_to(&conn, &target, "0.2.0", BackupKind::Manual)
         .unwrap_err()
         .to_string();
@@ -426,12 +380,7 @@ fn assert_no_temp_residue(dir: &Path) {
 /// 恢复「失败早退不清理」本用例即变红。
 #[test]
 fn backup_failure_leaves_no_temp_residue() {
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-backup-residue-{}-{}",
-        std::process::id(),
-        db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new("backup-test-residue");
 
     // 注入点一：源连接处于事务内，`VACUUM INTO` 报错（现场失败形态：
     // 0 字节临时库文件残留）。
@@ -448,8 +397,6 @@ fn backup_failure_leaves_no_temp_residue() {
     std::fs::create_dir(&occupied).unwrap();
     backup_db_to(&conn, &occupied, "0.6.0", BackupKind::Manual).unwrap_err();
     assert_no_temp_residue(&dir);
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 // -------------------------------------------------------------------------
@@ -464,12 +411,7 @@ fn backup_failure_leaves_no_temp_residue() {
 /// `unable to open database`，且留下 0 字节临时库残留。
 #[test]
 fn backup_rejects_foreign_form_db_with_coded_error() {
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-backup-foreign-{}-{}",
-        std::process::id(),
-        db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new("backup-test-foreign");
     let src = dir.join("ledger.db");
     ledger_infra::test_utils::write_foreign_form_plaintext_db(&src, 3);
     let conn = open_connection(&src).unwrap();
@@ -486,8 +428,6 @@ fn backup_rejects_foreign_form_db_with_coded_error() {
     assert!(shown.contains("重启应用"), "文案应指向修复动作: {shown}");
     assert!(!target.exists(), "不应产生备份产物");
     assert_no_temp_residue(&dir);
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// 正常库备份行为与产物形态不变（issue #1454 回归判据）：应用自有形态的
@@ -506,7 +446,6 @@ fn backup_of_app_owned_db_succeeds_with_clean_form() {
     let mut entry = archive.by_name("ledger.db").unwrap();
     std::io::Read::read_exact(&mut entry, &mut header).unwrap();
     assert_eq!(header[20], 0, "产物库偏移 20 应为 0（应用自有形态）");
-    ledger_infra::fs_util::cleanup(&target);
 }
 
 /// 加密库快照不受形态门禁影响（issue #1454 回归判据）：密文库的保留字节
@@ -514,12 +453,7 @@ fn backup_of_app_owned_db_succeeds_with_clean_form() {
 /// 仍为密文。
 #[test]
 fn backup_of_encrypted_db_bypasses_form_guard_and_stays_encrypted() {
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-backup-enc-{}-{}",
-        std::process::id(),
-        db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new("backup-test-enc");
     let src = dir.join("ledger.db");
     // 文件库不入测试工厂（ADR-0084 决策 3，同本文件上方先例）：迁移后的库经
     // VACUUM INTO 落盘，再整库转密文。
@@ -547,8 +481,6 @@ fn backup_of_encrypted_db_bypasses_form_guard_and_stays_encrypted() {
         ledger_infra::db::encryption::DbFileKind::Encrypted,
         "备份产物应为密文库（继承密钥）"
     );
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 // -------------------------------------------------------------------------
@@ -615,12 +547,7 @@ fn managed_name_roundtrip_with_book_tag() {
 /// `include_legacy`（登记序首本）可见；无作用域全可见（兼容口径）。
 #[test]
 fn scoped_listing_filters_by_book() {
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-backup-scope-list-{}-{}",
-        std::process::id(),
-        db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new("backup-test-scope-list");
     for name in [
         "ledger-backup-20260101-000000.db.zip", // 无标识（历史产物）
         "ledger-auto-20260102-000000-book-a.db.zip", // 账本 A
@@ -659,19 +586,12 @@ fn scoped_listing_filters_by_book() {
         names(&list_managed_backups(&dir, Some(&scope_b)).unwrap()),
         vec!["ledger-backup-20260104-000000-book-b.db.zip"]
     );
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// 按本滚动清理：共享目录内各账本独立计算保留上限，互不影响。
 #[test]
 fn scoped_prune_is_per_book() {
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-backup-scope-prune-{}-{}",
-        std::process::id(),
-        db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new("backup-test-scope-prune");
     for name in [
         "ledger-auto-20260101-000000-book-a.db.zip",
         "ledger-auto-20260102-000000-book-a.db.zip",
@@ -721,6 +641,4 @@ fn scoped_prune_is_per_book() {
         dir.join("ledger-auto-20260101-000000-book-b.db.zip")
             .exists()
     );
-
-    std::fs::remove_dir_all(&dir).ok();
 }
