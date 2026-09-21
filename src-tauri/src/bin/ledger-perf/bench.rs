@@ -340,6 +340,7 @@ pub(crate) fn run_benchmarks(
         start_date: Some(trend_min.clone()),
         end_date: Some(trend_max.clone()),
     };
+    let mwr_range = MwrRange::default();
     let as_of_date = max_date.clone();
 
     let benches: Vec<(&'static str, Box<BenchFn>)> = vec![
@@ -521,11 +522,11 @@ pub(crate) fn run_benchmarks(
             }),
         ),
         (
-            "资金加权收益",
+            "资金加权收益率",
             Box::new(move |conn| {
                 // 区间不设界 = IPC 命令的缺省调用形态（unwrap_or_default）；
                 // 每对（账户 × 标的）一次 XIRR 数值解（200 次迭代）。
-                query_money_weighted_return_summary(conn, &MwrRange::default())
+                query_money_weighted_return_summary(conn, &mwr_range)
                     .map_err(|e| e.to_string())
                     .map(|s| {
                         format!(
