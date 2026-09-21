@@ -850,3 +850,265 @@ fn portfolio_trend_constant_fund_ignores_flat_history_rows() {
         "平坦行（20000）既不被消费也不叠加，恒定标的按常量 1.0000 出数"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 组合走势数量推算优化等价判据（issue #1654）：按标的分组增量推进替代逐价格
+// 行全量重算后，周点数值与现实现逐点一致。「现实现」的参照 = 优化前的取数
+// 形态——逐价格行委托时点持仓接缝（holdings_as_of）取当期数量、按周键折算
+// 求和；参照的价格行以夹具字面量给出（种子日期均为周一，周键 = 采样日），
+// 汇率按夹具已知值解析（含反向量倒数兜底与缺失跳过）。
+// ---------------------------------------------------------------------------
+
+/// 优化前取数形态的参照实现：逐价格行 as-of 取数量 → 分位取整 → 按周键折算。
+/// 价格行四元组 =（标的，采样交易日=周键，价格，币种）。
+fn reference_trend_points(
+    conn: &Connection,
+    price_rows: &[(&str, &str, i64, &str)],
+    rate: impl Fn(&str, &str) -> Option<f64>,
+) -> Vec<(String, i64)> {
+    use std::collections::BTreeMap;
+    let mut by_week: BTreeMap<String, (i64, bool)> = BTreeMap::new();
+    for (instrument_id, week, price, currency) in price_rows {
+        let Some(rate) = rate(currency, week) else {
+            continue;
+        };
+        let quantity = holdings::holdings_as_of(conn, Some(instrument_id), week).unwrap();
+        let value = (quantity * *price as f64 / prices::PRICE_UNITS_PER_FEN).round() as i64;
+        let entry = by_week.entry(week.to_string()).or_insert((0, false));
+        entry.0 += (value as f64 * rate).round() as i64;
+        entry.1 = true;
+    }
+    by_week
+        .into_iter()
+        .filter(|(_, (_, contributed))| *contributed)
+        .map(|(date, (total, _))| (date, total))
+        .collect()
+}
+
+#[test]
+fn portfolio_trend_incremental_quantity_matches_per_row_as_of_reference() {
+    let conn = open();
+    seed_account(&conn, "acc-eq", "证券户", "investment", "CNY", 0);
+    seed_account(&conn, "acc-eq-gone", "待删户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-eq-cny", "000001", "平安银行", "CNY", "unknown");
+    seed_instrument(&conn, "inst-eq-hkd", "00700", "腾讯控股", "HKD", "unknown");
+    seed_instrument(
+        &conn,
+        "inst-eq-out",
+        "000001.OF",
+        "转出基金",
+        "CNY",
+        "unknown",
+    );
+    seed_instrument(
+        &conn,
+        "inst-eq-in",
+        "000002.OF",
+        "转入基金",
+        "CNY",
+        "unknown",
+    );
+    seed_instrument(&conn, "inst-eq-spl", "600036", "招商银行", "CNY", "unknown");
+    seed_instrument(&conn, "inst-eq-gone", "000005", "华新城", "CNY", "unknown");
+
+    // inst-eq-cny：多笔买入 + 卖出 + 一笔待软删的买入（各腿跨多周生效）。
+    for (kind, qty, price, date) in [
+        (TransactionKind::Buy, 10.0, 150_000, "2026-02-04"),
+        (TransactionKind::Buy, 5.0, 180_000, "2026-02-10"),
+        (TransactionKind::Sell, 4.0, 260_000, "2026-02-18"),
+    ] {
+        create_transaction_internal(
+            &conn,
+            make_trade_input(kind, "acc-eq", "inst-eq-cny", qty, price, date),
+        )
+        .unwrap();
+    }
+    let mut deleted_buy = make_trade_input(
+        TransactionKind::Buy,
+        "acc-eq",
+        "inst-eq-cny",
+        2.0,
+        180_000,
+        "2026-02-11",
+    );
+    deleted_buy.note = Some("eq-to-delete".into());
+    create_transaction_internal(&conn, deleted_buy).unwrap();
+
+    // inst-eq-hkd：非本位币（汇率按周取，双时间键契约）。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-eq",
+            "inst-eq-hkd",
+            2.0,
+            1_000_000,
+            "2026-02-05",
+        ),
+    )
+    .unwrap();
+
+    // convert 一笔两腿（转出腿 −6 / 转入腿 +12）+ 前置批次买入。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-eq",
+            "inst-eq-out",
+            6.0,
+            100_000,
+            "2026-02-03",
+        ),
+    )
+    .unwrap();
+    let mut convert = make_convert_input(
+        "acc-eq",
+        "inst-eq-out",
+        "inst-eq-in",
+        6.0,
+        12.0,
+        10_000,
+        10_000,
+        0,
+    );
+    convert.date = "2026-02-12".into();
+    create_transaction_internal(&conn, convert).unwrap();
+
+    // split 带符号 Δ（+10，缩股为 − 同腿）+ 前置持仓买入。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-eq",
+            "inst-eq-spl",
+            10.0,
+            100_000,
+            "2026-02-06",
+        ),
+    )
+    .unwrap();
+    let mut split = make_split_input("acc-eq", "inst-eq-spl", 10.0);
+    split.date = "2026-02-17".into();
+    create_transaction_internal(&conn, split).unwrap();
+
+    // inst-eq-gone：挂在待删账户（整户软删后贡献消失）。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-eq-gone",
+            "inst-eq-gone",
+            3.0,
+            100_000,
+            "2026-02-06",
+        ),
+    )
+    .unwrap();
+
+    // 价格行（种子日期均为周一，周键 = 采样日；价格为万分之一元刻度）。
+    let price_rows = [
+        ("inst-eq-cny", "2026-02-09", 100_000, "CNY"),
+        ("inst-eq-cny", "2026-02-16", 200_000, "CNY"),
+        ("inst-eq-cny", "2026-02-23", 300_000, "CNY"),
+        ("inst-eq-out", "2026-02-09", 100_000, "CNY"),
+        ("inst-eq-out", "2026-02-16", 100_000, "CNY"),
+        ("inst-eq-in", "2026-02-09", 50_000, "CNY"),
+        ("inst-eq-in", "2026-02-16", 50_000, "CNY"),
+        ("inst-eq-spl", "2026-02-09", 100_000, "CNY"),
+        ("inst-eq-spl", "2026-02-16", 100_000, "CNY"),
+        ("inst-eq-spl", "2026-02-23", 100_000, "CNY"),
+        ("inst-eq-gone", "2026-02-09", 100_000, "CNY"),
+        ("inst-eq-gone", "2026-02-16", 100_000, "CNY"),
+        ("inst-eq-hkd", "2026-03-02", 1_000_000, "HKD"),
+        ("inst-eq-hkd", "2026-03-09", 1_000_000, "HKD"),
+        ("inst-eq-hkd", "2026-03-16", 1_000_000, "HKD"),
+    ];
+    // 周一价 + 交易夹具：2026-02-09 1000 元、02-16 2000 元、02-23 3000 元。
+    for (iid, date, price, currency) in price_rows {
+        seed_price_history(
+            &conn,
+            &format!("ph-eq-{iid}-{date}"),
+            iid,
+            date,
+            price,
+            currency,
+        );
+    }
+    // 汇率：w1 正向 HKD→CNY=0.9；w2 仅反向 CNY→HKD=5.0（兜底取倒数 0.2）；
+    // w3 无任何历史（该周 HKD 贡献被跳过）。
+    seed_fx_rate_history(&conn, "fx-eq-1", "HKD", "CNY", "2026-03-02", 0.9);
+    seed_fx_rate_history(&conn, "fx-eq-2", "CNY", "HKD", "2026-03-09", 5.0);
+    let rate = |currency: &str, week: &str| -> Option<f64> {
+        match (currency, week) {
+            ("CNY", _) => Some(1.0),
+            ("HKD", "2026-03-02") => Some(0.9),
+            ("HKD", "2026-03-09") => Some(1.0 / 5.0),
+            _ => None,
+        }
+    };
+
+    let trend_values = |conn: &Connection| -> Vec<(String, i64)> {
+        trend::query_portfolio_value_trend(conn, &TrendRange::default())
+            .unwrap()
+            .points
+            .iter()
+            .map(|p| (p.date.clone(), p.market_value_cents))
+            .collect()
+    };
+
+    // 基线：新路径（增量推进）与参照（逐行 as-of）全等，且与独立人算字面量
+    // 一致（买 10+5+2、卖 4、convert 两腿、split Δ、软删账户贡献俱全）。
+    let baseline = trend_values(&conn);
+    assert_eq!(
+        baseline,
+        reference_trend_points(&conn, &price_rows, rate),
+        "新路径与逐行 as-of 参照逐点全等"
+    );
+    assert_eq!(
+        baseline,
+        [
+            ("2026-02-09".to_string(), 29_000), // 10000 + 6000 + 0 + 10000 + 3000
+            ("2026-02-16".to_string(), 53_000), // 34000 + 0 + 6000 + 10000 + 3000
+            ("2026-02-23".to_string(), 59_000), // 39000 + 20000
+            ("2026-03-02".to_string(), 18_000), // 20000 HKD 分 × 0.9
+            ("2026-03-09".to_string(), 4_000),  // 20000 HKD 分 × (1/5.0)
+        ],
+    );
+
+    // 软删一笔买入（无公开软删入口，库内状态直置——本文件既有软删用例同款
+    // 显式例外）：两形态同步剔除该腿，逐点全等保持。
+    conn.execute(
+        "UPDATE transactions SET is_deleted=1 WHERE note='eq-to-delete'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        trend_values(&conn),
+        reference_trend_points(&conn, &price_rows, rate),
+        "软删交易后仍逐点全等"
+    );
+
+    // 软删整户（同款显式例外）：该户贡献从两形态同步消失，逐点全等保持；
+    // 02-09/02-16 两周各失去 inst-eq-gone 的 300 分贡献。
+    conn.execute(
+        "UPDATE accounts SET is_deleted=1 WHERE id='acc-eq-gone'",
+        [],
+    )
+    .unwrap();
+    let after = trend_values(&conn);
+    assert_eq!(
+        after,
+        reference_trend_points(&conn, &price_rows, rate),
+        "软删账户后仍逐点全等"
+    );
+    assert_eq!(
+        after,
+        [
+            ("2026-02-09".to_string(), 26_000),
+            ("2026-02-16".to_string(), 46_000), // cny 15 股 30000 + 0 + 6000 + 10000
+            ("2026-02-23".to_string(), 53_000), // cny 11 股 33000 + 20000
+            ("2026-03-02".to_string(), 18_000),
+            ("2026-03-09".to_string(), 4_000),
+        ],
+    );
+}

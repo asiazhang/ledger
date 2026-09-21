@@ -66,9 +66,9 @@ fn init_db_is_idempotent_and_seeds_defaults() {
     assert_eq!(mismatched, 0);
 }
 
-/// 当前迁移序列长度（V001–V029，V005 移除不回填，共 28 条）；新增迁移时随
+/// 当前迁移序列长度（V001–V030，V005 移除不回填，共 29 条）；新增迁移时随
 /// `migrations()` 同步更新。钉住「从零迁移到最新」的完整性基线。
-const LATEST_SCHEMA_VERSION: usize = 28;
+const LATEST_SCHEMA_VERSION: usize = 29;
 
 /// 从零迁移完整性（内存库从零 → 最新）：user_version 停在最新、全库完整性
 /// 检查通过、每条迁移的签名表/列在场。漏跑或中途失败的迁移批次会停在半途
@@ -176,6 +176,27 @@ fn migration_from_zero_reaches_latest_completely() {
     assert!(
         index_sql.contains("merchant_id"),
         "idx_transactions_note_search 定义应引用 merchant_id，实际: {index_sql}"
+    );
+
+    // V030 商户维度覆盖索引（issue #1655）：分组列打头的 partial 覆盖索引在场，
+    // 列集漂移在此确定性失败（查询侧 INDEXED BY 钉定的防删守卫之外的第二道）。
+    let merchant_covering_sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master \
+             WHERE type='index' AND name='idx_transactions_merchant_covering'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|_| panic!("索引 idx_transactions_merchant_covering 应存在"));
+    for col in ["merchant_id", "kind", "date", "amount_native_cents"] {
+        assert!(
+            merchant_covering_sql.contains(col),
+            "idx_transactions_merchant_covering 应包含 {col}: {merchant_covering_sql}"
+        );
+    }
+    assert!(
+        merchant_covering_sql.contains("is_deleted = 0"),
+        "idx_transactions_merchant_covering 应为 partial index: {merchant_covering_sql}"
     );
 }
 

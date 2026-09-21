@@ -516,8 +516,9 @@ pub(crate) fn run_benchmarks(
         (
             "投资组合趋势",
             Box::new(move |conn| {
-                // 全窗口周线（issue #1627）：逐价格行委托时点持仓接缝
-                // （holdings_as_of），周采样 × 标的的嵌套循环是本项被测成本。
+                // 全窗口周线（issue #1627 入集；#1654 优化后：数量推算按标的
+                // 分组增量推进，周采样 × 标的的嵌套循环已消除，取数成本 =
+                // 全库腿流一次装载 + 逐价格行游标累加）。
                 query_portfolio_value_trend(conn, &trend_range)
                     .map_err(|e| e.to_string())
                     .map(|t| {

@@ -21,11 +21,14 @@
 //!   与 Holding（`v_holdings`）/ InvestedInstrument / 净资产全局对齐——删除账户 =
 //!   从全部投资视角（含历史走势曲线）消失，账户删除/恢复（软删标志翻转）使流水
 //!   自动进出推算，无需时点存续状态。隐藏账户不是软删除，与 `v_holdings` 一致不排除。
-//! - **消费者**：PortfolioValueTrend 的组合市值（逐价格行取该标的当期数量，
-//!   contract 阶段 issue #219 接线）；单标的走势是价格直出，不消费本模块。
+//! - **消费者**：PortfolioValueTrend 的组合市值（组合走势按标的分组增量推进，
+//!   消费本模块的腿流投影 [`holdings_legs_by_instrument`]，issue #1654）；
+//!   资金加权收益率的边界市值消费账户维度扩展形态（issue #1195）。单标的走势
+//!   是价格直出，不消费本模块。
 
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
+use std::collections::HashMap;
 
 use ledger_infra::error::{AppError, Result};
 
@@ -121,4 +124,86 @@ pub fn holdings_as_of_in(
             r.get(0)
         })?;
     Ok(quantity)
+}
+
+/// 一条持仓变动腿：`(交易日, 带符号数量增量)`——买入累加、卖出递减、convert
+/// 转出腿取负/转入腿取正、split 带符号 Δ。组内按交易日升序扫描时逐腿累加即得
+/// 任意时点的时点持仓——[`holdings_as_of`] 同一推算不变量的流水投影形态。
+pub(crate) type HoldingsLegStream = HashMap<String, Vec<(String, f64)>>;
+
+/// 全库持仓变动腿流，按标的分组、组内按交易日升序（SQL 层 `ORDER BY` 保序）。
+///
+/// 与 [`holdings_as_of`] 的四臂 UNION ALL 同形（同一推算不变量的两种投影）：
+/// 仅认 buy/sell、convert 两腿与 split 腿，逐腿同样的 `quantity`/`to_quantity`
+/// 非空条件、同样的软删除账户与软删交易行排除——差异只有两点：标的维度
+///（分腿归属替代 `COALESCE(?2,…)` 钉定）与无日期上界（上界由消费方的游标
+/// 推进承担，而非 SQL 谓词）。**两处 SQL 必须同步修改**：任何一侧口径变化
+///（新增腿类型、过滤条件变化）必须同时改另一侧，并保持 `tests/holdings_as_of`
+/// 的配对测试绿（同一夹具上逐标的逐日期：腿流前缀和 ≡ `holdings_as_of`）。
+///
+/// 消费方（组合走势，issue #1654）：价格行按标的分组、组内按交易日升序，
+/// 游标扫过「交易日 ≤ 采样日」的前缀逐腿累加——替代逐价格行全量重算
+///（周采样 × 标的的嵌套循环，50 万笔库 p95 8.85s）；相邻周点间不再重复
+/// 扫描同一标的的全部交易。累计序为日期升序，与 SQL 逐行 `SUM` 的扫描序在
+/// f64 末位可能相差 ULP 级；周点金额经分位取整后与逐行 as-of 口径逐点一致
+///（配对测试与走势等价测试双钉）。
+pub(crate) fn holdings_legs_by_instrument(conn: &Connection) -> Result<HoldingsLegStream> {
+    // 四臂 UNION ALL 与 [`holdings_as_of`] 逐臂同形（见函数文档的同步纪律）：
+    // 每行至多产出「转出腿 + 转入腿」两条腿（convert 一笔两腿），`ORDER BY`
+    // 给出（标的，交易日）字典序，消费方按序分组即得组内升序腿流。
+    let sql = "SELECT st.instrument_id, t.date, \
+                   CASE st.action WHEN 'buy' THEN st.quantity ELSE -st.quantity END \
+                   FROM security_transactions st \
+                   JOIN transactions t ON t.id = st.transaction_id \
+                   JOIN accounts a ON a.id = t.account_id \
+                   WHERE st.action IN ('buy','sell') \
+                     AND st.quantity IS NOT NULL \
+                     AND t.is_deleted = 0 \
+                     AND a.is_deleted = 0 \
+               UNION ALL \
+               SELECT st.instrument_id, t.date, -st.quantity \
+                   FROM security_transactions st \
+                   JOIN transactions t ON t.id = st.transaction_id \
+                   JOIN accounts a ON a.id = t.account_id \
+                   WHERE st.action = 'convert' \
+                     AND st.quantity IS NOT NULL \
+                     AND t.is_deleted = 0 \
+                     AND a.is_deleted = 0 \
+               UNION ALL \
+               SELECT st.to_instrument_id, t.date, st.to_quantity \
+                   FROM security_transactions st \
+                   JOIN transactions t ON t.id = st.transaction_id \
+                   JOIN accounts a ON a.id = t.account_id \
+                   WHERE st.action = 'convert' \
+                     AND st.to_quantity IS NOT NULL \
+                     AND t.is_deleted = 0 \
+                     AND a.is_deleted = 0 \
+               UNION ALL \
+               SELECT st.instrument_id, t.date, st.quantity \
+                   FROM security_transactions st \
+                   JOIN transactions t ON t.id = st.transaction_id \
+                   JOIN accounts a ON a.id = t.account_id \
+                   WHERE st.action = 'split' \
+                     AND st.quantity IS NOT NULL \
+                     AND t.is_deleted = 0 \
+                     AND a.is_deleted = 0 \
+               ORDER BY 1, 2";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, f64>(2)?,
+        ))
+    })?;
+    // SQL 已按（标的，交易日）升序输出；push 保序即得组内升序。
+    let mut by_instrument: HoldingsLegStream = HashMap::new();
+    for row in rows {
+        let (instrument_id, date, qty) = row?;
+        by_instrument
+            .entry(instrument_id)
+            .or_default()
+            .push((date, qty));
+    }
+    Ok(by_instrument)
 }

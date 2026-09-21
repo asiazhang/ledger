@@ -452,6 +452,80 @@ fn v016_category_shares_period_form_stays_on_category_covering_index() {
     );
 }
 
+/// 商户占比聚合钉计划（V030 / issue #1655）：商户维度覆盖索引驱动 GROUP BY
+///（分组列打头，kind/日期过滤与金额求和全在索引内，聚合零回表），与 reports
+/// 域 `merchant_shares_report` 同形状（INDEXED BY 钉定 + ORDER BY net 的结果
+/// 排序步骤）。钉定前两种可达计划（merchant 索引 SCAN 全回表，或 date 索引
+/// 范围扫加 GROUP BY 临时 B-tree）在 50 万笔库均 800ms 量级，CI 实测
+/// p95 777.28ms；INDEXED BY 在索引缺失时 prepare 直接报错，钉定自带防删守卫。
+fn v030_merchant_world() -> Connection {
+    let conn = v016_world();
+    // 在 V016 世界基础上补商户字典并把一半交易挂上商户（真实画像：部分交易
+    // 带商户、其余 merchant_id 为 NULL），随数据重算统计，保证 planner 选择
+    // 可代表真实库。
+    conn.execute_batch(
+        "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES ('m-01','商户一','2026-03-01T08:00:00Z','2026-03-01T08:00:00Z',1,'test',0);
+         UPDATE transactions SET merchant_id='m-01' \
+         WHERE is_deleted=0 AND CAST(substr(id,4) AS INTEGER) % 2 = 0;
+         ANALYZE;",
+    )
+    .unwrap();
+    conn
+}
+
+/// 遗留年份口径（bench 商户占比项与 IPC 缺省形态的 WHERE 形状）。
+#[test]
+fn v030_merchant_shares_use_merchant_covering_index() {
+    let conn = v030_merchant_world();
+    let plan = v016_plan(
+        &conn,
+        "SELECT t.merchant_id, m.name, SUM(CASE WHEN t.kind='expense' THEN t.amount_native_cents \
+         WHEN t.kind='refund' THEN -t.amount_native_cents ELSE 0 END), COUNT(*) \
+         FROM transactions t INDEXED BY idx_transactions_merchant_covering \
+         JOIN merchants m ON m.id=t.merchant_id \
+         WHERE t.kind IN ('expense','refund') AND t.is_deleted=0 \
+         AND substr(t.date,1,4)='2026' \
+         GROUP BY t.merchant_id ORDER BY 3 DESC, m.name",
+        [],
+    );
+    assert!(
+        plan.contains("idx_transactions_merchant_covering"),
+        "商户占比应由商户覆盖索引驱动: {plan}"
+    );
+    assert!(
+        !plan.contains("TEMP B-TREE FOR GROUP BY"),
+        "商户占比不应有 GROUP BY 临时 B-tree（覆盖索引自带分组序）: {plan}"
+    );
+}
+
+/// 期间口径变体（issue #411）：perf-bench 商户占比项即走期间口径（全窗口
+/// 日期范围），日期范围约束下覆盖索引仍驱动分组与过滤，不退回其它索引
+/// + GROUP BY 临时 B-tree。
+#[test]
+fn v030_merchant_shares_period_form_stays_on_merchant_covering_index() {
+    let conn = v030_merchant_world();
+    let plan = v016_plan(
+        &conn,
+        "SELECT t.merchant_id, m.name, SUM(CASE WHEN t.kind='expense' THEN t.amount_native_cents \
+         WHEN t.kind='refund' THEN -t.amount_native_cents ELSE 0 END), COUNT(*) \
+         FROM transactions t INDEXED BY idx_transactions_merchant_covering \
+         JOIN merchants m ON m.id=t.merchant_id \
+         WHERE t.kind IN ('expense','refund') AND t.is_deleted=0 \
+         AND t.date>='2026-01-01' AND t.date<='2026-12-31' \
+         GROUP BY t.merchant_id ORDER BY 3 DESC, m.name",
+        [],
+    );
+    assert!(
+        plan.contains("idx_transactions_merchant_covering"),
+        "期间口径商户占比应由商户覆盖索引驱动: {plan}"
+    );
+    assert!(
+        !plan.contains("TEMP B-TREE FOR GROUP BY"),
+        "期间口径商户占比不应有 GROUP BY 临时 B-tree: {plan}"
+    );
+}
+
 /// 日期探测钉计划：改写后的两个标量子查询各自经列表序索引端点定位
 /// （单条 MIN+MAX 无法双向走索引，拆开后亚毫秒）。
 #[test]
