@@ -1,8 +1,11 @@
 #!/usr/bin/env bun
-// 后台服务成组拉起守门（issue #961 / #1375）：`backup::start_scheduler`（自动备份调度，
+// 后台服务成组拉起守门（issue #961 / #1375 / #1546）：`backup::start_scheduler`（自动备份调度，
 // 轮询同轮承载定时追补）、`sync_engine::start_triggers`（同步触发编排，分平台
-// 门收在域内一处，ADR-0098 决策 4）与 `market_sync::start_history_backfill`
-//（价格历史后台补全，ADR-0122 / issue #1375）在**所有业务可用起点**必须成组拉起。
+// 门收在域内一处，ADR-0098 决策 4）、`market_sync::start_history_backfill`
+//（价格历史后台补全，ADR-0122 / issue #1375）、`market_sync::start_daily_price_refresh`
+//（每日现价刷新，ADR-0122 决策 3 / issue #1377）与 `market_sync::start_daily_fx_sync`
+//（每日汇率增量同步，ADR-0019 修订记录 / issue #1546）在**所有业务可用起点**
+// 必须成组拉起。
 // 各调用独立书写时无任何机制保证成组——#863 会话已由同一根因造成两次
 // 真实缺陷（分平台门漂移、`restart_app` 落 Ready 漏接同步触发），且「缺失一个
 // 调用」不会让任何断言变红。守门规则（「白名单即规格」，ADR-0056 决策 4 哲学）：
@@ -56,6 +59,7 @@ const PAIRED_NAMES = [
   "start_triggers",
   "start_history_backfill",
   "start_daily_price_refresh",
+  "start_daily_fx_sync",
 ] as const;
 
 /**
@@ -114,6 +118,12 @@ export const GUARDED_NAMES: readonly GuardedName[] = [
     orchestratorBodyAllowed: true,
     note: "后台每日现价刷新调度入口（ADR-0122 决策 3 / issue #1377；定义住 ledger-market-sync crate 的 daily_refresh.rs，crate 根再导出）",
   },
+  {
+    name: "start_daily_fx_sync",
+    wholeFile: ["crates/market-sync/src/fx_daily.rs", "crates/market-sync/src/lib.rs"],
+    orchestratorBodyAllowed: true,
+    note: "后台每日汇率增量同步调度入口（ADR-0019 修订记录 / issue #1546；定义住 ledger-market-sync crate 的 fx_daily.rs，crate 根再导出）",
+  },
 ];
 
 /** 启动接线单点（issue #1088）：标识符 + 唯一合法接线文件（相对 src-tauri 根，
@@ -126,7 +136,8 @@ export interface BootWiring {
 
 /**
  * 后台车道执行器守门（issue #1413 / ADR-0125 决策 7）：行情同步域 crate 的生产面
- * 禁止自建 OS 线程——两条后台车道（价格历史补全 / 每日现价刷新）必须是挂全局
+ * 禁止自建 OS 线程——后台车道（价格历史补全 / 每日现价刷新 / 每日汇率增量同步）
+ * 必须是挂全局
  * 运行时的 async 任务（`tauri::async_runtime::spawn` 拉起 + `tokio::time::sleep`
  * 异步定时）。改回 `std::thread::spawn` / `std::thread::sleep` 即红；删掉异步
  * 执行器或异步定时接线同样红。扫描面 = 行情域 crate 生产源码（tests.rs 与
@@ -137,10 +148,12 @@ export const MARKET_SYNC_SRC_REL = "crates/market-sync/src";
 export const LANE_EXECUTOR_TOKEN = "tauri::async_runtime::spawn";
 export const LANE_TIMER_TOKEN = "tokio::time::sleep";
 export const LANE_BANNED_TOKENS = ["thread::spawn", "std::thread::sleep"] as const;
-/** 两条车道的住址（相对 src-tauri 根；与 GUARDED_NAMES 的 wholeFile 同源路径） */
+/** 后台车道的住址（相对 src-tauri 根；与 GUARDED_NAMES 的 wholeFile 同源路径；
+ *  每日汇率增量同步车道（#1546）不经 lane 骨架但同受异步执行器守门） */
 export const LANE_FILES = [
   "crates/market-sync/src/daily_refresh.rs",
   "crates/market-sync/src/history.rs",
+  "crates/market-sync/src/fx_daily.rs",
 ] as const;
 
 /**
@@ -345,7 +358,7 @@ function main(): void {
       if (new RegExp(`\\b${token.replace(/::/g, "\\s*::\\s*")}\\b`).test(masked)) {
         problems.push(
           `✗ 车道回归自建线程：${f.rel} 出现 \`${token}\`\n` +
-            `    后台两条车道（价格历史补全 / 每日现价刷新）必须是挂全局运行时的 async 任务\n` +
+            `    后台车道（价格历史补全 / 每日现价刷新 / 每日汇率增量同步）必须是挂全局运行时的 async 任务\n` +
             `   （tauri::async_runtime::spawn + tokio::time::sleep，ADR-0125 决策 7 / issue #1413）`,
         );
       }
