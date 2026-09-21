@@ -73,7 +73,6 @@ fn gated_channels(
             })
         }),
         fetch_kline: Box::new(|_| Box::pin(async { Ok(vec![]) })),
-        fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
         fetch_nav_history: Box::new(|_| {
             Box::pin(async {
                 unreachable!("测试现场无基金标的，净值通道不应被触达")
@@ -445,11 +444,6 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
             fetch_kline: Box::new(|_| {
                 Box::pin(async {
                     unreachable!("测试现场无行情标的，K 线通道不应被触达")
-                })
-            }),
-            fetch_fx: Box::new(|_| {
-                Box::pin(async {
-                    unreachable!("测试现场无外币标的，汇率通道不应被触达")
                 })
             }),
             fetch_nav_history: Box::new(|_| {

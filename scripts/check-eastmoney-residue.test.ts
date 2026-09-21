@@ -18,14 +18,13 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 登记例外的 FX 腿夹具：东财 push2his 主机池，命中数与 REGISTERED_EXCEPTIONS 同为 4 */
-const FX_HOST_POOL = [
-  "// 测试夹具：汇率 K 线腿主机池（#1551 退役前）",
+/** 登记例外的 FX 腿夹具已随 #1551 退役（REGISTERED_EXCEPTIONS 清空）：
+ *  原东财 push2his 主机池现在出现在 http.rs 即未登记残留，直接红（收紧后的判据）。
+ */
+const RETIRED_FX_HOST_POOL = [
+  "// 测试夹具：已退役的东财 FX 日 K 主机池（#1551 换 ECB）",
   "pub const FX_KLINE_HOSTS: &[&str] = &[",
   '    "https://push2his.eastmoney.com",',
-  '    "https://21.push2his.eastmoney.com",',
-  '    "https://40.push2his.eastmoney.com",',
-  '    "https://70.push2his.eastmoney.com",',
   "];",
 ].join("\n");
 
@@ -33,7 +32,6 @@ const FX_HOST_POOL = [
 const DEFAULT_FILES: Record<string, string> = {
   "scripts/check-eastmoney-residue.ts": "// 守门本体（豁免自证对象）",
   "scripts/check-eastmoney-residue.test.ts": "// 包装测试（豁免自证对象）",
-  "src-tauri/crates/market-sync/src/http.rs": FX_HOST_POOL,
   "src/lib.ts": "export const ok = 1;",
 };
 
@@ -51,12 +49,12 @@ function makeFixture(files: Record<string, string | null> = {}): string {
 }
 
 describe("check-eastmoney-residue（东财行情面端点零残留守门，issue #1572 / ADR-0130 判据①）", () => {
-  it("默认扫描本仓（门槛路径）：行情面零残留全绿，FX 腿例外明示", () => {
+  it("默认扫描本仓（门槛路径）：行情面零残留全绿，已登记例外清单为空", () => {
     const r = run();
     expect(r.status).toBe(0);
     expect(r.output).toContain("东财行情面零残留守门通过");
-    // 已登记例外明示：FX 腿（汇率）#1551 退役前合法在场
-    expect(r.output).toContain("已登记例外 1 条");
+    // 零例外稳态（#1551 退役 FX 腿后删除登记条目，同 check-infra-dml 自 #1108 起）
+    expect(r.output).toContain("已登记例外 0 条");
   });
 
   it("负向判据：未登记文件出现东财端点域名即红并定位到 文件:行", () => {
@@ -83,43 +81,15 @@ describe("check-eastmoney-residue（东财行情面端点零残留守门，issue
     expect(r.output).toContain("src/rogue.ts:1");
   });
 
-  it("例外计数漂移即红：FX 腿多出/少掉命中都不放行（严格相等校验）", () => {
-    const fewer = makeFixture({
-      "src-tauri/crates/market-sync/src/http.rs": FX_HOST_POOL.replace(
-        '    "https://70.push2his.eastmoney.com",\n',
-        "",
-      ),
-    });
-    const fewerRun = run([fewer]);
-    expect(fewerRun.status).toBe(1);
-    expect(fewerRun.output).toContain("例外计数漂移");
-
-    const more = makeFixture({
-      "src-tauri/crates/market-sync/src/http.rs":
-        FX_HOST_POOL + '\nconst EXTRA = "https://push2delay.eastmoney.com";',
-    });
-    const r = run([more]);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("例外计数漂移");
-    expect(r.output).toContain("实际命中 5 处 ≠ 登记 4 处");
-  });
-
-  it("例外已收敛即红：FX 腿退役后登记条目须同步删除", () => {
+  it("收紧后的判据：原 FX 腿主机池文件（http.rs）再出现东财域名即未登记残留红", () => {
     const dir = makeFixture({
-      "src-tauri/crates/market-sync/src/http.rs": "// 东财 FX 腿已退役，换 ECB",
+      "src-tauri/crates/market-sync/src/http.rs": RETIRED_FX_HOST_POOL,
     });
     const r = run([dir]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("例外已收敛");
-  });
-
-  it("登记文件消失即红（清单漂移 fail loud）", () => {
-    const dir = makeFixture({
-      "src-tauri/crates/market-sync/src/http.rs": null,
-    });
-    const r = run([dir]);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("例外清单漂移");
+    expect(r.output).toContain("src-tauri/crates/market-sync/src/http.rs:3");
+    expect(r.output).toContain("eastmoney.com");
+    expect(r.output).toContain("ADR-0130");
   });
 
   it("豁免自证：守门本体或包装测试缺失即红，不放任守门空转", () => {

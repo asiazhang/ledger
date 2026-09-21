@@ -76,7 +76,6 @@ fn gated_daily_refresh_channels(
                 unreachable!("现价刷新不发逐只日 K 请求（issue #1377）")
             })
         }),
-        fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
         fetch_nav_history: Box::new(|_| {
             Box::pin(async {
                 unreachable!("测试现场无基金标的，净值通道不应被触达")
@@ -112,7 +111,6 @@ fn frontend_sync_channels() -> SyncChannelsSlot {
                 unreachable!("现价刷新不发逐只日 K 请求（issue #1377）")
             })
         }),
-        fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
         fetch_nav_history: Box::new(|_| {
             Box::pin(async {
                 unreachable!("测试现场无基金标的，净值通道不应被触达")

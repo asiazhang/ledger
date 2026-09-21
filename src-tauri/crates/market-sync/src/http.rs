@@ -6,43 +6,25 @@
 //! 不再有任何阻塞驱动点。
 //! 标的全量同步（clist 分页爬取）已随 ADR-0081 决策 3 退役删除（issue #698），
 //! 单点行情（stock/get）已随 #1567 接线腾讯后删除、历史净值通道（lsjz）已随
-//! #1571 接线新浪全历史面后删除（ADR-0130 决策 1：不留死代码），本层现仅服务
-//! 东财汇率日 K（FX 采集通道，随 #1551 换 ECB 后退役）。
+//! #1571 接线新浪全历史面后删除、东财日 K / FX 汇率腿已随 #1551 换 ECB 后删除
+//!（ADR-0130 决策 1：不留死代码）。本层是多主机轮换 / 重试 / 限流冷却与 GBK
+//! 解码的共享原语，供现役取数单元消费：腾讯行情批量报价（字节 + GBK）、腾讯
+//! 日 K（JSON）、新浪场外基金批量面与单只全历史面（字节 / 文本）、基金详情
+//! `.js` 数据文件（文本）、证监会基金电子披露（文本）与 ECB 参考汇率文件（文本）。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 
 use ledger_infra::error::{AppError, Result};
 
-// 日 K 线接口路径：按 secid 一次返回一段日线（汇率历史采集用；场内历史 K 线
-// 已接腾讯 `web.ifzq.gtimg.cn`，issue #1561）。注意历史 K 线仅在 push2his 主机上
-// 提供服务（push2delay 只响应当日报价、返回空 klines），因此 K 线走独立主机池，
-// 但复用同一套轮换/限流/重试泛型层。
-const KLINE_PATH: &str = "/api/qt/stock/kline/get";
-const KLINE_HOSTS: &[&str] = &[
-    "https://push2his.eastmoney.com",
-    "https://21.push2his.eastmoney.com",
-    "https://40.push2his.eastmoney.com",
-    "https://70.push2his.eastmoney.com",
-];
-// 日 K 参数：日线（klt=101）、不复权（fqt=0）；fields2=f51,f53 → 每行 "日期,收盘价"。
-// 复权方式选不复权：历史库存真实成交价，已落库数据语义恒定（前复权会随后续除权
-// 整体重算，且与 2 年窗口外的旧行产生接缝不一致）；复权展示如需可在查询层再做。
-const KLINE_FIELDS1: &str = "f1,f2,f3,f4,f5,f6";
-const KLINE_FIELDS2: &str = "f51,f53";
-const KLINE_KLT_DAILY: &str = "101";
-const KLINE_FQT_NONE: &str = "0";
-/// 日 K 区间终点（远期占位，实际覆盖由 beg 控制近两年窗口）。
-const KLINE_END: &str = "20500101";
-// 东方财富公开行情接口限频约 60 次/分钟（1 次/秒）——这就是「正常状态贴近数据源
-// 可承受量级」的起点（ADR-0121 决策 5）。出口 IP 会被 onegate WAF 间歇性限流
-//（返回 200 非 JSON 拦截页或 429），限流窗口约 2-4 分钟自动恢复；写死的固定间隔
-// 在两个方向上都错（保守值浪费额度、激进值撞风控），故限速随观测自适应：
-// 命中限流/风控页即降速并复用既有冷却，之后每成功一次逐步回升到本起点。
+// 共享限速基线（ADR-0121 决策 5）：相邻两次请求至少间隔 1 秒——「正常状态贴近
+// 数据源可承受量级」的保守起点，东财时代标定后沿用为全部分享通道的共用节奏
+//（现役：腾讯 / 新浪 / 证监会披露 / ECB）。写死的固定间隔在两个方向上都错
+//（保守值浪费额度、激进值撞风控），故限速随观测自适应：命中限流/拦截页即降速
+// 并复用既有冷却，之后每成功一次逐步回升到本起点。
 const REQUEST_INTERVAL: Duration = Duration::from_millis(1000);
 /// 自适应限速的降速倍数（命中限流 / 疑似风控页时）。
 const PACER_SLOWDOWN_FACTOR: u32 = 2;
@@ -477,118 +459,4 @@ impl KlineBar {
             close,
         }
     }
-}
-
-/// 日 K 接口响应：`data` 为 null（无效 secid / 无数据）时视为空序列而非错误，
-/// 保证增量同步「停牌/无效样本优雅降级不中断」语义。
-#[derive(Debug, Deserialize)]
-pub(super) struct KlineResponse {
-    pub(super) data: Option<KlineData>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct KlineData {
-    #[serde(default)]
-    pub(super) klines: Option<Vec<String>>,
-}
-
-/// 解析 klines 字符串数组（fields2=f51,f53 → 每行 "日期,收盘价"）。
-/// 无效样本（缺字段、非数值、收盘 ≤ 0，如停牌 "-"）静默跳过、不中断。
-pub(super) fn parse_klines(raw: &[String]) -> Vec<KlineBar> {
-    raw.iter()
-        .filter_map(|line| {
-            let mut parts = line.split(',');
-            let date = parts.next()?.trim();
-            if date.is_empty() {
-                return None;
-            }
-            let close: f64 = parts.next()?.trim().parse().ok()?;
-            (close > 0.0).then(|| KlineBar {
-                date: date.to_string(),
-                close,
-            })
-        })
-        .collect()
-}
-
-/// 拉取单个 secid 的日 K 线（近两年窗口由 `beg`（YYYYMMDD）控制，终点固定远期）。
-pub(super) async fn fetch_kline(
-    client: &reqwest::Client,
-    pacer: &mut Pacer,
-    secid: &str,
-    beg: &str,
-) -> Result<Vec<KlineBar>> {
-    tracing::debug!(secid, beg, "日 K 线查询");
-    let params = [
-        ("secid", secid),
-        ("klt", KLINE_KLT_DAILY),
-        ("fqt", KLINE_FQT_NONE),
-        ("fields1", KLINE_FIELDS1),
-        ("fields2", KLINE_FIELDS2),
-        ("beg", beg),
-        ("end", KLINE_END),
-    ];
-    let resp: KlineResponse = request_json_from_hosts(
-        client,
-        &params,
-        KLINE_PATH,
-        KLINE_HOSTS,
-        RetryConfig::production(),
-        pacer,
-        &format!("fetch_kline:{secid}"),
-        None,
-    )
-    .await?;
-    let raw = resp.data.and_then(|d| d.klines).unwrap_or_default();
-    Ok(parse_klines(&raw))
-}
-
-/// 汇率 K 线 secid 候选（按序尝试）。`pair` 为 base+quote 直连串（如 "HKDCNY"）。
-/// 东财外汇 K 线市场：119 = 全球外汇，120 = 人民币外汇（在岸，形如 HKDCNYC）。
-/// 返回 (secid, 是否取倒数)：反向候选的 rate 取倒数后落库为正方向（base→quote）。
-pub(super) fn fx_secid_candidates(pair: &str) -> Vec<(String, bool)> {
-    let mut candidates = Vec::new();
-    if pair.len() != 6 {
-        return candidates;
-    }
-    let (base, quote) = pair.split_at(3);
-    // 对人民币报价优先走在岸市场（119 无 HKDCNY/CNY 直连对）。
-    if quote == "CNY" {
-        candidates.push((format!("120.{pair}C"), false));
-    }
-    candidates.push((format!("119.{pair}"), false));
-    candidates.push((format!("119.{quote}{base}"), true));
-    if base == "CNY" {
-        candidates.push((format!("120.{quote}CNYC"), true));
-    }
-    candidates
-}
-
-/// 拉取币种对（base→quote，pair 形如 "HKDCNY"）的汇率日 K 线。
-/// 按 [`fx_secid_candidates`] 顺序尝试，首个有数据的候选生效（反向取倒数）；
-/// 全部候选无数据（如东财不覆盖该币种对）返回空列表，不报错。
-pub(super) async fn fetch_fx_kline(
-    client: &reqwest::Client,
-    pacer: &mut Pacer,
-    pair: &str,
-    beg: &str,
-) -> Result<Vec<KlineBar>> {
-    for (secid, invert) in fx_secid_candidates(pair) {
-        let bars = fetch_kline(client, pacer, &secid, beg).await?;
-        if bars.is_empty() {
-            continue;
-        }
-        tracing::debug!(pair, secid, invert, "汇率 K 线命中候选");
-        return Ok(if invert {
-            bars.into_iter()
-                .map(|b| KlineBar {
-                    date: b.date,
-                    close: 1.0 / b.close,
-                })
-                .collect()
-        } else {
-            bars
-        });
-    }
-    Ok(Vec::new())
 }

@@ -2,14 +2,14 @@
 //! issue #695 ETF 纳入行情通道；覆盖面放开至库内全部标的 + 名称随行刷新
 //! issue #827）：单次收集**库内全部标的**（不再以「当前有持仓」为界，清仓
 //! 标的与纯建档未交易标的同享同步；`INVESTED_EXISTS` 谓词不再服务收集），
-//! 一次执行完成五件事：① 批量报价刷股票/场内 ETF 现价 upsert `market_prices`；
-//! ② 每行情分区标的一次日 K 请求回填近两年日线，本地降采样为周线落
-//! `price_history`；③ 非本位币币种对的汇率 K 线同期落 `fx_rate_history`；
-//! ④ 基金走历史净值通道逐只回填（ADR-0038 决策 6，见 `fund_nav`）——无历史
-//! 序列者首刷回填近两年（优先单请求全量通道、失败回退分页，issue #1062），
-//! 已有序列者按水位增量（issue #1059）；
-//! ⑤ 有通道的行以数据源权威名称随行刷新标的字典名称（行情通道零额外请求，
-//! 基金通道逐只详情查询；「随用随修 + 同步随行刷新」，ADR-0036/0081 修订）。
+//! 一次执行完成三件事：① 行情分区标的（stock|etf，#695）批量报价刷现价
+//! upsert `market_prices`，有历史序列者当周采样点直落 `price_history`；
+//! ② 非恒定的场外基金标的走批量取数面 + 历史净值通道逐只刷新现价（ADR-0038
+//! 决策 6，见 `fund_nav` 与 `fund_price_refresh`）；③ 有通道的行以数据源权威
+//! 名称随行刷新标的字典名称（行情通道零额外请求，基金通道逐只详情查询；
+//! 「随用随修 + 同步随行刷新」，ADR-0036/0081 修订）。价格历史深回填归后台
+//! 补全（[`super::history`]）、汇率序列归 ECB 同步编排（[`super::fx`]），均不在
+//! 本编排（ADR-0122 / ADR-0019 修订记录）。
 //! 单只标的的历史回填整只一次提交（ADR-0122 决策 8 / issue #1373）：日 K 周线
 //! 与基金净值周线的落库各自在一只一个事务内，第 N 个周点写入失败或中途中断
 //! 整体回滚——不留半根历史，「有历史序列」与「历史完整」等价。
@@ -18,9 +18,10 @@
 //! 随行修名称；按代码查询/创建随用随修（全量同步翼已随 ADR-0081 决策 3
 //! 退役，issue #698）。
 //!
-//! 编排与网络解耦：核心流程 [`do_incremental_sync_with`] 接受注入的批量报价 / 日 K /
-//! 汇率 K 三个闭包（日 K / 汇率 K / 新浪单只全历史同签名 `&str → Result<Vec<_>>`；批量报价收
-//! [「市场 + 代码」查询单元](QuoteQuery)，issue #1555）、基金名称闭包（`&str → Result<String>`）与进度回调
+//! 编排与网络解耦：核心流程 [`do_incremental_sync_with`] 接受注入的批量报价 /
+//! 新浪单只全历史 / 基金名称 / 货基判定确认四个闭包（新浪全历史与基金名称同签名
+//! `&str → Result<Vec<_>>`；批量报价收
+//! [「市场 + 代码」查询单元](QuoteQuery)，issue #1555）、与进度回调
 //! 闭包（`done, total`，issue #897），测试以 mock 数据驱动（不依赖真实网络）；
 //! 生产经 [`super::channels`] 的通道束接 HTTP 层（复用主机池/重试/限流 pacer
 //! 与价格换算）。进度回调闭包是本函数唯一的对外观察点：编排核心不碰网络、不碰事件
@@ -50,17 +51,15 @@ use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use ledger_infra::error::Result;
 use ledger_investment::crud::refresh_instrument_name;
 use ledger_investment::prices::{
-    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, TENCENT_PRICE_SOURCE, price_value_to_cents,
-    upsert_market_price, upsert_price_history,
+    MarketPriceWrite, TENCENT_PRICE_SOURCE, price_value_to_cents, upsert_market_price,
+    upsert_price_history,
 };
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
-use ledger_transaction::amount::default_currency_code;
 
 use super::channels::{FetchFuture, QuoteItem, QuoteQuery};
 use super::fund_nav::NavPoint;
 use super::fund_price_refresh::{FundSyncStats, refresh_one_fund_price};
 use super::http::KlineBar;
-use super::persist::upsert_fx_rate_history;
 use super::progress::SyncProgress;
 use super::session::ScopedSession;
 
@@ -245,11 +244,12 @@ async fn take_bulk_surface(fetch: &mut FetchFundBatch, codes: &[String]) -> Opti
 /// 标的并按通道分区 → 行情分区（stock|etf，#695）递「市场 + 代码」查询单元批量报价
 ///（查询键由通道内部构造，issue #1555）upsert 现价
 ///（换算按随行精度位单点）、名称随行刷新、有历史序列者由现价刷新直落当周采样点
-///（不另发逐只请求）；汇率 K 线同期落 `fx_rate_history` → 基金侧先取批量取
+///（不另发逐只请求）→ 基金侧先取批量取
 /// 数面（ADR-0121，未命中 / 失败 / 停用一律回退逐标的短窗），逐只刷新现价与名称
 ///（委托 [`refresh_one_fund_price`]）→ 结果统计。**不再回填价格历史**：首刷深
-/// 回填与缺周点补齐归价格历史后台补全（[`super::history`]）。
-/// 注入面 = 四个抓取闭包 + 批量取数面 + 一个进度回调（issue #897；生产接
+/// 回填与缺周点补齐归价格历史后台补全（[`super::history`]）；**不再采集汇率**：
+/// 汇率序列归 ECB 同步编排（[`super::fx`]，独立触发与窗口，ADR-0019 修订记录）。
+/// 注入面 = 三个抓取闭包 + 批量取数面 + 一个进度回调（issue #897；生产接
 /// HTTP 层与事件发射，测试注入 mock），本函数不触碰网络、不碰事件系统。
 /// 返回统计：`synced` = 处理成功的标的数（行情分区有效价 + 基金处理成功，含基金
 /// 「已是最新」）；`skipped` = 无通道行（无行情类型/市场未知/名称充代码）、停牌/
@@ -275,15 +275,15 @@ async fn take_bulk_surface(fetch: &mut FetchFundBatch, codes: &[String]) -> Opti
 /// 测试注入桩，见 [`super::channels`]）。批量面只回答「这次刷新用几次请求」，不改变价格来源归属。
 /// 货基判定确认闭包（issue #1563 / ADR-0126 决策 3 换源）由逐只刷新单元消费：
 /// 未打标标的进逐只通道先确认、确认即退出采集链路。
-// 五个逐标的抓取闭包（含货基判定确认）+ 取数面 + 会话 + 进度回调 + 写入见证
-// 共 9 参：网络接缝逐通道注入使然（与 HTTP 层多主机请求同形），参数表就是
+// 四个逐标的抓取闭包（含货基判定确认）+ 取数面 + 会话 + 进度回调 + 写入见证
+// 共 8 参：网络接缝逐通道注入使然（与 HTTP 层多主机请求同形），参数表就是
 // 「本编排消费哪些外部通道」的清单（issue #1377 起日 K 通道归后台补全，不在
-// 本编排的参数表；issue #1571 起逐只净值回退与后台补全共用新浪全历史通道）。
+// 本编排的参数表；汇率通道随 #1551 换 ECB 退役，归 [`super::fx`] 编排；
+// issue #1571 起逐只净值回退与后台补全共用新浪全历史通道）。
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn do_incremental_sync_with<Q, F, X, H, M, C, P>(
+pub(super) async fn do_incremental_sync_with<Q, F, H, M, C, P>(
     session: &Q,
     fetch: &mut F,
-    fetch_fx: &mut X,
     fetch_nav_history: &mut H,
     fetch_fund_name: &mut M,
     confirm_money_fund: &mut C,
@@ -296,7 +296,6 @@ where
     // 签名层面取不到连接。
     Q: ScopedSession,
     F: FnMut(&[QuoteQuery]) -> FetchFuture<Vec<QuoteItem>> + Send,
-    X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
     H: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
     // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
     // （不落库）。生产接基金详情通道，测试注入 mock。
@@ -478,13 +477,7 @@ where
         progress(SyncProgress::instrument(done, total));
     }
 
-    // ② 汇率 K 线回填 → FxRateHistory：共用单元（[`backfill_fx_pairs`]，issue
-    // #1375 起与后台补全共用），仅非本位币币种对，与价格历史同期段采集。
-    // 汇率落库不计入写入见证（issue #1277）：与成功路径的零写入判定同口径——
-    // 只有价格或名称写入才发价格失效信号，汇率历史变化不在其列。
-    backfill_fx_pairs(session, fetch_fx, held.iter().map(|s| s.currency.clone())).await?;
-
-    // ③ 批量取数面（ADR-0121 / issue #1374 / ADR-0130 决策 2）：新浪 `f_` 场外
+    // ② 批量取数面（ADR-0121 / issue #1374 / ADR-0130 决策 2）：新浪 `f_` 场外
     // 基金批量面按本次现场的基金代码一次请求取回名称与最新净值（整次同步最多一次
     // 逻辑请求）——请求量自此不再随基金数线性增长；净值分区为空则零请求（无标的
     // 可刷，不白撞数据源）。失败 / 停用 / 未收录的标的在下方逐标的通道
@@ -497,7 +490,7 @@ where
         fetch_bulk_surfaces(bulk, &fund_codes).await
     };
 
-    // ④ 基金分区逐只（issue #897 逐只合并推进）：现价刷新（ADR-0122 决策 2，
+    // ③ 基金分区逐只（issue #897 逐只合并推进）：现价刷新（ADR-0122 决策 2，
     // 委托 [`refresh_one_fund_price`]——批量面命中整只零请求，未收录/降级退逐只
     // 通道（新浪全历史面，issue #1571），issue #1377 起不再承担首刷与缺周点深补）
     // + 权威名称随行刷新
@@ -647,18 +640,11 @@ pub(super) fn two_years_ago(today: NaiveDate) -> NaiveDate {
 
 /// 近两年回填窗口（`YYYY-MM-DD` 形态，腾讯日 K 接口参数用，issue #1561）：
 /// 起点 = 北京时间今天 − 2 年、终点 = 今天。生产通道束构造时取一次（每次同步
-/// 一次的口径不变，与 [`kline_beg`] 同型）。
+/// 一次的口径不变）。
 pub(crate) fn kline_window() -> (String, String) {
     let today = beijing_today();
     let beg = two_years_ago(today).format("%Y-%m-%d").to_string();
     (beg, today.format("%Y-%m-%d").to_string())
-}
-
-/// 近两年回填窗口起点（YYYYMMDD 形态，**东财**日 K 接口参数用——汇率 K 线腿
-/// 随 ECB 换源退役前仍走东财，ADR-0130 决策 2 把汇率单列）。生产通道束构造时
-/// 取一次（`channels::SyncFetchChannels::production_lane`，每次同步一次的口径不变）。
-pub(crate) fn kline_beg() -> String {
-    two_years_ago(beijing_today()).format("%Y%m%d").to_string()
 }
 
 /// 日线按 ISO 周降采样（ADR-0019）：每周取最后一个有报价交易日的 (日期, 收盘价)。
@@ -728,49 +714,6 @@ pub(super) fn write_weekly_price_history(
         )?;
     }
     Ok(count)
-}
-
-/// 汇率 K 线回填（ADR-0019；issue #1375 起手动同步与后台补全共用单元）：给定
-/// 标的币种集合中，仅非本位币币种对（与本位币相同的无需历史折算）按同期段
-/// 采集、同周规则落库。汇率消费方含基金与股票的历史市值折算。
-pub(super) async fn backfill_fx_pairs<Q, X>(
-    session: &Q,
-    fetch_fx: &mut X,
-    currencies: impl Iterator<Item = String>,
-) -> Result<()>
-where
-    Q: ScopedSession,
-    X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
-{
-    let native = session.with_connection(default_currency_code).await?;
-    let mut pairs: Vec<(String, String)> = currencies
-        .map(|base| (base, native.clone()))
-        .filter(|(base, quote)| base != quote)
-        .collect();
-    pairs.sort();
-    pairs.dedup();
-    for (base, quote) in &pairs {
-        let pair = format!("{base}{quote}");
-        // 汇率 K 线抓取在会话之外（await）；降采样落库才短暂取一次连接（issue #1275）。
-        let bars = fetch_fx(&pair).await?;
-        let (base, quote) = (base.clone(), quote.clone());
-        session
-            .with_connection(move |conn| {
-                for (trade_date, rate) in downsample_weekly(&bars) {
-                    upsert_fx_rate_history(
-                        conn,
-                        &base,
-                        &quote,
-                        &trade_date,
-                        rate,
-                        EASTMONEY_PRICE_SOURCE,
-                    )?;
-                }
-                Ok(())
-            })
-            .await?;
-    }
-    Ok(())
 }
 
 /// 行情分区单只落库作业的写入点标记（issue #1412）：作业闭包是 `Send + 'static`
