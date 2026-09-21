@@ -1178,7 +1178,8 @@ fn profile_investments_holdings_and_trades() {
     assert_eq!(
         instruments
             .iter()
-            .filter(|i| i.source == "manual" && i.kind == investment::InstrumentType::Fund)
+            .filter(|i| i.source == investment::MANUAL_SOURCE
+                && i.kind == investment::InstrumentType::Fund)
             .count(),
         3,
         "场外基金标的手动来源"

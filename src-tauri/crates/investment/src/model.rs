@@ -18,6 +18,15 @@ use super::channel::PriceChannel;
 use ledger_infra::closed_set::closed_set;
 use ledger_infra::db::query::FromRow;
 
+/// 来源词表「人工」标记（issue #1587 单点声明）：字典侧（`instruments.source`）
+/// 新建行一律取本值、来源随行终身不变（ADR-0036 决策 2）；汇率与价格侧
+/// （`exchange_rates` / `market_prices` / `price_history` 的 `source`）人工录入
+/// 行同样记本值（ADR-0036 / ADR-0130 决策 7）。两侧同词表而语义正交（见投资域
+/// 词汇表「字典来源」），「人工」是唯一跨实体共用值——投资域内它的全部判定
+/// （自动写入的人工行保护、自建标的的删除准入）与构造一律引用本常量，不写
+/// 裸字面量（钉词表取值的测试断言/夹具除外）。
+pub const MANUAL_SOURCE: &str = "manual";
+
 closed_set! {
 /// 金融工具类型闭集（与 `instruments.instrument_type` 的 CHECK 约束（V002）
 /// 一一对应）。五份表示（enum / `ALL` / `as_str` / `parse` / `Display`）由

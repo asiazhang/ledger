@@ -19,12 +19,9 @@ use chrono::NaiveDate;
 use rusqlite::Connection;
 
 use super::command::{PriceCommand, record_price};
-use super::model::{ManualPriceInput, ManualPriceResult};
+use super::model::{MANUAL_SOURCE, ManualPriceInput, ManualPriceResult};
 use super::prices::{MarketPriceWrite, upsert_market_price, upsert_price_history};
 use ledger_infra::error::{AppError, Result};
-
-/// 手动报价来源标记：价格数据来源「手动」（与字典侧 source 同词表，ADR-0036）。
-pub(crate) const MANUAL_PRICE_SOURCE: &str = "manual";
 
 /// 手动报价核心接缝：校验 → 价格历史周采样落库 → 按最新点映像规则决定现价
 /// upsert → 产出 op（裁决域 = 标的 × ISO 周采样行，issue #861）。与 IPC 命令
@@ -90,7 +87,7 @@ pub(crate) fn write_manual_price(
         &trade_date,
         input.price_cents,
         &currency,
-        MANUAL_PRICE_SOURCE,
+        MANUAL_SOURCE,
     )?;
 
     // 落点二：现价缓存 upsert——报价成为（或保持为）最新价格点时写入。
@@ -108,7 +105,7 @@ pub(crate) fn write_manual_price(
                 currency_code: &currency,
                 priced_at: &trade_date,
                 nav_date: None,
-                source: Some(MANUAL_PRICE_SOURCE),
+                source: Some(MANUAL_SOURCE),
             },
         )?;
     }
