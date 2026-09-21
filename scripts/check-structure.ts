@@ -792,25 +792,21 @@ export function lineAt(text: string, index: number | undefined): number {
   return (text.slice(0, index ?? 0).match(/\n/g)?.length ?? 0) + 1;
 }
 
-/** 收集到的 Rust 文件引用：绝对路径 + 相对路径（输出与报文用） */
-interface RustFileRef {
-  abs: string;
-  rel: string;
-}
+/** 结构守门 Rust 面扩展名闭集（walkTextFiles 消费参数） */
+const RUST_EXTENSIONS: ReadonlySet<string> = new Set([".rs"]);
 
-/** 递归收集目录下全部 .rs 文件（跳过测试豁免形态），相对路径排序保证输出确定 */
-function collectRustFiles(dir: string, relBase: string): RustFileRef[] {
-  const out: RustFileRef[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  )) {
-    const abs = join(dir, entry.name);
-    const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
-    if (isTestFile(rel)) continue;
-    if (entry.isDirectory()) out.push(...collectRustFiles(abs, rel));
-    else if (entry.name.endsWith(".rs")) out.push({ abs, rel });
-  }
-  return out;
+/**
+ * 结构守门 Rust 面收集：家族共享单点 walkTextFiles 的本守门消费侧（issue #1634，
+ * 与 check-infra-dml / check-eastmoney-residue 同源），文件结构复用 WalkedFile。
+ * 测试豁免（ADR-0056 决策 5）是本守门政策谓词，walk 后按 rel 过滤——
+ * isTestFile 只看 rel 形状，与遍历中剪枝输出全等（tests/ 目录成员无论多深
+ * 都按 rel 排除；唯一分歧形态是名为 tests.rs 的目录，非合法 Rust 模块布局，
+ * 出现时由模块面投影核对报红，此处多扫不致假绿）。
+ */
+function collectRustFiles(dir: string, relBase: string): WalkedFile[] {
+  return walkTextFiles(dir, relBase, { extensions: RUST_EXTENSIONS }).filter(
+    (f) => !isTestFile(f.rel),
+  );
 }
 
 /** 遍历收集的文本面文件：绝对路径（读文件用）+ 相对路径（报文定位用，`/` 分隔） */
@@ -1775,7 +1771,7 @@ function checkTransactionZoneDirection(srcTauriDir: string): string[] {
  * 本扫描面（#1596：声明面 + 编译期）。报文只给定位 + 分层 + 规则指针（T2-2）。
  */
 function scanModuleFile(
-  file: RustFileRef,
+  file: WalkedFile,
   layer: Layer,
   problems: string[],
   options: { scanShellRefs: boolean; context: string },
@@ -1842,7 +1838,7 @@ function scanModuleEntries(
       );
       continue;
     }
-    const files: RustFileRef[] = stat.isDirectory()
+    const files: WalkedFile[] = stat.isDirectory()
       ? collectRustFiles(abs, w.path)
       : [{ abs, rel: w.path }];
     if (files.length === 0) {
@@ -1892,7 +1888,7 @@ function main(): void {
   // 基础设施、顶层文件），残留引用可出现在任何层；collectRustFiles 自带测试
   // 豁免（ADR-0056 决策 5）——外挂测试目录的直置事务边界合法。
   // srcDir 整体不可达时静默交由白名单循环报「路径不存在」，不在此抛栈。
-  let allFiles: RustFileRef[] = [];
+  let allFiles: WalkedFile[] = [];
   try {
     allFiles = [
       ...collectRustFiles(srcDir, ""),
