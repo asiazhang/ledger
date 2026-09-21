@@ -18,15 +18,13 @@
 //!   同事务余额缓存整体重算），与生产导入同一 SQL 路径；前置探测与导入后的
 //!   一致性断言走现有 pub 查询函数，本模块零手写业务 SQL。
 //! - 每次迭代从 pristine 快照恢复（源库复制 + 快照零改动）：迭代间数据集规模
-//!   固定，p95 是同一状态的真分位数——这是「量测结论可复现」的落点。
-//! - 恢复后预写一次提交冲净拷贝写回（量测有效性）：文件拷贝留下的 OS 脏页写回
-//!   若不先行吸收，会挂在恢复后第一次 fsync（被测导入的 COMMIT）上，大库上把
-//!   每次导入虚增到秒级——量到的是写回不是导入；机制见
-//!   [`restore_from_snapshot`]。
-//! - 刷新段开销不新增观测代码：余额缓存刷新（`INSERT INTO
+//!   固定，p95 是同一状态的真分位数——这是「量测结论可复现」的落点。快照机制
+//!   收口在 [`super::snapshot`]（与 bench-sync 共用），含恢复后预写提交冲净
+//!   拷贝写回的量测有效性处理。
+//! - 刷新段开销不新增观测代码：余额缓存重算（`INSERT INTO
 //!   account_balance_cache …`）的单条 SQL 耗时由连接工厂自动挂载的耗时日志
-//!   （perf_trace）全覆盖——慢查询（≥100ms）以 warn「慢查询」可见，全量明细
-//!   需 DEBUG 级日志；报告不拆分该段，归因在日志中按语句检索。
+//!   （perf_trace）全覆盖——慢查询（≥100ms）以 warn「慢查询」可见，全量明细需
+//!   DEBUG 级日志；报告不拆分该段，归因在日志中按语句检索。
 //! - 正确性底线（issue #532 测试决策）：每次导入完成后断言余额缓存与实时计算
 //!   逐账户一致（读出口 + 审计口径同一对 pub 函数），断言失败即量测作废——
 //!   基准必须跑在正确路径而非坏缓存路径上。
@@ -48,7 +46,8 @@ use ledger_reports as reports_domain;
 use ledger_transaction::amount::{TransactionKind, default_currency_code};
 use ledger_transaction::{BatchOutcome, TransactionBatch, TransactionInput};
 
-use super::bench::percentile_ms;
+use super::bench::{display_width, percentile_ms};
+use super::snapshot::{SnapshotPaths, restore_from_snapshot};
 
 /// 基准行金额基数（分）：行金额逐行 +1 递增，保证批内去重身份全异
 /// （dedup=true 时行行真写、无一行被去重跳过——量测有效性前置）。
@@ -331,17 +330,18 @@ pub(crate) fn assert_cache_matches_realtime(conn: &Connection) -> Result<(), Str
     }
 }
 
-/// 数据集前置探测结果：基准日期与账户池。
-struct DatasetProbe {
+/// 数据集前置探测结果：基准日期与账户池（bench-import 与 bench-sync 共用，
+/// #1628 收编：两类写基准消费同一 generated 数据集的同一前置）。
+pub(crate) struct DatasetProbe {
     /// 基准行统一日期 = 数据集最大交易日期次日——与既有全部交易不共日期，
     /// 去重身份不可能命中既有数据（量测有效性的确定性保障）。
-    bench_date: String,
-    account_pool: Vec<String>,
+    pub(crate) bench_date: String,
+    pub(crate) account_pool: Vec<String>,
 }
 
 /// 前置探测（走现有查询函数，与读基准同款前置，不计入任何量测）：
 /// 日期极值推基准日期、账户清单推导入账户池。
-fn probe_dataset(conn: &Connection) -> Result<DatasetProbe, String> {
+pub(crate) fn probe_dataset(conn: &Connection) -> Result<DatasetProbe, String> {
     let range = reports_domain::query_report_date_range(conn).map_err(|e| e.to_string())?;
     let max_date = range
         .max_date
@@ -363,101 +363,6 @@ fn probe_dataset(conn: &Connection) -> Result<DatasetProbe, String> {
         bench_date,
         account_pool,
     })
-}
-
-/// 快照与工作库的文件路径组（源库同目录，保证同盘复制与权限一致）。
-///
-/// Drop 时删除快照/工作库及其 -wal/-shm 残留：成功、失败、panic 路径都不留
-/// 基准中间文件（源库本身全程零改动）。
-struct SnapshotPaths {
-    snapshot: PathBuf,
-    work: PathBuf,
-}
-
-impl SnapshotPaths {
-    /// 建路径组并落 pristine 快照（源库文件复制；generate 末尾已回填余额缓存
-    /// 并 ANALYZE，快照即健康 V017 形态，无需再补基线）。
-    fn create(source_db: &Path) -> Result<Self, String> {
-        let dir = source_db
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .ok_or_else(|| {
-                format!(
-                    "无法确定快照目录（源库路径缺少父目录）：{}",
-                    source_db.display()
-                )
-            })?;
-        let snapshot = dir.join("ledger-perf-bench-import-snapshot.db");
-        let work = dir.join("ledger-perf-bench-import-work.db");
-        remove_db_files(&work);
-        remove_db_files(&snapshot);
-        copy_db_files(source_db, &snapshot)?;
-        // 工作库先行从快照恢复：探测与正式迭代打开同一个完整状态的库。
-        restore_from_snapshot(&snapshot, &work)?;
-        Ok(SnapshotPaths { snapshot, work })
-    }
-}
-
-impl Drop for SnapshotPaths {
-    fn drop(&mut self) {
-        remove_db_files(&self.work);
-        remove_db_files(&self.snapshot);
-    }
-}
-
-/// 复制库文件（含 -wal 残留防御：干净关闭的库无 -wal，存在则一并带走，
-/// 快照必须自含完整状态）。
-fn copy_db_files(src: &Path, dst: &Path) -> Result<(), String> {
-    std::fs::copy(src, dst)
-        .map_err(|e| format!("快照复制失败（{} → {}）：{e}", src.display(), dst.display()))?;
-    let src_wal = sidecar_path(src, "-wal");
-    if src_wal.exists() {
-        std::fs::copy(&src_wal, sidecar_path(dst, "-wal"))
-            .map_err(|e| format!("快照复制失败（-wal 伴生文件）：{e}；请确认源库已干净关闭"))?;
-    }
-    Ok(())
-}
-
-/// 从快照恢复工作库：迭代间数据集规模固定的落点。
-///
-/// 恢复后紧跟一次预写提交（量测有效性）：文件拷贝会在 OS 页缓存里留下约整个
-/// 库文件大小的脏页，恢复后全进程第一次 fsync（即被量测导入的 COMMIT）会把
-/// 这笔写回一并冲掉——608MB 库上约 2.5s，与被测导入无关，却恰好落进计时窗口
-/// （DELETE 日志 + synchronous=FULL 下 fsync 计入提交语句）。预写必须产生
-/// 真实页写入：SQLite 对「值未变化的 UPDATE」跳过写页、提交零 fsync
-/// （`SET version = version` 形态吸收不了写回），故对单行做 version+1；fsync
-/// 按文件生效，一次提交即冲净拷贝写回，此后计时窗口量到的才是导入本身。
-fn restore_from_snapshot(snapshot: &Path, work: &Path) -> Result<(), String> {
-    remove_db_files(work);
-    copy_db_files(snapshot, work)?;
-    {
-        let conn = open_connection(work).map_err(|e| e.to_string())?;
-        conn.execute_batch(
-            "BEGIN IMMEDIATE; \
-             UPDATE accounts SET version = version + 1 WHERE id = (SELECT min(id) FROM accounts); \
-             COMMIT;",
-        )
-        .map_err(|e| format!("恢复后预写提交失败（拷贝写回吸收）：{e}"))?;
-    }
-    Ok(())
-}
-
-/// 删除库文件及其 -wal/-shm 伴生文件（尽力而为，不存在即忽略）。
-fn remove_db_files(db: &Path) {
-    for path in [
-        db.to_path_buf(),
-        sidecar_path(db, "-wal"),
-        sidecar_path(db, "-shm"),
-    ] {
-        let _ = std::fs::remove_file(path);
-    }
-}
-
-/// 库文件的 -wal/-shm 伴生路径。
-fn sidecar_path(db: &Path, suffix: &str) -> PathBuf {
-    let mut s = db.as_os_str().to_os_string();
-    s.push(suffix);
-    PathBuf::from(s)
 }
 
 /// 入口：打开源库校验、建快照、跑量测矩阵、打印人读报告（无门禁，纯观测）。
@@ -494,7 +399,7 @@ pub(crate) fn run_benchmark(
     if cfg.rows.is_empty() {
         return Err("--rows 至少需要一个档位".to_string());
     }
-    let guard = SnapshotPaths::create(source_db)?;
+    let guard = SnapshotPaths::create(source_db, "bench-import")?;
     // 探测在工作库上做（快照的副本，探测的读路径与正式迭代完全一致）。
     let probe = {
         let conn = open_connection(&guard.work).map_err(|e| e.to_string())?;
@@ -623,9 +528,4 @@ fn print_report(db: &Path, cfg: &ImportBenchConfig, results: &[ImportBenchMetric
     println!(
         "该段耗时经既有耗时日志按语句归因：RUST_LOG=debug 重跑后按「INSERT INTO account_balance_cache」检索全量明细（DEBUG 级），慢查询（≥100ms）以 warn「慢查询」直接可见。"
     );
-}
-
-/// 字符串终端显示宽估算：ASCII 记 1、其余（CJK 等）记 2。
-fn display_width(s: &str) -> usize {
-    s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum()
 }

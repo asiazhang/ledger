@@ -194,6 +194,13 @@ pub(crate) fn percentile_ms(sorted_ms: &[f64], p: f64) -> f64 {
     sorted_ms[rank.min(n) - 1]
 }
 
+/// 字符串终端显示宽估算：ASCII 记 1、其余（CJK 等）记 2。人读报告表列
+/// 手排共用（bench-import / bench-sync print_report；本模块读基准的表列
+/// 用自己的估算式，行为不变）。
+pub(crate) fn display_width(s: &str) -> usize {
+    s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum()
+}
+
 /// 入口：打开库、跑全部基准、打印人读表格。
 pub(crate) fn run(cli: BenchCli) -> Result<(), String> {
     init_tracing();
