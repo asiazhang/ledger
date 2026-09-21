@@ -5,15 +5,16 @@
 
 use std::path::{Path, PathBuf};
 
+use tauri_app_lib::test_support::ScratchDir;
+
 use crate::boot::book_registry;
 use crate::boot::book_registry::{BookRegistry, RegistryOrigin, RegistryRead, read_registry};
 use crate::boot::data_location::*;
 use crate::db::{check_integrity, open_connection};
 
-fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ledger-dl-unit-{tag}-{}", crate::ids::new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// 暂存目录（ScratchDir guard，issue #1645）：drop（含 panic unwind）整棵删除。
+fn temp_dir(tag: &str) -> ScratchDir {
+    ScratchDir::new(&format!("dl-unit-{tag}"))
 }
 
 fn file_bytes(path: &Path) -> Vec<u8> {
@@ -37,14 +38,14 @@ fn dir_listing(dir: &Path) -> Vec<String> {
 fn boot_missing_registry_uses_default_dir_as_factory_default_book() {
     let dir = temp_dir("boot-missing");
     let boot = boot(&dir);
-    assert_eq!(boot.db_dir, dir);
+    assert_eq!(boot.db_dir, dir.path());
     assert_eq!(boot.fallback_reason, None);
     assert_eq!(boot.deferred_relocation, None);
     // 出厂形态：唯一默认账本位于默认目录，兼活动账本。
     let registry = boot.registry.expect("出厂登记信息应可用");
     assert_eq!(registry.origin, RegistryOrigin::LegacyPointer);
     assert_eq!(registry.books.len(), 1);
-    assert_eq!(registry.active_dir(), Some(dir.as_path()));
+    assert_eq!(registry.active_dir(), Some(dir.path()));
 }
 
 #[test]
@@ -77,7 +78,7 @@ fn boot_corrupt_registry_falls_back_and_preserves_everything() {
     std::fs::write(dir.join(POINTER_FILE_NAME), "{broken").unwrap();
 
     let boot = boot(&dir);
-    assert_eq!(boot.db_dir, dir);
+    assert_eq!(boot.db_dir, dir.path());
     let reason = boot.fallback_reason.expect("损坏应携带回退原因");
     assert!(!reason.is_empty());
     assert!(
@@ -178,7 +179,7 @@ fn boot_unavailable_active_dir_falls_back_with_reason_and_preserves_files() {
     .unwrap();
 
     let boot = boot(&dir);
-    assert_eq!(boot.db_dir, dir);
+    assert_eq!(boot.db_dir, dir.path());
     let reason = boot.fallback_reason.expect("目录不可用应携带回退原因");
     assert!(reason.contains("目标目录不可用"), "实际 {reason}");
     // 注册表本身可读：登记信息仍可展示（用户可切回默认账本脱困）。
@@ -209,11 +210,11 @@ fn boot_deferred_legacy_relocation_reports_source_dir_in_registry() {
     .unwrap();
 
     let boot = boot(&dir);
-    assert_eq!(boot.db_dir, dir);
+    assert_eq!(boot.db_dir, dir.path());
     assert_eq!(boot.deferred_relocation, Some(target));
     assert_eq!(boot.fallback_reason, None, "推迟搬迁不是回退，无警示");
     let registry = boot.registry.expect("推迟窗口登记信息应可用");
-    assert_eq!(registry.active_dir(), Some(dir.as_path()));
+    assert_eq!(registry.active_dir(), Some(dir.path()));
     // 密文源库原样保留。
     assert_eq!(file_bytes(&dir.join("ledger.db")).len(), 4096);
 }
@@ -769,7 +770,7 @@ fn validate_and_commit_overwrites_corrupt_registry_as_escape() {
         registry.pending_relocation,
         Some(book_registry::PendingRelocation {
             book_id: registry.active_id.clone(),
-            from_dir: dir.clone(),
+            from_dir: dir.path().to_path_buf(),
         })
     );
 }

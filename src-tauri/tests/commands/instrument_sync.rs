@@ -102,11 +102,8 @@ fn reads_return_current_data_while_sync_in_flight() {
     ledger_backup::install_after_commit_hook();
     // 交易域接缝接线（fresh_app 同款）：编排的本位币读取钩子随此装入（幂等）。
     tauri_app_lib::transaction_wiring::install_all();
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-instrumentsync-it-{}",
-        ledger_infra::db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).expect("临时目录应可建");
+    // 目录走 ScratchDir（issue #1645）：用例结束（含 panic）整棵删除。
+    let dir = tauri_app_lib::test_support::ScratchDir::new("instrumentsync-it");
     let app = tauri::test::mock_app();
     app.manage(db::open_db_in(&dir).expect("文件库应可开"));
 
@@ -397,11 +394,7 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
     // ——单跑本测试时无其他测试代装，必显真实缺陷）。
     ledger_backup::install_after_commit_hook();
     tauri_app_lib::transaction_wiring::install_all();
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-instrumentsync-degraded-it-{}",
-        ledger_infra::db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).expect("临时目录应可建");
+    let dir = tauri_app_lib::test_support::ScratchDir::new("instrumentsync-degraded-it");
     let app = tauri::test::mock_app();
     app.manage(db::open_db_in(&dir).expect("文件库应可开"));
 
@@ -556,11 +549,7 @@ fn production_channels_branch_runs_empty_db_to_early_exit() {
     // 提交点后置动作与交易域接缝接线（与上两测同形，幂等）。
     ledger_backup::install_after_commit_hook();
     tauri_app_lib::transaction_wiring::install_all();
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-instrumentsync-production-it-{}",
-        ledger_infra::db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).expect("临时目录应可建");
+    let dir = tauri_app_lib::test_support::ScratchDir::new("instrumentsync-production-it");
     let app = tauri::test::mock_app();
     app.manage(db::open_db_in(&dir).expect("文件库应可开"));
 

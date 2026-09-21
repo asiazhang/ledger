@@ -33,7 +33,7 @@ use ledger_infra::db::{self, DbState};
 use ledger_infra::settings::{self, SettingKey};
 use ledger_sync_engine::{SyncChannelConfig, TriggerTimings, start_sync_scheduler_with};
 use tauri_app_lib::commands::boot::BootCell;
-use tauri_app_lib::test_support::{S3Addressing, S3StubConfig, spawn_s3_stub};
+use tauri_app_lib::test_support::{S3Addressing, S3StubConfig, ScratchDir, spawn_s3_stub};
 
 /// 低频轮询到期自跑轮次：无任何本地写入（无写信号），`recv_timeout` 超时分支
 /// 兜底轮询 → 成功轮次把「上次同步时刻」落库。删掉调度线程的轮询分支（到期
@@ -43,12 +43,9 @@ async fn poll_interval_elapses_into_a_round() {
     let stub = spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle));
 
     // 设备现场（与 tests/commands/sync_channel.rs 同型）：mock 应用 + 独立
-    // 临时目录文件库 + 引导登记态 + 两扇门（调度线程做空转判定）。
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-sync-poll-it-{}",
-        ledger_infra::db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    // 临时目录文件库 + 引导登记态 + 两扇门（调度线程做空转判定）。目录走
+    // ScratchDir（issue #1645）：用例结束（含 panic）整棵删除。
+    let dir = ScratchDir::new("sync-poll-it");
     let app = tauri::test::mock_app();
     app.manage(BootCell::new(data_location::boot(&dir)));
     app.manage(db::open_db_in(&dir).unwrap());

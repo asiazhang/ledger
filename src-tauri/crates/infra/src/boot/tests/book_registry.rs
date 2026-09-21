@@ -4,13 +4,14 @@
 
 use std::path::{Path, PathBuf};
 
+use tauri_app_lib::test_support::ScratchDir;
+
 use crate::boot::book_registry::*;
 use crate::db::new_uuid;
 
-fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ledger-registry-unit-{tag}-{}", new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// 暂存目录（ScratchDir guard，issue #1645）：drop（含 panic unwind）整棵删除。
+fn temp_dir(tag: &str) -> ScratchDir {
+    ScratchDir::new(&format!("registry-unit-{tag}"))
 }
 
 fn write_raw(dir: &Path, content: &str) {
@@ -56,9 +57,9 @@ fn single_default_shapes_factory_registry() {
     let registry = BookRegistry::single_default(&dir);
     assert_eq!(registry.origin, RegistryOrigin::LegacyPointer);
     assert_eq!(registry.books.len(), 1);
-    assert_eq!(registry.books[0].dir, dir);
+    assert_eq!(registry.books[0].dir, dir.path());
     assert_eq!(registry.books[0].name, DEFAULT_BOOK_NAME);
-    assert_eq!(registry.active_dir(), Some(dir.as_path()));
+    assert_eq!(registry.active_dir(), Some(dir.path()));
 }
 
 #[test]
@@ -340,7 +341,7 @@ fn create_appends_entry_and_lands_new_format() {
     assert_eq!(registry.origin, RegistryOrigin::NewFormat);
     assert_eq!(registry.books.len(), 2);
     assert_eq!(registry.books[0].name, DEFAULT_BOOK_NAME);
-    assert_eq!(registry.books[0].dir, dir);
+    assert_eq!(registry.books[0].dir, dir.path());
     assert_eq!(registry.books[1].id, created.id);
     assert_eq!(registry.active_id, registry.books[0].id);
 }

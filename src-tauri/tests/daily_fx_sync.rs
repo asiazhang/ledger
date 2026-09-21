@@ -166,11 +166,8 @@ fn startup_wiring_syncs_fx_rates_and_concurrent_sync_stays_unblocked() {
 
     // 设备现场（daily_price_sync IT 同款）：mock 应用 + 独立临时目录文件库 +
     // 两扇门（调度任务做空转判定）。
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-daily-fx-sync-it-{}",
-        ledger_infra::db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    // 目录走 ScratchDir（issue #1645）：用例结束（含 panic）整棵删除。
+    let dir = tauri_app_lib::test_support::ScratchDir::new("daily-fx-sync-it");
     let app = tauri::test::mock_app();
     app.manage(db::open_db_in(&dir).unwrap());
     app.manage(ledger_infra::db::encryption::EncryptionGate::new(false));

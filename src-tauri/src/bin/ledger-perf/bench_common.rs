@@ -109,7 +109,8 @@ pub(crate) fn percentile_ms(sorted_ms: &[f64], p: f64) -> f64 {
     sorted_ms[rank.min(n) - 1]
 }
 
-/// 字符串终端显示宽估算：ASCII 记 1、其余（CJK 等）记 2。
+/// 字符串终端显示宽估算：ASCII 记 1、其余（CJK 等）记 2。人读报告表列
+/// 共用（读基准与 bench-import / bench-sync / bench-market 的 print_report）。
 pub(crate) fn display_width(s: &str) -> usize {
     s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum()
 }

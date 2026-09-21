@@ -65,13 +65,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_support::{open, seed_account};
     use ledger_infra::db::DbState;
     use ledger_infra::error::AppError;
     use ledger_infra::test_utils::GATED_TIMEOUT;
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
+    use tauri_app_lib::test_support::{ScratchDir, open, seed_account};
+
+    use super::*;
 
     /// 内存库夹具（统一测试工厂建库，ADR-0084 决策 3/7）：写读两槽同指一连接
     /// （与 `DbState::open_in_memory` 同形），读句柄经具名访问器取——
@@ -196,11 +197,7 @@ mod tests {
     /// 表达不了读侧独立性（facade 侧同款取舍）。
     #[test]
     fn read_entry_returns_while_long_write_job_in_flight() {
-        let dir = std::env::temp_dir().join(format!(
-            "ledger-read-entry-{}",
-            ledger_infra::db::new_uuid()
-        ));
-        std::fs::create_dir_all(&dir).expect("临时目录应可建");
+        let dir = ScratchDir::new("read-entry");
         let state = ledger_infra::db::open_db_in(&dir).expect("文件库应成对打开");
 
         let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();

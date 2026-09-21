@@ -27,8 +27,6 @@
     )
 )]
 
-use std::path::PathBuf;
-
 use ledger_infra::db::data_location;
 use ledger_infra::db::encryption::{enable_encryption_for_file, probe_file_kind};
 use ledger_infra::db::{self, DbState};
@@ -44,14 +42,15 @@ use tauri_app_lib::commands::sync_channel::{
 };
 use tauri_app_lib::commands::{boot::BootCell, transactions};
 use tauri_app_lib::test_support::{
-    S3Addressing, S3Stub, S3StubConfig, read_scalar_i64, spawn_s3_stub,
+    S3Addressing, S3Stub, S3StubConfig, ScratchDir, read_scalar_i64, spawn_s3_stub,
 };
 
 use crate::isolation::isolate_home;
 
 /// 引导登记态在位的 mock 应用 + 独立临时目录（不含库连接；连接由调用方按
-/// 明文/密文形态自行挂载，tauri manage 同型仅首次生效）。
-pub(crate) fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, PathBuf) {
+/// 明文/密文形态自行挂载，tauri manage 同型仅首次生效）。库目录走 ScratchDir
+/// （issue #1645）：guard 随元组交调用方持有，用例结束（含 panic）整棵删除。
+pub(crate) fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, ScratchDir) {
     // 写路径副作用接缝接线（issue #1090）：本套件经产品建缝拿文件库连接（不入
     // 测试工厂，ADR-0084 决策 3），建库单点的注册不覆盖本处——落库前显式注册
     // 余额刷新实现（幂等，进程级，与 BDD world 同款纪律）。
@@ -65,11 +64,7 @@ pub(crate) fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, Pat
     // 测试（经测试工厂）装上、单独跑本用例时永不装上，
     // `write_entry_enqueues_upload_via_scheduler` 遂在隔离运行下假红。
     ledger_sync_engine::trigger::install_after_write_hook();
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-syncchannel-it-{tag}-{}",
-        ledger_infra::db::new_uuid()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new(&format!("syncchannel-it-{tag}"));
     let app = tauri::test::mock_app();
     let boot = data_location::boot(&dir);
     app.manage(BootCell::new(boot));
@@ -77,7 +72,7 @@ pub(crate) fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, Pat
 }
 
 /// 一台「设备」：mock 应用 + 独立临时目录文件库 + 真实引导登记态（BootCell）。
-pub(crate) fn device_app(tag: &str) -> (tauri::AppHandle<tauri::test::MockRuntime>, PathBuf) {
+pub(crate) fn device_app(tag: &str) -> (tauri::AppHandle<tauri::test::MockRuntime>, ScratchDir) {
     let (app, dir) = fresh_app(tag);
     app.manage(db::open_db_in(&dir).unwrap());
     (app.handle().clone(), dir)

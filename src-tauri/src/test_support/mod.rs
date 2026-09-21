@@ -53,6 +53,14 @@
 //! 守门共用；与 TS 侧 `check-structure.ts::maskNonCode` 双源登记，共享语料
 //! 夹具防漂移。登记处：ADR-0084 修订注记、CONTEXT-testing 词条。
 //!
+//! **#1645 追加**（测试暂存目录 guard）：Rust 测试「只建不删」的真临时目录
+//! 夹具（散在 5 个编译单元约 70 处）收编 [`scratch`]——`ScratchDir`（目录）与
+//! `ScratchFile`（散文件目录化形态），构造即建 `ledger-test-{tag}-{uuid}/`，
+//! drop（含 panic unwind）整棵删除，手写 remove_dir_all/cleanup 收尾随迁移
+//! 退役；前缀归一 `ledger-test-`，残留可一条 rm 识别清理。infra / backup /
+//! sync-engine / ledger-perf 经既有 dev-dependency 环消费，无新依赖边。
+//! 登记处：ADR-0084 修订注记、CONTEXT-testing「测试暂存目录」。
+//!
 //! 说明：集成测试 `tests/api_server/` 链接的是非 `#[cfg(test)]` 构建的 lib，
 //! 因此本模块不能仅以 `#[cfg(test)]` 编译；对生产二进制的影响只是一些未使用的
 //! 测试辅助函数（可被编译器消除）。
@@ -72,6 +80,7 @@ mod assert;
 pub mod channel;
 pub mod s3;
 pub mod scan;
+pub mod scratch;
 mod seed;
 #[cfg(test)]
 mod tests;
@@ -83,6 +92,7 @@ pub use channel::publish_raw_segment;
 pub use s3::{
     S3Addressing, S3Deny, S3Gate, S3ObservedRequest, S3Stub, S3StubConfig, spawn_s3_stub,
 };
+pub use scratch::{ScratchDir, ScratchFile};
 pub use seed::{
     seed_account, seed_exchange_rate, seed_exchange_rate_with_source, seed_fx_history_weeks,
     seed_fx_rate_history, seed_instrument, seed_investment_setup, seed_price_history,

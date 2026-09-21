@@ -5,27 +5,31 @@
 //! 文件库不入测试工厂（ADR-0084 决策 3）：建库经产品建缝 `open_connection` +
 //! 产品迁移缝 `migrations().to_latest`（boot/tests 先例）。
 
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crate::db::{migrations, new_uuid, open_connection, open_connection_with_passphrase};
+use tauri_app_lib::test_support::{ScratchDir, ScratchFile};
 
-fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ledger-db-readonly-{tag}-{}", new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+use crate::db::{migrations, open_connection, open_connection_with_passphrase};
+
+/// 暂存目录（ScratchDir guard，issue #1645）：drop（含 panic unwind）整棵删除。
+fn temp_dir(tag: &str) -> ScratchDir {
+    ScratchDir::new(&format!("db-readonly-{tag}"))
 }
 
-fn seeded_db(tag: &str, account: &str, balance: i64) -> PathBuf {
-    let dir = temp_dir(tag);
-    let db = dir.join(crate::db::connection::DB_FILE_NAME);
-    let mut conn = open_connection(&db).unwrap();
+/// 库文件夹具（issue #1645）：住各自的暂存目录，guard 随返回值交调用方持有
+/// （`db.parent()` 经 Deref 照常解析目录），用例结束整棵删除。
+fn seeded_db(tag: &str, account: &str, balance: i64) -> ScratchFile {
+    let file = ScratchFile::new(
+        &format!("db-readonly-{tag}"),
+        crate::db::connection::DB_FILE_NAME,
+    );
+    let mut conn = open_connection(&file).unwrap();
     migrations().to_latest(&mut conn).unwrap();
     tauri_app_lib::test_support::seed_account(&conn, account, "现金", "cash", "CNY", balance);
-    db
+    file
 }
 
-fn plaintext_db(tag: &str) -> PathBuf {
+fn plaintext_db(tag: &str) -> ScratchFile {
     seeded_db(tag, "acct-1", 12345)
 }
 

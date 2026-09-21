@@ -28,18 +28,18 @@ use crate::db::job_gate::LockOutcome;
 use crate::error::AppError;
 use crate::settings::SettingKey;
 use crate::test_utils::{CaptureLayer, GATED_TIMEOUT, capture_events, ensure_global_max_level};
-use tauri_app_lib::test_support::FIXED_NOW;
+use tauri_app_lib::test_support::{FIXED_NOW, ScratchDir};
 use tracing_subscriber::layer::SubscriberExt;
 
 use super::common::{dirty_state, write_test_state};
 
 /// 文件库成对 [`DbState`] 夹具（读写两槽各一条连接）：内存库两槽同指一连接，
 /// 表达不了「读侧独立于写侧」，故读侧独立性用文件库钉住（readonly 测试同款建库）。
-fn file_state(tag: &str) -> (std::path::PathBuf, DbState) {
+/// 库目录走暂存目录（ScratchDir guard，issue #1645）：guard 随元组交调用方
+/// 持有，用例结束（含 panic）整棵删除。
+fn file_state(tag: &str) -> (ScratchDir, DbState) {
     crate::db::register_after_commit_hook(ledger_backup::after_commit_hook);
-    let dir =
-        std::env::temp_dir().join(format!("ledger-db-facade-{tag}-{}", crate::db::new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new(&format!("db-facade-{tag}"));
     let state = crate::db::open_db_in(&dir).unwrap();
     (dir, state)
 }
@@ -763,11 +763,7 @@ fn facade_jobs_observe_paired_swap_in_both_slots() {
 
     // 新库：独立目录成对建连（产品建连缝：迁移在写连接上完成、读连接只读同库），
     // 种子种在换入前的裸连接上。
-    let new_dir = std::env::temp_dir().join(format!(
-        "ledger-db-facade-swap-new-{}",
-        crate::db::new_uuid()
-    ));
-    std::fs::create_dir_all(&new_dir).unwrap();
+    let new_dir = ScratchDir::new("db-facade-swap-new");
     let new_conn = crate::db::open_connection_in(&new_dir).expect("新库写连接应建成");
     let new_read = crate::db::open_connection_readonly_in(&new_dir).expect("新库读连接应建成");
     tauri_app_lib::test_support::seed_account(&new_conn, "acct-new", "新库", "cash", "CNY", 2222);
