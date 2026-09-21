@@ -782,6 +782,16 @@ export function scanRustSource(
   return hits;
 }
 
+/**
+ * 命中行定位：匹配下标 → 行号（1 起算，数命中点之前的换行，undefined 按文首计）。
+ * 守门家族共享单点（issue #1625）：matchAll 逐命中定位 文件:行 的唯一实现，
+ * check-infra-dml 的 scanDml 与 check-eastmoney-residue 的 scanResidue 消费；
+ * 与 maskNonCode 同址导出。
+ */
+export function lineAt(text: string, index: number | undefined): number {
+  return (text.slice(0, index ?? 0).match(/\n/g)?.length ?? 0) + 1;
+}
+
 /** 收集到的 Rust 文件引用：绝对路径 + 相对路径（输出与报文用） */
 interface RustFileRef {
   abs: string;
@@ -800,6 +810,54 @@ function collectRustFiles(dir: string, relBase: string): RustFileRef[] {
     if (entry.isDirectory()) out.push(...collectRustFiles(abs, rel));
     else if (entry.name.endsWith(".rs")) out.push({ abs, rel });
   }
+  return out;
+}
+
+/** 遍历收集的文本面文件：绝对路径（读文件用）+ 相对路径（报文定位用，`/` 分隔） */
+export interface WalkedFile {
+  abs: string;
+  rel: string;
+}
+
+/** 文本面遍历政策（各守门自己的豁免面，经参数注入，不在共享单点内） */
+export interface WalkTextOptions {
+  /** 收集的扩展名闭集（含点，如 ".rs"）；按文件名最后一个点之后的后缀匹配 */
+  extensions: ReadonlySet<string>;
+  /** 目录名剪枝（整目录豁免，如 node_modules / target / docs） */
+  skipDirs?: ReadonlySet<string>;
+  /** 相对路径剪枝（整文件豁免，如 CHANGELOG.md） */
+  skipFiles?: ReadonlySet<string>;
+}
+
+/**
+ * 递归收集目录下的文本面文件（守门家族共享单点，issue #1625）：扩展名闭集过滤、
+ * 目录名 localeCompare 排序保证输出确定、rel 以 relBase 为前缀 `/` 分隔归一。
+ * check-infra-dml（Rust 面）与 check-eastmoney-residue（全仓文本面）消费；
+ * 扫描哪些扩展名、豁免哪些目录与文件属各守门政策，经 options 注入。
+ */
+export function walkTextFiles(
+  dir: string,
+  relBase: string,
+  options: WalkTextOptions,
+): WalkedFile[] {
+  const out: WalkedFile[] = [];
+  const walk = (current: string, rel: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true }).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      const entryAbs = join(current, entry.name);
+      const entryRel = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (!options.skipDirs?.has(entry.name)) walk(entryAbs, entryRel);
+        continue;
+      }
+      const dot = entry.name.lastIndexOf(".");
+      if (dot === -1 || !options.extensions.has(entry.name.slice(dot))) continue;
+      if (options.skipFiles?.has(entryRel)) continue;
+      out.push({ abs: entryAbs, rel: entryRel });
+    }
+  };
+  walk(dir, relBase);
   return out;
 }
 
@@ -1546,7 +1604,7 @@ function stripLeadingAttrs(text: string): string {
 function scanModDeclarations(source: string): ModDeclScan {
   const keep = maskNonCode(source, true);
   const code = maskNonCode(source, false);
-  const lineOf = (idx: number): number => (code.slice(0, idx).match(/\n/g)?.length ?? 0) + 1;
+  const lineOf = (idx: number): number => lineAt(code, idx);
   const violations: { line: number; shape: string }[] = [];
   const modules: string[] = [];
 
@@ -1603,7 +1661,7 @@ function scanTransactionZoneRefs(text: string): ScanHit[] {
   const masked = maskNonCode(text);
   const rawLines = text.split("\n");
   const hits: ScanHit[] = [];
-  const lineOf = (index: number): number => (masked.slice(0, index).match(/\n/g)?.length ?? 0) + 1;
+  const lineOf = (index: number): number => lineAt(masked, index);
   const push = (index: number, match: string, captured: string): void => {
     const line = lineOf(index);
     hits.push({ line, text: (rawLines[line - 1] ?? "").trim(), match, captured });

@@ -30,10 +30,13 @@
 // 门槛检查；调用方式 `bun scripts/check-eastmoney-residue.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具仓库根：bun scripts/check-eastmoney-residue.ts [root]
 // 挂载于 scripts/check.sh 质量门槛序列；包装测试 scripts/check-eastmoney-residue.test.ts。
+// 行号定位与目录遍历消费 check-structure.ts 导出的家族共享单点
+// （lineAt / walkTextFiles，issue #1625）；禁令标记与豁免面属本守门政策，自持。
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { lineAt, walkTextFiles } from "./check-structure.ts";
 
 const DEFAULT_ROOT = join(fileURLToPath(import.meta.url), "..", "..");
 
@@ -107,34 +110,13 @@ function markerPattern(marker: string): RegExp {
   return new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
 }
 
-/** 递归收集扫描面文件（仓库相对路径排序，保证输出确定） */
-export function collectScanFiles(root: string): string[] {
-  const out: string[] = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )) {
-      if (entry.isDirectory()) {
-        if (!SKIP_DIRS.has(entry.name)) walk(join(dir, entry.name));
-        continue;
-      }
-      if (!SCAN_EXTENSIONS.has(entry.name.slice(entry.name.lastIndexOf(".")))) continue;
-      const rel = relative(root, join(dir, entry.name)).split("\\").join("/");
-      if (SKIP_FILES.has(rel)) continue;
-      out.push(rel);
-    }
-  };
-  walk(root);
-  return out;
-}
-
 /** 扫描单个文本：返回全部禁令标记命中（行号 1 起算，原文行去首尾空白） */
 export function scanResidue(rel: string, source: string): ResidueHit[] {
   const hits: ResidueHit[] = [];
   const lines = source.split("\n");
   for (const marker of BANNED_MARKERS) {
     for (const m of source.matchAll(markerPattern(marker))) {
-      const line = (source.slice(0, m.index ?? 0).match(/\n/g)?.length ?? 0) + 1;
+      const line = lineAt(source, m.index);
       hits.push({ file: rel, line, marker, text: (lines[line - 1] ?? "").trim() });
     }
   }
@@ -152,9 +134,14 @@ function main(): void {
     }
   }
 
-  // 单次收集全仓文件，逐文件扫描（读文件与扫描同轮完成，不做二次遍历）
-  const files = collectScanFiles(root);
-  const hits = files.flatMap((rel) => scanResidue(rel, readFileSync(join(root, rel), "utf8")));
+  // 单次收集全仓文件（家族共享单点 walkTextFiles，abs 读文件 / rel 报文定位），逐文件扫描
+  //（读文件与扫描同轮完成，不做二次遍历）
+  const scanned = walkTextFiles(root, "", {
+    extensions: SCAN_EXTENSIONS,
+    skipDirs: SKIP_DIRS,
+    skipFiles: SKIP_FILES,
+  });
+  const hits = scanned.flatMap((f) => scanResidue(f.rel, readFileSync(f.abs, "utf8")));
   const byFile = new Map<string, ResidueHit[]>();
   for (const hit of hits) {
     const list = byFile.get(hit.file) ?? [];
@@ -202,7 +189,7 @@ function main(): void {
     process.exit(1);
   }
   console.log(
-    `✓ 东财行情面零残留守门通过：扫描 ${files.length} 个文件，未登记端点域名零命中；` +
+    `✓ 东财行情面零残留守门通过：扫描 ${scanned.length} 个文件，未登记端点域名零命中；` +
       `已登记例外 ${REGISTERED_EXCEPTIONS.length} 条（FX 腿，#1551 退役前）`,
   );
 }

@@ -37,11 +37,13 @@
 // 门槛检查；调用方式 `bun scripts/check-infra-dml.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-infra-dml.ts [src-tauri-dir]
 // 挂载于 scripts/check.sh 质量门槛序列；包装测试 scripts/check-infra-dml.test.ts（#1158 归位）。
+// 行号定位与目录遍历消费 check-structure.ts 导出的家族共享单点
+// （lineAt / walkTextFiles，issue #1625）；禁令形态与豁免面属本守门政策，自持。
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { INFRA_SRC_REL, maskNonCode } from "./check-structure.ts";
+import { INFRA_SRC_REL, lineAt, maskNonCode, walkTextFiles } from "./check-structure.ts";
 
 const DEFAULT_SRC_TAURI = join(fileURLToPath(import.meta.url), "..", "..", "src-tauri");
 
@@ -198,7 +200,7 @@ export function scanDml(masked: string, bannedTables: readonly string[]): DmlHit
   const hits: DmlHit[] = [];
   const re = dmlPattern(bannedTables);
   for (const m of masked.matchAll(re)) {
-    const line = (masked.slice(0, m.index ?? 0).match(/\n/g)?.length ?? 0) + 1;
+    const line = lineAt(masked, m.index);
     hits.push({ line, text: (rawLines[line - 1] ?? "").trim(), match: m[0] });
   }
   return hits;
@@ -211,19 +213,8 @@ function isTestPath(relSegments: string[]): boolean {
   );
 }
 
-/** 递归收集目录下全部 .rs 文件（相对路径排序保证输出确定） */
-function walkRustFiles(dir: string, relBase: string): { abs: string; rel: string }[] {
-  const out: { abs: string; rel: string }[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  )) {
-    const abs = join(dir, entry.name);
-    const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) out.push(...walkRustFiles(abs, rel));
-    else if (entry.name.endsWith(".rs")) out.push({ abs, rel });
-  }
-  return out;
-}
+/** 扫描面：Rust 源文件（扩展名闭集，遍历机制归家族共享单点 walkTextFiles） */
+const RUST_EXTENSIONS: ReadonlySet<string> = new Set([".rs"]);
 
 function main(): void {
   const srcTauri = process.argv[2] ? resolve(process.argv[2]) : DEFAULT_SRC_TAURI;
@@ -243,8 +234,8 @@ function main(): void {
     }
   }
 
-  // 全量收集 → 免扫/外挂测试分流 → 生产文本扫描（掩码只抹注释、保留 SQL 字符串）
-  const allFiles = walkRustFiles(infraSrcDir, INFRA_SRC_REL);
+  // 全量收集（家族共享单点 walkTextFiles）→ 免扫/外挂测试分流 → 生产文本扫描（掩码只抹注释、保留 SQL 字符串）
+  const allFiles = walkTextFiles(infraSrcDir, INFRA_SRC_REL, { extensions: RUST_EXTENSIONS });
   const scannedFiles: { abs: string; rel: string }[] = [];
   const hitsByFile = new Map<string, DmlHit[]>();
   const exemptRel = new Set(EXEMPT_FILES.map((e) => `${INFRA_SRC_REL}/${e.file}`));
