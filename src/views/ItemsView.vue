@@ -35,7 +35,6 @@ import { useFocusParam } from "@/composables/useFocusParam";
 import { useWindowTier } from "@ledger/window-tier";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import { useReferenceStore } from "@/stores/reference";
-import { useAppStore } from "@/stores/app";
 import { useItemsStore } from "@/item/items";
 import { t } from "@ledger/i18n";
 
@@ -46,11 +45,15 @@ const reference = useReferenceStore();
 // 列与行内操作）；桌面档不挂（既有压缩行为一字不变）。
 const windowTier = useWindowTier();
 const isMobileTier = computed(() => windowTier.value === "mobile");
-const app = useAppStore();
 const itemsStore = useItemsStore();
 const message = useMessage();
 const router = useRouter();
 const route = useRoute();
+
+// 账本本位币基准（LedgerLevelSetting 首个成员，issue #858）：「本位币折算」行的符号与
+// 后缀取账本本位币——设备展示币种（app.defaultCurrency）自 #858 起只是本机表单预选/
+// 观感偏好，与折算语义分离；读取失败保持默认 CNY（issue #1664 范围外修复）。
+const baseCurrencyCode = ref<string>("CNY");
 
 // —— 创建唯一入口提示（issue #207，ADR-0025）：物品只能经交易右键「加入物品」创建，
 // 本页不提供手动新增表单；提示条常驻顶部并一键跳转交易页。——
@@ -369,6 +372,13 @@ onMounted(() => {
     .catch(() => {
       /* 候选为空，创建退化为手填 */
     });
+  // 本位币基准读取（设置页同款接缝）：失败不阻塞列表，保持默认 CNY 兑底
+  api
+    .getBaseCurrency()
+    .then((s) => (baseCurrencyCode.value = s.code))
+    .catch(() => {
+      /* 保持默认 CNY 兑底 */
+    });
 });
 </script>
 
@@ -555,8 +565,8 @@ onMounted(() => {
           }}{{ t("items.currencySuffix", { code: detail.currency_code }) }}
         </NDescriptionsItem>
         <NDescriptionsItem :label="t('items.detail.label.native')">
-          {{ formatAmount(detail.cost_native_cents, reference.getCurrency(app.defaultCurrency))
-          }}{{ t("items.currencySuffix", { code: app.defaultCurrency }) }}
+          {{ formatAmount(detail.cost_native_cents, reference.getCurrency(baseCurrencyCode))
+          }}{{ t("items.currencySuffix", { code: baseCurrencyCode }) }}
         </NDescriptionsItem>
         <NDescriptionsItem :label="t('items.detail.label.note')">{{
           detail.note ?? "—"

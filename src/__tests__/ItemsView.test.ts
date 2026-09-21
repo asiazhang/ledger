@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
 import { assertMobileTierScrollX } from "@ledger/test-support/mobile-scroll-x";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import type { InvokeSeamOverride } from "@ledger/test-support/invoke-mock";
 import { componentVm } from "@ledger/test-support/component-vm";
 import { findButton } from "@ledger/test-support/dom";
 import { mount, flushPromises, DOMWrapper } from "@vue/test-utils";
@@ -145,7 +146,10 @@ const mockExpenseTxs: Transaction[] = [
   },
 ];
 
-function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
+function setupInvoke(
+  expenseTxs: Transaction[] = mockExpenseTxs,
+  extraOverrides: Record<string, InvokeSeamOverride> = {},
+) {
   wireInvokeSeam({
     overrides: {
       // list_currencies 参考命令本场景需 USD 行（$ 金额格式化断言，overrides 优先于参考兑底）
@@ -191,6 +195,9 @@ function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
         itemList = itemList.filter((i) => i.id !== id);
         return Promise.resolve();
       },
+      // 用例级追加桩（如 get_base_currency）：与基础桩合并在同一 overrides 表内，
+      // 不能在 options 顶层展开（会整体替换 overrides、挤掉基础桩）。
+      ...extraOverrides,
     },
   });
 }
@@ -412,6 +419,27 @@ describe("ItemsView 物品详情（issue #117）", () => {
     const text = bodyQuery('[data-testid="item-detail-modal"]')!.textContent ?? "";
     expect(text).toContain("HHKB");
     expect(text).toContain("2025-06-01");
+  });
+
+  it("「本位币折算」行按账本本位币基准渲染符号与后缀，不取设备展示币种（#858 拆分遗留，issue #1664 范围外修复）", async () => {
+    // 账本本位币 USD、设备展示币种保持默认 CNY：本位币金额必须以 $ 渲染；
+    // 旧实现误用展示币种（¥ + CNY 两位小数），删掉 baseCurrencyCode 读取本用例变红。
+    itemList = [mockItems[1]];
+    setupInvoke(mockExpenseTxs, { get_base_currency: { code: "USD" } });
+    const wrapper = mount(ItemsView);
+    await flushPromises();
+
+    const detailBtn = findButton(wrapper, "详情", { exact: true });
+    await detailBtn!.trigger("click");
+    await flushPromises();
+
+    const text = bodyQuery('[data-testid="item-detail-modal"]')!.textContent ?? "";
+    // cost_native_cents = 890_000（USD 本位币分）→ $8,900
+    expect(text).toContain(formatAmount(890_000, usd));
+    expect(text).toContain("USD");
+    // 旧缺陷形态：按展示币种 CNY 渲染成 ¥8,900，不得回归
+    expect(text).not.toContain("¥8,900");
+    expect(text).not.toContain("CNY");
   });
 });
 
