@@ -705,6 +705,8 @@ fn writer_seam_populates_note_pinyin_on_insert_and_update() {
         amount_cents: 1000,
         currency_code: "CNY".into(),
         amount_native_cents: 1000,
+        fx_rate_used: None,
+        fx_rate_source: None,
         account_id: "a1".into(),
         to_account_id: None,
         category_id: None,

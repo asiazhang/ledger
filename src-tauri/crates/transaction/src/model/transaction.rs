@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::amount::TransactionKind;
+use crate::amount::{FxRateSource, TransactionKind};
 use ledger_infra::db::query::FromRow;
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
@@ -28,6 +28,12 @@ pub struct Transaction {
     /// 可选保单引用（issue #361 / ADR-0051 决策 3）：仅 expense/income 可挂（行为层准入）。
     pub policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
+    /// 折算来源留痕（issue #1548 / ADR-0011 修订，V029）：非本位币行记录本笔折算
+    /// 使用的汇率值与来源（`native ≈ amount_cents × fx_rate_used`，到分）；
+    /// 与本位币同币种、无现金腿（split）及写入时点早于留痕功能的存量行为 `None`。
+    /// 读回解释用，不参与检索与幂等身份。
+    pub fx_rate_used: Option<f64>,
+    pub fx_rate_source: Option<FxRateSource>,
     pub note: Option<String>,
     pub date: String,
     pub created_at: String,
@@ -147,6 +153,8 @@ impl FromRow for Transaction {
             is_deleted: row.get::<_, i64>(16)? != 0,
             merchant_id: row.get(17)?,
             policy_id: row.get(18)?,
+            fx_rate_used: row.get(19)?,
+            fx_rate_source: row.get(20)?,
             // 来源列非库列：FromRow 恒空，由列表/搜索读路径 `attach_sources` 按页填充。
             source: None,
             // 转换扩展同规：非库列，由列表/搜索读路径 `attach_convert_fields` 按页填充。

@@ -74,6 +74,8 @@ describe("useTransferForm", () => {
       amount_cents: 50000,
       currency_code: "CNY",
       amount_native_cents: 50000,
+      fx_rate_used: null,
+      fx_rate_source: null,
       account_id: "acc-1",
       to_account_id: "acc-2",
       funding_account_id: null,

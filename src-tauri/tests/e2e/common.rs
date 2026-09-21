@@ -105,7 +105,7 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
         .prepare(
             "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
              to_account_id,funding_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,\
-             version,device_id,is_deleted,merchant_id,policy_id \
+             version,device_id,is_deleted,merchant_id,policy_id,fx_rate_used,fx_rate_source \
              FROM transactions WHERE is_deleted=0 ORDER BY date DESC, created_at DESC, id DESC",
         )
         .unwrap();
@@ -130,6 +130,8 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
             is_deleted: r.get::<_, i64>(16)? != 0,
             merchant_id: r.get(17)?,
             policy_id: r.get(18)?,
+            fx_rate_used: r.get(19)?,
+            fx_rate_source: r.get(20)?,
             // 步骤侧直读快照不做来源反查：来源契约断言一律走列表命令（transactions_source_steps）。
             source: None,
             // 转换扩展同规：直读快照不反查，展示口径断言走列表命令。

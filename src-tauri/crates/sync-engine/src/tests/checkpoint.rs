@@ -809,6 +809,15 @@ fn bootstrap_migrates_older_schema_snapshot() {
                 [],
             )
             .unwrap();
+        // V029（issue #1548）：折算来源留痕两列。
+        for column in ["fx_rate_used", "fx_rate_source"] {
+            stale
+                .execute(
+                    &format!("ALTER TABLE transactions DROP COLUMN {column}"),
+                    [],
+                )
+                .unwrap();
+        }
         stale
             .execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_refund ON transactions(refund_of_transaction_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_sync ON transactions(updated_at, device_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_deleted ON transactions(is_deleted, updated_at);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_amount ON transactions(amount_cents);",

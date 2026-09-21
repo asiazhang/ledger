@@ -315,7 +315,7 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
     // 与通用 kind / 定时引擎共用同一折算路径（按交易日入口 convert_to_native_on_trade_date，
     // #1547：按交易所属 ISO 周命中汇率历史，基准为默认币种）。
-    let amount_native_cents = amount::convert_to_native_on_trade_date(
+    let native = amount::convert_to_native_on_trade_date(
         conn,
         amount_cents,
         &account_currency,
@@ -327,7 +327,9 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
             kind: TransactionKind::Buy,
             amount_cents,
             currency_code: account_currency,
-            amount_native_cents,
+            amount_native_cents: native.native_cents,
+            fx_rate_used: native.fx_rate_used,
+            fx_rate_source: native.fx_rate_source,
             account_id: input.account_id.clone(),
             // 现金腿归结算账户，不存在转入侧：携带已在守卫段拒绝，恒 None（issue #1187）。
             to_account_id: None,
@@ -447,7 +449,7 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
     // 与通用 kind / 定时引擎共用同一折算路径（按交易日入口 convert_to_native_on_trade_date，
     // #1547：按交易所属 ISO 周命中汇率历史，基准为默认币种）。
-    let amount_native_cents = amount::convert_to_native_on_trade_date(
+    let native = amount::convert_to_native_on_trade_date(
         conn,
         amount_cents,
         &account_currency,
@@ -463,7 +465,9 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
             kind: TransactionKind::Sell,
             amount_cents,
             currency_code: account_currency,
-            amount_native_cents,
+            amount_native_cents: native.native_cents,
+            fx_rate_used: native.fx_rate_used,
+            fx_rate_source: native.fx_rate_source,
             account_id: input.account_id.clone(),
             // 现金腿归结算账户，不存在转入侧：携带已在守卫段拒绝，恒 None（issue #1187）。
             to_account_id: None,
@@ -609,7 +613,7 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
     let consumed = lots::plan(conn, &active_lots, quantity)?;
     let carried_cost_cents = lots::total_cost(&consumed);
     // 按交易日入口折算（#1547）：结转成本按交易所属 ISO 周的汇率历史折算。
-    let amount_native_cents = amount::convert_to_native_on_trade_date(
+    let native = amount::convert_to_native_on_trade_date(
         conn,
         carried_cost_cents,
         &account_currency,
@@ -623,7 +627,9 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
             // 转入批次以其锚定闭合（既有「耗尽批次成本闭合」机制零改动）。
             amount_cents: carried_cost_cents,
             currency_code: account_currency,
-            amount_native_cents,
+            amount_native_cents: native.native_cents,
+            fx_rate_used: native.fx_rate_used,
+            fx_rate_source: native.fx_rate_source,
             account_id: input.account_id.clone(),
             // 两腿是标的而非账户：转入账户已拒绝、出资账户已被准入拒绝，恒 None。
             to_account_id: None,
@@ -804,6 +810,9 @@ fn prepare_split(
             amount_cents: 0,
             currency_code: account_currency,
             amount_native_cents: 0,
+            // 无现金腿不经汇率表（折算恒 0），无折算留痕（#1548 空值语义）。
+            fx_rate_used: None,
+            fx_rate_source: None,
             account_id: input.account_id.clone(),
             // 单标的、不跨账户：转入账户已拒绝、出资账户已被准入拒绝，恒 None。
             to_account_id: None,
@@ -911,7 +920,7 @@ fn prepare_dividend(conn: &Connection, input: &TransactionInput) -> Result<Divid
         &account_currency,
     )?;
     // 按交易日入口折算（#1547）：分红现金腿按交易所属 ISO 周的汇率历史折算。
-    let amount_native_cents = amount::convert_to_native_on_trade_date(
+    let native = amount::convert_to_native_on_trade_date(
         conn,
         input.amount_cents,
         &account_currency,
@@ -922,7 +931,9 @@ fn prepare_dividend(conn: &Connection, input: &TransactionInput) -> Result<Divid
             kind: TransactionKind::Dividend,
             amount_cents: input.amount_cents,
             currency_code: account_currency,
-            amount_native_cents,
+            amount_native_cents: native.native_cents,
+            fx_rate_used: native.fx_rate_used,
+            fx_rate_source: native.fx_rate_source,
             account_id: input.account_id.clone(),
             // 单标的、不跨账户：转入标的 / 转入账户已拒绝，出资账户已被准入拒绝。
             to_account_id: None,

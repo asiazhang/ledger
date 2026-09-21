@@ -147,6 +147,8 @@ describe("CategoryForm.vue", () => {
       amount_cents: 5000,
       currency_code: "CNY",
       amount_native_cents: 5000,
+      fx_rate_used: null,
+      fx_rate_source: null,
       account_id: "acc-1",
       to_account_id: null,
       funding_account_id: null,

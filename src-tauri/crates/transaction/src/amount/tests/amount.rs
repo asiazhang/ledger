@@ -488,21 +488,22 @@ fn convert_to_native_current_ignores_fx_rate_history() {
 // convert_to_native_on_trade_date（按交易日折算，#1547：写路径取数汇率历史）
 // ---------------------------------------------------------------------------
 
-/// 与本位币同币种 → 原样返回，与当期入口一致（#1541 验收：新入口对这条共同
-/// 不变量可被单测直接调用）。
+/// 与本位币同币种 → 原样返回、无折算留痕（金额与两个溯源列均为空值语义），
+/// 与当期入口一致（#1541 验收：新入口对这条共同不变量可被单测直接调用；
+/// 空值语义为 #1548 验收 3 的接缝级断言）。
 #[test]
 fn convert_to_native_on_trade_date_same_currency_is_identity_matches_current() {
     let conn = test_support::open();
-    assert_eq!(
-        convert_to_native_on_trade_date(
-            &conn,
-            12345,
-            &default_currency_code(&conn).unwrap(),
-            "2026-01-07"
-        )
-        .unwrap(),
-        12345
-    );
+    let conv = convert_to_native_on_trade_date(
+        &conn,
+        12345,
+        &default_currency_code(&conn).unwrap(),
+        "2026-01-07",
+    )
+    .unwrap();
+    assert_eq!(conv.native_cents, 12345);
+    assert_eq!(conv.fx_rate_used, None, "同币种不折算：无汇率留痕");
+    assert_eq!(conv.fx_rate_source, None, "同币种不折算：无来源留痕");
 }
 
 /// 历史某周的交易按该周汇率折算（断言到分）：周一为周键，周内任一日期同值；
@@ -515,23 +516,79 @@ fn convert_to_native_on_trade_date_uses_week_rate_of_trade_date() {
     test_support::seed_fx_rate_history(&conn, "fxh-w2", "USD", "CNY", "2026-01-12", 8.0);
     // 周三 2026-01-07 与周日 2026-01-11 都命中同一周键，按该周汇率折算到分。
     assert_eq!(
-        convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").unwrap(),
+        convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07")
+            .unwrap()
+            .native_cents,
         75000
     );
     assert_eq!(
-        convert_to_native_on_trade_date(&conn, 12345, "USD", "2026-01-11").unwrap(),
+        convert_to_native_on_trade_date(&conn, 12345, "USD", "2026-01-11")
+            .unwrap()
+            .native_cents,
         92588
     );
     // 下周的交易用下周的点（12345 × 8.0）。
     assert_eq!(
-        convert_to_native_on_trade_date(&conn, 12345, "USD", "2026-01-13").unwrap(),
+        convert_to_native_on_trade_date(&conn, 12345, "USD", "2026-01-13")
+            .unwrap()
+            .native_cents,
         98760
     );
     // 港币交易按交易周折算（#1547 验收字面）：52508160 分 × 0.9 = 47257344 分。
     test_support::seed_fx_rate_history(&conn, "fxh-hkd", "HKD", "CNY", "2026-01-05", 0.9);
     assert_eq!(
-        convert_to_native_on_trade_date(&conn, 52_508_160, "HKD", "2026-01-07").unwrap(),
+        convert_to_native_on_trade_date(&conn, 52_508_160, "HKD", "2026-01-07")
+            .unwrap()
+            .native_cents,
         47_257_344
+    );
+}
+
+/// 折算来源留痕（#1548 验收 2）：序列命中 → 汇率值存**使用值**（正查存序列点
+/// 本身、反向兑底存倒数），来源标为 `series`——仅凭留痕即可复算行内本位币金额。
+#[test]
+fn convert_to_native_on_trade_date_traces_series_rate_and_source() {
+    let conn = test_support::open();
+    // 正查：留痕 = 序列点本身（10000 × 7.5 = 75000 分，四舍五入到分）。
+    test_support::seed_fx_rate_history(&conn, "fxh-fwd", "USD", "CNY", "2026-01-05", 7.5);
+    let conv = convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").unwrap();
+    assert_eq!(conv.fx_rate_used, Some(7.5));
+    assert_eq!(conv.fx_rate_source, Some(FxRateSource::Series));
+    assert_eq!(
+        conv.native_cents, 75000,
+        "native = amount × 留痕汇率（到分）"
+    );
+
+    // 反向兑底：序列只有 CNY→USD 点，使用值为倒数（1 / 0.125 = 8）。
+    let conn = test_support::open();
+    test_support::seed_fx_rate_history(&conn, "fxh-rev", "CNY", "USD", "2026-01-05", 0.125);
+    let conv = convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").unwrap();
+    assert_eq!(conv.fx_rate_used, Some(8.0), "反向命中留痕存使用值（倒数）");
+    assert_eq!(conv.fx_rate_source, Some(FxRateSource::Series));
+    assert_eq!(conv.native_cents, 80000);
+}
+
+/// 折算来源闭集（#1548）：DB/wire 字符串边界严格互转，`series` 与 `explicit`
+///（#1549 接入的调用方显式给定）两值同源同序；未知值报码化错误不静默。
+#[test]
+fn fx_rate_source_closed_set_roundtrip_and_rejects_unknown() {
+    assert_eq!(
+        FxRateSource::ALL,
+        [FxRateSource::Series, FxRateSource::Explicit]
+    );
+    for source in FxRateSource::ALL {
+        assert_eq!(FxRateSource::parse(source.as_str()).unwrap(), source);
+        let json = serde_json::to_string(&source).unwrap();
+        assert_eq!(json, format!("\"{}\"", source.as_str()));
+        let back: FxRateSource = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, source);
+    }
+    let err = FxRateSource::parse("guessed").unwrap_err();
+    assert_eq!(err.code(), Some("fx.source-unknown"));
+    assert_eq!(
+        err.to_string(),
+        "未知折算来源: guessed（合法值: series/explicit）",
+        "message 逐字锁定（ADR-0050 只增不改）"
     );
 }
 
@@ -541,7 +598,9 @@ fn convert_to_native_on_trade_date_uses_reverse_rate_when_only_reverse_exists() 
     let conn = test_support::open();
     test_support::seed_fx_rate_history(&conn, "fxh-rev", "CNY", "USD", "2026-01-06", 0.125);
     assert_eq!(
-        convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").unwrap(),
+        convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07")
+            .unwrap()
+            .native_cents,
         80000
     );
 }
@@ -621,7 +680,9 @@ fn convert_to_native_on_trade_date_does_not_fall_back_to_current_table() {
 
     test_support::seed_fx_rate_history(&conn, "fxh-cur", "USD", "CNY", "2026-01-05", 7.5);
     assert_eq!(
-        convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07").unwrap(),
+        convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07")
+            .unwrap()
+            .native_cents,
         75000
     );
 }

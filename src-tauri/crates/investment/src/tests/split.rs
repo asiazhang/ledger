@@ -146,6 +146,39 @@ fn split_partial_sell_settles_at_restated_cost() {
     assert_eq!(realized_pnl_of(&conn, "inst-sp"), 10_000);
 }
 
+/// 折算来源留痕空值语义（#1548 验收 3）：split 无现金腿、不经汇率表——行内两个
+/// 留痕列恒为 NULL（「未折算」的诚实语义，不伪造来源）。
+#[test]
+fn split_row_has_no_fx_rate_trace() {
+    let conn = open();
+    seed_split_scene(&conn);
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sp",
+            "inst-sp",
+            100.0,
+            100_000,
+            "2026-01-10",
+        ),
+    )
+    .unwrap();
+    let split_id = create_transaction_internal(&conn, make_split_input("acc-sp", "inst-sp", 10.0))
+        .unwrap()
+        .id;
+
+    let (fx_rate_used, fx_rate_source): (Option<f64>, Option<String>) = conn
+        .query_row(
+            "SELECT fx_rate_used, fx_rate_source FROM transactions WHERE id=?1",
+            rusqlite::params![split_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(fx_rate_used, None, "无现金腿不折算：无汇率留痕");
+    assert_eq!(fx_rate_source, None, "无现金腿不折算：无来源留痕");
+}
+
 /// 多批次尾差归末批次（ADR-0106 决策 2）：非末批次每份成本独立取整稀释，
 /// 末批次吸收全部舍入尾差——Σ 权威批次剩余成本（锚点 − 记录消耗）精确不变，
 /// 且部分卖出后清仓的闭合恒等式不漂移。

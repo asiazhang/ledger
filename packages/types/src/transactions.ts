@@ -51,12 +51,21 @@ export interface TransactionSource {
   status: TransactionSourceStatus | null;
 }
 
+/** 折算来源闭集（issue #1548 / ADR-0011）：series=命中汇率历史序列（交易所属周）；
+ * explicit=调用方逐笔显式给定（写侧入参由后续票接入）。wire 字面与后端枚举同源。 */
+export type FxRateSource = "series" | "explicit";
+
 export interface Transaction extends Syncable {
   id: string;
   kind: TransactionKind;
   amount_cents: number;
   currency_code: string;
   amount_native_cents: number;
+  /** 折算来源留痕（issue #1548 / ADR-0011，V029）：非本位币行记录本笔折算使用的
+   * 汇率值（本位币金额 ≈ amount_cents × fx_rate_used，到分）与来源；
+   * 同币种 / 不折算（split 恒 0）/ 存量行为 null */
+  fx_rate_used: number | null;
+  fx_rate_source: FxRateSource | null;
   account_id: string;
   to_account_id: string | null;
   /** 可选出资账户（issue #935 / ADR-0096）：仅 buy/sell 可携带，读投影恒返回（无则 null） */

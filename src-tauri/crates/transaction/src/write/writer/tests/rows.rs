@@ -18,7 +18,8 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
     let row: RowFields = conn
         .query_row(
             "SELECT kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-             category_id,merchant_id,policy_id,refund_of_transaction_id,note,date \
+             category_id,merchant_id,policy_id,refund_of_transaction_id,note,date,\
+             fx_rate_used,fx_rate_source \
              FROM transactions WHERE id=?1",
             params![id],
             |r| {
@@ -35,6 +36,8 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
                     refund_of_transaction_id: r.get(9)?,
                     note: r.get(10)?,
                     date: r.get(11)?,
+                    fx_rate_used: r.get(12)?,
+                    fx_rate_source: r.get(13)?,
                 })
             },
         )
@@ -44,6 +47,8 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
         amount_cents: row.amount_cents,
         currency_code: row.currency_code,
         amount_native_cents: row.amount_native_cents,
+        fx_rate_used: row.fx_rate_used,
+        fx_rate_source: row.fx_rate_source,
         account_id: row.account_id,
         to_account_id: row.to_account_id,
         category_id: row.category_id,
@@ -70,6 +75,8 @@ struct RowFields {
     refund_of_transaction_id: Option<String>,
     note: Option<String>,
     date: String,
+    fx_rate_used: Option<f64>,
+    fx_rate_source: Option<tauri_app_lib::ledger_transaction::amount::FxRateSource>,
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +167,8 @@ fn update_row_overwrites_fields_and_bumps_version() {
         amount_cents: 3000,
         currency_code: "CNY".into(),
         amount_native_cents: 3000,
+        fx_rate_used: None,
+        fx_rate_source: None,
         account_id: "acc-a".into(),
         to_account_id: Some("acc-b".into()),
         category_id: None,

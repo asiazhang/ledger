@@ -248,6 +248,29 @@ fn buy_native_cents_converted_via_amount_seam() {
     );
 }
 
+/// 折算来源留痕（#1548 验收 2）：外币 buy 落库后，行内留痕 = 使用的序列汇率值 +
+/// `series` 来源——仅凭行即可复算本位币金额；负向判据：删除写入留痕的接线本测试即红。
+#[test]
+fn buy_row_traces_fx_rate_used_and_series_source() {
+    let conn = open();
+    seed_account(&conn, "acc-test-trace", "美股", "investment", "USD", 0);
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.2, &["2026-01-10"]);
+    seed_instrument(&conn, "inst-test-trace", "NVDA", "NVIDIA", "USD", "unknown");
+
+    let input = make_buy_input("acc-test-trace", "inst-test-trace", 10.0, 1_000_000, 500);
+    let txn_id = create_transaction_internal(&conn, input).unwrap().id;
+
+    let (fx_rate_used, fx_rate_source): (Option<f64>, Option<String>) = conn
+        .query_row(
+            "SELECT fx_rate_used, fx_rate_source FROM transactions WHERE id=?1",
+            params![txn_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(fx_rate_used, Some(7.2), "留痕 = 本笔使用的序列汇率值");
+    assert_eq!(fx_rate_source.as_deref(), Some("series"), "来源 = 序列命中");
+}
+
 /// 修改 buy 交易（行为层 revert→plan→apply 的 UPDATE 侧）同样经折算：非 1:1 汇率下
 /// `amount_native_cents` 保持折算值（INSERT/UPDATE 共用 prepare，防回归）。
 #[test]

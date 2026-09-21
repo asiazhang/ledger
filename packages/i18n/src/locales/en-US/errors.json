@@ -197,6 +197,7 @@
     "rate-non-positive": "exchange rate {0}->{1} is not positive: {2}",
     "reverse-rate-non-positive": "reverse exchange rate {0}->{1} is not positive: {2}",
     "rate-missing": "no exchange rate found for {0} -> {1} (neither direction)",
+    "source-unknown": "unknown fx rate source: {0} (valid values: {1})",
     "source-malformed": "the exchange rate source returned unparseable content; please retry the sync later",
     "source-unreachable": "the exchange-rate source is temporarily unreachable; check your network and try again",
     "source-no-data": "the exchange-rate source responded but currently has no usable rate data; please retry later"

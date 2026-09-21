@@ -820,3 +820,50 @@ async fn test_delete_convert_guarded_by_later_convert_returns_coded_400() {
     let (_, list) = get_json(&app, "/api/v1/transactions").await;
     assert_eq!(items_of(&list).len(), 1, "只剩建仓买入");
 }
+
+/// 折算来源留痕（#1548 / ADR-0011 修订）：批量导入非本位币历史行 → 列表读回
+/// 带出本笔使用的汇率值与来源（series）；同币种行两列为 null（空值语义）。
+/// 断言对准用户可观察结果（HTTP 读回），证明写路径留痕接线在壳层入口生效。
+#[tokio::test]
+async fn test_batch_import_foreign_currency_row_readback_exposes_fx_trace() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "港币账户").await;
+    // 交易周（2026-07-01 所属周）序列点：缺它整行被拒（缺汇率不静默降级）。
+    {
+        let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
+        test_support::seed_fx_rate_history(&guard, "fxh-api", "HKD", "CNY", "2026-06-29", 0.9);
+    }
+
+    let fx_tx = format!(
+        r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2026-07-01"}}"#
+    );
+    let cny_tx = format!(
+        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&fx_tx, &cny_tx], None)).await;
+    assert_eq!(created[0]["success"], true, "外币行应有汇率可折算");
+    assert_eq!(created[1]["success"], true);
+
+    let (_, body) = get_json(&app, "/api/v1/transactions").await;
+    let txs = items_of(&body);
+    assert_eq!(txs.len(), 2);
+    for tx in txs {
+        if tx["currency_code"] == "HKD" {
+            assert_eq!(tx["amount_native_cents"], 900, "1000 × 0.9 = 900 分");
+            assert_eq!(tx["fx_rate_used"], 0.9, "留痕 = 本笔使用的序列汇率值");
+            assert_eq!(tx["fx_rate_source"], "series", "来源 = 序列命中");
+        } else {
+            assert_eq!(tx["amount_native_cents"], 500);
+            assert_eq!(
+                tx["fx_rate_used"],
+                serde_json::Value::Null,
+                "同币种不折算：无汇率留痕"
+            );
+            assert_eq!(
+                tx["fx_rate_source"],
+                serde_json::Value::Null,
+                "同币种不折算：无来源留痕"
+            );
+        }
+    }
+}

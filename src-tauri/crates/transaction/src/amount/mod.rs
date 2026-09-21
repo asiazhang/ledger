@@ -14,7 +14,8 @@ mod kind;
 mod measure;
 
 pub use convert::{
-    convert_to_native_current, convert_to_native_on_trade_date, default_currency_code,
+    FxRateSource, NativeConversion, convert_to_native_current, convert_to_native_on_trade_date,
+    default_currency_code,
 };
 pub use kind::TransactionKind;
 pub use measure::{
