@@ -190,16 +190,16 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(restarted.findAll(".n-tabs-tab").map((t) => t.text())).toContain("定时");
   });
 
-  it("「通用」默认激活，含深色模式开关、展示币种下拉与日志卡片，不含账本级本位币基准（issue #858 币种设置拆分；issue #930 日志卡片迁入）", async () => {
+  it("「通用」默认激活，含深色模式开关与日志卡片，不含展示币种与账本级本位币基准（issue #858 币种设置拆分；issue #930 日志卡片迁入；#1664 展示币种迁「币种」页签）", async () => {
     const wrapper = mount(SettingsView);
     // 通用是首个 Tab，无需点击即挂载（show:lazy 语义）。
     const html = wrapper.html();
     expect(html).toContain("深色模式");
-    expect(html).toContain("展示币种");
     // 日志卡片（issue #930 / ADR-0022 修订）：等级下拉与「打开日志目录」同卡在末位。
     expect(html).toContain("日志等级");
     expect(html).toContain("打开日志目录");
-    // 本位币基准是账本级设置，落「币种」页签（#1664）。
+    // 币种域内容已迁「币种」页签（#1664）。
+    expect(html).not.toContain("展示币种");
     expect(html).not.toContain("本位币基准");
     // 深色模式开关反映当前主题（默认暗色）。
     expect(wrapper.find(".n-switch").attributes("aria-checked")).toBe("true");
@@ -212,11 +212,12 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(store.theme).toBe("light");
   });
 
-  it("「币种」含本位币基准与汇率同步卡，「分类」回归纯分类管理器（#1664，ADR-0022 修订）", async () => {
+  it("「币种」含本位币基准、展示币种与汇率同步卡，「分类」回归纯分类管理器（#1664，ADR-0022 修订）", async () => {
     const wrapper = mount(SettingsView);
     await openTab(wrapper, "币种");
     const html = wrapper.html();
     expect(html).toContain("本位币基准");
+    expect(html).toContain("展示币种");
     expect(html).toContain("同步汇率");
     // 币种字典本体仍无维护界面（ADR-0034，只读表格不回归）。
     expect(html).not.toContain("支持币种");

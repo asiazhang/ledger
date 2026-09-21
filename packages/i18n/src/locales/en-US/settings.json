@@ -447,7 +447,7 @@
     "baseCurrency": "Base Currency",
     "baseCurrencyHint": "Ledger-level setting: changes sync to all devices and keep the conversion basis consistent everywhere.",
     "displayCurrency": "Display Currency",
-    "displayCurrencyHint": "Per-device amount formatting and new-entry preselect; not synced.",
+    "displayCurrencyHint": "This device only: currency preselect for new forms and amount symbol hints; not synced, never used for base-currency conversion.",
     "baseCurrencyLoadFailed": "Failed to load base currency: {msg}",
     "baseCurrencySaveFailed": "Failed to save base currency: {msg}"
   },
