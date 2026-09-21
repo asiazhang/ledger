@@ -1,8 +1,8 @@
 #!/bin/sh
 # 文档一致性检查：地图完整性 / 术语唯一 / 导航一致 / ADR 编号唯一 / ADR 索引完整 /
-# ADR 索引反查 / 代码坐标 / 快照分组组数一致
+# ADR 索引反查 / 代码坐标 / 快照分组组数一致 / Migration 索引全等
 #
-# 八项校验：
+# 九项校验：
 #   ① CONTEXT-MAP.md 与 docs/contexts/CONTEXT-*.md 一一对应（地图断链、未挂地图的孤儿文件均报错）
 #   ② 术语全库唯一：分域词汇表条目标题（^## ）按括号前主干归一后比对，重复即报错
 #   ③ 导航一致：AGENTS.md 与 CONTEXT-MAP.md 引用的仓库内文件/目录必须存在（导航指向已删除文件即报错）
@@ -19,6 +19,10 @@
 #      不查遗漏的方向；判据取条目行而非「编号出现」，他行交叉引用不算（issue #1027）
 #   ⑧ ADR 索引反查：README 现行条目的编号必须有对应文件——⑦ 的反方向，防「ADR 已
 #      删除却仍留在现行索引」。tombstone 段用 `- **编号**` 形态，与现行条目天然区分
+#   ⑨ Migration 索引全等：src-tauri/migrations/ 下每个迁移文件都必须在
+#      docs/model/README.md 的 Migration 索引有一表行，索引表行也必须有对应迁移
+#      文件——「迁移目录 ↔ README 索引」双向全等（与⑦⑧ ADR 索引同形），防新
+#      迁移落盘后索引漂移（issue #1624：V027 / V028 合入后索引停在 V026）
 #
 # 任一校验失败即非零退出；错误信息为中文并定位到文件与术语。
 # 已挂入 scripts/check.sh 质量门槛序列，也可独立运行：scripts/check-docs.sh
@@ -193,10 +197,38 @@ if [ -f "$adr_readme" ]; then
   done
 fi
 
+# ── ⑨ Migration 索引全等（src-tauri/migrations/ ↔ docs/model/README.md）──────────────
+# 模型文档约定「表结构唯一事实来源是 migration，索引见文末」——新迁移落盘却忘记补
+# Migration 索引行时，读者与 AI 会照索引漏读 schema（实测漂移：V027 / V028 合入后
+# 索引停在 V026，issue #1624）。与⑦⑧ ADR 索引同形，双向都查：
+# 正向——迁移目录每个 V0XX__*.sql 须在索引有一表行；反向——索引表行须有对应迁移
+# 文件（迁移删除 / 改名后索引残留即红）。判据取「以 | `文件名` 开头的表行」，
+# 正文散文提及不算；V005 已移除的编号只住在脚注叙述，不落表行，天然不参与比对。
+model_readme=docs/model/README.md
+mig_dir=src-tauri/migrations
+if [ ! -f "$model_readme" ]; then
+  err "Migration 索引：$model_readme 不存在"
+elif [ ! -d "$mig_dir" ]; then
+  err "Migration 索引：迁移目录 $mig_dir 不存在"
+else
+  for f in "$mig_dir"/V[0-9][0-9][0-9]__*.sql; do
+    [ -e "$f" ] || continue
+    mig_name=$(basename "$f")
+    mig_name_re=$(printf '%s' "$mig_name" | sed 's/\./\\./g')
+    grep -qE "^\| \`$mig_name_re\`" "$model_readme" || \
+      err "Migration 未入索引：$mig_name 在 $model_readme 的 Migration 索引无表行（迁移落盘须同步补索引行）"
+  done
+  idx_names=$(grep -oE '^\| `V[0-9]{3}__[A-Za-z0-9_-]+\.sql`' "$model_readme" | sed 's/^| `//; s/`$//' | sort -u || true)
+  for mig_name in $idx_names; do
+    [ -f "$mig_dir/$mig_name" ] || \
+      err "Migration 索引反查：$model_readme 索引表行 $mig_name 无对应迁移文件（迁移删除 / 改名须同步索引）"
+  done
+fi
+
 # ── 结果 ────────────────────────────────────────────────────────────────
 if [ -s "$tmp" ]; then
   cat "$tmp"
   echo "❌ 文档一致性检查失败：$(wc -l <"$tmp" | tr -d ' ') 处问题（见上方 ✗ 列表）"
   exit 1
 fi
-echo "  ✓ 地图完整、术语唯一、导航一致、ADR 编号唯一、词汇表与模型文档坐标清零、快照分组组数一致、ADR 索引完整且可反查"
+echo "  ✓ 地图完整、术语唯一、导航一致、ADR 编号唯一、词汇表与模型文档坐标清零、快照分组组数一致、ADR 索引完整且可反查、Migration 索引双向全等"
