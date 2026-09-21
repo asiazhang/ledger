@@ -25,12 +25,46 @@
 //!   消费本模块的腿流投影 [`holdings_legs_by_instrument`]，issue #1654）；
 //!   资金加权收益率的边界市值消费账户维度扩展形态（issue #1195）。单标的走势
 //!   是价格直出，不消费本模块。
+//! - **同源第三投影（issue #1534）**：首笔持仓流水日（[`FIRST_POSITION_DATE`] /
+//!   [`first_position_date`]）是同一推算不变量的最早腿 MIN 投影，服务价格历史
+//!   回填深度的覆盖目标；三处 SQL 同步纪律见常量文档。
 
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
 use std::collections::HashMap;
 
 use ledger_infra::error::{AppError, Result};
+
+/// 首笔持仓流水日（标量子查询，issue #1534）：四臂腿流（buy/sell、convert 两腿、
+/// split）的最早交易日——价格历史回填深度的覆盖目标（基金历史回填要覆盖到
+/// 持仓期起点，见 ADR-0038 决策 6 修订）。与 [`holdings_as_of`] /
+/// [`holdings_legs_by_instrument`] 是同一推算不变量的 MIN 投影：认同一组腿
+///（quantity/to_quantity 非空）、排除同一组软删交易行与软删账户；dividend
+/// 零份额变动不入判。**三处 SQL 必须同步修改**：任何一侧腿口径变化（新增
+/// 腿类型、过滤条件变化）必须同时改另外两处，并保持 `tests/holdings_as_of`
+/// 的配对与首笔腿测试绿。
+///
+/// # 别名契约
+///
+/// 以 `i` 引用外层 `instruments` 行（同 [`crate::predicates::INVESTED_EXISTS`]）：
+/// 引用本常量的外层查询**必须**以 `i` 作为 instruments 表别名；逐标的读取走
+/// [`first_position_date`]，不再另写第二份 SQL。
+pub const FIRST_POSITION_DATE: &str = "(SELECT MIN(t.date) FROM security_transactions st \
+      JOIN transactions t ON t.id = st.transaction_id \
+      JOIN accounts a ON a.id = t.account_id \
+      WHERE t.is_deleted = 0 AND a.is_deleted = 0 \
+        AND ((st.action IN ('buy','sell','convert','split') AND st.quantity IS NOT NULL AND st.instrument_id = i.id) \
+          OR (st.action = 'convert' AND st.to_quantity IS NOT NULL AND st.to_instrument_id = i.id)))";
+
+/// 单标的的首笔持仓流水日（[`FIRST_POSITION_DATE`] 的逐标的读形态）：无持仓
+/// 流水返回 `None`（覆盖目标维持近两年，行为不变）。
+pub fn first_position_date(conn: &Connection, instrument_id: &str) -> Result<Option<String>> {
+    let sql = format!("SELECT {FIRST_POSITION_DATE} FROM instruments i WHERE i.id = ?1");
+    let date: Option<String> = conn
+        .query_row(&sql, params![instrument_id], |r| r.get(0))
+        .map_err(AppError::from)?;
+    Ok(date)
+}
 
 /// 某标的（或全组合，`instrument_id=None`）在某交易日的持有数量。
 ///
@@ -137,9 +171,11 @@ pub(crate) type HoldingsLegStream = HashMap<String, Vec<(String, f64)>>;
 /// 仅认 buy/sell、convert 两腿与 split 腿，逐腿同样的 `quantity`/`to_quantity`
 /// 非空条件、同样的软删除账户与软删交易行排除——差异只有两点：标的维度
 ///（分腿归属替代 `COALESCE(?2,…)` 钉定）与无日期上界（上界由消费方的游标
-/// 推进承担，而非 SQL 谓词）。**两处 SQL 必须同步修改**：任何一侧口径变化
-///（新增腿类型、过滤条件变化）必须同时改另一侧，并保持 `tests/holdings_as_of`
-/// 的配对测试绿（同一夹具上逐标的逐日期：腿流前缀和 ≡ `holdings_as_of`）。
+/// 推进承担，而非 SQL 谓词）。**多处 SQL 必须同步修改**：任何一侧口径变化
+///（新增腿类型、过滤条件变化）必须同时改 [`holdings_as_of`] 与
+/// [`FIRST_POSITION_DATE`]，并保持 `tests/holdings_as_of`
+/// 的配对测试绿（同一夹具上逐标的逐日期：腿流前缀和 ≡ `holdings_as_of`；
+/// 首笔腿 = 腿流首行日期）。
 ///
 /// 消费方（组合走势，issue #1654）：价格行按标的分组、组内按交易日升序，
 /// 游标扫过「交易日 ≤ 采样日」的前缀逐腿累加——替代逐价格行全量重算

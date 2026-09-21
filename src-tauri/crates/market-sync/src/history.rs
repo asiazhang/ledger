@@ -8,9 +8,10 @@
 //!
 //! 三块事实收口在本模块：
 //! - **队列 = 派生事实**（[`collect_backfill_queue`]）：「有价格通道但历史不
-//!   完整」——首刷（磁盘上没有任何历史序列）或缺周点（最新历史点 / 净值水位
-//!   落后当前自然周超过一周）。不落任务表、不新增持久状态；进程退出即硬停
-//!   （单只原子由 ADR-0122 决策 8 / issue #1373 保证，中断不留半根历史），
+//!   完整」——首刷（磁盘上没有任何历史序列）、缺周点（最新历史点 / 净值水位
+//!   落后当前自然周超过一周）或覆盖不足（最早历史周点晚于首笔持仓流水日
+//!   所在周，issue #1534 基金深回填）。不落任务表、不新增持久状态；进程退出
+//!   即硬停（单只原子由 ADR-0122 决策 8 / issue #1373 保证，中断不留半根历史），
 //!   下次启动继续。排队顺序**持仓优先**（投资域 [`INVESTED_EXISTS`] 谓词），
 //!   同级按 symbol 升序。
 //! - **一轮补全**（[`run_history_backfill_round`]）：排空队列——逐只调用
@@ -46,6 +47,7 @@ use tauri::{AppHandle, Runtime};
 
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::{AppError, Result};
+use ledger_investment::holdings::FIRST_POSITION_DATE;
 use ledger_investment::predicates::INVESTED_EXISTS;
 use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
 
@@ -65,7 +67,7 @@ use super::model::WriteWitness;
 use super::progress::SyncProgress;
 use super::session::{FacadeWriteSession, ScopedSession};
 use ledger_investment::backfill;
-use ledger_investment::prices::{TENCENT_PRICE_SOURCE, price_value_to_cents, upsert_price_history};
+use ledger_investment::prices::{TENCENT_PRICE_SOURCE, upsert_price_history};
 
 /// 缺周点判据（ADR-0122 决策 2「逐只采集只服务首刷与缺周点」的队列半边）：
 /// 参考点（行情标的历史的最新周点 / 基金水位的净值日期）落后当前自然周**超过
@@ -97,8 +99,10 @@ struct BackfillItem {
 }
 
 /// 补全队列收集（派生事实，一条 SQL）：库内全部标的按投资域单点派生价格通道，
-/// 只留行情与净值两通道，再按「历史不完整」过滤——首刷（无任何历史序列）或
-/// 缺周点（见 [`week_behind`]）。排序**持仓优先**（[`INVESTED_EXISTS`] 谓词），
+/// 只留行情与净值两通道，再按「历史不完整」过滤——首刷（无任何历史序列）、
+/// 缺周点（见 [`week_behind`]）或覆盖不足（基金通道：最早历史周点晚于首笔
+/// 持仓流水日所在周，见 [`super::fund_nav::coverage_short_of_first_position`]，
+/// issue #1534）。排序**持仓优先**（[`INVESTED_EXISTS`] 谓词），
 /// 同级按 symbol 升序；跳过的行（手动报价 / 无来源通道、历史完整的标的）不进
 /// 队列、零请求。
 fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
@@ -106,7 +110,9 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
     let sql = format!(
         "SELECT i.id, i.symbol, i.market, i.currency_code, i.instrument_type, i.constant_unit_price, \
                 MAX(ph.trade_date) AS latest_history, \
+                MIN(ph.trade_date) AS earliest_history, \
                 MAX(mp.nav_date) AS watermark, \
+                {FIRST_POSITION_DATE} AS first_position_date, \
                 CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested \
          FROM instruments i \
          LEFT JOIN price_history ph ON ph.instrument_id = i.id \
@@ -125,7 +131,9 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
             row.get::<_, Option<i64>>(5)?,
             row.get::<_, Option<String>>(6)?,
             row.get::<_, Option<String>>(7)?,
-            row.get::<_, i64>(8)? != 0,
+            row.get::<_, Option<String>>(8)?,
+            row.get::<_, Option<String>>(9)?,
+            row.get::<_, i64>(10)? != 0,
         ))
     })?;
     let mut queue = Vec::new();
@@ -138,7 +146,9 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
             kind,
             constant_unit_price,
             latest_history,
+            earliest_history,
             watermark,
+            first_position_date,
             _invested,
         ) = row?;
         // 价格通道判定消费投资域单点（issue #1060），与标的读投影同源；
@@ -163,10 +173,18 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
             }
             PriceChannel::FundNav => {
                 // 首刷判据 = 磁盘上没有任何历史序列（issue #1059，与基金分区
-                // 同源）；已有历史者按净值水位判缺周点（水位缺失保守判缺）。
+                // 同源）；已有历史者按净值水位判缺周点（水位缺失保守判缺），
+                // 或按覆盖目标判覆盖不足——最早历史周点晚于首笔持仓周 → 深回填
+                //（issue #1534，判据单点 [`super::fund_nav::coverage_short_of_first_position`]）。
                 let incomplete = match &latest_history {
                     None => true,
-                    Some(_) => week_behind(watermark.as_deref(), today),
+                    Some(_) => {
+                        week_behind(watermark.as_deref(), today)
+                            || super::fund_nav::coverage_short_of_first_position(
+                                earliest_history.as_deref(),
+                                first_position_date.as_deref(),
+                            )
+                    }
                 };
                 if !incomplete {
                     continue;
@@ -229,7 +247,9 @@ where
     }
     let instrument_id = inst.instrument_id.clone();
     let has_new = session
-        .with_connection(move |conn| has_new_weekly_point(conn, &instrument_id, &points))
+        .with_connection(move |conn| {
+            super::incremental::has_new_weekly_point(conn, &instrument_id, &points)
+        })
         .await?;
     if !has_new {
         return Ok(false);
@@ -249,29 +269,6 @@ where
         })
         .await
         .map(|written| written > 0)
-}
-
-/// 新点判定：降采样周点中是否存在「库内无此周」或「同周不同值」的行。
-/// 值比较按价格刻度换算后的存量列（`price_cents`）直比，浮点展示值不参与。
-fn has_new_weekly_point(
-    conn: &Connection,
-    instrument_id: &str,
-    points: &[(String, f64)],
-) -> Result<bool> {
-    let mut stmt =
-        conn.prepare("SELECT trade_date, price_cents FROM price_history WHERE instrument_id = ?1")?;
-    let existing: std::collections::HashMap<String, i64> = stmt
-        .query_map(params![instrument_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })?
-        .collect::<std::result::Result<_, _>>()?;
-    for (trade_date, close) in points {
-        let cents = price_value_to_cents(*close);
-        if existing.get(trade_date) != Some(&cents) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// 现价刷新直落当周采样点（ADR-0122 决策 2 / issue #1377）：只服务**已有历史

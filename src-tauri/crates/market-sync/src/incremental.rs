@@ -44,7 +44,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use chrono::{Datelike, NaiveDate};
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 
 use super::bulk::{BulkFetchSurfaces, BulkNavPoint, FetchFundBatch, FundBatch};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
@@ -714,6 +714,31 @@ pub(super) fn write_weekly_price_history(
         )?;
     }
     Ok(count)
+}
+
+/// 新点判定（行情日 K 回填与基金净值回填共用，issue #1534 起两通道同用）：
+/// 降采样周点中是否存在「库内无此周」或「同周不同值」的行。值比较按价格刻度
+/// 换算后的存量列（`price_cents`）直比，浮点展示值不参与——全部无新点时
+/// 调用方零落库（零新点不置脏不广播的判据半边）。
+pub(super) fn has_new_weekly_point(
+    conn: &Connection,
+    instrument_id: &str,
+    points: &[(String, f64)],
+) -> Result<bool> {
+    let mut stmt =
+        conn.prepare("SELECT trade_date, price_cents FROM price_history WHERE instrument_id = ?1")?;
+    let existing: std::collections::HashMap<String, i64> = stmt
+        .query_map(params![instrument_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+    for (trade_date, close) in points {
+        let cents = price_value_to_cents(*close);
+        if existing.get(trade_date) != Some(&cents) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// 行情分区单只落库作业的写入点标记（issue #1412）：作业闭包是 `Send + 'static`

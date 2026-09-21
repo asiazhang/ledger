@@ -1,9 +1,12 @@
 //! 基金**历史回填**单元（issue #1388 自 `fund_nav` 拆出；ADR-0038 决策 6 /
 //! ADR-0122 决策 2；issue #1377 起归价格历史后台补全专用）：首刷判据 = 磁盘上
-//! 没有任何历史序列，首刷回填近两年；增量以现价缓存净值日期为水位、取水位次日
-//! 之后。取数走**新浪单只全历史面**（issue #1566 / ADR-0130 决策 2：一次请求
-//! 整只历史单位净值，含已终止基金），窗口语义由本地裁剪表达——首刷裁剪到近两年
-//! 窗口、增量裁剪到水位次日之后，不依赖服务端窗口过滤行为。
+//! 没有任何历史序列；首刷回填覆盖到**首笔持仓流水日所在周**（无持仓流水则近
+//! 两年，issue #1534 深度放宽——单请求全量通道下不增网络请求，只多落周采样行）；
+//! 增量以现价缓存净值日期为水位、取水位次日之后；覆盖不足（最早周点晚于首笔
+//! 持仓周）的存量基金整根深回填到首笔持仓周。取数走**新浪单只全历史面**
+//!（issue #1566 / ADR-0130 决策 2：一次请求整只历史单位净值，含已终止基金），
+//! 窗口语义由本地裁剪表达，不依赖服务端窗口过滤行为。
+//! 零新点不落库（重复补全幂等，全部周点已入库且同值时整只零写入，issue #1534）。
 //! 未打标标的回填前先经官方披露判定门（issue #1563 / ADR-0126 决策 3 换源）：
 //! 确认即打标收尾、零抓取，万份收益不得经取数面冒充单位净值落库（#1342）。
 //!
@@ -18,7 +21,9 @@ use ledger_investment::prices::{
 
 use super::channels::FetchFuture;
 use super::fund_nav::{
-    NavPoint, mark_constant_price_on_confirm, nav_window, read_fund_watermark, trim_to_window,
+    NavPoint, coverage_short_of_first_position, deep_backfill_window,
+    mark_constant_price_on_confirm, nav_window, read_fund_coverage, read_fund_watermark,
+    trim_to_window,
 };
 use super::http::KlineBar;
 use super::session::ScopedSession;
@@ -36,10 +41,13 @@ pub(super) struct BackfillOutcome {
 /// #1377 起归价格历史后台补全专用——现价刷新走
 /// [`super::fund_price_refresh::refresh_one_fund_price`]，「同步标的信息」不再承担首刷）：
 /// **首刷判据 = 磁盘上没有任何历史序列**（issue
-/// #1059）。首刷回填近两年，已有历史序列者以现价缓存的净值日期为水位增量（水位
-/// 当日不重拉、只取水位次日之后）。取数一次请求拿整只历史单位净值（新浪全历史
-/// 面，含已终止基金），本地裁剪到窗口（首刷近两年 / 增量水位次日；取数失败上抛
-/// 交下一窗口重试，不把不可信结果当「无净值」——fail-closed，issue #1566）。
+/// #1059）。首刷窗口起点 = 近两年与首笔持仓流水日所在周周一的较早者（无持仓
+/// 流水 = 近两年；issue #1534 深度放宽）；已有历史序列者若覆盖不足（最早周点
+/// 晚于首笔持仓周）同样整根深回填到首笔持仓周，否则以现价缓存的净值日期为水位
+/// 增量（水位当日不重拉、只取水位次日之后）。取数一次请求拿整只历史单位净值
+///（新浪全历史面，含已终止基金），本地裁剪到窗口（取数失败上抛交下一窗口重试，
+/// 不把不可信结果当「无净值」——fail-closed，issue #1566）。窗口内全部周点均已
+/// 入库且同值时零落库（重复补全幂等，零新点不置脏不广播，issue #1534）。
 /// 净值点降采样落 PriceHistory（同周整周覆盖幂等），窗口内最新公布净值落现价缓存
 ///（现价 = 单位净值、priced_at = nav_date = 净值日期，与 #301 添加基金同形）。
 /// 周采样与现价落库在**一只一个事务**里整只一次提交（ADR-0122 决策 8 / issue
@@ -79,13 +87,19 @@ where
     //（#303 验收在真实账本上未成立的根因）。水位只服务已有历史序列的增量。
     // 两条读经作用域会话短暂取一次连接完成（issue #1275）；抓取前不再触碰连接。
     let (watermark, has_history) = read_fund_watermark(session, fund).await?;
-    let first_fill = !has_history;
-    let window_watermark = if first_fill {
-        None
+    // 覆盖深度（issue #1534）：首笔持仓流水日早于近两年的基金，窗口起点放宽到
+    // 首笔持仓所在周；已有历史但覆盖不足（最早周点晚于首笔持仓周）者同样深回填。
+    let (earliest_history, first_position_date) = read_fund_coverage(session, fund).await?;
+    let deep = !has_history
+        || coverage_short_of_first_position(
+            earliest_history.as_deref(),
+            first_position_date.as_deref(),
+        );
+    let (start, end) = if deep {
+        deep_backfill_window(first_position_date.as_deref(), today)
     } else {
-        watermark.as_deref()
+        nav_window(watermark.as_deref(), today)
     };
-    let (start, end) = nav_window(window_watermark, today);
 
     // 判定门前置（issue #1563 / ADR-0126 决策 3 换源）：官方披露自报形态确认即
     // 打标收尾——不发起净值抓取，万份收益不得经取数面冒充单位净值落库（#1342）。
@@ -171,12 +185,15 @@ where
     // 周采样与现价落库同在一只一个事务里（ADR-0122 决策 8 / issue #1373）：单只
     // 标的的历史回填整只一次提交，第 N 个周点写入失败或中途中断整体回滚，磁盘上
     // 不留半根历史——「有历史序列」与「历史完整」由此等价，首刷判据（ADR-0038
-    // 决策 6）依赖的正是这个等价。单位净值即价格（ADR-0038 决策 3），与日线共用
-    // 降采样与「整周覆盖」幂等（同周重复获取零重复行）。落库经作用域会话短暂取
-    // 一次连接（issue #1275）；抓取已在会话之外完成。事务经 [`ensure_transaction`]
-    // （ADR-0033 嵌套感知）：连接 autocommit 则自持事务、已在事务中则加入外层。
-    // 「一只一事务」的前提是写错误**不被吞**——本函数的写失败一律经 `?` 上抛，
-    // 加入外层时由外层持有者回滚，同样整只不留；任一层吞掉写错误才会破坏前提。
+    // 决策 6）依赖的正是这个等价。写入前先做新点判定（与行情日 K 通道同一单点，
+    // issue #1534）：窗口内全部周点均已入库且同值（覆盖不足但源无更深点 / 重复
+    // 补全）时整只零落库、不计写入——零新点不置脏不广播。单位净值即价格（ADR-0038
+    // 决策 3），与日线共用降采样与「整周覆盖」幂等（同周重复获取零重复行）。落库
+    // 经作用域会话短暂取一次连接（issue #1275）；抓取已在会话之外完成。事务经
+    // [`ensure_transaction`]（ADR-0033 嵌套感知）：连接 autocommit 则自持事务、
+    // 已在事务中则加入外层。「一只一事务」的前提是写错误**不被吞**——本函数的
+    // 写失败一律经 `?` 上抛，加入外层时由外层持有者回滚，同样整只不留；任一层
+    // 吞掉写错误才会破坏前提。
     let bars: Vec<KlineBar> = collected
         .iter()
         .map(|p| KlineBar {
@@ -188,9 +205,16 @@ where
     let currency = fund.currency.clone();
     let latest_date = latest.date.clone();
     let latest_nav = latest.nav;
-    session
+    let written: bool = session
         .with_connection(move |conn| {
             ensure_transaction(conn, || {
+                // 零新点防线（issue #1534）：降采样后与库内周点逐点比对（同日期
+                // 同值即旧点），全部旧点时整只零落库（含现价——无新周点即无更新
+                // 净值，现价必然已是最新）。
+                let points = super::incremental::downsample_weekly(&bars);
+                if !super::incremental::has_new_weekly_point(conn, &instrument_id, &points)? {
+                    return Ok(false);
+                }
                 // 周采样落库（与日 K 回填共用单点），与现价写在同一事务里整只一次提交。
                 super::incremental::write_weekly_price_history(
                     conn,
@@ -212,12 +236,12 @@ where
                         source: Some(SINA_PRICE_SOURCE),
                     },
                 )?;
-                Ok(())
+                Ok(true)
             })
         })
         .await?;
     Ok(BackfillOutcome {
-        written: true,
+        written,
         inconclusive: false,
     })
 }
