@@ -311,22 +311,22 @@ pub(crate) fn parse_args(args: &[String]) -> Result<ParsedArgs, String> {
     while let Some(f) = it.next_flag() {
         match f.flag {
             "--seed" => {
-                let v = it.value(f.inline_value, "--seed")?;
+                let v = it.value(f)?;
                 cli.seed = v
                     .parse::<u64>()
                     .map_err(|_| format!("--seed 需要非负整数，得到 {v:?}"))?;
             }
             "--transactions" => {
-                let v = it.value(f.inline_value, "--transactions")?;
+                let v = it.value(f)?;
                 cli.transactions = v
                     .parse::<u64>()
                     .map_err(|_| format!("--transactions 需要非负整数，得到 {v:?}"))?;
             }
             "--end-date" => {
-                cli.end_date = it.value(f.inline_value, "--end-date")?;
+                cli.end_date = it.value(f)?;
             }
             "--out" => {
-                cli.out = PathBuf::from(it.value(f.inline_value, "--out")?);
+                cli.out = PathBuf::from(it.value(f)?);
             }
             "-h" | "--help" => return Ok(ParsedArgs::Help),
             other => return Err(format!("未知参数 {other:?}")),

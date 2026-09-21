@@ -647,6 +647,17 @@ fn bench_common_name_column_width_takes_longest_and_never_saturates() {
 }
 
 #[test]
+fn bench_common_metric_table_header_aligns_labels_over_columns() {
+    // 表头标签右对齐在各自数值列上方：名称列宽 10 后，min 占 10、avg/p95 各
+    // 占 11（与行渲染的 {min:>10.2}{avg:>11.2}{p95:>11.2} 同宽），表尾接规模
+    // 备注列（「基准」4 宽 + 补齐 6 空格到列宽，再接右对齐标签）。
+    assert_eq!(
+        bench_common::metric_table_header(10),
+        "基准             min        avg        p95  规模备注（毫秒）"
+    );
+}
+
+#[test]
 fn bench_cli_gate_option_parses_and_defaults_off() {
     // 默认：无门禁（本地观察不受影响），迭代 20（n=20 才成真 p95 分位数）。
     let cli = parse_bench_cli(&[]).unwrap();

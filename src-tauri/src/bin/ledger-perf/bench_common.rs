@@ -59,15 +59,16 @@ impl<'a> CliArgs<'a> {
     }
 
     /// 当前 flag 的值：inline（`--flag=v`）优先，否则吃下一个词；缺值报错
-    /// （错误消息以 flag 名开头，与既有各解析器同款）。
-    pub(crate) fn value(&mut self, inline: Option<&'a str>, flag: &str) -> Result<String, String> {
-        if let Some(v) = inline {
+    /// （错误消息以 flag 名开头，与既有各解析器同款）。flag 名取自传入的
+    /// [`CliFlag`]，调用方不必手工回传。
+    pub(crate) fn value(&mut self, f: CliFlag<'a>) -> Result<String, String> {
+        if let Some(v) = f.inline_value {
             return Ok(v.to_string());
         }
         let next = self
             .args
             .get(self.pos)
-            .ok_or_else(|| format!("{flag} 缺少值"))?;
+            .ok_or_else(|| format!("{} 缺少值", f.flag))?;
         self.pos += 1;
         Ok(next.clone())
     }
@@ -148,6 +149,14 @@ pub(crate) trait MetricTableRow {
 /// 表头名称列标签（显示宽 4，宽度下限）。
 const NAME_HEADER: &str = "基准";
 
+/// 人读表头行（名称列按 name_width 取宽，min / avg / p95 标签右对齐在各自
+/// 数值列上方，单位毫秒入表头）：[`print_metric_table`] 与读基准
+/// print_report（带 ▲ 超阈值标记列，行渲染自持）共用。
+pub(crate) fn metric_table_header(name_width: usize) -> String {
+    let header_pad = " ".repeat(name_width - display_width(NAME_HEADER));
+    format!("{NAME_HEADER}{header_pad}       min        avg        p95  规模备注（毫秒）")
+}
+
 /// 名称列宽 = 最长行的显示宽与表头标签显示宽取大（issue #1650）：固定
 /// pad 宽度在长名称下 saturate 归零、数字列错位，列宽随内容动态取后
 /// 任意名称长度都对齐。
@@ -165,8 +174,7 @@ pub(crate) fn name_column_width<'a>(names: impl IntoIterator<Item = &'a str>) ->
 /// 单位毫秒入表头。
 pub(crate) fn print_metric_table<M: MetricTableRow>(rows: &[M]) {
     let width = name_column_width(rows.iter().map(MetricTableRow::name));
-    let header_pad = " ".repeat(width - display_width(NAME_HEADER));
-    println!("{NAME_HEADER}{header_pad}       min        avg        p95  规模备注（毫秒）");
+    println!("{}", metric_table_header(width));
     for r in rows {
         let pad = " ".repeat(width - display_width(r.name()));
         println!(

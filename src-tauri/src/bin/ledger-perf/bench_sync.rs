@@ -137,19 +137,19 @@ pub(crate) fn parse_bench_sync_args(args: &[String]) -> Result<ParsedBenchSync, 
     while let Some(f) = it.next_flag() {
         match f.flag {
             "--db" => {
-                cli.db = PathBuf::from(it.value(f.inline_value, "--db")?);
+                cli.db = PathBuf::from(it.value(f)?);
             }
             "--ops" => {
-                cli.ops = parse_tier_csv(&it.value(f.inline_value, "--ops")?, "--ops")?;
+                cli.ops = parse_tier_csv(&it.value(f)?, "--ops")?;
             }
             "--warmup" => {
-                let v = it.value(f.inline_value, "--warmup")?;
+                let v = it.value(f)?;
                 cli.warmup = v
                     .parse::<usize>()
                     .map_err(|_| format!("--warmup 需要非负整数，得到 {v:?}"))?;
             }
             "--iterations" => {
-                let v = it.value(f.inline_value, "--iterations")?;
+                let v = it.value(f)?;
                 cli.iterations = v
                     .parse::<usize>()
                     .map_err(|_| format!("--iterations 需要非负整数，得到 {v:?}"))?;

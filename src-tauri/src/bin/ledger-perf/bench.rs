@@ -25,7 +25,9 @@ use std::time::Instant;
 use chrono::{Months, NaiveDate};
 use rusqlite::Connection;
 
-use super::bench_common::{CliArgs, summarize};
+use super::bench_common::{
+    CliArgs, display_width, metric_table_header, name_column_width, summarize,
+};
 use ledger_accounts as accounts;
 use ledger_dashboard as dashboard_domain;
 use ledger_infra::db::open_connection;
@@ -117,28 +119,28 @@ pub(crate) fn parse_bench_args(args: &[String]) -> Result<ParsedBench, String> {
     while let Some(f) = it.next_flag() {
         match f.flag {
             "--db" => {
-                cli.db = PathBuf::from(it.value(f.inline_value, "--db")?);
+                cli.db = PathBuf::from(it.value(f)?);
             }
             "--warmup" => {
-                let v = it.value(f.inline_value, "--warmup")?;
+                let v = it.value(f)?;
                 cli.warmup = v
                     .parse::<usize>()
                     .map_err(|_| format!("--warmup 需要非负整数，得到 {v:?}"))?;
             }
             "--iterations" => {
-                let v = it.value(f.inline_value, "--iterations")?;
+                let v = it.value(f)?;
                 cli.iterations = v
                     .parse::<usize>()
                     .map_err(|_| format!("--iterations 需要非负整数，得到 {v:?}"))?;
             }
             "--search" => {
-                cli.search = it.value(f.inline_value, "--search")?;
+                cli.search = it.value(f)?;
             }
             "--search-pinyin" => {
-                cli.search_pinyin = it.value(f.inline_value, "--search-pinyin")?;
+                cli.search_pinyin = it.value(f)?;
             }
             "--max-p95-ms" => {
-                let v = it.value(f.inline_value, "--max-p95-ms")?;
+                let v = it.value(f)?;
                 let ms = v
                     .parse::<f64>()
                     .ok()
@@ -185,9 +187,9 @@ pub(crate) struct BenchMetrics {
 }
 
 /// 最近秩法 p95 与字符显示宽估算收口在 [`super::bench_common`]（issue #1650，
-/// 读基准与写基准共用）；本模块读基准的表列排版仍用自己的估算式，行为不变。
-/// 单项基准的执行体：吃连接、跑一次查询、返回人读规模备注
-/// （行数/命中数/数量等线索，由各基准自行描述语义）。
+/// 读基准与写基准共用）；本模块读基准的表列消费共享列宽与表头构造，
+/// ▲ 超阈值标记列的行渲染自持。单项基准的执行体：吃连接、跑一次查询、
+/// 返回人读规模备注（行数/命中数/数量等线索，由各基准自行描述语义）。
 type BenchFn<'a> = dyn Fn(&Connection) -> Result<String, String> + 'a;
 
 /// 入口：打开库、跑全部基准、打印人读表格。
@@ -646,12 +648,14 @@ fn print_report(db: &Path, cfg: &BenchConfig, results: &[BenchMetrics]) {
         cfg.warmup, cfg.iterations, threshold_ms
     );
     println!();
-    // CJK 名称在 {:<N} 下按字符数填充、与终端显示宽错位，表头与名称列手排显示宽
-    //（名称列显示宽 18，数字列右对齐 10/11 位，单位毫秒入表头）。
-    println!("基准                        min        avg        p95  规模备注（毫秒）");
+    // CJK 名称在 {:<N} 下按字符数填充、与终端显示宽错位：名称列宽随最长行
+    // 动态取、表头构造与写基准同源（共享 [`bench_common::name_column_width`]
+    // / [`bench_common::metric_table_header`]，issue #1650）；数字列右对齐
+    // 10/11 位，单位毫秒入表头；▲ 超阈值标记列自持。
+    let name_width = name_column_width(results.iter().map(|r| r.name));
+    println!("{}", metric_table_header(name_width));
     for r in results {
-        let display_width = r.name.chars().count() * 2;
-        let pad = " ".repeat(18usize.saturating_sub(display_width));
+        let pad = " ".repeat(name_width - display_width(r.name));
         let slow_mark = if r.p95_ms > threshold_ms {
             "　▲"
         } else {
