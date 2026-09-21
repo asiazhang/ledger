@@ -21,7 +21,9 @@ use crate::ops;
 use crate::transport::Transport;
 use ledger_sync_protocol::position as positions;
 use ledger_transaction::write::protocol;
-use tauri_app_lib::test_support::{self, assert_balance_cache_matches_realtime, seed_account};
+use tauri_app_lib::test_support::{
+    self, ScratchDir, ScratchFile, assert_balance_cache_matches_realtime, seed_account,
+};
 
 /// 读本机设备标识（测试判据用）。
 fn device_of(conn: &rusqlite::Connection) -> String {
@@ -368,8 +370,8 @@ fn sync_continues_after_truncation_without_resurrecting_truncated_ops() {
 /// 可重试码化错误，不裸上抛。
 #[test]
 fn encrypted_checkpoint_roundtrip_and_passphrase_guards() {
-    let dir = std::env::temp_dir().join(format!("ledger-cp-test-{}", ledger_infra::db::new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
+    // 暂存目录（ScratchDir guard，issue #1645）：drop（含 panic unwind）整棵删除。
+    let dir = ScratchDir::new("cp-test");
     let db_path = dir.join("ledger.db");
 
     // 工厂库（内存、明文、已迁移）写入账目 → VACUUM INTO 产出已迁移文件库
@@ -420,8 +422,6 @@ fn encrypted_checkpoint_roundtrip_and_passphrase_guards() {
     bootstrap_from_checkpoint(&mut conn_b, &cp, Some("correct horse")).unwrap();
     assert_eq!(read_transaction(&conn_b, &id).unwrap().amount_cents, 10000);
     assert_balance_cache_matches_realtime(&conn_b);
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// 首见流批次内含未裁决 op（wire 不可解挂起：不落日志、不触发推进）：位点
@@ -613,12 +613,15 @@ fn observed_channel_with_snapshot_hook(
 }
 
 /// 形态对齐守卫的本机库路径（域单测用内存库；明文 × 明文场景该路径只被
-/// probe，不发生文件写入）。
-fn probe_only_db_path() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "ledger-bootstrap-domain-{}.db",
-        ledger_infra::db::new_uuid()
-    ))
+/// probe，不发生文件写入）。路径住暂存目录（issue #1645），guard 随语句析构。
+fn probe_only_db_path() -> ScratchFile {
+    ScratchFile::new(
+        "bootstrap-domain",
+        format!(
+            "ledger-bootstrap-domain-{}.db",
+            ledger_infra::db::new_uuid()
+        ),
+    )
 }
 
 /// 引导事件序的期望形态：段1（前置守卫）→ manifest 读 → 快照体读 →
@@ -778,8 +781,11 @@ fn bootstrap_migrates_older_schema_snapshot() {
     // V021 时代 = 20）。V025 起迁移链含 DROP：模拟旧时代快照还须把「该时代
     // 在场、后被移除」的对象按原 DDL 复位（V025 删除的 6 索引，DDL 同
     // V001/V006），否则前向迁移到 V025 时 DROP 落空报 no such index。
-    let stale_path =
-        std::env::temp_dir().join(format!("ledger-v21-{}.db", ledger_infra::db::new_uuid()));
+    // 旧时代快照夹具（issue #1645）：散文件收进暂存目录，guard 随用例清理。
+    let stale_path = ScratchFile::new(
+        "v21",
+        format!("ledger-v21-{}.db", ledger_infra::db::new_uuid()),
+    );
     std::fs::write(&stale_path, &cp22.snapshot).unwrap();
     {
         let stale = ledger_infra::db::open_connection(&stale_path).unwrap();
@@ -829,7 +835,6 @@ fn bootstrap_migrates_older_schema_snapshot() {
         positions: cp22.positions,
         snapshot: std::fs::read(&stale_path).unwrap(),
     };
-    ledger_infra::fs_util::cleanup(&stale_path);
 
     let mut conn_b = test_support::open();
     bootstrap_from_checkpoint(&mut conn_b, &cp, None).unwrap();

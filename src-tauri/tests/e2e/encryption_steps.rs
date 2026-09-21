@@ -17,7 +17,7 @@ use ledger_infra::db::encryption::{
     DbFileKind, change_passphrase_for_file, disable_encryption_for_file,
     enable_encryption_for_file, probe_file_kind, reset_encrypted_db_file, unlock_db_file,
 };
-use ledger_infra::db::{init_db, new_uuid, open_connection, open_connection_with_passphrase};
+use ledger_infra::db::{init_db, open_connection, open_connection_with_passphrase};
 use ledger_infra::error::AppError;
 
 use crate::common::{count_transactions, count_transactions_in_file, seed_account_with_expenses};
@@ -29,8 +29,7 @@ use crate::world::LedgerWorld;
 
 fn ensure_dir(world: &mut LedgerWorld) {
     if world.boot.enc_dir.is_none() {
-        let dir = std::env::temp_dir().join(format!("ledger-e2e-enc-{}", new_uuid()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = world.scratch_dir("e2e-enc");
         world.boot.enc_dir = Some(dir.clone());
         // 同步登记到 DataLocation 场景现场：生目录断言类步骤（"生效目录应为
         // 默认数据目录"）复用 data_location_steps 的既有定义，不重复声明。
@@ -125,8 +124,7 @@ fn given_record_bytes(world: &mut LedgerWorld) {
 fn given_pointer_to_empty_target(world: &mut LedgerWorld) {
     ensure_dir(world);
     let default_dir = world.boot.enc_dir.clone().unwrap();
-    let target = std::env::temp_dir().join(format!("ledger-e2e-enc-target-{}", new_uuid()));
-    std::fs::create_dir_all(&target).unwrap();
+    let target = world.scratch_dir("e2e-enc-target");
     data_location::write_pointer(&default_dir, &target).unwrap();
     world.boot.enc_target_dir = Some(target);
 }

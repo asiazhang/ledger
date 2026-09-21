@@ -17,7 +17,7 @@ use ledger_infra::db::data_location::{self, DB_FILE_NAME, effective_db_dir};
 use ledger_infra::db::encryption::{
     SQLITE_HEADER_MAGIC, enable_encryption_for_file, normalize_plaintext_db_file,
 };
-use ledger_infra::db::{boot, init_db, new_uuid, open_connection, open_db_in};
+use ledger_infra::db::{boot, init_db, open_connection, open_db_in};
 
 use crate::common::seed_account_with_expenses;
 use crate::world::{LedgerWorld, StartupTakeover};
@@ -28,8 +28,7 @@ use crate::world::{LedgerWorld, StartupTakeover};
 
 #[given(expr = "默认数据目录中存在一个头部完好但内容损坏的明文库")]
 fn default_dir_with_corrupt_plaintext_db(world: &mut LedgerWorld) {
-    let dir = std::env::temp_dir().join(format!("ledger-e2e-sf-plain-{}", new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = world.scratch_dir("e2e-sf-plain");
     // 明文魔数完好、内容为垃圾：头探测按明文建连，建连即失败——启动失败的
     // 主场景（旧世界走原生「重置/退出」对话框，issue #601 起进失败恢复屏）。
     let mut bytes = SQLITE_HEADER_MAGIC.to_vec();
@@ -65,8 +64,7 @@ fn seed_vault_db(conn: &Connection, count: usize) {
 /// （落点不同：本步骤落在启动失败恢复场景的 dl_default_dir，供接管步骤消费）。
 #[given(expr = "默认数据目录中有一个凭主口令 {string} 加密且含 {int} 条交易的真密文库")]
 fn default_dir_with_encrypted_vault(world: &mut LedgerWorld, passphrase: String, count: usize) {
-    let dir = std::env::temp_dir().join(format!("ledger-e2e-sf-vault-{}", new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = world.scratch_dir("e2e-sf-vault");
     let path = dir.join(DB_FILE_NAME);
     {
         let mut conn = open_connection(&path).unwrap();
@@ -84,8 +82,7 @@ fn default_dir_with_encrypted_vault(world: &mut LedgerWorld, passphrase: String,
 /// 的迁移裁决（只比 user_version）不再触发，漂移守卫是唯一防线。
 #[given(expr = "默认数据目录中存在一个缺列漂移的明文库")]
 fn default_dir_with_drifted_db(world: &mut LedgerWorld) {
-    let dir = std::env::temp_dir().join(format!("ledger-e2e-sf-drift-{}", new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = world.scratch_dir("e2e-sf-drift");
     let path = dir.join(DB_FILE_NAME);
     {
         let mut conn = open_connection(&path).unwrap();

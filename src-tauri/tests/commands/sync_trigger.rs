@@ -17,7 +17,6 @@
 //! 调用）是源码形状事实，由根包源码扫描守门钉住（`sync_trigger_guard`，
 //! `signals_cross_check` 先例），不在本文件。
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -40,7 +39,12 @@ use crate::sync_channel::{configure_channel, expense_input, fresh_app, spawn_syn
 /// 调度线程现场（消费两扇门做锁定/失败空转判定）的设备应用：mock 应用 + 独立
 /// 临时目录文件库 + 引导登记态 + 两扇门（生产由 setup 首先登记，此处同型补齐；
 /// 与 [`crate::sync_channel::device_app`] 的差别仅在门）。
-fn trigger_device_app(tag: &str) -> (tauri::AppHandle<tauri::test::MockRuntime>, PathBuf) {
+fn trigger_device_app(
+    tag: &str,
+) -> (
+    tauri::AppHandle<tauri::test::MockRuntime>,
+    tauri_app_lib::test_support::ScratchDir,
+) {
     let (app, dir) = fresh_app(tag);
     app.manage(db::open_db_in(&dir).unwrap());
     app.manage(EncryptionGate::new(false));

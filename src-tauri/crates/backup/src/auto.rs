@@ -1026,22 +1026,17 @@ mod tests {
 mod scheduler_tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
+    use tauri_app_lib::test_support::ScratchDir;
 
     fn conn() -> rusqlite::Connection {
         // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
         tauri_app_lib::test_support::open()
     }
 
-    /// 与 backup 模块测试同款：临时目录唯一命名，避免并行测试互踩。
-    fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "ledger-auto-test-{tag}-{}-{}",
-            std::process::id(),
-            db::new_uuid()
-        ));
-        fs::create_dir_all(&dir).expect("创建临时目录");
-        dir
+    /// 与 backup 模块测试同款：暂存目录唯一命名（ScratchDir guard，issue
+    /// #1645）——drop（含 panic unwind）整棵删除，手写 remove_dir_all 收尾退役。
+    fn temp_dir(tag: &str) -> ScratchDir {
+        ScratchDir::new(&format!("auto-test-{tag}"))
     }
 
     /// 阈值跨越观察计数器是进程级静态：本模块内会跨越阈值的三个测试
@@ -1144,7 +1139,6 @@ mod scheduler_tests {
             state.last_backup_at,
             Some(String::from("2026-02-17T12:00:00Z"))
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 同一本地日已自动备份过（本地 08:00 锚点、20:00 再触发）→ 静默跳过且原因可辨：
@@ -1185,7 +1179,6 @@ mod scheduler_tests {
             Some(db::iso_at(local_utc(2026, 2, 17, 8, 0))),
             "跳过不前移锚点"
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 跨本地日恢复备份：锚点拨到本地昨天、今天脏 → 再次执行并前移锚点。
@@ -1215,7 +1208,6 @@ mod scheduler_tests {
             Some(db::iso_at(now)),
             "成功后锚点前移到本次备份时刻"
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 备份失败保留脏标记后，同日下个触发点重试仍然可行（锚点未记 → 日界门放行）。
@@ -1225,9 +1217,9 @@ mod scheduler_tests {
         let dir = temp_dir("failure-retry");
         mark_dirty(&c).expect("置脏");
         // 第一次：目录无效（父目录也不存在）→ Failed，脏保留、锚点不记。
-        let missing = std::env::temp_dir()
-            .join(format!("ledger-auto-missing-{}", db::new_uuid()))
-            .join("nested");
+        // 失败现场：父级 nested 不存在（暂存目录在场即可，guard 随用例清理）。
+        let missing_root = ScratchDir::new("auto-missing");
+        let missing = missing_root.join("nested");
         let first = run_due_backup(
             &c,
             Some(missing.to_str().unwrap()),
@@ -1251,7 +1243,6 @@ mod scheduler_tests {
             !state.dirty && state.last_backup_at.is_some(),
             "重试成功后清真并记锚点"
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 目录未配置 → 静默跳过（不执行、不报错），脏标记保留等配置后再补。
@@ -1308,7 +1299,6 @@ mod scheduler_tests {
             AttemptOutcome::Skipped(SkipReason::Disabled)
         );
         assert!(fs::read_dir(&dir).expect("列目录").next().is_none());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 目录已配置但路径无效 → 备份失败归入 Failed 且**保留脏标记**（下周期重试）。
@@ -1316,9 +1306,9 @@ mod scheduler_tests {
     fn failure_keeps_dirty() {
         let c = conn();
         // 配置了目录镜像但目录本身不存在（父目录也不存在，backup_db_to 必失败）。
-        let missing = std::env::temp_dir()
-            .join(format!("ledger-auto-missing-{}", db::new_uuid()))
-            .join("nested");
+        // 失败现场：父级 nested 不存在（暂存目录在场即可，guard 随用例清理）。
+        let missing_root = ScratchDir::new("auto-missing");
+        let missing = missing_root.join("nested");
         mark_dirty(&c).expect("置脏");
         let outcome = run_due_backup(
             &c,
@@ -1343,9 +1333,8 @@ mod scheduler_tests {
     fn consecutive_failures_accumulate_to_threshold() {
         let _serial = CROSSING_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let c = conn();
-        let missing = std::env::temp_dir()
-            .join(format!("ledger-auto-fail-count-{}", db::new_uuid()))
-            .join("nested");
+        let missing_root = ScratchDir::new("auto-fail-count");
+        let missing = missing_root.join("nested");
         mark_dirty(&c).expect("置脏");
         for n in 1..=FAILURE_ALERT_THRESHOLD {
             let outcome = run_due_backup(
@@ -1380,9 +1369,8 @@ mod scheduler_tests {
         let _serial = CROSSING_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let c = conn();
         // 造提示态：连续失败达阈值。
-        let missing = std::env::temp_dir()
-            .join(format!("ledger-auto-fail-reset-{}", db::new_uuid()))
-            .join("nested");
+        let missing_root = ScratchDir::new("auto-fail-reset");
+        let missing = missing_root.join("nested");
         mark_dirty(&c).expect("置脏");
         for _ in 0..FAILURE_ALERT_THRESHOLD {
             run_due_backup(
@@ -1413,7 +1401,6 @@ mod scheduler_tests {
         let state = get_state(&c).expect("读状态");
         assert_eq!(state.consecutive_failures, 0, "成功后计数清零");
         assert!(!failure_alerting(state.consecutive_failures), "提示态解除");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 阈值跨越才发通知，且只发一次（issue #1456 接线负向，删除即红）：跨越前
@@ -1424,9 +1411,8 @@ mod scheduler_tests {
     fn threshold_crossing_emits_notification_once() {
         let _serial = CROSSING_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let c = conn();
-        let missing = std::env::temp_dir()
-            .join(format!("ledger-auto-cross-emit-{}", db::new_uuid()))
-            .join("nested");
+        let missing_root = ScratchDir::new("auto-cross-emit");
+        let missing = missing_root.join("nested");
         mark_dirty(&c).expect("置脏");
         THRESHOLD_ALERT_EMISSIONS.store(0, std::sync::atomic::Ordering::Relaxed);
         for n in 1..=(FAILURE_ALERT_THRESHOLD + 1) {
@@ -1478,7 +1464,6 @@ mod scheduler_tests {
             AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday)
         );
         assert!(fs::read_dir(&dir).expect("列目录").next().is_none());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 退出兜底：当天尚未备份且脏 → 备份（晚间记账后退出不裸奔过夜）。
@@ -1498,7 +1483,6 @@ mod scheduler_tests {
         .expect("写状态");
         let outcome = run_exit_backup(&c, Some(dir.to_str().unwrap()), "0.2.0", Utc::now(), None);
         assert!(matches!(outcome, AttemptOutcome::Performed { .. }));
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 退出兜底：不脏则不备份。
@@ -1515,7 +1499,6 @@ mod scheduler_tests {
         );
         assert_eq!(outcome, AttemptOutcome::Skipped(SkipReason::Clean));
         assert!(fs::read_dir(&dir).expect("列目录").next().is_none());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 首次兜底：列表为空时即便不脏、从未备份过也立即备份一次；此后列表非空不再兜底
@@ -1532,7 +1515,6 @@ mod scheduler_tests {
         );
         let again = run_first_backup(&c, Some(d), "0.2.0", now_at("2026-02-17T09:00:00Z"), None);
         assert_eq!(again, AttemptOutcome::Skipped(SkipReason::ListNotEmpty));
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 首次兜底同受日界门（issue #386）：列表为空但当天已自动备份过（目录被清空）
@@ -1563,7 +1545,6 @@ mod scheduler_tests {
             AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday)
         );
         assert!(fs::read_dir(&dir).expect("列目录").next().is_none());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 首次兜底把手动备份也算进「列表非空」：已有手动产物就不再兜底。
@@ -1585,7 +1566,6 @@ mod scheduler_tests {
             fs::read_dir(&dir).expect("列目录").count() == 1,
             "不应新增文件"
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 
     // -----------------------------------------------------------------------
@@ -1683,7 +1663,6 @@ mod scheduler_tests {
                 .dirty,
             "成功备份应复位脏标记"
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 }
 
@@ -1694,7 +1673,7 @@ mod book_scope_tests {
     use super::*;
     use crate::BackupScope;
     use std::fs;
-    use std::path::PathBuf;
+    use tauri_app_lib::test_support::ScratchDir;
 
     fn conn() -> rusqlite::Connection {
         tauri_app_lib::test_support::open()
@@ -1706,14 +1685,8 @@ mod book_scope_tests {
             .with_timezone(&Utc)
     }
 
-    fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "ledger-auto-scope-{tag}-{}-{}",
-            std::process::id(),
-            db::new_uuid()
-        ));
-        fs::create_dir_all(&dir).expect("创建临时目录");
-        dir
+    fn temp_dir(tag: &str) -> ScratchDir {
+        ScratchDir::new(&format!("auto-scope-{tag}"))
     }
 
     /// 目录里已有账本 A 的产物：账本 B 的首次兜底仍执行（按本判定列表为空），
@@ -1762,6 +1735,5 @@ mod book_scope_tests {
             Some(&scope_b),
         );
         assert_eq!(again, AttemptOutcome::Skipped(SkipReason::ListNotEmpty));
-        let _ = fs::remove_dir_all(&dir);
     }
 }

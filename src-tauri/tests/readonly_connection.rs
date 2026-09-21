@@ -68,10 +68,13 @@ fn isolate_home() {
 }
 
 /// 明文库现场：mock 应用 + 引导登记态 + 临时目录文件库成对打开 + 两扇门
-/// （与生产 setup / tests/commands 同型）。
-fn readonly_device_app(tag: &str, locked: bool) -> (AppHandle, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("ledger-readonly-it-{tag}-{}", db::new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
+/// （与生产 setup / tests/commands 同型）。库目录走 ScratchDir（issue #1645）：
+/// guard 随元组交调用方持有，用例结束（含 panic）整棵删除。
+fn readonly_device_app(
+    tag: &str,
+    locked: bool,
+) -> (AppHandle, tauri_app_lib::test_support::ScratchDir) {
+    let dir = tauri_app_lib::test_support::ScratchDir::new(&format!("readonly-it-{tag}"));
     let app = tauri::test::mock_app();
     app.manage(tauri_app_lib::commands::boot::BootCell::new(
         db::data_location::boot(&dir),

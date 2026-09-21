@@ -107,3 +107,10 @@ spec #1086 的测试执行提速续作（#1514）实测两处与「单测不极�
 - **确定性真实等待改为可注入**。多端同步调度侧的轮次连接源（`AutoRoundConn`）每段取锁的等待上限改为字段、产品默认仍取 `ledger_backup::LOCK_TIMEOUT`，测试可注入短超时。`auto_round_gives_up_silently_when_connection_lock_is_busy` 断言的是「拿不到锁即放弃本轮」这一瞬时可判定语义，按产品默认 5s 两次取锁实等 10.1s；注入 10ms 后同一断言面耗时 0.18s。备份侧新增 `lock_conn_within(conn, timeout)` 作为参数化形态，`lock_conn_with_timeout` 是其 `LOCK_TIMEOUT` 薄转发，`db_slot_guard::backup_acquisition_points_go_through_facade_timed_job` 的回潮哨兵判定面不变。
 
 本注记只记机制变更与实测数据；决策 1–8 的判定与守门规则不变。
+
+## 修订注记（#1645，2026-09-21）：测试暂存目录 guard 收编 `test_support::scratch`
+
+Rust 测试的真临时目录夹具「只建不删」散在 5 个编译单元约 70 处（本机 `/tmp` 实测残留 13 049 项 / 11.2 GB），收编为 `test_support::scratch`：`ScratchDir`（目录）与 `ScratchFile`（散文件的目录化形态）构造即建 `temp_dir()/ledger-test-{tag}-{uuid}/`，drop（含 panic unwind）整棵删除，前缀归一 `ledger-test-`；手写 `remove_dir_all` / `fs_util::cleanup` 收尾与 `create_dir_all` 样板随迁移退役。e2e 场景的 guard 登记进 `BootGroup::scratch`（cucumber 每 scenario 重建 World，drop 即清理）；集成测试夹具经元组返回把 guard 交调用方持有（库目录寿命 = 设备寿命）。
+
+- **准入与可见性**：沿决策 1 放宽面先例（测试器具跨编译单元同体消费，#956/#1433 同款）与决策 2（`pub mod` + `#[doc(hidden)]`）；infra / backup / sync-engine / ledger-perf（根包 bin）经既有 `tauri-app` dev-dependency 环消费——与统一测试数据库工厂同一测试专用边处理，无新依赖边、无白名单改动；词汇表锚定见 CONTEXT-testing「测试暂存目录」。
+- **不收编面**（如实登记）：进程级 `$HOME` 夹具（`Once` + 重定向，目录进程存活期不能删）保持现状，属验收豁免类；产品代码路径（如多端同步域 checkpoint 快照临时文件，自有 `fs_util::cleanup` 收尾）不属测试器具；SIGKILL 下 guard 不执行，残留从「每次全量堆积」降为「异常终止偶发」。

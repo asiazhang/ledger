@@ -676,9 +676,10 @@ fn user_version(conn: &Connection) -> Result<i64, String> {
 /// 小规模画像测试的生成笔数（确定性：分布断言的容差按此规模校准）。
 const PROFILE_N: u64 = 4000;
 
-fn temp_db(tag: &str) -> (PathBuf, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("ledger-perf-test-{}-{}", tag, std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+/// 暂存目录（ScratchDir guard，issue #1645）：库目录随元组交调用方持有，
+/// 用例结束（含 panic）整棵删除——perf 单测曾是 /tmp 残留的最大来源。
+fn temp_db(tag: &str) -> (tauri_app_lib::test_support::ScratchDir, PathBuf) {
+    let dir = tauri_app_lib::test_support::ScratchDir::new(&format!("perf-test-{tag}"));
     // 库文件名用产品常量：build 经 open_connection_in（按目录打开 ledger.db）建库。
     let db = dir.join(ledger_infra::db::data_location::DB_FILE_NAME);
     (dir, db)
