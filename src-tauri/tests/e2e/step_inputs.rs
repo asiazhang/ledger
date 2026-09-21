@@ -67,6 +67,7 @@ fn txn_base(
         in_amount_cents: None,
         idempotency_key: None,
         origin: None,
+        fx_rate: None,
     }
 }
 
@@ -260,6 +261,7 @@ pub fn existing_input(existing: &Transaction) -> TransactionInput {
         in_amount_cents: None,
         idempotency_key: None,
         origin: None,
+        fx_rate: None,
     }
 }
 

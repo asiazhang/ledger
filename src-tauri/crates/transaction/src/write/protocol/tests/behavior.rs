@@ -80,6 +80,7 @@ fn create_transfer_with_to_account() {
             in_amount_cents: None,
             idempotency_key: None,
             origin: None,
+            fx_rate: None,
         },
     )
     .unwrap()
@@ -672,6 +673,7 @@ fn create_refund_linked_to_expense() {
             in_amount_cents: None,
             idempotency_key: None,
             origin: None,
+            fx_rate: None,
         },
     )
     .unwrap()
@@ -703,6 +705,7 @@ fn create_refund_linked_to_expense() {
             in_amount_cents: None,
             idempotency_key: None,
             origin: None,
+            fx_rate: None,
         },
     )
     .unwrap()
@@ -1402,4 +1405,26 @@ fn update_convert_note_only_reuses_inline_fx_when_series_missing() {
     assert_eq!(t.amount_native_cents, 9000, "本位币金额逐位不变");
     assert_eq!(t.fx_rate_used, Some(0.9));
     assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
+}
+
+/// 编辑时该笔携带显式汇率（#1549 × #1550）：显式 > 沿用 > 序列——三元组未变
+/// 也不沿用，按显式值折算并留痕 `explicit`；对端经 op 收敛到同一显式折算。
+#[test]
+fn update_with_explicit_fx_rate_beats_baseline_reuse() {
+    let conn = test_support::open();
+    let id = seeded_hkd_expense(&conn, "2026-07-01");
+    conn.execute("DELETE FROM fx_rate_history", []).unwrap();
+
+    let mut edited = hkd_expense_input("acc-fx-ed", 1000, "2026-07-01");
+    edited.fx_rate = Some(0.88);
+    update_transaction_internal(&conn, &id, edited).unwrap();
+
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.amount_native_cents, 880, "按显式给定值折算");
+    assert_eq!(t.fx_rate_used, Some(0.88));
+    assert_eq!(
+        t.fx_rate_source,
+        Some(FxRateSource::Explicit),
+        "来源改标显式"
+    );
 }

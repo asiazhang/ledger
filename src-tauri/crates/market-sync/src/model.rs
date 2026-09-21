@@ -60,8 +60,8 @@ impl SyncInstrumentInfoResult {
 /// （成功时与结果统计的 [`SyncInstrumentInfoResult::any_written`] 同口径等价，
 /// 测试钉住）。
 ///
-/// 汇率 K 线落库不计入：与成功路径的零写入判定同口径（只有价格或名称写入
-/// 才发价格失效信号，`fx_rate_history` 变化不在其列）。
+/// `fx_rate_history` 不设写入点：汇率序列归 ECB 同步编排（ADR-0019 修订记录），
+/// 且价格失效信号只辖价格与名称写入（`fx_rate_history` 变化不在其列）。
 ///
 /// [`SegmentedFailure`]: ledger_infra::shell_support::write_entry::SegmentedFailure
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

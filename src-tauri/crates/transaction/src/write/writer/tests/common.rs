@@ -36,6 +36,7 @@ pub(super) fn input(kind: TransactionKind, amount_cents: i64, account_id: &str) 
         refund_of_transaction_id: None,
         note: None,
         date: "2026-01-01".into(),
+        fx_rate: None,
         fx_edit_baseline: None,
     }
 }

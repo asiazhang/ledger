@@ -92,6 +92,9 @@ pub(crate) fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../../../migrations/V029__transaction_fx_rate_trace.sql"
             )),
+            M::up(include_str!(
+                "../../../../migrations/V030__transaction_merchant_covering_index.sql"
+            )),
         ])
     })
 }

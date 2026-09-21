@@ -118,6 +118,10 @@ export interface TransactionInput {
   out_amount_cents?: number | null;
   /** 转入金额（仅 convert 需提供，整数分，必须 > 0）：确认单转入端金额 */
   in_amount_cents?: number | null;
+  /** 可选逐笔显式汇率（issue #1549）：折算方向的乘数（本位币金额 ≈ amount_cents × fx_rate，
+   * 到分），用于数据源覆盖不到的日期；优先级「显式 > 序列命中 > 报错」，缺省（不传）
+   * 即既有行为不变；非法值后端报码化错误、整笔不落库 */
+  fx_rate?: number | null;
   /** 客户端提供的、内容无关的导入幂等键（指向"该交易来自源文件哪一行"） */
   idempotency_key?: string | null;
 }

@@ -65,7 +65,7 @@ pub(super) fn persist_ecb_fx_series(
             }
             report.pairs += 1;
             for (trade_date, rate) in &s.points {
-                upsert_fx_rate_history(conn, &s.base, &s.quote, trade_date, *rate, ECB_FX_SOURCE)?;
+                upsert_fx_rate_history(conn, &s.base, &s.quote, trade_date, *rate)?;
                 if report
                     .earliest
                     .as_ref()
@@ -105,15 +105,16 @@ pub(super) fn persist_ecb_fx_series(
 /// 按 (币种对, ISO 周) 插入或覆盖一条周采样汇率历史，规则与投资域价格历史
 /// 周采样 upsert（[`ledger_investment::prices::upsert_price_history`]）对齐
 /// （同周整周覆盖、同期采集）。`rate` 口径与 exchange_rates 一致：1 base = ? quote。
-/// `source` 为数据来源标记：东财 FX 通道 'eastmoney'（#1551 退役前）、ECB 落库
-/// 单元 [`ECB_FX_SOURCE`]。
+/// 来源标记恒为 ECB（[`ECB_FX_SOURCE`]）：东财 FX 通道退役后（#1551）本函数是
+/// 汇率历史唯一的自动写入原点，调用方只有 ECB 落库单元；存量旧来源行
+/// （'eastmoney'）随同周覆盖被改写为新来源（值与来源随 excluded 行覆盖），
+/// 未被覆盖的旧来源行保留原标记、不被冒认为新来源。
 pub(super) fn upsert_fx_rate_history(
     conn: &Connection,
     base_code: &str,
     quote_code: &str,
     trade_date: &str,
     rate: f64,
-    source: &str,
 ) -> Result<()> {
     let now = now_iso();
     conn.execute(
@@ -122,7 +123,7 @@ pub(super) fn upsert_fx_rate_history(
          ON CONFLICT(base_code, quote_code, week_start) DO UPDATE SET \
          trade_date=excluded.trade_date, rate=excluded.rate, source=excluded.source, \
          updated_at=excluded.updated_at, version=version+1",
-        params![new_uuid(), base_code, quote_code, trade_date, rate, source, now, device_id(conn)?],
+        params![new_uuid(), base_code, quote_code, trade_date, rate, ECB_FX_SOURCE, now, device_id(conn)?],
     )?;
     Ok(())
 }

@@ -31,6 +31,7 @@ fn note_pinyin_of(note: Option<&str>) -> Option<String> {
 /// 与命令层 [`crate::model::TransactionInput`] 解耦：不含 buy/sell 的投资字段
 /// （instrument_id/quantity/price_cents/fee_cents）与幂等键——幂等身份由
 /// 命令层在落库后另行回写，不属本模块职责。
+/// `#[derive(PartialEq)]` 无 `Eq`：`fx_rate` / `fx_edit_baseline` 含 f64（#1549 / #1550），浮点无 Eq。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Input {
     pub kind: TransactionKind,
@@ -61,9 +62,15 @@ pub struct Input {
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
+    /// 可选逐笔显式汇率（issue #1549）：调用方为该笔直接给定折算用汇率（与折算
+    /// 同向，`native = amount × rate`），数据源覆盖不到的日期由写入方补口；
+    /// 显式 > 序列命中 > 报错。归 [`amount::convert_to_native_on_trade_date`]
+    /// 单点校验（非正/同币种携带即码化错误），非法值不落库。
+    pub fx_rate: Option<f64>,
     /// 编辑沿用基线（#1550 / ADR-0011 修订）：修改路径从旧行读出的折算判别
-    /// 三元组与行内留痕（[`amount::FxEditBaseline`]）。币种/金额/日期未变时
-    /// [`normalize`] 沿用行内留痕、不再重查序列；创建路径与重放路径恒 `None`。
+    /// 三元组与行内留痕（[`amount::FxEditBaseline`]）。未携显式汇率且币种/金额/
+    /// 日期未变时 [`normalize`] 沿用行内留痕、不再重查序列；创建路径与重放路径
+    /// 恒 `None`。显式汇率在场时沿用不生效（显式 > 沿用 > 序列）。
     pub fx_edit_baseline: Option<amount::FxEditBaseline>,
 }
 
@@ -113,10 +120,10 @@ pub struct NormalizedRow {
 ///   记 income 挂单，非 refund，ADR-0051 决策 4），调用方传什么校验什么。
 /// - refund 必须关联**未删除**的原支出交易，且账户/币种/分类继承原支出
 ///   （忽略调用方填的 account_id / currency_code / category_id）；
-/// - 本位币折算走 Amount 接缝按交易日入口 [`amount::convert_to_native_on_edit`]
-///   （#1547：按交易所属 ISO 周命中汇率历史，基准为全局默认币种；#1550：修改路径
-///   携 [`Input::fx_edit_baseline`]，币种/金额/日期未变沿用行内留痕不重查；
-///   当期表只服务读路径）。
+/// - 本位币折算走 Amount 接缝编辑沿用入口 [`amount::convert_to_native_on_edit`]
+///   （#1547：按交易所属 ISO 周命中汇率历史，基准为全局默认币种；当期表只服务读
+///   路径；#1549：显式汇率 > 序列命中 > 报错；#1550：修改路径携
+///   [`Input::fx_edit_baseline`]，未携显式且三元组未变沿用行内留痕不重查）。
 ///
 /// 与旧命令层实现的两处**刻意差异**（issue #59 定时引擎 / issue #60 创建修改与
 /// 买入卖出行已接线，语义由本模块测试锁定）：
@@ -229,6 +236,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         input.amount_cents,
         &currency_code,
         &input.date,
+        input.fx_rate,
         input.fx_edit_baseline.as_ref(),
     )?;
     let policy_id = input.policy_id.clone();

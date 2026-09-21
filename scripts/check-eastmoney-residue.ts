@@ -12,10 +12,10 @@
 // 精确对准「端点回归」这一判据本体。
 //
 // 已登记例外（严格相等校验，与 check-infra-dml 的 REGISTERED_EXCEPTIONS 同纪律）：
-// 实际命中 ≠ 登记数、登记文件消失、例外已收敛（命中清零）都红。当前唯一例外是
-// 东财 FX 日 K 腿（汇率）：#1554 决策 12「汇率不并入，本 spec 不改其任何内容」，
-// push2his 主机池归 #1551（spec #1540）退役——届时删除登记条目，守门自然收紧到
-// 零例外。
+// 实际命中 ≠ 登记数、登记文件消失、例外已收敛（命中清零）都红。当前清单为空：
+// 唯一例外（东财 FX 日 K 腿主机池）已随 #1551 换 ECB 退役并删除登记，守门收紧到
+// 零例外（同 check-infra-dml 自 #1108 起的空清单稳态）；今后若出现新的合法在场，
+// 须在此逐条登记（文件 + 预期命中数 + 理由）。
 //
 // 扫描边界：全仓文本面（rs/ts/tsx/vue/md/json/sql/sh/html/toml/yml/yaml）。
 // docs/ 整域豁免——ADR、调研档案与词汇表的历史叙述（含端点 URL 引证）是其职责
@@ -90,16 +90,11 @@ export interface ResidueException {
 
 /**
  * 已登记例外（严格相等校验）：实际命中 ≠ 登记数即红（漂移——多出未登记新命中、
- * 少掉说明东财腿已退役），例外清零也红（登记条目应随退役删除），登记文件消失
- * 同样红（清单漂移，与 EXEMPT_FILES 家族纪律一致）。
+ * 少掉说明对应腿已退役），例外清零也红（登记条目应随退役删除），登记文件消失
+ * 同样红（清单漂移，与 EXEMPT_FILES 家族纪律一致）。当前为空：东财 FX 日 K 腿
+ * 主机池已随 #1551 换 ECB 退役，登记条目随之删除，守门收紧到零例外。
  */
-export const REGISTERED_EXCEPTIONS: readonly ResidueException[] = [
-  {
-    file: "src-tauri/crates/market-sync/src/http.rs",
-    count: 4,
-    why: "东财 FX 日 K 主机池（汇率腿）：#1554 决策 12 汇率不并入，归 #1551（spec #1540）退役——退役时删除本条目，守门收紧到零例外",
-  },
-];
+export const REGISTERED_EXCEPTIONS: readonly ResidueException[] = [];
 
 /** 禁令标记：东财自有域名闭集。任何东财端点的引用（主机池、URL、Referer、
  *  文档化常量）必然携带其一；新增东财关联域名须显式扩此清单并复核动机。 */
@@ -190,7 +185,8 @@ function main(): void {
   }
   console.log(
     `✓ 东财行情面零残留守门通过：扫描 ${scanned.length} 个文件，未登记端点域名零命中；` +
-      `已登记例外 ${REGISTERED_EXCEPTIONS.length} 条（FX 腿，#1551 退役前）`,
+      `已登记例外 ${REGISTERED_EXCEPTIONS.length} 条` +
+      `${REGISTERED_EXCEPTIONS.length > 0 ? `（${REGISTERED_EXCEPTIONS.map((e) => e.file).join("、")}）` : "（零例外）"}`,
   );
 }
 

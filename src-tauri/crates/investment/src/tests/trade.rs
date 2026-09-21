@@ -271,6 +271,67 @@ fn buy_row_traces_fx_rate_used_and_series_source() {
     assert_eq!(fx_rate_source.as_deref(), Some("series"), "来源 = 序列命中");
 }
 
+/// 逐笔显式汇率（#1549 验收 1）：buy 携 `fx_rate` 时跳过序列查询、按给定值
+/// 折算，行内留痕 = 显式值 + `explicit` 来源——数据源覆盖不到的日期由调用方
+/// 逐笔给定，事后可读回解释。
+#[test]
+fn buy_row_with_explicit_fx_rate_traces_explicit_source() {
+    let conn = open();
+    seed_account(&conn, "acc-test-expl", "美股", "investment", "USD", 0);
+    // 交易周有序列点：显式优先，序列值被跳过（explicit 7.0 ≠ series 7.2）。
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.2, &["2026-01-10"]);
+    seed_instrument(&conn, "inst-test-expl", "NVDA", "NVIDIA", "USD", "unknown");
+
+    let mut input = make_buy_input("acc-test-expl", "inst-test-expl", 10.0, 1_000_000, 500);
+    input.fx_rate = Some(7.0);
+    let txn_id = create_transaction_internal(&conn, input).unwrap().id;
+
+    let (amount_native_cents, fx_rate_used, fx_rate_source): (i64, Option<f64>, Option<String>) =
+        conn.query_row(
+            "SELECT amount_native_cents, fx_rate_used, fx_rate_source FROM transactions WHERE id=?1",
+            params![txn_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        amount_native_cents, 703500,
+        "本位币金额 = (数量×单价+手续费) × 显式汇率（100500 × 7.0）"
+    );
+    assert_eq!(fx_rate_used, Some(7.0), "留痕 = 显式给定值本身");
+    assert_eq!(
+        fx_rate_source.as_deref(),
+        Some("explicit"),
+        "来源标为显式（序列点被跳过）"
+    );
+}
+
+/// split 无现金腿、不折算：携带显式汇率按字段级无现金腿守卫拒绝（#1549，
+/// 与「不可提供单价 / 不接受手续费」同一守卫族），fail fast 不静默吞掉。
+#[test]
+fn split_rejects_explicit_fx_rate() {
+    let conn = open();
+    seed_account(&conn, "acc-test-split-fx", "基金", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        "inst-test-split-fx",
+        "F001",
+        "Fund One",
+        "CNY",
+        "unknown",
+    );
+
+    let mut input = make_split_input("acc-test-split-fx", "inst-test-split-fx", 100.0);
+    input.fx_rate = Some(1.0);
+    let err = create_transaction_internal(&conn, input).unwrap_err();
+    match err {
+        AppError::Coded { code, message, .. } => {
+            assert_eq!(code, "trade.split-fx-rate-forbidden");
+            assert!(message.contains("显式汇率"), "实际: {message}");
+        }
+        other => panic!("应为码化错误，实际: {other}"),
+    }
+}
+
 /// 修改 buy 交易（行为层 revert→plan→apply 的 UPDATE 侧）同样经折算：非 1:1 汇率下
 /// `amount_native_cents` 保持折算值（INSERT/UPDATE 共用 prepare，防回归）。
 #[test]
@@ -848,6 +909,7 @@ fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
             in_amount_cents: None,
             idempotency_key: None,
             origin: None,
+            fx_rate: None,
         },
     )
     .unwrap()

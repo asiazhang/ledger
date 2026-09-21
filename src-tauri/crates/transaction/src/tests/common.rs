@@ -36,6 +36,7 @@ pub(crate) fn make_input(
         in_amount_cents: None,
         idempotency_key: None,
         origin: None,
+        fx_rate: None,
     }
 }
 
@@ -71,5 +72,6 @@ pub(crate) fn make_buy_input(
         in_amount_cents: None,
         idempotency_key: None,
         origin: None,
+        fx_rate: None,
     }
 }

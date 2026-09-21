@@ -407,6 +407,12 @@ async fn contract_transaction_input_quantity_describes_split_semantics() {
 /// （两码完整保留在 400 响应与参数描述中，端点描述不再三重复述），仅删端点描述
 /// 与参数/响应描述的重复表述及对 HTTP 调用者无操作价值的 IPC 内部注解；已发布
 /// 描述零改动。
+///
+/// issue #1549 触线：`TransactionInput.fx_rate` / `UpdateTransactionInput.fx_rate`
+/// 两个新字段描述已瘦身至语义必需（方向乘数、优先级、缺省行为、非法值不落库）
+/// 后实测 25031 字节仍越 24KB，经同样的人工决策分支提至 25KB：逐笔显式汇率正是
+/// 面向 AI / 迁移调用方的新能力，取数方向与失败语义必须写在契约里让调用方读到，
+/// 删掉描述会让 AI 把 `fx_rate` 误当任意方向汇率提交。
 #[tokio::test]
 async fn contract_size_within_budget() {
     let (app, _) = setup_app();
@@ -422,8 +428,8 @@ async fn contract_size_within_budget() {
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = body_to_bytes(response.into_body()).await;
     assert!(
-        bytes.len() <= 24 * 1024,
-        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 24KB）",
+        bytes.len() <= 25 * 1024,
+        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 25KB）",
         bytes.len()
     );
 }

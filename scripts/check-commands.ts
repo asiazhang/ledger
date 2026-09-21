@@ -16,9 +16,10 @@
 // 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-commands.ts [commands-dir] [api-file]
 // 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job）。
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { walkTextFiles } from "./check-structure.ts";
 import { maskComments } from "./ts-comment-mask.ts";
 
 /** 单条扫描边界违规：行号 1 起算 + 违规行原文 */
@@ -398,17 +399,14 @@ export function scanTsInvokeCalls(text: string): TsInvokeCall[] {
   return calls;
 }
 
-/** 递归收集目录下全部 .rs 文件（按路径排序，保证输出确定） */
+/** 扫描面：Rust 源文件扩展名闭集（walkTextFiles 消费参数） */
+const RUST_EXTENSIONS: ReadonlySet<string> = new Set([".rs"]);
+
+/** 收集目录下全部 .rs 文件：遍历机制归守门家族共享单点 walkTextFiles（#1625
+ *  收口，#1637 起本脚本同源），localeCompare 排序保证输出确定；本脚本只需要
+ *  绝对路径（读文件用），投影 abs。 */
 function collectRustFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  )) {
-    const p = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...collectRustFiles(p));
-    else if (entry.name.endsWith(".rs")) out.push(p);
-  }
-  return out;
+  return walkTextFiles(dir, "", { extensions: RUST_EXTENSIONS }).map((f) => f.abs);
 }
 
 function main(): void {

@@ -685,6 +685,9 @@ fn plan_with_existing_refs(
                     refund_of_transaction_id: input.refund_of_transaction_id.clone(),
                     note: input.note.clone(),
                     date: input.date.clone(),
+                    // 逐笔显式汇率随输入下传（#1549）：归一化与非法值校验归
+                    // Amount 接缝编辑沿用入口单点，本层不重复判定。
+                    fx_rate: input.fx_rate,
                     // 折算沿用基线随修改路径下传（#1550），创建路径为 None。
                     fx_edit_baseline: fx_edit_baseline.cloned(),
                 },

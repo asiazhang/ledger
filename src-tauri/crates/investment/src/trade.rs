@@ -322,6 +322,7 @@ fn prepare_buy(
         amount_cents,
         &account_currency,
         &input.date,
+        input.fx_rate,
         fx_edit_baseline,
     )?;
 
@@ -460,6 +461,7 @@ fn prepare_sell(
         amount_cents,
         &account_currency,
         &input.date,
+        input.fx_rate,
         fx_edit_baseline,
     )?;
 
@@ -630,6 +632,7 @@ fn prepare_convert(
         carried_cost_cents,
         &account_currency,
         &input.date,
+        input.fx_rate,
         fx_edit_baseline,
     )?;
 
@@ -763,6 +766,12 @@ fn prepare_split(
         return Err(AppError::coded(
             "trade.split-amount-forbidden",
             "份额调整无现金腿，金额必须为 0",
+        ));
+    }
+    if input.fx_rate.is_some() {
+        return Err(AppError::coded(
+            "trade.split-fx-rate-forbidden",
+            "份额调整无现金腿、不折算，不能携带显式汇率",
         ));
     }
     let delta_quantity = input.quantity.unwrap_or(0.0);
@@ -943,6 +952,7 @@ fn prepare_dividend(
         input.amount_cents,
         &account_currency,
         &input.date,
+        input.fx_rate,
         fx_edit_baseline,
     )?;
     Ok(DividendPlan {

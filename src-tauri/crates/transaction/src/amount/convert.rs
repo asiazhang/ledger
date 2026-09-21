@@ -4,9 +4,10 @@
 //! （**当期折算**，读路径入口：持仓市值、净资产、财务自由度、实物资产估值、跨账本
 //! 汇总、定时花费）、[`convert_to_native_on_trade_date`]（**按交易日折算**，写路径
 //! 创建入口，#1547 接入：按交易所属 ISO 周命中汇率历史；返回值随行携带折算留痕
-//! [`NativeConversion`]，#1548）、[`convert_to_native_on_edit`]（**编辑沿用**，写路径
-//! 修改入口，#1550 接入：币种/金额/日期未变沿用行内留痕，任一变才重查）。
-//! 两类入口不设隐式默认，调用方必须显式选择（#1540 spec）。
+//! [`NativeConversion`]，#1548；可选逐笔显式汇率入参，显式 > 序列 > 报错，#1549）、
+//! [`convert_to_native_on_edit`]（**编辑沿用**，写路径修改入口，#1550 接入：未携
+//! 显式且币种/金额/日期未变沿用行内留痕，任一变才重查）。
+//! 各入口不设隐式默认，调用方必须显式选择（#1540 spec）。
 //! 共同不变量：基准为全局默认币种、与账户币种无关（避免跨账户漂移）；与本位币同
 //! 币种原样返回；正反向汇率均无即报错，不静默混币种。ADR 指针：ADR-0011 / ADR-0091
 //! 决策 3 / ADR-0113 决策 3.1。陷阱：本位币读取经 `super::base_currency` 接缝，
@@ -217,50 +218,87 @@ pub fn convert_to_native_current(
 /// - 币种与默认币种相同 → 1:1 原样返回，且不留痕（两个溯源列为 `None`）。
 /// - 基准为 [`default_currency_code`]。
 /// - 返回值随行携带折算来源留痕（#1548）：金额 + 使用汇率值 + 来源闭集。
-/// - 显式汇率优先由 #1549 接入；修改路径经 [`convert_to_native_on_edit`] 沿用
-///   行内留痕（#1550），不直接调用本函数。
+/// - 显式汇率优先（#1549）：`explicit_rate` 为 `Some` 且与本位币异币种时**跳过
+///   序列查询**，按给定汇率折算、来源标为 `Explicit`——数据源覆盖不到的日期
+///   由调用方逐笔给定；取值方向与折算同向（`native = amount × rate`，与留痕
+///   列 `fx_rate_used` 同口径）。不带显式汇率的行与 #1547 行为逐位一致。
+/// - 显式汇率非法即码化错误、不落库：非正或非有限报
+///   `fx.explicit-rate-non-positive`；与本位币同币种的行无折算方向，携带显式
+///   汇率报 `fx.explicit-rate-direction-mismatch`。
+/// - 修改路径经 [`convert_to_native_on_edit`] 进来（#1550）：未携显式且三元组
+///   未变沿用行内留痕，不直接调用本函数。
 pub fn convert_to_native_on_trade_date(
     conn: &Connection,
     amount_cents: i64,
     currency_code: &str,
     trade_date: &str,
+    explicit_rate: Option<f64>,
 ) -> Result<NativeConversion> {
     let target = default_currency_code(conn)?;
     if currency_code == target {
+        // 同币种无折算方向：显式汇率无处安放，fail fast 不静默吞掉（#1549）。
+        if let Some(rate) = explicit_rate {
+            return Err(AppError::codedp(
+                "fx.explicit-rate-direction-mismatch",
+                format!(
+                    "显式汇率方向不符：{currency_code} 即本位币，本笔无折算，不应显式给定汇率（{rate}）"
+                ),
+                &[currency_code],
+            ));
+        }
         return Ok(NativeConversion {
             native_cents: amount_cents,
             fx_rate_used: None,
             fx_rate_source: None,
         });
     }
-    let rate = lookup_fx_history_rate(conn, currency_code, &target, trade_date)?;
+    let (rate, source) = match explicit_rate {
+        Some(rate) => {
+            if !rate.is_finite() || rate <= 0.0 {
+                return Err(AppError::codedp(
+                    "fx.explicit-rate-non-positive",
+                    format!("显式汇率必须大于 0: {rate}"),
+                    &[&rate.to_string()],
+                ));
+            }
+            (rate, FxRateSource::Explicit)
+        }
+        None => (
+            lookup_fx_history_rate(conn, currency_code, &target, trade_date)?,
+            FxRateSource::Series,
+        ),
+    };
     Ok(NativeConversion {
         native_cents: (amount_cents as f64 * rate).round() as i64,
         fx_rate_used: Some(rate),
-        fx_rate_source: Some(FxRateSource::Series),
+        fx_rate_source: Some(source),
     })
 }
 
-/// **按交易日折算的编辑沿用形态**（写路径修改入口，#1550）：币种、金额、日期
-/// 三元组与旧行完全一致 → 原样返回行内留痕（含空值），不再查序列——避免导入的
-/// 历史行因当前数据源查不到当年值而变成改不动的僵尸行；任一项变了 → 按新值走
-/// [`convert_to_native_on_trade_date`] 重查重算，新周查不到即既有码化错误，
-/// 不静默沿用旧值。基线缺席（创建路径）与按交易日入口完全一致。
+/// **按交易日折算的编辑沿用形态**（写路径修改入口，#1550）：未携显式汇率且
+/// 币种、金额、日期三元组与旧行完全一致 → 原样返回行内留痕（含空值），不再
+/// 查序列——避免导入的历史行因当前数据源查不到当年值而变成改不动的僵尸行；
+/// 任一项变了或调用方逐笔显式给定汇率（#1549：显式 > 沿用 > 序列，显式在场时
+/// 沿用不生效，来源改标 `Explicit`）→ 走 [`convert_to_native_on_trade_date`]
+/// 重查重算，新周查不到即既有码化错误，不静默沿用旧值。基线与显式均缺席
+///（创建路径）与按交易日入口完全一致。
 pub fn convert_to_native_on_edit(
     conn: &Connection,
     amount_cents: i64,
     currency_code: &str,
     trade_date: &str,
+    explicit_rate: Option<f64>,
     baseline: Option<&FxEditBaseline>,
 ) -> Result<NativeConversion> {
-    if let Some(old) = baseline
+    if explicit_rate.is_none()
+        && let Some(old) = baseline
         && old.amount_cents == amount_cents
         && old.currency_code == currency_code
         && old.date == trade_date
     {
         return Ok(old.conversion);
     }
-    convert_to_native_on_trade_date(conn, amount_cents, currency_code, trade_date)
+    convert_to_native_on_trade_date(conn, amount_cents, currency_code, trade_date, explicit_rate)
 }
 
 /// 按交易日所属 ISO 周在汇率历史序列查汇率（正查失败则反查取倒数）。
