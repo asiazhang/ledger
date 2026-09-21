@@ -4,8 +4,8 @@
 //! 事务、置脏、信号内化单点，「即建商户」证据随闭包返回必达；读端点经
 //! `run_db`（形状乙）。
 //!
-//! 列表读端点的 HTTP 缺省上限（issue #1631）：缺省不再返回全部，等价第一页 ×
-//! 上限；显式 `page_size` / `limit` 超上限或负值报 400 码化错误。校验住本层，
+//! 列表读端点的 HTTP 缺省上限（issue #1631）：缺省不再返回全部，等价注入
+//! `page_size = 上限`（`page` 缺省 1）——显式 `page_size` / `limit` 超上限或负值报 400 码化错误。校验住本层，
 //! 与 IPC 共用的域实现（`list_transactions_internal`）零改动——IPC 缺省全量
 //! 语义不变（ADR-0008 原决策辖 IPC；HTTP 半边修订见其修订注记）。
 
@@ -32,7 +32,8 @@ use ledger_transaction::{
 const HTTP_MAX_PAGE_SIZE: usize = 100;
 
 /// HTTP 列表入参行数守卫（issue #1631，只辖 HTTP）：缺省（`page_size` 与
-/// `limit` 均未携带）注入等价第一页 × 上限，不再整表序列化；显式超上限或
+/// `limit` 均未携带）注入 `page_size = 上限`（`page` 缺省 1，故缺省即首页；
+/// 已携 `page` 时返回该页 × 上限），不再整表序列化；显式超上限或
 /// 负值 `limit`（SQLite 负值无上限语义仅限 IPC）报 400 码化错误——拒绝而非
 /// 静默截断，截断会造成读回少行不自知，AI 导入按码自纠（ADR-0050）。只携
 /// `limit` 时不注入缺省页（保留「取前 N 条」与分页互斥的既有语义，ADR-0008）。
@@ -74,7 +75,7 @@ fn enforce_http_page_bounds(
     description = "读回/列表唯一入口：返回 `{items, total}`，过滤参数（from/to、account_id、\
                   involving_account_id、merchant_id、category_id、instrument_id、kinds、\
                   uncategorized_only、limit、page/page_size）全部可选；默认按日期倒序稳定排序。\
-                  HTTP 单请求行数上限 100：缺省（不传 page/page_size）等价第一页 × 100，\
+                  HTTP 单请求行数上限 100：缺省（不传 page_size）等价 page_size=100（page 缺省 1，携 page 时返回该页），\
                   不再返回全部；显式 page_size 超过 100 报 400 码化错误 \
                   `transaction.page-size-over-cap`，limit 超过 100 或负值报 400 \
                   `transaction.limit-out-of-range`（负值无上限语义仅限 IPC）；\
@@ -93,7 +94,7 @@ fn enforce_http_page_bounds(
         ("kinds" = Option<Vec<TransactionKind>>, Query, description = "交易类型集合过滤（唯一类型维度，手动多选与下钻共用）：逗号分隔单参数如 expense,refund（同时承担单值与多值，取代原单值 kind 参数），命中 kind IN (...)；与其余维度 AND 组合，非法值 4xx"),
         ("limit" = Option<i64>, Query, description = "取前 N 条，须在 0 到 100 之间（负值无上限语义仅限 IPC），超范围 400 码化错误；与 page_size 互斥，仅携 limit 时按 limit 截取"),
         ("page" = Option<usize>, Query, description = "页码，从 1 开始，默认 1"),
-        ("page_size" = Option<usize>, Query, description = "每页条数，上限 100，超过报 400 码化错误；缺省等价第一页 × 100（total 恒返回，读全部按 total 翻页取齐）")
+        ("page_size" = Option<usize>, Query, description = "每页条数，上限 100，超过报 400 码化错误；缺省等价 page_size=100（total 恒返回，读全部按 total 翻页取齐）")
     ),
     responses(
         (status = 200, description = "交易分页结果 {items, total}", body = TransactionListResult),
