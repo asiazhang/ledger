@@ -18,7 +18,7 @@ use chrono::NaiveDate;
 use rusqlite::Connection;
 
 use tauri_app_lib::test_support::{
-    block_on, seed_account, seed_exchange_rate_with_source, seed_instrument,
+    block_on, seed_account, seed_exchange_rate_with_source, seed_fx_rate_history, seed_instrument,
 };
 
 use crate::ecb::EcbDayRates;
@@ -294,6 +294,65 @@ fn repeated_sync_skips_full_backfill_once_depth_reached() {
     );
     let (min_week, _) = fx_week_span(&conn, "USD", "CNY");
     assert_eq!(min_week.as_deref(), Some("2022-06-06"), "窗口深度保持");
+}
+
+/// 存量旧来源行（东财时代的 fx_rate_history 行，source='eastmoney'）不计入 ECB
+/// 深度判据（spec #1540 / issue #1551 AC）：全字典各对都有不晚于窗口起点的旧来源
+/// 行时，深度判据仍判「未达」——全量回填照常执行，同周键的旧值被 ECB 交叉值
+/// 覆盖、来源翻转为 'ecb'。把深度判据的 `source='ecb'` 过滤删掉，本用例即红：
+/// 旧来源行会被误当作新来源覆盖证据，同步走增量腿、旧值原样留存。
+#[test]
+fn legacy_eastmoney_rows_do_not_count_as_ecb_depth_and_are_overwritten() {
+    let conn = tauri_app_lib::test_support::open();
+    seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
+    // 全字典各非本位币对各种一条窗口起点当周的旧来源行（值 9.99，非 ECB 口径）。
+    for code in dictionary_codes(&conn) {
+        if code == "CNY" {
+            continue;
+        }
+        seed_fx_rate_history(
+            &conn,
+            &format!("fxh-legacy-{code}"),
+            &code,
+            "CNY",
+            "2022-06-06",
+            9.99,
+        );
+    }
+    let (mut channels, full_calls, incr_calls) = stub_channels(
+        &conn,
+        &[
+            ("2022-06-06", 7.2),
+            ("2022-06-15", 7.3),
+            ("2026-09-14", 7.4),
+        ],
+    );
+
+    let report = block_on(sync_fx_rates(&conn, &mut channels)).unwrap();
+
+    assert!(
+        report.full_backfilled,
+        "旧来源行不构成新来源的深度证据：应走全量回填"
+    );
+    assert_eq!(full_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(incr_calls.load(Ordering::SeqCst), 0);
+    // 同周键（2022-06-06）被 ECB 全量回填覆盖：值 = 交叉值、来源翻转 'ecb'。
+    let codes = dictionary_codes(&conn);
+    let usd_leg = leg_rate(&codes, "USD", 7.2);
+    let (rate, source): (f64, String) = conn
+        .query_row(
+            "SELECT rate, source FROM fx_rate_history \
+              WHERE base_code='USD' AND quote_code='CNY' AND week_start='2022-06-06'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(source, "ecb", "同周键覆盖后来源标记为新来源");
+    assert!(
+        (rate - 7.2 / usd_leg).abs() < 1e-9,
+        "同周键旧值被 ECB 交叉值覆盖，实际 rate={rate}"
+    );
+    assert_eq!(fx_point_count(&conn), 30, "10 对 × 3 个窗口内周，无重复行");
 }
 
 // ---------------------------------------------------------------------------

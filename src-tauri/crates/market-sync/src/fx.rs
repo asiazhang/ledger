@@ -295,6 +295,9 @@ fn earliest_non_native_trace_date(conn: &Connection, native: &str) -> Result<Opt
 /// 非本位币币种对本位币都已有不晚于窗口起点的周采样行，才判「深度已达成」。
 /// 一处的旧覆盖（如东财时代的孤立序列）不掩盖另一对的缺口（全局 MIN 会漏判）；
 /// 全量回填一次灌齐全部币种对，常态下第二轮即达成。
+/// 覆盖证据只认新来源（`source='ecb'`，issue #1551 AC）：存量旧来源行（东财
+/// 时代的 `fx_rate_history` 行）不是 ECB 序列的覆盖证据，不计入深度——否则
+/// 升级账本的首次同步会被误判「已达深」而跳过全量回填，旧值永远不被纠正。
 fn fx_depth_reached(conn: &Connection, native: &str, window_start: &str) -> Result<bool> {
     let missing: i64 = conn.query_row(
         "SELECT count(*) FROM currencies c \
@@ -302,7 +305,7 @@ fn fx_depth_reached(conn: &Connection, native: &str, window_start: &str) -> Resu
             AND NOT EXISTS ( \
                 SELECT 1 FROM fx_rate_history f \
                  WHERE f.base_code = c.code AND f.quote_code = ?1 \
-                   AND f.week_start <= ?2 \
+                   AND f.week_start <= ?2 AND f.source = 'ecb' \
             )",
         params![native, window_start],
         |row| row.get(0),

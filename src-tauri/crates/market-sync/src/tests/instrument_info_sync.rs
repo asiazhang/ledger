@@ -21,7 +21,6 @@ use crate::channels::{
     SyncFetchHosts, do_incremental_sync_channels,
 };
 use crate::fund_nav::NavPoint;
-use crate::http::{KlineBar, KlineResponse, fx_secid_candidates, parse_klines};
 use crate::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
 use crate::model::WriteWitness;
 use crate::session::ScopedSession;
@@ -117,7 +116,6 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &session,
         &mut logging_fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -163,8 +161,6 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
             "fetch:end", // 批量报价（会话外）
             "take",
             "release", // 名称随行刷新 + 现价 upsert + 当周采样点判定
-            "take",
-            "release", // 本位币读取（汇率回填；无非本位币币种对则零抓取）
         ],
         "读写只在会话内、抓取只在会话外的交织形状（issue #1275）"
     );
@@ -253,7 +249,6 @@ fn incremental_sync_normalizes_symbol_suffix() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -288,7 +283,6 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -311,7 +305,6 @@ fn incremental_sync_empty_library_returns_message() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -355,7 +348,6 @@ fn incremental_sync_updates_holding_prices_only() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -424,7 +416,6 @@ fn incremental_sync_skips_holdings_without_quote_source() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -475,7 +466,6 @@ fn incremental_sync_keeps_old_price_when_suspended() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -507,7 +497,6 @@ fn incremental_sync_counts_missing_response_as_skipped() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -537,7 +526,6 @@ fn incremental_sync_skips_unknown_market() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -562,7 +550,6 @@ fn incremental_sync_is_idempotent() {
     let first = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -577,7 +564,6 @@ fn incremental_sync_is_idempotent() {
     let second = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -609,7 +595,6 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -655,7 +640,6 @@ fn incremental_sync_pulls_a_daily_ledgers_quotes_in_one_batch() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -703,7 +687,6 @@ fn incremental_sync_hands_all_quote_queries_to_the_channel_in_one_call() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -741,7 +724,6 @@ fn swapping_quote_channel_keeps_prices_landing_without_source_key_in_orchestrati
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -769,7 +751,6 @@ fn incremental_sync_propagates_fetch_error() {
     let err = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -818,7 +799,6 @@ fn witness_survives_mid_run_failure_after_write() {
     let err = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut no_name,
         &mut no_confirm,
@@ -849,7 +829,6 @@ fn witness_mirrors_result_any_written_on_success() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -910,7 +889,6 @@ fn witness_mirrors_result_any_written_on_success() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut no_name,
         &mut no_confirm,
@@ -927,26 +905,7 @@ fn witness_mirrors_result_any_written_on_success() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// K 线回填（issue #137 / ADR-0019）：现价 upsert 之外，近两年日 K 回填降采样落
-// PriceHistory / FxRateHistory。编排经注入 mock kline / mock fx 闭包驱动
-// （与批量报价同一接缝），不依赖真实网络。
-// ---------------------------------------------------------------------------
-
-/// 构造一根日 K 样本（日期为 ISO 日期，收盘为真实价格值，如 10.40 元）。
-fn bar(date: &str, close: f64) -> KlineBar {
-    KlineBar {
-        date: date.to_string(),
-        close,
-    }
-}
-
-/// 空实现：同 [`no_kline`]，用于汇率回填。
-fn no_fx(_: &str) -> FetchFuture<Vec<KlineBar>> {
-    super::ready(Ok(vec![]))
-}
-
-/// 空实现：既有用例只关心股票/汇率行为时注入（净值通道最小桩，首刷查无净值
+/// 空实现：既有用例只关心股票行为时注入（净值通道最小桩，首刷查无净值
 /// 形态——基金计入跳过）。
 fn no_nav(_: &str) -> FetchFuture<Vec<NavPoint>> {
     super::ready(Ok(vec![]))
@@ -974,27 +933,11 @@ fn no_bulk() -> BulkFetchSurfaces {
 }
 
 /// 进度记录闭包：把**标的级一格的** (done, total) 推进序列攒进测试侧共享缓冲
-///（与 [`mock_fx`] 的请求记录同纪律：缓冲由测试持有，断言时 borrow）。事件恒为
-/// 标的级两字段（原页级明细随逐只通道换源退役，issue #1571）。
+///（缓冲由测试持有，断言时 borrow）。事件恒为标的级两字段（原页级明细随逐只
+/// 通道换源退役，issue #1571）。
 fn progress_recorder<'a>(log: &'a Mutex<Vec<(usize, usize)>>) -> impl FnMut(SyncProgress) + 'a {
     move |progress| {
         log.lock().unwrap().push((progress.done, progress.total));
-    }
-}
-
-/// 模拟汇率 K 线抓取：按 base+quote 直连串（如 "HKDCNY"）返回汇率日线样本，
-/// 并记录被请求的币种对（断言只对非本位币发起抓取）。
-fn mock_fx<'a>(
-    by_pair: &'a [(&'a str, Vec<KlineBar>)],
-    requested: &'a Mutex<Vec<String>>,
-) -> impl FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send + 'a {
-    move |pair: &str| {
-        requested.lock().unwrap().push(pair.to_string());
-        super::ready(Ok(by_pair
-            .iter()
-            .find(|(p, _)| *p == pair)
-            .map(|(_, bars)| bars.clone())
-            .unwrap_or_default()))
     }
 }
 
@@ -1018,37 +961,18 @@ fn price_history_rows(conn: &Connection, instrument_id: &str) -> Vec<(String, i6
     rows.map(|r| r.unwrap()).collect()
 }
 
-/// 查询币种对的周采样汇率历史（trade_date, rate），按日期升序。
-fn fx_rows(conn: &Connection, base: &str, quote: &str) -> Vec<(String, f64)> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT trade_date, rate FROM fx_rate_history \
-             WHERE base_code=?1 AND quote_code=?2 ORDER BY trade_date",
-        )
-        .unwrap();
-    let rows = stmt
-        .query_map(params![base, quote], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
-        })
-        .unwrap();
-    rows.map(|r| r.unwrap()).collect()
-}
-
 #[test]
 fn sync_writes_no_price_history_quote_only() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     let prices = [("600519", Some(100_000))];
-    let fx_log = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&prices);
-    let mut fx = mock_fx(&[], &fx_log);
     // 现价与历史解耦（ADR-0122 / issue #1377）：同步只刷现价——无历史序列的
     // 标的也不落任何采样点（单点会冒充历史完整、永久破坏后台补全的首刷判据），
     // 编排的参数表里已无日 K 通道（编译期不可表达）。
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -1089,13 +1013,10 @@ fn sync_lands_current_week_point_for_instrument_with_existing_history() {
     )
     .unwrap();
     let prices = [("600519", Some(100_000))];
-    let fx_log = Mutex::new(Vec::new());
     let mut fetch = mock_fetch(&prices);
-    let mut fx = mock_fx(&[], &fx_log);
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -1115,64 +1036,6 @@ fn sync_lands_current_week_point_for_instrument_with_existing_history() {
         ],
         "当周采样点由现价刷新直落：上一周点与当周点并存",
     );
-}
-
-#[test]
-fn fx_secid_candidates_cover_onshore_and_reverse_fallback() {
-    // HKD→CNY：东财无 119.HKDCNY，主候选为在岸人民币市场 120.HKDCNYC；反向兜底取倒数。
-    assert_eq!(
-        fx_secid_candidates("HKDCNY"),
-        vec![
-            ("120.HKDCNYC".to_string(), false),
-            ("119.HKDCNY".to_string(), false),
-            ("119.CNYHKD".to_string(), true),
-        ]
-    );
-    // 纯全球外汇对：119 直连 + 反向兜底。
-    assert_eq!(
-        fx_secid_candidates("EURUSD"),
-        vec![
-            ("119.EURUSD".to_string(), false),
-            ("119.USDEUR".to_string(), true),
-        ]
-    );
-    // 美元→人民币（issue #696 美股持仓折算）：在岸中间价 120.USDCNYC 首选
-    //（2026-01 实测命中；离岸 119.USDCNY 无直连数据），反向兇底取倒数。
-    assert_eq!(
-        fx_secid_candidates("USDCNY"),
-        vec![
-            ("120.USDCNYC".to_string(), false),
-            ("119.USDCNY".to_string(), false),
-            ("119.CNYUSD".to_string(), true),
-        ]
-    );
-    // 本位币为 base 的反向对：119 直连 + 119 反向 + 120 反向（取倒数）。
-    assert_eq!(
-        fx_secid_candidates("CNYHKD"),
-        vec![
-            ("119.CNYHKD".to_string(), false),
-            ("119.HKDCNY".to_string(), true),
-            ("120.HKDCNYC".to_string(), true),
-        ]
-    );
-}
-
-#[test]
-fn kline_response_deserializes_daily_bars_and_skips_invalid() {
-    // 真实 push2his 日 K 响应形状（fields2=f51,f53 → 每行 "日期,收盘价"）。
-    let json = r#"{"rc":0,"rt":17,"svr":1,"lt":1,"full":0,"data":{"code":"600519","market":1,"name":"贵州茅台","decimal":2,"dktotal":566,"preKPrice":1302.8,"klines":["2026-01-05,1302.80","2026-01-06,1310.00","2026-01-07,-"]}}"#;
-    let resp: KlineResponse = serde_json::from_str(json).unwrap();
-    let data = resp.data.unwrap();
-    let klines = data.klines.unwrap();
-    let bars = parse_klines(&klines);
-    assert_eq!(bars.len(), 2, "无效收盘样本（'-'）应被过滤");
-    assert_eq!(bars[0].date, "2026-01-05");
-    assert_eq!(bars[0].close, 1302.80);
-    assert_eq!(bars[1].close, 1310.00);
-
-    // 无效代码 / 无数据：data 为 null → 空序列，不报错（优雅降级）。
-    let empty: KlineResponse = serde_json::from_str(r#"{"rc":100,"data":null}"#).unwrap();
-    assert!(empty.data.is_none());
 }
 
 #[test]
@@ -1289,7 +1152,6 @@ fn fund_first_sync_without_nav_counts_skipped() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut no_name,
         &mut no_confirm,
@@ -1336,7 +1198,6 @@ fn fund_rows_without_real_code_skip_without_fetch() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut no_name,
         &mut no_confirm,
@@ -1373,7 +1234,6 @@ fn fund_nav_fetch_error_propagates() {
     let err = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut no_name,
         &mut no_confirm,
@@ -1411,7 +1271,6 @@ fn etf_holding_syncs_quote_only_without_history() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -1452,7 +1311,6 @@ fn etf_holding_unknown_market_counts_skipped_without_requests() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -1543,7 +1401,6 @@ fn three_type_partitions_roll_up_into_one_result() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut no_name,
         &mut no_confirm,
@@ -1587,11 +1444,11 @@ fn three_type_partitions_roll_up_into_one_result() {
 
 // ---------------------------------------------------------------------------
 // 美股行情通道（issue #696 / ADR-0081 决策 2）：f2 刻度实测钉住、美股持仓
-// 刷价 + 日 K 回填 + USDCNY 汇率同期采集的端到端离线注入。
+// 刷价的端到端离线注入（汇率序列归 ECB 同步编排，不在本编排，#1551）。
 // ---------------------------------------------------------------------------
 
 #[test]
-fn us_stock_holding_syncs_quote_kline_and_usdcny() {
+fn us_stock_holding_syncs_quote_and_rerun_overwrites() {
     let conn = tauri_app_lib::test_support::open();
     // 美股持仓：纳斯达克标的、USD 币种（创建增强落库形态）。
     insert_holding(
@@ -1617,19 +1474,10 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         }]))
     };
 
-    // USDCNY 汇率同期采集（持仓币种 USD ≠ 本位币 CNY）：记录被请求的币种对。
-    let fx_log = Mutex::new(Vec::new());
-    let fx_pairs = [(
-        "USDCNY",
-        vec![bar("2026-01-02", 7.02), bar("2026-01-08", 7.01)],
-    )];
-    let mut fx = mock_fx(&fx_pairs, &fx_log);
-
-    // 现价与历史解耦（issue #1377）：同步刷现价 + 汇率同期采集，不回填日 K。
+    // 现价与历史解耦（issue #1377）：同步只刷现价，不回填日 K。
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -1663,18 +1511,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         .unwrap();
     assert_eq!(count, 0);
 
-    // USDCNY 汇率同期落 FxRateHistory（候选序钉住见 fx_secid_candidates 测试）。
-    assert_eq!(
-        *fx_log.lock().unwrap(),
-        vec!["USDCNY".to_string()],
-        "只对非本位币币种对发起汇率抓取"
-    );
-    assert_eq!(
-        fx_rows(&conn, "USD", "CNY"),
-        vec![("2026-01-02".into(), 7.02), ("2026-01-08".into(), 7.01)],
-    );
-
-    // 重跑幂等：现价覆盖更新、汇率历史同周整周覆盖，零重复行。
+    // 重跑幂等：现价覆盖更新。
     let mut fetch = |queries: &[QuoteQuery]| {
         query_log.lock().unwrap().push(query_log_line(queries));
         super::ready(Ok(vec![QuoteItem {
@@ -1684,11 +1521,9 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
             price_date: None,
         }]))
     };
-    let mut fx = mock_fx(&fx_pairs, &fx_log);
     tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -1697,10 +1532,6 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
         &mut WriteWitness::default(),
     ))
     .unwrap();
-    let fx_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM fx_rate_history", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(fx_count, 2, "汇率历史零重复行");
     assert_eq!(
         market_price_of(&conn, "inst-aapl"),
         Some(3_200_000),
@@ -1722,13 +1553,9 @@ fn us_stock_holdings_route_exact_market_per_instrument() {
         query_log.lock().unwrap().push(query_log_line(queries));
         super::ready(Ok(vec![]))
     };
-    let fx_log = Mutex::new(Vec::new());
-    let usdcny = [("USDCNY", vec![bar("2026-01-05", 7.02)])];
-    let mut fx = mock_fx(&usdcny, &fx_log);
     tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -1926,7 +1753,6 @@ fn quote_date_is_exchange_local_and_source_is_tencent() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -1998,7 +1824,6 @@ fn incremental_sync_includes_cleared_instrument() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -2031,7 +1856,6 @@ fn incremental_sync_includes_never_traded_instrument() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -2063,7 +1887,6 @@ fn incremental_sync_refreshes_names_from_quote_batch() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -2110,7 +1933,6 @@ fn incremental_sync_skips_name_write_when_unchanged() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -2161,7 +1983,6 @@ fn fund_name_refresh_via_detail_lookup() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut fund_name,
         &mut no_confirm,
@@ -2218,7 +2039,6 @@ fn fund_name_refresh_degrades_deterministic_not_found_to_skip() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut fund_name,
         &mut no_confirm,
@@ -2260,7 +2080,6 @@ fn fund_name_refresh_still_propagates_network_failure() {
     let error = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut fund_name,
         &mut no_confirm,
@@ -2309,7 +2128,6 @@ fn fund_name_lookup_skips_name_as_code_rows_and_empty_names() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut fund_name,
         &mut no_confirm,
@@ -2383,7 +2201,6 @@ fn progress_sequence_total_first_then_per_instrument_advance() {
     tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -2453,7 +2270,6 @@ fn progress_denominator_counts_channel_capable_instruments_only() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut fund_name,
         &mut no_confirm,
@@ -2508,7 +2324,6 @@ fn progress_advances_even_when_quote_invalid_or_missing() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -2578,7 +2393,6 @@ fn fund_up_to_date_still_advances_progress() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut fund_name,
         &mut no_confirm,
@@ -2632,7 +2446,6 @@ fn fund_progress_advances_after_nav_and_name_complete() {
     tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut fund_name,
         &mut no_confirm,
@@ -2664,7 +2477,6 @@ fn progress_not_emitted_for_empty_library() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut no_nav,
         &mut no_name,
         &mut no_confirm,
@@ -2709,7 +2521,6 @@ fn progress_not_emitted_when_no_channel_capable_instrument() {
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
-        &mut no_fx,
         &mut nav,
         &mut no_name,
         &mut no_confirm,
@@ -2796,24 +2607,21 @@ fn instrument_version(conn: &Connection, instrument_id: &str) -> i64 {
     .unwrap()
 }
 
-/// 行情三通道（批量报价 / 日 K / 汇率）的调用计数：用例现场只有场外基金标的，
-/// 这三条通道恒不应被触达——被触达即计数 + 断言面（同时硬失败，避免静默）。
+/// 行情两通道（批量报价 / 日 K）的调用计数：用例现场只有场外基金标的，
+/// 这两条通道恒不应被触达——被触达即计数 + 断言面（同时硬失败，避免静默）。
 #[derive(Clone, Default)]
 struct QuoteChannelCalls {
     quote: Arc<AtomicUsize>,
     kline: Arc<AtomicUsize>,
-    fx: Arc<AtomicUsize>,
 }
 
 impl QuoteChannelCalls {
     fn total(&self) -> usize {
-        self.quote.load(Ordering::SeqCst)
-            + self.kline.load(Ordering::SeqCst)
-            + self.fx.load(Ordering::SeqCst)
+        self.quote.load(Ordering::SeqCst) + self.kline.load(Ordering::SeqCst)
     }
 }
 
-/// 批量取数面编排用例的通道束：行情三通道计到 [`QuoteChannelCalls`] 上并硬失败
+/// 批量取数面编排用例的通道束：行情两通道计到 [`QuoteChannelCalls`] 上并硬失败
 /// （用例现场无行情标的），逐标的基金通道与批量取数面由用例注入。
 fn fund_channels(
     quote_calls: QuoteChannelCalls,
@@ -2833,13 +2641,6 @@ fn fund_channels(
         fetch_kline: Box::new({
             let calls = quote_calls.kline.clone();
             move |_: &QuoteQuery| {
-                calls.fetch_add(1, Ordering::SeqCst);
-                unreachable!("用例现场无行情通道标的")
-            }
-        }),
-        fetch_fx: Box::new({
-            let calls = quote_calls.fx.clone();
-            move |_: &str| {
                 calls.fetch_add(1, Ordering::SeqCst);
                 unreachable!("用例现场无行情通道标的")
             }
@@ -4107,7 +3908,6 @@ fn mixed_ledger_keeps_constant_fund_out_of_requests_denominator_and_gaps() {
         fetch_kline: Box::new(|_| {
             Box::pin(async { unreachable!("历史日 K 已移出现价刷新编排") })
         }),
-        fetch_fx: Box::new(|_| Box::pin(async { unreachable!("全仓 CNY，零汇率抓取") })),
         fetch_nav_history: counting_nav(per_fund_nav_calls.clone(), today_s.clone(), 3.0),
         fetch_fund_name: counting_name(per_fund_name_calls.clone()),
         confirm_money_fund_form: Box::new(|_| Box::pin(async { Ok(false) })),

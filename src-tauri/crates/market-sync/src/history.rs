@@ -33,8 +33,9 @@
 //!
 //! 收尾裁决与手动同步同形（issue #1277 成败同判）：本轮实际写过价格数据
 //! （写入见证 [`WriteWitness`]）→ 提交点置脏一次 + 发既有价格失效信号；
-//! 零写入不置脏不广播。汇率 K 线同期补齐（与价格历史同期段采集，ADR-0019），
-//! 与手动同步同口径不计入写入见证。
+//! 零写入不置脏不广播。汇率序列不在本编排（ECB 同步编排独立触发与窗口，
+//! ADR-0019 修订记录；随 #1551 与东财汇率腿一并退役的「汇率 K 线同期补齐」
+//! 不再存在）。
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -53,7 +54,7 @@ use super::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
 use super::fund_nav::NavPoint;
 use super::http::KlineBar;
 use super::incremental::{
-    SyncInstrument, backfill_fx_pairs, beijing_today, downsample_weekly, quote_code, week_monday,
+    SyncInstrument, beijing_today, downsample_weekly, quote_code, week_monday,
     write_weekly_price_history,
 };
 use super::lane::{
@@ -331,8 +332,8 @@ pub(super) struct HistoryBackfillStats {
     pub(super) failed: usize,
 }
 
-/// 一轮价格历史补全：收集派生队列 → 排空（逐只回填单元，单只失败继续）→
-/// 汇率 K 线同期补齐。进度回调是唯一对外观察点：分母 = 队列长度，收集完成
+/// 一轮价格历史补全：收集派生队列 → 排空（逐只回填单元，单只失败继续）。
+/// 进度回调是唯一对外观察点：分母 = 队列长度，收集完成
 /// 立即发 `{ done: 0, total }`，此后每只处理完推进一格（成败同计格，与手动
 /// 同步口径一致——有通道标的不以成败计格）。队列空零动作：不发进度、零网络
 /// 请求。（基金首刷翻页的页级明细随 #1566 换源新浪全历史面退场：逐只回填
@@ -340,12 +341,9 @@ pub(super) struct HistoryBackfillStats {
 ///
 /// 单只网络失败不中断本轮（记 warn 继续）：无用户在场，失败的标的靠派生事实
 /// 在下一窗口自然重进队列；单只原子（issue #1373）保证失败不留半根历史。
-/// 汇率失败同样不中断（辅助性折算序列，缺失段由后续窗口的后台补全补齐）。
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn run_history_backfill_round<Q, K, X, H, C, P>(
+pub(super) async fn run_history_backfill_round<Q, K, H, C, P>(
     session: &Q,
     fetch_kline: &mut K,
-    fetch_fx: &mut X,
     fetch_nav_history: &mut H,
     confirm_money_fund: &mut C,
     progress: &mut P,
@@ -354,7 +352,6 @@ pub(super) async fn run_history_backfill_round<Q, K, X, H, C, P>(
 where
     Q: ScopedSession,
     K: FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> + Send,
-    X: FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send,
     // 新浪单只全历史通道（issue #1566）：6 位代码 → 整只历史单位净值。
     H: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
     // 货基判定确认通道（issue #1563）：6 位代码 → 官方披露自报形态三态。
@@ -439,13 +436,6 @@ where
     // 在途计数收起（尝试结局表保留到下一轮开始，轮间窗口的空态判定消费它）。
     backfill::round_finished();
 
-    // 汇率 K 线同期补齐（与手动同步 §③ 同一单元）：只取本轮队列标的的币种对
-    // ——本轮实际在补的曲线才需要同期折算序列；已完整标的的汇率序列已在库。
-    let currencies = queue.iter().map(|item| item.instrument.currency.clone());
-    if let Err(error) = backfill_fx_pairs(session, fetch_fx, currencies).await {
-        tracing::warn!(%error, "历史补全汇率序列补齐失败（不中断本轮，缺失段后续补齐）");
-    }
-
     Ok(HistoryBackfillStats {
         queued: total,
         failed,
@@ -500,10 +490,9 @@ impl LaneRound for HistoryBackfillRound {
     ) -> LaneRoundFuture<'a, Self::Stats> {
         Box::pin(async move {
             // 借用拆字段：编排各通道由独立参数消费（历史补全不消费批量取数面），
-            // 五条通道互不重叠地交给编排。
+            // 四条通道互不重叠地交给编排。
             let SyncFetchChannels {
                 fetch_kline,
-                fetch_fx,
                 fetch_nav_history,
                 confirm_money_fund_form,
                 ..
@@ -514,7 +503,6 @@ impl LaneRound for HistoryBackfillRound {
             run_history_backfill_round(
                 session,
                 fetch_kline,
-                fetch_fx,
                 fetch_nav_history,
                 confirm_money_fund_form,
                 &mut forward,

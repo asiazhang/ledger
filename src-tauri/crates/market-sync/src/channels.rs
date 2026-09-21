@@ -1,12 +1,14 @@
-//! 同步网络通道束（issue #1276）：六个逐标的抓取通道 + 一个批量取数面
+//! 同步网络通道束（issue #1276）：五个逐标的抓取通道 + 一个批量取数面
 //!（ADR-0121 / issue #1374 / ADR-0130 决策 2）的打包形态与生产/测试换装接缝。
 //!
-//! 束内闭包：批量报价 / 日 K / 汇率 K 线 / 新浪单只全历史 / 基金名称 /
-//! 货基判定确认（issue #1563 换源，由现价刷新与历史补全两编排消费）六个，
+//! 束内闭包：批量报价 / 日 K / 新浪单只全历史 / 基金名称 /
+//! 货基判定确认（issue #1563 换源，由现价刷新与历史补全两编排消费）五个，
 //! 外加一个批量取数面（新浪 `f_` 面：名称与最新净值同面返回；issue #1565 换源）。
-//! 增量编排（[`super::incremental`]）消费批量报价 / 汇率 K / 新浪单只全历史
-//!（issue #1571 起与历史补全同通道）/ 基金名称四闭包 + 批量面 + 货基确认，
+//! 增量编排（[`super::incremental`]）消费批量报价 / 新浪单只全历史
+//!（issue #1571 起与历史补全同通道）/ 基金名称三闭包 + 批量面 + 货基确认，
 //! 见 `do_incremental_sync_with`；日 K 通道归价格历史后台补全（issue #1377）。
+//! 汇率序列的采集腿已随 #1551 换 ECB 退役（[`super::fx`] 的 `FxSyncChannels`
+//! 是独立的汇率通道束，不经本束）。
 //! 基金名称闭包走按代码取价编排（新浪批量面 + 官方披露，issue #1568 换源）。
 //! 本模块把它们打成**一个通道束**：生产经 [`SyncFetchChannels::production`]
 //! 接 HTTP 层（复用主机池 / 重试 / 限流 pacer 与价格换算），测试把桩闭包装进
@@ -37,10 +39,9 @@ use super::csrc::confirm_money_fund_form;
 use super::fund::fetch_fund_quote;
 use super::fund_nav::NavPoint;
 use super::http::{
-    ForegroundGuard, KlineBar, Pacer, build_client, fetch_fx_kline, lock_pacer, shared_pacer,
-    wait_foreground_idle,
+    ForegroundGuard, KlineBar, Pacer, build_client, lock_pacer, shared_pacer, wait_foreground_idle,
 };
-use super::incremental::{do_incremental_sync_with, kline_beg, kline_window};
+use super::incremental::{do_incremental_sync_with, kline_window};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use super::progress::SyncProgress;
 use super::session::ScopedSession;
@@ -81,9 +82,6 @@ pub type FetchQuotes = Box<dyn FnMut(&[QuoteQuery]) -> FetchFuture<Vec<QuoteItem
 /// 查询键（腾讯 K 线键，issue #1561 接线）由通道内部构造（issue #1556 起编排
 /// 不拼数据源键，与批量报价通道同形）。
 pub type FetchKline = Box<dyn FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> + Send>;
-/// 汇率 K 线抓取通道闭包形态：币种对（如 `USDCNY`）→ 日线序列（币种对不是
-/// 行情查询键，键形态归汇率通道内部）。
-pub type FetchFxKline = Box<dyn FnMut(&str) -> FetchFuture<Vec<KlineBar>> + Send>;
 /// 单只全历史净值抓取通道闭包形态（新浪全历史面，issue #1566 接线）：代码 →
 /// 整只历史单位净值（含已终止基金）；窗口语义（首刷近两年 / 水位次日增量）由
 /// 消费方本地裁剪，通道不携带窗口参数。现价刷新逐只回退与价格历史后台补全
@@ -96,7 +94,7 @@ pub type FetchFundName = Box<dyn FnMut(&str) -> FetchFuture<String> + Send>;
 ///（不是「不是恒定标的」的反证）；`Err` = 披露源不可信（本轮不落任何价格）。
 pub type FetchMoneyFundForm = Box<dyn FnMut(&str) -> FetchFuture<bool> + Send>;
 
-/// 六个逐标的抓取通道 + 一个批量取数面的打包束：闭包签名与编排注入点逐一同形。
+/// 五个逐标的抓取通道 + 一个批量取数面的打包束：闭包签名与编排注入点逐一同形。
 /// 生产实现共享一个异步 HTTP client 与限流 pacer（`Arc<tokio::sync::Mutex<_>>`
 /// 内部可变、跨 `.await` 持有，串行语义与既有守卫一致，批量面同样经它限速）；
 /// 测试实现为注入桩。
@@ -107,8 +105,6 @@ pub struct SyncFetchChannels {
     /// 日 K（近两年日线）：「市场 + 代码」查询单元 → 日线序列；查询键（腾讯
     /// K 线键）由通道内部构造（issue #1556 接缝，issue #1561 接线腾讯 K 线）。
     pub fetch_kline: FetchKline,
-    /// 汇率 K 线：币种对（如 `USDCNY`）→ 日线序列。
-    pub fetch_fx: FetchFxKline,
     /// 单只全历史净值（新浪全历史面，issue #1566 接线）：代码 → 整只历史
     /// 单位净值（含已终止基金）；价格历史后台补全（首刷深回填与缺周点补齐）
     /// 与现价刷新逐只回退共用（issue #1571：逐只分页通道随 lsjz 换源退役）。
@@ -140,7 +136,7 @@ pub(super) struct SyncFetchHosts {
 }
 
 impl SyncFetchChannels {
-    /// 生产通道束（前台车道，手动同步等用户动作）：六个闭包接 HTTP 层
+    /// 生产通道束（前台车道，手动同步等用户动作）：五个闭包接 HTTP 层
     ///（`build_client` 主机池 / 重试；pacer 取**进程级全局限速器**单点，issue
     /// #1375——与后台补全共用同一份数据源额度）。回填窗口起点在束构造时取
     /// 一次（与先前每次同步取一次同口径）。
@@ -165,7 +161,6 @@ impl SyncFetchChannels {
     pub(super) fn production_lane(lane: Lane, hosts: SyncFetchHosts) -> Result<Self> {
         let client = build_client()?;
         let pacer = shared_pacer();
-        let beg = kline_beg();
         Ok(Self {
             fetch_quotes: {
                 let client = client.clone();
@@ -221,22 +216,6 @@ impl SyncFetchChannels {
                             tencent_kline::KLINE_COUNT,
                         )
                         .await
-                    })
-                })
-            },
-            fetch_fx: {
-                let client = client.clone();
-                let pacer = pacer.clone();
-                let beg = beg.clone();
-                Box::new(move |pair: &str| {
-                    let pair = pair.to_string();
-                    let client = client.clone();
-                    let pacer = pacer.clone();
-                    let beg = beg.clone();
-                    Box::pin(async move {
-                        let _foreground = lane.before_request().await;
-                        let mut pacer = lock_pacer(&pacer).await;
-                        fetch_fx_kline(&client, &mut pacer, &pair, &beg).await
                     })
                 })
             },
@@ -363,7 +342,6 @@ where
     do_incremental_sync_with(
         session,
         &mut channels.fetch_quotes,
-        &mut channels.fetch_fx,
         &mut channels.fetch_nav_history,
         &mut channels.fetch_fund_name,
         &mut channels.confirm_money_fund_form,
@@ -385,7 +363,6 @@ mod tests {
         SyncFetchChannels {
             fetch_quotes: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_kline: Box::new(|_| Box::pin(async { Ok(vec![]) })),
-            fetch_fx: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_nav_history: Box::new(|_| Box::pin(async { Ok(vec![]) })),
             fetch_fund_name: Box::new(|_| Box::pin(async { Ok(String::new()) })),
             confirm_money_fund_form: Box::new(|_| Box::pin(async { Ok(false) })),

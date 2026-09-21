@@ -69,14 +69,14 @@
 //!   回填单元，issue #1377 起不再与现价刷新共用）+ 启动延迟与自然日窗口调度 +
 //!   收尾裁决（置脏 + 价格失效信号）；唯一可见面是静默标的级计数（新事件名，见
 //!   [`progress`]），并发布走势空态三态的运行态判据（[`ledger_investment::backfill`]）；
-//! - [`http`]：HTTP 请求（含多主机切换、重试、限流冷却、Referer）与响应解析（报价
-//!   / 日 K / 汇率 K），价格换算按精度位单点收口（批量报价与单点行情共用），可独立测试；
+//! - [`http`]：HTTP 请求（含多主机切换、重试、限流冷却、Referer）与响应解析（报价），
+//!   价格换算按精度位单点收口（批量报价与单点行情共用），可独立测试；
 //! - [`incremental`]：标的信息同步编排（issue #103，#137 升级，#303 基金分区，#695
 //!   ETF 纳入行情分区，#827 覆盖面放开至库内全部标的 + 名称随行刷新）——ADR-0122 /
 //!   issue #1377 起**只刷现价**：现价 upsert + 有历史序列者当周采样点直落（不另发
-//!   逐只请求）+ 汇率 K 线落 `fx_rate_history`（ADR-0019）+ 基金现价刷新（批量面
+//!   逐只请求）+ 基金现价刷新（批量面
 //!   命中零请求，未命中退逐只短窗）+ 数据源权威名称随行刷新（「随用随修 + 同步
-//!   随行刷新」，ADR-0036/0081 修订）；历史采集归 [`history`]；
+//!   随行刷新」，ADR-0036/0081 修订）；历史采集归 [`history`]，汇率序列归 [`fx`]；
 //! - [`lane`]：后台车道单轮骨架（issue #1426）——两条后台车道（历史补全 /
 //!   每日现价刷新）共用的换装 / 会话 / 见证 / 收尾裁决 / 发射 / 失败日志单点，
 //!   车道侧只留编排（[`lane::LaneRound`] 实现）与统计日志（ADR-0122 决策 3
@@ -86,7 +86,8 @@
 //!   的统一载荷 [`ledger_investment::Quote`]）；
 //! - [`persist`]：ECB 汇率落库单元（issue #1543）——周采样序列 → `fx_rate_history`
 //!   （币种对 × 周键整周覆盖幂等）+ 当期汇率表（每对最新一条，人工行不覆盖），
-//!   单一事务、不产同步 op；东财 FX 通道的周采样 upsert 同住（#1551 退役前）；
+//!   单一事务、不产同步 op（东财 FX 通道的周采样写入已随 #1551 退役，本单元是
+//!   汇率历史唯一自动写入原点）；
 //!   价格写入单点已随投资域归位迁入 [`ledger_investment::prices`]，#401 / ADR-0056）；
 //! - [`progress`]：同步确定进度事件（issue #897 / ADR-0095）——带 payload
 //!   `{ done, total }` 的 `ledger:instrument-sync-progress` 事件，事件名常量、
@@ -199,8 +200,8 @@ pub use bulk::{
     FundBatch, FundNameDictionary, FundNavTable,
 };
 pub use channels::{
-    FetchFundName, FetchFxKline, FetchKline, FetchMoneyFundForm, FetchNavHistory, FetchQuotes,
-    QuoteItem, QuoteQuery, SyncFetchChannels, do_incremental_sync_channels,
+    FetchFundName, FetchKline, FetchMoneyFundForm, FetchNavHistory, FetchQuotes, QuoteItem,
+    QuoteQuery, SyncFetchChannels, do_incremental_sync_channels,
 };
 pub use daily_refresh::{
     DailyPriceRefreshChannelsSlot, start_daily_price_refresh, start_daily_price_refresh_with,

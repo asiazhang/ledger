@@ -127,7 +127,7 @@ fn history_rows(conn: &Connection, instrument_id: &str) -> i64 {
 struct Harness {
     /// 处理序日志：行情标的记 `kline:<市场>:<代码>`（不观数据源查询键形态，
     /// issue #1556），基金全历史记 `history:<code>`（issue #1566 起单一全历史
-    /// 通道），汇率记 `fx:<pair>`。
+    /// 通道）。
     log: Mutex<Vec<String>>,
     /// 「市场:代码」→ 日线样本；未命中 = 空表（零有效周点）。
     klines: Vec<(&'static str, Vec<KlineBar>)>,
@@ -138,8 +138,6 @@ struct Harness {
     nav_history: Vec<(&'static str, Vec<NavPoint>)>,
     /// 注入单只失败：命中该代码的全历史请求返回 Err（取数层不可信 / 网络失败）。
     fail_nav_history: Option<&'static str>,
-    /// 币种对 → 汇率日线。
-    fx: Vec<(&'static str, Vec<KlineBar>)>,
 }
 
 impl Harness {
@@ -150,7 +148,6 @@ impl Harness {
             fail_kline: None,
             nav_history: vec![],
             fail_nav_history: None,
-            fx: vec![],
         }
     }
 
@@ -171,11 +168,6 @@ impl Harness {
 
     fn with_failing_nav_history(mut self, code: &'static str) -> Self {
         self.fail_nav_history = Some(code);
-        self
-    }
-
-    fn with_fx(mut self, fx: Vec<(&'static str, Vec<KlineBar>)>) -> Self {
-        self.fx = fx;
         self
     }
 
@@ -218,16 +210,6 @@ impl Harness {
             .map(|(_, points)| points.clone())
             .unwrap_or_default())
     }
-
-    fn fetch_fx(&self, pair: &str) -> Result<Vec<KlineBar>> {
-        self.log.lock().unwrap().push(format!("fx:{pair}"));
-        Ok(self
-            .fx
-            .iter()
-            .find(|(key, _)| *key == pair)
-            .map(|(_, bars)| bars.clone())
-            .unwrap_or_default())
-    }
 }
 
 /// 驱动一轮补全：返回 (统计, 进度序列, 是否实际写过)。
@@ -238,13 +220,11 @@ fn run_round(
     let progress_log: Mutex<Vec<SyncProgress>> = Mutex::new(vec![]);
     let mut witness = WriteWitness::default();
     let mut fetch_kline = |query: &QuoteQuery| super::ready(harness.fetch_kline(query));
-    let mut fetch_fx = |pair: &str| super::ready(harness.fetch_fx(pair));
     let mut fetch_nav_history = |code: &str| super::ready(harness.fetch_nav_history(code));
     let mut progress = |p: SyncProgress| progress_log.lock().unwrap().push(p);
     let result = tauri::async_runtime::block_on(run_history_backfill_round(
         conn,
         &mut fetch_kline,
-        &mut fetch_fx,
         &mut fetch_nav_history,
         &mut no_confirm,
         &mut progress,
@@ -528,28 +508,6 @@ fn empty_kline_completes_without_writing() {
     assert_eq!(history_rows(&conn, "inst-a"), 0);
 }
 
-/// 汇率 K 线同期补齐：队列内标的的非本位币币种对按对拉取（折算序列与价格
-/// 历史同期段采集，与手动同步同一单元）；零外币队列不触发汇率请求。
-#[test]
-fn round_backfills_fx_pairs_for_queued_currencies() {
-    let conn = tauri_app_lib::test_support::open();
-    insert_plain_instrument(&conn, "inst-us", "AAPL", "stock", "USD", "nasdaq");
-    let harness = Harness::new()
-        .with_klines(vec![("nasdaq:AAPL", vec![bar(&date_offset(1), 319.97)])])
-        .with_fx(vec![("USDCNY", vec![bar(&date_offset(1), 7.02)])]);
-    let (result, _progress, _written) = run_round(&conn, &harness);
-    result.unwrap();
-    let fx_rows: i64 = conn
-        .query_row(
-            "SELECT count(*) FROM fx_rate_history WHERE base_code='USD' AND quote_code='CNY'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(fx_rows, 1, "USDCNY 周点落 fx_rate_history");
-    assert!(harness.requested().contains(&"fx:USDCNY".to_string()));
-}
-
 /// 「替换通道实现即换源」负向接线证明（issue #1556）：历史补全编排只递
 /// 「市场 + 代码」，日 K 查询键由通道在内部构造——本用例注入一个按自己形态
 ///（模拟换源）路由查询的通道实现，历史照常落库。
@@ -571,14 +529,12 @@ fn swapping_kline_channel_keeps_history_landing_without_source_key_in_orchestrat
         };
         super::ready(Ok(bars))
     };
-    let mut fetch_fx = |_: &str| super::ready(Ok(vec![]));
     let mut fetch_nav_history = |_: &str| super::ready(Ok(vec![]));
     let mut progress = |_: SyncProgress| {};
     let mut witness = WriteWitness::default();
     let stats = tauri::async_runtime::block_on(run_history_backfill_round(
         &conn,
         &mut fetch_kline,
-        &mut fetch_fx,
         &mut fetch_nav_history,
         &mut no_confirm,
         &mut progress,
@@ -646,7 +602,6 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
     )
     .expect("生产后台车道束应可构造");
     let mut fetch_kline = channels.fetch_kline;
-    let mut fetch_fx = |_: &str| super::ready(Ok(vec![]));
     let mut fetch_nav_history = |_: &str| super::ready(Ok(vec![]));
     let mut confirm = no_confirm;
     let mut progress = |_: SyncProgress| {};
@@ -654,7 +609,6 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
     let stats = tauri::async_runtime::block_on(run_history_backfill_round(
         &conn,
         &mut fetch_kline,
-        &mut fetch_fx,
         &mut fetch_nav_history,
         &mut confirm,
         &mut progress,
@@ -740,7 +694,6 @@ fn production_backfill_channel_lands_fund_history_via_sina() {
     )
     .expect("生产后台车道束应可构造");
     let mut fetch_kline = |_: &QuoteQuery| super::ready(Ok(vec![]));
-    let mut fetch_fx = |_: &str| super::ready(Ok(vec![]));
     let mut fetch_nav_history = channels.fetch_nav_history;
     let mut confirm = no_confirm;
     let mut progress = |_: SyncProgress| {};
@@ -748,7 +701,6 @@ fn production_backfill_channel_lands_fund_history_via_sina() {
     let stats = tauri::async_runtime::block_on(run_history_backfill_round(
         &conn,
         &mut fetch_kline,
-        &mut fetch_fx,
         &mut fetch_nav_history,
         &mut confirm,
         &mut progress,
