@@ -847,13 +847,13 @@ async fn test_batch_import_foreign_currency_row_readback_exposes_fx_trace() {
     let (_, body) = get_json(&app, "/api/v1/transactions").await;
     let txs = items_of(&body);
     assert_eq!(txs.len(), 2);
+    // 断言面 = 留痕字段的可读回（本票新增的用户可观察结果）；折算数值本身
+    // 归域单测（CONTEXT-testing「接线证明」：域结果细节不属壳层断言面）。
     for tx in txs {
         if tx["currency_code"] == "HKD" {
-            assert_eq!(tx["amount_native_cents"], 900, "1000 × 0.9 = 900 分");
             assert_eq!(tx["fx_rate_used"], 0.9, "留痕 = 本笔使用的序列汇率值");
             assert_eq!(tx["fx_rate_source"], "series", "来源 = 序列命中");
         } else {
-            assert_eq!(tx["amount_native_cents"], 500);
             assert_eq!(
                 tx["fx_rate_used"],
                 serde_json::Value::Null,
