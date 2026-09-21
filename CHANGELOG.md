@@ -12,6 +12,10 @@
 
 - **交易**：非本位币交易随行留痕折算来源——每笔记录本笔折算使用的汇率值与来源（「来自汇率序列」/「来自调用方显式给定」，后者写入入口由后续票接入），列表与详情可读回解释「这个本位币金额是怎么来的」；与本位币同币种、不折算（份额调整）及存量行留痕为空（[#1548]，只增不改、存量库免重建）。
 
+### Changed
+
+- **性能**：报表商户排名加商户维度覆盖索引（V030）并钉定查询计划，50 万笔库聚合 p95 777ms→148ms（[#1655]）。
+
 ## [0.7.0] - 2026-09-19
 
 ### Added
@@ -405,3 +409,4 @@
 [#1456]: https://github.com/asiazhang/ledger/issues/1456
 [#1519]: https://github.com/asiazhang/ledger/issues/1519
 [#1631]: https://github.com/asiazhang/ledger/issues/1631
+[#1655]: https://github.com/asiazhang/ledger/issues/1655

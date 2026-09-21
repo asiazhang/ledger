@@ -160,5 +160,6 @@ erDiagram
 | `V027__security_transaction_origin.sql` | security_transactions 期初存量标记列（origin: trade / opening 闭集，期初存量行不进资金加权收益率现金流集，含期初存量的标的改给未年化口径；#1343 / ADR-0115 修订） |
 | `V028__instrument_constant_unit_price.sql` | instruments 恒定单位价格列（constant_unit_price，可空，非空即进恒定价格通道——价格恒定标的的单位价格是定义性常量，货基为首个成员；#1450 / ADR-0126 决策 2） |
 | `V029__transaction_fx_rate_trace.sql` | transactions 折算来源留痕列（fx_rate_used / fx_rate_source，#1548 / ADR-0011 修订） |
+| `V030__transaction_merchant_covering_index.sql` | transactions 商户维度部分覆盖索引（商户消费排行聚合的分组列打头覆盖索引，查询侧 INDEXED BY 钉定，#1655） |
 
 > 迁移版本由 SQLite `user_version` 自动追踪，新迁移在数据库模块统一注册。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时新建 `V00X__名称.sql` 并在注册处追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。

@@ -210,9 +210,17 @@ pub fn merchant_shares_report(
     top_n: Option<i64>,
 ) -> Result<MerchantSharesReport> {
     let kinds = contributing_kinds_sql(Measure::ExpenseNet);
+    // INDEXED BY 钉定商户覆盖索引（V030 / issue #1655）：分组列/kind/日期/
+    // 金额全在 idx_transactions_merchant_covering 内，GROUP BY 自带分组序、
+    // 聚合零回表。先例与量化：分类聚合同款钉定（issue #1640，不钉 planner
+    // 在统计边际上摇摆）；本索引前两种可达计划（merchant 索引 SCAN 全回表 /
+    // date 范围扫 + GROUP BY 临时 B-tree）在 50 万笔库均 800ms 量级，CI 实测
+    // p95 777.28ms 超默认线，覆盖索引落地后回落。INDEXED BY 在索引缺失时
+    // prepare 直接报错，钉定自带防删守卫。
     let mut sql = format!(
         "SELECT t.merchant_id, m.name, SUM({expr}) AS net, COUNT(*) AS transaction_count \
-         FROM transactions t JOIN merchants m ON m.id=t.merchant_id \
+         FROM transactions t INDEXED BY idx_transactions_merchant_covering \
+         JOIN merchants m ON m.id=t.merchant_id \
          WHERE t.kind IN ({kinds}) AND t.is_deleted=0",
         expr = expense_net_expr("t"),
     );
