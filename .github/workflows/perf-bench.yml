@@ -1,7 +1,8 @@
 # 性能基准 workflow（issue #462；门禁 issue #493 / ADR-0068）：与主构建
 # workflow（build.yml，push/PR 触发）刻意分离——本 workflow 只在每日 cron
 # 与手动 dispatch 时运行：
-#   现场生成 50 万笔基准库（ledger-perf generate，seed 42）→ 跑 15 项查询
+#   现场生成 50 万笔基准库（ledger-perf generate，seed 42，含 2 本附属
+#   账本夹具，issue #1630）→ 跑 16 项查询
 #   基准（ledger-perf bench --iterations 20 --max-p95-ms 200）→ 批量导入写
 #   基准观测（ledger-perf bench-import，issue #532：只跑最大档 200 行 ×
 #   两分布、只记录不判定——写基准阈值未立，待 CI 基线分布稳定后修订
@@ -125,7 +126,7 @@ jobs:
           ./target/release/ledger-perf generate
           echo "GENERATE_SECONDS=$(($(date +%s) - START))" >> "$GITHUB_ENV"
 
-      - name: 运行查询基准（bench，15 项 × min/avg/p95 + 门禁 p95 ≤ 200ms）
+      - name: 运行查询基准（bench，16 项 × min/avg/p95 + 门禁 p95 ≤ 200ms）
         id: bench
         working-directory: src-tauri
         shell: bash

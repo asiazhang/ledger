@@ -51,6 +51,13 @@
 //!   不锚定「今天」；生成数据的全部时间字段（id 时间戳位 / created_at /
 //!   updated_at）由种子与日期推导，无墙钟参与——同参数两次生成，生成内容的
 //!   全表有序摘要一致（迁移种子行的审计时间列除外，见 tests 摘要断言）。
+//! - 附属账本（issue #1630）：除主库外同时生成 2 本附属账本——固定 2,000 笔/
+//!   本的小规模独立库（不随 `--transactions` 缩放），经同一生成路径产出全套
+//!   画像（含标的交易与批次持仓）；每本一个子目录（`ledger-perf-books/
+//!   book-NN/ledger.db`），与产品「一库 = 一本账」的目录形态一致（ADR-0089），
+//!   根目录在主库文件同级、每次生成先清后建；每本由基础种子派生自己的种子
+//!   （seed+1+序号），主库确定性不受影响。这是跨账本投资汇总基准（bench，
+//!   ADR-0114）的消费夹具：删除本目录 → 该基准项前置探测失败、bench 运行红。
 //! - 默认输出 `<src-tauri>/target/ledger-perf/ledger-perf.db`（构建目标目录下，
 //!   天然被版本控制忽略、与真实用户库物理隔离，`--out` 可改为任意文件路径）。
 //!   目标文件已存在时先删除再重建（保证从空库迁移 + 幂等重建）。
@@ -60,9 +67,9 @@
 //!   生成的库仅供性能基准消费，不是用户数据，崩溃重跑即可。
 //!
 //! ## bench：查询基准（issue #461；门禁 issue #493 / ADR-0068；拼音子序列基准 issue #514；
-//! ## 商户占比与投资三项读基准 issue #1627）
+//! ## 商户占比与投资三项读基准 issue #1627；跨账本投资汇总基准 issue #1630）
 //!
-//! 对 generate 产出的库跑 15 项查询基准并输出 min/avg/p95 报告：
+//! 对 generate 产出的库跑 16 项查询基准并输出 min/avg/p95 报告：
 //!
 //! ```text
 //! cargo run --bin ledger-perf -- bench [--db PATH] [--warmup N]
@@ -77,7 +84,10 @@
 //!   「买咖啡」→ mkf 等、不构成原文子串，拼音首字母子序列路径），均为
 //!   CPU 密集全量扫描；净资产总览聚合；持仓列表；时点持仓（直接聚合标的交易）；
 //!   商户占比（报表三件套第三件）；投资组合趋势（周采样 × 时点持仓嵌套循环）；
-//!   资金加权收益率（XIRR 数值解）；财务自由度（issue #1627）。
+//!   资金加权收益率（XIRR 数值解）；财务自由度（issue #1627）；跨账本投资
+//!   汇总（issue #1630：主库＝活动本连接 + 附属账本逐本只读建连，经壳层
+//!   编排 pub 函数取数折算合并，与 IPC 命令同一编排路径；前置探测附属账本
+//!   夹具，缺失即整体失败）。
 //! - 唯一接缝：全部经「现有 pub 查询函数 + 标准连接工厂打开文件库」调用，
 //!   与 IPC 命令同一 SQL 路径；慢查询日志（perf_trace，≥100ms warn）经连接
 //!   工厂自动挂载，基准内不重写 SQL。
@@ -170,6 +180,7 @@ mod bench;
 mod bench_import;
 mod bench_market;
 mod bench_sync;
+mod books;
 mod generate;
 mod investments;
 mod plans;
@@ -203,8 +214,9 @@ USAGE:
     ledger-perf <SUBCOMMAND> [OPTIONS]
 
 SUBCOMMANDS:
-    generate       生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite 库）
-    bench          查询基准——15 项查询 × min/avg/p95 报告（issue #461）
+    generate       生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite 库
+                   + 2 本附属账本小库，issue #1630）
+    bench          查询基准——16 项查询 × min/avg/p95 报告（issue #461）
     bench-import   批量导入写基准——固定行数 × 两种分布 × 总耗时/单行均摊 p95
                    （issue #532，纯观测无门禁）
     bench-sync     同步重放写基准——op 流重放（ingest_ops/apply_ops 权威入口）

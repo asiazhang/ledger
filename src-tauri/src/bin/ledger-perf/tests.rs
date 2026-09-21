@@ -38,6 +38,7 @@ use super::bench_sync::{
     self, BenchSyncCli, EntryForm, ParsedBenchSync, SOURCE_DEVICE_ID, SyncBenchConfig,
     generate_ops, generate_wire,
 };
+use super::books;
 use super::generate::{GenCounts, GenerateParams, generate_into};
 use super::{GenerateCli, ParsedArgs, parse_args};
 use ledger_accounts::{Account, AccountType};
@@ -70,7 +71,7 @@ fn run_cli(args: &[&str]) -> GenerateCli {
 #[test]
 fn bench_smoke_runs_all_benchmarks() {
     let (_dir, path) = temp_db("bench-smoke");
-    build(&path, 1_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+    build_with_books(&path, 1_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
     let conn = open_connection(&path).unwrap();
 
     let results = bench::run_benchmarks(
@@ -80,11 +81,12 @@ fn bench_smoke_runs_all_benchmarks() {
             iterations: 2,
             search_term: "咖啡".to_string(),
             pinyin_search_term: "kf".to_string(),
+            books_dir: books::attached_books_root(&path),
         },
     )
     .unwrap();
 
-    // 名单钉住：15 项基准一个不少、顺序稳定（增删基准必须显式更新本断言）。
+    // 名单钉住：16 项基准一个不少、顺序稳定（增删基准必须显式更新本断言）。
     let names: Vec<&str> = results.iter().map(|r| r.name).collect();
     assert_eq!(
         names,
@@ -104,6 +106,7 @@ fn bench_smoke_runs_all_benchmarks() {
             "投资组合趋势",
             "资金加权收益率",
             "财务自由度",
+            "跨账本投资汇总",
         ]
     );
     for r in &results {
@@ -136,6 +139,125 @@ fn bench_smoke_runs_all_benchmarks() {
         pinyin_search.context.contains("命中"),
         "拼音子序列基准备注应含命中数：{}",
         pinyin_search.context
+    );
+    // 跨账本基准确实逐本计入：附属账本全数 + 主库（夹具完整形态的规模备注）。
+    let cross_book = results.iter().find(|r| r.name == "跨账本投资汇总").unwrap();
+    assert!(
+        cross_book
+            .context
+            .contains(&format!("{} 本计入", books::ATTACHED_BOOK_TOTAL + 1)),
+        "跨账本基准备注应报告计入本数（附属 + 主库）：{}",
+        cross_book.context
+    );
+}
+
+/// 删除即变红（issue #1630 验收项）：附属账本夹具缺失 → 跨账本基准项前置
+/// 探测失败、基准运行红——基准不跑在夹具残缺形态上（不静默少算本数）。
+#[test]
+fn bench_fails_fast_when_attached_books_missing() {
+    let (_dir, path) = temp_db("cross-book-missing");
+    build(&path, 1_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+    let conn = open_connection(&path).unwrap();
+
+    let err = bench::run_benchmarks(
+        &conn,
+        &BenchConfig {
+            warmup: 0,
+            iterations: 1,
+            search_term: "咖啡".to_string(),
+            pinyin_search_term: "kf".to_string(),
+            books_dir: books::attached_books_root(&path),
+        },
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("附属账本"),
+        "探测错误应指向附属账本夹具缺失：{err}"
+    );
+}
+
+/// 附属账本夹具形态（issue #1630）：本数齐、固定小规模、含标的交易与批次
+/// 持仓、schema 与主库一致、本位币 CNY（跨账本同币直加口径的前提）；前置
+/// 探测在夹具完整时通过、缺本即失败（与基准前置探测同一函数）。
+#[test]
+fn attached_books_fixture_is_complete_multibook_dataset() {
+    let (_dir, path) = temp_db("attached-books");
+    build_with_books(&path, 1_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+    let main = open_connection(&path).unwrap();
+    let version = ledger_infra::db::schema_version(&main).unwrap();
+    let discovered =
+        books::discover_attached_books(&books::attached_books_root(&path), version).unwrap();
+    assert_eq!(
+        discovered.len(),
+        books::ATTACHED_BOOK_TOTAL,
+        "附属账本本数应与常量一致"
+    );
+
+    for book in &discovered {
+        let conn =
+            open_connection(book.dir.join(ledger_infra::db::data_location::DB_FILE_NAME)).unwrap();
+        // 小规模固定笔数（不随主库 --transactions 缩放）。
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(total as u64, books::ATTACHED_BOOK_TRANSACTIONS);
+        // 含标的交易与批次持仓（跨账本投资口径有数可合的前提）。
+        let trades: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE kind IN ('buy','sell')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(trades > 0, "附属账本应含标的交易");
+        let holdings = investment::list_holdings(&conn).unwrap();
+        assert!(!holdings.is_empty(), "附属账本应有批次持仓");
+        // 独立完整库：标的字典与主库同构、本位币 CNY（同币直加口径）。
+        let instruments = investment::list_instruments(&conn, &InstrumentListFilter::default())
+            .unwrap()
+            .items;
+        assert_eq!(instruments.len(), 20);
+        assert_eq!(
+            ledger_transaction::amount::default_currency_code(&conn).unwrap(),
+            "CNY"
+        );
+    }
+
+    // 删除一本 → 探测失败（删除生成侧即基准红的前置面，删除即变红）。
+    std::fs::remove_dir_all(&discovered[0].dir).unwrap();
+    assert!(
+        books::discover_attached_books(&books::attached_books_root(&path), version).is_err(),
+        "附属账本缺本时前置探测必须失败"
+    );
+}
+
+/// 附属账本确定性（issue #1630）：同参数两次生成，各附属账本全表有序摘要
+/// 逐本一致（种子派生 + 无墙钟纪律与主库同款）；种子派生使各本内容互不相同
+///（不是同一份数据复制 N 份）。
+#[test]
+fn attached_books_deterministic_across_regenerations() {
+    let end = NaiveDate::from_ymd_opt(2025, 12, 31).unwrap();
+    let (_dir_a, path_a) = temp_db("books-det-a");
+    let (_dir_b, path_b) = temp_db("books-det-b");
+    build_with_books(&path_a, 1_000, end);
+    build_with_books(&path_b, 1_000, end);
+
+    let book_db =
+        |root: &Path, i: usize| books::attached_book_db_path(&books::attached_books_root(root), i);
+    for i in 0..books::ATTACHED_BOOK_TOTAL {
+        let digest_a = digest_db(&book_db(&path_a, i)).unwrap();
+        let digest_b = digest_db(&book_db(&path_b, i)).unwrap();
+        assert_eq!(
+            digest_a, digest_b,
+            "同参数两次生成的附属账本（book-{:02}）摘要必须一致",
+            i
+        );
+    }
+    let d0 = digest_db(&book_db(&path_a, 0)).unwrap();
+    let d1 = digest_db(&book_db(&path_a, 1)).unwrap();
+    assert_ne!(
+        d0["transactions"], d1["transactions"],
+        "种子派生应使各附属账本内容互不相同"
     );
 }
 
@@ -706,6 +828,22 @@ fn build(path: &Path, transactions: u64, end_date: NaiveDate) -> GenCounts {
     .unwrap()
 }
 
+/// 建主库 + 附属账本夹具（issue #1630，跨账本基准消费的完整数据集形态）。
+/// 附属账本种子与锚定日期随主库参数；笔数取 books 模块固定小规模常量。
+fn build_with_books(path: &Path, transactions: u64, end_date: NaiveDate) -> GenCounts {
+    let counts = build(path, transactions, end_date);
+    books::generate_attached_books(
+        path,
+        &GenerateParams {
+            seed: 42,
+            transactions,
+            end_date,
+        },
+    )
+    .unwrap();
+    counts
+}
+
 // ---------------------------------------------------------------------------
 // schema 保真：迁移路径一致 + 外键完整
 // ---------------------------------------------------------------------------
@@ -1164,6 +1302,23 @@ fn regeneration_overwrites_existing_file() {
         .unwrap();
     assert_eq!(total, 500, "重复生成不叠加交易");
     drop(conn);
+    // 附属账本同样先清后建（issue #1630）：重复生成不叠加，每本恒定小规模。
+    for i in 0..books::ATTACHED_BOOK_TOTAL {
+        let book_conn = open_connection(books::attached_book_db_path(
+            &books::attached_books_root(&path),
+            i,
+        ))
+        .unwrap();
+        let total: i64 = book_conn
+            .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            total as u64,
+            books::ATTACHED_BOOK_TRANSACTIONS,
+            "重复生成不叠加附属账本交易（book-{:02}）",
+            i
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
