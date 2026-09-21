@@ -75,11 +75,8 @@ fn enforce_http_page_bounds(
     description = "读回/列表唯一入口：返回 `{items, total}`，过滤参数（from/to、account_id、\
                   involving_account_id、merchant_id、category_id、instrument_id、kinds、\
                   uncategorized_only、limit、page/page_size）全部可选；默认按日期倒序稳定排序。\
-                  HTTP 单请求行数上限 100：缺省（不传 page_size）等价 page_size=100（page 缺省 1，携 page 时返回该页），\
-                  不再返回全部；显式 page_size 超过 100 报 400 码化错误 \
-                  `transaction.page-size-over-cap`，limit 超过 100 或负值报 400 \
-                  `transaction.limit-out-of-range`（负值无上限语义仅限 IPC）；\
-                  读全部须按 total 翻页取齐。\
+                  HTTP 单请求行数上限 100：缺省不再返回全部（等价 page_size=100），\
+                  读全部须按 total 翻页取齐；超限或负值报 400 码化错误。\
                   读回核对与参数语义见导入知识「对账完成判定」节；行携带 `source` 来源字段（读时反查推导），\
                   无来源交易为`null`。",
     params(
@@ -92,9 +89,9 @@ fn enforce_http_page_bounds(
         ("uncategorized_only" = Option<bool>, Query, description = "true 时仅返回无分类交易；与 category_id 同携按 AND 组合"),
         ("instrument_id" = Option<String>, Query, description = "按标的过滤（ADR-0107）：命中证券交易扩展表中该标的的 buy/sell 行，convert 任一腿命中即算（转入腿同算）；与其余维度 AND 组合"),
         ("kinds" = Option<Vec<TransactionKind>>, Query, description = "交易类型集合过滤（唯一类型维度，手动多选与下钻共用）：逗号分隔单参数如 expense,refund（同时承担单值与多值，取代原单值 kind 参数），命中 kind IN (...)；与其余维度 AND 组合，非法值 4xx"),
-        ("limit" = Option<i64>, Query, description = "取前 N 条，须在 0 到 100 之间（负值无上限语义仅限 IPC），超范围 400 码化错误；与 page_size 互斥，仅携 limit 时按 limit 截取"),
+        ("limit" = Option<i64>, Query, description = "取前 N 条，须在 0 到 100 之间，超范围报 400；与 page_size 互斥，仅携 limit 时按 limit 截取"),
         ("page" = Option<usize>, Query, description = "页码，从 1 开始，默认 1"),
-        ("page_size" = Option<usize>, Query, description = "每页条数，上限 100，超过报 400 码化错误；缺省等价 page_size=100（total 恒返回，读全部按 total 翻页取齐）")
+        ("page_size" = Option<usize>, Query, description = "每页条数，上限 100，超过报 400 码化错误；缺省等价 page_size=100（total 恒返回）")
     ),
     responses(
         (status = 200, description = "交易分页结果 {items, total}", body = TransactionListResult),
