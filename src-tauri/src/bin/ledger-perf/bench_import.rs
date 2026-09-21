@@ -32,6 +32,9 @@
 //!   观测、只记录进 Summary；立阈值时修订 ADR-0068）；check.sh 不跑本基准。
 //!   不修改任何生产写入路径，置脏/信号等壳层职责（`write_entry`）不属
 //!   被测量，不在基准内重演。
+//!
+//! 脚手架（参数解析循环 / 档位 CSV 解析 / 统计块 / 报告表列）已收口到
+//! [`super::bench_common`]（issue #1650），本模块只持矩阵与量测语义。
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -46,7 +49,7 @@ use ledger_reports as reports_domain;
 use ledger_transaction::amount::{TransactionKind, default_currency_code};
 use ledger_transaction::{BatchOutcome, TransactionBatch, TransactionInput};
 
-use super::bench::{display_width, percentile_ms};
+use super::bench_common::{CliArgs, MetricTableRow, parse_tier_csv, print_metric_table, summarize};
 use super::snapshot::{SnapshotPaths, restore_from_snapshot};
 
 /// 基准行金额基数（分）：行金额逐行 +1 递增，保证批内去重身份全异
@@ -112,42 +115,31 @@ pub(crate) enum ParsedBenchImport {
     Help,
 }
 
-/// 手写参数解析（零新增依赖）。返回 Err(消息) 表示用法错误。
+/// 手写参数解析（零新增依赖；循环机制与档位解析收口在 [`super::bench_common`]，
+/// issue #1650）。返回 Err(消息) 表示用法错误。
 pub(crate) fn parse_bench_import_args(args: &[String]) -> Result<ParsedBenchImport, String> {
     let mut cli = BenchImportCli::default();
-    let mut i = 0;
-    while i < args.len() {
-        let (key, inline_value) = match args[i].split_once('=') {
-            Some((k, v)) => (k.to_string(), Some(v.to_string())),
-            None => (args[i].clone(), None),
-        };
-        let take_value = |i: &mut usize, inline: Option<String>| -> Result<String, String> {
-            if let Some(v) = inline {
-                return Ok(v);
-            }
-            let next = args.get(*i + 1).ok_or_else(|| format!("{key} 缺少值"))?;
-            *i += 1;
-            Ok(next.clone())
-        };
-        match key.as_str() {
+    let mut it = CliArgs::new(args);
+    while let Some(f) = it.next_flag() {
+        match f.flag {
             "--db" => {
-                cli.db = PathBuf::from(take_value(&mut i, inline_value)?);
+                cli.db = PathBuf::from(it.value(f)?);
             }
             "--rows" => {
-                cli.rows = parse_rows_csv(&take_value(&mut i, inline_value)?)?;
+                cli.rows = parse_tier_csv(&it.value(f)?, "--rows")?;
             }
             "--dedup" => {
-                let v = take_value(&mut i, inline_value)?;
+                let v = it.value(f)?;
                 cli.dedup = parse_bool(&v)?;
             }
             "--warmup" => {
-                let v = take_value(&mut i, inline_value)?;
+                let v = it.value(f)?;
                 cli.warmup = v
                     .parse::<usize>()
                     .map_err(|_| format!("--warmup 需要非负整数，得到 {v:?}"))?;
             }
             "--iterations" => {
-                let v = take_value(&mut i, inline_value)?;
+                let v = it.value(f)?;
                 cli.iterations = v
                     .parse::<usize>()
                     .map_err(|_| format!("--iterations 需要非负整数，得到 {v:?}"))?;
@@ -155,34 +147,11 @@ pub(crate) fn parse_bench_import_args(args: &[String]) -> Result<ParsedBenchImpo
             "-h" | "--help" => return Ok(ParsedBenchImport::Help),
             other => return Err(format!("未知参数 {other:?}")),
         }
-        i += 1;
     }
     if cli.iterations == 0 {
         return Err("--iterations 至少为 1".to_string());
     }
     Ok(ParsedBenchImport::Run(cli))
-}
-
-/// 行数档 CSV 解析：非零、互不重复、保持给定次序（矩阵展开次序即报告次序）。
-fn parse_rows_csv(csv: &str) -> Result<Vec<usize>, String> {
-    let mut rows = Vec::new();
-    for part in csv.split(',') {
-        let part = part.trim();
-        let n = part
-            .parse::<usize>()
-            .map_err(|_| format!("--rows 档位需要非负整数，得到 {part:?}"))?;
-        if n == 0 {
-            return Err("--rows 档位必须大于 0".to_string());
-        }
-        if rows.contains(&n) {
-            return Err(format!("--rows 档位重复：{n}"));
-        }
-        rows.push(n);
-    }
-    if rows.is_empty() {
-        return Err("--rows 至少需要一个档位".to_string());
-    }
-    Ok(rows)
 }
 
 /// 布尔参数解析（`--dedup` 只认 true/false，拒绝顺手 coercion 的歧义形态）。
@@ -450,19 +419,15 @@ fn run_cell(
             durations.push(elapsed);
         }
     }
-    durations.sort();
-    let ms: Vec<f64> = durations.iter().map(|d| d.as_secs_f64() * 1000.0).collect();
-    let min_ms = ms[0];
-    let avg_ms = ms.iter().sum::<f64>() / ms.len() as f64;
-    let p95_ms = percentile_ms(&ms, 0.95);
-    let per_row_p95_ms = p95_ms / rows as f64;
+    let stats = summarize(durations);
+    let per_row_p95_ms = stats.p95_ms / rows as f64;
     Ok(ImportBenchMetrics {
         name: label.clone(),
         rows,
         distribution,
-        min_ms,
-        avg_ms,
-        p95_ms,
+        min_ms: stats.min_ms,
+        avg_ms: stats.avg_ms,
+        p95_ms: stats.p95_ms,
         per_row_p95_ms,
         context: format!(
             "expense ×{rows} 行，dedup 去重={}，基准日期 {}；单行均摊 p95 {per_row_p95_ms:.2} ms/行",
@@ -493,7 +458,27 @@ fn verify_outcome(outcome: &BatchOutcome, rows: usize, label: &str) -> Result<()
     Ok(())
 }
 
-/// 人读表格输出：与读基准同款列形（min / avg / p95 + 规模备注），无门禁行。
+/// 人读报告行接口实现（issue #1650 收口）：交共享表列打印，不再自持排版。
+impl MetricTableRow for ImportBenchMetrics {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn min_ms(&self) -> f64 {
+        self.min_ms
+    }
+    fn avg_ms(&self) -> f64 {
+        self.avg_ms
+    }
+    fn p95_ms(&self) -> f64 {
+        self.p95_ms
+    }
+    fn context(&self) -> &str {
+        &self.context
+    }
+}
+
+/// 人读表格输出：与读基准同款列形（min / avg / p95 + 规模备注），无门禁行；
+/// 表列排版收口在 [`print_metric_table`]（issue #1650）。
 fn print_report(db: &Path, cfg: &ImportBenchConfig, results: &[ImportBenchMetrics]) {
     println!("ledger-perf bench-import —— 批量导入写基准报告（纯观测，无门禁，人工判读）");
     println!(
@@ -508,21 +493,7 @@ fn print_report(db: &Path, cfg: &ImportBenchConfig, results: &[ImportBenchMetric
         "统计口径：最近秩 p95，n<20 时 p95=max 无分位数分辨力（同 ADR-0068 口径），要真分位数请提高 --iterations"
     );
     println!();
-    // CJK 名称在 {:<N} 下按字符数填充、与终端显示宽错位，表头与名称列手排
-    // 显示宽（同读基准 print_report 的处理；名称含数字，ASCII 记 1 宽）。
-    println!("基准                            min        avg        p95  规模备注（毫秒）");
-    for r in results {
-        let pad = " ".repeat(18usize.saturating_sub(display_width(&r.name)));
-        println!(
-            "{name}{pad}{min:>10.2}{avg:>11.2}{p95:>11.2}  {ctx}",
-            name = r.name,
-            pad = pad,
-            min = r.min_ms,
-            avg = r.avg_ms,
-            p95 = r.p95_ms,
-            ctx = r.context,
-        );
-    }
+    print_metric_table(results);
     println!();
     println!("刷新段归因：每行写入都在同一事务内触发一次余额缓存整体重算；");
     println!(

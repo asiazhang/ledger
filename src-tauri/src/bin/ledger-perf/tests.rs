@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use chrono::NaiveDate;
 use rusqlite::Connection;
@@ -30,6 +31,7 @@ use ledger_transaction::search_transactions_internal;
 use tauri_app_lib::test_support::{self, FIXED_NOW};
 
 use super::bench::{self, BenchCli, BenchConfig, BenchMetrics, ParsedBench};
+use super::bench_common;
 use super::bench_import::{
     self, BenchImportCli, Distribution, ImportBenchConfig, ParsedBenchImport,
 };
@@ -541,10 +543,118 @@ fn bench_import_smoke_runs_matrix_and_produces_all_metrics() {
 fn p95_nearest_rank_is_true_quantile_at_n20() {
     // n=10：rank = ⌈0.95×10⌉ = 10 → p95 恒等于 max（iterations 10→20 的原因）。
     let ten: Vec<f64> = (1..=10).map(|i| i as f64).collect();
-    assert_eq!(bench::percentile_ms(&ten, 0.95), 10.0);
+    assert_eq!(bench_common::percentile_ms(&ten, 0.95), 10.0);
     // n=20：rank = ⌈0.95×20⌉ = 19 → 第 19 位样本，成真分位数。
     let twenty: Vec<f64> = (1..=20).map(|i| i as f64).collect();
-    assert_eq!(bench::percentile_ms(&twenty, 0.95), 19.0);
+    assert_eq!(bench_common::percentile_ms(&twenty, 0.95), 19.0);
+}
+
+// ---------------------------------------------------------------------------
+// bench_common 写基准共享脚手架（issue #1650 收口）：档位上界、参数迭代、
+// 计时统计与报告表列宽
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bench_common_tier_csv_keeps_order_and_enforces_nonzero_unique_cap() {
+    let ok = bench_common::parse_tier_csv(" 104 , 1040 ", "--points").unwrap();
+    assert_eq!(
+        ok,
+        vec![104, 1040],
+        "应去除空白并保持给定次序（矩阵展开次序即报告次序）"
+    );
+
+    // 上界（issue #1650）：档位超上限在解析层拒绝——bench-market 的采样日
+    // 运算（锚点周一 + i×7 天）在无界档位下会触 chrono 日期越界 panic。
+    let err = bench_common::parse_tier_csv("1000001", "--points").unwrap_err();
+    assert!(
+        err.contains("--points") && err.contains("上限"),
+        "超上限应报错并带参数名：{err}"
+    );
+    assert!(
+        bench_common::parse_tier_csv("1000000", "--points").is_ok(),
+        "恰在上界的档位应放行（刻意压测不被误伤）"
+    );
+
+    // 既有语义不变：非零、互不重复、非空、非数报错（错误消息带参数名）。
+    assert!(bench_common::parse_tier_csv("0", "--rows").is_err());
+    assert!(bench_common::parse_tier_csv("5,5", "--ops").is_err());
+    assert!(bench_common::parse_tier_csv("", "--rows").is_err());
+    let err = bench_common::parse_tier_csv("1,x", "--rows").unwrap_err();
+    assert!(err.contains("--rows"), "非数档位报错应带参数名：{err}");
+}
+
+/// 档位上界必须接线进三个写基准各自的 CLI 解析（删除任一接线 → 本断言红）。
+#[test]
+fn bench_common_tier_cap_is_wired_into_all_three_write_cli_parsers() {
+    assert!(
+        parse_bench_import_cli(&["--rows", "1000001"]).is_err(),
+        "--rows 档位上限应接线"
+    );
+    assert!(
+        parse_bench_sync_cli(&["--ops", "1000001"]).is_err(),
+        "--ops 档位上限应接线"
+    );
+    assert!(
+        parse_bench_market_cli(&["--points", "1000001"]).is_err(),
+        "--points 档位上限应接线（采样日运算防 chrono 日期越界）"
+    );
+    assert_eq!(
+        parse_bench_market_cli(&["--points", "1000000"])
+            .unwrap()
+            .points,
+        vec![1_000_000],
+        "恰在上界的档位应原样放行"
+    );
+}
+
+#[test]
+fn bench_common_cli_missing_value_errors_with_flag_name() {
+    let err = parse_bench_import_cli(&["--rows"]).unwrap_err();
+    assert!(
+        err.contains("--rows") && err.contains("缺少值"),
+        "缺值错误应带参数名：{err}"
+    );
+}
+
+#[test]
+fn bench_common_summarize_matches_min_avg_nearest_rank_p95() {
+    let s = bench_common::summarize(vec![
+        Duration::from_millis(30),
+        Duration::from_millis(10),
+        Duration::from_millis(20),
+        Duration::from_millis(40),
+    ]);
+    assert_eq!(s.min_ms, 10.0);
+    assert_eq!(s.avg_ms, 25.0);
+    // n=4：rank = ⌈0.95×4⌉ = 4 → p95 = max（最近秩法，同 ADR-0068 口径）。
+    assert_eq!(s.p95_ms, 40.0);
+}
+
+#[test]
+fn bench_common_name_column_width_takes_longest_and_never_saturates() {
+    // 长名称不再饱和归零——列宽随最长行取（issue #1650 排版脆弱点修复；
+    // bench-import 默认最长名 23 > 既有固定 pad 18，早已饱和错位）。
+    assert_eq!(
+        bench_common::name_column_width(["导入 200 行·同账户集中", "x"]),
+        23
+    );
+    assert_eq!(
+        bench_common::name_column_width(["行情 5200 点·多标的均匀"]),
+        24
+    );
+    // 下限：表头名称列标签「基准」的显示宽（4），空表也不产生零宽/负宽。
+    assert_eq!(bench_common::name_column_width([] as [&str; 0]), 4);
+}
+
+#[test]
+fn bench_common_metric_table_header_aligns_labels_over_columns() {
+    // 表头标签右对齐在各自数值列上方：名称列宽 10 后，min 占 10、avg/p95 各
+    // 占 11（与行渲染的 {min:>10.2}{avg:>11.2}{p95:>11.2} 同宽），表尾接规模
+    // 备注列（「基准」4 宽 + 补齐 6 空格到列宽，再接右对齐标签）。
+    assert_eq!(
+        bench_common::metric_table_header(10),
+        "基准             min        avg        p95  规模备注（毫秒）"
+    );
 }
 
 #[test]
