@@ -78,7 +78,7 @@ fn bench_smoke_runs_all_benchmarks() {
     )
     .unwrap();
 
-    // 名单钉住：11 项基准一个不少、顺序稳定（增删基准必须显式更新本断言）。
+    // 名单钉住：15 项基准一个不少、顺序稳定（增删基准必须显式更新本断言）。
     let names: Vec<&str> = results.iter().map(|r| r.name).collect();
     assert_eq!(
         names,
@@ -89,11 +89,15 @@ fn bench_smoke_runs_all_benchmarks() {
             "全账户实时余额",
             "月度汇总",
             "分类占比",
+            "商户占比",
             "备注搜索拼音过滤",
             "备注搜索拼音子序列",
             "净资产总览",
             "持仓列表",
             "时点持仓",
+            "投资组合趋势",
+            "资金加权收益率",
+            "财务自由度",
         ]
     );
     for r in &results {
@@ -679,6 +683,11 @@ fn temp_db(tag: &str) -> (PathBuf, PathBuf) {
 /// → 生成；内存对照库经统一测试工厂（spec #728 / issue #754 / ADR-0084 决策 7，
 /// 文件库不入工厂，迁移知识仍单一来源）。
 fn build(path: &Path, transactions: u64, end_date: NaiveDate) -> GenCounts {
+    // 进程级接缝接线：经 crate 单点 [`install_process_wiring`]（与本 bin main()
+    // 同一函数、幂等）——本套件多个用例直接经读接缝消费生成库（列表/搜索的
+    // 来源列计划反查），单独运行时没有其它测试经 `test_support::open` 代装，
+    // 接线必须由建库单点自带，否则单测顺序决定成败（ADR-0112 决策 5）。
+    crate::install_process_wiring();
     let mut conn = open_connection_in(path.parent().expect("临时库目录")).unwrap();
     generate_into(
         &mut conn,

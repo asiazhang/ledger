@@ -59,9 +59,10 @@
 //!   `journal_mode=MEMORY`，均不持久化进库文件），50 万笔在几十秒内完成；
 //!   生成的库仅供性能基准消费，不是用户数据，崩溃重跑即可。
 //!
-//! ## bench：查询基准（issue #461；门禁 issue #493 / ADR-0068；拼音子序列基准 issue #514）
+//! ## bench：查询基准（issue #461；门禁 issue #493 / ADR-0068；拼音子序列基准 issue #514；
+//! ## 商户占比与投资三项读基准 issue #1627）
 //!
-//! 对 generate 产出的库跑 11 项查询基准并输出 min/avg/p95 报告：
+//! 对 generate 产出的库跑 15 项查询基准并输出 min/avg/p95 报告：
 //!
 //! ```text
 //! cargo run --bin ledger-perf -- bench [--db PATH] [--warmup N]
@@ -74,7 +75,9 @@
 //!   TransactionSearch 备注搜索两条基准并列（issue #514）：中文子串
 //!   （默认「咖啡」，原文连续子串路径）与拼音子序列（默认「kf」，命中
 //!   「买咖啡」→ mkf 等、不构成原文子串，拼音首字母子序列路径），均为
-//!   CPU 密集全量扫描；净资产总览聚合；持仓列表；时点持仓（直接聚合标的交易）。
+//!   CPU 密集全量扫描；净资产总览聚合；持仓列表；时点持仓（直接聚合标的交易）；
+//!   商户占比（报表三件套第三件）；投资组合趋势（周采样 × 时点持仓嵌套循环）；
+//!   资金加权收益率（XIRR 数值解）；财务自由度（issue #1627）。
 //! - 唯一接缝：全部经「现有 pub 查询函数 + 标准连接工厂打开文件库」调用，
 //!   与 IPC 命令同一 SQL 路径；慢查询日志（perf_trace，≥100ms warn）经连接
 //!   工厂自动挂载，基准内不重写 SQL。
@@ -153,7 +156,7 @@ USAGE:
 
 SUBCOMMANDS:
     generate       生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite 库）
-    bench          查询基准——11 项查询 × min/avg/p95 报告（issue #461）
+    bench          查询基准——15 项查询 × min/avg/p95 报告（issue #461）
     bench-import   批量导入写基准——固定行数 × 两种分布 × 总耗时/单行均摊 p95
                    （issue #532，纯观测无门禁）
 
@@ -261,20 +264,26 @@ fn print_usage() {
     println!("{USAGE}");
 }
 
-fn main() -> ExitCode {
-    // 写路径副作用接缝接线（issue #1090 / #1091）：bench-import 的批量导入走核心
-    // 交易域写入协议，余额刷新实现须先注册（幂等，进程级一次；与壳层启动/测试
-    // 工厂同形）——注册点在下层（核心交易域/定时计划域/备份域），实现由账户域/
-    // 定时计划域/备份域提供；期次落账置脏与追补触发两条接缝同形对装（#1091）。
+/// bin 进程级接缝接线（生产 main 与测试建库单点共用；幂等，先装者优先）：
+/// 写路径副作用接缝（issue #1090 / #1091）——bench-import 的批量导入走核心
+/// 交易域写入协议，余额刷新实现须先注册；注册点在下层（核心交易域/定时计划域/
+/// 备份域），实现由账户域/定时计划域/备份域提供；期次落账置脏与追补触发两条
+/// 接缝同形对装（#1091）。交易域接缝接线（issue #1092 / #1180）：六向实现经
+/// 组合入口一次装入。测试侧（tests::build 建库单点）必须经本单点接线——
+/// 同形复制多处会让「新增钩子只装一处」的漂移重新引入顺序依赖 flake
+///（与壳层启动、test_support::open、BDD world 各自的单点同款纪律）。
+pub(crate) fn install_process_wiring() {
     ledger_accounts::balance::install_balance_refresh_hook();
     ledger_scheduled::install_plan_source_hook();
     ledger_scheduled::auto_run::register_after_occurrence_hook(
         ledger_backup::occurrence_dirty_hook,
     );
     ledger_backup::register_catch_up_hook(ledger_scheduled::auto_run::catch_up_hook);
-    // 交易域接缝接线（issue #1092 / #1180）：与壳层启动/测试工厂同形——六向实现经
-    // 组合入口一次装入（幂等，进程级一次）。
     tauri_app_lib::transaction_wiring::install_all();
+}
+
+fn main() -> ExitCode {
+    install_process_wiring();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(sub) = args.first() else {
         print_usage();
