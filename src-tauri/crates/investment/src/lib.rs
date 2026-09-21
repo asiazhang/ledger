@@ -74,7 +74,7 @@
 //!   （尾差归末批次）与 `security_lot_adjustments` 审计落库（ADR-0106 决策 2/3，
 //!   issue #1049）；
 //! - [`stock`]：股票按（市场，代码）查询的领域规则——代码形态 → 市场单点推断、
-//!   报价币种推导（issue #693 / ADR-0081；东财访问在行情同步域
+//!   报价币种推导（issue #693 / ADR-0081；行情源访问在行情同步域
 //!   `ledger-market-sync` crate 的 `sync::stock`）；
 //! - [`trade`]：buy/sell/convert/split/dividend 协议分派与买卖/转换/份额调整明细投影
 //!   （`TransactionTrade` / `TransactionConvert`）；

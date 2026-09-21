@@ -223,7 +223,7 @@ fn toggle_stub(
     Arc::new(move |code: &str| {
         calls.lock().unwrap().push(code.to_string());
         let result = if down.load(Ordering::SeqCst) {
-            Err(AppError::Io("东财网络不可达".into()))
+            Err(AppError::Io("行情源网络不可达".into()))
         } else {
             match hits.get(code) {
                 Some(hit) => Ok(ledger_investment::Quote {
@@ -345,7 +345,7 @@ async fn test_create_fund_degrade_replay_keeps_existing_authoritative_name() {
         "降级重放不得用 AI 名称覆盖既有权威名称"
     );
     assert!(row.price.is_some(), "既有现价不被降级重放破坏");
-    assert_eq!(calls.lock().unwrap().len(), 2, "两笔各发起一次东财尝试");
+    assert_eq!(calls.lock().unwrap().len(), 2, "两笔各发起一次行情源校验");
 }
 
 // ---------------------------------------------------------------------------
@@ -353,10 +353,10 @@ async fn test_create_fund_degrade_replay_keeps_existing_authoritative_name() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_create_fund_with_name_as_code_skips_eastmoney_lookup() {
+async fn test_create_fund_with_name_as_code_skips_remote_lookup() {
     let (app, conn, calls) = setup_app_with_fund_stub(stub_hit());
 
-    // 源数据无代码：名称充代码建行（自然键防碎），不触发东财校验、无现价。
+    // 源数据无代码：名称充代码建行（自然键防碎），不触发行情源校验、无现价。
     let (status, bytes) = post_instrument(
         &app,
         r#"{"symbol":"某雪球私募一号","type":"fund","name":"某雪球私募一号"}"#,
@@ -371,7 +371,7 @@ async fn test_create_fund_with_name_as_code_skips_eastmoney_lookup() {
     assert!(row.price.is_none(), "名称充代码的基金行不进净值通道");
     assert!(
         calls.lock().unwrap().is_empty(),
-        "非 6 位 symbol 不应发起东财请求"
+        "非 6 位 symbol 不应发起行情源请求"
     );
 }
 
@@ -419,7 +419,11 @@ async fn test_create_fund_replay_returns_same_id_without_price_fragments() {
         .query_row("SELECT COUNT(*) FROM market_prices", [], |r| r.get(0))
         .unwrap();
     assert_eq!(price_rows, 1, "重放应刷新现价而非产生碎片行");
-    assert_eq!(calls.lock().unwrap().len(), 2, "两次创建各发起一次东财校验");
+    assert_eq!(
+        calls.lock().unwrap().len(),
+        2,
+        "两次创建各发起一次行情源校验"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -463,7 +467,7 @@ async fn test_create_fund_with_market_rejects_without_row() {
     assert_eq!(count, 0, "被拒的 fund 创建不应产生标的行");
     assert!(
         calls.lock().unwrap().is_empty(),
-        "非 6 位 symbol 不应发起东财请求"
+        "非 6 位 symbol 不应发起行情源请求"
     );
 }
 
@@ -494,7 +498,7 @@ async fn test_create_fund_without_market_creates_unknown_row() {
 
 /// 6 位基金经按代码增强通道时，调用方携带的非 unknown 市场同样被拒——不变量
 /// 「对全部创建通道成立」，不因 6 位增强自造字典市场而例外（issue #1194 /
-/// ADR-0038）。入口守卫先于东财往返：拒绝即不发起网络请求、不落行。删掉入口
+/// ADR-0038）。入口守卫先于行情源往返：拒绝即不发起网络请求、不落行。删掉入口
 /// 守卫接线本测试即红（增强分支会 201 建出 market=unknown 的基金行）。
 #[tokio::test]
 async fn test_create_six_digit_fund_with_market_rejects_without_lookup_or_row() {
@@ -518,7 +522,7 @@ async fn test_create_six_digit_fund_with_market_rejects_without_lookup_or_row() 
     assert_eq!(count, 0, "被拒的 6 位 fund 创建不应产生标的行");
     assert!(
         calls.lock().unwrap().is_empty(),
-        "入口守卫应先于东财往返拒绝，不发起网络请求"
+        "入口守卫应先于行情源往返拒绝，不发起网络请求"
     );
 }
 

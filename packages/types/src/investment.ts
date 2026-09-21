@@ -172,7 +172,7 @@ export interface AddStockInstrumentResult {
   instrument_id: string;
   /** 归一化代码（港股左补零至 5 位、美股大写） */
   symbol: string;
-  /** 东财权威名称（已回填标的行） */
+  /** 数据源权威名称（已回填标的行） */
   name: string;
   /** 自动识别的类型（stock / etf） */
   type: InstrumentType;

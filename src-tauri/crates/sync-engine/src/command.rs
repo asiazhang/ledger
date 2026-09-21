@@ -64,7 +64,7 @@ pub enum DomainCommand {
     Instrument(InstrumentCommand),
     /// 汇率命令（投资域，issue #861）。
     ExchangeRate(ExchangeRateCommand),
-    /// 用户侧价格命令（现价录入 / 手动报价，issue #861；东财行情不进 op）。
+    /// 用户侧价格命令（现价录入 / 手动报价，issue #861；行情采集不进 op）。
     Price(PriceCommand),
 }
 
