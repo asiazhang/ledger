@@ -208,8 +208,8 @@ pub(crate) fn percentile_ms(sorted_ms: &[f64], p: f64) -> f64 {
 }
 
 /// 字符串终端显示宽估算：ASCII 记 1、其余（CJK 等）记 2。人读报告表列
-/// 手排共用（bench-import / bench-sync print_report；本模块读基准的表列
-/// 用自己的估算式，行为不变）。
+/// 手排共用（本模块读基准与 bench-import / bench-sync / bench-market 的
+/// print_report）。
 pub(crate) fn display_width(s: &str) -> usize {
     s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum()
 }
@@ -678,8 +678,7 @@ fn print_report(db: &Path, cfg: &BenchConfig, results: &[BenchMetrics]) {
     //（名称列显示宽 18，数字列右对齐 10/11 位，单位毫秒入表头）。
     println!("基准                        min        avg        p95  规模备注（毫秒）");
     for r in results {
-        let display_width = r.name.chars().count() * 2;
-        let pad = " ".repeat(18usize.saturating_sub(display_width));
+        let pad = " ".repeat(18usize.saturating_sub(display_width(r.name)));
         let slow_mark = if r.p95_ms > threshold_ms {
             "　▲"
         } else {
