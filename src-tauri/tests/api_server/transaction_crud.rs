@@ -867,3 +867,94 @@ async fn test_batch_import_foreign_currency_row_readback_exposes_fx_trace() {
         }
     }
 }
+
+/// 逐笔显式汇率（#1549 / ADR-0011 修订）：批量导入带 `fxRate` 的历史行——
+/// 数据源覆盖不到的日期（不种序列点）由调用方给定汇率，整行成功且读回留痕
+/// 标为 `explicit`；同批不带 `fxRate` 的本位币行零改动照常落库（契约只增不改）。
+#[tokio::test]
+async fn test_batch_import_row_with_explicit_fx_rate_readback_marks_explicit() {
+    let (app, _conn) = setup_app();
+    let account_id = create_account_via_api(&app, "港币账户").await;
+    // 刻意不种任何序列点：显式汇率正是服务「序列查不到」的日期。
+
+    let hkd_tx = format!(
+        r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2022-01-21","fx_rate":0.88}}"#
+    );
+    let cny_tx = format!(
+        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2022-01-21"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&hkd_tx, &cny_tx], None)).await;
+    assert_eq!(created[0]["success"], true, "带显式汇率的行应照常落库");
+    assert_eq!(created[1]["success"], true, "不带 fxRate 的行行为不变");
+
+    let (_, body) = get_json(&app, "/api/v1/transactions").await;
+    let txs = items_of(&body);
+    for tx in txs {
+        if tx["currency_code"] == "HKD" {
+            assert_eq!(tx["fx_rate_used"], 0.88, "留痕 = 显式给定值本身");
+            assert_eq!(tx["fx_rate_source"], "explicit", "来源标为显式");
+        } else {
+            assert_eq!(tx["fx_rate_used"], serde_json::Value::Null);
+            assert_eq!(tx["fx_rate_source"], serde_json::Value::Null);
+        }
+    }
+}
+
+/// 显式汇率非法（#1549 验收 3）：非正 → 码化错误逐行失败、不落库；同币种行
+/// 携带 fxRate → 方向不符拒绝。非法行不产生库内行，合法行不受影响。
+#[tokio::test]
+async fn test_batch_import_illegal_explicit_fx_rate_rejected_not_persisted() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "港币账户").await;
+
+    let zero = format!(
+        r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2022-01-21","fx_rate":0}}"#
+    );
+    let same_currency = format!(
+        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2022-01-21","fx_rate":1.0}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&zero, &same_currency], None)).await;
+    assert_eq!(created[0]["success"], false, "非正显式汇率应失败");
+    // 批量导入逐行结果只回 message 字符串（错误码入行结果属 spec #1540 范围外技术债），
+    // 断言面只能是消息子串；码值断言归域单测（fx.explicit-rate-non-positive）。
+    assert!(created[0]["error"].as_str().unwrap().contains("大于 0"));
+    assert_eq!(created[1]["success"], false, "同币种携带显式汇率应失败");
+    assert!(
+        created[1]["error"].as_str().unwrap().contains("方向不符"),
+        "实际: {:?}",
+        created[1]["error"]
+    );
+
+    {
+        let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(
+            count_active_transactions(&guard),
+            0,
+            "非法行不落库：库内无交易行"
+        );
+    }
+}
+
+/// 导入幂等身份不受显式汇率影响（#1549 验收 4）：同批带 `fxRate` 的行以同
+/// 幂等键重跑仍只落一份（去重键不含汇率，同键命中跳过）。
+#[tokio::test]
+async fn test_batch_import_explicit_fx_rate_row_idempotent_rerun() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "港币账户").await;
+
+    let row = format!(
+        r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2022-01-21","fx_rate":0.88,"idempotency_key":"moomoo-2022-01-21-1"}}"#
+    );
+    let first = post_batch(&app, batch_body(&[&row], None)).await;
+    assert_eq!(first[0]["success"], true);
+    assert_eq!(first[0]["duplicate"], false);
+
+    let rerun = post_batch(&app, batch_body(&[&row], None)).await;
+    assert_eq!(rerun[0]["success"], true, "同键重跑仍成功");
+    assert_eq!(rerun[0]["duplicate"], true, "同键重跑判为重复跳过");
+
+    {
+        let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(count_active_transactions(&guard), 1, "同批重跑只落一份");
+    }
+}

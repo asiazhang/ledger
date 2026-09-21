@@ -83,6 +83,7 @@ impl ImportedRow {
             in_amount_cents: None,
             idempotency_key: self.idempotency_key.clone(),
             origin: None,
+            fx_rate: None,
         }
     }
 }

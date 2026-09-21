@@ -97,6 +97,10 @@ pub struct TransactionInput {
     /// 未知。它不是当日真实入金，资金加权收益率据此不给该标的年化、改给未年化
     /// 收益率。缺省（不提交）即 `"trade"` 真实成交；其余 kind 携带返回 400。
     pub origin: Option<SecurityOrigin>,
+    /// 可选逐笔显式汇率：折算乘数（本位币金额 = round(amount_cents × fx_rate)，到分），
+    /// 用于数据源覆盖不到的日期；优先级显式 > 序列 > 报错；缺省（不提交）即按交易日
+    /// 序列折算；非法值（非正、与本位币同币种携带）报码化错误、整笔不落库。
+    pub fx_rate: Option<f64>,
     /// 客户端提供的、内容无关的导入幂等键（指向"该交易来自源文件哪一行"）。
     /// 带键时批量导入以其为准去重（同键跳过、内容无关）；无键时回退内容哈希兜底。
     pub idempotency_key: Option<String>,
@@ -149,6 +153,8 @@ pub struct UpdateTransactionInput {
     /// 证券扩展行来源（与 `TransactionInput.origin` 同一契约）：仅 buy 可携带，
     /// `"opening"` = 期初存量。就地修改为全字段替换，缺省即回落 `"trade"`。
     pub origin: Option<SecurityOrigin>,
+    /// 可选逐笔显式汇率：同 `TransactionInput.fx_rate`，缺省回退序列查询。
+    pub fx_rate: Option<f64>,
 }
 
 impl From<UpdateTransactionInput> for TransactionInput {
@@ -179,6 +185,7 @@ impl From<UpdateTransactionInput> for TransactionInput {
             out_amount_cents: u.out_amount_cents,
             in_amount_cents: u.in_amount_cents,
             origin: u.origin,
+            fx_rate: u.fx_rate,
             idempotency_key: None,
         }
     }

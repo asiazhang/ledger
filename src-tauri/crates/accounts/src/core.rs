@@ -495,6 +495,8 @@ pub fn adjust_account_balance(
                 in_amount_cents: None,
                 idempotency_key: None,
                 origin: None,
+                // 余额调整是同币种转账（黑洞账户），无折算，不携显式汇率（#1549）。
+                fx_rate: None,
             },
         )?
         .id;

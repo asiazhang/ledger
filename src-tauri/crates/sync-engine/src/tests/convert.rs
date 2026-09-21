@@ -69,6 +69,7 @@ fn buy_input(
         in_amount_cents: None,
         idempotency_key: None,
         origin: None,
+        fx_rate: None,
     }
 }
 

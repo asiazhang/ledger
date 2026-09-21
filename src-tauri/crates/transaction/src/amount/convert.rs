@@ -4,7 +4,7 @@
 //! （**当期折算**，读路径入口：持仓市值、净资产、财务自由度、实物资产估值、跨账本
 //! 汇总、定时花费）、[`convert_to_native_on_trade_date`]（**按交易日折算**，写路径
 //! 入口，#1547 接入：按交易所属 ISO 周命中汇率历史；返回值随行携带折算留痕
-//! [`NativeConversion`]，#1548）。两入口不设隐式默认，调用方必须显式选择（#1540 spec）。
+//! [`NativeConversion`]，#1548；可选逐笔显式汇率入参，显式 > 序列 > 报错，#1549）。两入口不设隐式默认，调用方必须显式选择（#1540 spec）。
 //! 共同不变量：基准为全局默认币种、与账户币种无关（避免跨账户漂移）；与本位币同
 //! 币种原样返回；正反向汇率均无即报错，不静默混币种。ADR 指针：ADR-0011 / ADR-0091
 //! 决策 3 / ADR-0113 决策 3.1。陷阱：本位币读取经 `super::base_currency` 接缝，
@@ -199,26 +199,58 @@ pub fn convert_to_native_current(
 /// - 币种与默认币种相同 → 1:1 原样返回，且不留痕（两个溯源列为 `None`）。
 /// - 基准为 [`default_currency_code`]。
 /// - 返回值随行携带折算来源留痕（#1548）：金额 + 使用汇率值 + 来源闭集。
-/// - 显式汇率优先由 #1549 接入。
+/// - 显式汇率优先（#1549）：`explicit_rate` 为 `Some` 且与本位币异币种时**跳过
+///   序列查询**，按给定汇率折算、来源标为 `Explicit`——数据源覆盖不到的日期
+///   由调用方逐笔给定；取值方向与折算同向（`native = amount × rate`，与留痕
+///   列 `fx_rate_used` 同口径）。不带显式汇率的行与 #1547 行为逐位一致。
+/// - 显式汇率非法即码化错误、不落库：非正或非有限报
+///   `fx.explicit-rate-non-positive`；与本位币同币种的行无折算方向，携带显式
+///   汇率报 `fx.explicit-rate-direction-mismatch`。
 pub fn convert_to_native_on_trade_date(
     conn: &Connection,
     amount_cents: i64,
     currency_code: &str,
     trade_date: &str,
+    explicit_rate: Option<f64>,
 ) -> Result<NativeConversion> {
     let target = default_currency_code(conn)?;
     if currency_code == target {
+        // 同币种无折算方向：显式汇率无处安放，fail fast 不静默吞掉（#1549）。
+        if let Some(rate) = explicit_rate {
+            return Err(AppError::codedp(
+                "fx.explicit-rate-direction-mismatch",
+                format!(
+                    "显式汇率方向不符：{currency_code} 即本位币，本笔无折算，不应显式给定汇率（{rate}）"
+                ),
+                &[currency_code],
+            ));
+        }
         return Ok(NativeConversion {
             native_cents: amount_cents,
             fx_rate_used: None,
             fx_rate_source: None,
         });
     }
-    let rate = lookup_fx_history_rate(conn, currency_code, &target, trade_date)?;
+    let (rate, source) = match explicit_rate {
+        Some(rate) => {
+            if !rate.is_finite() || rate <= 0.0 {
+                return Err(AppError::codedp(
+                    "fx.explicit-rate-non-positive",
+                    format!("显式汇率必须大于 0: {rate}"),
+                    &[&rate.to_string()],
+                ));
+            }
+            (rate, FxRateSource::Explicit)
+        }
+        None => (
+            lookup_fx_history_rate(conn, currency_code, &target, trade_date)?,
+            FxRateSource::Series,
+        ),
+    };
     Ok(NativeConversion {
         native_cents: (amount_cents as f64 * rate).round() as i64,
         fx_rate_used: Some(rate),
-        fx_rate_source: Some(FxRateSource::Series),
+        fx_rate_source: Some(source),
     })
 }
 

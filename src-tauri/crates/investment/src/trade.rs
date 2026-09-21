@@ -320,6 +320,7 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         amount_cents,
         &account_currency,
         &input.date,
+        input.fx_rate,
     )?;
 
     Ok(BuyPlan {
@@ -454,6 +455,7 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         amount_cents,
         &account_currency,
         &input.date,
+        input.fx_rate,
     )?;
 
     // 取批次 → 分摊（含「可卖出数量不足」守卫）两步单点算定消耗规划：apply 只落盘。
@@ -618,6 +620,7 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
         carried_cost_cents,
         &account_currency,
         &input.date,
+        input.fx_rate,
     )?;
 
     Ok(ConvertPlan {
@@ -750,6 +753,12 @@ fn prepare_split(
         return Err(AppError::coded(
             "trade.split-amount-forbidden",
             "份额调整无现金腿，金额必须为 0",
+        ));
+    }
+    if input.fx_rate.is_some() {
+        return Err(AppError::coded(
+            "trade.split-fx-rate-forbidden",
+            "份额调整无现金腿、不折算，不能携带显式汇率",
         ));
     }
     let delta_quantity = input.quantity.unwrap_or(0.0);
@@ -925,6 +934,7 @@ fn prepare_dividend(conn: &Connection, input: &TransactionInput) -> Result<Divid
         input.amount_cents,
         &account_currency,
         &input.date,
+        input.fx_rate,
     )?;
     Ok(DividendPlan {
         normalized: NormalizedTransaction {
