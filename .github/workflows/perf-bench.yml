@@ -5,7 +5,10 @@
 #   基准（ledger-perf bench --iterations 20 --max-p95-ms 200）→ 批量导入写
 #   基准观测（ledger-perf bench-import，issue #532：只跑最大档 200 行 ×
 #   两分布、只记录不判定——写基准阈值未立，待 CI 基线分布稳定后修订
-#   ADR-0068 另立判据）→ Markdown 报告写入 $GITHUB_STEP_SUMMARY。
+#   ADR-0068 另立判据）→ 同步重放写基准观测（ledger-perf bench-sync，
+#   issue #1628：只跑最大档 2000 op × 两分布 × 两入口、剥网络只量本地
+#   合并/写库，网络边界豁免见 ADR-0068）→ Markdown 报告写入
+#   $GITHUB_STEP_SUMMARY。
 # 「每日一次、前提是有代码变动」由 gate job 兜底：schedule 触发时比对本次
 # 调度的提交与本 workflow 最近一次成功运行的 head_sha——相同即自上次成功
 # 以来无新代码，整体跳过不空转；上次失败则最近成功停在更早提交、差异
@@ -16,8 +19,9 @@
 # 实测撤销（issue #516），分项例外机制保留、现行清单见 ADR-0068 与 bench
 # 工具内 PER_BENCH_MAX_P95_MS（当前为空）。任何一项超标 bench 以非零退出、
 # job 失败（超标清单随报告
-# 进 Summary）。不在 PR 上跑：一次 release 冷编译 + 生成 + 两段基准 ≈ 13
-# 分钟（rust-cache 命中时；bench-import 最大档观测约占 7 分钟），回归由
+# 进 Summary）。不在 PR 上跑：一次 release 冷编译 + 生成 + 三段基准 ≈ 35
+# 分钟（rust-cache 命中时；bench-import 最大档观测约占 7 分钟，bench-sync
+# 最大档观测约占 20 分钟），回归由
 # 每日基线与性能批合入后的手动触发拦截。
 # 生成器正确性单测（src/bin/ledger-perf/tests.rs，issue #459 验收项）原随
 # build.yml 的 cargo test --all 运行，2026-09 起迁入本 workflow：bin 测试
@@ -145,6 +149,27 @@ jobs:
           # 的先例顺序）。
           ./target/release/ledger-perf bench-import --rows 200 --iterations 20 | tee bench-import-report.txt
 
+      - name: 运行同步重放写基准（bench-sync，最大档 2000 op × 两分布 × 两入口，剥网络，只记录不判定）
+        id: bench-sync
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          set -o pipefail
+          # --ops 2000：CI 只跑离线一月上限形态最大档（写放大判别面在最大
+          # 档最清晰；100/500 档留作本地观察档）；两分布（同账户集中 /
+          # 多账户均匀）与两入口（wire 接入 ingest_ops / 进程内重放
+          # apply_ops）是写放大判别面与权威入口覆盖面，不裁剪。
+          # 网络边界豁免（ADR-0068）：S3 通道传输不属回归面，本基准只量
+          # 剥网络后的本地合并/写库。
+          # --iterations 5：最大档每单元是 2000 条独立事务的完整提交路径
+          # （本地实测约 21–34s/单元，CI 约 2×），20 次真分位数口径在此档
+          # 不可承受（全矩阵 ≈ 77 min 会破本 workflow 预算）；n<20 时
+          # p95=max 取保守上界，观测阶段 min/avg/max 足够判读，立阈值时
+          # 按 ADR-0068 处置纪律补充高迭代分布后再修订 ADR。不传门禁参数：
+          # 写基准无门禁（同 bench-import，阈值待 CI 基线分布稳定后修订
+          # ADR-0068 另立判据）。
+          ./target/release/ledger-perf bench-sync --ops 2000 --iterations 5 | tee bench-sync-report.txt
+
       - name: 写入 Job Summary（Markdown 耗时报告 + 门禁结果）
         if: always()
         run: |
@@ -177,5 +202,19 @@ jobs:
               ./scripts/perf-summary.sh src-tauri/bench-import-report.txt "ledger-perf bench-import stdout"
             else
               echo '> ⚠️ bench-import 未产出报告（步骤失败，详见上方日志）'
+            fi
+            echo
+            echo "## ledger-perf 同步重放写基准（bench-sync，剥网络，只记录不判定）"
+            echo
+            if [ "${{ steps.bench-sync.outcome }}" = "success" ]; then
+              echo "- 观测：✅ 完成（最大档 2000 op × 两分布 × 两入口；写基准无门禁阈值，待 CI 基线分布稳定后修订 ADR-0068 另立判据）"
+            else
+              echo "- 观测：❌ 未完成 —— bench-sync 步骤失败（详见上方日志）"
+            fi
+            echo
+            if [ -f src-tauri/bench-sync-report.txt ]; then
+              ./scripts/perf-summary.sh src-tauri/bench-sync-report.txt "ledger-perf bench-sync stdout"
+            else
+              echo '> ⚠️ bench-sync 未产出报告（步骤失败，详见上方日志）'
             fi
           } >> "$GITHUB_STEP_SUMMARY"

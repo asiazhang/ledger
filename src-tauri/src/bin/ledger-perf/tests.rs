@@ -33,9 +33,14 @@ use super::bench::{self, BenchCli, BenchConfig, BenchMetrics, ParsedBench};
 use super::bench_import::{
     self, BenchImportCli, Distribution, ImportBenchConfig, ParsedBenchImport,
 };
+use super::bench_sync::{
+    self, BenchSyncCli, EntryForm, ParsedBenchSync, SOURCE_DEVICE_ID, SyncBenchConfig,
+    generate_ops, generate_wire,
+};
 use super::generate::{GenCounts, GenerateParams, generate_into};
 use super::{GenerateCli, ParsedArgs, parse_args};
 use ledger_accounts::{Account, AccountType};
+use ledger_backup as backup_domain;
 use ledger_transaction::compute_dedup_hash;
 
 /// 解析并取 bench 运行参数（帮助请求在该测试套件中不该出现；
@@ -1612,4 +1617,256 @@ fn profile_budgets_and_scheduled_plans() {
         counts.transactions as u64, 2_000,
         "交易总数应等于 --transactions（含预留期次交易）"
     );
+}
+
+// ---------------------------------------------------------------------------
+// bench-sync 同步重放写基准（issue #1628）：op 流生成、wire 形态、冒烟与名单钉住
+// ---------------------------------------------------------------------------
+
+/// 解析并取 bench-sync 运行参数（帮助请求在该测试套件中不该出现）。
+fn parse_bench_sync_cli(args: &[&str]) -> Result<BenchSyncCli, String> {
+    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    match bench_sync::parse_bench_sync_args(&owned)? {
+        ParsedBenchSync::Run(cli) => Ok(cli),
+        ParsedBenchSync::Help => panic!("该输入应解析为运行参数"),
+    }
+}
+
+/// 小库上的同步基准配置（冒烟与报告口径共用）。
+fn small_sync_cfg() -> SyncBenchConfig {
+    SyncBenchConfig {
+        ops: vec![50],
+        warmup: 1,
+        iterations: 2,
+    }
+}
+
+#[test]
+fn bench_sync_cli_defaults_cover_sync_round_tiers() {
+    let cli = parse_bench_sync_cli(&[]).unwrap();
+    assert_eq!(
+        cli.ops,
+        vec![100, 500, 2000],
+        "默认矩阵应按同步轮真实量级校准：日常轮 / 离线一周积压 / 离线一月上限形态"
+    );
+    assert_eq!(cli.warmup, 1, "同步重放迭代成本高，预热默认 1 次");
+    assert_eq!(cli.iterations, 5);
+    assert_eq!(cli.db, super::default_out());
+}
+
+#[test]
+fn bench_sync_cli_parses_overrides_and_rejects_bad_values() {
+    let cli =
+        parse_bench_sync_cli(&["--ops", "100,200", "--warmup", "0", "--iterations", "2"]).unwrap();
+    assert_eq!(cli.ops, vec![100, 200]);
+    assert_eq!(cli.warmup, 0);
+    assert_eq!(cli.iterations, 2);
+    let cli = parse_bench_sync_cli(&["--ops=100"]).unwrap();
+    assert_eq!(cli.ops, vec![100]);
+
+    assert!(
+        parse_bench_sync_cli(&["--ops", ""]).is_err(),
+        "空矩阵应报错"
+    );
+    assert!(
+        parse_bench_sync_cli(&["--ops", "0"]).is_err(),
+        "op 档 0 应报错"
+    );
+    assert!(
+        parse_bench_sync_cli(&["--ops", "1,x"]).is_err(),
+        "非数档位应报错"
+    );
+    assert!(
+        parse_bench_sync_cli(&["--ops", "100,100"]).is_err(),
+        "重复档位应报错"
+    );
+    assert!(
+        parse_bench_sync_cli(&["--iterations", "0"]).is_err(),
+        "迭代 0 应报错"
+    );
+    assert!(
+        parse_bench_sync_cli(&["--unknown", "1"]).is_err(),
+        "未知参数应报错"
+    );
+}
+
+/// op 流生成（纯函数）：确定性、分布形态、身份全新与时钟单调（双端消费形态里
+/// A 端 read_ops 的返回形态；重放端幂等/位点/LWW 判定都依赖这些信封事实）。
+#[test]
+fn bench_sync_ops_are_deterministic_and_distribution_shaped() {
+    let accounts: Vec<String> = (0..3).map(|i| format!("acc-{i}")).collect();
+    let date = "2026-01-01";
+    let schema_version = 99;
+
+    let concentrated = generate_ops(
+        5,
+        &accounts,
+        Distribution::Concentrated,
+        "CNY",
+        date,
+        schema_version,
+    );
+    let replay = generate_ops(
+        5,
+        &accounts,
+        Distribution::Concentrated,
+        "CNY",
+        date,
+        schema_version,
+    );
+    let uniform = generate_ops(
+        5,
+        &accounts,
+        Distribution::Uniform,
+        "CNY",
+        date,
+        schema_version,
+    );
+
+    // 确定性：同参数两次生成，op 流逐条相等（可复现规格）。
+    assert_eq!(concentrated, replay, "同参数两次生成应逐条相同");
+
+    // 分布形态：同账户集中全部落首账户；多账户均匀按序轮转。
+    let account_of = |op: &ledger_sync_engine::SyncOp| match &op.command {
+        ledger_sync_engine::DomainCommand::Transaction(
+            ledger_transaction::TransactionCommand::Create { row, .. },
+        ) => row.account_id.clone(),
+        other => panic!("op 流应全为交易创建命令，得到 {other:?}"),
+    };
+    assert!(
+        concentrated.iter().all(|op| account_of(op) == accounts[0]),
+        "同账户集中应全部落首账户"
+    );
+    let uniform_accounts: Vec<String> = uniform.iter().map(account_of).collect();
+    assert_eq!(
+        uniform_accounts,
+        vec!["acc-0", "acc-1", "acc-2", "acc-0", "acc-1"],
+        "多账户均匀应按序轮转"
+    );
+
+    // 信封事实：op_id / 交易 id 全新全异、源端设备恒定、时钟自 1 单调、
+    // schema 版本随入参（偏斜判定不触发挂起）。
+    let mut op_ids = std::collections::HashSet::new();
+    let mut txn_ids = std::collections::HashSet::new();
+    for (i, op) in concentrated.iter().enumerate() {
+        assert!(op_ids.insert(op.op_id.clone()), "op_id 应全新全异");
+        assert_eq!(op.device_id, SOURCE_DEVICE_ID, "源端设备应恒定");
+        assert_eq!(op.clock, i as i64 + 1, "逻辑时钟应自 1 单调递增");
+        assert_eq!(op.schema_version, schema_version);
+        let ledger_sync_engine::DomainCommand::Transaction(
+            ledger_transaction::TransactionCommand::Create { id, row, .. },
+        ) = &op.command
+        else {
+            panic!("op 流应全为交易创建命令");
+        };
+        assert!(txn_ids.insert(id.clone()), "交易 id 应全新全异");
+        // 行形态：expense、本位币行无折算（native 金额 = 行金额、无留痕）、
+        // 金额逐条递增（幂等身份全异）、统一日期、币种随入参。
+        assert_eq!(row.kind, TransactionKind::Expense);
+        assert_eq!(
+            row.amount_cents,
+            super::bench_import::BASE_AMOUNT_CENTS + i as i64
+        );
+        assert_eq!(row.amount_native_cents, row.amount_cents);
+        assert_eq!(row.fx_rate_used, None);
+        assert_eq!(row.fx_rate_source, None);
+        assert_eq!(row.currency_code, "CNY");
+        assert_eq!(row.date, date);
+    }
+}
+
+/// wire 形态与 op 流同形（serde 往返无损）：`ingest_ops` 收到的通道报文反解
+/// 回来必须与 A 端 `read_ops` 的 op 逐条相等——量测走通道搬运形态不失真。
+#[test]
+fn bench_sync_wire_form_roundtrips_to_identical_ops() {
+    let accounts: Vec<String> = (0..2).map(|i| format!("acc-{i}")).collect();
+    let stream = generate_ops(4, &accounts, Distribution::Uniform, "CNY", "2026-01-01", 99);
+    let wire = generate_wire(&stream).unwrap();
+
+    assert_eq!(wire.len(), stream.len());
+    for (raw, op) in wire.iter().zip(&stream) {
+        let parsed: ledger_sync_engine::SyncOp = serde_json::from_str(raw).unwrap();
+        assert_eq!(&parsed, op, "wire 报文反解应与原 op 逐字段相等");
+    }
+}
+
+/// 冒烟（对齐 bench_import_smoke_runs_matrix_and_produces_all_metrics 形态）：
+/// 小库 → 跑完量测矩阵 → 产出全部指标，且每次迭代「逐条 Applied + 缓存一致」
+/// 前置未被违反——连续迭代结果稳定（写副作用残留会让第二批 op 命中幂等/
+/// 位点归宿，任何非 Applied 归宿都让量测作废）。
+#[test]
+fn bench_sync_smoke_runs_matrix_and_produces_all_metrics() {
+    // 写路径接缝接线（与 bin main() 同形，OnceLock 注册幂等）：重放路径触达
+    // 余额刷新与本位币读取等接缝，缺席即码化拒绝（壳层启动接线缺失）——
+    // 本测试独立过滤运行（cargo test --bin ledger-perf <过滤器>）时无其它
+    // 测试先行接线，故自装；全量跑时与先行测试的注册幂等共存。
+    ledger_accounts::balance::install_balance_refresh_hook();
+    ledger_scheduled::install_plan_source_hook();
+    ledger_scheduled::auto_run::register_after_occurrence_hook(
+        backup_domain::occurrence_dirty_hook,
+    );
+    backup_domain::register_catch_up_hook(ledger_scheduled::auto_run::catch_up_hook);
+    tauri_app_lib::transaction_wiring::install_all();
+
+    let (_dir, path) = temp_db("bench-sync-smoke");
+    build(&path, 2_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+
+    let results = bench_sync::run_benchmark(&path, &small_sync_cfg()).unwrap();
+
+    // 名单钉住：1 档 × 2 分布 × 2 入口，顺序稳定（矩阵展开次序：op 档外层、
+    // 分布中层、入口内层）。删除任一矩阵轴项（Distribution::ALL / EntryForm::ALL）
+    // 或默认档位，本断言或默认档断言即红——场景名单的删除即变红落点。
+    let names: Vec<String> = results.iter().map(|r| r.name.clone()).collect();
+    assert_eq!(
+        names,
+        [
+            "同步 50 op·同账户集中·wire 接入",
+            "同步 50 op·同账户集中·进程内重放",
+            "同步 50 op·多账户均匀·wire 接入",
+            "同步 50 op·多账户均匀·进程内重放",
+        ]
+    );
+    let distributions: Vec<Distribution> = results.iter().map(|r| r.distribution).collect();
+    assert_eq!(
+        distributions,
+        [
+            Distribution::Concentrated,
+            Distribution::Concentrated,
+            Distribution::Uniform,
+            Distribution::Uniform,
+        ],
+        "分布轴展开次序：同账户集中在前（Distribution::ALL 稳定清单）"
+    );
+    let entries: Vec<EntryForm> = results.iter().map(|r| r.entry).collect();
+    assert_eq!(
+        entries,
+        [
+            EntryForm::Ingest,
+            EntryForm::Apply,
+            EntryForm::Ingest,
+            EntryForm::Apply,
+        ],
+        "入口轴展开次序：生产通道形态在前（EntryForm::ALL 稳定清单）"
+    );
+    for r in &results {
+        assert_eq!(r.ops, 50, "指标行应携带 op 档：{}", r.name);
+        assert!(
+            r.min_ms.is_finite() && r.min_ms >= 0.0,
+            "{} min 非法",
+            r.name
+        );
+        assert!(r.avg_ms >= r.min_ms, "{} avg 应不小于 min", r.name);
+        assert!(r.p95_ms >= r.min_ms, "{} p95 应不小于 min", r.name);
+        assert!(
+            r.per_op_p95_ms > 0.0 && r.per_op_p95_ms <= r.p95_ms,
+            "{} 单 op 均摊 p95 应在 (0, p95] 内",
+            r.name
+        );
+        assert!(
+            r.context.contains("单 op 均摊")
+                && (r.context.contains("ingest_ops") || r.context.contains("apply_ops")),
+            "规模备注应携带单 op 均摊口径与入口锚点：{}",
+            r.context
+        );
+    }
 }

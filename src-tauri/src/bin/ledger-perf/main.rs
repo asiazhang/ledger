@@ -113,6 +113,29 @@
 //!   CI 基线分布稳定后修订 ADR-0068 另立判据）；perf-bench CI 每日以
 //!   最大档 200 行 × 两分布观测、只记录进 Summary；check.sh 不跑本基准。
 //!
+//! ## bench-sync：同步重放写基准（issue #1628）
+//!
+//! 对 generate 产出的库量测「apply_ops 循环逐条合并外来 op 流」的本地写耗时
+//! （剥网络：S3 通道传输不属回归面，ADR-0068 网络边界豁免）：
+//!
+//! ```text
+//! cargo run --bin ledger-perf -- bench-sync [--db PATH] [--ops <CSV>]
+//!                                           [--warmup N] [--iterations N]
+//! ```
+//!
+//! - 量测矩阵：op 数量档（默认 100,500,2000，按同步轮真实量级：日常轮/
+//!   离线一周积压/离线一月上限形态）× 两种分布（同账户集中/多账户均匀）
+//!   × 两个权威入口——wire 接入（`ingest_ops`，Transport 通道上的生产接缝）
+//!   与进程内重放（`apply_ops`，已解析形态）；报告每单元总耗时 min/avg/p95
+//!   与单 op 均摊 p95（n<20 时 p95=max，同 ADR-0068 统计口径）。
+//! - op 流确定性生成（双端消费形态：A 端 `read_ops` → B 端重放），迭代前
+//!   从 pristine 快照恢复隔离写副作用（快照机制与 bench-import 共用）；
+//!   重放后的结果核验与余额缓存一致性断言失败即量测作废（照 bench-import
+//!   既有断言模式）。
+//! - 无门禁判定：写基准阈值未立（同 bench-import）；perf-bench CI 每日以
+//!   最大档 2000 op × 两分布 × 两入口观测、只记录进 Summary；check.sh
+//!   不跑本基准。
+//!
 //! # 实现边界
 //!
 //! 全部生成/基准/摘要逻辑封在本 bin 模块内部，产品 lib 不新增模块、
@@ -120,10 +143,12 @@
 
 mod bench;
 mod bench_import;
+mod bench_sync;
 mod generate;
 mod investments;
 mod plans;
 mod rng;
+mod snapshot;
 
 #[cfg(test)]
 mod tests;
@@ -156,6 +181,9 @@ SUBCOMMANDS:
     bench          查询基准——11 项查询 × min/avg/p95 报告（issue #461）
     bench-import   批量导入写基准——固定行数 × 两种分布 × 总耗时/单行均摊 p95
                    （issue #532，纯观测无门禁）
+    bench-sync     同步重放写基准——op 流重放（ingest_ops/apply_ops 权威入口）
+                   × 两种分布 × 总耗时/单 op 均摊 p95（issue #1628，剥网络，
+                   纯观测无门禁）
 
 bench OPTIONS:
     --db <PATH>            目标库文件（默认同 generate 输出路径，须已生成）
@@ -173,6 +201,15 @@ bench-import OPTIONS:
                            修改源库——内部建 pristine 快照，每次迭代从快照恢复）
     --rows <CSV>           每档导入行数（默认 50,100,200；逗号分隔、保持次序）
     --dedup <BOOL>         批量导入去重开关（默认 true，HTTP 批量导入生产默认）
+    --warmup <N>           每档预热次数（默认 1，不计入统计）
+    --iterations <N>       每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集
+                           规模固定）
+    -h, --help             打印本说明
+
+bench-sync OPTIONS:
+    --db <PATH>            源库文件（默认同 generate 输出路径，须已生成；本命令不
+                           修改源库——内部建 pristine 快照，每次迭代从快照恢复）
+    --ops <CSV>            每档重放 op 条数（默认 100,500,2000；逗号分隔、保持次序）
     --warmup <N>           每档预热次数（默认 1，不计入统计）
     --iterations <N>       每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集
                            规模固定）
@@ -326,6 +363,24 @@ fn main() -> ExitCode {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(msg) => {
                     eprintln!("bench-import 失败：{msg}");
+                    ExitCode::FAILURE
+                }
+            },
+            Err(msg) => {
+                eprintln!("参数错误：{msg}\n");
+                print_usage();
+                ExitCode::from(2)
+            }
+        },
+        "bench-sync" => match bench_sync::parse_bench_sync_args(&args[1..]) {
+            Ok(bench_sync::ParsedBenchSync::Help) => {
+                print_usage();
+                ExitCode::SUCCESS
+            }
+            Ok(bench_sync::ParsedBenchSync::Run(cli)) => match bench_sync::run(cli) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(msg) => {
+                    eprintln!("bench-sync 失败：{msg}");
                     ExitCode::FAILURE
                 }
             },
