@@ -29,7 +29,7 @@
 //!   换源后的判定信号）；DataTables 参数全集请求构造单点、汇总行与份额行混排
 //!   过滤、已终止基金可取（存在性与最后一期净值的权威兜底）；异常响应
 //!   fail-closed 报 sync.disclosure-source-malformed，不误判「查无此码」。
-//!   判定确认（[`csrc::confirm_money_fund_form`]，issue #1563）接线在逐只刷新与
+//!   判定确认（[`csrc::confirm_money_fund_form_from`]，issue #1563）接线在逐只刷新与
 //!   历史首刷两确认点；区间取数的翻页面归 #1568 的查询创建接线消费；
 //! - [`daily_refresh`]：现价刷新的后台每日形态（ADR-0122 决策 3 / issue #1377）
 //!   ——启动后延迟补跑一次 + 每自然日窗口一次，与手动同步同形同取数面（后台
@@ -154,7 +154,7 @@
 
 mod bulk;
 mod channels;
-/// 证监会基金电子披露取数单元（issue #1562）：判定确认（[`csrc::confirm_money_fund_form`]，
+/// 证监会基金电子披露取数单元（issue #1562）：判定确认（[`csrc::confirm_money_fund_form_from`]，
 /// #1563 接线逐只刷新与历史首刷、#1568 接线基金查询创建）与区间取数面（翻页 +
 /// 完整性核验，#1568 接线已终止基金存在性兜底）。
 mod csrc;

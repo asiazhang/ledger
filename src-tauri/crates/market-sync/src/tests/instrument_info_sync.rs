@@ -1593,6 +1593,7 @@ fn production_quote_channel_requests_tencent_batch_endpoint() {
             kline: vec![],
             fund_batch: vec![],
             fund_history: vec![],
+            disclosure: vec![],
         },
     )
     .expect("生产束应可构造");
@@ -1652,6 +1653,7 @@ fn production_fund_batch_channel_requests_sina_batch_endpoint() {
             kline: vec![],
             fund_batch: vec![url],
             fund_history: vec![],
+            disclosure: vec![],
         },
     )
     .expect("生产束应可构造");
@@ -1697,6 +1699,185 @@ fn production_fund_batch_channel_requests_sina_batch_endpoint() {
             .contains("referer: https://finance.sina.com.cn/"),
         "批量面必须携带 Referer（缺省 403）：{}",
         captured[0]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 通道束六条闭包全部接入主机注入面（issue #1674）：基金名称与货基形态确认
+// 两条闭包不再在生产束里写死主机——前者消费批量面 + 证监会披露面，后者只消费
+// 披露面；钉接线测试由 4 条扩到 6 条。
+// ---------------------------------------------------------------------------
+
+/// 生产接线钉（issue #1674，删除接线即红）：生产通道束的基金名称闭包的主机
+/// 全部取自注入面——批量面以空值语句明示该码未收录（可信缺口），名称回退到
+/// 注入的证监会披露面拿权威名称；货基判定门同样打到注入的披露面。把闭包体
+/// 改回写死主机（生产常量），注入的披露面就收不到名称兜底那一次请求，本用例
+/// 的「披露面恰好两次请求」与「名称取自披露面」断言即红（ADR-0087）。
+#[test]
+fn production_fund_name_channel_falls_back_to_disclosure_host() {
+    let conn = tauri_app_lib::test_support::open();
+    let yesterday = (beijing_today() - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+    seed_fund(&conn, "inst-fund", "000001", "陈旧名称");
+
+    // ① 新浪批量面：该码以空值语句明示未收录（可信逐行缺口）——批量取数面报
+    //    零覆盖、名称闭包的新浪臂同样落空，两处都回退披露面。GBK 报文。
+    let batch_body = "var hq_str_f_000001=\"\";\n";
+    let gbk = encoding_rs::GBK.encode(batch_body).0.into_owned();
+    let (batch_url, batch_requests) = super::spawn_header_capture_server(gbk);
+    // ② 证监会披露面：普通净值形态记录——货基判定门读它得缺信号（照常取数），
+    //    名称兜底臂读它拿数据源权威名称。
+    let disclosure_body = format!(
+        r#"{{"sEcho":1,"iTotalRecords":1,"iTotalDisplayRecords":1,"aaData":[
+{{"code":"000001","shortName":"披露权威名称","shareNetValue":"1.333","totalNetValue":"1.552","valuationDate":"{yesterday}","gainPer":"","yearSevenDayYieldRatePercent":""}}]}}"#
+    );
+    let (disclosure_url, disclosure_requests) = super::spawn_header_capture_server(disclosure_body);
+    // ③ 新浪单只全历史面：判定门缺信号后逐只通道接管，近端净值落现价。
+    let nav_body = format!(
+        r#"{{"result":{{"status":{{"code":0}},"data":{{"data":[
+{{"fbrq":"{yesterday} 00:00:00","jjjz":"1.408","ljjz":"1.552"}}],"total_num":"1"}}}}}}"#
+    );
+    let (nav_url, _nav_requests) = super::spawn_header_capture_server(nav_body);
+
+    let mut channels = SyncFetchChannels::production_lane(
+        Lane::Foreground,
+        SyncFetchHosts {
+            quote: vec![],
+            kline: vec![],
+            fund_batch: vec![batch_url],
+            fund_history: vec![nav_url],
+            disclosure: vec![disclosure_url],
+        },
+    )
+    .expect("生产束应可构造");
+
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut WriteWitness::default(),
+    ))
+    .unwrap();
+
+    // 可观察结果：权威名称取自披露兜底、现价取自逐只历史面（编排照常跑完）。
+    assert_eq!(instrument_name(&conn, "inst-fund"), "披露权威名称");
+    assert_eq!(result.renamed, 1);
+    assert_eq!(result.synced, 1);
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((14_080, Some(yesterday))),
+        "逐只历史面的近端净值落现价"
+    );
+
+    // 接线本体：披露面恰好两次请求（货基判定门 1 次 + 名称兜底 1 次），路径与
+    // 代码逐条对准注入面指定的本地服务。名称闭包改回写死主机即只剩判定门那一次。
+    let captured = disclosure_requests.lock().unwrap().clone();
+    assert_eq!(
+        captured.len(),
+        2,
+        "判定门 1 次 + 名称兜底 1 次都应打到注入的披露面，实际：{captured:?}"
+    );
+    for head in &captured {
+        let line = head.lines().next().unwrap_or_default();
+        assert!(
+            line.contains("/fund/disclose/getPublicFundJZInfoMore.do"),
+            "披露请求应打到披露端点路径，实际 {line}"
+        );
+        assert!(
+            line.contains("000001"),
+            "披露请求应携带基金代码，实际 {line}"
+        );
+    }
+    // 双主机路径的新浪臂同样接注入面：批量面恰好两次请求（批量取数面 1 次 +
+    // 名称闭包新浪臂 1 次）——名称闭包改回写死主机即只剩取数面那一次。
+    assert_eq!(
+        batch_requests.lock().unwrap().len(),
+        2,
+        "批量取数面 1 次 + 名称闭包新浪臂 1 次都应打到注入的批量面"
+    );
+}
+
+/// 生产接线钉（issue #1674，删除接线即红）：生产通道束的货基形态确认闭包的
+/// 主机取自注入面的证监会披露面——批量面报货基错位行（名称在场、无价格点）
+/// 时判定门打到注入的本地服务，确认即打标落恒定价格、零逐只净值请求。把闭包
+/// 体改回写死主机，注入的披露面收不到判定请求，本用例的「恰好一次判定请求」
+/// 与「恒定单位价格回填」断言即红（ADR-0087）。
+#[test]
+fn production_confirm_channel_requests_disclosure_host() {
+    let conn = tauri_app_lib::test_support::open();
+    let today = beijing_today().format("%Y-%m-%d").to_string();
+    seed_fund(&conn, "inst-fund", "000001", "陈旧名称");
+
+    // 新浪批量面：货基错位行（万份收益在单位净值位、前一日位空）——名称被面
+    // 收录、净值表无该码，落逐只臂由官方披露判定门确认收尾。GBK 报文。
+    let batch_body =
+        format!("var hq_str_f_000001=\"天弘余额宝货币,0.2229,0.824,,{today},6799.46\";\n");
+    let gbk = encoding_rs::GBK.encode(&batch_body).0.into_owned();
+    let (batch_url, _batch_requests) = super::spawn_header_capture_server(gbk);
+    // 证监会披露面：货基自报形态（单位净值为空、万份收益与七日年化有值）。
+    let disclosure_body = format!(
+        r#"{{"sEcho":1,"iTotalRecords":1,"iTotalDisplayRecords":1,"aaData":[
+{{"code":"000001","shortName":"天弘余额宝货币","shareNetValue":"","totalNetValue":"","valuationDate":"{today}","gainPer":"0.2274","yearSevenDayYieldRatePercent":"0.8230%"}}]}}"#
+    );
+    let (disclosure_url, disclosure_requests) = super::spawn_header_capture_server(disclosure_body);
+
+    let mut channels = SyncFetchChannels::production_lane(
+        Lane::Foreground,
+        SyncFetchHosts {
+            quote: vec![],
+            kline: vec![],
+            fund_batch: vec![batch_url],
+            // 历史面空主机：确认即打标应零逐只净值请求，不会被打到。
+            fund_history: vec![],
+            disclosure: vec![disclosure_url],
+        },
+    )
+    .expect("生产束应可构造");
+
+    let result = tauri::async_runtime::block_on(do_incremental_sync_channels(
+        &conn,
+        &mut channels,
+        &mut |_| {},
+        &mut WriteWitness::default(),
+    ))
+    .unwrap();
+
+    // 可观察结果：确认即打标——恒定单位价格 1.0000 回填，现价同步为恒定价，
+    // 名称由批量面随行刷新；确认后退出采集链路，零逐只净值请求（空主机未被打到，
+    // 否则同步报错）。
+    let constant_unit_price: Option<i64> = conn
+        .query_row(
+            "SELECT constant_unit_price FROM instruments WHERE id='inst-fund'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        constant_unit_price,
+        Some(10_000),
+        "货基自报形态确认即打标（恒定单位净值 1.0000）"
+    );
+    assert_eq!(fund_price_of(&conn, "inst-fund"), Some((10_000, None)));
+    assert_eq!(instrument_name(&conn, "inst-fund"), "天弘余额宝货币");
+    assert_eq!((result.synced, result.written, result.renamed), (1, 1, 1));
+
+    // 接线本体：披露面恰好一次判定确认请求，路径与代码逐条对准注入面指定的
+    // 本地服务。闭包改回写死主机即零次。
+    let captured = disclosure_requests.lock().unwrap().clone();
+    assert_eq!(
+        captured.len(),
+        1,
+        "货基形态确认应恰好一次打到注入的披露面，实际：{captured:?}"
+    );
+    let line = captured[0].lines().next().unwrap_or_default();
+    assert!(
+        line.contains("/fund/disclose/getPublicFundJZInfoMore.do"),
+        "判定请求应打到披露端点路径，实际 {line}"
+    );
+    assert!(
+        line.contains("000001"),
+        "判定请求应携带基金代码，实际 {line}"
     );
 }
 
@@ -2042,6 +2223,21 @@ fn fund_name_refresh_degrades_deterministic_not_found_to_skip() {
     assert_eq!(name, "名称-002503", "确定性查无时保留原名称");
     assert_eq!(version, version_before, "未取到名称不写库、不虚增 version");
     assert_eq!(result.renamed, 0);
+}
+
+/// 谓词收口的负向守门（spec #1674，ADR-0087 删除即红）：上一条用例的降级行为
+/// 消费取数侧谓词——编排不嗅错误码字符串，「查无此码」码字面量只许住构造器与
+/// 谓词同址处（fund 模块）。编排 match 臂改回按码嗅探（或编排内任何位置重新
+/// 引用该字面量，含注释）本用例即红。落位随主语：被扫对象是编排（incremental），
+/// 故守门与编排行为用例同住本文件。
+#[test]
+fn orchestration_does_not_sniff_fund_not_found_code_string() {
+    let source = include_str!("../incremental.rs");
+    assert!(
+        !source.contains("sync.fund-not-found"),
+        "编排（incremental）不得出现查无此码的错误码字面量——名称刷新降级改回 \
+         is_code 字符串嗅探即红；识别收口在取数侧谓词 is_fund_not_found（spec #1674）"
+    );
 }
 
 #[test]

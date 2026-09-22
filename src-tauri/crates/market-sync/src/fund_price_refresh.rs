@@ -296,7 +296,7 @@ fn week_gap_needs_per_instrument(watermark: Option<&str>, bulk_date: &str) -> bo
 /// 按「前一日单位净值位为空」判形为 `MoneyYield`、
 /// [`super::sina_fund::SinaFundNavRow::into_nav_point`] 对它**不产出价格点**——
 /// 它只进批量面的名称字典、不进净值表，于是 `latest_hint` 为 None、落逐只臂由
-/// 官方披露判定门（[`super::csrc::confirm_money_fund_form`]）确认收尾，万份收益
+/// 官方披露判定门（[`super::csrc::confirm_money_fund_form_from`]）确认收尾，万份收益
 /// 永不进本臂。若要给未打标标的的批量直落再加一道判定门，代价是每只未打标基金
 /// 每次同步一次官方披露请求（与「批量命中零逐只请求」相悖）——本臂只收普通净值行
 /// 的形态保证就是那道门的等价物。

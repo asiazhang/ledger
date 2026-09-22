@@ -9,7 +9,7 @@
 //!    普通行直接给出名称与最新单位净值——在用基金与已终止普通基金都在面（实测
 //!    清盘样本末点照常在），一次请求即答；
 //! 2. **货基判定确认**（批量面为货基错位行——万份收益在单位净值位、产不出价格
-//!    点——时经官方披露自报形态确认，[`super::csrc::confirm_money_fund_form`]）：
+//!    点——时经官方披露自报形态确认，[`super::csrc::confirm_money_fund_form_from`]）：
 //!    确认即按恒定单位净值 1.0000 落恒定价并携带恒定价格信号（ADR-0126 决策 3；
 //!    万份收益永不进价，#1342）；缺信号落第 3 臂；
 //! 3. **证监会披露区间查询**（[`super::csrc::fetch_fund_nav_series`]，已终止基金
@@ -37,7 +37,7 @@ use ledger_investment::prices::{CSRC_PRICE_SOURCE, SINA_PRICE_SOURCE, price_valu
 use super::csrc::{
     CSRC_HOSTS, confirm_money_fund_form_from, disclosure_window_dates, fetch_fund_nav_series_from,
 };
-use super::http::{Pacer, build_client};
+use super::http::{ForegroundGuard, Pacer, build_client, lock_pacer, shared_pacer};
 use super::sina_fund::{SINA_FUND_BATCH_HOSTS, SinaFundNavForm, fetch_sina_fund_nav_rows};
 
 /// 字符串字段兼容任意 wire 形态且**不使报文失败**（基金类型码等判定信号）：字符串去首尾空白；其余形态（数字、null 等）归为
@@ -188,22 +188,42 @@ fn name_only_quote(code: &str, name: &str) -> Quote {
     }
 }
 
+/// 「查无此码」的错误码字面量单点（构造与识别同址，spec #1674）：
+/// [`fund_not_found`] 构造与 [`is_fund_not_found`] 识别共用，码值 / 文案与
+/// 用户可见契约零变化。
+const FUND_NOT_FOUND_CODE: &str = "sync.fund-not-found";
+
 /// 「查无此码」码化错误（Invalid → 400）：批量面未收录且官方披露可信空——两源
 /// 皆未命中时的唯一出口。
 fn fund_not_found(code: &str) -> AppError {
     AppError::codedp(
-        "sync.fund-not-found",
+        FUND_NOT_FOUND_CODE,
         format!("查无基金代码 {code}，请核对后重试"),
         &[code],
     )
 }
 
-/// 生产拉取入口：构建客户端与限流器后执行单次查询（不经数据库连接，
-/// 供两壳在连接锁外完成网络往返，避免长限流重试阻塞其它命令）。async 形态
-///（ADR-0125 决策 5/7，issue #1413）：网络等待以 `await` 表达，在异步上下文
-/// 内直接可调，#1411 的过渡同步桥已随接缝 async 化拆除。
+/// 「查无此码」识别谓词（spec #1674，带测谓词，与构造器同址防漂移）：编排的
+/// 名称刷新降级消费本谓词，不嗅错误码字符串——错误码、文案与用户可见契约零
+/// 变化，变的只是识别收口在取数侧（识别与构造同一字面量，漂移即测试红）。
+pub(super) fn is_fund_not_found(error: &AppError) -> bool {
+    error.is_code(FUND_NOT_FOUND_CODE)
+}
+
+/// 生产拉取入口：构建客户端后经**共享限速器**执行单次查询（issue #1674：手动
+/// 查询并入进程全局额度与前台在途守卫——后台车道看得见它并让路；主机 =
+/// [`fetch_fund_quote`] 的新浪批量面 + 证监会披露面生产常量，与通道束注入面
+/// 同源、束内外不分叉，见 `channels::production_hosts`），不经数据库连接，供两壳
+/// 在连接锁外完成网络往返，避免长限流重试阻塞其它命令。
+/// 本地限速器已随限速单点退役（ADR-0121 修订注记）。async 形态（ADR-0125
+/// 决策 5/7，issue #1413）：网络等待以 `await` 表达，在异步上下文内直接可调，
+/// #1411 的过渡同步桥已随接缝 async 化拆除。
 pub async fn fetch_fund_quote_production(code: &str) -> Result<Quote> {
+    // 前台守卫先于取额度：排队等共享限速器期间后台车道同样让行
+    //（ADR-0122 决策 6 的前台请求含手动按代码查询，issue #1674）。
+    let _foreground = ForegroundGuard::enter();
     let client = build_client()?;
-    let mut pacer = Pacer::default();
+    let pacer = shared_pacer();
+    let mut pacer = lock_pacer(&pacer).await;
     fetch_fund_quote(&client, &mut pacer, code).await
 }

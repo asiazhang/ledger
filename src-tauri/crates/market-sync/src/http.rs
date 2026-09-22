@@ -65,6 +65,12 @@ impl RetryConfig {
 ///
 /// 基线即构造间隔，也是回升下限与降速下限的锚：测试传零间隔即整只限速器惰性
 ///（降速乘零仍是零），不因自适应逻辑凭空产生等待。
+///
+/// **构造收口（issue #1674，编译期断言）**：命名构造器 [`Pacer::new`] 是
+/// `cfg(test)`，字段在模块外不可见——正常构建下传输层模块之外构造不出任何
+/// 限速器实例，生产面唯一获取点 = [`shared_pacer`] 的进程级单例（其初始化是
+/// 全库唯一的生产构造点）。「全库仅一个限速器实例」由此可断言，不另设扫描
+/// 守门（编译期成立后冗余，grilling 定稿 #1674）。
 pub(super) struct Pacer {
     last: Option<Instant>,
     interval: Duration,
@@ -73,6 +79,9 @@ pub(super) struct Pacer {
 }
 
 impl Pacer {
+    /// 测试构造口（`cfg(test)` 收口，issue #1674）：生产面拿不到本构造器，
+    /// 只能经 [`shared_pacer`] 取单例。
+    #[cfg(test)]
     pub(super) fn new(interval: Duration) -> Self {
         Self {
             last: None,
@@ -118,12 +127,6 @@ impl Pacer {
     }
 }
 
-impl Default for Pacer {
-    fn default() -> Self {
-        Self::new(REQUEST_INTERVAL)
-    }
-}
-
 /// 取一次限流 pacer 的异步守卫：从发请求前一直持有到响应处理完（ADR-0125
 /// 决策 6——锁的粒度不变，只把 `std` 互斥体换成可在 `.await` 之间持有的异步
 /// 互斥体；`std` 守卫跨 `await` 持有会让 future 失去 `Send`）。异步互斥体无
@@ -132,15 +135,25 @@ pub(super) async fn lock_pacer(pacer: &AsyncMutex<Pacer>) -> AsyncMutexGuard<'_,
     pacer.lock().await
 }
 
-/// 进程级共享限速器单例（issue #1375 额度让路）：前台（用户动作：手动同步）与
-/// 后台补全两条通道束共享同一份 `Pacer`——数据源的请求额度是进程全局的，
-/// 相邻两次请求（不管来自哪条车道）之间都保持当前间隔。先例：
-/// `bulk::shared_circuit`（跨同步记忆的进程级单例，通道束每次重建而记忆不随束
-/// 消亡）；限速器同理——束每次同步/每轮重建，限速状态必须活在束之外。
+/// 进程级共享限速器单例（issue #1375 额度让路 / issue #1674 限速单点）：前台
+///（用户动作：手动同步与手动按代码查询）与后台补全等全部车道共享同一份 `Pacer`
+///——数据源的请求额度是进程全局的，相邻两次请求（不管来自哪条车道、哪个入口）
+/// 之间都保持当前间隔。本函数的初始化是**全库唯一的限速器生产构造点**（命名
+/// 构造器均为 `cfg(test)`，见 [`Pacer`]）；先例：`bulk::shared_circuit`（跨同步
+/// 记忆的进程级单例，通道束每次重建而记忆不随束消亡）——限速器同理，束每次
+/// 同步/每轮重建，限速状态必须活在束之外。
 pub(super) fn shared_pacer() -> Arc<AsyncMutex<Pacer>> {
     static SHARED: OnceLock<Arc<AsyncMutex<Pacer>>> = OnceLock::new();
     SHARED
-        .get_or_init(|| Arc::new(AsyncMutex::new(Pacer::default())))
+        .get_or_init(|| {
+            // 全库唯一的生产构造点（issue #1674）：命名构造器是 cfg(test)，
+            // 字段在本模块外不可见——生产代码在传输层模块外另造限速器即编译失败。
+            Arc::new(AsyncMutex::new(Pacer {
+                last: None,
+                interval: REQUEST_INTERVAL,
+                baseline: REQUEST_INTERVAL,
+            }))
+        })
         .clone()
 }
 
