@@ -106,14 +106,12 @@ const BASE_DEFAULTS = {
 beforeEach(async () => {
   wireInvokeSeam({ defaults: BASE_DEFAULTS });
   pushMock.mockReset();
-  amountPrivacyEnabled.value = false;
   vi.useFakeTimers();
   vi.setSystemTime(new Date(2026, 0, 15, 12, 0, 0));
   await useReferenceStore().refresh();
 });
 
 afterEach(() => {
-  amountPrivacyEnabled.value = false;
   vi.useRealTimers();
 });
 
