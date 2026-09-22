@@ -68,7 +68,7 @@ function resolveSeamFallback(
 /**
  * defaults 表成员：命令契约快照，只收静态值；函数归 overrides 表。
  * 约束以文档约定与评审守门（TS 无法从 `object` 分支排除函数形态）：把函数
- * 写进 defaults 属用例缺陷——会被 `Promise.resolve` 当静态值兑底而非调用。
+ * 写进 defaults 属用例缺陷——会被 `Promise.resolve` 当静态值兜底而非调用。
  */
 export type InvokeSeamStaticValue = string | number | boolean | null | undefined | object;
 

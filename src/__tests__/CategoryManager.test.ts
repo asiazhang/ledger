@@ -76,7 +76,7 @@ const mockCategories: Category[] = [
 /** 本场景命令快照（beforeEach 与直调接缝的用例共享）：重排序按契约返回 undefined。 */
 const CATEGORY_SEAM_DEFAULTS = { reorder_categories: undefined };
 
-/** list_categories 参考命令本场景需自定义分类树（overrides 优先于参考兑底）。 */
+/** list_categories 参考命令本场景需自定义分类树（overrides 优先于参考兜底）。 */
 const CATEGORY_SEAM_OVERRIDES = { list_categories: mockCategories };
 
 describe("CategoryManager.vue", () => {

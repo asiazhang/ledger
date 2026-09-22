@@ -15,7 +15,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 /// app_settings 建表语句（与迁移 V008 同源，CREATE TABLE IF NOT EXISTS 幂等），
-/// 供「表缺失自愈」兑底复用。
+/// 供「表缺失自愈」兜底复用。
 const APP_SETTINGS_SQL: &str = include_str!("../../../migrations/V008__app_settings.sql");
 
 /// 配置键枚举：唯一合法的 `app_settings.key` 来源，杜绝字符串字面量散落。
@@ -109,7 +109,7 @@ pub fn set<T: Serialize>(
         rusqlite::params![key.as_str(), json],
     ) {
         Ok(_) => Ok(()),
-        // 表不存在 → 就地建表（幂等）后重试一次，与 get 的缺表兑底对齐。
+        // 表不存在 → 就地建表（幂等）后重试一次，与 get 的缺表兜底对齐。
         Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => {
             tracing::warn!(key = %key.as_str(), "app_settings 表不存在，就地创建后重试写入");
             conn.execute_batch(APP_SETTINGS_SQL)?;

@@ -123,7 +123,7 @@ async function removeAsset(id: string) {
   try {
     await physicalAssetsStore.remove(id);
   } catch {
-    /* 失败信号已由 status 承载；重拉失败由 ledger:changed 兑底 */
+    /* 失败信号已由 status 承载；重拉失败由 ledger:changed 兜底 */
   }
 }
 

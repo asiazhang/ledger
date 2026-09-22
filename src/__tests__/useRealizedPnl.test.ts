@@ -19,13 +19,13 @@ import {
 
 const mockSummary = makePnlSummary();
 
-/** 默认 invoke 布线：已实现盈亏汇总 + 标的搜索契约快照（参考字典命令走接缝内建兑底） */
+/** 默认 invoke 布线：已实现盈亏汇总 + 标的搜索契约快照（参考字典命令走接缝内建兜底） */
 const BASE_DEFAULTS = {
   realized_pnl_summary: mockSummary,
   list_instruments: { items: [makeInstrument({ id: "inst-1" })], total: 1 },
 };
 
-/** 参考命令本场景需自定义值（overrides 优先于参考兑底）：账户选项断言消费「证券账户A」 */
+/** 参考命令本场景需自定义值（overrides 优先于参考兜底）：账户选项断言消费「证券账户A」 */
 const REFERENCE_OVERRIDES = { list_accounts: mockAccounts };
 
 /** 宿主组件：模拟盈亏页在 setup 内使用 composable（onMounted 自动首刷时序留在薄壳内） */

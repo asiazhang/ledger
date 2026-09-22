@@ -9,7 +9,7 @@
 //!
 //! 接缝：
 //! - [`current`]：权威读单点（缺 key / 缺表回默认 [`DEFAULT_BASE_CURRENCY`]，
-//!   与 `settings::get` 兑底语义一致）；
+//!   与 `settings::get` 兜底语义一致）；
 //! - [`set_base_currency`]：本地写编排入口（校验 → 落库 → 产出 op，同事务）；
 //! - [`replay_command`]：重放执行（与本地写同协议，不产出 op——外来 op 由
 //!   同步引擎落日志）。

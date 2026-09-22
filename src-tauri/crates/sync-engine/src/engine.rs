@@ -82,7 +82,7 @@ fn order_key(op: &SyncOp) -> (i64, &str) {
 /// 位点之后的增量（issue #857）：从候选 op 中滤出本端位点未覆盖的部分。
 ///
 /// 「仅重放位点之后的 op」的拉取侧接缝：位点之前的 op 已并入快照谱系或日志，
-/// 无需重投；无位点行的流（前检查点世界）全量保留，由重放幂等去重兑底。
+/// 无需重投；无位点行的流（前检查点世界）全量保留，由重放幂等去重兜底。
 pub fn ops_after_positions(
     conn: &rusqlite::Connection,
     incoming: &[SyncOp],
@@ -212,7 +212,7 @@ fn replay_one(conn: &rusqlite::Connection, op: &SyncOp, local_version: i64) -> R
     }
     // 位点门（issue #857）：流位点已越过该 op（已并入快照谱系或日志已截断）
     // ⇒ 无需重放、无第二次效果。无位点行的流（前检查点世界）不设门，重放
-    // 幂等去重兑底。
+    // 幂等去重兜底。
     if let Some(position) = positions::position_of(conn, &op.device_id)?
         && op.clock <= position
     {

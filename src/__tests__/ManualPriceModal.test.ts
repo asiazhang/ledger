@@ -49,7 +49,7 @@ async function clickSubmit() {
 }
 
 beforeEach(async () => {
-  // 参考字典五个 list 命令由接缝内建规范夹具兑底，供 beforeEach 的 store 预拉
+  // 参考字典五个 list 命令由接缝内建规范夹具兜底，供 beforeEach 的 store 预拉
   wireInvokeSeam();
   await useReferenceStore().refresh();
 });

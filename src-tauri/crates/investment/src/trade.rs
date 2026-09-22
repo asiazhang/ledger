@@ -1378,7 +1378,7 @@ pub(crate) fn replay_plan(
             )?;
             // 每份成本是 prepare 单次舍入的派生结果，随命令携带（源端折算）；
             // 缺失属载荷伪造或程序缺陷（产出侧永不产 None），fail loud 由引擎
-            // 挂起承接，不以本地重算静默兑底。
+            // 挂起承接，不以本地重算静默兜底。
             let cost_per_unit_cents = fields
                 .cost_per_unit_cents
                 .ok_or_else(|| AppError::Invalid("买入命令缺少每份成本字段（程序缺陷）".into()))?;

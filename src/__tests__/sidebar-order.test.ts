@@ -825,7 +825,7 @@ describe("右键「移回侧栏」写路径（issue #475：点选即清单删除
     });
   });
 
-  it("组满拒写（运行时硬上限兑底，菜单置灰为第一道防线）：满员组移回 no-op 不写存储", () => {
+  it("组满拒写（运行时硬上限兜底，菜单置灰为第一道防线）：满员组移回 no-op 不写存储", () => {
     const store = useSidebarOrderStore();
     store.applyMoveBackToSidebar("scheduled"); // 记账出厂满员
     expect(localStorage.getItem(ORDER_KEY)).toBeNull();

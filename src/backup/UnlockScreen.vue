@@ -254,7 +254,7 @@ async function confirmReset() {
     />
 
     <!-- 忘记口令重置确认（issue #652 / ADR-0078）：error 级——不可逆（清空数据），
-         承载无后门后果说明与密文副本保留兑底；确认后重置流程不变 -->
+         承载无后门后果说明与密文副本保留兜底；确认后重置流程不变 -->
     <AppDangerConfirmModal
       level="error"
       v-model:show="resetConfirmShow"
