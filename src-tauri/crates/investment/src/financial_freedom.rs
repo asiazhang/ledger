@@ -23,6 +23,7 @@ use rusqlite::Connection;
 use ledger_accounts::AccountType;
 use ledger_accounts::balance::list_account_balances_with_visibility;
 use ledger_infra::db::query::{FromRow, query_all};
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_transaction::amount;
 
@@ -114,37 +115,44 @@ pub fn query_investable_assets_cents(conn: &Connection) -> Result<i64> {
 }
 
 /// conn 级聚合：计算财务自由度总览（只读）。
+///
+/// **读快照一致性（issue #1699）**：分子（现金腿 + 持仓腿逐行折算）与分母
+///（budgets 聚合）跨表多语句，整体收进同一读事务（嵌套感知）——分子分母恒
+/// 同时点，写提交落在语句之间会两端不同时点。
 pub fn query_financial_freedom(conn: &Connection) -> Result<FinancialFreedomOverview> {
-    // 分子：投资账户现金 + 持仓市值，口径单点见 [`query_investable_assets_cents`]。
-    let numerator_cents = query_investable_assets_cents(conn)?;
+    ensure_transaction(conn, || {
+        // 分子：投资账户现金 + 持仓市值，口径单点见 [`query_investable_assets_cents`]。
+        let numerator_cents = query_investable_assets_cents(conn)?;
 
-    // 分母：年度预算总额（全部未删除预算，无窗口不滚动；月度 × 12 为节奏年化）。
-    let denominator_cents: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(CASE WHEN period='monthly' THEN amount_cents * 12 \
+        // 分母：年度预算总额（全部未删除预算，无窗口不滚动；月度 × 12 为节奏年化）。
+        let denominator_cents: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(CASE WHEN period='monthly' THEN amount_cents * 12 \
                                   WHEN period='yearly' THEN amount_cents END), 0) \
          FROM budgets WHERE is_deleted=0",
-        [],
-        |r| r.get(0),
-    )?;
+            [],
+            |r| r.get(0),
+        )?;
 
-    // 零分母（未设预算）：返回零，不回退实际支出；占位引导在展示层。
-    let (ratio, coverage_years) = if denominator_cents == 0 {
-        (0.0, 0.0)
-    } else {
-        (
-            round1(
-                numerator_cents as f64 * SAFE_WITHDRAWAL_RATE / denominator_cents as f64 * 100.0,
-            ),
-            round1(numerator_cents as f64 / denominator_cents as f64),
-        )
-    };
+        // 零分母（未设预算）：返回零，不回退实际支出；占位引导在展示层。
+        let (ratio, coverage_years) = if denominator_cents == 0 {
+            (0.0, 0.0)
+        } else {
+            (
+                round1(
+                    numerator_cents as f64 * SAFE_WITHDRAWAL_RATE / denominator_cents as f64
+                        * 100.0,
+                ),
+                round1(numerator_cents as f64 / denominator_cents as f64),
+            )
+        };
 
-    Ok(FinancialFreedomOverview {
-        ratio,
-        numerator_cents,
-        denominator_cents,
-        coverage_years,
-        native_currency: amount::default_currency_code(conn)?,
+        Ok(FinancialFreedomOverview {
+            ratio,
+            numerator_cents,
+            denominator_cents,
+            coverage_years,
+            native_currency: amount::default_currency_code(conn)?,
+        })
     })
 }
 

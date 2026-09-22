@@ -625,8 +625,9 @@ export const CONVERT_CURRENT_CALLERS: readonly SymbolCallerEntry[] = [
     reason: "读路径：定时计划花费推算的当期折算",
   },
   {
-    file: "src/commands/cross_book_summary.rs",
-    reason: "读路径：跨账本汇总的当期折算（壳层命令，ADR-0114 跨本唯一例外）",
+    file: "src/cross_book_summary.rs",
+    reason:
+      "读路径：跨账本汇总的当期折算（活动本读数合并单点 read_active_book_and_merge，#1699 自壳层命令闭包抽出；ADR-0114 跨本唯一例外）",
   },
   {
     file: "src/bin/ledger-perf/bench.rs",

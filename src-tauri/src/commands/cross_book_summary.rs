@@ -18,12 +18,11 @@ use tauri::{AppHandle, Runtime, State};
 
 use crate::commands::data_location::default_data_dir;
 use crate::cross_book_summary::{
-    CrossBookInvestmentSummary, collect_other_books, merge_readings, read_book_investment,
+    CrossBookInvestmentSummary, collect_other_books, read_active_book_and_merge,
 };
 use crate::shell_support::read_entry::read_entry;
 use ledger_infra::db::{DbState, book_registry, run_db};
 use ledger_infra::error::{AppError, Result};
-use ledger_transaction::amount;
 
 const REGISTRY_UNAVAILABLE_MESSAGE: &str = "账本注册表尚未就绪，请重启应用后再试";
 
@@ -62,28 +61,17 @@ pub async fn cross_book_investment_summary<R: Runtime>(
 
     // ③ 非活动本逐本探测与只读取数（密文=未解锁、空=未初始化、版本不一致即排除，
     //    失败逐本降级，不阻塞其他本出数）。
-    let (rows, mut readings) = run_db("cross_book_summary:books", move || {
+    let (rows, readings) = run_db("cross_book_summary:books", move || {
         let (rows, readings) = collect_other_books(&books, &active_id, active_schema_version);
         Ok((rows, readings))
     })
     .await?;
 
-    // ④ 活动本读数 + 当期汇率折算合并（汇率取活动本汇率表，ADR-0114 决策 3）。
+    // ④ 活动本读数 + 当期汇率折算合并（汇率取活动本汇率表，ADR-0114 决策 3）：
+    //    同快照接线收在 read_active_book_and_merge 内（issue #1699 证据点「活动本
+    //    读数与汇率折算跨口径」），命令壳只留一行调用。
     read_entry("cross_book_summary", db.read_handle(), move |conn| {
-        readings.push(read_book_investment(conn)?);
-        let target_currency = amount::default_currency_code(conn)?;
-        let totals = merge_readings(&readings, &target_currency, &mut |cents, currency| {
-            amount::convert_to_native_current(conn, cents, currency)
-        })?;
-        Ok(CrossBookInvestmentSummary {
-            target_currency,
-            converted: totals.converted,
-            market_value_cents: totals.market_value_cents,
-            unrealized_pnl_cents: totals.unrealized_pnl_cents,
-            cumulative_pnl_cents: totals.cumulative_pnl_cents,
-            investable_assets_cents: totals.investable_assets_cents,
-            books: rows,
-        })
+        read_active_book_and_merge(readings, rows, conn)
     })
     .await
 }

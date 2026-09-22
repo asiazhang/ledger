@@ -3,7 +3,9 @@
 //! - [`query`]：交易查询、排序与分页
 //! - [`search`]：统一模糊搜索语义与搜索行为
 //! - [`search_repair`]：拼音辅助数据一键修复（积压回填、幂等、收敛）
+//! - [`snapshot`]：读快照一致性探针——total 与 items 同快照（issue #1699）
 
 mod query;
 mod search;
 mod search_repair;
+mod snapshot;
