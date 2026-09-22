@@ -4,6 +4,7 @@ import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from "@ledger/test-support
 import { flushPromises } from "@vue/test-utils";
 import { defineComponent, h, nextTick } from "vue";
 import InvestmentsView from "@/views/InvestmentsView.vue";
+import RealizedPnlPanel from "@/investment/RealizedPnlPanel.vue";
 import { formatAmount } from "@ledger/money";
 import { clickTab, findTab, probeColor } from "@ledger/test-support/dom";
 import { componentVm } from "@ledger/test-support/component-vm";
@@ -376,6 +377,36 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
     const remounted = mountView();
     await flushPromises();
     expect(remounted.findAll(".n-tabs-tab--active").map((el) => el.text())).toEqual(["持仓"]);
+  });
+});
+
+/**
+ * 盈亏页签预取保留（display-directive 'show' + NTabPane key）：'show' 的取数语义
+ * 依赖组件实例身份——盈亏面板随视图装配即挂载预取，页签切换只切可见性。
+ * NTabPane 无 key 时 Vue 按位置就地复用同类型组件：切到盈亏后概览 pane 在模板
+ * 首位被就地改造成盈亏 pane（插槽换血 = RealizedPnlPanel 重挂重拉），热实例反而
+ * 被销毁——用户可见后果是每次进盈亏页签都出现加载中（预取失效）。删除任一
+ * NTabPane 的 key 即下方断言变红（重挂 = realized_pnl_summary 二次取数 + 实例
+ * 身份变化），详见 InvestmentsView.vue 模板注释。
+ */
+describe("InvestmentsView 盈亏页签预取保留（display-directive 'show' + key）", () => {
+  const pnlFetchCount = () =>
+    mockInvoke.mock.calls.filter(([cmd]) => cmd === "realized_pnl_summary").length;
+
+  it("装配即预取盈亏汇总，概览→盈亏切换不重挂面板、不重拉数据", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    // 'show' 预取：不点盈亏页签，汇总也已随装配拉取（热挂载在位）
+    expect(pnlFetchCount()).toBe(1);
+    const pnlPanelUid = wrapper.findComponent(RealizedPnlPanel).vm.$.uid;
+
+    await clickTab(wrapper, "盈亏");
+    await flushPromises();
+    // 切换只切可见性：不二次取数（重挂即重拉 → 此处变 2 变红），
+    // 且盈亏面板仍是装配时的同一实例（按位复用即换新实例 → uid 变化变红；
+    // 注意不能用 vm 引用比对——test-utils 每次 .vm 访问都新建合并代理）
+    expect(pnlFetchCount()).toBe(1);
+    expect(wrapper.findComponent(RealizedPnlPanel).vm.$.uid).toBe(pnlPanelUid);
   });
 });
 

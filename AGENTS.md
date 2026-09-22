@@ -49,6 +49,7 @@ Rust 根（`src-tauri/`）是 workspace：根包仍是 tauri 应用包（壳层�
 - 会影响快捷键抑制的交互层通过现有 `App*` 封装或 `useAppDialog` 接入 Overlay Suppression；新增形态先补对应封装和注册表接线。
 - 新增 IPC 命令：放入已声明并扁平再导出的命令模块，由构建扫描器生成注册表，再同步前端 API/类型并运行一致性检查。新增 HTTP-only 端点走 API 契约与 API 集成测试，不增加无关 IPC 调用面。
 - 用户可见文案经 i18n；后端用户可见错误使用码化错误构造器，并同步错误模板。
+- naive-ui 页签组含 `display-directive="show"` / `"show:lazy"` 页签（预取/状态保留语义依赖组件实例身份）时，该组全部 `NTabPane` 必须带 `key`（= 页签名）：无 key 时 Vue 按位置就地复用同类型 pane 组件，切页签即插槽换血重挂重拉，`show` 语义失效（先例：投资页概览→盈亏切换重挂重拉，机制注释与回归测试见 `src/views/InvestmentsView.vue`、`src/__tests__/InvestmentsView.test.ts`）。
 
 ## 测试、工作流与发布
 

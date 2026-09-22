@@ -123,7 +123,7 @@ onMounted(() => focusParam.consume());
       <!-- 概览页签（spec #1532 / issue #1536）：默认落点与 ESC 复位目标——一进
            投资页就看到可投资资产与两腿拆分。纯只读，取数口径单点在后端
            `investment_overview`（ADR-0131：全页折本位币单值）。 -->
-      <NTabPane name="overview">
+      <NTabPane key="overview" name="overview">
         <template #tab
           ><span class="pane-tab"
             ><NIcon :component="SpeedometerOutline" />{{ t("investments.tabs.overview") }}</span
@@ -135,8 +135,14 @@ onMounted(() => focusParam.consume());
       <!-- pnl pane 用 display-directive='show'：内容保持挂载（v-show 隐藏），
            筛选/汇总状态在 tab 切换间保留，与原视图顶层 ref 行为一致。
            持仓/标的/走势 tab 保持默认 'if'，切回时重新挂载加载（ADR-0094 否决
-           KeepAlive）；持仓与走势的瞬态选择经投资页会话 store 恢复（issue #1192）。 -->
-      <NTabPane name="pnl" display-directive="show">
+           KeepAlive）；持仓与走势的瞬态选择经投资页会话 store 恢复（issue #1192）。
+           全部 NTabPane 必须带 key（= 页签名）：naive-ui 渲染的 pane 子节点若无
+           key，Vue 按位置就地复用同类型组件实例——概览（模板首位）激活时热挂的
+           盈亏 pane 在位置 1，切到盈亏后位置 0 由概览 pane 就地改造成盈亏 pane
+           （插槽换血 = RealizedPnlPanel 重新挂载重新取数），热实例反而被销毁。
+           带 key 后按实例身份比对，'show' 的预取与状态保留语义才真正成立
+           （设置页 SettingsView 全量带 key 是既有实践）。 -->
+      <NTabPane key="pnl" name="pnl" display-directive="show">
         <template #tab
           ><span class="pane-tab"
             ><NIcon :component="StatsChartOutline" />{{ t("investments.tabs.pnl") }}</span
@@ -147,7 +153,7 @@ onMounted(() => focusParam.consume());
 
       <!-- 持仓页签（issue #901）：原盈亏页顶部的持仓概览卡整体迁入，
            卡内自带同步接缝与价格失效信号订阅，独立挂载即可自洽。 -->
-      <NTabPane name="holdings">
+      <NTabPane key="holdings" name="holdings">
         <template #tab
           ><span class="pane-tab"
             ><NIcon :component="PieChartOutline" />{{ t("investments.tabs.holdings") }}</span
@@ -156,7 +162,7 @@ onMounted(() => focusParam.consume());
         <HoldingsOverview />
       </NTabPane>
 
-      <NTabPane name="instruments">
+      <NTabPane key="instruments" name="instruments">
         <template #tab
           ><span class="pane-tab"
             ><NIcon :component="ListOutline" />{{ t("investments.tabs.instruments") }}</span
@@ -165,7 +171,7 @@ onMounted(() => focusParam.consume());
         <InstrumentBrowser @view-trend="onViewTrend" />
       </NTabPane>
 
-      <NTabPane name="trend">
+      <NTabPane key="trend" name="trend">
         <template #tab
           ><span class="pane-tab"
             ><NIcon :component="TrendingUpOutline" />{{ t("investments.tabs.trend") }}</span
