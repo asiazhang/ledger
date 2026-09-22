@@ -140,45 +140,52 @@ fn write_create(conn: &Connection, asset: &NewAssetRows<'_>) -> Result<()> {
 /// 一次拉全部未删行（JOIN 最新估值行），在持行经 Amount 接缝折算本位币
 /// （缺汇率错误上抛，不以零或缺项静默通过）；合计口径恒为在持资产，
 /// 与筛选无关（回看已处置时「家底合计」不变）。排序按创建先后，列表稳定。
+///
+/// **读快照一致性（issue #1702）**：列表行、基准币种与逐行汇率是多语句读闭包，
+/// 整体收进同一读事务（嵌套感知）——「合计 = 在持行折算和」与读数↔汇率折算
+/// 要求全列表同时点，汇率刷新落在逐行折算中间即行间异快照、合计不再等于屏上
+/// 各行之和。dashboard 净资产第三腿嵌套消费本函数（其外层读事务嵌套加入）。
 pub fn list_physical_assets(conn: &Connection, status: Option<&str>) -> Result<PhysicalAssetList> {
-    // 状态筛选解析单点：合法值语义与实体状态解析同源（PhysicalAssetStatus::parse），
-    // 未知值码化报错（参数随 T1 命令面一次留足，处置筛选由 T3 消费）。
-    let filter = match status {
-        None => PhysicalAssetStatus::Holding,
-        Some(raw) => PhysicalAssetStatus::parse(raw)
-            .map_err(|e| AppError::codedp("physical-asset.status-invalid", e, &[raw]))?,
-    };
+    ensure_transaction(conn, || {
+        // 状态筛选解析单点：合法值语义与实体状态解析同源（PhysicalAssetStatus::parse），
+        // 未知值码化报错（参数随 T1 命令面一次留足，处置筛选由 T3 消费）。
+        let filter = match status {
+            None => PhysicalAssetStatus::Holding,
+            Some(raw) => PhysicalAssetStatus::parse(raw)
+                .map_err(|e| AppError::codedp("physical-asset.status-invalid", e, &[raw]))?,
+        };
 
-    let records: Vec<AssetRecord> = query_all(
-        conn,
-        &format!(
-            "SELECT {ASSET_WITH_VALUATION_COLUMNS} {ASSET_WITH_VALUATION_FROM} \
-             WHERE a.is_deleted=0 ORDER BY a.created_at, a.id"
-        ),
-        [],
-    )?;
-
-    let native_currency = default_currency_code(conn)?;
-    let mut assets = Vec::with_capacity(records.len());
-    let mut holding_total_native_cents = 0i64;
-    for record in records {
-        // 折算/累计先于筛选：在持合计恒为全部在持行（回看已处置时合计不变）；
-        // 折算与搬运的单一落点在 into_entity（列表/详情共用）。
-        let asset = into_entity(
+        let records: Vec<AssetRecord> = query_all(
             conn,
-            record,
-            &mut holding_total_native_cents,
-            &native_currency,
+            &format!(
+                "SELECT {ASSET_WITH_VALUATION_COLUMNS} {ASSET_WITH_VALUATION_FROM} \
+                 WHERE a.is_deleted=0 ORDER BY a.created_at, a.id"
+            ),
+            [],
         )?;
-        if asset.status == filter {
-            assets.push(asset);
-        }
-    }
 
-    Ok(PhysicalAssetList {
-        assets,
-        holding_total_native_cents,
-        native_currency,
+        let native_currency = default_currency_code(conn)?;
+        let mut assets = Vec::with_capacity(records.len());
+        let mut holding_total_native_cents = 0i64;
+        for record in records {
+            // 折算/累计先于筛选：在持合计恒为全部在持行（回看已处置时合计不变）；
+            // 折算与搬运的单一落点在 into_entity（列表/详情共用）。
+            let asset = into_entity(
+                conn,
+                record,
+                &mut holding_total_native_cents,
+                &native_currency,
+            )?;
+            if asset.status == filter {
+                assets.push(asset);
+            }
+        }
+
+        Ok(PhysicalAssetList {
+            assets,
+            holding_total_native_cents,
+            native_currency,
+        })
     })
 }
 
@@ -608,25 +615,31 @@ pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
 }
 
 /// 按 `id` 读单个未删除资产（详情）：不存在（或已软删除）→ 码化 NotFound。
+///
+/// **读快照一致性（issue #1702）**：详情行、基准币种与汇率是多语句读闭包，
+/// 整体收进同一读事务——折算值与 `native_currency` 标签必须同时点（与列表
+/// 同一读口径，嵌套加入外层）。
 pub fn get_physical_asset(conn: &Connection, id: &str) -> Result<PhysicalAsset> {
-    let record = query_one::<AssetRecord, _>(
-        conn,
-        &format!(
-            "SELECT {ASSET_WITH_VALUATION_COLUMNS} {ASSET_WITH_VALUATION_FROM} \
-             WHERE a.is_deleted=0 AND a.id=?1"
-        ),
-        [id],
-    )?
-    .ok_or_else(|| {
-        AppError::codedp_not_found(
-            "physical-asset.not-found",
-            format!("实物资产不存在: {id}"),
-            &[id],
-        )
-    })?;
+    ensure_transaction(conn, || {
+        let record = query_one::<AssetRecord, _>(
+            conn,
+            &format!(
+                "SELECT {ASSET_WITH_VALUATION_COLUMNS} {ASSET_WITH_VALUATION_FROM} \
+                 WHERE a.is_deleted=0 AND a.id=?1"
+            ),
+            [id],
+        )?
+        .ok_or_else(|| {
+            AppError::codedp_not_found(
+                "physical-asset.not-found",
+                format!("实物资产不存在: {id}"),
+                &[id],
+            )
+        })?;
 
-    // 详情与列表同一读口径（单一搬运点）；详情无合计语义，累计值丢弃。
-    let native_currency = default_currency_code(conn)?;
-    let mut unused_total = 0i64;
-    into_entity(conn, record, &mut unused_total, &native_currency)
+        // 详情与列表同一读口径（单一搬运点）；详情无合计语义，累计值丢弃。
+        let native_currency = default_currency_code(conn)?;
+        let mut unused_total = 0i64;
+        into_entity(conn, record, &mut unused_total, &native_currency)
+    })
 }

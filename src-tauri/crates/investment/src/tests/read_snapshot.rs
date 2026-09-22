@@ -1,6 +1,8 @@
-//! 多语句读闭包的快照一致性探针（issue #1699）：写提交落在语句之间时，同屏
-//! 口径必须仍互相自洽——总量=分量和（realized_pnl）、分子分母同时点
-//! （financial_freedom）。探针机制见 `tauri_app_lib::test_support::snapshot_probe`。
+//! 多语句读闭包的快照一致性探针（issue #1699 / #1702）：写提交落在语句之间时，
+//! 同屏口径必须仍互相自洽——总量=分量和（realized_pnl）、分子分母同时点
+//! （financial_freedom）、多腿同屏（overview）、现金流集与期末市值同时点
+//! （mwr）、读数↔汇率折算同时点（组合走势）。探针机制见
+//! `tauri_app_lib::test_support::snapshot_probe`。
 
 use ledger_transaction::create_transaction_internal;
 
@@ -9,7 +11,7 @@ use super::common::*;
 use tauri_app_lib::test_support::snapshot_probe::{self, InjectionOutcome};
 use tauri_app_lib::test_support::{
     FIXED_NOW, ScratchDir, open_file, seed_account, seed_exchange_rate, seed_fx_history_weeks,
-    seed_instrument,
+    seed_instrument, seed_price_history,
 };
 
 fn empty_filter() -> PnlFilter {
@@ -212,6 +214,208 @@ fn investment_overview_legs_share_one_snapshot() {
     );
     assert_eq!(
         before.native_currency, after.native_currency,
+        "折算基准币种不应漂移"
+    );
+}
+
+/// 收益率的现金流集与期末市值必须同快照（issue #1702）：现值模式的 XIRR 输入 =
+/// 现金流集（`FROM transactions`）+ 当前期末市值（`FROM v_holdings`），两次独立
+/// 语句。探针在期末市值读取开始前于另一连接把现价翻倍——
+/// - 读闭包无快照保护（红）：现金流读旧（投入 100000），期末市值读新（220000），
+///   解出的收益率相对基线漂移；
+/// - 读闭包收进读事务（绿）：注入写被挡住，两次解出的收益率逐字段相等
+///   （基线对拍——XIRR 解算非线性，口径断言取「与基线同时点」形态）。
+#[test]
+fn mwr_flows_and_end_value_share_one_snapshot() {
+    let dir = ScratchDir::new("investment-mwr-read-snapshot");
+    let conn = open_file(dir.path());
+    seed_account(&conn, "acc-mwr", "美股账户", "investment", "USD", 0);
+    seed_fx_history_weeks(&conn, "USD", "CNY", 1.0, &["2026-01-10"]);
+    seed_instrument(&conn, "inst-mwr", "AAPL", "Apple", "USD", "unknown");
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-mwr", "inst-mwr", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    // 现价高出买入价 10%：期末市值 110000 分，收益率非零且可解。
+    seed_market_price(&conn, "inst-mwr", 1_100_000, "USD");
+
+    let before = query_money_weighted_return_summary(&conn, &MwrRange::default()).unwrap();
+
+    // 探针：期末市值读取（`FROM v_holdings v JOIN accounts a`，与现金流的
+    // `FROM transactions t` 区分）开始前，另一连接提交现价翻倍。
+    snapshot_probe::arm(
+        &conn,
+        dir.path(),
+        "FROM v_holdings v JOIN accounts a",
+        &["UPDATE market_prices SET price_cents = price_cents * 2"],
+    );
+    let after = query_money_weighted_return_summary(&conn, &MwrRange::default()).unwrap();
+
+    let outcome = snapshot_probe::outcome();
+    assert!(
+        outcome != InjectionOutcome::NotFired,
+        "探针未命中期末市值读取（marker 漂移或未臂装），断言失去意义：{outcome:?}"
+    );
+
+    assert_eq!(before.total.len(), 1, "种子应产出恰好一个币种组");
+    assert_eq!(
+        before.total[0].basis,
+        MwrBasis::Annualized,
+        "有真实流水的对应给年化口径（否则口径断言空转）"
+    );
+    assert!(
+        before.total[0].rate.is_some_and(|r| r > 0.0),
+        "现价高出买入价应产出正收益率（否则口径断言空转）"
+    );
+    assert_eq!(
+        before
+            .by_instrument
+            .iter()
+            .map(|r| (
+                r.account_id.as_str(),
+                r.instrument_id.as_str(),
+                r.currency_code.as_str(),
+                r.basis,
+                r.rate
+            ))
+            .collect::<Vec<_>>(),
+        after
+            .by_instrument
+            .iter()
+            .map(|r| (
+                r.account_id.as_str(),
+                r.instrument_id.as_str(),
+                r.currency_code.as_str(),
+                r.basis,
+                r.rate
+            ))
+            .collect::<Vec<_>>(),
+        "单标的收益率必须与基线同时点（注入写落在现金流与期末市值之间即漂移）"
+    );
+    assert_eq!(
+        before
+            .by_account
+            .iter()
+            .map(|r| (
+                r.account_id.as_str(),
+                r.account_name.as_str(),
+                r.currency_code.as_str(),
+                r.basis,
+                r.rate
+            ))
+            .collect::<Vec<_>>(),
+        after
+            .by_account
+            .iter()
+            .map(|r| (
+                r.account_id.as_str(),
+                r.account_name.as_str(),
+                r.currency_code.as_str(),
+                r.basis,
+                r.rate
+            ))
+            .collect::<Vec<_>>(),
+        "账户级收益率必须与基线同时点"
+    );
+    assert_eq!(
+        before
+            .total
+            .iter()
+            .map(|r| (r.currency_code.as_str(), r.basis, r.rate))
+            .collect::<Vec<_>>(),
+        after
+            .total
+            .iter()
+            .map(|r| (r.currency_code.as_str(), r.basis, r.rate))
+            .collect::<Vec<_>>(),
+        "全账级收益率必须与基线同时点"
+    );
+}
+
+/// 组合走势的读数与汇率折算必须同快照（issue #1702）：曲线各周 = 数量 × 周线价
+/// × 同期汇率，价格行与汇率历史是两次独立语句（读数↔汇率折算形态，#1699 根因
+/// 清单第四形态）。探针在汇率历史读取开始前于另一连接把 USD→CNY 汇率翻倍——
+/// - 读闭包无快照保护（红）：价格行读旧、汇率读新，周点市值相对基线漂移；
+/// - 读闭包收进读事务（绿）：注入写被挡住，曲线与基线逐点相等。
+#[test]
+fn portfolio_trend_prices_and_fx_share_one_snapshot() {
+    let dir = ScratchDir::new("investment-trend-read-snapshot");
+    let conn = open_file(dir.path());
+    seed_account(&conn, "acc-trd-snap", "美股账户", "investment", "USD", 0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        7.0,
+        &["2026-01-10", "2026-02-02", "2026-02-09"],
+    );
+    seed_instrument(&conn, "inst-trd-snap", "AAPL", "Apple", "USD", "unknown");
+    // 周价格点（万分之一元）：w1=10 元、w2=20 元（USD 计价，折算靠同期汇率）。
+    seed_price_history(
+        &conn,
+        "ph-s1",
+        "inst-trd-snap",
+        "2026-02-02",
+        100_000,
+        "USD",
+    );
+    seed_price_history(
+        &conn,
+        "ph-s2",
+        "inst-trd-snap",
+        "2026-02-09",
+        200_000,
+        "USD",
+    );
+    // w1 之前买入 10 股：两个采样周都持有 10 股。
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-trd-snap", "inst-trd-snap", 10.0, 100_000, 0),
+    )
+    .unwrap();
+
+    let before = trend::query_portfolio_value_trend(&conn, &TrendRange::default()).unwrap();
+    assert_eq!(
+        before
+            .points
+            .iter()
+            .map(|p| p.market_value_cents)
+            .collect::<Vec<_>>(),
+        [70_000, 140_000],
+        "种子曲线应为 10 股 × 周价 × 汇率 7（否则口径断言空转）"
+    );
+
+    // 探针：汇率历史读取（`FROM fx_rate_history`，全闭包唯一命中）开始前，
+    // 另一连接提交汇率翻倍。
+    snapshot_probe::arm(
+        &conn,
+        dir.path(),
+        "FROM fx_rate_history",
+        &["UPDATE fx_rate_history SET rate = rate * 2"],
+    );
+    let after = trend::query_portfolio_value_trend(&conn, &TrendRange::default()).unwrap();
+
+    let outcome = snapshot_probe::outcome();
+    assert!(
+        outcome != InjectionOutcome::NotFired,
+        "探针未命中汇率历史读取（marker 漂移或未臂装），断言失去意义：{outcome:?}"
+    );
+    assert_eq!(
+        before
+            .points
+            .iter()
+            .map(|p| (p.date.as_str(), p.market_value_cents))
+            .collect::<Vec<_>>(),
+        after
+            .points
+            .iter()
+            .map(|p| (p.date.as_str(), p.market_value_cents))
+            .collect::<Vec<_>>(),
+        "曲线各周必须与基线同时点（价格读旧、汇率读新即漂移）"
+    );
+    assert_eq!(
+        before.currency_code, after.currency_code,
         "折算基准币种不应漂移"
     );
 }

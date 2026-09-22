@@ -7,6 +7,7 @@ use rusqlite::Connection;
 
 use super::model::PolicyStats;
 use ledger_infra::db::query::{FromRow, query_all};
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_transaction::amount::{
     Measure, contributing_kinds_sql, policy_inflow_expr, policy_premium_expr,
@@ -89,6 +90,11 @@ fn sum_by_policy(
 /// conn 级聚合：逐保单视角统计（只读，实时推导不落库，issue #363）。
 /// `today` 由命令层注入（本地今日），BDD 可传固定日期获得确定性到期口径。
 ///
+/// **读快照一致性（issue #1702）**：保单基础行、逐保单保费/流入合计、下期
+/// 扣款日与本位币是多语句读闭包，整体收进同一读事务（嵌套感知）——列表行与
+/// 逐保单合计是两段 join，写提交落在语句间即「列表有此保单而合计为 0」或
+/// 同屏两列不同时点。
+///
 /// - 累计已缴保费 / 累计现金流入：挂单流水（`policy_id` 归属，issue #361）忠实
 ///   合计 `amount_native_cents`——落库时已经 Writer 接缝折算本位币，读取期不二次
 ///   折算；kind→符号经 Amount 接缝矩阵驱动（不另写口径）；不摊销；软删流水
@@ -100,6 +106,11 @@ fn sum_by_policy(
 /// - 软删保单不产生统计行；其历史流水引用原样保留，且按 `policy_id` 分组天然
 ///   不串入其他保单统计。
 pub fn policy_stats(conn: &Connection, today: NaiveDate) -> Result<Vec<PolicyStats>> {
+    ensure_transaction(conn, || policy_stats_within_tx(conn, today))
+}
+
+/// 保单统计本体（无事务语义，由 [`policy_stats`] 的 [`ensure_transaction`] 包裹）。
+fn policy_stats_within_tx(conn: &Connection, today: NaiveDate) -> Result<Vec<PolicyStats>> {
     // 基础行：未删除保单（软删不进列表 → 也不进统计）。
     let periods: Vec<PolicyPeriodRow> = query_all(
         conn,

@@ -18,6 +18,7 @@ use rusqlite::Connection;
 
 use super::model::DashboardOverview;
 use ledger_infra::db::now_iso;
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_transaction::amount;
 
@@ -149,15 +150,28 @@ pub fn write(conn: &Connection, fingerprint: &str, overview: &DashboardOverview)
 /// 返回；不一致（或无缓存行）则调域入口实时聚合
 /// （`super::compute_dashboard_overview`）重算并回填缓存——指纹与缓存收口
 /// 在本模块，聚合公式在域入口，无定时任务。
+///
+/// **读闭包与回填的事务边界（issue #1702）**：指纹 → 缓存读 → 实时聚合是多语句
+/// 读闭包，收进同一读事务（快照纪律见 `tx_scope` 模块文档）——三腿（余额/持仓/
+/// 实物）与指纹必须同快照，写提交落在腿间即「总量 ≠ 分量和」（如买入在余额腿与
+/// 持仓腿之间提交：现金未扣、仓位已建，双计）。**回填写留在读事务之外**：
+/// 指纹标签自证失效——回填后被并发写超越即指纹失配、下次读重算，回填竞态最多
+/// 浪费一次重算、不错服旧值；而读事务内升级写（SHARED → RESERVED）在并发写
+/// 持有 RESERVED 时有 BUSY 风险，不值得为竞态无害的回填换取用户可见读失败。
 pub fn query_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
-    let fingerprint = current_fingerprint(conn)?;
-    if let Some(cached) = read_valid(conn, &fingerprint)? {
-        // 基准币种与当前一致才可信（缓存跨币种设置变更不成立时重算）。
-        if cached.native_currency == amount::default_currency_code(conn)? {
-            return Ok(cached);
+    let (overview, fingerprint, cache_hit) = ensure_transaction(conn, || {
+        let fingerprint = current_fingerprint(conn)?;
+        if let Some(cached) = read_valid(conn, &fingerprint)? {
+            // 基准币种与当前一致才可信（缓存跨币种设置变更不成立时重算）。
+            if cached.native_currency == amount::default_currency_code(conn)? {
+                return Ok((cached, fingerprint, true));
+            }
         }
+        let overview = super::compute_dashboard_overview(conn)?;
+        Ok((overview, fingerprint, false))
+    })?;
+    if !cache_hit {
+        write(conn, &fingerprint, &overview)?;
     }
-    let overview = super::compute_dashboard_overview(conn)?;
-    write(conn, &fingerprint, &overview)?;
     Ok(overview)
 }

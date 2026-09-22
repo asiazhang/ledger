@@ -61,6 +61,7 @@ use super::holdings::holdings_as_of_in;
 use super::lots::QTY_GUARD_EPSILON;
 use super::staleness::beijing_today;
 use ledger_infra::db::query::{FromRow, query_all};
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::{AppError, Result};
 
 // ---------------------------------------------------------------------------
@@ -221,7 +222,24 @@ pub fn query_money_weighted_return_summary(
 
 /// [`query_money_weighted_return_summary`] 的可注入形态（时钟是测试的行为输入，
 /// 先例：`instrument_price_staleness_on`）：给定今天与库内状态，结果唯一。
+///
+/// 多语句读闭包收进同一读事务（issue #1702，快照纪律见 `tx_scope` 模块文档）：
+/// 现金流集、期末/期初边界市值、账户行是多段取数，XIRR 的输入假设要求现金流与
+/// 市值锚同时点——写提交落在段间即「现金流读旧、市值读新」，解出任何快照都
+/// 不存在的收益率。
 pub fn query_money_weighted_return_summary_on(
+    conn: &Connection,
+    range: &MwrRange,
+    today: NaiveDate,
+) -> Result<MoneyWeightedReturnSummary> {
+    ensure_transaction(conn, || {
+        query_money_weighted_return_summary_within_tx(conn, range, today)
+    })
+}
+
+/// 收益率投影本体（无事务语义，由 [`query_money_weighted_return_summary_on`]
+/// 的 [`ensure_transaction`] 包裹）：区间校验 → 现金流装载 → 边界市值 → 三消费面。
+fn query_money_weighted_return_summary_within_tx(
     conn: &Connection,
     range: &MwrRange,
     today: NaiveDate,

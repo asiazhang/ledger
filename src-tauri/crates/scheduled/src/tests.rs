@@ -6,6 +6,7 @@
 //! - [`plan_edit`] — 订阅编辑校验（issue #162，ADR-0023 决策三）
 //! - [`merchant`] — 商户复制与软删引用（issue #190 / ADR-0028）
 //! - [`parse_codes`] — 闭集解析与期次日期守卫的码契约（ADR-0050 收口，#1072）
+//! - [`read_snapshot`] — 多语句读闭包的快照一致性探针（issue #1702）
 //!
 //! 共享脚手架收在 [`common`]（仅限本测试目录内部）。
 //! 全部基于内存库，走 `engine` 公开 API（create_plan / execute_occurrence 等）。
@@ -16,4 +17,5 @@ mod merchant;
 mod occurrence;
 mod parse_codes;
 mod plan_edit;
+mod read_snapshot;
 mod spend;

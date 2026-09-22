@@ -14,6 +14,33 @@ use ledger_transaction::TransactionInput;
 use ledger_transaction::amount::TransactionKind;
 use tauri_app_lib::test_support::FIXED_NOW;
 
+/// 种入标的当前行情（现价缓存单行，`v_holdings` 据此算市值与期末现金流）。
+/// 现价是 market_prices 单行，不在种子工厂登记处，按既有投资域测试先例裸插。
+pub(super) fn seed_market_price(
+    conn: &Connection,
+    instrument_id: &str,
+    price_cents: i64,
+    currency: &str,
+) {
+    let now = ledger_infra::db::now_iso();
+    conn.execute(
+        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,NULL,?6,?7,?8,?9)",
+        params![
+            ledger_infra::db::new_uuid(),
+            instrument_id,
+            price_cents,
+            currency,
+            now,
+            now,
+            now,
+            1,
+            "test"
+        ],
+    )
+    .unwrap();
+}
+
 // 既有测试经域根 glob（`super::super::*`）消费的旧壳 mod.rs 私有 use 绑定，
 // 随 #401 域归位改由共享脚手架再导出（import 更新，断言与场景不变）；
 // PnlFilter / TrendRange 已由域根模型再导出承载（#422），不再经脚手架转发。
