@@ -49,7 +49,10 @@ use ledger_reports as reports_domain;
 use ledger_transaction::amount::{TransactionKind, default_currency_code};
 use ledger_transaction::{BatchOutcome, TransactionBatch, TransactionInput};
 
-use super::bench_common::{CliArgs, MetricTableRow, parse_tier_csv, print_metric_table, summarize};
+use super::bench_common::{
+    FlagSpec, MetricTableRow, Parsed, parse_bool_value, parse_flags, parse_nonneg_int,
+    parse_tier_csv, print_metric_table, summarize,
+};
 use super::snapshot::{SnapshotPaths, restore_from_snapshot};
 
 /// 基准行金额基数（分）：行金额逐行 +1 递增，保证批内去重身份全异
@@ -108,59 +111,64 @@ impl Default for BenchImportCli {
     }
 }
 
-/// 参数解析结果：运行参数或帮助请求。
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ParsedBenchImport {
-    Run(BenchImportCli),
-    Help,
+/// bench-import 的 flag 表（flag 显示形态 + 帮助文案 + apply，issue #1679
+/// 表驱动单真源）：新增 flag 只登记本表一处，解析与 `--help` 都从表来。
+pub(crate) const FLAGS: &[FlagSpec<BenchImportCli>] = &[
+    FlagSpec {
+        flag: "--db <PATH>",
+        help: "源库文件（默认同 generate 输出路径，须已生成；本命令不修改源库——内部建 pristine 快照，每次迭代从快照恢复）",
+        apply: |cli, _flag, v| {
+            cli.db = PathBuf::from(v);
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--rows <CSV>",
+        help: "每档导入行数（默认 50,100,200；逗号分隔、保持次序；单档上限 1000000，issue #1650）",
+        apply: |cli, flag, v| {
+            cli.rows = parse_tier_csv(v, flag)?;
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--dedup <BOOL>",
+        help: "批量导入去重开关（默认 true，HTTP 批量导入生产默认）",
+        apply: |cli, flag, v| {
+            cli.dedup = parse_bool_value(flag, v)?;
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--warmup <N>",
+        help: "每档预热次数（默认 1，不计入统计）",
+        apply: |cli, flag, v| {
+            cli.warmup = parse_nonneg_int(flag, v)?;
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--iterations <N>",
+        help: "每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集规模固定）",
+        apply: |cli, flag, v| {
+            cli.iterations = parse_nonneg_int(flag, v)?;
+            Ok(())
+        },
+    },
+];
+
+/// 手写参数解析（零新增依赖；通用循环消费 [`FLAGS`]，收口在
+/// [`parse_flags`]，issue #1696）。返回 Err(消息) 表示用法错误；
+/// 「至少为 1」校验保持原位（解析层 → 参数错误通道，行为零变化）。
+pub(crate) fn parse_bench_import_args(args: &[String]) -> Result<Parsed<BenchImportCli>, String> {
+    match parse_flags(args, FLAGS)? {
+        Parsed::Run(cli) if cli.iterations == 0 => Err("--iterations 至少为 1".to_string()),
+        parsed => Ok(parsed),
+    }
 }
 
-/// 手写参数解析（零新增依赖；循环机制与档位解析收口在 [`super::bench_common`]，
-/// issue #1650）。返回 Err(消息) 表示用法错误。
-pub(crate) fn parse_bench_import_args(args: &[String]) -> Result<ParsedBenchImport, String> {
-    let mut cli = BenchImportCli::default();
-    let mut it = CliArgs::new(args);
-    while let Some(f) = it.next_flag() {
-        match f.flag {
-            "--db" => {
-                cli.db = PathBuf::from(it.value(f)?);
-            }
-            "--rows" => {
-                cli.rows = parse_tier_csv(&it.value(f)?, "--rows")?;
-            }
-            "--dedup" => {
-                let v = it.value(f)?;
-                cli.dedup = parse_bool(&v)?;
-            }
-            "--warmup" => {
-                let v = it.value(f)?;
-                cli.warmup = v
-                    .parse::<usize>()
-                    .map_err(|_| format!("--warmup 需要非负整数，得到 {v:?}"))?;
-            }
-            "--iterations" => {
-                let v = it.value(f)?;
-                cli.iterations = v
-                    .parse::<usize>()
-                    .map_err(|_| format!("--iterations 需要非负整数，得到 {v:?}"))?;
-            }
-            "-h" | "--help" => return Ok(ParsedBenchImport::Help),
-            other => return Err(format!("未知参数 {other:?}")),
-        }
-    }
-    if cli.iterations == 0 {
-        return Err("--iterations 至少为 1".to_string());
-    }
-    Ok(ParsedBenchImport::Run(cli))
-}
-
-/// 布尔参数解析（`--dedup` 只认 true/false，拒绝顺手 coercion 的歧义形态）。
-fn parse_bool(v: &str) -> Result<bool, String> {
-    match v {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        other => Err(format!("布尔参数需要 true/false，得到 {other:?}")),
-    }
+/// run 入口（dispatch 表登记项）：解析 + 运行 → 共享结局形态。
+pub(crate) fn execute(args: &[String]) -> super::bench_common::Outcome {
+    super::bench_common::execute_cli(args, parse_bench_import_args, run)
 }
 
 /// 基准运行配置（测试可注入小参数；与 [`BenchImportCli`] 的矩阵字段一一对应）。
@@ -170,6 +178,19 @@ pub(crate) struct ImportBenchConfig {
     pub dedup: bool,
     pub warmup: usize,
     pub iterations: usize,
+}
+
+/// Cli → Config 投影（issue #1679：原位 From impl；Config 的测试可注入
+/// 小参数接缝保留不动）。
+impl From<BenchImportCli> for ImportBenchConfig {
+    fn from(cli: BenchImportCli) -> Self {
+        ImportBenchConfig {
+            rows: cli.rows,
+            dedup: cli.dedup,
+            warmup: cli.warmup,
+            iterations: cli.iterations,
+        }
+    }
 }
 
 /// 单元（行数档 × 分布）的量测结果（人读报告行 + 冒烟断言面）。
@@ -344,14 +365,10 @@ pub(crate) fn run(cli: BenchImportCli) -> Result<(), String> {
             cli.db.display()
         ));
     }
-    let cfg = ImportBenchConfig {
-        rows: cli.rows.clone(),
-        dedup: cli.dedup,
-        warmup: cli.warmup,
-        iterations: cli.iterations,
-    };
-    let results = run_benchmark(&cli.db, &cfg)?;
-    print_report(&cli.db, &cfg, &results);
+    let db = cli.db.clone();
+    let cfg = ImportBenchConfig::from(cli);
+    let results = run_benchmark(&db, &cfg)?;
+    print_report(&db, &cfg, &results);
     Ok(())
 }
 

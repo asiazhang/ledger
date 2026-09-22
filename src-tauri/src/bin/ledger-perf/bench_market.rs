@@ -73,7 +73,10 @@ use ledger_investment::prices::{
 use ledger_investment::{InstrumentListFilter, PriceChannel};
 use ledger_reports as reports_domain;
 
-use super::bench_common::{CliArgs, MetricTableRow, parse_tier_csv, print_metric_table, summarize};
+use super::bench_common::{
+    FlagSpec, MetricTableRow, Parsed, parse_flags, parse_nonneg_int, parse_tier_csv,
+    print_metric_table, summarize,
+};
 use super::snapshot::{SnapshotPaths, restore_from_snapshot};
 
 /// 落库点流的来源标记基准价（万分之一元，ADR-0038 价格刻度）：价格逐点 +1
@@ -134,46 +137,56 @@ impl Default for BenchMarketCli {
     }
 }
 
-/// 参数解析结果：运行参数或帮助请求。
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ParsedBenchMarket {
-    Run(BenchMarketCli),
-    Help,
+/// bench-market 的 flag 表（flag 显示形态 + 帮助文案 + apply，issue #1679
+/// 表驱动单真源）：新增 flag 只登记本表一处，解析与 `--help` 都从表来。
+pub(crate) const FLAGS: &[FlagSpec<BenchMarketCli>] = &[
+    FlagSpec {
+        flag: "--db <PATH>",
+        help: "源库文件（默认同 generate 输出路径，须已生成；本命令不修改源库——内部建 pristine 快照，每次迭代从快照恢复）",
+        apply: |cli, _flag, v| {
+            cli.db = PathBuf::from(v);
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--points <CSV>",
+        help: "每档周采样点数（默认 104,1040,5200；逗号分隔、保持次序；单档上限 1000000，采样日运算防 chrono 日期越界，issue #1650）",
+        apply: |cli, flag, v| {
+            cli.points = parse_tier_csv(v, flag)?;
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--warmup <N>",
+        help: "每档预热次数（默认 1，不计入统计）",
+        apply: |cli, flag, v| {
+            cli.warmup = parse_nonneg_int(flag, v)?;
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--iterations <N>",
+        help: "每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集规模固定）",
+        apply: |cli, flag, v| {
+            cli.iterations = parse_nonneg_int(flag, v)?;
+            Ok(())
+        },
+    },
+];
+
+/// 手写参数解析（零新增依赖；通用循环消费 [`FLAGS`]，收口在
+/// [`parse_flags`]，issue #1696）。返回 Err(消息) 表示用法错误；
+/// 「至少为 1」校验保持原位（解析层 → 参数错误通道，行为零变化）。
+pub(crate) fn parse_bench_market_args(args: &[String]) -> Result<Parsed<BenchMarketCli>, String> {
+    match parse_flags(args, FLAGS)? {
+        Parsed::Run(cli) if cli.iterations == 0 => Err("--iterations 至少为 1".to_string()),
+        parsed => Ok(parsed),
+    }
 }
 
-/// 手写参数解析（零新增依赖；循环机制与档位解析收口在 [`super::bench_common`]，
-/// issue #1650）。返回 Err(消息) 表示用法错误。
-pub(crate) fn parse_bench_market_args(args: &[String]) -> Result<ParsedBenchMarket, String> {
-    let mut cli = BenchMarketCli::default();
-    let mut it = CliArgs::new(args);
-    while let Some(f) = it.next_flag() {
-        match f.flag {
-            "--db" => {
-                cli.db = PathBuf::from(it.value(f)?);
-            }
-            "--points" => {
-                cli.points = parse_tier_csv(&it.value(f)?, "--points")?;
-            }
-            "--warmup" => {
-                let v = it.value(f)?;
-                cli.warmup = v
-                    .parse::<usize>()
-                    .map_err(|_| format!("--warmup 需要非负整数，得到 {v:?}"))?;
-            }
-            "--iterations" => {
-                let v = it.value(f)?;
-                cli.iterations = v
-                    .parse::<usize>()
-                    .map_err(|_| format!("--iterations 需要非负整数，得到 {v:?}"))?;
-            }
-            "-h" | "--help" => return Ok(ParsedBenchMarket::Help),
-            other => return Err(format!("未知参数 {other:?}")),
-        }
-    }
-    if cli.iterations == 0 {
-        return Err("--iterations 至少为 1".to_string());
-    }
-    Ok(ParsedBenchMarket::Run(cli))
+/// run 入口（dispatch 表登记项）：解析 + 运行 → 共享结局形态。
+pub(crate) fn execute(args: &[String]) -> super::bench_common::Outcome {
+    super::bench_common::execute_cli(args, parse_bench_market_args, run)
 }
 
 /// 标的池成员（前置探测产出，落库计划的输入）。
@@ -375,6 +388,18 @@ pub(crate) struct MarketBenchConfig {
     pub iterations: usize,
 }
 
+/// Cli → Config 投影（issue #1679：原位 From impl；Config 的测试可注入
+/// 小参数接缝保留不动）。
+impl From<BenchMarketCli> for MarketBenchConfig {
+    fn from(cli: BenchMarketCli) -> Self {
+        MarketBenchConfig {
+            points: cli.points,
+            warmup: cli.warmup,
+            iterations: cli.iterations,
+        }
+    }
+}
+
 /// 单元（点数档 × 分布）的量测结果（人读报告行 + 冒烟断言面）。
 #[derive(Debug, Clone)]
 pub(crate) struct MarketBenchMetrics {
@@ -404,13 +429,10 @@ pub(crate) fn run(cli: BenchMarketCli) -> Result<(), String> {
             cli.db.display()
         ));
     }
-    let cfg = MarketBenchConfig {
-        points: cli.points.clone(),
-        warmup: cli.warmup,
-        iterations: cli.iterations,
-    };
-    let results = run_benchmark(&cli.db, &cfg)?;
-    print_report(&cli.db, &cfg, &results);
+    let db = cli.db.clone();
+    let cfg = MarketBenchConfig::from(cli);
+    let results = run_benchmark(&db, &cfg)?;
+    print_report(&db, &cfg, &results);
     Ok(())
 }
 

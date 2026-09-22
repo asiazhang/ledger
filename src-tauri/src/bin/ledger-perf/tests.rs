@@ -30,19 +30,15 @@ use ledger_transaction::read::{get_transaction, list_transactions};
 use ledger_transaction::search_transactions_internal;
 use tauri_app_lib::test_support::{self, FIXED_NOW};
 
-use super::bench::{self, BenchCli, BenchConfig, BenchMetrics, ParsedBench};
-use super::bench_common;
-use super::bench_import::{
-    self, BenchImportCli, Distribution, ImportBenchConfig, ParsedBenchImport,
-};
-use super::bench_market::{self, BenchMarketCli, ParsedBenchMarket, Spread};
+use super::bench::{self, BenchCli, BenchConfig, BenchMetrics};
+use super::bench_common::{self, Outcome, Parsed};
+use super::bench_import::{self, BenchImportCli, Distribution, ImportBenchConfig};
+use super::bench_market::{self, BenchMarketCli, Spread};
 use super::bench_sync::{
-    self, BenchSyncCli, EntryForm, ParsedBenchSync, SOURCE_DEVICE_ID, SyncBenchConfig,
-    generate_ops, generate_wire,
+    self, BenchSyncCli, EntryForm, SOURCE_DEVICE_ID, SyncBenchConfig, generate_ops, generate_wire,
 };
 use super::books;
-use super::generate::{GenCounts, GenerateParams, generate_into};
-use super::{GenerateCli, ParsedArgs, parse_args};
+use super::generate::{GenCounts, GenerateCli, GenerateParams, generate_into, parse_generate_args};
 use ledger_accounts::{Account, AccountType};
 use ledger_backup as backup_domain;
 use ledger_transaction::compute_dedup_hash;
@@ -52,17 +48,17 @@ use ledger_transaction::compute_dedup_hash;
 fn parse_bench_cli(args: &[&str]) -> Result<BenchCli, String> {
     let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     match bench::parse_bench_args(&owned)? {
-        ParsedBench::Run(cli) => Ok(cli),
-        ParsedBench::Help => panic!("该输入应解析为运行参数"),
+        Parsed::Run(cli) => Ok(cli),
+        Parsed::Help => panic!("该输入应解析为运行参数"),
     }
 }
 
 /// 解析并取运行参数（帮助请求在该测试套件中不该出现）。
 fn run_cli(args: &[&str]) -> GenerateCli {
     let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    match parse_args(&owned).unwrap() {
-        ParsedArgs::Run(cli) => cli,
-        ParsedArgs::Help => panic!("该输入应解析为运行参数"),
+    match parse_generate_args(&owned).unwrap() {
+        Parsed::Run(cli) => cli,
+        Parsed::Help => panic!("该输入应解析为运行参数"),
     }
 }
 
@@ -298,8 +294,8 @@ fn pinyin_bench_keyword_hits_only_via_pinyin_path() {
 fn parse_bench_import_cli(args: &[&str]) -> Result<BenchImportCli, String> {
     let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     match bench_import::parse_bench_import_args(&owned)? {
-        ParsedBenchImport::Run(cli) => Ok(cli),
-        ParsedBenchImport::Help => panic!("该输入应解析为运行参数"),
+        Parsed::Run(cli) => Ok(cli),
+        Parsed::Help => panic!("该输入应解析为运行参数"),
     }
 }
 
@@ -374,6 +370,48 @@ fn bench_import_cli_rejects_bad_values() {
     assert!(
         parse_bench_import_cli(&["--iterations", "0"]).is_err(),
         "迭代 0 应报错"
+    );
+}
+
+/// 错误文案逐字钉住（issue #1696）：共享解析的任一文案分支被删改 → 本断言红
+///（断言对准用户可观察的错误输出，ADR-0087）。
+#[test]
+fn bench_import_cli_error_messages_are_verbatim() {
+    assert_eq!(
+        parse_bench_import_cli(&["--rows", "1,x"]).unwrap_err(),
+        "--rows 档位需要非负整数，得到 \"x\""
+    );
+    assert_eq!(
+        parse_bench_import_cli(&["--rows", "0"]).unwrap_err(),
+        "--rows 档位必须大于 0"
+    );
+    assert_eq!(
+        parse_bench_import_cli(&["--rows", "100,100"]).unwrap_err(),
+        "--rows 档位重复：100"
+    );
+    assert_eq!(
+        parse_bench_import_cli(&["--rows", "1000001"]).unwrap_err(),
+        "--rows 档位超过上限 1000000：1000001"
+    );
+    assert_eq!(
+        parse_bench_import_cli(&["--dedup", "yes"]).unwrap_err(),
+        "布尔参数需要 true/false，得到 \"yes\""
+    );
+    assert_eq!(
+        parse_bench_import_cli(&["--warmup", "x"]).unwrap_err(),
+        "--warmup 需要非负整数，得到 \"x\""
+    );
+    assert_eq!(
+        parse_bench_import_cli(&["--iterations", "0"]).unwrap_err(),
+        "--iterations 至少为 1"
+    );
+    assert_eq!(
+        parse_bench_import_cli(&["--rows"]).unwrap_err(),
+        "--rows 缺少值"
+    );
+    assert_eq!(
+        parse_bench_import_cli(&["--unknown", "1"]).unwrap_err(),
+        "未知参数 \"--unknown\""
     );
 }
 
@@ -616,6 +654,458 @@ fn bench_common_cli_missing_value_errors_with_flag_name() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// CLI 表驱动收口（issue #1696 / spec #1679）：全文 golden、flag 表 ↔ 帮助
+// 一致、flag 名单钉住与解析矩阵、默认值钉住、Cli → Config 投影
+// ---------------------------------------------------------------------------
+
+/// 全文帮助 golden（inline const，spec #1679 测试决策）：帮助措辞、节次序
+/// （SUBCOMMANDS 列举沿表序 generate 居首；OPTIONS 节 bench → bench-import →
+/// bench-sync → bench-market → generate）与归一后列宽的任何变化必须有意修订
+/// 本 golden——「新增 flag 登记表 → golden 红」即删除即变红①。
+const HELP_GOLDEN: &str = r#"ledger-perf —— Ledger 性能基准工具
+
+USAGE:
+    ledger-perf <SUBCOMMAND> [OPTIONS]
+
+SUBCOMMANDS:
+    generate      生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite
+                  库 + 2 本附属账本小库，issue #1630）
+    bench         查询基准——16 项查询 × min/avg/p95 报告（issue #461）
+    bench-import  批量导入写基准——固定行数 × 两种分布 × 总耗时/单行均摊 p95
+                  （issue #532，纯观测无门禁）
+    bench-sync    同步重放写基准——op 流重放（ingest_ops/apply_ops 权威入口）×
+                  两种分布 × 总耗时/单 op 均摊 p95（issue #1628，剥网络，纯观测
+                  无门禁）
+    bench-market  行情/价格历史批量 upsert 写基准——点数档 × 两种分布 × 总耗
+                  时/单点均摊 p95（issue #1629，剥网络，纯观测无门禁）
+
+bench OPTIONS:
+    --db <PATH>              目标库文件（默认同 generate 输出路径，须已生成）
+    --warmup <N>             每项基准预热次数（默认 3，不计入统计）
+    --iterations <N>         每项基准计时迭代次数（默认 20，n=20 才成真 p95 分位
+                             数）
+    --search <TERM>          中文子串搜索基准的关键字（默认 咖啡）
+    --search-pinyin <TERM>   拼音子序列搜索基准的关键字（默认 kf）
+    --max-p95-ms <MS>        默认门禁阈值（毫秒）：全部基准 p95 ≤ 各自阈值才退
+                             出 0，任何一项超标即失败（CI 用；缺省不判定；分项例
+                             外机制与现行清单见 ADR-0068）
+    -h, --help               打印本说明
+
+bench-import OPTIONS:
+    --db <PATH>              源库文件（默认同 generate 输出路径，须已生成；本命
+                             令不修改源库——内部建 pristine 快照，每次迭代从快
+                             照恢复）
+    --rows <CSV>             每档导入行数（默认 50,100,200；逗号分隔、保持次序；
+                             单档上限 1000000，issue #1650）
+    --dedup <BOOL>           批量导入去重开关（默认 true，HTTP 批量导入生产默
+                             认）
+    --warmup <N>             每档预热次数（默认 1，不计入统计）
+    --iterations <N>         每档计时迭代次数（默认 5；每次迭代从快照恢复，数据
+                             集规模固定）
+    -h, --help               打印本说明
+
+bench-sync OPTIONS:
+    --db <PATH>              源库文件（默认同 generate 输出路径，须已生成；本命
+                             令不修改源库——内部建 pristine 快照，每次迭代从快
+                             照恢复）
+    --ops <CSV>              每档重放 op 条数（默认 100,500,2000；逗号分隔、保持
+                             次序；单档上限 1000000，issue #1650）
+    --warmup <N>             每档预热次数（默认 1，不计入统计）
+    --iterations <N>         每档计时迭代次数（默认 5；每次迭代从快照恢复，数据
+                             集规模固定）
+    -h, --help               打印本说明
+
+bench-market OPTIONS:
+    --db <PATH>              源库文件（默认同 generate 输出路径，须已生成；本命
+                             令不修改源库——内部建 pristine 快照，每次迭代从快
+                             照恢复）
+    --points <CSV>           每档周采样点数（默认 104,1040,5200；逗号分隔、保持
+                             次序；单档上限 1000000，采样日运算防 chrono 日期越
+                             界，issue #1650）
+    --warmup <N>             每档预热次数（默认 1，不计入统计）
+    --iterations <N>         每档计时迭代次数（默认 5；每次迭代从快照恢复，数据
+                             集规模固定）
+    -h, --help               打印本说明
+
+generate OPTIONS:
+    --seed <N>               随机种子（默认 42，同种子必出同库）
+    --transactions <N>       生成笔数（默认 500000）
+    --end-date <YYYY-MM-DD>  数据窗口锚定结束日期（默认 2025-12-31，不锚定「今
+                             天」）
+    --out <PATH>             输出库文件路径（默认
+                             src-tauri/target/ledger-perf/ledger-perf.db；已存在
+                             会先删除再重建）
+    -h, --help               打印本说明"#;
+
+#[test]
+fn usage_help_matches_golden() {
+    assert_eq!(
+        super::render_usage(),
+        HELP_GOLDEN,
+        "全文帮助与 golden 不一致——帮助措辞/组装/次序变化须有意修订 golden（issue #1679）"
+    );
+}
+
+/// 帮助含全部合法 flag（清单从表派生，spec #1679）：渲染器漏掉表内 flag 即
+/// 红；新增 flag 登记表 → 帮助自动更新、golden 变红（有意修订转绿）。
+#[test]
+fn help_renders_every_flag_registered_in_tables() {
+    let usage = super::render_usage();
+    for sub in super::SUBCOMMANDS {
+        let flags = (sub.flags)();
+        assert!(!flags.is_empty(), "{} 应登记 flag 表", sub.name);
+        assert!(
+            usage.contains(&format!("{} OPTIONS:", sub.name)),
+            "{} 的 OPTIONS 节应出现在全文帮助中",
+            sub.name
+        );
+        for f in &flags {
+            assert!(
+                usage.contains(f.flag),
+                "{} 的 flag「{}」应出现在全文帮助中",
+                sub.name,
+                f.flag
+            );
+        }
+    }
+}
+
+/// 逐子命令合法 flag 名单（测试侧名单钉住，issue #1696 删除即变红②）：与
+/// flag 表双向全等——表内增删未同步名单即红；名单中的 flag 未登记表（想要
+/// 的新 flag 忘了登记）→ 下面的解析矩阵报「未知参数」变红。名单是独立于
+/// 生产表的测试侧期望（同 16 项基准名单钉住的先例形态）。
+const EXPECTED_FLAGS: &[(&str, &[&str])] = &[
+    (
+        "generate",
+        &["--seed", "--transactions", "--end-date", "--out"],
+    ),
+    (
+        "bench",
+        &[
+            "--db",
+            "--warmup",
+            "--iterations",
+            "--search",
+            "--search-pinyin",
+            "--max-p95-ms",
+        ],
+    ),
+    (
+        "bench-import",
+        &["--db", "--rows", "--dedup", "--warmup", "--iterations"],
+    ),
+    ("bench-sync", &["--db", "--ops", "--warmup", "--iterations"]),
+    (
+        "bench-market",
+        &["--db", "--points", "--warmup", "--iterations"],
+    ),
+];
+
+/// 按名取 dispatch 登记项（找不到即红：名单与 dispatch 表不同步）。
+fn dispatch_entry(name: &str) -> &'static super::Subcommand {
+    super::SUBCOMMANDS
+        .iter()
+        .find(|s| s.name == name)
+        .unwrap_or_else(|| panic!("子命令 {name} 应登记在 dispatch 表"))
+}
+
+#[test]
+fn flag_tables_match_pinned_inventory() {
+    assert_eq!(
+        EXPECTED_FLAGS.len(),
+        super::SUBCOMMANDS.len(),
+        "名单应覆盖全部 dispatch 子命令"
+    );
+    for (name, expected) in EXPECTED_FLAGS {
+        let flags = (dispatch_entry(name).flags)();
+        let registered: Vec<&str> = flags.iter().map(|f| f.key()).collect();
+        assert_eq!(
+            registered, *expected,
+            "{name} 的 flag 表与名单不一致——增删 flag 须同步钉住名单（双向全等）"
+        );
+    }
+}
+
+/// 名单驱动的解析矩阵（删除即变红②）：名单中的 flag 未登记表 → 此处报
+/// 「未知参数」变红；缺值文案逐字同钉。
+#[test]
+fn every_expected_flag_is_accepted_by_parsers() {
+    for (name, keys) in EXPECTED_FLAGS {
+        let entry = dispatch_entry(name);
+        for k in *keys {
+            let key = k.to_string();
+            match (entry.execute)(std::slice::from_ref(&key)) {
+                Outcome::ParamError(msg) => {
+                    assert_eq!(msg, format!("{key} 缺少值"), "{name} 的 {key} 应报缺值错误")
+                }
+                other => panic!("{name} 传 {key} 应报参数错误，得到 {other:?}"),
+            }
+        }
+    }
+}
+
+/// 表外 flag 一律报「未知参数」且文案逐字一致（删除共享文案分支 → 对应
+/// 子命令测试红，删除即变红③的 dispatch 面）。
+#[test]
+fn unknown_flag_is_rejected_by_every_subcommand() {
+    for sub in super::SUBCOMMANDS {
+        match (sub.execute)(&["--definitely-unknown".to_string()]) {
+            Outcome::ParamError(msg) => assert_eq!(msg, "未知参数 \"--definitely-unknown\""),
+            other => panic!("{} 应拒绝未知参数，得到 {:?}", sub.name, other),
+        }
+    }
+}
+
+/// `-h` / `--help` 在每个子命令都请求全文帮助（--help 保持全文不窄化，spec
+/// #1679 行为零变化边界；替代被删除的五个 Run/Help 枚举壳的形态断言）。
+#[test]
+fn every_subcommand_help_flag_requests_full_help() {
+    for sub in super::SUBCOMMANDS {
+        assert_eq!(
+            (sub.execute)(&["--help".to_string()]),
+            Outcome::Help,
+            "{} --help 应请求帮助",
+            sub.name
+        );
+        assert_eq!(
+            (sub.execute)(&["-h".to_string()]),
+            Outcome::Help,
+            "{} -h 应请求帮助",
+            sub.name
+        );
+    }
+}
+
+/// 默认值钉住清单核对（spec #1679）：期望默认值显示必须出现在**渲染后的**
+/// 全文帮助中（spec 原文「断言渲染帮助含『默认 N』」）；与 Default impl 的
+/// 构造性一致由各子命令测试逐条互证（literal 钉住防两者同漂移）。短语取未
+/// 被折行拆断的连续片段——`--out` 默认路径在渲染中折行，故钉路径片段本身
+/// （全路径与 Default 的互证在各子命令测试内）。
+fn assert_default_pins(usage: &str, pins: &[(&str, &str)]) {
+    for (flag, expected) in pins {
+        assert!(
+            usage.contains(expected),
+            "渲染帮助应含 {flag} 的默认值显示「{expected}」"
+        );
+    }
+}
+
+#[test]
+fn generate_help_pins_default_values() {
+    let d = GenerateCli::default();
+    assert_eq!(
+        [
+            format!("默认 {}", d.seed),
+            format!("默认 {}", d.transactions),
+            format!("默认 {}", d.end_date),
+        ],
+        ["默认 42", "默认 500000", "默认 2025-12-31"]
+    );
+    assert!(
+        d.out
+            .to_string_lossy()
+            .ends_with("src-tauri/target/ledger-perf/ledger-perf.db"),
+        "--out 默认路径应为构建目标目录下的 ledger-perf.db，实际：{}",
+        d.out.display()
+    );
+    assert_default_pins(
+        &super::render_usage(),
+        &[
+            ("--seed <N>", "默认 42"),
+            ("--transactions <N>", "默认 500000"),
+            ("--end-date <YYYY-MM-DD>", "默认 2025-12-31"),
+            (
+                "--out <PATH>",
+                "src-tauri/target/ledger-perf/ledger-perf.db",
+            ),
+        ],
+    );
+}
+
+#[test]
+fn bench_help_pins_default_values() {
+    let d = BenchCli::default();
+    assert_eq!(
+        [
+            format!("默认 {}", d.warmup),
+            format!("默认 {}", d.iterations),
+            format!("默认 {}", d.search),
+            format!("默认 {}", d.search_pinyin),
+        ],
+        ["默认 3", "默认 20", "默认 咖啡", "默认 kf"]
+    );
+    assert_eq!(
+        d.max_p95_ms, None,
+        "默认不启用门禁（帮助应显「缺省不判定」）"
+    );
+    assert_eq!(d.db, super::default_out(), "--db 默认同 generate 输出路径");
+    assert_default_pins(
+        &super::render_usage(),
+        &[
+            ("--db <PATH>", "默认同 generate 输出路径"),
+            ("--warmup <N>", "默认 3"),
+            ("--iterations <N>", "默认 20"),
+            ("--search <TERM>", "默认 咖啡"),
+            ("--search-pinyin <TERM>", "默认 kf"),
+            ("--max-p95-ms <MS>", "缺省不判定"),
+        ],
+    );
+}
+
+#[test]
+fn bench_import_help_pins_default_values() {
+    let d = BenchImportCli::default();
+    let rows_csv = d
+        .rows
+        .iter()
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    assert_eq!(
+        [
+            format!("默认 {rows_csv}"),
+            format!("默认 {}", d.dedup),
+            format!("默认 {}", d.warmup),
+            format!("默认 {}", d.iterations),
+        ],
+        ["默认 50,100,200", "默认 true", "默认 1", "默认 5"]
+    );
+    assert_eq!(d.db, super::default_out());
+    assert_default_pins(
+        &super::render_usage(),
+        &[
+            ("--db <PATH>", "默认同 generate 输出路径"),
+            ("--rows <CSV>", "默认 50,100,200"),
+            ("--dedup <BOOL>", "默认 true"),
+            ("--warmup <N>", "默认 1"),
+            ("--iterations <N>", "默认 5"),
+        ],
+    );
+}
+
+#[test]
+fn bench_sync_help_pins_default_values() {
+    let d = BenchSyncCli::default();
+    let ops_csv = d
+        .ops
+        .iter()
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    assert_eq!(
+        [
+            format!("默认 {ops_csv}"),
+            format!("默认 {}", d.warmup),
+            format!("默认 {}", d.iterations),
+        ],
+        ["默认 100,500,2000", "默认 1", "默认 5"]
+    );
+    assert_eq!(d.db, super::default_out());
+    assert_default_pins(
+        &super::render_usage(),
+        &[
+            ("--db <PATH>", "默认同 generate 输出路径"),
+            ("--ops <CSV>", "默认 100,500,2000"),
+            ("--warmup <N>", "默认 1"),
+            ("--iterations <N>", "默认 5"),
+        ],
+    );
+}
+
+#[test]
+fn bench_market_help_pins_default_values() {
+    let d = BenchMarketCli::default();
+    let points_csv = d
+        .points
+        .iter()
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    assert_eq!(
+        [
+            format!("默认 {points_csv}"),
+            format!("默认 {}", d.warmup),
+            format!("默认 {}", d.iterations),
+        ],
+        ["默认 104,1040,5200", "默认 1", "默认 5"]
+    );
+    assert_eq!(d.db, super::default_out());
+    assert_default_pins(
+        &super::render_usage(),
+        &[
+            ("--db <PATH>", "默认同 generate 输出路径"),
+            ("--points <CSV>", "默认 104,1040,5200"),
+            ("--warmup <N>", "默认 1"),
+            ("--iterations <N>", "默认 5"),
+        ],
+    );
+}
+
+/// Cli → Config 投影（spec #1679：原位 From impl；bench 的改名字段与
+/// books_dir 派生在 From 内同形落地）。
+#[test]
+fn bench_cli_projects_into_config_via_from() {
+    let cli = parse_bench_cli(&[
+        "--db",
+        "/tmp/custom-ledger.db",
+        "--warmup",
+        "7",
+        "--iterations",
+        "9",
+        "--search",
+        "牛奶",
+        "--search-pinyin",
+        "wy",
+    ])
+    .unwrap();
+    let db = cli.db.clone();
+    let cfg = BenchConfig::from(cli);
+    assert_eq!(cfg.warmup, 7);
+    assert_eq!(cfg.iterations, 9);
+    assert_eq!(cfg.search_term, "牛奶");
+    assert_eq!(cfg.pinyin_search_term, "wy");
+    assert_eq!(
+        cfg.books_dir,
+        books::attached_books_root(&db),
+        "books_dir 应由 --db 同级派生（From 投影内派生，不进 Config 字段）"
+    );
+}
+
+/// 三个写基准的 Cli → Config 投影（spec #1679：原位 From impl 逐字段一一对应）。
+#[test]
+fn write_bench_clis_project_into_configs_via_from() {
+    let cli = parse_bench_import_cli(&[
+        "--rows",
+        "7,9",
+        "--dedup",
+        "false",
+        "--warmup",
+        "3",
+        "--iterations",
+        "4",
+    ])
+    .unwrap();
+    let cfg = ImportBenchConfig::from(cli);
+    assert_eq!(cfg.rows, vec![7, 9]);
+    assert!(!cfg.dedup);
+    assert_eq!(cfg.warmup, 3);
+    assert_eq!(cfg.iterations, 4);
+
+    let cli = parse_bench_sync_cli(&["--ops", "8", "--warmup", "2", "--iterations", "6"]).unwrap();
+    let cfg = SyncBenchConfig::from(cli);
+    assert_eq!(cfg.ops, vec![8]);
+    assert_eq!(cfg.warmup, 2);
+    assert_eq!(cfg.iterations, 6);
+
+    let cli =
+        parse_bench_market_cli(&["--points", "9", "--warmup", "4", "--iterations", "7"]).unwrap();
+    let cfg = bench_market::MarketBenchConfig::from(cli);
+    assert_eq!(cfg.points, vec![9]);
+    assert_eq!(cfg.warmup, 4);
+    assert_eq!(cfg.iterations, 7);
+}
+
 #[test]
 fn bench_common_summarize_matches_min_avg_nearest_rank_p95() {
     let s = bench_common::summarize(vec![
@@ -686,6 +1176,36 @@ fn bench_cli_gate_option_parses_and_defaults_off() {
         );
     }
     assert!(parse_bench_cli(&["--max-p95-ms"]).is_err(), "缺值报错");
+}
+
+/// 错误文案逐字钉住（issue #1696）：共享解析的任一文案分支被删改 → 本断言红。
+#[test]
+fn bench_cli_error_messages_are_verbatim() {
+    assert_eq!(
+        parse_bench_cli(&["--warmup", "x"]).unwrap_err(),
+        "--warmup 需要非负整数，得到 \"x\""
+    );
+    assert_eq!(
+        parse_bench_cli(&["--iterations", "abc"]).unwrap_err(),
+        "--iterations 需要非负整数，得到 \"abc\""
+    );
+    assert_eq!(
+        parse_bench_cli(&["--max-p95-ms", "abc"]).unwrap_err(),
+        "--max-p95-ms 需要正数（毫秒），得到 \"abc\""
+    );
+    assert_eq!(
+        parse_bench_cli(&["--max-p95-ms", "-1"]).unwrap_err(),
+        "--max-p95-ms 需要正数（毫秒），得到 \"-1\""
+    );
+    assert_eq!(
+        parse_bench_cli(&["--iterations", "0"]).unwrap_err(),
+        "--iterations 至少为 1"
+    );
+    assert_eq!(parse_bench_cli(&["--db"]).unwrap_err(), "--db 缺少值");
+    assert_eq!(
+        parse_bench_cli(&["--unknown", "1"]).unwrap_err(),
+        "未知参数 \"--unknown\""
+    );
 }
 
 #[test]
@@ -1332,16 +1852,44 @@ fn cli_defaults_and_overrides_parse() {
     assert_eq!(cli.end_date, "2024-06-30");
     assert_eq!(cli.out, PathBuf::from("/tmp/x.db"));
 
-    assert!(parse_args(&["--nope".to_string()]).is_err(), "未知参数报错");
-    assert!(parse_args(&["--seed".to_string()]).is_err(), "缺值报错");
     assert!(
-        parse_args(&["--seed".to_string(), "abc".to_string()]).is_err(),
+        parse_generate_args(&["--nope".to_string()]).is_err(),
+        "未知参数报错"
+    );
+    assert!(
+        parse_generate_args(&["--seed".to_string()]).is_err(),
+        "缺值报错"
+    );
+    assert!(
+        parse_generate_args(&["--seed".to_string(), "abc".to_string()]).is_err(),
         "非整数报错"
     );
     assert_eq!(
-        parse_args(&["--help".to_string()]),
-        Ok(ParsedArgs::Help),
+        parse_generate_args(&["--help".to_string()]),
+        Ok(Parsed::Help),
         "--help 请求"
+    );
+}
+
+/// 错误文案逐字钉住（issue #1696）：共享解析的任一文案分支被删改 → 本断言红。
+#[test]
+fn generate_cli_error_messages_are_verbatim() {
+    let owned = |args: &[&str]| -> Vec<String> { args.iter().map(|s| s.to_string()).collect() };
+    assert_eq!(
+        parse_generate_args(&owned(&["--seed", "abc"])).unwrap_err(),
+        "--seed 需要非负整数，得到 \"abc\""
+    );
+    assert_eq!(
+        parse_generate_args(&owned(&["--transactions", "x"])).unwrap_err(),
+        "--transactions 需要非负整数，得到 \"x\""
+    );
+    assert_eq!(
+        parse_generate_args(&owned(&["--seed"])).unwrap_err(),
+        "--seed 缺少值"
+    );
+    assert_eq!(
+        parse_generate_args(&owned(&["--nope"])).unwrap_err(),
+        "未知参数 \"--nope\""
     );
 }
 
@@ -1903,8 +2451,8 @@ fn profile_budgets_and_scheduled_plans() {
 fn parse_bench_sync_cli(args: &[&str]) -> Result<BenchSyncCli, String> {
     let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     match bench_sync::parse_bench_sync_args(&owned)? {
-        ParsedBenchSync::Run(cli) => Ok(cli),
-        ParsedBenchSync::Help => panic!("该输入应解析为运行参数"),
+        Parsed::Run(cli) => Ok(cli),
+        Parsed::Help => panic!("该输入应解析为运行参数"),
     }
 }
 
@@ -1963,6 +2511,39 @@ fn bench_sync_cli_parses_overrides_and_rejects_bad_values() {
     assert!(
         parse_bench_sync_cli(&["--unknown", "1"]).is_err(),
         "未知参数应报错"
+    );
+}
+
+/// 错误文案逐字钉住（issue #1696）：共享解析的任一文案分支被删改 → 本断言红。
+#[test]
+fn bench_sync_cli_error_messages_are_verbatim() {
+    assert_eq!(
+        parse_bench_sync_cli(&["--ops", "1,x"]).unwrap_err(),
+        "--ops 档位需要非负整数，得到 \"x\""
+    );
+    assert_eq!(
+        parse_bench_sync_cli(&["--ops", "0"]).unwrap_err(),
+        "--ops 档位必须大于 0"
+    );
+    assert_eq!(
+        parse_bench_sync_cli(&["--ops", "100,100"]).unwrap_err(),
+        "--ops 档位重复：100"
+    );
+    assert_eq!(
+        parse_bench_sync_cli(&["--warmup", "x"]).unwrap_err(),
+        "--warmup 需要非负整数，得到 \"x\""
+    );
+    assert_eq!(
+        parse_bench_sync_cli(&["--iterations", "0"]).unwrap_err(),
+        "--iterations 至少为 1"
+    );
+    assert_eq!(
+        parse_bench_sync_cli(&["--ops"]).unwrap_err(),
+        "--ops 缺少值"
+    );
+    assert_eq!(
+        parse_bench_sync_cli(&["--unknown", "1"]).unwrap_err(),
+        "未知参数 \"--unknown\""
     );
 }
 
@@ -2156,8 +2737,8 @@ fn bench_sync_smoke_runs_matrix_and_produces_all_metrics() {
 fn parse_bench_market_cli(args: &[&str]) -> Result<BenchMarketCli, String> {
     let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     match bench_market::parse_bench_market_args(&owned)? {
-        ParsedBenchMarket::Run(cli) => Ok(cli),
-        ParsedBenchMarket::Help => panic!("该输入应解析为运行参数"),
+        Parsed::Run(cli) => Ok(cli),
+        Parsed::Help => panic!("该输入应解析为运行参数"),
     }
 }
 
@@ -2207,6 +2788,39 @@ fn bench_market_cli_parses_overrides_and_rejects_bad_values() {
     assert!(
         parse_bench_market_cli(&["--unknown", "1"]).is_err(),
         "未知参数应报错"
+    );
+}
+
+/// 错误文案逐字钉住（issue #1696）：共享解析的任一文案分支被删改 → 本断言红。
+#[test]
+fn bench_market_cli_error_messages_are_verbatim() {
+    assert_eq!(
+        parse_bench_market_cli(&["--points", "1,x"]).unwrap_err(),
+        "--points 档位需要非负整数，得到 \"x\""
+    );
+    assert_eq!(
+        parse_bench_market_cli(&["--points", "0"]).unwrap_err(),
+        "--points 档位必须大于 0"
+    );
+    assert_eq!(
+        parse_bench_market_cli(&["--points", "10,10"]).unwrap_err(),
+        "--points 档位重复：10"
+    );
+    assert_eq!(
+        parse_bench_market_cli(&["--warmup", "x"]).unwrap_err(),
+        "--warmup 需要非负整数，得到 \"x\""
+    );
+    assert_eq!(
+        parse_bench_market_cli(&["--iterations", "0"]).unwrap_err(),
+        "--iterations 至少为 1"
+    );
+    assert_eq!(
+        parse_bench_market_cli(&["--points"]).unwrap_err(),
+        "--points 缺少值"
+    );
+    assert_eq!(
+        parse_bench_market_cli(&["--unknown", "1"]).unwrap_err(),
+        "未知参数 \"--unknown\""
     );
 }
 

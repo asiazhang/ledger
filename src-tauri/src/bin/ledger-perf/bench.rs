@@ -26,7 +26,8 @@ use chrono::{Months, NaiveDate};
 use rusqlite::Connection;
 
 use super::bench_common::{
-    CliArgs, display_width, metric_table_header, name_column_width, summarize,
+    FlagSpec, Parsed, display_width, metric_table_header, name_column_width, parse_flags,
+    parse_gate_ms, parse_nonneg_int, summarize,
 };
 use ledger_accounts as accounts;
 use ledger_dashboard as dashboard_domain;
@@ -104,58 +105,72 @@ impl Default for BenchCli {
     }
 }
 
-/// 参数解析结果：运行参数或帮助请求。
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ParsedBench {
-    Run(BenchCli),
-    Help,
+/// bench 的 flag 表（flag 显示形态 + 帮助文案 + apply，issue #1679 表驱动
+/// 单真源）：新增 flag 只登记本表一处，解析与 `--help` 都从表来。
+pub(crate) const FLAGS: &[FlagSpec<BenchCli>] = &[
+    FlagSpec {
+        flag: "--db <PATH>",
+        help: "目标库文件（默认同 generate 输出路径，须已生成）",
+        apply: |cli, _flag, v| {
+            cli.db = PathBuf::from(v);
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--warmup <N>",
+        help: "每项基准预热次数（默认 3，不计入统计）",
+        apply: |cli, flag, v| {
+            cli.warmup = parse_nonneg_int(flag, v)?;
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--iterations <N>",
+        help: "每项基准计时迭代次数（默认 20，n=20 才成真 p95 分位数）",
+        apply: |cli, flag, v| {
+            cli.iterations = parse_nonneg_int(flag, v)?;
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--search <TERM>",
+        help: "中文子串搜索基准的关键字（默认 咖啡）",
+        apply: |cli, _flag, v| {
+            cli.search = v.to_string();
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--search-pinyin <TERM>",
+        help: "拼音子序列搜索基准的关键字（默认 kf）",
+        apply: |cli, _flag, v| {
+            cli.search_pinyin = v.to_string();
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--max-p95-ms <MS>",
+        help: "默认门禁阈值（毫秒）：全部基准 p95 ≤ 各自阈值才退出 0，任何一项超标即失败（CI 用；缺省不判定；分项例外机制与现行清单见 ADR-0068）",
+        apply: |cli, flag, v| {
+            cli.max_p95_ms = Some(parse_gate_ms(flag, v)?);
+            Ok(())
+        },
+    },
+];
+
+/// 手写参数解析（零新增依赖；通用循环消费 [`FLAGS`]，收口在
+/// [`parse_flags`]，issue #1696）。返回 Err(消息) 表示用法错误；
+/// 「至少为 1」校验保持原位（解析层 → 参数错误通道，行为零变化）。
+pub(crate) fn parse_bench_args(args: &[String]) -> Result<Parsed<BenchCli>, String> {
+    match parse_flags(args, FLAGS)? {
+        Parsed::Run(cli) if cli.iterations == 0 => Err("--iterations 至少为 1".to_string()),
+        parsed => Ok(parsed),
+    }
 }
 
-/// 手写参数解析（零新增依赖；循环机制收口在 [`super::bench_common::CliArgs`]，
-/// issue #1650）。返回 Err(消息) 表示用法错误。
-pub(crate) fn parse_bench_args(args: &[String]) -> Result<ParsedBench, String> {
-    let mut cli = BenchCli::default();
-    let mut it = CliArgs::new(args);
-    while let Some(f) = it.next_flag() {
-        match f.flag {
-            "--db" => {
-                cli.db = PathBuf::from(it.value(f)?);
-            }
-            "--warmup" => {
-                let v = it.value(f)?;
-                cli.warmup = v
-                    .parse::<usize>()
-                    .map_err(|_| format!("--warmup 需要非负整数，得到 {v:?}"))?;
-            }
-            "--iterations" => {
-                let v = it.value(f)?;
-                cli.iterations = v
-                    .parse::<usize>()
-                    .map_err(|_| format!("--iterations 需要非负整数，得到 {v:?}"))?;
-            }
-            "--search" => {
-                cli.search = it.value(f)?;
-            }
-            "--search-pinyin" => {
-                cli.search_pinyin = it.value(f)?;
-            }
-            "--max-p95-ms" => {
-                let v = it.value(f)?;
-                let ms = v
-                    .parse::<f64>()
-                    .ok()
-                    .filter(|m| m.is_finite() && *m > 0.0)
-                    .ok_or_else(|| format!("--max-p95-ms 需要正数（毫秒），得到 {v:?}"))?;
-                cli.max_p95_ms = Some(ms);
-            }
-            "-h" | "--help" => return Ok(ParsedBench::Help),
-            other => return Err(format!("未知参数 {other:?}")),
-        }
-    }
-    if cli.iterations == 0 {
-        return Err("--iterations 至少为 1".to_string());
-    }
-    Ok(ParsedBench::Run(cli))
+/// run 入口（dispatch 表登记项）：解析 + 运行 → 共享结局形态。
+pub(crate) fn execute(args: &[String]) -> super::bench_common::Outcome {
+    super::bench_common::execute_cli(args, parse_bench_args, run)
 }
 
 /// 基准运行配置（测试可注入小参数；与 [`BenchCli`] 的 CLI 字段一一对应）。
@@ -168,6 +183,20 @@ pub(crate) struct BenchConfig {
     /// 附属账本根目录（issue #1630；生产由 `--db` 同级推导，books 模块）：
     /// 跨账本投资汇总基准项的前置探测与逐本建连都消费它。
     pub books_dir: PathBuf,
+}
+
+/// Cli → Config 投影（issue #1679：原位 From impl；`books_dir` 由 `--db`
+/// 同级派生，与改名字段同形落地；Config 的测试可注入小参数接缝保留不动）。
+impl From<BenchCli> for BenchConfig {
+    fn from(cli: BenchCli) -> Self {
+        BenchConfig {
+            warmup: cli.warmup,
+            iterations: cli.iterations,
+            search_term: cli.search,
+            pinyin_search_term: cli.search_pinyin,
+            books_dir: super::books::attached_books_root(&cli.db),
+        }
+    }
 }
 
 /// 单项基准的统计结果（人读报告行 + 冒烟断言面）。
@@ -201,17 +230,13 @@ pub(crate) fn run(cli: BenchCli) -> Result<(), String> {
             cli.db.display()
         ));
     }
-    let conn = open_connection(&cli.db).map_err(|e| e.to_string())?;
-    let cfg = BenchConfig {
-        warmup: cli.warmup,
-        iterations: cli.iterations,
-        search_term: cli.search.clone(),
-        pinyin_search_term: cli.search_pinyin.clone(),
-        books_dir: super::books::attached_books_root(&cli.db),
-    };
+    let max_p95_ms = cli.max_p95_ms;
+    let db = cli.db.clone();
+    let cfg = BenchConfig::from(cli);
+    let conn = open_connection(&db).map_err(|e| e.to_string())?;
     let results = run_benchmarks(&conn, &cfg)?;
-    print_report(&cli.db, &cfg, &results);
-    gate(&results, cli.max_p95_ms)?;
+    print_report(&db, &cfg, &results);
+    gate(&results, max_p95_ms)?;
     Ok(())
 }
 
