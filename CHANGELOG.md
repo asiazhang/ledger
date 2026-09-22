@@ -16,6 +16,7 @@
 
 ### Changed
 
+- **依赖**：锁文件刷新至范围内最新——前端 vue 3.5.43、vite 8.3.0 等 10 项与后端 tauri 2.11.6 等 7 个 crate；无跨 major、无使用者可见变化，TypeScript 6.x 与 @types/node 22 的既有 hold 不变（[#1688]）。
 - **性能**：报表商户排名加商户维度覆盖索引（V030）并钉定查询计划，50 万笔库聚合 p95 777ms→148ms（[#1655]）。
 - **性能**：投资组合市值走势数量推算改按标的分组增量推进，50 万笔库全窗口周线 p95 8850ms→26ms（[#1654]）。
 
@@ -416,3 +417,4 @@
 [#1631]: https://github.com/asiazhang/ledger/issues/1631
 [#1655]: https://github.com/asiazhang/ledger/issues/1655
 [#1654]: https://github.com/asiazhang/ledger/issues/1654
+[#1688]: https://github.com/asiazhang/ledger/issues/1688
