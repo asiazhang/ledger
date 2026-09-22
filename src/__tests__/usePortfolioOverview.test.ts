@@ -26,7 +26,7 @@ import type { Currency } from "@ledger/types";
 const cny = mockCurrencies[0];
 const usd: Currency = { code: "USD", name: "美元", symbol: "$", decimal_places: 2 };
 
-/** 默认 invoke 布线：持仓 + 持仓标的字典契约快照（参考字典命令走接缝内建兑底） */
+/** 默认 invoke 布线：持仓 + 持仓标的字典契约快照（参考字典命令走接缝内建兜底） */
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
@@ -37,7 +37,7 @@ const BASE_DEFAULTS = {
   ],
 };
 
-/** 参考命令本场景需自定义值（overrides 优先于参考兑底）：行装配断言消费账户名「证券账户A」 */
+/** 参考命令本场景需自定义值（overrides 优先于参考兜底）：行装配断言消费账户名「证券账户A」 */
 const REFERENCE_OVERRIDES = { list_accounts: mockAccounts };
 
 /** 宿主组件：模拟盈亏页/首页在 setup 内使用 composable（onMounted 自动首刷时序留在薄壳内） */

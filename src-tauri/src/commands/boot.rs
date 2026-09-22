@@ -224,7 +224,7 @@ fn normalize_plaintext_db_file(db_dir: &std::path::Path) -> Result<()> {
 /// 引导失败登记（启动与重引导共用的失败路径，issue #601）：登记失败门、
 /// 占位连接维持形状，应用存活，由前端失败恢复屏接管。`Err` 仅在占位内存
 /// 库也建不起（登记本身失败）时上抛：启动路径 fail loud 退出（run() 二次
-/// 失败兑底），重引导路径留痕后保持失败态。
+/// 失败兜底），重引导路径留痕后保持失败态。
 pub(crate) fn recover_boot_failure<R: Runtime>(app: &AppHandle<R>, error: &AppError) -> Result<()> {
     tracing::error!(error = %error, "数据库初始化失败，登记启动失败状态，交由前端失败恢复屏接管");
     // 失败码随门记录（issue #994 / ADR-0100）：漂移等码化失败原样上报，前端

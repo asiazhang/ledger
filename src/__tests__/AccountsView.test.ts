@@ -47,7 +47,7 @@ const mockBalances: AccountBalance[] = [
 
 beforeEach(async () => {
   pushMock.mockReset();
-  // list_accounts 参考命令本场景需自定义值（acc-2「银行」，overrides 优先于参考兑底）；
+  // list_accounts 参考命令本场景需自定义值（acc-2「银行」，overrides 优先于参考兜底）；
   // 参考 store 预载走接缝 opt-in 参数。
   await wireInvokeSeam({
     defaults: { list_account_balances: mockBalances },

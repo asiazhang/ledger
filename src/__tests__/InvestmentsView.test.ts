@@ -135,7 +135,7 @@ beforeEach(async () => {
   resetOverlays();
   clearViewResets();
   resetPricesChangedHandler();
-  // 参考 store 预载走接缝 opt-in 参数（五个 list 命令由桩层规范夹具兑底）。
+  // 参考 store 预载走接缝 opt-in 参数（五个 list 命令由桩层规范夹具兜底）。
   await wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, refreshReferenceStores: true }).ready;
 });
 

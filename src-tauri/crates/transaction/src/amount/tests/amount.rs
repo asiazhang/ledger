@@ -546,7 +546,7 @@ fn convert_to_native_on_trade_date_uses_week_rate_of_trade_date() {
 }
 
 /// 折算来源留痕（#1548 验收 2）：序列命中 → 汇率值存**使用值**（正查存序列点
-/// 本身、反向兑底存倒数），来源标为 `series`——仅凭留痕即可复算行内本位币金额。
+/// 本身、反向兜底存倒数），来源标为 `series`——仅凭留痕即可复算行内本位币金额。
 #[test]
 fn convert_to_native_on_trade_date_traces_series_rate_and_source() {
     let conn = test_support::open();
@@ -560,7 +560,7 @@ fn convert_to_native_on_trade_date_traces_series_rate_and_source() {
         "native = amount × 留痕汇率（到分）"
     );
 
-    // 反向兑底：序列只有 CNY→USD 点，使用值为倒数（1 / 0.125 = 8）。
+    // 反向兜底：序列只有 CNY→USD 点，使用值为倒数（1 / 0.125 = 8）。
     let conn = test_support::open();
     test_support::seed_fx_rate_history(&conn, "fxh-rev", "CNY", "USD", "2026-01-05", 0.125);
     let conv = convert_to_native_on_trade_date(&conn, 10000, "USD", "2026-01-07", None).unwrap();

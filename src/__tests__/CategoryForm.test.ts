@@ -45,7 +45,7 @@ const mockCategories: Category[] = [
 
 describe("CategoryForm.vue", () => {
   beforeEach(async () => {
-    // 参考命令本场景需自定义值（overrides 优先于参考兑底）；保单选项经 list_policies 自定义空表
+    // 参考命令本场景需自定义值（overrides 优先于参考兜底）；保单选项经 list_policies 自定义空表
     wireInvokeSeam({
       overrides: {
         list_accounts: mockAccounts,

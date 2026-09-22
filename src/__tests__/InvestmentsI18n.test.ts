@@ -46,7 +46,7 @@ const EMPTY_INVESTMENT_DEFAULTS = {
 // 英文渲染冒烟（issue #350）：切 en-US 后投资域文案走 en 资源；
 // 用例末尾还原 zh-CN，避免污染同进程其他测试（i18n 模块级单例）。
 beforeEach(async () => {
-  // 参考 store 预载走接缝 opt-in 参数（五个 list 命令由桩层规范夹具兑底）。
+  // 参考 store 预载走接缝 opt-in 参数（五个 list 命令由桩层规范夹具兜底）。
   await wireInvokeSeam({ defaults: EMPTY_INVESTMENT_DEFAULTS, refreshReferenceStores: true }).ready;
 });
 

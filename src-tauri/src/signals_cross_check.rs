@@ -820,7 +820,7 @@ fn shell_never_constructs_db_connections_directly() {
 ///   issue #601 前置修复，经槽级自由函数消费同一机制）。
 ///
 /// 扫描根 = 壳层 `src` 顶层 + `src/commands`（与建连守门同款非递归单层，
-/// `api_server`/`shell_support` 等子目录不在本守门范围，同款评审兑底边界）；
+/// `api_server`/`shell_support` 等子目录不在本守门范围，同款评审兜底边界）；
 /// 基础设施 `db` 内部（原语本体与同 crate 单测）不在扫描范围。读槽单槽换入
 /// 的编译期半边由 `replace_read_conn` 的 `pub(crate)` 收窄承担（issue #1303）。
 #[test]

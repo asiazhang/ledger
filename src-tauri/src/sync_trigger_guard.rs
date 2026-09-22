@@ -262,6 +262,6 @@ fn sync_desktop_gate_is_a_single_point_in_start_triggers_body() {
     assert!(
         fn_pos < cfg_pos && cfg_pos < sched_pos && sched_pos < start_pos,
         "分平台门形状漂移：desktop 门应贴在 start_triggers 内的 start_sync_scheduler \
-         调用上，sync_on_start（打开即同步，Android 兑底语义）在门外全平台跑"
+         调用上，sync_on_start（打开即同步，Android 兜底语义）在门外全平台跑"
     );
 }

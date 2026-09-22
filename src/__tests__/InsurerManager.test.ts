@@ -36,7 +36,7 @@ function insurerCalls(cmd: string) {
 
 beforeEach(async () => {
   insurerDb = mockInsurers;
-  // 管理页只消费保司表（可变库函数型覆写），其余走参考兑底规范夹具
+  // 管理页只消费保司表（可变库函数型覆写），其余走参考兜底规范夹具
   wireInvokeSeam({ overrides: { list_insurers: () => insurerDb } });
   const store = useReferenceStore();
   await store.refresh();

@@ -152,7 +152,7 @@ function setupInvoke(
 ) {
   wireInvokeSeam({
     overrides: {
-      // list_currencies 参考命令本场景需 USD 行（$ 金额格式化断言，overrides 优先于参考兑底）
+      // list_currencies 参考命令本场景需 USD 行（$ 金额格式化断言，overrides 优先于参考兜底）
       list_currencies: mockCurrencies,
       list_transactions: (args?: Record<string, unknown>) => {
         const filter = (args as { filter?: { kinds?: string[] | null } | null } | undefined)
