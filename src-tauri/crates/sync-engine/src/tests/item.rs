@@ -138,9 +138,9 @@ fn item_create_replay_does_not_reconvert() {
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
     // 汇率只在 A 端存在（EUR→CNY）：源端折算 8.0；B 端无汇率——若重放端重折算
-    // 会因缺汇率失败（挂起），物品缺失即失败信号。当期行服务物品行折算；交易
-    // 写入按交易日取数（#1547），源端另种交易周（2026-01-10 所属周）历史点。
-    test_support::seed_exchange_rate(&conn_a, "EUR", "CNY", 8.0);
+    // 会因缺汇率失败（挂起），物品缺失即失败信号。物品行折算继承交易行留痕
+    // （#1693），不读当期表；交易写入按交易日取数（#1547），源端另种交易周
+    // （2026-01-10 所属周）历史点。
     test_support::seed_fx_rate_history(&conn_a, "fxh-item", "EUR", "CNY", "2026-01-05", 8.0);
     let mut input = expense_input("acc-1");
     input.currency_code = "EUR".into();

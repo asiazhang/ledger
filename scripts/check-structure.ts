@@ -49,7 +49,7 @@
 //
 // 符号调用方闭集（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692）：当期入口
 // `convert_to_native_current` 的生产调用方白名单 CONVERT_CURRENT_CALLERS 逐条留痕
-//（7 个读路径消费面 + 压测工具注记 + item 写路径违例过渡态），白名单外调用即红；
+//（7 个读路径消费面 + 压测工具注记），白名单外调用即红；
 // 测试代码按 `/tests/` 路径约定豁免（ADR-0056 决策 5 同规），`fn` 定义面与注释/
 // 字符串提及经掩码与定义判定排除；在册成员文件缺失或零调用同样红（清单漂移
 // fail loud、拒绝空集假绿）。别名改写等文本不可达形态靠评审兜底（同壳层扫描
@@ -594,7 +594,7 @@ const CONVERT_CURRENT_CALL_SYMBOL = "convert_to_native_current";
  * 当期入口生产调用方闭集（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692，成员清单
  * 的唯一住址）：「写路径全部走交易日历史折算、当期表只服务读路径」的守卫载体——
  * 文件级白名单，白名单外的生产调用即红，测试代码按 `/tests/` 路径约定豁免。
- * 每条留痕成因（读路径消费面 / 压测工具注记 / item 违例过渡态），与
+ * 每条留痕成因（读路径消费面 / 压测工具注记），与
  * INFRA_DOMAIN_ALLOWED_EDGES 同款留痕纪律；在册成员零调用或文件缺失同样红
  *（清单漂移 fail loud、拒绝空集假绿）。
  */
@@ -602,7 +602,7 @@ export const CONVERT_CURRENT_CALLERS: readonly SymbolCallerEntry[] = [
   {
     file: "crates/item/src/domain.rs",
     reason:
-      "读路径合计 item_daily_total（DailyUsageCost 按当期折算，ADR-0011 决策 3 / #1676 裁决 3 合计口径不动）；同文件 validate_and_convert 为写路径违例，过渡态临时在册——#1693（#1676 票2）修正后删除本句",
+      "读路径合计 item_daily_total（DailyUsageCost 按当期折算，ADR-0011 决策 3 / #1676 裁决 3 合计口径不动）；写路径 validate_and_convert 已改接交易日入口并继承溯源留痕（#1693），本文件仅剩本读路径调用",
   },
   {
     file: "crates/dashboard/src/lib.rs",

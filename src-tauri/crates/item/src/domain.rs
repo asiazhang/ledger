@@ -9,7 +9,11 @@
 //! 只做参数解包、统一写入口与信号发射，转调本模块。
 //!
 //! 接缝约定：
-//! - 金额折算走 Amount 接缝（当期入口 `transaction::amount::convert_to_native_current`），不另写口径；
+//! - 金额折算走 Amount 接缝，不另写口径：写路径（创建/修改的本位币成本）按交易日
+//!   入口 `transaction::amount::convert_to_native_on_trade_date` 折算、继承溯源交易行
+//!   留痕汇率（ADR-0014 2026-09-22 修订 / #1693，基础成本与交易行精确一致）；
+//!   读路径合计 `item_daily_total` 走当期入口 `convert_to_native_current`
+//!   （DailyUsageCost 合计口径不动，ADR-0011 决策 3）；
 //! - 每天使用成本走 `item::cost` 接缝（DailyUsageCost 单一权威），列表不重算口径；
 //! - 溯源守卫（创建唯一入口的准入接缝）独立在 [`guard`]：
 //!   创建/换关路径经其解析关联购买交易并自动带出；
@@ -164,7 +168,8 @@ pub fn calculate_item_cost(
 /// 必填仅约束创建时刻。
 ///
 /// 其余校验：名称非空、总成本 > 0、购买日期可解析（YYYY-MM-DD）；
-/// 币种折算经 [`amount::convert_to_native_current`]（无汇率即报错，不静默混币种）。
+/// 币种折算经 [`amount::convert_to_native_on_trade_date`]（交易日口径，继承溯源
+/// 交易行留痕汇率，见 [`validate_and_convert`]；缺汇率即报错，不静默混币种）。
 pub fn create_item(
     conn: &Connection,
     input: ItemInput,
@@ -185,14 +190,18 @@ fn create_within_transaction(conn: &Connection, input: &ItemInput) -> Result<Str
     }
     // 关联购买交易：校验存在且为 expense，自动带出日期/成本/币种（覆盖同名入参）。
     let effective = apply_purchase_link(conn, input)?;
-    let (name, purchase_date, cost_native_cents) = validate_and_convert(conn, &effective)?;
+    // 溯源守卫（上方）已强制创建关联必填：生效溯源即入参关联，折算继承与溯源
+    // 落行共用同一值。
+    let link = input.purchase_transaction_id.clone();
+    let (name, purchase_date, cost_native_cents) =
+        validate_and_convert(conn, &effective, link.as_deref())?;
     let row = ItemCommandRow {
         name,
         purchase_date,
         total_cost_cents: effective.total_cost_cents,
         currency_code: effective.currency_code,
         cost_native_cents,
-        purchase_transaction_id: input.purchase_transaction_id.clone(),
+        purchase_transaction_id: link,
         note: input.note.clone(),
     };
     let id = write_create(conn, &new_uuid(), &row)?;
@@ -233,9 +242,20 @@ fn write_create(conn: &Connection, id: &str, row: &ItemCommandRow) -> Result<Str
 }
 
 /// 创建/修改共用的入参校验与归一化：名称非空、总成本 > 0、购买日期可解析
-/// （成本计算依赖日历日期）、币种可按 Amount 接缝折算本位币。
+/// （成本计算依赖日历日期）、币种按 Amount 接缝**交易日入口**折算本位币。
+///
+/// 折算取数（#1693 / ADR-0014 2026-09-22 修订）：`link` 是生效溯源（创建即入参
+/// 关联，修改为新关联或既有指针），其行内 `fx_rate_used` 经 [`linked_fx_rate`] 作
+/// 显式汇率传入——基础成本 native 与交易行精确一致、追加花费与基础同汇率可复现、
+/// 换关随新交易行重取；无留痕（迁移前行）/无溯源回落序列按购买日期重查；
+/// 本位币行由入口自持 1:1（携显式汇率报方向不符，故不传，见
+/// `convert_to_native_on_trade_date` 的同币种分支）。
 /// 返回归一化后的名称、规范化日期串（YYYY-MM-DD）与本位币成本，调用方直接落库。
-fn validate_and_convert(conn: &Connection, input: &ItemInput) -> Result<(String, String, i64)> {
+fn validate_and_convert(
+    conn: &Connection,
+    input: &ItemInput,
+    link: Option<&str>,
+) -> Result<(String, String, i64)> {
     let name = input.name.trim();
     if name.is_empty() {
         return Err(AppError::coded("item.name-required", "物品名称不能为空"));
@@ -247,13 +267,53 @@ fn validate_and_convert(conn: &Connection, input: &ItemInput) -> Result<(String,
         ));
     }
     let purchase_date = parse_date(&input.purchase_date)?;
-    let cost_native_cents =
-        amount::convert_to_native_current(conn, input.total_cost_cents, &input.currency_code)?;
-    Ok((
-        name.to_string(),
-        purchase_date.format("%Y-%m-%d").to_string(),
-        cost_native_cents,
-    ))
+    let trade_date = purchase_date.format("%Y-%m-%d").to_string();
+    let explicit_rate = linked_fx_rate(conn, link, &input.currency_code)?;
+    let conversion = amount::convert_to_native_on_trade_date(
+        conn,
+        input.total_cost_cents,
+        &input.currency_code,
+        &trade_date,
+        explicit_rate,
+    )?;
+    Ok((name.to_string(), trade_date, conversion.native_cents))
+}
+
+/// 继承溯源交易行留痕汇率（#1693 / ADR-0014 2026-09-22 修订）：物品币种与
+/// 关联购买交易行币种一致时，行内 `fx_rate_used` 即该笔购买的折算留痕
+/// （正反向兜底已存为使用值，方向与本折算同向），作显式汇率交交易日入口——
+/// 物品行与交易行因此对同一笔购买折出同一个本位币数。
+///
+/// 不传（回落序列重查）的三种情形：无留痕（迁移前行 `fx_rate_used` 为空）、
+/// 无溯源（创建必有关联，修改可无）、交易行缺失或物品币种被单独编辑
+/// （未换关时留痕属另一币种对，方向失效，不可冒充显式值）；本位币行同样不传
+/// （入口自持 1:1，携显式汇率报方向不符）——且按**当前**基准判定而非依赖
+/// 「同币种行必无留痕」不变量：基准币是账本级设置可变更（DefaultCurrency），
+/// 变更后写入时跨币种携率的行会变成「币种 == 新基准」，透传留痕即撞
+/// `fx.explicit-rate-direction-mismatch`、物品无法保存（#1693 交付物 1③）。
+fn linked_fx_rate(
+    conn: &Connection,
+    link: Option<&str>,
+    currency_code: &str,
+) -> Result<Option<f64>> {
+    if currency_code == amount::default_currency_code(conn)? {
+        return Ok(None);
+    }
+    let Some(tx_id) = link else {
+        return Ok(None);
+    };
+    let row: Option<(String, Option<f64>)> = conn
+        .query_row(
+            "SELECT currency_code, fx_rate_used FROM transactions \
+             WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![tx_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    Ok(match row {
+        Some((tx_currency, rate)) if tx_currency == currency_code => rate,
+        _ => None,
+    })
 }
 
 /// 按 `id` 修改物品字段（名称/购买日期/总成本/币种/备注/关联购买交易，
@@ -261,7 +321,8 @@ fn validate_and_convert(conn: &Connection, input: &ItemInput) -> Result<(String,
 ///
 /// 保留审计字段：`id` / `created_at` / `status` / 处置相关字段 / `is_deleted`
 /// 均不动；`version` 递增、`updated_at` / `device_id` 刷新（同 Writer 接缝的
-/// `update_row` 约定）。金额折算走 Amount 接缝，成功后调用 `notify`
+/// `update_row` 约定）。金额折算走 Amount 接缝交易日入口（继承生效溯源行留痕，
+/// 见 [`validate_and_convert`]），成功后调用 `notify`
 /// （生产路径发 `ledger:changed`）。物品不存在（或已软删除）→ [`AppError::NotFound`]。
 ///
 /// 关联购买交易语义：入参提供新交易 → 校验并自动带出（覆盖日期/成本/币种，
@@ -304,7 +365,8 @@ fn update_within_transaction(conn: &Connection, id: &str, input: &ItemInput) -> 
         .clone()
         .or(existing.purchase_transaction_id);
 
-    let (name, purchase_date, cost_native_cents) = validate_and_convert(conn, &effective)?;
+    let (name, purchase_date, cost_native_cents) =
+        validate_and_convert(conn, &effective, link.as_deref())?;
 
     // 已处置物品的购买日期不得晚于处置日，否则列表/详情读取时成本口径报错（不可达状态）。
     if let Some(disposal_date) = &existing.disposal_date {
