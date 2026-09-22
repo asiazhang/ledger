@@ -11,8 +11,10 @@
 //! 「近两年」窗口和东财额度无关（独立主机、独立限速）。
 //!
 //! 数据源返回非预期形状（空文件、非 XML、截断）时报 [`fx.source-malformed`]
-//! 码化错误，不静默产出空序列——空序列会让「该周无点」与「数据坏了」不可分辨。
-//! ECB 拉取按可重建缓存对待（ADR-0019 修订记录），不进同步日志。
+//! 码化错误，不静默产出空序列——空序列会让「该周无点」与「数据坏了」不可分辨；
+//! 源畸形的截断日志与降速信号经取数尾部契约（`source_tail`，spec #1675——
+//! 降速是 ADR-0121 决策 5 的补齐执行）统一补齐。ECB 拉取按可重建缓存对待
+//!（ADR-0019 修订记录），不进同步日志。
 
 use std::collections::BTreeMap;
 
@@ -24,6 +26,10 @@ use ledger_infra::error::{AppError, Result};
 
 use super::http::{Pacer, RetryConfig, request_text_from_hosts};
 use super::incremental::downsample_weekly_points;
+use super::source_tail;
+
+/// 单元标识（取数尾部契约的 `source` 日志字段）：源畸形 warn 按此分源 grep。
+const SOURCE: &str = "ecb-document";
 
 /// 生产主机（ECB 官方站，免费、无 key、有公开契约；ADR-0019 修订记录）。
 /// 入口按参数收主机，测试经本地 HTTP 服务注入假响应。
@@ -37,8 +43,9 @@ pub(super) const INCREMENTAL_90D_PATH: &str = "/stats/eurofxref/eurofxref-hist-9
 const FULL_HISTORY_LABEL: &str = "ECB 全量历史";
 const INCREMENTAL_90D_LABEL: &str = "ECB 90 天增量";
 
-/// 非预期形状的统一码化错误（空文件 / 非 XML / 截断 / 零可用日共用一码）。
-/// 具体是哪个文件、什么形状，由日志 ctx（`fetch_ecb:{label}`）与解析日志定位；
+/// 非预期形状的码化错误映射（空文件 / 非 XML / 截断 / 零可用日共用一码；
+/// 构造时机与形状归取数尾部契约，spec #1675）。具体是哪个文件、什么形状，
+/// 由日志 ctx（`fetch_ecb:{label}`）与契约统一 warn 的 error 字段定位；
 /// 两个入口的用户补救动作相同（稍后重试），不区分错误参数（ADR-0050：params
 /// 须 locale 无关，中文数据集名不进 params）。
 fn malformed_source() -> AppError {
@@ -96,8 +103,10 @@ pub(super) async fn fetch_ecb_90d_incremental(
 }
 
 /// 两个取数入口的共用通道：文本通道取回原文（纯文本通道的解析恒成功，复用既有
-/// 多主机切换 / 重试 / 限流冷却），Cube 报文的形状校验在解析层判定——报文坏了
-/// 重试也修不好，不进「疑似风控页」的长冷却重试循环。
+/// 多主机切换 / 重试 / 限流冷却），Cube 报文的形状校验在解析闭包判定——报文坏了
+/// 重试也修不好，不进「疑似风控页」的长冷却重试循环；解析失败经取数尾部契约
+///（[`source_tail::finish`]，spec #1675）统一截断 warn、补降速信号并映射码化
+/// 错误（裁决 4：本单元原是五单元中唯一漏补降速的，随契约接线补齐）。
 async fn fetch_ecb_document(
     client: &reqwest::Client,
     pacer: &mut Pacer,
@@ -117,7 +126,14 @@ async fn fetch_ecb_document(
         None,
     )
     .await?;
-    parse_ecb_rates(&text)
+    source_tail::finish(
+        SOURCE,
+        text.as_bytes(),
+        pacer,
+        source_tail::utf8,
+        parse_ecb_rates,
+        malformed_source,
+    )
 }
 
 /// 解析 ECB 参考汇率 XML（gesmes:Envelope → Cube → 按日 Cube@time → 每币种
@@ -126,10 +142,11 @@ async fn fetch_ecb_document(
 /// 形状宽容度：命名空间前缀不参与匹配（按本地名 Cube 认元素），报文里个别坏腿
 /// （rate 非数值 / ≤ 0）与坏日（time 缺失或不可解析）按「该腿 / 该日缺失」跳过
 /// ——单点损坏不中断整体。文件级非预期形状（空 / 非 XML / 截断 / 零可用日）报
-/// [`malformed_source`] 码化错误。
-pub(super) fn parse_ecb_rates(xml: &str) -> Result<Vec<EcbDayRates>> {
+/// `Err(detail)`（失败原因保留在错误详情，由取数尾部契约统一入日志、补降速并
+/// 映射 `fx.source-malformed`）。
+pub(super) fn parse_ecb_rates(xml: &str) -> std::result::Result<Vec<EcbDayRates>, String> {
     if xml.trim().is_empty() {
-        return Err(malformed_source());
+        return Err("空文件（无任何报文内容）".to_string());
     }
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
@@ -150,15 +167,17 @@ pub(super) fn parse_ecb_rates(xml: &str) -> Result<Vec<EcbDayRates>> {
             Ok(Event::Eof) => break,
             Ok(_) => {}
             Err(e) => {
-                tracing::warn!(error = %e, "ECB 参考汇率报文解析失败");
-                return Err(malformed_source());
+                return Err(format!("XML 解析失败：{e}"));
             }
         }
     }
     // 截断文档（元素未闭合，读到 EOF 仍在开标签内）按非预期形状报错；
     // 零可用日（如被拦截页恰好是合法 XML）同样不静默产出空序列。
     if depth != 0 || days.is_empty() {
-        return Err(malformed_source());
+        return Err(format!(
+            "报文不可信（未闭合元素深度 {depth}、可用日 {} 天）",
+            days.len()
+        ));
     }
     Ok(days
         .into_iter()
@@ -172,7 +191,7 @@ fn on_cube(
     e: &quick_xml::events::BytesStart<'_>,
     days: &mut BTreeMap<NaiveDate, BTreeMap<String, f64>>,
     current: &mut Option<NaiveDate>,
-) -> Result<()> {
+) -> std::result::Result<(), String> {
     if e.name().local_name().as_ref() != "Cube" {
         return Ok(());
     }
@@ -180,7 +199,7 @@ fn on_cube(
     let mut currency: Option<String> = None;
     let mut rate: Option<f64> = None;
     for attr in e.attributes() {
-        let attr = attr.map_err(|_| malformed_source())?;
+        let attr = attr.map_err(|_| "Cube 元素属性不可读".to_string())?;
         match attr.key.local_name().as_ref() {
             "time" => time_raw = Some(attr.value.trim().to_owned()),
             "currency" => currency = Some(attr.value.trim().to_owned()),
@@ -247,7 +266,6 @@ fn cross_rate(rates: &BTreeMap<String, f64>, base: &str, quote: &str) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ledger_infra::error::AppError;
 
     /// 真实报文形状钉值：gesmes 前缀 + 默认命名空间 + 自闭腿条目 + 日期降序（ECB 原样）。
     const SAMPLE_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -256,10 +274,10 @@ mod tests {
 <Cube time="2026-09-17"><Cube currency="USD" rate="1.1481"/><Cube currency="HKD" rate="9.0071"/><Cube currency="CNY" rate="7.7009"/></Cube>
 </Cube></gesmes:Envelope>"#;
 
-    fn assert_malformed(err: AppError) {
+    fn assert_malformed(detail: String) {
         assert!(
-            err.is_code("fx.source-malformed"),
-            "应报 fx.source-malformed 码化错误，实际 {err:?}"
+            !detail.is_empty(),
+            "文件级非预期形状应回 Err(detail)（失败原因入契约 warn 的 error 字段）"
         );
     }
 

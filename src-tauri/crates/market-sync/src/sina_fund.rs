@@ -46,6 +46,13 @@ use super::fund_nav::NavPoint;
 use super::http::{
     Pacer, RetryConfig, decode_gbk, request_bytes_from_hosts, request_text_from_hosts,
 };
+use super::source_tail;
+
+/// 单元标识（取数尾部契约的 `source` 日志字段）：批量最新净值面。
+const SOURCE_BATCH: &str = "sina-batch-nav";
+/// 单元标识（取数尾部契约的 `source` 日志字段）：单只全历史面——两个取数面
+/// 是两个源畸形健康面，分源 grep 需要各自的标识。
+const SOURCE_HISTORY: &str = "sina-nav-history";
 
 /// 批量最新净值面主机（新浪行情，免注册；必须带 Referer，调研 13.4 节实测）。
 /// 测试经本地 HTTP 服务注入假响应。
@@ -159,7 +166,8 @@ pub(super) fn fund_batch_from_rows(rows: Vec<SinaFundNavRow>) -> FundBatch {
     FundBatch { names, nav }
 }
 
-/// 解析批量最新净值面报文（GBK 已解码的文本）为按响应序的行序列。
+/// 解析批量最新净值面报文（GBK 已解码的文本）为按响应序的行序列，失败回
+/// `Err(detail)`（失败原因保留在错误详情，由取数尾部契约统一入日志并补降速）。
 ///
 /// 逐条 `var hq_str_f_<代码>="<字段串>";` 语句解析。查无此码的行由数据源以
 /// 空值语句明示，逐行跳过（可信缺口，语义同批一码未被面收录）；名称为空、
@@ -167,7 +175,9 @@ pub(super) fn fund_batch_from_rows(rows: Vec<SinaFundNavRow>) -> FundBatch {
 /// 是该只的缺口，由调用方按缺口走逐只通道，不是整批失败。整段无任何 `hq_str_f_`
 /// 语句（缺 Referer 的 403 Forbidden 文本 / 风控 HTML / 空体）才是不可信形状，
 /// 报错 fail-closed。
-pub(super) fn parse_sina_fund_nav_rows(body: &str) -> Result<Vec<SinaFundNavRow>> {
+pub(super) fn parse_sina_fund_nav_rows(
+    body: &str,
+) -> std::result::Result<Vec<SinaFundNavRow>, String> {
     let mut rows = Vec::new();
     let mut saw_statement = false;
     for (code, value) in fund_statements(body) {
@@ -177,11 +187,7 @@ pub(super) fn parse_sina_fund_nav_rows(body: &str) -> Result<Vec<SinaFundNavRow>
         }
     }
     if !saw_statement {
-        tracing::warn!(
-            head = %body_head(body),
-            "新浪场外基金批量净值响应不含任何基金净值语句（疑似被拦截）"
-        );
-        return Err(malformed_batch_source());
+        return Err("响应不含任何基金净值语句（疑似被拦截）".to_string());
     }
     Ok(rows)
 }
@@ -288,8 +294,9 @@ pub(super) async fn fetch_sina_fund_nav_rows(
 }
 
 /// 单批请求：请求行 `GET /list=f_<逗号串>` + Referer，GBK 解码后按
-/// [`parse_sina_fund_nav_rows`] 解析。解析失败按疑似拦截补降速信号（文本形状
-/// 判定在 HTTP 层看不见，先例：tencent 的批量面）。
+/// [`parse_sina_fund_nav_rows`] 解析。解码失败与形状判据失败同走取数尾部契约
+///（[`super::source_tail::finish`]：统一截断 warn → 补降速信号 → 码化映射，
+/// spec #1675）。
 async fn fetch_sina_fund_batch(
     client: &reqwest::Client,
     pacer: &mut Pacer,
@@ -312,28 +319,26 @@ async fn fetch_sina_fund_batch(
         Some(SINA_FUND_BATCH_REFERER),
     )
     .await?;
-    // GBK 解码与报文形状两道判据都归本层：任一失败都补降速信号
-    //（ADR-0121 决策 5，先例：tencent 的批量面）。解码错误统一归本单元的
-    // 批量源不可信码化错误（解码原语归 HTTP 层单点，单元上下文在此补齐）。
-    decode_gbk(&bytes)
-        .map_err(|error| {
-            tracing::warn!(%error, "新浪场外基金批量净值响应 GBK 解码失败（不可信形状）");
-            malformed_batch_source()
-        })
-        .and_then(|body| parse_sina_fund_nav_rows(&body))
-        .map_err(|error| {
-            tracing::warn!(%error, "新浪场外基金批量净值响应不可信");
-            pacer.record_throttled();
-            error
-        })
+    // GBK 解码与报文形状两道判据都归契约（spec #1675）：单元只出解码闭包、解析
+    // 闭包与错误映射；降速信号由契约结构性补上（ADR-0121 决策 5），截断片段取
+    // 解码后的响应文本（解码失败时才有损转换兕底）。
+    source_tail::finish(
+        SOURCE_BATCH,
+        &bytes,
+        pacer,
+        |response| decode_gbk(response).map_err(|error| error.to_string()),
+        parse_sina_fund_nav_rows,
+        malformed_batch_source,
+    )
 }
 
-/// 非预期批量面形状的统一码化错误（被拦截 / GBK 解码失败 / 无语句共用一码，
-/// #1612 对齐披露面形状）：fail-closed 退出取数与解析，不回退为空序列。具体
-/// 是哪种形状由解析日志定位；不区分错误参数（ADR-0050：params 须 locale 无关，
-/// 先例：csrc 披露源同款形状）。多数形状的用户补救动作相同（稍后重试）；与
-/// csrc 的 `sync.disclosure-source-malformed` 语义可区分——批量面与披露面是
-/// 两个数据源的独立健康信号，经基金按代码查询端点（#1568）直达调用方。
+/// 非预期批量面形状的统一码化错误映射（被拦截 / GBK 解码失败 / 无语句共用一码，
+/// #1612 对齐披露面形状；构造时机与形状归取数尾部契约，spec #1675）：fail-closed
+/// 退出取数与解析，不回退为空序列。具体是哪种形状由契约统一 warn 的 error 字段
+/// 定位；不区分错误参数（ADR-0050：params 须 locale 无关）。多数形状的用户补救
+/// 动作相同（稍后重试）；与 csrc 的 `sync.disclosure-source-malformed` 语义可区分
+///——批量面与披露面是两个数据源的独立健康信号，经基金按代码查询端点（#1568）
+/// 直达调用方。
 fn malformed_batch_source() -> AppError {
     AppError::coded(
         "sync.fund-batch-source-malformed",
@@ -391,35 +396,41 @@ struct NavHistoryStatus {
 }
 
 /// 解析单只全历史面报文为净值序列（wire 序：净值日期降序，先新后旧；消费端
-/// 采样自带按日排序，序无关）。响应不可信（缺 `result` / 缺 `data` /
+/// 采样自带按日排序，序无关），失败回 `Err(detail)`（失败原因保留在错误详情，
+/// 由取数尾部契约统一入日志并补降速）。响应不可信（缺 `result` / 缺 `data` /
 /// 缺 `data.data` 数组 / `status.code` 非 0 / 声明总数未取全 / 有行但全部
 /// 未通过解析纪律）报错 fail-closed；`data.data` 空数组是可信空结果（查无此码 /
 /// 货基 / 窗口外，见模块文档的空序列语义）。
 ///
 /// 行纪律：日期取 `fbrq` 的日期部分并按 ISO 校验、单位净值（`jjjz`）为正才
 /// 产出（无效行静默过滤，与日线「无效样本不中断」同姿态）。
-pub(super) fn parse_fund_nav_history(body: &str) -> Result<Vec<NavPoint>> {
-    let resp: NavHistoryResponse = serde_json::from_str(body).map_err(|error| {
-        tracing::warn!(error = %error, head = %body_head(body), "新浪基金历史净值响应不是可信 JSON 报文");
-        unexpected_history_response()
-    })?;
+pub(super) fn parse_fund_nav_history(body: &str) -> std::result::Result<Vec<NavPoint>, String> {
+    let resp: NavHistoryResponse =
+        serde_json::from_str(body).map_err(|error| format!("不是可信 JSON 报文：{error}"))?;
     parse_fund_nav_history_response(resp)
 }
 
 /// 已反序列化响应的结构纪律（与 [`parse_fund_nav_history`] 同判，由它取出
 /// 报文里的响应对象后委托本函数收口）。
-fn parse_fund_nav_history_response(resp: NavHistoryResponse) -> Result<Vec<NavPoint>> {
-    let result = resp.result.ok_or_else(unexpected_history_response)?;
+fn parse_fund_nav_history_response(
+    resp: NavHistoryResponse,
+) -> std::result::Result<Vec<NavPoint>, String> {
+    let result = resp
+        .result
+        .ok_or_else(|| "缺 result（非 JSON 或被拦截）".to_string())?;
     if result
         .status
         .and_then(|status| status.code)
         .is_some_and(|code| code != "0")
     {
-        tracing::warn!("新浪基金历史净值响应自报失败（status.code 非 0）");
-        return Err(unexpected_history_response());
+        return Err("自报失败（status.code 非 0）".to_string());
     }
-    let data = result.data.ok_or_else(unexpected_history_response)?;
-    let rows = data.rows.ok_or_else(unexpected_history_response)?;
+    let data = result
+        .data
+        .ok_or_else(|| "缺 data（不可信形状）".to_string())?;
+    let rows = data
+        .rows
+        .ok_or_else(|| "缺 data.data 数组（不可信形状）".to_string())?;
     let points: Vec<NavPoint> = rows
         .iter()
         .filter_map(|row| {
@@ -436,11 +447,10 @@ fn parse_fund_nav_history_response(resp: NavHistoryResponse) -> Result<Vec<NavPo
         })
         .collect();
     if points.is_empty() && !rows.is_empty() {
-        tracing::warn!(
-            raw = rows.len(),
-            "新浪基金历史净值响应有行但全部未通过解析纪律（不可信形状）"
-        );
-        return Err(unexpected_history_response());
+        return Err(format!(
+            "有 {} 行但全部未通过解析纪律（不可信形状）",
+            rows.len()
+        ));
     }
     // 完整性核对：单请求按 FUND_NAV_HISTORY_NUM 取全，服务端声明的原始行数
     // 超出实际收到的行数即窗口被截断（源侧上限漂移 / 翻页形态变化），fail-
@@ -453,12 +463,10 @@ fn parse_fund_nav_history_response(resp: NavHistoryResponse) -> Result<Vec<NavPo
         .and_then(|t| t.trim().parse::<usize>().ok())
         && rows.len() < total
     {
-        tracing::warn!(
-            total,
-            fetched = rows.len(),
-            "新浪基金历史净值声明总数未取全，窗口不完整"
-        );
-        return Err(unexpected_history_response());
+        return Err(format!(
+            "声明总数 {total} 未取全（实收 {} 行），窗口不完整",
+            rows.len()
+        ));
     }
     Ok(points)
 }
@@ -498,20 +506,22 @@ pub(super) async fn fetch_fund_nav_history(
         None,
     )
     .await?;
-    parse_fund_nav_history(&body).inspect_err(|_| {
-        // 文本通道的网络/解码失败已在重试层补降速信号；报文形状判据在本层，
-        // 失败同样补记（文本可信度由解析层判定，先例：csrc 的区间查询）。
-        pacer.record_throttled()
-    })
+    // 文本通道的网络/解码失败已在重试层处置；报文形状判据在本层，失败经取数
+    // 尾部契约统一 warn 并补降速信号（spec #1675）。消费面在后台补全与查询创建、
+    // 不直达用户，映射留 AppError::Parse（内部错误不转专码，ADR-0050）。
+    source_tail::finish(
+        SOURCE_HISTORY,
+        body.as_bytes(),
+        pacer,
+        source_tail::utf8,
+        parse_fund_nav_history,
+        unexpected_history_response,
+    )
 }
 
-/// 非预期全历史形状的统一错误（非 JSON / 缺结构 / 自报失败 / 截断）：退出解析
-/// 不产出半截序列。文案内部化（消费面是历史补全的回退与查询创建的失败分流）。
+/// 非预期全历史形状的错误映射（非 JSON / 缺结构 / 自报失败 / 截断）：退出解析
+/// 不产出半截序列。文案内部化（消费面是历史补全的回退与查询创建的失败分流），
+/// 失败原因留契约 warn 的 error 字段。
 fn unexpected_history_response() -> AppError {
     AppError::Parse("新浪基金历史净值响应不可解析".into())
-}
-
-/// 日志用的响应头片段（截断，避免日志吞下整页 HTML）。
-fn body_head(body: &str) -> String {
-    body.chars().take(120).collect()
 }

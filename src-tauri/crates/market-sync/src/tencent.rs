@@ -29,6 +29,7 @@ use ledger_investment::{InstrumentType, Market, Quote, StockRoute};
 
 use super::channels::{QuoteItem, QuoteQuery};
 use super::http::{Pacer, RetryConfig, request_bytes_from_hosts};
+use super::source_tail;
 
 /// 生成主机：腾讯财经公开报价端点（免费、无需 key 与 Referer；ADR-0130 决策 2）。
 /// 入口按参数收主机，测试经本地 HTTP 服务注入假响应。
@@ -276,7 +277,11 @@ fn quote_layout(key: &str) -> Option<(ResponseKeyMarket, QuoteLayout)> {
     Some((market, layout))
 }
 
-/// 解析腾讯批量报价报文（GBK 已解码的文本）为按响应序的报价序列。
+/// 单元标识（取数尾部契约的 `source` 日志字段）：源畸形 warn 按此分源 grep。
+const SOURCE: &str = "tencent-batch-quote";
+
+/// 解析腾讯批量报价报文（GBK 已解码的文本）为按响应序的报价序列，失败回
+/// `Err(detail)`（失败原因保留在错误详情，由取数尾部契约统一入日志）。
 ///
 /// 逐条 `v_<键>="<字段串>";` 语句解析；`v_pv_none_match`（数据源明示「批量内全部
 /// 代码无效」）忽略。fail-closed：整段无任何报价语句（风控 HTML 页 / 空体）、未知
@@ -286,7 +291,7 @@ fn quote_layout(key: &str) -> Option<(ResponseKeyMarket, QuoteLayout)> {
 /// 字段数偏少是**整批**报错而非丢单行：布局漂移会让全部行同形缩短，丢单行会把
 /// 「数据源改版」静默伪装成「这只今天缺行情」；空名称则是字段自身的合法缺值
 ///（与既有行情解析丢弃空名行同口径），两者性质不同。
-pub(super) fn parse_tencent_quotes(body: &str) -> Result<Vec<TencentQuote>> {
+pub(super) fn parse_tencent_quotes(body: &str) -> std::result::Result<Vec<TencentQuote>, String> {
     let mut quotes = Vec::new();
     let mut saw_statement = false;
     for (key, value) in quote_statements(body) {
@@ -295,36 +300,34 @@ pub(super) fn parse_tencent_quotes(body: &str) -> Result<Vec<TencentQuote>> {
             continue;
         }
         let Some((key_market, layout)) = quote_layout(key) else {
-            return Err(unexpected_response(format!("响应含非预期的报价键 {key}")));
+            return Err(format!("响应含非预期的报价键 {key}"));
         };
         let fields: Vec<&str> = value.split('~').collect();
         if fields.len() < layout.min_fields {
-            return Err(unexpected_response(format!(
+            return Err(format!(
                 "{} 报价字段数 {} 少于布局下界 {}（疑似布局漂移或被截断）",
                 key_market.as_str(),
                 fields.len(),
                 layout.min_fields
-            )));
+            ));
         }
         if let Some(quote) = build_quote(key_market, &fields, &layout)? {
             quotes.push(quote);
         }
     }
     if !saw_statement {
-        return Err(unexpected_response(
-            "响应不含任何报价语句（疑似被风控拦截）",
-        ));
+        return Err("响应不含任何报价语句（疑似被风控拦截）".to_string());
     }
     Ok(quotes)
 }
 
 /// 单条报价语句 → [`TencentQuote`]。空名称/空代码行返回 `Ok(None)`（无效行丢弃）；
-/// 美股缺交易所后缀或后缀未收录返回 `Err`（fail-closed，不猜市场）。
+/// 美股缺交易所后缀或后缀未收录返回 `Err(detail)`（fail-closed，不猜市场）。
 fn build_quote(
     key_market: ResponseKeyMarket,
     fields: &[&str],
     layout: &QuoteLayout,
-) -> Result<Option<TencentQuote>> {
+) -> std::result::Result<Option<TencentQuote>, String> {
     let name = field(fields, 1).trim();
     let echo_code = field(fields, 2).trim();
     if name.is_empty() || echo_code.is_empty() {
@@ -358,23 +361,21 @@ fn field<'a>(fields: &[&'a str], index: usize) -> &'a str {
 }
 
 /// 美股回显代码（`AAPL.OQ`）→（裸 ticker，交易所后缀）。缺后缀即非预期形态。
-fn split_us_code(echo_code: &str) -> Result<(&str, &str)> {
+fn split_us_code(echo_code: &str) -> std::result::Result<(&str, &str), String> {
     echo_code
         .rsplit_once('.')
-        .ok_or_else(|| unexpected_response(format!("美股报价缺少交易所后缀：{echo_code}")))
+        .ok_or_else(|| format!("美股报价缺少交易所后缀：{echo_code}"))
 }
 
 /// 交易所后缀 → 市场闭集三值（ADR-0081 决策 2）：`.OQ` 纳斯达克 / `.N` 纽交所 /
 /// `.AM` 美交所。这是「数据源自报词汇 → 市场闭集」的解析点（issue #1673，产出
 /// 类型化市场）。未收录后缀 fail-closed——静默丢弃会少一只，猜值会错挂市场。
-fn us_market_from_suffix(suffix: &str) -> Result<Market> {
+fn us_market_from_suffix(suffix: &str) -> std::result::Result<Market, String> {
     match suffix {
         "OQ" => Ok(Market::Nasdaq),
         "N" => Ok(Market::Nyse),
         "AM" => Ok(Market::Amex),
-        _ => Err(unexpected_response(format!(
-            "美股报价含未知交易所后缀 .{suffix}"
-        ))),
+        _ => Err(format!("美股报价含未知交易所后缀 .{suffix}")),
     }
 }
 
@@ -421,9 +422,9 @@ pub(super) async fn fetch_tencent_quotes(
 }
 
 /// 单批请求：请求行 `GET /q=<代码逗号串>`（无 Referer），GBK 解码后按
-/// [`parse_tencent_quotes`] 解析。解析失败按疑似风控页补降速信号（文本形状判定在
-/// HTTP 层看不见，先例：`bulk` 的批量面）。按代码查询的单只取数（#1567）
-/// 复用本请求原语：单只 = 一批一条。
+/// [`parse_tencent_quotes`] 解析。解码失败与形状判据失败同走取数尾部契约
+///（[`super::source_tail::finish`]：统一截断 warn → 补降速信号 → 专码映射，
+/// spec #1675）。按代码查询的单只取数（#1567）复用本请求原语：单只 = 一批一条。
 pub(super) async fn fetch_tencent_batch(
     client: &reqwest::Client,
     pacer: &mut Pacer,
@@ -443,21 +444,26 @@ pub(super) async fn fetch_tencent_batch(
         None,
     )
     .await?;
-    // GBK 解码与报文形状两道判据都归本层：任一失败都补降速信号
-    //（ADR-0121 决策 5，先例：bulk 的批量面）。解码错误统一包装为本单元
-    // 的非预期响应错误（解码原语归 HTTP 层单点，单元上下文在此补齐）。
-    decode_gbk(&bytes)
-        .map_err(unexpected_response)
-        .and_then(|body| parse_tencent_quotes(&body))
-        .map_err(|error| {
-            tracing::warn!(%error, "腾讯行情报价响应不可信");
-            pacer.record_throttled();
-            error
-        })
+    // GBK 解码与报文形状两道判据都归契约（spec #1675）：单元只出解码闭包、解析
+    // 闭包与错误映射；降速信号由契约结构性补上（ADR-0121 决策 5），截断片段取
+    // 解码后的响应文本（解码失败时才有损转换兕底）。
+    source_tail::finish(
+        SOURCE,
+        &bytes,
+        pacer,
+        |response| decode_gbk(response).map_err(|error| error.to_string()),
+        parse_tencent_quotes,
+        quote_source_malformed,
+    )
 }
 
-/// 非预期形状的统一错误（被拦截 / 截断 / 布局漂移）：退出取数与解析，不回退为空
-/// 序列。文案内部化（用户可见面是编排的「已降级、本次较慢」），细节留日志。
-fn unexpected_response(detail: impl std::fmt::Display) -> AppError {
-    AppError::Parse(format!("腾讯行情报价响应不可解析：{detail}"))
+/// 源畸形的码化错误映射（spec #1675 裁决 3：用户可见的源畸形一律专码）：
+/// 按代码查询 / 现价刷新的失败直达调用方，报本单元专码、入同族文案；解析
+/// detail（「响应不可解析：{detail}」的 detail）退出用户面、留日志（ADR-0050
+/// 决策 1：wire 只增字段）。无参形状对齐既有专码族——params 须 locale 无关。
+fn quote_source_malformed() -> AppError {
+    AppError::coded(
+        "sync.quote-source-malformed",
+        "腾讯行情报价数据源返回了无法解析的内容，请稍后重试同步",
+    )
 }

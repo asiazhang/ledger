@@ -64,6 +64,16 @@ fn assert_malformed(err: ledger_infra::error::AppError, label: &str) {
     );
 }
 
+/// 解析层 fail-closed 断言：形状不可信必须回 Err 且携带失败原因（detail 由取数
+/// 尾部契约入统一 warn 的 error 字段）；码化与降速归 fetch 层契约，语料断言见
+/// `source_tail`（spec #1675）。
+fn assert_parse_detail(detail: String, label: &str) {
+    assert!(
+        !detail.is_empty(),
+        "{label} 应 fail-closed 并携带错误详情（解析器改回 Err(detail)）"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 解析层：真实报文 fixture 钉值
 // ---------------------------------------------------------------------------
@@ -191,7 +201,7 @@ fn parse_rejects_untrusted_shapes_fail_closed() {
         ("aaData 非数组", r#"{"iTotalRecords":1,"aaData":{}}"#),
     ];
     for (label, body) in untrusted {
-        assert_malformed(parse_disclosure_page(body, "110022").unwrap_err(), label);
+        assert_parse_detail(parse_disclosure_page(body, "110022").unwrap_err(), label);
     }
 }
 
@@ -241,14 +251,14 @@ fn parse_all_rows_filtered_by_discipline_fails_closed() {
     let code_drift = r#"{"iTotalRecords":1,"aaData":[
         {"code":"999999","shortName":"易方达消费行业股票","shareNetValue":"2.811","totalNetValue":"","valuationDate":"2026-09-18","gainPer":"","yearSevenDayYieldRatePercent":""}
     ]}"#;
-    assert_malformed(
+    assert_parse_detail(
         parse_disclosure_page(code_drift, "110022").unwrap_err(),
         "同码防守整页滤空",
     );
     let date_drift = r#"{"iTotalRecords":1,"aaData":[
         {"code":"110022","shortName":"易方达消费行业股票","shareNetValue":"2.811","totalNetValue":"","valuationDate":"","gainPer":"","yearSevenDayYieldRatePercent":""}
     ]}"#;
-    assert_malformed(
+    assert_parse_detail(
         parse_disclosure_page(date_drift, "110022").unwrap_err(),
         "净值日期整体缺失",
     );

@@ -21,6 +21,9 @@
 //! - `sina_fund`：新浪场外基金取数（issue #1564，fixture 驱动）——批量面普通行 /
 //!   货基错位行 / 已终止基金行的形态判别与 fail-closed，全历史面末点 / 可信空 /
 //!   非可信形状，请求形态与批量承载量；
+//! - `source_tail`：取数尾部契约的跨单元畸形语料（spec #1675）——五个取数单元
+//!   各注入一份畸形响应，共享同一断言函数钉三件套（降速被记录、单条源畸形 warn
+//!   的文案与 source/error/body 三字段、期望的码化错误），删除即变红；
 //! - `stock_quote`：股票单点行情报文解析、类型特征探测与命中挑选（issue #693，fixture 驱动）；
 //! - `tencent`：腾讯行情批量报价取数（issue #1558，fixture 驱动）——三套字段布局的类型码 / 币种 /
 //!   交易所后缀、请求形态与批量承载量、被拦截响应 fail-closed。
@@ -45,6 +48,7 @@ mod history_backfill;
 mod http_client;
 mod instrument_info_sync;
 mod sina_fund;
+mod source_tail;
 mod stock_quote;
 mod tencent;
 
@@ -269,6 +273,7 @@ fn production_source_files() -> Vec<(&'static str, String)> {
         ("progress.rs", include_str!("progress.rs").to_string()),
         ("session.rs", include_str!("session.rs").to_string()),
         ("sina_fund.rs", include_str!("sina_fund.rs").to_string()),
+        ("source_tail.rs", include_str!("source_tail.rs").to_string()),
         ("stock.rs", include_str!("stock.rs").to_string()),
         ("tencent.rs", include_str!("tencent.rs").to_string()),
         (
