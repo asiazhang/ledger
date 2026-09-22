@@ -12,7 +12,7 @@
 //! （迁移种子行的审计时间列不参与比对，tests 内断言）。
 
 use std::collections::{BTreeMap, VecDeque};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::{Datelike, Duration, Months, NaiveDate};
 use rusqlite::Connection;
@@ -21,11 +21,12 @@ use ledger_categories as categories;
 use ledger_infra::db::{init_db, open_connection};
 use ledger_transaction::pinyin_initials;
 
-use super::GenerateCli;
+use super::bench_common::{FlagSpec, Parsed, parse_flags, parse_nonneg_int};
 use super::books;
 use super::investments::{self, MarketData, Portfolio, TradeKind};
 use super::plans;
 use super::rng::{Rng, time_ordered_id};
+use super::{DEFAULT_END_DATE, DEFAULT_SEED, DEFAULT_TRANSACTIONS, default_out};
 
 // ---------------------------------------------------------------------------
 // 画像常量（约数以固定值落地；变更须同步 bin 头注释与 tests）
@@ -148,6 +149,75 @@ pub(crate) struct GenCounts {
     pub scheduled_occurrences: usize,
     /// 已完成期次生成的真实交易（从 --transactions 预算中预留）。
     pub scheduled_occurrence_transactions: usize,
+}
+
+/// 解析后的 generate 子命令参数（默认值见各 const；issue #1696 自 main.rs
+/// 归位本子命令文件——子命令自持 Cli + flag 表 + run 入口）。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GenerateCli {
+    pub seed: u64,
+    pub transactions: u64,
+    pub end_date: String,
+    pub out: PathBuf,
+}
+
+impl Default for GenerateCli {
+    fn default() -> Self {
+        GenerateCli {
+            seed: DEFAULT_SEED,
+            transactions: DEFAULT_TRANSACTIONS,
+            end_date: DEFAULT_END_DATE.to_string(),
+            out: default_out(),
+        }
+    }
+}
+
+/// generate 的 flag 表（flag 显示形态 + 帮助文案 + apply，issue #1679 表驱动
+/// 单真源）：新增 flag 只登记本表一处，解析与 `--help` 都从表来。
+pub(crate) const FLAGS: &[FlagSpec<GenerateCli>] = &[
+    FlagSpec {
+        flag: "--seed <N>",
+        help: "随机种子（默认 42，同种子必出同库）",
+        apply: |cli, flag, v| {
+            cli.seed = parse_nonneg_int(flag, v)?;
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--transactions <N>",
+        help: "生成笔数（默认 500000）",
+        apply: |cli, flag, v| {
+            cli.transactions = parse_nonneg_int(flag, v)?;
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--end-date <YYYY-MM-DD>",
+        help: "数据窗口锚定结束日期（默认 2025-12-31，不锚定「今天」）",
+        apply: |cli, _flag, v| {
+            cli.end_date = v.to_string();
+            Ok(())
+        },
+    },
+    FlagSpec {
+        flag: "--out <PATH>",
+        help: "输出库文件路径（默认 src-tauri/target/ledger-perf/ledger-perf.db；已存在会先删除再重建）",
+        apply: |cli, _flag, v| {
+            cli.out = PathBuf::from(v);
+            Ok(())
+        },
+    },
+];
+
+/// 手写参数解析（零新增依赖；通用循环消费 [`FLAGS`]，收口在
+/// [`parse_flags`]，issue #1696）。返回 Err(消息) 表示用法错误。
+pub(crate) fn parse_generate_args(args: &[String]) -> Result<Parsed<GenerateCli>, String> {
+    parse_flags(args, FLAGS)
+}
+
+/// run 入口（dispatch 表登记项）：解析 + 运行 → 共享结局形态。
+pub(crate) fn execute(args: &[String]) -> super::bench_common::Outcome {
+    super::bench_common::execute_cli(args, parse_generate_args, run)
 }
 
 /// 入口：解析日期、准备输出文件、经迁移建库、生成、打印摘要。

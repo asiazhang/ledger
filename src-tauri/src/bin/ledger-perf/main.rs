@@ -15,12 +15,10 @@
     )
 )]
 
-//! # 工具用法（本注释即用法真源）
+//! # 工具用法
 //!
-//! ```text
-//! cargo run --bin ledger-perf -- generate [--seed N] [--transactions N]
-//!                                        [--end-date YYYY-MM-DD] [--out PATH]
-//! ```
+//! 命令行用法（子命令与 flag 全集）以 `--help` 的渲染输出为唯一真源——帮助
+//! 从各子命令 flag 表渲染（issue #1696），本注释不复述用法，只叙述语义。
 //!
 //! ## generate：生成性能形似真实的多域画像大库（issue #459/#460）
 //!
@@ -71,11 +69,8 @@
 //!
 //! 对 generate 产出的库跑 16 项查询基准并输出 min/avg/p95 报告：
 //!
-//! ```text
-//! cargo run --bin ledger-perf -- bench [--db PATH] [--warmup N]
-//!                                     [--iterations N] [--search TERM]
-//!                                     [--search-pinyin TERM] [--max-p95-ms MS]
-//! ```
+//! 用法以 `cargo run --bin ledger-perf -- bench --help` 的渲染输出为准
+//! （flag 表单一真源，issue #1696）。
 //!
 //! - 基准集：列表首页分页；深分页（OFFSET 逼近全量）；账户+日期范围筛选
 //!   列表；全账户实时余额；月度汇总（5 年 60 个月）；分类占比；
@@ -102,11 +97,8 @@
 //! 写路径每行整体重算的 O(N²) 假设（#519 grilling 裁决：粒度合并是否立项
 //! 由数裁决）：
 //!
-//! ```text
-//! cargo run --bin ledger-perf -- bench-import [--db PATH] [--rows <CSV>]
-//!                                             [--dedup <BOOL>] [--warmup N]
-//!                                             [--iterations N]
-//! ```
+//! 用法以 `cargo run --bin ledger-perf -- bench-import --help` 的渲染输出为
+//! 准（flag 表单一真源，issue #1696）。
 //!
 //! - 量测矩阵：行数档（默认 50,100,200，按月导入真实量级：轻量/典型/上限月）
 //!   × 两种分布——「同账户集中」全部落
@@ -131,10 +123,8 @@
 //! 对 generate 产出的库量测「apply_ops 循环逐条合并外来 op 流」的本地写耗时
 //! （剥网络：S3 通道传输不属回归面，ADR-0068 网络边界豁免）：
 //!
-//! ```text
-//! cargo run --bin ledger-perf -- bench-sync [--db PATH] [--ops <CSV>]
-//!                                           [--warmup N] [--iterations N]
-//! ```
+//! 用法以 `cargo run --bin ledger-perf -- bench-sync --help` 的渲染输出为准
+//! （flag 表单一真源，issue #1696）。
 //!
 //! - 量测矩阵：op 数量档（默认 100,500,2000，按同步轮真实量级：日常轮/
 //!   离线一周积压/离线一月上限形态）× 两种分布（同账户集中/多账户均匀）
@@ -154,10 +144,8 @@
 //! 对 generate 产出的库量测行情同步与价格历史补全的本地批量 upsert 耗时
 //! （剥网络：行情源抓取不属回归面，ADR-0068 网络边界豁免）：
 //!
-//! ```text
-//! cargo run --bin ledger-perf -- bench-market [--db PATH] [--points <CSV>]
-//!                                             [--warmup N] [--iterations N]
-//! ```
+//! 用法以 `cargo run --bin ledger-perf -- bench-market --help` 的渲染输出为
+//! 准（flag 表单一真源，issue #1696）。
 //!
 //! - 量测矩阵：周采样点数档（默认 104,1040,5200，按同步落库真实量级：单只
 //!   近两年整根首刷 / 部分批量重刷 / 全库价格线整根重刷）× 两种落位分布
@@ -191,6 +179,7 @@ mod snapshot;
 #[cfg(test)]
 mod tests;
 
+use bench_common::{FlagHelp, Outcome, flag_helps};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -207,136 +196,78 @@ pub(crate) fn default_out() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/ledger-perf/ledger-perf.db")
 }
 
-/// 顶部用法说明（与模块头注释同源，`--help` 输出）。
-const USAGE: &str = "\
-ledger-perf —— Ledger 性能基准工具
-
-USAGE:
-    ledger-perf <SUBCOMMAND> [OPTIONS]
-
-SUBCOMMANDS:
-    generate       生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite 库
-                   + 2 本附属账本小库，issue #1630）
-    bench          查询基准——16 项查询 × min/avg/p95 报告（issue #461）
-    bench-import   批量导入写基准——固定行数 × 两种分布 × 总耗时/单行均摊 p95
-                   （issue #532，纯观测无门禁）
-    bench-sync     同步重放写基准——op 流重放（ingest_ops/apply_ops 权威入口）
-                   × 两种分布 × 总耗时/单 op 均摊 p95（issue #1628，剥网络，
-                   纯观测无门禁）
-    bench-market   行情/价格历史批量 upsert 写基准——点数档 × 两种分布 ×
-                   总耗时/单点均摊 p95（issue #1629，剥网络，纯观测无门禁）
-
-bench OPTIONS:
-    --db <PATH>            目标库文件（默认同 generate 输出路径，须已生成）
-    --warmup <N>           每项基准预热次数（默认 3，不计入统计）
-    --iterations <N>       每项基准计时迭代次数（默认 20，n=20 才成真 p95 分位数）
-    --search <TERM>        中文子串搜索基准的关键字（默认 咖啡）
-    --search-pinyin <TERM> 拼音子序列搜索基准的关键字（默认 kf）
-    --max-p95-ms <MS>      默认门禁阈值（毫秒）：全部基准 p95 ≤ 各自阈值才退出
-                           0，任何一项超标即失败（CI 用；缺省不判定；分项例外
-                           机制与现行清单见 ADR-0068）
-    -h, --help             打印本说明
-
-bench-import OPTIONS:
-    --db <PATH>            源库文件（默认同 generate 输出路径，须已生成；本命令不
-                           修改源库——内部建 pristine 快照，每次迭代从快照恢复）
-    --rows <CSV>           每档导入行数（默认 50,100,200；逗号分隔、保持次序；
-                           单档上限 1000000，issue #1650）
-    --dedup <BOOL>         批量导入去重开关（默认 true，HTTP 批量导入生产默认）
-    --warmup <N>           每档预热次数（默认 1，不计入统计）
-    --iterations <N>       每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集
-                           规模固定）
-    -h, --help             打印本说明
-
-bench-sync OPTIONS:
-    --db <PATH>            源库文件（默认同 generate 输出路径，须已生成；本命令不
-                           修改源库——内部建 pristine 快照，每次迭代从快照恢复）
-    --ops <CSV>            每档重放 op 条数（默认 100,500,2000；逗号分隔、保持次序；
-                           单档上限 1000000，issue #1650）
-    --warmup <N>           每档预热次数（默认 1，不计入统计）
-    --iterations <N>       每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集
-                           规模固定）
-    -h, --help             打印本说明
-
-bench-market OPTIONS:
-    --db <PATH>            源库文件（默认同 generate 输出路径，须已生成；本命令不
-                           修改源库——内部建 pristine 快照，每次迭代从快照恢复）
-    --points <CSV>         每档周采样点数（默认 104,1040,5200；逗号分隔、保持次序；
-                           单档上限 1000000，采样日运算防 chrono 日期越界，issue #1650）
-    --warmup <N>           每档预热次数（默认 1，不计入统计）
-    --iterations <N>       每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集
-                           规模固定）
-    -h, --help             打印本说明
-
-generate OPTIONS:
-    --seed <N>             随机种子（默认 42，同种子必出同库）
-    --transactions <N>     生成笔数（默认 500000）
-    --end-date <YYYY-MM-DD> 数据窗口锚定结束日期（默认 2025-12-31，不锚定「今天」）
-    --out <PATH>           输出库文件路径（默认 src-tauri/target/ledger-perf/ledger-perf.db；
-                           已存在会先删除再重建）
-    -h, --help             打印本说明";
-
-/// 解析后的 generate 子命令参数（默认值见各 const）。
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct GenerateCli {
-    pub seed: u64,
-    pub transactions: u64,
-    pub end_date: String,
-    pub out: PathBuf,
+/// 子命令登记（dispatch 表驱动，issue #1696）：子命令名、简介、flag 表投影
+/// 与 run 入口，新增子命令只登记本表一处。SUBCOMMANDS 列举沿表序；OPTIONS
+/// 节次序与之现状不同（generate 垫底），以 [`Self::options_order`] 显式登记
+/// 在同一条目内——两序都随表维护，不另立次序真源。
+struct Subcommand {
+    name: &'static str,
+    summary: &'static str,
+    /// flag 表的帮助投影（渲染消费；解析走各子命令自己的表）。
+    flags: fn() -> Vec<FlagHelp>,
+    /// 本子命令 OPTIONS 节在 `--help` 全文中的次序。
+    options_order: u8,
+    /// run 入口（解析 + 运行 → 共享结局形态）。
+    execute: fn(&[String]) -> Outcome,
 }
 
-impl Default for GenerateCli {
-    fn default() -> Self {
-        GenerateCli {
-            seed: DEFAULT_SEED,
-            transactions: DEFAULT_TRANSACTIONS,
-            end_date: DEFAULT_END_DATE.to_string(),
-            out: default_out(),
-        }
-    }
-}
+const SUBCOMMANDS: &[Subcommand] = &[
+    Subcommand {
+        name: "generate",
+        summary: "生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite 库 + 2 本附属账本小库，issue #1630）",
+        flags: || flag_helps(generate::FLAGS),
+        options_order: 4,
+        execute: generate::execute,
+    },
+    Subcommand {
+        name: "bench",
+        summary: "查询基准——16 项查询 × min/avg/p95 报告（issue #461）",
+        flags: || flag_helps(bench::FLAGS),
+        options_order: 0,
+        execute: bench::execute,
+    },
+    Subcommand {
+        name: "bench-import",
+        summary: "批量导入写基准——固定行数 × 两种分布 × 总耗时/单行均摊 p95（issue #532，纯观测无门禁）",
+        flags: || flag_helps(bench_import::FLAGS),
+        options_order: 1,
+        execute: bench_import::execute,
+    },
+    Subcommand {
+        name: "bench-sync",
+        summary: "同步重放写基准——op 流重放（ingest_ops/apply_ops 权威入口）× 两种分布 × 总耗时/单 op 均摊 p95（issue #1628，剥网络，纯观测无门禁）",
+        flags: || flag_helps(bench_sync::FLAGS),
+        options_order: 2,
+        execute: bench_sync::execute,
+    },
+    Subcommand {
+        name: "bench-market",
+        summary: "行情/价格历史批量 upsert 写基准——点数档 × 两种分布 × 总耗时/单点均摊 p95（issue #1629，剥网络，纯观测无门禁）",
+        flags: || flag_helps(bench_market::FLAGS),
+        options_order: 3,
+        execute: bench_market::execute,
+    },
+];
 
-/// 参数解析结果：运行参数或帮助请求。
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ParsedArgs {
-    Run(GenerateCli),
-    Help,
-}
-
-/// 手写参数解析（零新增依赖；循环机制收口在 [`bench_common::CliArgs`]，
-/// issue #1650）。返回 Err(消息) 表示用法错误。
-pub(crate) fn parse_args(args: &[String]) -> Result<ParsedArgs, String> {
-    let mut cli = GenerateCli::default();
-    let mut it = bench_common::CliArgs::new(args);
-    while let Some(f) = it.next_flag() {
-        match f.flag {
-            "--seed" => {
-                let v = it.value(f)?;
-                cli.seed = v
-                    .parse::<u64>()
-                    .map_err(|_| format!("--seed 需要非负整数，得到 {v:?}"))?;
-            }
-            "--transactions" => {
-                let v = it.value(f)?;
-                cli.transactions = v
-                    .parse::<u64>()
-                    .map_err(|_| format!("--transactions 需要非负整数，得到 {v:?}"))?;
-            }
-            "--end-date" => {
-                cli.end_date = it.value(f)?;
-            }
-            "--out" => {
-                cli.out = PathBuf::from(it.value(f)?);
-            }
-            "-h" | "--help" => return Ok(ParsedArgs::Help),
-            other => return Err(format!("未知参数 {other:?}")),
-        }
-    }
-    Ok(ParsedArgs::Run(cli))
+/// 全文帮助（OPTIONS / SUBCOMMANDS 块从 dispatch 数据渲染，issue #1696）：
+/// 渲染规则与折行收口在 [`bench_common::render_help`]，全文由 tests 的 inline
+/// golden 钉住。
+fn render_usage() -> String {
+    let subcommands: Vec<(&str, &str)> = SUBCOMMANDS.iter().map(|s| (s.name, s.summary)).collect();
+    let mut sections: Vec<(u8, &str, Vec<FlagHelp>)> = SUBCOMMANDS
+        .iter()
+        .map(|s| (s.options_order, s.name, (s.flags)()))
+        .collect();
+    sections.sort_by_key(|(order, _, _)| *order);
+    let sections: Vec<(&str, Vec<FlagHelp>)> = sections
+        .into_iter()
+        .map(|(_, name, flags)| (name, flags))
+        .collect();
+    bench_common::render_help(&subcommands, &sections)
 }
 
 fn print_usage() {
-    println!("{USAGE}");
+    println!("{}", render_usage());
 }
 
 /// bin 进程级接缝接线（生产 main 与测试建库单点共用；幂等，先装者优先）：
@@ -364,105 +295,29 @@ fn main() -> ExitCode {
         print_usage();
         return ExitCode::from(2);
     };
-    match sub.as_str() {
-        "generate" => match parse_args(&args[1..]) {
-            Ok(ParsedArgs::Help) => {
+    if let Some(entry) = SUBCOMMANDS.iter().find(|s| s.name == sub.as_str()) {
+        return match (entry.execute)(&args[1..]) {
+            Outcome::Ok => ExitCode::SUCCESS,
+            Outcome::Help => {
                 print_usage();
                 ExitCode::SUCCESS
             }
-            Ok(ParsedArgs::Run(cli)) => match generate::run(cli) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(msg) => {
-                    eprintln!("generate 失败：{msg}");
-                    ExitCode::FAILURE
-                }
-            },
-            Err(msg) => {
+            Outcome::ParamError(msg) => {
                 eprintln!("参数错误：{msg}\n");
                 print_usage();
                 ExitCode::from(2)
             }
-        },
-        "bench" => match bench::parse_bench_args(&args[1..]) {
-            Ok(bench::ParsedBench::Help) => {
-                print_usage();
-                ExitCode::SUCCESS
+            Outcome::Failed(msg) => {
+                eprintln!("{} 失败：{msg}", entry.name);
+                ExitCode::FAILURE
             }
-            Ok(bench::ParsedBench::Run(cli)) => match bench::run(cli) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(msg) => {
-                    eprintln!("bench 失败：{msg}");
-                    ExitCode::FAILURE
-                }
-            },
-            Err(msg) => {
-                eprintln!("参数错误：{msg}\n");
-                print_usage();
-                ExitCode::from(2)
-            }
-        },
-        "bench-import" => match bench_import::parse_bench_import_args(&args[1..]) {
-            Ok(bench_import::ParsedBenchImport::Help) => {
-                print_usage();
-                ExitCode::SUCCESS
-            }
-            Ok(bench_import::ParsedBenchImport::Run(cli)) => match bench_import::run(cli) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(msg) => {
-                    eprintln!("bench-import 失败：{msg}");
-                    ExitCode::FAILURE
-                }
-            },
-            Err(msg) => {
-                eprintln!("参数错误：{msg}\n");
-                print_usage();
-                ExitCode::from(2)
-            }
-        },
-        "bench-sync" => match bench_sync::parse_bench_sync_args(&args[1..]) {
-            Ok(bench_sync::ParsedBenchSync::Help) => {
-                print_usage();
-                ExitCode::SUCCESS
-            }
-            Ok(bench_sync::ParsedBenchSync::Run(cli)) => match bench_sync::run(cli) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(msg) => {
-                    eprintln!("bench-sync 失败：{msg}");
-                    ExitCode::FAILURE
-                }
-            },
-            Err(msg) => {
-                eprintln!("参数错误：{msg}\n");
-                print_usage();
-                ExitCode::from(2)
-            }
-        },
-        "bench-market" => match bench_market::parse_bench_market_args(&args[1..]) {
-            Ok(bench_market::ParsedBenchMarket::Help) => {
-                print_usage();
-                ExitCode::SUCCESS
-            }
-            Ok(bench_market::ParsedBenchMarket::Run(cli)) => match bench_market::run(cli) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(msg) => {
-                    eprintln!("bench-market 失败：{msg}");
-                    ExitCode::FAILURE
-                }
-            },
-            Err(msg) => {
-                eprintln!("参数错误：{msg}\n");
-                print_usage();
-                ExitCode::from(2)
-            }
-        },
-        "-h" | "--help" => {
-            print_usage();
-            ExitCode::SUCCESS
-        }
-        other => {
-            eprintln!("未知子命令 {other:?}\n");
-            print_usage();
-            ExitCode::from(2)
-        }
+        };
     }
+    if sub == "-h" || sub == "--help" {
+        print_usage();
+        return ExitCode::SUCCESS;
+    }
+    eprintln!("未知子命令 {sub:?}\n");
+    print_usage();
+    ExitCode::from(2)
 }
