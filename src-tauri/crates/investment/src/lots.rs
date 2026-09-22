@@ -17,10 +17,11 @@
 
 use rusqlite::Connection;
 
+use super::guards;
 use super::prices::PRICE_UNITS_PER_FEN;
 use ledger_infra::db::now_iso;
 use ledger_infra::db::query::{FromRow, query_all};
-use ledger_infra::error::{AppError, Result};
+use ledger_infra::error::Result;
 use ledger_sync_protocol::device::device_id;
 
 /// 份额守卫容差（issue #1033）：f64 逐次 FIFO 扣减的累积位误差在账本量级
@@ -28,29 +29,6 @@ use ledger_sync_protocol::device::device_id;
 /// 真实超卖差异 ≥ 1e-4）——1e-6 距两侧各 3~5 个数量级，既吞掉全部位噪声、
 /// 又不会放过任何真实超卖。守卫与批次耗尽判定共用同一常量，不得各写各的。
 pub(crate) const QTY_GUARD_EPSILON: f64 = 1e-6;
-
-/// 数量展示格式化（错误文案用）：至多 4 位小数、去尾零——与录入粒度合同
-/// （issue #416 四位小数）对齐无损展示，f64 位误差（~1e-12）远在刻度以下
-/// 必然消失（如 8036.109999999999 → "8036.11"）。
-pub(crate) fn format_quantity_for_message(quantity: f64) -> String {
-    format!("{quantity:.4}")
-        .trim_end_matches('0')
-        .trim_end_matches('.')
-        .to_string()
-}
-
-/// 「可卖出数量不足」码化错误（buy/sell/convert 的 FIFO 守卫共用单点）：本地
-/// prepare 与重放计划重建同一口径（同码同文案同插值参数），两端与两路径不漂移。
-/// 数字按录入粒度合同展示，不把位噪声原文抛给用户。
-fn insufficient_holding_error(total_available: f64, quantity: f64) -> AppError {
-    let available_display = format_quantity_for_message(total_available);
-    let quantity_display = format_quantity_for_message(quantity);
-    AppError::codedp(
-        "trade.insufficient-holding",
-        format!("可卖出数量不足，当前持有 {available_display}，尝试卖出 {quantity_display}"),
-        &[&available_display, &quantity_display],
-    )
-}
 
 /// 某账户某标的的在用持仓批次快照（FIFO 排序键 = rowid）。
 pub(crate) struct ActiveLot {
@@ -134,7 +112,7 @@ pub(crate) fn prior_consumed_cost_cents(conn: &Connection, lot_id: &str) -> Resu
 /// 求和守卫（裸比较 `<` 会让 f64 FIFO 扣减的累积位误差误拒真实全清仓，如持有
 /// 8036.109999999999、卖出 8036.11），不足即码化拒绝、先于任何写入；通过后再
 /// 逐批次分摊。本地 prepare 与重放计划重建的四处共用本单点，同码同文案不漂移
-/// （issue #1033）。守卫只构造一次，见 [`insufficient_holding_error`]。
+/// （issue #1033）。守卫只构造一次，见 [`super::guards::insufficient_holding_error`]。
 ///
 /// 成本口径（卖出匹配与转换转出共用，ADR-0038 / ADR-0099）：
 /// - 耗尽批次 → 买入锚点行权威金额 − 该批次此前已消耗成本之和（闭合，精确到分）；
@@ -146,7 +124,10 @@ pub(crate) fn plan(
 ) -> Result<Vec<Consumption>> {
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
     if total_available + QTY_GUARD_EPSILON < quantity {
-        return Err(insufficient_holding_error(total_available, quantity));
+        return Err(guards::insufficient_holding_error(
+            total_available,
+            quantity,
+        ));
     }
     let mut remaining = quantity;
     let mut out: Vec<Consumption> = Vec::new();

@@ -9,6 +9,7 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
+use super::guards::{self, InstrumentUse, InvestmentAccountUse};
 use super::lots::{self, Consumption};
 use super::model::{TransactionConvert, TransactionSplit, TransactionTrade};
 use super::prices::PRICE_UNITS_PER_FEN;
@@ -36,19 +37,11 @@ fn account_currency_code(conn: &Connection, account_id: &str) -> Result<String> 
     .map_err(Into::into)
 }
 
-/// 标的存在性校验 + 类型读取（issue #295 / #302）：prepare 阶段拦截引用不存在标的的
-/// buy/sell，返回可读回自纠的码化 [`AppError::Coded`] 中文错误（HTTP 侧 400）——否则
-/// prepare 通过、apply 落 `security_transactions` 时才触发 `instrument_id` 外键违规的
-/// 「数据库错误」（HTTP 侧 500，批量导入路径还会整批回滚），AI 无法据此纠错。
-/// 创建与修改（全字段替换）共用 prepare，自然同时生效；`action` 为「买入/卖出」
-/// 措辞前缀，与既有「必须指定标的」等错误同风格，消息携带标的 id 供回自纠；
-/// `code` 由调用方按入口传入（`trade.buy-instrument-not-found` / `trade.sell-instrument-not-found`）。
-/// 返回标的类型闭集字面量（`fund` 等，ADR-0038）——场外基金申赎据此切换金额权威语义。
+/// 读取标的类型；缺失标的的错误码与文案由共享守卫登记，避免本地与重放漂移。
 fn fetch_instrument_type(
     conn: &Connection,
     instrument_id: &str,
-    action: &str,
-    code: &str,
+    use_case: InstrumentUse,
 ) -> Result<String> {
     let instrument_type: Option<String> = conn
         .query_row(
@@ -57,13 +50,7 @@ fn fetch_instrument_type(
             |r| r.get(0),
         )
         .optional()?;
-    instrument_type.ok_or_else(|| {
-        AppError::codedp(
-            code,
-            format!("{action}标的不存在: {instrument_id}"),
-            &[instrument_id],
-        )
-    })
+    guards::require_instrument_type(instrument_type, instrument_id, use_case)
 }
 
 /// 投资交易对外出口（issue #72 / spec #69）：`prepare / apply / revert` 三件套 +
@@ -219,30 +206,16 @@ fn prepare_buy(
         .ok_or_else(|| AppError::coded("trade.buy-instrument-required", "买入必须指定标的"))?
         .clone();
     // 标的存在性（兼类型读取）先于数量/单价校验：身份错了，数值对错无从谈起（issue #295）。
-    let instrument_type = fetch_instrument_type(
-        conn,
-        &instrument_id,
-        "买入",
-        "trade.buy-instrument-not-found",
-    )?;
+    let instrument_type = fetch_instrument_type(conn, &instrument_id, InstrumentUse::Buy)?;
     // 转入账户拒绝（issue #1187）：buy 的现金腿归结算账户（出资账户 ?? 投资账户，
     // ADR-0096），不存在转入侧——携带 `to_account_id` 会被余额写路径误用于覆盖
     // 转入侧余额（凭空污染第三个账户）。与 convert / split / dividend 的同款
     // forbidden 守卫同一纪律：不接受的字段一律拒绝，不静默吞掉。
-    if input.to_account_id.is_some() {
-        return Err(AppError::coded(
-            "trade.buy-to-account-forbidden",
-            "买入不能携带转入账户：资金流出归结算账户（出资账户或投资账户），账户间划转请使用转账",
-        ));
-    }
+    guards::reject_to_account(TransactionKind::Buy, input.to_account_id.is_some())?;
+
     let quantity = input.quantity.unwrap_or(0.0);
     let fee_cents = input.fee_cents.unwrap_or(0);
-    if quantity <= 0.0 {
-        return Err(AppError::coded(
-            "trade.buy-quantity-positive",
-            "买入数量必须大于 0",
-        ));
-    }
+    guards::require_positive(guards::PositiveValue::BuyQuantity, quantity)?;
     // 录入权威按标的类型分流（issue #302 / ADR-0038 决策 2）：场外基金以确认单为权威——
     // 整分金额 + 确认份额必填、成交单价由两者反算到万分之一元（确认单抄写即记账，
     // 行金额不被单价舍入污染）；其余类型维持单价权威，行金额由数量 × 单价重算。
@@ -300,12 +273,7 @@ fn prepare_buy(
             ((quantity * price_cents as f64 + fee_cents as f64 * PRICE_UNITS_PER_FEN) / quantity)
                 .round() as i64;
     }
-    ensure_investment_account(
-        conn,
-        &input.account_id,
-        "trade.buy-account-not-investment",
-        "买入交易必须使用投资账户",
-    )?;
+    ensure_investment_account(conn, &input.account_id, InvestmentAccountUse::Buy)?;
     let account_currency = account_currency_code(conn, &input.account_id)?;
     // 出资账户准入（issue #935 / ADR-0096）：buy 的结算币种 = 投资账户币种，
     // 出资账户币种必须与其一致。
@@ -370,28 +338,14 @@ fn prepare_sell(
         .clone();
     // 标的存在性（兼类型读取）先于可卖数量校验：不存在的标的不该误报「可卖出数量不足」
     // （issue #295）。
-    let instrument_type = fetch_instrument_type(
-        conn,
-        &instrument_id,
-        "卖出",
-        "trade.sell-instrument-not-found",
-    )?;
+    let instrument_type = fetch_instrument_type(conn, &instrument_id, InstrumentUse::Sell)?;
     // 转入账户拒绝（issue #1187）：与 prepare_buy 同款守卫——sell 的现金腿归
     // 结算账户（出资账户 ?? 投资账户，ADR-0096），不存在转入侧，携带即拒绝。
-    if input.to_account_id.is_some() {
-        return Err(AppError::coded(
-            "trade.sell-to-account-forbidden",
-            "卖出不能携带转入账户：资金流入归结算账户（出资账户或投资账户），账户间划转请使用转账",
-        ));
-    }
+    guards::reject_to_account(TransactionKind::Sell, input.to_account_id.is_some())?;
+
     let quantity = input.quantity.unwrap_or(0.0);
     let fee_cents = input.fee_cents.unwrap_or(0);
-    if quantity <= 0.0 {
-        return Err(AppError::coded(
-            "trade.sell-quantity-positive",
-            "卖出数量必须大于 0",
-        ));
-    }
+    guards::require_positive(guards::PositiveValue::SellQuantity, quantity)?;
     // 录入权威按标的类型分流（与 prepare_buy 同一口径，issue #302 / ADR-0038）：
     // 场外基金以确认单为权威——整分金额必填，毛收入 = 金额 + 手续费，单价反算。
     let is_fund = instrument_type == "fund";
@@ -439,12 +393,7 @@ fn prepare_sell(
         }
         amount_cents = gross_proceeds - fee_cents;
     }
-    ensure_investment_account(
-        conn,
-        &input.account_id,
-        "trade.sell-account-not-investment",
-        "卖出交易必须使用投资账户",
-    )?;
+    ensure_investment_account(conn, &input.account_id, InvestmentAccountUse::Sell)?;
     let account_currency = account_currency_code(conn, &input.account_id)?;
     // 出资账户准入（issue #935 / ADR-0096）：sell 的结算币种 = 投资账户币种，
     // 出资账户币种必须与其一致。
@@ -543,73 +492,29 @@ fn prepare_convert(
             )
         })?
         .clone();
-    if instrument_id == to_instrument_id {
-        return Err(AppError::coded(
-            "trade.convert-same-instrument",
-            "转换的转出标的与转入标的不能相同",
-        ));
-    }
+    guards::reject_same_instrument(instrument_id == to_instrument_id)?;
     // 标的存在性（兼类型读取）先于金额/份额校验：身份错了，数值对错无从谈起（卖出的同一顺序）。
-    fetch_instrument_type(
-        conn,
-        &instrument_id,
-        "转换转出",
-        "trade.convert-instrument-not-found",
-    )?;
-    fetch_instrument_type(
-        conn,
-        &to_instrument_id,
-        "转换转入",
-        "trade.convert-to-instrument-not-found",
-    )?;
+    fetch_instrument_type(conn, &instrument_id, InstrumentUse::ConvertOut)?;
+    fetch_instrument_type(conn, &to_instrument_id, InstrumentUse::ConvertIn)?;
     let quantity = input.quantity.unwrap_or(0.0);
-    if quantity <= 0.0 {
-        return Err(AppError::coded(
-            "trade.convert-quantity-positive",
-            "转换转出份额必须大于 0",
-        ));
-    }
+    guards::require_positive(guards::PositiveValue::ConvertQuantity, quantity)?;
     let to_quantity = input.to_quantity.unwrap_or(0.0);
-    if to_quantity <= 0.0 {
-        return Err(AppError::coded(
-            "trade.convert-to-quantity-positive",
-            "转换转入份额必须大于 0",
-        ));
-    }
+    guards::require_positive(guards::PositiveValue::ConvertToQuantity, to_quantity)?;
     let fee_cents = input.fee_cents.unwrap_or(0);
     // 两侧金额是确认单权威（列表展示与多腿分摊口径的输入）；行金额锚点不读它，
     // 而是服务端按 FIFO 消耗算出的结转成本（与 buy/sell「金额占位、服务端重算」同款）。
     let out_amount_cents = input.out_amount_cents.unwrap_or(0);
-    if out_amount_cents <= 0 {
-        return Err(AppError::coded(
-            "trade.convert-out-amount-positive",
-            "转换转出金额必须大于 0",
-        ));
-    }
+    guards::require_positive_cents(guards::PositiveValue::ConvertOutAmount, out_amount_cents)?;
     let in_amount_cents = input.in_amount_cents.unwrap_or(0);
-    if in_amount_cents <= 0 {
-        return Err(AppError::coded(
-            "trade.convert-in-amount-positive",
-            "转换转入金额必须大于 0",
-        ));
-    }
+    guards::require_positive_cents(guards::PositiveValue::ConvertInAmount, in_amount_cents)?;
     // 转出腿展示单价：确认单金额 ÷ 份额反算到万分之一元（金额权威、单价反算，
     // 与场外基金同款）；录入与重放共用同一公式（单点归属，两端不得算出不同单价）。
     let price_cents = derived_out_price_cents(out_amount_cents, quantity)?;
-    ensure_investment_account(
-        conn,
-        &input.account_id,
-        "trade.convert-account-not-investment",
-        "转换交易必须使用投资账户",
-    )?;
+    ensure_investment_account(conn, &input.account_id, InvestmentAccountUse::Convert)?;
     // 不跨账户（ADR-0099 决策 1）：两腿是同一投资账户内的两个标的，不是两个账户；
     // 携带转入账户即意图跨账户，显式拒绝。
-    if input.to_account_id.is_some() {
-        return Err(AppError::coded(
-            "trade.convert-to-account-forbidden",
-            "转换不跨账户：转出与转入必须同属一个投资账户，不能携带转入账户",
-        ));
-    }
+    guards::reject_to_account(TransactionKind::Convert, input.to_account_id.is_some())?;
+
     let account_currency = account_currency_code(conn, &input.account_id)?;
     // 出资账户准入（ADR-0096）：convert 不在出资闭集内，携带即被既有「不能携带
     // 出资账户」拒绝——「无现金保障」由此天然成立，不另设第二份判定。
@@ -729,12 +634,7 @@ fn prepare_split(
         .clone();
     // 标的存在性（兼类型读取）先于数值校验：身份错了，数值对错无从谈起
     // （buy/sell/convert 同一顺序）。标的类型不限（基金/股票同构）。
-    fetch_instrument_type(
-        conn,
-        &instrument_id,
-        "份额调整",
-        "trade.split-instrument-not-found",
-    )?;
+    fetch_instrument_type(conn, &instrument_id, InstrumentUse::Split)?;
     // 单标的、不跨账户、无现金腿（ADR-0106 决策 1）：携带 convert/交易形态的
     // 专属字段即意图漂移，fail fast 显式拒绝，不静默吞掉。
     if input.to_instrument_id.is_some() {
@@ -743,12 +643,8 @@ fn prepare_split(
             "份额调整是单标的份额变动，不能携带转入标的",
         ));
     }
-    if input.to_account_id.is_some() {
-        return Err(AppError::coded(
-            "trade.split-to-account-forbidden",
-            "份额调整不跨账户：只能调整同一投资账户内的标的，不能携带转入账户",
-        ));
-    }
+    guards::reject_to_account(TransactionKind::Split, input.to_account_id.is_some())?;
+
     if input.price_cents.is_some() {
         return Err(AppError::coded(
             "trade.split-price-forbidden",
@@ -762,12 +658,7 @@ fn prepare_split(
             "份额调整无现金腿，不接受手续费",
         ));
     }
-    if input.amount_cents != 0 {
-        return Err(AppError::coded(
-            "trade.split-amount-forbidden",
-            "份额调整无现金腿，金额必须为 0",
-        ));
-    }
+    guards::reject_split_cash_leg(input.amount_cents != 0)?;
     if input.fx_rate.is_some() {
         return Err(AppError::coded(
             "trade.split-fx-rate-forbidden",
@@ -778,18 +669,8 @@ fn prepare_split(
     // Δ = 0 不改变任何持仓，无意义：显式拒绝。`+` / `−` 两向都合法（ADR-0106
     // 决策 1：`+` = 折算/结转/送股、`−` = 缩股）；缩股幅度守卫（`|Δ|` 严格小于
     // 当前持仓）归投资域 [`split::plan_restatement`]，与批次快照同源、不在此另算。
-    if delta_quantity == 0.0 {
-        return Err(AppError::coded(
-            "trade.split-quantity-zero",
-            "份额调整数量不能为 0",
-        ));
-    }
-    ensure_investment_account(
-        conn,
-        &input.account_id,
-        "trade.split-account-not-investment",
-        "份额调整必须使用投资账户",
-    )?;
+    guards::require_nonzero_split_quantity(delta_quantity)?;
+    ensure_investment_account(conn, &input.account_id, InvestmentAccountUse::Split)?;
     // 出资账户准入（ADR-0096）：split 不在出资闭集内，携带即被既有
     // 「不能携带出资账户」拒绝——「无现金腿」由此天然成立，不另设第二份判定。
     let account_currency = account_currency_code(conn, &input.account_id)?;
@@ -817,12 +698,7 @@ fn prepare_split(
         delta_quantity,
         before_rowid,
     )?;
-    if restatement.lots.is_empty() {
-        return Err(AppError::coded(
-            "trade.split-no-holding",
-            "份额调整要求该标的有在用持仓（零持仓无从重述批次成本）",
-        ));
-    }
+    guards::require_split_holding(!restatement.lots.is_empty())?;
     // 无现金腿的本位币与留痕经 amount 零腿构造器取得（知识住址与「为什么不查
     // 汇率」见其文档，#1692 / ADR-0106 决策 1）；行金额恒 0、六度量系数全 0 不变。
     let zero_leg = amount::NativeConversion::zero_cash_leg();
@@ -884,24 +760,15 @@ fn prepare_dividend(
         .clone();
     // 标的存在性先于数值校验：身份错了，数值对错无从谈起（buy/sell/convert/split
     // 同一顺序）。标的类型不限（股票 / 基金 / 自建组合同构）。
-    fetch_instrument_type(
-        conn,
-        &instrument_id,
-        "分红",
-        "trade.dividend-instrument-not-found",
-    )?;
+    fetch_instrument_type(conn, &instrument_id, InstrumentUse::Dividend)?;
     if input.to_instrument_id.is_some() {
         return Err(AppError::coded(
             "trade.dividend-to-instrument-forbidden",
             "分红是单标的现金收入，不能携带转入标的",
         ));
     }
-    if input.to_account_id.is_some() {
-        return Err(AppError::coded(
-            "trade.dividend-to-account-forbidden",
-            "分红不跨账户，不能携带转入账户",
-        ));
-    }
+    guards::reject_to_account(TransactionKind::Dividend, input.to_account_id.is_some())?;
+
     if input.quantity.is_some() {
         return Err(AppError::coded(
             "trade.dividend-quantity-forbidden",
@@ -920,24 +787,10 @@ fn prepare_dividend(
             "分红不接受手续费",
         ));
     }
-    if input.amount_cents <= 0 {
-        return Err(AppError::coded(
-            "trade.dividend-amount-positive",
-            "分红金额必须大于 0",
-        ));
-    }
+    guards::require_positive_cents(guards::PositiveValue::DividendAmount, input.amount_cents)?;
     // 到账账户：任意在用账户（非投资账户亦合法），币种须与账户币种一致。
     let account_currency = active_account_currency(conn, &input.account_id)?;
-    if input.currency_code != account_currency {
-        return Err(AppError::codedp(
-            "trade.dividend-currency-mismatch",
-            format!(
-                "分红币种（{}）必须与到账账户币种（{account_currency}）一致",
-                input.currency_code
-            ),
-            &[&input.currency_code, &account_currency],
-        ));
-    }
+    guards::require_currency_match(&input.currency_code, &account_currency)?;
     // 出资账户准入（ADR-0096）：dividend 不在出资闭集内，携带即被既有「不能携带
     // 出资账户」拒绝——到账账户就是现金腿端点，不另设第二份判定。
     ledger_transaction::write::funding::validate_funding_account(
@@ -1351,32 +1204,13 @@ pub(crate) fn replay_plan(
         TransactionKind::Buy => {
             // 形态漂移守卫（与本地 prepare 同码，issue #1187）：buy 行恒无
             // to_account_id，携带即伪造/漂移载荷，重放不得绕开本地不变量。
-            if row.to_account_id.is_some() {
-                return Err(AppError::coded(
-                    "trade.buy-to-account-forbidden",
-                    "买入不能携带转入账户：资金流出归结算账户（出资账户或投资账户），账户间划转请使用转账",
-                ));
-            }
-            if fields.quantity <= 0.0 {
-                return Err(AppError::coded(
-                    "trade.buy-quantity-positive",
-                    "买入数量必须大于 0",
-                ));
-            }
+            guards::reject_to_account(TransactionKind::Buy, row.to_account_id.is_some())?;
+
+            guards::require_positive(guards::PositiveValue::BuyQuantity, fields.quantity)?;
             // 标的存在性校验（与本地同码）；类型不参与买入重放装配（每份成本
             // 随命令携带），仅作依赖在位检查。
-            fetch_instrument_type(
-                conn,
-                &fields.instrument_id,
-                "买入",
-                "trade.buy-instrument-not-found",
-            )?;
-            ensure_investment_account(
-                conn,
-                &row.account_id,
-                "trade.buy-account-not-investment",
-                "买入交易必须使用投资账户",
-            )?;
+            fetch_instrument_type(conn, &fields.instrument_id, InstrumentUse::Buy)?;
+            ensure_investment_account(conn, &row.account_id, InvestmentAccountUse::Buy)?;
             // 每份成本是 prepare 单次舍入的派生结果，随命令携带（源端折算）；
             // 缺失属载荷伪造或程序缺陷（产出侧永不产 None），fail loud 由引擎
             // 挂起承接，不以本地重算静默兜底。
@@ -1398,30 +1232,12 @@ pub(crate) fn replay_plan(
         TransactionKind::Sell => {
             // 形态漂移守卫（与本地 prepare 同码，issue #1187）：sell 行恒无
             // to_account_id，携带即伪造/漂移载荷，重放不得绕开本地不变量。
-            if row.to_account_id.is_some() {
-                return Err(AppError::coded(
-                    "trade.sell-to-account-forbidden",
-                    "卖出不能携带转入账户：资金流入归结算账户（出资账户或投资账户），账户间划转请使用转账",
-                ));
-            }
-            if fields.quantity <= 0.0 {
-                return Err(AppError::coded(
-                    "trade.sell-quantity-positive",
-                    "卖出数量必须大于 0",
-                ));
-            }
-            let instrument_type = fetch_instrument_type(
-                conn,
-                &fields.instrument_id,
-                "卖出",
-                "trade.sell-instrument-not-found",
-            )?;
-            ensure_investment_account(
-                conn,
-                &row.account_id,
-                "trade.sell-account-not-investment",
-                "卖出交易必须使用投资账户",
-            )?;
+            guards::reject_to_account(TransactionKind::Sell, row.to_account_id.is_some())?;
+
+            guards::require_positive(guards::PositiveValue::SellQuantity, fields.quantity)?;
+            let instrument_type =
+                fetch_instrument_type(conn, &fields.instrument_id, InstrumentUse::Sell)?;
+            ensure_investment_account(conn, &row.account_id, InvestmentAccountUse::Sell)?;
             // 毛收入重建（与本地 prepare 同式）：基金 = 权威金额 + 手续费
             // （金额随行携带），其余 = round(数量 × 单价 ÷ 换算因子)。
             let gross_proceeds_cents = if instrument_type == "fund" {
@@ -1449,24 +1265,13 @@ pub(crate) fn replay_plan(
             // 金额是本位币折算结果的原始腿，随归一化行携带（源端折算，ADR-0091
             // 决策 3），重放端校验其正性；形态漂移（携带转入账户 / 出资账户 /
             // 币种与账户不符）与本地同码拒绝——伪造载荷不得绕开本地不变量。
-            fetch_instrument_type(
-                conn,
-                &fields.instrument_id,
-                "分红",
-                "trade.dividend-instrument-not-found",
+            fetch_instrument_type(conn, &fields.instrument_id, InstrumentUse::Dividend)?;
+            guards::require_positive_cents(
+                guards::PositiveValue::DividendAmount,
+                row.amount_cents,
             )?;
-            if row.amount_cents <= 0 {
-                return Err(AppError::coded(
-                    "trade.dividend-amount-positive",
-                    "分红金额必须大于 0",
-                ));
-            }
-            if row.to_account_id.is_some() {
-                return Err(AppError::coded(
-                    "trade.dividend-to-account-forbidden",
-                    "分红不跨账户，不能携带转入账户",
-                ));
-            }
+            guards::reject_to_account(TransactionKind::Dividend, row.to_account_id.is_some())?;
+
             ledger_transaction::write::funding::validate_funding_account(
                 conn,
                 TransactionKind::Dividend,
@@ -1474,16 +1279,7 @@ pub(crate) fn replay_plan(
                 &row.currency_code,
             )?;
             let account_currency = active_account_currency(conn, &row.account_id)?;
-            if row.currency_code != account_currency {
-                return Err(AppError::codedp(
-                    "trade.dividend-currency-mismatch",
-                    format!(
-                        "分红币种（{}）必须与到账账户币种（{account_currency}）一致",
-                        row.currency_code
-                    ),
-                    &[&row.currency_code, &account_currency],
-                ));
-            }
+            guards::require_currency_match(&row.currency_code, &account_currency)?;
             Ok(Plan::Dividend(DividendPlan {
                 normalized: row.clone(),
                 instrument_id: fields.instrument_id.clone(),
@@ -1521,64 +1317,26 @@ pub(crate) fn replay_convert_plan(
     fields: &ConvertCommandFields,
 ) -> Result<Plan> {
     // 与本地 prepare 同序的守卫：身份（两标的互异 + 存在）→ 数值 → 账户 → 持仓。
-    if fields.instrument_id == fields.to_instrument_id {
-        return Err(AppError::coded(
-            "trade.convert-same-instrument",
-            "转换的转出标的与转入标的不能相同",
-        ));
-    }
-    fetch_instrument_type(
-        conn,
-        &fields.instrument_id,
-        "转换转出",
-        "trade.convert-instrument-not-found",
+    guards::reject_same_instrument(fields.instrument_id == fields.to_instrument_id)?;
+    fetch_instrument_type(conn, &fields.instrument_id, InstrumentUse::ConvertOut)?;
+    fetch_instrument_type(conn, &fields.to_instrument_id, InstrumentUse::ConvertIn)?;
+    guards::require_positive(guards::PositiveValue::ConvertQuantity, fields.quantity)?;
+    guards::require_positive(guards::PositiveValue::ConvertToQuantity, fields.to_quantity)?;
+    guards::require_positive_cents(
+        guards::PositiveValue::ConvertOutAmount,
+        fields.out_amount_cents,
     )?;
-    fetch_instrument_type(
-        conn,
-        &fields.to_instrument_id,
-        "转换转入",
-        "trade.convert-to-instrument-not-found",
+    guards::require_positive_cents(
+        guards::PositiveValue::ConvertInAmount,
+        fields.in_amount_cents,
     )?;
-    if fields.quantity <= 0.0 {
-        return Err(AppError::coded(
-            "trade.convert-quantity-positive",
-            "转换转出份额必须大于 0",
-        ));
-    }
-    if fields.to_quantity <= 0.0 {
-        return Err(AppError::coded(
-            "trade.convert-to-quantity-positive",
-            "转换转入份额必须大于 0",
-        ));
-    }
-    if fields.out_amount_cents <= 0 {
-        return Err(AppError::coded(
-            "trade.convert-out-amount-positive",
-            "转换转出金额必须大于 0",
-        ));
-    }
-    if fields.in_amount_cents <= 0 {
-        return Err(AppError::coded(
-            "trade.convert-in-amount-positive",
-            "转换转入金额必须大于 0",
-        ));
-    }
     // 展示单价由确认单金额 ÷ 份额反算（与本地录入同一公式单点）。
     let price_cents = derived_out_price_cents(fields.out_amount_cents, fields.quantity)?;
-    ensure_investment_account(
-        conn,
-        &row.account_id,
-        "trade.convert-account-not-investment",
-        "转换交易必须使用投资账户",
-    )?;
+    ensure_investment_account(conn, &row.account_id, InvestmentAccountUse::Convert)?;
     // 不跨账户（与本地录入同码）：两腿是同一投资账户内的两个标的，携带转入账户即
     // 伪造/漂移载荷，重放不得绕开本地不变量（CONTEXT-sync「经同一接缝执行」）。
-    if row.to_account_id.is_some() {
-        return Err(AppError::coded(
-            "trade.convert-to-account-forbidden",
-            "转换不跨账户：转出与转入必须同属一个投资账户，不能携带转入账户",
-        ));
-    }
+    guards::reject_to_account(TransactionKind::Convert, row.to_account_id.is_some())?;
+
     // 出资账户准入（与本地录入共用同一条接缝）：convert 不在出资闭集内，携带即拒绝。
     ledger_transaction::write::funding::validate_funding_account(
         conn,
@@ -1647,42 +1405,20 @@ pub(crate) fn replay_split_plan(
     existing_id: Option<&str>,
 ) -> Result<Plan> {
     // 与本地 prepare 同序的守卫：身份（标的存在）→ 数值 → 账户 → 持仓。
-    fetch_instrument_type(
-        conn,
-        &fields.instrument_id,
-        "份额调整",
-        "trade.split-instrument-not-found",
-    )?;
-    if fields.delta_quantity == 0.0 {
-        return Err(AppError::coded(
-            "trade.split-quantity-zero",
-            "份额调整数量不能为 0",
-        ));
-    }
+    fetch_instrument_type(conn, &fields.instrument_id, InstrumentUse::Split)?;
+    guards::require_nonzero_split_quantity(fields.delta_quantity)?;
     // 无现金腿（ADR-0106 决策 1）：行金额恒 0、本位币折算与留痕必须与 amount
     // 零腿构造器一致（知识住址见 `NativeConversion::zero_cash_leg`，#1692）；
     // 携带非零即伪造/漂移载荷，重放不得绕开本地不变量（CONTEXT-sync「经同一
     // 接缝执行」）。
     let zero_leg = amount::NativeConversion::zero_cash_leg();
-    if row.amount_cents != 0 || row.amount_native_cents != zero_leg.native_cents {
-        return Err(AppError::coded(
-            "trade.split-amount-forbidden",
-            "份额调整无现金腿，金额必须为 0",
-        ));
-    }
-    ensure_investment_account(
-        conn,
-        &row.account_id,
-        "trade.split-account-not-investment",
-        "份额调整必须使用投资账户",
+    guards::reject_split_cash_leg(
+        row.amount_cents != 0 || row.amount_native_cents != zero_leg.native_cents,
     )?;
+    ensure_investment_account(conn, &row.account_id, InvestmentAccountUse::Split)?;
     // 不跨账户（与本地录入同码）：单标的份额变动携带转入账户即伪造载荷。
-    if row.to_account_id.is_some() {
-        return Err(AppError::coded(
-            "trade.split-to-account-forbidden",
-            "份额调整不跨账户：只能调整同一投资账户内的标的，不能携带转入账户",
-        ));
-    }
+    guards::reject_to_account(TransactionKind::Split, row.to_account_id.is_some())?;
+
     // 出资账户准入（与本地录入共用同一条接缝）：split 不在出资闭集内，携带即拒绝。
     ledger_transaction::write::funding::validate_funding_account(
         conn,
@@ -1708,19 +1444,14 @@ pub(crate) fn replay_split_plan(
         before_rowid,
     )?;
     // 零在用持仓（前序买入 op 未达）在此码化拒绝，与本地创建同码（ADR-0106 决策 7）。
-    if restatement.lots.is_empty() {
-        return Err(AppError::coded(
-            "trade.split-no-holding",
-            "份额调整要求该标的有在用持仓（零持仓无从重述批次成本）",
-        ));
-    }
+    guards::require_split_holding(!restatement.lots.is_empty())?;
     // 源端锚点比对（ADR-0106 决策 9）：本地重建的最终持仓与批次总成本必须与源端
     // 携带值一致；不一致即本地快照发散（前序 op 未达 / 载荷被篡改），挂起待裁决。
     let quantity_diverges =
         (restatement.final_quantity - fields.final_quantity).abs() > lots::QTY_GUARD_EPSILON;
     if quantity_diverges || restatement.total_cost_cents != fields.total_cost_cents {
-        let source_quantity = lots::format_quantity_for_message(fields.final_quantity);
-        let local_quantity = lots::format_quantity_for_message(restatement.final_quantity);
+        let source_quantity = guards::format_quantity_for_message(fields.final_quantity);
+        let local_quantity = guards::format_quantity_for_message(restatement.final_quantity);
         let source_cost = fields.total_cost_cents.to_string();
         let local_cost = restatement.total_cost_cents.to_string();
         return Err(AppError::codedp(
@@ -1747,8 +1478,7 @@ pub(crate) fn replay_split_plan(
 fn ensure_investment_account(
     conn: &Connection,
     account_id: &str,
-    code: &str,
-    msg: &str,
+    use_case: InvestmentAccountUse,
 ) -> Result<()> {
     let account_type: AccountType = conn
         .query_row(
@@ -1757,8 +1487,5 @@ fn ensure_investment_account(
             |r| r.get::<_, String>(0),
         )?
         .parse()?;
-    if account_type != AccountType::Investment {
-        return Err(AppError::coded(code, msg));
-    }
-    Ok(())
+    guards::require_investment_account(account_type, use_case)
 }
