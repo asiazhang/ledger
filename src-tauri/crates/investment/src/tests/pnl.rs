@@ -1,13 +1,17 @@
 //! 已实现盈亏汇总（realized PnL）测试：空态、单笔 / 多账户聚合、按账户 / 按
 //! 标的过滤、按币种分组不混算（ADR-0107；issue #257 纯移动归组），
-//! 以及两表并入现金分红后的已实现收益口径（ADR-0129 / issue #1533）。
+//! 两表并入现金分红后的已实现收益口径（ADR-0129 / issue #1533），
+//! 以及按年表的完整年度收益（未实现变动腿，ADR-0132 / issue #1535）。
 
+use ledger_transaction::SecurityOrigin;
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::create_transaction_internal;
 
 use super::super::*;
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
+use tauri_app_lib::test_support::{
+    open, seed_account, seed_fx_history_weeks, seed_instrument, seed_price_history,
+};
 
 fn empty_filter() -> PnlFilter {
     PnlFilter {
@@ -105,6 +109,10 @@ fn realized_pnl_summary_dividend_only_year_appears() {
     assert_eq!(result.by_year[0].realized_pnl_cents, 0);
     assert_eq!(result.by_year[0].dividend_cents, 836_536);
     assert_eq!(result.by_year[0].realized_gain_cents, 836_536);
+    // 完整年度收益（ADR-0132 / issue #1535 验收）：当年无持仓 → 未实现变动 0、
+    // 年度收益 = 分红腿（与且慢 App 显示一致）
+    assert_eq!(result.by_year[0].unrealized_change_cents, Some(0));
+    assert_eq!(result.by_year[0].annual_return_cents, Some(836_536));
     // 按账户表同理：只有分红的账户整行出现（原口径下同样缺席）
     assert_eq!(result.by_account.len(), 1);
     assert_eq!(result.by_account[0].account_id, "acc-dv");
@@ -595,4 +603,410 @@ fn realized_pnl_summary_groups_by_currency_without_mixing() {
     assert_eq!(result.by_year.len(), 2);
     assert_eq!(result.by_account.len(), 2);
     assert_eq!(result.by_instrument.len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// 完整年度收益（未实现变动腿）：ADR-0132 / issue #1535
+// ---------------------------------------------------------------------------
+
+#[test]
+fn annual_return_identity_with_boundary_prices() {
+    // 三段式明细钉住恒等式（issue #1535 验收）：已实现为负、分红为正、浮盈为正的
+    // 年份（2024 形态）——年度收益 = 已实现 + 分红 + 未实现变动 = (期末市值 − 期初
+    // 市值) + 卖出净收入 + 分红 − 买入支出。
+    let conn = open();
+    seed_account(&conn, "acc-ar", "投资户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-ar", "501000", "基金A", "CNY", "unknown");
+    // 年界周采样点（万分之一元刻度）：2023-12-31 = 100 元、2024-12-31 = 110 元
+    seed_price_history(&conn, "ph-start", "inst-ar", "2023-12-31", 1_000_000, "CNY");
+    seed_price_history(&conn, "ph-end", "inst-ar", "2024-12-31", 1_100_000, "CNY");
+
+    // 2023 年建仓 10 份 @100 元（只买入、无卖出/分红的年份不成行）
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-ar",
+            "inst-ar",
+            10.0,
+            1_000_000,
+            "2023-12-20",
+        ),
+    )
+    .unwrap();
+    // 2024 年：卖 4 份 @90 元（已实现 −40 元）、分红 1000 元、再买 5 份 @105 元
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Sell,
+            "acc-ar",
+            "inst-ar",
+            4.0,
+            900_000,
+            "2024-06-10",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_dividend_input_on("acc-ar", "inst-ar", 100_000, "CNY", "2024-08-10"),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-ar",
+            "inst-ar",
+            5.0,
+            1_050_000,
+            "2024-09-10",
+        ),
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+
+    // 2023 只买入不成行（行集与 #1533 逐位一致，只加列不加行）
+    assert_eq!(result.by_year.len(), 1);
+    let row = &result.by_year[0];
+    assert_eq!(row.year, "2024");
+    assert_eq!(row.currency_code, "CNY");
+    // 已实现：卖 360 元 − FIFO 成本 400 元 = −40 元
+    assert_eq!(row.realized_pnl_cents, -4_000);
+    assert_eq!(row.dividend_cents, 100_000);
+    assert_eq!(row.realized_gain_cents, 96_000);
+    // 未实现变动 = (期末 1210 元 − 期初 1000 元) + 卖出 360 − 买入 525 − (−40)
+    //            = 期末浮盈 85 元（期初浮盈 0）
+    assert_eq!(row.unrealized_change_cents, Some(8_500));
+    assert_eq!(row.annual_return_cents, Some(104_500));
+    // 现金流式恒等式（分）：(121_000 − 100_000) + 36_000 + 100_000 − 52_500
+    assert_eq!(
+        row.annual_return_cents,
+        Some(121_000 - 100_000 + 36_000 + 100_000 - 52_500)
+    );
+}
+
+#[test]
+fn annual_return_not_computable_when_boundary_price_missing() {
+    // 缺价年份标「不可算」（None），不静默按 0 计；已实现与分红两腿照常出数
+    // （不受行情影响）。期初无持仓、期末持仓 10 份而年末无价 → 期末市值缺料。
+    let conn = open();
+    seed_account(&conn, "acc-np", "投资户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-np", "501000", "基金A", "CNY", "unknown");
+
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-np",
+            "inst-np",
+            10.0,
+            1_000_000,
+            "2024-03-01",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_dividend_input_on("acc-np", "inst-np", 50_000, "CNY", "2024-05-01"),
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+    assert_eq!(result.by_year.len(), 1);
+    let row = &result.by_year[0];
+    assert_eq!(row.realized_pnl_cents, 0);
+    assert_eq!(row.dividend_cents, 50_000);
+    assert_eq!(row.realized_gain_cents, 50_000);
+    assert_eq!(row.unrealized_change_cents, None);
+    assert_eq!(row.annual_return_cents, None);
+}
+
+#[test]
+fn annual_return_computable_without_prices_when_no_boundary_holdings() {
+    // 年内全平仓（期初/期末持仓均为 0）→ 无需任何价格即可算：未实现变动 0、
+    // 年度收益 = 已实现 + 分红（市值不可知也不影响该年口径）。
+    let conn = open();
+    seed_account(&conn, "acc-rt", "投资户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-rt", "501000", "基金A", "CNY", "unknown");
+
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-rt",
+            "inst-rt",
+            10.0,
+            1_000_000,
+            "2021-02-01",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Sell,
+            "acc-rt",
+            "inst-rt",
+            10.0,
+            1_200_000,
+            "2021-06-01",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_dividend_input_on("acc-rt", "inst-rt", 5_000, "CNY", "2021-07-01"),
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+    assert_eq!(result.by_year.len(), 1);
+    let row = &result.by_year[0];
+    assert_eq!(row.realized_pnl_cents, 20_000);
+    assert_eq!(row.dividend_cents, 5_000);
+    assert_eq!(row.unrealized_change_cents, Some(0));
+    assert_eq!(row.annual_return_cents, Some(25_000));
+}
+
+#[test]
+fn annual_return_convert_is_cash_free_and_value_continuous() {
+    // 基金转换无现金腿、市值连续（issue #1535 口径）：期初持 A、年中全换 B、
+    // 期末持 B —— 转换不入现金流，年度收益 = 期末 B 市值 − 期初 A 市值 + 分红腿。
+    // A 只需期初价、B 只需期末价（各边界只估值当时的持仓标的）。
+    let conn = open();
+    seed_account(&conn, "acc-cv", "投资户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-a", "501000", "基金A", "CNY", "unknown");
+    seed_instrument(&conn, "inst-b", "502000", "基金B", "CNY", "unknown");
+    seed_price_history(&conn, "ph-a", "inst-a", "2023-12-31", 1_000_000, "CNY");
+    seed_price_history(&conn, "ph-b", "inst-b", "2024-12-31", 600_000, "CNY");
+
+    // 2023 年买 A 10 份 @100 元；2024 年年中全换 B（结转成本 1000 元 → 20 份 @50 元）
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-cv",
+            "inst-a",
+            10.0,
+            1_000_000,
+            "2023-06-01",
+        ),
+    )
+    .unwrap();
+    let mut cv = make_convert_input(
+        "acc-cv", "inst-a", "inst-b", 10.0, 20.0, 100_000, 100_000, 0,
+    );
+    cv.date = "2024-06-01".into();
+    create_transaction_internal(&conn, cv).unwrap();
+    // 转换年无卖出/分红不成行：补一笔分红让 2024 成行（行集纪律：只加列不加行）
+    create_transaction_internal(
+        &conn,
+        make_dividend_input_on("acc-cv", "inst-b", 10_000, "CNY", "2024-08-01"),
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+    assert_eq!(result.by_year.len(), 1);
+    let row = &result.by_year[0];
+    assert_eq!(row.year, "2024");
+    // 未实现变动 = 期末 B 市值 1200 元 − 期初 A 市值 1000 元（转换零现金腿）
+    assert_eq!(row.unrealized_change_cents, Some(20_000));
+    assert_eq!(row.annual_return_cents, Some(30_000));
+}
+
+#[test]
+fn annual_return_counts_opening_balance_buy_as_expenditure() {
+    // 期初存量（补记 buy，origin='opening'）是 buy 行、计入年内买入支出
+    //（issue #1535 口径按字面：「该年 buy 行金额合计」）：否则补记年会把整笔
+    // 存量市值虚计为年度收益。未实现变动 = 期末市值 − 补记成本（自补记日起算）。
+    let conn = open();
+    seed_account(&conn, "acc-ob", "投资户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-ob", "501000", "基金A", "CNY", "unknown");
+    seed_price_history(&conn, "ph-ob", "inst-ob", "2024-12-31", 1_050_000, "CNY");
+
+    let mut opening = make_trade_input(
+        TransactionKind::Buy,
+        "acc-ob",
+        "inst-ob",
+        10.0,
+        1_000_000,
+        "2024-03-01",
+    );
+    opening.origin = Some(SecurityOrigin::Opening);
+    create_transaction_internal(&conn, opening).unwrap();
+    create_transaction_internal(
+        &conn,
+        make_dividend_input_on("acc-ob", "inst-ob", 10_000, "CNY", "2024-05-01"),
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+    assert_eq!(result.by_year.len(), 1);
+    let row = &result.by_year[0];
+    // 未实现变动 = 期末市值 1050 元 − 补记成本 1000 元 = 50 元（若补记买入不入
+    // 支出，该腿会虚增为 1050 元）
+    assert_eq!(row.unrealized_change_cents, Some(5_000));
+    assert_eq!(row.annual_return_cents, Some(15_000));
+}
+
+#[test]
+fn annual_return_legs_follow_filters() {
+    // 未实现变动腿与已实现/分红腿同源同过滤（ADR-0132）：账户筛选收窄后只估值
+    // 该账户名下持仓——无价账户整行不可算，筛到有价账户即可算。
+    let conn = open();
+    seed_account(&conn, "acc-fa", "有价户", "investment", "CNY", 0);
+    seed_account(&conn, "acc-fb", "缺价户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-fa", "501000", "基金A", "CNY", "unknown");
+    seed_instrument(&conn, "inst-fb", "502000", "基金B", "CNY", "unknown");
+    seed_price_history(&conn, "ph-fa", "inst-fa", "2024-12-31", 1_000_000, "CNY");
+
+    for (acc, inst) in [("acc-fa", "inst-fa"), ("acc-fb", "inst-fb")] {
+        create_transaction_internal(
+            &conn,
+            make_trade_input(
+                TransactionKind::Buy,
+                acc,
+                inst,
+                10.0,
+                1_000_000,
+                "2024-03-01",
+            ),
+        )
+        .unwrap();
+        create_transaction_internal(
+            &conn,
+            make_dividend_input_on(acc, inst, 10_000, "CNY", "2024-05-01"),
+        )
+        .unwrap();
+    }
+
+    // 不过滤：缺价户的期末持仓拉低整行 → 不可算（同年同币种一行）
+    let all = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+    assert_eq!(all.by_year.len(), 1);
+    assert_eq!(all.by_year[0].unrealized_change_cents, None);
+
+    // 筛到有价户：可算（期初持仓 0、期末市值 1000 元、买入 1000 元 → 未实现 0）
+    let filtered = query_realized_pnl_summary(
+        &conn,
+        &PnlFilter {
+            account_id: Some("acc-fa".into()),
+            instrument_id: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(filtered.by_year.len(), 1);
+    assert_eq!(filtered.by_year[0].unrealized_change_cents, Some(0));
+    assert_eq!(filtered.by_year[0].annual_return_cents, Some(10_000));
+
+    // 标的筛选同理
+    let by_inst = query_realized_pnl_summary(
+        &conn,
+        &PnlFilter {
+            account_id: None,
+            instrument_id: Some("inst-fa".into()),
+        },
+    )
+    .unwrap();
+    assert_eq!(by_inst.by_year.len(), 1);
+    assert_eq!(by_inst.by_year[0].unrealized_change_cents, Some(0));
+}
+
+#[test]
+fn annual_return_missing_fx_at_boundary_is_not_computable() {
+    // 缺同期汇率同按缺料处置（ADR-0132 空值语义）：美元价标的持在人民币户，
+    // 期末周点缺 USD→CNY 汇率 → 该年不可算。
+    let conn = open();
+    seed_account(&conn, "acc-fx", "人民币户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-fx", "AAPL", "Apple", "USD", "unknown");
+    // 交易周（2024-03-04 当周）有汇率（写路径折算用），年末周点（2024-12-30 当周）无
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.0, &["2024-03-04"]);
+    seed_price_history(&conn, "ph-fx", "inst-fx", "2024-12-31", 1_000_000, "USD");
+
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-fx",
+            "inst-fx",
+            10.0,
+            1_000_000,
+            "2024-03-06",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_dividend_input_on("acc-fx", "inst-fx", 10_000, "CNY", "2024-05-01"),
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+    assert_eq!(result.by_year.len(), 1);
+    assert_eq!(result.by_year[0].unrealized_change_cents, None);
+    assert_eq!(result.by_year[0].annual_return_cents, None);
+}
+
+#[test]
+fn annual_return_computable_when_dividend_lands_outside_investment_accounts() {
+    // 分红只到账非投资账户（该币种无任何投资账户）→ 组内无持仓、市值腿为 0，
+    // 该年可算（年度收益 = 分红）——不特判会被误判为不可算（ADR-0132 空值语义
+    // 只辖「有持仓而缺料」，不辖「无持仓」）。
+    let conn = open();
+    seed_account(&conn, "acc-bank", "银行卡", "cash", "CNY", 0);
+    seed_instrument(&conn, "inst-bk", "501000", "基金A", "CNY", "unknown");
+
+    create_transaction_internal(
+        &conn,
+        make_dividend_input_on("acc-bank", "inst-bk", 88_000, "CNY", "2021-12-31"),
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+    assert_eq!(result.by_year.len(), 1);
+    assert_eq!(result.by_year[0].unrealized_change_cents, Some(0));
+    assert_eq!(result.by_year[0].annual_return_cents, Some(88_000));
+}
+
+#[test]
+fn annual_return_constant_price_instrument_is_computable() {
+    // 恒定价格标的（货基，ADR-0126）不落价格历史行，边界市值由常量在装载器内
+    // 覆盖：持仓跨年、库内无任何价格历史 → 该年可算、未实现变动 0（份额不变、
+    // 价格恒定），年度收益 = 分红腿——「老婆的且慢」2019 行（当年只持货基）的
+    // 货基形态；常量覆盖失效时该行会被误判为不可算，本测试钉住该路径。
+    let conn = open();
+    seed_account(&conn, "acc-mm", "且慢", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-mm", "000198", "货币基金", "CNY", "unknown");
+    conn.execute(
+        "UPDATE instruments SET constant_unit_price = 10000 WHERE id = 'inst-mm'",
+        [],
+    )
+    .unwrap();
+
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-mm",
+            "inst-mm",
+            10.0,
+            10_000,
+            "2019-01-10",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_dividend_input_on("acc-mm", "inst-mm", 836_536, "CNY", "2019-12-31"),
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+    assert_eq!(result.by_year.len(), 1);
+    let row = &result.by_year[0];
+    assert_eq!(row.year, "2019");
+    // 期末市值 = 10 份 × 恒定 1.0000 元 = 10 元，买入支出同值 → 未实现变动 0
+    assert_eq!(row.unrealized_change_cents, Some(0));
+    assert_eq!(row.annual_return_cents, Some(836_536));
 }

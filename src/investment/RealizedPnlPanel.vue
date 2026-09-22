@@ -78,9 +78,43 @@ const realizedGainTitle = () =>
     testId: "pnl-realized-gain",
   });
 
+// 年度收益口径（ADR-0132 / issue #1535）：三腿合计，与且慢年度收益可对照
+const annualReturnTitle = () =>
+  h(ConceptLabel, {
+    label: t("investments.pnl.columns.annualReturn"),
+    concept: "annualReturn",
+    testId: "pnl-annual-return",
+  });
+
+// 完整年度收益两腿列（ADR-0132）：值由域内算好，前端只格式化。三态——
+// 不可算（null：年初或年末仍有持仓而缺价 / 缺汇率）显式标注「无法计算」，
+// 不按 0 计；可算时按行币种格式化并着盈亏涨跌色（与已实现收益主值同源）。
+function annualLegColumn(title: string | (() => VNodeChild), key: string): DataTableColumn {
+  return {
+    title,
+    key,
+    align: "right",
+    className: "tabular-nums",
+    render(row: any) {
+      const value: number | null = row[key];
+      if (value === null || value === undefined) {
+        return h("span", { class: subLine }, t("investments.pnl.notComputable"));
+      }
+      const currency = reference.currencyMap.get(row.currency_code);
+      return h(
+        "span",
+        { style: { color: pnlSemanticColor(value, appStore.theme) } },
+        formatAmount(value, currency),
+      );
+    },
+  };
+}
+
 const yearColumns: DataTableColumn[] = [
   { title: t("investments.pnl.columns.year"), key: "year" },
   realizedGainColumn(realizedGainTitle),
+  annualLegColumn(t("investments.pnl.columns.unrealizedChange"), "unrealized_change_cents"),
+  annualLegColumn(annualReturnTitle, "annual_return_cents"),
 ];
 
 const accountCols: DataTableColumn[] = [

@@ -263,6 +263,8 @@ export function makePnlSummary(partial: Partial<RealizedPnlSummary> = {}): Reali
         realized_pnl_cents: 30000,
         dividend_cents: 0,
         realized_gain_cents: 30000,
+        unrealized_change_cents: null,
+        annual_return_cents: null,
       },
     ],
     by_account: [

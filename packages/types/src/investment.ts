@@ -271,13 +271,17 @@ export interface MarketPriceInput {
 }
 
 /** 按年分组的已实现收益行（ADR-0129）：两腿（已实现盈亏 / 现金分红）并列，
- * realized_gain_cents = 两腿之和（词汇表「已实现收益（RealizedGain）」） */
+ * realized_gain_cents = 两腿之和（词汇表「已实现收益（RealizedGain）」）；
+ * 完整年度收益两腿随 ADR-0132 / issue #1535 只增不改地追加（null = 该年不可算：
+ * 年初或年末仍有持仓而边界市值缺价 / 缺汇率，不以 0 计） */
 export interface YearPnl {
   year: string;
   currency_code: string;
   realized_pnl_cents: number;
   dividend_cents: number;
   realized_gain_cents: number;
+  unrealized_change_cents: number | null;
+  annual_return_cents: number | null;
 }
 
 /** 按账户分组的已实现收益行（ADR-0129）：列口径同 YearPnl，按账户聚合 */
