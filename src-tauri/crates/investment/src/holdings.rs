@@ -38,8 +38,8 @@ use ledger_infra::error::{AppError, Result};
 /// 首笔持仓流水日（标量子查询，issue #1534）：四臂腿流（buy/sell、convert 两腿、
 /// split）的最早交易日——价格历史回填深度的覆盖目标（基金历史回填要覆盖到
 /// 持仓期起点，见 ADR-0038 决策 6 修订）。与 [`holdings_as_of`] /
-/// [`holdings_legs_by_instrument`] / [`holdings_legs_by_account_and_instrument`]
-/// 是同一推算不变量的 MIN 投影：认同一组腿（quantity/to_quantity 非空）、排除
+/// [`holdings_legs_by_instrument`] 是同一推算不变量的 MIN 投影：认同一组腿
+///（quantity/to_quantity 非空）、排除
 /// 同一组软删交易行与软删账户；dividend 零份额变动不入判。**多处 SQL 必须同步
 /// 修改**：任何一侧腿口径变化（新增腿类型、过滤条件变化）必须同时改其余各处，
 /// 并保持 `tests/holdings_as_of` 的配对与首笔腿测试绿。
@@ -172,10 +172,9 @@ pub(crate) type HoldingsLegStream = HashMap<String, Vec<(String, f64)>>;
 /// 非空条件、同样的软删除账户与软删交易行排除——差异只有两点：标的维度
 ///（分腿归属替代 `COALESCE(?2,…)` 钉定）与无日期上界（上界由消费方的游标
 /// 推进承担，而非 SQL 谓词）。**多处 SQL 必须同步修改**：任何一侧口径变化
-///（新增腿类型、过滤条件变化）必须同时改 [`holdings_as_of`]、
-/// [`FIRST_POSITION_DATE`] 与 [`holdings_legs_by_account_and_instrument`]，
-/// 并保持 `tests/holdings_as_of` 的配对测试绿（同一夹具上逐标的逐日期：
-/// 腿流前缀和 ≡ `holdings_as_of`；首笔腿 = 腿流首行日期）。
+///（新增腿类型、过滤条件变化）必须同时改 [`holdings_as_of`] 与
+/// [`FIRST_POSITION_DATE`]，并保持 `tests/holdings_as_of` 的配对测试绿（同一
+/// 夹具上逐标的逐日期：腿流前缀和 ≡ `holdings_as_of`；首笔腿 = 腿流首行日期）。
 ///
 /// 消费方（组合走势，issue #1654）：价格行按标的分组、组内按交易日升序，
 /// 游标扫过「交易日 ≤ 采样日」的前缀逐腿累加——替代逐价格行全量重算
@@ -242,79 +241,4 @@ pub(crate) fn holdings_legs_by_instrument(conn: &Connection) -> Result<HoldingsL
             .push((date, qty));
     }
     Ok(by_instrument)
-}
-
-/// 一条带账户维度的持仓变动腿：`((账户, 标的), [(交易日, 带符号数量增量)])`
-/// ——[`holdings_legs_by_instrument`] 的账户维度扩展投影（ADR-0132 / issue
-/// #1535）：按年表的未实现变动腿需要（账户 × 标的）粒度的边界时点存量
-///（币种分组按账户币，边界市值按账户归属折算），与资金加权收益率逐对调用
-/// [`holdings_as_of_in`] 的形态不同，这里一次装载全库、调用方按边界日做
-/// 前缀求和（年界数量级远小于逐价格行，无需游标增量）。
-pub(crate) type AccountInstrumentLegStream = HashMap<(String, String), Vec<(String, f64)>>;
-
-/// 全库持仓变动腿流，按（账户，标的）分组、组内按交易日升序。
-///
-/// 与 [`holdings_legs_by_instrument`] 同一推算不变量的第四种投影（见该函数
-/// 文档的多处同步纪律）：四臂 UNION ALL 逐臂同形，仅多选 `t.account_id` 一列、
-/// 排序键多一维；软删除账户与软删交易行排除同源。**多处 SQL 必须同步修改**
-///（见 [`FIRST_POSITION_DATE`] 文档）。
-pub(crate) fn holdings_legs_by_account_and_instrument(
-    conn: &Connection,
-) -> Result<AccountInstrumentLegStream> {
-    let sql = "SELECT t.account_id, st.instrument_id, t.date, \
-                   CASE st.action WHEN 'buy' THEN st.quantity ELSE -st.quantity END \
-               FROM security_transactions st \
-               JOIN transactions t ON t.id = st.transaction_id \
-               JOIN accounts a ON a.id = t.account_id \
-               WHERE st.action IN ('buy','sell') \
-                 AND st.quantity IS NOT NULL \
-                 AND t.is_deleted = 0 \
-                 AND a.is_deleted = 0 \
-               UNION ALL \
-               SELECT t.account_id, st.instrument_id, t.date, -st.quantity \
-               FROM security_transactions st \
-               JOIN transactions t ON t.id = st.transaction_id \
-               JOIN accounts a ON a.id = t.account_id \
-               WHERE st.action = 'convert' \
-                 AND st.quantity IS NOT NULL \
-                 AND t.is_deleted = 0 \
-                 AND a.is_deleted = 0 \
-               UNION ALL \
-               SELECT t.account_id, st.to_instrument_id, t.date, st.to_quantity \
-               FROM security_transactions st \
-               JOIN transactions t ON t.id = st.transaction_id \
-               JOIN accounts a ON a.id = t.account_id \
-               WHERE st.action = 'convert' \
-                 AND st.to_quantity IS NOT NULL \
-                 AND t.is_deleted = 0 \
-                 AND a.is_deleted = 0 \
-               UNION ALL \
-               SELECT t.account_id, st.instrument_id, t.date, st.quantity \
-               FROM security_transactions st \
-               JOIN transactions t ON t.id = st.transaction_id \
-               JOIN accounts a ON a.id = t.account_id \
-               WHERE st.action = 'split' \
-                 AND st.quantity IS NOT NULL \
-                 AND t.is_deleted = 0 \
-                 AND a.is_deleted = 0 \
-               ORDER BY 1, 2, 3";
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map([], |r| {
-        Ok((
-            r.get::<_, String>(0)?,
-            r.get::<_, String>(1)?,
-            r.get::<_, String>(2)?,
-            r.get::<_, f64>(3)?,
-        ))
-    })?;
-    // SQL 已按（账户，标的，交易日）升序输出；push 保序即得组内升序。
-    let mut by_pair: AccountInstrumentLegStream = HashMap::new();
-    for row in rows {
-        let (account_id, instrument_id, date, qty) = row?;
-        by_pair
-            .entry((account_id, instrument_id))
-            .or_default()
-            .push((date, qty));
-    }
-    Ok(by_pair)
 }
