@@ -83,8 +83,6 @@
 // 门槛检查；调用方式 `bun scripts/check-structure.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具：
 // bun scripts/check-structure.ts [src-dir] [src-tauri-dir]
-// 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job），
-// 与命令注册一致性检查并列。
 
 import { existsSync, readdirSync, readFileSync, statSync, type Stats } from "node:fs";
 import { dirname, join } from "node:path";

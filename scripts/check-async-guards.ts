@@ -4,7 +4,7 @@
 // 背景：手搓异步守卫在 ADR-0040 当点（2026-08-30）全仓仅搜索视图一处，架构走查
 // （2026-09-11）已增殖到三处——「新代码一律走 Loadable」纯纪律守不住。#1008 把存量
 // 六处收编进 useLoadable 后，手搓竞态序号已在源码面归零；本门把约束固化成可执行
-// 检查（仿 scripts/check-structure.ts 思路，Bun 运行时 ADR-0083），进 check.sh 与 CI。
+// 检查（仿 scripts/check-structure.ts 思路，Bun 运行时 ADR-0083）。
 //
 // 规则 1（硬零容忍）：手搓竞态序号 `let <名>seq = 0` 形态即红。竞态序号唯一合法
 // 住址 useLoadable 接缝本体（#1008 收编后的单点；#1318 起随包搬至
@@ -40,7 +40,6 @@
 // 门槛检查；调用方式 `bun scripts/check-async-guards.ts`。
 // 默认扫描本仓库（SCAN_ROOTS 清单，相对仓库根）；测试可传位置参数指向夹具仓库根
 // （夹具按 SCAN_ROOTS 布局摆放）：bun scripts/check-async-guards.ts [repo-root]
-// 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job）。
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";

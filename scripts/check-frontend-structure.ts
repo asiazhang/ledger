@@ -4,7 +4,7 @@
 // 规则七类：
 // ① 成员登记：packages/* 下的成员目录必须登记于本脚本 PACKAGES（磁盘 ↔ 清单双向
 //    全等，清单漂移 fail loud）——pnpm-workspace.yaml 的 glob 自动纳管目录，能「漏
-//    登记」的只有方向表登记册；新建成员目录不登记即红（删除即变红②）。
+//    登记」的只有方向表登记册；新建成员目录不登记即红（删除即变红）。
 //    另核 pnpm-workspace.yaml 须以 glob 声明 packages/*（成员可为空，目录缺失即红）。
 // ② 包依赖方向：每个包只能依赖 PACKAGES 已声明且方向允许的包；依赖未登记包、或
 //    依赖不在自身 deps 方向表内的包即红。方向表随包抽取逐票补充；dependencies /
@@ -37,9 +37,6 @@
 //    解析落点后比对），消费方不在白名单内即红；登记模块文件不存在即红（改名/删除
 //    后拒绝规则静默失效）；删除登记项即变红（登记表全等断言 + 夹具违规即红，
 //    issue #1323 验收判据）。
-// 删除即变红①：本脚本核对自身接线——scripts/check.sh 与 CI frontend job
-//（.github/workflows/build.yml）中必须存在实际调用行（非注释、非 echo 展示行），
-// 删除接线行即红（ADR-0087 断言强度：接线型守门的负向条目）。
 // 扫描边界：文本级扫描，只掩码注释（行注释与块注释）后匹配 import 形态——import
 // 说明符本身是字符串，掩码字符串会连靶一起抹掉；故字符串里的伪 import 靠 import/
 // from 关键词上下文排除，模板字面量动态 import（反引号形态）与字符串内的关键字
@@ -49,8 +46,6 @@
 // arg2 = 夹具包登记表（JSON 数组，与 PACKAGES 同形）——仅供测试夹具注入，注入时
 // 完全替代生产登记表（#1150 起 PACKAGES 非空，拼接会让生产条目泄漏进夹具）；
 // 生产路径不传，登记表唯一事实源仍是本脚本 PACKAGES。
-// 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job），
-// 与结构守门检查并列。
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -194,19 +189,6 @@ const MEMBER_DIR_GLOB = "packages/*";
 
 /** 包名空间前缀（规则③④的跨包引用识别面）。 */
 const PACKAGE_NAME_PREFIX = "@ledger/";
-
-/** 本脚本的门槛调用形态（接线核对与测试夹具共用的单一事实源）。 */
-export const SCRIPT_INVOCATION = "bun scripts/check-frontend-structure.ts";
-
-/** 接线宿主（删除即变红①）：行首形态逐字节匹配，非注释行才算接线。 */
-const WIRING_HOSTS: readonly { file: string; prefix: string; where: string }[] = [
-  { file: "scripts/check.sh", prefix: SCRIPT_INVOCATION, where: "scripts/check.sh" },
-  {
-    file: ".github/workflows/build.yml",
-    prefix: `run: ${SCRIPT_INVOCATION}`,
-    where: ".github/workflows/build.yml frontend job",
-  },
-];
 
 /** 规则③④靶形态（逐行扫描，与既有守门同形制）：说明符与 from 同行（多行 import
  *  的尾行即 from 行，行号对准说明符）；动态 import 与副作用 import 单独捕形 */
@@ -741,30 +723,6 @@ function checkDeepModuleBoundaries(repoRoot: string, problems: string[]): void {
   }
 }
 
-/** 接线核对（删除即变红①）：两个宿主文件须有非注释的实际调用行 */
-function checkWiring(repoRoot: string, problems: string[]): void {
-  for (const host of WIRING_HOSTS) {
-    const abs = join(repoRoot, host.file);
-    if (!existsSync(abs)) {
-      problems.push(`✗ 接线核对：宿主文件不存在：${host.where}`);
-      continue;
-    }
-    const wired = readFileSync(abs, "utf8")
-      .split("\n")
-      .some((line) => {
-        const trimmed = line.trim();
-        return !trimmed.startsWith("#") && trimmed.startsWith(host.prefix);
-      });
-    if (!wired) {
-      problems.push(
-        `✗ 接线核对：${host.where} 缺前端结构守门调用行\n` +
-          `    须有 \`${host.prefix}\` 开头的实际执行行（非注释、非 echo 展示行）——` +
-          `删除接线即门槛静默消失（issue #1149 删除即变红①）`,
-      );
-    }
-  }
-}
-
 function main(): void {
   const scriptDir = dirname(fileURLToPath(import.meta.url));
   const repoRoot = process.argv[2] ?? join(scriptDir, "..");
@@ -795,7 +753,6 @@ function main(): void {
   checkTestSupportPurity(repoRoot, registry, problems);
   checkUpwardImports(repoRoot, problems);
   checkDeepModuleBoundaries(repoRoot, problems);
-  checkWiring(repoRoot, problems);
 
   if (problems.length > 0) {
     for (const p of problems) console.error(p);
@@ -814,8 +771,7 @@ function main(): void {
           .join(" ") || "无"
       } 仅 devDependency 消费）` +
       `· 上行引用禁令 ${FORBIDDEN_UPWARD_IMPORTS.length} 条（${FORBIDDEN_UPWARD_IMPORTS.map((r) => r.dir).join(" ") || "无"}）` +
-      `· 深模块边界 ${DEEP_MODULE_BOUNDARIES.length} 项（${DEEP_MODULE_BOUNDARIES.map((e) => e.module).join(" ") || "无"}）` +
-      `· 接线核对（scripts/check.sh + CI frontend job）`,
+      `· 深模块边界 ${DEEP_MODULE_BOUNDARIES.length} 项（${DEEP_MODULE_BOUNDARIES.map((e) => e.module).join(" ") || "无"}）`,
   );
 }
 

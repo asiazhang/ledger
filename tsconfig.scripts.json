@@ -1,7 +1,7 @@
 {
   /* 守门脚本与测试的类型检查工程（issue #734 / ADR-0083；include 全量翻转见 #740）。
-     执行：pnpm exec vue-tsc -p tsconfig.scripts.json --noEmit（挂载于 scripts/check.sh
-     与 CI frontend job）。compilerOptions 收敛至 tsconfig.base.json（issue #1149），
+     执行：pnpm exec vue-tsc -p tsconfig.scripts.json --noEmit（质量门槛挂载登记见
+     scripts/gate-mounts.ts，issue #1682）。compilerOptions 收敛至 tsconfig.base.json（issue #1149），
      本工程经 extends 继承——行为逐字不变（ADR-0083「与根 tsconfig.json 保持同构」
      表述同步修订为「两工程共用同一份 extends 源」），差异仅两处：
      ① types 限定 node + vitest/globals（@types/node 提供 node:* 声明；vitest 测试全局

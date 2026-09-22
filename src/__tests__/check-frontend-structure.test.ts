@@ -1,11 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-  FORBIDDEN_UPWARD_IMPORTS,
-  PACKAGES,
-  SCRIPT_INVOCATION,
-} from "../../scripts/check-frontend-structure.ts";
+import { FORBIDDEN_UPWARD_IMPORTS, PACKAGES } from "../../scripts/check-frontend-structure.ts";
 import {
   cleanupFixtureRepos,
   fixtureRepo,
@@ -50,7 +46,7 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
   });
 
   describe("规则①：成员登记（磁盘 ↔ PACKAGES 双向全等）", () => {
-    it("删除即变红②：packages/ 下新建成员目录不登记即红", () => {
+    it("删除即变红：packages/ 下新建成员目录不登记即红", () => {
       const r = run(fixtureRepo({ memberDirs: ["unregistered"] }));
       expect(r.status).toBe(1);
       expect(r.output).toContain("成员登记");
@@ -320,32 +316,6 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
     it("exports ./* 通配放行目录级深导入绿", () => {
       const r = run(deepImportFixture("@ledger/b/sub", { "./*": "./src/*.ts" }));
       expect(r.status).toBe(0);
-    });
-  });
-
-  describe("接线核对（删除即变红①）", () => {
-    it("check.sh 删除调用行即红", () => {
-      const r = run(fixtureRepo({ omitWiring: ["check.sh"] }));
-      expect(r.status).toBe(1);
-      expect(r.output).toContain("scripts/check.sh");
-      expect(r.output).toContain("接线核对");
-    });
-
-    it("build.yml frontend job 删除调用行即红", () => {
-      const r = run(fixtureRepo({ omitWiring: ["build.yml"] }));
-      expect(r.status).toBe(1);
-      expect(r.output).toContain(".github/workflows/build.yml");
-      expect(r.output).toContain("接线核对");
-    });
-
-    it("接线行注释掉即红（非注释行才算接线）", () => {
-      const args = fixtureRepo({ omitWiring: ["check.sh"] });
-      const root = args[0] as string;
-      mkdirSync(join(root, "scripts"), { recursive: true });
-      writeFileSync(join(root, "scripts", "check.sh"), `#!/bin/sh\n# ${SCRIPT_INVOCATION}\n`);
-      const r = run(args);
-      expect(r.status).toBe(1);
-      expect(r.output).toContain("接线核对");
     });
   });
 
