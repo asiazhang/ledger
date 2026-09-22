@@ -150,3 +150,68 @@ fn financial_freedom_numerator_and_denominator_share_timepoint() {
         "折算基准币种不应漂移"
     );
 }
+
+/// 投资概览同屏多腿必须同快照（issue #1699 同根因——全页单值读数由现金 / 持仓 /
+/// 未实现 / 已实现 / 分红多段拼出）：探针在已实现腿（`SELECT sls.realized_pnl_cents`，
+/// 位于现金、持仓、未现实现各腿之后）开始前于另一连接改写匹配行已实现盈亏——
+/// - 读闭包无快照保护（红）：前段读旧、已实现腿读新，累计收益三腿和漂移；
+/// - 读闭包收进读事务（绿）：注入写被挡住，各腿同见一套数。
+#[test]
+fn investment_overview_legs_share_one_snapshot() {
+    let dir = ScratchDir::new("investment-overview-read-snapshot");
+    let conn = open_file(dir.path());
+    seed_account(&conn, "acc-ov", "美股账户", "investment", "USD", 0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        1.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-ov", "AAPL", "Apple", "USD", "unknown");
+    ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-ov", "inst-ov", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-ov", "inst-ov", 5.0, 1_200_000, 200),
+    )
+    .unwrap();
+
+    let before = query_investment_overview(&conn).unwrap();
+
+    snapshot_probe::arm(
+        &conn,
+        dir.path(),
+        "SELECT sls.realized_pnl_cents",
+        &["UPDATE security_lot_sales SET realized_pnl_cents = realized_pnl_cents + 5000"],
+    );
+    let after = query_investment_overview(&conn).unwrap();
+
+    let outcome = snapshot_probe::outcome();
+    assert!(
+        outcome != InjectionOutcome::NotFired,
+        "探针未命中已实现腿（marker 漂移或未臂装），断言失去意义：{outcome:?}"
+    );
+
+    assert!(
+        before.cumulative_pnl_cents > 0,
+        "种子买卖应产出非零累计收益（否则口径断言空转）"
+    );
+    assert_eq!(
+        before.cumulative_pnl_cents, after.cumulative_pnl_cents,
+        "累计收益（持仓收益+已实现+分红三腿）必须同快照"
+    );
+    assert_eq!(
+        before.investable_assets_cents, after.investable_assets_cents,
+        "可投资资产（现金+持仓两腿）必须同快照"
+    );
+    assert_eq!(
+        before.native_currency, after.native_currency,
+        "折算基准币种不应漂移"
+    );
+}

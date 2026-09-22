@@ -27,6 +27,7 @@ use rusqlite::Connection;
 use ledger_accounts::AccountType;
 use ledger_accounts::balance::list_accounts_with_visibility;
 use ledger_infra::db::query::{FromRow, query_all};
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_transaction::amount;
 
@@ -37,28 +38,34 @@ use super::financial_freedom::{
 use super::model::InvestmentOverview;
 
 /// conn 级聚合：投资概览读数（只读）。
+///
+/// **读快照一致性（issue #1699）**：现金 / 持仓 / 未实现 / 已实现 / 分红多腿与
+/// 计数、引导判定多段取数，整体收进同一读事务（嵌套感知）——写提交落在语句
+/// 之间会让同屏单值的各腿不同时点。
 pub fn query_investment_overview(conn: &Connection) -> Result<InvestmentOverview> {
-    // 两腿各自单点取值（隐藏账户排除、缺价跳过、缺汇率上抛都在腿内），合计在此相加。
-    let investment_cash_cents = query_investable_assets_cash_leg_cents(conn)?;
-    let holdings_market_value_cents = query_investable_assets_holdings_leg_cents(conn)?;
-    // 投资合计三项（#1537）：未实现腿与持仓市值腿同一取数面，单次取值两处消费。
-    let unrealized_pnl_cents = sum_holdings_facet_column_cents(conn, "unrealized_pnl_cents")?;
-    let realized_pnl_cents = query_realized_pnl_cents(conn)?;
-    let dividend_total_cents = query_dividend_total_cents(conn)?;
+    ensure_transaction(conn, || {
+        // 两腿各自单点取值（隐藏账户排除、缺价跳过、缺汇率上抛都在腿内），合计在此相加。
+        let investment_cash_cents = query_investable_assets_cash_leg_cents(conn)?;
+        let holdings_market_value_cents = query_investable_assets_holdings_leg_cents(conn)?;
+        // 投资合计三项（#1537）：未实现腿与持仓市值腿同一取数面，单次取值两处消费。
+        let unrealized_pnl_cents = sum_holdings_facet_column_cents(conn, "unrealized_pnl_cents")?;
+        let realized_pnl_cents = query_realized_pnl_cents(conn)?;
+        let dividend_total_cents = query_dividend_total_cents(conn)?;
 
-    Ok(InvestmentOverview {
-        native_currency: amount::default_currency_code(conn)?,
-        investable_assets_cents: investment_cash_cents + holdings_market_value_cents,
-        investment_cash_cents,
-        // 总市值与持仓市值腿在全页折本位币口径下是同一聚合（同取数面同折算）：
-        // 展示面「可投资资产拆分」与「投资合计」各答一次问，字段各存其名。
-        total_market_value_cents: holdings_market_value_cents,
-        holdings_market_value_cents,
-        unrealized_pnl_cents,
-        // 累计收益三腿相加（词汇表「累计收益」），不是第三种成本法。
-        cumulative_pnl_cents: unrealized_pnl_cents + realized_pnl_cents + dividend_total_cents,
-        missing_price_holding_count: count_unpriced_holdings(conn)?,
-        has_investment_account: has_investment_account(conn)?,
+        Ok(InvestmentOverview {
+            native_currency: amount::default_currency_code(conn)?,
+            investable_assets_cents: investment_cash_cents + holdings_market_value_cents,
+            investment_cash_cents,
+            // 总市值与持仓市值腿在全页折本位币口径下是同一聚合（同取数面同折算）：
+            // 展示面「可投资资产拆分」与「投资合计」各答一次问，字段各存其名。
+            total_market_value_cents: holdings_market_value_cents,
+            holdings_market_value_cents,
+            unrealized_pnl_cents,
+            // 累计收益三腿相加（词汇表「累计收益」），不是第三种成本法。
+            cumulative_pnl_cents: unrealized_pnl_cents + realized_pnl_cents + dividend_total_cents,
+            missing_price_holding_count: count_unpriced_holdings(conn)?,
+            has_investment_account: has_investment_account(conn)?,
+        })
     })
 }
 
