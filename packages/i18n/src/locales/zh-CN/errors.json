@@ -213,6 +213,7 @@
     "not-found": "标的 {0} 不存在",
     "symbol-required": "标的代码不能为空",
     "type-unknown": "未知金融工具类型: {0}（合法值: {1}）",
+    "market-unknown": "未知市场: {0}（合法值: {1}）",
     "sync-delete-forbidden": "同步来源标的不支持删除：名称与市场由按代码查询/创建带回权威信息维护",
     "traded-delete-forbidden": "该标的已有买卖流水，无法删除：可先删除相关交易后再试",
     "stock-manual-forbidden": "股票类标的不支持手动创建：请用「添加投资标的」按代码查询，自动回填权威名称",

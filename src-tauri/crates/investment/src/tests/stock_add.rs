@@ -55,24 +55,21 @@ fn tracking_fetch(
     let track = Rc::clone(&requests);
     (
         // async 接缝桩（ADR-0125 决策 7 / issue #1413）：应答值为立即就绪的 future。
-        // 命中判定与数据源行为同构：请求路由与命中市场一致（沪深港），或为聚合
-        // 路由 `Us` 且命中市场属美股三市场（行情源不区分交易所，issue #1673）。
+        // 命中判定与数据源行为同构：请求路由 = 命中市场的聚合投影（消费投资域
+        // `as_stock_route` 单点，不自建第二份映射，issue #1673）。
         move |code: &str, route: StockRoute| {
             track
                 .borrow_mut()
                 .push((route.as_str().to_string(), code.to_string()));
-            let hit_market = hit.as_ref().map(|(m, _)| *m);
-            let route_matches = match route {
-                StockRoute::Us => matches!(
-                    hit_market,
-                    Some(Market::Nasdaq) | Some(Market::Nyse) | Some(Market::Amex)
-                ),
-                StockRoute::Sh => hit_market == Some(Market::Sh),
-                StockRoute::Sz => hit_market == Some(Market::Sz),
-                StockRoute::Hk => hit_market == Some(Market::Hk),
-            };
+            let expected_route = hit
+                .as_ref()
+                .map(|(m, _)| *m)
+                .and_then(|m| m.as_quote_market())
+                .map(|qm| qm.as_stock_route());
             match &hit {
-                Some((_, quote)) if route_matches => std::future::ready(Ok(quote.clone())),
+                Some((_, quote)) if expected_route == Some(route) => {
+                    std::future::ready(Ok(quote.clone()))
+                }
                 _ => std::future::ready(Err(miss(code))),
             }
         },

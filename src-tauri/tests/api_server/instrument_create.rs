@@ -273,6 +273,35 @@ async fn test_create_instrument_with_blank_symbol_returns_400_unified_shape() {
     );
 }
 
+/// 缺省币种 + 闭集外 market：缺省币种推导前的市场闭集解析显式 400（稳定码
+/// `instrument.market-unknown`，params = [取值, 合法值清单]，issue #1673 /
+/// ADR-0050 码化构造点）。bond 不经行情增强，错误在写入口径之前返回。
+#[tokio::test]
+async fn test_create_instrument_with_unknown_market_and_default_currency_is_coded_400() {
+    let (app, _) = setup_app();
+
+    let (status, bytes) = post_instrument(
+        &app,
+        r#"{"symbol":"某虚拟标的","type":"bond","market":"NotAMarket"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        err["code"], "instrument.market-unknown",
+        "闭集外市场应以稳定错误码拒绝（ADR-0050）"
+    );
+    let params: Vec<String> = serde_json::from_value(err["params"].clone()).unwrap();
+    assert_eq!(
+        params,
+        vec![
+            "NotAMarket".to_string(),
+            "sh/sz/hk/nasdaq/nyse/amex/unknown".to_string(),
+        ],
+        "错误参数应含取值与同源合法值清单（清单随闭集单一来源）"
+    );
+}
+
 /// 请求体格式错误（缺必填字段 / type 非法枚举值）：与账户创建先例一致，
 /// 由 axum Json extractor 拒绝返回 422（格式错误不是业务校验，不占统一错误形状）。
 #[tokio::test]

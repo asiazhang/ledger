@@ -479,19 +479,9 @@ async fn add_instrument_with_stub_quote(
         let code = code.to_string();
         let name = name.clone();
         async move {
-            // 命中判定与数据源行为同构（issue #1673 类型化路由）：请求路由与命中
-            // 市场一致（沪深港），或为聚合路由 Us 且命中市场属美股三市场。
-            let hit = match route {
-                StockRoute::Us => matches!(
-                    quote_market,
-                    ledger_investment::Market::Nasdaq
-                        | ledger_investment::Market::Nyse
-                        | ledger_investment::Market::Amex
-                ),
-                StockRoute::Sh => quote_market == ledger_investment::Market::Sh,
-                StockRoute::Sz => quote_market == ledger_investment::Market::Sz,
-                StockRoute::Hk => quote_market == ledger_investment::Market::Hk,
-            };
+            // 命中判定与数据源行为同构：请求路由 = 命中市场的聚合投影（消费
+            // 投资域 `as_stock_route` 单点，不自建第二份映射，issue #1673）。
+            let hit = quote_market.as_quote_market().map(|qm| qm.as_stock_route()) == Some(route);
             if hit {
                 Ok(Quote {
                     // 代码回显请求归一化形态（与访问层回显同构：命中判定 = 回显全等）；

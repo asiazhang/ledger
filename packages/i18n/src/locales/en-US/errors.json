@@ -213,6 +213,7 @@
     "not-found": "instrument {0} does not exist",
     "symbol-required": "instrument symbol must not be empty",
     "type-unknown": "unknown instrument type: {0} (valid values: {1})",
+    "market-unknown": "unknown market: {0} (valid values: {1})",
     "sync-delete-forbidden": "sync-sourced instruments cannot be deleted: names and markets are maintained via by-code lookup/creation with authoritative values",
     "traded-delete-forbidden": "this instrument has trade records and cannot be deleted: delete the related transactions first and try again",
     "stock-manual-forbidden": "stock instruments cannot be created manually: use Add Instrument to look up by code and auto-fill the authoritative name",
