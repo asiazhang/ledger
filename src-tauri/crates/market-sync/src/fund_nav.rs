@@ -47,8 +47,8 @@ pub(super) struct FundIdentity<'a> {
     pub(super) code: &'a str,
     /// 报价币种。
     pub(super) currency: &'a str,
-    /// 价格通道（收集时点的投影）：回填单元的恒定价格分支判定输入；通道判定
-    /// 单点在投资域（issue #1060），本字段只透传不重派。
+    /// 价格通道（收集时点的投影）：回填单元判定门前置的守卫输入（恒定通道行
+    /// 在收集侧已被排除）；通道判定单点在投资域（issue #1060），本字段只透传不重派。
     pub(super) channel: PriceChannel,
 }
 
@@ -152,11 +152,13 @@ pub(super) fn deep_backfill_window(
     )
 }
 
-/// 恒定价格标的的打标收尾单点（ADR-0126 决策 3/5；issue #1563 判定门两确认点
-/// 与排队竞态窗共用）：回填恒定单位价格标记（单向幂等）并兜底建档常量价
-///（1.0000、净值日期空），返回是否实际落价（调用方据此计入价格写入见证）。
-/// 取代三处逐字重复的打标块；写入单点 [`ledger_investment::constant_price`]，
-/// 本函数不新增第二份落库 SQL。
+/// 恒定价格标的的打标收尾单点（ADR-0126 决策 3/5；issue #1563）：两道判定门共用
+///——历史首刷队列（[`super::fund_backfill`]）与逐只刷新
+///（[`super::fund_price_refresh`]）各一处，含队列排队后被并行刷新打标的竞态窗
+///（issue #1711，同样经历史首刷那道门）。回填恒定单位价格标记（单向幂等）并
+/// 兜底建档常量价（1.0000、净值日期空），返回是否实际落价（调用方据此计入价格
+/// 写入见证）。写入单点 [`ledger_investment::constant_price`]，本函数不新增
+/// 第二份落库 SQL。
 pub(super) async fn mark_constant_price_on_confirm<Q: ScopedSession>(
     session: &Q,
     instrument_id: &str,
