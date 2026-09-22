@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { lastInvokeArgs, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { fireProp } from "@ledger/test-support/component-vm";
 import { mount, flushPromises } from "@vue/test-utils";
@@ -185,10 +185,6 @@ describe("AccountsView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词�
   function moreButtons(wrapper: ReturnType<typeof mount>) {
     return wrapper.findAll('button[aria-label="更多操作"]');
   }
-
-  afterEach(() => {
-    amountPrivacyEnabled.value = false;
-  });
 
   /** 本 describe 专用夹具：第二行为 bank 类型，副行「银行卡 · CNY」与名称
    * 「银行」可区分（验证类型/币种确实并入副行而非丢失）。 */

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { mount, flushPromises } from "@vue/test-utils";
 import { findButton, probeColor } from "@ledger/test-support/dom";
@@ -562,10 +562,6 @@ describe("DashboardView 物品使用成本卡（issue #122）", () => {
 });
 
 describe("DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词汇表「窗口分级」）", () => {
-  afterEach(() => {
-    amountPrivacyEnabled.value = false;
-  });
-
   it("移动档栅格单列化：本月收支三格与投资概览三格均单列（断点口径接窗口分级常量，不自立断点）", async () => {
     setFakeMedia({ width: 600 });
     const wrapper = await mountView();
@@ -640,10 +636,6 @@ describe("DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词
 });
 
 describe("DashboardView 金额隐私模式（issue #567 仪表盘面核查：无 canvas 图表，数字卡全走格式化接缝）", () => {
-  afterEach(() => {
-    amountPrivacyEnabled.value = false;
-  });
-
   it("开启后各金额卡显示掩码、币种符号一同隐藏，百分比与件数保留", async () => {
     setCurrentMonthSummary({ income_cents: 100000, expense_cents: 80000, refund_cents: 5000 });
     mockBudgetProgress = [

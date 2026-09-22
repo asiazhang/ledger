@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
@@ -42,11 +42,6 @@ beforeEach(async () => {
   resetPricesChangedHandler();
   wireInvokeSeam({ defaults: { investment_overview: OVERVIEW } });
   await useReferenceStore().refresh();
-});
-
-// 金额隐私模式是模块级单点 ref（@ledger/money）：每测复位，防用例间洩漏
-afterEach(() => {
-  amountPrivacyEnabled.value = false;
 });
 
 async function mountPanel(): Promise<ReturnType<typeof mount>> {
