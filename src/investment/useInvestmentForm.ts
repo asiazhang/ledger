@@ -58,7 +58,7 @@ export function useInvestmentForm(
   const date = ref(Date.now());
   /**
    * 交易币种（issue #1191）：buy/sell 的记账币种由投资账户决定——后端 prepare 以
-   * 账户币种落 `currency_code`（见 CONTEXT-investment 累计收益「buy/sell 的记录币种
+   * 账户币种落 `currency_code`（见投资域「累计收益」词条的「buy/sell 的记录币种
    * 恒为账户币」），出资账户准入亦按该币种校验。前端不另存一份可能漂移的币种状态，
    * 展示值与出资候选过滤同源读账户；未选账户前退「新表单预选币种」（展示币种偏好，
    * 见核心交易域 DefaultCurrency）。

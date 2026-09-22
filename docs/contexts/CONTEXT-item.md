@@ -1,7 +1,7 @@
 # 领域词汇表：物品
 
 > Ledger 领域词汇表的物品分域（单列小域）。全部分域与彼此关系见 `CONTEXT-MAP.md`；决策记录见 `docs/adr/`（ADR-0014 独立领域、ADR-0025 创建唯一入口与自包含成本）。
-> 跨域共享术语（Transaction、Instrument、Subscription 等）见核心交易域 `CONTEXT-core.md`、投资域 `CONTEXT-investment.md`、定时计划域 `CONTEXT-scheduled-plans.md`，本文不复制定义。
+> 跨域共享术语（Transaction、Instrument、Subscription 等）见核心交易域 `CONTEXT-core.md`、投资域 `CONTEXT-investment-prices.md`、定时计划域 `CONTEXT-scheduled-plans.md`，本文不复制定义。
 > 若与代码行为冲突，以代码为准并同步修正本文件。
 
 > **与代码的差异（过渡态）**：本文档按 #113 修订后的**目标决策**描述，目标语义的决策权威是 ADR-0025、**现码为准绳**——溯源购买交易关联**必填**（创建时刻，后端守卫已强制，issue #207）、创建唯一入口 = 交易右键「加入物品」+ 确认弹窗、**无手动新建表单**（物品页表单已移除，issue #207）、**无交易物品不可录入**；当前实现仅剩一处过渡差异：列名仍为 `purchase_transaction_id`（目标名 `source_transaction_id`，改名及迁移另票处理），且该列仍可空（可空服务于修改语义与外键清理，必填仅约束创建时刻）。
