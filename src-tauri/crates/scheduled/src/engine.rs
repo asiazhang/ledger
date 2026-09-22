@@ -398,20 +398,26 @@ pub(crate) fn update_subscription_protocol(
 }
 
 /// 获取计划完整详情（含扩展字段和期次）。
+///
+/// **读快照一致性（issue #1702）**：core、扩展、pending 列表、完成计数与全量
+/// 期次是五段语句，整体收进同一读事务（嵌套感知）——「已完成 N 期 / 已还金额」
+/// 与弹窗期次明细、总期数必须同时点（页与总数形态），期次执行落在语句间即
+/// 计数与明细错位。
 pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransactionDetail> {
-    let core: ScheduledTransaction = query_one(
-        conn,
-        "SELECT id,kind,status,account_id,category_id,amount_cents,currency_code,\
-         recurrence_type,recurrence_interval,recurrence_day,start_date,note,\
-         created_at,updated_at,version,device_id,is_deleted \
-         FROM scheduled_transactions WHERE id=?1 AND is_deleted=0",
-        rusqlite::params![id],
-    )?
-    .ok_or_else(|| AppError::coded_not_found("scheduled-plan.not-found", "定时计划不存在"))?;
+    ensure_transaction(conn, || {
+        let core: ScheduledTransaction = query_one(
+            conn,
+            "SELECT id,kind,status,account_id,category_id,amount_cents,currency_code,\
+             recurrence_type,recurrence_interval,recurrence_day,start_date,note,\
+             created_at,updated_at,version,device_id,is_deleted \
+             FROM scheduled_transactions WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+        )?
+        .ok_or_else(|| AppError::coded_not_found("scheduled-plan.not-found", "定时计划不存在"))?;
 
-    let extension = match core.kind {
-        ScheduledKind::Installment => {
-            let ext: InstallmentPlan = query_one(
+        let extension = match core.kind {
+            ScheduledKind::Installment => {
+                let ext: InstallmentPlan = query_one(
                 conn,
                 "SELECT scheduled_transaction_id,merchant_id,total_amount_cents,total_occurrences \
                  FROM installment_plans WHERE scheduled_transaction_id=?1",
@@ -423,95 +429,101 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
                     "分期扩展信息不存在",
                 )
             })?;
-            serde_json::to_value(ext).unwrap_or_default()
-        }
-        ScheduledKind::Subscription => {
-            let ext: SubscriptionPlan = query_one(
-                conn,
-                "SELECT scheduled_transaction_id,merchant_id,policy_id \
+                serde_json::to_value(ext).unwrap_or_default()
+            }
+            ScheduledKind::Subscription => {
+                let ext: SubscriptionPlan = query_one(
+                    conn,
+                    "SELECT scheduled_transaction_id,merchant_id,policy_id \
                  FROM subscription_plans WHERE scheduled_transaction_id=?1",
-                rusqlite::params![id],
-            )?
-            .ok_or_else(|| {
-                AppError::coded_not_found(
-                    "scheduled-plan.subscription-ext-not-found",
-                    "订阅扩展信息不存在",
-                )
-            })?;
-            serde_json::to_value(ext).unwrap_or_default()
-        }
-        ScheduledKind::ScheduledTransfer => {
-            let ext: ScheduledTransferPlan = query_one(
-                conn,
-                "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
+                    rusqlite::params![id],
+                )?
+                .ok_or_else(|| {
+                    AppError::coded_not_found(
+                        "scheduled-plan.subscription-ext-not-found",
+                        "订阅扩展信息不存在",
+                    )
+                })?;
+                serde_json::to_value(ext).unwrap_or_default()
+            }
+            ScheduledKind::ScheduledTransfer => {
+                let ext: ScheduledTransferPlan = query_one(
+                    conn,
+                    "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
                  FROM scheduled_transfer_plans WHERE scheduled_transaction_id=?1",
-                rusqlite::params![id],
-            )?
-            .ok_or_else(|| {
-                AppError::coded_not_found(
-                    "scheduled-plan.transfer-ext-not-found",
-                    "定时转账扩展信息不存在",
-                )
-            })?;
-            serde_json::to_value(ext).unwrap_or_default()
-        }
-    };
+                    rusqlite::params![id],
+                )?
+                .ok_or_else(|| {
+                    AppError::coded_not_found(
+                        "scheduled-plan.transfer-ext-not-found",
+                        "定时转账扩展信息不存在",
+                    )
+                })?;
+                serde_json::to_value(ext).unwrap_or_default()
+            }
+        };
 
-    let pending_occurrences: Vec<ScheduledTransactionOccurrence> = query_all(
-        conn,
-        "SELECT id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,\
+        let pending_occurrences: Vec<ScheduledTransactionOccurrence> = query_all(
+            conn,
+            "SELECT id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,\
          created_at,updated_at,version,device_id,is_deleted \
          FROM scheduled_transaction_occurrences \
          WHERE scheduled_transaction_id=?1 AND is_deleted=0 AND status='pending' \
          ORDER BY scheduled_date ASC",
-        rusqlite::params![id],
-    )?;
+            rusqlite::params![id],
+        )?;
 
-    let (completed_occurrences, completed_amount_cents): (i64, i64) = conn.query_row(
-        "SELECT COUNT(*), COALESCE(SUM(amount_cents),0) FROM scheduled_transaction_occurrences \
+        let (completed_occurrences, completed_amount_cents): (i64, i64) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(amount_cents),0) FROM scheduled_transaction_occurrences \
          WHERE scheduled_transaction_id=?1 AND status='completed' AND is_deleted=0",
-        rusqlite::params![id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
+            rusqlite::params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
 
-    // issue #205：期次详情弹窗需要全量期次列表（含 failed 可重试、cancelled
-    // 历史等各状态）；新增返回字段，不改动既有字段口径。
-    let occurrences: Vec<ScheduledTransactionOccurrence> = query_all(
-        conn,
-        "SELECT id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,\
+        // issue #205：期次详情弹窗需要全量期次列表（含 failed 可重试、cancelled
+        // 历史等各状态）；新增返回字段，不改动既有字段口径。
+        let occurrences: Vec<ScheduledTransactionOccurrence> = query_all(
+            conn,
+            "SELECT id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,\
          created_at,updated_at,version,device_id,is_deleted \
          FROM scheduled_transaction_occurrences \
          WHERE scheduled_transaction_id=?1 AND is_deleted=0 \
          ORDER BY scheduled_date ASC",
-        rusqlite::params![id],
-    )?;
+            rusqlite::params![id],
+        )?;
 
-    Ok(ScheduledTransactionDetail {
-        core,
-        extension,
-        pending_occurrences,
-        completed_occurrences,
-        completed_amount_cents,
-        occurrences,
+        Ok(ScheduledTransactionDetail {
+            core,
+            extension,
+            pending_occurrences,
+            completed_occurrences,
+            completed_amount_cents,
+            occurrences,
+        })
     })
 }
 
 /// 列出所有非软删除的定时计划（含类型特有字段）。
+///
+/// **读快照一致性（issue #1702）**：core 行与逐行扩展（分期 / 订阅 / 转账 ext）
+/// 是 1+N 段语句（两段 join 形态），整体收进同一读事务——ext 行在 core 读后
+/// 新建 / 重建删旧段时，行内静默兜底为 0 值 / 空串的「半行」即消失。
 pub fn list_plans(conn: &Connection) -> Result<Vec<ScheduledTransactionWithExt>> {
-    let cores: Vec<ScheduledTransaction> = query_all(
-        conn,
-        "SELECT id,kind,status,account_id,category_id,amount_cents,currency_code,\
-         recurrence_type,recurrence_interval,recurrence_day,start_date,note,\
-         created_at,updated_at,version,device_id,is_deleted \
-         FROM scheduled_transactions WHERE is_deleted=0 ORDER BY created_at DESC",
-        [],
-    )?;
+    ensure_transaction(conn, || {
+        let cores: Vec<ScheduledTransaction> = query_all(
+            conn,
+            "SELECT id,kind,status,account_id,category_id,amount_cents,currency_code,\
+             recurrence_type,recurrence_interval,recurrence_day,start_date,note,\
+             created_at,updated_at,version,device_id,is_deleted \
+             FROM scheduled_transactions WHERE is_deleted=0 ORDER BY created_at DESC",
+            [],
+        )?;
 
-    let mut results = Vec::with_capacity(cores.len());
-    for core in cores {
-        let ext = match core.kind {
-            ScheduledKind::Installment => {
-                let plan: InstallmentPlan = query_one(
+        let mut results = Vec::with_capacity(cores.len());
+        for core in cores {
+            let ext = match core.kind {
+                ScheduledKind::Installment => {
+                    let plan: InstallmentPlan = query_one(
                     conn,
                     "SELECT scheduled_transaction_id,merchant_id,total_amount_cents,total_occurrences \
                      FROM installment_plans WHERE scheduled_transaction_id=?1",
@@ -523,60 +535,61 @@ pub fn list_plans(conn: &Connection) -> Result<Vec<ScheduledTransactionWithExt>>
                     total_amount_cents: 0,
                     total_occurrences: 0,
                 });
-                PlanExtProjection {
-                    merchant_id: plan.merchant_id,
-                    total_amount_cents: Some(plan.total_amount_cents),
-                    total_occurrences: Some(plan.total_occurrences),
-                    ..Default::default()
+                    PlanExtProjection {
+                        merchant_id: plan.merchant_id,
+                        total_amount_cents: Some(plan.total_amount_cents),
+                        total_occurrences: Some(plan.total_occurrences),
+                        ..Default::default()
+                    }
                 }
-            }
-            ScheduledKind::Subscription => {
-                let plan: SubscriptionPlan = query_one(
-                    conn,
-                    "SELECT scheduled_transaction_id,merchant_id,policy_id \
+                ScheduledKind::Subscription => {
+                    let plan: SubscriptionPlan = query_one(
+                        conn,
+                        "SELECT scheduled_transaction_id,merchant_id,policy_id \
                      FROM subscription_plans WHERE scheduled_transaction_id=?1",
-                    rusqlite::params![core.id],
-                )?
-                .unwrap_or(SubscriptionPlan {
-                    scheduled_transaction_id: core.id.clone(),
-                    merchant_id: None,
-                    policy_id: None,
-                });
-                PlanExtProjection {
-                    merchant_id: plan.merchant_id,
-                    policy_id: plan.policy_id,
-                    ..Default::default()
+                        rusqlite::params![core.id],
+                    )?
+                    .unwrap_or(SubscriptionPlan {
+                        scheduled_transaction_id: core.id.clone(),
+                        merchant_id: None,
+                        policy_id: None,
+                    });
+                    PlanExtProjection {
+                        merchant_id: plan.merchant_id,
+                        policy_id: plan.policy_id,
+                        ..Default::default()
+                    }
                 }
-            }
-            ScheduledKind::ScheduledTransfer => {
-                let plan: ScheduledTransferPlan = query_one(
-                    conn,
-                    "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
+                ScheduledKind::ScheduledTransfer => {
+                    let plan: ScheduledTransferPlan = query_one(
+                        conn,
+                        "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
                      FROM scheduled_transfer_plans WHERE scheduled_transaction_id=?1",
-                    rusqlite::params![core.id],
-                )?
-                .unwrap_or(ScheduledTransferPlan {
-                    scheduled_transaction_id: core.id.clone(),
-                    to_account_id: String::new(),
-                    total_occurrences: None,
-                });
-                PlanExtProjection {
-                    to_account_id: Some(plan.to_account_id),
-                    total_occurrences: plan.total_occurrences,
-                    ..Default::default()
+                        rusqlite::params![core.id],
+                    )?
+                    .unwrap_or(ScheduledTransferPlan {
+                        scheduled_transaction_id: core.id.clone(),
+                        to_account_id: String::new(),
+                        total_occurrences: None,
+                    });
+                    PlanExtProjection {
+                        to_account_id: Some(plan.to_account_id),
+                        total_occurrences: plan.total_occurrences,
+                        ..Default::default()
+                    }
                 }
-            }
-        };
-        results.push(ScheduledTransactionWithExt {
-            core,
-            merchant_id: ext.merchant_id,
-            policy_id: ext.policy_id,
-            total_amount_cents: ext.total_amount_cents,
-            total_occurrences: ext.total_occurrences,
-            to_account_id: ext.to_account_id,
-        });
-    }
-    Ok(results)
+            };
+            results.push(ScheduledTransactionWithExt {
+                core,
+                merchant_id: ext.merchant_id,
+                policy_id: ext.policy_id,
+                total_amount_cents: ext.total_amount_cents,
+                total_occurrences: ext.total_occurrences,
+                to_account_id: ext.to_account_id,
+            });
+        }
+        Ok(results)
+    })
 }
 
 // ---------------------------------------------------------------------------

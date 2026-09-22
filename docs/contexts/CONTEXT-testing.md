@@ -97,7 +97,7 @@
 
 ## 读快照探针
 
-- **定义**：多语句读闭包「写提交落在两语句之间」的确定性注入器具唯一定义点（`test_support::snapshot_probe`，issue #1699）——reader 连接注册 `trace_v2` STMT 回调，目标语句（marker 子串）开始前于另一条文件库连接经事务原语原子提交注入写；臂装一次、结局（`InjectionOutcome`）取走即清。配套 `test_support::open_file` 是文件库建库入口（内存库按连接隔离，双连接现场不可用）。
+- **定义**：多语句读闭包「写提交落在两语句之间」的确定性注入器具唯一定义点（`test_support::snapshot_probe`，issue #1699 / #1702）——reader 连接注册 `trace_v2` STMT 回调，目标语句（marker 子串）开始前于另一条文件库连接经事务原语原子提交注入写；臂装一次、结局（`InjectionOutcome`）取走即清。配套 `test_support::open_file` 是文件库建库入口（内存库按连接隔离，双连接现场不可用）。
 - **边界**：用例断言两段——「结局 ≠ NotFired」（marker 随 SQL 文本漂移即红，防探针静默失敏）+ 各自的用户可观察口径（总量=分量和 / 与基线同时点，ADR-0087）；不锁死注入结局分支（未来隔离级别变化只要口径自洽仍应绿）。STMT 注册在 `trace_v2` 单槽上顶掉 PROFILE 耗时 hook——仅测试连接、用例存活期，不回装；回调状态走线程局部（测试线程与用例一一对应）。准入沿 ADR-0084 决策 1/2（跨域同体消费 + `pub mod` / `doc(hidden)`）。
 - **别名**：不使用「注入写 helper」「并发写模拟器」变体指代本器具。
 

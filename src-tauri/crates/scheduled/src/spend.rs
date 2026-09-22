@@ -22,6 +22,7 @@ use serde::Serialize;
 
 use super::models::RecurrenceType;
 use ledger_infra::db::query::{FromRow, query_all};
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_transaction::amount;
 
@@ -173,7 +174,22 @@ fn query_projected_cost(conn: &Connection) -> Result<(i64, i64)> {
 
 /// conn 级聚合：订阅实际花费总览（只读）。`today` 由命令层注入（本地今日），
 /// 单测与 e2e 可传固定日期获得确定性口径。
+///
+/// **读快照一致性（issue #1702）**：逐月花费聚合、订阅行清单、推算成本
+///（计划金额 × 汇率）与基准币种是多语句读闭包，整体收进同一读事务（嵌套
+/// 感知）——「行内花费与顶层汇总同源」的既有依赖要求同一快照：期次落账落在
+/// 语句间即合计 ≠ Σ 行；计划取消落在语句间即行已 cancelled 而推算成本仍按
+/// active 计（或反向）。
 pub fn query_subscription_spend(
+    conn: &Connection,
+    today: NaiveDate,
+) -> Result<SubscriptionSpendOverview> {
+    ensure_transaction(conn, || query_subscription_spend_within_tx(conn, today))
+}
+
+/// 订阅花费总览本体（无事务语义，由 [`query_subscription_spend`] 的
+/// [`ensure_transaction`] 包裹）。
+fn query_subscription_spend_within_tx(
     conn: &Connection,
     today: NaiveDate,
 ) -> Result<SubscriptionSpendOverview> {

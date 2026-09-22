@@ -426,3 +426,100 @@ fn 统计_软删保单不产生统计行且不串其他保单() {
     assert_eq!(stats[0].policy_id, kept);
     assert_eq!(stats[0].total_paid_native_cents, 111, "已删保单流水不串入");
 }
+
+// ---------------------------------------------------------------------------
+// 读快照一致性探针（issue #1702）：写提交落在语句之间时，同屏口径必须仍互相
+// 自洽。探针机制见 `tauri_app_lib::test_support::snapshot_probe`。
+// ---------------------------------------------------------------------------
+
+use tauri_app_lib::test_support::snapshot_probe::{self, InjectionOutcome};
+use tauri_app_lib::test_support::{ScratchDir, open_file};
+
+/// 统计的保单行与逐保单合计必须同快照（issue #1702）：保单基础行、保费/流入
+/// 聚合、下期扣款日、本位币是多语句读闭包（两段 join 形态）。探针在保费聚合
+/// 读取开始前于另一连接把挂单流水金额翻倍——
+/// - 读闭包无快照保护（红）：统计相对基线漂移（合计读新、保单行读旧，
+///   「列表有此保单而合计对不上」不同时点）；
+/// - 读闭包收进读事务（绿）：注入写被挡住，行与合计同见一套数。
+#[test]
+fn policy_stats_rows_and_sums_share_one_snapshot() {
+    let dir = ScratchDir::new("policy-stats-read-snapshot");
+    let conn = open_file(dir.path());
+    let insurer_id = seed_insurer(&conn, "平安保险");
+    let policy_id = create_ok(&conn, input(&insurer_id));
+    insert_account(&conn, "acc-stats");
+    create_transaction_internal(
+        &conn,
+        linked_input(
+            "acc-stats",
+            TransactionKind::Expense,
+            300,
+            "2026-02-01",
+            &policy_id,
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        linked_input(
+            "acc-stats",
+            TransactionKind::Income,
+            50,
+            "2026-03-01",
+            &policy_id,
+        ),
+    )
+    .unwrap();
+
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+    let before = policy_stats(&conn, today).unwrap();
+    assert_eq!(
+        before.len(),
+        1,
+        "种子应产出恰好一行统计（否则口径断言空转）"
+    );
+    assert_eq!(
+        before[0].total_paid_native_cents, 300,
+        "种子保费合计应就位（否则口径断言空转）"
+    );
+    assert_eq!(before[0].total_inflow_native_cents, 50);
+
+    // 探针：保费聚合读取（`FROM transactions t JOIN policies p`，位于保单行
+    // 之后、全闭包首次命中）开始前，另一连接提交流水翻倍。
+    snapshot_probe::arm(
+        &conn,
+        dir.path(),
+        "FROM transactions t JOIN policies p",
+        &[
+            "UPDATE transactions SET amount_native_cents = amount_native_cents * 2",
+            "UPDATE transactions SET amount_cents = amount_cents * 2",
+        ],
+    );
+    let after = policy_stats(&conn, today).unwrap();
+
+    let outcome = snapshot_probe::outcome();
+    assert!(
+        outcome != InjectionOutcome::NotFired,
+        "探针未命中保费聚合（marker 漂移或未臂装），断言失去意义：{outcome:?}"
+    );
+
+    assert_eq!(
+        before[0].total_paid_native_cents, after[0].total_paid_native_cents,
+        "保费合计必须与基线同时点（保单行读旧、合计读新即漂移）"
+    );
+    assert_eq!(
+        before[0].total_inflow_native_cents, after[0].total_inflow_native_cents,
+        "流入合计必须与基线同时点"
+    );
+    assert_eq!(
+        (
+            before[0].policy_id.as_str(),
+            before[0].native_currency.as_str()
+        ),
+        (
+            after[0].policy_id.as_str(),
+            after[0].native_currency.as_str()
+        ),
+        "统计行身份与折算基准不应漂移"
+    );
+}

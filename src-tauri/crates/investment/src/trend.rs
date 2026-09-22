@@ -22,6 +22,7 @@ use super::model::{
     InstrumentPriceTrend, PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, TrendRange,
 };
 use super::prices::PRICE_UNITS_PER_FEN;
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::{AppError, Result};
 use ledger_transaction::amount::default_currency_code;
 
@@ -71,6 +72,12 @@ pub fn query_instrument_price_trend(
 
 /// [`query_instrument_price_trend`] 的可注入形态（时钟是测试的行为输入，先例：
 /// `instrument_price_staleness_on`）：常量合成的序列右界由「今天」夹出。
+///
+/// **读快照审计结论（issue #1702，判定不修）**：常量路径单语句 + 纯内存合成；
+/// 直出路径是「价格行查询 + 空集时补全状态判定」两段，但两组输出同源
+/// `price_history` 且按同键查表——写提交落在段间时，空点 + 无补全字段的组合
+/// 即「区间裁剪」的合法形态，任何交错都坍缩为某快照的合法应答，无自相矛盾
+/// 口径可断言，故不收读事务（同根因候选 #1702 留痕）。
 pub fn query_instrument_price_trend_on(
     conn: &Connection,
     instrument_id: &str,
@@ -201,7 +208,22 @@ pub fn query_portfolio_value_trend(
 
 /// [`query_portfolio_value_trend`] 的可注入形态（时钟是测试的行为输入，先例：
 /// `instrument_price_staleness_on`）：常量合成的序列右界由「今天」夹出。
+///
+/// 多语句读闭包收进同一读事务（issue #1702，快照纪律见 `tx_scope` 模块文档）：
+/// 曲线各周 = 数量 × 周线价 × 同期汇率，价格行与汇率历史是两次独立语句——写提交
+/// 落在段间即「价格读旧、汇率读新」，折算出任何快照都不存在的周点。
 pub fn query_portfolio_value_trend_on(
+    conn: &Connection,
+    range: &TrendRange,
+    today: chrono::NaiveDate,
+) -> Result<PortfolioValueTrend> {
+    ensure_transaction(conn, || portfolio_value_trend_within_tx(conn, range, today))
+}
+
+/// 组合走势投影本体（无事务语义，由 [`query_portfolio_value_trend_on`] 的
+/// [`ensure_transaction`] 包裹）：区间校验 → 本位币 → 价格行 → 恒量合成 →
+/// 汇率历史 → 数量腿流 → 按周聚合。
+fn portfolio_value_trend_within_tx(
     conn: &Connection,
     range: &TrendRange,
     today: chrono::NaiveDate,

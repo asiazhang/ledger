@@ -37,13 +37,36 @@
 //! 与同步域零直接依赖，反向引用由 cargo 依赖图编译期拒绝（生产依赖面无根包，
 //! 机器面负向核对住结构守门的 crate 依赖方向，Cargo.toml 注释留痕）。
 //!
-//! **测试布局**：域内无测试目标——纯读聚合由根包侧三层测试覆盖（壳层命令
-//! 集成与 e2e BDD `dashboard.feature`，断言与场景文本零改动），`cargo test
-//! -p ledger-dashboard` 当前为空集。
+//! **测试布局**：快照探针域单测随 issue #1702 立项（[`tests`]，读闭包纪律的
+//! 域内验收），其余纯读聚合仍由根包侧三层测试覆盖（壳层命令集成与 e2e BDD
+//! `dashboard.feature`，断言与场景文本零改动）。
+//!
+//! **测试实例纪律（dev-dependency 环双实例，ledger-reports 同款）**：
+//! `cargo test -p ledger-dashboard` 的依赖图内存在本 crate 的两份实例——被测本
+//! 实例与根包图内实例。本域是纯读路径、不读任何接缝注册静态，域单测直接驱动
+//! 本实例；经壳层的旅程由根包侧三层测试走根包图实例覆盖。
+
+// 测试整体豁免（ADR-0060）：clippy 六件套 deny 仅约束生产路径；单元测试目标
+// （含 src/** 内 #[cfg(test)] 模块）经 crate 根 cfg(test) 整体放行，生产构建
+// 零放宽。
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable
+    )
+)]
 
 mod model;
 
 pub mod net_worth;
+
+#[cfg(test)]
+mod tests;
 
 pub use model::DashboardOverview;
 pub use net_worth::query_dashboard_overview;

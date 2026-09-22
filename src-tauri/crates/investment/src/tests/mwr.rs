@@ -31,33 +31,6 @@ fn today() -> NaiveDate {
     NaiveDate::parse_from_str(TODAY, "%Y-%m-%d").unwrap()
 }
 
-/// 种入标的当前行情（现价缓存单行，`v_holdings` 据此算期末市值；现价是
-/// market_prices 单行，不在种子工厂登记处，按既有投资域测试先例裸插）。
-fn seed_market_price(
-    conn: &rusqlite::Connection,
-    instrument_id: &str,
-    price_cents: i64,
-    currency: &str,
-) {
-    let now = ledger_infra::db::now_iso();
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,NULL,?6,?7,?8,?9)",
-        rusqlite::params![
-            ledger_infra::db::new_uuid(),
-            instrument_id,
-            price_cents,
-            currency,
-            now,
-            now,
-            now,
-            1,
-            "test"
-        ],
-    )
-    .unwrap();
-}
-
 /// 日期/手续费显式的买入输入（价格权威形态：金额 = 数量 × 单价 + 手续费）。
 fn buy_on(
     account_id: &str,
