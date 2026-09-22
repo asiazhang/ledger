@@ -6,7 +6,9 @@ use ledger_transaction::create_transaction_internal;
 use rusqlite::{Connection, params};
 
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
+use tauri_app_lib::test_support::{
+    open, seed_account, seed_fx_history_weeks, seed_instrument, seed_market_price,
+};
 
 #[test]
 fn list_instruments_pagination_and_search() {
@@ -534,13 +536,7 @@ fn list_holdings_returns_after_buy_and_market_price() {
     let buy_input = make_buy_input("acc-hold", "inst-hold", 10.0, 1_500_000, 1000);
     create_transaction_internal(&conn, buy_input).unwrap();
 
-    let now = ledger_infra::db::now_iso();
-    let price_id = ledger_infra::db::new_uuid();
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,1600000,'USD',?3,NULL,?4,?5,?6,?7)",
-        params![price_id, "inst-hold", now, now, now, 1, "test"],
-    ).unwrap();
+    seed_market_price(&conn, "inst-hold", 1_600_000, "USD");
 
     let (qty, cost_basis, market_value, unrealized_pnl): (f64, i64, i64, i64) = conn
         .query_row(

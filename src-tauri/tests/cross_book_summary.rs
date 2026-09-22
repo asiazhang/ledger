@@ -36,7 +36,9 @@ use tauri_app_lib::commands::book;
 use tauri_app_lib::commands::boot::BootCell;
 use tauri_app_lib::commands::cross_book_summary::cross_book_investment_summary;
 use tauri_app_lib::cross_book_summary::{CrossBookBookStatus, CrossBookInvestmentSummary};
-use tauri_app_lib::test_support::{ScratchDir, seed_account, seed_exchange_rate, seed_instrument};
+use tauri_app_lib::test_support::{
+    ScratchDir, seed_account, seed_exchange_rate, seed_instrument, seed_market_price,
+};
 
 /// HOME 重定向（本二进制进程内一次；理由与形态见 tests/commands/isolation.rs）。
 fn isolate_home() {
@@ -95,32 +97,6 @@ fn buy_input(account_id: &str, instrument_id: &str) -> TransactionInput {
         origin: None,
         fx_rate: None,
     }
-}
-
-/// 种入标的当前行情（现价缓存单行；投资域测试同款裸插先例）。
-fn seed_market_price(
-    conn: &rusqlite::Connection,
-    instrument_id: &str,
-    price_cents: i64,
-    currency: &str,
-) {
-    let now = ledger_infra::db::now_iso();
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,NULL,?6,?7,?8,?9)",
-        rusqlite::params![
-            ledger_infra::db::new_uuid(),
-            instrument_id,
-            price_cents,
-            currency,
-            now,
-            now,
-            now,
-            1,
-            "test"
-        ],
-    )
-    .unwrap();
 }
 
 fn refresh_balances(conn: &rusqlite::Connection) {

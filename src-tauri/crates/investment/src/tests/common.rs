@@ -4,7 +4,8 @@
 //! 建库与跨域重复夹具（账户 / 标的字典 / 汇率 / 价格与汇率历史）已上收统一
 //! 测试工厂 `tauri_app_lib::test_support`（spec #728 / ADR-0084，域迁移票 #755）：
 //! 调用点直接用 `open` / `seed_account` / `seed_instrument` / `seed_exchange_rate`
-//! / `seed_price_history` / `seed_fx_rate_history`。本薄皮按准入规则（ADR-0084
+//! / `seed_price_history` / `seed_fx_rate_history` / `seed_market_price`。本薄皮按
+//! 准入规则（ADR-0084
 //! 决策 1）只留域特有形态：带市场 / 来源 / 基金类型的标的种子与交易输入构造器
 //! （域语义，非 DB 夹具）；种子簿记戳一律引用工厂 [`FIXED_NOW`]，零字面量。
 
@@ -13,33 +14,6 @@ use rusqlite::{Connection, params};
 use ledger_transaction::TransactionInput;
 use ledger_transaction::amount::TransactionKind;
 use tauri_app_lib::test_support::FIXED_NOW;
-
-/// 种入标的当前行情（现价缓存单行，`v_holdings` 据此算市值与期末现金流）。
-/// 现价是 market_prices 单行，不在种子工厂登记处，按既有投资域测试先例裸插。
-pub(super) fn seed_market_price(
-    conn: &Connection,
-    instrument_id: &str,
-    price_cents: i64,
-    currency: &str,
-) {
-    let now = ledger_infra::db::now_iso();
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,NULL,?6,?7,?8,?9)",
-        params![
-            ledger_infra::db::new_uuid(),
-            instrument_id,
-            price_cents,
-            currency,
-            now,
-            now,
-            now,
-            1,
-            "test"
-        ],
-    )
-    .unwrap();
-}
 
 // 既有测试经域根 glob（`super::super::*`）消费的旧壳 mod.rs 私有 use 绑定，
 // 随 #401 域归位改由共享脚手架再导出（import 更新，断言与场景不变）；

@@ -89,6 +89,68 @@ fn seed_exchange_rate_row(
     id
 }
 
+/// 种入一行标的当前行情（现价缓存单行，`v_holdings` 据此算市值；吸收 investment
+/// 域 `holdings_summary` / `cumulative_pnl` / `mwr`（经 common）、`trade`、
+/// `instrument_list`、`instrument_delete`、`fund_trade`，`dashboard`，infra 域测
+/// `holding`，壳层集成测试 `cross_book_summary` / `instrument_sync` 等处的同体裸插
+/// ——ADR-0084 决策 1：≥2 域同体消费即上收）。行 id 由 `new_uuid()` 内部发放；
+/// 簿记戳与 `priced_at` 全发 [`FIXED_NOW`](super::FIXED_NOW)（`priced_at` 语义为
+/// 行情采集时间、测试不读它，先例 [`seed_exchange_rate`]）；`source` 固定 NULL、
+/// `nav_date` 固定 NULL（股票/手动现价形态）、`version` 1、`device_id` 'test'。
+/// 带净值水位的基金现价见 [`seed_fund_market_price`]。
+pub fn seed_market_price(
+    conn: &Connection,
+    instrument_id: &str,
+    price_cents: i64,
+    currency_code: &str,
+) -> String {
+    conn.execute(
+        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,NULL,?5,?5,1,'test')",
+        params![
+            ledger_infra::db::new_uuid(),
+            instrument_id,
+            price_cents,
+            currency_code,
+            FIXED_NOW,
+        ],
+    )
+    .unwrap();
+    instrument_id.to_string()
+}
+
+/// 种入一行携带净值水位的基金现价（`nav_date` 兼任净值同步水位，ADR-0038；
+/// 吸收 `fund_trade` 持仓显形与壳层 `instrument_sync` 降级场景基线两处同体裸插
+/// ——ADR-0084 决策 1）。`nav_date` 是域时刻（bulk「无新净值」判据与增量窗口读
+/// 它）显式传入；`priced_at` 与 `nav_date` 同值——基金现价行情日期 = 净值日期是
+/// 生产写入单点的同形（`upsert_market_price` 调用方）；`source` 是被测行为输入
+/// （同步存量行 'eastmoney' 等）显式传入，无源行传 `None`。簿记戳仍发
+/// [`FIXED_NOW`](super::FIXED_NOW)，行 id 内部发放。
+pub fn seed_fund_market_price(
+    conn: &Connection,
+    instrument_id: &str,
+    price_cents: i64,
+    currency_code: &str,
+    nav_date: &str,
+    source: Option<&str>,
+) -> String {
+    conn.execute(
+        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,nav_date,source,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,?5,?6,?7,?7,1,'test')",
+        params![
+            ledger_infra::db::new_uuid(),
+            instrument_id,
+            price_cents,
+            currency_code,
+            nav_date,
+            source,
+            FIXED_NOW,
+        ],
+    )
+    .unwrap();
+    instrument_id.to_string()
+}
+
 /// 种入一条价格历史周采样点（吸收 db 域 `insert_price_history` 同体函数；投资域
 /// trend 测试的显式价格形状为并集上界）。`trade_date` 是域时刻（行为输入），显式
 /// 传入；来源固定 eastmoney（周唯一约束见 V010，同周两点会被库层拒绝）。

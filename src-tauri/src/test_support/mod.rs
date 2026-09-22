@@ -102,8 +102,9 @@ pub use s3::{
 };
 pub use scratch::{ScratchDir, ScratchFile};
 pub use seed::{
-    seed_account, seed_exchange_rate, seed_exchange_rate_with_source, seed_fx_history_weeks,
-    seed_fx_rate_history, seed_instrument, seed_investment_setup, seed_price_history,
+    seed_account, seed_exchange_rate, seed_exchange_rate_with_source, seed_fund_market_price,
+    seed_fx_history_weeks, seed_fx_rate_history, seed_instrument, seed_investment_setup,
+    seed_market_price, seed_price_history,
 };
 
 use std::future::Future;

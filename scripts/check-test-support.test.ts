@@ -68,7 +68,7 @@ describe("check-test-support（Rust 测试守门，纯禁令）", () => {
     expect(r.status).toBe(0);
     expect(r.output).toContain("Rust 测试守门通过");
     expect(r.output).toContain("纯禁令");
-    expect(r.output).toContain("禁用种子表 5 张");
+    expect(r.output).toContain("禁用种子表 6 张");
   });
 
   it("四条规则违规样本全部命中：直连建库、夹具裸 SQL、默认时刻字面量、自建通道线格式", () => {

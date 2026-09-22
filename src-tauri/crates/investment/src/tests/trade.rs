@@ -9,7 +9,9 @@ use rusqlite::{Connection, params};
 
 use super::super::*;
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
+use tauri_app_lib::test_support::{
+    open, seed_account, seed_fx_history_weeks, seed_instrument, seed_market_price,
+};
 
 /// 价格刻度不变式（ADR-0038）：四类价格列（成交单价/每份成本/现价/价格历史）
 /// 以万分之一元（0.0001 元）存储，金额列仍为整数分——金额分 = 数量 × 单价 ÷ 100。
@@ -108,13 +110,7 @@ fn price_scale_invariant_v_holdings_market_value() {
     .unwrap()
     .id;
 
-    let now = ledger_infra::db::now_iso();
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,5678,'CNY',?3,NULL,?4,?5,?6,?7)",
-        params![ledger_infra::db::new_uuid(), "inst-scale", now, now, now, 1, "test"],
-    )
-    .unwrap();
+    seed_market_price(&conn, "inst-scale", 5678, "CNY");
 
     let (cost_basis, market_value): (i64, i64) = conn
         .query_row(

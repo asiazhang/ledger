@@ -1,13 +1,15 @@
 //! 净值与汇率折算测试：`v_holdings` 跨币种折算、反向汇率兜底、id 唯一性、
 //! 软删除账户过滤，以及非本位币交易折算到 `amount_native_cents` 的语义。
 //!
-//! 建库与账户/标的/汇率种子经统一测试工厂（spec #728 / issue #754 / ADR-0084
-//! 决策 7，原同目录内联重抄副本已删）；交易/批次/持仓/行情行是本域测试的世界
-//! 构造（非工厂种子表），保留显式直写。
+//! 建库与账户/标的/汇率/现价种子经统一测试工厂（spec #728 / issue #754 / ADR-0084
+//! 决策 7，原同目录内联重抄副本已删）；交易/批次/持仓行是本域测试的世界构造
+//!（非工厂种子表），保留显式直写。
 
 use rusqlite::params;
 
-use tauri_app_lib::test_support::{seed_account, seed_exchange_rate, seed_instrument};
+use tauri_app_lib::test_support::{
+    seed_account, seed_exchange_rate, seed_instrument, seed_market_price,
+};
 
 /// 跨币种持仓：CNY 账户持 USD 标的，市值与成本都应折算到 CNY 后再相减。
 /// 旧实现只折算市值、不折算成本，会把 CNY 市值直接减 USD 成本，结果错误。
@@ -43,12 +45,7 @@ fn cross_currency_holding_pnl() {
     )
     .unwrap();
     // 最新价 $120 USD（1200000 万分之一元）
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,1200000,'USD','2026-07-07','yahoo','2026-07-07T00:00:00Z','2026-07-07T00:00:00Z',1,'test')",
-        params!["mp-cross", instrument_id],
-    )
-    .unwrap();
+    seed_market_price(&conn, instrument_id, 1_200_000, "USD");
 
     let (cost_basis, cost_ccy, market_value, unrealized_pnl): (i64, String, i64, i64) = conn
         .query_row(
@@ -108,12 +105,7 @@ fn holding_reverse_rate_fallback() {
     )
     .unwrap();
     // 最新价 $96 USD（960000 万分之一元）
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,960000,'USD','2026-07-07','yahoo','2026-07-07T00:00:00Z','2026-07-07T00:00:00Z',1,'test')",
-        params!["mp-rev", instrument_id],
-    )
-    .unwrap();
+    seed_market_price(&conn, instrument_id, 960_000, "USD");
 
     // 正向 USD->CNY 不存在，只能走反向 CNY->USD=0.125 取倒数得 8。
     // 市值 = 10 × 960000 ÷ 0.125 ÷ 100 = 768000 CNY 分

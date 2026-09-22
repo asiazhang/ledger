@@ -20,7 +20,7 @@ use super::super::*;
 use super::common::*;
 use tauri_app_lib::test_support::{
     open, seed_account, seed_exchange_rate, seed_fx_history_weeks, seed_fx_rate_history,
-    seed_instrument, seed_price_history,
+    seed_instrument, seed_market_price, seed_price_history,
 };
 
 /// 测试锚定「今天」：默认口径的期末现金流落在本日（2026-01-01 起整一年的
