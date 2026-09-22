@@ -285,7 +285,7 @@ fn adds_money_fund_marks_constant_and_lands_base_price_without_nav_date() {
 }
 
 /// 报价带恒定信号但无价（档案通道收益序列解析为空等形态）：仍按恒定单位
-/// 价格本身兑底落建档一条——「建档一条 1.0000」不依赖报价的有价性。
+/// 价格本身兜底落建档一条——「建档一条 1.0000」不依赖报价的有价性。
 #[test]
 fn adds_money_fund_without_price_still_lands_constant_base_price() {
     let conn = open();
@@ -302,7 +302,7 @@ fn adds_money_fund_without_price_still_lands_constant_base_price() {
         .unwrap();
     assert_eq!(cents, Some(10_000));
     let (price, _, _, nav_date, _) =
-        price_row(&conn, &result.instrument_id).expect("无价报价也应兑底建档常量价");
+        price_row(&conn, &result.instrument_id).expect("无价报价也应兜底建档常量价");
     assert_eq!(price, 10_000, "按恒定单位价格本身落建档一条");
     assert_eq!(nav_date, None);
     assert!(result.price_written, "常量价首落按价格写入计");

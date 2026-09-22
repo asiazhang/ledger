@@ -64,7 +64,7 @@ describe("侧栏组标题行「更多」链接显隐渲染（issue #475 / ADR-00
     store.applyMoveBackToSidebar("reports"); // 洞察组最后一个收纳成员移回：链接消失，出厂两链接保持
     await flushPromises();
     expect(linkCount(wrapper)).toBe(2);
-    // 记账出厂满员：移回拒写（菜单置灰的第一道防线之下的写路径兑底），渲染面无变化
+    // 记账出厂满员：移回拒写（菜单置灰的第一道防线之下的写路径兜底），渲染面无变化
     store.applyMoveBackToSidebar("scheduled");
     await flushPromises();
     expect(linkCount(wrapper)).toBe(2);

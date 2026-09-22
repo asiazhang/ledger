@@ -85,7 +85,7 @@ describe("TransactionsView 服务端分页", () => {
   it("查询期间 loading 状态可见", async () => {
     let resolveList!: (v: unknown) => void;
     // 接缝重布线：整体替换实现，仅 list_transactions 挂起不兑（loading 断言）；
-    // 参考命令由规范夹具兑底（本用例不断言字典内容），其余命令不需布线。
+    // 参考命令由规范夹具兜底（本用例不断言字典内容），其余命令不需布线。
     wireInvokeSeam({
       overrides: {
         list_transactions: () =>

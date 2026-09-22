@@ -69,7 +69,7 @@ function setupInvoke() {
   wireInvokeSeam({
     overrides: {
       // 保单换轨后页面消费保司下拉（ADR-0082）：参考命令本场景需真实保司数据
-      // （overrides 优先于参考兑底）
+      // （overrides 优先于参考兜底）
       list_insurers: mockInsurers,
       list_policies: () => policies.filter((p) => !p.is_deleted),
       list_policy_stats: () =>

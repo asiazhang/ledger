@@ -9,7 +9,7 @@ import type { ItemWithDailyCost } from "@ledger/types";
 // 显式 style 宽度由 cardSize 承担，无边框由 AppModal 默认承担。断言只看
 // 组件可观察输出（卡片宽度样式与边框类），不深究 naive-ui 内部实现。
 // 布线走唯一接缝（issue #748）：清单所需的最小领域契约进 defaults 表，
-// 参考字典五命令由规范夹具兑底；清理四件套由全局壳层承担。
+// 参考字典五命令由规范夹具兜底；清理四件套由全局壳层承担。
 
 vi.mock("vue-router", () => ({
   useRoute: () => ({ query: {} }),

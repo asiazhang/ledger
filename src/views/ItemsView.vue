@@ -372,12 +372,12 @@ onMounted(() => {
     .catch(() => {
       /* 候选为空，创建退化为手填 */
     });
-  // 本位币基准读取（设置页同款接缝）：失败不阻塞列表，保持默认 CNY 兑底
+  // 本位币基准读取（设置页同款接缝）：失败不阻塞列表，保持默认 CNY 兜底
   api
     .getBaseCurrency()
     .then((s) => (baseCurrencyCode.value = s.code))
     .catch(() => {
-      /* 保持默认 CNY 兑底 */
+      /* 保持默认 CNY 兜底 */
     });
 });
 </script>

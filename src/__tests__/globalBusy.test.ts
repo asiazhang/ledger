@@ -98,7 +98,7 @@ describe("globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
     mockInvoke.mockImplementation((() => []) as unknown as AppInvokeHandler);
     await api.listCurrencies();
     await vi.advanceTimersByTimeAsync(1000);
-    expect(busyVisible.value).toBe(false); // 递减走兑底包装，归零彻底
+    expect(busyVisible.value).toBe(false); // 递减走兜底包装，归零彻底
 
     // 计数对称未被破坏：后续慢 IO 仍能正常点亮与隐藏
     const d = deferred<void>();

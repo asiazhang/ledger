@@ -72,7 +72,7 @@ async fn test_lookup_fund_with_unpublished_nav_returns_null_nav_fields() {
 
 #[tokio::test]
 async fn test_lookup_terminated_fund_returns_name_and_last_nav() {
-    // 已终止（清盘）基金经官方披露兑底命中（ADR-0039 修订 / ADR-0130 决策 2，
+    // 已终止（清盘）基金经官方披露兜底命中（ADR-0039 修订 / ADR-0130 决策 2，
     // issue #1212 / #1568）：名称与最后一期净值齐备，不再误报查无此码；
     // 分类字段弃用，恒投影空串。
     let hits = HashMap::from([(

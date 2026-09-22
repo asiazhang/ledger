@@ -14,6 +14,6 @@ Feature: 日志等级配置持久化（spec #611）
     Then 应返回错误码 "settings.log-level-invalid"
     And 持久化日志档位应为 "info"
 
-  Scenario: 旧版本备份缺 app_settings 表回默认（表缺失自愈兑底）
+  Scenario: 旧版本备份缺 app_settings 表回默认（表缺失自愈兜底）
     When 移除 app_settings 表
     Then 持久化日志档位应为 "info"

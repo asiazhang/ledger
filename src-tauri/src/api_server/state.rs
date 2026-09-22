@@ -55,7 +55,7 @@ pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 /// 两槽同用「共享句柄 + 互斥体内槽替换」形态：壳层换连后本状态持有的克隆
 /// 同步可见（ADR-0080）。
 ///
-/// `fund_fetch` 为基金报价获取接缝（新浪批量面 + 官方披露兑底，#1568）：`None` = 生产路径（真实数据源，async
+/// `fund_fetch` 为基金报价获取接缝（新浪批量面 + 官方披露兜底，#1568）：`None` = 生产路径（真实数据源，async
 /// 生产入口直接 await，连接锁外往返）；集成测试注入桩离线驱动（issue #304）。
 /// `stock_fetch` 为股票行情获取接缝，同构（issue #693；生产路径腾讯，ADR-0130）。
 ///

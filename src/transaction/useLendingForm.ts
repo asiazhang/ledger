@@ -21,7 +21,7 @@ import type { AccountType, Transaction } from "@ledger/types";
 export function useLendingForm(options?: {
   /** 创建入口的预置方向（「借出」「借入」两个入口项各预设其一）；编辑模式优先按既有
    * 交易派生（与表单分派同用 domain 层 resolveLendingDirection），派生失败（账户类型
-   * 缺失）时以此兑底。 */
+   * 缺失）时以此兜底。 */
   initialDirection?: LendingFormDirection;
   onCreated?: () => void;
   onUpdated?: () => void;

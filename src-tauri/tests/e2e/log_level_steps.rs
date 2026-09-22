@@ -3,7 +3,7 @@
 //! 与既有设置类步骤同款：持 world 的连接锁直接读写后端领域缝
 //! （`logger::persisted_level` / `logger::set_persisted_level`），不经 IPC 命令
 //! （命令壳只做参数解包，没有 BDD 关注的额外行为）。「旧备份缺表」场景与
-//! `settings::get` 的表缺失自愈兑底（ADR-0017）同语义。
+//! `settings::get` 的表缺失自愈兜底（ADR-0017）同语义。
 
 use cucumber::{then, when};
 
