@@ -125,6 +125,25 @@ pub struct NativeConversion {
     pub fx_rate_source: Option<FxRateSource>,
 }
 
+impl NativeConversion {
+    /// **零腿例外**（#1692 / ADR-0106 决策 1 / ADR-0011 2026-09-22 修订 ③）：
+    /// 无现金腿写入（份额调整 split 的本地 `prepare_split` 与重放 `replay_split_plan`）
+    /// 的显式零腿构造——本位币 0、无汇率留痕、无来源留痕。
+    ///
+    /// 本构造器是这条知识的唯一住址：**无现金腿不经任何折算入口、不查汇率表**——
+    /// 0 在任何币种下的本位币折算恒为 0（0 × 任意汇率 = 0，与汇率在场与否无关），
+    /// 故 0 元外币行即使当期表与历史序列都无该币种对也合法落库；留痕两列同为
+    /// `None`（#1548 空值语义：「本笔未折算」的诚实表达，不伪造来源）。split 的
+    /// 既有守卫（拒绝非零金额 / 携带显式汇率 / 重放拒绝非零 native）不因此松动。
+    pub const fn zero_cash_leg() -> Self {
+        NativeConversion {
+            native_cents: 0,
+            fx_rate_used: None,
+            fx_rate_source: None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 本位币折算
 // ---------------------------------------------------------------------------
@@ -198,6 +217,11 @@ fn lookup_exchange_rate(conn: &Connection, base_code: &str, quote_code: &str) ->
 /// 消费面（#1541 起）：持仓市值、净资产、财务自由度、实物资产估值、跨账本汇总、
 /// 定时花费等读路径（写路径自 #1547 起全部改接
 /// [`convert_to_native_on_trade_date`]，当期表不再是写路径取数源）。
+///
+/// 守门台账（#1692 / ADR-0011 2026-09-22 修订 ①）：本入口的**生产调用方闭集**由
+/// 结构守门的符号调用方白名单 `CONVERT_CURRENT_CALLERS`（`scripts/check-structure.ts`）
+/// 守门——白名单外调用即红（测试代码按 `/tests/` 路径约定豁免）；新增读路径消费面
+/// 先在该台账留痕成因，写路径一律改接按交易日入口。
 pub fn convert_to_native_current(
     conn: &Connection,
     amount_cents: i64,

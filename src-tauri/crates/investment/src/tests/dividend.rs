@@ -18,7 +18,7 @@ use ledger_transaction::{
 
 use super::super::*;
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_instrument};
+use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
 
 /// 账户实时余额（ADR-0067 口径的权威比对基准，同 split 测试的 `balance_snapshot`）。
 fn balance_of(conn: &rusqlite::Connection, account_id: &str) -> i64 {
@@ -298,4 +298,43 @@ fn dividend_kind_change_is_forbidden_in_both_directions() {
     )
     .expect_err("改入 dividend 应被拒绝");
     assert_eq!(e.code().unwrap(), "trade.dividend-kind-change-forbidden");
+}
+
+/// 写路径负向断言（#1692 / ADR-0011 决策 3 + 2026-09-22 修订 ②，buy 先例同款）：
+/// `prepare_dividend` 的现金腿按交易日历史折算——夹具只种 `fx_rate_history`
+///（分红周 2026-02-10）、**不种当期行** `exchange_rates`；把 prepare 改回当期
+/// 入口 `convert_to_native_current` 本测试即红（当期表无行、缺点报 `fx.rate-missing`）。
+#[test]
+fn dividend_native_cents_converted_via_trade_date_history() {
+    let conn = open();
+    seed_account(&conn, "acc-dv-usd", "美股户", "investment", "USD", 0);
+    seed_instrument(&conn, "inst-dv-usd", "AAPL", "苹果", "USD", "unknown");
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.2, &["2026-02-10"]);
+
+    let write = create_transaction_internal(
+        &conn,
+        make_dividend_input("acc-dv-usd", "inst-dv-usd", 3000, "USD"),
+    )
+    .unwrap();
+
+    let (amount_cents, amount_native_cents, fx_rate_used, fx_rate_source): (
+        i64,
+        i64,
+        Option<f64>,
+        Option<String>,
+    ) = conn
+        .query_row(
+            "SELECT amount_cents, amount_native_cents, fx_rate_used, fx_rate_source \
+             FROM transactions WHERE id=?1",
+            rusqlite::params![write.id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(amount_cents, 3000, "现金腿 = 分红金额（USD 分）");
+    assert_eq!(
+        amount_native_cents, 21_600,
+        "本位币折算按交易日历史（3000 × 7.2）——改回当期入口本断言即红"
+    );
+    assert_eq!(fx_rate_used, Some(7.2), "折算留痕随行");
+    assert_eq!(fx_rate_source.as_deref(), Some("series"), "来源 = 序列命中");
 }

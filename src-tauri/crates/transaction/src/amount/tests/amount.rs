@@ -979,3 +979,22 @@ fn convert_to_native_on_edit_explicit_rate_beats_baseline_reuse() {
             .unwrap_err();
     assert_eq!(err.code(), Some("fx.explicit-rate-non-positive"));
 }
+
+// ---------------------------------------------------------------------------
+// 零腿构造器（#1692）
+// ---------------------------------------------------------------------------
+
+/// 零腿构造器单测（#1692 / ADR-0106 决策 1 / ADR-0011 2026-09-22 修订 ③）：
+/// 无现金腿的本位币折算结果恒为 0 / None / None——不经任何折算入口、不查汇率表
+///（知识住址见 [`NativeConversion::zero_cash_leg`] 文档）。
+#[test]
+fn zero_cash_leg_is_zero_without_trace() {
+    assert_eq!(
+        NativeConversion::zero_cash_leg(),
+        NativeConversion {
+            native_cents: 0,
+            fx_rate_used: None,
+            fx_rate_source: None,
+        }
+    );
+}

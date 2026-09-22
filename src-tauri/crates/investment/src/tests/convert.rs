@@ -15,7 +15,7 @@ use ledger_transaction::{
 
 use super::super::*;
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_instrument};
+use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
 
 /// 全部未删除账户的**实时**余额快照（`compute_balance` 口径，含黑洞等隐藏账户）。
 /// 用它而非缓存行：种子直插的账户无写路径钩子、缓存行未必存在，实时口径才是权威比对
@@ -1169,4 +1169,71 @@ fn get_transaction_convert_returns_two_legs() {
         matches!(&err, AppError::Coded { code, .. } if code == "trade.convert-detail-not-found"),
         "非转换交易应得码化 NotFound，got: {err:?}"
     );
+}
+
+/// 写路径负向断言（#1692 / ADR-0011 决策 3 + 2026-09-22 修订 ②，buy 先例同款）：
+/// `prepare_convert` 的本位币折算按交易日历史取数——夹具只种 `fx_rate_history`
+///（建仓周 2026-01-10 + 转换周 2026-02-01）、**不种当期行** `exchange_rates`；
+/// 把 prepare 改回当期入口 `convert_to_native_current` 本测试即红（当期表无行、
+/// 缺点报 `fx.rate-missing`）。
+#[test]
+fn convert_native_cents_converted_via_trade_date_history() {
+    let conn = open();
+    seed_account(&conn, "acc-cv-usd", "美股", "investment", "USD", 0);
+    seed_instrument(
+        &conn,
+        "inst-cv-usd-out",
+        "VWRA",
+        "先锋全市场",
+        "USD",
+        "unknown",
+    );
+    seed_instrument(&conn, "inst-cv-usd-in", "IUSA", "标普500", "USD", "unknown");
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.2, &["2026-01-10", "2026-02-01"]);
+
+    // 建仓：10 份 × 100 元 = 100000 分（fee 0），全部结转给转换。
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-cv-usd", "inst-cv-usd-out", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    let convert_id = create_transaction_internal(
+        &conn,
+        make_convert_input(
+            "acc-cv-usd",
+            "inst-cv-usd-out",
+            "inst-cv-usd-in",
+            10.0,
+            10.0,
+            1_100,
+            1_100,
+            0,
+        ),
+    )
+    .unwrap()
+    .id;
+
+    let (amount_cents, amount_native_cents, fx_rate_used, fx_rate_source): (
+        i64,
+        i64,
+        Option<f64>,
+        Option<String>,
+    ) = conn
+        .query_row(
+            "SELECT amount_cents, amount_native_cents, fx_rate_used, fx_rate_source \
+             FROM transactions WHERE id=?1",
+            rusqlite::params![convert_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        amount_cents, 100_000,
+        "行金额锚点 = FIFO 结转成本（10 × 100 元）"
+    );
+    assert_eq!(
+        amount_native_cents, 720_000,
+        "本位币折算按交易日历史（100000 × 7.2）——改回当期入口本断言即红"
+    );
+    assert_eq!(fx_rate_used, Some(7.2), "折算留痕随行");
+    assert_eq!(fx_rate_source.as_deref(), Some("series"), "来源 = 序列命中");
 }
