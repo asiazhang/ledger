@@ -24,6 +24,7 @@
 use rusqlite::Connection;
 
 use super::crud;
+use super::market::Market;
 use super::model::{AddFundResult, InstrumentInput, InstrumentType};
 use super::quote::{Quote, QuoteAdoptionInput, adopt_quote};
 use ledger_infra::error::{AppError, Result};
@@ -143,7 +144,8 @@ pub fn adopt_fund_quote(conn: &Connection, quote: &Quote) -> Result<AddFundResul
         conn,
         &QuoteAdoptionInput {
             kind: InstrumentType::Fund,
-            market: FUND_MARKET,
+            // 场外基金无交易所市场概念，字典市场恒 unknown（市场闭集类型，issue #1673）。
+            market: Market::Unknown,
             currency_code: FUND_CURRENCY,
             // 基金现价时点 = 净值日期；无净值时不落现价，该值不被消费。
             priced_at: nav_date.unwrap_or_default(),

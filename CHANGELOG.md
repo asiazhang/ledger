@@ -6,6 +6,7 @@
 
 ### BREAKING
 
+- **投资**：错误码 `sync.secid-unroutable`（「市场无法构造行情查询」的内部不一致兜底）退役——市场闭集收敛为投资域单点类型后，该条件的运行时发生路径结构性消失；查询键构造在类型上全函数化，「市场不可路由」不可再表达（[#1673]）。
 - **AI 导入 / HTTP API**：`GET /api/v1/transactions` 缺省不再返回全部——HTTP 单请求行数上限 100，缺省等价第一页 × 100（`total` 恒返回，读全部须按 `total` 翻页取齐）；显式 `page_size` 超过 100 报 400 码化错误 `transaction.page-size-over-cap`，`limit` 超过 100 或负值报 400 `transaction.limit-out-of-range`。读回核对教学同步改为分页读回；IPC 通道分页语义不变（前端与多端同步不受影响）（[#1631]）。
 
 ### Added
@@ -16,6 +17,7 @@
 
 ### Changed
 
+- **AI 导入 / HTTP API**：创建标的未带币种时，无法识别的 `market` 取值改报 400 码化错误 `instrument.market-unknown`（附合法值清单），不再落到数据库检查约束才拒绝（原为 500）；合法取值行为不变（[#1673]）。
 - **依赖**：锁文件刷新至范围内最新——前端 vue 3.5.43、vite 8.3.0 等 10 项与后端 tauri 2.11.6 等 7 个 crate；无跨 major、无使用者可见变化，TypeScript 6.x 与 @types/node 22 的既有 hold 不变（[#1688]）。
 - **性能**：报表商户排名加商户维度覆盖索引（V030）并钉定查询计划，50 万笔库聚合 p95 777ms→148ms（[#1655]）。
 - **性能**：投资组合市值走势数量推算改按标的分组增量推进，50 万笔库全窗口周线 p95 8850ms→26ms（[#1654]）。
@@ -272,6 +274,7 @@
 - **同步**：修复港股漏抓、进度条重置、启动崩溃、JPY 精度等问题。
 
 <!-- Unreleased 条目引用的 issue 链接（引用式链接，正文保持简洁） -->
+[#1673]: https://github.com/asiazhang/ledger/issues/1673
 
 [#1549]: https://github.com/asiazhang/ledger/issues/1549
 [#1548]: https://github.com/asiazhang/ledger/issues/1548

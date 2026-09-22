@@ -25,6 +25,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::channel::{PriceChannel, derive_price_channel};
+use crate::market::Market;
 use crate::model::InstrumentType;
 use ledger_infra::error::Result;
 
@@ -210,7 +211,8 @@ pub fn portfolio_trend_backfill_status(conn: &Connection) -> Result<Option<Trend
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
+            // DB 读边界 parse 一次（市场闭集类型，issue #1673）。
+            row.get::<_, Market>(2)?,
             row.get::<_, InstrumentType>(3)?,
             row.get::<_, Option<i64>>(4)?,
         ))
@@ -219,7 +221,7 @@ pub fn portfolio_trend_backfill_status(conn: &Connection) -> Result<Option<Trend
     for row in rows {
         let (id, symbol, market, kind, constant_unit_price) = row?;
         if matches!(
-            derive_price_channel(kind, &market, &symbol, constant_unit_price),
+            derive_price_channel(kind, market, &symbol, constant_unit_price),
             PriceChannel::Quote | PriceChannel::FundNav
         ) {
             pending.push(id);
@@ -258,11 +260,11 @@ fn is_collectable_instrument(conn: &Connection, instrument_id: &str) -> Result<b
         [instrument_id],
         |row| {
             let symbol: String = row.get(0)?;
-            let market: String = row.get(1)?;
+            let market: Market = row.get(1)?;
             let kind: InstrumentType = row.get(2)?;
             let constant_unit_price: Option<i64> = row.get(3)?;
             Ok(matches!(
-                derive_price_channel(kind, &market, &symbol, constant_unit_price),
+                derive_price_channel(kind, market, &symbol, constant_unit_price),
                 PriceChannel::Quote | PriceChannel::FundNav
             ))
         },

@@ -11,7 +11,7 @@ use ledger_infra::db::encryption::EncryptionGate;
 use ledger_infra::error::AppError;
 use ledger_infra::events::SignalEmitter;
 use ledger_investment::prices::price_value_to_cents;
-use ledger_investment::{InstrumentType, Quote};
+use ledger_investment::{InstrumentType, Market, Quote, StockRoute};
 use tauri_app_lib::api_server::{
     ApiState, EmitterSlot, FundQuoteFetcher, QuoteFuture, StockQuoteFetcher, build_router,
 };
@@ -177,13 +177,14 @@ pub(crate) fn setup_app_with_fund_stub(
 }
 
 /// 股票行情桩的返回形态（命中）：权威名称 / 可选（万分之一元价格，ISO 日期）/
-/// 类型提示 / 精确市场。市场不可由请求路径推导（换源后美股请求市场为聚合路由值
-/// `us`，精确交易所由数据源自报）——命中行自带应答市场，与数据源行为同构。
+/// 类型提示 / 精确市场。市场不可由请求路径推导（换源后美股请求路由为聚合值
+/// `Us`，精确交易所由数据源自报）——命中行自带应答市场（市场闭集类型，
+/// issue #1673），与数据源行为同构。
 pub(crate) struct StockStubHit {
     pub name: &'static str,
     pub price: Option<(i64, &'static str)>,
     pub kind_hint: InstrumentType,
-    pub market: &'static str,
+    pub market: Market,
 }
 
 /// 构造可注入的股票行情桩：命中表按 `请求市场/代码` 键驱动（表外代码返回
@@ -196,18 +197,18 @@ pub(crate) fn stock_fetch_stub(
     hits: std::collections::HashMap<String, StockStubHit>,
     calls: Arc<Mutex<Vec<(String, String)>>>,
 ) -> StockQuoteFetcher {
-    Arc::new(move |market: &str, code: &str| {
+    Arc::new(move |route: StockRoute, code: &str| {
         calls
             .lock()
             .unwrap()
-            .push((market.to_string(), code.to_string()));
-        let result = match hits.get(&format!("{market}/{code}")) {
+            .push((route.as_str().to_string(), code.to_string()));
+        let result = match hits.get(&format!("{}/{code}", route.as_str())) {
             Some(hit) => Ok(Quote {
                 code: code.to_string(),
                 name: hit.name.to_string(),
                 price_cents: hit.price.map(|(p, _)| p),
                 price_date: hit.price.map(|(_, d)| d.to_string()),
-                market: Some(hit.market.to_string()),
+                market: Some(hit.market),
                 kind_hint: Some(hit.kind_hint),
                 fund_class: None,
                 nav_date: None,

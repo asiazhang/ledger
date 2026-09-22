@@ -38,6 +38,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use ledger_infra::error::Result;
+use ledger_investment::QuoteMarket;
 
 use super::channels::QuoteQuery;
 use super::http::{KlineBar, Pacer, RetryConfig, request_json_from_hosts};
@@ -57,21 +58,22 @@ const PERIOD_DAY: &str = "day";
 /// 解析（不做补偿）。
 pub(super) const KLINE_COUNT: u32 = 800;
 
-/// 「市场 + 代码」查询单元 → 腾讯 K 线查询键（来源侧代码形态的唯一构造点，
-/// ADR-0130 决策 2）。`query.market` 取既有市场闭集（`sh`/`sz`/`hk`/`nasdaq`/
-/// `nyse`/`amex`），`query.code` 为响应回显形态的裸代码（如 `600519` / `00700`，
-/// 已去市场后缀）。市场闭集之外的取值返回 None（防御兼底，与批量报价通道同型：
-/// 构造不出键就不发请求）。
-pub(super) fn kline_symbol(query: &QuoteQuery) -> Option<String> {
-    match query.market.as_str() {
-        // 沪深港同一个形态：市场前缀 + 裸代码（`sh600519` / `sz000001` / `hk00700`）。
-        "sh" | "sz" | "hk" => Some(format!("{}{}", query.market, query.code)),
-        // 美股三市场必须带交易所后缀才能取到整段序列：裸 `usAAPL` 取不回日线。
-        // 后缀与市场闭集一一对应（ADR-0130 决策 4），由本单点承担。
-        "nasdaq" => Some(format!("us{}.OQ", query.code)),
-        "nyse" => Some(format!("us{}.N", query.code)),
-        "amex" => Some(format!("us{}.AM", query.code)),
-        _ => None,
+/// 查询单元 → 腾讯 K 线查询键（来源侧代码形态的唯一构造点，ADR-0130 决策 2 /
+/// issue #1673 全函数化）。`query.market` 是可路由市场子集 [`QuoteMarket`]，
+/// `query.code` 为响应回显形态的裸代码（如 `600519` / `00700`，已去市场后缀）。
+/// 六值全部可构造键——**全函数**：「市场构造不出 K 线键」的运行时兜底在类型上
+/// 不可表达。交易所后缀是源请求词汇（模块本地）：美股三市场必须带交易所后缀
+/// 才能取到整段序列（裸 `usAAPL` 取不回日线），后缀与市场闭集三值一一对应
+///（ADR-0130 决策 4），由本单点承担。
+pub(super) fn kline_symbol(query: &QuoteQuery) -> String {
+    match query.market {
+        QuoteMarket::Sh | QuoteMarket::Sz | QuoteMarket::Hk => {
+            // 沪深港同一个形态：市场前缀 + 裸代码（`sh600519` / `sz000001` / `hk00700`）。
+            format!("{}{}", query.market.as_str(), query.code)
+        }
+        QuoteMarket::Nasdaq => format!("us{}.OQ", query.code),
+        QuoteMarket::Nyse => format!("us{}.N", query.code),
+        QuoteMarket::Amex => format!("us{}.AM", query.code),
     }
 }
 
@@ -192,10 +194,10 @@ mod tests {
             .into_bars(symbol)
     }
 
-    /// 「市场 + 代码」查询单元的测试构造。
-    fn q(market: &str, code: &str) -> QuoteQuery {
+    /// 「市场 + 代码」查询单元的测试构造（市场字符串经闭集解析，测试侧词汇钉住）。
+    fn q(market: QuoteMarket, code: &str) -> QuoteQuery {
         QuoteQuery {
-            market: market.to_string(),
+            market,
             code: code.to_string(),
         }
     }
@@ -285,28 +287,17 @@ mod tests {
 
     /// 查询键形态（来源侧代码形态的唯一构造点）：沪深港为市场前缀 + 裸代码，美股
     /// 三市场必须带交易所后缀（裸 `usAAPL` 实测只回两条残缺行，后缀是取整段序列
-    /// 的必要条件）；市场闭集之外不构造键、不发请求。
+    /// 的必要条件）。查询单元市场是可路由子集（issue #1673），六值全函数逐值钉形。
     #[test]
     fn kline_symbol_pins_each_market_code_form() {
-        assert_eq!(
-            kline_symbol(&q("sh", "600519")).as_deref(),
-            Some("sh600519")
-        );
-        assert_eq!(
-            kline_symbol(&q("sz", "000001")).as_deref(),
-            Some("sz000001")
-        );
-        assert_eq!(kline_symbol(&q("hk", "00700")).as_deref(), Some("hk00700"));
-        assert_eq!(
-            kline_symbol(&q("nasdaq", "AAPL")).as_deref(),
-            Some("usAAPL.OQ")
-        );
-        assert_eq!(
-            kline_symbol(&q("nyse", "BABA")).as_deref(),
-            Some("usBABA.N")
-        );
-        assert_eq!(kline_symbol(&q("amex", "SPY")).as_deref(), Some("usSPY.AM"));
-        assert_eq!(kline_symbol(&q("unknown", "NVDA")), None);
+        assert_eq!(kline_symbol(&q(QuoteMarket::Sh, "600519")), "sh600519");
+        assert_eq!(kline_symbol(&q(QuoteMarket::Sz, "000001")), "sz000001");
+        assert_eq!(kline_symbol(&q(QuoteMarket::Hk, "00700")), "hk00700");
+        assert_eq!(kline_symbol(&q(QuoteMarket::Nasdaq, "AAPL")), "usAAPL.OQ");
+        assert_eq!(kline_symbol(&q(QuoteMarket::Nyse, "BABA")), "usBABA.N");
+        assert_eq!(kline_symbol(&q(QuoteMarket::Amex, "SPY")), "usSPY.AM");
+        // 可路由子集全量遍历：六个可路由市场全部可构造键（全函数，无 None 臂）。
+        assert_eq!(QuoteMarket::ALL.len(), 6);
     }
 
     /// 沪深行同样会在分红日多带第 7 个对象元素（真实报文：`sh600519` 2023-06-30

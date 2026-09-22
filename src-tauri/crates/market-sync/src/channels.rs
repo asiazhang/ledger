@@ -33,6 +33,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use ledger_infra::error::Result;
+use ledger_investment::QuoteMarket;
 
 use super::bulk::BulkFetchSurfaces;
 use super::csrc::confirm_money_fund_form;
@@ -55,12 +56,13 @@ pub type FetchFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 
 /// 「市场 + 代码」查询单元（issue #1555 批量报价 / issue #1556 日 K）：编排只递
 /// 「市场 + 代码」，数据源查询键（腾讯报价键 / 腾讯 K 线键等）由
-/// 各通道在内部构造——换源只改通道实现，编排零改动。`market` 取既有市场闭集
-///（`sh`/`sz`/`hk`/`nasdaq`/`nyse`/`amex`），`code` 是响应回显形态的裸代码
+/// 各通道在内部构造——换源只改通道实现，编排零改动。`market` 是可路由市场子集
+/// [`QuoteMarket`]（市场闭集去掉 unknown，issue #1673）——不可路由市场在类型上
+/// 无法进入查询单元，数据源键构造因此是全函数；`code` 是响应回显形态的裸代码
 ///（如 `600519` / `00700`，已去市场后缀）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuoteQuery {
-    pub market: String,
+    pub market: QuoteMarket,
     pub code: String,
 }
 
@@ -192,11 +194,9 @@ impl SyncFetchChannels {
                 let (beg, end) = kline_window();
                 Box::new(move |query: &QuoteQuery| {
                     // 查询键（腾讯 K 线键）在通道内部构造（issue #1559 / #1561）：
-                    // 编排只递「市场 + 代码」；无法构造键的查询单元不发请求、
-                    // 回空序列。
-                    let Some(symbol) = tencent_kline::kline_symbol(query) else {
-                        return Box::pin(async { Ok(vec![]) }) as FetchFuture<Vec<KlineBar>>;
-                    };
+                    // 编排只递「市场 + 代码」。查询单元市场是可路由子集
+                    //（issue #1673），键构造是全函数、无「构造不出键」分支。
+                    let symbol = tencent_kline::kline_symbol(query);
                     let client = client.clone();
                     let pacer = pacer.clone();
                     let hosts = hosts.clone();

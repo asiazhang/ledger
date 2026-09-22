@@ -9,6 +9,8 @@
 use std::time::Duration;
 
 use crate::http::{Pacer, build_client};
+use ledger_investment::{Market, StockRoute};
+
 use crate::stock::fetch_stock_quote;
 use crate::tests::spawn_header_capture_server;
 use crate::tests::tencent::{HK_STOCK, SH_ETF, SH_STOCK, US_AAPL};
@@ -42,7 +44,7 @@ fn fetch_pins_tencent_request_form_and_projects_quote() {
         &client,
         &mut pacer,
         &[url.as_str()],
-        "sh",
+        StockRoute::Sh,
         "600000",
     ))
     .expect("假响应应命中");
@@ -70,7 +72,7 @@ fn fetch_pins_tencent_request_form_and_projects_quote() {
         Some("2026-09-18"),
         "应投影交易所当地交易日"
     );
-    assert_eq!(quote.market.as_deref(), Some("sh"));
+    assert_eq!(quote.market, Some(Market::Sh));
     assert_eq!(
         quote.stock_kind_hint(),
         ledger_investment::InstrumentType::Stock
@@ -90,7 +92,7 @@ fn fetch_projects_etf_kind_hint_from_tencent_type_code() {
         &client,
         &mut pacer,
         &[url.as_str()],
-        "sh",
+        StockRoute::Sh,
         "510300",
     ))
     .expect("ETF 报文应命中");
@@ -99,7 +101,7 @@ fn fetch_projects_etf_kind_hint_from_tencent_type_code() {
         ledger_investment::InstrumentType::Etf,
         "场内基金类类型码应探测为 etf（stock/etf 同属行情通道）"
     );
-    assert_eq!(quote.market.as_deref(), Some("sh"));
+    assert_eq!(quote.market, Some(Market::Sh));
 }
 
 #[test]
@@ -114,7 +116,7 @@ fn us_ticker_single_query_maps_suffix_to_precise_market() {
         &client,
         &mut pacer,
         &[url.as_str()],
-        "us",
+        StockRoute::Us,
         "AAPL",
     ))
     .expect("美股报文应命中");
@@ -123,11 +125,7 @@ fn us_ticker_single_query_maps_suffix_to_precise_market() {
     assert_eq!(captured.len(), 1, "一次查询即命中，不必遍历三市场");
     assert_eq!(request_target(&captured[0]), "/q=usAAPL");
     assert_eq!(quote.code, "AAPL", "回显裸 ticker（去交易所后缀）");
-    assert_eq!(
-        quote.market.as_deref(),
-        Some("nasdaq"),
-        "自报 .OQ → 纳斯达克"
-    );
+    assert_eq!(quote.market, Some(Market::Nasdaq), "自报 .OQ → 纳斯达克");
     assert_eq!(quote.price_cents, Some(3_361_300), "336.13 美元");
     assert_eq!(
         quote.stock_kind_hint(),
@@ -145,13 +143,13 @@ fn hk_query_uses_normalized_key_and_projects_hkd_name() {
         &client,
         &mut pacer,
         &[url.as_str()],
-        "hk",
+        StockRoute::Hk,
         "00700",
     ))
     .expect("港股报文应命中");
     assert_eq!(request_target(&requests.lock().unwrap()[0]), "/q=hk00700");
     assert_eq!(quote.code, "00700", "回显 5 位补零形态");
-    assert_eq!(quote.market.as_deref(), Some("hk"));
+    assert_eq!(quote.market, Some(Market::Hk));
     assert_eq!(quote.name, "腾讯控股");
     assert_eq!(quote.price_cents, Some(4_190_000), "419.000 港元");
 }
@@ -171,7 +169,7 @@ fn all_invalid_batch_is_coded_not_found() {
         &client,
         &mut pacer,
         &[url.as_str()],
-        "sh",
+        StockRoute::Sh,
         "600000",
     ))
     .expect_err("全无效应报查无此码");
@@ -196,31 +194,9 @@ fn echo_mismatch_is_miss_not_hit() {
         &client,
         &mut pacer,
         &[url.as_str()],
-        "sh",
+        StockRoute::Sh,
         "600519",
     ))
     .expect_err("回显不等应按查无此码");
     assert!(error.is_code("sync.stock-not-found"), "实际: {error:?}");
-}
-
-#[test]
-fn unroutable_market_is_coded_internal_inconsistency() {
-    let client = build_client().unwrap();
-    let mut pacer = Pacer::new(Duration::ZERO);
-    let (url, requests) = spawn_header_capture_server(gbk(SH_STOCK));
-
-    // 市场闭集漂移才落入：解析单点已限定沪深港 + 美股（含聚合 us）。
-    let error = tauri::async_runtime::block_on(fetch_stock_quote(
-        &client,
-        &mut pacer,
-        &[url.as_str()],
-        "unknown",
-        "600519",
-    ))
-    .expect_err("未知市场应拒绝");
-    assert!(error.is_code("sync.secid-unroutable"), "实际: {error:?}");
-    assert!(
-        requests.lock().unwrap().is_empty(),
-        "无法构造查询键不得发起网络请求"
-    );
 }

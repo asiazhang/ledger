@@ -15,7 +15,7 @@ use crate::shell_support::write_entry::{Outcome, write_entry};
 use ledger_infra::error::AppError;
 use ledger_infra::signals::{WriteEvidence, WriteOp};
 use ledger_investment::{
-    InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentType, Quote,
+    InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentType, Market, Quote,
     StockCreateRoute, adopt_fund_quote, adopt_stock_quote, create_fund_degraded,
     create_stock_degraded, derive_quote_currency, is_six_digit_code, reject_carried_fund_market,
     route_stock_creation,
@@ -159,7 +159,7 @@ pub async fn create_instrument_handler(
         },
         StockDegrade {
             kind: InstrumentType,
-            market: String,
+            market: Market,
             code: String,
         },
     }
@@ -192,7 +192,7 @@ pub async fn create_instrument_handler(
                     Some(
                         match fetch_stock_quote_for_api(
                             &state,
-                            plan.candidate.market,
+                            plan.candidate.route,
                             &plan.candidate.code,
                         )
                         .await
@@ -225,12 +225,18 @@ pub async fn create_instrument_handler(
         _ => None,
     };
     // 报价币种可省：缺省按市场推导（沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，
-    // ADR-0037 决策 2 / ADR-0081）；
+    // ADR-0037 决策 2 / ADR-0081）；市场值先过闭集解析（issue #1673：未知值报
+    // 码化错误附合法值清单，不再落到库层 CHECK 才拒绝）。
     // market 缺省解析（None→unknown）由核心创建函数单点承担，此处仅按同口径推导币种。
     // fund 增强分支不经此推导：字典形态收口为按代码即拉同款（市场 unknown、币种人民币）。
-    let currency_code = input.currency_code.unwrap_or_else(|| {
-        derive_quote_currency(input.market.as_deref().unwrap_or("unknown")).to_string()
-    });
+    let currency_code = match input.currency_code {
+        Some(currency_code) => currency_code,
+        None => derive_quote_currency(match input.market.as_deref() {
+            Some(m) => Market::parse(m)?,
+            None => Market::Unknown,
+        })
+        .to_string(),
+    };
     // 壳层统一写入口（ADR-0073）：find-or-create 与信息更新同一写闭包，提交点置脏
     // 与信号内化单点；行情往返已在锁外完成（阻塞网络往返不进锁，慢闭包纪律），
     // 写闭包内零网络。泛型入参仅泛型分支消费，惰性构造；基金增强分支的落现价
@@ -259,7 +265,7 @@ pub async fn create_instrument_handler(
                 Some(Enrichment::StockDegrade { kind, market, code }) => {
                     // 降级：提交名称 + 真实代码 + 降级市场建行（基金恒 unknown 的镜像差异；
                     // 美股缺省遍历降级同 unknown，见 StockEnhancePlan）。
-                    let r = create_stock_degraded(conn, *kind, market, code, input.name.clone())?;
+                    let r = create_stock_degraded(conn, *kind, *market, code, input.name.clone())?;
                     (r.instrument_id, r.price_written)
                 }
                 None => {

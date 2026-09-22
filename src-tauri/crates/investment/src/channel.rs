@@ -18,6 +18,7 @@
 //! 三输入（类型 × 市场 × 代码）不再参与。
 
 use super::fund::is_six_digit_code;
+use super::market::{Market, QuoteMarket};
 use super::model::InstrumentType;
 use serde::{Deserialize, Serialize};
 use utoipa::openapi::{ObjectBuilder, RefOr, Schema, Type};
@@ -90,21 +91,31 @@ impl PartialSchema for PriceChannel {
 
 impl ToSchema for PriceChannel {}
 
-/// 行情通道的市场能力：已知市场（沪/深/港/美股三交易所）才可构造行情查询。
-/// 与行情同步域的腾讯查询键构造 `sync::tencent::tencent_query_key`（行情同步域
-/// `ledger-market-sync` crate，issue #1560 接线后）同一闭集——同步侧绑定测试钉住
-/// 两者一致（该 crate 的 `tests::instrument_info_sync`），改其一必同步另一。
-pub fn quote_market(market: &str) -> bool {
-    matches!(market, "sh" | "sz" | "hk" | "nasdaq" | "nyse" | "amex")
+/// 行情分区的查询单元市场（分区出口，issue #1673）：派生通道为 Quote 当且仅当
+/// 本函数返回 Some——内部消费 [`derive_price_channel`] 单点与
+/// [`Market::as_quote_market`] 唯一判定点，「行情通道 ⇔ 可路由市场」由同一份
+/// 判定承载。同步编排分区经本函数拿到类型化查询单元市场（`QuoteQuery`），
+/// Quote 通道配不可路由市场的组合在分区出口即被排除，不再需要运行时兜底。
+pub fn derive_quote_market(
+    kind: InstrumentType,
+    market: Market,
+    symbol: &str,
+    constant_unit_price: Option<i64>,
+) -> Option<QuoteMarket> {
+    match derive_price_channel(kind, market, symbol, constant_unit_price) {
+        PriceChannel::Quote => market.as_quote_market(),
+        _ => None,
+    }
 }
 
 /// 价格通道派生单点：类型 × 市场 × 代码 + 恒定单位价格 → 通道。同步分区、
 /// 标的读投影与过期检查面共用；判定顺序即语义——恒定单位价格在场即归恒定
 /// 价格通道（当且仅当该列有值，ADR-0126 决策 2），其余按类型 × 市场 × 代码
-/// 分派：市场未知的股票先于手动报价兜底拦截（它连录价入口也不开放）。
+/// 分派：市场未知的股票先于手动报价兜底拦截（它连录价入口也不开放）。行情
+/// 通道守卫消费 [`Market::as_quote_market`] 唯一判定点（issue #1673）。
 pub fn derive_price_channel(
     kind: InstrumentType,
-    market: &str,
+    market: Market,
     symbol: &str,
     constant_unit_price: Option<i64>,
 ) -> PriceChannel {
@@ -112,7 +123,9 @@ pub fn derive_price_channel(
         return PriceChannel::Constant;
     }
     match kind {
-        InstrumentType::Stock | InstrumentType::Etf if quote_market(market) => PriceChannel::Quote,
+        InstrumentType::Stock | InstrumentType::Etf if market.as_quote_market().is_some() => {
+            PriceChannel::Quote
+        }
         // 股票现价归同步通道（ADR-0036 决策 1）：市场未知即无任何价格来源。
         // ETF 不在此列——自建标的类型白名单含 ETF，录价入口开放，归手动通道。
         InstrumentType::Stock => PriceChannel::None,

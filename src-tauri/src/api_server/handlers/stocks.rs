@@ -10,7 +10,10 @@ use utoipa::ToSchema;
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::ApiState;
 use ledger_infra::error::AppError;
-use ledger_investment::{InstrumentType, Quote, derive_quote_currency, resolve_stock_code};
+use ledger_investment::{
+    InstrumentType, Quote, StockRoute, derive_quote_currency, explicit_quote_market,
+    resolve_stock_code,
+};
 
 /// 股票行情获取（查询端点与创建增强、添加投资标的壳共用，issue #693）：
 /// 测试注入桩直接在异步上下文 await（离线驱动）；生产路径为 async 生产入口
@@ -19,12 +22,12 @@ use ledger_investment::{InstrumentType, Quote, derive_quote_currency, resolve_st
 /// 决策 7 / issue #1413，`spawn_blocking` 包装与 JoinError 归一化删除）。
 pub async fn fetch_stock_quote_for_api(
     state: &ApiState,
-    market: &str,
+    route: StockRoute,
     code: &str,
 ) -> Result<Quote, AppError> {
     match &state.stock_fetch {
-        Some(fetch) => fetch(market, code).await,
-        None => ledger_market_sync::fetch_stock_quote_production(market, code).await,
+        Some(fetch) => fetch(route, code).await,
+        None => ledger_market_sync::fetch_stock_quote_production(route, code).await,
     }
 }
 
@@ -64,13 +67,13 @@ impl TryFrom<Quote> for StockLookup {
     fn try_from(q: Quote) -> Result<Self, AppError> {
         // 场内通道强约束在投资域单点判定（缺市场即内部不一致的码化拒绝，
         // ADR-0103 决策 2：通道差异从类型形状退到通道内判定）。
-        let market = q.stock_market()?.to_string();
+        let market = q.stock_market()?;
         let kind_hint = q.stock_kind_hint();
         Ok(Self {
-            currency_code: derive_quote_currency(&market).to_string(),
+            currency_code: derive_quote_currency(market).to_string(),
             code: q.code,
             name: q.name,
-            market,
+            market: market.as_str().to_string(),
             price_cents: q.price_cents,
             price_date: q.price_date,
             kind_hint,
@@ -109,7 +112,13 @@ pub async fn lookup_stock_handler(
     Query(query): Query<StockLookupQuery>,
 ) -> Result<Json<StockLookup>, AppError> {
     // 形态解析（推断 / 矛盾 / 不支持 / 北交所）在发起网络前完成：非法参数即刻 400。
-    let candidate = resolve_stock_code(query.market.as_deref(), &code)?;
-    let quote = fetch_stock_quote_for_api(&state, candidate.market, &candidate.code).await?;
+    // 显式 market 过投资域唯一校验点（wire 词汇 → 可路由市场，issue #1673）。
+    let explicit = query
+        .market
+        .as_deref()
+        .map(explicit_quote_market)
+        .transpose()?;
+    let candidate = resolve_stock_code(explicit, &code)?;
+    let quote = fetch_stock_quote_for_api(&state, candidate.route, &candidate.code).await?;
     Ok(Json(StockLookup::try_from(quote)?))
 }
