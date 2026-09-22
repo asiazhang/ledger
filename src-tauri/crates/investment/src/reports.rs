@@ -1,21 +1,14 @@
-//! 投资盈亏读投影（issue #1077 / #1078；ADR-0107 / ADR-0129 / ADR-0114 / ADR-0132）：
+//! 投资盈亏读投影（issue #1077 / #1078；ADR-0107 / ADR-0129 / ADR-0114）：
 //! 已实现盈亏汇总与按币种累计收益查询的只读单点。
 //!
 //! - [`query_cumulative_pnl_summary`]：未实现盈亏（`v_holdings`）+ 已实现盈亏（卖出
 //!   匹配）+ 累计分红三腿按币种独立成组，不跨币种折算；缺价 / 缺汇率持仓按空值跳过。
-//! - [`query_realized_pnl_summary`]：盈亏页按年 / 按账户两表（已实现 + 分红两腿 +
-//!   按年表的完整年度收益两腿）与按币种总数、按标的行；软删账户与软删流水排除、
-//!   隐藏账户照常计入。
+//! - [`query_realized_pnl_summary`]：盈亏页按年 / 按账户两表（已实现 + 分红两腿）
+//!   与按币种总数、按标的行；软删账户与软删流水排除、隐藏账户照常计入。
 //! - [`query_holdings_summary_by_currency`]：持仓市值 / 未实现盈亏按账户币种分组合计。
 
-use std::collections::{BTreeMap, HashMap};
-
-use chrono::NaiveDate;
 use rusqlite::Connection;
 
-use super::as_of::AsOfValues;
-use super::holdings::holdings_legs_by_account_and_instrument;
-use super::lots::QTY_GUARD_EPSILON;
 use super::model::{
     AccountPnl, CurrencyCumulativePnl, CurrencyHoldingTotals, CurrencyPnl, InstrumentPnl,
     PnlFilter, RealizedPnlSummary, YearPnl,
@@ -94,8 +87,8 @@ pub fn query_holdings_summary_by_currency(conn: &Connection) -> Result<Vec<Curre
 /// （ADR-0129 决策 4）。
 ///
 /// **读快照一致性（issue #1699）**：total / by_year / by_account / by_instrument
-/// 四查与年度收益腿装载（`attach_annual_return_legs`）整体收进同一读事务
-/// （嵌套感知）——写提交落在语句之间会总量≠分量和，同屏口径自相矛盾。
+/// 四查整体收进同一读事务（嵌套感知）——写提交落在语句之间会总量≠分量和，
+/// 同屏口径自相矛盾。
 pub fn query_realized_pnl_summary(
     conn: &Connection,
     filter: &PnlFilter,
@@ -187,14 +180,10 @@ pub fn query_realized_pnl_summary(
         let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
 
         let total: Vec<CurrencyPnl> = query_all(conn, &total_sql, params_ref.as_slice())?;
-        let mut by_year: Vec<YearPnl> = query_all(conn, &year_sql, params_ref.as_slice())?;
+        let by_year: Vec<YearPnl> = query_all(conn, &year_sql, params_ref.as_slice())?;
         let by_account: Vec<AccountPnl> = query_all(conn, &account_sql, params_ref.as_slice())?;
         let by_instrument: Vec<InstrumentPnl> =
             query_all(conn, &instrument_sql, params_ref.as_slice())?;
-
-        // 完整年度收益两腿（ADR-0132 / issue #1535）：未实现变动与年度收益只增不改地
-        // 追加到按年行，既有三列读数逐位不变。
-        attach_annual_return_legs(conn, filter, &mut by_year)?;
 
         Ok(RealizedPnlSummary {
             total,
@@ -203,213 +192,4 @@ pub fn query_realized_pnl_summary(
             by_instrument,
         })
     })
-}
-
-/// 按年行的未实现变动与年度收益（ADR-0132 / issue #1535，词汇表「年度收益
-/// （AnnualReturn）」）：采用现金流式——
-///
-/// ```text
-/// 年度收益 = (期末持仓市值 − 期初持仓市值) + 年内卖出净收入 + 年内分红 − 年内买入支出
-/// 未实现变动 = 年度收益 − 已实现盈亏 − 分红
-/// ```
-///
-/// 与三腿定义式（已实现 + 分红 + Δ未实现）在估值齐全时逐位相等（FIFO 已实现与
-/// 批次成本共用同一锚点，代数上可互导），且不需要时点成本。口径要点：
-///
-/// - **边界时点**：期初 = 上一年 12-31、期末 = 当年 12-31（当年即今日，价格取
-///   ≤ 该日最近周采样，未来日期自然夹到最新）；市值 = 时点持仓（[`holdings_legs_by_account_and_instrument`]
-///   前缀和）× 周线价 × 同期汇率（[`AsOfValues`]，与资金加权收益率边界市值
-///   同一装载器）。convert 无现金腿、split 不产生现金，公式天然覆盖。
-/// - **年内买入支出 = 该年 buy 行金额合计**（含费用；含期初存量补记行——否则
-///   补记年会把整笔存量市值虚计为年度收益）；卖出净收入 = sell 行金额合计（已扣费）。
-/// - **按币种分组沿用 ADR-0107 决策 6**（按币种分组、不跨币种折算）：本腿组币种
-///   = 账户币种（边界市值折到账户币，与匹配行 / 分红行币种同源），
-///   不跨币种折算；账户 / 标的筛选对市值腿与既有两腿同源同过滤。
-/// - **空值语义**：边界仍有持仓而市值缺料（缺价或缺汇率）→ 该年 `None`
-///   （不可算，前端显式标注）；期初或期末持仓为零则无需估值，年内全平仓等
-///   形态无价也可算。已实现与分红两腿不受行情影响，不可算年份照常出数。
-/// - **行集不变**：只加列不加行（#1533 的行集纪律——只有卖出或分红的年份成行）。
-fn attach_annual_return_legs(
-    conn: &Connection,
-    filter: &PnlFilter,
-    by_year: &mut [YearPnl],
-) -> Result<()> {
-    if by_year.is_empty() {
-        return Ok(());
-    }
-
-    // 1. 各年的期初 / 期末边界日（相邻年份共享同一 12-31：本年期末即次年期初）。
-    let mut boundaries: BTreeMap<String, (NaiveDate, NaiveDate)> = BTreeMap::new();
-    for row in by_year.iter() {
-        let Ok(year) = row.year.parse::<i32>() else {
-            continue;
-        };
-        let Some(start) = NaiveDate::from_ymd_opt(year - 1, 12, 31) else {
-            continue;
-        };
-        let Some(end) = NaiveDate::from_ymd_opt(year, 12, 31) else {
-            continue;
-        };
-        boundaries.insert(row.year.clone(), (start, end));
-    }
-    if boundaries.is_empty() {
-        return Ok(());
-    }
-
-    // 2. 边界市值装载器：每个去重后的边界日装载一次（相邻年共享，免双重扫描）。
-    let mut boundary_dates: Vec<NaiveDate> = boundaries
-        .values()
-        .flat_map(|(start, end)| [*start, *end])
-        .collect();
-    boundary_dates.sort();
-    boundary_dates.dedup();
-    let mut values: HashMap<NaiveDate, AsOfValues> = HashMap::new();
-    for date in boundary_dates {
-        values.insert(date, AsOfValues::load(conn, date)?);
-    }
-
-    // 3. 腿流一次装载：各边界日的（账户 × 标的）时点持仓由前缀求和给出。
-    let legs = holdings_legs_by_account_and_instrument(conn)?;
-
-    // 4. 投资账户币种表：软删排除、隐藏计入（与已实现 / 分红腿同口径）。
-    //    组币种 = 账户币种（与匹配行 / 分红行币种同源，分组不折算口径沿用
-    //    ADR-0107 决策 6），故每个币种组只估值该币种账户。
-    let mut account_conditions: Vec<String> = vec![
-        "is_deleted = 0".to_string(),
-        "type = 'investment'".to_string(),
-    ];
-    let mut account_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    if let Some(acct_id) = &filter.account_id {
-        account_params.push(Box::new(acct_id.clone()));
-        account_conditions.push(format!("id = ?{}", account_params.len()));
-    }
-    let accounts_sql = format!(
-        "SELECT id, currency_code FROM accounts WHERE {}",
-        account_conditions.join(" AND ")
-    );
-    let account_refs: Vec<&dyn rusqlite::ToSql> =
-        account_params.iter().map(|b| b.as_ref()).collect();
-    let mut accounts_by_currency: HashMap<String, Vec<String>> = HashMap::new();
-    {
-        let mut stmt = conn.prepare(&accounts_sql)?;
-        let rows = stmt.query_map(account_refs.as_slice(), |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })?;
-        for row in rows {
-            let (id, currency) = row?;
-            accounts_by_currency.entry(currency).or_default().push(id);
-        }
-    }
-
-    // 5. 年内买卖现金流（按年 × 币种）：买入计支出（含期初存量补记行，它们是
-    //    buy 行）、卖出为净收入；筛选与既有两腿同源同过滤（ADR-0129 决策 3）。
-    let mut flow_conditions: Vec<String> = vec![
-        "t.kind IN ('buy','sell')".to_string(),
-        "t.is_deleted = 0".to_string(),
-    ];
-    let mut flow_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    if let Some(acct_id) = &filter.account_id {
-        flow_params.push(Box::new(acct_id.clone()));
-        flow_conditions.push(format!("t.account_id = ?{}", flow_params.len()));
-    }
-    let instrument_join = if let Some(inst_id) = &filter.instrument_id {
-        flow_params.push(Box::new(inst_id.clone()));
-        flow_conditions.push(format!("st.instrument_id = ?{}", flow_params.len()));
-        " JOIN security_transactions st ON st.transaction_id = t.id".to_string()
-    } else {
-        String::new()
-    };
-    let flows_sql = format!(
-        "SELECT substr(t.date, 1, 4) AS year, t.currency_code, \
-         SUM(CASE WHEN t.kind = 'buy' THEN t.amount_cents ELSE 0 END), \
-         SUM(CASE WHEN t.kind = 'sell' THEN t.amount_cents ELSE 0 END) \
-         FROM transactions t{instrument_join} \
-         JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0 \
-         WHERE {} GROUP BY year, t.currency_code",
-        flow_conditions.join(" AND ")
-    );
-    let flow_refs: Vec<&dyn rusqlite::ToSql> = flow_params.iter().map(|b| b.as_ref()).collect();
-    let mut flows: HashMap<(String, String), (i64, i64)> = HashMap::new();
-    {
-        let mut stmt = conn.prepare(&flows_sql)?;
-        let rows = stmt.query_map(flow_refs.as_slice(), |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<i64>>(2)?.unwrap_or(0),
-                r.get::<_, Option<i64>>(3)?.unwrap_or(0),
-            ))
-        })?;
-        for row in rows {
-            let (year, currency, buy, sell) = row?;
-            flows.insert((year, currency), (buy, sell));
-        }
-    }
-
-    // 6. 逐行装配：先累计两个边界日的持仓市值（任一缺料 → 整行不可算，保持
-    //    None 不按零计），再由现金流式导出两腿；已实现 / 分红两腿不动（读数
-    //    逐位不变）。年内全平仓等边界持仓为零的形态无需估值，无价也可算。
-    for row in by_year.iter_mut() {
-        let Some((start, end)) = boundaries.get(&row.year) else {
-            continue;
-        };
-        let (Some(start_values), Some(end_values)) = (values.get(start), values.get(end)) else {
-            continue;
-        };
-        // 组币种无投资账户（如分红只到账银行卡）时按空持仓处理——可算、市值腿
-        // 为 0，与「边界持仓为零则无需估值」同一语义；不特判会让这类年份被误判
-        // 为不可算。
-        let account_ids = accounts_by_currency
-            .get(&row.currency_code)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        let mut start_mv = 0i64;
-        let mut end_mv = 0i64;
-        let mut computable = true;
-        for ((account_id, instrument_id), pair_legs) in legs.iter() {
-            if !account_ids.contains(account_id) {
-                continue;
-            }
-            if let Some(want) = &filter.instrument_id
-                && instrument_id != want
-            {
-                continue;
-            }
-            let qty_start = quantity_at(pair_legs, &start.to_string());
-            if qty_start.abs() > QTY_GUARD_EPSILON {
-                match start_values.market_value(qty_start, instrument_id, &row.currency_code) {
-                    Some(v) => start_mv += v,
-                    None => computable = false,
-                }
-            }
-            let qty_end = quantity_at(pair_legs, &end.to_string());
-            if qty_end.abs() > QTY_GUARD_EPSILON {
-                match end_values.market_value(qty_end, instrument_id, &row.currency_code) {
-                    Some(v) => end_mv += v,
-                    None => computable = false,
-                }
-            }
-        }
-        if !computable {
-            continue;
-        }
-        let (buy, sell) = flows
-            .get(&(row.year.clone(), row.currency_code.clone()))
-            .copied()
-            .unwrap_or((0, 0));
-        let unrealized = end_mv - start_mv + sell - buy - row.realized_pnl_cents;
-        row.unrealized_change_cents = Some(unrealized);
-        row.annual_return_cents = Some(row.realized_gain_cents + unrealized);
-    }
-    Ok(())
-}
-
-/// 边界日的时点持仓：腿流按交易日升序，取「交易日 ≤ 边界日」的前缀和（含当日）
-/// ——与 [`crate::holdings::holdings_as_of`] 同一前缀语义；单组腿数量级小
-///（标的全部流水），线性过滤即可，无需游标增量。
-fn quantity_at(legs: &[(String, f64)], as_of_date: &str) -> f64 {
-    legs.iter()
-        .filter(|(date, _)| date.as_str() <= as_of_date)
-        .map(|(_, qty)| qty)
-        .sum()
 }

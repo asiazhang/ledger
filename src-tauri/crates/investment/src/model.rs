@@ -484,11 +484,6 @@ pub struct CurrencyHoldingTotals {
 /// （dividend 行）两腿并列，合计即词汇表「已实现收益（RealizedGain）」。
 /// 两腿各自口径逐位不变（ADR-0107 / ADR-0109 决策 2）；合计在域内相加，
 /// 前端不持算术（ADR-0129 决策 4）。
-///
-/// 完整年度收益两腿（ADR-0132 / issue #1535）只增不改地追加：未实现变动与
-/// 年度收益（= 已实现收益 + 未实现变动）。`None` = 该年不可算（期初或期末
-/// 仍有持仓而边界市值缺价 / 缺汇率），前端显式标注、不按 0 计；已实现与分红
-/// 两腿不受行情影响，不可算年份照常出数。
 #[derive(Debug, Serialize)]
 pub struct YearPnl {
     pub year: String,
@@ -499,12 +494,6 @@ pub struct YearPnl {
     pub dividend_cents: i64,
     /// 已实现收益 = 已实现盈亏 + 现金分红（不含浮动盈亏）。
     pub realized_gain_cents: i64,
-    /// 未实现变动 = 年末未实现盈亏 − 年初未实现盈亏（经现金流式导出，
-    /// ADR-0132）；`None` = 边界市值缺料、该年不可算。
-    pub unrealized_change_cents: Option<i64>,
-    /// 年度收益 = 已实现收益 + 未实现变动（三腿合计，与且慢年度收益可对照）；
-    /// `None` = 该年不可算。
-    pub annual_return_cents: Option<i64>,
 }
 
 /// 按账户分组的已实现收益行（ADR-0129）：列口径同 [`YearPnl`]，按账户聚合。
@@ -609,10 +598,6 @@ impl FromRow for YearPnl {
             realized_pnl_cents: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
             dividend_cents: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
             realized_gain_cents: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
-            // 两腿由 [`crate::reports::query_realized_pnl_summary`] 装载后追加
-            //（需要边界市值装载，SQL 直出不携带），此处先置不可算。
-            unrealized_change_cents: None,
-            annual_return_cents: None,
         })
     }
 }

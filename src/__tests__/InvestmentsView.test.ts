@@ -5,7 +5,6 @@ import { flushPromises } from "@vue/test-utils";
 import { defineComponent, h, nextTick } from "vue";
 import InvestmentsView from "@/views/InvestmentsView.vue";
 import { formatAmount } from "@ledger/money";
-import { t } from "@ledger/i18n";
 import { clickTab, findTab, probeColor } from "@ledger/test-support/dom";
 import { componentVm } from "@ledger/test-support/component-vm";
 import { mountWithDialog } from "@ledger/test-support/mount";
@@ -282,8 +281,6 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
               realized_pnl_cents: 30000,
               dividend_cents: 0,
               realized_gain_cents: 30000,
-              unrealized_change_cents: 0,
-              annual_return_cents: 30000,
             },
             {
               year: "2025",
@@ -291,8 +288,6 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
               realized_pnl_cents: -12345,
               dividend_cents: 40000,
               realized_gain_cents: 27655,
-              unrealized_change_cents: 500,
-              annual_return_cents: 28155,
             },
           ],
           by_account: [
@@ -339,54 +334,6 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
       `${formatAmount(27655, cny)}已实现盈亏 ${formatAmount(-12345, cny)} · 现金分红 ${formatAmount(40000, cny)}`,
       `${formatAmount(27655, cny)}已实现盈亏 ${formatAmount(-12345, cny)} · 现金分红 ${formatAmount(40000, cny)}`,
     ]);
-  });
-
-  it("按年表年度收益两列：可算年份着盈亏色，缺料年份显式「无法计算」不按 0 计（ADR-0132）", async () => {
-    // 只加列：两列仅存在于按年表，值由域内算好，前端只格式化与三态渲染
-    wireInvokeSeam({
-      defaults: INVESTMENT_DEFAULTS,
-      overrides: {
-        realized_pnl_summary: makePnlSummary({
-          by_year: [
-            {
-              year: "2026",
-              currency_code: "CNY",
-              realized_pnl_cents: 30000,
-              dividend_cents: 0,
-              realized_gain_cents: 30000,
-              unrealized_change_cents: 8500,
-              annual_return_cents: 104500,
-            },
-            {
-              year: "2025",
-              currency_code: "CNY",
-              realized_pnl_cents: -12345,
-              dividend_cents: 40000,
-              realized_gain_cents: 27655,
-              unrealized_change_cents: null,
-              annual_return_cents: null,
-            },
-          ],
-        }),
-      },
-    });
-    const wrapper = mountView();
-    await flushPromises();
-    const theme = useAppStore().theme;
-    // 可算单元格按符号着盈亏涨跌色；null（不可算）不著色、标「无法计算」
-    const annualColors = wrapper
-      .findAll('td[data-col-key="annual_return_cents"] > span')
-      .map((s) => (s.element as HTMLElement).style.color);
-    expect(annualColors).toEqual([probeColor(pnlSemanticColor(104500, theme)), ""]);
-    const annualTexts = wrapper
-      .findAll('td[data-col-key="annual_return_cents"]')
-      .map((c) => c.text());
-    expect(annualTexts).toEqual([formatAmount(104500, cny), t("investments.pnl.notComputable")]);
-    // 未实现变动列同形态
-    const changeTexts = wrapper
-      .findAll('td[data-col-key="unrealized_change_cents"]')
-      .map((c) => c.text());
-    expect(changeTexts).toEqual([formatAmount(8500, cny), t("investments.pnl.notComputable")]);
   });
 
   it("价格失效信号触发持仓重查：翻新后的市值合计上屏（自动刷新贯通取数与渲染）", async () => {
