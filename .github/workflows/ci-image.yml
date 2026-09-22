@@ -48,9 +48,9 @@ jobs:
 
       # buildx 容器驱动：type=gha 层缓存导出与 load: 回载所需（默认 docker
       # 驱动不支持 cache-to gha）。
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -58,7 +58,7 @@ jobs:
 
       # 先构建不发布（load 进本地 docker），冒烟通过后才 push——发布以冒烟为
       # 前置门，坏镜像阻断在 push 之前，不上 :latest（#1109 评审修正）。
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .github/docker
           file: .github/docker/backend-ci.Dockerfile
