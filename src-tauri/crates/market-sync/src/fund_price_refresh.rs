@@ -10,19 +10,19 @@
 use chrono::NaiveDate;
 
 use ledger_infra::db::tx_scope::ensure_transaction;
-use ledger_infra::error::Result;
+use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::{
     MarketPriceWrite, SINA_PRICE_SOURCE, price_value_to_cents, upsert_market_price,
-    upsert_price_history,
 };
 
 use super::bulk::BulkNavPoint;
 use super::channels::FetchFuture;
 use super::fund_nav::{
-    NavPoint, mark_constant_price_on_confirm, nav_window, read_fund_watermark, trim_to_window,
+    FundIdentity, NavPoint, mark_constant_price_on_confirm, nav_window, read_fund_watermark,
+    trim_to_window,
 };
-use super::http::KlineBar;
 use super::session::ScopedSession;
+use super::weekly::{commit_price_history_weekly, week_monday};
 
 /// 现价刷新逐只回退的无历史序列短窗（issue #1377）：首刷的历史由后台补全整根
 /// 回填，现价刷新只为这类标的拿「最新公布净值」——一个月窗口、常数请求。
@@ -71,7 +71,7 @@ pub(super) struct FundSyncStats {
 /// 决策 4 / #1451），未打标货基的打标确认由上方官方披露判定门承担。
 pub(super) async fn refresh_one_fund_price<Q, H, C>(
     session: &Q,
-    fund: &super::incremental::SyncInstrument,
+    fund: &FundIdentity<'_>,
     latest_hint: Option<&BulkNavPoint>,
     fetch_nav_history: &mut H,
     confirm_money_fund: &mut C,
@@ -87,7 +87,7 @@ where
     C: FnMut(&str) -> FetchFuture<bool> + Send,
 {
     let today = super::incremental::beijing_today();
-    let (watermark, has_history) = read_fund_watermark(session, fund).await?;
+    let (watermark, has_history) = read_fund_watermark(session, fund.instrument_id).await?;
     // 取数面命中时整只零请求（ADR-0121 取数面把「要不要发逐只请求」的判断从
     // 「每标的一次请求」降为「整市场一次请求」）——逐只通道只在缺周点补齐与
     // 批量面未覆盖时接管（issue #1377：首刷不再接管，历史归后台补全）。
@@ -105,7 +105,7 @@ where
         BulkDecision::PerInstrument => {
             if let Some(hint) = latest_hint {
                 tracing::debug!(
-                    code = %fund.symbol, watermark = ?watermark, bulk_date = %hint.date,
+                    code = %fund.code, watermark = ?watermark, bulk_date = %hint.date,
                     "批量面已报出新净值但水位落后超过一个自然周，逐只通道补齐缺失周点"
                 );
             }
@@ -115,12 +115,12 @@ where
     // 打标收尾——不发起逐只净值请求，万份收益不得经取数面冒充单位净值落库
     //（#1342）。确认单向幂等：已标记行零触碰、缺信号不清空；披露源不可信则
     // 本轮整只不落（跳过，与被拦截同桶），下一窗口重试。
-    match confirm_money_fund(&fund.symbol).await {
+    match confirm_money_fund(fund.code).await {
         Ok(true) => {
             let written = mark_constant_price_on_confirm(
                 session,
-                &fund.instrument_id,
-                &fund.currency,
+                fund.instrument_id,
+                fund.currency,
                 today.format("%Y-%m-%d").to_string(),
             )
             .await?;
@@ -133,7 +133,7 @@ where
         Ok(false) => {}
         Err(error) => {
             tracing::warn!(
-                code = %fund.symbol, %error,
+                code = %fund.code, %error,
                 "官方披露判定源不可信，本轮整只不落（信号缺席时落取值位即万份收益冒充净值）"
             );
             stats.skipped += 1;
@@ -154,7 +154,7 @@ where
             today.format("%Y-%m-%d").to_string(),
         )
     };
-    let points: Vec<NavPoint> = fetch_nav_history(&fund.symbol).await?;
+    let points: Vec<NavPoint> = fetch_nav_history(fund.code).await?;
     let collected: Vec<NavPoint> = trim_to_window(points, &start, &end);
 
     if collected.is_empty() {
@@ -174,7 +174,7 @@ where
     // 非空由前文判空保证，此臂理论不可达；一旦前置防线被移除，此处记警告并
     // 跳过该只、不中断同步。
     let Some(latest) = collected.iter().max_by_key(|p| p.date.as_str()) else {
-        tracing::warn!(code = %fund.symbol, "净值点意外为空，跳过现价更新");
+        tracing::warn!(code = %fund.code, "净值点意外为空，跳过现价更新");
         return Ok(());
     };
     // 无新净值防线：短窗拿到的最新净值不新于水位即「已是最新」（无历史序列者
@@ -187,18 +187,19 @@ where
         return Ok(());
     }
     // 当周采样点（仅有历史序列者）与现价落库同在一只一个事务里（ADR-0122
-    // 决策 8 / issue #1373 同形体）：写失败整体回滚，不留半根。落库经作用域
-    // 会话短暂取一次连接（issue #1275 / #1412 async 形态）；事务经
+    // 决策 8 / issue #1373 同形体）：写失败整体回滚，不留半根。周点落库经原语
+    //（[`commit_price_history_weekly`]，spec #1677）：采样、判新（同周同值零
+    // 写入——收敛前本臂无判新，为统一引入的 version churn 收敛）、覆盖与事务
+    // 边界收口一处；净值点以载体中立逐日点集直入原语，不再经 KlineBar 适配壳。
+    // 日期解析失败按缺失点跳过（与净值腿收敛前一致；日期由取数层契约保证）。
+    // 落库经作用域会话短暂取一次连接（issue #1275 / #1412 async 形态）；事务经
     // [`ensure_transaction`]（ADR-0033 嵌套感知）。
-    let bars: Vec<KlineBar> = collected
+    let daily_points: Vec<(NaiveDate, f64)> = collected
         .iter()
-        .map(|p| KlineBar {
-            date: p.date.clone(),
-            close: p.nav,
-        })
+        .filter_map(|p| Some((NaiveDate::parse_from_str(&p.date, "%Y-%m-%d").ok()?, p.nav)))
         .collect();
-    let instrument_id = fund.instrument_id.clone();
-    let currency = fund.currency.clone();
+    let instrument_id = fund.instrument_id.to_string();
+    let currency = fund.currency.to_string();
     let latest_date = latest.date.clone();
     let latest_nav = latest.nav;
     session
@@ -207,12 +208,12 @@ where
                 if has_history {
                     // 窗口内缺失的近期周点顺带落库（完整性由全历史面的声明总数
                     // 核对保证；深度缺周点已在上方交后台补全）。
-                    super::incremental::write_weekly_price_history(
+                    commit_price_history_weekly(
                         conn,
                         &instrument_id,
                         &currency,
-                        &bars,
                         SINA_PRICE_SOURCE,
+                        &daily_points,
                     )?;
                 }
                 upsert_market_price(
@@ -281,8 +282,7 @@ fn week_gap_needs_per_instrument(watermark: Option<&str>, bulk_date: &str) -> bo
     let (Some(watermark), Some(bulk_date)) = (watermark.and_then(parse), parse(bulk_date)) else {
         return true;
     };
-    super::incremental::week_monday(bulk_date) - super::incremental::week_monday(watermark)
-        > chrono::Duration::days(7)
+    week_monday(bulk_date) - week_monday(watermark) > chrono::Duration::days(7)
 }
 
 /// 把批量取数面的最新单位净值直接落库（ADR-0122 决策 2 / issue #1377）：现价
@@ -306,40 +306,50 @@ fn week_gap_needs_per_instrument(watermark: Option<&str>, bulk_date: &str) -> bo
 /// 补全整根回填（issue #1377）。
 async fn land_bulk_point<Q: ScopedSession>(
     session: &Q,
-    fund: &super::incremental::SyncInstrument,
+    fund: &FundIdentity<'_>,
     hint: &BulkNavPoint,
 ) -> Result<()> {
     let price_cents = price_value_to_cents(hint.nav);
-    let instrument_id = fund.instrument_id.clone();
-    let currency = fund.currency.clone();
+    // 当周采样点 = 长度为 1 的载体中立点集（spec #1677）：日期解析失败 fail-closed
+    // 上抛（净值日期由取数层契约保证为 ISO 形态，不可信日期不落库）。
+    let day = NaiveDate::parse_from_str(hint.date.trim(), "%Y-%m-%d")
+        .map_err(|e| AppError::Parse(format!("非法净值日期 {}: {e}", hint.date)))?;
+    let nav = hint.nav;
+    let instrument_id = fund.instrument_id.to_string();
+    let currency = fund.currency.to_string();
     let hint_date = hint.date.clone();
     session
         .with_connection(move |conn| {
-            let has_history = ledger_investment::backfill::has_any_history(conn, &instrument_id)?;
-            upsert_market_price(
-                conn,
-                &MarketPriceWrite {
-                    instrument_id: &instrument_id,
-                    price_cents,
-                    currency_code: &currency,
-                    priced_at: &hint_date,
-                    nav_date: Some(&hint_date),
-                    // 价格来源随取数面换源如实记新浪（ADR-0130 决策 7 / issue #1565）——
-                    // 存量 `eastmoney` 行保留为历史事实，不重写不迁移。
-                    source: Some(SINA_PRICE_SOURCE),
-                },
-            )?;
-            if has_history {
-                upsert_price_history(
+            // 现价与当周采样点同一事务原子提交（spec #1677 收敛缺陷面：两段
+            // autocommit 的中途失败不再留「现价已写、当周点缺失」半态——批量
+            // 面场景的缺周点补齐兜底本就不触发，半态只能靠下一窗口修复）。
+            ensure_transaction(conn, || {
+                upsert_market_price(
                     conn,
-                    &instrument_id,
-                    &hint_date,
-                    price_cents,
-                    &currency,
-                    SINA_PRICE_SOURCE,
+                    &MarketPriceWrite {
+                        instrument_id: &instrument_id,
+                        price_cents,
+                        currency_code: &currency,
+                        priced_at: &hint_date,
+                        nav_date: Some(&hint_date),
+                        // 价格来源随取数面换源如实记新浪（ADR-0130 决策 7 / issue #1565）——
+                        // 存量 `eastmoney` 行保留为历史事实，不重写不迁移。
+                        source: Some(SINA_PRICE_SOURCE),
+                    },
                 )?;
-            }
-            Ok(())
+                if ledger_investment::backfill::has_any_history(conn, &instrument_id)? {
+                    // 周点经原语落库：判新同周同值零写入，事务并入外层
+                    //（「单点不冒充完整」前置门留在调用点，不进中性原语）。
+                    commit_price_history_weekly(
+                        conn,
+                        &instrument_id,
+                        &currency,
+                        SINA_PRICE_SOURCE,
+                        &[(day, nav)],
+                    )?;
+                }
+                Ok(())
+            })
         })
         .await?;
     Ok(())

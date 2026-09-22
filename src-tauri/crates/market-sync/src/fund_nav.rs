@@ -22,6 +22,7 @@
 use chrono::NaiveDate;
 use rusqlite::params;
 
+use ledger_investment::PriceChannel;
 use ledger_investment::constant_price::{ensure_constant_base_price, mark_constant_unit_price};
 use ledger_investment::prices::{CSRC_PRICE_SOURCE, price_value_to_cents};
 
@@ -34,6 +35,35 @@ use super::session::ScopedSession;
 pub struct NavPoint {
     pub(super) date: String,
     pub(super) nav: f64,
+}
+
+/// 基金单元的载体中立标的身份（spec #1677）：回填与现价刷新两单元的入参——
+/// 编排侧从收集投影裁出所需字段传入，单元签名不再收编排模块的私有收集类型
+/// `SyncInstrument`。
+pub(super) struct FundIdentity<'a> {
+    /// 标的 id（落库键）。
+    pub(super) instrument_id: &'a str,
+    /// 6 位真实代码（取数与判定门的键）。
+    pub(super) code: &'a str,
+    /// 报价币种。
+    pub(super) currency: &'a str,
+    /// 价格通道（收集时点的投影）：回填单元的恒定价格分支判定输入；通道判定
+    /// 单点在投资域（issue #1060），本字段只透传不重派。
+    pub(super) channel: PriceChannel,
+}
+
+impl FundIdentity<'_> {
+    /// 从编排侧的收集投影裁出本单元所需字段（spec #1677 迁接）。
+    pub(super) fn from_instrument(
+        instrument: &super::incremental::SyncInstrument,
+    ) -> FundIdentity<'_> {
+        FundIdentity {
+            instrument_id: &instrument.instrument_id,
+            code: &instrument.symbol,
+            currency: &instrument.currency,
+            channel: instrument.channel,
+        }
+    }
 }
 
 /// 货币基金的恒定单位净值（issue #1342）：收益以份额结转体现，单位净值恒为
@@ -96,7 +126,7 @@ pub(super) fn coverage_short_of_first_position(
     else {
         return true;
     };
-    super::incremental::week_monday(first) < super::incremental::week_monday(earliest)
+    super::weekly::week_monday(first) < super::weekly::week_monday(earliest)
 }
 
 /// 深回填窗口（issue #1534）：基金价格历史的覆盖深度由「近两年」放宽到
@@ -114,7 +144,7 @@ pub(super) fn deep_backfill_window(
         .map(str::trim)
         .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
     {
-        start = start.min(super::incremental::week_monday(d));
+        start = start.min(super::weekly::week_monday(d));
     }
     (
         start.format("%Y-%m-%d").to_string(),
@@ -158,9 +188,9 @@ pub(super) async fn mark_constant_price_on_confirm<Q: ScopedSession>(
 /// 会话短暂取一次连接完成（issue #1275）；抓取前不再触碰连接。
 pub(super) async fn read_fund_watermark<Q: ScopedSession>(
     session: &Q,
-    fund: &super::incremental::SyncInstrument,
+    instrument_id: &str,
 ) -> Result<(Option<String>, bool)> {
-    let instrument_id = fund.instrument_id.clone();
+    let instrument_id = instrument_id.to_string();
     session
         .with_connection(move |conn| {
             let watermark: Option<String> = conn
@@ -181,9 +211,9 @@ pub(super) async fn read_fund_watermark<Q: ScopedSession>(
 /// 经作用域会话短暂取一次连接完成（issue #1275）。
 pub(super) async fn read_fund_coverage<Q: ScopedSession>(
     session: &Q,
-    fund: &super::incremental::SyncInstrument,
+    instrument_id: &str,
 ) -> Result<(Option<String>, Option<String>)> {
-    let instrument_id = fund.instrument_id.clone();
+    let instrument_id = instrument_id.to_string();
     session
         .with_connection(move |conn| {
             let earliest_history: Option<String> = conn

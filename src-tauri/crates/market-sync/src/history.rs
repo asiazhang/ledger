@@ -42,11 +42,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use chrono::NaiveDate;
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 use tauri::{AppHandle, Runtime};
 
-use ledger_infra::db::tx_scope::ensure_transaction;
-use ledger_infra::error::{AppError, Result};
+use ledger_infra::error::Result;
 use ledger_investment::holdings::FIRST_POSITION_DATE;
 use ledger_investment::predicates::INVESTED_EXISTS;
 use ledger_investment::{
@@ -55,12 +54,9 @@ use ledger_investment::{
 
 use super::channels::{FetchFuture, QuoteQuery, SyncFetchChannels};
 use super::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
-use super::fund_nav::NavPoint;
+use super::fund_nav::{FundIdentity, NavPoint};
 use super::http::KlineBar;
-use super::incremental::{
-    SyncInstrument, beijing_today, downsample_weekly, quote_code, week_monday,
-    write_weekly_price_history,
-};
+use super::incremental::{SyncInstrument, beijing_today, quote_code};
 use super::lane::{
     LaneChannelsSlot, LaneId, LaneRound, LaneRoundFuture, LaneTimings, progress_forwarder,
     run_background_lane_round, start_daily_lane,
@@ -68,8 +64,9 @@ use super::lane::{
 use super::model::WriteWitness;
 use super::progress::SyncProgress;
 use super::session::{FacadeWriteSession, ScopedSession};
+use super::weekly::{commit_price_history_weekly, week_monday};
 use ledger_investment::backfill;
-use ledger_investment::prices::{TENCENT_PRICE_SOURCE, upsert_price_history};
+use ledger_investment::prices::TENCENT_PRICE_SOURCE;
 
 /// 缺周点判据（ADR-0122 决策 2「逐只采集只服务首刷与缺周点」的队列半边）：
 /// 参考点（行情标的历史的最新周点 / 基金水位的净值日期）落后当前自然周**超过
@@ -250,84 +247,35 @@ where
     // 查询单元由队列分区产出（分区出口已类型化，issue #1673）：数据源查询键
     //（腾讯 K 线键）由日 K 通道在内部构造——换源只改通道实现，本编排零改动。
     let bars = fetch_kline(query).await?;
-    let points = downsample_weekly(&bars);
-    if points.is_empty() {
-        return Ok(false);
-    }
-    let instrument_id = inst.instrument_id.clone();
-    let has_new = session
-        .with_connection(move |conn| {
-            super::incremental::has_new_weekly_point(conn, &instrument_id, &points)
+    // 载体中立逐日点集（spec #1677）：日期解析失败按缺失点跳过（与降采样核心
+    // 的无效点跳过同一品味，收敛前的日 K 腿同此行为）；无效值（≤0）由原语的
+    // 采样核心跳过。
+    let daily_points: Vec<(NaiveDate, f64)> = bars
+        .iter()
+        .filter_map(|bar| {
+            Some((
+                NaiveDate::parse_from_str(&bar.date, "%Y-%m-%d").ok()?,
+                bar.close,
+            ))
         })
-        .await?;
-    if !has_new {
-        return Ok(false);
-    }
+        .collect();
     let (instrument_id, currency) = (inst.instrument_id.clone(), inst.currency.clone());
+    // 周点落库经原语（spec #1677）：采样、判新（同周同值零写入）、覆盖与事务
+    // 边界（嵌套感知自保障，原语自持「一只一事务」）收口一处，降采样只算一遍。
+    // 全部无新点（已入库且同值）零写入 → 返回 false，调用方不置脏不广播
+    //（停牌/退市股持续在队的每日重采因此不空发信号）；有新点时的行集与取值与
+    // 无条件重写逐位一致（整周覆盖幂等）。
     session
         .with_connection(move |conn| {
-            ensure_transaction(conn, || {
-                write_weekly_price_history(
-                    conn,
-                    &instrument_id,
-                    &currency,
-                    &bars,
-                    TENCENT_PRICE_SOURCE,
-                )
-            })
+            commit_price_history_weekly(
+                conn,
+                &instrument_id,
+                &currency,
+                TENCENT_PRICE_SOURCE,
+                &daily_points,
+            )
         })
         .await
-        .map(|written| written > 0)
-}
-
-/// 现价刷新直落当周采样点（ADR-0122 决策 2 / issue #1377）：只服务**已有历史
-/// 序列**的标的（无序列者落单点会让「有历史序列」冒充「历史完整」，永久破坏
-/// 首刷判据——历史由后台补全整根回填）；且仅当该周点确实新（库内无此周、或
-/// 同周不同值）才写——「每周至多一条、取该周最后一个有报价交易日、整周覆盖
-/// 幂等」语义不变，同周同值零写入。返回是否实际落库（调用方据此决定是否计入
-/// 写入见证）。
-///
-/// `trade_date` 为行情日期——取数层给出的**交易所当地交易日**的日期部分
-///（ADR-0130 决策 5），或取数层缺日期时调用方的北京日内兜底；价格与周归属
-/// 以它为准，不做时区换算。
-pub(super) fn land_current_week_point(
-    conn: &Connection,
-    instrument_id: &str,
-    currency: &str,
-    trade_date: &str,
-    price_cents: i64,
-) -> Result<bool> {
-    if !ledger_investment::backfill::has_any_history(conn, instrument_id)? {
-        return Ok(false);
-    }
-    let date = NaiveDate::parse_from_str(trade_date, "%Y-%m-%d")
-        .map_err(|e| AppError::Parse(format!("非法交易日 {trade_date}: {e}")))?;
-    let monday = week_monday(date);
-    let sunday = monday + chrono::Duration::days(6);
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT price_cents FROM price_history \
-             WHERE instrument_id = ?1 AND trade_date >= ?2 AND trade_date <= ?3",
-            params![
-                instrument_id,
-                monday.format("%Y-%m-%d").to_string(),
-                sunday.format("%Y-%m-%d").to_string(),
-            ],
-            |row| row.get(0),
-        )
-        .ok();
-    if existing == Some(price_cents) {
-        return Ok(false);
-    }
-    upsert_price_history(
-        conn,
-        instrument_id,
-        trade_date,
-        price_cents,
-        currency,
-        TENCENT_PRICE_SOURCE,
-    )?;
-    Ok(true)
 }
 
 /// 一轮补全的统计：`queued` = 进队标的数，`failed` = 单只失败数（已记日志，
@@ -392,7 +340,7 @@ where
                 // 走 refresh_one_fund_price）。
                 backfill_one_fund_history(
                     session,
-                    &item.instrument,
+                    &FundIdentity::from_instrument(&item.instrument),
                     fetch_nav_history,
                     confirm_money_fund,
                 )

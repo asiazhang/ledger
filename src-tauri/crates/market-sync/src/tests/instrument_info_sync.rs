@@ -1027,7 +1027,7 @@ fn week_key_matches_sqlite_week_start_column() {
     // Rust 侧降采样周键（week_monday）与 V010 week_start 生成列恒等——这是
     // 「整周覆盖幂等」的隐式契约：周键一旦漂移，ON CONFLICT 落点即错、产生重复周行。
     // 扫描跨年/闰年边界三年，每天与 SQLite 生成表达式比对。
-    use crate::incremental::week_monday;
+    use crate::weekly::week_monday;
     use chrono::NaiveDate;
 
     let conn = tauri_app_lib::test_support::open();
@@ -3463,16 +3463,15 @@ fn bulk_nav_point_of_the_current_week_lands_price_and_weekly_sample_without_per_
     );
     // 当周采样点由批量取数落库：同周则整周覆盖（一条、取该周最新净值日），跨周则
     // 与上一周的采样点并存。
-    let expected = if crate::incremental::week_monday(watermark_date)
-        == crate::incremental::week_monday(today_date)
-    {
-        vec![(today.clone(), 35000, "CNY".into())]
-    } else {
-        vec![
-            (watermark.clone(), 30000, "CNY".into()),
-            (today.clone(), 35000, "CNY".into()),
-        ]
-    };
+    let expected =
+        if crate::weekly::week_monday(watermark_date) == crate::weekly::week_monday(today_date) {
+            vec![(today.clone(), 35000, "CNY".into())]
+        } else {
+            vec![
+                (watermark.clone(), 30000, "CNY".into()),
+                (today.clone(), 35000, "CNY".into()),
+            ]
+        };
     assert_eq!(price_history_rows(&conn, "inst-fund-0"), expected);
 }
 

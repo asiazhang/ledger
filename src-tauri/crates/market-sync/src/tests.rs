@@ -51,6 +51,7 @@ mod sina_fund;
 mod source_tail;
 mod stock_quote;
 mod tencent;
+mod weekly;
 
 // ---------------------------------------------------------------------------
 // 共享测试脚手架（一份）
@@ -280,6 +281,7 @@ fn production_source_files() -> Vec<(&'static str, String)> {
             "tencent_kline.rs",
             include_str!("tencent_kline.rs").to_string(),
         ),
+        ("weekly.rs", include_str!("weekly.rs").to_string()),
     ];
     files.sort_by_key(|(name, _)| *name);
     files

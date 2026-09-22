@@ -38,33 +38,39 @@
 //! 网络抓取只发生在会话之外且以 `await` 表达。「持着连接做网络 I/O」在类型上
 //! 不可表达；会话生产实现 = 门面写槽裸作业会话（[`super::session::FacadeWriteSession`]），
 //! 命令壳侧与域内后台车道各自持门面句柄接线。
+//!
+//! 周采样知识不住本模块（spec #1677）：周键、周降采样、判新与周点落库已收口
+//! 周点落库原语 [`super::weekly`]，各写入通道（本编排队列作业、基金回填、基金
+//! 现价刷新、批量面直落、汇率落库）一律经原语落周点；本模块只留同步窗口语义
+//!（北京日期、日更窗口、K 线窗口、两年窗口、报价代码）与收集分区编排。
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use chrono::{Datelike, NaiveDate};
-use rusqlite::{Connection, params};
+use chrono::NaiveDate;
+use rusqlite::Connection;
 
 use super::bulk::{BulkFetchSurfaces, BulkNavPoint, FetchFundBatch, FundBatch};
 use super::fund::is_fund_not_found;
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
-use ledger_infra::error::Result;
+use ledger_infra::db::tx_scope::ensure_transaction;
+use ledger_infra::error::{AppError, Result};
+use ledger_investment::backfill;
 use ledger_investment::crud::refresh_instrument_name;
 use ledger_investment::prices::{
-    MarketPriceWrite, TENCENT_PRICE_SOURCE, price_value_to_cents, upsert_market_price,
-    upsert_price_history,
+    MarketPriceWrite, TENCENT_PRICE_SOURCE, price_cents_to_value, upsert_market_price,
 };
 use ledger_investment::{
     InstrumentType, Market, PriceChannel, QuoteMarket, derive_price_channel, derive_quote_market,
 };
 
 use super::channels::{FetchFuture, QuoteItem, QuoteQuery};
-use super::fund_nav::NavPoint;
+use super::fund_nav::{FundIdentity, NavPoint};
 use super::fund_price_refresh::{FundSyncStats, refresh_one_fund_price};
-use super::http::KlineBar;
 use super::progress::SyncProgress;
 use super::session::ScopedSession;
+use super::weekly::commit_price_history_weekly;
 
 /// 持仓股票的报价代码：数据源响应 f12 与查询单元的代码均为裸代码（如 600519 / 00700）。
 /// 字典 symbol 可能带市场后缀（schema 注释示例格式如 "600519.SH"），取点号前段归一化。
@@ -442,24 +448,53 @@ where
                                         source: Some(TENCENT_PRICE_SOURCE),
                                     },
                                 )?;
+                                // 现价与当周采样点同一事务原子提交（spec #1677 收敛
+                                // 缺陷面：两段 autocommit 的中途失败不再留「现价已写、
+                                // 当周点缺失」半态；失败整体回滚时写入见证不计本
+                                // 标的——Priced 标记移到事务成功之后）。
+                                ensure_transaction(conn, || {
+                                    upsert_market_price(
+                                        conn,
+                                        &MarketPriceWrite {
+                                            instrument_id: &instrument_id,
+                                            price_cents,
+                                            currency_code: &currency,
+                                            // 场内现价时点 = 写入时刻、无净值日期语义（ADR-0036 /
+                                            // ADR-0103 决策 4）；行情日期由当周采样点的
+                                            // `trade_date` 承载（见下）。
+                                            priced_at: &ledger_infra::db::now_iso(),
+                                            nav_date: None,
+                                            source: Some(TENCENT_PRICE_SOURCE),
+                                        },
+                                    )?;
+                                    // 当周采样点直落（ADR-0122 决策 2 / issue #1377）：现价刷新
+                                    // 已携带该标的当日有效报价，经周点落库原语把当周点一并落库
+                                    //（spec #1677：判新同周同值零写入，事务并入本作业外层，
+                                    // 降采样只算一遍），不另发逐只日 K 请求；无历史序列者不落
+                                    //（单点会冒充历史完整，破坏后台补全的首刷判据）——「单点
+                                    // 不冒充完整」前置门留在调用点，不进中性原语。采样日取
+                                    // **行情日期**——交易所当地交易日的日期部分，不做时区换算
+                                    //（ADR-0130 决策 5）：按北京时间切分会把美股周五的收盘记成
+                                    // 周六；取数层解不出日期时按北京日历日兜底。
+                                    let trade_date = price_date.clone().unwrap_or_else(|| {
+                                        beijing_today().format("%Y-%m-%d").to_string()
+                                    });
+                                    let day = NaiveDate::parse_from_str(&trade_date, "%Y-%m-%d")
+                                        .map_err(|e| {
+                                            AppError::Parse(format!("非法交易日 {trade_date}: {e}"))
+                                        })?;
+                                    if backfill::has_any_history(conn, &instrument_id)? {
+                                        commit_price_history_weekly(
+                                            conn,
+                                            &instrument_id,
+                                            &currency,
+                                            TENCENT_PRICE_SOURCE,
+                                            &[(day, price_cents_to_value(price_cents))],
+                                        )?;
+                                    }
+                                    Ok(())
+                                })?;
                                 mark(&sink, StockMark::Priced);
-                                // 当周采样点直落（ADR-0122 决策 2 / issue #1377）：现价刷新
-                                // 已携带该标的当日有效报价，有历史序列者把当周点一并落库，
-                                // 不另发逐只日 K 请求；无历史序列者不落（单点会冒充历史完整，
-                                // 破坏后台补全的首刷判据）；同周同值零写入。采样日取
-                                // **行情日期**——交易所当地交易日的日期部分，不做时区换算
-                                //（ADR-0130 决策 5）：按北京时间切分会把美股周五的收盘记成
-                                // 周六；取数层解不出日期时按北京日历日兜底。
-                                let trade_date = price_date.clone().unwrap_or_else(|| {
-                                    beijing_today().format("%Y-%m-%d").to_string()
-                                });
-                                super::history::land_current_week_point(
-                                    conn,
-                                    &instrument_id,
-                                    &currency,
-                                    &trade_date,
-                                    price_cents,
-                                )?;
                             }
                             Ok(())
                         }
@@ -542,7 +577,7 @@ where
             let written_before = fund_stats.written;
             refresh_one_fund_price(
                 session,
-                fund,
+                &FundIdentity::from_instrument(fund),
                 latest_hint,
                 fetch_nav_history,
                 confirm_money_fund,
@@ -668,100 +703,6 @@ pub(crate) fn kline_window() -> (String, String) {
     (beg, today.format("%Y-%m-%d").to_string())
 }
 
-/// 日线按 ISO 周降采样（ADR-0019）：每周取最后一个有报价交易日的 (日期, 收盘价)。
-/// 输入日线按日期升序排序兜底（东财本就升序）；无效收盘价（≤0）与不可解析日期跳过；
-/// 整周无有效报价则该周无点。周键见 [`week_monday`]。基金净值点共用本函数
-///（单位净值即价格，ADR-0038 决策 3，fund_nav 攒齐全部净值点后一次降采样）。
-pub(super) fn downsample_weekly(bars: &[KlineBar]) -> Vec<(String, f64)> {
-    downsample_weekly_points(bars.iter().filter(|b| b.close > 0.0).filter_map(|b| {
-        Some((
-            NaiveDate::parse_from_str(&b.date, "%Y-%m-%d").ok()?,
-            b.close,
-        ))
-    }))
-}
-
-/// 周采样核心（日线 / 基金净值 / ECB 汇率腿共用，issue #1542）：(日期, 数值) 点
-/// 按 ISO 周降采样，每周取最后一个有报价交易日的 (trade_date, 数值)。无效数值
-///（≤0）跳过；整周无有效报价则该周无点；输出按日期升序。周键见 [`week_monday`]。
-pub(super) fn downsample_weekly_points<I>(points: I) -> Vec<(String, f64)>
-where
-    I: IntoIterator<Item = (NaiveDate, f64)>,
-{
-    let mut sorted: Vec<(NaiveDate, f64)> = points
-        .into_iter()
-        .filter(|(_, value)| *value > 0.0)
-        .collect();
-    sorted.sort_by_key(|(date, _)| *date);
-    let mut by_week: BTreeMap<NaiveDate, (String, f64)> = BTreeMap::new();
-    for (d, value) in sorted {
-        // 升序遍历：后写入者即该周最后一个交易日。
-        by_week.insert(week_monday(d), (d.format("%Y-%m-%d").to_string(), value));
-    }
-    by_week.into_values().collect()
-}
-
-/// 单只标的的周采样历史落库（ADR-0122 决策 8 / issue #1373）：日 K 回填与基金
-/// 净值回填两条通道共用的「降采样 + 逐周 upsert」形体，不另写第二份采样落库。
-/// 「整周覆盖」幂等由 `upsert_price_history` 的 UNIQUE 约束保证（同周重复获取
-/// 零重复行）。返回本次落库的周点数（调用方可据此判定「是否实际写过」；既有
-/// 调用点不消费该返回值，行为不变）。
-///
-/// `source` 由调用方按**实际取数源**声明（ADR-0130 决策 7）：场内日 K 走腾讯
-/// （`TENCENT_PRICE_SOURCE`），场外基金净值走新浪（`SINA_PRICE_SOURCE`，
-/// issue #1566 接线）——共用写入形体不再硬编码单一来源。
-///
-/// 本函数只写行、**不开事务**：调用方必须在**一只一个事务**里包住它
-///（[`ensure_transaction`]），否则第 N 个周点写入失败会留下半根历史。三个现役
-/// 调用点（行情分区日 K 回填、基金净值回填、基金现价刷新的缺周点补齐）都已如此
-/// 接线；基金侧另有现价与历史同事务的需求，故事务边界留在调用方而非本函数。
-pub(super) fn write_weekly_price_history(
-    conn: &Connection,
-    instrument_id: &str,
-    currency: &str,
-    bars: &[KlineBar],
-    source: &str,
-) -> Result<usize> {
-    let points = downsample_weekly(bars);
-    let count = points.len();
-    for (trade_date, close) in points {
-        upsert_price_history(
-            conn,
-            instrument_id,
-            &trade_date,
-            price_value_to_cents(close),
-            currency,
-            source,
-        )?;
-    }
-    Ok(count)
-}
-
-/// 新点判定（行情日 K 回填与基金净值回填共用，issue #1534 起两通道同用）：
-/// 降采样周点中是否存在「库内无此周」或「同周不同值」的行。值比较按价格刻度
-/// 换算后的存量列（`price_cents`）直比，浮点展示值不参与——全部无新点时
-/// 调用方零落库（零新点不置脏不广播的判据半边）。
-pub(super) fn has_new_weekly_point(
-    conn: &Connection,
-    instrument_id: &str,
-    points: &[(String, f64)],
-) -> Result<bool> {
-    let mut stmt =
-        conn.prepare("SELECT trade_date, price_cents FROM price_history WHERE instrument_id = ?1")?;
-    let existing: std::collections::HashMap<String, i64> = stmt
-        .query_map(params![instrument_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })?
-        .collect::<std::result::Result<_, _>>()?;
-    for (trade_date, close) in points {
-        let cents = price_value_to_cents(*close);
-        if existing.get(trade_date) != Some(&cents) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 /// 行情分区单只落库作业的写入点标记（issue #1412）：作业闭包是 `Send + 'static`
 /// 形态，编排在现场的见证器与计数器进不了闭包——各写入点的成功标记经共享缓冲
 /// 带出，`await` 之后回填（后续步失败时前面已 autocommit 的写入仍计见证，
@@ -780,12 +721,4 @@ fn mark(sink: &Mutex<Vec<StockMark>>, mark: StockMark) {
     sink.lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .push(mark);
-}
-
-/// 该日所属 ISO 周的周一：降采样的周键，与 price_history / fx_rate_history 的
-/// week_start 生成列（date(trade_date,'-6 days','weekday 1')）同口径。两侧恒等是
-/// 「整周覆盖幂等」的隐式契约，由 `week_key_matches_sqlite_week_start_column` 测试绑定，
-/// 防止周定义单侧调整后静默漂移。
-pub(super) fn week_monday(d: NaiveDate) -> NaiveDate {
-    d - chrono::Duration::days(d.weekday().num_days_from_monday() as i64)
 }
