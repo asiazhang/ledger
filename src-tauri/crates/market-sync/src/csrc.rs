@@ -31,7 +31,8 @@
 //!
 //! 网络请求复用行情 HTTP 层的多主机切换 / 重试 / 限速（文本通道：响应内容是否
 //! 可信由解析层判定，文本层不按内容重试，与基金详情页数据文件通道同形）；解析
-//! 失败即数据源异常信号，向限速器补记降速（ADR-0121 决策 5）。fixture 单测见
+//! 失败经取数尾部契约（`source_tail`，spec #1675）统一截断 warn、补降速并报
+//! 码化错误（ADR-0121 决策 5）。fixture 单测见
 //! `tests/csrc.rs`（真实报文形状 + 本地 HTTP 服务钉请求形态）。
 //!
 //! 判定确认（issue #1563 接线，ADR-0126 决策 3 换源）：[`confirm_money_fund_form`]
@@ -46,6 +47,10 @@ use ledger_infra::error::{AppError, Result};
 
 use super::fund::deserialize_flexible_string;
 use super::http::{Pacer, RetryConfig, request_text_from_hosts};
+use super::source_tail;
+
+/// 单元标识（取数尾部契约的 `source` 日志字段）：源畸形 warn 按此分源 grep。
+const SOURCE: &str = "csrc-disclosure";
 
 /// 生产主机（证监会基金电子披露网站，官方数据、免注册；站点无 HTTPS 服务，
 /// 调研 13.5 节实测）。测试经本地 HTTP 服务注入假响应。
@@ -63,9 +68,10 @@ const PAGE_SIZE: i64 = 500;
 ///（500 行/页 × 8 页 ≈ 16 年日频净值，覆盖本仓全部净值窗口需求）。
 const MAX_PAGES: usize = 8;
 
-/// 非预期响应形状的统一码化错误（空响应 / 非 JSON / 500「系统异常」页 / 报文
+/// 非预期响应形状的统一码化错误映射（空响应 / 非 JSON / 500「系统异常」页 / 报文
 /// 缺 `aaData` / 服务端自报失败 / 行数取不全 / 有行但全部未通过解析纪律共用
-/// 一码）。具体是哪种形状由日志 ctx（`fetch_csrc_nav:{code}`）与解析日志定位；
+/// 一码；构造时机与形状归取数尾部契约，spec #1675）。具体是哪种形状由契约统一
+/// warn 的 error 字段与日志 ctx（`fetch_csrc_nav:{code}`）定位；
 /// 不区分错误参数（ADR-0050：params 须 locale 无关）。多数形状的用户补救动作
 /// 相同（稍后重试）；窗口过深（声明总数超出页数上限）例外——重试无效、需收窄
 /// 查询窗口，窗口语义归调用方，此处不另立用户可见码。
@@ -225,36 +231,29 @@ fn ao_data(
 /// 「查无此码」，正是 fail-closed 要防的误判。
 ///
 /// 同码防守（与搜索通道 FCODE 全等、档案通道 `fS_code` 全等同纪律）：区间查询
-/// 按单代码圈定，混入的其他代码行不属于本次查询，防御性丢弃。
-pub(super) fn parse_disclosure_page(body: &str, code: &str) -> Result<DisclosurePage> {
-    let resp: DisclosureResponse = serde_json::from_str(body).map_err(|error| {
-        tracing::warn!(
-            code,
-            error = %error,
-            head = %body_head(body),
-            "官方披露响应不是可信 JSON 报文"
-        );
-        malformed_source()
-    })?;
+/// 按单代码圈定，混入的其他代码行不属于本次查询，防御性丢弃。失败回
+/// `Err(detail)`（失败原因保留在错误详情，由取数尾部契约统一入日志并补降速）。
+pub(super) fn parse_disclosure_page(
+    body: &str,
+    code: &str,
+) -> std::result::Result<DisclosurePage, String> {
+    let resp: DisclosureResponse = serde_json::from_str(body)
+        .map_err(|error| format!("fundCode={code} 响应不是可信 JSON 报文：{error}"))?;
     if resp.success == Some(false) {
-        tracing::warn!(code, "官方披露响应自报失败（success=false）");
-        return Err(malformed_source());
+        return Err(format!("fundCode={code} 响应自报失败（success=false）"));
     }
     let Some(rows) = resp.rows else {
-        tracing::warn!(code, head = %body_head(body), "官方披露响应缺 aaData（不可信形状）");
-        return Err(malformed_source());
+        return Err(format!("fundCode={code} 响应缺 aaData 数组（不可信形状）"));
     };
     let records: Vec<_> = rows
         .iter()
         .filter_map(|row| record_from_row(row, code))
         .collect();
     if records.is_empty() && !rows.is_empty() {
-        tracing::warn!(
-            code,
-            raw = rows.len(),
-            "官方披露响应有行但全部未通过解析纪律（不可信形状）"
-        );
-        return Err(malformed_source());
+        return Err(format!(
+            "fundCode={code} 响应有 {} 行但全部未通过解析纪律（不可信形状）",
+            rows.len()
+        ));
     }
     Ok(DisclosurePage {
         records,
@@ -316,11 +315,6 @@ fn raw_value(raw: Option<&str>) -> Option<f64> {
 /// 「无效行过滤」同姿态）。
 fn positive_value(raw: Option<&str>) -> Option<f64> {
     raw_value(raw).filter(|value| *value > 0.0)
-}
-
-/// 日志用的响应头片段（截断，避免日志吞下整页 HTML）。
-fn body_head(body: &str) -> String {
-    body.chars().take(120).collect()
 }
 
 /// 披露查询窗口的回看跨度（判定确认与查询创建的兜底区间共用）：窗口拉宽只为
@@ -440,9 +434,9 @@ pub(super) async fn fetch_fund_nav_series_from(
 }
 
 /// 拉取并解析一页（`display_start` 为起点行数）。文本通道的响应内容是否可信
-/// 由 [`parse_disclosure_page`] 判定；解析失败即数据源异常信号，向限速器补记
-/// 降速（文本层不按内容重试，降速信号由做可信度判定的这一层补上，ADR-0121
-/// 决策 5）。
+/// 由解析闭包判定；失败经取数尾部契约（[`super::source_tail::finish`]，
+/// spec #1675）统一截断 warn、补降速并映射码化错误（ADR-0121 决策 5：
+/// 解析失败即数据源异常信号；文本层不按内容重试）。
 async fn fetch_disclosure_page(
     client: &reqwest::Client,
     pacer: &mut Pacer,
@@ -471,5 +465,12 @@ async fn fetch_disclosure_page(
         None,
     )
     .await?;
-    parse_disclosure_page(&body, code).inspect_err(|_| pacer.record_throttled())
+    source_tail::finish(
+        SOURCE,
+        body.as_bytes(),
+        pacer,
+        source_tail::utf8,
+        |text| parse_disclosure_page(text, code),
+        malformed_source,
+    )
 }

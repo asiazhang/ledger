@@ -143,6 +143,12 @@ const cases: Case[] = [
     params: ["acc-x"],
     en: "the dividend destination account does not exist or was deleted: acc-x",
   },
+  // spec #1675 取数尾部契约：场内批量报价的源畸形专码（用户可见的源畸形一律专码）。
+  {
+    code: "sync.quote-source-malformed",
+    message: "腾讯行情报价数据源返回了无法解析的内容，请稍后重试同步",
+    en: "the Tencent quote source returned unparseable content; please retry the sync later",
+  },
 ];
 
 describe("errors.json 新增码表（ADR-0050 收口）", () => {

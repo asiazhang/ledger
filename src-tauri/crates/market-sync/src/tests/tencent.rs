@@ -410,7 +410,8 @@ fn fetch_decodes_gbk_and_fails_closed_on_intercepted_response() {
     .expect("GBK 报文应解析成功");
     assert_eq!(quotes[0].name, "浦发银行");
 
-    // 被风控拦截（200 + HTML）与非法 GBK 字节：报错，不退化为空序列。
+    // 被风控拦截（200 + HTML）与非法 GBK 字节：报错，不退化为空序列——
+    // 用户可见的源畸形报本单元专码（spec #1675 裁决 3，解析 detail 留日志）。
     for body in [
         b"<html><body>risk control</body></html>".to_vec(),
         vec![0xff, 0xfe, 0x00, 0x01],
@@ -424,7 +425,7 @@ fn fetch_decodes_gbk_and_fails_closed_on_intercepted_response() {
         ))
         .expect_err("被拦截响应应报错");
         assert!(
-            error.to_string().contains("腾讯行情报价响应不可解析"),
+            error.is_code("sync.quote-source-malformed"),
             "实际 {error:?}"
         );
     }

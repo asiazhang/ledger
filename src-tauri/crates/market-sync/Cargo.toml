@@ -48,6 +48,9 @@ tracing = "0.1"
 # 目标与生产依赖图分离，不构成生产环；结构守门的依赖方向核对只辖生产依赖
 #（本 crate 声明 tauri-app 为生产依赖即红，负向夹具见 check-structure.test.ts）。
 tauri-app = { path = "../.." }
+# 域单测经 test-utils feature 消费基础设施测试器具（取数尾部契约的源畸形日志
+# 捕获，#1132 cfg 门；先例：transaction / sync-engine 信号捕获）。
+ledger-infra = { path = "../infra", features = ["test-utils"] }
 # csrc 请求形态断言的查询串解码（issue #1582 附带）：form_urlencoded 标准实现，
 # 版本与 lock 中 reqwest 传递依赖同线，不额外拉重依赖。
 url = "2"
