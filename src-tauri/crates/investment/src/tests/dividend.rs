@@ -182,13 +182,12 @@ fn dividend_create_guards_return_coded_errors() {
     ));
     assert_eq!(e.code().unwrap(), "trade.dividend-account-not-found");
 
-    // 币种须与账户币种一致。
+    // 币种须与账户币种一致（币种文案单点断言住守卫单测，spec #1672）。
     let e = err(create_transaction_internal(
         &conn,
         make_dividend_input("acc-dv-usd", "inst-dv", 3000, "CNY"),
     ));
     assert_eq!(e.code().unwrap(), "trade.dividend-currency-mismatch");
-    assert!(e.to_string().contains("币种"), "文案应对准币种: {e}");
 
     // 无份额 / 单价 / 手续费（意图漂移 fail fast）。
     let mut input = make_dividend_input("acc-dv", "inst-dv", 3000, "CNY");

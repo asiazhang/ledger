@@ -720,7 +720,7 @@ fn split_guards_return_coded_errors() {
         "trade.split-shrink-not-less-than-holding",
         "{e:?}"
     );
-    assert!(e.to_string().contains("缩股"), "文案应针对缩股语义: {e}");
+    // 缩股文案对准缩股语义（非卖出/超卖）的单点断言住守卫单测（spec #1672）。
     let e = err(create_transaction_internal(
         &conn,
         make_split_input("acc-sp", "inst-sp", -150.0),

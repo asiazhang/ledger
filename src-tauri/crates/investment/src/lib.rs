@@ -40,6 +40,7 @@
 //!   （投资账户现金 / 持仓市值），合计 = 两腿之和（issue #1536）；
 //! - [`fund`]：场外基金接入——6 位代码校验、行情接入落库半边（`adopt_fund_quote`）、
 //!   AI 降级建行、按代码即拉注入接缝（`add_fund_by_code_with`）；
+//! - [`guards`]：共享守卫（SharedGuard）——本地装配与同步重放共用的纯裁决函数，集中登记两端一致的错误码与文案；
 //! - [`holdings`]：时点持仓（AsOfHolding）推算单点；
 //! - [`lots`]：持仓批次（security_lots）单点——取批次、逐批次 FIFO 分摊与
 //!   耗尽批次成本闭合、结转成本合计、修改/删除路径的两个精确回补原语
@@ -120,6 +121,7 @@ pub mod constant_price;
 pub mod crud;
 pub mod financial_freedom;
 pub mod fund;
+pub(crate) mod guards;
 pub mod holdings;
 pub mod lots;
 pub mod manual_price;

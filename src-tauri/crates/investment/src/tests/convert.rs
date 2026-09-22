@@ -365,13 +365,15 @@ fn convert_partial_then_sell_out_lot_closes_with_prior_convert() {
     assert_eq!(realized, (720 + 520) - 1_000, "Σ 盈亏 = Σ 卖出 − Σ 买入");
 }
 
-/// 守卫拒绝理由表：行 =（名称，期望错误码，期望文案子串，触发闭包）。全部拒绝须为
-/// 码化错误（`AppError::Coded`，HTTP 侧 400）且不落库，AI 可读回自纠（ADR-0050）。
-/// 错误码与文案双锁：码是契约面（前端按码取 i18n 模板）、文案是码的 zh 原文。
+/// 守卫拒绝理由表：行 =（名称，期望错误码，期望文案子串（可选），触发闭包）。全部
+/// 拒绝须为码化错误（`AppError::Coded`，HTTP 侧 400）且不落库，AI 可读回自纠
+/// （ADR-0050）。共享守卫行只断言码作接线证明、不再抄文案——码与完整文案的单点
+/// 断言住守卫单测（`guards::tests`，spec #1672 测试分工）；非共享守卫行（本地独有
+/// 与核心交易域守卫）无守卫单测单点，保留文案断言。
 struct GuardRow {
     name: &'static str,
     expected_code: &'static str,
-    expected: &'static str,
+    expected: Option<&'static str>,
     action: fn(&rusqlite::Connection) -> Result<(), AppError>,
 }
 
@@ -410,19 +412,19 @@ fn convert_guard_rejection_table() {
         GuardRow {
             name: "缺转出标的",
             expected_code: "trade.convert-instrument-required",
-            expected: "转换必须指定转出标的",
+            expected: Some("转换必须指定转出标的"),
             action: |conn| with_convert(conn, |i| i.instrument_id = None),
         },
         GuardRow {
             name: "缺转入标的",
             expected_code: "trade.convert-to-instrument-required",
-            expected: "转换必须指定转入标的",
+            expected: Some("转换必须指定转入标的"),
             action: |conn| with_convert(conn, |i| i.to_instrument_id = None),
         },
         GuardRow {
             name: "两标的相同",
             expected_code: "trade.convert-same-instrument",
-            expected: "转出标的与转入标的不能相同",
+            expected: None,
             action: |conn| {
                 with_convert(conn, |i| {
                     i.to_instrument_id = Some("inst-out".into());
@@ -432,7 +434,7 @@ fn convert_guard_rejection_table() {
         GuardRow {
             name: "转出标的不存在",
             expected_code: "trade.convert-instrument-not-found",
-            expected: "转换转出标的不存在",
+            expected: None,
             action: |conn| {
                 with_convert(conn, |i| {
                     i.instrument_id = Some("inst-missing".into());
@@ -442,7 +444,7 @@ fn convert_guard_rejection_table() {
         GuardRow {
             name: "转入标的不存在",
             expected_code: "trade.convert-to-instrument-not-found",
-            expected: "转换转入标的不存在",
+            expected: None,
             action: |conn| {
                 with_convert(conn, |i| {
                     i.to_instrument_id = Some("inst-missing".into());
@@ -452,31 +454,31 @@ fn convert_guard_rejection_table() {
         GuardRow {
             name: "转出份额非正",
             expected_code: "trade.convert-quantity-positive",
-            expected: "转换转出份额必须大于 0",
+            expected: None,
             action: |conn| with_convert(conn, |i| i.quantity = Some(0.0)),
         },
         GuardRow {
             name: "转入份额非正",
             expected_code: "trade.convert-to-quantity-positive",
-            expected: "转换转入份额必须大于 0",
+            expected: None,
             action: |conn| with_convert(conn, |i| i.to_quantity = Some(0.0)),
         },
         GuardRow {
             name: "转出金额非正",
             expected_code: "trade.convert-out-amount-positive",
-            expected: "转换转出金额必须大于 0",
+            expected: None,
             action: |conn| with_convert(conn, |i| i.out_amount_cents = Some(0)),
         },
         GuardRow {
             name: "转入金额非正",
             expected_code: "trade.convert-in-amount-positive",
-            expected: "转换转入金额必须大于 0",
+            expected: None,
             action: |conn| with_convert(conn, |i| i.in_amount_cents = Some(0)),
         },
         GuardRow {
             name: "非投资账户",
             expected_code: "trade.convert-account-not-investment",
-            expected: "转换交易必须使用投资账户",
+            expected: None,
             action: |conn| {
                 scene(conn);
                 seed_account(conn, "acc-cash-cv", "现金", "cash", "CNY", 0);
@@ -488,37 +490,37 @@ fn convert_guard_rejection_table() {
         GuardRow {
             name: "携带转入账户（跨账户）",
             expected_code: "trade.convert-to-account-forbidden",
-            expected: "转换不跨账户",
+            expected: None,
             action: |conn| with_convert(conn, |i| i.to_account_id = Some("acc-else".into())),
         },
         GuardRow {
             name: "携带出资账户",
             expected_code: "transaction.funding-unsupported",
-            expected: "不能携带出资账户",
+            expected: Some("不能携带出资账户"),
             action: |conn| with_convert(conn, |i| i.funding_account_id = Some("acc-fund".into())),
         },
         GuardRow {
             name: "转出超持仓",
             expected_code: "trade.insufficient-holding",
-            expected: "可卖出数量不足",
+            expected: None,
             action: |conn| with_convert(conn, |i| i.quantity = Some(11.0)),
         },
         GuardRow {
             name: "携带商户",
             expected_code: "transaction.merchant-unsupported",
-            expected: "不能携带商户",
+            expected: Some("不能携带商户"),
             action: |conn| with_convert(conn, |i| i.merchant_name = Some("某商户".into())),
         },
         GuardRow {
             name: "携带分类",
             expected_code: "transaction.category-unsupported",
-            expected: "不能携带分类",
+            expected: Some("不能携带分类"),
             action: |conn| with_convert(conn, |i| i.category_id = Some("cat-1".into())),
         },
         GuardRow {
             name: "携带保单",
             expected_code: "transaction.policy-unsupported",
-            expected: "不能挂保单",
+            expected: Some("不能挂保单"),
             action: |conn| with_convert(conn, |i| i.policy_id = Some("pol-1".into())),
         },
     ];
@@ -536,12 +538,14 @@ fn convert_guard_rejection_table() {
                     "守卫行「{}」失败：错误码不符",
                     row.name
                 );
-                assert!(
-                    message.contains(row.expected),
-                    "守卫行「{}」失败：期望文案「{}」未出现，got: {message}",
-                    row.name,
-                    row.expected
-                );
+                if let Some(expected) = row.expected {
+                    assert!(
+                        message.contains(expected),
+                        "守卫行「{}」失败：期望文案「{}」未出现，got: {message}",
+                        row.name,
+                        expected
+                    );
+                }
             }
             other => panic!(
                 "守卫行「{}」失败：应返回 Coded（400），got: {other:?}",

@@ -445,18 +445,21 @@ fn buy_transaction_requires_investment_account() {
 
     let input = make_buy_input("acc-test-cash", "inst-test-cny", 1.0, 10000, 0);
     let err = create_transaction_internal(&conn, input).unwrap_err();
+    // 共享守卫只断言码作接线证明；码与完整文案的单点断言住守卫单测（spec #1672）。
     assert!(
-        err.to_string().contains("投资账户"),
-        "非投资账户买入应报错，got: {err}"
+        err.is_code("trade.buy-account-not-investment"),
+        "非投资账户买入应以既定码拒绝，got: {err:?}"
     );
 }
 
-/// 拒绝理由表行（#768）：行 =（行名，期望文案，动作闭包，可选后置闭包）。
-/// 行名以写入口动作开头，兼作失败输出中的动作标识；期望文案为拒绝消息必须
-/// 逐条 `contains` 的子串清单（拒绝文案与标的 id，逐条对应原三胞胎断言面）。
+/// 拒绝理由表行（#768）：行 =（行名，期望错误码，动作闭包，可选后置闭包）。
+/// 行名以写入口动作开头，兼作失败输出中的动作标识；全部拒绝须为码化
+/// [`AppError::Coded`]（HTTP 侧 400）。共享守卫（标的存在性）只断言码作接线
+/// 证明——码与完整文案（含标的 id 插值）的单点断言住守卫单测（`guards::tests`，
+/// spec #1672 测试分工），本表不再抄文案。
 struct RejectionRow {
     name: &'static str,
-    expected: &'static [&'static str],
+    expected_code: &'static str,
     /// 动作闭包：自备前置（种子/建仓）并触发目标写入口；返回 Ok 即意外成功。
     action: fn(&Connection) -> Result<(), AppError>,
     /// 可选后置闭包：拒绝生效后的残留/原值断言。
@@ -465,13 +468,12 @@ struct RejectionRow {
 
 /// 标的不存在的拒绝理由表（#768）：原三胞胎（buy 建仓 / sell 建仓 / buy 修改）
 /// 拒绝断言体逐字同构，收敛为行数据 + 单一断言体，新增拒绝理由 = 加一行数据。
-/// 断言面原样保留（issue #295）：引用不存在标的在 prepare 校验段拦截为码化
-/// [`AppError::Coded`]（HTTP 侧 400），不再等到 apply 落 `security_transactions`
-/// 触发外键违规的「数据库错误」500；sell 侧先于可卖数量校验（否则误报
-/// 「可卖出数量不足，当前持有 0」，语义不明）；文案与标的 id 的 contains 断言
-/// 逐条对应原三处。第三行「保留原值」后置断言作可选后置列，不丢断言面。
-/// 失败报行：输出含行名（动作标识）、期望文案与实际消息。跨层重复（BDD 镜像
-/// 场景、api_server 400 断言）不进本表，归 #730 测试层级重划。
+/// 断言面：引用不存在标的在 prepare 校验段拦截为码化 [`AppError::Coded`]（HTTP
+/// 侧 400），不再等到 apply 落 `security_transactions` 触发外键违规的「数据库错误」
+/// 500；sell 侧先于可卖数量校验（否则误报「可卖出数量不足，当前持有 0」，语义
+/// 不明）。第三行「保留原值」后置断言作可选后置列，不丢断言面。
+/// 失败报行：输出含行名（动作标识）与实际错误。跨层重复（BDD 镜像场景、
+/// api_server 400 断言）不进本表，归 #730 测试层级重划。
 #[test]
 fn missing_instrument_rejection_reason_table() {
     use ledger_transaction::update_transaction_internal;
@@ -480,7 +482,7 @@ fn missing_instrument_rejection_reason_table() {
         // buy_with_missing_instrument_rejected_as_invalid_in_prepare
         RejectionRow {
             name: "buy_create 引用不存在标的",
-            expected: &["买入标的不存在", "inst-not-exist"],
+            expected_code: "trade.buy-instrument-not-found",
             action: |conn| {
                 seed_account(conn, "acc-test-missing", "美股", "investment", "USD", 0);
                 seed_fx_history_weeks(
@@ -508,7 +510,7 @@ fn missing_instrument_rejection_reason_table() {
         // sell_with_missing_instrument_rejected_as_invalid_in_prepare
         RejectionRow {
             name: "sell_create 引用不存在标的",
-            expected: &["卖出标的不存在", "inst-not-exist"],
+            expected_code: "trade.sell-instrument-not-found",
             action: |conn| {
                 seed_account(conn, "acc-test-sell-miss", "美股", "investment", "USD", 0);
                 seed_fx_history_weeks(
@@ -526,7 +528,7 @@ fn missing_instrument_rejection_reason_table() {
         // update_buy_to_missing_instrument_rejected_and_keeps_original
         RejectionRow {
             name: "update_buy 改引不存在标的",
-            expected: &["买入标的不存在"],
+            expected_code: "trade.buy-instrument-not-found",
             action: |conn| {
                 seed_account(conn, "acc-test-upd-miss", "美股", "investment", "USD", 0);
                 seed_fx_history_weeks(
@@ -586,14 +588,12 @@ fn missing_instrument_rejection_reason_table() {
             Ok(()) => panic!("拒绝理由表行「{}」失败：动作意外成功，应被拒绝", row.name),
         };
         match err {
-            AppError::Coded { message, .. } => {
-                for expected in row.expected {
-                    assert!(
-                        message.contains(expected),
-                        "拒绝理由表行「{}」失败：期望文案「{expected}」未出现在拒绝消息中，got: {message}",
-                        row.name
-                    );
-                }
+            AppError::Coded { code, .. } => {
+                assert_eq!(
+                    code, row.expected_code,
+                    "拒绝理由表行「{}」失败：错误码不符",
+                    row.name
+                );
             }
             other => panic!(
                 "拒绝理由表行「{}」失败：应返回 Coded（400），got: {other:?}",
@@ -1110,10 +1110,11 @@ fn sell_full_clearance_consumes_noise_over_lot_exactly() {
     assert_eq!(active_lots, 0, "无残余活跃批次");
 }
 
-/// 「可卖出数量不足」文案不带位噪声（issue #1033 报障文案）：数字按录入粒度合同
-/// （issue #416，至多四位小数）去尾零展示，8036.109999999999 → 8036.11。
+/// 带位噪声的批次数据（99.99999999999999）穿过卖出写入口仍以既定码拒绝；
+/// 文案格式（四位小数去尾零、不带位噪声，issue #1033）的单点断言住守卫单测
+/// （`guards::tests`，spec #1672 测试分工）。
 #[test]
-fn insufficient_holding_error_message_hides_float_noise() {
+fn float_noise_lot_sell_rejected_with_expected_code() {
     let conn = open();
     seed_account(&conn, "acc-msg", "美股", "investment", "USD", 0);
     seed_fx_history_weeks(
@@ -1141,13 +1142,8 @@ fn insufficient_holding_error_message_hides_float_noise() {
         make_sell_input("acc-msg", "inst-msg", 200.0, 10_000, 0),
     )
     .unwrap_err();
-    let message = err.to_string();
     assert!(
-        message.contains("当前持有 100，尝试卖出 200"),
-        "文案应按四位小数去尾零展示，got: {message}"
-    );
-    assert!(
-        !message.contains("99.9"),
-        "文案不应出现位噪声原样数字，got: {message}"
+        err.is_code("trade.insufficient-holding"),
+        "位噪声批次仍以既定码拒绝，got: {err:?}"
     );
 }
