@@ -1725,7 +1725,7 @@ fn production_fund_name_channel_falls_back_to_disclosure_host() {
     //    零覆盖、名称闭包的新浪臂同样落空，两处都回退披露面。GBK 报文。
     let batch_body = "var hq_str_f_000001=\"\";\n";
     let gbk = encoding_rs::GBK.encode(batch_body).0.into_owned();
-    let (batch_url, _batch_requests) = super::spawn_header_capture_server(gbk);
+    let (batch_url, batch_requests) = super::spawn_header_capture_server(gbk);
     // ② 证监会披露面：普通净值形态记录——货基判定门读它得缺信号（照常取数），
     //    名称兜底臂读它拿数据源权威名称。
     let disclosure_body = format!(
@@ -1760,7 +1760,7 @@ fn production_fund_name_channel_falls_back_to_disclosure_host() {
     ))
     .unwrap();
 
-    // 可观察结果：权威名称取自披露兑底、现价取自逐只历史面（编排照常跑完）。
+    // 可观察结果：权威名称取自披露兜底、现价取自逐只历史面（编排照常跑完）。
     assert_eq!(instrument_name(&conn, "inst-fund"), "披露权威名称");
     assert_eq!(result.renamed, 1);
     assert_eq!(result.synced, 1);
@@ -1770,13 +1770,13 @@ fn production_fund_name_channel_falls_back_to_disclosure_host() {
         "逐只历史面的近端净值落现价"
     );
 
-    // 接线本体：披露面恰好两次请求（货基判定门 1 次 + 名称兑底 1 次），路径与
+    // 接线本体：披露面恰好两次请求（货基判定门 1 次 + 名称兜底 1 次），路径与
     // 代码逐条对准注入面指定的本地服务。名称闭包改回写死主机即只剩判定门那一次。
     let captured = disclosure_requests.lock().unwrap().clone();
     assert_eq!(
         captured.len(),
         2,
-        "判定门 1 次 + 名称兑底 1 次都应打到注入的披露面，实际：{captured:?}"
+        "判定门 1 次 + 名称兜底 1 次都应打到注入的披露面，实际：{captured:?}"
     );
     for head in &captured {
         let line = head.lines().next().unwrap_or_default();
@@ -1789,6 +1789,13 @@ fn production_fund_name_channel_falls_back_to_disclosure_host() {
             "披露请求应携带基金代码，实际 {line}"
         );
     }
+    // 双主机路径的新浪臂同样接注入面：批量面恰好两次请求（批量取数面 1 次 +
+    // 名称闭包新浪臂 1 次）——名称闭包改回写死主机即只剩取数面那一次。
+    assert_eq!(
+        batch_requests.lock().unwrap().len(),
+        2,
+        "批量取数面 1 次 + 名称闭包新浪臂 1 次都应打到注入的批量面"
+    );
 }
 
 /// 生产接线钉（issue #1674，删除接线即红）：生产通道束的货基形态确认闭包的
@@ -2216,6 +2223,21 @@ fn fund_name_refresh_degrades_deterministic_not_found_to_skip() {
     assert_eq!(name, "名称-002503", "确定性查无时保留原名称");
     assert_eq!(version, version_before, "未取到名称不写库、不虚增 version");
     assert_eq!(result.renamed, 0);
+}
+
+/// 谓词收口的负向守门（spec #1674，ADR-0087 删除即红）：上一条用例的降级行为
+/// 消费取数侧谓词——编排不嗅错误码字符串，「查无此码」码字面量只许住构造器与
+/// 谓词同址处（fund 模块）。编排 match 臂改回按码嗅探（或编排内任何位置重新
+/// 引用该字面量，含注释）本用例即红。落位随主语：被扫对象是编排（incremental），
+/// 故守门与编排行为用例同住本文件。
+#[test]
+fn orchestration_does_not_sniff_fund_not_found_code_string() {
+    let source = include_str!("../incremental.rs");
+    assert!(
+        !source.contains("sync.fund-not-found"),
+        "编排（incremental）不得出现查无此码的错误码字面量——名称刷新降级改回 \
+         is_code 字符串嗅探即红；识别收口在取数侧谓词 is_fund_not_found（spec #1674）"
+    );
 }
 
 #[test]

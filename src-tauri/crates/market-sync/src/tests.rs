@@ -422,6 +422,48 @@ fn production_face_has_no_blocking_bridge() {
     }
 }
 
+/// 生产拉取入口接入前台让路纪律（issue #1674，删除即变红）：手动查询的前台在途
+/// 守卫与共享限速器是入口型接线——入口直连生产主机常量与真网络，测试面无从注入
+/// 慢拉取观察让行（与 #959/#961、`commands::investment` 同口径以源码扫描守门，
+/// ADR-0087）。限速器实例唯一由编译期收口（构造器 `cfg(test)`，见 `http.rs`），
+/// 本测钉的是「取的是共享单例 + 持前台守卫」：删掉任一入口的
+/// `ForegroundGuard::enter()`（后台车道看不见手动查询）或 `shared_pacer()`
+///（绕开进程全局额度）本测即红；断言只取**生产入口函数体**，不被同文件其他
+/// 位置的合法引用误触。
+#[test]
+fn production_entries_join_foreground_lane_discipline() {
+    let sources: Vec<(&'static str, String)> = production_source_files()
+        .into_iter()
+        .map(|(name, src)| (name, blank_inline_test_modules(&mask_non_code(&src))))
+        .collect();
+    for (name, signature) in [
+        ("fund.rs", "pub async fn fetch_fund_quote_production("),
+        ("stock.rs", "pub async fn fetch_stock_quote_production("),
+    ] {
+        let src = sources
+            .iter()
+            .find(|(file, _)| *file == name)
+            .map(|(_, src)| src.as_str())
+            .unwrap_or_else(|| panic!("{name} 应在守门源文件清单内"));
+        let anchor = src
+            .find(signature)
+            .unwrap_or_else(|| panic!("{name} 的生产拉取入口应在位"));
+        let open = anchor + src[anchor..].find('{').expect("生产拉取入口应有函数体");
+        let end = matching_brace_end(src, open).expect("生产拉取入口体花括号应配对");
+        let body = &src[open..end];
+        for (needle, what) in [
+            ("ForegroundGuard::enter()", "前台在途守卫"),
+            ("shared_pacer()", "进程级共享限速器"),
+        ] {
+            assert!(
+                body.contains(needle),
+                "{name} 的生产拉取入口函数体应接线 {what}（{needle}）——手动查询须被\
+                 后台车道看见并入全局额度（issue #1674），删除该接线即红"
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 后台车道单轮骨架单点（issue #1426，删除即变红）
 // ---------------------------------------------------------------------------

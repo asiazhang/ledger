@@ -112,7 +112,7 @@ pub struct SyncFetchChannels {
     /// 与现价刷新逐只回退共用（issue #1571：逐只分页通道随 lsjz 换源退役）。
     pub fetch_nav_history: FetchNavHistory,
     /// 基金详情名称（issue #827）：代码 → 数据源权威名称。主机取注入面的
-    /// 新浪批量面 + 证监会披露面两面（三臂编排：批量面未收录 → 披露兑底，
+    /// 新浪批量面 + 证监会披露面两面（三臂编排：批量面未收录 → 披露兜底，
     /// issue #1674 接注入面）。
     pub fetch_fund_name: FetchFundName,
     /// 货基判定确认（issue #1563 / ADR-0126 决策 3 换源）：代码 → 官方披露
@@ -142,7 +142,7 @@ pub(super) struct SyncFetchHosts {
     pub(super) fund_batch: Vec<String>,
     /// 新浪场外基金单只全历史面主机（历史补全，issue #1566）。
     pub(super) fund_history: Vec<String>,
-    /// 证监会基金电子披露面主机（货基形态确认与批量面未收录的披露兑底，
+    /// 证监会基金电子披露面主机（货基形态确认与批量面未收录的披露兜底，
     /// issue #1674）。
     pub(super) disclosure: Vec<String>,
 }
@@ -175,7 +175,7 @@ impl SyncFetchChannels {
     /// | `fetch_kline` | 场内日 K | `production_backfill_channel_lands_history_via_tencent_kline`（issue #1561） |
     /// | `bulk`（批量取数面） | 新浪基金批量面 | `production_fund_batch_channel_requests_sina_batch_endpoint`（issue #1565） |
     /// | `fetch_nav_history` | 新浪单只历史面 | `production_backfill_channel_lands_fund_history_via_sina`（issue #1566） |
-    /// | `fetch_fund_name` | 新浪基金批量面 + 证监会披露面（批量面未收录 → 披露兑底双主机） | `production_fund_name_channel_falls_back_to_disclosure_host`（issue #1674） |
+    /// | `fetch_fund_name` | 新浪基金批量面 + 证监会披露面（批量面未收录 → 披露兜底双主机） | `production_fund_name_channel_falls_back_to_disclosure_host`（issue #1674） |
     /// | `confirm_money_fund_form` | 证监会披露面 | `production_confirm_channel_requests_disclosure_host`（issue #1674） |
     pub(super) fn production_lane(lane: Lane, hosts: SyncFetchHosts) -> Result<Self> {
         let client = build_client()?;
@@ -257,20 +257,22 @@ impl SyncFetchChannels {
                 })
             },
             fetch_fund_name: {
-                let client = client.clone();
                 let pacer = pacer.clone();
                 let batch_hosts = hosts.fund_batch.clone();
                 let disclosure_hosts = hosts.disclosure.clone();
                 Box::new(move |code: &str| {
                     let code = code.to_string();
-                    let client = client.clone();
                     let pacer = pacer.clone();
                     let batch_hosts = batch_hosts.clone();
                     let disclosure_hosts = disclosure_hosts.clone();
                     Box::pin(async move {
                         let _foreground = lane.before_request().await;
+                        // 客户端每次请求现建（沿用本闭包改造前形态——issue #1674
+                        // 只收口主机、限速器与前台守卫，连接复用策略不在裁决内）；
+                        // 守卫与共享限速器在同一异步块内覆盖整次请求。
+                        let client = build_client()?;
                         let mut pacer = lock_pacer(&pacer).await;
-                        // 三臂取数编排（新浪批量面 → 官方披露兑底，issue #1568）：
+                        // 三臂取数编排（新浪批量面 → 官方披露兜底，issue #1568）：
                         // 两面主机都取注入面（fund_batch / disclosure），与生产
                         // 常量同形、与共享限速器同额度（issue #1674：本地限速器
                         // 归零、写死主机归零）。

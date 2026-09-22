@@ -263,20 +263,6 @@ fn fund_not_found_predicate_recognizes_constructor_error() {
     );
 }
 
-/// 谓词收口的负向守门（spec #1674，ADR-0087 删除即红）：编排的名称刷新降级消费
-/// 谓词、不嗅错误码字符串——「查无此码」码字面量只许住构造器与谓词同址处
-///（fund 模块），编排 match 臂改回按码嗅探（或编排内任何位置重新引用该字面量，
-/// 含注释）本用例即红。
-#[test]
-fn orchestration_does_not_sniff_fund_not_found_code_string() {
-    let source = include_str!("../incremental.rs");
-    assert!(
-        !source.contains("sync.fund-not-found"),
-        "编排（incremental）不得出现查无此码的错误码字面量——名称刷新降级改回 \
-         is_code 字符串嗅探即红；识别收口在取数侧谓词 is_fund_not_found（spec #1674）"
-    );
-}
-
 #[test]
 fn disclosure_malformed_propagates_fail_closed() {
     let client = reqwest::Client::new();
